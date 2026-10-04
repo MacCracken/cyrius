@@ -39,7 +39,7 @@ unscheduled 6.x backlog. Whole-cycle framing, the v6.7.x language arc and v6.8.x
 
 ## Where we are
 
-**Current head: v6.6.15** (2026-10-02) — cycc **1,492,144 B** (`.text` **1,315,016**) ·
+**Current head: v6.6.15** (2026-10-03) — cycc **1,492,144 B** (`.text` **1,315,016**) ·
 seed-derive **GREEN** · cross-OS **GREEN** on ecb/ach/cass/pi · self_compile **854 ms** ·
 **439** `.tcyr` (**173** in `crossos/`) · **105** `lib/*.cyr` · **326** shell gates under
 `tests/gates/<bucket>/` · **0 open issues** · **6 open proposals**.

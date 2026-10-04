@@ -4,7 +4,387 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [6.6.15] — 2026-10-02
+## [6.6.15] — 2026-10-03
+
+The curves and the compiler's secret leaks (user, 2026-10-02; scope set the same day): the sigil work
+marked for after 6.6.14, and what it uncovered. **Folds sigil 3.13.9** (tagged at `7d7a880`, before this
+release), which contains 3.13.8 (tag `bbaecc4`: constant-time P-256 / P-384 ECDH, and ECDSA signing on a
+constant-time engine) and 3.13.9 (its pin to 6.6.14 and the Windows rooted-path fix). ECDHE on P-256 /
+P-384 across the native TLS stack — the 1.2 client, the 1.3 client with HelloRetryRequest, the server in
+both versions — with every ephemeral secret zeroed. Two compiler defects: the `secret var` epilogue leak
+and B0a string interning. **CVE-68 … CVE-73**; the next free id is **74**. The remaining 6.6.x releases
+were sequenced the same day (roadmap.md § *The 6.6.x tail*, accepted by the user).
+
+### Security
+
+- **sigil 3.13.9 folded — which contains 3.13.8's constant-time ECDH on P-256 / P-384, its
+  constant-time ECDSA signing and the signing nonce no longer left behind in memory, plus 3.13.9's
+  toolchain pin 6.6.14 and Windows rooted-path fix.** (sigil 3.13.9, `7d7a880` on sigil main —
+  pinned to cyrius 6.6.14 — untagged at the time of writing — ⛔ tag it before 6.6.15. sigil 3.13.8
+  is tagged at `bbaecc4` and pins 6.6.9; everything after that tag is 3.13.9. The user decided
+  2026-10-02 that sigil is updated after 6.6.14 and refolded here.) **New API** (`lib/sigil.cyr`, all byte
+  strings big-endian, each returns 0 or -1 with every output zeroed):
+  `ecdh_p256_keygen(rnd, rnd_len, priv_out, pub_out)` — `rnd` at least `ECDH_P256_RAND_LEN` (40)
+  CSPRNG bytes, exactly the first 40 used; `priv_out` 32 B = d = (c mod (n − 1)) + 1 (FIPS 186-5
+  A.2.1, no rejection loop); `pub_out` 65 B = `0x04 ‖ X ‖ Y`; -1 when `rnd_len < 40`.
+  `ecdh_p256_shared(priv, peer_pub, peer_pub_len, secret_out)` — `secret_out` 32 B = x(d·Q), the
+  RFC 8422 §5.10 premaster; -1 unless the peer key is exactly 65 bytes `0x04 ‖ X ‖ Y` with X, Y < p
+  (compared as integers, never reduced) on the curve (compressed, hybrid and infinity encodings
+  refused), unless d ∈ [1, n − 1], or if d·Q is the identity; `secret_out` may alias `priv` or
+  `peer_pub` (every input is read first) and keygen's outputs may alias `rnd`.
+  `ecdh_p384_keygen` / `ecdh_p384_shared` likewise at 48-byte scalars, 97-byte points and 56
+  random bytes (`ECDH_P384_RAND_LEN`); constants `ECDH_P{256,384}_{RAND,PRIV,PUB,SECRET}_LEN`.
+  Constant-time in the random input and the private key, thread-safe, no `cbank()` lane, and the
+  stack each call used is wiped before it returns. Verified against RFC 5903 §8.1 / §8.2, all
+  25 + 25 NIST CAVP KAS ECC CDH primitive vectors, and OpenSSL 3.6.5 (6 embedded vectors + 100
+  random live pairs, 0 mismatches); sigil's `ecdh.tcyr` 460/0 on x86_64, the pi, ecb, ach and
+  cass (sigil 3.13.9 pins cyrius 6.6.14; under 3.13.8's 6.6.9 pin this repo's CVE-51 clock defect
+  failed the two "every timed derive succeeded" assertions on ach). P-256
+  keygen / shared 2.57 / 2.55 ms, P-384 7.18 / 7.48 ms on the x86_64 dev host (ecb ~1.85× and the
+  pi slower: the aarch64 high-half multiply is software). This is what native TLS 1.2 ECDHE on
+  secp256r1 / secp384r1 builds on — the remedy CVE-64's *Not covered* named for the 1.2 client's
+  x25519-only key exchange. **Security (sigil 3.13.8, HIGH; CVE-68):** `ecdsa_p256_sign` /
+  `ecdsa_p384_sign` — and so native-TLS CertificateVerify — ran the nonce through a ladder on the
+  verify path's variable-time field arithmetic and computed k⁻¹ and r·d on variable-time mod-n
+  code; a fixed-vs-random Welch t-test measured \|t\| = 6.3 at 400 samples on the 3.13.7 entry,
+  0.7 at 1200 on 3.13.8. Signing now runs on the same constant-time engine (`src/ec_ct.cyr`:
+  Montgomery arithmetic with branch-free carries and selects, complete Renes–Costello–Batina
+  formulas, fixed 4-bit window with a full-table masked lookup), byte-identical signatures, and
+  faster: P-256 sign 13.3 → 2.7 ms, P-384 30.1 → 7.9 ms. **Security (sigil 3.13.8, MEDIUM; CVE-68 part B):** every signature left its nonce k behind — all of it ~43 KB down in dead stack (the
+  HMAC_DRBG's last HMAC context; HMAC never wiped its context, whose final state is the MAC) and
+  half of it in xmm1 (the SHA-NI state), which the signer's own `secret var` epilogue then wrote
+  below its frame after its stack wipe; with k and one (r, s), d = r⁻¹(s·k − e). The same holds for
+  every 3.13.7 signature, and for any HMAC / HKDF output (the TLS key schedule) left in the dead
+  SHA context. Fixed: both HMACs wipe their context and inner hash, SHA-384's finalize its
+  scratch, the SHA-NI and AES-NI asm blocks clear the vector registers they used, and each signer
+  burns 128 / 160 KB of stack from a plain wrapper after its secret callee has returned. The
+  register half is a cyrius defect — the defer walker's `EDEFER_SAVE` area (x86_64 rax / rdx / r8
+  / xmm0 / xmm1, aarch64 x0–x3 / q0 / q1) is never cleared, so every `secret var` epilogue plants
+  live registers in dead stack after its wipe; fixed in cyrius in this release (**CVE-69**), and sigil no longer depends on it for its
+  secret-scalar entry points. `pt_scalarmul_secret` / `pt384_scalarmul_secret` keep their
+  signatures, now return the affine result (Z = 1), and live in `ec_ct.cyr`. **Removed private
+  symbols** (nothing in the ecosystem uses them): `_ecs256_init`, `_ecs384_init`,
+  `_ecs_addmod_n_p256` / `_p384`, `_p256_khat` / `_p384_khat`, `_p256_blind_point` /
+  `_p384_blind_point`, `_p256_scrub_secret_lanes` / `_p384_scrub_secret_lanes`, `_ecs256_R` /
+  `_ecs384_R` / `_ecs256_G` / `_ecs384_G`. **Kept:** `_ecs256_inited` / `_ecs384_inited`, which
+  abaco `tests/test_ccy_tls.tcyr:571` / `:582` snapshot — now set when the constant-time engine's
+  init publishes, so abaco's "no lazy init after abaco_tls_init" check compiles and stays
+  meaningful with no abaco change. Every conditional branch of the compiled engine and of the
+  signers, x86_64 and aarch64, was checked by disassembly to be a loop bound, a public exponent
+  bit, a public size or a public verdict (re-checked at sigil 3.13.9 on 6.6.14 codegen: identical counts, and
+  the engine's core functions compile to the same instructions as under 6.6.9). **Security (sigil
+  3.13.9, MEDIUM, Windows; CVE-73):** sigil's TPM / Secure Boot / IMA / dm-verity / LUKS helpers probed rooted POSIX
+  paths, which are drive-relative on Windows (`/dev/tpmrm0` is `C:\dev\tpmrm0`) — this repo's
+  CVE-54 / -57 / -65 class: on cass a planted `C:\dev\tpmrm0` made `tpm_available()` say yes, a
+  planted securityfs made `ima_get_status` / `ima_read_measurements` report the planted log and
+  `ima_write_policy` write into the planted file, a planted `C:\sys\module\dm_verity` made
+  `dmverity_supported()` say yes, and `luks_write_keyfile` staged the key in a planted `C:\tmp`.
+  New public `agnosys_rooted_paths_untrusted()` (1 on Windows); every such probe now fails closed
+  there (`tpm_detect` 0, the TPM / IMA-read / IMA-write / EFI-listing / LUKS-keyfile operations
+  `not_supported`, `secureboot_detect_state` SB_NOT_SUPPORTED, `ima_get_status` inactive,
+  `dmverity_supported` 0); nothing changes off Windows. Found in passing for this repo: on Windows
+  `lib/thread_win.cyr` sets `THREADS_CONCURRENT = 0` although its `CreateThread` threads run
+  concurrently (measured on cass; filing draft `filings/cyrius-thread-win-threads-concurrent-false.md`).
+  Folded byte-identical to sigil 3.13.9's `dist/sigil.cyr` (`7d7a880`).
+
+- **Security (CVE-69, P2): a `secret var` fn's epilogue no longer leaves its return registers in
+  dead stack after its own wipe.** The defer walker (`_defer_emit_walk`, which runs every `defer`
+  and `secret var` block on every return) saves the whole return convention in a 64-byte area
+  below sp before running the blocks — x86_64 rax, rdx, r8, the entry rsp, xmm0, xmm1; aarch64
+  x0–x3, q0, q1 — and since 6.6.7 reloaded them and released the area WITHOUT clearing it. So
+  every `secret var` fn wrote whatever those registers held into dead stack AFTER the wipe: in
+  sigil 3.13.7, xmm1 still held the HMAC_DRBG's last SHA-NI state at `ecdsa_p256_sign`'s return —
+  the RFC 6979 nonce k, and k plus one signature is the private key. `EDEFER_RESTORE` now clears
+  the area before releasing it: x86_64 (ELF, PE, both Mach-O arms, the agnos kernel ELF) reloads
+  the registers, takes the entry rsp into r11, zeroes the eight slots with immediate stores (no
+  return register touched) and moves rsp from r11; aarch64 (ELF, Mach-O) adds four
+  `stp xzr, xzr` before the `add sp, sp, #64`. Every fn with a walker (a plain `defer` too);
+  every other fn is byte-identical. +74 B (x86_64) / +16 B (aarch64) per such fn. cx is not
+  affected in the guest-visible sense (its save is six pushes on cxvm's private data stack, which
+  no guest address reaches). New `tests/tcyr/crossos/secret_epilogue_save_area.tcyr` (13
+  assertions: inline-asm markers in every saved register, a dead-stack window, an anti-vacuous
+  one-frame-down control, a no-walker control, a plain-`defer` row, and value rows for the
+  return value, `(a, b)`, `(a, b, c)`, f64 and f64v4): RED before on x86_64 (7 of 7 markers),
+  qemu-aarch64 / pi / ecb (8 of 8), ach (7 of 7), cass and wine (3 rows), GREEN after on all.
+  The sigil probe: `xmm1*10+rdx hits = 11` → `0`. `cross-os-selfhost.sh <host> crossos`:
+  SELFHOST_OK and 171 / 171 crossos on pi, ecb, ach and cass. (`src/backend/x86/float.cyr`,
+  `src/backend/aarch64/emit.cyr`; register entry CVE-69.)
+
+- **Ephemeral secrets (CVE-70, P2; and CVE-71, P3).** Neither
+  1.3 side nor the 1.2 server ever zeroised its ephemeral private key or shared secret / premaster
+  — on the global heap every past connection's stayed in the process for its life (forward
+  secrecy rests on them being gone). Now each step zeroises each secret as soon as it is used (and
+  the 1.3 client's first share's key when a HelloRetryRequest replaces it), so the next flight
+  already leaves without them, and `tls_native_connect`, `tls_native_accept` and
+  `tls_native_accept_12` wipe both on every exit. Every library-allocated EPH_PRIV / SHARED buffer
+  is 48 bytes so one wipe fits every group. CVE-71 (P3): the all-zero x25519 check above.
+
+- **A `defer` or `secret var` in a `#naked` fn is refused** (**CVE-72**, P3; a CVE-47 residual). A `#naked` fn has no
+  epilogue — its body ends in its own asm return — so the defer walker emitted after the body was
+  unreachable: the block never ran and the secret was never zeroised, and both compiled clean
+  (`#naked fn f() { defer { _g = 5; } asm { 0xC3; } }`, then `return _g;`, exited 0, want 5).
+  `return` was already refused there; `_PARSE_DEFER` and the `secret var` branch now refuse their
+  statement the same way, named, no binary. cx keeps `#naked` inert (framed), so its defers still
+  run. No `#naked` fn in `~/Repos` holds either. `tests/gates/diagnostics/defer_misuse_refused.sh`
+  gains two refusal rows and a control: 28 / 2 against the pre-fix parser, 30 / 0 after.
+
+### Fixed
+
+- **The native TLS 1.2 client does ECDHE on secp256r1 and secp384r1** (lane ecdhe; builds on the
+  sigil 3.13.8 fold above — ⛔ re-folded from the 3.13.8 TAG at integration). Until now the 1.2
+  client was x25519-only end to end: `tls_native_12_build_client_hello` offered x25519 (and,
+  since 6.6.14, a P-256 / P-384 client certificate's curve, listed but never usable),
+  `_tn_12_parse_server_kex` refused any other group, and the ClientKeyExchange and premaster
+  were 32-byte x25519. Measured on 6.6.14 against OpenSSL 3.6.5: `s_server -tls1_2 -groups P-256`,
+  `-groups P-384`, and an ECDSA P-256 or P-384 server certificate on default groups all ended in
+  `TLS_ERR_ALERT` (s_server: "no shared cipher"); and with a P-256 client certificate held, a
+  server ranking P-256 above X25519 (`-groups P-256:X25519 -serverpref`) failed the handshake
+  with `TLS_ERR_HANDSHAKE_FAILED` — the documented 6.6.14 trade-off. Now: supported_groups is
+  x25519, secp256r1, secp384r1 by default (x25519 first; the certificate-curve special case is
+  gone; `tls_native_set_groups` below changes the list); the ServerKeyExchange may name any of the three, each point exactly its length (32 / 65
+  / 97), and the group and point are recorded only once the signature verifies (the 1.2
+  ServerHello no longer stamps x25519); the client's key is sigil's constant-time
+  `ecdh_p256_keygen` / `ecdh_p384_keygen` fed 40 / 56 bytes through `_tn_rand_bytes` (the
+  `tls_native_set_entropy` hook) into a `secret var`; the premaster is sigil's
+  `ecdh_p*_shared` x-coordinate (32 / 48 B), sigil validating the server's point (0x04, X, Y < p,
+  on the curve); the ClientKeyExchange carries the uncompressed point (RFC 8422 §5.7). The
+  ephemeral private key is zeroised as soon as the premaster exists (whatever the outcome) and
+  the 48-byte premaster (now at `TLS_CTX_OFF_SHARED`) once the master secret is derived, and on
+  every failure path in between (`_tn_12_fail_pm`; its out-of-memory exit is tested, its other two
+  callers — a Certificate or ClientKeyExchange that does not fit the flight buffer — share the
+  helper and are unreachable without a mis-sized buffer). `tls_native_12_compute_premaster(ctx, peer_pub, out)` dispatches
+  on the ctx's group (0 still means x25519; `out` holds 48); `tls_native_12_build_client_key_exchange`
+  stays the 37-byte x25519 builder. `tls_native_get_group` reports the negotiated group on a 1.2
+  client. (This bite changed no ctx slot; the rest of the curve work below added four.) The
+  ephemeral helpers it introduced became the shared ones of the next bullet, and every
+  library-allocated EPH_PRIV / premaster buffer is 48 bytes.
+
+- **Found behind it: the 1.2 ServerKeyExchange signature was read as TLS 1.3 reads a
+  SignatureScheme.** In TLS 1.2 an ECDSA scheme names only the HASH (RFC 5246 §7.4.1.4.1), and
+  OpenSSL's P-384 server key signs SHA-256 when the client lists 0x0403 first, so once the curves
+  were listed every P-384 server certificate failed with `TLS_ERR_AUTHN`. `_tn_ecdsa_verify_12`
+  (digest from the scheme, curve from the key) is now shared by the SKE and by 6.6.14's client
+  CertificateVerify check, which carried the same logic inline.
+
+- **Tests.** NEW `tests/tcyr/crossos/tls12_client_ecdhe.tcyr` (112 assertions, every host): the
+  hello's group list with and without a client certificate; RFC 5903 §8.1 / §8.2 end to end (the
+  RFC's scalar installed through the entropy hook — FIPS 186-5 A.2.1 maps 8 zero bytes ‖ (d − 1)
+  to d — g^i in the ClientKeyExchange, g^ir as the premaster, the private key zeroised) and the
+  server's view through `compute_premaster`; x25519 unchanged; two OpenSSL-made SKE signatures
+  (a P-384 key over SHA-256, a P-256 key over SHA-384); every refused group / curve type / point
+  length (nothing recorded), a forged signature, off-curve / 0x02-prefix / x = p points (the
+  premaster refused, both buffers zero), a short entropy fill, a scalar ≥ n. It does not compile
+  on the 6.6.14 lib; mutants M1–M12 each RED; a missing ctx buffer is counted as a failure
+  (a regressed parse used to end the run in SIGSEGV with no summary). `tls_native_client_auth.tcyr`
+  236 → 260: a connected 1.2 client holds no byte of its private key or premaster (RED with
+  either memset removed), and one that FAILS between its premaster and its master secret —
+  a fault-injecting client Allocator refuses the flight buffer, with and without a client
+  certificate in play — holds neither either (RED with `_tn_12_fail_pm`'s memset removed).
+  `tests/gates/platform/tls_native_client_auth_openssl.sh` 27 → 39 rows: the trade-off row
+  flipped to SUCCEED on secp256r1, and a new E leg asserting the negotiated group — P-256 ranked
+  first with and without a certificate, P-256-only and P-384-only servers, ECDSA P-256 and P-384
+  SERVER certificates on X25519 and on their own curve, mTLS over P-384, an RSA-2048 server
+  certificate (ECDHE-RSA) on X25519 / P-256 / P-384, and ECDHE-ECDSA-AES256-GCM-SHA384 on P-384
+  (the SHA-384 PRF over the 48-byte premaster) with EMS and with `-no_ems` (the legacy master
+  secret; OpenSSL 3.0 has no `s_server -no_ems`, so there that row is SKIPPED by name and the
+  floor is 38). The 6.6.14 lib fails 13 of the 39; mutants ME1–ME5 RED against the first 34
+  (11 / 7 / 3 / 3 / 14 rows) and ME6 (secp384r1's premaster length taken as 32) against all 39
+  (the 6 secp384r1 rows).
+
+- **The rest of the native stack does it too: the TLS 1.3 client and server, the TLS 1.2 server, and
+  the HelloRetryRequest both ways** (lane ecdhe, the user's 2026-10-02 call to finish the curve work
+  in 6.6.15). Measured at eac97bb2 (the 1.2 client done) against OpenSSL 3.6.5: the 1.3 client
+  failed `s_server -tls1_3 -groups P-256` / `-groups P-384` (`TLS_ERR_ALERT`; s_server "no suitable
+  key share") — it offered x25519 alone and answered every HelloRetryRequest with
+  `TLS_ERR_HANDSHAKE_FAILED`; the 1.2 server sent every client an x25519 ServerKeyExchange
+  (`s_client -tls1_2 -groups P-256` / `P-384`: "wrong curve", accept `TLS_ERR_ALERT`); the 1.3 server
+  took an x25519 key_share or nothing (`-groups P-256` / `P-384`: accept −2, no alert) and even
+  `-groups P-256:X25519` failed, because `tls_native_accept` refused to send the HelloRetryRequest
+  it had built. Now, by side:
+  - **groups:** NEW `tls_native_set_groups(ctx, groups, n)` — the ECDHE groups a ctx offers (client)
+    or accepts (server), preference order, 1–3 of `TLS_GROUP_X25519` / `_SECP256R1` / `_SECP384R1`
+    (default all three, x25519 first; `TLS_ERR_INVALID_PARAM` for anything else, ctx unchanged).
+    Native only; a server sets it from its accept hook. The 1.2 client's supported_groups comes
+    from it too, and its ServerKeyExchange must name one of them.
+  - **1.3 client:** supported_groups = the ctx's groups; ONE key_share, on the first (x25519 by
+    default). ⚠ DECISION (recorded in the code and the contract): no P-256 share up front — a second
+    key pair costs 2.7 ms on every connection (x25519 2.4 ms, P-384 7.3 ms, measured here) to save a
+    round trip only to a server without X25519; OpenSSL and the browsers do the same; a caller
+    putting a NIST curve first gets that share. NEW `tls_native_client_process_hrr` takes ONE
+    HelloRetryRequest (RFC 8446 §4.1.4): refused — a second one (unexpected_message,
+    `TLS_ERR_PROTOCOL`); one for a group not offered, for the group already shared, or changing
+    nothing, a cipher / session id we did not send, a non-null compression method, a
+    supported_versions other than 0x0304, any extension twice (illegal_parameter); a cookie whose
+    length disagrees with its extension, an empty cookie, a supported_versions or key_share that is
+    not 2 bytes, bytes after the extensions (decode_error); an extension other than supported_versions
+    / key_share / cookie — unsupported_extension when our ClientHello did not carry it,
+    illegal_parameter when it did (supported_groups, signature_algorithms, server_name after SNI,
+    ALPN when offered; RFC 8446 §4.1.4 / §4.2 — NEW `_tn_client_offered_ext` reads it from the
+    ClientHello we sent); no supported_versions (missing_extension). The second ClientHello is the
+    first with the new share and the cookie echoed (one serializer builds both); the transcript is
+    message_hash(CH1) + HRR + CH2 (§4.4.1); the ServerHello must keep the HelloRetryRequest's cipher
+    and answer on our share's group, and one server CCS may come between them. The ServerHello's
+    session-id echo and compression byte are now checked too, and every ServerHello refusal sends
+    its alert: a DOWNGRD random, a supported_versions other than 0x0304, a cipher we did not offer,
+    a key_share on another group or of another length (illegal_parameter), no supported_versions
+    (protocol_version), no key_share (missing_extension), a byte after the key (decode_error).
+    `tls_native_connect` sends the alert a refusal recorded.
+  - **1.3 server:** takes the first of its groups the client sent a usable share for (a usable
+    share beats asking for a preferred group), else sends ONE HelloRetryRequest for the first of
+    its groups the client lists, reads the second ClientHello (one middlebox CCS may precede it —
+    still one per connection) and requires the asked-for share, the same session id and the same
+    cipher (illegal_parameter; never a second HelloRetryRequest), and a second ClientHello that no
+    longer offers TLS 1.3 is illegal_parameter. Refused with their alerts: a key_share without
+    supported_groups and supported_groups without a key_share (missing_extension, RFC 8446 §9.2 —
+    OpenSSL does the same; `tls_native_scaffold.tcyr`'s hand-built ClientHellos gained the
+    supported_groups a real one carries), a share for an unlisted group, two shares for one group,
+    a wrong-length share, a point sigil refuses (illegal_parameter), a supported_groups list that is
+    odd-length, empty or not its extension's length, a client_shares list that is not its
+    extension's length, an empty key_exchange, a session id over 32 bytes (decode_error), no cipher
+    suite in common, no shared group (handshake_failure). Every server entry path goes through
+    `tls_native_accept` (`tls_accept_complete` calls it).
+    ⛔ **Found by the review, fixed: supported_versions alone now makes a ClientHello TLS 1.3**
+    (RFC 8446 §4.2.1). `_tn_ch_is_tls13` returned 1 for any hello carrying a key_share, before it
+    read supported_versions, so the server negotiated TLS 1.3 with a client whose
+    supported_versions did not list it — in a first ClientHello, and in the second one answering a
+    HelloRetryRequest, whose new "must still offer TLS 1.3" check therefore did not hold (probed: a
+    second ClientHello with the requested share and supported_versions [0x0303] completed 1.3).
+    Pre-existing for the first hello (the dispatcher's comment called it robustness);
+    `tls_native_scaffold.tcyr`'s hand-built loopback client relied on it and now sends the
+    supported_versions a 1.3 client must. Such a hello to a ctx pinned to TLS 1.3 is now refused —
+    and the dispatcher's two refusals send their alert, where they sent none: a 1.2 hello to a
+    1.3-only ctx gets protocol_version (RFC 8446 §4.2.1 MUST; still `TLS_ERR_PROTOCOL`), a
+    malformed one decode_error.
+    ⛔ **Found by the review, fixed: the middlebox-compatibility CCS** (RFC 8446 §D.4). When the
+    client sends a non-empty legacy_session_id (OpenSSL's s_client always does) the server MUST send
+    one dummy ChangeCipherSpec directly after its first handshake message — the HelloRetryRequest,
+    else the ServerHello. The native server never did (pre-existing; OpenSSL tolerates the
+    absence). `tls_native_accept` now appends it to that message's write, once per connection.
+  - **1.2 server:** picks the first of its groups the client's supported_groups lists (its own first
+    when the client sends none, RFC 8422 §4), refuses a client listing none with handshake_failure;
+    the ServerKeyExchange / ClientKeyExchange carry that group's point and an invalid point, or a
+    ClientKeyExchange length byte that is not the point's, is illegal_parameter; a malformed
+    supported_groups, or a ClientKeyExchange of another size or handshake type, is decode_error. The group never depends on the
+    certificate (a P-384 certificate signs a P-256 exchange when the client lists both).
+    ⛔ **Found by the review, fixed: the suite and the certificate's curve.** In TLS 1.2 the
+    client's supported_groups also bounds an ECDSA certificate's curve, and a server MUST NOT
+    negotiate an ECC suite it cannot complete within it (RFC 8422 §5.1): the server sent a P-384
+    certificate to a P-256-only client, which refused it ("wrong curve"); now the server refuses
+    first (handshake_failure). An Ed25519 certificate is not bound. Found beside it and fixed in the
+    same choice (pre-existing since .74): the server took the first suite
+    `tls_native_12_cipher_supported` knew — with no RSA key it answered an ECDHE_RSA-first client
+    with an ECDHE_ECDSA suite the client never offered ("wrong cipher returned"), and
+    ECDHE-ECDSA-AES128-GCM-SHA256 alone failed with no alert (`TLS_ERR_CIPHER_NOT_SUPPORTED`; the
+    ServerHello cannot name it). NEW `_tn_12_server_suite_ok`: only a suite the ServerHello can name
+    back (ECDHE_ECDSA AES-256-GCM-SHA384 / ChaCha20-Poly1305); none of them is handshake_failure.
+  - **all sides:** one `_tn_ecdhe_shared` (x25519 with the all-zero result refused — ⛔ neither 1.3
+    side checked, RFC 8446 §7.4.2 MUST; the NIST curves through sigil's validating
+    `ecdh_p*_shared`), one `_tn_ephemeral_keygen` (every byte through the entropy hook).
+
+- **ctx / codes.** Slots +584 `TLS_CTX_OFF_GROUPS`, +592 `TLS_CTX_OFF_HS_ALERT` (the alert a refusing
+  handshake step records for its driver: `_tn_hs_fail` / `_tn_send_hs_alert`), +600
+  `TLS_CTX_OFF_HRR` (a HelloRetryRequest sent / taken; never cleared), +608 `TLS_CTX_OFF_KS_GROUP`;
+  `TLS_CTX_LEN` 584 → 616. No error code added (−24 not needed). `TLS_EXT_COOKIE` = 44. The
+  x25519-only helpers `_tn_find_x25519_share`, `_tn_supports_x25519`, `_tn_gen_ephemeral_x25519`
+  are gone; the lane's `_tn_12_point_len` / `_premaster_len` / `_eph_priv_len` /
+  `_tn_12_client_ephemeral` became the shared `_tn_group_*` / `_tn_ephemeral_keygen`.
+
+- **Tests.** NEW `tests/tcyr/crossos/tls_native_ecdhe_groups.tcyr` (832 assertions, every host,
+  single-threaded replay + scripted peers): the native↔native matrix in 1.3 and 1.2 for every
+  client-list × server-list pair that decides a group (with and without a HelloRetryRequest, no
+  shared group, ECDSA P-256 / P-384 certificates on the other curve — listed by the 1.2 client, and
+  refused when it is not), each row checking the group on both ends, the HelloRetryRequests on the
+  wire, ping/pong, no alert, the version, no server CCS to the native client's empty session id,
+  and that neither side holds a byte of either secret — at its next flight and at the end; every
+  client and server refusal named above with its alert (and, called directly, each client step
+  handed the other's message); the server's §D.4 CCS (after the ServerHello or
+  the HelloRetryRequest, once); the version a ClientHello's supported_versions alone decides; the
+  1.2 server's suite choice; the second ClientHello's random, share and cookie echo; failed writes
+  on every driver and `tls_native_accept_12` direct; RFC 8446 §4.4.1's message_hash against sigil's
+  sha256 / sha384; `tls_native_set_groups` and the ClientHellos it shapes. eac97bb2's lib (symbols
+  stubbed) failed 281 of the first cut's 573. ⚠ The first cut's claim "every client and server
+  refusal, each with its alert" was not true: the review's mutants N1–N11 and N15 each deleted one
+  refusal (the HelloRetryRequest's and ServerHello's compression byte, the ServerHello's
+  session-id echo, the HelloRetryRequest's supported_versions value, its duplicate key_share and
+  cookie length, the server's supported_groups-without-key_share, duplicate P-256 share, odd-length
+  supported_groups in 1.3 and 1.2, the second ClientHello's TLS 1.3 check, and the client taking a
+  server CCS after a HelloRetryRequest — that one only the Linux OpenSSL gate saw) and the suite
+  stayed green; each has a row now. ⚠ And that second claim was not true either: an independent
+  verifier found four more documented refusals no row pinned — each deleted, all 37 tls*.tcyr
+  stayed green: the HelloRetryRequest's duplicate supported_versions, duplicate cookie and empty
+  cookie (no row at all; each then TAKEN: rc `TLS_ERR_IO`, the latch set, no alert), and the server's
+  wrong-length key_share (its only row was a 64-byte P-256 share, which sigil's point check
+  refuses later with the same alert; an x25519 share of 31 or 33 bytes was then ACCEPTED). A sweep
+  then deleted every refusal statement in the functions this work wrote or rewrote, one per build
+  (144 sites): 52 were RED on the 738 assertions of the time. Every survivor that is a refusal the
+  docs name got a row — the four, the HelloRetryRequest's mis-sized supported_versions / key_share
+  and trailing bytes, the ServerHello's DOWNGRD random, supported_versions (absent or 0x0303),
+  cipher, key_share (absent, 31 / 33 bytes, a byte after it), the server's cipher suites in common,
+  33-byte session id, client_shares length, empty key_exchange, short and empty supported_groups,
+  the 1.2 ClientKeyExchange's handshake type and length byte, and the two client-step guards a
+  direct call reaches — R1–R24, each RED on the 832. The sweep's 68 survivors are none a refusal
+  the docs name (role guards, framing the driver checked first, guards the callers make
+  unreachable, length checks a later check repeats with the same alert or that only bound a read
+  — the mutation group asserts no such input faults — and checks this work did not write); the
+  test's ledger lists them by class. 80 mutants RED, ledger in the file: MG1–MG28, MW1–MW7,
+  N1–N11 + N15, the fix pass's V1, X1–X2, C1–C3, D1–D2, P1, and R1–R24 (this line read "63"
+  before R1–R24; the ledger then held 56, P1 included).
+  `tests/gates/platform/tls_native_client_auth_openssl.sh` 39 → 68 rows: leg H (the 1.3 client vs
+  `s_server -groups P-256 / P-384 / P-256:X25519 / X448:P-384 / P-521`, `-no_middlebox`, ECDSA P-384
+  and RSA certificates, mTLS with a P-384 client certificate after a HelloRetryRequest) and leg G
+  (the native server, 1.3 and 1.2, vs `s_client -groups P-256 / P-384 / P-521 / P-256:X25519`, the
+  native HelloRetryRequest via `X448:P-256`, `secp521r1:P-384` and a server restricted to P-384,
+  ECDSA certificates on the other curve; `-no_middlebox`; a P-384 certificate to a P-256-only 1.2
+  client; `-cipher` ECDHE-RSA only, ECDHE-ECDSA-AES128 only, RSA-then-CHACHA20), each row asserting
+  the group and the HelloRetryRequest, every 1.3 G row that completes also the server's §D.4 CCS
+  (exactly one, its 2nd record — read from the record headers `-msg` dumps, which OpenSSL 3.0 and
+  3.6 both print; 3.0 prints no "ChangeCipherSpec" line for it); the CVE-64 mTLS rows unchanged.
+  eac97bb2's lib fails 21 of the first 24 new rows; MH1 (message_hash replaced by ClientHello1 —
+  invisible natively, both sides share the helper) RED on the 10 HelloRetryRequest rows, MH2 (the
+  second ClientHello read refusing a CCS) on 3, MH3 (the §D.4 CCS never sent) on 7 (3.6 and 3.0),
+  MH4 (the old suite choice) on 3, MH5 (no certificate-curve bound) on 1.
+  `tls_native_scaffold.tcyr`: the client/server shared-secret comparison became zeroisation checks
+  (the handshake-secret agreement it stood for is asserted right after).
+
+- **String interning never aliases a literal onto bytes that differ from its own.** The lexer
+  compared a new literal (its bytes + terminator) against each pool entry, walking entries NUL to
+  NUL — and the comparison window could run past the committed pool into the literal's own,
+  uncommitted copy, which the next literal then overwrote. A literal holding an embedded NUL could
+  match there: `var A = "a"; var X = "a\0a"; var B = "zzzz"; syscall(60, load8(X + 2));` exited
+  122 ('z'), not 97. A match now counts only when the whole window is committed
+  (`while (si + slen < sstart)`, `src/frontend/lex.cyr`). A NUL-free literal can never reach the
+  boundary, so nothing else changes — every `src/main*.cyr` fork, `cbt/cyrius.cyr` and the
+  in-tree corpus intern exactly as before (an instrumented pre-fix compiler logged zero
+  cross-boundary matches across 560 files); self-host fixpoint and seed-derive green. New
+  `tests/tcyr/frontend/string_interning_embedded_nul.tcyr` (26 assertions: the filed repro
+  verbatim, NUL in the middle / first / last / first-and-last, `\x00` and `\u{0}` spellings, a
+  literal that is a prefix of another both ways, identical literals still shared with and
+  without a NUL, a literal equal to the bytes after another's NUL, and the boundary itself — a
+  window whose terminator would sit AT the pool end, `"~r\0\0Q12"` then `"\0Q12\0"`): 11 RED
+  before, all GREEN after; an off-by-one mutant of the fix (`<=` for `<`) fails the boundary row.
+  Ecosystem survey (every NUL-bearing literal in ~/Repos, 4,291 of them; the periodic ones — the
+  only shape that can reach the boundary — compiled through the CLI with the instrumented
+  compiler): one TU hit it, rekha `programs/hint_unit_vectors.cyr` lines 326 / 327, and both were
+  benign by luck (the overwriting literal also began with zeros: the program's output is
+  identical built either way); no value changes anywhere. The repro on cx: 122 → 97.
+
+- **Found in passing, fixed: `tests/tcyr/crypto/tls_libssl_read_errors.tcyr` raced its own forked
+  server.** The server wrote its alert and its "late" record in two writes; the libssl client could
+  read the alert, fail and close in between, and the second write failed (child exit 6). Pre-existing
+  (12–18 of 60 stressed runs on the pre-lane lib as on the new one); the two records now go out in
+  one write (0 of 60) — the race 6.6.14 closed in tls_native_alert_mapping.tcyr and
+  tls_native_ccs_deadline.tcyr, missed here.
+
+### Known / not fixed
+
+- Found by the TLS lane, pre-existing, for the backlog (roadmap): the native TLS 1.3 client accepts a
+  ServerHello carrying an extension it never offered (RFC 8446 §4.2 wants unsupported_extension; the
+  ServerHello walk must still admit pre_shared_key on resumption, EncryptedExtensions likely the same);
+  the native 1.2 client does not check the server certificate's curve against its own supported_groups
+  (harmless against the native server, which now refuses first); the 1.2 server takes a legacy_session_id
+  longer than 32 bytes (never stored or echoed, so not memory-unsafe — conformance only); four 1.2-client
+  ServerKeyExchange length / key-type checks have no test that fails without them. Not in scope: a
+  libssl-backend `tls_set_groups`; X448 / secp521r1 (sigil has neither ECDH).
 
 ## [6.6.14] — 2026-10-02
 
