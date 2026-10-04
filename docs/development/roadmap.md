@@ -100,7 +100,7 @@ reviews and a synthesis, archived at
 | Release | Contents |
 |---|---|
 | **6.6.15** | sigil **3.13.8** fold (constant-time P-256 / P-384 ECDH; ECDSA signing made constant-time — **CVE-68**); TLS ECDHE on P-256 / P-384 everywhere (1.2 client, 1.3 client with HelloRetryRequest, native server group negotiation, ephemeral-key zeroing); the `secret var` epilogue leak (**CVE-69**); B0a string interning (a NUL-bearing literal aliased another literal, silently). See *6.6.15* below. |
-| **6.6.16** repair | **Compiler:** the silent miscompiles — module-scope `var T: i64[3] = {…}` stores bytes, pointer-mode struct `q = a` / `G = a` / `a = q`, overload dispatch on a `Str` global, `g<i32>(..)?` (139) and `var v = g<i32>(..)` dropping the payload, a nested fn (SIGILL → a named error), a kmode global initialiser naming an enum; the named >8 B struct argument becomes a COPY (decided, *Open questions* 4); one shared type-name resolver (sizeof for u*/f*/bool; annotations stop prefix-matching); the `#deprecated` gaps; the cycc include fallback honouring `CYRIUS_HOME`. **Net / TLS / security:** plain-socket SIGPIPE (`sock_send*`, http, ws — CVE-66's class, a CVE; kavach's `basic` profile must admit `sendto` first — its issue is filed), `cyrius deps` tag-field traversal (CVE-62's class), the Ed25519 `sig_len == 64` check and the ServerKeyExchange curve binding, CA EKU, Windows accept inheriting `FIONBIO`, `fd_wait_ready`'s error mask, libssl session cache (`SSL_CTX_ctrl`) and the failed-`*_complete` sticky error, Windows `THREADS_CONCURRENT=1`, the agnos `setsockopt` stub. **Plus:** cwd-independent gates, the guide's `fn use()` example, the `element_typed_array` sentinel, the PE size gate's private wine prefix, the sit-fsck lookup, the stale premises in P2/P3/C1 and the syscall-families entry. |
+| **6.6.16** repair | **Compiler:** the silent miscompiles — module-scope `var T: i64[3] = {…}` stores bytes, pointer-mode struct `q = a` / `G = a` / `a = q`, overload dispatch on a `Str` global, `g<i32>(..)?` (139) and `var v = g<i32>(..)` dropping the payload, a nested fn (SIGILL → a named error), a kmode global initialiser naming an enum; the named >8 B struct argument becomes a COPY (decided, *Open questions* 4); one shared type-name resolver (sizeof for u*/f*/bool; annotations stop prefix-matching); the `#deprecated` gaps; the cycc include fallback honouring `CYRIUS_HOME`. **Net / TLS / security:** plain-socket SIGPIPE (`sock_send*`, http, ws — CVE-66's class, a CVE), `cyrius deps` tag-field traversal (CVE-62's class), the Ed25519 `sig_len == 64` check and the ServerKeyExchange curve binding, CA EKU, Windows accept inheriting `FIONBIO`, `fd_wait_ready`'s error mask, libssl session cache (`SSL_CTX_ctrl`) and the failed-`*_complete` sticky error, Windows `THREADS_CONCURRENT=1`, the agnos `setsockopt` stub. **Plus:** cwd-independent gates, the guide's `fn use()` example, the `element_typed_array` sentinel, the PE size gate's private wine prefix, the sit-fsck lookup, the stale premises in P2/P3/C1 and the syscall-families entry. |
 | **6.6.17** manifest | **P1** (the single manifest reader + `--print-config`; `[build] test` WIRED after measuring the repos with named deps; `defines` / `strict` wired; a `dce` key; `features` dropped, `target` held; profiles → backlog); **P5-A** (text corpus + per-entry view; P5 stays OPEN for its execution half); DRY the pass-1 top-level scanners across the 7 forks; LSP read sized by fstat; `lib sync --full` re-locking; `_toml_key_at`'s hyphen boundary. |
 | **6.6.18** distlib + poison | **P4** option 2 (the compile-verify fixpoint is the authority; one sibling regeneration wave); **P6** widened (`poison_allocator()`, leading redzone, live-block sweep, settable fill byte, `alloc()` / arena redzones; guard pages → backlog); the log / ws / ws_server fold bundles; the ESYSXLAT compile-time fold (~593 KB of `cycc-native-aarch64`); DCE's honest "compaction declined: <why>" note; the missing `sxtw`. |
 | **6.6.19** | **P2** `[embed]` (generated in cbt before `#@srcline` — never an in-band marker that reads files, the CVE-45 class; `[lib.PROFILE]` scoping; the interning perf fix B0b); x86-macOS real threads + `async_await_readable_ms` on macOS / agnos / Windows (*Open questions* 3). The release to trim if 6.7.0 should come sooner. |
@@ -362,6 +362,11 @@ kriya's was already there. Every repo that bumps to 6.6.13 must re-vendor `lib/m
 - bote still commits live `path = "../libro"` / `"../majra"` lines (the dhvani/libro shape 6.6.12 removed).
 - aethersafha: 21 files not `cyrius fmt`-clean on 6.6.11 (its CI has no fmt step); duplicate-fn warnings
   between sigil and the agnostik / agnodrm bundles (`_hex_nibble`, `result_print_err`, …).
+- kavach (a CONSUMER, not a stdlib — it gates nothing in cyrius; user, 2026-10-04): its `basic` seccomp
+  profile allows `write` but not `sendto` (nor `poll` / `fcntl`), so a sandboxed native TLS writer on Linux is
+  killed (SIGSYS) from 6.6.14 (CVE-66's `MSG_NOSIGNAL`), and from 6.6.16 a plain-socket writer too. Keeping
+  its allowlist in step with the stdlib's syscalls is kavach's own patch release. Filed in kavach (user,
+  2026-10-02): `kavach/docs/development/issues/2026-10-02-basic-seccomp-kills-native-tls-writes.md`.
 - sankhya's README / CLAUDE.md name varna 2.1.0 / itihas 2.4.0 / avatara 2.9.0; its 3.0.2 lock pins
   2.4.1 / 2.5.0 / 2.14.8.
 
@@ -410,11 +415,6 @@ priority surfaces.
     agnos's #48 hard-codes `TCP_PROGRESS_US`. It needs #48 to honour a time bound (`tcp_send_ex` already
     takes one) — an agnos ABI change, then the stdlib passes the time left (CVE-61's *Not covered*).
     **Filed in agnos** (user, 2026-10-02): `agnos/docs/development/issues/2026-10-02-sock-send-ignores-the-caller-deadline.md`.
-  - kavach — its `basic` seccomp profile allows `write` but not `sendto` (nor `poll` / `fcntl`), so a
-    sandboxed native TLS writer on Linux is killed (SIGSYS) from 6.6.14 (CVE-66's `MSG_NOSIGNAL`), and was
-    already whenever it set a deadline. Whether `basic` admits `sendto` (e.g. with a NULL destination only)
-    is kavach's call. **Filed in kavach** (user, 2026-10-02):
-    `kavach/docs/development/issues/2026-10-02-basic-seccomp-kills-native-tls-writes.md`.
   - `lib/net.cyr`'s plain writers (`sock_send`, `sock_send_all`, `lib/http.cyr`, `lib/ws.cyr`) are flagless
     `write`s on Linux and macOS: a reset peer still raises SIGPIPE there (CVE-66's class for plain sockets).
   - `lib/syscalls_windows.cyr` `fd_wait_ready` (~880, also ~949/955/965) returns `0 - WSAGetLastError`
