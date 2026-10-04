@@ -15,6 +15,14 @@ both versions — with every ephemeral secret zeroed. Two compiler defects: the 
 and B0a string interning. **CVE-68 … CVE-73**; the next free id is **74**. The remaining 6.6.x releases
 were sequenced the same day (roadmap.md § *The 6.6.x tail*, accepted by the user).
 
+**Bench** (same box, best of 7, interleaved): self_compile **873 ms** against 6.6.14's **871 ms** (+2 ms, +0.2 % —
+noise; `bench-history.sh` reads 876 ms; another session's compiler shared the box, so both absolute figures
+read a little high); cycc **1,492,144 B** (`.text` **1,315,016**), +4,248 B over 6.6.14's 1,487,896 — the CVE-69
+epilogue clear (+4,096, crossing a page) and the `#naked` refusal's diagnostics (+152). **Gate:**
+`release-gate.sh` GREEN — fixpoint, ARM lockstep, seed-derive, check.sh (156/156 shell gates, 0 failures, the
+two known agnos-parity SKIPs), and cross-OS self-host + crossos tests on ecb, ach, cass and pi; the per-file
+`.tcyr` loop 439/439. sigil 3.13.9 verified the same day by its own CI run in isolation (17/17).
+
 ### Security
 
 - **sigil 3.13.9 folded — which contains 3.13.8's constant-time ECDH on P-256 / P-384, its

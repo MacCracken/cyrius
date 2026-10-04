@@ -40,7 +40,7 @@ unscheduled 6.x backlog. Whole-cycle framing, the v6.7.x language arc and v6.8.x
 ## Where we are
 
 **Current head: v6.6.15** (2026-10-03) — cycc **1,492,144 B** (`.text` **1,315,016**) ·
-seed-derive **GREEN** · cross-OS **GREEN** on ecb/ach/cass/pi · self_compile **854 ms** ·
+seed-derive **GREEN** · cross-OS **GREEN** on ecb/ach/cass/pi · self_compile **876 ms** ·
 **439** `.tcyr` (**173** in `crossos/`) · **105** `lib/*.cyr` · **326** shell gates under
 `tests/gates/<bucket>/` · **0 open issues** · **6 open proposals**.
 
@@ -117,7 +117,7 @@ generators (after P2); sankoch retires its interning proof (after B0a, in 6.6.15
 
 ---
 
-## 6.6.15 — curves and the compiler's secret leaks (MERGED 2026-10-03: integration, the release gate running)
+## 6.6.15 — curves and the compiler's secret leaks (MERGED 2026-10-03: release gate GREEN, awaiting the tag)
 
 **User, 2026-10-02:** the sigil work marked for after 6.6.14, then (scope answers the same day) the
 `secret var` epilogue fix, B0a, and TLS 1.3 / native-server P-256 with ephemeral-key zeroing.
