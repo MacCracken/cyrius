@@ -117,22 +117,25 @@ generators (after P2); sankoch retires its interning proof (after B0a, in 6.6.15
 
 ---
 
-## 6.6.15 — curves and the compiler's secret leaks (OPEN 2026-10-02)
+## 6.6.15 — curves and the compiler's secret leaks (MERGED 2026-10-03: integration, the release gate running)
 
 **User, 2026-10-02:** the sigil work marked for after 6.6.14, then (scope answers the same day) the
 `secret var` epilogue fix, B0a, and TLS 1.3 / native-server P-256 with ephemeral-key zeroing.
-- **sigil 3.13.8** (⛔ the user tags it before cyrius 6.6.15): constant-time P-256 / P-384 ECDH
+- **sigil 3.13.8** (tag `bbaecc4`) + **3.13.9** (tag `7d7a880`, folded): constant-time P-256 / P-384 ECDH
   (`ecdh_p256_*` / `ecdh_p384_*`, SP 800-56A peer-key validation); ECDSA signing moved onto a
   constant-time EC engine — every field operation on the secret-nonce path branched on secret data since
   3.5.9 (a Welch t-test: |t| 6.34 before, 0.69 after) — **CVE-68**; the pin moves 6.6.9 → 6.6.14 (CVE-51
-  broke its Intel-Mac timing tests), TPM helpers fail closed on Windows, per-run temp names.
+  broke its Intel-Mac timing tests), the trust helpers fail closed on Windows instead of probing plantable rooted
+  paths (**CVE-73**), per-run temp names.
 - **cyrius:** the TLS 1.2 client's ECDHE on P-256 / P-384 (the 6.6.14 supported_groups trade-off and the
   "no shared cipher" against ECDSA servers both gone); the TLS 1.3 client lists P-256 / P-384 and handles
   HelloRetryRequest; the native server negotiates the group (1.2 by supported_groups, 1.3 by key_share or
-  an HRR); every ephemeral private key and shared secret is zeroed. The `secret var` epilogue leak —
+  an HRR); every ephemeral private key and shared secret is zeroed (**CVE-70**), and an all-zero x25519 secret is
+  refused (**CVE-71**). The `secret var` epilogue leak —
   the defer walker saved the return registers to dead stack after the wipe and never cleared them; in sigil
   3.13.7 that left the ECDSA nonce k behind (**CVE-69**). B0a — string interning aliased a NUL-bearing
-  literal onto another literal's storage (`"a\0a"` after `"a"` read `'z'`), silently.
+  literal onto another literal's storage (`"a\0a"` after `"a"` read `'z'`), silently. A `defer` / `secret var` in
+  a `#naked` fn is refused (it never ran — **CVE-72**). Detail: CHANGELOG [6.6.15].
 
 ---
 
@@ -379,14 +382,13 @@ priority surfaces.
 
 - **Found by the 6.6.14 lanes (2026-10-02; backlog, not placed — only the user promotes).** Met in passing or
   left by a lane with its reason; not swept for.
-  - TLS — the native 1.2 client does ECDHE on x25519 only. An OpenSSL 1.2 server with an ECDSA P-256 / P-384
-    SERVER certificate answers "no shared cipher". And since CVE-64's fix, a native 1.2 client HOLDING a
-    P-256 / P-384 client certificate lists that curve (OpenSSL requires it), so a server ranking it above
-    X25519 by its own preference fails the handshake where 6.6.13 connected (pinned by
-    `tls_native_client_auth_openssl.sh`). Remedy: ECDHE on P-256 / P-384 in the 1.2 client, which wants a
-    constant-time ECDH primitive in sigil (its P-256 / P-384 scalar multiplications are public-scalar, non-CT).
-    **Placed (user, 2026-10-02): sigil is updated after 6.6.14 ships, and refolded in 6.6.15** (with the
-    1.2 client's P-256 / P-384 ECDHE).
+  - TLS (found by the 6.6.15 TLS lane, pre-existing): the native TLS 1.3 client accepts a ServerHello carrying
+    an extension it never offered (RFC 8446 §4.2 — unsupported_extension; the walk must still admit
+    pre_shared_key on resumption; EncryptedExtensions likely the same); the native 1.2 client does not check
+    the server certificate's curve against its own supported_groups; the 1.2 server takes a legacy_session_id
+    longer than 32 bytes (never stored or echoed — conformance only); four 1.2-client ServerKeyExchange length
+    / key-type checks (`lib/tls_native_hs12.cyr` ~679 / 688 / 691 / 711) have no test that fails without them.
+    Not in scope of 6.6.15: a libssl-backend `tls_set_groups`; X448 / secp521r1 (sigil has neither ECDH).
   - TLS — `_tn_verify_sig_scheme` (`lib/tls_native_hs13.cyr` ~284) calls `ed25519_verify` without checking
     `sig_len == 64`, and binds the ECDSA curve to the scheme for the 1.2 ServerKeyExchange, where 1.2 allows a
     P-384 key with SHA-256.
