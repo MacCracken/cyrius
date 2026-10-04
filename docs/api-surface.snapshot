@@ -3272,6 +3272,7 @@ sigil::agnosys_is_hex_char/1
 sigil::agnosys_is_name_char/1
 sigil::agnosys_json_emit_cstr_or_null/2
 sigil::agnosys_read_fd_to_str/2
+sigil::agnosys_rooted_paths_untrusted/0
 sigil::agnosys_run_capture/4
 sigil::agnosys_run_capture_timeout/5
 sigil::agnosys_run_checked/2
