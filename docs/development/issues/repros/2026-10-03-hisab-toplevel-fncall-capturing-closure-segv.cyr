@@ -1,0 +1,40 @@
+# Repro: `fncallN(f, ...)` at TRUE TOP LEVEL dispatches a capturing closure as a
+# bare code pointer and SIGSEGVs. The closure is built and returned by a fn; the
+# same value called from inside ANY fn returns the right answer.
+# Filed with: docs/development/issues/2026-10-03-hisab-toplevel-fncall-capturing-closure-segv.md
+# Discovered from hisab, 2026-10-03 (3.3.4 work, cycc 6.6.14).
+#
+# Self-proving -- the exit code is the verdict:
+#   0    fixed: the top-level fncall1 returned 42
+#   139  defect present: SIGSEGV at the top-level `fncall1(g0, 1)` (last block)
+#   1    the top-level call returned, but not 42
+#   2, 3 a CONTROL failed, so the closure itself is bad and this is not the defect
+#
+#   cyrius build docs/development/issues/repros/2026-10-03-hisab-toplevel-fncall-capturing-closure-segv.cyr /tmp/r
+#   /tmp/r; echo "exit=$?"
+#
+# Measured 2026-10-03 (x86_64 ELF), each pin from a scratch dir whose cyrius.cyml
+# pins it, `cyrius build -v` naming versions/<v>/bin/cycc: exit 139 on every
+# installed pin 6.6.0 through 6.6.14 (no 6.5.x installed).
+#
+# Controls (both pass on every pin above):
+#   control 1 -- the SAME value g0, called through a one-line wrapper fn -> 42
+#   control 2 -- a NON-capturing closure returned the same way, fncall1'd at
+#                top level                                                -> 42
+# so the closure is well-formed and top-level fncall1 works on a plain code
+# pointer. Only capturing x top-level fails.
+
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+
+fn mk(b) { return |x| b + x; }          # captures the parameter `b`
+fn mk_plain() { return |x| 41 + x; }    # captures nothing
+fn call1(f, a) { return fncall1(f, a); }
+
+var g0 = mk(41);
+if (call1(g0, 1) != 42) { sys_exit_group(2); }              # control 1
+if (fncall1(mk_plain(), 1) != 42) { sys_exit_group(3); }    # control 2
+var r = fncall1(g0, 1);                                     # <- SIGSEGV here
+if (r != 42) { sys_exit_group(1); }
+sys_exit_group(0);
