@@ -389,9 +389,9 @@ priority surfaces.
     longer than 32 bytes (never stored or echoed — conformance only); four 1.2-client ServerKeyExchange length
     / key-type checks (`lib/tls_native_hs12.cyr` ~679 / 688 / 691 / 711) have no test that fails without them.
     Not in scope of 6.6.15: a libssl-backend `tls_set_groups`; X448 / secp521r1 (sigil has neither ECDH).
-  - TLS — `_tn_verify_sig_scheme` (`lib/tls_native_hs13.cyr` ~284) calls `ed25519_verify` without checking
-    `sig_len == 64`, and binds the ECDSA curve to the scheme for the 1.2 ServerKeyExchange, where 1.2 allows a
-    P-384 key with SHA-256.
+  - TLS — `_tn_verify_sig_scheme` (`lib/tls_native_hs13.cyr` ~533) calls `ed25519_verify` without checking
+    `sig_len == 64` (placed: 6.6.16). (Its other half — binding the ECDSA curve to the scheme for the 1.2
+    ServerKeyExchange — was fixed in 6.6.15 by `_tn_ecdsa_verify_12`.)
   - TLS — capability limits listed in CVE-64's *Not covered*: no RSA client certificates natively; the native
     client and the native server send their leaf only (no intermediates); an empty certificate_authorities;
     the 1.3 server reads each client message from one record (a client Certificate of at most 8 KiB).
