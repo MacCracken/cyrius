@@ -394,6 +394,7 @@ per-session memory files so they survive environment changes.
 
 ### Ecosystem & stdlib
 - sigil/sakshi/bayan/ganita/etc. are the **language's OWN stdlibs** (sovereign), never "external upstream". Anything shipping into `lib/` via `cyrius deps` IS stdlib — full stdlib discipline applies.
+- **A repo that is NOT a folded stdlib is FILINGS ONLY** (user, restated 2026-10-04). Only what `lib/` vendors (sigil, ganita, bayan, sakshi, …) is stdlib, and only a stdlib can gate a cyrius release. Every other repo (kavach, hisab, agnos, kriya, any consumer) is worked by other agents: never fix it from a cyrius session, never give it a lane, never make a cyrius release wait on its tag. When a cyrius change affects it, or ships what it was waiting on, file a note in ITS roadmap / issues (docs commit, not pushed) and in roadmap.md *Sibling follow-ups*, then get back to the actual work. (6.6.16 nearly gated a CVE fix on kavach's seccomp allowlist — a consumer's policy file.)
 - **Fix the SOURCE repo, not the fold** — a fix applied only to cyrius's vendored `lib/<dep>.cyr` evaporates at the next re-vendor. Patch upstream, version-bump it, regen dist, re-vendor.
 - Sibling-repo agents editing cyrius source is a hard violation regardless of patch correctness — revert + file as an issue.
 - Ecosystem-wide renames must cover ALL source extensions, not just `.cyr`/`.tcyr`.
