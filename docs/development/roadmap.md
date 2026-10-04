@@ -100,7 +100,7 @@ reviews and a synthesis, archived at
 | Release | Contents |
 |---|---|
 | **6.6.15** | sigil **3.13.8** fold (constant-time P-256 / P-384 ECDH; ECDSA signing made constant-time — **CVE-68**); TLS ECDHE on P-256 / P-384 everywhere (1.2 client, 1.3 client with HelloRetryRequest, native server group negotiation, ephemeral-key zeroing); the `secret var` epilogue leak (**CVE-69**); B0a string interning (a NUL-bearing literal aliased another literal, silently). See *6.6.15* below. |
-| **6.6.16** repair | **Compiler:** the silent miscompiles — module-scope `var T: i64[3] = {…}` stores bytes, pointer-mode struct `q = a` / `G = a` / `a = q`, overload dispatch on a `Str` global, `g<i32>(..)?` (139) and `var v = g<i32>(..)` dropping the payload, a nested fn (SIGILL → a named error), a kmode global initialiser naming an enum; the named >8 B struct argument becomes a COPY (decided, *Open questions* 4); one shared type-name resolver (sizeof for u*/f*/bool; annotations stop prefix-matching); the `#deprecated` gaps; the cycc include fallback honouring `CYRIUS_HOME`. **Net / TLS / security:** plain-socket SIGPIPE (`sock_send*`, http, ws — CVE-66's class, a CVE), `cyrius deps` tag-field traversal (CVE-62's class), the Ed25519 `sig_len == 64` check and the ServerKeyExchange curve binding, CA EKU, Windows accept inheriting `FIONBIO`, `fd_wait_ready`'s error mask, libssl session cache (`SSL_CTX_ctrl`) and the failed-`*_complete` sticky error, Windows `THREADS_CONCURRENT=1`, the agnos `setsockopt` stub. **Plus:** cwd-independent gates, the guide's `fn use()` example, the `element_typed_array` sentinel, the PE size gate's private wine prefix, the sit-fsck lookup, the stale premises in P2/P3/C1 and the syscall-families entry. |
+| **6.6.16** repair | **Compiler:** the silent miscompiles — module-scope `var T: i64[3] = {…}` stores bytes, pointer-mode struct `q = a` / `G = a` / `a = q`, overload dispatch on a `Str` global, `g<i32>(..)?` (139) and `var v = g<i32>(..)` dropping the payload, a nested fn (SIGILL → a named error), a kmode global initialiser naming an enum; the named >8 B struct argument becomes a COPY (decided, *Open questions* 4); one shared type-name resolver (sizeof for u*/f*/bool; annotations stop prefix-matching); the `#deprecated` gaps; the cycc include fallback honouring `CYRIUS_HOME`. **Net / TLS / security:** plain-socket SIGPIPE (`sock_send*`, http, ws — CVE-66's class, a CVE), `cyrius deps` tag-field traversal (CVE-62's class), the Ed25519 `sig_len == 64` check (its ServerKeyExchange curve-binding half shipped in 6.6.15), CA EKU, Windows accept inheriting `FIONBIO`, `fd_wait_ready`'s error mask, libssl session cache (`SSL_CTX_ctrl`) and the failed-`*_complete` sticky error, Windows `THREADS_CONCURRENT=1`, the agnos `setsockopt` stub. **Plus:** cwd-independent gates, the guide's `fn use()` example, the `element_typed_array` sentinel, the PE size gate's private wine prefix, the sit-fsck lookup, the stale premises in P2/P3/C1 and the syscall-families entry; the two hisab issues (a closure's `: stack` return booked against the enclosing fn; a top-level `fncallN` on a capturing closure SIGSEGVs). **Promoted 2026-10-04 (user)** from the planning premise checks: a local `var p: *i8` / `*i16` / `*i32` stored as a 1/2/4-byte scalar (the pointer truncated — silent memory corruption), and the libssl-only `tls.cyr` verbs (session callbacks, `max_early_data`, `get` / `set_session`, the early-data verbs) writing into a NATIVE ctx once libssl is loaded in-process. |
 | **6.6.17** manifest | **P1** (the single manifest reader + `--print-config`; `[build] test` WIRED after measuring the repos with named deps; `defines` / `strict` wired; a `dce` key; `features` dropped, `target` held; profiles → backlog); **P5-A** (text corpus + per-entry view; P5 stays OPEN for its execution half); DRY the pass-1 top-level scanners across the 7 forks; LSP read sized by fstat; `lib sync --full` re-locking; `_toml_key_at`'s hyphen boundary. |
 | **6.6.18** distlib + poison | **P4** option 2 (the compile-verify fixpoint is the authority; one sibling regeneration wave); **P6** widened (`poison_allocator()`, leading redzone, live-block sweep, settable fill byte, `alloc()` / arena redzones; guard pages → backlog); the log / ws / ws_server fold bundles; the ESYSXLAT compile-time fold (~593 KB of `cycc-native-aarch64`); DCE's honest "compaction declined: <why>" note; the missing `sxtw`. |
 | **6.6.19** | **P2** `[embed]` (generated in cbt before `#@srcline` — never an in-band marker that reads files, the CVE-45 class; `[lib.PROFILE]` scoping; the interning perf fix B0b); x86-macOS real threads + `async_await_readable_ms` on macOS / agnos / Windows (*Open questions* 3). The release to trim if 6.7.0 should come sooner. |
@@ -385,6 +385,33 @@ priority surfaces.
 > timebase item (no Rosetta host — an unsupported configuration) and sakshi's qemu-static item (does not
 > reproduce in CI). **These are technical items → they stay in the 6.x cycle, never 7.x.**
 
+- **Found by the 6.6.16 planning premise checks (2026-10-04; backlog — the user promoted only the `*iN`
+  pointer truncation and the libssl-verbs-on-a-native-ctx corruption into 6.6.16).** Met in passing, not swept for.
+  - ⚠ `cyrius deps` READ side: a `modules` entry with `../` or an absolute path, and a TRANSITIVE manifest's
+    `path`, vendor any local file into the consumer's `lib/` (security-relevant; 6.6.16's CVE covers the `tag`
+    field only). Confining a transitive `path` to its own manifest's tree is the design call (54 legitimate root
+    `path = "../sibling"` uses).
+  - ⚠ Silent wrong values: a top-level `var v = pair_fn(..)` keeps the tag and drops the payload (the v6.5.67
+    single-bind refusal is gated on `GINFN == 1`); `var G: f32 = 1.5` (global or local) stores the f64 bit
+    pattern with no warning; through a pointer-mode 8-byte struct, `o.m()` (self = `&o`) and `T_m(o)` read
+    different values.
+  - `asm { in al, dx; }` is refused because `in` is keyword 76, so the `ASM_IN` emitter arm is unreachable —
+    a compiler bug (the guide documents the form, ~2049).
+  - In an x86 `kernel;` build, float-literal global scalars (`var G: f64 = 1.5;`) are dead stores after the
+    program (6.6.16's kmode warning names them); `src/common/util.cyr` ~1151 wrongly claims byte-array
+    initialisers are immune.
+  - cx: `lib/fnptr.cyr` has no `CYRIUS_TARGET_CX` arm, so an address-taken `&fncallN` returns 0 there.
+  - `println(n)` on an `i64` local hands it to the cstring overload and exits 139 (the `_int` arm types only
+    call arguments; `PARSE_FNCALL`'s header comment claims otherwise). Loud.
+  - cycc's `_read_env` (`src/backend/common/env.cyr`) caps the environment at 8191 B and values at 255 B, so
+    every `CYRIUS_*` knob is missed past 8 KB of environment (the class the CLI fixed at 6.6.11 J4).
+  - Windows `sys_setsockopt` is a -38 stub although `net.cyr` reaches setsockopt through ws2_32 (0xF032), so
+    yantra's `TCP_NODELAY` is never set on PE.
+  - `lib/syscalls_macos.cyr` declares `SYS_ACCEPT4 = 288` and `sys_accept4` compiles for macOS, which has no
+    accept4 (not run).
+  - TLS conformance: the 1.3 ECDSA arms of `_tn_verify_sig_scheme` do not bind the leaf's curve to the scheme
+    (RFC 8446 §4.2.3); the 1.3 CertificateVerify and 1.2 ServerKeyExchange length checks use `>`, so trailing
+    bytes inside the message are accepted.
 - **Found by the 6.6.14 lanes (2026-10-02; backlog, not placed — only the user promotes).** Met in passing or
   left by a lane with its reason; not swept for.
   - TLS (found by the 6.6.15 TLS lane, pre-existing): the native TLS 1.3 client accepts a ServerHello carrying
