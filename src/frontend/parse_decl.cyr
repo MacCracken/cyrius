@@ -76,7 +76,6 @@ fn _arr_gdesc(S, vi): i64 {
 # refused — its stride cannot disagree with this size. CHANGELOG [6.6.13]
 fn _arr_ebytes(S, ew, flt, tsc, ann_ti): i64 {
     if (ann_ti == 0) { return 0; }
-    if (_arr_prefix_wrong(S, ew, flt, ann_ti) == 1) { return _arr_whole_ebytes(S, ann_ti); }
     if (ew > 0) { return ew; }
     if (flt == F64_TYID) { return 8; }
     if (flt == F32_TYID) { return 4; }
@@ -88,21 +87,22 @@ fn _arr_ebytes(S, ew, flt, tsc, ann_ti): i64 {
     if (tsc > 0) { return 8; }
     return _arr_name_ebytes(S, ann_ti);
 }
-# The annotation at `ti` named no type the ladders know: 8 for bool, cstring, an enum (declared
-# on either side — its values are i64) or a type parameter of the enclosing generic fn; else
+# The annotation at `ti` set no width, float, sid or vector: its size through the one type-name
+# resolver (6.6.16, parse_types.cyr _tn_resolve_at) — 8 for bool, cstring, an enum (declared on
+# either side — its values are i64) or a type parameter of the enclosing generic fn — else
 # refused by name, reported at the name and recovered (8), so each bad array is reported.
 # `--syntax-only` resolves nothing, so there it is 8 too (see `_syntax_only`, util.cyr).
+# (6.6.13's `_arr_prefix_wrong` / `_arr_whole_ebytes` undid the PREFIX ladders here; since 6.6.16
+# both ladders resolve the whole name, so the array path no longer has a prefix to undo.)
 fn _arr_name_ebytes(S, ti): i64 {
     if (_syntax_only == 1) { return 8; }
     var noff = TOKVAL(S, ti);
     if (TOKTYP(S, ti) == 2) {
-        if ((L64(S + 0xEC00000 + noff) & 0xFFFFFFFFFF) == 0x6C6F6F62) { return 8; }   # bool
-        if (_classify_return_type(S, noff) == 0 - 19) { return 8; }                 # cstring
-        if (_is_enum_name(S, noff) == 1) { return 8; }
-        if (_declared_later(S, noff, 60, 60) == 1) { return 8; }
-        if (_arr_fn_tparam(S, ti, noff) == 1) { return 8; }
+        var c = _tn_resolve_at(S, ti);
+        if (c != 0) { return _tn_bytes(S, c); }
     }
     if (_panic == 1) { return 8; }
+    if (_tn_once(S, ti) == 0) { return 8; }
     var sv = GTI(S);
     STI(S, ti);
     if (TOKTYP(S, ti) != 2) {
@@ -111,49 +111,12 @@ fn _arr_name_ebytes(S, ti): i64 {
         ERR_IDENT(S, "array element type ", noff, " is declared after the array; declare it above the array", 0 - 1);
     } else {
         ERR_IDENT(S, "unknown array element type ", noff, 0, 0 - 1);
+        _tn_prefix_note(S, noff);
         PRSTR("  note: an element is i8..i64, u8..u64, u128, f32, f64, bool, cstring, an enum, *T, a vector type, a slice, or a struct or union declared above the array\n");
     }
     STI(S, sv);
     _panic = 0;
     return 8;
-}
-# Both annotation ladders match a scalar by its name's PREFIX (`ltname & 0xFFFF == "i8"`) and ask
-# FINDSTRUCT only after, so `struct u8pair` / `struct f64pair` arrived as u8 / f64 and an array
-# of it was sized 1 or 8 per element (in a fn `u8pair[2]` held 8 of 32 bytes, with a 1-byte
-# subscript stride). In the ARRAY path the WHOLE name decides: 1 when the ladder's integer width
-# `ew` or float `flt` came from a prefix of a longer name. A type parameter the default build
-# bound to its argument (`_tp_resolve`) is the ladder's own answer and stands. The callers also
-# drop the integer descriptor then, so `a[i]` is refused like any non-integer element.
-fn _arr_prefix_wrong(S, ew, flt, ti): i64 {
-    if (ti == 0) { return 0; }
-    if (TOKTYP(S, ti) != 2) { return 0; }
-    var want = 0;
-    if (flt != 0) { want = 3; }
-    elif (ew == 1) { want = 2; }
-    elif (ew == 2 || ew == 4 || ew == 8) { want = 3; }
-    if (want == 0) { return 0; }
-    var noff = TOKVAL(S, ti);
-    if (_tp_c0 != 0) { if (_tp_resolve(S, noff) != 0) { return 0; } }
-    if (load8(S + 0xEC00000 + noff + want) == 0) { return 0; }
-    return 1;
-}
-# The element a prefix-matched name really spells: a struct or union (a generic one through its
-# instance, built as _gen_ann_sid builds it from the `<..>` after the name), else the by-name
-# resolution above (an enum, a type declared after the array, or refused).
-fn _arr_whole_ebytes(S, ti): i64 {
-    var sid = FINDSTRUCT(S, TOKVAL(S, ti));
-    if (sid > 0) {
-        if (TOKTYP(S, ti + 1) == 19) {
-            var sv = GTI(S);
-            var sv_gt = _ta_pending_gt;
-            STI(S, ti + 1);
-            sid = _gen_ann_sid(S, sid);
-            STI(S, sv);
-            _ta_pending_gt = sv_gt;
-        }
-        return STRUCTSZ(S, sid - 1);
-    }
-    return _arr_name_ebytes(S, ti);
 }
 # Is `noff` a type parameter of the generic fn whose body holds token `ti`? The default build binds
 # every T (to i64 in the base, to its argument in an instance) and PARSE_VAR's ladder resolves it,
@@ -2804,27 +2767,22 @@ fn PARSE_GVAR_REG(S): i64 {
     if (PEEKT(S) == 49) {
         STI(S, GTI(S) + 1);
         ann_ti = GTI(S);
-        if (PEEKT(S) == 8) { STI(S, GTI(S) + 1); psc = 8; STI(S, GTI(S) + 1); SKIP_GENERICS(S); }
+        # 6.6.16 (C8): `*T` names a type (T resolved whole, an unknown T refused); the
+        # declaration block's global pointer keeps scale 8 whatever T is, as it always had.
+        if (PEEKT(S) == 8) { STI(S, GTI(S) + 1); _tn_ptr(S, GTI(S), noff); psc = 8; STI(S, GTI(S) + 1); SKIP_GENERICS(S); }
         elif (PEEKT(S) == 105) { ann_scalar = 16; STI(S, GTI(S) + 1); }
         else {
             if (PEEKT(S) == 2) {
-                var ann_sn = PEEKV(S);
-                var ann_tn = L64(S + 0xEC00000 + ann_sn);
-                # v6.2.1: unsigned widths (u8/u16/u32/u64) added alongside
-                # the signed ones so top-level `var g: u64[N]` element-sizes
-                # like the in-fn path. u128 = 0x38323175.
-                if (ann_tn & 0xFFFF == 0x3869) { ann_scalar = 1; ann_signed = 1; }      # i8
-                elif (ann_tn & 0xFFFF == 0x3875) { ann_scalar = 1; }                     # u8
-                elif (ann_tn & 0xFFFFFF == 0x363169) { ann_scalar = 2; ann_signed = 1; } # i16
-                elif (ann_tn & 0xFFFFFF == 0x363175) { ann_scalar = 2; }                 # u16
-                elif (ann_tn & 0xFFFFFF == 0x323369) { ann_scalar = 4; ann_signed = 1; } # i32
-                elif (ann_tn & 0xFFFFFF == 0x323375) { ann_scalar = 4; }                 # u32
-                elif (ann_tn & 0xFFFFFF == 0x343669) { ann_scalar = 8; }
-                elif (ann_tn & 0xFFFFFF == 0x343675) { ann_scalar = 8; }
-                elif (ann_tn & 0xFFFFFF == 0x343666) { ann_float = F64_TYID; }
-                elif (ann_tn & 0xFFFFFF == 0x323366) { ann_float = F32_TYID; }
-                elif (ann_tn & 0xFFFFFFFF == 0x38323175) { ann_scalar = 16; }
-                else { ann_sid = FINDSTRUCT(S, ann_sn); }
+                # ⛔ 6.6.16 (C8): the one type-name resolver, as PARSE_VAR's ladder. This one
+                # matched PREFIXES before the struct lookup (`var g: i8x = 300` was an i8 global,
+                # `var g: u8pair;` a u8 scalar, `var g: f64v2` an f64) and read an unknown name as
+                # a silent i64. A vector is a plain 8-byte global here, as it is after the first
+                # statement (PARSE_VAR's global arm). CHANGELOG [6.6.16]
+                var ann_c = _tn_ann(S, GTI(S), noff);
+                ann_scalar = _tn_iw(ann_c);
+                ann_signed = _tn_sgn(ann_c);
+                ann_float = _tn_flt(ann_c);
+                ann_sid = _tn_sid(ann_c);
             }
             STI(S, GTI(S) + 1);
             ann_sid = _gen_ann_sid(S, ann_sid);   # 6.6.11: `W1<Pt>` is the instance, not the base
@@ -2836,7 +2794,6 @@ fn PARSE_GVAR_REG(S): i64 {
     # (pass-1 emits get skipped by the entry-jmp patch).
     if (PEEKT(S) == 28) {
         var ann_eb = _gvar_ebytes(S, ann_scalar, ann_float, ann_sid, psc, ann_ti);   # 6.6.13 (M2)
-        if (_arr_prefix_wrong(S, ann_scalar, ann_float, ann_ti) == 1) { ann_scalar = 0; ann_signed = 0; }
         PARSE_GVAR_ARR(S, noff, sti, ann_scalar, ann_signed, ann_eb);
         return 0;
     }
@@ -3842,15 +3799,10 @@ fn PARSE_VAR(S): i64 {
         STI(S, GTI(S) + 1);  # consume :
         ann_ti = GTI(S);
         if (PEEKT(S) == 8) {
-            # Pointer type: *i64, *i32, *i16, *i8
+            # Pointer type `*T`: T resolved by its WHOLE name, an unknown T refused; the scale
+            # (8, or 1/2/4 for *i8/*i16/*i32) — a local keeps an 8-byte slot (_sl_ptr_type).
             STI(S, GTI(S) + 1);  # consume *
-            var tnoff = PEEKV(S);
-            var tname = L64(S + 0xEC00000 + tnoff);
-            if (tname & 0xFFFFFF == 0x343669) { pscale = 8; }
-            if (tname & 0xFFFFFF == 0x323369) { pscale = 4; }
-            if (tname & 0xFFFFFF == 0x363169) { pscale = 2; }
-            if (tname & 0xFFFF == 0x3869) { pscale = 1; }
-            if (pscale == 0) { pscale = 8; }
+            pscale = _tn_ptr(S, GTI(S), noff);   # 6.6.16 (C8)
             STI(S, GTI(S) + 1);
             SKIP_GENERICS(S);
         } elif (PEEKT(S) == 28) {
@@ -3859,34 +3811,14 @@ fn PARSE_VAR(S): i64 {
             # v5.8.14 §6: capture element width for §7 sized indexing.
             STI(S, GTI(S) + 1);  # consume [
             if (PEEKT(S) == 8) {
-                # Pointer element: [*T] — width = 8 (pointer size)
+                # Pointer element: [*T] — width = 8 (pointer size); T must name a type (6.6.16)
                 STI(S, GTI(S) + 1);  # consume *
                 slice_elt_w = 8;
-                if (PEEKT(S) == 2) { STI(S, GTI(S) + 1); }  # consume ident
-            } elif (PEEKT(S) == 2) {
-                # Scalar/struct element: [u8], [i32], [Foo]
-                var elt_noff = PEEKV(S);
-                var elt_name = L64(S + 0xEC00000 + elt_noff);
-                # v6.3.9 (F-fns): `[T]` element under a generic binding (inert default).
-                var _etc = 0;
-                if (_tp_c0 != 0) { _etc = _tp_resolve(S, elt_noff); }
-                if (_etc != 0) { if (_etc < 0) { slice_elt_w = 0 - _etc; } else { slice_elt_w = STRUCTSZ(S, _etc - 1); } }
-                elif (elt_name & 0xFFFF == 0x3875)        { slice_elt_w = 1; }   # u8
-                elif (elt_name & 0xFFFF == 0x3869)      { slice_elt_w = 1; }   # i8
-                elif (elt_name & 0xFFFFFF == 0x363175)  { slice_elt_w = 2; }   # u16
-                elif (elt_name & 0xFFFFFF == 0x363169)  { slice_elt_w = 2; }   # i16
-                elif (elt_name & 0xFFFFFF == 0x323375)  { slice_elt_w = 4; }   # u32
-                elif (elt_name & 0xFFFFFF == 0x323369)  { slice_elt_w = 4; }   # i32
-                elif (elt_name & 0xFFFFFF == 0x343675)  { slice_elt_w = 8; }   # u64
-                elif (elt_name & 0xFFFFFF == 0x343669)  { slice_elt_w = 8; }   # i64
-                else {
-                    var elt_sid = FINDSTRUCT(S, elt_noff);
-                    if (elt_sid > 0) { slice_elt_w = STRUCTSZ(S, elt_sid - 1); }
-                    else { slice_elt_w = 8; }  # default to i64-width for unknown
-                }
-                STI(S, GTI(S) + 1);
-            } elif (PEEKT(S) == 105) {
-                slice_elt_w = 16;  # u128 element
+                if (PEEKT(S) == 2) { _tn_ptr(S, GTI(S), noff); STI(S, GTI(S) + 1); }  # consume ident
+            } elif (PEEKT(S) == 2 || PEEKT(S) == 105) {
+                # Element [u8], [i32], [Foo], [u128]: sizeof(T) by the WHOLE name (a bound type
+                # parameter by its argument); an unknown name is refused — it was 8. CHANGELOG [6.6.16]
+                slice_elt_w = _tn_slice_w(S, GTI(S), noff);
                 STI(S, GTI(S) + 1);
             }
             if (PEEKT(S) != 29) { ERR_EXPECT(S, 29); }
@@ -3897,11 +3829,12 @@ fn PARSE_VAR(S): i64 {
             # u128 type
             scalar_type = 16;
             STI(S, GTI(S) + 1);
-        } elif (PEEKT(S) == 2 && (L64(S + 0xEC00000 + PEEKV(S)) & 0xFFFFFFFFFF) == 0x6563696C73) {
+        } elif (PEEKT(S) == 2 && (L64(S + 0xEC00000 + PEEKV(S)) & 0xFFFFFFFFFFFF) == 0x006563696C73) {
             # v5.8.10 §2: `slice<T>` ident form — 16-byte {ptr,len} slot.
             # v5.8.14 §6: extract element width from <T> for §7 indexing.
-            # Bytes for "slice" = 0x6563696C73 (little-endian load64
-            # lower 5 bytes; 's'=0x73 'l'=0x6C 'i'=0x69 'c'=0x63 'e'=0x65).
+            # Bytes for "slice\0" = 0x006563696C73 (little-endian load64
+            # lower 6 bytes; 's'=0x73 'l'=0x6C 'i'=0x69 'c'=0x63 'e'=0x65, NUL).
+            # 6.6.16: the WHOLE word (the NUL is in the mask): `slices` / `slicer` were a slice.
             # Manual <T> parsing replaces SKIP_GENERICS so we can capture T.
             scalar_type = 16;
             STI(S, GTI(S) + 1);  # consume "slice"
@@ -3910,31 +3843,9 @@ fn PARSE_VAR(S): i64 {
                 if (PEEKT(S) == 8) {
                     STI(S, GTI(S) + 1);  # consume *
                     slice_elt_w = 8;
-                    if (PEEKT(S) == 2) { STI(S, GTI(S) + 1); }
-                } elif (PEEKT(S) == 2) {
-                    var gtt_noff = PEEKV(S);
-                    var gtt_name = L64(S + 0xEC00000 + gtt_noff);
-                    # v6.3.9 (F-fns): `slice<T>` element under a generic binding —
-                    # canonical token → width (<0 -width, >0 STRUCTSZ). Inert default.
-                    var _gtc = 0;
-                    if (_tp_c0 != 0) { _gtc = _tp_resolve(S, gtt_noff); }
-                    if (_gtc != 0) { if (_gtc < 0) { slice_elt_w = 0 - _gtc; } else { slice_elt_w = STRUCTSZ(S, _gtc - 1); } }
-                    elif (gtt_name & 0xFFFF == 0x3875)        { slice_elt_w = 1; }   # u8
-                    elif (gtt_name & 0xFFFF == 0x3869)      { slice_elt_w = 1; }   # i8
-                    elif (gtt_name & 0xFFFFFF == 0x363175)  { slice_elt_w = 2; }   # u16
-                    elif (gtt_name & 0xFFFFFF == 0x363169)  { slice_elt_w = 2; }   # i16
-                    elif (gtt_name & 0xFFFFFF == 0x323375)  { slice_elt_w = 4; }   # u32
-                    elif (gtt_name & 0xFFFFFF == 0x323369)  { slice_elt_w = 4; }   # i32
-                    elif (gtt_name & 0xFFFFFF == 0x343675)  { slice_elt_w = 8; }   # u64
-                    elif (gtt_name & 0xFFFFFF == 0x343669)  { slice_elt_w = 8; }   # i64
-                    else {
-                        var gtt_sid = FINDSTRUCT(S, gtt_noff);
-                        if (gtt_sid > 0) { slice_elt_w = STRUCTSZ(S, gtt_sid - 1); }
-                        else { slice_elt_w = 8; }
-                    }
-                    STI(S, GTI(S) + 1);
-                } elif (PEEKT(S) == 105) {
-                    slice_elt_w = 16;
+                    if (PEEKT(S) == 2) { _tn_ptr(S, GTI(S), noff); STI(S, GTI(S) + 1); }
+                } elif (PEEKT(S) == 2 || PEEKT(S) == 105) {
+                    slice_elt_w = _tn_slice_w(S, GTI(S), noff);   # 6.6.16 (C8): as `[T]` above
                     STI(S, GTI(S) + 1);
                 }
                 if (PEEKT(S) == 20) { STI(S, GTI(S) + 1); }  # consume >
@@ -3943,95 +3854,27 @@ fn PARSE_VAR(S): i64 {
             var _gs_sid = 0;   # v6.3.10: base sid if `: StructName` resolved (for generic-struct instantiation below)
             if (PEEKT(S) == 2) {
                 var lann = PEEKV(S);
-                # Check scalar types: i8/u8, i16/u16, i32/u32, i64/u64.
-                # v6.2.1: unsigned widths added so element-typed arrays
-                # `var a: u64[N]` size correctly (8N) instead of silently
-                # under-reserving as bytes — the same footgun class this
-                # slot closes. u-bytes: u8=0x3875 u16=0x363175 u32=0x323375
-                # u64=0x343675 (LE name load; see the slice-elt detector
-                # above). Zero existing u-scalar usage → self-host neutral.
-                var ltname = L64(S + 0xEC00000 + lann);
                 # v6.3.9 (F-fns): generic `: T` substitution. When a binding is
                 # active and `lann` is a bound type-param, the canonical token
-                # drives scalar_type (<0 → -width) or pscale (>0 → -sid), skipping
-                # the scalar/struct chain. Inert when _tp_c0==0 (_ltc stays 0) →
-                # byte-identical default path.
+                # drives scalar_type (<0 → -width) or pscale (>0 → -sid). Inert
+                # when _tp_c0==0 (_ltc stays 0).
                 var _ltc = 0;
                 if (_tp_c0 != 0) { _ltc = _tp_resolve(S, lann); }
                 if (_ltc != 0) { if (_ltc < 0) { scalar_type = 0 - _ltc; } else { pscale = 0 - _ltc; } }
-                # v6.4.6 (Phase 3a) — integer vector types (128-bit). MUST precede the
-                # scalar int checks below: "i8v16" & 0xFFFF == "i8" (0x3869) etc. The
-                # 6-byte packed name selects the structured-descriptor sentinel
-                # (util.cyr: desc = signed<<1 | lane_log2<<2 | lanes_log2<<5; signed
-                # bit set for i*, clear for u*). All are 16 B / 2 slots / 1 XMM.
-                elif ((ltname & 0xFFFFFFFFFFFF) == 0x003631763869) { pscale = 0 - 2178; }  # i8v16  (signed,  1B×16)
-                elif ((ltname & 0xFFFFFFFFFFFF) == 0x003631763875) { pscale = 0 - 2176; }  # u8v16  (unsigned)
-                elif ((ltname & 0xFFFFFFFFFFFF) == 0x003876363169) { pscale = 0 - 2150; }  # i16v8  (signed,  2B×8)
-                elif ((ltname & 0xFFFFFFFFFFFF) == 0x003876363175) { pscale = 0 - 2148; }  # u16v8  (unsigned)
-                elif ((ltname & 0xFFFFFFFFFFFF) == 0x003476323369) { pscale = 0 - 2122; }  # i32v4  (signed,  4B×4)
-                elif ((ltname & 0xFFFFFFFFFFFF) == 0x003476323375) { pscale = 0 - 2120; }  # u32v4  (unsigned)
-                elif ((ltname & 0xFFFFFFFFFFFF) == 0x003276343669) { pscale = 0 - 2094; }  # i64v2  (signed,  8B×2)
-                elif ((ltname & 0xFFFFFFFFFFFF) == 0x003276343675) { pscale = 0 - 2092; }  # u64v2  (unsigned)
-                elif (ltname & 0xFFFF == 0x3869) { scalar_type = 1; }
-                elif (ltname & 0xFFFF == 0x3875) { scalar_type = 1; }
-                elif (ltname & 0xFFFFFF == 0x363169) { scalar_type = 2; }
-                elif (ltname & 0xFFFFFF == 0x363175) { scalar_type = 2; }
-                elif (ltname & 0xFFFFFF == 0x323369) { scalar_type = 4; }
-                elif (ltname & 0xFFFFFF == 0x323375) { scalar_type = 4; }
-                elif (ltname & 0xFFFFFF == 0x343669) { scalar_type = 8; }
-                elif (ltname & 0xFFFFFF == 0x343675) { scalar_type = 8; }
-                # v6.3.35: a sub-i64 SIGNED type name ends in 'i' (low byte 0x69, e.g.
-                # "i8"/"i16"/"i32"); unsigned ends in 'u' (0x75). Mark signed so the
-                # load sign-extends (movsx). i64/u64 (width 8) load full-width — no mark.
-                if (scalar_type >= 1) { if (scalar_type <= 4) { if (ltname & 0xFF == 0x69) { scalar_signed = 1; } } }
-                # v5.10.28 — `f64v2` value type (16-byte). Detected
-                # here at var-decl parsing so `var v: f64v2;` triggers
-                # the 2-slot stack-local allocation path below. Encoded as
-                # pscale = -2093 (128-bit descriptor sentinel, desc 45, in
-                # the <= -2048 SIMD band decoded by _vec_desc). v6.4.14
-                # moved f64v2 off the flat -20, which collided with
-                # struct-id 20 (`0 - sid` for the 20th struct). The branch
-                # at line ~873 (`pscale < 0 && PEEKT == 5`) routes
-                # uninitialized f64v2 locals through the 2-slot
-                # filler+named allocation.
-                # bytes for "f64v2\0" — 5 chars + nul, packed in 6 bytes
-                elif ((ltname & 0xFFFFFFFFFFFF) == 0x00003276343666) {
-                    pscale = 0 - 2093;
-                }
-                # v5.10.37 — `f64v4` value type (32-byte). Same shape
-                # as f64v2 but 4-slot allocation. Encoded as -2125 (256-bit
-                # descriptor sentinel, desc 77; v6.4.14 moved it off the flat
-                # -21 that collided with struct-id 21).
-                # bytes for "f64v4\0": 'f' 0x66, '6' 0x36, '4' 0x34,
-                # 'v' 0x76, '4' 0x34, NUL 0x00 — packed LE = 0x00_34_76_34_36_66.
-                elif ((ltname & 0xFFFFFFFFFFFF) == 0x00003476343666) {
-                    pscale = 0 - 2125;
-                }
-                # v6.4.3+ (SIMD Phase 1) — `f32v4` value type: 4 f32 lanes = 16 bytes
-                # = 128-bit = same footprint as f64v2 (2 slots), distinguished by the
-                # structured descriptor sentinel -2121 (see util.cyr _vec_desc). MUST
-                # precede the 3-byte `f32` scalar check below — f32v4's low 3 bytes
-                # ARE "f32". bytes "f32v4\0": 'f' 0x66, '3' 0x33, '2' 0x32, 'v' 0x76,
-                # '4' 0x34, NUL 0x00 — packed LE = 0x00_34_76_32_33_66.
-                elif ((ltname & 0xFFFFFFFFFFFF) == 0x00003476323366) {
-                    pscale = 0 - 2121;
-                }
-                # v6.4.8 (SIMD Phase 4 R1) — `f32v8` value type: 8 f32 lanes = 32 bytes
-                # = 256-bit = same footprint as f64v4 (4 slots), distinguished by the
-                # structured descriptor sentinel -2153 (util.cyr _vec_desc → nslots 4,
-                # laneb 4). MUST precede the 3-byte `f32` scalar check — f32v8's low 3
-                # bytes ARE "f32". bytes "f32v8\0": 'f' 0x66, '3' 0x33, '2' 0x32, 'v'
-                # 0x76, '8' 0x38, NUL 0x00 — packed LE = 0x00_38_76_32_33_66.
-                elif ((ltname & 0xFFFFFFFFFFFF) == 0x00003876323366) {
-                    pscale = 0 - 2153;
-                }
-                # f64/f32 scalar — MUST come after f64v2/f64v4 (their low 3 bytes
-                # are also "f64", so the 6-byte SIMD checks must match first).
-                elif (ltname & 0xFFFFFF == 0x343666) { lfloat = F64_TYID; }
-                elif (ltname & 0xFFFFFF == 0x323366) { lfloat = F32_TYID; }
                 else {
-                    var lsid = FINDSTRUCT(S, lann);
-                    if (lsid > 0) { pscale = 0 - lsid; _gs_sid = lsid; }
+                    # ⛔ 6.6.16 (C8): the one type-name resolver (parse_types.cyr _tn_resolve).
+                    # This ladder matched PREFIXES (`i8x` an i8, `f64zz` an f64, the struct
+                    # `u8pair` a u8 scalar before the struct lookup) and read an unknown name as a
+                    # silent i64. Now: iN/uN set the width (and the sign of i8/i16/i32), f64/f32
+                    # the float tag, a vector its descriptor sentinel, a struct `0 - sid`; bool,
+                    # cstring, an enum, Result/Option/Tagged or a type parameter stay a plain i64;
+                    # any other name is refused by name. CHANGELOG [6.6.16]
+                    var _lc = _tn_ann(S, GTI(S), noff);
+                    scalar_type = _tn_iw(_lc);
+                    scalar_signed = _tn_sgn(_lc);
+                    lfloat = _tn_flt(_lc);
+                    _gs_sid = _tn_sid(_lc);
+                    pscale = _tn_vec(_lc) - _gs_sid;
                 }
             }
             STI(S, GTI(S) + 1);
@@ -4559,7 +4402,6 @@ fn PARSE_VAR(S): i64 {
     # bare `var buf[N]` has scalar_type==0 → legacy byte sizing.)
     if (PEEKT(S) == 28) {
         var arr_eb = _arr_ebytes(S, scalar_type, lfloat, pscale, ann_ti);   # 6.6.13 (M2)
-        if (_arr_prefix_wrong(S, scalar_type, lfloat, ann_ti) == 1) { scalar_type = 0; scalar_signed = 0; }
         PARSE_ARRAY(S, noff, scalar_type, scalar_signed, arr_eb);
         return 0;
     }
@@ -4804,7 +4646,7 @@ fn PARSE_VAR(S): i64 {
                 } elif (dfc != 0) {
                     SLTYPE(S, li, dfc);   # 6.6.11: `var t = p.y;` — see _decl_float_copy
                 } else {
-                    SLTYPE(S, li, pscale);
+                    _sl_ptr_type(S, li, pscale);   # 6.6.16: a `*i8`/`*i16`/`*i32` slot is 8 bytes, not 1/2/4
                 }
                 EFLSTORE(S, li);
             }

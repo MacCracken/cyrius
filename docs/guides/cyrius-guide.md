@@ -133,6 +133,35 @@ slots[3] = 7;          # Subscript (element-typed arrays only, since 6.6.12)
 x = x + 1;             # Reassignment
 ```
 
+### Type names (6.6.16)
+
+Every place that names a type — a `var` annotation (local or global), `*T`, `[T]` /
+`slice<T>`, a parameter, a return type, a multi-value return element, a struct field, an
+array element, `sizeof(T)` and `#assert sizeof(T)` — reads it from one vocabulary, and
+matches the **whole** name:
+
+| Name | `sizeof` | Notes |
+|------|----------|-------|
+| `i8` `i16` `i32` `i64` | 1 / 2 / 4 / 8 | |
+| `u8` `u16` `u32` `u64` | 1 / 2 / 4 / 8 | |
+| `u128` | 16 | |
+| `f32` / `f64` | 4 / 8 | |
+| `bool`, `cstring`, `Result`, `Option`, `Tagged`, an enum | 8 | an enum may be declared on either side |
+| a vector type (`f64v2` … `u64v2`, `f64v4`, `f32v8`) | 16 / 32 | |
+| a struct or union (`Pt`) | its size | a struct **named** like a scalar (`u8pair`) is the struct |
+| a type parameter in scope (`T`) | its argument's size | the `i64` base: 8 |
+
+`var a: T[N]` reserves exactly `N * sizeof(T)`. A name that is not a type is a compile
+error that names it — `unknown type 'Nope' for variable 'a'`, `... for parameter 'x'`,
+`... as a fn return type`, `... in sizeof` — and a name that only *starts* like one gets a
+hint (`'i8x' is not 'i8' - a type name must match whole`). Before 6.6.16 most sites
+matched a prefix (`var a: i8x = 300` was an `i8` and read 44, `var p: u8pair;` was a `u8`)
+and read any other name as a silent `i64`; `sizeof(f64)`, `sizeof(u8)` and `sizeof(bool)`
+did not compile. A parameter still takes `Str`, `cstring`, `Result`, `Option` and `Tagged`
+by name, without their `include`. A return type is a struct, `i8`..`i64`, `f64`, a vector
+type, `Result`, `Option`, `Tagged` or `cstring` — `fn f(): u8` is refused by name (return an
+`i64`). `cyrius lint` (`--syntax-only`) resolves no type names, so it never reports these.
+
 ### Arrays: byte vs slot sizing (v6.2.1)
 
 `var a: T[N]` declares a fixed array of **N elements of type T** — the
@@ -422,6 +451,16 @@ var a = *p;            # 10
 var b = *(p + 1);      # 20 (adds 8 bytes, not 1)
 ```
 
+A `*T` variable is an 8-byte address whatever `T` is, and `*p` always loads 8 bytes
+(use `load8` / `load16` / `load32` for narrower reads). `T` must name a type
+([Type names](#type-names-6616)). Only `p + n` depends on the spelling, and it is what it
+has always been: a local `*i64` (or `*u8`, `*Pt`, …) steps 8 bytes, a local `*i8` /
+`*i16` / `*i32` steps 1, a `*T` parameter steps 1, and a global steps 8 when declared in
+the leading declaration block and 1 / 2 / 4 / 8 by `T` after the first statement. When
+the step matters, write the byte offset on an untyped address (`&buf + i * 4`).
+⛔ Before 6.6.16 a **local** `var p: *i8` / `*i16` / `*i32` was stored in 1 / 2 / 4
+bytes, truncating the address: `p == &buf` was false and `load8(p + 1)` crashed.
+
 ## Structs
 
 ```
@@ -500,7 +539,7 @@ A field is untyped (`x;`, 8 bytes, i64) or annotated `x: T`, where `T` is one of
 | `u8` / `u16` / `u32` / `u64` | **8 each** | ⚠ Not narrow. The name is accepted but the field is a full word, so `struct { a: u8; b: u8; }` is 16 bytes, not 2. For a binary layout, use `i8` / `i16` / `i32` and mask the value. |
 | `f64` | 8 | **Typed** — `p.x + p.y`, `p.x * 2.0`, `-p.x` and `p.x < p.y` are float operations. |
 | `f32` | **8** | Typed (single-precision arithmetic), stored in the low 32 bits of a full word. |
-| `cstring`, `Result`, `Option`, `Tagged`, an enum | 8 | An enum may be declared before or after the struct. |
+| `bool`, `cstring`, `Result`, `Option`, `Tagged`, an enum | 8 | An enum may be declared before or after the struct. `bool` since 6.6.16 (it was refused). |
 | a struct or union | its size | Stored **inline**. It must be declared ABOVE the struct that uses it. |
 | `Vec` / `Vec<T>` | 8 | A handle. |
 | a type parameter of the struct being declared (`struct Box<T> { v: T; }`) | per instance | |
@@ -1576,8 +1615,12 @@ operand that is none of
 these is reported once, by name (`expected a number, sizeof(T) or an enum
 constant`), and `sizeof` must be the whole word — `sizeofzz(P)` is refused,
 not read as `sizeof`. So must its TYPE (since 6.6.11, in `#assert` and in
-expressions alike): `sizeof(i16v8)` and `sizeof(i8zz)` are `unknown type`, not
-2 and 1. An `#assert` with no message and no `;` ends at the end of its line —
+expressions alike): `sizeof(i8zz)` is refused, not 1. Since 6.6.16 both read
+the one type-name vocabulary ([Type names](#type-names-6616)): `sizeof(u8)`,
+`sizeof(f64)`, `sizeof(bool)`, `sizeof(u128)` (in `#assert` too), an enum and a
+vector type (`sizeof(i16v8)` is 16) all size, and a miss names the type —
+`unknown type 'i8zz' in #assert sizeof` — with no second `#assert failed`. An
+`#assert` with no message and no `;` ends at the end of its line —
 before 6.6.11 it swallowed the whole NEXT line (`#assert 1 == 1` then
 `return 42;` dropped the return). A failing `#assert` no longer stops the
 compile on the spot: every failing assert and any other error in the file is

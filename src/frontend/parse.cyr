@@ -2095,16 +2095,11 @@ fn _EVAL_CONST_ATOM(S): i64 {
             if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); }
             STI(S, GTI(S) + 1);
             var szval = 0;
-            if (PEEKT(S) == 2) {
-                var szn = PEEKV(S);
+            # 6.6.16 (C8): the one resolver, as the expression's sizeof — and u128 (a keyword token,
+            # it was `expected ')'` here). An unknown name is refused naming it. CHANGELOG [6.6.16]
+            if (PEEKT(S) == 2 || PEEKT(S) == 105) {
+                szval = _tn_sizeof(S, GTI(S), 1);
                 STI(S, GTI(S) + 1);
-                var szname = L64(S + 0xEC00000 + szn);
-                szval = _field_scalar_width(szname);   # whole name: `i16v8` is not i16. CHANGELOG [6.6.11]
-                if (szval == 0) {
-                    var szsid = FINDSTRUCT(S, szn);
-                    if (szsid > 0) { szval = STRUCTSZ(S, szsid - 1); }
-                    else { ERR_MSG(S, "#assert: unknown type in sizeof", 31); }
-                }
             }
             if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
             STI(S, GTI(S) + 1);

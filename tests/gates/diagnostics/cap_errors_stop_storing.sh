@@ -104,7 +104,7 @@ comp "$CC" "$D/st.cyr"
 [ "$rc" = 1 ] || bad "structs: rc $rc, want 1"
 grep -q 'too many struct definitions' "$D/err" || bad "structs: cap message missing"
 grep -q '#assert failed' "$D/err" && bad "structs: a refused struct was stored (over struct 0's field count, or at index -1 over struct 1023's name)"
-grep -q 'unknown type in sizeof' "$D/err" && bad "structs: a refused union/struct body wrote at index -1 (struct 1023's name slot)"
+grep -q "unknown type 'S1023'" "$D/err" && bad "structs: a refused union/struct body wrote at index -1 (struct 1023's name slot)"
 n=$(grep -c 'structs registered' "$D/err")
 [ "$n" = 1 ] || bad "structs: DUMP_STRUCTS ran $n times, want once"
 lines=$(wc -l < "$D/err")

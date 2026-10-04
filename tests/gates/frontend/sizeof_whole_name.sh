@@ -6,9 +6,10 @@
 # AXIS 1 — both sizeof sites (the expression in PARSE_FACTOR and #assert's constant
 #   evaluator) sized a scalar by the PREFIX-only `_scalar_name_width`: sizeof(i16v8) was 2,
 #   sizeof(i8zz) 1, sizeof(i32q) 4, and `#assert sizeof(i16v8) == 2` PASSED. 6.6.10 fixed the
-#   same prefix test for struct/union/Vec FIELDS (`_field_scalar_width`) only. A non-scalar
-#   name now falls through to the struct lookup and is refused by name, the same answer
-#   sizeof(f64v2) already gave.
+#   same prefix test for struct/union/Vec FIELDS (`_field_scalar_width`) only. A name that is no
+#   type is refused by name. 6.6.16 (C8): both sites resolve through the one type-name resolver
+#   (parse_types.cyr `_tn_resolve`) — a vector type like i16v8 now sizes 16 (axis 2) and the
+#   refusal names the type (tests/gates/diagnostics/type_name_refused.sh has every site).
 # AXIS 2 — ANTI-VACUOUS: sizeof(i8/i16/i32/i64) and a struct still size, in an expression,
 #   in a fn, at top level and under #assert.
 # AXIS 3 — PARSE_FACTOR also matched `mulh64` by a 6-byte prefix, so a user fn named
@@ -56,18 +57,21 @@ runs() {
 }
 
 echo "axis 1 — sizeof of a name that only STARTS like a scalar is refused:"
-refused sz_i16v8     'syscall(60, sizeof(i16v8));\n'                              'sizeof: unknown type'
-refused sz_i8zz      'syscall(60, sizeof(i8zz));\n'                               'sizeof: unknown type'
-refused sz_i32q      'syscall(60, sizeof(i32q));\n'                               'sizeof: unknown type'
-refused sz_in_fn     'fn f(): i64 { var k = sizeof(i16v8); return k; }\nvar r = f();\n' 'sizeof: unknown type'
-refused sz_global    'var G = sizeof(i16zz);\nsyscall(60, G);\n'                  'sizeof: unknown type'
-refused as_i16v8     '#assert sizeof(i16v8) == 2, "x";\nvar r = 0;\n'             '#assert: unknown type in sizeof'
-refused as_i8zz      '#assert sizeof(i8zz) == 1;\nvar r = 0;\n'                   '#assert: unknown type in sizeof'
+# 6.6.16 (C8): the message names the type (it was `sizeof: unknown type`), and i16v8 — a vector
+# type — is no longer an example of a non-type: it sizes 16 (axis 2), through the one resolver.
+refused sz_i8zz      'syscall(60, sizeof(i8zz));\n'                               "unknown type 'i8zz' in sizeof"
+refused sz_i32q      'syscall(60, sizeof(i32q));\n'                               "unknown type 'i32q' in sizeof"
+refused sz_in_fn     'fn f(): i64 { var k = sizeof(i16zz); return k; }\nvar r = f();\n' "unknown type 'i16zz' in sizeof"
+refused sz_global    'var G = sizeof(i16zz);\nsyscall(60, G);\n'                  "unknown type 'i16zz' in sizeof"
+refused as_i16zz     '#assert sizeof(i16zz) == 2, "x";\nvar r = 0;\n'             "unknown type 'i16zz' in #assert sizeof"
+refused as_i8zz      '#assert sizeof(i8zz) == 1;\nvar r = 0;\n'                   "unknown type 'i8zz' in #assert sizeof"
 
 echo "axis 2 — ANTI-VACUOUS: the whole scalar names and a struct still size:"
 runs sz_scalars 'syscall(60, sizeof(i8) + sizeof(i16) * 10 + sizeof(i32) * 50);\n' 221
 runs sz_fn      'struct P3 { a; b; c; }\nfn f(): i64 { var k = sizeof(i64) + sizeof(P3); return k; }\nsyscall(60, f());\n' 32
 runs sz_assert  '#assert sizeof(i8) == 1;\n#assert sizeof(i16) == 2;\n#assert sizeof(i32) == 4;\n#assert sizeof(i64) == 8, "i64";\nsyscall(60, 5);\n' 5
+runs sz_vector  'fn f(): i64 { var k = sizeof(i16v8); return k; }\nsyscall(60, f());\n' 16
+runs as_vector  '#assert sizeof(i16v8) == 16, "a vector, not an i16";\nsyscall(60, 6);\n' 6
 
 echo "axis 3 — a user fn named mulh64x is a CALL, not the intrinsic:"
 runs mh_expr 'fn mulh64x(a, b): i64 { return a + b; }\nsyscall(60, mulh64x(3, 4));\n' 7

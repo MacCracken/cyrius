@@ -1483,22 +1483,11 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
                 STI(S, GTI(S) + 1);
             } else {
                 if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
-                var szn = PEEKV(S);
+                # 6.6.16 (C8): the one type-name resolver — a bound type parameter its argument's
+                # size, else the WHOLE name (u8..u64, f32, f64, bool, cstring, an enum, a vector, a
+                # struct), else refused by name. sizeof(f64) / sizeof(u8) did not compile. CHANGELOG [6.6.16]
+                szval = _tn_sizeof(S, GTI(S), 0);
                 STI(S, GTI(S) + 1);
-                var szname = L64(S + 0xEC00000 + szn);
-                # v6.3.9 (F-fns): sizeof(T) under a generic binding → canonical token
-                # → size (<0 -width, >0 STRUCTSZ). Inert when _tp_c0==0 (byte-identical).
-                var _szc = 0;
-                if (_tp_c0 != 0) { _szc = _tp_resolve(S, szn); }
-                if (_szc != 0) { if (_szc < 0) { szval = 0 - _szc; } else { szval = STRUCTSZ(S, _szc - 1); } }
-                else {
-                    szval = _field_scalar_width(szname);   # whole name: sizeof(i16v8) was 2. CHANGELOG [6.6.11]
-                    if (szval == 0) {
-                        var szsid = FINDSTRUCT(S, szn);
-                        if (szsid > 0) { szval = STRUCTSZ(S, szsid - 1); }
-                        else { ERR_MSG(S, "sizeof: unknown type", 20); }
-                    }
-                }
             }
             if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
             STI(S, GTI(S) + 1);

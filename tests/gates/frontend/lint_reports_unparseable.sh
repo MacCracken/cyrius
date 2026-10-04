@@ -386,13 +386,17 @@ cat "$T/w/sib_ret.cyr" "$T/w/x_ret.cyr" > "$T/w/joined_ret.cyr"
 jr_rc=0
 ( cd "$T/w" && "$CYCC" < "$T/w/joined_ret.cyr" > /dev/null 2> "$T/rj" ) || jr_rc=$?
 check "premise: x_ret compiles once the sibling struct is in scope" 0 "$jr_rc"
-# ⭐ The load-bearing premise: a PLAIN compile manufactures a syntax-class error here.
-# If that ever stops being true this row fails loudly instead of the axis going vacuous.
-# "at least one", not an exact count — the cascade's LENGTH is an artefact of where
-# _sync_skip happens to land (this shape yields 2). Pinning the count would make the
-# row fail on an unrelated recovery tweak while proving nothing extra.
-check "premise: a plain compile MANUFACTURES a syntax-class cascade" "yes" \
-    "$([ "$(grep -cE "^error:[^ ]*: (unexpected|expected) " "$T/re" || true)" -gt 0 ] && echo yes || echo no)"
+# ⭐ The load-bearing premise: a PLAIN compile REFUSES this file, by a message lint does not
+# excuse. Until 6.6.16 that was the manufactured syntax-class cascade (2 errors: the old
+# `fn return type must be ...` latched `_panic` and the resync landed inside the `for`
+# header). 6.6.16 (C8) names the type and clears its own latch, so the cascade is GONE —
+# the second row pins that — and the refusal is `unknown type 'Str2' as a fn return type`,
+# which is not in `_lint_msg_is_context` (cbt/commands.cyr): without lint's --syntax-only
+# arm this file would still be condemned, so the axis below is not vacuous.
+check "premise: a plain compile refuses the return type BY NAME" 1 \
+    "$(grep -c "unknown type 'Str2' as a fn return type" "$T/re" || true)"
+check "premise: ...with no syntax-class cascade (6.6.16: the refusal no longer resyncs)" 0 \
+    "$(grep -cE "^error:[^ ]*: (unexpected|expected) " "$T/re" || true)"
 rc=$(lint x_ret.cyr)
 check "x_ret is LINTED, not refused (exit 0)" 0 "$rc"
 check "x_ret reports a warning count" 1 "$(grep -c 'warnings' "$T/o" || true)"
