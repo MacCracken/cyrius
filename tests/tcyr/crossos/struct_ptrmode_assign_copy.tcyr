@@ -40,10 +40,14 @@
 #     the different-type rebind); without that row, 5 rebind rows read a COPY (b = a 78, want 18;
 #     the two `*Pt` parameter rows 758 / 5434; the global rows 52 and, at top level, 56).
 #   * the deref-band arm removed from `_agc_addr_x1` -> every pointer-mode GLOBAL row reads 0
-#     (the copy addresses a frame slot), then SIGSEGV.
+#     (the copy addresses a frame slot; `GP = b.v` reads only b.n's 7), then SIGSEGV.
+#   * `_agc_handle_global` publishing `gvi` instead of the deref band `0 - 1000 - gvi` -> every
+#     global-handle DESTINATION row reads -1 (the copy lands in GP's own slot: GP is rebound to
+#     field 0's value), the global-handle SOURCE rows an ADDRESS, then SIGSEGV.
 #   * the `Str`-handle exemption removed from `_sca_mismatch` -> does not compile
 #     (`cannot copy 'str_from' ...`): a handle <- handle rebind refused.
-#   * `_agc_from_temp` testing `dgv >= 0` instead of `!= -1` -> GP = mk(3, 4) reads 0.
+#   * `_agc_from_temp` testing `dgv >= 0` instead of `!= -1` -> the four temp-sourced global-handle
+#     rows read 0: `GP = mk(3, 4)`, `GQ = mk3(5, 6, 7)`, `GP = q.dbl()`, `GQ = l + r`.
 #   * `_pcmpe_struct_assign` or `_fla_assign` keeping `_agc_pp == 1` -> SIGSEGV (the method /
 #     operator / field result stored over the handle's slot).
 #
@@ -71,6 +75,7 @@ fn P3_add(l: P3, r: P3): P3 { var t: P3; t.x = l.x + r.x; t.y = l.y + r.y; t.z =
 
 var GP: Pt = 0;                      # a pointer-mode GLOBAL (one slot holding an address)
 var GH: Pt = 0;
+var GQ: P3 = 0;                      # a pointer-mode GLOBAL of the retptr class
 var GI = Pt{9, 9};                   # an inline global
 var GO = O12{0, 0};
 var GN: i32 = 88;                    # packs at +12 after GO: an 8-byte tail store would clobber it
@@ -256,10 +261,87 @@ fn local_handle_from_operator() {
     a = l + r;
     return a.x * 100 + a.y * 10 + a.z;
 }
-fn glob_handle_from_retptr_call() {
+# Into a pointer-mode GLOBAL handle, every temp-sourced arm (`_agc_from_temp` / `_fla_assign`
+# with a deref-band dgv): the original heap object receives the fields and GP / GQ are not
+# rebound. Each is paired with a control that writes the same fields through field stores.
+fn glob_handle_from_pair_call() {
     GP = alloc(16); GP.x = 0; GP.y = 0;
+    var keep = GP;
     GP = mk(3, 4);
-    return GP.x * 10 + GP.y;
+    if (GP != keep) { return 0 - 1; }
+    return load64(keep) * 10 + load64(keep + 8);
+}
+fn glob_handle_from_pair_call_ctl() {
+    GP = alloc(16); GP.x = 0; GP.y = 0;
+    var keep = GP;
+    GP.x = 3; GP.y = 4;
+    return load64(keep) * 10 + load64(keep + 8);
+}
+fn glob_handle_from_retptr_call() {
+    GQ = alloc(24); GQ.x = 0; GQ.y = 0; GQ.z = 0;
+    var keep = GQ;
+    GQ = mk3(5, 6, 7);
+    if (GQ != keep) { return 0 - 1; }
+    return load64(keep) * 100 + load64(keep + 8) * 10 + load64(keep + 16);
+}
+fn glob_handle_from_retptr_call_ctl() {
+    GQ = alloc(24); GQ.x = 0; GQ.y = 0; GQ.z = 0;
+    var keep = GQ;
+    GQ.x = 5; GQ.y = 6; GQ.z = 7;
+    return load64(keep) * 100 + load64(keep + 8) * 10 + load64(keep + 16);
+}
+fn glob_handle_from_method() {
+    GP = alloc(16); GP.x = 0; GP.y = 0;
+    var keep = GP;
+    var q: Pt; q.x = 2; q.y = 3;
+    GP = q.dbl();
+    q.x = 9;
+    if (GP != keep) { return 0 - 1; }
+    return load64(keep) * 10 + load64(keep + 8);
+}
+fn glob_handle_from_method_ctl() {
+    GP = alloc(16); GP.x = 0; GP.y = 0;
+    var keep = GP;
+    var q: Pt; q.x = 2; q.y = 3;
+    GP.x = q.x * 2; GP.y = q.y * 2;
+    q.x = 9;
+    return load64(keep) * 10 + load64(keep + 8);
+}
+fn glob_handle_from_operator() {
+    GQ = alloc(24); GQ.x = 0; GQ.y = 0; GQ.z = 0;
+    var keep = GQ;
+    var l: P3 = mk3(2, 3, 4);
+    var r: P3 = mk3(1, 1, 1);
+    GQ = l + r;
+    l.x = 0;
+    if (GQ != keep) { return 0 - 1; }
+    return load64(keep) * 100 + load64(keep + 8) * 10 + load64(keep + 16);
+}
+fn glob_handle_from_operator_ctl() {
+    GQ = alloc(24); GQ.x = 0; GQ.y = 0; GQ.z = 0;
+    var keep = GQ;
+    var l: P3 = mk3(2, 3, 4);
+    var r: P3 = mk3(1, 1, 1);
+    GQ.x = l.x + r.x; GQ.y = l.y + r.y; GQ.z = l.z + r.z;
+    l.x = 0;
+    return load64(keep) * 100 + load64(keep + 8) * 10 + load64(keep + 16);
+}
+fn glob_handle_from_field() {
+    GP = alloc(16); GP.x = 0; GP.y = 0;
+    var keep = GP;
+    var b: Box; b.v.x = 4; b.v.y = 5; b.n = 7;
+    GP = b.v;
+    b.v.x = 9;
+    if (GP != keep) { return 0 - 1; }
+    return load64(keep) * 100 + load64(keep + 8) * 10 + b.n;
+}
+fn glob_handle_from_field_ctl() {
+    GP = alloc(16); GP.x = 0; GP.y = 0;
+    var keep = GP;
+    var b: Box; b.v.x = 4; b.v.y = 5; b.n = 7;
+    GP.x = b.v.x; GP.y = b.v.y;
+    b.v.x = 9;
+    return load64(keep) * 100 + load64(keep + 8) * 10 + b.n;
 }
 # From a by-value PARAMETER: copied into *a — a is NOT rebound to the caller's struct, so a later
 # `a.x = 9` leaves q (and the caller) alone.
@@ -411,7 +493,16 @@ assert_eq(local_handle_from_retptr_call(), 123, "a = mk3(1, 2, 3): a retptr resu
 assert_eq(local_handle_from_field(), 12, "a = b.v: a struct field into the pointee");
 assert_eq(local_handle_from_method(), 24, "a = q.dbl(): a method result into the pointee");
 assert_eq(local_handle_from_operator(), 123, "a = l + r: an operator result into the pointee");
-assert_eq(glob_handle_from_retptr_call(), 34, "GP = mk(3, 4): a call result into a global handle's pointee");
+assert_eq(glob_handle_from_pair_call(), 34, "GP = mk(3, 4): a rax:rdx pair result into a global handle's pointee");
+assert_eq(glob_handle_from_pair_call(), glob_handle_from_pair_call_ctl(), "GP = mk(3, 4) == control");
+assert_eq(glob_handle_from_retptr_call(), 567, "GQ = mk3(5, 6, 7): a retptr result into a global handle's pointee");
+assert_eq(glob_handle_from_retptr_call(), glob_handle_from_retptr_call_ctl(), "GQ = mk3(5, 6, 7) == control");
+assert_eq(glob_handle_from_method(), 46, "GP = q.dbl(): a method result into a global handle's pointee");
+assert_eq(glob_handle_from_method(), glob_handle_from_method_ctl(), "GP = q.dbl() == control");
+assert_eq(glob_handle_from_operator(), 345, "GQ = l + r: an operator result into a global handle's pointee");
+assert_eq(glob_handle_from_operator(), glob_handle_from_operator_ctl(), "GQ = l + r == control");
+assert_eq(glob_handle_from_field(), 457, "GP = b.v: a struct field into a global handle's pointee");
+assert_eq(glob_handle_from_field(), glob_handle_from_field_ctl(), "GP = b.v == control");
 assert_eq(local_handle_from_param(), 1231, "a = q from a by-value parameter: copied, and a.x = 9 leaves q.x at 1");
 assert_eq(local_handle_from_param(), local_handle_from_param_ctl(), "a = q from a by-value parameter == control");
 assert_eq(tptr_from_value(), 534, "q = r into a *Pt parameter copies into the pointee");

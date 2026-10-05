@@ -667,10 +667,12 @@ by-value parameter made `a` point at the CALLER's struct, so `a.x = 9` changed i
 `Option` and `Tagged` (heap handles by name) and structs of 8 bytes or less are unchanged.
 
 ⚠ **The declaration and the assignment differ on purpose.** `var q: P3 = a;` takes its storage
-class from its source: from a handle it declares `q` as a second pointer to the same struct, so a
-write through either is seen by both (the v6.6.5 alias). `q = a;` cannot change what `q` already
-is: an inline `q` receives a copy, a handle `q` is rebound. For a private copy of a handle's
-struct, declare first and assign: `var q: P3; q = a;`. One shape changed meaning: code that used
+class from its source: from a pointer-mode local or global it declares `q` as a second pointer to
+the same struct, so a write through either is seen by both (the v6.6.5 alias). From a parameter it
+copies, a `p: *P3` parameter included: `var q: P3 = p;` is the by-value parameter copy of v6.6.11,
+so a later `p.x = 9` does not reach `q`. `q = a;` cannot change what `q` already is: an inline
+`q` receives a copy, a handle `q` is rebound. For a private copy of a handle's struct, declare
+first and assign: `var q: P3; q = a;`. One shape changed meaning: code that used
 the one-word store to carry a handle through an inline struct variable (`var w: P3; w = a;` then
 `f(w)` where an untyped `f(v)` reads `load64(v + 8)`) now passes `w`'s first field. Pass `a`, or
 `&w`.
