@@ -60,10 +60,14 @@ grep -q 'n == 1700' "$AE" || fail "_macho_arm_routes does not claim 1700 — eve
 # The capability the crossos discriminator guards on. A backend that runs the body INLINE
 # (`fncall1` directly inside thread_create) must declare 0; declaring 1 there would make
 # thread_runs_concurrently.tcyr assert against a serial backend and fail the release gate.
-for f in lib/thread_win.cyr lib/thread_agnos.cyr; do
+# Windows is NOT a serial peer: thread_create is CreateThread (v6.0.61). This axis listed it
+# among the serial peers from v6.5.44 to 6.6.15 and so ENFORCED the stale 0 (CHANGELOG [6.6.16]).
+for f in lib/thread_agnos.cyr; do
     grep -qE '^var THREADS_CONCURRENT = 0;' "$ROOT/$f" \
         || fail "$f is a serial peer (bodies run inline) but does not declare THREADS_CONCURRENT = 0"
 done
+grep -qE '^var THREADS_CONCURRENT = 1;' "$ROOT/lib/thread_win.cyr" \
+    || fail "lib/thread_win.cyr's thread_create is CreateThread (real threads) but it does not declare THREADS_CONCURRENT = 1"
 grep -qE '^var THREADS_CONCURRENT = 1;' "$ROOT/lib/thread.cyr" \
     || fail "lib/thread.cyr uses real clone(2) threads but does not declare THREADS_CONCURRENT = 1"
 grep -qE '^var THREADS_CONCURRENT = 1;' "$ROOT/lib/thread_macos.cyr" \
@@ -71,4 +75,4 @@ grep -qE '^var THREADS_CONCURRENT = 1;' "$ROOT/lib/thread_macos.cyr" \
 grep -qE '^var THREADS_CONCURRENT = 0;' "$ROOT/lib/thread_macos.cyr" \
     || fail "lib/thread_macos.cyr declares no serial x86 arm — x86-macOS is a static no-libSystem binary and CANNOT use pthread_create"
 
-echo "PASS macos_arm64_real_threads (1700 -> __got[$SLOT] = _pthread_create, arm64-Mach-O-guarded, stubbed in every fork, THREADS_CONCURRENT honest on all four backends)"
+echo "PASS macos_arm64_real_threads (1700 -> __got[$SLOT] = _pthread_create, arm64-Mach-O-guarded, stubbed in every fork, THREADS_CONCURRENT honest on all four backends: 1 on Linux, arm64-macOS and Windows, 0 on x86-macOS and agnos)"
