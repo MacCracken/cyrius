@@ -77,7 +77,7 @@ both unless a row says otherwise. Consumers MUST treat the transport as **opaque
 |------|---------|----------|
 | `tls_available()` | 1 / 0 | Returns 1 once libssl has been successfully bootstrapped via fdlopen and the critical-symbol set has resolved — since 6.6.13 that set includes the five host-binding symbols (see "Server identity" below), so a libssl that cannot bind the leaf to `host` reads 0 rather than connecting unverified. Idempotent; runs `_tls_init` lazily. Returns 0 forever within the process once init has failed (no retry). Safe to call before any other verb. (Native backend: always 1.) |
 | `tls_init_main()` | 1 / 0 | **6.6.13.** Warm the stack once — call it on the MAIN thread before spawning TLS workers. Returns `tls_available()`'s verdict. Native: installs the main thread's crypto block and builds every lazy table a handshake reaches (SHA-256/-384/-512, AES-GCM, Ed25519, the P-256 and P-384 sign/verify tables, the X.509 OID, validity-date and PEM tables) plus the system CA bundle cache. Recommended, not required (see "Thread safety"). Idempotent; once warmed a call allocates nothing; harmless on a worker (it installs nothing over the worker's own thread-local block). libssl: runs `_tls_init` — main thread only. |
-| `tls_supports_session_resumption()` | 1 / 0 | Returns 1 iff the linked libssl exposes `SSL_get1_session` + `SSL_set_session` + `SSL_SESSION_free` + `SSL_CTX_set_session_cache_mode`. Probe BEFORE installing session callbacks. It reads the symbol cache only: 0 until libssl has been loaded (`tls_available()` or a connect on the libssl backend) — so 0 in a process that only uses the native backend, which has no session resumption through this surface. |
+| `tls_supports_session_resumption()` | 1 / 0 | Returns 1 iff the ACTIVE backend is libssl and the loaded libssl exposes `SSL_get1_session` + `SSL_set_session` + `SSL_SESSION_free` + `SSL_CTX_ctrl` (the cache mode's setter: `SSL_CTX_set_session_cache_mode` is a macro over it, and through 6.6.15 the probe asked dlsym for the macro's name, so it read 0 on every OpenSSL 3). Probe BEFORE installing session callbacks. It reads the symbol cache only: 0 until libssl has been loaded (`tls_available()` or a connect on the libssl backend). **0 whenever the native backend is active (6.6.16)**, even with libssl loaded in-process — the native backend has no session resumption through this surface, and the session verbs refuse there (see "Session resumption"). |
 | `tls_supports_early_data()` | 1 / 0 | Returns 1 iff the linked libssl exposes the FULL 0-RTT client-correctness surface (write + read + max_early_data setter + get_early_data_status + SESSION_get_max_early_data). Probe BEFORE attempting any 0-RTT send/recv. Like the resumption probe: 0 until libssl has loaded. |
 
 ### Connect — fused (legacy + ALPN-hook)
@@ -269,7 +269,7 @@ allocator-aware client connect.
 |------|-----------|---------|----------|
 | `tls_connect_alloc(sock, host, hook_fp, hook_ctx)` | (i64, i64, fnptr, i64) → i64 | ctx-pre-handshake or 0 | Builds the connection without running the handshake: applies the defaults above, runs the hook, binds the leaf to `host` (libssl: `X509_VERIFY_PARAM` + SNI for a DNS name here; native: inside the handshake — see "Server identity") and records the socket. Returns 0 on libssl for a host with no reference identity (`0`, `""`, `[::1]`) unless the hook cleared verification. On success the caller MUST follow with `tls_connect_complete` (handshake) OR `tls_close` (cleanup). Hook semantics identical to `tls_connect_with_ctx_hook`. The a == 0 form of `tls_connect_alloc_in`: everything lives on the global heap. |
 | `tls_connect_alloc_in(a, sock, host, hook_fp, hook_ctx)` | (i64, i64, i64, fnptr, i64) → i64 | ctx-pre-handshake or 0 | **6.6.13.** `tls_connect_alloc` with an Allocator. Native: the ctx, the 40-byte shim, the handshake, a hook's trust store and ALPN list, and the per-ctx record buffers all come from `a`, so `tls_close(c); reset_via(a);` gives the whole connection back. A non-zero `a` MUST be an `arena_allocator` — see "Memory" for its rules and capacity. libssl: `a` does not apply (OpenSSL manages its own memory); the call runs the same libssl body as `tls_connect_alloc`. |
-| `tls_connect_complete(ctx)` | (i64) → i64 | 1 / 0 | Runs the client handshake on a ctx from `tls_connect_alloc(_in)` (libssl `SSL_connect`; native `tls_native_connect`, which verifies the chain and the hostname before it returns). 1 on success; 0 on failure, a deadline that passed included. **On failure the ctx is NOT freed** — the caller MUST call `tls_close` (typically after inspecting the error, see "Failure"). Returns 0 on a null ctx without crash. |
+| `tls_connect_complete(ctx)` | (i64) → i64 | 1 / 0 | Runs the client handshake on a ctx from `tls_connect_alloc(_in)` (libssl `SSL_connect`; native `tls_native_connect`, which verifies the chain and the hostname before it returns). 1 on success; 0 on failure, a deadline that passed included. **A 0 is final** on both backends (libssl since 6.6.16): the ctx keeps the failure, and nothing re-drives the handshake (see "Failure"). **On failure the ctx is NOT freed** — the caller MUST call `tls_close` (typically after inspecting the error, see "Failure"). Returns 0 on a null ctx without crash. |
 
 ### Accept — server (v6.2.24 / v6.2.25)
 
@@ -282,7 +282,7 @@ handshake: the caller keeps them alive through `tls_accept_complete`.
 |------|-----------|---------|----------|
 | `tls_accept_alloc(sock, creds, hook_fp, hook_ctx)` | (i64, i64, fnptr, i64) → i64 | ctx-pre-handshake or 0 | Builds a server ctx from `creds` and loads them (a bad certificate or key fails here, not in the handshake), then runs the hook (ALPN, client-certificate request). libssl: `TLS_server_method`, the DER certificate via `SSL_CTX_use_certificate_ASN1`, the key via `d2i_AutoPrivateKey` (RSA / EC / Ed25519 detected); a client-only libssl returns 0. The a == 0 form of `tls_accept_alloc_in`. |
 | `tls_accept_alloc_in(a, sock, creds, hook_fp, hook_ctx)` | (i64, i64, i64, fnptr, i64) → i64 | ctx-pre-handshake or 0 | `tls_accept_alloc` with an Allocator: native draws the ctx, the whole handshake and record footprint and the shim from `a`, so a server loop `reset_via(a)`s each connection and keeps a flat RSS. libssl: `a` does not apply (routes to `tls_accept_alloc`). |
-| `tls_accept_complete(ctx)` | (i64) → i64 | 1 / 0 | Runs the server handshake (native: TLS 1.3, or the TLS 1.2 driver for a 1.2 ClientHello or a 1.2-pinned ctx). 1 on success; 0 on failure, and the caller `tls_close`s the ctx. |
+| `tls_accept_complete(ctx)` | (i64) → i64 | 1 / 0 | Runs the server handshake (native: TLS 1.3, or the TLS 1.2 driver for a 1.2 ClientHello or a 1.2-pinned ctx). 1 on success; 0 on failure — final on both backends, as for `tls_connect_complete` — and the caller `tls_close`s the ctx. |
 | `tls_accept(sock, cert, cert_len, key, key_len)` | (i64, i64, i64, i64, i64) → i64 | ctx or 0 | Convenience: `tls_accept_alloc` (no hook) + `tls_accept_complete`; on a failed handshake it closes the ctx itself and returns 0. |
 
 **Client certificates (mTLS) on a server.** A hook asks for one with `tls_set_verify(handle,
@@ -381,7 +381,8 @@ above `_tn_read_fail` in `lib/tls_native_conn.cyr` (native) and `_tls_ssl_io_ret
 | `TLS_ERR_DECRYPT` | -15 | A record failed authentication (bad_record_mac: tampered or misdirected). libssl reports it as `TLS_ERR_PROTOCOL`. | native |
 | `TLS_ERR_BAD_RECORD` | -3 | A malformed record: a header declaring more than the 16,640-byte ciphertext ceiling (record_overflow), a frame too short to open, an alert that is not exactly 2 bytes. | native |
 | `TLS_ERR_WRONG_THREAD` | -23 | The call came from a thread other than the main thread (6.6.14). It was refused without touching libssl and the connection is unchanged: make it on the main thread (see "Thread safety"). Not a connection failure. | libssl |
-| `TLS_ERR_WOULD_BLOCK` | -9 | A non-blocking socket had nothing ready (`WANT_READ` / `WANT_WRITE`) and no deadline is set: call again. The native backend needs a BLOCKING socket — there `EAGAIN` reads as `TLS_ERR_IO` and fails the connection; bound a native read with `tls_set_deadline` instead. | libssl |
+| `TLS_ERR_WOULD_BLOCK` | -9 | A non-blocking socket had nothing ready (`WANT_READ` / `WANT_WRITE`) and no deadline is set: call again. Read and write only — a `*_complete` that would block FAILS, finally (`TLS_ERR_HANDSHAKE_FAILED` below). The native backend needs a BLOCKING socket — there `EAGAIN` reads as `TLS_ERR_IO` and fails the connection; bound a native read with `tls_set_deadline` instead. | libssl |
+| `TLS_ERR_HANDSHAKE_FAILED` | -2 | The connection's handshake failed and libssl named no terminal error — a `*_complete` that would have blocked (a non-blocking socket, no deadline) among them (6.6.16, see "Failure"). Every later read returns it. | libssl (native: under "other") |
 | `TLS_ERR_OOM` | -11 | The ctx's record buffer could not be allocated (the first read or write, from an exhausted arena). | native |
 | `TLS_ERR_INVALID_PARAM` | -10 | `tls_read` with `maxlen <= 0` (does not fail the ctx). | native |
 | `TLS_ERR_RECORD_OVERFLOW` | -20 | An authenticated record whose plaintext exceeds 2^14 bytes (RFC 8446 §5.4; `lib/tls_native_lowlevel.cyr`). | native |
@@ -393,15 +394,16 @@ alert stays `TLS_ERR_ALERT`), and `tls_write` returns `TLS_ERR_PROTOCOL`. Three 
 ctx's state as it was: `TLS_ERR_INVALID_PARAM`; the `TLS_ERR_PROTOCOL` a ctx that is not connected
 (never connected, closed, or already failed) answers with; and a write whose record could not be
 sealed, which returns the sealer's code. None of them makes the connection usable again. libssl
-(6.6.14): the same rule — the first negative other than `TLS_ERR_WOULD_BLOCK` is kept on the ctx,
+(6.6.14): the same rule — the first negative other than `TLS_ERR_WOULD_BLOCK` is kept on the ctx
+(since 6.6.16 a failed `*_complete`'s failure too, see "Failure"),
 every later `tls_read` returns it, every later `tls_write` returns `TLS_ERR_PROTOCOL`, neither calls
 libssl again, and `tls_close` sends no close_notify (OpenSSL forbids `SSL_shutdown` after a fatal
 error). Until 6.6.14 a SECOND libssl read after a fatal alert returned 0 — OpenSSL reports
 `SSL_ERROR_ZERO_RETURN` once it has seen the peer's shutdown — so the re-read looked like a clean
 end. Either way: `tls_close`. A libssl-only build
 (`-D CYRIUS_TLS_LIBSSL`) defines only the codes its backend returns — `TLS_ERR_NOT_IMPLEMENTED`,
-`_WOULD_BLOCK`, `_INVALID_PARAM`, `_IO`, `_ALERT`, `_PROTOCOL`, `_TIMEOUT`, `_WRONG_THREAD` — with
-the same values;
+`_HANDSHAKE_FAILED` (6.6.16), `_WOULD_BLOCK`, `_INVALID_PARAM`, `_IO`, `_ALERT`, `_PROTOCOL`,
+`_TIMEOUT`, `_WRONG_THREAD` — with the same values;
 a consumer naming any other code compiles against the default build only.
 
 #### ChangeCipherSpec (native, 6.6.13)
@@ -507,30 +509,37 @@ an earlier `tls_dlsym` + `fncall*` call site. New consumers MUST use these in pr
 
 ### Session resumption (libssl only)
 
-These verbs (and the callbacks and 0-RTT verbs below) wrap libssl directly and do not check the
-backend. The native backend has no client-side session resumption or 0-RTT through this surface:
-probe `tls_supports_session_resumption()` / `tls_supports_early_data()` (both 0 in a process that has never loaded libssl). With a
-native ctx or handle they are no-ops only while libssl has never been loaded in the process;
-once it has (a libssl connect, `tls_dlsym`), they would hand the native pointer to libssl — call
-them on libssl ctxs only.
+These verbs (and the callbacks and 0-RTT verbs below) wrap libssl. The native backend has no
+client-side session resumption or 0-RTT through this surface: probe
+`tls_supports_session_resumption()` (0 under the native backend) / `tls_supports_early_data()`
+(0 in a process that has never loaded libssl). **On the native backend every verb here that takes
+a ctx or a hook handle refuses with the "unsupported" answer its row names, without touching
+libssl (6.6.16)** — whether or not libssl has been loaded in the process. Through 6.6.15 they
+checked only that their libssl symbol was resolved, and anything that loads libssl in-process (a
+libssl connect, `tls_available()` on the libssl backend, `tls_dlsym`) resolves it: they then
+handed the native ctx's +8 (0) or the native handle — the native ctx, not an `SSL_CTX` — to
+libssl, which wrote into native memory (measured: `tls_ctx_set_max_early_data` changed 4 bytes at
+offset 1024 of a 616-byte native ctx). `tls_session_free` and `tls_session_get_max_early_data`
+take a session, which only a libssl connection produces, and behave the same on either backend.
 
 | Verb | Signature | Returns | Contract |
 |------|-----------|---------|----------|
-| `tls_get_session(ctx)` | (i64) → i64 | session or 0 | Returns the post-handshake session pointer (refcount-bumped via `SSL_get1_session`). Caller OWNS the returned ref and MUST call `tls_session_free` when done. 0 means either ctx has no established session yet, libssl missing the symbol, or null ctx. Valid only between successful `tls_connect_complete` and `tls_close`. |
-| `tls_set_session(ctx, session)` | (i64, i64) → i64 | 1 / 0 | Installs a previously-cached session. **MUST be called between `tls_connect_alloc` and `tls_connect_complete`** — installing post-handshake is a no-op. Does NOT take ownership of the session pointer; caller still owns the ref. Returns 0 on null ctx / null session / unresolved symbol. |
+| `tls_get_session(ctx)` | (i64) → i64 | session or 0 | Returns the post-handshake session pointer (refcount-bumped via `SSL_get1_session`). Caller OWNS the returned ref and MUST call `tls_session_free` when done. 0 means either ctx has no established session yet, libssl missing the symbol, null ctx, or the native backend. Valid only between successful `tls_connect_complete` and `tls_close`. |
+| `tls_set_session(ctx, session)` | (i64, i64) → i64 | 1 / 0 | Installs a previously-cached session. **MUST be called between `tls_connect_alloc` and `tls_connect_complete`** — installing post-handshake is a no-op. Does NOT take ownership of the session pointer; caller still owns the ref. Returns 0 on null ctx / null session / unresolved symbol / the native backend. |
 | `tls_session_free(session)` | (i64) → i64 | 0 | Releases one ref via `SSL_SESSION_free`. Idempotent on null. Safe to call when libssl missing the symbol (no-op). |
 
 ### Session cache callbacks (server-side or persistent client cache; libssl only)
 
 Three callbacks installed on the SSL_CTX (the `handle` arg from inside the hook). Each is a thin
-`fncall2` over the libssl `SSL_CTX_sess_set_*_cb` pair; no return-value translation.
+`fncall2` over the libssl `SSL_CTX_sess_set_*_cb` pair and returns 0; on the native backend it
+returns 0 without calling libssl (6.6.16).
 
 | Verb | CB signature | Contract |
 |------|--------------|----------|
 | `tls_ctx_set_session_new_cb(handle, cb_fp)` | `int new_cb(SSL*, SSL_SESSION*)` | Fires when a handshake produces a session worth caching. **Return 1 to transfer ownership to the consumer** (consumer's cache impl owns the ref); 0 means libssl retains ownership. |
 | `tls_ctx_set_session_remove_cb(handle, cb_fp)` | `void remove_cb(SSL_CTX*, SSL_SESSION*)` | Fires when libssl invalidates a session. Consumer's cache should evict matching entries. |
 | `tls_ctx_set_session_get_cb(handle, cb_fp)` | `SSL_SESSION* get_cb(SSL*, unsigned char *id, int len, int *copy)` | Fires during handshake to fetch a cached session by id. **Set `*copy = 1` to bump refcount on the returned session; 0 to transfer ownership** to libssl. |
-| `tls_ctx_set_session_cache_mode(handle, mode)` | — | Enables caching at the SSL_CTX level. `mode` ∈ `{SSL_SESS_CACHE_OFF, _CLIENT, _SERVER, _BOTH}`. Returns previous mode, or 0 if libssl missing the symbol. |
+| `tls_ctx_set_session_cache_mode(handle, mode)` | — | Sets caching at the SSL_CTX level. `mode` ∈ `{SSL_SESS_CACHE_OFF, _CLIENT, _SERVER, _BOTH}` (a new SSL_CTX starts at `_SERVER`). Returns the previous mode, through `SSL_CTX_ctrl(handle, SSL_CTRL_SET_SESS_CACHE_MODE (44), mode, 0)` — `SSL_CTX_set_session_cache_mode` is a macro over it. Returns 0 for a null handle, on the native backend (no SSL_CTX), or when libssl lacks `SSL_CTX_ctrl` — without calling libssl. **6.6.16:** through 6.6.15 it resolved the macro's name, never found it, and was a silent no-op that returned 0. |
 
 **Caveat — leaky abstraction**: the four callback signatures above are literal libssl types.
 The native backend (the default since v6.1.21) implements none of this sub-surface; giving it one
@@ -542,10 +551,10 @@ libssl's session-cache state machine; this is acknowledged technical debt, not a
 
 | Verb | Signature | Returns | Contract |
 |------|-----------|---------|----------|
-| `tls_ctx_set_max_early_data(handle, max)` | (i64, i64) → i64 | 1 / 0 | Server-side: max early-data byte budget per session. `max == 0` disables 0-RTT (libssl default). RFC 8446 recommends 16384 as a starting point; consumer cache impl should bound against replay-attack risk. Returns 0 if libssl missing the symbol. |
-| `tls_write_early_data(ctx, buf, len)` | (i64, i64, i64) → i64 | bytes-written or -1 | Client-side write of 0-RTT payload BEFORE handshake completes. Valid only when `ctx` has a session installed via `tls_set_session` AND the session's server advertised acceptable 0-RTT (probe with `tls_session_get_max_early_data` first). -1 on error / null ctx / unresolved symbol. |
-| `tls_read_early_data(ctx, buf, maxlen)` | (i64, i64, i64) → i64 | bytes / -2 / -1 | Server-side read of 0-RTT payload. **Three return states**: positive = bytes read into buf; -2 = early data exhausted, caller transitions to `tls_read` for the post-handshake stream (libssl `SSL_READ_EARLY_DATA_FINISH`); -1 = error or unresolved symbol. |
-| `tls_get_early_data_status(ctx)` | (i64) → i64 | NOT_SENT / REJECTED / ACCEPTED | Client-side post-handshake check. Call AFTER `tls_connect_complete`. Returns one of `TLS_EARLY_DATA_NOT_SENT` (0; no early data attempted, OR null ctx, OR unresolved symbol — safe for consumers to treat as non-rejection), `TLS_EARLY_DATA_REJECTED` (1; server rejected — caller MUST resend over the normal stream via `tls_write`), `TLS_EARLY_DATA_ACCEPTED` (2; response is on the way via `tls_read`). |
+| `tls_ctx_set_max_early_data(handle, max)` | (i64, i64) → i64 | 1 / 0 | Server-side: max early-data byte budget per session. `max == 0` disables 0-RTT (libssl default). RFC 8446 recommends 16384 as a starting point; consumer cache impl should bound against replay-attack risk. Returns 0 if libssl missing the symbol, or on the native backend (without calling libssl, 6.6.16). |
+| `tls_write_early_data(ctx, buf, len)` | (i64, i64, i64) → i64 | bytes-written or -1 | Client-side write of 0-RTT payload BEFORE handshake completes. Valid only when `ctx` has a session installed via `tls_set_session` AND the session's server advertised acceptable 0-RTT (probe with `tls_session_get_max_early_data` first). -1 on error / null ctx / unresolved symbol / the native backend. |
+| `tls_read_early_data(ctx, buf, maxlen)` | (i64, i64, i64) → i64 | bytes / -2 / -1 | Server-side read of 0-RTT payload. **Three return states**: positive = bytes read into buf; -2 = early data exhausted, caller transitions to `tls_read` for the post-handshake stream (libssl `SSL_READ_EARLY_DATA_FINISH`); -1 = error, unresolved symbol or the native backend. |
+| `tls_get_early_data_status(ctx)` | (i64) → i64 | NOT_SENT / REJECTED / ACCEPTED | Client-side post-handshake check. Call AFTER `tls_connect_complete`. Returns one of `TLS_EARLY_DATA_NOT_SENT` (0; no early data attempted, OR null ctx, OR unresolved symbol, OR the native backend — safe for consumers to treat as non-rejection), `TLS_EARLY_DATA_REJECTED` (1; server rejected — caller MUST resend over the normal stream via `tls_write`), `TLS_EARLY_DATA_ACCEPTED` (2; response is on the way via `tls_read`). |
 | `tls_session_get_max_early_data(session)` | (i64) → i64 | byte budget or 0 | Pre-attempt eligibility probe. Returns the max early-data budget the cached session's server advertised at issue time. 0 means the session does NOT advertise 0-RTT support (don't attempt). 0 on null session / unresolved symbol — same semantic as "session doesn't advertise 0-RTT". |
 
 ## Memory: where a connection lives
@@ -623,9 +632,19 @@ those.
   does NOTHING (no `tls_close`). libssl freed its `SSL` / `SSL_CTX` before returning; native's
   partial ctx is in its allocator — kept by the global heap, returned by `reset_via(a)`.
 - **`tls_connect_complete` / `tls_accept_complete` return 0** → the caller still owns the ctx and
-  MUST call `tls_close`. The reason: native — `tls_native_get_last_error(handle)` on the native
-  handle the hook received (a `TLS_ERR_*`: `TLS_ERR_TIMEOUT`, `TLS_ERR_ALERT`,
-  `TLS_ERR_CERT_HOSTNAME_MISMATCH`, …); libssl — `SSL_get_error` via `tls_dlsym`.
+  MUST call `tls_close`. **The failure is final on both backends**: nothing afterwards resumes the
+  handshake. The reason: native — `tls_native_get_last_error(handle)` on the native handle the
+  hook received (a `TLS_ERR_*`: `TLS_ERR_TIMEOUT`, `TLS_ERR_ALERT`,
+  `TLS_ERR_CERT_HOSTNAME_MISMATCH`, …); libssl (6.6.16) — the next `tls_read` returns it: the
+  failure is recorded on the ctx as a `TLS_ERR_*` (`TLS_ERR_TIMEOUT` for a deadline,
+  `TLS_ERR_ALERT` / `TLS_ERR_PROTOCOL` / `TLS_ERR_IO` from libssl's error, and
+  `TLS_ERR_HANDSHAKE_FAILED` (-2) when libssl named no terminal error — a non-blocking socket
+  with nothing ready and no deadline among them: use `tls_set_deadline`, not retries). After it,
+  as after a failed read: every `tls_read` returns that code, `tls_write` returns
+  `TLS_ERR_PROTOCOL`, a second `*_complete` returns 0, none of them calls libssl, and `tls_close`
+  sends no close_notify. ⛔ Through 6.6.15 a libssl `*_complete` recorded nothing: `tls_read` then
+  called `SSL_read`, and OpenSSL's implicit handshake RESUMED the failed handshake — measured
+  returning the server's 21 bytes on a connection the caller had been told had failed.
 - **A negative `tls_read` / `tls_write`** → the connection is over (see the I/O table); `tls_close`
   it.
 - **`tls_close` twice** → do not. libssl double-frees. Native's second call is a no-op only while
