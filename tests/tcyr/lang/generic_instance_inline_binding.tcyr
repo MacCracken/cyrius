@@ -1,0 +1,67 @@
+# generic_instance_inline_binding.tcyr — 6.6.17 (a3). A generic INSTANCE's body sees its own type
+# arguments wherever it is emitted — including when a small instance is INLINED at its call site.
+#
+# ⛔ THE DEFECT, every release through 6.6.16. An instance (`szof$i16`) is a separate fn whose body
+# tokens are the base's. A one-statement body is inlinable, and the inline replay (PARSE_FNCALL)
+# bound T to the CALL's inferred type arguments, which an explicit `f<i16>(..)` never sets (i64).
+# So a call from inside a fn (top level does not inline) read the i64 base's answers:
+#   `fn szof<T>(x: T) { return sizeof(T); }`   szof<i16>(1) inside a fn = 8 (top level: 2);
+#   `fn h<T>(x: T) { return g<T>(x); }`        h<i8> instantiated g$i64, not g$i8: `var y: T = 253`
+#                                              read 253 where -3 is right, `var a: T[4]` was 32 B.
+# The instance now records its type arguments (SFIC) and the replay binds those (_bind_inl_generic).
+# Every expected value is a hand constant AND, where a direct (non-inlined) form exists, equal to it.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/assert.cyr"
+
+fn szof<T>(x: T) { return sizeof(T); }
+fn szk<T>(x: T) { var k = sizeof(T); return k; }
+fn sv<T>(x: T) { var y: T = 253; return y; }
+fn sv16<T>(x: T) { var y: T = 65533; return y; }
+fn sa<T>(x: T) { var a: T[2]; a[0] = 253; a[1] = 65533; return a[0] * 1000000 + a[1]; }
+fn arr<T>(x: T) { var a: T[4]; var b: T[4]; var c: i64 = 0; return (&a - &b) * 1000 + (&b - &c); }
+# Forwarders: each body is one `return f<T>(..);`, so each instance is itself inlined.
+fn szh<T>(x: T) { return szof<T>(x); }
+fn svh<T>(x: T) { return sv<T>(x); }
+fn sv16h<T>(x: T) { return sv16<T>(x); }
+fn sah<T>(x: T) { return sa<T>(x); }
+fn arrh<T>(x: T) { return arr<T>(x); }
+# The same calls made from inside a fn (top-level calls are never inlined).
+fn in_szof_i16() { return szof<i16>(1); }
+fn in_szof_i32() { return szof<i32>(1); }
+fn in_szof_i8() { return szof<i8>(1); }
+fn in_szof_f64() { return szof<f64>(1.5); }
+fn in_szh_i16() { return szh<i16>(1); }
+fn in_sv_i8() { return sv<i8>(1); }
+fn in_svh_i8() { return svh<i8>(1); }
+fn in_sv16h_i16() { return sv16h<i16>(1); }
+fn in_sah_i8() { return sah<i8>(1); }
+fn in_sah_i16() { return sah<i16>(1); }
+fn in_arrh_i8() { return arrh<i8>(1); }
+fn in_arrh_i32() { return arrh<i32>(1); }
+fn in_arr_i32() { return arr<i32>(1); }
+fn in_arr_f64() { return arr<f64>(1.5); }
+fn nf() { var a: f64[4]; var b: f64[4]; var c: i64 = 0; return (&a - &b) * 1000 + (&b - &c); }
+
+var top_i16 = szof<i16>(1);
+var top_i32 = szof<i32>(1);
+assert_eq(top_i16, 2, "control: top-level szof<i16> (not inlined)");
+assert_eq(top_i32, 4, "control: top-level szof<i32> (not inlined)");
+assert_eq(in_szof_i16(), 2, "szof<i16> inlined in a fn is 2");
+assert_eq(in_szof_i32(), 4, "szof<i32> inlined in a fn is 4");
+assert_eq(in_szof_i8(), 1, "szof<i8> inlined in a fn is 1");
+assert_eq(in_szof_f64(), 8, "szof<f64> inlined in a fn is 8");
+assert_eq(szk<i16>(1), 2, "control: `var k = sizeof(T); return k;` (not inlined)");
+assert_eq(in_szh_i16(), 2, "szof<T> forwarded from an i16 instance is 2");
+assert_eq(in_sv_i8(), 0 - 3, "`var y: T = 253` in sv<i8> inlined is -3");
+assert_eq(in_svh_i8(), 0 - 3, "sv<T> forwarded from an i8 instance is -3");
+assert_eq(in_sv16h_i16(), 0 - 3, "sv16<T> forwarded from an i16 instance is -3");
+assert_eq(in_sah_i8(), 0 - 3000003, "T[2] forwarded at i8: both elements sign-extend");
+assert_eq(in_sah_i16(), 252999997, "T[2] forwarded at i16: 253 stays, 65533 is -3");
+assert_eq(in_arrh_i8(), arr<i8>(1), "T[4] forwarded at i8 is laid out as arr<i8>");
+assert_eq(in_arrh_i32(), in_arr_i32(), "T[4] forwarded at i32 is laid out as arr<i32>");
+assert_eq(in_arrh_i32() / 1000, 16, "T[4] forwarded at i32 is 16 B");
+assert_eq(in_arr_f64(), nf(), "T[4] at f64 is laid out as a plain f64[4]");
+assert_eq(in_arr_f64() / 1000, 32, "T[4] at f64 is 32 B (8 per element)");
+var r = assert_summary();

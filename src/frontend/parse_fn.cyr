@@ -3485,7 +3485,7 @@ fn PARSE_FNCALL(S, noff): i64 {
                     # (4 reads, restored verbatim) → byte-identical.
                     var _gsv_n0 = _tp_n0; var _gsv_c0 = _tp_c0;
                     var _gsv_n1 = _tp_n1; var _gsv_c1 = _tp_c1;
-                    _bind_generic_call(S, fi, _ginf0, _ginf1);
+                    _bind_inl_generic(S, fi, _ginf0, _ginf1);   # 6.6.17 (a3): an instance binds its own
                     SIDEP(S, GIDEP(S) + 1);
                     # v6.5.52 — the replayed body is a NESTED SCOPE, so bump the scope depth for it.
                     # The duplicate-variable check is `GLDEP(existing) == GSDEP()`, i.e. same-scope,
@@ -3868,6 +3868,18 @@ fn _bind_generic_call(S, fi, inf0, inf1): i64 {
     var _bg1 = (_bg >> 32) & 0xFFFFFFFF;
     if (_bg1 != 0) { _tp_bind(S, 1, _bg1 - 1, inf1); }
     return 0;
+}
+
+# ⛔ 6.6.17 (a3) — the binding an INLINE replay of generic fn `fi` runs under. An instance
+# (`szof$i16`, `sv$i8`) is a separate fn whose body tokens are the base's, so its replay must bind
+# T to the instance's OWN type arguments (recorded at instantiation, `SFIC`); it bound the call's
+# inferred ones, which an explicit `f<i16>(..)` never sets (-8, i64). A one-statement generic
+# body is inlinable, so `return sizeof(T);` read 8 and `var y: T` was an i64 whenever the call
+# sat inside a fn — and a generic forwarding its T (`return sv<T>(x);`) lost it. CHANGELOG [6.6.17]
+fn _bind_inl_generic(S, fi, inf0, inf1): i64 {
+    var c0 = GFIC(S, fi, 0);
+    if (c0 != 0) { return _bind_generic_call(S, fi, c0, GFIC(S, fi, 1)); }
+    return _bind_generic_call(S, fi, inf0, inf1);
 }
 
 # v6.3.9 (F-fns): is `noff` one of fn `fi`'s captured type-params? Used at the
@@ -4613,6 +4625,7 @@ fn _instantiate_generic_fn(S, base_fi, conc0, conc1): i64 {
     _tp_n0 = sv_n0; _tp_c0 = sv_c0; _tp_n1 = sv_n1; _tp_c1 = sv_c1;
     STI(S, sv_ti);
     spec = FINDFN(S, mangled);                       # now registered by PARSE_FN_DEF
+    if (spec >= 0) { SFIC(S, spec, conc0, conc1); }  # 6.6.17 (a3): see _bind_inl_generic
     _gen_inherit_dep(S, spec, base_fi);              # 6.6.16: `#deprecated` reaches instances
     return spec;
 }
