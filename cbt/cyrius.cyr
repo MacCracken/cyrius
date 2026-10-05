@@ -668,13 +668,15 @@ fn main(): i64 {
         # v6.5.49/.51 — fall back to `[build] entry` (legacy synonym `src`) and
         # `[build] output` in ./cyrius.cyml for whichever argument was NOT given.
         # The command line always WINS; the manifest is consulted only for the gaps.
+        # 6.6.17: through the one reader (cbt/manifest.cyr) — the whole manifest, with `src`
+        # resolved as `entry`'s synonym in the vocabulary.
+        if (_mf_load() < 0) { return 1; }
         if (b_src == 0) {
-            b_src = _manifest_build_key("entry", 5);
-            if (b_src == 0) { b_src = _manifest_build_key("src", 3); }
+            b_src = _mf_key_str("build", "entry");
             _build_paths_from_manifest = 2;
         }
         if (b_out == 0) {
-            b_out = _manifest_build_key("output", 6);
+            b_out = _mf_str("build", "output");
             if (_build_paths_from_manifest == 0) { _build_paths_from_manifest = 1; }
         }
         if (b_src == 0 || b_out == 0) {

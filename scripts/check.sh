@@ -1831,6 +1831,11 @@ _chk_gate "$ROOT/tests/gates/toolchain/ci_steps_delegate_to_driver.sh"
 # says the same. The expected keys come from what consumers write, not from the vocabulary.
 _chk_gate "$ROOT/tests/gates/toolchain/manifest_key_inventory.sh"
 
+# 6.6.17 (P1) — every [build] / [package] / [sections] read goes through ONE reader that reads the
+# WHOLE manifest (refused by name past 16 MiB) and parses values as TOML: a [build] past 64 KiB, a
+# key after a multi-line array, literal / escaped strings, the CYML body, `cyrius package`.
+_chk_gate "$ROOT/tests/gates/toolchain/manifest_one_reader.sh"
+
 # 6.6.10 (bite 12) — the check driver runs only tools it BUILT from this tree in this run:
 # all nine executables it runs come from its private run dir, planted build/ stubs and a
 # ~/.cyrius/bin copy are ignored, and a tool that does not compile is a FAIL naming it.

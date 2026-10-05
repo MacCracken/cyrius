@@ -320,69 +320,36 @@ fn run_cx(cyx_path): i64 {
 
 # v6.3.3 #5: parse `[sections] base = "0x.."` from the cwd's cyrius.cyml and build
 # a "CYRIUS_KERNEL_BASE=0x.." env string (alloc'd) for the cycc spawn, or 0 if the
-# block / key is absent. Same line-scan idiom as `_parse_toml_str_array` in cbt/deps.cyr; cbt is
-# cycc-compiled (no cybs limits). Only consulted on bare-metal builds. The `[sections]`
+# block / key is absent. Only consulted on bare-metal builds. The `[sections]`
 # block is bare-metal section-placement control (deliverable #5); today it exposes the
 # image load base — the one knob a freestanding kernel/firmware consumer needs.
 fn _sections_base_env(): i64 {
-    if (file_exists("cyrius.cyml") == 0) { return 0; }
-    var buf = alloc(32768);
-    var n = file_read_all("cyrius.cyml", buf, 32767);
-    if (n <= 0) { return 0; }
-    var pos = 0;
-    while (pos < n) {
-        if (memeq(buf + pos, "[sections]", 10) == 1 && _toml_section_at(buf, n, pos) == 1) { break; }
-        pos = pos + 1;
-    }
-    if (pos >= n) { return 0; }
-    pos = pos + 10;
-    while (pos < n) {
-        while (pos < n && (load8(buf + pos) == 10 || load8(buf + pos) == 32 || load8(buf + pos) == 9)) { pos = pos + 1; }
-        if (pos >= n) { return 0; }
-        if (load8(buf + pos) == 91) { return 0; }   # '[' — next section ends the block
-        if (memeq(buf + pos, "base", 4) == 1) {
-            var after = pos + 4;
-            while (after < n && (load8(buf + after) == 32 || load8(buf + after) == 9)) { after = after + 1; }
-            if (after < n && load8(buf + after) == 61) {   # '='
-                after = after + 1;
-                while (after < n && (load8(buf + after) == 32 || load8(buf + after) == 9)) { after = after + 1; }
-                if (after < n && load8(buf + after) == 34) {   # '"'
-                    after = after + 1;
-                    var out = alloc(64);
-                    var pfx = "CYRIUS_KERNEL_BASE=";
-                    var pi = 0;
-                    while (load8(pfx + pi) != 0) { store8(out + pi, load8(pfx + pi)); pi = pi + 1; }
-                    var vi = 0;
-                    while (after < n && load8(buf + after) != 34 && load8(buf + after) != 10 && vi < 40) {
-                        store8(out + pi + vi, load8(buf + after));
-                        vi = vi + 1; after = after + 1;
-                    }
-                    store8(out + pi + vi, 0);
-                    # Parse the numeric base from the copied "0x.." value (for the D6 report).
-                    _section_base_val = 0;
-                    if (load8(out + pi) == 48 && (load8(out + pi + 1) == 120 || load8(out + pi + 1) == 88)) {
-                        var hp = pi + 2;
-                        var acc = 0;
-                        var hc = load8(out + hp);
-                        while (hc != 0) {
-                            var dd = 0 - 1;
-                            if (hc >= 48 && hc <= 57) { dd = hc - 48; }
-                            elif (hc >= 97 && hc <= 102) { dd = hc - 97 + 10; }
-                            elif (hc >= 65 && hc <= 70) { dd = hc - 65 + 10; }
-                            if (dd < 0) { break; }
-                            acc = acc * 16 + dd;
-                            hp = hp + 1; hc = load8(out + hp);
-                        }
-                        _section_base_val = acc;
-                    }
-                    return out;
-                }
-                return 0;
-            }
+    # 6.6.17: through the one reader (cbt/manifest.cyr) — this was a 32,767-byte scan of its own.
+    var v = _mf_str("sections", "base");
+    if (v == 0) { return 0; }
+    var vl = strlen(v);
+    var out = alloc(vl + 20);
+    memcpy(out, "CYRIUS_KERNEL_BASE=", 19);
+    memcpy(out + 19, v, vl + 1);
+    # Parse the numeric base from the "0x.." value (for the D6 report).
+    _section_base_val = 0;
+    if (load8(v) == 48 && (load8(v + 1) == 120 || load8(v + 1) == 88)) {
+        var hp = 2;
+        var acc = 0;
+        var hc = load8(v + hp);
+        while (hc != 0) {
+            var dd = 0 - 1;
+            if (hc >= 48 && hc <= 57) { dd = hc - 48; }
+            elif (hc >= 97 && hc <= 102) { dd = hc - 97 + 10; }
+            elif (hc >= 65 && hc <= 70) { dd = hc - 65 + 10; }
+            if (dd < 0) { break; }
+            acc = acc * 16 + dd;
+            hp = hp + 1;
+            hc = load8(v + hp);
         }
-        while (pos < n && load8(buf + pos) != 10) { pos = pos + 1; }
+        _section_base_val = acc;
     }
-    return 0;
+    return out;
 }
 
 # v6.4.73 — the manifest auto-prepend, factored out of compile() so it has exactly

@@ -47,8 +47,7 @@ fn cmd_build(source, output): i64 {
     # refusal happens before anything is written.
     var _pb_cc = current_cc();
     if (_pb_tail_eq(output, _pb_cc) == 1) {
-        var _pb_decl = _manifest_build_key("entry", 5);
-        if (_pb_decl == 0) { _pb_decl = _manifest_build_key("src", 3); }
+        var _pb_decl = _mf_key_str("build", "entry");   # `src` resolves as its synonym
         var _pb_ok = 0;
         if (_pb_decl != 0) { if (_pb_tail_eq(source, _pb_decl) == 1) { _pb_ok = 1; } }
         if (_pb_ok == 0) {
@@ -1072,10 +1071,10 @@ fn _self_step_failed(step, rc, src, cc): i64 {
 # mentioning "stdlib" or a `[lib] modules = [...]` array isn't matched.
 # Reuses _parse_toml_str_array (cbt/deps.cyr).
 fn _libsync_declared_mods(): i64 {
-    if (file_exists("cyrius.cyml") == 0) { return 0; }
-    var buf = alloc(32768);
-    var n = file_read_all("cyrius.cyml", buf, 32767);
-    if (n <= 0) { return 0; }
+    # 6.6.17: the WHOLE manifest through the one reader (this read 32,767 bytes).
+    if (_mf_load() != 1) { return 0; }
+    var buf = _mf_buf;
+    var n = _mf_len;
     # v6.5.30 — route through the SHARED `_toml_key_at` (cbt/deps.cyr) instead of a
     # hand-rolled guard pair. The inline version checked the identifier boundary and the
     # comment line but NOT whether the match sits inside a QUOTED VALUE, so a
@@ -4519,10 +4518,10 @@ fn cmd_distlib_all(check): i64 {
         _err("no cyrius.cyml or cyrius.toml found");
         return 1;
     }
-    var mbuf = alloc(32768);
-    var mlen = file_read_all(mf, mbuf, 32767);
-    if (mlen <= 0) { _err("cannot read manifest"); return 1; }
-    store8(mbuf + mlen, 0);
+    # 6.6.17: the WHOLE manifest through the one reader (this read 32,767 bytes).
+    if (_mf_load() != 1) { _err("cannot read manifest"); return 1; }
+    var mbuf = _mf_buf;
+    var mlen = _mf_len;
 
     var names = alloc(4096);
     var n = _distlib_enum_profiles(mbuf, mlen, names, 4096);
@@ -5019,97 +5018,39 @@ fn cmd_distlib(profile): i64 {
         _err("no cyrius.cyml or cyrius.toml found");
         return 1;
     }
-    var mbuf = alloc(32768);
-    var mlen = file_read_all(mf, mbuf, 32767);
-    if (mlen <= 0) { _err("cannot read manifest"); return 1; }
-    store8(mbuf + mlen, 0);
+    # 6.6.17: the WHOLE manifest through the one reader (this read 32,767 bytes).
+    if (_mf_load() != 1) { _err("cannot read manifest"); return 1; }
+    var mbuf = _mf_buf;
+    var mlen = _mf_len;
 
-    # Extract package name
-    var pkg_name = 0;
-    var pi = 0;
-    while (pi < mlen) {
-        # ⛔ v6.5.37 (A5) — THIS SCAN HAD NO GUARDS AT ALL, and it decides the output FILENAME.
-        # It was a bare `memeq(..., "name", 4)` plus a separator test: no left-identifier
-        # boundary, no comment guard, no quoted-value guard, no `[package]` anchor, and no
-        # `_dep_reject_unsafe_name` (which only ever ran on the --modular path). Measured at
-        # 6.5.36, three separate ways to hijack the bundle's name:
-        #   (a) a COMMENT — `# The package name = "the crate identifier"` produced
-        #       `dist/the crate identifier.cyr` and `.deps`, and the real `dist/probe.*` was
-        #       never written at all;
-        #   (b) NO LEFT BOUNDARY — `display_name = "WRONG"` matched on its own `name` tail;
-        #   (c) TRAVERSAL — `name = "../victim/pwned"` wrote both files OUTSIDE dist/ before
-        #       an unrelated include-time message appeared. CVE-32's guard covers --modular
-        #       only, so the flat path had none.
-        # `_toml_key_at` supplies (a) and (b) — including the inline-`#` case fixed above —
-        # and `_dep_reject_unsafe_name` supplies (c), before the first sys_open rather than
-        # after two files are already on disk.
-        if (pi + 4 <= mlen && memeq(mbuf + pi, "name", 4) == 1 && _toml_key_at(mbuf, mlen, pi, 4) == 1) {   # v6.2.52: bound the tail read
-            if (pi + 4 < mlen && (load8(mbuf + pi + 4) == 32 || load8(mbuf + pi + 4) == 61)) {
-                var qi = pi + 4;
-                while (qi < mlen && load8(mbuf + qi) != 34) { qi = qi + 1; }
-                qi = qi + 1;
-                var qs = qi;
-                while (qi < mlen && load8(mbuf + qi) != 34) { qi = qi + 1; }
-                pkg_name = alloc(qi - qs + 1);
-                memcpy(pkg_name, mbuf + qs, qi - qs);
-                store8(pkg_name + qi - qs, 0);
-                break;
-            }
-        }
-        pi = pi + 1;
-    }
+    # Extract package name. ⛔ v6.5.37 (A5): this scan decides the output FILENAME, and it once
+    # had no guards at all — a comment (`# The package name = "…"`), a `display_name` tail and a
+    # traversal `name = "../victim/pwned"` each hijacked the bundle. 6.6.17: `[package] name`
+    # through the one reader (cbt/manifest.cyr) — anchored to [package], whole-key, comment- and
+    # string-aware — and `_dep_reject_unsafe_name` before the first sys_open.
+    var pkg_name = _mf_str("package", "name");
     if (pkg_name == 0) { pkg_name = "lib"; }
     if (_dep_reject_unsafe_name(pkg_name) != 0) { return 1; }
 
     # Extract version via cyml_expand_value
     var pkg_ver = _version;
 
-    # Find modules list. With a profile, we look for [lib.PROFILE] only;
-    # otherwise the existing [build] / [lib] fallback applies.
+    # Find modules list. With a profile, [lib.PROFILE] only; otherwise [build], then [lib].
+    # 6.6.17: through the one reader (cbt/manifest.cyr), which steps over multi-line values, so a
+    # line inside an array that begins with `[` is never read as a section header.
     var modules = 0;
-    var profile_hdr = 0;
-    var profile_hdr_len = 0;
     if (profile != 0) {
-        # Build "[lib.PROFILE]" header once for section matching.
-        var plen = strlen(profile);
-        profile_hdr = alloc(plen + 8);
-        memcpy(profile_hdr, "[lib.", 5);
-        memcpy(profile_hdr + 5, profile, plen);
-        store8(profile_hdr + 5 + plen, 93);    # ']'
-        store8(profile_hdr + 6 + plen, 0);
-        profile_hdr_len = 6 + plen;
+        var psb = str_builder_new();
+        str_builder_add_cstr(psb, "lib.");
+        str_builder_add_cstr(psb, profile);
+        modules = _mf_strs(str_data(str_builder_build(psb)), "modules");
+    } else {
+        modules = _mf_strs("build", "modules");
+        if (modules == 0 && _toml_bad == 0) { modules = _mf_strs("lib", "modules"); }
     }
-    var si = 0;
-    while (si < mlen) {
-        var matched = 0;
-        var header_len = 0;
-        # v6.5.37 (A5): a header only counts when it is the first token on its LINE.
-        # Unguarded, a comment naming a section won the scan and the module list was read
-        # from the comment's array — see _toml_section_at for the measured reproduction.
-        if (_toml_section_at(mbuf, mlen, si) == 1) {
-            if (profile != 0) {
-                if (memeq(mbuf + si, profile_hdr, profile_hdr_len) == 1) {
-                    matched = 1;
-                    header_len = profile_hdr_len;
-                }
-            } else {
-                if (memeq(mbuf + si, "[build]", 7) == 1) {
-                    matched = 1;
-                    header_len = 7;
-                }
-                elif (memeq(mbuf + si, "[lib]", 5) == 1) {
-                    matched = 1;
-                    header_len = 5;
-                }
-            }
-        }
-        if (matched == 1) {
-            # The shared section-modules parser (cbt/deps.cyr) — `_auto_deps` reads
-            # `[build].modules` through the same one. CHANGELOG [6.6.9].
-            modules = _toml_section_modules(mbuf, mlen, si + header_len);
-            if (modules != 0) { break; }
-        }
-        si = si + 1;
+    if (_toml_bad == 1) {
+        _err("distlib: `modules` must be a string or an array of strings");
+        return 1;
     }
 
     if (modules == 0 || vec_len(modules) == 0) {
@@ -5728,33 +5669,21 @@ fn cmd_publish(): i64 {
     sys_write(STDOUT_FD, "  version: ", 11);
     println(ver);
 
-    # Step 1: distlib if manifest has modules
-    var mf = "cyrius.cyml";
-    if (file_exists(mf) == 0) { mf = "cyrius.toml"; }
-    if (file_exists(mf) == 1) {
-        var mbuf = alloc(4096);
-        var mn = file_read_all(mf, mbuf, 4095);
-        if (mn > 0) {
-            store8(mbuf + mn, 0);
-            var has_modules = 0;
-            var mi = 0;
-            while (mi < mn) {
-                if (memeq(mbuf + mi, "modules", 7) == 1) { has_modules = 1; break; }
-                mi = mi + 1;
-            }
-            if (has_modules == 1) {
-                _status("  distlib...");
-                # v6.5.19: was a bare `cmd_distlib(0);`. distlib's return value is
-                # its bundle self-check verdict (commands.cyr, "the generated
-                # bundle does not compile"), and dropping it meant publish printed
-                # that error, then went on to `git tag` the release and exit 0.
-                # A defective bundle must not get tagged. CHANGELOG [6.5.19].
-                var pub_dr = cmd_distlib(0);
-                if (pub_dr != 0) {
-                    _err("publish: distlib failed — not tagging");
-                    return pub_dr;
-                }
-            }
+    # Step 1: distlib if manifest has modules. 6.6.17: asked of the one reader — `[build]` or
+    # `[lib]` declares `modules` — instead of a raw substring hunt for "modules" through the first
+    # 4,095 bytes, which a comment satisfied and a key past byte 4,095 did not.
+    if (_mf_load() < 0) { return 1; }
+    if (_mf_has("build", "modules") == 1 || _mf_has("lib", "modules") == 1) {
+        _status("  distlib...");
+        # v6.5.19: was a bare `cmd_distlib(0);`. distlib's return value is
+        # its bundle self-check verdict (commands.cyr, "the generated
+        # bundle does not compile"), and dropping it meant publish printed
+        # that error, then went on to `git tag` the release and exit 0.
+        # A defective bundle must not get tagged. CHANGELOG [6.5.19].
+        var pub_dr = cmd_distlib(0);
+        if (pub_dr != 0) {
+            _err("publish: distlib failed — not tagging");
+            return pub_dr;
         }
     }
 

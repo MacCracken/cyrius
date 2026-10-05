@@ -152,3 +152,437 @@ fn _mf_vocab_print(): i64 {
     }
     return 0;
 }
+
+# ================================================================
+# THE READER — one function family for every manifest read in the CLI.
+# ================================================================
+# ⛔ WHY ONE. The CLI carried a separate hand-rolled scanner per key family — `[build]` (32,767-byte
+# cap), `[package] cyrius` / `version` / `name` (32,767 each, three copies), `[sections] base`
+# (32,767), `_auto_deps` (65,535) and `distlib` / `publish` (32,767 and 4,095) — none of which could
+# see a key past its cap: measured, a `[build]` starting at byte 44,000 made `cyrius build` print
+# its usage and exit 1 although the keys were there. Each also had its own value rule: a
+# single-quoted value (`entry = 'src/main.cyr'`) read as absent, and the line walkers had no
+# notion of a multi-line array, so a line inside one that began with `[` read as a section
+# header. Now the manifest is read WHOLE (grown to fit, refused by name past 16 MiB) and parsed by
+# one line walker that steps over every value it is not reading. CHANGELOG [6.6.17].
+
+var _MF_MAX = 16777216;   # a manifest past 16 MiB is refused by name, not read
+var _mf_buf = 0;          # the manifest's TOML header (a CYML body after a `---` line is cut)
+var _mf_len = 0;
+var _mf_state = 0;        # 0 = not read yet, 1 = loaded, 2 = no manifest, 3 = refused
+var _mf_path = 0;
+var _toml_bad = 0;        # set by a getter: the key is PRESENT but its value is malformed / mistyped
+
+fn _toml_eol(buf, n, p): i64 {
+    while (p < n && load8(buf + p) != 10) { p = p + 1; }
+    if (p < n) { return p + 1; }
+    return n;
+}
+
+fn _toml_skip_ws(buf, n, p): i64 {
+    while (p < n) {
+        var c = load8(buf + p);
+        if (c != 32 && c != 9 && c != 13) { return p; }
+        p = p + 1;
+    }
+    return p;
+}
+
+# A bare-key byte: A-Z a-z 0-9 _ - (TOML), plus `.` so a dotted key reads as ONE token and never
+# as its last segment.
+fn _toml_keych(c): i64 {
+    if (c >= 48 && c <= 57) { return 1; }
+    if (c >= 65 && c <= 90) { return 1; }
+    if (c >= 97 && c <= 122) { return 1; }
+    if (c == 95 || c == 45 || c == 46) { return 1; }
+    return 0;
+}
+
+fn _toml_hex(c): i64 {
+    if (c >= 48 && c <= 57) { return c - 48; }
+    if (c >= 97 && c <= 102) { return c - 87; }
+    if (c >= 65 && c <= 70) { return c - 55; }
+    return 0 - 1;
+}
+
+# Append code point `cp` to `out` at `o` as UTF-8; returns the new offset.
+fn _toml_put_cp(out, o, cp): i64 {
+    if (cp < 128) { store8(out + o, cp); return o + 1; }
+    if (cp < 2048) {
+        store8(out + o, 192 | (cp >> 6));
+        store8(out + o + 1, 128 | (cp & 63));
+        return o + 2;
+    }
+    if (cp < 65536) {
+        store8(out + o, 224 | (cp >> 12));
+        store8(out + o + 1, 128 | ((cp >> 6) & 63));
+        store8(out + o + 2, 128 | (cp & 63));
+        return o + 3;
+    }
+    store8(out + o, 240 | (cp >> 18));
+    store8(out + o + 1, 128 | ((cp >> 12) & 63));
+    store8(out + o + 2, 128 | ((cp >> 6) & 63));
+    store8(out + o + 3, 128 | (cp & 63));
+    return o + 4;
+}
+
+# Offset just past the string that opens at buf[p] (`"`, `'`, `"""` or `'''`). An unterminated
+# single-line string stops at its line end.
+fn _toml_skip_string(buf, n, p): i64 {
+    var q = load8(buf + p);
+    if (p + 2 < n && load8(buf + p + 1) == q && load8(buf + p + 2) == q) {
+        var i = p + 3;
+        while (i + 2 < n) {
+            var c = load8(buf + i);
+            if (q == 34 && c == 92) { i = i + 2; continue; }
+            if (c == q && load8(buf + i + 1) == q && load8(buf + i + 2) == q) {
+                i = i + 3;
+                if (i < n && load8(buf + i) == q) { i = i + 1; }     # `""""` / `"""""` close
+                if (i < n && load8(buf + i) == q) { i = i + 1; }
+                return i;
+            }
+            i = i + 1;
+        }
+        return n;
+    }
+    var j = p + 1;
+    while (j < n) {
+        var d = load8(buf + j);
+        if (d == 10) { return j; }
+        if (d == q) { return j + 1; }
+        if (q == 34 && d == 92) { j = j + 1; }
+        j = j + 1;
+    }
+    return n;
+}
+
+# Offset just past the value at buf[p]: a string, an array or inline table (nested, multi-line,
+# with strings and comments inside), or — for a bare token — p itself (the line walker then steps
+# to the end of the line).
+fn _toml_skip_value(buf, n, p): i64 {
+    if (p >= n) { return n; }
+    var c = load8(buf + p);
+    if (c == 34 || c == 39) { return _toml_skip_string(buf, n, p); }
+    if (c != 91 && c != 123) { return p; }
+    var depth = 0;
+    while (p < n) {
+        c = load8(buf + p);
+        if (c == 34 || c == 39) { p = _toml_skip_string(buf, n, p); continue; }
+        if (c == 35) {
+            while (p < n && load8(buf + p) != 10) { p = p + 1; }
+            continue;
+        }
+        if (c == 91 || c == 123) { depth = depth + 1; }
+        if (c == 93 || c == 125) {
+            depth = depth - 1;
+            if (depth == 0) { return p + 1; }
+        }
+        p = p + 1;
+    }
+    return n;
+}
+
+# Parse the line at `p` into `info` (4 x 8 B): kind (0 = blank / comment / not a key line,
+# 1 = `[table]`, 2 = `[[array]]`, 3 = `key = value`), name offset, name length, value offset.
+# Returns where the NEXT line starts — past a multi-line value, so no line inside one is ever
+# taken for a header or a key.
+fn _toml_line(buf, n, p, info): i64 {
+    store64(info, 0);
+    p = _toml_skip_ws(buf, n, p);
+    if (p >= n) { return n; }
+    var c = load8(buf + p);
+    if (c == 91) {
+        var k = 1;
+        var s = p + 1;
+        if (s < n && load8(buf + s) == 91) { k = 2; s = s + 1; }
+        s = _toml_skip_ws(buf, n, s);
+        var e = s;
+        while (e < n && load8(buf + e) != 93 && load8(buf + e) != 10) { e = e + 1; }
+        var t = e;
+        while (t > s && (load8(buf + t - 1) == 32 || load8(buf + t - 1) == 9)) { t = t - 1; }
+        store64(info, k);
+        store64(info + 8, s);
+        store64(info + 16, t - s);
+        return _toml_eol(buf, n, e);
+    }
+    var ks = p;
+    var ke = p;
+    if (c == 34 || c == 39) {
+        var qe = _toml_skip_string(buf, n, p);
+        ks = p + 1;
+        ke = qe - 1;
+        p = qe;
+    } else {
+        while (p < n && _toml_keych(load8(buf + p)) == 1) { p = p + 1; }
+        ke = p;
+    }
+    if (ke <= ks) { return _toml_eol(buf, n, p); }
+    p = _toml_skip_ws(buf, n, p);
+    if (p >= n || load8(buf + p) != 61) { return _toml_eol(buf, n, p); }
+    p = _toml_skip_ws(buf, n, p + 1);
+    store64(info, 3);
+    store64(info + 8, ks);
+    store64(info + 16, ke - ks);
+    store64(info + 24, p);
+    return _toml_eol(buf, n, _toml_skip_value(buf, n, p));
+}
+
+# Offset of the value of `key` in `[section]`, or -1. Names compare WHOLE: `test` is not
+# `test-only`, `name` is not `display-name`, and `[build]` is not `[build.debug]`. The first
+# occurrence wins.
+fn _toml_find(buf, n, section, key): i64 {
+    var info[32];
+    var sl = strlen(section);
+    var kl = strlen(key);
+    var insec = 0;
+    var p = 0;
+    while (p < n) {
+        p = _toml_line(buf, n, p, &info);
+        var kind = load64(&info);
+        if (kind == 1 || kind == 2) {
+            insec = 0;
+            if (kind == 1 && load64(&info + 16) == sl) {
+                if (memeq(buf + load64(&info + 8), section, sl) == 1) { insec = 1; }
+            }
+        } elif (kind == 3 && insec == 1) {
+            if (load64(&info + 16) == kl) {
+                if (memeq(buf + load64(&info + 8), key, kl) == 1) { return load64(&info + 24); }
+            }
+        }
+    }
+    return 0 - 1;
+}
+
+# The keys present in `[section]`, in file order, as a vec of fresh cstrs (empty when the section
+# is absent).
+fn _toml_section_keys(buf, n, section): i64 {
+    var out = vec_new();
+    var info[32];
+    var sl = strlen(section);
+    var insec = 0;
+    var p = 0;
+    while (p < n) {
+        p = _toml_line(buf, n, p, &info);
+        var kind = load64(&info);
+        if (kind == 1 || kind == 2) {
+            insec = 0;
+            if (kind == 1 && load64(&info + 16) == sl) {
+                if (memeq(buf + load64(&info + 8), section, sl) == 1) { insec = 1; }
+            }
+        } elif (kind == 3 && insec == 1) {
+            var kl = load64(&info + 16);
+            var k = alloc(kl + 1);
+            memcpy(k, buf + load64(&info + 8), kl);
+            store8(k + kl, 0);
+            vec_push(out, k);
+        }
+    }
+    return out;
+}
+
+# The single-line string at buf[p] — basic `"…"` (escapes decoded) or literal `'…'` (verbatim:
+# TOML literal strings have NO escapes) — as a fresh cstr, with the offset past its closing quote
+# stored in *endp. 0 when buf[p] is not a quote; 0 with _toml_bad set when the string is
+# unterminated on its line, carries an invalid escape, or is a multi-line `"""` / `'''` string.
+fn _toml_str_at(buf, n, p, endp): i64 {
+    if (p >= n) { return 0; }
+    var q = load8(buf + p);
+    if (q != 34 && q != 39) { return 0; }
+    if (p + 2 < n && load8(buf + p + 1) == q && load8(buf + p + 2) == q) { _toml_bad = 1; return 0; }
+    var e = p + 1;
+    while (e < n) {
+        var c = load8(buf + e);
+        if (c == 10) { _toml_bad = 1; return 0; }
+        if (c == q) { break; }
+        if (q == 34 && c == 92) { e = e + 1; }
+        e = e + 1;
+    }
+    if (e >= n) { _toml_bad = 1; return 0; }
+    var out = alloc(e - p + 1);
+    var o = 0;
+    var i = p + 1;
+    while (i < e) {
+        var b = load8(buf + i);
+        if (q == 34 && b == 92) {
+            var x = load8(buf + i + 1);
+            i = i + 2;
+            if (x == 110) { store8(out + o, 10); o = o + 1; }
+            elif (x == 116) { store8(out + o, 9); o = o + 1; }
+            elif (x == 114) { store8(out + o, 13); o = o + 1; }
+            elif (x == 98) { store8(out + o, 8); o = o + 1; }
+            elif (x == 102) { store8(out + o, 12); o = o + 1; }
+            elif (x == 34 || x == 92) { store8(out + o, x); o = o + 1; }
+            elif (x == 117 || x == 85) {
+                var nd = 4;
+                if (x == 85) { nd = 8; }
+                var cp = 0;
+                var k = 0;
+                while (k < nd) {
+                    if (i + k >= e) { _toml_bad = 1; return 0; }
+                    var h = _toml_hex(load8(buf + i + k));
+                    if (h < 0) { _toml_bad = 1; return 0; }
+                    cp = cp * 16 + h;
+                    k = k + 1;
+                }
+                if (cp > 1114111) { _toml_bad = 1; return 0; }
+                i = i + nd;
+                o = _toml_put_cp(out, o, cp);
+            } else { _toml_bad = 1; return 0; }
+        } else {
+            store8(out + o, b);
+            o = o + 1;
+            i = i + 1;
+        }
+    }
+    store8(out + o, 0);
+    store64(endp, e + 1);
+    return out;
+}
+
+# A string, or an array of strings, at buf[p] as a vec of cstrs — `key = "x"` reads as ["x"].
+# 0 with _toml_bad set for any other value, or an array holding a non-string.
+fn _toml_strs_at(buf, n, p): i64 {
+    var out = vec_new();
+    var e = 0;
+    if (p < n && (load8(buf + p) == 34 || load8(buf + p) == 39)) {
+        var s = _toml_str_at(buf, n, p, &e);
+        if (s == 0) { _toml_bad = 1; return 0; }
+        vec_push(out, s);
+        return out;
+    }
+    if (p >= n || load8(buf + p) != 91) { _toml_bad = 1; return 0; }
+    p = p + 1;
+    while (p < n) {
+        var c = load8(buf + p);
+        if (c == 32 || c == 9 || c == 13 || c == 10 || c == 44) { p = p + 1; continue; }
+        if (c == 35) {
+            while (p < n && load8(buf + p) != 10) { p = p + 1; }
+            continue;
+        }
+        if (c == 93) { return out; }
+        if (c != 34 && c != 39) { _toml_bad = 1; return 0; }
+        var s2 = _toml_str_at(buf, n, p, &e);
+        if (s2 == 0) { _toml_bad = 1; return 0; }
+        vec_push(out, s2);
+        p = e;
+    }
+    _toml_bad = 1;
+    return 0;
+}
+
+# 1 when the bytes at p end a bare token (space, `#`, `,`, a closing bracket or the line end).
+fn _toml_tok_end(buf, n, p): i64 {
+    if (p >= n) { return 1; }
+    var c = load8(buf + p);
+    if (c == 32 || c == 9 || c == 13 || c == 10 || c == 35 || c == 44 || c == 93 || c == 125) { return 1; }
+    return 0;
+}
+
+# ── the manifest ──────────────────────────────────────────────────────────────────────────
+# The CYML header ends at a line that starts `---`; everything after it is prose.
+fn _mf_header_len(b, n): i64 {
+    var i = 0;
+    while (i + 3 < n) {
+        if (load8(b + i) == 10 && memeq(b + i + 1, "---", 3) == 1) { return i; }
+        i = i + 1;
+    }
+    return n;
+}
+
+# Load ./cyrius.cyml (legacy: ./cyrius.toml) WHOLE, once per process (nothing in the CLI changes
+# directory, and the one in-process manifest write — `cyrius update`'s toml migration — writes the
+# same TOML). Returns 1 when loaded, 0 when there is no manifest, -1 when it exists and could not
+# be read or is larger than 16 MiB (named once).
+fn _mf_load(): i64 {
+    if (_mf_state == 1) { return 1; }
+    if (_mf_state == 2) { return 0; }
+    if (_mf_state == 3) { return 0 - 1; }
+    var path = "cyrius.cyml";
+    if (file_exists(path) == 0) { path = "cyrius.toml"; }
+    if (file_exists(path) == 0) {
+        _mf_state = 2;
+        return 0;
+    }
+    _mf_path = path;
+    var n = 0;
+    var b = file_read_whole_max(path, _MF_MAX, &n);
+    if (b == 0) {
+        _mf_state = 3;
+        if (n == 0 - 27) { _err_ctx("the manifest is larger than 16 MiB; refusing to read it", path); }
+        else { _err_ctx("cannot read the manifest", path); }
+        return 0 - 1;
+    }
+    _mf_len = _mf_header_len(b, n);
+    store8(b + _mf_len, 0);
+    _mf_buf = b;
+    _mf_state = 1;
+    return 1;
+}
+
+# `[section] key` as a fresh cstr, or 0 when absent (or no manifest). A present key whose value is
+# not a string also answers 0, with _toml_bad set — the caller decides whether that is an error.
+fn _mf_str(section, key): i64 {
+    _toml_bad = 0;
+    if (_mf_load() != 1) { return 0; }
+    var v = _toml_find(_mf_buf, _mf_len, section, key);
+    if (v < 0) { return 0; }
+    var e = 0;
+    var s = _toml_str_at(_mf_buf, _mf_len, v, &e);
+    if (s == 0) { _toml_bad = 1; }
+    return s;
+}
+
+# `[section] key` as 1 / 0; -1 when absent, -2 when present but not `true` / `false`.
+fn _mf_bool(section, key): i64 {
+    _toml_bad = 0;
+    if (_mf_load() != 1) { return 0 - 1; }
+    var v = _toml_find(_mf_buf, _mf_len, section, key);
+    if (v < 0) { return 0 - 1; }
+    if (v + 4 <= _mf_len && memeq(_mf_buf + v, "true", 4) == 1) {
+        if (_toml_tok_end(_mf_buf, _mf_len, v + 4) == 1) { return 1; }
+    }
+    if (v + 5 <= _mf_len && memeq(_mf_buf + v, "false", 5) == 1) {
+        if (_toml_tok_end(_mf_buf, _mf_len, v + 5) == 1) { return 0; }
+    }
+    _toml_bad = 1;
+    return 0 - 2;
+}
+
+# `[section] key` — a string or an array of strings — as a vec of cstrs; 0 when absent, 0 with
+# _toml_bad set when present with another type.
+fn _mf_strs(section, key): i64 {
+    _toml_bad = 0;
+    if (_mf_load() != 1) { return 0; }
+    var v = _toml_find(_mf_buf, _mf_len, section, key);
+    if (v < 0) { return 0; }
+    return _toml_strs_at(_mf_buf, _mf_len, v);
+}
+
+fn _mf_has(section, key): i64 {
+    if (_mf_load() != 1) { return 0; }
+    if (_toml_find(_mf_buf, _mf_len, section, key) < 0) { return 0; }
+    return 1;
+}
+
+# The key `[section] key` was actually read under — `key` itself or, when that is absent, the
+# first synonym the vocabulary declares for it (`[build] src` for `entry`) — or 0 when neither is
+# present. The ONE place synonyms resolve.
+fn _mf_key_used(section, key): i64 {
+    if (_mf_has(section, key) == 1) { return key; }
+    var row = _mf_vocab_row(section, key);
+    if (row == 0) { return 0; }
+    var syn = _mf_vocab_field(row, 3);
+    if (streq(syn, "-") == 1) { return 0; }
+    if (_mf_has(section, syn) == 1) { return syn; }
+    return 0;
+}
+
+# `_mf_str` through the synonym rule.
+fn _mf_key_str(section, key): i64 {
+    var k = _mf_key_used(section, key);
+    if (k == 0) {
+        _toml_bad = 0;
+        return 0;
+    }
+    return _mf_str(section, k);
+}
