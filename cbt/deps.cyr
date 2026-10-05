@@ -1699,6 +1699,25 @@ fn _dep_reject_unsafe_tag(tag): i64 {
     return 0;
 }
 
+# 6.6.17 — the git-dep cache key: `<base>/<name>/<tag>`, and `<base>/<name>/.untagged` for an
+# untagged dep (the remote's default branch). The untagged clone used to live at
+# `<name>/main`, the very dir a `tag = "main"` dep resolves to, so whichever ran first served
+# the other: the branch's bytes vendored for an untagged dep, or the default-branch clone
+# refused as a "tampered cache" for the tagged one. A `.`-led component is one
+# `_dep_reject_unsafe_tag` refuses in every tag, so no tag can name the untagged key. <base>
+# is `<home>/deps`, else the run's private temp dir (whose flat `<name>_<tag>` had the same
+# collision: `[deps.a_b]` untagged against `[deps.a] tag = "b"`); both levels are created here.
+fn _dep_clone_dir(name, tag): i64 {
+    var base = 0;
+    if (_home != 0) { base = _cat2(_home, "/deps"); } else { base = _cbt_tmpfile("deps"); }
+    sys_mkdir(base, 0x1ED);
+    var nd = _cat2(_cat2(base, "/"), name);
+    sys_mkdir(nd, 0x1ED);
+    var key = tag;
+    if (key == 0) { key = ".untagged"; }
+    return _cat2(_cat2(nd, "/"), key);
+}
+
 # Print a refused tag with its non-printing bytes as `\xNN`, so the error line
 # cannot carry a terminal escape sequence out of a hostile manifest.
 fn _ew_tag_shown(tag): i64 {
@@ -2104,40 +2123,7 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
             # override is operator-controlled and has no remote tag to pin.
             # The git/tag fields are inert in that case.
             if (need_clone == 1) {
-                var clone_sb = str_builder_new();
-                if (_home != 0) {
-                    str_builder_add_cstr(clone_sb, _home);
-                    str_builder_add_cstr(clone_sb, "/deps/");
-                    str_builder_add_cstr(clone_sb, dep_name);
-                    str_builder_add_cstr(clone_sb, "/");
-                    if (dep_tag != 0) {
-                        str_builder_add_cstr(clone_sb, dep_tag);
-                    } else {
-                        str_builder_add_cstr(clone_sb, "main");
-                    }
-                } else {
-                    str_builder_add_cstr(clone_sb, _cbt_tmpfile("deps"));
-                    str_builder_add_cstr(clone_sb, "/");
-                    str_builder_add_cstr(clone_sb, dep_name);
-                    if (dep_tag != 0) {
-                        str_builder_add_cstr(clone_sb, "_");
-                        str_builder_add_cstr(clone_sb, dep_tag);
-                    }
-                }
-                var clone_dir = str_data(str_builder_build(clone_sb));
-                if (_home != 0) {
-                    var pdir_sb = str_builder_new();
-                    str_builder_add_cstr(pdir_sb, _home);
-                    str_builder_add_cstr(pdir_sb, "/deps");
-                    sys_mkdir(str_data(str_builder_build(pdir_sb)), 0x1ED);
-                    var pdir2_sb = str_builder_new();
-                    str_builder_add_cstr(pdir2_sb, _home);
-                    str_builder_add_cstr(pdir2_sb, "/deps/");
-                    str_builder_add_cstr(pdir2_sb, dep_name);
-                    sys_mkdir(str_data(str_builder_build(pdir2_sb)), 0x1ED);
-                } else {
-                    sys_mkdir(_cbt_tmpfile("deps"), 0x1ED);
-                }
+                var clone_dir = _dep_clone_dir(dep_name, dep_tag);
                 if (is_dir(str_from(clone_dir)) == 0) {
                     var git_ok = 1;
                     var gi2 = 0;

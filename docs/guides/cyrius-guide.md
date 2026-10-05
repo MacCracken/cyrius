@@ -1958,7 +1958,8 @@ no trailer: it fails open for one resolve and comes back stamped. `cyrius deps -
 re-hashes `lib/` **keeping** the commit pins (it used to drop them).
 
 **The git-dep CACHE is verified too (v6.6.5, CVE-43).** A git dep is cloned once into
-`$CYRIUS_HOME/deps/<name>/<tag>` and reused by every project on the machine, so on every
+`$CYRIUS_HOME/deps/<name>/<tag>` (an untagged dep into `<name>/.untagged`, so it never shares
+a clone with a `tag = "main"` dep — 6.6.17) and reused by every project on the machine, so on every
 resolve the resolver checks that the checkout is still consistent with the tag it claims:
 `.git` is a real directory, `HEAD == refs/tags/<tag>^{commit}`, `remote.origin.url` is the url
 your manifest declares (compared with a trailing `/` and `.git` normalised away — `…/x` and

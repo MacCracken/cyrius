@@ -255,8 +255,9 @@ fn _cli_help_extra(verb): i64 {
     if (streq(verb, "deps") == 1) {
         println("");
         println("Resolve [deps] stdlib leaves and [deps.NAME] entries from cyrius.cyml into");
-        println("lib/. Each named dep is git-cloned into ~/.cyrius/deps/<name>/<tag>/ and its");
-        println("modules are COPIED into lib/ (a symlinked lib/ is refused). cyrius.lock is");
+        println("lib/. Each named dep is git-cloned into ~/.cyrius/deps/<name>/<tag>/ (an");
+        println("untagged one into <name>/.untagged/) and its modules are COPIED into lib/");
+        println("(a symlinked lib/ is refused). cyrius.lock is");
         println("written whenever lib/ gains a file it does not cover — including the first");
         println("lock of a stdlib-only project and a newly declared stdlib leaf.");
         println("  --verify    verify cyrius.lock matches the working lib/: every locked hash,");
