@@ -1,0 +1,74 @@
+# ptr_param_small_struct.tcyr — 6.6.17 (a2). A `p: *T` PARAMETER is an 8-byte pointer whatever
+# T's size, so `p.v` reads and writes the struct it points at — for an 8 B (or smaller) T too.
+#
+# ⛔ THE DEFECT, every release through 6.6.16. `_param_record` (src/frontend/parse_fn.cyr) ran
+# MARK_SMALL_STRUCT on every struct-typed parameter, and that marks a struct of 8 B or less as
+# held INLINE in its slot. On a `*T` slot that turned the pointer into "the struct": `rd(&b)` read
+# the pointer itself as `p.v` (an address where 5 is right), `wr(&b, 9)` overwrote the pointer and
+# left b alone, on x86, aarch64, PE and cx. A captured `*T` parameter did the same inside a closure
+# (`_CL_CAP_BASE_RA` decided "holds an address" by T's size alone). A by-value 8 B parameter is the
+# control: it IS held inline and must stay so.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fnptr.cyr"
+include "lib/assert.cyr"
+
+struct B1 { v; }                     # 8 B
+struct B4 { a: i32; }                # 4 B
+struct B2 { a: i32; b: i32; }        # 8 B, two fields
+struct H { n; m; }                   # 16 B (control: always address-shaped)
+
+fn rd(p: *B1) { return p.v; }
+fn wr(p: *B1, n) { p.v = n; return 0; }
+fn rd4(p: *B4) { return p.a; }
+fn wr4(p: *B4, n) { p.a = n; return 0; }
+fn sw(p: *B2) { var t = p.a; p.a = p.b; p.b = t; return 0; }
+fn fwd(p: *B1) { wr(p, p.v + 1); return rd(p); }
+fn B1_get(self: B1) { return self.v; }
+fn B1_pget(self: *B1) { return self.v; }
+fn B1_set(self: *B1, n) { self.v = n; return 0; }
+fn m_get(p: *B1) { return p.get(); }
+fn m_pget(p: *B1) { return p.pget(); }
+fn m_set(p: *B1) { p.set(42); return 0; }
+fn rdg<T>(p: *T) { return p.v; }
+fn g_rd(p: *B1) { return rdg<B1>(p); }
+fn clo1(p: *B1) { var f = || { return p.v * 2; }; return fncall0(f); }
+fn clo4(p: *B4) { var f = || { return p.a * 3; }; return fncall0(f); }
+fn cloH(p: *H) { var f = || { return p.n * 2 + p.m; }; return fncall0(f); }
+fn byv(b: B1) { b.v = b.v + 100; return b.v; }
+fn clob(b: B1) { var f = || { return b.v * 2; }; return fncall0(f); }
+
+fn run() {
+    var b: B1; b.v = 5;
+    assert_eq(rd(&b), 5, "*B1 (8 B) param: p.v reads the pointee");
+    wr(&b, 9);
+    assert_eq(b.v, 9, "*B1 param: p.v = n writes the pointee");
+    var c: B4; c.a = 3;
+    assert_eq(rd4(&c), 3, "*B4 (4 B) param: p.a reads the pointee");
+    wr4(&c, 44);
+    assert_eq(c.a, 44, "*B4 param: p.a = n writes the pointee");
+    var d: B2; d.a = 1; d.b = 2;
+    sw(&d);
+    assert_eq(d.a * 10 + d.b, 21, "*B2 param: two-field swap through the pointer");
+    b.v = 6;
+    assert_eq(fwd(&b), 7, "*B1 param forwarded to *B1 params");
+    assert_eq(b.v, 7, "*B1 param forwarded: the caller's struct moved");
+    assert_eq(m_get(&b), 7, "method with a by-value self on a *B1 param");
+    assert_eq(m_pget(&b), 7, "method with a *B1 self on a *B1 param");
+    m_set(&b);
+    assert_eq(b.v, 42, "method writing through a *B1 self on a *B1 param");
+    assert_eq(g_rd(&b), 42, "generic `*T` instance at T = B1");
+    assert_eq(clo1(&b), 84, "closure capturing a *B1 param reads the pointee");
+    assert_eq(clo4(&c), 132, "closure capturing a *B4 param reads the pointee");
+    var h: H; h.n = 3; h.m = 1;
+    assert_eq(cloH(&h), 7, "control: closure capturing a *H (16 B) param");
+    assert_eq(byv(b), 142, "control: a by-value B1 param is a value");
+    assert_eq(b.v, 42, "control: a by-value B1 param does not write the caller's");
+    assert_eq(clob(b), 84, "control: closure capturing a by-value B1 param");
+    return 0;
+}
+
+alloc_init();
+run();
+var r = assert_summary();

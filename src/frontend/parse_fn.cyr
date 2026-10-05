@@ -3828,9 +3828,12 @@ fn _mark_ptr_param(S): i64 {
 # a struct by value (it reads the pending `*` mark, so first); a struct of 8 B or less is inline
 # (MARK_SMALL_STRUCT); a `*T` is marked on its own slot — LAST, because MARK_SMALL_STRUCT's SLAGG
 # rewrites the word's high half. One call from the parameter loop. CHANGELOG [6.6.16]
+# ⛔ 6.6.17 (a2) — only a BY-VALUE struct parameter is a small struct. A `p: *T` is always an 8-byte
+# pointer, whatever T's size; marking it inline when T was 8 B or less made `p.v` read and write
+# the pointer's own slot (the caller's struct never moved). CHANGELOG [6.6.17]
 fn _param_record(S, li, pnoff, is_async): i64 {
     if (is_async == 1) { _refuse_async_struct_param(S, li, pnoff); }
-    MARK_SMALL_STRUCT(S, li, GLTYPE(S, li));
+    if (_cur_fn_ptrp != li + 1) { MARK_SMALL_STRUCT(S, li, GLTYPE(S, li)); }
     if (_cur_fn_ptrp == li + 1) { SLPTRP(S, li); }
     _cur_fn_ptrp = 0;
     return 0;

@@ -160,6 +160,12 @@ fn _cl_snap_aew(esl): i64 {
     if (_cl_snap == 0) { return 0; }
     return (L64(_cl_snap + _cl_snap_n * 8 + esl * 8) >> 48) & 0xFF;
 }
+# The enclosing slot's `p: *T` mark (util.cyr GLPTRP, bit 56 of the same word). 6.6.17
+fn _cl_snap_ptrp(esl): i64 {
+    if (_cl_snap == 0) { return 0; }
+    if (esl < 0) { return 0; }
+    return (L64(_cl_snap + _cl_snap_n * 8 + esl * 8) >> 56) & 1;
+}
 fn _cl_snap_type(esl): i64 {
     if (_cl_snap == 0) { return 0; }
     return L64(_cl_snap + _cl_snap_n * 16 + esl * 8);
