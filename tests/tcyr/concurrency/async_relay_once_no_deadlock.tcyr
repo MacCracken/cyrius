@@ -57,9 +57,18 @@ fn _aro_task(arg): i64 {
     return 0;
 }
 
-fn main() {
+fn main(): i64 {
     alloc_init();
     _aro_rt = async_new();
+
+    #ifdef CYRIUS_TARGET_WIN
+    # Windows has no pipes (sys_pipe is -1 on PE): every row below needs two. The Windows relay is
+    # exercised between sockets and files by tests/tcyr/crossos/async_relay_once_socket.tcyr.
+    println("    SKIP: no pipes on Windows — the socket / file relay is crossos/async_relay_once_socket.tcyr");
+    var wp[16];
+    assert_eq(sys_pipe(&wp) < 0, 1, "Windows: sys_pipe is unavailable (the SKIP's premise)");
+    return assert_summary();
+    #endif
 
     # Two pipes: read from the first, relay into the second. Using ONE pipe would let the
     # relay's own write satisfy a later read and mask an ordering error.
@@ -89,6 +98,8 @@ fn main() {
     assert_eq(load8(rb), 104, "first byte is 'h'");
     assert_eq(load8(rb + 4), 111, "last byte is 'o'");
 
+    # ⛔ 6.6.17 — the summary IS the exit code. This returned 0 whatever the asserts said, so on
+    # cass (no pipes) it printed `1 passed, 7 failed` and exited 0.
     var r = assert_summary();
-    return 0;
+    return r;
 }

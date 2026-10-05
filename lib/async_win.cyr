@@ -286,11 +286,56 @@ fn async_wait_rw(rt, fd): i64 {
 
 # v6.5.26 — one direction of a byte relay. The epoll backend parks until rfd is readable;
 # here the read itself blocks, which is the equivalent wait, so the body is the same shape
-# minus the park. Returns bytes WRITTEN, 0 on clean EOF, -1 on error.
+# minus the park. Returns bytes WRITTEN, 0 on clean EOF, a negative error otherwise
+# (-WSAGetLastError for a socket, -1 for a HANDLE).
+# ⛔ 6.6.17 — WHY recv / send. This read with sys_read and wrote with sys_write — ReadFile /
+# WriteFile — and on a Winsock SOCKET those do not work: measured on cass over two loopback pairs
+# with five bytes waiting, the read returned 0 (a false EOF) and nothing was relayed, either way
+# round. A socket now goes through recv / send (0xF048 / 0xF047, sign-extended by their emitters);
+# Winsock's WSAENOTSOCK sends a file or pipe HANDLE back to ReadFile / WriteFile (the native TLS
+# transport's _tn_os_read / _tn_os_write rule). CHANGELOG [6.6.17]
 fn async_relay_once(rt, rfd, wfd, buf, len): i64 {
-    var n = sys_read(rfd, buf, len);
+    var n = _asw_relay_read(rfd, buf, len);
     if (n <= 0) { return n; }
-    return sys_write(wfd, buf, n);
+    return _asw_relay_write(wfd, buf, n);
+}
+
+# 1 when Winsock's negated error `e` says the handle is not a socket at all: WSAENOTSOCK, or
+# WSANOTINITIALISED (no socket exists in a process that never started Winsock).
+fn _asw_notsock(e): i64 {
+    var code = (0 - e) & 0xFFFFFFFF;
+    if (code == 10038) { return 1; }                 # WSAENOTSOCK
+    if (code == 10093) { return 1; }                 # WSANOTINITIALISED
+    return 0;
+}
+
+# The calling thread's last Winsock error, negated; never 0.
+fn _asw_wsa_err(): i64 {
+    var e = syscall(0xF024) & 0xFFFFFFFF;            # WSAGetLastError
+    if (e == 0) { return 0 - 1; }
+    return 0 - e;
+}
+
+# Read up to `len` bytes from `fd`: recv on a socket, ReadFile on any other HANDLE.
+fn _asw_relay_read(fd, buf, len): i64 {
+    var n = len;
+    if (n > 0x7FFFFFFF) { n = 0x7FFFFFFF; }          # recv takes an int length
+    var r = syscall(0xF048, fd, buf, n, 0);          # recv
+    if (r >= 0) { return r; }
+    var e = _asw_wsa_err();
+    if (_asw_notsock(e) == 1) { return sys_read(fd, buf, len); }
+    return e;
+}
+
+# Write `len` bytes to `fd`: send on a socket (a short send is legal), WriteFile on any other HANDLE.
+fn _asw_relay_write(fd, buf, len): i64 {
+    var n = len;
+    if (n > 0x7FFFFFFF) { n = 0x7FFFFFFF; }
+    var w = syscall(0xF047, fd, buf, n, 0);          # send
+    if (w >= 0) { return w; }
+    var e = _asw_wsa_err();
+    if (_asw_notsock(e) == 1) { return sys_write(fd, buf, len); }
+    return e;
 }
 
 # Reactor connect task: create an overlapped socket, associate it with the IOCP, bind a
