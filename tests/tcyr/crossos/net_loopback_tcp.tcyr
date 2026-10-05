@@ -14,6 +14,11 @@
 #      SO_RCVTIMEO read that expires as an error (not a hang), close.
 #   B. non-blocking: an accept with nothing pending is EAGAIN, net_connect_nb to the listener is
 #      connected, the pending connection is then accepted; net_connect_nb to a closed port is not.
+#      6.6.16: the socket accepted from that NON-BLOCKING listener is itself BLOCKING (an empty read
+#      under a 300 ms SO_RCVTIMEO waits for it; on POSIX its O_NONBLOCK is clear) while the
+#      listener stays non-blocking. Windows (FIONBIO) and macOS (O_NONBLOCK) hand the accepted
+#      socket the listener's mode; sock_accept now resets it, so the two
+#      `sock_clear_nonblocking(accepted, …)` workarounds this file carried are gone.
 #   C. UDP: two connected datagram sockets exchange a datagram; the multicast setters and
 #      sock_reuseport succeed.
 #   D. http_get against a one-shot HTTP server on the listener — in a thread on Windows, a forked
@@ -25,6 +30,8 @@
 # MUTATION (6.6.11): reverting ONE Windows arm — _net_os_accept's to `syscall(SYS_ACCEPT, ...)` —
 # fails groups A, B and D under wine and on cass. `_NET_SO_REUSE = 0x0004` (Windows' SO_REUSEADDR
 # instead of SO_EXCLUSIVEADDRUSE) fails group E on cass. CHANGELOG [6.6.11]
+# MUTATION (6.6.16): _net_os_accept without its mode reset fails group B's blocking rows on cass,
+# ecb and ach (the empty read returns at once). CHANGELOG [6.6.16]
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 include "lib/string.cyr"
@@ -33,6 +40,7 @@ include "lib/vec.cyr"
 include "lib/tagged.cyr"
 include "lib/io.cyr"
 include "lib/net.cyr"
+include "lib/chrono.cyr"
 include "lib/http.cyr"
 #ifdef CYRIUS_TARGET_WIN
 include "lib/thread.cyr"
@@ -163,6 +171,35 @@ fn _lb_tcp_group(): i64 {
     return 0;
 }
 
+# 6.6.16: `afd`, accepted from the NON-BLOCKING listener `lfd`, is blocking; `lfd` is still not.
+fn _lb_accepted_blocking(lfd, afd): i64 {
+    #ifndef CYRIUS_TARGET_WIN
+    var onb = _fd_o_nonblock();
+    var afl = sys_fcntl(afd, 3, 0);                  # F_GETFL
+    assert(afl >= 0, "F_GETFL on the accepted socket");
+    assert_eq(afl & onb, 0, "the accepted socket's O_NONBLOCK is clear (the listener's is not inherited)");
+    var lfl = sys_fcntl(lfd, 3, 0);
+    assert(lfl >= 0, "F_GETFL on the listener");
+    assert((lfl & onb) != 0, "…and the listener's own O_NONBLOCK is still set");
+    #endif
+    # The listener is still non-blocking: with nothing pending, a second accept fails at once.
+    var t0 = clock_now_ms();
+    var xt, xv = sock_accept(lfd);
+    assert_eq(is_err_result(xt), 1, "a second accept with nothing pending fails (the listener's mode is untouched)");
+    var quick = clock_now_ms() - t0;
+    assert(quick < 250, "…at once");
+    # The accepted socket blocks: an empty read waits for the 300 ms SO_RCVTIMEO instead of
+    # returning EAGAIN at once (0 ms on Windows and macOS before 6.6.16).
+    assert_eq(sock_set_recv_timeout(afd, 0, 300000), 0, "SO_RCVTIMEO 0.3 s on the accepted socket");
+    var b = alloc(8);
+    var t1 = clock_now_ms();
+    var rt, rv = sock_recv(afd, b, 8);
+    var waited = clock_now_ms() - t1;
+    assert_eq(is_err_result(rt), 1, "an empty read on the accepted socket ends by its timeout");
+    assert(waited >= 250, "…after waiting for it (>= 250 ms): the accepted socket is BLOCKING");
+    return 0;
+}
+
 fn _lb_nonblocking_group(): i64 {
     test_group("6.6.11 — non-blocking accept and net_connect_nb");
     var l = alloc(16);
@@ -189,10 +226,11 @@ fn _lb_nonblocking_group(): i64 {
         k = k + 1;
     }
     assert_eq(got, 1, "…and the listener then accepts it");
+    if (got == 1) { _lb_accepted_blocking(lfd, afd); }
     assert(sock_clear_nonblocking(lfd, saved) >= 0, "sock_clear_nonblocking");
-    # net_connect_nb left the client BLOCKING: a round trip on it works.
+    # net_connect_nb left the client BLOCKING, and sock_accept hands back a BLOCKING socket on
+    # every target: a round trip on the pair works with no mode fix-up on either end.
     if (got == 1) {
-        sock_clear_nonblocking(afd, saved);
         sock_set_recv_timeout(afd, 5, 0);
         assert_eq(sock_send_all(cfd, "nb", 2), 2, "the nb-connected client sends");
         var b = alloc(8);
@@ -278,7 +316,7 @@ fn _lb_exclusive_group(): i64 {
 # the listener either way: a client left in the backlog of an abandoned listener would wait for
 # a response forever, and http_get has no read timeout.
 fn _lb_serve(lfd, port): i64 {
-    var saved = sock_set_nonblocking(lfd);
+    sock_set_nonblocking(lfd);
     var cfd = 0 - 1;
     var k = 0;
     while (cfd < 0 && k < 1000) {
@@ -288,7 +326,6 @@ fn _lb_serve(lfd, port): i64 {
     }
     sock_close(lfd);
     if (cfd < 0) { return 1; }
-    sock_clear_nonblocking(cfd, saved);          # Windows: an accepted socket inherits FIONBIO
     sock_set_recv_timeout(cfd, 10, 0);
     var buf = alloc(2048);
     var got = 0;
