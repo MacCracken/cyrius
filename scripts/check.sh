@@ -1692,7 +1692,8 @@ _chk_gate "$ROOT/tests/gates/diagnostics/type_name_refused.sh"
 # image (tests/tcyr/crossos/global_array_initializer.tcyr runs the values on every host). These pin:
 # the shapes it refuses by name (count, range, a non-constant, an element type no list fills, a list
 # inside a top-level block); that a `kernel;` build (x86 and EFI) carries the bytes in its image
-# with no store behind the program; and that cx, which has no image, stores the same bytes.
+# with no store behind the program; and that cx bakes the same bytes into the .cyx var data that
+# cxvm copies into the guest, and they hash equal to the host image's (and aarch64's under qemu).
 _chk_gate "$ROOT/tests/gates/frontend/array_initializer_refusals.sh"
 _chk_gate "$ROOT/tests/gates/platform/kmode_array_initializer_baked.sh"
 _chk_gate "$ROOT/tests/gates/codegen/cx_array_initializer.sh"

@@ -1926,11 +1926,12 @@ fn _efi_stdlib_fallback_gate(): i64 {
         sys_close(read_fd); sys_close(write_fd); sys_close(out_fd);
         sys_unlink(src_path); _check(label, 1); return 1;
     }
-    # Build augmented envp: parent's ENVP_ARR (carries HOME, needed
-    # by cycc's `_init_cyrius_lib` to build the version-pinned
-    # fallback path) + CYRIUS_TARGET_EFI=1 + NUL. _self_host_pipe_efi
+    # Build augmented envp: parent's ENVP_ARR (carries CYRIUS_HOME and
+    # HOME — cycc's `_init_cyrius_lib` builds the version-pinned
+    # fallback path from CYRIUS_HOME when it is set and non-empty, else
+    # from HOME, since 6.6.16) + CYRIUS_TARGET_EFI=1 + NUL. _self_host_pipe_efi
     # passes only "CYRIUS_TARGET_EFI=1" but that suffices for the
-    # inline-asm efi_probe.cyr — this gate needs HOME because the
+    # inline-asm efi_probe.cyr — this gate needs the home vars because the
     # whole point is to exercise the stdlib-include fallback.
     var aug_envp = alloc((ENVP_COUNT + 2) * 8);
     var ei = 0;

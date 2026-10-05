@@ -43,10 +43,11 @@
 #     out of cbt/ and the package list out of build-windows-tarball.sh.
 #
 # HERMETIC. Everything is built from this tree with ./build/cycc into a throwaway
-# CYRIUS_HOME, AND HOME is a throwaway whose .cyrius is that same directory — cycc's
-# include fallback reads $HOME/.cyrius/versions/<ver>/lib and ignores CYRIUS_HOME, so a
-# CYRIUS_HOME alone was NOT hermetic (round 3: five rows compiled against the live
-# store, and went red with an empty HOME). The wine leg runs in a throwaway
+# CYRIUS_HOME, AND HOME is a throwaway whose .cyrius is that same directory. Until 6.6.16
+# cycc's include fallback read $HOME/.cyrius/versions/<ver>/lib and ignored CYRIUS_HOME, so
+# a CYRIUS_HOME alone was NOT hermetic (round 3: five rows compiled against the live
+# store, and went red with an empty HOME). Since 6.6.16 the fallback honours a set,
+# non-empty CYRIUS_HOME first; the HOME pin is kept, now redundant but harmless. The wine leg runs in a throwaway
 # WINEPREFIX under $T and removes its wineserver socket dir. Verified by running the
 # whole gate with HOME pointed at an EMPTY directory: green.
 #
@@ -179,13 +180,15 @@ mv "$HOME_DIR/bin/cyrsign-efi" "$T/cyrsign-efi.real"
 build_one "$ROOT/src/main_cx.cyr" "$HOME_DIR/bin/cycc_cx"
 CY="$HOME_DIR/bin/cyrius"
 export CYRIUS_HOME="$HOME_DIR"
-# ⛔ HERMETIC HOME TOO (round-3 review). cycc's include fallback reads
-# $HOME/.cyrius/versions/<cycc version>/lib and ignores CYRIUS_HOME
+# ⛔ HERMETIC HOME TOO (round-3 review). Until 6.6.16 cycc's include fallback read
+# $HOME/.cyrius/versions/<cycc version>/lib and ignored CYRIUS_HOME
 # (src/frontend/lex.cyr), so the fixtures that `include "lib/…"` from a scratch dir
 # with no lib/ were compiled against the LIVE store: with an empty HOME five rows went
 # red (run argc x2, test -D, tests count, fuzz one-file) while the header claimed
 # "nothing reads ~/.cyrius". HOME now points at a throwaway whose .cyrius IS the
 # CYRIUS_HOME built above, so every compile — wrapper or fallback — sees this tree's lib.
+# Since 6.6.16 the fallback honours the CYRIUS_HOME exported above first, so this pin is
+# redundant but harmless; it stays as a second guard.
 export HOME="$T/h"
 mkdir -p "$HOME"
 ln -s "$HOME_DIR" "$HOME/.cyrius"
