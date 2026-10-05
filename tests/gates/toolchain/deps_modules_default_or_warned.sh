@@ -1,8 +1,9 @@
 #!/bin/sh
 # deps_modules_default_or_warned.sh — a `[deps.X]` that lists no `modules` is either RESOLVED
 # (its tag or path ships `dist/X.cyr`) or WARNED BY NAME and counted; it is never dropped
-# silently. And a `[deps.NAME]` whose NAME would make a path (`/`, `..`) is refused, in the
-# root manifest and in a transitive one.
+# silently. And a `[deps.NAME]` whose NAME would make a path (`/`, `..`), or whose `tag` would
+# move the clone dir out of `<home>/deps/<name>`, is refused, in the root manifest and in a
+# transitive one.
 #
 # 6.6.13 (I10, filed by agnostic 0.1.7). `cbt/deps.cyr` cloned a named dep only under
 # `dep_git != 0 && dep_modules != 0` and marked it visited only when a module was copied, so a
@@ -18,6 +19,8 @@
 # CVE-62: the header NAME becomes the clone dir `<home>/deps/<name>/<tag>` and the
 # default `dist/<name>.cyr`; `[deps.../../esc/x]` cloned OUTSIDE the dep cache on 6.6.12 (the
 # v6.2.51 traversal guard covered sub-module / index / package names, never this one).
+# CVE-TBD(T1) (6.6.16): the same class on the TAG — `tag = "../../../esc/sub"` made git mkdir
+# outside the cache, and a tag naming an existing dir printed `rm -rf` advice for it (D9).
 #
 # Hermetic: a mktemp CYRIUS_HOME with the CLI built FROM SOURCE as the pin's own wrapper,
 # local file:// origins, no /etc/gitconfig or ~/.gitconfig (GIT_CONFIG_NOSYSTEM +
@@ -34,8 +37,14 @@
 #   drop `, N vendored nothing` from the summary           -> D3 D3b D4 red
 #   drop the modular-pull success mark                     -> D6 red
 #   drop the [deps.NAME] traversal refusal (I10d)          -> D8 red
+#   drop the tag refusal call (6.6.16, T1)                 -> D9a D9b D9c D9f red
+#   call the tag check on a tagless dep (no dep_tag guard) -> D4 D9e red (SIGSEGV)
+#   also refuse `/` inside a tag                           -> D9d red
+#   drop the empty-tag refusal                             -> D9f red
+#   print the refused tag raw (no \xNN escape)            -> D9f red
 # D5 (modules = []) and D7 (optional / target gates) are the anti-over-reach axes: every
-# mutant above leaves them green, and so must the fix.
+# mutant above leaves them green, and so must the fix. D9d (plain + slash tags) and D9e
+# (tagless path / git deps) are the tag check's anti-over-reach rows.
 set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT"
@@ -270,7 +279,143 @@ if [ "$rca" -ne 0 ] && grep -qF '[deps.../x] is not a usable dep name' "$W/d8a.e
     ok "D8 [deps.../x] and [deps.../../esc/x] (root) and a TRANSITIVE [deps.../../esc/y]: refused by name, rc 1, no lock, nothing created outside \$CYRIUS_HOME/deps"
 else bad "D8 (root rc=$rca transitive rc=$rct H/x=$([ -e "$H/x" ] && echo EXISTS || echo absent) W/esc=$([ -e "$W/esc" ] && echo EXISTS || echo absent)): $(diff "$W/d8.before2" "$W/d8.after" | head -3) $(head -2 "$W/d8a.err")"; fi
 
+# ── D9: CVE-TBD(T1) — a `tag` that would move the clone dir out of <home>/deps/<name> ─────
+# The tag is joined into `<home>/deps/<name>/<tag>`. On 6.6.15 `../../../esc/sub` made git
+# mkdir $W/esc before it rejected the ref, and `../../..` (an EXISTING dir, $W) skipped the
+# clone and printed `rm -rf <home>/deps/foo/../../..` — the parent of CYRIUS_HOME. git runs
+# through `/usr/bin/env git`, so a PATH shim logs every invocation: "git never invoked" is
+# measured, not inferred. The anti-over-reach rows (D9d, D9e) must stay green under every
+# mutant: plain and slash tags, and the tagless path / git deps that are most of the ecosystem.
+REALGIT=$(command -v git)
+mkdir -p "$W/shim"
+printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "%s/git.log"\nexec "%s" "$@"\n' "$W" "$REALGIT" > "$W/shim/git"
+chmod +x "$W/shim/git"
+run9() {   # run() with the git shim first on PATH; $W/git.log starts empty
+    : > "$W/git.log"
+    rc=0; if ( cd "$1" && PATH="$W/shim:$PATH" "$CY" deps > "$1.out" 2> "$1.err" ); then rc=0; else rc=$?; fi
+}
+snap9() { ( cd "$W" && find . -path ./home/deps -prune -o -path './d9*' -prune -o -path ./o -prune \
+    -o -path ./shim -prune -o -path ./git.log -prune -o -print | LC_ALL=C sort ); }
+git -C "$F" tag rel/1.0 2.0.0
+TT="$O/tt"; mkdir -p "$TT/dist"
+( cd "$TT" && git init -q . && printf 'fn tt_v(): i64 { return 4; }\n' > dist/tt.cyr \
+  && printf '[package]\nname = "tt"\nversion = "1.0.0"\nlanguage = "cyrius"\n\n[deps.foo]\ngit = "file://%s"\ntag = "../../../esc/t"\nmodules = ["dist/foo.cyr"]\n' "$F" > cyrius.cyml \
+  && git add -A && git commit -qm v1 && git tag 1.0.0 )
+git -C "$B" show HEAD:dist/bar.cyr > "$W/barmain.expect"
+noleak() {  # $1 = project dir: stderr + stdout carry no rm -rf and no real path under $W
+    ! grep -q 'rm -rf' "$1.err" "$1.out" && ! grep -qF "$W" "$1.err" "$1.out"
+}
+REFUSAL_TAIL="is not a usable tag (it would make the cache path leave <home>/deps/foo) — section refused"
+
+# D9a: the root traversal tag that used to mkdir outside the cache.
+freshcache; snap9 > "$W/d9.before"
+P="$W/d9a"; mkp "$P" <<EOF
+[deps.foo]
+git = "file://$F"
+tag = "../../../esc/sub"
+modules = ["dist/foo.cyr"]
+EOF
+run9 "$P"; snap9 > "$W/d9a.after"
+if [ "$rc" -eq 1 ] && grep -qxF "error: [deps.foo] tag '../../../esc/sub' $REFUSAL_TAIL" "$P.err" \
+   && [ ! -s "$W/git.log" ] && [ ! -e "$W/esc" ] && cmp -s "$W/d9.before" "$W/d9a.after" && [ ! -f "$P/cyrius.lock" ] \
+   && [ ! -e "$P/lib/foo.cyr" ] && noleak "$P"; then
+    ok "D9a root tag '../../../esc/sub': refused by name, rc 1, git never invoked, nothing created outside \$CYRIUS_HOME/deps, no lock"
+else bad "D9a (rc=$rc git=[$(head -1 "$W/git.log")] W/esc=$([ -e "$W/esc" ] && echo EXISTS || echo absent)): $(diff "$W/d9.before" "$W/d9a.after" | head -3) $(head -2 "$P.err")"; fi
+
+# D9b: `../../..` names an EXISTING dir ($W) — the shape that printed `rm -rf` of it.
+freshcache; mkdir -p "$H/deps/foo"
+P="$W/d9b"; mkp "$P" <<EOF
+[deps.foo]
+git = "file://$F"
+tag = "../../.."
+modules = ["dist/foo.cyr"]
+EOF
+run9 "$P"
+if [ "$rc" -eq 1 ] && grep -qxF "error: [deps.foo] tag '../../..' $REFUSAL_TAIL" "$P.err" && [ ! -s "$W/git.log" ] \
+   && [ ! -f "$P/cyrius.lock" ] && noleak "$P"; then
+    ok "D9b tag '../../..' naming an existing dir: refused, rc 1, no 'rm -rf' and no real path in the output, git never invoked"
+else bad "D9b (rc=$rc git=[$(head -1 "$W/git.log")]): $(head -4 "$P.err")"; fi
+
+# D9c: the same class from a TRANSITIVE manifest (tt 1.0.0 declares foo at '../../../esc/t').
+freshcache; snap9 > "$W/d9.before"
+P="$W/d9c"; mkp "$P" <<EOF
+[deps.tt]
+git = "file://$TT"
+tag = "1.0.0"
+modules = ["dist/tt.cyr"]
+EOF
+run9 "$P"; snap9 > "$W/d9c.after"
+if [ "$rc" -eq 1 ] && grep -qxF "error: [deps.foo] tag '../../../esc/t' $REFUSAL_TAIL" "$P.err" \
+   && [ -f "$P/lib/tt.cyr" ] && ! grep -qF "file://$F" "$W/git.log" && [ ! -e "$W/esc" ] && cmp -s "$W/d9.before" "$W/d9c.after" \
+   && [ ! -f "$P/cyrius.lock" ] && [ ! -e "$P/lib/foo.cyr" ] && noleak "$P"; then
+    ok "D9c a TRANSITIVE [deps.foo] tag '../../../esc/t': refused by name, rc 1, foo's origin never fetched, nothing outside \$CYRIUS_HOME/deps, no lock"
+else bad "D9c (rc=$rc W/esc=$([ -e "$W/esc" ] && echo EXISTS || echo absent)): $(diff "$W/d9.before" "$W/d9c.after" | head -3) $(head -3 "$P.err")"; fi
+
+# D9d: anti-over-reach — a plain tag and a SLASH tag still clone, pin and vendor.
+freshcache
+P="$W/d9d1"; mkp "$P" <<EOF
+[deps.foo]
+git = "file://$F"
+tag = "1.0.0"
+modules = ["dist/foo.cyr"]
+EOF
+run9 "$P"; rc1=$rc
+P="$W/d9d2"; mkp "$P" <<EOF
+[deps.foo]
+git = "file://$F"
+tag = "rel/1.0"
+modules = ["dist/foo.cyr"]
+EOF
+run9 "$P"; rc2=$rc
+if [ "$rc1" -eq 0 ] && cmp -s "$W/d9d1/lib/foo.cyr" "$W/foo1.expect" && [ "$(lockpins "$W/d9d1" foo)" = "$C1" ] \
+   && [ "$rc2" -eq 0 ] && [ -d "$H/deps/foo/rel/1.0/.git" ] && cmp -s "$W/d9d2/lib/foo.cyr" "$W/foo2.expect" \
+   && [ "$(lockpins "$W/d9d2" foo)" = "$C2" ] && ! grep -q 'not a usable tag' "$W/d9d1.err" "$W/d9d2.err"; then
+    ok "D9d tags '1.0.0' and 'rel/1.0' still clone (under <home>/deps/foo/), vendor the tag's bytes and pin the tag's commit"
+else bad "D9d (rc1=$rc1 rc2=$rc2 pins1='$(lockpins "$W/d9d1" foo)' pins2='$(lockpins "$W/d9d2" foo)'): $(cat "$W/d9d1.err" "$W/d9d2.err" | head -4)"; fi
+
+# D9e: anti-over-reach — TAGLESS deps (no `tag` key at all) never reach the check.
+freshcache
+P="$W/d9e1"; mkp "$P" <<EOF
+[deps.foo]
+path = "../pathdep"
+modules = ["dist/foo.cyr"]
+EOF
+run9 "$P"; rc1=$rc
+P="$W/d9e2"; mkp "$P" <<EOF
+[deps.bar]
+git = "file://$B"
+modules = ["dist/bar.cyr"]
+EOF
+run9 "$P"; rc2=$rc
+if [ "$rc1" -eq 0 ] && cmp -s "$W/d9e1/lib/foo.cyr" "$PD/dist/foo.cyr" \
+   && [ "$rc2" -eq 0 ] && [ -d "$H/deps/bar/main/.git" ] && cmp -s "$W/d9e2/lib/bar.cyr" "$W/barmain.expect" \
+   && ! grep -q 'not a usable tag' "$W/d9e1.err" "$W/d9e2.err"; then
+    ok "D9e tagless path = \"../pathdep\" and a tagless git dep (default branch): both resolve, no tag refusal"
+else bad "D9e (rc1=$rc1 rc2=$rc2): $(cat "$W/d9e1.out" "$W/d9e1.err" "$W/d9e2.out" "$W/d9e2.err" | head -6)"; fi
+
+# D9f: the rest of the refused set — a literally empty `tag = ""`, a leading `-` / `/`, a
+# `.`-led component, a backslash, a control byte (shown escaped, never raw).
+freshcache; d9f=0; d9fn=0
+ESC=$(printf '\033')
+for t in '' '-x' '/abs' '.hidden' 'a/.b' 'a\b' "a${ESC}b"; do
+    d9fn=$((d9fn+1)); P="$W/d9f$d9fn"; mkp "$P" <<EOF
+[deps.foo]
+git = "file://$F"
+tag = "$t"
+modules = ["dist/foo.cyr"]
+EOF
+    run9 "$P"
+    if [ "$rc" -eq 1 ] && grep -qF "error: [deps.foo] tag '" "$P.err" && grep -qF "$REFUSAL_TAIL" "$P.err" \
+       && [ ! -s "$W/git.log" ] && [ ! -f "$P/cyrius.lock" ] && ! grep -qF "$ESC" "$P.err"; then
+        d9f=$((d9f+1))
+    else echo "    D9f row $d9fn: rc=$rc git=[$(head -1 "$W/git.log")] $(head -2 "$P.err")"; fi
+done
+if [ "$d9f" -eq 7 ] && grep -qxF "error: [deps.foo] tag '' $REFUSAL_TAIL" "$W/d9f1.err" \
+   && grep -qxF "error: [deps.foo] tag 'a\\x1bb' $REFUSAL_TAIL" "$W/d9f7.err"; then
+    ok "D9f tag = \"\", '-x', '/abs', '.hidden', 'a/.b', a backslash and a control byte: each refused (rc 1, git never invoked, no lock), the ESC shown as \\x1b"
+else bad "D9f ($d9f of 7 refused): $(head -1 "$W/d9f7.err")"; fi
+
 echo "$G: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1
-[ "$pass" -ge 9 ] || { echo "FAIL: $G: only $pass axes ran (floor 9)"; exit 1; }
-echo "PASS: $G — a modules-less [deps.X] is resolved from dist/X.cyr or warned and counted; unsafe names refused"
+[ "$pass" -ge 15 ] || { echo "FAIL: $G: only $pass axes ran (floor 15)"; exit 1; }
+echo "PASS: $G — a modules-less [deps.X] is resolved from dist/X.cyr or warned and counted; unsafe names and tags refused"
