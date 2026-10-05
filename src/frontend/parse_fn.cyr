@@ -8626,9 +8626,15 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                     # post-compaction positions.
                     var _fc0 = L64(S + 0x1A6010);
                     var _fcn = GFCNT(S);
-                    var _fi = _fc0;
-                    while (_fi < _fcn) {
-                        var _fa = _fixup_base + _fi * 16;
+                    # ⛔ 6.6.17 — NOT `_fi`: cybs (the seed-built bootstrap compiler) does not start an
+                    # identifier at `_`, so it lexes `_fi` as `fi` — THIS fn's own `fi` — and the loop
+                    # below then overwrote the fn index (SFNE recorded the code end under the wrong fn,
+                    # and DCE saw no calls). Latent since this loop landed; it broke seed-derive the
+                    # moment the cybs-built cycc took a path that reads `fi` after it. No two names in
+                    # one fn may differ only by leading underscores (gates/toolchain/underscore_alias).
+                    var _cfx = _fc0;
+                    while (_cfx < _fcn) {
+                        var _fa = _fixup_base + _cfx * 16;
                         var _fcp = L64(_fa);
                         var _fsh = 0;
                         var _ni2 = 0;
@@ -8638,7 +8644,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                             _ni2 = _ni2 + 1;
                         }
                         S64(_fa, _fcp - _fsh);
-                        _fi = _fi + 1;
+                        _cfx = _cfx + 1;
                     }
                     # Stage 3: shift jump-target table entries (used by LASE
                     # / BB analysis at IR>0; harmless to update at IR=0).
