@@ -1855,6 +1855,11 @@ _chk_gate "$ROOT/tests/gates/toolchain/build_config_windows_arm.sh"
 # file once; a missing target is a named failure; absent key = unchanged; an argument wins.
 _chk_gate "$ROOT/tests/gates/toolchain/test_runs_build_test.sh"
 
+# 6.6.17 (P1 m6) — manifest keys compare whole (`dev-stdlib` is not `stdlib`, `test-only` is not
+# `test`) and [deps.NAME] path / git / tag / target are TOML strings: `'…'` reads, a bare value is
+# refused by name, a quoted word in a comment inside an array is not an element.
+_chk_gate "$ROOT/tests/gates/toolchain/toml_key_boundary_and_values.sh"
+
 # 6.6.10 (bite 12) — the check driver runs only tools it BUILT from this tree in this run:
 # all nine executables it runs come from its private run dir, planted build/ stubs and a
 # ~/.cyrius/bin copy are ignored, and a tool that does not compile is a FAIL naming it.

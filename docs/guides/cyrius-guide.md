@@ -1811,7 +1811,9 @@ flag beats an environment variable, which beats the manifest, which beats the bu
 a key with no argument or environment channel (a `—` above) simply has no such rung. The whole
 manifest is read (a manifest past 16 MiB is refused by name) and values are TOML: `"…"` with
 escapes, `'…'` verbatim, `true`/`false`, arrays (multi-line, with comments); a CYML body after
-a `---` line is prose, never configuration.
+a `---` line is prose, never configuration. Keys compare whole — `dev-stdlib` is not `stdlib`,
+`test-only` is not `test` — and that holds in `[deps.NAME]` too, where `path` / `git` / `tag` /
+`target` must be TOML strings (`tag = 'v1'` reads `v1`; a bare `tag = v1` is refused by name).
 
 `[build]` carries what used to be retyped on every CI line (6.6.17):
 

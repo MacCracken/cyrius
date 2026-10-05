@@ -979,6 +979,10 @@ fn _toml_key_at(buf, n, si, klen): i64 {
         if (pc >= 65 && pc <= 90)   { return 0; }   # A-Z
         if (pc >= 97 && pc <= 122)  { return 0; }   # a-z
         if (pc == 95)               { return 0; }   # _
+        # 6.6.17 (m6): `-` is a bare-key byte too, so `stdlib` inside `dev-stdlib` is the TAIL of
+        # another key, not this one. Measured: `dev-stdlib = ["math"]` above the real `stdlib`
+        # made `cyrius deps` vendor math.cyr and none of the declared leaves (first match wins).
+        if (pc == 45)               { return 0; }   # -
     }
     # Walk back to the start of the line holding `si`.
     var ls = si;
@@ -1040,29 +1044,44 @@ fn _toml_key_at(buf, n, si, klen): i64 {
     return 1;
 }
 
-# Parse a TOML array of strings: ["a", "b", "c"] starting at buf[pos]
-# Returns a vec of cstrings. Advances pos past the closing ].
+# The value of the key at (or ending at) buf[pos] — a TOML array of strings, or a single string —
+# as a vec of cstrs. 6.6.17 (m6): elements are TOML strings (`'…'` literal, `"…"` with escapes;
+# a `'…'` element used to be DROPPED), a `#` comment inside the array is skipped (a `"…"` in it was
+# read as an element), and the search for the value stops at the end of the key's own line (it
+# used to skip to the next `[` wherever that was — a section header, when the value was not an
+# array). Empty vec when the line holds no string / array value.
 fn _parse_toml_str_array(buf, len, pos): i64 {
     var result = vec_new();
-    # Skip to [
-    while (pos < len && load8(buf + pos) != 91) { pos = pos + 1; }
+    while (pos < len) {
+        var k = load8(buf + pos);
+        if (k == 61 || k == 91 || k == 10) { break; }
+        pos = pos + 1;
+    }
+    if (pos < len && load8(buf + pos) == 61) { pos = _toml_skip_ws(buf, len, pos + 1); }
+    var e = 0;
+    if (pos < len && (load8(buf + pos) == 34 || load8(buf + pos) == 39)) {
+        var one = _toml_str_at(buf, len, pos, &e);
+        if (one != 0) { vec_push(result, one); }
+        return result;
+    }
+    if (pos >= len || load8(buf + pos) != 91) { return result; }
     pos = pos + 1;
     while (pos < len) {
         var c = load8(buf + pos);
         if (c == 93) { break; }
-        if (c == 34) {
-            pos = pos + 1;
-            var start = pos;
-            while (pos < len && load8(buf + pos) != 34) { pos = pos + 1; }
-            var slen = pos - start;
-            var s = alloc(slen + 1);
-            memcpy(s, buf + start, slen);
-            store8(s + slen, 0);
-            vec_push(result, s);
-            pos = pos + 1;
-        } else {
-            pos = pos + 1;
+        if (c == 35) {
+            while (pos < len && load8(buf + pos) != 10) { pos = pos + 1; }
+            continue;
         }
+        if (c == 34 || c == 39) {
+            var s = _toml_str_at(buf, len, pos, &e);
+            if (s != 0) {
+                vec_push(result, s);
+                pos = e;
+                continue;
+            }
+        }
+        pos = pos + 1;
     }
     return result;
 }
@@ -1723,6 +1742,7 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
             var dep_modular = 0;   # v6.2.50 Phase C: sub-modules from dist/<name>/
             var dep_optional = 0;  # v6.3.1 lever 2: resolve only when an active feature names this dep
             var dep_target = 0;    # v6.3.1 lever 2: resolve only on a matching build target
+            var dep_bad = 0;       # 6.6.17 (m6): the key whose value is not a TOML string
             # CVE-21 (v6.2.30): cleared if a tagged dep's resolved commit
             # disagrees with the lock — gates the module copy so poisoned
             # content never lands in lib/.
@@ -1737,41 +1757,25 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                         if (load8(buf + si + 1) != 100) { break; }
                     }
                 }
+                # 6.6.17 (m6): path / git / tag / target are read as TOML strings
+                # (`_toml_value_str_after_key`, cbt/manifest.cyr). They were "skip to the next `"`
+                # in the file", so `path = '../foo'` resolved the NEXT double-quoted string (the
+                # modules entry) and `tag = 'v1'` the same. A value that is not a string refuses
+                # the section by name (`dep_bad`).
                 if (memeq(buf + si, "path", 4) == 1 && load8(buf + si + 4) != 0 && (load8(buf + si + 4) == 32 || load8(buf + si + 4) == 61)) {
-                    var pi = si + 4;
-                    while (pi < n && load8(buf + pi) != 34) { pi = pi + 1; }
-                    pi = pi + 1;
-                    var ps = pi;
-                    while (pi < n && load8(buf + pi) != 34) { pi = pi + 1; }
-                    var plen = pi - ps;
-                    dep_path = alloc(plen + 1);
-                    memcpy(dep_path, buf + ps, plen);
-                    store8(dep_path + plen, 0);
+                    dep_path = _toml_value_str_after_key(buf, n, si + 4);
+                    if (dep_path == 0) { dep_bad = "path"; }
                     # v5.7.14: resolve relative `path = "..."` against
                     # the manifest's directory, not the consumer's cwd.
-                    dep_path = _dep_join_path(manifest_dir, dep_path);
+                    else { dep_path = _dep_join_path(manifest_dir, dep_path); }
                 }
                 if (memeq(buf + si, "git", 3) == 1 && (load8(buf + si + 3) == 32 || load8(buf + si + 3) == 61)) {
-                    var gi = si + 3;
-                    while (gi < n && load8(buf + gi) != 34) { gi = gi + 1; }
-                    gi = gi + 1;
-                    var gs = gi;
-                    while (gi < n && load8(buf + gi) != 34) { gi = gi + 1; }
-                    var glen = gi - gs;
-                    dep_git = alloc(glen + 1);
-                    memcpy(dep_git, buf + gs, glen);
-                    store8(dep_git + glen, 0);
+                    dep_git = _toml_value_str_after_key(buf, n, si + 3);
+                    if (dep_git == 0) { dep_bad = "git"; }
                 }
                 if (memeq(buf + si, "tag", 3) == 1 && (load8(buf + si + 3) == 32 || load8(buf + si + 3) == 61)) {
-                    var ti = si + 3;
-                    while (ti < n && load8(buf + ti) != 34) { ti = ti + 1; }
-                    ti = ti + 1;
-                    var ts = ti;
-                    while (ti < n && load8(buf + ti) != 34) { ti = ti + 1; }
-                    var tlen = ti - ts;
-                    dep_tag = alloc(tlen + 1);
-                    memcpy(dep_tag, buf + ts, tlen);
-                    store8(dep_tag + tlen, 0);
+                    dep_tag = _toml_value_str_after_key(buf, n, si + 3);
+                    if (dep_tag == 0) { dep_bad = "tag"; }
                 }
                 # Key-boundary check (space/`=` after `modules`) — matches
                 # the path/git/tag siblings above. Without it `modules` was
@@ -1812,18 +1816,20 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                 # the current build target matches (see `_dep_target_matches`).
                 # Scalar string, parsed like `tag`. Key-boundary checked.
                 if (memeq(buf + si, "target", 6) == 1 && (load8(buf + si + 6) == 32 || load8(buf + si + 6) == 61)) {
-                    var tgi = si + 6;
-                    while (tgi < n && load8(buf + tgi) != 34) { tgi = tgi + 1; }
-                    tgi = tgi + 1;
-                    var tgs = tgi;
-                    while (tgi < n && load8(buf + tgi) != 34) { tgi = tgi + 1; }
-                    var tglen = tgi - tgs;
-                    dep_target = alloc(tglen + 1);
-                    memcpy(dep_target, buf + tgs, tglen);
-                    store8(dep_target + tglen, 0);
+                    dep_target = _toml_value_str_after_key(buf, n, si + 6);
+                    if (dep_target == 0) { dep_bad = "target"; }
                 }
                 while (si < n && load8(buf + si) != 10) { si = si + 1; }
                 si = si + 1;
+            }
+            if (dep_bad != 0) {
+                _ew("error: [deps.");
+                _ew(dep_name);
+                _ew("] ");
+                _ew(dep_bad);
+                _ew(" is not a TOML string (quote it: \"…\" or '…') — section refused\n");
+                errors = errors + 1;
+                continue;
             }
             # CVE-76 (6.6.16): the tag becomes a path component of the clone dir —
             # refuse one that would leave `<home>/deps/<name>` BEFORE any gate, mkdir,
