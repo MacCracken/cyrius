@@ -4266,7 +4266,10 @@ everywhere else. cycc warns on a conflicting `SYS_*` redefinition.
   it refuses to start on agnos < 1.57.7 rather than listen on the network)
 - Signals (sigprocmask, kill, pause)
 - Filesystem (mkdir, rmdir, unlink, rename, link on ext2)
-- Networking (sockets, UDP, ICMP; #47–#61)
+- Networking (sockets, UDP, ICMP; #47–#61). Since 6.6.17 the BSD verbs link too: `sys_socket`
+  (AF_INET + SOCK_STREAM only), `sys_bind`, `sys_listen`, `sys_connect` and `sys_accept4` are built
+  on the same tagged-fd adapter as `lib/net.cyr` (#47 / #56 / #57); `sys_accept4` is
+  non-blocking (-11 when nothing is pending) and every other shape declines -38
 - Framebuffer, blit, keyboard (#38–#42), the GPU-compute band (`sys_gpu_dispatch`..`sys_gpu_blit_bb`, #82–#91) and the #92–#95 tail
 - SIMD, function pointers, inline asm (same as Linux/macOS)
 
@@ -4284,6 +4287,8 @@ everywhere else. cycc warns on a conflicting `SYS_*` redefinition.
 - Dynamic linking (`dlopen`, auxv machinery), only static binaries
 - Socket options: `sys_setsockopt` is a -38 decline stub (6.6.16); deadlines go through
   `sock_set_recv_timeout` / `sock_set_send_timeout`
+- The `cyrius` CLI: built for agnos (6.6.17) it answers `version` and `help` only — its verbs
+  run cycc as a child process through fork / execve / waitpid. Compile with `cycc` directly
 
 The agnos syscall surface is **append-only, currently #0–#104 + #106–#108 at agnos 1.57.9 (#105 withdrawn)**. The
 re-freeze rule (§5) names the agnos **kernel dispatch** — `agnos/kernel/core/syscall.cyr` —

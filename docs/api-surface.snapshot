@@ -4806,7 +4806,9 @@ syscalls_x86_64_agnos::sigset_add/2
 syscalls_x86_64_agnos::sigset_has/2
 syscalls_x86_64_agnos::sigset_new/0
 syscalls_x86_64_agnos::statfs_bsize/1
+syscalls_x86_64_agnos::sys_accept4/4
 syscalls_x86_64_agnos::sys_access/2
+syscalls_x86_64_agnos::sys_bind/3
 syscalls_x86_64_agnos::sys_blit/4
 syscalls_x86_64_agnos::sys_blk_close/1
 syscalls_x86_64_agnos::sys_blk_enum/2
@@ -4828,6 +4830,7 @@ syscalls_x86_64_agnos::sys_chdir/1
 syscalls_x86_64_agnos::sys_chmod/2
 syscalls_x86_64_agnos::sys_chroot/1
 syscalls_x86_64_agnos::sys_close/1
+syscalls_x86_64_agnos::sys_connect/3
 syscalls_x86_64_agnos::sys_dup/1
 syscalls_x86_64_agnos::sys_epoll_create/0
 syscalls_x86_64_agnos::sys_epoll_ctl/3
@@ -4885,6 +4888,7 @@ syscalls_x86_64_agnos::sys_kill_tree/2
 syscalls_x86_64_agnos::sys_klug/2
 syscalls_x86_64_agnos::sys_lgetxattr/4
 syscalls_x86_64_agnos::sys_link/4
+syscalls_x86_64_agnos::sys_listen/2
 syscalls_x86_64_agnos::sys_listxattr/3
 syscalls_x86_64_agnos::sys_llistxattr/3
 syscalls_x86_64_agnos::sys_lremovexattr/2
@@ -4959,6 +4963,7 @@ syscalls_x86_64_agnos::sys_sock_listen/1
 syscalls_x86_64_agnos::sys_sock_peer/1
 syscalls_x86_64_agnos::sys_sock_recv/3
 syscalls_x86_64_agnos::sys_sock_send/3
+syscalls_x86_64_agnos::sys_socket/3
 syscalls_x86_64_agnos::sys_socketpair/4
 syscalls_x86_64_agnos::sys_spawn/2
 syscalls_x86_64_agnos::sys_spawn_argv/5

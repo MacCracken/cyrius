@@ -13,6 +13,10 @@
 # so the assertions read what the kernel would have been given. The probe reports its own
 # results through an unused number (`syscall(999, tag, value)`), which the tracer logs too.
 # CHANGELOG [6.6.7]
+# 6.6.17: axis 5 the BSD socket verbs (sys_socket / bind / listen / connect / accept4) this peer
+# lacked, axis 6 their arity against the Linux-common wrappers, axis 7 the agnos build of the CLI
+# (cbt/cyrius.cyr), which stopped at ~110 arity errors. Measured on the 4a37046b peer: axis 5's
+# probes do not build (5 undefined fns), axis 6 reads 0 for all five, axis 7 does not compile.
 set -u
 R=$(cd "$(dirname "$0")/../../.." && pwd)
 T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: agnos_peer_fake_kernel: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
@@ -240,6 +244,120 @@ check "getsockname on the loopback listener reports 127.0.0.1:8080" "0 720581419
 check "a recycled slot (closed loopback listener) inherits no port and no class" "0 1" "$(mark 77) $(mark 78)"
 run "$T/a4.cyr" oldnet
 check "on a pre-1.57.7 kernel (flagged #56 → -1) a loopback server FAILS CLOSED" "1" "$(mark 79)"
+
+# ── axis 5 — the BSD socket verbs (6.6.17): built on #47 / #56 / #57, declining what agnos lacks ──
+# They were missing from the peer (a portable caller failed to LINK on agnos). Each one must drive
+# the same kernel calls lib/net.cyr's agnos arms do, with the same address and class rules.
+echo "axis 5 — sys_socket / sys_bind / sys_listen / sys_connect / sys_accept4 on the agnos adapter (6.6.17):"
+cat > "$T/a5.cyr" <<'EOF'
+include "lib/alloc.cyr"
+fn sa_in(sa, ip0, ip1, ip2, ip3, port): i64 {
+    store64(sa, 0);
+    store64(sa + 8, 0);
+    store16(sa, 2);
+    store8(sa + 2, (port >> 8) & 0xFF);
+    store8(sa + 3, port & 0xFF);
+    store8(sa + 4, ip0);
+    store8(sa + 5, ip1);
+    store8(sa + 6, ip2);
+    store8(sa + 7, ip3);
+    return sa;
+}
+var sa[16];
+var pa[16];
+var al[8];
+var l = sys_socket(2, 1, 0);
+syscall(999, 80, (l & AGNOS_SOCK_TAG) / AGNOS_SOCK_TAG);
+syscall(999, 81, sys_socket(2, 2, 0) * 1000000 + sys_socket(10, 1, 0) * 1000 + sys_socket(2, 1, 17));
+syscall(999, 82, sys_socket(2, 0x801, 0) * 1000 + (sys_socket(2, 0x80001, 6) & AGNOS_SOCK_TAG) / AGNOS_SOCK_TAG);
+syscall(999, 83, sys_listen(l, 4));
+syscall(999, 84, sys_bind(1, sa_in(&sa, 127, 0, 0, 1, 8080), 16));
+syscall(999, 85, sys_bind(l, sa_in(&sa, 127, 0, 0, 1, 8080), 8) * 1000 + sys_bind(l, sa_in(&sa, 127, 0, 0, 1, 0), 16));
+store16(&sa, 10);
+syscall(999, 86, sys_bind(l, &sa, 16));
+syscall(999, 87, sys_bind(l, sa_in(&sa, 10, 0, 2, 99, 8080), 16));
+syscall(999, 88, sys_bind(l, sa_in(&sa, 127, 0, 0, 1, 8080), 16));
+syscall(999, 89, sys_listen(l, 4));
+var g = sys_socket(2, 1, 0);
+sys_bind(g, sa_in(&sa, 0, 0, 0, 0, 8081), 16);
+syscall(999, 90, 0);
+sys_listen(g, 4);
+var c = sys_socket(2, 1, 0);
+syscall(999, 91, sys_connect(c, sa_in(&sa, 127, 0, 0, 1, 8080), 16));
+syscall(999, 92, sys_connect(c, sa_in(&sa, 127, 0, 0, 1, 8080), 16) * 1000 + sys_connect(l, sa_in(&sa, 127, 0, 0, 1, 8080), 16));
+store64(&al, 16);
+syscall(999, 98, 0);
+var rn = sys_accept4(l, &pa, &al, 0x800);
+syscall(999, 93, rn);
+var a = sys_accept4(l, &pa, &al, 0);
+syscall(999, 94, (a & AGNOS_SOCK_TAG) / AGNOS_SOCK_TAG);
+syscall(999, 95, load64(&pa));
+syscall(999, 96, load64(&al) * 1000 + sys_accept4(c, 0, 0, 0) * 0 - sys_accept4(1, 0, 0, 0));
+syscall(999, 97, sys_accept4(c, 0, 0, 0));
+sys_exit(0);
+EOF
+run "$T/a5.cyr" plain
+check "sys_socket(AF_INET, SOCK_STREAM, 0) is a tagged socket fd" "1" "$(mark 80)"
+check "UDP, AF_INET6 and protocol 17 decline -38 (no fd form on agnos)" "-38038038" "$(mark 81)"
+check "SOCK_NONBLOCK declines -38; SOCK_CLOEXEC with IPPROTO_TCP is a socket" "-37999" "$(mark 82)"
+check "sys_listen on an unbound socket is -22 (EINVAL)" "-22" "$(mark 83)"
+check "sys_bind on a non-socket fd is -88 (ENOTSOCK)" "-88" "$(mark 84)"
+check "a short sockaddr and port 0 are -22 each" "-22022" "$(mark 85)"
+check "a non-AF_INET sockaddr is -97 (EAFNOSUPPORT)" "-97" "$(mark 86)"
+check "an address this host lacks (10.0.2.99) is -99, never widened (CVE-48)" "-99" "$(mark 87)"
+check "sys_bind(127.0.0.1:8080) then sys_listen: #56(8080 | SOCK_LISTEN_LOOPBACK)" "0 0 4294975376" "$(mark 88) $(mark 89) $(after 88 56 | awk '{ print $1 }')"
+check "sys_bind(0.0.0.0:8081) then sys_listen: #56(8081), class ANY" "8081" "$(after 90 56 | awk '{ print $1 }')"
+check "sys_connect(127.0.0.1:8080) is #47(0x7F000001, 8080, 0) and answers 0" "0 2130706433 8080 0" "$(mark 91) $(after 90 47 | cut -d' ' -f1-3)"
+check "connecting a connected or a listening socket is -106 (EISCONN)" "-106106" "$(mark 92)"
+check "sys_accept4 with SOCK_NONBLOCK declines -38 before taking a connection" "-38 0" "$(mark 93) $(between 98 57)"
+check "sys_accept4 is #57 on the listener's id and returns a tagged fd" "1 0" "$(mark 94) $(after 93 57 | awk '{ print $1 }')"
+check "  and writes the peer (#106) as sockaddr_in {AF_INET, 8080 BE, 127.0.0.1 BE}" "72058141916725250" "$(mark 95)"
+check "  with *addrlen = 16; accept on a non-socket fd is -88" "16088" "$(mark 96)"
+check "sys_accept4 on a socket that is not listening is -22" "-22" "$(mark 97)"
+cat > "$T/a5b.cyr" <<'EOF'
+include "lib/alloc.cyr"
+var sa[16];
+store64(&sa, 0);
+store64(&sa + 8, 0);
+store16(&sa, 2);
+store8(&sa + 2, 0x1F);
+store8(&sa + 3, 0x90);
+store8(&sa + 4, 127);
+store8(&sa + 7, 1);
+var l = sys_socket(2, 1, 0);
+sys_bind(l, &sa, 16);
+sys_listen(l, 4);
+syscall(999, 100, sys_accept4(l, 0, 0, 0));
+var c = sys_socket(2, 1, 0);
+syscall(999, 101, sys_connect(c, &sa, 16));
+sys_exit(0);
+EOF
+run "$T/a5b.cyr" noacc
+check "nothing pending (#57 -1) is -11 (EAGAIN), as on a non-blocking Linux listener" "-11" "$(mark 100)"
+run "$T/a5b.cyr" noconn
+check "a refused connect (#47 -1) is -111 (ECONNREFUSED)" "-111" "$(mark 101)"
+run "$T/a5b.cyr" oldnet
+check "a LOOPBACK listen on a pre-1.57.7 kernel is refused: sys_accept4 then reads -22 (not listening)" "-22" "$(mark 100)"
+
+# ── axis 6 — the five verbs exist on the agnos peer at their Linux-common arity ──────────────
+echo "axis 6 — the agnos peer defines the Linux-common BSD socket verbs at the same arity:"
+for v in sys_socket sys_bind sys_listen sys_connect sys_accept4; do
+    want=$(grep -E "^fn $v\(" lib/syscalls_linux_common.cyr | head -1 | sed 's/).*//' | tr ',' '\n' | wc -l)
+    got=$(grep -E "^fn $v\(" lib/syscalls_x86_64_agnos.cyr | head -1 | sed 's/).*//' | tr ',' '\n' | wc -l)
+    [ -n "$(grep -E "^fn $v\(" lib/syscalls_x86_64_agnos.cyr)" ] || got=0
+    check "$v: agnos arity = Linux-common arity" "$want" "$got"
+done
+
+# ── axis 7 — the CLI builds for agnos (6.6.17): its refusal block, run under the fake kernel ─
+echo "axis 7 — cbt/cyrius.cyr compiles for CYRIUS_TARGET_AGNOS=1 and its help path exits 0:"
+if CYRIUS_TARGET_AGNOS=1 "$CC" < cbt/cyrius.cyr > "$T/cli.bin" 2>"$T/cli.err"; then
+    chmod +x "$T/cli.bin"
+    "$T/sct" "$T/cli.bin" plain > "$T/run.log" 2>&1
+    check "the agnos CLI (no verb) writes its help to fd 2 and exits 0" "1 0" \
+        "$(awk '$1 == "sc" && $2 == 1 && $3 == 2 { w = 1 } $1 == "exit" { c = $2 } END { print w + 0, c + 0 }' "$T/run.log")"
+else
+    echo "  FAIL: cbt/cyrius.cyr does not compile for agnos:"; grep -E '^error' "$T/cli.err" | head -5; fails=$((fails + 1))
+fi
 
 echo ""
 if [ "$fails" = "0" ]; then

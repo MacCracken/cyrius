@@ -1471,7 +1471,8 @@ _chk_gate "$ROOT/tests/gates/platform/agnos_syscall_a4_defined.sh"
 # 6.6.7 bite 4 — the agnos peer RUN against a scripted fake kernel (PTRACE_SYSEMU,
 # tests/fixtures/agnos_sctrace.cyr): the registers each wrapper hands the kernel — a4 defined,
 # spawn/redirect/endow argument packing and guards, the wait/kill/peer surface, the loopback
-# listen class.
+# listen class; 6.6.17: the BSD socket verbs (sys_socket..sys_accept4) on the adapter, their
+# arity against the Linux-common wrappers, and the agnos build of the CLI (cbt/cyrius.cyr).
 _chk_gate "$ROOT/tests/gates/platform/agnos_peer_fake_kernel.sh"
 
 # 6.6.7 bite 4 — an agnos socket read waits for its deadline on a REAL clock (#95, then the RTC
