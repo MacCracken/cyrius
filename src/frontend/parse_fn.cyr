@@ -5218,7 +5218,7 @@ fn _classify_return_type(S, rt_noff): i64 {
 }
 
 # v6.3.5 CO-01 — pass-1 fn-signature prescan. Three small helpers that, when
-# called from a fork's pass-1 loop in place of the old inline fn-skip, register
+# called from the pass-1 scan (_tl_scan1) in place of the old inline fn-skip, register
 # every top-level fn AND record its ABI metadata (param masks, param count,
 # variadic flag, struct/scalar return) BEFORE pass-2 emits any call. That makes
 # forward calls — a call lexically before its definition — read the correct
@@ -5578,8 +5578,8 @@ fn _warn_undefined_prepass(S): i64 {
     return 0;
 }
 
-# 6.6.9 — THE top-level directive dispatcher. Every fork's pass-1 scan calls it with
-# arm=0 (consume only), every fork's pass-2 dispatch and PARSE_PROG call it with arm=1
+# 6.6.9 — THE top-level directive dispatcher. The pass-1 scan (_tl_scan1) calls it with
+# arm=0 (consume only), the pass-2 dispatch (_tl_scan2) and PARSE_PROG call it with arm=1
 # (arm the pending flag PARSE_FN_DEF transfers onto the next fn). Returns 1 when the
 # token at the cursor was a directive it handled, 0 otherwise.
 #
@@ -5931,12 +5931,12 @@ fn _prescan_skip_stmt(S): i64 {
     return hasfn;
 }
 
-# 6.6.5 — pass 1 stops at the first top-level STATEMENT (`else { scan = 0; }` in every
-# fork), but PARSE_PROG keeps accepting `fn` definitions after it — relaxed ordering. So
-# every fn below the first statement was unstamped: reachable from any file by a
-# preceding call, and address-passed struct params silently miscompiled. This walks the
-# REST of the stream registering only those fns; statements are skipped (a top-level
-# `var` registers itself on the PARSE_PROG path, so it must NOT be handled here).
+# 6.6.5 — pass 1 stops at the first top-level STATEMENT (_tl_scan1 returns 0), but
+# PARSE_PROG keeps accepting `fn` definitions after it — relaxed ordering. So every fn
+# below the first statement was unstamped: reachable from any file by a preceding call,
+# and address-passed struct params silently miscompiled. This walks the REST of the stream
+# registering only those fns; statements are skipped (a top-level `var` registers itself
+# on the PARSE_PROG path, so it must NOT be handled here).
 #
 # The cursor and module are saved and restored, so pass 2 starts exactly where it did.
 # SMOD(0) because PARSE_PROG runs after pass 2's module reset. CHANGELOG [6.6.5]
@@ -5958,7 +5958,7 @@ fn _prescan_tail_loop(S): i64 {
     while (go == 1) {
         var t = PEEKT(S);
         if (t == 12) { go = 0; }                       # EOF
-        # ⚠ _IS_FN_KW, not a bare `t == 32`: every fork's pass-1 loop asks _IS_FN_KW, so a
+        # ⚠ _IS_FN_KW, not a bare `t == 32`: the pass-1 scan (_tl_scan1) asks _IS_FN_KW, so a
         # bare test here would make the two scanners disagree about what a DEFINITION is and
         # an `async fn` after the first top-level statement would stay unstamped. Not
         # reachable today (PARSE_PROG rejects `async` there on 6.6.4 and on this build), and
@@ -5973,6 +5973,196 @@ fn _prescan_tail_loop(S): i64 {
         # prescanned, so drop the pending here rather than let it land on the NEXT top-level
         # fn — the one pass 2 leaves unmarked, whose every call would then warn falsely.
         elif (_prescan_skip_stmt(S) == 1) { _pre_dep_pending = 0; }
+    }
+    return 0;
+}
+
+# 6.6.17 — THE top-level declaration scans, shared by all seven src/main*.cyr forks: pass 1
+# (register), pass 2 (define) and the enum-init walk. Each fork used to carry its own copy of
+# all three — 21 loops — so a new top-level form had to be added seven times, and the fork
+# that missed it broke on its own target only (#io v5.8.20, #pure v6.2.2, the 6.6.3 #inline
+# consume, the 6.6.9 directive arms). A new top-level form goes HERE, once; the
+# toplevel_scan_shared gate refuses a fork that re-grows a copy. `objok` is 1 on the two
+# forks with an object writer (main.cyr, main_win.cyr): there `object;` selects mode 3;
+# elsewhere it is not a declaration and ends the scan ("unexpected object"). CHANGELOG [6.6.17]
+fn _tl_pass1(S, objok): i64 {
+    STI(S, 0);
+    var go = 1;
+    while (go == 1) { go = _tl_scan1(S, objok); }
+    # pass 1 stops at the first top-level statement, but PARSE_PROG keeps defining fns after it
+    _prescan_tail(S);
+    SMOD(S, 0);
+    return 0;
+}
+
+# One pass-1 step: consume one top-level declaration and return 1, or return 0 at the first
+# token that is not one (the first statement). The arms only peek until they match.
+fn _tl_scan1(S, objok): i64 {
+    var t = PEEKT(S);
+    if (t == 72) { _tl_mod(S); return 1; }
+    if (_TL_VIS(S) == 1) { return 1; }
+    if (t == 74) { _tl_use(S); return 1; }
+    if (t == 40) { PARSE_STRUCT_DEF(S); return 1; }
+    if (t == 101) { PARSE_UNION_DEF(S); return 1; }
+    if (t == 3) { PARSE_GVAR_REG(S); return 1; }
+    if (_tl_directive(S, 0) == 1) { return 1; }
+    if (_IS_FN_KW(S) == 1) { _prescan_fn_sig(S); return 1; }   # v6.3.5 CO-01: register + ABI masks
+    if (t == 60) { PARSE_ENUM_DEF(S, 0); return 1; }
+    var r = _tl_scan1_mode(S, t, objok);
+    return r;
+}
+
+fn _tl_scan1_mode(S, t, objok): i64 {
+    if (_TOK_IS_KERNEL(S) == 1) { _tl_kmode(S, 1); return 1; }
+    if (t == 78) { _tl_kmode(S, 2); return 1; }
+    if (t == 79) { if (objok == 1) { _tl_kmode(S, 3); return 1; } }
+    if (t == 77) { _prescan_impl(S); return 1; }
+    return 0;
+}
+
+# `kernel;` / `shared;` / `object;` — set kernel_mode (pass 1). Pass 2 only skips them.
+fn _tl_kmode(S, m): i64 {
+    S64(S + 0x18FCA0, m);
+    _tl_skip_mode(S);
+    return 0;
+}
+
+fn _tl_skip_mode(S): i64 {
+    STI(S, GTI(S) + 1);
+    if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); }
+    return 0;
+}
+
+# `mod name;` — set the module prefix (both passes).
+fn _tl_mod(S): i64 {
+    STI(S, GTI(S) + 1);
+    if (PEEKT(S) == 2) { SMOD(S, PEEKV(S)); STI(S, GTI(S) + 1); }
+    if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); }
+    return 0;
+}
+
+# `use modname.funcname;` — register the alias funcname -> modname_funcname (pass 1).
+fn _tl_use(S): i64 {
+    STI(S, GTI(S) + 1);
+    if (PEEKT(S) == 2) {
+        var umod = PEEKV(S);
+        STI(S, GTI(S) + 1);
+        if (PEEKT(S) == 41) {
+            STI(S, GTI(S) + 1);
+            if (PEEKT(S) == 2) {
+                var ufn = PEEKV(S);
+                STI(S, GTI(S) + 1);
+                _tl_use_alias(S, umod, ufn);
+            }
+        }
+    }
+    if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); }
+    return 0;
+}
+
+# Append the mangled `mod_fn` to tok_names (NPOS is stable after lexing) and record the alias
+# in the use table. v5.11.65 (CVE-05): bounded by the actual source lengths.
+fn _tl_use_alias(S, umod, ufn): i64 {
+    var uc = GUSEC(S);
+    S64(S + 0x18FFD0 + uc * 8, ufn);
+    var _ulen1 = 0; while (load8(S + 0xEC00000 + umod + _ulen1) != 0) { _ulen1 = _ulen1 + 1; }
+    var _ulen2 = 0; while (load8(S + 0xEC00000 + ufn + _ulen2) != 0) { _ulen2 = _ulen2 + 1; }
+    NPOS_GUARD(S, _ulen1 + 1 + _ulen2 + 1);
+    var apos = GNPOS(S);
+    var ri = 0;
+    var rc = load8(S + 0xEC00000 + umod + ri);
+    while (rc != 0) { store8(S + 0xEC00000 + apos, rc); apos = apos + 1; ri = ri + 1; rc = load8(S + 0xEC00000 + umod + ri); }
+    store8(S + 0xEC00000 + apos, 95); apos = apos + 1;
+    ri = 0; rc = load8(S + 0xEC00000 + ufn + ri);
+    while (rc != 0) { store8(S + 0xEC00000 + apos, rc); apos = apos + 1; ri = ri + 1; rc = load8(S + 0xEC00000 + ufn + ri); }
+    store8(S + 0xEC00000 + apos, 0); apos = apos + 1;
+    var alias_noff = GNPOS(S);
+    SNPOS(S, apos);
+    S64(S + 0x1901D0 + uc * 8, alias_noff);
+    SUSEC(S, uc + 1);
+    return 0;
+}
+
+# Pass 2: define fns, impls and enum constructors; skip what pass 1 already registered.
+fn _tl_pass2(S, objok): i64 {
+    STI(S, 0);
+    var go = 1;
+    while (go == 1) { go = _tl_scan2(S, objok); }
+    SMOD(S, 0);
+    return 0;
+}
+
+fn _tl_scan2(S, objok): i64 {
+    var t = PEEKT(S);
+    if (t == 72) { _tl_mod(S); return 1; }
+    if (_TL_VIS(S) == 1) { return 1; }
+    if (t == 74) { _tl_skip_use(S); return 1; }
+    if (t == 40) { _tl_skip_struct(S); return 1; }
+    if (t == 101) { _tl_skip_union(S); return 1; }
+    if (t == 60) { PARSE_ENUM_DEF(S, 2); return 1; }   # constructor bodies, before the jmp patch
+    if (_TOK_IS_KERNEL(S) == 1) { _tl_skip_mode(S); return 1; }
+    # 6.6.9: ONE dispatcher arms every fn attribute and evaluates #assert. See _tl_directive.
+    if (_tl_directive(S, 1) == 1) { return 1; }
+    var r = _tl_scan2_def(S, t, objok);
+    return r;
+}
+
+fn _tl_scan2_def(S, t, objok): i64 {
+    if (_IS_FN_KW(S) == 1) {
+        # v6.5.17: EVERY fn body is parsed, reachable or not — reachability is a codegen
+        # concern (CYRIUS_DCE=1, backend/x86/fixup.cyr), not a parsing one. A parse-time body
+        # skip once made garbage in an uncalled fn compile GREEN on x86 and fail on aarch64
+        # (tests/gates/frontend/dead_fn_body_syntax_checked.sh).
+        # v6.3.11 (G): consume a leading `async` and arm the lowering PARSE_FN_DEF consumes.
+        if (PEEKT(S) == 134) { _pending_async = 1; STI(S, GTI(S) + 1); }
+        PARSE_FN_DEF(S);
+        return 1;
+    }
+    if (t == 3) { _skip_gvar_decl(S); return 1; }   # 6.6.6: a `;` inside a closure body is not the end
+    if (t == 77) { PARSE_IMPL(S); return 1; }
+    if (t == 78) { _tl_skip_mode(S); return 1; }
+    if (t == 79) { if (objok == 1) { _tl_skip_mode(S); return 1; } }
+    return 0;
+}
+
+fn _tl_skip_use(S): i64 {
+    while (PEEKT(S) != 5) { if (PEEKT(S) == 12) { break; } STI(S, GTI(S) + 1); }
+    if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); }
+    return 0;
+}
+
+# A struct (with its optional `<T>` list) or a union was parsed in pass 1: skip to its `}`.
+fn _tl_skip_struct(S): i64 {
+    STI(S, GTI(S) + 1); STI(S, GTI(S) + 1);
+    if (PEEKT(S) == 19) { while (PEEKT(S) != 20) { STI(S, GTI(S) + 1); } STI(S, GTI(S) + 1); }
+    _tl_skip_body(S);
+    return 0;
+}
+
+fn _tl_skip_union(S): i64 {
+    STI(S, GTI(S) + 1); STI(S, GTI(S) + 1);
+    _tl_skip_body(S);
+    return 0;
+}
+
+fn _tl_skip_body(S): i64 {
+    if (PEEKT(S) != 13) { ERR(S); }
+    STI(S, GTI(S) + 1);
+    var go = 1;
+    while (go == 1) { if (PEEKT(S) == 14) { go = 0; } else { STI(S, GTI(S) + 1); } }
+    STI(S, GTI(S) + 1);
+    return 0;
+}
+
+# Enum initialisations, emitted FIRST (before the gvar inits, which may call fns that read
+# enum values). Walks the whole token stream; the caller restores the cursor.
+fn _tl_enum_inits(S): i64 {
+    STI(S, 0);
+    var go = 1;
+    while (go == 1) {
+        if (PEEKT(S) == 60) { PARSE_ENUM_DEF(S, 1); }
+        else { if (PEEKT(S) == 12) { go = 0; }
+            else { STI(S, GTI(S) + 1); } }
     }
     return 0;
 }

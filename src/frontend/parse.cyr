@@ -4016,7 +4016,7 @@ fn PARSE_PROG(S): i64 {
         if (typ == 12) { go = 0; }
         else { if (typ == 14) { go = 0; }
             else { if (_tl_directive(S, 1) == 1) {
-                    # 6.6.9: the SAME dispatcher every fork's pass 2 calls, so an attribute written
+                    # 6.6.9: the SAME dispatcher the pass-2 scan (_tl_scan2) calls, so an attribute written
                     # after the first top-level statement behaves exactly like one written before it.
                     # (This was a 15th copy; bare `#deprecated` errored here and was a silent no-op
                     # there.) `#assert` also lands here and is evaluated via PARSE_STMT. See _tl_directive.

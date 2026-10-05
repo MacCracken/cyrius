@@ -1389,104 +1389,7 @@ if (_mono_env != 0) {
 }
 
 # Pass 1: Pre-scan to register all global vars and structs (no fn bodies)
-STI(S, 0);
-var scan = 1;
-while (scan == 1) {
-    if (PEEKT(S) == 72) {
-        # mod name; — set current module prefix
-        STI(S, GTI(S) + 1);
-        if (PEEKT(S) == 2) { SMOD(S, PEEKV(S)); STI(S, GTI(S) + 1); }
-        if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); }
-    }
-    else { if (_TL_VIS(S) == 1) {
-            # v6.5.0: `pub`/`public` and `private` both handled by _TL_VIS, which
-            # consumes the token and records the visibility intent. Was a bare
-            # skip-and-ignore for `pub`.
-        }
-        else { if (PEEKT(S) == 74) {
-                # use modname.funcname; — register alias
-                STI(S, GTI(S) + 1);
-                if (PEEKT(S) == 2) {
-                    var umod = PEEKV(S);
-                    STI(S, GTI(S) + 1);
-                    if (PEEKT(S) == 41) {
-                        STI(S, GTI(S) + 1);
-                        if (PEEKT(S) == 2) {
-                            var ufn = PEEKV(S);
-                            STI(S, GTI(S) + 1);
-                            # Build mangled name: mod_fn
-                            # Each alias gets 64 bytes in scratch area (30000 + uc*64)
-                            var uc = GUSEC(S);
-                            S64(S + 0x18FFD0 + uc * 8, ufn);
-                            # Append mangled name to tok_names (after lexing, NPOS is stable)
-                            # v5.11.65 (CVE-05): bound by actual source lengths.
-                            var _ulen1 = 0; while (load8(S + 0xEC00000 + umod + _ulen1) != 0) { _ulen1 = _ulen1 + 1; }
-                            var _ulen2 = 0; while (load8(S + 0xEC00000 + ufn + _ulen2) != 0) { _ulen2 = _ulen2 + 1; }
-                            NPOS_GUARD(S, _ulen1 + 1 + _ulen2 + 1);
-                            var apos = GNPOS(S);
-                            var ri = 0;
-                            var rc = load8(S + 0xEC00000 + umod + ri);
-                            while (rc != 0) { store8(S + 0xEC00000 + apos, rc); apos = apos + 1; ri = ri + 1; rc = load8(S + 0xEC00000 + umod + ri); }
-                            store8(S + 0xEC00000 + apos, 95); apos = apos + 1;
-                            ri = 0; rc = load8(S + 0xEC00000 + ufn + ri);
-                            while (rc != 0) { store8(S + 0xEC00000 + apos, rc); apos = apos + 1; ri = ri + 1; rc = load8(S + 0xEC00000 + ufn + ri); }
-                            store8(S + 0xEC00000 + apos, 0); apos = apos + 1;
-                            var alias_noff = GNPOS(S);
-                            SNPOS(S, apos);
-                            S64(S + 0x1901D0 + uc * 8, alias_noff);
-                            SUSEC(S, uc + 1);
-                        }
-                    }
-                }
-                if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); }
-            }
-            else { if (PEEKT(S) == 40) { PARSE_STRUCT_DEF(S); }
-                else { if (PEEKT(S) == 101) { PARSE_UNION_DEF(S); }
-                    else { if (PEEKT(S) == 3) { PARSE_GVAR_REG(S); }
-                        # 6.6.9: every top-level directive (#regalloc #must_use #deprecated #pure #io
-                        # #alloc #naked #inline #assert) goes through ONE dispatcher, shared by all
-                        # seven forks and PARSE_PROG. Pass 1 consumes; pass 2 arms. See _tl_directive.
-                        else { if (_tl_directive(S, 0) == 1) { }
-                            else { if (_IS_FN_KW(S) == 1) {
-                                    # v6.3.5 CO-01 — prescan the fn signature:
-                                    # register the fn + record its ABI metadata
-                                    # (param masks / count / variadic / return
-                                    # type) so a forward call (lexically before
-                                    # the definition) resolves the correct Str /
-                                    # cstring / SIMD / struct-return ABI instead
-                                    # of mask 0. Cursor advancement is byte-
-                                    # identical to the prior inline skip — the
-                                    # only new effect is the pass-1 registration
-                                    # (see _prescan_fn_sig in parse_fn.cyr).
-                                    _prescan_fn_sig(S);
-                                }
-                                else { if (PEEKT(S) == 60) { PARSE_ENUM_DEF(S, 0); }
-                                    else { if (_TOK_IS_KERNEL(S) == 1) {
-                                            S64(S + 0x18FCA0, 1);
-                                            STI(S, GTI(S) + 1);
-                                            if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); }
-                                        }
-                                        else { if (PEEKT(S) == 78) {
-                                                S64(S + 0x18FCA0, 2);
-                                                STI(S, GTI(S) + 1);
-                                                if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); }
-                                            }
-                                            else { if (PEEKT(S) == 79) {
-                                                    S64(S + 0x18FCA0, 3);
-                                                    STI(S, GTI(S) + 1);
-                                                    if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); }
-                                                }
-                                                else { if (PEEKT(S) == 77) { _prescan_impl(S); }
-                                                    else { scan = 0; } } } } } } } } } } } } }
-}
-
-# 6.6.5 — pass 1 stops at the first top-level statement, but PARSE_PROG keeps defining
-# fns after it. Register those too, or they stay unstamped: reachable across the
-# `private` boundary by a preceding call, and address-passed struct params miscompile.
-_prescan_tail(S);
-
-# Reset module for pass 2
-SMOD(S, 0);
+_tl_pass1(S, 1);   # 6.6.17: the ONE pass-1 scan, shared by every fork (src/frontend/parse_fn.cyr)
 
 # v6.5.17 — the DCE pre-scan referenced-name bitmap that used to be built here
 # is GONE with the parse-time body skip it fed (see the `fn` dispatch in pass 2).
@@ -1603,80 +1506,7 @@ if (_ir_env != 0) {
 }
 
 # Pass 2: Parse struct and fn definitions (vars already registered)
-STI(S, 0);
-var topgo = 1;
-while (topgo == 1) {
-    # Skip mod/pub/use in pass 2
-    if (PEEKT(S) == 72) { STI(S, GTI(S) + 1); if (PEEKT(S) == 2) { SMOD(S, PEEKV(S)); STI(S, GTI(S) + 1); } if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); } }
-    else { if (_TL_VIS(S) == 1) { }
-        else { if (PEEKT(S) == 74) { while (PEEKT(S) != 5) { if (PEEKT(S) == 12) { break; } STI(S, GTI(S) + 1); } if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); } }
-            else { if (PEEKT(S) == 40) {
-                    # Skip struct (already parsed in pass 1)
-                    STI(S, GTI(S) + 1); STI(S, GTI(S) + 1);
-                    if (PEEKT(S) == 19) { while (PEEKT(S) != 20) { STI(S, GTI(S) + 1); } STI(S, GTI(S) + 1); }
-                    if (PEEKT(S) != 13) { ERR(S); }
-                    STI(S, GTI(S) + 1);
-                    var ssk = 1;
-                    while (ssk == 1) { if (PEEKT(S) == 14) { ssk = 0; } else { STI(S, GTI(S) + 1); } }
-                    STI(S, GTI(S) + 1);
-                }
-                else { if (PEEKT(S) == 101) {
-                        # Skip union (already parsed in pass 1)
-                        STI(S, GTI(S) + 1); STI(S, GTI(S) + 1);
-                        if (PEEKT(S) != 13) { ERR(S); }
-                        STI(S, GTI(S) + 1);
-                        var usk = 1;
-                        while (usk == 1) { if (PEEKT(S) == 14) { usk = 0; } else { STI(S, GTI(S) + 1); } }
-                        STI(S, GTI(S) + 1);
-                    }
-                    else { if (PEEKT(S) == 60) {
-                            # Emit constructor bodies in function section (before JMP is patched)
-                            PARSE_ENUM_DEF(S, 2);
-                        }
-                        else { if (_TOK_IS_KERNEL(S) == 1) {
-                                STI(S, GTI(S) + 1);
-                                if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); }
-                            }
-                            # 6.6.9: ONE dispatcher arms every fn attribute (and evaluates #assert) — the same
-                            # call in all seven forks and in PARSE_PROG, so an attribute armed here on x86 is armed
-                            # everywhere. PARSE_FN_DEF transfers the pending flags onto the next fn. See _tl_directive.
-                            else { if (_tl_directive(S, 1) == 1) { }
-                                else { if (_IS_FN_KW(S) == 1) {
-                                        # v6.5.17 — EVERY fn body is PARSED, reachable or not.
-                                        # A parse-time "skip the body of an unreferenced fn" pass used
-                                        # to sit here: it emitted a 3-byte `xor eax,eax; ret` stub and
-                                        # brace-skipped the body tokens, so arbitrary garbage inside an
-                                        # uncalled fn compiled GREEN on every gate. It was gated on
-                                        # "the name contains no '_'" — a conservative guard for module-
-                                        # mangled `mod_fn` names, whose call sites intern a DIFFERENT
-                                        # string than the definition and so never set the reference
-                                        # bitmap — which made "is my function syntax-checked at all"
-                                        # depend on a character in its identifier, and on whether some
-                                        # unrelated file happened to use the same name as a local. The
-                                        # three aarch64 forks never carried the skip, so the same source
-                                        # was accepted on x86/PE/Mach-O and REJECTED on aarch64.
-                                        # Reachability is a codegen concern, not a parsing one: the real
-                                        # elimination pass (CYRIUS_DCE=1, backend/x86/fixup.cyr) acts on
-                                        # the COMPILED result and reports the floor as
-                                        # `note: N unreachable fns`. See hisab filing
-                                        # hisab-dead-fn-bodies-never-syntax-checked.md and the gate
-                                        # tests/gates/frontend/dead_fn_body_syntax_checked.sh.
-                                        # v6.3.11 (G): consume a leading `async` here (cursor → `fn`) and
-                                        # arm the async lowering PARSE_FN_DEF consumes.
-                                        if (PEEKT(S) == 134) { _pending_async = 1; STI(S, GTI(S) + 1); }
-                                        PARSE_FN_DEF(S);
-                                    }
-                                    else { if (PEEKT(S) == 3) {
-                                            _skip_gvar_decl(S);   # 6.6.6: a `;` inside a closure body is not the end
-                                        }
-                                        else { if (PEEKT(S) == 77) { PARSE_IMPL(S); }
-                                            else { if (PEEKT(S) == 78) { STI(S, GTI(S) + 1); if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); } }
-                                                else { if (PEEKT(S) == 79) { STI(S, GTI(S) + 1); if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); } }
-                                                    else { topgo = 0; } } } } } } } } } } } } }
-}
-
-# Reset module
-SMOD(S, 0);
+_tl_pass2(S, 1);   # 6.6.17: the ONE pass-2 dispatch, shared by every fork
 
 # Patch jmp to land here (start of main code)
 EPATCH(S, jmp_patch);
@@ -1805,13 +1635,7 @@ if (_init_km == 3 || _init_km == 2) {
 # Emit enum initializations FIRST (before gvar inits, since gvar inits may call
 # functions that reference enum values)
 var gvar_save_ti = GTI(S);
-STI(S, 0);
-var escan = 1;
-while (escan == 1) {
-    if (PEEKT(S) == 60) { PARSE_ENUM_DEF(S, 1); }
-    else { if (PEEKT(S) == 12) { escan = 0; }
-        else { STI(S, GTI(S) + 1); } }
-}
+_tl_enum_inits(S);
 # v5.7.19: kmode == 1 needs top-level asm (the multiboot 32→64
 # long-mode boot shim) to run BEFORE any 64-bit gvar-init code.
 # Multiboot1 hands control in 32-bit protected mode; gvar inits

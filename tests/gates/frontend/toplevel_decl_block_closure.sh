@@ -29,8 +29,8 @@
 # LEGS: host x86_64 (every row); cx via the tree's own main_cx + cxvm; aarch64 under
 # qemu-aarch64 and Win64 PE under wine when installed — qemu and wine are EMULATION, NOT
 # hardware (tests/tcyr/crossos/toplevel_block_closure.tcyr is the real-hardware leg, and it is
-# the only one that reaches Mach-O). Axis S is static 7-fork parity: the pass-2 skip is copied
-# into every fork, so a fork that keeps the old loop is broken on that target only.
+# the only one that reaches Mach-O). Axis S is static 7-fork parity: every fork runs the shared
+# pass-2 scan (6.6.17), so a fork that keeps its own old loop is broken on that target only.
 #
 # MUTATION LEDGER (6.6.6 — each mutant is a scratch tree whose src/ carries the mutation, built
 # by build/cycc and run as CYCC=<mutant>, so the cx / aarch64 / PE legs are built from it too):
@@ -129,17 +129,20 @@ elif ! grep -q "nosuchname_m" "$WORK/m.err"; then
     bad "row M: the error in the NEXT declaration was not reported (the skip swallowed it): $(head -c 300 "$WORK/m.err")"
 fi
 
-# S — static 7-fork parity: every fork's pass-2 `var` arm calls the shared skip, and none still
-#     carries the old first-`;` loop. The fork list is derived, not listed.
+# S — static 7-fork parity: every fork runs the ONE shared pass-2 scan (6.6.17: _tl_pass2,
+#     src/frontend/parse_fn.cyr), whose `var` arm calls the shared skip, and none still carries
+#     the old first-`;` loop. The fork list is derived, not listed.
 NROWS=$((NROWS + 1))
 NFORK=0
 for fk in "$ROOT"/src/main*.cyr; do
     NFORK=$((NFORK + 1))
-    n=$(grep -c '_skip_gvar_decl(S);' "$fk" || true)
-    [ "$n" = "1" ] || bad "row S: $(basename "$fk") calls _skip_gvar_decl $n times in its top-level loop, want 1"
+    n=$(grep -c '^_tl_pass2(S, [01]);' "$fk" || true)
+    [ "$n" = "1" ] || bad "row S: $(basename "$fk") calls the shared pass-2 scan $n times, want 1"
     if grep -q 'while (vsk == 1)' "$fk"; then bad "row S: $(basename "$fk") still carries the first-';' pass-2 skip"; fi
 done
 [ "$NFORK" -ge 7 ] || bad "row S: found $NFORK src/main*.cyr forks, want at least 7"
+n=$(awk 'index($0, "fn _tl_scan2_def(") == 1 {on=1} on {print} on && /^}/ {exit}' "$ROOT/src/frontend/parse_fn.cyr" | grep -c '_skip_gvar_decl(S);' || true)
+[ "$n" = "1" ] || bad "row S: the shared pass-2 scan calls _skip_gvar_decl $n times, want 1"
 
 # ---- cx leg: the tree's own cx compiler + cxvm ----
 echo "cx (cxvm):"

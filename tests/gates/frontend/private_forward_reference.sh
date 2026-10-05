@@ -114,16 +114,21 @@ fail=0
 forks=$(ls "$ROOT"/src/main*.cyr 2>/dev/null | grep -v version_str)
 nf=$(printf '%s\n' "$forks" | grep -c .)
 [ "$nf" -ge 7 ] || { echo "  FAIL: private_forward_reference axis1 — expected >= 7 src/main*.cyr forks, found $nf"; fail=1; }
+# 6.6.17: the two calls live in the ONE shared pass-1 scan every fork runs (_tl_pass1,
+# src/frontend/parse_fn.cyr); toplevel_scan_shared.sh refuses a fork that re-grows its own.
 for f in $forks; do
   b=$(basename "$f")
-  ci=$(grep -c '_prescan_impl(S)' "$f" || true)
-  ct=$(grep -c '_prescan_tail(S)' "$f" || true)
+  cp1=$(grep -c '^_tl_pass1(S, [01]);' "$f" || true)
   cs=$(grep -c 'var idep = 0' "$f" || true)
-  [ -n "$ci" ] || ci=0; [ -n "$ct" ] || ct=0; [ -n "$cs" ] || cs=0
-  [ "$ci" = "1" ] || { echo "  FAIL: private_forward_reference axis1 — $b has $ci x _prescan_impl(S), want exactly 1"; fail=1; }
-  [ "$ct" = "1" ] || { echo "  FAIL: private_forward_reference axis1 — $b has $ct x _prescan_tail(S), want exactly 1"; fail=1; }
+  [ -n "$cp1" ] || cp1=0; [ -n "$cs" ] || cs=0
+  [ "$cp1" = "1" ] || { echo "  FAIL: private_forward_reference axis1 — $b calls the shared pass-1 scan $cp1 x, want exactly 1"; fail=1; }
   [ "$cs" = "0" ] || { echo "  FAIL: private_forward_reference axis1 — $b still carries the inline pass-1 impl brace-skip ('var idep = 0')"; fail=1; }
 done
+_pfbody() { awk -v n="fn $1(" 'index($0, n) == 1 {on=1} on {print} on && /^}/ {exit}' "$ROOT/src/frontend/parse_fn.cyr"; }
+ci=$(_pfbody _tl_scan1_mode | grep -c '_prescan_impl(S)' || true)
+ct=$(_pfbody _tl_pass1 | grep -c '_prescan_tail(S)' || true)
+[ "$ci" = "1" ] || { echo "  FAIL: private_forward_reference axis1 — the shared pass-1 scan has $ci x _prescan_impl(S), want exactly 1"; fail=1; }
+[ "$ct" = "1" ] || { echo "  FAIL: private_forward_reference axis1 — _tl_pass1 has $ct x _prescan_tail(S), want exactly 1"; fail=1; }
 
 # ─────────────────────────────────────────────────────────────────────────────────────
 # Shared fixture. `lib/` is symlinked from the real tree so the probes can include
@@ -514,5 +519,5 @@ sw=$(grep -c "warning: undefined function" "$T/selfw.err" 2>/dev/null || true)
 [ "$sw" = "0" ] || { echo "  FAIL: private_forward_reference axis3 [self] — $sw 'undefined function' warnings compiling cycc's own source"; grep "undefined function" "$T/selfw.err" | head -3 | sed 's/^/      /' || true; fail=1; }
 
 [ "$fail" = 0 ] || exit 1
-echo "PASS private_forward_reference: 7/7 forks carry both pass-1 calls; 10 refusal rows match forward==backward over a hard-coded symbol floor; the deferral backstop reports a violation on a fn defined inside a top-level block exactly once; 9 legal programs run (6 with exit codes computed in the shell from the fixture literals, 3 against a literal, one of them the axis-2b no-private control) plus 1 build-only control; last-definition visibility holds both ways; diagnostics name the right symbol"
+echo "PASS private_forward_reference: 7/7 forks run the shared pass-1 scan, which carries both pass-1 calls; 10 refusal rows match forward==backward over a hard-coded symbol floor; the deferral backstop reports a violation on a fn defined inside a top-level block exactly once; 9 legal programs run (6 with exit codes computed in the shell from the fixture literals, 3 against a literal, one of them the axis-2b no-private control) plus 1 build-only control; last-definition visibility holds both ways; diagnostics name the right symbol"
 exit 0
