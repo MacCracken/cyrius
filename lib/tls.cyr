@@ -1943,12 +1943,18 @@ fn tls_session_get_max_early_data(session): i64 {
     return fncall1(_fn_SSL_SESSION_get_max_early_data, session);
 }
 
-# Returns 1 if the linked libssl exposes the FULL 0-RTT client-
+# Returns 1 if the ACTIVE backend is libssl and the loaded libssl exposes the FULL 0-RTT client-
 # correctness surface (write + read + max_early_data setter
 # v5.10.21, plus get_early_data_status + SESSION_get_max_early_data
-# v5.10.34); 0 otherwise. Sandhi's 1.3.2 0-RTT path probes this
-# before attempting early-data send/recv with retry-on-rejection.
+# v5.10.34); 0 otherwise — on the native backend always, even with libssl loaded in-process.
+# Sandhi's 1.3.2 0-RTT path probes this before attempting early-data send/recv with
+# retry-on-rejection.
+# ⛔ 6.6.17 — WHY the backend check: the resumption probe's twin (6.6.16). It read the symbol
+# cache only, so once anything had loaded libssl it answered 1 under the native backend, where
+# every 0-RTT verb refuses (measured: tls_available() on libssl, then tls_set_backend(NATIVE) ->
+# 1). Misleading, not corrupting — the verbs it points at refuse on a native ctx.
 fn tls_supports_early_data(): i64 {
+    if (_tls_backend_is_native() == 1) { return 0; }
     if (_fn_SSL_write_early_data == 0) { return 0; }
     if (_fn_SSL_read_early_data == 0) { return 0; }
     if (_fn_SSL_CTX_set_max_early_data == 0) { return 0; }

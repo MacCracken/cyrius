@@ -1,5 +1,6 @@
 # tls_libssl_session_cache.tcyr — 6.6.16: the libssl session-cache mode is really set, and on the
-# NATIVE backend every libssl-only verb refuses without touching libssl, loaded or not.
+# NATIVE backend every libssl-only verb refuses without touching libssl, loaded or not; and (6.6.17)
+# tls_supports_early_data, like the resumption probe, reads 0 under the native backend.
 #
 # ⛔ THE DEFECTS. (1) lib/tls.cyr dlsym'd "SSL_CTX_set_session_cache_mode", which is a MACRO over
 # SSL_CTX_ctrl(ctx, 44, mode, NULL) in OpenSSL 1.1 and 3.x alike, so the pointer was always 0:
@@ -38,6 +39,7 @@
 #   the guard dropped from tls_ctx_set_session_cache_mode alone -> 2 RED: spy row, canary (1 byte)
 #   the guard dropped from tls_ctx_set_session_new_cb alone      -> 2 RED: spy row, canary (3 bytes)
 #   the probe's backend check dropped -> 2 RED, the two "under native" probe rows
+#   (6.6.17) tls_supports_early_data's backend check dropped -> 2 RED, its two "under native" rows
 #   the null-handle check dropped     -> 1 RED, "without calling SSL_CTX_ctrl"
 #   SSL_CTX_ctrl resolved by the old macro name (pointer 0, the 6.6.15 shape)
 #       -> 9 RED: group 2's whole readback (set returns 0, OpenSSL keeps 2), both probe rows
@@ -78,6 +80,7 @@ fn _sc_slots_init(): i64 {
     _sc_slot(&_fn_SSL_write_early_data);
     _sc_slot(&_fn_SSL_read_early_data);
     _sc_slot(&_fn_SSL_get_early_data_status);
+    _sc_slot(&_fn_SSL_SESSION_get_max_early_data);     # the early-data probe's fifth symbol (6.6.17)
     return 0;
 }
 fn _sc_spies_on(): i64 {
@@ -240,13 +243,18 @@ fn test_native_refuses_spied(): i64 {
     # backend check, not a missing symbol.
     _sc_spies_on();
     var under_native = tls_supports_session_resumption();
+    var ed_native = tls_supports_early_data();
     tls_set_backend(TLS_BACKEND_LIBSSL);
     var under_libssl = tls_supports_session_resumption();
+    var ed_libssl = tls_supports_early_data();
     tls_set_backend(TLS_BACKEND_NATIVE);
     _sc_spies_off();
     assert_eq(under_native, 0,
       "tls_supports_session_resumption() under native, every symbol present -> 0 (6.6.15: 1)");
     assert_eq(under_libssl, 1, "  ... and 1 under the libssl backend over the same symbols");
+    assert_eq(ed_native, 0,
+      "tls_supports_early_data() under native, every symbol present -> 0 (6.6.16: 1)");
+    assert_eq(ed_libssl, 1, "  ... and 1 under the libssl backend over the same symbols");
     return 0;
 }
 
@@ -308,9 +316,12 @@ fn test_native_refuses_libssl_loaded(): i64 {
     assert_eq(tls_set_backend(TLS_BACKEND_NATIVE), 0, "the native backend is selected");
     assert_eq(tls_supports_session_resumption(), 0,
       "tls_supports_session_resumption() under native, libssl loaded -> 0 (6.6.15: 1 once ctrl worked)");
+    assert_eq(tls_supports_early_data(), 0,
+      "tls_supports_early_data() under native, libssl loaded -> 0 (6.6.16: 1)");
     _sc_native_rows(0);
     assert_eq(tls_set_backend(TLS_BACKEND_LIBSSL), 0, "back to the libssl backend");
     assert_eq(tls_supports_session_resumption(), 1, "  ... where the probe reads 1 again");
+    assert_eq(tls_supports_early_data(), 1, "  ... and so does the early-data probe");
     return 0;
 }
 
