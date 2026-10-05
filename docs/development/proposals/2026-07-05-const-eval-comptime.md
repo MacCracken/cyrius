@@ -8,17 +8,40 @@ narrow immediate payoff; wants maintainer direction on scope before any work.
 *bulk* of compile-time-data needs; this is about the residual *computation* gap.
 **Placement:** **v6.6.x item 2 — UNCHANGED, and NOT an exit from 6.5.x.** It was pinned to 6.6.x before this re-triage with its scope already chosen; leaving it there honours the pin rather than moving 6.5.x work out.
 
-> **⟳ Re-stamped 2026-08-14 at v6.5.21 (backlog re-triage).** ⛔ **CORRECTS A MIS-CLASSIFICATION.** A first pass labelled this BLOCKED-ON-MAINTAINER for 'which rung'; an adversarial re-check REFUTED it: **the rung was chosen 2026-07-07**, recorded at `roadmap_6.md:144-149` — **option 1 `const fn`** primary, **option 3 `#phf`** fallback, option 4 declined. **No maintainer decision is outstanding.** Premise otherwise holds (0 hits at 6.5.21). ⚠ Rungs 1–2 reuse the `ir_const_fold` fixpoint (`src/common/ir.cyr:747`) which Slot 3 rewrites — build const-eval AFTER Slot 3 or pay the churn twice.
+> **⟳ Re-stamped 2026-08-14 at v6.5.21 (backlog re-triage).** ⛔ **CORRECTS A MIS-CLASSIFICATION.** A first pass labelled this BLOCKED-ON-MAINTAINER for 'which rung'; an adversarial re-check REFUTED it: **the rung was chosen 2026-07-07**, recorded at `roadmap_6.md:144-149` — **option 1 `const fn`** primary, **option 3 `#phf`** fallback, option 4 declined. **No maintainer decision is outstanding.** Premise otherwise holds (0 hits at 6.5.21). ~~⚠ Rungs 1–2 reuse the `ir_const_fold` fixpoint (`src/common/ir.cyr:747`) which Slot 3 rewrites — build const-eval AFTER Slot 3 or pay the churn twice.~~ *(Struck 2026-10-04 — see the correction block below.)*
+
+> ### ⛔ Correction 2026-10-04 (6.6.16) — the const-eval base is `_CF_TRY`, and a computed initializer is NOT folded
+>
+> Verified against the 6.6.16 tree; the struck text below (this block's line 11 note, items 1–2 of
+> the 2026-08-11 corrections, the "Current state" bullet and option 1's last sentence) is kept for
+> history, not deleted.
+>
+> - **`ir_const_fold` is not the base.** It is an x86-ELF codebuf peephole (`src/common/ir.cyr:672`,
+>   a state machine that patches emitted bytes and NOP-fills), called only from `src/main.cyr:2064`
+>   inside `if (IR_ENABLED(S) == 1)` / `if (_ir_mode == 51)` — i.e. under opt-in `CYRIUS_IR=3` —
+>   and absent from the other six compiler forks (`grep -c ir_const_fold` → 0 in each). There is
+>   no "const-fold → DCE → dead-store fixpoint" on the default path for `const fn` to reuse, and no
+>   ordering constraint against it. The base for `const fn` is the **parse-time folder `_CF_TRY`**
+>   (`src/frontend/parse_decl.cyr:2239`), as `roadmap_6.md` § v6.7.x C1 has said since 2026-10-02.
+> - **A module-scope computed initializer is a deferred runtime store, not a fold.** `var A = 6;
+>   var B = A * 7; syscall(60, B, 0, 0);` does exit 42, but the x86 image carries a runtime
+>   `push rax; mov eax,7; pop rcx; imul rcx; mov [0x600008],rax` sequence: `B` is computed when the
+>   program runs. Only an all-literal initializer folds — `var B = 6 * 7;` emits no `imul`
+>   (`_CF_TRY`). So the "data that already folds" in the 2026-08-11 item 2 is literal data only, and
+>   the residual for this arc includes computed constants, which is exactly what `const fn` buys.
 
 > ### Currency corrections (re-triage 2026-08-11, v6.5.19) — neither changes the verdict
 >
-> 1. **Stale line reference.** This file cites `ir_const_fold` at `src/main.cyr:1986`. It lives
->    at **`src/common/ir.cyr:735`**.
-> 2. **"Current state" understates what already ships.** This file says global initializers are
+> 1. ~~**Stale line reference.** This file cites `ir_const_fold` at `src/main.cyr:1986`. It lives
+>    at **`src/common/ir.cyr:735`**.~~ *(Struck 2026-10-04: it is not the base at all — see the
+>    correction above.)*
+> 2. ~~**"Current state" understates what already ships.** This file says global initializers are
 >    "literals (plus that folding)". Since v6.4.74's `_CF_TRY`, a module-scope **computed**
 >    initializer really is folded — probe at 6.5.19: `var A = 6; var B = A * 7;` at module
 >    scope, `syscall(60, B, 0, 0)` → **exits 42**. Scope the v6.6.x arc to the actual residual,
->    which is *computation* (`const fn` / `#phf`), not data that already folds.
+>    which is *computation* (`const fn` / `#phf`), not data that already folds.~~ *(Struck
+>    2026-10-04: exiting 42 shows the value, not a fold — `B` is a deferred runtime store; see the
+>    correction above.)*
 >
 > Premise otherwise holds: `grep -rniE 'comptime|const fn' src cbt` → 0; `grep -rn phf` → 0;
 > `const fn two() { return 2; }` → `error:<source>:1:7: expected '=', got fn`.
@@ -61,9 +84,11 @@ What it does **not** cover is **compile-time computation**:
 
 ## Current state (verified 2026-07-05)
 
-- CYRIUS **already has IR-level const-folding** — `ir_const_fold` (`src/main.cyr:1986`, run in the
+- ~~CYRIUS **already has IR-level const-folding** — `ir_const_fold` (`src/main.cyr:1986`, run in the
   "const-fold → DCE → dead-store" fixpoint), plus "const-fold enum" handling (`src/main.cyr:148`,
-  `src/main_win.cyr:96`). This is an **optimization pass** over arithmetic / enum-value literals,
+  `src/main_win.cyr:96`).~~ *(Struck 2026-10-04: that pass is an opt-in x86-ELF peephole, not a
+  default-path fixpoint; the default-path folder is the parse-time `_CF_TRY` — see the correction
+  at the top.)* This is an **optimization pass** over arithmetic / enum-value literals,
   **not** a user-facing const-eval: global initializers are literals (plus that folding), and
   there is **no `const fn`, no comptime block, no compile-time loop/table generation.**
 - (At filing) no `const-eval` / `comptime` / `const fn` appeared in `docs/development/roadmap_6.md`.
@@ -78,7 +103,8 @@ generics). Options, smallest → largest:
 
 1. **`const fn` propagation (minimal).** Mark pure functions `const`; the existing fold fixpoint
    evaluates them over literal args at compile time. Unlocks *computed constants* without a
-   generator program. Smallest surface; reuses `ir_const_fold` machinery.
+   generator program. Smallest surface; ~~reuses `ir_const_fold` machinery.~~ *(Struck 2026-10-04:
+   it builds on the parse-time folder `_CF_TRY` — see the correction at the top.)*
 2. **`comptime { … }` build-time blocks (medium).** A block the compiler executes at build,
    emitting its results as baked globals — subsumes much of the generated-`.cyr` idiom *inline*
    (no separate generator program, no manual include wiring). Bigger: needs a compile-time
