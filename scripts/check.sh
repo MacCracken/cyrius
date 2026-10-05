@@ -1836,6 +1836,11 @@ _chk_gate "$ROOT/tests/gates/toolchain/manifest_key_inventory.sh"
 # key after a multi-line array, literal / escaped strings, the CYML body, `cyrius package`.
 _chk_gate "$ROOT/tests/gates/toolchain/manifest_one_reader.sh"
 
+# 6.6.17 (P1) — `cyrius build --print-config` prints every value with its origin (argument >
+# environment > manifest > default) and builds / resolves nothing; checked against verbatim
+# consumer manifests, with the expected values parsed from the fixtures by awk.
+_chk_gate "$ROOT/tests/gates/toolchain/build_print_config.sh"
+
 # 6.6.10 (bite 12) — the check driver runs only tools it BUILT from this tree in this run:
 # all nine executables it runs come from its private run dir, planted build/ stubs and a
 # ~/.cyrius/bin copy are ignored, and a tool that does not compile is a FAIL naming it.

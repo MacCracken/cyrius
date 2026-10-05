@@ -1806,6 +1806,27 @@ package recipes, never changes a build. Synonyms are resolved in that one place:
 is read only when `entry` is absent. (Before 6.6.17 `[build] test` and `[build] defines` were
 declared by 41 and 3 manifests and read by nothing.)
 
+**One precedence for every key: argument > environment > manifest > default.** An operand or
+flag beats an environment variable, which beats the manifest, which beats the built-in default;
+a key with no argument or environment channel (a `—` above) simply has no such rung. The whole
+manifest is read (a manifest past 16 MiB is refused by name) and values are TOML: `"…"` with
+escapes, `'…'` verbatim, `true`/`false`, arrays (multi-line, with comments); a CYML body after
+a `---` line is prose, never configuration.
+
+`cyrius build --print-config [<source> [<output>]]` resolves the configuration and prints each
+value with the rung it came from, then exits 0 — it builds nothing and resolves no deps:
+
+```
+$ cyrius build --print-config
+cyrius build configuration (argument > environment > manifest > default)
+  manifest: cyrius.cyml
+  build.entry = "src/main.cyr"  (manifest: [build] src)
+  build.output = "build/hisab"  (manifest: [build] output)
+  build.strict = false  (default)
+  build.defines = []  (default)
+  ...
+```
+
 | Section | Key | Status | Synonyms | Environment | Argument | Read by |
 |---|---|---|---|---|---|---|
 | `[package]` | `name` | read | — | — | — | bundle name (cyrius distlib); the cyrius-source-repo check |

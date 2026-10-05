@@ -586,3 +586,213 @@ fn _mf_key_str(section, key): i64 {
     }
     return _mf_str(section, k);
 }
+
+# ================================================================
+# THE RESOLVED CONFIGURATION — one precedence for every key
+# ================================================================
+# argument > environment > manifest > default, the same for every key (no per-key exceptions; a
+# key with no argument or environment channel simply has no such rung). Resolution writes the
+# lowest rung first and lets each higher one overwrite it, so the order IS the code.
+# `cyrius build --print-config` prints every value with the rung it came from. CHANGELOG [6.6.17].
+var _CFG_DEFAULT = 0;
+var _CFG_MANIFEST = 1;
+var _CFG_ENV = 2;
+var _CFG_ARG = 3;
+var _CFG_N = 9;
+var _CK_ENTRY = 0;
+var _CK_OUTPUT = 1;
+var _CK_STRICT = 2;
+var _CK_DEFINES = 3;
+var _CK_MODULES = 4;
+var _CK_PKG_NAME = 5;
+var _CK_PKG_VERSION = 6;
+var _CK_PKG_CYRIUS = 7;
+var _CK_SECTIONS_BASE = 8;
+var _cfg_v[16];   # the value: a cstr (0 = unset), a bool, or a vec of cstrs (0 = empty)
+var _cfg_o[16];   # the origin rung
+var _cfg_w[16];   # where on that rung: "[build] src", "CYRIUS_DCE", "--dce", "<source>"
+
+fn _cfg_name(i): i64 {
+    if (i == _CK_ENTRY) { return "build.entry"; }
+    if (i == _CK_OUTPUT) { return "build.output"; }
+    if (i == _CK_STRICT) { return "build.strict"; }
+    if (i == _CK_DEFINES) { return "build.defines"; }
+    if (i == _CK_MODULES) { return "build.modules"; }
+    if (i == _CK_PKG_NAME) { return "package.name"; }
+    if (i == _CK_PKG_VERSION) { return "package.version"; }
+    if (i == _CK_PKG_CYRIUS) { return "package.cyrius"; }
+    return "sections.base";
+}
+
+# 0 = string, 1 = bool, 2 = list
+fn _cfg_kind(i): i64 {
+    if (i == _CK_STRICT) { return 1; }
+    if (i == _CK_DEFINES || i == _CK_MODULES) { return 2; }
+    return 0;
+}
+
+fn _cfg_put(i, v, o, w): i64 {
+    store64(&_cfg_v + i * 8, v);
+    store64(&_cfg_o + i * 8, o);
+    store64(&_cfg_w + i * 8, w);
+    return 0;
+}
+fn _cfg_val(i): i64 { return load64(&_cfg_v + i * 8); }
+fn _cfg_org(i): i64 { return load64(&_cfg_o + i * 8); }
+
+fn _cfg_reset(): i64 {
+    var i = 0;
+    while (i < _CFG_N) {
+        _cfg_put(i, 0, _CFG_DEFAULT, 0);
+        i = i + 1;
+    }
+    return 0;
+}
+
+# "[section] key" — where a manifest value came from.
+fn _cfg_where(section, key): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "[");
+    str_builder_add_cstr(sb, section);
+    str_builder_add_cstr(sb, "] ");
+    str_builder_add_cstr(sb, key);
+    return str_data(str_builder_build(sb));
+}
+
+fn _cfg_bad(section, key, want): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "cyrius.cyml ");
+    str_builder_add_cstr(sb, _cfg_where(section, key));
+    str_builder_add_cstr(sb, " must be ");
+    str_builder_add_cstr(sb, want);
+    _err(str_data(str_builder_build(sb)));
+    return 1;
+}
+
+# Manifest rungs. Each returns 0, or 1 after naming a value of the wrong type.
+fn _cfg_mf_str(i, section, key): i64 {
+    var k = _mf_key_used(section, key);
+    if (k == 0) { return 0; }
+    var v = _mf_str(section, k);
+    if (v == 0) { return _cfg_bad(section, k, "a string"); }
+    _cfg_put(i, v, _CFG_MANIFEST, _cfg_where(section, k));
+    return 0;
+}
+
+fn _cfg_mf_bool(i, section, key): i64 {
+    var b = _mf_bool(section, key);
+    if (b == 0 - 1) { return 0; }
+    if (b < 0) { return _cfg_bad(section, key, "true or false"); }
+    _cfg_put(i, b, _CFG_MANIFEST, _cfg_where(section, key));
+    return 0;
+}
+
+fn _cfg_mf_strs(i, section, key): i64 {
+    var v = _mf_strs(section, key);
+    if (_toml_bad == 1) { return _cfg_bad(section, key, "a string or an array of strings"); }
+    if (v == 0) { return 0; }
+    _cfg_put(i, v, _CFG_MANIFEST, _cfg_where(section, key));
+    return 0;
+}
+
+# Resolve the configuration `cyrius build` acts on. `src_arg` / `out_arg` are its operands (0 when
+# not given). Returns 0, or 1 after naming what is wrong.
+fn _cfg_resolve_build(src_arg, out_arg): i64 {
+    _cfg_reset();
+    if (_mf_load() < 0) { return 1; }
+    if (_cfg_mf_str(_CK_ENTRY, "build", "entry") != 0) { return 1; }
+    if (_cfg_mf_str(_CK_OUTPUT, "build", "output") != 0) { return 1; }
+    if (_cfg_mf_strs(_CK_MODULES, "build", "modules") != 0) { return 1; }
+    if (_cfg_mf_str(_CK_PKG_NAME, "package", "name") != 0) { return 1; }
+    if (_cfg_mf_str(_CK_PKG_VERSION, "package", "version") != 0) { return 1; }
+    var pv = _cfg_val(_CK_PKG_VERSION);   # the value the build sees: `${file:PATH}` expanded
+    if (pv != 0) {
+        var pe = _dep_expand_file_interp(pv, strlen(pv));
+        if (pe != 0) { store64(&_cfg_v + _CK_PKG_VERSION * 8, pe); }
+    }
+    if (_cfg_mf_str(_CK_PKG_CYRIUS, "package", "cyrius") != 0) { return 1; }
+    if (_cfg_mf_str(_CK_SECTIONS_BASE, "sections", "base") != 0) { return 1; }
+    if (src_arg != 0) { _cfg_put(_CK_ENTRY, src_arg, _CFG_ARG, "<source>"); }
+    if (out_arg != 0) { _cfg_put(_CK_OUTPUT, out_arg, _CFG_ARG, "<output>"); }
+    if (_cli_has("--strict") == 1) { _cfg_put(_CK_STRICT, 1, _CFG_ARG, "--strict"); }
+    var defs = _cli_values("-D");
+    if (vec_len(defs) > 0) { _cfg_put(_CK_DEFINES, defs, _CFG_ARG, "-D"); }
+    return 0;
+}
+
+# Hand the resolved values to the compile.
+fn _cfg_apply_build(): i64 {
+    _strict = _cfg_val(_CK_STRICT);
+    _defines = 0;
+    var d = _cfg_val(_CK_DEFINES);
+    if (d != 0) { if (vec_len(d) > 0) { _defines = d; } }
+    return 0;
+}
+
+fn _cfg_out(s): i64 {
+    sys_write(STDOUT_FD, s, strlen(s));
+    return 0;
+}
+
+fn _cfg_print_value(i): i64 {
+    var v = _cfg_val(i);
+    var k = _cfg_kind(i);
+    if (k == 1) {
+        if (v == 1) { return _cfg_out("true"); }
+        return _cfg_out("false");
+    }
+    if (k == 2) {
+        _cfg_out("[");
+        if (v != 0) {
+            var j = 0;
+            while (j < vec_len(v)) {
+                if (j > 0) { _cfg_out(", "); }
+                _cfg_out("\"");
+                _cfg_out(vec_get(v, j));
+                _cfg_out("\"");
+                j = j + 1;
+            }
+        }
+        return _cfg_out("]");
+    }
+    if (v == 0) { return _cfg_out("(unset)"); }
+    _cfg_out("\"");
+    _cfg_out(v);
+    return _cfg_out("\"");
+}
+
+fn _cfg_print_row(i): i64 {
+    _cfg_out("  ");
+    _cfg_out(_cfg_name(i));
+    _cfg_out(" = ");
+    _cfg_print_value(i);
+    _cfg_out("  (");
+    var o = _cfg_org(i);
+    if (o == _CFG_DEFAULT) { _cfg_out("default"); }
+    if (o == _CFG_MANIFEST) { _cfg_out("manifest"); }
+    if (o == _CFG_ENV) { _cfg_out("environment"); }
+    if (o == _CFG_ARG) { _cfg_out("argument"); }
+    var w = load64(&_cfg_w + i * 8);
+    if (w != 0) {
+        _cfg_out(": ");
+        _cfg_out(w);
+    }
+    _cfg_out(")\n");
+    return 0;
+}
+
+# `cyrius build --print-config [<source> [<output>]]` — resolve, print every value with its origin,
+# exit 0 WITHOUT building (and without resolving deps: it runs ahead of the dep resolver).
+fn _cfg_print_config(src_arg, out_arg): i64 {
+    if (_cfg_resolve_build(src_arg, out_arg) != 0) { return 1; }
+    _cfg_out("cyrius build configuration (argument > environment > manifest > default)\n");
+    _cfg_out("  manifest: ");
+    if (_mf_state == 1) { _cfg_out(_mf_path); } else { _cfg_out("(none)"); }
+    _cfg_out("\n");
+    var i = 0;
+    while (i < _CFG_N) {
+        _cfg_print_row(i);
+        i = i + 1;
+    }
+    return 0;
+}
