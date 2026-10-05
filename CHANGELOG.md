@@ -19,7 +19,7 @@ width; libssl-only verbs writing into a native ctx), the toolchain gates (cwd-in
 and the ganita 1.2.13 / sandhi 1.10.7 folds. **CVE-74 … CVE-76**; the next free id is **77**. Every further
 lane-review find went to 6.6.17 (user, 2026-10-04/05).
 
-**Bench** — recorded at the release gate. **Gate:** recorded at the release gate.
+**Gate (merged tree):** self-host fixpoint + seed-derive GREEN; cycc **1,535,360 B** (`.text` **1,357,032**), +43,216 B over 6.6.15's 1,492,144; `build/cycc-native-aarch64` regenerated (`cyrius pulsar`). Full check.sh: 169/169 shell gates produced a result, the 453-file `.tcyr` suite PASS; two reds — `gates_never_write_tree` axis 9 (a detector false positive, fixed in this release) and `audit_scope_covers_suite` (TIMEOUT at 900 s under load; ~750 s alone, filed for 6.6.17). Cross-OS ran per bite on ecb / ach / cass / pi in the lanes; the full `release-gate.sh` and the bench were not run on the merged tree (user, 2026-10-05: hand off).
 
 ### Security
 
