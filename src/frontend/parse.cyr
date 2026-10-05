@@ -757,9 +757,13 @@ fn _ensure_pair_flags(S): i64 {
 #     call path does the same.
 # A receiver that is not one name (`a.b.m()`, `f().m()`, an untyped impl `self`) is typed by no
 # call path; it stays -1, today's answer. CHANGELOG [6.6.16]
+# ⛔ 6.6.17 (a7): a GENERIC's call answers for the INSTANCE it reaches (`_pair_gen_inst`), not the
+# template — `fn w<T>(p: T, d) { return p.div(d); }` is a pair at T = Pt (`Pt_div` returns Ok/Err)
+# and one value at T = Qt, and the template, whose flag no single answer fits, left `w(p, d)?` on
+# the boxed lowering (rc 139). CHANGELOG [6.6.17]
 fn _pair_callee_at(S, ti): i64 {
     if (_gcall_open(S, ti) >= 0) {
-        var fi = FINDFN(S, TOKVAL(S, ti));
+        var fi = _pair_gen_inst(S, ti);
         return fi;
     }
     if (_tok_method_open(S, ti) == 0) { return 0 - 1; }
@@ -767,6 +771,17 @@ fn _pair_callee_at(S, ti): i64 {
     if (sid <= 0) { return 0 - 1; }
     var mf = FINDFN(S, BUILD_METHOD_NAME(S, sid - 1, TOKVAL(S, ti + 2)));
     return mf;
+}
+# The fn the call at token ti reaches (`_gen_resolve_call`: a generic's instance, instantiating it if
+# needed, so its body — parsed with T bound — has set its own pair flag; else FINDFN's entry). A
+# lookahead: the refusal state that resolver leaves for an emitting path is put back.
+fn _pair_gen_inst(S, ti): i64 {
+    var se = _grc_err;
+    var sf = _grc_fi;
+    var fi = _gen_resolve_call(S, ti);
+    _grc_err = se;
+    _grc_fi = sf;
+    return fi;
 }
 # `IDENT . IDENT (` at token ti: a method call on a single name. 1 / 0.
 fn _tok_method_open(S, ti): i64 {
