@@ -1203,7 +1203,8 @@ fn _testsuite_gate(): i64 {
         _p(_TCYR_HELPER);
         println(", so the libssl groups run)");
     } else {
-        println("  note: no dlopen-helper at $CYRIUS_HOME/dlopen-helper or $HOME/.cyrius/dlopen-helper — the libssl groups SKIP (each test still runs with a throwaway HOME)");
+        _p("  note: no dlopen-helper at $CYRIUS_HOME/dlopen-helper or $HOME/.cyrius/dlopen-helper");
+        println(" — the libssl groups SKIP (each test still runs with a throwaway HOME)");
     }
     var fail_count = 0;
     var total = 0;
