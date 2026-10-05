@@ -78,9 +78,10 @@ var _vgsi_base = 0;    # 0x1EC000 gvar_initval
 # ⛔ 6.6.16 (C1) — a global array's `= { .. }` initializer is an IMAGE BLOB, per var: 0 = none,
 # else an alloc'd { +0 the data length, +8 eb | kind << 8 of the last entry that wrote it, +16 the
 # array's bytes }. Every backend copies it into the var area (_gai_bake below) — cx too, into the
-# var data its .cyx carries (main_cx.cyr). The `kind` byte is a field of the
-# header and nothing else reads it (1 an integer element, 2 the bare byte list, 3 u128, 4 f64, 5
-# f32) — it is no type code and never reaches a type table. Lazily allocated at the var table's
+# var data its .cyx carries (main_cx.cyr). (C6: a declaration-zone struct literal whose every leaf
+# is a constant is a blob too, written by _spc_try in parse_decl.cyr.) The `kind` byte is a field of
+# the header and nothing else reads it (1 an integer element, 2 the bare byte list, 3 u128, 4 f64, 5
+# f32, 6 a struct literal) — it is no type code and never reaches a type table. Lazily allocated at the var table's
 # hard cap, the SVFI shape: NOT a heap-map region and NOT a `_grow_g*` link (the cybs-fragile
 # chain). CHANGELOG [6.6.16]
 var _vgai_base = 0;

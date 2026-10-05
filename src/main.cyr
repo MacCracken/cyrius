@@ -1842,6 +1842,9 @@ if (_prof_on == 1) { _prof_gvar_end = _prof_clock_ns(); }
 _warn_undefined_prepass(S);
 
 if (_init_km == 1) {
+    # 6.6.16 (C6): this replay runs AFTER the program — a constant initializer is baked into the
+    # image (_gvk_pre / _spc_try), what is not is warned (parse_decl.cyr _gvk_arm). CHANGELOG [6.6.16]
+    _gvk_arm(S);
     EMIT_GVAR_INITS(S);
 } else {
     # v6.4.59: the x86-macho argv/env capture is done by the r15 landing park at

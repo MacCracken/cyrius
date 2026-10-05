@@ -1697,6 +1697,13 @@ _chk_gate "$ROOT/tests/gates/frontend/array_initializer_refusals.sh"
 _chk_gate "$ROOT/tests/gates/platform/kmode_array_initializer_baked.sh"
 _chk_gate "$ROOT/tests/gates/codegen/cx_array_initializer.sh"
 
+# 6.6.16 (C6) — in an x86 `kernel;` build a global initializer that names an enum holds its value
+# from the first instruction: a scalar that folds and an all-constant struct literal are baked into
+# the image (run under CYRIUS_ELF64_KERNEL=1, image-scanned for the default kernel build and EFI),
+# and what the late replay still runs is named once per declaration — true only there (no warning
+# in a host build, an aarch64 kernel build, or an EFI build with efi_main).
+_chk_gate "$ROOT/tests/gates/platform/kmode_enum_initializer_baked.sh"
+
 # 6.6.13 (M3) — inside a closure, copying a captured struct copies its bytes
 # (tests/tcyr/crossos/closure_capture_struct_copy.tcyr runs the copies on every host). This pins
 # the compile-time half: a captured struct or vector of ANOTHER type is refused by name in the field

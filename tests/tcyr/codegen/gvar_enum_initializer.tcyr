@@ -1,0 +1,132 @@
+# 6.6.16 (C6) — a declaration-zone global whose initializer names an enum constant is BAKED: it holds
+# its value from the first instruction, like a literal constant, while the replayed store stays.
+#
+# THE DEFECT (measured at the 6.6.16 slot open): pass 1's constant folder refuses every name, so
+# `var X = A;` / `E.A` / `A + 1` / `var X: u8 = A;` and every struct literal took the deferred
+# runtime-store path. An x86 `kernel;` build emits that replay AFTER its top-level program, so a
+# kernel that never returns read 0 (tests/gates/platform/kmode_enum_initializer_baked.sh runs that
+# build). On a host build it shows as a FORWARD READ: an initializer that runs before the replayed
+# store — `var y = g();` above `var X = A;`, with g reading X — got 0, where a literal constant
+# (`var X = 3;`, baked since v5.11.64) gives 3.
+#
+# The fold sits at the REPLAY, where names resolve exactly as the replayed store resolves them.
+# Pass 1 could not: it sees only the names declared so far, so it would miss a forward enum (row
+# "forward enum") and fold 3 where a later global that shadows the name makes the program read 9
+# (row "shadow"). Those resolution rows pin the fold to the runtime: if the two ever disagree, the
+# baked value and the stored value differ and a row reads the wrong one.
+#
+# Host test (codegen/): the image writers it relies on are shared — _EMIT_GVAR_STATIC_INITS for a
+# scalar, _gai_bake for a struct literal's blob (crossos/global_array_initializer.tcyr runs that one
+# on every host). Also run under qemu-aarch64 and cxvm when this landed: cx stores the folded scalar
+# first (_gv_cx_prestore) and bakes the literal's blob into its var data, so every row agrees there.
+
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/fmt.cyr"
+include "lib/assert.cyr"
+
+struct GvkP { a; b: i32; c: u8; }
+struct GvkN { x: u16; p: GvkP; y; }
+struct GvkF64 { f: f64; n; }
+struct GvkLq { a: i32; p: GvkP; }
+
+# --- forward reads: initializers that run BEFORE the replayed stores below them ---------------
+fn gvk_rd(): i64 { return GVK_LATE; }
+fn gvk_rd_lit(): i64 { return GVK_LATE_LIT; }
+fn gvk_rd_q(): i64 { return GVK_LQ.p.b + GVK_LQ.p.c; }
+fn gvk_rd_e(): i64 { return GVK_LE; }
+var GVK_EARLY = gvk_rd();
+var GVK_EARLY_LIT = gvk_rd_lit();
+var GVK_EARLY_Q = gvk_rd_q();
+var GVK_EARLY_E = gvk_rd_e();
+var GVK_LATE = GvkE.GB;                       # an enum declared further down, qualified
+var GVK_LATE_LIT = 7;                         # the literal control (baked since v5.11.64)
+var GVK_LQ = GvkLq { GA, 1, 2, 0x55 };        # an all-constant struct literal, nested
+var GVK_LE = GA * 4 + GvkE.GB;                # an enum expression
+
+# --- the resolution rows: the fold must agree with the runtime store ------------------------
+var GVK_FW = GVF_A;                           # forward enum -> 3
+enum GvkFw { GVF_A = 3; GVF_B = 0x400; }
+enum GvkS { GVS_A = 3; }
+var GVK_SH = GVS_A;                           # a LATER global shadows the enum name -> reads 9
+var GVS_A = 9;
+var GVK_R1 = 5;                               # a constant, then an enum: the last wins -> 3
+var GVK_R1 = GVF_A;
+var GVK_R2 = GVF_A;                           # an enum, then a constant: the last wins -> 5
+var GVK_R2 = 5;
+var GVK_R3 = GVF_A;                           # two enum declarations -> the second
+var GVK_R3 = GvkFw.GVF_B;
+var GVK_R4 = GVF_A;                           # an enum, then a computed one -> the computed value
+var GVK_R4 = gvk_id(0x77);
+fn gvk_id(x): i64 { return x; }
+
+# --- every scalar form ---------------------------------------------------------------------
+enum GvkE { GA = 0x37; GB = 0x1234; GC = -5; }
+var GVK_B = GA;
+var GVK_Q = GvkE.GA;
+var GVK_X = GA + 1;
+var GVK_P = (GA) | GvkE.GB;
+var GVK_U8: u8 = GA;
+var GVK_I8: i8 = GC;
+var GVK_U16: u16 = GvkE.GB;
+var GVK_U32: u32 = GvkE.GA | 0x5A170000;
+var GVK_I32: i32 = GC * 3;
+var GVK_PTR: *i64 = GB;
+var GVK_ZERO = GA - 0x37;                     # folds to 0
+var GVK_CALL = gvk_id(GA);                    # not foldable: the runtime store gives it
+var GVK_N0 = 11;
+var GVK_N1 = GVK_N0 + GA;                     # names a global: not folded, stored at the replay
+
+# --- struct literals -----------------------------------------------------------------------
+var GVK_S = GvkP { GA, GvkE.GB * 2, 0x99 };
+var GVK_SN = GvkN { 0xBEEF, GC, 0x11223344, 7, 0x123456789 };
+var GVK_SF = GvkF64 { -1.5, GA };
+var GVK_SC = GvkP { gvk_id(4), 5, 6 };        # a call leaf: not baked, the store gives it
+
+# --- the reads -----------------------------------------------------------------------------
+assert_eq(GVK_EARLY, 0x1234, "a forward read sees an enum-named global below it (was 0)");
+assert_eq(GVK_EARLY_LIT, 7, "a forward read sees a literal global below it (the v5.11.64 control)");
+assert_eq(GVK_EARLY_Q, 0x55 + 2, "a forward read sees an all-constant struct literal below it");
+assert_eq(GVK_EARLY_E, 0x37 * 4 + 0x1234, "a forward read sees an enum expression below it");
+assert_eq(GVK_LATE, 0x1234, "the enum-named global itself");
+assert_eq(GVK_LQ.a, 0x37, "nested literal: leaf 0");
+assert_eq(GVK_LQ.p.a, 1, "nested literal: inner leaf 0");
+assert_eq(GVK_LQ.p.b, 2, "nested literal: inner leaf 1");
+assert_eq(GVK_LQ.p.c, 0x55, "nested literal: inner leaf 2");
+
+assert_eq(GVK_FW, 3, "forward enum -> 3");
+assert_eq(GVK_SH, 9, "a later global shadowing the enum name -> 9 (as the runtime reads it)");
+assert_eq(GVS_A, 9, "the shadowing global");
+assert_eq(GVK_R1, 3, "constant then enum: the enum (last) wins");
+assert_eq(GVK_R2, 5, "enum then constant: the constant (last) wins");
+assert_eq(GVK_R3, 0x400, "enum then enum: the second");
+assert_eq(GVK_R4, 0x77, "enum then computed: the computed value");
+
+assert_eq(GVK_B, 0x37, "bare");
+assert_eq(GVK_Q, 0x37, "qualified");
+assert_eq(GVK_X, 0x38, "enum + 1");
+assert_eq(GVK_P, 0x1237, "(A) | E.B");
+assert_eq(GVK_U8, 0x37, "u8 = A");
+assert_eq(GVK_I8, -5, "i8 = a negative enum");
+assert_eq(GVK_U16, 0x1234, "u16 = E.B");
+assert_eq(GVK_U32, 0x5A170037, "u32 = E.A | k");
+assert_eq(GVK_I32, -15, "i32 = an enum expression");
+assert_eq(GVK_PTR, 0x1234, "*i64 = an enum");
+assert_eq(GVK_ZERO, 0, "an enum expression folding to 0");
+assert_eq(GVK_CALL, 0x37, "f(A) is stored at the replay");
+assert_eq(GVK_N1, 11 + 0x37, "a global in the expression: stored at the replay");
+
+assert_eq(GVK_S.a, 0x37, "literal: enum leaf");
+assert_eq(GVK_S.b, 0x2468, "literal: enum expression into i32");
+assert_eq(GVK_S.c, 0x99, "literal: u8 leaf");
+assert_eq(GVK_SN.x, 0xBEEF, "nested literal: u16");
+assert_eq(GVK_SN.p.a, -5, "nested literal: a negative enum");
+assert_eq(GVK_SN.p.b, 0x11223344, "nested literal: i32");
+assert_eq(GVK_SN.p.c, 7, "nested literal: u8");
+assert_eq(GVK_SN.y, 0x123456789, "nested literal: trailing i64");
+assert_eq(load64(&GVK_SF), 0xBFF8000000000000, "literal: -1.5 in an f64 field");
+assert_eq(load64(&GVK_SF + 8), 0x37, "literal: enum after an f64 field");
+assert_eq(GVK_SC.a, 4, "literal with a call leaf: stored at the replay");
+assert_eq(GVK_SC.c, 6, "literal with a call leaf: its constant leaf");
+
+var r = assert_summary();

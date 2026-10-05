@@ -3017,6 +3017,36 @@ startup, in declaration order. (`= 0` is deferred only
 because the static path reserves 0 for "no value"; the store is redundant and harmless.)
 An uninitialized top-level `var x;` is an error — write `var x = 0;`.
 
+**An initializer that names an enum constant is a constant too (6.6.16).** `var x = A;`,
+`var x = E.A;`, `var x = A + 1;`, `var x: u8 = A;` — any initializer that folds once enum
+constants are known, the enum declared above or below — is baked into the image like
+`var x = 42;`. The name resolves exactly as a read of it does: if a later global hides the
+enum constant (`enum E { A = 3; } var x = A; var A = 9;`), `x` is 9. So is a struct literal
+whose every field is a constant (`var p = Pt { A, 0x66 };`, nested struct fields included, a
+float literal in a float field); a field that is a call, a name, a string or a `Str` leaves
+the whole literal to the startup store. The startup store still runs (the code does not
+change), so the visible difference is the value before it: an initializer that runs earlier —
+`var y = g();` above `var x = A;`, `g` reading `x` — now sees it, as it already saw a literal.
+
+**Kernel builds.** An x86 `kernel;` (or `CYRIUS_KERNEL=1`) build runs the deferred
+initializers **after** the top-level program — its top-level asm (the multiboot shim) must run
+first. A kernel whose program never returns never runs them, and the program reads what the
+image holds: the value, for everything baked above; 0 for the rest. The compiler names each
+declaration it leaves to that late replay, once:
+
+```
+# in a `kernel;` build:
+fn hostname() { return "agnos"; }
+var host = hostname();     # warning: in a kernel build the initializer of 'host' runs after
+                           # the top-level program: the program does not see its value, ...
+```
+
+It is a warning, not an error, and it is only issued where it is true: not by a host build,
+not by an aarch64 kernel build (it runs the initializers before the program), and not by an
+EFI application that defines `efi_main` (`CYRIUS_TARGET_EFI=1`: they run before `efi_main` is
+called). The fix is a constant, an assignment in the program, or a function that returns the
+value (a string literal inside a fn is an address baked into its code).
+
 Until 6.6.8 deferred initializers were capped at **4096 per compilation unit**
 (`too many initialized globals (max 4096)`), and this section documented the counting
 rule wrongly: `= -1` never counted, while `= 0` and string literals did. Since 6.6.9

@@ -3466,6 +3466,192 @@ fn PARSE_GVAR_REG(S): i64 {
     return 0;
 }
 
+# ================================================================
+# Enum-named global initializers in the image (6.6.16, C6)
+# ================================================================
+# ⛔ WHY. A declaration-zone global whose initializer names an enum constant (`var X = A;`,
+# `E.A`, `A + 1`, `var X: u8 = A;`) never took the static-init path. Pass 1's folder refuses every
+# name, and must: it sees only the names declared so far, so it would miss a forward enum and fold
+# 3 where a later `var A = 9;` makes the program read 9. The global was a runtime store in the
+# deferred replay — and an x86 `kernel;` build emits that replay AFTER its top-level program
+# (main.cyr's `_init_km == 1` branch, the v5.7.19 multiboot order), so a kernel that never returns
+# read 0. A struct literal (`var Q = P { A, 0x66 };`) was deferred whatever it named.
+#
+# NOW the fold sits where names resolve exactly as the replayed store resolves them, and its value
+# is BAKED. The store stays, so no code changes:
+#   * _gvk_pre, just before the replay: each live scalar entry whose initializer folds (the enum arm
+#     on, _CF_ENUM) records the value as its slot's static init, in entry order, so the last
+#     declaration wins as its store would. On cx (scalars are not in its var data) the same record
+#     is what _gv_cx_prestore stores first, so a read through an earlier initializer agrees there.
+#   * _spc_try, at the replay: a struct literal whose EVERY leaf is a constant is written into the
+#     slot's image blob (util.cyr _vgai_base; every writer bakes it, cx's var data too) by a walker
+#     that mirrors _spi_fields leaf for leaf and bails at anything it does not fully understand.
+#   * _gvk_warn: what an x86 kernel build still leaves to its late replay is named, once per entry.
+# CHANGELOG [6.6.16]
+var _gvk_late = 0;   # 1 = this replay runs AFTER the top-level program (main.cyr; see _gvk_arm)
+var _gvk_bk = 0;     # per deferred entry: 1 = _gvk_pre baked its scalar, 2 = _spc_try its literal
+var _spc_ti = 0;     # the struct walker's token
+var _spc_ok = 0;     # 0 = a leaf did not fold: the literal is not baked
+
+# main.cyr's x86 kernel branch, before its late replay. An EFI application that defines `efi_main`
+# runs that replay before it calls efi_main (main.cyr), so efi_main sees every value: no warning.
+fn _gvk_arm(S): i64 {
+    _gvk_late = 1;
+    if (_TARGET_EFI_APPLICATION != 1) { return 0; }
+    var fi = _find_fn_by_name(S, "efi_main", 8);
+    if (fi < 0) { return 0; }
+    if (L64(_fnt_offsets + fi * 8) >= 0) { _gvk_late = 0; }
+    return 0;
+}
+
+fn _gvk_live(S, vi): i64 {
+    if (vi < 0) { return 0; }
+    if (GVDEAD(S, vi) != 0) { return 0; }
+    return 1;
+}
+# A slot a folded scalar can be baked into: live, no struct annotation, a width the static-init
+# writer bakes (_EMIT_GVAR_STATIC_INITS: 8 / 4 / 2 / 1).
+fn _gvk_plain(S, vi): i64 {
+    if (_gvk_live(S, vi) == 0) { return 0; }
+    if (GVPM(S, vi) != 0) { return 0; }
+    var w = L64(_vars_base + vi * 8);
+    if (w == 8 || w == 4 || w == 2 || w == 1) { return 1; }
+    return 0;
+}
+
+# The first token of entry `sti`'s initializer (`var NAME [: T] = <expr> ;`), or 0 when it is not a
+# single `= <expr>` (a destructure, an array list). The cursor is put back.
+fn _gvk_rhs(S, sti): i64 {
+    if (TOKTYP(S, sti + 2) == 31) { return 0; }
+    var sv = GTI(S);
+    STI(S, sti + 2);
+    if (PEEKT(S) == 49) { _gvi_ann(S, 0 - 1); }
+    var r = 0;
+    if (PEEKT(S) == 4) { r = GTI(S) + 1; }
+    STI(S, sv);
+    return r;
+}
+
+# Before the replay (names resolve as there: all registered, a kernel build's program globals
+# hidden). An entry a later constant declaration superseded is that declaration's value: skipped.
+fn _gvk_pre(S): i64 {
+    var gc = L64(S + 0x19A000);
+    _gvk_bk = alloc(gc + 8);
+    var gi = 0;
+    while (gi < gc) {
+        store8(_gvk_bk + gi, _gvk_one(S, gi));
+        gi = gi + 1;
+    }
+    return 0;
+}
+fn _gvk_one(S, gi): i64 {
+    var graw = L64(_gvt(S) + gi * 8);
+    if ((_gv_sup(graw) & 1) != 0) { return 0; }
+    var ti = _gvk_rhs(S, _gv_tok(graw));
+    if (ti == 0) { return 0; }
+    if (gi >= _gv_ent_cap) { return 0; }
+    var vi = (load64(_gv_ent_base + gi * 8) & 0x1FFFFF) - 1;   # its recorded slot (_gv_ent_slot)
+    if (_gvk_plain(S, vi) == 0) { return 0; }
+    _cf_enum = 1;
+    var v = _CF_TRY(S, ti, 5);
+    _cf_enum = 0;
+    if (_cf_ok == 0) { return 0; }
+    S64(_vgsi_base + vi * 8, v);
+    return 1;
+}
+
+# After the replay's scalar or struct arm: in a late replay the entry is named unless it was baked —
+# by _spc_try (2), or by _gvk_pre (1) into a slot no list blob covers (the image writes a blob over
+# the scalar: `var B[1] = {..}; var B = A;` holds the list until the late store).
+fn _gvk_left(S, gi, sti, idx): i64 {
+    if (_gvk_late != 1) { return 0; }
+    if (_gvk_live(S, idx) == 0) { return 0; }
+    var k = load8(_gvk_bk + gi);
+    if (k == 2) { return 0; }
+    if (k == 1) { if (GVGAI(S, idx) == 0) { return 0; } }
+    return _gvk_warn(S, sti);
+}
+# A destructure stays deferred: named when any of its targets is live.
+fn _gvk_dst(S, sti, a, b, c): i64 {
+    if (_gvk_live(S, a) + _gvk_live(S, b) + _gvk_live(S, c) == 0) { return 0; }
+    return _gvk_warn(S, sti);
+}
+# Once per entry; not in a build that has already failed (it runs nothing).
+fn _gvk_warn(S, sti): i64 {
+    if (_gvk_late != 1) { return 0; }
+    if (_had_error != 0) { return 0; }
+    syscall(SYS_WRITE, 2, "warning:", 8);
+    _err_head_at(S, sti + 1);
+    PRSTR(": in a kernel build the initializer of '");
+    PRSTR(S + 0xEC00000 + TOKVAL(S, sti + 1));
+    PRSTR("' runs after the top-level program: the program does not see its value, and a kernel that never returns never runs it (use a constant, or assign it in the program)\n");
+    return 0;
+}
+
+# A struct literal at the cursor (past `{`) whose every leaf is a constant — an integer, an enum
+# constant or a constant expression of them; a float literal (optionally negated) in a float field —
+# is written into slot `idx`'s blob, each leaf at its FIELDOFF and FIELDSZ, the bytes the replayed
+# stores write (EMIT_STRUCT_FIELD_W: a float literal is its binary64 bits in an f64 or f32 field).
+# Nested struct fields are walked into, as _spi_fields walks them (a constant into a nested field is
+# its first leaf). Not baked: a union, a Str / Vec / u128 leaf, a name or call (a whole struct value
+# is one), a string, a named-field list — anything the walk does not fully understand. Reads tokens
+# only (the cursor and the diagnostics are the replay's). Entry `gi` is marked baked (2).
+fn _spc_try(S, gi, idx, sid): i64 {
+    if (_gvk_live(S, idx) == 0) { return 0; }
+    if (_spc_walk(S, sid, 0) == 0) { return 0; }
+    var b = _gai_blob(S, idx, 8, 6);
+    _spc_walk(S, sid, b + 16);
+    store8(_gvk_bk + gi, 2);
+    return 0;
+}
+# One walk (`d` = 0: check only); 1 = every leaf folded and the list ends at its `}`.
+fn _spc_walk(S, sid, d): i64 {
+    _spc_ti = GTI(S);
+    _spc_ok = 1;
+    _spc_fields(S, sid - 1, 0, d);
+    if (_spc_ok == 0) { return 0; }
+    if (TOKTYP(S, _spc_ti) != 14) { return 0; }
+    return 1;
+}
+fn _spc_fields(S, si, base, d): i64 {
+    if (ISUNION(S, si) == 1) { _spc_ok = 0; return 0; }
+    var fc = GETFCOUNT(S, si);
+    var fi = 0;
+    while (fi < fc) {
+        if (_spc_ok == 0) { return 0; }
+        var ft = GETFTYPE(S, si, fi);
+        var off = base + FIELDOFF(S, si, fi);
+        if (_spi_is_nested(S, ft) == 1) {
+            if (GETFCOUNT(S, ft - 1) == 0) { _spc_ok = 0; return 0; }
+            _spc_fields(S, ft - 1, off, d);
+        } else { _spc_leaf(S, si, fi, off, d); }
+        fi = fi + 1;
+    }
+    return 0;
+}
+fn _spc_leaf(S, si, fi, off, d): i64 {
+    var ft = GETFTYPE(S, si, fi);
+    if (ft > 0 || ft < 0 - 8) { _spc_ok = 0; return 0; }   # Str (> 0), u128 / Vec (< -8)
+    var ti = _spc_ti;
+    var v = 0;
+    _gai_ok = 0;
+    if (GFFK(S, si, fi) != 0) { v = _gai_flit(S, ti); }
+    if (_gai_ok == 1) {
+        ti = ti + 1;
+        if (TOKTYP(S, ti - 1) == 7) { ti = ti + 1; }
+    } else {
+        _cf_enum = 1;
+        v = _CF_TRY(S, ti, 31);
+        _cf_enum = 0;
+        if (_cf_ok == 0) { _spc_ok = 0; return 0; }
+        ti = _cf_ti;
+    }
+    if (d != 0) { _gai_put(d + off, FIELDSZ(S, ft), v); }
+    if (TOKTYP(S, ti) == 31) { ti = ti + 1; }
+    _spc_ti = ti;
+    return 0;
+}
+
 # Emit deferred global var inits (replays saved token positions)
 # The leading declaration block's `: Type` annotation, consumed. Returns `0 - sid` for a struct
 # name, else 0 (a pointer, a scalar: not checked here). `slot` is the global the entry declared.
@@ -3508,8 +3694,9 @@ fn _gvi_expr(S, gps): i64 {
 }
 
 fn EMIT_GVAR_INITS(S): i64 {
-    if (_TARGET_CX == 1) { _gv_cx_prestore(S); }   # 6.6.6: see _gv_cx_prestore
     _gv_hide_program(S, 1);   # 6.6.6: a kernel replay reads declaration-zone globals (FINDVAR)
+    _gvk_pre(S);              # 6.6.16 (C6): enum-named scalars baked; resolves as the replay does
+    if (_TARGET_CX == 1) { _gv_cx_prestore(S); }   # 6.6.6: see _gv_cx_prestore
     var gc = L64(S + 0x19A000);
     var gi = 0;
     while (gi < gc) {
@@ -3553,6 +3740,7 @@ fn EMIT_GVAR_INITS(S): i64 {
             }
             EMOVRA_RDX(S);
             if (ei2 >= 0) { EVSTORE(S, ei2); _gv_slvar(S, ei2); }
+            _gvk_dst(S, sti, ei1, ei2, ei3);   # 6.6.16 (C6): a kernel build names what stays late
             if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
             STI(S, GTI(S) + 1);
             gi = gi + 1;
@@ -3597,10 +3785,12 @@ fn EMIT_GVAR_INITS(S): i64 {
                 # v6.3.44 Str-field fix lives in _emit_struct_positional_init now
                 # (R5, v6.4.15) — this global-init REPLAY was the parallel copy
                 # that had to take the fix separately.
+                _spc_try(S, gi, idx, sid);   # 6.6.16 (C6): an all-constant literal is baked
                 _emit_struct_positional_init(S, idx, sid);
                 if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); }
                 STI(S, GTI(S) + 1);
                 _gv_slvar(S, idx);
+                _gvk_left(S, gi, sti, idx);   # 6.6.16 (C6): a kernel build names what stays late
                 if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
                 STI(S, GTI(S) + 1);
                 did_struct = 1;
@@ -3611,6 +3801,7 @@ fn EMIT_GVAR_INITS(S): i64 {
                 _gvi_expr(S, gps);
                 if (idx >= 0) { _gv_store(S, idx); _gv_slvar(S, idx); }   # 6.6.13: at its width
             }
+            _gvk_left(S, gi, sti, idx);   # 6.6.16 (C6): a kernel build names what stays late
             if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
             STI(S, GTI(S) + 1);
         }
