@@ -2744,12 +2744,16 @@ sandhi::sandhi_http_options_follow/1
 sandhi::sandhi_http_options_follow_redirects/2
 sandhi::sandhi_http_options_get_allow_0rtt/1
 sandhi::sandhi_http_options_get_connect_ms/1
+sandhi::sandhi_http_options_get_idle_cb/1
+sandhi::sandhi_http_options_get_idle_ms/1
 sandhi::sandhi_http_options_get_pool/1
 sandhi::sandhi_http_options_get_read_ms/1
 sandhi::sandhi_http_options_get_tls_policy/1
 sandhi::sandhi_http_options_get_total_ms/1
 sandhi::sandhi_http_options_get_write_ms/1
 sandhi::sandhi_http_options_hops/1
+sandhi::sandhi_http_options_idle_cb/2
+sandhi::sandhi_http_options_idle_ms/2
 sandhi::sandhi_http_options_max_hops/2
 sandhi::sandhi_http_options_max_response_bytes/2
 sandhi::sandhi_http_options_new/0
@@ -2849,6 +2853,7 @@ sandhi::sandhi_router_add/4
 sandhi::sandhi_router_dispatch/6
 sandhi::sandhi_router_dispatch_a/7
 sandhi::sandhi_router_dispatch_c/6
+sandhi::sandhi_router_dispatch_c_a/7
 sandhi::sandhi_router_new/1
 sandhi::sandhi_router_new_a/3
 sandhi::sandhi_rpc_body/1
@@ -2900,6 +2905,7 @@ sandhi::sandhi_server_options_get_idle_ms/1
 sandhi::sandhi_server_options_get_max_conns/1
 sandhi::sandhi_server_options_get_max_request/1
 sandhi::sandhi_server_options_get_req_arena/1
+sandhi::sandhi_server_options_get_request_ms/1
 sandhi::sandhi_server_options_get_stop_flag/1
 sandhi::sandhi_server_options_get_tls/1
 sandhi::sandhi_server_options_idle_ms/2
@@ -2908,6 +2914,7 @@ sandhi::sandhi_server_options_max_request/2
 sandhi::sandhi_server_options_new/0
 sandhi::sandhi_server_options_new_a/1
 sandhi::sandhi_server_options_req_arena/2
+sandhi::sandhi_server_options_request_ms/2
 sandhi::sandhi_server_options_stop_flag/2
 sandhi::sandhi_server_options_tls/5
 sandhi::sandhi_server_path_only/1

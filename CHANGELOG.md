@@ -8,6 +8,30 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Downstream
 
+- **sandhi 1.10.7 folded (`lib/sandhi.cyr`, sandhi tag `1.10.7` @ `a13398a`; 1.10.5 and 1.10.6 were never
+  folded on their own) — TLS policy no longer fails open under concurrency, the client's framing defects,
+  a server request budget, SIGPIPE on macOS.**
+  - **Security:**
+    - concurrent requests ran under EACH OTHER's TLS policy: the hook lived in two process-wide globals, so
+      an unpolicied request on another thread accepted certificates its own verification rejects (measured
+      162–167 of 180), and a policied one could run under another thread's trust store. The hook now lives
+      in the per-call request context;
+    - a policied open no longer uses the TLS session cache (the libssl backend resumed a session made under
+      another policy: a rejected trust store got `200 [Reused]`, an mTLS identity was reported for the wrong
+      client);
+    - a whole-request budget against Slowloris: `sandhi_server_options_request_ms` (default 60 s, 0
+      disables) answers `408` on plaintext and fails the session on TLS;
+    - the server's SIGPIPE guard composes the stdlib's `signal_ignore`, so a client that disconnects no
+      longer kills a sandhi server on macOS.
+  - **Fixed:** a response shorter than its Content-Length is `SANDHI_ERR_PROTOCOL` (was `SANDHI_OK`);
+    `Connection: close` bodies were cut at their first NUL; HEAD / 204 / 304 complete at the end of the
+    header block instead of waiting for a close; HTTPS routing no longer grows the global heap per request
+    and honours `req_arena` on TLS; the one-shot and chunked response verbs report their write results; a
+    stream event split across two reads is no longer lost.
+  - **Added:** stream idle turns (`sandhi_http_options_idle_ms` / `_idle_cb` + getters),
+    `sandhi_server_options_request_ms` + getter, `sandhi_router_dispatch_c_a` — api-surface **5,803 → 5,810**.
+  - Pin 6.6.15. The 18 in-tree `.tcyr` files that include sandhi pass on x86_64 and aarch64 (qemu).
+
 - **ganita 1.2.13 folded (`lib/ganita.cyr`, ganita tag `1.2.13` @ `486b8f5`; 1.2.12 was never folded on its
   own) — the SVD rewritten, non-finite input refused across linalg.** ⚠ `ganita_mat_svd` is a new algorithm
   (one-sided Jacobi on a column- and row-pivoted QR — Drmač–Veselić, LAPACK dgejsv / dgesvj), so every SVD's
