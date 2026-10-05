@@ -1592,6 +1592,45 @@ fn _sptr_param_temp(S, li, sid): i64 {
     return t;
 }
 
+# ⛔ 6.6.16 (C7) — A PARAMETER ANNOTATED WITH A PLAIN STRUCT IS A VALUE, AT EVERY WIDTH. Over 8 B
+# the caller passes the struct's ADDRESS (the ABI above, unchanged), and nothing ever made the copy
+# "by value" promises: `fn bump(p: P3) { p.x = p.x + 1; }` wrote the CALLER's struct — a named
+# local, a global, a pointer-mode local's heap object, a forwarded parameter, a typed `self: T`
+# receiver, a generic instance, a call through `fncall1(&bump, &p)`, and at top level a field
+# (`take(BX.v)`). Only a field argument inside a fn was copied (6.6.12, caller-side, so not at top
+# level). The copy is made HERE, in the callee's prologue — one site for every caller, fn pointers
+# included, built from frontend emitters every backend has: after `_stkp_flush` has homed every
+# parameter slot (a Win64 5th+ / SysV 7th+ pointer arrives on the stack) and before the body. Each
+# such parameter's struct is copied into an inline frame aggregate (`_sptr_param_temp`), which
+# takes the parameter's NAME at the parameter's depth (so a body `var p` is a duplicate exactly
+# as before); the pointer slot is renamed -1. From there it is an ordinary inline local: field
+# access, `q = r`, `return q`, `&q`, operators and closure captures take their inline paths.
+# A `p: *T` parameter is a pointer and is never copied (`_is_ptr_param`); a `#naked` fn has no
+# frame; a coroutine impl is re-entered on every resume (and an `async fn` refuses such a
+# parameter, `_refuse_async_struct_param`). CHANGELOG [6.6.16]
+fn _sptr_params_localize(S): i64 {
+    if (_cur_fn_naked != 0) { return 0; }
+    if (_pending_coro != 0) { return 0; }
+    var li = 0;
+    while (li < _cur_fn_pslots) {
+        if (_local_is_sptr_param(S, li) == 1) {
+            if (_is_ptr_param(S, li) == 0) { _sptr_param_localize1(S, li); }
+        }
+        li = li + 1;
+    }
+    return 0;
+}
+fn _sptr_param_localize1(S, li): i64 {
+    var d = GSDEP(S);
+    SSDEP(S, 0);
+    var t = _sptr_param_temp(S, li, 0 - GLTYPE(S, li));
+    SSDEP(S, d);
+    S64(S + 0x5D9D000 + t * 8, L64(S + 0x5D9D000 + li * 8));
+    SSLICE_W(S, t, 0);
+    S64(S + 0x5D9D000 + li * 8, 0 - 1);
+    return 0;
+}
+
 # ⭐ 6.6.5 — PARSE_FNCALL's `: Str` param auto-coercion, EXTRACTED so the method-call path
 # (parse_decl.cyr) uses the same code rather than a second copy that drifts. A string
 # literal landing in a param the callee annotated `: Str` is wrapped in `str_from(...)`;
@@ -2459,10 +2498,12 @@ fn _push_struct_expr_arg(S, fi, argc): i64 {
 }
 
 # The recorded field source as by-value argument `argc` of `fn`: checked against the parameter's
-# struct (SFPSID — the instance's for a generic) and refused by name when it differs. In a fn the
-# callee gets a COPY (a frame temp), so a write through its parameter cannot reach the caller's
-# field — the by-value contract. At top level there is no frame, and the field's own address is
-# passed, as a named global argument's is (`_push_struct_addr_global`). Returns 1. CHANGELOG [6.6.12]
+# struct (SFPSID — the instance's for a generic) and refused by name when it differs. The field's
+# own ADDRESS is passed, in a fn and at top level alike, as a named argument's is: the callee
+# copies it in its prologue (`_sptr_params_localize`), so a write through its parameter cannot
+# reach the caller's field — the by-value contract. 6.6.12 copied it into a caller frame temp
+# here instead, which had no frame to use at top level (there the callee got the field itself);
+# with the callee's copy that temp was a second copy. Returns 1. CHANGELOG [6.6.12] [6.6.16]
 fn _fla_push_arg(S, fi, argc): i64 {
     _fla_hit = 0;
     var ps = GFPSID(S, fi, argc);
@@ -2471,15 +2512,9 @@ fn _fla_push_arg(S, fi, argc): i64 {
             EPUSHR(S);   # keeps the argument count; no binary is written
             return 1;
         } }
-    if (GINFN(S) == 1) {
-        var t = _agg_temp(S, _fla_ft);
-        _agc_copy_bytes(S, t, 0 - 1, 0 - 2, 0 - 1, STRUCTSZ(S, _fla_ft - 1));
-        EFLADDR(S, t);
-    } else {
-        _fsc_src_x1(S, 0);
-        EMOVI(S, 0);
-        EADDR(S);            # rax = x1
-    }
+    _fsc_src_x1(S, 0);
+    EMOVI(S, 0);
+    EADDR(S);            # rax = x1
     EPUSHR(S);
     return 1;
 }
@@ -2631,6 +2666,30 @@ fn _refuse_async_simd_param(S, pnoff): i64 {
     syscall(SYS_WRITE, 2, ": async fn parameter '", 22);
     PRSTR(S + 0xEC00000 + pnoff);
     syscall(SYS_WRITE, 2, "' is a value-form vector, which an `async fn` does not capture yet — pass a pointer to it\n", 92);
+    _had_error = 1;
+    return 0;
+}
+# ⛔ 6.6.16 (C7) — the same capture, for a plain struct over 8 B passed by value. Such a parameter
+# arrives as its struct's ADDRESS, and a by-value one is copied in the callee's prologue
+# (`_sptr_params_localize`) — but an `async fn` runs its body at force time, so the copy would
+# read the caller's struct late (measured: `bump(p)`, then `p.x = 10`, then `await` printed 11),
+# and a coroutine impl re-runs its prologue on every resume. Refused by name until the Future
+# carries the struct; `p: *T` (one i64) and a struct of 8 B or less still compile. `li` is the
+# parameter's slot, typed and not yet marked (`_param_record`). CHANGELOG [6.6.16]
+fn _refuse_async_struct_param(S, li, pnoff): i64 {
+    if (_cur_fn_ptrp == li + 1) { return 0; }
+    var lt = GLTYPE(S, li);
+    if (_agc_plain_big(S, lt) == 0) { return 0; }
+    if (_panic == 1) { return 0; }
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    syscall(SYS_WRITE, 2, ": async fn parameter '", 22);
+    PRSTR(S + 0xEC00000 + pnoff);
+    syscall(SYS_WRITE, 2, "' is a struct passed by value, which an `async fn` does not capture yet — pass a pointer to it (`", 99);
+    PRSTR(S + 0xEC00000 + pnoff);
+    syscall(SYS_WRITE, 2, ": *", 3);
+    PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + ((0 - lt) - 1) * 8));
+    syscall(SYS_WRITE, 2, "`)\n", 3);
     _had_error = 1;
     return 0;
 }
@@ -3586,7 +3645,7 @@ fn _infer_conc_at_cursor(S): i64 {
                 # 6.6.10: a vector local's SLTYPE is a descriptor sentinel (<= -2048), not a
                 # struct id — it read as "struct 2093". Vectors are not type arguments.
                 if (_ic_lt <= 0 - 2048) { return 0 - 8; }
-                if (_is_ptr_param(_ic_lli) == 1) { return 0 - 8; }   # 6.6.10: `pp: *Pt` is a pointer
+                if (_is_ptr_param(S, _ic_lli) == 1) { return 0 - 8; }   # 6.6.10: `pp: *Pt` is a pointer
                 if (_ic_lt < 0) { return 0 - _ic_lt; }
                 return 0 - 8;
             }
@@ -3598,15 +3657,28 @@ fn _infer_conc_at_cursor(S): i64 {
 # 6.6.10 (bite 7 review): a `pp: *Pt` parameter. The parameter loop skips the `*`, so the slot is
 # typed `Pt` like a by-value one and `pp.x` works — but it is a POINTER, and a `var q: *Pt` local
 # (not struct-typed at all) infers i64, so `f(pp)` does too. It used to instantiate `f$Pt`.
+# 6.6.16 (C7): the `*` is seen before the slot exists, so this only marks the slot to come;
+# `_param_record` writes it onto the slot itself. It was a 64-bit mask by slot index, blind at
+# slot >= 64, where a pointer then read as a by-value struct and was copied in. CHANGELOG [6.6.16]
 fn _mark_ptr_param(S): i64 {
-    var li = GFLC(S);
-    if (li < 64) { _cur_fn_ptrp = _cur_fn_ptrp | (1 << li); }
+    _cur_fn_ptrp = GFLC(S) + 1;
     return 0;
 }
-fn _is_ptr_param(li): i64 {
-    if (li >= 64) { return 0; }
+# 6.6.16 (C7) — an int-class parameter's slot facts, once its SLTYPE is set: an `async fn` refuses
+# a struct by value (it reads the pending `*` mark, so first); a struct of 8 B or less is inline
+# (MARK_SMALL_STRUCT); a `*T` is marked on its own slot — LAST, because MARK_SMALL_STRUCT's SLAGG
+# rewrites the word's high half. One call from the parameter loop. CHANGELOG [6.6.16]
+fn _param_record(S, li, pnoff, is_async): i64 {
+    if (is_async == 1) { _refuse_async_struct_param(S, li, pnoff); }
+    MARK_SMALL_STRUCT(S, li, GLTYPE(S, li));
+    if (_cur_fn_ptrp == li + 1) { SLPTRP(S, li); }
+    _cur_fn_ptrp = 0;
+    return 0;
+}
+fn _is_ptr_param(S, li): i64 {
+    if (li < 0) { return 0; }
     if (li >= _cur_fn_pslots) { return 0; }
-    return (_cur_fn_ptrp >> li) & 1;
+    return GLPTRP(S, li);
 }
 # 6.6.10: a struct GLOBAL argument binds its struct like a struct local does. GVTYPE alone is
 # ambiguous (a narrow scalar global stores its WIDTH there, 1..7); a struct global is the one
@@ -7060,7 +7132,10 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                 # and the caller pushes `&local`), so its slot holds a pointer; one that fits in
                 # 8 B arrives BY VALUE, so the slot IS the struct. That second half used to be a
                 # `_TARGET_CX == 0` guess at the use site, which is why cx deref'd its own slot.
-                MARK_SMALL_STRUCT(S, li, GLTYPE(S, li));
+                # 6.6.16 (C7): `_param_record` also marks a `*T` on its slot and refuses a struct
+                # by value on an `async fn`. Over 8 B such a parameter is COPIED in the prologue
+                # (`_sptr_params_localize`, after `_stkp_flush` below).
+                _param_record(S, li, pnoff, _is_async);
                 # Only emit register params now (0-5). v5.5.36 Phase 2b:
                 # x86 struct-returning fns reserve arg-reg 0 (RDI on SysV,
                 # RCX on Win64) for the hidden retptr, so user param 0
@@ -7275,6 +7350,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     # yet, so THIS is the boundary `_local_is_sptr_param` tests. CHANGELOG [6.6.6]
     _cur_fn_pslots = GFLC(S);
     _stkp_flush(S, int_pc + _pl_shift);
+    _sptr_params_localize(S);   # 6.6.16 (C7): a struct parameter over 8 B is copied in, here
     # Parse body
     if (PEEKT(S) != 13) { ERR_EXPECT(S, 13); }
     STI(S, GTI(S) + 1);

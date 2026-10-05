@@ -350,10 +350,13 @@ var r = add(20, 22);   # r = 42
   (`Type_method(args)`), which is how the constructor idiom `fn new(a, b)` inside an `impl` is
   written anyway. Forward calls are exempt from the check — the callee has no body yet.
 - **`x.m()` passes `self` exactly as `T_m(x)` would.** An untyped `self` (the `impl` form) is
-  the receiver's address. A typed `self: T` follows the parameter rule: a struct over 8 bytes is
-  address-passed, one of **8 bytes or less is passed by value** — so `fn Odd_sum(self: Odd)`
-  sees a copy, and writing `self.a` inside it does not change `x`. Before v6.6.11 the dot form
-  pushed `&x` for a small typed `self` too and the method read its fields out of the address.
+  the receiver's address. A typed `self: T` follows the parameter rule: a struct is a **value**
+  at every width — one of 8 bytes or less arrives in a register, a wider one by address and is
+  copied on entry (v6.6.16) — so `fn Odd_sum(self: Odd)` and `fn P3_bump(self: P3)` see a copy,
+  and writing `self.a` inside them does not change `x`. Before v6.6.11 the dot form pushed `&x`
+  for a small typed `self` too and the method read its fields out of the address; before v6.6.16
+  a typed `self` over 8 bytes was the receiver itself, so `x.bump()` changed `x`. A method that
+  must change its receiver takes an untyped `self` or `self: *T`.
 
 **Reserved words are a CLASS, not a short list.** `TOKNAME_BUILTIN` in
 `src/common/util.cyr` is the single source of truth — **79** builtin/intrinsic names
@@ -634,8 +637,9 @@ makes `t` an `f64`, where it used to be an untyped `i64` holding the bits.
 
 A struct declared inside a fn — `var p = Point { 1, 2 };`, `var p: Point;`, `var p: Point = q;`
 — is a **per-call frame object**. It is fresh on every call, private to the calling thread, and
-its name is visible only inside its own scope. Take its address with `&p`; pass it to a
-`p: Point` parameter and the callee receives that address.
+its name is visible only inside its own scope. Take its address with `&p`. Pass it to a
+`q: Point` parameter and the callee gets its own copy (v6.6.16); pass `&p` to a `q: *Point`
+parameter and the callee works on `p` itself.
 
 A struct declared at TOP LEVEL is a single shared object in the data section, and a local
 declared as `var p: Point = <expression>` where the expression yields an ADDRESS (a heap
@@ -774,11 +778,12 @@ v6.6.11 each of those stored one word, silently.
 Two more field / global sources became copies in v6.6.12. **A struct-typed FIELD passed as a
 by-value struct argument** (`take(r.v)` into a `: P3` parameter over 8 bytes), from any base (a
 local, a global, a by-value parameter, a pointer-mode local), and through a generic instance
-(`mk<P3>(r.v)`). Inside a fn the callee gets a COPY of the field, so writing through the
-parameter does not reach `r.v` — unlike a NAMED struct argument, which is address-passed (see
-below). At top level there is no frame, so the callee gets the field itself. A field of a
-different struct type is refused (`cannot pass 'q' to a by-value parameter of a different struct
-type in a call to 'take'`). Before v6.6.12 the field's first word was passed as the struct's
+(`mk<P3>(r.v)`). The callee gets a COPY of the field, so writing through the parameter does not
+reach `r.v`, at top level as in a fn — since v6.6.16 that copy is the callee's own, made on entry
+as for every by-value struct argument (see below). From v6.6.12 to v6.6.15 a fn copied the field
+into a frame temporary and top level, with no frame, passed the field itself, which the callee
+then wrote. A field of a different struct type is refused (`cannot pass 'q' to a by-value
+parameter of a different struct type in a call to 'take'`). Before v6.6.12 the field's first word was passed as the struct's
 address, and the callee SIGSEGV'd. **A top-level copy-init** — `var B: P3 = A;` from an inline
 global, or `var G: P3 = BX.v;` from a global's field, in the leading declaration block or after
 the first statement — gives `B` its own STRUCTSZ bytes and copies them. Before v6.6.12 `B` got one
@@ -788,11 +793,30 @@ struct, exactly as in a fn. The source must be declared ABOVE the copy: `var B: 
 `var A = P3 { .. };` is refused (`cannot copy-init 'B' from a global declared below it`), since
 globals are initialised in declaration order and `A` has not been initialised when `B` copies it.
 
-⚠ **A by-value struct PARAMETER over 8 bytes is address-passed** — the parameter's slot holds
-the caller's address, which is why writing `q.z = 5` inside the callee is visible to the caller.
-Since v6.6.6 every path that copies or returns such a parameter goes through that address:
-`q = r`, `q = mk(..)`, `q = b.mk(..)`, `q = a + b`, `q = G`, `r = q`, `G = q`, `q = w` (a copy,
-not an alias) and `return q;` all move the whole struct. Before v6.6.6 they moved the POINTER
+⚠ **A by-value struct PARAMETER is a COPY, at every width (v6.6.16).** A `q: P3` parameter over
+8 bytes still TRAVELS by address — the caller passes its struct's address, so the calling
+convention is unchanged — but the callee copies the struct into its own frame on entry, before
+the body runs, and from there `q` is an ordinary local struct. Writing `q.z = 5` inside the callee
+changes the copy and never the caller's struct, whatever the argument was: a named local, a
+global, a pointer-mode local's heap object, a parameter passed on (`mid(q)` calling `bump(q)`),
+a typed `self: P3` receiver (`p.bump()` and `P3_bump(p)` agree), a generic instance
+(`bumpg<T>(p: T)` with `T = P3`), a call through a fn pointer (`fncall1(&bump, &p)`) or a field
+(`take(b.v)`), in a fn or at top level. Before v6.6.16 the parameter WAS the caller's struct, so
+every one of those writes reached the caller, and this guide said so here; only a field argument
+inside a fn was copied. A callee that must change the caller's struct says so in its signature:
+`fn bump(p: *P3)`, called `bump(&p)` — or a method with an untyped `self` or `self: *T`. Because
+the copy is made on entry, an argument that is not a struct (`take(0)` for a `q: P3`) now faults
+there even when the body never reads `q`. And `q` reads like any struct variable: a bare `q` where
+an untyped value is expected (`var k = q;`, `raw(q)` into an untyped parameter, `load64(q)`) is its
+first field, as for an inline local and for a struct of 8 bytes or less — before v6.6.16 it was
+the caller's address. Write `&q` for the address (of the copy). A struct of 8 bytes or less was
+already a value: it travels in a register. An `async fn` refuses such a parameter (see *Other
+limits* under async).
+
+From v6.6.6 to v6.6.15 every path that copied or returned such a parameter went through that
+address: `q = r`, `q = mk(..)`, `q = b.mk(..)`, `q = a + b`, `q = G`, `r = q`, `G = q`, `q = w` (a
+copy, not an alias) and `return q;` all moved the whole struct (with the copy on entry they are
+the plain local-struct paths, and they still do). Before v6.6.6 they moved the POINTER
 instead — `q = r` overwrote it and the next `q.z` SIGSEGV'd, `r = q` put the pointer in `r`'s
 first field, and `return q;` returned the address as the value, silently. The declaration
 `var y: P3 = q;` joined the list at v6.6.11 — before, it bound `y` as a second pointer to the
@@ -810,7 +834,7 @@ holding the pointer and returned 0. Both were silent, exit 0.
 ⚠ This is a rule about PARAMETERS, not about pointer-mode locals in general. A struct local
 whose slot holds a heap handle (`var p: P3 = alloc(24);`) is unchanged and deliberately so:
 `p + r` there is POINTER ARITHMETIC and does not dispatch, and `&p` is the slot. Only a
-parameter denotes the caller's struct.
+`p: *T` parameter denotes the caller's struct.
 
 ⚠ At TOP LEVEL there is no frame to hold the result, so a struct-valued call there
 (`mk(1);`, `var g: P3 = mk(1);`, `g = mk(1);`, `take(mk(1))` — and the method and operator
@@ -3017,8 +3041,15 @@ returned, and this guide told you to force it yourself with `future_force`.)
 PARAMETER (`async fn f(v: f64v2)`) — an `async fn` captures each argument as one
 8-byte value, so since v6.6.6 that is a compile error naming the parameter; pass
 a pointer to the vector instead (before v6.6.6 it compiled and computed with the
-wrong vector). A **by-value struct RETURN** over 8 bytes is likewise unsupported
-and, since v6.6.6, a compile error naming the fn: a Future carries one i64, so a
+wrong vector). Nor is a **struct over 8 bytes passed by value**
+(`async fn f(p: P3)`): its body runs when the Future is forced, so the copy a
+by-value parameter makes on entry would read the caller's struct LATE. Before
+v6.6.16 the body read and wrote the caller's struct itself at force time —
+`f(p)` with `p.x == 3`, then `p.x = 10`, then `await` gave 11 and left `p.x` 11.
+Since v6.6.16 it is a compile error naming the parameter and the spelling to
+use, `p: *P3`; a struct of 8 bytes or less and a `p: *P3` parameter still work.
+A **by-value struct RETURN** over 8 bytes is likewise unsupported and, since
+v6.6.6, a compile error naming the fn: a Future carries one i64, so a
 >16 B return (hidden retptr) came back as garbage and a 9–16 B one (rax:rdx) lost
 its high half — both silently, exit 0, before v6.6.6. A struct of 8 bytes or less
 IS one i64 and works, as does `Str` (a heap handle); for anything wider, return a

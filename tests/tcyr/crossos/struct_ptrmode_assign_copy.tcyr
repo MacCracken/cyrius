@@ -162,7 +162,7 @@ fn glob_from_glob_handle() {
 }
 # A by-value PARAMETER (address-passed) as the destination: copied INTO, so a write through it
 # leaves the handle's struct alone. (Whether the CALLER's struct moves is the by-value parameter
-# rule, srcb-5's row, not this one's.)
+# rule: the joint C2 x C7 row below.)
 fn param_from_handle_i(q: P3) {
     var a: P3 = alloc(24); a.x = 1; a.y = 2; a.z = 3;
     q = a;
@@ -177,6 +177,38 @@ fn param_from_handle_ctl_i(q: P3) {
     return a.x * 100 + q.x * 10 + q.z;
 }
 fn param_from_handle_ctl() { var s: P3 = mk3(9, 9, 9); return param_from_handle_ctl_i(s); }
+# 6.6.16 (C2 x C7) — and the CALLER's struct. `q = a` copies a's struct INTO the by-value
+# parameter (C2), and the parameter is the callee's own copy (C7, made on entry), so the caller's
+# struct stays 999 in every field. With C2 alone the copy went through the parameter's address
+# into the caller's struct (this row read -1: s.y was 2).
+fn param_from_handle_caller_i(q: P3) {
+    var a: P3 = alloc(24); a.x = 1; a.y = 2; a.z = 3;
+    q = a;
+    q.x = 5;
+    return q.x * 10 + q.z;
+}
+fn param_from_handle_caller() {
+    var s: P3 = mk3(999, 999, 999);
+    var d = param_from_handle_caller_i(s);
+    if (d != 53) { return 0 - d; }
+    if (s.y != 999) { return 0 - 1; }
+    if (s.z != 999) { return 0 - 2; }
+    return s.x;
+}
+fn param_from_handle_caller_ctl_i(q: P3) {
+    var a: P3 = alloc(24); a.x = 1; a.y = 2; a.z = 3;
+    q.x = a.x; q.y = a.y; q.z = a.z;
+    q.x = 5;
+    return q.x * 10 + q.z;
+}
+fn param_from_handle_caller_ctl() {
+    var s: P3 = mk3(999, 999, 999);
+    var d = param_from_handle_caller_ctl_i(s);
+    if (d != 53) { return 0 - d; }
+    if (s.y != 999) { return 0 - 1; }
+    if (s.z != 999) { return 0 - 2; }
+    return s.x;
+}
 
 # ---------------------------------------- (2) handle <- value: copy INTO the pointee (`*a = q`)
 # SUBJECT: `a = q`. The ORIGINAL heap object receives q's fields, `a` still points at it (no
@@ -481,6 +513,8 @@ assert_eq(inl_from_glob_handle(), inl_from_glob_handle_ctl(), "q = GP == control
 assert_eq(glob_from_glob_handle(), 12, "GI = GP: inline global <- pointer-mode global");
 assert_eq(param_from_handle(), 153, "q = a into a by-value parameter: a.x stays 1 (copy, not rebind)");
 assert_eq(param_from_handle(), param_from_handle_ctl(), "q = a into a by-value parameter == control");
+assert_eq(param_from_handle_caller(), 999, "q = a into a by-value parameter: the CALLER's struct stays 999 (C2 x C7)");
+assert_eq(param_from_handle_caller(), param_from_handle_caller_ctl(), "the caller's struct after q = a == control");
 
 assert_eq(local_handle_from_inl(), 12, "a = q: copied into the ORIGINAL heap object, a not rebound");
 assert_eq(local_handle_from_inl(), local_handle_from_inl_ctl(), "a = q == control");

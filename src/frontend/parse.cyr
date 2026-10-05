@@ -2162,12 +2162,13 @@ fn _agc_plain_big(S, t): i64 {
 }
 # A one-slot struct local (GLAGG == 0): an address-passed by-value parameter (`_agc_pp` 1), a
 # handle (2), or not an aggregate operand (0 returned). Kept out of `_agc_operand` for cybs's
-# per-fn reference limit. CHANGELOG [6.6.16]
+# per-fn reference limit. Since C7 a by-value parameter is copied into an inline local in the
+# prologue (`_sptr_params_localize`), so 1 is left only for a `#naked` fn's. CHANGELOG [6.6.16]
 fn _agc_handle_local(S, li): i64 {
     var lt = GLTYPE(S, li);
     if (_agc_plain_big(S, lt) == 0) { return 0; }
     _agc_pp = 2;
-    if (_local_is_sptr_param(S, li) == 1) { if (_is_ptr_param(li) == 0) { _agc_pp = 1; } }
+    if (_local_is_sptr_param(S, li) == 1) { if (_is_ptr_param(S, li) == 0) { _agc_pp = 1; } }
     _agc_li = li;
     _agc_t = lt;
     var n = AGG_NSLOTS(S, lt);

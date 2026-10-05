@@ -344,8 +344,12 @@ l_f64v2(); l_f64v4(); l_f32v4(); l_f32v8();
 l_i8v16(); l_u8v16(); l_i16v8(); l_u16v8(); l_i32v4(); l_u32v4(); l_i64v2(); l_u64v2();
 l_u8pair(); l_f64pair(); l_i32one(); l_u8kind(); l_u8box();
 l_i64(); l_u8(); l_i32(); l_u128(); l_slice(); l_bare();
-gen_arr<P3>(0, 3 * sizeof(P3), "generic T[3], T = P3: 72 B (the instance)");
-gen_arr<Pt>(0, 3 * sizeof(Pt), "generic T[3], T = Pt: 48 B (the instance)");
+# 6.6.16 (C7): a struct parameter is copied on entry, so its argument is a struct even when the
+# type comes from `<P3>` — a `0` there is read as the struct's address, and faults.
+var gz3 = P3{0, 0, 0};
+var gzp = Pt{0, 0};
+gen_arr<P3>(gz3, 3 * sizeof(P3), "generic T[3], T = P3: 72 B (the instance)");
+gen_arr<Pt>(gzp, 3 * sizeof(Pt), "generic T[3], T = Pt: 48 B (the instance)");
 gen_arr<i32>(0, 3 * 4, "generic T[3], T = i32: 12 B");
 gen_arr<i64>(0, 3 * 8, "generic T[3], T = i64: 24 B");
 l_static();

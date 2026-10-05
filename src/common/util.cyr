@@ -1070,8 +1070,11 @@ var _gh_inf1 = 0;
 # back to, so the path that then emits its own call refuses it by name instead of calling the base.
 var _grc_err = 0;
 var _grc_fi = 0 - 1;
-# 6.6.10: bit li = parameter li was declared `name: *T` (a pointer: it never binds a type argument
-# to the pointee struct). Saved with the per-fn snapshot, zeroed with `_cur_fn_pslots`.
+# 6.6.10: a parameter declared `name: *T` is a pointer: it never binds a type argument to the
+# pointee struct, and (6.6.16, C7) it is never copied in. 6.6.16: this is no longer the record —
+# it is the PENDING mark (the slot index + 1, 0 = none) between the `*` and the parameter's
+# registration, where `_param_record` (parse_fn.cyr) moves it to the slot's own bit (SLPTRP), so
+# no slot index is out of range. Saved with the per-fn snapshot, zeroed with `_cur_fn_pslots`.
 var _cur_fn_ptrp = 0;
 fn _tp_clear(S): i64 { _tp_n0 = 0; _tp_c0 = 0; _tp_n1 = 0; _tp_c1 = 0; return 0; }
 fn _tp_bind(S, slot, noff, conc): i64 {
@@ -1309,6 +1312,18 @@ fn SLAEW(S, li, d): i64 { S64(S + 0x5DBD000 + li * 8, L64(S + 0x5DBD000 + li * 8
 fn GLAEW(S, li): i64 {
     if (li < 0) { return 0; }
     return (L64(S + 0x5DBD000 + li * 8) >> 48) & 0xFF;
+}
+# 6.6.16 (C7) — bit 56 of the same word: the slot is a `name: *T` PARAMETER, a pointer the
+# callee never copies in. It replaced a 64-bit mask indexed by slot (`_cur_fn_ptrp`), which
+# could not record a slot >= 64 — reached by 64 int parameters, or on Win64 by 16 `f64v4` ones
+# (4 slots each) — so such a pointer read as a by-value struct and was copied. Per slot: no width
+# limit; it clears itself on slot reuse like the span, and rides the closure snapshot with
+# the rest of the word. Written LAST at registration (`_param_record`, parse_fn.cyr), after
+# MARK_SMALL_STRUCT's SLAGG, which rewrites the high half. CHANGELOG [6.6.16]
+fn SLPTRP(S, li): i64 { S64(S + 0x5DBD000 + li * 8, L64(S + 0x5DBD000 + li * 8) | (1 << 56)); return 0; }
+fn GLPTRP(S, li): i64 {
+    if (li < 0) { return 0; }
+    return (L64(S + 0x5DBD000 + li * 8) >> 56) & 1;
 }
 fn GLAGG(S, li): i64 {
     if (GLSPAN(S, li) == 0) { return 0; }

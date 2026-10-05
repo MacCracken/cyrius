@@ -274,7 +274,8 @@ fn gback<T>(x: T): i64 { var y: T = x; return y; }
 fn ga_f64(): i64 { var k = ga<f64>(1.5, "generic T[3], T = f64: 24 B (it reserved 27)"); return k; }
 fn ga_i8(): i64 { var k = ga<i8>(1, "generic T[3], T = i8: 3 B"); return k; }
 fn ga_i32(): i64 { var k = ga<i32>(1, "generic T[3], T = i32: 12 B"); return k; }
-fn ga_pt(): i64 { var k = ga<Pt>(0, "generic T[3], T = Pt: 48 B"); return k; }
+# 6.6.16 (C7): a struct parameter is copied on entry, so `p` gets a struct, not `0`.
+fn ga_pt(): i64 { var z: Pt; z.x = 0; z.y = 0; var k = ga<Pt>(z, "generic T[3], T = Pt: 48 B"); return k; }
 fn ga_base(): i64 { var k = ga(1, "generic T[3], the i64 base: 24 B"); return k; }
 fn bound_locals(): i64 {
     test_group("(7) a bound T is its argument: T[N] and var y: T");
