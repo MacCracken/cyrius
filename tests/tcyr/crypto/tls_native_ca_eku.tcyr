@@ -1,0 +1,309 @@
+# tls_native_ca_eku.tcyr — 6.6.16 (CVE-TBD(N3)): the native chain verifier enforces a CA's
+# extendedKeyUsage for the chain's purpose, on every intermediate AND on the trust anchor.
+#
+# THE DEFECT (premise-checked on the 6.6.15 lib): _tn_verify_chain (lib/tls_native_hs12.cyr) — the
+# client's verifier of a server chain (_TN_PURPOSE_SERVER) and, since 6.6.14, the mTLS server's
+# verifier of a client chain (_TN_PURPOSE_CLIENT, TLS 1.3 and 1.2) — applied the purpose to the
+# LEAF only. A CA was checked for keyCertSign and pathLen (_tn_ca_signer_ok, CVE-17) and never for
+# its extendedKeyUsage, so a CA confined to clientAuth, codeSigning or S/MIME could issue a leaf
+# the native client accepted as a TLS server, and a serverAuth-only CA in an mTLS server's trust
+# set could issue a client identity. OpenSSL refuses both (error 26, unsuitable certificate
+# purpose). The fix (6.6.16): _tn_eku_purpose_ok(cert, purpose) is the one EKU rule — absent means
+# unrestricted, SERVER needs serverAuth, CLIENT needs clientAuth, anyExtendedKeyUsage satisfies
+# either — and _tn_ca_signer_ok applies it to every CA it vets, inside the conjunction that
+# SELECTS a candidate: a wrongly-purposed CA is skipped and path building goes on to the next
+# candidate, it is not fatal.
+#
+# THE FIXTURES (openssl 3.6.5, P-256, every certificate valid 2025-01-01 .. 2049-12-31, read at a
+# pinned 2030-01-01, so no row is a time bomb). The ONLY variable in each family is the EKU:
+#   roots  root_{none,server,client,code,any}: five self-signed certificates sharing ONE subject
+#          (CN=eku-root) and ONE key, keyUsage keyCertSign|cRLSign, EKU absent / serverAuth /
+#          clientAuth / codeSigning / anyExtendedKeyUsage;
+#   ints   int_{none,server,client,code,any}: five CA certificates sharing one subject (CN=eku-int)
+#          and one key, issued by that root key, the same five EKUs;
+#   leaves leaf_r (issued by the root key) and leaf_i (by the intermediate key), CN=localhost,
+#          keyUsage digitalSignature, EKU serverAuth + clientAuth — fit for BOTH purposes, so a
+#          refusal below is the CA's.
+# Because each family shares subject and key, any member signs for any other: leaf_i chains
+# through whichever int_* the row passes, and leaf_r / int_* anchor at whichever root_* the row
+# trusts — which is also what makes the duplicate-subject path-building rows possible.
+#
+# THE VERDICT TABLE, with `openssl verify -attime 1893456000 -purpose sslserver | sslclient`
+# (OpenSSL 3.6.5) on the same files — S = server purpose, C = client purpose; ok / 26 = error 26:
+#   row                                         native S / C      openssl S / C
+#   anchor at depth 0: leaf_r <- root_none       ok / ok           ok / ok
+#                               <- root_server   ok / REFUSED      ok / 26
+#                               <- root_client   REFUSED / ok      26 / ok
+#                               <- root_code     REFUSED / REFUSED 26 / 26
+#                               <- root_any      ok / ok           26 / 26   (divergence A)
+#   intermediate: leaf_i <- int_X <- root_none, X = none / server / client / code / any:
+#                                                the same five verdicts as the roots, openssl the
+#                                                same as for the roots (error 26 at depth 1)
+#   anchor at depth 1: leaf_i <- int_none <- root_X: the same five verdicts again (openssl: error
+#                                                26 at depth 2)
+#   path building, two intermediates (duplicate subject and key):
+#     [int_client, int_server]  S                ok                26        (divergence B)
+#     [int_server, int_client]  C                ok                26        (divergence B)
+#     [int_server, int_client]  S                ok                ok
+#     [int_client, int_code]    S                REFUSED           26
+#     [int_server, int_code]    C                REFUSED           26
+#     [int_code, int_any]       S and C          ok / ok           26 / 26   (divergence A)
+#   path building, several trust roots (a PEM bundle, in this order):
+#     [root_client, root_code, root_server]  S / C   ok / ok       26 / ok   (divergence B)
+#     [root_server, root_code, root_client]  S / C   ok / ok       ok / 26   (divergence B)
+#     [root_client, root_code]               S / C   REFUSED / ok  26 / ok
+#   the public verb tls_native_client_verify_chain (server purpose): leaf_i with [int_client] is
+#   refused, with [int_server] verifies.
+# DIVERGENCE A (the documented default): anyExtendedKeyUsage satisfies either purpose at every
+#   depth, as RFC 5280 §4.2.1.12 reads and as cyrius's shipped LEAF rule already did (and still
+#   does). OpenSSL 3.6.5 honours it at NO depth — an anyEKU-only leaf, intermediate or root fails
+#   both purposes. Going OpenSSL-strict is one line in _tn_eku_purpose_ok, and moves the leaf rule
+#   with it.
+# DIVERGENCE B (path building): OpenSSL takes the FIRST issuer candidate that matches and signs,
+#   and fails error 26 when that one is wrongly purposed — measured: with the rightly purposed
+#   intermediate or root listed FIRST it verifies OK. The native verifier skips a wrongly purposed
+#   candidate and keeps looking, so its verdict does not depend on the order a peer or a bundle
+#   lists them in. It is more permissive only where a fully valid path (every CA rightly purposed)
+#   exists.
+#
+# MUTATIONS (measured on this file, 82 assertions; the 6.6.15 lib — no CA EKU check, and no
+# _tn_eku_purpose_ok, shimmed for the measurement — fails every one of the 16 chain refusals and
+# none of the rest):
+#   the EKU check in _tn_ca_signer_ok removed -> the 16 chain refusal rows (the three tables' 12,
+#     the two intermediate-pair refusals, the root-bundle refusal, the public verb's refusal)
+#   the anchor's check given the server purpose whatever the chain's -> 5 (the client-purpose
+#     serverAuth / clientAuth anchor rows at depth 0 and 1, and the [root_client, root_code]
+#     client row)
+#   the intermediate's check given the server purpose -> 3 (the client-purpose serverAuth /
+#     clientAuth intermediate rows, and [int_server, int_code] client)
+#   a wrongly purposed intermediate made FATAL instead of skipped -> 4 (the [int_client,
+#     int_server] / [int_server, int_client] skips and both [int_code, int_any] rows)
+#   a wrongly purposed trust root made fatal -> 2 (the two bundles whose first root is wrong)
+#   an ABSENT extension taken as restricting -> 26 (every row whose path holds a CA without EKU)
+#   anyExtendedKeyUsage not honoured for the client purpose -> 5 (every anyEKU client row)
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/io.cyr"
+include "lib/tls.cyr"
+
+var EK_NOW = 1893456000;   # 2030-01-01 00:00 UTC
+
+var _ek_root_none = 0;
+var _ek_root_server = 0;
+var _ek_root_client = 0;
+var _ek_root_code = 0;
+var _ek_root_any = 0;
+var _ek_int_none = 0;
+var _ek_int_server = 0;
+var _ek_int_client = 0;
+var _ek_int_code = 0;
+var _ek_int_any = 0;
+var _ek_leaf_r = 0;
+var _ek_leaf_i = 0;
+
+# A parsed certificate from its DER as hex (`hex_n` hex digits), or 0 when it does not parse.
+fn _ek_cert(hex, hex_n): i64 {
+    var der = hex_decode(hex, hex_n);
+    var c = x509_cert_alloc();
+    if (x509_parse(der, hex_n / 2, c) != 1) { return 0; }
+    return c;
+}
+
+fn _ek_fixtures(): i64 {
+    _ek_root_none = _ek_cert("308201583081fea00302010202021001300a06082a8648ce3d04030230133111300f06035504030c08656b752d726f6f74301e170d3235303130313030303030305a170d3439313233313030303030305a30133111300f06035504030c08656b752d726f6f743059301306072a8648ce3d020106082a8648ce3d030107034200041763b07248785b27e9c9af80c984898fbf0bf24afbdb1e8d52696e5b98bf4a87831b987df0ae8d25a3e82e746ba58a480ee1e1c29b59ec76f8e0bc26bfef92c0a3423040300f0603551d130101ff040530030101ff300e0603551d0f0101ff040403020106301d0603551d0e04160414ec71bed0abc8e63f9529b24854c0280971a77161300a06082a8648ce3d0403020349003046022100efff514f0ebbbff3f778b4daa6a146cd5d2ad51cdbd1b723df03de86f5c9d186022100fd452d345bf2c837d4c0c606be6e8ac25249a2e1bfa7b42cbecef00ef8bb613d", 696);
+    _ek_root_server = _ek_cert("3082016d30820113a00302010202021002300a06082a8648ce3d04030230133111300f06035504030c08656b752d726f6f74301e170d3235303130313030303030305a170d3439313233313030303030305a30133111300f06035504030c08656b752d726f6f743059301306072a8648ce3d020106082a8648ce3d030107034200041763b07248785b27e9c9af80c984898fbf0bf24afbdb1e8d52696e5b98bf4a87831b987df0ae8d25a3e82e746ba58a480ee1e1c29b59ec76f8e0bc26bfef92c0a3573055300f0603551d130101ff040530030101ff300e0603551d0f0101ff04040302010630130603551d25040c300a06082b06010505070301301d0603551d0e04160414ec71bed0abc8e63f9529b24854c0280971a77161300a06082a8648ce3d0403020348003045022100c2670af5707cf65b8b3cbd185d8655cc61d0a39fc8da0e05008773faedc1b16202207595f2865d05dd93946a6c065e2b3ec2c71f5e43d8e7a24b76d0c853b58a1f81", 738);
+    _ek_root_client = _ek_cert("3082016d30820113a00302010202021003300a06082a8648ce3d04030230133111300f06035504030c08656b752d726f6f74301e170d3235303130313030303030305a170d3439313233313030303030305a30133111300f06035504030c08656b752d726f6f743059301306072a8648ce3d020106082a8648ce3d030107034200041763b07248785b27e9c9af80c984898fbf0bf24afbdb1e8d52696e5b98bf4a87831b987df0ae8d25a3e82e746ba58a480ee1e1c29b59ec76f8e0bc26bfef92c0a3573055300f0603551d130101ff040530030101ff300e0603551d0f0101ff04040302010630130603551d25040c300a06082b06010505070302301d0603551d0e04160414ec71bed0abc8e63f9529b24854c0280971a77161300a06082a8648ce3d040302034800304502204076d791eeb59664a8332895ed0e7ef6d4c473b111c284ceac60fbe1efc710fb022100d56978ea4b2c8f23f50aef4efc712367ad8d3eae2ed7f56aff546a70bc5c0c6b", 738);
+    _ek_root_code = _ek_cert("3082016e30820113a00302010202021004300a06082a8648ce3d04030230133111300f06035504030c08656b752d726f6f74301e170d3235303130313030303030305a170d3439313233313030303030305a30133111300f06035504030c08656b752d726f6f743059301306072a8648ce3d020106082a8648ce3d030107034200041763b07248785b27e9c9af80c984898fbf0bf24afbdb1e8d52696e5b98bf4a87831b987df0ae8d25a3e82e746ba58a480ee1e1c29b59ec76f8e0bc26bfef92c0a3573055300f0603551d130101ff040530030101ff300e0603551d0f0101ff04040302010630130603551d25040c300a06082b06010505070303301d0603551d0e04160414ec71bed0abc8e63f9529b24854c0280971a77161300a06082a8648ce3d0403020349003046022100a083cd3147da16666ddb72cdccfa5d9f1c3720948dc010d23e8cf6d947f3e4ca022100e9357fab47f024a1a41ae0cd74a9ce9f9347ce394a6f90b0b7a333f3e4d73bb7", 740);
+    _ek_root_any = _ek_cert("308201693082010fa00302010202021005300a06082a8648ce3d04030230133111300f06035504030c08656b752d726f6f74301e170d3235303130313030303030305a170d3439313233313030303030305a30133111300f06035504030c08656b752d726f6f743059301306072a8648ce3d020106082a8648ce3d030107034200041763b07248785b27e9c9af80c984898fbf0bf24afbdb1e8d52696e5b98bf4a87831b987df0ae8d25a3e82e746ba58a480ee1e1c29b59ec76f8e0bc26bfef92c0a3533051300f0603551d130101ff040530030101ff300e0603551d0f0101ff040403020106300f0603551d25040830060604551d2500301d0603551d0e04160414ec71bed0abc8e63f9529b24854c0280971a77161300a06082a8648ce3d040302034800304502204e2074a2bcd2d6fc535d3ddc14a270695e2b610a6364d69d005584636e8008b9022100991fab9eeefb3b7a541738b9b44adf5d344be27faf735e20bbc44272992aa69c", 730);
+    _ek_int_none = _ek_cert("308201793082011ea00302010202021006300a06082a8648ce3d04030230133111300f06035504030c08656b752d726f6f74301e170d3235303130313030303030305a170d3439313233313030303030305a30123110300e06035504030c07656b752d696e743059301306072a8648ce3d020106082a8648ce3d030107034200048ae05408cf2d520c4e5a4a46e50cc5eb9904e8d8482c5671fcf770e6f489be977eeda68355ded56d80756d6041aebe3e3da9232e2f7542f1b3b7322acda4ec37a3633061300f0603551d130101ff040530030101ff300e0603551d0f0101ff040403020106301d0603551d0e04160414cab9c8ca0d6430622e138498e154eef6e4cd6f8f301f0603551d23041830168014ec71bed0abc8e63f9529b24854c0280971a77161300a06082a8648ce3d0403020349003046022100c0276fc06022171d1125c6a3e551745efc38c596a972850cea613083afeb139a022100bf36b872bbad25efb7ec6e0c39421d9cb1bcacdc7e478edc18bcba2eb30479a9", 762);
+    _ek_int_server = _ek_cert("3082018e30820133a00302010202021007300a06082a8648ce3d04030230133111300f06035504030c08656b752d726f6f74301e170d3235303130313030303030305a170d3439313233313030303030305a30123110300e06035504030c07656b752d696e743059301306072a8648ce3d020106082a8648ce3d030107034200048ae05408cf2d520c4e5a4a46e50cc5eb9904e8d8482c5671fcf770e6f489be977eeda68355ded56d80756d6041aebe3e3da9232e2f7542f1b3b7322acda4ec37a3783076300f0603551d130101ff040530030101ff300e0603551d0f0101ff04040302010630130603551d25040c300a06082b06010505070301301d0603551d0e04160414cab9c8ca0d6430622e138498e154eef6e4cd6f8f301f0603551d23041830168014ec71bed0abc8e63f9529b24854c0280971a77161300a06082a8648ce3d040302034900304602210081cc23bfaad1f6029486b9be7016f9aad3102357db934d5e3a20e0e160b3b60602210095f43956e4ce5fcaa686aec4397275c90f17e8b3d91cfeb41c7481f5931b841d", 804);
+    _ek_int_client = _ek_cert("3082018c30820133a00302010202021008300a06082a8648ce3d04030230133111300f06035504030c08656b752d726f6f74301e170d3235303130313030303030305a170d3439313233313030303030305a30123110300e06035504030c07656b752d696e743059301306072a8648ce3d020106082a8648ce3d030107034200048ae05408cf2d520c4e5a4a46e50cc5eb9904e8d8482c5671fcf770e6f489be977eeda68355ded56d80756d6041aebe3e3da9232e2f7542f1b3b7322acda4ec37a3783076300f0603551d130101ff040530030101ff300e0603551d0f0101ff04040302010630130603551d25040c300a06082b06010505070302301d0603551d0e04160414cab9c8ca0d6430622e138498e154eef6e4cd6f8f301f0603551d23041830168014ec71bed0abc8e63f9529b24854c0280971a77161300a06082a8648ce3d040302034700304402200bb3f45410978c0f17e484eec4d8626c6497767e23d1210023af21173e23644d022074eb768151b9fd810b0fa66392b6690bd3596c017c9150949e52470daedb9f7a", 800);
+    _ek_int_code = _ek_cert("3082018d30820133a00302010202021009300a06082a8648ce3d04030230133111300f06035504030c08656b752d726f6f74301e170d3235303130313030303030305a170d3439313233313030303030305a30123110300e06035504030c07656b752d696e743059301306072a8648ce3d020106082a8648ce3d030107034200048ae05408cf2d520c4e5a4a46e50cc5eb9904e8d8482c5671fcf770e6f489be977eeda68355ded56d80756d6041aebe3e3da9232e2f7542f1b3b7322acda4ec37a3783076300f0603551d130101ff040530030101ff300e0603551d0f0101ff04040302010630130603551d25040c300a06082b06010505070303301d0603551d0e04160414cab9c8ca0d6430622e138498e154eef6e4cd6f8f301f0603551d23041830168014ec71bed0abc8e63f9529b24854c0280971a77161300a06082a8648ce3d0403020348003045022100e8d38e11238d5172a2bdcc10608a429c78aad252ca3630a8fc044dc2a9d7b8e702202845b8de1bb830da6b908152570aee214d19d34405d6cde49e9760d94d4bc2f1", 802);
+    _ek_int_any = _ek_cert("308201893082012fa0030201020202100a300a06082a8648ce3d04030230133111300f06035504030c08656b752d726f6f74301e170d3235303130313030303030305a170d3439313233313030303030305a30123110300e06035504030c07656b752d696e743059301306072a8648ce3d020106082a8648ce3d030107034200048ae05408cf2d520c4e5a4a46e50cc5eb9904e8d8482c5671fcf770e6f489be977eeda68355ded56d80756d6041aebe3e3da9232e2f7542f1b3b7322acda4ec37a3743072300f0603551d130101ff040530030101ff300e0603551d0f0101ff040403020106300f0603551d25040830060604551d2500301d0603551d0e04160414cab9c8ca0d6430622e138498e154eef6e4cd6f8f301f0603551d23041830168014ec71bed0abc8e63f9529b24854c0280971a77161300a06082a8648ce3d040302034800304502210088a8b117dd0fdb9c7e2884d1501b35208b5bf834c68731a9b3d6b1c2d48e51f902206f49db205c3457d5fafdd8333cc6793c6b8de90d73bd1927d53b1479ce5c2ca1", 794);
+    _ek_leaf_r = _ek_cert("308201ac30820151a0030201020202100b300a06082a8648ce3d04030230133111300f06035504030c08656b752d726f6f74301e170d3235303130313030303030305a170d3439313233313030303030305a30143112301006035504030c096c6f63616c686f73743059301306072a8648ce3d020106082a8648ce3d03010703420004575ac13fb3b90dbd31c06aeda389c41844ba2b605eedaeae8744d0ad8356173fb7e4a92ca439b4d2d0e475d575c474b762940fe9ff0c54342a431d22d9f522e5a3819330819030090603551d1304023000300e0603551d0f0101ff040403020780301d0603551d250416301406082b0601050507030106082b0601050507030230140603551d11040d300b82096c6f63616c686f7374301d0603551d0e04160414a69e141ae52b49164e934b9577d373aa850aab51301f0603551d23041830168014ec71bed0abc8e63f9529b24854c0280971a77161300a06082a8648ce3d0403020349003046022100bd0c7b53f3770f5bfd09fe63cacd9c6ceefddc676413f1a942c29c4a5854d241022100958dfd9011a1da93bb80788723bd6f30224b6543e3ee1453cb623c3fb32bc42e", 864);
+    _ek_leaf_i = _ek_cert("308201aa30820150a0030201020202100c300a06082a8648ce3d04030230123110300e06035504030c07656b752d696e74301e170d3235303130313030303030305a170d3439313233313030303030305a30143112301006035504030c096c6f63616c686f73743059301306072a8648ce3d020106082a8648ce3d03010703420004575ac13fb3b90dbd31c06aeda389c41844ba2b605eedaeae8744d0ad8356173fb7e4a92ca439b4d2d0e475d575c474b762940fe9ff0c54342a431d22d9f522e5a3819330819030090603551d1304023000300e0603551d0f0101ff040403020780301d0603551d250416301406082b0601050507030106082b0601050507030230140603551d11040d300b82096c6f63616c686f7374301d0603551d0e04160414a69e141ae52b49164e934b9577d373aa850aab51301f0603551d23041830168014cab9c8ca0d6430622e138498e154eef6e4cd6f8f300a06082a8648ce3d0403020348003045022100c1e858077e8a9ad725419502031c10cd7b8958efbe2e3daa2cd84ef37321a869022039cbf48fcd78c1631b1921f0c5d4eba1e07a144baf8cffd7f80b31c8adcd3201", 860);
+    return 0;
+}
+
+# PEM bundles of several roots, in the order the row names.
+var _ek_b_cls = "-----BEGIN CERTIFICATE-----\nMIIBbTCCAROgAwIBAgICEAMwCgYIKoZIzj0EAwIwEzERMA8GA1UEAwwIZWt1LXJv\nb3QwHhcNMjUwMTAxMDAwMDAwWhcNNDkxMjMxMDAwMDAwWjATMREwDwYDVQQDDAhl\na3Utcm9vdDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABBdjsHJIeFsn6cmvgMmE\niY+/C/JK+9sejVJpbluYv0qHgxuYffCujSWj6C50a6WKSA7h4cKbWex2+OC8Jr/v\nksCjVzBVMA8GA1UdEwEB/wQFMAMBAf8wDgYDVR0PAQH/BAQDAgEGMBMGA1UdJQQM\nMAoGCCsGAQUFBwMCMB0GA1UdDgQWBBTscb7Qq8jmP5UpskhUwCgJcadxYTAKBggq\nhkjOPQQDAgNIADBFAiBAdteR7rWWZKgzKJXtDn721MRzsRHChM6sYPvh78cQ+wIh\nANVpeOpLLI8j9QrvTvxxI2etjT6uLtf1av9UanC8XAxr\n-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----\nMIIBbjCCAROgAwIBAgICEAQwCgYIKoZIzj0EAwIwEzERMA8GA1UEAwwIZWt1LXJv\nb3QwHhcNMjUwMTAxMDAwMDAwWhcNNDkxMjMxMDAwMDAwWjATMREwDwYDVQQDDAhl\na3Utcm9vdDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABBdjsHJIeFsn6cmvgMmE\niY+/C/JK+9sejVJpbluYv0qHgxuYffCujSWj6C50a6WKSA7h4cKbWex2+OC8Jr/v\nksCjVzBVMA8GA1UdEwEB/wQFMAMBAf8wDgYDVR0PAQH/BAQDAgEGMBMGA1UdJQQM\nMAoGCCsGAQUFBwMDMB0GA1UdDgQWBBTscb7Qq8jmP5UpskhUwCgJcadxYTAKBggq\nhkjOPQQDAgNJADBGAiEAoIPNMUfaFmZt23LNzPpdnxw3IJSNwBDSPoz22Ufz5MoC\nIQDpNX+rR/AkoaQa4M10qc6fk0fOOUpvkLC3ozPz5Nc7tw==\n-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----\nMIIBbTCCAROgAwIBAgICEAIwCgYIKoZIzj0EAwIwEzERMA8GA1UEAwwIZWt1LXJv\nb3QwHhcNMjUwMTAxMDAwMDAwWhcNNDkxMjMxMDAwMDAwWjATMREwDwYDVQQDDAhl\na3Utcm9vdDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABBdjsHJIeFsn6cmvgMmE\niY+/C/JK+9sejVJpbluYv0qHgxuYffCujSWj6C50a6WKSA7h4cKbWex2+OC8Jr/v\nksCjVzBVMA8GA1UdEwEB/wQFMAMBAf8wDgYDVR0PAQH/BAQDAgEGMBMGA1UdJQQM\nMAoGCCsGAQUFBwMBMB0GA1UdDgQWBBTscb7Qq8jmP5UpskhUwCgJcadxYTAKBggq\nhkjOPQQDAgNIADBFAiEAwmcK9XB89luLPL0YXYZVzGHQo5/I2g4FAIdz+u3BsWIC\nIHWV8oZdBd2TlGpsBl4rPsLHH15D2OeiS3bQyFO1ih+B\n-----END CERTIFICATE-----\n";
+var _ek_b_scl = "-----BEGIN CERTIFICATE-----\nMIIBbTCCAROgAwIBAgICEAIwCgYIKoZIzj0EAwIwEzERMA8GA1UEAwwIZWt1LXJv\nb3QwHhcNMjUwMTAxMDAwMDAwWhcNNDkxMjMxMDAwMDAwWjATMREwDwYDVQQDDAhl\na3Utcm9vdDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABBdjsHJIeFsn6cmvgMmE\niY+/C/JK+9sejVJpbluYv0qHgxuYffCujSWj6C50a6WKSA7h4cKbWex2+OC8Jr/v\nksCjVzBVMA8GA1UdEwEB/wQFMAMBAf8wDgYDVR0PAQH/BAQDAgEGMBMGA1UdJQQM\nMAoGCCsGAQUFBwMBMB0GA1UdDgQWBBTscb7Qq8jmP5UpskhUwCgJcadxYTAKBggq\nhkjOPQQDAgNIADBFAiEAwmcK9XB89luLPL0YXYZVzGHQo5/I2g4FAIdz+u3BsWIC\nIHWV8oZdBd2TlGpsBl4rPsLHH15D2OeiS3bQyFO1ih+B\n-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----\nMIIBbjCCAROgAwIBAgICEAQwCgYIKoZIzj0EAwIwEzERMA8GA1UEAwwIZWt1LXJv\nb3QwHhcNMjUwMTAxMDAwMDAwWhcNNDkxMjMxMDAwMDAwWjATMREwDwYDVQQDDAhl\na3Utcm9vdDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABBdjsHJIeFsn6cmvgMmE\niY+/C/JK+9sejVJpbluYv0qHgxuYffCujSWj6C50a6WKSA7h4cKbWex2+OC8Jr/v\nksCjVzBVMA8GA1UdEwEB/wQFMAMBAf8wDgYDVR0PAQH/BAQDAgEGMBMGA1UdJQQM\nMAoGCCsGAQUFBwMDMB0GA1UdDgQWBBTscb7Qq8jmP5UpskhUwCgJcadxYTAKBggq\nhkjOPQQDAgNJADBGAiEAoIPNMUfaFmZt23LNzPpdnxw3IJSNwBDSPoz22Ufz5MoC\nIQDpNX+rR/AkoaQa4M10qc6fk0fOOUpvkLC3ozPz5Nc7tw==\n-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----\nMIIBbTCCAROgAwIBAgICEAMwCgYIKoZIzj0EAwIwEzERMA8GA1UEAwwIZWt1LXJv\nb3QwHhcNMjUwMTAxMDAwMDAwWhcNNDkxMjMxMDAwMDAwWjATMREwDwYDVQQDDAhl\na3Utcm9vdDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABBdjsHJIeFsn6cmvgMmE\niY+/C/JK+9sejVJpbluYv0qHgxuYffCujSWj6C50a6WKSA7h4cKbWex2+OC8Jr/v\nksCjVzBVMA8GA1UdEwEB/wQFMAMBAf8wDgYDVR0PAQH/BAQDAgEGMBMGA1UdJQQM\nMAoGCCsGAQUFBwMCMB0GA1UdDgQWBBTscb7Qq8jmP5UpskhUwCgJcadxYTAKBggq\nhkjOPQQDAgNIADBFAiBAdteR7rWWZKgzKJXtDn721MRzsRHChM6sYPvh78cQ+wIh\nANVpeOpLLI8j9QrvTvxxI2etjT6uLtf1av9UanC8XAxr\n-----END CERTIFICATE-----\n";
+var _ek_b_cl_co = "-----BEGIN CERTIFICATE-----\nMIIBbTCCAROgAwIBAgICEAMwCgYIKoZIzj0EAwIwEzERMA8GA1UEAwwIZWt1LXJv\nb3QwHhcNMjUwMTAxMDAwMDAwWhcNNDkxMjMxMDAwMDAwWjATMREwDwYDVQQDDAhl\na3Utcm9vdDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABBdjsHJIeFsn6cmvgMmE\niY+/C/JK+9sejVJpbluYv0qHgxuYffCujSWj6C50a6WKSA7h4cKbWex2+OC8Jr/v\nksCjVzBVMA8GA1UdEwEB/wQFMAMBAf8wDgYDVR0PAQH/BAQDAgEGMBMGA1UdJQQM\nMAoGCCsGAQUFBwMCMB0GA1UdDgQWBBTscb7Qq8jmP5UpskhUwCgJcadxYTAKBggq\nhkjOPQQDAgNIADBFAiBAdteR7rWWZKgzKJXtDn721MRzsRHChM6sYPvh78cQ+wIh\nANVpeOpLLI8j9QrvTvxxI2etjT6uLtf1av9UanC8XAxr\n-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----\nMIIBbjCCAROgAwIBAgICEAQwCgYIKoZIzj0EAwIwEzERMA8GA1UEAwwIZWt1LXJv\nb3QwHhcNMjUwMTAxMDAwMDAwWhcNNDkxMjMxMDAwMDAwWjATMREwDwYDVQQDDAhl\na3Utcm9vdDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABBdjsHJIeFsn6cmvgMmE\niY+/C/JK+9sejVJpbluYv0qHgxuYffCujSWj6C50a6WKSA7h4cKbWex2+OC8Jr/v\nksCjVzBVMA8GA1UdEwEB/wQFMAMBAf8wDgYDVR0PAQH/BAQDAgEGMBMGA1UdJQQM\nMAoGCCsGAQUFBwMDMB0GA1UdDgQWBBTscb7Qq8jmP5UpskhUwCgJcadxYTAKBggq\nhkjOPQQDAgNJADBGAiEAoIPNMUfaFmZt23LNzPpdnxw3IJSNwBDSPoz22Ufz5MoC\nIQDpNX+rR/AkoaQa4M10qc6fk0fOOUpvkLC3ozPz5Nc7tw==\n-----END CERTIFICATE-----\n";
+
+# The [count][cert ptrs] intermediates list _tn_verify_chain takes (TLS order), or 0 for none.
+fn _ek_inters(a, b): i64 {
+    if (a == 0) { return 0; }
+    var n = 1;
+    if (b != 0) { n = 2; }
+    var l = alloc(8 + n * 8);
+    store64(l, n);
+    store64(l + 8, a);
+    if (n == 2) { store64(l + 16, b); }
+    return l;
+}
+
+# _tn_verify_chain on a fresh ctx trusting the one DER root `root`.
+fn _ek_v(root, leaf, i1, i2, purpose): i64 {
+    var ctx = tls_native_new_client("localhost", 9);
+    if (tls_native_set_ca_bundle(ctx, load64(root), load64(root + 8), 1) != TLS_OK) { return 0 - 999; }
+    return _tn_verify_chain(ctx, leaf, _ek_inters(i1, i2), EK_NOW, purpose);
+}
+
+# The same on a fresh ctx trusting the PEM bundle `pem` — the install path a system store takes,
+# whose root DER lives in the set's pool (the client purpose reads it: sigil records serverAuth
+# only, so clientAuth is read from the DER).
+fn _ek_vb(pem, leaf, purpose): i64 {
+    var ctx = tls_native_new_client("localhost", 9);
+    if (tls_native_set_ca_bundle(ctx, pem, strlen(pem), 0) != TLS_OK) { return 0 - 999; }
+    return _tn_verify_chain(ctx, leaf, 0, EK_NOW, purpose);
+}
+
+fn _ek_ok(r, label): i64 { return assert_eq(r, TLS_OK, label); }
+fn _ek_no(r, label): i64 { return assert_eq(r, TLS_ERR_CERT_INVALID, label); }
+
+fn test_fixtures(): i64 {
+    test_group("the fixtures parse, and each carries the EKU its name says");
+    assert(_ek_root_none != 0, "root_none parses");
+    assert(_ek_root_server != 0, "root_server parses");
+    assert(_ek_root_client != 0, "root_client parses");
+    assert(_ek_root_code != 0, "root_code parses");
+    assert(_ek_root_any != 0, "root_any parses");
+    assert(_ek_int_none != 0, "int_none parses");
+    assert(_ek_int_server != 0, "int_server parses");
+    assert(_ek_int_client != 0, "int_client parses");
+    assert(_ek_int_code != 0, "int_code parses");
+    assert(_ek_int_any != 0, "int_any parses");
+    assert(_ek_leaf_r != 0, "leaf_r parses");
+    assert(_ek_leaf_i != 0, "leaf_i parses");
+    assert_eq(x509_cert_eku(_ek_root_none), 0, "  root_none: no extendedKeyUsage (sigil 0 = absent)");
+    assert_eq(x509_cert_eku(_ek_root_server), 0x101, "  root_server: serverAuth (0x101)");
+    assert_eq(x509_cert_eku(_ek_root_client), 0x100, "  root_client: present, no serverAuth (0x100)");
+    assert_eq(x509_cert_eku(_ek_root_code), 0x100, "  root_code: present, no serverAuth (0x100)");
+    assert_eq(x509_cert_eku(_ek_root_any), 0x101, "  root_any: anyExtendedKeyUsage reads as serverAuth (0x101)");
+    assert_eq(x509_cert_eku(_ek_int_client), 0x100, "  int_client: present, no serverAuth (0x100)");
+    assert_eq(x509_cert_is_ca(_ek_root_client), 1, "  root_client is a CA");
+    assert_eq(x509_cert_is_ca(_ek_int_code), 1, "  int_code is a CA");
+    # Every row's only variable: the controls verify for both purposes.
+    _ek_ok(_ek_v(_ek_root_none, _ek_leaf_r, 0, 0, _TN_PURPOSE_SERVER), "control: leaf_r <- root_none, server purpose");
+    _ek_ok(_ek_v(_ek_root_none, _ek_leaf_r, 0, 0, _TN_PURPOSE_CLIENT), "control: leaf_r <- root_none, client purpose");
+    _ek_ok(_ek_v(_ek_root_none, _ek_leaf_i, _ek_int_none, 0, _TN_PURPOSE_SERVER),
+      "control: leaf_i <- int_none <- root_none, server purpose");
+    _ek_ok(_ek_v(_ek_root_none, _ek_leaf_i, _ek_int_none, 0, _TN_PURPOSE_CLIENT),
+      "control: leaf_i <- int_none <- root_none, client purpose");
+    _ek_no(_ek_v(_ek_root_none, _ek_leaf_i, 0, 0, _TN_PURPOSE_SERVER),
+      "control: leaf_i with no intermediate has no path (CERT_INVALID)");
+    return 0;
+}
+
+# The one EKU rule, on each fixture: absent -> 1; SERVER -> serverAuth or anyEKU; CLIENT ->
+# clientAuth or anyEKU.
+fn test_rule(): i64 {
+    test_group("_tn_eku_purpose_ok: the one EKU rule every depth applies");
+    assert_eq(_tn_eku_purpose_ok(_ek_root_none, _TN_PURPOSE_SERVER), 1, "EKU absent, server purpose: 1 (unrestricted)");
+    assert_eq(_tn_eku_purpose_ok(_ek_root_none, _TN_PURPOSE_CLIENT), 1, "EKU absent, client purpose: 1 (unrestricted)");
+    assert_eq(_tn_eku_purpose_ok(_ek_root_server, _TN_PURPOSE_SERVER), 1, "serverAuth, server purpose: 1");
+    assert_eq(_tn_eku_purpose_ok(_ek_root_server, _TN_PURPOSE_CLIENT), 0, "serverAuth, client purpose: 0");
+    assert_eq(_tn_eku_purpose_ok(_ek_root_client, _TN_PURPOSE_SERVER), 0, "clientAuth, server purpose: 0");
+    assert_eq(_tn_eku_purpose_ok(_ek_root_client, _TN_PURPOSE_CLIENT), 1, "clientAuth, client purpose: 1");
+    assert_eq(_tn_eku_purpose_ok(_ek_root_code, _TN_PURPOSE_SERVER), 0, "codeSigning, server purpose: 0");
+    assert_eq(_tn_eku_purpose_ok(_ek_root_code, _TN_PURPOSE_CLIENT), 0, "codeSigning, client purpose: 0");
+    assert_eq(_tn_eku_purpose_ok(_ek_root_any, _TN_PURPOSE_SERVER), 1, "anyExtendedKeyUsage, server purpose: 1");
+    assert_eq(_tn_eku_purpose_ok(_ek_root_any, _TN_PURPOSE_CLIENT), 1, "anyExtendedKeyUsage, client purpose: 1");
+    assert_eq(_tn_eku_purpose_ok(_ek_leaf_r, _TN_PURPOSE_SERVER), 1, "serverAuth + clientAuth, server purpose: 1");
+    assert_eq(_tn_eku_purpose_ok(_ek_leaf_r, _TN_PURPOSE_CLIENT), 1, "serverAuth + clientAuth, client purpose: 1");
+    return 0;
+}
+
+# One CA family at one position: the trust anchor at depth 0 (`where` 0), the intermediate
+# (`where` 1), or the anchor at depth 1, above int_none (`where` 2).
+fn _ek_at(where, ca, purpose): i64 {
+    if (where == 0) { return _ek_v(ca, _ek_leaf_r, 0, 0, purpose); }
+    if (where == 1) { return _ek_v(_ek_root_none, _ek_leaf_i, ca, 0, purpose); }
+    return _ek_v(ca, _ek_leaf_i, _ek_int_none, 0, purpose);
+}
+
+fn test_table(where, label, none, server, client, code, any): i64 {
+    test_group(label);
+    _ek_ok(_ek_at(where, none, _TN_PURPOSE_SERVER), "EKU absent, server purpose: verifies");
+    _ek_ok(_ek_at(where, none, _TN_PURPOSE_CLIENT), "EKU absent, client purpose: verifies");
+    _ek_ok(_ek_at(where, server, _TN_PURPOSE_SERVER), "serverAuth, server purpose: verifies");
+    _ek_no(_ek_at(where, server, _TN_PURPOSE_CLIENT), "serverAuth, client purpose: REFUSED (openssl: error 26)");
+    _ek_no(_ek_at(where, client, _TN_PURPOSE_SERVER), "clientAuth, server purpose: REFUSED (openssl: error 26)");
+    _ek_ok(_ek_at(where, client, _TN_PURPOSE_CLIENT), "clientAuth, client purpose: verifies");
+    _ek_no(_ek_at(where, code, _TN_PURPOSE_SERVER), "codeSigning, server purpose: REFUSED (openssl: error 26)");
+    _ek_no(_ek_at(where, code, _TN_PURPOSE_CLIENT), "codeSigning, client purpose: REFUSED (openssl: error 26)");
+    _ek_ok(_ek_at(where, any, _TN_PURPOSE_SERVER),
+      "anyExtendedKeyUsage, server purpose: verifies (openssl 3.6.5: error 26 — divergence A)");
+    _ek_ok(_ek_at(where, any, _TN_PURPOSE_CLIENT),
+      "anyExtendedKeyUsage, client purpose: verifies (openssl 3.6.5: error 26 — divergence A)");
+    return 0;
+}
+
+fn test_path_building(): i64 {
+    test_group("path building: a wrongly purposed CA is SKIPPED, not fatal");
+    _ek_ok(_ek_v(_ek_root_none, _ek_leaf_i, _ek_int_client, _ek_int_server, _TN_PURPOSE_SERVER),
+      "[int_client, int_server], server purpose: int_client skipped, verifies through int_server");
+    _ek_ok(_ek_v(_ek_root_none, _ek_leaf_i, _ek_int_server, _ek_int_client, _TN_PURPOSE_CLIENT),
+      "[int_server, int_client], client purpose: int_server skipped, verifies through int_client");
+    _ek_ok(_ek_v(_ek_root_none, _ek_leaf_i, _ek_int_server, _ek_int_client, _TN_PURPOSE_SERVER),
+      "[int_server, int_client], server purpose: verifies through the first");
+    _ek_no(_ek_v(_ek_root_none, _ek_leaf_i, _ek_int_client, _ek_int_code, _TN_PURPOSE_SERVER),
+      "[int_client, int_code], server purpose: no rightly purposed intermediate, REFUSED");
+    _ek_no(_ek_v(_ek_root_none, _ek_leaf_i, _ek_int_server, _ek_int_code, _TN_PURPOSE_CLIENT),
+      "[int_server, int_code], client purpose: no rightly purposed intermediate, REFUSED");
+    _ek_ok(_ek_v(_ek_root_none, _ek_leaf_i, _ek_int_code, _ek_int_any, _TN_PURPOSE_SERVER),
+      "[int_code, int_any], server purpose: verifies through int_any (divergence A)");
+    _ek_ok(_ek_v(_ek_root_none, _ek_leaf_i, _ek_int_code, _ek_int_any, _TN_PURPOSE_CLIENT),
+      "[int_code, int_any], client purpose: verifies through int_any (divergence A)");
+
+    test_group("path building: several trust roots, from a PEM bundle");
+    _ek_ok(_ek_vb(_ek_b_cls, _ek_leaf_r, _TN_PURPOSE_SERVER),
+      "[root_client, root_code, root_server], server purpose: anchors at root_server");
+    _ek_ok(_ek_vb(_ek_b_cls, _ek_leaf_r, _TN_PURPOSE_CLIENT),
+      "[root_client, root_code, root_server], client purpose: anchors at root_client");
+    _ek_ok(_ek_vb(_ek_b_scl, _ek_leaf_r, _TN_PURPOSE_SERVER),
+      "[root_server, root_code, root_client], server purpose: anchors at root_server");
+    _ek_ok(_ek_vb(_ek_b_scl, _ek_leaf_r, _TN_PURPOSE_CLIENT),
+      "[root_server, root_code, root_client], client purpose: anchors at root_client");
+    _ek_no(_ek_vb(_ek_b_cl_co, _ek_leaf_r, _TN_PURPOSE_SERVER),
+      "[root_client, root_code], server purpose: no rightly purposed root, REFUSED");
+    _ek_ok(_ek_vb(_ek_b_cl_co, _ek_leaf_r, _TN_PURPOSE_CLIENT),
+      "[root_client, root_code], client purpose: anchors at root_client");
+    return 0;
+}
+
+# The client's public verb carries the server purpose to the CA check.
+fn test_public_verb(): i64 {
+    test_group("tls_native_client_verify_chain: a server chain through a clientAuth-only CA");
+    var c = tls_native_new_client("localhost", 9);
+    tls_native_set_ca_bundle(c, load64(_ek_root_none), load64(_ek_root_none + 8), 1);
+    store64(c + TLS_CTX_OFF_SERVER_CERT, _ek_leaf_i);
+    store64(c + TLS_CTX_OFF_SERVER_INTERS, _ek_inters(_ek_int_client, 0));
+    _ek_no(tls_native_client_verify_chain(c, EK_NOW), "leaf_i <- int_client: REFUSED");
+    var d = tls_native_new_client("localhost", 9);
+    tls_native_set_ca_bundle(d, load64(_ek_root_none), load64(_ek_root_none + 8), 1);
+    store64(d + TLS_CTX_OFF_SERVER_CERT, _ek_leaf_i);
+    store64(d + TLS_CTX_OFF_SERVER_INTERS, _ek_inters(_ek_int_server, 0));
+    _ek_ok(tls_native_client_verify_chain(d, EK_NOW), "leaf_i <- int_server: verifies");
+    return 0;
+}
+
+fn _ek_all(): i64 {
+    alloc_init();
+    _ek_fixtures();
+    test_fixtures();
+    test_rule();
+    test_table(0, "the trust anchor, signing the leaf (depth 0)", _ek_root_none, _ek_root_server,
+      _ek_root_client, _ek_root_code, _ek_root_any);
+    test_table(1, "the intermediate (under root_none)", _ek_int_none, _ek_int_server, _ek_int_client,
+      _ek_int_code, _ek_int_any);
+    test_table(2, "the trust anchor, above int_none (depth 1)", _ek_root_none, _ek_root_server,
+      _ek_root_client, _ek_root_code, _ek_root_any);
+    test_path_building();
+    test_public_verb();
+    return 0;
+}
+
+_ek_all();
+var r = assert_summary();
