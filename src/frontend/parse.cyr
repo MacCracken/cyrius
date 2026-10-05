@@ -2129,10 +2129,60 @@ fn _EVAL_CONST_ATOM(S): i64 {
 # 6.6.6 — `_agc_pp` is the third answer: the operand IS an aggregate, but its slot holds the
 # ADDRESS of one (a by-value struct PARAMETER). Read it beside `_agc_li`; the copy below takes
 # the addressed path for it exactly as it does for a global. CHANGELOG [6.6.6]
+# ⛔ 6.6.16 (C2) — `_agc_pp == 2` is a HANDLE: a slot holding the address of a plain struct over
+# 8 B that is NOT the struct's value — a pointer-mode local (`var a: Pt = alloc(16);`) or a `*T`
+# parameter. A pointer-mode GLOBAL handle publishes `_agc_gvi` in the deref band `0 - 1000 - gvi`
+# instead (`_agc_addr_x1` loads the slot, as `_AGC_DREF` does for a local), so a consumer testing
+# `>= 0` before SLVAR skips it: the global itself is not written. Both copy through the address
+# exactly as `_agc_pp == 1` does; the difference is the RULE: handle <- handle is a pointer
+# REBIND (`_try_aggregate_copy_assign`), every other pair with a handle in it is a copy. Before,
+# `_agc_operand` reported a handle as "not an aggregate" and every arm fell to the one-word store
+# — the address into an inline struct's field 0, or field 0's value into the handle (SIGSEGV at
+# the next `a.x`). Read `_agc_hdl()` for "is a handle". CHANGELOG [6.6.16]
 var _agc_li = 0 - 1;
 var _agc_gvi = 0 - 1;
 var _agc_t = 0;
 var _agc_pp = 0;
+fn _agc_hdl(): i64 {
+    if (_agc_pp == 2) { return 1; }
+    if (_agc_gvi <= 0 - 1000) { return 1; }
+    return 0;
+}
+# 1 = `t` (a `0 - sid` type) is a plain struct over 8 B — the only kind a handle copies. `Str` /
+# `Result` / `Option` / `Tagged` are excluded by name through the classifier that builds a fn's
+# structmask, as `_local_is_sptr_param` excludes them: their slots hold heap handles that every
+# assignment rebinds (the stdlib's convention). A <= 8 B struct is held by value. CHANGELOG [6.6.16]
+fn _agc_plain_big(S, t): i64 {
+    if (t >= 0) { return 0; }
+    if (t <= 0 - 2048) { return 0; }
+    var si = (0 - t) - 1;
+    if (STRUCTSZ(S, si) <= 8) { return 0; }
+    if (_classify_param_type(S, L64(S + 0x1A6018 + si * 8)) != 0) { return 0; }
+    return 1;
+}
+# A one-slot struct local (GLAGG == 0): an address-passed by-value parameter (`_agc_pp` 1), a
+# handle (2), or not an aggregate operand (0 returned). Kept out of `_agc_operand` for cybs's
+# per-fn reference limit. CHANGELOG [6.6.16]
+fn _agc_handle_local(S, li): i64 {
+    var lt = GLTYPE(S, li);
+    if (_agc_plain_big(S, lt) == 0) { return 0; }
+    _agc_pp = 2;
+    if (_local_is_sptr_param(S, li) == 1) { if (_is_ptr_param(li) == 0) { _agc_pp = 1; } }
+    _agc_li = li;
+    _agc_t = lt;
+    var n = AGG_NSLOTS(S, lt);
+    return n;
+}
+# A pointer-mode global (GVPM 1) of a plain struct over 8 B: a handle, in the deref band.
+fn _agc_handle_global(S, gvi): i64 {
+    if (GVPM(S, gvi) != 1) { return 0; }
+    var t = 0 - GVTYPE(S, gvi);
+    if (_agc_plain_big(S, t) == 0) { return 0; }
+    _agc_gvi = 0 - 1000 - gvi;
+    _agc_t = t;
+    var n = AGG_NSLOTS(S, t);
+    return n;
+}
 fn _agc_operand(S, onoff): i64 {
     _agc_li = 0 - 1;
     _agc_gvi = 0 - 1;
@@ -2145,8 +2195,9 @@ fn _agc_operand(S, onoff): i64 {
                 # 6.6.6 — span 0 is "not inline", which an address-passed struct parameter also
                 # is. It owns ONE slot holding the caller's pointer, so it is an aggregate
                 # operand reached through one indirection. See `_local_is_sptr_param`.
-                if (_local_is_sptr_param(S, li) == 0) { return 0; }
-                _agc_pp = 1;
+                # 6.6.16 (C2): and so is a handle. See `_agc_handle_local`.
+                var hn = _agc_handle_local(S, li);
+                return hn;
             }
             var lt = GLTYPE(S, li);
             if (lt >= 0) { return 0; }
@@ -2158,10 +2209,13 @@ fn _agc_operand(S, onoff): i64 {
     }
     var gvi = FINDVAR(S, onoff);
     if (gvi < 0) { return 0; }
-    # 2 == the slot IS the struct. 1 == it holds an address (a pointer copy is an 8-byte
-    # store, which is what falling through gives), 0 == not a recorded aggregate. GVTYPE's
-    # positive range is shared with scalar widths, so it is never the gate.
-    if (GVPM(S, gvi) != 2) { return 0; }
+    # 2 == the slot IS the struct. 1 == it holds an address, 0 == not a recorded aggregate.
+    # GVTYPE's positive range is shared with scalar widths, so it is never the gate.
+    # 6.6.16 (C2): a 1 is a handle (`_agc_handle_global`), no longer "not an aggregate".
+    if (GVPM(S, gvi) != 2) {
+        var hg = _agc_handle_global(S, gvi);
+        return hg;
+    }
     var gt = GVTYPE(S, gvi);
     if (gt <= 0) { return 0; }
     _agc_gvi = gvi;
@@ -2220,7 +2274,7 @@ fn _try_struct_call_assign(S, noff): i64 {
     }
     var dli = _agc_li;
     var dgv = _agc_gvi;
-    if (_agc_pp == 1) { dli = _AGC_DREF(dli); }
+    if (_agc_pp != 0) { dli = _AGC_DREF(dli); }   # 6.6.16 (C2): a handle copies through it too
     var t = _struct_call_into_temp(S);
     _agc_from_temp(S, t, dli, dgv, n, GFRS(S, fi));
     if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
@@ -2230,11 +2284,15 @@ fn _try_struct_call_assign(S, noff): i64 {
 
 # `x = f(..);` — x a struct operand (`_agc_operand` just ran) and f returning a DIFFERENT struct:
 # refused by name (1). Reads `_agc_t`. CHANGELOG [6.6.11]
+# 6.6.16 (C2): into a HANDLE, a call returning a struct HANDLE (`Str`: class 0 over 8 B, the
+# address in rax) is handle <- handle, a rebind at any type — as before, when a handle was not an
+# operand at all. A struct VALUE of a different type is refused, as into an inline one.
 fn _sca_mismatch(S, fi, noff): i64 {
     if (fi < 0) { return 0; }
     if (_grc_err < 0) { return 0; }   # a failed instantiation: the call refuses itself, once
     var rs = GFRS(S, fi);
     if (rs <= 0) { return 0; }
+    if (_agc_hdl() == 1) { if (_ret_agg_class(S, fi) == 0) { if (STRUCTSZ(S, rs - 1) > 8) { return 0; } } }
     return _AGG_ASSIGN_TYPE_ERR(S, _agc_t, 0 - rs, noff, PEEKV(S));
 }
 
@@ -2243,10 +2301,12 @@ fn _sca_mismatch(S, fi, noff): i64 {
 # `_AGC_DREF` band is a by-value PARAMETER whose slot holds the struct's ADDRESS (6.6.6) — the
 # slot-index loop cannot express that, so it takes the same addressed copy a global takes.
 # CHANGELOG [6.6.6]
+# 6.6.16 (C2): a `dgv` in the deref band (`<= -1000`, a pointer-mode global handle) is addressed
+# too, and never SLVAR'd — the global's own slot is not written. CHANGELOG [6.6.16]
 fn _agc_from_temp(S, t, dli, dgv, n, sid): i64 {
-    if (dgv >= 0) {
+    if (dgv != 0 - 1) {
         _agc_copy_bytes(S, 0 - 1, dgv, t, 0 - 1, STRUCTSZ(S, sid - 1));
-        SLVAR(S, dgv);
+        if (dgv >= 0) { SLVAR(S, dgv); }
         return 0;
     }
     if (dli <= 0 - 1000) {
@@ -2428,7 +2488,7 @@ fn _pcmpe_struct_assign(S, noff): i64 {
     if (_agc_t != 0 - _sc_sid) { return 0; }
     if (t < 0) { _refuse_toplevel_struct_call(S, _sc_fn); return 0; }
     var pdli = _agc_li;
-    if (_agc_pp == 1) { pdli = _AGC_DREF(pdli); }
+    if (_agc_pp != 0) { pdli = _AGC_DREF(pdli); }   # 6.6.16 (C2): a handle too
     _agc_from_temp(S, t, pdli, _agc_gvi, n, _sc_sid);
     if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
     STI(S, GTI(S) + 1);   # consume ';'
@@ -2461,18 +2521,26 @@ fn _try_aggregate_copy_assign(S, noff): i64 {
         }
         return 0;
     }
+    # ⛔ 6.6.16 (C2) — read whether the destination is a HANDLE (`_agc_hdl`) before the source
+    # probe resets the globals. handle <- handle is a pointer REBIND — the one-word store below,
+    # at ANY pair of struct types, exactly as before a handle was an operand: Str and every heap
+    # handle idiom rely on it. It returns ahead of the type check, so a rebind between handles of
+    # two struct types stays legal. Every other pair holding a handle copies the struct (through
+    # its address, the `_AGC_DREF` / deref-band path) and is type-checked like any copy.
+    var dh = _agc_hdl();
     var dst_li = _agc_li;
-    if (_agc_pp == 1) { dst_li = _AGC_DREF(dst_li); }
+    if (_agc_pp != 0) { dst_li = _AGC_DREF(dst_li); }
     var dst_gv = _agc_gvi;
     var lt = _agc_t;
     var snslots = _agc_src_operand(S, src_noff);   # 6.6.13: a closure capture too
+    if (dh == 1) { if (_agc_hdl() == 1) { return 0; } }
     # 6.6.6 — this pair of tests USED to be the whole answer to a type mismatch, and the
     # answer was `return 0` = the generic 8-byte store. See `_AGG_ASSIGN_TYPE_ERR`.
     if (_AGG_ASSIGN_TYPE_ERR(S, lt, _agc_t, noff, src_noff) == 1) { return 0; }
     if (snslots != nslots) { return 0; }
     if (_agc_t != lt) { return 0; }
     var src_li = _agc_li;
-    if (_agc_pp == 1) { src_li = _AGC_DREF(src_li); }
+    if (_agc_pp != 0) { src_li = _AGC_DREF(src_li); }
     var src_gv = _agc_gvi;
     # ⛔ v6.6.1 — A NEGATIVE GLTYPE DOES NOT MEAN "INLINE AGGREGATE", AND ASSUMING IT DID SHIPPED
     # A SILENT MISCOMPILE IN v6.5.57. Two different layouts share the same negative type marker:
@@ -2500,9 +2568,12 @@ fn _try_aggregate_copy_assign(S, noff): i64 {
     # parameter back into the 8-byte store this bite exists to remove.
     if (dst_li >= 0) { if (dst_li - nslots + 1 < 0) { return 0; } }
     if (src_li >= 0) { if (src_li - nslots + 1 < 0) { return 0; } }
-    if (dst_gv >= 0 || src_gv >= 0 || dst_li <= 0 - 1000 || src_li <= 0 - 1000 || src_li == 0 - 2) {
+    if (dst_li < 0 || src_li < 0) {
         # A global or an address-passed parameter on either side: byte-exact, addressed.
         # See `_agc_copy_bytes`. 6.6.13: so is a closure capture (`src_li` -2, `_agc_src_operand`).
+        # 6.6.16 (C2): and a handle — a local in the `_AGC_DREF` band, a global in the deref band.
+        # Only two INLINE locals (both slots >= 0) take the slot loop below; every other operand
+        # has `li` < 0 (a global's is -1), so one test says it. CHANGELOG [6.6.16]
         var nb = nslots * 8;
         if (lt < 0) { if (lt > 0 - 2048) { nb = STRUCTSZ(S, (0 - lt) - 1); } }
         _agc_copy_bytes(S, dst_li, dst_gv, src_li, src_gv, nb);

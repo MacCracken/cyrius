@@ -644,6 +644,37 @@ than out of the frame. The compiler records which of the two a variable is at it
 before v6.6.5 it guessed from the shape of the neighbouring stack slot and got it wrong for any
 pointer-mode struct declared after a closed `{ ... }` block.
 
+⚠ **An assignment between a pointer and a struct copies the struct (v6.6.16).** Call a variable
+whose slot holds a struct's ADDRESS a *handle*: a pointer-mode local (`var a: P3 = alloc(24);`),
+a pointer-mode global (`var G: P3 = 0;` then `G = alloc(24);`), or a `p: *P3` parameter. For a
+plain struct over 8 bytes:
+
+* `q = a` — a struct VALUE (an inline local or global, a by-value parameter) assigned from a
+  handle — copies the struct `a` points at into `q`.
+* `a = q` — a handle assigned a struct value (a variable, a by-value parameter, a field `b.v`, a
+  call `mk(..)`, a method `q.dbl()`, an operator `l + r`) — copies INTO the struct `a` points at,
+  as `*a = q` does in C. `a` still points where it did.
+* `a = b` between two handles is a pointer **rebind**, at any pair of struct types, as it always
+  was. So is a handle assigned something that is not a struct value: an untyped pointer
+  (`a = alloc(24)`, `a = p`) or a call returning `Str`. Between two `*P3` parameters `a = b`
+  rebinds too; before v6.6.16 it copied `*b` into `*a`.
+
+A struct value of a different type assigned into a handle is refused
+(`cannot copy 'r' into a variable of a different struct/vector type: 'a'`), as into an inline
+struct. Before v6.6.16 each of these stored ONE word: `q = a` put `a`'s address in `q.x` and left
+`q.y` stale, `a = q` put `q.x`'s value in `a`'s slot so the next `a.x` crashed, and `a = q` from a
+by-value parameter made `a` point at the CALLER's struct, so `a.x = 9` changed it. `Str`, `Result`,
+`Option` and `Tagged` (heap handles by name) and structs of 8 bytes or less are unchanged.
+
+⚠ **The declaration and the assignment differ on purpose.** `var q: P3 = a;` takes its storage
+class from its source: from a handle it declares `q` as a second pointer to the same struct, so a
+write through either is seen by both (the v6.6.5 alias). `q = a;` cannot change what `q` already
+is: an inline `q` receives a copy, a handle `q` is rebound. For a private copy of a handle's
+struct, declare first and assign: `var q: P3; q = a;`. One shape changed meaning: code that used
+the one-word store to carry a handle through an inline struct variable (`var w: P3; w = a;` then
+`f(w)` where an untyped `f(v)` reads `load64(v + 8)`) now passes `w`'s first field. Pass `a`, or
+`&w`.
+
 ### Returning a struct by value (v6.6.6)
 
 A fn declared `: Point` returns the struct itself — a struct over 16 bytes through a hidden

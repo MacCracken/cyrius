@@ -517,8 +517,12 @@ fn _AGC_DREF(li): i64 { return 0 - 1000 - li; }
 # 6.6.11 — `li == -2` is a FOURTH source: the struct-typed FIELD recorded by `_fla_take`, so a
 # variable destination (`q = b.v;`, `var p: Pt = b.v;`) takes this same byte-exact copy. `-2` is
 # free: a slot is >= 0, "none" is -1 and the dereferenced band starts at -1000. CHANGELOG [6.6.11]
+# 6.6.16 (C2) — `gv <= -1000` is a pointer-mode GLOBAL handle (`_agc_gvi`'s deref band, parse.cyr
+# `_agc_handle_global`): its slot holds the address, so the base is `[G]` — `_fsc_src_x1`'s
+# `_fsc_gdr` arm. Tested before the `li` arms, which a global operand leaves at -1. CHANGELOG [6.6.16]
 fn _agc_addr_x1(S, li, gv, boff): i64 {
     if (gv >= 0) { EVADDR_X1(S, gv); }
+    elif (gv <= 0 - 1000) { EVLOAD(S, 0 - 1000 - gv); EMOVCA(S); }
     elif (li == 0 - 2) { _fsc_src_x1(S, boff); return 0; }
     elif (li <= 0 - 1000) { EFLLOAD(S, 0 - 1000 - li); EMOVCA(S); }
     else { EFLADDR_X1(S, li); }
@@ -912,9 +916,9 @@ fn _fla_assign(S, noff): i64 {
     _agc_operand(S, noff);
     if (_AGG_ASSIGN_TYPE_ERR(S, _agc_t, 0 - _fla_ft, noff, _fla_name) == 1) { return 0; }
     var dli = _agc_li;
-    if (_agc_pp == 1) { dli = _AGC_DREF(dli); }
+    if (_agc_pp != 0) { dli = _AGC_DREF(dli); }   # 6.6.16 (C2): a handle copies through it too
     _agc_copy_bytes(S, dli, _agc_gvi, 0 - 2, 0 - 1, STRUCTSZ(S, _fla_ft - 1));
-    if (_agc_gvi >= 0) { SLVAR(S, _agc_gvi); }
+    if (_agc_gvi >= 0) { SLVAR(S, _agc_gvi); }   # never a deref-band handle: G is not written
     if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
     STI(S, GTI(S) + 1);   # consume ';'
     return 1;
