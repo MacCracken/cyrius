@@ -1,0 +1,576 @@
+# struct_ptrmode_assign_copy.tcyr — 6.6.16 (C2). A STRUCT ASSIGNMENT BETWEEN A HANDLE AND A
+# VALUE COPIES THE STRUCT; handle <- handle STAYS A POINTER REBIND.
+#
+# A HANDLE is one slot holding the ADDRESS of a plain struct over 8 B: a pointer-mode local
+# (`var a: Pt = alloc(16);`), a pointer-mode global (`var GP: Pt = 0; GP = alloc(16);`) or a `*T`
+# parameter. A VALUE is an inline local or global, a by-value struct parameter, a closure capture,
+# a struct field, or a call / method / operator result.
+#
+# ⛔ THE DEFECT, every release before 6.6.16. `_agc_operand` (src/frontend/parse.cyr) reported a
+# handle as "not an aggregate", so every assignment arm fell to the one-word store:
+#   q = a;        (inline <- handle)  stored a's ADDRESS in q.x and left q.y stale — printed
+#                 1397460178042889 where 12 is right; the same into a global, from a global, for
+#                 24 B and for an odd 12 B struct;
+#   a = q;        (handle <- value)   stored q.x's VALUE (1) in a's slot, and the next a.x
+#                 dereferenced it: SIGSEGV, x86 and aarch64 alike. Likewise `a = G`, `GP = q`,
+#                 `a = mk(1, 2)`, `a = mk3(..)`, `a = b.v`, `a = q.dbl()` and `a = l + r`;
+#   a = q;        with q a by-value PARAMETER rebound a to the CALLER's struct, so `a.x = 9`
+#                 wrote the caller's — and `q = a; q.x = 5` (a by-value parameter) wrote a's.
+# The field store (`b.v = a`, 6.6.10) and the closure capture (6.6.13) already copied from a
+# handle; the variable path was the odd one out.
+#
+# ⭐ EVERY EXPECTED VALUE IS DERIVED A DIFFERENT WAY FROM THE THING UNDER TEST: each subject is
+# paired with a CONTROL that reaches the same state through FIELD STORES ONLY, and the rows pin
+# BOTH the hand-computed constant AND subject == control. A copy is told from an alias by a WRITE
+# after the assignment: the subject writes the source (or the destination) and the other side
+# must not move.
+#
+# ⭐ THE ANTI-VACUOUS GROUP IS LOAD-BEARING. handle <- handle is a REBIND (b = a, a `*T`
+# parameter, a pointer-mode global, two different struct types); the DECLARATION `var q: Pt = a;`
+# stays the documented alias (it takes its storage class from the source, an assignment cannot
+# change the destination's); `Str` is a heap handle whose rebind the stdlib relies on; a <= 8 B
+# struct is held by value. A fix keyed on "pointer-mode struct" without the handle <- handle rule
+# turns every heap-handle rebind into a copy and reddens that group.
+#
+# Mutations that redden this file (each applied to the 6.6.16 tree, rebuilt, measured on x86):
+#   * `_agc_operand` without its handle rungs (the pre-6.6.16 compiler) -> 16 rows red, the first
+#     ones an ADDRESS where 12 is right, then SIGSEGV in the handle-destination group.
+#   * dropping the handle <- handle `return 0` in `_try_aggregate_copy_assign` -> the file no
+#     longer compiles (`cannot copy 'a' into a variable of a different struct/vector type: 'b'`,
+#     the different-type rebind); without that row, 5 rebind rows read a COPY (b = a 78, want 18;
+#     the two `*Pt` parameter rows 758 / 5434; the global rows 52 and, at top level, 56).
+#   * the deref-band arm removed from `_agc_addr_x1` -> every pointer-mode GLOBAL row reads 0
+#     (the copy addresses a frame slot; `GP = b.v` reads only b.n's 7), then SIGSEGV.
+#   * `_agc_handle_global` publishing `gvi` instead of the deref band `0 - 1000 - gvi` -> every
+#     global-handle DESTINATION row reads -1 (the copy lands in GP's own slot: GP is rebound to
+#     field 0's value), the global-handle SOURCE rows an ADDRESS, then SIGSEGV.
+#   * the `Str`-handle exemption removed from `_sca_mismatch` -> does not compile
+#     (`cannot copy 'str_from' ...`): a handle <- handle rebind refused.
+#   * `_agc_from_temp` testing `dgv >= 0` instead of `!= -1` -> the four temp-sourced global-handle
+#     rows read 0: `GP = mk(3, 4)`, `GQ = mk3(5, 6, 7)`, `GP = q.dbl()`, `GQ = l + r`.
+#   * `_pcmpe_struct_assign` or `_fla_assign` keeping `_agc_pp == 1` -> SIGSEGV (the method /
+#     operator / field result stored over the handle's slot).
+#
+# CROSS-HOST: the copy is per-chunk (8/4/2/1-byte) address + load/store, emitted by each
+# backend; the global-handle load is EVLOAD. Gate-run on ecb, ach, cass and pi.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/str.cyr"
+include "lib/fnptr.cyr"
+include "lib/assert.cyr"
+
+struct Pt { x; y; }                  # 16 B — the rax:rdx pair class
+struct P3 { x; y; z; }               # 24 B — the retptr class
+struct Q3 { a; b; c; }               # 24 B, a different type
+struct Box { v: Pt; n; }
+struct O12 { a: i64; b: i32; }       # 12 B — an odd tail (copied 8 + 4)
+struct B1 { val; }                   # 8 B — held by value, never a handle
+
+fn mk(a, b): Pt { var p: Pt; p.x = a; p.y = b; return p; }
+fn mk3(a, b, c): P3 { var p: P3; p.x = a; p.y = b; p.z = c; return p; }
+fn Pt_dbl(self: Pt): Pt { var r: Pt; r.x = self.x * 2; r.y = self.y * 2; return r; }
+fn P3_add(l: P3, r: P3): P3 { var t: P3; t.x = l.x + r.x; t.y = l.y + r.y; t.z = l.z + r.z; return t; }
+
+var GP: Pt = 0;                      # a pointer-mode GLOBAL (one slot holding an address)
+var GH: Pt = 0;
+var GQ: P3 = 0;                      # a pointer-mode GLOBAL of the retptr class
+var GI = Pt{9, 9};                   # an inline global
+var GO = O12{0, 0};
+var GN: i32 = 88;                    # packs at +12 after GO: an 8-byte tail store would clobber it
+
+# --------------------------------------- (1) value <- handle: copy the struct it points at ----
+# SUBJECT: `q = a`. The write to `a.x` afterwards must not reach q.
+fn inl_from_local_handle() {
+    var a: Pt = alloc(16); a.x = 1; a.y = 2;
+    var q: Pt; q.x = 9; q.y = 9;
+    q = a;
+    a.x = 7;
+    return q.x * 10 + q.y;
+}
+fn inl_from_local_handle_ctl() {
+    var a: Pt = alloc(16); a.x = 1; a.y = 2;
+    var q: Pt; q.x = 9; q.y = 9;
+    q.x = a.x; q.y = a.y;
+    a.x = 7;
+    return q.x * 10 + q.y;
+}
+fn inl_from_local_handle_p3() {
+    var a: P3 = alloc(24); a.x = 1; a.y = 2; a.z = 3;
+    var q: P3; q.x = 9; q.y = 9; q.z = 9;
+    q = a;
+    return q.x * 100 + q.y * 10 + q.z;
+}
+fn inl_from_local_handle_p3_ctl() {
+    var a: P3 = alloc(24); a.x = 1; a.y = 2; a.z = 3;
+    var q: P3; q.x = 9; q.y = 9; q.z = 9;
+    q.x = a.x; q.y = a.y; q.z = a.z;
+    return q.x * 100 + q.y * 10 + q.z;
+}
+# 12 B: copied 8 + 4, so the inline global after GO (GN, packed at +12) is untouched.
+fn odd_inl_from_local_handle() {
+    var a: O12 = alloc(16); a.a = 1; a.b = 2;
+    var q: O12; q.a = 9; q.b = 9;
+    q = a;
+    return q.a * 10 + q.b;
+}
+fn odd_glob_from_local_handle() {
+    var a: O12 = alloc(16); a.a = 3; a.b = 4;
+    GO = a;
+    return GO.a * 10 + GO.b;
+}
+fn odd_glob_from_local_handle_ctl() {
+    var a: O12 = alloc(16); a.a = 3; a.b = 4;
+    GO.a = a.a; GO.b = a.b;
+    return GO.a * 10 + GO.b;
+}
+fn glob_from_local_handle() {
+    var a: Pt = alloc(16); a.x = 3; a.y = 4;
+    GI.x = 9; GI.y = 9;
+    GI = a;
+    a.x = 7;
+    return GI.x * 10 + GI.y;
+}
+fn glob_from_local_handle_ctl() {
+    var a: Pt = alloc(16); a.x = 3; a.y = 4;
+    GI.x = 9; GI.y = 9;
+    GI.x = a.x; GI.y = a.y;
+    a.x = 7;
+    return GI.x * 10 + GI.y;
+}
+fn inl_from_glob_handle() {
+    GP = alloc(16); GP.x = 1; GP.y = 2;
+    var q: Pt; q.x = 9; q.y = 9;
+    q = GP;
+    GP.x = 7;
+    return q.x * 10 + q.y;
+}
+fn inl_from_glob_handle_ctl() {
+    GP = alloc(16); GP.x = 1; GP.y = 2;
+    var q: Pt; q.x = 9; q.y = 9;
+    q.x = GP.x; q.y = GP.y;
+    GP.x = 7;
+    return q.x * 10 + q.y;
+}
+fn glob_from_glob_handle() {
+    GP = alloc(16); GP.x = 1; GP.y = 2;
+    GI.x = 9; GI.y = 9;
+    GI = GP;
+    GP.x = 7;
+    return GI.x * 10 + GI.y;
+}
+# A by-value PARAMETER (address-passed) as the destination: copied INTO, so a write through it
+# leaves the handle's struct alone. (Whether the CALLER's struct moves is the by-value parameter
+# rule: the joint C2 x C7 row below.)
+fn param_from_handle_i(q: P3) {
+    var a: P3 = alloc(24); a.x = 1; a.y = 2; a.z = 3;
+    q = a;
+    q.x = 5;
+    return a.x * 100 + q.x * 10 + q.z;
+}
+fn param_from_handle() { var s: P3 = mk3(9, 9, 9); return param_from_handle_i(s); }
+fn param_from_handle_ctl_i(q: P3) {
+    var a: P3 = alloc(24); a.x = 1; a.y = 2; a.z = 3;
+    q.x = a.x; q.y = a.y; q.z = a.z;
+    q.x = 5;
+    return a.x * 100 + q.x * 10 + q.z;
+}
+fn param_from_handle_ctl() { var s: P3 = mk3(9, 9, 9); return param_from_handle_ctl_i(s); }
+# 6.6.16 (C2 x C7) — and the CALLER's struct. `q = a` copies a's struct INTO the by-value
+# parameter (C2), and the parameter is the callee's own copy (C7, made on entry), so the caller's
+# struct stays 999 in every field. With C2 alone the copy went through the parameter's address
+# into the caller's struct (this row read -1: s.y was 2).
+fn param_from_handle_caller_i(q: P3) {
+    var a: P3 = alloc(24); a.x = 1; a.y = 2; a.z = 3;
+    q = a;
+    q.x = 5;
+    return q.x * 10 + q.z;
+}
+fn param_from_handle_caller() {
+    var s: P3 = mk3(999, 999, 999);
+    var d = param_from_handle_caller_i(s);
+    if (d != 53) { return 0 - d; }
+    if (s.y != 999) { return 0 - 1; }
+    if (s.z != 999) { return 0 - 2; }
+    return s.x;
+}
+fn param_from_handle_caller_ctl_i(q: P3) {
+    var a: P3 = alloc(24); a.x = 1; a.y = 2; a.z = 3;
+    q.x = a.x; q.y = a.y; q.z = a.z;
+    q.x = 5;
+    return q.x * 10 + q.z;
+}
+fn param_from_handle_caller_ctl() {
+    var s: P3 = mk3(999, 999, 999);
+    var d = param_from_handle_caller_ctl_i(s);
+    if (d != 53) { return 0 - d; }
+    if (s.y != 999) { return 0 - 1; }
+    if (s.z != 999) { return 0 - 2; }
+    return s.x;
+}
+
+# ---------------------------------------- (2) handle <- value: copy INTO the pointee (`*a = q`)
+# SUBJECT: `a = q`. The ORIGINAL heap object receives q's fields, `a` still points at it (no
+# rebind to the frame), and a later write to q does not reach it.
+fn local_handle_from_inl() {
+    var a: Pt = alloc(16); a.x = 0; a.y = 0;
+    var keep = a;
+    var q: Pt; q.x = 1; q.y = 2;
+    a = q;
+    q.x = 5;
+    if (a != keep) { return 0 - 1; }
+    return load64(keep) * 10 + load64(keep + 8);
+}
+fn local_handle_from_inl_ctl() {
+    var a: Pt = alloc(16); a.x = 0; a.y = 0;
+    var keep = a;
+    var q: Pt; q.x = 1; q.y = 2;
+    a.x = q.x; a.y = q.y;
+    q.x = 5;
+    if (a != keep) { return 0 - 1; }
+    return load64(keep) * 10 + load64(keep + 8);
+}
+fn local_handle_from_glob() {
+    var a: Pt = alloc(16); a.x = 0; a.y = 0;
+    GI.x = 3; GI.y = 4;
+    a = GI;
+    GI.x = 9;
+    return a.x * 10 + a.y;
+}
+fn local_handle_from_glob_ctl() {
+    var a: Pt = alloc(16); a.x = 0; a.y = 0;
+    GI.x = 3; GI.y = 4;
+    a.x = GI.x; a.y = GI.y;
+    GI.x = 9;
+    return a.x * 10 + a.y;
+}
+fn glob_handle_from_inl() {
+    GP = alloc(16); GP.x = 0; GP.y = 0;
+    var keep = GP;
+    var q: Pt; q.x = 1; q.y = 2;
+    GP = q;
+    q.x = 5;
+    if (GP != keep) { return 0 - 1; }
+    return GP.x * 10 + GP.y;
+}
+fn glob_handle_from_inl_ctl() {
+    GP = alloc(16); GP.x = 0; GP.y = 0;
+    var q: Pt; q.x = 1; q.y = 2;
+    GP.x = q.x; GP.y = q.y;
+    q.x = 5;
+    return GP.x * 10 + GP.y;
+}
+fn local_handle_from_pair_call() {
+    var a: Pt = alloc(16); a.x = 0; a.y = 0;
+    var keep = a;
+    a = mk(1, 2);
+    if (a != keep) { return 0 - 1; }
+    return a.x * 10 + a.y;
+}
+fn local_handle_from_retptr_call() {
+    var a: P3 = alloc(24); a.x = 0; a.y = 0; a.z = 0;
+    a = mk3(1, 2, 3);
+    return a.x * 100 + a.y * 10 + a.z;
+}
+fn local_handle_from_field() {
+    var a: Pt = alloc(16); a.x = 0; a.y = 0;
+    var b: Box; b.v.x = 1; b.v.y = 2; b.n = 7;
+    a = b.v;
+    b.v.x = 9;
+    return a.x * 10 + a.y;
+}
+fn local_handle_from_method() {
+    var a: Pt = alloc(16); a.x = 0; a.y = 0;
+    var q: Pt; q.x = 1; q.y = 2;
+    a = q.dbl();
+    return a.x * 10 + a.y;
+}
+fn local_handle_from_operator() {
+    var a: P3 = alloc(24); a.x = 0; a.y = 0; a.z = 0;
+    var l: P3 = mk3(1, 1, 1);
+    var r: P3 = mk3(0, 1, 2);
+    a = l + r;
+    return a.x * 100 + a.y * 10 + a.z;
+}
+# Into a pointer-mode GLOBAL handle, every temp-sourced arm (`_agc_from_temp` / `_fla_assign`
+# with a deref-band dgv): the original heap object receives the fields and GP / GQ are not
+# rebound. Each is paired with a control that writes the same fields through field stores.
+fn glob_handle_from_pair_call() {
+    GP = alloc(16); GP.x = 0; GP.y = 0;
+    var keep = GP;
+    GP = mk(3, 4);
+    if (GP != keep) { return 0 - 1; }
+    return load64(keep) * 10 + load64(keep + 8);
+}
+fn glob_handle_from_pair_call_ctl() {
+    GP = alloc(16); GP.x = 0; GP.y = 0;
+    var keep = GP;
+    GP.x = 3; GP.y = 4;
+    return load64(keep) * 10 + load64(keep + 8);
+}
+fn glob_handle_from_retptr_call() {
+    GQ = alloc(24); GQ.x = 0; GQ.y = 0; GQ.z = 0;
+    var keep = GQ;
+    GQ = mk3(5, 6, 7);
+    if (GQ != keep) { return 0 - 1; }
+    return load64(keep) * 100 + load64(keep + 8) * 10 + load64(keep + 16);
+}
+fn glob_handle_from_retptr_call_ctl() {
+    GQ = alloc(24); GQ.x = 0; GQ.y = 0; GQ.z = 0;
+    var keep = GQ;
+    GQ.x = 5; GQ.y = 6; GQ.z = 7;
+    return load64(keep) * 100 + load64(keep + 8) * 10 + load64(keep + 16);
+}
+fn glob_handle_from_method() {
+    GP = alloc(16); GP.x = 0; GP.y = 0;
+    var keep = GP;
+    var q: Pt; q.x = 2; q.y = 3;
+    GP = q.dbl();
+    q.x = 9;
+    if (GP != keep) { return 0 - 1; }
+    return load64(keep) * 10 + load64(keep + 8);
+}
+fn glob_handle_from_method_ctl() {
+    GP = alloc(16); GP.x = 0; GP.y = 0;
+    var keep = GP;
+    var q: Pt; q.x = 2; q.y = 3;
+    GP.x = q.x * 2; GP.y = q.y * 2;
+    q.x = 9;
+    return load64(keep) * 10 + load64(keep + 8);
+}
+fn glob_handle_from_operator() {
+    GQ = alloc(24); GQ.x = 0; GQ.y = 0; GQ.z = 0;
+    var keep = GQ;
+    var l: P3 = mk3(2, 3, 4);
+    var r: P3 = mk3(1, 1, 1);
+    GQ = l + r;
+    l.x = 0;
+    if (GQ != keep) { return 0 - 1; }
+    return load64(keep) * 100 + load64(keep + 8) * 10 + load64(keep + 16);
+}
+fn glob_handle_from_operator_ctl() {
+    GQ = alloc(24); GQ.x = 0; GQ.y = 0; GQ.z = 0;
+    var keep = GQ;
+    var l: P3 = mk3(2, 3, 4);
+    var r: P3 = mk3(1, 1, 1);
+    GQ.x = l.x + r.x; GQ.y = l.y + r.y; GQ.z = l.z + r.z;
+    l.x = 0;
+    return load64(keep) * 100 + load64(keep + 8) * 10 + load64(keep + 16);
+}
+fn glob_handle_from_field() {
+    GP = alloc(16); GP.x = 0; GP.y = 0;
+    var keep = GP;
+    var b: Box; b.v.x = 4; b.v.y = 5; b.n = 7;
+    GP = b.v;
+    b.v.x = 9;
+    if (GP != keep) { return 0 - 1; }
+    return load64(keep) * 100 + load64(keep + 8) * 10 + b.n;
+}
+fn glob_handle_from_field_ctl() {
+    GP = alloc(16); GP.x = 0; GP.y = 0;
+    var keep = GP;
+    var b: Box; b.v.x = 4; b.v.y = 5; b.n = 7;
+    GP.x = b.v.x; GP.y = b.v.y;
+    b.v.x = 9;
+    return load64(keep) * 100 + load64(keep + 8) * 10 + b.n;
+}
+# From a by-value PARAMETER: copied into *a — a is NOT rebound to the caller's struct, so a later
+# `a.x = 9` leaves q (and the caller) alone.
+fn local_handle_from_param_i(q: P3) {
+    var a: P3 = alloc(24); a.x = 0; a.y = 0; a.z = 0;
+    a = q;
+    var got = a.x * 100 + a.y * 10 + a.z;
+    a.x = 9;
+    return got * 10 + q.x;
+}
+fn local_handle_from_param() { var s: P3 = mk3(1, 2, 3); return local_handle_from_param_i(s); }
+fn local_handle_from_param_ctl_i(q: P3) {
+    var a: P3 = alloc(24); a.x = 0; a.y = 0; a.z = 0;
+    a.x = q.x; a.y = q.y; a.z = q.z;
+    var got = a.x * 100 + a.y * 10 + a.z;
+    a.x = 9;
+    return got * 10 + q.x;
+}
+fn local_handle_from_param_ctl() { var s: P3 = mk3(1, 2, 3); return local_handle_from_param_ctl_i(s); }
+# A `*T` parameter is a handle too: from a VALUE it copies into the pointee (as it always did).
+fn tptr_from_value_i(q: *Pt, r: Pt) { q = r; q.x = 5; return 0; }
+fn tptr_from_value() {
+    var p: Pt = mk(1, 2);
+    var r: Pt = mk(3, 4);
+    tptr_from_value_i(&p, r);
+    return p.x * 100 + r.x * 10 + p.y;
+}
+# Inside a closure: a closure-local handle from a CAPTURE (a value — the 6.6.13 rule).
+fn closure_handle_from_capture() {
+    var p: Pt = mk(1, 2);
+    var f = || {
+        var a: Pt = alloc(16); a.x = 0; a.y = 0;
+        a = p;
+        p.x = 7;
+        return a.x * 10 + a.y;
+    };
+    return callptr(f);
+}
+fn closure_inl_from_local_handle() {
+    var f = || {
+        var q: Pt; q.x = 0; q.y = 0;
+        var a: Pt = alloc(16); a.x = 3; a.y = 4;
+        q = a;
+        a.x = 9;
+        return q.x * 10 + q.y;
+    };
+    return callptr(f);
+}
+
+# ------------------------------------------------- (3) what must NOT change (anti-vacuous) ----
+# handle <- handle is a REBIND: a write through either side afterwards is seen by both.
+fn rebind_local() {
+    var a: Pt = alloc(16); a.x = 7; a.y = 8;
+    var b: Pt = alloc(16); b.x = 0; b.y = 0;
+    b = a;
+    a.x = 1;
+    return b.x * 10 + b.y;
+}
+# ... at ANY pair of struct types (status quo — it compiles, and binds).
+fn rebind_different_types() {
+    var a: P3 = alloc(24); a.x = 7; a.y = 8; a.z = 1;
+    var b: Q3 = alloc(24); b.a = 0; b.b = 0; b.c = 0;
+    b = a;
+    a.x = 1;
+    return b.a * 10 + b.b;
+}
+fn rebind_globals() {
+    GP = alloc(16); GP.x = 1; GP.y = 2;
+    GH = alloc(16); GH.x = 0; GH.y = 0;
+    GH = GP;
+    GP.x = 5;
+    var a: Pt = alloc(16);
+    a = GP;
+    GP.y = 6;
+    GH = a;
+    return GH.x * 10 + GH.y;
+}
+# A `*T` parameter from a pointer-mode local: a rebind; the caller's struct is untouched.
+fn tptr_rebind_i(q: *Pt) { var a: Pt = alloc(16); a.x = 7; a.y = 8; q = a; q.x = 5; return a.x; }
+fn tptr_rebind() { var p: Pt = mk(1, 2); var ax = tptr_rebind_i(&p); return ax * 100 + p.x * 10 + p.y; }
+# Two `*T` parameters: `a = b` rebinds a to b's struct (before 6.6.16 it copied *b into *a).
+fn tptr_tptr_i(a: *Pt, b: *Pt) { a = b; a.x = 5; return 0; }
+fn tptr_tptr() {
+    var p: Pt = mk(1, 2);
+    var r: Pt = mk(3, 4);
+    tptr_tptr_i(&p, &r);
+    return p.x * 1000 + p.y * 100 + r.x * 10 + r.y;
+}
+# A source that is not a struct at all (an untyped pointer) binds, as ever.
+fn handle_from_untyped_ptr() {
+    var a: Pt = alloc(16); a.x = 1; a.y = 2;
+    var p = alloc(16); store64(p, 3); store64(p + 8, 4);
+    a = p;
+    return a.x * 10 + a.y;
+}
+# A call returning a struct HANDLE (`Str`, the address in rax) into a handle: a rebind.
+fn handle_from_str_call() {
+    var a: P3 = alloc(24);
+    a = str_from("abcd");
+    return str_len(a);
+}
+# The DECLARATION is the documented alias: `var q: Pt = a;` binds q to a's struct.
+fn decl_alias() {
+    var a: Pt = alloc(16); a.x = 5; a.y = 6;
+    var q: Pt = a;
+    a.x = 1;
+    return q.x * 10 + q.y;
+}
+# The inline Str pun: `var t: Str; t = a;` keeps the handle, so str_len(t) reads a's string.
+fn str_inline_pun() { var a = str_from("abcde"); var t: Str; t = a; return str_len(t); }
+fn str_rebind() { var a: Str = str_from("abcde"); var b: Str = str_from("xy"); b = a; return str_len(b); }
+# A <= 8 B struct is held by value: both directions copy, as they did.
+fn small_inl_from_ptr() { var a: B1 = alloc(8); a.val = 5; var q: B1; q.val = 9; q = a; return q.val; }
+fn small_ptr_from_inl() { var a: B1 = alloc(8); a.val = 0; var q: B1; q.val = 5; a = q; return a.val; }
+# A struct FIELD from a handle (6.6.10) still copies.
+fn field_from_handle() {
+    var a: Pt = alloc(16); a.x = 1; a.y = 2;
+    var b: Box; b.v.x = 9; b.v.y = 9; b.n = 7;
+    b.v = a;
+    return b.v.x * 100 + b.v.y * 10 + b.n;
+}
+
+alloc_init();
+
+assert_eq(inl_from_local_handle(), 12, "q = a: inline <- pointer-mode local copies (a.x = 7 after does not reach q)");
+assert_eq(inl_from_local_handle(), inl_from_local_handle_ctl(), "q = a == its field-store control");
+assert_eq(inl_from_local_handle_p3(), 123, "q = a, 24 B");
+assert_eq(inl_from_local_handle_p3(), inl_from_local_handle_p3_ctl(), "q = a, 24 B == control");
+assert_eq(odd_inl_from_local_handle(), 12, "q = a, odd 12 B struct");
+assert_eq(odd_glob_from_local_handle(), 34, "G = a, odd 12 B global");
+assert_eq(odd_glob_from_local_handle(), odd_glob_from_local_handle_ctl(), "G = a, 12 B == control");
+assert_eq(GN, 88, "the i32 global packed after the 12 B global is untouched by the copy");
+assert_eq(glob_from_local_handle(), 34, "G = a: inline global <- pointer-mode local");
+assert_eq(glob_from_local_handle(), glob_from_local_handle_ctl(), "G = a == control");
+assert_eq(inl_from_glob_handle(), 12, "q = GP: inline local <- pointer-mode global");
+assert_eq(inl_from_glob_handle(), inl_from_glob_handle_ctl(), "q = GP == control");
+assert_eq(glob_from_glob_handle(), 12, "GI = GP: inline global <- pointer-mode global");
+assert_eq(param_from_handle(), 153, "q = a into a by-value parameter: a.x stays 1 (copy, not rebind)");
+assert_eq(param_from_handle(), param_from_handle_ctl(), "q = a into a by-value parameter == control");
+assert_eq(param_from_handle_caller(), 999, "q = a into a by-value parameter: the CALLER's struct stays 999 (C2 x C7)");
+assert_eq(param_from_handle_caller(), param_from_handle_caller_ctl(), "the caller's struct after q = a == control");
+
+assert_eq(local_handle_from_inl(), 12, "a = q: copied into the ORIGINAL heap object, a not rebound");
+assert_eq(local_handle_from_inl(), local_handle_from_inl_ctl(), "a = q == control");
+assert_eq(local_handle_from_glob(), 34, "a = G: pointer-mode local <- inline global");
+assert_eq(local_handle_from_glob(), local_handle_from_glob_ctl(), "a = G == control");
+assert_eq(glob_handle_from_inl(), 12, "GP = q: pointer-mode global <- inline local, GP not rebound");
+assert_eq(glob_handle_from_inl(), glob_handle_from_inl_ctl(), "GP = q == control");
+assert_eq(local_handle_from_pair_call(), 12, "a = mk(1, 2): a rax:rdx result into the pointee");
+assert_eq(local_handle_from_retptr_call(), 123, "a = mk3(1, 2, 3): a retptr result into the pointee");
+assert_eq(local_handle_from_field(), 12, "a = b.v: a struct field into the pointee");
+assert_eq(local_handle_from_method(), 24, "a = q.dbl(): a method result into the pointee");
+assert_eq(local_handle_from_operator(), 123, "a = l + r: an operator result into the pointee");
+assert_eq(glob_handle_from_pair_call(), 34, "GP = mk(3, 4): a rax:rdx pair result into a global handle's pointee");
+assert_eq(glob_handle_from_pair_call(), glob_handle_from_pair_call_ctl(), "GP = mk(3, 4) == control");
+assert_eq(glob_handle_from_retptr_call(), 567, "GQ = mk3(5, 6, 7): a retptr result into a global handle's pointee");
+assert_eq(glob_handle_from_retptr_call(), glob_handle_from_retptr_call_ctl(), "GQ = mk3(5, 6, 7) == control");
+assert_eq(glob_handle_from_method(), 46, "GP = q.dbl(): a method result into a global handle's pointee");
+assert_eq(glob_handle_from_method(), glob_handle_from_method_ctl(), "GP = q.dbl() == control");
+assert_eq(glob_handle_from_operator(), 345, "GQ = l + r: an operator result into a global handle's pointee");
+assert_eq(glob_handle_from_operator(), glob_handle_from_operator_ctl(), "GQ = l + r == control");
+assert_eq(glob_handle_from_field(), 457, "GP = b.v: a struct field into a global handle's pointee");
+assert_eq(glob_handle_from_field(), glob_handle_from_field_ctl(), "GP = b.v == control");
+assert_eq(local_handle_from_param(), 1231, "a = q from a by-value parameter: copied, and a.x = 9 leaves q.x at 1");
+assert_eq(local_handle_from_param(), local_handle_from_param_ctl(), "a = q from a by-value parameter == control");
+assert_eq(tptr_from_value(), 534, "q = r into a *Pt parameter copies into the pointee");
+assert_eq(closure_handle_from_capture(), 12, "in a closure: handle <- captured struct copies");
+assert_eq(closure_inl_from_local_handle(), 34, "in a closure: inline <- closure-local handle copies");
+
+assert_eq(rebind_local(), 18, "b = a between two handles is a REBIND");
+assert_eq(rebind_different_types(), 18, "a rebind between handles of two struct types compiles and binds");
+assert_eq(rebind_globals(), 56, "global / local handle rebinds");
+assert_eq(tptr_rebind(), 512, "q = a, *Pt parameter <- pointer-mode local: a rebind, the caller untouched");
+assert_eq(tptr_tptr(), 1254, "a = b between two *Pt parameters: a rebind");
+assert_eq(handle_from_untyped_ptr(), 34, "a handle <- an untyped pointer binds");
+assert_eq(handle_from_str_call(), 4, "a handle <- a Str-returning call binds");
+assert_eq(decl_alias(), 16, "the declaration var q: Pt = a; is an alias");
+assert_eq(str_inline_pun(), 5, "the inline Str pun keeps the handle");
+assert_eq(str_rebind(), 5, "Str <- Str is a rebind");
+assert_eq(small_inl_from_ptr(), 5, "<= 8 B struct, inline <- pointer-mode");
+assert_eq(small_ptr_from_inl(), 5, "<= 8 B struct, pointer-mode <- inline");
+assert_eq(field_from_handle(), 127, "b.v = a: a field from a handle copies (6.6.10)");
+
+# --------------------------------------------- (4) at TOP LEVEL: no frame, global addressing ----
+GP = alloc(16); GP.x = 1; GP.y = 2;
+GI.x = 9; GI.y = 9;
+GI = GP;
+GP.x = 3;
+assert_eq(GI.x * 10 + GI.y, 12, "top level: GI = GP copies");
+var GJ = Pt{5, 6};
+GP = GJ;
+GJ.x = 0;
+assert_eq(GP.x * 10 + GP.y, 56, "top level: GP = GJ copies into the pointee");
+var GK: Pt = alloc(16);
+GK.x = 8; GK.y = 8;
+GK = GP;
+GK.x = 4;
+assert_eq(GP.x * 10 + GP.y, 46, "top level: GK = GP between two global handles is a rebind");
+
+var r = assert_summary();

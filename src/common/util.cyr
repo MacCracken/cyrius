@@ -75,6 +75,29 @@ fn SVECP(S, vi, v): i64 {
     return 0;
 }
 var _vgsi_base = 0;    # 0x1EC000 gvar_initval
+# ⛔ 6.6.16 (C1) — a global array's `= { .. }` initializer is an IMAGE BLOB, per var: 0 = none,
+# else an alloc'd { +0 the data length, +8 eb | kind << 8 of the last entry that wrote it, +16 the
+# array's bytes }. Every backend copies it into the var area (_gai_bake below) — cx too, into the
+# var data its .cyx carries (main_cx.cyr). (C6: a declaration-zone struct literal whose every leaf
+# is a constant is a blob too, written by _spc_try in parse_decl.cyr.) The `kind` byte is a field of
+# the header and nothing else reads it (1 an integer element, 2 the bare byte list, 3 u128, 4 f64, 5
+# f32, 6 a struct literal) — it is no type code and never reaches a type table. Lazily allocated at the var table's
+# hard cap, the SVFI shape: NOT a heap-map region and NOT a `_grow_g*` link (the cybs-fragile
+# chain). CHANGELOG [6.6.16]
+var _vgai_base = 0;
+fn GVGAI(S, vi): i64 {
+    if (_vgai_base == 0) { return 0; }
+    if (vi < 0) { return 0; }
+    return load64(_vgai_base + vi * 8);
+}
+fn SVGAI(S, vi, b): i64 {
+    if (_vgai_base == 0) {
+        if (b == 0) { return 0; }
+        _vgai_base = alloc(1048576 * 8);
+    }
+    store64(_vgai_base + vi * 8, b);
+    return 0;
+}
 var _venid_base = 0;   # 0x204000 var_enum_id
 var _vsgn_base = 0;    # v6.4.23: per-var signedness (1 = signed sub-i64 iN scalar, 0 = uN/other).
 # Read by the global-scalar load path to sign-extend (movsx) vs zero-extend.
@@ -1047,8 +1070,11 @@ var _gh_inf1 = 0;
 # back to, so the path that then emits its own call refuses it by name instead of calling the base.
 var _grc_err = 0;
 var _grc_fi = 0 - 1;
-# 6.6.10: bit li = parameter li was declared `name: *T` (a pointer: it never binds a type argument
-# to the pointee struct). Saved with the per-fn snapshot, zeroed with `_cur_fn_pslots`.
+# 6.6.10: a parameter declared `name: *T` is a pointer: it never binds a type argument to the
+# pointee struct, and (6.6.16, C7) it is never copied in. 6.6.16: this is no longer the record —
+# it is the PENDING mark (the slot index + 1, 0 = none) between the `*` and the parameter's
+# registration, where `_param_record` (parse_fn.cyr) moves it to the slot's own bit (SLPTRP), so
+# no slot index is out of range. Saved with the per-fn snapshot, zeroed with `_cur_fn_pslots`.
 var _cur_fn_ptrp = 0;
 fn _tp_clear(S): i64 { _tp_n0 = 0; _tp_c0 = 0; _tp_n1 = 0; _tp_c1 = 0; return 0; }
 fn _tp_bind(S, slot, noff, conc): i64 {
@@ -1152,13 +1178,16 @@ fn _GV_ALIGN(off, vsize): i64 {
 # v5.11.64 — apply gvar static-init values to the var area at the
 # given output offset `bss_o`. Called by each EMIT_* emit fn after
 # its var-area zero-fill loop completes. Iterates the gvar table;
-# any var with a recorded non-zero literal gets an 8-byte store at
-# its byte offset, overwriting the zeros. Vars without static init
-# (or with size != 8, e.g. arrays) are left zero — the array byte-
-# list path (PARSE_GVAR_ARR + EMIT_GVAR_INITS) keeps its existing
-# runtime-store handling, since per-byte arrays don't suffer the
-# kmode-entry init-order bug (the store sequence is the workaround
-# the user already writes by hand).
+# any var with a recorded non-zero literal gets a store at its byte
+# offset and width, overwriting the zeros. Then every array
+# initializer's blob is copied in (_gai_bake). ⛔ 6.6.16 (C1): the
+# note that stood here said the byte-list path kept runtime stores
+# because "per-byte arrays don't suffer the kmode-entry init-order
+# bug". False: in a `kernel;` build the replay runs AFTER the
+# top-level program, so `kernel; var B[1] = {0x77, 0x66};` put its
+# stores behind a program that never returns and B read 0. An array
+# initializer is now baked here on every image target, like a
+# scalar constant. CHANGELOG [6.6.16]
 fn _EMIT_GVAR_STATIC_INITS(S, O, bss_o): i64 {
     var gvc = GVCNT(S);
     var gvi = 0;
@@ -1181,6 +1210,29 @@ fn _EMIT_GVAR_STATIC_INITS(S, O, bss_o): i64 {
             }
         }
         gvi = gvi + 1;
+    }
+    _gai_bake(S, O, bss_o);
+    return 0;
+}
+# 6.6.16 (C1) — each array initializer's bytes into the var area, AFTER the scalar values: a blob
+# on a slot that also holds a scalar constant (a bare `var B[1]` redeclaring `var B = 5;`) was
+# seeded with it when it was made, so the later declaration wins and keeps the earlier bytes it
+# does not list, as the replayed stores did. The length is the smaller of the blob's and the slot's.
+fn _gai_bake(S, O, bss_o): i64 {
+    if (_vgai_base == 0) { return 0; }
+    var n = GVCNT(S);
+    var vi = 0;
+    while (vi < n) {
+        var b = GVGAI(S, vi);
+        if (b != 0) {
+            var len = load64(b);
+            var vs = L64(_vars_base + vi * 8);
+            if (vs < len) { len = vs; }
+            var d = O + bss_o + GVOFF(S, vi);
+            var i = 0;
+            while (i < len) { store8(d + i, load8(b + 16 + i)); i = i + 1; }
+        }
+        vi = vi + 1;
     }
     return 0;
 }
@@ -1260,6 +1312,18 @@ fn SLAEW(S, li, d): i64 { S64(S + 0x5DBD000 + li * 8, L64(S + 0x5DBD000 + li * 8
 fn GLAEW(S, li): i64 {
     if (li < 0) { return 0; }
     return (L64(S + 0x5DBD000 + li * 8) >> 48) & 0xFF;
+}
+# 6.6.16 (C7) — bit 56 of the same word: the slot is a `name: *T` PARAMETER, a pointer the
+# callee never copies in. It replaced a 64-bit mask indexed by slot (`_cur_fn_ptrp`), which
+# could not record a slot >= 64 — reached by 64 int parameters, or on Win64 by 16 `f64v4` ones
+# (4 slots each) — so such a pointer read as a by-value struct and was copied. Per slot: no width
+# limit; it clears itself on slot reuse like the span, and rides the closure snapshot with
+# the rest of the word. Written LAST at registration (`_param_record`, parse_fn.cyr), after
+# MARK_SMALL_STRUCT's SLAGG, which rewrites the high half. CHANGELOG [6.6.16]
+fn SLPTRP(S, li): i64 { S64(S + 0x5DBD000 + li * 8, L64(S + 0x5DBD000 + li * 8) | (1 << 56)); return 0; }
+fn GLPTRP(S, li): i64 {
+    if (li < 0) { return 0; }
+    return (L64(S + 0x5DBD000 + li * 8) >> 56) & 1;
 }
 fn GLAGG(S, li): i64 {
     if (GLSPAN(S, li) == 0) { return 0; }

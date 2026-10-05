@@ -189,6 +189,75 @@ CYRIUS_ASYNC=1 "$T/stage1" < "$T/r.cyr" > "$T/rp" 2>"$T/rp.err" || {
 chmod +x "$T/rp"; grp=0; "$T/rp" > /dev/null 2>&1 || grp=$?
 [ "$grp" -eq 0 ] || { echo "FAIL coroutine_midbody_suspend axis4: the pointer-to-vector async fns exit $grp (1 = coroutine, 2 = plain, want 95 each)"; exit 1; }
 
+# 6.6.16 (C7) — a STRUCT over 8 B passed BY VALUE to an `async fn`, in a coroutine AND in a plain
+# async fn. Such a parameter is copied in the callee's prologue (`_sptr_params_localize`), and an
+# async body runs at force time: the copy would read the caller's struct LATE, and a coroutine
+# impl re-runs its prologue on every resume. Before 6.6.16 it compiled and the body read and wrote
+# the CALLER's struct at force time (`f(p)` with p.x 3, then `p.x = 10`, then `await` gave 11).
+# The diagnostic names the parameter AND the spelling to use. Then the anti-vacuous half: a
+# `p: *P3` parameter, a struct of 8 B or less and a `Str` (a heap handle, 16 B by name) still
+# compile and compute. Mutation: drop the `_refuse_async_struct_param` call in `_param_record`
+# (parse_fn.cyr) -> RED ("a 24-byte struct parameter of a coro async fn COMPILED").
+for sz in 24 16; do
+  flds='x; y; z;'; [ "$sz" = 16 ] && flds='x; y;'
+  for form in coro plain; do
+    aw=''; [ "$form" = coro ] && aw='var s = await nopark(); '
+    cat > "$T/r.cyr" <<EOF
+${PRE}
+struct Pv { $flds }
+fn nopark(): i64 { return 0; }
+async fn sp(a, pv: Pv, b): i64 { ${aw}return pv.x + a + b; }
+fn main(): i64 { alloc_init(); syscall(60, 0); return 0; }
+var e = main();
+EOF
+    refuse "a $sz-byte struct parameter of a $form async fn" "async fn parameter 'pv' is a struct passed by value"
+    grep -qF '(`pv: *Pv`)' "$T/r.err" || {
+      echo "FAIL coroutine_midbody_suspend axis4: the $sz-byte struct parameter refusal does not name the spelling (pv: *Pv)"
+      sed -n 1,2p "$T/r.err" | sed 's/^/    /'; exit 1; }
+  done
+done
+sp_a=4; sp_x=3; sp_b=5
+cat > "$T/r.cyr" <<EOF
+${PRE}include "lib/str.cyr"
+struct P3 { x; y; z; }
+struct B1 { x; }
+fn nopark(): i64 { return 0; }
+async fn cp(a, pp: *P3): i64 { var s = await nopark(); pp.x = pp.x + a; return pp.x; }
+async fn ap(a, pp: *P3): i64 { pp.x = pp.x + a; return pp.x; }
+async fn cb(a, b1: B1): i64 { var s = await nopark(); b1.x = b1.x + a; return b1.x; }
+async fn ab(a, b1: B1): i64 { b1.x = b1.x + a; return b1.x; }
+async fn sl(st: Str): i64 { return str_len(st); }
+fn main(): i64 {
+    alloc_init();
+    var p: P3; p.x = $sp_x; p.y = 0; p.z = 0;
+    var C = cp($sp_a, &p);
+    future_force(C); future_force(C);
+    var x = future_force(C);
+    var y = future_force(ap($sp_a, &p));
+    var b: B1; b.x = $sp_b;
+    var D = cb($sp_a, b);
+    future_force(D); future_force(D);
+    var z = future_force(D);
+    var w = future_force(ab($sp_a, b));
+    var v = future_force(sl(str_from("abcde")));
+    if (x != $(( sp_x + sp_a ))) { return 1; }
+    if (y != $(( sp_x + 2 * sp_a ))) { return 2; }
+    if (p.x != $(( sp_x + 2 * sp_a ))) { return 3; }
+    if (z != $(( sp_b + sp_a ))) { return 4; }
+    if (w != $(( sp_b + sp_a ))) { return 5; }
+    if (b.x != $sp_b) { return 6; }
+    if (v != 5) { return 7; }
+    return 0;
+}
+var e = main();
+syscall(60, e);
+EOF
+CYRIUS_ASYNC=1 "$T/stage1" < "$T/r.cyr" > "$T/rs" 2>"$T/rs.err" || {
+  echo "FAIL coroutine_midbody_suspend axis4: a *P3 / <= 8 B / Str parameter of an async fn did not compile"; grep -m2 '^error' "$T/rs.err"; exit 1; }
+[ -s "$T/rs" ] || { echo "FAIL coroutine_midbody_suspend axis4: the struct-parameter anti-vacuous probe is empty"; exit 1; }
+chmod +x "$T/rs"; grs=0; "$T/rs" > /dev/null 2>&1 || grs=$?
+[ "$grs" -eq 0 ] || { echo "FAIL coroutine_midbody_suspend axis4: the *P3 / <= 8 B / Str async parameters exit $grs (1-3 = *P3, 4-6 = B1, 7 = Str)"; exit 1; }
+
 # ── axis 4b — a BY-VALUE STRUCT RETURN from an `async fn` (6.6.6) ────────────────────────
 # A Future carries ONE i64 (`future_force` returns what the body left in rax), so the two
 # by-value struct return ABIs never arrive: over 16 B the hidden retptr is consumed building
@@ -609,5 +678,5 @@ chmod +x "$T/a10"; g10=0; timeout 30 "$T/a10" > /dev/null 2>&1 || g10=$?
   echo "  deadline sentinel) starved behind a coroutine that never parks."
   exit 1; }
 
-echo "PASS coroutine_midbody_suspend: the reactor resumes a coroutine whose await did not park (async_run, task_join; parked tasks and the deadline are not starved) · vector params refused by name (4 classes x coroutine/plain; a pointer works) · by-value struct returns (24 B / 16 B) and value-form vector returns (4 classes) refused by name, with the <= 8 B struct and the sync vector fn still computing · mid-body suspend resumes in place · in loops · multi-parameter · &local across suspends · arity 6/7/8 against plain-fn controls · &struct-local (typed AND literal, single- and multi-word) across a suspend with a trashed stack · no-await async fns bit-identical"
+echo "PASS coroutine_midbody_suspend: the reactor resumes a coroutine whose await did not park (async_run, task_join; parked tasks and the deadline are not starved) · vector params refused by name (4 classes x coroutine/plain; a pointer works) · by-value struct params over 8 B (24 B / 16 B x coroutine/plain) refused by name with the p: *T spelling (a *P3, a <= 8 B struct and a Str still compute) · by-value struct returns (24 B / 16 B) and value-form vector returns (4 classes) refused by name, with the <= 8 B struct and the sync vector fn still computing · mid-body suspend resumes in place · in loops · multi-parameter · &local across suspends · arity 6/7/8 against plain-fn controls · &struct-local (typed AND literal, single- and multi-word) across a suspend with a trashed stack · no-await async fns bit-identical"
 exit 0

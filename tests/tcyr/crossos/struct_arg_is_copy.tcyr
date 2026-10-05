@@ -1,0 +1,281 @@
+# struct_arg_is_copy.tcyr — 6.6.16 (C7). A PARAMETER ANNOTATED WITH A PLAIN STRUCT IS A VALUE AT
+# EVERY WIDTH: over 8 B the callee gets a COPY, whatever the argument was.
+#
+# ⛔ THE DEFECT, every release before 6.6.16. A struct parameter over 8 B travels by ADDRESS
+# (`_param_wants_struct_ptr` sets the callee's structmask; the caller pushes `&local`, `&G`, a
+# pointer-mode local's slot, `&x` for a typed `self`, a call result's temp) and the callee worked
+# on the caller's storage directly. Nothing made the copy "by value" promises, so
+# `fn bump(p: P3) { p.x = p.x + 1; return p.x; }` called twice on a local with p.x == 3 printed
+# 4 then 5 and left the caller at 5 — and the same for a 16 B struct, an inline global (in a fn
+# and at top level), a pointer-mode local (its HEAP object moved), a parameter passed on (`mid(q)`
+# calling `bump(q)` moved the outermost caller), a typed `self: P3` method (`p.bump()`), a
+# generic instance (`bumpg<T>` with T = P3), a call through `fncall1(&bump, &p)`, and a top-level
+# FIELD argument (`take(BX.v)` left BX.v.x at 100: top level had no frame for 6.6.12's
+# caller-side field copy). Only a field argument inside a fn was copied.
+#
+# ⭐ THE FIX is one site in the CALLEE's prologue (`_sptr_params_localize`, src/frontend/
+# parse_fn.cyr): after `_stkp_flush` has homed every parameter slot — a stack-passed pointer
+# (SysV 7th+, aarch64 9th+, Win64 5th+) included — each such parameter's struct is copied into an
+# inline frame aggregate that takes the parameter's name. The ABI does not change, so every
+# caller form above, fn pointers included, gets the copy from the one site.
+#
+# ⭐ EVERY EXPECTED VALUE IS DERIVED TWO WAYS: a hand-computed constant, and a CONTROL that
+# builds the same answer from FIELD READS ONLY (no call that could alias). A copy is told from an
+# alias by the caller's field AFTER the callee wrote its parameter twice: 443 is "4, 4, 3".
+#
+# ⭐ THE ANTI-VACUOUS GROUP IS LOAD-BEARING. A `p: *P3` parameter IS the caller's struct (4 5 6 6),
+# at any slot — including slot 64, past the 64-bit mask that recorded `*T` parameters until
+# 6.6.16 (a pointer there read as a by-value struct and was copied, so the write was lost). An
+# untyped `self` writes the receiver. A struct of 8 B or less was always a value. A `Str`
+# parameter is a heap HANDLE: a write through it reaches the caller's string. A fix that copied
+# every struct-typed slot reddens that group.
+#
+# Mutations that redden this file (each applied to the 6.6.16 tree, rebuilt, measured on x86):
+#   * `_sptr_params_localize` returning at once (the 6.6.15 alias, without 6.6.12's caller-side
+#     field copy) -> 24 rows red, each the alias's number: 455 for 443, 444 for 433, 779 for 730,
+#     1309 for 1213, BX.v.x 100 for 1. The shipped 6.6.15 compiler reads 22 red (its field copy
+#     inside a fn still held).
+#   * the copied temp left unnamed (the parameter keeps its name and its pointer slot) -> the
+#     same 24.
+#   * the `_is_ptr_param` exclusion dropped (every `*T` parameter copied in too) -> 2 red: the
+#     `*P3` row 4443 (want 4566) and the slot-64 `*T` row 67673 (want 67685).
+#   * the 64-bit-mask record restored (`_is_ptr_param` 0 at slot >= 64) -> 1 red: the slot-64
+#     `*T` row 67673 (the write landed in a copy); on Win64 (wine) 2, the `f64v4` row too (35).
+#   (Not covered here: the `*T` bit written before MARK_SMALL_STRUCT, whose SLAGG would erase it —
+#   only an 8 B pointee is affected, and it is never copied in.)
+#   * the copy made BEFORE `_stkp_flush` -> the 10th-argument row reads garbage, then SIGSEGV
+#     (x86; on cass the same, then an access violation): the pointer slot is not homed yet when
+#     the copy reads it. (On aarch64 it passed — the unhomed slot happened to hold the stale
+#     pushed argument — which is why the row runs on every host.)
+#
+# CROSS-HOST: the copy is built from frontend emitters every backend has (EFLLOAD / EFLADDR_X1 /
+# EFIELD_LOAD_W / the narrow stores). Gate-run on ecb, ach, cass and pi.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/str.cyr"
+include "lib/fnptr.cyr"
+include "lib/assert.cyr"
+
+struct P3 { x; y; z; }          # 24 B — the retptr class
+struct Pt { x; y; }             # 16 B — the rax:rdx pair class
+struct B1 { x; }                # 8 B — held by value, always was
+struct Box { v: Pt; n; }
+
+fn mk3(a, b, c): P3 { var p: P3; p.x = a; p.y = b; p.z = c; return p; }
+
+# The callees. Each writes its parameter, then reads it back.
+fn bump(p: P3): i64 { p.x = p.x + 1; return p.x; }
+fn bump2(p: Pt): i64 { p.x = p.x + 1; return p.x; }
+fn bumpg<T>(p: T): i64 { p.x = p.x + 1; return p.x; }
+fn take(p: Pt): i64 { p.x = 100; return p.x; }
+fn mid(q: P3): i64 { var a = bump(q); return a * 10 + q.x; }
+fn P3_bump(self: P3): i64 { self.x = self.x + 1; return self.x; }
+fn bumpp(p: *P3): i64 { p.x = p.x + 1; return p.x; }
+fn P3_inc(self: *P3): i64 { self.x = self.x + 1; return self.x; }
+fn bump1(p: B1): i64 { p.x = p.x + 1; return p.x; }
+fn B1_bump(self: B1): i64 { self.x = self.x + 1; return self.x; }
+impl Tr for P3 { fn setx(self, v) { store64(self, v); return v; } }
+fn sclobber(s: Str): i64 { store64(s + 8, 1); return 0; }
+# A by-value parameter that is ASSIGNED, returned and recursed with.
+fn assign_in(q: P3): i64 { var r: P3 = mk3(7, 8, 9); q = r; return q.x; }
+fn inc(p: P3): P3 { p.x = p.x + 1; return p; }
+fn rec(p: P3, n): i64 { if (n == 0) { return p.x; } p.x = p.x + 1; return rec(p, n - 1); }
+var G_dfr = 0;
+fn dfr(p: P3): i64 { defer { G_dfr = p.x; } p.x = 50; return p.x; }
+# The struct parameter STACK-passed: the 10th argument is on the stack on every ABI (SysV 7th+,
+# aarch64 9th+, Win64 5th+); the 5th is on the stack on Win64 only. `_stkp_flush` homes the
+# pointer, and the copy is made after it.
+fn stk10(a0, a1, a2, a3, a4, a5, a6, a7, a8, p: P3): i64 { p.x = p.x + a8; return p.x; }
+fn stk5(a0, a1, a2, a3, p: P3, a5): i64 { p.x = p.x + a5; return p.x * 10 + a3; }
+
+var G = P3{3, 0, 0};
+var G2 = P3{3, 0, 0};
+var BX = Box{1, 2, 3};
+
+# Each driver: two calls, then the caller's field. 443 = 4, 4, 3 (a copy); 453 = 4, 5, 3 would be
+# an alias whose caller is read before the second write landed, and 455 the full alias.
+fn drv_local(): i64 { var p: P3 = mk3(3, 0, 0); var a = bump(p); var b = bump(p); return a * 100 + b * 10 + p.x; }
+fn drv_pt(): i64 { var p: Pt; p.x = 3; p.y = 0; var a = bump2(p); var b = bump2(p); return a * 100 + b * 10 + p.x; }
+fn drv_global(): i64 { var a = bump(G); var b = bump(G); return a * 100 + b * 10 + G.x; }
+fn drv_ptrmode(): i64 {
+    var h: P3 = alloc(24);
+    h.x = 3;
+    h.y = 0;
+    h.z = 0;
+    var a = bump(h);
+    var b = bump(h);
+    return a * 100 + b * 10 + h.x;
+}
+fn drv_fwd(): i64 { var p: P3 = mk3(3, 0, 0); var a = mid(p); return a * 10 + p.x; }
+fn drv_self(): i64 { var p: P3 = mk3(3, 0, 0); var a = p.bump(); var b = p.bump(); return a * 100 + b * 10 + p.x; }
+fn drv_self_free(): i64 {
+    var p: P3 = mk3(3, 0, 0);
+    var a = P3_bump(p);
+    var b = P3_bump(p);
+    return a * 100 + b * 10 + p.x;
+}
+fn drv_self_ptrmode(): i64 {
+    var h: P3 = alloc(24);
+    h.x = 3;
+    h.y = 0;
+    h.z = 0;
+    var a = h.bump();
+    var b = h.bump();
+    return a * 100 + b * 10 + h.x;
+}
+fn drv_generic(): i64 {
+    var p: P3 = mk3(3, 0, 0);
+    var a = bumpg(p);
+    var b = bumpg<P3>(p);
+    return a * 100 + b * 10 + p.x;
+}
+fn drv_fnptr(): i64 {
+    var p: P3 = mk3(3, 0, 0);
+    var a = fncall1(&bump, &p);
+    var b = fncall1(&bump, &p);
+    return a * 100 + b * 10 + p.x;
+}
+fn drv_field(): i64 {
+    var b: Box;
+    b.v.x = 3;
+    b.v.y = 0;
+    b.n = 0;
+    var a = bump2(b.v);
+    var c = bump2(b.v);
+    return a * 100 + c * 10 + b.v.x;
+}
+fn drv_call_arg(): i64 { var a = bump(mk3(3, 0, 0)); return a; }
+fn drv_assign_in(): i64 { var p: P3 = mk3(3, 0, 0); var a = assign_in(p); return a * 100 + p.x * 10 + p.z; }
+fn drv_inc(): i64 { var p: P3 = mk3(3, 0, 0); var r: P3 = inc(p); return r.x * 10 + p.x; }
+fn drv_rec(): i64 { var p: P3 = mk3(3, 0, 0); var a = rec(p, 5); return a * 10 + p.x; }
+fn drv_dfr(): i64 { var p: P3 = mk3(3, 0, 0); var a = dfr(p); return G_dfr * 1000 + a * 10 + p.x; }
+fn drv_stk10(): i64 {
+    var p: P3 = mk3(3, 0, 0);
+    var a = stk10(0, 1, 2, 3, 4, 5, 6, 7, 8, p);
+    var b = stk10(0, 1, 2, 3, 4, 5, 6, 7, 8, p);
+    return a * 100 + b * 10 + p.x;
+}
+fn drv_stk5(): i64 {
+    var p: P3 = mk3(3, 0, 0);
+    var a = stk5(0, 1, 2, 7, p, 2);
+    var b = stk5(0, 1, 2, 7, p, 2);
+    return a * 100 + b * 10 + p.x;
+}
+
+# The CONTROLS: the same numbers from field reads only.
+fn ctl_two(x): i64 { return (x + 1) * 100 + (x + 1) * 10 + x; }
+fn ctl_local(): i64 { var p: P3 = mk3(3, 0, 0); return ctl_two(p.x); }
+fn ctl_pt(): i64 { var p: Pt; p.x = 3; p.y = 0; return ctl_two(p.x); }
+fn ctl_ptrmode(): i64 { var h: P3 = alloc(24); h.x = 3; return ctl_two(h.x); }
+fn ctl_field(): i64 { var b: Box; b.v.x = 3; return ctl_two(b.v.x); }
+fn ctl_fwd(): i64 { var p: P3 = mk3(3, 0, 0); return ((p.x + 1) * 10 + p.x) * 10 + p.x; }
+fn ctl_stk10(): i64 { var p: P3 = mk3(3, 0, 0); return (p.x + 8) * 100 + (p.x + 8) * 10 + p.x; }
+
+# The ANTI-VACUOUS group.
+fn drv_ptrparam(): i64 {
+    var p: P3 = mk3(3, 0, 0);
+    var a = bumpp(&p);
+    var b = bumpp(&p);
+    var c = p.inc();
+    return a * 1000 + b * 100 + c * 10 + p.x;
+}
+fn drv_untyped_self(): i64 { var p: P3 = mk3(1, 2, 3); p.setx(40); return p.x + p.y; }
+fn drv_small(): i64 { var b: B1; b.x = 3; var a = bump1(b); var c = bump1(b); return a * 100 + c * 10 + b.x; }
+fn drv_small_self(): i64 { var b: B1; b.x = 3; var a = b.bump(); var c = b.bump(); return a * 100 + c * 10 + b.x; }
+fn drv_str(): i64 { var s = str_from("abcde"); sclobber(s); return str_len(s); }
+
+# A `*P3` parameter at frame slot 64 (64 int parameters before it): still the caller's struct.
+fn wide64(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15,
+  a16, a17, a18, a19, a20, a21, a22, a23, a24, a25, a26, a27, a28, a29, a30, a31,
+  a32, a33, a34, a35, a36, a37, a38, a39, a40, a41, a42, a43, a44, a45, a46, a47,
+  a48, a49, a50, a51, a52, a53, a54, a55, a56, a57, a58, a59, a60, a61, a62, a63, q: *P3): i64 {
+    q.x = q.x + 1;
+    return q.x + a63;
+}
+fn drv_wide64(): i64 {
+    var p: P3 = mk3(3, 0, 0);
+    var a = wide64(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
+      16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31,
+      32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47,
+      48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, &p);
+    var b = wide64(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
+      16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31,
+      32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47,
+      48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, &p);
+    return a * 1000 + b * 10 + p.x;
+}
+
+#ifdef CYRIUS_TARGET_WIN
+# Win64 only: a value-form vector is address-passed in ONE int slot there (MS x64), with no XMM
+# budget, so sixteen `f64v4` parameters put the next two at frame slots 64 and 65 with small
+# parameter ordinals — the case the 64-bit `*T` mask could not record.
+fn wide_vec(v0: f64v4, v1: f64v4, v2: f64v4, v3: f64v4, v4: f64v4, v5: f64v4, v6: f64v4, v7: f64v4,
+  v8: f64v4, v9: f64v4, v10: f64v4, v11: f64v4, v12: f64v4, v13: f64v4, v14: f64v4, v15: f64v4,
+  q: *P3, r: P3): i64 {
+    q.x = q.x + 1;
+    r.x = r.x + 100;
+    return q.x * 1000 + r.x;
+}
+fn drv_wide_vec(): i64 {
+    var v: f64v4;
+    var p: P3 = mk3(3, 0, 0);
+    var s: P3 = mk3(5, 0, 0);
+    var a = wide_vec(v, v, v, v, v, v, v, v, v, v, v, v, v, v, v, v, &p, s);
+    var b = wide_vec(v, v, v, v, v, v, v, v, v, v, v, v, v, v, v, v, &p, s);
+    return (b - a) * 100 + p.x * 10 + s.x;
+}
+#endif
+
+alloc_init();
+
+test_group("a struct argument over 8 B is a COPY, whatever the argument form");
+assert_eq(drv_local(), 443, "bump(p), p a named inline local: 4, 4, and p.x stays 3 (the filed repro)");
+assert_eq(drv_local(), ctl_local(), "bump(p) == its field-read control");
+assert_eq(drv_pt(), 443, "bump2(p), a 16 B struct: 4, 4, 3");
+assert_eq(drv_pt(), ctl_pt(), "the 16 B row == control");
+assert_eq(drv_global(), 443, "bump(G), an inline global, in a fn: 4, 4, 3");
+assert_eq(drv_ptrmode(), 443, "bump(h), a pointer-mode local: 4, 4, and its heap object stays 3");
+assert_eq(drv_ptrmode(), ctl_ptrmode(), "the pointer-mode row == control");
+assert_eq(drv_fwd(), 433, "mid(q) passing q on to bump(q): bump sees 4, mid's q and the caller's stay 3");
+assert_eq(drv_fwd(), ctl_fwd(), "the forwarded row == control");
+assert_eq(drv_self(), 443, "p.bump() with a typed self: P3: 4, 4, 3");
+assert_eq(drv_self_free(), drv_self(), "P3_bump(p) agrees with p.bump()");
+assert_eq(drv_self_ptrmode(), 443, "h.bump() on a pointer-mode local: its heap object stays 3");
+assert_eq(drv_generic(), 443, "bumpg(p) / bumpg<P3>(p), a generic instance: 4, 4, 3");
+assert_eq(drv_fnptr(), 443, "fncall1(&bump, &p): 4, 4, 3 — the copy is the callee's, so a fn pointer gets it too");
+assert_eq(drv_field(), 443, "bump2(b.v), a field argument in a fn: 4, 4, 3");
+assert_eq(drv_field(), ctl_field(), "the field row == control");
+assert_eq(drv_call_arg(), 4, "bump(mk3(3, 0, 0)), a call result argument");
+
+test_group("the copy is an ordinary local: assigned, returned, recursed, read by a defer, stack-passed");
+assert_eq(drv_assign_in(), 730, "q = r inside the callee: q.x is 7, the caller stays 3 / 0");
+assert_eq(drv_inc(), 43, "return p; after p.x + 1: the result is 4, the caller stays 3");
+assert_eq(drv_rec(), 83, "rec(p, 5) recursing with its own copy: 8, the caller stays 3");
+assert_eq(drv_dfr(), 50503, "a defer reads the callee's copy (50); the caller stays 3");
+assert_eq(drv_stk10(), 1213, "the 10th argument, stack-passed on every ABI: 11, 11, 3");
+assert_eq(drv_stk10(), ctl_stk10(), "the stack-passed row == control");
+assert_eq(drv_stk5(), 6273, "the 5th argument (stack-passed on Win64): 57, 57, 3");
+
+test_group("what must NOT be a copy (anti-vacuous)");
+assert_eq(drv_ptrparam(), 4566, "p: *P3 + bumpp(&p) twice, then self: *P3: 4, 5, 6 — the caller's struct, 6");
+assert_eq(drv_untyped_self(), 42, "an untyped self writes the receiver (40 + 2)");
+assert_eq(drv_small(), 443, "a struct of 8 B or less was always a value: 4, 4, 3");
+assert_eq(drv_small_self(), 443, "a typed self: B1 of 8 B: 4, 4, 3");
+assert_eq(drv_str(), 1, "a Str parameter is a heap handle: a write through it reaches the caller's string");
+assert_eq(drv_wide64(), 67685, "a *P3 parameter at frame slot 64 is still the caller's struct: 67, 68, 5");
+#ifdef CYRIUS_TARGET_WIN
+assert_eq(drv_wide_vec(), 100055, "Win64: *P3 at slot 64 writes the caller (5); P3 at slot 65 is a copy (5)");
+#endif
+
+# --------------------------------------------------------- at TOP LEVEL: no caller frame -----
+test_group("at top level");
+var tl_a = bump(G2);
+var tl_b = bump(G2);
+assert_eq(tl_a * 100 + tl_b * 10 + G2.x, 443, "bump(G2) at top level: 4, 4, and G2.x stays 3");
+var tl_f = take(BX.v);
+assert_eq(tl_f, 100, "take(BX.v) at top level: the callee's copy reads 100");
+assert_eq(BX.v.x, 1, "take(BX.v) at top level: BX.v.x stays 1 (6.6.12 passed the field itself)");
+
+var r = assert_summary();

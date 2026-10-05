@@ -39,12 +39,404 @@ fn _scalar_name_width(name64): i64 {
 # 6.6.10 — the same ladder for a FIELD type, which must match the WHOLE name. The masks above
 # test only the leading bytes, so `v: i16v8` registered a 2-byte i16 field and `v: i64v2` an
 # 8-byte one, silently; a vector (or `i8foo`) now falls through to the named-type path, where
-# it is refused by name. The other five callers keep the prefix test. CHANGELOG [6.6.10]
+# it is refused by name. Since 6.6.16 every other site resolves through _tn_resolve below.
+# CHANGELOG [6.6.10]
 fn _field_scalar_width(name64): i64 {
     var w = _scalar_name_width(name64);
     if (w == 1) { if ((name64 >> 16) & 0xFF != 0) { return 0; } }
     if (w > 1) { if ((name64 >> 24) & 0xFF != 0) { return 0; } }
     return w;
+}
+
+# ⛔ 6.6.16 (C8) — ONE TYPE-NAME VOCABULARY. sizeof, `#assert sizeof` and every annotation
+# (a local, a global, `*T`, `[T]` / `slice<T>`, a param, a return, a multi-value return element)
+# had a ladder of its own. Most matched a name's PREFIX — `var a: i8x = 300` was an i8 (it read
+# 44), `var a: f64zz` an f64, and `var p: u8pair;` (a struct) was a u8 scalar BEFORE the struct
+# lookup ran — and almost all read a name they did not know as a silent i64 (`var a: Nonexist`,
+# `fn f(a: i16q)`, `fn f(): (i64, Nope)`). sizeof knew only i8..i64, u128 and structs, so
+# `sizeof(f64)` / `sizeof(u8)` / `sizeof(bool)` did not compile. Every one of those sites now
+# resolves here, by the WHOLE name, and a name that is no type is refused by name (_tn_refuse).
+# The struct lookup goes FIRST, as _classify_return_type's always has. CHANGELOG [6.6.16]
+#
+# THE CODE BAND. A resolved name is one value in a band of its own, `0x7E000000 | class << 16 |
+# val`, that no table stores and no other encoding uses: it is not a struct sid (1..1024) nor
+# `0 - sid` (GLTYPE, pscale, GVTYPE's pointer scale), not a width (SLTYPE 1/2/4/8, `0 - width`
+# from _tp_resolve / scalar_type), not the F64_TYID..FUTURE_TYID band (0x40000001..4), not the
+# SIMD descriptor band (<= -2048), not MULTIRET_SID (-40) and not the `0 - 1000 - gvi`
+# global-deref band. A caller reads a code ONLY through the accessors below (_tn_iw, _tn_sgn,
+# _tn_flt, _tn_sid, _tn_vec, _tn_bytes) and stores what it always stored — a width, a sid, a
+# sentinel, a float tag — so no code ever reaches SLTYPE, SVTYPE, GFRS/GFRT, SPSC, pscale,
+# scalar_type or a global's init blob, and one that leaked could not be read as any of them.
+#   class 1  signed integer     i8 i16 i32 i64           val = its bytes
+#   class 2  unsigned integer   u8 u16 u32 u64           val = its bytes
+#   class 3  float              f32 f64                  val = its bytes
+#   class 4  an 8-byte handle   val: 1 bool, 2 an enum, 3 Result, 4 Option, 5 Tagged, 6 cstring,
+#                               7 a type parameter, 8 Vec (a vec_new() handle; the `<T>` of
+#                               `Vec<T>` is skipped by each site, as it always was)
+#   class 5  a SIMD vector      val = 0 - its descriptor sentinel (f64v2 2093, i8v16 2178, ...)
+#   class 6  a struct or union  val = its sid
+# `u128` is a keyword token, never a name: its sites handle token 105 before the lookup.
+fn _tn_code(cls, val): i64 { return 0x7E000000 | (cls << 16) | val; }
+fn _tn_class(c): i64 {
+    if ((c >> 24) != 0x7E) { return 0; }
+    return (c >> 16) & 0xFF;
+}
+fn _tn_val(c): i64 { return c & 0xFFFF; }
+
+# The builtin scalar names, each matched WHOLE (the NUL is in the mask). 0 = not one of them.
+fn _tn_scalar(n): i64 {
+    if ((n & 0xFFFFFF) == 0x003869) { return _tn_code(1, 1); }      # i8
+    if ((n & 0xFFFFFF) == 0x003875) { return _tn_code(2, 1); }      # u8
+    var lo = n & 0xFFFFFFFF;
+    if (lo == 0x00363169) { return _tn_code(1, 2); }                # i16
+    if (lo == 0x00323369) { return _tn_code(1, 4); }                # i32
+    if (lo == 0x00343669) { return _tn_code(1, 8); }                # i64
+    if (lo == 0x00363175) { return _tn_code(2, 2); }                # u16
+    if (lo == 0x00323375) { return _tn_code(2, 4); }                # u32
+    if (lo == 0x00343675) { return _tn_code(2, 8); }                # u64
+    if (lo == 0x00343666) { return _tn_code(3, 8); }                # f64
+    if (lo == 0x00323366) { return _tn_code(3, 4); }                # f32
+    if ((n & 0xFFFFFFFFFF) == 0x006C6F6F62) { return _tn_code(4, 1); }   # bool
+    if (lo == 0x00636556) { return _tn_code(4, 8); }                # Vec — the field vocabulary's handle
+    return 0;
+}
+
+# A _classify_return_type value (also a bound type parameter's _tp_resolve value) as a code.
+fn _tn_from_rc(rc): i64 {
+    if (rc > 0) { return _tn_code(6, rc); }
+    if (rc <= 0 - 2048) { return _tn_code(5, 0 - rc); }
+    if (rc == 0 - 9) { return _tn_code(3, 8); }                     # f64
+    if (rc >= 0 - 8) { if (rc < 0) { return _tn_code(1, 0 - rc); } }   # i8 / i16 / i32 / i64
+    if (rc <= 0 - 16) { if (rc >= 0 - 19) { return _tn_code(4, 0 - rc - 13); } }   # Result Option Tagged cstring
+    return 0;
+}
+
+# The name at `noff`, with no scope: a struct or union (first), a builtin scalar, Result / Option /
+# Tagged / cstring, a vector, or an enum declared on either side (its values are i64). 0 = none.
+fn _tn_resolve(S, noff): i64 {
+    var c = _tn_from_rc(_classify_return_type(S, noff));
+    if (c != 0) { return c; }
+    c = _tn_scalar(L64(S + 0xEC00000 + noff));
+    if (c != 0) { return c; }
+    if (_is_enum_name(S, noff) == 1) { return _tn_code(4, 2); }
+    if (_declared_later(S, noff, 60, 60) == 1) { return _tn_code(4, 2); }
+    return 0;
+}
+
+# The name at token `ti`, in scope: _tn_resolve, else a type parameter in scope there (8 bytes,
+# the i64 base): a bound one, the declaring struct's own, the enclosing generic fn's (its body or
+# its signature — CYRIUS_MONOMORPH=0 binds and captures nothing, so these read the tokens).
+fn _tn_resolve_at(S, ti): i64 {
+    var noff = TOKVAL(S, ti);
+    if (_tp_resolve(S, noff) != 0) { return _tn_code(4, 7); }   # bound: callers that size it bind first
+    var c = _tn_resolve(S, noff);
+    if (c != 0) { return c; }
+    if (_tn_tparam(S, ti, noff) == 1) { return _tn_code(4, 7); }
+    return 0;
+}
+fn _tn_tparam(S, ti, noff): i64 {
+    if (_is_own_tparam(S, noff) == 1) { return 1; }
+    if (_arr_fn_tparam(S, ti, noff) == 1) { return 1; }
+    return _tn_sig_tparam(S, ti, noff);
+}
+# Is `noff` (at token `ti`, in a fn SIGNATURE — a param or return type) one of that fn's own
+# `<T, ..>`? The signature holds no `{`, `}` or `;`, so meeting one means `ti` is not in one.
+fn _tn_sig_tparam(S, ti, noff): i64 {
+    var k = ti - 1;
+    while (k >= 0) {
+        var t = TOKTYP(S, k);
+        if (t == 13 || t == 14 || t == 5) { return 0; }
+        if (t == 32) {
+            if (TOKTYP(S, k + 2) != 19) { return 0; }   # `fn name <`
+            var j = k + 3;
+            t = TOKTYP(S, j);
+            while (t != 20 && t != 10 && t != 12) {
+                if (t == 2) { if (STREQ(S, TOKVAL(S, j), noff) == 1) { return 1; } }
+                j = j + 1;
+                t = TOKTYP(S, j);
+            }
+            return 0;
+        }
+        k = k - 1;
+    }
+    return 0;
+}
+
+# The accessors — the only way a code is read.
+fn _tn_iw(c): i64 {                         # an integer's width (iN / uN), else 0
+    var k = _tn_class(c);
+    if (k == 1 || k == 2) { return _tn_val(c); }
+    return 0;
+}
+fn _tn_sgn(c): i64 {                        # 1 for a SIGNED sub-i64 integer (loads sign-extend)
+    if (_tn_class(c) == 1) { if (_tn_val(c) < 8) { return 1; } }
+    return 0;
+}
+fn _tn_flt(c): i64 {                        # F64_TYID / F32_TYID, else 0
+    if (_tn_class(c) != 3) { return 0; }
+    if (_tn_val(c) == 8) { return F64_TYID; }
+    return F32_TYID;
+}
+fn _tn_sid(c): i64 {                        # a struct's sid, else 0
+    if (_tn_class(c) == 6) { return _tn_val(c); }
+    return 0;
+}
+fn _tn_vec(c): i64 {                        # a vector's descriptor sentinel (<= -2048), else 0
+    if (_tn_class(c) == 5) { return 0 - _tn_val(c); }
+    return 0;
+}
+fn _tn_init_w(c): i64 {                     # 6.6.16 (C1): the bytes of an array element an
+    var w = _tn_iw(c);                      # integer constant initializes — iN / uN its width,
+    if (w > 0) { return w; }                # bool and an enum 8 — else 0 (a float, a struct, a
+    if (_tn_class(c) == 4) {                # vector, a handle no constant makes)
+        var v = _tn_val(c);
+        if (v == 1 || v == 2) { return 8; }
+    }
+    return 0;
+}
+# sizeof: an integer or float its width; a handle (bool, an enum, cstring, Result, Option,
+# Tagged, Vec, a type parameter's i64 base) 8; a vector 16 / 32; a struct STRUCTSZ. This is exactly
+# what `var a: T[N]` reserves per element (_arr_ebytes), so the array is N * sizeof(T).
+fn _tn_bytes(S, c): i64 {
+    var k = _tn_class(c);
+    if (k == 6) { return STRUCTSZ(S, _tn_val(c) - 1); }
+    if (k == 5) {
+        _vec_desc(S, 0 - _tn_val(c));
+        return GVEC_NSLOTS(S) * 8;
+    }
+    if (k == 4) { return 8; }
+    if (k >= 1) { return _tn_val(c); }
+    return 0;
+}
+
+# The refusal: ONE named error, reported AT the name (`ti`), the cursor put back, and the panic
+# latch this error set cleared — the declaration parses on as a plain i64, so each bad name is
+# reported once, with no cascade, and every bad name of a file is reported. An error that already
+# held the latch is left alone. `--syntax-only` (lint's pre-pass) resolves nothing and refuses
+# nothing, as _arr_name_ebytes does. `tail` / `noff2` are ERR_IDENT's (the site, and a var name
+# or -1). A struct or union declared BELOW a site that needs it above keeps its own message.
+fn _tn_refuse(S, ti, tail, noff2): i64 {
+    if (_syntax_only == 1) { return 0; }
+    if (_panic == 1) { return 0; }
+    if (_tn_once(S, ti) == 0) { return 0; }
+    var noff = TOKVAL(S, ti);
+    var sv = GTI(S);
+    STI(S, ti);
+    if (_declared_later(S, noff, 40, 101) == 1) {
+        ERR_IDENT(S, "type ", noff, " is declared after its use; declare it above the first use", 0 - 1);
+    } else {
+        ERR_IDENT(S, "unknown type ", noff, tail, noff2);
+        _tn_prefix_note(S, noff);
+        PRSTR("  note: a type is i8..i64, u8..u64, u128, f32, f64, bool, cstring, Result, Option, Tagged, Vec, an enum, a vector type, or a struct or union (missing include?)\n");
+    }
+    STI(S, sv);
+    _panic = 0;
+    return 0;
+}
+# `i8x` is not `i8`: name the builtin a misspelling starts with, since the prefix used to be enough.
+fn _tn_prefix_note(S, noff): i64 {
+    var n = L64(S + 0xEC00000 + noff);
+    var k = 0;
+    if (_tn_scalar(n & 0xFFFF) != 0) { k = 2; }
+    if (_tn_scalar(n & 0xFFFFFF) != 0) { k = 3; }
+    if (_tn_scalar(n & 0xFFFFFFFF) != 0) { k = 4; }
+    if (k == 0) { return 0; }
+    PRSTR("  note: '");
+    PRSTR(S + 0xEC00000 + noff);
+    PRSTR("' is not '");
+    syscall(SYS_WRITE, 2, S + 0xEC00000 + noff, k);
+    PRSTR("' - a type name must match whole\n");
+    return 0;
+}
+# A generic fn's body is parsed once for its base and once per instance, so the same name would
+# be refused on every pass: one byte per token (lazily allocated) reports it the first time only.
+var _tn_seen = 0;
+var _tn_seen_n = 0;
+fn _tn_once(S, ti): i64 {
+    if (_tn_seen == 0) {
+        _tn_seen_n = GTCNT(S) + 1;
+        _tn_seen = alloc(_tn_seen_n);
+        if (_tn_seen == 0) { return 1; }
+    }
+    if (ti < 0 || ti >= _tn_seen_n) { return 1; }
+    if (load8(_tn_seen + ti) == 1) { return 0; }
+    store8(_tn_seen + ti, 1);
+    return 1;
+}
+
+# A type annotation at token `ti` (a local or a global; `vnoff` the variable): its code, or 0
+# after the refusal. The caller takes the width / sign / float / sid / vector through the
+# accessors; a refused name leaves all of them 0, i.e. a plain i64. An ARRAY element (`T[N]`,
+# the `[` next) is not refused here: _arr_name_ebytes names it as an array element.
+fn _tn_ann(S, ti, vnoff): i64 {
+    var c = _tn_resolve_at(S, ti);
+    if (c == 0) {
+        if (TOKTYP(S, ti + 1) != 28) { _tn_refuse(S, ti, " for variable ", vnoff); }
+    }
+    return c;
+}
+
+# A `var` annotation's code (a local, or a global after the first statement). A type parameter
+# the default build BOUND (`_tp_resolve`: T -> i64 in the base, T -> its argument in an instance)
+# is its argument's code, so `var y: T` / `var a: T[N]` in the `g<f64>` instance are exactly
+# `var y: f64` / `var a: f64[N]` — the accessors give the width, the sign of i8/i16/i32, the
+# float tag, the sid. That arm used to read the binding's raw code as a width: T = f64 (-9) made
+# a 9-byte word (`T[N]` reserved 9 * N while sizeof(T) is 8) and T = i8 never sign-extended.
+fn _tn_var_ann(S, ti, vnoff): i64 {
+    var b = _tp_resolve(S, TOKVAL(S, ti));
+    if (b != 0) { return _tn_from_rc(b); }
+    return _tn_ann(S, ti, vnoff);
+}
+
+# ⛔ 6.6.16 — A LOCAL `*i8` / `*i16` / `*i32` TRUNCATED THE POINTER. Its pointer scale (1/2/4)
+# was written as the local's SLTYPE, and a positive SLTYPE below 8 IS a narrow scalar's width
+# (parse_expr.cyr: "no sub-i64 typed pointers exist, so 1/2/4 are always scalars"): the slot was
+# stored and loaded 1/2/4 bytes wide, so `var p: *i8 = &buf;` held the low byte of the address —
+# `p == &buf` false, `load8(p + 1)` SIGSEGV, silently. A `*T` local is an 8-byte pointer whatever
+# T is: SLTYPE 0, a plain word, whose `+` is byte arithmetic — the scale these three already had
+# (the scalar path reset it to 1), so no arithmetic changes. `*i64` and every other `*T` keep
+# SLTYPE 8, the scale-8 typed pointer. Globals and params never had the leak (8-byte slots).
+# CHANGELOG [6.6.16]
+fn _sl_ptr_type(S, li, ps): i64 {
+    if (ps > 0) { if (ps < 8) { SLTYPE(S, li, 0); return 0; } }
+    SLTYPE(S, li, ps);
+    return 0;
+}
+# ... but the slot's width is not its pointer-ness: an SLTYPE-0 load leaves the expression scale
+# 0, "not a pointer", so `var q: *i16 = p;` / `= p + 1` warned "assigning non-pointer to typed
+# pointer" about a pointer (the narrow slot had loaded with scale 1, the byte step these three
+# keep). So such a local also carries a MARK, read at its load to set scale 1 again — on an
+# 8-byte load. Scale 1 multiplies by nothing (EPTR_SCALE), so no emitted byte changes; only the
+# two "non-pointer" warnings read it. The mark lives in the slice-width table (SSLICE_W), the
+# same table as the sign mark: slice code reads only a POSITIVE width and the sign mark (-1 / -2
+# / -4) is read only for SLTYPE 1..7, so this SLTYPE-0 slot's `0 - 0x7E00` is seen by nothing
+# else, and it rides the closure local snapshot with the rest of the table.
+fn _sl_marks(S, li, sgn, st, sw, ps): i64 {
+    if (sgn == 1) { if (sw == 0) { SSLICE_W(S, li, 0 - st); } }
+    if (ps > 0) { if (ps < 8) { SSLICE_W(S, li, 0 - 0x7E00); } }
+    return 0;
+}
+# An SLTYPE-0 local was just loaded: its marks — the untyped-float flag (_UFV_L) and the pointer
+# mark above.
+fn _sl_load_marks(S, li): i64 {
+    _UFV_L(S, li);
+    if (GSLICE_W(S, li) == 0 - 0x7E00) { SPSC(S, 1); }
+    return 0;
+}
+
+# The pointer annotation `*T` at token `ti` (T, the token after the `*`): the pointer scale,
+# with T resolved — an unknown T is refused (it was taken silently). 8 for every T but the
+# signed i8 / i16 / i32, which keep their 1 / 2 / 4: a global declared after the first
+# statement scales by it. uN deliberately keeps 8 (what it always had). A local `*iN` must NOT
+# make its slot that wide — see _sl_ptr_type. `**T` and `*u128` are left to their callers.
+fn _tn_ptr(S, ti, vnoff): i64 {
+    if (TOKTYP(S, ti) != 2) { return 8; }
+    var c = _tn_resolve_at(S, ti);
+    if (c == 0) {
+        _tn_refuse(S, ti, " as the target of pointer ", vnoff);
+        return 8;
+    }
+    if (_tn_class(c) == 1) { return _tn_val(c); }
+    return 8;
+}
+
+# A slice element `[T]` / `slice<T>` at token `ti`: its width. A bound type parameter is its
+# argument's size; a name that is no type is refused (it was 8, silently).
+fn _tn_slice_w(S, ti, vnoff): i64 {
+    if (TOKTYP(S, ti) == 105) { return 16; }      # u128
+    if (TOKTYP(S, ti) != 2) { return 8; }
+    var b = _tp_resolve(S, TOKVAL(S, ti));
+    if (b != 0) { return _tn_bytes(S, _tn_from_rc(b)); }
+    var c = _tn_resolve_at(S, ti);
+    if (c == 0) {
+        _tn_refuse(S, ti, " as the element of slice ", vnoff);
+        return 8;
+    }
+    return _tn_bytes(S, c);
+}
+
+# sizeof(T) at token `ti` — an expression (`asrt` 0) or an `#assert` operand (1): T's bytes, or 0
+# after the refusal. A bound type parameter is its argument's size (f64 is 8: it read 9).
+fn _tn_sizeof(S, ti, asrt): i64 {
+    if (TOKTYP(S, ti) == 105) { return 16; }      # u128
+    if (TOKTYP(S, ti) != 2) { return 0; }
+    var b = _tp_resolve(S, TOKVAL(S, ti));
+    if (b != 0) { return _tn_bytes(S, _tn_from_rc(b)); }
+    var c = _tn_resolve_at(S, ti);
+    if (c != 0) { return _tn_bytes(S, c); }
+    if (asrt == 0) {
+        _tn_refuse(S, ti, " in sizeof", 0 - 1);
+        return 0;
+    }
+    # An `#assert` operand: leave the latch set, as the error it replaces did — the #assert
+    # handler then drops its own "#assert failed" for the operand it could not evaluate.
+    _tn_refuse(S, ti, " in #assert sizeof", 0 - 1);
+    _panic = 1;
+    return 0;
+}
+
+# A parameter's type name at the cursor (PARSE_FN_DEF; `ptc` its _classify_param_type class).
+# Str, cstring, Result, Option, Tagged and the vector names stay accepted BY NAME (`ptc != 0`):
+# `s: Str` in a unit without lib/str.cyr is the by-name handle the param ABI has always taken.
+# So is a type parameter of the fn (captured, or read from its `<..>`) and any name the resolver
+# knows. Anything else is refused by name — `fn f(a: Nonexist)` / `fn f(a: i16q)` compiled with
+# no ABI at all. Widths still have no effect on a param. Pass 1 (_prescan_params) reads the same
+# names and reports nothing, so each is reported once.
+fn _tn_param_check(S, pnoff, fi, ptc): i64 {
+    if (ptc != 0) { return 0; }
+    var ti = GTI(S);
+    if (_tn_resolve_at(S, ti) != 0) { return 0; }
+    if (_is_tparam_of(S, fi, TOKVAL(S, ti)) == 1) { return 0; }
+    _tn_refuse(S, ti, " for parameter ", pnoff);
+    return 0;
+}
+
+# A return type _classify_return_type does not take (cursor on it): an unknown name is
+# `unknown type 'X' as a fn return type`; a type that exists but is not a return type (u8..u64,
+# f32, bool, an enum) says so by name — both used to be the one unnamed "fn return type must be
+# struct or ..." line, and its panic resync could cascade. The ACCEPTED set is unchanged.
+# Returns the return code to record: 0 after the refusal, and -8 (an i64) under --syntax-only,
+# which resolves nothing and refuses nothing (see the v6.5.19 note at the call site). Either
+# way a `<..>` after the name (`fn f(): Vec<i64>`) is skipped with it — the cursor is left on its
+# last token, the one the caller steps past — so its type arguments are not parsed as the body
+# (a second and third error, `expected '{', got '<'` and `undefined variable 'i64'`).
+fn _tn_ret_refuse(S): i64 {
+    var ti = GTI(S);
+    var rc = 0;
+    if (_syntax_only == 1) { rc = 0 - 8; }
+    else { _tn_ret_report(S, ti); }
+    if (TOKTYP(S, ti + 1) != 19) { return rc; }
+    STI(S, ti + 1);
+    SKIP_GENERICS(S);
+    STI(S, GTI(S) - 1);
+    return rc;
+}
+fn _tn_ret_report(S, ti): i64 {
+    var c = _tn_resolve_at(S, ti);
+    if (c == 0) {
+        _tn_refuse(S, ti, " as a fn return type", 0 - 1);
+        return 0;
+    }
+    if (_panic == 1) { return 0; }
+    if (_tn_once(S, ti) == 0) { return 0; }
+    if (c == _tn_code(4, 7)) {
+        ERR_IDENT(S, "type parameter ", TOKVAL(S, ti), " cannot be this fn's return type", 0 - 1);
+        PRSTR("  note: a generic fn returns its first or second type parameter, and none under CYRIUS_MONOMORPH=0\n");
+    } else {
+        ERR_IDENT(S, "type ", TOKVAL(S, ti), " cannot be a fn return type", 0 - 1);
+        PRSTR("  note: a return type is a struct, i8/i16/i32/i64, f64, a vector type, Result, Option, Tagged or cstring; return an i64 (no annotation) for the others\n");
+    }
+    _panic = 0;
+    return 0;
+}
+
+# A multi-value return element (`: (T1, T2)`) _classify_return_type does not take: every TYPE
+# name stays accepted as a plain i64 slot (as it always was); a name that is no type is refused
+# — `fn f(): (i64, Nonexist)` compiled silently. Pass 2 only (pass 1 is `quiet`).
+fn _tn_mret_check(S, ti): i64 {
+    if (_tn_resolve_at(S, ti) != 0) { return 0; }
+    _tn_refuse(S, ti, " in a multi-value return type", 0 - 1);
+    return 0;
 }
 
 # Get/set struct_id for global variable at index vi.
@@ -736,21 +1128,24 @@ fn _skip_refused_body(S): i64 {
 var _sdef_tp_ti = 0;   # the token after the declaring struct's name (its `<` when generic)
 
 # The float kind of an accepted non-struct field type name (0 = plain 8 bytes, 1 = f64, 2 = f32),
-# or -1 when the name is not a field type at all.
+# or -1 when the name is not a field type at all (a vector, or no type). 6.6.16: through the one
+# type-name resolver (_tn_resolve), so `bool` — an 8-byte array element and sizeof 8 — is an
+# 8-byte field too (it was refused here alone), and `Vec` is a `Vec<T>` element (`Vec<Vec>`, a
+# vector of 8-byte handles). A bare `Vec` / `Vec<T>` FIELD never reaches here (PARSE_STRUCT_DEF
+# takes it first). CHANGELOG [6.6.16]
 fn _field_name_kind(S, tnoff): i64 {
-    var nm = L64(S + 0xEC00000 + tnoff);
-    if (nm & 0xFFFFFFFF == 0x343666) { return 1; }     # f64
-    if (nm & 0xFFFFFFFF == 0x323366) { return 2; }     # f32
-    if (nm & 0xFFFFFF == 0x3875) { return 0; }         # u8
-    if (nm & 0xFFFFFFFF == 0x363175) { return 0; }     # u16
-    if (nm & 0xFFFFFFFF == 0x323375) { return 0; }     # u32
-    if (nm & 0xFFFFFFFF == 0x343675) { return 0; }     # u64
-    var c = _classify_return_type(S, tnoff);
-    if (c <= 0 - 16) { if (c >= 0 - 19) { return 0; } }   # Result / Option / Tagged / cstring
-    if (_is_enum_name(S, tnoff) == 1) { return 0; }
-    if (_is_own_tparam(S, tnoff) == 1) { return 0; }
-    if (_declared_later(S, tnoff, 60, 60) == 1) { return 0; }   # an enum below: still i64
-    return 0 - 1;
+    var c = _tn_resolve(S, tnoff);
+    if (c == 0) {
+        if (_is_own_tparam(S, tnoff) == 1) { return 0; }
+        return 0 - 1;
+    }
+    var k = _tn_class(c);
+    if (k == 3) {
+        if (_tn_val(c) == 8) { return 1; }   # f64
+        return 2;                            # f32
+    }
+    if (k == 5) { return 0 - 1; }            # a vector: _refuse_field_type names it
+    return 0;   # u8..u64 (8 bytes), bool, cstring, Result, Option, Tagged, an enum (either side)
 }
 
 # Is `noff` one of the type parameters of the struct being declared (`struct Box<T> { v: T; }`)?
@@ -796,7 +1191,8 @@ fn _refuse_field_type(S, tnoff, fnoff, snoff): i64 {
         ERR_IDENT(S, "struct field type ", tnoff, " is declared after its use; declare it before ", snoff);
     } else {
         ERR_IDENT(S, "unknown type ", tnoff, " for struct field ", fnoff);
-        PRSTR("  note: a field type is a struct or union declared above it, i8/i16/i32/i64, u8/u16/u32/u64, f32, f64, cstring, an enum, or Vec / Vec<T> (missing include?)\n");
+        _tn_prefix_note(S, tnoff);   # 6.6.16
+        PRSTR("  note: a field type is a struct or union declared above it, i8/i16/i32/i64, u8/u16/u32/u64, f32, f64, bool, cstring, Result, Option, Tagged, an enum, or Vec / Vec<T> (missing include?)\n");
     }
     _panic = 0;
     return 0;

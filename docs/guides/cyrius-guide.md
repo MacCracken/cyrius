@@ -133,6 +133,43 @@ slots[3] = 7;          # Subscript (element-typed arrays only, since 6.6.12)
 x = x + 1;             # Reassignment
 ```
 
+### Type names (6.6.16)
+
+Every place that names a type — a `var` annotation (local or global), `*T`, `[T]` /
+`slice<T>`, a parameter, a return type, a multi-value return element, a struct field, an
+array element, `sizeof(T)` and `#assert sizeof(T)` — reads it from one vocabulary, and
+matches the **whole** name:
+
+| Name | `sizeof` | Notes |
+|------|----------|-------|
+| `i8` `i16` `i32` `i64` | 1 / 2 / 4 / 8 | |
+| `u8` `u16` `u32` `u64` | 1 / 2 / 4 / 8 | |
+| `u128` | 16 | |
+| `f32` / `f64` | 4 / 8 | |
+| `bool`, `cstring`, `Result`, `Option`, `Tagged`, an enum | 8 | an enum may be declared on either side |
+| `Vec` / `Vec<T>` | 8 | a `vec_new()` handle, as a struct field has always taken it |
+| a vector type (`f64v2` … `u64v2`, `f64v4`, `f32v8`) | 16 / 32 | |
+| a struct or union (`Pt`) | its size | a struct **named** like a scalar (`u8pair`) is the struct |
+| a type parameter in scope (`T`) | its argument's size | the `i64` base: 8 |
+
+`var a: T[N]` reserves exactly `N * sizeof(T)`. Inside a generic fn's instance a type
+parameter IS its argument: in `g<f64>`, `var y: T` is an `f64` (its `+` is a float add) and
+`var a: T[N]` holds `f64`s; in `g<i8>`, `var y: T` sign-extends like any `i8`. (Before
+6.6.16 `T = f64` made a 9-byte untyped word and `T = i8` / `i16` / `i32` loaded
+zero-extended.)
+
+A name that is not a type is a compile error that names it — `unknown type 'Nope' for
+variable 'a'`, `... for parameter 'x'`, `... as a fn return type`, `... in sizeof` — and a
+name that only *starts* like one gets a hint (`'i8x' is not 'i8' - a type name must match
+whole`). A type with no place at a site is refused once, its `<..>` with it
+(`fn f(): Vec<i64>` is one error). Before 6.6.16 most sites matched a prefix
+(`var a: i8x = 300` was an `i8` and read 44, `var p: u8pair;` was a `u8`)
+and read any other name as a silent `i64`; `sizeof(f64)`, `sizeof(u8)` and `sizeof(bool)`
+did not compile. A parameter still takes `Str`, `cstring`, `Result`, `Option` and `Tagged`
+by name, without their `include`. A return type is a struct, `i8`..`i64`, `f64`, a vector
+type, `Result`, `Option`, `Tagged` or `cstring` — `fn f(): u8` is refused by name (return an
+`i64`). `cyrius lint` (`--syntax-only`) resolves no type names, so it never reports these.
+
 ### Arrays: byte vs slot sizing (v6.2.1)
 
 `var a: T[N]` declares a fixed array of **N elements of type T** — the
@@ -199,6 +236,55 @@ with `'Foo' is not an enum`, and `Other.BUF` with `'BUF' is not a variant of
 'Other'` — before 6.6.11 the qualifier was ignored. When two enums share a
 variant name, `A.X` and `B.X` each read their own enum's value (the bare `X`
 keeps "last definition wins", with its warning).
+
+### Array initializers: `var a: T[N] = { .. }` (6.6.16)
+
+At module scope an array takes a list of constants — **N elements of T**,
+written into the program image:
+
+```
+enum Op { ADD = 1; SUB = 2; }
+var table: u16[4] = {0xFFFF, Op.SUB, 1 << 8, -1};  # 0xFFFF, 2, 256, 0xFFFF
+var scale: f64[2] = {1.5, -0.25};
+var wide: u128[1] = {0xFF};                        # the low 8 bytes; the high 8 are 0
+var utf16[1] = {0x67, 0x00, 0x6E, 0x00};           # the bare form: a BYTE list
+```
+
+- An element is an integer literal, an enum constant (`A` or `E.A`, the enum
+  declared on either side), or a constant expression of them (`1 << 4`,
+  `E.A * 2`, `-5`). An `f64` / `f32` element also takes a float literal,
+  optionally negated; an `f32` element is the literal rounded to the nearest
+  `f32`, ties to even — what `f32_from` gives. An integer in a float element
+  keeps its bits, with the warning `var g: f64 = 2;` gives.
+- A value must fit its element: an `N`-byte integer element takes
+  `-2^(8N-1) .. 2^(8N)-1`, so `0xFF` in an `i8` and `-1` in a `u8` are the same
+  bits, while `256` in an `i8` is refused (`array initializer value 256 does not
+  fit a 1-byte element (-128 .. 255)`). `i64`, `u64`, `bool`, an enum and `*T`
+  take any 64-bit value. The bare `var b[N] = { .. }` stays a list of **bytes**
+  in `[0, 255]`, at most `N * 8` of them, and now takes enum constants and
+  constant expressions too.
+- Elements past the list are 0. More elements than `N` is refused, naming `N`.
+- A struct, union, vector, slice, `cstring`, `Str` (a struct), `Result`,
+  `Option`, `Tagged` or `Vec` element type is refused by name — store the
+  elements explicitly. A call, a variable or a string is not a constant and is
+  refused.
+- The values are **in the image**: no code stores them at startup, so they hold
+  from the first instruction — in a `kernel;` build too, and on cx (in the
+  `.cyx`'s var data). An initializer that runs earlier, even one that reads the
+  array before its declaration, sees the list.
+- The same declaration after the first top-level statement means the same
+  thing. Inside a top-level block (`while`, `if` / `elif` / `else`, `for` and
+  its init clause, a `switch` case or `default` arm, `match`, `@unsafe`, a bare
+  `{ }`) a list is refused: it would hold its values once, where a scalar's
+  initializer runs each time the block does — assign the elements in the block.
+  A function-local array takes no list.
+
+⚠ Before 6.6.16 the list was a byte list whatever `T` was:
+`var t: i64[3] = {1, 2, 42};` read `t[0] == 0x2A0201` and `t[1] == t[2] == 0`, on
+every target. A value over 255, `-3`, `1.5` and an enum constant were refused,
+`Pt[2]` / `bool[2]` / `i8v16[2]` lists compiled silently into bytes, and the
+bytes were stored at startup — after the program, in a `kernel;` build, so a
+kernel that never returns read 0.
 
 ### Subscripts: `a[i]` (6.6.12)
 
@@ -268,10 +354,13 @@ var r = add(20, 22);   # r = 42
   (`Type_method(args)`), which is how the constructor idiom `fn new(a, b)` inside an `impl` is
   written anyway. Forward calls are exempt from the check — the callee has no body yet.
 - **`x.m()` passes `self` exactly as `T_m(x)` would.** An untyped `self` (the `impl` form) is
-  the receiver's address. A typed `self: T` follows the parameter rule: a struct over 8 bytes is
-  address-passed, one of **8 bytes or less is passed by value** — so `fn Odd_sum(self: Odd)`
-  sees a copy, and writing `self.a` inside it does not change `x`. Before v6.6.11 the dot form
-  pushed `&x` for a small typed `self` too and the method read its fields out of the address.
+  the receiver's address. A typed `self: T` follows the parameter rule: a struct is a **value**
+  at every width — one of 8 bytes or less arrives in a register, a wider one by address and is
+  copied on entry (v6.6.16) — so `fn Odd_sum(self: Odd)` and `fn P3_bump(self: P3)` see a copy,
+  and writing `self.a` inside them does not change `x`. Before v6.6.11 the dot form pushed `&x`
+  for a small typed `self` too and the method read its fields out of the address; before v6.6.16
+  a typed `self` over 8 bytes was the receiver itself, so `x.bump()` changed `x`. A method that
+  must change its receiver takes an untyped `self` or `self: *T`.
 
 **Reserved words are a CLASS, not a short list.** `TOKNAME_BUILTIN` in
 `src/common/util.cyr` is the single source of truth — **79** builtin/intrinsic names
@@ -426,6 +515,16 @@ var a = *p;            # 10
 var b = *(p + 1);      # 20 (adds 8 bytes, not 1)
 ```
 
+A `*T` variable is an 8-byte address whatever `T` is, and `*p` always loads 8 bytes
+(use `load8` / `load16` / `load32` for narrower reads). `T` must name a type
+([Type names](#type-names-6616)). Only `p + n` depends on the spelling, and it is what it
+has always been: a local `*i64` (or `*u8`, `*Pt`, …) steps 8 bytes, a local `*i8` /
+`*i16` / `*i32` steps 1, a `*T` parameter steps 1, and a global steps 8 when declared in
+the leading declaration block and 1 / 2 / 4 / 8 by `T` after the first statement. When
+the step matters, write the byte offset on an untyped address (`&buf + i * 4`).
+⛔ Before 6.6.16 a **local** `var p: *i8` / `*i16` / `*i32` was stored in 1 / 2 / 4
+bytes, truncating the address: `p == &buf` was false and `load8(p + 1)` crashed.
+
 ## Structs
 
 ```
@@ -504,7 +603,7 @@ A field is untyped (`x;`, 8 bytes, i64) or annotated `x: T`, where `T` is one of
 | `u8` / `u16` / `u32` / `u64` | **8 each** | ⚠ Not narrow. The name is accepted but the field is a full word, so `struct { a: u8; b: u8; }` is 16 bytes, not 2. For a binary layout, use `i8` / `i16` / `i32` and mask the value. |
 | `f64` | 8 | **Typed** — `p.x + p.y`, `p.x * 2.0`, `-p.x` and `p.x < p.y` are float operations. |
 | `f32` | **8** | Typed (single-precision arithmetic), stored in the low 32 bits of a full word. |
-| `cstring`, `Result`, `Option`, `Tagged`, an enum | 8 | An enum may be declared before or after the struct. |
+| `bool`, `cstring`, `Result`, `Option`, `Tagged`, an enum | 8 | An enum may be declared before or after the struct. `bool` since 6.6.16 (it was refused). |
 | a struct or union | its size | Stored **inline**. It must be declared ABOVE the struct that uses it. |
 | `Vec` / `Vec<T>` | 8 | A handle. |
 | a type parameter of the struct being declared (`struct Box<T> { v: T; }`) | per instance | |
@@ -542,8 +641,9 @@ makes `t` an `f64`, where it used to be an untyped `i64` holding the bits.
 
 A struct declared inside a fn — `var p = Point { 1, 2 };`, `var p: Point;`, `var p: Point = q;`
 — is a **per-call frame object**. It is fresh on every call, private to the calling thread, and
-its name is visible only inside its own scope. Take its address with `&p`; pass it to a
-`p: Point` parameter and the callee receives that address.
+its name is visible only inside its own scope. Take its address with `&p`. Pass it to a
+`q: Point` parameter and the callee gets its own copy (v6.6.16); pass `&p` to a `q: *Point`
+parameter and the callee works on `p` itself.
 
 A struct declared at TOP LEVEL is a single shared object in the data section, and a local
 declared as `var p: Point = <expression>` where the expression yields an ADDRESS (a heap
@@ -551,6 +651,39 @@ pointer, or a fn returning one) is a **pointer** to that object — `p.x` reads 
 than out of the frame. The compiler records which of the two a variable is at its declaration;
 before v6.6.5 it guessed from the shape of the neighbouring stack slot and got it wrong for any
 pointer-mode struct declared after a closed `{ ... }` block.
+
+⚠ **An assignment between a pointer and a struct copies the struct (v6.6.16).** Call a variable
+whose slot holds a struct's ADDRESS a *handle*: a pointer-mode local (`var a: P3 = alloc(24);`),
+a pointer-mode global (`var G: P3 = 0;` then `G = alloc(24);`), or a `p: *P3` parameter. For a
+plain struct over 8 bytes:
+
+* `q = a` — a struct VALUE (an inline local or global, a by-value parameter) assigned from a
+  handle — copies the struct `a` points at into `q`.
+* `a = q` — a handle assigned a struct value (a variable, a by-value parameter, a field `b.v`, a
+  call `mk(..)`, a method `q.dbl()`, an operator `l + r`) — copies INTO the struct `a` points at,
+  as `*a = q` does in C. `a` still points where it did.
+* `a = b` between two handles is a pointer **rebind**, at any pair of struct types, as it always
+  was. So is a handle assigned something that is not a struct value: an untyped pointer
+  (`a = alloc(24)`, `a = p`) or a call returning `Str`. Between two `*P3` parameters `a = b`
+  rebinds too; before v6.6.16 it copied `*b` into `*a`.
+
+A struct value of a different type assigned into a handle is refused
+(`cannot copy 'r' into a variable of a different struct/vector type: 'a'`), as into an inline
+struct. Before v6.6.16 each of these stored ONE word: `q = a` put `a`'s address in `q.x` and left
+`q.y` stale, `a = q` put `q.x`'s value in `a`'s slot so the next `a.x` crashed, and `a = q` from a
+by-value parameter made `a` point at the CALLER's struct, so `a.x = 9` changed it. `Str`, `Result`,
+`Option` and `Tagged` (heap handles by name) and structs of 8 bytes or less are unchanged.
+
+⚠ **The declaration and the assignment differ on purpose.** `var q: P3 = a;` takes its storage
+class from its source: from a pointer-mode local or global it declares `q` as a second pointer to
+the same struct, so a write through either is seen by both (the v6.6.5 alias). From a parameter it
+copies, a `p: *P3` parameter included: `var q: P3 = p;` is the by-value parameter copy of v6.6.11,
+so a later `p.x = 9` does not reach `q`. `q = a;` cannot change what `q` already is: an inline
+`q` receives a copy, a handle `q` is rebound. For a private copy of a handle's struct, declare
+first and assign: `var q: P3; q = a;`. One shape changed meaning: code that used
+the one-word store to carry a handle through an inline struct variable (`var w: P3; w = a;` then
+`f(w)` where an untyped `f(v)` reads `load64(v + 8)`) now passes `w`'s first field. Pass `a`, or
+`&w`.
 
 ### Returning a struct by value (v6.6.6)
 
@@ -649,11 +782,12 @@ v6.6.11 each of those stored one word, silently.
 Two more field / global sources became copies in v6.6.12. **A struct-typed FIELD passed as a
 by-value struct argument** (`take(r.v)` into a `: P3` parameter over 8 bytes), from any base (a
 local, a global, a by-value parameter, a pointer-mode local), and through a generic instance
-(`mk<P3>(r.v)`). Inside a fn the callee gets a COPY of the field, so writing through the
-parameter does not reach `r.v` — unlike a NAMED struct argument, which is address-passed (see
-below). At top level there is no frame, so the callee gets the field itself. A field of a
-different struct type is refused (`cannot pass 'q' to a by-value parameter of a different struct
-type in a call to 'take'`). Before v6.6.12 the field's first word was passed as the struct's
+(`mk<P3>(r.v)`). The callee gets a COPY of the field, so writing through the parameter does not
+reach `r.v`, at top level as in a fn — since v6.6.16 that copy is the callee's own, made on entry
+as for every by-value struct argument (see below). From v6.6.12 to v6.6.15 a fn copied the field
+into a frame temporary and top level, with no frame, passed the field itself, which the callee
+then wrote. A field of a different struct type is refused (`cannot pass 'q' to a by-value
+parameter of a different struct type in a call to 'take'`). Before v6.6.12 the field's first word was passed as the struct's
 address, and the callee SIGSEGV'd. **A top-level copy-init** — `var B: P3 = A;` from an inline
 global, or `var G: P3 = BX.v;` from a global's field, in the leading declaration block or after
 the first statement — gives `B` its own STRUCTSZ bytes and copies them. Before v6.6.12 `B` got one
@@ -663,11 +797,30 @@ struct, exactly as in a fn. The source must be declared ABOVE the copy: `var B: 
 `var A = P3 { .. };` is refused (`cannot copy-init 'B' from a global declared below it`), since
 globals are initialised in declaration order and `A` has not been initialised when `B` copies it.
 
-⚠ **A by-value struct PARAMETER over 8 bytes is address-passed** — the parameter's slot holds
-the caller's address, which is why writing `q.z = 5` inside the callee is visible to the caller.
-Since v6.6.6 every path that copies or returns such a parameter goes through that address:
-`q = r`, `q = mk(..)`, `q = b.mk(..)`, `q = a + b`, `q = G`, `r = q`, `G = q`, `q = w` (a copy,
-not an alias) and `return q;` all move the whole struct. Before v6.6.6 they moved the POINTER
+⚠ **A by-value struct PARAMETER is a COPY, at every width (v6.6.16).** A `q: P3` parameter over
+8 bytes still TRAVELS by address — the caller passes its struct's address, so the calling
+convention is unchanged — but the callee copies the struct into its own frame on entry, before
+the body runs, and from there `q` is an ordinary local struct. Writing `q.z = 5` inside the callee
+changes the copy and never the caller's struct, whatever the argument was: a named local, a
+global, a pointer-mode local's heap object, a parameter passed on (`mid(q)` calling `bump(q)`),
+a typed `self: P3` receiver (`p.bump()` and `P3_bump(p)` agree), a generic instance
+(`bumpg<T>(p: T)` with `T = P3`), a call through a fn pointer (`fncall1(&bump, &p)`) or a field
+(`take(b.v)`), in a fn or at top level. Before v6.6.16 the parameter WAS the caller's struct, so
+every one of those writes reached the caller, and this guide said so here; only a field argument
+inside a fn was copied. A callee that must change the caller's struct says so in its signature:
+`fn bump(p: *P3)`, called `bump(&p)` — or a method with an untyped `self` or `self: *T`. Because
+the copy is made on entry, an argument that is not a struct (`take(0)` for a `q: P3`) now faults
+there even when the body never reads `q`. And `q` reads like any struct variable: a bare `q` where
+an untyped value is expected (`var k = q;`, `raw(q)` into an untyped parameter, `load64(q)`) is its
+first field, as for an inline local and for a struct of 8 bytes or less — before v6.6.16 it was
+the caller's address. Write `&q` for the address (of the copy). A struct of 8 bytes or less was
+already a value: it travels in a register. An `async fn` refuses such a parameter (see *Other
+limits* under async).
+
+From v6.6.6 to v6.6.15 every path that copied or returned such a parameter went through that
+address: `q = r`, `q = mk(..)`, `q = b.mk(..)`, `q = a + b`, `q = G`, `r = q`, `G = q`, `q = w` (a
+copy, not an alias) and `return q;` all moved the whole struct (with the copy on entry they are
+the plain local-struct paths, and they still do). Before v6.6.6 they moved the POINTER
 instead — `q = r` overwrote it and the next `q.z` SIGSEGV'd, `r = q` put the pointer in `r`'s
 first field, and `return q;` returned the address as the value, silently. The declaration
 `var y: P3 = q;` joined the list at v6.6.11 — before, it bound `y` as a second pointer to the
@@ -685,7 +838,7 @@ holding the pointer and returned 0. Both were silent, exit 0.
 ⚠ This is a rule about PARAMETERS, not about pointer-mode locals in general. A struct local
 whose slot holds a heap handle (`var p: P3 = alloc(24);`) is unchanged and deliberately so:
 `p + r` there is POINTER ARITHMETIC and does not dispatch, and `&p` is the slot. Only a
-parameter denotes the caller's struct.
+`p: *T` parameter denotes the caller's struct.
 
 ⚠ At TOP LEVEL there is no frame to hold the result, so a struct-valued call there
 (`mk(1);`, `var g: P3 = mk(1);`, `g = mk(1);`, `take(mk(1))` — and the method and operator
@@ -1580,8 +1733,12 @@ operand that is none of
 these is reported once, by name (`expected a number, sizeof(T) or an enum
 constant`), and `sizeof` must be the whole word — `sizeofzz(P)` is refused,
 not read as `sizeof`. So must its TYPE (since 6.6.11, in `#assert` and in
-expressions alike): `sizeof(i16v8)` and `sizeof(i8zz)` are `unknown type`, not
-2 and 1. An `#assert` with no message and no `;` ends at the end of its line —
+expressions alike): `sizeof(i8zz)` is refused, not 1. Since 6.6.16 both read
+the one type-name vocabulary ([Type names](#type-names-6616)): `sizeof(u8)`,
+`sizeof(f64)`, `sizeof(bool)`, `sizeof(u128)` (in `#assert` too), an enum and a
+vector type (`sizeof(i16v8)` is 16) all size, and a miss names the type —
+`unknown type 'i8zz' in #assert sizeof` — with no second `#assert failed`. An
+`#assert` with no message and no `;` ends at the end of its line —
 before 6.6.11 it swallowed the whole NEXT line (`#assert 1 == 1` then
 `return 42;` dropped the return). A failing `#assert` no longer stops the
 compile on the spot: every failing assert and any other error in the file is
@@ -2893,8 +3050,15 @@ returned, and this guide told you to force it yourself with `future_force`.)
 PARAMETER (`async fn f(v: f64v2)`) — an `async fn` captures each argument as one
 8-byte value, so since v6.6.6 that is a compile error naming the parameter; pass
 a pointer to the vector instead (before v6.6.6 it compiled and computed with the
-wrong vector). A **by-value struct RETURN** over 8 bytes is likewise unsupported
-and, since v6.6.6, a compile error naming the fn: a Future carries one i64, so a
+wrong vector). Nor is a **struct over 8 bytes passed by value**
+(`async fn f(p: P3)`): its body runs when the Future is forced, so the copy a
+by-value parameter makes on entry would read the caller's struct LATE. Before
+v6.6.16 the body read and wrote the caller's struct itself at force time —
+`f(p)` with `p.x == 3`, then `p.x = 10`, then `await` gave 11 and left `p.x` 11.
+Since v6.6.16 it is a compile error naming the parameter and the spelling to
+use, `p: *P3`; a struct of 8 bytes or less and a `p: *P3` parameter still work.
+A **by-value struct RETURN** over 8 bytes is likewise unsupported and, since
+v6.6.6, a compile error naming the fn: a Future carries one i64, so a
 >16 B return (hidden retptr) came back as garbage and a 9–16 B one (rax:rdx) lost
 its high half — both silently, exit 0, before v6.6.6. A struct of 8 bytes or less
 IS one i64 and works, as does `Str` (a heap handle); for anything wider, return a
@@ -2916,13 +3080,45 @@ var r = get_value();             # r = 42
 
 **Deferred initializers — no count cap (6.6.9).** A top-level `var` is baked into
 the image when its initializer folds to a **nonzero** integer constant (`var x = 42;`,
-`var m = 1 << 4;`, `var n = -1;`). Every other top-level `var` — a call
+`var m = 1 << 4;`, `var n = -1;`), and so is every array initializer
+`var b: T[N] = { … };` (6.6.16 — see *Array initializers* above; it was a run of byte
+stores at startup). Every other top-level `var` — a call
 (`var t = alloc(1024);`), an identifier or other non-constant expression, `= 0`, a
-string literal, a byte-array literal `var b[4] = { … };`, a top-level destructure
+string literal, a top-level destructure
 `var a, b = f();` — is a *deferred initializer*: its right-hand side runs once at
 startup, in declaration order. (`= 0` is deferred only
 because the static path reserves 0 for "no value"; the store is redundant and harmless.)
 An uninitialized top-level `var x;` is an error — write `var x = 0;`.
+
+**An initializer that names an enum constant is a constant too (6.6.16).** `var x = A;`,
+`var x = E.A;`, `var x = A + 1;`, `var x: u8 = A;` — any initializer that folds once enum
+constants are known, the enum declared above or below — is baked into the image like
+`var x = 42;`. The name resolves exactly as a read of it does: if a later global hides the
+enum constant (`enum E { A = 3; } var x = A; var A = 9;`), `x` is 9. So is a struct literal
+whose every field is a constant (`var p = Pt { A, 0x66 };`, nested struct fields included, a
+float literal in a float field); a field that is a call, a name, a string or a `Str` leaves
+the whole literal to the startup store. The startup store still runs (the code does not
+change), so the visible difference is the value before it: an initializer that runs earlier —
+`var y = g();` above `var x = A;`, `g` reading `x` — now sees it, as it already saw a literal.
+
+**Kernel builds.** An x86 `kernel;` (or `CYRIUS_KERNEL=1`) build runs the deferred
+initializers **after** the top-level program — its top-level asm (the multiboot shim) must run
+first. A kernel whose program never returns never runs them, and the program reads what the
+image holds: the value, for everything baked above; 0 for the rest. The compiler names each
+declaration it leaves to that late replay, once:
+
+```
+# in a `kernel;` build:
+fn hostname() { return "agnos"; }
+var host = hostname();     # warning: in a kernel build the initializer of 'host' runs after
+                           # the top-level program: the program does not see its value, ...
+```
+
+It is a warning, not an error, and it is only issued where it is true: not by a host build,
+not by an aarch64 kernel build (it runs the initializers before the program), and not by an
+EFI application that defines `efi_main` (`CYRIUS_TARGET_EFI=1`: they run before `efi_main` is
+called). The fix is a constant, an assignment in the program, or a function that returns the
+value (a string literal inside a fn is an address baked into its code).
 
 Until 6.6.8 deferred initializers were capped at **4096 per compilation unit**
 (`too many initialized globals (max 4096)`), and this section documented the counting
@@ -2951,8 +3147,15 @@ var a = 7;        # warning: duplicate symbol 'a' redefined with conflicting val
   discarded.
 - A **computed** redeclaration runs in declaration order like any deferred
   initializer: `var a = 5; var b = a; var a = f();` gives `b == 5` and `a == f()`.
-- An array's `= { .. }` byte list is a sequence of byte stores, so two byte-list
-  declarations of one array both run, in order.
+- Two `= { .. }` lists for one array both apply, in order: the later list's
+  elements overwrite the earlier one's, and the bytes it does not list keep the
+  earlier values. A constant **scalar** redeclaration after an array list wins
+  whole, as above.
+- A list is a constant initializer, so the first rule covers it too (6.6.16): over
+  an earlier `= 0` or computed initializer of the name it is the value from
+  program start — `var a = f(); var a[1] = {0, 4};` runs `f()` and reads `0x400`
+  — and over an earlier scalar **constant** it keeps the bytes it does not list
+  (`var a = 0x0506; var a[1] = {9};` reads `0x0509`).
 - A redeclaration that changes the **type or size** (`var a = 5;` then
   `var a: i32 = 7;`, `var q[8];` then `var q[16];`) is an error naming the global —
   one of the two would read the other's storage in the wrong shape. Same rule as a

@@ -1682,6 +1682,28 @@ _chk_gate "$ROOT/tests/gates/diagnostics/missing_helper_error_exits_1.sh"
 # (default and CYRIUS_MONOMORPH=0) keep compiling.
 _chk_gate "$ROOT/tests/gates/diagnostics/typed_array_elem_refusals.sh"
 
+# 6.6.16 (C8) — one type-name resolver (tests/tcyr/frontend/type_name_resolver.tcyr runs the
+# sizes): a name that is no type, or a prefix misspelling (`i8x`), is refused by name at every
+# annotation site, sizeof and #assert sizeof — once, no cascade, no binary — and every name of the
+# vocabulary still compiles where it is taken (a Str param by name, enums, type parameters).
+_chk_gate "$ROOT/tests/gates/diagnostics/type_name_refused.sh"
+
+# 6.6.16 (C1) — a global array initializer `var X: T[N] = { .. }` is N elements of T, baked into the
+# image (tests/tcyr/crossos/global_array_initializer.tcyr runs the values on every host). These pin:
+# the shapes it refuses by name (count, range, a non-constant, an element type no list fills, a list
+# inside a top-level block); that a `kernel;` build (x86 and EFI) carries the bytes in its image
+# with no store behind the program; and that cx, which has no image, stores the same bytes.
+_chk_gate "$ROOT/tests/gates/frontend/array_initializer_refusals.sh"
+_chk_gate "$ROOT/tests/gates/platform/kmode_array_initializer_baked.sh"
+_chk_gate "$ROOT/tests/gates/codegen/cx_array_initializer.sh"
+
+# 6.6.16 (C6) — in an x86 `kernel;` build a global initializer that names an enum holds its value
+# from the first instruction: a scalar that folds and an all-constant struct literal are baked into
+# the image (run under CYRIUS_ELF64_KERNEL=1, image-scanned for the default kernel build and EFI),
+# and what the late replay still runs is named once per declaration — true only there (no warning
+# in a host build, an aarch64 kernel build, or an EFI build with efi_main).
+_chk_gate "$ROOT/tests/gates/platform/kmode_enum_initializer_baked.sh"
+
 # 6.6.13 (M3) — inside a closure, copying a captured struct copies its bytes
 # (tests/tcyr/crossos/closure_capture_struct_copy.tcyr runs the copies on every host). This pins
 # the compile-time half: a captured struct or vector of ANOTHER type is refused by name in the field

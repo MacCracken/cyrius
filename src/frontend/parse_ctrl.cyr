@@ -489,7 +489,7 @@ fn PARSE_FOR(S): i64 {
     }
     if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); }
     STI(S, GTI(S) + 1);
-    PARSE_STMT(S);
+    _PARSE_STMT_NESTED(S);   # 6.6.16: the init is inside the `for` (parse.cyr)
     var slt = L64(S + 0x18F838);
     var sbk = L64(S + 0x18F840);
     var scfw = L64(S + 0x18F898);

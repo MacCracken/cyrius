@@ -645,11 +645,15 @@ if (_had_error == 0) {
     _write_out_all(&entry_off, 4);
     # Write bytecode
     _write_out_all(S + 0x54A000, cp);
-    # Write variable data (zeroed)
-    var zero_byte[1];
-    store8(&zero_byte, 0);
+    # Write variable data: zero, but for the array initializers (6.6.16, C1). cxvm copies the
+    # var data into the guest, so a list is baked here exactly as every image target bakes it
+    # (_gai_bake, util.cyr) and holds from the first instruction — it was stored at its replay
+    # point, so an earlier initializer that read it saw 0 on cx alone. CHANGELOG [6.6.16]
+    var vdat = alloc(totvar + 8);
     vi = 0;
-    while (vi < totvar) { _write_out_all(&zero_byte, 1); vi = vi + 1; }
+    while (vi < totvar) { store64(vdat + vi, 0); vi = vi + 8; }
+    _gai_bake(S, vdat, 0);
+    _write_out_all(vdat, totvar);
     # Write string data
     _write_out_all(S + 0x21A000, spos);
 }

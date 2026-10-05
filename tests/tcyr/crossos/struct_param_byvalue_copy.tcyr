@@ -1,6 +1,16 @@
 # struct_param_byvalue_copy.tcyr — 6.6.6. A BY-VALUE STRUCT PARAMETER OVER 8 BYTES IS
 # ADDRESS-PASSED, AND EVERY PATH THAT COPIES OR RETURNS IT HAS TO GO THE EXTRA INDIRECTION.
 #
+# ⭐ 6.6.16 (C7) — AND IT IS A COPY. The address-passing ABI below is unchanged, but the callee
+# now copies the caller's struct into its own frame in its prologue (`_sptr_params_localize`,
+# after `_stkp_flush`), and from there the parameter is an INLINE local. So every subject in this
+# file now runs through the inline-local paths, and the two rows that pinned the old ALIAS — a
+# write through `&q` and a field write through `q` reaching the caller — are flipped: the caller's
+# struct is untouched (3, was 77). The 6.6.6 indirection arms this file was written for
+# (`_AGC_DREF`, `_op_operand_local`, the `&q` arm, `_sptr_param_temp` in PARSE_RETURN) are still
+# compiled and are reached only by a `p: *T` parameter now. Every argument FORM is pinned in
+# struct_arg_is_copy.tcyr; this file keeps the operation forms.
+#
 # ⛔ THE DEFECT, in every release before 6.6.6, silent or fatal depending on the shape. A
 # struct parameter wider than 8 bytes travels as a POINTER (`_param_wants_struct_ptr` sets the
 # callee's structmask and the caller pushes `&local`), so the parameter's frame slot holds the
@@ -35,7 +45,23 @@
 # struct" rather than on "address-passed parameter" turns those into 16-byte header copies and
 # reddens this file.
 #
-# Mutations that redden this file (each applied to the 6.6.6 tree, rebuilt, measured):
+# Mutations that redden this file on the 6.6.16 tree (each applied, rebuilt, measured):
+#   * `_sptr_params_localize` returning at once (the 6.6.6-6.6.15 compiler: no copy, the alias)
+#     -> 2 red: param_amp_write_stays_local 77 and write_stays_in_copy 77 (want 3).
+#   * the copied temp left unnamed (the parameter keeps its name and its pointer slot) -> the
+#     same 2 red.
+#   * the first, plus `_local_is_sptr_param` returning 0 always (the pre-6.6.6 reading of such a
+#     parameter) -> 7 red (q = w aliases, 99; both `return q;` rows 0; the four operator rows a
+#     pointer sum), then a SIGSEGV in the operator group. (The assignment-target group passes
+#     there since 6.6.16's C2: the parameter then reads as a handle, and handle <- value copies.)
+#   * `_local_is_sptr_param` without its `_classify_param_type` exclusion -> no binary: a `Str`
+#     parameter is copied in as an inline struct, so `store64(a + 8, 1)` dispatches `Str_add`.
+# ⚠ Since 6.6.16 the other 6.6.6 mutations below no longer redden THIS file — with the copy on
+# entry a by-value parameter never reaches those arms (measured: the RETURN-half one, the
+# `_op_local_dispatches` one and the `_op_operand_local` one each leave all 32 green). They were
+# measured on the 6.6.6 tree and are kept as the record of why each arm exists; a `p: *T`
+# parameter still depends on them.
+# Mutations that reddened this file on the 6.6.6 tree (each applied, rebuilt, measured):
 #   * `_local_is_sptr_param` returning 0 always (i.e. the pre-6.6.6 compiler) -> the file does
 #     not reach its end: `param_dst_local_src` SIGSEGVs on the very first group.
 #   * dropping only the RETURN half (the two `_sptr_param_temp` calls in PARSE_RETURN)
@@ -124,9 +150,12 @@ fn ret_retptr_param(q: P3): P3 { return q; }
 fn ret_pair_param(q: P2): P2 { return q; }
 
 # ---------------------------------------------- (4) what must NOT change (anti-vacuous) ----
-# A write through a by-value struct parameter still reaches the CALLER's struct: the parameter
-# is address-passed and always was. This bite changed how the struct is COPIED, not the ABI.
-fn writes_through(q: P3) { q.z = 77; return 0; }
+# 6.6.16 (C7): a write to a by-value struct parameter stays in the callee's COPY. Until 6.6.15
+# this row asserted the opposite (77: "a write through a by-value struct parameter still reaches
+# the caller"), which was the alias the user decided against (roadmap Open questions 4). The ABI
+# is unchanged — the struct still arrives by address — but the callee copies it in its prologue.
+# A callee that must write the caller's struct takes `q: *P3` (struct_arg_is_copy.tcyr pins it).
+fn write_stays_in_copy(q: P3) { q.z = 77; return 0; }
 
 # A `Str` parameter (16 B by name, a heap handle by ABI) keeps POINTER-REBIND assignment.
 # `a = b` then clobbering a's length word must be visible through `b` — that is an alias.
@@ -145,11 +174,12 @@ fn param_op_mixed_rhs(q: P3) { var w: P3 = mk3(1, 2, 5); return w + q; }
 fn param_op_agg(q: Acc, w: Acc) { var c: Acc = q + w; return c.a; }
 fn param_op_agg_ctl(q: Acc, w: Acc) { return q.a + w.a; }
 
-# SUBJECT: `&q` must address the CALLER's struct, for reading and for writing, exactly as
-# `q.z` does. Paired with the field form as the control.
+# SUBJECT: `&q` must address the struct `q.z` addresses, for reading and for writing. Paired with
+# the field form as the control. 6.6.16 (C7): that struct is the callee's COPY, so a store through
+# `&q` no longer reaches the caller (until 6.6.15 it did, and this row asserted 77).
 fn param_amp_read(q: P3) { return load64(&q + 16); }
 fn param_amp_read_ctl(q: P3) { return q.z; }
-fn param_amp_write(q: P3) { store64(&q + 16, 77); return 0; }
+fn param_amp_write_stays_local(q: P3) { store64(&q + 16, 77); return load64(&q + 16); }
 
 # ANTI-VACUOUS for group 5: the 6.6.5 rule that a POINTER-MODE (heap-handle) local is NOT an
 # inline aggregate must survive. `p + r` on two heap-mode locals is POINTER ARITHMETIC and
@@ -186,7 +216,8 @@ fn drive_param_op_agg_ctl() {
 }
 fn drive_param_amp_read() { var s: P3 = mk3(1, 2, 9); return param_amp_read(s); }
 fn drive_param_amp_read_ctl() { var s: P3 = mk3(1, 2, 9); return param_amp_read_ctl(s); }
-fn drive_param_amp_write() { var s: P3 = mk3(1, 2, 3); var d = param_amp_write(s); return s.z; }
+fn drive_param_amp_write_stays_local() { var s: P3 = mk3(1, 2, 3); var d = param_amp_write_stays_local(s); return s.z; }
+fn drive_param_amp_write_reads_back() { var s: P3 = mk3(1, 2, 3); return param_amp_write_stays_local(s); }
 
 fn drive_param_dst_local_src() { var s: P3 = mk3(1, 2, 3); return param_dst_local_src(s); }
 fn drive_param_dst_local_src_ctl() { var s: P3 = mk3(1, 2, 3); return param_dst_local_src_ctl(s); }
@@ -207,7 +238,7 @@ fn drive_param_dst_param_src() {
 }
 fn drive_ret_retptr_param() { var s: P3 = mk3(1, 2, 9); var t: P3 = ret_retptr_param(s); return t.z; }
 fn drive_ret_pair_param() { var s: P2 = mk2(3, 4); var t: P2 = ret_pair_param(s); return t.y; }
-fn drive_writes_through() { var s: P3 = mk3(1, 2, 3); var d = writes_through(s); return s.z; }
+fn drive_write_stays_in_copy() { var s: P3 = mk3(1, 2, 3); var d = write_stays_in_copy(s); return s.z; }
 
 fn drive_str_local_rebind() {
     var a = str_from("abcde");
@@ -255,13 +286,14 @@ assert_eq(drive_param_op_agg(), 13, "a struct-RETURNING operator over two parame
 assert_eq(drive_param_op_agg(), drive_param_op_agg_ctl(), "the struct-returning operator matches the field-read sum");
 assert_eq(drive_param_amp_read(), 9, "&q + 16 reads the caller's third field");
 assert_eq(drive_param_amp_read(), drive_param_amp_read_ctl(), "&q agrees with q.z");
-assert_eq(drive_param_amp_write(), 77, "a store through &q reaches the caller's struct");
+assert_eq(drive_param_amp_write_stays_local(), 3, "a store through &q stays in the callee's copy (6.6.16; was 77)");
+assert_eq(drive_param_amp_write_reads_back(), 77, "the store through &q is read back through &q inside the callee");
 
 test_group("what this bite must NOT have changed");
 assert_eq(heaplocal_op_is_ptr_arith(), 0, "a heap-mode struct local still does POINTER arithmetic, no dispatch");
 assert_eq(heaplocal_amp_is_slot(), 9, "&p on a heap-mode struct local is still the SLOT");
 assert_eq(inline_local_amp_is_the_struct(), 9, "&p on an inline struct local is still the struct");
-assert_eq(drive_writes_through(), 77, "a write through a by-value struct parameter still reaches the caller");
+assert_eq(drive_write_stays_in_copy(), 3, "a write to a by-value struct parameter stays in the copy (6.6.16; was 77)");
 assert_eq(drive_str_local_rebind(), 1, "a = b between two Str LOCALS is still a pointer rebind");
 assert_eq(drive_str_param_rebind(), 1, "a = b between two Str PARAMETERS is still a pointer rebind");
 

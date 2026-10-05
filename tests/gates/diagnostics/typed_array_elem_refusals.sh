@@ -145,7 +145,12 @@ runs keep_enum_below 'var g: Late[3];\nvar s = 6;\nenum Late { A = 0; B = 1; }\n
 runs keep_cstring 'fn f(): i64 {\n    var s = 4;\n    var a: cstring[2];\n    store64(&a + 8, "x");\n    return s;\n}\nsyscall(60, f());\n' 4
 # The critic's shape (6.6.13 planning): compiled at 6.6.12 under-sized; must compile and size.
 GEN="${P3}fn sz<T>(p: T): i64 {\n    var x = 7;\n    var px = &x;\n    var a: T[2];\n    return px - &a;\n}\n"
-runs gen_instance "${GEN}syscall(60, sz<P3>(0));\n" 56
+# 6.6.16 (C7): a struct parameter is copied on entry, so `p` must get a struct even though the type
+# comes from `<P3>` — `sz<P3>(0)` is read as the struct's address and faults (139). The copy is 3
+# frame slots, which flips the frame's parity, so the 16-aligned array (v6.3.15) now takes an
+# 8-byte pad: 64 = 48 (P3[2]) + 8 (px) + 8 (pad); it was 56 = 48 + 8 with no copy. Measured: the
+# srcb-4 compiler gives 56 for this program, this one 64, and `p: *T` (no copy) 56 on both.
+runs gen_instance "${GEN}var gz = P3 { 0, 0, 0 };\nsyscall(60, sz<P3>(gz));\n" 64
 runs gen_scalar   "${GEN}syscall(60, sz<i64>(0));\n" 24
 runs gen_mono0    "${GEN}syscall(60, sz(0));\n" 24 CYRIUS_MONOMORPH=0
 GEN2='fn two<A, B>(p: A, q: B): i64 {\n    var x = 7;\n    var px = &x;\n    var a: B[3];\n    var c = || {\n        var d: A[2];\n        return 0;\n    };\n    return px - &a;\n}\n'

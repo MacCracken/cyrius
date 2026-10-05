@@ -21,6 +21,8 @@
 # `q = a;` from a pointer-mode LOCAL into an inline struct, and a callee writing through its
 # by-value parameter, are separate defects (backlogged 2026-10-01, roadmap a2ece50f (a)/(b)) — a
 # control here would pin them. The closure rows of those shapes copy, and are asserted literally.
+# (a) is fixed at 6.6.16 (C2): `q = a;` from a pointer-mode local copies, and its non-closure
+# rows live in struct_ptrmode_assign_copy.tcyr.
 #
 # A declaration from a captured POINTER-mode local stays a pointer bind — the C semantics of
 # `P *b = a` the local form has had since 6.6.5 — and is asserted equal to its control.
