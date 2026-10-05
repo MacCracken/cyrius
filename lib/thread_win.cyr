@@ -291,6 +291,8 @@ fn _chan_take(ch): i64 {
     return v;
 }
 
+# Create a channel with capacity `cap` (its waiter queues sit after the ring's `cap` slots);
+# 0 if an allocation fails.
 fn chan_new(cap): i64 {
     alloc_init();
     var ch = alloc(56);
