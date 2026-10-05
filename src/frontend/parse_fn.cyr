@@ -3837,6 +3837,12 @@ fn _infer_conc_at_cursor(S): i64 {
 # slot >= 64, where a pointer then read as a by-value struct and was copied in. CHANGELOG [6.6.16]
 fn _mark_ptr_param(S): i64 {
     _cur_fn_ptrp = GFLC(S) + 1;
+    # 6.6.17: and its step, sizeof(T), as a mark on the slot the parameter takes next — read only
+    # behind the slot's bit 56, which `_param_record` sets (see `_sl_marks`). Cursor on T; an
+    # unknown T is refused by `_tn_param_check`, so this is quiet. `**T` steps a pointer's 8.
+    var ps = 8;
+    if (PEEKT(S) != 8) { ps = _tn_ptr_step(S, GTI(S), 0 - 1, 1); }
+    SSLICE_W(S, GFLC(S), 0 - 0x7E00 - ps);
     return 0;
 }
 # 6.6.16 (C7) — an int-class parameter's slot facts, once its SLTYPE is set: an `async fn` refuses

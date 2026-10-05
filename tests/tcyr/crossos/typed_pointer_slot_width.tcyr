@@ -9,12 +9,10 @@
 #
 # Each row checks the pointer is the address it was given (`p == &buf`, and an alloc'd heap
 # address), that a load and a store through it land on the right bytes, and that `p + 1` moves by
-# the scale the language ALREADY gave that site — the fix changes the slot's width, never the
-# arithmetic: a local `*i8`/`*i16`/`*i32` is byte arithmetic (+1, what its scalar path did), a
-# local `*i64` / `*u8` +8; a param +1 whatever T; a global declared in the leading declaration
-# block +8; a global declared after the first top-level statement +1/+2/+4 for `*i8`/`*i16`/`*i32`
-# and +8 otherwise. (Those per-site scales disagree with each other; that is pre-existing and
-# recorded in the 6.6.16 CHANGELOG, not changed here.)
+# sizeof(T) — at every site since 6.6.17 (the uniform step is pinned site by site in
+# typed_pointer_step.tcyr). Until 6.6.17 this file pinned the per-site steps 6.6.16 left in place:
+# a local `*i8`/`*i16`/`*i32` +1 and every other local +8 (`*u8` too), a param +1 whatever T, a
+# declaration-block global +8, a later global +1/+2/+4/+8 by T.
 #
 # Mutation ledger (6.6.16, measured on x86): the slot-open compiler fails 6 rows — `p == &buf` and
 # the above-4-GiB address for each of the local `*i8` / `*i16` / `*i32` (the file reports them and
@@ -59,7 +57,7 @@ fn l_i16(): i64 {
     assert_eq(p, &buf, "local *i16 == &buf (the slot is 8 bytes)");
     if (p != &buf) { return 0; }
     assert_eq(load16(p), 0x1110, "local *i16: load through p");
-    assert_eq(load8(p + 1), 0x11, "local *i16: load through p + 1 (+1)");
+    assert_eq(load8(p + 1), 0x12, "local *i16: load through p + 1 (+2)");
     p = &buf + 8;
     assert_eq(p, &buf + 8, "local *i16: reassigned, still 8 bytes");
     return 0;
@@ -71,7 +69,7 @@ fn l_i32(): i64 {
     assert_eq(p, &buf, "local *i32 == &buf (the slot is 8 bytes)");
     if (p != &buf) { return 0; }
     assert_eq(load32(p), 0x13121110, "local *i32: load through p");
-    assert_eq(load8(p + 1), 0x11, "local *i32: load through p + 1 (+1)");
+    assert_eq(load8(p + 1), 0x14, "local *i32: load through p + 1 (+4)");
     return 0;
 }
 # A stack address can sit below 4 GiB (Windows), where a 4-byte slot would still compare equal:
@@ -96,7 +94,7 @@ fn l_u8(): i64 {
     var p: *u8 = &buf;
     assert_eq(p, &buf, "local *u8 == &buf");
     if (p != &buf) { return 0; }
-    assert_eq(load8(p + 1), 0x18, "local *u8: load through p + 1 (+8, unchanged)");
+    assert_eq(load8(p + 1), 0x11, "local *u8: load through p + 1 (+1)");
     return 0;
 }
 fn l_i64(): i64 {
@@ -118,12 +116,12 @@ fn l_capture(): i64 {
     return 0;
 }
 
-# ---- params: a `*T` param was always an 8-byte slot; `p + 1` is +1 whatever T ----
+# ---- params: a `*T` param was always an 8-byte slot; `p + 1` is +sizeof(T) (6.6.17) ----
 fn p_i8(p: *i8, b): i64 { assert_eq(p, b, "param *i8 == &buf"); assert_eq(load8(p + 1), 0x11, "param *i8: p + 1"); return 0; }
-fn p_i16(p: *i16, b): i64 { assert_eq(p, b, "param *i16 == &buf"); assert_eq(load8(p + 1), 0x11, "param *i16: p + 1"); return 0; }
-fn p_i32(p: *i32, b): i64 { assert_eq(p, b, "param *i32 == &buf"); assert_eq(load8(p + 1), 0x11, "param *i32: p + 1"); return 0; }
+fn p_i16(p: *i16, b): i64 { assert_eq(p, b, "param *i16 == &buf"); assert_eq(load8(p + 1), 0x12, "param *i16: p + 1 (+2)"); return 0; }
+fn p_i32(p: *i32, b): i64 { assert_eq(p, b, "param *i32 == &buf"); assert_eq(load8(p + 1), 0x14, "param *i32: p + 1 (+4)"); return 0; }
 fn p_u8(p: *u8, b): i64 { assert_eq(p, b, "param *u8 == &buf"); assert_eq(load8(p + 1), 0x11, "param *u8: p + 1"); return 0; }
-fn p_i64(p: *i64, b): i64 { assert_eq(p, b, "param *i64 == &buf"); assert_eq(load8(p + 1), 0x11, "param *i64: p + 1"); return 0; }
+fn p_i64(p: *i64, b): i64 { assert_eq(p, b, "param *i64 == &buf"); assert_eq(load8(p + 1), 0x18, "param *i64: p + 1 (+8)"); return 0; }
 fn params(): i64 {
     var buf: i64[4];
     pattern(&buf);
@@ -135,7 +133,7 @@ fn params(): i64 {
     return 0;
 }
 
-# ---- globals in the leading declaration block: 8-byte slots, `p + 1` is +8 ----
+# ---- globals in the leading declaration block: 8-byte slots, `p + 1` is +sizeof(T) ----
 var D_i8: *i8 = 0;
 var D_i16: *i16 = 0;
 var D_i32: *i32 = 0;
@@ -149,8 +147,8 @@ fn decl_globals(): i64 {
     assert_eq(D_i32, &GBUF, "global *i32 == &GBUF");
     assert_eq(D_u8, &GBUF, "global *u8 == &GBUF");
     assert_eq(D_i64, &GBUF, "global *i64 == &GBUF");
-    assert_eq(load8(D_i8 + 1), 0x18, "global *i8: p + 1 (+8)");
-    assert_eq(load8(D_i32 + 1), 0x18, "global *i32: p + 1 (+8)");
+    assert_eq(load8(D_i8 + 1), 0x11, "global *i8: p + 1 (+1)");
+    assert_eq(load8(D_i32 + 1), 0x14, "global *i32: p + 1 (+4)");
     assert_eq(load8(D_i64 + 1), 0x18, "global *i64: p + 1 (+8)");
     return 0;
 }
@@ -168,7 +166,7 @@ params();
 test_group("global *T (declaration block)");
 decl_globals();
 
-# ---- globals after the first top-level statement: 8-byte slots, `p + 1` scales by iN ----
+# ---- globals after the first top-level statement: 8-byte slots, `p + 1` is +sizeof(T) ----
 var A_i8: *i8 = &GBUF;
 var A_i16: *i16 = &GBUF;
 var A_i32: *i32 = &GBUF;
@@ -183,7 +181,7 @@ fn after_globals(): i64 {
     assert_eq(load8(A_i8 + 1), 0x11, "late global *i8: p + 1 (+1)");
     assert_eq(load8(A_i16 + 1), 0x12, "late global *i16: p + 1 (+2)");
     assert_eq(load8(A_i32 + 1), 0x14, "late global *i32: p + 1 (+4)");
-    assert_eq(load8(A_u8 + 1), 0x18, "late global *u8: p + 1 (+8)");
+    assert_eq(load8(A_u8 + 1), 0x11, "late global *u8: p + 1 (+1)");
     assert_eq(load8(A_i64 + 1), 0x18, "late global *i64: p + 1 (+8)");
     return 0;
 }

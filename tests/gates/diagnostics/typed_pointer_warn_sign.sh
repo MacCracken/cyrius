@@ -220,5 +220,31 @@ if [ "$crc" -ne 0 ]; then echo "  FAIL axis 9: a *T field / a *T return did not 
 elif [ "$n" -ne 0 ]; then echo "  FAIL axis 9: a *T field / a *T return bound to a *T local warned $n time(s)"; fail=1
 else echo "  ok axis 9: a *T field and a *T return are pointers"; fi
 
+# --- axis 10 (6.6.17): a `*T` PARAMETER, a CAPTURED `*T` local and `G += n` on a `*T` global are
+# pointers — each loaded (or left) with scale 0 before 6.6.17, so these copies warned falsely.
+cat > "$T" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+var arr[8];
+var G: *i32 = 0;
+fn f(p: *i32): i64 {
+    var q: *i32 = p;
+    var c: *i16 = &arr;
+    var k = || { var r: *i16 = c; return r; };
+    G = &arr;
+    G += 1;
+    return callptr(k) + q;
+}
+var ec = 0;
+syscall(60, ec);
+EOF
+crc=0
+"$CC" < "$T" > "$O" 2>"$E" || crc=$?
+n=$(warns)
+if [ "$crc" -ne 0 ]; then echo "  FAIL axis 10: the fixture did not compile (rc $crc)"; fail=1
+elif [ "$n" -ne 0 ]; then echo "  FAIL axis 10: a *T param / a captured *T / G += n warned $n time(s)"; fail=1
+else echo "  ok axis 10: a *T param, a captured *T and G += n are pointers"; fi
+
 [ "$fail" -eq 0 ] || { echo "FAIL: typed-pointer-warn-sign"; exit 1; }
 echo "PASS: typed-pointer-warn-sign — warns on typed pointers only, not on width/float-annotated locals"

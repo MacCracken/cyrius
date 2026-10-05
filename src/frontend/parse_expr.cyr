@@ -193,6 +193,16 @@ fn _cl_snap_is_sptr(S, esl): i64 {
     if (_classify_param_type(S, L64(S + 0x1A6018 + (sid - 1) * 8)) != 0) { return 0; }
     return 1;
 }
+# 6.6.17 — the step of enclosing slot `esl` when it is a typed pointer (`_slot_ptr_step`, read
+# from the snapshot: bit 56 of its depth word, the mark in its slice-width word), else 0. A
+# capture of one loaded with scale 0, so `p + 1` stepped 1 and `var q: *T = p;` warned.
+fn _cl_snap_ptr_step(esl): i64 {
+    if (_cl_snap == 0) { return 0; }
+    if (((L64(_cl_snap + _cl_snap_n * 8 + esl * 8) >> 56) & 1) == 0) { return 0; }
+    var w = L64(_cl_snap + _cl_snap_n * 24 + esl * 8);
+    if (w <= 0 - 0x7E01) { return 0 - w - 0x7E00; }
+    return 8;
+}
 # Word offset of capture `capi` inside the env object (slot 0 is the fn pointer).
 fn _cl_cap_woff(capi): i64 {
     var off = 1;
@@ -221,6 +231,8 @@ fn _CL_CAP_WORDS_RA(S, capi): i64 {
 # aggregate dispatches, exactly as the enclosing-local and global rungs decide it.
 # CHANGELOG [6.6.5]
 fn _CL_CAP_OPTYPE(S, esl, capi): i64 {
+    var ps = _cl_snap_ptr_step(esl);   # 6.6.17: a captured typed pointer carries its step
+    if (ps > 0) { SPSC(S, ps); return 0; }
     if (_cl_snap_span(esl) < 1) { return 0; }
     var t = _cl_snap_type(esl);
     if (t >= 0) { return 0; }
@@ -1909,7 +1921,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
                         STI(S, GTI(S) + 1);  # consume ]
                         return 0;
                     } }
-                var lt = GLTYPE(S, li);
+                var lt = _load_lt(S, li);   # 6.6.17: a typed pointer's value is a plain word
                 # v6.2.19 math arc: f64/f32 locals — load the 8-byte value and tag
                 # the expression f64/f32 so PEXPR/PARSE_TERM route operators to the
                 # f64 builtins (skip the SPSC pointer-scale + sub-word paths below).

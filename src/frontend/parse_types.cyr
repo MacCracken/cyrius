@@ -288,47 +288,64 @@ fn _tn_var_ann(S, ti, vnoff): i64 {
     return _tn_ann(S, ti, vnoff);
 }
 
-# ⛔ 6.6.16 — A LOCAL `*i8` / `*i16` / `*i32` TRUNCATED THE POINTER. Its pointer scale (1/2/4)
-# was written as the local's SLTYPE, and a positive SLTYPE below 8 IS a narrow scalar's width
-# (parse_expr.cyr: "no sub-i64 typed pointers exist, so 1/2/4 are always scalars"): the slot was
-# stored and loaded 1/2/4 bytes wide, so `var p: *i8 = &buf;` held the low byte of the address —
-# `p == &buf` false, `load8(p + 1)` SIGSEGV, silently. A `*T` local is an 8-byte pointer whatever
-# T is: SLTYPE 0, a plain word, whose `+` is byte arithmetic — the scale these three already had
-# (the scalar path reset it to 1), so no arithmetic changes. `*i64` and every other `*T` keep
-# SLTYPE 8, the scale-8 typed pointer. Globals and params never had the leak (8-byte slots).
-# CHANGELOG [6.6.16]
+# ⛔ 6.6.17 — `p + n` ON A `*T` STEPS sizeof(T) ELEMENTS, AT EVERY SITE (the user's decision,
+# 2026-10-05). The step used to depend on WHERE the pointer was declared: a local `*i8` / `*i16` /
+# `*i32` stepped 1 and every other local `*T` 8 (so `*u8` stepped 8 and `*Pt` 8); a parameter 1
+# whatever T (a `*f32` parameter was even an f32, so `p + 1` was a float add, and a `*Pt` one
+# dispatched `Pt_add`); a closure-captured `*T` 1; a declaration-block global 8; a global after
+# the first statement 1/2/4/8 by T; and `p += n` 1 everywhere. Measured across ~/Repos: no source
+# declares a `*T` at all, so nothing relied on the old steps (drafts b7-measure).
+# A `*T` slot stays a full 8-byte word (6.6.16 C8: a narrow SLTYPE truncated the pointer). The
+# step is carried on the slot as a MARK in the slice-width table, `0 - 0x7E00 - step`, read only
+# when bit 56 of the depth word says the slot is a typed pointer (SLPTRP — set here for a local,
+# by `_param_record` for a parameter): the slice-width table is not reset for a parameter's slot,
+# so a mark is only trusted behind that bit, which every slot gets fresh. A step-8 local keeps
+# SLTYPE 8, the load path it always had. The mark rides the closure snapshot with the depth word
+# (`_cl_snap_ptr_step`). CHANGELOG [6.6.17]
+# `ps` is PARSE_VAR's pscale: > 0 a pointer's step; 0 or `0 - sid` / a vector descriptor for
+# anything else, which is the SLTYPE as it stands.
 fn _sl_ptr_type(S, li, ps): i64 {
-    if (ps > 0) { if (ps < 8) { SLTYPE(S, li, 0); return 0; } }
+    if (ps > 0) { if (ps != 8) { SLTYPE(S, li, 0); return 0; } }
     SLTYPE(S, li, ps);
     return 0;
 }
-# ... but the slot's width is not its pointer-ness: an SLTYPE-0 load leaves the expression scale
-# 0, "not a pointer", so `var q: *i16 = p;` / `= p + 1` warned "assigning non-pointer to typed
-# pointer" about a pointer (the narrow slot had loaded with scale 1, the byte step these three
-# keep). So such a local also carries a MARK, read at its load to set scale 1 again — on an
-# 8-byte load. Scale 1 multiplies by nothing (EPTR_SCALE), so no emitted byte changes; only the
-# two "non-pointer" warnings read it. The mark lives in the slice-width table (SSLICE_W), the
-# same table as the sign mark: slice code reads only a POSITIVE width and the sign mark (-1 / -2
-# / -4) is read only for SLTYPE 1..7, so this SLTYPE-0 slot's `0 - 0x7E00` is seen by nothing
-# else, and it rides the closure local snapshot with the rest of the table.
 fn _sl_marks(S, li, sgn, st, sw, ps): i64 {
     if (sgn == 1) { if (sw == 0) { SSLICE_W(S, li, 0 - st); } }
-    if (ps > 0) { if (ps < 8) { SSLICE_W(S, li, 0 - 0x7E00); } }
+    if (ps > 0) {
+        SSLICE_W(S, li, 0 - 0x7E00 - ps);
+        SLPTRP(S, li);
+    }
+    return 0;
+}
+# The step of a typed-pointer slot `li` (a local or a `p: *T` parameter), 0 when it is none.
+fn _slot_ptr_step(S, li): i64 {
+    if (GLPTRP(S, li) == 0) { return 0; }
+    var w = GSLICE_W(S, li);
+    if (w <= 0 - 0x7E01) { return 0 - w - 0x7E00; }
+    return 8;
+}
+# The type a VALUE read of local `li` is made at (PARSE_FACTOR, `x OP= ..`): a typed pointer is a
+# plain word (0) whatever its SLTYPE says — a `p: *f32` parameter's slot is typed f32 and a
+# `p: *Pt` one `0 - sid` (that is what `p.x` reads through), but its VALUE is an address, so it is
+# neither a float nor an operator-overloading operand. Step-8 locals keep SLTYPE 8.
+fn _load_lt(S, li): i64 {
+    var lt = GLTYPE(S, li);
+    if (GLPTRP(S, li) == 0) { return lt; }
+    if (lt == 8) { return 8; }
     return 0;
 }
 # An SLTYPE-0 local was just loaded: its marks — the untyped-float flag (_UFV_L) and the pointer
-# mark above.
+# step above.
 fn _sl_load_marks(S, li): i64 {
     _UFV_L(S, li);
-    if (GSLICE_W(S, li) == 0 - 0x7E00) { SPSC(S, 1); }
+    var ps = _slot_ptr_step(S, li);
+    if (ps > 0) { SPSC(S, ps); }
     return 0;
 }
 
-# The pointer annotation `*T` at token `ti` (T, the token after the `*`): the pointer scale,
-# with T resolved — an unknown T is refused (it was taken silently). 8 for every T but the
-# signed i8 / i16 / i32, which keep their 1 / 2 / 4: a global declared after the first
-# statement scales by it. uN deliberately keeps 8 (what it always had). A local `*iN` must NOT
-# make its slot that wide — see _sl_ptr_type. `**T` and `*u128` are left to their callers.
+# The pointer annotation `*T` at token `ti` (T, the token after the `*`), resolved — an unknown T
+# is refused (it was taken silently). 6.6.17: only a slice element `[*T]` / `slice<*T>` asks this
+# now (whose width is a pointer's 8); every `*T` variable's step is sizeof(T), `_tn_ptr_step`.
 fn _tn_ptr(S, ti, vnoff): i64 {
     if (TOKTYP(S, ti) != 2) { return 8; }
     var c = _tn_resolve_at(S, ti);

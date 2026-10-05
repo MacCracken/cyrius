@@ -517,19 +517,25 @@ var b = *(p + 1);      # 20 (adds 8 bytes, not 1)
 
 A `*T` variable is an 8-byte address whatever `T` is, and `*p` always loads 8 bytes
 (use `load8` / `load16` / `load32` for narrower reads). `T` must name a type
-([Type names](#type-names-6616)). Only `p + n` depends on the spelling, and it is what it
-has always been: a local `*i64` (or `*u8`, `*Pt`, …) steps 8 bytes, a local `*i8` /
-`*i16` / `*i32` steps 1, a `*T` parameter steps 1, and a global steps 8 when declared in
-the leading declaration block and 1 / 2 / 4 / 8 by `T` after the first statement. When
-the step matters, write the byte offset on an untyped address (`&buf + i * 4`).
+([Type names](#type-names-6616)). **`p + n`, `p - n`, `p += n` and `p -= n` step
+`sizeof(T)` elements, wherever `p` is declared** — a local, a parameter, a global, a
+closure capture, a struct field or a fn result: `*u8` / `*i8` step 1, `*i16` 2, `*i32` /
+`*u32` / `*f32` 4, `*i64` 8, `*Pt` `sizeof(Pt)`, a pointer to a pointer 8. A `*T` value
+is a pointer, not a `T`: `p + 1` on a `p: *f32` parameter is address arithmetic (not a
+float add), and on a `p: *Pt` parameter it is not `Pt`'s `+` overload — `p.x` still reads
+through it. To step in bytes, use an untyped address (`&buf + i * 4`, or `var q = p;`).
+⚠ Before 6.6.17 the step depended on where `p` was declared: a local `*i8` / `*i16` /
+`*i32` stepped 1 and every other local `*T` 8 (`*u8` too), a parameter or a captured
+`*T` 1, a global 8 in the leading declaration block and 1 / 2 / 4 / 8 by `T` after the
+first statement, and `p += n` 1 everywhere. No source in the ecosystem declared a `*T`,
+so the rule changed without a transition error.
 ⛔ Before 6.6.16 a **local** `var p: *i8` / `*i16` / `*i32` was stored in 1 / 2 / 4
 bytes, truncating the address: `p == &buf` was false and `load8(p + 1)` crashed.
 
 `*T` is also a struct or union **field** type and a fn **return** type (and a multi-value
 return element) — `struct PH { name: *Str; }`, `fn first(q: *Q): *Pt`. Either is an 8-byte
-pointer, and the value it yields steps `sizeof(T)` in `p + n` (`*u8` 1, `*i32` 4, `*Pt`
-`sizeof(Pt)`, `**T` 8), so it binds to a `*T` local without a warning. Before 6.6.17 both
-positions were the parse error `expected identifier, got '*'`.
+pointer whose value steps `sizeof(T)` like any other, so it binds to a `*T` local without a
+warning. Before 6.6.17 both positions were the parse error `expected identifier, got '*'`.
 
 ## Structs
 

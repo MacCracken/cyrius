@@ -3302,9 +3302,9 @@ fn PARSE_GVAR_REG(S): i64 {
     if (PEEKT(S) == 49) {
         STI(S, GTI(S) + 1);
         ann_ti = GTI(S);
-        # 6.6.16 (C8): `*T` names a type (T resolved whole, an unknown T refused); the
-        # declaration block's global pointer keeps scale 8 whatever T is, as it always had.
-        if (PEEKT(S) == 8) { STI(S, GTI(S) + 1); _tn_ptr(S, GTI(S), noff); psc = 8; STI(S, GTI(S) + 1); SKIP_GENERICS(S); }
+        # 6.6.16 (C8): `*T` names a type (T resolved whole, an unknown T refused). 6.6.17: its
+        # scale is sizeof(T), as at every other site (it was 8 here whatever T was).
+        if (PEEKT(S) == 8) { psc = _ptr_annot(S, noff, 0); }
         elif (PEEKT(S) == 105) { ann_scalar = 16; STI(S, GTI(S) + 1); }
         else {
             if (PEEKT(S) == 2) {
@@ -4486,12 +4486,9 @@ fn PARSE_VAR(S): i64 {
         STI(S, GTI(S) + 1);  # consume :
         ann_ti = GTI(S);
         if (PEEKT(S) == 8) {
-            # Pointer type `*T`: T resolved by its WHOLE name, an unknown T refused; the scale
-            # (8, or 1/2/4 for *i8/*i16/*i32) — a local keeps an 8-byte slot (_sl_ptr_type).
-            STI(S, GTI(S) + 1);  # consume *
-            pscale = _tn_ptr(S, GTI(S), noff);   # 6.6.16 (C8)
-            STI(S, GTI(S) + 1);
-            SKIP_GENERICS(S);
+            # Pointer type `*T`: T resolved by its WHOLE name, an unknown T refused; the scale is
+            # sizeof(T) (6.6.17) — a local keeps an 8-byte slot (_sl_ptr_type).
+            pscale = _ptr_annot(S, noff, 0);
         } elif (PEEKT(S) == 28) {
             # v5.8.9 §1: `[T]` slice type sugar — `var x: [u8] = ...`.
             # v5.8.10 §2: 16-byte {ptr, len} slot (u128 path).
