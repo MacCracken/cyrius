@@ -12,9 +12,11 @@
 #
 # THE FIX. The dispatcher asks the 6.6.13 I11 classifier (`_str_arg_kind`), which types `x` in
 # PARSE_FACTOR's order (a local or param decides by itself, then a closure capture, then a
-# global by GVTYPE where GVPM marks a struct, else GVDSID), the base of `x.f` in
-# PARSE_FIELD_LOAD's order, and a call by its declared return — and only when the primary ENDS
-# the argument.
+# global by GVTYPE where GVPM marks a struct, else GVDSID), the receiver of `x.f` / `x.m(..)` in
+# PARSE_FIELD_LOAD's order, and a call or method by its declared return — and only when the
+# head plus at most one `.f` / `.m(..)` step ENDS the argument. A call result is typed by its
+# OWN return: the first cut of this fix dropped `s.cat(t)` (routed before by `s`'s type, right
+# only by luck — `s.len()` went to `show_str` the same way), so the method rows below pin both.
 #
 # Each row calls a user pair that answers which one ran: `show` 1, `show_str` 2. The pair never
 # reads its argument, so a misroute is a wrong number here, not a crash. The frontend is shared
@@ -37,6 +39,22 @@ fn two(a, b): i64 { return 1; }
 fn two_str(s: Str): i64 { return 2; }
 
 fn mk(): Str { return str_from("made"); }
+# A struct returned BY VALUE, for the call-result rows. 24 bytes: cx has no 16-byte int-class
+# pair-return ABI, and this file runs there too.
+struct Rec { name: Str; n; pad; }
+fn mkh(): Rec {
+    var h: Rec;
+    h.name = str_from("hname");
+    h.n = 7;
+    h.pad = 0;
+    return h;
+}
+# User methods on a non-Str struct: one declared `: Str`, one not.
+fn Rec_getname(self: Rec): Str { return self.name; }
+fn Rec_num(self: Rec): i64 { return self.n; }
+# A generic declared `: Str` (the template's return is the call's), and one returning `T`.
+fn gstr<T>(x: T): Str { return str_from("generic"); }
+fn gid<T>(x: T): T { return x; }
 
 # ---- registered by PARSE_GVAR_REG: declared before the first top-level statement ----
 var gs: Str = str_from("explicit-global");
@@ -69,10 +87,16 @@ var tl_gi2 = show(gi2);
 var tl_gh = show(gh.name);
 var tl_data = show(gs.data);
 var tl_len = strlen(gs);
+var tl_m = show(gs.clone());
+var tl_mlen = show(gs.len());
+var tl_g = show(gstr<i64>(1));
 
 fn tail_gs(): i64 { return show(gs); }
 fn tail_gi(): i64 { return show(gi2); }
 fn tail_field(): i64 { return show(gh.name); }
+fn tail_method(): i64 { return show(gs.clone()); }
+fn tail_method_len(): i64 { return show(gs.len()); }
+fn tail_call_field(): i64 { return show(mkh().name); }
 fn param_untyped(s): i64 { return show(s); }
 fn param_untyped_nontail(s): i64 { var r = show(s); return r; }
 fn param_str(p: Str): i64 { var r = show(p); return r; }
@@ -99,6 +123,9 @@ fn test_toplevel(): i64 {
     assert_eq(tl_gh, 2, "top level: show(gh.name)");
     assert_eq(tl_data, 1, "top level: show(gs.data)");
     assert_eq(tl_len, 15, "top level: strlen(gs) is the string's length");
+    assert_eq(tl_m, 2, "top level: show(gs.clone())");
+    assert_eq(tl_mlen, 1, "top level: show(gs.len())");
+    assert_eq(tl_g, 2, "top level: show(gstr<i64>(1))");
     return 0;
 }
 
@@ -138,10 +165,48 @@ fn test_tail_and_params(): i64 {
     assert_eq(tail_gs(), 2, "return show(gs);");
     assert_eq(tail_gi(), 2, "return show(gi2);");
     assert_eq(tail_field(), 2, "return show(gh.name);");
+    assert_eq(tail_method(), 2, "return show(gs.clone());");
+    assert_eq(tail_method_len(), 1, "return show(gs.len());");
+    assert_eq(tail_call_field(), 2, "return show(mkh().name);");
     assert_eq(param_untyped("cstr"), 1, "an untyped param named like a Str global (tail)");
     assert_eq(param_untyped_nontail("cstr"), 1, "an untyped param named like a Str global");
     assert_eq(param_str(gs), 2, "a `: Str` param");
     assert_eq(param_str_tail(gs), 2, "a `: Str` param (tail)");
+    return 0;
+}
+
+# A method or call RESULT is typed by its own declared return, never by its receiver or head.
+fn test_results(): i64 {
+    var ls: Str = str_from("local");
+    var lt: Str = str_from("XY");
+    var h = mkh();
+    assert_eq(show(ls.clone()), 2, "a Str method declared `: Str` (clone)");
+    assert_eq(show(ls.cat(lt)), 2, "a Str method declared `: Str` (cat)");
+    assert_eq(show(ls.sub(1, 3)), 2, "a Str method declared `: Str` (sub)");
+    assert_eq(show(ls.len()), 1, "a Str method returning i64 (len) stays on the base");
+    assert_eq(show(ls.data()), 1, "a Str method returning a data pointer (data) stays on the base");
+    assert_eq(show(gs.clone()), 2, "a Str method on a `: Str` global");
+    assert_eq(show(gs.len()), 1, "an i64 Str method on a `: Str` global");
+    assert_eq(show(h.getname()), 2, "a user method declared `: Str` on a non-Str struct");
+    assert_eq(show(h.num()), 1, "a user method returning i64 on the same struct");
+    assert_eq(show(mk().clone()), 2, "a `: Str` method on a `: Str` call's result");
+    assert_eq(show(mk().len()), 1, "an i64 method on a `: Str` call's result");
+    assert_eq(show(mkh().name), 2, "a `: Str` field of a call's result");
+    assert_eq(show(mkh().n), 1, "an untyped field of a call's result");
+    assert_eq(show(mkh().getname()), 2, "a `: Str` method on a call's result");
+    assert_eq(show(mkh().num()), 1, "an i64 method on a call's result");
+    assert_eq(show(gstr<i64>(1)), 2, "an explicit generic declared `: Str`");
+    assert_eq(show(gstr(1)), 2, "an inferred generic declared `: Str`");
+    assert_eq(show(gid<i64>(5)), 1, "an explicit generic returning i64");
+    assert_eq(two(ls.clone(), 0), 1, "an arity-mismatched _str sibling, method argument");
+    # The library pair: strlen -> strlen_str. A misroute reads the header's pointer bytes as a
+    # cstring (3 bytes at this load address), so none of these lengths is 3.
+    assert_eq(strlen(ls.sub(1, 4)), 4, "strlen(ls.sub(1, 4))");
+    assert_eq(strlen(ls.cat(lt)), 7, "strlen(ls.cat(lt))");
+    assert_eq(strlen(gs.clone()), 15, "strlen(gs.clone())");
+    assert_eq(strlen(mkh().name), 5, "strlen(mkh().name)");
+    assert_eq(strlen(h.getname()), 5, "strlen(h.getname())");
+    assert_eq(strlen(gstr<i64>(0)), 7, "strlen(gstr<i64>(0))");
     return 0;
 }
 
@@ -163,12 +228,16 @@ fn test_captures(): i64 {
     var c4 = |k| show(o.name) + k;
     var c5 = |k| show(gs) + k;
     var c6 = |k| show(lt.len) + k;
+    var c7 = |k| show(lt.clone()) + k;
+    var c8 = |k| show(lt.len()) + k;
     assert_eq(fncall1(c1, 0), 1, "a cstr capture named like a Str global stays on the base");
     assert_eq(fncall1(c2, 0), 2, "a Str capture");
     assert_eq(fncall1(c3, 0), 2, "a captured struct's `: Str` field");
     assert_eq(fncall1(c4, 0), 1, "a captured struct's untyped field, a Str-field global of the same name");
     assert_eq(fncall1(c5, 0), 2, "a Str global read inside a closure");
     assert_eq(fncall1(c6, 0), 1, "a Str capture's .len");
+    assert_eq(fncall1(c7, 0), 2, "a `: Str` method on a Str capture");
+    assert_eq(fncall1(c8, 0), 1, "an i64 method on a Str capture");
     return 0;
 }
 
@@ -190,6 +259,7 @@ test_toplevel();
 test_locals();
 test_fields();
 test_tail_and_params();
+test_results();
 test_captures();
 test_lib_pairs();
 var r = assert_summary();

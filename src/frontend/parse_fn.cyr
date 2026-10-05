@@ -1812,76 +1812,120 @@ fn _cl_cap_esl(S, noff): i64 {
     return esl;
 }
 
-var _sca_shape = 0;   # how the argument is written: 0 `x`, 1 `f(..)`, 2 `x.f`
-# What the hint wraps in str_cstr(..): 0 `..`, 1 the base IDENT (`x.data` -> x), 2 the argument
-# as written, 3 the IDENT inside `str_data(x)`.
+var _sca_shape = 0;   # how the argument's head is written: 0 `x`, 1 `f(..)`, 2 `g<..>(..)`
+var _sca_di = 0;      # the `.` of the one `.f` / `.m(..)` step after the head, 0 when none
+# What the hint wraps in str_cstr(..): 0 `..`, 1 the head as written (`x.data` -> x), 2 the
+# argument as written, 3 the IDENT inside `str_data(x)`.
 var _sca_op = 0;
 # What the argument at the cursor hands a `: cstring` param: 1 a Str, 2 a Str's data pointer
-# (`x.data`, `str_data(..)`), 0 not known — only a SINGLE primary that ends the argument is typed.
-# A pure peek (it writes only `_sca_shape` / `_sca_op`, which the warning recomputes), and it
-# does not depend on CYRIUS_TYPE_CHECK: PARSE_FNCALL's overload dispatcher routes `base(x, ..)`
-# to `base_str` exactly when this answers 1 for the FIRST argument, so a first argument the
-# warning would call "Str-typed" never reaches a base that has an arity-compatible `_str`
-# sibling — the call is routed instead. Each name is typed in the order codegen reads it: `x` as
-# PARSE_FACTOR does (`_arg_name_sid`), the base of `x.f` as PARSE_FIELD_LOAD does (`_recv_sid`).
+# (`x.data`, `str_data(..)`), 0 not known. Only a head (`x`, `f(..)`, `g<..>(..)`) with at most
+# ONE step after it (`.f`, `.m(..)`) that together END the argument is typed: `x.f.g`,
+# `x.m().n()`, `s + 8` and `load64(p)` are 0.
+# A pure peek (it writes only `_sca_shape` / `_sca_di` / `_sca_op`, which the warning recomputes),
+# and it does not depend on CYRIUS_TYPE_CHECK: PARSE_FNCALL's overload dispatcher routes
+# `base(x, ..)` to `base_str` exactly when this answers 1 for the FIRST argument, so a first
+# argument the warning would call "Str-typed" never reaches a base that has an arity-compatible
+# `_str` sibling — the call is routed instead. Each piece is typed the way codegen reads it: `x`
+# as PARSE_FACTOR does (`_arg_name_sid`), a call by its callee's declared return, the receiver of
+# `x.f` / `x.m(..)` as PARSE_FIELD_LOAD does (`_recv_sid`), a method by `<Struct>_<m>`'s return.
+# A call RESULT is typed by its declared return, never by its receiver or its head: the first
+# 6.6.16 cut dropped the method shape, so `println(s.cat(t))` — routed before by `s`'s type,
+# which is right only by luck (`s.len()` went to `_str` the same way) — printed pointer bytes.
 # CHANGELOG [6.6.16]
 fn _str_arg_kind(S, ssid): i64 {
     var ti = GTI(S);
+    _sca_shape = 0;
+    _sca_di = 0;
     if (TOKTYP(S, ti) != 2) { return 0; }
     if (_tok_ends_arg(S, ti + 1) == 1) {
-        _sca_shape = 0;
         _sca_op = 2;
         if (_arg_name_sid(S, TOKVAL(S, ti)) == ssid) { return 1; }
         return 0;
     }
-    if (TOKTYP(S, ti + 1) == 10) {
-        var r = _str_call_kind(S, ti, ssid);
+    var o = _gcall_open(S, ti);
+    if (o >= 0) {
+        var r = _str_call_kind(S, ti, o, ssid);
         return r;
     }
     if (TOKTYP(S, ti + 1) != 41) { return 0; }
-    if (TOKTYP(S, ti + 2) != 2) { return 0; }
-    if (_tok_ends_arg(S, ti + 3) == 0) { return 0; }
-    _sca_shape = 2;
     var bsid = _recv_sid(S, TOKVAL(S, ti));
-    if (bsid <= 0) { return 0; }
-    if (bsid == ssid) {
-        _sca_op = 1;
-        if (_noff_is(S, TOKVAL(S, ti + 2), "data", 4) == 1) { return 2; }
-        return 0;
-    }
-    _sca_op = 2;
-    var fx = FINDFIELD(S, bsid - 1, TOKVAL(S, ti + 2));
-    if (fx < 0) { return 0; }
-    if (GETFTYPE(S, bsid - 1, fx) == ssid) { return 1; }
-    return 0;
+    var k = _str_step_kind(S, ti + 1, bsid, ssid);
+    return k;
 }
-# `f(..)` at token `ti`: a Str when f is declared `: Str`, a data pointer when f is `str_data`.
-fn _str_call_kind(S, ti, ssid): i64 {
+# `f(..)` / `g<..>(..)` at token `ti`, its `(` at `o`: a Str when the callee is declared `: Str`
+# (for a generic, its template's declared return: a `: T` return is no struct id there, so
+# `id<Str>(s)` is not typed), a data pointer when it is `str_data`; followed by one `.f` /
+# `.m(..)`, that step on the struct the callee returns.
+fn _str_call_kind(S, ti, o, ssid): i64 {
     _sca_shape = 1;
+    if (o != ti + 1) { _sca_shape = 2; }
     _sca_op = 0;
-    var e = _tok_close_paren(S, ti + 1);
+    var e = _tok_close_paren(S, o);
     if (e < 0) { return 0; }
-    if (_tok_ends_arg(S, e + 1) == 0) { return 0; }
     var cfi = FINDFN(S, TOKVAL(S, ti));
+    var rs = 0;
+    if (cfi >= 0) { rs = GFRS(S, cfi); }
+    if (_tok_ends_arg(S, e + 1) == 0) {
+        if (TOKTYP(S, e + 1) != 41) { return 0; }
+        var k = _str_step_kind(S, e + 1, rs, ssid);
+        return k;
+    }
     if (cfi < 0) { return 0; }
-    if (GFRS(S, cfi) == ssid) {
+    if (rs == ssid) {
         _sca_op = 2;
         return 1;
     }
+    if (_sca_shape != 1) { return 0; }
     if (_noff_is(S, TOKVAL(S, ti), "str_data", 8) == 0) { return 0; }
     if (TOKTYP(S, ti + 2) == 2) { if (e == ti + 3) { _sca_op = 3; } }
     return 2;
 }
+# The one step `.f` / `.m(..)` whose `.` is at token `di`, on a receiver of struct id `rsid`
+# (0 untyped), when the step ends the argument. A method is a Str when `<Struct>_<m>` (as
+# PARSE_FIELD_LOAD builds it) is declared `: Str` — `s.cat(t)` is, `s.len()` / `s.data()` are
+# not; a field when it is declared `: Str`; `.data` of a Str is its data pointer.
+fn _str_step_kind(S, di, rsid, ssid): i64 {
+    if (TOKTYP(S, di + 1) != 2) { return 0; }
+    if (rsid <= 0) { return 0; }
+    _sca_di = di;
+    if (TOKTYP(S, di + 2) == 10) {
+        _sca_op = 2;
+        var e = _tok_close_paren(S, di + 2);
+        if (e < 0) { return 0; }
+        if (_tok_ends_arg(S, e + 1) == 0) { return 0; }
+        var mf = FINDFN(S, BUILD_METHOD_NAME(S, rsid - 1, TOKVAL(S, di + 1)));
+        if (mf < 0) { return 0; }
+        if (GFRS(S, mf) == ssid) { return 1; }
+        return 0;
+    }
+    if (_tok_ends_arg(S, di + 2) == 0) { return 0; }
+    if (rsid == ssid) {
+        _sca_op = 1;
+        if (_noff_is(S, TOKVAL(S, di + 1), "data", 4) == 1) { return 2; }
+        return 0;
+    }
+    _sca_op = 2;
+    var fx = FINDFIELD(S, rsid - 1, TOKVAL(S, di + 1));
+    if (fx < 0) { return 0; }
+    if (GETFTYPE(S, rsid - 1, fx) == ssid) { return 1; }
+    return 0;
+}
 
-# The argument as written (`x`, `f(..)`, `x.f`), then what the hint wraps in str_cstr(..).
+# The argument as written: the head (`x`, `f(..)`, `g<..>(..)`), then its step (`.f`, `.m(..)`).
 fn _sca_print_arg(S): i64 {
+    _sca_print_head(S);
+    if (_sca_di > 0) {
+        syscall(SYS_WRITE, 2, ".", 1);
+        PRSTR(S + 0xEC00000 + TOKVAL(S, _sca_di + 1));
+        if (TOKTYP(S, _sca_di + 2) == 10) { _sca_print_call_args(S, _sca_di + 1); }
+    }
+    return 0;
+}
+fn _sca_print_head(S): i64 {
     var ti = GTI(S);
     PRSTR(S + 0xEC00000 + TOKVAL(S, ti));
     if (_sca_shape == 1) { _sca_print_call_args(S, ti); }
-    if (_sca_shape == 2) {
-        syscall(SYS_WRITE, 2, ".", 1);
-        PRSTR(S + 0xEC00000 + TOKVAL(S, ti + 2));
-    }
+    if (_sca_shape == 2) { syscall(SYS_WRITE, 2, "<..>(..)", 8); }
     return 0;
 }
 # A call's argument list as the message shows it: `()`, `(x)` for one bare IDENT, else `(..)`.
@@ -1902,7 +1946,7 @@ fn _sca_print_call_args(S, ti): i64 {
 fn _sca_print_op(S): i64 {
     var ti = GTI(S);
     if (_sca_op == 0) { syscall(SYS_WRITE, 2, "..", 2); }
-    if (_sca_op == 1) { PRSTR(S + 0xEC00000 + TOKVAL(S, ti)); }
+    if (_sca_op == 1) { _sca_print_head(S); }
     if (_sca_op == 2) { _sca_print_arg(S); }
     if (_sca_op == 3) { PRSTR(S + 0xEC00000 + TOKVAL(S, ti + 2)); }
     return 0;
@@ -3038,10 +3082,11 @@ fn PARSE_FNCALL(S, noff): i64 {
     # the same way), `base(arg, ..)` is routed to the sibling when the arg matches, behind the
     # v6.5.1 arity gate (`_OV_ARITY_OK`):
     #   _str — the WHOLE first argument is a Str, as `_str_arg_kind` (the I11 classifier) reads
-    #          it: a Str local / param / capture, a `: Str` or inferred-Str global, a one-level
-    #          `: Str` field (`h.name`, `gh.name`), or a call declared `: Str`. `println(gs)` ->
-    #          `println_str`, `strlen(gs)` -> `strlen_str`. `x.data`, `x.len`, `x + 1` and
-    #          `f(..).field` are NOT routed by their base's type.
+    #          it: a Str local / param / capture, a `: Str` or inferred-Str global, a one-step
+    #          `: Str` field (`h.name`, `gh.name`, `mkh().name`), or a call or method declared
+    #          `: Str` (`mk()`, `g<T>(..)`, `s.cat(t)`, `mkh().getname()`). `println(gs)` ->
+    #          `println_str`, `strlen(gs)` -> `strlen_str`. `x.data`, `x.len`, `s.len()`,
+    #          `x + 1` are NOT routed by their base's type.
     #   _int — an `IDENT(..)` call returning i64 (GFRS -8), into an i64-returning base whose
     #          param 0 is `: cstring` (v6.0.3 / v6.5.2, below). A plain i64 IDENT is never
     #          routed here.
@@ -3059,11 +3104,13 @@ fn PARSE_FNCALL(S, noff): i64 {
                 if (_od_ret < 0) { _od_arg_scalar = 0 - _od_ret; }
             }
         }
-        var _od_str_sid = _STR_SID(S);
-        if (_od_str_sid > 0) {
-            if (_str_arg_kind(S, _od_str_sid) == 1) {
-                var _od_str_target = L64(_fnt_ovstr + fi * 8);
-                if (_od_str_target > 0) {
+        # The sibling first: the classifier scans a call argument's parens, and most bases
+        # have no `_str` sibling to route to.
+        var _od_str_target = L64(_fnt_ovstr + fi * 8);
+        if (_od_str_target > 0) {
+            var _od_str_sid = _STR_SID(S);
+            if (_od_str_sid > 0) {
+                if (_str_arg_kind(S, _od_str_sid) == 1) {
                     # v6.5.1 — arity-gate the redirect (see _OV_ARITY_OK).
                     var _od_st = _od_str_target - 1;
                     if (_OV_ARITY_OK(S, _od_st, _CALL_ARGC_PEEK(S)) == 1) {
