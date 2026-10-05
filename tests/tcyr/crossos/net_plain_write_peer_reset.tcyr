@@ -1,0 +1,360 @@
+# net_plain_write_peer_reset.tcyr — 6.6.16: a peer that resets a plain TCP connection no longer
+# kills the writer with SIGPIPE, on every lib/net.cyr and lib/async*.cyr socket write path.
+#
+# ⛔ WHY (CVE-TBD(N1), the plain-socket half of CVE-66's class). lib/net.cyr's `_net_os_send` — the
+# one primitive under sock_send, sock_send_all and sock_send_a, and so under lib/http.cyr,
+# lib/ws.cyr, lib/ws_server.cyr, lib/yantra.cyr and folded sandhi's client paths — was a flagless
+# write(2) on Linux and macOS, and so were the async backends' send and relay writers. Writing to a
+# peer that had reset the connection raised SIGPIPE, whose default disposition terminates the
+# process: any peer could kill a client or server it was talking to, remotely and without
+# authenticating. Measured before the fix: exit 141 on x86_64 Linux, qemu-aarch64, pi, ecb and ach.
+# 6.6.14 fixed the TLS transport only (lib/tls_native_conn.cyr). The writes now go through the
+# private `_fd_write_nosigpipe` (lib/syscalls.cyr): send(MSG_NOSIGNAL) on Linux, SO_NOSIGPIPE on
+# macOS, and write(2) for anything that is not a socket.
+#
+# THE MECHANISM: each row runs in a CHILD, so a kill fails one row instead of taking the runner with
+# it. On POSIX the child is a fork() of the test — no execve, so the file also runs under
+# qemu-aarch64 without binfmt; on Windows, which has no fork, the test spawns ITSELF
+# (lib/process.cyr spawn: `argv(0) <scenario> child`). The child resets SIGPIPE to SIG_DFL
+# FIRST (a GitHub runner starts steps with it ignored, which would make every row pass vacuously),
+# builds its own loopback pair, closes the accepted end (a FIN) and writes through one path until a
+# write fails, then PR_AFTER more times. The first write reaches a closed socket and draws an RST;
+# a later one is the write that used to raise SIGPIPE. The extra writes are what keep the rows
+# honest on Linux: a write that finds the RST's ECONNRESET pending returns it WITHOUT a signal, and
+# only the write after it is EPIPE. The child prints nothing and answers with its exit code:
+#   0    every write after the reset failed, with an errno in the accepted set, and it lived
+#   2    the loopback pair could not be built          3   no write failed within PR_TRIES
+#   4    the first error was outside {EPIPE, ECONNRESET} (Linux 32/104, Darwin 32/54)
+#   5    a write after the first error succeeded       6   the async runtime could not be set up
+#   40   the CONTROL survived (see below)              141 = 128 + SIGPIPE: the kernel killed it
+# The errno is a SET, never one value: which of EPIPE and ECONNRESET a write sees depends on
+# whether the peer's FIN or its RST was processed first. Windows has no SIGPIPE; there the rows
+# claim only "negative and alive".
+#
+# THE CONTROL (POSIX): one child writes into the same reset connection with a raw write(2) and
+# must DIE 141. It proves, on every run, that this host delivers SIGPIPE to a reset writer at the
+# default disposition — so the rows above are not passing because nothing would have killed them.
+#
+# RED-THEN-GREEN (measured at 6.6.16 on x86_64 Linux, qemu-aarch64, pi, ecb and ach): with
+# `_net_os_send` and the async writers restored to their flagless writes, all seven reset rows
+# report child exit 141. Mutations, each RED: only `_net_os_send` restored -> rows 1-5 at 141;
+# only the async writers restored -> the async_send and relay rows at 141; the leaf's ENOTSOCK
+# fallback dropped -> the pipe and file rows read -88 (x86); the macOS EINVAL arm made to write
+# anyway -> the shut-down-first row at 141 (ecb and ach). CHANGELOG [6.6.16]
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/str.cyr"
+include "lib/vec.cyr"
+include "lib/tagged.cyr"
+include "lib/fmt.cyr"
+include "lib/syscalls.cyr"
+include "lib/io.cyr"
+include "lib/net.cyr"
+include "lib/chrono.cyr"
+include "lib/args.cyr"
+include "lib/process.cyr"
+
+# ws_server_handshake's two fold helpers, which this file never reaches (only the frame writer is
+# exercised): lib/sandhi.cyr and lib/bayan.cyr would drag whole stacks in for two symbols.
+fn sandhi_server_find_header(buf, blen, name): i64 { return 0; }
+fn base64_encode(data, len): i64 { return 0; }
+
+include "lib/ws_server.cyr"
+include "lib/async.cyr"
+
+enum PlainResetTest {
+    PR_TRIES = 200;            # writes (10 ms apart) before a reset row gives up
+    PR_AFTER = 3;              # writes after the first failure, each of which must fail too
+    PR_CHILD_MS = 60000;       # the parent's wait for each child
+}
+
+# The write paths a child can take.
+enum PlainResetPath {
+    PR_SEND_ALL = 1;           # sock_send_all
+    PR_SEND = 2;               # sock_send (Result)
+    PR_SEND_A = 3;             # sock_send_a (Result, allocator form)
+    PR_WS = 5;                 # ws_server_send_frame (two sock_send_all calls)
+    PR_ASYNC_SEND = 6;         # async_send + task_join (epoll / kqueue runtime)
+    PR_RELAY = 7;              # async_relay_once, pipe -> socket
+    PR_RAW = 9;                # the control: a flagless write(2)
+}
+
+var _pr_ws = 0;                # the ws_server handle around the writer (PR_WS)
+var _pr_rt = 0;                # the async runtime (PR_ASYNC_SEND, PR_RELAY)
+var _pr_prd = 0;               # the relay's source pipe: read end
+var _pr_pwr = 0;               #   …and write end
+
+# The port (host order) socket `fd` is bound to, or -1.
+fn _pr_port(fd): i64 {
+    var sa[16];
+    var sl[8];
+    store64(&sl, 16);
+    if (sys_getsockname(fd, &sa, &sl) != 0) { return 0 - 1; }
+    return ((load8(&sa + 2) & 0xFF) << 8) | (load8(&sa + 3) & 0xFF);
+}
+
+# ── the child ────────────────────────────────────────────────────────────────────────────────
+
+var _pr_afd = 0 - 1;           # the accepted (peer) end of the last pair
+
+# A connected loopback TCP pair: the writer fd (the accepted end in _pr_afd), or -1.
+fn _pr_pair(): i64 {
+    var lt, lfd = tcp_socket();
+    if (is_err_result(lt) == 1) { return 0 - 1; }
+    var bt, bv = sock_bind(lfd, INADDR_LOOPBACK(), 0);
+    if (is_err_result(bt) == 1) { sock_close(lfd); return 0 - 1; }
+    var st, sv = sock_listen(lfd, 4);
+    if (is_err_result(st) == 1) { sock_close(lfd); return 0 - 1; }
+    var port = _pr_port(lfd);
+    if (port <= 0) { sock_close(lfd); return 0 - 1; }
+    var ct, cfd = tcp_socket();
+    if (is_err_result(ct) == 1) { sock_close(lfd); return 0 - 1; }
+    var kt, kv = sock_connect(cfd, INADDR_LOOPBACK(), port);
+    if (is_err_result(kt) == 1) { sock_close(cfd); sock_close(lfd); return 0 - 1; }
+    var at, afd = sock_accept(lfd);
+    sock_close(lfd);
+    if (is_err_result(at) == 1) { sock_close(cfd); return 0 - 1; }
+    _pr_afd = afd;
+    return cfd;
+}
+
+# A pair whose peer has closed (its FIN is in): the writer fd, or -1.
+fn _pr_pair_closed(): i64 {
+    var fd = _pr_pair();
+    if (fd < 0) { return 0 - 1; }
+    sock_close(_pr_afd);
+    sleep_ms(50);
+    return fd;
+}
+
+# 1 when `e` (a positive errno) is a reset writer's answer on this target.
+fn _pr_errno_ok(e): i64 {
+    if (e == 32) { return 1; }                   # EPIPE, every POSIX target
+    #ifdef CYRIUS_TARGET_LINUX
+    if (e == 104) { return 1; }                  # ECONNRESET (Linux)
+    #endif
+    #ifdef CYRIUS_TARGET_MACOS
+    if (e == 54) { return 1; }                   # ECONNRESET (Darwin)
+    #endif
+    #ifdef CYRIUS_TARGET_WIN
+    if (e > 0) { return 1; }                     # any WSA error: the claim there is "negative, alive"
+    #endif
+    return 0;
+}
+
+# One write of "reset-probe" through path `how`: >= 0 (a byte count, or 0 for a whole ws frame),
+# or -errno.
+fn _pr_write(how, fd): i64 {
+    if (how == PR_SEND_ALL) { return sock_send_all(fd, "reset-probe", 11); }
+    if (how == PR_SEND) {
+        var st, sv = sock_send(fd, "reset-probe", 11);
+        if (is_err_result(st) == 1) { return 0 - sv; }
+        return sv;
+    }
+    if (how == PR_SEND_A) {
+        var at, av = sock_send_a(0, fd, "reset-probe", 11);
+        if (is_err_result(at) == 1) { return 0 - av; }
+        return av;
+    }
+    if (how == PR_WS) { return ws_server_send_frame(_pr_ws, 1, "reset-probe", 11); }
+    #ifndef CYRIUS_TARGET_WIN
+    if (how == PR_ASYNC_SEND) {
+        var h = async_send(_pr_rt, fd, "reset-probe", 11);
+        if (h == 0) { return 0 - 12; }           # ENOMEM: no task
+        return task_join(_pr_rt, h);
+    }
+    if (how == PR_RELAY) {
+        if (sys_write(_pr_pwr, "reset-probe", 11) != 11) { return 0 - 5; }
+        var b[64];
+        return async_relay_once(_pr_rt, _pr_prd, fd, &b, 64);
+    }
+    if (how == PR_RAW) { return sys_write(fd, "reset-probe", 11); }
+    #endif
+    return 0 - 22;
+}
+
+# Write through `how` until a write fails, then PR_AFTER more times: the child's exit code.
+fn _pr_until_error(how, fd): i64 {
+    var first = 0;
+    var i = 0;
+    while (i < PR_TRIES) {
+        var w = _pr_write(how, fd);
+        if (w < 0) {
+            first = w;
+            i = PR_TRIES;
+        } else {
+            sleep_ms(10);
+            i = i + 1;
+        }
+    }
+    if (first == 0) { return 3; }
+    if (_pr_errno_ok(0 - first) != 1) { return 4; }
+    var k = 0;
+    while (k < PR_AFTER) {
+        if (_pr_write(how, fd) >= 0) { return 5; }
+        k = k + 1;
+    }
+    return 0;
+}
+
+# A reset row through `how`: the child's exit code.
+fn _pr_child_reset(how): i64 {
+    #ifndef CYRIUS_TARGET_WIN
+    if (how == PR_ASYNC_SEND || how == PR_RELAY) {
+        _pr_rt = async_new();
+        if (_pr_rt == 0) { return 6; }
+        var pf[16];
+        if (sys_pipe(&pf) < 0) { return 6; }
+        _pr_prd = load32(&pf);
+        _pr_pwr = load32(&pf + 4);
+    }
+    #endif
+    var fd = _pr_pair_closed();
+    if (fd < 0) { return 2; }
+    if (how == PR_WS) {
+        _pr_ws = ws_server_new(fd);
+        if (_pr_ws == 0) { return 6; }
+    }
+    var rc = _pr_until_error(how, fd);
+    sock_close(fd);
+    return rc;
+}
+
+# The socket shut down both ways by the WRITER before its first write (its peer still open): the
+# state an RST leaves. Linux: EPIPE. macOS: xnu refuses SO_NOSIGPIPE on such a socket (EINVAL) and
+# the leaf answers EPIPE without writing. Windows: WSAESHUTDOWN.
+fn _pr_child_shut_first(): i64 {
+    var fd = _pr_pair();
+    if (fd < 0) { return 2; }
+    sock_shutdown(fd, 2);                        # SHUT_RDWR / SD_BOTH
+    var rc = _pr_until_error(PR_SEND_ALL, fd);
+    sock_close(fd);
+    sock_close(_pr_afd);
+    return rc;
+}
+
+fn _pr_child(scn): i64 {
+    signal_default(SIGPIPE);                     # the default disposition: SIGPIPE kills
+    if (streq(scn, "send_all") == 1) { return _pr_child_reset(PR_SEND_ALL); }
+    if (streq(scn, "send") == 1) { return _pr_child_reset(PR_SEND); }
+    if (streq(scn, "send_a") == 1) { return _pr_child_reset(PR_SEND_A); }
+    if (streq(scn, "shut") == 1) { return _pr_child_shut_first(); }
+    if (streq(scn, "ws") == 1) { return _pr_child_reset(PR_WS); }
+    if (streq(scn, "async_send") == 1) { return _pr_child_reset(PR_ASYNC_SEND); }
+    if (streq(scn, "relay") == 1) { return _pr_child_reset(PR_RELAY); }
+    if (streq(scn, "raw") == 1) {
+        _pr_child_reset(PR_RAW);
+        return 40;                               # lived: the control did not see SIGPIPE
+    }
+    return 31;
+}
+
+# ── the parent ───────────────────────────────────────────────────────────────────────────────
+
+# Run scenario `scn` in a child and wait for it: its exit code (128 + n for signal n), or a
+# negative number when it could not be started or waited for.
+fn _pr_run(scn): i64 {
+    #ifdef CYRIUS_TARGET_WIN
+    var pt, pid = spawn(argv(0), scn, "child");
+    if (is_err_result(pt) == 1) { return 0 - 1; }
+    #endif
+    #ifndef CYRIUS_TARGET_WIN
+    var pid = sys_fork();
+    if (pid < 0) { return 0 - 1; }
+    if (pid == 0) { sys_exit(_pr_child(scn)); }
+    #endif
+    var wt, wv = wait_pid(pid);
+    if (is_err_result(wt) == 1) { return 0 - 2; }
+    return wv;
+}
+
+fn _pr_reset_rows(): i64 {
+    test_group("6.6.16 — a plain-socket writer survives a peer that reset the connection (CVE-TBD(N1))");
+    assert_eq(_pr_run("send_all"), 0,
+      "sock_send_all after the reset: < 0 (EPIPE / ECONNRESET) and the process lives (141 = SIGPIPE)");
+    assert_eq(_pr_run("send"), 0,
+      "sock_send after the reset: Err(EPIPE / ECONNRESET) and the process lives");
+    assert_eq(_pr_run("send_a"), 0,
+      "sock_send_a after the reset: Err and the process lives");
+    assert_eq(_pr_run("shut"), 0,
+      "a socket shut down both ways before its first write: sock_send_all < 0, no SIGPIPE");
+    assert_eq(_pr_run("ws"), 0,
+      "ws_server_send_frame to a reset peer: < 0 and the process lives (lib/ws_server.cyr)");
+    #ifndef CYRIUS_TARGET_WIN
+    assert_eq(_pr_run("async_send"), 0,
+      "async_send on the epoll / kqueue runtime to a reset peer: < 0 and the process lives");
+    assert_eq(_pr_run("relay"), 0,
+      "async_relay_once from a pipe into a reset socket: < 0 and the process lives");
+    test_group("6.6.16 — the CONTROL: a flagless write(2) into the same reset connection DIES");
+    assert_eq(_pr_run("raw"), 141,
+      "raw write(2) to a reset peer at SIG_DFL: the child dies of SIGPIPE (141), so the rows above are not vacuous");
+    #endif
+    #ifdef CYRIUS_TARGET_WIN
+    test_group("6.6.16 — Windows: SKIP the async and control rows (no SIGPIPE; async_win writes through WSASend)");
+    assert(1 == 1, "Windows: named SKIP");
+    #endif
+    return 0;
+}
+
+# Not a socket: the leaf falls back to write(2) — sendto answers ENOTSOCK on Linux, setsockopt
+# answers ENOTSOCK on macOS — so a pipe and a file still take every byte.
+fn _pr_notsock_rows(): i64 {
+    #ifndef CYRIUS_TARGET_WIN
+    test_group("6.6.16 — not a socket: sock_send_all to a pipe and to a file still writes every byte");
+    var pf[16];
+    assert(sys_pipe(&pf) >= 0, "create a pipe");
+    var rfd = load32(&pf);
+    var wfd = load32(&pf + 4);
+    assert_eq(sock_send_all(wfd, "hello", 5), 5, "pipe: sock_send_all returns the full count");
+    sys_close(wfd);                              # so an empty pipe reads EOF instead of blocking
+    var b[32];
+    assert_eq(sys_read(rfd, &b, 32), 5, "  …and the reader gets 5 bytes");
+    assert_eq(memeq(&b, "hello", 5), 1, "  …the bytes written");
+    sys_close(rfd);
+    var path = alloc(64);
+    memcpy(path, "_net_pr_file_", 13);
+    var pl = fmt_int_buf(getpid(), path + 13);
+    memcpy(path + 13 + pl, ".bin", 5);
+    xunlink(path);
+    var ffd = file_open(path, O_WRONLY | O_CREAT | O_TRUNC, 0x1A4);
+    assert(ffd >= 0, "create a scratch file");
+    if (ffd < 0) { return 0; }
+    assert_eq(sock_send_all(ffd, "plain-file", 10), 10, "file: sock_send_all returns the full count");
+    file_close(ffd);
+    var gfd = file_open(path, O_RDONLY, 0);
+    assert(gfd >= 0, "reopen it to read");
+    var c[32];
+    assert_eq(sys_read(gfd, &c, 32), 10, "  …10 bytes on disk");
+    assert_eq(memeq(&c, "plain-file", 10), 1, "  …the bytes written");
+    file_close(gfd);
+    xunlink(path);
+    #endif
+    #ifdef CYRIUS_TARGET_WIN
+    test_group("6.6.16 — Windows: SKIP the not-a-socket rows (the Winsock send arm is unchanged)");
+    assert(1 == 1, "Windows: named SKIP");
+    #endif
+    return 0;
+}
+
+fn main(): i64 {
+    alloc_init();
+    #ifdef CYRIUS_TARGET_AGNOS
+    # agnos: no SIGPIPE (sys_write routes a socket to sock_send#48), no host in the release gate,
+    # and its process peer has no spawn deadline.
+    test_group("6.6.16 — agnos: SKIP the spawn-self loopback run (no SIGPIPE on agnos)");
+    assert(1 == 1, "agnos: named SKIP");
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
+    args_init();
+    if (argc() > 2) { return _pr_child(argv(1)); }
+    proc_set_timeout_ms(PR_CHILD_MS);
+    _pr_reset_rows();
+    _pr_notsock_rows();
+    #endif
+    var r = assert_summary();
+    return r;
+}
+
+var ec = main();
+syscall(60, ec);

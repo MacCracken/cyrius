@@ -137,6 +137,33 @@ fn _fw_negative_fd_rows(): i64 {
     return 0;
 }
 
+#ifdef CYRIUS_TARGET_WIN
+# 6.6.16 — the Winsock error codes come back EXACT: fd_wait_ready and sys_listen /
+# sys_getsockname read WSAGetLastError (0xF024) and the int results of listen / getsockname
+# masked to 32 bits (their PE emitters define only eax). Contract pins: the values are the same
+# before and after the mask on the Windows builds measured; tests/gates/platform/
+# pe_wsa_lasterr_masked.sh pins the mask itself. Needs Winsock started — _fw_socket_rows ran.
+fn _fw_win_wsa_rows(): i64 {
+    test_group("6.6.16 — Windows: exact -WSAE* codes through the masked WSAGetLastError");
+    assert_eq(fd_wait_ready(0x1234, 0, 10), 0 - 10038, "fd_wait_ready(bogus socket 0x1234): -10038 WSAENOTSOCK");
+    assert_eq(sys_listen(0x1234, 4), 0 - 10038, "sys_listen(bogus socket 0x1234): -10038 WSAENOTSOCK");
+    var ut, ufd = tcp_socket();
+    assert_eq(is_err_result(ut), 0, "an unbound tcp_socket");
+    if (is_err_result(ut) == 1) { return 0; }
+    var sa[16];
+    var sl[8];
+    store64(&sl, 16);
+    assert_eq(sys_getsockname(ufd, &sa, &sl), 0 - 10022, "sys_getsockname(unbound): -10022 WSAEINVAL");
+    var bt, bv = sock_bind(ufd, INADDR_LOOPBACK(), 0);
+    assert_eq(is_err_result(bt), 0, "bind 127.0.0.1:0");
+    assert_eq(sys_listen(ufd, 4), 0, "sys_listen(a bound socket): 0");
+    store64(&sl, 16);
+    assert_eq(sys_getsockname(ufd, &sa, &sl), 0, "sys_getsockname(bound): 0");
+    sock_close(ufd);
+    return 0;
+}
+#endif
+
 #ifndef CYRIUS_TARGET_WIN
 # POSIX: the wait is not socket-only — a pipe works the same way.
 fn _fw_pipe_rows(): i64 {
@@ -165,6 +192,9 @@ fn main(): i64 {
     #ifndef CYRIUS_TARGET_AGNOS
     _fw_socket_rows();
     _fw_negative_fd_rows();
+    #ifdef CYRIUS_TARGET_WIN
+    _fw_win_wsa_rows();
+    #endif
     #ifndef CYRIUS_TARGET_WIN
     _fw_pipe_rows();
     #endif

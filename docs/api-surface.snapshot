@@ -4935,6 +4935,7 @@ syscalls_x86_64_agnos::sys_sched_yield/0
 syscalls_x86_64_agnos::sys_sched_yield_to/1
 syscalls_x86_64_agnos::sys_sendmsg/3
 syscalls_x86_64_agnos::sys_sendto/6
+syscalls_x86_64_agnos::sys_setsockopt/5
 syscalls_x86_64_agnos::sys_setxattr/5
 syscalls_x86_64_agnos::sys_shm_create/1
 syscalls_x86_64_agnos::sys_shm_create_gpu/1

@@ -60,10 +60,24 @@ grep -q 'n == 1700' "$AE" || fail "_macho_arm_routes does not claim 1700 — eve
 # The capability the crossos discriminator guards on. A backend that runs the body INLINE
 # (`fncall1` directly inside thread_create) must declare 0; declaring 1 there would make
 # thread_runs_concurrently.tcyr assert against a serial backend and fail the release gate.
-for f in lib/thread_win.cyr lib/thread_agnos.cyr; do
+# Windows is NOT a serial peer: thread_create is CreateThread (v6.0.61). This axis listed it
+# among the serial peers from v6.5.44 to 6.6.15 and so ENFORCED the stale 0 (CHANGELOG [6.6.16]).
+for f in lib/thread_agnos.cyr; do
     grep -qE '^var THREADS_CONCURRENT = 0;' "$ROOT/$f" \
         || fail "$f is a serial peer (bodies run inline) but does not declare THREADS_CONCURRENT = 0"
 done
+# Assert the MECHANISM, not only the value: each value below is justified by what that
+# backend's thread_create body actually does, so read the body (fn line to its closing `}`).
+_tc_body() { awk '/^fn thread_create\(/{p=1} p{print} p&&/^}/{exit}' "$ROOT/$1"; }
+_tc_body lib/thread_agnos.cyr | grep -q 'fncall1(fp, arg)' \
+    || fail "lib/thread_agnos.cyr's thread_create no longer runs the body inline (fncall1) — re-derive its THREADS_CONCURRENT from its mechanism"
+_tc_body lib/thread_win.cyr | grep -q 'syscall(61447, a)' \
+    || fail "lib/thread_win.cyr's thread_create no longer calls CreateThread (reroute 0xF007 = 61447), so THREADS_CONCURRENT = 1 is no longer justified"
+if _tc_body lib/thread_win.cyr | grep -q 'fncall1('; then
+    fail "lib/thread_win.cyr's thread_create runs a body inline (fncall1) — that is a serial backend, and THREADS_CONCURRENT = 1 would be a lie"
+fi
+grep -qE '^var THREADS_CONCURRENT = 1;' "$ROOT/lib/thread_win.cyr" \
+    || fail "lib/thread_win.cyr's thread_create is CreateThread (real threads) but it does not declare THREADS_CONCURRENT = 1"
 grep -qE '^var THREADS_CONCURRENT = 1;' "$ROOT/lib/thread.cyr" \
     || fail "lib/thread.cyr uses real clone(2) threads but does not declare THREADS_CONCURRENT = 1"
 grep -qE '^var THREADS_CONCURRENT = 1;' "$ROOT/lib/thread_macos.cyr" \
@@ -71,4 +85,4 @@ grep -qE '^var THREADS_CONCURRENT = 1;' "$ROOT/lib/thread_macos.cyr" \
 grep -qE '^var THREADS_CONCURRENT = 0;' "$ROOT/lib/thread_macos.cyr" \
     || fail "lib/thread_macos.cyr declares no serial x86 arm — x86-macOS is a static no-libSystem binary and CANNOT use pthread_create"
 
-echo "PASS macos_arm64_real_threads (1700 -> __got[$SLOT] = _pthread_create, arm64-Mach-O-guarded, stubbed in every fork, THREADS_CONCURRENT honest on all four backends)"
+echo "PASS macos_arm64_real_threads (1700 -> __got[$SLOT] = _pthread_create, arm64-Mach-O-guarded, stubbed in every fork, THREADS_CONCURRENT honest on every backend: 1 on Linux, arm64-macOS and Windows, 0 on x86-macOS and agnos)"

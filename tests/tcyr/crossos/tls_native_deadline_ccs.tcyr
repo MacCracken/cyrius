@@ -17,7 +17,7 @@
 # write's would-block is EAGAIN 11 on Linux and 35 on Darwin, restored with each target's F_SETFL,
 # and WSAEWOULDBLOCK on Windows, under ioctlsocket(FIONBIO).
 #
-# SINGLE-THREADED, so it runs as-is where threads run inline (Windows, Intel-Mac): each row opens
+# SINGLE-THREADED, so it runs as-is where threads run inline (Intel-Mac, agnos): each row opens
 # a loopback TCP pair, PRELOADS the server end with the bytes under test, then runs the native
 # client on the other end. The client's ClientHello lands in the server end's receive buffer,
 # unread until the row inspects it. A 5 s SO_RCVTIMEO on both ends is a safety net: a regression

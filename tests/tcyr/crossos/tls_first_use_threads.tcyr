@@ -13,11 +13,11 @@
 # No network and no fork: one cold process, so it runs on every cross-OS host.
 #
 # ⚠ BRANCHES ON THREADS_CONCURRENT, NOT ON THE TARGET NAME. Where thread_create runs the body
-# INLINE (Windows, x86-macOS, agnos) a start barrier would spin forever — the first "worker"
+# INLINE (x86-macOS, agnos) a start barrier would spin forever — the first "worker"
 # waits for a release the main thread can only give after thread_create returns. There the K
 # workers run sequentially with no barrier, and the assertions are the same ones: identical
 # return codes, correct results, exactly one bundle load. Where threads are real (Linux,
-# arm64-macOS) the workers park at the barrier and are released together, so their first uses
+# arm64-macOS, Windows) the workers park at the barrier and are released together, so their first uses
 # overlap. Every spin is BOUNDED so a broken barrier fails a test instead of hanging the leg.
 #
 # A host with no system bundle answers TLS_ERR_IO — consistently, from every caller; that is the

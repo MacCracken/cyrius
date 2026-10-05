@@ -734,6 +734,14 @@ fn sys_sendmsg(fd, msghdr, flags): i64 { return 0 - 38; }
 # Send a datagram to an address. agnos sockets are connection-id based (sock_connect +
 # sock_send); there is no unconnected send-to-address form.
 fn sys_sendto(fd, buf, len, flags, dstaddr, dstaddrlen): i64 { return 0 - 38; }
+# Set a socket option. agnos has no socket-option syscall, so this declines (-ENOSYS) for
+# every level / name. ⛔ NO setsockopt `SYS_*` number is minted here, ever: Linux #54 is
+# agnos udp_unbind (agnos ABI decision O5), so a raw syscall(54) silently unbinds a UDP
+# listener (yantra's pre-1.0.7 bug). The options agnos CAN honour are reachable portably:
+# lib/net.cyr's sock_set_recv_timeout / sock_set_send_timeout set the peer's per-socket
+# deadlines, and sock_reuse is already a success no-op. A stub rather than a missing symbol
+# so an unguarded portable call links on agnos. CHANGELOG [6.6.16]
+fn sys_setsockopt(fd, level, optname, val, vallen): i64 { return 0 - 38; }
 # Set a file's length by descriptor. agnos has no truncate family.
 fn sys_ftruncate(fd, length): i64 { return 0 - 38; }
 # Set a file's length by path. agnos has no truncate family.

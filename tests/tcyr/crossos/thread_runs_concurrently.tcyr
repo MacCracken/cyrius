@@ -15,8 +15,9 @@
 # which is only possible if two things are running at once.
 #
 # ⚠ GUARDED BY CAPABILITY, NOT BY TARGET NAME AND NOT BY ERRNO (the v6.5.36 lesson).
-# `THREADS_CONCURRENT` is published by each backend: 1 for Linux clone threads and arm64-macOS
-# pthread threads, 0 for the three serial peers (x86-macOS, Windows, agnos). Guarding on the
+# `THREADS_CONCURRENT` is published by each backend: 1 for Linux clone threads, arm64-macOS
+# pthread threads and Windows CreateThread threads, 0 for the two serial peers (x86-macOS,
+# agnos). Guarding on the
 # capability means this file starts asserting automatically the day another peer becomes real,
 # instead of needing someone to remember to un-guard it.
 #

@@ -1835,4 +1835,10 @@ _chk_gate "$ROOT/tests/gates/platform/pe_socket_reroutes_routed.sh"
 # wine. Hardware: the same .tcyr + pe_path_utf8_long.tcyr on cass. Whole-gate SKIP is exit 77.
 _chk_gate "$ROOT/tests/gates/platform/pe_last_error_reroute.sh"
 
+# 6.6.16 (net-3, N5) — every WSAGetLastError (0xF024) and every int-returning ws2_32 result in
+# lib/ is read masked to 32 bits: their PE emitters define only eax. Static (no compiler, no wine;
+# the defect is ABI-latent — cass zero-extends today), with a built-in clean-fixture + per-rule
+# mutant self-test. The values are pinned on cass by tests/tcyr/crossos/fd_wait_ready.tcyr.
+_chk_gate "$ROOT/tests/gates/platform/pe_wsa_lasterr_masked.sh"
+
 _chk_gate "$ROOT/tests/gates/platform/process_errno_constants_every_target.sh"

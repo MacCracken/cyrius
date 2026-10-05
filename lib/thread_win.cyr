@@ -33,7 +33,10 @@ include "lib/fnptr.cyr"
 # passed on macOS while bodies ran inline — a serial backend satisfies "the worker ran", "join
 # returned 0" and "the count is exact". A test that DISCRIMINATES must be guarded by capability
 # (never by target name, never by errno — the v6.5.36 lesson), and this is that capability.
-var THREADS_CONCURRENT = 0;   # serial fallback (bodies run inline)
+# Windows is 1: thread_create below is CreateThread, a real preemptive thread (v6.0.61). It
+# read 0 from v6.5.44 to 6.6.15 — a stale serial-peer value, so the discriminator never
+# asserted here (CHANGELOG [6.6.16]).
+var THREADS_CONCURRENT = 1;   # REAL CreateThread threads (v6.0.61)
 
 # Create a real OS thread: CreateThread(NULL, 0, fp, arg, 0, NULL). fp is the
 # cyrius thread-body fn pointer (&body) — a single-i64-param fn returning i64,
