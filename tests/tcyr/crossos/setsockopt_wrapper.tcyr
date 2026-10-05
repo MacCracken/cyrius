@@ -1,0 +1,68 @@
+# setsockopt_wrapper.tcyr — 6.6.16: `sys_setsockopt` resolves on EVERY target, and answers
+# honestly there. CHANGELOG [6.6.16]
+#
+# THE BUG THIS GUARDS: the agnos peer (lib/syscalls_x86_64_agnos.cyr) had no sys_setsockopt at
+# all, so any agnos build that reached the portable name failed its link check ("refusing to
+# emit binary with 1 reachable undefined function(s)"). yantra and abaco each hand-rolled an
+# `#ifdef CYRIUS_TARGET_AGNOS return 0 - 38;` arm around their call to get past it. The call
+# below is deliberately UNGUARDED: before the stub, tcyr_corpus_cross_compiles.sh's agnos leg
+# failed on this file.
+#
+# Rows per target:
+#   Linux / macOS — SO_REUSEADDR on a fresh tcp_socket() succeeds (0), using lib/net.cyr's
+#                   SockOpt values (Linux 1/2, Darwin 0xFFFF/4).
+#   Windows       — the peer's existing decline stub answers -38 (-ENOSYS). net.cyr reaches
+#                   setsockopt through ws2_32 itself; the raw sys_ wrapper declines.
+#   agnos         — -38: agnos has no socket options, and no setsockopt syscall number is minted there
+#                   (Linux #54 is agnos udp_unbind). agnos runs this file only through the
+#                   corpus cross-compile gate; the row is asserted, not skipped.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/str.cyr"
+include "lib/vec.cyr"
+include "lib/tagged.cyr"
+include "lib/io.cyr"
+include "lib/net.cyr"
+include "lib/assert.cyr"
+
+fn _ss_declines(): i64 {
+    var one = 1;
+    # Any fd / level / name: the decline does not depend on them.
+    var r = sys_setsockopt(0 - 1, 1, 2, &one, 4);
+    assert_eq(r, 0 - 38, "sys_setsockopt declines with -ENOSYS(-38) on this target");
+    return 0;
+}
+
+fn _ss_reuseaddr(): i64 {
+    var t, fd = tcp_socket();
+    assert_eq(is_err_result(t), 0, "tcp_socket");
+    if (is_err_result(t) == 1) { return 0 - 1; }
+    var one = 1;
+    var r = sys_setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, 4);
+    assert_eq(r, 0, "sys_setsockopt(SOL_SOCKET, SO_REUSEADDR, 1) on a fresh TCP socket returns 0");
+    # A bad fd still reaches the real syscall: -EBADF (9 on Linux and Darwin).
+    var b = sys_setsockopt(0 - 1, SOL_SOCKET, SO_REUSEADDR, &one, 4);
+    assert_eq(b, 0 - 9, "sys_setsockopt on fd -1 is -EBADF: it reached setsockopt, not a stub");
+    sock_close(fd);
+    return 0;
+}
+
+fn _ss_run(): i64 {
+    test_group("sys_setsockopt resolves and answers on this target");
+    #ifdef CYRIUS_TARGET_AGNOS
+    _ss_declines();
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
+    #ifdef CYRIUS_TARGET_WIN
+    _ss_declines();
+    #endif
+    #ifndef CYRIUS_TARGET_WIN
+    _ss_reuseaddr();
+    #endif
+    #endif
+    return 0;
+}
+
+_ss_run();
+var r = assert_summary();
