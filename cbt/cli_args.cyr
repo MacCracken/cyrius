@@ -127,7 +127,7 @@ fn _cli_spec_b(verb): i64 {
     if (streq(verb, "api-surface") == 1) { return "--update|--scope=|--snapshot="; }
     if (streq(verb, "deps") == 1) { return "--verify|--lock|--no-lock|--relock|--dry-run"; }
     if (streq(verb, "clean") == 1) { return "--dry-run"; }
-    if (streq(verb, "lib") == 1) { return "--dry-run|--full"; }
+    if (streq(verb, "lib") == 1) { return "--dry-run|--full|--no-lock"; }
     if (streq(verb, "version") == 1) { return "--project"; }
     if (streq(verb, "--version") == 1) { return "--project"; }
     return 0 - 1;
