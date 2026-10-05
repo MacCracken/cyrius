@@ -1386,7 +1386,12 @@ fn _sit_find_dir(): i64 {
     if (home != 0) {
         if (load8(home) == 47) {
             var h = _path_norm(_cat2(home, "/Repos/sit"));
-            if (_sit_try(h) == 1) { return h; }
+            # already tried as (b) or (c): stat it once and name it once in the SKIP
+            var dup = streq(h, d);
+            if (w != 0) { if (streq(h, w) == 1) { dup = 1; } }
+            if (dup != 1) {
+                if (_sit_try(h) == 1) { return h; }
+            }
         }
     }
     return 0;

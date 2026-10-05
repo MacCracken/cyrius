@@ -21,6 +21,10 @@
 #   1  a worktree far from sit, ABSOLUTE gitdir + relative commondir `../..` -> <main>/../sit
 #   2  RELATIVE gitdir + relative commondir                               -> the same
 #   3  ABSOLUTE commondir, gitdir file with a CRLF line end                -> the same
+#   3b/3c a gitdir that is NOT <common>/worktrees/<id> (five levels under the fake root, so
+#      gitdir/../.. is a decoy dir holding a decoy sit), commondir ABSOLUTE (3b) and RELATIVE
+#      (3c) -> <main>/../sit: only a real read of `commondir` resolves it (axes 1-3 all have
+#      commondir == gitdir/../.., so they cannot tell a read from a guess)
 #   4  SIT_DIR wins over a resolvable worktree; a SIT_DIR without build/sit is a miss that
 #      names it (the override is not silently replaced by another sit)
 #   5  a plain checkout next to sit resolves to that sibling (branch b, unchanged)
@@ -28,15 +32,20 @@
 #      candidates and SIT_DIR
 #   7  $HOME/Repos/sit is the last resort; a `.git` file with no commondir (a
 #      --separate-git-dir clone) is not followed and does not crash the lookup
+#   9  no candidate is tried or named twice: a plain checkout at $HOME/Repos/proj (its ../sit
+#      IS $HOME/Repos/sit) and a worktree whose main checkout sits in $HOME/Repos (its
+#      worktree candidate IS $HOME/Repos/sit) each name $HOME/Repos/sit exactly once
 #   8  LIVE: when this tree is itself a git worktree whose main checkout has a built sibling
 #      sit, `--sit-dir` from the root names exactly that (git's own --git-common-dir is the
 #      oracle); otherwise the axis says why it did not apply
 #
 # MUTATIONS (each RED; measured when this gate was written):
-#   M1 `_sit_find_dir` drops the worktree branch (`_sit_worktree_candidate`)  -> axes 1, 2, 3, 6, 8
+#   M1 `_sit_find_dir` drops the worktree branch (`_sit_worktree_candidate`)  -> axes 1-3c, 6, 8
 #   M2 the relative gitdir taken as absolute (no ROOT join)                    -> axis 2
 #   M3 `_read_line1` keeps the CR                                              -> axis 3
 #   M4 SIT_DIR falls through to the other candidates on a miss                 -> axis 4
+#   M5 commondir never read: common = gitdir/../.. hard-coded                  -> axes 3b, 3c
+#   M6 $HOME/Repos/sit tried without the dedup against ../sit and the worktree -> axis 9
 set -e
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || { echo "FAIL: check_sit_lookup_worktree: cannot cd to $ROOT"; exit 1; }
@@ -94,6 +103,17 @@ mkwt "$T/lanes/c/wt" "$T/main" c "gitdir: $T/main/.git/worktrees/c" "$T/main/.gi
 printf 'gitdir: %s\r\n' "$T/main/.git/worktrees/c" > "$T/lanes/c/wt/.git"
 sitdir "$T/lanes/c/wt"; expect 3 "$T/sit"
 
+# 3b/3c — the gitdir is not under the common dir, so `commondir` must actually be read.
+# gitdir/../.. is $T/x/a, and a guess of common = gitdir/../.. lands on the decoy $T/x/sit.
+mksit "$T/x/sit"
+mkdir -p "$T/x/a/b/c/wt-e" "$T/x/a/b/c/wt-f" "$T/lanes/e/wt" "$T/lanes/f/wt"
+printf '%s\n' "$T/main/.git" > "$T/x/a/b/c/wt-e/commondir"
+printf 'gitdir: %s\n' "$T/x/a/b/c/wt-e" > "$T/lanes/e/wt/.git"
+sitdir "$T/lanes/e/wt"; expect 3b "$T/sit"
+printf '%s\n' "../../../../../main/.git" > "$T/x/a/b/c/wt-f/commondir"
+printf 'gitdir: %s\n' "$T/x/a/b/c/wt-f" > "$T/lanes/f/wt/.git"
+sitdir "$T/lanes/f/wt"; expect 3c "$T/sit"
+
 # 4 — SIT_DIR is an override.
 mksit "$T/othersit"
 sitdir "$T/lanes/a/wt" SIT_DIR="$T/othersit"; expect 4a "$T/othersit"
@@ -128,6 +148,26 @@ sitdir "$T/lanes/d/wt"; expect 7a "$T/home/Repos/sit"
 mkdir -p "$T/sep/repo.git" "$T/far/sep"
 printf 'gitdir: %s\n' "$T/sep/repo.git" > "$T/far/sep/.git"
 sitdir "$T/far/sep"; expect 7b "$T/home/Repos/sit"
+rm -rf "$T/home/Repos"
+
+# 9 — every candidate tried and named once, when ../sit or the worktree route IS $HOME/Repos/sit.
+once() {  # <axis>
+    if [ "$RC" -ne 1 ] || [ -n "$OUT" ]; then
+        _fail "axis $1: expected a miss (rc 1, empty stdout), got rc $RC and '$OUT'"
+        return
+    fi
+    _n=$(grep -o "$T/home/Repos/sit" "$T/err" | wc -l | tr -d ' ')
+    if [ "$_n" != 1 ]; then
+        _fail "axis $1: the miss names $T/home/Repos/sit $_n times, expected once: $(cat "$T/err")"
+    else
+        echo "  ok: axis $1 -> $(cat "$T/err")"
+    fi
+}
+mkdir -p "$T/home/Repos/proj"
+sitdir "$T/home/Repos/proj"; once 9a
+mkdir -p "$T/home/Repos/cy"
+mkwt "$T/lanes/g/wt" "$T/home/Repos/cy" g "gitdir: $T/home/Repos/cy/.git/worktrees/g" "../.."
+sitdir "$T/lanes/g/wt"; once 9b
 rm -rf "$T/home/Repos"
 
 # 8 — LIVE: this tree, when it is a worktree.
