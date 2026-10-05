@@ -3341,12 +3341,16 @@ fn _PARSE_STMT_IMPL(S): i64 {
             # returned 42. It also gave the two positions OPPOSITE stack alignment (the
             # lowering spills the callee to a frame slot; the plain call pushes it as an
             # argument), which is the asymmetry the mabda filing measured and could not
-            # explain from the source text. Same gate as the expression side — inside a fn,
-            # a real `fncallN` name, and FINDFN >= 0 so a program that never included
+            # explain from the source text. Same gate as the expression side — a real
+            # `fncallN` name, and FINDFN >= 0 so a program that never included
             # lib/fnptr.cyr still gets its "undefined function" diagnostic.
             # CHANGELOG [6.6.5]
+            # 6.6.16: no longer "inside a fn" too — at top level the lowering brings its own
+            # micro-frame (PINDIRECT_CALL), and the old fall-through to lib/fnptr.cyr called a
+            # capturing closure's tagged value: `fncall1(g, 1);` at top level SIGSEGV'd.
+            # CHANGELOG [6.6.16]
             var _stmt_fcn = 0;
-            if (_cur_fn_ix >= 0) { if (_IS_FNCALL_NAME(S, noff) == 1) { if (_mu_fi >= 0) { _stmt_fcn = 1; } } }
+            if (_IS_FNCALL_NAME(S, noff) == 1) { if (_mu_fi >= 0) { _stmt_fcn = 1; } }
             if (_stmt_fcn == 1) {
                 _fncall_expect = ((L64(S + 0xEC00000 + noff) >> 48) & 0xFF) - 48;
                 STI(S, GTI(S) + 1);   # consume '('

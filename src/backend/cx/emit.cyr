@@ -543,6 +543,25 @@ fn ECALLIND(S, idx): i64 {
     return 0;
 }
 
+# 6.6.16 — the MICRO-FRAME around a TOP-LEVEL indirect call (PINDIRECT_CALL, parse_expr.cyr; the
+# x86 peer in backend/x86/emit.cyr has the full note). The ordinary prologue pair — EFNPRO
+# (`pushc fp; mov fp, sp`, fp saved on the CALL stack) and ESUBRSP's patchable `movi r15; sub sp`
+# — and the epilogue without its `ret`. Before 6.6.16 a top-level fncallN on cx was an ordinary
+# call into lib/fnptr.cyr, which has no cx arm, so it returned 0 for EVERY callee.
+fn ETLFRAME_OPEN(S): i64 {
+    _IR_REC0(S, IR_RAW_EMIT);
+    EFNPRO(S);
+    var patch = ESUBRSP(S);
+    return patch;
+}
+fn ETLFRAME_CLOSE(S, patch, nslots): i64 {
+    _IR_REC0(S, IR_RAW_EMIT);
+    EPATCHFRAME(S, patch, ((nslots * 8 + 15) / 16) * 16);
+    CX_EMIT(S, 2, 254, 253, 0);   # mov sp, fp
+    CX_EMIT(S, 0x63, 253, 0, 0);  # popc fp (from call stack)
+    return 0;
+}
+
 fn ECALLPOPS(S, n): i64 {
     # Pop args into r3-r8 (argument registers)
     var i = n - 1;

@@ -30,6 +30,13 @@
 # Part (C) below adds those positions. See docs/development/issues/archived/
 # 2026-09-16-mabda-cycc-nested-call-stack-misalignment.md.
 #
+# 6.6.16 — (A)'s top-level fncallN calls are no longer ordinary calls into lib/fnptr.cyr's asm:
+# a top-level indirect call is now LOWERED like an in-fn one (PINDIRECT_CALL, which opens a
+# per-call-site micro-frame — before, top level fell through to the library, which called a
+# capturing closure's tagged value and SIGSEGV'd). The micro-frame keeps rsp's parity, so (A)
+# still enters every extern-C callee 16-byte aligned, now through ECALLPOPS; (C)'s in-fn rows
+# are byte-unchanged. See tests/gates/codegen/toplevel_indirect_call.sh.
+#
 # MUTATION LEDGER (measured 2026-09-17 on x86_64 Linux / glibc):
 #   * the 6.6.4 compiler            -> PASS(A) PASS(B), FAIL(C) SIGSEGV. That split is the
 #     clearest statement of what the v6.3.26 gate did and did not prove: the same C callees,

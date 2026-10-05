@@ -4132,6 +4132,55 @@ fn ECALLIND(S, idx): i64 {
     return 0;
 }
 
+# 6.6.16 — the MICRO-FRAME around a TOP-LEVEL indirect call (PINDIRECT_CALL, parse_expr.cyr).
+# Top-level code has no frame, and the indirect-call lowering spills its callee to rbp-relative
+# slots, so the call site opens one: `push rbp; mov rbp, rsp; sub rsp, imm32`, the imm32 patched
+# at the close once the slot count is known. Serves every x86 image (ELF, PE, EFI, agnos, x86
+# Mach-O). Recorded as IR_RAW_EMIT, never IR_PROLOGUE / IR_ALLOC_FRAME: a prologue in the middle
+# of a stream is not one the IR passes should reason about. rax is never touched (the result
+# of the call rides through the close, and nothing is assumed dead at the open).
+#
+# ⛔ PE: the frame gets the page-walk probe, because Windows commits the stack one guard page at
+# a time and a `sub rsp` that jumps past it faults on first touch. The size is only known at the
+# close, so the open always emits the walk — the trade ESUBRSP makes for every PE prologue — but
+# with the size in r10 rather than eax, so rax survives. A frame under 4 KiB walks one step.
+# Returns the offset of the imm32 the close patches (the frame size on both paths).
+fn ETLFRAME_OPEN(S): i64 {
+    _IR_REC0(S, IR_RAW_EMIT);
+    EB(S, 0x55);                                       # push rbp
+    E3(S, 0xE58948);                                   # mov rbp, rsp
+    if (_TARGET_PE == 1) {
+        E2(S, 0xBA41);                                 # 41 BA       mov r10d, imm32 (patched = size)
+        var pp = GCP(S);
+        E2(S, 0); E2(S, 0);
+        E3(S, 0xE38949);                               # 49 89 E3    mov r11, rsp
+        E3(S, 0xD3294D);                               # 4D 29 D3    sub r11, r10   (r11 = target rsp)
+        E3(S, 0xDC394C);                               # 4C 39 DC    cmp rsp, r11   (.probe)
+        E2(S, 0x0D76);                                 # 76 0D       jbe .done (+13)
+        E3(S, 0xEC8148); E2(S, 0x1000); E2(S, 0);      # 48 81 EC .. sub rsp, 0x1000
+        E2(S, 0x8948); E2(S, 0x2424);                  # 48 89 24 24 mov [rsp], rsp (touch the page)
+        E2(S, 0xEEEB);                                 # EB EE       jmp .probe (-18)
+        E3(S, 0xDC894C);                               # 4C 89 DC    mov rsp, r11   (.done)
+        return pp;
+    }
+    E3(S, 0xEC8148);                                   # sub rsp, imm32  (patched)
+    var patch = GCP(S);
+    EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
+    return patch;
+}
+# The frame is `nslots` 8-byte slots, rounded so 8 (the saved rbp) + size == 0 mod 16: rsp keeps
+# its parity across the call site, which is what the 6.6.5 depth-0 alignment and `_xdepth`
+# assume, so nothing else needs to know a frame was opened. `leave` restores rbp and rsp.
+fn ETLFRAME_CLOSE(S, patch, nslots): i64 {
+    _IR_REC0(S, IR_RAW_EMIT);
+    var fsz = ((nslots * 8 + 8 + 15) / 16) * 16 - 8;
+    var pa = _codebuf_base + patch;
+    S64(pa, (L64(pa) >> 32 << 32) | (fsz & 0xFFFFFFFF));
+    EB(S, 0xC9);                                       # leave
+    _flags_reflect_rax = 0;
+    return 0;
+}
+
 # Emit pop into arg register for arg N.
 # SysV x86_64: n=0..5 → rdi/rsi/rdx/rcx/r8/r9.
 # Win64   (v5.5.3): n=0..3 → rcx/rdx/r8/r9. n>=4 falls through to

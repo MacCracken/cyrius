@@ -1697,6 +1697,12 @@ _chk_gate "$ROOT/tests/gates/frontend/stack_enum_mixed_return_warning.sh"
 # repro runs verbatim against the tree through a throwaway home; real mixed returns still warn.
 _chk_gate "$ROOT/tests/gates/frontend/stack_enum_closure_return_scope.sh"
 
+# 6.6.16 (H1) — fncall0..8 and callptr at TRUE TOP LEVEL dispatch an escaped capturing closure:
+# a top-level indirect call opens its own micro-frame (it was never lowered there: SIGSEGV on
+# x86/aarch64, 0xC0000005 on PE, 0 for every callee on cx; callptr was refused). The filed hisab
+# repro and closure_escape_dispatch.tcyr's top-level section on x86, qemu, wine and cxvm.
+_chk_gate "$ROOT/tests/gates/codegen/toplevel_indirect_call.sh"
+
 # 6.6.9 (bite 3) — a second struct/union with a different layout (the first silently won) and
 # an enum constant over a zero/computed global of the same name are warned, not silent.
 _chk_gate "$ROOT/tests/gates/frontend/redefinition_layout_and_enum_over_var.sh"
