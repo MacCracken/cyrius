@@ -98,6 +98,20 @@
 # passing `pair = 0` to `_stmt_qmark` -> the SG `?` Err row dies (rc 139: the tag read as a
 # pointer).
 #
+# SQ (6.6.16, C4) rows `run_generic_q` + the top-level SQ row: the explicit generic spelling
+# `g<T>(..)` behaves like `f(..)` for `?` in EVERY expression position, for the destructure and
+# through a wrapper. Every "does this call return a pair" asker recognised only `name(`, so on
+# 6.6.15 `var v = sgdiv<i32>(6, 0)?;` — and the assignment, `return Ok(..? + k)`, `if (..? > k)`,
+# the `: i64` bind, `sgdiv<i64>` and a generic declared `: Result` — took the BOXED `?` lowering
+# and dereferenced the tag (rc 139); `var a, b = sgdiv<i32>(..);` was "multi-value destructure
+# needs a call on the right-hand side", in a fn and at top level after a statement; and a wrapper
+# `return sgdiv<i32>(..);` defined AFTER its `w(..)?` caller was never flagged (rc 139). The
+# statement form `sgdiv<i32>(..)?;` (SG above) was already right. The refusals (single bind,
+# assignment, store64 of a generic) are in tests/gates/frontend/stack_enum_lossy_context.sh; the
+# method spelling `p.m(..)` is tests/tcyr/crossos/method_pair_result.tcyr. Mutations (scratch tree,
+# measured): `_pair_callee_at` taking `name(` only -> rc 139; `_pair_ret_open` (the token passes)
+# taking `name(` only -> rc 139 (the forward-wrapper row, flagged only by the pair prescan).
+#
 # CROSS-HOST because each instance is a by-value struct-param fn emitted inline (jumped over) by
 # every backend, and struct returns take the per-target retptr / register-pair ABI.
 include "lib/assert.cyr"
@@ -313,6 +327,64 @@ fn sgp8<T>(x: T): P8 { sg_hits = sg_hits + x * 1000; var p: P8; p.a = x; p.b = 1
 fn sgp3<T>(x: T): P3 { sg_hits = sg_hits + x * 10; var r: P3; r.a = x; r.b = x + 1; r.c = x + 2; return r; }
 fn sgdiv<T>(n: T, d: T) { sg_hits = sg_hits + 1; if (d == 0) { return Err(99); } return Ok(n / d); }
 fn sgq(n, d) { sgdiv<i32>(n, d)?; return Ok(7); }
+# SQ (6.6.16, C4): `?` on an explicit generic in every expression position; destructure; wrappers.
+fn sgdivr<T>(n: T, d: T): Result { if (d == 0) { return Err(98); } return Ok(n / d); }
+fn sq_bind(n, d) { var v = sgdiv<i32>(n, d)?; return Ok(v + 1000); }
+fn sq_assign(n, d) { var x = 0; x = sgdiv<i32>(n, d)?; return Ok(x + 2000); }
+fn sq_expr(n, d) { return Ok(sgdiv<i32>(n, d)? + 3000); }
+fn sq_if(n, d) { if (sgdiv<i32>(n, d)? > 2) { return Ok(4001); } return Ok(4002); }
+fn sq_typed(n, d) { var x: i64 = sgdiv<i32>(n, d)?; return Ok(x + 5000); }
+fn sq_i64(n, d) { var v = sgdiv<i64>(n, d)?; return Ok(v + 6000); }
+fn sq_res(n, d) { var v = sgdivr<i32>(n, d)?; return Ok(v + 7000); }
+fn sq_fwd(n, d) { var v = sq_wrap(n, d)?; return Ok(v + 8000); }   # its wrapper is defined BELOW
+fn sq_wrap(n, d) { return sgdiv<i32>(n, d); }
+fn sq_back(n, d) { var v = sq_wrap(n, d)?; return Ok(v + 9000); }  # ...and here ABOVE
+fn sq_destr(n, d): i64 { var a, b = sgdiv<i32>(n, d); return a * 1000 + b; }
+# An Ok row and an Err row folded into one number: the Ok payload (its tag 0) plus the Err row's
+# tag * 1000000 and payload * 10 — so Err(99) adds 1000990.
+fn sq_oe(t1, v1, t2, v2): i64 { return t1 * 100000 + v1 + t2 * 1000000 + v2 * 10; }
+fn run_generic_q(): i64 {
+    test_group("`?`, the destructure and wrappers on an explicit generic call (C4)");
+    var t1, v1 = sq_bind(6, 2);
+    assert_eq(t1 * 100000 + v1, 1003, "SQ: `var v = sgdiv<i32>(6, 2)?;` Ok -> the payload (was rc 139)");
+    var t2, v2 = sq_bind(6, 0);
+    assert_eq(t2 * 100000 + v2, 100099, "SQ: `var v = sgdiv<i32>(6, 0)?;` Err leaves with both halves");
+    var t3, v3 = sq_assign(6, 2);
+    var t4, v4 = sq_assign(6, 0);
+    assert_eq(sq_oe(t3, v3, t4, v4), 1000990 + 2003,
+        "SQ: `x = sgdiv<i32>(..)?;` Ok and Err");
+    var t5, v5 = sq_expr(6, 2);
+    var t6, v6 = sq_expr(6, 0);
+    assert_eq(sq_oe(t5, v5, t6, v6), 1000990 + 3003,
+        "SQ: `return Ok(sgdiv<i32>(..)? + 3000);` Ok and Err");
+    var t7, v7 = sq_if(6, 2);
+    var t8, v8 = sq_if(6, 0);
+    assert_eq(sq_oe(t7, v7, t8, v8), 1000990 + 4001,
+        "SQ: `if (sgdiv<i32>(..)? > 2)` Ok and Err");
+    var t9, v9 = sq_typed(6, 2);
+    var t10, v10 = sq_typed(6, 0);
+    assert_eq(sq_oe(t9, v9, t10, v10), 1000990 + 5003,
+        "SQ: `var x: i64 = sgdiv<i32>(..)?;` Ok and Err");
+    var t11, v11 = sq_i64(6, 2);
+    var t12, v12 = sq_i64(6, 0);
+    assert_eq(sq_oe(t11, v11, t12, v12), 1000990 + 6003,
+        "SQ: `sgdiv<i64>(..)?` (the base) Ok and Err");
+    var t13, v13 = sq_res(6, 2);
+    var t14, v14 = sq_res(6, 0);
+    assert_eq(sq_oe(t13, v13, t14, v14), 1000980 + 7003,
+        "SQ: a generic declared `: Result`, `?` Ok and Err");
+    var t15, v15 = sq_fwd(6, 2);
+    var t16, v16 = sq_fwd(6, 0);
+    assert_eq(sq_oe(t15, v15, t16, v16), 1000990 + 8003,
+        "SQ: `w(..)?` on `return sgdiv<i32>(..)` defined AFTER the caller");
+    var t17, v17 = sq_back(6, 2);
+    var t18, v18 = sq_back(6, 0);
+    assert_eq(sq_oe(t17, v17, t18, v18), 1000990 + 9003,
+        "SQ: the same wrapper defined BEFORE the caller");
+    assert_eq(sq_destr(6, 2), 3, "SQ: `var a, b = sgdiv<i32>(6, 2);` in a fn binds (0, 3)");
+    assert_eq(sq_destr(6, 0), 1099, "SQ: `var a, b = sgdiv<i32>(6, 0);` binds (1, 99) (was 'needs a call')");
+    return 0;
+}
 fn run_stmt_generics(): i64 {
     test_group("an explicit generic call as a bare statement (R2)");
     sg_hits = 0;
@@ -468,6 +540,7 @@ fn main(): i64 {
     run_params();
     run_call_fields();
     run_stmt_generics();
+    run_generic_q();
     #ifndef CYRIUS_TARGET_CX
     run_returns();
     run_paths();
@@ -497,6 +570,10 @@ sg_hits = 0;
 sgid<i32>(100);
 sgid<i64>(20);
 assert_eq(sg_hits, 120, "SG: top-level `sgid<i32>(100); sgid<i64>(20);`");
+# SQ (6.6.16, C4): the destructure at top level AFTER a statement (PARSE_VAR's global arm; the
+# declaration zone already worked) — was "multi-value destructure needs a call on the right-hand side".
+var sqtt, sqtv = sgdiv<i32>(8, 0);
+assert_eq(sqtt * 1000 + sqtv, 1099, "SQ: top-level `var t, v = sgdiv<i32>(8, 0);` after a statement");
 var r = assert_summary();
 # ⚠ The explicit exit is load-bearing: with `fn main` defined, the entry auto-calls it AGAIN after
 # the top level, and that second run's 0 would be the exit code — a failed row then exits 0.

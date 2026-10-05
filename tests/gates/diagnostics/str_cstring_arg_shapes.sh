@@ -16,9 +16,13 @@
 # ⭐ Axis 3 is the anti-vacuous one for the "warning text only" claim: the same source must
 # give a BYTE-IDENTICAL binary with CYRIUS_TYPE_CHECK=0 — and must still warn with it on, so
 # a check that warned by changing codegen, or that stopped warning, both fail.
-# ⚠ The inferred-global record (GVDSID) is diagnostic-only ON PURPOSE: typing an inferred
-# global through GVTYPE changes codegen (struct-copy init, field access, the overload
-# dispatcher). Axis 3's cmp is what would catch that "simplification".
+# ⚠ The inferred-global record (GVDSID) is never written into GVTYPE ON PURPOSE: typing an
+# inferred global through GVTYPE changes codegen (struct-copy init, field access). Axis 3's cmp
+# is what would catch that "simplification". Since 6.6.16 the overload dispatcher READS GVDSID —
+# it routes on this check's own classifier (`_str_arg_kind`), so `println(gi)` reaches
+# `println_str` — and that routing does not depend on CYRIUS_TYPE_CHECK, so axis 3 still holds.
+# Axis 4's last rows pin the invariant that buys: a call the dispatcher can route never warns —
+# for a call or method RESULT too (`s.cat(t)`, `mkh().name`), typed by its own declared return.
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -289,6 +293,114 @@ EOF
 row "an i32 global whose width equals Str's struct id stays silent; the Str global beside it warns" 1
 if grep -q "passing Str-typed 'gv'" "$T/row.cyr.err"; then _ok "axis 4 width/sid: the one warning is the Str global, not the i32"
 else _bad "axis 4 width/sid: the warning is not on the Str global"; grep "$NEEDLE" "$T/row.cyr.err" || true; fi
+
+# 6.6.16 (C3): the overload dispatcher asks `_str_arg_kind` too, so whenever this warning would
+# say "passing Str-typed X" to a base with an arity-compatible `_str` sibling, the call is ROUTED
+# instead — and must not warn. Before 6.6.16 every call here warned and printed the Str header's
+# pointer bytes (no Str global or field was ever routed), and strlen(gs) answered 3.
+printf '%s\n%s\n' "$HDR" 'var gs: Str = str_from("explicit-global");
+var gi = str_from("inferred-global");
+fn main(): i64 {
+    alloc_init();
+    var h: H;
+    h.name = str_from("field");
+    println(gs);
+    println(gi);
+    println(h.name);
+    var r = strlen(gs);
+    return r;
+}
+var rc = main();
+syscall(SYS_EXIT, rc);' > "$T/row.cyr"
+row "routed: println(gs), println(gi), println(h.name), strlen(gs) reach their _str siblings" 0
+if [ "$(cat "$T/row.cyr.rc")" = 0 ]; then
+    chmod +x "$T/row.cyr.bin"
+    out=$("$T/row.cyr.bin" | tr '\n' ' ' || true)
+    if "$T/row.cyr.bin" > /dev/null; then rc=0; else rc=$?; fi
+    if [ "$out" = 'explicit-global inferred-global field ' ] && [ "$rc" = 15 ]; then
+        _ok "axis 4 routed: the binary prints the three strings and strlen(gs) is 15"
+    else _bad "axis 4 routed: printed '$out', exit $rc (want the three strings, exit 15)"; fi
+fi
+# A closure capture is typed as PARSE_FACTOR reads it — before any global of the same name. 6.6.15
+# warned on the cstr capture `s` (reading the Str global `s`) and was silent on the Str capture `lt`;
+# the dispatcher shares this classifier, so the same mistake routed `show(s)` to `show_str`.
+printf '%s\n%s\n' "$HDR" 'var s: Str = str_from("g");
+fn main(): i64 {
+    alloc_init();
+    var s = "cstr";
+    var lt: Str = str_from("cap");
+    var c1 = |x| later(0, s) + x;
+    var c2 = |x| later(0, lt) + x;
+    return fncall1(c1, 0) + fncall1(c2, 0);
+}
+var rc = main();' > "$T/row.cyr"
+row "closure captures: a cstr capture named like a Str global is silent, a Str capture warns" 1
+if grep -q "passing Str-typed 'lt' to 'later'" "$T/row.cyr.err"; then _ok "axis 4 captures: the one warning is the Str capture"
+else _bad "axis 4 captures: the warning is not on the Str capture 'lt'"; grep "$NEEDLE" "$T/row.cyr.err" || true; fi
+# A call or method RESULT is typed by its own declared return (`_str_step_kind`), never by its
+# receiver: the first 6.6.16 cut dropped `s.cat(t)` — routed before only because `s` is a Str,
+# which also sent `s.len()` to `println_str` — and printed the header's pointer bytes for it.
+printf '%s\n%s\n' "$HDR" 'fn mkh(): H { var h: H; h.name = str_from("callfield"); h.n = 0; return h; }
+fn H_getname(self: H): Str { return self.name; }
+fn main(): i64 {
+    alloc_init();
+    var s: Str = str_from("hello");
+    var t: Str = str_from("XY");
+    var h = mkh();
+    println(s.cat(t));
+    println(h.getname());
+    println(mkh().name);
+    var r = strlen(s.sub(1, 4));
+    return r;
+}
+var rc = main();
+syscall(SYS_EXIT, rc);' > "$T/row.cyr"
+row "routed results: println(s.cat(t)), println(h.getname()), println(mkh().name), strlen(s.sub(1, 4))" 0
+if [ "$(cat "$T/row.cyr.rc")" = 0 ]; then
+    chmod +x "$T/row.cyr.bin"
+    out=$("$T/row.cyr.bin" | tr '\n' ' ' || true)
+    if "$T/row.cyr.bin" > /dev/null; then rc=0; else rc=$?; fi
+    if [ "$out" = 'helloXY callfield callfield ' ] && [ "$rc" = 4 ]; then
+        _ok "axis 4 routed results: the binary prints the three strings and strlen(s.sub(1, 4)) is 4"
+    else _bad "axis 4 routed results: printed '$out', exit $rc (want the three strings, exit 4)"; fi
+fi
+# The same shapes into a `: cstring` param with no sibling warn, named as written; an i64 method
+# and an untyped field of a result stay silent.
+printf '%s\n%s\n' "$HDR" 'fn mkh(): H { var h: H; h.name = str_from("f"); h.n = 0; return h; }
+fn H_getname(self: H): Str { return self.name; }
+fn mk(): Str { return str_from("m"); }
+fn gstr<X>(x: X): Str { return str_from("g"); }
+fn main(): i64 {
+    alloc_init();
+    var s: Str = str_from("abc");
+    var r = later(0, s.clone());
+    r = r + later(0, mkh().name);
+    r = r + later(0, mkh().getname());
+    r = r + later(0, gstr<i64>(0));
+    r = r + later(0, mk().data);
+    r = r + later(0, s.len());
+    r = r + later(0, mkh().n);
+    return r;
+}
+var rc = main();' > "$T/row.cyr"
+row "results into a cstring: s.clone(), mkh().name, mkh().getname(), gstr<i64>(0), mk().data warn; s.len(), mkh().n do not" 5
+if grep -q "passing Str-typed 's.clone()' to 'later'" "$T/row.cyr.err" \
+    && grep -q "pass str_cstr(s.clone())" "$T/row.cyr.err" \
+    && grep -q "passing Str-typed 'mkh().name' to 'later'" "$T/row.cyr.err" \
+    && grep -q "passing Str-typed 'mkh().getname()' to 'later'" "$T/row.cyr.err" \
+    && grep -q "passing Str-typed 'gstr<..>(..)' to 'later'" "$T/row.cyr.err" \
+    && grep -q "passing a Str's data pointer 'mk().data' to 'later'" "$T/row.cyr.err" \
+    && grep -q "pass str_cstr(mk())" "$T/row.cyr.err"; then
+    _ok "axis 4 results: each warning names the argument as written, and the hint wraps it"
+else _bad "axis 4 results: a warning or hint does not name the argument as written"; grep -A1 "$NEEDLE" "$T/row.cyr.err" || true; fi
+# ...and the data pointer is still not a Str: not routed, and still warned about as one.
+printf '%s\n%s\n' "$HDR" 'var gs: Str = str_from("explicit-global");
+fn main(): i64 { alloc_init(); println(gs.data); return 0; }
+var rc = main();' > "$T/row.cyr"
+row "not routed: println(gs.data)" 1
+if grep -q "passing a Str's data pointer 'gs.data' to 'println'" "$T/row.cyr.err"; then
+    _ok "axis 4 not routed: println(gs.data) is still reported as a Str's data pointer"
+else _bad "axis 4 not routed: println(gs.data) is not reported as a data pointer"; grep "$NEEDLE" "$T/row.cyr.err" || true; fi
 
 echo "str_cstring_arg_shapes: $pass ok, $fail failed"
 [ "$fail" -eq 0 ] || exit 1

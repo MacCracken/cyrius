@@ -739,6 +739,10 @@ fn PARSE_RETURN(S): i64 {
                             STI(S, GTI(S) + 1);
                             # Parse args (same as PARSE_FNCALL arg handling)
                             STI(S, GTI(S) + 1);  # consume (
+                            # 6.6.16 — the token the call's warnings name (PARSE_FNCALL's
+                            # convention: the first token after `(`). By the time they fire the
+                            # cursor is past `);`, on the NEXT statement. CHANGELOG [6.6.16]
+                            var _tc_wti = GTI(S);
                             var tcargc = 0;
                             # SIMD_TC (v6.4.15): the tail-call path bypasses
                             # PARSE_FNCALL, so a value-form SIMD arg mismatched to the
@@ -787,8 +791,7 @@ fn PARSE_RETURN(S): i64 {
                             # Look up function
                             var tcfi = FINDFN(S, tcnoff);
                             if (tcfi < 0) { tcfi = REGFN(S, tcnoff); }
-                            _vis_check(S, tcfi, tcnoff);
-                            _DEPRECATED_WARN(S, tcfi, tcnoff);   # v6.6.4: tail calls warned nothing
+                            _callee_site_checks(S, tcfi, tcnoff, _tc_wti);   # v6.6.4: tail calls warned nothing
                             # v5.8.20: #pure enforcement on the tail-call path —
                             # `return helper(args);` bypasses PARSE_FNCALL but
                             # still needs the #io / #alloc check.
@@ -796,14 +799,14 @@ fn PARSE_RETURN(S): i64 {
                                 var _tcf = GFLG(S, tcfi);
                                 if (_tcf & 16 != 0) {
                                     syscall(SYS_WRITE, 2, "warning:", 8);
-                                    _err_head(S);
+                                    _err_head_at(S, _tc_wti);
                                     syscall(SYS_WRITE, 2, ": #pure fn calls #io fn '", 25);
                                     PRSTR(S + 0xEC00000 + tcnoff);
                                     syscall(SYS_WRITE, 2, "'\n", 2);
                                 }
                                 if (_tcf & 32 != 0) {
                                     syscall(SYS_WRITE, 2, "warning:", 8);
-                                    _err_head(S);
+                                    _err_head_at(S, _tc_wti);
                                     syscall(SYS_WRITE, 2, ": #pure fn calls #alloc fn '", 28);
                                     PRSTR(S + 0xEC00000 + tcnoff);
                                     syscall(SYS_WRITE, 2, "'\n", 2);
@@ -1245,7 +1248,7 @@ fn PARSE_RETURN(S): i64 {
                                 SFLC(S, _rc_named + 1);
                                 if (_rc_named + 1 > _flc_hwm) { _flc_hwm = _rc_named + 1; }
                                 # Marshal the inner call: retptr = &temp, then args.
-                                _vis_check(S, _rc_fi, _rc_noff);   # v6.6.4: PE SIMD-return call emits its own call
+                                _callee_site_checks_here(S, _rc_fi, _rc_noff, 0);   # v6.6.4: PE SIMD-return call emits its own call
                                 STI(S, GTI(S) + 1);   # consume callee IDENT
                                 STI(S, GTI(S) + 1);   # consume '('
                                 EFLADDR(S, _rc_named);
@@ -1745,12 +1748,14 @@ fn _gv_rhs_call_sid(S, ri): i64 {
     return TOKVAL(S, ri) + 1;
 }
 
-# The struct id a NAMED value carries, for the diagnostic only, 0 when untyped. A local decides
+# The struct id a NAMED value carries, 0 when untyped. Shared by the I11 Str -> `: cstring`
+# warning, the overload dispatcher (both through `_str_arg_kind`) and `_recv_sid`. A local decides
 # by itself (`0 - GLTYPE`; an untyped local shadowing a `Str` global is 0, not the global's
 # type). A global: its positive GVTYPE, but only when GVPM marks it a struct — GVTYPE's positive
 # range is shared with scalar widths, so an `i32` global's 4 must not read as struct id 4. Else
-# an inferred global's initializer return (GVDSID). The old check compared a global against the
-# LOCAL encoding `0 - sid`, so a `var g: Str` global never matched.
+# an inferred global's initializer return (GVDSID: READ here, never written into GVTYPE, which
+# would change codegen). Comparing a global against the LOCAL encoding `0 - sid` — what the I11
+# check did before 6.6.13 and the dispatcher before 6.6.16 — matches no Str global at all.
 fn _diag_name_sid(S, noff): i64 {
     if (GINFN(S) == 1) {
         var li = FINDLOCAL(S, noff);
@@ -1760,6 +1765,12 @@ fn _diag_name_sid(S, noff): i64 {
             return 0;
         }
     }
+    var g = _glob_name_sid(S, noff);
+    return g;
+}
+# `_diag_name_sid`'s global half, alone: the pair scans (`_tok_name_sid`) type a global receiver
+# exactly as `_recv_sid` does, with no local table to consult. CHANGELOG [6.6.16]
+fn _glob_name_sid(S, noff): i64 {
     var vi = _findvar_core(S, noff);
     if (vi < 0) { return 0; }
     var gt = GVTYPE(S, vi);
@@ -1773,69 +1784,151 @@ fn _diag_name_sid(S, noff): i64 {
     return r;
 }
 
-var _sca_shape = 0;   # how the argument is written: 0 `x`, 1 `f(..)`, 2 `x.f`
-# What the hint wraps in str_cstr(..): 0 `..`, 1 the base IDENT (`x.data` -> x), 2 the argument
-# as written, 3 the IDENT inside `str_data(x)`.
+# The struct id of a single NAME read as a value, in PARSE_FACTOR's order: a local decides by
+# itself, then — inside a capturing closure — a captured enclosing local decides by the type its
+# snapshot recorded, then a global (`_diag_name_sid`). The overload dispatcher routes on this, so
+# a cstr local, param or CAPTURE named like a Str global must read 0 here: measured on the planning
+# prototype, `var s = "x"; var c = |k| show(s) ..;` beside a `var s: Str` global reached `show_str`,
+# which read the cstr's bytes as a {data, len} header. CHANGELOG [6.6.16]
+fn _arg_name_sid(S, noff): i64 {
+    if (GINFN(S) == 1) {
+        if (FINDLOCAL(S, noff) < 0) {
+            var esl = _cl_cap_esl(S, noff);
+            if (esl >= 0) {
+                var t = _cl_snap_type(esl);
+                if (t < 0) { if (t > 0 - 2048) { return 0 - t; } }
+                return 0;
+            }
+        }
+    }
+    var r = _diag_name_sid(S, noff);
+    return r;
+}
+# The enclosing slot a name reads inside a capturing closure body (PARSE_FACTOR's capture rung),
+# or -1 when the name is not a capture there.
+fn _cl_cap_esl(S, noff): i64 {
+    if (_cl_capturing != 1) { return 0 - 1; }
+    if (_cl_env_lidx < 0) { return 0 - 1; }
+    var esl = _cl_snap_find(S, noff);
+    if (esl < 0) { return 0 - 1; }
+    if (_cl_cap_find(esl) < 0) { return 0 - 1; }
+    return esl;
+}
+
+var _sca_shape = 0;   # how the argument's head is written: 0 `x`, 1 `f(..)`, 2 `g<..>(..)`
+var _sca_di = 0;      # the `.` of the one `.f` / `.m(..)` step after the head, 0 when none
+# What the hint wraps in str_cstr(..): 0 `..`, 1 the head as written (`x.data` -> x), 2 the
+# argument as written, 3 the IDENT inside `str_data(x)`.
 var _sca_op = 0;
 # What the argument at the cursor hands a `: cstring` param: 1 a Str, 2 a Str's data pointer
-# (`x.data`, `str_data(..)`), 0 not known — only a SINGLE primary that ends the argument is typed.
+# (`x.data`, `str_data(..)`), 0 not known. Only a head (`x`, `f(..)`, `g<..>(..)`) with at most
+# ONE step after it (`.f`, `.m(..)`) that together END the argument is typed: `x.f.g`,
+# `x.m().n()`, `s + 8` and `load64(p)` are 0.
+# A pure peek (it writes only `_sca_shape` / `_sca_di` / `_sca_op`, which the warning recomputes),
+# and it does not depend on CYRIUS_TYPE_CHECK: PARSE_FNCALL's overload dispatcher routes
+# `base(x, ..)` to `base_str` exactly when this answers 1 for the FIRST argument, so a first
+# argument the warning would call "Str-typed" never reaches a base that has an arity-compatible
+# `_str` sibling — the call is routed instead. Each piece is typed the way codegen reads it: `x`
+# as PARSE_FACTOR does (`_arg_name_sid`), a call by its callee's declared return, the receiver of
+# `x.f` / `x.m(..)` as PARSE_FIELD_LOAD does (`_recv_sid`), a method by `<Struct>_<m>`'s return.
+# A call RESULT is typed by its declared return, never by its receiver or its head: the first
+# 6.6.16 cut dropped the method shape, so `println(s.cat(t))` — routed before by `s`'s type,
+# which is right only by luck (`s.len()` went to `_str` the same way) — printed pointer bytes.
+# CHANGELOG [6.6.16]
 fn _str_arg_kind(S, ssid): i64 {
     var ti = GTI(S);
+    _sca_shape = 0;
+    _sca_di = 0;
     if (TOKTYP(S, ti) != 2) { return 0; }
     if (_tok_ends_arg(S, ti + 1) == 1) {
-        _sca_shape = 0;
         _sca_op = 2;
-        if (_diag_name_sid(S, TOKVAL(S, ti)) == ssid) { return 1; }
+        if (_arg_name_sid(S, TOKVAL(S, ti)) == ssid) { return 1; }
         return 0;
     }
-    if (TOKTYP(S, ti + 1) == 10) {
-        var r = _str_call_kind(S, ti, ssid);
+    var o = _gcall_open(S, ti);
+    if (o >= 0) {
+        var r = _str_call_kind(S, ti, o, ssid);
         return r;
     }
     if (TOKTYP(S, ti + 1) != 41) { return 0; }
-    if (TOKTYP(S, ti + 2) != 2) { return 0; }
-    if (_tok_ends_arg(S, ti + 3) == 0) { return 0; }
-    _sca_shape = 2;
-    var bsid = _diag_name_sid(S, TOKVAL(S, ti));
-    if (bsid <= 0) { return 0; }
-    if (bsid == ssid) {
-        _sca_op = 1;
-        if (_noff_is(S, TOKVAL(S, ti + 2), "data", 4) == 1) { return 2; }
-        return 0;
-    }
-    _sca_op = 2;
-    var fx = FINDFIELD(S, bsid - 1, TOKVAL(S, ti + 2));
-    if (fx < 0) { return 0; }
-    if (GETFTYPE(S, bsid - 1, fx) == ssid) { return 1; }
-    return 0;
+    var bsid = _recv_sid(S, TOKVAL(S, ti));
+    var k = _str_step_kind(S, ti + 1, bsid, ssid);
+    return k;
 }
-# `f(..)` at token `ti`: a Str when f is declared `: Str`, a data pointer when f is `str_data`.
-fn _str_call_kind(S, ti, ssid): i64 {
+# `f(..)` / `g<..>(..)` at token `ti`, its `(` at `o`: a Str when the callee is declared `: Str`
+# (for a generic, its template's declared return: a `: T` return is no struct id there, so
+# `id<Str>(s)` is not typed), a data pointer when it is `str_data`; followed by one `.f` /
+# `.m(..)`, that step on the struct the callee returns.
+fn _str_call_kind(S, ti, o, ssid): i64 {
     _sca_shape = 1;
+    if (o != ti + 1) { _sca_shape = 2; }
     _sca_op = 0;
-    var e = _tok_close_paren(S, ti + 1);
+    var e = _tok_close_paren(S, o);
     if (e < 0) { return 0; }
-    if (_tok_ends_arg(S, e + 1) == 0) { return 0; }
     var cfi = FINDFN(S, TOKVAL(S, ti));
+    var rs = 0;
+    if (cfi >= 0) { rs = GFRS(S, cfi); }
+    if (_tok_ends_arg(S, e + 1) == 0) {
+        if (TOKTYP(S, e + 1) != 41) { return 0; }
+        var k = _str_step_kind(S, e + 1, rs, ssid);
+        return k;
+    }
     if (cfi < 0) { return 0; }
-    if (GFRS(S, cfi) == ssid) {
+    if (rs == ssid) {
         _sca_op = 2;
         return 1;
     }
+    if (_sca_shape != 1) { return 0; }
     if (_noff_is(S, TOKVAL(S, ti), "str_data", 8) == 0) { return 0; }
     if (TOKTYP(S, ti + 2) == 2) { if (e == ti + 3) { _sca_op = 3; } }
     return 2;
 }
+# The one step `.f` / `.m(..)` whose `.` is at token `di`, on a receiver of struct id `rsid`
+# (0 untyped), when the step ends the argument. A method is a Str when `<Struct>_<m>` (as
+# PARSE_FIELD_LOAD builds it) is declared `: Str` — `s.cat(t)` is, `s.len()` / `s.data()` are
+# not; a field when it is declared `: Str`; `.data` of a Str is its data pointer.
+fn _str_step_kind(S, di, rsid, ssid): i64 {
+    if (TOKTYP(S, di + 1) != 2) { return 0; }
+    if (rsid <= 0) { return 0; }
+    _sca_di = di;
+    if (TOKTYP(S, di + 2) == 10) {
+        _sca_op = 2;
+        var e = _tok_close_paren(S, di + 2);
+        if (e < 0) { return 0; }
+        if (_tok_ends_arg(S, e + 1) == 0) { return 0; }
+        var mf = FINDFN(S, BUILD_METHOD_NAME(S, rsid - 1, TOKVAL(S, di + 1)));
+        if (mf < 0) { return 0; }
+        if (GFRS(S, mf) == ssid) { return 1; }
+        return 0;
+    }
+    if (_tok_ends_arg(S, di + 2) == 0) { return 0; }
+    if (rsid == ssid) {
+        _sca_op = 1;
+        if (_noff_is(S, TOKVAL(S, di + 1), "data", 4) == 1) { return 2; }
+        return 0;
+    }
+    _sca_op = 2;
+    var fx = FINDFIELD(S, rsid - 1, TOKVAL(S, di + 1));
+    if (fx < 0) { return 0; }
+    if (GETFTYPE(S, rsid - 1, fx) == ssid) { return 1; }
+    return 0;
+}
 
-# The argument as written (`x`, `f(..)`, `x.f`), then what the hint wraps in str_cstr(..).
+# The argument as written: the head (`x`, `f(..)`, `g<..>(..)`), then its step (`.f`, `.m(..)`).
 fn _sca_print_arg(S): i64 {
+    _sca_print_head(S);
+    if (_sca_di > 0) {
+        syscall(SYS_WRITE, 2, ".", 1);
+        PRSTR(S + 0xEC00000 + TOKVAL(S, _sca_di + 1));
+        if (TOKTYP(S, _sca_di + 2) == 10) { _sca_print_call_args(S, _sca_di + 1); }
+    }
+    return 0;
+}
+fn _sca_print_head(S): i64 {
     var ti = GTI(S);
     PRSTR(S + 0xEC00000 + TOKVAL(S, ti));
     if (_sca_shape == 1) { _sca_print_call_args(S, ti); }
-    if (_sca_shape == 2) {
-        syscall(SYS_WRITE, 2, ".", 1);
-        PRSTR(S + 0xEC00000 + TOKVAL(S, ti + 2));
-    }
+    if (_sca_shape == 2) { syscall(SYS_WRITE, 2, "<..>(..)", 8); }
     return 0;
 }
 # A call's argument list as the message shows it: `()`, `(x)` for one bare IDENT, else `(..)`.
@@ -1856,7 +1949,7 @@ fn _sca_print_call_args(S, ti): i64 {
 fn _sca_print_op(S): i64 {
     var ti = GTI(S);
     if (_sca_op == 0) { syscall(SYS_WRITE, 2, "..", 2); }
-    if (_sca_op == 1) { PRSTR(S + 0xEC00000 + TOKVAL(S, ti)); }
+    if (_sca_op == 1) { _sca_print_head(S); }
     if (_sca_op == 2) { _sca_print_arg(S); }
     if (_sca_op == 3) { PRSTR(S + 0xEC00000 + TOKVAL(S, ti + 2)); }
     return 0;
@@ -2131,8 +2224,7 @@ fn _struct_call_into(S, handle): i64 {
     var fi = _gen_resolve_call(S, GTI(S));   # 6.6.10: a generic's instance, not its base
     if (fi < 0) { fi = REGFN(S, noff); }
     _gen_own_call_check(S, fi, noff);
-    _vis_check(S, fi, noff);
-    _DEPRECATED_WARN(S, fi, noff);
+    _callee_site_checks_here(S, fi, noff, 0);   # the cursor is on the callee's name
     var t = 0;
     if (handle == 1) { t = _ptr_temp(S, GFRS(S, fi)); }
     else { t = _agg_temp(S, GFRS(S, fi)); }
@@ -2730,17 +2822,23 @@ fn _simd_arg_second_pass(S, tbl, cnt): i64 {
     return 0;
 }
 
-# v5.6.4 #deprecated call-site warning, ONE helper for every call path. It fires at
-# EVERY call site (unlike #must_use, which only fires on statement-level discard —
-# deprecated fns should get the nudge no matter how their result is used). v6.6.4:
-# it lived inline in PARSE_FNCALL only, so `return olde();` — the TAIL-CALL path,
-# which bypasses PARSE_FNCALL exactly as the v6.2.41 arity note says — warned
-# nothing while `var v = olde();` did. Message body lives in fn_deprecated_msg as a
+# v5.6.4 #deprecated call-site warning. It fires at EVERY call site (unlike #must_use,
+# which only fires on statement-level discard — deprecated fns should get the nudge no
+# matter how their result is used). Message body lives in fn_deprecated_msg as a
 # string-literal token value (offset<<32 | length).
-fn _DEPRECATED_WARN(S, fi, noff): i64 {
+#
+# ⛔ 6.6.16 — reached ONLY through `_callee_site_checks` below. v6.6.4 called it from three
+# paths (PARSE_FNCALL, the tail call, `_struct_call_into`) while `_vis_check` had fourteen, so
+# `&old_f`, `o.m()`, the struct receives, operator dispatch and the PE vector receives were
+# silent; and a call parsed before the definition was silent on every path, because only
+# pass 2 set the bit (pass 1 now does — `_prescan_dep_take`). `ti` is the token the warning
+# names: `_err_head` read the CURSOR, which the tail path has already walked past `);`, so
+# `return old_f(x);` was reported on the NEXT token's line. CHANGELOG [6.6.16]
+fn _DEPRECATED_WARN(S, fi, noff, ti): i64 {
     if (GFLG(S, fi) & 4 == 0) { return 0; }
+    if (_dep_seen(ti, fi) == 1) { return 0; }
     syscall(SYS_WRITE, 2, "warning:", 8);
-    _err_head(S);
+    _err_head_at(S, ti);
     syscall(SYS_WRITE, 2, ": '", 3);
     PRSTR(S + 0xEC00000 + noff);
     syscall(SYS_WRITE, 2, "' is deprecated", 15);
@@ -2753,6 +2851,60 @@ fn _DEPRECATED_WARN(S, fi, noff): i64 {
     }
     syscall(SYS_WRITE, 2, "\n", 1);
     return 1;
+}
+
+# 6.6.16 — ONE warning per call site. The same tokens are parsed more than once: an `#inline`
+# fn's body at its definition and again at every expansion, a generic's body for its base and
+# again for each instance. A re-parse names the same token for the same callee, so that pair
+# is the site — `w(1); w(2);` on an `#inline fn w` calling a deprecated fn printed the
+# identical line three times. Every path names a token of its OWN call (an operator its
+# operator), so two calls never share a pair. Warnings are rare: a short list, not a bitmap.
+var _dep_warned = 0;
+fn _dep_seen(ti, fi): i64 {
+    if (_dep_warned == 0) { _dep_warned = vec_new(); }
+    var n = vec_len(_dep_warned);
+    var i = 0;
+    while (i < n) {
+        if (vec_get(_dep_warned, i) == ti) { if (vec_get(_dep_warned, i + 1) == fi) { return 1; } }
+        i = i + 2;
+    }
+    vec_push(_dep_warned, ti);
+    vec_push(_dep_warned, fi);
+    return 0;
+}
+
+# A generic INSTANCE (`old_g<i32>(..)`, minted as `old_g$i32`) is deprecated when its base is:
+# the instance is re-parsed from the base's tokens long after the attribute was consumed, so
+# it never received the bit, and only the i64 spellings (which ARE the base) warned.
+fn _gen_inherit_dep(S, spec, base_fi): i64 {
+    if (spec < 0) { return 0; }
+    if ((GFLG(S, base_fi) & 4) == 0) { return 0; }
+    SFLG(S, spec, GFLG(S, spec) | 4);
+    SFDM(S, spec, GFDM(S, base_fi));
+    return 0;
+}
+
+# 6.6.16 — THE per-callee check, for every path that resolves a name to an fn and emits its
+# own call or address: the `private` check and the `#deprecated` warning, together, so the two
+# lists cannot drift apart again (they had: 14 sites against 3). A new call path is ONE call
+# here; `grep -n '_callee_site_checks' src/frontend/` is the list of paths. `ti` is the token
+# the warning names. CHANGELOG [6.6.16]
+fn _callee_site_checks(S, fi, noff, ti): i64 {
+    if (fi < 0) { return 0; }
+    _vis_check(S, fi, noff);
+    _DEPRECATED_WARN(S, fi, noff, ti);
+    return 0;
+}
+
+# The same, naming a token relative to the cursor: `back` = 0 is the cursor itself (a path
+# whose cursor is still on the callee's name, its `(`, or the first token after that `(`), 1 is
+# the token just consumed (`&old_f`, whose name is behind the cursor — the token AFTER it can be
+# on the next line). ONE call with no nested one, so the hot parsers that use it (PARSE_VAR,
+# _PARSE_FACTOR_IMPL, PARSE_RETURN, PARSE_FNCALL) carry no more references than `_vis_check`
+# alone did — cybs's per-fn reference ceiling fails silently (CLAUDE.md, Release Gate 2).
+fn _callee_site_checks_here(S, fi, noff, back): i64 {
+    _callee_site_checks(S, fi, noff, GTI(S) - back);
+    return 0;
 }
 
 # Parse fn call args and emit call (as expression)
@@ -2775,7 +2927,8 @@ fn _DEPRECATED_WARN(S, fi, noff): i64 {
 # `&fn` (parse_expr.cyr), `s.method()`, the asv retptr / asp pair struct receives (also
 # the inferred `var q = f()` form), and four PE-only SIMD receive/return paths
 # (parse_decl.cyr _try_vector_call_assign / _f2c / _f4c, parse_fn.cyr _rc). All eleven
-# now call it; `grep -n '_vis_check(' src/frontend/` is the list.
+# now call it — since 6.6.16 through `_callee_site_checks`, its only caller, which adds the
+# `#deprecated` warning; `grep -n '_callee_site_checks' src/frontend/` is the list.
 #
 # ⛔ 6.6.5 — "FAIL-OPEN ON UNKNOWNS … Phase 3 must revisit this" stood here for five
 # minors and WAS the hole. An unstamped callee (GFFI == 0) returned at the FIRST test
@@ -2987,48 +3140,40 @@ fn PARSE_FNCALL(S, noff): i64 {
     # call of a stub generic. See _gen_call_head.
     var _gfi = _gen_call_head(S, fi, noff);
     if (_gfi != fi) { fi = _gfi; noff = L64(_fnt_names + fi * 8); }
-    # v5.10.25 — Phase 3 generalize: registry-based overload
-    # dispatch. Replaces the v5.10.3-5 hardcoded {println, strlen}
-    # name lookups with a lookup table populated at REGFN time.
-    # For any fn `<base>` with a sibling `<base>_str` / `<base>_int`
-    # / `<base>_cstr` defined, the parser auto-routes
-    # `base(arg)` → `base_<suffix>(arg)` when arg's type matches.
-    # User-defined overloads work the same way without any compiler
-    # change. The original v5.10.5 agnosys-close shapes still work:
-    #   `println(IDENT)`/`println(IDENT(args))` Str-typed → `println_str`
-    #   `strlen(IDENT)`/`strlen(IDENT(args))` Str-typed → `str_len`
-    #     (registered via the `str_len` → `strlen` base mapping)
-    #   `println(IDENT)`/`println(IDENT(args))` i64-typed → `println_int`
-    # Arg-shape detection covers plain IDENT and `IDENT (` (fn call):
-    # for fn-call args we look up the called fn's return-type via
-    # GFRS (positive sid for struct returns; negative scalar =
-    # -8/-4/-2/-1 for i64/i32/i16/i8).
+    # v5.10.25 — registry-based overload dispatch on the FIRST argument: for a fn `<base>`
+    # with a `<base>_str` / `<base>_int` sibling (tables filled at REGFN time; user pairs work
+    # the same way), `base(arg, ..)` is routed to the sibling when the arg matches, behind the
+    # v6.5.1 arity gate (`_OV_ARITY_OK`):
+    #   _str — the WHOLE first argument is a Str, as `_str_arg_kind` (the I11 classifier) reads
+    #          it: a Str local / param / capture, a `: Str` or inferred-Str global, a one-step
+    #          `: Str` field (`h.name`, `gh.name`, `mkh().name`), or a call or method declared
+    #          `: Str` (`mk()`, `g<T>(..)`, `s.cat(t)`, `mkh().getname()`). `println(gs)` ->
+    #          `println_str`, `strlen(gs)` -> `strlen_str`. `x.data`, `x.len`, `s.len()`,
+    #          `x + 1` are NOT routed by their base's type.
+    #   _int — an `IDENT(..)` call returning i64 (GFRS -8), into an i64-returning base whose
+    #          param 0 is `: cstring` (v6.0.3 / v6.5.2, below). A plain i64 IDENT is never
+    #          routed here.
+    # 6.6.16: the Str arm typed the argument itself — `0 - sid` against a global's positive
+    # GVTYPE (so no Str global ever routed and `println(gs)` printed the header's pointer
+    # bytes), no fields, and nothing required the name to END the argument, so `show(s.data)`
+    # / `show(s.len)` on a Str local reached `show_str`, which read the VALUE as a header.
+    # CHANGELOG [6.6.16]
     if (PEEKT(S) == 2) {
-        var _od_arg_noff = PEEKV(S);
-        var _od_arg_typ = 0;
         var _od_arg_scalar = 0;
         if (TOKTYP(S, GTI(S) + 1) == 10) {
-            var _od_arg_fi = FINDFN(S, _od_arg_noff);
+            var _od_arg_fi = FINDFN(S, PEEKV(S));
             if (_od_arg_fi >= 0) {
                 var _od_ret = GFRS(S, _od_arg_fi);
-                if (_od_ret > 0) { _od_arg_typ = 0 - _od_ret; }
-                else { if (_od_ret < 0) { _od_arg_scalar = 0 - _od_ret; } }
-            }
-        } else {
-            if (GINFN(S) == 1) {
-                var _od_lli = FINDLOCAL(S, _od_arg_noff);
-                if (_od_lli >= 0) { _od_arg_typ = GLTYPE(S, _od_lli); }
-            }
-            if (_od_arg_typ == 0) {
-                var _od_vi = FINDVAR(S, _od_arg_noff);
-                if (_od_vi >= 0) { _od_arg_typ = GVTYPE(S, _od_vi); }
+                if (_od_ret < 0) { _od_arg_scalar = 0 - _od_ret; }
             }
         }
-        var _od_str_sid = _STR_SID(S);
-        if (_od_str_sid > 0) {
-            if (_od_arg_typ == 0 - _od_str_sid) {
-                var _od_str_target = L64(_fnt_ovstr + fi * 8);
-                if (_od_str_target > 0) {
+        # The sibling first: the classifier scans a call argument's parens, and most bases
+        # have no `_str` sibling to route to.
+        var _od_str_target = L64(_fnt_ovstr + fi * 8);
+        if (_od_str_target > 0) {
+            var _od_str_sid = _STR_SID(S);
+            if (_od_str_sid > 0) {
+                if (_str_arg_kind(S, _od_str_sid) == 1) {
                     # v6.5.1 — arity-gate the redirect (see _OV_ARITY_OK).
                     var _od_st = _od_str_target - 1;
                     if (_OV_ARITY_OK(S, _od_st, _CALL_ARGC_PEEK(S)) == 1) {
@@ -3111,12 +3256,11 @@ fn PARSE_FNCALL(S, noff): i64 {
             }
         }
     }
-    # v5.6.4: #deprecated call-site warning (see _DEPRECATED_WARN — shared with the
-    # tail-call path since v6.6.4). Line number is the paren-open we just consumed,
-    # which matches the call-site.
-    _vis_check(S, fi, noff);
+    # v5.6.4: #deprecated call-site warning, with the `private` check (see
+    # _callee_site_checks). It names the first token after the `(` we just consumed,
+    # which is on the call-site's line.
+    _callee_site_checks_here(S, fi, noff, 0);
     var _dep_flags = GFLG(S, fi);
-    _DEPRECATED_WARN(S, fi, noff);
     # v5.8.20: #pure caller cannot call #io / #alloc callees. Warning
     # (not error) for downstream incremental adoption — same shape as
     # #must_use / #deprecated diagnostics. The annotation ramp happens
@@ -4375,6 +4519,7 @@ fn _instantiate_generic_fn(S, base_fi, conc0, conc1): i64 {
     _tp_n0 = sv_n0; _tp_c0 = sv_c0; _tp_n1 = sv_n1; _tp_c1 = sv_c1;
     STI(S, sv_ti);
     spec = FINDFN(S, mangled);                       # now registered by PARSE_FN_DEF
+    _gen_inherit_dep(S, spec, base_fi);              # 6.6.16: `#deprecated` reaches instances
     return spec;
 }
 
@@ -5205,6 +5350,7 @@ fn _prescan_fn_sig(S): i64 {
         # produced a false "is private to its file" AND a false "expects 2 arguments, got
         # 1". The v6.5.38 identity rule now runs in BOTH passes, from one place.
         var fi = _fn_def_slot(S, noff, _pfid, _ppriv);
+        _prescan_dep_take(S, fi);               # 6.6.16: a pending `#deprecated`, for forward calls
         if (_ptp != 0) { SFTP(S, fi, _ptp); }   # v6.3.9: forward-ref generic sig
         if (_ptp != 0) { _gen_record(S, fi, GTI(S)); }   # 6.6.10: stub + carrier facts, by name
         # 6.6.10 — mark `async fn` HERE, so a coroutine's `await f(..)` classifies a callee
@@ -5233,9 +5379,23 @@ fn _prescan_fn_sig(S): i64 {
                 }
             }
         }
-    }
+    } else { _pre_dep_pending = 0; }    # an unnamed `fn`: pass 2 refuses it; never carry past it
     STI(S, start_ti);
     _prescan_skip_fn(S);
+    return 0;
+}
+
+# 6.6.16 — hand a pass-1 `#deprecated` (recorded by `_tl_deprecated(S, 0)`) to the fn just
+# registered, so a call parsed BEFORE the definition warns. Pass 1 walks the definitions in
+# pass 2's order (impl methods included), so this is the fn PARSE_FN_DEF will mark too; it
+# only ORs bit 2 (value 4), which PARSE_FN_DEF ORs again. GFDM's one reader is
+# `_DEPRECATED_WARN`, so nothing here reaches codegen. CHANGELOG [6.6.16]
+fn _prescan_dep_take(S, fi): i64 {
+    if (_pre_dep_pending == 0) { return 0; }
+    SFLG(S, fi, GFLG(S, fi) | 4);
+    SFDM(S, fi, _pre_dep_msg);
+    _pre_dep_pending = 0;
+    _pre_dep_msg = 0;
     return 0;
 }
 
@@ -5390,14 +5550,21 @@ fn _tl_arm(t): i64 {
 # #deprecated("msg"). The message is REQUIRED (the v5.6.4 design): arm=1 refuses a bare
 # `#deprecated` by name wherever it sits — it used to be a silent no-op before the first
 # statement and a hard error after it. On the error the cursor stays put, so the `fn`
-# that follows is still parsed. Pass 1 (arm=0) only consumes; pass 2 reports.
+# that follows is still parsed. Pass 1 (arm=0) consumes and reports nothing; since 6.6.16
+# it also RECORDS a complete `( STRING )` for the fn it registers next (`_prescan_dep_take`)
+# — a call parsed before the definition never saw the bit, which only pass 2 set. A bare
+# or malformed one records nothing: pass 2 still refuses it. CHANGELOG [6.6.16]
 fn _tl_deprecated(S, arm): i64 {
     STI(S, GTI(S) + 1);
     if (arm == 0) {
         if (PEEKT(S) == 10) {
             STI(S, GTI(S) + 1);
-            if (PEEKT(S) == 30) { STI(S, GTI(S) + 1); }
-            if (PEEKT(S) == 11) { STI(S, GTI(S) + 1); }
+            var _pd_msg = 0 - 1;
+            if (PEEKT(S) == 30) { _pd_msg = PEEKV(S); STI(S, GTI(S) + 1); }
+            if (PEEKT(S) == 11) {
+                STI(S, GTI(S) + 1);
+                if (_pd_msg != 0 - 1) { _pre_dep_pending = 1; _pre_dep_msg = _pd_msg; }
+            }
         }
         return 0;
     }
@@ -5661,13 +5828,16 @@ fn _prescan_impl_body(S): i64 {
 
 # 6.6.5 — skip ONE top-level statement, tracking ( { [ depth. Stops after a depth-0 `;`,
 # or after a depth-0 `}` that is not followed by `else`/`elif` (a statement can end in a
-# brace: `if (..) { .. } else { .. }`, `while`, `switch`, `match`).
+# brace: `if (..) { .. } else { .. }`, `while`, `switch`, `match`). Returns 1 when the
+# statement held a `fn` keyword — a definition PARSE_PROG will parse inside it (6.6.16).
 fn _prescan_skip_stmt(S): i64 {
     var dep = 0;
     var go = 1;
+    var hasfn = 0;
     while (go == 1) {
         var t = PEEKT(S);
-        if (t == 12) { return 0; }                                  # EOF
+        if (t == 12) { return hasfn; }                              # EOF
+        if (t == 32) { hasfn = 1; }
         if (t == 10 || t == 13 || t == 28) { dep = dep + 1; }
         if (t == 11 || t == 14 || t == 29) { dep = dep - 1; }
         STI(S, GTI(S) + 1);
@@ -5679,7 +5849,7 @@ fn _prescan_skip_stmt(S): i64 {
             }
         }
     }
-    return 0;
+    return hasfn;
 }
 
 # 6.6.5 — pass 1 stops at the first top-level STATEMENT (`else { scan = 0; }` in every
@@ -5698,6 +5868,7 @@ fn _prescan_tail(S): i64 {
     _pub_pending = 0;
     _prescan_tail_loop(S);
     _pub_pending = 0;
+    _pre_dep_pending = 0;                # the end of pass 1: nothing may carry into pass 2
     SMOD(S, svmod);
     STI(S, sv);
     return 0;
@@ -5717,20 +5888,12 @@ fn _prescan_tail_loop(S): i64 {
         elif (_IS_FN_KW(S) == 1) { _prescan_fn_sig(S); }
         elif (t == 14) { go = 0; }                     # stray '}' — where PARSE_PROG stops
         elif (t == 109 || t == 122 || t == 125 || t == 126 || t == 127 || t == 133 || t == 163) { STI(S, GTI(S) + 1); }
-        elif (t == 124) { _prescan_skip_deprecated(S); }
-        else { _prescan_skip_stmt(S); }
-    }
-    return 0;
-}
-
-# `#deprecated` / `#deprecated("msg")` — consume the directive with its optional argument,
-# exactly as the pass-1 arm does.
-fn _prescan_skip_deprecated(S): i64 {
-    STI(S, GTI(S) + 1);
-    if (PEEKT(S) == 10) {
-        STI(S, GTI(S) + 1);
-        if (PEEKT(S) == 30) { STI(S, GTI(S) + 1); }
-        if (PEEKT(S) == 11) { STI(S, GTI(S) + 1); }
+        elif (t == 124) { _tl_deprecated(S, 0); }       # the pass-1 arm itself, so it records too
+        # ⚠ 6.6.16 — a statement holding a `fn` (a definition inside a top-level block, which
+        # PARSE_PROG accepts) is where pass 2 hands a pending `#deprecated`. That fn is never
+        # prescanned, so drop the pending here rather than let it land on the NEXT top-level
+        # fn — the one pass 2 leaves unmarked, whose every call would then warn falsely.
+        elif (_prescan_skip_stmt(S) == 1) { _pre_dep_pending = 0; }
     }
     return 0;
 }
@@ -6025,10 +6188,11 @@ fn _stkp_flush(S, nint): i64 {
 
 # v6.5.19 (CVE-40): the fn-definition tier. `fn f() { ` repeated 514 times SIGSEGV'd —
 # the cheapest of the six vectors at ~16 KB of stack per level, and the one neither the
-# PARSE_STMT nor the PEXPR bound caught, because a nested definition recurses through
+# PARSE_STMT nor the PEXPR bound caught, because a nested definition recursed through
 # THIS function rather than the statement wrapper (a top-level `fn` is dispatched from
-# PARSE_PROG, and a nested one re-enters here). Wrapper shape identical to the other
-# three chokepoints. See _rd_enter (src/common/util.cyr).
+# PARSE_PROG, and a nested one re-entered here until 6.6.16 refused it — parse.cyr
+# `_refuse_nested_fn`). Wrapper shape identical to the other three chokepoints. See
+# _rd_enter (src/common/util.cyr).
 fn PARSE_FN_DEF(S): i64 {
     _rd_enter(S);
     # 6.6.5 — a fn body is emitted with its OWN frame, so its expression depth starts at 0
@@ -6156,9 +6320,10 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
             if ((GFLG(S, fi) & 64) != 0) { _this_priv = 1; }
         }
     } else {
-        # Not prescanned — a fn nested inside another fn's body, or a monomorphized
-        # instance. The v6.5.38 identity rule still applies; it lives in `_fn_def_slot`
-        # now so pass 1 and pass 2 cannot drift apart about what a definition owns.
+        # Not prescanned — a fn defined inside a top-level block (one inside a fn body is
+        # refused, parse.cyr `_refuse_nested_fn`), or a monomorphized instance. The v6.5.38
+        # identity rule still applies; it lives in `_fn_def_slot` now so pass 1 and pass 2
+        # cannot drift apart about what a definition owns.
         fi = _fn_def_slot(S, noff, _vis_fid, _this_priv);
     }
     var _dup_off = L64(_fnt_offsets + fi * 8);
@@ -6397,9 +6562,10 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
         _naked_pending = 0;
     }
     else { _cur_fn_naked = 0; }
-    # v6.5.63: #inline — consume the pending flag into a LOCAL, not a global. A nested fn
-    # definition re-enters this fn, and a global would let the inner fn inherit or clear the
-    # outer one's request (the shape `_cur_fn_naked` needs an explicit save/restore for).
+    # v6.5.63: #inline — consume the pending flag into a LOCAL, not a global. A definition
+    # emitted mid-body (a generic instance) re-enters this fn, and a global would let the inner
+    # fn inherit or clear the outer one's request (the shape `_cur_fn_naked` needs an explicit
+    # save/restore for).
     var _fn_inline_req = 0;
     if (_inline_pending == 1) {
         _fn_inline_req = 1;
@@ -7367,9 +7533,13 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
         while (_b3_bd > 0) {
             var _b3t = PEEKT(S);
             if (_b3t == 12) { break; }               # EOF guard
-            if (_b3t == 13) { _b3_bd = _b3_bd + 1; }
-            elif (_b3t == 14) { _b3_bd = _b3_bd - 1; if (_b3_bd == 0) { break; } }
-            STI(S, GTI(S) + 1);
+            # 6.6.16: a nested fn is refused here too (consumed whole), whether or not an
+            # instance ever re-parses this body. See `_refuse_nested_fn` (parse.cyr).
+            if (_refuse_nested_fn(S) == 0) {
+                if (_b3t == 13) { _b3_bd = _b3_bd + 1; }
+                elif (_b3t == 14) { _b3_bd = _b3_bd - 1; if (_b3_bd == 0) { break; } }
+                STI(S, GTI(S) + 1);
+            }
         }
         EMOVI(S, 0);                                  # dead stub: rax = 0
     } else {

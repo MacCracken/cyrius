@@ -361,154 +361,174 @@ fn _LEX_EMIT_UTF8(S, spos, cp): i64 {
 # INCLUDE / FILE I/O / PREPROCESSOR
 # ================================================================
 
-# Read a file into buffer at dst, return bytes read. Path must be null-terminated.
-# Fallback lib path for include resolution (set from CYRIUS_HOME env)
-var _cyrius_lib[256];
+# ── The `lib/...` include fallback: THIS cycc's own store slot ──────────────────────────
+# A `lib/<leaf>.cyr` include that does not open in the CWD is retried by READFILE (below)
+# against ONE store slot, the one named by this cycc's own version (`_VERSION_TOOLCHAIN`):
+#   CYRIUS_HOME/versions/<VERSION>/lib/      when CYRIUS_HOME is set and non-empty
+#   HOME/.cyrius/versions/<VERSION>/lib/     otherwise
+# — the home the CLI resolves (cbt `_home`), so `cyrius` and a raw cycc read one stdlib.
+# ⛔ A set CYRIUS_HOME is AUTHORITATIVE: no fall-through to HOME's slot when its slot lacks
+# a file (that compiles a mix of two stdlibs, the misattribution this exists to end), and
+# an over-long one disables the fallback rather than falling back to HOME. An EMPTY
+# CYRIUS_HOME (or HOME) is unset — not the root-anchored `/versions/...`. Until 6.6.16 only
+# `HOME=` was read, and only the first 4 KB of the environment. CHANGELOG [6.6.16]
+# Why version-PINNED (never the `~/.cyrius/lib` symlink): a cycc compiling against another
+# version's stdlib emits calls to helpers that lib lacks. CHANGELOG [5.10.9]
+# Linux-targeted builds only — /proc/self/environ; the macOS and PE-native cycc have no
+# fallback. CHANGELOG [5.5.9]
+var _cyrius_lib[256];    # 2048 B: a bare top-level array is N*8 bytes (v6.4.10)
 var _cyrius_lib_len = 0;
 
-fn _init_cyrius_lib(): i64 {
-    # v5.5.9: /proc/self/environ readback is Linux-only. On Windows
-    # CreateFileW returns INVALID_HANDLE_VALUE for the non-existent
-    # path; the `if (efd < 0)` guard below should handle it but in
-    # practice cycc_win.exe crashes somewhere in this fn's early
-    # syscall chain (exact cause TBD). Gate the whole body on
-    # CYRIUS_TARGET_LINUX so Windows gets a no-op that leaves
-    # _cyrius_lib empty — include-resolution falls back to CWD,
-    # fine for stdin-fed compilation. GetEnvironmentVariableW-based
-    # HOME lookup queued for v5.5.x tail.
-    #
-    # v5.10.9 — version-PINNED lib path. Pre-v5.10.9 the fallback
-    # was `$HOME/.cyrius/lib/` which is a symlink to whichever
-    # version `cyriusly use` last pointed at. That created a
-    # contamination bug: if a user runs cycc v5.10.8 against a
-    # symlink pointing at v5.10.6 lib, the codegen emits calls to
-    # helpers (str_builder_add_json_str, etc.) that don't exist
-    # in the older lib snapshot → undefined-fn warnings → SIGILL.
-    # The agnosys agent hit exactly this on real Pi hardware
-    # (their pin was 5.10.6; testing 5.10.7+ binaries against
-    # 5.10.6 lib produced the SIGILL pattern documented in the
-    # 1.1.12 issue file).
-    #
-    # Fix: each cycc binary loads `$HOME/.cyrius/versions/<MY_VERSION>/
-    # lib/` directly, where <MY_VERSION> is extracted from
-    # `_VERSION_STR_CYCC` at runtime ("cycc X.Y.Z\n" → "X.Y.Z").
-    # Each cycc binary always uses its own version-matched lib;
-    # the `~/.cyrius/lib` symlink is no longer consulted (it stays
-    # for `cyriusly use` to point `~/.cyrius/bin` at the active
-    # version, but lib resolution doesn't go through it).
-    #ifdef CYRIUS_TARGET_LINUX
-    # Read /proc/self/environ to find HOME=
-    var ebuf[4096];
-    # v5.11.27: aarch64 has only openat (syscall 56); literal syscall(2,...)
-    # gets xlat'd 2→56 but cyrius doesn't reshuffle args, so path lands in
-    # dfd slot and dfd=0 in path → EFAULT. Match READFILE's branch — when
-    # SYS_OPEN != 2 we're on openat and must pass AT_FDCWD=-100 first.
-    var efd = 0;
-    if (SYS_OPEN == 2) { efd = syscall(SYS_OPEN, "/proc/self/environ", 0, 0); }
-    else { efd = syscall(SYS_OPEN, 0 - 100, "/proc/self/environ", 0, 0); }
-    if (efd < 0) { return 0; }
-    var elen = syscall(0, efd, &ebuf, 4096);
-    syscall(3, efd);
-    # Scan for HOME=
-    var ei = 0;
-    while (ei < elen) {
-        if (load8(&ebuf + ei) == 72) {
-            if (load8(&ebuf + ei + 1) == 79) {
-                if (load8(&ebuf + ei + 2) == 77) {
-                    if (load8(&ebuf + ei + 3) == 69) {
-                        if (load8(&ebuf + ei + 4) == 61) {
-                            # Found HOME=, copy value + /.cyrius/versions/<VERSION>/lib/
-                            var hi = ei + 5;
-                            var wi = 0;
-                            # v6.4.81 (CVE-34): `var _cyrius_lib[256]` is a BARE
-                            # TOP-LEVEL array, so it is 256*8 = 2048 B (v6.4.10
-                            # contract) — not 256. This copy was bounded only by
-                            # `elen` (<= 4096 from /proc/self/environ), so a HOME
-                            # longer than ~2 KB overran it, and ~32 more bytes of
-                            # "/.cyrius/versions/<VER>/lib/" are appended below
-                            # unconditionally. Reserve that suffix and give up on
-                            # the fallback rather than smashing: the CYRIUS_HOME
-                            # lib path is best-effort, so `return 0` degrades to
-                            # "no fallback" exactly like the `efd < 0` case above.
-                            while (hi < elen) {
-                                var hc = load8(&ebuf + hi);
-                                if (hc == 0) { break; }
-                                if (wi >= 1984) { return 0; }
-                                store8(&_cyrius_lib + wi, hc);
-                                wi = wi + 1; hi = hi + 1;
-                            }
-                            # Append /.cyrius/versions/
-                            store8(&_cyrius_lib + wi, 47); wi = wi + 1;   # /
-                            store8(&_cyrius_lib + wi, 46); wi = wi + 1;   # .
-                            store8(&_cyrius_lib + wi, 99); wi = wi + 1;   # c
-                            store8(&_cyrius_lib + wi, 121); wi = wi + 1;  # y
-                            store8(&_cyrius_lib + wi, 114); wi = wi + 1;  # r
-                            store8(&_cyrius_lib + wi, 105); wi = wi + 1;  # i
-                            store8(&_cyrius_lib + wi, 117); wi = wi + 1;  # u
-                            store8(&_cyrius_lib + wi, 115); wi = wi + 1;  # s
-                            store8(&_cyrius_lib + wi, 47); wi = wi + 1;   # /
-                            store8(&_cyrius_lib + wi, 118); wi = wi + 1;  # v
-                            store8(&_cyrius_lib + wi, 101); wi = wi + 1;  # e
-                            store8(&_cyrius_lib + wi, 114); wi = wi + 1;  # r
-                            store8(&_cyrius_lib + wi, 115); wi = wi + 1;  # s
-                            store8(&_cyrius_lib + wi, 105); wi = wi + 1;  # i
-                            store8(&_cyrius_lib + wi, 111); wi = wi + 1;  # o
-                            store8(&_cyrius_lib + wi, 110); wi = wi + 1;  # n
-                            store8(&_cyrius_lib + wi, 115); wi = wi + 1;  # s
-                            store8(&_cyrius_lib + wi, 47); wi = wi + 1;   # /
-                            # Append the version digits from _VERSION_STR_CYCC
-                            # ("cycc X.Y.Z\n" — skip first 5 chars "cycc ",
-                            # copy until '\n'). v6.0.1: was 4 (correct for
-                            # the old "cc5 " prefix), missed at v6.0.0
-                            # rename — yielded "/versions/ X.Y.Z/lib/"
-                            # (leading space) so the fallback path didn't
-                            # exist on FS, stdlib includes failed to
-                            # resolve, fncallN bodies went undefined,
-                            # fixup emitted ud2 sentinels. See CHANGELOG
-                            # [6.0.1].
-                            var vp = 5;
-                            while (vp < _VERSION_LEN_CYCC) {
-                                var vc = load8(_VERSION_STR_CYCC + vp);
-                                if (vc == 10) { break; }
-                                store8(&_cyrius_lib + wi, vc);
-                                wi = wi + 1; vp = vp + 1;
-                            }
-                            # Append /lib/
-                            store8(&_cyrius_lib + wi, 47); wi = wi + 1;   # /
-                            store8(&_cyrius_lib + wi, 108); wi = wi + 1;  # l
-                            store8(&_cyrius_lib + wi, 105); wi = wi + 1;  # i
-                            store8(&_cyrius_lib + wi, 98); wi = wi + 1;   # b
-                            store8(&_cyrius_lib + wi, 47); wi = wi + 1;   # /
-                            store8(&_cyrius_lib + wi, 0);
-                            _cyrius_lib_len = wi;
-                            # v6.4.66: the shadow-lib compile note was RETIRED here.
-                            # The CLI wrapper's version-aware freshness check
-                            # (cbt/ `_check_lib_freshness`, v6.4.63) supersedes it:
-                            # it names per-lib version skew on every build/run/test,
-                            # whereas cycc's note byte-size-compared only alloc.cyr
-                            # (a silent false negative when a stale dep sat behind an
-                            # unchanged alloc.cyr) and was Linux-host-only. See
-                            # issues/2026-07-14-converge-cycc-shadow-lib-sentinel.md.
-                            # v5.11.57: detect cyml pin drift
-                            # (iron-boot papercut Item 1).
-                            # Wrapper-side drift is invisible to
-                            # consumers because wrapper has been
-                            # stuck at .25 since May-12 (install.sh
-                            # rebuild-staleness misses version_str.cyr
-                            # dep). cycc IS current per self-host
-                            # discipline, so cycc is the authoritative
-                            # surfacer. See CHANGELOG [5.11.57].
-                            _check_cyml_pin_drift();
-                            return 1;
-                        }
-                    }
-                }
-            }
-        }
-        # Skip to next null
-        while (ei < elen) { if (load8(&ebuf + ei) == 0) { break; } ei = ei + 1; }
-        ei = ei + 1;
+#ifdef CYRIUS_TARGET_LINUX
+# Append the NUL-terminated `s` to the fallback path. 0, or -1 when it would not fit the
+# 2048-B buffer: the caller then disables the fallback, because a TRUNCATED path names a
+# DIFFERENT directory (CVE-34). CHANGELOG [6.6.16]
+fn _cl_append(s): i64 {
+    var i = 0;
+    while (load8(s + i) != 0) {
+        if (_cyrius_lib_len >= 2047) { return 0 - 1; }
+        store8(&_cyrius_lib + _cyrius_lib_len, load8(s + i));
+        _cyrius_lib_len = _cyrius_lib_len + 1;
+        i = i + 1;
     }
+    store8(&_cyrius_lib + _cyrius_lib_len, 0);
+    return 0;
+}
+
+# The environ scan's state, `st` (i64 slots), carried across reads so an entry split between
+# two chunks still matches:
+#   +0  bytes into the current entry      +8  name bits still matching: 1 CYRIUS_HOME=, 2 HOME=
+#   +16 capturing: 0 no, 1 CYRIUS_HOME, 2 HOME                +24 bytes captured
+#   +32 CYRIUS_HOME length  +40 HOME length: -1 absent, -2 over 1984 B (unusable, never
+#                                            truncated — CVE-34's bound), else the length
+#   +48 CYRIUS_HOME buffer  +56 HOME buffer (2048 B each, NUL-terminated)
+# A capture slot is at st + 24 + 8*which and its buffer at st + 40 + 8*which.
+
+# Keep `bit` in `mt` only while byte `ep` of the entry still spells `name` (`nl` bytes).
+fn _env_name_bit(mt, bit, name, nl, ep, c): i64 {
+    if ((mt & bit) == 0) { return mt; }
+    if (ep < nl) {
+        if (load8(name + ep) == c) { return mt; }
+    }
+    return mt - bit;
+}
+
+# `name=` just completed for variable `which`. The FIRST occurrence wins, as getenv and
+# _read_env do: a later duplicate is not captured.
+fn _env_cap_start(st, which): i64 {
+    store64(st + 8, 0);
+    if (load64(st + 24 + 8 * which) != 0 - 1) { return 0; }
+    store64(st + 16, which);
+    store64(st + 24, 0);
+    return 0;
+}
+
+# The entry being captured ended: record its length (-2 when it overflowed).
+fn _env_cap_end(st, which): i64 {
+    var k = load64(st + 24);
+    if (k > 1984) { store64(st + 24 + 8 * which, 0 - 2); return 0; }
+    store8(load64(st + 40 + 8 * which) + k, 0);
+    store64(st + 24 + 8 * which, k);
+    return 0;
+}
+
+# Feed one environ byte `c` to the scan.
+fn _env_step(st, c): i64 {
+    var cap = load64(st + 16);
+    if (c == 0) {
+        if (cap != 0) { _env_cap_end(st, cap); }
+        store64(st, 0);
+        store64(st + 8, 3);
+        store64(st + 16, 0);
+        return 0;
+    }
+    if (cap != 0) {
+        var k = load64(st + 24);
+        if (k < 1984) { store8(load64(st + 40 + 8 * cap) + k, c); }
+        if (k <= 1984) { store64(st + 24, k + 1); }
+        return 0;
+    }
+    var ep = load64(st);
+    store64(st, ep + 1);
+    var mt = load64(st + 8);
+    if (mt == 0) { return 0; }
+    mt = _env_name_bit(mt, 1, "CYRIUS_HOME=", 12, ep, c);
+    mt = _env_name_bit(mt, 2, "HOME=", 5, ep, c);
+    store64(st + 8, mt);
+    if ((mt & 1) != 0 && ep == 11) { _env_cap_start(st, 1); }
+    if ((mt & 2) != 0 && ep == 4) { _env_cap_start(st, 2); }
+    return 0;
+}
+
+# ONE pass over /proc/self/environ, read in chunks TO EOF (it was a single 4096-B read, so
+# a HOME past the first 4 KB of the environment was silently missed). No heap and no
+# _read_env, which reads 8 KB and truncates a value to 255 B. 0, or -1 (unreadable: no
+# fallback). The open matches READFILE's: aarch64 has only openat. CHANGELOG [5.11.27]
+fn _env_scan_homes(st): i64 {
+    var fd = 0;
+    if (SYS_OPEN == 2) { fd = syscall(SYS_OPEN, "/proc/self/environ", 0, 0); }
+    else { fd = syscall(SYS_OPEN, 0 - 100, "/proc/self/environ", 0, 0); }
+    if (fd < 0) { return 0 - 1; }
+    var buf[4096];
+    var n = syscall(SYS_READ, fd, &buf, 4096);
+    while (n > 0) {
+        var i = 0;
+        while (i < n) {
+            _env_step(st, load8(&buf + i));
+            i = i + 1;
+        }
+        n = syscall(SYS_READ, fd, &buf, 4096);
+    }
+    syscall(SYS_CLOSE, fd);
+    if (n < 0) { return 0 - 1; }
+    _env_step(st, 0);   # end an unterminated last entry
+    return 0;
+}
+
+# Build the slot path from the scan's two values (see the block comment above). 1, or 0
+# for no fallback.
+fn _cl_select(st): i64 {
+    var chl = load64(st + 32);
+    if (chl == 0 - 2) { return 0; }
+    if (chl > 0) {
+        if (_cl_append(load64(st + 48)) != 0) { return 0; }
+    } else {
+        if (load64(st + 40) <= 0) { return 0; }
+        if (_cl_append(load64(st + 56)) != 0) { return 0; }
+        if (_cl_append("/.cyrius") != 0) { return 0; }
+    }
+    if (_cl_append("/versions/") != 0) { return 0; }
+    if (_cl_append(_VERSION_TOOLCHAIN) != 0) { return 0; }
+    if (_cl_append("/lib/") != 0) { return 0; }
+    return 1;
+}
+#endif
+
+fn _init_cyrius_lib(): i64 {
+    #ifdef CYRIUS_TARGET_LINUX
+    var st[64];
+    var ch[2048];
+    var hm[2048];
+    store64(&st, 0);
+    store64(&st + 8, 3);
+    store64(&st + 16, 0);
+    store64(&st + 24, 0);
+    store64(&st + 32, 0 - 1);
+    store64(&st + 40, 0 - 1);
+    store64(&st + 48, &ch);
+    store64(&st + 56, &hm);
+    _cyrius_lib_len = 0;
+    var ok = 0;
+    if (_env_scan_homes(&st) == 0) { ok = _cl_select(&st); }
+    if (ok != 1) {
+        _cyrius_lib_len = 0;
+        store8(&_cyrius_lib, 0);
+        return 0;
+    }
+    # Once, after EITHER home selected the slot (it ran on the HOME branch only until
+    # 6.6.16). CHANGELOG [5.11.57]
+    _check_cyml_pin_drift();
+    return 1;
     #endif
     return 0;
 }
@@ -692,6 +712,7 @@ fn _check_cyml_pin_drift(): i64 {
     return 0;
 }
 
+# Read a file into buffer at dst, return bytes read. Path must be null-terminated.
 fn READFILE(path, dst, maxsz): i64 {
     # CVE-02: reject path traversal (.. components) UNLESS explicitly
     # allowed via CYRIUS_ALLOW_PARENT_INCLUDES=1. Bote (and any project
@@ -728,9 +749,10 @@ fn READFILE(path, dst, maxsz): i64 {
     # CVE-16 (v6.1.33): reject absolute include paths (leading '/') UNLESS
     # CYRIUS_ALLOW_ABSOLUTE_INCLUDES=1 — completes the CVE-02 spec (the v4.x fix
     # landed only the '..' half). A hostile `.cyr` could `include "/home/u/.ssh/id_rsa"`
-    # and surface the contents via error text / embedded output. The CYRIUS_HOME
-    # lib fallback below builds its own absolute path and opens it directly (not
-    # through this guard), so it is unaffected.
+    # and surface the contents via error text / embedded output. The store-slot
+    # `lib/` fallback below builds its own path from CYRIUS_HOME or HOME
+    # (`_init_cyrius_lib`) and opens it directly (not through this guard), so it
+    # is unaffected.
     var _allow_abs = _read_env("CYRIUS_ALLOW_ABSOLUTE_INCLUDES");
     var allow_abs = 0;
     if (_allow_abs != 0) {
@@ -752,7 +774,9 @@ fn READFILE(path, dst, maxsz): i64 {
     var fd = 0;
     if (SYS_OPEN == 2) { fd = syscall(SYS_OPEN, path, 0, 0); }
     else { fd = syscall(SYS_OPEN, 0 - 100, path, 0, 0); }
-    # Fallback: if open fails and path starts with "lib/", try CYRIUS_HOME/lib/
+    # Fallback: if open fails and path starts with "lib/", try the store slot
+    # `_init_cyrius_lib` chose — CYRIUS_HOME/versions/<VERSION>/lib/, else
+    # HOME/.cyrius/versions/<VERSION>/lib/ — with `lib/` replaced by it.
     if (fd < 0) {
         if (_cyrius_lib_len > 0) {
             if (load8(path) == 108) { if (load8(path + 1) == 105) { if (load8(path + 2) == 98) { if (load8(path + 3) == 47) {
@@ -804,7 +828,8 @@ fn READFILE(path, dst, maxsz): i64 {
         }
     }
     # CVE-31: distinguish open-fail from a legitimately-empty file. Return -1
-    # when the path could not be opened (after the CYRIUS_HOME/lib fallback);
+    # when the path could not be opened (after the store-slot `lib/` fallback
+    # and the `#@incdir` retry);
     # the PP include sites hard-error on -1. A successfully-opened empty file
     # still returns 0 (a valid, silent no-op include).
     if (fd < 0) { return 0 - 1; }

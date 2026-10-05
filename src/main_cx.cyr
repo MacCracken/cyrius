@@ -520,7 +520,10 @@ while (ufi < GFCNT(S)) {
     var uft = uraw >> 56;
     var uidx = uraw & 0x00FFFFFFFFFFFFFF;
     if (uft == 2 || uft == 3) {
-        if (L64(_fnt_offsets + uidx * 8) < 0) {
+        # 6.6.16: -1 only. -2 is a name the parser already REPORTED (a refused nested fn,
+        # parse.cyr `_nested_fn_mark` — the native check's own "reported" marker); that compile
+        # has `_had_error` set and stops at the gate below without a .cyx. CHANGELOG [6.6.16]
+        if (L64(_fnt_offsets + uidx * 8) == 0 - 1) {
             if (cx_undef == 0) {
                 syscall(SYS_WRITE, 2, "error: undefined function(s) called (cx backend):\n", 50);
             }

@@ -58,9 +58,13 @@
 #         axis 2 STAYS GREEN: the _vis_check deferral catches the refusal half on its own.
 #         That is the deferral earning its place, and it is why M5 is proven jointly:
 #   M4+M5 also disable the deferral                       -> axis 2 after_stmt row red
-#   M5  disable the deferral ALONE                        -> axis 2b red (0 reports, binary emitted)
+#   M5  disable the deferral ALONE                        -> axis 2b red (0 reports, binary emitted;
+#         re-measured on the 6.6.16 top-level-block fixture: the same)
 #   M5b re-walk the deferral list without CONSUMING       -> axis 2b red with **13** reports instead
-#         of 1 — PARSE_PROG is the block parser, so the list is re-judged at every block end
+#         of 1 — PARSE_PROG is the block parser, so the list is re-judged at every block end.
+#         Re-measured at 6.6.16 on the ported fixture: **4** reports. The 6.6.5 round-3 stamp
+#         sequence re-walks only after a NEW private stamp, so the fixture carries three private
+#         fns defined after the violation; without them M5b reported 1 and this axis passed it.
 #   M6  drop the _fn_by_defti pass-1 authority            -> public_marker_scoped_to_its_item
 #         var_then_fn + arr_then_fn red (pass 2's `var` skip re-arms `public` and consumes nothing)
 #   M7  remove the SNPOS commit in parse_decl.cyr         -> axis 3 wrong_name red (names Q7_seven,
@@ -258,27 +262,40 @@ ok() {
 # ─────────────────────────────────────────────────────────────────────────────────────
 # AXIS 2b — the fail-CLOSED DEFERRAL, on a shape pass 1 genuinely cannot stamp.
 #
-# A fn NESTED inside another fn's body is defined by PARSE_FN_DEF at pass-2 emit time;
-# pass 1 never walks a fn body, so nothing prescans it. A forward cross-file call to one in
-# a `private` file therefore still resolves with no owner — and this is where `_vis_check`'s
-# deferral earns its place: the reference is recorded and re-judged once the definition has
-# been stamped. Measured on 6.6.4: the build was ACCEPTED and SIGSEGV'd (rc 139).
+# A fn defined inside a TOP-LEVEL block (`if (on) { fn f() { .. } }`) is defined by
+# PARSE_FN_DEF at pass-2 emit time; pass 1 stops at the first top-level statement and the
+# relaxed-ordering prescan does not descend into a block, so nothing prescans it. A forward
+# cross-file call to one in a `private` file therefore still resolves with no owner — and
+# this is where `_vis_check`'s deferral earns its place: the reference is recorded and
+# re-judged once the definition has been stamped.
+#
+# ⚠ 6.6.16 PORTED THE FIXTURE. Until then it nested `inner_secret` inside another fn's
+# body — the other shape pass 1 cannot stamp, measured accepted + SIGSEGV (rc 139) on 6.6.4.
+# 6.6.16 refuses a fn inside a fn body by name (parse.cyr `_refuse_nested_fn`), so that
+# fixture would now stop at the nested-fn error and its control would not build. A fn inside
+# a top-level block is the LEGAL shape with the same pass-1 blind spot. `public` must precede
+# the first top-level statement, so the public fns come first.
 #
 # ⚠ AND IT MUST REPORT EXACTLY ONCE. `_vis_check_deferred` hangs off the end of PARSE_PROG,
 # which is the BLOCK parser — it runs at the end of every `if` / `while` body, not once per
-# program. The fixture therefore carries several further blocks AFTER the definition, so an
-# implementation that re-walks its pending list without consuming entries reports the one
-# violation **13** times (measured, mutant M5b) and fails here.
+# program, and it re-walks its list after every new PRIVATE stamp. The fixture therefore
+# defines further (private, relaxed-ordering) fns with blocks in them AFTER the definition,
+# plus more top-level blocks, so an implementation that re-walks its pending list without
+# consuming entries reports the one violation 4 times (measured at 6.6.16, mutant M5b) and
+# fails here.
 cat > "$T/w/lib/nest.cyr" <<'EOF'
 private
-public fn outer(): i64 {
-    fn inner_secret(): i64 { return 42; }
-    return inner_secret();
-}
 public fn more1(): i64 { if (1 == 1) { return 1; } return 0; }
 public fn more2(): i64 { if (1 == 1) { return 1; } return 0; }
-public fn more3(): i64 { var i = 0; while (i < 2) { i = i + 1; } return i; }
-public fn more4(): i64 { var j = 0; while (j < 2) { if (j == 0) { j = j + 1; } else { j = j + 1; } } return j; }
+var _nest_on = 1;
+if (_nest_on == 1) {
+    fn inner_secret(): i64 { return 42; }
+}
+fn later1(): i64 { if (1 == 1) { return 1; } return 0; }
+fn later2(): i64 { var i = 0; while (i < 2) { i = i + 1; } return i; }
+fn later3(): i64 { var j = 0; while (j < 2) { if (j == 0) { j = j + 1; } else { j = j + 1; } } return j; }
+if (_nest_on == 1) { _nest_on = 2; }
+while (_nest_on < 4) { _nest_on = _nest_on + 1; }
 EOF
 cat > "$T/w/nested.cyr" <<'EOF'
 include "lib/syscalls.cyr"
@@ -292,23 +309,24 @@ nd=$(grep -c "'inner_secret' is private to its file" "$T/w/nested.err" 2>/dev/nu
 [ -n "$nd" ] || nd=0
 [ "$nd" = "1" ] || { echo "  FAIL: private_forward_reference axis2b [deferral] — expected EXACTLY 1 report, got $nd"; fail=1; }
 if [ -s "$T/w/nested.bin" ]; then echo "  FAIL: private_forward_reference axis2b [deferral] — a binary was still emitted"; fail=1; fi
-# ANTI-VACUOUS, and judged on the DIAGNOSTIC rather than an exit code: the identical program
-# with the `private` line removed must compile with NO visibility error, which is what says
-# the refusal above is caused by `private` and not by the shape.
-#
-# ⚠ Deliberately NOT `ok nested_ok 42`. A cross-file call to a fn nested inside another fn's
-# body SIGSEGVs on 6.6.4 and on this build alike — a separate, pre-existing defect that has
-# nothing to do with visibility (measured: rc 139 from both compilers, on a fixture with no
-# `private` anywhere). Asserting an exit code here would couple this axis to that bug; the
-# compile-clean assertion is the part this bite owns. `public` is a TOP-LEVEL marker and is
-# rejected on a nested fn, so dropping `private` is the only available control.
+# ANTI-VACUOUS: the identical program with the `private` line removed must compile with NO
+# visibility error AND RUN 42, which is what says the refusal above is caused by `private`
+# and not by the shape. (The nested-fn fixture this replaced could only assert compile-clean:
+# a cross-file call to a fn nested in a fn body SIGSEGV'd. A top-level-block fn runs.)
 sed '1d' "$T/w/lib/nest.cyr" > "$T/w/lib/nest_pub.cyr"
 sed 's|lib/nest.cyr|lib/nest_pub.cyr|' "$T/w/nested.cyr" > "$T/w/nested_ok.cyr"
 ( cd "$T/w" && "$CC" < nested_ok.cyr > nested_ok.bin 2> nested_ok.err ) || true
 if grep -q "is private to its file" "$T/w/nested_ok.err" 2>/dev/null; then
   echo "  FAIL: private_forward_reference axis2b [control] — the SAME program with no \`private\` was still refused on visibility"; fail=1
 fi
-[ -s "$T/w/nested_ok.bin" ] || { echo "  FAIL: private_forward_reference axis2b [control] — the non-private control did not build at all"; head -3 "$T/w/nested_ok.err" | sed 's/^/      /' || true; fail=1; }
+if [ -s "$T/w/nested_ok.bin" ]; then
+  chmod +x "$T/w/nested_ok.bin"
+  _okrc=0
+  ( cd "$T/w" && ./nested_ok.bin ) || _okrc=$?
+  [ "$_okrc" = "42" ] || { echo "  FAIL: private_forward_reference axis2b [control] — the non-private control exited $_okrc, expected 42"; fail=1; }
+else
+  echo "  FAIL: private_forward_reference axis2b [control] — the non-private control did not build at all"; head -3 "$T/w/nested_ok.err" | sed 's/^/      /' || true; fail=1
+fi
 
 # ─────────────────────────────────────────────────────────────────────────────────────
 # AXIS 3 — NO FALSE REFUSALS, and the expected exit codes are computed by shell
@@ -496,5 +514,5 @@ sw=$(grep -c "warning: undefined function" "$T/selfw.err" 2>/dev/null || true)
 [ "$sw" = "0" ] || { echo "  FAIL: private_forward_reference axis3 [self] — $sw 'undefined function' warnings compiling cycc's own source"; grep "undefined function" "$T/selfw.err" | head -3 | sed 's/^/      /' || true; fail=1; }
 
 [ "$fail" = 0 ] || exit 1
-echo "PASS private_forward_reference: 7/7 forks carry both pass-1 calls; 10 refusal rows match forward==backward over a hard-coded symbol floor; the deferral backstop reports a nested-fn violation exactly once; 8 legal programs run (6 with exit codes computed in the shell from the fixture literals, 2 against a literal) plus 2 build-only controls; last-definition visibility holds both ways; diagnostics name the right symbol"
+echo "PASS private_forward_reference: 7/7 forks carry both pass-1 calls; 10 refusal rows match forward==backward over a hard-coded symbol floor; the deferral backstop reports a violation on a fn defined inside a top-level block exactly once; 9 legal programs run (6 with exit codes computed in the shell from the fixture literals, 3 against a literal, one of them the axis-2b no-private control) plus 1 build-only control; last-definition visibility holds both ways; diagnostics name the right symbol"
 exit 0

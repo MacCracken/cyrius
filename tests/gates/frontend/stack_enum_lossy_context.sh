@@ -34,8 +34,8 @@ set -u
 R=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$R" || { echo "FAIL: stack_enum_lossy_context: cannot cd to $R"; exit 1; }
 T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: stack_enum_lossy_context: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }; trap 'rm -rf "$T"' EXIT
-CC="$R/build/cycc"
-[ -x "$CC" ] || { echo "FAIL stack_enum_lossy_context: no build/cycc"; exit 1; }
+CC=${CYCC:-"$R/build/cycc"}
+[ -x "$CC" ] || { echo "FAIL stack_enum_lossy_context: no compiler at $CC"; exit 1; }
 
 PRE='include "lib/string.cyr"
 include "lib/fmt.cyr"
@@ -400,5 +400,184 @@ UNDEF=$(grep -c "undefined function" "$T/w.err")
   exit 1
 }
 
-echo 'PASS stack_enum_lossy_context: lossy binds refused on stack enums (bare ctor, forwarding wrapper) · `?` propagates the pair with its Err payload intact · destructure and return-forwarding still work · nullary variants allowed and unflagged · assignment and store64 refused (v6.6.0) · statement-position `?` propagates the pair · top-level destructure works · BOXED enums unaffected by all of it · forward references resolve (`?`, chains, and the diagnostic) · the propagation pass mints no fn-table entries'
+# ── axis 14 — 6.6.16 (C4): THE EXPLICIT GENERIC AND METHOD SPELLINGS ─────────────────────────
+# ⛔ Every "does this callee return a pair" asker recognised only `name(`. The explicit generic
+# `g<i32>(..)` and the method `p.m(..)` (its `T_m`) fell through all of them, so on 6.6.15 every
+# refusal row below COMPILED and kept the tag with the payload dropped, silently — measured
+# `0 0 / 0 1` for Ok(3) / Err(99) — where the identical plain call `f(..)` was refused. The forward
+# wrappers (defined AFTER the bind) reach the flag only through the pair prescan's own resolver.
+# Not here, and unchanged: a top-level single bind of ANY pair callee (the v6.5.67 refusal is a
+# fn-body one), and a receiver that is not one name (`a.b.m()`, `f().m()`).
+# refuse_both <label> <axis> — must fail to compile WITH the "bind both" message.
+refuse_both() {
+  cat > "$T/p.cyr"
+  if "$CC" < "$T/p.cyr" > "$T/p" 2>"$T/p.err"; then
+    echo "FAIL stack_enum_lossy_context $2: $1 COMPILED — the payload is silently dropped."
+    exit 1
+  fi
+  grep -q "bind both" "$T/p.err" || {
+    echo "FAIL stack_enum_lossy_context $2: $1 was refused, but not with the 'bind both' message:"
+    grep -E '^error' "$T/p.err" | head -2 | sed 's/^/    /'
+    exit 1
+  }
+}
+GM='include "lib/syscalls.cyr"
+enum GR: stack { GOk(v); GErr(e); }
+fn gdiv<T>(n: T, d: T) { if (d == 0) { return GErr(99); } return GOk(n / d); }
+fn gid<T>(n: T): i64 { return n; }
+struct Pt { x; y; }
+fn Pt_div(self: Pt, d) { if (d == 0) { return GErr(99); } return GOk(self.x / d); }
+fn Pt_one(self: Pt): i64 { return self.x; }
+'
+refuse_both "var v = gdiv<i32>(..)" axis14a <<EOF
+${GM}fn main(): i64 { var v = gdiv<i32>(6, 2); return v; }
+var e = main();
+EOF
+refuse_both "x = gdiv<i32>(..)" axis14b <<EOF
+${GM}fn main(): i64 { var x = 0; x = gdiv<i32>(6, 2); return x; }
+var e = main();
+EOF
+refuse_both "store64(&s, gdiv<i32>(..))" axis14c <<EOF
+${GM}fn main(): i64 { var s[16]; store64(&s, gdiv<i32>(6, 2)); return 0; }
+var e = main();
+EOF
+refuse_both "var v = p.div(..)" axis14d <<EOF
+${GM}fn main(): i64 { var p: Pt; p.x = 6; p.y = 0; var v = p.div(2); return v; }
+var e = main();
+EOF
+refuse_both "x = p.div(..)" axis14e <<EOF
+${GM}fn main(): i64 { var p: Pt; p.x = 6; p.y = 0; var x = 0; x = p.div(2); return x; }
+var e = main();
+EOF
+refuse_both "store64(&s, p.div(..))" axis14f <<EOF
+${GM}fn main(): i64 { var p: Pt; p.x = 6; p.y = 0; var s[16]; store64(&s, p.div(2)); return 0; }
+var e = main();
+EOF
+refuse_both "var v = w(..), w a generic wrapper defined AFTER" axis14g <<EOF
+${GM}fn main(): i64 { var v = wg(6, 2); return v; }
+fn wg(n, d) { return gdiv<i32>(n, d); }
+var e = main();
+EOF
+refuse_both "var v = w(..), w a method wrapper defined AFTER" axis14h <<EOF
+${GM}fn main(): i64 { var v = wm(6, 2); return v; }
+fn wm(n, d) { var p: Pt; p.x = n; p.y = 0; return p.div(d); }
+var e = main();
+EOF
+refuse_both "var v = w(..), w a method wrapper on a param defined BEFORE" axis14i <<EOF
+${GM}fn wp(p: Pt, d) { return p.div(d); }
+fn main(): i64 { var p: Pt; p.x = 6; p.y = 0; var v = wp(p, 2); return v; }
+var e = main();
+EOF
+# ANTI-OVER-REACH: the same spellings returning ONE value bind to one variable and are right, and
+# the destructure the refusal prescribes works for both spellings.
+accept "one-value generic/method binds, and both destructures" axis14j 42 <<EOF
+${GM}fn wone(n): i64 { var p: Pt; p.x = n; p.y = 0; return p.one(); }
+fn main(): i64 {
+    var p: Pt; p.x = 6; p.y = 0;
+    var a = p.one();
+    var b = gid<i32>(7);
+    var c = wone(9);
+    var t1, v1 = gdiv<i32>(6, 0);
+    var t2, v2 = p.div(3);
+    if (a != 6) { return 101; }
+    if (b != 7) { return 102; }
+    if (c != 9) { return 103; }
+    if (t1 != 1) { return 104; }
+    if (v1 != 99) { return 105; }
+    if (t2 != 0) { return 106; }
+    if (v2 != 2) { return 107; }
+    return 42;
+}
+var e = main();
+syscall(60, e & 0xFF, 0,0,0,0);
+EOF
+
+# ANTI-OVER-REACH: a comparison is not a generic call. `return cnt < m;` beside a pair fn named
+# `cnt` must not read as `cnt<..>(` by running on to a `> (` in a LATER statement — measured on
+# the first cut of this axis's fix: `lt` was flagged pair-returning and `var v = lt(1, 2);` was
+# refused. The token passes bound a type-argument list by shape and require a generic callee.
+accept "return cnt < m; is a comparison, not cnt<..>(" axis14k 11 <<EOF
+${GM}fn cnt(x) { if (x == 0) { return GErr(1); } return GOk(x); }
+fn lt(cnt, m) { return cnt < m; }
+fn other(a, b) { if (a > (b)) { return 1; } return 0; }
+fn main(): i64 { var v = lt(1, 2); var w = other(3, 2); return v + w * 10; }
+var e = main();
+syscall(60, e & 0xFF, 0,0,0,0);
+EOF
+
+# The RECEIVER of a forward method wrapper, resolved BY SCOPE and typed as PARSE_VAR types it
+# (review of this fix's first cut, each measured there). The prescan runs before the wrapper is
+# parsed, so it types the receiver from the tokens:
+#   - `var p = Pt { .. }` and `var p = mkp(n)` read as UNTYPED, so a forward wrapper on either was
+#     never flagged and `var v = w(..);` compiled and dropped the payload (`0 0 / 0 1`) — 14l, 14m;
+#   - the lexically LAST declaration decided, so `var p: Pt; if (..) { var p: Qt; }` typed the
+#     receiver `Qt` and missed the pair (14o), and the mirror typed a `Qt` receiver `Pt`: the
+#     wrapper was flagged pair-returning and its legal one-value bind REFUSED (14p, an accept row).
+# GM2's two structs share the method name `div` with different pair-ness, so those rows are
+# decided by the typing itself — including a generic's `: T` return bound explicitly (14q) or by
+# inference (14r) and a `pp: *Pt` param (14s). 14n's receiver is a generic fn's `p: T` param,
+# typed per instance, which no token pass sees: it is flagged because `Pt_div` is the only `_div`
+# in GM. Mutations (scratch tree, measured red): `_tok_init_sid`'s literal arm -> 14l, its call
+# arm -> 14m, its generic `: T` arm -> 14q + 14r, `_tok_decl_sid` not skipping a param's `*`
+# -> 14s, `_tok_ret_callee` without `_tok_method_any` -> 14n, `_tok_name_sid` not stepping
+# over a closed block -> 14o + 14p. All eight rows are red on the first cut; all but 14p on 6.6.15.
+GM2='include "lib/syscalls.cyr"
+enum GR: stack { GOk(v); GErr(e); }
+struct Pt { x; y; }
+struct Qt { x; y; }
+fn Pt_div(self: Pt, d) { if (d == 0) { return GErr(99); } return GOk(self.x / d); }
+fn Qt_div(self: Qt, d): i64 { return self.x + d; }
+fn mkp(n): Pt { var p: Pt; p.x = n; p.y = 0; return p; }
+fn idp<T>(v: T): T { return v; }
+'
+refuse_both "var v = w(..), w a method wrapper AFTER on var p = Pt { .. }" axis14l <<EOF
+${GM2}fn main(): i64 { var v = wl(6, 2); return v; }
+fn wl(n, d) { var p = Pt { n, 0 }; return p.div(d); }
+var e = main();
+EOF
+refuse_both "var v = w(..), w a method wrapper AFTER on var p = mkp(n)" axis14m <<EOF
+${GM2}fn main(): i64 { var v = wc(6, 2); return v; }
+fn wc(n, d) { var p = mkp(n); return p.div(d); }
+var e = main();
+EOF
+refuse_both "var v = w(..), w a generic method wrapper AFTER on its p: T param" axis14n <<EOF
+${GM}fn main(): i64 { var p: Pt; p.x = 6; p.y = 0; var v = wt(p, 2); return v; }
+fn wt<T>(p: T, d) { return p.div(d); }
+var e = main();
+EOF
+refuse_both "var v = w(..), w a method wrapper AFTER, a Qt shadow in a block CLOSED before the call" axis14o <<EOF
+${GM2}fn main(): i64 { var v = ws(6, 2); return v; }
+fn ws(n, d) { var p: Pt; p.x = n; p.y = 0; if (n == 99) { var p: Qt; p.x = 1; } return p.div(d); }
+var e = main();
+EOF
+refuse_both "var v = w(..), w a method wrapper AFTER on var p = idp<Pt>(q)" axis14q <<EOF
+${GM2}fn main(): i64 { var v = wi(6, 2); return v; }
+fn wi(n, d) { var q: Pt; q.x = n; q.y = 0; var p = idp<Pt>(q); return p.div(d); }
+var e = main();
+EOF
+refuse_both "var v = w(..), w a method wrapper AFTER on var p = idp(q), T inferred" axis14r <<EOF
+${GM2}fn main(): i64 { var v = wj(6, 2); return v; }
+fn wj(n, d) { var q: Pt; q.x = n; q.y = 0; var p = idp(q); return p.div(d); }
+var e = main();
+EOF
+refuse_both "var v = w(..), w a method wrapper AFTER on a pp: *Pt param" axis14s <<EOF
+${GM2}fn main(): i64 { var p: Pt; p.x = 6; p.y = 0; var v = wp(&p, 2); return v; }
+fn wp(pp: *Pt, d) { return pp.div(d); }
+var e = main();
+EOF
+accept "one-value forward wrappers on a Qt receiver (closed-block Pt shadow, literal, idp, *Qt)" axis14p 104 <<EOF
+${GM2}fn main(): i64 {
+    var q: Qt; q.x = 9; q.y = 0;
+    var v = wq(6, 2); var u = wr(70, 10); var g = wg(5, 1); var h = wh(&q, 1);
+    return v + u + g + h;
+}
+fn wq(n, d): i64 { var p: Qt; p.x = n; p.y = 0; if (n == 99) { var p: Pt; p.x = 1; } return p.div(d); }
+fn wr(n, d): i64 { var q = Qt { n, 0 }; return q.div(d); }
+fn wg(n, d): i64 { var q: Qt; q.x = n; q.y = 0; var p = idp(q); return p.div(d); }
+fn wh(pp: *Qt, d): i64 { return pp.div(d); }
+var e = main();
+syscall(60, e & 0xFF, 0,0,0,0);
+EOF
+
+echo 'PASS stack_enum_lossy_context: lossy binds refused on stack enums (bare ctor, forwarding wrapper) · `?` propagates the pair with its Err payload intact · destructure and return-forwarding still work · nullary variants allowed and unflagged · assignment and store64 refused (v6.6.0) · statement-position `?` propagates the pair · top-level destructure works · BOXED enums unaffected by all of it · forward references resolve (`?`, chains, and the diagnostic) · the propagation pass mints no fn-table entries · the explicit generic and method spellings are refused the same way, through wrappers in either order and on any receiver the parser types (by scope, by inference), and their one-value binds and destructures work (6.6.16)'
 exit 0

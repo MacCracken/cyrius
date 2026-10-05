@@ -46,8 +46,9 @@ assert_eq(_tr_sqrt_stmt(f64_from(9)), 1, "f64_sqrt(x); parses as a bare statemen
 
 # ── callptr (token 137, was 111) ─────────────────────────────────────────────────────
 test_group("callptr after the renumber");
-# ⚠ Wrapped: an indirect call is refused at TOP LEVEL ("must be inside a function"), which is a
-# pre-existing and correct guard — the same class as the SIMD one added this release.
+# Wrapped in a fn: these rows pin the token number through the in-fn lowering. (Until 6.6.16 a
+# top-level `callptr` was refused outright; it now opens its own micro-frame and is covered by
+# tests/tcyr/crossos/closure_escape_dispatch.tcyr.)
 fn _tr_callptr_expr(f) { return callptr(f, 40, 2); }
 assert_eq(_tr_callptr_expr(&_tr_add), 42, "callptr as an expression");
 

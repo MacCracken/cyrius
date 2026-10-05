@@ -25,6 +25,19 @@
 # tests/tcyr/codegen/callptr.tcyr. Hence a capturing closure is capped at
 # (arg registers - 1) parameters, which is 5 on SysV/AAPCS64 and 3 on Win64 — so the
 # 5-parameter arm below is Windows-guarded.
+#
+# ⛔ 6.6.16 — THE TOP-LEVEL SECTION (above `var ec = main();`). Every row above calls from
+# inside a fn, so none of them could see the shape hisab filed on 2026-10-03: `fncallN` at TRUE
+# TOP LEVEL was never lowered (its gate was "inside a fn", because the lowering spills to frame
+# slots and top-level code has no frame), so it stayed an ordinary call into lib/fnptr.cyr,
+# which called the closure's bit-63-tagged value: SIGSEGV on x86_64/aarch64/Mach-O, 0xC0000005
+# on Windows, and 0 for EVERY callee on cx. `callptr` was refused outright. A top-level indirect
+# call now opens a per-call-site micro-frame. The section runs each route a value can arrive by
+# (return, global, load64) through fncall1 AND callptr, the other arities, nesting, statement
+# position, plain-pointer controls with stack arguments, a chain that holds more than 4 KiB of
+# micro-frames and arguments live at once (on PE every one of those frames runs the page-walk
+# probe), and a 1000-iteration loop proving the frames balance. Gate:
+# tests/gates/codegen/toplevel_indirect_call.sh (the filed repro, and this file on cx).
 include "lib/assert.cyr"
 include "lib/alloc.cyr"
 include "lib/fnptr.cyr"
@@ -133,5 +146,143 @@ fn main(): i64 {
     var rc = assert_summary();
     return rc;
 }
+
+# ── TOP LEVEL (6.6.16) ── runs before `main()` below, in source order; its rows are counted in
+# main's assert_summary. Nothing here is inside a fn.
+var g_tl_set = 0;
+fn tl_stash(): i64 { g_clos = make_adder(41); return 0; }
+fn tl_mk0(b): i64 { return || b + 1; }
+fn tl_mk2(b): i64 { return |x, y| b + x + y; }
+fn tl_mk3(b): i64 { return |x, y, z| b + x + y + z; }
+# CAPTURING (k): a closure that captures nothing is a plain code pointer and worked at top level
+# even through lib/fnptr.cyr, so it could not see the statement-position defect.
+fn tl_setter(k): i64 { return |v| { g_tl_set = v + k; return 0; }; }
+fn eight(a, b, c, d, e, f, g, h): i64 { return a + b + c + d + e + f + g + h; }
+fn pick11(a, b, c, d, e, f, g, h, i, j, k): i64 { return k; }
+# The address of a local in a fresh frame: two calls from the same depth agree iff rsp did.
+fn tl_sp(): i64 { var x = 0; return &x; }
+# ...and its low four bits: the stack alignment its CALLER landed it at.
+fn tl_amod(): i64 { var p = tl_sp(); return p & 15; }
+fn tl_mka(b): i64 { return |x| b + x + tl_amod(); }
+
+test_group("TOP LEVEL: an escaped capturing closure dispatches outside every fn (6.6.16)");
+assert_eq(fncall1(make_adder(41), 1), 42, "RETURNED by a fn, called with fncall1");
+assert_eq(callptr(make_adder(41), 1), 42, "RETURNED by a fn, called with callptr");
+tl_stash();
+assert_eq(fncall1(g_clos, 1), 42, "stored in a global by a fn, fncall1");
+assert_eq(callptr(g_clos, 1), 42, "stored in a global by a fn, callptr");
+var tl_cell = alloc(8);
+store64(tl_cell, make_adder(41));
+assert_eq(fncall1(load64(tl_cell), 1), 42, "round-tripped through store64/load64, fncall1");
+assert_eq(callptr(load64(tl_cell), 1), 42, "round-tripped through store64/load64, callptr");
+assert_eq(fncall0(tl_mk0(41)), 42, "fncall0 on a zero-param capturing closure");
+assert_eq(fncall2(tl_mk2(40), 1, 1), 42, "fncall2");
+assert_eq(fncall3(tl_mk3(39), 1, 1, 1), 42, "fncall3 (3 params + env: Win64's 4 registers)");
+var tl_g = make_adder(41);
+assert_eq(fncall1(tl_g, fncall1(tl_g, 1)), 83, "nested: an indirect call in another's argument");
+assert_eq(1 + fncall1(tl_g, 0), 42, "right operand, with the left one pending on the stack");
+var tl_st = tl_setter(0);
+fncall1(tl_st, 7);
+assert_eq(g_tl_set, 7, "statement position: `fncall1(f, 7);` ran the closure");
+callptr(tl_st, 9);
+assert_eq(g_tl_set, 9, "statement position: `callptr(f, 9);` ran the closure");
+
+# The micro-frame keeps the call site's stack parity (8 for the saved rbp + the frame == 0 mod
+# 16 on x86), so the callee is entered exactly as aligned as a DIRECT call from the same position.
+# A frame that flipped it would hand an SSE-spilling extern-C callee a misaligned stack.
+var tl_a0 = tl_amod();
+assert_eq(fncall0(&tl_amod), tl_a0, "alignment: fncall0(&f) lands its callee like a direct call");
+assert_eq(callptr(&tl_amod), tl_a0, "alignment: callptr(&f) likewise");
+assert_eq(7 + fncall0(&tl_amod), 7 + tl_amod(), "alignment: with a value pending on the stack");
+assert_eq(fncall1(tl_mka(0), 0), tl_a0, "alignment: a capturing closure's body, at top level");
+
+test_group("TOP LEVEL: plain fn pointers take the same lowering");
+assert_eq(fncall2(&plain_add, 20, 22), 42, "&fn via fncall2");
+assert_eq(callptr(&seven, 1, 2, 3, 4, 5, 6, 21), 42, "&fn via callptr, 7 args (stack arguments)");
+assert_eq(fncall7(&seven, 1, 2, 3, 4, 5, 6, 21), 42, "&fn via fncall7");
+assert_eq(fncall8(&eight, 1, 2, 3, 4, 5, 6, 7, 14), 42, "&fn via fncall8");
+
+var tl_armed = 0;
+#ifdef CYRIUS_TARGET_WIN
+println("SKIP: Win64 has 4 argument registers — a capturing closure caps at 3 params");
+tl_armed = 1;
+#endif
+#ifndef CYRIUS_TARGET_WIN
+fn tl_mk5(b): i64 { return |p, q, r, s, t| b + p + q + r + s + t; }
+assert_eq(fncall5(tl_mk5(27), 1, 2, 3, 4, 5), 42, "fncall5: 5 params + env in the sixth register");
+tl_armed = 1;
+#endif
+assert_eq(tl_armed, 1, "a top-level arg-register arm ran (0 = it compiled into nothing)");
+
+test_group("TOP LEVEL: the micro-frames nest deep and balance");
+# 42 nested callptr calls, each holding its micro-frame and ten pushed arguments while the
+# next one is evaluated: the innermost argument runs more than 4 KiB below where the chain
+# started (asserted, so the row cannot pass shallow), and on PE every frame on the way ran the
+# page-walk probe. A frame can never itself reach 4 KiB at top level — nothing there allocates
+# frame temps but the call's own two slots — so this is the most stack one call can hold.
+var tl_top = tl_sp();
+var tl_low = callptr(&pick11, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+  callptr(&pick11, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+    callptr(&pick11, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+      callptr(&pick11, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+        callptr(&pick11, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+          callptr(&pick11, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+            callptr(&pick11, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+              callptr(&pick11, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+                callptr(&pick11, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+                  callptr(&pick11, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+                    callptr(&pick11, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+                      callptr(&pick11, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+                        callptr(&pick11, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+                          callptr(&pick11, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+                            callptr(&pick11, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+                              callptr(&pick11, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+                                callptr(&pick11, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+                                  callptr(&pick11, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+                                    callptr(&pick11, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+                                      callptr(&pick11, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+                                        callptr(&pick11, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+                                          callptr(&pick11, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+                                            callptr(&pick11, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+                                              callptr(&pick11, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+                                                callptr(&pick11, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+                                                  callptr(&pick11, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+                                                    callptr(&pick11, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+                                                      callptr(&pick11, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+                                                        callptr(&pick11, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+                                                          callptr(&pick11, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+                                                            callptr(&pick11, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+                                                              callptr(&pick11, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+                                                                callptr(&pick11, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+                                                                  callptr(&pick11, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+                                                                    callptr(&pick11, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+                                                                      callptr(&pick11, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+                                                                        callptr(&pick11, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+                                                                          callptr(&pick11, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+                                                                            callptr(&pick11, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+                                                                              callptr(&pick11, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+                                                                                callptr(&pick11, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+                                                                                  callptr(&pick11, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+                                                                                    tl_sp()))))))))))))))))))))))))))))))))))))))))));
+var tl_after = tl_sp();
+assert_eq(tl_after - tl_top, 0, "rsp is back where it was after the deep chain");
+#ifdef CYRIUS_TARGET_CX
+println("SKIP: cxvm frames are VM words, not machine stack — the 4 KiB span is a native row");
+assert(tl_low != 0, "the deep chain returned the innermost address");
+#endif
+#ifndef CYRIUS_TARGET_CX
+assert(tl_top - tl_low > 4096, "the innermost argument ran more than 4 KiB below the chain's start");
+#endif
+
+var tl_sp0 = tl_sp();
+var tl_i = 0;
+var tl_acc = 0;
+while (tl_i < 1000) {
+    tl_acc = tl_acc + fncall1(tl_g, 1) - 42 + callptr(tl_g, 1) - 42;
+    tl_i = tl_i + 1;
+}
+assert_eq(tl_acc, 0, "2000 top-level indirect calls in a loop, every one 42");
+assert_eq(tl_sp() - tl_sp0, 0, "and rsp is exactly where it was: every micro-frame balanced");
+
 var ec = main();
 syscall(60, ec);

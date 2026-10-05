@@ -398,8 +398,23 @@ fn _IS_FNCALL_NAME(S, noff): i64 {
 # indirect calls get distinct slots) so it survives ECALLPOPS — which on Win64
 # `sub`s rsp for the 32 B shadow home and would bury a stack-pushed callee. Then
 # push args, marshal, and call through the slot via ECALLIND (`call [rbp-disp]` /
-# `ldur x6; blr x6`). The spill is a frame local, so an indirect call needs a
-# function frame — top-level vars are globals (no rbp frame). Fail loud, not crash.
+# `ldur x6; blr x6`). The spill is a frame local, so the call needs a frame.
+#
+# ⛔ 6.6.16 — AT TOP LEVEL THE CALL BRINGS ITS OWN FRAME. Top-level code has none (its
+# vars are globals; rbp / x29 / cx fp hold whatever the loader left), and this used to
+# be answered two ways at once: `callptr` was refused ("must be inside a function"),
+# while `fncallN` was simply NOT LOWERED there (both gates below were `_cur_fn_ix >= 0`)
+# and fell through to lib/fnptr.cyr, whose asm calls the raw value. A capturing
+# closure's value is its env object with bit 63 set, so every top-level fncallN on a
+# closure that ESCAPED a fn (returned, stashed in a global, round-tripped through
+# memory) jumped to a non-canonical address: SIGSEGV on x86_64/aarch64/Mach-O,
+# 0xC0000005 on Windows, and on cx — where lib/fnptr.cyr has no arm — EVERY top-level
+# fncallN returned 0, plain fn pointers included. Now `PINDIRECT_CALL` wraps a top-level
+# call in a per-call-site MICRO-FRAME (`ETLFRAME_OPEN` / `ETLFRAME_CLOSE` in each
+# backend), sized at the close from the slots the call actually used, so fncall0..8
+# and callptr take the same closure-aware lowering everywhere. Inside a fn nothing
+# changes: the wrapper calls `_PINDIRECT_CALL_IN` directly. See
+# 2026-10-03-hisab-toplevel-fncall-capturing-closure-segv.md. CHANGELOG [6.6.16]
 #
 # RUNTIME CLOSURE DISPATCH. The spilled callee value is read TWICE: once through
 # ECLENV for the hidden env argument, once through ECLNORM for the real code
@@ -422,11 +437,33 @@ fn _IS_FNCALL_NAME(S, noff): i64 {
 # register argument, which every ABI we emit for (SysV, Win64, AAPCS64) permits
 # because the CALLER cleans the argument area. Leading it would shift every user
 # argument of every non-closure indirect call.
+#
+# THE TOP-LEVEL MICRO-FRAME. Slot numbering restarts at 0 inside it (nothing at top level
+# lives in a frame slot — hidden temps there are globals, and every other frame-slot
+# user refuses top level or is gated on GINFN), and the frame is sized from the larger
+# of the final GFLC and the `_flc_hwm` high-water, because hidden temps and the inline
+# replay release GFLC back down after use. Both are restored afterwards, so the
+# enclosing top-level state is untouched; a nested top-level indirect call (one in
+# another's arguments) opens its own frame inside this one. The result stays in
+# rax / x0 / r0 across the close. Kept a SMALL separate fn with no tail call: cybs,
+# which builds this file on the seed chain, has a per-fn reference ceiling.
 fn PINDIRECT_CALL(S): i64 {
-    if (_cur_fn_ix < 0) {
-        syscall(SYS_WRITE, 2, "error: an indirect call (callptr / fncallN) must be inside a function, not at top level\n", 88);
-        syscall(SYS_EXIT, 1);
-    }
+    if (_cur_fn_ix >= 0) { _PINDIRECT_CALL_IN(S); return 0; }
+    var tl_flc = GFLC(S);
+    var tl_hwm = _flc_hwm;
+    SFLC(S, 0);
+    _flc_hwm = 0;
+    var tl_patch = ETLFRAME_OPEN(S);
+    _PINDIRECT_CALL_IN(S);
+    var tl_n = GFLC(S);
+    if (_flc_hwm > tl_n) { tl_n = _flc_hwm; }
+    ETLFRAME_CLOSE(S, tl_patch, tl_n);
+    SFLC(S, tl_flc);
+    _flc_hwm = tl_hwm;
+    return 0;
+}
+
+fn _PINDIRECT_CALL_IN(S): i64 {
     PCMPE(S);                               # eval callee → rax
     var cp_v = GFLC(S);
     S64(S + 0x5D9D000 + cp_v * 8, 0 - 1);   # anonymous (stale-name guard)
@@ -1536,25 +1573,23 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
     # asm for >4 args on Win64 and >6 on SysV.
     #
     # Gated on FINDFN so a program that never included lib/fnptr.cyr still gets its
-    # "undefined function" diagnostic instead of silently compiling, and on
-    # `_cur_fn_ix >= 0` because the lowering spills the callee to a FRAME slot and a
-    # top-level statement has no frame. At top level `fncallN` therefore keeps its
-    # pre-v6.5.17 meaning — an ordinary call into lib/fnptr.cyr — which is the only
-    # thing that ever worked there anyway (a closure literal needs a frame too, and
-    # `callptr` at top level has always been a hard error). Without this gate the
-    # extern-C driver in tests/gates/platform/ffi_stack_protected_extern_c.sh, which
-    # calls fncall4..7 at top level, stopped compiling.
-    if (typ == 2) { if (_cur_fn_ix >= 0) { if (_IS_FNCALL_NAME(S, PEEKV(S)) == 1) {
-                if (TOKTYP(S, GTI(S) + 1) == 10) { if (FINDFN(S, PEEKV(S)) >= 0) {
-                        # v6.5.46: the digit in the name IS the promised arity — the same
-                        # byte `_IS_FNCALL_NAME` already validated as '0'..'8'.
-                        _fncall_expect = ((L64(S + 0xEC00000 + PEEKV(S)) >> 48) & 0xFF) - 48;
-                        STI(S, GTI(S) + 1);   # consume fncallN
-                        STI(S, GTI(S) + 1);   # consume '('
-                        PINDIRECT_CALL(S);
-                        return 0;
-                    } }
-            } } }
+    # "undefined function" diagnostic instead of silently compiling.
+    # ⛔ 6.6.16 — and NOT on being inside a fn: this gate also read `_cur_fn_ix >= 0`, so a
+    # top-level fncallN fell back to lib/fnptr.cyr, which calls a capturing closure's tagged
+    # value (SIGSEGV; 0 for every callee on cx). PINDIRECT_CALL now brings a micro-frame to
+    # top level (see its header), so the lowering is the same at every depth — the extern-C
+    # driver in tests/gates/platform/ffi_stack_protected_extern_c.sh included. CHANGELOG [6.6.16]
+    if (typ == 2) { if (_IS_FNCALL_NAME(S, PEEKV(S)) == 1) {
+            if (TOKTYP(S, GTI(S) + 1) == 10) { if (FINDFN(S, PEEKV(S)) >= 0) {
+                    # v6.5.46: the digit in the name IS the promised arity — the same
+                    # byte `_IS_FNCALL_NAME` already validated as '0'..'8'.
+                    _fncall_expect = ((L64(S + 0xEC00000 + PEEKV(S)) >> 48) & 0xFF) - 48;
+                    STI(S, GTI(S) + 1);   # consume fncallN
+                    STI(S, GTI(S) + 1);   # consume '('
+                    PINDIRECT_CALL(S);
+                    return 0;
+                } }
+        } }
     if (typ == 1) {
         var val = PEEKV(S);
         STI(S, GTI(S) + 1);
@@ -1927,7 +1962,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         if (fni >= 0) {
             # v6.6.4: `&fn` is its own resolution path — a private fn was reachable from any
             # file by taking its address and calling through callptr/fncallN (hisab 2026-09-13).
-            _vis_check(S, fni, anoff);
+            _callee_site_checks_here(S, fni, anoff, 1);   # 6.6.16: and `#deprecated` — `&old_f` was silent
             _gen_addr_check(S, fni, anoff);   # 6.6.10: `&g` of a stub generic reaches the stub
             var fc = GFCNT(S);
             if (fc >= 1048576) {
@@ -3132,6 +3167,9 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
             _cl_env_lidx = cl_env_slot;
         }
         # Parse params until | (a zero-param `||` closure has no param list)
+        # ⚠ The pair scans (parse.cyr `_tok_is_closure_body`) recognise a closure BODY as a `{`
+        # immediately preceded by the closing `|` or by `||`. Typed params or a return annotation
+        # between the bars and the body would break that predicate — move it with the grammar.
         # v6.5.46: remember the first param's local index — the deferred stack-param pass
         # below needs it, and inside the loop `cpli` is re-read each iteration.
         var cl_p0 = GFLC(S);
@@ -4546,6 +4584,7 @@ fn EMIT_OP_DISPATCH(S, stype, op_str, op_len, beg): i64 {
     if (_ret_agg_class(S, _op_fn_peek(S, stype, op_str, op_len)) != 0) {
         return _EMIT_OP_DISPATCH_AGG(S, stype, op_str, op_len, beg);
     }
+    var opti = GTI(S) - 1;   # the operator, just consumed — the call the warning names (6.6.16)
     # For struct vars, push address instead of value
     var svar = GESVAR(S);
     _OP_OPERAND_ADDR(S, svar);
@@ -4559,7 +4598,7 @@ fn EMIT_OP_DISPATCH(S, stype, op_str, op_len, beg): i64 {
     ECALLPOPS(S, 2);
     var ofi = FINDFN(S, opnoff);
     if (ofi < 0) { ofi = REGFN(S, opnoff); }
-    _vis_check(S, ofi, opnoff);   # v6.5.0: operator overloading is its own call path
+    _callee_site_checks(S, ofi, opnoff, opti);   # v6.5.0: operator overloading is its own call path
     # ⛔ 6.6.6 (bite 14 review) — OPERATOR DISPATCH NEVER CHECKED THE OPERATOR FN'S ARITY. An
     # operator always passes exactly two operands, so `fn V2_add(a, b, c)` bound `c` to whatever
     # happened to be in the third argument register: `a + b` compiled clean and computed with
@@ -4594,6 +4633,7 @@ fn _op_fn_peek(S, stype, op_str, op_len): i64 {
 # VALUE (there is no struct var to re-address), it is already in rax when the operator is seen,
 # and on x86/cx the retptr must go BELOW it — so it is parked in a frame word first.
 fn _EMIT_OP_DISPATCH_AGG(S, stype, op_str, op_len, beg): i64 {
+    var opti = GTI(S) - 1;   # the operator (see EMIT_OP_DISPATCH)
     var svar = GESVAR(S);
     var opnoff = BUILD_OP_NAME(S, stype, op_str, op_len);
     var ofi = FINDFN(S, opnoff);
@@ -4610,7 +4650,7 @@ fn _EMIT_OP_DISPATCH_AGG(S, stype, op_str, op_len, beg): i64 {
     EPUSHR(S);
     ECALLPOPS(S, n);
     _sc_x8(S, ofi, t);
-    _vis_check(S, ofi, opnoff);
+    _callee_site_checks(S, ofi, opnoff, opti);
     # 6.6.6 — same arity check as the scalar dispatch above. The retptr/X8 the struct-returning
     # form adds is NOT a declared parameter, so the expected count is still exactly 2.
     _CHECK_ARITY(S, GTLINE(S, beg), opnoff, ofi, 2, 1);

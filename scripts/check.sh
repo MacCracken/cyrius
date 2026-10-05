@@ -1692,6 +1692,35 @@ _chk_gate "$ROOT/tests/gates/diagnostics/closure_capture_struct_copy_mismatch.sh
 # a whole variant, not a dropped tag: no mixed-return warning. The dropped-tag shapes still warn.
 _chk_gate "$ROOT/tests/gates/frontend/stack_enum_mixed_return_warning.sh"
 
+# 6.6.16 (H2) — a closure's `return <: stack call>` belongs to the CLOSURE: the pair scans skip a
+# closure body, so the enclosing fn is neither refused "bind both" nor warned. The filed hisab
+# repro runs verbatim against the tree through a throwaway home; real mixed returns still warn.
+_chk_gate "$ROOT/tests/gates/frontend/stack_enum_closure_return_scope.sh"
+
+# 6.6.16 (H1) — fncall0..8 and callptr at TRUE TOP LEVEL dispatch an escaped capturing closure:
+# a top-level indirect call opens its own micro-frame (it was never lowered there: SIGSEGV on
+# x86/aarch64, 0xC0000005 on PE, 0 for every callee on cx; callptr was refused). The filed hisab
+# repro and closure_escape_dispatch.tcyr's top-level section on x86, qemu, wine and cxvm.
+_chk_gate "$ROOT/tests/gates/codegen/toplevel_indirect_call.sh"
+
+# 6.6.16 (C5) — a named `fn` / `async fn` inside a fn body, closure, impl method or generic body
+# is ONE named error ("fn 'inner' is defined inside fn 'outer'"), its tokens skipped so nothing
+# cascades — it used to compile and crash (SIGILL / SIGSEGV). A fn in a top-level block still runs.
+_chk_gate "$ROOT/tests/gates/diagnostics/nested_fn_refused.sh"
+
+# 6.6.16 (C9) — `#deprecated("msg")` warns EXACTLY ONCE, on the call's own line, on every path:
+# a call before the definition (pass 1 now records it), `&f`, `o.m()`, the struct receives,
+# operator dispatch, the PE vector paths, a generic instance, an `#inline` / generic re-parse;
+# a tail call is reported at 14:18, not the next token. Binaries identical without the attribute.
+_chk_gate "$ROOT/tests/gates/diagnostics/deprecated_every_call_path.sh"
+
+# 6.6.16 (C10) — cycc's `lib/...` include fallback reads CYRIUS_HOME's store slot, else HOME's,
+# from the WHOLE environment: both orders, empty = unset, no fall-through to HOME, past 4 KB / 8 KB
+# and across read boundaries, the 1984-B bound never truncated — x86, aarch64, cx, the PE cross and
+# the native aarch64 fork under qemu, all built from the tree. The selection is the compile's own
+# reachable-undefined refusal, so nothing has to run.
+_chk_gate "$ROOT/tests/gates/toolchain/include_fallback_cyrius_home.sh"
+
 # 6.6.9 (bite 3) — a second struct/union with a different layout (the first silently won) and
 # an enum constant over a zero/computed global of the same name are warned, not silent.
 _chk_gate "$ROOT/tests/gates/frontend/redefinition_layout_and_enum_over_var.sh"

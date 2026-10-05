@@ -254,6 +254,10 @@ var r = add(20, 22);   # r = 42
 - Up to 6 register params, 7+ passed on stack
 - Forward calls work (functions can call functions defined later)
 - Relaxed ordering: functions can appear after statements (v1.11.0+)
+- **A fn is defined at top level** (or inside a top-level block). A named `fn` / `async fn` inside
+  a fn body, a closure, an `impl` method or a generic body is a compile error naming both
+  (`fn 'inner' is defined inside fn 'outer'`) — before 6.6.16 it compiled and crashed (SIGILL /
+  SIGSEGV). A local function is a closure: `var sq = |x| x * x;`.
 - All functions return a value (`return 0;` if nothing to return)
 - **Calling with the wrong number of arguments is a hard error** (v6.5.1; there is no
   overloading and no default arguments, so a count mismatch is never intentional). Since
@@ -2587,10 +2591,15 @@ var g_dbl = |x| { var y = x * 2; return y; };     # … or as a top-level `var`
 The body may be a single expression or a `{ … }` block (with `return`).
 
 A closure literal is also a legal top-level initializer, including the `{ block }`
-form. Call it with `fncallN` (an ordinary function from `lib/fnptr.cyr`, so it works
-at top level too) or, from inside a function, with `callptr` — a bare `callptr` in
-top-level code is refused: *an indirect call (callptr / fncallN) must be inside a
-function, not at top level*. ⚠ **Before 6.6.6 a block-bodied closure in
+form. Call it with `fncallN` or `callptr`, inside a function or at top level: since
+6.6.16 an indirect call in top-level code brings its own small stack frame, so it
+dispatches a capturing closure exactly as it does inside a function. ⚠ **Before 6.6.16
+a top-level `fncallN` on a capturing closure that a function had built and returned
+(or stored in a global, or passed through memory) crashed** (SIGSEGV; 0xC0000005 on
+Windows; on the cx target every top-level `fncallN` returned 0), and a top-level
+`callptr` did not compile. The usual workaround, calling it from inside a function,
+is no longer needed. Pinned by `tests/tcyr/crossos/closure_escape_dispatch.tcyr` and
+`tests/gates/codegen/toplevel_indirect_call.sh`. ⚠ **Before 6.6.6 a block-bodied closure in
 a top-level `var` declared before the first top-level statement silently dropped the
 rest of the program**: the declaration was skipped to its first `;`, which the
 closure body contains, so both parser passes stopped inside the body and nothing
@@ -2658,10 +2667,10 @@ Linux/macOS (x86_64 and aarch64) and **three** on Windows — the hidden
 environment argument occupies the next argument register, and it is a compile
 error to declare more. A capturing closure with eight arguments cannot be
 called through `fncall8` (there is no `fncall9` for the environment to ride in);
-use `callptr`, which has no arity ladder. `fncallN` at **top level** is an
-ordinary call into `lib/fnptr.cyr` and does not dispatch closures — call it from
-inside a function. Captured closures are flat (no capture of a capture across
-two nested closure levels).
+use `callptr`, which has no arity ladder. `fncallN` and `callptr` dispatch
+closures the same way at **top level** as inside a function (since 6.6.16; before
+that a top-level `fncallN` on a capturing closure crashed). Captured closures are
+flat (no capture of a capture across two nested closure levels).
 
 ## Generic Functions
 

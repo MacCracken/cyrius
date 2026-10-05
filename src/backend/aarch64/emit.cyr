@@ -2370,6 +2370,27 @@ fn ECALLIND(S, idx): i64 {
     return 0;
 }
 
+# 6.6.16 — the MICRO-FRAME around a TOP-LEVEL indirect call (PINDIRECT_CALL, parse_expr.cyr; the
+# x86 peer in backend/x86/emit.cyr has the full note). Top-level code has no frame and x29 is
+# whatever the loader left, so the call site opens one with the ordinary prologue pair: EFNPRO
+# (`stp x29, x30, [sp, #-16]!; mov x29, sp` — x30 is saved too, the `blr` inside clobbers it) and
+# ESUBRSP's two patchable slots, so a frame of 4 KiB or more is still encoded (imm12 + LSL #12)
+# rather than masked. Serves Linux, Mach-O arm64 and the native fork. Returns the patch offset.
+fn ETLFRAME_OPEN(S): i64 {
+    _IR_REC0(S, IR_RAW_EMIT);
+    EFNPRO(S);
+    var patch = ESUBRSP(S);
+    return patch;
+}
+# sp stays 16-aligned (the frame is rounded to 16); the result stays in x0.
+fn ETLFRAME_CLOSE(S, patch, nslots): i64 {
+    _IR_REC0(S, IR_RAW_EMIT);
+    EPATCHFRAME(S, patch, ((nslots * 8 + 15) / 16) * 16);
+    EW(S, 0x910003BF);  # mov sp, x29
+    EW(S, 0xA8C17BFD);  # ldp x29, x30, [sp], #16
+    return 0;
+}
+
 # Pop into aarch64 arg register (x0-x7).
 # v5.6.25: when n == 0 and the immediately preceding instruction is
 # `push x0` (EPUSHR), the push+pop pair is a no-op — rewind past the

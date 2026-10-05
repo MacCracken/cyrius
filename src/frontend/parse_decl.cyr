@@ -1182,7 +1182,8 @@ fn _field_load_on(S, noff, fnoff, pfl_beg, idx, sid): i64 {
         # `argc` indexes the callee's params, so it starts at 1 (`self` is param 0 and is
         # int-class); `m_int_argc` is what ECALLPOPS/ECALLCLEAN take, since SIMD args never
         # reach the stack. CHANGELOG [6.6.5]
-        var m_line = GTLINE(S, GTI(S));
+        var m_ti = GTI(S);           # the `(`; the method's NAME is the token before it
+        var m_line = GTLINE(S, m_ti);
         STI(S, GTI(S) + 1);  # consume (
         var argc = 1;
         var m_simd_table: i64[24];   # 8 args x 3 i64s, a LOCAL — a nested call gets its own
@@ -1216,7 +1217,7 @@ fn _field_load_on(S, noff, fnoff, pfl_beg, idx, sid): i64 {
         ECALLPOPS(S, m_int_argc);
         _simd_arg_second_pass(S, &m_simd_table, load64(&m_st + 8));
         _sc_x8(S, mfi, m_rt);        # 6.6.6: aarch64's retptr register
-        _vis_check(S, mfi, mname);   # v6.6.4: `s.method()` is its own call path
+        _callee_site_checks(S, mfi, mname, m_ti - 1);   # v6.6.4: `s.method()` is its own call path
         var mfoff = L64(_fnt_offsets + mfi * 8);
         if (mfoff >= 0) { ECALLTO(S, mfoff); }
         else { ECALLFIX(S, mfi); }
@@ -3641,7 +3642,7 @@ fn _try_vector_call_assign(S, noff): i64 {
     if (vns <= 1) { return 0; }
     if (_TARGET_PE == 1) {
         var vnoff = PEEKV(S);
-        _vis_check(S, vfi, vnoff);   # v6.6.4: PE retptr vector receive emits its own call
+        _callee_site_checks_here(S, vfi, vnoff, 0);   # v6.6.4: PE retptr vector receive emits its own call
         STI(S, GTI(S) + 1);   # consume callee IDENT
         STI(S, GTI(S) + 1);   # consume '('
         EFLADDR(S, dst_li);
@@ -3677,6 +3678,29 @@ fn _var_rhs_call(S, ti): i64 {
             } } }
     if (c == 1) { if (_call_dotted(S, ti) == 1) { c = 0; } }
     return c;
+}
+
+# ⛔ 6.6.16 — the destructure's right-hand CALL, in every spelling `f(..)` is: `name(`, an explicit
+# generic `name<..>(` and a method `x.m(`. It took `name(` only, so the remedy the "bind both"
+# refusal prints — `var tag, val = f();` — was "multi-value destructure needs a call on the
+# right-hand side" for `g<i32>(..)` and `p.m(..)`. The method is taken by SHAPE: whether `x` names
+# a struct is the call's own question (PARSE_FIELD_LOAD reports it by name). The `(` that opens
+# the call at the cursor, or -1. CHANGELOG [6.6.16]
+fn _dt_call_open(S): i64 {
+    var ti = GTI(S);
+    var o = _gcall_open(S, ti);
+    if (o >= 0) { return o; }
+    if (_tok_method_open(S, ti) == 1) { return ti + 3; }
+    return 0 - 1;
+}
+# ...and the fn it REACHES, whose return types type the bindings: a generic's instance
+# (`_gen_resolve_call`, so `: (T1, T2)` / `: f64` are the instance's), else the method's `T_m`.
+fn _dt_call_fn(S): i64 {
+    var ti = GTI(S);
+    var fi = 0 - 1;
+    if (_gcall_open(S, ti) >= 0) { fi = _gen_resolve_call(S, ti); }
+    else { fi = _pair_callee_at(S, ti); }
+    return fi;
 }
 
 # Parse: var IDENT = expr ;
@@ -3720,18 +3744,17 @@ fn PARSE_VAR(S): i64 {
         # one silently, because the second target simply read whatever rdx held.
         # A non-call right-hand side can never produce a second value, so it is
         # now rejected outright.
-        if (PEEKT(S) != 2) {
+        # 6.6.16: `f(`, `g<..>(` or `x.m(` (`_dt_call_open`). CHANGELOG [6.6.16]
+        var _dt_sc = _dt_call_open(S);
+        if (_dt_sc < 0) {
             ERR_MSG(S, "multi-value destructure needs a call on the right-hand side", 59);
-        }
-        if (TOKTYP(S, GTI(S) + 1) != 10) {
-            ERR_MSG(S, "multi-value destructure needs a call on the right-hand side", 59);
+            _dt_sc = GTI(S) + 1;
         }
         # ...and the call must be the WHOLE right-hand side. `dm(17, 5) + (k / 9) - 11`
         # opens with the same two tokens, and used to compile silently with the
         # trailing arithmetic's leftovers in rdx landing in the second target —
         # measured as an idiv REMAINDER arriving in `r`. Walk to the call's
         # matching ')' and require ';' immediately after it.
-        var _dt_sc = GTI(S) + 1;
         var _dt_d = 0;
         while (_dt_sc < GTCNT(S)) {
             var _dt_tk = TOKTYP(S, _dt_sc);
@@ -3742,7 +3765,7 @@ fn PARSE_VAR(S): i64 {
         if (TOKTYP(S, _dt_sc + 1) != 5) {
             ERR_MSG(S, "multi-value destructure needs a call on the right-hand side", 59);
         }
-        var _dt_fi = FINDFN(S, PEEKV(S));
+        var _dt_fi = _dt_call_fn(S);
         if (_dt_fi >= 0) {
             var _dt_rs = GFRS(S, _dt_fi);
             if (_dt_rs == 0 - 9) { _dt_ftype = F64_TYID; _dt_t1 = F64_TYID; _dt_t2 = F64_TYID; _dt_t3 = F64_TYID; }
@@ -4070,7 +4093,9 @@ fn PARSE_VAR(S): i64 {
                 # also feeds `_tpair`, which is what tells `?` it is holding a pair at all, and
                 # suppressing it there sends `?` down the boxed lowering that dereferences the
                 # tag as a pointer (measured: immediate SIGSEGV).
-                if (_call_is_propagated(S, GTI(S) + 2) == 0) {
+                # 6.6.16: scanned from the callee's first token, the right start for `f(`,
+                # `g<..>(` and `x.m(` alike (it walks to the first `(`). CHANGELOG [6.6.16]
+                if (_call_is_propagated(S, GTI(S) + 1) == 0) {
                     ERR_MSG(S, "a `: stack` enum returns two values — bind both: `var tag, val = f();`", 72);
                 }
             }
@@ -4229,7 +4254,7 @@ fn PARSE_VAR(S): i64 {
                             # path at line ~1063: push &named first,
                             # then user args, ECALLPOPS pops into RCX
                             # (retptr) + RDX/R8/R9 (user args).
-                            _vis_check(S, _f2c_look_fi, _f2c_look_noff);   # v6.6.4: own-call path
+                            _callee_site_checks_here(S, _f2c_look_fi, _f2c_look_noff, 0);   # v6.6.4: own-call path
                             STI(S, GTI(S) + 1);  # consume callee IDENT
                             STI(S, GTI(S) + 1);  # consume '('
                             EFLADDR(S, _f2c_named);
@@ -4299,7 +4324,7 @@ fn PARSE_VAR(S): i64 {
                         STI(S, GTI(S) + 1);  # consume '='
                         if (_TARGET_PE == 1) {
                             # Win64 retptr-style call (mirror f64v2 Win64 branch).
-                            _vis_check(S, _f4c_look_fi, _f4c_look_noff);   # v6.6.4: own-call path
+                            _callee_site_checks_here(S, _f4c_look_fi, _f4c_look_noff, 0);   # v6.6.4: own-call path
                             STI(S, GTI(S) + 1);  # consume callee IDENT
                             STI(S, GTI(S) + 1);  # consume '('
                             EFLADDR(S, _f4c_named);
@@ -4463,7 +4488,7 @@ fn PARSE_VAR(S): i64 {
         if (_rcv_fi >= 0) { asv_fi = _rcv_fi; }   # 6.6.10: the instance the lookahead resolved
         if (asv_fi < 0) { asv_fi = REGFN(S, asv_fnoff); }
         _gen_own_call_check(S, asv_fi, asv_fnoff);
-        _vis_check(S, asv_fi, asv_fnoff);   # v6.6.4: retptr struct receive emits its own call
+        _callee_site_checks_here(S, asv_fi, asv_fnoff, 0);   # v6.6.4: retptr struct receive emits its own call
         var asv_callee_sid = GFRS(S, asv_fi);
         if (asv_callee_sid == 0) {
             ERR_MSG(S, "fn does not declare a struct return type", 40);
@@ -4538,7 +4563,7 @@ fn PARSE_VAR(S): i64 {
         if (_rcv_fi >= 0) { asp_fi = _rcv_fi; }   # 6.6.10: see asv_try
         if (asp_fi < 0) { asp_fi = REGFN(S, asp_fnoff); }
         _gen_own_call_check(S, asp_fi, asp_fnoff);
-        _vis_check(S, asp_fi, asp_fnoff);   # v6.6.4: pair struct receive emits its own call (also the inferred `var q = f()` form)
+        _callee_site_checks_here(S, asp_fi, asp_fnoff, 0);   # v6.6.4: pair struct receive emits its own call (also the inferred `var q = f()` form)
         var asp_callee_sid = GFRS(S, asp_fi);
         if (asp_callee_sid == 0) {
             ERR_MSG(S, "fn does not declare a struct return type", 40);

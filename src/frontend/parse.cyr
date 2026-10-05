@@ -30,10 +30,16 @@ var _unsafe_depth = 0;
 # `(STR)` args, storing the string token value (offset<<32 | length
 # into str_data at 0x21A000) in _deprecated_msg_pending. PARSE_FN_DEF
 # transfers both into fn_flags[fi] bit 2 + fn_deprecated_msg[fi].
-# Call-site check lives in PARSE_FNCALL — fires at every call, not
-# just statement-level discards (that's #must_use's job).
+# Call-site check is `_callee_site_checks` (parse_fn.cyr) — every call path, at every
+# call, not just statement-level discards (that's #must_use's job).
 var _deprecated_pending = 0;
 var _deprecated_msg_pending = 0;
+# 6.6.16 — PASS 1's own copy of the pair: `_tl_deprecated(S, 0)` records, `_prescan_fn_sig`
+# hands it to the fn it registers (`_prescan_dep_take`), so a call parsed BEFORE the
+# definition sees the bit. Never the pass-2 pair: a flag carried across the pass boundary
+# is the `_pub_pending` defect (see `_prescan_fn_sig`). CHANGELOG [6.6.16]
+var _pre_dep_pending = 0;
+var _pre_dep_msg = 0;
 
 # v5.8.20: pending fn-attribute flags for the next `fn` definition.
 # Lexer tokens 125 / 126 / 127 (#pure / #io / #alloc) set the
@@ -87,19 +93,301 @@ var _inline_pending = 0;
 # The fix is one linear propagation pass over the token stream, run lazily on first demand (by
 # which time pass 1 has registered every fn and flagged every `: stack` constructor). For each
 # `fn NAME (...) { ... }` whose flag is unset, look for `return IDENT (` in its OWN body where
-# IDENT is already flagged. Repeat until nothing changes, bounded — a chain of forwarding
+# IDENT is already flagged (since 6.6.16 also `return IDENT<..>(` and the method `return x.m(`,
+# `_tok_ret_callee`). Repeat until nothing changes, bounded — a chain of forwarding
 # wrappers needs one round per link.
 #
-# ⚠ NESTED fn BODIES ARE SKIPPED. A closure defined inside the body has its own `return`, and
-# counting it would flag the OUTER fn as pair-returning — over-flagging is worse than
-# under-flagging here, because it routes a non-pair call into the two-register receive and reads
-# a garbage rdx.
+# ⚠ CLOSURE BODIES AND NESTED fn BODIES ARE SKIPPED (`_skip_nested_body`). A closure defined
+# inside the body has its own `return`, and counting it would flag the OUTER fn as
+# pair-returning — over-flagging is worse than under-flagging here, because it routes a non-pair
+# call into the two-register receive and reads a garbage rdx. A closure literal (`|x| { .. }`,
+# `|| { .. }`) has NO `fn` token, so a skip keyed on `fn` alone booked its `return h(..)` to the
+# enclosing fn: a false "bind both" refusal at every single-variable bind of that fn's result, and
+# the mixed-return warning aimed at its own plain return. The closure's own pair-ness is
+# unaffected — its fn entry is flagged while its body is parsed — and `_warn_mixed_pair_returns`
+# judges a closure's returns as its OWN unit (`_warn_closure_block`). A named fn inside a body is
+# REFUSED since 6.6.16 (`_refuse_nested_fn`), so no program that compiles has one; skipping it
+# stays, as diagnostic hygiene for the refused program — `_warn_mixed_pair_returns` runs at the
+# end of a parse that has errors, and without the skip a refused fn's `return h(x)` would put a
+# bogus mixed-return warning on the OUTER fn beside the refusal. CHANGELOG [6.6.16]
 # ⚠ INVALIDATED whenever a `: stack` constructor is flagged (parse_types.cyr). The prescan is
 # demand-driven, and the first demand can arrive BEFORE the enum declaration has been reached —
 # measured: the pass ran with a complete 3,498-token stream and flagged nothing, because no
 # constructor carried the flag yet for it to propagate FROM. Re-running on each new stack enum
 # is cheap (enum declarations are few) and is what makes the propagation order-independent.
 var _pair_prescan_done = 0;
+
+# Token-stream skip helpers shared by the two pair scans (`_pair_prescan`,
+# `_warn_mixed_pair_returns`). Separate small fns, not inline loops: cybs (the seed-built
+# bootstrap compiler) fails SILENTLY on too many references in one fn.
+#
+# Does the `{` at token k open a CLOSURE body? Call only when TOKTYP(S, k) == 13. Closure grammar
+# is `|` IDENT (`,` IDENT)* `|` or `||`, then the body — untyped params, no return annotation
+# (parse_expr.cyr, the `typ == 35 || typ == 54` factor arm) — and `{` never begins an expression,
+# so a `{` right after `|` (35) or `||` (54) can only be a closure block body, never `a | b` /
+# `a || b`. ⚠ If closure params or a return type ever gain annotations, this must scan the param
+# list instead. A brace-less closure (`|x| h(x)`) needs no skip: an expression holds no `return`.
+fn _tok_is_closure_body(S, k): i64 {
+    if (k < 1) { return 0; }
+    var p = TOKTYP(S, k - 1);
+    if (p == 35) { return 1; }
+    if (p == 54) { return 1; }
+    return 0;
+}
+
+# Index of the `}` that closes the first `{` at or after token k (n when the stream ends first).
+fn _tok_skip_block(S, k, n): i64 {
+    var d = 0;
+    var started = 0;
+    while (k < n) {
+        var t = TOKTYP(S, k);
+        if (t == 13) { d = d + 1; started = 1; }
+        if (t == 14) {
+            d = d - 1;
+            if (d == 0) { if (started == 1) { return k; } }
+        }
+        k = k + 1;
+    }
+    return k;
+}
+
+# THE one skip of a nested unit, shared by both pair scans and by the nested-fn refusal: the
+# index of the LAST token of the unit that starts at token k, or -1 when none starts there.
+#   - a `{` that opens a closure body (`_tok_is_closure_body`): that brace's matching `}`;
+#   - a `fn` keyword (a nested fn — refused, see `_refuse_nested_fn`; an `async` before it is
+#     the caller's to step over): its header runs to the first `{` or `;` at paren depth 0, so
+#     a bodiless `fn x(..);` ends at its `;` instead of swallowing the next block, and a body
+#     ends at its matching `}`.
+# Never past the EOF token (12, the stream's last): a truncated or unbalanced source ends there.
+fn _skip_nested_body(S, k): i64 {
+    var n = GTCNT(S);
+    var t = TOKTYP(S, k);
+    var e = 0 - 1;
+    if (t == 13) {
+        if (_tok_is_closure_body(S, k) == 1) { e = _tok_skip_block(S, k, n); }
+    } elif (t == 32) {
+        e = n;
+        var pd = 0;
+        var j = k + 1;
+        while (j < n) {
+            var u = TOKTYP(S, j);
+            if (u == 12) { e = j; j = n; }
+            elif (u == 10) { pd = pd + 1; }
+            elif (u == 11) { pd = pd - 1; }
+            elif (pd == 0 && u == 5) { e = j; j = n; }
+            elif (pd == 0 && u == 13) { e = _tok_skip_block(S, j, n); j = n; }
+            j = j + 1;
+        }
+    }
+    if (e >= n) { e = n - 1; }
+    return e;
+}
+
+# ⛔ 6.6.16 — THE CALL A TOKEN PASS SEES, for the pair question. The pair scans run on the token
+# stream before (prescan) or after (warnings) the fns are parsed, so no local is registered for
+# them: a callee is resolved from the tokens alone, in the three spellings the parser's own
+# `_pair_callee_at` resolves — `name(`, `name<..>(` and the method `x.m(`. They recognised only
+# `name(`, so a wrapper `return g<i32>(..)` / `return p.m(..)` defined after its caller was never
+# flagged pair-returning (`w(..)?` then dereferenced the tag: rc 139), and `return g<i32>(..)`
+# beside `return Ok(5)` was reported as a dropped tag.
+# ⚠ THE TOKEN ANSWER MUST BE THE PARSER'S ANSWER, OR -1. A wrong fn is worse than none. The first
+# cut typed a receiver from its lexically LAST `name: T` declaration, so (measured):
+#   - `var p: Qt; if (c) { var p: Pt; } return p.div(d);` resolved `Pt_div` for a `Qt` receiver:
+#     the wrapper was flagged pair-returning and a plain `var v = w(..);` of it was REFUSED;
+#   - `var p = Pt { .. }` / `var p = mk(n)` (PARSE_VAR types both) read as untyped, so a forward
+#     wrapper `return p.div(d)` was never flagged (`w(..)?` rc 139, `var v = w(..);` dropped the
+#     payload in silence) and the wrapper, flagged once parsed, drew a false mixed-return warning.
+# So the receiver is found BY SCOPE and typed as the parser types it (`_tok_name_sid`: an
+# annotation, a `*T` param, an initializer, a generic's bound `: T`), a name typed by nothing a
+# token pass can see falls back to the one `T_m` every struct agrees on
+# (`_tok_method_any`), and -1 means unknown to every reader: a missed flag, never a false one, and
+# never a warning (`_ret_is_variant`). CHANGELOG [6.6.16]
+#
+# The `(` of `name(` or `name<..>(` at token ti, else -1.
+fn _pair_ret_open(S, ti): i64 {
+    var nt = TOKTYP(S, ti + 1);
+    if (nt == 10) { return ti + 1; }
+    if (nt != 19) { return 0 - 1; }
+    var e = _tok_targs_close(S, ti + 2);
+    if (e < 0) { return 0 - 1; }
+    if (TOKTYP(S, e + 1) != 10) { return 0 - 1; }
+    return e + 1;
+}
+# The `>` (or the `>>` / `>>>` tail) closing the type-argument list that starts at token i, just
+# past its `<`, or -1. The arguments are not resolved (none are bound this early), so the list is
+# bounded by shape instead: it must close before any `;` `(` `)` `{` `}` or EOF — `return n < m;`
+# must not reach a `> (` in a later statement.
+fn _tok_targs_close(S, i): i64 {
+    var n = GTCNT(S);
+    var d = 1;
+    while (i < n) {
+        var t = TOKTYP(S, i);
+        if (t == 5 || t == 10 || t == 11 || t == 12 || t == 13 || t == 14) { return 0 - 1; }
+        if (t == 19) { d = d + 1; }
+        elif (t == 20) { d = d - 1; }
+        elif (t == 39) { d = d - 2; }
+        elif (t == 152) { d = d - 3; }
+        if (d <= 0) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+# The struct id the name `noff` holds at token k, in the top-level unit that starts at token a (its
+# `fn` keyword; a closure's own `{` when no top-level fn encloses it). Found BY SCOPE, walking back
+# from k: a block closed before k (its `}` .. `{`) is stepped over whole, so no declaration inside
+# it is seen, and a closure body k sits in is left for the fn around it, whose locals it
+# captures — PARSE_FIELD_LOAD's order, local then capture. The first declaration reached decides
+# (`_tok_decl_sid`); with none, the global's (`_glob_name_sid`, `_recv_sid`'s global arm). 0 when
+# untyped. (A closure's own params are untyped, so a receiver among them never compiles.)
+fn _tok_name_sid(S, a, k, noff): i64 {
+    var b = a;
+    while (b < k) { if (TOKTYP(S, b) == 13) { break; } b = b + 1; }   # the body `{`: params lie before it
+    var cd = 0;
+    var i = k - 1;
+    while (i > a) {
+        var t = TOKTYP(S, i);
+        if (t == 14) { cd = cd + 1; }
+        elif (t == 13) { if (cd > 0) { cd = cd - 1; } }
+        elif (cd == 0) {
+            if (t == 2) {
+                if (STREQ(S, TOKVAL(S, i), noff) == 1) {
+                    var r = _tok_decl_sid(S, a, i, b);
+                    if (r >= 0) { return r; }
+                }
+            }
+        }
+        i = i - 1;
+    }
+    var g = _glob_name_sid(S, noff);
+    return g;
+}
+# What the name at token i is declared as: a struct id, 0 when untyped, -1 when the name there is not
+# a declaration. A declaration is `var NAME`, or a param `(NAME` / `, NAME` in the header (before
+# the body `{` at token b). A `: T` annotation types it — for a param also `: *T`, whose `*` the
+# parameter loop skips (`_mark_ptr_param`); a `var p: *T` local is a plain pointer — and an untyped
+# `var` takes its initializer's struct (`_tok_init_sid`). `a` is the unit's first token.
+fn _tok_decl_sid(S, a, i, b): i64 {
+    var pt = TOKTYP(S, i - 1);
+    var d = 0;
+    if (pt == 3) { d = 1; }
+    elif (i < b) { if (pt == 10 || pt == 31) { d = 1; } }
+    if (d == 0) { return 0 - 1; }
+    var r = 0;
+    var nt = TOKTYP(S, i + 1);
+    if (nt == 49) {
+        var at = i + 2;
+        if (pt != 3) { if (TOKTYP(S, at) == 8) { at = at + 1; } }
+        if (TOKTYP(S, at) == 2) { r = FINDSTRUCT(S, TOKVAL(S, at)); }
+    }
+    elif (pt == 3) { if (nt == 4) { r = _tok_init_sid(S, a, i, i + 2); } }
+    return r;
+}
+# The struct an untyped `var x = ..` (its name at token i) takes from the initializer at token j, as
+# PARSE_VAR infers it (`_lit_head`, `_var_rhs_call`): a literal `Name {` / `Name<..> {` (a generic
+# struct's methods are its base's), or a call `f(..)` / `g<..>(..)`, not `f(..).field`, whose fn
+# declares a struct return (GFRS) — for a generic's `: T`, the struct T is bound to at this call
+# (`_tok_gen_ret_sid`). 0 otherwise.
+fn _tok_init_sid(S, a, i, j): i64 {
+    if (TOKTYP(S, j) != 2) { return 0; }
+    var e = j;
+    if (TOKTYP(S, j + 1) == 19) { e = _tok_targs_close(S, j + 2); }
+    if (e < 0) { return 0; }
+    var nt = TOKTYP(S, e + 1);
+    var r = 0;
+    if (nt == 13) { r = FINDSTRUCT(S, TOKVAL(S, j)); }
+    elif (nt == 10) {
+        if (TOKTYP(S, _call_close(S, e + 1) + 1) == 41) { return 0; }   # `f(..).field`: the field's value
+        var fi = FINDFN(S, TOKVAL(S, j));
+        if (fi < 0) { return 0; }
+        var gen = GFTP(S, fi);
+        if (e > j) { if (gen == 0) { return 0; } }   # `<` on a generic only
+        r = GFRS(S, fi);
+        if (r <= 0) { if (gen != 0) { r = _tok_gen_ret_sid(S, a, i, j, fi); } }
+        if (r < 0) { r = 0; }
+    }
+    return r;
+}
+# Which type parameter (0 / 1) the generic fi returns as `: T`, or -1.
+fn _gen_ret_tp(S, fi): i64 {
+    var o = _gen_def_open(S, fi);
+    if (o < 0) { return 0 - 1; }
+    var c = _tok_close_paren(S, o);
+    if (c < 0) { return 0 - 1; }
+    if (TOKTYP(S, c + 1) != 49) { return 0 - 1; }
+    if (TOKTYP(S, c + 2) != 2) { return 0 - 1; }
+    var rn = TOKVAL(S, c + 2) + 1;
+    var tp = GFTP(S, fi);
+    if ((tp & 0xFFFFFFFF) == rn) { return 0; }
+    if (((tp >> 32) & 0xFFFFFFFF) == rn) { return 1; }
+    return 0 - 1;
+}
+# The struct a generic's `: T` return is bound to at the call `g<..>(` / `g(` at token j (fi its
+# base), as the call binds it: T's explicit argument when that is a plain struct name, else the
+# WHOLE argument in T's parameter position (`_gen_infer_tp`) — a name, typed scanning back from
+# token i (the declaration being typed, so an initializer never sees its own name), or a call of a
+# struct-returning fn. 0 when the return is not a type parameter or binds no struct.
+fn _tok_gen_ret_sid(S, a, i, j, fi): i64 {
+    var w = _gen_ret_tp(S, fi);
+    if (w < 0) { return 0; }
+    var r = 0;
+    if (TOKTYP(S, j + 1) == 19) {
+        var k = j + 2;
+        if (w == 1) { if (TOKTYP(S, k + 1) != 31) { return 0; } k = k + 2; }
+        if (TOKTYP(S, k) != 2) { return 0; }
+        var kt = TOKTYP(S, k + 1);
+        if (kt != 20) { if (kt != 31) { return 0; } }   # a plain name, not `Box<..>`
+        r = FINDSTRUCT(S, TOKVAL(S, k));
+        if (r > 0) { if (GSTP(S, r - 1) != 0) { r = 0; } }
+        return r;
+    }
+    var m = GFGM(S, fi);
+    var pk = w + 1;
+    if ((m & 4) != 0) { pk = (m >> (8 + w * 8)) & 255; }
+    if (pk == 0) { return 0; }
+    var at = _call_arg_start(S, j + 1, pk - 1);
+    if (at < 0) { return 0; }
+    if (TOKTYP(S, at) != 2) { return 0; }
+    var nt = TOKTYP(S, at + 1);
+    if (nt == 31 || nt == 11) { r = _tok_name_sid(S, a, i, TOKVAL(S, at)); }
+    elif (nt == 10) { if (_call_is_whole_arg(S, at) == 1) { r = _tok_init_sid(S, a, i, at); } }
+    return r;
+}
+# A method `x.m(` whose single-name receiver the tokens do not type — a generic fn's `p: T` param,
+# bound per instance — still has ONE answer when every struct's `T_m` agrees on the pair flag: the
+# receiver's struct, whichever it is, must define `T_m` or the call does not compile. That fn (the
+# first), or -1 when no struct defines `_m` or two of them disagree.
+fn _tok_method_any(S, mnoff): i64 {
+    var sc = GSTC(S);
+    var r = 0 - 1;
+    var i = 0;
+    while (i < sc) {
+        var f = FINDFN(S, BUILD_METHOD_NAME(S, i, mnoff));
+        if (f >= 0) {
+            if (r < 0) { r = f; }
+            elif ((GFLG(S, f) & 256) != (GFLG(S, r) & 256)) { return 0 - 1; }
+        }
+        i = i + 1;
+    }
+    return r;
+}
+# The fn the call at token t reaches — `name(`, `name<..>(`, or `x.m(` with x resolved at t in the
+# unit starting at token a (`_tok_name_sid`; its `T_m`, else `_tok_method_any`) — or -1.
+fn _tok_ret_callee(S, a, t): i64 {
+    if (TOKTYP(S, t) != 2) { return 0 - 1; }
+    var o = _pair_ret_open(S, t);
+    if (o >= 0) {
+        var fi = FINDFN(S, TOKVAL(S, t));
+        if (o > t + 1) { if (fi >= 0) { if (GFTP(S, fi) == 0) { fi = 0 - 1; } } }   # `<` on a generic only
+        return fi;
+    }
+    if (_tok_method_open(S, t) == 0) { return 0 - 1; }
+    if (t > 0) { if (TOKTYP(S, t - 1) == 41) { return 0 - 1; } }   # `a.x.m(`: not a single name
+    var sid = _tok_name_sid(S, a, t, TOKVAL(S, t));
+    var mf = 0 - 1;
+    if (sid > 0) { mf = FINDFN(S, BUILD_METHOD_NAME(S, sid - 1, TOKVAL(S, t + 2))); }
+    else { mf = _tok_method_any(S, TOKVAL(S, t + 2)); }
+    return mf;
+}
 
 fn _pair_prescan(S): i64 {
     var n = GTCNT(S);
@@ -150,36 +438,24 @@ fn _pair_prescan(S): i64 {
                                             if (k >= n) { go = 0; }
                                             else {
                                                 var t = TOKTYP(S, k);
-                                                if (t == 13) { bd = bd + 1; }
+                                                if (t == 13) {
+                                                    # a closure body — its returns are its own
+                                                    var sk = _skip_nested_body(S, k);
+                                                    if (sk >= 0) { k = sk; } else { bd = bd + 1; }
+                                                }
                                                 elif (t == 14) {
                                                     bd = bd - 1;
                                                     if (bd == 0) { go = 0; }
                                                 }
-                                                elif (t == 32) {
-                                                    # nested fn — skip its whole body
-                                                    var nd = 0;
-                                                    var started = 0;
-                                                    while (k < n) {
-                                                        var nt = TOKTYP(S, k);
-                                                        if (nt == 13) { nd = nd + 1; started = 1; }
-                                                        if (nt == 14) {
-                                                            nd = nd - 1;
-                                                            if (nd == 0) { if (started == 1) { break; } }
-                                                        }
-                                                        k = k + 1;
-                                                    }
-                                                }
+                                                elif (t == 32) { k = _skip_nested_body(S, k); }   # a refused nested fn (header)
                                                 elif (t == 33) {                  # `return`
-                                                    if (TOKTYP(S, k + 1) == 2) {
-                                                        if (TOKTYP(S, k + 2) == 10) {
-                                                            var rf = FINDFN(S, TOKVAL(S, k + 1));
-                                                            if (rf >= 0) {
-                                                                if ((GFLG(S, rf) & 256) != 0) {
-                                                                    SFLG(S, pfi, GFLG(S, pfi) | 256);
-                                                                    changed = 1;
-                                                                    go = 0;
-                                                                }
-                                                            }
+                                                    # `return f(`, `return g<..>(`, `return x.m(` (6.6.16)
+                                                    var rf = _tok_ret_callee(S, i, k + 1);
+                                                    if (rf >= 0) {
+                                                        if ((GFLG(S, rf) & 256) != 0) {
+                                                            SFLG(S, pfi, GFLG(S, pfi) | 256);
+                                                            changed = 1;
+                                                            go = 0;
                                                         }
                                                     }
                                                 }
@@ -241,11 +517,22 @@ var _mixed_warned = 0;
 # else — a wrapper, a local, a raw integer — is the dropped-tag class and stays plain.
 # 6.6.9: the nullary cases used to be plain, so `return None();` beside `return Some(v);`
 # was reported as a dropped tag and told to `return Err(x);`. CHANGELOG [6.6.9]
-fn _ret_is_variant(S, t): i64 {
-    var rf = FINDFN(S, TOKVAL(S, t));
+# 6.6.16: the call is resolved as `_tok_ret_callee` resolves it (`a` = the unit's first token),
+# so `return g<i32>(..)` / `return p.m(..)` forwarding a pair is a whole variant, not a dropped
+# tag, and the same spellings returning ONE value still warn. A method whose callee the tokens
+# cannot resolve is UNKNOWN, and unknown is not plain: the parser may have typed that receiver and
+# flagged this fn by it (PARSE_RETURN, `_pair_callee_at`), and the receiver's own NAME looked up as
+# a fn — the old fallback — answered "plain" and warned on a wrapper's only return. CHANGELOG [6.6.16]
+fn _ret_is_variant(S, a, t): i64 {
+    var rf = _tok_ret_callee(S, a, t);
+    var nt = 10;
+    if (rf < 0) {
+        if (_tok_method_open(S, t) == 1) { return 0; }
+        rf = FINDFN(S, TOKVAL(S, t));
+        nt = TOKTYP(S, t + 1);
+    }
     if (rf < 0) { return 1; }
     var fl = GFLG(S, rf);
-    var nt = TOKTYP(S, t + 1);
     if (nt == 10) {
         if ((fl & 256) != 0) { return 0; }
         if ((fl & 512) != 0) { return 0; }
@@ -254,19 +541,139 @@ fn _ret_is_variant(S, t): i64 {
     return 1;
 }
 
+# ⛔ 6.6.16 — A CLOSURE IS A FN FOR THIS RULE. The fn walk below skips a closure body, because
+# its returns are not the enclosing fn's (H2). Skipping alone took away the only warning a
+# GENUINELY mixed closure had: `|x| { if (x > 0) { return h(x); } return 0; }` built silent, and
+# `var t, v = fncall1(g, 0)` on it read a stale rdx — the exact hazard this warning exists for.
+# So every closure body is judged as its OWN unit, at any depth (top level, an unflagged fn, a
+# nested closure): it is pair-returning when its own body — nested closures and fns skipped,
+# each is its own unit — says `return f(..)` or `f(..)?` with f flagged 256 (f spelled `f(`,
+# `f<..>(` or `x.f(`), the two things that flag a fn 256 while it is parsed; a plain return there
+# is then reported. CHANGELOG [6.6.16]
+
+# Is the call at token t (`f(`, `g<..>(`, `x.m(` — `_tok_ret_callee`, `a` the unit's first token)
+# pair-returning (flag 256)? The test PARSE_RETURN and `?`'s `_tpair` apply while parsing
+# (`_pair_callee_at`), read here with FINAL flags.
+fn _tok_call_is_pair(S, a, t): i64 {
+    if (t < 0) { return 0; }
+    var rf = _tok_ret_callee(S, a, t);
+    if (rf < 0) { return 0; }
+    if ((GFLG(S, rf) & 256) == 0) { return 0; }
+    return 1;
+}
+
+# The `<` opening the type-argument list whose closing `>` / `>>` / `>>>` is token e, or -1.
+fn _tok_targs_open(S, e): i64 {
+    var d = 0;
+    while (e > 0) {
+        var t = TOKTYP(S, e);
+        if (t == 20) { d = d + 1; }
+        elif (t == 39) { d = d + 2; }
+        elif (t == 152) { d = d + 3; }
+        elif (t == 19) { d = d - 1; if (d <= 0) { return e; } }
+        elif (t == 5 || t == 10 || t == 11 || t == 13 || t == 14) { return 0 - 1; }
+        e = e - 1;
+    }
+    return 0 - 1;
+}
+
+# Does the `?` at token q consume a pair (`f(..)?`, `g<..>(..)?`, `x.m(..)?` — the callee flagged
+# 256)? Walks back to the `(` that matches the `)` before it, then to the call's first token.
+# 6.6.16: a method or explicit generic call was never a pair here, as it was not in `_tpair`;
+# both now are, so both are here. CHANGELOG [6.6.16]
+fn _tok_q_is_pair(S, a, q): i64 {
+    if (q < 1) { return 0; }
+    if (TOKTYP(S, q - 1) != 11) { return 0; }
+    var d = 0;
+    var p = q - 1;
+    while (p > 0) {
+        var t = TOKTYP(S, p);
+        if (t == 11) { d = d + 1; }
+        elif (t == 10) {
+            d = d - 1;
+            if (d == 0) {
+                var c = p - 1;
+                var ct = TOKTYP(S, c);
+                if (ct == 20 || ct == 39 || ct == 152) { c = _tok_targs_open(S, c) - 1; }
+                elif (c >= 2) { if (TOKTYP(S, c - 1) == 41) { c = c - 2; } }
+                var r = _tok_call_is_pair(S, a, c);
+                return r;
+            }
+        }
+        p = p - 1;
+    }
+    return 0;
+}
+
+# The mixed-return warning for a CLOSURE, at its plain `return` (token k). `encl` is the name
+# offset of the top-level fn whose body holds the closure, or -1 (top level, an impl method).
+fn _warn_closure_mixed_at(S, k, encl): i64 {
+    syscall(SYS_WRITE, 2, "warning:", 8);
+    _err_head_at(S, k);
+    syscall(SYS_WRITE, 2, ": a closure", 11);
+    if (encl >= 0) {
+        syscall(SYS_WRITE, 2, " in `", 5);
+        PRSTR(S + 0xEC00000 + encl);
+        syscall(SYS_WRITE, 2, "`", 1);
+    }
+    syscall(SYS_WRITE, 2, " returns a `: stack` pair on another path but a SINGLE value here — the tag is dropped, so the caller reads this value as its TAG. Return a variant of the same enum on this path: `Err(x)` for a Result, `None()` for an Option.\n", 228);
+    return 0;
+}
+
+# Judge ONE closure body (the `{` at token k) as its own fn; warns at most once, at its first
+# plain return. Names in it resolve in the unit starting at token `a` — the top-level fn that
+# encloses the closure, whose locals it captures, else k itself. Returns the index of the body's
+# closing `}`.
+fn _warn_closure_block(S, k, n, encl, a): i64 {
+    var e = _tok_skip_block(S, k, n);
+    var pair = 0;
+    var plain = 0 - 1;
+    var j = k + 1;
+    while (j < e) {
+        var t = TOKTYP(S, j);
+        if (t == 13 || t == 32) {                  # a nested closure or (refused) fn — its own unit
+            var sk = _skip_nested_body(S, j);
+            if (sk >= 0) { j = sk; }
+        }
+        elif (t == 124) { if (_tok_q_is_pair(S, a, j) == 1) { pair = 1; } }
+        elif (t == 33) {
+            var nt = TOKTYP(S, j + 1);
+            if (_tok_call_is_pair(S, a, j + 1) == 1) { pair = 1; }
+            elif (nt == 2) { if (_ret_is_variant(S, a, j + 1) == 1) { if (plain < 0) { plain = j; } } }
+            elif (nt != 5) { if (plain < 0) { plain = j; } }
+        }
+        j = j + 1;
+    }
+    if (pair == 1) { if (plain >= 0) { _warn_closure_mixed_at(S, plain, encl); } }
+    return e;
+}
+
 fn _warn_mixed_pair_returns(S): i64 {
     if (_mixed_warned == 1) { return 0; }
     _mixed_warned = 1;
     var n = GTCNT(S);
     var d = 0;
     var i = 0;
+    var encl = 0 - 1;     # the top-level fn whose body the walk is in (for a closure's message)
+    var ea = 0 - 1;       # ...and its `fn` token, where a closure's names resolve (captures)
     while (i < n) {
         var t0 = TOKTYP(S, i);
-        if (t0 == 13) { d = d + 1; }
-        elif (t0 == 14) { d = d - 1; }
+        if (t0 == 13) {
+            # every closure body, at any depth, is its own unit (see `_warn_closure_block`)
+            if (_tok_is_closure_body(S, i) == 1) {
+                var ca = i;
+                if (ea >= 0) { ca = ea; }
+                _warn_closure_block(S, i, n, encl, ca);
+            }
+            d = d + 1;
+        }
+        elif (t0 == 14) { d = d - 1; if (d == 0) { encl = 0 - 1; ea = 0 - 1; } }
+        elif (t0 == 5) { if (d == 0) { encl = 0 - 1; ea = 0 - 1; } }
         elif (t0 == 32) {
             if (d == 0) {
                 if (TOKTYP(S, i + 1) == 2) {
+                    encl = TOKVAL(S, i + 1);
+                    ea = i;
                     var wfi = FINDFN(S, TOKVAL(S, i + 1));
                     if (wfi >= 0) {
                         if ((GFLG(S, wfi) & 256) != 0) {
@@ -287,29 +694,21 @@ fn _warn_mixed_pair_returns(S): i64 {
                                         if (k >= n) { go = 0; }
                                         else {
                                             var t = TOKTYP(S, k);
-                                            if (t == 13) { bd = bd + 1; }
+                                            if (t == 13) {
+                                                # a closure body — its own unit, judged by the outer walk
+                                                var sk = _skip_nested_body(S, k);
+                                                if (sk >= 0) { k = sk; } else { bd = bd + 1; }
+                                            }
                                             elif (t == 14) {
                                                 bd = bd - 1;
                                                 if (bd == 0) { go = 0; }
                                             }
-                                            elif (t == 32) {
-                                                var nd = 0;
-                                                var started = 0;
-                                                while (k < n) {
-                                                    var nt = TOKTYP(S, k);
-                                                    if (nt == 13) { nd = nd + 1; started = 1; }
-                                                    if (nt == 14) {
-                                                        nd = nd - 1;
-                                                        if (nd == 0) { if (started == 1) { break; } }
-                                                    }
-                                                    k = k + 1;
-                                                }
-                                            }
+                                            elif (t == 32) { k = _skip_nested_body(S, k); }   # a refused nested fn (see `_pair_prescan`)
                                             elif (t == 33) {
                                                 var plain = 1;
                                                 if (TOKTYP(S, k + 1) == 5) { plain = 0; }
                                                 if (TOKTYP(S, k + 1) == 2) {
-                                                    plain = _ret_is_variant(S, k + 1);
+                                                    plain = _ret_is_variant(S, i, k + 1);
                                                 }
                                                 if (plain == 1) {
                                                     syscall(SYS_WRITE, 2, "warning:", 8);
@@ -343,12 +742,56 @@ fn _ensure_pair_flags(S): i64 {
     return 0;
 }
 
-fn _callee_returns_pair_at(S, ti): i64 {
+# ⛔ 6.6.16 — THE ONE CALLEE RESOLVER FOR "DOES THIS CALL RETURN A PAIR". Every asker — `?`'s
+# `_tpair`, the lossy-bind refusals (`var v = ..`, `x = ..`, store8/16/32/64), PARSE_RETURN's
+# wrapper flag, the destructure — recognised only `name(`, so the explicit generic `g<i32>(..)`
+# and the method `p.m(..)` (its `T_m`) fell through all of them: `var v = g<i32>(n, d)?;` and
+# `var v = p.m(d)?;` took the BOXED `?` lowering and dereferenced the tag (rc 139), `var v =
+# g<i32>(..);` / `x = p.m(..);` / `store64(&s, g<i32>(..))` kept the tag and dropped the payload
+# in silence, `var a, b = g<i32>(..);` was "multi-value destructure needs a call", and `p.m(..)?;`
+# was "expected ';'". The fn index of the call at token ti, or -1:
+#   - `name(` / a resolvable `name<..>(` (`_gcall_open`): FINDFN's entry — the generic TEMPLATE,
+#     the flag source the 6.6.12 statement form (`_stmt_explicit_generic`) reads;
+#   - `x.m(` on a single name typed as a struct (`_recv_sid`, PARSE_FIELD_LOAD's order): `T_m`.
+#     BUILD_METHOD_NAME writes only uncommitted scratch at GNPOS, so the peek is safe — the real
+#     call path does the same.
+# A receiver that is not one name (`a.b.m()`, `f().m()`, an untyped impl `self`) is typed by no
+# call path; it stays -1, today's answer. CHANGELOG [6.6.16]
+fn _pair_callee_at(S, ti): i64 {
+    if (_gcall_open(S, ti) >= 0) {
+        var fi = FINDFN(S, TOKVAL(S, ti));
+        return fi;
+    }
+    if (_tok_method_open(S, ti) == 0) { return 0 - 1; }
+    var sid = _recv_sid(S, TOKVAL(S, ti));
+    if (sid <= 0) { return 0 - 1; }
+    var mf = FINDFN(S, BUILD_METHOD_NAME(S, sid - 1, TOKVAL(S, ti + 2)));
+    return mf;
+}
+# `IDENT . IDENT (` at token ti: a method call on a single name. 1 / 0.
+fn _tok_method_open(S, ti): i64 {
     if (TOKTYP(S, ti) != 2) { return 0; }
-    if (TOKTYP(S, ti + 1) != 10) { return 0; }
-    _ensure_pair_flags(S);
-    var _cra = FINDFN(S, TOKVAL(S, ti));
+    if (TOKTYP(S, ti + 1) != 41) { return 0; }
+    if (TOKTYP(S, ti + 2) != 2) { return 0; }
+    if (TOKTYP(S, ti + 3) != 10) { return 0; }
+    return 1;
+}
+# The struct id of a method call's single-name receiver, resolved in PARSE_FIELD_LOAD's order: a
+# local decides by itself, then a closure's capture of a struct, then a global (`_diag_name_sid`:
+# GVTYPE where GVPM marks a struct, else an inferred global's GVDSID). 0 when untyped.
+fn _recv_sid(S, noff): i64 {
+    if (GINFN(S) == 1) {
+        if (FINDLOCAL(S, noff) < 0) {
+            if (_CL_CAP_FIELD_IDX(S, noff) < 0 - 1) { return _cap_fld_sid; }
+        }
+    }
+    var r = _diag_name_sid(S, noff);
+    return r;
+}
+fn _callee_returns_pair_at(S, ti): i64 {
+    var _cra = _pair_callee_at(S, ti);
     if (_cra < 0) { return 0; }
+    _ensure_pair_flags(S);
     if ((GFLG(S, _cra) & 256) == 0) { return 0; }
     return 1;
 }
@@ -398,12 +841,8 @@ fn _refuse_lossy_pair(S): i64 {
 }
 
 fn _callee_returns_pair(S): i64 {
-    if (PEEKT(S) != 2) { return 0; }
-    if (TOKTYP(S, GTI(S) + 1) != 10) { return 0; }
-    _ensure_pair_flags(S);
-    var _crp = FINDFN(S, PEEKV(S));
-    if (_crp < 0) { return 0; }
-    if ((GFLG(S, _crp) & 256) == 0) { return 0; }
+    var _crp = _callee_returns_pair_at(S, GTI(S));
+    if (_crp == 0) { return 0; }
     # ⚠ NO propagation check here either — this feeds `_tpair` in `_PARSE_TERM_IMPL`, the flag
     # that tells `?` it is holding a pair. Both helpers answer "does this callee return a pair",
     # nothing more; whether a `?` then CONSUMES that pair is the binding site's question, and it
@@ -2771,6 +3210,118 @@ fn _stmt_explicit_generic(S, noff): i64 {
     return 1;
 }
 
+# ⛔ 6.6.16 — A METHOD CALL AS A BARE STATEMENT, `p.m(..);` — with a postfix `?`, like `f(..)?;`
+# and `g<T>(..)?;`. The arm in _PARSE_STMT_IMPL called PARSE_FIELD_LOAD and then demanded `;`, so
+# `p.div(d)?;` was "expected ';', got unknown". `pair` is read BEFORE the call is parsed
+# (`_pair_callee_at`: the receiver's `T_m`), as the other two statement forms read theirs. Cursor
+# on the DOT after the receiver `noff`; consumes through the `;`. One call in _PARSE_STMT_IMPL
+# (the cybs per-function cap). CHANGELOG [6.6.16]
+fn _stmt_method_call(S, noff): i64 {
+    var pair = _callee_returns_pair_at(S, GTI(S) - 1);
+    PARSE_FIELD_LOAD(S, noff);
+    _stmt_qmark(S, pair);
+    if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
+    STI(S, GTI(S) + 1);
+    return 0;
+}
+
+# ⛔ 6.6.16 — A fn IS DEFINED AT TOP LEVEL. A named `fn` / `async fn` inside a fn body — or a
+# closure, an impl method, a generic body — reached PARSE_PROG's relaxed-ordering arm, which is
+# for TOP-LEVEL code: PARSE_FN_DEF for the inner fn overwrote the OUTER fn's per-fn state while
+# the outer was still being emitted (its locals and frame, its return patches, `_cur_fn_ix`, and
+# `SINFN(S, 0)` at the inner fn's end, so the rest of the outer body parsed as top-level code),
+# and pass 1 never registered the inner fn (bodies are brace-skipped). Measured on x86:
+# `fn outer(): i64 { fn inner(): i64 { return 3; } return inner(); }` compiled rc 0 and ran SIGILL
+# (132), and still did with `return 7;` in place of the call; a multi-line form, an untyped one,
+# one inside an `if` and one in a generic instance SIGSEGV'd. In a switch case, an `async fn`, a
+# closure body or an impl method it failed with an unrelated message (`unexpected async`,
+# `undefined variable 'x'`, `undefined function 'inner'`), often with a cascade.
+# So it is ONE named error, and nothing cascades: the nested fn's tokens are consumed
+# (`_skip_nested_body`, the pair scans' own skip), its name is entered as already REPORTED
+# (`_nested_fn_mark`), and the panic latch is left as it was (the report is written here, not
+# through an ERR_* emitter that would latch it), so the outer body parses on and reports its own
+# errors. A fn inside a TOP-LEVEL block (`if (on) { fn f() { .. } }`, GINFN == 0) is the
+# relaxed-ordering feature, compiles correctly, and is untouched. A local function is a closure.
+# CHANGELOG [6.6.16]
+var _nfn_seen = 0;   # vec of the `fn` tokens refused so far: a body parsed twice reports once
+
+# Has the nested `fn` at token kw been reported? A body can be parsed more than once — a generic
+# instance and an `#inline` replay re-parse the base's tokens — and each is the same definition.
+fn _nested_fn_seen(kw): i64 {
+    if (_nfn_seen == 0) { _nfn_seen = vec_new(); }
+    var i = 0;
+    var c = vec_len(_nfn_seen);
+    while (i < c) {
+        if (vec_get(_nfn_seen, i) == kw) { return 1; }
+        i = i + 1;
+    }
+    vec_push(_nfn_seen, kw);
+    return 0;
+}
+
+# The refused fn's NAME is entered in the fn table as already REPORTED — offset -2, the
+# undefined-call check's own "reported" marker, plus an owner so the pre-pass check skips it too —
+# so a call to it adds no "undefined function" warning and no "refusing to emit binary" error to
+# the one diagnostic. Only an entry nothing defines: a fn of the same name defined elsewhere keeps
+# its entry untouched, and a call reaches that one.
+fn _nested_fn_mark(S, noff, kw): i64 {
+    var fi = FINDFN(S, noff);
+    if (fi < 0) { fi = REGFN(S, noff); }
+    if (L64(_fnt_offsets + fi * 8) != 0 - 1) { return 0; }
+    if (GFFI(S, fi) != 0) { return 0; }
+    S64(_fnt_offsets + fi * 8, 0 - 2);
+    SFFI(S, fi, FM_FILEID(S, GTLINE(S, kw)) + 1);
+    return 0;
+}
+
+# Where the refused fn sits, for the message: `fn 'outer'` (a generic instance's or an async
+# body's `$..` suffix cut), or `a closure` for a closure's `__clNNNNN` entry.
+fn _nested_fn_encl(S): i64 {
+    if (_cur_fn_ix < 0) { PRSTR("a fn body"); return 0; }
+    var p = S + 0xEC00000 + L64(_fnt_names + _cur_fn_ix * 8);
+    if (load8(p) == 95 && load8(p + 1) == 95 && load8(p + 2) == 99 && load8(p + 3) == 108) {
+        if (load8(p + 4) >= 48 && load8(p + 4) <= 57) { PRSTR("a closure"); return 0; }
+    }
+    PRSTR("fn '");
+    var l = 0;
+    while (load8(p + l) != 0 && load8(p + l) != 36) { l = l + 1; }
+    syscall(SYS_WRITE, 2, p, l);
+    PRSTR("'");
+    return 0;
+}
+
+# Refuse the `fn` / `async fn` at the cursor when it is inside a fn body (GINFN == 1).
+# 1 = refused: reported once, consumed through its body's `}` (or a bodiless header's `;`, never
+# past EOF). 0 = not a nested fn: nothing moved. Small and with no tail call (cybs).
+# Called by PARSE_PROG's `fn` arm, the end of _PARSE_STMT_IMPL (`async fn`, and the statement
+# positions that bypass PARSE_PROG: a switch case body, `@unsafe { }`) and the generic stub-body
+# skip in PARSE_FN_DEF.
+fn _refuse_nested_fn(S): i64 {
+    if (GINFN(S) != 1) { return 0; }
+    var kw = GTI(S);
+    if (TOKTYP(S, kw) == 134) { kw = kw + 1; }    # `async fn`
+    if (TOKTYP(S, kw) != 32) { return 0; }
+    if (_nested_fn_seen(kw) == 0) {
+        syscall(SYS_WRITE, 2, "error:", 6);
+        _err_head(S);
+        if (TOKTYP(S, kw + 1) == 2) {
+            PRSTR(": fn '");
+            PRSTR(S + 0xEC00000 + TOKVAL(S, kw + 1));
+            PRSTR("' is defined inside ");
+            _nested_fn_mark(S, TOKVAL(S, kw + 1), kw);
+        } else { PRSTR(": a fn is defined inside "); }
+        _nested_fn_encl(S);
+        PRSTR("; define it at top level\n");
+        _err_excerpt(S);
+        PRSTR("  note: a local function is a closure (`var f = |x| { .. };`); a fn inside a top-level block is allowed\n");
+        _had_error = 1;
+    }
+    var e = _skip_nested_body(S, kw);
+    if (TOKTYP(S, e) != 12) { e = e + 1; }
+    STI(S, e);
+    return 1;
+}
+
 fn PARSE_STMT(S): i64 {
     var before = GTI(S);
     # v6.5.19 (CVE-40): this wrapper is already the one place every statement descent
@@ -3202,12 +3753,16 @@ fn _PARSE_STMT_IMPL(S): i64 {
             # returned 42. It also gave the two positions OPPOSITE stack alignment (the
             # lowering spills the callee to a frame slot; the plain call pushes it as an
             # argument), which is the asymmetry the mabda filing measured and could not
-            # explain from the source text. Same gate as the expression side — inside a fn,
-            # a real `fncallN` name, and FINDFN >= 0 so a program that never included
+            # explain from the source text. Same gate as the expression side — a real
+            # `fncallN` name, and FINDFN >= 0 so a program that never included
             # lib/fnptr.cyr still gets its "undefined function" diagnostic.
             # CHANGELOG [6.6.5]
+            # 6.6.16: no longer "inside a fn" too — at top level the lowering brings its own
+            # micro-frame (PINDIRECT_CALL), and the old fall-through to lib/fnptr.cyr called a
+            # capturing closure's tagged value: `fncall1(g, 1);` at top level SIGSEGV'd.
+            # CHANGELOG [6.6.16]
             var _stmt_fcn = 0;
-            if (_cur_fn_ix >= 0) { if (_IS_FNCALL_NAME(S, noff) == 1) { if (_mu_fi >= 0) { _stmt_fcn = 1; } } }
+            if (_IS_FNCALL_NAME(S, noff) == 1) { if (_mu_fi >= 0) { _stmt_fcn = 1; } }
             if (_stmt_fcn == 1) {
                 _fncall_expect = ((L64(S + 0xEC00000 + noff) >> 48) & 0xFF) - 48;
                 STI(S, GTI(S) + 1);   # consume '('
@@ -3230,11 +3785,10 @@ fn _PARSE_STMT_IMPL(S): i64 {
                 var peek_noff = PEEKV(S);
                 STI(S, GTI(S) + 1);  # consume method name
                 if (PEEKT(S) == 10) {
-                    # Method call: rewind and use PARSE_FIELD_LOAD (which handles methods)
+                    # Method call: rewind and use PARSE_FIELD_LOAD (which handles methods),
+                    # a postfix `?` included (6.6.16, _stmt_method_call)
                     STI(S, save_ti);
-                    PARSE_FIELD_LOAD(S, noff);
-                    if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
-                    STI(S, GTI(S) + 1);
+                    _stmt_method_call(S, noff);
                     return 0;
                 }
             }
@@ -3363,6 +3917,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
         STI(S, GTI(S) + 1);
         return 0;
     }
+    if (_refuse_nested_fn(S) == 1) { return 0; }   # 6.6.16: a `fn` / `async fn` in a fn body
     ERR(S);
     return 0;
 }
@@ -3386,17 +3941,22 @@ fn PARSE_PROG(S): i64 {
                     # there.) `#assert` also lands here and is evaluated via PARSE_STMT. See _tl_directive.
                 }
                 else { if (typ == 32) {
-                        # fn definition inside top-level code (relaxed ordering)
-                        # Emit jmp over fn body, compile fn, patch jmp
-                        # v6.6.4: this loop never parses `public` (a `public` after
-                        # top-level code is a syntax error), so any armed marker here
-                        # is STALE — pass 2's `var` skip re-arms it at `public var` and
-                        # nothing on this path consumed it, re-exposing the first
-                        # relaxed-ordering fn in a private file.
-                        _pub_pending = 0;
-                        var fn_skip = EJMP0(S);
-                        PARSE_FN_DEF(S);
-                        EPATCH(S, fn_skip);
+                        # 6.6.16: THIS loop is also the fn-body and block parser, so a `fn` here
+                        # inside a fn body is a nested fn — refused (`_refuse_nested_fn`). The
+                        # relaxed-ordering arm below is for top-level code only (GINFN == 0).
+                        if (_refuse_nested_fn(S) == 0) {
+                            # fn definition inside top-level code (relaxed ordering)
+                            # Emit jmp over fn body, compile fn, patch jmp
+                            # v6.6.4: this loop never parses `public` (a `public` after
+                            # top-level code is a syntax error), so any armed marker here
+                            # is STALE — pass 2's `var` skip re-arms it at `public var` and
+                            # nothing on this path consumed it, re-exposing the first
+                            # relaxed-ordering fn in a private file.
+                            _pub_pending = 0;
+                            var fn_skip = EJMP0(S);
+                            PARSE_FN_DEF(S);
+                            EPATCH(S, fn_skip);
+                        }
                     }
                     else { PARSE_STMT(S); } } } }
     }

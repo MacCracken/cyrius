@@ -57,15 +57,13 @@ CYRIUS="$WORK/tools/cyrius"
 # the running version re-execs `versions/<pin>/bin/cyrius` — a binary built before this
 # feature existed — and the gate silently tests the OLD code. That is not hypothetical: it is
 # how this feature first appeared not to run at all during development.
-# ⚠ HOME is pinned to a throwaway whose .cyrius IS the home under test. The verify compiles
-# with cycc, and cycc's include fallback for `lib/<leaf>.cyr` reads $HOME/.cyrius/versions/
-# <its own VERSION>/lib — it does not consult CYRIUS_HOME. With the real HOME, a staged run
-# verified the tree's leaves against the LIVE store's slot: at 6.6.13 that slot predated the
-# f64_le/f64_ge/f64_trunc builtins, so its math.cyr (which still defined them) did not compile
-# and axis 1 read "no sidecar written". CHANGELOG [6.6.13]
-mkdir -p "$WORK/h_main"
-ln -s "$HOMEDIR" "$WORK/h_main/.cyrius"
-run_distlib() { ( cd "$1" && HOME="$WORK/h_main" CYRIUS_RESOLVED=1 "$CYRIUS" distlib 2>&1 ); }
+# ⚠ CYRIUS_HOME is passed EXPLICITLY, so the CLI and the verify's cycc read the home under
+# test: since 6.6.16 cycc's `lib/<leaf>.cyr` fallback reads CYRIUS_HOME's slot before HOME's
+# (it read HOME's only, so this gate had to pin HOME to a throwaway — a staged run otherwise
+# verified the tree's leaves against the LIVE store's slot, CHANGELOG [6.6.13]). HOMEDIR may
+# come from $HOME/.cyrius, and then both readers agree anyway. The real HOME is left alone.
+# CHANGELOG [6.6.16]
+run_distlib() { ( cd "$1" && CYRIUS_HOME="$HOMEDIR" CYRIUS_RESOLVED=1 "$CYRIUS" distlib 2>&1 ); }
 
 mkproj() {  # mkproj <dir> <body-of-src/lib.cyr> <declared stdlib list>
     d="$WORK/$1"; mkdir -p "$d/src"
@@ -169,9 +167,7 @@ EOF
     printf '%s\n' "$3" > "$d/src/lib.cyr"
     echo "$d"
 }
-mkdir -p "$WORK/h_nd"
-ln -s "$NH" "$WORK/h_nd/.cyrius"
-run_nd() { ( cd "$1" && HOME="$WORK/h_nd" CYRIUS_HOME="$NH" CYRIUS_RESOLVED=1 "$CYRIUS" distlib 2>&1 ); }
+run_nd() { ( cd "$1" && CYRIUS_HOME="$NH" CYRIUS_RESOLVED=1 "$CYRIUS" distlib 2>&1 ); }
 nd_leaves() { grep -v '^#' "$1/dist/np.deps" 2>/dev/null | tr '\n' ' '; }
 
 # axis 5: a symbol the bundle takes from the named dep is DEFINED in the unit (module splice).
@@ -345,12 +341,27 @@ for k in 1 2 3 4 5; do
     grep -qx "yc$k" "$P13B/dist/np.deps" || fail "axis 13b (anti-vacuous): 'yc$k' missing from [$(nd_leaves "$P13B")]"
 done
 
+# axis 14 (6.6.16, C10): the verify's cycc reads CYRIUS_HOME's slot, not HOME's. HOME is a
+# throwaway whose slot holds the 6.6.13 shape — a stale math.cyr that still defines the f64_le
+# builtin, which fails with nothing undefined, so the verify fails loud — and axis 1's bundle
+# must not see it. Measured: the slot-open cycc reads HOME's slot here and writes no sidecar.
+SH="$WORK/stalehome"
+mkdir -p "$SH/.cyrius/versions/$VER/lib"
+printf 'var F64_ONE = 4607182418800017408;\nfn f64_le(a, b): i64 { return 0; }\n' > "$SH/.cyrius/versions/$VER/lib/math.cyr"
+A14=$(mkproj a14 'fn vprobe_scale(x): i64 {
+    var one = F64_ONE;
+    return f64_mul(x, one);
+}' '"syscalls", "alloc", "string", "io", "fmt", "vec", "str"')
+( cd "$A14" && HOME="$SH" CYRIUS_HOME="$HOMEDIR" CYRIUS_RESOLVED=1 "$CYRIUS" distlib ) >/dev/null 2>&1 || true
+[ -f "$A14/dist/vprobe.deps" ] || fail "axis 14: no sidecar written under a HOME whose slot is stale — the verify read HOME's slot, not CYRIUS_HOME's"
+grep -qx 'math' "$A14/dist/vprobe.deps" || fail "axis 14: 'math' was not re-added under a HOME whose slot is stale"
+
 # axis 12: the verify's scratch mirror (dist/.dlverify-<pid>) never outlives the run — on the
 # success path or on the fail-loud one.
-for d in "$P5" "$P6" "$P9" "$P10" "$P10B" "$P10C" "$P10D" "$P10E" "$P11" "$P13" "$P13B"; do
+for d in "$P5" "$P6" "$P9" "$P10" "$P10B" "$P10C" "$P10D" "$P10E" "$P11" "$P13" "$P13B" "$A14"; do
     if ls -a "$d/dist" 2>/dev/null | grep -q '^\.dlverify-'; then
         fail "axis 12: $d/dist still holds the verify's scratch mirror"
     fi
 done
 
-echo "PASS: distlib_sidecar_verified (missing leaf repaired, sufficient set untouched, dispatcher not peer, all resolve, named deps in the unit, fails loud, the round cap is not convergence)"
+echo "PASS: distlib_sidecar_verified (missing leaf repaired, sufficient set untouched, dispatcher not peer, all resolve, named deps in the unit, fails loud, the round cap is not convergence, CYRIUS_HOME's slot not HOME's)"
