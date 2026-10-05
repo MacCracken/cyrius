@@ -1,0 +1,329 @@
+# tls_ctx_backend_dispatch.tcyr — 6.6.17: every lib/tls.cyr verb dispatches on the ctx or hook
+# handle it is GIVEN, never on the active backend, and answers a null handle without faulting.
+#
+# ⛔ THE DEFECTS (premise-checked on the 6.6.16 lib, x86_64 Linux, OpenSSL 3.6.5).
+#   (1) The verbs dispatched on the GLOBAL `_tls_backend`, which only says what a NEW connection
+#       uses. After tls_set_backend flipped, a ctx reached the wrong backend: a native ctx's
+#       tls_get_session handed libssl its NULL SSL (SIGSEGV, rc 139); a libssl ctx's tls_read ran
+#       tls_native_read on the SSL_CTX (-19, read out of OpenSSL's struct) and its tls_close ran
+#       tls_native_close, which wrote TLS_STATE_CLOSED over the SSL_CTX's second word and never freed
+#       it. The hook-handle verbs (tls_set_alpn, tls_ctx_set_session_*, …) the same way.
+#   (2) tls_ctx_set_session_new_cb / _remove_cb / _get_cb and tls_ctx_set_max_early_data had no
+#       null-handle check: on the libssl backend each SIGSEGVed inside libssl (rc 139, all four).
+# THE FIX: a shim is native when its +8 (libssl's SSL*, never 0 on a libssl shim) is 0
+# (_tls_shim_native); a hook handle is native when it carries the backend tag _tn_ctx_new_in writes
+# at TLS_CTX_OFF_BACKEND_TAG (_tls_handle_native), which no SSL_CTX can; and every handle verb
+# answers 0 / -1 for a null handle first.
+#
+# GROUPS (1-3 run on every host with no libssl: the libssl slots hold counting spies, i.e. non-zero
+# pointers as after a load; 4 needs libssl.so.3 + the fdlopen helper and is a named SKIP without).
+#   1  a null ctx / handle, the LIBSSL backend active: every verb's documented answer, no libssl call
+#   2  a NATIVE ctx + handle, the LIBSSL backend active: the native answers, no libssl call
+#   3  a libssl-shaped shim + SSL_CTX (canary buffers), the NATIVE backend active: each verb reaches
+#      libssl, and native code writes nothing into either buffer
+#   4  real libssl: an SSL_CTX built by a libssl connect is driven with the native backend active
+#      (the cache mode really changes), the shim closes through libssl, and the four measured null
+#      handles answer 0; a native ctx with the libssl backend active answers natively.
+#
+# MEASURED ON THE 6.6.16 LIB (6.6.17, x86_64 Linux; the two tag names shimmed so it compiles, no
+# $HOME so group 4 SKIPs): group 1 — 4 rows RED (the four handle verbs called libssl with 0);
+# group 2 — 17 RED (every verb called its libssl spy; the ALPN offer, the verify mode, the
+# deadline and the close never reached the native ctx); group 3 — 5 RED (the five handle verbs
+# refused) and then SIGSEGV (rc 139) inside tls_set_alpn's NATIVE path reading the SSL_CTX buffer
+# as a native ctx. With the real libssl, group 4's four null-handle rows are each an rc 139.
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/io.cyr"
+include "lib/net.cyr"
+include "lib/chrono.cyr"
+include "lib/tls.cyr"
+
+# ---- the spies ---------------------------------------------------------------------------------
+var _bd_spy_n = 0;
+fn _bd_spy(): i64 {
+    _bd_spy_n = _bd_spy_n + 1;
+    return 0;
+}
+
+# Every libssl slot a verb under test reads.
+var _bd_slots: i64[40];
+var _bd_saved: i64[40];
+var _bd_nslots = 0;
+fn _bd_slot(a): i64 {
+    _bd_slots[_bd_nslots] = a;
+    _bd_nslots = _bd_nslots + 1;
+    return 0;
+}
+fn _bd_slots_init(): i64 {
+    _bd_nslots = 0;
+    _bd_slot(&_fn_SSL_get1_session);
+    _bd_slot(&_fn_SSL_set_session);
+    _bd_slot(&_fn_SSL_SESSION_free);
+    _bd_slot(&_fn_SSL_CTX_sess_set_new_cb);
+    _bd_slot(&_fn_SSL_CTX_sess_set_remove_cb);
+    _bd_slot(&_fn_SSL_CTX_sess_set_get_cb);
+    _bd_slot(&_fn_SSL_CTX_ctrl);
+    _bd_slot(&_fn_SSL_CTX_set_max_early_data);
+    _bd_slot(&_fn_SSL_write_early_data);
+    _bd_slot(&_fn_SSL_read_early_data);
+    _bd_slot(&_fn_SSL_get_early_data_status);
+    _bd_slot(&_fn_SSL_SESSION_get_max_early_data);
+    _bd_slot(&_fn_SSL_CTX_set_alpn_protos);
+    _bd_slot(&_fn_SSL_CTX_set_verify);
+    _bd_slot(&_fn_SSL_CTX_load_verify_locations);
+    _bd_slot(&_fn_SSL_CTX_set_default_verify_paths);
+    _bd_slot(&_fn_SSL_CTX_use_certificate_file);
+    _bd_slot(&_fn_SSL_CTX_use_PrivateKey_file);
+    _bd_slot(&_fn_SSL_read);
+    _bd_slot(&_fn_SSL_write);
+    _bd_slot(&_fn_SSL_shutdown);
+    _bd_slot(&_fn_SSL_free);
+    _bd_slot(&_fn_SSL_CTX_free);
+    _bd_slot(&_fn_SSL_connect);
+    _bd_slot(&_fn_SSL_accept);
+    _bd_slot(&_fn_SSL_get_error);
+    _bd_slot(&_fn_ERR_clear_error);
+    _bd_slot(&_fn_ERR_peek_last_error);
+    return 0;
+}
+fn _bd_spies_on(): i64 {
+    var i = 0;
+    while (i < _bd_nslots) {
+        _bd_saved[i] = load64(_bd_slots[i]);
+        store64(_bd_slots[i], &_bd_spy);
+        i = i + 1;
+    }
+    _bd_spy_n = 0;
+    return 0;
+}
+fn _bd_spies_off(): i64 {
+    var i = 0;
+    while (i < _bd_nslots) {
+        store64(_bd_slots[i], _bd_saved[i]);
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn _bd_cb(): i64 { return 0; }
+
+# `r` is the verb's answer, `want` the documented one; the verb must have made `calls` libssl calls
+# (-1 = at least one).
+var _bd_n0 = 0;
+fn _bd_mark(): i64 {
+    _bd_n0 = _bd_spy_n;
+    return 0;
+}
+fn _bd_row(r, want, calls, name): i64 {
+    var made = _bd_spy_n - _bd_n0;
+    assert_eq(r, want, name);
+    if (calls < 0) { assert_gt(made, 0, "    ... and reached libssl"); }
+    if (calls == 0) { assert_eq(made, 0, "    ... and made no libssl call"); }
+    if (calls > 0) { assert_eq(made, calls, "    ... and made exactly that many libssl calls"); }
+    return 0;
+}
+
+# ---- group 1 -----------------------------------------------------------------------------------
+fn test_null_handles(): i64 {
+    test_group("a null ctx / handle, libssl backend active: the documented answer, no libssl call");
+    tls_set_backend(TLS_BACKEND_LIBSSL);
+    var b[32];
+    _bd_spies_on();
+    _bd_mark(); _bd_row(tls_ctx_set_session_new_cb(0, &_bd_cb), 0, 0, "tls_ctx_set_session_new_cb(0) -> 0 (6.6.16: SIGSEGV)");
+    _bd_mark(); _bd_row(tls_ctx_set_session_remove_cb(0, &_bd_cb), 0, 0, "tls_ctx_set_session_remove_cb(0) -> 0 (6.6.16: SIGSEGV)");
+    _bd_mark(); _bd_row(tls_ctx_set_session_get_cb(0, &_bd_cb), 0, 0, "tls_ctx_set_session_get_cb(0) -> 0 (6.6.16: SIGSEGV)");
+    _bd_mark(); _bd_row(tls_ctx_set_max_early_data(0, 16384), 0, 0, "tls_ctx_set_max_early_data(0) -> 0 (6.6.16: SIGSEGV)");
+    _bd_mark(); _bd_row(tls_ctx_set_session_cache_mode(0, SSL_SESS_CACHE_CLIENT), 0, 0, "tls_ctx_set_session_cache_mode(0) -> 0");
+    _bd_mark(); _bd_row(tls_set_alpn(0, "\x02h2", 3), 0 - 1, 0, "tls_set_alpn(0) -> -1");
+    _bd_mark(); _bd_row(tls_set_verify(0, 1, 0), 0 - 1, 0, "tls_set_verify(0) -> -1");
+    _bd_mark(); _bd_row(tls_ctx_load_verify_locations(0, "x.pem", 0), 0 - 1, 0, "tls_ctx_load_verify_locations(0) -> -1");
+    _bd_mark(); _bd_row(tls_ctx_set_verify_paths(0), 0 - 1, 0, "tls_ctx_set_verify_paths(0) -> -1");
+    _bd_mark(); _bd_row(tls_ctx_use_certificate_file(0, "x.pem", 1), 0 - 1, 0, "tls_ctx_use_certificate_file(0) -> -1");
+    _bd_mark(); _bd_row(tls_ctx_use_private_key_file(0, "x.pem", 1), 0 - 1, 0, "tls_ctx_use_private_key_file(0) -> -1");
+    _bd_mark(); _bd_row(tls_get_session(0), 0, 0, "tls_get_session(0) -> 0");
+    _bd_mark(); _bd_row(tls_set_session(0, 1), 0, 0, "tls_set_session(0, s) -> 0");
+    _bd_mark(); _bd_row(tls_write_early_data(0, "e", 1), 0 - 1, 0, "tls_write_early_data(0) -> -1");
+    _bd_mark(); _bd_row(tls_read_early_data(0, &b, 16), 0 - 1, 0, "tls_read_early_data(0) -> -1");
+    _bd_mark(); _bd_row(tls_get_early_data_status(0), TLS_EARLY_DATA_NOT_SENT, 0, "tls_get_early_data_status(0) -> NOT_SENT");
+    _bd_mark(); _bd_row(tls_read(0, &b, 16), 0 - 1, 0, "tls_read(0) -> -1");
+    _bd_mark(); _bd_row(tls_write(0, "w", 1), 0 - 1, 0, "tls_write(0) -> -1");
+    _bd_mark(); _bd_row(tls_connect_complete(0), 0, 0, "tls_connect_complete(0) -> 0");
+    _bd_mark(); _bd_row(tls_accept_complete(0), 0, 0, "tls_accept_complete(0) -> 0");
+    _bd_mark(); _bd_row(tls_set_deadline(0, 1), TLS_ERR_INVALID_PARAM, 0, "tls_set_deadline(0) -> TLS_ERR_INVALID_PARAM");
+    _bd_mark(); _bd_row(tls_get_alpn_selected(0, &b, 16), 0, 0, "tls_get_alpn_selected(0) -> 0");
+    _bd_mark(); _bd_row(tls_get_peer_spki_der(0, &b, 16), 0, 0, "tls_get_peer_spki_der(0) -> 0");
+    _bd_mark(); _bd_row(tls_close(0), 0, 0, "tls_close(0) -> 0");
+    _bd_spies_off();
+    tls_set_backend(TLS_BACKEND_NATIVE);
+    return 0;
+}
+
+# ---- group 2 -----------------------------------------------------------------------------------
+var _bd_h = 0;                    # the hook handle a connect hook received
+fn _bd_capture(hctx, handle): i64 {
+    _bd_h = handle;
+    return 0;
+}
+
+fn test_native_ctx_libssl_active(): i64 {
+    test_group("a NATIVE ctx and handle, libssl backend active: the native answers, no libssl call");
+    tls_set_backend(TLS_BACKEND_NATIVE);
+    _bd_h = 0;
+    var c = tls_connect_alloc(0 - 1, "localhost", &_bd_capture, 0);
+    assert_neq(c, 0, "a native connection (alloc only) is built");
+    assert_neq(_bd_h, 0, "  and its hook received the native handle");
+    if (c == 0) { return 0; }
+    if (_bd_h == 0) { return 0; }
+    var n = load64(c);
+    assert_eq(n, _bd_h, "  the shim's +0 is that handle");
+    assert_eq(load64(_bd_h + TLS_CTX_OFF_BACKEND_TAG), _TN_CTX_TAG, "  and it carries the native backend tag");
+    tls_set_backend(TLS_BACKEND_LIBSSL);
+    var b[32];
+    _bd_spies_on();
+    var h = _bd_h;
+    _bd_mark(); _bd_row(tls_set_alpn(h, "\x02h2", 3), 0, 0, "tls_set_alpn(native) -> 0 (native set_alpn)");
+    assert_neq(load64(h + TLS_CTX_OFF_ALPN_OFFER), 0, "    the native ctx holds the ALPN offer");
+    _bd_mark(); _bd_row(tls_set_verify(h, 0, 0), 0, 0, "tls_set_verify(native, 0) -> 0");
+    assert_eq(load64(h + TLS_CTX_OFF_VERIFY), TLS_VERIFY_NONE, "    the native ctx's verify mode is NONE");
+    _bd_mark(); _bd_row(tls_ctx_set_session_new_cb(h, &_bd_cb), 0, 0, "tls_ctx_set_session_new_cb(native) -> 0");
+    _bd_mark(); _bd_row(tls_ctx_set_session_remove_cb(h, &_bd_cb), 0, 0, "tls_ctx_set_session_remove_cb(native) -> 0");
+    _bd_mark(); _bd_row(tls_ctx_set_session_get_cb(h, &_bd_cb), 0, 0, "tls_ctx_set_session_get_cb(native) -> 0");
+    _bd_mark(); _bd_row(tls_ctx_set_session_cache_mode(h, SSL_SESS_CACHE_BOTH), 0, 0, "tls_ctx_set_session_cache_mode(native) -> 0");
+    _bd_mark(); _bd_row(tls_ctx_set_max_early_data(h, 0x41414141), 0, 0, "tls_ctx_set_max_early_data(native) -> 0");
+    _bd_mark(); _bd_row(tls_get_session(c), 0, 0, "tls_get_session(native ctx) -> 0 (6.6.16: SIGSEGV in libssl)");
+    _bd_mark(); _bd_row(tls_set_session(c, 1), 0, 0, "tls_set_session(native ctx) -> 0");
+    _bd_mark(); _bd_row(tls_write_early_data(c, "e", 1), 0 - 1, 0, "tls_write_early_data(native ctx) -> -1");
+    _bd_mark(); _bd_row(tls_read_early_data(c, &b, 16), 0 - 1, 0, "tls_read_early_data(native ctx) -> -1");
+    _bd_mark(); _bd_row(tls_get_early_data_status(c), TLS_EARLY_DATA_NOT_SENT, 0, "tls_get_early_data_status(native ctx) -> NOT_SENT");
+    _bd_mark(); _bd_row(tls_set_deadline(c, 77), 0, 0, "tls_set_deadline(native ctx, 77) -> 0");
+    assert_eq(load64(n + TLS_CTX_OFF_DEADLINE), 77, "    the deadline is on the native ctx (6.6.16: on the shim's +24)");
+    _bd_mark();
+    var rr = tls_read(c, &b, 16);
+    _bd_row(rr < 0, 1, 0, "tls_read(native ctx, never connected) -> a native error");
+    _bd_mark();
+    var wr = tls_write(c, "w", 1);
+    _bd_row(wr < 0, 1, 0, "tls_write(native ctx, never connected) -> a native error");
+    _bd_mark(); _bd_row(tls_close(c), 0, 0, "tls_close(native ctx) -> 0");
+    assert_eq(load64(n + TLS_CTX_OFF_STATE), TLS_STATE_CLOSED, "    the native ctx is CLOSED by tls_native_close");
+    _bd_spies_off();
+    tls_set_backend(TLS_BACKEND_NATIVE);
+    return 0;
+}
+
+# ---- group 3 -----------------------------------------------------------------------------------
+var _BD_FAKE = 2048;              # canary buffers: big enough for any native ctx offset
+
+# Bytes of `p`[0..n) that are not 0xA5.
+fn _bd_dirty(p, n): i64 {
+    var d = 0;
+    var i = 0;
+    while (i < n) {
+        if ((load8(p + i) & 0xFF) != 0xA5) { d = d + 1; }
+        i = i + 1;
+    }
+    return d;
+}
+
+fn test_libssl_ctx_native_active(): i64 {
+    test_group("a libssl-shaped ctx and SSL_CTX, NATIVE backend active: each verb reaches libssl");
+    tls_set_backend(TLS_BACKEND_NATIVE);
+    var sctx = alloc(_BD_FAKE);                 # the "SSL_CTX": no backend tag, all 0xA5
+    var ssl = alloc(_BD_FAKE);                  # the "SSL"
+    memset(sctx, 0xA5, _BD_FAKE);
+    memset(ssl, 0xA5, _BD_FAKE);
+    var c = alloc(40);                          # the libssl shim: [SSL_CTX, SSL, fd, deadline, error]
+    store64(c, sctx);
+    store64(c + 8, ssl);
+    store64(c + 16, 0 - 1);
+    store64(c + 24, 0);
+    store64(c + 32, 0);
+    var b[32];
+    _bd_spies_on();
+    _bd_mark(); _bd_row(tls_ctx_set_session_new_cb(sctx, &_bd_cb), 0, 1, "tls_ctx_set_session_new_cb(SSL_CTX) reaches SSL_CTX_sess_set_new_cb (6.6.16: refused)");
+    _bd_mark(); _bd_row(tls_ctx_set_session_remove_cb(sctx, &_bd_cb), 0, 1, "tls_ctx_set_session_remove_cb(SSL_CTX) reaches libssl");
+    _bd_mark(); _bd_row(tls_ctx_set_session_get_cb(sctx, &_bd_cb), 0, 1, "tls_ctx_set_session_get_cb(SSL_CTX) reaches libssl");
+    _bd_mark(); _bd_row(tls_ctx_set_session_cache_mode(sctx, SSL_SESS_CACHE_BOTH), 0, 1, "tls_ctx_set_session_cache_mode(SSL_CTX) reaches SSL_CTX_ctrl");
+    _bd_mark(); _bd_row(tls_ctx_set_max_early_data(sctx, 16384), 0, 1, "tls_ctx_set_max_early_data(SSL_CTX) reaches libssl");
+    _bd_mark(); _bd_row(tls_set_alpn(sctx, "\x02h2", 3), 0, 1, "tls_set_alpn(SSL_CTX) reaches SSL_CTX_set_alpn_protos (6.6.16: native, into the SSL_CTX)");
+    _bd_mark(); _bd_row(tls_set_verify(sctx, 1, 0), 0, 1, "tls_set_verify(SSL_CTX) reaches SSL_CTX_set_verify");
+    _bd_mark(); _bd_row(tls_get_session(c), 0, 1, "tls_get_session(libssl ctx) reaches SSL_get1_session");
+    _bd_mark(); _bd_row(tls_set_session(c, 1), 0, 1, "tls_set_session(libssl ctx) reaches SSL_set_session");
+    _bd_mark(); _bd_row(tls_write_early_data(c, "e", 1), 0 - 1, 1, "tls_write_early_data(libssl ctx) reaches libssl");
+    _bd_mark(); _bd_row(tls_read_early_data(c, &b, 16), 0 - 1, 1, "tls_read_early_data(libssl ctx) reaches libssl");
+    _bd_mark(); _bd_row(tls_get_early_data_status(c), 0, 1, "tls_get_early_data_status(libssl ctx) reaches libssl");
+    _bd_mark(); _bd_row(tls_set_deadline(c, 77), 0, 0, "tls_set_deadline(libssl ctx, 77) -> 0");
+    assert_eq(load64(c + 24), 77, "    the deadline is on the shim's +24 (libssl's slot)");
+    store64(c + 24, 0);
+    _bd_mark(); _bd_row(tls_read(c, &b, 16), TLS_ERR_IO, 0 - 1, "tls_read(libssl ctx) reaches SSL_read (a spied 0 maps to TLS_ERR_IO)");
+    store64(c + 32, 0);
+    _bd_mark(); _bd_row(tls_write(c, "w", 1), TLS_ERR_IO, 0 - 1, "tls_write(libssl ctx) reaches SSL_write");
+    store64(c + 32, 0);
+    _bd_mark(); _bd_row(tls_close(c), 0, 3, "tls_close(libssl ctx) reaches SSL_shutdown, SSL_free, SSL_CTX_free (6.6.16: tls_native_close on the SSL_CTX)");
+    _bd_spies_off();
+    assert_eq(_bd_dirty(sctx, _BD_FAKE), 0, "the SSL_CTX buffer is byte-identical: no native code wrote into it");
+    assert_eq(_bd_dirty(ssl, _BD_FAKE), 0, "the SSL buffer is byte-identical");
+    return 0;
+}
+
+# ---- group 4: real libssl ----------------------------------------------------------------------
+var _bd_ctrl = 0;
+var _bd_sslctx = 0;
+fn _bd_libssl_hook(hctx, handle): i64 {
+    _bd_sslctx = handle;
+    tls_set_verify(handle, 0, 0);         # no host binding needed: this connection never handshakes
+    return 0;
+}
+
+fn test_real_libssl(): i64 {
+    test_group("real libssl: a libssl ctx driven with the NATIVE backend active, and the reverse");
+    _bd_ctrl = tls_dlsym("SSL_CTX_ctrl");
+    assert_neq(_bd_ctrl, 0, "SSL_CTX_ctrl resolves (the test's own tls_dlsym)");
+    if (_bd_ctrl == 0) { return 0; }
+    _bd_sslctx = 0;
+    var c = tls_connect_alloc(0 - 1, "localhost", &_bd_libssl_hook, 0);
+    assert_neq(c, 0, "a libssl connection (alloc only) is built");
+    assert_neq(_bd_sslctx, 0, "  and its hook received the SSL_CTX");
+    if (c == 0) { return 0; }
+    assert_eq(tls_set_backend(TLS_BACKEND_NATIVE), 0, "the native backend is now active");
+    assert_eq(tls_ctx_set_session_cache_mode(_bd_sslctx, SSL_SESS_CACHE_CLIENT), SSL_SESS_CACHE_SERVER,
+      "tls_ctx_set_session_cache_mode(SSL_CTX, CLIENT) -> 2, the previous mode (6.6.16: 0, refused)");
+    assert_eq(fncall4(_bd_ctrl, _bd_sslctx, 45, 0, 0), SSL_SESS_CACHE_CLIENT, "  OpenSSL reads CLIENT (1)");
+    assert_eq(tls_close(c), 0, "tls_close(libssl ctx) with native active -> 0, through libssl");
+    assert_eq(tls_set_backend(TLS_BACKEND_LIBSSL), 0, "the libssl backend is active again");
+    assert_eq(tls_ctx_set_session_new_cb(0, &_bd_cb), 0, "tls_ctx_set_session_new_cb(0) -> 0 (6.6.16: rc 139)");
+    assert_eq(tls_ctx_set_session_remove_cb(0, &_bd_cb), 0, "tls_ctx_set_session_remove_cb(0) -> 0 (6.6.16: rc 139)");
+    assert_eq(tls_ctx_set_session_get_cb(0, &_bd_cb), 0, "tls_ctx_set_session_get_cb(0) -> 0 (6.6.16: rc 139)");
+    assert_eq(tls_ctx_set_max_early_data(0, 16384), 0, "tls_ctx_set_max_early_data(0) -> 0 (6.6.16: rc 139)");
+    # The reverse: a native ctx used with the libssl backend active.
+    tls_set_backend(TLS_BACKEND_NATIVE);
+    var nc = tls_connect_alloc(0 - 1, "localhost", 0, 0);
+    tls_set_backend(TLS_BACKEND_LIBSSL);
+    assert_neq(nc, 0, "a native connection (alloc only)");
+    if (nc == 0) { return 0; }
+    assert_eq(tls_get_session(nc), 0, "tls_get_session(native ctx) with libssl active -> 0 (6.6.16: rc 139)");
+    assert_eq(tls_close(nc), 0, "tls_close(native ctx) with libssl active -> 0");
+    tls_set_backend(TLS_BACKEND_NATIVE);
+    return 0;
+}
+
+alloc_init();
+_bd_slots_init();
+test_null_handles();
+test_native_ctx_libssl_active();
+test_libssl_ctx_native_active();
+#ifdef CYRIUS_TARGET_AGNOS
+var _agnos_skip = "  SKIP (agnos): group 4 — libssl is a Linux fdlopen bridge\n";
+sys_write(1, _agnos_skip, strlen(_agnos_skip));
+#endif
+#ifndef CYRIUS_TARGET_AGNOS
+tls_set_backend(TLS_BACKEND_LIBSSL);
+if (tls_available() != 1) {
+    var _skip = "  SKIP: group 4 — libssl.so.3 or the fdlopen helper ($HOME/.cyrius/dlopen-helper) is not available here\n";
+    sys_write(1, _skip, strlen(_skip));
+} else {
+    test_real_libssl();
+}
+tls_set_backend(TLS_BACKEND_NATIVE);
+#endif
+var r = assert_summary();

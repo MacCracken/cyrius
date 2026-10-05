@@ -525,6 +525,17 @@ handed the native ctx's +8 (0) or the native handle — the native ctx, not an `
 libssl, which wrote into native memory (measured: `tls_ctx_set_max_early_data` changed 4 bytes at
 offset 1024 of a 616-byte native ctx). `tls_session_free` and `tls_session_get_max_early_data`
 take a session, which only a libssl connection produces, and behave the same on either backend.
+**Since 6.6.17 "native" is a property of the ctx, not of the active backend**: a ctx or hook handle
+keeps the backend that built it (`tls_set_backend` decides only what the next connect / accept
+builds), so a native ctx refuses here even while libssl is the active backend, and a libssl ctx or
+`SSL_CTX` reaches libssl even while native is — through 6.6.16 the active backend decided, so a
+native ctx's `tls_get_session` after a switch to libssl handed libssl a NULL `SSL` (SIGSEGV), and a
+libssl ctx's `tls_close` after a switch to native ran `tls_native_close` on its `SSL_CTX`. The same
+holds for every other verb that takes a ctx (`tls_read`, `tls_write`, `tls_close`, the `*_complete`
+pair, `tls_set_deadline`, the introspection verbs) or a hook handle (`tls_set_alpn`,
+`tls_set_verify`, the `tls_ctx_*` verbs). And every verb here answers a NULL ctx / handle with that
+same "unsupported" value (6.6.17: the three session-callback setters and
+`tls_ctx_set_max_early_data` SIGSEGVed inside libssl on one).
 
 | Verb | Signature | Returns | Contract |
 |------|-----------|---------|----------|
@@ -759,7 +770,7 @@ is a contract amendment — it amends this file in the same patch and says so in
 entry.
 
 Internal implementation details — the shim's layout (40 bytes on libssl: `SSL_CTX*`, `SSL*`,
-socket, deadline, the sticky error; 40 bytes on native), the native ctx layout (`TLS_CTX_LEN`, 584 bytes at 6.6.14),
+socket, deadline, the sticky error; 40 bytes on native), the native ctx layout (`TLS_CTX_LEN`, 624 bytes at 6.6.17 — +616 is the backend tag),
 the `_fn_*` symbol cache, `_tls_libssl_handle`, the fdlopen bootstrap sequence — are NOT contract.
 Stdlib maintainers may restructure them freely so long as the public behaviour above is preserved.
 
