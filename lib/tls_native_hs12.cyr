@@ -2613,7 +2613,7 @@ fn tls_native_set_client_key(ctx, key, key_len): i64 {
 # set, != -1) must permit `below` intermediate CAs beneath it toward the leaf.
 # `below` is the path-build depth at which this CA signs (0 = it directly signs
 # the leaf). Uses the sigil 3.7.12 keyUsage/pathLen fields. Returns 1 if OK.
-# ⛔ 6.6.16 (CVE-TBD(N3)) — WHY `purpose`: a CA's extendedKeyUsage confines what it may vouch
+# ⛔ 6.6.16 (CVE-75) — WHY `purpose`: a CA's extendedKeyUsage confines what it may vouch
 # for, and this never looked at it. A CA limited to clientAuth / codeSigning / S/MIME could issue
 # a leaf the native client took as a TLS server, and a serverAuth-only CA in an mTLS server's
 # trust set could issue a client identity; OpenSSL refuses both. The check sits HERE, inside the

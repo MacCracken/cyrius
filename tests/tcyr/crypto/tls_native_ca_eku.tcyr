@@ -1,4 +1,4 @@
-# tls_native_ca_eku.tcyr — 6.6.16 (CVE-TBD(N3)): the native chain verifier enforces a CA's
+# tls_native_ca_eku.tcyr — 6.6.16 (CVE-75): the native chain verifier enforces a CA's
 # extendedKeyUsage for the chain's purpose, on every intermediate AND on the trust anchor.
 #
 # THE DEFECT (premise-checked on the 6.6.15 lib): _tn_verify_chain (lib/tls_native_hs12.cyr) — the
