@@ -1,0 +1,195 @@
+# overload_str_dispatch.tcyr — 6.6.16 (C3): `base(x)` reaches `base_str` exactly when the WHOLE
+# first argument is a Str.
+#
+# THE DEFECT. PARSE_FNCALL's overload dispatcher typed its first argument by hand and compared
+# the result with the LOCAL encoding `0 - sid`. A struct global's GVTYPE is the POSITIVE sid and
+# an inferred global (`var g = str_from(..)`) records no GVTYPE at all, so no Str global was ever
+# routed: `println(gs)` printed the header's pointer bytes and `strlen(gs)` answered 3 for a
+# 15-byte string. A `: Str` field (`h.name`) was never typed either. And nothing required the
+# name to END the argument, so `show(s.data)`, `show(s.len)` and `show(s + 8)` on a Str LOCAL
+# reached `show_str`, which read the argument's VALUE as a {data, len} header (measured: the
+# string's content bytes read as data/len, and rc 139 for `.len`).
+#
+# THE FIX. The dispatcher asks the 6.6.13 I11 classifier (`_str_arg_kind`), which types `x` in
+# PARSE_FACTOR's order (a local or param decides by itself, then a closure capture, then a
+# global by GVTYPE where GVPM marks a struct, else GVDSID), the base of `x.f` in
+# PARSE_FIELD_LOAD's order, and a call by its declared return — and only when the primary ENDS
+# the argument.
+#
+# Each row calls a user pair that answers which one ran: `show` 1, `show_str` 2. The pair never
+# reads its argument, so a misroute is a wrong number here, not a crash. The frontend is shared
+# by every target, so this is a tcyr/lang file, not a cross-host one.
+include "lib/assert.cyr"
+# Three structs ahead of lib/str.cyr make `Str` the 4th struct: its sid is 4, which is also the
+# GVTYPE an `i32` global records (GVTYPE's positive range is shared with scalar widths).
+struct A1 { a; }
+struct A2 { a; }
+struct A3 { a; }
+include "lib/str.cyr"
+
+struct Holder { name: Str; n; }
+struct Other { name; n; }
+
+fn show(x): i64 { return 1; }
+fn show_str(s: Str): i64 { return 2; }
+# A `_str` sibling of a DIFFERENT arity: the v6.5.1 arity gate keeps `two(gs, 0)` on the base.
+fn two(a, b): i64 { return 1; }
+fn two_str(s: Str): i64 { return 2; }
+
+fn mk(): Str { return str_from("made"); }
+
+# ---- registered by PARSE_GVAR_REG: declared before the first top-level statement ----
+var gs: Str = str_from("explicit-global");
+var gi = str_from("inferred-global");
+var gw: i32 = 5;
+var gh = Holder { 0, 0 };
+var gp: Holder = alloc(16);
+# A Str global that the untyped local, param and capture below are named like.
+var s: Str = str_from("shadowed-global");
+# A Str-field global that the captured `o: Other` below is named like.
+var o = Holder { 0, 0 };
+
+alloc_init();
+
+# ---- registered by PARSE_VAR's global arm: declared after a top-level statement ----
+var gs2: Str = str_from("explicit-after");
+var gi2 = str_from("inferred-after");
+var gh2 = Holder { 0, 0 };
+
+gh.name = str_from("gfield");
+gp.name = str_from("pfield");
+gh2.name = str_from("gfield-after");
+o.name = str_from("o-global");
+
+# ---- top level: no frame, PARSE_FNCALL all the same ----
+var tl_gs = show(gs);
+var tl_gi = show(gi);
+var tl_gs2 = show(gs2);
+var tl_gi2 = show(gi2);
+var tl_gh = show(gh.name);
+var tl_data = show(gs.data);
+var tl_len = strlen(gs);
+
+fn tail_gs(): i64 { return show(gs); }
+fn tail_gi(): i64 { return show(gi2); }
+fn tail_field(): i64 { return show(gh.name); }
+fn param_untyped(s): i64 { return show(s); }
+fn param_untyped_nontail(s): i64 { var r = show(s); return r; }
+fn param_str(p: Str): i64 { var r = show(p); return r; }
+fn param_str_tail(p: Str): i64 { return show(p); }
+
+fn test_globals(): i64 {
+    assert_eq(show(gs), 2, "a `: Str` global (PARSE_GVAR_REG)");
+    assert_eq(show(gi), 2, "an inferred Str global (PARSE_GVAR_REG)");
+    assert_eq(show(gs2), 2, "a `: Str` global after a top-level statement");
+    assert_eq(show(gi2), 2, "an inferred Str global after a top-level statement");
+    assert_eq(show(gw), 1, "an i32 global whose width equals Str's sid stays on the base");
+    assert_eq(show(gs.data), 1, "gs.data is a data pointer, not a Str");
+    assert_eq(show(gs.len), 1, "gs.len is a number, not a Str");
+    assert_eq(show(gs + 8), 1, "gs + 8 is not a Str");
+    assert_eq(two(gs, 0), 1, "an arity-mismatched _str sibling is not a redirect target");
+    return 0;
+}
+
+fn test_toplevel(): i64 {
+    assert_eq(tl_gs, 2, "top level: show(gs)");
+    assert_eq(tl_gi, 2, "top level: show(gi)");
+    assert_eq(tl_gs2, 2, "top level: show(gs2)");
+    assert_eq(tl_gi2, 2, "top level: show(gi2)");
+    assert_eq(tl_gh, 2, "top level: show(gh.name)");
+    assert_eq(tl_data, 1, "top level: show(gs.data)");
+    assert_eq(tl_len, 15, "top level: strlen(gs) is the string's length");
+    return 0;
+}
+
+fn test_locals(): i64 {
+    var ls: Str = str_from("local");
+    var li = str_from("local-inferred");
+    assert_eq(show(ls), 2, "a `: Str` local");
+    assert_eq(show(li), 2, "an inferred Str local");
+    assert_eq(show(ls.data), 1, "ls.data is a data pointer, not a Str");
+    assert_eq(show(ls.len), 1, "ls.len is a number, not a Str");
+    assert_eq(show(li.data), 1, "li.data is a data pointer, not a Str");
+    assert_eq(show(ls + 8), 1, "ls + 8 is not a Str");
+    assert_eq(show(mk()), 2, "a call declared `: Str`");
+    assert_eq(show(mk().data), 1, "a Str call's .data is not a Str");
+    assert_eq(show(str_data(ls)), 1, "str_data(..) is a data pointer, not a Str");
+    var s = "plain-cstr";
+    assert_eq(show(s), 1, "an untyped local named like a Str global stays on the base");
+    return 0;
+}
+
+fn test_fields(): i64 {
+    var h: Holder;
+    h.name = str_from("field");
+    h.n = 3;
+    var hp: Holder = alloc(16);
+    hp.name = str_from("pfield");
+    assert_eq(show(h.name), 2, "an inline local struct's `: Str` field");
+    assert_eq(show(hp.name), 2, "a pointer-mode local struct's `: Str` field");
+    assert_eq(show(gh.name), 2, "an inline global struct's `: Str` field");
+    assert_eq(show(gp.name), 2, "a pointer-mode global struct's `: Str` field");
+    assert_eq(show(gh2.name), 2, "a global struct's `: Str` field, declared after a statement");
+    assert_eq(show(h.n), 1, "an untyped field stays on the base");
+    return 0;
+}
+
+fn test_tail_and_params(): i64 {
+    assert_eq(tail_gs(), 2, "return show(gs);");
+    assert_eq(tail_gi(), 2, "return show(gi2);");
+    assert_eq(tail_field(), 2, "return show(gh.name);");
+    assert_eq(param_untyped("cstr"), 1, "an untyped param named like a Str global (tail)");
+    assert_eq(param_untyped_nontail("cstr"), 1, "an untyped param named like a Str global");
+    assert_eq(param_str(gs), 2, "a `: Str` param");
+    assert_eq(param_str_tail(gs), 2, "a `: Str` param (tail)");
+    return 0;
+}
+
+# A capture decides by itself, as PARSE_FACTOR reads it: a cstr capture named like the Str
+# global `s` is a cstr, a Str capture is a Str with no global of its name, and a captured
+# `o: Other` (untyped `name`) is not the global `o: Holder`.
+fn test_captures(): i64 {
+    var s = "plain-cstr";
+    var lt: Str = str_from("captured");
+    var h: Holder;
+    h.name = str_from("captured-field");
+    h.n = 0;
+    var o: Other;
+    o.name = 0;
+    o.n = 0;
+    var c1 = |k| show(s) + k;
+    var c2 = |k| show(lt) + k;
+    var c3 = |k| show(h.name) + k;
+    var c4 = |k| show(o.name) + k;
+    var c5 = |k| show(gs) + k;
+    var c6 = |k| show(lt.len) + k;
+    assert_eq(fncall1(c1, 0), 1, "a cstr capture named like a Str global stays on the base");
+    assert_eq(fncall1(c2, 0), 2, "a Str capture");
+    assert_eq(fncall1(c3, 0), 2, "a captured struct's `: Str` field");
+    assert_eq(fncall1(c4, 0), 1, "a captured struct's untyped field, a Str-field global of the same name");
+    assert_eq(fncall1(c5, 0), 2, "a Str global read inside a closure");
+    assert_eq(fncall1(c6, 0), 1, "a Str capture's .len");
+    return 0;
+}
+
+# The library pairs route the same way: strlen -> strlen_str (str_len).
+fn test_lib_pairs(): i64 {
+    var ls: Str = str_from("abc");
+    assert_eq(strlen(gs), 15, "strlen(gs) == str_len(gs)");
+    assert_eq(strlen(gi), 15, "strlen(gi) == str_len(gi)");
+    assert_eq(strlen(gs2), 14, "strlen(gs2)");
+    assert_eq(strlen(gh.name), 6, "strlen(gh.name)");
+    assert_eq(strlen(mk()), 4, "strlen(mk())");
+    assert_eq(strlen(ls), 3, "strlen(ls)");
+    assert_eq(strlen(str_cstr(gs)), 15, "strlen(str_cstr(gs)) stays the cstring strlen");
+    return 0;
+}
+
+test_globals();
+test_toplevel();
+test_locals();
+test_fields();
+test_tail_and_params();
+test_captures();
+test_lib_pairs();
+var r = assert_summary();

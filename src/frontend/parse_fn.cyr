@@ -1745,12 +1745,14 @@ fn _gv_rhs_call_sid(S, ri): i64 {
     return TOKVAL(S, ri) + 1;
 }
 
-# The struct id a NAMED value carries, for the diagnostic only, 0 when untyped. A local decides
+# The struct id a NAMED value carries, 0 when untyped. Shared by the I11 Str -> `: cstring`
+# warning, the overload dispatcher (both through `_str_arg_kind`) and `_recv_sid`. A local decides
 # by itself (`0 - GLTYPE`; an untyped local shadowing a `Str` global is 0, not the global's
 # type). A global: its positive GVTYPE, but only when GVPM marks it a struct — GVTYPE's positive
 # range is shared with scalar widths, so an `i32` global's 4 must not read as struct id 4. Else
-# an inferred global's initializer return (GVDSID). The old check compared a global against the
-# LOCAL encoding `0 - sid`, so a `var g: Str` global never matched.
+# an inferred global's initializer return (GVDSID: READ here, never written into GVTYPE, which
+# would change codegen). Comparing a global against the LOCAL encoding `0 - sid` — what the I11
+# check did before 6.6.13 and the dispatcher before 6.6.16 — matches no Str global at all.
 fn _diag_name_sid(S, noff): i64 {
     if (GINFN(S) == 1) {
         var li = FINDLOCAL(S, noff);
@@ -1779,19 +1781,57 @@ fn _glob_name_sid(S, noff): i64 {
     return r;
 }
 
+# The struct id of a single NAME read as a value, in PARSE_FACTOR's order: a local decides by
+# itself, then — inside a capturing closure — a captured enclosing local decides by the type its
+# snapshot recorded, then a global (`_diag_name_sid`). The overload dispatcher routes on this, so
+# a cstr local, param or CAPTURE named like a Str global must read 0 here: measured on the planning
+# prototype, `var s = "x"; var c = |k| show(s) ..;` beside a `var s: Str` global reached `show_str`,
+# which read the cstr's bytes as a {data, len} header. CHANGELOG [6.6.16]
+fn _arg_name_sid(S, noff): i64 {
+    if (GINFN(S) == 1) {
+        if (FINDLOCAL(S, noff) < 0) {
+            var esl = _cl_cap_esl(S, noff);
+            if (esl >= 0) {
+                var t = _cl_snap_type(esl);
+                if (t < 0) { if (t > 0 - 2048) { return 0 - t; } }
+                return 0;
+            }
+        }
+    }
+    var r = _diag_name_sid(S, noff);
+    return r;
+}
+# The enclosing slot a name reads inside a capturing closure body (PARSE_FACTOR's capture rung),
+# or -1 when the name is not a capture there.
+fn _cl_cap_esl(S, noff): i64 {
+    if (_cl_capturing != 1) { return 0 - 1; }
+    if (_cl_env_lidx < 0) { return 0 - 1; }
+    var esl = _cl_snap_find(S, noff);
+    if (esl < 0) { return 0 - 1; }
+    if (_cl_cap_find(esl) < 0) { return 0 - 1; }
+    return esl;
+}
+
 var _sca_shape = 0;   # how the argument is written: 0 `x`, 1 `f(..)`, 2 `x.f`
 # What the hint wraps in str_cstr(..): 0 `..`, 1 the base IDENT (`x.data` -> x), 2 the argument
 # as written, 3 the IDENT inside `str_data(x)`.
 var _sca_op = 0;
 # What the argument at the cursor hands a `: cstring` param: 1 a Str, 2 a Str's data pointer
 # (`x.data`, `str_data(..)`), 0 not known — only a SINGLE primary that ends the argument is typed.
+# A pure peek (it writes only `_sca_shape` / `_sca_op`, which the warning recomputes), and it
+# does not depend on CYRIUS_TYPE_CHECK: PARSE_FNCALL's overload dispatcher routes `base(x, ..)`
+# to `base_str` exactly when this answers 1 for the FIRST argument, so a first argument the
+# warning would call "Str-typed" never reaches a base that has an arity-compatible `_str`
+# sibling — the call is routed instead. Each name is typed in the order codegen reads it: `x` as
+# PARSE_FACTOR does (`_arg_name_sid`), the base of `x.f` as PARSE_FIELD_LOAD does (`_recv_sid`).
+# CHANGELOG [6.6.16]
 fn _str_arg_kind(S, ssid): i64 {
     var ti = GTI(S);
     if (TOKTYP(S, ti) != 2) { return 0; }
     if (_tok_ends_arg(S, ti + 1) == 1) {
         _sca_shape = 0;
         _sca_op = 2;
-        if (_diag_name_sid(S, TOKVAL(S, ti)) == ssid) { return 1; }
+        if (_arg_name_sid(S, TOKVAL(S, ti)) == ssid) { return 1; }
         return 0;
     }
     if (TOKTYP(S, ti + 1) == 10) {
@@ -1802,7 +1842,7 @@ fn _str_arg_kind(S, ssid): i64 {
     if (TOKTYP(S, ti + 2) != 2) { return 0; }
     if (_tok_ends_arg(S, ti + 3) == 0) { return 0; }
     _sca_shape = 2;
-    var bsid = _diag_name_sid(S, TOKVAL(S, ti));
+    var bsid = _recv_sid(S, TOKVAL(S, ti));
     if (bsid <= 0) { return 0; }
     if (bsid == ssid) {
         _sca_op = 1;
@@ -2993,46 +3033,35 @@ fn PARSE_FNCALL(S, noff): i64 {
     # call of a stub generic. See _gen_call_head.
     var _gfi = _gen_call_head(S, fi, noff);
     if (_gfi != fi) { fi = _gfi; noff = L64(_fnt_names + fi * 8); }
-    # v5.10.25 — Phase 3 generalize: registry-based overload
-    # dispatch. Replaces the v5.10.3-5 hardcoded {println, strlen}
-    # name lookups with a lookup table populated at REGFN time.
-    # For any fn `<base>` with a sibling `<base>_str` / `<base>_int`
-    # / `<base>_cstr` defined, the parser auto-routes
-    # `base(arg)` → `base_<suffix>(arg)` when arg's type matches.
-    # User-defined overloads work the same way without any compiler
-    # change. The original v5.10.5 agnosys-close shapes still work:
-    #   `println(IDENT)`/`println(IDENT(args))` Str-typed → `println_str`
-    #   `strlen(IDENT)`/`strlen(IDENT(args))` Str-typed → `str_len`
-    #     (registered via the `str_len` → `strlen` base mapping)
-    #   `println(IDENT)`/`println(IDENT(args))` i64-typed → `println_int`
-    # Arg-shape detection covers plain IDENT and `IDENT (` (fn call):
-    # for fn-call args we look up the called fn's return-type via
-    # GFRS (positive sid for struct returns; negative scalar =
-    # -8/-4/-2/-1 for i64/i32/i16/i8).
+    # v5.10.25 — registry-based overload dispatch on the FIRST argument: for a fn `<base>`
+    # with a `<base>_str` / `<base>_int` sibling (tables filled at REGFN time; user pairs work
+    # the same way), `base(arg, ..)` is routed to the sibling when the arg matches, behind the
+    # v6.5.1 arity gate (`_OV_ARITY_OK`):
+    #   _str — the WHOLE first argument is a Str, as `_str_arg_kind` (the I11 classifier) reads
+    #          it: a Str local / param / capture, a `: Str` or inferred-Str global, a one-level
+    #          `: Str` field (`h.name`, `gh.name`), or a call declared `: Str`. `println(gs)` ->
+    #          `println_str`, `strlen(gs)` -> `strlen_str`. `x.data`, `x.len`, `x + 1` and
+    #          `f(..).field` are NOT routed by their base's type.
+    #   _int — an `IDENT(..)` call returning i64 (GFRS -8), into an i64-returning base whose
+    #          param 0 is `: cstring` (v6.0.3 / v6.5.2, below). A plain i64 IDENT is never
+    #          routed here.
+    # 6.6.16: the Str arm typed the argument itself — `0 - sid` against a global's positive
+    # GVTYPE (so no Str global ever routed and `println(gs)` printed the header's pointer
+    # bytes), no fields, and nothing required the name to END the argument, so `show(s.data)`
+    # / `show(s.len)` on a Str local reached `show_str`, which read the VALUE as a header.
+    # CHANGELOG [6.6.16]
     if (PEEKT(S) == 2) {
-        var _od_arg_noff = PEEKV(S);
-        var _od_arg_typ = 0;
         var _od_arg_scalar = 0;
         if (TOKTYP(S, GTI(S) + 1) == 10) {
-            var _od_arg_fi = FINDFN(S, _od_arg_noff);
+            var _od_arg_fi = FINDFN(S, PEEKV(S));
             if (_od_arg_fi >= 0) {
                 var _od_ret = GFRS(S, _od_arg_fi);
-                if (_od_ret > 0) { _od_arg_typ = 0 - _od_ret; }
-                else { if (_od_ret < 0) { _od_arg_scalar = 0 - _od_ret; } }
-            }
-        } else {
-            if (GINFN(S) == 1) {
-                var _od_lli = FINDLOCAL(S, _od_arg_noff);
-                if (_od_lli >= 0) { _od_arg_typ = GLTYPE(S, _od_lli); }
-            }
-            if (_od_arg_typ == 0) {
-                var _od_vi = FINDVAR(S, _od_arg_noff);
-                if (_od_vi >= 0) { _od_arg_typ = GVTYPE(S, _od_vi); }
+                if (_od_ret < 0) { _od_arg_scalar = 0 - _od_ret; }
             }
         }
         var _od_str_sid = _STR_SID(S);
         if (_od_str_sid > 0) {
-            if (_od_arg_typ == 0 - _od_str_sid) {
+            if (_str_arg_kind(S, _od_str_sid) == 1) {
                 var _od_str_target = L64(_fnt_ovstr + fi * 8);
                 if (_od_str_target > 0) {
                     # v6.5.1 — arity-gate the redirect (see _OV_ARITY_OK).
