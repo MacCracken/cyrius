@@ -1107,6 +1107,8 @@ lexer_not_lower:
     cmp rax, 90
     jle lexer_ident
 lexer_not_letter:
+    cmp rax, 95           # '_' starts an identifier too (6.6.17: it fell to lexer_skip and
+    je lexer_ident        # was DROPPED, so `_fi` lexed as `fi` and the two shared one slot)
     cmp rax, 61
     je lexer_eq_or_eqeq
     cmp rax, 33
