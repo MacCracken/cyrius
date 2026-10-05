@@ -594,11 +594,18 @@ priority surfaces.
     compiler's own diagnostic — "raw syscall 117 is x86_64 `setresuid`; on ELF-aarch64 that
     number is `ptrace`" — i.e. no row translates it. The remaining design point:
     `programs/gen_syscall_xlat.cyr`'s `is_native_a64` drops the raw-x86-literal warning row for
-    any number the aarch64 peer declares below the 1000 alias band, so each native declaration
-    SILENCES the warning for that x86 number — 117 `setresuid`, 123 `setfsgid`, 67 `shmdt`,
-    68 `msgget`, 164 `settimeofday`. Decide per family whether that trade is acceptable or the
-    family takes a ≥1000 alias instead (as the 6.6.12 xattr band did for the same reason), and
-    re-check it with `programs/gen_syscall_xlat.cyr` when the slot opens.
+    any number the aarch64 peer declares below the 1000 alias band — but it can only drop a row
+    that EXISTS, and `_SYSX_MEANT` (`src/common/syscall_xlat.cyr`) carries a row only for an x86
+    number named in BOTH peers. Of the five natives, only **117** has one today (x86
+    `setresuid`): declaring `ptrace` natively would silence that live warning. **123**, **67**,
+    **68** and **164** are x86 `setfsgid` / `shmdt` / `msgget` / `settimeofday`, which the x86
+    peer does not name, so they have no row and already warn nothing (measured at 6.6.16 with
+    the tree's aarch64 cross compiler: raw 117 warns, raw 123 / 67 / 68 / 164 are silent) —
+    their native declarations silence nothing now, and would matter only if those x86 names
+    later get declared in both peers. So the per-family decision is `ptrace`'s alone: accept
+    losing the setresuid-117 warning, or give `ptrace` a ≥1000 alias instead (as the 6.6.12
+    xattr band did for the same reason); re-check with `programs/gen_syscall_xlat.cyr` when the
+    slot opens.
   - **Acceptance**: every family named in `lib/syscalls_linux_common.cyr` (or the peer that owns
     it) with a Darwin arm, a row whose placement `esysxlat_row_order.sh` passes, and a runtime
     assertion in `tests/tcyr/crossos/` that fails when the number is wrong — the three tests

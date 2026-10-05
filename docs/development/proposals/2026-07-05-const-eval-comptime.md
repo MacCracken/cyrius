@@ -13,7 +13,8 @@ narrow immediate payoff; wants maintainer direction on scope before any work.
 > ### ⛔ Correction 2026-10-04 (6.6.16) — the const-eval base is `_CF_TRY`, and a computed initializer is NOT folded
 >
 > Verified against the 6.6.16 tree; the struck text below (this block's line 11 note, items 1–2 of
-> the 2026-08-11 corrections, the "Current state" bullet and option 1's last sentence) is kept for
+> the 2026-08-11 corrections, the `ir_const_fold` clause and "(plus that folding)" in the
+> "Current state" bullet, and option 1's "fold fixpoint" and last sentence) is kept for
 > history, not deleted.
 >
 > - **`ir_const_fold` is not the base.** It is an x86-ELF codebuf peephole (`src/common/ir.cyr:672`,
@@ -84,12 +85,15 @@ What it does **not** cover is **compile-time computation**:
 
 ## Current state (verified 2026-07-05)
 
-- ~~CYRIUS **already has IR-level const-folding** — `ir_const_fold` (`src/main.cyr:1986`, run in the
-  "const-fold → DCE → dead-store" fixpoint), plus "const-fold enum" handling (`src/main.cyr:148`,
-  `src/main_win.cyr:96`).~~ *(Struck 2026-10-04: that pass is an opt-in x86-ELF peephole, not a
-  default-path fixpoint; the default-path folder is the parse-time `_CF_TRY` — see the correction
-  at the top.)* This is an **optimization pass** over arithmetic / enum-value literals,
-  **not** a user-facing const-eval: global initializers are literals (plus that folding), and
+- CYRIUS **already has** ~~**IR-level const-folding** — `ir_const_fold` (`src/main.cyr:1986`, run in the
+  "const-fold → DCE → dead-store" fixpoint), plus~~ *(Struck 2026-10-04: that pass is an opt-in
+  x86-ELF peephole, not a default-path fixpoint; the default-path folder is the parse-time
+  `_CF_TRY` — see the correction at the top.)* "const-fold enum" handling (`src/main.cyr:172`,
+  `src/main_win.cyr:109` at 6.6.16 — first cited at `:148` / `:96`; only the line numbers moved).
+  This is an **optimization pass** over arithmetic / enum-value literals,
+  **not** a user-facing const-eval: global initializers are literals ~~(plus that folding)~~
+  *(2026-10-04: plus `_CF_TRY`'s parse-time fold of all-literal arithmetic; a computed initializer
+  is a deferred runtime store — see the correction at the top)*, and
   there is **no `const fn`, no comptime block, no compile-time loop/table generation.**
 - (At filing) no `const-eval` / `comptime` / `const fn` appeared in `docs/development/roadmap_6.md`.
   **Superseded 2026-07-07**: const-eval/comptime is now SCHEDULED for v6.6.x (language-ergonomics
@@ -101,7 +105,9 @@ What it does **not** cover is **compile-time computation**:
 Const-eval is a large feature and CYRIUS is deliberately minimal (everything i64, single-pass, no
 generics). Options, smallest → largest:
 
-1. **`const fn` propagation (minimal).** Mark pure functions `const`; the existing fold fixpoint
+1. **`const fn` propagation (minimal).** Mark pure functions `const`; ~~the existing fold fixpoint
+   evaluates them~~ *(Struck 2026-10-04: there is no default-path fold fixpoint; the evaluator to
+   extend is the parse-time folder `_CF_TRY` — see the correction at the top)* the compiler
    evaluates them over literal args at compile time. Unlocks *computed constants* without a
    generator program. Smallest surface; ~~reuses `ir_const_fold` machinery.~~ *(Struck 2026-10-04:
    it builds on the parse-time folder `_CF_TRY` — see the correction at the top.)*
