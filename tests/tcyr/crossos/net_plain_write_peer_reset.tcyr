@@ -1,7 +1,7 @@
 # net_plain_write_peer_reset.tcyr — 6.6.16: a peer that resets a plain TCP connection no longer
 # kills the writer with SIGPIPE, on every lib/net.cyr and lib/async*.cyr socket write path.
 #
-# ⛔ WHY (CVE-TBD(N1), the plain-socket half of CVE-66's class). lib/net.cyr's `_net_os_send` — the
+# ⛔ WHY (CVE-74, the plain-socket half of CVE-66's class). lib/net.cyr's `_net_os_send` — the
 # one primitive under sock_send, sock_send_all and sock_send_a, and so under lib/http.cyr,
 # lib/ws.cyr, lib/ws_server.cyr, lib/yantra.cyr and folded sandhi's client paths — was a flagless
 # write(2) on Linux and macOS, and so were the async backends' send and relay writers. Writing to a
@@ -270,7 +270,7 @@ fn _pr_run(scn): i64 {
 }
 
 fn _pr_reset_rows(): i64 {
-    test_group("6.6.16 — a plain-socket writer survives a peer that reset the connection (CVE-TBD(N1))");
+    test_group("6.6.16 — a plain-socket writer survives a peer that reset the connection (CVE-74)");
     assert_eq(_pr_run("send_all"), 0,
       "sock_send_all after the reset: < 0 (EPIPE / ECONNRESET) and the process lives (141 = SIGPIPE)");
     assert_eq(_pr_run("send"), 0,

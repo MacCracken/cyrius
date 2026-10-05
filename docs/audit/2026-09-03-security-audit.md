@@ -2,7 +2,7 @@
 
 **Scope:** the untrusted-source-input surface. Previous full audit:
 `docs/audit/2026-07-27-security-audit.md` (CVE-32…CVE-36) at cycc 6.4.82.
-**Next free identifier after this document: CVE-74.** (CVE-41 is fixed at 6.5.47; see its entry.) (CVE-37 and CVE-38 in the previous
+**Next free identifier after this document: CVE-75.** (CVE-41 is fixed at 6.5.47; see its entry.) (CVE-37 and CVE-38 in the previous
 document are **withdrawn** but still consume their ids.) CVE-43 was consumed at 6.6.5,
 **CVE-44 and CVE-45 at 6.6.6** — the release installer's fixed `/tmp` staging, and a forged `#@file` from an included file —
 **CVE-46, CVE-47 and CVE-48 at 6.6.7** (a `secret var` inside a closure was never zeroised; a `secret var` in a
@@ -13,7 +13,7 @@ predictable shared `/tmp` names; `lib/http.cyr` wrote a long URL past its 2048-b
 `rdx`; the lexer silently dropped any `@` that did not spell `@unsafe`; `lib/ws.cyr`'s `ws_recv_frame` let a
 remote peer choose its allocation size and read frames it had not received), and **CVE-54 and CVE-55 at 6.6.11**
 (on Windows, `net_resolve_ipv4` read a drive-relative `C:\etc\hosts` that any local user can plant; a multi-line
-string literal shifted file attribution, so a call to another file's `private` fn compiled); **CVE-56 at 6.6.12** (`lib/log.cyr`'s `log_info_kv` / `log_info_int` built a log line past a 512-byte stack buffer); **CVE-57 at 6.6.12** (on Windows, the folded sandhi resolver read a drive-relative `C:\etc\resolv.conf` any local user can plant); **CVE-58 at 6.6.12** (cxvm let guest bytecode read and write the interpreter's own host memory); **CVE-59 at 6.6.13** (the libssl TLS backend never bound the server's certificate to the host, so any chain-valid certificate verified any host); **CVE-60 at 6.6.13** (the libssl backend's `tls_read` / `tls_write` (and `tls_get_peer_spki_der`) returned a C `int` zero-extended, so a tampered record read as ~4 GiB read); **CVE-61 at 6.6.13** (the native TLS stack skipped plaintext ChangeCipherSpec records without limit and had no deadline, so anyone on the path held a thread for ever); **CVE-62 at 6.6.13** (a `[deps.NAME]` header holding `..` made `cyrius deps` create directories and git-clone outside the dep cache — a CVE-32 residual); **CVE-63 at 6.6.13** (the native TLS client verified an IP-literal host against dNSName SAN entries, wildcards included); **CVE-64 at 6.6.14** (a native TLS server that required client certificates authenticated nobody: a TLS 1.2 client connected with none, a TLS 1.3 client with any leaf, and `tls_set_verify` dropped FAIL_IF_NO_PEER_CERT); **CVE-65 at 6.6.14** (on Windows, the native TLS client read its trust roots from a drive-relative `C:\etc\ssl\cert.pem` any local user can plant); **CVE-66 at 6.6.14** (a TLS write to a peer that had reset the connection raised SIGPIPE, so any peer could kill a native- or libssl-backed TLS client or server process); **CVE-67 at 6.6.14** (the native TLS client took any `*.` dNSName as a wildcard, so a certificate for `*.com` verified every `.com` host); **CVE-68 at 6.6.15** (folded sigil's ECDSA P-256 / P-384 signing leaked its secret nonce and key through timing, and left the nonce in dead stack and a vector register); **CVE-69 at 6.6.15** (a `secret var` fn's epilogue wrote its return registers into dead stack after its own wipe); **CVE-70 at 6.6.15** (the native TLS stack never zeroed its ephemeral ECDHE private keys or shared secrets); **CVE-71 at 6.6.15** (native TLS 1.3 accepted an all-zero x25519 shared secret); **CVE-72 at 6.6.15** (a `secret var` or `defer` in a `#naked` fn compiled clean and never ran); **CVE-73 at 6.6.15** (on Windows, folded sigil's trust helpers probed drive-relative rooted POSIX paths any local user can plant); all thirty-one are appended below.
+string literal shifted file attribution, so a call to another file's `private` fn compiled); **CVE-56 at 6.6.12** (`lib/log.cyr`'s `log_info_kv` / `log_info_int` built a log line past a 512-byte stack buffer); **CVE-57 at 6.6.12** (on Windows, the folded sandhi resolver read a drive-relative `C:\etc\resolv.conf` any local user can plant); **CVE-58 at 6.6.12** (cxvm let guest bytecode read and write the interpreter's own host memory); **CVE-59 at 6.6.13** (the libssl TLS backend never bound the server's certificate to the host, so any chain-valid certificate verified any host); **CVE-60 at 6.6.13** (the libssl backend's `tls_read` / `tls_write` (and `tls_get_peer_spki_der`) returned a C `int` zero-extended, so a tampered record read as ~4 GiB read); **CVE-61 at 6.6.13** (the native TLS stack skipped plaintext ChangeCipherSpec records without limit and had no deadline, so anyone on the path held a thread for ever); **CVE-62 at 6.6.13** (a `[deps.NAME]` header holding `..` made `cyrius deps` create directories and git-clone outside the dep cache — a CVE-32 residual); **CVE-63 at 6.6.13** (the native TLS client verified an IP-literal host against dNSName SAN entries, wildcards included); **CVE-64 at 6.6.14** (a native TLS server that required client certificates authenticated nobody: a TLS 1.2 client connected with none, a TLS 1.3 client with any leaf, and `tls_set_verify` dropped FAIL_IF_NO_PEER_CERT); **CVE-65 at 6.6.14** (on Windows, the native TLS client read its trust roots from a drive-relative `C:\etc\ssl\cert.pem` any local user can plant); **CVE-66 at 6.6.14** (a TLS write to a peer that had reset the connection raised SIGPIPE, so any peer could kill a native- or libssl-backed TLS client or server process); **CVE-67 at 6.6.14** (the native TLS client took any `*.` dNSName as a wildcard, so a certificate for `*.com` verified every `.com` host); **CVE-68 at 6.6.15** (folded sigil's ECDSA P-256 / P-384 signing leaked its secret nonce and key through timing, and left the nonce in dead stack and a vector register); **CVE-69 at 6.6.15** (a `secret var` fn's epilogue wrote its return registers into dead stack after its own wipe); **CVE-70 at 6.6.15** (the native TLS stack never zeroed its ephemeral ECDHE private keys or shared secrets); **CVE-71 at 6.6.15** (native TLS 1.3 accepted an all-zero x25519 shared secret); **CVE-72 at 6.6.15** (a `secret var` or `defer` in a `#naked` fn compiled clean and never ran); **CVE-73 at 6.6.15** (on Windows, folded sigil's trust helpers probed drive-relative rooted POSIX paths any local user can plant); **CVE-74 at 6.6.16** (a plain-socket write to a peer that had reset the connection raised SIGPIPE, so any peer could kill a `lib/net.cyr` client or server process that had not ignored the signal — the plain-socket half of CVE-66's class); all thirty-two are appended below.
 ⚠ **This line read "next free: CVE-42" while CLAUDE.md read "the next CVE number is 43" and this document ran 39-41.**
 Two authorities, two answers, and nothing reconciled them. CLAUDE.md is the one every closeout reads, so **42 is
 retired unused** and CVE-43 is the entry appended below. Anything below 64 now collides.
@@ -1638,3 +1638,104 @@ integrator for the backlog, not changed here.
 **Verified.** sigil `tests/tcyr/rooted_paths.tcyr` and `scripts/cass-rooted-paths.sh` (every probed path planted on a `subst` scratch drive on cass: each helper fails closed at 3.13.9, each answered from the planted file at 3.13.8). cyrius: `lib/sigil.cyr` is 3.13.9's `dist/sigil.cyr` byte for byte; the cyrius suite and the cross-OS leg pass on the fold.
 
 **Not covered.** Paths a CALLER supplies on Windows (`secureboot_read_efi_variable(path)`, `tpm_seal`'s `output_dir`, trust-store and keyring paths) are drive-relative too if rooted — the caller's to resolve (sigil audit §F8, *Not covered*).
+
+## CVE-74 — a plain-socket write to a peer that had reset the connection raised SIGPIPE: any peer could kill a `lib/net.cyr` client or server process that had not ignored the signal (sock_send*, http, ws, ws_server, yantra, sandhi's client paths, the async writers)
+
+*Appended 2026-10-05 (cyrius 6.6.16, lane net, bite net-1, item N1). Found by: CVE-66's own
+vidya field note, which listed `lib/net.cyr`'s plain writers as "the open instance", and roadmap
+backlog (the 6.6.14 sweep). Not part of the 2026-09-03 sweep: recorded here because this is the live
+ledger. 6.6.16 spends CVE-74 … CVE-76.*
+
+| | |
+|---|---|
+| **Severity** | P1 (High) — availability, remote and unauthenticated. Any peer ends the WHOLE process (every connection and thread of a server, not one) by closing its end before the victim's next write: a client that disconnects while a server writes its response, or a server that drops a client mid-request. Not P0: no code execution or data exposure, and a process that ignored SIGPIPE itself (`signal_ignore(SIGPIPE)`; sandhi's servers since 1.6.6) was never exposed. |
+| **Class** | Uncaught exception / improper handling of an exceptional condition (CWE-248, CWE-755): a process-fatal signal raised by a library on peer-controlled input (CWE-400 class). The plain-socket instance of CVE-66's class. |
+| **Affected** | Every program on Linux (x86_64, aarch64) or macOS (arm64, x86_64) that writes a TCP (or other stream) socket through the stdlib and had not ignored SIGPIPE, from the earliest `lib/net.cyr` through 6.6.15: `sock_send`, `sock_send_all`, `sock_send_a` — and so `lib/http.cyr` (requests), `lib/ws.cyr` (client frames), `lib/ws_server.cyr` (`ws_server_handshake`, `ws_server_send_frame` and every sender on it), `lib/yantra.cyr`, and the folded sandhi's CLIENT paths (its servers have ignored SIGPIPE since sandhi 1.6.6); the async backends' `async_send` (epoll task: a raw `SYS_WRITE`; kqueue task: `sys_write`) and `async_relay_once` (both backends). Windows (Winsock `send`, `async_win`'s `WSASend`) and agnos (`sock_send#48` answers -1 for a dead connection) raise no such signal. A pipe or a file written through these verbs keeps `write(2)`'s semantics, SIGPIPE included (no per-call flag exists for one). |
+| **Files** | `lib/syscalls.cyr` — new private `_fd_write_nosigpipe`; `lib/net.cyr` — `_net_os_send` (the non-Windows arm, the one choke point under the three `sock_send*` verbs); `lib/async.cyr` — `_async_send_task`, `async_relay_once`; `lib/async_macos.cyr` — `_async_send_task`, `async_relay_once` |
+| **Fixed** | 6.6.16 |
+
+**Vector.** The peer closes its socket (a FIN). The victim's next write reaches a closed socket,
+whose kernel answers with an RST; the write after that fails with EPIPE, and a flagless `write(2)` on
+a socket raises SIGPIPE with it. On Linux the RST arriving in CLOSE_WAIT sets `sk_err = EPIPE` and
+`sk_stream_error` sends the signal unless the send carries `MSG_NOSIGNAL` (a write that instead finds
+`ECONNRESET` pending returns it without a signal, and the NEXT write is EPIPE with one); on macOS
+`sosend` answers EPIPE for `SS_CANTSENDMORE` and signals unless the socket has `SO_NOSIGPIPE`. A
+socket the writer shut down both ways itself (`sock_shutdown(fd, 2)`) is killed on its first write
+the same way. Nothing in `lib/` ignored SIGPIPE for these callers: `lib/http.cyr`, `lib/ws.cyr` and
+`lib/ws_server.cyr` never call `signal_ignore`.
+
+**Impact.** Denial of service: the process dies (`128 + 13 = 141`), taking every connection and every
+thread with it. Measured against the 6.6.15 lib with SIGPIPE at `SIG_DFL`, a loopback pair whose
+accepted end was closed: the planning probe (`sock_send_all` in a loop) printed `11` and exited 141
+on x86_64 Linux, qemu-aarch64, pi (aarch64, kernel 7.0.0-1020-raspi), ecb (macOS 27.0.1 arm64) and ach
+(macOS 13.7.8 x86_64); and all seven reset rows of the new test — `sock_send_all`, `sock_send`,
+`sock_send_a`, a socket shut down both ways before its first write, `ws_server_send_frame`,
+`async_send` on the epoll / kqueue runtime, and `async_relay_once` from a pipe into the reset socket —
+read child exit 141 on x86_64, qemu-aarch64, pi, ecb and ach (`10 passed, 7 failed (17 total)` on each).
+
+**Fix.** ONE private leaf, `_fd_write_nosigpipe(fd, buf, n)` in `lib/syscalls.cyr`, under every
+plain-socket writer, so `lib/net.cyr` and both async backends cannot drift (the TLS transport keeps
+its own per-ctx-cached copy, `_tn_os_write` / `_tn_nosigpipe`, from CVE-66). The process-wide signal
+disposition is never touched.
+- **Linux** (x86_64 and aarch64): `sys_sendto(fd, buf, n, 0x4000 /*MSG_NOSIGNAL*/, 0, 0)` —
+  `SYS_SENDTO` 44 on x86_64, the native 206 on aarch64, no ESYSXLAT row involved. With no destination
+  it is `write(2)` on a connected socket, honouring O_NONBLOCK and SO_SNDTIMEO the same way (both are
+  `tcp_sendmsg`), so `sock_send_all`'s short-write contract is unchanged. `ENOTSOCK` (-88) falls
+  through to `write(2)`.
+- **macOS** (arm64 and x86_64): `setsockopt(fd, SOL_SOCKET 0xFFFF, SO_NOSIGPIPE 0x1022, &1, 4)` on
+  every call (both Mach-O backends route `sys_setsockopt` to BSD 105). Per call rather than at
+  socket creation because sandhi creates IPv6 sockets with a raw `sys_socket` that never passes
+  through `tcp_socket`. xnu answers `EINVAL` for a socket already shut down both ways — what an RST
+  leaves — and that is answered `-EPIPE` with NOTHING written, the errno the write would have given,
+  minus the signal (failing closed: writing after a refused `SO_NOSIGPIPE` is the hole itself).
+  `ENOTSOCK` (-38: a pipe or a file) writes; any other refusal is returned. (Darwin does define
+  `MSG_NOSIGNAL` — 0x80000, measured working on 13.7.8 — but it is not relied on.)
+- Every target's tail is `write(2)`: the pipe / file fallback on POSIX; on agnos the peer's #48
+  route; on PE / EFI / cx it is unused by net.cyr (the Winsock arm is unchanged) or harmless.
+- `_net_os_send`'s non-Windows arm, `lib/async.cyr`'s `_async_send_task` (was a raw `SYS_WRITE`) and
+  `async_relay_once`, and `lib/async_macos.cyr`'s `_async_send_task` and `async_relay_once` call it.
+
+**Behaviour change.** A plain-socket writer that has not ignored SIGPIPE now survives a peer reset:
+`sock_send_all` returns `-EPIPE` (or `-ECONNRESET`), `sock_send` / `sock_send_a` return
+`Err(EPIPE)` / `Err(ECONNRESET)`, `ws_server_send_frame` and the http / ws senders return their
+negative error, `async_send`'s task and `async_relay_once` a negative count. On macOS a socket shut
+down both ways answers `-EPIPE` without a write being attempted (the errno the write itself would
+give). No public API change. ⚠ **The syscall set changes:** on Linux every such socket write is
+`sendto(2)` (44 x86_64 / 206 aarch64) instead of `write(2)` — `write(2)` remains only for an fd that
+is not a socket — and on macOS each send adds one `setsockopt(2)`. A seccomp allowlist that admits
+`write` but not `sendto` now SIGSYS-kills a self-confined plain-socket writer on its first send; a
+fallback cannot help, because a seccomp kill is not an error return. kavach's `basic` filter is one
+(read from its source and measured in a probe: `security_create_basic_seccomp_filter`, kill on a
+miss); its sandboxed spawn paths use the exec deny-list filter and are not affected. Filed for
+kavach as a consumer note.
+
+**Verified.** `tests/tcyr/crossos/net_plain_write_peer_reset.tcyr` (new, in the release gate's
+cross-OS set; 17 assertions on POSIX, 7 on Windows). Each reset row runs in a child — a `fork()` on
+POSIX (no execve, so the file also runs under qemu-aarch64 without binfmt), the test spawning itself
+on Windows — that sets SIGPIPE to `SIG_DFL` first, builds its own loopback pair, closes the accepted
+end, writes through one path until a write fails and then three more times, and must exit 0: every
+write after the reset `< 0`, the first errno in the accepted set (Linux {32, 104}, Darwin {32, 54};
+never one exact value — which one a write sees depends on whether the peer's FIN or its RST was
+processed first), and alive. A POSIX control child writing the same reset connection with a raw
+`write(2)` must die 141, so a host that would not have killed the writer cannot pass the rows
+vacuously. Pipe and file rows pin the ENOTSOCK fallback (every byte written and read back).
+17/17 on x86_64 Linux, qemu-aarch64, pi, ecb and ach (10 consecutive runs each on pi, ecb and ach,
+20 on x86_64, 16 concurrent copies on x86_64); 7/7 on cass (8 consecutive runs) (Windows rows 1-5, observed
+`WSAECONNABORTED` 10053 and `WSAESHUTDOWN` 10058); the observed first errno on every POSIX host and
+path was EPIPE (32). Against the 6.6.15 lib all seven reset rows read 141 on x86_64, qemu-aarch64,
+pi, ecb and ach. Mutants, each RED: `_net_os_send` alone back to `write(2)` — rows 1-5 at 141 (x86_64);
+the async writers alone back to `write(2)` — the `async_send` and relay rows at 141 (x86_64); the
+ENOTSOCK fallback removed — the pipe and file rows read -88 (x86_64); the macOS EINVAL arm made to
+write anyway (fail open) — the shut-down-first row at 141 on ecb and ach. The planning probe exits 7
+with the write returning -32 (was 141) on x86_64, qemu-aarch64, pi, ecb and ach.
+`sock_send_all_short_write`, `tls_native_socket_transport`, `http_connect_by_name`,
+`async_macos_verbs`, `async_relay_once_no_deadlock` (and `http_short_send`, `net_loopback_tcp`,
+`ws_client_short_write`, `ws_server_socket_reads`) green on pi, ecb, ach and cass; all 69 `.tcyr` that
+include net / async / ws / http / tls exit 0 on x86_64. `tcyr_corpus_cross_compiles.sh` green (PE,
+both Mach-O, agnos); the leaf also compiles and runs on cx (cxvm).
+
+**Not covered.** A pipe or a file written through these verbs keeps `write(2)`'s SIGPIPE — neither OS
+has a per-call flag for one, and the process-wide disposition is the application's
+(`signal_ignore(SIGPIPE)`). A raw `sys_write` / `syscall(SYS_WRITE, ..)` a consumer issues on a
+socket itself is the consumer's. UDP never raises SIGPIPE (`net_dns_query_ipv4`, `async_resolve`'s
+connected UDP send are unaffected either way). Windows and agnos were never exposed.
