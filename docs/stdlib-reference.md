@@ -654,9 +654,9 @@ lib/sandhi.cyr).
 | `tcp_socket` / `udp_socket` | `→ Result<fd, errno>` | Create socket |
 | `sock_bind` | `sock_bind(fd, addr, port) → Result<0, errno>` | Bind |
 | `sock_listen` | `sock_listen(fd, backlog) → Result<0, errno>` | Listen |
-| `sock_accept` | `sock_accept(fd) → Result<client_fd, errno>` | Accept |
+| `sock_accept` | `sock_accept(fd) → Result<client_fd, errno>` | Accept. The accepted socket is BLOCKING on every target, whatever the listener's mode (6.6.16: Windows and macOS used to inherit a non-blocking listener's mode; Linux never did) — call `sock_set_nonblocking` on it if you want it non-blocking |
 | `sock_connect` | `sock_connect(fd, addr, port) → Result<0, errno>` | Connect |
-| `sock_send` / `sock_recv` | `(fd, buf, len) → Result<n, errno>` | Send/receive |
+| `sock_send` / `sock_recv` | `(fd, buf, len) → Result<n, errno>` | Send/receive. A peer that reset the connection is `Err(EPIPE)` / `Err(ECONNRESET)`, never SIGPIPE — the same for `sock_send_all` (`-EPIPE` / `-ECONNRESET`) and `sock_send_a` (6.6.16: `MSG_NOSIGNAL` on Linux, `SO_NOSIGPIPE` on macOS; `write(2)` for an fd that is not a socket) |
 | `sock_close` / `sock_shutdown` | `(fd, [how]) → int` | Bare int — no Err variant since failure on a valid fd is essentially impossible |
 | `net_parse_ipv4` | `net_parse_ipv4(s) → addr \| -1` | Strict dotted-quad literal → packed network-byte-order address (the `sock_connect` form). Leading zeros refused (v6.6.9) |
 | `net_resolve_ipv4` | `net_resolve_ipv4(host) → addr \| -1` | Literal, then `localhost` / `*.localhost` (always 127.0.0.1), then `/etc/hosts`, then one DNS A query to the first IPv4 `nameserver` in `/etc/resolv.conf` (127.0.0.1 if none). IPv4 only, no `search` domains (v6.6.9) |
@@ -752,7 +752,7 @@ one fn so the `#ifdef`-blind static checker sees a single definition):
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `signal_ignore` | `signal_ignore(signum) → 0/-errno` | Set the disposition to `SIG_IGN` |
+| `signal_ignore` | `signal_ignore(signum) → 0/-errno` | Set the disposition to `SIG_IGN`. For SIGPIPE it is needed for pipes and raw `write(2)`s only — `lib/net.cyr`'s socket writers never raise SIGPIPE since 6.6.16 |
 | `signal_default` | `signal_default(signum) → 0/-errno` | v6.5.7 — set it back to `SIG_DFL`. **Not optional alongside `signal_ignore`**: `SIG_IGN` is *inherited across `execve`* (a handler is reset, an ignore is not), so a process that ignores a signal then fork+execve's a child hands that child a disposition its own code never chose. Call it in the child between fork and execve |
 
 Readiness wait (every peer, v6.6.13):
@@ -930,16 +930,23 @@ OS thread creation and synchronization using clone/futex on Linux (v6.0.53: Wind
 | `mutex_new` | `mutex_new() → ptr` | Create a futex-based mutex (0=unlocked) |
 | `mutex_lock` | `mutex_lock(m) → 0` | Acquire mutex; blocks via futex when contended (acquire barrier) |
 | `mutex_unlock` | `mutex_unlock(m) → 0` | Release mutex; wakes one waiter (release barrier) |
-| `chan_new` | `chan_new(cap) → ptr` | Create bounded MPSC channel with capacity cap |
-| `chan_send` | `chan_send(ch, val) → 0/-1` | Send value to channel (blocks if full; returns -1 if closed) |
-| `chan_recv` | `chan_recv(ch) → val` | Receive from channel (blocks if empty; returns 0 if closed) |
+| `chan_new` | `chan_new(cap) → ptr` | Create a bounded MPMC channel with capacity cap |
+| `chan_send` | `chan_send(ch, val) → 0/-1` | Send value to channel (blocks if full where `CHAN_BLOCKING == 1`; on a serial peer it answers at once; returns -1 if closed) |
+| `chan_recv` | `chan_recv(ch) → val` | Receive from channel (blocks if empty where `CHAN_BLOCKING == 1`; on a serial peer it answers at once; returns 0 once closed and empty) |
 | `chan_try_recv` | `chan_try_recv(ch) → val/0` | Non-blocking receive (returns 0 if empty or closed) |
-| `chan_close` | `chan_close(ch) → 0` | Close channel; wakes all blocked receivers |
+| `chan_close` | `chan_close(ch) → 0` | Close channel; wakes every blocked receiver (0) and sender (-1) |
 
-⚠ `chan_*` here is the **in-process MPSC thread channel**. agnos's kernel
+Two capabilities, exported by every thread peer, say what a target can do — ask them, never
+test a target name: `THREADS_CONCURRENT` (1 = `thread_create` starts a second thread; 0 = the
+body runs inline at create) and `CHAN_BLOCKING` (1 = `chan_recv` / `chan_send` block and any
+number of producer and consumer threads may share the ring; 0 = no second thread exists to end
+a wait). `CHAN_BLOCKING`: Linux 1 · arm64 macOS 1 · Windows 1 · x86 macOS 0 · agnos 0 · cx 0
+(6.6.16). A pool of workers that loops on `chan_recv` needs `CHAN_BLOCKING == 1`.
+
+⚠ `chan_*` here is the **in-process MPMC thread channel**. agnos's kernel
 channel syscalls (`#97 chan_op`, minted v6.5.8) are deliberately named
 `sys_chan_*` — reusing `chan_send`/`chan_recv`/`chan_close` would have let
-last-definition-wins silently replace the MPSC channel on agnos only.
+last-definition-wins silently replace the MPMC channel on agnos only.
 
 ### thread_local.cyr (v6.0.61)
 

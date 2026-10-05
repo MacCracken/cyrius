@@ -2324,6 +2324,10 @@ return f();              # ✓ forwarding the pair onward
 The requirement follows the value through `return`, so forwarding it out of a wrapper and
 binding it one-wide there is caught too.
 
+`f` is any call spelling: an explicit generic `g<T>(..)` and a method `p.m(..)` are refused,
+destructured and propagated with `?` exactly like `f(..)` (v6.6.16 — before that, `?` on them
+crashed and a single bind dropped the payload silently).
+
 **Every path of a pair-returning fn returns a variant.** In a fn that returns `Ok(x)` /
 `Some(v)` on one path, a `return rv;`, `return 0;` or `return wrapper();` on another hands the
 caller that value AS ITS TAG and a stale payload, so it is warned (*"returns a `: stack` pair on
@@ -3290,7 +3294,7 @@ include "lib/fmt.cyr"     # Formatting: fmt_int, fmt_hex, fmt_hex0x, fmt_bool, f
 include "lib/args.cyr"    # CLI args: args_init, argc, argv
 include "lib/fnptr.cyr"   # Function pointers: fncall0, fncall1, fncall2
 include "lib/thread.cyr"  # Threads (clone+mmap) incl. thread_create_detached / thread_is_done,
-                          # mutex (three-state futex), MPSC channels (chan_send/recv + try_ variants)
+                          # mutex (three-state futex), MPMC channels (chan_send/recv + try_ variants; blocking where `CHAN_BLOCKING == 1`)
 include "lib/async.cyr"   # Async primitives
 include "lib/freelist.cyr"# Freelist allocator (free + reuse, O(1) alloc/free)
 include "lib/math.cyr"    # Math functions: f64_atan and extended math ops
@@ -3610,9 +3614,10 @@ convert back to UTF-8 for the cyrius API.
 - `chan_new(cap)`, `chan_send(ch, val)`, `chan_recv(ch)`, `chan_try_recv(ch)`,
   `chan_try_send(ch, val)`, `chan_close(ch)` — thread-safe FIFO ring
 
-Mutexes are preemptive-safe (block contending threads). Channel `recv` is
-non-blocking (returns 0 when empty); blocking variants require condition
-variables, not yet routed.
+Mutexes are preemptive-safe (block contending threads). Since 6.6.16 the channel
+blocks exactly as on Linux (`CHAN_BLOCKING = 1`): `chan_recv` waits for a value and
+`chan_send` waits for room, each waiter parked on an I/O completion port taken from a
+small process-wide pool (no kernel handle is held per channel).
 
 **Command-Line Arguments & Environment**
 - `args_init()` — parse GetCommandLineW via the real CommandLineToArgvW
@@ -4249,7 +4254,7 @@ everywhere else. cycc warns on a conflicting `SYS_*` redefinition.
   one bit per *implemented* op, and a merely-reserved op reads 0. ⚠ `sys_chan_endow` returns an
   **fd, not 0** — the one op in the band that does; the parent passes it to the child as
   `AGNOS_CHAN=<fd>` in the `sys_spawn_path_env` blob. ⚠ The `sys_chan_` prefix is deliberate:
-  bare `chan_send`/`chan_recv`/`chan_close` are already the in-process MPSC thread channel, and
+  bare `chan_send`/`chan_recv`/`chan_close` are already the in-process MPMC thread channel, and
   cyrius resolves duplicate fns last-definition-wins.
 - Pipes, epoll, signalfd, timerfd (the event loop primitives). ⭐ v6.6.7: `sys_read` / `sys_write`
   (and every short raw `syscall`, which cycc now emits with a4 = 0) BLOCK on an empty / full pipe
@@ -4277,6 +4282,8 @@ everywhere else. cycc warns on a conflicting `SYS_*` redefinition.
 - `chmod` (no permission model; `sys_chmod` is a no-op stub returning 0)
 - Thread-local storage (not modeled in agnos ring-3)
 - Dynamic linking (`dlopen`, auxv machinery), only static binaries
+- Socket options: `sys_setsockopt` is a -38 decline stub (6.6.16); deadlines go through
+  `sock_set_recv_timeout` / `sock_set_send_timeout`
 
 The agnos syscall surface is **append-only, currently #0–#104 + #106–#108 at agnos 1.57.9 (#105 withdrawn)**. The
 re-freeze rule (§5) names the agnos **kernel dispatch** — `agnos/kernel/core/syscall.cyr` —

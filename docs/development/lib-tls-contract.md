@@ -275,7 +275,10 @@ allocator-aware client connect.
 
 The symmetric mirror of the client trio, so a TLS server rides the same backend-dispatched
 contract. `creds` is one pointer to a 4-slot struct `[cert@0, cert_len@8, key@16, key_len@24]` —
-the DER certificate and the DER private key. The buffers are referenced, not copied, until the
+the DER certificate and the DER private key. Native also takes the key as PEM
+(`-----BEGIN PRIVATE KEY-----` PKCS#8, or `-----BEGIN EC PRIVATE KEY-----` SEC1; Ed25519, P-256,
+P-384), decoded once per process per key text (6.6.16; see "Memory: where a connection lives").
+libssl takes DER only. The buffers are referenced, not copied, until the
 handshake: the caller keeps them alive through `tls_accept_complete`.
 
 | Verb | Signature | Returns | Contract |
@@ -576,6 +579,12 @@ libssl's session-cache state machine; this is acknowledged technical debt, not a
     131,072 B;
   - the shared system root set lives on the global heap, never in `a`, so resetting `a` never
     disturbs another connection's roots.
+- **A PEM private key** (a server's in `creds`, or a native client's own key) is decoded once
+  per process per distinct key text (6.6.16). The decode and a copy of the text stay on the
+  global heap for the life of the process, never in `a`. Every later load of the same text
+  costs 0 B. At most 32 texts are kept; a further text is decoded on every load, onto the
+  global heap, as every PEM key was until 6.6.16 (120 B per accept for a 119-byte Ed25519
+  key). A DER key never takes the decoder.
 - **libssl** — OpenSSL's own heap: `tls_close` frees the `SSL` and the `SSL_CTX`; `a` does not
   apply; the 40-byte shim is on the global heap.
 
