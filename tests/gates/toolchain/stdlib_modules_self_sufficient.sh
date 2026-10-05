@@ -137,6 +137,10 @@
 #      axis 7 FAIL: chan_send's WAKE, _chan_wake and chan_recv's WAKE via the probe (140, not
 #      255); chan_send's WAIT and chan_recv's WAIT via the blocking probes (140, not timeout's
 #      124). All five removed on real hardware: ecb and ach cxvm exit 140 (the cross-OS fixture).
+#   y2. 6.6.16: the channel's futex calls moved into two helpers, so two guards remain.
+#      _chan_park's removed -> axis 7 FAIL through both blocking probes (140, not 124; measured).
+#      _chan_wake's is not reachable on cx: a wake is owed only to a thread registered as
+#      parked, and the one guest thread is never parked while another changes the channel.
 # MUTATION LEDGER (6.6.12 B06, measured against this file)
 #   z. lib/thread.cyr's cx `return 0 - 1` in thread_join removed -> axis 7 FAIL (the join probe:
 #      the instrumented cxvm exits 140 — FUTEX_WAIT on the fake tid — and the plain cxvm spins

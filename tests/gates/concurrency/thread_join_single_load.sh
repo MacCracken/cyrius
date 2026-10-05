@@ -62,7 +62,8 @@ n_priv=$(printf '%s\n' "$BODY" | grep -c 'FUTEX_PRIVATE_FLAG' || true)
 check "no FUTEX_PRIVATE_FLAG in thread_join" 0 "$n_priv"
 
 echo "axis 5 — the sibling futex waiters keep the same discipline:"
-# chan_send observes `count` once under the mutex; chan_recv and mutex_lock pass constants.
+# chan_send / chan_recv park on a seq value read once under the mutex (6.6.16); mutex_lock
+# passes a constant.
 # None of them may grow a fresh load in the expected-value slot.
 n_sib=$(grep -cE 'FUTEX_WAIT, load64\(' lib/thread.cyr lib/sync.cyr 2>/dev/null | awk -F: '{s+=$2} END{print s+0}')
 check "no re-loading waiter anywhere in thread.cyr/sync.cyr" 0 "$n_sib"

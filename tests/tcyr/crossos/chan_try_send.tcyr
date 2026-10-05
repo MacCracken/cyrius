@@ -86,23 +86,14 @@ fn main(): i64 {
     }
     assert_eq(ok, 1, "10 send/recv cycles through a cap-2 ring stay correct");
 
-    # BLOCKING chan_send is deliberately NOT exercised on macOS. It parks on
-    # FUTEX_WAIT, and Darwin has no futex — a raw SYS_FUTEX raises SIGSYS and kills
-    # the process (exit 140). That gap is pre-existing and tracked as issue
-    # 2026-07-03 (macOS threading), pinned to v6.5.x; the NON-BLOCKING pair above
-    # runs unguarded on macOS and must keep passing there.
-    # ⚠ v6.5.41 — A DE-ROT SWEEP LISTED THIS GUARD AS STALE. IT IS NOT. The rationale above
-    # is live: Darwin has no futex, and a raw SYS_FUTEX raises SIGSYS which KILLS the process
-    # (exit 140) rather than failing an assertion — so removing this guard does not redden a
-    # test, it takes down the ecb leg of the release gate. The two guards that WERE stale
-    # (sync_mutex_contended's tautology, thread_detach) were removed in the same pass after
-    # checking the live macOS peer; this one was checked and kept.
-    #ifndef CYRIUS_TARGET_MACOS
+    # 6.6.16: this row ran everywhere but macOS, behind a guard whose premise was a raw
+    # SYS_FUTEX in chan_send (SIGSYS on Darwin). macOS has had its own peer since v6.5.11
+    # (lib/thread_macos.cyr), which never issues one, and arm64 macOS now parks on __ulock.
+    # The waiting itself is tests/tcyr/crossos/chan_blocking_threads.tcyr's job.
     test_group("blocking chan_send still works (not regressed)");
     var c6 = chan_new(2);
     assert_eq(chan_send(c6, 55), 0, "chan_send still enqueues");
     assert_eq(chan_try_recv(c6), 55, "and is readable");
-    #endif
 
     var r = assert_summary();
     return r;
