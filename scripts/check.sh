@@ -1714,6 +1714,13 @@ _chk_gate "$ROOT/tests/gates/diagnostics/nested_fn_refused.sh"
 # a tail call is reported at 14:18, not the next token. Binaries identical without the attribute.
 _chk_gate "$ROOT/tests/gates/diagnostics/deprecated_every_call_path.sh"
 
+# 6.6.16 (C10) — cycc's `lib/...` include fallback reads CYRIUS_HOME's store slot, else HOME's,
+# from the WHOLE environment: both orders, empty = unset, no fall-through to HOME, past 4 KB / 8 KB
+# and across read boundaries, the 1984-B bound never truncated — x86, aarch64, cx, the PE cross and
+# the native aarch64 fork under qemu, all built from the tree. The selection is the compile's own
+# reachable-undefined refusal, so nothing has to run.
+_chk_gate "$ROOT/tests/gates/toolchain/include_fallback_cyrius_home.sh"
+
 # 6.6.9 (bite 3) — a second struct/union with a different layout (the first silently won) and
 # an enum constant over a zero/computed global of the same name are warned, not silent.
 _chk_gate "$ROOT/tests/gates/frontend/redefinition_layout_and_enum_over_var.sh"
