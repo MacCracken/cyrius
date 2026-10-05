@@ -598,17 +598,18 @@ var _CFG_DEFAULT = 0;
 var _CFG_MANIFEST = 1;
 var _CFG_ENV = 2;
 var _CFG_ARG = 3;
-var _CFG_N = 10;
+var _CFG_N = 11;
 var _CK_ENTRY = 0;
 var _CK_OUTPUT = 1;
 var _CK_DCE = 2;
 var _CK_STRICT = 3;
 var _CK_DEFINES = 4;
-var _CK_MODULES = 5;
-var _CK_PKG_NAME = 6;
-var _CK_PKG_VERSION = 7;
-var _CK_PKG_CYRIUS = 8;
-var _CK_SECTIONS_BASE = 9;
+var _CK_TEST = 5;
+var _CK_MODULES = 6;
+var _CK_PKG_NAME = 7;
+var _CK_PKG_VERSION = 8;
+var _CK_PKG_CYRIUS = 9;
+var _CK_SECTIONS_BASE = 10;
 # 1 when the resolved `dce` is on and did NOT come from the environment: compile() then hands cycc
 # CYRIUS_DCE=1, replacing any inherited value (an argument beats CYRIUS_DCE=0).
 var _cfg_dce_inject = 0;
@@ -623,6 +624,7 @@ fn _cfg_name(i): i64 {
     if (i == _CK_DCE) { return "build.dce"; }
     if (i == _CK_STRICT) { return "build.strict"; }
     if (i == _CK_DEFINES) { return "build.defines"; }
+    if (i == _CK_TEST) { return "build.test"; }
     if (i == _CK_MODULES) { return "build.modules"; }
     if (i == _CK_PKG_NAME) { return "package.name"; }
     if (i == _CK_PKG_VERSION) { return "package.version"; }
@@ -633,7 +635,7 @@ fn _cfg_name(i): i64 {
 # 0 = string, 1 = bool, 2 = list
 fn _cfg_kind(i): i64 {
     if (i == _CK_DCE || i == _CK_STRICT) { return 1; }
-    if (i == _CK_DEFINES || i == _CK_MODULES) { return 2; }
+    if (i == _CK_DEFINES || i == _CK_TEST || i == _CK_MODULES) { return 2; }
     return 0;
 }
 
@@ -814,6 +816,7 @@ fn _cfg_resolve_build(src_arg, out_arg): i64 {
     if (_cfg_mf_bool(_CK_STRICT, "build", "strict") != 0) { return 1; }
     if (_cfg_mf_strs(_CK_DEFINES, "build", "defines") != 0) { return 1; }
     if (_cfg_defines_ok(_cfg_val(_CK_DEFINES), "cyrius.cyml [build] defines") != 0) { return 1; }
+    if (_cfg_mf_strs(_CK_TEST, "build", "test") != 0) { return 1; }
     if (_cfg_mf_strs(_CK_MODULES, "build", "modules") != 0) { return 1; }
     if (_cfg_mf_str(_CK_PKG_NAME, "package", "name") != 0) { return 1; }
     if (_cfg_mf_str(_CK_PKG_VERSION, "package", "version") != 0) { return 1; }
@@ -837,6 +840,19 @@ fn _cfg_resolve_build(src_arg, out_arg): i64 {
     var defs = _cli_values("-D");
     if (vec_len(defs) > 0) { _cfg_put(_CK_DEFINES, defs, _CFG_ARG, "-D"); }
     return 0;
+}
+
+# `[build] test` for a bare `cyrius test` (its argument rung is the operand list, which takes the
+# other path entirely). Returns the declared targets (a vec) or 0, and -1 after naming a value of
+# the wrong type.
+fn _cfg_resolve_test(): i64 {
+    if (_mf_load() < 0) { return 0 - 1; }
+    var v = _mf_strs("build", "test");
+    if (_toml_bad == 1) {
+        _cfg_bad("build", "test", "a path or an array of paths");
+        return 0 - 1;
+    }
+    return v;
 }
 
 # Hand the resolved values to the compile.

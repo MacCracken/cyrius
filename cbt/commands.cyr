@@ -530,6 +530,74 @@ fn cmd_test(source): i64 {
 # link to an ancestor made this re-descend until PATH_MAX — measured as **41 passed** for
 # a tree holding ONE .tcyr. An inflated pass count reads as coverage, which is the worst
 # possible failure for a test runner.
+# 6.6.17 (P1): the files a bare `cyrius test` has already run, so a file that `[build] test` names
+# AND the tests/ walk finds runs ONCE (crab declares `test = "tests"`; chakshu, klug and sit name
+# their tests/<name>.tcyr). 0 = not tracking (`cyrius tests`, which never reads the key).
+var _tests_seen = 0;
+
+# `p` with leading "./" and doubled / trailing slashes removed — the one spelling `_tests_seen`
+# compares. A fresh cstr.
+fn _test_norm(p): i64 {
+    var n = strlen(p);
+    var out = alloc(n + 1);
+    var i = 0;
+    var o = 0;
+    while (i + 1 < n && load8(p + i) == 46 && load8(p + i + 1) == 47) {
+        i = i + 2;
+        while (i < n && load8(p + i) == 47) { i = i + 1; }
+    }
+    while (i < n) {
+        var c = load8(p + i);
+        var dup = 0;
+        if (c == 47 && o > 0) {
+            if (load8(out + o - 1) == 47) { dup = 1; }
+        }
+        if (dup == 0) {
+            store8(out + o, c);
+            o = o + 1;
+        }
+        i = i + 1;
+    }
+    while (o > 1 && load8(out + o - 1) == 47) { o = o - 1; }
+    store8(out + o, 0);
+    return out;
+}
+
+# 1 when `p` has not run yet in this bare `cyrius test` (and records it); always 1 when not tracking.
+fn _tests_first_run(p): i64 {
+    if (_tests_seen == 0) { return 1; }
+    var np = _test_norm(p);
+    var i = 0;
+    while (i < vec_len(_tests_seen)) {
+        if (streq(vec_get(_tests_seen, i), np) == 1) { return 0; }
+        i = i + 1;
+    }
+    vec_push(_tests_seen, np);
+    return 1;
+}
+
+# 6.6.17 (P1): run what `[build] test` declares — a file as-is whatever its extension (the init
+# template's is src/test.cyr), a directory's .tcyr files recursively. 41 manifests declared the key
+# and nothing read it (kashi's 397 assertions never ran in CI). A target that does not exist is a
+# FAILED run, by name — a typo must not read as "nothing to test".
+fn _tests_run_declared(targets): i64 {
+    var i = 0;
+    while (i < vec_len(targets)) {
+        var t = _test_norm(vec_get(targets, i));
+        i = i + 1;
+        if (is_dir(str_from(t)) == 1) {
+            _tests_walk(t);
+        } elif (file_exists(t) == 1) {
+            _tests_found = 1;
+            if (_tests_first_run(t) == 1) { cmd_test(t); }
+        } else {
+            _err_ctx("cyrius.cyml [build] test names a path that does not exist", t);
+            _fail = _fail + 1;
+        }
+    }
+    return 0;
+}
+
 fn _tests_walk_d(dir, depth): i64 {
     if (depth > 64) {
         sys_write(STDERR_FD, "warning: test walk depth cap (64) hit — symlink loop? subtree skipped: ", 73);
@@ -554,7 +622,7 @@ fn _tests_walk_d(dir, depth): i64 {
         }
         elif (str_ends_with(name, str_from(".tcyr")) == 1) {
             _tests_found = 1;
-            cmd_test(full);
+            if (_tests_first_run(full) == 1) { cmd_test(full); }
         }
         ei = ei + 1;
     }

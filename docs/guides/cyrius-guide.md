@@ -1824,7 +1824,11 @@ dce = true                   # dead-code elimination; --dce / CYRIUS_DCE=1 (CYRI
 strict = true                # passes cycc --strict; --strict / CYRIUS_STRICT=1
 ```
 
-They configure `cyrius build`; `-D` on `test` / `run` / `bench` stays a command-line choice. A
+They configure `cyrius build`; `-D` on `test` / `run` / `bench` stays a command-line choice.
+`[build] test` (a file, a directory, or a list of either — `src/test.cyr` is what `cyrius init`
+writes) is what a bare `cyrius test` runs FIRST, before every `.tcyr` under `tests/`; a file both
+name runs once, and a declared path that does not exist is a named failure. Before 6.6.17
+nothing read the key, so a declared `src/test.cyr` never ran — 41 manifests declared one. A
 mistyped value (`dce = "yes"`) is refused by name, and so is a define holding a control
 character (it would start a new source line in the compiled unit). `[build] target` is **held**
 (pass `--target` / `--aarch64` / `--win` / `--agnos`), `[build] features` is **dropped** (features
@@ -1893,6 +1897,7 @@ cyrius build src/main.cyr build/myapp   # resolves deps + compiles
 cyrius deps                              # manually resolve deps
 cyrius build -v src/main.cyr build/myapp # verbose (shows compiler, binary size)
 cyrius test tests/test.tcyr             # resolve deps + compile + run
+cyrius test                              # [build] test first (6.6.17), then every .tcyr under tests/, each once
 cyrius test a.tcyr b.tcyr -D FEATURE     # 1..N files; -D/-DNAME reaches test/run/bench/fuzz/check too (v6.6.5)
 cyrius run src/main.cyr host 443         # compile + run; everything AFTER the source is the program's argv (v6.6.5)
 cyrius run prog.cyx                      # run cx bytecode via cxvm — arguments are REFUSED (cx has no guest argv yet)

@@ -728,8 +728,14 @@ fn main(): i64 {
         #
         # ONE root, deliberately: tests/tcyr lives UNDER tests/, so walking both
         # recursively would visit every file in it TWICE (axis 7's double-count).
+        # 6.6.17 (P1): `[build] test` runs FIRST when declared, then the tests/ walk — what the
+        # init templates and 25 consumer CIs always said bare `cyrius test` did; each file once.
         _pass = 0; _fail = 0;
         _tests_found = 0;
+        var t_decl = _cfg_resolve_test();
+        if (t_decl == 0 - 1) { return 1; }
+        _tests_seen = vec_new();
+        if (t_decl != 0) { _tests_run_declared(t_decl); }
         if (is_dir(str_from("tests")) == 1) {
             _tests_walk("tests");
         }

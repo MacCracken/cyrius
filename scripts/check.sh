@@ -1851,6 +1851,10 @@ _chk_gate "$ROOT/tests/gates/toolchain/build_config_precedence.sh"
 # SKIP by name without wine.
 _chk_gate "$ROOT/tests/gates/toolchain/build_config_windows_arm.sh"
 
+# 6.6.17 (P1) — bare `cyrius test` runs [build] test (file / dir / list) first, then tests/, each
+# file once; a missing target is a named failure; absent key = unchanged; an argument wins.
+_chk_gate "$ROOT/tests/gates/toolchain/test_runs_build_test.sh"
+
 # 6.6.10 (bite 12) — the check driver runs only tools it BUILT from this tree in this run:
 # all nine executables it runs come from its private run dir, planted build/ stubs and a
 # ~/.cyrius/bin copy are ignored, and a tool that does not compile is a FAIL naming it.

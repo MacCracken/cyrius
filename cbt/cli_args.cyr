@@ -293,6 +293,11 @@ fn _cli_help_extra(verb): i64 {
         println("                     environment > manifest > default); build nothing, resolve no deps");
         println("  <source>/<output> may be omitted when ./cyrius.cyml declares [build] entry / output.");
     }
+    if (streq(verb, "test") == 1) {
+        println("");
+        println("  With no <test.tcyr>: what ./cyrius.cyml [build] test declares (a file, a directory");
+        println("  or a list) runs first, then every .tcyr under tests/ (recursive); each file once.");
+    }
     if (streq(verb, "run") == 1) {
         println("");
         println("  Everything after <source> is forwarded to the program, go-run style:");
