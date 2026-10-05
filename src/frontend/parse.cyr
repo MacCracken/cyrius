@@ -30,10 +30,16 @@ var _unsafe_depth = 0;
 # `(STR)` args, storing the string token value (offset<<32 | length
 # into str_data at 0x21A000) in _deprecated_msg_pending. PARSE_FN_DEF
 # transfers both into fn_flags[fi] bit 2 + fn_deprecated_msg[fi].
-# Call-site check lives in PARSE_FNCALL — fires at every call, not
-# just statement-level discards (that's #must_use's job).
+# Call-site check is `_callee_site_checks` (parse_fn.cyr) — every call path, at every
+# call, not just statement-level discards (that's #must_use's job).
 var _deprecated_pending = 0;
 var _deprecated_msg_pending = 0;
+# 6.6.16 — PASS 1's own copy of the pair: `_tl_deprecated(S, 0)` records, `_prescan_fn_sig`
+# hands it to the fn it registers (`_prescan_dep_take`), so a call parsed BEFORE the
+# definition sees the bit. Never the pass-2 pair: a flag carried across the pass boundary
+# is the `_pub_pending` defect (see `_prescan_fn_sig`). CHANGELOG [6.6.16]
+var _pre_dep_pending = 0;
+var _pre_dep_msg = 0;
 
 # v5.8.20: pending fn-attribute flags for the next `fn` definition.
 # Lexer tokens 125 / 126 / 127 (#pure / #io / #alloc) set the

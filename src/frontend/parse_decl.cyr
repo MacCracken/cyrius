@@ -1182,7 +1182,8 @@ fn _field_load_on(S, noff, fnoff, pfl_beg, idx, sid): i64 {
         # `argc` indexes the callee's params, so it starts at 1 (`self` is param 0 and is
         # int-class); `m_int_argc` is what ECALLPOPS/ECALLCLEAN take, since SIMD args never
         # reach the stack. CHANGELOG [6.6.5]
-        var m_line = GTLINE(S, GTI(S));
+        var m_ti = GTI(S);           # the `(`; the method's NAME is the token before it
+        var m_line = GTLINE(S, m_ti);
         STI(S, GTI(S) + 1);  # consume (
         var argc = 1;
         var m_simd_table: i64[24];   # 8 args x 3 i64s, a LOCAL — a nested call gets its own
@@ -1216,7 +1217,7 @@ fn _field_load_on(S, noff, fnoff, pfl_beg, idx, sid): i64 {
         ECALLPOPS(S, m_int_argc);
         _simd_arg_second_pass(S, &m_simd_table, load64(&m_st + 8));
         _sc_x8(S, mfi, m_rt);        # 6.6.6: aarch64's retptr register
-        _vis_check(S, mfi, mname);   # v6.6.4: `s.method()` is its own call path
+        _callee_site_checks(S, mfi, mname, m_ti - 1);   # v6.6.4: `s.method()` is its own call path
         var mfoff = L64(_fnt_offsets + mfi * 8);
         if (mfoff >= 0) { ECALLTO(S, mfoff); }
         else { ECALLFIX(S, mfi); }
@@ -3641,7 +3642,7 @@ fn _try_vector_call_assign(S, noff): i64 {
     if (vns <= 1) { return 0; }
     if (_TARGET_PE == 1) {
         var vnoff = PEEKV(S);
-        _vis_check(S, vfi, vnoff);   # v6.6.4: PE retptr vector receive emits its own call
+        _callee_site_checks_here(S, vfi, vnoff, 0);   # v6.6.4: PE retptr vector receive emits its own call
         STI(S, GTI(S) + 1);   # consume callee IDENT
         STI(S, GTI(S) + 1);   # consume '('
         EFLADDR(S, dst_li);
@@ -4253,7 +4254,7 @@ fn PARSE_VAR(S): i64 {
                             # path at line ~1063: push &named first,
                             # then user args, ECALLPOPS pops into RCX
                             # (retptr) + RDX/R8/R9 (user args).
-                            _vis_check(S, _f2c_look_fi, _f2c_look_noff);   # v6.6.4: own-call path
+                            _callee_site_checks_here(S, _f2c_look_fi, _f2c_look_noff, 0);   # v6.6.4: own-call path
                             STI(S, GTI(S) + 1);  # consume callee IDENT
                             STI(S, GTI(S) + 1);  # consume '('
                             EFLADDR(S, _f2c_named);
@@ -4323,7 +4324,7 @@ fn PARSE_VAR(S): i64 {
                         STI(S, GTI(S) + 1);  # consume '='
                         if (_TARGET_PE == 1) {
                             # Win64 retptr-style call (mirror f64v2 Win64 branch).
-                            _vis_check(S, _f4c_look_fi, _f4c_look_noff);   # v6.6.4: own-call path
+                            _callee_site_checks_here(S, _f4c_look_fi, _f4c_look_noff, 0);   # v6.6.4: own-call path
                             STI(S, GTI(S) + 1);  # consume callee IDENT
                             STI(S, GTI(S) + 1);  # consume '('
                             EFLADDR(S, _f4c_named);
@@ -4487,7 +4488,7 @@ fn PARSE_VAR(S): i64 {
         if (_rcv_fi >= 0) { asv_fi = _rcv_fi; }   # 6.6.10: the instance the lookahead resolved
         if (asv_fi < 0) { asv_fi = REGFN(S, asv_fnoff); }
         _gen_own_call_check(S, asv_fi, asv_fnoff);
-        _vis_check(S, asv_fi, asv_fnoff);   # v6.6.4: retptr struct receive emits its own call
+        _callee_site_checks_here(S, asv_fi, asv_fnoff, 0);   # v6.6.4: retptr struct receive emits its own call
         var asv_callee_sid = GFRS(S, asv_fi);
         if (asv_callee_sid == 0) {
             ERR_MSG(S, "fn does not declare a struct return type", 40);
@@ -4562,7 +4563,7 @@ fn PARSE_VAR(S): i64 {
         if (_rcv_fi >= 0) { asp_fi = _rcv_fi; }   # 6.6.10: see asv_try
         if (asp_fi < 0) { asp_fi = REGFN(S, asp_fnoff); }
         _gen_own_call_check(S, asp_fi, asp_fnoff);
-        _vis_check(S, asp_fi, asp_fnoff);   # v6.6.4: pair struct receive emits its own call (also the inferred `var q = f()` form)
+        _callee_site_checks_here(S, asp_fi, asp_fnoff, 0);   # v6.6.4: pair struct receive emits its own call (also the inferred `var q = f()` form)
         var asp_callee_sid = GFRS(S, asp_fi);
         if (asp_callee_sid == 0) {
             ERR_MSG(S, "fn does not declare a struct return type", 40);

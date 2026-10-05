@@ -1962,7 +1962,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         if (fni >= 0) {
             # v6.6.4: `&fn` is its own resolution path — a private fn was reachable from any
             # file by taking its address and calling through callptr/fncallN (hisab 2026-09-13).
-            _vis_check(S, fni, anoff);
+            _callee_site_checks_here(S, fni, anoff, 1);   # 6.6.16: and `#deprecated` — `&old_f` was silent
             _gen_addr_check(S, fni, anoff);   # 6.6.10: `&g` of a stub generic reaches the stub
             var fc = GFCNT(S);
             if (fc >= 1048576) {
@@ -4584,6 +4584,7 @@ fn EMIT_OP_DISPATCH(S, stype, op_str, op_len, beg): i64 {
     if (_ret_agg_class(S, _op_fn_peek(S, stype, op_str, op_len)) != 0) {
         return _EMIT_OP_DISPATCH_AGG(S, stype, op_str, op_len, beg);
     }
+    var opti = GTI(S) - 1;   # the operator, just consumed — the call the warning names (6.6.16)
     # For struct vars, push address instead of value
     var svar = GESVAR(S);
     _OP_OPERAND_ADDR(S, svar);
@@ -4597,7 +4598,7 @@ fn EMIT_OP_DISPATCH(S, stype, op_str, op_len, beg): i64 {
     ECALLPOPS(S, 2);
     var ofi = FINDFN(S, opnoff);
     if (ofi < 0) { ofi = REGFN(S, opnoff); }
-    _vis_check(S, ofi, opnoff);   # v6.5.0: operator overloading is its own call path
+    _callee_site_checks(S, ofi, opnoff, opti);   # v6.5.0: operator overloading is its own call path
     # ⛔ 6.6.6 (bite 14 review) — OPERATOR DISPATCH NEVER CHECKED THE OPERATOR FN'S ARITY. An
     # operator always passes exactly two operands, so `fn V2_add(a, b, c)` bound `c` to whatever
     # happened to be in the third argument register: `a + b` compiled clean and computed with
@@ -4632,6 +4633,7 @@ fn _op_fn_peek(S, stype, op_str, op_len): i64 {
 # VALUE (there is no struct var to re-address), it is already in rax when the operator is seen,
 # and on x86/cx the retptr must go BELOW it — so it is parked in a frame word first.
 fn _EMIT_OP_DISPATCH_AGG(S, stype, op_str, op_len, beg): i64 {
+    var opti = GTI(S) - 1;   # the operator (see EMIT_OP_DISPATCH)
     var svar = GESVAR(S);
     var opnoff = BUILD_OP_NAME(S, stype, op_str, op_len);
     var ofi = FINDFN(S, opnoff);
@@ -4648,7 +4650,7 @@ fn _EMIT_OP_DISPATCH_AGG(S, stype, op_str, op_len, beg): i64 {
     EPUSHR(S);
     ECALLPOPS(S, n);
     _sc_x8(S, ofi, t);
-    _vis_check(S, ofi, opnoff);
+    _callee_site_checks(S, ofi, opnoff, opti);
     # 6.6.6 — same arity check as the scalar dispatch above. The retptr/X8 the struct-returning
     # form adds is NOT a declared parameter, so the expected count is still exactly 2.
     _CHECK_ARITY(S, GTLINE(S, beg), opnoff, ofi, 2, 1);

@@ -1708,6 +1708,12 @@ _chk_gate "$ROOT/tests/gates/codegen/toplevel_indirect_call.sh"
 # cascades — it used to compile and crash (SIGILL / SIGSEGV). A fn in a top-level block still runs.
 _chk_gate "$ROOT/tests/gates/diagnostics/nested_fn_refused.sh"
 
+# 6.6.16 (C9) — `#deprecated("msg")` warns EXACTLY ONCE, on the call's own line, on every path:
+# a call before the definition (pass 1 now records it), `&f`, `o.m()`, the struct receives,
+# operator dispatch, the PE vector paths, a generic instance, an `#inline` / generic re-parse;
+# a tail call is reported at 14:18, not the next token. Binaries identical without the attribute.
+_chk_gate "$ROOT/tests/gates/diagnostics/deprecated_every_call_path.sh"
+
 # 6.6.9 (bite 3) — a second struct/union with a different layout (the first silently won) and
 # an enum constant over a zero/computed global of the same name are warned, not silent.
 _chk_gate "$ROOT/tests/gates/frontend/redefinition_layout_and_enum_over_var.sh"

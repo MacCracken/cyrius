@@ -739,6 +739,10 @@ fn PARSE_RETURN(S): i64 {
                             STI(S, GTI(S) + 1);
                             # Parse args (same as PARSE_FNCALL arg handling)
                             STI(S, GTI(S) + 1);  # consume (
+                            # 6.6.16 — the token the call's warnings name (PARSE_FNCALL's
+                            # convention: the first token after `(`). By the time they fire the
+                            # cursor is past `);`, on the NEXT statement. CHANGELOG [6.6.16]
+                            var _tc_wti = GTI(S);
                             var tcargc = 0;
                             # SIMD_TC (v6.4.15): the tail-call path bypasses
                             # PARSE_FNCALL, so a value-form SIMD arg mismatched to the
@@ -787,8 +791,7 @@ fn PARSE_RETURN(S): i64 {
                             # Look up function
                             var tcfi = FINDFN(S, tcnoff);
                             if (tcfi < 0) { tcfi = REGFN(S, tcnoff); }
-                            _vis_check(S, tcfi, tcnoff);
-                            _DEPRECATED_WARN(S, tcfi, tcnoff);   # v6.6.4: tail calls warned nothing
+                            _callee_site_checks(S, tcfi, tcnoff, _tc_wti);   # v6.6.4: tail calls warned nothing
                             # v5.8.20: #pure enforcement on the tail-call path —
                             # `return helper(args);` bypasses PARSE_FNCALL but
                             # still needs the #io / #alloc check.
@@ -796,14 +799,14 @@ fn PARSE_RETURN(S): i64 {
                                 var _tcf = GFLG(S, tcfi);
                                 if (_tcf & 16 != 0) {
                                     syscall(SYS_WRITE, 2, "warning:", 8);
-                                    _err_head(S);
+                                    _err_head_at(S, _tc_wti);
                                     syscall(SYS_WRITE, 2, ": #pure fn calls #io fn '", 25);
                                     PRSTR(S + 0xEC00000 + tcnoff);
                                     syscall(SYS_WRITE, 2, "'\n", 2);
                                 }
                                 if (_tcf & 32 != 0) {
                                     syscall(SYS_WRITE, 2, "warning:", 8);
-                                    _err_head(S);
+                                    _err_head_at(S, _tc_wti);
                                     syscall(SYS_WRITE, 2, ": #pure fn calls #alloc fn '", 28);
                                     PRSTR(S + 0xEC00000 + tcnoff);
                                     syscall(SYS_WRITE, 2, "'\n", 2);
@@ -1245,7 +1248,7 @@ fn PARSE_RETURN(S): i64 {
                                 SFLC(S, _rc_named + 1);
                                 if (_rc_named + 1 > _flc_hwm) { _flc_hwm = _rc_named + 1; }
                                 # Marshal the inner call: retptr = &temp, then args.
-                                _vis_check(S, _rc_fi, _rc_noff);   # v6.6.4: PE SIMD-return call emits its own call
+                                _callee_site_checks_here(S, _rc_fi, _rc_noff, 0);   # v6.6.4: PE SIMD-return call emits its own call
                                 STI(S, GTI(S) + 1);   # consume callee IDENT
                                 STI(S, GTI(S) + 1);   # consume '('
                                 EFLADDR(S, _rc_named);
@@ -2221,8 +2224,7 @@ fn _struct_call_into(S, handle): i64 {
     var fi = _gen_resolve_call(S, GTI(S));   # 6.6.10: a generic's instance, not its base
     if (fi < 0) { fi = REGFN(S, noff); }
     _gen_own_call_check(S, fi, noff);
-    _vis_check(S, fi, noff);
-    _DEPRECATED_WARN(S, fi, noff);
+    _callee_site_checks_here(S, fi, noff, 0);   # the cursor is on the callee's name
     var t = 0;
     if (handle == 1) { t = _ptr_temp(S, GFRS(S, fi)); }
     else { t = _agg_temp(S, GFRS(S, fi)); }
@@ -2820,17 +2822,23 @@ fn _simd_arg_second_pass(S, tbl, cnt): i64 {
     return 0;
 }
 
-# v5.6.4 #deprecated call-site warning, ONE helper for every call path. It fires at
-# EVERY call site (unlike #must_use, which only fires on statement-level discard —
-# deprecated fns should get the nudge no matter how their result is used). v6.6.4:
-# it lived inline in PARSE_FNCALL only, so `return olde();` — the TAIL-CALL path,
-# which bypasses PARSE_FNCALL exactly as the v6.2.41 arity note says — warned
-# nothing while `var v = olde();` did. Message body lives in fn_deprecated_msg as a
+# v5.6.4 #deprecated call-site warning. It fires at EVERY call site (unlike #must_use,
+# which only fires on statement-level discard — deprecated fns should get the nudge no
+# matter how their result is used). Message body lives in fn_deprecated_msg as a
 # string-literal token value (offset<<32 | length).
-fn _DEPRECATED_WARN(S, fi, noff): i64 {
+#
+# ⛔ 6.6.16 — reached ONLY through `_callee_site_checks` below. v6.6.4 called it from three
+# paths (PARSE_FNCALL, the tail call, `_struct_call_into`) while `_vis_check` had fourteen, so
+# `&old_f`, `o.m()`, the struct receives, operator dispatch and the PE vector receives were
+# silent; and a call parsed before the definition was silent on every path, because only
+# pass 2 set the bit (pass 1 now does — `_prescan_dep_take`). `ti` is the token the warning
+# names: `_err_head` read the CURSOR, which the tail path has already walked past `);`, so
+# `return old_f(x);` was reported on the NEXT token's line. CHANGELOG [6.6.16]
+fn _DEPRECATED_WARN(S, fi, noff, ti): i64 {
     if (GFLG(S, fi) & 4 == 0) { return 0; }
+    if (_dep_seen(ti, fi) == 1) { return 0; }
     syscall(SYS_WRITE, 2, "warning:", 8);
-    _err_head(S);
+    _err_head_at(S, ti);
     syscall(SYS_WRITE, 2, ": '", 3);
     PRSTR(S + 0xEC00000 + noff);
     syscall(SYS_WRITE, 2, "' is deprecated", 15);
@@ -2843,6 +2851,60 @@ fn _DEPRECATED_WARN(S, fi, noff): i64 {
     }
     syscall(SYS_WRITE, 2, "\n", 1);
     return 1;
+}
+
+# 6.6.16 — ONE warning per call site. The same tokens are parsed more than once: an `#inline`
+# fn's body at its definition and again at every expansion, a generic's body for its base and
+# again for each instance. A re-parse names the same token for the same callee, so that pair
+# is the site — `w(1); w(2);` on an `#inline fn w` calling a deprecated fn printed the
+# identical line three times. Every path names a token of its OWN call (an operator its
+# operator), so two calls never share a pair. Warnings are rare: a short list, not a bitmap.
+var _dep_warned = 0;
+fn _dep_seen(ti, fi): i64 {
+    if (_dep_warned == 0) { _dep_warned = vec_new(); }
+    var n = vec_len(_dep_warned);
+    var i = 0;
+    while (i < n) {
+        if (vec_get(_dep_warned, i) == ti) { if (vec_get(_dep_warned, i + 1) == fi) { return 1; } }
+        i = i + 2;
+    }
+    vec_push(_dep_warned, ti);
+    vec_push(_dep_warned, fi);
+    return 0;
+}
+
+# A generic INSTANCE (`old_g<i32>(..)`, minted as `old_g$i32`) is deprecated when its base is:
+# the instance is re-parsed from the base's tokens long after the attribute was consumed, so
+# it never received the bit, and only the i64 spellings (which ARE the base) warned.
+fn _gen_inherit_dep(S, spec, base_fi): i64 {
+    if (spec < 0) { return 0; }
+    if ((GFLG(S, base_fi) & 4) == 0) { return 0; }
+    SFLG(S, spec, GFLG(S, spec) | 4);
+    SFDM(S, spec, GFDM(S, base_fi));
+    return 0;
+}
+
+# 6.6.16 — THE per-callee check, for every path that resolves a name to an fn and emits its
+# own call or address: the `private` check and the `#deprecated` warning, together, so the two
+# lists cannot drift apart again (they had: 14 sites against 3). A new call path is ONE call
+# here; `grep -n '_callee_site_checks' src/frontend/` is the list of paths. `ti` is the token
+# the warning names. CHANGELOG [6.6.16]
+fn _callee_site_checks(S, fi, noff, ti): i64 {
+    if (fi < 0) { return 0; }
+    _vis_check(S, fi, noff);
+    _DEPRECATED_WARN(S, fi, noff, ti);
+    return 0;
+}
+
+# The same, naming a token relative to the cursor: `back` = 0 is the cursor itself (a path
+# whose cursor is still on the callee's name, its `(`, or the first token after that `(`), 1 is
+# the token just consumed (`&old_f`, whose name is behind the cursor — the token AFTER it can be
+# on the next line). ONE call with no nested one, so the hot parsers that use it (PARSE_VAR,
+# _PARSE_FACTOR_IMPL, PARSE_RETURN, PARSE_FNCALL) carry no more references than `_vis_check`
+# alone did — cybs's per-fn reference ceiling fails silently (CLAUDE.md, Release Gate 2).
+fn _callee_site_checks_here(S, fi, noff, back): i64 {
+    _callee_site_checks(S, fi, noff, GTI(S) - back);
+    return 0;
 }
 
 # Parse fn call args and emit call (as expression)
@@ -2865,7 +2927,8 @@ fn _DEPRECATED_WARN(S, fi, noff): i64 {
 # `&fn` (parse_expr.cyr), `s.method()`, the asv retptr / asp pair struct receives (also
 # the inferred `var q = f()` form), and four PE-only SIMD receive/return paths
 # (parse_decl.cyr _try_vector_call_assign / _f2c / _f4c, parse_fn.cyr _rc). All eleven
-# now call it; `grep -n '_vis_check(' src/frontend/` is the list.
+# now call it — since 6.6.16 through `_callee_site_checks`, its only caller, which adds the
+# `#deprecated` warning; `grep -n '_callee_site_checks' src/frontend/` is the list.
 #
 # ⛔ 6.6.5 — "FAIL-OPEN ON UNKNOWNS … Phase 3 must revisit this" stood here for five
 # minors and WAS the hole. An unstamped callee (GFFI == 0) returned at the FIRST test
@@ -3193,12 +3256,11 @@ fn PARSE_FNCALL(S, noff): i64 {
             }
         }
     }
-    # v5.6.4: #deprecated call-site warning (see _DEPRECATED_WARN — shared with the
-    # tail-call path since v6.6.4). Line number is the paren-open we just consumed,
-    # which matches the call-site.
-    _vis_check(S, fi, noff);
+    # v5.6.4: #deprecated call-site warning, with the `private` check (see
+    # _callee_site_checks). It names the first token after the `(` we just consumed,
+    # which is on the call-site's line.
+    _callee_site_checks_here(S, fi, noff, 0);
     var _dep_flags = GFLG(S, fi);
-    _DEPRECATED_WARN(S, fi, noff);
     # v5.8.20: #pure caller cannot call #io / #alloc callees. Warning
     # (not error) for downstream incremental adoption — same shape as
     # #must_use / #deprecated diagnostics. The annotation ramp happens
@@ -4457,6 +4519,7 @@ fn _instantiate_generic_fn(S, base_fi, conc0, conc1): i64 {
     _tp_n0 = sv_n0; _tp_c0 = sv_c0; _tp_n1 = sv_n1; _tp_c1 = sv_c1;
     STI(S, sv_ti);
     spec = FINDFN(S, mangled);                       # now registered by PARSE_FN_DEF
+    _gen_inherit_dep(S, spec, base_fi);              # 6.6.16: `#deprecated` reaches instances
     return spec;
 }
 
@@ -5287,6 +5350,7 @@ fn _prescan_fn_sig(S): i64 {
         # produced a false "is private to its file" AND a false "expects 2 arguments, got
         # 1". The v6.5.38 identity rule now runs in BOTH passes, from one place.
         var fi = _fn_def_slot(S, noff, _pfid, _ppriv);
+        _prescan_dep_take(S, fi);               # 6.6.16: a pending `#deprecated`, for forward calls
         if (_ptp != 0) { SFTP(S, fi, _ptp); }   # v6.3.9: forward-ref generic sig
         if (_ptp != 0) { _gen_record(S, fi, GTI(S)); }   # 6.6.10: stub + carrier facts, by name
         # 6.6.10 — mark `async fn` HERE, so a coroutine's `await f(..)` classifies a callee
@@ -5315,9 +5379,23 @@ fn _prescan_fn_sig(S): i64 {
                 }
             }
         }
-    }
+    } else { _pre_dep_pending = 0; }    # an unnamed `fn`: pass 2 refuses it; never carry past it
     STI(S, start_ti);
     _prescan_skip_fn(S);
+    return 0;
+}
+
+# 6.6.16 — hand a pass-1 `#deprecated` (recorded by `_tl_deprecated(S, 0)`) to the fn just
+# registered, so a call parsed BEFORE the definition warns. Pass 1 walks the definitions in
+# pass 2's order (impl methods included), so this is the fn PARSE_FN_DEF will mark too; it
+# only ORs bit 2 (value 4), which PARSE_FN_DEF ORs again. GFDM's one reader is
+# `_DEPRECATED_WARN`, so nothing here reaches codegen. CHANGELOG [6.6.16]
+fn _prescan_dep_take(S, fi): i64 {
+    if (_pre_dep_pending == 0) { return 0; }
+    SFLG(S, fi, GFLG(S, fi) | 4);
+    SFDM(S, fi, _pre_dep_msg);
+    _pre_dep_pending = 0;
+    _pre_dep_msg = 0;
     return 0;
 }
 
@@ -5472,14 +5550,21 @@ fn _tl_arm(t): i64 {
 # #deprecated("msg"). The message is REQUIRED (the v5.6.4 design): arm=1 refuses a bare
 # `#deprecated` by name wherever it sits — it used to be a silent no-op before the first
 # statement and a hard error after it. On the error the cursor stays put, so the `fn`
-# that follows is still parsed. Pass 1 (arm=0) only consumes; pass 2 reports.
+# that follows is still parsed. Pass 1 (arm=0) consumes and reports nothing; since 6.6.16
+# it also RECORDS a complete `( STRING )` for the fn it registers next (`_prescan_dep_take`)
+# — a call parsed before the definition never saw the bit, which only pass 2 set. A bare
+# or malformed one records nothing: pass 2 still refuses it. CHANGELOG [6.6.16]
 fn _tl_deprecated(S, arm): i64 {
     STI(S, GTI(S) + 1);
     if (arm == 0) {
         if (PEEKT(S) == 10) {
             STI(S, GTI(S) + 1);
-            if (PEEKT(S) == 30) { STI(S, GTI(S) + 1); }
-            if (PEEKT(S) == 11) { STI(S, GTI(S) + 1); }
+            var _pd_msg = 0 - 1;
+            if (PEEKT(S) == 30) { _pd_msg = PEEKV(S); STI(S, GTI(S) + 1); }
+            if (PEEKT(S) == 11) {
+                STI(S, GTI(S) + 1);
+                if (_pd_msg != 0 - 1) { _pre_dep_pending = 1; _pre_dep_msg = _pd_msg; }
+            }
         }
         return 0;
     }
@@ -5743,13 +5828,16 @@ fn _prescan_impl_body(S): i64 {
 
 # 6.6.5 — skip ONE top-level statement, tracking ( { [ depth. Stops after a depth-0 `;`,
 # or after a depth-0 `}` that is not followed by `else`/`elif` (a statement can end in a
-# brace: `if (..) { .. } else { .. }`, `while`, `switch`, `match`).
+# brace: `if (..) { .. } else { .. }`, `while`, `switch`, `match`). Returns 1 when the
+# statement held a `fn` keyword — a definition PARSE_PROG will parse inside it (6.6.16).
 fn _prescan_skip_stmt(S): i64 {
     var dep = 0;
     var go = 1;
+    var hasfn = 0;
     while (go == 1) {
         var t = PEEKT(S);
-        if (t == 12) { return 0; }                                  # EOF
+        if (t == 12) { return hasfn; }                              # EOF
+        if (t == 32) { hasfn = 1; }
         if (t == 10 || t == 13 || t == 28) { dep = dep + 1; }
         if (t == 11 || t == 14 || t == 29) { dep = dep - 1; }
         STI(S, GTI(S) + 1);
@@ -5761,7 +5849,7 @@ fn _prescan_skip_stmt(S): i64 {
             }
         }
     }
-    return 0;
+    return hasfn;
 }
 
 # 6.6.5 — pass 1 stops at the first top-level STATEMENT (`else { scan = 0; }` in every
@@ -5780,6 +5868,7 @@ fn _prescan_tail(S): i64 {
     _pub_pending = 0;
     _prescan_tail_loop(S);
     _pub_pending = 0;
+    _pre_dep_pending = 0;                # the end of pass 1: nothing may carry into pass 2
     SMOD(S, svmod);
     STI(S, sv);
     return 0;
@@ -5799,20 +5888,12 @@ fn _prescan_tail_loop(S): i64 {
         elif (_IS_FN_KW(S) == 1) { _prescan_fn_sig(S); }
         elif (t == 14) { go = 0; }                     # stray '}' — where PARSE_PROG stops
         elif (t == 109 || t == 122 || t == 125 || t == 126 || t == 127 || t == 133 || t == 163) { STI(S, GTI(S) + 1); }
-        elif (t == 124) { _prescan_skip_deprecated(S); }
-        else { _prescan_skip_stmt(S); }
-    }
-    return 0;
-}
-
-# `#deprecated` / `#deprecated("msg")` — consume the directive with its optional argument,
-# exactly as the pass-1 arm does.
-fn _prescan_skip_deprecated(S): i64 {
-    STI(S, GTI(S) + 1);
-    if (PEEKT(S) == 10) {
-        STI(S, GTI(S) + 1);
-        if (PEEKT(S) == 30) { STI(S, GTI(S) + 1); }
-        if (PEEKT(S) == 11) { STI(S, GTI(S) + 1); }
+        elif (t == 124) { _tl_deprecated(S, 0); }       # the pass-1 arm itself, so it records too
+        # ⚠ 6.6.16 — a statement holding a `fn` (a definition inside a top-level block, which
+        # PARSE_PROG accepts) is where pass 2 hands a pending `#deprecated`. That fn is never
+        # prescanned, so drop the pending here rather than let it land on the NEXT top-level
+        # fn — the one pass 2 leaves unmarked, whose every call would then warn falsely.
+        elif (_prescan_skip_stmt(S) == 1) { _pre_dep_pending = 0; }
     }
     return 0;
 }
