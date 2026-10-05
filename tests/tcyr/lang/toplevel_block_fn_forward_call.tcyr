@@ -1,0 +1,47 @@
+# toplevel_block_fn_forward_call.tcyr — 6.6.17: a fn defined inside a TOP-LEVEL block (an `if`,
+# a `while` inside one, an `else`) is prescanned like any other top-level fn, so a call parsed
+# BEFORE the definition knows its signature.
+#
+# THE DEFECT. The relaxed-ordering prescan (`_prescan_tail`) skipped a top-level statement whole,
+# so a fn defined inside its block was registered only when PARSE_PROG reached it. A call from an
+# earlier fn therefore met an fn with no parameter masks: a struct argument — which the callee
+# reads through its address — was pushed by value, and `early_struct()` died with SIGSEGV (rc 139)
+# on the slot-open compiler. It also printed a false `warning: undefined function` (pinned by
+# tests/gates/diagnostics/false_warnings_valid_shapes.sh). The same miscompile 6.6.5 fixed for a
+# fn defined after the first top-level statement, one level down.
+include "lib/assert.cyr"
+
+struct Pt { x; y; z; }
+
+fn early_struct(): i64 {
+    var p: Pt;
+    p.x = 10;
+    p.y = 20;
+    p.z = 12;
+    var r = blk_sum(p);
+    return r;
+}
+fn early_scalar(): i64 { return blk_twice(21); }
+fn early_nested(): i64 { return blk_deep(40); }
+fn early_else(): i64 { return blk_else(1); }
+
+var blk_on = 1;
+if (blk_on == 1) {
+    fn blk_sum(q: Pt): i64 { return q.x + q.y + q.z; }
+    fn blk_twice(x): i64 { return x * 2; }
+}
+if (blk_on == 1) {
+    while (blk_on == 1) {
+        fn blk_deep(x): i64 { return x + 2; }
+        blk_on = 2;
+    }
+}
+if (blk_on == 0) { blk_on = 9; } else {
+    fn blk_else(x): i64 { return x + 41; }
+}
+
+assert_eq(early_struct(), 42, "a struct argument to a block fn, called before its definition");
+assert_eq(early_scalar(), 42, "the second of two fns in one block");
+assert_eq(early_nested(), 42, "a fn in a while inside an if");
+assert_eq(early_else(), 42, "a fn in an else block");
+var r = assert_summary();

@@ -1747,6 +1747,11 @@ _chk_gate "$ROOT/tests/gates/diagnostics/deprecated_every_call_path.sh"
 # had no file and a line past the end, and an included file's EOF showed a `#@file` marker).
 _chk_gate "$ROOT/tests/gates/diagnostics/diag_location_eof_and_tail_private.sh"
 
+# 6.6.17 — four false warnings on valid code, each with a row proving the warning still fires on
+# a wrong shape: `undefined function` for a fn in a top-level block called earlier, and `assigning
+# non-pointer to typed pointer` for a same-typed global, a `: Str` method and a `: Str` field.
+_chk_gate "$ROOT/tests/gates/diagnostics/false_warnings_valid_shapes.sh"
+
 # 6.6.16 (C10) — cycc's `lib/...` include fallback reads CYRIUS_HOME's store slot, else HOME's,
 # from the WHOLE environment: both orders, empty = unset, no fall-through to HOME, past 4 KB / 8 KB
 # and across read boundaries, the 1984-B bound never truncated — x86, aarch64, cx, the PE cross and

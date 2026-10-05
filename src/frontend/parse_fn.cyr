@@ -6010,7 +6010,15 @@ fn _prescan_skip_stmt(S): i64 {
     while (go == 1) {
         var t = PEEKT(S);
         if (t == 12) { return hasfn; }                              # EOF
-        if (t == 32) { hasfn = 1; }
+        if (t == 32) {
+            hasfn = 1;
+            # 6.6.17 — a definition at statement position INSIDE the statement's block
+            # (`if (..) { fn f(..) { .. } }`, which PARSE_PROG accepts) is prescanned like a
+            # top-level one. It was skipped, so a call parsed before it warned "undefined
+            # function" and — the same miscompile 6.6.5 fixed after the first statement — an
+            # address-passed struct argument was pushed by value: rc 139. CHANGELOG [6.6.17]
+            if (_prescan_block_fn(S, dep) == 1) { continue; }
+        }
         if (t == 10 || t == 13 || t == 28) { dep = dep + 1; }
         if (t == 11 || t == 14 || t == 29) { dep = dep - 1; }
         STI(S, GTI(S) + 1);
@@ -6023,6 +6031,18 @@ fn _prescan_skip_stmt(S): i64 {
         }
     }
     return hasfn;
+}
+
+# Prescan the `fn` at the cursor when it opens a definition inside a block (`dep` >= 1, right
+# after `{`, `;` or `}`). The signature walk consumes the whole definition, braces balanced, so
+# the caller's depth is unchanged. Returns 1 when it consumed one.
+fn _prescan_block_fn(S, dep): i64 {
+    if (dep < 1) { return 0; }
+    var pt = TOKTYP(S, GTI(S) - 1);
+    if (pt != 13) { if (pt != 5) { if (pt != 14) { return 0; } } }
+    if (TOKTYP(S, GTI(S) + 1) != 2) { return 0; }
+    _prescan_fn_sig(S);
+    return 1;
 }
 
 # 6.6.5 — pass 1 stops at the first top-level STATEMENT (_tl_scan1 returns 0), but
@@ -6063,9 +6083,10 @@ fn _prescan_tail_loop(S): i64 {
         elif (t == 109 || t == 122 || t == 125 || t == 126 || t == 127 || t == 133 || t == 163) { STI(S, GTI(S) + 1); }
         elif (t == 124) { _tl_deprecated(S, 0); }       # the pass-1 arm itself, so it records too
         # ⚠ 6.6.16 — a statement holding a `fn` (a definition inside a top-level block, which
-        # PARSE_PROG accepts) is where pass 2 hands a pending `#deprecated`. That fn is never
-        # prescanned, so drop the pending here rather than let it land on the NEXT top-level
-        # fn — the one pass 2 leaves unmarked, whose every call would then warn falsely.
+        # PARSE_PROG accepts) is where pass 2 hands a pending `#deprecated`. Since 6.6.17 that fn
+        # is prescanned (`_prescan_block_fn`), which takes the pending itself; whatever is left
+        # is dropped here rather than let it land on the NEXT top-level fn — the one pass 2
+        # leaves unmarked, whose every call would then warn falsely.
         elif (_prescan_skip_stmt(S) == 1) { _pre_dep_pending = 0; }
     }
     return 0;

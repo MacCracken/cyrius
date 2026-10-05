@@ -268,11 +268,11 @@ ok() {
 # AXIS 2b — the fail-CLOSED DEFERRAL, on a shape pass 1 genuinely cannot stamp.
 #
 # A fn defined inside a TOP-LEVEL block (`if (on) { fn f() { .. } }`) is defined by
-# PARSE_FN_DEF at pass-2 emit time; pass 1 stops at the first top-level statement and the
-# relaxed-ordering prescan does not descend into a block, so nothing prescans it. A forward
-# cross-file call to one in a `private` file therefore still resolves with no owner — and
-# this is where `_vis_check`'s deferral earns its place: the reference is recorded and
-# re-judged once the definition has been stamped.
+# PARSE_FN_DEF at pass-2 emit time. Until 6.6.17 the relaxed-ordering prescan did not descend
+# into a block, so a forward cross-file call to one in a `private` file resolved with no owner
+# and only `_vis_check`'s deferral caught it (re-judged once the definition was stamped).
+# 6.6.17: the prescan stamps it (`_prescan_block_fn`), so the call is judged directly; the row
+# still pins EXACTLY one report either way.
 #
 # ⚠ 6.6.16 PORTED THE FIXTURE. Until then it nested `inner_secret` inside another fn's
 # body — the other shape pass 1 cannot stamp, measured accepted + SIGSEGV (rc 139) on 6.6.4.
@@ -519,5 +519,5 @@ sw=$(grep -c "warning: undefined function" "$T/selfw.err" 2>/dev/null || true)
 [ "$sw" = "0" ] || { echo "  FAIL: private_forward_reference axis3 [self] — $sw 'undefined function' warnings compiling cycc's own source"; grep "undefined function" "$T/selfw.err" | head -3 | sed 's/^/      /' || true; fail=1; }
 
 [ "$fail" = 0 ] || exit 1
-echo "PASS private_forward_reference: 7/7 forks run the shared pass-1 scan, which carries both pass-1 calls; 10 refusal rows match forward==backward over a hard-coded symbol floor; the deferral backstop reports a violation on a fn defined inside a top-level block exactly once; 9 legal programs run (6 with exit codes computed in the shell from the fixture literals, 3 against a literal, one of them the axis-2b no-private control) plus 1 build-only control; last-definition visibility holds both ways; diagnostics name the right symbol"
+echo "PASS private_forward_reference: 7/7 forks run the shared pass-1 scan, which carries both pass-1 calls; 10 refusal rows match forward==backward over a hard-coded symbol floor; a violation on a fn defined inside a top-level block is reported exactly once; 9 legal programs run (6 with exit codes computed in the shell from the fixture literals, 3 against a literal, one of them the axis-2b no-private control) plus 1 build-only control; last-definition visibility holds both ways; diagnostics name the right symbol"
 exit 0
