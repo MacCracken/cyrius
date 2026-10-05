@@ -1,8 +1,9 @@
-# `fncallN` at top level SIGSEGVs on a capturing closure that a fn built and returned — 🟡 OPEN
+# `fncallN` at top level SIGSEGVs on a capturing closure that a fn built and returned — ✅ RESOLVED in 6.6.16
 
-**Status:** 🟡 **OPEN** — reproduced 2026-10-03 on every installed pin 6.6.0 through 6.6.14 (exit 139),
-x86_64 ELF and `--aarch64` under qemu. The files cited below are identical between the 6.6.14 tag and
-the 6.6.15 working tree: `git diff 6.6.14 HEAD -- src/frontend/parse_expr.cyr lib/fnptr.cyr` is empty.
+**Status:** ✅ **RESOLVED in 6.6.16** (lane srca, bite srca-2) — a top-level indirect call opens its own
+micro-frame, so `fncall0..8` and `callptr` take the closure-aware lowering at every depth; the filed repro
+exits 0 on x86_64, and compiled natively on ecb (macOS arm64), ach (Intel macOS), pi (aarch64 Linux) and
+cass (Windows), and on cx under cxvm. See CHANGELOG [6.6.16].
 **Placement:** **6.6.16** (placed 2026-10-04 at the slot open; the user listed the open issues for this
 release). The crash is silent — the build prints no warning or error — so it is a patch-release fix,
 not backlog.
@@ -13,6 +14,42 @@ and SIGSEGVs at run time, with no diagnostic. A workaround exists (call it from 
 and `cyrius build -v` printed `compiler: /home/macro/.cyrius/versions/<v>/bin/cycc`. The aarch64 row
 printed `.../6.6.14/bin/cycc_aarch64`. No 6.5.x is installed on this box, so the first-bad version
 is unknown. It is at or below 6.6.0, and that bound is evidence about visibility only, not origin.
+
+## Resolution (6.6.16)
+
+**Root cause confirmed as filed, plus one site the filing did not name.** Option (a) of the filing. The
+fncallN lowering in `_PARSE_FACTOR_IMPL` was gated on `_cur_fn_ix >= 0` because `PINDIRECT_CALL` spills the
+callee to frame slots and top-level code has no frame — and so was the STATEMENT-position lowering in
+`_PARSE_STMT_IMPL` (`fncall1(g, 1);` as a bare statement, the filing's table row that also crashed).
+`PINDIRECT_CALL` itself refused top level, which is where `callptr`'s error came from. At top level fncallN
+fell through to `lib/fnptr.cyr`, whose asm calls the raw bit-63-tagged value.
+
+**cx was worse than the filing could see.** `lib/fnptr.cyr` has no cx arm, so on cx EVERY top-level fncallN
+returned 0 — the filing's controls 2 and 3 (a non-capturing closure, a plain `&add41`) included. Three
+existing crossos/stdlib files failed on cxvm for that reason (no gate runs cx there); they pass now.
+
+**Fix.** `PINDIRECT_CALL` is a small wrapper: inside a fn it calls `_PINDIRECT_CALL_IN` (the old body, minus
+the refusal) and nothing changes; at top level it saves and zeroes the frame-slot counter and its high-water
+mark, opens a micro-frame (`ETLFRAME_OPEN`), runs the same body, closes it sized from the larger of the two
+(`ETLFRAME_CLOSE`), and restores both. Backends: x86 (ELF, PE, EFI, agnos, x86 Mach-O) `push rbp; mov rbp,
+rsp; sub rsp, imm32` … `leave`, the size rounded so rsp keeps its parity; aarch64 the ordinary prologue pair
+(`stp x29, x30` / two patchable `sub sp` slots) … `mov sp, x29; ldp`; cx `pushc fp; mov fp, sp; movi r15;
+sub sp` … `mov sp, fp; popc fp`. On PE the open carries the page-walk stack probe (size in r10, rax
+untouched). Both lowering gates and the refusal are removed; the result rides in rax / x0 / r0 across the
+close, and a nested top-level indirect call nests its frame.
+
+**Verified.** The filed repro VERBATIM exits 0 on x86_64, aarch64/qemu, PE/wine, cx/cxvm, and compiled
+NATIVELY on ecb, ach, pi and cass (cross-built == natively built, byte for byte). The same repro built by
+the slot-open compiler still exits 139. In-fn codegen is byte-identical: across all 439 `.tcyr`, only the six files with a
+top-level indirect call (and the extended gate file) change bytes, with 0 exit-status changes (x86 and
+aarch64). `ffi_stack_protected_extern_c.sh` (top-level fncall4..7 into stack-protected C, now through the
+lowered path) and `call_site_stack_alignment.sh` stay green.
+
+**The filing's recipe note can go.** "Call it from inside a fn" is no longer needed on 6.6.16; hisab's own
+code was never exposed (all 96 of its indirect calls are in fns).
+
+**Not covered (backlog, roadmap.md):** an ADDRESS-TAKEN `&fncallN` that is then called still runs
+`lib/fnptr.cyr`'s asm — no closure dispatch, and 0 on cx.
 
 ## Summary
 

@@ -1,9 +1,8 @@
-# A closure's `return <: stack call>` is booked against the ENCLOSING fn — a false "bind both" error and a misattributed warning — 🟡 OPEN
+# A closure's `return <: stack call>` is booked against the ENCLOSING fn — a false "bind both" error and a misattributed warning — ✅ RESOLVED in 6.6.16
 
-**Status:** 🟡 **OPEN** — reproduced 2026-10-03 on every installed pin from 6.6.0 to 6.6.14. The repro
-exits 3 on each, and its three controls pass on each. The cited code in
-`src/frontend/parse.cyr` and `parse_decl.cyr` is identical between the 6.6.14 tag and the 6.6.15
-working tree (`git diff 6.6.14 HEAD` on both is empty).
+**Status:** ✅ **RESOLVED in 6.6.16** (lane srca, bite srca-1) — both post-parse pair scans skip a closure body,
+and the mixed-return warning judges each closure body as its own fn; the filed repro exits 0 against the
+6.6.16 tree (D1-D3 clean and running 0, C1-C3 holding). See CHANGELOG [6.6.16].
 **Placement:** **6.6.16** (placed 2026-10-04 at the slot open; the user listed the open issues for this release).
 **Discovered:** 2026-09-30 from hisab during its 3.3.1 work. hisab's autodiff × optimizer recipe hit it,
 and it is tracked as hisab roadmap item D082. hisab's maintainer approved filing on 2026-10-03.
@@ -14,6 +13,51 @@ it, and `cyrius build -v` printed `compiler: /home/macro/.cyrius/versions/<v>/bi
 First-bad is unknown, and 6.6.0 is only the oldest pin installed here (no 6.5.x is): user-declared
 `enum X: stack` exists since 6.5.55, and pair-ness has been tracked through `return` since 6.5.67
 (CHANGELOG [6.5.55], [6.5.67]); the row below with a user enum shows the defect does not need `Result`.
+
+## Resolution (6.6.16)
+
+**Root cause confirmed as filed.** `_pair_prescan` (`src/frontend/parse.cyr`) and `_warn_mixed_pair_returns`
+skipped a nested body only at a `fn` token; a closure literal has none, so its `return` was scanned as the
+enclosing fn's. The in-parse flagging (`PARSE_RETURN`, `?`) was not involved — a closure body parses with
+`_cur_fn_ix` set to the closure. Two problems the filing did not name were found by the planning premise
+check and are fixed by the same change: a REAL pair fn whose closure says `return 0;` drew a false warning,
+and a real mixed-return fn holding a closure was warned at the closure's return (column 28) instead of its
+own (column 69).
+
+**Fix.** Both scans skip a `{` that opens a closure body. `_tok_is_closure_body(S, k)`: the `{` is
+immediately preceded by `|` (token 35) or `||` (token 54). That is exact for today's grammar — closure params
+carry no type and no return annotation, and `{` never begins an expression — and the closure parser
+(`parse_expr.cyr`) now carries a comment naming the dependency. `_tok_skip_block(S, k, n)` jumps to the
+matching `}`. A brace-less closure needs no skip (an expression holds no `return`).
+
+**The closure is judged as its own fn.** The filing's title is the whole rule — the closure's returns
+belong to the CLOSURE — so taking them away from the enclosing fn is only half of it. A first cut stopped
+there, and a genuinely mixed closure (`|x| { if (x > 0) { return h(x); } return 0; }`, whose
+`var t, v = fncall1(g, 0)` reads a stale rdx) lost the only warning it had, found in review.
+`_warn_mixed_pair_returns` now visits every closure body at any depth (`_warn_closure_block`): pair-returning
+when its own body, nested closures and fns skipped, says `return f(..)` or `f(..)?` with `f` flagged 256 —
+the test that flags a fn — and then its first plain return is warned as *"a closure in `<fn>` returns a
+`: stack` pair on another path but a SINGLE value here"*. A mixed closure at top level and a `?`-then-plain
+closure are warned for the first time. The filing's side
+question ("should the closure's value carry a pair-return mark for a later `var t, v = fncallN(g, ..)`?")
+needs no answer: that bind does not read the enclosing fn's flag, and it behaves exactly as before — the
+binaries of every previously-buildable row are byte-identical, and `var g = mk(41); var tg, pl =
+fncall1(g, 1);` now builds and exits 0.
+
+**Verified.** The repro, VERBATIM, against the tree through a throwaway HOME + CYRIUS_HOME (each `compiler:`
+line the staged tree cycc): exit 0. At the slot open (0bf9b773): exit 3. The extra shapes in the filing's
+second table — the forwarding wrapper, the `?` closure body — build clean and run 0. Differential over all
+439 `tests/tcyr` files on x86 and aarch64 (against the slot open): 0 byte, 0 diagnostic and 0 build-status
+differences; the same over `programs/`, the CLI, benches and fuzz (110 files) and the 133 sibling `dist/*.cyr`
+bundles. The pinned gate is `tests/gates/frontend/stack_enum_closure_return_scope.sh` (41 rows, with a
+mutation ledger: removing either scan's skip, the closure-unit check, its nested-closure skip or its `?` test
+each turns rows red; the slot open is 33 red).
+
+**hisab.** Nothing to change in-tree (its closure binds both halves since 3.3.1). Its autodiff recipe may
+return `ad_grad_into(...)` from the closure again once it pins ≥ 6.6.16 (D082) — adopting it is hisab's
+job; the note goes in hisab's own issue file
+(`hisab/docs/development/issues/2026-10-03-cyrius-closure-stack-return-blamed-on-enclosing-fn.md`, see
+`drafts/srca-1/filings.md`).
 
 ## Summary
 
