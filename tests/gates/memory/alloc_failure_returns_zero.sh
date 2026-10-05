@@ -58,7 +58,18 @@ CCA="$ROOT/build/cycc_aarch64"
 
 [ -x "$CC" ] || { echo "FAIL: alloc_failure_returns_zero: build/cycc missing"; exit 1; }
 W=$(mktemp -d) && [ -d "$W" ] || { echo "FAIL: alloc_failure_returns_zero: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
-trap 'rm -rf "$W"' EXIT
+# A PRIVATE wine prefix under $W, never the user's ~/.wine: its one wineserver is shared by
+# every concurrent check.sh on the box. The EXIT kill is scoped to THIS prefix and also removes
+# its server socket dir (/tmp/.wine-<uid>/server-<dev>-<ino>). CHANGELOG [6.6.16]
+WP="$W/wine"
+_wine_down() {
+    [ -d "$WP" ] || return 0
+    _ws="/tmp/.wine-$(id -u)/server-$(stat -c '%D' "$WP" 2>/dev/null)-$(printf '%x' "$(stat -c '%i' "$WP" 2>/dev/null || echo 0)")"
+    WINEPREFIX="$WP" wineserver -k >/dev/null 2>&1 || true
+    WINEPREFIX="$WP" wineserver -w >/dev/null 2>&1 || true
+    rm -rf "$_ws" || true
+}
+trap '_wine_down; rm -rf "$W"' EXIT
 FAIL=0
 fail() { echo "FAIL: alloc_failure_returns_zero: $*"; FAIL=1; }
 
@@ -143,6 +154,7 @@ if ! command -v wine >/dev/null 2>&1; then
     echo "  SKIP: axis 3 (PE alloc_init abort) — wine not installed; axis 3s still checked"
     GATE_SKIPS=$((${GATE_SKIPS:-0} + 1))
 else
+    export WINEPREFIX="$WP" WINEDEBUG=-all WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d'
     CYRIUS_TARGET_WIN=1 "$CC" < "$W/winit.cyr" > "$W/winit.exe" 2>/dev/null || fail "axis 3: the PE probe did not compile"
     wrc=0; ( cd "$W" && WINEDEBUG=-all timeout 120 wine ./winit.exe > wo.txt 2> we.txt ) || wrc=$?
     if [ "$wrc" -ne 1 ]; then

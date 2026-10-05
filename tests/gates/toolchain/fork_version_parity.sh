@@ -51,7 +51,18 @@ VER=$(cat VERSION)
 [ -n "$VER" ] || { echo "FAIL: VERSION is empty"; exit 1; }
 
 T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: fork_version_parity: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
-trap 'rm -rf "$T"' EXIT
+# A PRIVATE wine prefix under $T, never the user's ~/.wine: its one wineserver is shared by
+# every concurrent check.sh on the box. The EXIT kill is scoped to THIS prefix and also removes
+# its server socket dir (/tmp/.wine-<uid>/server-<dev>-<ino>). CHANGELOG [6.6.16]
+WP="$T/wine"
+_wine_down() {
+    [ -d "$WP" ] || return 0
+    _ws="/tmp/.wine-$(id -u)/server-$(stat -c '%D' "$WP" 2>/dev/null)-$(printf '%x' "$(stat -c '%i' "$WP" 2>/dev/null || echo 0)")"
+    WINEPREFIX="$WP" wineserver -k >/dev/null 2>&1 || true
+    WINEPREFIX="$WP" wineserver -w >/dev/null 2>&1 || true
+    rm -rf "$_ws" || true
+}
+trap '_wine_down; rm -rf "$T"' EXIT
 
 # ── the derived fork list ────────────────────────────────────────────────
 FORKS=$(find src -maxdepth 1 -name 'main*.cyr' | sort)
@@ -156,8 +167,7 @@ if ! cat src/main_win.cyr | "$T/cycc_win" > "$T/cycc.exe" 2>/dev/null; then
     exit 1
 fi
 if command -v wine > /dev/null 2>&1; then
-    WINEDEBUG=-all
-    export WINEDEBUG
+    export WINEPREFIX="$WP" WINEDEBUG=-all WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d'
     assert_version "win PE under wine (main_win.cyr)" wine "$T/cycc.exe" || exit 1
     build_fork src/main_cx.cyr "$T/cx_win.exe" CYRIUS_TARGET_WIN=1 || exit 1
     assert_version "cx PE under wine (main_cx.cyr)" wine "$T/cx_win.exe" || exit 1

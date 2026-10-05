@@ -64,7 +64,18 @@ CC=${CYCC:-"$ROOT/build/cycc"}
 NAME=harness_alloc_refused
 [ -x "$CC" ] || { echo "FAIL: $NAME — no compiler at $CC"; exit 1; }
 W=$(mktemp -d) && [ -d "$W" ] || { echo "FAIL: $NAME — mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
-trap 'rm -rf "$W"' EXIT
+# A PRIVATE wine prefix under $W, never the user's ~/.wine: its one wineserver is shared by
+# every concurrent check.sh on the box. The EXIT kill is scoped to THIS prefix and also removes
+# its server socket dir (/tmp/.wine-<uid>/server-<dev>-<ino>). CHANGELOG [6.6.16]
+WP="$W/wine"
+_wine_down() {
+    [ -d "$WP" ] || return 0
+    _ws="/tmp/.wine-$(id -u)/server-$(stat -c '%D' "$WP" 2>/dev/null)-$(printf '%x' "$(stat -c '%i' "$WP" 2>/dev/null || echo 0)")"
+    WINEPREFIX="$WP" wineserver -k >/dev/null 2>&1 || true
+    WINEPREFIX="$WP" wineserver -w >/dev/null 2>&1 || true
+    rm -rf "$_ws" || true
+}
+trap '_wine_down; rm -rf "$W"' EXIT
 FAILS=0
 _fail() { echo "  FAIL: $1"; FAILS=$((FAILS + 1)); }
 ulimit -c 0 2>/dev/null || :
@@ -108,6 +119,7 @@ CYR
 "$CC" < programs/cxvm.cyr > "$W/vm" 2>/dev/null && chmod +x "$W/vm" || _fail "cxvm did not build from programs/cxvm.cyr"
 HAVE_QEMU=1; command -v qemu-aarch64 >/dev/null 2>&1 || HAVE_QEMU=0
 HAVE_WINE=1; command -v wine >/dev/null 2>&1 || HAVE_WINE=0
+export WINEPREFIX="$WP" WINEDEBUG=-all WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d'
 NT=0
 build_run() {  # $1 target, $2 probe → sets RRC, $W/<probe>.<t>.out / .err ; returns 1 on SKIP
     t=$1; p=$2; o="$W/$p.$t"

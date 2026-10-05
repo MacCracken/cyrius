@@ -88,7 +88,20 @@ cd "$ROOT"
 CC=${CYCC:-$ROOT/build/cycc}
 [ -x "$CC" ] || { echo "FAIL: compiler $CC missing"; exit 1; }
 W=$(mktemp -d) && [ -d "$W" ] || { echo "FAIL: mktemp"; exit 1; }
-trap 'rm -rf "$W"; wineserver -k >/dev/null 2>&1 || true' EXIT
+# A PRIVATE wine prefix under $W, never the user's ~/.wine: its one wineserver is shared by
+# every concurrent check.sh on the box. The EXIT kill is scoped to THIS prefix and also removes
+# its server socket dir (/tmp/.wine-<uid>/server-<dev>-<ino>). The bare `wineserver -k` this trap
+# ran before 6.6.16 killed the DEFAULT prefix's server on any exit before the export below.
+# CHANGELOG [6.6.16]
+WP="$W/wine"
+_wine_down() {
+    [ -d "$WP" ] || return 0
+    _ws="/tmp/.wine-$(id -u)/server-$(stat -c '%D' "$WP" 2>/dev/null)-$(printf '%x' "$(stat -c '%i' "$WP" 2>/dev/null || echo 0)")"
+    WINEPREFIX="$WP" wineserver -k >/dev/null 2>&1 || true
+    WINEPREFIX="$WP" wineserver -w >/dev/null 2>&1 || true
+    rm -rf "$_ws" || true
+}
+trap '_wine_down; rm -rf "$W"' EXIT
 
 MSG="a vector-returning fn carries its result"
 pass=0; fail=0; nrefuse=0; naccept=0

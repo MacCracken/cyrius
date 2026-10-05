@@ -77,6 +77,10 @@
 #      stale allowlist entry fails) and no fixed port bound (sock_bind with a non-zero literal or
 #      a name assigned one; a raw bind whose sockaddr gets non-zero port bytes or is built by
 #      sockaddr_in[6](a, P)). Self-tested on 6 shapes and a clean file.
+#   9. STATIC (6.6.16, G4), every gate + check.sh: no gate runs wine / winepath in the user's
+#      shared ~/.wine — a private WINEPREFIX under the gate's own mktemp dir (exported first,
+#      inline on the call, or baked into a generated runner) — and no `wineserver` call is
+#      unscoped, inside a trap least of all. Self-tested on 9 shapes and 5 clean spellings.
 #
 # MUTATION LEDGER (measured 6.6.6, each in a scratch copy of the tree):
 #   a. 6.6.5 syscall_xlat_generated.sh + 6.6.5 generator  -> axis 2 FAIL (normal: table
@@ -154,6 +158,22 @@
 #      (`syscall(0xF03A)`) let that test use `test_scratch` on EVERY target, so the rule, its
 #      one allowlist entry and this row are gone — the standing permission went with the
 #      defect it was written for. `z` still covers the surviving `chdir` rule.
+#   z3. axis 9 (6.6.16), the 6.6.15 bodies of the 8  -> axis 9 FAIL, one per gate (defer_every_
+#      gates + simd_return_shapes.sh                     return_path:123, x86_trig_calls_polyfill
+#                                                        :88, alloc_failure_returns_zero:147,
+#                                                        harness_alloc_refused:123, cli_pe_file_
+#                                                        size_and_sibling_tools:110 (winepath),
+#                                                        cli_pe_pinned_redirect:40 (winepath),
+#                                                        cx_runtime_foundations:248, fork_version_
+#                                                        parity:161) and simd_return_shapes:91
+#                                                        (the bare `wineserver -k` trap)
+#   z4. one gate's `export WINEPREFIX` removed; the   -> axis 9 FAIL, naming that gate's line
+#      simd trap back to bare; `_wine_down`'s -k
+#      unscoped; a runner's WINEPREFIX="%s" removed;
+#      pe_fsync_flushes.sh's inline prefix removed
+#   z5. detector: trap rule off / private() always    -> axis 9 self-test FAIL (trap_after_export
+#      true / the "%s" runner form off / the inline      / not_private / c_wrapper / second_call +
+#      form off / the wine-call rule off                 c_inline / bare, winepath_first, fn_arg)
 # Real tree -> PASS.
 #
 # ⚠ Runs ONLY against a scratch copy. It never runs a gate against the real tree it lives in.
@@ -984,5 +1004,148 @@ elif [ "$st6" = 0 ]; then
     echo "  ok: axis 6: $n6 tests/tcyr + tests/fixtures files name no fixed /tmp path ($nallow allowlisted non-path literals) and bind no fixed port (self-tested on 6 shapes + 1 clean file)"
 fi
 
+# ── axis 9: STATIC — no gate runs wine in the SHARED default prefix ────────────────────
+# v6.6.16 (G4). Axes 5-8 are about /tmp, ports and the repo root. This one is about the last
+# shared directory a check.sh run touches: the user's ~/.wine, and the ONE wineserver that
+# serves it. 8 gates ran `wine` / `winepath` with no WINEPREFIX, so every concurrent check.sh
+# on the box initialised, contended for and waited on that one server — and
+# simd_return_shapes.sh's EXIT trap ran a bare `wineserver -k`, which (before its private
+# prefix was exported, i.e. on any early exit) killed the DEFAULT prefix's server under every
+# other wine job on the machine: cbt_fork_sites_have_pe_arm.sh's 6.6.6 fix, one gate over.
+# A gate that runs wine sets a PRIVATE prefix under its own mktemp dir, by one of four spellings,
+# each accepted here and each self-tested as a clean fixture:
+#   export   `export WINEPREFIX="$T/wine" …` before the first wine/winepath call (line order)
+#   inline   `WINEPREFIX="$D/wp" wine …` on the call's own logical line (`\` continuations joined)
+#   wrapper  a generated runner: `printf '…WINEPREFIX="%s" … exec wine "$1"…' "$T/wp" > "$WRUN"`
+#   scoped   every `wineserver` call carries an inline `WINEPREFIX=<private>` — or follows the
+#            export in straight-line code; inside a `trap` it MUST be inline, because a trap
+#            runs on an early exit, before the export ever did
+# "Private" = the value is "$V/…" (or "%s" filled from one) where V was assigned a mktemp, or a
+# path under such a V (followed through further assignments). "Runs wine" = `wine`/`wine64`/
+# `winepath` followed by an operand (a $-expansion, ./ or ..\, X.exe, cmd, reg, -flag) — so
+# prose ("wine not installed"), `command -v wine` and comments do not count. Line order stands
+# in for straight-line order: an export in an earlier, untaken branch would read as set (the
+# 22 gates use none of that shape). This file is excluded: its fixtures spell the bad shapes.
+cat > "$W/wine9.awk" <<'AWK'
+function dref(s,    v) {   # does s expand a mktemp-derived variable?
+    for (v in DV) if (match(s, "\\$(\\{" v "\\}|" v ")([^A-Za-z0-9_]|$)")) return 1
+    return 0
+}
+function val(s,    c, e) {  # the value at the start of s (just after `NAME=`)
+    c = substr(s, 1, 1)
+    if (c == "\"" || c == "'") { e = index(substr(s, 2), c); return (e ? substr(s, 2, e - 1) : substr(s, 2)) }
+    match(s, /^[^ \t;&|)]*/); return substr(s, 1, RLENGTH)
+}
+function private(s, pos,    v, rest) {   # is the WINEPREFIX= whose value starts at pos private?
+    v = val(substr(s, pos)); rest = substr(s, pos + length(v))
+    return dref(v) || (index(v, "%s") && dref(rest))
+}
+function inline_ok(s, p,    pre, k, off, last, t) {   # a private WINEPREFIX= before column p
+    pre = substr(s, 1, p - 1); last = 0; off = 0; t = pre
+    while ((k = index(t, "WINEPREFIX=")) > 0) { last = off + k; off = off + k; t = substr(pre, off + 1) }
+    return last ? private(s, last + 11) : 0
+}
+{
+    raw = $0
+    if (raw ~ /^[ \t]*#/) raw = ""
+    sub(/[ \t]+#[ \t].*$/, "", raw); sub(/[ \t]+#$/, "", raw)
+    if (cont) { LL[ln] = LL[ln] " " raw } else { ln = NR; LL[ln] = raw; ORD[++nl] = ln }
+    cont = (LL[ln] ~ /\\$/); if (cont) sub(/\\$/, "", LL[ln])
+}
+END {
+    # mktemp-derived variables: V=$(mktemp …), then any V="$U/…" with U derived (3 passes)
+    for (i = 1; i <= nl; i++) {
+        s = LL[ORD[i]]; t = s
+        while (match(t, /(^|[ \t;&|(])[A-Za-z_][A-Za-z0-9_]*=/)) {
+            a = substr(t, RSTART, RLENGTH); sub(/^[ \t;&|(]/, "", a); nm = substr(a, 1, length(a) - 1)
+            t = substr(t, RSTART + RLENGTH); v = val(t)
+            if (v ~ /^\$\([ \t]*([^ \t)]*\/)?mktemp([ \t)]|$)/ || t ~ /^`([^ \t`]*\/)?mktemp/) DV[nm] = 1
+            else if (nm != "WINEPREFIX") { AS[nm] = AS[nm] SUBSEP v }
+        }
+    }
+    for (pass = 0; pass < 3; pass++) for (nm in AS) if (!(nm in DV)) {
+        n = split(AS[nm], vs, SUBSEP)
+        for (j = 1; j <= n; j++) for (d in DV) if (match(vs[j], "^\\$(\\{" d "\\}|" d ")(/|$)")) DV[nm] = 1
+    }
+    expok = 0; pend = ""
+    for (i = 1; i <= nl; i++) {
+        L = ORD[i]; s = LL[L]
+        if (match(s, /(^|[ \t;&|(])export[ \t]+([A-Za-z_][A-Za-z0-9_]*=[^ \t]*[ \t]+)*WINEPREFIX=/)) expok = private(s, RSTART + RLENGTH)
+        else if (match(s, /^[ \t]*WINEPREFIX=/)) pend = s
+        if (match(s, /(^|[ \t;&|(])export[ \t]+WINEPREFIX([ \t;]|$)/) && pend != "") expok = private(pend, index(pend, "WINEPREFIX=") + 11)
+        if (s ~ /(^|[ \t;&|(])unset[ \t]+WINEPREFIX/) expok = 0
+        t = s; off = 0
+        while (match(t, /(^|[^A-Za-z0-9_.$\/-])(wine|wine64|winepath)[ \t]+("?\$|"?\.\.?[\/\\]|[A-Za-z0-9_.\\-]*\.exe|cmd[ \t]|reg[ \t]|start[ \t]|-[A-Za-z])/)) {
+            p = off + RSTART; off = off + RSTART + RLENGTH - 1; t = substr(s, off + 1)
+            if (!inline_ok(s, p + 1) && !expok) { print L ": runs wine with NO private WINEPREFIX (the shared ~/.wine): " s; break }
+        }
+        t = s; off = 0
+        while (match(t, /(^|[^A-Za-z0-9_.$\/-])wineserver[ \t]/)) {
+            p = off + RSTART; off = off + RSTART + RLENGTH - 1; t = substr(s, off + 1)
+            if (inline_ok(s, p + 1)) continue
+            if (s ~ /^[ \t]*trap[ \t]/) { print L ": an UNSCOPED wineserver in a trap (an early exit kills the DEFAULT prefix's server): " s; break }
+            if (!expok) { print L ": an UNSCOPED wineserver (no private WINEPREFIX set yet): " s; break }
+        }
+    }
+}
+AWK
+_wine_shared() { awk -f "$W/wine9.awk" "$1"; }
+mkdir -p "$W/fx9"
+printf 'T=$(mktemp -d) && [ -d "$T" ] || { echo no; exit 1; }\nWINEDEBUG=-all wine "$T/m.exe" > /dev/null 2>&1; got=$?\n' > "$W/fx9/bare.sh"
+printf 'W=$(mktemp -d) && [ -d "$W" ] || { echo no; exit 1; }\nexport WINEDEBUG=-all\nwp() { winepath -w "$1" 2>/dev/null; }\nexport WINEPREFIX="$W/wine"\n' > "$W/fx9/winepath_first.sh"
+printf 'T=$(mktemp -d) && [ -d "$T" ] || { echo no; exit 1; }\nassert_version "win PE under wine (main_win.cyr)" wine "$T/cycc.exe" || exit 1\n' > "$W/fx9/fn_arg.sh"
+{ printf 'W=$(mktemp -d) && [ -d "$W" ] || { echo no; exit 1; }\n'
+  printf 'trap '"'"'rm -rf "$W"; wineserver -k >/dev/null 2>&1 || true'"'"' EXIT\n'
+  printf 'export WINEPREFIX="$W/wine" WINEDEBUG=-all\nwine "$W/a.exe"\n'; } > "$W/fx9/trap_bare.sh"
+printf 'wineserver -k > /dev/null 2>&1 || true\n' > "$W/fx9/kill_bare.sh"
+# the prefix IS exported first, but a trap's body runs whenever the shell exits — the trap rule
+# alone must flag this one (the straight-line rule would accept it)
+{ printf 'W=$(mktemp -d) && [ -d "$W" ] || { echo no; exit 1; }\nexport WINEPREFIX="$W/wine"\n'
+  printf 'trap '"'"'wineserver -k >/dev/null 2>&1; rm -rf "$W"'"'"' EXIT\n'; } > "$W/fx9/trap_after_export.sh"
+printf 'T=$(mktemp -d) && [ -d "$T" ] || { echo no; exit 1; }\nexport WINEPREFIX="$HOME/.wine" WINEDEBUG=-all\nwine "$T/a.exe"\n' > "$W/fx9/not_private.sh"
+printf 'T=$(mktemp -d) && [ -d "$T" ] || { echo no; exit 1; }\nprintf '"'"'#!/bin/sh\\nexec wine "$1"\\n'"'"' > "$T/wr"\n' > "$W/fx9/wrapper_bare.sh"
+printf 'D=$(mktemp -d) && [ -d "$D" ] || { echo no; exit 1; }\n( cd "$D" && WINEPREFIX="$D/wp" wine a.exe )\n( cd "$D" && wine ./b.exe )\n' > "$W/fx9/second_call.sh"
+# the four accepted spellings, one clean fixture each — and the prose / probe look-alikes
+{ printf 'T=$(mktemp -d) && [ -d "$T" ] || { echo no; exit 1; }\nWP="$T/wine"\n'
+  printf 'export WINEPREFIX="$WP" WINEDEBUG=-all WINEDLLOVERRIDES='"'"'mscoree=d'"'"'\nwp() { winepath -w "$1"; }\n'
+  printf 'wine cmd /c '"'"'echo %%TEMP%%'"'"'\ntimeout 120 wine "..\\\\bin\\\\x.exe" demo\nwineserver -k > /dev/null 2>&1 || true\n'; } > "$W/fx9/c_export.sh"
+{ printf 'D=$(mktemp -d) && [ -d "$D" ] || { echo no; exit 1; }\n'
+  printf '( cd "$D/w" && ulimit -c 0; WINEPREFIX="$D/wp" WINEDEBUG=-all \\\n    wine t.exe > "$D/t.out" 2>&1 ); wrc=$?\n'
+  printf 'WINEPREFIX="$D/wp" wineserver -k > /dev/null 2>&1 || true\n'; } > "$W/fx9/c_inline.sh"
+{ printf 'T=$(mktemp -d) && [ -d "$T" ] || { echo no; exit 1; }\nWRUN="$T/wrun"\n'
+  printf 'printf '"'"'#!/bin/sh\\nWINEPREFIX="%%s" WINEDEBUG=-all exec wine "$1"\\n'"'"' "$T/wp" > "$WRUN"; chmod +x "$WRUN"\n'; } > "$W/fx9/c_wrapper.sh"
+{ printf 'T=$(mktemp -d) && [ -d "$T" ] || { echo no; exit 1; }\nWP="$T/wine"\n'
+  printf 'trap '"'"'[ -d "$WP" ] && WINEPREFIX="$WP" wineserver -k > /dev/null 2>&1; rm -rf "$T"'"'"' EXIT\n'
+  printf '_wine_down() { WINEPREFIX="$WP" wineserver -k >/dev/null 2>&1; WINEPREFIX="$WP" wineserver -w >/dev/null 2>&1; }\n'; } > "$W/fx9/c_scoped.sh"
+{ printf '# wine "$T/a.exe" in a comment, and a bare wineserver -k\n'
+  printf 'if command -v wine > /dev/null 2>&1; then echo "  SKIP: wine not installed (cass covers it)"; fi\n'
+  printf 'echo "win64 (wine — EMULATION, not hardware):"\ncheck "wine: the staging path translated (floor)" yes "$x"\n'
+  printf 'foreign() {   # $1 label, $2 runner prefix ("" or "qemu-aarch64" / "wine")\n    :\n}\n'; } > "$W/fx9/c_prose.sh"
+st9=0
+for f in bare winepath_first fn_arg trap_bare trap_after_export kill_bare not_private wrapper_bare second_call; do
+    [ -n "$(_wine_shared "$W/fx9/$f.sh")" ] || { echo "FAIL: axis 9 self-test: a shared-prefix wine shape ('$f') was not flagged"; st9=1; }
+done
+[ "$(_wine_shared "$W/fx9/second_call.sh" | cut -d: -f1)" = 3 ] || { echo "FAIL: axis 9 self-test: an inline prefix on ONE call excused the next call (second_call)"; st9=1; }
+for f in c_export c_inline c_wrapper c_scoped c_prose; do
+    [ -z "$(_wine_shared "$W/fx9/$f.sh")" ] || { echo "FAIL: axis 9 self-test: an isolated spelling ('$f') was flagged: $(_wine_shared "$W/fx9/$f.sh")"; st9=1; }
+done
+[ "$st9" = 0 ] || FAIL=1
+n9=0; nwine9=0; bad9=0
+for g in $(find tests/gates -name '*.sh' | LC_ALL=C sort) scripts/check.sh; do
+    [ "$g" = "$SELF" ] && continue
+    n9=$((n9 + 1))
+    grep -qE '(^|[^A-Za-z0-9_.$/-])(wine|wine64|winepath)[[:space:]]+("?\$|"?\.\.?[/\\]|[A-Za-z0-9_.\\-]*\.exe|cmd[[:space:]]|reg[[:space:]]|-[A-Za-z])' "$g" && nwine9=$((nwine9 + 1))
+    h=$(_wine_shared "$g")
+    [ -n "$h" ] && { echo "$h" | sed "s|^|FAIL: axis 9: $g:|"; bad9=1; }
+done
+# Floor: 22 gates run wine at 6.6.16 (derive: the grep above, over tests/gates/**/*.sh).
+if [ "$n9" -lt 150 ] || [ "$nwine9" -lt 20 ]; then
+    echo "FAIL: axis 9: scanned $n9 scripts / $nwine9 that run wine (floors 150 / 20) — the scan read nothing"; FAIL=1
+elif [ "$bad9" != 0 ]; then
+    FAIL=1
+elif [ "$st9" = 0 ]; then
+    echo "  ok: axis 9: all $nwine9 gates that run wine use a private WINEPREFIX under their own mktemp dir, and no wineserver call is unscoped ($n9 scripts scanned; self-tested on 9 shapes + 5 clean spellings)"
+fi
+
 if [ "$FAIL" != 0 ]; then echo "FAIL: gates_never_write_tree"; exit 1; fi
-echo "PASS gates_never_write_tree (static: no gate or check.sh writes a path under \$ROOT but gitignored build/ outputs, edits one in place, or backs one up and restores it; every temp dir is a checked mktemp and no gate or check-driver path is a fixed /tmp name; no test check.sh runs names a fixed /tmp path or binds a fixed port; dynamic: the 4 gates that did leave a stamped scratch tree untouched under 4 TMPDIR faults; the generator fails a short write)"
+echo "PASS gates_never_write_tree (static: no gate or check.sh writes a path under \$ROOT but gitignored build/ outputs, edits one in place, or backs one up and restores it; every temp dir is a checked mktemp and no gate or check-driver path is a fixed /tmp name; no gate runs wine outside a private WINEPREFIX or kills an unscoped wineserver; no test check.sh runs names a fixed /tmp path or binds a fixed port; dynamic: the 4 gates that did leave a stamped scratch tree untouched under 4 TMPDIR faults; the generator fails a short write)"
