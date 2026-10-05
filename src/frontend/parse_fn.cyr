@@ -8580,11 +8580,15 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                     # Stage 2: shift fixup-table CPs added during this fn.
                     # FIXUP later patches via these CPs — they must reflect
                     # post-compaction positions.
+                    # ⛔ 6.6.17: not `_fi` — cybs (the seed-built bootstrap compiler) resolves a
+                    # variable name with its leading `_`s dropped, so `_fi` WAS this fn's `fi`
+                    # in gen1: the fn-end record went to the wrong slot, harmless until the fn
+                    # table grew past 2048 (`_fnt_codeend` then overran into `_fnt_structmask`).
                     var _fc0 = L64(S + 0x1A6010);
                     var _fcn = GFCNT(S);
-                    var _fi = _fc0;
-                    while (_fi < _fcn) {
-                        var _fa = _fixup_base + _fi * 16;
+                    var _fxi = _fc0;
+                    while (_fxi < _fcn) {
+                        var _fa = _fixup_base + _fxi * 16;
                         var _fcp = L64(_fa);
                         var _fsh = 0;
                         var _ni2 = 0;
@@ -8594,7 +8598,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                             _ni2 = _ni2 + 1;
                         }
                         S64(_fa, _fcp - _fsh);
-                        _fi = _fi + 1;
+                        _fxi = _fxi + 1;
                     }
                     # Stage 3: shift jump-target table entries (used by LASE
                     # / BB analysis at IR>0; harmless to update at IR=0).
