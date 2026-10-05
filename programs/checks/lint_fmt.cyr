@@ -174,7 +174,7 @@ fn _parse_drift_load(path, len_out): i64 {
     var seen = _pd_last_fn(buf, total);
     var real = _pd_tail_last_fn(path, size);
     if (real < 0 || seen != real) {
-        _pd_fail(path, "the scan did not reach the file's last fn (read from its end) — it is checking a truncated file");
+        _pd_fail(path, "the scan did not reach the file's last fn (read from its end): a truncated file");
         return 0;
     }
     store64(len_out, total);
@@ -222,7 +222,8 @@ fn _parse_emit_drift_gate(): i64 {
         _p(ANSI_GREEN);
         _p("PASS");
         _p(ANSI_RESET);
-        _p(": no direct emits in all 6 parse_*.cyr files, each read whole through its last fn (path-A baseline at v5.11.39)\n");
+        _p(": no direct emits in all 6 parse_*.cyr files, each read whole through its last fn");
+        _p(" (path-A baseline at v5.11.39)\n");
     }
     _check("path-A drift gate: parse_*.cyr direct-emit zero baseline (v5.11.39)", fail);
     return fail;
