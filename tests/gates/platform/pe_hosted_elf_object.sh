@@ -27,7 +27,20 @@ ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
 [ -x "$CC" ] || { echo "FAIL pe_hosted_elf_object: no compiler at $CC"; exit 1; }
 T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL pe_hosted_elf_object: mktemp -d failed"; exit 1; }
-trap 'rm -rf "$T"' EXIT
+# A PRIVATE wine prefix, and wine's own HOME / XDG_CACHE_HOME, under $T — never the user's
+# ~/.wine or ~/.cache (a fresh prefix writes $HOME/.cache: mesa shader caches). The EXIT
+# teardown stops THIS prefix's wineserver and removes its server dir
+# (/tmp/.wine-<uid>/server-<dev>-<ino>), which `wineserver -k` leaves behind. CHANGELOG [6.6.17]
+WP="$T/wp"
+WHM="$T/whome"
+_wine_down() {
+    [ -d "$WP" ] || return 0
+    _ws="/tmp/.wine-$(id -u)/server-$(stat -c '%D' "$WP" 2>/dev/null)-$(printf '%x' "$(stat -c '%i' "$WP" 2>/dev/null || echo 0)")"
+    WINEPREFIX="$WP" wineserver -k >/dev/null 2>&1 || true
+    WINEPREFIX="$WP" wineserver -w >/dev/null 2>&1 || true
+    rm -rf "$_ws" || true
+}
+trap '_wine_down; rm -rf "$T"' EXIT
 cd "$ROOT" || exit 1
 ulimit -c 0
 fail=0
@@ -53,7 +66,7 @@ else
   CYRIUS_TARGET_WIN=1 "$CC" < src/main_win.cyr > "$T/cycc.exe" 2> "$T/pe.err"
   if [ ! -s "$T/cycc.exe" ]; then _bad "the PE compiler did not build"; grep -m3 '^error' "$T/pe.err"
   else
-    export WINEPREFIX="$T/wp" WINEDEBUG=-all WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d'
+    export WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d'
     nfx=0
     for fx in tests/fixtures/linker/*.cyr; do
       grep -q '^object;' "$fx" || continue
@@ -69,7 +82,7 @@ else
       else pass=$((pass + 1)); fi
     done
     [ "$nfx" -ge 4 ] || _bad "only $nfx object fixtures under tests/fixtures/linker (floor 4)"
-    rm -rf "$T/wp"
+    _wine_down; rm -rf "$T/wp"
   fi
 fi
 

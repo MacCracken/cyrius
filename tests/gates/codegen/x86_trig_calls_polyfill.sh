@@ -25,7 +25,11 @@ T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL x86_trig_calls_polyfill: mktemp -d
 # A PRIVATE wine prefix under $T, never the user's ~/.wine: its one wineserver is shared by
 # every concurrent check.sh on the box. The EXIT kill is scoped to THIS prefix and also removes
 # its server socket dir (/tmp/.wine-<uid>/server-<dev>-<ino>). CHANGELOG [6.6.16]
+# 6.6.17: wine's own HOME and XDG_CACHE_HOME are under $T too — a fresh prefix writes
+# $HOME/.cache (mesa shader caches) — and `wineserver -k` leaves the server dir behind, so
+# _wine_down removes it. CHANGELOG [6.6.17]
 WP="$T/wine"
+WHM="$T/whome"
 _wine_down() {
     [ -d "$WP" ] || return 0
     _ws="/tmp/.wine-$(id -u)/server-$(stat -c '%D' "$WP" 2>/dev/null)-$(printf '%x' "$(stat -c '%i' "$WP" 2>/dev/null || echo 0)")"
@@ -95,7 +99,7 @@ else
     echo "  ok [elf] axis 3: sin(pi), sin(1e19), cos(DBL_MAX) are the correctly rounded bits"
 fi
 if command -v wine > /dev/null 2>&1; then
-    export WINEPREFIX="$WP" WINEDEBUG=-all WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d'
+    export WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d'
     cp "$T/m.pe" "$T/m.exe"
     wine "$T/m.exe" > /dev/null 2>&1; got=$?
     if [ "$got" -ne 42 ]; then

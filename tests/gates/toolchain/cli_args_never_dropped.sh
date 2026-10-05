@@ -152,7 +152,20 @@ if [ ! -x "$ROOT/build/cycc" ]; then
 fi
 
 T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: cli_args_never_dropped: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
-trap 'rm -rf "$T"' EXIT
+# A PRIVATE wine prefix, and wine's own HOME / XDG_CACHE_HOME, under $T — never the user's
+# ~/.wine or ~/.cache (a fresh prefix writes $HOME/.cache: mesa shader caches). The EXIT
+# teardown stops THIS prefix's wineserver and removes its server dir
+# (/tmp/.wine-<uid>/server-<dev>-<ino>), which `wineserver -k` leaves behind. CHANGELOG [6.6.17]
+WP="$T/wine"
+WHM="$T/whome"
+_wine_down() {
+    [ -d "$WP" ] || return 0
+    _ws="/tmp/.wine-$(id -u)/server-$(stat -c '%D' "$WP" 2>/dev/null)-$(printf '%x' "$(stat -c '%i' "$WP" 2>/dev/null || echo 0)")"
+    WINEPREFIX="$WP" wineserver -k >/dev/null 2>&1 || true
+    WINEPREFIX="$WP" wineserver -w >/dev/null 2>&1 || true
+    rm -rf "$_ws" || true
+}
+trap '_wine_down; rm -rf "$T"' EXIT
 HOME_DIR="$T/home"
 mkdir -p "$HOME_DIR/bin" "$HOME_DIR/versions/$(cat VERSION)"
 cp "$ROOT/build/cycc" "$HOME_DIR/bin/cycc" && chmod +x "$HOME_DIR/bin/cycc"
@@ -951,7 +964,7 @@ else
     # A THROWAWAY prefix under $T, so the leg reads and writes nothing of the user's
     # ~/.wine (and HOME is already $T/h). winemenubuilder/mono/gecko are disabled so a
     # fresh prefix neither writes desktop entries nor tries to download runtimes.
-    export WINEPREFIX="$T/wine" WINEDEBUG=-all WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d'
+    export WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d'
     WN="$T/wn"; mkdir -p "$WN/bin" "$WN/w"
     "$ROOT/build/cycc" < "$ROOT/src/main_win.cyr" > "$T/cc_win" 2> "$T/build.err" && chmod +x "$T/cc_win"
     build_pe() {   # $1 source, $2 dest — refuse an empty or non-PE artifact

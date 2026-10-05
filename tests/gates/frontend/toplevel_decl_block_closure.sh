@@ -52,7 +52,20 @@ cd "$ROOT" || { echo "FAIL: toplevel_decl_block_closure: cannot cd to $ROOT"; ex
 CC="${CYCC:-$ROOT/build/cycc}"
 [ -x "$CC" ] || { echo "FAIL: toplevel_decl_block_closure: $CC missing"; exit 1; }
 WORK=$(mktemp -d) && [ -d "$WORK" ] || { echo "FAIL: toplevel_decl_block_closure: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
-trap 'rm -rf "$WORK"' EXIT
+# A PRIVATE wine prefix, and wine's own HOME / XDG_CACHE_HOME, under $WORK — never the user's
+# ~/.wine or ~/.cache (a fresh prefix writes $HOME/.cache: mesa shader caches). The EXIT
+# teardown stops THIS prefix's wineserver and removes its server dir
+# (/tmp/.wine-<uid>/server-<dev>-<ino>), which `wineserver -k` leaves behind. CHANGELOG [6.6.17]
+WP="$WORK/wine"
+WHM="$WORK/whome"
+_wine_down() {
+    [ -d "$WP" ] || return 0
+    _ws="/tmp/.wine-$(id -u)/server-$(stat -c '%D' "$WP" 2>/dev/null)-$(printf '%x' "$(stat -c '%i' "$WP" 2>/dev/null || echo 0)")"
+    WINEPREFIX="$WP" wineserver -k >/dev/null 2>&1 || true
+    WINEPREFIX="$WP" wineserver -w >/dev/null 2>&1 || true
+    rm -rf "$_ws" || true
+}
+trap '_wine_down; rm -rf "$WORK"' EXIT
 ulimit -c 0 2>/dev/null || true
 NFAIL=0
 NROWS=0
@@ -170,7 +183,7 @@ fi
 if command -v wine > /dev/null 2>&1; then
     echo "win64 (wine — emulation, not hardware):"
     # A throwaway prefix, so nothing of the user's ~/.wine is read or written.
-    export WINEPREFIX="$WORK/wine" WINEDEBUG=-all WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d'
+    export WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d'
     if build "$CC" "$ROOT/src/main_win.cyr" "$WORK/cycc_win"; then
         chmod +x "$WORK/cycc_win"
         wr_() { cp "$1" "$1.exe"; timeout 180 wine "$1.exe"; }

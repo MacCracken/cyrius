@@ -67,7 +67,11 @@ W=$(mktemp -d) && [ -d "$W" ] || { echo "FAIL: $NAME — mktemp -d failed (TMPDI
 # A PRIVATE wine prefix under $W, never the user's ~/.wine: its one wineserver is shared by
 # every concurrent check.sh on the box. The EXIT kill is scoped to THIS prefix and also removes
 # its server socket dir (/tmp/.wine-<uid>/server-<dev>-<ino>). CHANGELOG [6.6.16]
+# 6.6.17: wine's own HOME and XDG_CACHE_HOME are under $W too — a fresh prefix writes
+# $HOME/.cache (mesa shader caches) — and `wineserver -k` leaves the server dir behind, so
+# _wine_down removes it. CHANGELOG [6.6.17]
 WP="$W/wine"
+WHM="$W/whome"
 _wine_down() {
     [ -d "$WP" ] || return 0
     _ws="/tmp/.wine-$(id -u)/server-$(stat -c '%D' "$WP" 2>/dev/null)-$(printf '%x' "$(stat -c '%i' "$WP" 2>/dev/null || echo 0)")"
@@ -119,7 +123,7 @@ CYR
 "$CC" < programs/cxvm.cyr > "$W/vm" 2>/dev/null && chmod +x "$W/vm" || _fail "cxvm did not build from programs/cxvm.cyr"
 HAVE_QEMU=1; command -v qemu-aarch64 >/dev/null 2>&1 || HAVE_QEMU=0
 HAVE_WINE=1; command -v wine >/dev/null 2>&1 || HAVE_WINE=0
-export WINEPREFIX="$WP" WINEDEBUG=-all WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d'
+export WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d'
 NT=0
 build_run() {  # $1 target, $2 probe → sets RRC, $W/<probe>.<t>.out / .err ; returns 1 on SKIP
     t=$1; p=$2; o="$W/$p.$t"

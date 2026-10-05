@@ -38,7 +38,11 @@ W=$(mktemp -d) && [ -d "$W" ] || { echo "FAIL: $NAME: mktemp -d failed (TMPDIR=$
 # A PRIVATE wine prefix under $W, never the user's ~/.wine: its one wineserver is shared by
 # every concurrent check.sh on the box. The EXIT kill is scoped to THIS prefix and also removes
 # its server socket dir (/tmp/.wine-<uid>/server-<dev>-<ino>). CHANGELOG [6.6.16]
+# 6.6.17: wine's own HOME and XDG_CACHE_HOME are under $W too — a fresh prefix writes
+# $HOME/.cache (mesa shader caches) — and `wineserver -k` leaves the server dir behind, so
+# _wine_down removes it. CHANGELOG [6.6.17]
 WP="$W/wine"
+WHM="$W/whome"
 _wine_down() {
     [ -d "$WP" ] || return 0
     _ws="/tmp/.wine-$(id -u)/server-$(stat -c '%D' "$WP" 2>/dev/null)-$(printf '%x' "$(stat -c '%i' "$WP" 2>/dev/null || echo 0)")"
@@ -47,7 +51,7 @@ _wine_down() {
     rm -rf "$_ws" || true
 }
 trap '_wine_down; rm -rf "$W"' EXIT
-export WINEPREFIX="$WP" WINEDEBUG=-all WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d'
+export WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d'
 wp() { winepath -w "$1" 2>/dev/null; }
 
 # The cross compiler (Linux-hosted, emits PE), then cyrius.exe from THIS tree.
