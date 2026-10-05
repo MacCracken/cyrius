@@ -1400,6 +1400,7 @@ fn main(): i64 {
             if (streq(argv(1), "--list-suites") == 1) { lone = 1; }
             if (streq(argv(1), "--list-selectable-only") == 1) { lone = 1; }
             if (streq(argv(1), "--tcyr-floor") == 1) { lone = 1; }
+            if (streq(argv(1), "--sit-dir") == 1) { lone = 1; }
         }
         if (lone == 0) { return _rg_supervise_self(); }
     }
@@ -1505,6 +1506,20 @@ fn main(): i64 {
             }
             print_num(tf);
             _p("\n");
+            return 0;
+        }
+        # The sit checkout the sit-fsck row would run (`_sit_find_dir`, services.cyr): print it
+        # and exit 0, or name every candidate tried on stderr and exit 1, printing nothing on
+        # stdout. How a gate proves the worktree lookup without the 100-commit fixture.
+        # Gate: tests/gates/toolchain/check_sit_lookup_worktree.sh. CHANGELOG [6.6.16]
+        if (streq(sel, "--sit-dir") == 1) {
+            var sd = _sit_find_dir();
+            if (sd == 0) {
+                _perr(_sit_not_found_why());
+                _perr("\n");
+                return 1;
+            }
+            println(sd);
             return 0;
         }
         only = _suite_index(sel);
