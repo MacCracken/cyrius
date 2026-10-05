@@ -2329,7 +2329,7 @@ fn _err_excerpt(S): i64 {
     var off = GTOFF(S, GTI(S));
     var bl = GBL(S);
     if (off == 0) { return 0; }
-    if (off >= bl) { return 0; }
+    if (off > bl) { return 0; }   # == bl is the EOF token of a source with no final newline (6.6.17)
     var ls = off;
     while (ls > 0) {
         if (load8(S + 0x459D000 + ls - 1) == 10) { break; }

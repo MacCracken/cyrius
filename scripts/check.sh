@@ -1742,6 +1742,11 @@ _chk_gate "$ROOT/tests/gates/diagnostics/nested_fn_refused.sh"
 # a tail call is reported at 14:18, not the next token. Binaries identical without the attribute.
 _chk_gate "$ROOT/tests/gates/diagnostics/deprecated_every_call_path.sh"
 
+# 6.6.17 — C9's twin for `private`: a tail call's error names its own line, not the `}` after it;
+# and `expected '}', got end of file` names <file>:line:col just past the last source byte (it
+# had no file and a line past the end, and an included file's EOF showed a `#@file` marker).
+_chk_gate "$ROOT/tests/gates/diagnostics/diag_location_eof_and_tail_private.sh"
+
 # 6.6.16 (C10) — cycc's `lib/...` include fallback reads CYRIUS_HOME's store slot, else HOME's,
 # from the WHOLE environment: both orders, empty = unset, no fall-through to HOME, past 4 KB / 8 KB
 # and across read boundaries, the 1984-B bound never truncated — x86, aarch64, cx, the PE cross and

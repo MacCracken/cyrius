@@ -2950,7 +2950,7 @@ fn _gen_inherit_dep(S, spec, base_fi): i64 {
 # the warning names. CHANGELOG [6.6.16]
 fn _callee_site_checks(S, fi, noff, ti): i64 {
     if (fi < 0) { return 0; }
-    _vis_check(S, fi, noff);
+    _vis_check(S, fi, noff, ti);
     _DEPRECATED_WARN(S, fi, noff, ti);
     return 0;
 }
@@ -3026,21 +3026,23 @@ var _visdef_vec = 0;
 # rather than reasoned about.
 var _vis_stamp_seq = 0;
 var _vis_swept_seq = 0 - 1;
-fn _vis_check(S, fi, noff): i64 {
+fn _vis_check(S, fi, noff, ti): i64 {
     if (fi < 0) { return 0; }                    # unresolved name — nothing to judge
     if (GFFI(S, fi) == 0) {
         # Owner unknown. If it also has no body yet, this may be a forward reference to a
         # definition that has not been stamped — re-judge it at the end of the parse.
-        if (L64(_fnt_offsets + fi * 8) < 0) { _vis_defer(S, fi); }
+        if (L64(_fnt_offsets + fi * 8) < 0) { _vis_defer(S, fi, ti); }
         return 0;
     }
     if ((GFLG(S, fi) & 64) == 0) { return 0; }   # callee not private — the common path
     var callee = GFFI(S, fi);
     if (callee == 0) { return 0; }               # callee origin unknown
-    # The CALLER's file comes from the token being parsed, not from `_cur_fn_ix`: the
+    # The CALLER's file comes from the call's own token, not from `_cur_fn_ix`: the
     # inline-replay path re-parses a callee's body tokens while `_cur_fn_ix` still
     # names the enclosing fn, so asking the fn table would answer for the wrong file.
-    var caller = FM_FILEID(S, GTLINE(S, GTI(S))) + 1;
+    # 6.6.17: `ti`, not the cursor — a tail call fires this past `);`, so the cursor named
+    # the NEXT token (`return pv(x);` was reported at the `}` below it). CHANGELOG [6.6.17]
+    var caller = FM_FILEID(S, GTLINE(S, ti)) + 1;
     if (caller == 0) { return 0; }
     if (caller == callee) { return 0; }          # same file — allowed
     # v6.5.0 Phase 3 — HARD ERROR by default, via the v6.3.2 undefined-fn playbook:
@@ -3053,7 +3055,7 @@ fn _vis_check(S, fi, noff): i64 {
     # A fail-fast exit here would make adopting `private` on a large file an
     # N-compile-cycles-to-find-N-callers exercise.
     syscall(SYS_WRITE, 2, "error:", 6);
-    _err_head(S);
+    _err_head_at(S, ti);
     syscall(SYS_WRITE, 2, ": '", 3);
     PRSTR(S + 0xEC00000 + noff);
     syscall(SYS_WRITE, 2, "' is private to its file\n", 25);
@@ -3064,13 +3066,13 @@ fn _vis_check(S, fi, noff): i64 {
 # 6.6.5 — record a reference whose callee had no owner yet: (fi, caller fid + 1, token).
 # Kept as its own fn so cybs sees a small body (the global/call fan-out rule). Lazy vec:
 # a compile with no unstamped reference allocates nothing.
-fn _vis_defer(S, fi): i64 {
-    var dcaller = FM_FILEID(S, GTLINE(S, GTI(S))) + 1;
+fn _vis_defer(S, fi, ti): i64 {
+    var dcaller = FM_FILEID(S, GTLINE(S, ti)) + 1;
     if (dcaller == 0) { return 0; }
     if (_visdef_vec == 0) { _visdef_vec = vec_new(); }
     vec_push(_visdef_vec, fi);
     vec_push(_visdef_vec, dcaller);
-    vec_push(_visdef_vec, GTI(S));
+    vec_push(_visdef_vec, ti);
     return 0;
 }
 
