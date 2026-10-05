@@ -6,6 +6,22 @@
 # Each thread gets its own stack via mmap.
 # Join waits via futex on the thread's tid.
 #
+# CAPABILITIES. Every backend exports these two vars, so a consumer picks a strategy by
+# asking, never by testing a target name (the v6.5.36 lesson):
+#   THREADS_CONCURRENT  1 = thread_create starts a SECOND thread; 0 = the body runs INLINE
+#                       at create, on a serial peer (v6.5.44).
+#   CHAN_BLOCKING       1 = the channel is a locked ring that any number of producer and
+#                       consumer threads may share. chan_recv BLOCKS until a value arrives,
+#                       and returns 0 once the channel is closed and empty. chan_send BLOCKS
+#                       while the ring is full, and returns -1 once the channel is closed.
+#                       0 = no second thread exists to end a wait, so do not rely on one.
+#                       On x86 macOS and agnos chan_recv answers 0 when empty and chan_send
+#                       fails when full. On cx a wait that only another thread could end
+#                       spins for ever, as it always has (6.6.16).
+#     CHAN_BLOCKING:  Linux 1 · arm64 macOS 1 · Windows 1 · x86 macOS 0 · agnos 0 · cx 0
+#   chan_try_send / chan_try_recv / chan_close keep one contract on every target. A pool of
+#   workers that loop on chan_recv needs CHAN_BLOCKING == 1. CHANGELOG [6.6.16]
+#
 # >>> include "lib/syscalls.cyr"
 # >>> include "lib/alloc.cyr"
 # >>> include "lib/mmap.cyr"
@@ -95,10 +111,13 @@ include "lib/atomic.cyr"
 # (never by target name, never by errno — the v6.5.36 lesson), and this is that capability.
 #ifndef CYRIUS_TARGET_CX
 var THREADS_CONCURRENT = 1;   # REAL clone(2) threads
+var CHAN_BLOCKING = 1;        # futex-parked channel (see the header; 6.6.16)
 #endif
 # cx: cxvm is one guest thread — thread_create FAILS there (below), so no second thread exists.
+# Its channel never parks (no futex on cx), so it is not a blocking channel either.
 #ifdef CYRIUS_TARGET_CX
 var THREADS_CONCURRENT = 0;
+var CHAN_BLOCKING = 0;
 #endif
 
 # Stack size per thread. v6.3.13: bumped 64KB → 2MB so that `var arr[N]` LOCALS —
@@ -584,7 +603,7 @@ fn gettid(): i64 {
 # so a receiver that saw "open and empty", unlocked, and lost the CPU before its FUTEX_WAIT
 # slept through chan_close's wake for good.
 #
-# THE PROTOCOL (an eventcount):
+# THE PROTOCOL (an eventcount; lib/thread_macos.cyr runs the same one over __ulock):
 #   - A waiter finds, UNDER THE LOCK, that it must wait. It registers (+1 on its count),
 #     reads its seq word, unlocks, and parks on that seq value.
 #   - A waker changes the state UNDER THE LOCK. If a thread of the other kind is registered,
@@ -601,7 +620,7 @@ fn gettid(): i64 {
 #   enters the kernel. (Until 6.6.15 every send and every receive made a FUTEX_WAKE.)
 # cx: no futex (the _CX_NO_FUTEX note at the top of this file). The park and the wake compile no
 # futex call there, so a wait that only another thread could end spins, as it always has, and
-# tests/gates/toolchain/stdlib_modules_self_sufficient.sh axis 7 pins that.
+# tests/gates/toolchain/stdlib_modules_self_sufficient.sh axis 7 pins that (CHAN_BLOCKING = 0).
 # CHANGELOG [6.6.16]
 var CHAN_SIZE = 56;
 var _CHAN_WAITBLK = 32;

@@ -1,0 +1,355 @@
+# chan_blocking_threads.tcyr — 6.6.16: the channel BLOCKS wherever threads are real.
+#
+# ⛔ WHY THIS FILE EXISTS. arm64 macOS started real pthreads at v6.5.44 and Windows has had real
+# CreateThread threads since v6.0.61, but both kept a channel whose chan_recv answered 0 when
+# empty and whose chan_send failed when full (and on arm64 macOS the ring had no lock at all).
+# A pool of workers looping on chan_recv read that 0 as "closed" and exited at once, so sandhi's
+# pooled servers bound, listened and accepted on macOS but never served a request (issue
+# 2026-10-04-sandhi-macos-chan-serial-under-real-threads). Nothing in the corpus could see it:
+# chan_try_send.tcyr is single-threaded, and the thread tests never block in a channel.
+#
+# GUARDED BY CAPABILITY, never by target name (the v6.5.36 lesson). CHAN_BLOCKING is exported
+# by every thread backend: 1 on Linux, arm64 macOS and Windows; 0 on x86 macOS, agnos and cx,
+# whose bodies run inline, so a blocking receive could never be woken.
+#   CHAN_BLOCKING == 1: a consumer started first blocks in chan_recv, then takes N values in
+#     FIFO order from a producer thread; chan_close wakes blocked receivers, which get 0; a
+#     chan_send on a full channel waits until a consumer drains it, and chan_close wakes it
+#     with -1; four producers and four consumers on a cap-1 channel lose and duplicate nothing,
+#     and neither does one producer feeding three consumers (a saturated worker pool).
+#   CHAN_BLOCKING == 0: the serial contract. On x86 macOS and agnos chan_recv answers 0 at once
+#     on an empty channel and chan_send fails at once on a full one (cx spins there instead).
+#
+# ⚠ EVERY WAIT HAS A DEADLINE, so a regression FAILS here instead of hanging the cross-OS leg.
+# The calls that can block run only on worker threads; the main thread polls their progress
+# flags with a deadline. A wait that times out leaves threads parked for good, so the test then
+# reports and ends EVERY thread (exit_group; on Darwin exit(2) already ends the process).
+# The cap-1 rows also caught the Linux channel: through 6.6.15 its senders and receivers parked
+# on ONE futex word with wake-one, and each of those rows deadlocked on every run on x86_64 and
+# on pi (on pi a cap-3 channel did not). CHANGELOG [6.6.16]
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/syscalls.cyr"
+include "lib/chrono.cyr"
+include "lib/atomic.cyr"
+include "lib/thread.cyr"
+
+# Generous on purpose: qemu-aarch64 and a loaded Windows host are slow, and a passing run never
+# waits this long. Each wait that expires is a failure in its own right.
+var CB_DEADLINE_MS = 30000;
+# How long a thread that should be blocked is given to (wrongly) return.
+var CB_SETTLE_MS = 100;
+
+# End every thread in the process with `code`.
+fn _cb_exit_all(code): i64 {
+    #ifdef CYRIUS_TARGET_MACOS
+    syscall(60, code);         # Darwin exit(2) ends the whole process
+    #endif
+    #ifndef CYRIUS_TARGET_MACOS
+    sys_exit_group(code);
+    #endif
+    return 0;
+}
+
+# A deadline expired: threads are parked for good, so nothing after this can be trusted.
+fn _cb_abort(what): i64 {
+    assert_eq(0, 1, what);
+    assert_summary();
+    _cb_exit_all(1);
+    return 0;
+}
+
+# Wait until *addr >= want. 1 when reached; otherwise the test is aborted.
+fn _cb_wait_ge(addr, want, what): i64 {
+    var t0 = clock_now_ms();
+    while (atomic_load(addr) < want) {
+        if (clock_now_ms() - t0 > CB_DEADLINE_MS) { _cb_abort(what); return 0; }
+        sleep_ms(1);
+    }
+    return 1;
+}
+
+# ── row A: a consumer started first blocks, then takes N values in FIFO order ──
+var A_N = 2000;
+var _a_ch = 0;
+var _a_entered = 0;
+var _a_got = 0;
+var _a_bad = 0;
+var _a_done = 0;
+
+fn _a_consumer(arg): i64 {
+    atomic_store(&_a_entered, 1);
+    var want = 1;
+    var bad = 0;
+    var v = chan_recv(_a_ch);
+    while (v != 0) {
+        if (v != want) { bad = bad + 1; }
+        atomic_store(&_a_got, want);
+        want = want + 1;
+        v = chan_recv(_a_ch);
+    }
+    atomic_store(&_a_bad, bad);
+    atomic_store(&_a_done, 1);
+    return 0;
+}
+
+fn _a_producer(arg): i64 {
+    var i = 1;
+    while (i <= A_N) {
+        chan_send(_a_ch, i);
+        i = i + 1;
+    }
+    chan_close(_a_ch);
+    return 0;
+}
+
+fn _row_fifo(): i64 {
+    test_group("a consumer started first BLOCKS in chan_recv, then takes N values in FIFO order");
+    _a_ch = chan_new(4);
+    var tc = thread_create(&_a_consumer, 0);
+    assert_neq(tc, 0, "consumer thread created");
+    _cb_wait_ge(&_a_entered, 1, "row A: the consumer thread never started");
+    sleep_ms(CB_SETTLE_MS);
+    # THE DISCRIMINATOR. A channel that does not block answers 0 on this empty, OPEN channel,
+    # and the consumer has long since read it as "closed" and finished.
+    assert_eq(atomic_load(&_a_done), 0, "on an empty open channel the consumer is still inside chan_recv");
+    assert_eq(atomic_load(&_a_got), 0, "and has received nothing");
+    var tp = thread_create(&_a_producer, 0);
+    assert_neq(tp, 0, "producer thread created");
+    _cb_wait_ge(&_a_done, 1, "row A: the consumer never finished (a lost wake-up?)");
+    assert_eq(thread_join(tp), 0, "producer joined");
+    assert_eq(thread_join(tc), 0, "consumer joined");
+    assert_eq(atomic_load(&_a_got), A_N, "the consumer received all N values");
+    assert_eq(atomic_load(&_a_bad), 0, "in FIFO order");
+    assert_eq(chan_recv(_a_ch), 0, "the closed, drained channel answers 0 at once");
+    return 0;
+}
+
+# ── row B: chan_close wakes every blocked receiver, and each gets 0 ──
+var B_NR = 3;
+var _b_ch = 0;
+var _b_in = 0;
+var _b_out = 0;
+var _b_nonzero = 0;
+
+fn _b_receiver(arg): i64 {
+    atomic_fetch_add(&_b_in, 1);
+    var v = chan_recv(_b_ch);
+    if (v != 0) { atomic_fetch_add(&_b_nonzero, 1); }
+    atomic_fetch_add(&_b_out, 1);
+    return 0;
+}
+
+fn _row_close_wakes_receivers(): i64 {
+    test_group("chan_close wakes every receiver blocked in chan_recv, and each gets 0");
+    _b_ch = chan_new(2);
+    var ts: i64[4];
+    var i = 0;
+    while (i < B_NR) {
+        store64(&ts + i * 8, thread_create(&_b_receiver, 0));
+        assert_neq(load64(&ts + i * 8), 0, "receiver thread created");
+        i = i + 1;
+    }
+    _cb_wait_ge(&_b_in, B_NR, "row B: the receiver threads never started");
+    sleep_ms(CB_SETTLE_MS);
+    assert_eq(atomic_load(&_b_out), 0, "all three receivers are still blocked on the empty open channel");
+    chan_close(_b_ch);
+    _cb_wait_ge(&_b_out, B_NR, "row B: chan_close did not wake every blocked receiver");
+    assert_eq(atomic_load(&_b_nonzero), 0, "every woken receiver got 0 (closed and empty)");
+    i = 0;
+    while (i < B_NR) {
+        thread_join(load64(&ts + i * 8));
+        i = i + 1;
+    }
+    assert_eq(chan_send(_b_ch, 5), 0 - 1, "chan_send on the closed channel answers -1");
+    assert_eq(chan_try_send(_b_ch, 5), 0 - 1, "chan_try_send on the closed channel answers -1");
+    return 0;
+}
+
+# ── row C: chan_send on a full channel waits for a drain, and chan_close wakes it with -1 ──
+var _c_ch = 0;
+var _c_in = 0;
+var _c_rc = 99;
+var _c_out = 0;
+
+fn _c_sender(arg): i64 {
+    atomic_store(&_c_in, 1);
+    var rc = chan_send(_c_ch, arg);
+    atomic_store(&_c_rc, rc);
+    atomic_store(&_c_out, 1);
+    return 0;
+}
+
+fn _row_full_send_waits(): i64 {
+    test_group("chan_send on a FULL channel waits until a consumer drains it");
+    _c_ch = chan_new(2);
+    assert_eq(chan_send(_c_ch, 1), 0, "first send fits");
+    assert_eq(chan_send(_c_ch, 2), 0, "second send fits; the channel is full");
+    var t = thread_create(&_c_sender, 3);
+    assert_neq(t, 0, "sender thread created");
+    _cb_wait_ge(&_c_in, 1, "row C: the sender thread never started");
+    sleep_ms(CB_SETTLE_MS);
+    assert_eq(atomic_load(&_c_out), 0, "the third chan_send is still waiting on the full channel");
+    assert_eq(chan_recv(_c_ch), 1, "draining one value");
+    _cb_wait_ge(&_c_out, 1, "row C: draining did not release the waiting sender");
+    assert_eq(atomic_load(&_c_rc), 0, "the released chan_send returned 0");
+    thread_join(t);
+    assert_eq(chan_recv(_c_ch), 2, "FIFO: 2");
+    assert_eq(chan_recv(_c_ch), 3, "FIFO: the waited-for value 3 comes last");
+
+    test_group("chan_close wakes a sender waiting on a full channel, and it gets -1");
+    _c_ch = chan_new(1);
+    atomic_store(&_c_in, 0);
+    atomic_store(&_c_out, 0);
+    atomic_store(&_c_rc, 99);
+    assert_eq(chan_send(_c_ch, 7), 0, "the one slot is taken");
+    t = thread_create(&_c_sender, 8);
+    assert_neq(t, 0, "sender thread created");
+    _cb_wait_ge(&_c_in, 1, "row C2: the sender thread never started");
+    sleep_ms(CB_SETTLE_MS);
+    assert_eq(atomic_load(&_c_out), 0, "the second chan_send is still waiting");
+    chan_close(_c_ch);
+    _cb_wait_ge(&_c_out, 1, "row C2: chan_close did not wake the waiting sender");
+    assert_eq(atomic_load(&_c_rc), 0 - 1, "the woken chan_send returned -1 (closed)");
+    thread_join(t);
+    assert_eq(chan_recv(_c_ch), 7, "the value queued before close is still drained");
+    assert_eq(chan_recv(_c_ch), 0, "then the closed, empty channel answers 0");
+    return 0;
+}
+
+# ── row D: several producers and consumers sharing a cap-1 channel ──
+var D_K = 5000;
+var _d_np = 0;
+var _d_ch = 0;
+var _d_pdone = 0;
+var _d_cdone = 0;
+var _d_count = 0;
+var _d_sum = 0;
+var _d_order_bad = 0;
+
+# Producer `id` (1.._d_np) sends id * 1000000 + 1 .. + D_K.
+fn _d_producer(id): i64 {
+    var i = 1;
+    while (i <= D_K) {
+        chan_send(_d_ch, id * 1000000 + i);
+        i = i + 1;
+    }
+    atomic_fetch_add(&_d_pdone, 1);
+    return 0;
+}
+
+# The ring is one FIFO, so any one consumer sees each producer's values in increasing order.
+fn _d_consumer(arg): i64 {
+    var last: i64[8];
+    var j = 0;
+    while (j < 8) {
+        store64(&last + j * 8, 0);
+        j = j + 1;
+    }
+    var n = 0;
+    var s = 0;
+    var bad = 0;
+    var v = chan_recv(_d_ch);
+    while (v != 0) {
+        var id = v / 1000000;
+        var seq = v % 1000000;
+        if (id < 1 || id > _d_np) { bad = bad + 1; }
+        if (id >= 1 && id <= _d_np) {
+            if (seq <= load64(&last + id * 8)) { bad = bad + 1; }
+            store64(&last + id * 8, seq);
+        }
+        n = n + 1;
+        s = s + v;
+        v = chan_recv(_d_ch);
+    }
+    atomic_fetch_add(&_d_count, n);
+    atomic_fetch_add(&_d_sum, s);
+    atomic_fetch_add(&_d_order_bad, bad);
+    atomic_fetch_add(&_d_cdone, 1);
+    return 0;
+}
+
+# np producers and nc consumers (np + nc <= 8) through a channel of capacity cap.
+fn _row_mpmc(np, nc, cap): i64 {
+    _d_np = np;
+    atomic_store(&_d_pdone, 0);
+    atomic_store(&_d_cdone, 0);
+    atomic_store(&_d_count, 0);
+    atomic_store(&_d_sum, 0);
+    atomic_store(&_d_order_bad, 0);
+    _d_ch = chan_new(cap);
+    var ts: i64[8];
+    var i = 0;
+    while (i < nc) {
+        store64(&ts + i * 8, thread_create(&_d_consumer, 0));
+        assert_neq(load64(&ts + i * 8), 0, "consumer thread created");
+        i = i + 1;
+    }
+    i = 0;
+    while (i < np) {
+        store64(&ts + (nc + i) * 8, thread_create(&_d_producer, i + 1));
+        assert_neq(load64(&ts + (nc + i) * 8), 0, "producer thread created");
+        i = i + 1;
+    }
+    _cb_wait_ge(&_d_pdone, np, "row D: the producers never finished (a lost wake-up?)");
+    chan_close(_d_ch);
+    _cb_wait_ge(&_d_cdone, nc, "row D: the consumers never finished after close");
+    i = 0;
+    while (i < nc + np) {
+        thread_join(load64(&ts + i * 8));
+        i = i + 1;
+    }
+    var want_sum = 1000000 * D_K * (np * (np + 1) / 2) + np * (D_K * (D_K + 1) / 2);
+    assert_eq(atomic_load(&_d_count), np * D_K, "every value was received exactly once (count)");
+    assert_eq(atomic_load(&_d_sum), want_sum, "every value was received exactly once (sum)");
+    assert_eq(atomic_load(&_d_order_bad), 0, "each consumer saw each producer's values in order");
+    return 0;
+}
+
+# ── CHAN_BLOCKING == 0: the serial contract ──
+# x86 macOS and agnos answer at once where a blocking channel would wait. cx keeps its one guest
+# thread spinning there, as it always has (stdlib_modules_self_sufficient.sh axis 7 pins that),
+# so those three rows are not run on cx.
+fn _row_serial(): i64 {
+    test_group("serial ring (CHAN_BLOCKING == 0): nothing ever waits");
+    var c = chan_new(2);
+    #ifndef CYRIUS_TARGET_CX
+    assert_eq(chan_recv(c), 0, "chan_recv on an empty open channel answers 0 at once");
+    #endif
+    assert_eq(chan_send(c, 11), 0, "send 11");
+    assert_eq(chan_send(c, 12), 0, "send 12; the channel is full");
+    #ifndef CYRIUS_TARGET_CX
+    assert_eq(chan_send(c, 13), 0 - 1, "chan_send on a full channel fails at once with -1");
+    #endif
+    assert_eq(chan_try_send(c, 14), 0 - 2, "chan_try_send on a full channel answers -2");
+    assert_eq(chan_recv(c), 11, "FIFO: 11");
+    assert_eq(chan_recv(c), 12, "FIFO: 12");
+    #ifndef CYRIUS_TARGET_CX
+    assert_eq(chan_recv(c), 0, "empty again: 0");
+    #endif
+    chan_close(c);
+    assert_eq(chan_try_send(c, 1), 0 - 1, "chan_try_send on a closed channel answers -1");
+    assert_eq(chan_recv(c), 0, "chan_recv on a closed, empty channel answers 0");
+    return 0;
+}
+
+fn _cb_run(): i64 {
+    alloc_init();
+    if (CHAN_BLOCKING == 1) {
+        _row_fifo();
+        _row_close_wakes_receivers();
+        _row_full_send_waits();
+        test_group("four producers and four consumers on a cap-1 channel: nothing lost, nothing duplicated");
+        _row_mpmc(4, 4, 1);
+        test_group("one producer feeding three consumers through a cap-1 channel (a saturated pool)");
+        _row_mpmc(1, 3, 1);
+    }
+    if (CHAN_BLOCKING == 0) {
+        _row_serial();
+    }
+    assert_eq(1, 1, "channel probe completed");
+    return 0;
+}
+var _cb_ran = _cb_run();
+var r = assert_summary();
