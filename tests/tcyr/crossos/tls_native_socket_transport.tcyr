@@ -13,9 +13,10 @@
 #       send(MSG_NOSIGNAL) on Linux and SO_NOSIGPIPE on macOS, and such a write is TLS_ERR_IO.
 #
 # THE MECHANISM: the test spawns ITSELF (lib/process.cyr spawn — fork + execve on POSIX,
-# CreateProcessW on Windows), because threads run inline on cass and ach and a TLS handshake needs
-# both ends running at once. The parent listens on 127.0.0.1:0, spawns `argv(0) <scenario> <port>`,
-# accepts, and plays one TLS role; the child connects and plays the other. Verification stays ON:
+# CreateProcessW on Windows), because threads run inline on ach (x86-macOS, THREADS_CONCURRENT
+# = 0) and a TLS handshake needs both ends running at once; one portable mechanism serves every
+# host. The parent listens on 127.0.0.1:0, spawns `argv(0) <scenario> <port>`, accepts, and
+# plays one TLS role; the child connects and plays the other. Verification stays ON:
 # the client trusts the test's self-signed P-256 root (SAN DNS:localhost). Every TLS ctx carries a
 # deadline and the parent's wait is bounded, so a regression fails a row instead of hanging the run.
 # The child prints nothing and answers with its exit code: 0 = its half held, 2..39 = the step
