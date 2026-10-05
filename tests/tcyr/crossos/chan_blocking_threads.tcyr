@@ -19,10 +19,13 @@
 #   CHAN_BLOCKING == 0: the serial contract. On x86 macOS and agnos chan_recv answers 0 at once
 #     on an empty channel and chan_send fails at once on a full one (cx spins there instead).
 #
-# ⚠ EVERY WAIT HAS A DEADLINE, so a regression FAILS here instead of hanging the cross-OS leg.
-# The calls that can block run only on worker threads; the main thread polls their progress
-# flags with a deadline. A wait that times out leaves threads parked for good, so the test then
-# reports and ends EVERY thread (exit_group; on Darwin exit(2) already ends the process).
+# ⚠ EVERY WAIT HAS A DEADLINE, so a regression FAILS here instead of hanging the cross-OS leg
+# or a local run. On a blocking peer the main thread never calls chan_recv / chan_send itself,
+# not even where the channel should answer at once: each such call runs on a worker
+# (_cb_recv / _cb_send), and the main thread polls the workers' done flags with a deadline. It
+# joins a thread only after seeing that thread's done flag, which the thread sets as its last
+# act. A wait that times out leaves threads parked for good, so the test then reports and ends
+# EVERY thread (exit_group; on Darwin exit(2) already ends the process).
 # The cap-1 rows also caught the Linux channel: through 6.6.15 its senders and receivers parked
 # on ONE futex word with wake-one, and each of those rows deadlocked on every run on x86_64 and
 # on pi (on pi a cap-3 channel did not). CHANGELOG [6.6.16]
@@ -70,6 +73,45 @@ fn _cb_wait_ge(addr, want, what): i64 {
     return 1;
 }
 
+# One chan_recv / chan_send, run on a worker so that the main thread waits for it with a
+# deadline. A call that should answer at once but parks (a lost value, a channel that no
+# longer sees close) then fails the row instead of hanging the file.
+var _o_op = 0;     # 0 = chan_recv, 1 = chan_send
+var _o_ch = 0;
+var _o_val = 0;
+var _o_rc = 0;
+var _o_done = 0;
+
+fn _o_worker(arg): i64 {
+    var rc = 0;
+    if (_o_op == 1) {
+        rc = chan_send(_o_ch, _o_val);
+    } else {
+        rc = chan_recv(_o_ch);
+    }
+    atomic_store(&_o_rc, rc);
+    atomic_store(&_o_done, 1);
+    return 0;
+}
+
+fn _cb_bounded(op, ch, val, what): i64 {
+    _o_op = op;
+    _o_ch = ch;
+    _o_val = val;
+    atomic_store(&_o_rc, 0);
+    atomic_store(&_o_done, 0);
+    var t = thread_create(&_o_worker, 0);
+    if (t == 0) { _cb_abort(what); return 0; }
+    _cb_wait_ge(&_o_done, 1, what);
+    thread_join(t);
+    return atomic_load(&_o_rc);
+}
+
+# chan_recv(ch) on a worker, bounded by the deadline; `what` names the row if it parks.
+fn _cb_recv(ch, what): i64 { return _cb_bounded(0, ch, 0, what); }
+# chan_send(ch, v) on a worker, bounded by the deadline.
+fn _cb_send(ch, v, what): i64 { return _cb_bounded(1, ch, v, what); }
+
 # ── row A: a consumer started first blocks, then takes N values in FIFO order ──
 var A_N = 2000;
 var _a_ch = 0;
@@ -77,6 +119,7 @@ var _a_entered = 0;
 var _a_got = 0;
 var _a_bad = 0;
 var _a_done = 0;
+var _a_pdone = 0;
 
 fn _a_consumer(arg): i64 {
     atomic_store(&_a_entered, 1);
@@ -101,6 +144,7 @@ fn _a_producer(arg): i64 {
         i = i + 1;
     }
     chan_close(_a_ch);
+    atomic_store(&_a_pdone, 1);
     return 0;
 }
 
@@ -118,11 +162,15 @@ fn _row_fifo(): i64 {
     var tp = thread_create(&_a_producer, 0);
     assert_neq(tp, 0, "producer thread created");
     _cb_wait_ge(&_a_done, 1, "row A: the consumer never finished (a lost wake-up?)");
+    # A consumer that quit early (a spurious 0 on an open channel) leaves the producer parked on
+    # a full ring: that is a failure here, never a hang in thread_join.
+    _cb_wait_ge(&_a_pdone, 1, "row A: the producer never finished (the consumer quit early?)");
     assert_eq(thread_join(tp), 0, "producer joined");
     assert_eq(thread_join(tc), 0, "consumer joined");
     assert_eq(atomic_load(&_a_got), A_N, "the consumer received all N values");
     assert_eq(atomic_load(&_a_bad), 0, "in FIFO order");
-    assert_eq(chan_recv(_a_ch), 0, "the closed, drained channel answers 0 at once");
+    assert_eq(_cb_recv(_a_ch, "row A: chan_recv parked on the closed, drained channel"), 0,
+      "the closed, drained channel answers 0 at once");
     return 0;
 }
 
@@ -162,7 +210,8 @@ fn _row_close_wakes_receivers(): i64 {
         thread_join(load64(&ts + i * 8));
         i = i + 1;
     }
-    assert_eq(chan_send(_b_ch, 5), 0 - 1, "chan_send on the closed channel answers -1");
+    assert_eq(_cb_send(_b_ch, 5, "row B: chan_send parked on the closed channel"), 0 - 1,
+      "chan_send on the closed channel answers -1");
     assert_eq(chan_try_send(_b_ch, 5), 0 - 1, "chan_try_send on the closed channel answers -1");
     return 0;
 }
@@ -184,26 +233,28 @@ fn _c_sender(arg): i64 {
 fn _row_full_send_waits(): i64 {
     test_group("chan_send on a FULL channel waits until a consumer drains it");
     _c_ch = chan_new(2);
-    assert_eq(chan_send(_c_ch, 1), 0, "first send fits");
-    assert_eq(chan_send(_c_ch, 2), 0, "second send fits; the channel is full");
+    assert_eq(_cb_send(_c_ch, 1, "row C: the first chan_send parked"), 0, "first send fits");
+    assert_eq(_cb_send(_c_ch, 2, "row C: the second chan_send parked"), 0,
+      "second send fits; the channel is full");
     var t = thread_create(&_c_sender, 3);
     assert_neq(t, 0, "sender thread created");
     _cb_wait_ge(&_c_in, 1, "row C: the sender thread never started");
     sleep_ms(CB_SETTLE_MS);
     assert_eq(atomic_load(&_c_out), 0, "the third chan_send is still waiting on the full channel");
-    assert_eq(chan_recv(_c_ch), 1, "draining one value");
+    assert_eq(_cb_recv(_c_ch, "row C: chan_recv parked on a full channel"), 1, "draining one value");
     _cb_wait_ge(&_c_out, 1, "row C: draining did not release the waiting sender");
     assert_eq(atomic_load(&_c_rc), 0, "the released chan_send returned 0");
     thread_join(t);
-    assert_eq(chan_recv(_c_ch), 2, "FIFO: 2");
-    assert_eq(chan_recv(_c_ch), 3, "FIFO: the waited-for value 3 comes last");
+    assert_eq(_cb_recv(_c_ch, "row C: value 2 was lost"), 2, "FIFO: 2");
+    assert_eq(_cb_recv(_c_ch, "row C: the released sender's value 3 was lost"), 3,
+      "FIFO: the waited-for value 3 comes last");
 
     test_group("chan_close wakes a sender waiting on a full channel, and it gets -1");
     _c_ch = chan_new(1);
     atomic_store(&_c_in, 0);
     atomic_store(&_c_out, 0);
     atomic_store(&_c_rc, 99);
-    assert_eq(chan_send(_c_ch, 7), 0, "the one slot is taken");
+    assert_eq(_cb_send(_c_ch, 7, "row C2: chan_send parked on an empty channel"), 0, "the one slot is taken");
     t = thread_create(&_c_sender, 8);
     assert_neq(t, 0, "sender thread created");
     _cb_wait_ge(&_c_in, 1, "row C2: the sender thread never started");
@@ -213,8 +264,10 @@ fn _row_full_send_waits(): i64 {
     _cb_wait_ge(&_c_out, 1, "row C2: chan_close did not wake the waiting sender");
     assert_eq(atomic_load(&_c_rc), 0 - 1, "the woken chan_send returned -1 (closed)");
     thread_join(t);
-    assert_eq(chan_recv(_c_ch), 7, "the value queued before close is still drained");
-    assert_eq(chan_recv(_c_ch), 0, "then the closed, empty channel answers 0");
+    assert_eq(_cb_recv(_c_ch, "row C2: the value queued before close was lost"), 7,
+      "the value queued before close is still drained");
+    assert_eq(_cb_recv(_c_ch, "row C2: chan_recv parked on the closed, empty channel"), 0,
+      "then the closed, empty channel answers 0");
     return 0;
 }
 
