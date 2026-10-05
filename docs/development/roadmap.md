@@ -1,8 +1,8 @@
 # Cyrius Development Roadmap — v6.6.x (active minor)
 
 **Scope** — the **current active minor only** (v6.6.x). This is the slot-pinning working
-artifact: the 6.6.13 repair release, the tooling proposals that round out the minor, and the
-unscheduled 6.x backlog. Whole-cycle framing, the v6.7.x language arc and v6.8.x/v6.9.x RISC-V live in
+artifact: the rest of the 6.6.x tail (the 6.6.16 repair release, then the tooling proposals that
+round out the minor), and the unscheduled 6.x backlog. Whole-cycle framing, the v6.7.x language arc and v6.8.x/v6.9.x RISC-V live in
 [roadmap_6.md](roadmap_6.md); the unpinned watching list is
 [roadmap-future.md](roadmap-future.md); per-release history is
 [CHANGELOG.md](../../CHANGELOG.md) and [completed-phases.md](completed-phases.md).
@@ -39,10 +39,11 @@ unscheduled 6.x backlog. Whole-cycle framing, the v6.7.x language arc and v6.8.x
 
 ## Where we are
 
-**Current head: v6.6.16** (2026-10-04) — cycc **1,492,144 B** (`.text` **1,315,016**) ·
-seed-derive **GREEN** · cross-OS **GREEN** on ecb/ach/cass/pi · self_compile **876 ms** ·
-**439** `.tcyr` (**173** in `crossos/`) · **105** `lib/*.cyr` · **326** shell gates under
-`tests/gates/<bucket>/` · **4 open issues** (two hisab + two sandhi filings, all 6.6.16) · **6 open proposals**.
+**Current head: v6.6.16** (2026-10-04) — **MERGED 2026-10-05, release gate pending** · cycc **1,535,360 B**
+(`.text` **1,357,032**, +43,216 B over 6.6.15) · fixpoint + seed-derive **GREEN** on the merged tree; cross-OS and
+the bench run at the release gate (last: 6.6.15, cross-OS **GREEN** on ecb/ach/cass/pi, self_compile **876 ms**) ·
+**453** `.tcyr` (**182** in `crossos/`) · **105** `lib/*.cyr` · **339** shell gates under `tests/gates/<bucket>/` ·
+**0 open issues** (the four 6.6.16 filings are archived) · **6 open proposals**.
 
 > ⚠ **Every figure above was DERIVED on the day, not carried** (re-derived 2026-09-27 at the 6.6.7 open).
 > `version-bump.sh` rewrites the version token, replaces the `(…)` after it with the bump date, and
@@ -60,7 +61,7 @@ CHANGELOG; do not re-add shipped slots here.
 **v6.6.7–v6.6.12 were the repair batch** (2026-09-27 → 2026-09-30, CLOSED): the 30 issues filed after
 6.6.6, split by the user across three releases, then each release's own review finds, which the user
 placed into 6.6.10–6.6.12 — and 6.6.12 also took the backlog's repair items and every sibling follow-up.
-It spent **CVE-46 … CVE-58** (the next free id is 74) and shipped each release together with the sibling
+It spent **CVE-46 … CVE-58** (the next free id is now **77**) and shipped each release together with the sibling
 patch releases it needed. Per-release detail is in the CHANGELOG; the process rules it settled are in
 *Standing notes* below.
 
@@ -68,6 +69,10 @@ patch releases it needed. Per-release detail is in the CHANGELOG; the process ru
 that led the backlog, and the open issues (I1–I11). After it the minor finishes on **tooling** (the proposals).
 The language list that was Phase 3 moved to **v6.7.x**, which RISC-V vacates for v6.8.x/v6.9.x. See
 *The shape of v6.6.x*.
+
+**The 6.6.x tail (accepted 2026-10-02):** 6.6.15 SHIPPED 2026-10-03 (tag `6.6.15` @ `2f1ed9d1`; CVE-68 … CVE-73);
+6.6.16 MERGED 2026-10-05, release gate pending (CVE-74 … CVE-76; the next free id is **77**). Every further
+6.6.16 lane-review find is filed into 6.6.17 (user, 2026-10-04/05).
 
 ---
 
@@ -79,7 +84,7 @@ The language list that was Phase 3 moved to **v6.7.x**, which RISC-V vacates for
 | **1b — the repair batch** | `.7` – `.12` | ✅ **CLOSED at 6.6.12** (summary in *Where we are*). |
 | **1c — memory + reported-issue repair** | `.13` | ✅ **SHIPPED 2026-10-02** (tag `6.6.13`): the three silent memory-corruption finds, the open issues I1–I11, and the ganita / bayan / sigil folds. See *6.6.13* below. |
 | **1d — the TLS follow-ups** | `.14` | ✅ **SHIPPED 2026-10-02** (tag `6.6.14`): every remaining noted TLS issue and the sigil 3.13.7 fold. See *6.6.14* below. |
-| **2 — the 6.6.x tail** | `.15` – `.19` | The release sequence ACCEPTED 2026-10-02 (see *The 6.6.x tail*): `.15` curves + the compiler leaks, `.16` repair, `.17` manifest, `.18` distlib + poison, `.19` embed + macOS threads. |
+| **2 — the 6.6.x tail** | `.15` – `.19` | The release sequence ACCEPTED 2026-10-02 (see *The 6.6.x tail*): `.15` curves + the compiler leaks (✅ SHIPPED 2026-10-03), `.16` repair (✅ MERGED 2026-10-05, release gate pending), `.17` manifest, `.18` distlib + poison, `.19` embed + macOS threads. |
 | **3 — closeout** | `.20` | The full closeout pass, like every minor (user, 2026-10-02: done before any v6.7.x work). Then **v6.7.0**. |
 | ~~**Committed ergonomics**~~ | — | **Moved to v6.7.x** with P3 `const fn` (user, 2026-10-01) — see [roadmap_6.md](roadmap_6.md). |
 
@@ -99,8 +104,8 @@ reviews and a synthesis, archived at
 
 | Release | Contents |
 |---|---|
-| **6.6.15** | sigil **3.13.8** fold (constant-time P-256 / P-384 ECDH; ECDSA signing made constant-time — **CVE-68**); TLS ECDHE on P-256 / P-384 everywhere (1.2 client, 1.3 client with HelloRetryRequest, native server group negotiation, ephemeral-key zeroing); the `secret var` epilogue leak (**CVE-69**); B0a string interning (a NUL-bearing literal aliased another literal, silently). See *6.6.15* below. |
-| **6.6.16** repair | **Compiler:** the silent miscompiles — module-scope `var T: i64[3] = {…}` stores bytes, pointer-mode struct `q = a` / `G = a` / `a = q`, overload dispatch on a `Str` global, `g<i32>(..)?` (139) and `var v = g<i32>(..)` dropping the payload, a nested fn (SIGILL → a named error), a kmode global initialiser naming an enum; the named >8 B struct argument becomes a COPY (decided, *Open questions* 4); one shared type-name resolver (sizeof for u*/f*/bool; annotations stop prefix-matching); the `#deprecated` gaps; the cycc include fallback honouring `CYRIUS_HOME`. **Net / TLS / security:** plain-socket SIGPIPE (`sock_send*`, http, ws — CVE-66's class, a CVE), `cyrius deps` tag-field traversal (CVE-62's class), the Ed25519 `sig_len == 64` check (its ServerKeyExchange curve-binding half shipped in 6.6.15), CA EKU, Windows accept inheriting `FIONBIO`, `fd_wait_ready`'s error mask, libssl session cache (`SSL_CTX_ctrl`) and the failed-`*_complete` sticky error, Windows `THREADS_CONCURRENT=1`, the agnos `setsockopt` stub. **Plus:** cwd-independent gates, the guide's `fn use()` example, the `element_typed_array` sentinel, the PE size gate's private wine prefix, the sit-fsck lookup, the stale premises in P2/P3/C1 and the syscall-families entry; the two hisab issues (a closure's `: stack` return booked against the enclosing fn; a top-level `fncallN` on a capturing closure SIGSEGVs). **Added 2026-10-04 with the sandhi 1.10.7 fold** (user): sandhi's two cyrius filings — a blocking, thread-safe channel wherever threads are real (arm64 macOS, and Windows, which 6.6.16's N7 makes `THREADS_CONCURRENT = 1`) plus a channel capability, and the native TLS server decoding a PEM key per accept on the global heap. **Promoted 2026-10-04 (user)** from the planning premise checks: a local `var p: *i8` / `*i16` / `*i32` stored as a 1/2/4-byte scalar (the pointer truncated — silent memory corruption), and the libssl-only `tls.cyr` verbs (session callbacks, `max_early_data`, `get` / `set_session`, the early-data verbs) writing into a NATIVE ctx once libssl is loaded in-process. |
+| **6.6.15** ✅ SHIPPED 2026-10-03 (tag `6.6.15` @ `2f1ed9d1`) | sigil **3.13.8** fold (constant-time P-256 / P-384 ECDH; ECDSA signing made constant-time — **CVE-68**); TLS ECDHE on P-256 / P-384 everywhere (1.2 client, 1.3 client with HelloRetryRequest, native server group negotiation, ephemeral-key zeroing); the `secret var` epilogue leak (**CVE-69**); B0a string interning (a NUL-bearing literal aliased another literal, silently). See *6.6.15* below. |
+| **6.6.16** repair — ✅ **MERGED 2026-10-05** (release gate pending; **CVE-74** N1, **CVE-75** N3, **CVE-76** T1; ganita 1.2.13 + sandhi 1.10.7 folded; detail in CHANGELOG [6.6.16] and *6.6.16* below) | **Compiler:** the silent miscompiles — module-scope `var T: i64[3] = {…}` stores bytes, pointer-mode struct `q = a` / `G = a` / `a = q`, overload dispatch on a `Str` global, `g<i32>(..)?` (139) and `var v = g<i32>(..)` dropping the payload, a nested fn (SIGILL → a named error), a kmode global initialiser naming an enum; the named >8 B struct argument becomes a COPY (decided, *Open questions* 4); one shared type-name resolver (sizeof for u*/f*/bool; annotations stop prefix-matching); the `#deprecated` gaps; the cycc include fallback honouring `CYRIUS_HOME`. **Net / TLS / security:** plain-socket SIGPIPE (`sock_send*`, http, ws — CVE-66's class, a CVE), `cyrius deps` tag-field traversal (CVE-62's class), the Ed25519 `sig_len == 64` check (its ServerKeyExchange curve-binding half shipped in 6.6.15), CA EKU, Windows accept inheriting `FIONBIO`, `fd_wait_ready`'s error mask, libssl session cache (`SSL_CTX_ctrl`) and the failed-`*_complete` sticky error, Windows `THREADS_CONCURRENT=1`, the agnos `setsockopt` stub. **Plus:** cwd-independent gates, the guide's `fn use()` example, the `element_typed_array` sentinel, the PE size gate's private wine prefix, the sit-fsck lookup, the stale premises in P2/P3/C1 and the syscall-families entry; the two hisab issues (a closure's `: stack` return booked against the enclosing fn; a top-level `fncallN` on a capturing closure SIGSEGVs). **Added 2026-10-04 with the sandhi 1.10.7 fold** (user): sandhi's two cyrius filings — a blocking, thread-safe channel wherever threads are real (arm64 macOS, and Windows, which 6.6.16's N7 makes `THREADS_CONCURRENT = 1`) plus a channel capability, and the native TLS server decoding a PEM key per accept on the global heap. **Promoted 2026-10-04 (user)** from the planning premise checks: a local `var p: *i8` / `*i16` / `*i32` stored as a 1/2/4-byte scalar (the pointer truncated — silent memory corruption), and the libssl-only `tls.cyr` verbs (session callbacks, `max_early_data`, `get` / `set_session`, the early-data verbs) writing into a NATIVE ctx once libssl is loaded in-process. |
 | **6.6.17** manifest | **P1** (the single manifest reader + `--print-config`; `[build] test` WIRED after measuring the repos with named deps; `defines` / `strict` wired; a `dce` key; `features` dropped, `target` held; profiles → backlog); **P5-A** (text corpus + per-entry view; P5 stays OPEN for its execution half); DRY the pass-1 top-level scanners across the 7 forks; LSP read sized by fstat; `lib sync --full` re-locking; `_toml_key_at`'s hyphen boundary. |
 | **6.6.18** distlib + poison | **P4** option 2 (the compile-verify fixpoint is the authority; one sibling regeneration wave); **P6** widened (`poison_allocator()`, leading redzone, live-block sweep, settable fill byte, `alloc()` / arena redzones; guard pages → backlog); the log / ws / ws_server fold bundles; the ESYSXLAT compile-time fold (~593 KB of `cycc-native-aarch64`); DCE's honest "compaction declined: <why>" note; the missing `sxtw`. |
 | **6.6.19** | **P2** `[embed]` (generated in cbt before `#@srcline` — never an in-band marker that reads files, the CVE-45 class; `[lib.PROFILE]` scoping; the interning perf fix B0b); x86-macOS real threads + `async_await_readable_ms` on macOS / agnos / Windows (*Open questions* 3). The release to trim if 6.7.0 should come sooner. |
@@ -128,6 +133,10 @@ it says otherwise; the measurements are in the lane records (`~/.cache/cyrius-ba
   - A generic whose pair-ness depends on its type argument (`fn w<T>(p: T, d) { return p.div(d); }`) exits 139
     on `w(..)?` — the pair flag lives on the template, not the instance.
   - A module-scope array redeclared after a statement gets a fresh zeroed slot (the 6.6.6 one-definition rule).
+  - In a generic instance a PARAMETER `x: T` with T bound to `f64` is an untyped word (`x + x` adds the bits as
+    integers), while since 6.6.16 a local `var y: T` there is an `f64`, so `y + x` and `y != x` warn. Type the
+    instance's params by their argument as the locals are (an ABI question for f64 params; nothing in the
+    ecosystem instantiates a generic at f64).
 - **TLS.**
   - An mTLS server verifying CLIENT chains with `tls_native_set_ca_system` takes a Windows root whose store
     purpose is serverAuth-only as a client-chain anchor — the trust-store half of CVE-75's purpose check.
@@ -158,7 +167,10 @@ it says otherwise; the measurements are in the lane records (`~/.cache/cyrius-ba
   (the concurrency bucket is not in the cross-OS leg); wine gates leave wineservers and `/tmp/.wine-1000` dirs and a
   fresh prefix writes `$HOME/.cache`; `lint_fmt`'s `_parse_emit_drift_gate` reads `parse_*.cyr` into 256 KB, which
   `parse_expr.cyr` / `parse_fn.cyr` exceed; `private_per_item_rejected.sh` axes 4/6 (and two more) test the live
-  store's lib through cycc's HOME fallback; `alloc_failure_returns_zero.sh` reads `build/cycc_aarch64`.
+  store's lib through cycc's HOME fallback; `alloc_failure_returns_zero.sh` reads `build/cycc_aarch64`;
+  `cbt/commands.cyr` `_lint_msg_is_context` still lists `sizeof: unknown type`, which nothing prints since 6.6.16
+  (a dead entry); the `macos_arm64_real_threads.sh` driver description (`programs/checks/main.cyr` ~638) says axis 6
+  pins `THREADS_CONCURRENT` "on all four backends" where it pins five (read "on every backend").
 - **Language / grammar (loud).** A closure nested in a closure cannot capture the outer fn's locals (the guide's
   "captured closures are flat" — a codegen limit written down as a rule); a nested `fn` inside a closure body ends
   the closure's scope; `name: *Str` fields and `fn f(): *Str` do not parse; method chains `s.clone().cat(t)` do not
@@ -166,6 +178,21 @@ it says otherwise; the measurements are in the lane records (`~/.cache/cyrius-ba
   generic instantiation lands on the instance; `#deprecated` inside an impl body; the tail-call `private` error is
   mislocated (C9's twin); the end-of-file error has no `<source>:` and a wrong line; a `Str` two steps away
   (`a.b.name`, a generic returning `T`) is neither dispatched nor typed by I11.
+  - A multi-value return element takes no type arguments either (`(Box<i64>, i64)` → `expected ')', got '<'`),
+    like `sizeof(X<..>)`.
+  - False warnings: a fn defined inside a TOP-LEVEL block and called from a fn earlier in the file draws a pre-pass
+    `undefined function` warning although it builds and runs (`_prescan_tail` does not descend into a top-level
+    block); a `*T` PARAMETER, and a `*T` local captured by a closure, load with pointer scale 0, so copying one into
+    a typed pointer warns `assigning non-pointer to typed pointer`; so does `a = GP;` (a pointer-mode struct local
+    rebound from a pointer-mode struct global of its type), a `Str`-returning method (`b = q.name();`) and a `Str`
+    field assigned into a struct handle.
+  - I11's warning names `x.data` and `str_data(x)` as a Str's data pointer but not the method spelling `x.data()`
+    (dispatch is right either way).
+  - The step of `p + n` on a `*T` differs by site (documented in the guide's *Pointers* at 6.6.16): a local
+    `*i8`/`*i16`/`*i32` steps 1, every other local `*T` 8 (so `*u8` steps 8), a param 1 whatever T, a
+    declaration-block global 8, a global after the first statement 1/2/4/8 by T. A language decision.
+  - The lexer's string pool is emitted whole, so a `#deprecated("…")` (or `#assert …, "…"`) message is in every
+    binary's `.rodata` whether or not anything references it (+16 B for "use new_f"). Size only.
 
 Defaults taken with the plan (the memo's): P4 option 2 (reverses the v6.5.10 "union" stance); P6 widened to
 `alloc()` redzones; `output` stays a default and `init --bin` writes `build/{PROJ}`; DCE stays opt-in (so the
@@ -176,7 +203,33 @@ generators (after P2); sankoch retires its interning proof (after B0a, in 6.6.15
 
 ---
 
-## 6.6.15 — curves and the compiler's secret leaks (MERGED 2026-10-03: release gate GREEN, awaiting the tag)
+## 6.6.16 — repair (MERGED 2026-10-05: fixpoint + seed-derive GREEN, release gate pending)
+
+The first row of *The 6.6.x tail*: 29 bites over six lanes (srca, srcb, net, tls, tool, thr). **Detail is in CHANGELOG
+[6.6.16]; its four issue files are archived.**
+- **Compiler:** global array initialisers baked as N elements (C1); pointer-mode struct assignment copies (C2); Str
+  overload dispatch (C3); `g<T>(..)?` / `p.m(..)?` receive the pair (C4); a nested `fn` is refused by name (C5);
+  kmode enum initialisers baked (C6); a by-value struct parameter over 8 B is a COPY (C7, *Open questions* 4); one
+  type-name resolver, with the promoted local `*i8` / `*i16` / `*i32` truncation (C8); the `#deprecated` gaps (C9);
+  the include fallback honours `CYRIUS_HOME` (C10); hisab's two filings — a top-level `fncallN` on a capturing
+  closure (H1), a closure's `: stack` return booked on its enclosing fn (H2).
+- **Net / TLS:** plain-socket SIGPIPE (**CVE-74**, N1); a CA's extendedKeyUsage enforced on intermediates and the
+  anchor (**CVE-75**, N3); Ed25519 `sig_len == 64` (N2); `sock_accept` returns a blocking socket on every target
+  (N4); the Windows WSA error mask (N5); the libssl session cache through `SSL_CTX_ctrl`, a sticky failed
+  `*_complete`, and libssl-only verbs never touching a native ctx (N6 + the promoted guard); Windows
+  `THREADS_CONCURRENT = 1` (N7); the agnos `sys_setsockopt` decline stub (N8).
+- **Threads** (sandhi's two filings): a blocking, thread-safe channel on arm64 macOS and Windows with `CHAN_BLOCKING`
+  on every peer, and the Linux channel's MPMC lost-wake-up deadlock fixed on the way; a PEM server key decoded once
+  per key text, not per accept.
+- **Tooling:** `cyrius deps` tag traversal (**CVE-76**, T1); every gate cwd-independent (G1); private wine prefixes
+  (G4); the sit lookup from a worktree (G5); the guide's include-less examples compiled (G2); the
+  `element_typed_array` sentinel (G3); stale doc premises (G6).
+- **Folds:** ganita 1.2.13, sandhi 1.10.7. cycc 1,535,360 B (+43,216 over 6.6.15). Every further lane-review find
+  is in *6.6.17 also takes* (user, 2026-10-04/05).
+
+---
+
+## 6.6.15 — curves and the compiler's secret leaks (SHIPPED 2026-10-03, tag `6.6.15` @ `2f1ed9d1`)
 
 **User, 2026-10-02:** the sigil work marked for after 6.6.14, then (scope answers the same day) the
 `secret var` epilogue fix, B0a, and TLS 1.3 / native-server P-256 with ephemeral-key zeroing.
@@ -216,7 +269,8 @@ Defaults taken without asking (each recorded in the CHANGELOG):
 - I8 makes no Windows transport switch (backlog (j));
 - `TLS_ERR_TIMEOUT` is -22, so the released `TLS_ERR_RECORD_OVERFLOW` keeps -20.
 
-The in-passing finds of the premise check and the lanes' reviews are in *Potential backlog* below.
+The in-passing finds of the premise check and the lanes' reviews are in *Potential backlog* below (those
+6.6.16 shipped have been removed from it).
 
 ---
 
@@ -406,6 +460,12 @@ and sankhya below, plus three 6.6.13 downstream notes — abaco (drop its TLS / 
 kriya's was already there. Every repo that bumps to 6.6.13 must re-vendor `lib/math.cyr` in the same commit
 (I5 reserves `f64_le` / `f64_ge` / `f64_trunc`); each note says so.
 
+**Recorded in each repo on 2026-10-05 (the 6.6.16 filings; filings only from here)**: hisab `1faa48f` + `8895f32`,
+kavach `237098d`, sandhi `857a469`, sigil `e36a140`, bayan `a63bd45`, yantra `38627f1`, abaco `e1f4abb`, szal
+`6770fde`, agnosai `6cb1fc4`, agnos `e8553c47` — one bullet each below. Not filed: gnoboot (srcb-3 recorded nothing
+for it, and its roadmap.md has uncommitted changes), argonaut (net-5's stale comment at `src/syscall_compat.cyr:59`,
+information only), the retired agnosys copies.
+
 - ⚠ kriya `k_isatty` does TCGETS into a 16-byte `var tio[16]` (termios is 36 B): a stack overrun on
   every tty probe, a crash on aarch64 (`cp -i`, `mv -i`, `ls` on a terminal) — recorded for kriya 1.7.4,
   which also adopts 6.6.12's aarch64 wrappers after the cyrius tag.
@@ -419,13 +479,57 @@ kriya's was already there. Every repo that bumps to 6.6.13 must re-vendor `lib/m
 - bote still commits live `path = "../libro"` / `"../majra"` lines (the dhvani/libro shape 6.6.12 removed).
 - aethersafha: 21 files not `cyrius fmt`-clean on 6.6.11 (its CI has no fmt step); duplicate-fn warnings
   between sigil and the agnostik / agnodrm bundles (`_hex_nibble`, `result_print_err`, …).
-- kavach (a CONSUMER, not a stdlib — it gates nothing in cyrius; user, 2026-10-04): its `basic` seccomp
-  profile allows `write` but not `sendto` (nor `poll` / `fcntl`), so a sandboxed native TLS writer on Linux is
-  killed (SIGSYS) from 6.6.14 (CVE-66's `MSG_NOSIGNAL`), and from 6.6.16 a plain-socket writer too. Keeping
-  its allowlist in step with the stdlib's syscalls is kavach's own patch release. Filed in kavach (user,
-  2026-10-02): `kavach/docs/development/issues/2026-10-02-basic-seccomp-kills-native-tls-writes.md`.
 - sankhya's README / CLAUDE.md name varna 2.1.0 / itihas 2.4.0 / avatara 2.9.0; its 3.0.2 lock pins
   2.4.1 / 2.5.0 / 2.14.8.
+- **hisab** — 6.6.16 fixes both of its 2026-10-03 filings: a top-level `fncallN` on a capturing closure (srca-2,
+  H1) and a closure's `: stack` return being booked against the enclosing fn (srca-1, H2, its D082). Nothing
+  changes in its tree. Once it pins ≥ 6.6.16 it may relax `src/autodiff.cyr`'s "invoke from inside a fn" recipe
+  note and return `ad_grad_into(..)` from the closure again, returning a pair on every path; then it archives
+  both records. The ganita 1.2.13 fold also addresses its two ganita SVD filings, but SVD non-convergence is now
+  −3 (was −1), so `svd_compute`'s fallback needs a re-check. Roadmap + records: hisab `1faa48f`, `8895f32`.
+- **kavach** (a CONSUMER, not a stdlib — it gates nothing in cyrius; user, 2026-10-04) — from 6.6.16 (CVE-74)
+  plain-socket writers issue `sendto(..., MSG_NOSIGNAL)`, so `security_create_basic_seccomp_filter` kills a
+  process that loads it on itself on its first `sock_send_all`. This was measured, not only for native TLS
+  (whose writers have done the same since 6.6.14, CVE-66). Its sandboxed spawn paths load the exec filter and are
+  not affected. A measured argument-pinned `sendto`/`fcntl` + `poll`/`ppoll` allowlist (40/37 instructions) was
+  added to its open issue as a suggestion, with the probe under `repros/`; kavach decides. Filed in kavach (user,
+  2026-10-02): `kavach/docs/development/issues/2026-10-02-basic-seccomp-kills-native-tls-writes.md`; updated
+  2026-10-05 in kavach `237098d`.
+- **sandhi** (stdlib, fixed upstream at its next release) — both 2026-10-04 filings are fixed in 6.6.16 (thr-1
+  blocking channel + `CHAN_BLOCKING`; thr-2 PEM key decoded once per key text) and marked so. Its new
+  `2026-10-05-adopt-cyrius-6616.md` lists five adoptions: the stale "sock_send has no MSG_NOSIGNAL" premise
+  (`src/server/mod.cyr:1260`/`:1469`), the redundant `_sandhi_server_conn_blocking` (N4),
+  `sandhi_session_cache_supported()` reading 1 on OpenSSL 3 under libssl plus an end-to-end resumption test
+  (N6), `_sandhi_server_pool_inline` keyed on `CHAN_BLOCKING`, and the server-guide DER-key bullet plus probe [8]
+  tightened to `per == 0`. sandhi `857a469`.
+- **sigil** (stdlib, fixed upstream) — two issues filed. `pem_decode_privkey` (`src/privkey.cyr:435`, the fold's
+  ~20456) never wipes its decoded-key DER scratch, which leaves a plaintext private key in never-freed heap on
+  every return path, including the RSA retry case. It also never checks `alloc(pem_len)` for 0, and
+  `pem_decode_certs` (`src/pem.cyr:359`) has the same unchecked alloc. Separately, `tests/threads.cyr`'s Windows
+  comment is stale since `THREADS_CONCURRENT` reads 1 on Windows (N7). sigil `e36a140`.
+- **bayan** (stdlib) — at its 6.6.16 pin bump, `#deprecated` warns through `&fn` (C9), so
+  `tests/bayan.tcyr:3111-3112,3575-3576` give 4 warnings and `no-warnings.sh cyrius test` goes red. Rearranging
+  those references is bayan's call (no pattern allowance). The `consumer-check.sh` ~266 comment is also stale.
+  bayan `a63bd45`.
+- **yantra** (stdlib) — with a ≥ 6.6.16 floor, `_cdp_set_nodelay`'s agnos arm can go: N8 defines a -38
+  `sys_setsockopt` stub on agnos. Its `json_v_obj_get` calls (`src/protocol/cdp.cyr` 158/187/313/316) now warn in
+  either include order; switch them to `bayan_json_v_obj_get_by_cstr`. yantra `38627f1`.
+- **abaco** — `_ccy_nodelay`'s `#ifdef CYRIUS_TARGET_LINUX` guard (`src/ai.cyr:1813`) can relax at the 6.6.16 pin,
+  because agnos now has a `sys_setsockopt` stub (N8). The guard also skips macOS, where TCP_NODELAY works. abaco
+  `e1f4abb`.
+- **szal** — from 6.6.16 a full subscriber channel blocks `_hub_publish` on arm64 macOS and Windows as it does on
+  Linux (it used to drop the event), and the `run_parallel` permit semaphore now really caps there. Its
+  stream/parallel tests should run on macOS and Windows at the bump, and its "no `chan_try_send`" comment is stale
+  (that API has existed since 6.4.84). szal `6770fde`.
+- **agnosai** — no code change. The sandhi 1.10.7 fold reaches it at 6.6.16 (the chunked verbs now report write
+  results, so B8 can notice a departed client). Its kavach `basic`-profile row was corrected (spawn paths load the
+  exec filter). `arena_pool`'s ring is now locked on arm64 macOS, and the `inference_queue` reply channel really
+  waits on Windows. agnosai `6cb1fc4`.
+- **agnos** (roadmap only, pinned 6.6.6) — at the 6.6.16 pin an x86 kernel build warns twice (srcb-3 kmode:
+  `_AGNOS_VERSION` version.cyr:55, `kernel_hostname` core/syscall.cyr:1582) with a byte-identical image.
+  Separately, the aarch64 kernel build fails on agnos's own 6.6.6 compiler too: `DIRECTMAP_BASE` is undefined at
+  `core/pmm.cyr:330` because `core/vmm.cyr` is included only under `ARCH_X86_64`. The agnos stdlib peer also gains
+  a `sys_setsockopt` decline stub (N8). agnos `e8553c47`.
 
 ---
 
@@ -440,12 +544,15 @@ priority surfaces.
 > is wired through RA_SCAN_LOOPS), the bare `var a[N]` question (subscripting one is a hard error naming the
 > typed spelling; overrun checks go to C2), the I7 / race-gate port flake (shipped in 6.6.14), the Rosetta
 > timebase item (no Rosetta host — an unsupported configuration) and sakshi's qemu-static item (does not
-> reproduce in CI). **These are technical items → they stay in the 6.x cycle, never 7.x.**
+> reproduce in CI). **Removed 2026-10-05**: every item 6.6.16 shipped (the 6.6.13 lanes' five, premise-check
+> (a)–(c) and (g), the `#deprecated` gaps, five 6.6.12 items, eight 6.6.14-lane items), each checked against the
+> merged tree; their history is CHANGELOG [6.6.16]. **These are technical items → they stay in the 6.x cycle,
+> never 7.x.**
 
 - **Found by the 6.6.16 planning premise checks (2026-10-04; backlog — the user promoted only the `*iN`
   pointer truncation and the libssl-verbs-on-a-native-ctx corruption into 6.6.16).** Met in passing, not swept for.
   - ⚠ `cyrius deps` READ side: a `modules` entry with `../` or an absolute path, and a TRANSITIVE manifest's
-    `path`, vendor any local file into the consumer's `lib/` (security-relevant; 6.6.16's CVE covers the `tag`
+    `path`, vendor any local file into the consumer's `lib/` (security-relevant; 6.6.16's CVE-76 covers the `tag`
     field only). Confining a transitive `path` to its own manifest's tree is the design call (54 legitimate root
     `path = "../sibling"` uses).
   - ⚠ Silent wrong values: a top-level `var v = pair_fn(..)` keeps the tag and drops the payload (the v6.5.67
@@ -455,11 +562,13 @@ priority surfaces.
   - `asm { in al, dx; }` is refused because `in` is keyword 76, so the `ASM_IN` emitter arm is unreachable —
     a compiler bug (the guide documents the form, ~2049).
   - In an x86 `kernel;` build, float-literal global scalars (`var G: f64 = 1.5;`) are dead stores after the
-    program (6.6.16's kmode warning names them); `src/common/util.cyr` ~1151 wrongly claims byte-array
-    initialisers are immune.
-  - cx: `lib/fnptr.cyr` has no `CYRIUS_TARGET_CX` arm, so an address-taken `&fncallN` returns 0 there.
+    program (6.6.16's kmode warning names them).
+  - cx: `lib/fnptr.cyr` has no `CYRIUS_TARGET_CX` arm, so an ADDRESS-TAKEN `&fncallN` (called through another
+    indirect call) returns 0 there; on x86 / aarch64 the same `&fncallN` runs the library asm, which calls a
+    capturing closure's tagged value (no closure dispatch). Direct `fncallN(..)` calls are lowered by the compiler
+    at every depth since 6.6.16 and are not affected.
   - `println(n)` on an `i64` local hands it to the cstring overload and exits 139 (the `_int` arm types only
-    call arguments; `PARSE_FNCALL`'s header comment claims otherwise). Loud.
+    call arguments). Loud.
   - cycc's `_read_env` (`src/backend/common/env.cyr`) caps the environment at 8191 B and values at 255 B, so
     every `CYRIUS_*` knob is missed past 8 KB of environment (the class the CLI fixed at 6.6.11 J4).
   - Windows `sys_setsockopt` is a -38 stub although `net.cyr` reaches setsockopt through ws2_32 (0xF032), so
@@ -478,100 +587,37 @@ priority surfaces.
     longer than 32 bytes (never stored or echoed — conformance only); four 1.2-client ServerKeyExchange length
     / key-type checks (`lib/tls_native_hs12.cyr` ~679 / 688 / 691 / 711) have no test that fails without them.
     Not in scope of 6.6.15: a libssl-backend `tls_set_groups`; X448 / secp521r1 (sigil has neither ECDH).
-  - TLS — `_tn_verify_sig_scheme` (`lib/tls_native_hs13.cyr` ~533) calls `ed25519_verify` without checking
-    `sig_len == 64` (placed: 6.6.16). (Its other half — binding the ECDSA curve to the scheme for the 1.2
-    ServerKeyExchange — was fixed in 6.6.15 by `_tn_ecdsa_verify_12`.)
   - TLS — capability limits listed in CVE-64's *Not covered*: no RSA client certificates natively; the native
     client and the native server send their leaf only (no intermediates); an empty certificate_authorities;
     the 1.3 server reads each client message from one record (a client Certificate of at most 8 KiB).
-  - TLS — the chain verifier checks only the LEAF's extendedKeyUsage, never a CA's own (Windows' chain engine
-    and OpenSSL both check it).
   - TLS, Windows — the store: CurrentUser `ROOT` under the ProtectedRoots policy is unverified; the
     auto-updated disallowed CTL is not read; a root with a dated distrust is refused whole (SecureTrust's
     pre-2026-09-15 leaves fail here); roots Windows has not fetched yet are invisible (CVE-65's *Not covered*).
-  - TLS, Windows — an accepted socket inherits a non-blocking listener's `FIONBIO`, so native TLS with no
-    deadline on it fails `TLS_ERR_IO`.
-  - TLS, libssl — `tls_ctx_set_session_cache_mode` is a silent no-op (OpenSSL 3 makes
-    `SSL_CTX_set_session_cache_mode` a macro over `SSL_CTX_ctrl`; the dlsym finds nothing); a failed
-    `tls_*_complete` records no sticky error, so a contract-violating `tls_read` after it re-drives the
-    handshake.
   - TLS, agnos — a native write can overshoot the caller's deadline by one `sock_send#48` stall (~8 s):
     agnos's #48 hard-codes `TCP_PROGRESS_US`. It needs #48 to honour a time bound (`tcp_send_ex` already
     takes one) — an agnos ABI change, then the stdlib passes the time left (CVE-61's *Not covered*).
     **Filed in agnos** (user, 2026-10-02): `agnos/docs/development/issues/2026-10-02-sock-send-ignores-the-caller-deadline.md`.
-  - `lib/net.cyr`'s plain writers (`sock_send`, `sock_send_all`, `lib/http.cyr`, `lib/ws.cyr`) are flagless
-    `write`s on Linux and macOS: a reset peer still raises SIGPIPE there (CVE-66's class for plain sockets).
-  - `lib/syscalls_windows.cyr` `fd_wait_ready` (~880, also ~949/955/965) returns `0 - WSAGetLastError`
-    without the 32-bit mask `net.cyr` applies.
-  - check.sh — `cli_pe_file_size_and_sibling_tools.sh` runs wine in the shared default prefix; with several
-    check.sh runs at once its axis 1 hung to its 300 s timeout (a plausible mechanism: the gate supervisor
-    reaping another run's wineserver). The `sit fsck` driver row always SKIPs in a worktree outside `~/Repos`.
-  - `lib/thread_win.cyr:36` says `THREADS_CONCURRENT = 0` is a "serial fallback (bodies run inline)", while
-    `thread_create` starts a real `CreateThread`.
   - `tls_native_set_client_cert` sizes its decode at `TLS_CA_MAX_ROOTS` (300) entries; sigil 3.13.7's
     `pem_count_cert_blocks` could size it exactly.
   - sigil (its repo) — the TPM helpers probe `/dev/tpmrm0` and spawn `/usr/bin/tpm2_*` by rooted path,
     drive-relative on Windows if reachable on PE (the CVE-65 class, an executable this time); its check.sh
     builds at predictable `/tmp/sigil_{t,b,f}_$$` paths. sandhi (its repo): `lib/sandhi.cyr` ~1589 still
     calls the tls ctx a 24-byte struct.
-- **Found by the 6.6.13 lanes' reviews (2026-10-01; backlog, not placed — only the user promotes).** The TLS
-  finds are 6.6.14's scope (*6.6.14* above).
-  - `cyrius deps` joins the `tag` value into `<home>/deps/<name>/<tag>` unchecked: `tag = "../../../x"`
-    exits 1 (git refuses the ref) but leaves an empty directory outside the dep cache — CVE-62's class on
-    the tag field.
-  - cycc's include fallback (`_init_cyrius_lib`, `src/frontend/lex.cyr`) reads
-    `$HOME/.cyrius/versions/<VERSION>/lib` and ignores `CYRIUS_HOME`, although its comment says otherwise,
-    so `cyrius distlib`'s verify can compile against a different stdlib than the one it attributes from
-    (`distlib_sidecar_verified.sh` pins HOME to work around it).
-  - Both annotation ladders PREFIX-match scalar type names: `var a: i8x` is silently `i8` (arrays and
-    scalars; only vector names are matched whole, in the array path).
-  - A nested `fn` inside a fn body compiles and SIGSEGVs at run time
-    (`fn outer(): i64 { fn inner(): i64 { return 3; } return inner(); }` → rc 139).
-  - `tests/tcyr/lang/element_typed_array.tcyr`'s sentinel sits BELOW the array, where an overrun cannot reach
-    it (the new `crossos/typed_array_elem_size.tcyr` covers the shape).
 - **Found by the 6.6.13 premise check (2026-10-01; backlog, not placed — only the user promotes).** Met in
-  passing while planning M1–M3 and I1–I11, not swept for. ⚠ (a)–(c) are silent miscompiles. The TLS finds
-  (d), (e), (f), (i), (j) are 6.6.14's scope (*6.6.14* above); the letters are kept for reference.
-  - (a) A pointer-mode struct local assigned into an inline struct stores its address
-    (`var a: Pt = alloc(16); var q: Pt; q = a;`): `_try_aggregate_copy_assign` (`parse.cyr` ~2457) gets 0
-    from `_agc_operand` for a non-parameter pointer-mode local and falls to the 8-byte store.
-  - (b) A callee writing to its by-value struct parameter mutates the caller's named-local argument
-    (`bump(p)` twice gives 4 then 5): `_try_push_struct_addr_arg` pushes `&local` with no copy, while
-    `_fla_push_arg` copies a field argument. The same decision as the 6.6.12 item below ("does the named
-    form copy too?").
-  - (c) The overload dispatcher compares a global's `GVTYPE` against the LOCAL encoding `0 - sid`
-    (`parse_fn.cyr` ~2757), so a `: Str` global is never routed to its `_str` sibling: `println(gs)` prints
-    the header's pointer bytes. I11 fixes the same sign in the diagnostic only (I11 is warning-only).
-  - (g) `sizeof(f64)`, `sizeof(f32)`, `sizeof(u64)`, `sizeof(bool)`, `sizeof(ptr)` fail with
-    `sizeof: unknown type` — loud, not silent.
+  passing while planning M1–M3 and I1–I11, not swept for. The TLS finds (d), (e), (f), (i), (j) were 6.6.14's
+  scope and (a)–(c) and (g) shipped in 6.6.16 (C2, C7, C3, C8); the letters are kept for reference.
   - (h) `EMACHO_PTHREAD_CREATE_ARM` takes `pthread_create`'s `int` result without sign-extending it
     (harmless: `thread_create` tests only `!= 0`).
-- **`#deprecated` gaps (measured by bayan 1.5.10 on the 6.6.12 release, recorded in I11's issue as a
-  *Related* separate defect; backlog, not placed).**
-  - Silent: a call through `&f` (`fncall1(&old_f, 1)`), a method-dot call `o.m()` whose `T_m` is
-    `#deprecated`, and a call parsed before the deprecated definition.
-  - Mislocated on a tail call: PARSE_RETURN warns (`_DEPRECATED_WARN`, `parse_fn.cyr:790`) after the `)`
-    and `;` are consumed, so `return old_f(x);` is reported at the NEXT token's line.
 - **Found by the 6.6.12 premise check and lanes (2026-09-30; backlog, not placed — only the user promotes).**
   Met in passing, not swept for. Its three ⚠ silent-memory-corruption items were promoted to **6.6.13**
   (M1–M3) on 2026-10-01.
-  - `var v = g<i32>(..)?;` exits 139 on a generic returning a `Result` pair: the expression-side
-    `_callee_returns_pair` recognises only `name (`, not `name<T>(`. The statement form (6.6.12 R2) is right.
-  - A named >8 B struct argument aliases the caller (`take(q)` passes the address; the guide documents it),
-    while 6.6.12 made a FIELD argument copy — decide whether the named form copies too.
   - Windows `sys_symlink` (CreateSymbolicLinkW) widens with `_win_widen` at 519 units, no `\\?\` — a link
     at a path over 260 units fails -1 (honest).
   - cyrius-lsp `lsp_read_file` reads the open document through a fixed 1 MB buffer, silently.
-  - The agnos stdlib peer has no `sys_setsockopt` (not even a declining stub), so anything reaching it
-    fails to build for agnos (yantra 1.0.7 carries an agnos arm).
   - `async_await_readable_ms` is defined only in `lib/async.cyr`'s Linux branch (sandhi's cooperative
     server loop on macOS is unexercised).
   - `cyrius lib sync --full` does not re-lock `cyrius.lock`, so rows for files a repo does not vendor keep
     stale hashes until a lock is regenerated from empty (kriya and yantra both hit it).
-  - `tests/gates/codegen/cx_forward_read_constant_global.sh` builds relative to the cwd (green only from
-    the repo root, where check.sh runs it).
-  - The guide's zero-allocation Result example defines `fn use()`, a reserved word — the block does not
-    compile (guide_examples_compile.sh skips blocks with no `include`).
   - Inside an aarch64 region (6.6.12 B05's `#@a+` markers) a raw literal that HAS an ESYSXLAT x86-compat
     row is still translated with no warning: `syscall(9, ..)` meant as native lgetxattr runs mmap (also 5 →
     fstat, 55 → getsockopt). Unchanged from 6.6.11 (the raw-literal warning only covers untranslated
@@ -701,10 +747,11 @@ whereupon it became 43 derived rows and shipped at `.51`. Assume the same of any
 3. **macOS concurrency ordering — PLACED 6.6.19** (2026-10-02, with the tail plan): x86-macOS real
    threads and `async_await_readable_ms` on macOS / agnos / Windows. Real platform work with a
    genuinely broken verb on a gate host; no consumer waiting; it mirrors `thread_win`.
-4. **A named struct argument over 8 bytes — DECIDED 2026-10-02 (user accepted): it is a COPY**,
-   matching 6.6.12's field-argument copy and fixing a callee that mutates the caller's struct
-   (`bump(p)` twice gave 4 then 5). Settled before v6.7.x's traits inherit the convention; lands in
-   6.6.16. The blast radius is cyrius's own tests and the guide (which documents the alias today).
+4. **A named struct argument over 8 bytes — SHIPPED 6.6.16 (C7)** (decided 2026-10-02, user accepted:
+   it is a COPY, matching 6.6.12's field-argument copy and fixing a callee that mutated the caller's
+   struct — `bump(p)` twice gave 4 then 5). The callee copies on entry, so it holds for every argument
+   form, at top level and through fn pointers; a typed `self: T` follows it; an `async fn` refuses such
+   a parameter by name; `p: *T` + `f(&x)` is the mutating spelling.
 
 *(Former item 3 — per-item `private` — was never a question. It is a live defect and is now
 slot `.3` above. Former item 2, the bare-metal forbidden-module check, SHIPPED at v6.5.24 after
