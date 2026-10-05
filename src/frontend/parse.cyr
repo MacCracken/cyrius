@@ -3550,10 +3550,9 @@ fn _PARSE_STMT_IMPL(S): i64 {
                 if (PEEKT(S) == 30) {
                     # String token value is (offset << 32) | length
                     var sv = PEEKV(S);
-                    var soff = sv >> 32;
                     var slen = sv & 0xFFFFFFFF;
                     syscall(SYS_WRITE, 2, ": ", 2);
-                    syscall(SYS_WRITE, 2, S + 0x21A000 + soff, slen);
+                    syscall(SYS_WRITE, 2, _lit_ptr(S, sv), slen);   # 6.6.17: a side-table message
                 }
                 syscall(SYS_WRITE, 2, "\n", 1);
                 # 6.6.11: record, don't exit. A top-level #assert runs in the declaration phase,

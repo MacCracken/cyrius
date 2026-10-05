@@ -1944,6 +1944,96 @@ fn _lex_eof_last(S, bl): i64 {
     return 0 - 1;
 }
 
+# 6.6.17 — A COMPILE-TIME-ONLY STRING IS NOT EMITTED. The whole string pool (str_data) is copied
+# into every binary, so a `#deprecated("use new_f")` or `#assert .., "msg"` message — read only by
+# a diagnostic, never by code — cost every binary its bytes (+16 B for "use new_f"). Right after
+# such a literal is lexed it is moved to a side table and the pool is wound back to where it
+# began: it is the LAST string in the pool (an interned one shares bytes another literal needs and
+# stays), so no other offset moves. Its token value keeps the (offset << 32) | length shape with
+# bit 30 of the offset set; the two readers (`_DEPRECATED_WARN`, the #assert failure printer)
+# resolve it through `_lit_ptr`. The side table is alloc'd on first use: no heap-map region.
+var _lex_side = 0;
+var _lex_side_n = 0;
+var _lex_side_cap = 0;
+fn _lex_dir_msg_fix(S, interned): i64 {
+    if (interned >= 0) { return 0; }
+    var tc = GTCNT(S) - 1;
+    if (_lex_is_dir_msg(S, tc) == 0) { return 0; }
+    var v = TOKVAL(S, tc);
+    var off = v >> 32;
+    var n = v & 0xFFFFFFFF;
+    var so = _lex_side_put(S + 0x21A000 + off, n + 1);
+    if (so < 0) { return 0; }
+    SSPOS(S, off);
+    S64(S + 0xAC00000 + tc * 8, ((so | 0x40000000) << 32) | n);
+    return 0;
+}
+# Copy `n` bytes to the side table; its offset, or -1 when it cannot grow (the literal stays in
+# the pool, as before).
+fn _lex_side_put(src, n): i64 {
+    if (_lex_side_n + n > _lex_side_cap) {
+        var nc = _lex_side_cap * 2;
+        if (nc < 4096) { nc = 4096; }
+        while (nc < _lex_side_n + n) { nc = nc * 2; }
+        if (nc >= 0x40000000) { return 0 - 1; }
+        var nb = alloc(nc);
+        if (nb == 0) { return 0 - 1; }
+        var i = 0;
+        while (i < _lex_side_n) { store8(nb + i, load8(_lex_side + i)); i = i + 1; }
+        _lex_side = nb;
+        _lex_side_cap = nc;
+    }
+    var o = _lex_side_n;
+    var k = 0;
+    while (k < n) { store8(_lex_side + o + k, load8(src + k)); k = k + 1; }
+    _lex_side_n = o + n;
+    return o;
+}
+# 1 when string token `tc` is a directive's message: `#deprecated ( STRING`, or the message slot of
+# an `#assert ATOM [OP ATOM] [,] STRING` (the grammar `_tl_assert` / PARSE_STMT's arm consume).
+fn _lex_is_dir_msg(S, tc): i64 {
+    if (tc >= 2) { if (TOKTYP(S, tc - 1) == 10) { if (TOKTYP(S, tc - 2) == 124) { return 1; } } }
+    var a = tc - 1;
+    var lo = tc - 12;
+    if (lo < 0) { lo = 0; }
+    while (a >= lo) {
+        if (TOKTYP(S, a) == 107) {
+            if (_lex_assert_msg_at(S, a) == tc) { return 1; }
+            return 0;
+        }
+        a = a - 1;
+    }
+    return 0;
+}
+fn _lex_assert_msg_at(S, a): i64 {
+    var i = _lex_assert_atom(S, a + 1);
+    var op = TOKTYP(S, i);
+    if (op >= 17) { if (op <= 22) { i = _lex_assert_atom(S, i + 1); } }
+    if (TOKTYP(S, i) == 31) { i = i + 1; }
+    return i;
+}
+# `_assert_skip_atom` over token indices: a number, `sizeof ( [T] )`, `E.N`, or a name.
+fn _lex_assert_atom(S, i): i64 {
+    var t = TOKTYP(S, i);
+    if (t == 1) { return i + 1; }
+    if (t != 2) { return i; }
+    if (_is_sizeof_word(S, TOKVAL(S, i)) != 1) {
+        if (TOKTYP(S, i + 1) == 41) { if (TOKTYP(S, i + 2) == 2) { return i + 3; } }
+        return i + 1;
+    }
+    var j = i + 2;
+    var tj = TOKTYP(S, j);
+    if (tj == 2) { j = j + 1; }
+    elif (tj == 105) { j = j + 1; }
+    return j + 1;
+}
+# A string token value's bytes: the pool, or the side table for a directive message (bit 30).
+fn _lit_ptr(S, v): i64 {
+    var off = v >> 32;
+    if ((off & 0x40000000) != 0) { return _lex_side + (off & 0x3FFFFFFF); }
+    return S + 0x21A000 + off;
+}
+
 fn LEX(S): i64 {
     var p = 0;
     var bl = GBL(S);
@@ -2594,6 +2684,7 @@ fn LEX(S): i64 {
                                                                                                                                     SCLINE(S, sline);
                                                                                                                                     ADDTOK(S, 30, (sstart << 32) | slen);
                                                                                                                                     SCLINE(S, eline);
+                                                                                                                                    _lex_dir_msg_fix(S, interned);   # 6.6.17: a directive-only message leaves the pool
                                                                                                                                 }
                                                                                                                                 else {
                                                                                                                                     # Reject non-ASCII bytes outside strings/comments

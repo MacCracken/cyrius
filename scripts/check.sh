@@ -805,6 +805,11 @@ _chk_gate "$ROOT/tests/gates/codegen/ir_edges_scaling.sh"
 # assertion with a non-zero control so it cannot go vacuous.
 _chk_gate "$ROOT/tests/gates/codegen/stack_enum_no_alloc.sh"
 
+# 6.6.17 — a string only a diagnostic reads (a `#deprecated` / `#assert` message, #derive's
+# generated ones too) leaves no bytes in the binary: the lexer moves it to a side table. Binaries
+# that differ only in such messages are byte-identical; the messages still print.
+_chk_gate "$ROOT/tests/gates/codegen/compile_time_strings_not_emitted.sh"
+
 # v6.5.56 P0: identifier dedup must be an EXACT compare. It was a PREFIX compare that happened to
 # be exact only while `bucket = klen` put one length per chain; v6.5.50's content hash removed
 # that invariant without adding the terminator check it had been standing in for, so a shorter

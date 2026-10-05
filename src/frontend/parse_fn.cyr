@@ -2995,10 +2995,9 @@ fn _DEPRECATED_WARN(S, fi, noff, ti): i64 {
     syscall(SYS_WRITE, 2, "' is deprecated", 15);
     var _dep_msg = GFDM(S, fi);
     if (_dep_msg != 0) {
-        var _dep_off = _dep_msg >> 32;
         var _dep_len = _dep_msg & 0xFFFFFFFF;
         syscall(SYS_WRITE, 2, ": ", 2);
-        syscall(SYS_WRITE, 2, S + 0x21A000 + _dep_off, _dep_len);
+        syscall(SYS_WRITE, 2, _lit_ptr(S, _dep_msg), _dep_len);   # 6.6.17: a side-table message
     }
     syscall(SYS_WRITE, 2, "\n", 1);
     return 1;
