@@ -108,6 +108,65 @@ reviews and a synthesis, archived at
 | **6.7.0** | The language arc ([roadmap_6.md](roadmap_6.md)): traits first, with the ADR and the one reserved-word survey at the open; P3 `const fn` after `const` and the if-expression; P5's execution half designed with C2. |
 | **after v6.7.x, before RISC-V** | The DCE compaction arc (aarch64 first, then PE / Mach-O — see its section), `lib/net.cyr` §4 per-arch socket peers, the remaining syscall families, AF_UNIX (default yes). |
 
+**6.6.17 also takes — FILED 2026-10-05 from the 6.6.16 lane reviews** (user: "file them to be done in 6.6.17;
+6.6.16 has TAKEN WAY TO LONG"). Each was met in passing by a 6.6.16 implementer or reviewer and is pre-existing unless
+it says otherwise; the measurements are in the lane records (`~/.cache/cyrius-batch-records-6.6.16.tgz` once archived).
+- ⚠ **Silent wrong values / memory.**
+  - A pointer-mode struct local returned from a by-value struct fn returns garbage
+    (`fn mk(n): Pt { var p: Pt = alloc(16); p.x = n; return p; }` → `p.x` prints a heap address) — C2's
+    handle→value class on the `return` path.
+  - A `p: *T` PARAMETER whose pointee is ≤ 8 B reads and writes the pointer's own slot (`MARK_SMALL_STRUCT` on a
+    pointer slot) — the promoted 6.6.16 (b) class at the parameter site; one guard in `_param_record`.
+  - C8's remaining storage-size leaks: a vector-typed scalar global (`var g: f64v2 = 0;`) is an 8-byte slot; a
+    generic `var a: T[N]` with T = f64 reserves 9 B per element and with T = i8/i16/i32 is not sign-extended
+    (`_ltc` reads the sign from the NAME `T`); a generic body of only `return sizeof(T)` returns 8 when called
+    from inside a fn.
+  - `var X: u128 = 5;` at module scope reads 0 on x86 ELF and aarch64 (`_EMIT_GVAR_STATIC_INITS` bakes only
+    8/4/2/1-byte slots).
+  - `var a, b = f()` where f returns ONE value compiles silently; `b` is a stale rdx.
+  - A `var` in a top-level `elif` / `else` body is not block-scoped (`PARSE_ELIF` has no SCOPE_PUSH/POP).
+  - A generic whose pair-ness depends on its type argument (`fn w<T>(p: T, d) { return p.div(d); }`) exits 139
+    on `w(..)?` — the pair flag lives on the template, not the instance.
+  - A module-scope array redeclared after a statement gets a fresh zeroed slot (the 6.6.6 one-definition rule).
+- **TLS.**
+  - An mTLS server verifying CLIENT chains with `tls_native_set_ca_system` takes a Windows root whose store
+    purpose is serverAuth-only as a client-chain anchor — the trust-store half of CVE-75's purpose check.
+  - `tls_supports_early_data()` reads 1 under the native backend once libssl is loaded (the twin of the
+    resumption probe 6.6.16 fixed; misleading, not corrupting).
+  - The libssl session-callback / `max_early_data` verbs SIGSEGV on a null handle; backend dispatch keys on the
+    global `_tls_backend`, not on a per-ctx tag.
+  - check.sh runs the `.tcyr` corpus with no `$HOME`, so the libssl groups of `tls_libssl_read_errors`,
+    `tls_libssl_session_cache` and `tls_libssl_worker_thread` always SKIP there (a coverage hole).
+- **Platform / stdlib.**
+  - Windows `async_relay_once` uses ReadFile/WriteFile on Winsock sockets: a false EOF, nothing relayed (cass).
+  - `lib/async_win.cyr` tests kernel32 BOOL results unmasked (SetWaitableTimer, RegisterWaitForSingleObject —
+    N5's class); `_async_connect_task` ignores its bind result.
+  - PE `callptr` / `fncallN` with ~500+ stack arguments moves rsp > 4 KiB at once (guard page; reasoned, not
+    measured); cx `ECALLIND` uses r14/r15 as scratch under 12+ argument registers (reasoned).
+  - The per-parameter-ORDINAL masks (`_fnt_structmask` incl. bit 62, the str/cstring/result/option/tagged masks,
+    the SysV simd_mask) wrap past 64 parameters (32 with a value-form vector).
+  - agnos peer: no `sys_socket` / `bind` / `listen` / `connect` / `accept4`; `cbt/cyrius.cyr` does not build for
+    `CYRIUS_TARGET_AGNOS=1`.
+  - `src/frontend/lex.cyr` `_env_var_is_1` reads the environment into 4096 B (pin-drift knobs missed past 4 KB);
+    `cbt/core.cyr`'s `_home` diverges from cycc's new `CYRIUS_HOME` rule (last vs first duplicate, empty value,
+    32 KB); the READFILE include fallback opens a path truncated at 4095 B.
+  - `cyrius deps`: a single-quoted TOML value silently takes the next double-quoted string; `tag = "main"` shares
+    the untagged default clone's cache dir.
+  - `scripts/install.sh --refresh-only` exits 1 with no message when `$HOME/.cyrius` does not exist (`set -e`).
+- **Harness.** `audit_scope_covers_suite.sh` takes ~750 s against the 900 s long timeout (red under load); on cass
+  `async_timeout_result` exits 1 on its SKIP path and `async_relay_once_no_deadlock` prints 7 failures yet exits 0
+  (the concurrency bucket is not in the cross-OS leg); wine gates leave wineservers and `/tmp/.wine-1000` dirs and a
+  fresh prefix writes `$HOME/.cache`; `lint_fmt`'s `_parse_emit_drift_gate` reads `parse_*.cyr` into 256 KB, which
+  `parse_expr.cyr` / `parse_fn.cyr` exceed; `private_per_item_rejected.sh` axes 4/6 (and two more) test the live
+  store's lib through cycc's HOME fallback; `alloc_failure_returns_zero.sh` reads `build/cycc_aarch64`.
+- **Language / grammar (loud).** A closure nested in a closure cannot capture the outer fn's locals (the guide's
+  "captured closures are flat" — a codegen limit written down as a rule); a nested `fn` inside a closure body ends
+  the closure's scope; `name: *Str` fields and `fn f(): *Str` do not parse; method chains `s.clone().cat(t)` do not
+  parse; `SKIP_GENERICS` does not nest (`Vec<Box<i64>>`); `sizeof(X<..>)`; a pending attribute before a top-level
+  generic instantiation lands on the instance; `#deprecated` inside an impl body; the tail-call `private` error is
+  mislocated (C9's twin); the end-of-file error has no `<source>:` and a wrong line; a `Str` two steps away
+  (`a.b.name`, a generic returning `T`) is neither dispatched nor typed by I11.
+
 Defaults taken with the plan (the memo's): P4 option 2 (reverses the v6.5.10 "union" stance); P6 widened to
 `alloc()` redzones; `output` stays a default and `init --bin` writes `build/{PROJ}`; DCE stays opt-in (so the
 `dce` key earns its place); shabdakosh's phf is its own generator, no `#phf` builtin. Sibling follow-ups
