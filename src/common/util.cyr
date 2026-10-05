@@ -1217,7 +1217,11 @@ fn _EMIT_GVAR_STATIC_INITS(S, O, bss_o): i64 {
             # `vsize == 8` gate skipped narrow globals entirely, so `var G: i32 = 40`
             # left G zero in the file image (the load then read 0). Write the value at
             # the var's width (the load reads the same width from the same offset).
-            if (vsize == 8) {
+            # ⛔ 6.6.17 (a4): and a 16-byte (u128) global. Its runtime store is elided for a static
+            # value like every other width's, so `var X: u128 = 5;` read 0 on every image target
+            # (cx, which keeps the runtime store, read 5). The value is the low word, as the
+            # runtime store (rax) writes it; the high word stays the image's zero. CHANGELOG [6.6.17]
+            if (vsize == 8 || vsize == 16) {
                 S64(O + bss_o + GVOFF(S, gvi), siv);
             } elif (vsize == 4) {
                 store32(O + bss_o + GVOFF(S, gvi), siv & 0xFFFFFFFF);

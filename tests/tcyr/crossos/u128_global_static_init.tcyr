@@ -1,0 +1,38 @@
+# u128_global_static_init.tcyr — 6.6.17 (a4). A module-scope `var X: u128 = <constant>;` holds its
+# value: the low word is the constant, the high word zero — as the runtime store (rax) writes it.
+#
+# ⛔ THE DEFECT, every release through 6.6.16. A global with a constant initializer has its runtime
+# store elided and its value baked into the var area (`_EMIT_GVAR_STATIC_INITS`, util.cyr), which
+# wrote only 8 / 4 / 2 / 1-byte slots — so a 16-byte u128 global read 0 on x86 ELF, aarch64, PE and
+# Mach-O, in the declaration block and after the first statement. cx keeps the runtime store and
+# was already right.
+# CROSS-HOST: each image writer (ELF, Mach-O, PE) calls the same bake over its own var area.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/assert.cyr"
+
+enum UK { UK_A = 0x77; }
+var X: u128 = 5;
+var Y: u128 = 0x123456789;
+var Z: u128 = 0 - 1;
+var W: u128 = 6 * 7;
+var E: u128 = UK_A;
+var N: i64 = 7;                       # control: an i64 constant global
+
+assert_eq(load64(&X), 5, "u128 = 5: low word");
+assert_eq(load64(&X + 8), 0, "u128 = 5: high word");
+assert_eq(load64(&Y), 0x123456789, "u128 = 0x123456789: low word");
+assert_eq(load64(&Y + 8), 0, "u128 = 0x123456789: high word");
+assert_eq(load64(&Z), 0 - 1, "u128 = 0 - 1: low word is the constant");
+assert_eq(load64(&Z + 8), 0, "u128 = 0 - 1: high word stays zero (as the runtime store)");
+assert_eq(load64(&W), 42, "u128 = folded 6 * 7");
+assert_eq(load64(&E), 0x77, "u128 = an enum constant");
+assert_eq(N, 7, "control: an i64 constant global");
+alloc_init();
+var L: u128 = 9;
+var L2: u128 = 0x5555;
+assert_eq(load64(&L), 9, "u128 after the first statement: low word");
+assert_eq(load64(&L + 8), 0, "u128 after the first statement: high word");
+assert_eq(load64(&L2), 0x5555, "a second u128 after the first statement");
+var r = assert_summary();
