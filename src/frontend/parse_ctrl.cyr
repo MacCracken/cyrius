@@ -112,6 +112,10 @@ fn PATCHXP(S): i64 {
 
 # Parse: if (cond) { stmts } [else { stmts }]
 # Parse elif chain as recursive: each elif is essentially else { if (...) { } ... }
+# ⛔ 6.6.17 (a6): an `elif` body and the `else` after it are scopes, as the `if` arm's are
+# (PARSE_IF). They had no SCOPE_PUSH / SCOPE_POP, so a `var` declared there outlived its `}`: at
+# fn scope `elif { var t } else { var t }` was "duplicate variable", and at top level the name
+# stayed visible after the chain. CHANGELOG [6.6.17]
 fn PARSE_ELIF(S, cond_patch): i64 {
     # Emit jmp-to-end for previous branch
     var skip = EJMP0(S);
@@ -126,7 +130,9 @@ fn PARSE_ELIF(S, cond_patch): i64 {
     STI(S, GTI(S) + 1);
     if (PEEKT(S) != 13) { ERR_EXPECT(S, 13); }
     STI(S, GTI(S) + 1);
+    SCOPE_PUSH(S);
     PARSE_PROG(S);
+    SCOPE_POP(S);
     if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); }
     STI(S, GTI(S) + 1);
     # Check for more elif/else
@@ -140,7 +146,9 @@ fn PARSE_ELIF(S, cond_patch): i64 {
             EPATCH(S, patch);
             if (PEEKT(S) != 13) { ERR_EXPECT(S, 13); }
             STI(S, GTI(S) + 1);
+            SCOPE_PUSH(S);
             PARSE_PROG(S);
+            SCOPE_POP(S);
             if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); }
             STI(S, GTI(S) + 1);
             EPATCH(S, skip2);

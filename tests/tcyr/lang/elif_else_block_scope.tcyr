@@ -1,0 +1,53 @@
+# elif_else_block_scope.tcyr — 6.6.17 (a6). An `elif` body, and the `else` that follows an `elif`, are
+# scopes exactly like the `if` body: a `var` declared there ends at its `}`, at top level and in a fn.
+#
+# ⛔ THE DEFECT, every release through 6.6.16. PARSE_ELIF (src/frontend/parse_ctrl.cyr) parsed both
+# bodies with no SCOPE_PUSH / SCOPE_POP, which PARSE_IF's own `if` and `else` bodies have. So:
+#   * in a fn, `elif (..) { var t = 20; } else { var t = 30; }` was "duplicate variable" (this file
+#     did not compile);
+#   * at top level the elif's `var t` outlived the chain: with `var t = 5;` before it, `t` read 0
+#     after an `elif` that declared one, and 30 after the `else` of an elif chain — silently.
+# A plain `if { var u } else { var u }` was always scoped: it is the control.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/assert.cyr"
+
+fn pick(x) {
+    var t = 1;
+    var r = 0;
+    if (x == 1) { var t = 10; r = t; }
+    elif (x == 2) { var t = 20; r = t; }
+    elif (x == 3) { var t = 30; r = t; }
+    else { var t = 40; r = t; }
+    return r * 10 + t;
+}
+fn pick2(x) {
+    var r = 0;
+    if (x == 1) { var s = 1; r = s; } elif (x == 2) { var s = 2; r = s; } else { var s = 3; r = s; }
+    var s = 9;
+    return r * 10 + s;
+}
+fn ctl(x) {
+    var u = 1;
+    if (x == 1) { var u = 7; } else { var u = 8; }
+    return u;
+}
+
+var t = 5;
+var k = 2;
+var seen = 0;
+if (k == 1) { var t = 10; seen = t; } elif (k == 2) { var t = 20; seen = t; } else { var t = 30; seen = t; }
+assert_eq(seen, 20, "top level: the elif body sees its own t");
+assert_eq(t, 5, "top level: the elif's var t ends at its brace");
+var m = 3;
+if (m == 1) { var t = 10; seen = t; } elif (m == 2) { var t = 20; seen = t; } else { var t = 30; seen = t; }
+assert_eq(seen, 30, "top level: the else after an elif sees its own t");
+assert_eq(t, 5, "top level: the else's var t (after an elif) ends at its brace");
+assert_eq(pick(1), 101, "fn: if arm local, outer t restored");
+assert_eq(pick(2), 201, "fn: elif arm local, outer t restored");
+assert_eq(pick(3), 301, "fn: second elif arm local, outer t restored");
+assert_eq(pick(4), 401, "fn: else-after-elif local, outer t restored");
+assert_eq(pick2(2), 29, "fn: the same name in elif and else, then at fn scope");
+assert_eq(ctl(1), 1, "control: a plain if/else was always scoped");
+var r = assert_summary();
