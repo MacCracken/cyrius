@@ -90,15 +90,19 @@ var _inline_pending = 0;
 # IDENT is already flagged. Repeat until nothing changes, bounded — a chain of forwarding
 # wrappers needs one round per link.
 #
-# ⚠ NESTED fn BODIES AND CLOSURE BODIES ARE SKIPPED. A nested fn or a closure defined inside the
-# body has its own `return`, and counting it would flag the OUTER fn as pair-returning —
-# over-flagging is worse than under-flagging here, because it routes a non-pair call into the
-# two-register receive and reads a garbage rdx. A closure literal (`|x| { .. }`, `|| { .. }`) has
-# NO `fn` token, so a skip keyed on `fn` alone booked its `return h(..)` to the enclosing fn: a
-# false "bind both" refusal at every single-variable bind of that fn's result, and the
-# mixed-return warning aimed at its own plain return. The closure's own pair-ness is unaffected —
-# its fn entry is flagged while its body is parsed — and `_warn_mixed_pair_returns` judges a
-# closure's returns as its OWN unit (`_warn_closure_block`). CHANGELOG [6.6.16]
+# ⚠ CLOSURE BODIES AND NESTED fn BODIES ARE SKIPPED (`_skip_nested_body`). A closure defined
+# inside the body has its own `return`, and counting it would flag the OUTER fn as
+# pair-returning — over-flagging is worse than under-flagging here, because it routes a non-pair
+# call into the two-register receive and reads a garbage rdx. A closure literal (`|x| { .. }`,
+# `|| { .. }`) has NO `fn` token, so a skip keyed on `fn` alone booked its `return h(..)` to the
+# enclosing fn: a false "bind both" refusal at every single-variable bind of that fn's result, and
+# the mixed-return warning aimed at its own plain return. The closure's own pair-ness is
+# unaffected — its fn entry is flagged while its body is parsed — and `_warn_mixed_pair_returns`
+# judges a closure's returns as its OWN unit (`_warn_closure_block`). A named fn inside a body is
+# REFUSED since 6.6.16 (`_refuse_nested_fn`), so no program that compiles has one; skipping it
+# stays, as diagnostic hygiene for the refused program — `_warn_mixed_pair_returns` runs at the
+# end of a parse that has errors, and without the skip a refused fn's `return h(x)` would put a
+# bogus mixed-return warning on the OUTER fn beside the refusal. CHANGELOG [6.6.16]
 # ⚠ INVALIDATED whenever a `: stack` constructor is flagged (parse_types.cyr). The prescan is
 # demand-driven, and the first demand can arrive BEFORE the enum declaration has been reached —
 # measured: the pass ran with a complete 3,498-token stream and flagged nothing, because no
@@ -125,8 +129,6 @@ fn _tok_is_closure_body(S, k): i64 {
 }
 
 # Index of the `}` that closes the first `{` at or after token k (n when the stream ends first).
-# Entered AT a `{` it is that brace's match; entered at a nested `fn` token it skips the header
-# and then the body, exactly as the scans' inline nested-fn loops do.
 fn _tok_skip_block(S, k, n): i64 {
     var d = 0;
     var started = 0;
@@ -140,6 +142,38 @@ fn _tok_skip_block(S, k, n): i64 {
         k = k + 1;
     }
     return k;
+}
+
+# THE one skip of a nested unit, shared by both pair scans and by the nested-fn refusal: the
+# index of the LAST token of the unit that starts at token k, or -1 when none starts there.
+#   - a `{` that opens a closure body (`_tok_is_closure_body`): that brace's matching `}`;
+#   - a `fn` keyword (a nested fn — refused, see `_refuse_nested_fn`; an `async` before it is
+#     the caller's to step over): its header runs to the first `{` or `;` at paren depth 0, so
+#     a bodiless `fn x(..);` ends at its `;` instead of swallowing the next block, and a body
+#     ends at its matching `}`.
+# Never past the EOF token (12, the stream's last): a truncated or unbalanced source ends there.
+fn _skip_nested_body(S, k): i64 {
+    var n = GTCNT(S);
+    var t = TOKTYP(S, k);
+    var e = 0 - 1;
+    if (t == 13) {
+        if (_tok_is_closure_body(S, k) == 1) { e = _tok_skip_block(S, k, n); }
+    } elif (t == 32) {
+        e = n;
+        var pd = 0;
+        var j = k + 1;
+        while (j < n) {
+            var u = TOKTYP(S, j);
+            if (u == 12) { e = j; j = n; }
+            elif (u == 10) { pd = pd + 1; }
+            elif (u == 11) { pd = pd - 1; }
+            elif (pd == 0 && u == 5) { e = j; j = n; }
+            elif (pd == 0 && u == 13) { e = _tok_skip_block(S, j, n); j = n; }
+            j = j + 1;
+        }
+    }
+    if (e >= n) { e = n - 1; }
+    return e;
 }
 
 fn _pair_prescan(S): i64 {
@@ -193,27 +227,14 @@ fn _pair_prescan(S): i64 {
                                                 var t = TOKTYP(S, k);
                                                 if (t == 13) {
                                                     # a closure body — its returns are its own
-                                                    if (_tok_is_closure_body(S, k) == 1) { k = _tok_skip_block(S, k, n); }
-                                                    else { bd = bd + 1; }
+                                                    var sk = _skip_nested_body(S, k);
+                                                    if (sk >= 0) { k = sk; } else { bd = bd + 1; }
                                                 }
                                                 elif (t == 14) {
                                                     bd = bd - 1;
                                                     if (bd == 0) { go = 0; }
                                                 }
-                                                elif (t == 32) {
-                                                    # nested fn — skip its whole body
-                                                    var nd = 0;
-                                                    var started = 0;
-                                                    while (k < n) {
-                                                        var nt = TOKTYP(S, k);
-                                                        if (nt == 13) { nd = nd + 1; started = 1; }
-                                                        if (nt == 14) {
-                                                            nd = nd - 1;
-                                                            if (nd == 0) { if (started == 1) { break; } }
-                                                        }
-                                                        k = k + 1;
-                                                    }
-                                                }
+                                                elif (t == 32) { k = _skip_nested_body(S, k); }   # a refused nested fn (header)
                                                 elif (t == 33) {                  # `return`
                                                     if (TOKTYP(S, k + 1) == 2) {
                                                         if (TOKTYP(S, k + 2) == 10) {
@@ -367,8 +388,10 @@ fn _warn_closure_block(S, k, n, encl): i64 {
     var j = k + 1;
     while (j < e) {
         var t = TOKTYP(S, j);
-        if (t == 13) { if (_tok_is_closure_body(S, j) == 1) { j = _tok_skip_block(S, j, n); } }
-        elif (t == 32) { j = _tok_skip_block(S, j, n); }      # a nested fn — its own unit
+        if (t == 13 || t == 32) {                  # a nested closure or (refused) fn — its own unit
+            var sk = _skip_nested_body(S, j);
+            if (sk >= 0) { j = sk; }
+        }
         elif (t == 124) { if (_tok_q_is_pair(S, j) == 1) { pair = 1; } }
         elif (t == 33) {
             var nt = TOKTYP(S, j + 1);
@@ -424,26 +447,14 @@ fn _warn_mixed_pair_returns(S): i64 {
                                             var t = TOKTYP(S, k);
                                             if (t == 13) {
                                                 # a closure body — its own unit, judged by the outer walk
-                                                if (_tok_is_closure_body(S, k) == 1) { k = _tok_skip_block(S, k, n); }
-                                                else { bd = bd + 1; }
+                                                var sk = _skip_nested_body(S, k);
+                                                if (sk >= 0) { k = sk; } else { bd = bd + 1; }
                                             }
                                             elif (t == 14) {
                                                 bd = bd - 1;
                                                 if (bd == 0) { go = 0; }
                                             }
-                                            elif (t == 32) {
-                                                var nd = 0;
-                                                var started = 0;
-                                                while (k < n) {
-                                                    var nt = TOKTYP(S, k);
-                                                    if (nt == 13) { nd = nd + 1; started = 1; }
-                                                    if (nt == 14) {
-                                                        nd = nd - 1;
-                                                        if (nd == 0) { if (started == 1) { break; } }
-                                                    }
-                                                    k = k + 1;
-                                                }
-                                            }
+                                            elif (t == 32) { k = _skip_nested_body(S, k); }   # a refused nested fn (see `_pair_prescan`)
                                             elif (t == 33) {
                                                 var plain = 1;
                                                 if (TOKTYP(S, k + 1) == 5) { plain = 0; }
@@ -2910,6 +2921,103 @@ fn _stmt_explicit_generic(S, noff): i64 {
     return 1;
 }
 
+# ⛔ 6.6.16 — A fn IS DEFINED AT TOP LEVEL. A named `fn` / `async fn` inside a fn body — or a
+# closure, an impl method, a generic body — reached PARSE_PROG's relaxed-ordering arm, which is
+# for TOP-LEVEL code: PARSE_FN_DEF for the inner fn overwrote the OUTER fn's per-fn state while
+# the outer was still being emitted (its locals and frame, its return patches, `_cur_fn_ix`, and
+# `SINFN(S, 0)` at the inner fn's end, so the rest of the outer body parsed as top-level code),
+# and pass 1 never registered the inner fn (bodies are brace-skipped). Measured on x86:
+# `fn outer(): i64 { fn inner(): i64 { return 3; } return inner(); }` compiled rc 0 and ran SIGILL
+# (132), and still did with `return 7;` in place of the call; a multi-line form, an untyped one,
+# one inside an `if` and one in a generic instance SIGSEGV'd. In a switch case, an `async fn`, a
+# closure body or an impl method it failed with an unrelated message (`unexpected async`,
+# `undefined variable 'x'`, `undefined function 'inner'`), often with a cascade.
+# So it is ONE named error, and nothing cascades: the nested fn's tokens are consumed
+# (`_skip_nested_body`, the pair scans' own skip), its name is entered as already REPORTED
+# (`_nested_fn_mark`), and the panic latch is left as it was (the report is written here, not
+# through an ERR_* emitter that would latch it), so the outer body parses on and reports its own
+# errors. A fn inside a TOP-LEVEL block (`if (on) { fn f() { .. } }`, GINFN == 0) is the
+# relaxed-ordering feature, compiles correctly, and is untouched. A local function is a closure.
+# CHANGELOG [6.6.16]
+var _nfn_seen = 0;   # vec of the `fn` tokens refused so far: a body parsed twice reports once
+
+# Has the nested `fn` at token kw been reported? A body can be parsed more than once — a generic
+# instance and an `#inline` replay re-parse the base's tokens — and each is the same definition.
+fn _nested_fn_seen(kw): i64 {
+    if (_nfn_seen == 0) { _nfn_seen = vec_new(); }
+    var i = 0;
+    var c = vec_len(_nfn_seen);
+    while (i < c) {
+        if (vec_get(_nfn_seen, i) == kw) { return 1; }
+        i = i + 1;
+    }
+    vec_push(_nfn_seen, kw);
+    return 0;
+}
+
+# The refused fn's NAME is entered in the fn table as already REPORTED — offset -2, the
+# undefined-call check's own "reported" marker, plus an owner so the pre-pass check skips it too —
+# so a call to it adds no "undefined function" warning and no "refusing to emit binary" error to
+# the one diagnostic. Only an entry nothing defines: a fn of the same name defined elsewhere keeps
+# its entry untouched, and a call reaches that one.
+fn _nested_fn_mark(S, noff, kw): i64 {
+    var fi = FINDFN(S, noff);
+    if (fi < 0) { fi = REGFN(S, noff); }
+    if (L64(_fnt_offsets + fi * 8) != 0 - 1) { return 0; }
+    if (GFFI(S, fi) != 0) { return 0; }
+    S64(_fnt_offsets + fi * 8, 0 - 2);
+    SFFI(S, fi, FM_FILEID(S, GTLINE(S, kw)) + 1);
+    return 0;
+}
+
+# Where the refused fn sits, for the message: `fn 'outer'` (a generic instance's or an async
+# body's `$..` suffix cut), or `a closure` for a closure's `__clNNNNN` entry.
+fn _nested_fn_encl(S): i64 {
+    if (_cur_fn_ix < 0) { PRSTR("a fn body"); return 0; }
+    var p = S + 0xEC00000 + L64(_fnt_names + _cur_fn_ix * 8);
+    if (load8(p) == 95 && load8(p + 1) == 95 && load8(p + 2) == 99 && load8(p + 3) == 108) {
+        if (load8(p + 4) >= 48 && load8(p + 4) <= 57) { PRSTR("a closure"); return 0; }
+    }
+    PRSTR("fn '");
+    var l = 0;
+    while (load8(p + l) != 0 && load8(p + l) != 36) { l = l + 1; }
+    syscall(SYS_WRITE, 2, p, l);
+    PRSTR("'");
+    return 0;
+}
+
+# Refuse the `fn` / `async fn` at the cursor when it is inside a fn body (GINFN == 1).
+# 1 = refused: reported once, consumed through its body's `}` (or a bodiless header's `;`, never
+# past EOF). 0 = not a nested fn: nothing moved. Small and with no tail call (cybs).
+# Called by PARSE_PROG's `fn` arm, the end of _PARSE_STMT_IMPL (`async fn`, and the statement
+# positions that bypass PARSE_PROG: a switch case body, `@unsafe { }`) and the generic stub-body
+# skip in PARSE_FN_DEF.
+fn _refuse_nested_fn(S): i64 {
+    if (GINFN(S) != 1) { return 0; }
+    var kw = GTI(S);
+    if (TOKTYP(S, kw) == 134) { kw = kw + 1; }    # `async fn`
+    if (TOKTYP(S, kw) != 32) { return 0; }
+    if (_nested_fn_seen(kw) == 0) {
+        syscall(SYS_WRITE, 2, "error:", 6);
+        _err_head(S);
+        if (TOKTYP(S, kw + 1) == 2) {
+            PRSTR(": fn '");
+            PRSTR(S + 0xEC00000 + TOKVAL(S, kw + 1));
+            PRSTR("' is defined inside ");
+            _nested_fn_mark(S, TOKVAL(S, kw + 1), kw);
+        } else { PRSTR(": a fn is defined inside "); }
+        _nested_fn_encl(S);
+        PRSTR("; define it at top level\n");
+        _err_excerpt(S);
+        PRSTR("  note: a local function is a closure (`var f = |x| { .. };`); a fn inside a top-level block is allowed\n");
+        _had_error = 1;
+    }
+    var e = _skip_nested_body(S, kw);
+    if (TOKTYP(S, e) != 12) { e = e + 1; }
+    STI(S, e);
+    return 1;
+}
+
 fn PARSE_STMT(S): i64 {
     var before = GTI(S);
     # v6.5.19 (CVE-40): this wrapper is already the one place every statement descent
@@ -3506,6 +3614,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
         STI(S, GTI(S) + 1);
         return 0;
     }
+    if (_refuse_nested_fn(S) == 1) { return 0; }   # 6.6.16: a `fn` / `async fn` in a fn body
     ERR(S);
     return 0;
 }
@@ -3529,17 +3638,22 @@ fn PARSE_PROG(S): i64 {
                     # there.) `#assert` also lands here and is evaluated via PARSE_STMT. See _tl_directive.
                 }
                 else { if (typ == 32) {
-                        # fn definition inside top-level code (relaxed ordering)
-                        # Emit jmp over fn body, compile fn, patch jmp
-                        # v6.6.4: this loop never parses `public` (a `public` after
-                        # top-level code is a syntax error), so any armed marker here
-                        # is STALE — pass 2's `var` skip re-arms it at `public var` and
-                        # nothing on this path consumed it, re-exposing the first
-                        # relaxed-ordering fn in a private file.
-                        _pub_pending = 0;
-                        var fn_skip = EJMP0(S);
-                        PARSE_FN_DEF(S);
-                        EPATCH(S, fn_skip);
+                        # 6.6.16: THIS loop is also the fn-body and block parser, so a `fn` here
+                        # inside a fn body is a nested fn — refused (`_refuse_nested_fn`). The
+                        # relaxed-ordering arm below is for top-level code only (GINFN == 0).
+                        if (_refuse_nested_fn(S) == 0) {
+                            # fn definition inside top-level code (relaxed ordering)
+                            # Emit jmp over fn body, compile fn, patch jmp
+                            # v6.6.4: this loop never parses `public` (a `public` after
+                            # top-level code is a syntax error), so any armed marker here
+                            # is STALE — pass 2's `var` skip re-arms it at `public var` and
+                            # nothing on this path consumed it, re-exposing the first
+                            # relaxed-ordering fn in a private file.
+                            _pub_pending = 0;
+                            var fn_skip = EJMP0(S);
+                            PARSE_FN_DEF(S);
+                            EPATCH(S, fn_skip);
+                        }
                     }
                     else { PARSE_STMT(S); } } } }
     }

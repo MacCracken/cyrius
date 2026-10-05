@@ -254,6 +254,10 @@ var r = add(20, 22);   # r = 42
 - Up to 6 register params, 7+ passed on stack
 - Forward calls work (functions can call functions defined later)
 - Relaxed ordering: functions can appear after statements (v1.11.0+)
+- **A fn is defined at top level** (or inside a top-level block). A named `fn` / `async fn` inside
+  a fn body, a closure, an `impl` method or a generic body is a compile error naming both
+  (`fn 'inner' is defined inside fn 'outer'`) — before 6.6.16 it compiled and crashed (SIGILL /
+  SIGSEGV). A local function is a closure: `var sq = |x| x * x;`.
 - All functions return a value (`return 0;` if nothing to return)
 - **Calling with the wrong number of arguments is a hard error** (v6.5.1; there is no
   overloading and no default arguments, so a count mismatch is never intentional). Since

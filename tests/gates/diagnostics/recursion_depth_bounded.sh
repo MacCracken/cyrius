@@ -32,16 +32,26 @@
 # "grep the SHAPE, not the operator" trap from v6.4.80. Hence axis 1 runs ALL SEVEN
 # shapes every time rather than the one that motivated the patch.
 #
+# ⚠ 6.6.16 — THE NESTED-fn SHAPE NO LONGER RECURSES AT ALL. A fn inside a fn body is now
+# refused by name (src/frontend/parse.cyr `_refuse_nested_fn`) and its tokens are skipped by
+# an iterative brace match, so `fn f() { ` x N reports the nested-fn error once and never
+# reaches the depth bound. Axis 1 still runs it (no signal, no hang); axis 3 measures the
+# bound on NESTED BLOCKS instead and asserts the nested-fn refusal for the nested-fn shape.
+#
 # MUTATION PROOF (run at v6.5.19, RED then GREEN):
 #   * raise the bound in `_rd_enter` from 256 to 100000000 (semantically "no bound",
 #     leaving every call site and message intact) and rebuild cycc -> axis 1 RED on
 #     nested-fn / blocks / if / while / parens / unary / call (the SIGSEGVs return),
 #     axis 2 and axis 3 stay green. A textual mutation — renaming `_rd_enter`, deleting
 #     the message — proves nothing here; the bound VALUE is the whole mechanism.
+#   * RE-MEASURED at 6.6.16 (same mutation, `CYCC=<mutant> sh <this gate>`): axis 1 RED on
+#     blocks / if / while / parens / unary / call; nested-fn stays GREEN at every depth (it
+#     is refused and skipped, see above); axis 3's bound row RED — nested blocks at 1024
+#     compile rc 0 with no diagnostic under the mutant; the nested-fn refusal row green.
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
-CC="$ROOT/build/cycc"
+CC=${CYCC:-"$ROOT/build/cycc"}
 fails=0
 
 check() {
@@ -49,7 +59,7 @@ check() {
     else echo "  FAIL: $1 — expected $2, got $3"; fails=$((fails + 1)); fi
 }
 
-[ -x "$CC" ] || { echo "FAIL: recursion-depth-bounded — build/cycc not built"; exit 1; }
+[ -x "$CC" ] || { echo "FAIL: recursion-depth-bounded — $CC not built"; exit 1; }
 command -v python3 >/dev/null 2>&1 || { echo "SKIP: python3 unavailable"; exit 77; }
 
 # The whole gate is one python run: it needs signal-vs-exit fidelity, which the shell
@@ -136,10 +146,18 @@ check("…and no depth diagnostic at 32 levels", False, "nesting too deep" in er
 # A bounded parser that exits 1 with nothing on stderr would pass axis 1 while being
 # useless to a user, and `cyrius lint`'s pre-pass classifies on the MESSAGE.
 print("axis 3 — over-deep input is REFUSED with a located diagnostic, not killed:")
-rc, err = run(SHAPES["nested fn"](1024))
+# Nested BLOCKS, not nested fn: since 6.6.16 a fn inside a fn body is refused by name before
+# any recursion (see the header), so only a shape that still recurses can reach the bound.
+rc, err = run(SHAPES["nested blocks"](1024))
 check("exits 1 (graceful), not a signal", 1, rc)
 check("names the depth bound", True, "nesting too deep" in err)
 check("carries an error: prefix", True, err.startswith("error:") or "\nerror:" in err)
+# …and the nested-fn shape at the same depth is the nested-fn refusal, reported ONCE (the
+# first inner `fn`; the skip consumes the rest), not a depth error and not a cascade of 1023.
+rc, err = run(SHAPES["nested fn"](1024))
+check("nested fn @ 1024 exits 1", 1, rc)
+check("nested fn @ 1024 is the nested-fn refusal, once", 1, err.count("is defined inside fn 'f'; define it at top level"))
+check("nested fn @ 1024 never reaches the depth bound", False, "nesting too deep" in err)
 
 print("")
 if fails == 0:

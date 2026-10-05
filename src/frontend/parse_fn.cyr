@@ -6025,10 +6025,11 @@ fn _stkp_flush(S, nint): i64 {
 
 # v6.5.19 (CVE-40): the fn-definition tier. `fn f() { ` repeated 514 times SIGSEGV'd —
 # the cheapest of the six vectors at ~16 KB of stack per level, and the one neither the
-# PARSE_STMT nor the PEXPR bound caught, because a nested definition recurses through
+# PARSE_STMT nor the PEXPR bound caught, because a nested definition recursed through
 # THIS function rather than the statement wrapper (a top-level `fn` is dispatched from
-# PARSE_PROG, and a nested one re-enters here). Wrapper shape identical to the other
-# three chokepoints. See _rd_enter (src/common/util.cyr).
+# PARSE_PROG, and a nested one re-entered here until 6.6.16 refused it — parse.cyr
+# `_refuse_nested_fn`). Wrapper shape identical to the other three chokepoints. See
+# _rd_enter (src/common/util.cyr).
 fn PARSE_FN_DEF(S): i64 {
     _rd_enter(S);
     # 6.6.5 — a fn body is emitted with its OWN frame, so its expression depth starts at 0
@@ -6156,9 +6157,10 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
             if ((GFLG(S, fi) & 64) != 0) { _this_priv = 1; }
         }
     } else {
-        # Not prescanned — a fn nested inside another fn's body, or a monomorphized
-        # instance. The v6.5.38 identity rule still applies; it lives in `_fn_def_slot`
-        # now so pass 1 and pass 2 cannot drift apart about what a definition owns.
+        # Not prescanned — a fn defined inside a top-level block (one inside a fn body is
+        # refused, parse.cyr `_refuse_nested_fn`), or a monomorphized instance. The v6.5.38
+        # identity rule still applies; it lives in `_fn_def_slot` now so pass 1 and pass 2
+        # cannot drift apart about what a definition owns.
         fi = _fn_def_slot(S, noff, _vis_fid, _this_priv);
     }
     var _dup_off = L64(_fnt_offsets + fi * 8);
@@ -6397,9 +6399,10 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
         _naked_pending = 0;
     }
     else { _cur_fn_naked = 0; }
-    # v6.5.63: #inline — consume the pending flag into a LOCAL, not a global. A nested fn
-    # definition re-enters this fn, and a global would let the inner fn inherit or clear the
-    # outer one's request (the shape `_cur_fn_naked` needs an explicit save/restore for).
+    # v6.5.63: #inline — consume the pending flag into a LOCAL, not a global. A definition
+    # emitted mid-body (a generic instance) re-enters this fn, and a global would let the inner
+    # fn inherit or clear the outer one's request (the shape `_cur_fn_naked` needs an explicit
+    # save/restore for).
     var _fn_inline_req = 0;
     if (_inline_pending == 1) {
         _fn_inline_req = 1;
@@ -7367,9 +7370,13 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
         while (_b3_bd > 0) {
             var _b3t = PEEKT(S);
             if (_b3t == 12) { break; }               # EOF guard
-            if (_b3t == 13) { _b3_bd = _b3_bd + 1; }
-            elif (_b3t == 14) { _b3_bd = _b3_bd - 1; if (_b3_bd == 0) { break; } }
-            STI(S, GTI(S) + 1);
+            # 6.6.16: a nested fn is refused here too (consumed whole), whether or not an
+            # instance ever re-parses this body. See `_refuse_nested_fn` (parse.cyr).
+            if (_refuse_nested_fn(S) == 0) {
+                if (_b3t == 13) { _b3_bd = _b3_bd + 1; }
+                elif (_b3t == 14) { _b3_bd = _b3_bd - 1; if (_b3_bd == 0) { break; } }
+                STI(S, GTI(S) + 1);
+            }
         }
         EMOVI(S, 0);                                  # dead stub: rax = 0
     } else {

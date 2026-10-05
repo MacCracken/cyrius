@@ -1703,6 +1703,11 @@ _chk_gate "$ROOT/tests/gates/frontend/stack_enum_closure_return_scope.sh"
 # repro and closure_escape_dispatch.tcyr's top-level section on x86, qemu, wine and cxvm.
 _chk_gate "$ROOT/tests/gates/codegen/toplevel_indirect_call.sh"
 
+# 6.6.16 (C5) — a named `fn` / `async fn` inside a fn body, closure, impl method or generic body
+# is ONE named error ("fn 'inner' is defined inside fn 'outer'"), its tokens skipped so nothing
+# cascades — it used to compile and crash (SIGILL / SIGSEGV). A fn in a top-level block still runs.
+_chk_gate "$ROOT/tests/gates/diagnostics/nested_fn_refused.sh"
+
 # 6.6.9 (bite 3) — a second struct/union with a different layout (the first silently won) and
 # an enum constant over a zero/computed global of the same name are warned, not silent.
 _chk_gate "$ROOT/tests/gates/frontend/redefinition_layout_and_enum_over_var.sh"
