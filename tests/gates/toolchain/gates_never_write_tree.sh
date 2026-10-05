@@ -1082,6 +1082,7 @@ END {
         t = s; off = 0
         while (match(t, /(^|[^A-Za-z0-9_.$\/-])wineserver[ \t]/)) {
             p = off + RSTART; off = off + RSTART + RLENGTH - 1; t = substr(s, off + 1)
+            if (substr(s, 1, p) ~ /(command[ \t]+-[vV]|which|type)[ \t]+$/) continue   # an existence probe, not a run (6.6.16)
             if (inline_ok(s, p + 1)) continue
             if (s ~ /^[ \t]*trap[ \t]/) { print L ": an UNSCOPED wineserver in a trap (an early exit kills the DEFAULT prefix's server): " s; break }
             if (!expok) { print L ": an UNSCOPED wineserver (no private WINEPREFIX set yet): " s; break }
@@ -1121,12 +1122,17 @@ printf 'D=$(mktemp -d) && [ -d "$D" ] || { echo no; exit 1; }\n( cd "$D" && WINE
   printf 'if command -v wine > /dev/null 2>&1; then echo "  SKIP: wine not installed (cass covers it)"; fi\n'
   printf 'echo "win64 (wine — EMULATION, not hardware):"\ncheck "wine: the staging path translated (floor)" yes "$x"\n'
   printf 'foreign() {   # $1 label, $2 runner prefix ("" or "qemu-aarch64" / "wine")\n    :\n}\n'; } > "$W/fx9/c_prose.sh"
+# 6.6.16: `command -v wineserver` is an existence PROBE, not a run — the scoped kill after it on the
+# same line is what counts (toplevel_indirect_call.sh's cleanup); a bare kill after a probe still reds.
+{ printf 'T=$(mktemp -d) && [ -d "$T" ] || { echo no; exit 1; }\nWP="$T/wp"\n'
+  printf 'if [ -d "$WP" ] && command -v wineserver > /dev/null 2>&1; then WINEPREFIX="$WP" wineserver -k > /dev/null 2>&1; fi\n'; } > "$W/fx9/c_probe.sh"
+printf 'command -v wineserver > /dev/null 2>&1 && wineserver -k > /dev/null 2>&1\n' > "$W/fx9/probe_then_bare.sh"
 st9=0
-for f in bare winepath_first fn_arg trap_bare trap_after_export kill_bare not_private wrapper_bare second_call; do
+for f in bare winepath_first fn_arg trap_bare trap_after_export kill_bare not_private wrapper_bare second_call probe_then_bare; do
     [ -n "$(_wine_shared "$W/fx9/$f.sh")" ] || { echo "FAIL: axis 9 self-test: a shared-prefix wine shape ('$f') was not flagged"; st9=1; }
 done
 [ "$(_wine_shared "$W/fx9/second_call.sh" | cut -d: -f1)" = 3 ] || { echo "FAIL: axis 9 self-test: an inline prefix on ONE call excused the next call (second_call)"; st9=1; }
-for f in c_export c_inline c_wrapper c_scoped c_prose; do
+for f in c_export c_inline c_wrapper c_scoped c_prose c_probe; do
     [ -z "$(_wine_shared "$W/fx9/$f.sh")" ] || { echo "FAIL: axis 9 self-test: an isolated spelling ('$f') was flagged: $(_wine_shared "$W/fx9/$f.sh")"; st9=1; }
 done
 [ "$st9" = 0 ] || FAIL=1
@@ -1144,7 +1150,7 @@ if [ "$n9" -lt 150 ] || [ "$nwine9" -lt 20 ]; then
 elif [ "$bad9" != 0 ]; then
     FAIL=1
 elif [ "$st9" = 0 ]; then
-    echo "  ok: axis 9: all $nwine9 gates that run wine use a private WINEPREFIX under their own mktemp dir, and no wineserver call is unscoped ($n9 scripts scanned; self-tested on 9 shapes + 5 clean spellings)"
+    echo "  ok: axis 9: all $nwine9 gates that run wine use a private WINEPREFIX under their own mktemp dir, and no wineserver call is unscoped ($n9 scripts scanned; self-tested on 10 shapes + 6 clean spellings)"
 fi
 
 if [ "$FAIL" != 0 ]; then echo "FAIL: gates_never_write_tree"; exit 1; fi
