@@ -1055,6 +1055,71 @@ fn PARSE_FIELD_LOAD(S, noff): i64 {
     return 0;
 }
 
+# ⛔ 6.6.17 — A METHOD CALL'S RESULT TAKES `.field` AND `.method(..)` (`s.clone().cat(t)`,
+# `p.bump().bump().sum()`, as a value or a statement). The method arm returned straight after
+# the call, so the `.` was a syntax error in every position (`expected ';', got '.'`), while a
+# free call's result has taken both since 6.6.12 (`_call_field`). The result goes where
+# `_call_field` puts a call's: a > 16 B struct in the temp `_sc_pre` gave it, a 9-16 B one in a
+# temp `_sc_pre_m` asks for when a chain follows, a <= 8 B struct in an inline temp and a `Str`
+# handle in a pointer-mode one — and this body runs again on that temp, so a chain reaches any
+# depth. A result that is no struct, and a chain at top level (no frame), are refused by name.
+fn _mchain_at(S, k): i64 {
+    if (TOKTYP(S, k) != 41) { return 0; }
+    if (TOKTYP(S, k + 1) != 2) { return 0; }
+    return 1;
+}
+# `_sc_pre` for the method arm (cursor on the call's `(`): a 9-16 B result followed by a chain
+# needs its temp as much as one a destination asked for.
+fn _sc_pre_m(S, fi, noff, beg): i64 {
+    if (_mchain_at(S, _call_close(S, GTI(S)) + 1) == 0) { return _sc_pre(S, fi, noff, beg); }
+    var w = _sc_want;
+    _sc_want = beg;
+    var t = _sc_pre(S, fi, noff, beg);
+    _sc_want = w;
+    return t;
+}
+# After the method call `fi` (`t` = its temp, -1 for none; cursor past its `)`): 1 = a chain on
+# its result was parsed (rax = its value), 0 = none follows.
+fn _method_chain(S, fi, noff, beg, t): i64 {
+    if (_mchain_at(S, GTI(S)) == 0) { return 0; }
+    var sid = 0;
+    if (fi >= 0) { sid = GFRS(S, fi); }
+    if (sid <= 0) {
+        if (_syntax_only == 0) { ERR_IDENT(S, "cannot take a field of the result of ", noff, ": it does not return a struct", 0 - 1); }
+        _mchain_skip(S);
+        return 1;
+    }
+    if (GINFN(S) != 1) {
+        if (_syntax_only == 0) { _refuse_toplevel_struct_call(S, noff); }
+        _mchain_skip(S);
+        return 1;
+    }
+    if (t < 0) { t = _mchain_temp(S, sid); }
+    STI(S, GTI(S) + 1);                 # consume `.`
+    var fnoff = PEEKV(S);
+    STI(S, GTI(S) + 1);                 # consume the field / method name
+    _field_load_on(S, noff, fnoff, beg, 0 - 2 - t, sid);
+    _cfo = 0;
+    return 1;
+}
+# rax = a struct result returned in rax (a <= 8 B struct's bytes, or a `Str` handle): stored in a
+# fresh temp laid out as `_struct_call_emit` lays out a class-0 result. Returns the temp's slot.
+fn _mchain_temp(S, sid): i64 {
+    var t = 0;
+    if (STRUCTSZ(S, sid - 1) > 8) { t = _ptr_temp(S, sid); }
+    else { t = _agg_temp(S, sid); }
+    EFLSTORE(S, t);
+    return t;
+}
+# The rest of a refused chain: every `.name` and `(..)`.
+fn _mchain_skip(S): i64 {
+    while (_mchain_at(S, GTI(S)) == 1) {
+        STI(S, GTI(S) + 2);
+        if (PEEKT(S) == 10) { STI(S, _call_close(S, GTI(S)) + 1); }
+    }
+    return 0;
+}
+
 # PARSE_FIELD_LOAD past the base: the receiver resolved to (idx, sid) in PARSE_FIELD_LOAD's
 # encoding, the cursor just past `.name` (`fnoff`). A method call, or the field and any nested
 # chain loaded at the leaf's width and signedness. `noff` names the receiver in diagnostics and
@@ -1113,7 +1178,7 @@ fn _field_load_on(S, noff, fnoff, pfl_beg, idx, sid): i64 {
         # which this path never supplied: `var r: P3 = b.mk(2)`, `b.mk(3);` and `r = b.mk(5)`
         # SIGSEGV'd (the callee took `self` as its retptr). `_sc_pre` allocates the temp and, on
         # x86/cx, pushes its address as int arg 0 BEFORE `self`. CHANGELOG [6.6.6]
-        var m_rt = _sc_pre(S, mfi, mname, pfl_beg);
+        var m_rt = _sc_pre_m(S, mfi, mname, pfl_beg);   # 6.6.17: and a temp when a chain follows
         var m_n0 = _sc_n0;
         # Push &var as first arg (self) — handle locals and globals.
         # v6.6.4: mirror _resolve_field_base_addr. A local struct is either POINTER-mode
@@ -1197,6 +1262,7 @@ fn _field_load_on(S, noff, fnoff, pfl_beg, idx, sid): i64 {
         ECALLCLEAN(S, m_int_argc);
         _sc_post(S, mfi, mname, pfl_beg, m_rt);   # 6.6.6: the pair store / value, and the record
         _call_ret_ps(S, mfi);                     # 6.6.17: a `*T` return's pointer scale
+        _method_chain(S, mfi, mname, pfl_beg, m_rt);   # 6.6.17: `.field` / `.m(..)` on the result
         return 0;
     }
 

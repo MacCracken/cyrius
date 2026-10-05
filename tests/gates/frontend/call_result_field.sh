@@ -35,6 +35,11 @@
 #          "expected '=', got '<'" plus two follow-on errors on 6.6.11.
 #   G3     (R2) `mu<i32>(3);` on a `#must_use` generic warns that the result is discarded, as the
 #          `IDENT (` statement does — and still compiles.
+#   C1-C3  (6.6.17) a chain on a METHOD's result (`p.bump().sum()`; acceptance rows in
+#          tests/tcyr/crossos/method_chain.tcyr): at top level, as an initialiser (C1) and as a
+#          bare statement (C2), refused once with the rest of the chain skipped; in a fn, on a
+#          method that returns no struct (C3), named. On 6.6.16 all three were "expected ';' /
+#          ')', got '.'".
 #
 # MUTATION LEDGER (6.6.12, scratch trees, each rebuilt with the one change):
 #   base 6.6.11 build/cycc                                  -> RED, 14 of 15 (S2 was already right)
@@ -158,6 +163,25 @@ else
     printf '  FAIL: G3     no #must_use warning on `mu<i32>(3);` (rc=%s, first line: %s)\n' "$rc" "$(head -1 "$D/g3.err")"
     fail=$((fail+1))
 fi
+
+echo "a chain on a method's result (6.6.17):"
+refuse C1 "'Pt_two' $MT" "${T}fn Pt_two(self: Pt): Pt { return mkpt(2); }
+fn Pt_sx(self: Pt): i64 { return self.x; }
+var gp = Pt { 1, 2 };
+var G = gp.two().sx();
+var r = 0; syscall(60, r);
+" "" one
+refuse C2 "'Pt_two' $MT" "${T}fn Pt_two(self: Pt): Pt { return mkpt(2); }
+fn Pt_sx(self: Pt): i64 { return self.x; }
+var gp = Pt { 1, 2 };
+var r = 0;
+gp.two().two().sx();
+syscall(60, r);
+" "" one
+refuse C3 "cannot take a field of the result of 'Pt_sx': it does not return a struct" "${T}fn Pt_sx(self: Pt): i64 { return self.x; }
+fn m(): i64 { var p = Pt { 1, 2 }; return p.sx().y; }
+var r = m(); syscall(60, r);
+" "" one
 
 echo "in a fn — named refusals:"
 refuse A1 "cannot assign to a field of a call result: the result is a temporary" "${T}fn m(): i64 { mk8(1).a = 5; return 0; }

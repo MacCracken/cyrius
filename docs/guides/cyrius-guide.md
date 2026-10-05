@@ -598,6 +598,14 @@ does not return a struct is refused too, and so is an assignment to a result's f
 position; `var s = mk(3).n + 1;` also typed `s` as `Box` and looked for an undefined `Box_add`.
 All of these were loud: nothing compiled wrong.
 
+A **method's** result takes `.field` and `.method(..)` the same way, chained to any depth, as a
+value or as a bare statement (since 6.6.17): `var u: Str = s.clone().cat(t);`,
+`p.bump().bump().sum()`, `p.big().c`. Each link's result is held like a call's (a frame
+temporary), so the receiver is untouched. At top level a chain on a struct-returning method is
+refused by name, as a call result's field is, and a chain on a method that returns no struct is
+`cannot take a field of the result of 'T_m': it does not return a struct`. Before 6.6.17 the `.`
+after a method call was `expected ';', got '.'` in every position.
+
 ### Field types (v6.6.10)
 
 A field is untyped (`x;`, 8 bytes, i64) or annotated `x: T`, where `T` is one of:
