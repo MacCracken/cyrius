@@ -21,6 +21,30 @@
 # a deadline routes tls_read / tls_write through their own branch (_tls_ssl_io, CVE-61's loop) and
 # the stored error must hold there too.
 #
+# 6.6.16 — and a failed HANDSHAKE stays failed. tls_connect_complete / tls_accept_complete returned 0
+# and recorded nothing, and the deadline loop threw the failure's code away, so a later tls_read
+# called SSL_read and OpenSSL's implicit handshake RESUMED the handshake: after a complete that
+# failed on a non-blocking socket, tls_read returned the server's 21 bytes on a connection the
+# caller had been told had failed (measured). Now the failure is kept at +32 like a failed read's
+# (_tls_libssl_complete_fail): tls_read returns it, tls_write TLS_ERR_PROTOCOL, a second complete 0,
+# none of them calls SSL (spies on SSL_connect / SSL_accept as well), and tls_close sends no
+# SSL_shutdown. The rows (test_libssl_complete_final): a non-blocking socket with a delayed server;
+# a deadline already passed, then cleared; a deadline that passes mid-handshake, then cleared;
+# verification against the untrusted server; a libssl SERVER whose peer sends garbage — the last
+# two with and without a deadline. Each server sends data once its handshake completes, so a
+# re-driven handshake would hand that data to tls_read.
+# MUTATION LEDGER (measured 6.6.16, x86_64 Linux, OpenSSL 3.6.5):
+#   the 6.6.15 lib/ (slot open)                          -> 82 RED (reads "late-data", calls SSL_read,
+#                                                           a second complete SUCCEEDS)
+#   the store in _tls_libssl_complete_fail deleted       -> 72 RED
+#   the up-front +32 refusal in _tls_libssl_complete gone -> 26 RED (the second complete re-drives,
+#                                                           and on the late-server rows completes)
+#   _tls_ssl_io collapsing CONNECT / ACCEPT to 1 / 0 again -> 16 RED (the deadline rows record
+#                                                           HANDSHAKE_FAILED, not TIMEOUT / PROTOCOL)
+#   the ERR_clear_error before the no-deadline handshake -> GREEN: OpenSSL 3.6.5's handshake state
+#     machine clears the queue on entry, so the planted stale error cannot decide it there. Kept
+#     for parity with tls_read / tls_write; the planted-error row still proves the outcome.
+#
 # A libssl-backend client (this process) against a forked native server that misbehaves on cue.
 # A named SKIP when libssl.so.3 or the fdlopen helper is missing. SIGPIPE is ignored here: the
 # tls_write row writes to a closed peer on purpose, and libssl's own SIGPIPE exposure is a separate
@@ -152,6 +176,18 @@ fn _lr_spy_shutdown(ssl): i64 {
     _lr_n_shut = _lr_n_shut + 1;
     return fncall1(_lr_real_shutdown, ssl);
 }
+# 6.6.16: the handshake calls, counted the same way (SSL_connect + SSL_accept).
+var _lr_real_connect = 0;
+var _lr_real_accept = 0;
+var _lr_n_hs = 0;
+fn _lr_spy_connect(ssl): i64 {
+    _lr_n_hs = _lr_n_hs + 1;
+    return fncall1(_lr_real_connect, ssl);
+}
+fn _lr_spy_accept(ssl): i64 {
+    _lr_n_hs = _lr_n_hs + 1;
+    return fncall1(_lr_real_accept, ssl);
+}
 fn _lr_install_spies(): i64 {
     _lr_real_read = _fn_SSL_read;
     _lr_real_write = _fn_SSL_write;
@@ -159,6 +195,10 @@ fn _lr_install_spies(): i64 {
     _fn_SSL_read = &_lr_spy_read;
     _fn_SSL_write = &_lr_spy_write;
     _fn_SSL_shutdown = &_lr_spy_shutdown;
+    _lr_real_connect = _fn_SSL_connect;
+    _fn_SSL_connect = &_lr_spy_connect;
+    _lr_real_accept = _fn_SSL_accept;
+    if (_lr_real_accept != 0) { _fn_SSL_accept = &_lr_spy_accept; }   # a client-only libssl keeps 0
     return 0;
 }
 
@@ -315,6 +355,191 @@ fn test_libssl_reads(): i64 {
     return 0;
 }
 
+# ---- 6.6.16: a failed *_complete is final -------------------------------------------------------
+
+# The complete rows (_lc_row).
+enum LibsslComplete {
+    LC_NONBLOCK = 1;         # client: a non-blocking socket, the server 300 ms late
+    LC_DL_PASSED = 2;        # client: a deadline already passed, cleared after the complete
+    LC_DL_MIDWAY = 3;        # client: a 100 ms deadline, the server 600 ms late; then cleared
+    LC_VERIFY = 4;           # client: verification on, the server's self-signed leaf untrusted
+    LC_SERVER_GARBAGE = 5;   # libssl SERVER: the peer sends an HTTP request, not a ClientHello
+}
+
+# [built, complete, SSL_connect / SSL_accept calls in it, +32 after it, tls_read, the read buffer
+#  untouched, tls_write, SSL_read + SSL_write calls in the two, a second complete, handshake calls
+#  in it, SSL_shutdown calls in tls_close, the peer's wait status, stale error planted, the
+#  tls_set_deadline answers (summed)]
+var _lc_obs: i64[16];
+
+# The client rows' native server: after `delay_ms`, accept, send "late-data" — what a re-driven
+# handshake would hand to tls_read — and hold the socket until the client closes it. Exit 0, or the
+# step that failed: 3 (the handshake never completed) is every row's outcome once the client
+# refuses to finish it.
+fn _lc_serve(sfd, delay_ms): i64 {
+    if (delay_ms > 0) { sleep_ms(delay_ms); }
+    var srv = tls_native_new_server(_lr_cert, _lr_cert_len, _lr_key, _lr_key_len);
+    if (tls_native_server_load_creds(srv) != TLS_OK) { return 2; }
+    if (_lr_ver12 == 1) { tls_native_set_version_range(srv, TLS_VERSION_1_2, TLS_VERSION_1_2); }
+    if (tls_native_accept(srv, sfd) != TLS_OK) { return 3; }
+    if (tls_native_write(srv, "late-data", 9) != 9) { return 4; }
+    _lr_hold(sfd);
+    return 0;
+}
+
+# The server row's peer: an HTTP request where a ClientHello belongs, then hold until EOF.
+fn _lc_garbage(fd): i64 {
+    var req = "GET / HTTP/1.0\r\n\r\n";
+    if (_lr_write_all(fd, req, strlen(req)) < 0) { return 2; }
+    _lr_hold(fd);
+    return 0;
+}
+
+# The ctx under test: a libssl server for LC_SERVER_GARBAGE, else a libssl client (verifying for
+# LC_VERIFY, not verifying otherwise).
+fn _lc_alloc(kind, fd): i64 {
+    if (kind == LC_SERVER_GARBAGE) {
+        var creds: i64[4];
+        creds[0] = _lr_cert;
+        creds[1] = _lr_cert_len;
+        creds[2] = _lr_key;
+        creds[3] = _lr_key_len;
+        return tls_accept_alloc(fd, &creds, 0, 0);
+    }
+    if (kind == LC_VERIFY) { return tls_connect_alloc(fd, "localhost", 0, 0); }   # the default: verify
+    return tls_connect_alloc(fd, "localhost", &_lr_noverify, 0);
+}
+
+fn _lc_complete(kind, c): i64 {
+    if (kind == LC_SERVER_GARBAGE) { return tls_accept_complete(c); }
+    return tls_connect_complete(c);
+}
+
+# One row: build the ctx, fail its handshake, then try everything a caller might do next.
+# `dl` = 1 puts a 5 s deadline on the connection (the _tls_ssl_io branch).
+fn _lc_row(kind, dl): i64 {
+    var i = 0;
+    while (i < 16) { _lc_obs[i] = 0 - 99; i = i + 1; }
+    var fds[8];
+    sys_socketpair(1, 1, 0, &fds);
+    var fdp = load64(&fds);
+    var kfd = fdp & 0xFFFFFFFF;            # the child's end
+    var cfd = (fdp >> 32) & 0xFFFFFFFF;    # this process's end
+    var delay = 0;
+    if (kind == LC_NONBLOCK) { delay = 300; }
+    if (kind == LC_DL_MIDWAY) { delay = 600; }
+    var pid = sys_fork();
+    if (pid == 0) {
+        sys_close(cfd);
+        if (kind == LC_SERVER_GARBAGE) { sys_exit(_lc_garbage(kfd)); }
+        sys_exit(_lc_serve(kfd, delay));
+    }
+    sys_close(kfd);
+    sock_set_recv_timeout(cfd, LR_TIMEOUT_S, 0);
+    var c = _lc_alloc(kind, cfd);
+    _lc_obs[0] = 0;
+    if (c != 0) {
+        _lc_obs[0] = 1;
+        _lc_obs[13] = 0;
+        # 1 ns after the monotonic clock's epoch: long past.
+        if (kind == LC_DL_PASSED) { _lc_obs[13] = tls_set_deadline(c, 1); }
+        if (kind == LC_DL_MIDWAY) { _lc_obs[13] = tls_set_deadline(c, clock_now_ns() + 100000000); }
+        if (dl == 1) { _lc_obs[13] = tls_set_deadline(c, clock_now_ns() + 5000000000); }
+        var saved = 0 - 1;
+        if (kind == LC_NONBLOCK) { saved = fd_set_nonblocking(cfd); }
+        _lc_obs[12] = _lr_plant_stale();
+        var h0 = _lr_n_hs;
+        _lc_obs[1] = _lc_complete(kind, c);
+        _lc_obs[2] = _lr_n_hs - h0;
+        if (saved >= 0) { fd_restore_flags(cfd, saved); }
+        _lc_obs[3] = load64(c + _TLS_SHIM_OFF_ERR);
+        # With the deadline cleared, what is left is a blocking socket on which SSL_read WOULD finish
+        # the handshake — the server is answering — unless the failure is final.
+        if (kind == LC_DL_PASSED || kind == LC_DL_MIDWAY) {
+            _lc_obs[13] = _lc_obs[13] + tls_set_deadline(c, 0);
+        }
+        var b[64];
+        memset(&b, 0x5A, 64);
+        var n0 = _lr_n_io;
+        _lc_obs[4] = tls_read(c, &b, LR_MAXLEN);
+        _lc_obs[5] = 0;
+        if (load8(&b) == 0x5A) { _lc_obs[5] = 1; }
+        _lc_obs[6] = tls_write(c, "x", 1);
+        _lc_obs[7] = _lr_n_io - n0;
+        var h1 = _lr_n_hs;
+        _lc_obs[8] = _lc_complete(kind, c);
+        _lc_obs[9] = _lr_n_hs - h1;
+        var s0 = _lr_n_shut;
+        tls_close(c);
+        _lc_obs[10] = _lr_n_shut - s0;
+    }
+    sys_close(cfd);
+    var st[4];
+    sys_waitpid(pid, &st, 0);
+    _lc_obs[11] = load64(&st) & 0xFFFF;
+    return 0;
+}
+
+# What every failed row must show after its complete: `code` kept and returned, nothing re-driven.
+# `peer` is the child's expected wait status (768 = exit 3: its handshake never completed).
+fn _lc_final(code, peer): i64 {
+    assert_eq(_lc_obs[13], 0, "  every tls_set_deadline on the row -> 0");
+    assert_eq(_lc_obs[1], 0, "  the complete -> 0");
+    assert_eq(_lc_obs[3], code, "  ... and it recorded its failure at +32 (6.6.15: nothing)");
+    assert_eq(_lc_obs[4], code,
+      "  tls_read -> the recorded code (6.6.15: SSL_read re-drove the handshake and read the server's data)");
+    assert_eq(_lc_obs[5], 1, "  nothing was read into the caller's buffer");
+    assert_eq(_lc_obs[6], TLS_ERR_PROTOCOL, "  tls_write -> TLS_ERR_PROTOCOL");
+    assert_eq(_lc_obs[7], 0, "  neither called SSL_read / SSL_write");
+    assert_eq(_lc_obs[8], 0, "  a second complete -> 0");
+    assert_eq(_lc_obs[9], 0, "  ... without calling SSL_connect / SSL_accept again");
+    assert_eq(_lc_obs[10], 0, "  tls_close sent no SSL_shutdown");
+    assert_eq(_lc_obs[11], peer, "  the peer saw no completed handshake (its wait status)");
+    return 0;
+}
+
+fn test_libssl_complete_final(): i64 {
+    test_group("a failed tls_connect_complete / tls_accept_complete is FINAL on the libssl backend");
+    _lr_v();
+    _lc_row(LC_NONBLOCK, 0);
+    println("  a non-blocking socket, the server 300 ms late:");
+    assert_eq(_lc_obs[0], 1, "  the connection is built");
+    assert_eq(_lc_obs[12], 1, "  a stale libcrypto error is queued before the complete");
+    assert_gte(_lc_obs[2], 1, "  the complete ran SSL_connect");
+    _lc_final(TLS_ERR_HANDSHAKE_FAILED, 768);
+
+    _lc_row(LC_DL_PASSED, 0);
+    println("  a deadline already passed, then cleared:");
+    assert_eq(_lc_obs[0], 1, "  the connection is built");
+    assert_eq(_lc_obs[2], 0, "  the complete did not reach SSL_connect (the deadline had passed)");
+    _lc_final(TLS_ERR_TIMEOUT, 768);
+
+    _lc_row(LC_DL_MIDWAY, 0);
+    println("  a 100 ms deadline, the server 600 ms late, then cleared:");
+    assert_eq(_lc_obs[0], 1, "  the connection is built");
+    assert_gte(_lc_obs[2], 1, "  the complete ran SSL_connect");
+    _lc_final(TLS_ERR_TIMEOUT, 768);
+
+    var dl = 0;
+    while (dl < 2) {
+        _lc_row(LC_VERIFY, dl);
+        if (dl == 1) { println("  verification on, the server untrusted (under a 5 s deadline):"); }
+        else { println("  verification on, the server untrusted:"); }
+        assert_eq(_lc_obs[0], 1, "  the connection is built");
+        assert_gte(_lc_obs[2], 1, "  the complete ran SSL_connect");
+        _lc_final(TLS_ERR_PROTOCOL, 768);
+
+        _lc_row(LC_SERVER_GARBAGE, dl);
+        if (dl == 1) { println("  a libssl server, its peer sending an HTTP request (under a 5 s deadline):"); }
+        else { println("  a libssl server, its peer sending an HTTP request:"); }
+        assert_eq(_lc_obs[0], 1, "  the server ctx is built (tls_accept_alloc)");
+        assert_gte(_lc_obs[2], 1, "  tls_accept_complete ran SSL_accept");
+        _lc_final(TLS_ERR_PROTOCOL, 0);
+        dl = dl + 1;
+    }
+    return 0;
+}
+
 # Runs everywhere, libssl or not — and BEFORE the backend loads, so SSL_get_error is still
 # unresolved and _tls_ssl_io_ret answers from the C int alone. That is the sign-extension half of
 # the fix, and it needs no peer. Without this group the file had no assertion on a host (or in
@@ -350,6 +575,11 @@ if (tls_available() != 1) {
         test_libssl_reads();
         _lr_deadline = _lr_deadline + 1;
     }
+    _lr_deadline = 0;
+    _lr_ver12 = 0;
+    test_libssl_complete_final();
+    _lr_ver12 = 1;
+    test_libssl_complete_final();
 }
 #endif
 var r = assert_summary();

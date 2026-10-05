@@ -539,6 +539,11 @@ fn _tn_verify_sig_scheme(scheme, leaf, msg, msg_len, sig, sig_len): i64 {
         return _tn_ecdsa_p384_verify_der(pk, msg, msg_len, sig, sig_len);
     }
     if (scheme == TLS_SIG_ED25519) {
+        # ed25519_verify reads a fixed 64 bytes and the pubkey slot holds any key type, so
+        # bind the leaf to Ed25519 and the field to exactly 64 bytes (RFC 8032 §5.1.7,
+        # RFC 8446 §4.4.3), as _tn_verify_client_sig does. CHANGELOG [6.6.16]
+        if (x509_cert_curve(leaf) != X509_CURVE_ED25519) { return 0; }
+        if (sig_len != 64) { return 0; }
         return ed25519_verify(pk, msg, msg_len, sig);
     }
     return _tn_rsa_verify_scheme(scheme, leaf, msg, msg_len, sig, sig_len);

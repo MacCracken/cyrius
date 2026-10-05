@@ -1,0 +1,334 @@
+# tls_libssl_session_cache.tcyr — 6.6.16: the libssl session-cache mode is really set, and on the
+# NATIVE backend every libssl-only verb refuses without touching libssl, loaded or not.
+#
+# ⛔ THE DEFECTS. (1) lib/tls.cyr dlsym'd "SSL_CTX_set_session_cache_mode", which is a MACRO over
+# SSL_CTX_ctrl(ctx, 44, mode, NULL) in OpenSSL 1.1 and 3.x alike, so the pointer was always 0:
+# tls_ctx_set_session_cache_mode was a silent no-op returning 0 (OpenSSL's own GET read 2 before
+# and after it), and tls_supports_session_resumption read 0 on every OpenSSL 3, so sandhi's session
+# cache never ran. (2) The session, session-cache and 0-RTT verbs checked only that their libssl
+# symbol was resolved, and anything that loads libssl in-process resolves it even with the native
+# backend active. Handed a native ctx (+8 = 0) or a native hook handle (the native ctx, not an
+# SSL_CTX), libssl wrote into native memory: tls_ctx_set_max_early_data changed 4 bytes at offset
+# 1024 of a 616-byte native ctx (measured). A working SSL_CTX_ctrl would have been one more such
+# writer, and a resumption probe answering 1 under native steered folded sandhi into
+# tls_set_session / tls_get_session on native ctxs.
+#
+# GROUPS.
+#   1 (every host, no libssl needed): the native backend, with a counting spy in every libssl slot
+#     the guarded verbs reach, i.e. non-zero pointers as after a load. Each verb answers its
+#     documented "unsupported" value, calls no spy, and leaves byte-identical the canary-filled
+#     arena that holds the native ctx and its shim. tls_supports_session_resumption() reads 0, and
+#     1 under the libssl backend over the same slots, so the 0 is the backend check.
+#   2 (libssl): inside a connect hook the cache mode round-trips through OpenSSL's own GET
+#     (SSL_CTX_ctrl 45, resolved independently with tls_dlsym): 2, set CLIENT -> 2, 1, set BOTH ->
+#     1, 3, set OFF -> 3, 0. A null handle answers 0 without a ctrl call;
+#     tls_supports_session_resumption() == 1.
+#   3 (libssl loaded, native active): the same verbs with the REAL libssl pointers leave the canary
+#     arena untouched, and the probe reads 0 (1 again once the backend is libssl).
+# Groups 2 and 3 are a named SKIP when libssl.so.3 or the fdlopen helper is missing (check.sh's
+# empty environment has no $HOME, so there too).
+#
+# MUTATION LEDGER (measured 6.6.16, x86_64 Linux, OpenSSL 3.6.5):
+#   _tls_backend_is_native() answering 0 (every native guard gone)
+#       -> group 1: all 10 "no libssl call" rows and the probe row RED; group 3: the probe row RED,
+#          then SIGSEGV (rc 139) once a ctx verb hands libssl its NULL SSL
+#   the guard dropped from tls_ctx_set_max_early_data alone
+#       -> 3 RED: its spy row, its answer (1) and the group 3 canary row (4 bytes changed — the
+#          planning measurement's write)
+#   the guard dropped from tls_ctx_set_session_cache_mode alone -> 2 RED: spy row, canary (1 byte)
+#   the guard dropped from tls_ctx_set_session_new_cb alone      -> 2 RED: spy row, canary (3 bytes)
+#   the probe's backend check dropped -> 2 RED, the two "under native" probe rows
+#   the null-handle check dropped     -> 1 RED, "without calling SSL_CTX_ctrl"
+#   SSL_CTX_ctrl resolved by the old macro name (pointer 0, the 6.6.15 shape)
+#       -> 9 RED: group 2's whole readback (set returns 0, OpenSSL keeps 2), both probe rows
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/io.cyr"
+include "lib/net.cyr"
+include "lib/chrono.cyr"
+include "lib/tls.cyr"
+
+# ---- the spies -----------------------------------------------------------------------------------
+var _sc_spy_n = 0;
+fn _sc_spy(): i64 {
+    _sc_spy_n = _sc_spy_n + 1;
+    return 0;
+}
+
+# Every libssl slot a guarded verb, or the resumption probe, reads.
+var _sc_slots: i64[16];
+var _sc_saved: i64[16];
+var _sc_nslots = 0;
+fn _sc_slot(a): i64 {
+    _sc_slots[_sc_nslots] = a;
+    _sc_nslots = _sc_nslots + 1;
+    return 0;
+}
+fn _sc_slots_init(): i64 {
+    _sc_nslots = 0;
+    _sc_slot(&_fn_SSL_get1_session);
+    _sc_slot(&_fn_SSL_set_session);
+    _sc_slot(&_fn_SSL_SESSION_free);
+    _sc_slot(&_fn_SSL_CTX_sess_set_new_cb);
+    _sc_slot(&_fn_SSL_CTX_sess_set_remove_cb);
+    _sc_slot(&_fn_SSL_CTX_sess_set_get_cb);
+    _sc_slot(&_fn_SSL_CTX_ctrl);
+    _sc_slot(&_fn_SSL_CTX_set_max_early_data);
+    _sc_slot(&_fn_SSL_write_early_data);
+    _sc_slot(&_fn_SSL_read_early_data);
+    _sc_slot(&_fn_SSL_get_early_data_status);
+    return 0;
+}
+fn _sc_spies_on(): i64 {
+    var i = 0;
+    while (i < _sc_nslots) {
+        _sc_saved[i] = load64(_sc_slots[i]);
+        store64(_sc_slots[i], &_sc_spy);
+        i = i + 1;
+    }
+    _sc_spy_n = 0;
+    return 0;
+}
+fn _sc_spies_off(): i64 {
+    var i = 0;
+    while (i < _sc_nslots) {
+        store64(_sc_slots[i], _sc_saved[i]);
+        i = i + 1;
+    }
+    return 0;
+}
+
+# A session callback for the setters (never called: nothing reaches libssl).
+fn _sc_cb(): i64 { return 0; }
+
+# ---- a native ctx in a canary-filled arena -------------------------------------------------------
+var _SC_ARENA_CAP = 65536;
+var _sc_nctx = 0;                 # the native hook handle the connect hook received
+
+fn _sc_capture(hctx, handle): i64 {
+    _sc_nctx = handle;
+    return 0;
+}
+
+# An arena allocator whose whole capacity reads 0xA5 before the first allocation, so a write
+# anywhere past what the native connection allocated changes a byte the snapshot holds.
+fn _sc_canary_arena(): i64 {
+    var al = arena_allocator(_SC_ARENA_CAP);
+    if (al == 0) { return 0; }
+    var ar = allocator_state(al);
+    memset(load64(ar), 0xA5, load64(ar + 16) - load64(ar));
+    return al;
+}
+fn _sc_arena_base(al): i64 { return load64(allocator_state(al)); }
+
+fn _sc_snap(al, dst): i64 {
+    memcpy(dst, _sc_arena_base(al), _SC_ARENA_CAP);
+    return 0;
+}
+# Bytes of the arena that differ from `snap`.
+fn _sc_diff(al, snap): i64 {
+    var base = _sc_arena_base(al);
+    var n = 0;
+    var i = 0;
+    while (i < _SC_ARENA_CAP) {
+        if (load8(base + i) != load8(snap + i)) { n = n + 1; }
+        i = i + 1;
+    }
+    return n;
+}
+
+# ---- the verbs under test ------------------------------------------------------------------------
+var _SC_NV = 10;
+var _sc_ret: i64[16];
+var _sc_calls: i64[16];
+
+# Every guarded verb on the shim `c` / native handle `h`: its answer and its spy-call count. The
+# handle verbs run first: unguarded, the ctx verbs hand libssl a NULL SSL and die there.
+fn _sc_battery(c, h): i64 {
+    var b[16];
+    var k = 0;
+    while (k < 16) { _sc_ret[k] = 0 - 99; _sc_calls[k] = 0 - 99; k = k + 1; }
+    var n0 = _sc_spy_n;
+    _sc_ret[0] = tls_ctx_set_session_new_cb(h, &_sc_cb);
+    _sc_calls[0] = _sc_spy_n - n0; n0 = _sc_spy_n;
+    _sc_ret[1] = tls_ctx_set_session_remove_cb(h, &_sc_cb);
+    _sc_calls[1] = _sc_spy_n - n0; n0 = _sc_spy_n;
+    _sc_ret[2] = tls_ctx_set_session_get_cb(h, &_sc_cb);
+    _sc_calls[2] = _sc_spy_n - n0; n0 = _sc_spy_n;
+    _sc_ret[3] = tls_ctx_set_session_cache_mode(h, SSL_SESS_CACHE_BOTH);
+    _sc_calls[3] = _sc_spy_n - n0; n0 = _sc_spy_n;
+    _sc_ret[4] = tls_ctx_set_max_early_data(h, 0x41414141);
+    _sc_calls[4] = _sc_spy_n - n0; n0 = _sc_spy_n;
+    _sc_ret[5] = tls_get_session(c);
+    _sc_calls[5] = _sc_spy_n - n0; n0 = _sc_spy_n;
+    _sc_ret[6] = tls_set_session(c, 1);                    # a bogus session: never reached
+    _sc_calls[6] = _sc_spy_n - n0; n0 = _sc_spy_n;
+    _sc_ret[7] = tls_write_early_data(c, "early", 5);
+    _sc_calls[7] = _sc_spy_n - n0; n0 = _sc_spy_n;
+    _sc_ret[8] = tls_read_early_data(c, &b, 16);
+    _sc_calls[8] = _sc_spy_n - n0; n0 = _sc_spy_n;
+    _sc_ret[9] = tls_get_early_data_status(c);
+    _sc_calls[9] = _sc_spy_n - n0;
+    return 0;
+}
+
+fn _sc_name(k): i64 {
+    if (k == 0) { return "tls_ctx_set_session_new_cb(native handle) -> 0"; }
+    if (k == 1) { return "tls_ctx_set_session_remove_cb(native handle) -> 0"; }
+    if (k == 2) { return "tls_ctx_set_session_get_cb(native handle) -> 0"; }
+    if (k == 3) { return "tls_ctx_set_session_cache_mode(native handle, BOTH) -> 0"; }
+    if (k == 4) { return "tls_ctx_set_max_early_data(native handle, 0x41414141) -> 0"; }
+    if (k == 5) { return "tls_get_session(native ctx) -> 0"; }
+    if (k == 6) { return "tls_set_session(native ctx, s) -> 0"; }
+    if (k == 7) { return "tls_write_early_data(native ctx) -> -1"; }
+    if (k == 8) { return "tls_read_early_data(native ctx) -> -1"; }
+    return "tls_get_early_data_status(native ctx) -> TLS_EARLY_DATA_NOT_SENT";
+}
+
+fn _sc_expect(k): i64 {
+    if (k == 7) { return 0 - 1; }
+    if (k == 8) { return 0 - 1; }
+    if (k == 9) { return TLS_EARLY_DATA_NOT_SENT; }
+    return 0;
+}
+
+# Build a native connection (no handshake: alloc only) in a fresh canary arena. Returns the shim;
+# `_sc_nctx` is its native handle. `out_al` receives the allocator.
+fn _sc_native_conn(out_al): i64 {
+    store64(out_al, 0);
+    var al = _sc_canary_arena();
+    if (al == 0) { return 0; }
+    store64(out_al, al);
+    _sc_nctx = 0;
+    return tls_connect_alloc_in(al, 0 - 1, "localhost", &_sc_capture, 0);
+}
+
+# The rows both native groups share: each verb's answer (and, spied, its call count), then the
+# arena untouched. `spied` = 1 asserts the call counts.
+fn _sc_native_rows(spied): i64 {
+    var al_cell[8];
+    var c = _sc_native_conn(&al_cell);
+    var al = load64(&al_cell);
+    assert_neq(c, 0, "a native connection (alloc only) is built in a canary-filled arena");
+    assert_neq(_sc_nctx, 0, "  and its hook received the native handle");
+    if (c == 0) { return 0; }
+    if (_sc_nctx == 0) { return 0; }
+    assert_eq(load64(c + 8), 0, "  the shim's +8 (libssl's SSL slot) is 0 on native");
+    var snap = alloc(_SC_ARENA_CAP);
+    _sc_snap(al, snap);
+    if (spied == 1) { _sc_spies_on(); }
+    _sc_battery(c, _sc_nctx);
+    if (spied == 1) { _sc_spies_off(); }
+    var k = 0;
+    while (k < _SC_NV) {
+        assert_eq(_sc_ret[k], _sc_expect(k), _sc_name(k));
+        if (spied == 1) { assert_eq(_sc_calls[k], 0, "    ... and made no libssl call"); }
+        k = k + 1;
+    }
+    assert_eq(_sc_diff(al, snap), 0,
+      "the native ctx, its shim and the canary bytes after them are byte-identical afterwards");
+    return 0;
+}
+
+fn test_native_refuses_spied(): i64 {
+    test_group("native backend: the libssl-only verbs refuse WITHOUT touching libssl (spied slots)");
+    assert_eq(tls_set_backend(TLS_BACKEND_NATIVE), 0, "the native backend is selected");
+    _sc_slots_init();
+    _sc_native_rows(1);
+    # The probe over the same non-zero slots: 0 under native, 1 under libssl — so the 0 is the
+    # backend check, not a missing symbol.
+    _sc_spies_on();
+    var under_native = tls_supports_session_resumption();
+    tls_set_backend(TLS_BACKEND_LIBSSL);
+    var under_libssl = tls_supports_session_resumption();
+    tls_set_backend(TLS_BACKEND_NATIVE);
+    _sc_spies_off();
+    assert_eq(under_native, 0,
+      "tls_supports_session_resumption() under native, every symbol present -> 0 (6.6.15: 1)");
+    assert_eq(under_libssl, 1, "  ... and 1 under the libssl backend over the same symbols");
+    return 0;
+}
+
+# ---- libssl: the mode is really set --------------------------------------------------------------
+var _sc_ctrl = 0;                 # SSL_CTX_ctrl, resolved by the test itself (tls_dlsym)
+var _sc_obs: i64[8];
+
+fn _sc_get_mode(handle): i64 {
+    return fncall4(_sc_ctrl, handle, 45, 0, 0);       # SSL_CTRL_GET_SESS_CACHE_MODE
+}
+
+# Runs on the libssl SSL_CTX inside tls_connect_alloc; aborts the connect (no SSL, no socket used).
+fn _sc_hook(hctx, handle): i64 {
+    _sc_obs[0] = _sc_get_mode(handle);
+    _sc_obs[1] = tls_ctx_set_session_cache_mode(handle, SSL_SESS_CACHE_CLIENT);
+    _sc_obs[2] = _sc_get_mode(handle);
+    _sc_obs[3] = tls_ctx_set_session_cache_mode(handle, SSL_SESS_CACHE_BOTH);
+    _sc_obs[4] = _sc_get_mode(handle);
+    _sc_obs[5] = tls_ctx_set_session_cache_mode(handle, SSL_SESS_CACHE_OFF);
+    _sc_obs[6] = _sc_get_mode(handle);
+    return 1;
+}
+
+fn test_libssl_cache_mode(): i64 {
+    test_group("libssl backend: tls_ctx_set_session_cache_mode sets the mode (SSL_CTX_ctrl 44)");
+    _sc_ctrl = tls_dlsym("SSL_CTX_ctrl");
+    assert_neq(_sc_ctrl, 0, "SSL_CTX_ctrl resolves (the test's own tls_dlsym)");
+    if (_sc_ctrl == 0) { return 0; }
+    var i = 0;
+    while (i < 8) { _sc_obs[i] = 0 - 99; i = i + 1; }
+    var c = tls_connect_alloc(0 - 1, "localhost", &_sc_hook, 0);
+    assert_eq(c, 0, "the hook aborted the connect (nothing to close)");
+    assert_eq(_sc_obs[0], SSL_SESS_CACHE_SERVER, "a new SSL_CTX's mode: SERVER (2), OpenSSL's default");
+    assert_eq(_sc_obs[1], SSL_SESS_CACHE_SERVER, "set CLIENT -> the previous mode, 2 (6.6.15: 0, a no-op)");
+    assert_eq(_sc_obs[2], SSL_SESS_CACHE_CLIENT, "  OpenSSL now reads CLIENT (1) (6.6.15: still 2)");
+    assert_eq(_sc_obs[3], SSL_SESS_CACHE_CLIENT, "set BOTH -> 1");
+    assert_eq(_sc_obs[4], SSL_SESS_CACHE_BOTH, "  OpenSSL reads BOTH (3)");
+    assert_eq(_sc_obs[5], SSL_SESS_CACHE_BOTH, "set OFF -> 3");
+    assert_eq(_sc_obs[6], SSL_SESS_CACHE_OFF, "  OpenSSL reads OFF (0)");
+    assert_eq(tls_supports_session_resumption(), 1,
+      "tls_supports_session_resumption() under libssl -> 1 (6.6.15: 0 on every OpenSSL 3)");
+    # A null handle: 0, and SSL_CTX_ctrl is never called.
+    var real = _fn_SSL_CTX_ctrl;
+    _fn_SSL_CTX_ctrl = &_sc_spy;
+    _sc_spy_n = 0;
+    var rn = tls_ctx_set_session_cache_mode(0, SSL_SESS_CACHE_CLIENT);
+    var nn = _sc_spy_n;
+    _fn_SSL_CTX_ctrl = real;
+    assert_eq(rn, 0, "tls_ctx_set_session_cache_mode(0, CLIENT) -> 0");
+    assert_eq(nn, 0, "  ... without calling SSL_CTX_ctrl");
+    return 0;
+}
+
+fn test_native_refuses_libssl_loaded(): i64 {
+    test_group("native backend with libssl loaded in-process: the REAL libssl is never reached");
+    assert_neq(_fn_SSL_CTX_ctrl, 0, "precondition: libssl is loaded (SSL_CTX_ctrl resolved)");
+    assert_neq(_fn_SSL_CTX_set_max_early_data, 0, "precondition: SSL_CTX_set_max_early_data resolved");
+    assert_neq(_fn_SSL_get1_session, 0, "precondition: SSL_get1_session resolved");
+    assert_eq(tls_set_backend(TLS_BACKEND_NATIVE), 0, "the native backend is selected");
+    assert_eq(tls_supports_session_resumption(), 0,
+      "tls_supports_session_resumption() under native, libssl loaded -> 0 (6.6.15: 1 once ctrl worked)");
+    _sc_native_rows(0);
+    assert_eq(tls_set_backend(TLS_BACKEND_LIBSSL), 0, "back to the libssl backend");
+    assert_eq(tls_supports_session_resumption(), 1, "  ... where the probe reads 1 again");
+    return 0;
+}
+
+alloc_init();
+test_native_refuses_spied();
+#ifdef CYRIUS_TARGET_AGNOS
+var _agnos_skip = "  SKIP (agnos): libssl is a Linux fdlopen bridge\n";
+sys_write(1, _agnos_skip, strlen(_agnos_skip));
+#endif
+#ifndef CYRIUS_TARGET_AGNOS
+tls_set_backend(TLS_BACKEND_LIBSSL);
+if (tls_available() != 1) {
+    var _skip = "  SKIP: libssl.so.3 or the fdlopen helper ($HOME/.cyrius/dlopen-helper) is not available here\n";
+    sys_write(1, _skip, strlen(_skip));
+} else {
+    test_libssl_cache_mode();
+    test_native_refuses_libssl_loaded();
+}
+tls_set_backend(TLS_BACKEND_NATIVE);
+#endif
+var r = assert_summary();

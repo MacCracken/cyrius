@@ -16,18 +16,118 @@ include "lib/tls_native.cyr"
 include "lib/tls.cyr"
 include "lib/assert.cyr"
 
-test_group("tls_native Ed25519 server cert (.31)");
-
 # Ed25519 self-signed leaf for CN=127.0.0.1 (cert DER 320 B; PKCS#8 key 48 B,
 # OID 1.3.101.112 + 32-byte seed).
 var cert = hex_decode("3082013c3081efa00302010202146f270712a3903ffd2c16beb02b1ddac6d8ec2e31300506032b657030143112301006035504030c093132372e302e302e31301e170d3236303631313034333035395a170d3236303631323034333035395a30143112301006035504030c093132372e302e302e31302a300506032b6570032100b83296da752a714efff5d1ac23384bd55e1d3e7a09b52d9f5aa3b248cb52388fa3533051301d0603551d0e04160414da1359a574f0e44c08a2c4a0953feb245e258069301f0603551d23041830168014da1359a574f0e44c08a2c4a0953feb245e258069300f0603551d130101ff040530030101ff300506032b6570034100e37e115584d6d72ae3adf09fff610f2ee2771691b853b5e3be1558e3738cf032fa239b682be3faf4b4d2ef30e31da3729de0913837f93ef3b5cc305c35c3380a", 640);
 var key = hex_decode("302e020100300506032b657004220420ea5da8171db67e4e169e246d8f7223ee88110129914478f8b49ffc898780df10", 96);
+
+# ── 6.6.16: an Ed25519 handshake signature is exactly 64 bytes, from an Ed25519 leaf ──
+# _tn_verify_sig_scheme's Ed25519 arm (the 1.3 server CertificateVerify and the 1.2
+# ServerKeyExchange) called ed25519_verify, which reads a FIXED 64 bytes, without looking at
+# sig_len or at the leaf's key type: a 65-byte field verified with its tail ignored, a 63- or
+# 0-byte field borrowed its missing bytes from whatever followed it in the buffer, and a
+# non-Ed25519 leaf had the first 32 bytes of its key slot decoded as an Ed25519 point. Each
+# malformed row below was measured returning 1 / TLS_OK before the fix. Mutation: dropping the
+# sig_len check reddens the 65/63/0 rows (both groups); dropping the curve check reddens the
+# doctored P-256 leaf row. The 63-byte rows keep the genuine 64th byte right after the field,
+# so the over-read would succeed. CHANGELOG [6.6.16]
+test_group("Ed25519 signature: 64 bytes from an Ed25519 leaf (6.6.16)");
+
+# A self-signed P-256 leaf (CN=localhost; the TLS 1.2 unit tests' CERT23).
+var p256c = hex_decode("3082017d30820123a0030201020214561cee528775ffec8d05834b308f1ad80d7e7dbe300a06082a8648ce3d04030230143112301006035504030c096c6f63616c686f7374301e170d3236303630313138343930365a170d3336303532393138343930365a30143112301006035504030c096c6f63616c686f73743059301306072a8648ce3d020106082a8648ce3d030107034200049167a2981f570fdbd8d94bf20fb4f5c89d77aa5b58cf4ed416bafa0256a2561a04f1e71d57537fc532fc87ca980eb8ba1f8f8704fc7f6a793ba6598b97bb3275a3533051301d0603551d0e04160414e6e9022c5ba23153aa7b2a0004574c417dfbf42e301f0603551d23041830168014e6e9022c5ba23153aa7b2a0004574c417dfbf42e300f0603551d130101ff040530030101ff300a06082a8648ce3d04030203480030450220274b9132990767c26d383d8712024a2c8cdb63e38af642893d1a59ab44a29758022100a57e61df420d2425c712ad284d0ad53ef9c8cdbfd07ba65c952eaead0dc13729", 770);
+
+var ed_leaf = x509_cert_alloc();
+assert_eq(x509_parse(cert, 320, ed_leaf), 1, "the Ed25519 leaf parses");
+assert_eq(x509_cert_curve(ed_leaf), X509_CURVE_ED25519, "  ...as an Ed25519 key");
+var p256_leaf = x509_cert_alloc();
+assert_eq(x509_parse(p256c, 385, p256_leaf), 1, "the P-256 leaf parses");
+assert_eq(x509_cert_curve(p256_leaf), X509_CURVE_P256, "  ...as a P-256 key");
+
+# The leaf's own key: the PKCS#8 seed is the last 32 bytes of `key`.
+var ed_sk[64];
+var ed_pk[32];
+ed25519_keypair(key + 16, &ed_sk, &ed_pk);
+assert_eq(memeq(&ed_pk, x509_cert_pubkey(ed_leaf), 32), 1, "the PKCS#8 seed derives the leaf's public key");
+
+var vmsg = "TLS 1.3, server CertificateVerify content";
+var vlen = strlen(vmsg);
+var vsig = alloc(80);
+memset(vsig, 0xAB, 80);                    # 0xAB follows the 64 signature bytes
+ed25519_sign(&ed_sk, vmsg, vlen, vsig);
+assert_eq(_tn_verify_sig_scheme(TLS_SIG_ED25519, ed_leaf, vmsg, vlen, vsig, 64), 1, "sig_len 64: valid");
+assert_eq(_tn_verify_sig_scheme(TLS_SIG_ED25519, ed_leaf, vmsg, vlen, vsig, 65), 0,
+  "sig_len 65 (the signature plus a trailing byte): invalid");
+assert_eq(_tn_verify_sig_scheme(TLS_SIG_ED25519, ed_leaf, vmsg, vlen, vsig, 63), 0,
+  "sig_len 63 (the 64th byte read from past the field): invalid");
+assert_eq(_tn_verify_sig_scheme(TLS_SIG_ED25519, ed_leaf, vmsg, vlen, vsig, 0), 0,
+  "sig_len 0 (all 64 bytes read from past the field): invalid");
+assert_eq(_tn_verify_sig_scheme(TLS_SIG_ED25519, p256_leaf, vmsg, vlen, vsig, 64), 0,
+  "Ed25519 scheme with a P-256 leaf: invalid");
+# The curve check, isolated: a P-256 leaf whose key slot begins with the Ed25519 public key
+# would verify if the slot were read as an Ed25519 point.
+var dr_leaf = x509_cert_alloc();
+x509_parse(p256c, 385, dr_leaf);
+memcpy(x509_cert_pubkey(dr_leaf), &ed_pk, 32);
+assert_eq(_tn_verify_sig_scheme(TLS_SIG_ED25519, dr_leaf, vmsg, vlen, vsig, 64), 0,
+  "Ed25519 scheme with a P-256 leaf whose key slot starts with the Ed25519 key: invalid");
+
+# Through _tn_12_parse_server_kex: an x25519 ServerKeyExchange signed by the Ed25519 leaf's key
+# over client_random ‖ server_random ‖ params, with the sig field 64, 65 or 63 bytes long.
+fn _ske_client(c_der, c_len, crand, srand): i64 {
+    var c = tls_native_new_client(0, 0);
+    store64(c + TLS_CTX_OFF_CLIENT_RANDOM, crand);
+    store64(c + TLS_CTX_OFF_SERVER_RANDOM, srand);
+    var body = alloc(6 + c_len);
+    _tn_be24_w(body, 3 + c_len);
+    _tn_be24_w(body + 3, c_len);
+    memcpy(body + 6, c_der, c_len);
+    if (_tn_parse_certificate_12(c, body, 6 + c_len) != TLS_OK) { return 0; }
+    return c;
+}
+
+# The SKE body into `out` with a `field_len`-byte sig field; the full signature is always
+# written, so a 63-byte field is followed by the signature's genuine 64th byte and a 65-byte
+# field ends in it plus 0xAB. Returns the body length.
+fn _ske_ed25519(sk, crand, srand, field_len, out): i64 {
+    var plen = 4 + 32;
+    store8(out, 3);
+    _tn_be16_w(out + 1, TLS_GROUP_X25519);
+    store8(out + 3, 32);
+    var i = 0;
+    while (i < 32) { store8(out + 4 + i, 0x09 + i); i = i + 1; }
+    var content = alloc(64 + plen);
+    memcpy(content, crand, 32);
+    memcpy(content + 32, srand, 32);
+    memcpy(content + 64, out, plen);
+    _tn_be16_w(out + plen, TLS_SIG_ED25519);
+    _tn_be16_w(out + plen + 2, field_len);
+    memset(out + plen + 4, 0xAB, 72);
+    ed25519_sign(sk, content, 64 + plen, out + plen + 4);
+    return plen + 4 + field_len;
+}
+
+var ske_cr = alloc(32);
+var ske_sr = alloc(32);
+var ri = 0;
+while (ri < 32) { store8(ske_cr + ri, ri); store8(ske_sr + ri, 0x20 + ri); ri = ri + 1; }
+var ske = alloc(256);
+var skc = _ske_client(cert, 320, ske_cr, ske_sr);
+assert_neq(skc, 0, "1.2 client ctx with the Ed25519 server leaf");
+var skn = _ske_ed25519(&ed_sk, ske_cr, ske_sr, 64, ske);
+assert_eq(_tn_12_parse_server_kex(skc, ske, skn), TLS_OK, "SKE with a 64-byte Ed25519 signature: TLS_OK");
+skc = _ske_client(cert, 320, ske_cr, ske_sr);
+skn = _ske_ed25519(&ed_sk, ske_cr, ske_sr, 65, ske);
+assert_eq(_tn_12_parse_server_kex(skc, ske, skn), TLS_ERR_AUTHN, "SKE with a 65-byte sig field: TLS_ERR_AUTHN");
+skc = _ske_client(cert, 320, ske_cr, ske_sr);
+skn = _ske_ed25519(&ed_sk, ske_cr, ske_sr, 63, ske);
+assert_eq(_tn_12_parse_server_kex(skc, ske, skn), TLS_ERR_AUTHN, "SKE with a 63-byte sig field: TLS_ERR_AUTHN");
 
 # Disable peer verification of the self-signed test cert (still exercises the
 # full CertVerify SIGNATURE path on the server + signature VERIFY on the client;
 # only the chain-trust step is skipped).
 fn vhook(hctx, handle): i64 { tls_set_verify(handle, 0, 0); return 0; }
 
+test_group("tls_native Ed25519 server cert (.31)");
 #ifdef CYRIUS_TARGET_AGNOS
 # 6.6.10: a named SKIP on agnos — the corpus cross-compile ratchet
 # (tests/gates/toolchain/tcyr_corpus_cross_compiles.sh). This end-to-end run is a socketpair + fork +

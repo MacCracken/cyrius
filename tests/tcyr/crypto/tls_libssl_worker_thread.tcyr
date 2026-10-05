@@ -101,7 +101,7 @@ fn _wt_slots_init(): i64 {
     _wt_slot(&_fn_SSL_CTX_sess_set_new_cb);
     _wt_slot(&_fn_SSL_CTX_sess_set_remove_cb);
     _wt_slot(&_fn_SSL_CTX_sess_set_get_cb);
-    _wt_slot(&_fn_SSL_CTX_set_session_cache_mode);
+    _wt_slot(&_fn_SSL_CTX_ctrl);
     _wt_slot(&_fn_SSL_CTX_set_max_early_data);
     _wt_slot(&_fn_SSL_write_early_data);
     _wt_slot(&_fn_SSL_read_early_data);

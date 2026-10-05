@@ -2613,7 +2613,14 @@ fn tls_native_set_client_key(ctx, key, key_len): i64 {
 # set, != -1) must permit `below` intermediate CAs beneath it toward the leaf.
 # `below` is the path-build depth at which this CA signs (0 = it directly signs
 # the leaf). Uses the sigil 3.7.12 keyUsage/pathLen fields. Returns 1 if OK.
-fn _tn_ca_signer_ok(ca, below): i64 {
+# ⛔ 6.6.16 (CVE-TBD(N3)) — WHY `purpose`: a CA's extendedKeyUsage confines what it may vouch
+# for, and this never looked at it. A CA limited to clientAuth / codeSigning / S/MIME could issue
+# a leaf the native client took as a TLS server, and a serverAuth-only CA in an mTLS server's
+# trust set could issue a client identity; OpenSSL refuses both. The check sits HERE, inside the
+# conjunction _tn_verify_chain uses to SELECT a candidate (intermediate and trust anchor alike),
+# so a wrongly purposed CA is skipped and path building goes on to the next one — never fatal.
+# CHANGELOG [6.6.16]
+fn _tn_ca_signer_ok(ca, below, purpose): i64 {
     var ku = x509_cert_key_usage(ca);
     if (ku != 0) {                          # keyUsage present
         if ((ku & 0x04) == 0) { return 0; } # keyCertSign required to sign certs
@@ -2622,6 +2629,7 @@ fn _tn_ca_signer_ok(ca, below): i64 {
     if (pl != (0 - 1)) {                     # pathLenConstraint set
         if (below > pl) { return 0; }
     }
+    if (_tn_eku_purpose_ok(ca, purpose) != 1) { return 0; }
     return 1;
 }
 
@@ -2632,6 +2640,8 @@ fn _tn_ca_signer_ok(ca, below): i64 {
 #   _TN_PURPOSE_CLIENT  a TLS client: keyUsage allows digitalSignature | keyAgreement (0x88, the
 #                       mask of OpenSSL's ssl_client purpose); extendedKeyUsage lists clientAuth or
 #                       anyExtendedKeyUsage
+# The extendedKeyUsage half binds every CA on the path too, intermediates and the trust anchor
+# (_tn_eku_purpose_ok, 6.6.16); keyUsage on a CA is keyCertSign (_tn_ca_signer_ok).
 enum TlsChainPurpose {
     _TN_PURPOSE_SERVER = 0;
     _TN_PURPOSE_CLIENT = 1;
@@ -2709,6 +2719,21 @@ fn _tn_cert_eku_client_auth(der, der_len): i64 {
     return 0;
 }
 
+# 1 if `cert`'s extendedKeyUsage permits `purpose` (see TlsChainPurpose), else 0 — the ONE EKU
+# rule, applied at every depth: the leaf (_tn_leaf_purpose_ok) and every CA, intermediate or trust
+# anchor (_tn_ca_signer_ok). An absent extension imposes no restriction (RFC 5280 §4.2.1.12).
+# anyExtendedKeyUsage satisfies either purpose at every depth, as RFC 5280 reads it and as the leaf
+# rule always did; OpenSSL 3.6.5 honours it at NO depth (measured) — going strict is this one
+# function, and it moves the leaf rule too. `cert`'s DER (load64(cert)) must be live: sigil
+# records the serverAuth bit only, so the client purpose reads the extension from the DER.
+# CHANGELOG [6.6.16]
+fn _tn_eku_purpose_ok(cert, purpose): i64 {
+    var eku = x509_cert_eku(cert);
+    if (eku == 0) { return 1; }
+    if (purpose == _TN_PURPOSE_SERVER) { return eku & 0x01; }
+    return _tn_cert_eku_client_auth(load64(cert), load64(cert + 8));
+}
+
 # 1 if `leaf`'s keyUsage and extendedKeyUsage permit `purpose` (see TlsChainPurpose), else 0.
 fn _tn_leaf_purpose_ok(leaf, purpose): i64 {
     var kmask = 0xA8;
@@ -2717,10 +2742,7 @@ fn _tn_leaf_purpose_ok(leaf, purpose): i64 {
     if (lku != 0) {
         if ((lku & kmask) == 0) { return 0; }
     }
-    var leku = x509_cert_eku(leaf);
-    if (leku == 0) { return 1; }
-    if (purpose == _TN_PURPOSE_SERVER) { return leku & 0x01; }
-    return _tn_cert_eku_client_auth(load64(leaf), load64(leaf + 8));
+    return _tn_eku_purpose_ok(leaf, purpose);
 }
 
 # The chain verifier both roles share (6.6.14): `leaf` (a parsed x509 cert, or 0), `inters` (the
@@ -2779,8 +2801,9 @@ fn _tn_verify_chain(ctx, leaf, inters, now_unix, purpose): i64 {
                     if (x509_cert_is_ca(R) == 1) {
                         if (_x509_verify_link(cur, R) == 1) {
                             # CVE-17: the anchoring root must assert keyCertSign
-                            # (if it has keyUsage) + honor pathLen for `depth`.
-                            if (_tn_ca_signer_ok(R, depth) == 1) { return TLS_OK; }
+                            # (if it has keyUsage) + honor pathLen for `depth`;
+                            # 6.6.16: and its EKU must permit `purpose`.
+                            if (_tn_ca_signer_ok(R, depth, purpose) == 1) { return TLS_OK; }
                         }
                     }
                 }
@@ -2798,8 +2821,9 @@ fn _tn_verify_chain(ctx, leaf, inters, now_unix, purpose): i64 {
                         if (_x509_in_window(P, now_unix) == 1) {
                             if (_x509_verify_link(cur, P) == 1) {
                                 # CVE-17: signing intermediate must assert
-                                # keyCertSign + honor pathLen for `depth`.
-                                if (_tn_ca_signer_ok(P, depth) == 1) { nextp = P; ii = ni; }
+                                # keyCertSign + honor pathLen for `depth`;
+                                # 6.6.16: and its EKU must permit `purpose`.
+                                if (_tn_ca_signer_ok(P, depth, purpose) == 1) { nextp = P; ii = ni; }
                             }
                         }
                     }
