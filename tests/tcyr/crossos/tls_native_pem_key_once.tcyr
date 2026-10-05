@@ -1,0 +1,744 @@
+# tls_native_pem_key_once.tcyr — 6.6.16: a native TLS server decodes a PEM private key ONCE, not on
+# every accept, on every host target.
+#
+# ⛔ THE DEFECT (issue 2026-10-04-sandhi-tls-server-pem-key-decoded-per-accept, measured on 6.6.15):
+# lib/tls.cyr's accept builds a server ctx from the caller's credentials on EVERY connection and
+# loads them, and a PEM key went through sigil's pem_decode_privkey each time. That decoder takes
+# its DER scratch from the GLOBAL heap (alloc(pem_len)), never from the arena tls_accept_alloc_in
+# was given, so a server that rewinds a per-connection arena still kept pem_len bytes (rounded to
+# 8) per connection: 120 B per request for a 119-byte Ed25519 key (sandhi 1.10.7's
+# _server_tls_probe [8]). A DER key cost 0.
+#
+# ROWS
+#   - the filed shape: 40 accepts of a 119-byte Ed25519 PKCS#8 PEM through tls_accept_alloc_in,
+#     the arena rewound per accept: 0 B of global heap per accept (6.6.15: 120);
+#   - each key form loads the same algorithm and key material as its DER, and an accept after
+#     the first costs 0 B: Ed25519 PKCS#8, and P-256 / P-384 in PKCS#8 and SEC1, as PEM and DER;
+#     and a client's own key (tls_native_set_client_key, mTLS), which the same code loads;
+#   - refusals keep the error the accept path gave (TLS_ERR_KEY_UNSUPPORTED from
+#     tls_native_server_load_creds, so tls_accept_alloc_in answers 0), every time, and cost 0 B
+#     from the second on: RSA (PKCS#1 and PKCS#8 PEM, DER), bad base64, no END line, a truncated
+#     body, a certificate, a lone dash, and a label that does not match its body (the PKCS#8 label
+#     around a SEC1 key, and the reverse: the decoder's verdict is kept, not a looser re-parse);
+#   - the cache is keyed on the TEXT: two keys of the same length alternate, and one buffer is
+#     refilled with another key, and each load gets its own key;
+#   - real handshakes: lib/tls.cyr's tls_accept_alloc_in + tls_accept_complete against
+#     tls_native_connect, over the replay transport of tls_native_client_auth.tcyr (one thread,
+#     so it runs on every host): each key form in TLS 1.3 and one PEM per algorithm in TLS 1.2,
+#     "ping" / "pong" both ways, and 0 B of global heap per server run; a server whose key is
+#     not its certificate's fails at the client (TLS_ERR_AUTHN), so the rows have teeth;
+#   - threads: 8 loaders take one new key and one key each at once. Every load gets its key, and
+#     afterwards every one of them is served from the cache;
+#   - past the cache's capacity a new key still loads correctly, and a key cached before it
+#     filled is still served from it.
+# MEASURED RED: the 6.6.15 lib fails 24 of the 204 assertions, every growth row whose text reaches
+# the decoder's allocation (a text with no key label, or no END line, never did); 40 accepts of
+# the 119-byte key cost it 4800 B, the filed 120 B each. Every other row holds on both.
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/io.cyr"
+include "lib/chrono.cyr"
+include "lib/atomic.cyr"
+include "lib/thread.cyr"
+include "lib/tls.cyr"
+
+enum PkHandle { PK_CLIENT = 1; PK_SERVER = 2; }
+var PK_LOG_CAP = 65536;
+var PK_ROUNDS_MAX = 10;
+var PK_ACCEPTS = 40;        # accepts per growth measurement
+var PK_RACERS = 8;
+var PK_RACE_LOADS = 25;
+var PK_DEADLINE_MS = 60000; # a racer that has not finished by then fails the row
+
+# ---- fixtures (openssl 3.6; every certificate self-signed, CN=localhost) ----
+var _pk_ed_crt = 0;
+var _pk_ed_der = 0;
+var _pk_p256_crt = 0;
+var _pk_p256_p8 = 0;
+var _pk_p256_sec1 = 0;
+var _pk_p384_crt = 0;
+var _pk_p384_p8 = 0;
+var _pk_p384_sec1 = 0;
+var _pk_rsa_der = 0;
+var _pk_ed_pem = 0;
+var _pk_p256_p8_pem = 0;
+var _pk_p256_sec1_pem = 0;
+var _pk_p384_p8_pem = 0;
+var _pk_p384_sec1_pem = 0;
+var _pk_rsa_p1_pem = 0;
+var _pk_rsa_p8_pem = 0;
+var _pk_ed_seed = 0;        # the key material each form must load (its DER, through sigil's parser)
+var _pk_p256_d = 0;
+var _pk_p384_d = 0;
+
+fn _pk_fixtures(): i64 {
+    _pk_ed_crt = hex_decode("3082013e3081f1a00302010202147046aa516ade57c4b0dab0c0675e1dffce1af1d1300506032b657030143112301006035504030c096c6f63616c686f73743020170d3236313030353133303533345a180f32303531303532373133303533345a30143112301006035504030c096c6f63616c686f7374302a300506032b657003210095a55ee25db1a694570e79742cc62af98821976e55bf8c167ef5fe95d74b973aa3533051301d0603551d0e041604141fbf68c5881280ca37d612c356567b3d7497ba1d301f0603551d230418301680141fbf68c5881280ca37d612c356567b3d7497ba1d300f0603551d130101ff040530030101ff300506032b6570034100d528f9c1aaee2665899dcec07cb512517b2968cbc9ef17085bb38cf6c4efc46939d705f6d252174260ce162dfc02c79647aacff2c4d5916887bd26b70d5c860f", 644);
+    _pk_ed_der = hex_decode("302e020100300506032b657004220420c331e05e656084e64cdbe63a5ad6c704847220708b88bdc3073670bc2a9a819c", 96);
+    _pk_p256_crt = hex_decode("3082017f30820125a003020102021414e8deaab35b4119d02adcdb8d86a0cb758ed264300a06082a8648ce3d04030230143112301006035504030c096c6f63616c686f73743020170d3236313030353133303533345a180f32303531303532373133303533345a30143112301006035504030c096c6f63616c686f73743059301306072a8648ce3d020106082a8648ce3d030107034200042421c0dfa71f69aa09cd9a866dbee4253871bd28bed3b174dee1828d1bf58f8c46495c4b13bf6be347e061cc48d862e2ff571ffc0b2bd8e24479a868f13afc0da3533051301d0603551d0e0416041418b74142bb0341d128023f8d15bfb07d8481fde0301f0603551d2304183016801418b74142bb0341d128023f8d15bfb07d8481fde0300f0603551d130101ff040530030101ff300a06082a8648ce3d0403020348003045022100a513f0fb46b090c7827bcf01175f8f7e84c6d55cd36f58d22ed0edf8fb29425d02204f04d7f0c708ea19267d78f44a6086e5df968220f01b4fee7e976e1f64306f80", 774);
+    _pk_p256_p8 = hex_decode("308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b0201010420a7d51d2aadb85c537b35c3b9a43065310773ac810cd467ad0dfa991359d91282a144034200042421c0dfa71f69aa09cd9a866dbee4253871bd28bed3b174dee1828d1bf58f8c46495c4b13bf6be347e061cc48d862e2ff571ffc0b2bd8e24479a868f13afc0d", 276);
+    _pk_p256_sec1 = hex_decode("30770201010420a7d51d2aadb85c537b35c3b9a43065310773ac810cd467ad0dfa991359d91282a00a06082a8648ce3d030107a144034200042421c0dfa71f69aa09cd9a866dbee4253871bd28bed3b174dee1828d1bf58f8c46495c4b13bf6be347e061cc48d862e2ff571ffc0b2bd8e24479a868f13afc0d", 242);
+    _pk_p384_crt = hex_decode("308201bc30820142a00302010202141210874bb28dcc1be30e6a22ef68599ebc7d6bb0300a06082a8648ce3d04030230143112301006035504030c096c6f63616c686f73743020170d3236313030353133303533345a180f32303531303532373133303533345a30143112301006035504030c096c6f63616c686f73743076301006072a8648ce3d020106052b810400220362000425eeb12132d6f5536b55e6480c881eb752fd050c94821aadabc27b7e8f33d4ef9965fd2690596b611add6127b30e423ed3f9d3969524f634411c1c46b7326ddb09211d311d5e767b2c145e85e03a7caec2db37fa62aa1617acf4d8d8b6f8f90ca3533051301d0603551d0e04160414a2e953bbc31bc873067ab1841ec374462f1862a0301f0603551d23041830168014a2e953bbc31bc873067ab1841ec374462f1862a0300f0603551d130101ff040530030101ff300a06082a8648ce3d0403020368003065023100aeb043a607f1a033e56a2af82dcd3ed772de4c64ce4f8254a93cf0afefc4c5764c76ec055100b6b213819e33b5968efe02300a9d816651d964be3f049b19e90d8c69b24727e2cb2e579f091ecd7e7a3868c6f46dac27484fb6624a9465e836f840b6", 896);
+    _pk_p384_p8 = hex_decode("3081b6020100301006072a8648ce3d020106052b8104002204819e30819b020101043056f25e738f37779adad90742aba09c4a2fd071d7e2e91573db8c785fe47760ccfebe4a979cfa4c548871e962b37883caa1640362000425eeb12132d6f5536b55e6480c881eb752fd050c94821aadabc27b7e8f33d4ef9965fd2690596b611add6127b30e423ed3f9d3969524f634411c1c46b7326ddb09211d311d5e767b2c145e85e03a7caec2db37fa62aa1617acf4d8d8b6f8f90c", 370);
+    _pk_p384_sec1 = hex_decode("3081a4020101043056f25e738f37779adad90742aba09c4a2fd071d7e2e91573db8c785fe47760ccfebe4a979cfa4c548871e962b37883caa00706052b81040022a1640362000425eeb12132d6f5536b55e6480c881eb752fd050c94821aadabc27b7e8f33d4ef9965fd2690596b611add6127b30e423ed3f9d3969524f634411c1c46b7326ddb09211d311d5e767b2c145e85e03a7caec2db37fa62aa1617acf4d8d8b6f8f90c", 334);
+    _pk_rsa_der = hex_decode("30820276020100300d06092a864886f70d0101010500048202603082025c02010002818100b275504b964c43b39c8a44555fdf2783eff9bc1f025f9327fbf67e57b67b6962f363fc23ce058a2ffc77e95c74c321ca4164ca379eb0621e0fc5426d9d4655ce2b8aa653b4c14ab4114dbdf4f7d2f66b8ea35fdfacab13f1b9336f7b41831f570ae6eba2753028691d51c170cf5cdc120eede079b586586395db186cc635a47f020301000102818031cf349e24511d0460c8e6d1bd74979ee7b8189dbf17d606eef899c2f997f08e41c8c2736be977ec74d733372f0fd7ba900e05b30883ca9f015fd96ea6db1ecf78afc59ce11eb86e85869b2a72547d37dd5e467d1b4670bae2f7f0daab254574c78c7146bbd0ed47bde33a7519397e1936c6f127deb5ff45c03fc09a32c3c661024100ede0890f402538bb5853d4b7582bd53d72c6bac7314de89c0655ecbab3cc0232d591951f1709a8b26451d3d03bd186f23566cec79b90e3be1915603e69358fad024100c00de55561224a53a9f5249f1f0622a172f020d25e8a4a295dbc2611471fd86ca224913148e1e8387114303d6205614a53ace9bdf89fc6ff6630e92310641a5b02407a830ef3eccc7ec876384eb0d2d7586eda6321a51f6e89a379dbdd1d572675e76a791d3d32e7459c02f0e5cf344fb8599c4943ac2821da3978bfba9eca1ecccd024029fc1fb17d8d988017bc8ea7f68949d2cfa4ad183030bd2bb3e128d5481e2f1af88b53ee59478193ad2cc3aaf79dc37a1336ced687deae0b3154e9f28f67c2d7024100e840023e558721d62611ee6227cc3f59d567560be278656b312e35a74ba6178c240e8645a43c8106a0961b2ab1496cc1243108cefd48c4ba01a2dc6f3f50072a", 1268);
+    _pk_ed_pem = "-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEIMMx4F5lYITmTNvmOlrWxwSEciBwi4i9wwc2cLwqmoGc\n-----END PRIVATE KEY-----\n";
+    _pk_p256_p8_pem = "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgp9UdKq24XFN7NcO5\npDBlMQdzrIEM1GetDfqZE1nZEoKhRANCAAQkIcDfpx9pqgnNmoZtvuQlOHG9KL7T\nsXTe4YKNG/WPjEZJXEsTv2vjR+BhzEjYYuL/Vx/8CyvY4kR5qGjxOvwN\n-----END PRIVATE KEY-----\n";
+    _pk_p256_sec1_pem = "-----BEGIN EC PRIVATE KEY-----\nMHcCAQEEIKfVHSqtuFxTezXDuaQwZTEHc6yBDNRnrQ36mRNZ2RKCoAoGCCqGSM49\nAwEHoUQDQgAEJCHA36cfaaoJzZqGbb7kJThxvSi+07F03uGCjRv1j4xGSVxLE79r\n40fgYcxI2GLi/1cf/Asr2OJEeaho8Tr8DQ==\n-----END EC PRIVATE KEY-----\n";
+    _pk_p384_p8_pem = "-----BEGIN PRIVATE KEY-----\nMIG2AgEAMBAGByqGSM49AgEGBSuBBAAiBIGeMIGbAgEBBDBW8l5zjzd3mtrZB0Kr\noJxKL9Bx1+LpFXPbjHhf5HdgzP6+Spec+kxUiHHpYrN4g8qhZANiAAQl7rEhMtb1\nU2tV5kgMiB63Uv0FDJSCGq2rwnt+jzPU75ll/SaQWWthGt1hJ7MOQj7T+dOWlST2\nNEEcHEa3Mm3bCSEdMR1ednssFF6F4Dp8rsLbN/piqhYXrPTY2Lb4+Qw=\n-----END PRIVATE KEY-----\n";
+    _pk_p384_sec1_pem = "-----BEGIN EC PRIVATE KEY-----\nMIGkAgEBBDBW8l5zjzd3mtrZB0KroJxKL9Bx1+LpFXPbjHhf5HdgzP6+Spec+kxU\niHHpYrN4g8qgBwYFK4EEACKhZANiAAQl7rEhMtb1U2tV5kgMiB63Uv0FDJSCGq2r\nwnt+jzPU75ll/SaQWWthGt1hJ7MOQj7T+dOWlST2NEEcHEa3Mm3bCSEdMR1ednss\nFF6F4Dp8rsLbN/piqhYXrPTY2Lb4+Qw=\n-----END EC PRIVATE KEY-----\n";
+    _pk_rsa_p1_pem = "-----BEGIN RSA PRIVATE KEY-----\nMIICXAIBAAKBgQCydVBLlkxDs5yKRFVf3yeD7/m8HwJfkyf79n5XtntpYvNj/CPO\nBYov/HfpXHTDIcpBZMo3nrBiHg/FQm2dRlXOK4qmU7TBSrQRTb3099L2a46jX9+s\nqxPxuTNve0GDH1cK5uuidTAoaR1RwXDPXNwSDu3gebWGWGOV2xhsxjWkfwIDAQAB\nAoGAMc80niRRHQRgyObRvXSXnue4GJ2/F9YG7viZwvmX8I5ByMJza+l37HTXMzcv\nD9e6kA4FswiDyp8BX9luptsez3ivxZzhHrhuhYabKnJUfTfdXkZ9G0ZwuuL38Nqr\nJUV0x4xxRrvQ7Ue94zp1GTl+GTbG8Sfetf9FwD/AmjLDxmECQQDt4IkPQCU4u1hT\n1LdYK9U9csa6xzFN6JwGVey6s8wCMtWRlR8XCaiyZFHT0DvRhvI1Zs7Hm5DjvhkV\nYD5pNY+tAkEAwA3lVWEiSlOp9SSfHwYioXLwINJeikopXbwmEUcf2GyiJJExSOHo\nOHEUMD1iBWFKU6zpvfifxv9mMOkjEGQaWwJAeoMO8+zMfsh2OE6w0tdYbtpjIaUf\nbomjedvdHVcmdedqeR09MudFnALw5c80T7hZnElDrCgh2jl4v7qeyh7MzQJAKfwf\nsX2NmIAXvI6n9olJ0s+krRgwML0rs+Eo1UgeLxr4i1PuWUeBk60sw6r3ncN6EzbO\n1ofergsxVOnyj2fC1wJBAOhAAj5VhyHWJhHuYifMP1nVZ1YL4nhlazEuNadLpheM\nJA6GRaQ8gQaglhsqsUlswSQxCM79SMS6AaLcbz9QByo=\n-----END RSA PRIVATE KEY-----\n";
+    _pk_rsa_p8_pem = "-----BEGIN PRIVATE KEY-----\nMIICdgIBADANBgkqhkiG9w0BAQEFAASCAmAwggJcAgEAAoGBALJ1UEuWTEOznIpE\nVV/fJ4Pv+bwfAl+TJ/v2fle2e2li82P8I84Fii/8d+lcdMMhykFkyjeesGIeD8VC\nbZ1GVc4riqZTtMFKtBFNvfT30vZrjqNf36yrE/G5M297QYMfVwrm66J1MChpHVHB\ncM9c3BIO7eB5tYZYY5XbGGzGNaR/AgMBAAECgYAxzzSeJFEdBGDI5tG9dJee57gY\nnb8X1gbu+JnC+ZfwjkHIwnNr6XfsdNczNy8P17qQDgWzCIPKnwFf2W6m2x7PeK/F\nnOEeuG6FhpsqclR9N91eRn0bRnC64vfw2qslRXTHjHFGu9DtR73jOnUZOX4ZNsbx\nJ961/0XAP8CaMsPGYQJBAO3giQ9AJTi7WFPUt1gr1T1yxrrHMU3onAZV7LqzzAIy\n1ZGVHxcJqLJkUdPQO9GG8jVmzsebkOO+GRVgPmk1j60CQQDADeVVYSJKU6n1JJ8f\nBiKhcvAg0l6KSildvCYRRx/YbKIkkTFI4eg4cRQwPWIFYUpTrOm9+J/G/2Yw6SMQ\nZBpbAkB6gw7z7Mx+yHY4TrDS11hu2mMhpR9uiaN5290dVyZ152p5HT0y50WcAvDl\nzzRPuFmcSUOsKCHaOXi/up7KHszNAkAp/B+xfY2YgBe8jqf2iUnSz6StGDAwvSuz\n4SjVSB4vGviLU+5ZR4GTrSzDqvedw3oTNs7Wh96uCzFU6fKPZ8LXAkEA6EACPlWH\nIdYmEe5iJ8w/WdVnVgvieGVrMS41p0umF4wkDoZFpDyBBqCWGyqxSWzBJDEIzv1I\nxLoBotxvP1AHKg==\n-----END PRIVATE KEY-----\n";
+    _pk_ed_seed = alloc(48);
+    _pk_p256_d = alloc(48);
+    _pk_p384_d = alloc(48);
+    ed25519_privkey_from_der(_pk_ed_der, 48, _pk_ed_seed);
+    ecdsa_p256_privkey_from_der(_pk_p256_p8, 138, _pk_p256_d);
+    ecdsa_p384_privkey_from_der(_pk_p384_p8, 185, _pk_p384_d);
+    return 0;
+}
+
+# ---- PEM armour for keys made up at run time (openssl's layout: 64-column lines) ----
+var _pk_b64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+fn _pk_put(out, p, s): i64 {
+    var n = strlen(s);
+    memcpy(out + p, s, n);
+    return p + n;
+}
+
+fn _pk_b64c(v): i64 { return load8(_pk_b64 + (v & 63)) & 0xFF; }
+
+# Armour `n` DER bytes under `label` into `out`. Returns the text's length.
+fn _pk_armour(der, n, label, out): i64 {
+    var p = _pk_put(out, 0, "-----BEGIN ");
+    p = _pk_put(out, p, label);
+    p = _pk_put(out, p, "-----\n");
+    var i = 0;
+    var col = 0;
+    while (i < n) {
+        var b0 = load8(der + i) & 0xFF;
+        var b1 = 0;
+        var b2 = 0;
+        if (i + 1 < n) { b1 = load8(der + i + 1) & 0xFF; }
+        if (i + 2 < n) { b2 = load8(der + i + 2) & 0xFF; }
+        store8(out + p, _pk_b64c(b0 >> 2));
+        store8(out + p + 1, _pk_b64c(((b0 & 3) << 4) | (b1 >> 4)));
+        store8(out + p + 2, 61);
+        store8(out + p + 3, 61);
+        if (i + 1 < n) { store8(out + p + 2, _pk_b64c(((b1 & 15) << 2) | (b2 >> 6))); }
+        if (i + 2 < n) { store8(out + p + 3, _pk_b64c(b2)); }
+        p = p + 4;
+        col = col + 4;
+        i = i + 3;
+        if (col == 64) {
+            store8(out + p, 10);
+            p = p + 1;
+            col = 0;
+        }
+    }
+    if (col > 0) {
+        store8(out + p, 10);
+        p = p + 1;
+    }
+    p = _pk_put(out, p, "-----END ");
+    p = _pk_put(out, p, label);
+    p = _pk_put(out, p, "-----\n");
+    return p;
+}
+
+# An Ed25519 key made up from `k` (distinct for every k < 256): its PKCS#8 DER (48 B) into `der`.
+fn _pk_ed_make(k, der): i64 {
+    memcpy(der, _pk_ed_der, 16);                         # the PKCS#8 / RFC 8410 prefix
+    var i = 0;
+    while (i < 32) {
+        store8(der + 16 + i, (k * 131 + i * 29 + 7) & 0xFF);
+        i = i + 1;
+    }
+    return 48;
+}
+
+# The PEM text of key `k` (a fresh 128-byte buffer; the text is 119 bytes).
+fn _pk_ed_pem_of(k): i64 {
+    var der: i64[6];
+    _pk_ed_make(k, &der);
+    var out = alloc(128);
+    _pk_armour(&der, 48, "PRIVATE KEY", out);
+    return out;
+}
+
+# The seed of key `k` (32 B).
+fn _pk_ed_seed_of(k): i64 {
+    var der = alloc(48);
+    _pk_ed_make(k, der);
+    return der + 16;
+}
+
+# ---- one accept's credential load ----
+var _pk_arena = 0;          # the server's Allocator, rewound before every accept
+
+# lib/tls.cyr's server accept on `a` (rewound first): the native ctx, or 0 when the credentials
+# are refused. The "socket" is the replay transport's server handle; nothing reads it here.
+fn _pk_accept_in(a, cert, cert_n, key, key_n): i64 {
+    reset_via(a);
+    var creds: i64[4];
+    store64(&creds, cert);
+    store64(&creds + 8, cert_n);
+    store64(&creds + 16, key);
+    store64(&creds + 24, key_n);
+    var sh = tls_accept_alloc_in(a, PK_SERVER, &creds, 0, 0);
+    if (sh == 0) { return 0; }
+    return load64(sh);
+}
+
+fn _pk_accept(cert, cert_n, key, key_n): i64 {
+    return _pk_accept_in(_pk_arena, cert, cert_n, key, key_n);
+}
+
+# Global-heap bytes PK_ACCEPTS accepts of this key add, after one accept that may fill the cache.
+fn _pk_growth(cert, cert_n, key, key_n): i64 {
+    _pk_accept(cert, cert_n, key, key_n);
+    var u0 = alloc_used();
+    var i = 0;
+    while (i < PK_ACCEPTS) {
+        _pk_accept(cert, cert_n, key, key_n);
+        i = i + 1;
+    }
+    return alloc_used() - u0;
+}
+
+# tls_native_server_load_creds's answer for these credentials on a fresh server ctx.
+fn _pk_load_err(cert, cert_n, key, key_n): i64 {
+    reset_via(_pk_arena);
+    var s = tls_native_new_server_in(_pk_arena, cert, cert_n, key, key_n);
+    if (s == 0) { return 0 - 999; }
+    return tls_native_server_load_creds(s);
+}
+
+# 1 when the native ctx holds algorithm `algo` and the `n` key-material bytes at `want`.
+fn _pk_holds(nctx, algo, want, n): i64 {
+    if (nctx == 0) { return 0; }
+    if (load64(nctx + TLS_CTX_OFF_KEY_ALGO) != algo) { return 0; }
+    if (load64(nctx + TLS_CTX_OFF_KEY_MAT_LEN) != n) { return 0; }
+    var m = load64(nctx + TLS_CTX_OFF_KEY_MAT);
+    if (m == 0) { return 0; }
+    return memeq(m, want, n);
+}
+
+fn _pk_say_growth(label, g): i64 {
+    sys_write(1, "    ", 4);
+    sys_write(1, label, strlen(label));
+    sys_write(1, ": ", 2);
+    fmt_int(g);
+    sys_write(1, " B of global heap over ", 23);
+    fmt_int(PK_ACCEPTS);
+    println(" accepts");
+    return 0;
+}
+
+# ---- rows ----
+
+fn test_filed_shape(): i64 {
+    test_group("6.6.16 — the filed shape: a 119-byte Ed25519 PEM key, the arena rewound per accept");
+    assert_eq(strlen(_pk_ed_pem), 119, "the PEM key is 119 bytes, as sandhi's key.pem");
+    var g = _pk_growth(_pk_ed_crt, 322, _pk_ed_pem, 119);
+    _pk_say_growth("Ed25519 PEM", g);
+    assert_eq(g, 0, "0 B of global heap per accept (6.6.15: 120, the key decoded on every accept)");
+    var gd = _pk_growth(_pk_ed_crt, 322, _pk_ed_der, 48);
+    assert_eq(gd, 0, "the same key as DER: 0 B per accept (it never took the PEM decoder)");
+    return 0;
+}
+
+# One key form: it loads `algo` and the `n` bytes at `want`, twice, and costs 0 B per accept after
+# the first.
+fn _pk_form(label, cert, cert_n, key, key_n, algo, want, n): i64 {
+    println(label);
+    var s = _pk_accept(cert, cert_n, key, key_n);
+    assert(s != 0, "  tls_accept_alloc_in accepts the credentials");
+    assert_eq(_pk_holds(s, algo, want, n), 1, "  the ctx holds the key's algorithm and key material");
+    s = _pk_accept(cert, cert_n, key, key_n);
+    assert_eq(_pk_holds(s, algo, want, n), 1, "  …and again on the next accept");
+    assert_eq(_pk_growth(cert, cert_n, key, key_n), 0, "  0 B of global heap per accept");
+    return 0;
+}
+
+fn test_key_forms(): i64 {
+    test_group("6.6.16 — every key form loads the same key, at 0 B per accept");
+    _pk_form("  Ed25519 PKCS#8 PEM", _pk_ed_crt, 322, _pk_ed_pem, 119, SIG_PRIVKEY_ED25519, _pk_ed_seed, 32);
+    _pk_form("  Ed25519 PKCS#8 DER", _pk_ed_crt, 322, _pk_ed_der, 48, SIG_PRIVKEY_ED25519, _pk_ed_seed, 32);
+    _pk_form("  P-256 PKCS#8 PEM", _pk_p256_crt, 387, _pk_p256_p8_pem, 241, SIG_PRIVKEY_ECDSA_P256, _pk_p256_d, 32);
+    _pk_form("  P-256 SEC1 PEM", _pk_p256_crt, 387, _pk_p256_sec1_pem, 227, SIG_PRIVKEY_ECDSA_P256, _pk_p256_d, 32);
+    _pk_form("  P-256 PKCS#8 DER", _pk_p256_crt, 387, _pk_p256_p8, 138, SIG_PRIVKEY_ECDSA_P256, _pk_p256_d, 32);
+    _pk_form("  P-256 SEC1 DER", _pk_p256_crt, 387, _pk_p256_sec1, 121, SIG_PRIVKEY_ECDSA_P256, _pk_p256_d, 32);
+    _pk_form("  P-384 PKCS#8 PEM", _pk_p384_crt, 448, _pk_p384_p8_pem, 306, SIG_PRIVKEY_ECDSA_P384, _pk_p384_d, 48);
+    _pk_form("  P-384 SEC1 PEM", _pk_p384_crt, 448, _pk_p384_sec1_pem, 288, SIG_PRIVKEY_ECDSA_P384, _pk_p384_d, 48);
+    _pk_form("  P-384 PKCS#8 DER", _pk_p384_crt, 448, _pk_p384_p8, 185, SIG_PRIVKEY_ECDSA_P384, _pk_p384_d, 48);
+    _pk_form("  P-384 SEC1 DER", _pk_p384_crt, 448, _pk_p384_sec1, 167, SIG_PRIVKEY_ECDSA_P384, _pk_p384_d, 48);
+
+    # The client's own key (mTLS) is loaded by the same code, once per connection.
+    println("  a client's own P-256 PKCS#8 PEM key (tls_native_set_client_key)");
+    var ok = 0;
+    var i = 0;
+    while (i < 3) {
+        reset_via(_pk_arena);
+        var c = tls_native_new_client_in(_pk_arena, 0, 0);
+        if (tls_native_set_client_key(c, _pk_p256_p8_pem, 241) == TLS_OK) {
+            ok = ok + _pk_holds(c, SIG_PRIVKEY_ECDSA_P256, _pk_p256_d, 32);
+        }
+        i = i + 1;
+    }
+    assert_eq(ok, 3, "  each client ctx holds the key");
+    var u0 = alloc_used();
+    i = 0;
+    while (i < PK_ACCEPTS) {
+        reset_via(_pk_arena);
+        tls_native_set_client_key(tls_native_new_client_in(_pk_arena, 0, 0), _pk_p256_p8_pem, 241);
+        i = i + 1;
+    }
+    assert_eq(alloc_used() - u0, 0, "  0 B of global heap per client connection");
+    return 0;
+}
+
+# A refused key: TLS_ERR_KEY_UNSUPPORTED from tls_native_server_load_creds three times, a 0 from
+# tls_accept_alloc_in, and 0 B per accept after the first.
+fn _pk_refused(label, key, key_n): i64 {
+    println(label);
+    assert_eq(_pk_load_err(_pk_ed_crt, 322, key, key_n), TLS_ERR_KEY_UNSUPPORTED,
+      "  tls_native_server_load_creds: TLS_ERR_KEY_UNSUPPORTED");
+    assert_eq(_pk_load_err(_pk_ed_crt, 322, key, key_n), TLS_ERR_KEY_UNSUPPORTED, "  …the second time");
+    assert_eq(_pk_load_err(_pk_ed_crt, 322, key, key_n), TLS_ERR_KEY_UNSUPPORTED, "  …and the third");
+    assert_eq(_pk_accept(_pk_ed_crt, 322, key, key_n), 0, "  tls_accept_alloc_in refuses the credentials");
+    return 0;
+}
+
+# The same, plus the growth row (PEM texts only: a DER key never took the decoder).
+fn _pk_refused_pem(label, key, key_n): i64 {
+    _pk_refused(label, key, key_n);
+    assert_eq(_pk_growth(_pk_ed_crt, 322, key, key_n), 0, "  0 B of global heap per refused accept");
+    return 0;
+}
+
+fn test_refusals(): i64 {
+    test_group("6.6.16 — a refused key keeps its error, at the same point, at 0 B per accept");
+    _pk_refused_pem("  RSA, PKCS#1 PEM (the native stack signs with no RSA key)", _pk_rsa_p1_pem, 887);
+    _pk_refused_pem("  RSA, PKCS#8 PEM", _pk_rsa_p8_pem, 916);
+    _pk_refused("  RSA, PKCS#8 DER", _pk_rsa_der, 634);
+    var bad = "-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEI!!!!\n-----END PRIVATE KEY-----\n";
+    _pk_refused_pem("  a body that is not base64", bad, strlen(bad));
+    var noend = "-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEIMMx4F5lYITmTNvmOlrWxwSEciBwi4i9wwc2cLwqmoGc\n";
+    _pk_refused_pem("  no END line", noend, strlen(noend));
+    var trunc = "-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIE\n-----END PRIVATE KEY-----\n";
+    _pk_refused_pem("  a truncated body", trunc, strlen(trunc));
+    var crt = alloc(1024);
+    var crt_n = _pk_armour(_pk_ed_crt, 322, "CERTIFICATE", crt);
+    _pk_refused_pem("  a certificate, not a key", crt, crt_n);
+    _pk_refused_pem("  a lone dash", "-", 1);
+    var mis1 = alloc(512);
+    var mis1_n = _pk_armour(_pk_p256_sec1, 121, "PRIVATE KEY", mis1);
+    _pk_refused_pem("  the PKCS#8 label around a SEC1 P-256 key", mis1, mis1_n);
+    var mis2 = alloc(512);
+    var mis2_n = _pk_armour(_pk_p256_p8, 138, "EC PRIVATE KEY", mis2);
+    _pk_refused_pem("  the SEC1 label around a PKCS#8 P-256 key", mis2, mis2_n);
+    return 0;
+}
+
+fn test_keyed_on_text(): i64 {
+    test_group("6.6.16 — the cache is keyed on the PEM text, not on its address");
+    var a = _pk_ed_pem_of(1);
+    assert_eq(memeq(_pk_ed_pem_of(0 - 1), a, 119), 0, "two made-up keys differ");
+    # The armour reproduces openssl's text byte for byte, so the made-up keys are real PEM.
+    var ref = alloc(128);
+    assert_eq(_pk_armour(_pk_ed_der, 48, "PRIVATE KEY", ref), 119, "the armour of the fixture is 119 bytes");
+    assert_eq(memeq(ref, _pk_ed_pem, 119), 1, "…and is openssl's text");
+
+    println("  two keys of the same length, alternating");
+    var b = _pk_ed_pem_of(2);
+    var sa = _pk_ed_seed_of(1);
+    var sb = _pk_ed_seed_of(2);
+    var ok = 0;
+    var i = 0;
+    while (i < 10) {
+        ok = ok + _pk_holds(_pk_accept(_pk_ed_crt, 322, a, 119), SIG_PRIVKEY_ED25519, sa, 32);
+        ok = ok + _pk_holds(_pk_accept(_pk_ed_crt, 322, b, 119), SIG_PRIVKEY_ED25519, sb, 32);
+        i = i + 1;
+    }
+    assert_eq(ok, 20, "  every load holds its own key");
+    var u0 = alloc_used();
+    i = 0;
+    while (i < 10) {
+        _pk_accept(_pk_ed_crt, 322, a, 119);
+        _pk_accept(_pk_ed_crt, 322, b, 119);
+        i = i + 1;
+    }
+    assert_eq(alloc_used() - u0, 0, "  0 B of global heap once both are cached");
+
+    println("  one buffer, refilled with another key of the same length");
+    var buf = alloc(128);
+    memcpy(buf, _pk_ed_pem_of(3), 119);
+    var s3 = _pk_ed_seed_of(3);
+    var s4 = _pk_ed_seed_of(4);
+    assert_eq(_pk_holds(_pk_accept(_pk_ed_crt, 322, buf, 119), SIG_PRIVKEY_ED25519, s3, 32), 1,
+      "  key 3 loads key 3");
+    memcpy(buf, _pk_ed_pem_of(4), 119);
+    assert_eq(_pk_holds(_pk_accept(_pk_ed_crt, 322, buf, 119), SIG_PRIVKEY_ED25519, s4, 32), 1,
+      "  the buffer refilled with key 4 loads key 4, not the cached key 3");
+    memcpy(buf, _pk_ed_pem_of(3), 119);
+    assert_eq(_pk_holds(_pk_accept(_pk_ed_crt, 322, buf, 119), SIG_PRIVKEY_ED25519, s3, 32), 1,
+      "  …and refilled with key 3 again, key 3");
+    return 0;
+}
+
+# ---- real handshakes over the replay transport (see tls_native_client_auth.tcyr) ----
+var _pk_cs = 0;             # client -> server bytes the server reads (the client's last run)
+var _pk_cs_len = 0;
+var _pk_cs_next = 0;        # what the running client writes
+var _pk_cs_next_len = 0;
+var _pk_sc = 0;             # server -> client
+var _pk_sc_len = 0;
+var _pk_sc_next = 0;
+var _pk_sc_next_len = 0;
+var _pk_cs_rd = 0;
+var _pk_sc_rd = 0;
+var _pk_overflow = 0;
+var _pk_eof = 0;            # the running side read past the end of the other's log
+var _pk_c_eof = 0;
+var _pk_s_eof = 0;
+var _pk_ca = 0;             # the client's Allocator, rewound every run
+
+fn _pk_read(h, buf, n): i64 {
+    var src = _pk_sc;
+    var len = _pk_sc_len;
+    var cur = _pk_sc_rd;
+    if (h == PK_SERVER) {
+        src = _pk_cs;
+        len = _pk_cs_len;
+        cur = _pk_cs_rd;
+    }
+    var avail = len - cur;
+    if (avail <= 0) {
+        _pk_eof = 1;
+        return 0;
+    }
+    var k = n;
+    if (k > avail) { k = avail; }
+    memcpy(buf, src + cur, k);
+    if (h == PK_SERVER) { _pk_cs_rd = cur + k; }
+    else { _pk_sc_rd = cur + k; }
+    return k;
+}
+
+fn _pk_write(h, buf, n): i64 {
+    if (h == PK_SERVER) {
+        if (_pk_sc_next_len + n > PK_LOG_CAP) { _pk_overflow = 1; return 0 - 1; }
+        memcpy(_pk_sc_next + _pk_sc_next_len, buf, n);
+        _pk_sc_next_len = _pk_sc_next_len + n;
+        return n;
+    }
+    if (_pk_cs_next_len + n > PK_LOG_CAP) { _pk_overflow = 1; return 0 - 1; }
+    memcpy(_pk_cs_next + _pk_cs_next_len, buf, n);
+    _pk_cs_next_len = _pk_cs_next_len + n;
+    return n;
+}
+
+fn _pk_now(): i64 { return 1893456000; }                 # 2030-01-01 00:00 UTC
+
+# Deterministic entropy (xorshift64), reseeded at the start of every run of a side.
+var _pk_rng = 1;
+fn _pk_rand(buf, n, fl): i64 {
+    var i = 0;
+    while (i < n) {
+        var x = _pk_rng;
+        x = x ^ (x << 13);
+        x = x ^ (x >> 7);
+        x = x ^ (x << 17);
+        _pk_rng = x;
+        store8(buf + i, (x >> 24) & 0xFF);
+        i = i + 1;
+    }
+    return n;
+}
+
+# [0] client connect, [1] the client's read after "ping" (-99 when not run), [2] server accept
+# (TLS_OK, the ctx's last error, or -999 when tls_accept_alloc_in refused), [3] the server's read
+# (-99), [4] global-heap bytes of the server runs after the first, [5] rounds to the fixed point.
+var _pk_obs: i64[6];
+
+fn _pk_client_run(v12): i64 {
+    reset_via(_pk_ca);
+    _pk_rng = 0x2468ACE1;
+    _pk_eof = 0;
+    _pk_sc_rd = 0;
+    _pk_cs_next_len = 0;
+    var c = tls_native_new_client_in(_pk_ca, 0, 0);
+    tls_native_set_verify(c, TLS_VERIFY_NONE);      # the CertificateVerify is still checked
+    if (v12 == 1) { tls_native_set_version_range(c, TLS_VERSION_1_2, TLS_VERSION_1_2); }
+    var rc = tls_native_connect(c, PK_CLIENT);
+    _pk_obs[0] = rc;
+    _pk_obs[1] = 0 - 99;
+    if (rc == TLS_OK) {
+        tls_native_write(c, "ping", 4);
+        var b[64];
+        store64(&b, 0);
+        var n = tls_native_read(c, &b, 64);
+        _pk_obs[1] = n;
+        if (n == 4) {
+            if (memeq(&b, "pong", 4) != 1) { _pk_obs[1] = 0 - 98; }
+        }
+    }
+    _pk_c_eof = _pk_eof;
+    var t = _pk_cs;
+    _pk_cs = _pk_cs_next;
+    _pk_cs_next = t;
+    _pk_cs_len = _pk_cs_next_len;
+    return 0;
+}
+
+# One server run: an accept through lib/tls.cyr. Returns the global-heap bytes it added.
+fn _pk_server_run(cert, cert_n, key, key_n): i64 {
+    var u0 = alloc_used();
+    reset_via(_pk_arena);
+    _pk_rng = 0x13579BDF;
+    _pk_eof = 0;
+    _pk_cs_rd = 0;
+    _pk_sc_next_len = 0;
+    var creds: i64[4];
+    store64(&creds, cert);
+    store64(&creds + 8, cert_n);
+    store64(&creds + 16, key);
+    store64(&creds + 24, key_n);
+    var sh = tls_accept_alloc_in(_pk_arena, PK_SERVER, &creds, 0, 0);
+    _pk_obs[2] = 0 - 999;
+    _pk_obs[3] = 0 - 99;
+    if (sh != 0) {
+        var nctx = load64(sh);
+        if (tls_accept_complete(sh) == 1) {
+            _pk_obs[2] = TLS_OK;
+            var b[64];
+            store64(&b, 0);
+            var n = tls_read(sh, &b, 64);
+            _pk_obs[3] = n;
+            if (n == 4) {
+                if (memeq(&b, "ping", 4) == 1) { tls_write(sh, "pong", 4); }
+                else { _pk_obs[3] = 0 - 98; }
+            }
+        } else {
+            var le = tls_native_get_last_error(nctx);
+            if (le == 0) { le = 0 - 777; }
+            _pk_obs[2] = le;
+        }
+    }
+    var g = alloc_used() - u0;
+    _pk_s_eof = _pk_eof;
+    var t = _pk_sc;
+    _pk_sc = _pk_sc_next;
+    _pk_sc_next = t;
+    _pk_sc_len = _pk_sc_next_len;
+    return g;
+}
+
+# Replay one handshake to its fixed point: each round runs the client from scratch against the
+# server's last log, then the server against the client's.
+fn _pk_row(v12, cert, cert_n, key, key_n): i64 {
+    _pk_cs_len = 0;
+    _pk_sc_len = 0;
+    _pk_overflow = 0;
+    var pc = 0 - 1;
+    var ps = 0 - 1;
+    var r = 0;
+    var grow = 0;
+    var settled = 0;
+    while (settled == 0) {
+        if (r >= PK_ROUNDS_MAX) { settled = 2; }
+        if (settled == 0) {
+            _pk_client_run(v12);
+            var g = _pk_server_run(cert, cert_n, key, key_n);
+            if (r > 0) { grow = grow + g; }               # the first run may fill one-time state
+            r = r + 1;
+            if (_pk_c_eof == 0) {
+                if (_pk_s_eof == 0) { settled = 1; }
+            }
+            if (_pk_cs_len == pc) {
+                if (_pk_sc_len == ps) { settled = 1; }
+            }
+            pc = _pk_cs_len;
+            ps = _pk_sc_len;
+        }
+    }
+    _pk_obs[4] = grow;
+    _pk_obs[5] = 0;
+    if (settled == 1) { _pk_obs[5] = r; }
+    assert(_pk_obs[5] > 1, "  the replay settled after more than one round");
+    assert_eq(_pk_overflow, 0, "  no log overflowed");
+    return 0;
+}
+
+fn _pk_hs(label, v12, cert, cert_n, key, key_n): i64 {
+    println(label);
+    _pk_accept(cert, cert_n, key, key_n);               # a warm cache, as in a running server
+    _pk_row(v12, cert, cert_n, key, key_n);
+    assert_eq(_pk_obs[2], TLS_OK, "  the server's handshake completes");
+    assert_eq(_pk_obs[0], TLS_OK, "  the client's handshake completes (it checked the CertificateVerify)");
+    assert_eq(_pk_obs[3], 4, "  the server reads the client's \"ping\"");
+    assert_eq(_pk_obs[1], 4, "  the client reads the server's \"pong\"");
+    assert_eq(_pk_obs[4], 0, "  0 B of global heap per server run");
+    return 0;
+}
+
+fn test_handshakes(): i64 {
+    test_group("6.6.16 — PEM and DER keys handshake, at 0 B of global heap per accept");
+    _pk_hs("  Ed25519 PKCS#8 PEM, TLS 1.3", 0, _pk_ed_crt, 322, _pk_ed_pem, 119);
+    _pk_hs("  Ed25519 PKCS#8 DER, TLS 1.3", 0, _pk_ed_crt, 322, _pk_ed_der, 48);
+    _pk_hs("  Ed25519 PKCS#8 PEM, TLS 1.2", 1, _pk_ed_crt, 322, _pk_ed_pem, 119);
+    _pk_hs("  P-256 PKCS#8 PEM, TLS 1.3", 0, _pk_p256_crt, 387, _pk_p256_p8_pem, 241);
+    _pk_hs("  P-256 SEC1 PEM, TLS 1.3", 0, _pk_p256_crt, 387, _pk_p256_sec1_pem, 227);
+    _pk_hs("  P-256 PKCS#8 DER, TLS 1.3", 0, _pk_p256_crt, 387, _pk_p256_p8, 138);
+    _pk_hs("  P-256 SEC1 DER, TLS 1.3", 0, _pk_p256_crt, 387, _pk_p256_sec1, 121);
+    _pk_hs("  P-256 SEC1 PEM, TLS 1.2", 1, _pk_p256_crt, 387, _pk_p256_sec1_pem, 227);
+    _pk_hs("  P-384 PKCS#8 PEM, TLS 1.3", 0, _pk_p384_crt, 448, _pk_p384_p8_pem, 306);
+    _pk_hs("  P-384 SEC1 PEM, TLS 1.3", 0, _pk_p384_crt, 448, _pk_p384_sec1_pem, 288);
+    _pk_hs("  P-384 PKCS#8 DER, TLS 1.3", 0, _pk_p384_crt, 448, _pk_p384_p8, 185);
+    _pk_hs("  P-384 SEC1 DER, TLS 1.3", 0, _pk_p384_crt, 448, _pk_p384_sec1, 167);
+    _pk_hs("  P-384 PKCS#8 PEM, TLS 1.2", 1, _pk_p384_crt, 448, _pk_p384_p8_pem, 306);
+
+    println("  a key that is not the certificate's (an Ed25519 certificate, another Ed25519 key)");
+    var other = _pk_ed_pem_of(1);
+    _pk_row(0, _pk_ed_crt, 322, other, 119);
+    assert_eq(_pk_obs[0], TLS_ERR_AUTHN, "  the client refuses the server's CertificateVerify");
+    return 0;
+}
+
+# ---- threads ----
+var _pk_go = 0;
+var _pk_done = 0;
+var _pk_bad = 0;
+var _pk_shared = 0;         # the key every racer loads
+var _pk_shared_seed = 0;
+var _pk_own: i64[8];        # each racer's own key
+var _pk_own_seed: i64[8];
+var _pk_racer_arena: i64[8];
+
+fn _pk_racer(i): i64 {
+    var t0 = clock_now_ms();
+    while (atomic_load(&_pk_go) == 0) {
+        if (clock_now_ms() - t0 > PK_DEADLINE_MS) { break; }
+    }
+    var a = _pk_racer_arena[i];
+    var own = _pk_own[i];
+    var own_seed = _pk_own_seed[i];
+    var k = 0;
+    while (k < PK_RACE_LOADS) {
+        var s = _pk_accept_in(a, _pk_ed_crt, 322, _pk_shared, 119);
+        if (_pk_holds(s, SIG_PRIVKEY_ED25519, _pk_shared_seed, 32) != 1) { atomic_fetch_add(&_pk_bad, 1); }
+        s = _pk_accept_in(a, _pk_ed_crt, 322, own, 119);
+        if (_pk_holds(s, SIG_PRIVKEY_ED25519, own_seed, 32) != 1) { atomic_fetch_add(&_pk_bad, 1); }
+        k = k + 1;
+    }
+    atomic_fetch_add(&_pk_done, 1);
+    return 0;
+}
+
+fn test_threads(): i64 {
+    test_group("6.6.16 — loaders racing on new keys each get their key, and then the cache");
+    if (THREADS_CONCURRENT == 1) { println("  (real threads)"); }
+    else { println("  (THREADS_CONCURRENT is 0 here: the racers may run in turn; the rows hold either way)"); }
+    _pk_shared = _pk_ed_pem_of(10);
+    _pk_shared_seed = _pk_ed_seed_of(10);
+    var i = 0;
+    while (i < PK_RACERS) {
+        _pk_own[i] = _pk_ed_pem_of(11 + i);
+        _pk_own_seed[i] = _pk_ed_seed_of(11 + i);
+        _pk_racer_arena[i] = arena_allocator(1048576);
+        i = i + 1;
+    }
+    _pk_go = 0;
+    _pk_done = 0;
+    _pk_bad = 0;
+    # Where bodies run inline, the start flag must already be up or each would wait out the deadline.
+    if (THREADS_CONCURRENT != 1) { atomic_store(&_pk_go, 1); }
+    var ts: i64[8];
+    i = 0;
+    while (i < PK_RACERS) {
+        ts[i] = thread_create(&_pk_racer, i);
+        i = i + 1;
+    }
+    atomic_store(&_pk_go, 1);
+    var t0 = clock_now_ms();
+    while (atomic_load(&_pk_done) < PK_RACERS) {
+        if (clock_now_ms() - t0 > PK_DEADLINE_MS) { break; }
+        sleep_ms(1);
+    }
+    assert_eq(atomic_load(&_pk_done), PK_RACERS, "every racer finished");
+    if (atomic_load(&_pk_done) == PK_RACERS) {
+        i = 0;
+        while (i < PK_RACERS) {
+            thread_join(ts[i]);
+            i = i + 1;
+        }
+    }
+    assert_eq(atomic_load(&_pk_bad), 0, "every one of 400 loads held its own key");
+    # One load each from here: a key whose every racing load found the claim taken is cached now.
+    _pk_accept(_pk_ed_crt, 322, _pk_shared, 119);
+    i = 0;
+    while (i < PK_RACERS) {
+        _pk_accept(_pk_ed_crt, 322, _pk_own[i], 119);
+        i = i + 1;
+    }
+    var u0 = alloc_used();
+    var ok = _pk_holds(_pk_accept(_pk_ed_crt, 322, _pk_shared, 119), SIG_PRIVKEY_ED25519, _pk_shared_seed, 32);
+    i = 0;
+    while (i < PK_RACERS) {
+        ok = ok + _pk_holds(_pk_accept(_pk_ed_crt, 322, _pk_own[i], 119), SIG_PRIVKEY_ED25519, _pk_own_seed[i], 32);
+        i = i + 1;
+    }
+    assert_eq(alloc_used() - u0, 0, "afterwards all nine keys are served from the cache: 0 B");
+    assert_eq(ok, 9, "…holding the right keys");
+    return 0;
+}
+
+fn test_capacity(): i64 {
+    test_group("6.6.16 — past the cache's capacity, keys still load");
+    var first = _pk_ed_pem_of(100);
+    var ok = 0;
+    var k = 100;
+    while (k < 140) {
+        var sk = _pk_accept(_pk_ed_crt, 322, _pk_ed_pem_of(k), 119);
+        ok = ok + _pk_holds(sk, SIG_PRIVKEY_ED25519, _pk_ed_seed_of(k), 32);
+        k = k + 1;
+    }
+    assert_eq(ok, 40, "40 more distinct keys each load their own key");
+    var u0 = alloc_used();
+    var s = _pk_accept(_pk_ed_crt, 322, first, 119);
+    assert_eq(alloc_used() - u0, 0, "the first of them, cached before the cache filled, still costs 0 B");
+    assert_eq(_pk_holds(s, SIG_PRIVKEY_ED25519, _pk_ed_seed_of(100), 32), 1, "…and holds its key");
+    var last = _pk_accept(_pk_ed_crt, 322, _pk_ed_pem_of(139), 119);
+    assert_eq(_pk_holds(last, SIG_PRIVKEY_ED25519, _pk_ed_seed_of(139), 32), 1,
+      "the last, past the capacity, loads its key again");
+    return 0;
+}
+
+fn _pk_all(): i64 {
+    alloc_init();
+    _pk_fixtures();
+    _pk_arena = arena_allocator(2097152);
+    _pk_ca = arena_allocator(2097152);
+    _pk_cs = alloc(PK_LOG_CAP);
+    _pk_cs_next = alloc(PK_LOG_CAP);
+    _pk_sc = alloc(PK_LOG_CAP);
+    _pk_sc_next = alloc(PK_LOG_CAP);
+    tls_native_set_transport(&_pk_read, &_pk_write, &_pk_now);
+    tls_native_set_entropy(&_pk_rand);
+    test_filed_shape();
+    test_key_forms();
+    test_refusals();
+    test_keyed_on_text();
+    test_handshakes();
+    test_threads();
+    test_capacity();
+    tls_native_set_entropy(0);
+    tls_native_set_transport(0, 0, 0);
+    return 0;
+}
+
+_pk_all();
+var r = assert_summary();
