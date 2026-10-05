@@ -96,6 +96,12 @@ var ENVP_COUNT = 0;
 # code is reachable from the suite at all. The name is kept because every call site means "not
 # the caller's environment"; see the construction below for why.
 var EMPTY_ENVP = 0;
+# 6.6.17: the .tcyr phase's environment — EMPTY_ENVP's entry plus HOME=<a throwaway dir in this
+# run's private scratch dir> holding a COPY of the fdlopen helper, so the libssl groups run
+# instead of SKIPping, and no test reaches the invoking $HOME. Built on first use
+# (`_tcyr_envp`, selfhost.cyr); _TCYR_HELPER is the helper it copied, 0 when there was none.
+var _TCYR_ENVP = 0;
+var _TCYR_HELPER = 0;
 
 # CO-02 (v6.1.35): the exit code of the most recent `_exec_capture_clean`,
 # captured via regression_exec_capture_status. Gates read this so a tcyr that

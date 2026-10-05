@@ -1060,6 +1060,56 @@ fn _heapmap_gate(): i64 {
     return 0;
 }
 
+# ⛔ 6.6.17 — THE .tcyr CHILDREN GET A THROWAWAY $HOME THAT HOLDS THE fdlopen HELPER.
+# They used to run with EMPTY_ENVP alone — no HOME — and lib/fdlopen.cyr finds its helper only
+# at $HOME/.cyrius/dlopen-helper, so tls_available() under the libssl backend read 0 and the
+# libssl groups of tls_libssl_read_errors / _session_cache / _worker_thread (and the libssl leg
+# of four more) SKIPped on every check.sh and release-gate run: measured 6 / 27 / 3 assertions
+# there against 348 / 60 / 83 with the helper. The children still never see the invoking
+# environment: HOME is <this run's private dir>/tcyr_home, removed with that dir, and the helper
+# in it is a COPY of the one the toolchain under test would use — $CYRIUS_HOME/dlopen-helper
+# (check.sh's staged home builds it from programs/dlopen-helper.c), else the invoking
+# $HOME/.cyrius/dlopen-helper, which is read and never written.
+# Gate: tests/gates/toolchain/check_tcyr_home_has_helper.sh. CHANGELOG [6.6.17]
+fn _tcyr_helper_src(): i64 {
+    var ch = getenv("CYRIUS_HOME");
+    if (ch != 0) {
+        if (strlen(ch) > 0) {
+            var p1 = _cat2(ch, "/dlopen-helper");
+            if (file_exists(p1) == 1) { return p1; }
+        }
+    }
+    var h = getenv("HOME");
+    if (h != 0) {
+        if (strlen(h) > 0) {
+            var p2 = _cat2(h, "/.cyrius/dlopen-helper");
+            if (file_exists(p2) == 1) { return p2; }
+        }
+    }
+    return 0;
+}
+
+fn _tcyr_envp(): i64 {
+    if (_TCYR_ENVP != 0) { return _TCYR_ENVP; }
+    var home = _cat2(_run_tmp(), "/tcyr_home");
+    sys_mkdir(home, 448);
+    var dot = _cat2(home, "/.cyrius");
+    sys_mkdir(dot, 448);
+    var src = _tcyr_helper_src();
+    if (src != 0) {
+        if (_exec_in_dir3("/", "/bin/cp", src, _cat2(dot, "/dlopen-helper"), 0, 0) == 0) {
+            _TCYR_HELPER = src;
+        }
+    }
+    var envp = alloc(24);
+    if (envp == 0) { return EMPTY_ENVP; }
+    store64(envp, "CYRIUS_TEST_ENV=1");
+    store64(envp + 8, _cat2("HOME=", home));
+    store64(envp + 16, 0);
+    _TCYR_ENVP = envp;
+    return envp;
+}
+
 fn _tcyr_compile_and_run(src_path): i64 {
     var bin_path = _tmp_path("audit_t_");
     var rc1 = _self_host_pipe(src_path, CC_PATH, bin_path);
@@ -1082,7 +1132,7 @@ fn _tcyr_compile_and_run(src_path): i64 {
     # bug surfaces here too.
     var out_cap = 65536;
     var out_buf = alloc(out_cap);
-    var out_n = _exec_capture_clean(bin_path, out_buf, out_cap);
+    var out_n = _exec_capture_envp(bin_path, out_buf, out_cap, _tcyr_envp());
     sys_unlink(bin_path);
 
     # ⛔ v6.6.6: SAY WHEN A TEST NEVER FINISHED. `_exec_capture_clean` is now deadlined
@@ -1147,6 +1197,14 @@ fn _testsuite_gate(): i64 {
     # the gate still printed PASS over a shrunken count.
     var files = find_files(dir_str, str_from(".tcyr"));
     var prefix_len = str_len(dir_str) + 1;
+    _tcyr_envp();
+    if (_TCYR_HELPER != 0) {
+        _p("  (each test runs with a throwaway HOME holding a copy of ");
+        _p(_TCYR_HELPER);
+        println(", so the libssl groups run)");
+    } else {
+        println("  note: no dlopen-helper at $CYRIUS_HOME/dlopen-helper or $HOME/.cyrius/dlopen-helper — the libssl groups SKIP (each test still runs with a throwaway HOME)");
+    }
     var fail_count = 0;
     var total = 0;
     var i = 0;

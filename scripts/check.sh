@@ -923,6 +923,10 @@ _chk_gate "$ROOT/tests/gates/toolchain/tcyr_epilogue_shape.sh"
 # before assert_summary (its FAIL rows go to stderr, never captured) and exited 0, or printed
 # `0 passed, 0 failed`, read PASS. Now: the LAST `N passed, M failed` line, N >= 1, M == 0, ec 0.
 _chk_gate "$ROOT/tests/gates/toolchain/check_driver_requires_summary.sh"
+# 6.6.17 (g2): the .tcyr phase hands each test a throwaway HOME holding a copy of the fdlopen
+# helper. With no HOME at all the libssl groups of tls_libssl_read_errors / _session_cache /
+# _worker_thread SKIPped on every check.sh run; the invoking HOME is still never reached.
+_chk_gate "$ROOT/tests/gates/toolchain/check_tcyr_home_has_helper.sh"
 # 6.6.12 B12 (T4): a .tcyr whose data file is missing fails WITH A COUNT, never a signal.
 # text/unicode_normconf.tcyr run outside the repo root printed its FAIL, then stored its
 # terminator at corpus + (-ENOENT) — 2 bytes before a fresh mapping — and died of SIGSEGV
