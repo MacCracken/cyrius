@@ -2971,6 +2971,15 @@ alloc(16);` ahead of the first top-level statement reads and writes `G.v.x` and 
 block was typed as the base `W1`, where `v: T` is an i64 — `G.v.x` failed to parse and
 `w1s(G)` read the wrong storage). A global declared after a statement already did.
 
+**Type arguments nest (6.6.17)** wherever a type is written — `var x: Vec<Box<i64>>`,
+`var b: Box<Vec<i64>>`, `var z: Box<Box<i32>>`, a parameter, a global, a `Vec<Box<i64>>`
+field, `idv<Vec<i64>>(x)`, and a multi-value return element `(Box<i64>, i64)` — with the
+lexer's `>>` closing two lists. `sizeof(T<..>)` is the size of the instance the same
+annotation declares — what `var b: Box<i32>` occupies (4 for the `Box` above, 16 for
+`Pair<i64>`); `sizeof(Vec<i64>)` is a handle's 8. Before 6.6.17 `Vec<Box<i64>>` ran to the end of the file
+(`expected '=', got end of file`), `Box<Vec<i64>>` and a `Vec<Box<..>>` field were refused,
+and `sizeof(Box<i64>)` and `(Box<i64>, i64)` were `expected ')', got '<'`.
+
 **Status & limits (6.6.10).** Generic functions and structs are supported over
 i64, narrow scalars (`i32`/`i16`/`i8`), and struct type arguments, inferred or
 explicit, with any body (a small straight-line body is inlined at its call sites;

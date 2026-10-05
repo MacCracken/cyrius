@@ -2541,8 +2541,7 @@ fn _EVAL_CONST_ATOM(S): i64 {
             # 6.6.16 (C8): the one resolver, as the expression's sizeof — and u128 (a keyword token,
             # it was `expected ')'` here). An unknown name is refused naming it. CHANGELOG [6.6.16]
             if (PEEKT(S) == 2 || PEEKT(S) == 105) {
-                szval = _tn_sizeof(S, GTI(S), 1);
-                STI(S, GTI(S) + 1);
+                szval = _sizeof_type(S, 1);   # 6.6.17: + `<..>` (_sizeof_type)
             }
             if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
             STI(S, GTI(S) + 1);

@@ -456,6 +456,22 @@ fn _tn_sizeof(S, ti, asrt): i64 {
     return 0;
 }
 
+# ⛔ 6.6.17 — `sizeof(T<..>)` did not parse (`expected ')', got '<'`). Cursor on T: its size, T
+# and any `<..>` consumed. A generic struct with arguments is the INSTANCE `var b: Box<i32>`
+# declares (`_gen_ann_sid`), so `sizeof(Box<i32>)` is what that variable occupies; any other
+# `T<..>` (`Vec<i64>`, a handle) is T's own size. `asrt` as _tn_sizeof's.
+fn _sizeof_type(S, asrt): i64 {
+    var ti = GTI(S);
+    var sz = _tn_sizeof(S, ti, asrt);
+    STI(S, ti + 1);
+    if (PEEKT(S) != 19) { return sz; }
+    var sid = 0;
+    if (TOKTYP(S, ti) == 2) { sid = FINDSTRUCT(S, TOKVAL(S, ti)); }
+    var g = _gen_ann_sid(S, sid);
+    if (g > 0) { if (g != sid) { sz = STRUCTSZ(S, g - 1); } }
+    return sz;
+}
+
 # A parameter's type name at the cursor (PARSE_FN_DEF; `ptc` its _classify_param_type class).
 # Str, cstring, Result, Option, Tagged and the vector names stay accepted BY NAME (`ptc != 0`):
 # `s: Str` in a unit without lib/str.cyr is the by-name handle the param ABI has always taken.
@@ -1319,6 +1335,25 @@ fn _vec_elem_code(S, si, fnoff, etoff): i64 {
     return 0;
 }
 
+# A `Vec<T>` field's element, cursor on T: its code (`_vec_elem_code`, which refuses an unknown
+# name), T and the `>` closing `Vec<` consumed. 6.6.17: T may take type arguments of its own —
+# `items: Vec<Box<i64>>` was `expected '>', got '<'`. They are skipped, not instantiated: this
+# runs inside a struct definition, whose fields must stay contiguous in the field pool, and the
+# element code is read only by the derive codecs. The lexer's `>>` closes T's list AND the
+# `Vec<` one, which `_ta_pending_gt` carries.
+fn _vec_field_elem(S, si, fnoff): i64 {
+    if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
+    var etoff = PEEKV(S);
+    STI(S, GTI(S) + 1);                     # consume the element type name
+    var elemc = _vec_elem_code(S, si, fnoff, etoff);
+    _ta_pending_gt = 0;
+    if (PEEKT(S) == 19) { _ta_pending_gt = _skip_targ_list(S); }
+    if (_ta_pending_gt > 0) { _ta_pending_gt = _ta_pending_gt - 1; return elemc; }
+    if (PEEKT(S) != 20) { ERR_EXPECT(S, 20); }
+    STI(S, GTI(S) + 1);                     # consume >
+    return elemc;
+}
+
 fn PARSE_STRUCT_DEF(S): i64 {
     var _sdefstart = GTI(S);   # v6.3.10: the `struct` token, for generic instance re-emit
     STI(S, GTI(S) + 1);  # consume STRUCT
@@ -1384,12 +1419,7 @@ fn PARSE_STRUCT_DEF(S): i64 {
                     if (ftname & 0xFFFFFFFF == 0x636556) {
                         if (PEEKT(S) == 19) {
                             STI(S, GTI(S) + 1);   # consume <
-                            if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
-                            var etoff = PEEKV(S);
-                            STI(S, GTI(S) + 1);   # consume element type name
-                            var elemc = _vec_elem_code(S, si, fnoff, etoff);   # 6.6.10: refuses an unknown name
-                            if (PEEKT(S) != 20) { ERR_EXPECT(S, 20); }
-                            STI(S, GTI(S) + 1);   # consume >
+                            var elemc = _vec_field_elem(S, si, fnoff);   # 6.6.17: + a nested `<..>`
                             var _vsent = MKVEC(S, elemc);
                             ADDFIELDTYPED(S, si, fnoff, _vsent);
                         } else {
@@ -1458,12 +1488,7 @@ fn PARSE_UNION_DEF(S): i64 {
                 if (ftname & 0xFFFFFFFF == 0x636556) {
                     if (PEEKT(S) == 19) {
                         STI(S, GTI(S) + 1);   # consume <
-                        if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
-                        var etoff = PEEKV(S);
-                        STI(S, GTI(S) + 1);   # consume element type name
-                        var elemc = _vec_elem_code(S, si, fnoff, etoff);   # 6.6.10: refuses an unknown name
-                        if (PEEKT(S) != 20) { ERR_EXPECT(S, 20); }
-                        STI(S, GTI(S) + 1);   # consume >
+                        var elemc = _vec_field_elem(S, si, fnoff);   # 6.6.17: + a nested `<..>`
                         var _vsent = MKVEC(S, elemc);
                         ADDFIELDTYPED(S, si, fnoff, _vsent);
                     } else {
