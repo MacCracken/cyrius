@@ -226,10 +226,10 @@ fn _rg_supervise(path, argvp, envp, deadline_ms, label, knob): i64 {
 # `cyrius_check --run-gate <script> [args]`: /bin/sh <script> [args] under the supervisor,
 # bounded by CYRIUS_CHECK_LONG_TIMEOUT. argv(1) is "--run-gate".
 #
-# ⛔ A GATE RUNS FROM `/`, NEVER FROM THE TREE. 22 gates derived their root from $0 and never
-# cd'd there, then compiled `src/...` / `lib/...` with raw cycc (whose includes resolve
-# against the CWD) or read `src/main.cyr` relative to it — green only because check.sh and
-# the driver always ran from the root, red from anywhere else. The supervisor now chdirs to
+# ⛔ A GATE RUNS FROM `/`, NEVER FROM THE TREE. Every gate must cd to the root it derives
+# from $0. Gates that derived it and never cd'd there compiled `src/...` / `lib/...` with raw
+# cycc (whose includes resolve against the CWD) or read `src/main.cyr` relative to it — green
+# only because check.sh and the driver always ran from the root, red from anywhere else. The supervisor now chdirs to
 # `/` before it starts the gate, so every check.sh run runs every gate from a foreign cwd and
 # the class cannot come back silently; `/` is never the tree and is not writable by a normal
 # user, so a cwd-relative write fails loudly too. A relative script path is refused (it would
