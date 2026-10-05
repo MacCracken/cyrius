@@ -1735,7 +1735,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
                             if (AGG_NSLOTS(S, lt) > 1) { SESVAR(S, 0 - 2 - li); }
                         } } }
                 EFLLOAD(S, li);
-                if (lt == 0) { _UFV_L(S, li); }   # 6.6.10: an untyped float variable (kind 3)
+                if (lt == 0) { _sl_load_marks(S, li); }   # 6.6.10 the float flag, 6.6.16 the *iN mark
                 return 0;
             }
         }

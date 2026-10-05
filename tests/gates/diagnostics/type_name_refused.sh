@@ -24,9 +24,13 @@
 #   axis 2  ANTI-VACUOUS: every name of the vocabulary compiles at every site that takes it, a
 #           `Str` param in a unit without lib/str.cyr (the by-name handle), enums declared on
 #           either side, a fn's type parameters (first, second and THIRD, in the default build and
-#           CYRIUS_MONOMORPH=0), a struct declared below its use, and the prefix-named struct.
+#           CYRIUS_MONOMORPH=0), a struct declared below its use, the prefix-named struct, and
+#           `Vec` / `Vec<T>` (the struct-field vocabulary's handle) at every annotation site.
 #   axis 3  `--syntax-only` (what `cyrius lint` runs) resolves nothing: every axis-1 shape exits 0
-#           with no `unknown type` line.
+#           with no `unknown type` line — a refused return type's `<..>` included.
+#   axis 4  a local `*i8` / `*i16` / `*i32` (an 8-byte slot since 6.6.16) is still a POINTER to the
+#           declaration's `assigning non-pointer to typed pointer` check: copied, stepped, or
+#           copied across widths into a typed pointer it draws no warning; an integer still does.
 #
 # MUTATION LEDGER (6.6.16, built from scratch copies of src/, measured):
 #   the slot-open compiler                    -> axis 1 RED on 35 of its 38 rows (all but the
@@ -42,6 +46,15 @@
 #   _tn_sizeof's `#assert` arm not latching   -> as_unknown / as_prefix RED (`#assert failed` too)
 #   _tn_param_check ignoring `ptc`            -> str_param RED (`s: Str` without lib/str.cyr)
 #   _tn_ann refusing before an array's `[`    -> arr_unknown RED (2 errors for one name)
+# and on the srcb-1 review build (02121475, the first cut of this bite), measured:
+#   no `Vec` in _tn_scalar                    -> v_local / v_global / v_late / v_ptr / v_slice /
+#                                                v_param / v_sizeof / v_mret / vec_forms RED
+#                                                (`unknown type 'Vec' ...`), loc_vec_hint RED
+#   _tn_ret_refuse not skipping the `<..>`    -> ret_vec_targs RED (3 errors: `expected '{', got
+#                                                '<'` and `undefined variable 'i64'` after it),
+#                                                and its --syntax-only row RED (rc 1)
+#   _sl_load_marks without its SPSC(S, 1)     -> ptr_copy_nowarn RED (4 warnings: every copy and
+#                                                step of an 8-byte *iN slot read as a non-pointer)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || { echo "FAIL: type_name_refused: cannot cd to $ROOT"; exit 1; }
@@ -119,6 +132,10 @@ refused field_unknown 'struct S { a: Nonexist; }\nsyscall(60, 0);\n' "unknown ty
 refused field_prefix  'struct S { a: i8x; }\nsyscall(60, 0);\n' "unknown type 'i8x' for struct field 'a'"
 refused arr_unknown   "${FN}    var a: Nonexist[3];\n    return 0;\n}\nsyscall(60, f());\n" "unknown array element type 'Nonexist'"
 refused dz_late_struct 'var g: Late = 0;\nstruct Late { a; b; }\nsyscall(60, 0);\n' "type 'Late' is declared after its use"
+refused loc_vec_hint  "${FN}    var a: Vecx = 0;\n    return a;\n}\nsyscall(60, f());\n" "note: 'Vecx' is not 'Vec' - a type name must match whole"
+# A known type that is no return type, WITH type arguments: one error — the `<i64>` is skipped
+# with the name, not parsed as the fn body.
+refused ret_vec_targs 'fn f(): Vec<i64> { return 3; }\nsyscall(60, f());\n' "type 'Vec' cannot be a fn return type"
 # A generic fn's body is parsed for its base and for each instance: one report per name, not three.
 refused gen_dedupe    'fn g<T>(a: T): i64 {\n    var x: Nope = 1;\n    var y: Nope2[2];\n    return 0;\n}\nfn h(): i64 { var a = g<i32>(1); var b = g<i64>(2); return a + b + g(3); }\nsyscall(60, h());\n' "unknown type 'Nope' for variable 'x'" 2
 # Each bad name is reported, and the declaration parses on: four names, four errors, no cascade.
@@ -130,7 +147,7 @@ refused one_expression "${FN}    return sizeof(Nope1) + sizeof(Nope2);\n}\nsysca
 
 echo "axis 2 - every name of the vocabulary still compiles where it is taken:"
 PRE='enum Color { RED = 1; BLUE = 2; }\nstruct Pt { x; y; }\nstruct u8pair { a; b; }\n'
-SCALARS="i8 i16 i32 i64 u8 u16 u32 u64 f32 f64 bool cstring Result Option Tagged Color Pt u8pair"
+SCALARS="i8 i16 i32 i64 u8 u16 u32 u64 f32 f64 bool cstring Result Option Tagged Vec Color Pt u8pair"
 VECS="f64v2 f64v4 f32v4 f32v8 i8v16 u8v16 i16v8 u16v8 i32v4 u32v4 i64v2 u64v2"
 loc="" glb="" pp="" ptr="" gptr="" sl="" slg="" par="" szs="" fld="" mret=""
 n=0
@@ -165,15 +182,19 @@ runs v_late    "${PRE}syscall(39);\n${pp}syscall(60, 0);\n" 0
 runs v_ptr     "${PRE}${gptr}fn f(): i64 {\n${ptr}    return 0;\n}\nsyscall(60, f());\n" 0
 runs v_slice   "${PRE}fn f(): i64 {\n${sl}${slg}    return 0;\n}\nsyscall(60, f());\n" 0
 runs v_param   "${PRE}${par}syscall(60, 0);\n" 0
-# u128 16 + i8..u64 30 + f32 4 + f64 8 + six 8-byte names 48 + Pt and u8pair 32 + the vectors
-# 224 (eight of 16, two of 16 and two of 32 among the float ones) = 362
-runs v_sizeof  "${PRE}fn f(): i64 {\n    var k = sizeof(u128);\n${szs}    return k - 362;\n}\nsyscall(60, f());\n" 0
+# u128 16 + i8..u64 30 + f32 4 + f64 8 + seven 8-byte names (Vec among them) 56 + Pt and u8pair
+# 32 + the vectors 224 (eight of 16, two of 16 and two of 32 among the float ones) = 370
+runs v_sizeof  "${PRE}fn f(): i64 {\n    var k = sizeof(u128);\n${szs}    return k - 370;\n}\nsyscall(60, f());\n" 0
 # i8..i64 15 + u8..u64 32 (a full word each) + f32, f64 16 + bool, cstring, Result, Option, Tagged,
-# Color 48 + Pt, u8pair 32 = 143
-runs v_field   "${PRE}struct All {\n${fld}}\nsyscall(60, sizeof(All) - 143);\n" 0
+# Vec, Color 56 + Pt, u8pair 32 = 151
+runs v_field   "${PRE}struct All {\n${fld}}\nsyscall(60, sizeof(All) - 151);\n" 0
 runs v_mret    "${PRE}${mret}var a, b = mr1();\nsyscall(60, a + b);\n" 3
 runs v_returns "${PRE}fn r1(): i8 { return 1; }\nfn r2(): i16 { return 2; }\nfn r3(): i32 { return 3; }\nfn r4(): i64 { return 4; }\nfn r5(): cstring { return 0; }\nfn r6(): f64 { return 0; }\nsyscall(60, r1() + r2() + r3() + r4());\n" 10
 runs str_param 'fn f(s: Str): i64 { return 4; }\nsyscall(60, f(0));\n' 4
+# `Vec<T>`, as the struct-field path has always taken it (and vidya documents `var x: Vec<i64>`
+# and `fn f<T>(v: Vec<T>)`): both global zones, a local, a param bare and generic, `*Vec<i64>`,
+# an array of handles, and sizeof 8. 8 + 1 + 2 = 11.
+runs vec_forms 'var g: Vec<i64> = 0;\nsyscall(39);\nvar h: Vec<i64> = 0;\nfn f(v: Vec): i64 { return 1; }\nfn k<T>(v: Vec<T>): i64 { return 2; }\nfn m(): i64 {\n    var x: Vec<i64> = 0;\n    var p: *Vec<i64> = &x;\n    var a: Vec[2];\n    return sizeof(Vec) + f(x) + k<i64>(x) + g + h;\n}\nsyscall(60, m());\n' 11
 runs enum_sides 'enum Color { RED = 1; BLUE = 2; }\nvar g: Color = 2;\nvar h: Late = 1;\nfn f(c: Color, d: Late): i64 { var l: Color = c; var m: Late = d; return l + m + g + h; }\nenum Late { A = 1; }\nsyscall(60, f(3, 4));\n' 10
 GEN='fn g<T>(a: T): i64 {\n    var y: T = a;\n    var s: [T] = 0;\n    var p: *T = 0;\n    return y + sizeof(T);\n}\nfn h<A, B, C>(a: A, b: B, c: C): i64 {\n    var y: C = c;\n    return y + sizeof(C);\n}\n'
 runs tparams       "${GEN}syscall(60, g(3) + h(1, 2, 4));\n" 23
@@ -183,7 +204,7 @@ runs own_tparam 'struct Box<T> { v: T; n; }\nsyscall(60, sizeof(Box));\n' 16
 runs u8pair_ptr 'struct u8pair { a; b; }\nvar buf: i64[2];\nvar p: u8pair = 0;\nfn f(): i64 {\n    p = &buf;\n    p.a = 300;\n    p.b = 7;\n    if (load64(&buf) != 300) { return 1; }\n    return p.a - 300 + p.b;\n}\nsyscall(60, f());\n' 7
 
 echo "axis 3 - --syntax-only resolves nothing (cyrius lint's pre-pass):"
-for r in loc_unknown dz_prefix pp_unknown lptr_prefix gptr_unknown slice_unknown sliceg_prefix param_prefix ret_unknown mret_unknown sz_prefix as_unknown four_names; do
+for r in loc_unknown dz_prefix pp_unknown lptr_prefix gptr_unknown slice_unknown sliceg_prefix param_prefix ret_unknown ret_vec_targs mret_unknown sz_prefix as_unknown four_names; do
     rows=$((rows + 1))
     rc=0
     "$CC" --syntax-only < "$T/$r.cyr" > "$T/$r.so" 2> "$T/$r.soerr" || rc=$?
@@ -191,7 +212,22 @@ for r in loc_unknown dz_prefix pp_unknown lptr_prefix gptr_unknown slice_unknown
     check "syntax_only $r: no type refusal" no "$(grep -qF "unknown type" "$T/$r.soerr" && echo yes || echo no)"
 done
 
-if [ "$rows" -lt 66 ]; then echo "FAIL: type_name_refused: only $rows rows ran (floor 66)"; exit 1; fi
+echo "axis 4 - a local *i8 / *i16 / *i32 is a pointer to the non-pointer check:"
+# warns <name> <source> <expected count of the warning>
+warns() {
+    rows=$((rows + 1))
+    printf '%b' "$2" > "$T/$1.cyr"
+    rc=0
+    "$CC" < "$T/$1.cyr" > "$T/$1.bin" 2> "$T/$1.err" || rc=$?
+    check "$1: compiles" 0 "$rc"
+    check "$1: non-pointer warnings" "$3" "$(grep -c 'assigning non-pointer to typed pointer' "$T/$1.err" || true)"
+}
+warns ptr_copy_nowarn 'var GB: i64[2];\nfn f(): i64 {\n    var a: *i8 = &GB;\n    var b: *i8 = a;\n    var c: *i16 = &GB;\n    var d: *i16 = c + 1;\n    var e: *i32 = &GB;\n    var e2: *i32 = e - 0;\n    var w: *i16 = b;\n    return 0;\n}\nsyscall(60, f());\n' 0
+# ANTI-VACUOUS: an integer into those same pointers still warns, so the row above is not a
+# warning that was simply switched off.
+warns ptr_int_warns 'fn f(): i64 {\n    var x = 5;\n    var q: *i16 = x;\n    var r: *i8 = x + 1;\n    return 0;\n}\nsyscall(60, f());\n' 2
+
+if [ "$rows" -lt 72 ]; then echo "FAIL: type_name_refused: only $rows rows ran (floor 72)"; exit 1; fi
 if [ "$fails" -ne 0 ]; then echo "FAIL: type_name_refused: $fails check(s) failed"; exit 1; fi
 echo "PASS: type_name_refused ($rows rows)"
 exit 0

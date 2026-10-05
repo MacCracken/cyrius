@@ -3853,29 +3853,22 @@ fn PARSE_VAR(S): i64 {
         } else {
             var _gs_sid = 0;   # v6.3.10: base sid if `: StructName` resolved (for generic-struct instantiation below)
             if (PEEKT(S) == 2) {
-                var lann = PEEKV(S);
-                # v6.3.9 (F-fns): generic `: T` substitution. When a binding is
-                # active and `lann` is a bound type-param, the canonical token
-                # drives scalar_type (<0 → -width) or pscale (>0 → -sid). Inert
-                # when _tp_c0==0 (_ltc stays 0).
-                var _ltc = 0;
-                if (_tp_c0 != 0) { _ltc = _tp_resolve(S, lann); }
-                if (_ltc != 0) { if (_ltc < 0) { scalar_type = 0 - _ltc; } else { pscale = 0 - _ltc; } }
-                else {
-                    # ⛔ 6.6.16 (C8): the one type-name resolver (parse_types.cyr _tn_resolve).
-                    # This ladder matched PREFIXES (`i8x` an i8, `f64zz` an f64, the struct
-                    # `u8pair` a u8 scalar before the struct lookup) and read an unknown name as a
-                    # silent i64. Now: iN/uN set the width (and the sign of i8/i16/i32), f64/f32
-                    # the float tag, a vector its descriptor sentinel, a struct `0 - sid`; bool,
-                    # cstring, an enum, Result/Option/Tagged or a type parameter stay a plain i64;
-                    # any other name is refused by name. CHANGELOG [6.6.16]
-                    var _lc = _tn_ann(S, GTI(S), noff);
-                    scalar_type = _tn_iw(_lc);
-                    scalar_signed = _tn_sgn(_lc);
-                    lfloat = _tn_flt(_lc);
-                    _gs_sid = _tn_sid(_lc);
-                    pscale = _tn_vec(_lc) - _gs_sid;
-                }
+                # ⛔ 6.6.16 (C8): the one type-name resolver (parse_types.cyr _tn_var_ann).
+                # This ladder matched PREFIXES (`i8x` an i8, `f64zz` an f64, the struct
+                # `u8pair` a u8 scalar before the struct lookup) and read an unknown name as a
+                # silent i64; a bound type parameter took its argument's raw code as a WIDTH
+                # (T = f64 a 9-byte word, T = i8 never sign-extended). Now: iN/uN set the width
+                # (and the sign of i8/i16/i32), f64/f32 the float tag, a vector its descriptor
+                # sentinel, a struct `0 - sid` — for a bound T exactly as for its argument
+                # spelled out; bool, cstring, Vec, an enum, Result/Option/Tagged or an unbound
+                # type parameter stay a plain i64; any other name is refused by name.
+                # CHANGELOG [6.6.16]
+                var _lc = _tn_var_ann(S, GTI(S), noff);
+                scalar_type = _tn_iw(_lc);
+                scalar_signed = _tn_sgn(_lc);
+                lfloat = _tn_flt(_lc);
+                _gs_sid = _tn_sid(_lc);
+                pscale = _tn_vec(_lc) - _gs_sid;
             }
             STI(S, GTI(S) + 1);
             # v6.3.10 (generic structs): `var x: Box<conc>` retargets the local to the instance
@@ -4662,7 +4655,8 @@ fn PARSE_VAR(S): i64 {
             # v6.3.35: mark a SIGNED sub-i64 scalar local with a NEGATIVE sentinel in the
             # (otherwise-0-for-scalars) slice-width table — slice-logic only checks `>0`, so
             # the sentinel is invisible to it. The load reads it to sign-extend (movsx).
-            if (scalar_signed == 1) { if (slice_elt_w == 0) { SSLICE_W(S, li, 0 - scalar_type); } }
+            # 6.6.16: and a local `*i8`/`*i16`/`*i32` with its pointer mark (_sl_marks).
+            _sl_marks(S, li, scalar_signed, scalar_type, slice_elt_w, pscale);
             SFLC(S, li + 1);
             SLFI(S, li, ufv);   # 6.6.10: set on EVERY declaration, after SFLC cleared it (see _UFV_L)
         }

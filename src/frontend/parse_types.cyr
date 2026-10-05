@@ -71,7 +71,8 @@ fn _field_scalar_width(name64): i64 {
 #   class 2  unsigned integer   u8 u16 u32 u64           val = its bytes
 #   class 3  float              f32 f64                  val = its bytes
 #   class 4  an 8-byte handle   val: 1 bool, 2 an enum, 3 Result, 4 Option, 5 Tagged, 6 cstring,
-#                               7 a type parameter
+#                               7 a type parameter, 8 Vec (a vec_new() handle; the `<T>` of
+#                               `Vec<T>` is skipped by each site, as it always was)
 #   class 5  a SIMD vector      val = 0 - its descriptor sentinel (f64v2 2093, i8v16 2178, ...)
 #   class 6  a struct or union  val = its sid
 # `u128` is a keyword token, never a name: its sites handle token 105 before the lookup.
@@ -96,6 +97,7 @@ fn _tn_scalar(n): i64 {
     if (lo == 0x00343666) { return _tn_code(3, 8); }                # f64
     if (lo == 0x00323366) { return _tn_code(3, 4); }                # f32
     if ((n & 0xFFFFFFFFFF) == 0x006C6F6F62) { return _tn_code(4, 1); }   # bool
+    if (lo == 0x00636556) { return _tn_code(4, 8); }                # Vec — the field vocabulary's handle
     return 0;
 }
 
@@ -184,7 +186,7 @@ fn _tn_vec(c): i64 {                        # a vector's descriptor sentinel (<=
     return 0;
 }
 # sizeof: an integer or float its width; a handle (bool, an enum, cstring, Result, Option,
-# Tagged, a type parameter's i64 base) 8; a vector 16 / 32; a struct STRUCTSZ. This is exactly
+# Tagged, Vec, a type parameter's i64 base) 8; a vector 16 / 32; a struct STRUCTSZ. This is exactly
 # what `var a: T[N]` reserves per element (_arr_ebytes), so the array is N * sizeof(T).
 fn _tn_bytes(S, c): i64 {
     var k = _tn_class(c);
@@ -216,7 +218,7 @@ fn _tn_refuse(S, ti, tail, noff2): i64 {
     } else {
         ERR_IDENT(S, "unknown type ", noff, tail, noff2);
         _tn_prefix_note(S, noff);
-        PRSTR("  note: a type is i8..i64, u8..u64, u128, f32, f64, bool, cstring, Result, Option, Tagged, an enum, a vector type, or a struct or union (missing include?)\n");
+        PRSTR("  note: a type is i8..i64, u8..u64, u128, f32, f64, bool, cstring, Result, Option, Tagged, Vec, an enum, a vector type, or a struct or union (missing include?)\n");
     }
     STI(S, sv);
     _panic = 0;
@@ -265,6 +267,18 @@ fn _tn_ann(S, ti, vnoff): i64 {
     return c;
 }
 
+# A `var` annotation's code (a local, or a global after the first statement). A type parameter
+# the default build BOUND (`_tp_resolve`: T -> i64 in the base, T -> its argument in an instance)
+# is its argument's code, so `var y: T` / `var a: T[N]` in the `g<f64>` instance are exactly
+# `var y: f64` / `var a: f64[N]` — the accessors give the width, the sign of i8/i16/i32, the
+# float tag, the sid. That arm used to read the binding's raw code as a width: T = f64 (-9) made
+# a 9-byte word (`T[N]` reserved 9 * N while sizeof(T) is 8) and T = i8 never sign-extended.
+fn _tn_var_ann(S, ti, vnoff): i64 {
+    var b = _tp_resolve(S, TOKVAL(S, ti));
+    if (b != 0) { return _tn_from_rc(b); }
+    return _tn_ann(S, ti, vnoff);
+}
+
 # ⛔ 6.6.16 — A LOCAL `*i8` / `*i16` / `*i32` TRUNCATED THE POINTER. Its pointer scale (1/2/4)
 # was written as the local's SLTYPE, and a positive SLTYPE below 8 IS a narrow scalar's width
 # (parse_expr.cyr: "no sub-i64 typed pointers exist, so 1/2/4 are always scalars"): the slot was
@@ -277,6 +291,27 @@ fn _tn_ann(S, ti, vnoff): i64 {
 fn _sl_ptr_type(S, li, ps): i64 {
     if (ps > 0) { if (ps < 8) { SLTYPE(S, li, 0); return 0; } }
     SLTYPE(S, li, ps);
+    return 0;
+}
+# ... but the slot's width is not its pointer-ness: an SLTYPE-0 load leaves the expression scale
+# 0, "not a pointer", so `var q: *i16 = p;` / `= p + 1` warned "assigning non-pointer to typed
+# pointer" about a pointer (the narrow slot had loaded with scale 1, the byte step these three
+# keep). So such a local also carries a MARK, read at its load to set scale 1 again — on an
+# 8-byte load. Scale 1 multiplies by nothing (EPTR_SCALE), so no emitted byte changes; only the
+# two "non-pointer" warnings read it. The mark lives in the slice-width table (SSLICE_W), the
+# same table as the sign mark: slice code reads only a POSITIVE width and the sign mark (-1 / -2
+# / -4) is read only for SLTYPE 1..7, so this SLTYPE-0 slot's `0 - 0x7E00` is seen by nothing
+# else, and it rides the closure local snapshot with the rest of the table.
+fn _sl_marks(S, li, sgn, st, sw, ps): i64 {
+    if (sgn == 1) { if (sw == 0) { SSLICE_W(S, li, 0 - st); } }
+    if (ps > 0) { if (ps < 8) { SSLICE_W(S, li, 0 - 0x7E00); } }
+    return 0;
+}
+# An SLTYPE-0 local was just loaded: its marks — the untyped-float flag (_UFV_L) and the pointer
+# mark above.
+fn _sl_load_marks(S, li): i64 {
+    _UFV_L(S, li);
+    if (GSLICE_W(S, li) == 0 - 0x7E00) { SPSC(S, 1); }
     return 0;
 }
 
@@ -351,8 +386,23 @@ fn _tn_param_check(S, pnoff, fi, ptc): i64 {
 # `unknown type 'X' as a fn return type`; a type that exists but is not a return type (u8..u64,
 # f32, bool, an enum) says so by name — both used to be the one unnamed "fn return type must be
 # struct or ..." line, and its panic resync could cascade. The ACCEPTED set is unchanged.
+# Returns the return code to record: 0 after the refusal, and -8 (an i64) under --syntax-only,
+# which resolves nothing and refuses nothing (see the v6.5.19 note at the call site). Either
+# way a `<..>` after the name (`fn f(): Vec<i64>`) is skipped with it — the cursor is left on its
+# last token, the one the caller steps past — so its type arguments are not parsed as the body
+# (a second and third error, `expected '{', got '<'` and `undefined variable 'i64'`).
 fn _tn_ret_refuse(S): i64 {
     var ti = GTI(S);
+    var rc = 0;
+    if (_syntax_only == 1) { rc = 0 - 8; }
+    else { _tn_ret_report(S, ti); }
+    if (TOKTYP(S, ti + 1) != 19) { return rc; }
+    STI(S, ti + 1);
+    SKIP_GENERICS(S);
+    STI(S, GTI(S) - 1);
+    return rc;
+}
+fn _tn_ret_report(S, ti): i64 {
     var c = _tn_resolve_at(S, ti);
     if (c == 0) {
         _tn_refuse(S, ti, " as a fn return type", 0 - 1);
@@ -1071,7 +1121,9 @@ var _sdef_tp_ti = 0;   # the token after the declaring struct's name (its `<` wh
 # The float kind of an accepted non-struct field type name (0 = plain 8 bytes, 1 = f64, 2 = f32),
 # or -1 when the name is not a field type at all (a vector, or no type). 6.6.16: through the one
 # type-name resolver (_tn_resolve), so `bool` — an 8-byte array element and sizeof 8 — is an
-# 8-byte field too (it was refused here alone). CHANGELOG [6.6.16]
+# 8-byte field too (it was refused here alone), and `Vec` is a `Vec<T>` element (`Vec<Vec>`, a
+# vector of 8-byte handles). A bare `Vec` / `Vec<T>` FIELD never reaches here (PARSE_STRUCT_DEF
+# takes it first). CHANGELOG [6.6.16]
 fn _field_name_kind(S, tnoff): i64 {
     var c = _tn_resolve(S, tnoff);
     if (c == 0) {

@@ -147,15 +147,23 @@ matches the **whole** name:
 | `u128` | 16 | |
 | `f32` / `f64` | 4 / 8 | |
 | `bool`, `cstring`, `Result`, `Option`, `Tagged`, an enum | 8 | an enum may be declared on either side |
+| `Vec` / `Vec<T>` | 8 | a `vec_new()` handle, as a struct field has always taken it |
 | a vector type (`f64v2` … `u64v2`, `f64v4`, `f32v8`) | 16 / 32 | |
 | a struct or union (`Pt`) | its size | a struct **named** like a scalar (`u8pair`) is the struct |
 | a type parameter in scope (`T`) | its argument's size | the `i64` base: 8 |
 
-`var a: T[N]` reserves exactly `N * sizeof(T)`. A name that is not a type is a compile
-error that names it — `unknown type 'Nope' for variable 'a'`, `... for parameter 'x'`,
-`... as a fn return type`, `... in sizeof` — and a name that only *starts* like one gets a
-hint (`'i8x' is not 'i8' - a type name must match whole`). Before 6.6.16 most sites
-matched a prefix (`var a: i8x = 300` was an `i8` and read 44, `var p: u8pair;` was a `u8`)
+`var a: T[N]` reserves exactly `N * sizeof(T)`. Inside a generic fn's instance a type
+parameter IS its argument: in `g<f64>`, `var y: T` is an `f64` (its `+` is a float add) and
+`var a: T[N]` holds `f64`s; in `g<i8>`, `var y: T` sign-extends like any `i8`. (Before
+6.6.16 `T = f64` made a 9-byte untyped word and `T = i8` / `i16` / `i32` loaded
+zero-extended.)
+
+A name that is not a type is a compile error that names it — `unknown type 'Nope' for
+variable 'a'`, `... for parameter 'x'`, `... as a fn return type`, `... in sizeof` — and a
+name that only *starts* like one gets a hint (`'i8x' is not 'i8' - a type name must match
+whole`). A type with no place at a site is refused once, its `<..>` with it
+(`fn f(): Vec<i64>` is one error). Before 6.6.16 most sites matched a prefix
+(`var a: i8x = 300` was an `i8` and read 44, `var p: u8pair;` was a `u8`)
 and read any other name as a silent `i64`; `sizeof(f64)`, `sizeof(u8)` and `sizeof(bool)`
 did not compile. A parameter still takes `Str`, `cstring`, `Result`, `Option` and `Tagged`
 by name, without their `include`. A return type is a struct, `i8`..`i64`, `f64`, a vector

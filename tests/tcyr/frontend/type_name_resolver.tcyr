@@ -10,18 +10,25 @@
 # stores silently landing in a byte. And `bool` was an 8-byte array element but a refused struct
 # field. Every one of those now resolves through parse_types.cyr `_tn_resolve`.
 #
-# Rows: (1) sizeof of every builtin name, the vectors, structs, a union, an enum and a bool-field
-# struct; (2) `#assert sizeof` over the same vocabulary (a failing one stops the build); (3) for
-# every T, the bytes `var a: T[3]` reserves are 3 * sizeof(T) — measured against an ADDRESS-TAKEN
-# sentinel declared just ABOVE the array (a local before it, a global after it), then byte-filled
-# to prove the sentinel survives; (4) prefix-named structs as local and global annotations; (5)
-# a bool field is 8 bytes; (6) sizeof(T) in a generic fn is its argument's size (T = f64 read 9).
+# Rows: (1) sizeof of every builtin name, the vectors, structs, a union, an enum, `Vec` and a
+# bool-field struct; (2) `#assert sizeof` over the same vocabulary (a failing one stops the
+# build); (3) for every T, the bytes `var a: T[3]` reserves are 3 * sizeof(T) — measured against
+# an ADDRESS-TAKEN sentinel declared just ABOVE the array (a local before it, a global after it),
+# then byte-filled to prove the sentinel survives; (4) prefix-named structs as local and global
+# annotations; (5) a bool field is 8 bytes; (6) sizeof(T) in a generic fn is its argument's size
+# (T = f64 read 9); (7) in a generic fn's instance `var a: T[3]` reserves 3 * sizeof(T) and
+# `var y: T` IS its argument — T = f64 an f64 (its `+` a float add), T = i8 / i16 sign-extending.
 #
 # Mutation ledger (6.6.16, measured): the slot-open compiler does not compile this file — `a: bool`
 # is `unknown type 'bool' for struct field 'a'`, `#assert sizeof(f64)` is `#assert: unknown type in
 # sizeof`, `#assert sizeof(u128)` is `expected ')', got u128`, and every expression sizeof of a
 # name outside i8..i64 / u128 / a struct is `sizeof: unknown type`. The prefix-named rows are pinned
 # on the slot-open compiler by tests/gates/diagnostics/type_name_refused.sh (v_local, u8pair_ptr).
+# Group (7), measured on the srcb-1 review build (bound T's raw code read as a width, the arm
+# 6.6.16 first left alone): `T[5]` with T = f64 spanned 56 bytes against T = i64's 40 (9-byte
+# elements) while sizeof(T) was 8, `y + y` with T = f64 was an INTEGER add of 1.5's bits, and
+# T = i8 / i16 / i32 read -1 back zero-extended — 5 rows red. With parse_types.cyr _tn_var_ann's
+# bound arm deleted (T then an unbound, plain-i64 name), 3 rows go red (T = Pt, f64, i32). `Vec` (sizeof 8, `Vec[3]`) did not compile there (`unknown type 'Vec'`).
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 include "lib/str.cyr"
@@ -57,6 +64,7 @@ struct i32one { v; }            # 8 B — a struct, not an i32
 #assert sizeof(i8v16) == 16, "i8v16";
 #assert sizeof(u8pair) == 16, "a struct named like a u8";
 #assert sizeof(BF) == 9, "a bool field";
+#assert sizeof(Vec) == 8, "Vec, a handle";
 
 var SENT = 0x5AC3A55A3CA55AC3;
 
@@ -113,6 +121,7 @@ fn sizes(): i64 {
     assert_eq(sizeof(f64pair), 16, "sizeof(f64pair)");
     assert_eq(sizeof(i32one), 8, "sizeof(i32one)");
     assert_eq(sizeof(BF), 9, "sizeof(struct { a: bool; b: i8; })");
+    assert_eq(sizeof(Vec), 8, "sizeof(Vec) - the struct-field vocabulary's handle");
     return 0;
 }
 
@@ -142,6 +151,7 @@ fn l_p3(): i64 { var s = SENT; var a: P3[3]; return row(&s, &a, 3 * sizeof(P3), 
 fn l_u2(): i64 { var s = SENT; var a: U2[3]; return row(&s, &a, 3 * sizeof(U2), "local U2[3] (a union)"); }
 fn l_bf(): i64 { var s = SENT; var a: BF[3]; return row(&s, &a, 3 * sizeof(BF), "local BF[3] (odd struct)"); }
 fn l_u8pair(): i64 { var s = SENT; var a: u8pair[3]; return row(&s, &a, 3 * sizeof(u8pair), "local u8pair[3]"); }
+fn l_vec(): i64 { var s = SENT; var a: Vec[3]; return row(&s, &a, 3 * sizeof(Vec), "local Vec[3]"); }
 
 # ... and in the leading declaration block (each sentinel directly after its array).
 var d_f64: f64[3];
@@ -166,7 +176,7 @@ fn arrays(): i64 {
     l_i8(); l_i16(); l_i32(); l_i64(); l_u8(); l_u16(); l_u32(); l_u64(); l_u128();
     l_f32(); l_f64(); l_bool(); l_cstr(); l_enum();
     l_f64v2(); l_f64v4(); l_f32v4(); l_f32v8(); l_i8v16(); l_i32v4();
-    l_pt(); l_p3(); l_u2(); l_bf(); l_u8pair();
+    l_pt(); l_p3(); l_u2(); l_bf(); l_u8pair(); l_vec();
     test_group("(3) var a: T[N] reserves N * sizeof(T) (declaration block)");
     row(&d_f64_s, &d_f64, 3 * sizeof(f64), "global f64[3]");
     row(&d_f32_s, &d_f32, 3 * sizeof(f32), "global f32[3]");
@@ -251,9 +261,43 @@ fn generic_sizes(): i64 {
     return 0;
 }
 
+# (7) a BOUND type parameter is its argument, in every `var` annotation of the instance.
+fn ga<T>(p: T, what): i64 { var s = SENT; var a: T[3]; var n = 3 * sizeof(T); return row(&s, &a, n, what); }
+# `row` proves AT LEAST n bytes; an over-reservation passes it. The exact half: f64 and i64 are
+# both 8 bytes, so the f64 instance's array spans exactly what the i64 instance's does (the same
+# frame scheme on every backend, so the comparison needs no layout constant).
+fn gx<T>(p: T): i64 { var s = SENT; var a: T[5]; var g = &s - &a; return g; }
+fn gx_f64(): i64 { var k = gx<f64>(1.5); return k; }
+fn gx_i64(): i64 { var k = gx<i64>(1); return k; }
+fn gdbl<T>(x: T): i64 { var y: T = x; return y + y; }
+fn gback<T>(x: T): i64 { var y: T = x; return y; }
+fn ga_f64(): i64 { var k = ga<f64>(1.5, "generic T[3], T = f64: 24 B (it reserved 27)"); return k; }
+fn ga_i8(): i64 { var k = ga<i8>(1, "generic T[3], T = i8: 3 B"); return k; }
+fn ga_i32(): i64 { var k = ga<i32>(1, "generic T[3], T = i32: 12 B"); return k; }
+fn ga_pt(): i64 { var k = ga<Pt>(0, "generic T[3], T = Pt: 48 B"); return k; }
+fn ga_base(): i64 { var k = ga(1, "generic T[3], the i64 base: 24 B"); return k; }
+fn bound_locals(): i64 {
+    test_group("(7) a bound T is its argument: T[N] and var y: T");
+    ga_f64(); ga_i8(); ga_i32(); ga_pt(); ga_base();
+    assert_eq(gx_f64(), gx_i64(), "generic T[5]: T = f64 spans exactly what T = i64 does (9-byte elements: 56 B against 40)");
+    var three = f64_from(3);
+    var d = gdbl<f64>(1.5);
+    assert_eq(d, three, "var y: T, T = f64: y + y is a float add (3.0, not 1.5's bits doubled)");
+    var di = gdbl<i64>(21);
+    assert_eq(di, 42, "var y: T, T = i64: y + y is an integer add");
+    var b8 = gback<i8>(0 - 1);
+    assert_eq(b8, 0 - 1, "var y: T, T = i8: sign-extends (it read 255)");
+    var b16 = gback<i16>(0 - 2);
+    assert_eq(b16, 0 - 2, "var y: T, T = i16: sign-extends (it read 65534)");
+    var b32 = gback<i32>(0x1FFFFFFFF);
+    assert_eq(b32, 0 - 1, "var y: T, T = i32: 4 bytes, sign-extended");
+    return 0;
+}
+
 sizes();
 arrays();
 prefix_named();
 bool_field();
 generic_sizes();
+bound_locals();
 var r = assert_summary();
