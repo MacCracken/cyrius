@@ -6,6 +6,492 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [6.6.16] — 2026-10-04
 
+The 6.6.16 repair release — the first row of roadmap.md § *The 6.6.x tail*: the compiler's silent miscompiles
+(global array initializers baked as bytes, enum-named initializers late in a kernel build, pointer-mode struct
+assignment storing one word, `g<T>(..)?` / `p.m(..)?` on a pair callee, Str overload dispatch), the named-struct
+argument that is now a COPY (user decision 2026-10-02), one type-name resolver for every annotation site, and the
+net / TLS items (plain-socket SIGPIPE, the CA extendedKeyUsage, the libssl session cache, `sock_accept`'s mode, the
+Windows WSA masks and threads flag, the agnos `sys_setsockopt`). Also hisab's two filings (a closure's `return`
+booked on its enclosing fn; a capturing closure called through `fncallN` at top level), sandhi's two (the channel
+that never blocked on arm64 macOS / Windows; a PEM server key decoded on every accept), the two finds the user
+promoted from the planning premise checks on 2026-10-04 (a local `*i8` / `*i16` / `*i32` truncated to its pointee
+width; libssl-only verbs writing into a native ctx), the toolchain gates (cwd-independent, private wine prefixes),
+and the ganita 1.2.13 / sandhi 1.10.7 folds. **CVE-74 … CVE-76**; the next free id is **77**. Every further
+lane-review find went to 6.6.17 (user, 2026-10-04/05).
+
+**Bench** — recorded at the release gate. **Gate:** recorded at the release gate.
+
+### Security
+
+- **CVE-74 (P1): a peer that resets a plain TCP connection no longer kills the writer with SIGPIPE.**
+  `lib/net.cyr`'s `_net_os_send` — under `sock_send` / `sock_send_all` / `sock_send_a`, and so under `lib/http.cyr`,
+  `lib/ws.cyr`, `lib/ws_server.cyr`, `lib/yantra.cyr` and folded sandhi's client paths — and the async writers
+  (`async_send`'s task and `async_relay_once`, `lib/async.cyr` / `lib/async_macos.cyr`) were a flagless `write(2)` on
+  Linux and macOS. A write to a reset peer raised SIGPIPE, whose default action ends the process: any peer could kill
+  a client or server, remotely and unauthenticated, unless the program ignored SIGPIPE itself (exit 141 on x86_64,
+  qemu-aarch64, pi, ecb and ach against 6.6.15). CVE-66 (6.6.14) fixed the class on the TLS transport only. Every
+  such write now goes through one private leaf, `_fd_write_nosigpipe` (`lib/syscalls.cyr`): on Linux
+  `send(.., MSG_NOSIGNAL)` (`sendto` with no destination, `write(2)` again on `ENOTSOCK`); on macOS `SO_NOSIGPIPE` set
+  on every call, so a socket made by a raw `sys_socket` is covered too, and xnu's `EINVAL` on a socket shut down both
+  ways answers `-EPIPE` with nothing written. Windows, agnos, EFI and cx never raised SIGPIPE and are unchanged. A
+  write to a reset peer returns `-EPIPE` / `-ECONNRESET`. New `tests/tcyr/crossos/net_plain_write_peer_reset.tcyr`:
+  seven reset rows (the three `sock_send*` verbs, a socket shut down before its first write, `ws_server_send_frame`,
+  `async_send`, `async_relay_once`), each in a child that restores `SIG_DFL` first and must LIVE, a raw-`write(2)`
+  control child that must die 141, and pipe / file rows for the `ENOTSOCK` fallback; 17/17 on x86_64,
+  qemu-aarch64, pi, ecb and ach, 7/7 on cass; all seven reset rows read 141 on the 6.6.15 lib. (The syscall it
+  makes is a visible change — see *Changed*.)
+
+- **CVE-75 (P2): a CA's extendedKeyUsage now binds what it may vouch for — on every intermediate and on the trust
+  anchor.** `_tn_verify_chain` (`lib/tls_native_hs12.cyr`) — the native client's server-chain verifier and, since
+  6.6.14, the mTLS server's client-chain verifier — applied the chain's purpose to the LEAF only; a CA was checked
+  for keyCertSign and pathLen (CVE-17) but never for its own EKU. So a clientAuth-, codeSigning- or S/MIME-only CA
+  could issue a leaf the native client accepted as a TLS server, and a serverAuth-only CA in an mTLS server's trust
+  set could issue a client identity: all 16 such chains in the new verdict table verified `TLS_OK` on 6.6.15, where
+  `openssl verify -purpose sslserver | sslclient` refuses each (error 26). Now `_tn_eku_purpose_ok` is the one EKU
+  rule at every depth (absent → unrestricted; server → serverAuth; client → clientAuth; anyExtendedKeyUsage →
+  either), and `_tn_ca_signer_ok` applies it to every CA inside the conjunction that selects a path candidate, so a
+  wrongly purposed CA is skipped and path building goes on to the next candidate. **Two deliberate divergences from
+  OpenSSL 3.6.5**, both pinned: (A) anyExtendedKeyUsage satisfies the purpose at every depth (RFC 5280 §4.2.1.12,
+  the rule the native leaf check has always applied), where OpenSSL honours it at no depth; (B) OpenSSL takes the
+  FIRST issuer candidate that matches and signs and fails when that one is wrongly purposed, while the native
+  verifier keeps looking, so its verdict does not depend on the order a chain or bundle lists duplicates. Public
+  WebPKI is unaffected (none of the 122 roots in `/etc/ssl/cert.pem` carries an EKU); a private PKI whose CA carries
+  an EKU without the purpose now fails natively, as it already did on OpenSSL and the libssl backend. New
+  `tests/tcyr/crypto/tls_native_ca_eku.tcyr` (82 assertions over root / intermediate families differing only in
+  their EKU, both purposes, duplicate-subject path building in both orders, the public
+  `tls_native_client_verify_chain`; the header records `openssl verify`'s verdict per row);
+  `tls_native_client_auth.tcyr` gains a serverAuth-only client CA and its EKU-less twin, in TLS 1.3 and 1.2 (297
+  assertions, on every host). Five mutations each measured RED.
+
+- **CVE-76 (P2): a `[deps.X] tag` can no longer move the dep-cache path out of `<home>/deps/<name>`**
+  (`cbt/deps.cyr`). CVE-62's class on the TAG field: 6.6.13 guarded the header, never the tag, which is joined into
+  `<home>/deps/<name>/<tag>` behind only a shell-metacharacter check. From a root or a TRANSITIVE manifest,
+  `tag = "../../../esc/sub"` made git create the clone dir's leading components outside the cache (left behind after
+  git refused the ref), and `tag = "../../.."` naming an existing directory skipped the clone and printed the
+  tampered-cache advice `rm -rf <home>/deps/foo/../../..` — the parent of `CYRIUS_HOME`, `$HOME` under the default
+  home. A new `_dep_reject_unsafe_tag` runs right after a section's keys are read, before any gate, mkdir, clone or
+  `is_dir`, and only when a `tag` key is present: it refuses an empty `tag = ""`, `..` anywhere, a leading `/` or
+  `-`, a component starting with `.`, a backslash and control bytes (`rel/1.0` stays legal; no git refname holds the
+  refused shapes). The refusal names the section and the tag, prints no derived path and no `rm -rf`, and exits 1
+  with no lock written. Every tag in the 75 repos that carry `[deps.X]` is plain `X.Y.Z`. Pinned by
+  `deps_modules_default_or_warned.sh` axis D9 (git never invoked, a find snapshot proves nothing created outside
+  `$CYRIUS_HOME/deps`, tagless path / git deps still resolve); five mutants each RED.
+
+- **The libssl-only session, cache and 0-RTT verbs never touch a NATIVE ctx** (promoted by the user 2026-10-04;
+  memory corruption, no id — reachable only by the program's own calls). `tls_ctx_set_session_new_cb` /
+  `_remove_cb` / `_get_cb`, `tls_ctx_set_session_cache_mode`, `tls_ctx_set_max_early_data`, `tls_get_session`,
+  `tls_set_session`, `tls_write_early_data`, `tls_read_early_data` and `tls_get_early_data_status` checked only that
+  their libssl symbol was resolved — true while the native backend is active whenever anything has loaded libssl
+  in-process — and then handed libssl a native ctx, which wrote into native memory (`tls_ctx_set_max_early_data`
+  changed 4 bytes at offset 1024 of a 616-byte native ctx and answered 1). On the native backend each now returns its
+  documented "unsupported" answer without a libssl call, and `tls_supports_session_resumption()` reads 0 there even
+  with libssl loaded (folded sandhi probes it before `tls_set_session`). New
+  `tests/tcyr/crypto/tls_libssl_session_cache.tcyr` (60 assertions: every verb under native with a counting spy in
+  each guarded slot and a canary arena that must stay byte-identical, and with the REAL libssl pointers loaded);
+  every guard dropped turns it RED and then SIGSEGV.
+
+- **A local `var p: *i8` / `*i16` / `*i32` keeps the whole address** (promoted by the user 2026-10-04; a miscompile
+  of valid code, no id). PARSE_VAR wrote the pointer's scale 1 / 2 / 4 as the local's SLTYPE, which for a positive
+  value below 8 means a narrow scalar's WIDTH, so the slot was stored and loaded 1 / 2 / 4 bytes wide:
+  `var p: *i8 = &buf;` held the low byte of the address, `p == &buf` was false and `load8(p + 1)` died SIGSEGV, on
+  every backend. A `*T` local is now an 8-byte pointer whatever `T` (`_sl_ptr_type`, `parse_types.cyr`); globals and
+  params always had an 8-byte slot. No arithmetic changed — each spelling keeps the step it had (the per-site steps
+  disagree with one another; pre-existing, now documented in the guide's *Pointers*, a language decision) — and no
+  emitted byte of any `.tcyr`, fixture or program moved. New `tests/tcyr/crossos/typed_pointer_slot_width.tcyr`
+  (49 assertions on every host: the five widths as locals, params and globals in both zones, an address above 4 GiB,
+  loads / stores / a walk through `p + 1`, a closure capture); 6 rows red on the slot-open compiler.
+
+### Fixed
+
+- **A closure's `return` belongs to the closure, not to the fn that holds it** (hisab issue 2026-10-03, hisab D082).
+  The two post-parse token scans over `: stack` pair returns — `_pair_prescan` (flag 256 propagation) and
+  `_warn_mixed_pair_returns` — skipped a nested body only at a `fn` token, and a closure literal has none. So on
+  every pin from 6.6.0 to 6.6.15, `fn mk(b) { var g = |x| { return h(x + b); }; return g; }` was booked as returning
+  a pair: `var g = mk(41);` was REFUSED ("bind both"), the refusal's own hint compiled and read an unset `rdx` (rc
+  139), the flag spread through forwarding wrappers, and the mixed-return warning fired on the wrong fn and column.
+  Both scans now skip a `{` that directly follows `|` or `||` (exact: closure params carry no annotation and `{`
+  never begins an expression), via one `_skip_nested_body` shared with the C5 refusal below. A closure is also
+  judged as its OWN unit for the mixed-return rule at any depth, so a genuinely mixed closure is still warned — at
+  its own return, as "a closure in `mk` returns a `: stack` pair on another path but a SINGLE value here" (see
+  *Changed*). No codegen changed; the 439 `.tcyr` files, the 110 in-tree programs / benches / fuzz
+  harnesses and all 133 sibling `dist/*.cyr` bundles compile byte-identical with identical stderr. Gate
+  `tests/gates/frontend/stack_enum_closure_return_scope.sh` (41 rows, x86 and the aarch64 cross; the filed repro
+  verbatim; five mutations each RED).
+
+- **`fncallN` and `callptr` at top level dispatch a capturing closure, on every target** (hisab issue 2026-10-03).
+  `fn mk(b) { return |x| b + x; }` then `fncall1(mk(41), 1)` outside every fn exited 139 (0xC0000005 on Windows) on
+  every pin from 6.6.0 to 6.6.15, and top-level `callptr` did not compile. Since 6.5.17 the closure-aware lowering
+  (`PINDIRECT_CALL`) needs frame slots, so at top level `fncallN` silently stayed a call into `lib/fnptr.cyr`, whose
+  asm calls the raw value — for a capturing closure, its env pointer with bit 63 set. On cx every top-level
+  `fncallN` returned 0, plain pointers included (`lib/fnptr.cyr` has no cx arm), so three existing crossos / stdlib
+  files had been failing on cxvm unseen. A top-level indirect call now opens a per-call-site **micro-frame**
+  (`ETLFRAME_OPEN` / `ETLFRAME_CLOSE` on x86 — ELF, PE, EFI, agnos, Mach-O — aarch64 and cx), sized from the slots
+  the call used, keeping rsp's parity on x86 and carrying the page-walk stack probe on PE (measured on cass with a
+  forced 512 KiB frame: probed it runs, unprobed 0xC0000005). Inside a fn nothing changes; only the 6 `.tcyr` files
+  with a top-level indirect call compile to different bytes. `callptr` at top level is now legal (one diagnostic
+  removed; the guide's two sentences stating the defect as a rule are rewritten). Pinned by a TOP-LEVEL section of
+  `tests/tcyr/crossos/closure_escape_dispatch.tcyr` (every route a closure arrives by, `fncall0..8`, alignment
+  against a direct call, a 42-deep chain past 4 KiB, 2000 calls with rsp unchanged) and gate
+  `tests/gates/codegen/toplevel_indirect_call.sh` (x86_64, aarch64/qemu, PE/wine, cx/cxvm); natively built and green
+  on ecb, ach, pi and cass.
+
+- **A named `fn` inside a fn body is refused by name instead of compiling to a crash** (C5). Every body is parsed by
+  `PARSE_PROG`, whose `fn` arm is top-level relaxed ordering; inside a fn the inner `PARSE_FN_DEF` overwrote the
+  OUTER fn's locals, frame, return patches and `_cur_fn_ix` mid-emission, so `fn outer() { fn inner() { .. } .. }`
+  compiled rc 0 and ran SIGILL / SIGSEGV, and in a switch case, `async fn`, closure or `impl` method gave an
+  unrelated error. Now `error:<loc>: fn 'inner' is defined inside fn 'outer'; define it at top level` (or "inside a
+  closure"), with a note pointing at closures, reported once per definition (generic instances and `#inline`
+  replays do not repeat it), the nested tokens consumed so the outer body's own errors still report, and no
+  follow-on `undefined function`. Checked in `PARSE_PROG`, at the end of `_PARSE_STMT_IMPL` and in the generic
+  stub-body skip, in the shared frontend (all 7 forks); cx's undefined-call check no longer prints a second error.
+  A fn inside a TOP-LEVEL block is still the relaxed-ordering feature. No nested fn exists in the 7 forks, the tree
+  or 1,350 ecosystem units. Gate `tests/gates/diagnostics/nested_fn_refused.sh` (46 rows, 15 shapes on x86 and the
+  aarch64 cross, the one-liner also through PE and cx; nine mutations each RED); `private_forward_reference.sh` and
+  `recursion_depth_bounded.sh` re-based off the nested-fn shape.
+
+- **`g<T>(..)` and `p.m(..)` are the same call as `f(..)` for `?`, the destructure and the "bind both" refusals**
+  (C4). Every asker of "does this call return a `: stack` pair" recognised only `name(`. On 6.6.15
+  `var v = gdiv<i32>(n, d)?;` and `var v = p.div(d)?;` exited 139 in every expression position (`?` took the boxed
+  lowering and dereferenced the tag), `var v = gdiv<i32>(..);` / `p.div(d)` silently kept only the tag, the
+  refusal's prescribed `var a, b = ..` was "needs a call on the right-hand side", `p.div(d)?;` as a statement was a
+  syntax error, a forward wrapper was never flagged pair-returning, and a correct `return gdiv<i32>(..)` drew a false
+  "SINGLE value" warning. One resolver, `_pair_callee_at`, now answers for `name(`, a generic `name<..>(` and
+  `x.m(` on a name typed as a struct (local, then capture, then struct global), and every asker uses it; the
+  destructure takes its types from the generic's instance, and the method statement takes a postfix `?`. The token
+  passes resolve the same three spellings (`_tok_ret_callee`), typing a method's receiver BY SCOPE the way the parser
+  does (an annotation, a struct literal, a struct-returning call, a generic `: T` return); an unresolvable receiver
+  stays unknown — no flag, no warning — and a `<` is a type-argument list only when it closes before `;` `(` `)`
+  `{` `}` and the name is a generic. The new refusals replace silent payload loss. Against the srca-3 compiler 4,826
+  ecosystem and in-tree units show 0 byte, stderr or exit-status differences. New
+  `tests/tcyr/crossos/method_pair_result.tcyr` (31 rows; 28 on cx), 13 rows in `generic_struct_inference.tcyr`,
+  `stack_enum_lossy_context.sh` axis 14 (16 refusal + 3 anti-over-reach rows), 23 rows in
+  `stack_enum_mixed_return_warning.sh`; every mutation measured RED.
+
+- **Str overload dispatch: `println(s)`, `strlen(s)` and any `base` / `base_str` pair reach the `_str` sibling for a
+  Str global, a `: Str` field and a Str-returning call or method — and no longer for `s.data`, `s.len`, `s.len()` or
+  `s + 8`** (C3). `PARSE_FNCALL` typed its first argument by hand against the LOCAL encoding `0 - sid`, so no Str
+  global was ever routed (a struct global's GVTYPE is the positive sid; an inferred one records none) —
+  `println(gs)` printed the header's pointer bytes and `strlen(gs)` answered 3 for 15 bytes — and no `: Str` field
+  was typed. Worse, nothing required the name to end the argument, so `show(s.data)`, `show(s.len)`, `show(s + 8)`
+  and `show(s.len())` were routed by their BASE's type into `show_str`, which reads the VALUE as a `{data, len}`
+  header: `println(s.data)` became a write of content-chosen length from a content-chosen address (no ecosystem
+  site in 129 repos). The dispatcher now asks the I11 warning's classifier, `_str_arg_kind`: `base_str` is taken
+  exactly when the WHOLE first argument is a Str — a Str local / param / capture, a `: Str` or inferred-Str global,
+  a `: Str` field one step past a name or call, or a call / method / generic declared `: Str` (each result typed by
+  its own declared return, never its receiver) — and the 6.5.1 arity gate still decides. Names resolve in codegen's
+  order (a capture before a same-named global, `_arg_name_sid` / `_recv_sid`); the I11 Str → `: cstring` warning
+  shares the classifier and so names the new shapes. New `tests/tcyr/lang/overload_str_dispatch.tcyr` (85 rows; 47
+  red on 6.6.15; x86, qemu-aarch64, cx, PE/wine), `str_cstring_arg_shapes.sh` axis 4 21 → 31 rows. 6,162 ecosystem
+  and in-tree units: 0 differences in binary, diagnostics or exit status.
+
+- **`#deprecated("…")` warns once, on the call's own line, on every path that reaches the fn — and still changes no
+  byte of the binary** (C9). A call parsed before the definition was silent (only pass 2 set the flag; pass 1 now
+  records the attribute via `_tl_deprecated` / `_prescan_dep_take`); eleven call paths never asked (`&f`, a method
+  `o.m()`, struct-valued receives, overloaded operators, the four PE vector paths) — one helper,
+  `_callee_site_checks`, now runs the deprecation and `private` checks together at every site so the lists cannot
+  drift; a tail call was reported at the next statement (also the tail path's `#pure` warnings); a generic instance
+  never inherited the flag; `#inline` / generic / vector re-parses repeated the line 2–3 times (now once per (token,
+  fn)); an `async fn`'s attribute went to its `$impl` body. Gate
+  `tests/gates/diagnostics/deprecated_every_call_path.sh` (114 rows over x86, PE through both forks, the aarch64
+  cross, cx and the native aarch64 fork under qemu; the attribute-free twin compiles byte-identical; 52 red on the
+  slot open). 5,119 ecosystem units: 0 binary differences, one diagnostic difference (see *Downstream*, bayan).
+
+- **cycc's `lib/...` include fallback reads the store slot of the home the CLI uses** (C10, `_init_cyrius_lib`,
+  `src/frontend/lex.cyr`). It built the slot from `HOME` alone though its comments said `CYRIUS_HOME`, so under any
+  other home cycc and the CLI read different stdlibs (`cyrius distlib`'s sidecar verify compiled against HOME's
+  slot); and it read only the first 4 KB of `/proc/self/environ`, so a large variable ahead of `HOME` made it
+  vanish. Now `CYRIUS_HOME/versions/<V>/lib/` when set and non-empty, else `HOME/.cyrius/versions/<V>/lib/`; a set
+  `CYRIUS_HOME` is authoritative (never a fall-through to HOME's slot, a mix of two stdlibs), empty counts as unset,
+  a relative one resolves from the CWD, and a value over 1,984 B (CVE-34's bound) disables the fallback rather than
+  truncating it. The environment is read in chunks to EOF with the match state carried across boundaries; the
+  pin-drift check runs on either branch; the version comes from `_VERSION_TOOLCHAIN`. `_init_cyrius_lib` shrank
+  from 68 lines to 24 through small helpers (cybs-safe; seed-derive green); still Linux-only. Gate
+  `tests/gates/toolchain/include_fallback_cyrius_home.sh` (175 rows across x86, the aarch64 cross, cx, the PE cross
+  and the native aarch64 fork; 140 red before; 35/35 on pi); `distlib_sidecar_verified.sh` drops its HOME pins and
+  gains axis 14.
+
+- **One type-name resolver; every type name is matched WHOLE; a name that is no type is refused by name** (C8,
+  `_tn_resolve`, `src/frontend/parse_types.cyr`). sizeof, `#assert sizeof` and each annotation site had about nine
+  ladders of their own, with three answers to a miss:
+  - **sizeof** knew only i8..i64, u128 and structs; `f64`, `u8`..`u64`, `f32`, `bool`, `cstring`, an enum and every
+    vector type were "unknown type". They now size exactly what `var a: T[N]` reserves per element; `#assert
+    sizeof(u128)` is 16; and a bound type parameter is its argument's size (`sizeof(T)` for `T = f64` read **9**,
+    the f64 code taken as a width).
+  - **A bound type parameter IS its argument in a `var` annotation**: in a `g<f64>` instance `var a: T[5]` reserved
+    45 bytes and `var y: T` was an untyped word (`y + y` an integer add of 1.5's bits); with `T = i8/i16/i32` the
+    local was never sign-extended. PARSE_VAR's bound arm goes through the resolver.
+  - **Prefix matching is gone**: `var a: i8x = 300` was an i8 (read 44), `f64zz` an f64, and a struct named like a
+    scalar (`struct u8pair`) was that scalar — a 1-byte global whose `G.a = 300` landed in a byte. The struct lookup
+    goes first everywhere, and `slice` is a whole word.
+  - **`Vec` / `Vec<T>` is in the vocabulary**, an 8-byte handle at every site (as a struct field always took it).
+    **`bool` is a struct field** (8 B); an array element takes `Result` / `Option` / `Tagged` by name.
+  - A name that is no type was a silent i64 at almost every site; it is now ONE error naming the type and the site,
+    with a hint for a misspelt prefix (see *Changed*). A refused return type's `<..>` is skipped with it (one error,
+    not three, and no `expected '{'` in `cyrius lint`); `--syntax-only` refuses nothing.
+  Results live in a band of their own (`0x7E000000 | class << 16 | val`) read only through accessors, so no released
+  value moved; `_arr_prefix_wrong` / `_arr_whole_ebytes` are deleted. Over 1,350 ecosystem units: 0 regressions.
+  New `tests/tcyr/frontend/type_name_resolver.tcyr` (132 assertions) and
+  `tests/gates/diagnostics/type_name_refused.sh` (74 rows; 35 of 38 refusal rows red on the slot open; eight
+  mutations each caught).
+
+- **A global array initializer `var X: T[N] = { .. }` is N elements of T, baked into the image** (C1,
+  `parse_decl.cyr`, `_vgai_base` / `_gai_bake`). The list was a BYTE list whatever the element type:
+  `var T: i64[3] = {1, 2, 42};` put the values in the first three bytes, a value over 255 was refused, `-3`, `1.5`
+  and enum constants were syntax errors, and a `Pt[2]` list compiled silently into bytes (`T[2] + W[2] + 100` exited
+  100 where 184 is right, on every target). Now each element is an integer, an enum constant (declared on either
+  side) or a constant expression; an `f64` element takes a float literal's bits, an `f32` element the literal
+  narrowed round-to-nearest-even by an integer-only helper (`_gai_f32`, equal to `f32_from` over a 200-literal corpus
+  and 6,000 random values); one range window per width, and a TRUNCATING value is refused naming it; too many
+  elements, non-constants, a float in an integer array and an aggregate element type are refused by name (the bare
+  `var b[N] = { .. }` stays a byte list, and now takes enum constants and constant expressions too). No
+  target emits code for a list: it is evaluated into a per-slot blob and copied into the var area by every image
+  writer and by cx's `.cyx` var data, so **in a `kernel;` build the values hold from the first instruction** (the
+  byte stores used to run after the top-level program) and an earlier initializer reading the array sees the list.
+  The same declaration after the first statement (was a syntax error) is baked the same way; inside a top-level
+  block it is refused (see *Changed*). A list is a constant initializer under 6.6.6's value rule (`_gv_supersede`).
+  gnoboot's 29 byte lists build to identical array bytes and a 2 KB smaller image; the in-tree corpus is
+  byte-identical except the three files holding a list. `ESTOREB_IMM` and the aarch64 / cx `_EVRCX` shim are removed.
+  New `tests/tcyr/crossos/global_array_initializer.tcyr` (82 assertions), gates
+  `tests/gates/frontend/array_initializer_refusals.sh` (41 rows), `platform/kmode_array_initializer_baked.sh` and
+  `codegen/cx_array_initializer.sh` (15 rows; four mutants each caught).
+
+- **In an x86 kernel build, a global initializer naming an enum constant holds its value from the first
+  instruction** (C6). `kernel; enum E { A = 0x1234567; } var X = A;` emitted the store AFTER the top-level asm, so
+  a kernel that never returns read 0 — and so did `E.A`, `A + 1`, narrow annotations and every declaration-zone
+  struct literal. Pass 1's folder must refuse names (it would miss a forward enum or a later shadowing `var`), so the
+  fold now sits at the replay, where every name resolves as the store does: `_gvk_pre` bakes each live scalar entry
+  (in entry order) as the slot's static init, and `_spc_try` writes an all-constant struct literal leaf by leaf
+  into C1's image blob; the store stays, so no code changes. cx records the same value for its prestore. A host
+  build sees one difference — an initializer that runs earlier now reads the value (it read 0), as for a literal
+  since v5.11.64. What still runs late in an x86 kernel build is named by a new warning (see *Changed*); the aarch64
+  kernel build and an EFI application with `efi_main` run the replay first and stay silent. Gate
+  `tests/gates/platform/kmode_enum_initializer_baked.sh` (11 rows: a `CYRIUS_ELF64_KERNEL=1` build that also runs as
+  a process checks 32 values; IMAGE rows for multiboot and EFI; the warning rows) and
+  `tests/tcyr/codegen/gvar_enum_initializer.tcyr` (41 assertions, x86, qemu-aarch64, cxvm).
+
+- **A struct assignment between a pointer-mode variable and a struct copies the struct** (C2,
+  `_try_aggregate_copy_assign` and its arms in `parse.cyr` / `parse_decl.cyr`). A *handle* — a pointer-mode local
+  (`var a: Pt = alloc(16);`), a pointer-mode global or a `*T` param — was "not an aggregate", so every arm stored
+  ONE word: `q = a` put a's ADDRESS in `q.x` and left `q.y` stale, `a = q` put `q.x`'s value in a's slot (the next
+  `a.x` SIGSEGV'd), likewise from a global, a call, a method, a field or an operator, on x86 and aarch64; and
+  through a by-value parameter the two sides aliased each other's caller. The rule for plain structs over 8 B: value
+  ← handle copies the pointee; handle ← value copies INTO it (`*a = q`; `a` keeps its address); handle ← handle
+  stays a pointer rebind; a struct value of another type into a handle is refused by name. The declaration `var q:
+  Pt = a;` is unchanged and stays the documented alias (the guide now says so); `Str` / `Result` / `Option` /
+  `Tagged` and structs of 8 B or less are untouched; cx already copied. No ecosystem site of any changed shape (591
+  units byte-identical; a static scan of 14,689 files found 3 sites, all cyrius tests, unchanged). New
+  `tests/tcyr/crossos/struct_ptrmode_assign_copy.tcyr` (57 assertions, every direction with a field-store control
+  and an anti-vacuous rebind group; 16 rows red on the srcb-3 compiler; eight mutations each RED).
+
+- **Windows: every `WSAGetLastError` and every `int`-returning ws2_32 result in the stdlib is read masked to 32
+  bits** (N5). Those PE emitters define only eax. `lib/syscalls_windows.cyr`'s `fd_wait_ready` negated the raw
+  `WSAGetLastError`, and `sys_getpeername` / `sys_getsockname` / `sys_listen` tested the raw int; a new private
+  `_sw_wsa_err()` masks and never returns 0, and the three wrappers mask. `lib/async_win.cyr`'s four
+  `!= 997` (WSA_IO_PENDING) checks, the WSAIoctl fetches, the ConnectEx / AcceptEx BOOLs, the WSARecv / WSASend
+  tests and the resolve task's getaddrinfo are masked. No returned value moves on cass (ws2_32 zero-extends there),
+  so the new gate `tests/gates/platform/pe_wsa_lasterr_masked.sh` scans `lib/` statically (self-tested on a clean
+  fixture and eight per-rule mutants; 19 rows RED on the 6.6.15 lib); `fd_wait_ready.tcyr` gains a Windows group
+  pinning the exact codes.
+
+- **`sys_setsockopt` resolves on agnos** (N8). The agnos peer had none, so any agnos build reaching the portable
+  name failed its link check (yantra and abaco carried `#ifdef CYRIUS_TARGET_AGNOS` arms to dodge it). It is now an
+  explicit decline stub returning -38 for every option; no setsockopt number is minted, because Linux #54 is agnos
+  `udp_unbind` (ABI decision O5). Timeouts stay reachable through `sock_set_recv_timeout` /
+  `sock_set_send_timeout`. New `tests/tcyr/crossos/setsockopt_wrapper.tcyr` calls it unguarded (0 / -EBADF on Linux
+  and macOS, -38 on Windows and agnos); `docs/api-surface.snapshot` gains `syscalls_x86_64_agnos::sys_setsockopt/5`.
+
+- **Native TLS: an Ed25519 handshake signature must be exactly 64 bytes, from an Ed25519 leaf** (N2,
+  `_tn_verify_sig_scheme`, `lib/tls_native_hs13.cyr` — the 1.3 server CertificateVerify and the 1.2
+  ServerKeyExchange). `ed25519_verify` reads a fixed 64 bytes, and the arm checked neither `sig_len` nor the leaf's
+  key type: a 65-byte field verified with its tail ignored, a 63- or 0-byte one borrowed its missing bytes from the
+  next handshake bytes, and a P-256 leaf's key slot was decoded as an Ed25519 point. Both are now refused with the
+  existing invalid-signature verdict (`TLS_ERR_AUTHN`), mirroring `_tn_verify_client_sig`. No forgery was possible
+  (a valid signature from the leaf's key was still needed), so this is conformance, not a CVE.
+  `tests/tcyr/crypto/tls_native_ed25519.tcyr` gains a unit group on every target (lengths 64 / 65 / 63 / 0, a P-256
+  leaf, a doctored P-256 key slot, hand-built ServerKeyExchanges); each check's removal measured RED.
+
+- **libssl backend: `tls_ctx_set_session_cache_mode` really sets the mode, and
+  `tls_supports_session_resumption()` reads 1 on OpenSSL 3** (N6). `SSL_CTX_set_session_cache_mode` is a MACRO
+  over `SSL_CTX_ctrl(ctx, 44, ..)` in OpenSSL 1.1 and 3.x, so its dlsym was always 0: the verb was a silent no-op
+  and the resumption probe read 0, so folded sandhi's session cache never ran. `SSL_CTX_ctrl` is now resolved as a
+  soft symbol and driven with `_TLS_SSL_CTRL_SET_SESS_CACHE_MODE = 44`, returning the previous mode (a sweep of all
+  49 resolved names found no other macro). Pinned in `tls_libssl_session_cache.tcyr` against OpenSSL's own GET
+  (ctrl 45).
+
+- **libssl backend: a failed `tls_connect_complete` / `tls_accept_complete` is final** (N6). It returned 0 and
+  recorded nothing, and the deadline loop collapsed the result to 1 / 0, so a later `tls_read` called `SSL_read`,
+  whose implicit handshake RESUMED the failed one: after a complete that failed on a non-blocking socket, `tls_read`
+  returned the server's 21 bytes on a connection the caller had been told had failed. Both verbs now run
+  `_tls_libssl_complete`: a ctx already carrying a failure is refused without touching SSL, the error queue is
+  cleared first, the deadline loop hands back its own code, and the failure is kept at shim +32 (a non-terminal
+  result as the released `TLS_ERR_HANDSHAKE_FAILED`, -2, which joins the `CYRIUS_TLS_LIBSSL`-only code block — every
+  libssl-only build failed to compile without it). After it, `tls_read` returns the code, `tls_write`
+  `TLS_ERR_PROTOCOL`, a second complete 0, and `tls_close` sends no `SSL_shutdown`. `tls_libssl_read_errors.tcyr`
+  gains `SSL_connect` / `SSL_accept` spies and the complete rows in TLS 1.3 and 1.2 (348 assertions, 82 red on the
+  slot-open lib); `lib-tls-contract.md` updated.
+
+- **A native TLS server decodes a PEM private key once per process, not on every accept** (sandhi issue
+  2026-10-04). The server accept builds a native ctx and loads the caller's credentials per connection, and a PEM key
+  went through sigil's `pem_decode_privkey`, whose DER scratch is on the GLOBAL heap, never the accept arena — so a
+  server rewinding a per-connection arena still kept a decoded copy of its private key per connection (sandhi
+  measured 120 B / request for its 119-byte Ed25519 key). The decode is now cached for the process, keyed on the PEM
+  TEXT (a buffer refilled with another key never gets the old one), recording sigil's answer — key material or
+  refusal — so errors and label checks are unchanged. Entries are immutable once published; lookups take no lock and
+  a miss only TRIES to claim the right to add one (a lost race decodes uncached, as before; no wait survives a
+  `fork`). At most 32 texts are kept. A native mTLS client's own PEM key benefits too. sandhi 1.10.7's own probe
+  reads 0 B / request against this tree. New `tests/tcyr/crossos/tls_native_pem_key_once.tcyr` (204 assertions: the
+  filed shape, every key form as PEM and DER, the refusals, keyed-on-text, real 1.3 / 1.2 handshakes, 8 concurrent
+  loaders, capacity); 10/10 on x86_64, pi, ecb, ach and cass; 24 red on the 6.6.15 lib.
+
+- **The Linux channel no longer deadlocks with several producers or consumers.** Receivers parked on "empty" and
+  senders parked on "full" shared one futex word and every operation woke ONE thread, which could be a waiter of the
+  wrong kind: it re-parked and the waiter that could proceed slept on. Four producers and four consumers deadlocked
+  on every run (40/40 at cap 1), and one producer feeding three consumers through a cap-1 channel (sandhi's pooled
+  server shape) hung on pi; and `closed` was not in the futex word, so a receiver preempted between its check and
+  its `FUTEX_WAIT` slept through `chan_close` for good. The channel is now an eventcount: a waiter registers under
+  the lock, reads its kind's seq word and parks on it; a waker advances the other kind's seq word only when a waiter
+  is registered and wakes one after unlocking (`chan_close` wakes all). No wake is lost or misdirected, and an
+  uncontended send / receive no longer makes a syscall. Pinned by `chan_blocking_threads.tcyr`'s cap-1 rows (RED on
+  the old code on x86 5/5 and pi 3/3; see *Changed*). `chan_try_send.tcyr`'s "blocking chan_send still works" row
+  now runs on macOS too (its skip premise, a raw `SYS_FUTEX`, has been false since v6.5.11; 20/20 on ecb and ach).
+
+- **No gate runs wine in the shared `~/.wine` any more** (G4). Eight gates ran `wine` / `winepath` in the user's
+  default prefix and its single wineserver, shared by every concurrent `check.sh` on the box, and
+  `simd_return_shapes.sh`'s EXIT trap ran a bare `wineserver -k` before its private prefix was exported, killing the
+  default server under every other wine job. All nine now use a private prefix under their own mktemp dir and a
+  `_wine_down` that kills only that prefix's server and removes its socket directory. `gates_never_write_tree.sh`
+  axis 9 checks every gate statically (self-tested on 9 bad and 5 clean shapes; RED on exactly those nine on
+  6.6.15).
+
+- **The check driver's sit-fsck row runs from a git worktree** (G5). `_sit_status_gate` looked only at `$SIT_DIR`
+  or `<root>/../sit`, so it SKIPped in every release lane. `_sit_find_dir()` now tries `$SIT_DIR` (authoritative),
+  `../sit`, the main checkout's `../sit` found through the worktree's `commondir`, then `$HOME/Repos/sit`, each named
+  once, and a miss names them all; `cyrius_check --sit-dir` prints the answer. Gate
+  `tests/gates/toolchain/check_sit_lookup_worktree.sh` (six mutations each RED).
+
+- **The guide's include-less examples are compiled, and four were wrong** (G2). `guide_examples_compile.sh`
+  compiled only the 18 blocks with an `include "lib/...` and skipped ~85 unread. Fixed in the guide: a Result example
+  naming its fn `use` (a reserved word), a 2-argument `file_open`, an output table in an unlabeled fence, and
+  `asm { outb; }` (now `out dx, al`). New axis 4 compiles every include-less block behind a fixed prelude (floors:
+  ≥ 60 extracted, ≥ 30 clean; today 84 / 42); axis 1 uses the same reserved-word check.
+
+- **`tests/tcyr/lang/element_typed_array.tcyr` can detect an under-sized array** (G3): its sentinels sat below the
+  arrays, where no overrun reaches; each now precedes its array and the gap is asserted in literal bytes (a
+  `T[N]`-as-N-bytes mutant fails 5 rows on x86 and aarch64).
+
+- **Docs: four stale premises corrected against the code** (G6): P2 `[embed]` no longer carries the obsolete "inject
+  ZERO newlines" constraint (cbt's `#@srcline` has made a prelude line-neutral since v6.5.24); P3 `const fn` points
+  at its real base, the parse-time folder `_CF_TRY` (`ir_const_fold` is an x86-ELF opt-in peephole, and
+  `var B = A * 7` is not folded), with the proposal's stale lines struck in place; the syscall-families entry lists
+  only the unshipped `setrlimit`, `ptrace`, `sched_getaffinity`, `pread64` / `pwrite64`.
+
+### Changed
+
+- **A struct parameter is a VALUE at every width: over 8 B the callee gets a COPY** (C7; user decision 2026-10-02,
+  roadmap *Open questions* 4). A parameter annotated with a plain struct over 8 B (`fn bump(p: P3)`, a typed
+  `self: P3`, a generic `p: T` bound to one) travels by address, and nothing made the promised copy: the callee
+  worked on the caller's storage — for a local, a global (in a fn and at top level), a pointer-mode local's heap
+  object, a parameter passed on, a typed `self` method, a generic instance, a call through a fn pointer and a
+  top-level field argument; only a field argument inside a fn was copied. Now the CALLEE copies in its prologue,
+  after `_stkp_flush` has homed every parameter slot (stack-passed ones included), into an inline frame aggregate
+  that takes the parameter's name — one site covering every caller form, built from emitters every backend has;
+  the calling convention is unchanged and the caller-side field copy is gone. **Migration:** a callee that must
+  change the caller's struct says so — `fn bump(p: *P3)` with `bump(&p)`, or an untyped / `*T` `self`. Untyped
+  params, `p: *T`, `Str` / `Result` / `Option` / `Tagged` and structs of 8 B or less are unchanged. **Visible
+  changes:** writes stay in the callee; a bare `q` in an untyped context (`var k = q;`, `raw(q)`, `load64(q)`) now
+  reads its FIRST FIELD like any inline struct local, not the caller's address (`&q` is the copy's address); a
+  non-struct argument (`take(0)` for a `q: P3`) faults on entry even when the body never reads it (three cyrius
+  tests that bound a generic `T` with `0` now pass a struct); `take(b.v)` into a `p: *T` param inside a fn now passes
+  the field's address, as at top level. **An `async fn` refuses a struct over 8 B by value** (its body runs at force
+  time, so it would read the caller's struct late) — pass `p: *T`. **A `*T` parameter is recorded at any slot**: the
+  record was a 64-bit mask indexed by frame slot, so a `*T` at slot ≥ 64 read as by-value and would have been
+  copied; it is now bit 56 of the slot's own depth word (`SLPTRP`). The planning survey found such parameters only
+  in cyrius tests (92 in 5,807 files); 591 ecosystem units compile byte-identically. New
+  `tests/tcyr/crossos/struct_arg_is_copy.tcyr` (33 rows, 34 on Win64; 22 red on 6.6.15; 34/34 on cass, green on pi);
+  `struct_param_byvalue_copy.tcyr`'s two alias rows flip 77 → 3; `coroutine_midbody_suspend.sh` pins the async
+  refusal.
+
+- **Pointer-mode struct assignment copies** (C2, *Fixed*): code that carried a handle through an inline struct
+  variable (`var w: Pt; w = a;`, then an untyped `f(w)`) now passes w's first FIELD; `a = b` between two `*T`
+  params is a rebind (it copied `*b` into `*a`); a handle assigned from a by-value parameter copies instead of
+  aliasing the caller. None has an ecosystem site.
+
+- **Unknown and prefix-misspelled type names are hard errors** (C8, *Fixed*): `unknown type 'Nonexist' for variable
+  'a'` (and "as the target of pointer", "as the element of slice", "for parameter", "in a multi-value return type",
+  "in sizeof", "as a fn return type"), with `note: 'i8x' is not 'i8' - a type name must match whole`; a struct
+  declared below a declaration-block global that names it is `type 'Late' is declared after its use`; `type 'u8'
+  cannot be a fn return type` and `type parameter 'T' cannot be this fn's return type` replace the unnamed return
+  error. Still accepted by design: `Str` / `cstring` / `Result` / `Option` / `Tagged` / vector names as params by
+  name, enums declared on either side, a fn's type parameters, a struct declared below a local or param use.
+
+- **A named `fn` inside a fn body, closure, `impl` method or generic body is a compile error** (C5, *Fixed*); write it
+  at top level, or as a closure. A fn inside a top-level block still compiles.
+
+- **A global array initializer list inside a top-level block is refused by name** (`while`, `if` / `elif` / `else`,
+  `for` and its init, a `switch` arm, `match`, `@unsafe`, a bare `{ }`): a baked list would hold its values once
+  where a scalar's initializer runs each time the block does. That shape never compiled. Also from C1: a deferred
+  initializer of ANOTHER name that writes into an array at startup, declared before the array's list, now persists
+  (the list is the starting value, C semantics), where the list's replayed stores used to overwrite it.
+
+- **`sock_accept` returns a BLOCKING socket on every target, whatever the listener's mode** (N4, `_net_os_accept`).
+  Windows (`FIONBIO`) and macOS (`O_NONBLOCK`) let an accepted socket inherit a non-blocking listener's mode, Linux
+  never does — so `lib/net.cyr`'s own documented non-blocking accept loop handed native TLS a non-blocking fd on
+  those two targets only, and the no-deadline transport failed every handshake at once (`tls_native_accept` -12 on
+  cass, ecb and ach). The mode is now reset per accept (one `ioctlsocket` on Windows; `F_GETFL` and an `F_SETFL`
+  only when set on macOS); a failed reset closes the socket and returns the error. Linux and agnos make no extra
+  syscall. ⚠ Code that relied on the inheritance must call `sock_set_nonblocking` on the accepted socket.
+  `net_loopback_tcp.tcyr` drops its two Windows workarounds and gains the blocking rows;
+  `tls_native_socket_transport.tcyr` gains a no-deadline server row over a non-blocking listener (RED on cass, ecb
+  and ach against 6.6.15).
+
+- **Windows reports `THREADS_CONCURRENT = 1`** (N7). `thread_create` has been `CreateThread` since v6.0.61, but the
+  flag was given the serial-peer 0 at v6.5.44 and `macos_arm64_real_threads.sh` axis 6 ENFORCED it, so
+  `thread_runs_concurrently.tcyr` never asserted on Windows and `tls_first_use_threads.tcyr` ran its workers one by
+  one. Axis 6 now asserts 1 and checks the MECHANISM behind every backend's value (Windows must reach `CreateThread`,
+  0xF007, with no inline `fncall1`; agnos must run inline); four mutations each RED. On cass,
+  `thread_runs_concurrently` 1 → 5/5 and `tls_first_use_threads` 54/54 through the barrier, 10/10 runs each.
+
+- **`chan_recv` / `chan_send` block on arm64 macOS and Windows; `CHAN_BLOCKING` says where they do** (sandhi issue
+  2026-10-04). Both targets have real threads (arm64 macOS since v6.5.44, Windows since v6.0.61) but kept a channel
+  whose `chan_recv` answered 0 when empty and `chan_send` -1 when full — and arm64 macOS's ring had no lock. A
+  worker pool looping on `chan_recv` read the 0 as "closed" and exited, so sandhi's `run_pooled` / `run_pooled_tls`
+  served no request on macOS (sandhi 1.10.7 serves inline off Linux) — and, by reading the code, szal's
+  `max_concurrency` permit channel limited nothing there. Both now keep `lib/thread.cyr`'s contract (`chan_recv`
+  blocks until a value, 0 once closed AND empty; `chan_send` blocks while full, -1 once closed; the 56-byte header
+  unchanged). **arm64 macOS:** the `__ulock` lock and the eventcount the Linux channel now uses (*Fixed*).
+  **Windows:** waiters queue on per-kind FIFOs and block in `GetQueuedCompletionStatus` on a completion port taken
+  from a process-wide pool (≤ 64 idle, in static storage) and returned after the wait, so handles scale with
+  concurrent waiters, not channels (400 reply channels: 84 → 85 handles, where a port per channel reached 484); no
+  new reroute. x86 macOS, agnos and cx stay serial. **New `CHAN_BLOCKING`** in every thread peer, beside
+  `THREADS_CONCURRENT`: 1 on Linux, arm64 macOS and Windows, 0 on x86 macOS, agnos and cx — a pool looping on
+  `chan_recv` needs it to be 1 (public fn set unchanged). New `tests/tcyr/crossos/chan_blocking_threads.tcyr` (49
+  rows, 11 on a serial peer, guarded on `CHAN_BLOCKING`, never a target name; every main-thread channel call runs on
+  a worker behind a 30 s deadline, so a regression fails instead of hanging): 10/10 on x86, pi, ecb and cass, 13
+  rows red on the old code; four idle blocked workers use ~0 CPU.
+
+- **New warnings.** `#deprecated` now warns on every call path (C9), so a call that was silent — before the
+  definition, `&f`, a method, a struct receive, an operator, a generic instance, an `async fn` — warns once at its
+  own call. A closure that returns a `: stack` pair on one path and a single value on another is warned at its own
+  return (H2), including at top level and after a `?`. In an x86 kernel build, each declaration-zone initializer
+  that still runs after the top-level program is warned once: `in a kernel build the initializer of 'X' runs after
+  the top-level program …` (C6; agnos gets 2).
+
+- **The plain-socket write is a different syscall on Linux and macOS** (CVE-74): `sendto(2)` instead of `write(2)` on
+  Linux (no cost), one `setsockopt(2)` per send on macOS. ⚠ A seccomp filter that allows `write` but not `sendto`
+  now kills a self-confined plain-socket writer on its first send (SIGSYS) — kavach's basic filter is one (see
+  *Downstream*).
+
+- **The gate harness runs every gate from cwd `/`** (G1). 36 shell gates derived their root from `$0` and never
+  `cd`'d there, then compiled or read tree files relative to the CWD: from anywhere but the root they failed, or
+  (14 of them) compiled against the HOME store's `lib/` instead of the tree's through cycc's include fallback, and
+  nothing noticed because every runner launched from the root. The 36 now `cd` to their root (`heapmap.sh` gains a
+  derivation), and `_run_gate_main` (`programs/checks/run_gate.cyr`) chdirs to `/` before starting any gate and
+  refuses a relative script path, so a gate that forgets its `cd` goes red on the next run. **Convention for every
+  new gate:** derive `ROOT` from `$0`, `cd "$ROOT"`, honour `$CYCC`, and pass as `cd / && sh <abs path>` under a HOME
+  with no `.cyrius`. Gate `tests/gates/toolchain/gates_run_from_foreign_cwd.sh` (the 36 `cd` lines pinned
+  statically; every mutation RED). All 327 gates swept from `/` under a store-less HOME: green or a named SKIP,
+  except three that need a HOME store from the root too (backlog).
+
 ### Downstream
 
 - **sandhi 1.10.7 folded (`lib/sandhi.cyr`, sandhi tag `1.10.7` @ `a13398a`; 1.10.5 and 1.10.6 were never
@@ -42,6 +528,35 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `pseudo_inv` gives no NaN entries when σ underflows and `pseudo_inv` / `condition` are right when σ₁
   overflows. No public signature changed (api-surface unchanged at 5,803). Pin 6.6.15. The 12 in-tree
   `.tcyr` files that include ganita pass on x86_64 and aarch64 (qemu).
+
+- **What the consumers see from this release** (each repo's adoption is its own call):
+  - **hisab** — both filings fixed (H1, H2); once it pins ≥ 6.6.16 its autodiff recipe can return `ad_grad_into(..)`
+    from the closure again (D082) and call an escaped closure at top level.
+  - **sandhi** (fixed upstream, at its next release) — a pooled server can serve on arm64 macOS and Windows where
+    `CHAN_BLOCKING == 1` instead of serving inline; a PEM server key costs 0 B per request;
+    `sandhi_session_cache_supported()` reads 1 on OpenSSL 3 under the libssl backend; `_sandhi_server_conn_blocking`
+    is redundant (N4) and the SIGPIPE-guard comment is stale (CVE-74).
+  - **kavach** — `security_create_basic_seccomp_filter` (kill on a miss) allows `write` but not `sendto`, so a
+    process that loads it on itself and writes a plain socket is killed from 6.6.16 (a native TLS writer already was
+    since 6.6.14's CVE-66); its sandboxed spawn paths are not affected. The retired agnosys library's vendored
+    copies (akshara, attn11, cyim-lsp, commandress, darshini, takumi `lib/agnosys.cyr`) carry the same allowlist; no
+    `src/` calls it.
+  - **bayan** — `tests/bayan.tcyr` takes `&` of its two deprecated names and now gets 4 warnings, as its own comment
+    anticipated; `dtoa_init.tcyr`'s start barrier now engages on Windows (12/12 ×5 on cass). **yantra** —
+    `lib/yantra.cyr`'s calls to bayan's deprecated `json_v_obj_get` warn in either include order.
+  - **yantra / abaco** — the `#ifdef CYRIUS_TARGET_AGNOS` arms around their `TCP_NODELAY` `sys_setsockopt` can go.
+  - **agnos** — two new kernel-build warnings, `_AGNOS_VERSION` (`kernel/version.cyr:55`) and `kernel_hostname`
+    (`kernel/core/syscall.cyr:1582`), string globals its own comments already call unsafe from the program body; the
+    image is byte-identical. **gnoboot** — identical array bytes, image 37,376 → 35,328 B, no warning.
+  - **szal / agnosai / sigil** — `max_concurrency` permits now limit on arm64 macOS and Windows; a `chan_new(1)`
+    reply channel per request holds no kernel handle on Windows; sigil's `tests/threads.cyr` note that Windows
+    answers `THREADS_CONCURRENT = 0` is stale (its code is unaffected).
+
+### Known / not fixed
+
+- Everything the 6.6.16 implementers and reviewers met in passing — silent wrong values and memory, TLS, platform /
+  stdlib and toolchain items, each pre-existing unless it says otherwise — is filed in roadmap.md's **"6.6.17 also
+  takes"** block, with its measurement in the lane records (user, 2026-10-04/05: 6.6.16 adds nothing more).
 
 ## [6.6.15] — 2026-10-03
 
