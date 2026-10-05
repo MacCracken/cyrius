@@ -1029,6 +1029,10 @@ var _cl_capturing = 0;
 var _cl_ncap = 0;
 var _cl_snap = 0;
 var _cl_snap_n = 0;
+# 6.6.17 — entries [0, _cl_snap_nl) of `_cl_snap` are the enclosing fn's LOCALS; entries
+# [_cl_snap_nl, _cl_snap_n) are the enclosing closure's own CAPTURES, so a closure nested in a
+# capturing closure can capture them in turn (`_cl_ctx_enter`). CHANGELOG [6.6.17]
+var _cl_snap_nl = 0;
 var _cl_nshadow = 0;
 var _cl_env_lidx = 0;
 # ⛔ 6.6.5 — A fn-LOCAL STATIC ARRAY IS NOT A PROGRAM-WIDE GLOBAL NAME.

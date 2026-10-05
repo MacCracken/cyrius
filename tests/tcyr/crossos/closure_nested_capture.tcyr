@@ -1,0 +1,167 @@
+# closure_nested_capture.tcyr — 6.6.17 — a closure nested inside another closure captures the
+# variables of EVERY enclosing scope: the enclosing fn's locals and params, the outer closure's
+# own params and locals, and what the outer closure itself captured — by value, at construction,
+# exactly as a single-level capture does.
+#
+# Before 6.6.17 the capture tables were ONE global set that a nested closure literal overwrote,
+# and a closure's snapshot held only the enclosing closure's own locals. Measured on the
+# 6.6.17-open compiler:
+#   * `fn mk(b) { var g = |x| { var k = |y| { return h(y + b); }; .. }; }` (the filed shape) was
+#     refused `undefined variable 'b'` — the guide called it "captured closures are flat";
+#   * an outer capturing closure that merely CONTAINED a nested closure (capturing or not) lost
+#     its own captures after it: `|x| { var k = |y| y + 1; return b + callptr(k, x); }` was
+#     refused `undefined variable 'b'`, and its env was sized from the nested closure's list;
+#   * a nested closure's `var` stayed in the outer closure's shadow set, so a name the outer body
+#     read after the nested body was not captured; and an expression-bodied outer closure whose
+#     body is a block-bodied closure (`|x| |y| { var t = y; return t + a; }`) stopped its scan at
+#     the first `;` inside it, dropping every capture after it.
+#
+# CROSS-HOST: the env copy of a capture of a capture (a load from the enclosing closure's env) is
+# emitted by each backend. Capturing closures here take at most three parameters (Win64's limit).
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+include "lib/str.cyr"
+include "lib/assert.cyr"
+
+fn h(v): i64 { return v; }
+
+# ── the filed repro (6.6.16 review), verbatim shape ─────────────────────────────────────────────
+fn repro(b): i64 {
+    var g = |x| { var k = |y| { return h(y + b); }; return callptr(k, x); };
+    return callptr(g, 2);
+}
+
+# ── the outer closure keeps its own captures after a nested closure ────────────────────────────
+fn after_plain_inner(b): i64 {
+    var g = |x| { var k = |y| y + 1; return b + callptr(k, x); };
+    return callptr(g, 1);
+}
+fn after_capturing_inner(a, b): i64 {
+    var g = |x| { var k = |y| y + b; var r = callptr(k, x); return r * 100 + a; };
+    return callptr(g, 1);
+}
+
+# ── a fn local (not a param), and the outer closure's own param, in one inner closure ─────────
+fn local_and_param(): i64 {
+    var base = 30;
+    var g = |x| { var k = |y| base + x + y; return callptr(k, 2); };
+    return callptr(g, 10);
+}
+
+# ── curried: an expression body that is itself a closure ───────────────────────────────────────
+fn curried(a): i64 {
+    var f = |x| |y| a + x + y;
+    var g = callptr(f, 10);
+    return callptr(g, 2);
+}
+fn curried_block(a): i64 {
+    var f = |x| |y| { var t = y * 2; return t + a + x; };
+    var g = callptr(f, 10);
+    return callptr(g, 1);
+}
+
+# ── three levels ────────────────────────────────────────────────────────────────────────────────
+fn three_levels(a): i64 {
+    var f = |x| {
+        var g = |y| {
+            var k = |z| a + x * 100 + y * 10 + z;
+            return callptr(k, 1);
+        };
+        return callptr(g, 2);
+    };
+    return callptr(f, 3);
+}
+
+# ── scoping ─────────────────────────────────────────────────────────────────────────────────────
+# A nested closure's `var b` is its own: the outer body's `b` after it is still the fn's.
+fn inner_var_scoped(b): i64 {
+    var g = |x| { var k = |y| { var b = y * 1000; return b; }; return b + callptr(k, x); };
+    return callptr(g, 1);
+}
+# Inside the nested closure its own `var b` shadows the captured one.
+fn inner_var_shadows(b): i64 {
+    var g = |x| { var k = |y| { var b = 100; return b + y; }; return callptr(k, x) * 1000 + b; };
+    return callptr(g, 1);
+}
+# An outer closure's own local `b` (declared after it captured the fn's `b`) is what a nested
+# closure built in its scope sees.
+fn outer_local_shadows(b): i64 {
+    var g = |x| {
+        var t = b;
+        if (x > 0) {
+            var b = 5;
+            var k = |y| b * 1000 + y;
+            return callptr(k, t);
+        }
+        return 0;
+    };
+    return callptr(g, 1);
+}
+
+# ── aggregates through two levels ───────────────────────────────────────────────────────────────
+struct NcP { a; b; c; }
+fn aggregate(): i64 {
+    var q: NcP;
+    q.a = 1; q.b = 2; q.c = 3;
+    var g = |x| { var k = |y| q.a * 100 + q.b * 10 + q.c + y; return callptr(k, x); };
+    return callptr(g, 1000);
+}
+fn aggregate_pointer_mode(): i64 {
+    var p: NcP = alloc(24);
+    p.a = 4; p.b = 5; p.c = 6;
+    var g = |x| { var k = |y| p.a * 100 + p.b * 10 + p.c + y; return callptr(k, x); };
+    return callptr(g, 0);
+}
+
+# ── by value, and escaping ──────────────────────────────────────────────────────────────────────
+# The nested closure is returned out of the outer one and called after the fn's variable changed.
+fn by_value(): i64 {
+    var b = 40;
+    var f = |x| { var k = |y| b + x + y; return k; };
+    var k1 = callptr(f, 1);
+    b = 999;
+    return callptr(k1, 1);
+}
+fn mk_escape(b): i64 {
+    var f = |x| { var k = |y| b * 10 + x + y; return k; };
+    return callptr(f, 1);
+}
+
+# ── a capture's TYPE rides through: overload dispatch on a capture of a capture ──────────────────
+fn show(x): i64 { return 1; }
+fn show_str(s: Str): i64 { return 2; }
+var s: Str = str_from("global-str");
+fn typed_captures(): i64 {
+    var s = "plain-cstr";
+    var lt: Str = str_from("captured");
+    var c1 = |k| (|j| show(s) + j);
+    var c2 = |k| (|j| show(lt) + j);
+    var d1 = fncall1(c1, 0);
+    var d2 = fncall1(c2, 0);
+    return fncall1(d1, 0) * 10 + fncall1(d2, 0);
+}
+
+# ── a top-level outer closure ───────────────────────────────────────────────────────────────────
+var tl_outer = |x| { var k = |y| x * 10 + y; return callptr(k, 2); };
+
+alloc_init();
+assert_eq(repro(40), 42, "the filed repro: an inner closure reads the outermost fn's param");
+assert_eq(after_plain_inner(40), 42, "outer keeps its capture after a non-capturing inner closure");
+assert_eq(after_capturing_inner(7, 40), 4107, "outer keeps its capture after a capturing inner closure");
+assert_eq(local_and_param(), 42, "a fn local and the outer closure's param in one inner closure");
+assert_eq(curried(30), 42, "curried |x| |y| a + x + y");
+assert_eq(curried_block(30), 42, "curried with a block body: the scan does not stop at its `;`");
+assert_eq(three_levels(4000), 4321, "three levels deep");
+assert_eq(inner_var_scoped(40), 1040, "a nested closure's var does not hide the outer's capture after it");
+assert_eq(inner_var_shadows(7), 101007, "a nested closure's var shadows the captured name inside it");
+assert_eq(outer_local_shadows(40), 5040, "the outer closure's own local shadows its capture");
+assert_eq(aggregate(), 1123, "a 3-word struct captured through two levels");
+assert_eq(aggregate_pointer_mode(), 456, "a pointer-mode struct captured through two levels");
+assert_eq(by_value(), 42, "captured by value at construction, escaped out of the outer closure");
+var esc = mk_escape(4);
+assert_eq(fncall1(esc, 1), 42, "an escaped capture-of-a-capture called at top level");
+assert_eq(typed_captures(), 12, "a cstr / Str capture of a capture dispatches by its own type");
+assert_eq(callptr(tl_outer, 4), 42, "a top-level outer closure's param in a nested closure");
+var r = assert_summary();

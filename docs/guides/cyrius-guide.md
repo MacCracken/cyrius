@@ -2830,8 +2830,27 @@ error to declare more. A capturing closure with eight arguments cannot be
 called through `fncall8` (there is no `fncall9` for the environment to ride in);
 use `callptr`, which has no arity ladder. `fncallN` and `callptr` dispatch
 closures the same way at **top level** as inside a function (since 6.6.16; before
-that a top-level `fncallN` on a capturing closure crashed). Captured closures are
-flat (no capture of a capture across two nested closure levels).
+that a top-level `fncallN` on a capturing closure crashed).
+
+**Nested closures capture through every enclosing level (6.6.17).** A closure written inside
+another closure may read the inner closure's own locals, the outer closure's params and
+locals, and the enclosing function's locals and params — at any depth. Each level captures by
+value at its own construction: the outer closure captures what any closure nested in it reads,
+and the inner closure copies that captured value out of the outer one's environment when it is
+built.
+
+```
+fn adder(a): i64 {
+    var f = |x| |y| a + x + y;       # curried: the inner closure reads `a` and `x`
+    return callptr(callptr(f, 10), 2);   # a + 12
+}
+```
+
+⚠ Before 6.6.17 this did not compile: the inner closure's reference to an enclosing
+function's variable was refused `undefined variable`, and an outer capturing closure that merely
+contained a nested closure lost its own captures after it (refused the same way). This section
+used to call it "captured closures are flat", which was a compiler limit, not a rule. Pinned by
+`tests/tcyr/crossos/closure_nested_capture.tcyr`.
 
 ## Generic Functions
 
