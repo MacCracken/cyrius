@@ -319,16 +319,14 @@ agnosai ships its own generator, so nothing is blocked. **Its prerequisite has c
 `2026-06-25-source-level-version-constant` shipped at v6.5.21, and `PP_EMIT_PKGVER`
 (`src/frontend/lex_pp.cyr`) is the template for a `#@embed` arm.
 
-⚠ **Hard constraint learned at `.21`**: an injected directive must emit **ZERO newlines** (merge
-onto the following source line) or it shifts every `<source>` diagnostic by one — a 1-for-1 line
-replacement is **not** line-neutral.
-
 ### ~~P3 — Compile-time evaluation (`const fn`)~~ → moved to v6.7.x (2026-10-01)
 [`proposals/2026-07-05-const-eval-comptime.md`](proposals/2026-07-05-const-eval-comptime.md)
 
 It is language, not tooling, so it moved with the rest of the language list. Its spec — the rung
-chosen 2026-07-07 and the `ir_const_fold` ordering constraint — is now [roadmap_6.md](roadmap_6.md)
-§ v6.7.x, item C1.
+chosen 2026-07-07 and its corrected base (the parse-time folder `_CF_TRY`, not the x86-ELF
+peephole that runs only under opt-in `CYRIUS_IR=3`) — is now [roadmap_6.md](roadmap_6.md)
+§ v6.7.x, item C1. *(Corrected 2026-10-04, 6.6.16: this stub used to point at "the
+`ir_const_fold` ordering constraint", a base roadmap_6.md had already retracted on 2026-10-02.)*
 
 ### P4 — test-only stdlib leaves, instead of hiding them from the umbrella scan
 [`proposals/2026-09-16-declare-test-only-stdlib-leaves-instead-of-hiding-them-from-the-umbrella-scan.md`](proposals/2026-09-16-declare-test-only-stdlib-leaves-instead-of-hiding-them-from-the-umbrella-scan.md)
@@ -621,29 +619,52 @@ priority surfaces.
   self-sufficiency sweep (6.6.9 bite 7) carries them as a named PENDING tier. The real fix is a distlib
   change released in cyrius first, then ten sibling regenerations + releases, then a re-vendor — an XL
   cross-repo campaign, so it is not packed into 6.6.7–6.6.9.
-- **Nine syscall families consumers still hand-roll, unnamed by the stdlib** — the widened
-  surface v6.6.5 measured and deliberately did NOT ship. Per-family reasons, consumers and
-  collision analysis live in the table of
+- **The syscall families consumers still hand-roll, unnamed by the stdlib — `setrlimit`, `ptrace`,
+  `sched_getaffinity`, `pread64` / `pwrite64`** — what remains of the widened surface v6.6.5
+  measured and deliberately did NOT ship. Per-family reasons, consumers and collision analysis
+  live in the table of
   [`issues/archived/2026-09-17-thoth-memfd-ftruncate-sendmsg-unnamed-pass-through-on-aarch64.md`](issues/archived/2026-09-17-thoth-memfd-ftruncate-sendmsg-unnamed-pass-through-on-aarch64.md)
   ("Not fixed, deliberately — (b)"). **Pinned here, not left in an archived file**, because a
   deferral is real only when it is pinned somewhere still open. ⛔ **They are in the exact silent
   class thoth filed**: `_SYSX_MEANT` only carries numbers named in BOTH peers, so a NAMELESS
   number produces **no warning at all** (measured: raw 160 on the aarch64 fork warns nothing).
-  Two tiers:
-  - ⭐ **Tier 1 SHIPPED at 6.6.8 bite 3** — kavach filed for `unshare`/`chroot`
-    ([`issues/archived/2026-09-25-kavach-unshare-chroot-unnamed-aarch64-chroot-unreachable.md`](issues/archived/2026-09-25-kavach-unshare-chroot-unnamed-aarch64-chroot-unreachable.md)),
-    and shakti is broken on aarch64 today, so `capget`/`capset` and `process_vm_*` ride with it.
-  - **No technical blocker, held only as API surface nobody filed for** — `capget`/`capset`
-    (125/126 → 90/91, consumers kybernet + shakti), `chroot` (161 → 51, kavach — the row must sit
-    BELOW `51 → 204`), `unshare` (272 → 97, kavach), `process_vm_readv`/`writev` (310/311 →
-    270/271, mirshi). Each needs a Darwin route-or-decline, and this release's open concern is
-    that three Darwin numbers were derived from neighbouring rows rather than an SDK read — so
-    take these on a slot that has an ecb/ach leg, not as a tail-end addition.
-  - **Concrete blockers** — `ptrace` (101 is the PRODUCT of this release's `35 → 101`),
-    `sched_getaffinity` (204 is the product of `51 → 204`), `pread64`/`pwrite64` (17 is the
-    product of `79 → 17` and aarch64-native getcwd → needs the ≥1000 alias band), and the
-    `rlimit` family (aarch64 has only `prlimit64`, with a different arg list → an arg-shifting
-    row, real hand-assembly).
+  *(Corrected 2026-10-04, 6.6.16: this entry was titled "Nine syscall families", still listed the
+  shipped Tier 1 as unshipped, and called the rlimit family blocked on a `prlimit64` arg-shift.)*
+  - ⭐ **Already shipped, so no longer listed here**: Tier 1 at **6.6.8 bite 3** — `unshare`,
+    `chroot`, `capget` / `capset`, `process_vm_readv` / `writev`, plus `pivot_root`
+    (`lib/syscalls_linux_common.cyr:495-562`, with `-38` decline stubs in the agnos and Windows
+    peers; CHANGELOG [6.6.8]; kavach's
+    [`issues/archived/2026-09-25-kavach-unshare-chroot-unnamed-aarch64-chroot-unreachable.md`](issues/archived/2026-09-25-kavach-unshare-chroot-unnamed-aarch64-chroot-unreachable.md))
+    — and `getrlimit` at **6.6.12** (`sys_getrlimit`, `lib/syscalls_linux_common.cyr:755`; the
+    aarch64 peer declares the NATIVE `SYS_GETRLIMIT = 163`, Darwin row `163 → 194`).
+  - **`setrlimit` has no arg-shift blocker.** aarch64 has `setrlimit` **164** natively, as it has
+    `getrlimit` 163 — no `prlimit64` row is needed (measured under `qemu-aarch64` at 6.6.16: raw
+    164 set `RLIMIT_NOFILE`'s soft limit to 64 and raw 163 read 64 back). It wants the getrlimit
+    shape: a native declaration in the aarch64 peer, no ESYSXLAT row.
+  - **What is left is the warning interplay, not number collisions.** The x86 spellings of
+    `ptrace` (101), `sched_getaffinity` (204) and `pread64` (17) ARE products of the ELF-arm rows
+    `35 → 101`, `51 → 204` and `79 → 17`, which is why this entry used to call them blocked —
+    but the aarch64 peer would declare the NATIVE numbers, as `SYS_GETRLIMIT = 163` does, and the
+    natives **117** (ptrace), **123** (sched_getaffinity), **67** / **68** (pread64 / pwrite64)
+    and **164** (setrlimit) are neither sources nor products of the ELF-arm chain. That is
+    derived from the row COMMENTS in `src/backend/aarch64/emit.cyr`'s ESYSXLAT block, not decoded
+    from the generator's tables; it is cross-checked by `qemu-aarch64` runs at 6.6.16 (raw 67
+    read `pread` at offset 6, raw 123 returned 8, raw 164 as above) and, for 117, by the
+    compiler's own diagnostic — "raw syscall 117 is x86_64 `setresuid`; on ELF-aarch64 that
+    number is `ptrace`" — i.e. no row translates it. The remaining design point:
+    `programs/gen_syscall_xlat.cyr`'s `is_native_a64` drops the raw-x86-literal warning row for
+    any number the aarch64 peer declares below the 1000 alias band — but it can only drop a row
+    that EXISTS, and `_SYSX_MEANT` (`src/common/syscall_xlat.cyr`) carries a row only for an x86
+    number named in BOTH peers. Of the five natives, only **117** has one today (x86
+    `setresuid`): declaring `ptrace` natively would silence that live warning. **123**, **67**,
+    **68** and **164** are x86 `setfsgid` / `shmdt` / `msgget` / `settimeofday`, which the x86
+    peer does not name, so they have no row and already warn nothing (measured at 6.6.16 with
+    the tree's aarch64 cross compiler: raw 117 warns, raw 123 / 67 / 68 / 164 are silent) —
+    their native declarations silence nothing now, and would matter only if those x86 names
+    later get declared in both peers. So the per-family decision is `ptrace`'s alone: accept
+    losing the setresuid-117 warning, or give `ptrace` a ≥1000 alias instead (as the 6.6.12
+    xattr band did for the same reason); re-check with `programs/gen_syscall_xlat.cyr` when the
+    slot opens.
   - **Acceptance**: every family named in `lib/syscalls_linux_common.cyr` (or the peer that owns
     it) with a Darwin arm, a row whose placement `esysxlat_row_order.sh` passes, and a runtime
     assertion in `tests/tcyr/crossos/` that fails when the number is wrong — the three tests

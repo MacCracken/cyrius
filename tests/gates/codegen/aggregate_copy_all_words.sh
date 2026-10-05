@@ -27,6 +27,7 @@
 # every assignment into a multi-word copy.
 set -u
 R=$(cd "$(dirname "$0")/../../.." && pwd)
+cd "$R" || { echo "FAIL: aggregate_copy_all_words: cannot cd to $R"; exit 1; }
 T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: aggregate_copy_all_words: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }; trap 'rm -rf "$T"' EXIT
 CC="$R/build/cycc"
 [ -x "$CC" ] || { echo "FAIL aggregate_copy_all_words: no build/cycc"; exit 1; }

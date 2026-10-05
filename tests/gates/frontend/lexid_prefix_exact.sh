@@ -25,6 +25,7 @@
 # ⚠ Builds the compiler FROM SOURCE: the dedup under test lives in the compiler being built.
 set -u
 R=$(cd "$(dirname "$0")/../../.." && pwd)
+cd "$R" || { echo "FAIL: lexid_prefix_exact: cannot cd to $R"; exit 1; }
 T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: lexid_prefix_exact: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }; trap 'rm -rf "$T"' EXIT
 CC="$R/build/cycc"
 [ -x "$CC" ] || { echo "FAIL lexid_prefix_exact: no build/cycc"; exit 1; }

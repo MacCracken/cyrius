@@ -33,6 +33,7 @@
 #     correct                 -> 1275 fns, 1275 clean,  0 undecodable, 0 desynced
 set -u
 R=$(cd "$(dirname "$0")/../../.." && pwd)
+cd "$R" || { echo "FAIL: decode_len_coverage: cannot cd to $R"; exit 1; }
 T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: decode_len_coverage: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }; trap 'rm -rf "$T"' EXIT
 CC="$R/build/cycc"
 [ -x "$CC" ] || { echo "FAIL decode_len_coverage: no build/cycc"; exit 1; }

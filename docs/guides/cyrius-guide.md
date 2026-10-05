@@ -1499,7 +1499,7 @@ cannot use `public`, `pub`, or `private` as identifiers.
 ```
 # Conditional compilation (v5.6.1)
 #ifdef CYRIUS_TARGET_LINUX
-    var fd = file_open("/proc/self/exe", 0);
+    var fd = file_open("/proc/self/exe", 0, 0);
 #elif CYRIUS_TARGET_WIN
     var fd = win_get_image_handle();
 #else
@@ -2119,7 +2119,7 @@ fn parse(x): i64 {
     return Err(0 - x);
 }
 
-fn use(): i64 {
+fn use_res(): i64 {
     var tag, val = parse(21);   # ZERO allocation
     if (tag == 0) { return val; }
     return 0 - val;
@@ -2211,7 +2211,7 @@ This table read *"unchanged"* for that whole row until v6.6.2, and it was wrong.
 rewritten from `load64(box)` to a direct register compare. On a value-form tag that is correct; on
 a **raw box** every one of them answers wrongly, compiling clean and exiting 0:
 
-```
+```text
 tag(box)           = 140399372926976   # the POINTER, not the tag (fn now deleted)
 is_tag(box, MSome) = 0                 # the value IS MSome
 is_some(box) = 0   is_none(box) = 0    # simultaneously not-Some and not-None
@@ -3253,7 +3253,7 @@ fn io_outb(port, val) {
     var p = port;
     var v = val;
     asm { 0xBA; 0xF8; 0x03; }    # raw bytes: mov dx, 0x3F8
-    asm { outb; }                  # mnemonic
+    asm { out dx, al; }            # mnemonic
 }
 ```
 

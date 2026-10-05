@@ -32,6 +32,7 @@
 # that neuters rather than corrupts proves nothing.
 set -u
 R=$(cd "$(dirname "$0")/../../.." && pwd)
+cd "$R" || { echo "FAIL: wholeprogram_nop_compaction: cannot cd to $R"; exit 1; }
 T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: wholeprogram_nop_compaction: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }; trap 'rm -rf "$T"' EXIT
 CC="$R/build/cycc"
 [ -x "$CC" ] || { echo "FAIL wholeprogram_nop_compaction: no build/cycc"; exit 1; }

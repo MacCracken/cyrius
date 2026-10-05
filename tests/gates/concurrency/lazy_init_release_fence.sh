@@ -26,6 +26,7 @@
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
+cd "$ROOT" || { echo "FAIL: lazy_init_release_fence: cannot cd to $ROOT"; exit 1; }
 CC="$ROOT/build/cycc"
 [ -x "$CC" ] || { echo "FAIL: lazy_init_release_fence: build/cycc missing"; exit 1; }
 WORK=$(mktemp -d) && [ -d "$WORK" ] || { echo "FAIL: lazy_init_release_fence: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }; trap 'rm -rf "$WORK"' EXIT

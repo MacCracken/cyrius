@@ -42,6 +42,7 @@
 # Skips gracefully off Linux/x86_64, or without gcc / libc.so.6 / build/cycc.
 set -e
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
+cd "$ROOT" || { echo "FAIL: ffi_stack_protected_extern_c: cannot cd to $ROOT"; exit 1; }
 CYCC="$ROOT/build/cycc"
 
 # --- platform gate: this exercises the SysV x86_64 / glibc path only ---

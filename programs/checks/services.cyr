@@ -1231,20 +1231,189 @@ fn _tls_live_gate(): i64 {
     return 1;
 }
 
+# ── Locating sit ────────────────────────────────────────────────────────────────────────────
+# The sit-fsck row runs a sibling sit checkout's build/sit. It looked in $SIT_DIR, then
+# <ROOT>/../sit, and nowhere else, so from a git WORKTREE added outside ~/Repos (a release lane
+# at ~/.cache/<lanes>/<x>) `../sit` named nothing and the row SKIPped while the main checkout's
+# sibling sit sat built. In a worktree `.git` is a FILE, `gitdir: <main>/.git/worktrees/<x>`
+# (relative to the worktree root when relative), and that directory's `commondir` names the
+# shared .git (`../..`, relative to the gitdir); the shared .git's parent is the main checkout.
+# Order, first hit wins: $SIT_DIR — an OVERRIDE, the only candidate when set, so a wrong one
+# SKIPs naming it instead of quietly running some other sit — then <ROOT>/../sit, then
+# <main>/../sit by the gitdir/commondir route, then $HOME/Repos/sit. A candidate counts only if
+# <dir>/build/sit exists; each one looked at is recorded in _SIT_TRIED, so the SKIP (and
+# `cyrius_check --sit-dir` on a miss) names them all.
+# Gate: tests/gates/toolchain/check_sit_lookup_worktree.sh. CHANGELOG [6.6.16]
+var _SIT_TRIED = 0;
+
+# Lexically normalise an ABSOLUTE path: collapse `//`, drop `.`, resolve `..` (never above /).
+fn _path_norm(p): i64 {
+    var n = strlen(p);
+    var out = alloc(n + 2);
+    var o = 0;
+    var i = 0;
+    while (i < n) {
+        if (load8(p + i) == 47) {
+            i = i + 1;
+        } else {
+            var s = i;
+            var seg = 1;
+            while (seg == 1) {
+                if (i >= n) { seg = 0; }
+                else {
+                    if (load8(p + i) == 47) { seg = 0; } else { i = i + 1; }
+                }
+            }
+            var len = i - s;
+            var dot = 0;
+            if (len == 1) { if (load8(p + s) == 46) { dot = 1; } }
+            if (len == 2) {
+                if (load8(p + s) == 46) { if (load8(p + s + 1) == 46) { dot = 2; } }
+            }
+            if (dot == 2) {
+                # back up to the previous '/', or stay at the root
+                var up = 1;
+                while (up == 1) {
+                    if (o == 0) { up = 0; }
+                    else {
+                        o = o - 1;
+                        if (load8(out + o) == 47) { up = 0; }
+                    }
+                }
+            }
+            if (dot == 0) {
+                store8(out + o, 47);
+                o = o + 1;
+                var k = 0;
+                while (k < len) {
+                    store8(out + o, load8(p + s + k));
+                    o = o + 1;
+                    k = k + 1;
+                }
+            }
+        }
+    }
+    if (o == 0) { store8(out, 47); o = 1; }
+    store8(out + o, 0);
+    return out;
+}
+
+# `rel` joined to the absolute directory `base` unless it is already absolute; normalised.
+fn _path_join_norm(base, rel): i64 {
+    if (load8(rel) == 47) { return _path_norm(rel); }
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, base);
+    str_builder_add_cstr(sb, "/");
+    str_builder_add_cstr(sb, rel);
+    return _path_norm(str_data(str_builder_build(sb)));
+}
+
+# The first line of a small text file (trailing CR/LF/space/tab trimmed), or 0 when it cannot
+# be read (missing, a directory — EISDIR — or empty).
+fn _read_line1(path): i64 {
+    var buf = alloc(4097);
+    var n = file_read_all(path, buf, 4096);
+    if (n <= 0) { return 0; }
+    var e = 0;
+    var go = 1;
+    while (go == 1) {
+        if (e >= n) { go = 0; }
+        else {
+            if (load8(buf + e) == 10) { go = 0; } else { e = e + 1; }
+        }
+    }
+    var trim = 1;
+    while (trim == 1) {
+        if (e == 0) { trim = 0; }
+        else {
+            var c = load8(buf + e - 1);
+            if (c == 13) { e = e - 1; }
+            else {
+                if (c == 32) { e = e - 1; }
+                else {
+                    if (c == 9) { e = e - 1; } else { trim = 0; }
+                }
+            }
+        }
+    }
+    if (e == 0) { return 0; }
+    store8(buf + e, 0);
+    return buf;
+}
+
+# The main checkout's sibling `sit` when ROOT is a git worktree (its `.git` a `gitdir: ` file
+# whose gitdir holds a `commondir`), else 0. A `.git` file with no commondir (a
+# --separate-git-dir clone, a submodule) is not a worktree; its checkout is ROOT itself.
+fn _sit_worktree_candidate(): i64 {
+    var line = _read_line1(_root_path(".git"));
+    if (line == 0) { return 0; }
+    if (strlen(line) <= 8) { return 0; }
+    if (_buf_eq(line, "gitdir: ", 8) != 1) { return 0; }
+    var gitdir = _path_join_norm(ROOT_PATH, line + 8);
+    var cd = _read_line1(_cat2(gitdir, "/commondir"));
+    if (cd == 0) { return 0; }
+    var common = _path_join_norm(gitdir, cd);
+    return _path_norm(_cat2(common, "/../../sit"));
+}
+
+# 1 when <dir>/build/sit exists. Records `dir` in _SIT_TRIED either way.
+fn _sit_try(dir): i64 {
+    if (_SIT_TRIED == 0) { _SIT_TRIED = dir; }
+    else { _SIT_TRIED = _cat2(_cat2(_SIT_TRIED, ", "), dir); }
+    if (file_exists(_cat2(dir, "/build/sit")) == 1) { return 1; }
+    return 0;
+}
+
+# The sit checkout the sit-fsck row runs (see the block above), or 0.
+fn _sit_find_dir(): i64 {
+    _SIT_TRIED = 0;
+    var env = getenv("SIT_DIR");
+    if (env != 0) {
+        if (load8(env) != 0) {
+            if (_sit_try(env) == 1) { return env; }
+            return 0;
+        }
+    }
+    var d = _path_norm(_root_path("../sit"));
+    if (_sit_try(d) == 1) { return d; }
+    var w = _sit_worktree_candidate();
+    if (w != 0) {
+        if (streq(w, d) != 1) {
+            if (_sit_try(w) == 1) { return w; }
+        }
+    }
+    var home = getenv("HOME");
+    if (home != 0) {
+        if (load8(home) == 47) {
+            var h = _path_norm(_cat2(home, "/Repos/sit"));
+            # already tried as (b) or (c): stat it once and name it once in the SKIP
+            var dup = streq(h, d);
+            if (w != 0) { if (streq(h, w) == 1) { dup = 1; } }
+            if (dup != 1) {
+                if (_sit_try(h) == 1) { return h; }
+            }
+        }
+    }
+    return 0;
+}
+
+# Why `_sit_find_dir` found nothing: every candidate it tried, and the override.
+fn _sit_not_found_why(): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "no build/sit under ");
+    str_builder_add_cstr(sb, _SIT_TRIED);
+    str_builder_add_cstr(sb, " (set SIT_DIR=<sit checkout> to choose one)");
+    return str_data(str_builder_build(sb));
+}
+
 fn _sit_status_gate(): i64 {
     var label = "sit fsck on 100-commit fixture reports 0 bad (pin v5.6.35; sankoch deflate)";
-    var sit_dir = getenv("SIT_DIR");
-    if (sit_dir == 0) { sit_dir = _root_path("../sit"); }
-
-    var sit_bin_sb = str_builder_new();
-    str_builder_add_cstr(sit_bin_sb, sit_dir);
-    str_builder_add_cstr(sit_bin_sb, "/build/sit");
-    var sit_bin = str_data(str_builder_build(sit_bin_sb));
-
-    if (file_exists(sit_bin) != 1) {
-        _skip(label, _cat2(sit_bin, " not built"));
+    var sit_dir = _sit_find_dir();
+    if (sit_dir == 0) {
+        _skip(label, _sit_not_found_why());
         return 0;
     }
+    var sit_bin = _cat2(sit_dir, "/build/sit");
 
     var scratch = _tmp_path("audit_sit_");
     if (sys_mkdir(scratch, 493) < 0) {

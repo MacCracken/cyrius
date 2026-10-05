@@ -22,7 +22,18 @@
 set -u
 R=$(cd "$(dirname "$0")/../../.." && pwd)
 T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL x86_trig_calls_polyfill: mktemp -d failed"; exit 1; }
-trap 'rm -rf "$T"' EXIT
+# A PRIVATE wine prefix under $T, never the user's ~/.wine: its one wineserver is shared by
+# every concurrent check.sh on the box. The EXIT kill is scoped to THIS prefix and also removes
+# its server socket dir (/tmp/.wine-<uid>/server-<dev>-<ino>). CHANGELOG [6.6.16]
+WP="$T/wine"
+_wine_down() {
+    [ -d "$WP" ] || return 0
+    _ws="/tmp/.wine-$(id -u)/server-$(stat -c '%D' "$WP" 2>/dev/null)-$(printf '%x' "$(stat -c '%i' "$WP" 2>/dev/null || echo 0)")"
+    WINEPREFIX="$WP" wineserver -k >/dev/null 2>&1 || true
+    WINEPREFIX="$WP" wineserver -w >/dev/null 2>&1 || true
+    rm -rf "$_ws" || true
+}
+trap '_wine_down; rm -rf "$T"' EXIT
 CC=${CYCC:-"$R/build/cycc"}
 [ -x "$CC" ] || { echo "FAIL x86_trig_calls_polyfill: no compiler at $CC"; exit 1; }
 cd "$R" || exit 1
@@ -84,8 +95,9 @@ else
     echo "  ok [elf] axis 3: sin(pi), sin(1e19), cos(DBL_MAX) are the correctly rounded bits"
 fi
 if command -v wine > /dev/null 2>&1; then
+    export WINEPREFIX="$WP" WINEDEBUG=-all WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d'
     cp "$T/m.pe" "$T/m.exe"
-    WINEDEBUG=-all wine "$T/m.exe" > /dev/null 2>&1; got=$?
+    wine "$T/m.exe" > /dev/null 2>&1; got=$?
     if [ "$got" -ne 42 ]; then
         echo "  FAIL [pe] axis 3: under wine, row $got is not correctly rounded"; fail=1
     else

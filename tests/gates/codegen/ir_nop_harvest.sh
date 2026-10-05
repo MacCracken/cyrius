@@ -20,6 +20,7 @@
 # RED (mutation-proven: reverting the gate to `IR_ENABLED(S) == 0` gives 19,067 NOPs).
 set -u
 R=$(cd "$(dirname "$0")/../../.." && pwd)
+cd "$R" || { echo "FAIL: ir_nop_harvest: cannot cd to $R"; exit 1; }
 T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: ir_nop_harvest: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }; trap 'rm -rf "$T"' EXIT
 CC="$R/build/cycc"
 [ -x "$CC" ] || { echo "FAIL ir_nop_harvest: no build/cycc"; exit 1; }

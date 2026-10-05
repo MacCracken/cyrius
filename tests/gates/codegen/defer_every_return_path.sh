@@ -42,7 +42,18 @@
 set -u
 R=$(cd "$(dirname "$0")/../../.." && pwd)
 T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: defer_every_return_path: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
-trap 'rm -rf "$T"' EXIT
+# A PRIVATE wine prefix under $T, never the user's ~/.wine: its one wineserver is shared by
+# every concurrent check.sh on the box. The EXIT kill is scoped to THIS prefix and also removes
+# its server socket dir (/tmp/.wine-<uid>/server-<dev>-<ino>). CHANGELOG [6.6.16]
+WP="$T/wine"
+_wine_down() {
+    [ -d "$WP" ] || return 0
+    _ws="/tmp/.wine-$(id -u)/server-$(stat -c '%D' "$WP" 2>/dev/null)-$(printf '%x' "$(stat -c '%i' "$WP" 2>/dev/null || echo 0)")"
+    WINEPREFIX="$WP" wineserver -k >/dev/null 2>&1 || true
+    WINEPREFIX="$WP" wineserver -w >/dev/null 2>&1 || true
+    rm -rf "$_ws" || true
+}
+trap '_wine_down; rm -rf "$T"' EXIT
 ulimit -c 0 2>/dev/null || true
 CC="${CYCC:-$R/build/cycc}"
 [ -x "$CC" ] || { echo "FAIL defer_every_return_path: no $CC"; exit 1; }
@@ -118,6 +129,7 @@ else echo "  SKIP: a64 leg — qemu-aarch64 not installed"; GATE_SKIPS=$((${GATE
 
 # ---- PE (wine) -----------------------------------------------------------------------------
 if command -v wine > /dev/null 2>&1; then
+  export WINEPREFIX="$WP" WINEDEBUG=-all WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d'
   CYRIUS_TARGET_WIN=1 "$T/stage1" < "$TC" > "$T/tc.exe" 2>"$T/tc.werr"
   if [ -s "$T/tc.exe" ]; then
     (cd "$T" && timeout 180 wine ./tc.exe > "$T/tc.wout" 2>/dev/null); r=$?

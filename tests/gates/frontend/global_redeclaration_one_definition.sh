@@ -53,6 +53,7 @@
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
+cd "$ROOT" || { echo "FAIL: global_redeclaration_one_definition: cannot cd to $ROOT"; exit 1; }
 CC="${CYCC:-$ROOT/build/cycc}"
 [ -x "$CC" ] || { echo "FAIL: global_redeclaration: $CC missing"; exit 1; }
 WORK=$(mktemp -d) && [ -d "$WORK" ] || { echo "FAIL: global_redeclaration: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }

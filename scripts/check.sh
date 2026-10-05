@@ -1779,6 +1779,16 @@ _chk_gate "$ROOT/tests/gates/toolchain/ci_steps_delegate_to_driver.sh"
 # ~/.cyrius/bin copy are ignored, and a tool that does not compile is a FAIL naming it.
 _chk_gate "$ROOT/tests/gates/toolchain/check_driver_builds_its_tools.sh"
 
+# 6.6.16 (G1) — every gate runs from `/`: the --run-gate supervisor chdirs there before it
+# starts a gate and refuses a relative script path, so a gate that does not cd to the root it
+# derives from $0 is red on every run instead of green because check.sh ran from the root.
+_chk_gate "$ROOT/tests/gates/toolchain/gates_run_from_foreign_cwd.sh"
+
+# 6.6.16 (G5) — the check driver finds sit from a git worktree: $SIT_DIR, <root>/../sit, then
+# the worktree's gitdir/commondir route to the main checkout's sibling sit, then
+# $HOME/Repos/sit; a miss names every path tried. Every release lane's sit-fsck row SKIPped.
+_chk_gate "$ROOT/tests/gates/toolchain/check_sit_lookup_worktree.sh"
+
 # 6.6.10 (bite 12) — the harness never stores through a refused allocation: test_scratch
 # panics by name on x86, qemu-aarch64, wine and cxvm; bench_new returns 0; the regression verbs
 # return -1 before any fork. Mutation ledger in the header.
