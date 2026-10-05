@@ -1,16 +1,19 @@
 #!/bin/sh
-# Gate: on cx a global array initializer stores the SAME BYTES every image target bakes
-# (6.6.16, C1).
+# Gate: on cx a global array initializer holds the SAME BYTES, from the same moment, as on every
+# image target (6.6.16, C1).
 #
-# ⛔ WHY. Every image target now evaluates `var X: T[N] = { .. }` into a blob and copies it into
-# the file image (src/frontend/parse_decl.cyr, "Global array initializers"). cx has no file image —
-# cxvm allocates the globals and zeroes them — so it alone turns the same blob into run-time
-# stores at the replay point (_gai_cx): 8-byte words, the tail BYTE BY BYTE (an 8-byte store past
-# a 12-byte array lands on the next global, which is packed right behind it), a zero word skipped
-# on a fresh blob and stored when an earlier declaration of the slot wrote the blob too. Two
-# implementations of one meaning, so they are run against each other. At the 6.6.16 slot open the
-# list was bytes on cx as everywhere: `var T: i64[3] = {1,2,42}; var W: u16[3] = {1,2,42};
-# syscall(60, T[2] + W[2] + 100)` exited 100.
+# ⛔ WHY. Every target evaluates `var X: T[N] = { .. }` into a blob at the replay and copies it into
+# the var area of its output (src/frontend/parse_decl.cyr, "Global array initializers";
+# _gai_bake). cx does it through its OWN writer — a .cyx carries its var data after the bytecode,
+# and cxvm copies it into the guest (src/main_cx.cyr) — and keeps a run-time PRESTORE of every
+# scalar constant ahead of the replay (_gv_cx_prestore), which must leave a slot a list bakes
+# alone. So the meaning is implemented twice and the two are run against each other here.
+#   History: the first cut of the bite stored the blob at the replay point on cx alone (_gai_cx,
+#   since removed). That was not the image's meaning, and the review measured it: `var F1 = 5;
+#   var F1[1] = {0};` read 5 on cx and 0 elsewhere (a skipped zero word over the prestored
+#   scalar), and an initializer that read a list declared below it saw 0 on cx and the list on
+#   every other target. At the 6.6.16 slot open the list was bytes on cx as everywhere:
+#   `var T: i64[3] = {1,2,42}; var W: u16[3] = {1,2,42}; syscall(60, T[2] + W[2] + 100)` exited 100.
 #
 # HOW. Each row is one program, run on the HOST (x86_64 ELF, the image bake), on cx (the tree's
 # own src/main_cx.cyr + programs/cxvm.cyr) and, when qemu-aarch64 is installed, on aarch64 (the
@@ -20,23 +23,36 @@
 # cxvm are emulators, not hardware: the crossos tcyr runs the image targets on real hosts.
 #   A  integer elements i8..u32/i64, range ends, bare and qualified enums, an enum declared BELOW
 #   B  f64 / f32 / u128 elements (the f32 narrowing, the u128 high word)
-#   C  the bare byte list with a ZERO first word (skipped on a fresh blob) and an enum element
-#   D  a 12-byte array with a u8 packed right after it (the tail). ⚠ The neighbour is a REDECLARED
-#      constant: cx prestores it and its first entry is superseded, so nothing re-stores it after the
-#      array's replay. A plain `var D2: u8 = 0x5A;` is stored AGAIN in declaration order on cx (it
-#      keeps its runtime store), which repaired a clobber and hid it — measured: the tail mutant
-#      below read GREEN against that shape.
-#   E  a redeclared array: the second list writes ZEROS over the first one's bytes (stored, not
-#      skipped, because the blob is shared) and keeps the bytes it does not list
+#   C  the bare byte list with a zero first word and an enum element
+#   D  a 12-byte array with a u8 packed right after it: the bake copies the blob's length, not a
+#      whole last word, so the neighbour (a REDECLARED constant, prestored on cx) is untouched
+#   E  a redeclared array: the second list writes ZEROS over the first one's bytes and keeps the
+#      bytes it does not list
 #   F  a bare array redeclaring a scalar constant keeps the scalar's other bytes (the seed)
 #   G  a declaration after the first top-level statement
 #   H  an array entry superseded by a later constant declaration writes nothing
 #   I  a 4800-byte array: words far past any short displacement
-# MUTATION LEDGER (6.6.16, scratch trees, the gate run from inside each):
-#   1. real tree                                            -> GREEN (9 rows + sanity)
-#   2. _gai_cx's tail stored as a whole 8-byte word         -> RED, 2 checks: D (the packed neighbour)
-#   3. _gai_cx skipping zero words on a SHARED blob         -> RED, 2 checks: E
-#   4. _gai_eval's cx call removed                          -> RED, 16 checks: the rows on cx
+#   J  a ZERO list over a scalar constant (`var J1 = 5; var J1[1] = {0};`) reads 0 — the review's
+#      repro: cx must not prestore the scalar over the baked list
+#   K  a list over `= 0` (a deferred initializer) is the value: 6.6.6's rule, a constant
+#      redeclaration is the global's value from program start (it read 0 on the image targets in
+#      the bite's first cut — the earlier `= 0` ran after the bake)
+#   L  a list over a COMPUTED initializer: the call still runs (its side effect is counted), its
+#      result is discarded
+#   M  an earlier initializer reads a list declared BELOW it (a forward read): the list
+#   N  the same through a fn defined after a post-statement list and called before it
+#   O  an earlier initializer of ANOTHER name writes into the array: that write persists, as a
+#      startup store over a baked value does in C
+# MUTATION LEDGER (6.6.16 review fix, scratch trees, the gate run against each tree's own cycc):
+#   1. real tree                                  -> GREEN (15 rows + sanity)
+#   2. d5fcaa38 (_gai_cx, the replay-point stores) -> RED, 13 checks: J, M, N, O on cx; K and L on
+#      every target (an earlier `= 0` / computed initializer ran after the bake)
+#   3. main_cx.cyr's _gai_bake call removed       -> RED, 24 checks: every nonzero list, on cx
+#   4. _gv_cx_prestore's GVGAI skip removed       -> RED, 6 checks: F, J, K on cx (the prestored
+#      scalar lands over the baked list)
+#   5. PARSE_GVAR_ARR's list supersede removed    -> RED, 11 checks: K and L everywhere, F, J on cx
+#   6. _gv_supersede's list keep removed          -> RED, 3 checks: E everywhere (a later list
+#      superseded the earlier one, so the bytes it does not list were lost)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 1
@@ -184,6 +200,61 @@ h = hb(h, &H1, 8);
 var bad = 0;
 if (H1 != 5) { bad = bad | 1; }
 '
+row J 'var J1 = 5;
+var J1[1] = {0};
+var h = 7;
+h = hb(h, &J1, 8);
+var bad = 0;
+if (load64(&J1) != 0) { bad = bad | 1; }
+'
+row K 'var K1 = 0;
+var K1[1] = {0, 3};
+var K2 = 0x0102030405060708;
+var K2[1] = {9};
+var h = 7;
+h = hb(h, &K1, 8); h = hb(h, &K2, 8);
+var bad = 0;
+if (load64(&K1) != 0x0300) { bad = bad | 1; }
+if (load64(&K2) != 0x0102030405060709) { bad = bad | 2; }
+'
+row L 'var calls = 0;
+fn side(): i64 { calls = calls + 1; return 0x7777; }
+var L1 = side();
+var L1[1] = {0, 4};
+var h = 7;
+h = hb(h, &L1, 8);
+var bad = 0;
+if (load64(&L1) != 0x0400) { bad = bad | 1; }
+if (calls != 1) { bad = bad | 2; }
+'
+row M 'fn rd(): i64 { return M2[1] + M3[0]; }
+var M1 = rd();
+var M2: i64[2] = {5, 6};
+var M3: u16[1] = {0x100};
+var h = 7;
+h = hb(h, &M2, 16); h = hb(h, &M3, 2);
+var bad = 0;
+if (M1 != 0x106) { bad = bad | 1; }
+'
+row N 'var N0 = 1;
+syscall(1, 1, "", 0);
+var N1 = rdn();
+var N2: i64[2] = {5, 6};
+fn rdn(): i64 { return N2[1]; }
+var h = 7;
+h = hb(h, &N2, 16);
+var bad = 0;
+if (N1 != 6) { bad = bad | 1; }
+'
+row O 'fn wr(): i64 { store64(&O1, 4); return 0; }
+var O1: i64[1];
+var O0 = wr();
+var O1: i64[1] = {1};
+var h = 7;
+h = hb(h, &O1, 8);
+var bad = 0;
+if (O1[0] != 4) { bad = bad | 1; }
+'
 IL=$(awk 'BEGIN { for (i = 0; i < 600; i++) { printf "%s%d", (i ? ", " : ""), (i % 7 == 0 ? 0 : i * 1000003) } }')
 row I "var I1: i64[600] = {$IL};
 var h = 7;
@@ -194,7 +265,7 @@ if (I1[598] != 598 * 1000003) { bad = bad | 2; }
 if (I1[595] != 0) { bad = bad | 4; }
 "
 
-[ "$rows" -ge 9 ] || bad "only $rows rows ran (floor 9)"
+[ "$rows" -ge 15 ] || bad "only $rows rows ran (floor 15)"
 if [ "$fail" -ne 0 ]; then
     echo "FAIL: cx_array_initializer ($fail checks failed over $rows rows)"
     exit 1

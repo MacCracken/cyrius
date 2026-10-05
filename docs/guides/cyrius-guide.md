@@ -269,13 +269,15 @@ var utf16[1] = {0x67, 0x00, 0x6E, 0x00};           # the bare form: a BYTE list
   elements explicitly. A call, a variable or a string is not a constant and is
   refused.
 - The values are **in the image**: no code stores them at startup, so they hold
-  from the first instruction — in a `kernel;` build too. On cx, which has no
-  image, the stores run where the declaration's initializer runs.
+  from the first instruction — in a `kernel;` build too, and on cx (in the
+  `.cyx`'s var data). An initializer that runs earlier, even one that reads the
+  array before its declaration, sees the list.
 - The same declaration after the first top-level statement means the same
-  thing. Inside a top-level block (`while`, `if` / `elif` / `else`, `for`,
-  `match`, a bare `{ }`) a list is refused: it would hold its values once, where
-  a scalar's initializer runs each time the block does — assign the elements in
-  the block. A function-local array takes no list.
+  thing. Inside a top-level block (`while`, `if` / `elif` / `else`, `for` and
+  its init clause, a `switch` case or `default` arm, `match`, `@unsafe`, a bare
+  `{ }`) a list is refused: it would hold its values once, where a scalar's
+  initializer runs each time the block does — assign the elements in the block.
+  A function-local array takes no list.
 
 ⚠ Before 6.6.16 the list was a byte list whatever `T` was:
 `var t: i64[3] = {1, 2, 42};` read `t[0] == 0x2A0201` and `t[1] == t[2] == 0`, on
@@ -3046,6 +3048,11 @@ var a = 7;        # warning: duplicate symbol 'a' redefined with conflicting val
   elements overwrite the earlier one's, and the bytes it does not list keep the
   earlier values. A constant **scalar** redeclaration after an array list wins
   whole, as above.
+- A list is a constant initializer, so the first rule covers it too (6.6.16): over
+  an earlier `= 0` or computed initializer of the name it is the value from
+  program start — `var a = f(); var a[1] = {0, 4};` runs `f()` and reads `0x400`
+  — and over an earlier scalar **constant** it keeps the bytes it does not list
+  (`var a = 0x0506; var a[1] = {9};` reads `0x0509`).
 - A redeclaration that changes the **type or size** (`var a = 5;` then
   `var a: i32 = 7;`, `var q[8];` then `var q[16];`) is an error naming the global —
   one of the two would read the other's storage in the wrong shape. Same rule as a

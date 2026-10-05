@@ -1642,7 +1642,7 @@ fn PARSE_SWITCH(S): i64 {
                     else { if (PEEKT(S) == 59) { cgo = 0; }
                         else { if (PEEKT(S) == 14) { cgo = 0; }
                             else { if (PEEKT(S) == 12) { cgo = 0; }
-                                else { PARSE_STMT(S); } } } }
+                                else { _PARSE_STMT_NESTED(S); } } } }
                 }
                 var _eg = _ends_guard(S, ec);
                 var _ep = EJMP0(S);
@@ -1658,7 +1658,7 @@ fn PARSE_SWITCH(S): i64 {
                     default_cp = GCP(S);
                     while (PEEKT(S) != 14) {
                         if (PEEKT(S) == 12) { break; }
-                        PARSE_STMT(S);
+                        _PARSE_STMT_NESTED(S);
                     }
                     var _eg = _ends_guard(S, ec);
                     var _ep = EJMP0(S);
@@ -1714,7 +1714,7 @@ fn PARSE_SWITCH(S): i64 {
                     else { if (PEEKT(S) == 59) { cgo = 0; }
                         else { if (PEEKT(S) == 14) { cgo = 0; }
                             else { if (PEEKT(S) == 12) { cgo = 0; }
-                                else { PARSE_STMT(S); } } } }
+                                else { _PARSE_STMT_NESTED(S); } } } }
                 }
                 var _eg = _ends_guard(S, ec);
                 var _ep = EJMP0(S);
@@ -1735,7 +1735,7 @@ fn PARSE_SWITCH(S): i64 {
                     # also giving a non-last default a jump-over + backward entry.
                     while (PEEKT(S) != 14) {
                         if (PEEKT(S) == 12) { break; }
-                        PARSE_STMT(S);
+                        _PARSE_STMT_NESTED(S);
                     }
                 }
                 else { sgo = 0; } }
@@ -2785,6 +2785,19 @@ fn PARSE_STMT(S): i64 {
     return 0;
 }
 
+# 6.6.16 (C1): a statement inside another statement that has NO braced PARSE_PROG body — a
+# `switch` case / default arm, an `@unsafe { }` body, a `for`'s init clause — is one nesting
+# level deeper for _gai_stmt (parse_decl.cyr), which takes an array initializer only at module
+# scope (`_pp_depth == 1`). PARSE_PROG counts every braced body; these parse their statements
+# through PARSE_STMT directly, so a list in a top-level `case` arm was baked whether the arm ran
+# or not. A wrapper, so no hot function gains a global reference. CHANGELOG [6.6.16]
+fn _PARSE_STMT_NESTED(S): i64 {
+    _pp_depth = _pp_depth + 1;
+    PARSE_STMT(S);
+    _pp_depth = _pp_depth - 1;
+    return 0;
+}
+
 fn _PARSE_STMT_IMPL(S): i64 {
     var typ = PEEKT(S);
     # v5.6.3: @unsafe { ... } block. Body parses as a plain block
@@ -2805,7 +2818,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
         }
         while (PEEKT(S) != 14) {
             if (PEEKT(S) == 12) { break; }
-            PARSE_STMT(S);
+            _PARSE_STMT_NESTED(S);
         }
         STI(S, GTI(S) + 1);
         _unsafe_depth = _unsafe_depth - 1;

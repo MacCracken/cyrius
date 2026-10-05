@@ -2021,6 +2021,7 @@ fn PARSE_GVAR_ARR(S, noff, sti, ew, sgn, eb): i64 {
     if (PEEKT(S) == 4) {
         STI(S, GTI(S) + 1);
         _gai_decl(S, _gai_ann(S, sti), sz_raw, sz);
+        if (vc != vc0) { _gv_supersede(S, noff, 1); }   # 6.6.16: a list is the value from start
         _gv_defer(S, sti, vc + 1);   # 6.6.6: vc + 1 = the slot this entry declared
     }
     if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
@@ -2230,9 +2231,8 @@ fn _CF_TRY(S, ti, term): i64 {
 #   * The replay (EMIT_GVAR_INITS -> _gai_replay) evaluates each element with the constant folder,
 #     its enum arm on (_CF_ENUM), into the slot's blob (_vgai_base, util.cyr). Names resolve there
 #     exactly as a runtime read of them would.
-#   * Every image target copies the blob into the var area (_gai_bake, from
-#     _EMIT_GVAR_STATIC_INITS) and emits NO code; cx, which has no image, stores the blob at the
-#     replay point (_gai_cx).
+#   * Every target copies the blob into the var area (_gai_bake, from _EMIT_GVAR_STATIC_INITS,
+#     and main_cx.cyr's var-data write: a .cyx carries its var data too) and emits NO code.
 #   * The same declaration after the first top-level statement (PARSE_ARRAY) is evaluated at once
 #     — at true module scope only (_gai_stmt): a global's meaning does not depend on where it is.
 # Values: an integer element takes -2^(8w-1) .. 2^(8w)-1 (so `0xFF` into i8 and `-1` into u8 are
@@ -2243,7 +2243,6 @@ fn _CF_TRY(S, ti, term): i64 {
 # CHANGELOG [6.6.16]
 var _gai_w = 0;        # the element bytes _gai_kind found
 var _gai_ok = 0;       # _gai_val: 1 = the element is a constant
-var _gai_shared = 0;   # _gai_blob: 1 = an earlier declaration of the slot wrote the blob too
 var _pp_depth = 0;     # PARSE_PROG nesting: 1 = module scope (see _gai_stmt)
 
 # A leading-block declaration at `sti` (its `var`): the annotation's type token, 0 for a bare
@@ -2368,11 +2367,13 @@ fn _gai_decl(S, ann_ti, n, sz): i64 {
 
 # After the first top-level statement (PARSE_ARRAY, GINFN != 1, cursor on `=`). At module scope
 # the declaration is the leading block's, evaluated once the slot is registered (_gai_now) — by
-# then every name is. In a top-level block (`while`, `if` / `elif` / `else`, `for`, `match`, a
-# bare `{ }`) it is REFUSED: a baked list would hold its values once, where a scalar's
-# initializer runs each time the block does (that shape never compiled — `expected ';'`).
-# PARSE_PROG counts its nesting in `_pp_depth`; scope depth cannot tell, an `elif` body opens no
-# scope. Returns the `{` token, or 0.
+# then every name is. In a top-level block (`while`, `if` / `elif` / `else`, `for` and its init,
+# `switch` arms, `match`, `@unsafe`, a bare `{ }`) it is REFUSED: a baked list would hold its
+# values once, where a scalar's initializer runs each time the block does (that shape never
+# compiled — `expected ';'`).
+# PARSE_PROG counts its nesting in `_pp_depth`, and _PARSE_STMT_NESTED (parse.cyr) the statements
+# parsed with no PARSE_PROG body — a `switch` case / default arm, `@unsafe { }`, a `for`'s init;
+# scope depth cannot tell, an `elif` body opens no scope. Returns the `{` token, or 0.
 fn _gai_stmt(S, ann_ti, n): i64 {
     var eq = GTI(S);
     STI(S, eq + 1);
@@ -2414,7 +2415,7 @@ fn _gai_replay(S, gi, noff, gsup, sti): i64 {
 }
 
 # Evaluate `{ e, e, .. }` (cursor on `{`, left past `}`) into slot `vi`'s blob (vi < 0: errors
-# only). The walk has reported the shape; this reports the values. cx stores the result here.
+# only). The walk has reported the shape; this reports the values.
 fn _gai_eval(S, vi, ann): i64 {
     var k = _gai_kind(S, ann);
     var eb = _gai_w;
@@ -2434,7 +2435,6 @@ fn _gai_eval(S, vi, ann): i64 {
         if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
     }
     STI(S, GTI(S) + 1);
-    if (_TARGET_CX == 1) { if (b != 0) { _gai_cx(S, vi, b, off); } }
     return 0;
 }
 
@@ -2443,11 +2443,9 @@ fn _gai_eval(S, vi, ann): i64 {
 # stores did). A later declaration of the slot reuses it, so the overlay order is the old store
 # order. 0 for `vi < 0`.
 fn _gai_blob(S, vi, eb, k): i64 {
-    _gai_shared = 0;
     if (vi < 0) { return 0; }
     var b = GVGAI(S, vi);
-    if (b != 0) { _gai_shared = 1; }
-    else {
+    if (b == 0) {
         var sz = L64(_vars_base + vi * 8);
         b = alloc(sz + 24);
         store64(b, sz);
@@ -2620,26 +2618,31 @@ fn _gai_f32(d): i64 {
     return s | bits;
 }
 
-# cx has no image to bake into: the blob is stored at the replay point, the order the stores have
-# always run in — 8-byte words, the tail byte by byte (an 8-byte store there would run into the
-# next global). A zero word is skipped on a fresh blob (cxvm zeroes its globals) and stored when an
-# earlier declaration of the slot wrote the blob too (the overlay). `n` = the bytes the list covers.
-fn _gai_cx(S, vi, b, n): i64 {
-    if (n > load64(b)) { n = load64(b); }
-    EVADDR_X1(S, vi);
-    var at = 0;
-    var off = 0;
-    while (off < n) {
-        var w = 8;
-        if (off + 8 > n) { w = 1; }
-        var v = load64(b + 16 + off);
-        if (w == 1) { v = load8(b + 16 + off); }
-        if (v != 0 || _gai_shared == 1) {
-            if (off > at) { EADDIMM_X1(S, off - at); at = off; }
-            EMOVI(S, v);
-            if (w == 8) { ESTOC(S); } else { ESTORE8(S); }
+# A deferred entry (`sti` = its `var`) that is an array list — the replay's own test
+# (EMIT_GVAR_INITS): `var NAME [`, or `var NAME : <annotation> [`. The cursor is put back.
+fn _gai_is_list(S, sti): i64 {
+    var sv = GTI(S);
+    STI(S, sti + 2);
+    if (PEEKT(S) == 49) { _gvi_ann(S, 0 - 1); }
+    var r = 0;
+    if (PEEKT(S) == 28) { r = 1; }
+    STI(S, sv);
+    return r;
+}
+
+# cx (_gv_cx_prestore): make the blob of every slot a live leading-block list writes — the replay
+# fills it — so the prestore leaves that slot to the var data. The blob is seeded with the scalar
+# constant the slot held; storing the scalar at run time would land over the baked list.
+fn _gai_cx_blobs(S): i64 {
+    var gc = L64(S + 0x19A000);
+    var gi = 0;
+    while (gi < gc) {
+        var graw = L64(_gvt(S) + gi * 8);
+        var sti = _gv_tok(graw);
+        if ((_gv_sup(graw) & 1) == 0) {
+            if (_gai_is_list(S, sti) == 1) { _gai_blob(S, _gv_ent_slot(S, gi, 0, TOKVAL(S, sti + 1)), 0, 0); }
         }
-        off = off + w;
+        gi = gi + 1;
     }
     return 0;
 }
@@ -2761,13 +2764,22 @@ fn _gv_reg8(S, noff, ty, ti): i64 {
 # redeclared constants would have been the next quadratic shape. The list records the same
 # names the scan compared (target 0 always; targets 1 and 2 only behind a `,`), so the same
 # bits get set. CHANGELOG [6.6.9]
-fn _gv_supersede(S, noff): i64 {
+#
+# 6.6.16 (C1): an array list is a constant initializer too — baked, the value from program start —
+# so a list redeclaring a slot supersedes the name's earlier deferred initializers the same way
+# (`lists` = 1): `var a = 0; var a[1] = {0, 3};` is 0x300, and `var a = f(); var a[1] = {7};`
+# runs f() into a sink. An earlier LIST is left alone (two lists overlay in order, the shared
+# blob). A constant scalar redeclaration (`lists` = 0) supersedes every earlier entry, lists
+# included: it wins whole. CHANGELOG [6.6.16]
+fn _gv_supersede(S, noff, lists): i64 {
     if (_gvx_m == 0) { return 0; }
     var e = _nm_get(S, _gvx_m, noff);
     while (e != 0) {
         var v = load64(_gvx_rec + (e - 1) * 8);
         var a = _gvt(S) + (v >> 2) * 8;
-        S64(a, L64(a) | ((1 << (v & 3)) << 40));
+        var keep = 0;
+        if (lists == 1) { keep = _gai_is_list(S, _gv_tok(L64(a))); }
+        if (keep == 0) { S64(a, L64(a) | ((1 << (v & 3)) << 40)); }
         e = load64(_gvx_nxt + (e - 1) * 8);
     }
     return 0;
@@ -2886,18 +2898,20 @@ fn _gv_store(S, vi): i64 {
     return 0;
 }
 
-# cx has no file image to bake a value into, so a CONSTANT global is stored FIRST, ahead of
-# every deferred initializer — the same "from program start" the image gives every other
-# target.
+# cx does not bake a scalar constant into its var data (it opts out of the static-init path,
+# below), so a CONSTANT global is stored FIRST, ahead of every deferred initializer — the same
+# "from program start" the image gives every other target. (⚠ This line read "cx has no file
+# image"; a .cyx does carry its var data — written as zeros, copied into the guest by cxvm —
+# and 6.6.16's array lists are baked into it, main_cx.cyr.)
 #
 # 6.6.6 bite 19d — EVERY constant global, not only a redeclared one. ⚠ The line that stood
 # here read "Only a redeclaration records a value on cx (see PARSE_GVAR_REG)", which was both
 # the behaviour and the defect: a plain `var a = 5;` recorded nothing, so a forward read of it
 # got 0 on cx and 5 everywhere else.
 #
-# cx opts out of the static-init path (`_TARGET_CX != 1` in PARSE_GVAR_REG): its globals live
-# in cxvm-allocated memory zeroed at startup, so the runtime store in EMIT_GVAR_INITS is what
-# gives them their value. But that replay runs in DECLARATION ORDER, so a forward read saw 0:
+# cx opts out of the static-init path (`_TARGET_CX != 1` in PARSE_GVAR_REG): its scalar
+# globals are zero in the .cyx var data, so the runtime store in EMIT_GVAR_INITS is what gives
+# them their value. But that replay runs in DECLARATION ORDER, so a forward read saw 0:
 #
 #     var b = a;      # 5 on x86 / aarch64 / Mach-O / PE, 0 on cx
 #     var a = 5;
@@ -2909,12 +2923,16 @@ fn _gv_store(S, vi): i64 {
 # folded constant for cx too — without setting `sit_lit`, so cx keeps its runtime store —
 # makes this loop cover every constant global and puts cx back in agreement with the other
 # five targets. CHANGELOG [6.6.6]
+#
+# 6.6.16 (C1): a slot a leading-block array list writes is left to the .cyx var data, where the
+# list is baked (main_cx.cyr) — its blob was seeded with this constant (_gai_cx_blobs).
 fn _gv_cx_prestore(S): i64 {
+    _gai_cx_blobs(S);
     var n = GVCNT(S);
     var vi = 0;
     while (vi < n) {
         var v = L64(_vgsi_base + vi * 8);
-        if (v != 0) { EMOVI(S, v); _gv_store(S, vi); }
+        if (v != 0) { if (GVGAI(S, vi) == 0) { EMOVI(S, v); _gv_store(S, vi); } }
         vi = vi + 1;
     }
     return 0;
@@ -3414,7 +3432,7 @@ fn PARSE_GVAR_REG(S): i64 {
         if (cf_has == 1 && is_struct == 0) {
             sit_lit = 1;
             sit_val = cf_val;
-            _gv_supersede(S, noff);
+            _gv_supersede(S, noff, 0);
         }
     }
     # v5.11.64: static-init path — record literal value, skip gvar_toks

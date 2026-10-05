@@ -262,6 +262,23 @@ var GFL64: f64[200] = {
     -0.000000000000000000000000000000000000000000001401298464324817
 };
 
+# a list is the value FROM PROGRAM START, 6.6.6's rule for a constant redeclaration: an earlier
+# initializer reads it, and over an earlier initializer of the same name it wins (a constant it
+# does not fully list keeps its other bytes; a computed one still runs, its result discarded)
+fn gai_read_fwd(): i64 { return GRDT[1]; }
+var GRD = gai_read_fwd();
+var GRDT: i64[2] = {5, 6};
+var GRS = 5;
+var GRS[1] = {0};
+var GRK = 0x0506;
+var GRK[1] = {9};
+var GRZ = 0;
+var GRZ[1] = {0, 3};
+var GAI_CALLS = 0;
+fn gai_side(): i64 { GAI_CALLS = GAI_CALLS + 1; return 0x7777; }
+var GRC = gai_side();
+var GRC[1] = {0, 4};
+
 alloc_init();
 
 # ── after the first top-level statement: the same declarations mean the same thing ──
@@ -360,5 +377,12 @@ assert_eq(GPOSTW[0], 0xFFFF, "post-statement u16");
 assert_eq(GPOSTW[1], 0x40, "post-statement qualified enum");
 assert_eq(load8(&GPOSTB + 2), 9, "post-statement bare list");
 assert_eq(load64(&GPOSTF), 0xBFF8000000000000, "post-statement f64 -1.5");
+
+assert_eq(GRD, 6, "an earlier initializer reads a list declared below it");
+assert_eq(load64(&GRS), 0, "a zero list over a scalar constant");
+assert_eq(load64(&GRK), 0x0509, "a list over a scalar constant keeps the bytes it does not list");
+assert_eq(load64(&GRZ), 0x0300, "a list over `= 0` is the value (the later declaration wins)");
+assert_eq(load64(&GRC), 0x0400, "a list over a computed initializer is the value");
+assert_eq(GAI_CALLS, 1, "the computed initializer still ran, once");
 
 var r = assert_summary();
