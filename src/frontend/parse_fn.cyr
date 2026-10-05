@@ -978,7 +978,8 @@ fn PARSE_RETURN(S): i64 {
         # 6.6.6 — `return q;` where `q` is a by-value struct PARAMETER: its slot holds the
         # caller's ADDRESS, so the byte-copy below would copy the pointer word. Materialise the
         # struct into an inline temp and return THAT. See `_local_is_sptr_param`.
-        if (_local_is_sptr_param(S, srn_lli) == 1) { srn_lli = _sptr_param_temp(S, srn_lli, _cur_fn_ret_sid); }
+        # 6.6.17 (a1): and a HANDLE (a pointer-mode local). See `_ret_local_inline`.
+        srn_lli = _ret_local_inline(S, srn_lli);
         # Byte-copy size (aligned up to 8 — the retptr slot is already
         # 8-aligned so padded copies are safe)
         var srn_sz = STRUCTSZ(S, _cur_fn_ret_sid - 1);
@@ -1068,7 +1069,8 @@ fn PARSE_RETURN(S): i64 {
                             STI(S, GTI(S) + 1);     # consume ';'
                             # 6.6.6 — an address-passed parameter holds the caller's pointer,
                             # not the pair. Materialise it inline first.
-                            if (_local_is_sptr_param(S, _ip_lli) == 1) { _ip_lli = _sptr_param_temp(S, _ip_lli, _cur_fn_ret_sid); }
+                            # 6.6.17 (a1): and a HANDLE. See `_ret_local_inline`.
+                            _ip_lli = _ret_local_inline(S, _ip_lli);
                             EFLLOAD_STRUCT_INT_PAIR(S, _ip_lli);
                             var _ip_rp = EJMP0(S);
                             vec_push(rp_vec, _ip_rp);
@@ -1589,6 +1591,20 @@ fn _local_is_sptr_param(S, li): i64 {
 # 6.6.6 — materialise an address-passed struct parameter as an INLINE frame aggregate, so the
 # `return` paths (which address a local's slots directly) read the struct and not the pointer.
 # Returns the temp's field-0 slot. CHANGELOG [6.6.6]
+# ⛔ 6.6.17 (a1) — the local a `return x;` from a by-value struct fn reads, made INLINE. Both
+# return arms address the local's SLOTS (the >16 B byte copy, the 9-16 B rax:rdx load), so a slot
+# that HOLDS the struct's address handed back the pointer: an address-passed parameter (above) and
+# a HANDLE — a pointer-mode local (`var p: Pt = alloc(16); .. return p;`), which 6.6.16 C2 made
+# copy on `=` but not on `return` (the caller's `q.x` read a heap address, on every backend).
+# Either is copied through its address into an inline temp. A struct of 8 B or less is held by
+# value, and `Str` / `Result` / `Option` / `Tagged` slots are handles by convention
+# (`_agc_plain_big`): both untouched. CHANGELOG [6.6.17]
+fn _ret_local_inline(S, li): i64 {
+    if (_local_is_sptr_param(S, li) == 1) { return _sptr_param_temp(S, li, _cur_fn_ret_sid); }
+    if (GLAGG(S, li) != 0) { return li; }
+    if (_agc_plain_big(S, GLTYPE(S, li)) == 0) { return li; }
+    return _sptr_param_temp(S, li, _cur_fn_ret_sid);
+}
 fn _sptr_param_temp(S, li, sid): i64 {
     var t = _agg_temp(S, sid);
     _agc_copy_bytes(S, t, 0 - 1, _AGC_DREF(li), 0 - 1, STRUCTSZ(S, sid - 1));
