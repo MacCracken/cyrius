@@ -183,85 +183,203 @@ fn _skip_nested_body(S, k): i64 {
 # `_pair_callee_at` resolves — `name(`, `name<..>(` and the method `x.m(`. They recognised only
 # `name(`, so a wrapper `return g<i32>(..)` / `return p.m(..)` defined after its caller was never
 # flagged pair-returning (`w(..)?` then dereferenced the tag: rc 139), and `return g<i32>(..)`
-# beside `return Ok(5)` was reported as a dropped tag. Unresolvable stays -1, the old answer: a
-# missed flag or warning, never a false one. CHANGELOG [6.6.16]
+# beside `return Ok(5)` was reported as a dropped tag.
+# ⚠ THE TOKEN ANSWER MUST BE THE PARSER'S ANSWER, OR -1. A wrong fn is worse than none. The first
+# cut typed a receiver from its lexically LAST `name: T` declaration, so (measured):
+#   - `var p: Qt; if (c) { var p: Pt; } return p.div(d);` resolved `Pt_div` for a `Qt` receiver:
+#     the wrapper was flagged pair-returning and a plain `var v = w(..);` of it was REFUSED;
+#   - `var p = Pt { .. }` / `var p = mk(n)` (PARSE_VAR types both) read as untyped, so a forward
+#     wrapper `return p.div(d)` was never flagged (`w(..)?` rc 139, `var v = w(..);` dropped the
+#     payload in silence) and the wrapper, flagged once parsed, drew a false mixed-return warning.
+# So the receiver is found BY SCOPE and typed as the parser types it (`_tok_name_sid`: an
+# annotation, a `*T` param, an initializer, a generic's bound `: T`), a name typed by nothing a
+# token pass can see falls back to the one `T_m` every struct agrees on
+# (`_tok_method_any`), and -1 means unknown to every reader: a missed flag, never a false one, and
+# never a warning (`_ret_is_variant`). CHANGELOG [6.6.16]
 #
-# `name(` (1) or `name<..>(` (2) at token ti, else 0. The type arguments are not resolved (none are
-# bound this early), so the list is bounded by shape instead: it ends at its closing `>` before any
-# `;` `(` `)` `{` `}` or EOF — `return n < m;` must not reach a `> (` in a later statement.
+# The `(` of `name(` or `name<..>(` at token ti, else -1.
 fn _pair_ret_open(S, ti): i64 {
     var nt = TOKTYP(S, ti + 1);
-    if (nt == 10) { return 1; }
-    if (nt != 19) { return 0; }
+    if (nt == 10) { return ti + 1; }
+    if (nt != 19) { return 0 - 1; }
+    var e = _tok_targs_close(S, ti + 2);
+    if (e < 0) { return 0 - 1; }
+    if (TOKTYP(S, e + 1) != 10) { return 0 - 1; }
+    return e + 1;
+}
+# The `>` (or the `>>` / `>>>` tail) closing the type-argument list that starts at token i, just
+# past its `<`, or -1. The arguments are not resolved (none are bound this early), so the list is
+# bounded by shape instead: it must close before any `;` `(` `)` `{` `}` or EOF — `return n < m;`
+# must not reach a `> (` in a later statement.
+fn _tok_targs_close(S, i): i64 {
     var n = GTCNT(S);
     var d = 1;
-    var i = ti + 2;
     while (i < n) {
         var t = TOKTYP(S, i);
-        if (t == 5 || t == 10 || t == 11 || t == 12 || t == 13 || t == 14) { return 0; }
+        if (t == 5 || t == 10 || t == 11 || t == 12 || t == 13 || t == 14) { return 0 - 1; }
         if (t == 19) { d = d + 1; }
         elif (t == 20) { d = d - 1; }
         elif (t == 39) { d = d - 2; }
         elif (t == 152) { d = d - 3; }
-        if (d <= 0) {
-            if (TOKTYP(S, i + 1) == 10) { return 2; }
-            return 0;
-        }
+        if (d <= 0) { return i; }
         i = i + 1;
     }
-    return 0;
+    return 0 - 1;
 }
-# The struct id the name `noff` holds at token k inside the unit whose tokens start at a (a `fn`
-# keyword, or a closure's `{`): its LAST declaration before k — a param (`(`/`,` before it, in the
-# header) or a `var noff` — typed `: T` gives T's id, untyped gives 0 (a local shadows a global of
-# the same name). With no declaration there, a struct global's (GVPM marks it a struct: GVTYPE's
-# positive range is shared with scalar widths). 0 when unknown — for a closure (a = its `{`) that
-# includes a receiver it CAPTURES: the declaration is outside the unit, so the warning is missed,
-# the safe direction.
+# The struct id the name `noff` holds at token k, in the top-level unit that starts at token a (its
+# `fn` keyword; a closure's own `{` when no top-level fn encloses it). Found BY SCOPE, walking back
+# from k: a block closed before k (its `}` .. `{`) is stepped over whole, so no declaration inside
+# it is seen, and a closure body k sits in is left for the fn around it, whose locals it
+# captures — PARSE_FIELD_LOAD's order, local then capture. The first declaration reached decides
+# (`_tok_decl_sid`); with none, the global's (`_glob_name_sid`, `_recv_sid`'s global arm). 0 when
+# untyped. (A closure's own params are untyped, so a receiver among them never compiles.)
 fn _tok_name_sid(S, a, k, noff): i64 {
-    var r = 0 - 1;
-    var body = 0;
-    var i = a;
-    while (i < k) {
+    var b = a;
+    while (b < k) { if (TOKTYP(S, b) == 13) { break; } b = b + 1; }   # the body `{`: params lie before it
+    var cd = 0;
+    var i = k - 1;
+    while (i > a) {
         var t = TOKTYP(S, i);
-        if (t == 13) { body = 1; }
-        elif (t == 2) {
-            if (STREQ(S, TOKVAL(S, i), noff) == 1) {
-                var pt = TOKTYP(S, i - 1);
-                var decl = 0;
-                if (body == 0) { if (pt == 10 || pt == 31) { decl = 1; } }
-                if (pt == 3) { decl = 1; }
-                if (decl == 1) {
-                    r = 0;
-                    if (TOKTYP(S, i + 1) == 49) { if (TOKTYP(S, i + 2) == 2) { r = FINDSTRUCT(S, TOKVAL(S, i + 2)); } }
+        if (t == 14) { cd = cd + 1; }
+        elif (t == 13) { if (cd > 0) { cd = cd - 1; } }
+        elif (cd == 0) {
+            if (t == 2) {
+                if (STREQ(S, TOKVAL(S, i), noff) == 1) {
+                    var r = _tok_decl_sid(S, a, i, b);
+                    if (r >= 0) { return r; }
                 }
             }
         }
+        i = i - 1;
+    }
+    var g = _glob_name_sid(S, noff);
+    return g;
+}
+# What the name at token i is declared as: a struct id, 0 when untyped, -1 when the name there is not
+# a declaration. A declaration is `var NAME`, or a param `(NAME` / `, NAME` in the header (before
+# the body `{` at token b). A `: T` annotation types it — for a param also `: *T`, whose `*` the
+# parameter loop skips (`_mark_ptr_param`); a `var p: *T` local is a plain pointer — and an untyped
+# `var` takes its initializer's struct (`_tok_init_sid`). `a` is the unit's first token.
+fn _tok_decl_sid(S, a, i, b): i64 {
+    var pt = TOKTYP(S, i - 1);
+    var d = 0;
+    if (pt == 3) { d = 1; }
+    elif (i < b) { if (pt == 10 || pt == 31) { d = 1; } }
+    if (d == 0) { return 0 - 1; }
+    var r = 0;
+    var nt = TOKTYP(S, i + 1);
+    if (nt == 49) {
+        var at = i + 2;
+        if (pt != 3) { if (TOKTYP(S, at) == 8) { at = at + 1; } }
+        if (TOKTYP(S, at) == 2) { r = FINDSTRUCT(S, TOKVAL(S, at)); }
+    }
+    elif (pt == 3) { if (nt == 4) { r = _tok_init_sid(S, a, i, i + 2); } }
+    return r;
+}
+# The struct an untyped `var x = ..` (its name at token i) takes from the initializer at token j, as
+# PARSE_VAR infers it (`_lit_head`, `_var_rhs_call`): a literal `Name {` / `Name<..> {` (a generic
+# struct's methods are its base's), or a call `f(..)` / `g<..>(..)`, not `f(..).field`, whose fn
+# declares a struct return (GFRS) — for a generic's `: T`, the struct T is bound to at this call
+# (`_tok_gen_ret_sid`). 0 otherwise.
+fn _tok_init_sid(S, a, i, j): i64 {
+    if (TOKTYP(S, j) != 2) { return 0; }
+    var e = j;
+    if (TOKTYP(S, j + 1) == 19) { e = _tok_targs_close(S, j + 2); }
+    if (e < 0) { return 0; }
+    var nt = TOKTYP(S, e + 1);
+    var r = 0;
+    if (nt == 13) { r = FINDSTRUCT(S, TOKVAL(S, j)); }
+    elif (nt == 10) {
+        if (TOKTYP(S, _call_close(S, e + 1) + 1) == 41) { return 0; }   # `f(..).field`: the field's value
+        var fi = FINDFN(S, TOKVAL(S, j));
+        if (fi < 0) { return 0; }
+        var gen = GFTP(S, fi);
+        if (e > j) { if (gen == 0) { return 0; } }   # `<` on a generic only
+        r = GFRS(S, fi);
+        if (r <= 0) { if (gen != 0) { r = _tok_gen_ret_sid(S, a, i, j, fi); } }
+        if (r < 0) { r = 0; }
+    }
+    return r;
+}
+# Which type parameter (0 / 1) the generic fi returns as `: T`, or -1.
+fn _gen_ret_tp(S, fi): i64 {
+    var o = _gen_def_open(S, fi);
+    if (o < 0) { return 0 - 1; }
+    var c = _tok_close_paren(S, o);
+    if (c < 0) { return 0 - 1; }
+    if (TOKTYP(S, c + 1) != 49) { return 0 - 1; }
+    if (TOKTYP(S, c + 2) != 2) { return 0 - 1; }
+    var rn = TOKVAL(S, c + 2) + 1;
+    var tp = GFTP(S, fi);
+    if ((tp & 0xFFFFFFFF) == rn) { return 0; }
+    if (((tp >> 32) & 0xFFFFFFFF) == rn) { return 1; }
+    return 0 - 1;
+}
+# The struct a generic's `: T` return is bound to at the call `g<..>(` / `g(` at token j (fi its
+# base), as the call binds it: T's explicit argument when that is a plain struct name, else the
+# WHOLE argument in T's parameter position (`_gen_infer_tp`) — a name, typed scanning back from
+# token i (the declaration being typed, so an initializer never sees its own name), or a call of a
+# struct-returning fn. 0 when the return is not a type parameter or binds no struct.
+fn _tok_gen_ret_sid(S, a, i, j, fi): i64 {
+    var w = _gen_ret_tp(S, fi);
+    if (w < 0) { return 0; }
+    var r = 0;
+    if (TOKTYP(S, j + 1) == 19) {
+        var k = j + 2;
+        if (w == 1) { if (TOKTYP(S, k + 1) != 31) { return 0; } k = k + 2; }
+        if (TOKTYP(S, k) != 2) { return 0; }
+        var kt = TOKTYP(S, k + 1);
+        if (kt != 20) { if (kt != 31) { return 0; } }   # a plain name, not `Box<..>`
+        r = FINDSTRUCT(S, TOKVAL(S, k));
+        if (r > 0) { if (GSTP(S, r - 1) != 0) { r = 0; } }
+        return r;
+    }
+    var m = GFGM(S, fi);
+    var pk = w + 1;
+    if ((m & 4) != 0) { pk = (m >> (8 + w * 8)) & 255; }
+    if (pk == 0) { return 0; }
+    var at = _call_arg_start(S, j + 1, pk - 1);
+    if (at < 0) { return 0; }
+    if (TOKTYP(S, at) != 2) { return 0; }
+    var nt = TOKTYP(S, at + 1);
+    if (nt == 31 || nt == 11) { r = _tok_name_sid(S, a, i, TOKVAL(S, at)); }
+    elif (nt == 10) { if (_call_is_whole_arg(S, at) == 1) { r = _tok_init_sid(S, a, i, at); } }
+    return r;
+}
+# A method `x.m(` whose single-name receiver the tokens do not type — a generic fn's `p: T` param,
+# bound per instance — still has ONE answer when every struct's `T_m` agrees on the pair flag: the
+# receiver's struct, whichever it is, must define `T_m` or the call does not compile. That fn (the
+# first), or -1 when no struct defines `_m` or two of them disagree.
+fn _tok_method_any(S, mnoff): i64 {
+    var sc = GSTC(S);
+    var r = 0 - 1;
+    var i = 0;
+    while (i < sc) {
+        var f = FINDFN(S, BUILD_METHOD_NAME(S, i, mnoff));
+        if (f >= 0) {
+            if (r < 0) { r = f; }
+            elif ((GFLG(S, f) & 256) != (GFLG(S, r) & 256)) { return 0 - 1; }
+        }
         i = i + 1;
     }
-    if (r >= 0) { return r; }
-    var vi = _findvar_core(S, noff);
-    if (vi < 0) { return 0; }
-    if (GVPM(S, vi) == 0) { return 0; }
-    r = GVTYPE(S, vi);
-    if (r > 0) { return r; }
-    return 0;
+    return r;
 }
-# The fn the call at token t reaches — `name(`, `name<..>(`, or `x.m(` with x typed in the unit
-# starting at token a (its `T_m`) — or -1.
+# The fn the call at token t reaches — `name(`, `name<..>(`, or `x.m(` with x resolved at t in the
+# unit starting at token a (`_tok_name_sid`; its `T_m`, else `_tok_method_any`) — or -1.
 fn _tok_ret_callee(S, a, t): i64 {
     if (TOKTYP(S, t) != 2) { return 0 - 1; }
-    var po = _pair_ret_open(S, t);
-    if (po > 0) {
+    var o = _pair_ret_open(S, t);
+    if (o >= 0) {
         var fi = FINDFN(S, TOKVAL(S, t));
-        if (po == 2) { if (fi >= 0) { if (GFTP(S, fi) == 0) { fi = 0 - 1; } } }   # `<` on a generic only
+        if (o > t + 1) { if (fi >= 0) { if (GFTP(S, fi) == 0) { fi = 0 - 1; } } }   # `<` on a generic only
         return fi;
     }
     if (_tok_method_open(S, t) == 0) { return 0 - 1; }
     if (t > 0) { if (TOKTYP(S, t - 1) == 41) { return 0 - 1; } }   # `a.x.m(`: not a single name
     var sid = _tok_name_sid(S, a, t, TOKVAL(S, t));
-    if (sid <= 0) { return 0 - 1; }
-    var mf = FINDFN(S, BUILD_METHOD_NAME(S, sid - 1, TOKVAL(S, t + 2)));
+    var mf = 0 - 1;
+    if (sid > 0) { mf = FINDFN(S, BUILD_METHOD_NAME(S, sid - 1, TOKVAL(S, t + 2))); }
+    else { mf = _tok_method_any(S, TOKVAL(S, t + 2)); }
     return mf;
 }
 
@@ -395,11 +513,15 @@ var _mixed_warned = 0;
 # was reported as a dropped tag and told to `return Err(x);`. CHANGELOG [6.6.9]
 # 6.6.16: the call is resolved as `_tok_ret_callee` resolves it (`a` = the unit's first token),
 # so `return g<i32>(..)` / `return p.m(..)` forwarding a pair is a whole variant, not a dropped
-# tag, and the same spellings returning ONE value still warn. CHANGELOG [6.6.16]
+# tag, and the same spellings returning ONE value still warn. A method whose callee the tokens
+# cannot resolve is UNKNOWN, and unknown is not plain: the parser may have typed that receiver and
+# flagged this fn by it (PARSE_RETURN, `_pair_callee_at`), and the receiver's own NAME looked up as
+# a fn — the old fallback — answered "plain" and warned on a wrapper's only return. CHANGELOG [6.6.16]
 fn _ret_is_variant(S, a, t): i64 {
     var rf = _tok_ret_callee(S, a, t);
     var nt = 10;
     if (rf < 0) {
+        if (_tok_method_open(S, t) == 1) { return 0; }
         rf = FINDFN(S, TOKVAL(S, t));
         nt = TOKTYP(S, t + 1);
     }
@@ -493,8 +615,10 @@ fn _warn_closure_mixed_at(S, k, encl): i64 {
 }
 
 # Judge ONE closure body (the `{` at token k) as its own fn; warns at most once, at its first
-# plain return. Returns the index of the body's closing `}`.
-fn _warn_closure_block(S, k, n, encl): i64 {
+# plain return. Names in it resolve in the unit starting at token `a` — the top-level fn that
+# encloses the closure, whose locals it captures, else k itself. Returns the index of the body's
+# closing `}`.
+fn _warn_closure_block(S, k, n, encl, a): i64 {
     var e = _tok_skip_block(S, k, n);
     var pair = 0;
     var plain = 0 - 1;
@@ -505,11 +629,11 @@ fn _warn_closure_block(S, k, n, encl): i64 {
             var sk = _skip_nested_body(S, j);
             if (sk >= 0) { j = sk; }
         }
-        elif (t == 124) { if (_tok_q_is_pair(S, k, j) == 1) { pair = 1; } }
+        elif (t == 124) { if (_tok_q_is_pair(S, a, j) == 1) { pair = 1; } }
         elif (t == 33) {
             var nt = TOKTYP(S, j + 1);
-            if (_tok_call_is_pair(S, k, j + 1) == 1) { pair = 1; }
-            elif (nt == 2) { if (_ret_is_variant(S, k, j + 1) == 1) { if (plain < 0) { plain = j; } } }
+            if (_tok_call_is_pair(S, a, j + 1) == 1) { pair = 1; }
+            elif (nt == 2) { if (_ret_is_variant(S, a, j + 1) == 1) { if (plain < 0) { plain = j; } } }
             elif (nt != 5) { if (plain < 0) { plain = j; } }
         }
         j = j + 1;
@@ -525,19 +649,25 @@ fn _warn_mixed_pair_returns(S): i64 {
     var d = 0;
     var i = 0;
     var encl = 0 - 1;     # the top-level fn whose body the walk is in (for a closure's message)
+    var ea = 0 - 1;       # ...and its `fn` token, where a closure's names resolve (captures)
     while (i < n) {
         var t0 = TOKTYP(S, i);
         if (t0 == 13) {
             # every closure body, at any depth, is its own unit (see `_warn_closure_block`)
-            if (_tok_is_closure_body(S, i) == 1) { _warn_closure_block(S, i, n, encl); }
+            if (_tok_is_closure_body(S, i) == 1) {
+                var ca = i;
+                if (ea >= 0) { ca = ea; }
+                _warn_closure_block(S, i, n, encl, ca);
+            }
             d = d + 1;
         }
-        elif (t0 == 14) { d = d - 1; if (d == 0) { encl = 0 - 1; } }
-        elif (t0 == 5) { if (d == 0) { encl = 0 - 1; } }
+        elif (t0 == 14) { d = d - 1; if (d == 0) { encl = 0 - 1; ea = 0 - 1; } }
+        elif (t0 == 5) { if (d == 0) { encl = 0 - 1; ea = 0 - 1; } }
         elif (t0 == 32) {
             if (d == 0) {
                 if (TOKTYP(S, i + 1) == 2) {
                     encl = TOKVAL(S, i + 1);
+                    ea = i;
                     var wfi = FINDFN(S, TOKVAL(S, i + 1));
                     if (wfi >= 0) {
                         if ((GFLG(S, wfi) & 256) != 0) {

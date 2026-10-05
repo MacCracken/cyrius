@@ -1760,6 +1760,12 @@ fn _diag_name_sid(S, noff): i64 {
             return 0;
         }
     }
+    var g = _glob_name_sid(S, noff);
+    return g;
+}
+# `_diag_name_sid`'s global half, alone: the pair scans (`_tok_name_sid`) type a global receiver
+# exactly as `_recv_sid` does, with no local table to consult. CHANGELOG [6.6.16]
+fn _glob_name_sid(S, noff): i64 {
     var vi = _findvar_core(S, noff);
     if (vi < 0) { return 0; }
     var gt = GVTYPE(S, vi);
