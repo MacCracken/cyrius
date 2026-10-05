@@ -1196,6 +1196,7 @@ fn _field_load_on(S, noff, fnoff, pfl_beg, idx, sid): i64 {
         else { ECALLFIX(S, mfi); }
         ECALLCLEAN(S, m_int_argc);
         _sc_post(S, mfi, mname, pfl_beg, m_rt);   # 6.6.6: the pair store / value, and the record
+        _call_ret_ps(S, mfi);                     # 6.6.17: a `*T` return's pointer scale
         return 0;
     }
 
@@ -1263,6 +1264,8 @@ fn _field_load_type(S, si, fi): i64 {
     var k = GFFK(S, si, fi);
     if (k == 1) { SESTYPE(S, F64_TYID); }
     if (k == 2) { SESTYPE(S, F32_TYID); }
+    var ps = _fld_ps_get(S, si, fi);   # 6.6.17: a `name: *T` field is a pointer (_add_ptr_field)
+    if (ps > 0) { SPSC(S, ps); }
     return 0;
 }
 

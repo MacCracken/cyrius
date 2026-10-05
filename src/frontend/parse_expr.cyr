@@ -1401,6 +1401,7 @@ fn _explicit_generic_call(S, noff, fi): i64 {
     if (_ta_do == 0) {
         _ta_explicit = 1;               # set right before the call that reads it (see below)
         PARSE_FNCALL(S, noff);          # all-i64: call the base
+        _call_ret_ps(S, fi);            # 6.6.17: a `*T` return's pointer scale
         return 0;
     }
     # non-i64: monomorphize on demand + call the specialized fn.
@@ -1422,8 +1423,17 @@ fn _explicit_generic_call(S, noff, fi): i64 {
     # ⚠ `_ta_explicit` is set only NOW: the instance body just emitted makes calls of its own,
     # and the first of them would have taken the flag as its own and skipped its inference.
     _ta_explicit = 1;
-    if (_spec >= 0) { PARSE_FNCALL(S, L64(_fnt_names + _spec * 8)); }
+    if (_spec >= 0) { PARSE_FNCALL(S, L64(_fnt_names + _spec * 8)); _call_ret_ps(S, _spec); }
     else { PARSE_FNCALL(S, noff); }
+    return 0;
+}
+# After a plain call `name(..)` to fn `fi` (-1: unresolved): a scalar f64 return (sentinel -9) is
+# in xmm0 — bring it back into rax and type the expression F64_TYID (v6.4.55; EMOVQ_A_X0 is a no-op
+# on aarch64/cx) — and a `*T` return carries T's step as the pointer scale (6.6.17).
+fn _call_ret_marks(S, fi): i64 {
+    if (fi < 0) { return 0; }
+    if (GFRS(S, fi) == 0 - 9) { EMOVQ_A_X0(S); SESTYPE(S, F64_TYID); }
+    _call_ret_ps(S, fi);
     return 0;
 }
 
@@ -1796,8 +1806,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
             # and tag the expr F64_TYID so a bare +,-,*,/,compare on the call result
             # dispatches to the f64 emitters, not integer ops. EMOVQ_A_X0 = `movq rax,
             # xmm0` on x86/PE/macho, a no-op on aarch64/cx (value already in x0/r0).
-            var _f64r_fi = FINDFN(S, noff);
-            if (_f64r_fi >= 0) { if (GFRS(S, _f64r_fi) == 0 - 9) { EMOVQ_A_X0(S); SESTYPE(S, F64_TYID); } }
+            _call_ret_marks(S, FINDFN(S, noff));   # 6.6.17: + a `*T` return's pointer scale
             _cfo = 0;
             return 0;
         }

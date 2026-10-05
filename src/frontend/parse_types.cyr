@@ -340,6 +340,87 @@ fn _tn_ptr(S, ti, vnoff): i64 {
     return 8;
 }
 
+# 6.6.17 — sizeof(T) for the pointer annotation `*T` at token `ti` (T, the token after the `*`):
+# the step of `p + n` on such a pointer. T is resolved as _tn_ptr resolves it: an unknown T is
+# refused once (`quiet` 1, pass 1: not reported — pass 2 reads it again) and steps 8; a bound
+# type parameter steps by its argument's size, an unbound one by its i64 base's 8.
+fn _tn_ptr_step(S, ti, vnoff, quiet): i64 {
+    if (TOKTYP(S, ti) == 105) { return 16; }      # *u128
+    if (TOKTYP(S, ti) != 2) { return 8; }
+    var w = 0;
+    var b = _tp_resolve(S, TOKVAL(S, ti));
+    if (b != 0) { w = _tn_bytes(S, _tn_from_rc(b)); }
+    else {
+        var c = _tn_resolve_at(S, ti);
+        if (c == 0) {
+            if (quiet == 0) { _tn_refuse(S, ti, " as the target of pointer ", vnoff); }
+            return 8;
+        }
+        w = _tn_bytes(S, c);
+    }
+    if (w < 1) { return 8; }
+    return w;
+}
+# ⛔ 6.6.17 — `name: *T` (a struct or union field) and `fn f(): *T` (a return type, a multi-value
+# return element) did not parse — `expected identifier, got '*'` — while `var p: *T` and a
+# `p: *T` parameter did. Each is an 8-byte pointer. Cursor on the first `*`: consumes the `*`s,
+# T and any `<..>` after it, and returns the step of `p + n` on the value — sizeof(T), 8 for a
+# pointer to a pointer — which a field load / a call result carries as its pointer scale, so
+# `var q: *T = h.p;` / `= f();` is not "assigning non-pointer to typed pointer". CHANGELOG [6.6.17]
+fn _ptr_annot(S, vnoff, quiet): i64 {
+    var n = 0;
+    while (PEEKT(S) == 8) {
+        STI(S, GTI(S) + 1);
+        n = n + 1;
+    }
+    var ps = _tn_ptr_step(S, GTI(S), vnoff, quiet);
+    if (n > 1) { ps = 8; }
+    if (PEEKT(S) == 2 || PEEKT(S) == 105) {
+        STI(S, GTI(S) + 1);
+        SKIP_GENERICS(S);
+    } elif (quiet == 0) { ERR_EXPECT(S, 2); }
+    return ps;
+}
+# A `name: *T` field (cursor on its `:`): an 8-byte field whose loads carry T's step.
+var _fld_ps = 0;   # per field-pool entry: the step of a `*T` field, 0 for any other field
+fn _add_ptr_field(S, si, fnoff): i64 {
+    STI(S, GTI(S) + 1);                     # consume ':'
+    var ps = _ptr_annot(S, fnoff, 0);
+    var ent = L64(S + 0x1AA018 + si * 8) + (L64(S + 0x1A8018 + si * 8) & 0x7FFFFFFFFFFFFFFF);
+    var top = L64(S + 0x1AC018);
+    ADDFIELD(S, si, fnoff);
+    if (L64(S + 0x1AC018) == top) { return 0; }   # refused (and reported) by ADDFIELD
+    if (ent >= 8192) { return 0; }
+    if (_fld_ps == 0) { _fld_ps = alloc(8192 * 8); }
+    S64(_fld_ps + ent * 8, ps);
+    return 0;
+}
+fn _fld_ps_get(S, si, fi): i64 {
+    if (_fld_ps == 0) { return 0; }
+    var ent = (L64(S + 0x1AA018 + si * 8) + fi) & 0x7FFFFFFFFFFFFFFF;
+    if (ent >= 8192) { return 0; }
+    return L64(_fld_ps + ent * 8);
+}
+# A `fn f(): *T` return (cursor on the `*`): recorded as an i64 return plus T's step, which a
+# call to it carries (`_call_ret_ps`). `quiet` 1 in pass 1 (`_prescan_fn_sig`), which only
+# records it; pass 2 (PARSE_FN_DEF) refuses an unknown T and sets the fn's return scalar.
+var _fn_rps = 0;   # per fn: the step of a `*T` return, 0 for any other return
+fn _ret_ptr_annot(S, fi, quiet): i64 {
+    var ps = _ptr_annot(S, 0 - 1, quiet);
+    SFRS(S, fi, 0 - 8);
+    if (_fn_rps == 0) { _fn_rps = alloc(131072 * 8); }
+    S64(_fn_rps + fi * 8, ps);
+    if (quiet == 0) { _cur_fn_ret_scalar = 0 - 8; }
+    return 0;
+}
+fn _call_ret_ps(S, fi): i64 {
+    if (fi < 0) { return 0; }
+    if (_fn_rps == 0) { return 0; }
+    var ps = L64(_fn_rps + fi * 8);
+    if (ps > 0) { SPSC(S, ps); }
+    return 0;
+}
+
 # A slice element `[T]` / `slice<T>` at token `ti`: its width. A bound type parameter is its
 # argument's size; a name that is no type is refused (it was 8, silently).
 fn _tn_slice_w(S, ti, vnoff): i64 {
@@ -424,7 +505,7 @@ fn _tn_ret_report(S, ti): i64 {
         PRSTR("  note: a generic fn returns its first or second type parameter, and none under CYRIUS_MONOMORPH=0\n");
     } else {
         ERR_IDENT(S, "type ", TOKVAL(S, ti), " cannot be a fn return type", 0 - 1);
-        PRSTR("  note: a return type is a struct, i8/i16/i32/i64, f64, a vector type, Result, Option, Tagged or cstring; return an i64 (no annotation) for the others\n");
+        PRSTR("  note: a return type is a struct, i8/i16/i32/i64, f64, a vector type, Result, Option, Tagged, cstring or a pointer *T; return an i64 (no annotation) for the others\n");
     }
     _panic = 0;
     return 0;
@@ -1192,7 +1273,7 @@ fn _refuse_field_type(S, tnoff, fnoff, snoff): i64 {
     } else {
         ERR_IDENT(S, "unknown type ", tnoff, " for struct field ", fnoff);
         _tn_prefix_note(S, tnoff);   # 6.6.16
-        PRSTR("  note: a field type is a struct or union declared above it, i8/i16/i32/i64, u8/u16/u32/u64, f32, f64, bool, cstring, Result, Option, Tagged, an enum, or Vec / Vec<T> (missing include?)\n");
+        PRSTR("  note: a field type is a struct or union declared above it, i8/i16/i32/i64, u8/u16/u32/u64, f32, f64, bool, cstring, Result, Option, Tagged, an enum, Vec / Vec<T>, or a pointer *T (missing include?)\n");
     }
     _panic = 0;
     return 0;
@@ -1270,7 +1351,8 @@ fn PARSE_STRUCT_DEF(S): i64 {
             var fnoff = PEEKV(S);
             STI(S, GTI(S) + 1);
             # Check for type annotation: field: Type
-            if (PEEKT(S) == 49) {
+            if (PEEKT(S) == 49 && TOKTYP(S, GTI(S) + 1) == 8) { _add_ptr_field(S, si, fnoff); }   # 6.6.17: `: *T`
+            elif (PEEKT(S) == 49) {
                 STI(S, GTI(S) + 1);
                 if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
                 var tnoff = PEEKV(S);
@@ -1363,7 +1445,8 @@ fn PARSE_UNION_DEF(S): i64 {
             if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
             var fnoff = PEEKV(S);
             STI(S, GTI(S) + 1);
-            if (PEEKT(S) == 49) {
+            if (PEEKT(S) == 49 && TOKTYP(S, GTI(S) + 1) == 8) { _add_ptr_field(S, si, fnoff); }   # 6.6.17: `: *T`
+            elif (PEEKT(S) == 49) {
                 STI(S, GTI(S) + 1);
                 if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
                 var tnoff = PEEKV(S);

@@ -1513,6 +1513,7 @@ fn PP_DTYPE(base, p, end, dst): i64 {
     _pp_dlen = 0;
     store8(dst, 0);
     if (p >= end) { _pp_dstop = 1; return end; }
+    if (load8(base + p) == 42) { return PP_DPTR(base, p, end); }   # 6.6.17: `*T`
     if (PP_IDSTART(load8(base + p)) == 0) { _pp_dstop = 1; return end; }
     p = PP_DAPPEND_ID(base, p, end, dst, "error: #derive field type name too long (max 31 bytes)\n", 55);
     var q = PP_DTRIV(base, p, end);
@@ -1528,6 +1529,38 @@ fn PP_DTYPE(base, p, end, dst): i64 {
     if (load8(base + q) != 62) { _pp_dstop = 1; return end; }
     PP_DPUT(dst, 62, "error: #derive field type name too long (max 31 bytes)\n", 55);
     return q + 1;
+}
+
+# 6.6.17 — a `name: *T` field (the parser takes it since 6.6.17). To every derived codec the
+# pointer is an untyped 8-byte word — an accessor is load64 / store64, a codec writes the number —
+# so no type name is recorded: step over the `*`s, T and any `<..>` after it. Before, the `*`
+# stopped the walk and every field after it lost its accessors. CHANGELOG [6.6.17]
+fn PP_DPTR(base, p, end): i64 {
+    while (p < end) {
+        if (load8(base + p) != 42) { break; }
+        p = PP_DTRIV(base, p + 1, end);
+    }
+    if (p >= end) { _pp_dstop = 1; return end; }
+    if (PP_IDSTART(load8(base + p)) == 0) { _pp_dstop = 1; return end; }
+    while (p < end) {
+        if (PP_IDC(load8(base + p)) == 0) { break; }
+        p = p + 1;
+    }
+    var q = PP_DTRIV(base, p, end);
+    if (q >= end) { return p; }
+    if (load8(base + q) != 60) { return p; }
+    var d = 0;
+    while (q < end) {
+        var c = load8(base + q);
+        if (c == 60) { d = d + 1; }
+        if (c == 62) {
+            d = d - 1;
+            if (d == 0) { return q + 1; }
+        }
+        q = q + 1;
+    }
+    _pp_dstop = 1;
+    return end;
 }
 
 # An enum member's value, after its `=`: an optional `-`, then a number or a char literal

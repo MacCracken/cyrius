@@ -194,5 +194,31 @@ rc=0
 if [ "$rc" -ne 42 ]; then echo "  FAIL axis 8 (anti-vacuous): '&buf + 3' addressed byte $rc, not byte 3 — the pointer scale is re-scaling byte arithmetic"; fail=1
 else echo "  ok axis 8: &x + n stays BYTE arithmetic (scale 1)"; fi
 
+# --- axis 9 (6.6.17): a `name: *T` field and a `fn f(): *T` result ARE pointers ---
+# Both positions were parse errors before 6.6.17. Their value carries T's step as its pointer
+# scale, so binding it to a `*T` local must not warn; axes 4 and 6 keep the warning reachable.
+cat > "$T" <<'EOF'
+include "lib/syscalls.cyr"
+struct Pt { x; y; }
+struct H { p: *Pt; n; }
+var arr[4];
+fn first(h: *H): *Pt { return h.p; }
+fn main(): i64 {
+    var h: H;
+    h.p = &arr; h.n = 0;
+    var a: *Pt = h.p;
+    var b: *Pt = first(&h);
+    return 0;
+}
+var ec = main();
+syscall(60, ec);
+EOF
+crc=0
+"$CC" < "$T" > "$O" 2>"$E" || crc=$?
+n=$(warns)
+if [ "$crc" -ne 0 ]; then echo "  FAIL axis 9: a *T field / a *T return did not compile (rc $crc)"; fail=1
+elif [ "$n" -ne 0 ]; then echo "  FAIL axis 9: a *T field / a *T return bound to a *T local warned $n time(s)"; fail=1
+else echo "  ok axis 9: a *T field and a *T return are pointers"; fi
+
 [ "$fail" -eq 0 ] || { echo "FAIL: typed-pointer-warn-sign"; exit 1; }
 echo "PASS: typed-pointer-warn-sign — warns on typed pointers only, not on width/float-annotated locals"

@@ -5126,19 +5126,10 @@ fn _parse_multiret_sig(S, fi, quiet): i64 {
     var n = 0;
     var go = 1;
     while (go == 1) {
-        if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); return n; }
-        var t = _classify_return_type(S, PEEKV(S));
-        # Unknown element type keeps the token stream in sync as a plain i64 slot
-        # rather than desyncing the parse — same tactic as the `_syntax_only` arm
-        # on the single-value path below. 6.6.16 (C8): a name that is no type at all is
-        # refused by name (it compiled silently as i64); every type name stays accepted.
-        if (t == 0) {
-            if (quiet == 0) { _tn_mret_check(S, GTI(S)); }
-            t = 0 - 8;
-        }
+        if (PEEKT(S) != 2) { if (PEEKT(S) != 8) { ERR_EXPECT(S, 2); return n; } }
+        var t = _mret_elem(S, quiet);
         if (n < 3) { SFRT(S, fi, n, t); }
         n = n + 1;
-        STI(S, GTI(S) + 1);                 # consume the type IDENT
         if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); } else { go = 0; }
     }
     if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); return n; }
@@ -5150,6 +5141,26 @@ fn _parse_multiret_sig(S, fi, quiet): i64 {
     SFRN(S, fi, n);
     SFRS(S, fi, MULTIRET_SID);
     return n;
+}
+
+# One element of a multi-value return type (cursor on it), consumed; its return code.
+# Unknown element type keeps the token stream in sync as a plain i64 slot
+# rather than desyncing the parse — same tactic as the `_syntax_only` arm
+# on the single-value path below. 6.6.16 (C8): a name that is no type at all is
+# refused by name (it compiled silently as i64); every type name stays accepted.
+# 6.6.17: a `*T` element is an i64 slot too (`_ptr_annot`).
+fn _mret_elem(S, quiet): i64 {
+    if (PEEKT(S) == 8) {
+        _ptr_annot(S, 0 - 1, quiet);
+        return 0 - 8;
+    }
+    var t = _classify_return_type(S, PEEKV(S));
+    if (t == 0) {
+        if (quiet == 0) { _tn_mret_check(S, GTI(S)); }
+        t = 0 - 8;
+    }
+    STI(S, GTI(S) + 1);                 # consume the type IDENT
+    return t;
 }
 
 fn _classify_return_type(S, rt_noff): i64 {
@@ -5450,7 +5461,8 @@ fn _prescan_fn_sig(S): i64 {
                 # v6.5.21 — `: (T1, T2[, T3])`. Recorded HERE in pass 1 so a
                 # FORWARD call can arity-check against a fn defined later.
                 _parse_multiret_sig(S, fi, 1);
-            } else {
+            } elif (PEEKT(S) == 8) { _ret_ptr_annot(S, fi, 1); }   # 6.6.17: `: *T`
+            else {
                 if (PEEKT(S) == 2) {
                     var rtc = _classify_return_type(S, PEEKV(S));
                     if (rtc > 0) { rtc = _gtype_sid(S, fi, rtc); }   # 6.6.10: `: Box<Pt>`
@@ -6939,7 +6951,8 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                 # i64)` called as `f(7, 9)` gave a = 9 and b = 0. Exactly the
                 # failure the v6.3.9 note above describes for `: T`, in the arm
                 # that catches every return type which is not a bare IDENT.
-                if (PEEKT(S) != 10) { _cur_fn_ret_stash = 8; }
+                # 6.6.17: nor is a `: *T` pointer return (one word in rax).
+                if (PEEKT(S) != 10) { if (PEEKT(S) != 8) { _cur_fn_ret_stash = 8; } }
             }
         }
     }
@@ -7449,7 +7462,8 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
         if (PEEKT(S) == 10) {
             _parse_multiret_sig(S, fi, 0);
             _cur_fn_ret_scalar = MULTIRET_SID;
-        } else {
+        } elif (PEEKT(S) == 8) { _ret_ptr_annot(S, fi, 0); }   # 6.6.17: `: *T`
+        else {
             if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
             var rt_noff = PEEKV(S);
             # v6.3.5 CO-01 — classify the return type via the shared

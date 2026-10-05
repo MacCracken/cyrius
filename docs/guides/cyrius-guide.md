@@ -167,8 +167,8 @@ whole`). A type with no place at a site is refused once, its `<..>` with it
 and read any other name as a silent `i64`; `sizeof(f64)`, `sizeof(u8)` and `sizeof(bool)`
 did not compile. A parameter still takes `Str`, `cstring`, `Result`, `Option` and `Tagged`
 by name, without their `include`. A return type is a struct, `i8`..`i64`, `f64`, a vector
-type, `Result`, `Option`, `Tagged` or `cstring` — `fn f(): u8` is refused by name (return an
-`i64`). `cyrius lint` (`--syntax-only`) resolves no type names, so it never reports these.
+type, `Result`, `Option`, `Tagged`, `cstring` or a pointer `*T` (6.6.17) — `fn f(): u8` is
+refused by name (return an `i64`). `cyrius lint` (`--syntax-only`) resolves no type names, so it never reports these.
 
 ### Arrays: byte vs slot sizing (v6.2.1)
 
@@ -525,6 +525,12 @@ the step matters, write the byte offset on an untyped address (`&buf + i * 4`).
 ⛔ Before 6.6.16 a **local** `var p: *i8` / `*i16` / `*i32` was stored in 1 / 2 / 4
 bytes, truncating the address: `p == &buf` was false and `load8(p + 1)` crashed.
 
+`*T` is also a struct or union **field** type and a fn **return** type (and a multi-value
+return element) — `struct PH { name: *Str; }`, `fn first(q: *Q): *Pt`. Either is an 8-byte
+pointer, and the value it yields steps `sizeof(T)` in `p + n` (`*u8` 1, `*i32` 4, `*Pt`
+`sizeof(Pt)`, `**T` 8), so it binds to a `*T` local without a warning. Before 6.6.17 both
+positions were the parse error `expected identifier, got '*'`.
+
 ## Structs
 
 ```
@@ -606,6 +612,7 @@ A field is untyped (`x;`, 8 bytes, i64) or annotated `x: T`, where `T` is one of
 | `bool`, `cstring`, `Result`, `Option`, `Tagged`, an enum | 8 | An enum may be declared before or after the struct. `bool` since 6.6.16 (it was refused). |
 | a struct or union | its size | Stored **inline**. It must be declared ABOVE the struct that uses it. |
 | `Vec` / `Vec<T>` | 8 | A handle. |
+| `*T` (any type name `T`) | 8 | A pointer: `p.f + n` steps `sizeof(T)` (see [Pointers](#pointers)). Since 6.6.17. |
 | a type parameter of the struct being declared (`struct Box<T> { v: T; }`) | per instance | |
 
 ⚠ The field widths are layout (and ABI). `u8`..`u32` and `f32` have always taken 8 bytes;
