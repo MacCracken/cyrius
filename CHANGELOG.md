@@ -6,6 +6,19 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [6.6.16] — 2026-10-04
 
+### Downstream
+
+- **ganita 1.2.13 folded (`lib/ganita.cyr`, ganita tag `1.2.13` @ `486b8f5`; 1.2.12 was never folded on its
+  own) — the SVD rewritten, non-finite input refused across linalg.** ⚠ `ganita_mat_svd` is a new algorithm
+  (one-sided Jacobi on a column- and row-pivoted QR — Drmač–Veselić, LAPACK dgejsv / dgesvj), so every SVD's
+  bits change; it no longer refuses finite matrices that have an SVD (zero / repeated rows, tiny rotations,
+  a two-cycling 5×4 — hisab 3.3.3's filings) and is faster from 8×8 up. **Return codes a caller can see
+  change:** the SVD's non-convergence is −3 (was −1); a NaN or infinite input is refused across linalg (−2);
+  `rank` passes the SVD's −2 / −3 through; `eigen_sym`'s allocation failure is −1 (was −2). 1.2.13:
+  `pseudo_inv` gives no NaN entries when σ underflows and `pseudo_inv` / `condition` are right when σ₁
+  overflows. No public signature changed (api-surface unchanged at 5,803). Pin 6.6.15. The 12 in-tree
+  `.tcyr` files that include ganita pass on x86_64 and aarch64 (qemu).
+
 ## [6.6.15] — 2026-10-03
 
 The curves and the compiler's secret leaks (user, 2026-10-02; scope set the same day): the sigil work
