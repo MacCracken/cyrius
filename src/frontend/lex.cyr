@@ -550,34 +550,67 @@ fn _init_cyrius_lib(): i64 {
 # now the single opt-out probe.
 fn _env_var_is_1(name, name_len): i64 {
     #ifdef CYRIUS_TARGET_LINUX
-    var _ev_buf[4096];
-    var _ev_fd = 0;
-    if (SYS_OPEN == 2) { _ev_fd = syscall(SYS_OPEN, "/proc/self/environ", 0, 0); }
-    else { _ev_fd = syscall(SYS_OPEN, 0 - 100, "/proc/self/environ", 0, 0); }
-    if (_ev_fd < 0) { return 0; }
-    var _ev_len = syscall(0, _ev_fd, &_ev_buf, 4096);
-    syscall(3, _ev_fd);
-    var _ev_i = 0;
-    while (_ev_i < _ev_len) {
-        var _ev_start = _ev_i;
-        while (_ev_i < _ev_len && load8(&_ev_buf + _ev_i) != 0) { _ev_i = _ev_i + 1; }
-        var _ev_entry_len = _ev_i - _ev_start;
-        if (_ev_entry_len == name_len + 2) {
-            if (load8(&_ev_buf + _ev_start + name_len) == 61) {
-                if (load8(&_ev_buf + _ev_start + name_len + 1) == 49) {
-                    var _ev_match = 1;
-                    var _ev_m = 0;
-                    while (_ev_m < name_len) {
-                        if (load8(&_ev_buf + _ev_start + _ev_m) != load8(name + _ev_m)) { _ev_match = 0; break; }
-                        _ev_m = _ev_m + 1;
-                    }
-                    if (_ev_match == 1) { return 1; }
-                }
-            }
+    # 6.6.17 — read TO EOF in chunks, the way `_env_scan_homes` does: it was ONE 4096-B read,
+    # so CYRIUS_NO_WARN_PIN_DRIFT=1 / CYRIUS_STRICT_PIN=1 past the first 4 KB of the
+    # environment were ignored (the warning printed; strict mode did not refuse). The FIRST
+    # entry named `name` decides, as getenv and _read_env do. CHANGELOG [6.6.17]
+    var fd = 0;
+    if (SYS_OPEN == 2) { fd = syscall(SYS_OPEN, "/proc/self/environ", 0, 0); }
+    else { fd = syscall(SYS_OPEN, 0 - 100, "/proc/self/environ", 0, 0); }
+    if (fd < 0) { return 0; }
+    var st[32];
+    store64(&st, 0);
+    store64(&st + 8, 1);
+    store64(&st + 16, 0);
+    store64(&st + 24, 0 - 1);
+    var buf[4096];
+    var n = syscall(SYS_READ, fd, &buf, 4096);
+    while (n > 0) {
+        var i = 0;
+        while (i < n) {
+            _ev1_step(&st, name, name_len, load8(&buf + i));
+            i = i + 1;
         }
-        _ev_i = _ev_i + 1;
+        n = syscall(SYS_READ, fd, &buf, 4096);
     }
+    syscall(SYS_CLOSE, fd);
+    _ev1_step(&st, name, name_len, 0);   # end an unterminated last entry
+    if (load64(&st + 24) == 1) { return 1; }
     #endif
+    return 0;
+}
+
+# One environ byte for `_env_var_is_1`. State `st` (i64 slots): +0 bytes into the entry, +8 1
+# while the entry still spells `name=`, +16 the value so far (0 empty, 1 exactly "1", 2 else),
+# +24 the verdict (-1 until the first `name=` entry ends, then 1 for "1", 0 otherwise).
+fn _ev1_step(st, name, nl, c): i64 {
+    var ep = load64(st);
+    if (c == 0) {
+        if (load64(st + 8) == 1) { if (ep > nl) { if (load64(st + 24) == 0 - 1) {
+                    var v = 0;
+                    if (load64(st + 16) == 1) { v = 1; }
+                    store64(st + 24, v);
+                } } }
+        store64(st, 0);
+        store64(st + 8, 1);
+        store64(st + 16, 0);
+        return 0;
+    }
+    store64(st, ep + 1);
+    if (load64(st + 8) == 0) { return 0; }
+    if (ep < nl) {
+        if (load8(name + ep) != c) { store64(st + 8, 0); }
+        return 0;
+    }
+    if (ep == nl) {
+        if (c != 61) { store64(st + 8, 0); }
+        return 0;
+    }
+    if (ep == nl + 1) {
+        if (c == 49) { store64(st + 16, 1); } else { store64(st + 16, 2); }
+        return 0;
+    }
+    store64(st + 16, 2);
     return 0;
 }
 
@@ -783,12 +816,14 @@ fn READFILE(path, dst, maxsz): i64 {
                             # Build fallback path: _cyrius_lib + (path + 4)
                             # v6.4.81 (CVE-33): both copies below were unbounded
                             # into a 512-BYTE local (`var x[N]` local = N bytes).
-                            # `_cyrius_lib_len` can reach ~2 KB and `path` is
-                            # caller-supplied, so either loop could walk off the
-                            # frame. Widened to 4096 (matching the PP filename
-                            # bound) and both loops now stop at 4095; a truncated
-                            # path simply fails to open and takes the existing
-                            # -1 / "cannot open include file" path.
+                            # Widened to 4096 and both loops stop at 4095. ⚠ The cap
+                            # is NOT reached today, and must not be: a truncated
+                            # path is a PREFIX that can name a different existing
+                            # file. `path` is at most 767 B (PP_FNAME_TOO_LONG,
+                            # CVE-39) and `_cyrius_lib_len` at most ~2013 B (a home
+                            # over 1984 B disables the fallback, `_env_cap_end`), so
+                            # the composed path is <= ~2776 B. Raise either bound and
+                            # this copy must refuse by name instead. (6.6.17)
                             var fbuf[4096];
                             var fi = 0;
                             while (fi < _cyrius_lib_len) { if (fi >= 4095) { break; } store8(&fbuf + fi, load8(&_cyrius_lib + fi)); fi = fi + 1; }
@@ -815,6 +850,8 @@ fn READFILE(path, dst, maxsz): i64 {
     # already passed, and would recurse.
     if (fd < 0) {
         if (_pp_incdir_len > 0) {
+            # The 4095 cap below is unreachable for the same reason as the store-slot copy's:
+            # `_pp_incdir` <= 480 B (PP_SCAN_INCDIR) + '/' + `path` <= 767 B. (6.6.17)
             var ibuf[4096];
             var ii2 = 0;
             while (ii2 < _pp_incdir_len) { if (ii2 >= 4094) { break; } store8(&ibuf + ii2, load8(&_pp_incdir + ii2)); ii2 = ii2 + 1; }
