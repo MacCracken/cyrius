@@ -1519,6 +1519,10 @@ _chk_gate "$ROOT/tests/gates/toolchain/walkers_fail_closed_unreadable_dir.sh"
 # LSP's fixed row / names / paths / file caps answered null past the cut).
 _chk_gate "$ROOT/tests/gates/toolchain/lsp_indexes_every_decl_spelling.sh"
 
+# 6.6.17 — cyrius-lsp reads the open document sized by fstat (it was a fixed 1 MB read, so a
+# definition past the cut answered null) and refuses a document over 64 MiB by name.
+_chk_gate "$ROOT/tests/gates/toolchain/lsp_reads_whole_document.sh"
+
 # 6.6.7 (bite 10) — the NEXT version-bump can rewrite every document anchor in the live tree.
 # Step 5's stamp sed admitted only a date in the parenthetical, so the hand-annotated stamp
 # matched nothing and the bump exited 0 (twice: 6.6.7, and — measured — 6.6.8); steps 3/4
