@@ -1744,6 +1744,11 @@ _chk_gate "$ROOT/tests/gates/diagnostics/deprecated_every_call_path.sh"
 # reachable-undefined refusal, so nothing has to run.
 _chk_gate "$ROOT/tests/gates/toolchain/include_fallback_cyrius_home.sh"
 
+# 6.6.17 — the CLI picks its home by cycc's rule (first duplicate wins, empty = unset, the whole
+# environment read): `cyrius which` and an include-fallback probe agree on every row; a 600+ B
+# CYRIUS_HOME is read by cyrius.exe under wine (SKIP by name without wine).
+_chk_gate "$ROOT/tests/gates/toolchain/cli_home_matches_cycc.sh"
+
 # 6.6.9 (bite 3) — a second struct/union with a different layout (the first silently won) and
 # an enum constant over a zero/computed global of the same name are warned, not silent.
 _chk_gate "$ROOT/tests/gates/frontend/redefinition_layout_and_enum_over_var.sh"
