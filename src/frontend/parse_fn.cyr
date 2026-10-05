@@ -2558,10 +2558,22 @@ fn _sc_var_receive(S, noff, pscale, ext, start): i64 {
 # `var G: S = <expr>` at top level: no frame, so a 9-16 B method/operator result is refused by name
 # (a >16 B one already was, in `_sc_pre`). Untyped `var g = ..` keeps the first word.
 fn _sc_global_receive(S, pscale, start): i64 {
+    if (pscale <= 0 - 2048) { return _vecg_rhs_ok(S, start); }   # 6.6.17 (a3): a vector global
     if (_sc_global_mismatch(S, pscale, start) != 0) { return 0; }
     if (_sc_whole(S, start) != 0 - 1) { return 0; }
     if (pscale != 0 - _sc_sid) { return 0; }
     _refuse_toplevel_struct_call(S, _sc_fn);
+    return 0;
+}
+
+# 6.6.17 (a3): a vector global declared after the first statement takes only `= 0;` (see
+# `_vecg_size`, parse_decl.cyr). `start` is the initializer's first token, after
+# `var NAME : VEC =` (a vector type is one token, so the name is 4 back).
+fn _vecg_rhs_ok(S, start): i64 {
+    var v = _CF_TRY(S, start, 5);
+    var has = 0;
+    if (_cf_ok == 1) { has = 1; }
+    _vecg_init_ok(S, has, v, TOKVAL(S, start - 4));
     return 0;
 }
 

@@ -1,0 +1,57 @@
+# vector_global_storage.tcyr — 6.6.17 (a3). A VECTOR-typed global owns the vector's bytes: 16 for a
+# 128-bit vector, 32 for a 256-bit one, in both global zones (the declaration block, and after the
+# first top-level statement).
+#
+# ⛔ THE DEFECT, every release through 6.6.16. `var g: f64v2 = 0;` was ONE 8-byte slot, so the
+# pointer-form API the language routes `f64v2_add(&g, &h)` to wrote the vector's second lane over
+# the NEXT global — silently, on every target (`&after - &g` measured 8). The value-form shapes
+# that moved one word of it (`g = f(..)`, `var v: f64v2 = g;`, `g = v;`, a non-zero initializer)
+# are now refused by name; tests/gates/diagnostics/type_name_refused.sh pins those.
+#
+# CROSS-HOST: each image writer lays the var area out from the recorded size (ELF, Mach-O, PE),
+# and cx from its own var data; the `&g` + load/store round trip is per-backend.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/simd.cyr"
+include "lib/assert.cyr"
+
+var g2: f64v2 = 0;
+var after2: i64 = 0x55;
+var g4: f64v4 = 0;
+var after4: i64 = 0x66;
+var gi: i32v4 = 0;
+var afteri: i64 = 0x77;
+
+fn lane_sum2(p) { return load64(p) + load64(p + 8); }
+
+fn ptr_api_roundtrip(): i64 {
+    var a: f64v2 = f64v2_make(0x3FF0000000000000, 0x4000000000000000);   # {1.0, 2.0}
+    store64(&g2, load64(&a));
+    store64(&g2 + 8, load64(&a + 8));
+    var s: f64v2 = f64v2_add(&g2, &g2);                                   # routed to _ptr
+    if (load64(&s) != 0x4000000000000000) { return 1; }                   # 2.0
+    if (load64(&s + 8) != 0x4010000000000000) { return 2; }               # 4.0
+    return 0;
+}
+
+assert_eq(&after2 - &g2, 16, "f64v2 global is 16 B (declaration block)");
+assert_eq(&after4 - &g4, 32, "f64v4 global is 32 B (declaration block)");
+assert_eq(&afteri - &gi, 16, "i32v4 global is 16 B (declaration block)");
+alloc_init();
+assert_eq(ptr_api_roundtrip(), 0, "&g with the *_ptr form reads both lanes");
+assert_eq(after2, 0x55, "the global after an f64v2 is untouched by a full-width write");
+store64(&g4 + 24, 7);
+assert_eq(after4, 0x66, "the global after an f64v4 is untouched by its last lane");
+assert_eq(lane_sum2(&gi), 0, "an i32v4 global starts zero");
+
+# After the first statement: PARSE_VAR's global arm sizes it the same way.
+var h2: f64v2 = 0;
+var hafter2: i64 = 0x88;
+var h4: f64v4 = 0 + 0;
+var hafter4: i64 = 0x99;
+assert_eq(&hafter2 - &h2, 16, "f64v2 global is 16 B (after the first statement)");
+assert_eq(&hafter4 - &h4, 32, "f64v4 global is 32 B (after the first statement)");
+store64(&h2 + 8, 3);
+assert_eq(hafter2, 0x88, "the late global after an f64v2 is untouched by its second lane");
+var r = assert_summary();

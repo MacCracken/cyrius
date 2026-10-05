@@ -998,6 +998,13 @@ fn SVFI(S, vi, v): i64 { if (_var_fileid == 0) { _var_fileid = alloc(1048576 * 8
 var _var_ptrmode = 0;
 fn GVPM(S, vi): i64 { if (_var_ptrmode == 0) { return 0; } if (vi < 0) { return 0; } return load8(_var_ptrmode + vi); }
 fn SVPM(S, vi, v): i64 { if (_var_ptrmode == 0) { _var_ptrmode = alloc(1048576); } store8(_var_ptrmode + vi, v); return 0; }
+# 6.6.17 (a3) — a VECTOR-typed global (`var g: f64v2 = 0;`): its byte size / 8 (2 or 4), 0 = not
+# one. It owns the vector's 16/32 bytes (it was one 8-byte slot, so `&g` with a `*_ptr` form wrote
+# past it into the next global); a value-form read or write of it is refused by name
+# (`_vecg_refuse`, parse_decl.cyr). Lazy-alloc'd at the var table's cap like `_var_ptrmode`.
+var _var_vecg = 0;
+fn GVVEC(S, vi): i64 { if (_var_vecg == 0) { return 0; } if (vi < 0) { return 0; } return load8(_var_vecg + vi); }
+fn SVVEC(S, vi, v): i64 { if (_var_vecg == 0) { if (v == 0) { return 0; } _var_vecg = alloc(1048576); } store8(_var_vecg + vi, v); return 0; }
 # 6.6.13 (I11) — per-global DIAGNOSTIC record: for an untyped `var g = f(..);`, f's name offset
 # + 1 (resolved to f's `: Struct` return when the check runs, so f may be defined after g). Read
 # ONLY by the Str -> `: cstring` warning. ⛔ Never put this in GVTYPE: GVTYPE drives codegen

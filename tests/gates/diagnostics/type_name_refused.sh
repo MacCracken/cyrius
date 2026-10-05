@@ -31,6 +31,9 @@
 #   axis 4  a local `*i8` / `*i16` / `*i32` (an 8-byte slot since 6.6.16) is still a POINTER to the
 #           declaration's `assigning non-pointer to typed pointer` check: copied, stepped, or
 #           copied across widths into a typed pointer it draws no warning; an integer still does.
+#   axis 5  (6.6.17, a3) a vector global owns its 16/32 B and is used through `&g`: each value-form
+#           read / write / non-zero initializer is refused naming it (8 rows, all compiling silently
+#           before); `&g`, a folded 0 and the routed `*_ptr` form run (anti-vacuous).
 #
 # MUTATION LEDGER (6.6.16, built from scratch copies of src/, measured):
 #   the slot-open compiler                    -> axis 1 RED on 35 of its 38 rows (all but the
@@ -227,7 +230,24 @@ warns ptr_copy_nowarn 'var GB: i64[2];\nfn f(): i64 {\n    var a: *i8 = &GB;\n  
 # warning that was simply switched off.
 warns ptr_int_warns 'fn f(): i64 {\n    var x = 5;\n    var q: *i16 = x;\n    var r: *i8 = x + 1;\n    return 0;\n}\nsyscall(60, f());\n' 2
 
-if [ "$rows" -lt 72 ]; then echo "FAIL: type_name_refused: only $rows rows ran (floor 72)"; exit 1; fi
+echo "axis 5 - a vector global is used through its address; a value-form use is refused by name:"
+# 6.6.17 (a3): `var g: f64v2 = 0;` owns 16 B (tests/tcyr/crossos/vector_global_storage.tcyr); each
+# shape below moved ONE word of it before, silently. The message names the global.
+VG='include "lib/alloc.cyr"\ninclude "lib/simd.cyr"\nvar g: f64v2 = 0;\nfn f(): i64 {\n'
+VE='    return 0;\n}\nsyscall(60, f());\n'
+VM="vector global 'g'"
+refused vg_assign_call  "${VG}    g = f64v2_make(3, 4);\n${VE}" "$VM"
+refused vg_copy_init    "${VG}    var v: f64v2 = g;\n${VE}" "$VM"
+refused vg_from_local   "${VG}    var v: f64v2 = f64v2_make(1, 2);\n    g = v;\n${VE}" "$VM"
+refused vg_into_local   "${VG}    var v: f64v2 = f64v2_make(1, 2);\n    v = g;\n${VE}" "$VM"
+refused vg_compound     "${VG}    g += 1;\n${VE}" "$VM"
+refused vg_untyped_read "${VG}    var x = g;\n    return x;\n}\nsyscall(60, f());\n" "$VM"
+refused vg_init_dz      'include "lib/simd.cyr"\nvar g: f64v2 = 5;\nsyscall(60, 0);\n' "vector global 'g' takes no initializer but 0"
+refused vg_init_late    'include "lib/simd.cyr"\nvar k = 1;\nk = 2;\nvar g: f64v4 = f64v4_make(1, 2, 3, 4);\nsyscall(60, 0);\n' "vector global 'g' takes no initializer but 0"
+# ANTI-VACUOUS: the address, a folded 0 and the routed pointer form all compile and run.
+runs vg_addr_ok 'include "lib/alloc.cyr"\ninclude "lib/simd.cyr"\nvar g: f64v2 = 0 + 0;\nvar n: i64 = 5;\nfn f(): i64 {\n    store64(&g + 8, 9);\n    var s: f64v2 = f64v2_add(&g, &g);\n    return n + (&n - &g);\n}\nsyscall(60, f());\n' 21
+
+if [ "$rows" -lt 81 ]; then echo "FAIL: type_name_refused: only $rows rows ran (floor 81)"; exit 1; fi
 if [ "$fails" -ne 0 ]; then echo "FAIL: type_name_refused: $fails check(s) failed"; exit 1; fi
 echo "PASS: type_name_refused ($rows rows)"
 exit 0
