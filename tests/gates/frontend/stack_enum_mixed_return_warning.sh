@@ -18,6 +18,13 @@
 # variant from the check. Ok/Err on every path stays silent. The fixture probe also RUNS
 # (is_some=1 payload=40 / is_some=0), so "no warning" is not bought with wrong code.
 #
+# 6.6.16 (C4) rows: a pair forwarded through the explicit generic `g<T>(..)` or the method
+# `p.m(..)` beside `return Ok(5)` is silent (both were reported as a dropped tag), the same spellings
+# returning ONE value still warn, and a closure is judged through either spelling's `return` / `?`.
+# Mutations (scratch tree, measured): `_ret_is_variant` without `_tok_ret_callee` -> gen_pair and
+# m_pair red on both targets (4 rows); `_tok_q_is_pair` not rewinding `g<..>(` / `x.m(` to the call's
+# first token -> cl_gq_mixed red on both (2 rows). The tree before this fix: 10 rows red.
+#
 # The compilers are built FROM SOURCE, so reverting the fix turns this RED.
 set -u
 R=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -90,6 +97,30 @@ fx raw_zero     'fn f(x) { if (x > 0) { return Some(x); } return 0; }'
 fx wrapper      'fn nw() { return None(); }
 fn f(x) { if (x > 0) { return Some(x); } return nw(); }'
 fx local        'fn f(x) { if (x > 0) { return Some(x); } var n = None(); return n; }'
+# 6.6.16 (C4): the explicit generic `g<T>(..)` and the method `p.m(..)` are resolved like `f(..)`
+# (`_tok_ret_callee`). Forwarding a pair through either beside `return Ok(5)` warned falsely ("a
+# SINGLE value here") because only `name(` was recognised; the same spellings returning ONE value
+# must still warn. In a closure (judged as its own unit) the pair is also recognised through
+# either spelling's `return` and `?`, which went unwarned.
+P2='struct Pt { x; y; }
+fn Pt_div(self: Pt, d) { if (d == 0) { return Err(9); } return Ok(self.x / d); }
+fn Pt_one(self: Pt): i64 { return self.x; }
+fn gd<T>(n: T) { if (n == 0) { return Err(1); } return Ok(n); }
+fn gid<T>(n: T): i64 { return n; }'
+fx gen_pair     "$P2
+fn f(x) { if (x > 5) { return Ok(5); } return gd<i32>(x); }"
+fx m_pair       "$P2
+fn f(x) { var p: Pt; p.x = x; p.y = 0; if (x > 5) { return Ok(5); } return p.div(1); }"
+fx m_single     "$P2
+fn f(x) { var p: Pt; p.x = x; p.y = 0; if (x > 5) { return Ok(5); } return p.one(); }"
+fx gen_single   "$P2
+fn f(x) { if (x > 5) { return Ok(5); } return gid<i32>(x); }"
+fx cl_gen_pair  "$P2
+fn f(x) { var g = |y| { if (y > 5) { return Ok(5); } return gd<i32>(y); }; return Ok(x); }"
+fx cl_m_mixed   "$P2
+fn f(x) { var g = |y| { var p: Pt; p.x = y; p.y = 0; if (y > 5) { return p.div(1); } return 0; }; return Ok(x); }"
+fx cl_gq_mixed  "$P2
+fn f(x) { var g = |y| { var v = gd<i32>(y)?; return v; }; return Ok(x); }"
 
 # warns <compiler> <fixture> <expected count>
 warns() {
@@ -110,6 +141,13 @@ for c in x86 aarch64; do
   warns "$c" raw_zero 1
   warns "$c" wrapper 1
   warns "$c" local 1
+  warns "$c" gen_pair 0
+  warns "$c" m_pair 0
+  warns "$c" m_single 1
+  warns "$c" gen_single 1
+  warns "$c" cl_gen_pair 0
+  warns "$c" cl_m_mixed 1
+  warns "$c" cl_gq_mixed 1
 done
 
 # the hint no longer prescribes Err alone (it named `return Err(x);` for an Option)
@@ -123,5 +161,5 @@ out=$("$T/kyb" | tr '\n' ' ')
 if [ "$out" = "pick(4) is_some=1 pick(4) payload=40 pick(0) is_some=0 " ]; then pass=$((pass + 1)); else _bad "kyb repro printed '$out'"; fi
 
 if [ "$fail" -ne 0 ]; then echo "FAIL stack_enum_mixed_return_warning: $fail row(s) red, $pass green"; exit 1; fi
-echo "PASS stack_enum_mixed_return_warning: $pass rows — nullary variants silent, dropped tags warned, on x86 and aarch64"
+echo "PASS stack_enum_mixed_return_warning: $pass rows — nullary variants silent, dropped tags warned, generic and method forwards silent and their single values warned, on x86 and aarch64"
 exit 0

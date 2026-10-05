@@ -3679,6 +3679,29 @@ fn _var_rhs_call(S, ti): i64 {
     return c;
 }
 
+# ⛔ 6.6.16 — the destructure's right-hand CALL, in every spelling `f(..)` is: `name(`, an explicit
+# generic `name<..>(` and a method `x.m(`. It took `name(` only, so the remedy the "bind both"
+# refusal prints — `var tag, val = f();` — was "multi-value destructure needs a call on the
+# right-hand side" for `g<i32>(..)` and `p.m(..)`. The method is taken by SHAPE: whether `x` names
+# a struct is the call's own question (PARSE_FIELD_LOAD reports it by name). The `(` that opens
+# the call at the cursor, or -1. CHANGELOG [6.6.16]
+fn _dt_call_open(S): i64 {
+    var ti = GTI(S);
+    var o = _gcall_open(S, ti);
+    if (o >= 0) { return o; }
+    if (_tok_method_open(S, ti) == 1) { return ti + 3; }
+    return 0 - 1;
+}
+# ...and the fn it REACHES, whose return types type the bindings: a generic's instance
+# (`_gen_resolve_call`, so `: (T1, T2)` / `: f64` are the instance's), else the method's `T_m`.
+fn _dt_call_fn(S): i64 {
+    var ti = GTI(S);
+    var fi = 0 - 1;
+    if (_gcall_open(S, ti) >= 0) { fi = _gen_resolve_call(S, ti); }
+    else { fi = _pair_callee_at(S, ti); }
+    return fi;
+}
+
 # Parse: var IDENT = expr ;
 fn PARSE_VAR(S): i64 {
     STI(S, GTI(S) + 1);  # consume VAR
@@ -3720,18 +3743,17 @@ fn PARSE_VAR(S): i64 {
         # one silently, because the second target simply read whatever rdx held.
         # A non-call right-hand side can never produce a second value, so it is
         # now rejected outright.
-        if (PEEKT(S) != 2) {
+        # 6.6.16: `f(`, `g<..>(` or `x.m(` (`_dt_call_open`). CHANGELOG [6.6.16]
+        var _dt_sc = _dt_call_open(S);
+        if (_dt_sc < 0) {
             ERR_MSG(S, "multi-value destructure needs a call on the right-hand side", 59);
-        }
-        if (TOKTYP(S, GTI(S) + 1) != 10) {
-            ERR_MSG(S, "multi-value destructure needs a call on the right-hand side", 59);
+            _dt_sc = GTI(S) + 1;
         }
         # ...and the call must be the WHOLE right-hand side. `dm(17, 5) + (k / 9) - 11`
         # opens with the same two tokens, and used to compile silently with the
         # trailing arithmetic's leftovers in rdx landing in the second target —
         # measured as an idiv REMAINDER arriving in `r`. Walk to the call's
         # matching ')' and require ';' immediately after it.
-        var _dt_sc = GTI(S) + 1;
         var _dt_d = 0;
         while (_dt_sc < GTCNT(S)) {
             var _dt_tk = TOKTYP(S, _dt_sc);
@@ -3742,7 +3764,7 @@ fn PARSE_VAR(S): i64 {
         if (TOKTYP(S, _dt_sc + 1) != 5) {
             ERR_MSG(S, "multi-value destructure needs a call on the right-hand side", 59);
         }
-        var _dt_fi = FINDFN(S, PEEKV(S));
+        var _dt_fi = _dt_call_fn(S);
         if (_dt_fi >= 0) {
             var _dt_rs = GFRS(S, _dt_fi);
             if (_dt_rs == 0 - 9) { _dt_ftype = F64_TYID; _dt_t1 = F64_TYID; _dt_t2 = F64_TYID; _dt_t3 = F64_TYID; }
@@ -4070,7 +4092,9 @@ fn PARSE_VAR(S): i64 {
                 # also feeds `_tpair`, which is what tells `?` it is holding a pair at all, and
                 # suppressing it there sends `?` down the boxed lowering that dereferences the
                 # tag as a pointer (measured: immediate SIGSEGV).
-                if (_call_is_propagated(S, GTI(S) + 2) == 0) {
+                # 6.6.16: scanned from the callee's first token, the right start for `f(`,
+                # `g<..>(` and `x.m(` alike (it walks to the first `(`). CHANGELOG [6.6.16]
+                if (_call_is_propagated(S, GTI(S) + 1) == 0) {
                     ERR_MSG(S, "a `: stack` enum returns two values — bind both: `var tag, val = f();`", 72);
                 }
             }

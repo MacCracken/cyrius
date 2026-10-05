@@ -1,0 +1,163 @@
+# method_pair_result.tcyr — 6.6.16 (C4): a METHOD call `p.m(..)` on a pair-returning `T_m` behaves
+# like the plain call `T_m(p, ..)` for `?`, for the destructure and through a wrapper.
+#
+# ⛔ THE DEFECT. Every place that asks "does this callee return a pair" — `?`'s `_tpair`, the
+# lossy-bind refusals, PARSE_RETURN's wrapper flag, the destructure, the pair prescan — recognised
+# only `name(`. The method spelling resolves to `T_m` inside PARSE_FIELD_LOAD, after all of them
+# had answered "no". Measured on 6.6.15 (x86, and the same under qemu-aarch64):
+#   `var v = p.div(d)?;`  — inline, pointer-mode, global, param or closure-captured receiver —
+#                           rc 139: `?` took the BOXED lowering and dereferenced the tag (0 or 1)
+#                           as a pointer
+#   `return Ok(p.div(d)? + k);`, `if (p.div(d)? > k)`               rc 139
+#   `p.div(d)?;` as a statement                                     "expected ';', got unknown"
+#   `var a, b = p.div(d);` — the remedy the refusal itself prints  "multi-value destructure
+#                                                                   needs a call on the right-hand side"
+#   a wrapper `return p.div(d);` defined after its `w(..)?` caller   rc 139
+# while `Pt_div(p, d)?` was right. The single-value binds that silently kept the tag
+# (`var v = p.div(d);`, `x = p.div(d);`) are refusals now, gated in
+# tests/gates/frontend/stack_enum_lossy_context.sh; the explicit generic spelling `g<T>(..)` is
+# tests/tcyr/crossos/generic_struct_inference.tcyr (SQ rows).
+#
+# Not covered, and unchanged (CHANGELOG [6.6.16]): a receiver that is not ONE name (`a.b.m()`,
+# `f().m()`, an untyped impl `self`) is typed by no call path.
+#
+# MUTATIONS (scratch tree, measured), each RED here: `_pair_callee_at` without its method arm ->
+# rc 139 (the first `?` row); `_dt_call_open` without the method open -> the file does not build
+# ("multi-value destructure needs a call"); `_stmt_method_call` passing pair 0 -> rc 139 (the
+# statement row); `_tok_ret_callee` without its method arm -> rc 139 (the forward-wrapper rows,
+# flagged only by the pair prescan); `_recv_sid` without its closure-capture arm -> rc 139 (the
+# captured-receiver row).
+#
+# CROSS-HOST because the pair is the per-target two-register return (rax:rdx / x0:x1 / the cx
+# pair), `self` is passed by address from five receiver storages, and a propagated Err
+# re-emits both halves through each backend's epilogue.
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/result.cyr"
+include "lib/fnptr.cyr"
+
+struct Pt { x; y; }
+fn Pt_div(self: Pt, d) { if (d == 0) { return Err(99); } return Ok(self.x / d); }
+fn Pt_one(self: Pt): i64 { return self.x; }
+# `self` as the receiver of another method of the same struct.
+fn Pt_halfdiv(self: Pt, d) { var v = self.div(d)?; return Ok(v / 2); }
+
+var gp: Pt = 0;                    # a pointer-mode global
+var gi: Pt = Pt { 12, 0 };         # an inline global
+
+fn mq_inline(n, d) { var p: Pt; p.x = n; p.y = 0; var v = p.div(d)?; return Ok(v + 1000); }
+fn mq_ptr(n, d) { var p: Pt = alloc(16); p.x = n; p.y = 0; var v = p.div(d)?; return Ok(v + 2000); }
+fn mq_global(n, d) { gp.x = n; var v = gp.div(d)?; return Ok(v + 3000); }
+fn mq_inline_global(d) { var v = gi.div(d)?; return Ok(v + 4000); }
+fn mq_param(p: Pt, d) { var v = p.div(d)?; return Ok(v + 5000); }
+fn mq_expr(n, d) { var p: Pt; p.x = n; p.y = 0; return Ok(p.div(d)? + 6000); }
+fn mq_if(n, d) { var p: Pt; p.x = n; p.y = 0; if (p.div(d)? > 2) { return Ok(7001); } return Ok(7002); }
+fn mq_assign(n, d) { var p: Pt; p.x = n; p.y = 0; var x = 0; x = p.div(d)?; return Ok(x + 8000); }
+fn mq_stmt(n, d) { var p: Pt; p.x = n; p.y = 0; p.div(d)?; return Ok(7); }
+fn mq_self(n, d) { var p: Pt; p.x = n; p.y = 0; var v = p.halfdiv(d)?; return Ok(v + 9000); }
+fn mq_destr(n, d): i64 { var p: Pt; p.x = n; p.y = 0; var a, b = p.div(d); return a * 1000 + b; }
+fn mq_destr_ptr(n, d): i64 { var p: Pt = alloc(16); p.x = n; var a, b = p.div(d); return a * 1000 + b; }
+# Wrappers: each `mw_*` is defined BELOW its caller (the forward case reaches it only through the
+# pair prescan) or ABOVE it.
+fn mq_fwd(n, d) { var v = mw_local(n, d)?; return Ok(v + 10000); }
+fn mq_fwd_param(n, d) { var p: Pt; p.x = n; p.y = 0; var v = mw_param(p, d)?; return Ok(v + 11000); }
+fn mq_fwd_global(n, d) { gp.x = n; var v = mw_global(d)?; return Ok(v + 12000); }
+fn mw_local(n, d) { var p: Pt; p.x = n; p.y = 0; return p.div(d); }
+fn mw_param(p: Pt, d) { return p.div(d); }
+fn mw_global(d) { return gp.div(d); }
+fn mq_back(n, d) { var v = mw_local(n, d)?; return Ok(v + 13000); }
+# A closure's CAPTURED struct as the receiver (resolved as PARSE_FIELD_LOAD resolves it: local,
+# then capture, then global).
+fn mq_capture(n, d): i64 {
+    var p: Pt; p.x = n; p.y = 0;
+    var g = |dd| { var v = p.div(dd)?; return Ok(v + 14000); };
+    var t, v = fncall1(g, d);
+    return t * 1000000 + v;
+}
+fn mq_capture_destr(n, d): i64 {
+    var p: Pt; p.x = n; p.y = 0;
+    var h = |dd| { var a, b = p.div(dd); return a * 1000 + b; };
+    var r = fncall1(h, d);
+    return r;
+}
+# A wrapper whose receiver's method returns ONE value stays a single value: binding it to one
+# variable is legal and right.
+fn mw_one(n): i64 { var p: Pt; p.x = n; p.y = 0; return p.one(); }
+
+# Ok and Err of a `(tag, payload)` wrapper folded into one number: the Ok row's payload (its tag 0)
+# plus the Err row's tag * 1000000 and payload * 10 — so (1, 99) reads 1000990.
+fn okerr(t1, v1, t2, v2): i64 { return t1 * 100000 + v1 + t2 * 1000000 + v2 * 10; }
+
+fn run_method_q(): i64 {
+    test_group("`?` on a pair-returning METHOD call, every receiver storage");
+    var a1, b1 = mq_inline(6, 2);
+    var a2, b2 = mq_inline(6, 0);
+    assert_eq(okerr(a1, b1, a2, b2), 1000990 + 1003,
+        "MQ: `var v = p.div(d)?;` on an inline local, Ok and Err (was rc 139)");
+    var a3, b3 = mq_ptr(6, 2);
+    var a4, b4 = mq_ptr(6, 0);
+    assert_eq(okerr(a3, b3, a4, b4), 1000990 + 2003, "MQ: the same on a pointer-mode local (`var p: Pt = alloc(16)`)");
+    var a5, b5 = mq_global(6, 2);
+    var a6, b6 = mq_global(6, 0);
+    assert_eq(okerr(a5, b5, a6, b6), 1000990 + 3003, "MQ: the same on a pointer-mode struct GLOBAL");
+    var a7, b7 = mq_inline_global(3);
+    var a8, b8 = mq_inline_global(0);
+    assert_eq(okerr(a7, b7, a8, b8), 1000990 + 4004, "MQ: the same on an inline struct global (`Pt { 12, 0 }`)");
+    var q: Pt; q.x = 6; q.y = 0;
+    var a9, b9 = mq_param(q, 2);
+    var a10, b10 = mq_param(q, 0);
+    assert_eq(okerr(a9, b9, a10, b10), 1000990 + 5003, "MQ: the same on a `p: Pt` PARAM");
+    var a11, b11 = mq_self(12, 2);
+    var a12, b12 = mq_self(12, 0);
+    assert_eq(okerr(a11, b11, a12, b12), 1000990 + 9003, "MQ: `self.div(d)?` inside another method of the struct");
+    assert_eq(mq_capture(6, 2), 14003, "MQ: `p.div(dd)?` in a closure, p CAPTURED, Ok");
+    assert_eq(mq_capture(6, 0), 1000099, "MQ: the same, Err leaves the closure with both halves");
+    assert_eq(mq_capture_destr(6, 0), 1099, "MQ: `var a, b = p.div(dd);` in a closure, p captured");
+    test_group("`?` on a method call in every expression position, and as a statement");
+    var c1, d1 = mq_expr(6, 2);
+    var c2, d2 = mq_expr(6, 0);
+    assert_eq(okerr(c1, d1, c2, d2), 1000990 + 6003, "MQ: `return Ok(p.div(d)? + 6000);` Ok and Err");
+    var c3, d3 = mq_if(6, 2);
+    var c4, d4 = mq_if(6, 0);
+    assert_eq(okerr(c3, d3, c4, d4), 1000990 + 7001, "MQ: `if (p.div(d)? > 2)` Ok and Err");
+    var c5, d5 = mq_assign(6, 2);
+    var c6, d6 = mq_assign(6, 0);
+    assert_eq(okerr(c5, d5, c6, d6), 1000990 + 8003, "MQ: `x = p.div(d)?;` Ok and Err");
+    var c7, d7 = mq_stmt(6, 2);
+    var c8, d8 = mq_stmt(6, 0);
+    assert_eq(okerr(c7, d7, c8, d8), 1000990 + 7,
+        "MQ: the statement `p.div(d)?;` (was \"expected ';'\"): Ok falls through, Err leaves with both halves");
+    test_group("the destructure on a method call");
+    assert_eq(mq_destr(6, 2), 3, "MQ: `var a, b = p.div(d);` binds (0, 3)");
+    assert_eq(mq_destr(6, 0), 1099, "MQ: `var a, b = p.div(d);` binds (1, 99) (was 'needs a call')");
+    assert_eq(mq_destr_ptr(9, 3), 3, "MQ: the same on a pointer-mode local");
+    test_group("wrappers forwarding a method's pair, defined after and before the caller");
+    var e1, f1 = mq_fwd(6, 2);
+    var e2, f2 = mq_fwd(6, 0);
+    assert_eq(okerr(e1, f1, e2, f2), 1000990 + 10003,
+        "MQ: `w(..)?`, w `return p.div(d);` on a local, defined AFTER (was rc 139)");
+    var e3, f3 = mq_fwd_param(6, 2);
+    var e4, f4 = mq_fwd_param(6, 0);
+    assert_eq(okerr(e3, f3, e4, f4), 1000990 + 11003, "MQ: the same, the receiver a `p: Pt` param of the wrapper");
+    var e5, f5 = mq_fwd_global(6, 2);
+    var e6, f6 = mq_fwd_global(6, 0);
+    assert_eq(okerr(e5, f5, e6, f6), 1000990 + 12003, "MQ: the same, the receiver a struct global");
+    var e7, f7 = mq_back(6, 2);
+    var e8, f8 = mq_back(6, 0);
+    assert_eq(okerr(e7, f7, e8, f8), 1000990 + 13003,
+        "MQ: the local-receiver wrapper, called from BELOW its definition");
+    var one = mw_one(5);
+    assert_eq(one, 5, "control: a wrapper of a ONE-value method binds to one variable");
+    return 0;
+}
+
+alloc_init();
+gp = alloc(16);
+run_method_q();
+# The destructure at top level after a statement (PARSE_VAR's global arm).
+gp.x = 8;
+var mtt, mtv = gp.div(0);
+assert_eq(mtt * 1000 + mtv, 1099, "MQ: top-level `var t, v = gp.div(0);` after a statement");
+var mtt2, mtv2 = gp.div(4);
+assert_eq(mtt2 * 1000 + mtv2, 2, "MQ: top-level `var t, v = gp.div(4);` binds (0, 2)");
+var r = assert_summary();
