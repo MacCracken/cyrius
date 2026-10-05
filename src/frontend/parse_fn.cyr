@@ -2963,6 +2963,15 @@ fn _dep_seen(ti, fi): i64 {
 # A generic INSTANCE (`old_g<i32>(..)`, minted as `old_g$i32`) is deprecated when its base is:
 # the instance is re-parsed from the base's tokens long after the attribute was consumed, so
 # it never received the bit, and only the i64 spellings (which ARE the base) warned.
+# 6.6.17 — what an instance must know of itself that the base's pass-1 record holds: its type
+# arguments (a3, `_bind_inl_generic`) and the base's "returns one value" bit 1024 (a5,
+# `_prescan_ret_single` — the instance's body IS the base's tokens).
+fn _gen_inst_record(S, spec, base_fi, c0, c1): i64 {
+    if (spec < 0) { return 0; }
+    SFIC(S, spec, c0, c1);
+    if ((GFLG(S, base_fi) & 1024) != 0) { SFLG(S, spec, GFLG(S, spec) | 1024); }
+    return 0;
+}
 fn _gen_inherit_dep(S, spec, base_fi): i64 {
     if (spec < 0) { return 0; }
     if ((GFLG(S, base_fi) & 4) == 0) { return 0; }
@@ -4637,7 +4646,7 @@ fn _instantiate_generic_fn(S, base_fi, conc0, conc1): i64 {
     _tp_n0 = sv_n0; _tp_c0 = sv_c0; _tp_n1 = sv_n1; _tp_c1 = sv_c1;
     STI(S, sv_ti);
     spec = FINDFN(S, mangled);                       # now registered by PARSE_FN_DEF
-    if (spec >= 0) { SFIC(S, spec, conc0, conc1); }  # 6.6.17 (a3): see _bind_inl_generic
+    _gen_inst_record(S, spec, base_fi, conc0, conc1);   # 6.6.17 (a3, a5)
     _gen_inherit_dep(S, spec, base_fi);              # 6.6.16: `#deprecated` reaches instances
     return spec;
 }
@@ -5502,10 +5511,90 @@ fn _prescan_fn_sig(S): i64 {
                 }
             }
         }
+        _prescan_ret_single(S, fi);   # 6.6.17 (a5)
     } else { _pre_dep_pending = 0; }    # an unnamed `fn`: pass 2 refuses it; never carry past it
     STI(S, start_ti);
     _prescan_skip_fn(S);
     return 0;
+}
+
+# ⛔ 6.6.17 (a5) — PASS 1: does fn `fi`'s body PROVABLY return ONE value? Then GFLG bit 1024, which
+# `_dt_arity_check` (parse_decl.cyr) reads to refuse `var a, b = f();` — b took a stale rdx,
+# silently, at fn scope and at top level. Recorded HERE so a forward call knows it. Conservative:
+# a `ret2`, an `asm` block, a `?` or any `return` that is not provably one value (`_ret_stmt_single`)
+# leaves the bit clear. Closure and nested-fn bodies are their own units. Cursor: past the
+# signature; not moved.
+fn _prescan_ret_single(S, fi): i64 {
+    SFLG(S, fi, GFLG(S, fi) & (0 - 1025));
+    var n = GTCNT(S);
+    var i = GTI(S);
+    while (i < n) {
+        var t = TOKTYP(S, i);
+        if (t == 13) { break; }
+        if (t == 5 || t == 12) { return 0; }
+        i = i + 1;
+    }
+    if (i >= n) { return 0; }
+    var e = _tok_skip_block(S, i, n);
+    var j = i + 1;
+    while (j < e) {
+        var u = TOKTYP(S, j);
+        if (u == 13 || u == 32) {
+            var sk = _skip_nested_body(S, j);
+            if (sk >= 0) { j = sk; }
+        }
+        elif (u == 97 || u == 48 || u == 124) { return 0; }   # ret2, asm, `?`
+        elif (u == 33) { if (_ret_stmt_single(S, j) == 0) { return 0; } }
+        j = j + 1;
+    }
+    if (_body_ends_in_return(S, i, e) == 0) { return 0; }
+    SFLG(S, fi, GFLG(S, fi) | 1024);
+    return 0;
+}
+# 1 = the LAST statement of the body `{` at `o` .. `}` at `e` is a `return`. A body that can fall
+# off its end returns whatever rax:rdx its last statement left (a call's pair, say), so it is
+# not provably one value.
+fn _body_ends_in_return(S, o, e): i64 {
+    if (TOKTYP(S, e - 1) != 5) { return 0; }
+    var bd = 0;
+    var pd = 0;
+    var first = 1;
+    var lastk = 0;
+    var j = o + 1;
+    while (j < e) {
+        var t = TOKTYP(S, j);
+        if (first == 1) { lastk = t; first = 0; }
+        if (t == 10 || t == 28) { pd = pd + 1; }
+        elif (t == 11 || t == 29) { pd = pd - 1; }
+        elif (t == 13) { bd = bd + 1; }
+        elif (t == 14) { bd = bd - 1; if (bd == 0) { if (pd == 0) { first = 1; } } }
+        elif (t == 5) { if (bd == 0) { if (pd == 0) { first = 1; } } }
+        j = j + 1;
+    }
+    if (lastk == 33) { return 1; }
+    return 0;
+}
+# 1 = the `return` at token k returns one value: `return;`, or an expression with no comma outside
+# a bracket (a tuple `(a, b)` is two) that does not END in `)` — a whole call (`return f(..);`,
+# `return x.m(..);`) forwards whatever its callee left in rax:rdx.
+fn _ret_stmt_single(S, k): i64 {
+    var n = GTCNT(S);
+    var d = 0;
+    var last = 0;
+    var j = k + 1;
+    while (j < n) {
+        var t = TOKTYP(S, j);
+        if (d == 0 && t == 5) { j = n; }
+        else {
+            if (t == 10 || t == 28 || t == 13) { d = d + 1; }
+            if (t == 11 || t == 29 || t == 14) { d = d - 1; }
+            if (t == 31 && d <= 1) { return 0; }
+            last = t;
+            j = j + 1;
+        }
+    }
+    if (last == 11) { return 0; }
+    return 1;
 }
 
 # 6.6.16 — hand a pass-1 `#deprecated` (recorded by `_tl_deprecated(S, 0)`) to the fn just

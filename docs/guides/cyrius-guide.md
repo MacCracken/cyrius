@@ -1079,6 +1079,10 @@ var hi, lo, bexp = dd_pow10(k);
 #   var q, r = 42;                    # not a call
 #   var q, r = dm(17, 5) + (k / 9);   # call is not the whole RHS
 #   var x, y, z = f();                # count disagrees with f's declared arity
+#   var a, b = one(1);                # `one` returns ONE value (6.6.17): every `return` is a
+#                                     # single value and the body ends in one — at fn scope and
+#                                     # at top level, a forward-declared `one` included
+# (Before 6.6.17 the top-level destructure above the first statement checked none of these.)
 
 # Legacy builtins still work
 fn divmod_old(a, b) { ret2(a / b, a % b); }

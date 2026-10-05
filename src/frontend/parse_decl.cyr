@@ -3772,6 +3772,7 @@ fn EMIT_GVAR_INITS(S): i64 {
             }
             if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); }
             STI(S, GTI(S) + 1);   # consume =
+            _dt_zone_check(S, egn);   # 6.6.17 (a5)
             var ei1 = _gv_target(S, _gv_ent_slot(S, gi, 0, noff), gsup, 0);
             var ei2 = _gv_target(S, _gv_ent_slot(S, gi, 1, eg2), gsup, 1);
             var ei3 = 0 - 1;
@@ -4265,6 +4266,70 @@ fn _var_rhs_call(S, ti): i64 {
     return c;
 }
 
+# The right-hand side of a destructure (cursor on it) must be ONE whole call: `f(`, `g<..>(` or
+# `x.m(`, with `;` right after its `)`. `dm(17, 5) + (k / 9) - 11` opens with the same tokens and
+# used to compile with the arithmetic's leftovers in rdx landing in the second target (an idiv
+# REMAINDER in `r`). v6.5.21 / 6.6.16; shared with the declaration-zone replay since 6.6.17.
+fn _dt_rhs_check(S): i64 {
+    var sc = _dt_call_open(S);
+    if (sc < 0) {
+        ERR_MSG(S, "multi-value destructure needs a call on the right-hand side", 59);
+        sc = GTI(S) + 1;
+    }
+    var d = 0;
+    while (sc < GTCNT(S)) {
+        var tk = TOKTYP(S, sc);
+        if (tk == 10) { d = d + 1; }
+        if (tk == 11) { d = d - 1; if (d == 0) { break; } }
+        sc = sc + 1;
+    }
+    if (TOKTYP(S, sc + 1) != 5) {
+        ERR_MSG(S, "multi-value destructure needs a call on the right-hand side", 59);
+    }
+    return 0;
+}
+# ⛔ 6.6.17 (a5) — the declaration-zone top-level destructure (`var a, b = f();` before the first
+# statement) is replayed by EMIT_GVAR_INITS, which PCMPE'd the right-hand side with NO contract:
+# `var a, b = 42;`, a call followed by arithmetic, a declared-arity mismatch and a one-value `f`
+# all compiled silently. The same checks as PARSE_VAR's, from here. `n` = names bound.
+# The replay has no statement resync, so each report clears the panic latch it set (as `_gai_err`
+# does) and every bad declaration of a file is reported; an error already holding it is left alone.
+fn _dt_zone_check(S, n): i64 {
+    if (_panic == 1) { return 0; }
+    _dt_rhs_check(S);
+    var fi = _dt_call_fn(S);
+    if (fi >= 0) { _dt_arity_check(S, fi, n); }
+    _panic = 0;
+    return 0;
+}
+# ⛔ 6.6.17 (a5) — THE DESTRUCTURE'S ARITY, against the fn the call reaches. A declared
+# `: (T1, T2[, T3])` must match exactly (v6.5.21). A fn whose body provably returns ONE value
+# (pass 1, `_prescan_ret_single`, GFLG bit 1024) is refused by name: `var a, b = one(1);` bound b
+# to whatever rdx held, silently, at fn scope and at top level (6.6.0's destructure). Not refused:
+# a `: stack` pair (bit 256), Result / Option / Tagged, a vector, a struct over 8 B (rax:rdx or a
+# retptr) — any of which can carry a second word. CHANGELOG [6.6.17]
+fn _dt_arity_check(S, fi, n): i64 {
+    var rs = GFRS(S, fi);
+    if (rs == MULTIRET_SID) {
+        if (GFRN(S, fi) != n) {
+            ERR_MSG(S, "multi-value destructure count does not match the fn's declared return arity", 75);
+        }
+        return 0;
+    }
+    var fl = GFLG(S, fi);
+    if ((fl & 1024) == 0) { return 0; }
+    if ((fl & 256) != 0) { return 0; }
+    if (rs <= 0 - 16) { if (rs >= 0 - 18) { return 0; } }
+    if (rs <= 0 - 2048) { return 0; }
+    if (rs > 0) { if (STRUCTSZ(S, rs - 1) > 8) { return 0; } }
+    if (n == 3) {
+        ERR_IDENT(S, "multi-value destructure binds 3 names, but ", L64(_fnt_names + fi * 8), " returns 1 value - bind it to one name: `var x = f(..);`", 0 - 1);
+    } else {
+        ERR_IDENT(S, "multi-value destructure binds 2 names, but ", L64(_fnt_names + fi * 8), " returns 1 value - bind it to one name: `var x = f(..);`", 0 - 1);
+    }
+    return 0;
+}
+
 # ⛔ 6.6.16 — the destructure's right-hand CALL, in every spelling `f(..)` is: `name(`, an explicit
 # generic `name<..>(` and a method `x.m(`. It took `name(` only, so the remedy the "bind both"
 # refusal prints — `var tag, val = f();` — was "multi-value destructure needs a call on the
@@ -4330,38 +4395,16 @@ fn PARSE_VAR(S): i64 {
         # A non-call right-hand side can never produce a second value, so it is
         # now rejected outright.
         # 6.6.16: `f(`, `g<..>(` or `x.m(` (`_dt_call_open`). CHANGELOG [6.6.16]
-        var _dt_sc = _dt_call_open(S);
-        if (_dt_sc < 0) {
-            ERR_MSG(S, "multi-value destructure needs a call on the right-hand side", 59);
-            _dt_sc = GTI(S) + 1;
-        }
-        # ...and the call must be the WHOLE right-hand side. `dm(17, 5) + (k / 9) - 11`
-        # opens with the same two tokens, and used to compile silently with the
-        # trailing arithmetic's leftovers in rdx landing in the second target —
-        # measured as an idiv REMAINDER arriving in `r`. Walk to the call's
-        # matching ')' and require ';' immediately after it.
-        var _dt_d = 0;
-        while (_dt_sc < GTCNT(S)) {
-            var _dt_tk = TOKTYP(S, _dt_sc);
-            if (_dt_tk == 10) { _dt_d = _dt_d + 1; }
-            if (_dt_tk == 11) { _dt_d = _dt_d - 1; if (_dt_d == 0) { break; } }
-            _dt_sc = _dt_sc + 1;
-        }
-        if (TOKTYP(S, _dt_sc + 1) != 5) {
-            ERR_MSG(S, "multi-value destructure needs a call on the right-hand side", 59);
-        }
+        # 6.6.17 (a5): factored into `_dt_rhs_check`, which the declaration-zone replay shares.
+        _dt_rhs_check(S);
         var _dt_fi = _dt_call_fn(S);
         if (_dt_fi >= 0) {
             var _dt_rs = GFRS(S, _dt_fi);
             if (_dt_rs == 0 - 9) { _dt_ftype = F64_TYID; _dt_t1 = F64_TYID; _dt_t2 = F64_TYID; _dt_t3 = F64_TYID; }
+            _dt_arity_check(S, _dt_fi, _dt_n);   # 6.6.17 (a5): the declared AND the one-value arity
             if (_dt_rs == MULTIRET_SID) {
-                # Declared `: (T1, T2[, T3])` — enforce arity exactly and take the
-                # element types from the signature, so the bindings need no
-                # annotation of their own.
-                var _dt_decl = GFRN(S, _dt_fi);
-                if (_dt_decl != _dt_n) {
-                    ERR_MSG(S, "multi-value destructure count does not match the fn's declared return arity", 75);
-                }
+                # Declared `: (T1, T2[, T3])` — take the element types from the signature, so
+                # the bindings need no annotation of their own.
                 if (GFRT(S, _dt_fi, 0) == 0 - 9) { _dt_t1 = F64_TYID; }
                 if (GFRT(S, _dt_fi, 1) == 0 - 9) { _dt_t2 = F64_TYID; }
                 if (GFRT(S, _dt_fi, 2) == 0 - 9) { _dt_t3 = F64_TYID; }

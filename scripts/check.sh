@@ -1688,6 +1688,11 @@ _chk_gate "$ROOT/tests/gates/diagnostics/typed_array_elem_refusals.sh"
 # vocabulary still compiles where it is taken (a Str param by name, enums, type parameters).
 _chk_gate "$ROOT/tests/gates/diagnostics/type_name_refused.sh"
 
+# 6.6.17 (a5) — `var a, b = f();` where f provably returns ONE value (pass 1 records it, so a
+# forward call is judged too) is refused naming f, at fn scope and in both top-level zones; the
+# declaration zone gets the whole destructure contract. Pair-carrying callees still destructure.
+_chk_gate "$ROOT/tests/gates/diagnostics/destructure_one_value_refused.sh"
+
 # 6.6.16 (C1) — a global array initializer `var X: T[N] = { .. }` is N elements of T, baked into the
 # image (tests/tcyr/crossos/global_array_initializer.tcyr runs the values on every host). These pin:
 # the shapes it refuses by name (count, range, a non-constant, an element type no list fills, a list
