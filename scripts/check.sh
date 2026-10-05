@@ -1860,6 +1860,11 @@ _chk_gate "$ROOT/tests/gates/toolchain/test_runs_build_test.sh"
 # refused by name, a quoted word in a comment inside an array is not an element.
 _chk_gate "$ROOT/tests/gates/toolchain/toml_key_boundary_and_values.sh"
 
+# 6.6.17 (P5-A) — `cyrius coverage` takes RUN programs as a TEXT corpus ([coverage] programs, or
+# --programs which wins), `*` within one path segment, empty globs named, corpus programs not
+# measured, and --per-entry names which entry references which fn. Execution coverage is v6.7.x.
+_chk_gate "$ROOT/tests/gates/toolchain/coverage_run_programs.sh"
+
 # 6.6.10 (bite 12) — the check driver runs only tools it BUILT from this tree in this run:
 # all nine executables it runs come from its private run dir, planted build/ stubs and a
 # ~/.cyrius/bin copy are ignored, and a tool that does not compile is a FAIL naming it.

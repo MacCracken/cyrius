@@ -616,7 +616,7 @@ var _CFG_DEFAULT = 0;
 var _CFG_MANIFEST = 1;
 var _CFG_ENV = 2;
 var _CFG_ARG = 3;
-var _CFG_N = 11;
+var _CFG_N = 12;
 var _CK_ENTRY = 0;
 var _CK_OUTPUT = 1;
 var _CK_DCE = 2;
@@ -624,10 +624,11 @@ var _CK_STRICT = 3;
 var _CK_DEFINES = 4;
 var _CK_TEST = 5;
 var _CK_MODULES = 6;
-var _CK_PKG_NAME = 7;
-var _CK_PKG_VERSION = 8;
-var _CK_PKG_CYRIUS = 9;
-var _CK_SECTIONS_BASE = 10;
+var _CK_PROGRAMS = 7;
+var _CK_PKG_NAME = 8;
+var _CK_PKG_VERSION = 9;
+var _CK_PKG_CYRIUS = 10;
+var _CK_SECTIONS_BASE = 11;
 # 1 when the resolved `dce` is on and did NOT come from the environment: compile() then hands cycc
 # CYRIUS_DCE=1, replacing any inherited value (an argument beats CYRIUS_DCE=0).
 var _cfg_dce_inject = 0;
@@ -644,6 +645,7 @@ fn _cfg_name(i): i64 {
     if (i == _CK_DEFINES) { return "build.defines"; }
     if (i == _CK_TEST) { return "build.test"; }
     if (i == _CK_MODULES) { return "build.modules"; }
+    if (i == _CK_PROGRAMS) { return "coverage.programs"; }
     if (i == _CK_PKG_NAME) { return "package.name"; }
     if (i == _CK_PKG_VERSION) { return "package.version"; }
     if (i == _CK_PKG_CYRIUS) { return "package.cyrius"; }
@@ -653,7 +655,7 @@ fn _cfg_name(i): i64 {
 # 0 = string, 1 = bool, 2 = list
 fn _cfg_kind(i): i64 {
     if (i == _CK_DCE || i == _CK_STRICT) { return 1; }
-    if (i == _CK_DEFINES || i == _CK_TEST || i == _CK_MODULES) { return 2; }
+    if (i == _CK_DEFINES || i == _CK_TEST || i == _CK_MODULES || i == _CK_PROGRAMS) { return 2; }
     return 0;
 }
 
@@ -836,6 +838,7 @@ fn _cfg_resolve_build(src_arg, out_arg): i64 {
     if (_cfg_defines_ok(_cfg_val(_CK_DEFINES), "cyrius.cyml [build] defines") != 0) { return 1; }
     if (_cfg_mf_strs(_CK_TEST, "build", "test") != 0) { return 1; }
     if (_cfg_mf_strs(_CK_MODULES, "build", "modules") != 0) { return 1; }
+    if (_cfg_mf_strs(_CK_PROGRAMS, "coverage", "programs") != 0) { return 1; }
     if (_cfg_mf_str(_CK_PKG_NAME, "package", "name") != 0) { return 1; }
     if (_cfg_mf_str(_CK_PKG_VERSION, "package", "version") != 0) { return 1; }
     var pv = _cfg_val(_CK_PKG_VERSION);   # the value the build sees: `${file:PATH}` expanded

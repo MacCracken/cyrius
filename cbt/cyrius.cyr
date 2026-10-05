@@ -1029,7 +1029,19 @@ fn main(): i64 {
                 return 1;
             }
         }
-        return cmd_coverage(_cli_has("--full"), cov_min, _cli_pos_at(0));
+        # 6.6.17 (P5-A): RUN programs join the corpus — `--programs <glob>` (repeatable) beats
+        # `[coverage] programs` in ./cyrius.cyml, the one precedence every key follows.
+        var cov_progs = _cli_values("--programs");
+        if (vec_len(cov_progs) == 0) {
+            if (_mf_load() < 0) { return 1; }
+            _cfg_warn_section("coverage");
+            cov_progs = _mf_strs("coverage", "programs");
+            if (_toml_bad == 1) {
+                _cfg_bad("coverage", "programs", "a glob or an array of globs");
+                return 1;
+            }
+        }
+        return cmd_coverage(_cli_has("--full"), cov_min, _cli_pos_at(0), cov_progs, _cli_has("--per-entry"));
     }
 
     if (streq(cmd, "doctest") == 1) {

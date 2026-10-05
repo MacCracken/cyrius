@@ -1914,6 +1914,7 @@ cyrius distlib [profile]                 # bundle src/ modules into dist/{name}.
 cyrius distlib --all                     # regenerate the base bundle AND every [lib.X] profile (v6.5.8)
 cyrius distlib --check                   # verify bundles are current — compares BYTES, writes nothing (v6.5.8)
 cyrius coverage [--full] [--min <pct>]   # reference coverage of src/ (--min 0..100 gates CI; -v or a failed --min names the misses, 6.6.8; `main` is not counted, 6.6.11)
+cyrius coverage --programs 'programs/*_test.cyr' --per-entry   # RUN programs join the corpus (6.6.17); which entry references which fn
 cyrius capacity [--check] [src]          # report compiler capacity / CI gate; no arg = THIS HOST's fork (v6.6.6)
 cyrius pulsar                            # x86-64 LINUX ONLY: rebuild cycc + cross bins + tools, then install
 cyrius lsp                               # build + install cyrius-lsp into ~/.cyrius/bin/
@@ -1954,6 +1955,19 @@ cyrius lsp                               # build + install cyrius-lsp into ~/.cy
 > count. A `src/` whose only public fn is `main` has nothing to measure and gets the
 > "no public functions found … not a pass" error. Pinned by
 > `tests/gates/toolchain/coverage_corpus_and_failopen.sh` axis 20.
+>
+> ⚠ **`coverage` takes RUN programs as a corpus** (6.6.17). A project that tests with
+> self-checking programs (`programs/*_test.cyr`, no `tests/`) read ~0 %: the corpus was
+> `tests/**/*.tcyr` only. `[coverage] programs = ["programs/*_test.cyr"]` in cyrius.cyml, or
+> `--programs <glob>` (repeatable; it replaces the manifest list), adds each matched file to the
+> corpus, counted exactly as a `.tcyr` is — whole identifiers in code, comments and strings
+> blanked. `*` / `?` stay inside one path segment (`programs/*_test.cyr` does not reach
+> `programs/sub/`); a glob that matches nothing, or a program that does not exist, is a named
+> failure; a corpus program is a test, so it is never counted as measured surface. `--per-entry`
+> lists, for every corpus entry, the public fns it references. ⚠ This is TEXT coverage — a
+> reference count, the same measure `.tcyr` corpora get — not execution coverage: building and
+> running instrumented programs (P5-B) is v6.7.x, alongside the bounds-checked build mode.
+> Pinned by `tests/gates/toolchain/coverage_run_programs.sh`.
 >
 > ⚠ **`distlib` regenerates and `--check`s sidecars on an x86-64 Linux host only** (v6.6.11).
 > The `.deps` sidecar is compile-verified against EVERY target — x86-64 Linux, Windows and
