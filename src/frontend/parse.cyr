@@ -97,7 +97,8 @@ var _inline_pending = 0;
 # NO `fn` token, so a skip keyed on `fn` alone booked its `return h(..)` to the enclosing fn: a
 # false "bind both" refusal at every single-variable bind of that fn's result, and the
 # mixed-return warning aimed at its own plain return. The closure's own pair-ness is unaffected —
-# its fn entry is flagged while its body is parsed. CHANGELOG [6.6.16]
+# its fn entry is flagged while its body is parsed — and `_warn_mixed_pair_returns` judges a
+# closure's returns as its OWN unit (`_warn_closure_block`). CHANGELOG [6.6.16]
 # ⚠ INVALIDATED whenever a `: stack` constructor is flagged (parse_types.cyr). The prescan is
 # demand-driven, and the first demand can arrive BEFORE the enum declaration has been reached —
 # measured: the pass ran with a complete 3,498-token stream and flagged nothing, because no
@@ -298,19 +299,109 @@ fn _ret_is_variant(S, t): i64 {
     return 1;
 }
 
+# ⛔ 6.6.16 — A CLOSURE IS A FN FOR THIS RULE. The fn walk below skips a closure body, because
+# its returns are not the enclosing fn's (H2). Skipping alone took away the only warning a
+# GENUINELY mixed closure had: `|x| { if (x > 0) { return h(x); } return 0; }` built silent, and
+# `var t, v = fncall1(g, 0)` on it read a stale rdx — the exact hazard this warning exists for.
+# So every closure body is judged as its OWN unit, at any depth (top level, an unflagged fn, a
+# nested closure): it is pair-returning when its own body — nested closures and fns skipped,
+# each is its own unit — says `return f(..)` or `f(..)?` with f flagged 256, the two things that
+# flag a fn 256 while it is parsed; a plain return there is then reported. CHANGELOG [6.6.16]
+
+# Is token t an IDENT immediately followed by `(` that names a pair-returning fn (flag 256)?
+# The test PARSE_RETURN and `?`'s `_tpair` apply while parsing, read here with FINAL flags.
+fn _tok_call_is_pair(S, t): i64 {
+    if (t < 0) { return 0; }
+    if (TOKTYP(S, t) != 2) { return 0; }
+    if (TOKTYP(S, t + 1) != 10) { return 0; }
+    var rf = FINDFN(S, TOKVAL(S, t));
+    if (rf < 0) { return 0; }
+    if ((GFLG(S, rf) & 256) == 0) { return 0; }
+    return 1;
+}
+
+# Does the `?` at token q consume a pair (`f(..)?`, f flagged 256)? Walks back to the `(` that
+# matches the `)` before it. A method call (`o.m(..)?`, DOT 41) is no pair, as in `_tpair`.
+fn _tok_q_is_pair(S, q): i64 {
+    if (q < 1) { return 0; }
+    if (TOKTYP(S, q - 1) != 11) { return 0; }
+    var d = 0;
+    var p = q - 1;
+    while (p > 0) {
+        var t = TOKTYP(S, p);
+        if (t == 11) { d = d + 1; }
+        elif (t == 10) {
+            d = d - 1;
+            if (d == 0) {
+                if (p >= 2) { if (TOKTYP(S, p - 2) == 41) { return 0; } }
+                var r = _tok_call_is_pair(S, p - 1);
+                return r;
+            }
+        }
+        p = p - 1;
+    }
+    return 0;
+}
+
+# The mixed-return warning for a CLOSURE, at its plain `return` (token k). `encl` is the name
+# offset of the top-level fn whose body holds the closure, or -1 (top level, an impl method).
+fn _warn_closure_mixed_at(S, k, encl): i64 {
+    syscall(SYS_WRITE, 2, "warning:", 8);
+    _err_head_at(S, k);
+    syscall(SYS_WRITE, 2, ": a closure", 11);
+    if (encl >= 0) {
+        syscall(SYS_WRITE, 2, " in `", 5);
+        PRSTR(S + 0xEC00000 + encl);
+        syscall(SYS_WRITE, 2, "`", 1);
+    }
+    syscall(SYS_WRITE, 2, " returns a `: stack` pair on another path but a SINGLE value here — the tag is dropped, so the caller reads this value as its TAG. Return a variant of the same enum on this path: `Err(x)` for a Result, `None()` for an Option.\n", 228);
+    return 0;
+}
+
+# Judge ONE closure body (the `{` at token k) as its own fn; warns at most once, at its first
+# plain return. Returns the index of the body's closing `}`.
+fn _warn_closure_block(S, k, n, encl): i64 {
+    var e = _tok_skip_block(S, k, n);
+    var pair = 0;
+    var plain = 0 - 1;
+    var j = k + 1;
+    while (j < e) {
+        var t = TOKTYP(S, j);
+        if (t == 13) { if (_tok_is_closure_body(S, j) == 1) { j = _tok_skip_block(S, j, n); } }
+        elif (t == 32) { j = _tok_skip_block(S, j, n); }      # a nested fn — its own unit
+        elif (t == 124) { if (_tok_q_is_pair(S, j) == 1) { pair = 1; } }
+        elif (t == 33) {
+            var nt = TOKTYP(S, j + 1);
+            if (_tok_call_is_pair(S, j + 1) == 1) { pair = 1; }
+            elif (nt == 2) { if (_ret_is_variant(S, j + 1) == 1) { if (plain < 0) { plain = j; } } }
+            elif (nt != 5) { if (plain < 0) { plain = j; } }
+        }
+        j = j + 1;
+    }
+    if (pair == 1) { if (plain >= 0) { _warn_closure_mixed_at(S, plain, encl); } }
+    return e;
+}
+
 fn _warn_mixed_pair_returns(S): i64 {
     if (_mixed_warned == 1) { return 0; }
     _mixed_warned = 1;
     var n = GTCNT(S);
     var d = 0;
     var i = 0;
+    var encl = 0 - 1;     # the top-level fn whose body the walk is in (for a closure's message)
     while (i < n) {
         var t0 = TOKTYP(S, i);
-        if (t0 == 13) { d = d + 1; }
-        elif (t0 == 14) { d = d - 1; }
+        if (t0 == 13) {
+            # every closure body, at any depth, is its own unit (see `_warn_closure_block`)
+            if (_tok_is_closure_body(S, i) == 1) { _warn_closure_block(S, i, n, encl); }
+            d = d + 1;
+        }
+        elif (t0 == 14) { d = d - 1; if (d == 0) { encl = 0 - 1; } }
+        elif (t0 == 5) { if (d == 0) { encl = 0 - 1; } }
         elif (t0 == 32) {
             if (d == 0) {
                 if (TOKTYP(S, i + 1) == 2) {
+                    encl = TOKVAL(S, i + 1);
                     var wfi = FINDFN(S, TOKVAL(S, i + 1));
                     if (wfi >= 0) {
                         if ((GFLG(S, wfi) & 256) != 0) {
@@ -332,7 +423,7 @@ fn _warn_mixed_pair_returns(S): i64 {
                                         else {
                                             var t = TOKTYP(S, k);
                                             if (t == 13) {
-                                                # a closure body — its returns are its own
+                                                # a closure body — its own unit, judged by the outer walk
                                                 if (_tok_is_closure_body(S, k) == 1) { k = _tok_skip_block(S, k, n); }
                                                 else { bd = bd + 1; }
                                             }
