@@ -3190,6 +3190,33 @@ fn _OV_ARITY_OK(S, fi, argc): i64 {
     return 0;
 }
 
+# v5.8.20: #pure caller cannot call #io / #alloc callees. Warning
+# (not error) for downstream incremental adoption — same shape as
+# #must_use / #deprecated diagnostics. The annotation ramp happens
+# gradually; cyrlint --strict will escalate to error in a follow-up.
+# 6.6.17: one fn, so the method arm (`p.m(..)`, `_field_load_on`) runs it too — an impl
+# method takes `#io` / `#alloc` since 6.6.17 (`_impl_attrs`).
+fn _pure_effect_warn(S, fi, noff): i64 {
+    if (_cur_fn_is_pure != 1) { return 0; }
+    if (fi < 0) { return 0; }
+    var fl = GFLG(S, fi);
+    if (fl & 16 != 0) {
+        syscall(SYS_WRITE, 2, "warning:", 8);
+        _err_head(S);
+        syscall(SYS_WRITE, 2, ": #pure fn calls #io fn '", 25);
+        PRSTR(S + 0xEC00000 + noff);
+        syscall(SYS_WRITE, 2, "'\n", 2);
+    }
+    if (fl & 32 != 0) {
+        syscall(SYS_WRITE, 2, "warning:", 8);
+        _err_head(S);
+        syscall(SYS_WRITE, 2, ": #pure fn calls #alloc fn '", 28);
+        PRSTR(S + 0xEC00000 + noff);
+        syscall(SYS_WRITE, 2, "'\n", 2);
+    }
+    return 0;
+}
+
 fn PARSE_FNCALL(S, noff): i64 {
     STI(S, GTI(S) + 1);  # consume (
     # Check for inline candidate
@@ -3319,27 +3346,7 @@ fn PARSE_FNCALL(S, noff): i64 {
     # _callee_site_checks). It names the first token after the `(` we just consumed,
     # which is on the call-site's line.
     _callee_site_checks_here(S, fi, noff, 0);
-    var _dep_flags = GFLG(S, fi);
-    # v5.8.20: #pure caller cannot call #io / #alloc callees. Warning
-    # (not error) for downstream incremental adoption — same shape as
-    # #must_use / #deprecated diagnostics. The annotation ramp happens
-    # gradually; cyrlint --strict will escalate to error in a follow-up.
-    if (_cur_fn_is_pure == 1) {
-        if (_dep_flags & 16 != 0) {
-            syscall(SYS_WRITE, 2, "warning:", 8);
-            _err_head(S);
-            syscall(SYS_WRITE, 2, ": #pure fn calls #io fn '", 25);
-            PRSTR(S + 0xEC00000 + noff);
-            syscall(SYS_WRITE, 2, "'\n", 2);
-        }
-        if (_dep_flags & 32 != 0) {
-            syscall(SYS_WRITE, 2, "warning:", 8);
-            _err_head(S);
-            syscall(SYS_WRITE, 2, ": #pure fn calls #alloc fn '", 28);
-            PRSTR(S + 0xEC00000 + noff);
-            syscall(SYS_WRITE, 2, "'\n", 2);
-        }
-    }
+    _pure_effect_warn(S, fi, noff);   # v5.8.20 (6.6.17: shared with the method arm)
     # ⛔ 6.6.6 — A >16 B STRUCT-RETURNING CALLEE WRITES ITS RESULT THROUGH A HIDDEN RETPTR, and
     # until 6.6.6 only `var p: S = f(..)` supplied one. Everywhere else — an expression
     # statement, an argument, `return f(..)` in a non-struct fn — the user args were marshalled
@@ -3704,6 +3711,7 @@ fn PARSE_IMPL(S): i64 {
     while (igo == 1) {
         if (PEEKT(S) == 14) { igo = 0; }
         else {
+            _impl_attrs(S, 1);         # 6.6.17: `#deprecated` / `#must_use` / ... on a method
             if (_TL_VIS(S) == 1) { }   # v6.5.0: `pub`/`public` on an impl method
             if (PEEKT(S) == 32) { PARSE_FN_DEF(S); }
             else { igo = 0; }
@@ -3712,6 +3720,17 @@ fn PARSE_IMPL(S): i64 {
     if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); }
     STI(S, GTI(S) + 1);  # consume }
     SMOD(S, saved_mod);
+    return 0;
+}
+
+# ⛔ 6.6.17 — DIRECTIVES IN AN impl BODY. Its loop took only `pub` and `fn`, so `#deprecated("..")`
+# before a method was "expected '}', got unknown" (#must_use / #pure / #io / #alloc / #inline /
+# #regalloc / #naked and #assert alike). They go through THE top-level dispatcher
+# (`_tl_directive`): arm 1 in pass 2 arms an attribute for the method PARSE_FN_DEF parses next;
+# arm 0 in pass 1 (`_prescan_impl_body`) consumes, and records a `#deprecated` for the method it
+# registers, so a call parsed before the impl warns too.
+fn _impl_attrs(S, arm): i64 {
+    while (_tl_directive(S, arm) == 1) { }
     return 0;
 }
 
@@ -4588,7 +4607,9 @@ fn _instantiate_generic_fn(S, base_fi, conc0, conc1): i64 {
     _inst_base_fi = base_fi;
     _inst_conc0 = conc0;
     _inst_conc1 = conc1;
+    var attrs = _attr_park();         # 6.6.17: a pending attribute is the next definition's
     PARSE_FN_DEF(S);
+    _attr_unpark(attrs);
     _inst_name = 0;
     _inst_base_fi = 0 - 1;
     _inst_conc0 = 0;
@@ -4608,6 +4629,40 @@ fn _instantiate_generic_fn(S, base_fi, conc0, conc1): i64 {
     spec = FINDFN(S, mangled);                       # now registered by PARSE_FN_DEF
     _gen_inherit_dep(S, spec, base_fi);              # 6.6.16: `#deprecated` reaches instances
     return spec;
+}
+
+# ⛔ 6.6.17 — A PENDING fn ATTRIBUTE BELONGS TO THE DEFINITION IT PRECEDES, NOT TO AN INSTANCE.
+# The instance above is emitted by PARSE_FN_DEF itself, which consumed whatever `#must_use` /
+# `#deprecated` / `#pure` / ... was armed: an attribute written before a top-level statement that
+# instantiates `g<i32>` marked `g$i32` (deprecated — every call to it warned) and was gone by the
+# `fn` it preceded (`#must_use` silent there). Parked around the instance and put back. The
+# instance still inherits the BASE's own `#deprecated` (`_gen_inherit_dep`).
+fn _attr_park(): i64 {
+    var b = alloc(80);
+    store64(b, _regalloc_pending);       _regalloc_pending = 0;
+    store64(b + 8, _must_use_pending);   _must_use_pending = 0;
+    store64(b + 16, _deprecated_pending); _deprecated_pending = 0;
+    store64(b + 24, _deprecated_msg_pending); _deprecated_msg_pending = 0;
+    store64(b + 32, _pure_pending);      _pure_pending = 0;
+    store64(b + 40, _io_pending);        _io_pending = 0;
+    store64(b + 48, _alloc_pending);     _alloc_pending = 0;
+    store64(b + 56, _naked_pending);     _naked_pending = 0;
+    store64(b + 64, _inline_pending);    _inline_pending = 0;
+    store64(b + 72, _pub_pending);       _pub_pending = 0;
+    return b;
+}
+fn _attr_unpark(b): i64 {
+    _regalloc_pending = load64(b);
+    _must_use_pending = load64(b + 8);
+    _deprecated_pending = load64(b + 16);
+    _deprecated_msg_pending = load64(b + 24);
+    _pure_pending = load64(b + 32);
+    _io_pending = load64(b + 40);
+    _alloc_pending = load64(b + 48);
+    _naked_pending = load64(b + 56);
+    _inline_pending = load64(b + 64);
+    _pub_pending = load64(b + 72);
+    return 0;
 }
 
 # v6.3.10 (generic structs): instantiate `Box<conc>` → a deduped specialized struct.
@@ -5930,6 +5985,7 @@ fn _prescan_impl_body(S): i64 {
         elif (t == 73) { _TL_VIS(S); }                 # `public` on a method
         elif (t == 153) { _TL_VIS(S); }                # `private` — marked by _PRIV_PRESCAN
         elif (t == 32) { _prescan_fn_sig(S); }
+        elif (_tl_directive(S, 0) == 1) { }            # 6.6.17: directives on a method (_impl_attrs)
         else { go = 0; }
     }
     return 0;

@@ -38,6 +38,8 @@
 #   7. a fixture floor, so an empty fixture set cannot pass.
 #
 # On the tree before the fix: 52 of 114 rows red.
+# 6.6.17 added two fixtures: `impl_attr` (a `#deprecated` impl method) and `geninst` (a pending
+# attribute before a statement that instantiates a generic lands on the next fn, not the instance).
 # MUTATION LEDGER (6.6.16: a copy of the tree with ONE edit, its compilers rebuilt by this gate):
 #   a. `_prescan_dep_take` takes nothing (no pass-1 record)     -> 43 red: every call parsed before
 #        its definition (filed 3 6, tailregion 2 5, addr 2, method 6, agg 6, pair 3, generic 2 3) on
@@ -280,6 +282,44 @@ var rc = main();
 syscall(60, rc);
 EOF
 
+# 6.6.17 — an `impl` method takes the attribute (the impl body refused it: "expected '}', got
+# unknown"): the dot call before and after the impl, and the free spelling. Column 0, so the twin
+# swaps it for an `#assert` inside the impl body, which that body takes since 6.6.17 too.
+cat > "$T/fx/impl_attr.cyr" <<'EOF'
+include "lib/alloc.cyr"
+struct V { n: i64; }
+fn early() {
+    var v: V = alloc(8);
+    store64(v, 4);
+    return v.old();   #W
+}
+impl Vm for V {
+#deprecated("use V_neu")
+    fn old(self) { return load64(self); }
+    fn neu(self) { return load64(self) + 1; }
+}
+fn late() {
+    var v: V = alloc(8);
+    store64(v, 5);
+    var a = v.old() + v.neu();   #W
+    return a + V_old(v);   #W
+}
+alloc_init();
+var rc = early() + late();
+syscall(60, rc);
+EOF
+# 6.6.17 — a pending attribute before a top-level STATEMENT that first instantiates a generic is
+# the next DEFINITION's: it marked the instance `g$i32` (every call to it warned) instead of `b`.
+cat > "$T/fx/geninst.cyr" <<'EOF'
+fn g<T>(x: T): T { return x + 6; }
+var y = 0;
+#deprecated("use c")
+y = g<i32>(1);
+fn b() { return 3; }
+fn m() { var k = g<i32>(2); return b() + y + k; }   #W
+syscall(60, m());
+EOF
+
 NFX=0
 NROWS=0
 for fx in "$T"/fx/*.cyr; do
@@ -384,8 +424,8 @@ for b in bare_pre bare_post; do
 done
 
 # ── floor ──────────────────────────────────────────────────────────────────────────────────────
-[ "$NFX" -ge 9 ] || _bad "only $NFX fixtures ran (floor 9) — an empty fixture set must not read green"
-[ "$NROWS" -ge 32 ] || _bad "only $NROWS marked call sites (floor 32)"
+[ "$NFX" -ge 11 ] || _bad "only $NFX fixtures ran (floor 11) — an empty fixture set must not read green"
+[ "$NROWS" -ge 36 ] || _bad "only $NROWS marked call sites (floor 36)"
 
 if [ "$fail" -ne 0 ]; then
     echo "FAIL deprecated_every_call_path: $fail failed, $pass passed"

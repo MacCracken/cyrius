@@ -1063,6 +1063,9 @@ fn PARSE_FIELD_LOAD(S, noff): i64 {
 # temp `_sc_pre_m` asks for when a chain follows, a <= 8 B struct in an inline temp and a `Str`
 # handle in a pointer-mode one — and this body runs again on that temp, so a chain reaches any
 # depth. A result that is no struct, and a chain at top level (no frame), are refused by name.
+# The method a `.m(..)` expression ENDED with (-1 when it ended with a field or anything else) —
+# what `p.m(..);` as a statement discards, for #must_use (parse.cyr `_stmt_method_call`).
+var _mcall_last = 0 - 1;
 fn _mchain_at(S, k): i64 {
     if (TOKTYP(S, k) != 41) { return 0; }
     if (TOKTYP(S, k + 1) != 2) { return 0; }
@@ -1082,6 +1085,7 @@ fn _sc_pre_m(S, fi, noff, beg): i64 {
 # its result was parsed (rax = its value), 0 = none follows.
 fn _method_chain(S, fi, noff, beg, t): i64 {
     if (_mchain_at(S, GTI(S)) == 0) { return 0; }
+    _mcall_last = 0 - 1;                # the chain's own last method, if it ends with one
     var sid = 0;
     if (fi >= 0) { sid = GFRS(S, fi); }
     if (sid <= 0) {
@@ -1256,12 +1260,14 @@ fn _field_load_on(S, noff, fnoff, pfl_beg, idx, sid): i64 {
         _simd_arg_second_pass(S, &m_simd_table, load64(&m_st + 8));
         _sc_x8(S, mfi, m_rt);        # 6.6.6: aarch64's retptr register
         _callee_site_checks(S, mfi, mname, m_ti - 1);   # v6.6.4: `s.method()` is its own call path
+        _pure_effect_warn(S, mfi, mname);               # 6.6.17: and #pure's #io / #alloc check
         var mfoff = L64(_fnt_offsets + mfi * 8);
         if (mfoff >= 0) { ECALLTO(S, mfoff); }
         else { ECALLFIX(S, mfi); }
         ECALLCLEAN(S, m_int_argc);
         _sc_post(S, mfi, mname, pfl_beg, m_rt);   # 6.6.6: the pair store / value, and the record
         _call_ret_ps(S, mfi);                     # 6.6.17: a `*T` return's pointer scale
+        _mcall_last = mfi;                             # 6.6.17: for a statement's #must_use
         _method_chain(S, mfi, mname, pfl_beg, m_rt);   # 6.6.17: `.field` / `.m(..)` on the result
         return 0;
     }

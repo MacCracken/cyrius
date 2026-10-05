@@ -1735,6 +1735,25 @@ top-level statement — before 6.6.9 only x86_64 honoured them ahead of it.
 A top-level `#assert` is a declaration-phase directive, on one line or
 wrapped: structs, enums and fns may follow it.
 
+An attribute belongs to the **fn definition it precedes**, with any statements in between:
+`#must_use` / `y = g<i32>(1);` / `fn b()` marks `b`, not the `g$i32` instance the statement
+mints (before 6.6.17 the instance took it — `b();` was silent and every `g<i32>` call warned
+`#deprecated`). Every directive also works **inside an `impl` body**, on the method it precedes
+(6.6.17; it was `expected '}', got unknown`), and the dot call `p.m(..)` gets the checks a
+plain call gets — `#deprecated` at every call (a call parsed before the `impl` included),
+`#must_use` when `p.m(..);` discards the result (the last method of a chain, `p.bump().m();`),
+`#pure`'s `#io` / `#alloc` check:
+
+```
+struct Acct { bal; }
+impl Ops for Acct {
+    #must_use
+    fn take(self, n): i64 { store64(self, load64(self) - n); return load64(self); }
+    #deprecated("use take")
+    fn withdraw(self, n): i64 { return Acct_take(self, n); }
+}
+```
+
 `#assert A OP B, "message";` checks a compile-time fact and stops the build
 with `#assert failed: message` when it does not hold. Each operand is ONE
 atom — an integer literal, `sizeof(T)`, or an enum constant (`EB` or
