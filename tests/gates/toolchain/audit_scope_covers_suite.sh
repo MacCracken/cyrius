@@ -30,6 +30,16 @@
 # left by two killed runs. `cyrius audit` now runs in $WORK/t, a copy of every directory it
 # walks plus the manifest and the four tools it resolves from ./build, so the tree is only
 # ever READ. tests/gates/toolchain/gates_never_write_tree.sh pins it. CHANGELOG [6.6.6]
+#
+# ⛔ 6.6.17 — THE SCRATCH TREE CARRIES NO RUNNABLE SUITE. Every `cyrius audit` ends with its
+# tests stage (the whole .tcyr corpus, compiled and run) and its bench stage, and this gate ran
+# the verb FOUR times, once only to read the scope banner: ~250 s an audit, ~750 s for the gate
+# against check.sh's 900 s long deadline, and a TIMEOUT at the 6.6.16 merge under load.
+# Measured: fmt+lint+docs are ~7 s of an audit, the tests stage ~243 s. Nothing below reads
+# either late stage — the probe is a passing test precisely so the tests stage stays quiet — so
+# the copy drops every .tcyr and .bcyr. That leaves the probe the ONLY .tcyr in the tree and
+# axis 2 measuring exactly what it did (scope, descent, the .tcyr suffix); axis 1 reads the
+# banner off the BASE run instead of an audit of its own. CHANGELOG [6.6.17]
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -58,21 +68,23 @@ for b in cycc cyrfmt cyrlint cyrdoc; do
     cp "$ROOT/build/$b" "$T/build/$b" || fail "could not copy build/$b into the scratch tree"
 done
 [ -x "$T/build/cyrfmt" ] || fail "build/cyrfmt missing — the fmt stage would print 'skip' and axis 2 could measure nothing"
+# No runnable suite in the copy (the 6.6.17 note above). The directories stay, so the scope
+# banner still names tests/ and benches/ and the probe still lands two levels down. The strip
+# also removes any probe a pre-6.6.6 run left in a working tree, which counted in BASE would
+# collapse axis 2's +1 to BASE -> BASE and read as a broken descent (6.6.5).
+find "$T/tests" "$T/benches" -type f \( -name '*.tcyr' -o -name '*.bcyr' \) -exec rm -f {} + \
+    || fail "could not strip the runnable suite from the scratch tree"
+left=$(find "$T/tests" "$T/benches" -type f \( -name '*.tcyr' -o -name '*.bcyr' \) | wc -l)
+[ "$left" -eq 0 ] || fail "$left .tcyr/.bcyr file(s) survived the strip — the audit would run them and this gate would be slow again"
 PROBE="$T/tests/tcyr/lang/_audit_scope_probe.tcyr"
 [ -d "$T/tests/tcyr/lang" ] || fail "tests/tcyr/lang/ is missing from the scratch tree — the probe has nowhere to go"
+[ -d "$T/benches" ] || fail "benches/ is missing from the scratch tree — axis 1 could not see it"
 
 # Built from source against build/cycc — never the installed `cyrius`, which is the last
 # release and would test the wrong binary.
 ( cd "$ROOT" && cat cbt/cyrius.cyr | "$CC" > "$WORK/cyrius" ) 2>/dev/null \
     || fail "could not build cbt/cyrius.cyr"
 chmod +x "$WORK/cyrius"
-
-# ── axis 1: the scope banner names the suite directories ──────────────────────────
-SCOPE=$( cd "$T" && "$WORK/cyrius" audit 2>&1 | grep -m1 '^  scope:' || true )
-[ -n "$SCOPE" ] || fail "axis 1: audit printed no 'scope:' line at all"
-for d in tests benches fuzz; do
-    echo "$SCOPE" | grep -qw "$d" || fail "axis 1: audit scope does not include '$d' — got: $SCOPE"
-done
 
 # ── axis 2: ⭐ NON-VACUOUS — adding one bad file TWO LEVELS DOWN must move the fmt count ──
 # ⚠ Three things this gate cannot do, each learned the hard way on its own earlier versions:
@@ -98,13 +110,18 @@ fmt_total() {   # named-lines + the "… and N more" remainder, from an audit tr
     echo $((named + more))
 }
 
-# ⚠ 6.6.5 — no probe in BASE. A probe that a pre-6.6.6 run left in a working tree is COPIED
-# into the scratch tree with everything else; counted in BASE it would collapse the +1 delta
-# to BASE -> BASE and read as a broken descent. Unlinked from the COPY — the tree is not ours.
-rm -f "$PROBE"
+# ⚠ 6.6.5 — no probe in BASE: the strip above has already removed any stale one from the COPY.
 set +e
 ( cd "$T" && "$WORK/cyrius" audit > "$WORK/base.out" 2>&1 )
 set -e
+
+# ── axis 1: the scope banner names the suite directories (read off the BASE run) ──────
+SCOPE=$(grep -m1 '^  scope:' "$WORK/base.out" || true)
+[ -n "$SCOPE" ] || fail "axis 1: audit printed no 'scope:' line at all"
+for d in tests benches fuzz; do
+    echo "$SCOPE" | grep -qw "$d" || fail "axis 1: audit scope does not include '$d' — got: $SCOPE"
+done
+
 BASE=$(fmt_total "$WORK/base.out")
 [ "$BASE" -gt 0 ] || fail "axis 2 setup: the fmt stage reported 0 failing files, so a +1 delta cannot be measured — the section markers or the cap wording changed and this gate is blind"
 
@@ -143,4 +160,4 @@ AFTER=$(fmt_total "$WORK/good.out")
 [ "$AFTER" -eq "$BASE" ] \
     || fail "axis 3: the fmt count did not return to $BASE after the probe was removed (got $AFTER) — it is drifting between runs, so axis 2's +1 proves nothing"
 
-echo "PASS: audit_scope_covers_suite (scope names tests/benches/fuzz; a mis-formatted .tcyr two levels down moves the fmt count $BASE -> $WITH and back — measured in a scratch copy, the tree is only read)"
+echo "PASS: audit_scope_covers_suite (scope names tests/benches/fuzz; a mis-formatted .tcyr two levels down moves the fmt count $BASE -> $WITH and back — measured in a scratch copy with no runnable suite, the tree is only read)"
