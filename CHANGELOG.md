@@ -4,6 +4,8 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [6.6.17] — 2026-10-05
+
 ## [6.6.16] — 2026-10-05
 
 The 6.6.16 repair release — the first row of roadmap.md § *The 6.6.x tail*: the compiler's silent miscompiles
