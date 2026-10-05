@@ -237,6 +237,53 @@ with `'Foo' is not an enum`, and `Other.BUF` with `'BUF' is not a variant of
 variant name, `A.X` and `B.X` each read their own enum's value (the bare `X`
 keeps "last definition wins", with its warning).
 
+### Array initializers: `var a: T[N] = { .. }` (6.6.16)
+
+At module scope an array takes a list of constants — **N elements of T**,
+written into the program image:
+
+```
+enum Op { ADD = 1; SUB = 2; }
+var table: u16[4] = {0xFFFF, Op.SUB, 1 << 8, -1};  # 0xFFFF, 2, 256, 0xFFFF
+var scale: f64[2] = {1.5, -0.25};
+var wide: u128[1] = {0xFF};                        # the low 8 bytes; the high 8 are 0
+var utf16[1] = {0x67, 0x00, 0x6E, 0x00};           # the bare form: a BYTE list
+```
+
+- An element is an integer literal, an enum constant (`A` or `E.A`, the enum
+  declared on either side), or a constant expression of them (`1 << 4`,
+  `E.A * 2`, `-5`). An `f64` / `f32` element also takes a float literal,
+  optionally negated; an `f32` element is the literal rounded to the nearest
+  `f32`, ties to even — what `f32_from` gives. An integer in a float element
+  keeps its bits, with the warning `var g: f64 = 2;` gives.
+- A value must fit its element: an `N`-byte integer element takes
+  `-2^(8N-1) .. 2^(8N)-1`, so `0xFF` in an `i8` and `-1` in a `u8` are the same
+  bits, while `256` in an `i8` is refused (`array initializer value 256 does not
+  fit a 1-byte element (-128 .. 255)`). `i64`, `u64`, `bool`, an enum and `*T`
+  take any 64-bit value. The bare `var b[N] = { .. }` stays a list of **bytes**
+  in `[0, 255]`, at most `N * 8` of them, and now takes enum constants and
+  constant expressions too.
+- Elements past the list are 0. More elements than `N` is refused, naming `N`.
+- A struct, union, vector, slice, `cstring`, `Str` (a struct), `Result`,
+  `Option`, `Tagged` or `Vec` element type is refused by name — store the
+  elements explicitly. A call, a variable or a string is not a constant and is
+  refused.
+- The values are **in the image**: no code stores them at startup, so they hold
+  from the first instruction — in a `kernel;` build too. On cx, which has no
+  image, the stores run where the declaration's initializer runs.
+- The same declaration after the first top-level statement means the same
+  thing. Inside a top-level block (`while`, `if` / `elif` / `else`, `for`,
+  `match`, a bare `{ }`) a list is refused: it would hold its values once, where
+  a scalar's initializer runs each time the block does — assign the elements in
+  the block. A function-local array takes no list.
+
+⚠ Before 6.6.16 the list was a byte list whatever `T` was:
+`var t: i64[3] = {1, 2, 42};` read `t[0] == 0x2A0201` and `t[1] == t[2] == 0`, on
+every target. A value over 255, `-3`, `1.5` and an enum constant were refused,
+`Pt[2]` / `bool[2]` / `i8v16[2]` lists compiled silently into bytes, and the
+bytes were stored at startup — after the program, in a `kernel;` build, so a
+kernel that never returns read 0.
+
 ### Subscripts: `a[i]` (6.6.12)
 
 An integer element-typed array `var a: T[N]` (T one of `i8`..`i64`,
@@ -2958,9 +3005,11 @@ var r = get_value();             # r = 42
 
 **Deferred initializers — no count cap (6.6.9).** A top-level `var` is baked into
 the image when its initializer folds to a **nonzero** integer constant (`var x = 42;`,
-`var m = 1 << 4;`, `var n = -1;`). Every other top-level `var` — a call
+`var m = 1 << 4;`, `var n = -1;`), and so is every array initializer
+`var b: T[N] = { … };` (6.6.16 — see *Array initializers* above; it was a run of byte
+stores at startup). Every other top-level `var` — a call
 (`var t = alloc(1024);`), an identifier or other non-constant expression, `= 0`, a
-string literal, a byte-array literal `var b[4] = { … };`, a top-level destructure
+string literal, a top-level destructure
 `var a, b = f();` — is a *deferred initializer*: its right-hand side runs once at
 startup, in declaration order. (`= 0` is deferred only
 because the static path reserves 0 for "no value"; the store is redundant and harmless.)
@@ -2993,8 +3042,10 @@ var a = 7;        # warning: duplicate symbol 'a' redefined with conflicting val
   discarded.
 - A **computed** redeclaration runs in declaration order like any deferred
   initializer: `var a = 5; var b = a; var a = f();` gives `b == 5` and `a == f()`.
-- An array's `= { .. }` byte list is a sequence of byte stores, so two byte-list
-  declarations of one array both run, in order.
+- Two `= { .. }` lists for one array both apply, in order: the later list's
+  elements overwrite the earlier one's, and the bytes it does not list keep the
+  earlier values. A constant **scalar** redeclaration after an array list wins
+  whole, as above.
 - A redeclaration that changes the **type or size** (`var a = 5;` then
   `var a: i32 = 7;`, `var q[8];` then `var q[16];`) is an error naming the global —
   one of the two would read the other's storage in the wrong shape. Same rule as a

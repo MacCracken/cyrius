@@ -3369,6 +3369,7 @@ fn PARSE_PROG(S): i64 {
     # FIRST PARSE_PROG-path declaration (`var`, array, struct literal, destructure) in a
     # private file consumed it and was stamped public. Found by the bite-3 review.
     _pub_pending = 0;
+    _pp_depth = _pp_depth + 1;   # 6.6.16 (C1): 1 = module scope (parse_decl.cyr _gai_stmt)
     var go = 1;
     while (go == 1) {
         var typ = PEEKT(S);
@@ -3420,6 +3421,7 @@ fn PARSE_PROG(S): i64 {
     # parse_fn.cyr) — without it the walk is quadratic in the deferral count.
     # See _vis_check (src/frontend/parse_fn.cyr). CHANGELOG [6.6.5]
     _vis_check_deferred(S);
+    _pp_depth = _pp_depth - 1;
     # With no marker (raw `cat | cycc`) every include is the user's, so the plain latch
     # applies. See PP_NOTE_HOST_ONLY.
     var _ho = _pp_hostonly_hit;

@@ -196,7 +196,8 @@ fn _arr_size_ok(S, asz, em): i64 {
 # `sgn` = 1 for a signed element type (i8/i16/i32). 6.6.12: `ew` and `sgn` are also RECORDED
 # as the array's element descriptor, which is what `a[i]` scales and loads by (_arr_desc).
 # 6.6.13: `eb` is the bytes per element (_arr_ebytes), 0 for a bare `var a[N]`.
-fn PARSE_ARRAY(S, noff, ew, sgn, eb): i64 {
+# 6.6.16 (C1): `ann_ti` is the annotation's type token (0 bare) — a module-scope initializer's kind.
+fn PARSE_ARRAY(S, noff, ew, sgn, eb, ann_ti): i64 {
     var _pa_decl_ti = GTI(S);   # v6.6.4: the `[` token — `]` and `;` are consumed below, so by the stamp the cursor may already sit in the NEXT file
     STI(S, GTI(S) + 1);  # consume [
     # v5.10.48: accept either NUM literal OR an IDENT that resolves
@@ -237,6 +238,10 @@ fn PARSE_ARRAY(S, noff, ew, sgn, eb): i64 {
     asz = _arr_size_ok(S, asz, _pa_em);
     if (PEEKT(S) != 29) { ERR_EXPECT(S, 29); }
     STI(S, GTI(S) + 1);  # consume ]
+    # ⛔ 6.6.16 (C1): `= { .. }` after the first top-level statement means what it means before it
+    # (it was `expected ';'`); refused by name inside a top-level block. A local's stays unsupported.
+    var _pa_init = 0;
+    if (PEEKT(S) == 4) { if (GINFN(S) != 1) { _pa_init = _gai_stmt(S, ann_ti, asz); } }
     if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
     STI(S, GTI(S) + 1);  # consume ;
     # Arrays inside functions are globals. To avoid name collisions between
@@ -358,6 +363,7 @@ fn PARSE_ARRAY(S, noff, ew, sgn, eb): i64 {
         _GVAR_VIS(S, vcnt, _pa_decl_ti);
     }
     SVCNT(S, vcnt + 1);
+    if (_pa_init > 0) { _gai_now(S, vcnt, _pa_init, ann_ti); }   # 6.6.16 (C1): the slot is registered
     # v5.11.62: accumulate the array's byte cost into the current fn's
     # attribution slot at 0x1C8000. Top-level `var foo[N]` (no enclosing
     # fn, _cur_fn_ix == -1) skip the accumulation. Read by FIXUP's
@@ -2007,49 +2013,14 @@ fn PARSE_GVAR_ARR(S, noff, sti, ew, sgn, eb): i64 {
     # marker, re-exposing the next declaration instead.
     _GVAR_VIS(S, vc, sti);
     if (vc == vc0) { SVCNT(S, vc0 + 1); }
-    # v5.11.51: optional byte-list initializer
-    # `var foo[N] = { 0x.., 0x.., ... };` emits store8 calls equivalent
-    # to the user typing them by hand. Each byte must be a NUM in [0, 255];
-    # at most `sz` bytes (the array's declared capacity in bytes, =
-    # sz_raw * 8). Bytes beyond the brace-list count stay zero (cyrius
-    # default for .bss / gvar storage). Token IDs: 4 = `=`, 13 = `{`,
-    # 14 = `}`, 31 = `,`, 5 = `;`. See issue 2026-05-13-gnoboot-byte-array-literal.md
-    # and CHANGELOG [5.11.51] for the consumer-side rationale.
-    #
-    # The actual codegen (per-byte EVADDR + EADDRA_IMM + EPUSHR + EMOVI
-    # + EPOPC + ESTORE8) happens in `EMIT_GVAR_INITS` at pass-2 emit
-    # time. Pass 1 (where we are now) only registers the var and saves
-    # sti to gvar_toks so the replay can find the byte list. Emitting
-    # inline here would land in dead code (skipped by the entry-jmp).
+    # v5.11.51: the optional initializer `var foo[N] = { .. };` (issue 2026-05-13-gnoboot-byte-
+    # array-literal.md). Pass 1 checks the element type and the count and registers the deferred
+    # entry; the replay evaluates it into the slot's image blob. ⛔ 6.6.16 (C1): it was a BYTE list
+    # whatever the element type, stored at run time — see "Global array initializers" above.
+    # CHANGELOG [6.6.16]
     if (PEEKT(S) == 4) {
-        # Validate the brace-list shape + byte values, but DON'T emit
-        # codegen. Walk the tokens to (a) error on bad syntax / bad
-        # values early, (b) leave the token-stream cursor past the `;`.
         STI(S, GTI(S) + 1);
-        if (PEEKT(S) != 13) { ERR_EXPECT(S, 13); }
-        STI(S, GTI(S) + 1);
-        var bi = 0;
-        var go = 1;
-        while (go == 1) {
-            if (PEEKT(S) == 14) { go = 0; }
-            else {
-                if (PEEKT(S) != 1) { ERR_EXPECT(S, 1); }
-                var bv = PEEKV(S);
-                if (bv < 0 || bv > 255) {
-                    ERR_MSG(S, "byte-array literal value must be in [0, 255]", 44);
-                }
-                if (bi >= sz) {
-                    ERR_MSG(S, "byte-array literal has more bytes than the array's declared capacity (cap is [N]*8 bytes)", 89);
-                }
-                STI(S, GTI(S) + 1);
-                bi = bi + 1;
-                if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
-            }
-        }
-        STI(S, GTI(S) + 1);
-        # Register for deferred emit. EMIT_GVAR_INITS replays from sti;
-        # the replay path detects the `[N] = { ... };` shape and emits
-        # store8 calls per byte.
+        _gai_decl(S, _gai_ann(S, sti), sz_raw, sz);
         _gv_defer(S, sti, vc + 1);   # 6.6.6: vc + 1 = the slot this entry declared
     }
     if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
@@ -2108,6 +2079,7 @@ fn PARSE_GVAR_ARR(S, noff, sti, ew, sgn, eb): i64 {
 # terminating `;`, which makes a partial fold impossible.
 var _cf_ok = 0;
 var _cf_ti = 0;
+var _cf_enum = 0;   # 6.6.16 (C1): 1 = enum constants fold (see _CF_ENUM)
 
 # Arithmetic (sign-propagating) right shift, spelled WITHOUT the `>>>` operator.
 #
@@ -2148,8 +2120,34 @@ fn _CF_FACTOR(S): i64 {
         _cf_ti = _cf_ti + 1;
         return pv;
     }
+    if (t == 2) { if (_cf_enum == 1) { return _CF_ENUM(S); } }
     _cf_ok = 0;
     return 0;
+}
+
+# ⛔ 6.6.16 (C1) — THE ENUM ARM, ON ONLY WHERE NAMES RESOLVE AS THE RUNTIME DOES. An enum constant
+# (`A`, `E.A`) folds to its value when `_cf_enum == 1`, which only an evaluation at the REPLAY or
+# after the first top-level statement sets: by then every name is registered, so a forward enum and
+# a later global that shadows the name resolve exactly as a runtime read of them would. Pass 1's
+# call (PARSE_GVAR_REG) leaves it 0 — there it would miss a forward enum and fold 3 where the program
+# reads a shadowing `var A = 9;` as 9. QUIET: no error, no cursor move; a name it cannot fold clears
+# `_cf_ok` and the caller reports (a qualified base that is a variable is a field access). An enum
+# constant carries no `private` stamp (PARSE_ENUM_DEF sets none), so a fold has no visibility to
+# check. The value is the raw i64 (_vecv_base, the presence flag in GVECP). CHANGELOG [6.6.16]
+fn _CF_ENUM(S): i64 {
+    var ti = _cf_ti;
+    var vi = 0 - 1;
+    if (TOKTYP(S, ti + 1) == 41) {
+        if (TOKTYP(S, ti + 2) != 2) { _cf_ok = 0; return 0; }
+        if (_findvar_core(S, TOKVAL(S, ti)) >= 0) { _cf_ok = 0; return 0; }
+        vi = _enum_variant_in(S, TOKVAL(S, ti), TOKVAL(S, ti + 2));
+        ti = ti + 2;
+    } else {
+        vi = _findvar_core(S, TOKVAL(S, ti));
+    }
+    if (GVECP(S, vi) != 1) { _cf_ok = 0; return 0; }
+    _cf_ti = ti + 1;
+    return L64(_vecv_base + vi * 8);
 }
 
 fn _CF_TERM(S): i64 {
@@ -2197,15 +2195,453 @@ fn _CF_EXPR(S): i64 {
 
 # Fold the initializer expression starting at token `ti`. On success sets
 # _cf_ok = 1 and returns the value; on ANY doubt sets _cf_ok = 0 and the caller
-# keeps today's behaviour. Requires the expression to end exactly on `;` so a
-# partially-consumed initializer can never be mistaken for a folded one.
-fn _CF_TRY(S, ti): i64 {
+# keeps today's behaviour. Requires the expression to end exactly on its
+# terminator so a partially-consumed initializer can never be mistaken for a
+# folded one: `term` 5 is a declaration's `;`, 31 an array element's `,` or `}`
+# (6.6.16). On success `_cf_ti` is the terminator's token.
+fn _CF_TRY(S, ti, term): i64 {
     _cf_ok = 1;
     _cf_ti = ti;
     var v = _CF_EXPR(S);
     if (_cf_ok == 0) { return 0; }
-    if (TOKTYP(S, _cf_ti) != 5) { _cf_ok = 0; return 0; }
+    var t = TOKTYP(S, _cf_ti);
+    if (t == term) { return v; }
+    if (term == 31) { if (t == 14) { return v; } }
+    _cf_ok = 0;
+    return 0;
+}
+
+# ================================================================
+# Global array initializers (6.6.16, C1)
+# ================================================================
+# ⛔ WHY. `var X: T[N] = { .. }` meant BYTES whatever T was: the list went into the first bytes
+# of the array one byte per element, so `var T: i64[3] = {1, 2, 42};` read T[0] = 0x2A0201 and
+# T[1] = T[2] = 0, on every target (an i8 list read right only because its element IS a byte).
+# A value over 255 was "byte-array literal value must be in [0, 255]", `-3` and `1.5` were
+# syntax errors, an enum constant was "expected number", and `Pt[2]` / `i8v16[2]` / `bool[2]`
+# lists compiled silently as bytes. The element type sized the array and was never consulted
+# again. And the list was STORED AT RUN TIME by the deferred replay, which a `kernel;` build runs
+# after the top-level program — so in a kernel that never returns every array literal read 0.
+#
+# NOW. `var X: T[N] = { .. }` is N elements of T, baked into the image:
+#   * Pass 1 (PARSE_GVAR_ARR) checks the element type — refused BY NAME where a list of
+#     constants cannot fill it — and the element count, and records the deferred entry. It does
+#     NOT evaluate: an element may name an enum declared further down.
+#   * The replay (EMIT_GVAR_INITS -> _gai_replay) evaluates each element with the constant folder,
+#     its enum arm on (_CF_ENUM), into the slot's blob (_vgai_base, util.cyr). Names resolve there
+#     exactly as a runtime read of them would.
+#   * Every image target copies the blob into the var area (_gai_bake, from
+#     _EMIT_GVAR_STATIC_INITS) and emits NO code; cx, which has no image, stores the blob at the
+#     replay point (_gai_cx).
+#   * The same declaration after the first top-level statement (PARSE_ARRAY) is evaluated at once
+#     — at true module scope only (_gai_stmt): a global's meaning does not depend on where it is.
+# Values: an integer element takes -2^(8w-1) .. 2^(8w)-1 (so `0xFF` into i8 and `-1` into u8 are
+# bit patterns, while a value that would be TRUNCATED is refused); i64 / u64 / bool / an enum /
+# `*T` take any i64; the bare byte list keeps [0, 255]; u128 is the value in its low 8 bytes; f64
+# is a float literal's bits; f32 the literal narrowed to binary32, round-to-nearest-even
+# (_gai_f32). An integer in an f64 / f32 element keeps its bits, with the warning a scalar gives.
+# CHANGELOG [6.6.16]
+var _gai_w = 0;        # the element bytes _gai_kind found
+var _gai_ok = 0;       # _gai_val: 1 = the element is a constant
+var _gai_shared = 0;   # _gai_blob: 1 = an earlier declaration of the slot wrote the blob too
+var _pp_depth = 0;     # PARSE_PROG nesting: 1 = module scope (see _gai_stmt)
+
+# A leading-block declaration at `sti` (its `var`): the annotation's type token, 0 for a bare
+# `var b[N]` — `var NAME : T`, so the token after the `:`.
+fn _gai_ann(S, sti): i64 {
+    if (TOKTYP(S, sti + 2) == 49) { return sti + 3; }
+    return 0;
+}
+
+# The element kind of an array annotated at `ann_ti` (0 = a bare `var b[N]`), its bytes in
+# `_gai_w`: 1 an integer (iN / uN, bool, an enum, `*T`), 2 the bare byte list, 3 u128, 4 f64,
+# 5 f32. 0 = an element no list of constants fills (a struct or union, a vector, a slice,
+# cstring, Result / Option / Tagged, Vec); -1 = a name that is no type, which _arr_name_ebytes has
+# already refused at the name. The type comes from the one resolver (_tn_resolve_at).
+fn _gai_kind(S, ann_ti): i64 {
+    _gai_w = 1;
+    if (ann_ti == 0) { return 2; }
+    var t = TOKTYP(S, ann_ti);
+    _gai_w = 8;
+    if (t == 8) { return 1; }
+    if (t == 105) { _gai_w = 16; return 3; }
+    if (t != 2) { return 0; }
+    var c = _tn_resolve_at(S, ann_ti);
+    if (c == 0) { return 0 - 1; }
+    var f = _tn_flt(c);
+    if (f == F64_TYID) { return 4; }
+    if (f == F32_TYID) { _gai_w = 4; return 5; }
+    _gai_w = _tn_init_w(c);
+    if (_gai_w > 0) { return 1; }
+    return 0;
+}
+
+# A diagnostic at token `ti`, the cursor put back. Each is reported once and the latch it set is
+# cleared, so every bad array of a file is reported; an error already holding it is left alone.
+fn _gai_err(S, ti, msg): i64 {
+    if (_panic == 1) { return 0; }
+    var n = 0;
+    while (load8(msg + n) != 0) { n = n + 1; }
+    var sv = GTI(S);
+    STI(S, ti);
+    ERR_MSG(S, msg, n);
+    STI(S, sv);
+    _panic = 0;
+    return 0;
+}
+fn _gai_type_err(S, ti): i64 {
+    if (_syntax_only == 1) { return 0; }
+    if (_panic == 1) { return 0; }
+    if (TOKTYP(S, ti) != 2) {
+        _gai_err(S, ti, "an initializer list is not supported for this array's element type; store the elements explicitly");
+        return 0;
+    }
+    var sv = GTI(S);
+    STI(S, ti);
+    ERR_IDENT(S, "an initializer list for an array of ", TOKVAL(S, ti), " is not supported; store the elements explicitly (a list fills integer, bool, enum, pointer, u128, f64 and f32 elements)", 0 - 1);
+    STI(S, sv);
+    _panic = 0;
+    return 0;
+}
+# More elements than the array holds: the bare list keeps its message (it counts BYTES).
+fn _gai_cap_err(S, cap, bare): i64 {
+    if (bare == 1) {
+        _gai_err(S, GTI(S), "byte-array literal has more bytes than the array's declared capacity (cap is [N]*8 bytes)");
+        return 0;
+    }
+    if (_panic == 1) { return 0; }
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    PRSTR(": array initializer has more elements than the array holds (");
+    PRNUM(cap);
+    PRSTR(")\n");
+    _err_excerpt(S);
+    _had_error = 1;
+    return 0;
+}
+
+# Step over one element: to its `,` or `}` outside parentheses. A `;` or EOF stops it (the caller
+# reports the missing `}`). An empty element is `expected number`, as it always was — unless
+# `quiet` (the evaluation, after the walk has reported).
+fn _gai_skip(S, quiet): i64 {
+    var t = PEEKT(S);
+    if (t == 31 || t == 14) {
+        if (quiet == 0) { ERR_EXPECT(S, 1); }
+        return 0;
+    }
+    var d = 0;
+    while (t != 5 && t != 12) {
+        if (d == 0) { if (t == 31 || t == 14) { return 0; } }
+        if (t == 10) { d = d + 1; }
+        if (t == 11) { d = d - 1; }
+        STI(S, GTI(S) + 1);
+        t = PEEKT(S);
+    }
+    return 0;
+}
+# The walk of `{ e, e, .. }`, cursor on `{` and left past `}`: the element count against `cap`
+# (elements; the bare list's bytes), reported at the first element past it. No value is looked at.
+fn _gai_walk(S, cap, bare): i64 {
+    if (PEEKT(S) != 13) { ERR_EXPECT(S, 13); return 0; }
+    STI(S, GTI(S) + 1);
+    var n = 0;
+    while (PEEKT(S) != 14) {
+        var t = PEEKT(S);
+        if (t == 5 || t == 12) { ERR_EXPECT(S, 14); return n; }
+        if (n == cap) { _gai_cap_err(S, cap, bare); }
+        _gai_skip(S, 0);
+        n = n + 1;
+        if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
+    }
+    STI(S, GTI(S) + 1);
+    return n;
+}
+# The declaration's half (pass 1, and _gai_stmt): the element type, then the walk. `n` the
+# declared element count, `sz` the slot's bytes (the bare list's cap). Cursor on `{`.
+fn _gai_decl(S, ann_ti, n, sz): i64 {
+    var bare = 0;
+    if (ann_ti == 0) { bare = 1; n = sz; }
+    if (_gai_kind(S, ann_ti) == 0) { _gai_type_err(S, ann_ti); }
+    _gai_walk(S, n, bare);
+    return 0;
+}
+
+# After the first top-level statement (PARSE_ARRAY, GINFN != 1, cursor on `=`). At module scope
+# the declaration is the leading block's, evaluated once the slot is registered (_gai_now) — by
+# then every name is. In a top-level block (`while`, `if` / `elif` / `else`, `for`, `match`, a
+# bare `{ }`) it is REFUSED: a baked list would hold its values once, where a scalar's
+# initializer runs each time the block does (that shape never compiled — `expected ';'`).
+# PARSE_PROG counts its nesting in `_pp_depth`; scope depth cannot tell, an `elif` body opens no
+# scope. Returns the `{` token, or 0.
+fn _gai_stmt(S, ann_ti, n): i64 {
+    var eq = GTI(S);
+    STI(S, eq + 1);
+    var bare = 0;
+    if (ann_ti == 0) { bare = 1; }
+    if (_pp_depth != 1) {
+        _gai_err(S, eq, "an array initializer is allowed only at module scope: in a block it would hold its values once, not each time the block runs; assign the elements in the block");
+        _gai_walk(S, 0 - 1, bare);
+        return 0;
+    }
+    var lb = GTI(S);
+    _gai_decl(S, ann_ti, n, n * 8);
+    return lb;
+}
+fn _gai_now(S, vi, lb, ann_ti): i64 {
+    var sv = GTI(S);
+    STI(S, lb);
+    _gai_eval(S, vi, ann_ti);
+    STI(S, sv);
+    return 0;
+}
+
+# The replay of a leading-block array initializer (EMIT_GVAR_INITS, cursor on `[`). An entry a
+# later constant declaration superseded (_gv_supersede) is evaluated for its errors and writes
+# nothing: the later declaration is the value, and no blob of this one may land over it.
+fn _gai_replay(S, gi, noff, gsup, sti): i64 {
+    while (PEEKT(S) != 13) {
+        var t = PEEKT(S);
+        if (t == 5 || t == 12) { ERR_EXPECT(S, 13); return 0; }
+        STI(S, GTI(S) + 1);
+    }
+    var ann = _gai_ann(S, sti);
+    var vi = _gv_ent_slot(S, gi, 0, noff);
+    if ((gsup & 1) != 0) { vi = 0 - 1; }
+    _gai_eval(S, vi, ann);
+    if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
+    STI(S, GTI(S) + 1);
+    return 0;
+}
+
+# Evaluate `{ e, e, .. }` (cursor on `{`, left past `}`) into slot `vi`'s blob (vi < 0: errors
+# only). The walk has reported the shape; this reports the values. cx stores the result here.
+fn _gai_eval(S, vi, ann): i64 {
+    var k = _gai_kind(S, ann);
+    var eb = _gai_w;
+    if (_syntax_only == 1) { k = 0; }
+    var b = 0;
+    if (k > 0) { b = _gai_blob(S, vi, eb, k); }
+    STI(S, GTI(S) + 1);
+    var off = 0;
+    while (PEEKT(S) != 14) {
+        var t = PEEKT(S);
+        if (t == 5 || t == 12) { return 0; }
+        var ti = GTI(S);
+        if (k > 0) { _gai_one(S, b, off, eb, k, ti); }
+        STI(S, ti);
+        _gai_skip(S, 1);
+        off = off + eb;
+        if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
+    }
+    STI(S, GTI(S) + 1);
+    if (_TARGET_CX == 1) { if (b != 0) { _gai_cx(S, vi, b, off); } }
+    return 0;
+}
+
+# Slot `vi`'s blob, made on first use: zeroed, then seeded with a scalar constant this slot folded
+# from (a bare `var B[1]` redeclaring `var B = 5;` keeps the bytes it does not list, as the replayed
+# stores did). A later declaration of the slot reuses it, so the overlay order is the old store
+# order. 0 for `vi < 0`.
+fn _gai_blob(S, vi, eb, k): i64 {
+    _gai_shared = 0;
+    if (vi < 0) { return 0; }
+    var b = GVGAI(S, vi);
+    if (b != 0) { _gai_shared = 1; }
+    else {
+        var sz = L64(_vars_base + vi * 8);
+        b = alloc(sz + 24);
+        store64(b, sz);
+        if (sz >= 8) { store64(b + 16, GVSI(S, vi)); }
+        SVGAI(S, vi, b);
+    }
+    store64(b + 8, eb | (k << 8));
+    return b;
+}
+
+# One element at token `ti`, written at byte `off` of blob `b` (b == 0: checked only). An empty
+# element, and one past the declared count, were reported by the walk.
+fn _gai_one(S, b, off, eb, k, ti): i64 {
+    var t = TOKTYP(S, ti);
+    if (t == 31 || t == 14) { return 0; }
+    var v = _gai_val(S, ti, k, eb);
+    if (_gai_ok == 0) { _gai_bad(S, ti); return 0; }
+    if (b == 0) { return 0; }
+    if (off + eb > load64(b)) { return 0; }
+    _gai_put(b + 16 + off, eb, v);
+    return 0;
+}
+fn _gai_put(d, eb, v): i64 {
+    if (eb == 1) { store8(d, v); return 0; }
+    if (eb == 2) { store16(d, v); return 0; }
+    if (eb == 4) { store32(d, v); return 0; }
+    store64(d, v);
+    if (eb == 16) { store64(d + 8, 0); }
+    return 0;
+}
+
+# The value of the element at `ti` (`_gai_ok` = 0: not a constant). f64 / f32 take a float
+# literal, optionally negated, first; everything else is the integer folder with enum constants on.
+fn _gai_val(S, ti, k, eb): i64 {
+    _gai_ok = 1;
+    if (k >= 4) {
+        var fb = _gai_flit(S, ti);
+        if (_gai_ok == 1) {
+            if (k == 5) { return _gai_f32(fb); }
+            return fb;
+        }
+        _gai_ok = 1;
+    }
+    _cf_enum = 1;
+    var v = _CF_TRY(S, ti, 31);
+    _cf_enum = 0;
+    if (_cf_ok == 0) { _gai_ok = 0; return 0; }
+    if (k >= 4) {
+        _gai_ifs(S, ti);
+        if (k == 5) { return v & 0xFFFFFFFF; }
+        return v;
+    }
+    _gai_range(S, ti, v, eb, k);
     return v;
+}
+# `-`? FLOAT, then the element's end: the literal's binary64 bits, the sign bit flipped for `-`.
+fn _gai_flit(S, ti): i64 {
+    var neg = 0;
+    if (TOKTYP(S, ti) == 7) { neg = 1; ti = ti + 1; }
+    _gai_ok = 0;
+    if (TOKTYP(S, ti) != 61) { return 0; }
+    var e = TOKTYP(S, ti + 1);
+    if (e != 31) { if (e != 14) { return 0; } }
+    _gai_ok = 1;
+    var bits = FLIT_NUM(TOKVAL(S, ti));
+    if (neg == 1) { bits = bits ^ (1 << 63); }
+    return bits;
+}
+# An integer in an f64 / f32 element: the warning `var G: f64 = 2;` gives (_IFS_SPAN's shapes).
+fn _gai_ifs(S, ti): i64 {
+    if (_IFS_SPAN(S, ti, _cf_ti) == 0) { return 0; }
+    var sv = GTI(S);
+    STI(S, ti);
+    _FLT_TYPE_WARN(S, 4);
+    STI(S, sv);
+    return 0;
+}
+# One window per width, -2^(8w-1) .. 2^(8w)-1: a bit-pattern spelling is taken, a value that would
+# be truncated is refused. The bare byte list keeps [0, 255].
+fn _gai_range(S, ti, v, eb, k): i64 {
+    if (k == 2) {
+        if (v < 0 || v > 255) { _gai_err(S, ti, "byte-array literal value must be in [0, 255]"); }
+        return 0;
+    }
+    if (k != 1) { return 0; }
+    if (eb >= 8) { return 0; }
+    var hi = (1 << (eb * 8)) - 1;
+    var lo = 0 - (1 << (eb * 8 - 1));
+    if (v < lo || v > hi) { _gai_range_err(S, ti, v, eb, lo, hi); }
+    return 0;
+}
+fn _gai_range_err(S, ti, v, eb, lo, hi): i64 {
+    if (_panic == 1) { return 0; }
+    var sv = GTI(S);
+    STI(S, ti);
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    PRSTR(": array initializer value ");
+    PRNUM(v);
+    PRSTR(" does not fit a ");
+    PRNUM(eb);
+    PRSTR("-byte element (");
+    PRNUM(lo);
+    PRSTR(" .. ");
+    PRNUM(hi);
+    PRSTR(")\n");
+    _err_excerpt(S);
+    STI(S, sv);
+    _had_error = 1;
+    return 0;
+}
+# An element that is not a constant. A name gets the report a reference to it would give (a variant
+# named through the wrong enum, a global another file keeps `private`); otherwise one message.
+fn _gai_bad(S, ti): i64 {
+    if (_panic == 1) { return 0; }
+    var e0 = _had_error;
+    _had_error = 0;
+    var sv = GTI(S);
+    STI(S, ti);
+    var t = TOKTYP(S, ti);
+    if (t == 2) {
+        var vn = TOKVAL(S, ti);
+        if (TOKTYP(S, ti + 1) == 41) {
+            if (_findvar_core(S, vn) < 0) { _enum_qual_resolve(S, ti); }
+        } else {
+            var vi = _findvar_core(S, vn);
+            if (vi >= 0) { _vis_check_var(S, vi, vn); }
+        }
+    }
+    var said = _had_error;
+    _had_error = _had_error | e0;
+    _panic = 0;
+    STI(S, sv);
+    if (said != 0) { return 0; }
+    if (t == 7) { t = TOKTYP(S, ti + 1); }
+    if (t == 61) {
+        _gai_err(S, ti, "a float literal initializes only an f64 or f32 array element");
+        return 0;
+    }
+    _gai_err(S, ti, "array initializer elements must be constants: integers, enum constants and constant expressions (float literals in an f64 or f32 array)");
+    return 0;
+}
+
+# The binary32 bits of binary64 `d`, round-to-nearest-even — what cvtsd2ss / fcvt give — in
+# integers only (cybs compiles no float builtin, and src/ uses none). A result below f32's least
+# subnormal is a signed zero, one past its range infinity; a NaN stays a quiet NaN (its top
+# payload bits). `(x - 1) << 23 + r` makes both carries by addition: a significand that rounds up
+# to 2^24 bumps the exponent, and a subnormal that rounds up to 2^23 is the least normal.
+fn _gai_f32(d): i64 {
+    var s = (d >> 63) << 31;
+    var e = (d >> 52) & 0x7FF;
+    var m = d & 0xFFFFFFFFFFFFF;
+    if (e == 0x7FF) {
+        if (m == 0) { return s | 0x7F800000; }
+        return s | 0x7FC00000 | (m >> 29);
+    }
+    if (e == 0) { return s; }
+    m = m | (1 << 52);
+    var x = e - 896;
+    var sh = 29;
+    if (x < 1) { sh = 30 - x; x = 1; }
+    if (sh >= 54) { return s; }
+    var r = m >> sh;
+    var rem = m & ((1 << sh) - 1);
+    var half = 1 << (sh - 1);
+    if (rem > half) { r = r + 1; }
+    elif (rem == half) { if ((r & 1) == 1) { r = r + 1; } }
+    var bits = ((x - 1) << 23) + r;
+    if (bits >= 0x7F800000) { return s | 0x7F800000; }
+    return s | bits;
+}
+
+# cx has no image to bake into: the blob is stored at the replay point, the order the stores have
+# always run in — 8-byte words, the tail byte by byte (an 8-byte store there would run into the
+# next global). A zero word is skipped on a fresh blob (cxvm zeroes its globals) and stored when an
+# earlier declaration of the slot wrote the blob too (the overlay). `n` = the bytes the list covers.
+fn _gai_cx(S, vi, b, n): i64 {
+    if (n > load64(b)) { n = load64(b); }
+    EVADDR_X1(S, vi);
+    var at = 0;
+    var off = 0;
+    while (off < n) {
+        var w = 8;
+        if (off + 8 > n) { w = 1; }
+        var v = load64(b + 16 + off);
+        if (w == 1) { v = load8(b + 16 + off); }
+        if (v != 0 || _gai_shared == 1) {
+            if (off > at) { EADDIMM_X1(S, off - at); at = off; }
+            EMOVI(S, v);
+            if (w == 8) { ESTOC(S); } else { ESTORE8(S); }
+        }
+        off = off + w;
+    }
+    return 0;
 }
 
 # ================================================================
@@ -2267,6 +2703,7 @@ fn _gv_clear(S, vi): i64 {
     SVTYPE(S, vi, 0);
     SVSGN(S, vi, 0);
     S64(_vgsi_base + vi * 8, 0);
+    SVGAI(S, vi, 0);   # 6.6.16 (C1): an array initializer's blob
     if (GVPM(S, vi) != 0) { SVPM(S, vi, 0); }
     if (GVFI(S, vi) != 0) { SVFI(S, vi, 0); }
     return 0;
@@ -2883,7 +3320,7 @@ fn PARSE_GVAR_REG(S): i64 {
         # exactly as before. A folded ZERO still falls through — BSS is already zero,
         # so the runtime store is redundant but harmless, and keeping that branch
         # identical preserves the v5.11.64 behaviour for `= 0 ;`.
-        var fv = _CF_TRY(S, GTI(S));
+        var fv = _CF_TRY(S, GTI(S), 5);
         if (_cf_ok == 1) {
             cf_has = 1;
             cf_val = fv;
@@ -3105,72 +3542,11 @@ fn EMIT_GVAR_INITS(S): i64 {
         }
         var gps = 0;
         if (PEEKT(S) == 49) { gps = _gvi_ann(S, _gv_ent_slot(S, gi, 0, noff)); }
-        # v5.11.51: byte-array literal `var foo[N] = { 0x.., ... };`
-        # After IDENT (+ optional `:type`) the next token is `[` for
-        # array-typed gvar inits. PARSE_GVAR_ARR registered the var in
-        # pass 1; here we walk past `[N]=` then emit a per-byte store8
-        # sequence into the live codebuf (this is pass-2 emit time —
-        # the code runs at top-level entry, post EPATCH).
+        # v5.11.51: an array initializer `var foo[N] = { .. };`. ⛔ 6.6.16 (C1): evaluated into the
+        # slot's image blob (_gai_replay) — no code on an image target; it emitted one byte store
+        # per element, which a `kernel;` build runs after its never-returning program.
         if (PEEKT(S) == 28) {
-            STI(S, GTI(S) + 1);              # consume `[`
-            # Skip size — already enforced in pass 1 (num or enum-const ident).
-            if (PEEKT(S) == 1 || PEEKT(S) == 2) { STI(S, GTI(S) + 1); }
-            if (PEEKT(S) != 29) { ERR_EXPECT(S, 29); }
-            STI(S, GTI(S) + 1);              # consume `]`
-            if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); }
-            STI(S, GTI(S) + 1);              # consume `=`
-            if (PEEKT(S) != 13) { ERR_EXPECT(S, 13); }
-            STI(S, GTI(S) + 1);              # consume `{`
-            var b_vidx = _gv_target(S, _gv_ent_slot(S, gi, 0, noff), gsup, 0);
-            # v6.0.88 peephole: hoist &var into rcx/x1/r1 ONCE (via _EVRCX),
-            # then emit a single direct byte-store per element (ESTOREB_IMM) instead
-            # of the ~7-op EVADDR/EADDRA_IMM/PUSH/MOVI/POPC/STORE8/XORAA
-            # chain per byte. ~5× emit compression + one fixup per array
-            # (was one per byte). Cross-arch: x86 `mov byte [rcx+d],imm8`,
-            # aarch64 `strb w0,[x1,#d]`, cx `store8 [r1(+d)],r0`.
-            # IR recording (CYRIUS_IR=1|2, opt-in) keeps the legacy
-            # IR-aware sequence so the IR stream is unchanged; the default
-            # (IR-off) path — every consumer build + self-host — gets the
-            # peephole. See CHANGELOG [6.0.88].
-            var b_vidx_ir = IR_ENABLED(S);
-            # _EVRCX (not EVADDR_X1): obj-aware base load. x86 EVADDR_X1 is
-            # absolute-mov only, which stores to the wrong address under
-            # x86-Mach-O PIE (caught on real ach hardware, v6.0.88). _EVRCX
-            # emits rip-relative LEA when _IS_OBJ; aarch64/cx alias to their
-            # already-correct EVADDR_X1.
-            if (b_vidx_ir == 0) { _EVRCX(S, b_vidx); }
-            var b_i = 0;
-            var b_go = 1;
-            while (b_go == 1) {
-                if (PEEKT(S) == 14) { b_go = 0; }
-                else {
-                    var b_v = PEEKV(S);
-                    STI(S, GTI(S) + 1);
-                    # b_legacy = 1 → emit the legacy per-byte chain. Used
-                    # under IR recording, and when the peephole reports the
-                    # disp is out of the arch's direct-store range
-                    # (ESTOREB_IMM returns non-zero, e.g. aarch64 >= 4096).
-                    var b_legacy = 1;
-                    if (b_vidx_ir == 0) {
-                        b_legacy = ESTOREB_IMM(S, b_i, b_v);
-                    }
-                    if (b_legacy != 0) {
-                        # legacy `store8(&var + b_i, b_v)`:
-                        EVADDR(S, b_vidx);
-                        if (b_i > 0) { EADDRA_IMM(S, b_i); }
-                        EPUSHR(S);
-                        EMOVI(S, b_v);
-                        EPOPC(S);
-                        ESTORE8(S);
-                        EXORAA(S);
-                    }
-                    b_i = b_i + 1;
-                    if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
-                }
-            }
-            STI(S, GTI(S) + 1);              # consume `}`
-            if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
-            STI(S, GTI(S) + 1);              # consume `;`
+            _gai_replay(S, gi, noff, gsup, sti);
             gi = gi + 1;
             continue;
         }
@@ -4395,7 +4771,7 @@ fn PARSE_VAR(S): i64 {
     # bare `var buf[N]` has scalar_type==0 → legacy byte sizing.)
     if (PEEKT(S) == 28) {
         var arr_eb = _arr_ebytes(S, scalar_type, lfloat, pscale, ann_ti);   # 6.6.13 (M2)
-        PARSE_ARRAY(S, noff, scalar_type, scalar_signed, arr_eb);
+        PARSE_ARRAY(S, noff, scalar_type, scalar_signed, arr_eb, ann_ti);
         return 0;
     }
     # expect EQ

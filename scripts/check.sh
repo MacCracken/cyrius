@@ -1688,6 +1688,15 @@ _chk_gate "$ROOT/tests/gates/diagnostics/typed_array_elem_refusals.sh"
 # vocabulary still compiles where it is taken (a Str param by name, enums, type parameters).
 _chk_gate "$ROOT/tests/gates/diagnostics/type_name_refused.sh"
 
+# 6.6.16 (C1) — a global array initializer `var X: T[N] = { .. }` is N elements of T, baked into the
+# image (tests/tcyr/crossos/global_array_initializer.tcyr runs the values on every host). These pin:
+# the shapes it refuses by name (count, range, a non-constant, an element type no list fills, a list
+# inside a top-level block); that a `kernel;` build (x86 and EFI) carries the bytes in its image
+# with no store behind the program; and that cx, which has no image, stores the same bytes.
+_chk_gate "$ROOT/tests/gates/frontend/array_initializer_refusals.sh"
+_chk_gate "$ROOT/tests/gates/platform/kmode_array_initializer_baked.sh"
+_chk_gate "$ROOT/tests/gates/codegen/cx_array_initializer.sh"
+
 # 6.6.13 (M3) — inside a closure, copying a captured struct copies its bytes
 # (tests/tcyr/crossos/closure_capture_struct_copy.tcyr runs the copies on every host). This pins
 # the compile-time half: a captured struct or vector of ANOTHER type is refused by name in the field

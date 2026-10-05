@@ -185,6 +185,15 @@ fn _tn_vec(c): i64 {                        # a vector's descriptor sentinel (<=
     if (_tn_class(c) == 5) { return 0 - _tn_val(c); }
     return 0;
 }
+fn _tn_init_w(c): i64 {                     # 6.6.16 (C1): the bytes of an array element an
+    var w = _tn_iw(c);                      # integer constant initializes — iN / uN its width,
+    if (w > 0) { return w; }                # bool and an enum 8 — else 0 (a float, a struct, a
+    if (_tn_class(c) == 4) {                # vector, a handle no constant makes)
+        var v = _tn_val(c);
+        if (v == 1 || v == 2) { return 8; }
+    }
+    return 0;
+}
 # sizeof: an integer or float its width; a handle (bool, an enum, cstring, Result, Option,
 # Tagged, Vec, a type parameter's i64 base) 8; a vector 16 / 32; a struct STRUCTSZ. This is exactly
 # what `var a: T[N]` reserves per element (_arr_ebytes), so the array is N * sizeof(T).
