@@ -1793,10 +1793,9 @@ fn _lint_msg_is_context(p, n): i64 {
     if (_lint_pfx(p, n, "array size identifier must be an enum constant") == 1) { return 1; }
     # a struct declared in a sibling module (the 6.5.19 cross-file shape, gate axis 6)
     if (_lint_pfx(p, n, "no struct type in scope for ") == 1) { return 1; }
-    # …and the same struct named as a field's type or measured by sizeof (the 6.6.11 sweep:
+    # …and the same struct named as a field's type (the 6.6.11 sweep:
     # 23 sibling-repo files, e.g. samay's `name: Str` with lib/str.cyr not in the file)
     if (_lint_pfx(p, n, "unknown type '") == 1 && _lint_has(p, n, "' for struct field '") == 1) { return 1; }
-    if (_lint_pfx(p, n, "sizeof: unknown type") == 1) { return 1; }
     return 0;
 }
 

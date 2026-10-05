@@ -1,4 +1,5 @@
-# thread_macos.cyr — macOS (Darwin) threading: single-threaded SERIAL fallback.
+# thread_macos.cyr — macOS (Darwin) threading: REAL threads + a blocking channel on arm64,
+# a single-threaded SERIAL fallback on x86 macOS.
 # Usage: included by lib/thread.cyr under #ifdef CYRIUS_TARGET_MACOS.
 # Requires: alloc.cyr, fnptr.cyr, syscalls.cyr (sys_getpid), thread_local.cyr.
 #
@@ -27,11 +28,12 @@
 # agnos. The thread body then ACTUALLY RUNS, which is precisely what
 # 2026-07-03-macos-threading-workers-dont-run reports as broken.
 #
-# ⚠ SCOPE, stated plainly: this makes threading CORRECT-but-UNPARALLELIZED on macOS.
-# It is not the concurrent Darwin backend (bsdthread_create / __ulock_wait), which
-# remains the roadmapped Slot 11 item and which this file does not attempt. Consumers
-# that use threads for THROUGHPUT get correct results, serially; consumers that need
-# genuine parallelism on macOS still need Slot 11. `lib/thread_agnos.cyr`'s own header
+# ⚠ SCOPE, stated plainly: v6.5.11 made threading CORRECT-but-UNPARALLELIZED on macOS.
+# That serial fallback is now x86 macOS only: since v6.5.44 arm64 macOS starts REAL
+# threads (libSystem `pthread_create`, see the v6.5.44 block below), and since 6.6.16 its
+# channel is a locked ring whose waiters block on `__ulock` (CHAN_BLOCKING = 1). On x86
+# macOS consumers that use threads for THROUGHPUT get correct results, serially
+# (THREADS_CONCURRENT = 0, CHAN_BLOCKING = 0). `lib/thread_agnos.cyr`'s own header
 # already described "the macOS single-threaded thread_local model" as this same family
 # — macOS was conceptually here all along and simply was never routed.
 #
