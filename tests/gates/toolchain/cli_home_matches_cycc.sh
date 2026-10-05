@@ -118,7 +118,7 @@ row big_ahead_home  B  "$BIG" HOME="$W/B"
 # the buffer unwritten and the home read as "") ─────────────────────────────────────────────
 if command -v wine > /dev/null 2>&1; then
     export WINEPREFIX="$W/wine" XDG_CACHE_HOME="$W/xdg" WINEDEBUG=-all
-    trap 'wineserver -k > /dev/null 2>&1; rm -rf "$W"' EXIT
+    trap 'WINEPREFIX="$W/wine" wineserver -k > /dev/null 2>&1; rm -rf "$W"' EXIT
     D100=$(head -c 100 /dev/zero | tr '\0' d)
     LONG="$W/$D100/$D100/$D100/$D100/$D100/$D100"
     mkdir -p "$LONG/bin" && : > "$LONG/bin/cycc.exe"
