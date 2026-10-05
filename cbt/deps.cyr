@@ -1674,7 +1674,7 @@ fn _dep_reject_unsafe_name(name): i64 {
     return 0;
 }
 
-# CVE-TBD(T1) (6.6.16): a `[deps.X] tag` is joined into the clone dir
+# CVE-76 (6.6.16): a `[deps.X] tag` is joined into the clone dir
 # `<home>/deps/<name>/<tag>`, so it must name a place INSIDE that dir — CVE-62's class
 # on the TAG field (CVE-62 guarded the header name only). `../../../esc/sub` made git
 # mkdir the leading components OUTSIDE the cache before it rejected the ref, and a tag
@@ -2008,7 +2008,7 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                 while (si < n && load8(buf + si) != 10) { si = si + 1; }
                 si = si + 1;
             }
-            # CVE-TBD(T1) (6.6.16): the tag becomes a path component of the clone dir —
+            # CVE-76 (6.6.16): the tag becomes a path component of the clone dir —
             # refuse one that would leave `<home>/deps/<name>` BEFORE any gate, mkdir,
             # clone or is_dir. Only when a `tag` key is present: a tagless path / git dep
             # (dep_tag == 0) is the common shape and stays untouched.

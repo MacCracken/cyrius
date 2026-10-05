@@ -19,7 +19,7 @@
 # CVE-62: the header NAME becomes the clone dir `<home>/deps/<name>/<tag>` and the
 # default `dist/<name>.cyr`; `[deps.../../esc/x]` cloned OUTSIDE the dep cache on 6.6.12 (the
 # v6.2.51 traversal guard covered sub-module / index / package names, never this one).
-# CVE-TBD(T1) (6.6.16): the same class on the TAG — `tag = "../../../esc/sub"` made git mkdir
+# CVE-76 (6.6.16): the same class on the TAG — `tag = "../../../esc/sub"` made git mkdir
 # outside the cache, and a tag naming an existing dir printed `rm -rf` advice for it (D9).
 #
 # Hermetic: a mktemp CYRIUS_HOME with the CLI built FROM SOURCE as the pin's own wrapper,
@@ -279,7 +279,7 @@ if [ "$rca" -ne 0 ] && grep -qF '[deps.../x] is not a usable dep name' "$W/d8a.e
     ok "D8 [deps.../x] and [deps.../../esc/x] (root) and a TRANSITIVE [deps.../../esc/y]: refused by name, rc 1, no lock, nothing created outside \$CYRIUS_HOME/deps"
 else bad "D8 (root rc=$rca transitive rc=$rct H/x=$([ -e "$H/x" ] && echo EXISTS || echo absent) W/esc=$([ -e "$W/esc" ] && echo EXISTS || echo absent)): $(diff "$W/d8.before2" "$W/d8.after" | head -3) $(head -2 "$W/d8a.err")"; fi
 
-# ── D9: CVE-TBD(T1) — a `tag` that would move the clone dir out of <home>/deps/<name> ─────
+# ── D9: CVE-76 — a `tag` that would move the clone dir out of <home>/deps/<name> ─────
 # The tag is joined into `<home>/deps/<name>/<tag>`. On 6.6.15 `../../../esc/sub` made git
 # mkdir $W/esc before it rejected the ref, and `../../..` (an EXISTING dir, $W) skipped the
 # clone and printed `rm -rf <home>/deps/foo/../../..` — the parent of CYRIUS_HOME. git runs

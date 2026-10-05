@@ -2,7 +2,7 @@
 
 **Scope:** the untrusted-source-input surface. Previous full audit:
 `docs/audit/2026-07-27-security-audit.md` (CVE-32…CVE-36) at cycc 6.4.82.
-**Next free identifier after this document: CVE-76.** (CVE-41 is fixed at 6.5.47; see its entry.) (CVE-37 and CVE-38 in the previous
+**Next free identifier after this document: CVE-77.** (CVE-41 is fixed at 6.5.47; see its entry.) (CVE-37 and CVE-38 in the previous
 document are **withdrawn** but still consume their ids.) CVE-43 was consumed at 6.6.5,
 **CVE-44 and CVE-45 at 6.6.6** — the release installer's fixed `/tmp` staging, and a forged `#@file` from an included file —
 **CVE-46, CVE-47 and CVE-48 at 6.6.7** (a `secret var` inside a closure was never zeroised; a `secret var` in a
@@ -13,7 +13,7 @@ predictable shared `/tmp` names; `lib/http.cyr` wrote a long URL past its 2048-b
 `rdx`; the lexer silently dropped any `@` that did not spell `@unsafe`; `lib/ws.cyr`'s `ws_recv_frame` let a
 remote peer choose its allocation size and read frames it had not received), and **CVE-54 and CVE-55 at 6.6.11**
 (on Windows, `net_resolve_ipv4` read a drive-relative `C:\etc\hosts` that any local user can plant; a multi-line
-string literal shifted file attribution, so a call to another file's `private` fn compiled); **CVE-56 at 6.6.12** (`lib/log.cyr`'s `log_info_kv` / `log_info_int` built a log line past a 512-byte stack buffer); **CVE-57 at 6.6.12** (on Windows, the folded sandhi resolver read a drive-relative `C:\etc\resolv.conf` any local user can plant); **CVE-58 at 6.6.12** (cxvm let guest bytecode read and write the interpreter's own host memory); **CVE-59 at 6.6.13** (the libssl TLS backend never bound the server's certificate to the host, so any chain-valid certificate verified any host); **CVE-60 at 6.6.13** (the libssl backend's `tls_read` / `tls_write` (and `tls_get_peer_spki_der`) returned a C `int` zero-extended, so a tampered record read as ~4 GiB read); **CVE-61 at 6.6.13** (the native TLS stack skipped plaintext ChangeCipherSpec records without limit and had no deadline, so anyone on the path held a thread for ever); **CVE-62 at 6.6.13** (a `[deps.NAME]` header holding `..` made `cyrius deps` create directories and git-clone outside the dep cache — a CVE-32 residual); **CVE-63 at 6.6.13** (the native TLS client verified an IP-literal host against dNSName SAN entries, wildcards included); **CVE-64 at 6.6.14** (a native TLS server that required client certificates authenticated nobody: a TLS 1.2 client connected with none, a TLS 1.3 client with any leaf, and `tls_set_verify` dropped FAIL_IF_NO_PEER_CERT); **CVE-65 at 6.6.14** (on Windows, the native TLS client read its trust roots from a drive-relative `C:\etc\ssl\cert.pem` any local user can plant); **CVE-66 at 6.6.14** (a TLS write to a peer that had reset the connection raised SIGPIPE, so any peer could kill a native- or libssl-backed TLS client or server process); **CVE-67 at 6.6.14** (the native TLS client took any `*.` dNSName as a wildcard, so a certificate for `*.com` verified every `.com` host); **CVE-68 at 6.6.15** (folded sigil's ECDSA P-256 / P-384 signing leaked its secret nonce and key through timing, and left the nonce in dead stack and a vector register); **CVE-69 at 6.6.15** (a `secret var` fn's epilogue wrote its return registers into dead stack after its own wipe); **CVE-70 at 6.6.15** (the native TLS stack never zeroed its ephemeral ECDHE private keys or shared secrets); **CVE-71 at 6.6.15** (native TLS 1.3 accepted an all-zero x25519 shared secret); **CVE-72 at 6.6.15** (a `secret var` or `defer` in a `#naked` fn compiled clean and never ran); **CVE-73 at 6.6.15** (on Windows, folded sigil's trust helpers probed drive-relative rooted POSIX paths any local user can plant); **CVE-74 at 6.6.16** (a plain-socket write to a peer that had reset the connection raised SIGPIPE, so any peer could kill a `lib/net.cyr` client or server process that had not ignored the signal — the plain-socket half of CVE-66's class); **CVE-75 at 6.6.16** (the native TLS chain verifier ignored a CA's extendedKeyUsage, so a CA confined to another purpose could issue a TLS server identity to a native client, or a TLS client identity to a native mTLS server); all thirty-three are appended below.
+string literal shifted file attribution, so a call to another file's `private` fn compiled); **CVE-56 at 6.6.12** (`lib/log.cyr`'s `log_info_kv` / `log_info_int` built a log line past a 512-byte stack buffer); **CVE-57 at 6.6.12** (on Windows, the folded sandhi resolver read a drive-relative `C:\etc\resolv.conf` any local user can plant); **CVE-58 at 6.6.12** (cxvm let guest bytecode read and write the interpreter's own host memory); **CVE-59 at 6.6.13** (the libssl TLS backend never bound the server's certificate to the host, so any chain-valid certificate verified any host); **CVE-60 at 6.6.13** (the libssl backend's `tls_read` / `tls_write` (and `tls_get_peer_spki_der`) returned a C `int` zero-extended, so a tampered record read as ~4 GiB read); **CVE-61 at 6.6.13** (the native TLS stack skipped plaintext ChangeCipherSpec records without limit and had no deadline, so anyone on the path held a thread for ever); **CVE-62 at 6.6.13** (a `[deps.NAME]` header holding `..` made `cyrius deps` create directories and git-clone outside the dep cache — a CVE-32 residual); **CVE-63 at 6.6.13** (the native TLS client verified an IP-literal host against dNSName SAN entries, wildcards included); **CVE-64 at 6.6.14** (a native TLS server that required client certificates authenticated nobody: a TLS 1.2 client connected with none, a TLS 1.3 client with any leaf, and `tls_set_verify` dropped FAIL_IF_NO_PEER_CERT); **CVE-65 at 6.6.14** (on Windows, the native TLS client read its trust roots from a drive-relative `C:\etc\ssl\cert.pem` any local user can plant); **CVE-66 at 6.6.14** (a TLS write to a peer that had reset the connection raised SIGPIPE, so any peer could kill a native- or libssl-backed TLS client or server process); **CVE-67 at 6.6.14** (the native TLS client took any `*.` dNSName as a wildcard, so a certificate for `*.com` verified every `.com` host); **CVE-68 at 6.6.15** (folded sigil's ECDSA P-256 / P-384 signing leaked its secret nonce and key through timing, and left the nonce in dead stack and a vector register); **CVE-69 at 6.6.15** (a `secret var` fn's epilogue wrote its return registers into dead stack after its own wipe); **CVE-70 at 6.6.15** (the native TLS stack never zeroed its ephemeral ECDHE private keys or shared secrets); **CVE-71 at 6.6.15** (native TLS 1.3 accepted an all-zero x25519 shared secret); **CVE-72 at 6.6.15** (a `secret var` or `defer` in a `#naked` fn compiled clean and never ran); **CVE-73 at 6.6.15** (on Windows, folded sigil's trust helpers probed drive-relative rooted POSIX paths any local user can plant); **CVE-74 at 6.6.16** (a plain-socket write to a peer that had reset the connection raised SIGPIPE, so any peer could kill a `lib/net.cyr` client or server process that had not ignored the signal — the plain-socket half of CVE-66's class); **CVE-75 at 6.6.16** (the native TLS chain verifier ignored a CA's extendedKeyUsage, so a CA confined to another purpose could issue a TLS server identity to a native client, or a TLS client identity to a native mTLS server); **CVE-76 at 6.6.16** (a `[deps.X] tag` holding `..` made `cyrius deps` create directories outside the dep cache and print `rm -rf` advice for a directory outside it — a CVE-62 residual); all thirty-four are appended below.
 ⚠ **This line read "next free: CVE-42" while CLAUDE.md read "the next CVE number is 43" and this document ran 39-41.**
 Two authorities, two answers, and nothing reconciled them. CLAUDE.md is the one every closeout reads, so **42 is
 retired unused** and CVE-43 is the entry appended below. Anything below 64 now collides.
@@ -1763,3 +1763,79 @@ connected UDP send are unaffected either way). Windows and agnos were never expo
 **Verified.** `tests/tcyr/crypto/tls_native_ca_eku.tcyr` (82 assertions): openssl-generated P-256 families — five roots and five intermediates, each family one subject and one key, differing only in EKU (absent / serverAuth / clientAuth / codeSigning / anyEKU) — and two leaves fit for both purposes, valid 2025-2049 and read at a pinned 2030-01-01; the rule on each fixture; the verdict table for the trust anchor at depth 0 and depth 1 and for the intermediate, both purposes; path building over duplicate-subject intermediates and over multi-root PEM bundles in both orders; `tls_native_client_verify_chain`. The header records `openssl verify`'s verdict per row. The 6.6.15 lib fails exactly the 16 refusal rows. `tests/tcyr/crossos/tls_native_client_auth.tcyr` (+37 assertions, 297): a clientAuth leaf from a serverAuth-only CA is refused by a native server trusting that CA, TLS 1.3 and 1.2, and authenticated by one trusting the CA's EKU-less twin (same subject and key) — the 6.6.15 lib fails the 8 refusal assertions; it runs at the release gate on ecb, ach, cass and pi. Mutations measured RED: the CA EKU check removed (16 unit rows, the 8 crossos assertions); the anchor's / intermediate's check fed the server purpose whatever the chain's (5 / 3); a wrongly purposed intermediate / root made fatal instead of skipped (4 / 2); an absent EKU read as restricting (26); anyEKU dropped for the client purpose (5). The CVE-17 rows and every other client-auth row are unchanged. x86_64, and qemu-aarch64 locally.
 
 **Not covered.** (1) anyExtendedKeyUsage stays honoured at every depth (above) — a policy choice, not a residual; flipping it is one line and also changes the leaf rule. (2) The native verifier has no policy-constraints / certificate-policies processing and no name constraints (unchanged; a root carrying Windows root-program name constraints is refused whole by the Windows store reader, CVE-65). (3) sigil's own `x509_verify_chain` primitive takes no purpose; nothing in the TLS stack calls it (the native stack uses only its `_x509_verify_link` signature check).
+
+## CVE-76 — a `[deps.X] tag` was joined into the dep-cache path unchecked: `cyrius deps` created directories outside the cache, and printed `rm -rf` advice for a directory outside it (a CVE-62 residual)
+
+*Appended 2026-10-05 (cyrius 6.6.16, lane tool, bite tool-3, item T1). Found by: the 6.6.13 lanes'
+reviews (roadmap backlog, "`cyrius deps` joins the `tag` value into `<home>/deps/<name>/<tag>`
+unchecked"); re-measured, and the `rm -rf` shape found, by the 6.6.16 T1 premise check. Not part of
+the 2026-09-03 sweep: recorded here because this is the live ledger. 6.6.16 spends CVE-74 … CVE-76.*
+
+| | |
+|---|---|
+| **Severity** | P2 (Medium) — directory creation outside the dep cache, driven by any manifest in the dep graph including a transitive dependency's, plus a destructive command PRINTED as advice for a path outside the cache (the user must run it; nothing deletes it on its own). Not P1 like CVE-62: git rejects the traversal ref before it writes a checkout, so only empty leading directories are created, and no bytes are written into an existing file. |
+| **Class** | Path traversal (CWE-22) on a manifest field; a CVE-62 residual (CVE-62 added `_dep_reject_unsafe_name` for the `[deps.NAME]` header only), itself a CVE-32 residual. |
+| **Affected** | every cyrius with named git deps through 6.6.15 — the tag has been joined into the clone dir since named git deps landed; the `rm -rf <cache path>` advice since 6.6.5, when the tampered-cache refusal (`_git_cache_refuse`, the CVE-43 release) began naming the cache path and a recovery. |
+| **Files** | `cbt/deps.cyr` — `_process_named_deps` (the `tag` key, then the clone-dir build `<home>/deps/<name>/<tag>`, `sys_mkdir`, `is_dir`, `git clone`, and `_git_cache_refuse` on an existing dir with no readable `.git`) |
+| **Fixed** | 6.6.16 |
+
+**Vector.** A `cyrius.cyml` — the consumer's own, or the manifest of ANY transitive dependency,
+which `cyrius deps` (and `cyrius build`'s auto-deps) read in the Phase 3 walk — declaring a
+`[deps.<name>]` with `git`, a `tag` holding `..` components, and `modules` (or none: the
+modules-less default clones too).
+
+**Impact.** Measured on 6.6.15 (the tree with the new call removed, throwaway `CYRIUS_HOME` =
+`<W>/home`, local `file://` origin):
+- `tag = "../../../esc/sub"` (root manifest) and `tag = "../../../esc/t"` (a transitive dep's
+  manifest): `git clone --depth 1 -q -b <tag> -- <url> <home>/deps/foo/../../../esc/sub` exits on
+  `fatal: Remote branch ../../../esc/sub not found`, but has already created `<W>/esc`, OUTSIDE
+  `$CYRIUS_HOME`; git removes only the last component it created. `cyrius deps` exits 1. With the
+  default home (`~/.cyrius`), `../../../esc/sub` creates `$HOME/esc`: three `..` leave
+  `CYRIUS_HOME`, and four leave `$HOME`.
+- `tag = "../../.."`, which resolves to an EXISTING directory (`<home>/deps/foo/../../..` = `<W>`,
+  the parent of `CYRIUS_HOME`): `is_dir` is true, so no clone is attempted; the dir has no readable
+  `.git`, so the tampered-cache refusal prints
+  `cache: <W>/home/deps/foo/../../..` and
+  `or: rm -rf <W>/home/deps/foo/../../..   (re-clones from the remote on the next resolve).`
+  Under the default `~/.cyrius` that path is `$HOME`. `..` names the whole dep cache and `../..`
+  names `$CYRIUS_HOME` the same way. A user following the advice deletes their home directory.
+- On PE (no fork) an existing outside dir would instead be vendored as-is through the
+  no-git warning path (from reading the code; not run on cass).
+
+**Fix.** `_dep_reject_unsafe_tag(tag)`, beside `_dep_reject_unsafe_name`, is called right after the
+section's key loop — before the optional / target gates and before any mkdir, clone or `is_dir` —
+and only when a `tag` key is present (`dep_tag != 0`; a tagless dep, the common shape, is never
+checked). It refuses: an empty value (a literal `tag = ""`), `..` anywhere, a leading `/` or `-`,
+any path component starting with `.`, a backslash (a Windows separator), and control bytes
+(< 0x20, 0x7F). A `/` inside the tag stays legal: `release/1.0` is a valid git tag and the clone
+dir stays under `<home>/deps/<name>/`. Git refnames can never contain `..`, a leading `-` or a
+`.`-led component, so no real tag is lost. A refused section prints
+`error: [deps.<name>] tag '<tag>' is not a usable tag (it would make the cache path leave <home>/deps/<name>) — section refused`
+— the tag's non-printing bytes shown as `\xNN` so a hostile manifest cannot put a terminal escape
+on the user's screen — with no derived path and no `rm -rf` advice; it counts an error (exit 1, no
+`cyrius.lock` written) and the walk continues. With the name (CVE-62) and the tag both validated,
+the clone dir is always inside `<home>/deps/<name>/`, so `_git_cache_refuse`'s advice needs no
+change. Same function for the root and every transitive manifest.
+
+**Not covered (backlog, roadmap "Found by the 6.6.16 planning premise checks").** The read side:
+a `modules` entry with `../` or an absolute path, and a transitive manifest's `path`, can vendor
+any local file into the consumer's `lib/` (information disclosure, no write outside `lib/`).
+
+**Survey.** 75 repos in `~/Repos` carry `[deps.X]`; every tag is a plain `X.Y.Z`. Nothing is
+newly refused.
+
+**Verified.** `tests/gates/toolchain/deps_modules_default_or_warned.sh` axis D9 (throwaway `HOME` +
+`CYRIUS_HOME`, local `file://` origins, git calls logged through a PATH shim):
+- D9a root `../../../esc/sub` — refused by name, rc 1, git never invoked, a find snapshot outside
+  `$CYRIUS_HOME/deps` unchanged, no lock;
+- D9b `../../..` naming an existing dir — refused, rc 1, no `rm -rf` and no real path in the
+  output, git never invoked;
+- D9c the same class from a TRANSITIVE manifest — refused, the bad dep's origin never fetched,
+  nothing outside the cache, no lock;
+- D9d `1.0.0` and `rel/1.0` still clone, vendor the tag's bytes and pin the tag's commit;
+- D9e a tagless `path = "../pathdep"` and a tagless git dep still resolve;
+- D9f `""`, `-x`, `/abs`, `.hidden`, `a/.b`, `a\b` and a control byte each refused, the ESC shown
+  as `\x1b`.
+Mutants (each built from `cbt/`, run via `CYRIUS_GATE_CLI`): no call → D9a D9b D9c D9f red; no
+`dep_tag != 0` guard → D4 D9e red (SIGSEGV on a tagless dep); `/` refused → D9d red; empty
+allowed → D9f red; tag printed raw → D9f red.
