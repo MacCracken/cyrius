@@ -54,7 +54,6 @@ set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
 CC="$ROOT/build/cycc"
-CCA="$ROOT/build/cycc_aarch64"
 
 [ -x "$CC" ] || { echo "FAIL: alloc_failure_returns_zero: build/cycc missing"; exit 1; }
 W=$(mktemp -d) && [ -d "$W" ] || { echo "FAIL: alloc_failure_returns_zero: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
@@ -76,6 +75,13 @@ _wine_down() {
 trap '_wine_down; rm -rf "$W"' EXIT
 FAIL=0
 fail() { echo "FAIL: alloc_failure_returns_zero: $*"; FAIL=1; }
+# ⛔ 6.6.17: the aarch64 cross compiler is built FROM THIS TREE into $W. It was read from
+# build/cycc_aarch64, which is gitignored — absent in a fresh worktree (axis 1 failed "compiler
+# for aarch64 missing") and stale whenever src/ has moved since its last rebuild, so the axis
+# could test a compiler the tree no longer produces. CHANGELOG [6.6.17]
+CCA="$W/cca"
+"$CC" < src/main_aarch64.cyr > "$CCA" 2> "$W/cca.err" && chmod +x "$CCA" \
+    || { echo "FAIL: alloc_failure_returns_zero: could not build the aarch64 cross compiler from src/main_aarch64.cyr"; sed -n 1,3p "$W/cca.err"; exit 1; }
 
 # ── axis 1: freelist.cyr included alone compiles on every target ─────────────────────
 printf 'include "lib/freelist.cyr";\nvar _p = fl_alloc(8);\nsyscall(60, 0);\n' > "$W/alone.cyr"
