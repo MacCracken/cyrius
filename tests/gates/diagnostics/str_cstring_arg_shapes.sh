@@ -393,6 +393,38 @@ if grep -q "passing Str-typed 's.clone()' to 'later'" "$T/row.cyr.err" \
     && grep -q "pass str_cstr(mk())" "$T/row.cyr.err"; then
     _ok "axis 4 results: each warning names the argument as written, and the hint wraps it"
 else _bad "axis 4 results: a warning or hint does not name the argument as written"; grep -A1 "$NEEDLE" "$T/row.cyr.err" || true; fi
+# 6.6.17 — a Str TWO steps away (a nested struct field; a generic `: T` with T bound to Str,
+# explicitly or by inference) and the method spelling of a Str's data pointer, `s.data()`. All
+# four were silent; the untyped nested field and the i64-bound generic stay silent.
+printf '%s\n%s\n' "$HDR" 'struct W { h: H; k; }
+fn gid<X>(x: X): X { return x; }
+fn main(): i64 {
+    alloc_init();
+    var s: Str = str_from("abc");
+    var h: H;
+    h.name = s;
+    h.n = 0;
+    var w: W;
+    w.h = h;
+    w.k = 0;
+    var r = later(0, w.h.name);
+    r = r + later(0, gid<Str>(s));
+    r = r + later(0, gid(s));
+    r = r + later(0, s.data());
+    r = r + later(0, w.h.n);
+    r = r + later(0, gid<i64>(5));
+    return r;
+}
+var rc = main();' > "$T/row.cyr"
+row "two steps into a cstring: w.h.name, gid<Str>(s), gid(s), s.data() warn; w.h.n, gid<i64>(5) do not" 4
+if grep -q "passing Str-typed 'w.h.name' to 'later'" "$T/row.cyr.err" \
+    && grep -q "pass str_cstr(w.h.name)" "$T/row.cyr.err" \
+    && grep -q "passing Str-typed 'gid<..>(..)' to 'later'" "$T/row.cyr.err" \
+    && grep -q "passing Str-typed 'gid(s)' to 'later'" "$T/row.cyr.err" \
+    && grep -q "passing a Str's data pointer 's.data()' to 'later'" "$T/row.cyr.err" \
+    && grep -q "pass str_cstr(s)" "$T/row.cyr.err"; then
+    _ok "axis 4 two steps: each warning names the argument as written, and the hint wraps it"
+else _bad "axis 4 two steps: a warning or hint does not name the argument as written"; grep -A1 "$NEEDLE" "$T/row.cyr.err" || true; fi
 # ...and the data pointer is still not a Str: not routed, and still warned about as one.
 printf '%s\n%s\n' "$HDR" 'var gs: Str = str_from("explicit-global");
 fn main(): i64 { alloc_init(); println(gs.data); return 0; }

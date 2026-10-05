@@ -1855,15 +1855,17 @@ fn _cl_cap_esl(S, noff): i64 {
 }
 
 var _sca_shape = 0;   # how the argument's head is written: 0 `x`, 1 `f(..)`, 2 `g<..>(..)`
-var _sca_di = 0;      # the `.` of the one `.f` / `.m(..)` step after the head, 0 when none
+var _sca_di = 0;      # the `.` of the LAST `.f` / `.m(..)` step after the head, 0 when none
+var _sca_d0 = 0;      # the `.` of the FIRST step (6.6.17: nested fields `a.b.name` are several)
 # What the hint wraps in str_cstr(..): 0 `..`, 1 the head as written (`x.data` -> x), 2 the
 # argument as written, 3 the IDENT inside `str_data(x)`.
 var _sca_op = 0;
 # What the argument at the cursor hands a `: cstring` param: 1 a Str, 2 a Str's data pointer
-# (`x.data`, `str_data(..)`), 0 not known. Only a head (`x`, `f(..)`, `g<..>(..)`) with at most
-# ONE step after it (`.f`, `.m(..)`) that together END the argument is typed: `x.f.g`,
-# `x.m().n()`, `s + 8` and `load64(p)` are 0.
-# A pure peek (it writes only `_sca_shape` / `_sca_di` / `_sca_op`, which the warning recomputes),
+# (`x.data`, `x.data()`, `str_data(..)`), 0 not known. Only a head (`x`, `f(..)`, `g<..>(..)`,
+# a generic `: T` by T's binding) followed by nested STRUCT fields and then at most one `.f` /
+# `.m(..)` step, together ENDING the argument, is typed (6.6.17: `a.b.name`): `x.m().n()`,
+# a step into a Str field, `s + 8` and `load64(p)` are 0.
+# A pure peek (it writes only `_sca_shape` / `_sca_di` / `_sca_d0` / `_sca_op`, which the warning recomputes),
 # and it does not depend on CYRIUS_TYPE_CHECK: PARSE_FNCALL's overload dispatcher routes
 # `base(x, ..)` to `base_str` exactly when this answers 1 for the FIRST argument, so a first
 # argument the warning would call "Str-typed" never reaches a base that has an arity-compatible
@@ -1878,6 +1880,7 @@ fn _str_arg_kind(S, ssid): i64 {
     var ti = GTI(S);
     _sca_shape = 0;
     _sca_di = 0;
+    _sca_d0 = 0;
     if (TOKTYP(S, ti) != 2) { return 0; }
     if (_tok_ends_arg(S, ti + 1) == 1) {
         _sca_op = 2;
@@ -1907,6 +1910,7 @@ fn _str_call_kind(S, ti, o, ssid): i64 {
     var cfi = FINDFN(S, TOKVAL(S, ti));
     var rs = 0;
     if (cfi >= 0) { rs = GFRS(S, cfi); }
+    if (rs <= 0) { if (cfi >= 0) { rs = _gen_ret_bound(S, cfi, ti, o); } }   # 6.6.17: `: T`
     if (_tok_ends_arg(S, e + 1) == 0) {
         if (TOKTYP(S, e + 1) != 41) { return 0; }
         var k = _str_step_kind(S, e + 1, rs, ssid);
@@ -1930,17 +1934,22 @@ fn _str_step_kind(S, di, rsid, ssid): i64 {
     if (TOKTYP(S, di + 1) != 2) { return 0; }
     if (rsid <= 0) { return 0; }
     _sca_di = di;
+    if (_sca_d0 == 0) { _sca_d0 = di; }
     if (TOKTYP(S, di + 2) == 10) {
         _sca_op = 2;
         var e = _tok_close_paren(S, di + 2);
         if (e < 0) { return 0; }
         if (_tok_ends_arg(S, e + 1) == 0) { return 0; }
+        if (_str_data_call(S, di, e, rsid, ssid) == 1) { return 2; }   # 6.6.17: `x.data()`
         var mf = FINDFN(S, BUILD_METHOD_NAME(S, rsid - 1, TOKVAL(S, di + 1)));
         if (mf < 0) { return 0; }
         if (GFRS(S, mf) == ssid) { return 1; }
         return 0;
     }
-    if (_tok_ends_arg(S, di + 2) == 0) { return 0; }
+    if (_tok_ends_arg(S, di + 2) == 0) {
+        var nk = _str_nested_step(S, di, rsid, ssid);   # 6.6.17: `a.b.name`
+        return nk;
+    }
     if (rsid == ssid) {
         _sca_op = 1;
         if (_noff_is(S, TOKVAL(S, di + 1), "data", 4) == 1) { return 2; }
@@ -1953,10 +1962,93 @@ fn _str_step_kind(S, di, rsid, ssid): i64 {
     return 0;
 }
 
+# 6.6.17 — `a.b.name`: a field that does not end the argument continues the chain when it is a
+# nested STRUCT and the next step is a field, as PARSE_FIELD_LOAD walks it (`_rlf_more`). A
+# `: Str` field is never stepped INTO (it is a pointer slot, not an inline struct), and a
+# `.m(..)` after a nested field is not parsed at all, so neither is typed.
+fn _str_nested_step(S, di, rsid, ssid): i64 {
+    if (TOKTYP(S, di + 2) != 41) { return 0; }
+    if (TOKTYP(S, di + 3) != 2) { return 0; }
+    if (TOKTYP(S, di + 4) == 10) { return 0; }
+    if (rsid == ssid) { return 0; }
+    var fx = FINDFIELD(S, rsid - 1, TOKVAL(S, di + 1));
+    if (fx < 0) { return 0; }
+    var ft = GETFTYPE(S, rsid - 1, fx);
+    if (ft <= 0) { return 0; }
+    if (ft == ssid) { return 0; }
+    var k = _str_step_kind(S, di + 2, ft, ssid);
+    return k;
+}
+# 6.6.17 — `x.data()` on a Str is its data pointer, the method spelling of `x.data` and
+# `str_data(x)` (I11 named those two and was silent on this one). 1 when the step at `di`, its
+# `)` at `e`, is exactly that.
+fn _str_data_call(S, di, e, rsid, ssid): i64 {
+    if (rsid != ssid) { return 0; }
+    if (e != di + 3) { return 0; }
+    if (_noff_is(S, TOKVAL(S, di + 1), "data", 4) == 0) { return 0; }
+    _sca_op = 1;
+    return 1;
+}
+# 6.6.17 — what a generic declared `: T` returns at THIS call: the struct T is bound to, by the
+# explicit type argument (`g<Str>(..)`) or by the argument the call infers it from (`g(s)`) — the
+# binding `_gen_resolve_call` instantiates on. A peek: no instance is minted here. 0 when T is not
+# bound to a struct (the call returns a scalar, as before).
+fn _gen_ret_bound(S, fi, ti, o): i64 {
+    if (_MONOMORPH_OK == 0) { return 0; }
+    var w = _gen_ret_tparam(S, fi);
+    if (w < 0) { return 0; }
+    var c = 0;
+    if (o != ti + 1) { c = _gen_explicit_targ(S, ti, w); }
+    else { c = _gen_infer_tp(S, fi, o, w); }
+    if (c > 0) { return c; }
+    return 0;
+}
+# Which type parameter (0 / 1) generic `fi` names as its return type, read from its signature
+# (`fn g<T>(..): T`), else -1.
+fn _gen_ret_tparam(S, fi): i64 {
+    var tp = GFTP(S, fi);
+    if (tp == 0) { return 0 - 1; }
+    var ds = GFDS(S, fi);
+    if (ds <= 0) { return 0 - 1; }
+    var i = ds;                                  # the fn's name (GFDS = the `fn` token + 1)
+    var n = GTCNT(S);
+    while (i < n) { if (TOKTYP(S, i) == 10) { break; } i = i + 1; }
+    var e = _tok_close_paren(S, i);
+    if (e < 0) { return 0 - 1; }
+    if (TOKTYP(S, e + 1) != 49) { return 0 - 1; }
+    if (TOKTYP(S, e + 2) != 2) { return 0 - 1; }
+    var rn = TOKVAL(S, e + 2);
+    var t0 = tp & 0xFFFFFFFF;
+    var t1 = (tp >> 32) & 0xFFFFFFFF;
+    if (t0 != 0) { if (rn == t0 - 1) { return 0; } }
+    if (t1 != 0) { if (rn == t1 - 1) { return 1; } }
+    return 0 - 1;
+}
+# The struct named by explicit type argument `w` of the call at `ti` (`g<A>(` / `g<A, B>(`), when
+# it is a single name; 0 otherwise (a scalar or a nested generic is not a Str).
+fn _gen_explicit_targ(S, ti, w): i64 {
+    var a = ti + 2;
+    if (w == 1) {
+        if (TOKTYP(S, a + 1) != 31) { return 0; }
+        a = a + 2;
+    }
+    if (TOKTYP(S, a) != 2) { return 0; }
+    var nt = TOKTYP(S, a + 1);
+    if (nt != 20) { if (nt != 31) { return 0; } }
+    var sid = FINDSTRUCT(S, TOKVAL(S, a));
+    return sid;
+}
+
 # The argument as written: the head (`x`, `f(..)`, `g<..>(..)`), then its step (`.f`, `.m(..)`).
 fn _sca_print_arg(S): i64 {
     _sca_print_head(S);
     if (_sca_di > 0) {
+        var d = _sca_d0;
+        while (d < _sca_di) {                     # the nested fields before the last step
+            syscall(SYS_WRITE, 2, ".", 1);
+            PRSTR(S + 0xEC00000 + TOKVAL(S, d + 1));
+            d = d + 2;
+        }
         syscall(SYS_WRITE, 2, ".", 1);
         PRSTR(S + 0xEC00000 + TOKVAL(S, _sca_di + 1));
         if (TOKTYP(S, _sca_di + 2) == 10) { _sca_print_call_args(S, _sca_di + 1); }

@@ -55,6 +55,18 @@ fn Rec_num(self: Rec): i64 { return self.n; }
 # A generic declared `: Str` (the template's return is the call's), and one returning `T`.
 fn gstr<T>(x: T): Str { return str_from("generic"); }
 fn gid<T>(x: T): T { return x; }
+# 6.6.17 — a Str TWO steps away: a nested struct field (`w.h.name`, `mkw().h.name`) and a generic
+# declared `: T` with T bound to Str (`gid<Str>(s)`, `gid(s)`). Wrap is 32 bytes (cx: no 16-byte
+# pair return).
+struct Wrap { h: Rec; k; }
+fn mkw(): Wrap {
+    var w: Wrap;
+    w.h = mkh();
+    w.k = 3;
+    return w;
+}
+fn tail_nested_call(): i64 { return show(mkw().h.name); }
+fn tail_gen_bound(): i64 { return show(gid<Str>(gs)); }
 
 # ---- registered by PARSE_GVAR_REG: declared before the first top-level statement ----
 var gs: Str = str_from("explicit-global");
@@ -254,6 +266,32 @@ fn test_lib_pairs(): i64 {
     return 0;
 }
 
+fn test_two_steps(): i64 {
+    var w: Wrap;
+    w.h = mkh();
+    w.k = 9;
+    var ls: Str = str_from("local");
+    var li = str_from("inferred");
+    assert_eq(show(w.h.name), 2, "a `: Str` field of a nested struct field (w.h.name)");
+    assert_eq(show(w.h.n), 1, "an untyped field of a nested struct field (w.h.n)");
+    assert_eq(show(mkw().h.name), 2, "a `: Str` field two steps past a call (mkw().h.name)");
+    assert_eq(show(mkw().h.n), 1, "an untyped field two steps past a call");
+    assert_eq(show(gid<Str>(ls)), 2, "an explicit generic `: T` with T = Str");
+    assert_eq(show(gid(ls)), 2, "an inferred generic `: T` from a `: Str` local");
+    assert_eq(show(gid(li)), 2, "an inferred generic `: T` from an inferred Str local");
+    assert_eq(show(gid<i64>(5)), 1, "an explicit generic `: T` with T = i64 stays on the base");
+    assert_eq(show(gid(5)), 1, "an inferred generic `: T` from a literal stays on the base");
+    assert_eq(show(ls.data()), 1, "a Str's data pointer (method spelling) stays on the base");
+    assert_eq(tail_nested_call(), 2, "return show(mkw().h.name);");
+    assert_eq(tail_gen_bound(), 2, "return show(gid<Str>(gs));");
+    # The library pair, where a misroute is a WRONG LENGTH (the header's pointer bytes).
+    assert_eq(strlen(w.h.name), 5, "strlen(w.h.name)");
+    assert_eq(strlen(mkw().h.name), 5, "strlen(mkw().h.name)");
+    assert_eq(strlen(gid<Str>(ls)), 5, "strlen(gid<Str>(ls))");
+    assert_eq(strlen(gid(li)), 8, "strlen(gid(li))");
+    return 0;
+}
+
 test_globals();
 test_toplevel();
 test_locals();
@@ -262,4 +300,5 @@ test_tail_and_params();
 test_results();
 test_captures();
 test_lib_pairs();
+test_two_steps();
 var r = assert_summary();
