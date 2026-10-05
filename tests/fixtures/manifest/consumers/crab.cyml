@@ -1,0 +1,177 @@
+[package]
+name = "crab"
+version = "${file:VERSION}"
+description = "crab — sovereign Cyrius-native file manager for AGNOS. Dual-pane GUI on the dhancha/setu desktop stack. PLANNED, NOT SHIPPED: AI semantic find / auto-tag / dedup via daimon's vector store, files-as-memory, sibling to mneme. The hermit crab carries its $HOME and reaches out to grab: a sea-arthropod parity on KDE's Dolphin, wearing Rust's own mascot (Ferris) while replacing the Rust interim (yazi). Roadmap Priority 1 — ship before beta."
+license = "GPL-3.0-only"
+language = "cyrius"
+cyrius = "6.6.6"
+
+[build]
+entry = "src/main.cyr"
+# ⚠ INERT. `cyrius test` auto-discovers `tests/*.tcyr` and never consults this key — proven by
+# pointing it at a file that exits 1 and watching `cyrius test` still return 0. It names where the
+# suite is; it does not run it. The real gates are `cyrius test` and `.github/workflows/ci.yml`.
+test = "tests"
+output = "crab"
+
+[deps]
+# ⚠ `chrono` is load-bearing: setu's agnos read path needs it, and `cyrius deps`' own validation
+# cannot catch its absence when a sidecar under-reports.
+# ⭐ `net` IS GONE (0.10.0). setu dropped TCP at 0.8.4 and crab has pinned past it since 0.4.5, so
+# the leaf had been dead for six minor versions while this comment said so and carried it anyway.
+# ⚠ RE-MEASURED AT THE CUT RATHER THAN TRUSTED FROM THE NOTE, AND THE NOTE WAS LOOSE. It said
+# "measured clean"; the binaries are NOT byte-identical — both grew 16 bytes and 182,246 bytes
+# differ, because dropping a leaf from the middle of the list changes the FOLD ORDER and everything
+# after it shifts. What IS clean is what matters: no undefined symbol on either target, `cyrius deps`
+# resolves, `deny` 0 violations, the suite unchanged at 2451/0.
+# ⇒ "Measured clean" and "byte-identical" are different claims and this comment used to blur them.
+stdlib = ["string", "fmt", "alloc", "io", "vec", "str", "args", "syscalls", "assert", "bench", "hashmap", "fnptr", "tagged", "result", "chrono"]
+
+# ⛔ ORDER MATTERS: sadish (2D vector) THEN rekha (text; references sd_*) THEN dhancha (widgets;
+# references both). dhancha's dist references sd_*/rekha_* rather than bundling them, so crab must
+# supply them directly.
+# ⛔ `path` WINS OVER `tag`, so a green local build is NOT evidence the declared graph resolves.
+# Re-verify with the overrides disabled at every cut — see `docs/development/state.md` § Hazards.
+# ⛔ AND THE CONVERSE BITES TOO, MEASURED 2026-09-21: a sibling that moves AHEAD of these tags breaks
+# the local build while the committed tree is fine. `../dhancha` at 0.10.4 calls
+# `sd_flatten_op_begin` / `_end` / `sd_flatten_degraded`, which the then-pinned sadish 0.5.5 does not
+# define — `path` won, `lib/dhancha.cyr` was rewritten, and the build refused 3 undefined functions
+# against a manifest that had not changed. To rebuild what a tag actually shipped, disable the
+# `path` lines and resolve from the tags (that reproduced 0.10.1's artifacts byte-identical).
+
+# ⛔ FLOOR: dhancha 0.10.4's `dh_draw_text_ink` calls `sd_flatten_op_begin` / `_end` /
+# `sd_flatten_degraded` (per-operation flatten budget, sadish 0.7.x); 0.10.0's floor of >= 0.5.5
+# (`sd_alloc_set`, `sd_canvas_blit_at`) stands beneath it.
+# ⛔ MOVE sadish AND rekha TOGETHER. rekha 0.9.0 pins sadish 0.11.2 EXACTLY and its dist is cut
+# against sadish's inline-point `SdPath`; two bundles on two sadishes is a link error at best.
+# ⚠ The bundle is 471,512 B of source (85,815 at 0.5.5). Linked whole it cost +49 % of the binary
+# (0.10.2); since 0.10.3 CI and the release build under `CYRIUS_DCE=1` (operator ruling) and the
+# unreachable four fifths of it are NOPed — 878,376 B on the target against 1,685,288 plain.
+[deps.sadish]
+git = "https://github.com/MacCracken/sadish.git"
+tag = "0.11.2"
+modules = ["dist/sadish.cyr"]
+
+# rupa (रूप — form) — the shared desktop theme-token core. crab reads its tokens through dhancha's
+# `dh_theme_*` and names no colour of its own (ADR 0001).
+# ⛔ FLOOR >= 0.1.5, HARD: dhancha 0.9.20 binds `dh_theme_on_accent()` to `rupa_theme_on_accent`.
+# Against an older pin the toolkit references a function crab's own dep graph does not supply.
+[deps.rupa]
+git = "https://github.com/MacCracken/rupa.git"
+path = "../rupa"
+tag = "0.1.7"
+modules = ["dist/rupa.cyr"]
+
+# rekha — scalable TrueType outlines. Since 0.9.0 crab draws with it: `crab_face` opens the
+# kernel's `/fonts/default.ttf` through `rekha_font_open` and sizes every column by
+# `rekha_char_advance_px` / `rekha_units_per_em`; dhancha's fold calls the rest.
+# ⛔ FLOOR >= 0.3.6, HARD: dhancha 0.9.27's `dh_text_advance` calls `rekha_char_advance_px`, which
+# 0.3.5 does not define. Against an older pin crab fails to link with
+# `undefined function 'rekha_char_advance_px'` — measured, not predicted.
+# ⛔ 0.9.0 pins sadish 0.11.2 EXACTLY — see the sadish block: the two move together.
+# ⛔⛔ TAG-ONLY, AND DELIBERATELY SO. sadish, rekha and chitra are the only three deps crab resolves
+# without a `path` override, which makes them the only three whose REMOTE resolution a local build
+# actually exercises. Do not add one — that property is what stands between this manifest and the
+# 2026-08-28 phantom-tag failure. (This line said "two" until 0.10.2; chitra has been tag-only since
+# it was adopted on 2026-08-31.)
+[deps.rekha]
+git = "https://github.com/MacCracken/rekha.git"
+tag = "0.9.0"
+modules = ["dist/rekha.cyr"]
+
+# kashi (काशि) — the AGNOS system font. dhancha's `dh_draw_text` blits its CP437 8x16 glyphs for
+# default (font = 0) text.
+# ⛔ THE FREESTANDING CORE IS A MEASURED CHOICE, NOT A SHORTCUT, and it has a written expiry:
+# switch to `modules = ["dist/kashi.cyr"]` the day crab needs runtime font LOADING.
+# See docs/adr/0003-kashi-freestanding-core-over-the-library-face.md.
+# ⚠ That switch would have FAILED against every kashi through 1.0.8 — `dist/` was gitignored and no
+# release attached it, so a `git` + `tag` resolve found no bundle (kashi 1.0.10's own finding).
+# 1.0.10 tracks and publishes it; the expiry is executable now. `src/font_data.cyr` is byte-identical
+# from 1.0.8 to 1.0.10.
+[deps.kashi]
+git = "https://github.com/MacCracken/kashi.git"
+path = "../kashi"
+tag = "1.0.10"
+modules = ["src/font_data.cyr"]
+
+# dhancha — the widget toolkit: LIST, GRID, PROGRESS, MENU, SHEET, the theme bindings, and the
+# per-frame arena crab's render path depends on.
+# ⛔ FLOOR >= 0.9.18, HARD: `src/main.cyr` references `POINTER_SCROLL`, which 0.9.17 does not define.
+# The host target builds without it and `--agnos` does not — which is why CI builds both.
+# ⛔ 0.9.15 IS A CONTRACT: `dh_frame_begin` rewinds the arena AND clears dhancha's retained widget
+# pointers. The halves cannot be separated — never call `arena_reset` on a frame arena — and an app
+# on a frame arena must re-establish focus every frame, which `crab_pane` does.
+# ⛔ 0.9.14 IS A CONTRACT: `dh_surface_render` may return the SAME surface twice. A caller wanting
+# two frames at once needs two DhSurfaces; `src/render_test.cyr` is one and guards it.
+# ⚠ The allocation-gate history that used to live here is docs/architecture/001's subject.
+[deps.dhancha]
+git = "https://github.com/MacCracken/dhancha.git"
+path = "../dhancha"
+tag = "0.10.4"
+modules = ["dist/dhancha.cyr"]
+
+# setu — the display client transport. On agnos it is the channel band (syscall #97 `chan_op`); it
+# reads `AGNOS_CHAN` and does not dial. ⛔ FLOOR: agnos >= 1.56.40.
+[deps.setu]
+git = "https://github.com/MacCracken/setu.git"
+path = "../setu"
+tag = "0.8.9"
+modules = ["dist/setu.cyr"]
+
+# chitra (चित्र — image) — CPU raster decode (PNG/JPEG/GIF/BMP) for THUMBNAILS only. The preview's
+# DIMENSIONS line uses no decoder at all: `crab_img_dims` reads header bytes.
+# ⛔⛔ EVERY DECODE IS PERMANENT AND THAT — NOT THE BINARY SIZE — IS THE LIVE CONSTRAINT. chitra makes
+# 31 `alloc()` calls, `chitra_image_free` is a no-op, and cyrius's `alloc` has no `free()`. The two
+# budgets that bound it are `CRAB_THUMB_MAX_RGBA` and `CRAB_THUMB_TOTAL_MAX` in `src/app.cyr`, and
+# they are the first thing to delete the day the allocator gains a `free()`.
+# ⚠ Adopting it cost +115 % of the binary, ~399 KB of which is the transitive `sankoch` inflate leaf
+# PNG requires. Operator ruling 2026-08-31, taken with the measurements in hand.
+# ⚠ crab declares none of chitra's extra stdlib leaves and does not need to — `dist/chitra.deps` is
+# authoritative, and deleting them produced a byte-identical binary.
+[deps.chitra]
+git = "https://github.com/MacCracken/chitra.git"
+tag = "1.0.3"
+modules = ["dist/chitra.cyr"]
+
+# daimon (δαίμων) — the AGNOS agent orchestrator, and the intended back end for crab's M7/M8 arc:
+# the local index, tags, smart folders (M7) and assisted search (0.11.0). Duplicate detection
+# shipped at 0.10.0 without it, which is the rule below working.
+#
+# ⛔⛔ DECLARED, NOT LINKED, AND THAT IS THE WHOLE SHAPE OF THIS DEPENDENCY. daimon is a BINARY —
+# `[build] output = "build/daimon"` — and ships no `dist/`. There is no module for crab to fold in,
+# and there must not be: linking an agent orchestrator into a file manager would put its HTTP
+# server, its scheduler and its federation code in crab's address space for the sake of a query.
+# ⇒ crab TALKS to it, over daimon's HTTP API — daimon 2.3.0's own words: *"crab reaches it over
+# HTTP"*. JSON bodies, one request per connection, 64 KB cap, 120 requests/min per source. It binds
+# 127.0.0.1:8090 on Linux; on agnos it listens on the NIC's own address (`sock_listen`#56 takes
+# none) and TCP to 127.0.0.1 is dropped there, so a client dials `sys_net_ip()` and still sends
+# `Host: 127.0.0.1` — which is exactly what daimon's own agnos guest client does.
+# ⛔ THE AF_UNIX SOCKET THIS BLOCK USED TO NAME NO LONGER EXISTS. `agent_ipc_new` → `<dir>/<agent>.sock`
+# was REMOVED at daimon 2.3.3 (no caller; its `SO_PEERCRED` check failed open). An agent daimon
+# STARTS now gets a channel on fd 3 (`chan_op`#97 on agnos) — that is for daimon's children, not crab.
+# ⚠ NO `modules` KEY, DELIBERATELY. A `modules` entry here would make `cyrius deps` try to fold a
+# file that does not exist. The pin records WHICH daimon crab's protocol is written against, which
+# is what a version pin is for whether or not a linker ever reads it — and it enters no lock.
+# ⛔⛔ SO NOTHING IN THE TOOLCHAIN VERIFIES THIS TAG — measured 2026-09-23: `tag = "9.9.9"`, a tag that
+# does not exist, with every `path` disabled → `cyrius deps` "7 deps resolved", `deps --verify` 49/0,
+# daimon never fetched. A phantom daimon pin passes every gate crab has (the 2026-08-28 class). It
+# is checked by `git ls-remote --tags` at each cut and by nothing else.
+# ⛔ AND crab STILL RUNS WITHOUT IT. The index is an enrichment, not a precondition: a crab on a box
+# with no daimon lists, copies, moves and deletes exactly as it does today, and the M7 surfaces
+# report that the index is unavailable rather than failing. That is the same rule the preview
+# follows for a file it cannot decode — say which kind of nothing this is.
+# ✅ IT BUILDS AND RUNS ON AGNOS — re-derived for 2.4.3 on 2026-09-23, not taken from its changelog:
+# `cyrius build --agnos` 0 errors (was 53 at 2.1.4), and the 2.4.3 commit's CI job "AGNOS guest
+# test — Guest test on the released agnos kernel" passed. The blocker this block recorded at 0.10.2
+# closed upstream as it predicted: cyrius 6.6.6's `distlib` dropped `syscalls_linux_common` from
+# bote's sidecar (bote 3.3.10); daimon's own three sites went with its 2.1.7 agnos port.
+# ⛔⛔ BUT THE BUILD WAS NEVER THE ONLY GATE, AND THIS BLOCK SAID IT WAS. M7 needs daimon to HOLD a
+# disk-wide file index and per-file tags; M8 needs ranked FILE results that say why they matched.
+# daimon 2.4.3 offers none of it: none of the 25 path branches in `http_route` is about files; its
+# per-agent memory store has no route and no tag field; its RAG is in-memory only (the vector store
+# never writes to disk), embeds by a 32-slot character-sum hash, and answers with a prompt template,
+# not paths. Filed: daimon/docs/development/issues/2026-09-23-crab-needs-a-file-index-tags-and-ranked-search.md
+[deps.daimon]
+git = "https://github.com/MacCracken/daimon.git"
+path = "../daimon"
+tag = "2.4.3"

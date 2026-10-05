@@ -1,0 +1,427 @@
+[package]
+name = "sigil"
+version = "${file:VERSION}"
+description = "Sigil — system-wide trust verification for AGNOS. Ed25519, SHA-256/512, HMAC, HKDF, AES-256-GCM, integrity, audit."
+license = "GPL-3.0-only"
+repository = "https://github.com/MacCracken/sigil"
+language = "cyrius"
+cyrius = "6.6.14"
+
+[build]
+entry = "programs/smoke.cyr"
+output = "build/sigil"
+defines = ["SIGIL_SMOKE"]
+# NOTE (2.9.4): smoke-test program currently produced at build/sigil so
+# the genesis boot pipeline's --iso-check (which expects build/<package>)
+# finds the artifact. A future patch will replace this with a real
+# library-probe build that doesn't define SIGIL_SMOKE; later still, the
+# boot will look at dist/sigil.cyr (source bundle, sigil's actual
+# consumer-facing artifact) once that path has been hardened in test.
+#
+# Test layout: sigil uses the per-module integration-test pattern
+# (every module gets its own `tests/tcyr/<module>.tcyr` file with
+# self-contained assertions). There is no unified `src/test.cyr`
+# entry. Drive the suite via:
+#   for t in tests/tcyr/*.tcyr; do cyrius test "$t"; done
+# This matches agnosticos first-party-standards § Testing's
+# "Integration tests: `tests/*.tcyr` for cross-module behavior"
+# branch — sigil's per-module crypto / parser scope makes this
+# pattern cleaner than a single src/test.cyr roll-up.
+
+# `modules` declares the src/ files `cyrius distlib` concatenates
+# into `dist/sigil.cyr`. Order matches src/lib.cyr's includes —
+# each module may reference symbols defined earlier.
+#
+# INVARIANT (restored 3.12.2): this list and `src/lib.cyr`'s `include`
+# directives must have the SAME entries, in the same order — 67 each (65 until
+# 3.13.8 added src/ec_ct.cyr and src/ecdh.cyr).
+# They had diverged: `src/efi_sigdb.cyr` (UEFI signature-list / .esl /
+# .auth enrollment, shipped 3.11.1) was listed here but never included
+# by src/lib.cyr, so every dist/ consumer got it while the
+# `programs/smoke.cyr` build surface did not — nothing compiled it
+# through that path. The include was added at 3.12.2; keep the two in
+# step when adding a module.
+#
+# The bundle must be self-contained (Cyrius 5.2.1's distlib
+# compile-checks the result). As of 3.8.1 the trust stack is fully
+# INTERNALIZED (the agnosys → agnodrm decomposition) and is now fully
+# BUNDLED (P2 — trust API first-class in dist):
+#   - support: src/sys_error.cyr / src/sys_util.cyr / src/sysinfo.cyr
+#     define the SYSE_* errors + the internalized `agnosys_*` helpers
+#     (json-emit / uname / run_capture / hex-char) the cores call;
+#   - cores:   src/{certpin,tpm,ima,secureboot}_core.cyr +
+#     src/dmverity.cyr + src/luks.cyr build on the support layer;
+#   - wrappers: src/{tpm,ima,secureboot,certpin}.cyr sit on the cores.
+# All are bundled below, so `dist/sigil.cyr` now exposes the FULL
+# crypto + trust engine (TPM seal/unseal, IMA, SecureBoot, cert-pin,
+# dm-verity, LUKS), not just the crypto core — no external agnosys dep
+# remains. Order mirrors src/lib.cyr's src-include order: support +
+# cores BEFORE types; wrappers AFTER audit, before verify.
+#
+# IMPORTANT: keep `modules` under `[lib]`, NOT `[build]`. 5.7.x
+# treats `[build].modules` as an auto-prepend list and inlines
+# every src/ file into the temp before the entry source — which
+# then re-includes them via `src/lib.cyr`'s include directives,
+# producing 374 duplicate-fn warnings. Same lesson agnosys
+# learned at 1.0.1 ("76% binary size reduction").
+[lib]
+modules = [
+    # Internalized trust support + cores (3.8.1 fold; bundled at 3.9.0 — P2).
+    # Must precede types/crypto: the cores call the agnosys_* helpers these
+    # support modules define. Mirrors src/lib.cyr lines 52-60.
+    "src/sys_error.cyr",
+    "src/sys_util.cyr",
+    "src/sysinfo.cyr",
+    "src/certpin_core.cyr",
+    "src/tpm_core.cyr",
+    "src/ima_core.cyr",
+    "src/secureboot_core.cyr",
+    "src/dmverity.cyr",
+    "src/luks.cyr",
+    "src/types.cyr",
+    "src/error.cyr",
+    "src/random.cyr",
+    "src/crypto_scratch.cyr",
+    "src/mul64.cyr",
+    "src/sha_ni.cyr",
+    "src/sha256.cyr",
+    "src/hex.cyr",
+    "src/hmac.cyr",
+    "src/hkdf.cyr",
+    "src/aes_ni.cyr",
+    "src/aes_gcm.cyr",
+    "src/poly1305.cyr",
+    "src/chacha20.cyr",
+    "src/chacha20poly1305.cyr",
+    "src/sha512.cyr",
+    "src/sha384.cyr",
+    "src/blake2b.cyr",
+    "src/argon2.cyr",
+    "src/hmac_sha384.cyr",
+    "src/hkdf_sha384.cyr",
+    "src/tls12_prf.cyr",
+    "src/bigint_ext.cyr",
+    "src/bignum.cyr",
+    "src/ed25519.cyr",
+    "src/x25519.cyr",
+    "src/ecdsa_p256.cyr",
+    "src/ecdsa_p384.cyr",
+    "src/ec_ct.cyr",
+    "src/ecdh.cyr",
+    "src/ecdsa_sign.cyr",
+    "src/x509.cyr",
+    "src/pem.cyr",
+    "src/privkey.cyr",
+    "src/rsa.cyr",
+    "src/authenticode.cyr",
+    "src/efi_sigdb.cyr",
+    "src/sgx.cyr",
+    "src/sev_snp.cyr",
+    "src/tdx.cyr",
+    "src/seal.cyr",
+    "src/mldsa_params.cyr",
+    "src/mldsa_reduce.cyr",
+    "src/mldsa_ntt.cyr",
+    "src/mldsa_poly.cyr",
+    "src/mldsa_rounding.cyr",
+    "src/mldsa_encode.cyr",
+    "src/mldsa_sample.cyr",
+    "src/mldsa.cyr",
+    "src/trust.cyr",
+    "src/integrity.cyr",
+    "src/policy.cyr",
+    "src/audit.cyr",
+    # Trust wrappers over the cores (bundled at 3.9.0 — P2). Mirrors the
+    # src/lib.cyr wrapper block: after audit.cyr, before verify.cyr.
+    # No line numbers here on purpose — they rot on every include added
+    # above them, and the previous ones had. NOTE: `distlib` scans this
+    # array for quoted strings WITHOUT skipping `#` comments, so a
+    # double-quoted phrase in a comment inside the array is parsed as a
+    # module path and fails the build. Keep comment prose unquoted.
+    "src/tpm.cyr",
+    "src/ima.cyr",
+    "src/secureboot.cyr",
+    "src/certpin.cyr",
+    "src/verify.cyr",
+]
+
+
+# `[lib.argon2]` — Argon2id password hashing (RFC 9106) + its BLAKE2b (RFC 7693).
+# `cyrius distlib argon2` -> dist/sigil-argon2.cyr. 4-module closure of the
+# argon2/blake2b entry points, compile-verified self-contained (no undefined
+# sigil symbol). Order matches the [lib] include chain (single-pass). Lets a
+# consumer that only needs password hashing (e.g. a login endpoint) avoid the
+# full 67-module bundle's global footprint.
+[lib.argon2]
+modules = [
+    "src/error.cyr",
+    "src/crypto_scratch.cyr",
+    "src/blake2b.cyr",
+    "src/argon2.cyr",
+]
+
+# `[lib.sha]` — SHA-2 family (SHA-256/384/512 + SHA-NI) — the hashing floor.
+# `cyrius distlib sha` -> dist/sigil-sha.cyr. 5-module closure of the
+# sha entry points, compile-verified self-contained (no undefined sigil symbol).
+# Order matches the [lib] include chain (single-pass). Lets a consumer that only
+# needs sha avoid the full 67-module bundle's global footprint.
+[lib.sha]
+modules = [
+    "src/crypto_scratch.cyr",
+    "src/sha_ni.cyr",
+    "src/sha256.cyr",
+    "src/sha512.cyr",
+    "src/sha384.cyr",
+]
+
+# `[lib.hmac]` — HMAC-SHA256 / HMAC-SHA384 message authentication.
+# `cyrius distlib hmac` -> dist/sigil-hmac.cyr. 7-module closure of the
+# hmac entry points, compile-verified self-contained (no undefined sigil symbol).
+# Order matches the [lib] include chain (single-pass). Lets a consumer that only
+# needs hmac avoid the full 67-module bundle's global footprint.
+[lib.hmac]
+modules = [
+    "src/crypto_scratch.cyr",
+    "src/sha_ni.cyr",
+    "src/sha256.cyr",
+    "src/hmac.cyr",
+    "src/sha512.cyr",
+    "src/sha384.cyr",
+    "src/hmac_sha384.cyr",
+]
+
+# `[lib.hkdf]` — HKDF (SHA-256 + SHA-384) key derivation.
+# `cyrius distlib hkdf` -> dist/sigil-hkdf.cyr. 9-module closure of the
+# hkdf entry points, compile-verified self-contained (no undefined sigil symbol).
+# Order matches the [lib] include chain (single-pass). Lets a consumer that only
+# needs hkdf avoid the full 67-module bundle's global footprint.
+[lib.hkdf]
+modules = [
+    "src/crypto_scratch.cyr",
+    "src/sha_ni.cyr",
+    "src/sha256.cyr",
+    "src/hmac.cyr",
+    "src/hkdf.cyr",
+    "src/sha512.cyr",
+    "src/sha384.cyr",
+    "src/hmac_sha384.cyr",
+    "src/hkdf_sha384.cyr",
+]
+
+# `[lib.aes]` — AES-GCM AEAD (128/256, AES-NI accelerated).
+# `cyrius distlib aes` -> dist/sigil-aes.cyr. 5-module closure of the
+# aes entry points, compile-verified self-contained (no undefined sigil symbol).
+# Order matches the [lib] include chain (single-pass). Lets a consumer that only
+# needs aes avoid the full 67-module bundle's global footprint.
+[lib.aes]
+modules = [
+    "src/error.cyr",
+    "src/crypto_scratch.cyr",
+    "src/sha_ni.cyr",
+    "src/aes_ni.cyr",
+    "src/aes_gcm.cyr",
+]
+
+# `[lib.chacha]` — ChaCha20-Poly1305 AEAD.
+# `cyrius distlib chacha` -> dist/sigil-chacha.cyr. 5-module closure of the
+# chacha entry points, compile-verified self-contained (no undefined sigil symbol).
+# Order matches the [lib] include chain (single-pass). Lets a consumer that only
+# needs chacha avoid the full 67-module bundle's global footprint.
+[lib.chacha]
+modules = [
+    "src/error.cyr",
+    "src/crypto_scratch.cyr",
+    "src/poly1305.cyr",
+    "src/chacha20.cyr",
+    "src/chacha20poly1305.cyr",
+]
+
+# `[lib.ed25519]` — Ed25519 signatures + X25519 key agreement.
+# `cyrius distlib ed25519` -> dist/sigil-ed25519.cyr. 7-module closure of the
+# ed25519 entry points, compile-verified self-contained (no undefined sigil symbol).
+# Order matches the [lib] include chain (single-pass). Lets a consumer that only
+# needs ed25519 avoid the full 67-module bundle's global footprint.
+[lib.ed25519]
+modules = [
+    "src/random.cyr",
+    "src/crypto_scratch.cyr",
+    "src/mul64.cyr",
+    "src/sha512.cyr",
+    "src/bigint_ext.cyr",
+    "src/ed25519.cyr",
+    "src/x25519.cyr",
+]
+
+# `[lib.ecdsa]` — ECDSA P-256 / P-384 sign+verify (RFC 6979 deterministic) and, since
+# 3.13.8, ECDH on the same two curves (src/ecdh.cyr) over the constant-time engine
+# (src/ec_ct.cyr) that signing also runs on.
+# `cyrius distlib ecdsa` -> dist/sigil-ecdsa.cyr. 14-module closure of the
+# ecdsa entry points, compile-verified self-contained (no undefined sigil symbol).
+# Order matches the [lib] include chain (single-pass). Lets a consumer that only
+# needs ecdsa avoid the full 67-module bundle's global footprint.
+[lib.ecdsa]
+modules = [
+    "src/crypto_scratch.cyr",
+    "src/mul64.cyr",
+    "src/sha_ni.cyr",
+    "src/sha256.cyr",
+    "src/hmac.cyr",
+    "src/sha512.cyr",
+    "src/sha384.cyr",
+    "src/hmac_sha384.cyr",
+    "src/bigint_ext.cyr",
+    "src/ecdsa_p256.cyr",
+    "src/ecdsa_p384.cyr",
+    "src/ec_ct.cyr",
+    "src/ecdh.cyr",
+    "src/ecdsa_sign.cyr",
+]
+
+# `[lib.mldsa]` — ML-DSA (FIPS 204, Dilithium) post-quantum signatures.
+# `cyrius distlib mldsa` -> dist/sigil-mldsa.cyr. 15-module closure of the
+# mldsa entry points, compile-verified self-contained (no undefined sigil symbol).
+# Order matches the [lib] include chain (single-pass). Lets a consumer that only
+# needs mldsa avoid the full 67-module bundle's global footprint.
+[lib.mldsa]
+modules = [
+    "src/types.cyr",
+    "src/random.cyr",
+    "src/crypto_scratch.cyr",
+    "src/mul64.cyr",
+    "src/sha512.cyr",
+    "src/bigint_ext.cyr",
+    "src/ed25519.cyr",
+    "src/mldsa_params.cyr",
+    "src/mldsa_reduce.cyr",
+    "src/mldsa_ntt.cyr",
+    "src/mldsa_poly.cyr",
+    "src/mldsa_rounding.cyr",
+    "src/mldsa_encode.cyr",
+    "src/mldsa_sample.cyr",
+    "src/mldsa.cyr",
+]
+
+# `[lib.x509]` — X.509 cert parse/verify + PEM + RSA + the ECDSA/Ed25519 verify closure.
+# `cyrius distlib x509` -> dist/sigil-x509.cyr. 18-module closure of the
+# x509 entry points, compile-verified self-contained (no undefined sigil symbol).
+# Order matches the [lib] include chain (single-pass). Lets a consumer that only
+# needs x509 avoid the full 67-module bundle's global footprint.
+[lib.x509]
+modules = [
+    "src/random.cyr",
+    "src/crypto_scratch.cyr",
+    "src/mul64.cyr",
+    "src/sha_ni.cyr",
+    "src/sha256.cyr",
+    "src/hex.cyr",
+    "src/sha512.cyr",
+    "src/sha384.cyr",
+    "src/bigint_ext.cyr",
+    "src/bignum.cyr",
+    "src/ed25519.cyr",
+    "src/ecdsa_p256.cyr",
+    "src/ecdsa_p384.cyr",
+    # pt_scalarmul_secret / pt384_scalarmul_secret moved here from the two
+    # modules above at 3.13.8; kept in this profile so its surface is unchanged.
+    "src/ec_ct.cyr",
+    "src/x509.cyr",
+    "src/pem.cyr",
+    "src/privkey.cyr",
+    "src/rsa.cyr",
+]
+
+# `[lib.authenticode]` — UEFI Authenticode PE signing AND verification (the
+# sovereign sbsign *and* sbverify), including the 3.12.2 ECDSA P-256 RFC 6979
+# signer variant, plus its RSA / X.509 / ECDSA / SHA closure.
+# `cyrius distlib authenticode` -> dist/sigil-authenticode.cyr. 21-module closure of the
+# authenticode entry points, compile-verified self-contained (no undefined sigil symbol).
+# Order matches the [lib] include chain (single-pass). Lets a consumer that only
+# needs authenticode avoid the full 67-module bundle's global footprint.
+[lib.authenticode]
+modules = [
+    "src/random.cyr",
+    "src/crypto_scratch.cyr",
+    "src/mul64.cyr",
+    "src/sha_ni.cyr",
+    "src/sha256.cyr",
+    "src/hmac.cyr",
+    "src/hex.cyr",
+    "src/sha512.cyr",
+    "src/sha384.cyr",
+    "src/hmac_sha384.cyr",
+    "src/bigint_ext.cyr",
+    "src/bignum.cyr",
+    "src/ed25519.cyr",
+    "src/ecdsa_p256.cyr",
+    "src/ecdsa_p384.cyr",
+    "src/ec_ct.cyr",
+    "src/ecdsa_sign.cyr",
+    "src/x509.cyr",
+    "src/rsa.cyr",
+    "src/authenticode.cyr",
+    "src/efi_sigdb.cyr",
+]
+
+# `[lib.secureboot]` — Secure Boot state detection + EFI-variable read.
+# `cyrius distlib secureboot` -> dist/sigil-secureboot.cyr. 6-module closure of the
+# secureboot entry points, compile-verified self-contained (no undefined sigil symbol).
+# Order matches the [lib] include chain (single-pass). Lets a consumer that only
+# needs secureboot avoid the full 67-module bundle's global footprint.
+# src/sys_util.cyr joined at 3.13.9: secureboot_core calls agnosys_capture_n and
+# agnosys_rooted_paths_untrusted, which live there. Until then the profile was not
+# self-contained, and dist/sigil-secureboot.deps named the stdlib `sigil` fold, so a
+# consumer resolved those two through the whole of lib/sigil.cyr (or, for the 3.13.9
+# helper, not at all).
+[lib.secureboot]
+modules = [
+    "src/sys_error.cyr",
+    "src/sys_util.cyr",
+    "src/sysinfo.cyr",
+    "src/secureboot_core.cyr",
+    "src/types.cyr",
+    "src/secureboot.cyr",
+]
+
+# `[lib.tpm]` — TPM 2.0 access + measurement.
+# `cyrius distlib tpm` -> dist/sigil-tpm.cyr. 5-module closure of the
+# tpm entry points, compile-verified self-contained (no undefined sigil symbol).
+# Order matches the [lib] include chain (single-pass). Lets a consumer that only
+# needs tpm avoid the full 67-module bundle's global footprint.
+[lib.tpm]
+modules = [
+    "src/sys_error.cyr",
+    "src/sys_util.cyr",
+    "src/tpm_core.cyr",
+    "src/random.cyr",
+    "src/tpm.cyr",
+]
+
+[deps]
+# json + bigint dropped at the 6.2.1 pin: both carved into bayan @6.1.25, so 6.2.x
+# ships no lib/json.cyr / lib/bigint.cyr. sigil rolls its own json_write_escaped
+# (src/trust.cyr) so it never needed stdlib-json; its u256_* big-integer arithmetic
+# now comes from bayan, which re-exports the legacy u256_* names via compat aliases.
+stdlib = ["syscalls", "alloc", "freelist", "assert", "str", "string", "vec", "hashmap", "io", "fmt", "result", "fnptr", "bayan", "chrono", "tagged", "process", "fs", "bench", "slice", "sakshi", "sys"]
+
+# sakshi moved from `[deps.sakshi]` into `[deps].stdlib` at the 6.5.17 pin.
+#
+# The git dep's own comment said "pin to the published tag until the toolchain
+# vendors it" — the toolchain now does: 6.5.17's snapshot ships sakshi 2.4.10.
+# sigil's `src/` references **no** sakshi symbol at all (only
+# `tests/tcyr/x509_offdiag.tcyr` does, for `sakshi_set_level`), so the git dep
+# was provisioning a module nothing in the library used.
+#
+# ⚠ Keeping it would have been actively harmful to consumers, not merely
+# redundant. `cyrius deps` overlays a git dep's resolution on top of the
+# toolchain snapshot, so **every project depending on sigil had its
+# `lib/sakshi.cyr` silently downgraded to whatever tag sat here** — undoing its
+# own `lib sync --full` on the next build, with an unnamed "1 bundled lib(s)
+# differ" warning as the only signal and `deps --verify` unable to catch it
+# because the lock is written from disk. kavach hit exactly that and recorded it
+# as a known residual it could not fix from its own side. Dropping the dep
+# removes the overlay for every consumer at once.
+# (agnosys dep dropped — sigil internalized the trust primitives it needs
+# (certpin/tpm/ima/secureboot/dmverity/luks + their sys_error/sys_util support)
+# as src/*_core.cyr + sys_error.cyr/sys_util.cyr. Part of the agnosys→agnodrm
+# decomposition; killed the whole-bundle pull-in + the ERR_IO duplicate-symbol
+# conflict. See agnosys/docs/development/2026-06-18-agnosys-to-agnodrm-decomposition-plan.md.)

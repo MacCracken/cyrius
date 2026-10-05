@@ -1,0 +1,81 @@
+[package]
+name = "hisab"
+version = "${file:VERSION}"
+description = "hisab — higher mathematics library (linear algebra, geometry, calculus, numerical methods)"
+license = "GPL-3.0-only"
+repository = "https://github.com/MacCracken/hisab"
+language = "cyrius"
+cyrius = "6.6.14"
+
+[build]
+src = "src/main.cyr"
+output = "build/hisab"
+
+# `cyrius distlib` concatenates these, in this order, into dist/hisab.cyr. The
+# modules carry no `include` lines, so each resolves against the modules above
+# it: keep them in dependency order. The per-module dependency table is in
+# docs/architecture/overview.md ("Module dependency manifest").
+[lib]
+modules = [
+    "src/visibility.cyr",
+    "src/error.cyr",
+    "src/f64_util.cyr",
+    "src/vec2.cyr",
+    "src/vec3.cyr",
+    "src/vec4.cyr",
+    "src/quat.cyr",
+    "src/mat3.cyr",
+    "src/mat4.cyr",
+    "src/transforms.cyr",
+    "src/color.cyr",
+    "src/complex.cyr",
+    "src/interval.cyr",
+    "src/autodiff.cyr",
+    "src/tensor.cyr",
+    "src/geo.cyr",
+    "src/geo_advanced.cyr",
+    "src/geo_diff.cyr",
+    "src/spatial.cyr",
+    "src/collision_core.cyr",
+    "src/collision_mesh.cyr",
+    "src/calc.cyr",
+    "src/calc_ext.cyr",
+    "src/num.cyr",
+    "src/num_ext.cyr",
+    "src/ode.cyr",
+    "src/optimize.cyr",
+    "src/linalg_ext.cyr",
+    "src/linalg_precision.cyr",
+    "src/einsum.cyr",
+    "src/noise_simplex.cyr",
+    "src/lie.cyr",
+    "src/lie_ext.cyr",
+    "src/diffgeo.cyr",
+    "src/symbolic.cyr",
+    "src/symbolic_ext.cyr",
+]
+
+[deps]
+stdlib = [
+    "syscalls",
+    "string",
+    "alloc",
+    "str",
+    "fmt",
+    "vec",
+    "io",
+    "args",
+    "assert",
+    "math",
+    "ganita",
+    "tagged",
+    "result",
+    "fnptr",
+    "bench",
+    "callback",
+]
+
+[deps.sakshi]
+git = "https://github.com/MacCracken/sakshi.git"
+tag = "2.5.6"
+modules = ["dist/sakshi.cyr"]

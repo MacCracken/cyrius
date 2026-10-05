@@ -1826,6 +1826,11 @@ _chk_gate "$ROOT/tests/gates/toolchain/check_driver_skip_is_not_pass.sh"
 # once (tests/tcyr/CORPUS_FLOOR); every CI self-host step uses cross-os-selfhost.sh's fork.
 _chk_gate "$ROOT/tests/gates/toolchain/ci_steps_delegate_to_driver.sh"
 
+# 6.6.17 (P1) — every cyrius.cyml key the ecosystem, the init templates and package-format.md
+# use is declared in `cyrius help manifest` (read / held / dropped / info), and the guide's table
+# says the same. The expected keys come from what consumers write, not from the vocabulary.
+_chk_gate "$ROOT/tests/gates/toolchain/manifest_key_inventory.sh"
+
 # 6.6.10 (bite 12) — the check driver runs only tools it BUILT from this tree in this run:
 # all nine executables it runs come from its private run dir, planted build/ stubs and a
 # ~/.cyrius/bin copy are ignored, and a tool that does not compile is a FAIL naming it.

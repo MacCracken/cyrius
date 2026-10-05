@@ -1,0 +1,154 @@
+# ================================================================
+# cbt/manifest.cyr — cyrius.cyml as the build tool's CONFIGURATION (6.6.17, P1)
+# ================================================================
+#
+# WHY THIS FILE EXISTS. The manifest was read partially and inconsistently: some keys were
+# load-bearing, some decorative, and nothing distinguished them. `[build] test` was declared by
+# 41 manifests and read by nothing (kashi's 393 assertions never ran in CI); `[build] defines`
+# was declared by 3 and read by nothing; and v6.5.49's `[build]` fallback shipped INERT because
+# it read `src` while 120 of 125 manifests wrote `entry`. An inert key cannot be observed to be
+# wrong. So every key the docs, the `cyrius init` templates or the ecosystem use is declared
+# ONCE, below, with what reads it — and `cyrius help manifest` prints that table, the guide's
+# table mirrors it, and tests/gates/toolchain/manifest_key_inventory.sh checks the two against
+# each other and against what consumers actually write. CHANGELOG [6.6.17].
+
+# ── THE DECLARED KEY VOCABULARY ───────────────────────────────────
+# One row per key: "section|key|status|synonyms|environment|argument|read by".
+#   status   read    — something in the toolchain reads it
+#            held    — recognised, deliberately NOT read yet; a present key is warned by name
+#            dropped — never read; a present key is warned by name
+#            info    — metadata for people and package recipes; never changes a build
+#   section  `deps.*` / `lib.*` stand for every `[deps.NAME]` / `[lib.PROFILE]`; key `*` for any
+#            name (a `[features]` feature, a `[groups]` group).
+#   synonyms resolved HERE and nowhere else (`entry` first, then `src`).
+# Precedence for every key: argument > environment > manifest > default. A `-` channel means the
+# key has no such rung.
+fn _mf_vocab_a(i): i64 {
+    if (i == 0) { return "package|name|read|-|-|-|bundle name (cyrius distlib); the cyrius-source-repo check"; }
+    if (i == 1) { return "package|version|read|-|-|-|CYRIUS_PKG_VERSION (${file:PATH} expands)"; }
+    if (i == 2) { return "package|cyrius|read|-|-|-|the toolchain pin: re-exec into versions/<v>, its stdlib"; }
+    if (i == 3) { return "package|description|info|-|-|-|people and package recipes"; }
+    if (i == 4) { return "package|license|info|-|-|-|people and package recipes"; }
+    if (i == 5) { return "package|language|info|-|-|-|people and package recipes"; }
+    if (i == 6) { return "package|repository|info|-|-|-|people and package recipes"; }
+    if (i == 7) { return "build|entry|read|src|-|<source>|cyrius build, cyrius package: the source"; }
+    if (i == 8) { return "build|output|read|-|-|<output>|cyrius build, cyrius package: the output (a default)"; }
+    if (i == 9) { return "build|test|read|-|-|<file>...|bare cyrius test: these (file / dir / list), then tests/"; }
+    if (i == 10) { return "build|modules|read|-|-|-|every compile: these files prepended before the entry"; }
+    if (i == 11) { return "build|dce|read|-|CYRIUS_DCE|--dce|cyrius build: dead-code elimination (bool)"; }
+    if (i == 12) { return "build|strict|read|-|CYRIUS_STRICT|--strict|cyrius build: undefined fn = error (bool)"; }
+    if (i == 13) { return "build|defines|read|-|CYRIUS_DEFINES|-D|cyrius build: one #define per name"; }
+    if (i == 14) { return "build|target|held|-|-|-|not read yet: pass --target / --aarch64 / --win / --agnos"; }
+    if (i == 15) { return "build|features|dropped|-|-|-|never read: features are [features] + --features"; }
+    if (i == 16) { return "coverage|programs|read|-|-|--programs|cyrius coverage: RUN programs in the corpus (globs)"; }
+    if (i == 17) { return "sections|base|read|-|-|-|bare-metal builds: the image load base"; }
+    return 0;
+}
+
+fn _mf_vocab_b(i): i64 {
+    if (i == 18) { return "deps|stdlib|read|-|-|-|cyrius deps: stdlib leaves vendored into lib/ and auto-prepended"; }
+    if (i == 19) { return "deps.*|git|read|-|-|-|cyrius deps: the repository to clone"; }
+    if (i == 20) { return "deps.*|tag|read|-|-|-|cyrius deps: the tag to check out"; }
+    if (i == 21) { return "deps.*|path|read|-|-|-|cyrius deps: a local checkout instead of git"; }
+    if (i == 22) { return "deps.*|modules|read|-|-|-|cyrius deps: the files to vendor"; }
+    if (i == 23) { return "deps.*|modular|read|-|-|-|cyrius deps: sub-modules from dist/<name>/"; }
+    if (i == 24) { return "deps.*|requires|read|-|-|-|cyrius deps: stdlib leaves the dep needs in scope"; }
+    if (i == 25) { return "deps.*|optional|read|-|-|--features|cyrius deps: resolve only when a feature names it"; }
+    if (i == 26) { return "deps.*|target|read|-|-|--target|cyrius deps: resolve only for a matching target"; }
+    if (i == 27) { return "lib|modules|read|-|-|-|cyrius distlib: the base bundle"; }
+    if (i == 28) { return "lib.*|modules|read|-|-|<profile>|cyrius distlib <profile>"; }
+    if (i == 29) { return "features|default|read|-|-|--no-default-features|cyrius deps: features on by default"; }
+    if (i == 30) { return "features|*|read|-|-|--features|cyrius deps: a feature and the optional deps it turns on"; }
+    if (i == 31) { return "groups|*|read|-|-|-|cyrius deps: a named group of stdlib leaves"; }
+    if (i == 32) { return "release|bins|read|-|-|-|release.yml, install.sh, cyrius pulsar"; }
+    if (i == 33) { return "release|cross_bins|read|-|-|-|release.yml, install.sh, cyrius pulsar"; }
+    if (i == 34) { return "release|scripts|read|-|-|-|release.yml, install.sh"; }
+    return 0;
+}
+
+fn _mf_vocab(i): i64 {
+    if (i < 18) { return _mf_vocab_a(i); }
+    return _mf_vocab_b(i);
+}
+
+# Field `f` (0-based) of vocabulary row `row`, as a fresh cstr.
+fn _mf_vocab_field(row, f): i64 {
+    var i = 0;
+    var k = 0;
+    while (k < f) {
+        while (load8(row + i) != 0 && load8(row + i) != 124) { i = i + 1; }
+        if (load8(row + i) == 0) { return ""; }
+        i = i + 1;
+        k = k + 1;
+    }
+    var s = i;
+    while (load8(row + i) != 0 && load8(row + i) != 124) { i = i + 1; }
+    var out = alloc(i - s + 1);
+    memcpy(out, row + s, i - s);
+    store8(out + i - s, 0);
+    return out;
+}
+
+# The vocabulary row for `key` in `section`, or 0 when the key is not declared. A `[deps.NAME]`
+# section looks up `deps.*`, a `[lib.PROFILE]` one `lib.*`; a `*` key matches any name.
+fn _mf_vocab_row(section, key): i64 {
+    var sec = section;
+    if (strlen(section) > 5 && memeq(section, "deps.", 5) == 1) { sec = "deps.*"; }
+    if (strlen(section) > 4 && memeq(section, "lib.", 4) == 1) { sec = "lib.*"; }
+    var wild = 0;
+    var i = 0;
+    var row = _mf_vocab(0);
+    while (row != 0) {
+        if (streq(_mf_vocab_field(row, 0), sec) == 1) {
+            var k = _mf_vocab_field(row, 1);
+            if (streq(k, key) == 1) { return row; }
+            if (streq(k, "*") == 1) { wild = row; }
+        }
+        i = i + 1;
+        row = _mf_vocab(i);
+    }
+    return wild;
+}
+
+fn _mf_pad(s, w): i64 {
+    var l = strlen(s);
+    sys_write(STDOUT_FD, s, l);
+    while (l < w) { sys_write(STDOUT_FD, " ", 1); l = l + 1; }
+    sys_write(STDOUT_FD, " ", 1);
+    return 0;
+}
+
+# `cyrius help manifest` — the vocabulary, one key per line.
+fn _mf_vocab_print(): i64 {
+    println("cyrius.cyml keys. status: read = something reads it; held = recognised, not read yet");
+    println("(warned when present); dropped = never read (warned when present); info = metadata for");
+    println("people and package recipes, never changes a build.");
+    println("Every key resolves argument > environment > manifest > default; `-` = no such channel.");
+    println("`cyrius build --print-config` shows the value each key resolved to and where it came from.");
+    println("");
+    sys_write(STDOUT_FD, "  ", 2);
+    _mf_pad("section", 12); _mf_pad("key", 12); _mf_pad("status", 8); _mf_pad("synonyms", 8);
+    _mf_pad("environment", 15); _mf_pad("argument", 22);
+    println("read by");
+    var i = 0;
+    var row = _mf_vocab(0);
+    while (row != 0) {
+        var sb = str_builder_new();
+        str_builder_add_cstr(sb, "[");
+        str_builder_add_cstr(sb, _mf_vocab_field(row, 0));
+        str_builder_add_cstr(sb, "]");
+        sys_write(STDOUT_FD, "  ", 2);
+        _mf_pad(str_data(str_builder_build(sb)), 12);
+        _mf_pad(_mf_vocab_field(row, 1), 12);
+        _mf_pad(_mf_vocab_field(row, 2), 8);
+        _mf_pad(_mf_vocab_field(row, 3), 8);
+        _mf_pad(_mf_vocab_field(row, 4), 15);
+        _mf_pad(_mf_vocab_field(row, 5), 22);
+        var rb = _mf_vocab_field(row, 6);
+        sys_write(STDOUT_FD, rb, strlen(rb));
+        sys_write(STDOUT_FD, "\n", 1);
+        i = i + 1;
+        row = _mf_vocab(i);
+    }
+    return 0;
+}

@@ -1794,6 +1794,56 @@ now refused rather than silently building a do-nothing program, and every form p
 `=== N passed, M failed ===` summary — the single-file form used not to, which made it
 unscriptable.
 
+## Manifest keys (`cyrius.cyml`)
+
+Every key the docs, the `cyrius init` templates or the ecosystem use is declared once in the
+CLI (`cbt/manifest.cyr`) with what reads it; `cyrius help manifest` prints that table and this
+one mirrors it (`tests/gates/toolchain/manifest_key_inventory.sh` checks both against each
+other and against what the ecosystem's manifests actually write). Status: **read** — something
+reads it; **held** — recognised, deliberately not read yet, warned by name when present;
+**dropped** — never read, warned by name when present; **info** — metadata for people and
+package recipes, never changes a build. Synonyms are resolved in that one place: `[build] src`
+is read only when `entry` is absent. (Before 6.6.17 `[build] test` and `[build] defines` were
+declared by 41 and 3 manifests and read by nothing.)
+
+| Section | Key | Status | Synonyms | Environment | Argument | Read by |
+|---|---|---|---|---|---|---|
+| `[package]` | `name` | read | — | — | — | bundle name (cyrius distlib); the cyrius-source-repo check |
+| `[package]` | `version` | read | — | — | — | CYRIUS_PKG_VERSION (`${file:PATH}` expands) |
+| `[package]` | `cyrius` | read | — | — | — | the toolchain pin: re-exec into `versions/<v>`, its stdlib |
+| `[package]` | `description` | info | — | — | — | people and package recipes |
+| `[package]` | `license` | info | — | — | — | people and package recipes |
+| `[package]` | `language` | info | — | — | — | people and package recipes |
+| `[package]` | `repository` | info | — | — | — | people and package recipes |
+| `[build]` | `entry` | read | `src` | — | `<source>` | cyrius build, cyrius package: the source |
+| `[build]` | `output` | read | — | — | `<output>` | cyrius build, cyrius package: the output (a default) |
+| `[build]` | `test` | read | — | — | `<file>...` | bare cyrius test: these (file / dir / list), then tests/ |
+| `[build]` | `modules` | read | — | — | — | every compile: these files prepended before the entry |
+| `[build]` | `dce` | read | — | `CYRIUS_DCE` | `--dce` | cyrius build: dead-code elimination (bool) |
+| `[build]` | `strict` | read | — | `CYRIUS_STRICT` | `--strict` | cyrius build: undefined fn = error (bool) |
+| `[build]` | `defines` | read | — | `CYRIUS_DEFINES` | `-D` | cyrius build: one #define per name |
+| `[build]` | `target` | held | — | — | — | not read yet: pass --target / --aarch64 / --win / --agnos |
+| `[build]` | `features` | dropped | — | — | — | never read: features are [features] + --features |
+| `[coverage]` | `programs` | read | — | — | `--programs` | cyrius coverage: RUN programs in the corpus (globs) |
+| `[sections]` | `base` | read | — | — | — | bare-metal builds: the image load base |
+| `[deps]` | `stdlib` | read | — | — | — | cyrius deps: stdlib leaves vendored into lib/ and auto-prepended |
+| `[deps.*]` | `git` | read | — | — | — | cyrius deps: the repository to clone |
+| `[deps.*]` | `tag` | read | — | — | — | cyrius deps: the tag to check out |
+| `[deps.*]` | `path` | read | — | — | — | cyrius deps: a local checkout instead of git |
+| `[deps.*]` | `modules` | read | — | — | — | cyrius deps: the files to vendor |
+| `[deps.*]` | `modular` | read | — | — | — | cyrius deps: sub-modules from `dist/<name>/` |
+| `[deps.*]` | `requires` | read | — | — | — | cyrius deps: stdlib leaves the dep needs in scope |
+| `[deps.*]` | `optional` | read | — | — | `--features` | cyrius deps: resolve only when a feature names it |
+| `[deps.*]` | `target` | read | — | — | `--target` | cyrius deps: resolve only for a matching target |
+| `[lib]` | `modules` | read | — | — | — | cyrius distlib: the base bundle |
+| `[lib.*]` | `modules` | read | — | — | `<profile>` | `cyrius distlib <profile>` |
+| `[features]` | `default` | read | — | — | `--no-default-features` | cyrius deps: features on by default |
+| `[features]` | `*` | read | — | — | `--features` | cyrius deps: a feature and the optional deps it turns on |
+| `[groups]` | `*` | read | — | — | — | cyrius deps: a named group of stdlib leaves |
+| `[release]` | `bins` | read | — | — | — | release.yml, install.sh, cyrius pulsar |
+| `[release]` | `cross_bins` | read | — | — | — | release.yml, install.sh, cyrius pulsar |
+| `[release]` | `scripts` | read | — | — | — | release.yml, install.sh |
+
 ## Build Tool & Dependencies
 
 ```sh

@@ -26,6 +26,8 @@ include "cbt/core.cyr"
 # v6.6.5: THE ONE ARGUMENT RULE — after core (it reads core's globals), before build
 # (compile() reads _pie_target).
 include "cbt/cli_args.cyr"
+# 6.6.17: the manifest reader — before build (compile() reads its resolved configuration).
+include "cbt/manifest.cyr"
 include "cbt/build.cyr"
 include "cbt/commands.cyr"
 include "cbt/project.cyr"
@@ -98,6 +100,7 @@ fn usage(): i64 {
     println("  which                           show path to cycc");
     println("  hooks install                   install the build-artifact pre-commit hook");
     println("  help                            show this help");
+    println("  help manifest                   list the cyrius.cyml keys: what reads each, and which are held / dropped");
     return 0;
 }
 
@@ -1136,6 +1139,10 @@ fn main(): i64 {
     if (is_help == 0) { is_help = streq(cmd, "--help"); }
     if (is_help == 0) { is_help = streq(cmd, "-h"); }
     if (is_help == 1) {
+        # 6.6.17: `cyrius help manifest` — the declared cyrius.cyml key vocabulary.
+        if (cmd_idx + 1 < argc()) {
+            if (streq(argv(cmd_idx + 1), "manifest") == 1) { return _mf_vocab_print(); }
+        }
         usage();
         return 0;
     }

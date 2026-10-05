@@ -1,0 +1,56 @@
+[package]
+name = "kashi"
+version = "${file:VERSION}"
+description = "kashi — AGNOS console-font subsystem: freestanding bitmap glyph core (VGA 8x16, CGA 8x8, VGA 9x16; full CP437) plus a stdlib-using PSF/BDF/PCF font-loading library"
+license = "GPL-3.0-only"
+repository = "https://github.com/MacCracken/kashi"
+language = "cyrius"
+cyrius = "6.6.6"
+
+[build]
+entry = "src/lib.cyr"
+test = "src/test.cyr"
+output = "kashi"
+
+# The FREESTANDING font-data core (src/font_data.cyr) needs ZERO stdlib —
+# it uses only the store8/load8 intrinsics + arithmetic, so a freestanding
+# kernel (agnos: `[deps] stdlib = []`) can include it directly. The deps
+# below are for the stdlib-using LIBRARY face (src/lib.cyr) and the test /
+# bench harnesses only. Keep this list minimal; do not add stdlib to the
+# freestanding core. `io` is here for the `kashi_load_*_file` /
+# `kashi_attach_*_file` read paths; `alloc` / `vec` for the runtime registry.
+# `[lib]` feeds `cyrius distlib` -> dist/kashi.cyr, the PUBLISHED library face —
+# tracked in git + attached to releases since 1.0.10 (until then dist/ was
+# gitignored, so a `git` + `tag` consumer could not resolve it at all); CI
+# regenerates it and fails on drift, so run `cyrius distlib` after touching
+# any module listed below and commit the result.
+#
+# ⛔⛔ WHY THIS EXISTS, AND WHAT WAS BROKEN WITHOUT IT. ADR 0001 says stdlib-linked consumers should
+# take the **library face** (`src/lib.cyr`) and only a freestanding kernel should take the raw core.
+# Every stdlib consumer in the desktop stack — dhancha, crab, puka, aethersafha — took the raw core
+# anyway. Not by preference: `src/lib.cyr` opens with `include "src/font_data.cyr"`, a path relative
+# to THIS repo's root, so the moment it is vendored into a consumer's `lib/` that include cannot
+# resolve and the build dies with `cannot open include file: src/font_data.cyr`. The library face was
+# **literally unconsumable downstream**, so the kernel's escape hatch was the only surface that
+# worked, and the ADR's own recommendation could not be followed by anyone.
+#
+# ⚠ THE FOLD LISTS EVERY LEAF MODULE EXPLICITLY, WITH `src/lib.cyr` LAST — listing the aggregator
+# alone is NOT enough. distlib concatenates exactly what is listed and STRIPS `include` lines rather
+# than following them (measured 2026-09-21: a `modules = ["src/lib.cyr"]` fold is 1,177 lines with
+# the loaders but no `kashi_font_init` and no parser, and distlib's own self-check flags it as a real
+# defect). Order is the include chain: font_data first (everything reads its tables), aggregator last.
+#
+# ⛔ `src/font_data.cyr` STAYS the freestanding entry point and is NOT replaced by this. agnos has
+# `[deps] stdlib = []` and physically cannot link the stdlib the other three modules use — ADR 0001
+# is unchanged, this adds the missing second half of it.
+[lib]
+modules = [
+    "src/font_data.cyr",
+    "src/font_psf.cyr",
+    "src/font_bdf.cyr",
+    "src/font_pcf.cyr",
+    "src/lib.cyr",
+]
+
+[deps]
+stdlib = ["string", "fmt", "io", "vec", "alloc", "syscalls", "assert", "bench"]
