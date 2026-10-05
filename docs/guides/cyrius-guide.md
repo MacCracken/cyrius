@@ -153,11 +153,13 @@ matches the **whole** name:
 | a type parameter in scope (`T`) | its argument's size | the `i64` base: 8 |
 
 `var a: T[N]` reserves exactly `N * sizeof(T)`. Inside a generic fn's instance a type
-parameter IS its argument: in `g<f64>`, `var y: T` is an `f64` (its `+` is a float add) and
-`var a: T[N]` holds `f64`s; in `g<i8>`, `var y: T` sign-extends like any `i8`. (Before
+parameter IS its argument: in `g<f64>`, `var y: T` and a parameter `x: T` are `f64`s (their `+`
+is a float add; the parameter still arrives in an integer register, as a non-generic `x: f64`
+does) and `var a: T[N]` holds `f64`s; in `g<i8>`, `var y: T` sign-extends like any `i8`. (Before
 6.6.16 `T = f64` made a 9-byte untyped word and `T = i8` / `i16` / `i32` loaded
 zero-extended; before 6.6.17 an instance INLINED at a call inside a fn — a one-statement
-body such as `return sizeof(T);` or a generic forwarding its `T` — still ran as the `i64` base.)
+body such as `return sizeof(T);` or a generic forwarding its `T` — still ran as the `i64` base,
+and a parameter `x: T` at `f64` was an untyped word, as was any inlined `x: f64`.)
 
 A name that is not a type is a compile error that names it — `unknown type 'Nope' for
 variable 'a'`, `... for parameter 'x'`, `... as a fn return type`, `... in sizeof` — and a

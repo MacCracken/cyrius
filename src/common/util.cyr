@@ -879,10 +879,14 @@ fn GFIPT(S, fi): i64 { if (_fnt_inlpt == 0) { return 0; } return L64(_fnt_inlpt 
 fn SFIPT(S, fi, v): i64 { if (_fnt_inlpt == 0) { _fnt_inlpt = alloc(131072 * 8); } S64(_fnt_inlpt + fi * 8, v); return 0; }
 
 # Unpack param `which` (0|1) from a GFIPT word -> SLTYPE sentinel, or 0 if not a vector.
+# 6.6.17: `0x8001` / `0x8002` is an f64 / f32 scalar param (`_param_float`, parse_fn.cyr) -> its
+# positive float tag; a vector's descriptor field never exceeds 256.
 fn _ipt_sltype(packed, which): i64 {
     var f = packed & 0xFFFF;
     if (which == 1) { f = (packed >> 16) & 0xFFFF; }
     if (f == 0) { return 0; }
+    if (f == 0x8001) { return F64_TYID; }
+    if (f == 0x8002) { return F32_TYID; }
     return 0 - ((f - 1) + 2048);
 }
 

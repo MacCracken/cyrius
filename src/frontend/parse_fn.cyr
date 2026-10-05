@@ -3465,8 +3465,9 @@ fn PARSE_FNCALL(S, noff): i64 {
                             # v6.5.52 — a SIMD param takes the local-copy path; PCMPE cannot
                             # materialise a value-form vector (see _inl_simd_arg).
                             var _sd = 0;
-                            if (iargc == 0) { if (_t0 != 0) { _inl_simd_arg(S, p0_slot, _w0, _t0); _sd = 1; } }
-                            if (iargc == 1) { if (_t1 != 0) { _inl_simd_arg(S, p1_slot, _w1, _t1); _sd = 1; } }
+                            # 6.6.17 (a9): a vector's sentinel is negative; an f64 / f32 tag is positive.
+                            if (iargc == 0) { if (_t0 < 0) { _inl_simd_arg(S, p0_slot, _w0, _t0); _sd = 1; } }
+                            if (iargc == 1) { if (_t1 < 0) { _inl_simd_arg(S, p1_slot, _w1, _t1); _sd = 1; } }
                             if (_sd == 0) {
                                 PCMPE(S);
                                 if (iargc == 0) { _inl_store_arg(S, p0_slot, _w0); }
@@ -3858,6 +3859,21 @@ fn _param_record(S, li, pnoff, is_async): i64 {
     if (_cur_fn_ptrp == li + 1) { SLPTRP(S, li); }
     _cur_fn_ptrp = 0;
     return 0;
+}
+# ⛔ 6.6.17 (a9) — an f64 / f32 parameter's slot tag, and the same tag for the INLINE replay. The
+# replay re-registers a parameter by name with the type GFIPT recorded, which carried vector
+# descriptors only, so an inlined `x: f64` was an untyped word: `#inline fn d(x: f64) { return x
+# + x; }` added 1.5's bits as integers, and so did every one-statement generic instance at T = f64
+# (`x: T` was untyped there too, see the parameter loop). Field `0x8001` / `0x8002` in the pack is
+# f64 / f32 (`_ipt_sltype`); a vector's field is its descriptor + 1 (<= 256). CHANGELOG [6.6.17]
+fn _param_float(S, li, pc, flt, pack): i64 {
+    if (flt == 0) { return pack; }
+    SLTYPE(S, li, flt);
+    var f = 0x8001;
+    if (flt == F32_TYID) { f = 0x8002; }
+    if (pc == 0) { return pack | f; }
+    if (pc == 1) { return pack | (f << 16); }
+    return pack;
 }
 fn _is_ptr_param(S, li): i64 {
     if (li < 0) { return 0; }
@@ -7305,6 +7321,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                     # Inert when _tp_c0==0 → byte-identical default path.
                     if (_tp_c0 != 0) {
                         var _ptpc = _tp_resolve(S, tnoff);
+                        if (_ptpc == 0 - 9) { pt_float = F64_TYID; }   # 6.6.17 (a9): `x: T`, T = f64, is an f64 param
                         if (_ptpc > 0) {
                             pt_sid = _ptpc;
                             # v6.3.39 (B3) — a tparam-typed param resolved (via the instance
@@ -7425,7 +7442,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                 # local-load (lt == F64_TYID/F32_TYID) routes ops to the float
                 # emitters. pt_float is 0 for every non-float param (incl. all of
                 # cycc's) → self-host stays byte-identical.
-                if (pt_float != 0) { SLTYPE(S, li, pt_float); }
+                _ipt_pack = _param_float(S, li, pc, pt_float, _ipt_pack);   # 6.6.17 (a9)
                 # 6.6.5 — RECORD THE PARAM ABI INSTEAD OF RE-DERIVING IT AT EVERY USE. A struct
                 # param over 8 B is ADDRESS-passed (`_param_wants_struct_ptr` sets structmask
                 # and the caller pushes `&local`), so its slot holds a pointer; one that fits in
