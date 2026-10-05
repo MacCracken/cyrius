@@ -1444,6 +1444,13 @@ fn main(): i64 {
             _run_tmp_cleanup();
             return G_FAIL;
         }
+        # `--parse-drift-row`: the path-A drift row alone, over the root — how a gate proves the
+        # scan reads each parse_*.cyr whole. CHANGELOG [6.6.17]
+        if (streq(argv(sel_idx), "--parse-drift-row") == 1) {
+            _parse_emit_drift_gate();
+            _run_tmp_cleanup();
+            return G_FAIL;
+        }
     }
     if (argc() > sel_idx + 1) {
         if (streq(argv(sel_idx), "--gate-row") == 1) {

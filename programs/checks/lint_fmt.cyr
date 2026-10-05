@@ -66,9 +66,127 @@ fn _cyrfmt_comment_braces_gate(): i64 {
     return fail;
 }
 
-fn _parse_drift_scan(path, buf, cap): i64 {
-    var n = file_read_all(path, buf, cap);
-    if (n < 0) { return 0; }     # missing file — not a failure
+# ⛔ 6.6.17 — THE DRIFT SCAN READS EACH FILE WHOLE, AND PROVES IT REACHED THE END.
+# It read every parse_*.cyr into one fixed 256 KB buffer ("fits any parse_*.cyr"), and
+# file_read_all stops at the cap without a word: parse_decl.cyr (264,737 B), parse_expr.cyr
+# (266,510 B) and parse_fn.cyr (474,667 B) had outgrown it, so a direct emit in their tails was
+# never seen. Now each file is sized by fstat (an empty file, or one past 16 MiB, is refused BY
+# NAME), read to EOF, and must yield exactly st_size bytes; and the last `fn ` header the scan
+# saw must be the file's last one, found independently by reading back from the END of the
+# file. A missing file is a failure too: the scan cannot vouch for what it never read.
+# Gate: tests/gates/toolchain/check_parse_drift_reads_whole.sh. CHANGELOG [6.6.17]
+
+# Offset of the last `fn ` that starts a line in buf[0..n), or -1.
+fn _pd_last_fn(buf, n): i64 {
+    var i = n - 3;
+    while (i >= 0) {
+        if (load8(buf + i) == 102) {
+            if (load8(buf + i + 1) == 110) {
+                if (load8(buf + i + 2) == 32) {
+                    if (i == 0) { return 0; }
+                    if (load8(buf + i - 1) == 10) { return i; }
+                }
+            }
+        }
+        i = i - 1;
+    }
+    return 0 - 1;
+}
+
+# The file's last `fn ` offset, read back from its END (a window that doubles until it holds one
+# or covers the file) — a read path that shares nothing with the scan's buffer. -1 if none.
+fn _pd_tail_last_fn(path, size): i64 {
+    var k = 65536;
+    while (1 == 1) {
+        if (k > size) { k = size; }
+        var fd = file_open(path, 0, 0);
+        if (fd < 0) { return 0 - 1; }
+        var t = alloc(k + 1);
+        if (t == 0) { file_close(fd); return 0 - 1; }
+        if (sys_lseek(fd, size - k, 0) != size - k) { file_close(fd); return 0 - 1; }
+        var got = 0;
+        var go = 1;
+        while (go == 1) {
+            var r = file_read(fd, t + got, k - got);
+            if (r <= 0) { go = 0; } else { got = got + r; if (got >= k) { go = 0; } }
+        }
+        file_close(fd);
+        var at = _pd_last_fn(t, got);
+        if (at >= 0) { return size - k + at; }
+        if (k >= size) { return 0 - 1; }
+        k = k + k;
+    }
+    return 0 - 1;
+}
+
+fn _pd_fail(path, why): i64 {
+    _p("  ");
+    _p(ANSI_RED);
+    _p("FAIL");
+    _p(ANSI_RESET);
+    _p(": ");
+    _p(path);
+    _p(" — ");
+    println(why);
+    return 1;
+}
+
+# Read `path` whole. Returns the buffer (NUL-terminated) and stores the length through
+# len_out, or returns 0 having said why (missing, unstatable, empty, absurd size, short read,
+# or the scan not reaching the file's last fn).
+fn _parse_drift_load(path, len_out): i64 {
+    var fd = file_open(path, 0, 0);
+    if (fd < 0) { _pd_fail(path, "missing: the drift scan has nothing to read"); return 0; }
+    var st = alloc(144);
+    if (st == 0) { file_close(fd); _pd_fail(path, "no memory for its stat"); return 0; }
+    if (sys_fstat(fd, st) < 0) { file_close(fd); _pd_fail(path, "fstat failed"); return 0; }
+    var size = load64(st + 48);
+    if (size <= 0 || size > 16777216) {
+        file_close(fd);
+        _pd_fail(path, "refused: empty, or larger than the scan's 16 MiB ceiling");
+        return 0;
+    }
+    var buf = alloc(size + 1);
+    if (buf == 0) { file_close(fd); _pd_fail(path, "no memory for a whole-file read"); return 0; }
+    var total = 0;
+    var go = 1;
+    while (go == 1) {
+        var n = file_read(fd, buf + total, size + 1 - total);
+        if (n < 0) { file_close(fd); _pd_fail(path, "read failed part way"); return 0; }
+        if (n == 0) { go = 0; } else { total = total + n; if (total > size) { go = 0; } }
+    }
+    file_close(fd);
+    if (total != size) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": ");
+        _p(path);
+        _p(" — the scan read ");
+        print_num(total);
+        _p(" bytes, fstat says ");
+        print_num(size);
+        println(" (the file changed under the read, or the read is capped)");
+        return 0;
+    }
+    store8(buf + total, 0);
+    var seen = _pd_last_fn(buf, total);
+    var real = _pd_tail_last_fn(path, size);
+    if (real < 0 || seen != real) {
+        _pd_fail(path, "the scan did not reach the file's last fn (read from its end) — it is checking a truncated file");
+        return 0;
+    }
+    store64(len_out, total);
+    return buf;
+}
+
+fn _parse_drift_scan(path): i64 {
+    var nb[8];
+    store64(&nb, 0);
+    var buf = _parse_drift_load(path, &nb);
+    if (buf == 0) { return 1; }
+    var n = load64(&nb);
     var hits = 0;
     hits = hits + _count_substr_buf(buf, n, "EB(S, 0x");
     hits = hits + _count_substr_buf(buf, n, "E2(S, 0x");
@@ -88,25 +206,23 @@ fn _parse_drift_scan(path, buf, cap): i64 {
 }
 
 fn _parse_emit_drift_gate(): i64 {
-    var cap = 262144;     # 256 KB — fits any parse_*.cyr
-    var buf = alloc(cap);
     var fail = 0;
     # Scope: all 6 parse files. v5.11.38 covered the 5 audited
     # leaves; v5.11.39 added `ESWITCH_DISPATCH_PRE` +
     # `ESWITCH_DISPATCH_TABLE` named ops that closed parse.cyr's
     # switch-jump-table direct emits. parse.cyr now joins the gate.
-    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse.cyr"),       buf, cap);
-    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse_ctrl.cyr"),  buf, cap);
-    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse_decl.cyr"),  buf, cap);
-    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse_expr.cyr"),  buf, cap);
-    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse_fn.cyr"),    buf, cap);
-    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse_types.cyr"), buf, cap);
+    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse.cyr"));
+    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse_ctrl.cyr"));
+    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse_decl.cyr"));
+    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse_expr.cyr"));
+    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse_fn.cyr"));
+    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse_types.cyr"));
     if (fail == 0) {
         _p("  ");
         _p(ANSI_GREEN);
         _p("PASS");
         _p(ANSI_RESET);
-        _p(": no direct emits in all 6 parse_*.cyr files (path-A baseline at v5.11.39)\n");
+        _p(": no direct emits in all 6 parse_*.cyr files, each read whole through its last fn (path-A baseline at v5.11.39)\n");
     }
     _check("path-A drift gate: parse_*.cyr direct-emit zero baseline (v5.11.39)", fail);
     return fail;
