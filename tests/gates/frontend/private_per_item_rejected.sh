@@ -22,6 +22,18 @@ CC="$R/build/cycc"
 chmod +x "$T/cc"
 fail=0
 
+# ⛔ 6.6.17 — A THROWAWAY CYRIUS_HOME STAGED FROM THE TREE. Axes 4, 6 and 7 compile inside $T/c,
+# where `include "lib/syscalls.cyr"` is not on disk, so cycc resolves it through its fallback:
+# $CYRIUS_HOME/versions/<V>/lib/, else $HOME/.cyrius/versions/<V>/lib/. Run from a shell, those
+# axes tested the LIVE store's lib instead of this tree's, and failed under a store-less HOME.
+# $H/versions/<VERSION>/lib holds links to this tree's lib/ entries (read, never written), and
+# axis 7 proves the compiles resolve there. CHANGELOG [6.6.17]
+V=$(tr -d '[:space:]' < "$R/VERSION")
+H="$T/home"
+mkdir -p "$H/versions/$V/lib" || { echo "FAIL private_per_item_rejected: cannot stage a CYRIUS_HOME under $T"; exit 1; }
+for e in "$R"/lib/*; do ln -s "$e" "$H/versions/$V/lib/" || { echo "FAIL private_per_item_rejected: cannot stage $e"; exit 1; }; done
+[ -e "$H/versions/$V/lib/syscalls.cyr" ] || { echo "FAIL private_per_item_rejected: the staged home has no lib/syscalls.cyr"; exit 1; }
+
 # axis 1 — the per-item form must HARD ERROR and say why.
 printf 'include "lib/syscalls.cyr"\nprivate fn helper(): i64 { return 7; }\nfn main(): i64 { syscall(60, helper(), 0, 0, 0, 0); return 0; }\n' > "$T/a1.cyr"
 if "$T/cc" < "$T/a1.cyr" > /dev/null 2>"$T/a1.err"; then
@@ -93,7 +105,7 @@ fn main(): i64 { return a4_g(); }
 var rc = main();
 sys_exit_group(rc);
 EOF
-( cd "$T/c" && "$T/cc" < a4.cyr > a4.bin 2> a4.err ) || true
+( cd "$T/c" && CYRIUS_HOME="$H" "$T/cc" < a4.cyr > a4.bin 2> a4.err ) || true
 c4=$(grep -c "per-item" "$T/c/a4.err" 2>/dev/null || true)
 [ -n "$c4" ] || c4=0
 [ "$c4" = "1" ] || { echo "FAIL private_per_item_rejected axis4: the diagnostic was emitted $c4 times, expected exactly 1"; fail=1; }
@@ -118,7 +130,7 @@ fn main(): i64 { return a6_g(); }
 var rc = main();
 sys_exit_group(rc);
 EOF
-( cd "$T/c" && "$T/cc" < a6.cyr > a6.bin 2>/dev/null ) || true
+( cd "$T/c" && CYRIUS_HOME="$H" "$T/cc" < a6.cyr > a6.bin 2>/dev/null ) || true
 if [ -s "$T/c/a6.bin" ]; then
   chmod +x "$T/c/a6.bin"; g6=0; ( cd "$T/c" && ./a6.bin ) || g6=$?
   [ "$g6" = "$G" ] || { echo "FAIL private_per_item_rejected axis6: control program exited $g6, expected $G"; fail=1; }
@@ -126,6 +138,27 @@ else
   echo "FAIL private_per_item_rejected axis6: the control program (no per-item line) did not build"; fail=1
 fi
 
+# axis 7 — axes 4 and 6 resolved their lib through the STAGED home, not through whatever store
+# the invoking environment holds: a lib file that exists ONLY in the staged home must resolve
+# from $T/c. With the compiles run bare (the pre-6.6.17 shape) the include falls through to
+# the live store, which has no such file, and this axis is red.
+printf 'fn ppir_canary(): i64 { return 42; }\n' > "$T/ppir_canary.cyr"
+ln -s "$T/ppir_canary.cyr" "$H/versions/$V/lib/ppir_canary.cyr"
+cat > "$T/c/a7.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/ppir_canary.cyr"
+fn main(): i64 { return ppir_canary(); }
+var rc = main();
+sys_exit_group(rc);
+EOF
+( cd "$T/c" && CYRIUS_HOME="$H" "$T/cc" < a7.cyr > a7.bin 2>/dev/null ) || true
+if [ -s "$T/c/a7.bin" ]; then
+  chmod +x "$T/c/a7.bin"; g7=0; ( cd "$T/c" && ./a7.bin ) || g7=$?
+  [ "$g7" = "42" ] || { echo "FAIL private_per_item_rejected axis7: the staged-home canary program exited $g7, expected 42"; fail=1; }
+else
+  echo "FAIL private_per_item_rejected axis7: a lib file present only in the staged CYRIUS_HOME did not resolve — the compiles are not reading the staged home"; fail=1
+fi
+
 [ $fail -eq 0 ] || exit 1
-echo "PASS private_per_item_rejected: per-item form errors ONCE, does not privatise the file, and the own-line / 'private;' / at-EOF forms still work"
+echo "PASS private_per_item_rejected: per-item form errors ONCE, does not privatise the file, and the own-line / 'private;' / at-EOF forms still work (lib resolved from a CYRIUS_HOME staged from the tree)"
 exit 0

@@ -118,7 +118,10 @@ done
 # ── the old aarch64 behaviour, observed: the binary it USED to emit dies SIGILL ─────────────
 # Only where qemu-aarch64 exists; the rows above are the gate, this one shows what it prevents.
 if command -v qemu-aarch64 >/dev/null 2>&1; then
-  ( cd "$T" && ulimit -c 0 && ./aarch64 --allow-undef < tail.cyr > tail_a64 2>/dev/null && chmod +x tail_a64 && sh -c 'qemu-aarch64 ./tail_a64' >/dev/null 2>&1 ) 2>/dev/null; rc=$?
+  # ⛔ 6.6.17: compiled from the ROOT like every row above. It used to compile inside $T, where
+  # `include "lib/syscalls.cyr"` resolves through cycc's $CYRIUS_HOME / $HOME/.cyrius fallback —
+  # the live store's lib, not this tree's — and failed under a store-less HOME. CHANGELOG [6.6.17]
+  ( ulimit -c 0 && "$T/aarch64" --allow-undef < "$T/tail.cyr" > "$T/tail_a64" 2>/dev/null && chmod +x "$T/tail_a64" && cd "$T" && sh -c 'qemu-aarch64 ./tail_a64' >/dev/null 2>&1 ) 2>/dev/null; rc=$?
   if [ "$rc" -eq 132 ] || [ "$rc" -eq 139 ]; then pass=$((pass + 1)); else _bad "aarch64 --allow-undef tail binary exited $rc under qemu, expected the UDF trap (132)"; fi
 fi
 
