@@ -156,7 +156,8 @@ matches the **whole** name:
 parameter IS its argument: in `g<f64>`, `var y: T` is an `f64` (its `+` is a float add) and
 `var a: T[N]` holds `f64`s; in `g<i8>`, `var y: T` sign-extends like any `i8`. (Before
 6.6.16 `T = f64` made a 9-byte untyped word and `T = i8` / `i16` / `i32` loaded
-zero-extended.)
+zero-extended; before 6.6.17 an instance INLINED at a call inside a fn — a one-statement
+body such as `return sizeof(T);` or a generic forwarding its `T` — still ran as the `i64` base.)
 
 A name that is not a type is a compile error that names it — `unknown type 'Nope' for
 variable 'a'`, `... for parameter 'x'`, `... as a fn return type`, `... in sizeof` — and a
@@ -1331,6 +1332,12 @@ the raw builtins.
 The integer vectors are signed by default; the unsigned variants
 (`u8v16`, `u16v8`, `u32v4`, `u64v2`) share the same lane layout and select
 unsigned packed ops where the width distinguishes them.
+
+A vector-typed **global** (`var g: f64v2 = 0;`) owns its 16 / 32 bytes and is used
+through its address — `&g` with the pointer forms (`f64v2_add(&g, &h)` routes to
+`f64v2_add_ptr`). A value-form read or write of it (`g = f(..)`, `var v: f64v2 = g;`,
+`g = v;`) or an initializer other than `0` is refused by name: a value-form vector is a
+local. (Before 6.6.17 it was one 8-byte slot, and each of those moved one word of it.)
 
 ### Packed-op builtins
 
