@@ -12,6 +12,7 @@
 # write happens host-side with aarch64 VAs — no ARM hardware needed for this check.
 set -e
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
+cd "$ROOT" || { echo "FAIL: dx01_syms_parity: cannot cd to $ROOT"; exit 1; }
 CYCC="${CYCC:-$ROOT/build/cycc}"
 TMP=$(mktemp -d) && [ -d "$TMP" ] || { echo "FAIL: dx01_syms_parity: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$TMP"' EXIT

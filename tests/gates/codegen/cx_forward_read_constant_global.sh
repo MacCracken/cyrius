@@ -43,6 +43,7 @@
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
+cd "$ROOT" || { echo "FAIL: cx_forward_read_constant_global: cannot cd to $ROOT"; exit 1; }
 CC="${CYCC:-$ROOT/build/cycc}"
 [ -x "$CC" ] || { echo "FAIL: cx_forward_read_constant_global: $CC missing"; exit 1; }
 WORK=$(mktemp -d) && [ -d "$WORK" ] || { echo "FAIL: mktemp"; exit 1; }

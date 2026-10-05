@@ -51,6 +51,7 @@
 #      runs `cyrius_check cli-cross`)
 set -e
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
+cd "$ROOT" || { echo "FAIL: ci_steps_delegate_to_driver: cannot cd to $ROOT"; exit 1; }
 CC=${CYCC:-"$ROOT/build/cycc"}
 NAME=ci_steps_delegate_to_driver
 CIY="$ROOT/.github/workflows/ci.yml"

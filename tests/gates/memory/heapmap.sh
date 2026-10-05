@@ -6,9 +6,12 @@
 
 set -e
 
+ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
+cd "$ROOT" || { echo "FAIL: heapmap: cannot cd to $ROOT"; exit 1; }
+
 MAIN="src/main.cyr"
 if [ ! -f "$MAIN" ]; then
-    echo "error: $MAIN not found (run from repo root)" >&2
+    echo "error: $MAIN not found (cwd: $(pwd))" >&2
     exit 1
 fi
 

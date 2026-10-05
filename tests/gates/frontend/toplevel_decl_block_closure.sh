@@ -48,6 +48,7 @@
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
+cd "$ROOT" || { echo "FAIL: toplevel_decl_block_closure: cannot cd to $ROOT"; exit 1; }
 CC="${CYCC:-$ROOT/build/cycc}"
 [ -x "$CC" ] || { echo "FAIL: toplevel_decl_block_closure: $CC missing"; exit 1; }
 WORK=$(mktemp -d) && [ -d "$WORK" ] || { echo "FAIL: toplevel_decl_block_closure: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }

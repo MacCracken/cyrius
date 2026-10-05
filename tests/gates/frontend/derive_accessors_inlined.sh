@@ -19,6 +19,7 @@
 # its baseline and the row fails (the absolute `>= 2` it replaced passed that mutant at 5).
 set -u
 R=$(cd "$(dirname "$0")/../../.." && pwd)
+cd "$R" || { echo "FAIL: derive_accessors_inlined: cannot cd to $R"; exit 1; }
 T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: derive_accessors_inlined: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }; trap 'rm -rf "$T"' EXIT
 CC="$R/build/cycc"
 [ -x "$CC" ] || { echo "FAIL derive_accessors_inlined: no build/cycc"; exit 1; }

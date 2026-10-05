@@ -24,6 +24,7 @@
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
+cd "$ROOT" || { echo "FAIL: dce_pe_macho_layout_declines_compaction: cannot cd to $ROOT"; exit 1; }
 CYCC="$ROOT/build/cycc"
 fail() { echo "FAIL: dce_pe_macho_layout_declines_compaction: $1"; exit 1; }
 [ -x "$CYCC" ] || fail "build/cycc not found or not executable"

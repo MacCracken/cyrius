@@ -8,6 +8,7 @@
 # All expected encodings were assembled + round-trip-verified with llvm-mc.
 set -e
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
+cd "$ROOT" || { echo "FAIL: simd_f32v8_disasm: cannot cd to $ROOT"; exit 1; }
 CC="$ROOT/build/cycc"
 [ -x "$CC" ] || { echo "SKIP: build/cycc missing"; exit 77; }
 command -v objdump >/dev/null 2>&1 || { echo "SKIP: objdump not available"; exit 77; }

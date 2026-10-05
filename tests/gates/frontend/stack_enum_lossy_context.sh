@@ -32,6 +32,7 @@
 # self-drifting-value shape this cycle keeps finding. Re-derive, do not copy.
 set -u
 R=$(cd "$(dirname "$0")/../../.." && pwd)
+cd "$R" || { echo "FAIL: stack_enum_lossy_context: cannot cd to $R"; exit 1; }
 T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: stack_enum_lossy_context: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }; trap 'rm -rf "$T"' EXIT
 CC="$R/build/cycc"
 [ -x "$CC" ] || { echo "FAIL stack_enum_lossy_context: no build/cycc"; exit 1; }

@@ -17,6 +17,7 @@
 # gated behind a Linux/macOS host; the field guard is arch-independent.
 set -e
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
+cd "$ROOT" || { echo "FAIL: simd_vec_reject: cannot cd to $ROOT"; exit 1; }
 CC="$ROOT/build/cycc"
 [ -x "$CC" ] || { echo "SKIP: build/cycc missing"; exit 77; }
 T=$(mktemp) && [ -f "$T" ] || { echo "FAIL: simd_vec_reject: mktemp failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }

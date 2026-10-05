@@ -153,6 +153,7 @@
 # Skips gracefully off Linux/x86_64, or without gcc / build/cycc.
 set -e
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
+cd "$ROOT" || { echo "FAIL: call_site_stack_alignment: cannot cd to $ROOT"; exit 1; }
 CYCC="$ROOT/build/cycc"
 
 uname_s=$(uname -s 2>/dev/null || echo unknown)

@@ -6,6 +6,7 @@
 # watchdog. (Robustness vs byte-mutated input is the VR-02 parser-fuzz gate's job.)
 set -e
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
+cd "$ROOT" || { echo "FAIL: dx_multi_error: cannot cd to $ROOT"; exit 1; }
 CC="$ROOT/build/cycc"
 [ -x "$CC" ] || { echo "SKIP: build/cycc missing"; exit 77; }
 T=$(mktemp) && [ -f "$T" ] || { echo "FAIL: dx_multi_error: mktemp failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
