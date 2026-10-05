@@ -23,6 +23,11 @@
 # = 104 bytes. The OVERLAPPED + WSABUF + buffers live in the ctx (never a stack local —
 # a stack OVERLAPPED corrupts on completion after the issuing frame returns).
 #
+# INT RESULTS. WSAGetLastError (0xF024), WSAIoctl, WSARecv, WSASend, getaddrinfo and the
+# ConnectEx / AcceptEx BOOLs return a C `int`; their reroutes (and callptr) define only eax,
+# so every one is tested masked to 32 bits — dirty upper bits must not turn WSA_IO_PENDING
+# or a 0 into a failure. Pinned by tests/gates/platform/pe_wsa_lasterr_masked.sh. CHANGELOG [6.6.16]
+#
 # >>> include "lib/fnptr.cyr"
 include "lib/fnptr.cyr"
 
@@ -303,7 +308,7 @@ fn _async_connect_task(ctx): i64 {
         var guid[16]; store64(&guid, 0x4660DDF325A207B9); store64(&guid + 8, 0x3E06748CE576E98E);
         var cxp[8]; store64(&cxp, 0);
         var nbf[8]; store32(&nbf, 0);
-        if (syscall(0xF027, s, 0xC8000006, &guid, 16, &cxp, 8, &nbf, 0, 0) != 0) {
+        if ((syscall(0xF027, s, 0xC8000006, &guid, 16, &cxp, 8, &nbf, 0, 0) & 0xFFFFFFFF) != 0) {
             syscall(0xF023, s); return 0 - 1;
         }
         var connectex = load64(&cxp);
@@ -318,8 +323,8 @@ fn _async_connect_task(ctx): i64 {
         var cr = callptr(connectex, s, &sa, 16, 0, 0, 0, ctx);   # ConnectEx(overlapped=ctx)
         # A synchronous failure (FALSE + last-error != WSA_IO_PENDING) queues NO completion —
         # don't park (the reactor would hang), fail the task instead.
-        if (cr == 0) {
-            if (syscall(0xF024) != 997) { syscall(0xF023, s); return 0 - 1; }   # not WSA_IO_PENDING
+        if ((cr & 0xFFFFFFFF) == 0) {   # BOOL: only eax is defined
+            if ((syscall(0xF024) & 0xFFFFFFFF) != 997) { syscall(0xF023, s); return 0 - 1; }   # not WSA_IO_PENDING
         }
         _async_win_park(rt);
         return 0;
@@ -359,7 +364,7 @@ fn _async_accept_task(ctx): i64 {
         var guid[16]; store64(&guid, 0x11CFCBACB5367DF1); store64(&guid + 8, 0x92A1485F8000CA95);
         var axp[8]; store64(&axp, 0);
         var nbf[8]; store32(&nbf, 0);
-        if (syscall(0xF027, load64(ctx + 56), 0xC8000006, &guid, 16, &axp, 8, &nbf, 0, 0) != 0) {
+        if ((syscall(0xF027, load64(ctx + 56), 0xC8000006, &guid, 16, &axp, 8, &nbf, 0, 0) & 0xFFFFFFFF) != 0) {
             syscall(0xF023, acc); return 0 - 1;
         }
         var acceptex = load64(&axp);
@@ -369,8 +374,8 @@ fn _async_accept_task(ctx): i64 {
         # AcceptEx(listen, accept, outbuf, dwRecvLen=0, localAddrLen=32, remoteAddrLen=32, &bytes,
         # overlapped=ctx). localAddrLen/remoteAddrLen = sizeof(sockaddr_in)+16 = 32; outbuf holds both.
         var ar = callptr(acceptex, load64(ctx + 56), acc, ctx + 80, 0, 32, 32, ctx + 72, ctx);
-        if (ar == 0) {
-            if (syscall(0xF024) != 997) { syscall(0xF023, acc); return 0 - 1; }   # not WSA_IO_PENDING
+        if ((ar & 0xFFFFFFFF) == 0) {   # BOOL: only eax is defined
+            if ((syscall(0xF024) & 0xFFFFFFFF) != 997) { syscall(0xF023, acc); return 0 - 1; }   # not WSA_IO_PENDING
         }
         _async_win_park(rt);
         return 0;
@@ -409,8 +414,8 @@ fn _async_recv_task(ctx): i64 {
         store64(ctx + 40, 1);
         # WSARecv(s, &WSABUF, 1, NULL, &flags, &overlapped=ctx, NULL)
         var rc = syscall(0xF029, load64(ctx + 48), ctx + 80, 1, 0, ctx + 96, ctx, 0);
-        if (rc != 0) {   # SOCKET_ERROR — a non-pending failure queues no completion; don't park
-            if (syscall(0xF024) != 997) { return 0 - 1; }   # not WSA_IO_PENDING
+        if ((rc & 0xFFFFFFFF) != 0) {   # SOCKET_ERROR — a non-pending failure queues no completion; don't park
+            if ((syscall(0xF024) & 0xFFFFFFFF) != 997) { return 0 - 1; }   # not WSA_IO_PENDING
         }
         _async_win_park(rt);
         return 0;
@@ -443,8 +448,8 @@ fn _async_send_task(ctx): i64 {
         store64(ctx + 40, 1);
         # WSASend(s, &WSABUF, 1, NULL, dwFlags=0, &overlapped=ctx, NULL)
         var rc = syscall(0xF02A, load64(ctx + 48), ctx + 80, 1, 0, 0, ctx, 0);
-        if (rc != 0) {   # SOCKET_ERROR — a non-pending failure queues no completion; don't park
-            if (syscall(0xF024) != 997) { return 0 - 1; }   # not WSA_IO_PENDING
+        if ((rc & 0xFFFFFFFF) != 0) {   # SOCKET_ERROR — a non-pending failure queues no completion; don't park
+            if ((syscall(0xF024) & 0xFFFFFFFF) != 997) { return 0 - 1; }   # not WSA_IO_PENDING
         }
         _async_win_park(rt);
         return 0;
@@ -470,7 +475,8 @@ fn async_send(rt, fd, buf, len): i64 {
 # (getaddrinfo is synchronous — acceptable for R1). ctx = { host, rt }.
 fn _async_resolve_task(ctx): i64 {
     var result[8]; store64(&result, 0);
-    if (syscall(0xF02B, load64(ctx), 0, 0, &result) != 0) { return 0 - 1; }   # getaddrinfo(host,0,0,&res)
+    var gr = syscall(0xF02B, load64(ctx), 0, 0, &result);   # getaddrinfo(host,0,0,&res)
+    if ((gr & 0xFFFFFFFF) != 0) { return 0 - 1; }
     var ai = load64(&result);
     var ipv4 = 0 - 1;
     var found = 0;
