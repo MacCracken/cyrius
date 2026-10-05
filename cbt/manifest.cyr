@@ -36,10 +36,10 @@ fn _mf_vocab_a(i): i64 {
     if (i == 9) { return "build|test|read|-|-|<file>...|bare cyrius test: these (file / dir / list), then tests/"; }
     if (i == 10) { return "build|modules|read|-|-|-|every compile: these files prepended before the entry"; }
     if (i == 11) { return "build|dce|read|-|CYRIUS_DCE|--dce|cyrius build: dead-code elimination (bool)"; }
-    if (i == 12) { return "build|strict|read|-|CYRIUS_STRICT|--strict|cyrius build: undefined fn = error (bool)"; }
+    if (i == 12) { return "build|strict|read|-|CYRIUS_STRICT|--strict|cyrius build: passes cycc --strict (bool)"; }
     if (i == 13) { return "build|defines|read|-|CYRIUS_DEFINES|-D|cyrius build: one #define per name"; }
-    if (i == 14) { return "build|target|held|-|-|-|not read yet: pass --target / --aarch64 / --win / --agnos"; }
-    if (i == 15) { return "build|features|dropped|-|-|-|never read: features are [features] + --features"; }
+    if (i == 14) { return "build|target|held|-|-|-|pass --target / --aarch64 / --win / --agnos on the command line"; }
+    if (i == 15) { return "build|features|dropped|-|-|-|features are [features] + --features"; }
     if (i == 16) { return "coverage|programs|read|-|-|--programs|cyrius coverage: RUN programs in the corpus (globs)"; }
     if (i == 17) { return "sections|base|read|-|-|-|bare-metal builds: the image load base"; }
     return 0;
@@ -598,16 +598,21 @@ var _CFG_DEFAULT = 0;
 var _CFG_MANIFEST = 1;
 var _CFG_ENV = 2;
 var _CFG_ARG = 3;
-var _CFG_N = 9;
+var _CFG_N = 10;
 var _CK_ENTRY = 0;
 var _CK_OUTPUT = 1;
-var _CK_STRICT = 2;
-var _CK_DEFINES = 3;
-var _CK_MODULES = 4;
-var _CK_PKG_NAME = 5;
-var _CK_PKG_VERSION = 6;
-var _CK_PKG_CYRIUS = 7;
-var _CK_SECTIONS_BASE = 8;
+var _CK_DCE = 2;
+var _CK_STRICT = 3;
+var _CK_DEFINES = 4;
+var _CK_MODULES = 5;
+var _CK_PKG_NAME = 6;
+var _CK_PKG_VERSION = 7;
+var _CK_PKG_CYRIUS = 8;
+var _CK_SECTIONS_BASE = 9;
+# 1 when the resolved `dce` is on and did NOT come from the environment: compile() then hands cycc
+# CYRIUS_DCE=1, replacing any inherited value (an argument beats CYRIUS_DCE=0).
+var _cfg_dce_inject = 0;
+var _cfg_warned = 0;
 var _cfg_v[16];   # the value: a cstr (0 = unset), a bool, or a vec of cstrs (0 = empty)
 var _cfg_o[16];   # the origin rung
 var _cfg_w[16];   # where on that rung: "[build] src", "CYRIUS_DCE", "--dce", "<source>"
@@ -615,6 +620,7 @@ var _cfg_w[16];   # where on that rung: "[build] src", "CYRIUS_DCE", "--dce", "<
 fn _cfg_name(i): i64 {
     if (i == _CK_ENTRY) { return "build.entry"; }
     if (i == _CK_OUTPUT) { return "build.output"; }
+    if (i == _CK_DCE) { return "build.dce"; }
     if (i == _CK_STRICT) { return "build.strict"; }
     if (i == _CK_DEFINES) { return "build.defines"; }
     if (i == _CK_MODULES) { return "build.modules"; }
@@ -626,7 +632,7 @@ fn _cfg_name(i): i64 {
 
 # 0 = string, 1 = bool, 2 = list
 fn _cfg_kind(i): i64 {
-    if (i == _CK_STRICT) { return 1; }
+    if (i == _CK_DCE || i == _CK_STRICT) { return 1; }
     if (i == _CK_DEFINES || i == _CK_MODULES) { return 2; }
     return 0;
 }
@@ -695,13 +701,119 @@ fn _cfg_mf_strs(i, section, key): i64 {
     return 0;
 }
 
+# The environment value of `name`, or 0 when it is unset or empty. POSIX reads the CLI's own envp
+# (`_envp` — the one every child inherits, so this is what cycc would see); Windows asks
+# GetEnvironmentVariableA.
+fn _cfg_env(name): i64 {
+    #ifdef CYRIUS_TARGET_WIN
+    var wb = alloc(512);
+    var wv = _win_getenv_into(name, wb);
+    if (wv == 0) { return 0; }
+    if (load8(wv) == 0) { return 0; }
+    return wv;
+    #endif
+    #ifndef CYRIUS_TARGET_WIN
+    if (_envp == 0) { return 0; }
+    var nl = strlen(name);
+    var i = 0;
+    while (load64(_envp + i * 8) != 0) {
+        var e = load64(_envp + i * 8);
+        if (memeq(e, name, nl) == 1 && load8(e + nl) == 61) {
+            if (load8(e + nl + 1) == 0) { return 0; }
+            return e + nl + 1;
+        }
+        i = i + 1;
+    }
+    return 0;
+    #endif
+}
+
+# Environment rungs. A bool variable is on only when it is exactly "1" — cycc's own rule for
+# CYRIUS_DCE, so `CYRIUS_DCE=0` (or any other value) is an explicit OFF that beats the manifest.
+fn _cfg_env_bool(i, name): i64 {
+    var e = _cfg_env(name);
+    if (e == 0) { return 0; }
+    var b = 0;
+    if (streq(e, "1") == 1) { b = 1; }
+    _cfg_put(i, b, _CFG_ENV, name);
+    return 0;
+}
+
+fn _cfg_env_csv(i, name): i64 {
+    var e = _cfg_env(name);
+    if (e == 0) { return 0; }
+    var v = _split_csv(e);
+    if (vec_len(v) == 0) { return 0; }
+    _cfg_put(i, v, _CFG_ENV, name);
+    return 0;
+}
+
+# A define reaches the compile as one `#define NAME` line, so a name that is empty or carries a
+# control byte (a newline would START A NEW SOURCE LINE in the materialized unit) is refused.
+fn _cfg_defines_ok(v, where): i64 {
+    if (v == 0) { return 0; }
+    var i = 0;
+    while (i < vec_len(v)) {
+        var d = vec_get(v, i);
+        var bad = 0;
+        if (load8(d) == 0) { bad = 1; }
+        var j = 0;
+        while (load8(d + j) != 0) {
+            if (load8(d + j) < 32 || load8(d + j) == 127) { bad = 1; }
+            j = j + 1;
+        }
+        if (bad == 1) {
+            _err_ctx("a define is empty or holds a control character", where);
+            return 1;
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# Warn, once, about every key present in `[section]` that nothing reads: a HELD or DROPPED key by
+# name with what to do instead, and a key the vocabulary does not declare at all (a typo reads as
+# silence otherwise — an inert key cannot be observed to be wrong).
+fn _cfg_warn_section(section): i64 {
+    if (_mf_state != 1) { return 0; }
+    var keys = _toml_section_keys(_mf_buf, _mf_len, section);
+    var i = 0;
+    while (i < vec_len(keys)) {
+        var k = vec_get(keys, i);
+        i = i + 1;
+        var row = _mf_vocab_row(section, k);
+        var sb = str_builder_new();
+        str_builder_add_cstr(sb, "cyrius.cyml ");
+        str_builder_add_cstr(sb, _cfg_where(section, k));
+        if (row == 0) {
+            str_builder_add_cstr(sb, " is not a known key and nothing reads it (cyrius help manifest lists them)");
+        } else {
+            var st = _mf_vocab_field(row, 2);
+            if (streq(st, "held") == 1) { str_builder_add_cstr(sb, " is HELD, not read in this release: "); }
+            elif (streq(st, "dropped") == 1) { str_builder_add_cstr(sb, " is DROPPED and ignored: "); }
+            else { continue; }
+            str_builder_add_cstr(sb, _mf_vocab_field(row, 6));
+        }
+        _warn(str_data(str_builder_build(sb)));
+    }
+    return 0;
+}
+
 # Resolve the configuration `cyrius build` acts on. `src_arg` / `out_arg` are its operands (0 when
 # not given). Returns 0, or 1 after naming what is wrong.
 fn _cfg_resolve_build(src_arg, out_arg): i64 {
     _cfg_reset();
     if (_mf_load() < 0) { return 1; }
+    if (_cfg_warned == 0) {
+        _cfg_warned = 1;
+        _cfg_warn_section("build");
+    }
     if (_cfg_mf_str(_CK_ENTRY, "build", "entry") != 0) { return 1; }
     if (_cfg_mf_str(_CK_OUTPUT, "build", "output") != 0) { return 1; }
+    if (_cfg_mf_bool(_CK_DCE, "build", "dce") != 0) { return 1; }
+    if (_cfg_mf_bool(_CK_STRICT, "build", "strict") != 0) { return 1; }
+    if (_cfg_mf_strs(_CK_DEFINES, "build", "defines") != 0) { return 1; }
+    if (_cfg_defines_ok(_cfg_val(_CK_DEFINES), "cyrius.cyml [build] defines") != 0) { return 1; }
     if (_cfg_mf_strs(_CK_MODULES, "build", "modules") != 0) { return 1; }
     if (_cfg_mf_str(_CK_PKG_NAME, "package", "name") != 0) { return 1; }
     if (_cfg_mf_str(_CK_PKG_VERSION, "package", "version") != 0) { return 1; }
@@ -712,7 +824,14 @@ fn _cfg_resolve_build(src_arg, out_arg): i64 {
     }
     if (_cfg_mf_str(_CK_PKG_CYRIUS, "package", "cyrius") != 0) { return 1; }
     if (_cfg_mf_str(_CK_SECTIONS_BASE, "sections", "base") != 0) { return 1; }
+    _cfg_env_bool(_CK_DCE, "CYRIUS_DCE");
+    _cfg_env_bool(_CK_STRICT, "CYRIUS_STRICT");
+    _cfg_env_csv(_CK_DEFINES, "CYRIUS_DEFINES");
+    if (_cfg_org(_CK_DEFINES) == _CFG_ENV) {
+        if (_cfg_defines_ok(_cfg_val(_CK_DEFINES), "CYRIUS_DEFINES") != 0) { return 1; }
+    }
     if (src_arg != 0) { _cfg_put(_CK_ENTRY, src_arg, _CFG_ARG, "<source>"); }
+    if (_cli_has("--dce") == 1) { _cfg_put(_CK_DCE, 1, _CFG_ARG, "--dce"); }
     if (out_arg != 0) { _cfg_put(_CK_OUTPUT, out_arg, _CFG_ARG, "<output>"); }
     if (_cli_has("--strict") == 1) { _cfg_put(_CK_STRICT, 1, _CFG_ARG, "--strict"); }
     var defs = _cli_values("-D");
@@ -723,6 +842,8 @@ fn _cfg_resolve_build(src_arg, out_arg): i64 {
 # Hand the resolved values to the compile.
 fn _cfg_apply_build(): i64 {
     _strict = _cfg_val(_CK_STRICT);
+    _cfg_dce_inject = 0;
+    if (_cfg_val(_CK_DCE) == 1 && _cfg_org(_CK_DCE) != _CFG_ENV) { _cfg_dce_inject = 1; }
     _defines = 0;
     var d = _cfg_val(_CK_DEFINES);
     if (d != 0) { if (vec_len(d) > 0) { _defines = d; } }
@@ -796,3 +917,17 @@ fn _cfg_print_config(src_arg, out_arg): i64 {
     }
     return 0;
 }
+
+# Windows: set NAME=VALUE on this process, so the cmd.exe that runs the compiler inherits it
+# (there is no envp to hand CreateProcessW here). kernel32!SetEnvironmentVariableA by
+# GetProcAddress — no PE reroute exists for it — as `_win_redirect_to_pinned` does. 0 = set.
+#ifdef CYRIUS_TARGET_WIN
+fn _win_setenv(name, val): i64 {
+    var k32 = syscall(0xF013, "kernel32.dll");                    # GetModuleHandleA
+    var set_env = 0;
+    if (k32 != 0) { set_env = syscall(0xF014, k32, "SetEnvironmentVariableA"); }   # GetProcAddress
+    if (set_env == 0) { return 1; }
+    if ((callptr(set_env, name, val) & 4294967295) == 0) { return 1; }
+    return 0;
+}
+#endif

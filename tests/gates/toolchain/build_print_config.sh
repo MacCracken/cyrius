@@ -24,7 +24,7 @@ CC=${CYCC:-"$ROOT/build/cycc"}
 W=$(mktemp -d) && [ -d "$W" ] || { echo "FAIL: build_print_config: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$W"' EXIT
 FAIL=0
-fail() { echo "  FAIL: $*"; FAIL=1; }
+fail() { echo "  FAIL: $*"; FAIL=$((FAIL + 1)); }
 "$CC" < cbt/cyrius.cyr > "$W/cyrius" 2> "$W/build.err" || { echo "FAIL: build_print_config: cbt/cyrius.cyr does not build"; tail -3 "$W/build.err"; exit 1; }
 chmod +x "$W/cyrius"
 mkdir -p "$W/home/bin"; cp "$CC" "$W/home/bin/cycc"

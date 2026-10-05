@@ -1813,6 +1813,25 @@ manifest is read (a manifest past 16 MiB is refused by name) and values are TOML
 escapes, `'…'` verbatim, `true`/`false`, arrays (multi-line, with comments); a CYML body after
 a `---` line is prose, never configuration.
 
+`[build]` carries what used to be retyped on every CI line (6.6.17):
+
+```toml
+[build]
+entry = "programs/smoke.cyr"
+output = "build/sakshi-smoke"
+defines = ["SAKSHI_SMOKE"]   # one `#define NAME` each; -D NAME / CYRIUS_DEFINES=A,B replace the list
+dce = true                   # dead-code elimination; --dce / CYRIUS_DCE=1 (CYRIUS_DCE=0 turns it off)
+strict = true                # passes cycc --strict; --strict / CYRIUS_STRICT=1
+```
+
+They configure `cyrius build`; `-D` on `test` / `run` / `bench` stays a command-line choice. A
+mistyped value (`dce = "yes"`) is refused by name, and so is a define holding a control
+character (it would start a new source line in the compiled unit). `[build] target` is **held**
+(pass `--target` / `--aarch64` / `--win` / `--agnos`), `[build] features` is **dropped** (features
+are `[features]` + `--features`), and a key the vocabulary does not know — a typo — is warned
+by name instead of being silently inert. ⚠ `cycc --strict` has changed nothing since 6.3.2,
+when a reachable undefined function became an error by default; `strict` passes it faithfully.
+
 `cyrius build --print-config [<source> [<output>]]` resolves the configuration and prints each
 value with the rung it came from, then exits 0 — it builds nothing and resolves no deps:
 
@@ -1822,6 +1841,7 @@ cyrius build configuration (argument > environment > manifest > default)
   manifest: cyrius.cyml
   build.entry = "src/main.cyr"  (manifest: [build] src)
   build.output = "build/hisab"  (manifest: [build] output)
+  build.dce = true  (environment: CYRIUS_DCE)
   build.strict = false  (default)
   build.defines = []  (default)
   ...
@@ -1841,10 +1861,10 @@ cyrius build configuration (argument > environment > manifest > default)
 | `[build]` | `test` | read | — | — | `<file>...` | bare cyrius test: these (file / dir / list), then tests/ |
 | `[build]` | `modules` | read | — | — | — | every compile: these files prepended before the entry |
 | `[build]` | `dce` | read | — | `CYRIUS_DCE` | `--dce` | cyrius build: dead-code elimination (bool) |
-| `[build]` | `strict` | read | — | `CYRIUS_STRICT` | `--strict` | cyrius build: undefined fn = error (bool) |
+| `[build]` | `strict` | read | — | `CYRIUS_STRICT` | `--strict` | cyrius build: passes cycc --strict (bool) |
 | `[build]` | `defines` | read | — | `CYRIUS_DEFINES` | `-D` | cyrius build: one #define per name |
-| `[build]` | `target` | held | — | — | — | not read yet: pass --target / --aarch64 / --win / --agnos |
-| `[build]` | `features` | dropped | — | — | — | never read: features are [features] + --features |
+| `[build]` | `target` | held | — | — | — | pass --target / --aarch64 / --win / --agnos on the command line |
+| `[build]` | `features` | dropped | — | — | — | features are [features] + --features |
 | `[coverage]` | `programs` | read | — | — | `--programs` | cyrius coverage: RUN programs in the corpus (globs) |
 | `[sections]` | `base` | read | — | — | — | bare-metal builds: the image load base |
 | `[deps]` | `stdlib` | read | — | — | — | cyrius deps: stdlib leaves vendored into lib/ and auto-prepended |

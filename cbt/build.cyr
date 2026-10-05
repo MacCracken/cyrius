@@ -997,19 +997,30 @@ fn _cc_env_retarget(tv): i64 {
 # 4th parameter when that file is next touched. CHANGELOG [6.5.19].
 #ifdef CYRIUS_TARGET_WIN
 fn _win_compile_spawn_err(cc, source, output, errfile): i64 {
-    # v6.6.6 — sized from the four paths, not a fixed 16 KiB; `_w_cmdbuf` refuses by
+    # 6.6.17: `errfile` may be 0 (stderr stays on the console), and a resolved `strict` adds
+    # `--strict` — cycc_win reads it from GetCommandLineW (src/main_win.cyr). This is now the one
+    # Windows compile spawn in compile(), so the flag cannot be lost on the other path.
+    var fl = "";
+    if (_strict == 1) { fl = " --strict"; }
+    var elen = 0;
+    if (errfile != 0) { elen = strlen(errfile); }
+    # v6.6.6 — sized from the paths, not a fixed 16 KiB; `_w_cmdbuf` refuses by
     # name past Windows' 32,767-character command line. See lib/process_win.cyr.
-    var wbuf = _w_cmdbuf(strlen(cc) + strlen(source) + strlen(output) + strlen(errfile));
+    var wbuf = _w_cmdbuf(strlen(cc) + strlen(source) + strlen(output) + elen + strlen(fl));
     if (wbuf == 0) { _err_ctx("compiler spawn", cc); return 1; }
     var o = 0;
     o = _w_append_cstr(wbuf, o, "cmd /s /c \"\"");
     o = _w_append_cstr(wbuf, o, cc);
-    o = _w_append_cstr(wbuf, o, "\" < \"");
+    o = _w_append_cstr(wbuf, o, "\"");
+    o = _w_append_cstr(wbuf, o, fl);
+    o = _w_append_cstr(wbuf, o, " < \"");
     o = _w_append_cstr(wbuf, o, source);
     o = _w_append_cstr(wbuf, o, "\" > \"");
     o = _w_append_cstr(wbuf, o, output);
-    o = _w_append_cstr(wbuf, o, "\" 2> \"");
-    o = _w_append_cstr(wbuf, o, errfile);
+    if (errfile != 0) {
+        o = _w_append_cstr(wbuf, o, "\" 2> \"");
+        o = _w_append_cstr(wbuf, o, errfile);
+    }
     o = _w_append_cstr(wbuf, o, "\"\"");
     _w_terminate(wbuf, o);
     var pi[24];
@@ -1162,8 +1173,17 @@ fn compile(source, output): i64 {
     # path doesn't yet have — tracked for follow-up. See CHANGELOG [6.0.85].
     #ifdef CYRIUS_TARGET_WIN
     var wrc = 0;
-    if (_cc_stderr_to != 0) { wrc = _win_compile_spawn_err(cc, actual_source, output, _cc_stderr_to); }
-    else { wrc = _win_compile_spawn(cc, actual_source, output); }
+    # 6.6.17: a resolved `dce` reaches cycc through the environment it inherits, and `strict`
+    # through its command line — neither crossed this arm before (CYRIUS_DCE only if the user's
+    # own environment held it; `--strict` never), so [build] dce / strict were inert here.
+    if (_cfg_dce_inject == 1) {
+        if (_win_setenv("CYRIUS_DCE", "1") != 0) {
+            if (tmp_src != 0) { sys_unlink(tmp_src); }
+            _err("could not set CYRIUS_DCE=1 for the compiler ([build] dce / --dce)");
+            return 1;
+        }
+    }
+    wrc = _win_compile_spawn_err(cc, actual_source, output, _cc_stderr_to);
     if (tmp_src != 0) { sys_unlink(tmp_src); }
     # v6.6.6 (bite 24 review) — the PE arm's status; see `_cc_last_exit`. `wrc` is what
     # `_win_wait_close` read out of the cmd.exe that ran the compiler, i.e. the compiler's
@@ -1290,18 +1310,26 @@ fn compile(source, output): i64 {
         # cycc reads PIE from its own cmdline or from CYRIUS_PIE=1; the env is the form
         # available here.
         if (_pie_target == 1) { sp_extra = sp_extra + 1; }
+        if (_cfg_dce_inject == 1) { sp_extra = sp_extra + 1; }   # 6.6.17: [build] dce / --dce
         if (_baremetal_target == 1) { sp_extra = sp_extra + 2; }   # CYRIUS_KERNEL + CYRIUS_ELF64_KERNEL
         if (_baremetal_target == 1 && _section_base_env_ptr != 0) { sp_extra = sp_extra + 1; }   # v6.3.3 #5 CYRIUS_KERNEL_BASE
         if (sp_extra > 0) {
             var sp_count = 0;
             while (load64(_envp + sp_count * 8) != 0) { sp_count = sp_count + 1; }
             var sp_envp = alloc((sp_count + sp_extra + 1) * 8);
+            # 6.6.17: an injected CYRIUS_DCE=1 REPLACES an inherited CYRIUS_DCE (an argument beats
+            # CYRIUS_DCE=0 in the environment, and cycc reads the first entry).
             var sp_ej = 0;
+            var sp_ni = 0;
             while (sp_ej < sp_count) {
-                store64(sp_envp + sp_ej * 8, load64(_envp + sp_ej * 8));
+                var sp_e = load64(_envp + sp_ej * 8);
+                if (_cfg_dce_inject == 0 || _cc_pfx(sp_e, "CYRIUS_DCE=") == 0) {
+                    store64(sp_envp + sp_ni * 8, sp_e);
+                    sp_ni = sp_ni + 1;
+                }
                 sp_ej = sp_ej + 1;
             }
-            var sp_ni = sp_count;
+            if (_cfg_dce_inject == 1) { store64(sp_envp + sp_ni * 8, "CYRIUS_DCE=1"); sp_ni = sp_ni + 1; }
             if (_strict_pin == 1) { store64(sp_envp + sp_ni * 8, "CYRIUS_STRICT_PIN=1"); sp_ni = sp_ni + 1; }
             if (_agnos_target == 1) { store64(sp_envp + sp_ni * 8, "CYRIUS_TARGET_AGNOS=1"); sp_ni = sp_ni + 1; }
             if (_win_target == 1) { store64(sp_envp + sp_ni * 8, "CYRIUS_TARGET_WIN=1"); sp_ni = sp_ni + 1; }

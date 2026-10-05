@@ -1841,6 +1841,16 @@ _chk_gate "$ROOT/tests/gates/toolchain/manifest_one_reader.sh"
 # consumer manifests, with the expected values parsed from the fixtures by awk.
 _chk_gate "$ROOT/tests/gates/toolchain/build_print_config.sh"
 
+# 6.6.17 (P1) — [build] dce / strict / defines resolve argument > environment > manifest > default
+# at every rung, observed where they land (a stub cycc's argv + CYRIUS_DCE, the program's exit
+# code); mistyped values refused; held target / dropped features / unknown keys warned by name.
+_chk_gate "$ROOT/tests/gates/toolchain/build_config_precedence.sh"
+
+# 6.6.17 (P1) — on Windows the resolved dce / strict reach cycc.exe (CYRIUS_DCE in its
+# environment, --strict on its command line): a PE stub compiler under a private wine prefix.
+# SKIP by name without wine.
+_chk_gate "$ROOT/tests/gates/toolchain/build_config_windows_arm.sh"
+
 # 6.6.10 (bite 12) — the check driver runs only tools it BUILT from this tree in this run:
 # all nine executables it runs come from its private run dir, planted build/ stubs and a
 # ~/.cyrius/bin copy are ignored, and a tool that does not compile is a FAIL naming it.
