@@ -14,7 +14,8 @@
 # is otherwise valid, so on the pre-6.6.19 CLI every row exits 0 — RED)
 #   1. paths: absolute, `../x`, `a/../../x`, 'C:\x', '\x', a `:` anywhere (the NTFS stream forms
 #      `.git::$INDEX_ALLOCATION/config` and `.git:$I30:$INDEX_ALLOCATION/config` name the .git
-#      directory on Windows; `file:stream`), a committed link `data/k ->
+#      directory on Windows; `file:stream`), an 8.3 short-name component (`x~1`), a code point
+#      HFS+ ignores (U+200C, U+FEFF), a file with a second hard link, a committed link `data/k ->
 #      /etc/hostname`, a path through a linked directory, `.git/config` and `.GIT/config`, a
 #      missing file, a directory.
 #   2. sizes, against cycc's pool (2,097,152 B; LEX refuses at `spos + 1 >= 2097152`, so it holds
@@ -50,6 +51,12 @@ mkdir -p "$P/data" "$P/sub" "$P/.git" "$P/real"
 printf 'syscall(60, 0);\n' > "$P/main.cyr"
 printf '{"preset": "lean"}\n' > "$P/data/x.json"
 printf 'a real file whose name holds a colon\n' > "$P/data/x.json:secret"
+# real files for the rows the previous CLI ACCEPTED: an 8.3-shaped name, HFS+-ignorable code
+# points (U+200C, U+FEFF), and a second hard link to an in-project file
+ZWNJ=$(printf '\342\200\214'); BOM=$(printf '\357\273\277')
+printf 'x\n' > "$P/data/x~1.json"; mkdir -p "$P/pr~2"; printf 'x\n' > "$P/pr~2/x.json"
+printf 'x\n' > "$P/data/z$ZWNJ.json"; printf 'x\n' > "$P/data/b$BOM.json"
+printf 'x\n' > "$P/data/h0.json"; ln "$P/data/h0.json" "$P/data/hard.json"
 printf 'in-project\n' > "$P/real/x.json"
 printf '[core]\n\textraheader = AUTHORIZATION: basic c2VjcmV0\n' > "$P/.git/config"
 ln -s /etc/hostname "$P/data/k"
@@ -87,6 +94,11 @@ refused "axis 1 drive"           'DRV = "C:\x"'            "DRV = 'C:\\x'"
 refused "axis 1 ntfs stream"     'ADS = ".git::$INDEX_ALLOCATION/config"' "ADS = '.git::\$INDEX_ALLOCATION/config'" "holds a ':'"
 refused "axis 1 ntfs I30"        'I30 = ".git:$I30:$INDEX_ALLOCATION/config"' "I30 = '.git:\$I30:\$INDEX_ALLOCATION/config'" "holds a ':'"
 refused "axis 1 file:stream"     'STR = "data/x.json:secret"' "STR = 'data/x.json:secret'" "holds a ':'"
+refused "axis 1 8.3 name"        'TIL = "data/x~1.json"'   'TIL = "data/x~1.json"' "8.3 short-name"
+refused "axis 1 8.3 dir"         'TID = "pr~2/x.json"'     'TID = "pr~2/x.json"' "8.3 short-name"
+refused "axis 1 HFS ignorable"   "ZW = \"data/z$ZWNJ.json\"" "ZW = 'data/z$ZWNJ.json'" "HFS+ ignores"
+refused "axis 1 HFS BOM"         "BOM = \"data/b$BOM.json\"" "BOM = 'data/b$BOM.json'" "HFS+ ignores"
+refused "axis 1 hard link"       'HARD = "data/hard.json"' 'HARD = "data/hard.json"' "more than one hard link"
 refused "axis 1 backslash"       'BS = "\x"'               "BS = '\\x'"
 refused "axis 1 committed link"  'LINK = "data/k"'         'LINK = "data/k"'
 refused "axis 1 linked dir"      'VIA = "lnk/x.json"'      'VIA = "lnk/x.json"'

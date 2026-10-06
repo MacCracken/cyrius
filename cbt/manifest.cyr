@@ -633,9 +633,9 @@ fn _mf_key_str(section, key): i64 {
 # what it may read is narrow, and every refusal names `cyrius.cyml [embed] NAME`:
 #   · NAME is an identifier, and not a reserved word: the module is `fn NAME()`, and an error in
 #     that prelude is blamed on the ENTRY file (`<source>:N`), so cbt has to catch it first.
-#   · the path is relative, with no `..`, no `\`, no `:`, no control byte and no `.git`
-#     component (actions/checkout leaves the job token in .git/config, which passes every other
-#     rule); and no SYMLINK anywhere on it — an untrusted checkout must not ship out-of-project
+#   · the path is relative, with no `..`, no `\`, no `:`, no control byte, no 8.3 short-name
+#     component (`~` + digit), no code point HFS+ ignores, and no `.git` component (actions/checkout
+#     leaves the job token in .git/config, which passes every other rule); the file has one link; and no SYMLINK anywhere on it — an untrusted checkout must not ship out-of-project
 #     bytes inside a release binary, and "inside the project" cannot be read off the path text
 #     once a link is involved (dir_walk follows links since 6.5.12; this deliberately does not).
 #   · a regular file, opened ONCE and read from that fd here: the bytes the build embeds are the
@@ -727,6 +727,33 @@ fn _embed_is_dotgit(buf, s, e): i64 {
     return 1;
 }
 
+# 1 when the UTF-8 at path[i] is a code point HFS+ ignores in names (git's protectHFS list:
+# U+200C-200F, U+202A-202E, U+206A-206F, U+FEFF) — `.g<U+200C>it` IS `.git` on HFS+.
+fn _embed_hfs_ignorable(path, i, n): i64 {
+    if (i + 2 >= n) { return 0; }
+    var a = load8(path + i);
+    var b = load8(path + i + 1);
+    var c = load8(path + i + 2);
+    if (a == 0xE2 && b == 0x80 && ((c >= 0x8C && c <= 0x8F) || (c >= 0xAA && c <= 0xAE))) { return 1; }
+    if (a == 0xE2 && b == 0x81 && c >= 0xAA && c <= 0xAF) { return 1; }
+    if (a == 0xEF && b == 0xBB && c == 0xBF) { return 1; }
+    return 0;
+}
+
+# 1 when component buf[s..e) holds `~` followed by a digit — an NTFS 8.3 short name (`GIT~1`,
+# `PROGRA~2`) that can alias a different long name, `.git` included.
+fn _embed_has_short83(buf, s, e): i64 {
+    var i = s;
+    while (i + 1 < e) {
+        if (load8(buf + i) == 126) {
+            var d = load8(buf + i + 1);
+            if (d >= 48 && d <= 57) { return 1; }
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
 # 0 when `path` is a relative, in-project, link-free path, else why not.
 fn _embed_path_bad(path): i64 {
     var n = strlen(path);
@@ -742,6 +769,7 @@ fn _embed_path_bad(path): i64 {
         if (c == 58) { return "the path holds a ':' (a drive, or an NTFS stream like .git::$INDEX_ALLOCATION); an [embed] path is a plain relative path"; }
         if (c == 92) { return "the path holds a backslash; write [embed] paths with / (a \\ is a separator on Windows and would step past these checks)"; }
         if (c < 32 || c == 127) { return "the path holds a control character"; }
+        if (_embed_hfs_ignorable(path, i, n) == 1) { return "the path holds a code point HFS+ ignores (U+200C-U+200F, U+202A-U+202E, U+206A-U+206F, U+FEFF: git's protectHFS list), so it can name .git"; }
         i = i + 1;
     }
     var s = 0;
@@ -750,6 +778,9 @@ fn _embed_path_bad(path): i64 {
         if (i == n || load8(path + i) == 47) {
             if (i - s == 2 && load8(path + s) == 46 && load8(path + s + 1) == 46) {
                 return "the path climbs out with ..; an [embed] path stays inside the project";
+            }
+            if (_embed_has_short83(path, s, i) == 1) {
+                return "the path has an 8.3 short-name component (~ and a digit, like GIT~1); on Windows it can alias another name, .git included";
             }
             if (_embed_is_dotgit(path, s, i) == 1) {
                 return "the path reaches into .git; an [embed] never reads the repository's own metadata (actions/checkout keeps the job token in .git/config)";
@@ -838,6 +869,18 @@ fn _embed_read(path, lenp, whyp): i64 {
         store64(whyp, "is not a regular file");
         return 0;
     }
+    # A cheap hard-link guard: a file with another name may be one outside the project. fstat on
+    # the fd that is read (nlink is u16 on macOS; the low 16 bits elsewhere). No fstat on PE.
+    #ifndef CYRIUS_TARGET_WIN
+    var st[256];
+    if (sys_fstat(fd, &st) == 0) {
+        if (load16(&st + STAT_NLINK) > 1) {
+            file_close(fd);
+            store64(whyp, "has more than one hard link; another name for the file may lie outside the project");
+            return 0;
+        }
+    }
+    #endif
     if (size > _EMBED_POOL - 1) {
         var dr = file_read(fd, &probe, 1);
         file_close(fd);

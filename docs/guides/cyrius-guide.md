@@ -2026,7 +2026,9 @@ instruction.
   replace the stdlib function in every consumer of a bundle that carries it.
 - The path is relative to the project and stays inside it: no leading `/`, no `\`, no `:` (a
   drive, or an NTFS stream such as `.git::$INDEX_ALLOCATION`), no `..`, no control character, no
-  `.git` component (in any case). **No symlink anywhere
+  8.3 short-name component (`~` and a digit, as in `GIT~1`), no code point HFS+ ignores (U+200C–200F,
+  U+202A–202E, U+206A–206F, U+FEFF), no `.git` component (in any case), and the file has a single
+  hard link. **No symlink anywhere
   on the path** — `[embed]` is the one key that copies a file into a built artifact, and a link
   committed into an untrusted checkout could ship any file on the build machine inside a release
   binary. The file must exist and be a regular file; it is opened once and the bytes the build
