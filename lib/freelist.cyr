@@ -89,6 +89,12 @@ include "lib/mmap.cyr"
 # alloc.cyr reached at v6.0.64, for the same reasons.
 include "lib/atomic.cyr"
 
+# 6.6.18: the poison core — the settable fill byte, the shared fill / check helpers and the
+# report. Poison mode used to be a freelist-only feature with its fill a constant in three
+# places here; every poisoning allocator now shares one core. It is NOT compiler source and
+# costs nothing until poison mode is on. CHANGELOG [6.6.18]
+include "lib/poison.cyr"
+
 # Size classes: 16 32 64 128 256 512 1024 2048 4096
 var _fl_heads[72];
 var _fl_init = 0;
@@ -302,9 +308,9 @@ fn fl_poison_disable(): i64 { _fl_poison = 0; return 0; }
 # 1 when poison fill is active.
 fn fl_poison_active(): i64 { return _fl_poison; }
 # The fill byte. Exposed so a harness can assert "the output contains no poison bytes"
-# without hardcoding the constant. 0xA5 is deliberately not 0x00 and not 0xFF: both of those
-# occur naturally in real data, so either would produce false negatives.
-fn fl_poison_byte(): i64 { return 165; }
+# without hardcoding the constant. 6.6.18: it is the poison core's CURRENT fill
+# (`poison_fill_set` changes it; default 0xA5), no longer a constant.
+fn fl_poison_byte(): i64 { return poison_fill(); }
 
 # v6.5.29 — REDZONE + QUARANTINE. `.28` shipped the alloc-side FILL and deferred these two,
 # stating that a free-side poison "needs the block's original size, and the size-class path
@@ -325,7 +331,9 @@ fn fl_poison_byte(): i64 { return 165; }
 #     blk+8                    cls  / total
 #     blk+16                   [ user data — `size` bytes ]
 #     blk+16+size              [ redzone — poison, up to cap-8 ]   <- overflow detector
-#     blk+16+cap-8             [ the requested size, stored ]      <- read back at free
+#     blk+16+cap-8             [ size | fill << 56 ]               <- read back at free
+# (6.6.18: the slot records the fill the block was ARMED with, so changing the fill between
+# a block's alloc and its free cannot score a false violation.)
 # An overWRITE past `size` corrupts poison and `fl_free` reports it. An overREAD returns the
 # poison pattern instead of live heap, which is what the filed sit defect needed: the leaked
 # bytes become recognisable rather than plausible.
@@ -346,44 +354,35 @@ fn _fl_capacity(blk): i64 {
 }
 
 # Verify the redzone of a poison-mode block. Returns the number of corrupted bytes found
-# (0 = intact). The stored size lives in the last 8 bytes of capacity; anything between the
-# end of the user data and that slot must still read as poison.
+# (0 = intact). The slot in the last 8 bytes of capacity holds `size | fill << 56`; anything
+# between the end of the user data and that slot must still read as THAT fill — the one the
+# block was armed with, not the current one (6.6.18).
 fn _fl_redzone_check(blk): i64 {
     var cap = _fl_capacity(blk);
     if (cap < _FL_RZ) { return 0; }
-    var size = load64(blk + 16 + cap - 8);
-    if (size < 0) { return 0; }
+    var slot = load64(blk + 16 + cap - 8);
+    var fill = slot >> 56;
+    var size = slot & 0xFFFFFFFFFFFFFF;
     if (size > cap - 8) { return 0; }
-    var bad = 0;
-    var i = blk + 16 + size;
-    var e = blk + 16 + cap - 8;
-    while (i < e) {
-        if (load8(i) != 165) { bad = bad + 1; }
-        i = i + 1;
-    }
-    return bad;
+    return _poison_count_bad(blk + 16 + size, cap - 8 - size, fill);
 }
 
-# Arm a freshly-handed-out poison-mode block: poison the tail and record the requested size.
+# Arm a freshly-handed-out poison-mode block: poison the tail and record the requested size
+# together with the fill used.
 fn _fl_redzone_arm(blk, size): i64 {
     var cap = _fl_capacity(blk);
     if (cap < _FL_RZ) { return 0; }
     if (size > cap - 8) { return 0; }
-    _fl_poison_fill(blk + 16 + size, cap - 8 - size);
-    store64(blk + 16 + cap - 8, size);
+    var fill = poison_fill();
+    _poison_set(blk + 16 + size, cap - 8 - size, fill);
+    store64(blk + 16 + cap - 8, size | (fill << 56));
     return 0;
 }
 
-# Fill `n` bytes at `p` with the poison pattern. 8-byte stores with a byte tail, same shape as
-# fl_calloc's zero loop — a byte loop here would reintroduce the 369x cost this release just
-# removed, in the mode that is already the slow one.
+# Fill `n` bytes at `p` with the current poison fill (the core's 8-byte-store fill — a byte
+# loop here would reintroduce the 369x cost v6.5.28 removed, in the mode that is already slow).
 fn _fl_poison_fill(p, n): i64 {
-    var w = 11936128518282651045;      # 0xA5A5A5A5A5A5A5A5
-    var n8 = (n / 8) * 8;
-    var i = 0;
-    while (i < n8) { store64(p + i, w); i = i + 8; }
-    while (i < n) { store8(p + i, 165); i = i + 1; }
-    return 0;
+    return _poison_set(p, n, poison_fill());
 }
 
 # Allocate size bytes. Returns a pointer to usable memory, or 0 when size <= 0 or the mapping

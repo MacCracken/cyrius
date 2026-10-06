@@ -1,0 +1,196 @@
+# poison.cyr — the shared poison core: fill byte, redzone fill/check helpers, report, trap.
+# Usage: include "lib/poison.cyr"   (lib/freelist.cyr includes it; so does lib/alloc.cyr,
+#        but ONLY under `#ifdef CYRIUS_POISON`)
+#
+# ⛔ WHY ONE CORE. Poison mode began as a freelist-only feature (v6.5.28/.29) with the fill a
+# constant in three places — `fl_poison_byte()`, the fill word, the redzone check's literal.
+# Everything that poisons (fl_alloc, alloc(), arenas, a consumer's own allocator seam) must
+# agree on the fill, on how a block records it, and on what a detection does, so all of that
+# lives here and the allocators call in. CHANGELOG [6.6.18]
+#
+# ⚠ ZERO COST WHEN OFF. lib/alloc.cyr is COMPILER SOURCE (all seven src/main*.cyr include it),
+# and it includes this file only under `#ifdef CYRIUS_POISON`, which no compiler build defines —
+# so cycc's bytes do not change. Never make that include unconditional: 6.6.6's unconditional
+# include in alloc.cyr grew cycc and broke the seed -> cybs -> cycc chain.
+#
+# ⚠ INCLUDE ORDER. alloc.cyr includes this file at its TOP (under the flag) and this file
+# includes alloc.cyr; include-once makes the cycle terminate. The globals below are declared
+# BEFORE `include "lib/alloc.cyr"` so alloc.cyr's poison arms can name them whichever file a
+# consumer includes first.
+#
+# The fill is a settable NONZERO byte. Nonzero is load-bearing: a poisoned freelist block is
+# recognised by a nonzero byte just below the user pointer (a plain block's header word has a
+# zero top byte), so a zero fill would make the two layouts indistinguishable.
+include "lib/atomic.cyr"
+include "lib/syscalls.cyr"
+
+# The current fill. 0xA5 is deliberately not 0x00 and not 0xFF: both occur naturally in
+# real data, so either would produce false negatives.
+var _poison_fill = 165;
+# Redzone width in bytes, both sides. A multiple of 8 so armed spans stay word-aligned.
+var _POISON_RZ = 32;
+# Detections since the counter was last reset (every allocator, every detection point).
+var _poison_viol = 0;
+# 1 = a detection reports and EXITS 86; 0 = it reports and is counted.
+var _poison_trap = 0;
+# Spinlock over the live-block lists. Its own lock, not alloc.cyr's or freelist.cyr's: the
+# poison paths run after those are released, so nothing ever nests.
+var _poison_lock = 0;
+
+# `#define CYRIUS_POISON_B` (the A/B differential's second run) starts with a different fill,
+# so a byte that leaked from a redzone differs between the two runs.
+#ifdef CYRIUS_POISON_B
+var _poison_fill_b_on = poison_fill_set(90);
+#endif
+
+include "lib/alloc.cyr"
+
+# The current fill byte (1..255).
+fn poison_fill(): i64 { return _poison_fill; }
+
+# Set the fill byte for blocks armed from now on. Returns the previous fill, or -1 (and
+# changes nothing) for 0 or a value outside 1..255 — a zero fill would make a poisoned block
+# undecodable. Blocks already armed keep the fill they recorded.
+fn poison_fill_set(b): i64 {
+    if (b <= 0) { return 0 - 1; }
+    if (b > 255) { return 0 - 1; }
+    var prev = _poison_fill;
+    _poison_fill = b;
+    return prev;
+}
+
+# Detections since the last poison_reset().
+fn poison_violations(): i64 { return _poison_viol; }
+
+# Reset the detection COUNTER only. The live-block lists are untouched — a block that is
+# still corrupt is still found by the next sweep. (Forgetting the lists is a separate call.)
+fn poison_reset(): i64 { _poison_viol = 0; return 0; }
+
+# Make a detection fatal (1: report, then exit 86) or counted (0). Returns the previous mode.
+fn poison_trap_set(on): i64 {
+    var prev = _poison_trap;
+    _poison_trap = 0;
+    if (on != 0) { _poison_trap = 1; }
+    return prev;
+}
+
+# The fill byte replicated into a word.
+fn _poison_word(b): i64 {
+    var w = b | (b << 8);
+    w = w | (w << 16);
+    return w | (w << 32);
+}
+
+# Fill `n` bytes at `p` with byte `b`: 8-byte stores plus a byte tail.
+fn _poison_set(p, n, b): i64 {
+    var w = _poison_word(b);
+    var n8 = (n / 8) * 8;
+    var i = 0;
+    while (i < n8) { store64(p + i, w); i = i + 8; }
+    while (i < n) { store8(p + i, b); i = i + 1; }
+    return 0;
+}
+
+# Number of bytes in [p, p+n) that are not `b`. Word compares, then the byte tail.
+fn _poison_count_bad(p, n, b): i64 {
+    if (n <= 0) { return 0; }
+    var w = _poison_word(b);
+    var n8 = (n / 8) * 8;
+    var bad = 0;
+    var i = 0;
+    while (i < n8) {
+        if (load64(p + i) != w) {
+            var j = 0;
+            while (j < 8) { if (load8(p + i + j) != b) { bad = bad + 1; } j = j + 1; }
+        }
+        i = i + 8;
+    }
+    while (i < n) { if (load8(p + i) != b) { bad = bad + 1; } i = i + 1; }
+    return bad;
+}
+
+# The list lock. Free until threads exist (`_threads_active`, the same gate alloc.cyr's lock
+# uses — single-threaded code cannot flip it mid-section, so gating inside is safe). The spin
+# is arch-gated; the `return 0` stays outside the #ifdefs (cx has neither arch).
+fn _poison_lock_acquire(): i64 {
+    if (_threads_active == 0) { return 0; }
+    #ifdef CYRIUS_ARCH_X86
+    while (atomic_cas(&_poison_lock, 0, 1) == 0) { }
+    #endif
+    #ifdef CYRIUS_ARCH_AARCH64
+    while (atomic_cas(&_poison_lock, 0, 1) == 0) { }
+    #endif
+    return 0;
+}
+
+fn _poison_lock_release(): i64 {
+    if (_threads_active == 0) { return 0; }
+    #ifdef CYRIUS_ARCH_AARCH64
+    atomic_fence();
+    #endif
+    atomic_store(&_poison_lock, 0);
+    return 0;
+}
+
+# Append the NUL-terminated `s` at buf+pos; returns the new pos. Lengths come from the
+# terminator, so no literal length can be miscounted.
+fn _poison_cat(buf, pos, s): i64 {
+    var i = 0;
+    while (load8(s + i) != 0) { store8(buf + pos + i, load8(s + i)); i = i + 1; }
+    return pos + i;
+}
+
+# Append `n` (>= 0) in decimal.
+fn _poison_cat_dec(buf, pos, n): i64 {
+    var t[24];
+    var k = 0;
+    if (n == 0) { store8(&t, 48); k = 1; }
+    while (n > 0) { store8(&t + k, 48 + n % 10); n = n / 10; k = k + 1; }
+    while (k > 0) { k = k - 1; store8(buf + pos, load8(&t + k)); pos = pos + 1; }
+    return pos;
+}
+
+# Append `n` as 0x-prefixed hex.
+fn _poison_cat_hex(buf, pos, n): i64 {
+    pos = _poison_cat(buf, pos, "0x");
+    var started = 0;
+    var sh = 60;
+    while (sh >= 0) {
+        var nib = (n >> sh) & 15;
+        if (nib != 0) { started = 1; }
+        if (started == 1) {
+            if (nib < 10) { store8(buf + pos, 48 + nib); } else { store8(buf + pos, 87 + nib); }
+            pos = pos + 1;
+        }
+        sh = sh - 4;
+    }
+    if (started == 0) { store8(buf + pos, 48); pos = pos + 1; }
+    return pos;
+}
+
+# Report one detection: a single stderr line, counted, and fatal (exit 86) when trapping.
+#   kind: 1 alloc, 2 arena, 3 fl, 4 seam      side: 1 leading, 2 trailing, 3 after-free, 4 header
+fn _poison_report(kind, side, blk, req, nbad): i64 {
+    _poison_viol = _poison_viol + 1;
+    var line[192];
+    var pos = _poison_cat(&line, 0, "poison: redzone overwrite \xe2\x80\x94 ");
+    if (kind == 1) { pos = _poison_cat(&line, pos, "alloc"); }
+    if (kind == 2) { pos = _poison_cat(&line, pos, "arena"); }
+    if (kind == 3) { pos = _poison_cat(&line, pos, "fl"); }
+    if (kind == 4) { pos = _poison_cat(&line, pos, "seam"); }
+    pos = _poison_cat(&line, pos, " block ");
+    pos = _poison_cat_hex(&line, pos, blk);
+    pos = _poison_cat(&line, pos, " (");
+    pos = _poison_cat_dec(&line, pos, req);
+    pos = _poison_cat(&line, pos, " bytes): ");
+    pos = _poison_cat_dec(&line, pos, nbad);
+    pos = _poison_cat(&line, pos, " byte(s) changed [");
+    if (side == 1) { pos = _poison_cat(&line, pos, "leading"); }
+    if (side == 2) { pos = _poison_cat(&line, pos, "trailing"); }
+    if (side == 3) { pos = _poison_cat(&line, pos, "after-free"); }
+    if (side == 4) { pos = _poison_cat(&line, pos, "header"); }
+    pos = _poison_cat(&line, pos, "]\n");
+    syscall(1, 2, &line, pos);
+    if (_poison_trap == 1) { sys_exit_group(86); }
+    return 0;
+}

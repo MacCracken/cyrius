@@ -2340,6 +2340,11 @@ patra::wal_slots_init/0
 patra::wal_start/3
 patra::where_eval/4
 patra::where_validate_types/3
+poison::poison_fill/0
+poison::poison_fill_set/1
+poison::poison_reset/0
+poison::poison_trap_set/1
+poison::poison_violations/0
 process::exec_capture/3
 process::exec_capture_status/4
 process::exec_capture_str/3
