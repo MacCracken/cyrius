@@ -127,8 +127,18 @@ fi
 # ── PE: a CYRIUS_HOME of 512+ B (GetEnvironmentVariableA was given 512, so a longer value left
 # the buffer unwritten and the home read as "") ─────────────────────────────────────────────
 if command -v wine > /dev/null 2>&1; then
-    export WINEPREFIX="$W/wine" XDG_CACHE_HOME="$W/xdg" WINEDEBUG=-all
-    trap 'WINEPREFIX="$W/wine" wineserver -k > /dev/null 2>&1; rm -rf "$W"' EXIT
+    # A PRIVATE prefix, and wine's own HOME / XDG_CACHE_HOME, under $W; the EXIT teardown stops
+    # THIS prefix's wineserver and removes its server dir, which `wineserver -k` leaves behind.
+    WP="$W/wine"; WHM="$W/whome"; mkdir -p "$WHM"
+    _wine_down() {
+        [ -d "$WP" ] || return 0
+        _ws="/tmp/.wine-$(id -u)/server-$(stat -c '%D' "$WP" 2>/dev/null)-$(printf '%x' "$(stat -c '%i' "$WP" 2>/dev/null || echo 0)")"
+        WINEPREFIX="$WP" wineserver -k >/dev/null 2>&1 || true
+        WINEPREFIX="$WP" wineserver -w >/dev/null 2>&1 || true
+        rm -rf "$_ws" || true
+    }
+    trap '_wine_down; rm -rf "$W"' EXIT
+    export WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all
     D100=$(head -c 100 /dev/zero | tr '\0' d)
     LONG="$W/$D100/$D100/$D100/$D100/$D100/$D100"
     mkdir -p "$LONG/bin" && : > "$LONG/bin/cycc.exe"
