@@ -8674,10 +8674,11 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                     # Stage 2: shift fixup-table CPs added during this fn.
                     # FIXUP later patches via these CPs — they must reflect
                     # post-compaction positions.
-                    # ⛔ 6.6.17: not `_fi` — cybs (the seed-built bootstrap compiler) resolves a
-                    # variable name with its leading `_`s dropped, so `_fi` WAS this fn's `fi`
-                    # in gen1: the fn-end record went to the wrong slot, harmless until the fn
-                    # table grew past 2048 (`_fnt_codeend` then overran into `_fnt_structmask`).
+                    # ⛔ 6.6.17: not `_fi` — until cybs's lexer arm for `_` (6.6.17), cybs (the
+                    # seed-built bootstrap compiler) dropped the leading `_`s of EVERY name, so
+                    # `_fi` WAS this fn's `fi` in gen1: the fn-end record went to the wrong slot,
+                    # harmless until the fn table grew past 2048 (`_fnt_codeend` then overran
+                    # into `_fnt_structmask`).
                     var _fc0 = L64(S + 0x1A6010);
                     var _fcn = GFCNT(S);
                     var _fxi = _fc0;

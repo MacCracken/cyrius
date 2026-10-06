@@ -78,8 +78,9 @@ if ! cmp -s "$TMP/gen2" "$TMP/gen3"; then
 fi
 
 # ⛔ 6.6.17 — gen2 == build/cycc proves gen1 EMITTED the right bytes, not that gen1 COMPUTED
-# everything right. cybs resolves a variable name with its leading `_`s dropped, so a local
-# `_fi` was the same slot as `fi` in _PARSE_FN_DEF_IMPL: gen1 recorded every fn's code end at
+# everything right. Until cybs's lexer arm for `_` (6.6.17) its lexer dropped the leading `_`s
+# of EVERY name (`fn aq` / `fn _aq` were one fn, a local `_fi` the same slot as `fi`), so in
+# _PARSE_FN_DEF_IMPL gen1 recorded every fn's code end at
 # the wrong index, and the only trace for many releases was its DCE note (57 unreachable fns
 # where cycc says 73). It turned into wrong BYTES the day the compiler passed 2048 fns and the
 # fn table grew (the stray write overran into `_fnt_structmask`). gen1 must say what gen2 says.
