@@ -299,7 +299,7 @@ P4 + P6 → 6.6.18, P2 → 6.6.19, P3 and P5's execution half → v6.7.x — see
 below carries its placement; the detail of each premise check is in the archived memo.
 
 ### P1 — `cyrius.cyml` as the build tool's actual configuration
-[`proposals/2026-09-04-build-tool-manifest-integration.md`](proposals/2026-09-04-build-tool-manifest-integration.md)
+[`proposals/archived/2026-09-04-build-tool-manifest-integration.md`](proposals/archived/2026-09-04-build-tool-manifest-integration.md)
 
 **✅ SHIPPED in 6.6.17** (MERGED 2026-10-05, release gate pending; placed 2026-10-02). One declared key vocabulary
 (`cyrius help manifest`, gated against what consumers write), one reader of the whole manifest, one precedence rule
