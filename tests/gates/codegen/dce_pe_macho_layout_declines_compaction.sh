@@ -21,11 +21,20 @@
 # targets. DELETING DCE ENTIRELY WOULD SATISFY BOTH. Axis 3 pins that ELF still performs real
 # elimination, so the decline is proven TARGET-SCOPED rather than a blanket disable. A gate that
 # passes when the feature is gone would be worse than no gate.
+#
+# 6.6.18 — A DECLINE MUST SAY SO, AND WHY (axes 4-7). Every declining target printed exactly what
+# a compacting one prints, `note: N unreachable fns (M bytes NOPed)`, so nothing told a user that
+# the binary kept its dead bytes. The worst case was silent AND a cliff: on static x86 ELF, 4,096
+# dead fns compact (4,456 B) and 4,097 do not (201,064 B), because the repair registry holds
+# 4,096 runs and a saturated registry declines the whole pass. The reason rides INSIDE that note
+# line — `(M bytes NOPed; compaction declined on <target>: <why>)` — so every downstream
+# `grep -v "unreachable fns"` filter still removes it. Old compiler: axes 4 and 5 FAIL (measured:
+# those builds printed only "N bytes NOPed").
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || { echo "FAIL: dce_pe_macho_layout_declines_compaction: cannot cd to $ROOT"; exit 1; }
-CYCC="$ROOT/build/cycc"
+CYCC="${CYCC:-$ROOT/build/cycc}"
 fail() { echo "FAIL: dce_pe_macho_layout_declines_compaction: $1"; exit 1; }
 [ -x "$CYCC" ] || fail "build/cycc not found or not executable"
 
@@ -101,4 +110,65 @@ if [ "$EB" -ge "$EA" ]; then
       become a blanket disable — axes 1-2 would then pass with the feature deleted."
 fi
 
-echo "PASS: dce_pe_macho_layout_declines_compaction (PE payload pinned at $A; Mach-O $MA B stable; ELF $EA -> $EB B)"
+# ---- axes 4-7: a decline is REPORTED, inside the unreachable-fns note, with its reason -------
+# A small probe with exactly three dead fns; `shared;` needs its own copy (the directive is first).
+cat > "$WORK/p3.cyr" <<'EOF'
+fn dead_a(x): i64 { return x + 1; }
+fn dead_b(x): i64 { return x * 2; }
+fn dead_c(x): i64 { return x - 3; }
+fn main(): i64 { return 7; }
+var e = main();
+EOF
+{ echo 'shared;'; cat "$WORK/p3.cyr"; } > "$WORK/p3s.cyr"
+printf 'fn main(): i64 { return 7; }\nvar e = main();\n' > "$WORK/p0.cyr"
+
+pbuild() {  # pbuild <compiler> <src> <errfile> <env-assignments...> — stderr kept for the axes
+    pcc="$1"; psrc="$2"; perr="$3"; shift 3
+    prc=0
+    env "$@" "$pcc" < "$psrc" > "$WORK/p.out" 2> "$perr" || prc=$?
+    [ "$prc" = 0 ] || fail "compile of $(basename "$psrc") failed (rc $prc): $(tail -1 "$perr")"
+    [ -s "$WORK/p.out" ] || fail "compile of $(basename "$psrc") produced an empty binary"
+}
+declined() {  # declined <axis> <errfile> <target word> <reason word>
+    dn=$(grep -c 'compaction declined' "$2" || true)
+    [ "$dn" = 1 ] || fail "$1: expected exactly one 'compaction declined on $3' report, got $dn: $(cat "$2")"
+    dl=$(grep 'compaction declined' "$2")
+    printf '%s\n' "$dl" | grep -Eq '^note: [0-9]+ unreachable fns \([0-9]+ bytes NOPed; compaction declined on ' \
+        || fail "$1: the decline is not carried INSIDE the unreachable-fns note (a line of its own escapes every grep -v 'unreachable fns' filter): $dl"
+    printf '%s\n' "$dl" | grep -Fq "declined on $3: " || fail "$1: wrong target word (want '$3'): $dl"
+    printf '%s\n' "$dl" | grep -Fq "$4" || fail "$1: the reason does not name '$4': $dl"
+}
+
+# axis 4: each x86 decline path names its target and its reason
+pbuild "$CYCC" "$WORK/p3.cyr" "$WORK/a4pe.err" CYRIUS_DCE=1 CYRIUS_TARGET_WIN=1
+declined "axis 4 (PE)" "$WORK/a4pe.err" "PE" "import table"
+pbuild "$CYCC" "$WORK/p3.cyr" "$WORK/a4mo.err" CYRIUS_DCE=1 CYRIUS_MACHO=1
+declined "axis 4 (x86 Mach-O)" "$WORK/a4mo.err" "x86_64 Mach-O" "stub table"
+pbuild "$CYCC" "$WORK/p3.cyr" "$WORK/a4pie.err" CYRIUS_DCE=1 CYRIUS_PIE=1
+declined "axis 4 (--pie)" "$WORK/a4pie.err" "x86_64 ELF (--pie)" "position-independent"
+pbuild "$CYCC" "$WORK/p3s.cyr" "$WORK/a4so.err" CYRIUS_DCE=1
+declined "axis 4 (shared;)" "$WORK/a4so.err" "x86_64 ELF (shared;)" "shared object"
+
+# axis 5: the registry cliff, pinned on both sides. 4,096 one-line dead fns compact; 4,097
+# saturate the 4,096-run registry and the whole pass declines — the reason must say exactly that.
+for n in 4096 4097; do
+    awk -v n="$n" 'BEGIN { for (i = 0; i < n; i++) printf "fn d%d(): i64 { return %d; }\n", i, i;
+                           print "fn main(): i64 { return 7; }"; print "var e = main();" }' > "$WORK/g$n.cyr"
+    pbuild "$CYCC" "$WORK/g$n.cyr" "$WORK/a5_$n.err" CYRIUS_DCE=1
+done
+grep -q 'dead code eliminated' "$WORK/a5_4096.err" \
+    || fail "axis 5: 4096 dead fns no longer compact — the cliff moved; re-measure it: $(cat "$WORK/a5_4096.err")"
+if grep -q 'compaction declined' "$WORK/a5_4096.err"; then fail "axis 5: 4096 dead fns compacted AND reported a decline"; fi
+declined "axis 5 (4097 dead fns)" "$WORK/a5_4097.err" "x86_64 ELF" "more than 4096 dead-code runs"
+if grep -q 'dead code eliminated' "$WORK/a5_4097.err"; then fail "axis 5: 4097 dead fns reported a decline AND an elimination"; fi
+
+# axis 6 (anti-vacuous): the compacting target says it compacted, and reports NO decline
+pbuild "$CYCC" "$WORK/p3.cyr" "$WORK/a6.err" CYRIUS_DCE=1
+grep -q 'dead code eliminated' "$WORK/a6.err" || fail "axis 6: static x86 ELF no longer compacts the probe: $(cat "$WORK/a6.err")"
+if grep -q 'compaction declined' "$WORK/a6.err"; then fail "axis 6: static x86 ELF compacted and ALSO reported a decline: $(cat "$WORK/a6.err")"; fi
+
+# axis 7: nothing dead, nothing to decline — a PE build with no dead code prints no decline
+pbuild "$CYCC" "$WORK/p0.cyr" "$WORK/a7.err" CYRIUS_DCE=1 CYRIUS_TARGET_WIN=1
+if grep -q 'compaction declined' "$WORK/a7.err"; then fail "axis 7: a PE build with no dead code reported a decline: $(cat "$WORK/a7.err")"; fi
+
+echo "PASS: dce_pe_macho_layout_declines_compaction (PE payload pinned at $A; Mach-O $MA B stable; ELF $EA -> $EB B; declines named on PE, x86 Mach-O, --pie, shared; and past the 4096-run registry)"

@@ -35,7 +35,11 @@
 #   axis 4  KNOB TWO, through a DIFFERENT code path. CYRIUS_DCE is read in
 #           src/backend/x86/fixup.cyr and is observable in the DCE note: unset it invites
 #           you ("set CYRIUS_DCE=1 to eliminate"), set it reports "NOPed". One knob could
-#           be wired by accident at one call site; two, in two files, cannot.
+#           be wired by accident at one call site; two, in two files, cannot. Since 6.6.18
+#           the set run must also say WHY the PE fork keeps the bytes ("NOPed; compaction
+#           declined on PE: ...") — this is the only leg that runs the main_win.cyr fork's
+#           own copy of that predicate (dce_pe_macho_layout_declines_compaction.sh runs the
+#           Linux cross-compiler's).
 #
 # HARDWARE — MEASURED ON REAL cass (Win11), 2026-09-19, and this is the recipe to re-take it.
 # wine is the local approximation; nothing here should be believed from wine alone.
@@ -65,7 +69,7 @@
 # Nothing is written inside the tree; everything lands in a mktemp -d removed on exit.
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
-CC="$ROOT/build/cycc"
+CC="${CYCC:-$ROOT/build/cycc}"
 LABEL_FLOOR=6
 
 [ -x "$CC" ] || { echo "SKIP: build/cycc missing"; exit 77; }
@@ -167,14 +171,18 @@ else
     noped=$(grep -c 'bytes NOPed' "$D/pe_dce.err" || true)
     invited=$(grep -c 'set CYRIUS_DCE=1 to eliminate' "$D/pe_nodce.err" || true)
     still=$(grep -c 'set CYRIUS_DCE=1 to eliminate' "$D/pe_dce.err" || true)
+    said=$(grep -c 'NOPed; compaction declined on PE: ' "$D/pe_dce.err" || true)
     if [ "$invited" -lt 1 ]; then
         echo "  FAIL axis 4 (anti-vacuous): the unset PE run printed no DCE note at all, so the set run proves nothing"
         fail=1
     elif [ "$noped" -lt 1 ] || [ "$still" != "0" ]; then
         echo "  FAIL axis 4: CYRIUS_DCE is invisible to cycc.exe — the note still invites you to set it ($still) and reports no elimination ($noped)"
         fail=1
+    elif [ "$said" != "1" ]; then
+        echo "  FAIL axis 4: cycc.exe NOP-filled under CYRIUS_DCE=1 but did not say compaction was declined on PE ($said report lines, want 1): $(grep 'unreachable fns' "$D/pe_dce.err" | head -1)"
+        fail=1
     else
-        echo "  ok axis 4: cycc.exe honours CYRIUS_DCE too — a second knob, read in a different source file"
+        echo "  ok axis 4: cycc.exe honours CYRIUS_DCE too — a second knob, read in a different source file — and says why PE keeps the bytes"
     fi
     _wine_down; rm -rf "$D/wp"
 fi

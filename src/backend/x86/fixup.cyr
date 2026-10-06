@@ -731,13 +731,16 @@ fn FIXUP(S): i64 {
         }
         dwi = dwi + 1;
     }
+    # 6.6.18: computed ONCE, before the note — the note and the compaction gate below both read
+    # it, so what the note says and what the pass does cannot differ (runtime.cyr).
+    var _wp_why = _dce_compact_why(S, 0);
     if (dead_count > 0) {
         syscall(SYS_WRITE, 2, "note: ", 6);
         PRNUM(dead_count);
         syscall(SYS_WRITE, 2, " unreachable fns (", 18);
         PRNUM(dce_bytes);
         if (dce_enabled == 1) {
-            syscall(SYS_WRITE, 2, " bytes NOPed)\n", 14);
+            _dce_nop_tail(S, 0, _wp_why, dce_bytes);
         } else {
             syscall(SYS_WRITE, 2, " bytes — set CYRIUS_DCE=1 to eliminate, CYRIUS_DCE_VERBOSE=1 to list)\n", 72);
         }
@@ -873,11 +876,14 @@ fn FIXUP(S): i64 {
     # bodies zeroed and highly compressible) — the same place aarch64 and arm64 Mach-O sit.
     # ELF keeps the real elimination. Repairing the rip-relative shape is what would let these
     # targets shrink too; that is a codegen arc, NOT a reason to keep emitting a crashing binary.
-    var _wp_fmt = _emit_fmt(S);
-    if (dce_enabled == 1 && _pie_mode == 0 && _wp_fmt != 1 && _wp_fmt != 3) {
+    # 6.6.18: the decline predicate is `_dce_compact_why` (runtime.cyr) — the same value the
+    # unreachable-fns note above printed its reason from. _dce_drift_check names any refusal
+    # inside wp_compact that the predicate does not know about.
+    if (dce_enabled == 1 && _wp_why == 0) {
         _wp_post_patch = 1;
         var _wpd2 = wp_compact(S);
         _wp_post_patch = 0;
+        _dce_drift_check(S, _wpd2);
         if (_wpd2 > 0) {
             var _cp2 = GCP(S);
             _cp2 = (_cp2 + 7) & (0 - 8);
