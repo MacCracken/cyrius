@@ -5623,10 +5623,20 @@ fn cmd_distlib(profile): i64 {
         if (_distlib_check == 1) { xunlink(out_path); }
         return 1;
     }
-    if (_verified_added > 0) {
+    # 6.6.18 review: the TOTAL, then how many the verify derived (it printed the derived count
+    # alone — sigil's "9" for a 19-leaf sidecar).
+    var sc_total = 0;
+    var sci = 0;
+    while (sci < vec_len(req_leaves)) {
+        if (_distlib_vec_has(named_deps, vec_get(req_leaves, sci)) == 0) { sc_total = sc_total + 1; }
+        sci = sci + 1;
+    }
+    if (sc_total > 0) {
         sys_write(STDOUT_FD, "  sidecar: ", 11);
+        fmt_int(sc_total);
+        sys_write(STDOUT_FD, " leaf(s), compile-verified (", 28);
         fmt_int(_verified_added);
-        println(" leaf(s), compile-verified");
+        println(" derived by the verify)");
     }
     # 6.6.18 (D5): the requires block — see _distlib_write_requires. Same under --check, so the
     # regenerated temp is compared WITH its block.
