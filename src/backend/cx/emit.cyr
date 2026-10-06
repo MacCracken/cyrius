@@ -273,10 +273,11 @@ fn EFNPRO(S): i64 {
 }
 
 fn ESUBRSP(S): i64 {
-    # sub sp, imm — two instructions: movi r15, size; sub r254, r254, r15
+    # sub sp, imm — two instructions: movi r252, size; sub r254, r254, r252
+    # 6.6.17: r252, not r15 — this runs before the parameters are stored (see _cx_fpaddr).
     var patch = GCP(S);
-    CX_EMIT(S, 1, 15, 0, 0);        # movi r15, 0 (placeholder)
-    CX_EMIT(S, 17, 254, 254, 15);   # sub sp, sp, r15
+    CX_EMIT(S, 1, 252, 0, 0);       # movi r252, 0 (placeholder)
+    CX_EMIT(S, 17, 254, 254, 252);  # sub sp, sp, r252
     return patch;
 }
 
@@ -476,7 +477,8 @@ fn ECALLFIX(S, fnidx): i64 {
 #
 # `idx` is a LOCAL SLOT, matching x86's `call [rbp+disp]` (backend/x86/emit.cyr:2888):
 # the caller spilled the callee address there. So materialise `fp - _cx_ldisp(idx)`, load
-# the slot, call through it. r14/r15 are the established scratch pair (see :555).
+# the slot, call through it. 6.6.17: through r251 / r252 (`_cx_fpaddr`) — r14 / r15 are argument
+# registers from 12 arguments.
 #
 # ⚠ callptr-to-NATIVE (COM/DXGI) is still impossible on cx and always will be — a `.cyx`
 # has no machine addresses. This covers cyrius-internal fn pointers, which is what
@@ -519,11 +521,9 @@ fn ECLNORM(S, idx): i64 {
 }
 
 fn ECALLIND(S, idx): i64 {
-    CX_EMIT(S, 2, 14, 253, 0);            # mov  r14, fp
-    CX_MOVI(S, 15, _cx_ldisp(idx));       # movi r15, slot displacement
-    CX_EMIT(S, 17, 14, 14, 15);           # sub  r14, r14, r15
-    CX_EMIT(S, 65, 14, 14, 0);            # load64 r14, [r14]   (callee code offset)
-    CX_EMIT(S, 105, 14, 0, 0);            # callind r14
+    _cx_fpaddr(S, _cx_ldisp(idx));        # 6.6.17: r251 = the callee's slot (see _cx_fpaddr)
+    CX_EMIT(S, 65, 251, 251, 0);          # load64 r251, [r251]   (callee code offset)
+    CX_EMIT(S, 105, 251, 0, 0);           # callind r251
     return 0;
 }
 
@@ -757,77 +757,63 @@ fn EFLLOAD_F64V4_PAIR(S, idx): i64 {
 # CYRIUS_TARGET_CX. If a future cx consumer needs SIMD param
 # passing, mirror the v5.10.37 4-register pair-quad return
 # shape (R0..R3 stores per slot).
+# ⛔ 6.6.17 (a11) — THE CALL BOUNDARY'S SCRATCH IS r251 / r252, NOT r14 / r15. ECALLPOPS pops
+# argument k into r(3+k) for EVERY k, so from 12 arguments r14 and from 13 r15 ARE argument
+# registers — and every emitter that runs between the caller's pops and the callee's stores used
+# them as scratch: ECALLIND (`fncallN` / `callptr`), the prologue's frame `movi` (ESUBRSP), and
+# each parameter store. A 12-argument call read argument 11 as a frame address (measured on cxvm:
+# 12581018 where 650 is right, direct and indirect alike). r251 / r252 sit above every argument
+# register a call of up to 248 arguments uses, below fp / sp (r253 / r254). `_cx_fpaddr` leaves
+# r251 = fp - off. CHANGELOG [6.6.17]
+fn _cx_fpaddr(S, off): i64 {
+    CX_EMIT(S, 2, 251, 253, 0);           # mov  r251, fp
+    CX_MOVI(S, 252, off);                 # movi r252, off
+    CX_EMIT(S, 17, 251, 251, 252);        # sub  r251, r251, r252
+    return 0;
+}
 # v6.4.54 — cx value-form SIMD param/return marshaling. cxvm has no vector register
 # file, so 16B/32B value-form vectors ride a GP register-PAIR transport: SIMD ordinal
 # k occupies r(16+2k)=lo / r(16+2k+1)=hi (a 32B f64v4 spans two ordinals → the 4
-# consecutive regs r(16+2k)..r(16+2k+3)). r16.. is clear of int-args (r3..r8), returns
-# (r0..r3), scratch (r14/r15), and the ENOTR sentinel (r31); nothing between the caller's
+# consecutive regs r(16+2k)..r(16+2k+3)). r16.. is clear of int-args up to 13 of them, returns
+# (r0..r3), the call-boundary scratch (r251/r252) and the ENOTR sentinel (r31); nothing between the caller's
 # ELOAD (call site) and the callee's ESTOREPARM (fn entry) touches r16.., so the pair
 # survives the call. Frame lane layout reuses _cx_ldisp and mirrors EFL{STORE,LOAD}_*_PAIR.
 # 16B covers f64v2 / f32v4 / i32v4 (2-slot pair); f64v4 is the 4-slot quad. CHANGELOG [6.4.54].
 fn ESTOREPARM_F64V2(S, simd_ord, named_idx): i64 {
     var base = 16 + simd_ord * 2;
-    CX_EMIT(S, 2, 14, 253, 0);              # mov r14, fp
-    CX_MOVI(S, 15, _cx_ldisp(named_idx));    # r15 = offset_lo (named slot)
-    CX_EMIT(S, 17, 14, 14, 15);             # sub r14, r14, r15
-    CX_EMIT(S, 67, 14, base, 0);            # store64 [r14], r_lo
-    CX_EMIT(S, 2, 14, 253, 0);
-    CX_MOVI(S, 15, _cx_ldisp(named_idx - 1));   # filler slot (hi half)
-    CX_EMIT(S, 17, 14, 14, 15);
-    CX_EMIT(S, 67, 14, base + 1, 0);        # store64 [r14], r_hi
+    _cx_fpaddr(S, _cx_ldisp(named_idx));     # 6.6.17: r251 / r252 scratch (see _cx_fpaddr)
+    CX_EMIT(S, 67, 251, base, 0);            # store64 [r251], r_lo
+    _cx_fpaddr(S, _cx_ldisp(named_idx - 1)); # filler slot (hi half)
+    CX_EMIT(S, 67, 251, base + 1, 0);        # store64 [r251], r_hi
     return 0;
 }
 fn ESTOREPARM_F64V4(S, simd_ord, named_idx): i64 {
     var base = 16 + simd_ord * 2;
-    CX_EMIT(S, 2, 14, 253, 0);
-    CX_MOVI(S, 15, _cx_ldisp(named_idx));
-    CX_EMIT(S, 17, 14, 14, 15);
-    CX_EMIT(S, 67, 14, base, 0);
-    CX_EMIT(S, 2, 14, 253, 0);
-    CX_MOVI(S, 15, _cx_ldisp(named_idx - 1));
-    CX_EMIT(S, 17, 14, 14, 15);
-    CX_EMIT(S, 67, 14, base + 1, 0);
-    CX_EMIT(S, 2, 14, 253, 0);
-    CX_MOVI(S, 15, _cx_ldisp(named_idx - 2));
-    CX_EMIT(S, 17, 14, 14, 15);
-    CX_EMIT(S, 67, 14, base + 2, 0);
-    CX_EMIT(S, 2, 14, 253, 0);
-    CX_MOVI(S, 15, _cx_ldisp(named_idx - 3));
-    CX_EMIT(S, 17, 14, 14, 15);
-    CX_EMIT(S, 67, 14, base + 3, 0);
+    var k = 0;
+    while (k < 4) {
+        _cx_fpaddr(S, _cx_ldisp(named_idx - k));
+        CX_EMIT(S, 67, 251, base + k, 0);
+        k = k + 1;
+    }
     return 0;
 }
 fn ESTOREPARM_SIMD_WIN64(S, pidx, named_idx, nbytes): i64 { return 0; }  # v6.4.31 PE-only; stub off-PE
 fn ELOAD_F64V2_TO_XMM(S, simd_ord, named_idx): i64 {
     var base = 16 + simd_ord * 2;
-    CX_EMIT(S, 2, 14, 253, 0);
-    CX_MOVI(S, 15, _cx_ldisp(named_idx));
-    CX_EMIT(S, 17, 14, 14, 15);
-    CX_EMIT(S, 65, base, 14, 0);            # load64 r_lo, [r14]
-    CX_EMIT(S, 2, 14, 253, 0);
-    CX_MOVI(S, 15, _cx_ldisp(named_idx - 1));
-    CX_EMIT(S, 17, 14, 14, 15);
-    CX_EMIT(S, 65, base + 1, 14, 0);        # load64 r_hi, [r14]
+    _cx_fpaddr(S, _cx_ldisp(named_idx));     # 6.6.17: runs after the caller's pops (_cx_fpaddr)
+    CX_EMIT(S, 65, base, 251, 0);            # load64 r_lo, [r251]
+    _cx_fpaddr(S, _cx_ldisp(named_idx - 1));
+    CX_EMIT(S, 65, base + 1, 251, 0);        # load64 r_hi, [r251]
     return 0;
 }
 fn ELOAD_F64V4_TO_XMM(S, simd_ord, named_idx): i64 {
     var base = 16 + simd_ord * 2;
-    CX_EMIT(S, 2, 14, 253, 0);
-    CX_MOVI(S, 15, _cx_ldisp(named_idx));
-    CX_EMIT(S, 17, 14, 14, 15);
-    CX_EMIT(S, 65, base, 14, 0);
-    CX_EMIT(S, 2, 14, 253, 0);
-    CX_MOVI(S, 15, _cx_ldisp(named_idx - 1));
-    CX_EMIT(S, 17, 14, 14, 15);
-    CX_EMIT(S, 65, base + 1, 14, 0);
-    CX_EMIT(S, 2, 14, 253, 0);
-    CX_MOVI(S, 15, _cx_ldisp(named_idx - 2));
-    CX_EMIT(S, 17, 14, 14, 15);
-    CX_EMIT(S, 65, base + 2, 14, 0);
-    CX_EMIT(S, 2, 14, 253, 0);
-    CX_MOVI(S, 15, _cx_ldisp(named_idx - 3));
-    CX_EMIT(S, 17, 14, 14, 15);
-    CX_EMIT(S, 65, base + 3, 14, 0);
+    var k = 0;
+    while (k < 4) {
+        _cx_fpaddr(S, _cx_ldisp(named_idx - k));
+        CX_EMIT(S, 65, base + k, 251, 0);
+        k = k + 1;
+    }
     return 0;
 }
 
@@ -888,21 +874,19 @@ fn EFLSTORE(S, idx): i64 {
 }
 
 fn EPATCHFRAME(S, patch, size): i64 {
-    # Patch the movi r15, size placeholder
+    # Patch the movi r252, size placeholder (ESUBRSP)
     store8(S + 0x54A000 + patch, 1);        # movi opcode
-    store8(S + 0x54A000 + patch + 1, 15);   # r15
+    store8(S + 0x54A000 + patch + 1, 252);  # r252
     store8(S + 0x54A000 + patch + 2, size & 0xFF);
     store8(S + 0x54A000 + patch + 3, (size >> 8) & 0xFF);
     return 0;
 }
 
 fn ESTOREPARM(S, pidx, lidx, pc): i64 {
-    # Store param register to local slot. Use r14/r15 as temps to avoid
-    # clobbering arg registers r3-r8.
-    CX_EMIT(S, 2, 14, 253, 0);           # mov r14, fp
-    CX_MOVI(S, 15, _cx_ldisp(lidx));      # r15 = offset
-    CX_EMIT(S, 17, 14, 14, 15);          # sub r14, r14, r15
-    CX_EMIT(S, 67, 14, 3 + pidx, 0);    # store64 [r14], arg_reg
+    # Store param register to local slot. 6.6.17: r251 / r252 temps — r14 / r15 ARE argument
+    # registers from 12 arguments (see _cx_fpaddr).
+    _cx_fpaddr(S, _cx_ldisp(lidx));
+    CX_EMIT(S, 67, 251, 3 + pidx, 0);    # store64 [r251], arg_reg
     return 0;
 }
 
@@ -915,11 +899,8 @@ fn ESTOREPARM(S, pidx, lidx, pc): i64 {
 # shape matches ESTOREPARM byte-for-byte except for the offset
 # source — kept symmetric so callers see identical semantics.
 fn ESTORESTACKPARM(S, pidx, disp, pc): i64 {
-    var abs_disp = 0 - disp;
-    CX_EMIT(S, 2, 14, 253, 0);            # mov r14, fp
-    CX_MOVI(S, 15, abs_disp);             # r15 = |disp|
-    CX_EMIT(S, 17, 14, 14, 15);           # sub r14, r14, r15
-    CX_EMIT(S, 67, 14, 3 + pidx, 0);      # store64 [r14], r(3+pidx)
+    _cx_fpaddr(S, 0 - disp);              # 6.6.17: r251 = fp - |disp| (see _cx_fpaddr)
+    CX_EMIT(S, 67, 251, 3 + pidx, 0);     # store64 [r251], r(3+pidx)
     return 0;
 }
 fn EPOPARG(S, n): i64 { CX_EMIT(S, 129, 3 + n, 0, 0); return 0; }
@@ -1684,11 +1665,8 @@ fn EFLADDR_X1(S, lli): i64 {
 # the x86-shape convention since cxvm has no dedicated indirect-
 # result register but plenty of GP regs.
 fn ESTOREREGPARM(S, pidx, disp): i64 {
-    var abs_disp = 0 - disp;
-    CX_EMIT(S, 2, 14, 253, 0);            # mov r14, fp
-    CX_MOVI(S, 15, abs_disp);             # r15 = |disp|
-    CX_EMIT(S, 17, 14, 14, 15);           # sub r14, r14, r15
-    CX_EMIT(S, 67, 14, 3 + pidx, 0);      # store64 [r14], r(3+pidx)
+    _cx_fpaddr(S, 0 - disp);              # 6.6.17: r251 = fp - |disp| (see _cx_fpaddr)
+    CX_EMIT(S, 67, 251, 3 + pidx, 0);     # store64 [r251], r(3+pidx)
     return 0;
 }
 # mulh64(a, b): the high 64 bits of the UNSIGNED 128-bit product. The frontend pops a

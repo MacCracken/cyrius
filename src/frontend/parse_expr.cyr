@@ -160,6 +160,12 @@ fn _cl_snap_aew(esl): i64 {
     if (_cl_snap == 0) { return 0; }
     return (L64(_cl_snap + _cl_snap_n * 8 + esl * 8) >> 48) & 0xFF;
 }
+# The enclosing slot's `p: *T` mark (util.cyr GLPTRP, bit 56 of the same word). 6.6.17
+fn _cl_snap_ptrp(esl): i64 {
+    if (_cl_snap == 0) { return 0; }
+    if (esl < 0) { return 0; }
+    return (L64(_cl_snap + _cl_snap_n * 8 + esl * 8) >> 56) & 1;
+}
 fn _cl_snap_type(esl): i64 {
     if (_cl_snap == 0) { return 0; }
     return L64(_cl_snap + _cl_snap_n * 16 + esl * 8);
@@ -1080,6 +1086,7 @@ fn _UFV_L(S, li): i64 {
     return 0;
 }
 fn _UFV_G(S, vi): i64 {
+    _vecg_refuse(S, vi);   # 6.6.17 (a3): the untyped-global read rung — a vector global's too
     if (_gfi_base == 0) { return 0; }
     if (vi < 0) { return 0; }
     if (load8(_gfi_base + vi) == 1) { _FBR_MARK(S, 3); }

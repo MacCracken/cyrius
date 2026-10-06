@@ -879,10 +879,14 @@ fn GFIPT(S, fi): i64 { if (_fnt_inlpt == 0) { return 0; } return L64(_fnt_inlpt 
 fn SFIPT(S, fi, v): i64 { if (_fnt_inlpt == 0) { _fnt_inlpt = alloc(131072 * 8); } S64(_fnt_inlpt + fi * 8, v); return 0; }
 
 # Unpack param `which` (0|1) from a GFIPT word -> SLTYPE sentinel, or 0 if not a vector.
+# 6.6.17: `0x8001` / `0x8002` is an f64 / f32 scalar param (`_param_float`, parse_fn.cyr) -> its
+# positive float tag; a vector's descriptor field never exceeds 256.
 fn _ipt_sltype(packed, which): i64 {
     var f = packed & 0xFFFF;
     if (which == 1) { f = (packed >> 16) & 0xFFFF; }
     if (f == 0) { return 0; }
+    if (f == 0x8001) { return F64_TYID; }
+    if (f == 0x8002) { return F32_TYID; }
     return 0 - ((f - 1) + 2048);
 }
 
@@ -934,6 +938,84 @@ fn GFPSID(S, fi, pc): i64 {
     var row = L64(_fnt_psid + fi * 8);
     if (row == 0) { return 0; }
     return L64(row + pc * 8);
+}
+# 6.6.17 (a3) — a generic INSTANCE's type arguments (`_instantiate_generic_fn`'s conc0 / conc1),
+# two words per fn, 0 = not an instance. Lazy-alloc'd at the max fn cap like _fnt_tparams, so the
+# brk layout does not move. Read by an inline replay of the instance (`_bind_inl_generic`).
+var _fnt_instconc = 0;
+fn GFIC(S, fi, k): i64 { if (_fnt_instconc == 0) { return 0; } if (fi < 0) { return 0; } return L64(_fnt_instconc + fi * 16 + k * 8); }
+fn SFIC(S, fi, c0, c1): i64 {
+    if (_fnt_instconc == 0) { _fnt_instconc = alloc(131072 * 16); }
+    S64(_fnt_instconc + fi * 16, c0);
+    S64(_fnt_instconc + fi * 16 + 8, c1);
+    return 0;
+}
+# 6.6.17 (a10) — the per-fn OVERFLOW ROW of parameter kinds for ordinals past the per-fn masks
+# (parse_fn.cyr `_pmw`): per fn 0, or a row [capacity][one kind byte per ordinal], allocated on the
+# first such parameter and grown on demand, so no parameter count is refused. The table is
+# lazy-alloc'd at the max fn cap like _fnt_tparams, so the brk layout does not move.
+var _fnt_pmhi = 0;
+fn _pm_row_get(fi, ord): i64 {
+    if (_fnt_pmhi == 0) { return 0; }
+    if (fi < 0) { return 0; }
+    var row = L64(_fnt_pmhi + fi * 8);
+    if (row == 0) { return 0; }
+    if (ord >= load64(row)) { return 0; }
+    return load8(row + 8 + ord);
+}
+# The row of fn `fi`, holding at least ordinal `ord` (allocated / grown, zero-filled).
+fn _pm_row_at(fi, ord): i64 {
+    if (_fnt_pmhi == 0) { _fnt_pmhi = alloc(131072 * 8); }
+    var row = L64(_fnt_pmhi + fi * 8);
+    var cap = 0;
+    if (row != 0) { cap = load64(row); }
+    if (ord < cap) { return row; }
+    var ncap = 128;
+    while (ncap <= ord) { ncap = ncap * 2; }
+    var nr = alloc(8 + ncap);
+    var i = 0;
+    while (i < ncap) { store8(nr + 8 + i, 0); i = i + 1; }
+    i = 0;
+    while (i < cap) { store8(nr + 8 + i, load8(row + 8 + i)); i = i + 1; }
+    store64(nr, ncap);
+    S64(_fnt_pmhi + fi * 8, nr);
+    return nr;
+}
+fn _pm_row_or(fi, ord, k): i64 {
+    if (fi < 0) { return 0; }
+    var row = _pm_row_at(fi, ord);
+    store8(row + 8 + ord, load8(row + 8 + ord) | k);
+    return 0;
+}
+fn _pm_row_clr(fi, ord, k): i64 {
+    if (fi < 0) { return 0; }
+    var row = _pm_row_at(fi, ord);
+    store8(row + 8 + ord, load8(row + 8 + ord) & (255 - k));
+    return 0;
+}
+fn _pm_row_reset(fi): i64 {
+    if (_fnt_pmhi == 0) { return 0; }
+    if (fi < 0) { return 0; }
+    var row = L64(_fnt_pmhi + fi * 8);
+    if (row == 0) { return 0; }
+    var n = load64(row);
+    var i = 0;
+    while (i < n) { store8(row + 8 + i, 0); i = i + 1; }
+    return 0;
+}
+# 1 when any overflow ordinal of fn `fi` carries a kind bit in `k`.
+fn _pm_row_any(fi, k): i64 {
+    if (_fnt_pmhi == 0) { return 0; }
+    if (fi < 0) { return 0; }
+    var row = L64(_fnt_pmhi + fi * 8);
+    if (row == 0) { return 0; }
+    var n = load64(row);
+    var i = 0;
+    while (i < n) {
+        if ((load8(row + 8 + i) & k) != 0) { return 1; }
+        i = i + 1;
+    }
+    return 0;
 }
 # v6.3.11 (G): per-fn async flag (lazy-alloc'd, 0 = not async / table unallocated).
 fn GFAS(S, fi): i64 { if (_fnt_is_async == 0) { return 0; } return L64(_fnt_is_async + fi * 8); }
@@ -987,6 +1069,13 @@ fn SVFI(S, vi, v): i64 { if (_var_fileid == 0) { _var_fileid = alloc(1048576 * 8
 var _var_ptrmode = 0;
 fn GVPM(S, vi): i64 { if (_var_ptrmode == 0) { return 0; } if (vi < 0) { return 0; } return load8(_var_ptrmode + vi); }
 fn SVPM(S, vi, v): i64 { if (_var_ptrmode == 0) { _var_ptrmode = alloc(1048576); } store8(_var_ptrmode + vi, v); return 0; }
+# 6.6.17 (a3) — a VECTOR-typed global (`var g: f64v2 = 0;`): its byte size / 8 (2 or 4), 0 = not
+# one. It owns the vector's 16/32 bytes (it was one 8-byte slot, so `&g` with a `*_ptr` form wrote
+# past it into the next global); a value-form read or write of it is refused by name
+# (`_vecg_refuse`, parse_decl.cyr). Lazy-alloc'd at the var table's cap like `_var_ptrmode`.
+var _var_vecg = 0;
+fn GVVEC(S, vi): i64 { if (_var_vecg == 0) { return 0; } if (vi < 0) { return 0; } return load8(_var_vecg + vi); }
+fn SVVEC(S, vi, v): i64 { if (_var_vecg == 0) { if (v == 0) { return 0; } _var_vecg = alloc(1048576); } store8(_var_vecg + vi, v); return 0; }
 # 6.6.13 (I11) — per-global DIAGNOSTIC record: for an untyped `var g = f(..);`, f's name offset
 # + 1 (resolved to f's `: Struct` return when the check runs, so f may be defined after g). Read
 # ONLY by the Str -> `: cstring` warning. ⛔ Never put this in GVTYPE: GVTYPE drives codegen
@@ -1199,7 +1288,11 @@ fn _EMIT_GVAR_STATIC_INITS(S, O, bss_o): i64 {
             # `vsize == 8` gate skipped narrow globals entirely, so `var G: i32 = 40`
             # left G zero in the file image (the load then read 0). Write the value at
             # the var's width (the load reads the same width from the same offset).
-            if (vsize == 8) {
+            # ⛔ 6.6.17 (a4): and a 16-byte (u128) global. Its runtime store is elided for a static
+            # value like every other width's, so `var X: u128 = 5;` read 0 on every image target
+            # (cx, which keeps the runtime store, read 5). The value is the low word, as the
+            # runtime store (rax) writes it; the high word stays the image's zero. CHANGELOG [6.6.17]
+            if (vsize == 8 || vsize == 16) {
                 S64(O + bss_o + GVOFF(S, gvi), siv);
             } elif (vsize == 4) {
                 store32(O + bss_o + GVOFF(S, gvi), siv & 0xFFFFFFFF);

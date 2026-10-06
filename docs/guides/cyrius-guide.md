@@ -153,10 +153,13 @@ matches the **whole** name:
 | a type parameter in scope (`T`) | its argument's size | the `i64` base: 8 |
 
 `var a: T[N]` reserves exactly `N * sizeof(T)`. Inside a generic fn's instance a type
-parameter IS its argument: in `g<f64>`, `var y: T` is an `f64` (its `+` is a float add) and
-`var a: T[N]` holds `f64`s; in `g<i8>`, `var y: T` sign-extends like any `i8`. (Before
+parameter IS its argument: in `g<f64>`, `var y: T` and a parameter `x: T` are `f64`s (their `+`
+is a float add; the parameter still arrives in an integer register, as a non-generic `x: f64`
+does) and `var a: T[N]` holds `f64`s; in `g<i8>`, `var y: T` sign-extends like any `i8`. (Before
 6.6.16 `T = f64` made a 9-byte untyped word and `T = i8` / `i16` / `i32` loaded
-zero-extended.)
+zero-extended; before 6.6.17 an instance INLINED at a call inside a fn — a one-statement
+body such as `return sizeof(T);` or a generic forwarding its `T` — still ran as the `i64` base,
+and a parameter `x: T` at `f64` was an untyped word, as was any inlined `x: f64`.)
 
 A name that is not a type is a compile error that names it — `unknown type 'Nope' for
 variable 'a'`, `... for parameter 'x'`, `... as a fn return type`, `... in sizeof` — and a
@@ -1078,6 +1081,10 @@ var hi, lo, bexp = dd_pow10(k);
 #   var q, r = 42;                    # not a call
 #   var q, r = dm(17, 5) + (k / 9);   # call is not the whole RHS
 #   var x, y, z = f();                # count disagrees with f's declared arity
+#   var a, b = one(1);                # `one` returns ONE value (6.6.17): every `return` is a
+#                                     # single value and the body ends in one — at fn scope and
+#                                     # at top level, a forward-declared `one` included
+# (Before 6.6.17 the top-level destructure above the first statement checked none of these.)
 
 # Legacy builtins still work
 fn divmod_old(a, b) { ret2(a / b, a % b); }
@@ -1331,6 +1338,12 @@ the raw builtins.
 The integer vectors are signed by default; the unsigned variants
 (`u8v16`, `u16v8`, `u32v4`, `u64v2`) share the same lane layout and select
 unsigned packed ops where the width distinguishes them.
+
+A vector-typed **global** (`var g: f64v2 = 0;`) owns its 16 / 32 bytes and is used
+through its address — `&g` with the pointer forms (`f64v2_add(&g, &h)` routes to
+`f64v2_add_ptr`). A value-form read or write of it (`g = f(..)`, `var v: f64v2 = g;`,
+`g = v;`) or an initializer other than `0` is refused by name: a value-form vector is a
+local. (Before 6.6.17 it was one 8-byte slot, and each of those moved one word of it.)
 
 ### Packed-op builtins
 

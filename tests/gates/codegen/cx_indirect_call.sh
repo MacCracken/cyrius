@@ -77,7 +77,34 @@ else
     printf '  FAIL: duplicate cxvm dispatch opcode(s): %s\n' "$(echo $dups)"; fail=$((fail+1))
 fi
 
+echo "axis 5 — 12+ arguments (6.6.17): r14 / r15 are ARGUMENT registers from 12 arguments:"
+# The call boundary used them as scratch (ECALLIND, the callee's frame movi, each parameter
+# store), so argument 11 read a frame address — direct and indirect alike (12581018 for a 12-arg
+# weighted sum where 650 is right). Asserted against the EXPECTED value: both forms were wrong.
+argcase() {  # $1 n  — t(a0..a(n-1)) returns a(n-2) + 2*a(n-1); args 1..n, so want 3n - 1
+    n=$1; ps=""; as=""; i=0
+    while [ "$i" -lt "$n" ]; do
+        [ "$i" -gt 0 ] && { ps="$ps, "; as="$as, "; }
+        ps="${ps}a$i"; as="$as$((i + 1))"; i=$((i + 1))
+    done
+    want=$((3 * n - 1))
+    printf 'fn t(%s): i64 { return a%s + a%s * 2; }\nfn main(): i64 { return t(%s); }\nvar r = main();\nsyscall(60, r);\n' "$ps" "$((n - 2))" "$((n - 1))" "$as" > "$D/n.cyr"
+    printf 'fn t(%s): i64 { return a%s + a%s * 2; }\nfn main(): i64 { var f = &t; return callptr(f, %s); }\nvar r = main();\nsyscall(60, r);\n' "$ps" "$((n - 2))" "$((n - 1))" "$as" > "$D/m.cyr"
+    cat "$D/n.cyr" | "$D/cc" > "$D/n.cyx" 2>/dev/null
+    NR=0; timeout 30 "$D/vm" < "$D/n.cyx" >/dev/null 2>&1 || NR=$?
+    cat "$D/m.cyr" | "$D/cc" > "$D/m.cyx" 2>/dev/null
+    MR=0; timeout 30 "$D/vm" < "$D/m.cyx" >/dev/null 2>&1 || MR=$?
+    if [ "$NR" = "$want" ] && [ "$MR" = "$want" ]; then printf '  ok: %s args  direct=%s indirect=%s\n' "$n" "$NR" "$MR"; pass=$((pass+1))
+    else printf '  FAIL: %s args  direct=%s indirect=%s (want %s)\n' "$n" "$NR" "$MR" "$want"; fail=$((fail+1)); fi
+}
+argcase 11
+argcase 12
+argcase 13
+argcase 20
+argcase 60
+
 echo ""
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1
+[ "$pass" -ge 13 ] || { echo "FAIL: cx_indirect_call: only $pass rows passed (floor 13)"; exit 1; }
 echo "PASS: cx callptr — indirect calls match direct, &fn materialises, no compiler fault"

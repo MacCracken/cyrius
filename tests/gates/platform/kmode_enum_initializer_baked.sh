@@ -199,8 +199,9 @@ else
     bad "W1: K did not build"
 fi
 # W2: a struct literal with a string leaf, a destructure, a float literal: each left late, each once.
+# (6.6.17: `wp` returns the PAIR the destructure binds — a one-value fn there is now refused.)
 rows=$((rows + 1))
-printf 'kernel;\nstruct WP { a; b; }\nfn wp(): i64 { return 1; }\nvar W1 = WP { 1, "s" };\nvar W2, W3 = wp();\nvar W4: f64 = 1.5;\nvar W5 = 0;\nvar W6 = 7;\nasm { 0xF4; }\n' > "$T/w2.cyr"
+printf 'kernel;\nstruct WP { a; b; }\nfn wp(): (i64, i64) { return (1, 2); }\nvar W1 = WP { 1, "s" };\nvar W2, W3 = wp();\nvar W4: f64 = 1.5;\nvar W5 = 0;\nvar W6 = 7;\nasm { 0xF4; }\n' > "$T/w2.cyr"
 if "$CC" < "$T/w2.cyr" > "$T/w2.bin" 2> "$T/w2.err"; then
     [ "$(nwarn "$T/w2.err")" = 3 ] || bad "W2: $(nwarn "$T/w2.err") warnings, want 3 (W1 a string leaf, W2 a destructure, W4 a float literal)"
     for n in W1 W2 W4; do grep "$WMSG '$n'" "$T/w2.err" > /dev/null || bad "W2: no warning names $n"; done

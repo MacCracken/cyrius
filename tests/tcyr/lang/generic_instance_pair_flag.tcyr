@@ -1,0 +1,43 @@
+# generic_instance_pair_flag.tcyr — 6.6.17 (a7). Whether a call returns a `: stack` PAIR (Ok/Err) is
+# asked of the fn the call REACHES: for a generic, its INSTANCE.
+#
+# ⛔ THE DEFECT, every release through 6.6.16. `fn w<T>(p: T, d) { return p.div(d); }` returns a pair
+# at T = Pt (`Pt_div` returns Ok/Err) and one value at T = Qt. The pair question
+# (`_pair_callee_at`, src/frontend/parse.cyr) looked at the generic TEMPLATE, whose flag cannot fit
+# both, so `w(p, 2)?` and `w<Pt>(p, 2)?` took the BOXED `?` lowering and dereferenced the tag:
+# SIGSEGV (rc 139) on x86, aarch64 and PE, in either definition order. Now the call resolves to its
+# instance (`_pair_gen_inst`), whose body set its own flag when it was parsed with T bound.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/result.cyr"
+include "lib/assert.cyr"
+
+struct Pt { x; }
+struct Qt { x; }
+fn Pt_div(self: Pt, d) { if (d == 0) { return Err(7); } return Ok(self.x / d); }
+fn Qt_div(self: Qt, d) { return self.x / d; }
+fn w<T>(p: T, d) { return p.div(d); }
+
+fn via_q(n, d): Result { var p = Pt { n }; var v = w(p, d)?; return Ok(v + 1); }
+fn via_q_explicit(n, d): Result { var p = Pt { n }; var v = w<Pt>(p, d)?; return Ok(v + 2); }
+fn via_late(n, d): Result { var p = Pt { n }; var v = later_w(p, d)?; return Ok(v + 3); }
+fn bind_both(n, d) { var p = Pt { n }; var t, v = w(p, d); return t * 1000 + v; }
+fn single(n, d) { var q = Qt { n }; var u = w(q, d); return u; }
+fn later_w<T>(p: T, d) { return p.div(d); }
+
+fn ok_val(n, d) { var t, v = via_q(n, d); if (t != 0) { return 0 - 1; } return v; }
+fn err_val(n, d) { var t, v = via_q(n, d); if (t == 0) { return 0 - 1; } return v; }
+
+assert_eq(ok_val(84, 2), 43, "w(p, d)? at T = Pt: Ok payload propagates");
+assert_eq(err_val(84, 0), 7, "w(p, d)? at T = Pt: Err propagates out of the caller");
+var t1, v1 = via_q_explicit(90, 3);
+assert_eq(t1, 0, "w<Pt>(p, d)?: Ok tag");
+assert_eq(v1, 32, "w<Pt>(p, d)?: payload");
+var t2, v2 = via_late(50, 5);
+assert_eq(t2, 0, "a generic defined after its use: Ok tag");
+assert_eq(v2, 13, "a generic defined after its use: payload");
+assert_eq(bind_both(60, 6), 10, "var t, v = w(p, d) at T = Pt: tag 0, payload 10");
+assert_eq(bind_both(60, 0), 1007, "var t, v = w(p, 0) at T = Pt: Err tag 1, payload 7");
+assert_eq(single(30, 3), 10, "w(q, d) at T = Qt: one value, bound to one name");
+var r = assert_summary();

@@ -1,0 +1,49 @@
+# generic_f64_param.tcyr — 6.6.17 (a9). In a generic instance at T = f64 a PARAMETER `x: T` is an f64,
+# exactly as the non-generic `x: f64` is and as a local `var y: T` there has been since 6.6.16 — and
+# an INLINED f64 parameter (a one-statement generic instance, or `#inline`) keeps its type.
+#
+# ⛔ THE DEFECT, every release through 6.6.16. The parameter loop typed a `T`-bound parameter only
+# when T was a struct, so at T = f64 `x` was an untyped word: `x + x` added 1.5's BITS as integers
+# (9218868437227405312 where 3.0's bits are right) and `x / y` was an integer division of bit
+# patterns; `var y: T = x; y + x` warned "f64 arithmetic with a non-f64 right operand". Separately,
+# the inline replay re-registered a parameter with the type GFIPT recorded — vector descriptors
+# only — so `#inline fn d(x: f64) { return x + x; }` was the same integer add. The ABI does not move:
+# an f64 parameter still arrives in an integer register on every backend; only its slot's type tag
+# (the one a non-generic `x: f64` gets) and the replay's record of it are new.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/assert.cyr"
+
+fn dbl<T>(x: T) { return x + x; }
+fn mix<T>(x: T) { var y: T = x; return y + x; }
+fn half<T>(x: T, y: T) { return x / y; }
+fn lt<T>(x: T, y: T) { if (x < y) { return 1; } return 0; }
+fn dblf(x: f64) { return x + x; }
+#inline
+fn dbli(x: f64) { return x + x; }
+#inline
+fn sumi(x: f64, y: f64) { return x + y; }
+fn dbl_i64<T>(x: T) { return x + x; }
+
+fn run() {
+    var a: f64 = 1.5;
+    var b: f64 = 3.0;
+    var c: f64 = 2.0;
+    var neg: f64 = 0.0 - 1.0;
+    var one: f64 = 1.0;
+    assert_eq(dblf(a), 0x4008000000000000, "control: non-generic x: f64 doubles 1.5 to 3.0");
+    assert_eq(dbl<f64>(a), 0x4008000000000000, "generic x: T at f64 doubles 1.5 to 3.0");
+    assert_eq(mix<f64>(a), 0x4008000000000000, "var y: T = x; y + x at f64 is 3.0");
+    assert_eq(half<f64>(b, c), 0x3FF8000000000000, "x / y at f64 is 1.5");
+    assert_eq(lt<f64>(neg, one), 1, "x < y at f64 compares as floats (-1.0 < 1.0)");
+    assert_eq(dbli(a), 0x4008000000000000, "#inline x: f64 doubles 1.5 to 3.0");
+    assert_eq(sumi(a, b), 0x4012000000000000, "#inline two f64 params: 1.5 + 3.0 = 4.5");
+    assert_eq(dbl_i64<i64>(21), 42, "control: an i64 instance stays an integer add");
+    assert_eq(dbl(21), 42, "control: the inferred (i64) call stays an integer add");
+    return 0;
+}
+
+alloc_init();
+run();
+var r = assert_summary();
