@@ -42,7 +42,7 @@ closeout), and the unscheduled 6.x backlog. Whole-cycle framing, the v6.7.x lang
 **Current head: v6.6.18** (2026-10-06) — **slot open** (6.6.17 shipped: tag `6.6.17` @ `c2e7eef9`) · cycc
 **1,581,040 B** (`.text` **1,400,760**) · `cycc-native-aarch64` **2,042,184 B** · seed-derive **GREEN** · cross-OS
 **GREEN** on ecb/ach/cass/pi · self_compile **985 ms** · **473** `.tcyr` (**193** in `crossos/`) · **105** `lib/*.cyr` ·
-**361** shell gates under `tests/gates/<bucket>/` · **0 open issues** · **5 open proposals** · the next free CVE id is **78**.
+**361** shell gates under `tests/gates/<bucket>/` · **0 open issues** · **5 open proposals** · the next free CVE id is **79**.
 
 > ⚠ **Every figure above was DERIVED on the day, not carried** (re-derived 2026-09-27 at the 6.6.7 open).
 > `version-bump.sh` rewrites the version token, replaces the `(…)` after it with the bump date, and
