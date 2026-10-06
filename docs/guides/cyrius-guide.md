@@ -1975,6 +1975,8 @@ cyrius build configuration (argument > environment > manifest > default)
 | `[deps.*]` | `target` | read | — | — | `--target` | cyrius deps: resolve only for a matching target |
 | `[lib]` | `modules` | read | — | — | — | cyrius distlib: the base bundle |
 | `[lib.*]` | `modules` | read | — | — | `<profile>` | `cyrius distlib <profile>` |
+| `[lib]` | `embed` | read | — | — | — | cyrius distlib: the [embed] entries the base bundle carries |
+| `[lib.*]` | `embed` | read | — | — | `<profile>` | `cyrius distlib <profile>`: the [embed] entries this bundle carries |
 | `[features]` | `default` | read | — | — | `--no-default-features` | cyrius deps: features on by default |
 | `[features]` | `*` | read | — | — | `--features` | cyrius deps: a feature and the optional deps it turns on |
 | `[groups]` | `*` | read | — | — | — | cyrius deps: a named group of stdlib leaves |
