@@ -1963,6 +1963,7 @@ cyrius build configuration (argument > environment > manifest > default)
 | `[build]` | `features` | dropped | — | — | — | features are [features] + --features |
 | `[coverage]` | `programs` | read | — | — | `--programs` | cyrius coverage: RUN programs in the corpus (globs) |
 | `[sections]` | `base` | read | — | — | — | bare-metal builds: the image load base |
+| `[embed]` | `*` | read | — | — | — | every compile: the file's bytes as NAME() / NAME_len(), prepended before the entry |
 | `[deps]` | `stdlib` | read | — | — | — | cyrius deps: stdlib leaves vendored into lib/ and auto-prepended |
 | `[deps.*]` | `git` | read | — | — | — | cyrius deps: the repository to clone |
 | `[deps.*]` | `tag` | read | — | — | — | cyrius deps: the tag to check out |
@@ -1974,12 +1975,86 @@ cyrius build configuration (argument > environment > manifest > default)
 | `[deps.*]` | `target` | read | — | — | `--target` | cyrius deps: resolve only for a matching target |
 | `[lib]` | `modules` | read | — | — | — | cyrius distlib: the base bundle |
 | `[lib.*]` | `modules` | read | — | — | `<profile>` | `cyrius distlib <profile>` |
+| `[lib]` | `embed` | read | — | — | — | cyrius distlib: the [embed] entries the base bundle carries |
+| `[lib.*]` | `embed` | read | — | — | `<profile>` | `cyrius distlib <profile>`: the [embed] entries this bundle carries |
 | `[features]` | `default` | read | — | — | `--no-default-features` | cyrius deps: features on by default |
 | `[features]` | `*` | read | — | — | `--features` | cyrius deps: a feature and the optional deps it turns on |
 | `[groups]` | `*` | read | — | — | — | cyrius deps: a named group of stdlib leaves |
 | `[release]` | `bins` | read | — | — | — | release.yml, install.sh, cyrius pulsar |
 | `[release]` | `cross_bins` | read | — | — | — | release.yml, install.sh, cyrius pulsar |
 | `[release]` | `scripts` | read | — | — | — | release.yml, install.sh |
+
+## Embedding data files: `[embed]`
+
+`[embed]` (6.6.19) puts a file's bytes into the program, so a binary can answer from data baked
+into it — presets, a font, a dictionary, a web page — with no generator script and no generated
+`.cyr` to keep in sync:
+
+```toml
+[embed]
+PRESET_LEAN = "presets/quality-lean.json"
+FACE = "assets/face.ttf"
+```
+
+```cyrius
+syscall(1, 1, PRESET_LEAN(), PRESET_LEAN_len());   # the bytes, then their count
+```
+
+Each entry `NAME = "path"` gives every compile two functions: `NAME()` returns a pointer to the
+file's bytes and `NAME_len()` their count. The bytes are exact — binary is fine, NULs included —
+and are followed by one NUL, so a text file can be used as a C string as long as it holds no NUL
+of its own. The file is read when the build runs, so an edited data file is in the next build;
+there is nothing to regenerate and nothing to go stale.
+
+**How it works.** cbt generates, ahead of your entry file, one module per entry —
+`fn NAME(): i64 { return "…"; }` and `fn NAME_len(): i64 { return N; }` — with the bytes escaped
+(printable ASCII as itself except `"` and `\`, every other byte as `\xHH`), so each literal is one
+pure-ASCII source line that no preprocessor rule can see into. The module is line-neutral: an
+error on line 3 of your entry still reports `<source>:3`. It is a **function, not a `var`**: a
+top-level `var X = "…";` is a store that runs when the top-level code does (after the program, in
+an x86 `kernel;` build), while a function's literal is a static address from the first
+instruction.
+
+**The rules** — every refusal names `cyrius.cyml [embed] NAME` and the reason:
+
+- `NAME` is an identifier (`[A-Za-z_][A-Za-z0-9_]*`, at most 64 characters) and not a reserved
+  word (`match`, `syscall`, `sizeof`, `load8`, …): it becomes `fn NAME()`. `X` and `X_len` cannot
+  both be declared, and a name may appear once. A `NAME` or `NAME_len` that is already declared —
+  by any leaf of the pinned stdlib snapshot, by `[build] entry` or `[build] modules`, or by a `.cyr`
+  under `src/` or `lib/` — is refused (`[embed] vec` is, because of `vec_len`): left to "the last
+  definition wins", the stdlib would silently win in your build, and the embed would silently
+  replace the stdlib function in every consumer of a bundle that carries it.
+- The path is relative to the project and stays inside it: no leading `/`, no `\`, no `:` (a
+  drive, or an NTFS stream such as `.git::$INDEX_ALLOCATION`), no `..`, no control character, no
+  8.3 short-name component (`~` and a digit, as in `GIT~1`), no code point HFS+ ignores (U+200C–200F,
+  U+202A–202E, U+206A–206F, U+FEFF), no `.git` component (in any case), and the file has a single
+  hard link. **No symlink anywhere
+  on the path** — `[embed]` is the one key that copies a file into a built artifact, and a link
+  committed into an untrusted checkout could ship any file on the build machine inside a release
+  binary. The file must exist and be a regular file; it is opened once and the bytes the build
+  embeds are the bytes that were checked.
+- One path string per entry. A `{ dir, glob, prefix }` set, an array or an `[embed.X]` section is
+  refused: list each file (an order that depends on a directory listing is a trap).
+- **Size.** Every string literal lives in cycc's string pool, 2 MiB (2,097,152 bytes, NUL
+  terminators included). One file may be at most 2,097,150 bytes and all embeds together at most
+  2,097,151 (each plus its NUL); past that the build is refused with every entry's size listed.
+  The pool is **shared with the program's own strings** — the stdlib's, the `[package] version`,
+  your own — so real embeds should stay well under it. Anything larger (a 40 MB asset) is not an
+  embed: read it at run time.
+
+**What it costs.** The whole string pool is copied into the binary, so **every compile carries
+every embed** — each test binary of the project, each program, even one that never calls
+`NAME()`, and even under dead-code elimination (DCE removes the function, not its bytes).
+
+**Bundles.** `cyrius distlib` carries only the embeds a bundle names: `[lib] embed = ["NAME"]`
+for the base bundle, `[lib.PROFILE] embed` for a profile, nothing by default. A profile may be
+embed-only (`[lib.face]` with `embed = ["FACE"]` and no modules is a bundle of the bytes). A
+bundle module that calls an embed the bundle does not carry is refused by name, and
+`cyrius distlib --check` names a bundle STALE once its data file changes — so a committed bundle
+gets the freshness check a generator script never had. `--modular` writes each carried embed as
+its own `embed_<NAME>` sub-module.
+
+`cyrius-lsp` does not read the manifest, so it shows `NAME()` as undefined.
 
 ## Build Tool & Dependencies
 

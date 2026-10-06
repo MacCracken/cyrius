@@ -58,6 +58,10 @@ var _dep_inert = 0;
 # lock to detect a force-pushed/repointed tag or a poisoned cached clone.
 var _dep_commit_lines = 0;
 var _build_modules = 0;
+# 6.6.19: the [embed] entries every compile carries (cbt/manifest.cyr _embed_load; 0 = none).
+# _materialize_source renders them before `#@srcline`. A bundle verify clears it so the bundle
+# is checked ALONE (cbt/commands.cyr).
+var _embeds = 0;
 # v5.7.8: when set, compile() skips the manifest-dep auto-prepend.
 # Used by `cyrius check` (default-on) and `cyrius build --no-deps`.
 var _skip_deps = 0;

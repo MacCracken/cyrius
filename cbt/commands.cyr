@@ -3901,6 +3901,12 @@ fn _distlib_target_spawn(entry, t, vout, verr): i64 {
         # entry must contain EXACTLY the leaves under test. (compile() still prepends the
         # `#@incdir` of the entry's directory, the mirror: a leaf ./lib lacks resolves there.)
         _skip_deps = 1;
+        # 6.6.19 (E3) — and nothing of the PRODUCER's own build either: its [embed] prelude would
+        # satisfy NAME() for a bundle that does not carry it, and its [build] modules (which
+        # _materialize_source prepends regardless of _skip_deps) put their own includes and
+        # globals in scope — a short sidecar or an uncompilable [lib.P] bundle verified green.
+        _embeds = 0;
+        _build_modules = 0;
         _cc_allow_undef = 1;
         _cc_stderr_to = verr;
         _cc_override = _distlib_tgt_cc(t);
@@ -4302,6 +4308,7 @@ fn _distlib_verify_rounds(leaves, out_path, named_deps, root, m): i64 {
             added_total = added_total + 1;
         }
         if (added_here == 0) {                           # fixpoint: nothing new to add
+            if (_distlib_embed_unlisted(out_path, names) > 0) { return 0 - 1; }
             _distlib_report_unowned(out_path, names, masks);
             return added_total;
         }
@@ -4821,6 +4828,123 @@ fn _distlib_leaf_defining(root, name): i64 {
     return 0;
 }
 
+# ── [embed] NAME collisions (6.6.19) ───────────────────────────────────────────────────────────
+# An [embed] NAME (or NAME_len) that another top-level declaration in scope already owns is
+# REFUSED, never left to "last definition wins": in the producer's build the prelude comes FIRST, so
+# the stdlib / project definition wins and NAME() silently returns ITS result; in a consumer that
+# includes a bundle carrying the embed, the bundle comes AFTER the stdlib, so the embed silently
+# REPLACES the stdlib fn (measured: `[embed] vec_new` in a bundle -> `vec: alloc failed`, exit 1,
+# and only a `duplicate fn` warning; the distlib self-check passed). Owners checked: every leaf of
+# the pinned stdlib snapshot (the D1 index, _distlib_snap_cache), and the project's own sources —
+# `[build] entry`, `[build] modules`, every .cyr under src/ and lib/ (dist/ is the output, never
+# an owner). Called once from _embed_load; returns the number refused (each named).
+var _emb_hit = 0;
+
+fn _embed_owner_refuse(e, nm, where): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, nm);
+    str_builder_add_cstr(sb, " is already declared by ");
+    str_builder_add_cstr(sb, where);
+    str_builder_add_cstr(sb, "; the generated ");
+    str_builder_add_cstr(sb, nm);
+    str_builder_add_cstr(sb, "() would silently replace it or be replaced by it (the last definition wins) — in this build and in every consumer of a bundle that carries it; choose another name");
+    _embed_refuse(_embed_e_name(e), 0, str_data(str_builder_build(sb)));
+    vec_push(_emb_hit, e);
+    return 1;
+}
+
+# Refuse every entry not yet refused whose NAME / NAME_len is in `set` (a _src_ids set).
+fn _embed_owner_check(set, ents, where): i64 {
+    var n = 0;
+    var i = 0;
+    while (i < vec_len(ents)) {
+        var e = vec_get(ents, i);
+        i = i + 1;
+        var seen = 0;
+        var k = 0;
+        while (k < vec_len(_emb_hit)) { if (vec_get(_emb_hit, k) == e) { seen = 1; } k = k + 1; }
+        if (seen == 1) { continue; }
+        var nm = _embed_e_name(e);
+        var nl = strlen(nm);
+        if (_src_ids_has(set, nm, nl) == 1) { n = n + _embed_owner_refuse(e, nm, where); continue; }
+        var sb = str_builder_new();
+        str_builder_add_cstr(sb, nm);
+        str_builder_add_cstr(sb, "_len");
+        var ln = str_data(str_builder_build(sb));
+        if (_src_ids_has(set, ln, nl + 4) == 1) { n = n + _embed_owner_refuse(e, ln, where); }
+    }
+    return n;
+}
+
+fn _embed_owner_file(path, ents): i64 {
+    var got = 0;
+    var fb = file_read_whole(path, &got);
+    if (fb == 0 || got <= 0) { return 0; }   # unreadable: the compile that includes it names it
+    _src_blank_noncode(fb, got);
+    var offs = vec_new();
+    var lens = vec_new();
+    var kinds = vec_new();
+    _src_decls(fb, got, offs, lens, kinds);
+    var set = _src_ids_new(vec_len(offs) * 8 + 8);
+    if (set == 0) { return 0; }
+    var k = 0;
+    while (k < vec_len(offs)) {
+        _src_ids_add(set, fb + vec_get(offs, k), vec_get(lens, k));
+        k = k + 1;
+    }
+    return _embed_owner_check(set, ents, path);
+}
+
+# Every .cyr under `dir` (links are not followed; depth-capped like dir_walk).
+fn _embed_owner_dir(dir, ents, depth): i64 {
+    if (depth > 16 || is_dir(str_from(dir)) != 1) { return 0; }
+    var v = vec_new();
+    if (dir_list_checked(str_from(dir), v) < 0) { return 0; }
+    var n = 0;
+    var i = 0;
+    while (i < vec_len(v)) {
+        var ed = str_data(vec_get(v, i));
+        i = i + 1;
+        var el = strlen(ed);
+        if (el == 0 || load8(ed) == 46) { continue; }
+        var fp = _distlib_join(dir, ed);
+        if (is_symlink(str_from(fp)) == 1) { continue; }
+        if (is_dir(str_from(fp)) == 1) { n = n + _embed_owner_dir(fp, ents, depth + 1); continue; }
+        if (el > 4 && memeq(ed + el - 4, ".cyr", 4) == 1) { n = n + _embed_owner_file(fp, ents); }
+    }
+    return n;
+}
+
+fn _embed_collisions(ents): i64 {
+    _emb_hit = vec_new();
+    var n = 0;
+    var root = _distlib_stdlib_root();
+    if (root != 0) {
+        if (_distlib_snap_cache(root) != 0) { return 1; }
+        var i = 0;
+        while (i < vec_len(_dl_snap_names)) {
+            var sb = str_builder_new();
+            str_builder_add_cstr(sb, "the stdlib leaf ");
+            str_builder_add_cstr(sb, vec_get(_dl_snap_names, i));
+            str_builder_add_cstr(sb, " (");
+            str_builder_add_cstr(sb, root);
+            str_builder_add_cstr(sb, ")");
+            n = n + _embed_owner_check(vec_get(_dl_snap_sets, i), ents, str_data(str_builder_build(sb)));
+            i = i + 1;
+        }
+    }
+    var ent = _mf_key_str("build", "entry");
+    if (ent != 0) { n = n + _embed_owner_file(ent, ents); }
+    var bm = _mf_strs("build", "modules");
+    if (bm != 0) {
+        var j = 0;
+        while (j < vec_len(bm)) { n = n + _embed_owner_file(vec_get(bm, j), ents); j = j + 1; }
+    }
+    n = n + _embed_owner_dir("src", ents, 0);
+    n = n + _embed_owner_dir("lib", ents, 0);
+    return n;
+}
+
 # Pull every undefined symbol name out of a captured cycc diagnostic stream.
 fn _distlib_collect_undefined(errbuf, elen, names): i64 {
     var p = 0;
@@ -5092,6 +5216,32 @@ fn _distlib_named_deps(mbuf, mlen): i64 {
 # giving the resolver each sub-unit's transitive deps in topological order. So a
 # consumer (or a v6.3.x lever-2 profile) can pull EXACT sub-modules instead of the
 # whole monolith. The flat single-file `cyrius distlib` is unchanged (default).
+fn _dl_identch(c): i64 {
+    if (c == 95 || (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122)) { return 1; }
+    return 0;
+}
+
+# 1 when buf[0..n) holds the identifier `name` or `name_len` as a whole word.
+fn _distlib_mentions(buf, n, name): i64 {
+    var nl = strlen(name);
+    var i = 0;
+    while (i + nl <= n) {
+        if (memeq(buf + i, name, nl) == 1) {
+            var pre = 0;
+            if (i > 0) { pre = _dl_identch(load8(buf + i - 1)); }
+            var e = i + nl;
+            if (e + 4 <= n && memeq(buf + e, "_len", 4) == 1) {
+                if (e + 4 == n || _dl_identch(load8(buf + e + 4)) == 0) { e = e + 4; }
+            }
+            var post = 0;
+            if (e < n) { post = _dl_identch(load8(buf + e)); }
+            if (pre == 0 && post == 0) { return 1; }
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
 fn _distlib_modular_emit(pkg_name, modules, mbuf, mlen): i64 {
     if (_dep_reject_unsafe_name(pkg_name) == 1) { return 1; }   # CVE-32: producer-side pkg name (no `/`/`..` in dist/<pkg>)
     sys_mkdir("dist", 0x1ED);
@@ -5111,6 +5261,39 @@ fn _distlib_modular_emit(pkg_name, modules, mbuf, mlen): i64 {
     var count = 0;
     var seen_bases = vec_new();   # v6.2.52: per-pkg basename collision guard
     var mi = 0;
+    # 6.6.19 (E3) — each carried [embed] entry is its own sub-module `embed_<NAME>`, with no
+    # siblings and no leaves; through seen_bases, so a module file named embed_<NAME>.cyr collides
+    # by name instead of overwriting it.
+    var ei = 0;
+    while (_dl_embed_sel != 0 && ei < vec_len(_dl_embed_sel)) {
+        var ee = vec_get(_dl_embed_sel, ei);
+        ei = ei + 1;
+        var eb_sb = str_builder_new();
+        str_builder_add_cstr(eb_sb, "embed_");
+        str_builder_add_cstr(eb_sb, _embed_e_name(ee));
+        var ebase = str_data(str_builder_build(eb_sb));
+        vec_push(seen_bases, ebase);
+        var eo_sb = str_builder_new();
+        str_builder_add_cstr(eo_sb, moddir);
+        str_builder_add_cstr(eo_sb, "/");
+        str_builder_add_cstr(eo_sb, ebase);
+        str_builder_add_cstr(eo_sb, ".cyr");
+        var e_out = str_data(str_builder_build(eo_sb));
+        var efd = _aw_open(e_out);
+        if (efd == 0) { _err_ctx("distlib --modular: cannot write", e_out); return 1; }
+        _aw_write(efd, "# ", 2);
+        _aw_write(efd, ebase, strlen(ebase));
+        _aw_write(efd, " (cyrius distlib --modular)\n\n", 29);
+        var one = vec_new();
+        vec_push(one, ee);
+        var etn = 0;
+        var etx = _embed_render(one, &etn);
+        _aw_write(efd, etx, etn);
+        if (_aw_commit(efd) != 0) { _err_ctx("distlib --modular: write failed (left as it was)", e_out); return 1; }
+        str_builder_add_cstr(idx, ebase);
+        str_builder_add_cstr(idx, " = []\n");
+        count = count + 1;
+    }
     while (mi < vec_len(modules)) {
         var mod_path = vec_get(modules, mi);
         if (file_exists(mod_path) == 0) {
@@ -5232,6 +5415,20 @@ fn _distlib_modular_emit(pkg_name, modules, mbuf, mlen): i64 {
             _aw_write(mfd, "\n", 1);
         }
         if (_aw_commit(mfd) != 0) { _err_ctx("distlib --modular: write failed (left as it was)", mod_out); return 1; }
+        # 6.6.19 (E3): a module that names a carried embed's accessor lists its sub-module as a
+        # sibling, so resolving the module brings the bytes (a comment mention only over-pulls).
+        var ej = 0;
+        while (_dl_embed_sel != 0 && ej < vec_len(_dl_embed_sel)) {
+            var enm = _embed_e_name(vec_get(_dl_embed_sel, ej));
+            ej = ej + 1;
+            if (_distlib_mentions(fbuf, flen, enm) == 1) {
+                if (first == 0) { str_builder_add_cstr(idx, ", "); }
+                str_builder_add_cstr(idx, "\"embed_");
+                str_builder_add_cstr(idx, enm);
+                str_builder_add_cstr(idx, "\"");
+                first = 0;
+            }
+        }
         str_builder_add_cstr(idx, "]\n");
         count = count + 1;
         mi = mi + 1;
@@ -5357,6 +5554,95 @@ fn _distlib_has_requires(path): i64 {
     return 0;
 }
 
+# 6.6.19 (E3) — the [embed] entries a bundle carries, from `[<lsec>] embed` (a NAME or a list of
+# them, each declared in [embed]) as a vec of _embed_load entries in the order listed; -1 after
+# naming what is wrong. Sets _dl_embed_key / _dl_embed_sel for _distlib_embed_unlisted.
+var _dl_embed_key = 0;
+var _dl_embed_sel = 0;
+fn _distlib_embed_select(lsec): i64 {
+    _dl_embed_key = _cfg_where(lsec, "embed");
+    var sel = vec_new();
+    _dl_embed_sel = sel;
+    var names = _mf_strs(lsec, "embed");
+    if (_toml_bad == 1) {
+        _err_ctx("distlib: must be an [embed] NAME or an array of them", _dl_embed_key);
+        return 0 - 1;
+    }
+    if (names == 0) { return sel; }
+    var all = _embed_load();
+    if (all < 0) { return 0 - 1; }
+    var bad = 0;
+    var i = 0;
+    while (i < vec_len(names)) {
+        var nm = vec_get(names, i);
+        i = i + 1;
+        var hit = 0;
+        var j = 0;
+        while (j < vec_len(all)) {
+            if (streq(_embed_e_name(vec_get(all, j)), nm) == 1) { hit = vec_get(all, j); }
+            j = j + 1;
+        }
+        if (hit == 0) {
+            var sb = str_builder_new();
+            str_builder_add_cstr(sb, "cyrius.cyml ");
+            str_builder_add_cstr(sb, _dl_embed_key);
+            str_builder_add_cstr(sb, " names ");
+            str_builder_add_cstr(sb, nm);
+            str_builder_add_cstr(sb, ", which [embed] does not declare (a bundle carries [embed] entries by NAME)");
+            _err(str_data(str_builder_build(sb)));
+            bad = bad + 1;
+            continue;
+        }
+        var dup = 0;
+        j = 0;
+        while (j < vec_len(sel)) {
+            if (vec_get(sel, j) == hit) { dup = 1; }
+            j = j + 1;
+        }
+        if (dup == 0) { vec_push(sel, hit); }
+    }
+    if (bad > 0) { return 0 - 1; }
+    return sel;
+}
+
+# A name still undefined after the converged verify that IS one of this project's [embed] accessors
+# (NAME or NAME_len) means a bundle module calls an embed the bundle does not carry: the verify
+# compiled it ALONE, without the producer's prelude, and a consumer will too. Refused naming the
+# key and the NAME (_distlib_report_unowned only WARNS — a bundle may call a consumer's hook, but
+# never this). Returns the count named.
+fn _distlib_embed_unlisted(out_path, names): i64 {
+    var all = _embed_all;
+    if (_embed_state != 1 || all == 0) { return 0; }
+    var n = 0;
+    var i = 0;
+    while (i < vec_len(names)) {
+        var u = vec_get(names, i);
+        i = i + 1;
+        var j = 0;
+        while (j < vec_len(all)) {
+            var en = _embed_e_name(vec_get(all, j));
+            j = j + 1;
+            if (streq(u, en) == 1 || _embed_is_len_of(u, en) == 1) {
+                var sb = str_builder_new();
+                str_builder_add_cstr(sb, "distlib: ");
+                str_builder_add_cstr(sb, out_path);
+                str_builder_add_cstr(sb, " calls ");
+                str_builder_add_cstr(sb, u);
+                str_builder_add_cstr(sb, "(), the accessor of [embed] ");
+                str_builder_add_cstr(sb, en);
+                str_builder_add_cstr(sb, ", but cyrius.cyml ");
+                str_builder_add_cstr(sb, _dl_embed_key);
+                str_builder_add_cstr(sb, " does not list ");
+                str_builder_add_cstr(sb, en);
+                str_builder_add_cstr(sb, " — a bundle carries only the embeds it names; add it there");
+                _err(str_data(str_builder_build(sb)));
+                n = n + 1;
+            }
+        }
+    }
+    return n;
+}
+
 fn cmd_distlib(profile): i64 {
     if (_distlib_valid_profile(profile) == 0) {
         _err("invalid profile name (allowed: [a-zA-Z0-9_-]{1,32})");
@@ -5390,11 +5676,13 @@ fn cmd_distlib(profile): i64 {
     # 6.6.17: through the one reader (cbt/manifest.cyr), which steps over multi-line values, so a
     # line inside an array that begins with `[` is never read as a section header.
     var modules = 0;
+    var lsec = "lib";
     if (profile != 0) {
         var psb = str_builder_new();
         str_builder_add_cstr(psb, "lib.");
         str_builder_add_cstr(psb, profile);
-        modules = _mf_strs(str_data(str_builder_build(psb)), "modules");
+        lsec = str_data(str_builder_build(psb));
+        modules = _mf_strs(lsec, "modules");
     } else {
         modules = _mf_strs("build", "modules");
         if (modules == 0 && _toml_bad == 0) { modules = _mf_strs("lib", "modules"); }
@@ -5403,11 +5691,18 @@ fn cmd_distlib(profile): i64 {
         _err("distlib: `modules` must be a string or an array of strings");
         return 1;
     }
+    # 6.6.19 (E3) — the [embed] entries this bundle carries: `[lib] embed` / `[lib.P] embed`,
+    # nothing unless named (rekha's 1.6 MB face must never ride into dist/rekha.cyr). An
+    # embed-only profile is LEGAL — `[lib.face] embed = ["FACE"]` with no modules is a bundle of
+    # data — so "no modules" is refused only when the profile names no embed either.
+    var esel = _distlib_embed_select(lsec);
+    if (esel < 0) { return 1; }
+    if (vec_len(esel) > 0 && modules == 0) { modules = vec_new(); }
 
-    if (modules == 0 || vec_len(modules) == 0) {
+    if ((modules == 0 || vec_len(modules) == 0) && vec_len(esel) == 0) {
         if (profile != 0) {
             _err_ctx("no modules found for profile", profile);
-            println("  Add modules = [...] under the matching [lib.PROFILE] section.");
+            println("  Add modules = [...] (or embed = [...]) under the matching [lib.PROFILE] section.");
         } else {
             _err("no [build] modules or [lib] modules found in manifest");
             println("  Add modules = [\"src/types.cyr\", \"src/lib.cyr\", ...] to your manifest.");
@@ -5490,6 +5785,15 @@ fn cmd_distlib(profile): i64 {
     # was a content line, "# Do not edit ..."), so the per-module
     # opener writes its single leading blank as the separator.
     var prev_blank = 0;
+
+    # 6.6.19 (E3) — the carried [embed] entries, after the header and before the first module (the
+    # same generated text a build prepends; cbt/build.cyr _embed_render).
+    if (vec_len(esel) > 0) {
+        _aw_write(ofd, "\n# --- [embed] ---\n\n", 20);
+        var eln = 0;
+        var etx = _embed_render(esel, &eln);
+        _aw_write(ofd, etx, eln);
+    }
 
     # Concatenate each module
     var mi = 0;
@@ -5886,6 +6190,13 @@ fn cmd_distlib(profile): i64 {
     # will use it" — and makes the check STRONGER, not weaker.
     var dl_saved_skip = _skip_deps;
     _skip_deps = 0;
+    # 6.6.19 (E3) — the bundle is checked ALONE: not beside the producer's [embed] prelude, and not
+    # beside its [build] modules (the base bundle IS those modules, so they compiled twice; a
+    # [lib.P] bundle borrowed their globals). Not a forked child — saved and restored.
+    var dl_saved_emb = _embeds;
+    var dl_saved_bm = _build_modules;
+    _embeds = 0;
+    _build_modules = 0;
     var check_r = 0 - 1;
     var dl_wrote = 0;
     var dl_errf = _cbt_tmpfile("distlib_err");
@@ -5906,6 +6217,8 @@ fn cmd_distlib(profile): i64 {
         xunlink(dl_entry);
     }
     _skip_deps = dl_saved_skip;
+    _embeds = dl_saved_emb;
+    _build_modules = dl_saved_bm;
     sys_unlink(dl_out);
     if (dl_wrote == 0) {
         _err_ctx("distlib: cannot write the bundle self-check entry", dl_entry);
