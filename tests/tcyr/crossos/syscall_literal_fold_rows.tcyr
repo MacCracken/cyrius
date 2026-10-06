@@ -1,0 +1,87 @@
+# syscall_literal_fold_rows.tcyr — 6.6.18: the folded ESYSXLAT rows, run against REAL files.
+#
+# A literal syscall number on aarch64 no longer carries the 82-row translation chain: the
+# compiler simulates the chain at compile time and keeps only the bodies that would run
+# (src/backend/aarch64/emit.cyr `_esx_fold`). tests/gates/platform/esysxlat_fold.sh proves
+# the shape and, under qemu, that each folded call makes the syscall its runtime twin makes;
+# THIS file is the real-hardware half — pi runs it in the release gate's cross-OS leg, with
+# every row shape issued as a literal x86 number: the renumbers, the AT_FDCWD arg-shifts
+# (open/stat/lstat/rename/symlink/mkdir/rmdir/unlink/readlink), the insert-zero rows
+# (pipe/dup2/epoll_wait), poll's ms->timespec block, the re-capture pairs (unlinkat 263,
+# nanosleep 35, statfs 137) and the 1049 chdir alias (SYS_CHDIR). On x86_64 Linux the same numbers are
+# native, so that run is the reference. Other targets spell these numbers differently, so the
+# rows are Linux-only; elsewhere the file passes trivially.
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/syscalls.cyr"
+include "lib/assert.cyr"
+
+alloc_init();
+test_group("syscall literal fold rows");
+assert_eq(1, 1, "the file runs on every target");
+
+#ifdef CYRIUS_TARGET_LINUX
+var _fr_f = test_scratch("cyrius_fold_rows_f");
+var _fr_g = test_scratch("cyrius_fold_rows_g");
+var _fr_l = test_scratch("cyrius_fold_rows_l");
+var _fr_d = test_scratch("cyrius_fold_rows_d");
+var _fr_buf[256];
+var _fr_st[256];
+var _fr_ts[16];
+syscall(87, _fr_f); syscall(87, _fr_g); syscall(87, _fr_l); syscall(84, _fr_d);
+
+test_group("open 2 / write 1 / close 3 / read 0 (openat + AT_FDCWD shift, renumbers)");
+var _fr_fd = syscall(2, _fr_f, 0x241, 0x1A4);          # O_WRONLY|O_CREAT|O_TRUNC, 0644
+assert_eq(_fr_fd >= 0, 1, "open(2) created the scratch file");
+assert_eq(syscall(1, _fr_fd, "fold", 4), 4, "write(1) wrote 4 bytes");
+assert_eq(syscall(3, _fr_fd), 0, "close(3)");
+_fr_fd = syscall(2, _fr_f, 0, 0);
+assert_eq(_fr_fd >= 0, 1, "open(2) reopened it read-only");
+assert_eq(syscall(0, _fr_fd, &_fr_buf, 64), 4, "read(0) got the 4 bytes back");
+assert_eq(load8(&_fr_buf + 3), 100, "and they are the bytes written ('d')");
+syscall(3, _fr_fd);
+
+test_group("stat 4 / lstat 6 / symlink 88 / readlink 89 (fstatat-family shifts)");
+assert_eq(syscall(4, _fr_f, &_fr_st), 0, "stat(4) of the file");
+assert_eq(load64(&_fr_st + 48), 4, "st_size is 4 (offset 48 on both Linux arches)");
+assert_eq(syscall(88, _fr_f, _fr_l), 0, "symlink(88)");
+assert_eq(syscall(6, _fr_l, &_fr_st), 0, "lstat(6) of the link");
+assert_eq(load64(&_fr_st + 48), strlen(_fr_f), "lstat sees the LINK (size = target length), not the file");
+assert_eq(syscall(89, _fr_l, &_fr_buf, 256), strlen(_fr_f), "readlink(89) returns the target length");
+
+test_group("rename 82 / unlink 87 / unlinkat 263 / mkdir 83 / rmdir 84");
+assert_eq(syscall(82, _fr_f, _fr_g), 0, "rename(82)");
+assert_eq(syscall(4, _fr_f, &_fr_st) < 0, 1, "the old name is gone");
+assert_eq(syscall(4, _fr_g, &_fr_st), 0, "the new name exists");
+assert_eq(syscall(87, _fr_g), 0, "unlink(87)");
+assert_eq(syscall(263, 0 - 100, _fr_l, 0), 0, "unlinkat(263) with AT_FDCWD");
+assert_eq(syscall(83, _fr_d, 0x1ED), 0, "mkdir(83)");
+assert_eq(syscall(84, _fr_d), 0, "rmdir(84)");
+assert_eq(syscall(84, _fr_d) < 0, 1, "and it is gone");
+
+test_group("pipe 22 / dup2 33 / epoll_wait 232 (insert-zero rows)");
+assert_eq(syscall(22, &_fr_buf), 0, "pipe(22)");
+var _fr_p0 = load32(&_fr_buf);
+var _fr_p1 = load32(&_fr_buf + 4);
+assert_eq(syscall(33, _fr_p1, 100), 100, "dup2(33) onto fd 100");
+assert_eq(syscall(1, 100, "xy", 2), 2, "write through the dup");
+assert_eq(syscall(0, _fr_p0, &_fr_st, 8), 2, "read the pipe");
+syscall(3, 100); syscall(3, _fr_p0); syscall(3, _fr_p1);
+assert_eq(syscall(232, 0 - 1, &_fr_buf, 1, 0), 0 - 9, "epoll_wait(232) on fd -1 is EBADF");
+
+test_group("poll 7 / nanosleep 35 / statfs 137 / getpid 39");
+assert_eq(syscall(7, 0, 0, 5), 0, "poll(7) with a 5 ms timeout returns 0");
+store64(&_fr_ts, 0); store64(&_fr_ts + 8, 1000000);
+assert_eq(syscall(35, &_fr_ts, 0), 0, "nanosleep(35) 1 ms");
+assert_eq(syscall(137, ".", &_fr_buf), 0, "statfs(137) of the cwd");
+assert_eq(syscall(39), syscall(SYS_GETPID), "getpid(39) is the stdlib's getpid");
+
+#ifdef CYRIUS_ARCH_AARCH64
+test_group("the 1049 chdir alias (aarch64 private band; SYS_CHDIR is an enum constant, so it folds)");
+assert_eq(syscall(SYS_CHDIR, "."), 0, "chdir via the 1049 alias, to the cwd");
+#endif
+#endif
+
+var r = assert_summary();
+syscall(60, r);

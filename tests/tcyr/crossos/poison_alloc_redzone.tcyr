@@ -18,6 +18,35 @@ include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 include "lib/assert.cyr"
 
+# 6.6.18 review — macOS / Windows only: alloc() picks the bump reserve or its own `big`
+# mapping by whether the request FITS, and alloc_used() counts only the reserve. The redzones
+# fill the reserve sooner, so the poisoned build must still count exactly the requests the
+# non-poison build would have fit (a shadow counter), or alloc_used() under --poison drifts.
+#ifdef CYRIUS_TARGET_MACOS
+fn _reserve_fit_check(): i64 { return _reserve_fit_body(); }
+#endif
+#ifdef CYRIUS_TARGET_WIN
+fn _reserve_fit_check(): i64 { return _reserve_fit_body(); }
+#endif
+
+fn _reserve_fit_body(): i64 {
+    test_group("macOS / Windows: the reserve-fit split is the non-poison one");
+    var rem = (_heap_end - _heap_base) - alloc_used();    # non-poison room left in the reserve
+    var u0 = alloc_used();
+    var f = alloc(rem - 64);
+    assert_nonnull(f, "a filler that fits the non-poison reserve");
+    assert_eq(alloc_used() - u0, rem - 64, "it is counted, though its poisoned size cannot fit the reserve");
+    assert_eq(load8(f + rem - 64), poison_fill(), "and it is armed");
+    u0 = alloc_used();
+    alloc(64);
+    assert_eq(alloc_used() - u0, 64, "the reserve's last 64 bytes still count");
+    u0 = alloc_used();
+    var over = alloc(8);
+    assert_nonnull(over, "a request past the reserve is served by its own mapping");
+    assert_eq(alloc_used() - u0, 0, "and, as without poison, not counted");
+    return 0;
+}
+
 fn main(): i64 {
     poison_trap_set(0);
     alloc_init();
@@ -58,6 +87,13 @@ fn main(): i64 {
     assert_eq(alloc_used() - u0, 1600, "100 x alloc(16) moves alloc_used() by 1600");
     assert_eq(alloc(0), 0, "alloc(0) is still refused");
     assert_eq(alloc(0 - 8), 0, "a negative request is still refused");
+
+    #ifdef CYRIUS_TARGET_MACOS
+    _reserve_fit_check();
+    #endif
+    #ifdef CYRIUS_TARGET_WIN
+    _reserve_fit_check();
+    #endif
 
     test_group("alloc_reset forgets the lists");
     store8(odd + 13, 0x41);      # stale corruption that the reset must not report later

@@ -50,6 +50,19 @@ fn main(): i64 {
     fl_poison_reset();
     assert_eq(poison_sweep(), 0, "freed blocks leave the live list");
 
+    test_group("a smashed fl meta word is reported every time (6.6.18 review)");
+    var sm = fl_alloc(40);
+    var smeta = load64(sm - 40);         # blk+32 = u - RZ - 8
+    store64(sm - 40, 0x4141414141414141);
+    poison_reset();
+    assert_eq(poison_sweep(), 1, "a sweep reaching a smashed fl header counts it bad");
+    assert_eq(poison_violations(), 1, "and reports it, although the garbage has bit 54 set");
+    store64(sm - 40, smeta);
+    assert_eq(poison_sweep(), 0, "restored");
+    fl_free(sm);
+    fl_poison_reset();
+    poison_reset();
+
     test_group("fill change between alloc and free");
     var f = fl_alloc(24);
     var oldf = poison_fill_set(90);

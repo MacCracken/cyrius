@@ -161,8 +161,37 @@ else ok "x86-macOS: Darwin's kill(pid, sig, posix) is silent"; fi
 grep -q '^warning:<source>:2:[0-9]*: syscall arity mismatch' "$D/km.err" && ok "x86-macOS: a 1-arg kill still warns (control)" \
     || bad "x86-macOS: a 1-arg kill did not warn"
 
+# AXIS 4 (6.6.18) — syscall() with more than 6 arguments after the number is REFUSED by name on
+# every target whose generic path is ESCPOPS. Every backend pops the number + at most six
+# arguments, so a 7th was left on the stack, an ARGUMENT was popped as the number (16 B leaked)
+# — and on arm64 macOS a variable number at that arity kept its `bl .` stub placeholder: an
+# infinite loop, rc 0. The PE parse-time reroutes that take more (WSARecv at argc 8) and PE's
+# dynamic -38 path are not ESCPOPS and stay accepted.
+printf 'var _fn = 20;\nvar _r = syscall(_fn, 1, 2, 3, 4, 5, 6, 7);\n' > "$D/a8v.cyr"
+printf 'var _r = syscall(39, 1, 2, 3, 4, 5, 6, 7);\n' > "$D/a8l.cyr"
+printf 'var _fn = 20;\nvar _r = syscall(_fn, 1, 2, 3, 4, 5, 6);\n' > "$D/a7.cyr"
+printf 'var _b[64];\nvar _r = syscall(61481, 1, &_b, 1, &_b, &_b, 0, 0);\n' > "$D/pe8.cyr"
+_refused() {  # $1 label, $2 source, then the compiler command
+    l=$1; src=$2; shift 2
+    rc=0; "$@" < "$src" > "$D/r.bin" 2> "$D/r.err" || rc=$?
+    if [ "$rc" != 0 ] && grep -q '^error:<source>:[0-9]*:[0-9]*: syscall() takes at most 6 arguments after the number' "$D/r.err"; then
+        ok "$l: an 8-value syscall() is refused by name"
+    else bad "$l: an 8-value syscall() was not refused by name (rc $rc): $(head -1 "$D/r.err")"; fi
+}
+_refused "x86-Linux literal" "$D/a8l.cyr" "$CC"
+_refused "x86-Linux variable" "$D/a8v.cyr" "$CC"
+_refused "x86-macOS literal" "$D/a8l.cyr" env CYRIUS_MACHO=1 "$CC"
+_refused "aarch64 variable" "$D/a8v.cyr" "$A64"
+_refused "arm64-macOS variable (was an infinite loop)" "$D/a8v.cyr" env CYRIUS_MACHO_ARM=1 "$A64"
+rc=0; "$CC" < "$D/a7.cyr" > "$D/a7.bin" 2> "$D/a7.err" || rc=$?
+[ "$rc" = 0 ] && ok "x86-Linux (control): 6 arguments after the number compile" || bad "x86-Linux: a 6-argument syscall() was refused (rc $rc)"
+rc=0; "$A64" < "$D/a7.cyr" > "$D/a7a.bin" 2> "$D/a7a.err" || rc=$?
+[ "$rc" = 0 ] && ok "aarch64 (control): 6 arguments after the number compile" || bad "aarch64: a 6-argument syscall() was refused (rc $rc)"
+rc=0; CYRIUS_TARGET_WIN=1 "$CC" < "$D/pe8.cyr" > "$D/pe8.exe" 2> "$D/pe8.err" || rc=$?
+[ "$rc" = 0 ] && ok "PE (control): the WSARecv reroute at argc 8 still compiles" || bad "PE: the argc-8 WSARecv reroute was refused (rc $rc): $(head -1 "$D/pe8.err")"
+
 echo "raw_syscall_native_exempt_and_kill_arity: $pass passed, $fail failed"
-[ "$pass" -ge 19 ] || { echo "FAIL: raw_syscall_native_exempt_and_kill_arity — only $pass of the 19 rows passed"; exit 1; }
+[ "$pass" -ge 27 ] || { echo "FAIL: raw_syscall_native_exempt_and_kill_arity — only $pass of the 27 rows passed"; exit 1; }
 [ "$fail" = 0 ] || { echo "FAIL: raw_syscall_native_exempt_and_kill_arity"; exit 1; }
 echo "PASS: raw_syscall_native_exempt_and_kill_arity"
 exit 0

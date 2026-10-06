@@ -1767,7 +1767,259 @@ fn _macho_arm_routes(n): i64 {
 # Pop syscall args (LIFO — last pushed = first popped)
 # Push order: syscall_num, arg1, arg2, ..., argN
 # Pop order: argN first, syscall_num last
-fn ESCPOPS(S, n): i64 {
+# 6.6.18 — a LITERAL syscall number's ESYSXLAT chain is folded at compile time.
+# ESYSXLAT emits every row inline at every site (82 rows, 1,184 B on ELF at 6.6.18 — 36 % of
+# the native compiler). When the number is a compile-time constant the outcome is known, so the
+# chain is emitted as always and then DECODED and SIMULATED in place: cur = the literal; for each
+# row in emission order whose `cmp x8,#src` equals cur, the row's body is kept (copied down) and a
+# final `movz x8,#d` sets cur = d; every other row, and every cmp/b.ne, is dropped. Running the
+# chain's own order is what keeps every ordering rule (flock above poll, epoll_wait below pipe,
+# the at-family below getcwd/symlink, 263->35 below 35->101, the alias band last) true by
+# construction, and decode-after-emit leaves the row SOURCE untouched — the ~11 gates that read
+# ESYSXLAT's hex words keep reading the truth.
+# ⛔ Relocating a body is only sound under an invariant this fn CHECKS, loudly, on every fold (a
+# violation stops the build — never a silent fallback to the inline chain): rows tile the chain
+# exactly as `cmp x8,#src` / `b.ne +4k` / k-1 body words; x8 is written only by a `movz x8` that
+# is the body's LAST word (ELF) and a Mach-O body ends in `movz x16`; a flag reader follows a
+# flag setter inside its own body (the dropped cmp's flags are gone); and no body word is
+# PC-relative to anything outside its body (B / B.cond / CBZ / TBZ must land in the body; ADR,
+# ADRP, LDR-literal, BL and register branches are refused outright, as are FP/SIMD words,
+# system instructions and BC.cond).
+# ⚠ No literal `EW(S, 0xF1…1F)` may appear here: raw_syscall_literals_routed.sh derives its
+# allowlist from exactly those words inside ESYSXLAT. CHANGELOG [6.6.18]
+fn _esx_sext(v, bits): i64 {
+    if (v >= (1 << (bits - 1))) { return v - (1 << bits); }
+    return v;
+}
+fn _esx_prhex(w): i64 {
+    var b[16];
+    var i = 0;
+    while (i < 8) {
+        var d = (w >> ((7 - i) * 4)) & 15;
+        if (d < 10) { store8(&b + i, 48 + d); } else { store8(&b + i, 55 + d); }
+        i = i + 1;
+    }
+    syscall(SYS_WRITE, 2, &b, 8);
+    return 0;
+}
+# `src` < 0: a structural failure before any row decoded — name the offending word instead.
+fn _esx_fold_die(st, q, src, why): i64 {
+    PRSTR("error: internal: ESYSXLAT fold refused chain word ");
+    PRNUM((q - st) / 4);
+    if (src >= 0) {
+        PRSTR(" (the row cmp x8,#");
+        PRNUM(src);
+    } else {
+        PRSTR(" (0x");
+        _esx_prhex(load32(_codebuf_base + q));
+    }
+    PRSTR("): ");
+    PRSTR(why);
+    PRSTR("\n");
+    syscall(SYS_EXIT, 1);
+    return 0;
+}
+# 0 when body [bs, be) relocates soundly, else why not. A load/store naming x8 as Rt, Rt2 or Rn
+# counts as an x8 write — conservative (a store of x8 is refused too), never silently wrong.
+fn _esx_body_bad(cb, bs, be): i64 {
+    var lastw = load32(cb + be - 4);
+    var hi = be;
+    if ((lastw & 0xFFE0001F) == 0xD2800008) { hi = be - 4; }   # never branch past the movz x8
+    var fl = 0;
+    var o = bs;
+    while (o < be) {
+        var w = load32(cb + o);
+        if ((w & 0x1F000000) == 0x10000000) { return "ADR/ADRP in a row body"; }
+        if ((w & 0x0C000000) == 0x0C000000) { return "a floating-point/SIMD word in a row body"; }
+        if ((w & 0xFFC00000) == 0xD5000000) { return "a system instruction (MRS/MSR/hint) in a row body"; }
+        if ((w & 0xFF000010) == 0x54000010) { return "BC.cond in a row body"; }
+        if ((w & 0x3B000000) == 0x18000000) { return "LDR (literal) in a row body"; }
+        if ((w & 0xFC000000) == 0x94000000) { return "BL in a row body"; }
+        if ((w & 0xFE000000) == 0xD6000000) { return "a register branch in a row body"; }
+        var br = 0;
+        var d = 0;
+        if ((w & 0xFC000000) == 0x14000000) { br = 1; d = _esx_sext(w & 0x3FFFFFF, 26); }
+        if ((w & 0xFF000010) == 0x54000000) { br = 2; d = _esx_sext((w >> 5) & 0x7FFFF, 19); }
+        if ((w & 0x7E000000) == 0x34000000) { br = 1; d = _esx_sext((w >> 5) & 0x7FFFF, 19); }
+        if ((w & 0x7E000000) == 0x36000000) { br = 1; d = _esx_sext((w >> 5) & 0x3FFF, 14); }
+        var rf = 0;
+        if (br == 2) { rf = 1; }
+        var dp = w & 0x1FE00000;
+        if (dp == 0x1A000000) { rf = 1; }    # ADC/SBC
+        if (dp == 0x1A400000) { rf = 1; }    # CCMP/CCMN
+        if (dp == 0x1A800000) { rf = 1; }    # CSEL/CSINC/CSINV/CSNEG
+        if (rf == 1) { if (fl == 0) { return "a flag reader before any flag setter in its body"; } }
+        if (br != 0) {
+            var t = o + d * 4;
+            if (t < bs) { return "a branch that leaves its row body"; }
+            if (t > hi) { return "a branch that leaves its row body"; }
+        }
+        if ((w & 0x20000000) != 0) {
+            if ((w & 0x1F000000) == 0x11000000) { fl = 1; }   # ADDS/SUBS imm (cmp/cmn)
+            if ((w & 0x1F000000) == 0x0B000000) { fl = 1; }   # ADDS/SUBS reg
+        }
+        if (((w >> 29) & 3) == 3) {
+            if ((w & 0x1F800000) == 0x12000000) { fl = 1; }   # ANDS imm (tst)
+            if ((w & 0x1F000000) == 0x0A000000) { fl = 1; }   # ANDS reg
+        }
+        var wx8 = 0;
+        if ((w & 0x0A000000) == 0x08000000) {
+            if (((w >> 5) & 0x1F) == 8) { wx8 = 1; }
+            if ((w & 0x1F) == 8) { wx8 = 1; }
+            if ((w & 0x3A000000) == 0x28000000) { if (((w >> 10) & 0x1F) == 8) { wx8 = 1; } }
+        } else {
+            if (br == 0) { if ((w & 0x1F) == 8) { wx8 = 1; } }
+        }
+        if (wx8 == 1) {
+            if (o + 4 != be) { return "x8 written before the body's last word"; }
+            if ((w & 0xFFE0001F) != 0xD2800008) { return "x8 written by something other than movz x8"; }
+            if (_TARGET_MACHO == 2) { return "x8 written in a Mach-O row (the chain compares x8)"; }
+        }
+        o = o + 4;
+    }
+    if (_TARGET_MACHO == 2) {
+        if ((lastw & 0xFFE0001F) != 0xD2800010) { return "a Mach-O row body that does not end in movz x16"; }
+    }
+    return 0;
+}
+fn _esx_fold(S, st, lit): i64 {
+    var en = GCP(S);
+    var cb = _codebuf_base;
+    var p = st;
+    if (_TARGET_MACHO == 2) {
+        if (load32(cb + p) != 0xD29FFFF0) { _esx_fold_die(st, p, 0 - 1, "no chain head (movz x16,#0xFFFF)"); }
+        p = p + 4;
+    }
+    var q = p;
+    while (q < en) {
+        var c = load32(cb + q);
+        var src = (c >> 10) & 0xFFF;
+        if ((c & 0xFFC003FF) != 0xF100011F) { _esx_fold_die(st, q, 0 - 1, "not a cmp x8,#imm row head"); }
+        var b = load32(cb + q + 4);
+        if ((b & 0xFF00001F) != 0x54000001) { _esx_fold_die(st, q, src, "no b.ne after the cmp"); }
+        var k = (b >> 5) & 0x7FFFF;
+        if (k < 2) { _esx_fold_die(st, q, src, "an empty row body"); }
+        if (q + 4 + k * 4 > en) { _esx_fold_die(st, q, src, "a row that overruns the chain"); }
+        var why = _esx_body_bad(cb, q + 8, q + 4 + k * 4);
+        if (why != 0) { _esx_fold_die(st, q, src, why); }
+        q = q + 4 + k * 4;
+    }
+    var cur = lit;
+    var out = st;
+    var hit = 0;
+    q = p;
+    while (q < en) {
+        var src2 = (load32(cb + q) >> 10) & 0xFFF;
+        var e2 = q + 4 + ((load32(cb + q + 4) >> 5) & 0x7FFFF) * 4;
+        if (src2 == cur) {
+            hit = 1;
+            var r = q + 8;
+            while (r < e2) {
+                var bw = load32(cb + r);
+                store32(cb + out, bw);
+                out = out + 4;
+                r = r + 4;
+            }
+            var lw = load32(cb + e2 - 4);
+            if ((lw & 0xFFE0001F) == 0xD2800008) { cur = (lw >> 5) & 0xFFFF; }
+        }
+        q = e2;
+    }
+    # Mach-O: every body ends in movz x16 (checked above), so the head matters only on a miss.
+    if (_TARGET_MACHO == 2) { if (hit == 0) { store32(cb + out, 0xD29FFFF0); out = out + 4; } }
+    SCP(S, out);
+    return 0;
+}
+
+# 6.6.18 — a NON-literal number calls ONE shared translation stub per class instead of inlining
+# the chain at every site: `bl <stub>` (a placeholder recorded here, patched by ESYSX_STUBS once
+# the stubs exist after EEXIT). The class is 0 on ELF and the arity on arm64 Mach-O, whose chain
+# depends on `_esx_argc` (_esx_short, EMACHO_NANOSLEEP_ARM). Clobbering x30 is safe in a framed fn
+# (EFNEPI reloads it) and at top level (never returns); a `#naked` fn has the return address LIVE
+# in x30, so it keeps the inline chain.
+# ⛔ These are RESOLVED `bl`s with no fixup-table entry: a future aarch64 code-moving pass (the
+# DCE whole-program compaction x86 has and aarch64 does not) must repair them. And a path that
+# reaches FIXUP without ESYSX_STUBS would ship `bl .` (an infinite loop) — FIXUP asserts the list
+# is drained (_esx_stubs_drained). CHANGELOG [6.6.18]
+var _esx_sl = 0;     # alloc()'d list of {code offset, class} pairs, 16 B each
+var _esx_ns = 0;
+var _esx_scap = 0;
+fn _esx_stub_site(S, n): i64 {
+    if (_cur_fn_naked == 1) { ESYSXLAT(S); return 0; }
+    if (_esx_ns >= _esx_scap) {
+        var nc = _esx_scap * 2;
+        if (nc < 64) { nc = 64; }
+        var nl = alloc(nc * 16);
+        if (nl == 0) { PRSTR("error: ESYSXLAT stub sites: alloc failed\n"); syscall(SYS_EXIT, 1); }
+        var i = 0;
+        while (i < _esx_ns * 2) { store64(nl + i * 8, load64(_esx_sl + i * 8)); i = i + 1; }
+        _esx_sl = nl;
+        _esx_scap = nc;
+    }
+    var cls = 0;
+    if (_TARGET_MACHO == 2) { cls = n; }
+    if (cls > 7) { cls = 7; }   # ESYSX_STUBS emits classes 0-7; the chain is the same at 7 and up
+    store64(_esx_sl + _esx_ns * 16, GCP(S));
+    store64(_esx_sl + _esx_ns * 16 + 8, cls);
+    _esx_ns = _esx_ns + 1;
+    EW(S, 0x94000000);      # bl . — placeholder, patched by ESYSX_STUBS
+    return 0;
+}
+# Called by every aarch64 driver between EEXIT and FIXUP: outside every fn's range, so the DCE
+# NOP-fill never touches a stub and nothing falls into one, and patched before the DCE byte-scan.
+fn ESYSX_STUBS(S): i64 {
+    var c = 0;
+    while (c < 8) {
+        var stub = 0 - 1;
+        var i = 0;
+        while (i < _esx_ns) {
+            if (load64(_esx_sl + i * 16 + 8) == c) {
+                if (stub < 0) {
+                    stub = GCP(S);
+                    if (c > 0) { _esx_argc = c; }
+                    ESYSXLAT(S);
+                    _esx_argc = 7;
+                    EW(S, 0xD65F03C0);   # ret
+                }
+                var site = load64(_esx_sl + i * 16);
+                if (load32(_codebuf_base + site) != 0x94000000) {
+                    PRSTR("error: internal: ESYSXLAT stub site at code offset ");
+                    PRNUM(site);
+                    PRSTR(" is no longer its bl placeholder (did a pass move code?)\n");
+                    syscall(SYS_EXIT, 1);
+                }
+                store32(_codebuf_base + site, 0x94000000 | (((stub - site) >> 2) & 0x3FFFFFF));
+            }
+            i = i + 1;
+        }
+        c = c + 1;
+    }
+    # Every site must now be a REAL bl: one left at the placeholder would loop for ever.
+    var j = 0;
+    while (j < _esx_ns) {
+        if (load32(_codebuf_base + load64(_esx_sl + j * 16)) == 0x94000000) {
+            PRSTR("error: internal: a variable-number syscall site of class ");
+            PRNUM(load64(_esx_sl + j * 16 + 8));
+            PRSTR(" got no ESYSXLAT stub\n");
+            syscall(SYS_EXIT, 1);
+        }
+        j = j + 1;
+    }
+    _esx_ns = 0;
+    return 0;
+}
+fn _esx_stubs_drained(): i64 {
+    if (_esx_ns != 0) {
+        PRSTR("error: internal: ");
+        PRNUM(_esx_ns);
+        PRSTR(" variable-number syscall site(s) reached FIXUP unpatched — this driver never called ESYSX_STUBS\n");
+        syscall(SYS_EXIT, 1);
+    }
+    return 0;
+}
+
+fn ESCPOPS(S, n, lit): i64 {
+    if (_sc_argc_refuse(S, n) == 1) { return 0; }   # > 6 arguments: no backend can pass them
     # LIFO: last pushed (argN) pops first, first pushed (syscall_num) pops last
     # For syscall(num, a1, a2, a3, a4, a5, a6):
     #   Push order: num, a1, a2, a3, a4, a5, a6
@@ -1793,7 +2045,9 @@ fn ESCPOPS(S, n): i64 {
         }
     }
     _esx_argc = n;          # the Mach-O pointer emulations key on it (EMACHO_NANOSLEEP_ARM, _esx_short)
-    ESYSXLAT(S);
+    var xst = GCP(S);
+    if (lit >= 0) { ESYSXLAT(S); _esx_fold(S, xst, lit); }   # a compile-time number: keep what runs
+    else { _esx_stub_site(S, n); }                         # else: one shared stub per class
     _esx_argc = 7;
     ESYSCALL(S);
     return 0;
@@ -1937,7 +2191,13 @@ fn EMACHO_PTHREAD_CREATE_ARM(S): i64 {
     EPOPARG(S, 1);                 # ldr x1, [sp], #16 — attr (0 = default)
     EPOPARG(S, 0);                 # ldr x0, [sp], #16 — &pthread_t out
     EW(S, 0x910043FF);             # add sp, sp, #16 — discard sc_num
-    _EMACHO_BLR_GOT(S, 5);         # __got[5] = _pthread_create; returns 0 / errno in x0
+    _EMACHO_BLR_GOT(S, 5);         # __got[5] = _pthread_create; 0 / errno as an int in w0
+    # ⚠ AAPCS64 leaves x0[63:32] unspecified for an int result, and lib/thread_macos.cyr's
+    # `rc != 0` reads all 64 bits — a success with dirty upper bits would read as failure and
+    # leak a running thread. ecb measures zero upper bits today, so this is conformance, not an
+    # observed fault; it is the one __got int-result site that lacked it (all nine slots
+    # audited — EMACHO_FORK_ARM below has the same word). CHANGELOG [6.6.18]
+    EW(S, 0x93407C00);             # sxtw x0, w0
     return 0;
 }
 
