@@ -863,6 +863,48 @@ fn _cbt_tmpbase_fail(base, e): i64 {
 }
 
 # "<private dir>/<name>" — the replacement for every fixed "/tmp/cyrius_*".
+# ⭐ 6.6.18 — NAME THE MISSING LEAF, NOT JUST THE MISSING SYMBOL. When no caller captures the
+# compiler's stderr, compile() captures it itself, relays it whole the moment the child exits,
+# and — if the compile failed on undefined names — looks each one up in the stdlib snapshot and
+# says which leaf defines it and how to fix the manifest. After the P4 change a consumer that
+# relied on a producer's over-reported sidecar (takumi: declares `sandhi`, whose fold needs
+# `sakshi`, which only sigil's old sidecar vendored) got `undefined function
+# 'sakshi_span_enter' ... refusing to emit binary` and nothing about the cause or the remedy.
+# A capture that cannot be made fails OPEN (the child keeps our stderr, no hint). CHANGELOG [6.6.18]
+fn _cc_own_err_begin(): i64 {
+    if (_cc_stderr_to != 0) { return 0; }
+    var p = _cbt_tmpfile("cc_err");
+    sys_unlink(p);
+    var fd = sys_open(p, O_WRONLY | O_CREAT | O_EXCL, 0x180);
+    if (fd < 0) { return 0; }
+    sys_close(fd);
+    _cc_stderr_to = p;
+    return p;
+}
+
+fn _cc_own_err_end(own, rc): i64 {
+    if (own == 0) { return 0; }
+    _cc_stderr_to = 0;
+    _cbt_relay_file(own);
+    if (rc != 0) { _cc_undef_hints(own); }
+    sys_unlink(own);
+    return 0;
+}
+
+# Copy file `path` to our stderr whole (chunked). Absent file = nothing.
+fn _cbt_relay_file(path): i64 {
+    var fd = sys_open(path, O_RDONLY, 0);
+    if (fd < 0) { return 0; }
+    var buf[4096];
+    var n = sys_read(fd, &buf, 4096);
+    while (n > 0) {
+        sys_write(STDERR_FD, &buf, n);
+        n = sys_read(fd, &buf, 4096);
+    }
+    sys_close(fd);
+    return 0;
+}
+
 fn _cbt_tmpfile(name): i64 {
     var sb = str_builder_new();
     str_builder_add_cstr(sb, _cbt_tmpdir());
@@ -1189,7 +1231,9 @@ fn compile(source, output): i64 {
             return 1;
         }
     }
+    var w_own = _cc_own_err_begin();
     wrc = _win_compile_spawn_err(cc, actual_source, output, _cc_stderr_to);
+    _cc_own_err_end(w_own, wrc);
     if (tmp_src != 0) { sys_unlink(tmp_src); }
     # v6.6.6 (bite 24 review) — the PE arm's status; see `_cc_last_exit`. `wrc` is what
     # `_win_wait_close` read out of the cmd.exe that ran the compiler, i.e. the compiler's
@@ -1245,6 +1289,7 @@ fn compile(source, output): i64 {
     }
     sys_close(probe_fd);
     if (_baremetal_target == 1) { _section_base_env_ptr = _sections_base_env(); }
+    var own_err = _cc_own_err_begin();
     var pid = sys_fork();
     if (pid == 0) {
         var sfd = sys_open(actual_source, O_RDONLY, 0);
@@ -1355,6 +1400,10 @@ fn compile(source, output): i64 {
     }
     var status_buf[1];
     sys_waitpid(pid, &status_buf, 0);
+    var own_st = load32(&status_buf);
+    var own_rc = 1;
+    if (WIFEXITED(own_st) == 1) { own_rc = WEXITSTATUS(own_st); }
+    _cc_own_err_end(own_err, own_rc);
     # The compiler child has been reaped, so it is done with the preprocessed source.
     # Unlink here, ABOVE the success/failure split, so neither return path can skip it.
     if (tmp_src != 0) { sys_unlink(tmp_src); }

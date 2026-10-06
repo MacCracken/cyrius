@@ -24,16 +24,20 @@
 #           compiler per target — and writes no sidecar and no scratch mirror. (Through 6.6.10 this
 #           axis required the verify to RUN here, re-adding `math` for F64_ONE; that was a
 #           Windows-shaped sidecar, the host dependence K5 removed.)
-#   axis 2  (wine) `distlib --check` right after `distlib` reports the bundle current — on a
-#           project with no stdlib snapshot in reach, so the verify is skipped and the byte
-#           compare (`_distlib_files_same`, bug 1's second site) is what is exercised.
+#   axis 2  (wine) with NO stdlib snapshot in reach, `cyrius.exe distlib` and `distlib --check`
+#           both REFUSE by name and write no sidecar. ⚠ 6.6.18 (D4): this axis read "`--check`
+#           right after `distlib` reports the bundle current", reached because a snapshot-less
+#           run SKIPPED the verify and published unverified — the only way a non-x86-Linux CLI
+#           could finish distlib. The verify is the sidecar's only authority now, so that run
+#           refuses, and the byte compare (`_distlib_files_same`) is unreachable on PE; bug 1's
+#           fix there stays pinned by axis 0 (no raw `syscall(4,` in cbt/).
 #   axis 3  (wine) `cyrius.exe lint` with an EMPTY CYRIUS_HOME finds cyrlint.exe beside it.
 # wine is not hardware: the release gate's cass leg and a real-cass run of these three
 # commands are the verification (done for 6.6.9 on cass, see CHANGELOG [6.6.9]).
 #
 # (6.6.11: axis 1 asserts the K5 refusal; see the axes above.)
 # MUTATION LEDGER (2026-09-28, 6.6.9, wine): the 6.6.8 cbt/ (a full revert) FAILS axes 0-3;
-# `_file_size` alone back to syscall(4) FAILS 0 and 2 (axis 1 stays green: the verify's own
+# `_file_size` alone back to syscall(4) FAILS 0 and 2 (2 no longer since 6.6.18; axis 1 stays green: the verify's own
 # reads moved to file_read_whole, so they no longer depend on it); `_wrapper_dir` without the
 # Windows arm FAILS 3 only. `_wrapper_w2u8` back to a fixed 4096-byte buffer FAILS 0b (rc 2).
 set -eu
@@ -165,20 +169,20 @@ fi
 if ls -a "$P/dist" 2>/dev/null | grep -q '^\.dlverify-'; then
     echo "  FAIL axis 1: the verify's scratch mirror was left behind: $(ls -a "$P/dist" | grep '^\.dlverify-')"; fail=1
 fi
-# axis 2 — no stdlib snapshot in reach (an EMPTY home, no [deps] stdlib): the verify is skipped,
-# the bundle is written, and --check must byte-compare it as current.
+# axis 2 — no stdlib snapshot in reach (an EMPTY home): distlib and --check refuse by name
+# (6.6.18, D4 — the verify is the only authority; nothing unverified is published).
 P2="$W/proj2"; mkdir -p "$P2/src"
 printf '[package]\nname = "vprobe2"\nversion = "0.1.0"\ncyrius = "%s"\n\n[lib]\nmodules = ["src/lib.cyr"]\n' "$VER" > "$P2/cyrius.cyml"
 printf 'fn vprobe2_one(x): i64 {\n    return x + 1;\n}\n' > "$P2/src/lib.cyr"
 HE=$(wp "$W/empty")
-( cd "$P2" && CYRIUS_HOME="$HE" CYRIUS_RESOLVED=1 timeout 300 wine "$W/home/bin/cyrius.exe" distlib > "$W/d1b.log" 2>&1 ) || true
-[ -f "$P2/dist/vprobe2.cyr" ] || { echo "  FAIL axis 2 premise: cyrius.exe distlib wrote no bundle without a snapshot:"; sed -n '1,4p' "$W/d1b.log" | sed 's/^/    /'; fail=1; }
-( cd "$P2" && CYRIUS_HOME="$HE" CYRIUS_RESOLVED=1 timeout 300 wine "$W/home/bin/cyrius.exe" distlib --check > "$W/d2.log" 2>&1 ) || true
-if grep -q 'current: dist/vprobe2.cyr' "$W/d2.log" && ! grep -q 'STALE' "$W/d2.log"; then
-    echo "  ok axis 2: distlib --check reports a just-built bundle current"
+D2A=0; ( cd "$P2" && CYRIUS_HOME="$HE" CYRIUS_RESOLVED=1 timeout 300 wine "$W/home/bin/cyrius.exe" distlib > "$W/d1b.log" 2>&1 ) || D2A=$?
+D2B=0; ( cd "$P2" && CYRIUS_HOME="$HE" CYRIUS_RESOLVED=1 timeout 300 wine "$W/home/bin/cyrius.exe" distlib --check > "$W/d2.log" 2>&1 ) || D2B=$?
+if [ "$D2A" != 0 ] && [ "$D2B" != 0 ] && grep -q 'no stdlib snapshot' "$W/d1b.log" && grep -q 'no stdlib snapshot' "$W/d2.log" \
+   && [ ! -f "$P2/dist/vprobe2.deps" ] && ! grep -q 'current: dist/vprobe2.cyr' "$W/d2.log"; then
+    echo "  ok axis 2: with no snapshot, cyrius.exe distlib and --check refuse by name (rc $D2A / $D2B) and publish nothing unverified"
 else
-    echo "  FAIL axis 2: distlib --check right after distlib did not report the bundle current:"
-    sed -n '1,4p' "$W/d2.log" | sed 's/^/    /'; fail=1
+    echo "  FAIL axis 2: with no snapshot, cyrius.exe distlib / --check did not refuse by name (rc $D2A / $D2B):"
+    sed -n '1,3p' "$W/d1b.log" "$W/d2.log" | sed 's/^/    /'; fail=1
 fi
 
 # ── axis 3: the tools beside cyrius.exe, with an EMPTY CYRIUS_HOME ──────────────────────

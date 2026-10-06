@@ -913,6 +913,26 @@ fn _cfg_resolve_test(): i64 {
     return v;
 }
 
+# 6.6.18 — `[build] defines` for a verb that is not `cyrius build` (P1: defines apply to every
+# build; `cyrius fuzz` harnesses never got them — only `-D` reached them). The same precedence
+# as `cyrius build`: -D > CYRIUS_DEFINES > [build] defines. Sets `_defines`; 0, or 1 named.
+fn _cfg_apply_defines(): i64 {
+    _cfg_reset();
+    if (_mf_load() < 0) { return 1; }
+    if (_cfg_mf_strs(_CK_DEFINES, "build", "defines") != 0) { return 1; }
+    if (_cfg_defines_ok(_cfg_val(_CK_DEFINES), "cyrius.cyml [build] defines") != 0) { return 1; }
+    _cfg_env_csv(_CK_DEFINES, "CYRIUS_DEFINES");
+    if (_cfg_org(_CK_DEFINES) == _CFG_ENV) {
+        if (_cfg_defines_ok(_cfg_val(_CK_DEFINES), "CYRIUS_DEFINES") != 0) { return 1; }
+    }
+    var defs = _cli_values("-D");
+    if (vec_len(defs) > 0) { _cfg_put(_CK_DEFINES, defs, _CFG_ARG, "-D"); }
+    _defines = 0;
+    var d = _cfg_val(_CK_DEFINES);
+    if (d != 0) { if (vec_len(d) > 0) { _defines = d; } }
+    return 0;
+}
+
 # Hand the resolved values to the compile.
 fn _cfg_apply_build(): i64 {
     _strict = _cfg_val(_CK_STRICT);

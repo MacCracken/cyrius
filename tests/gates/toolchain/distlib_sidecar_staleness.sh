@@ -25,6 +25,10 @@
 # packages that never had leaves, and no lie for packages that stopped having them. Axis 3
 # pins the "never had any" case so a future change cannot start emitting empty base sidecars
 # for every dependency-free package.
+#
+# ⚠ 6.6.18 (D4): the leaf set is what the bundle REFERENCES (compile-verified), not what
+# `[deps] stdlib` declares — so the fixtures call into their leaves rather than declaring them,
+# and "dropped every dependency" means the code that needed them is gone.
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -59,7 +63,7 @@ mkproj() {  # mkproj <dir> <declared-stdlib-or-empty> <body>
 
 # ── axis 1: a sidecar whose leaf set has emptied is REMOVED ────────────────────────
 A=$(mkproj a '"alloc", "str", "string", "syscalls", "io", "fmt", "vec"' \
-    'fn st_fn(): i64 { var s = str_from("x"); return 1; }')
+    'fn st_fn(): i64 { var s = str_from("x"); var v = vec_new(); fmt_int(strlen("ab")); return alloc(8) + file_exists("x"); }')
 run "$A" distlib >/dev/null 2>&1 || true
 [ -f "$A/dist/stprobe.deps" ] || fail "axis 1 premise: no sidecar produced for a package WITH leaves"
 BEFORE=$(grep -c '^[a-z]' "$A/dist/stprobe.deps" || true)
@@ -89,10 +93,10 @@ run "$B" distlib >/dev/null 2>&1 || true
 
 # ── axis 4: ANTI-VACUOUS — a package WITH leaves still gets one, and --check passes ─
 # Without this, never writing a sidecar at all passes axes 1-3.
-C=$(mkproj c '"alloc", "io"' 'fn st_ok(): i64 { return 1; }')
+C=$(mkproj c '"alloc", "io"' 'fn st_ok(): i64 { return alloc(8) + file_exists("x"); }')
 run "$C" distlib >/dev/null 2>&1 || true
-[ -f "$C/dist/stprobe.deps" ] || fail "axis 4: a package WITH declared leaves produced no sidecar"
-grep -qx 'alloc' "$C/dist/stprobe.deps" || fail "axis 4: the sidecar lost its declared leaves"
+[ -f "$C/dist/stprobe.deps" ] || fail "axis 4: a package WITH referenced leaves produced no sidecar"
+grep -qx 'alloc' "$C/dist/stprobe.deps" || fail "axis 4: the sidecar lost its referenced leaf 'alloc'"
 set +e
 (cd "$C" && CYRIUS_RESOLVED=1 "$CYRIUS" distlib --check >/dev/null 2>&1); RC4=$?
 set -e

@@ -23,6 +23,11 @@
 # `_dep_reject_unsafe_name` (which ran only on the --modular path). Three measured hijacks,
 # axes 2-4: a comment, a `display_name` tail, and `../victim/pwned` — the last writing BOTH
 # files outside dist/ before any message appeared.
+#
+# ⭐ 6.6.18 (D4, P4 option 2): `cyrius distlib` no longer reads `[deps] stdlib` (the union was
+# removed; the sidecar is compile-verified), so axes 1 and 5 use `cyrius deps` — the reader of
+# that key that remains, and the one a consumer runs — as their vehicle, and axis 5 also pins
+# that the published sidecar is byte-identical with and without the key.
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -32,9 +37,18 @@ VER=$(cat "$ROOT/VERSION")
 WORK=$(mktemp -d) && [ -d "$WORK" ] || { echo "FAIL: manifest_scan_decoys: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$WORK"' EXIT
 fail() { echo "FAIL: manifest_scan_decoys: $1"; exit 1; }
+# The CLI resolves its tools from its own directory, and distlib's verify needs the aarch64
+# cross compiler too — staged from this tree (77 if that cannot be done).
+CC=${CYCC:-"$ROOT/build/cycc"}
+mkdir -p "$WORK/tools" && cp "$CYRIUS" "$WORK/tools/cyrius" && cp "$CC" "$WORK/tools/cycc" \
+    && ( cd "$ROOT" && "$CC" < src/main_aarch64.cyr > "$WORK/tools/cycc_aarch64" 2>/dev/null ) \
+    && chmod +x "$WORK/tools/cyrius" "$WORK/tools/cycc" "$WORK/tools/cycc_aarch64" \
+    || { echo "SKIP: manifest_scan_decoys: could not stage cycc + cycc_aarch64 beside the CLI"; exit 77; }
+CYRIUS="$WORK/tools/cyrius"
 # CYRIUS_RESOLVED=1: a fixture pinning another version would re-exec a binary built before
 # these fixes and the gate would silently test OLD code.
 run() { ( cd "$1" && CYRIUS_RESOLVED=1 "$CYRIUS" distlib 2>&1 ); }
+rundeps() { ( cd "$1" && CYRIUS_RESOLVED=1 "$CYRIUS" deps 2>&1 ); }
 
 mk() {  # mk <dir> <manifest-body>
     d="$WORK/$1"; mkdir -p "$d/src"
@@ -54,11 +68,11 @@ modules = [\"src/lib.cyr\"]   # TODO: split; stdlib = [\"math\"] will move here
 
 [deps]
 stdlib = [\"string\", \"fmt\", \"alloc\", \"io\", \"vec\", \"str\", \"syscalls\"]")
-run "$A" >/dev/null 2>&1 || true
-[ -f "$A/dist/probe.deps" ] || fail "axis 1: no sidecar written"
-N=$(grep -c '^[a-z]' "$A/dist/probe.deps" || true)
-[ "$N" -ge 7 ] || fail "axis 1: sidecar has $N leaves (expected >= 7) — the inline-comment decoy won the scan"
-grep -qx 'string' "$A/dist/probe.deps" || fail "axis 1: the real [deps] stdlib was not used"
+rundeps "$A" >/dev/null 2>&1 || true
+for l in string fmt alloc io vec str syscalls; do
+    [ -f "$A/lib/$l.cyr" ] || fail "axis 1: lib/$l.cyr was not vendored — the inline-comment decoy won the scan, the real [deps] stdlib was not used"
+done
+[ -f "$A/lib/math.cyr" ] && fail "axis 1: lib/math.cyr was vendored — the inline-comment decoy was read as the declaration"
 
 # ── axis 2: a commented `name = ...` must NOT name the bundle ───────────────────────
 B=$(mk b "# The package name = \"the crate identifier\"
@@ -139,9 +153,16 @@ cyrius = \"$VER\"
 modules = [\"src/lib.cyr\"]
 [deps]
 stdlib = [\"alloc\", \"io\"]")
+echo 'fn probe_entry(): i64 { return alloc(8); }' > "$E/src/lib.cyr"
+rundeps "$E" >/dev/null 2>&1 || true
+[ -f "$E/lib/alloc.cyr" ] && [ -f "$E/lib/io.cyr" ] || fail "axis 5: an ordinary [deps] stdlib was not vendored — the guards reject valid input"
 run "$E" >/dev/null 2>&1 || true
 [ -f "$E/dist/cleanprobe.cyr" ] || fail "axis 5: an ordinary manifest produced no bundle — the guards reject valid input"
 [ -f "$E/dist/cleanprobe.deps" ] || fail "axis 5: an ordinary manifest produced no sidecar"
-grep -qx 'alloc' "$E/dist/cleanprobe.deps" || fail "axis 5: ordinary sidecar lost its declared leaves"
+grep -qx 'alloc' "$E/dist/cleanprobe.deps" || fail "axis 5: the sidecar lost the leaf its bundle references"
+cp "$E/dist/cleanprobe.deps" "$WORK/e_with.deps"
+sed -i.bak '/^\[deps\]/,$d' "$E/cyrius.cyml" && rm -f "$E/cyrius.cyml.bak"
+run "$E" >/dev/null 2>&1 || true
+cmp -s "$WORK/e_with.deps" "$E/dist/cleanprobe.deps" || fail "axis 5: the sidecar changed when the [deps] stdlib key was removed — declared leaves are being published"
 
-echo "PASS: manifest_scan_decoys (inline-comment stdlib, comment name, display_name, traversal, commented section header, ordinary manifest)"
+echo "PASS: manifest_scan_decoys (inline-comment stdlib, comment name, display_name, traversal, commented section header, ordinary manifest; the sidecar never depends on the key)"

@@ -98,6 +98,18 @@
 #       -> RED: axes 10 and 11 (axis 11 strips comments too).
 #   Real tree -> GREEN.
 #
+# ⛔ AND THE COMPILER CHILD'S OWN STDERR (6.6.18, poison-10). `_progress_open` closes the
+# line for cbt's NAMED errors only; cycc's stderr was inherited, so its notes still landed
+# between the padded path and the verdict — on every harness with a dead fn:
+#   h.fcyr                    note: 1 unreachable fns (48 bytes — set CYRIUS_DCE=1 ...)
+#   PASS
+# `_fuzz_run_one` now captures the child's stderr (`_cc_stderr_to`) and relays it after the
+# verdict. Axis 12 pins it: verdict ON the header, no header line carrying `note:`, and the
+# note still printed (anti-vacuous — dropping the capture's relay would pass the rest).
+#   Q1. the capture removed (pre-6.6.18 shape)          -> RED: axis 12 (spliced)
+#   Q2. capture kept, relay call removed                -> RED: axis 12 (note lost)
+#   Real tree -> GREEN.
+#
 # ⚠ qemu-aarch64 is an EMULATOR, not hardware; it is only used to reach the aarch64
 # refusal, which is a CLI-side decision. Axes 2-5 are native.
 set -u
@@ -367,11 +379,29 @@ else
   fi
 fi
 
+# ── axis 12 — the compiler CHILD's stderr is relayed AFTER the fuzz verdict (6.6.18) ──
+# A harness with a dead fn makes cycc print `note: 1 unreachable fns (...)` on stderr.
+printf 'fn _q12_dead(): i64 { return 1; }\nfn main(): i64 { return 0; }\n' > "$W/n.fcyr"
+rc=0; ( cd "$W" || exit 1; ulimit -c 0; CYRIUS_RESOLVED=1 "$D/cli" fuzz n.fcyr >"$D/a12.out" 2>&1 ) || rc=$?
+if [ "$rc" -ne 0 ]; then
+  echo "FAIL axis12: a fuzz run of a harness with a dead fn exited $rc"
+  sed 's/^/    /' "$D/a12.out"; fail=1
+elif grep -q 'n\.fcyr.*note:' "$D/a12.out"; then
+  echo "FAIL axis12: the compiler's note is spliced INTO the padded progress header:"
+  grep -n 'n\.fcyr.*note:' "$D/a12.out" | sed 's/^/    /'; fail=1
+elif ! grep -qE '^  n\.fcyr  +PASS$' "$D/a12.out"; then
+  echo "FAIL axis12: PASS is no longer on the padded header line"
+  sed 's/^/    /' "$D/a12.out"; fail=1
+elif ! grep -q '^note: 1 unreachable fns' "$D/a12.out"; then
+  echo "FAIL axis12: the compiler's note was not relayed at all — the capture swallowed it"
+  sed 's/^/    /' "$D/a12.out"; fail=1
+fi
+
 if [ "$fail" -ne 0 ]; then
   echo "FAIL cli_progress_line_not_spliced"
   exit 1
 fi
 # 6.6.11 (K1): an axis that could not run makes the gate a SKIP (77), never a PASS.
 if [ "${GATE_SKIPS:-0}" -gt 0 ]; then echo "SKIP: cli_progress_line_not_spliced — $GATE_SKIPS axis/leg(s) above could not run; every one that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS cli_progress_line_not_spliced: 7 named-failure paths (build x4, fuzz, smoke, fail-closed tmpdir), none spliced into an open header; $pad_with_compile of $pad_total padded headers mark the line open, $tdclose of $tdexits _cbt_tmpdir exits close it; native + js + fuzz results still land ON the header line"
+echo "PASS cli_progress_line_not_spliced: 7 named-failure paths (build x4, fuzz, smoke, fail-closed tmpdir) + the fuzz compiler's notes, none spliced into an open header; $pad_with_compile of $pad_total padded headers mark the line open, $tdclose of $tdexits _cbt_tmpdir exits close it; native + js + fuzz results still land ON the header line"
 exit 0

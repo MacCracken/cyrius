@@ -96,14 +96,16 @@ grep -qx 'math' "$A/dist/vprobe.deps" || fail "axis 1: 'math' was not re-added �
 
 # ── axis 2: ANTI-VACUOUS — a sufficient sidecar is NOT inflated ───────────────────────
 # Without this, re-adding every leaf in the stdlib passes axis 1.
+# ⭐ 6.6.18 (D4): a bundle that references nothing has NO leaves, whatever it declares — the
+# seven declared here never reach the sidecar, so no sidecar is written at all (the v6.5.29
+# no-stray-file rule). Through 6.6.17 the [deps] union published all seven.
 B=$(mkproj b 'fn vprobe_plain(x): i64 {
     return x + 1;
 }' '"syscalls", "alloc", "string", "io", "fmt", "vec", "str"')
 OUTB=$(run_distlib "$B" 2>&1 || true)
-[ -f "$B/dist/vprobe.deps" ] || fail "axis 2: no sidecar written"
-NB=$(grep -c '^[a-z]' "$B/dist/vprobe.deps" || true)
-[ "$NB" -le 12 ] || fail "axis 2: a self-sufficient bundle grew to $NB leaves — the verification is inflating, not repairing"
-echo "$OUTB" | grep -q 're-added' && fail "axis 2: verification re-added leaves to a bundle that needed none"
+[ -f "$B/dist/vprobe.cyr" ] || fail "axis 2: no bundle written: $(echo "$OUTB" | head -3)"
+[ -f "$B/dist/vprobe.deps" ] && fail "axis 2: a bundle that references no stdlib symbol got a sidecar: [$(grep -v '^#' "$B/dist/vprobe.deps" | tr '\n' ' ')] — declared leaves are being published"
+echo "$OUTB" | grep -q 'compile-verified' && fail "axis 2: the verification recorded leaves for a bundle that needed none"
 
 # ── axis 3: a peer-defined symbol resolves to the DISPATCHER, not the peer ────────────
 # SYS_MMAP is defined only in the per-arch peers. Adding a peer directly would put another
@@ -120,6 +122,7 @@ grep -qx 'syscalls' "$C/dist/vprobe.deps" || fail "axis 3: 'syscalls' was not re
 
 # ── axis 4: every leaf in a verified sidecar resolves ─────────────────────────────────
 for f in "$A/dist/vprobe.deps" "$B/dist/vprobe.deps" "$C/dist/vprobe.deps"; do
+    [ -f "$f" ] || continue          # B has none since 6.6.18 (axis 2)
     while IFS= read -r l; do
         case "$l" in ''|'#'*) continue;; esac
         [ -f "$SNAP/$l.cyr" ] || [ -d "$SNAP/$l" ] || fail "axis 4: $f names '$l', which does not resolve in $SNAP"
@@ -174,19 +177,25 @@ nd_leaves() { grep -v '^#' "$1/dist/np.deps" 2>/dev/null | tr '\n' ' '; }
 # thin_sign's only stdlib declarer is bigfold, which is not a named dep, so neither the owner
 # guard nor the leaf skip can hide a missing splice here.
 P5=$(mknd p5 'fn np_a(x): i64 { return thin_sign(x); }' 'include "src/np.cyr"')
-O5=$(run_nd "$P5" || true)
-[ -f "$P5/dist/np.deps" ] || fail "axis 5: no sidecar written: $(echo "$O5" | head -3)"
+# (6.6.18, D4: the bundle needs no stdlib leaf, so NO sidecar is the right answer — the
+# declared syscalls/alloc are not published; the verify must still have RUN, rc 0.)
+rc5=0; O5=$(run_nd "$P5") || rc5=$?
+[ "$rc5" -eq 0 ] || fail "axis 5: distlib exited $rc5: $(echo "$O5" | head -3)"
 case " $(nd_leaves "$P5") " in
     *" helperlib "*|*" bigfold "*) fail "axis 5: [$(nd_leaves "$P5")] — thin_sign comes from the named dep's module, but the verify unit left it out and credited it to the stdlib's bigfold (the libro 'sys' shape)" ;;
 esac
 
 # axis 6: a leaf that IS a named dep is the consumer's pinned module, not the stdlib fold.
-# The umbrella includes lib/fold.cyr, so `fold` is captured as a leaf; splicing the stdlib's
-# fold.cyr brings its helperlib need into the sidecar.
+# The umbrella includes lib/fold.cyr; splicing the stdlib's fold.cyr brings its helperlib need
+# into the sidecar. (6.6.18, D4: the umbrella is no longer scanned at all, so `fold` never
+# becomes a leaf this way — the axis now also pins that an umbrella include contributes
+# nothing. A MODULE-kept `include "lib/fold.cyr"` is different: it ships in the bundle and
+# resolves to whatever lib/fold.cyr the consumer has, here the stdlib fold, so its helperlib
+# need is the artifact's own — measured, and correct.)
 P6=$(mknd p6 'fn np_c(x): i64 { return fold_sign(x); }' 'include "lib/fold.cyr"
 include "src/np.cyr"')
-O6=$(run_nd "$P6" || true)
-[ -f "$P6/dist/np.deps" ] || fail "axis 6: no sidecar written: $(echo "$O6" | head -3)"
+rc6=0; O6=$(run_nd "$P6") || rc6=$?
+[ "$rc6" -eq 0 ] || fail "axis 6: distlib exited $rc6: $(echo "$O6" | head -3)"
 case " $(nd_leaves "$P6") " in
     *" helperlib "*) fail "axis 6: [$(nd_leaves "$P6")] — the leaf 'fold' is a named dep, but the verify spliced the STDLIB fold and recorded its needs" ;;
 esac
@@ -194,9 +203,9 @@ esac
 # axis 7: no named dep is ever an OWNER. fold_extra exists only in the stdlib fold (the thin
 # module lacks it); crediting it to `fold` re-adds a leaf the writer then silently drops.
 P7=$(mknd p7 'fn np_b(x): i64 { return fold_sign(x) + fold_extra(x); }' 'include "src/np.cyr"')
-O7=$(run_nd "$P7" || true)
-[ -f "$P7/dist/np.deps" ] || fail "axis 7: no sidecar written: $(echo "$O7" | head -3)"
-echo "$O7" | grep -q 're-added' && fail "axis 7: the verify re-added a leaf for fold_extra — a named dep ('fold') was taken as the owner: $(echo "$O7" | grep re-added)"
+rc7=0; O7=$(run_nd "$P7") || rc7=$?
+[ "$rc7" -eq 0 ] || fail "axis 7: distlib exited $rc7: $(echo "$O7" | head -3)"
+echo "$O7" | grep -q 'compile-verified' && fail "axis 7: the verify recorded a leaf for fold_extra — a named dep ('fold') was taken as the owner: $(echo "$O7" | grep compile-verified)"
 
 # axis 8 (ANTI-VACUOUS for 5-7): a bundle that genuinely calls a helperlib fn still gets it.
 P8=$(mknd p8 'fn np_d(x): i64 { return thin_sign(x) + helperlib_do(x); }' 'include "src/np.cyr"')
@@ -356,12 +365,26 @@ A14=$(mkproj a14 'fn vprobe_scale(x): i64 {
 [ -f "$A14/dist/vprobe.deps" ] || fail "axis 14: no sidecar written under a HOME whose slot is stale — the verify read HOME's slot, not CYRIUS_HOME's"
 grep -qx 'math' "$A14/dist/vprobe.deps" || fail "axis 14: 'math' was not re-added under a HOME whose slot is stale"
 
+# axis 15 (6.6.18, D2): A NAME THE CONVERGED VERIFY CANNOT OWN IS NAMED, with the targets it
+# fails on. It was a silent `continue` ("not a stdlib symbol — the consumer's problem"), so a
+# short sidecar and a deliberate consumer hook looked the same; niyama's family symbols and
+# mabda's agnos-only O_RDWR published at rc 0 with nothing said. A WARNING: the exit status is
+# unchanged (a bundle may call a consumer-defined hook). 15b: axis 2's sufficient bundle stays
+# silent. Measured on a2c60583: the output never mentions the name.
+A15=$(mkproj a15 'fn vprobe_hook(x): i64 {
+    return _dl_no_such_fn_anywhere(x);
+}' '"alloc"')
+rc15=0; O15=$(run_distlib "$A15") || rc15=$?
+[ "$rc15" -eq 0 ] || fail "axis 15: distlib exited $rc15 over an unowned name — D2 is a warning, the exit status must not change: $(echo "$O15" | head -3)"
+echo "$O15" | grep -q "_dl_no_such_fn_anywhere (every target)" || fail "axis 15: the unowned name and its targets were not named: $(echo "$O15" | head -4)"
+echo "$OUTB" | grep -q 'still undefined' && fail "axis 15b: a self-sufficient bundle printed the unowned-name warning: $(echo "$OUTB" | grep -A2 'still undefined')"
+
 # axis 12: the verify's scratch mirror (dist/.dlverify-<pid>) never outlives the run — on the
 # success path or on the fail-loud one.
-for d in "$P5" "$P6" "$P9" "$P10" "$P10B" "$P10C" "$P10D" "$P10E" "$P11" "$P13" "$P13B" "$A14"; do
+for d in "$P5" "$P6" "$P9" "$P10" "$P10B" "$P10C" "$P10D" "$P10E" "$P11" "$P13" "$P13B" "$A14" "$A15"; do
     if ls -a "$d/dist" 2>/dev/null | grep -q '^\.dlverify-'; then
         fail "axis 12: $d/dist still holds the verify's scratch mirror"
     fi
 done
 
-echo "PASS: distlib_sidecar_verified (missing leaf repaired, sufficient set untouched, dispatcher not peer, all resolve, named deps in the unit, fails loud, the round cap is not convergence, CYRIUS_HOME's slot not HOME's)"
+echo "PASS: distlib_sidecar_verified (missing leaf repaired, sufficient set untouched, dispatcher not peer, all resolve, named deps in the unit, fails loud, the round cap is not convergence, CYRIUS_HOME's slot not HOME's, an unowned name is named)"
