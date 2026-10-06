@@ -3918,13 +3918,9 @@ fn _distlib_partial_owner(root, nm, mask, leaves, named_deps, scope): i64 {
     var i = 0;
     while (i < vec_len(_dl_snap_names)) {
         var set = vec_get(_dl_snap_sets, i);
-        var ed = str_data(vec_get(_dl_snap_names, i));
+        var raw = vec_get(_dl_snap_names, i);
         i = i + 1;
         if (_src_ids_has(set, nm, nlen) == 0) { continue; }
-        var el = strlen(ed);
-        var raw = alloc(el - 3);
-        memcpy(raw, ed, el - 4);
-        store8(raw + el - 4, 0);
         var owner = _distlib_resolve_dispatcher(root, raw);
         if (_distlib_vec_has(leaves, owner) == 1 || _distlib_vec_has(named_deps, owner) == 1) { return 1; }
         if (_distlib_vec_has(leaves, raw) == 1) { return 1; }
@@ -4206,14 +4202,11 @@ fn _distlib_only_peers_include(root, pre, leaf): i64 {
     var pl = strlen(pre);
     var i = 0;
     while (ans == 1 && _dl_snap_names != 0 && i < vec_len(_dl_snap_names)) {
-        var ed = str_data(vec_get(_dl_snap_names, i));
+        var base = vec_get(_dl_snap_names, i);
         i = i + 1;
-        var el = strlen(ed);
-        var base = alloc(el - 3);
-        memcpy(base, ed, el - 4);
-        store8(base + el - 4, 0);
+        var bl = strlen(base);
         if (streq(base, leaf) == 1) { continue; }
-        if (el - 4 > pl && memeq(base, pre, pl) == 1 && load8(base + pl) == 95) { continue; }
+        if (bl > pl && memeq(base, pre, pl) == 1 && load8(base + pl) == 95) { continue; }
         if (_distlib_file_includes(root, base, leaf) == 1) { ans = 0; }
     }
     vec_push(_dl_pp_keys, key);
@@ -4257,6 +4250,8 @@ fn _distlib_peer_includes(root, pre, leaf): i64 {
 }
 
 fn _distlib_resolve_dispatcher(root, leaf): i64 {
+    # 6.6.18 (D1): a family directory is its own owner — never a `<pre>_…` peer of a flat file.
+    if (is_dir(str_from(_distlib_join(root, leaf))) == 1) { return leaf; }
     var ll = strlen(leaf);
     var i = 1;
     while (i < ll) {
@@ -4330,8 +4325,8 @@ fn _distlib_resolve_dispatcher(root, leaf): i64 {
 # can lose declarations — contributes its loose `fn X` / `var X` names to
 # `_dl_snap_lost`, so such a symbol is a hard error instead of a silent miss.
 var _dl_snap_root = 0;
-var _dl_snap_names = 0;   # vec of Str: directory entry names, dir_list order
-var _dl_snap_sets = 0;    # vec of i64: each file's _src_ids set of declared names
+var _dl_snap_names = 0;   # vec of cstr: the LEAF each entry answers for (`alloc`, `unicode`), dir_list order
+var _dl_snap_sets = 0;    # vec of i64: each leaf's _src_ids set of declared names
 var _dl_snap_lost = 0;    # _src_ids set: `fn X` / `var X` names in files whose braces do not balance
 var _dl_snap_lostf = 0;   # vec of cstr: those files, for the error
 var _dl_snap_lostb = 0;   # vec of i64: their (blanked) buffers
@@ -4359,13 +4354,26 @@ fn _distlib_snap_cache(root): i64 {
         i = i + 1;
         var ed = str_data(e);
         var el = strlen(ed);
-        if (el <= 4) { continue; }
-        if (memeq(ed + el - 4, ".cyr", 4) != 1) { continue; }
-        var fsb = str_builder_new();
-        str_builder_add_cstr(fsb, root);
-        str_builder_add_cstr(fsb, "/");
-        str_builder_add_cstr(fsb, ed);
-        var fp = str_data(str_builder_build(fsb));
+        if (el == 0 || load8(ed) == 46) { continue; }          # '.', '..', dotfiles
+        var fp = _distlib_join(root, ed);
+        if (el <= 4 || memeq(ed + el - 4, ".cyr", 4) != 1) {
+            # ⛔ 6.6.18 (D1) — A FAMILY DIRECTORY (`lib/unicode/`) IS A LEAF TOO. This loop read
+            # depth-0 files only, so every family symbol read "not a stdlib symbol" and the
+            # verify `continue`d past it: a producer calling unicode_category() without
+            # declaring `unicode` published its sidecar SHORT, at rc 0 (niyama's, once the
+            # [deps] union stopped hiding it). The owner is the FAMILY name — the spelling a
+            # producer declares and `cyrius deps` expands — never a member file: members read
+            # their `_*_data` siblings, so a per-file owner would not compile. CHANGELOG [6.6.18]
+            if (is_dir(str_from(fp)) == 1) {
+                var fset = _distlib_snap_family(fp);
+                if (fset < 0) { return 0 - 1; }
+                if (fset > 0) {
+                    vec_push(_dl_snap_names, ed);
+                    vec_push(_dl_snap_sets, fset);
+                }
+            }
+            continue;
+        }
         # 6.6.9: read WHOLE. Sized by `_file_size`, every file read as empty on the Windows
         # CLI (-38), so no symbol had an owner and the verify loop was inert there.
         # 6.6.10: an unreadable file is an error by name — it was skipped in silence.
@@ -4373,24 +4381,57 @@ fn _distlib_snap_cache(root): i64 {
         var fb = file_read_whole(fp, &got);
         if (fb == 0) { _err_ctx("distlib: cannot read stdlib file", fp); return 0 - 1; }
         if (got <= 0) { continue; }
-        var set = _distlib_snap_index(fb, got, fp);
+        var set = _distlib_snap_index(fb, got, fp, 0);
         if (set == 0) { _err("distlib: out of memory"); return 0 - 1; }
-        vec_push(_dl_snap_names, e);
+        var lname = alloc(el - 3);
+        memcpy(lname, ed, el - 4);
+        store8(lname + el - 4, 0);
+        vec_push(_dl_snap_names, lname);
         vec_push(_dl_snap_sets, set);
     }
     _dl_snap_root = root;
     return 0;
 }
 
+# One declared-name set for every `.cyr` of family directory `dir` (6.6.18, D1): the union, in
+# `_dep_name_cmp` order — the order `cyrius deps` and the verify unit expand it in. Answers the
+# set, 0 for a directory with no `.cyr` (not a leaf), or -1 after naming why it was unreadable.
+fn _distlib_snap_family(dir): i64 {
+    var fents = _cbt_list_dir(dir, "the sidecar verify cannot attribute that family's symbols");
+    if (fents == 0) { return 0 - 1; }
+    vec_sort_by(fents, &_dep_name_cmp);
+    var set = 0;
+    var fi = 0;
+    while (fi < vec_len(fents)) {
+        var fe = str_data(vec_get(fents, fi));
+        fi = fi + 1;
+        var fel = strlen(fe);
+        if (fel <= 4 || memeq(fe + fel - 4, ".cyr", 4) != 1) { continue; }
+        var mp = _distlib_join(dir, fe);
+        var got = 0;
+        var fb = file_read_whole(mp, &got);
+        if (fb == 0) { _err_ctx("distlib: cannot read stdlib file", mp); return 0 - 1; }
+        if (set == 0) {
+            set = _src_ids_new(4096);
+            if (set == 0) { _err("distlib: out of memory"); return 0 - 1; }
+        }
+        if (got <= 0) { continue; }
+        if (_distlib_snap_index(fb, got, mp, set) == 0) { _err("distlib: out of memory"); return 0 - 1; }
+    }
+    return set;
+}
+
 # The declared-name set of one snapshot file (buffer fb[0, n), blanked here in place — the
-# cache owns it). Adds the file to the "lost" index when its braces do not balance. 0 on OOM.
-fn _distlib_snap_index(fb, n, fp): i64 {
+# cache owns it), added to `into` (a family's shared set) or to a fresh set when `into` is 0.
+# Adds the file to the "lost" index when its braces do not balance. 0 on OOM.
+fn _distlib_snap_index(fb, n, fp, into): i64 {
     _src_blank_noncode(fb, n);
     var offs = vec_new();
     var lens = vec_new();
     var kinds = vec_new();
     var bal = _src_decls(fb, n, offs, lens, kinds);
-    var set = _src_ids_new(vec_len(offs) * 8);
+    var set = into;
+    if (set == 0) { set = _src_ids_new(vec_len(offs) * 8); }
     if (set == 0) { return 0; }
     var k = 0;
     while (k < vec_len(offs)) {
@@ -4430,18 +4471,10 @@ fn _distlib_leaf_defining(root, name): i64 {
     var nlen = strlen(name);
     var i = 0;
     while (i < vec_len(_dl_snap_names)) {
-        var e = vec_get(_dl_snap_names, i);
+        var lname = vec_get(_dl_snap_names, i);
         var set = vec_get(_dl_snap_sets, i);
         i = i + 1;
-        if (_src_ids_has(set, name, nlen) == 1) {
-            var ed = str_data(e);
-            var el = strlen(ed);
-            var lname = alloc(el - 3);
-            if (lname == 0) { return 0; }
-            memcpy(lname, ed, el - 4);
-            store8(lname + el - 4, 0);
-            return lname;
-        }
+        if (_src_ids_has(set, name, nlen) == 1) { return lname; }
     }
     return 0;
 }
