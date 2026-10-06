@@ -1,0 +1,64 @@
+# str_field_chain.tcyr — 6.6.17: `.len` / `.data` THROUGH a `: Str` struct field read and write
+# the Str itself, on every backend.
+#
+# THE DEFECT. A `: Str` field is one 8-byte slot holding the Str's address (FIELDSZ), but the
+# chained-field walk (`_resolve_leaf_field`, parse_decl.cyr) treated it as an inline struct and
+# added `.len`'s offset to the slot's. With `struct Holder { name: Str; n; }`, `h.name.len` read
+# `h.n`, `h.name.data` read the handle, and `h.name.len = 2` overwrote `h.n` — silently, for a
+# local, a global, a parameter and a call result. The walk now loads the slot and applies the
+# step through that pointer. Each `n` below differs from the string's length, so a regression
+# reads a wrong number rather than a lucky one.
+include "lib/assert.cyr"
+include "lib/str.cyr"
+
+struct Holder { name: Str; n; pad; }   # 24 B: cx has no 16-byte pair return (mkh)
+struct Outer { k; h: Holder; }
+
+var gh: Holder = Holder { 0, 0, 0 };
+
+fn mkh(): Holder {
+    var h: Holder;
+    h.name = str_from("hello");
+    h.n = 99;
+    h.pad = 0;
+    return h;
+}
+fn len_of_param(p: Holder): i64 { return p.name.len; }
+
+fn test_reads(): i64 {
+    var h: Holder;
+    h.name = str_from("abc");
+    h.n = 77;
+    assert_eq(h.name.len, 3, "h.name.len reads the Str's length, not h.n");
+    assert_eq(h.name.data, str_data(h.name), "h.name.data is the Str's data pointer, not its handle");
+    assert_eq(load8(h.name.data), 97, "the bytes behind h.name.data");
+    var o: Outer;
+    o.k = 1;
+    o.h = h;
+    assert_eq(o.h.name.len, 3, "o.h.name.len (a Str field inside a nested struct)");
+    assert_eq(o.h.n, 77, "o.h.n is still h.n");
+    gh.name = str_from("glob!!");
+    gh.n = 5;
+    assert_eq(gh.name.len, 6, "gh.name.len on a global");
+    assert_eq(mkh().name.len, 5, "mkh().name.len on a call result");
+    assert_eq(len_of_param(h), 3, "p.name.len on a parameter");
+    return 0;
+}
+
+fn test_writes(): i64 {
+    var h: Holder;
+    h.name = str_from("abcdef");
+    h.n = 77;
+    h.name.len = 2;
+    assert_eq(str_len(h.name), 2, "h.name.len = 2 writes the Str's length");
+    assert_eq(h.n, 77, "...and leaves h.n alone");
+    var keep = h.name;
+    h.name.data = str_data(h.name) + 1;
+    assert_eq(load8(str_data(keep)), 98, "h.name.data = p writes the Str's data pointer (the Str is shared)");
+    assert_eq(h.n, 77, "...and leaves h.n alone");
+    return 0;
+}
+
+test_reads();
+test_writes();
+var r = assert_summary();
