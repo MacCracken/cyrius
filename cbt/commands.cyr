@@ -578,7 +578,7 @@ fn _tests_first_run(p): i64 {
 
 # 6.6.17 (P1): run what `[build] test` declares — a file as-is whatever its extension (the init
 # template's is src/test.cyr), a directory's .tcyr files recursively. 41 manifests declared the key
-# and nothing read it (kashi's 397 assertions never ran in CI). A target that does not exist is a
+# and nothing read it (kashi's 393 assertions never ran in CI). A target that does not exist is a
 # FAILED run, by name — a typo must not read as "nothing to test".
 fn _tests_run_declared(targets): i64 {
     var i = 0;
