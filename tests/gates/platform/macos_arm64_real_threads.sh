@@ -101,7 +101,7 @@ LRET=$(printf '%s\n' "$PB" | awk '/return 0;/ {r = NR} END {print r}')
 [ -n "$LBLR" ] && [ -n "$LRET" ] && [ "$LBLR" -lt "$LSX" ] && [ "$LSX" -lt "$LRET" ] \
     || fail "the sxtw must follow _EMACHO_BLR_GOT(S, 5) and precede the return"
 CC=${CYCC:-"$ROOT/build/cycc"}
-T=$(mktemp -d) && [ -d "$T" ] || fail "mktemp -d"
+T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL macos_arm64_real_threads: mktemp -d"; exit 1; }
 trap 'rm -rf "$T"' EXIT
 rc=0; (cd "$ROOT" && "$CC" < src/main_aarch64.cyr > "$T/cca" 2> "$T/cca.err") || rc=$?
 [ "$rc" = 0 ] && [ -s "$T/cca" ] || fail "cross-building cycc_aarch64 from src failed (rc $rc): $(head -3 "$T/cca.err")"
