@@ -1,8 +1,8 @@
 # Cyrius Development Roadmap — v6.6.x (active minor)
 
 **Scope** — the **current active minor only** (v6.6.x). This is the slot-pinning working
-artifact: the rest of the 6.6.x tail (the 6.6.16 repair release, then the tooling proposals that
-round out the minor), and the unscheduled 6.x backlog. Whole-cycle framing, the v6.7.x language arc and v6.8.x/v6.9.x RISC-V live in
+artifact: the rest of the 6.6.x tail (the tooling proposals that round out the minor, then the
+closeout), and the unscheduled 6.x backlog. Whole-cycle framing, the v6.7.x language arc and v6.8.x/v6.9.x RISC-V live in
 [roadmap_6.md](roadmap_6.md); the unpinned watching list is
 [roadmap-future.md](roadmap-future.md); per-release history is
 [CHANGELOG.md](../../CHANGELOG.md) and [completed-phases.md](completed-phases.md).
@@ -39,11 +39,10 @@ round out the minor), and the unscheduled 6.x backlog. Whole-cycle framing, the 
 
 ## Where we are
 
-**Current head: v6.6.17** (2026-10-05) — **MERGED 2026-10-05, release gate GREEN 2026-10-06** · cycc **1,581,040 B**
-(`.text` **1,400,760**; +45,680 over 6.6.16's 1,535,360) · `cycc-native-aarch64` **2,042,184 B** · fixpoint +
-seed-derive **GREEN** · cross-OS **GREEN** on ecb/ach/cass/pi (the release gate, 2026-10-06) · self_compile
-**985 ms** (same-box A/B vs 6.6.16: +5.5 % own-source, +1.4 % same-input) · **473** `.tcyr` (**193** in `crossos/`) · **105** `lib/*.cyr` ·
-**361** shell gates under `tests/gates/<bucket>/` · **0 open issues** · **5 open proposals** (P1 archived at 6.6.17).
+**Current head: v6.6.17** (2026-10-06) — **SHIPPED** (tag `6.6.17` @ `c2e7eef9`; store slot refreshed at the tag) · cycc
+**1,581,040 B** (`.text` **1,400,760**) · `cycc-native-aarch64` **2,042,184 B** · seed-derive **GREEN** · cross-OS
+**GREEN** on ecb/ach/cass/pi · self_compile **985 ms** · **473** `.tcyr` (**193** in `crossos/`) · **105** `lib/*.cyr` ·
+**361** shell gates under `tests/gates/<bucket>/` · **0 open issues** · **5 open proposals** · the next free CVE id is **78**.
 
 > ⚠ **Every figure above was DERIVED on the day, not carried** (re-derived 2026-09-27 at the 6.6.7 open).
 > `version-bump.sh` rewrites the version token, replaces the `(…)` after it with the bump date, and
@@ -51,29 +50,11 @@ seed-derive **GREEN** · cross-OS **GREEN** on ecb/ach/cass/pi (the release gate
 > line and its parenthetical free of nested `(`/`)`, or the bump refuses to rewrite it (and
 > `tests/gates/toolchain/version_bump_doc_anchors.sh` goes red the day it is written). Re-derive gates with `find tests/gates -name '*.sh' | wc -l`; never increment.
 
-**v6.6.0 opened this minor** with its one breaking change: `Result` / `Option` / `Either` are the **value
-form** (construction allocates zero bytes), shipped WITH the ecosystem. **v6.6.1–v6.6.6** were the repair
-window: 6.6.1 closed the issue queue, 6.6.2/6.6.3 repaired what the ecosystem sweep found, 6.6.4 fixed the
-59-release native-aarch64 `cyrius run/test` defect, 6.6.5 the nine issues open at 2026-09-17, and 6.6.6 its
-27-bite follow-on (five lanes; see CHANGELOG). **The repair window is CLOSED.** Per-release detail is in the
-CHANGELOG; do not re-add shipped slots here.
-
-**v6.6.7–v6.6.12 were the repair batch** (2026-09-27 → 2026-09-30, CLOSED): the 30 issues filed after
-6.6.6, split by the user across three releases, then each release's own review finds, which the user
-placed into 6.6.10–6.6.12 — and 6.6.12 also took the backlog's repair items and every sibling follow-up.
-It spent **CVE-46 … CVE-58** (the next free id is now **78** — CVE-77 was spent at 6.6.17) and shipped each release together with the sibling
-patch releases it needed. Per-release detail is in the CHANGELOG; the process rules it settled are in
-*Standing notes* below.
-
-**Re-planned 2026-10-01 (user).** 6.6.13 is a repair release — the three silent memory-corruption finds
-that led the backlog, and the open issues (I1–I11). After it the minor finishes on **tooling** (the proposals).
-The language list that was Phase 3 moved to **v6.7.x**, which RISC-V vacates for v6.8.x/v6.9.x. See
-*The shape of v6.6.x*.
-
-**The 6.6.x tail (accepted 2026-10-02):** 6.6.15 SHIPPED 2026-10-03 (tag `6.6.15` @ `2f1ed9d1`; CVE-68 … CVE-73);
-6.6.16 SHIPPED 2026-10-05 (tag `6.6.16` @ `09848672`; CVE-74 … CVE-76); 6.6.17 spends **CVE-77**, so the next free id is **78**. Every further
-6.6.16 lane-review find was filed into 6.6.17 (user, 2026-10-04/05); **6.6.17 MERGED 2026-10-05, release gate GREEN 2026-10-06**
-(seven lanes; detail in CHANGELOG [6.6.17] and *6.6.17* below).
+**v6.6.0–v6.6.17 are shipped** — the value-form `Result` flip, the repair window (.1–.6), the repair batch (.7–.12),
+the memory / TLS / curves / repair releases (.13–.16) and the manifest release (.17). One line per release is in
+[completed-phases.md](completed-phases.md) § *v6.6.x*; the detail is the CHANGELOG. **Do not re-add shipped
+releases here.** What is left of the minor: **6.6.18** distlib + poison, **6.6.19** embed + macOS threads, **6.6.20**
+closeout, then **v6.7.0** (*The 6.6.x tail* below).
 
 ---
 
@@ -81,11 +62,8 @@ The language list that was Phase 3 moved to **v6.7.x**, which RISC-V vacates for
 
 | Phase | Slots | What goes here |
 |---|---|---|
-| **1 — Repair window** | `.2` – `.6` | ✅ **CLOSED at 6.6.6.** |
-| **1b — the repair batch** | `.7` – `.12` | ✅ **CLOSED at 6.6.12** (summary in *Where we are*). |
-| **1c — memory + reported-issue repair** | `.13` | ✅ **SHIPPED 2026-10-02** (tag `6.6.13`): the three silent memory-corruption finds, the open issues I1–I11, and the ganita / bayan / sigil folds. See *6.6.13* below. |
-| **1d — the TLS follow-ups** | `.14` | ✅ **SHIPPED 2026-10-02** (tag `6.6.14`): every remaining noted TLS issue and the sigil 3.13.7 fold. See *6.6.14* below. |
-| **2 — the 6.6.x tail** | `.15` – `.19` | The release sequence ACCEPTED 2026-10-02 (see *The 6.6.x tail*): `.15` curves + the compiler leaks (✅ SHIPPED 2026-10-03), `.16` repair (✅ SHIPPED 2026-10-05), `.17` manifest (MERGED 2026-10-05, release gate GREEN 2026-10-06), `.18` distlib + poison, `.19` embed + macOS threads. |
+| **1 — repair** | `.1` – `.16` | ✅ **SHIPPED** — the repair window (.1–.6), the repair batch (.7–.12), memory + reported issues (.13), the TLS follow-ups (.14), curves + the compiler leaks (.15), repair (.16). See [completed-phases.md](completed-phases.md) § *v6.6.x*. |
+| **2 — the 6.6.x tail** | `.17` – `.19` | The release sequence ACCEPTED 2026-10-02 (see *The 6.6.x tail*): `.17` manifest (✅ SHIPPED 2026-10-06), **`.18` distlib + poison**, `.19` embed + macOS threads. |
 | **3 — closeout** | `.20` | The full closeout pass, like every minor (user, 2026-10-02: done before any v6.7.x work). Then **v6.7.0**. |
 | ~~**Committed ergonomics**~~ | — | **Moved to v6.7.x** with P3 `const fn` (user, 2026-10-01) — see [roadmap_6.md](roadmap_6.md). |
 
@@ -105,9 +83,6 @@ reviews and a synthesis, archived at
 
 | Release | Contents |
 |---|---|
-| **6.6.15** ✅ SHIPPED 2026-10-03 (tag `6.6.15` @ `2f1ed9d1`) | sigil **3.13.8** fold (constant-time P-256 / P-384 ECDH; ECDSA signing made constant-time — **CVE-68**); TLS ECDHE on P-256 / P-384 everywhere (1.2 client, 1.3 client with HelloRetryRequest, native server group negotiation, ephemeral-key zeroing); the `secret var` epilogue leak (**CVE-69**); B0a string interning (a NUL-bearing literal aliased another literal, silently). See *6.6.15* below. |
-| **6.6.16** repair — ✅ **SHIPPED 2026-10-05** (tag `6.6.16` @ `09848672`; **CVE-74** N1, **CVE-75** N3, **CVE-76** T1; ganita 1.2.13 + sandhi 1.10.7 folded; detail in CHANGELOG [6.6.16] and *6.6.16* below) | **Compiler:** the silent miscompiles — module-scope `var T: i64[3] = {…}` stores bytes, pointer-mode struct `q = a` / `G = a` / `a = q`, overload dispatch on a `Str` global, `g<i32>(..)?` (139) and `var v = g<i32>(..)` dropping the payload, a nested fn (SIGILL → a named error), a kmode global initialiser naming an enum; the named >8 B struct argument becomes a COPY (decided, *Open questions* 4); one shared type-name resolver (sizeof for u*/f*/bool; annotations stop prefix-matching); the `#deprecated` gaps; the cycc include fallback honouring `CYRIUS_HOME`. **Net / TLS / security:** plain-socket SIGPIPE (`sock_send*`, http, ws — CVE-66's class, a CVE), `cyrius deps` tag-field traversal (CVE-62's class), the Ed25519 `sig_len == 64` check (its ServerKeyExchange curve-binding half shipped in 6.6.15), CA EKU, Windows accept inheriting `FIONBIO`, `fd_wait_ready`'s error mask, libssl session cache (`SSL_CTX_ctrl`) and the failed-`*_complete` sticky error, Windows `THREADS_CONCURRENT=1`, the agnos `setsockopt` stub. **Plus:** cwd-independent gates, the guide's `fn use()` example, the `element_typed_array` sentinel, the PE size gate's private wine prefix, the sit-fsck lookup, the stale premises in P2/P3/C1 and the syscall-families entry; the two hisab issues (a closure's `: stack` return booked against the enclosing fn; a top-level `fncallN` on a capturing closure SIGSEGVs). **Added 2026-10-04 with the sandhi 1.10.7 fold** (user): sandhi's two cyrius filings — a blocking, thread-safe channel wherever threads are real (arm64 macOS, and Windows, which 6.6.16's N7 makes `THREADS_CONCURRENT = 1`) plus a channel capability, and the native TLS server decoding a PEM key per accept on the global heap. **Promoted 2026-10-04 (user)** from the planning premise checks: a local `var p: *i8` / `*i16` / `*i32` stored as a 1/2/4-byte scalar (the pointer truncated — silent memory corruption), and the libssl-only `tls.cyr` verbs (session callbacks, `max_early_data`, `get` / `set_session`, the early-data verbs) writing into a NATIVE ctx once libssl is loaded in-process. |
-| **6.6.17** manifest — **MERGED 2026-10-05, release gate GREEN 2026-10-06** (**CVE-77** l1; detail in CHANGELOG [6.6.17] and *6.6.17* below) | **P1** shipped (one key vocabulary, one reader of the whole manifest, argument > environment > manifest > default, `--print-config`; `[build] test` / `dce` / `defines` read; `strict` and `target` held, `features` dropped; named profiles → backlog); **P5-A** shipped (text corpus + per-entry view; P5 stays OPEN for its execution half, v6.7.x); the pass-1 top-level scans DRYed across the 7 forks; LSP read sized by fstat; `lib sync` re-locking; the TOML key boundary; plus every *6.6.17 also takes* item (now in the *6.6.17* section). |
 | **6.6.18** distlib + poison | **P4** option 2 (the compile-verify fixpoint is the authority; one sibling regeneration wave); **P6** widened (`poison_allocator()`, leading redzone, live-block sweep, settable fill byte, `alloc()` / arena redzones; guard pages → backlog); the log / ws / ws_server fold bundles; the ESYSXLAT compile-time fold (~593 KB of `cycc-native-aarch64`; then lower the pre-commit ARM size band, raised 700K–2M → 700K–3M at 6.6.17); DCE's honest "compaction declined: <why>" note; the missing `sxtw`. |
 | **6.6.19** | **P2** `[embed]` (generated in cbt before `#@srcline` — never an in-band marker that reads files, the CVE-45 class; `[lib.PROFILE]` scoping; the interning perf fix B0b); x86-macOS real threads + `async_await_readable_ms` on macOS / agnos / Windows (*Open questions* 3). The release to trim if 6.7.0 should come sooner. |
 | **6.6.20** closeout | The full closeout pass (CLAUDE.md § Closeout, [cycle-discipline.md](cycle-discipline.md)): the release gate, heap / dead-code / refactor / code-review / cleanup passes, a security re-scan, the downstream check, vidya (`types.cyml` still stamps 6.6.1), the backlog re-triage, `verify-store`. |
@@ -120,123 +95,6 @@ Defaults taken with the plan (the memo's): P4 option 2 (reverses the v6.5.10 "un
 once these tag: rekha drops its prelude and CI pin (after P4) and adopts the poison pack (after P6); kriya's and
 puka's `--poison` runs check something real (after P6); agnosai, agnostic, rekha and sankoch retire their embed
 generators (after P2); sankoch retires its interning proof (after B0a, in 6.6.15).
-
----
-
-## 6.6.17 — manifest (MERGED 2026-10-05, release gate GREEN 2026-10-06)
-
-The second row of *The 6.6.x tail*, seven lanes (srca, srcb, srcc, lib, man, tool, gate). **Detail is in CHANGELOG
-[6.6.17].** The *6.6.17 also takes* list filed from the 6.6.16 lane reviews is done; what the 6.6.17 lanes met
-outside their items is in *Potential backlog* → "Found by the 6.6.17 lanes".
-- **P1:** `cyrius help manifest` (one key vocabulary, gated against what consumers write); one reader of the whole
-  manifest as TOML (the 32 KB / 64 KB / 4 KB capped scanners gone); argument > environment > manifest > default for
-  every key, shown by `cyrius build --print-config`; `[build] dce` / `defines` read, `[build] test` run by bare
-  `cyrius test`, `strict` held (no effect since 6.3.2) and `target` held, `features` dropped; the TOML key boundary
-  and literal strings. Named profiles → backlog.
-- **P5-A:** `cyrius coverage --programs` / `[coverage] programs` / `--per-entry` (text coverage; P5-B is v6.7.x).
-- **Compiler:** the seven forks share one top-level scan (c1); silent wrong values — struct return through a handle,
-  small `*T` params, inlined generic instances, vector globals, a u128 global, one-value destructures (now refused),
-  elif scopes, generic pair flags, f64 instance params, ordinals past 64, wide `callptr` on Windows, cx calls with
-  12+ args, `.len` through a `: Str` field, a Str two steps away; language — pointer fields / returns, chains
-  through them and `*Struct` locals (linked lists), method chains, nested closure capture, nested generic arguments,
-  attributes in impl bodies and around instances, and **`p + n` = `sizeof(T)` at every site** (user decision; 0 `*T`
-  in 143 repos, so every shape switched silently — accepted 2026-10-05); diagnostics locations, four false warnings,
-  compile-time-only strings not emitted, env knobs past 4 KB, `--syntax-only` on cycc.exe. b2 was already fixed by
-  6.6.16 C5; a8's premise was false (a post-statement redeclaration is a new variable, scalars and arrays alike).
-- **Bootstrap:** cybs lexes a leading `_` (it dropped it, so `_fi` was `fi` in gen1; seed-derive went RED past
-  2048 fns); seed-derive step 6/6 (gen1's diagnostics == gen2's).
-- **TLS / platform / stdlib:** **CVE-77** (l1); `tls_supports_early_data` under native; per-ctx backend dispatch +
-  null handles (`TLS_CTX_LEN` 624); the Windows socket relay and its two tests' exit protocol; async_win BOOL masks;
-  the agnos socket peers and an agnos CLI build (version / help only).
-- **Tooling / harness:** `lib sync` re-locks under the leaf guard; untagged vs `tag = "main"` cache; the CLI's home
-  rule; the LSP's whole-document read; `install.sh --refresh-only` on a store-less HOME; the audit gate 750 s →
-  15 s; the libssl groups run in check.sh; wine gates leave nothing; the drift row reads whole files; no gate reads
-  the live store or the gitignored cross compilers.
-
----
-
-## 6.6.16 — repair (SHIPPED 2026-10-05, tag `6.6.16` @ `09848672`)
-
-The first row of *The 6.6.x tail*: 29 bites over six lanes (srca, srcb, net, tls, tool, thr). **Detail is in CHANGELOG
-[6.6.16]; its four issue files are archived.**
-- **Compiler:** global array initialisers baked as N elements (C1); pointer-mode struct assignment copies (C2); Str
-  overload dispatch (C3); `g<T>(..)?` / `p.m(..)?` receive the pair (C4); a nested `fn` is refused by name (C5);
-  kmode enum initialisers baked (C6); a by-value struct parameter over 8 B is a COPY (C7, *Open questions* 4); one
-  type-name resolver, with the promoted local `*i8` / `*i16` / `*i32` truncation (C8); the `#deprecated` gaps (C9);
-  the include fallback honours `CYRIUS_HOME` (C10); hisab's two filings — a top-level `fncallN` on a capturing
-  closure (H1), a closure's `: stack` return booked on its enclosing fn (H2).
-- **Net / TLS:** plain-socket SIGPIPE (**CVE-74**, N1); a CA's extendedKeyUsage enforced on intermediates and the
-  anchor (**CVE-75**, N3); Ed25519 `sig_len == 64` (N2); `sock_accept` returns a blocking socket on every target
-  (N4); the Windows WSA error mask (N5); the libssl session cache through `SSL_CTX_ctrl`, a sticky failed
-  `*_complete`, and libssl-only verbs never touching a native ctx (N6 + the promoted guard); Windows
-  `THREADS_CONCURRENT = 1` (N7); the agnos `sys_setsockopt` decline stub (N8).
-- **Threads** (sandhi's two filings): a blocking, thread-safe channel on arm64 macOS and Windows with `CHAN_BLOCKING`
-  on every peer, and the Linux channel's MPMC lost-wake-up deadlock fixed on the way; a PEM server key decoded once
-  per key text, not per accept.
-- **Tooling:** `cyrius deps` tag traversal (**CVE-76**, T1); every gate cwd-independent (G1); private wine prefixes
-  (G4); the sit lookup from a worktree (G5); the guide's include-less examples compiled (G2); the
-  `element_typed_array` sentinel (G3); stale doc premises (G6).
-- **Folds:** ganita 1.2.13, sandhi 1.10.7. cycc 1,535,360 B (+43,216 over 6.6.15). Every further lane-review find
-  was filed into 6.6.17 (user, 2026-10-04/05; see *6.6.17*).
-
----
-
-## 6.6.15 — curves and the compiler's secret leaks (SHIPPED 2026-10-03, tag `6.6.15` @ `2f1ed9d1`)
-
-**User, 2026-10-02:** the sigil work marked for after 6.6.14, then (scope answers the same day) the
-`secret var` epilogue fix, B0a, and TLS 1.3 / native-server P-256 with ephemeral-key zeroing.
-- **sigil 3.13.8** (tag `bbaecc4`) + **3.13.9** (tag `7d7a880`, folded): constant-time P-256 / P-384 ECDH
-  (`ecdh_p256_*` / `ecdh_p384_*`, SP 800-56A peer-key validation); ECDSA signing moved onto a
-  constant-time EC engine — every field operation on the secret-nonce path branched on secret data since
-  3.5.9 (a Welch t-test: |t| 6.34 before, 0.69 after) — **CVE-68**; the pin moves 6.6.9 → 6.6.14 (CVE-51
-  broke its Intel-Mac timing tests), the trust helpers fail closed on Windows instead of probing plantable rooted
-  paths (**CVE-73**), per-run temp names.
-- **cyrius:** the TLS 1.2 client's ECDHE on P-256 / P-384 (the 6.6.14 supported_groups trade-off and the
-  "no shared cipher" against ECDSA servers both gone); the TLS 1.3 client lists P-256 / P-384 and handles
-  HelloRetryRequest; the native server negotiates the group (1.2 by supported_groups, 1.3 by key_share or
-  an HRR); every ephemeral private key and shared secret is zeroed (**CVE-70**), and an all-zero x25519 secret is
-  refused (**CVE-71**). The `secret var` epilogue leak —
-  the defer walker saved the return registers to dead stack after the wipe and never cleared them; in sigil
-  3.13.7 that left the ECDSA nonce k behind (**CVE-69**). B0a — string interning aliased a NUL-bearing
-  literal onto another literal's storage (`"a\0a"` after `"a"` read `'z'`), silently. A `defer` / `secret var` in
-  a `#naked` fn is refused (it never ran — **CVE-72**). Detail: CHANGELOG [6.6.15].
-
----
-
-## 6.6.13 — memory fixes + reported-issue repair (SHIPPED 2026-10-02, tag `6.6.13`)
-
-All fourteen items landed over six lanes and are merged on `main`. **Detail is in CHANGELOG [6.6.13]; the
-eleven issue files are archived.**
-- Memory: M1 narrow-global init width, M2 arrays sized by element, M3 closure-captured struct copies, I9
-  natural global alignment.
-- Issues: I1 (CVE-59), I2 (with CVE-60), I3, I4, I5, I6, I7 (CVE-63), I8 (CVE-61), I10 (with CVE-62),
-  I11.
-- Folds: sigil 3.13.6, ganita 1.2.11, bayan 1.5.10, and **bayan 1.5.11** (cut for this release; tagged
-  first).
-
-Defaults taken without asking (each recorded in the CHANGELOG):
-- two `src` lanes, only one committing `build/cycc`;
-- I9 aligns every global naturally, rather than padding only after typed arrays;
-- I3 dropped the libssl off-main guard (backlog (i));
-- I8 makes no Windows transport switch (backlog (j));
-- `TLS_ERR_TIMEOUT` is -22, so the released `TLS_ERR_RECORD_OVERFLOW` keeps -20.
-
-The in-passing finds of the premise check and the lanes' reviews are in *Potential backlog* below (those
-6.6.16 shipped have been removed from it).
-
----
-
-## 6.6.14 — the TLS follow-ups (SHIPPED 2026-10-02, tag `6.6.14`)
-
-Every remaining noted TLS issue (user, 2026-10-02) over five lanes, plus the sigil 3.13.7 fold. **Detail is in
-CHANGELOG [6.6.14].**
-- **CVE-64** native mTLS authenticated nobody (1.2 server, 1.3 chain, `tls_set_verify`); **CVE-65** Windows'
-  plantable trust store (now the CurrentUser ROOT store); **CVE-66** SIGPIPE on a reset peer, both backends;
-  **CVE-67** the `*.com` wildcard.
-- Native TLS over Winsock with a real deadline; libssl fails closed off the main thread, errors stick; the
-  credential loaders; no IP-literal SNI; the port-race gates; sigil 3.13.7's lenient trust-bundle decode.
-- CI at the first push caught three test defects (an inherited SIGPIPE ignore; two-write peer races), fixed
-  before the tag. Filed in their repos (user): the agnos #48 write deadline, kavach's `basic` seccomp vs `sendto`.
 
 ---
 
@@ -292,29 +150,17 @@ tooling proposals (Phase 2). It is backend work, not language work, so it did no
 
 ---
 
-## Phase 2 — the tooling round-out (after 6.6.14, to the minor's close)
+## Phase 2 — the tooling round-out (to the minor's close)
 
 **Set 2026-10-01 (user): v6.6.x finishes on tooling. Placed 2026-10-02 (accepted):** P1 + P5-A → 6.6.17,
 P4 + P6 → 6.6.18, P2 → 6.6.19, P3 and P5's execution half → v6.7.x — see *The 6.6.x tail*. Each proposal
 below carries its placement; the detail of each premise check is in the archived memo.
 
-### P1 — `cyrius.cyml` as the build tool's actual configuration
-[`proposals/archived/2026-09-04-build-tool-manifest-integration.md`](proposals/archived/2026-09-04-build-tool-manifest-integration.md)
-
-**✅ SHIPPED in 6.6.17** (MERGED 2026-10-05, release gate GREEN 2026-10-06; placed 2026-10-02). One declared key vocabulary
-(`cyrius help manifest`, gated against what consumers write), one reader of the whole manifest, one precedence rule
-(argument > environment > manifest > default) shown by `cyrius build --print-config`; `[build] test` (run by bare
-`cyrius test`, then `tests/`), `dce` and `defines` read; `strict` held (`cycc --strict` has had no effect since
-6.3.2) and `target` held, both warned; `features` dropped and warned. **Named profiles → backlog.** Detail in
-CHANGELOG [6.6.17]; the proposal is archived (`proposals/archived/`).
-
-⭐ **The lesson it already records is the reason it ranks first**: the v6.5.49 slice shipped
-**inert**. Its `[build]` path fallback read `src`, the key *this* repo happens to use — but of
-125 `cyrius.cyml` files across `~/Repos`, **120 declare `entry` and 5 declare `src`**, one of the
-five being cyrius itself. So the feature presented as *"does not exist"* to 96% of the ecosystem,
-and **its gate passed the whole time because the gate's fixture manifest was written with the
-same key the implementation read.** Any work here must gate against a fixture that does *not*
-share the implementation's assumptions.
+### ~~P1 — `cyrius.cyml` as the build tool's actual configuration~~ → ✅ SHIPPED 6.6.17 (archived)
+[`proposals/archived/2026-09-04-build-tool-manifest-integration.md`](proposals/archived/2026-09-04-build-tool-manifest-integration.md) —
+detail in CHANGELOG [6.6.17]. Named profiles are in *Potential backlog*. Its lesson stands for every manifest key
+P2 / P4 / P6 add: gate against fixtures written the way CONSUMERS write the key, never in the implementation's own
+spelling (the v6.5.49 slice read `src` while 120 of 125 manifests declare `entry`, and its gate passed throughout).
 
 ### P2 — Embed data files as source strings (`[embed]` / assets manifest)
 [`proposals/2026-08-10-embed-data-files-as-source-strings.md`](proposals/2026-08-10-embed-data-files-as-source-strings.md)
@@ -372,11 +218,6 @@ quieter, not safer.
 
 **🟡 OPEN — A SHIPPED in 6.6.17** (text corpus + per-entry view: `[coverage] programs`, `--programs <glob>`, `--per-entry`); **B (execution coverage) is v6.7.x with C2** — it shares C2's insertion point and build-flag plumbing. P5 stays OPEN until B: archiving it after A would narrow the filing silently. The scope question (text references vs execution) was answered by the placement: A is text, B is execution.
 
-Filed 2026-09-20 by **rekha 0.4.12** (25 self-checking `programs/*_test.cyr`, ~13,000 lines of assertions,
-coverage reported as ~0 %). ⚠ **Its prerequisite ships first**: 6.6.8 bite 9 fixes how coverage COUNTS
-(substring and comment matches, a denominator that drops public fns), and extending the corpus before that
-would widen a number that is already wrong. The open scope question — a text-reference corpus versus
-execution/branch coverage — is the proposal's, and gets asked when this slot opens. Size: M on top of 6.6.8.
 
 ### P6 — `cyrius fuzz --poison` through a custom allocator seam
 [`proposals/2026-09-20-fuzz-poison-should-follow-a-custom-allocator-seam.md`](proposals/2026-09-20-fuzz-poison-should-follow-a-custom-allocator-seam.md)

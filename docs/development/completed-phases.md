@@ -74,6 +74,24 @@ per-minor max heading, not carried over from the deleted text.
 
 ---
 
+## v6.6.x — releases so far (the minor is still open)
+
+Added 2026-10-06, when roadmap.md was cleaned of the shipped 6.6.13–6.6.17 sections. One line per release;
+the CHANGELOG is the detail. The minor closes at the 6.6.20 closeout (roadmap.md § *The 6.6.x tail*).
+
+| Release | Shipped | What it was |
+|---|---|---|
+| **6.6.0** | 2026-09-07 | `Result` / `Option` / `Either` become the VALUE form (construction allocates zero bytes), shipped with the ecosystem; the v6.5.57 aggregate-copy P0 found at the cut. |
+| **6.6.1–6.6.6** | 2026-09-08 → 09-20 | The repair window: the issue queue, the ecosystem-sweep repairs (.2/.3), the 59-release native-aarch64 `cyrius run/test` defect (.4), the nine 2026-09-17 issues (.5, CVE-43), the 27-bite follow-on (.6, CVE-44/45). |
+| **6.6.7–6.6.12** | 2026-09-27 → 09-30 | The repair batch: the 30 post-6.6.6 issues over three releases, then each release's review finds; CVE-46 … CVE-58. |
+| **6.6.13** | 2026-10-02 | Memory fixes (narrow global init, arrays sized by element, closure struct copies, natural global alignment) + issues I1–I11; CVE-59 … CVE-63. |
+| **6.6.14** | 2026-10-02 | Every remaining noted TLS issue + sigil 3.13.7; CVE-64 … CVE-67. |
+| **6.6.15** | 2026-10-03 | sigil 3.13.8/3.13.9 (constant-time ECDH + signing), ECDHE on P-256 / P-384 across native TLS, the `secret var` epilogue leak, B0a interning; CVE-68 … CVE-73. |
+| **6.6.16** | 2026-10-05 | Repair: silent miscompiles, the named struct argument as a COPY, one type-name resolver, plain-socket SIGPIPE, CA EKU, deps tag traversal, the hisab and sandhi filings; CVE-74 … CVE-76. Tagged without the cross-OS leg. |
+| **6.6.17** | 2026-10-06 | The manifest release: P1 (`cyrius.cyml` as configuration, `--print-config`), P5-A (coverage over run programs), one top-level scan for all seven forks, pointer fields + linked lists, `p + n` by sizeof(T), the 6.6.16 lane-review finds, cybs's leading-`_` lexer (the seed broke past 2048 fns); CVE-77. Cross-OS GREEN again. |
+
+---
+
 ## v6.5.x — bands, and what each actually delivered
 
 Added 2026-09-04 when roadmap.md was cleaned: that file had accumulated **seven stacked
