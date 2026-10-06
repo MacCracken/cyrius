@@ -6,6 +6,233 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [6.6.18] — 2026-10-06
 
+The 6.6.18 distlib + poison release — the 6.6.18 row of roadmap.md § *The 6.6.x tail*. **P4 option 2**: a fold's
+`.deps` sidecar is what the compile-verify fixpoint proves its bundle needs and nothing else — no `[deps] stdlib`
+union, no umbrella scan, no profile prune — and every bundle carries a compile-verified requires block, so
+`include "dist/<pkg>.cyr"` alone compiles. **P6**: `cyrius fuzz --poison` reaches `alloc()`, arenas, `fl_alloc` and any
+`_a` API (`poison_allocator()`), with leading and trailing redzones, a live-block sweep, a settable fill byte and an
+A/B differential (`--poison=ab`); an overwrite stops the harness with exit 86. **The ESYSXLAT compile-time fold**: on
+aarch64 a literal syscall number no longer carries the translation chain and a variable one calls a shared per-class
+stub — `build/cycc-native-aarch64` **−718,792 B (−35.2 %)**. DCE now says when it declined to compact, and why, on
+every target that declines; arm64 macOS sign-extends `pthread_create`'s result (`sxtw`). Four lanes (dce, poison, a64,
+cbt). **CVE-78**; the next free id is **79**. Per the user's decision (2026-10-06) this release ships the distlib
+change only: all 12 folded stdlibs regenerate in ONE wave after the tag, and their re-vendor, the log / ws /
+ws_server fold bundles and the tls_native mirror retirement are 6.6.19 (R1–R3).
+
+**Gate (merged tree):** GATE-LINE-TBD
+
+**Size:** cycc **1,582,088 B** (`.text` **1,402,392**), +1,048 B over 6.6.17's 1,581,040 (DCE's reason helpers, +928; the
+`ESCPOPS` literal argument and the >6-argument refusal — the fold itself is aarch64 backend code); `build/cycc-native-aarch64`
+regenerated (`cyrius pulsar`), 2,042,184 → **1,323,392 B** (−718,792, −35.2 %) — now smaller than x86 cycc. api-surface 5,816 → **5,827** (+11, `lib/poison.cyr`). `lib/*.cyr` 105 → **106**. `.tcyr`
+473 → **481** (crossos 193 → **196**); shell gates 361 → **368**.
+
+**Bench:** BENCH-TBD
+
+### Security
+
+- **CVE-78 (P1): `fmt_int_buf` wrote 24 bytes at `buf` whatever the number's length** (`lib/fmt.cyr`, poison-1 +
+  d81e7f05). It built digits in place from `buf+23` downward and shifted them, so any `buf + pos` caller with less
+  than 24 bytes of room overran: `fmt_float`'s own 32-byte stack buffer for |val| ≳ 1e8, and heap callers such as
+  `alloc(32)+10` (patra, bench and yantra format at `buf + off`). The scratch is now a local and exactly `len + 1`
+  bytes are written. `fmt_float`'s 32-byte buffer was also short of `fmt_float_buf`'s real worst case (a finite value
+  past i64 range: 43 bytes). `fmt_float_buf` now computes at most 18 fraction digits and pads the rest with `'0'` —
+  `10^decimals` overflowed i64 at 19 decimals (wrong digits) and wrapped to 0 at 64 (SIGFPE) — and `fmt_float`
+  formats ≤ 18 decimals into a 64-byte stack buffer and writes wider padding in pieces (no heap). Output for
+  decimals ≤ 18 unchanged. `tests/tcyr/text/fmt_int_buf_bounded.tcyr` (21 assertions; the pre-fix code fails 6 of
+  the original 17, and dies of SIGFPE at 64 decimals). Found by the poison prototype's check-previous-block run over
+  the tcyr corpus, not a review sweep. Entry in `docs/audit/2026-09-03-security-audit.md`.
+
+### Distlib — P4 option 2 (the compile-verify is the only authority for a sidecar)
+
+- **The sidecar verify attributes stdlib FAMILY directories** (D1, `lib/unicode/`). Its snapshot index read only
+  depth-0 `lib/*.cyr`, so a family symbol read as "not a stdlib symbol" and the fixpoint skipped it: a producer
+  calling `unicode_category()` without declaring `unicode` published a SHORT sidecar at rc 0. niyama carried
+  `unicode` only because the v6.5.10 union copied its declaration in. A family directory is now ONE snapshot entry
+  owned by the family name (the spelling producers declare and `cyrius deps` expands); a member file is never an
+  owner. Gate `distlib_sidecar_family_leaf.sh` (6 targets, 0 undefined; RED on the old CLI).
+- **distlib names the symbols the converged verify could not own** (D2). A name no stdlib leaf, named dep or bundled
+  module defines was a silent `continue`, so a short sidecar and a bundle that deliberately calls a consumer hook
+  looked identical. At convergence each name still undefined is printed with the targets it fails on
+  (`warn: distlib: dist/x.cyr uses 1 name(s) still undefined after the sidecar verify converged …`). A warning; exit
+  status unchanged. `distlib_sidecar_verified.sh` axes 15 / 15b.
+- **The verify compiles for agnos too — six targets — and an in-unit declarer that failed is not the owner** (D3).
+  10 of the 12 folds carry `#ifdef CYRIUS_TARGET_AGNOS` arms the verify never compiled. mabda includes
+  `lib/syscalls.cyr`, whose peers declare `O_RDWR`, but on agnos only `lib/io.cyr`'s agnos arm defines it — the old
+  rule ("a declarer is already in the unit, so it is the target's own gap") hid it. Among out-of-unit declarers a
+  fold bundle is dropped whenever a non-fold file declares the name (the 6.6.11 rule). A non-symbol failure on agnos
+  ALONE is a named warning, so the ~62 non-fold producers never built for agnos are not refused at their pin bump.
+  Gate `distlib_sidecar_agnos_target.sh`; `host_independent` covers six targets.
+- **P4 option 2 itself** (D4). `cyrius distlib` no longer seeds the sidecar from the umbrella scan (v6.2.48), the
+  `[deps] stdlib` union (v6.5.10) or the profile prune (v6.4.48): the seed is the `lib/` includes the bundled modules
+  keep, and the fixpoint derives the rest. The union published every producer's TEST-ONLY leaves to every consumer —
+  75 fleet sidecars name `assert` and 68 of those bundles reference no assert symbol; 53 name `bench` and 51 use none
+  of it. `[deps] stdlib` still feeds auto-prepend and `cyrius deps` for the package's OWN builds; it never reaches
+  the published sidecar. A missing stdlib snapshot is a named refusal (it used to publish unverified). −271 lines
+  (`_distlib_scan_umbrella`, `_distlib_union_declared_stdlib`, `_distlib_prune_profile_leaves`,
+  `_distlib_scan_lib_includes`, `_distlib_leaf_referenced(_d)`); the report reads
+  `sidecar: 19 leaf(s), compile-verified (9 derived by the verify)` (55851de7). Measured on scratch copies of the 11
+  distlib folds: every run converges, the deepest in 3 recording rounds (mabda) = 4 compiles against the 6-round cap;
+  niyama names `unicode`, mabda names `io`; all 11 base + 39 profile sidecars compile with 0 undefined on 6 targets
+  except one name D2 reports (`sys_recvmsg` on x86_64-windows, from mabda's named dep samvada). Base sidecars
+  before → after: bayan 13→10, ganita 10→3, mabda 18→12, niyama 9→4, patra 14→14, sandhi 28→18, sankoch 8→7,
+  sigil 26→19, vani 21→14, yantra 28→23, yukti 18→3; per profile, in
+  [ecosystem-migration-6.6.18.md](docs/development/ecosystem-migration-6.6.18.md). All 33 gates that invoke distlib
+  re-run green; `build_config_windows_arm.sh` axis 4 and `cli_pe_file_size_and_sibling_tools.sh` axis 2 now assert
+  the named refusal (a snapshot-less run was the only way a non-x86-Linux CLI finished distlib).
+- **Every bundle carries a compile-verified REQUIRES BLOCK, so it is raw-includable** (D5). Most fold modules include
+  nothing, so nothing survived into the bundle: included alone, 10 of the 12 vendored folds left 3–207 names
+  undefined (sandhi 207, yukti 83, yantra 67, bayan 62, mabda 57, sigil 54, vani 16, niyama 11, sakshi 4, ganita 3).
+  The bundle is rewritten crash-safely with `# Requires (compile-verified; the leaves of dist/<pkg>.deps):` and one
+  `include "lib/<leaf>.cyr"` per sidecar leaf, between the header lines and the first module — block == sidecar,
+  same leaves, same order, families expanded by the one expander the verify uses. Leaf names are charset-checked
+  (`[A-Za-z0-9_/-]`, no leading, trailing or doubled `/`). A `cyrius deps` consumer is unaffected (include-once is
+  keyed on the literal path). `--check` names the cause for an older bundle: `the committed bundle predates cyrius
+  6.6.18's requires block — run cyrius distlib --all`. Gate `distlib_bundle_raw_includable.sh` (6 targets; RED on
+  the old CLI and on a skip-the-rewrite mutant).
+- **A failed build names the stdlib leaf to declare** (dde1c170). The consumer half of D4: a leaf a build used only
+  because some producer's sidecar over-reported it disappears at that producer's regeneration. `compile()` captures
+  the compiler's stderr, relays it whole, and on a failed compile prints `hint: '<name>' is defined by stdlib leaf
+  '<leaf>' — add it to [deps] stdlib in cyrius.cyml` (from the snapshot index; silent for in-scope leaves, unknown
+  names and success). `cyrius fuzz`'s COMPILE FAIL gets the same. Gate `build_undefined_leaf_hint.sh`.
+- Review fixes: the regression suite's sidecar row (`programs/checks/deps_init.cyr`) asserted the umbrella-only
+  `keccak` — it now asserts the option-2 contract (7a63c931); the unowned report honours the agnos mask, and a
+  requires-block leaf that expands to nothing is an error (ff85fb5c).
+- ⚠ **Every producer's `distlib --check` reads STALE at its 6.6.18 pin bump** — that is the regeneration wave. Consumers
+  that used `assert` / `bench` or a fold's own leaves only because a producer's sidecar vendored them must declare
+  them in their own `[deps] stdlib` until 6.6.19 re-vendors the folds:
+  [docs/development/ecosystem-migration-6.6.18.md](docs/development/ecosystem-migration-6.6.18.md).
+
+### Poison — P6 (`cyrius fuzz --poison` through an allocator seam)
+
+- **`lib/poison.cyr` — one poison core** (poison-2). The fill byte was the constant 0xA5 in three places in
+  `lib/freelist.cyr`; it is now settable (`poison_fill()`, `poison_fill_set(b)` — 1..255, returns the previous fill),
+  with shared fill / check helpers, a detection counter (`poison_violations()`, `poison_reset()` — counter only), a
+  trap switch (`poison_trap_set(on)`) and a one-line stderr report. `#define CYRIUS_POISON_B` starts with fill 0x5A.
+  A freelist block records the fill it was ARMED with, so a fill change between alloc and free scores no false
+  violation. `tests/tcyr/memory/poison_fill_byte.tcyr`.
+- **The poison seam** (poison-3): `poison_alloc` / `poison_free` (the `fn(n): ptr` shape a hook-style seam points
+  at), `poison_allocator()` for any `_a` API, and `poison_allocator_over(inner)`, which wraps any Allocator. A
+  poisoned block carries a 24-byte header, a 32-byte LEADING redzone and a trailing redzone, and sits on a live list;
+  `poison_sweep()` checks every listed block (a live block's redzones, a freed block's whole span) and returns how
+  many are bad. `poison_free` quarantines (never reused); `poison_forget_all()` drops the list. Works with no compile
+  flag. `tests/tcyr/memory/poison_seam.tcyr`.
+- **`alloc()` blocks carry leading and trailing redzones under `CYRIUS_POISON`** (poison-4) on Linux, macOS and
+  Windows — the bump heap and the `big` own-mapping path — so a read past `alloc(16)` yields the fill instead of the
+  next block's live bytes. The size is checked against `ALLOC_MAX` before the redzones are added; `alloc_used()`
+  reports exactly what it does without poison (on macOS / Windows through a shadow counter, 7e0dd93b). agnos and cx
+  `alloc()` are not instrumented. `lib/alloc.cyr` is compiler source: every poison line is under
+  `#ifdef CYRIUS_POISON`, so all 14 fork / target builds are `cmp`-identical and seed-derive is GREEN. Poison on,
+  `bench_alloc` 8 B 11 → 59 ns (fuzz mode only; +88 B per block). `tests/tcyr/crossos/poison_alloc_redzone.tcyr`.
+- **Arenas are an accounting shell over redzoned blocks under `CYRIUS_POISON`** (poison-5): every accept / refuse
+  decision, `arena_used` and `arena_remaining` are the non-poison values; `arena_reset` / `arena_free` check, fill
+  and mark DEAD every owned block. ⚠ Under poison an arena never re-issues an address after `arena_reset` — a fuzz
+  harness must not assert pointer identity across a reset. `tests/tcyr/memory/poison_arena_redzone.tcyr`.
+- **`fl_alloc`'s poisoned blocks gain a LEADING redzone and a live list; the layout is decoded from the block, not
+  the mode flag** (poison-6). The v6.5.29 layout had a trailing redzone checked only at `fl_free` — an underwrite was
+  invisible and a block never freed was never checked. A block allocated in one mode and freed in the other is freed
+  at the right header; a free whose header does not decode as a listed poisoned block is reported, not recycled.
+  Poison OFF costs nothing (`bench_freelist` 64 B 22 → 22 ns). `tests/tcyr/memory/fl_poison_lead_and_live.tcyr`.
+- **Under `cyrius fuzz --poison` an overwrite is SEEN without harness changes, and fails the run** (poison-7). Every
+  poisoned allocation checks the previous block's redzones, a full sweep runs each time the poisoned-allocation count
+  reaches 2^k (k ≥ 10; total sweep work ~2N), and a detection prints `poison: redzone overwrite — <alloc|arena|fl|seam>
+  block <addr> (<req> bytes): <n> byte(s) changed [leading|trailing|after-free|header]` and exits **86** (reserved for
+  poison). `assert_summary()` sweeps under the flag. A run-time `fl_poison_enable()` without the flag keeps
+  counting; `poison_trap_set(0)` opts out. 0 of 194 ecosystem harnesses read `fl_poison_violations()`, so the old
+  counted behaviour checked nothing for anyone. `poison_mode_observable.sh` axes 5, 7–9.
+- **`cyrius fuzz --poison=ab` — the A/B differential** (poison-8). Plain `--poison` traps writes, but an overread is
+  silent. Under `--poison=ab` each harness is compiled and run twice — fill 0xA5, then 0x5A — and passes only when both
+  legs exit 0 with byte-identical stdout (`FAIL (A/B diverged at byte N)` otherwise). Opt-in: time doubles, and a
+  harness that prints timings diverges. Any other `--poison=` value is refused by name. Gate
+  `tests/gates/memory/poison_ab_differential.sh`.
+- **The `--poison` banner states the real coverage** (poison-9) — it said `alloc()` and arenas were not covered and
+  overwrites were only counted. It now names the NOT-covered list: a read that jumps a redzone into a live neighbour,
+  a read past a logical bound inside one allocation, stack and static memory, agnos and cx; no guard pages.
+- Review fixes (6bc05a5e, d1239edb, 7e0dd93b): an undecodable block header is reported every time and a sweep that
+  stops says where; `poison_free` reports a double free; macOS / Windows `alloc_used()` under poison follows the
+  non-poison reserve split.
+- **`cyrius fuzz` no longer splices the compiler's notes into its open progress line** (poison-10): the child's
+  stderr is captured and relayed after the verdict. `cli_progress_line_not_spliced.sh` axis 12.
+- **`[build] defines` and `CYRIUS_DEFINES` reach `cyrius fuzz` harnesses** (7e3efac3; P1 said defines apply to every
+  build, and only `-D` did). Precedence `-D` > environment > manifest; a row in `build_config_precedence.sh`.
+
+### aarch64 — the ESYSXLAT compile-time fold
+
+- **A literal syscall number no longer carries the ESYSXLAT chain** (XLAT-1). Every `syscall(N, …)` site inlined the
+  whole x86 → aarch64 translation chain — ~1.2 KB per site, 36 % of the native compiler. When N is a compile-time
+  constant (the `sc_num` PE reroute selection already trusts) the compiler emits the chain, decodes it and SIMULATES
+  it in emission order with cur = N, keeping only the row bodies that would run (`_esx_fold`): a number no row routes
+  emits nothing, a renumber one `movz x8`. Every ordering rule in the chain holds by construction and the row SOURCE
+  is untouched, so the gates that read ESYSXLAT's words still read the truth. The fold checks each row's shape and a
+  violation stops the build with an internal error naming the row — never a silent fallback. arm64 Mach-O folds too.
+- **A variable syscall number calls ONE shared per-class stub** (XLAT-2) instead of inlining the chain: `ESYSX_STUBS`,
+  called by all three aarch64 drivers between `EEXIT` and `FIXUP`, emits one chain + `ret` per class and patches
+  every site to `bl stub`; FIXUP refuses an undrained site list (a skipped call would ship `bl .`, an infinite loop).
+  A `#naked` fn keeps the inline chain — its return address is live in x30.
+- **Measured.** `build/cycc-native-aarch64` 2,042,184 → **1,323,392 B (−718,792, −35.2 %)**; it self-hosts
+  byte-identical under qemu and on pi; 0 `cmp x8,#imm` words remain in it. The review's equivalence check — 772
+  numbers × 1–7 arguments × ELF / Mach-O × literal / variable, the folded result against the chain interpreted row
+  by row — found **0 differences**. Test binaries over the crossos + platform corpus: 108.1 → 58.2 MB. Gate
+  `tests/gates/platform/esysxlat_fold.sh` (axes 1–6); real-hardware guards
+  `tests/tcyr/crossos/syscall_literal_fold_rows.tcyr` and `syscall_number_nonliteral.tcyr` (195/195 crossos on pi and
+  ecb at the lane).
+- **`syscall()` with more than 6 arguments after the number is refused by name** on every `ESCPOPS` target
+  (bee06a2a). ESCPOPS pops the number + at most six arguments, so a 7th stayed on the stack and an argument was popped
+  as the number (16 B leaked); on arm64 macOS a variable number at that arity kept its `bl .` placeholder — an
+  infinite loop. PE's parse-time reroutes that take more (WSARecv / WSASend, WSAIoctl) are unaffected.
+  `raw_syscall_native_exempt_and_kill_arity.sh` axis 4.
+- **The pre-commit ARM size band is back to 700K–2M** (XLAT-4; raised to 3M at 6.6.17 for the inline chain). Gate
+  `precommit_arm_size_band.sh`.
+- **arm64 macOS: `thread_create` sign-extends `pthread_create`'s result** (`sxtw x0, w0` after the `__got[5]` call;
+  S1). AAPCS64 leaves x0[63:32] unspecified for an `int` return and `lib/thread_macos.cyr`'s `rc != 0` reads all 64
+  bits, so a success with dirty upper bits would read as failure while the thread ran. ecb measures clean upper bits
+  today — conformance, not an observed fault; the roadmap's backlog item (h) had called it "harmless" because "it
+  tests only `!= 0`", which is exactly the comparison that reads the dirty bits. It was the only `__got` int-result
+  site without the extension. `macos_arm64_real_threads.sh` axis 7.
+
+### DCE — the honest "compaction declined" note
+
+- **`CYRIUS_DCE=1` says when it did NOT compact, and why — and the decision and the note are one predicate** (DCE-1).
+  PE, x86 Mach-O, `--pie`, `shared;` and static x86 ELF past the repair registry's **4,096 dead-code runs** (measured:
+  4,096 one-line dead fns compact to 4,456 B, 4,097 leave 201,064 B — a silent cliff) printed exactly what a
+  compacting build prints. `_dce_compact_why` is both FIXUP's gate and the note's reason, carried INSIDE the existing
+  line, so every `grep -v "unreachable fns"` filter still removes it:
+  `note: 3 unreachable fns (273 bytes NOPed; compaction declined on PE: its import table is reached through
+  rip-relative disp32s this pass cannot repair)`. A drift catch names any refusal the predicate does not know.
+- **aarch64 targets say they NOP-fill only** (DCE-2): `compaction declined on aarch64 ELF: aarch64 has no compaction
+  repair model yet` (`… on arm64 Mach-O`).
+- **The unset hint stops promising elimination where it cannot happen** (DCE-3): static x86 ELF keeps the old text
+  byte for byte; a declining target reads `set CYRIUS_DCE=1 to NOP-fill them; no compaction on <target>: <why>`, and
+  past 4,096 dead fns static ELF names the cap. Gates `dce_pe_macho_layout_declines_compaction.sh` axes 4–9 and
+  `pe_compiler_reads_env.sh` axis 4; no sibling greps the changed text.
+
+### Integration
+
+The four lanes merged into main in the order dce, poison, a64, cbt. The first merged check.sh (191 of 191 shell gates ran; driver
+306 / 0 / 1) found one defect no lane could see: a64's >6-argument refusal fired on `async_win.cyr`'s PE-only Winsock
+reroutes, which `dce_pe_macho_layout_declines_compaction.sh` pasted unguarded into its x86 Mach-O input — fixed in
+the gate (3ba91969; real builds include `async_win.cyr` only under `CYRIUS_TARGET_WIN`). The cbt review's blocker (the
+regression suite's `keccak` sidecar row) and its consumer finding (the undefined-leaf hint) were fixed before merge.
+Two check.sh selectors in parallel in ONE worktree collide on `build/cyrius_check` — run them in parallel only across
+worktrees.
+
+### Downstream
+
+Nothing here gates the release. ⚠ **The 12 folded stdlibs** (sakshi, bayan, sandhi, sigil, ganita, niyama, mabda,
+vani, yantra, yukti, patra, sankoch) regenerate in ONE wave after the tag — our own work, sakshi first (its first
+distlib-generated sidecar). Filings (notes in each repo, not fixed from here): **takumi** declares `sandhi` but not
+`sakshi` and reached `lib/sakshi.cyr` only through sigil's old sidecar — declare it; **samvada** has no Windows
+`sys_recvmsg` wrapper (D2 names it through mabda); **rekha** drops its prelude and CI sidecar pin and can adopt
+`--poison[=ab]`; **kriya, puka** — `--poison` now covers `alloc()`, and an overwrite exits 86; **agora** re-evaluates
+N4. The ~62 non-fold producers meet the stale `--check` and the agnos verify target at their own pin bump.
+
+### Known / not fixed
+
+- The x86-macOS `EMACHO_SYSXLAT` fold, XLAT-3 (arm64-macOS pipe / fork post-svc fixups for literal numbers), the WPNR
+  4,096-run merge, `dce_data_vaddr_frozen` as a behavioural gate, poison guard pages, and aarch64 compaction having to
+  repair the resolved `bl <stub>` sites XLAT-2 leaves without a fixup entry — all in roadmap.md's *Potential backlog*.
+- `dce_eliminates.sh` exits 7 silently under `bash -eo pipefail` (pre-existing at the lane base; passes under `sh`,
+  as check.sh runs it).
+
 ## [6.6.17] — 2026-10-06
 
 The 6.6.17 manifest release — the second row of roadmap.md § *The 6.6.x tail*: **P1**, `cyrius.cyml` as the build
