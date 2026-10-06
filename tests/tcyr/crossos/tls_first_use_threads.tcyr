@@ -130,6 +130,11 @@ fn _ft_ca_forget(): i64 {
     _tn_ca_len = 0;
     _tn_ca_sys_set = 0;       # 6.6.13: the shared root set is part of the same load
     _tn_ca_sys_skipped = 0;
+    _tn_ca_cl_state = 0;      # 6.6.17: the client-purpose set a Windows server ctx installs
+    _tn_ca_cl_buf = 0;
+    _tn_ca_cl_len = 0;
+    _tn_ca_cl_set = 0;
+    _tn_ca_cl_skipped = 0;
     return 0;
 }
 
@@ -224,6 +229,15 @@ fn test_init_main(recs): i64 {
     var a0 = alloc_used();
     assert_eq(tls_init_main(), 1, "a second call returns 1");
     assert_eq(alloc_used() - a0, 0, "a second call allocates nothing");
+    #ifdef CYRIUS_TARGET_WIN
+    # 6.6.17: on Windows a server ctx installs a second, client-purpose set (CVE-TBD(l1)); the
+    # warm loads it too, so an mTLS server's first tls_native_set_ca_system allocates nothing.
+    assert_eq(atomic_load(&_tn_ca_cl_state), 2, "Windows: the warm loaded the client-purpose set as well");
+    var sv = _tn_ctx_new(TLS_ROLE_SERVER);
+    var a1 = alloc_used();
+    assert_eq(tls_native_set_ca_system(sv), TLS_OK, "  a server ctx installs it");
+    assert_eq(alloc_used() - a1, 0, "  and allocates nothing doing so");
+    #endif
     return 0;
 }
 

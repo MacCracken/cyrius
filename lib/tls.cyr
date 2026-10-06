@@ -580,6 +580,12 @@ fn _tls_native_warm(): i64 {
     # _x509_parse_time -> _x509_date_to_epoch), the junk parse above stops before it.
     _x509_init_mdays();
     _tn_ca_load();
+    # Windows: a server ctx installs the second, client-purpose set (CVE-TBD(l1)); load it here so
+    # an mTLS server's first tls_native_set_ca_system does not pay for it. Elsewhere both roles
+    # share the set above.
+    #ifdef CYRIUS_TARGET_WIN
+    _tn_ca_load_client();
+    #endif
     return 0;
 }
 
