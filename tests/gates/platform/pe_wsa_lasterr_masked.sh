@@ -31,8 +31,9 @@
 #           Anything else (`return syscall(0xF033, ...)`, `if (syscall(...) == 0)`) is RED.
 #   axis 3  lib/async_win.cyr: every `var X = callptr(...)` (the ConnectEx / AcceptEx BOOLs) is
 #           used only as `X & 0xFFFFFFFF`.
-#   axis 4  each never-zero error helper (_sw_wsa_err, _net_wsa_err, _tn_win_sockerr) masks and
-#           maps an error of 0 to -1, so a failure can never read as success.
+#   axis 4  each never-zero error helper (_sw_wsa_err, _net_wsa_err, _tn_win_sockerr and, 6.6.17,
+#           lib/async_win.cyr's _asw_wsa_err) masks and maps an error of 0 to -1, so a failure can
+#           never read as success.
 #   axis 5  (6.6.17) lib/async_win.cyr: the kernel32 BOOLs — SetWaitableTimer (0xF02F),
 #           RegisterWaitForSingleObject (0xF02D), CreateProcessW (0xF005 / 61445) — follow the axis 2
 #           rules (their emitters ESETTIMER_PE / EREGWAIT_PE / ECREATEPROC_PE do not extend eax
@@ -54,6 +55,7 @@
 #   async_win WSAIoctl back to `if (syscall(0xF027, ...) != 0)`          axis 2 FAIL
 #   async_win ConnectEx back to `if (cr == 0)`                           axis 3 FAIL
 #   _sw_wsa_err without the `e == 0` → -1 line                           axis 4 FAIL
+#   (6.6.17) _asw_wsa_err without its `e == 0` → -1 line, or unmasked    axis 4 FAIL (each)
 #   _net_wsa_err's `& 0xFFFFFFFF` dropped                                axes 1 and 4 FAIL
 #   async_win WSARecv back to `if (rc != 0)`                             axis 2 FAIL
 #   async_win getaddrinfo back to `if (syscall(0xF02B, ...) != 0)`       axis 2 FAIL
@@ -119,7 +121,7 @@ scan() {
         line = strip($0)
         if (line ~ /^fn[ \t]/) { nv = 0; infn = line; sub(/^fn[ \t]+/, "", infn); sub(/\(.*/, "", infn) }
         # axis 4: the never-zero helpers
-        if (infn == "_sw_wsa_err" || infn == "_net_wsa_err" || infn == "_tn_win_sockerr") {
+        if (infn == "_sw_wsa_err" || infn == "_net_wsa_err" || infn == "_tn_win_sockerr" || infn == "_asw_wsa_err") {
             if (line ~ /^fn[ \t]/) { H[infn, "m"] = 0; H[infn, "z"] = 0; HS[infn] = FILENAME }
             if (line ~ /syscall\([ \t]*(0[xX][fF]024|61476)[ \t]*\)[ \t]*&[ \t]*0[xX][fF][fF][fF][fF][fF][fF][fF][fF]/) H[infn, "m"] = 1
             if (line ~ /if[ \t]*\([ \t]*e[ \t]*==[ \t]*0[ \t]*\)[ \t]*\{[ \t]*return[ \t]+0[ \t]*-[ \t]*1[ \t]*;/) H[infn, "z"] = 1
@@ -289,7 +291,7 @@ nfiles=$(grep -l -e '0xF024' -e '61476' $FILES 2>/dev/null | wc -l)
 [ "$nw" -ge 7 ]  && ok || bad "floor: $nw WSAGetLastError sites in lib/ (want >= 7) — the scan went blind or a site moved"
 [ "$ni" -ge 25 ] && ok || bad "floor: $ni int-reroute sites in lib/ (want >= 25)"
 [ "$nc" -ge 2 ]  && ok || bad "floor: $nc async_win callptr sites (want >= 2: ConnectEx, AcceptEx)"
-[ "$nh" -eq 3 ]  && ok || bad "axis 4: $nh of the 3 never-zero helpers (_sw_wsa_err, _net_wsa_err, _tn_win_sockerr) found and correct"
+[ "$nh" -eq 4 ]  && ok || bad "axis 4: $nh of the 4 never-zero helpers (_sw_wsa_err, _net_wsa_err, _tn_win_sockerr, _asw_wsa_err) found and correct"
 [ "$nfiles" -ge 3 ] && ok || bad "floor: $nfiles files carry WSAGetLastError (want >= 3)"
 [ "$nb" -ge 6 ]  && ok || bad "floor: $nb async_win kernel32 BOOL sites (want >= 6: two SetWaitableTimer, three RegisterWait, CreateProcessW)"
 
