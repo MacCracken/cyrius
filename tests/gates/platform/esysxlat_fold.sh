@@ -41,7 +41,7 @@
 #       keeps the chain free of a live re-capture (no row's output is a LATER row's source), so no
 #       live number needs a second match today. Written down rather than claimed.
 #   (d) an ADR word placed in a row body (critic #7)                  -> every aarch64 build stops:
-#       "error: internal: ESYSXLAT fold refused the row … ADR/ADRP in a row body"
+#       "error: internal: ESYSXLAT fold refused chain word 6 (the row cmp x8,#2): ADR/ADRP in a row body"
 #   (e) drop the `#naked` carve-out in _esx_stub_site                 -> axis 5 FAILS (82 cmp x8 words,
 #                                                                         want 164)
 #   (f) per-site chains (XLAT-2 reverted)                             -> axis 4 FAILS (1,804 for 22 sites)

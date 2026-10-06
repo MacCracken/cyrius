@@ -732,6 +732,7 @@ fn ESADDR(S, soff): i64 {
 var _msx_argc = 7;
 # emit syscall pops for N args then syscall
 fn ESCPOPS(S, n, lit): i64 {   # lit: the aarch64 fold's literal number; unused here
+    if (_sc_argc_refuse(S, n) == 1) { return 0; }   # > 6 arguments: no backend can pass them
     var _ire = IR_ENABLED(S); if (_ire >= 1) { ir_emit1(S, IR_CALL_POPS, n); }
     if (n >= 7) { EPOPR9(S); }
     if (n >= 6) { EPOPR8(S); }

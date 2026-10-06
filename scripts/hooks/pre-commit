@@ -116,7 +116,7 @@ for bin in build/cycc build/cc5 build/cycc-native-aarch64 bootstrap/asm; do
             # 6.6.18: 3M → 2M, build/cycc's band again. 6.6.17 raised it because ESYSXLAT
             # copied its whole translation chain into every aarch64 syscall site (2,042,184 B,
             # +29 % over x86). The 6.6.18 compile-time fold (XLAT-1/2) put the ARM compiler at
-            # 1,323,072 B — ~16 % SMALLER than x86 cycc's 1,581,968 — so it no longer runs
+            # 1,323,392 B — ~16 % SMALLER than x86 cycc's 1,582,088 — so it no longer runs
             # larger than x86. 2M leaves ~680 KB of headroom (~170 releases at ~4 KB each), and
             # an UN-folded build (2,042,184 B and growing with every row) now sits OUTSIDE the
             # band, so the hook trips on a lost fold as well as on gross corruption. The real

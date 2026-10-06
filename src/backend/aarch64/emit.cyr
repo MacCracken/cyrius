@@ -1783,18 +1783,36 @@ fn _macho_arm_routes(n): i64 {
 # is the body's LAST word (ELF) and a Mach-O body ends in `movz x16`; a flag reader follows a
 # flag setter inside its own body (the dropped cmp's flags are gone); and no body word is
 # PC-relative to anything outside its body (B / B.cond / CBZ / TBZ must land in the body; ADR,
-# ADRP, LDR-literal, BL and register branches are refused outright).
+# ADRP, LDR-literal, BL and register branches are refused outright, as are FP/SIMD words,
+# system instructions and BC.cond).
 # ⚠ No literal `EW(S, 0xF1…1F)` may appear here: raw_syscall_literals_routed.sh derives its
 # allowlist from exactly those words inside ESYSXLAT. CHANGELOG [6.6.18]
 fn _esx_sext(v, bits): i64 {
     if (v >= (1 << (bits - 1))) { return v - (1 << bits); }
     return v;
 }
+fn _esx_prhex(w): i64 {
+    var b[16];
+    var i = 0;
+    while (i < 8) {
+        var d = (w >> ((7 - i) * 4)) & 15;
+        if (d < 10) { store8(&b + i, 48 + d); } else { store8(&b + i, 55 + d); }
+        i = i + 1;
+    }
+    syscall(SYS_WRITE, 2, &b, 8);
+    return 0;
+}
+# `src` < 0: a structural failure before any row decoded — name the offending word instead.
 fn _esx_fold_die(st, q, src, why): i64 {
-    PRSTR("error: internal: ESYSXLAT fold refused the row at chain word ");
+    PRSTR("error: internal: ESYSXLAT fold refused chain word ");
     PRNUM((q - st) / 4);
-    PRSTR(" (cmp x8,#");
-    PRNUM(src);
+    if (src >= 0) {
+        PRSTR(" (the row cmp x8,#");
+        PRNUM(src);
+    } else {
+        PRSTR(" (0x");
+        _esx_prhex(load32(_codebuf_base + q));
+    }
     PRSTR("): ");
     PRSTR(why);
     PRSTR("\n");
@@ -1812,6 +1830,9 @@ fn _esx_body_bad(cb, bs, be): i64 {
     while (o < be) {
         var w = load32(cb + o);
         if ((w & 0x1F000000) == 0x10000000) { return "ADR/ADRP in a row body"; }
+        if ((w & 0x0C000000) == 0x0C000000) { return "a floating-point/SIMD word in a row body"; }
+        if ((w & 0xFFC00000) == 0xD5000000) { return "a system instruction (MRS/MSR/hint) in a row body"; }
+        if ((w & 0xFF000010) == 0x54000010) { return "BC.cond in a row body"; }
         if ((w & 0x3B000000) == 0x18000000) { return "LDR (literal) in a row body"; }
         if ((w & 0xFC000000) == 0x94000000) { return "BL in a row body"; }
         if ((w & 0xFE000000) == 0xD6000000) { return "a register branch in a row body"; }
@@ -1937,6 +1958,7 @@ fn _esx_stub_site(S, n): i64 {
     }
     var cls = 0;
     if (_TARGET_MACHO == 2) { cls = n; }
+    if (cls > 7) { cls = 7; }   # ESYSX_STUBS emits classes 0-7; the chain is the same at 7 and up
     store64(_esx_sl + _esx_ns * 16, GCP(S));
     store64(_esx_sl + _esx_ns * 16 + 8, cls);
     _esx_ns = _esx_ns + 1;
@@ -1972,6 +1994,17 @@ fn ESYSX_STUBS(S): i64 {
         }
         c = c + 1;
     }
+    # Every site must now be a REAL bl: one left at the placeholder would loop for ever.
+    var j = 0;
+    while (j < _esx_ns) {
+        if (load32(_codebuf_base + load64(_esx_sl + j * 16)) == 0x94000000) {
+            PRSTR("error: internal: a variable-number syscall site of class ");
+            PRNUM(load64(_esx_sl + j * 16 + 8));
+            PRSTR(" got no ESYSXLAT stub\n");
+            syscall(SYS_EXIT, 1);
+        }
+        j = j + 1;
+    }
     _esx_ns = 0;
     return 0;
 }
@@ -1986,6 +2019,7 @@ fn _esx_stubs_drained(): i64 {
 }
 
 fn ESCPOPS(S, n, lit): i64 {
+    if (_sc_argc_refuse(S, n) == 1) { return 0; }   # > 6 arguments: no backend can pass them
     # LIFO: last pushed (argN) pops first, first pushed (syscall_num) pops last
     # For syscall(num, a1, a2, a3, a4, a5, a6):
     #   Push order: num, a1, a2, a3, a4, a5, a6
