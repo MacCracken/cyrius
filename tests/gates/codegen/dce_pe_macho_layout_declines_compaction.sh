@@ -49,7 +49,11 @@ for m in string alloc vec str fmt io syscalls fs tagged process args fnptr threa
     [ -f "$ROOT/lib/$m.cyr" ] && cp "$ROOT/lib/$m.cyr" "$WORK/lib/$m.cyr"
 done
 # Pull in the per-OS sub-includes those modules dispatch to, so the Windows/macOS forks link.
+# ⚠ Not the async_* peers: none of the modules above includes them, and async_win.cyr's PE-only
+# Winsock reroutes (8–10 values) would be pasted, unguarded, into the x86 Mach-O build, where 6.6.18
+# refuses a generic syscall() with more than 6 arguments after the number. CHANGELOG [6.6.18]
 for m in "$ROOT"/lib/*_win.cyr "$ROOT"/lib/*_windows.cyr "$ROOT"/lib/*_macos.cyr; do
+    case "$(basename "$m")" in async_*) continue ;; esac
     [ -f "$m" ] && cp "$m" "$WORK/lib/$(basename "$m")"
 done
 
