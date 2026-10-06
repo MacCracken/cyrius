@@ -340,8 +340,20 @@ fn _wt_case_orphan_claim(arg): i64 {
     _tls_init_state = 1;
     _tls_introspect_state = 1;
     if (tls_available() != 0) { return 80; }
+    # A zeroed TLS_CTX_LEN buffer stands in for the ctx: the verb must refuse on the orphaned
+    # latch before it reads the ctx at all (6.6.17 — this passed an 8-byte stack buffer, which is
+    # not a ctx: since per-ctx dispatch the verb read its +8 from the stack).
+    var cx = alloc(TLS_CTX_LEN);
+    if (cx == 0) { return 82; }
+    memset(cx, 0, TLS_CTX_LEN);
     var b[8];
-    if (tls_get_alpn_selected(&b, &b, 8) != 0) { return 81; }
+    if (tls_get_alpn_selected(cx, &b, 8) != 0) { return 81; }
+    if (tls_get_peer_spki_der(cx, &b, 8) != 0) { return 83; }
+    # ...and it reads NOTHING through the ctx: an unmapped address (the first page) must refuse
+    # too, where any read of it would fault. This is the half that pins the order — a zeroed ctx
+    # alone reads as a native shim and answers 0 whether or not the latch is checked first.
+    if (tls_get_alpn_selected(16, &b, 8) != 0) { return 84; }
+    if (tls_get_peer_spki_der(16, &b, 8) != 0) { return 85; }
     return 0;
 }
 
