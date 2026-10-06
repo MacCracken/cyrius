@@ -1,0 +1,91 @@
+#define CYRIUS_POISON
+# poison_arena_redzone.tcyr — 6.6.18: under CYRIUS_POISON an arena is an accounting shell over
+# redzoned blocks. Every accept/refuse decision and arena_used / arena_remaining are exactly
+# the non-poison values; each block has both redzones; arena_reset / arena_free quarantine.
+#
+# Before 6.6.18 arena memory was never poisoned: arena_alloc carves adjacent spans out of one
+# chunk, so a read past one allocation returned the NEIGHBOURING span's live bytes, and a use
+# after arena_reset read whatever the next cycle wrote there. The test traps nothing
+# (poison_trap_set(0)) and restores every byte it clobbers.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/assert.cyr"
+
+fn main(): i64 {
+    poison_trap_set(0);
+    alloc_init();
+    poison_reset();
+    var fill = poison_fill();
+
+    test_group("arena blocks are redzoned (6.6.18)");
+    var a = arena_new(64);
+    var p = arena_alloc(a, 16);
+    var n = arena_alloc(a, 16);
+    store64(n, 0x4242424242424242);
+    assert_eq(load8(p + 16), fill, "a read past arena_alloc(a, 16) yields the fill, not the neighbour");
+    assert_eq(load8(p - 1), fill, "a read before it yields the fill");
+    assert_eq(load64(p), 0, "user bytes are zero");
+    var o = arena_alloc(a, 5);
+    assert_eq(load8(o + 5), fill, "an odd request is guarded from its exact end");
+
+    test_group("decisions and accounting are the non-poison ones");
+    var b = arena_new(64);
+    var k = 0;
+    var got = 0;
+    while (k < 8) { if (arena_alloc(b, 8) != 0) { got = got + 1; } k = k + 1; }
+    assert_eq(got, 8, "arena_new(64) accepts 8 x arena_alloc(8)");
+    assert_eq(arena_alloc(b, 8), 0, "and refuses the 9th");
+    assert_eq(arena_used(b), 64, "arena_used == 64");
+    assert_eq(arena_remaining(b), 0, "arena_remaining == 0");
+    var ua = alloc_used();
+    var c = arena_new(100);
+    assert_eq(alloc_used() - ua, 176, "arena_new(100) costs the global heap 56 + 120 bytes, as without poison");
+    ua = alloc_used();
+    arena_alloc(c, 13);
+    assert_eq(alloc_used(), ua, "an arena request does not move alloc_used()");
+    assert_eq(arena_used(c), 16, "arena_used counts the 8-rounded request");
+    assert_eq(arena_remaining(c), 84, "arena_remaining likewise");
+
+    test_group("arena_reset quarantines");
+    store64(p, 1234);
+    arena_reset(a);
+    assert_eq(arena_used(a), 0, "reset rewinds the accounting");
+    assert_eq(load8(p), fill, "a read after reset yields the fill");
+    assert_eq(load8(p + 8), fill, "the whole span is quarantined");
+    assert_eq(poison_sweep(), 0, "an untouched quarantined block is clean");
+    store8(p + 3, 9);
+    assert_eq(poison_sweep(), 1, "a store through the stale pointer: sweep == 1");
+    store8(p + 3, fill);
+    assert_eq(poison_sweep(), 0, "restored");
+    var p2 = arena_alloc(a, 16);
+    assert_neq(p2, p, "the arena does not re-issue a quarantined block");
+
+    test_group("GROW and SPILL");
+    var g = arena_new_growable(32);
+    var g1 = arena_alloc(g, 24);
+    var g2 = arena_alloc(g, 24);
+    var g3 = arena_alloc(g, 100);
+    assert_nonnull(g3, "a growable arena serves past its first chunk");
+    assert_eq(load8(g2 + 24), fill, "a grown chunk's block is redzoned");
+    assert_eq(load8(g3 + 100), fill, "an oversize grown block is redzoned");
+    store8(g1, 7);
+    arena_free(g);
+    assert_eq(load8(g1), fill, "arena_free quarantines too");
+    assert_eq(arena_alloc(g, 8), 0, "a freed arena still refuses");
+
+    var s = arena_new(16);
+    arena_set_on_full(s, ARENA_FULL_SPILL);
+    arena_alloc(s, 16);
+    var u0 = alloc_used();
+    var sp = arena_alloc(s, 16);
+    assert_nonnull(sp, "the spill is served");
+    assert_eq(alloc_used() - u0, 16, "one spill, its overhead counted once: alloc_used moves by 16");
+    assert_eq(load8(sp + 16), fill, "the spilled block is redzoned");
+    assert_eq(load8(sp - 1), fill, "and has its leading redzone");
+
+    assert_eq(poison_sweep(), 0, "the heap sweeps clean at the end");
+    var r = assert_summary();
+    return r;
+}
+var ec = main();
+syscall(60, ec);

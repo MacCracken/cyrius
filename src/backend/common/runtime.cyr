@@ -105,6 +105,79 @@ fn _mode_unsupported(S, a64): i64 {
     return 1;
 }
 
+# 6.6.18 — CYRIUS_DCE=1 compaction: ONE predicate DECIDES and REPORTS. Six paths declined
+# compaction and said nothing: PE, x86 Mach-O, `--pie`, `shared;`, every aarch64 target, and a
+# saturated repair registry on the one target that does compact (static x86 ELF). The last is a
+# cliff: 4,096 dead fns compact to 4,456 B, 4,097 leave 201,064 B (one-line fns) — and it was misdiagnosed on
+# record as a DECODE_WALK_OK bail. The x86 FIXUP gates wp_compact on `why == 0`, so the note
+# cannot drift from the decision; wp_compact keeps its own guards (the CYRIUS_IR=3 seam uses
+# them) and FIXUP flags any refusal this does not classify. 0 = compaction will run.
+# `a64` = 1 from the aarch64 FIXUP. CHANGELOG [6.6.18]
+fn _dce_compact_why(S, a64): i64 {
+    if (a64 == 1) { return "aarch64 has no compaction repair model yet"; }
+    var fmt = _emit_fmt(S);
+    if (fmt == 3) { return "its import table is reached through rip-relative disp32s this pass cannot repair"; }
+    if (fmt == 1) { return "its stub table is reached through rip-relative disp32s this pass cannot repair"; }
+    if (_pie_mode != 0) { return "position-independent code reaches data through rip-relative disp32s this pass cannot repair"; }
+    if (L64(S + 0x18FCA0) > 1) { return "a shared object reaches data through rip-relative disp32s this pass cannot repair"; }
+    if (_wpnr_ovf == 1) { return "more than 4096 dead-code runs, the repair registry cap"; }
+    if (_wpjs_ovf == 1) { return "more than 49152 rel32/disp32 sources, the repair registry cap"; }
+    if (_wpsw_ovf == 1) { return "more than 4096 switch tables, the repair registry cap"; }
+    return 0;
+}
+fn _dce_target_word(S, a64): i64 {
+    var fmt = _emit_fmt(S);
+    if (a64 == 1) { return _fmt_word(fmt); }
+    if (fmt == 3) { return "PE"; }
+    if (fmt == 1) { return "x86_64 Mach-O"; }
+    if (_pie_mode != 0) { return "x86_64 ELF (--pie)"; }
+    if (L64(S + 0x18FCA0) > 1) { return "x86_64 ELF (shared;)"; }
+    return "x86_64 ELF";
+}
+# The reason rides INSIDE the existing `note: N unreachable fns (...)` line, never on a line of
+# its own: consumers filter that note with `grep -v "unreachable fns"`, and a separate line
+# would slip through every such filter.
+fn _dce_nop_tail(S, a64, why, nbytes): i64 {
+    PRSTR(" bytes NOPed");
+    if (why != 0) {
+        if (nbytes > 0) {
+            PRSTR("; compaction declined on ");
+            PRSTR(_dce_target_word(S, a64));
+            PRSTR(": ");
+            PRSTR(why);
+        }
+    }
+    PRSTR(")\n");
+    return 0;
+}
+# The CYRIUS_DCE-unset hint. It promised "set CYRIUS_DCE=1 to eliminate" on every target, including
+# the ones that can never eliminate (dce_eliminates.sh records that broken promise from v6.5.72).
+# Unset, FIXUP still records the dead-code runs, so the 4,096-run cap shows here too; the jump and
+# switch registries record only under CYRIUS_DCE=1 / CYRIUS_IR, so those two caps cannot.
+fn _dce_hint_tail(S, a64, why): i64 {
+    if (why == 0) {
+        PRSTR(" bytes — set CYRIUS_DCE=1 to eliminate, CYRIUS_DCE_VERBOSE=1 to list)\n");
+        return 0;
+    }
+    PRSTR(" bytes — set CYRIUS_DCE=1 to NOP-fill them; no compaction on ");
+    PRSTR(_dce_target_word(S, a64));
+    PRSTR(": ");
+    PRSTR(why);
+    PRSTR("; CYRIUS_DCE_VERBOSE=1 to list)\n");
+    return 0;
+}
+# Drift catch: called after a `why == 0` compaction. wp_compact zeroes the run count when it
+# compacts, so runs left over with nothing removed mean it refused for a reason the note above
+# did not give — a guard added to wp_compact and not to _dce_compact_why. Say so, not nothing.
+fn _dce_drift_check(S, removed): i64 {
+    if (removed != 0) { return 0; }
+    if (_wpnr_n == 0) { return 0; }
+    PRSTR("note: dead-code compaction declined on ");
+    PRSTR(_dce_target_word(S, 0));
+    PRSTR(": wp_compact refused for a reason the unreachable-fns note does not classify (compiler drift: _dce_compact_why is missing a guard) - the dead bytes stay NOP-filled\n");
+    return 1;
+}
+
 # _env_scratch + _read_env live in env.cyr (6.6.10), shared with the cx driver.
 include "src/backend/common/env.cyr"
 
