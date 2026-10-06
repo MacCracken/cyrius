@@ -14,8 +14,18 @@ cd "$ROOT" || { echo "FAIL: syntax_only_flag_pe: cannot cd to $ROOT"; exit 1; }
 CC=${CYCC:-"$ROOT/build/cycc"}
 [ -x "$CC" ] || { echo "FAIL: syntax_only_flag_pe: no compiler at $CC"; exit 1; }
 D=$(mktemp -d) && [ -d "$D" ] || { echo "FAIL: syntax_only_flag_pe: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
-export WINEPREFIX="$D/wine" WINEDEBUG=-all
-trap 'command -v wineserver >/dev/null 2>&1 && wineserver -k >/dev/null 2>&1; rm -rf "$D"' EXIT
+# A PRIVATE prefix, and wine's own HOME / XDG_CACHE_HOME, under $D; the EXIT teardown stops THIS
+# prefix's wineserver and removes its server dir, which `wineserver -k` leaves behind.
+WP="$D/wine"; mkdir -p "$D/whome"
+_wine_down() {
+    [ -d "$WP" ] || return 0
+    _ws="/tmp/.wine-$(id -u)/server-$(stat -c '%D' "$WP" 2>/dev/null)-$(printf '%x' "$(stat -c '%i' "$WP" 2>/dev/null || echo 0)")"
+    WINEPREFIX="$WP" wineserver -k >/dev/null 2>&1 || true
+    WINEPREFIX="$WP" wineserver -w >/dev/null 2>&1 || true
+    rm -rf "$_ws" || true
+}
+trap '_wine_down; rm -rf "$D"' EXIT
+export WINEPREFIX="$WP" HOME="$D/whome" XDG_CACHE_HOME="$D/whome/.cache" WINEDEBUG=-all
 "$CC" < src/main_win.cyr > "$D/xwin" 2>/dev/null && chmod +x "$D/xwin" \
   || { echo "FAIL: syntax_only_flag_pe: could not build src/main_win.cyr"; exit 1; }
 "$D/xwin" < src/main_win.cyr > "$D/cycc.exe" 2>/dev/null

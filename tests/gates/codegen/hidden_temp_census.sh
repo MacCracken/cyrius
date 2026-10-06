@@ -105,7 +105,9 @@ fi
 #   _await_coro_suspend 1 | _await_coro_force 1 | _await_spill 1 (6.6.10: a coroutine `await`
 #   keeps its operand, a forced Future's value, and the enclosing expression's pending pushes in
 #   coroutine-frame words across the suspend — parse_expr.cyr)
-HT_SPEC="PARSE_SWITCH:1 PARSE_MATCH:1 _stmt_qmark:3 _PARSE_TERM_IMPL:3 PARSE_FOR:4 _gv_target:1 _await_coro_suspend:1 _await_coro_force:1 _await_spill:1"
+# 6.6.17: _ptr_park — a `.name` through a `*T` field at TOP LEVEL parks the loaded pointer as a
+# dead pointer-mode global (inside a fn it takes a frame temp instead). CHANGELOG [6.6.17]
+HT_SPEC="PARSE_SWITCH:1 PARSE_MATCH:1 _stmt_qmark:3 _PARSE_TERM_IMPL:3 PARSE_FOR:4 _gv_target:1 _await_coro_suspend:1 _await_coro_force:1 _await_spill:1 _ptr_park:1"
 ht_attr=$(for f in $(find src/frontend src/common src/backend -name '*.cyr'); do
     awk '/^fn /{fn=$2; sub(/\(.*/,"",fn)} /_HTEMP\(S\)/{ if ($0 !~ /fn _HTEMP/) print fn }' "$f"
 done | sort | uniq -c | awk '{print $2":"$1}')
