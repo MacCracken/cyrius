@@ -21,7 +21,7 @@
 # a genuine typed pointer, which is also the case that never worked before this fix.
 set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
-CC="$ROOT/build/cycc"
+CC=${CYCC:-"$ROOT/build/cycc"}
 [ -x "$CC" ] || { echo "SKIP: build/cycc missing"; exit 77; }
 cd "$ROOT"
 T=$(mktemp --suffix=.cyr) && [ -f "$T" ] || { echo "FAIL: typed_pointer_warn_sign: mktemp --suffix=.cyr failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
@@ -245,6 +245,21 @@ n=$(warns)
 if [ "$crc" -ne 0 ]; then echo "  FAIL axis 10: the fixture did not compile (rc $crc)"; fail=1
 elif [ "$n" -ne 0 ]; then echo "  FAIL axis 10: a *T param / a captured *T / G += n warned $n time(s)"; fail=1
 else echo "  ok axis 10: a *T param, a captured *T and G += n are pointers"; fi
+
+# --- axis 11 (6.6.17): a difference of pointers with different element sizes is refused by name.
+# It used to scale the right pointer by the left one's step and compile a meaningless number.
+cat > "$T" <<'EOF'
+include "lib/syscalls.cyr"
+var arr[8];
+fn f(p: *i64, b: *u8): i64 { return p - b; }
+var ec = 0;
+syscall(60, ec);
+EOF
+crc=0
+"$CC" < "$T" > "$O" 2>"$E" || crc=$?
+if [ "$crc" -ne 0 ] && grep -q "pointer difference of pointers with different element sizes" "$E"; then
+    echo "  ok axis 11: *i64 - *u8 is refused by name"
+else echo "  FAIL axis 11: *i64 - *u8 was not refused by name (rc $crc)"; fail=1; fi
 
 [ "$fail" -eq 0 ] || { echo "FAIL: typed-pointer-warn-sign"; exit 1; }
 echo "PASS: typed-pointer-warn-sign — warns on typed pointers only, not on width/float-annotated locals"

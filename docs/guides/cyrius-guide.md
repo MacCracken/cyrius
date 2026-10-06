@@ -524,6 +524,13 @@ closure capture, a struct field or a fn result: `*u8` / `*i8` step 1, `*i16` 2, 
 is a pointer, not a `T`: `p + 1` on a `p: *f32` parameter is address arithmetic (not a
 float add), and on a `p: *Pt` parameter it is not `Pt`'s `+` overload — `p.x` still reads
 through it. To step in bytes, use an untyped address (`&buf + i * 4`, or `var q = p;`).
+`n + p` steps like `p + n`. `q - p` of two pointers with the same element size is the number
+of elements between them (`(q - p) / sizeof(T)`, a plain integer); two pointers with
+different element sizes (`*i64 - *u8`, `*Pt - &buf`) are a compile error — there is no
+honest unit — so subtract plain addresses for a byte count. A call's result is a pointer
+only when the fn declares `: *T`; `f(p) + 1` adds 1 whatever `p` is. (Before 6.6.17,
+`q - p` scaled `q`'s partner and read garbage, `n + p` stepped 1, and a call's result kept
+its last argument's step.)
 ⚠ Before 6.6.17 the step depended on where `p` was declared: a local `*i8` / `*i16` /
 `*i32` stepped 1 and every other local `*T` 8 (`*u8` too), a parameter or a captured
 `*T` 1, a global 8 in the leading declaration block and 1 / 2 / 4 / 8 by `T` after the

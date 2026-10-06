@@ -139,9 +139,31 @@ fn call_results(): i64 {
     return 0;
 }
 
+# ── pointer difference and `n + p` (C rules) ────────────────────────────────────────────────
+# Before 6.6.17 `q - p` scaled the right pointer by the left one's step (`*i16`: -4090 where 3 is
+# right) and `n + p` stepped 1.
+fn differences(p: *i16): i64 {
+    var q: *i16 = p + 3;
+    assert_eq(q - p, 3, "*i16 q - p is an element count");
+    var a: *Pt = &buf;
+    var b: *Pt = a + 2;
+    assert_eq(b - a, 2, "*Pt b - a");
+    assert_eq(a - b, 0 - 2, "*Pt a - b is negative");
+    assert_eq((b - a) + 1, 3, "an element count is a plain value");
+    var c: *i64 = &buf;
+    assert_eq(d(2 + c, c), 16, "2 + c steps like c + 2");
+    assert_eq(2 + c - c, 2, "2 + c - c");
+    var e = &buf + 16;
+    assert_eq(e - &buf, 16, "plain addresses: a byte difference, as before");
+    var n = 3;
+    assert_eq(d(c - n, c), 0 - 24, "c - n still steps n elements");
+    return 0;
+}
+
 alloc_init();
 locals();
 call_results();
+differences(&buf);
 params(&buf, &buf, &buf, &buf);
 compound(&buf);
 captures();

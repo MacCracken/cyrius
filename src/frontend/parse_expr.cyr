@@ -4697,6 +4697,74 @@ fn _PARSE_TERM_IMPL(S): i64 {
     return 0;
 }
 
+# ⛔ 6.6.17 — POINTER ARITHMETIC BY THE C RULES, on both operand orders. `+` / `-` scaled the RIGHT
+# operand by the LEFT one's step whatever the right one was, so with `p, q: *i16` the difference
+# `q - p` was `q - 2p`'s bits (`var q: *i16 = p + 3; q - p` read -4090 where 3 is right), and
+# `n + p` with the integer on the left stepped 1 where `p + n` steps sizeof(T). Now (ps = the
+# left operand's step, rs = the right one's, both 0 for a plain value):
+#   p + n, p - n      the integer steps ps (unchanged)
+#   n + p             the integer steps rs — `+` commutes (`_int_plus_ptr`)
+#   p - q             the ELEMENT count (p - q) / ps when ps == rs; a NAMED ERROR when the steps
+#                     differ (`*i64 - *u8`, `*Pt - &buf`) — the result has no honest unit. Two
+#                     pointers to different types of the same size cannot be told apart: the step
+#                     is all a pointer value carries. Plain addresses (`&a - &b`, step 1 each) stay
+#                     a byte difference, as they always were.
+# CHANGELOG [6.6.17]
+fn _ptr_add(S, ps): i64 {
+    var rs = GPSC(S);
+    if (ps == 0) { if (rs > 1) { return _int_plus_ptr(S, rs); } }
+    EPTR_SCALE(S, ps);
+    EMOVCA(S);
+    EUNSPILL(S);
+    EADDR(S);
+    SPSC(S, ps);
+    return 0;
+}
+# Stack = n, rax = p: rax = n * rs + p (EIMUL clobbers rcx, so n goes round the stack).
+fn _int_plus_ptr(S, rs): i64 {
+    EMOVCA(S);           # rcx = p
+    EUNSPILL(S);         # rax = n
+    EPUSHR(S);           # push n
+    EMOVI(S, 0);
+    EADDR(S);            # rax = p
+    EPOPC(S);            # rcx = n
+    EPUSHR(S);           # push p
+    EMOVI(S, rs);
+    EIMUL(S);            # rax = n * rs
+    EPOPC(S);            # rcx = p
+    EADDR(S);
+    SPSC(S, rs);
+    return 0;
+}
+fn _ptr_sub(S, ps): i64 {
+    var rs = GPSC(S);
+    if (ps > 0) { if (rs > 0) { return _ptr_diff(S, ps, rs); } }
+    EPTR_SCALE(S, ps);
+    EMOVCA(S);
+    EPOPR(S);
+    ESUBR(S);
+    SPSC(S, ps);
+    return 0;
+}
+fn _ptr_diff(S, ps, rs): i64 {
+    if (rs != ps) {
+        ERR_MSG(S, "pointer difference of pointers with different element sizes; for a byte count subtract plain addresses (`var a = p;`)", 117);
+    }
+    EMOVCA(S);
+    EPOPR(S);
+    ESUBR(S);            # rax = p - q, in bytes
+    if (ps > 1) {
+        EPUSHR(S);
+        EMOVI(S, ps);
+        EMOVCA(S);
+        EPOPR(S);
+        ECQO(S);
+        EIDIV(S);        # / sizeof(T)
+    }
+    SPSC(S, 0);
+    return 0;
+}
+
 fn EPTR_SCALE(S, ps): i64 {
     # rax has the offset value; multiply by pointer scale
     # mov rcx, rax; mov rax, ps; imul rcx → rax = offset * scale
@@ -4950,10 +5018,10 @@ fn _PEXPR_IMPL(S): i64 {
                         var cfr = _cfv + crv;
                         if (cfr >= 0) {
                             STI(S, GTI(S) + 1); SCP(S, _cfp); EMOVI(S, cfr); _cfv = cfr;
-                        } else { ESPILL(S); SPSC(S, 0); _RHS_T(S); EPTR_SCALE(S, ps); EMOVCA(S); EUNSPILL(S); EADDR(S); SPSC(S, ps); _cfo = 0; }
+                        } else { ESPILL(S); SPSC(S, 0); _RHS_T(S); _ptr_add(S, ps); ps = GPSC(S); _cfo = 0; }
                     }
-                    else { ESPILL(S); SPSC(S, 0); _RHS_T(S); EPTR_SCALE(S, ps); EMOVCA(S); EUNSPILL(S); EADDR(S); SPSC(S, ps); _cfo = 0; }
-                } else { ESPILL(S); SPSC(S, 0); _RHS_T(S); EPTR_SCALE(S, ps); EMOVCA(S); EUNSPILL(S); EADDR(S); SPSC(S, ps); _cfo = 0; }
+                    else { ESPILL(S); SPSC(S, 0); _RHS_T(S); _ptr_add(S, ps); ps = GPSC(S); _cfo = 0; }
+                } else { ESPILL(S); SPSC(S, 0); _RHS_T(S); _ptr_add(S, ps); ps = GPSC(S); _cfo = 0; }
             }
             if (addst <= 0) { _INT_F64_MIX(S); }
         }
@@ -4978,10 +5046,10 @@ fn _PEXPR_IMPL(S): i64 {
                             var cfr = _cfv - crv;
                             if (cfr >= 0) {
                                 STI(S, GTI(S) + 1); SCP(S, _cfp); EMOVI(S, cfr); _cfv = cfr;
-                            } else { EPUSHR(S); SPSC(S, 0); _RHS_T(S); EPTR_SCALE(S, ps); EMOVCA(S); EPOPR(S); ESUBR(S); SPSC(S, ps); _cfo = 0; }
+                            } else { EPUSHR(S); SPSC(S, 0); _RHS_T(S); _ptr_sub(S, ps); ps = GPSC(S); _cfo = 0; }
                         }
-                        else { EPUSHR(S); SPSC(S, 0); _RHS_T(S); EPTR_SCALE(S, ps); EMOVCA(S); EPOPR(S); ESUBR(S); SPSC(S, ps); _cfo = 0; }
-                    } else { EPUSHR(S); SPSC(S, 0); _RHS_T(S); EPTR_SCALE(S, ps); EMOVCA(S); EPOPR(S); ESUBR(S); SPSC(S, ps); _cfo = 0; }
+                        else { EPUSHR(S); SPSC(S, 0); _RHS_T(S); _ptr_sub(S, ps); ps = GPSC(S); _cfo = 0; }
+                    } else { EPUSHR(S); SPSC(S, 0); _RHS_T(S); _ptr_sub(S, ps); ps = GPSC(S); _cfo = 0; }
                 }
                 if (subst <= 0) { _INT_F64_MIX(S); }
             }
