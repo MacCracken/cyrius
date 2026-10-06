@@ -39,11 +39,11 @@ closeout), and the unscheduled 6.x backlog. Whole-cycle framing, the v6.7.x lang
 
 ## Where we are
 
-**Current head: v6.6.19** (2026-10-06) — **slot open** (6.6.18 shipped: tag `6.6.18` @ `010538b5`; the 12-fold wave
-tagged) · cycc **1,582,088 B** (`.text` **1,402,392**) · `cycc-native-aarch64` **1,323,392 B** · seed-derive **GREEN** ·
-cross-OS **GREEN** on ecb/ach/cass/pi at 6.6.18 · self_compile **987 ms** · **481** `.tcyr` (**196** in `crossos/`) ·
-**106** `lib/*.cyr` · **368** shell gates under `tests/gates/<bucket>/` · **0 open issues** · **3 open proposals** ·
-the next free CVE id is **79**.
+**Current head: v6.6.19** (2026-10-06) — **merged, release gate pending** (6.6.18 shipped: tag `6.6.18` @ `010538b5`)
+· cycc **1,586,184 B** (`.text` **1,405,464**) · `cycc-native-aarch64` **1,323,400 B** · seed-derive **GREEN** (lanes) ·
+cross-OS **GREEN** on ecb/ach/cass/pi per lane, the merged-tree run is the gate's · self_compile **933 ms** (intern
+lane; the gate re-measures) · **482** `.tcyr` (**197** in `crossos/`) · **106** `lib/*.cyr` · **372** shell gates under
+`tests/gates/<bucket>/` · api-surface **5,827** · **0 open issues** · **2 open proposals** · the next free CVE id is **79**.
 
 > ⚠ **Every figure above was DERIVED on the day, not carried** (re-derived 2026-09-27 at the 6.6.7 open).
 > `version-bump.sh` rewrites the version token, replaces the `(…)` after it with the bump date, and
@@ -51,11 +51,11 @@ the next free CVE id is **79**.
 > line and its parenthetical free of nested `(`/`)`, or the bump refuses to rewrite it (and
 > `tests/gates/toolchain/version_bump_doc_anchors.sh` goes red the day it is written). Re-derive gates with `find tests/gates -name '*.sh' | wc -l`; never increment.
 
-**v6.6.0–v6.6.17 are shipped** — the value-form `Result` flip, the repair window (.1–.6), the repair batch (.7–.12),
-the memory / TLS / curves / repair releases (.13–.16) and the manifest release (.17). One line per release is in
-[completed-phases.md](completed-phases.md) § *v6.6.x*; the detail is the CHANGELOG. **Do not re-add shipped
-releases here.** What is left of the minor: **6.6.18** distlib + poison (merged, gate pending), then the post-tag
-wave of 12 fold regenerations, **6.6.19** the fold re-vendor + embed + macOS threads, **6.6.20** closeout, then
+**v6.6.0–v6.6.18 are shipped** — the value-form `Result` flip, the repair window (.1–.6), the repair batch (.7–.12),
+the memory / TLS / curves / repair releases (.13–.16), the manifest release (.17) and distlib + poison (.18, then the
+post-tag wave of 12 fold regenerations). One line per release is in [completed-phases.md](completed-phases.md)
+§ *v6.6.x*; the detail is the CHANGELOG. **Do not re-add shipped releases here.** What is left of the minor:
+**6.6.19** the fold re-vendor + `[embed]` + macOS threads (merged, release gate pending), **6.6.20** closeout, then
 **v6.7.0** (*The 6.6.x tail* below).
 
 ---
@@ -86,7 +86,7 @@ reviews and a synthesis, archived at
 | Release | Contents |
 |---|---|
 | **6.6.18** distlib + poison — ✅ **SHIPPED 2026-10-06** (tag `6.6.18` @ `010538b5`; the 12-fold wave tagged after it) | ✅ **P4** option 2 (the compile-verify fixpoint is the only sidecar authority, with its prerequisites D1–D3; every bundle raw-includable through a requires block; a failed build names the leaf to declare); ✅ **P6** widened (`poison_allocator()`, leading redzone, live-block sweep, settable fill byte, `alloc()` / arena redzones, exit 86, `--poison=ab`; guard pages → backlog); ✅ the ESYSXLAT compile-time fold (`cycc-native-aarch64` −718,792 B, −35.2 %; the pre-commit ARM band back to 700K–2M); ✅ DCE's honest "compaction declined: <why>" note; ✅ the missing `sxtw`; **CVE-78**. The log / ws / ws_server fold bundles moved to 6.6.19 (user decision 2026-10-06: siblings can pin only a RELEASED cyrius, so all 12 folds regenerate in ONE wave after the tag). |
-| **6.6.19** — **OPEN 2026-10-06** | **After the post-tag fold wave** (*Sibling follow-ups* § 6.6.18): **R1** re-vendor all 12 folds byte-identical from their tags, then `docs/ecosystem.md` (`fold_table_matches_vendored`) and state.md — needs every wave tag; **R2** `lib/log.cyr`, `lib/ws.cyr` and `lib/ws_server.cyr` include their folds and `stdlib_modules_self_sufficient.sh`'s PENDING tier is retired — needs sakshi, bayan, sandhi; **R3** the native TLS stack drops its mirror of sigil's leaves and `folds_agnos_parity` includes each fold alone — needs sigil. Then **P2** `[embed]` (generated in cbt before `#@srcline` — never an in-band marker that reads files, the CVE-45 class; `[lib.PROFILE]` scoping; the interning perf fix B0b); x86-macOS real threads + `async_await_readable_ms` on macOS / agnos / Windows (*Open questions* 3). The release to trim if 6.7.0 should come sooner. |
+| **6.6.19** — **MERGED 2026-10-06, release gate pending** (main `e804cc44`; CHANGELOG [6.6.19]) | ✅ R1–R3, ✅ B0b (interning by index: byte-identical, self_compile −6.7 %, the 1.9 MB-embed case 11.4 s → ~0.9 s), ✅ P2 `[embed]` + distlib `embed` + the review's E-S1…E-S4 (no CVE: unreleased), ✅ T1 x86-macOS real threads, ✅ A1 / A2 `async_await_readable_ms` on macOS, Windows and agnos. The plan as placed: **After the post-tag fold wave** (*Sibling follow-ups* § 6.6.18): **R1** re-vendor all 12 folds byte-identical from their tags, then `docs/ecosystem.md` (`fold_table_matches_vendored`) and state.md — needs every wave tag; **R2** `lib/log.cyr`, `lib/ws.cyr` and `lib/ws_server.cyr` include their folds and `stdlib_modules_self_sufficient.sh`'s PENDING tier is retired — needs sakshi, bayan, sandhi; **R3** the native TLS stack drops its mirror of sigil's leaves and `folds_agnos_parity` includes each fold alone — needs sigil. Then **P2** `[embed]` (generated in cbt before `#@srcline` — never an in-band marker that reads files, the CVE-45 class; `[lib.PROFILE]` scoping; the interning perf fix B0b); x86-macOS real threads + `async_await_readable_ms` on macOS / agnos / Windows (*Open questions* 3). The release to trim if 6.7.0 should come sooner. |
 | **6.6.20** closeout | The full closeout pass (CLAUDE.md § Closeout, [cycle-discipline.md](cycle-discipline.md)): the release gate, heap / dead-code / refactor / code-review / cleanup passes, a security re-scan, the downstream check, vidya (`types.cyml` still stamps 6.6.1), the backlog re-triage, `verify-store`. |
 | **6.7.0** | The language arc ([roadmap_6.md](roadmap_6.md)): traits first, with the ADR and the one reserved-word survey at the open; P3 `const fn` after `const` and the if-expression; P5's execution half designed with C2. |
 | **after v6.7.x, before RISC-V** | The DCE compaction arc (aarch64 first, then PE / Mach-O — see its section), `lib/net.cyr` §4 per-arch socket peers, the remaining syscall families, AF_UNIX (default yes). |
@@ -170,15 +170,10 @@ detail in CHANGELOG [6.6.17]. Named profiles are in *Potential backlog*. Its les
 P2 / P4 / P6 add: gate against fixtures written the way CONSUMERS write the key, never in the implementation's own
 spelling (the v6.5.49 slice read `src` while 120 of 125 manifests declare `entry`, and its gate passed throughout).
 
-### P2 — Embed data files as source strings (`[embed]` / assets manifest)
-[`proposals/2026-08-10-embed-data-files-as-source-strings.md`](proposals/2026-08-10-embed-data-files-as-source-strings.md)
-
-**Placed: 6.6.19** (2026-10-02). Still needed (the section is silently ignored; 4 repos run python generators; nobody is blocked). It does NOT want `const fn`: bytes in, cbt writes escaped literals (a 1.9 MB blob already round-trips on all five targets). Generate in cbt before `#@srcline` — never a compiler-side marker that reads files (the CVE-45 class); `[lib.PROFILE]` scoping (rekha and sankoch are libraries); the interning perf fix B0b. Its "zero newlines" constraint is obsolete since `#@srcline` (v6.5.24).
-
-Ergonomics, not capability — the generated-`.cyr` idiom already works and is fleet-wide, and
-agnosai ships its own generator, so nothing is blocked. **Its prerequisite has cleared**:
-`2026-06-25-source-level-version-constant` shipped at v6.5.21, and `PP_EMIT_PKGVER`
-(`src/frontend/lex_pp.cyr`) is the template for a `#@embed` arm.
+### ~~P2 — Embed data files as source strings (`[embed]`)~~ → ✅ SHIPPED 6.6.19 (archived)
+[`proposals/archived/2026-08-10-embed-data-files-as-source-strings.md`](proposals/archived/2026-08-10-embed-data-files-as-source-strings.md)
+— its resolution header and CHANGELOG [6.6.19] *Embed — P2* carry the detail; the guide's *Embedding data files:
+[embed]* is the reference. The E-S3 residual (Windows, Apple Silicon) is in *Potential backlog*.
 
 ### ~~P3 — Compile-time evaluation (`const fn`)~~ → moved to v6.7.x (2026-10-01)
 [`proposals/2026-07-05-const-eval-comptime.md`](proposals/2026-07-05-const-eval-comptime.md)
@@ -360,11 +355,42 @@ until cyrius 6.6.18 is TAGGED, its release tarball (which ships `cycc_aarch64`) 
 - The ~62 non-fold producers with sidecars: no filing per repo — they meet the stale `--check` (its hint names the
   cause) and the agnos verify target at their own pin bump; consumers that used a leaf only because a sidecar
   over-reported it follow ecosystem-migration-6.6.18.md. No sweep.
+- **6.6.19 — filed 2026-10-06 in each repo's `docs/development/roadmap.md`** (docs commits, not pushed; each opens
+  "⛔ Needs cyrius >= 6.6.19 — do not bump the pin until 6.6.19 is tagged"; notes, never orders):
+  - **`[embed]` retires the embed generators** — **agnosai** (`scripts/gen-presets.sh` + the checked-in
+    `presets_data.cyr`; one entry per preset, `var X` becomes `X()`; JSON compaction stays theirs), **agnostic**
+    (`gen-presets.sh` outright and the escaping half of `gen-webgui.sh`; CSP hashing stays theirs), **rekha**
+    (`scripts/face2cyr.py` + the 1.65 MB `fonts/face_data.cyr` → `[embed] REKHA_FACE` + an embed-only `[lib.face]`
+    profile; agnos then points its `modules` at the face bundle), **sankoch** (folded stdlib —
+    `scripts/brotli_dict2cyr.py` + `nul-literal-gate.py` retire upstream, `[lib] embed` / `[lib.woff] embed` carry
+    `_brotli_dict_data`, then cyrius re-vendors `lib/sankoch.cyr` byte-identical).
+  - **Threads / async** — **sigil**: the `_crypto_needs_block` comment ("macOS keep it process-global") is stale,
+    both macOS arches have per-thread TLS. **sandhi**: `_sandhi_server_pool_inline` can test `CHAN_BLOCKING` instead
+    of `CYRIUS_TARGET_LINUX`, and the stop-flag idle path can use `async_await_readable_ms(sfd,
+    SANDHI_SERVER_STOP_POLL_MS)` instead of `sleep_ms` on every target. **agnos**: a non-destructive readiness probe
+    (a blocking epoll over VFS_SOCK, or #57 returning a VFS_SOCK fd) would let the cyrius peer drop A2's readiness
+    stash; and please boot-test sandhi's cooperative server (`run_async`) — A2 is verified only under the
+    PTRACE_SYSEMU fake kernel.
 
 ---
 
 ## Potential backlog — 6.x-cycle, unscheduled (NOT parked to 7.x)
 
+- **Found by the 6.6.19 lanes and their review (2026-10-06; backlog — only the user promotes).**
+  - **The `[embed]` link race on Windows and Apple Silicon (E-S3 residual).** Linux and x86 macOS walk the path
+    with `openat(dirfd, component, O_DIRECTORY | O_NOFOLLOW)`; PE keeps the per-component reparse-point check plus a
+    whole-path `O_NOFOLLOW` open, so a directory swapped for a junction between them is followed — fix with
+    `GetFinalPathNameByHandleW` on the opened handle + containment under the project root (a NEW PE reroute).
+    macOS arm64's `SYS_OPENAT` 56 is rerouted to BSD `open` DROPPING the dirfd (Linux `AT_FDCWD` −100 ≠ Darwin −2,
+    so a straight row to `openat` 463 would break every open) — needs a dirfd-preserving Mach-O route, with a
+    companion in `tests/tcyr/crossos/`. Both need concurrent write access to the checkout during the build.
+  - **`sizeof` is in neither of `util.cyr`'s reserved tables** (`TOKNAME_BUILTIN` / `IS_KEYWORD_TOK`): `fn
+    sizeof()` declares, and calling it is a parse error. `mulh64` and `fncall0..8` are the same shape
+    (`_is_ident_intrinsic` / `_IS_FNCALL_NAME`). Any tool that derives the reserved set from util.cyr alone misses
+    them — `[embed]`'s list reads all four sources.
+  - **The macOS-arm64 `cyrius` CLI looks for `cycc_aarch64` in `CYRIUS_HOME/bin`** (the ecb `[embed]` smoke had to
+    supply one) — check whether that is intended for a native Mach-O host.
+  - **Some gates leave temp dirs in `TMPDIR`** — the 9.9.9 installer staging and `cyrius-<pid>` test dirs.
 - **Found by the 6.6.19 R2/R3 work (2026-10-06; backlog — only the user promotes).**
   - ⚠ **A redefined fn did not bind to its LAST definition in one build** (possible silent mis-binding): in
     `stdlib_alloc_refusal_sentinels.sh`'s ws_server probe, a stub `sandhi_server_find_header` defined after
@@ -510,8 +536,6 @@ priority surfaces.
   - Windows `sys_symlink` (CreateSymbolicLinkW) widens with `_win_widen` at 519 units, no `\\?\` — a link
     at a path over 260 units fails -1 (honest).
   - cyrius-lsp `lsp_read_file` reads the open document through a fixed 1 MB buffer, silently.
-  - `async_await_readable_ms` is defined only in `lib/async.cyr`'s Linux branch (sandhi's cooperative
-    server loop on macOS is unexercised).
   - `cyrius lib sync --full` does not re-lock `cyrius.lock`, so rows for files a repo does not vendor keep
     stale hashes until a lock is regenerated from empty (kriya and yantra both hit it).
   - Inside an aarch64 region (6.6.12 B05's `#@a+` markers) a raw literal that HAS an ESYSXLAT x86-compat
@@ -551,9 +575,6 @@ priority surfaces.
 - **Auto-vectorization of scalar SOA loops** — item 4 of the SIMD filing's own fix list, which
   that file already calls "longer term".
 
-- **Fold bundles that are raw-includable** — ✅ the distlib half shipped in 6.6.18 (every bundle carries a
-  compile-verified requires block); the 12 fold regenerations are the post-tag wave, and the re-vendor plus `log` /
-  `ws` / `ws_server` including their folds are **6.6.19 R1–R2** (*The 6.6.x tail*). Listed until 6.6.19 ships.
 - **The syscall families consumers still hand-roll, unnamed by the stdlib — `setrlimit`, `ptrace`,
   `sched_getaffinity`, `pread64` / `pwrite64`** — what remains of the widened surface v6.6.5
   measured and deliberately did NOT ship. Per-family reasons, consumers and collision analysis
@@ -633,9 +654,11 @@ whereupon it became 43 derived rows and shipped at `.51`. Assume the same of any
    re-review WITH item 1's performance track**, the two being the same subject. Explicitly *not*
    silently dropped — parked against that track's opening review, which decides whether it still
    earns a bite. Record the outcome here either way.
-3. **macOS concurrency ordering — PLACED 6.6.19** (2026-10-02, with the tail plan): x86-macOS real
-   threads and `async_await_readable_ms` on macOS / agnos / Windows. Real platform work with a
-   genuinely broken verb on a gate host; no consumer waiting; it mirrors `thread_win`.
+3. **macOS concurrency ordering — RESOLVED in 6.6.19** (placed 2026-10-02 with the tail plan): **T1** x86
+   macOS starts real threads (raw `bsdthread_*`, per-thread TLS in the gs base, the `__ulock` channel shared
+   with arm64, `THREADS_CONCURRENT` = `CHAN_BLOCKING` = 1 on both Mach-O arches); **A1** `async_await_readable_ms`
+   on macOS and Windows over `fd_wait_ready`; **A2** the agnos peer over a readiness stash in the socket adapter.
+   The legacy `async_await_readable` really waits on all three. CHANGELOG [6.6.19] *Threads / async*.
 4. **A named struct argument over 8 bytes — SHIPPED 6.6.16 (C7)** (decided 2026-10-02, user accepted:
    it is a COPY, matching 6.6.12's field-argument copy and fixing a callee that mutated the caller's
    struct — `bump(p)` twice gave 4 then 5). The callee copies on entry, so it holds for every argument
