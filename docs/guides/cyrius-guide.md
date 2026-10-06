@@ -2022,8 +2022,9 @@ instruction.
   both be declared, and a name may appear once. A NAME equal to a function your program or the
   stdlib defines collides like any duplicate function: same arity, a `duplicate fn` warning at the
   later definition (which wins); different arity, an error.
-- The path is relative to the project and stays inside it: no leading `/`, no `\`, no drive
-  (`C:`), no `..`, no control character, no `.git` component (in any case). **No symlink anywhere
+- The path is relative to the project and stays inside it: no leading `/`, no `\`, no `:` (a
+  drive, or an NTFS stream such as `.git::$INDEX_ALLOCATION`), no `..`, no control character, no
+  `.git` component (in any case). **No symlink anywhere
   on the path** — `[embed]` is the one key that copies a file into a built artifact, and a link
   committed into an untrusted checkout could ship any file on the build machine inside a release
   binary. The file must exist and be a regular file; it is opened once and the bytes the build

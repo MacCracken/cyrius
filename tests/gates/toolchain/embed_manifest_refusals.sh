@@ -12,7 +12,9 @@
 #
 # AXES (each refusal row: `cyrius build` exits 1 AND names `[embed] NAME`; a project whose build
 # is otherwise valid, so on the pre-6.6.19 CLI every row exits 0 — RED)
-#   1. paths: absolute, `../x`, `a/../../x`, 'C:\x', '\x', a committed link `data/k ->
+#   1. paths: absolute, `../x`, `a/../../x`, 'C:\x', '\x', a `:` anywhere (the NTFS stream forms
+#      `.git::$INDEX_ALLOCATION/config` and `.git:$I30:$INDEX_ALLOCATION/config` name the .git
+#      directory on Windows; `file:stream`), a committed link `data/k ->
 #      /etc/hostname`, a path through a linked directory, `.git/config` and `.GIT/config`, a
 #      missing file, a directory.
 #   2. sizes, against cycc's pool (2,097,152 B; LEX refuses at `spos + 1 >= 2097152`, so it holds
@@ -47,6 +49,7 @@ P="$W/p"
 mkdir -p "$P/data" "$P/sub" "$P/.git" "$P/real"
 printf 'syscall(60, 0);\n' > "$P/main.cyr"
 printf '{"preset": "lean"}\n' > "$P/data/x.json"
+printf 'a real file whose name holds a colon\n' > "$P/data/x.json:secret"
 printf 'in-project\n' > "$P/real/x.json"
 printf '[core]\n\textraheader = AUTHORIZATION: basic c2VjcmV0\n' > "$P/.git/config"
 ln -s /etc/hostname "$P/data/k"
@@ -63,12 +66,14 @@ entry = "main.cyr"
 output = "build/main"
 '
 cli() { ( cd "$P" && env -u CYRIUS_DCE -u CYRIUS_DEFINES CYRIUS_HOME="$W/home" CYRIUS_RESOLVED=1 "$W/cyrius" "$@" ); }
-# refused <label> <expected NAME as printed> <[embed] body line(s)>
+# refused <label> <expected NAME as printed> <[embed] body line(s)> [<reason substring>]
 refused() {
+    rm -rf "$P/build"
     printf '%s[embed]\n%s\n' "$HDR" "$3" > "$P/cyrius.cyml"
     rc=0; cli build > "$W/out" 2>&1 || rc=$?
     if [ "$rc" = 0 ]; then fail "$1: exit 0 (the [embed] entry was accepted or ignored): $(head -2 "$W/out" | tr '\n' ' ')"; return; fi
     grep -qF "error: cyrius.cyml [embed] $2" "$W/out" || fail "$1: exit $rc but no 'error: cyrius.cyml [embed] $2' line: $(head -2 "$W/out" | tr '\n' ' ')"
+    [ -z "$4" ] || grep -qF "$4" "$W/out" || fail "$1: refused, but not for the reason '$4': $(head -1 "$W/out")"
     [ -e "$P/build/main" ] && fail "$1: a binary was built anyway"
     rm -rf "$P/build"
 }
@@ -79,6 +84,9 @@ refused "axis 1 absolute"        'ABS = "/etc/hostname"'   'ABS = "/etc/hostname
 refused "axis 1 ../x"            'UP = "../x"'             'UP = "../x"'
 refused "axis 1 a/../../x"       'UP2 = "a/../../x"'       "UP2 = 'a/../../x'"
 refused "axis 1 drive"           'DRV = "C:\x"'            "DRV = 'C:\\x'"
+refused "axis 1 ntfs stream"     'ADS = ".git::$INDEX_ALLOCATION/config"' "ADS = '.git::\$INDEX_ALLOCATION/config'" "holds a ':'"
+refused "axis 1 ntfs I30"        'I30 = ".git:$I30:$INDEX_ALLOCATION/config"' "I30 = '.git:\$I30:\$INDEX_ALLOCATION/config'" "holds a ':'"
+refused "axis 1 file:stream"     'STR = "data/x.json:secret"' "STR = 'data/x.json:secret'" "holds a ':'"
 refused "axis 1 backslash"       'BS = "\x"'               "BS = '\\x'"
 refused "axis 1 committed link"  'LINK = "data/k"'         'LINK = "data/k"'
 refused "axis 1 linked dir"      'VIA = "lnk/x.json"'      'VIA = "lnk/x.json"'
@@ -86,7 +94,7 @@ refused "axis 1 .git"            'GIT = ".git/config"'     'GIT = ".git/config"'
 refused "axis 1 .GIT"            'GIT2 = ".GIT/config"'    'GIT2 = ".GIT/config"'
 refused "axis 1 missing"         'MISS = "nope.json"'      'MISS = "nope.json"'
 refused "axis 1 directory"       'DIR = "sub"'             'DIR = "sub"'
-[ "$FAIL" = "$x" ] && echo "  ok axis 1: absolute, .., C:, \\, a committed link, a linked dir, .git (any case), missing and a directory are refused by name"
+[ "$FAIL" = "$x" ] && echo "  ok axis 1: absolute, .., C:, any ':' (NTFS streams), \\, a committed link, a linked dir, .git (any case), missing and a directory are refused by name"
 
 # ── axis 2: sizes ────────────────────────────────────────────────────────────────────────
 x=$FAIL

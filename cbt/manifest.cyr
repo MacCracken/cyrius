@@ -723,13 +723,14 @@ fn _embed_path_bad(path): i64 {
     var n = strlen(path);
     if (n == 0) { return "the path is empty"; }
     if (load8(path) == 47) { return "the path is absolute; an [embed] path is relative to the project"; }
-    if (n >= 2 && load8(path + 1) == 58) {
-        var d = load8(path) | 32;
-        if (d >= 97 && d <= 122) { return "the path names a drive (X:); an [embed] path is relative to the project"; }
-    }
     var i = 0;
     while (i < n) {
         var c = load8(path + i);
+        # A `:` ANYWHERE, not only `X:`: on NTFS `name:stream` opens an alternate data stream, and
+        # `.git::$INDEX_ALLOCATION/config` (or `.git:$I30:$INDEX_ALLOCATION/config`) names the
+        # .git DIRECTORY itself while its component text is not `.git` (git's CVE-2019-1352 class;
+        # read through CreateFile on cass). A drive (`C:x`) is the same byte.
+        if (c == 58) { return "the path holds a ':' (a drive, or an NTFS stream like .git::$INDEX_ALLOCATION); an [embed] path is a plain relative path"; }
         if (c == 92) { return "the path holds a backslash; write [embed] paths with / (a \\ is a separator on Windows and would step past these checks)"; }
         if (c < 32 || c == 127) { return "the path holds a control character"; }
         i = i + 1;
