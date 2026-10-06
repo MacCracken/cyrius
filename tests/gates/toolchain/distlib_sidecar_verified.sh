@@ -356,12 +356,26 @@ A14=$(mkproj a14 'fn vprobe_scale(x): i64 {
 [ -f "$A14/dist/vprobe.deps" ] || fail "axis 14: no sidecar written under a HOME whose slot is stale — the verify read HOME's slot, not CYRIUS_HOME's"
 grep -qx 'math' "$A14/dist/vprobe.deps" || fail "axis 14: 'math' was not re-added under a HOME whose slot is stale"
 
+# axis 15 (6.6.18, D2): A NAME THE CONVERGED VERIFY CANNOT OWN IS NAMED, with the targets it
+# fails on. It was a silent `continue` ("not a stdlib symbol — the consumer's problem"), so a
+# short sidecar and a deliberate consumer hook looked the same; niyama's family symbols and
+# mabda's agnos-only O_RDWR published at rc 0 with nothing said. A WARNING: the exit status is
+# unchanged (a bundle may call a consumer-defined hook). 15b: axis 2's sufficient bundle stays
+# silent. Measured on a2c60583: the output never mentions the name.
+A15=$(mkproj a15 'fn vprobe_hook(x): i64 {
+    return _dl_no_such_fn_anywhere(x);
+}' '"alloc"')
+rc15=0; O15=$(run_distlib "$A15") || rc15=$?
+[ "$rc15" -eq 0 ] || fail "axis 15: distlib exited $rc15 over an unowned name — D2 is a warning, the exit status must not change: $(echo "$O15" | head -3)"
+echo "$O15" | grep -q "_dl_no_such_fn_anywhere (every target)" || fail "axis 15: the unowned name and its targets were not named: $(echo "$O15" | head -4)"
+echo "$OUTB" | grep -q 'still undefined' && fail "axis 15b: a self-sufficient bundle printed the unowned-name warning: $(echo "$OUTB" | grep -A2 'still undefined')"
+
 # axis 12: the verify's scratch mirror (dist/.dlverify-<pid>) never outlives the run — on the
 # success path or on the fail-loud one.
-for d in "$P5" "$P6" "$P9" "$P10" "$P10B" "$P10C" "$P10D" "$P10E" "$P11" "$P13" "$P13B" "$A14"; do
+for d in "$P5" "$P6" "$P9" "$P10" "$P10B" "$P10C" "$P10D" "$P10E" "$P11" "$P13" "$P13B" "$A14" "$A15"; do
     if ls -a "$d/dist" 2>/dev/null | grep -q '^\.dlverify-'; then
         fail "axis 12: $d/dist still holds the verify's scratch mirror"
     fi
 done
 
-echo "PASS: distlib_sidecar_verified (missing leaf repaired, sufficient set untouched, dispatcher not peer, all resolve, named deps in the unit, fails loud, the round cap is not convergence, CYRIUS_HOME's slot not HOME's)"
+echo "PASS: distlib_sidecar_verified (missing leaf repaired, sufficient set untouched, dispatcher not peer, all resolve, named deps in the unit, fails loud, the round cap is not convergence, CYRIUS_HOME's slot not HOME's, an unowned name is named)"

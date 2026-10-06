@@ -4098,7 +4098,10 @@ fn _distlib_verify_rounds(leaves, out_path, named_deps, root, m): i64 {
             recorded_here = recorded_here + 1;
             added_total = added_total + 1;
         }
-        if (added_here == 0) { return added_total; }   # fixpoint: nothing new to add
+        if (added_here == 0) {                           # fixpoint: nothing new to add
+            _distlib_report_unowned(out_path, names, masks);
+            return added_total;
+        }
         if (recorded_here > 0) { scope = vec_new(); }   # (2) above
     }
     # ⛔ THE CAP IS NOT A FIXPOINT. Falling out of the loop means the last round ADDED leaves that
@@ -4106,6 +4109,44 @@ fn _distlib_verify_rounds(leaves, out_path, named_deps, root, m): i64 {
     # as real convergence, and an 8-leaf chain published 6 leaves as "compile-verified" at rc 0.
     # A bigger cap would only move the failure one leaf further out. CHANGELOG [6.6.11]
     return _distlib_verify_fail("distlib: sidecar verify did not converge in 6 rounds — sidecar NOT written", out_path);
+}
+
+# ⚠ 6.6.18 (D2) — NAME WHAT THE CONVERGED VERIFY COULD NOT OWN. A name no stdlib leaf, named
+# dep or bundled module defines was a silent `continue` above ("the consumer's problem"), so a
+# short sidecar and a bundle that calls a consumer-supplied hook looked the same: niyama's
+# family symbols and mabda's agnos-only O_RDWR both published at rc 0 with nothing said. Every
+# name still undefined in the final round is listed with the targets it fails on. A WARNING:
+# the exit status is unchanged, because a bundle may deliberately call a consumer's hook.
+# CHANGELOG [6.6.18]
+fn _distlib_report_unowned(out_path, names, masks): i64 {
+    var n = vec_len(names);
+    if (n == 0 || _quiet == 1) { return 0; }
+    var all_mask = (1 << _DL_TGT_N) - 1;
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "warn: distlib: ");
+    str_builder_add_cstr(sb, out_path);
+    str_builder_add_cstr(sb, " uses ");
+    str_builder_add_int(sb, n);
+    str_builder_add_cstr(sb, " name(s) still undefined after the sidecar verify converged — no stdlib leaf, named dep or bundled module defines them there (a consumer must supply them, or the bundle is short):\n");
+    var i = 0;
+    while (i < n && i < 40) {
+        str_builder_add_cstr(sb, "  ");
+        str_builder_add_cstr(sb, vec_get(names, i));
+        str_builder_add_cstr(sb, " (");
+        var mk = vec_get(masks, i);
+        if (mk == all_mask) { str_builder_add_cstr(sb, "every target"); }
+        else { _distlib_add_targets(sb, mk); }
+        str_builder_add_cstr(sb, ")\n");
+        i = i + 1;
+    }
+    if (n > 40) {
+        str_builder_add_cstr(sb, "  ... and ");
+        str_builder_add_int(sb, n - 40);
+        str_builder_add_cstr(sb, " more\n");
+    }
+    var msg = str_data(str_builder_build(sb));
+    sys_write(STDERR_FD, msg, strlen(msg));
+    return 0;
 }
 
 fn _distlib_stdlib_root(): i64 {
