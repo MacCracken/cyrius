@@ -365,6 +365,14 @@ until cyrius 6.6.18 is TAGGED, its release tarball (which ships `cycc_aarch64`) 
 
 ## Potential backlog — 6.x-cycle, unscheduled (NOT parked to 7.x)
 
+- **Found by the 6.6.19 R2/R3 work (2026-10-06; backlog — only the user promotes).**
+  - ⚠ **A redefined fn did not bind to its LAST definition in one build** (possible silent mis-binding): in
+    `stdlib_alloc_refusal_sentinels.sh`'s ws_server probe, a stub `sandhi_server_find_header` defined after
+    `include "lib/ws_server.cyr"` was called from `main`, yet `ws_server_handshake` still called sandhi's
+    version — while the compiler warns "last definition wins". Two-file repros DO bind to the last
+    definition, so the trigger is specific to that build (call sites compiled before the redefinition inside a
+    large fold?). Needs a repro hunt, then a fix or a named refusal.
+
 Real 6.x-line work without a committed slot; pulled into a release the moment a consumer or
 priority surfaces.
 
