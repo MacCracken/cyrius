@@ -4414,6 +4414,9 @@ fn _dep_lock_guard_stdlib_leaf(src, dst): i64 {
     # same shape appears when the LOCK moved (`cyrius update` + `--lock`) and the snapshot
     # did not; the `source:` line lets the reader tell which side moved
     var m1 = ": cyrius.lock and the pinned stdlib snapshot DISAGREE under an unchanged pin ";
+    # 6.6.17: `lib sync` cannot tell an unchanged pin from one `deps` just re-stamped; its own
+    # summary (_libsync_guard) says which advice fits which case.
+    if (streq(_dep_lock_guard_verb, "deps") == 0) { m1 = ": cyrius.lock and the pinned stdlib snapshot DISAGREE under the pin the lock records, "; }
     sys_write(STDERR_FD, m1, strlen(m1));
     sys_write(STDERR_FD, pin, strlen(pin));
     var m2 = "\n  cyrius.lock records  ";
@@ -4425,11 +4428,15 @@ fn _dep_lock_guard_stdlib_leaf(src, dst): i64 {
     var m4 = "\n  source: ";
     sys_write(STDERR_FD, m4, strlen(m4));
     sys_write(STDERR_FD, src, strlen(src));
+    if (streq(_dep_lock_guard_verb, "deps") == 0) {
+        _ew("\n  refusing to vendor or re-lock this leaf.\n");
+        _dep_lock_refused = _dep_lock_refused + 1;
+        return 3;
+    }
     var m5 = "\n  refusing to vendor or re-lock this leaf. Either change the pin ([package].cyrius; an unpinned manifest follows the installed toolchain), or run";
     sys_write(STDERR_FD, m5, strlen(m5));
-    _ew(" `cyrius ");
-    _ew(_dep_lock_guard_verb);
-    _ew(" --relock` to accept the new content explicitly.\n");
+    var m6 = " `cyrius deps --relock` to accept the new content explicitly.\n";
+    sys_write(STDERR_FD, m6, strlen(m6));
     _dep_lock_refused = _dep_lock_refused + 1;
     return 3;
 }

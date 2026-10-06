@@ -1610,9 +1610,10 @@ fn _libsync_guard(ps, pd): i64 {
     _ew("error: lib sync: ");
     fmt_int_fd(STDERR_FD, _dep_lock_refused);
     _ew(" file(s) refused above — NOTHING was written and cyrius.lock is unchanged.\n");
-    _ew("  After a pin move, run `cyrius lib sync` BEFORE `cyrius deps` / `build`: those re-stamp the\n");
-    _ew("  lock with the new pin and keep the previous pin's rows for files they do not vendor, which\n");
-    _ew("  then read as a moved snapshot here. `cyrius lib sync --relock` accepts the snapshot's bytes.\n");
+    _ew("  If you just moved [package].cyrius and ran `deps`/`build` first, these rows are the\n");
+    _ew("  previous pin's: `cyrius lib sync --relock` (with --full for the whole snapshot).\n");
+    _ew("  If the pin did NOT move, the installed snapshot changed under it — reinstall that\n");
+    _ew("  version; do not `--relock`.\n");
     return 1;
 }
 

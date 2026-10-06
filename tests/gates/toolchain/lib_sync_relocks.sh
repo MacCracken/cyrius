@@ -117,7 +117,7 @@ _locked_at_666
 echo '# moved under the same pin' >> "$H/versions/6.6.6/lib/string.cyr"
 cp "$P/cyrius.lock" "$W/a3.lock"; cp "$P/lib/string.cyr" "$W/a3.string"
 rc=0; _cy lib sync > "$W/a3.out" 2>&1 || rc=$?
-{ [ "$rc" -ne 0 ] && grep -q 'lib/string.cyr: cyrius.lock and the pinned stdlib snapshot DISAGREE' "$W/a3.out"; } \
+{ [ "$rc" -ne 0 ] && grep -q 'lib/string.cyr: cyrius.lock and the pinned stdlib snapshot DISAGREE' "$W/a3.out" && grep -q 'reinstall that' "$W/a3.out"; } \
   || { fail "axis 3: lib sync accepted a snapshot that moved under an unchanged pin (rc=$rc)"; x=1; }
 rc=0; _cy lib sync --dry-run > "$W/a3d.out" 2>&1 || rc=$?
 [ "$rc" -ne 0 ] || { fail "axis 3: lib sync --dry-run reported success for a sync that refuses"; x=1; }
