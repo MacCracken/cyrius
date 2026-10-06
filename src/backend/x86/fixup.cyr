@@ -742,7 +742,7 @@ fn FIXUP(S): i64 {
         if (dce_enabled == 1) {
             _dce_nop_tail(S, 0, _wp_why, dce_bytes);
         } else {
-            syscall(SYS_WRITE, 2, " bytes — set CYRIUS_DCE=1 to eliminate, CYRIUS_DCE_VERBOSE=1 to list)\n", 72);
+            _dce_hint_tail(S, 0, _wp_why);
         }
         # v5.11.45: per-fn name list now gated behind CYRIUS_DCE_VERBOSE=1.
         # Default-off because the list is dominated by mode-dispatched

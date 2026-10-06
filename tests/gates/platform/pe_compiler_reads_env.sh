@@ -34,7 +34,8 @@
 #           when unset. This knob is read in src/main_win.cyr.
 #   axis 4  KNOB TWO, through a DIFFERENT code path. CYRIUS_DCE is read in
 #           src/backend/x86/fixup.cyr and is observable in the DCE note: unset it invites
-#           you ("set CYRIUS_DCE=1 to eliminate"), set it reports "NOPed". One knob could
+#           you ("set CYRIUS_DCE=1 to ..."; on PE "to NOP-fill them" since 6.6.18 — it never
+#           eliminated there), set it reports "NOPed". One knob could
 #           be wired by accident at one call site; two, in two files, cannot. Since 6.6.18
 #           the set run must also say WHY the PE fork keeps the bytes ("NOPed; compaction
 #           declined on PE: ...") — this is the only leg that runs the main_win.cyr fork's
@@ -169,14 +170,20 @@ else
     CYRIUS_DCE=1 wine "$D/cycc.exe" < "$D/heavy.cyr" > /dev/null 2> "$D/pe_dce.err"
     wine "$D/cycc.exe" < "$D/heavy.cyr" > /dev/null 2> "$D/pe_nodce.err"
     noped=$(grep -c 'bytes NOPed' "$D/pe_dce.err" || true)
-    invited=$(grep -c 'set CYRIUS_DCE=1 to eliminate' "$D/pe_nodce.err" || true)
-    still=$(grep -c 'set CYRIUS_DCE=1 to eliminate' "$D/pe_dce.err" || true)
+    # 6.6.18: the unset hint reads "set CYRIUS_DCE=1 to NOP-fill them; no compaction on PE: ..."
+    # — PE cannot eliminate, so it no longer promises to. Match the invitation, not the verb.
+    invited=$(grep -c 'set CYRIUS_DCE=1 to' "$D/pe_nodce.err" || true)
+    promised=$(grep -c 'to eliminate' "$D/pe_nodce.err" || true)
+    still=$(grep -c 'set CYRIUS_DCE=1 to' "$D/pe_dce.err" || true)
     said=$(grep -c 'NOPed; compaction declined on PE: ' "$D/pe_dce.err" || true)
     if [ "$invited" -lt 1 ]; then
         echo "  FAIL axis 4 (anti-vacuous): the unset PE run printed no DCE note at all, so the set run proves nothing"
         fail=1
     elif [ "$noped" -lt 1 ] || [ "$still" != "0" ]; then
         echo "  FAIL axis 4: CYRIUS_DCE is invisible to cycc.exe — the note still invites you to set it ($still) and reports no elimination ($noped)"
+        fail=1
+    elif [ "$promised" != "0" ]; then
+        echo "  FAIL axis 4: cycc.exe's unset hint still promises elimination on PE, which cannot eliminate: $(grep 'unreachable fns' "$D/pe_nodce.err" | head -1)"
         fail=1
     elif [ "$said" != "1" ]; then
         echo "  FAIL axis 4: cycc.exe NOP-filled under CYRIUS_DCE=1 but did not say compaction was declined on PE ($said report lines, want 1): $(grep 'unreachable fns' "$D/pe_dce.err" | head -1)"

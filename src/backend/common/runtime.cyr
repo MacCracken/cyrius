@@ -150,6 +150,21 @@ fn _dce_nop_tail(S, a64, why, nbytes): i64 {
     PRSTR(")\n");
     return 0;
 }
+# The CYRIUS_DCE-unset hint. It promised "set CYRIUS_DCE=1 to eliminate" on every target, including
+# the ones that can never eliminate (dce_eliminates.sh records that broken promise from v6.5.72).
+# With the flag unset the registry is empty, so only the per-target reasons can show here.
+fn _dce_hint_tail(S, a64, why): i64 {
+    if (why == 0) {
+        PRSTR(" bytes — set CYRIUS_DCE=1 to eliminate, CYRIUS_DCE_VERBOSE=1 to list)\n");
+        return 0;
+    }
+    PRSTR(" bytes — set CYRIUS_DCE=1 to NOP-fill them; no compaction on ");
+    PRSTR(_dce_target_word(S, a64));
+    PRSTR(": ");
+    PRSTR(why);
+    PRSTR("; CYRIUS_DCE_VERBOSE=1 to list)\n");
+    return 0;
+}
 # Drift catch: called after a `why == 0` compaction. wp_compact zeroes the run count when it
 # compacts, so runs left over with nothing removed mean it refused for a reason the note above
 # did not give — a guard added to wp_compact and not to _dce_compact_why. Say so, not nothing.

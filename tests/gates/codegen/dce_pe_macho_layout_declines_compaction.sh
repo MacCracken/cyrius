@@ -184,4 +184,28 @@ declined "axis 8 (aarch64 ELF)" "$WORK/a8elf.err" "aarch64 ELF" "no compaction r
 pbuild "$WORK/cc_x" "$WORK/p3.cyr" "$WORK/a8mo.err" CYRIUS_DCE=1 CYRIUS_MACHO_ARM=1
 declined "axis 8 (arm64 Mach-O)" "$WORK/a8mo.err" "arm64 Mach-O" "no compaction repair model"
 
-echo "PASS: dce_pe_macho_layout_declines_compaction (PE payload pinned at $A; Mach-O $MA B stable; ELF $EA -> $EB B; declines named on PE, x86 Mach-O, --pie, shared;, aarch64 ELF, arm64 Mach-O and past the 4096-run registry)"
+# axis 9: with CYRIUS_DCE UNSET, the hint stops promising elimination on a target that cannot
+# eliminate. It read "set CYRIUS_DCE=1 to eliminate" everywhere (dce_eliminates.sh:5 records the
+# same broken promise from v6.5.72); a declining target now says NOP-fill, and why.
+hinted() {  # hinted <axis> <errfile> <target word>
+    hl=$(grep 'unreachable fns' "$2" || true)
+    [ -n "$hl" ] || fail "$1: no unreachable-fns note at all — the probe proves nothing: $(cat "$2")"
+    if printf '%s\n' "$hl" | grep -q 'to eliminate'; then fail "$1: the hint still promises elimination on $3: $hl"; fi
+    printf '%s\n' "$hl" | grep -Eq '^note: [0-9]+ unreachable fns \([0-9]+ bytes .*set CYRIUS_DCE=1 to NOP-fill them; no compaction on ' \
+        || fail "$1: the hint does not say NOP-fill (inside the unreachable-fns note): $hl"
+    printf '%s\n' "$hl" | grep -Fq "no compaction on $3: " || fail "$1: wrong target word (want '$3'): $hl"
+}
+pbuild "$CYCC" "$WORK/p3.cyr" "$WORK/a9pe.err" CYRIUS_TARGET_WIN=1
+hinted "axis 9 (PE)" "$WORK/a9pe.err" "PE"
+pbuild "$CYCC" "$WORK/p3.cyr" "$WORK/a9mo.err" CYRIUS_MACHO=1
+hinted "axis 9 (x86 Mach-O)" "$WORK/a9mo.err" "x86_64 Mach-O"
+pbuild "$CYCC" "$WORK/p3.cyr" "$WORK/a9pie.err" CYRIUS_PIE=1
+hinted "axis 9 (--pie)" "$WORK/a9pie.err" "x86_64 ELF (--pie)"
+pbuild "$WORK/cc_x" "$WORK/p3.cyr" "$WORK/a9a64.err" CYRIUS_DCE_UNSET=1
+hinted "axis 9 (aarch64 ELF)" "$WORK/a9a64.err" "aarch64 ELF"
+# anti-vacuous: the one target that DOES eliminate keeps the promise, word for word
+pbuild "$CYCC" "$WORK/p3.cyr" "$WORK/a9elf.err" CYRIUS_DCE_UNSET=1
+grep -q '^note: [0-9]* unreachable fns ([0-9]* bytes .*set CYRIUS_DCE=1 to eliminate, CYRIUS_DCE_VERBOSE=1 to list)$' "$WORK/a9elf.err" \
+    || fail "axis 9 (static x86 ELF): the eliminating target lost its 'set CYRIUS_DCE=1 to eliminate' hint: $(cat "$WORK/a9elf.err")"
+
+echo "PASS: dce_pe_macho_layout_declines_compaction (PE payload pinned at $A; Mach-O $MA B stable; ELF $EA -> $EB B; declines named on PE, x86 Mach-O, --pie, shared;, aarch64 ELF, arm64 Mach-O and past the 4096-run registry; the unset hint promises elimination only where it happens)"
