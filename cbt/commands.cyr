@@ -3598,7 +3598,8 @@ fn _distlib_mirror_drop(): i64 {
 
 # Append the include line(s) for stdlib leaf `lf` to `esb`: `include "lib/<lf>.cyr"`, or
 # one line per `.cyr` of the family directory `<lib>/<lf>/` in name order. A leaf that is
-# neither (not in the snapshot) adds nothing. ⭐ 6.6.18 (D5): THE ONE EXPANDER — the verify
+# neither (not in the snapshot) adds nothing. Answers the number of include lines added.
+# ⭐ 6.6.18 (D5): THE ONE EXPANDER — the verify
 # unit (lib = its mirror's lib/) and the bundle's requires block (lib = the snapshot) both
 # call it, so the block can never drift from what was compile-verified.
 fn _distlib_unit_leaf(esb, lib, lf): i64 {
@@ -3610,7 +3611,7 @@ fn _distlib_unit_leaf(esb, lib, lf): i64 {
         str_builder_add_cstr(esb, "include \"lib/");
         str_builder_add_cstr(esb, lf);
         str_builder_add_cstr(esb, ".cyr\"\n");
-        return 0;
+        return 1;
     }
     if (is_dir(str_from(lbase)) == 0) { return 0; }
     # 6.6.10: named and counted in _err_count (the verify then fails) — it read as empty.
@@ -3618,6 +3619,7 @@ fn _distlib_unit_leaf(esb, lib, lf): i64 {
     if (fents == 0) { return 0; }
     vec_sort_by(fents, &_dep_name_cmp);   # v6.5.37 (A8): deterministic family order
     var fi = 0;
+    var added = 0;
     while (fi < vec_len(fents)) {
         var fe = str_data(vec_get(fents, fi));
         fi = fi + 1;
@@ -3628,9 +3630,10 @@ fn _distlib_unit_leaf(esb, lib, lf): i64 {
             str_builder_add_cstr(esb, "/");
             str_builder_add_cstr(esb, fe);
             str_builder_add_cstr(esb, "\"\n");
+            added = added + 1;
         }
     }
-    return 0;
+    return added;
 }
 
 # (6.6.10: the `_dl_ids_*` identifier set moved to cbt/srcscan.cyr as `_src_ids_*`, shared
@@ -4322,6 +4325,7 @@ fn _distlib_report_unowned(out_path, names, masks): i64 {
     var n = vec_len(names);
     if (n == 0 || _quiet == 1) { return 0; }
     var all_mask = (1 << _DL_TGT_N) - 1;
+    if (_dl_agnos_skip == 1) { all_mask = all_mask - (1 << _DL_TGT_AGNOS); }   # as the rounds do
     var sb = str_builder_new();
     str_builder_add_cstr(sb, "warn: distlib: ");
     str_builder_add_cstr(sb, out_path);
@@ -5302,7 +5306,12 @@ fn _distlib_write_requires(out_path, deps_path, leaves, named_deps): i64 {
             _err_ctx("distlib: a sidecar leaf is not a safe include path (allowed: [A-Za-z0-9_/-]) — bundle NOT rewritten", lf);
             return 1;
         }
-        _distlib_unit_leaf(blk, root, lf);
+        # 6.6.18 review: a leaf the snapshot does not have would leave the block SHORT of its
+        # sidecar while looking complete — the block == sidecar invariant fails by name instead.
+        if (_distlib_unit_leaf(blk, root, lf) == 0) {
+            _err_ctx("distlib: a sidecar leaf is not in the stdlib snapshot, so the requires block cannot name it — bundle NOT rewritten", lf);
+            return 1;
+        }
         nl = nl + 1;
     }
     if (nl == 0) { return 0; }

@@ -12,8 +12,8 @@
 # Needs only lib/string.cyr (memeq), lib/alloc.cyr and lib/vec.cyr.
 
 # ================================================================
-# Source scanning shared by the reference tools (coverage, header;
-# distlib's profile prune). CHANGELOG [6.6.8]
+# Source scanning shared by the reference tools (coverage, header, distlib's sidecar
+# verify; distlib's profile prune used it until 6.6.18 removed the prune). CHANGELOG [6.6.8]
 # ================================================================
 # These answer "which bytes of a cyrius source are CODE, and where does a declaration
 # start", and they exist ONCE so the tools cannot drift apart again: cmd_coverage and
