@@ -278,12 +278,11 @@ fn _fl_arena_alloc(bsize): i64 {
 # harness asserting 'output contains no poison bytes' turns an invisible overread into a loud
 # one." That is exactly what this implements.
 #
-# ⚠ SCOPE: poison mode instruments THIS allocator's blocks only — the alloc-side fill, the
-# redzone checked at `fl_free` and quarantine-on-free (both v6.5.29, below). Memory from
-# `alloc()`, from an arena, or from a consumer's own allocation seam is NOT poisoned; an
-# overread there still returns plausible bytes (proposals/2026-09-20-fuzz-poison-should-
-# follow-a-custom-allocator-seam.md). A redzone overWRITE is COUNTED, not trapped: a harness
-# must assert `fl_poison_violations() == 0` to see it.
+# ⚠ SCOPE (6.6.18): this file's blocks — the alloc-side fill, both redzones, the live list and
+# quarantine-on-free. Under CYRIUS_POISON lib/alloc.cyr's alloc() is redzoned too (Linux, macOS,
+# Windows; not agnos / cx), and a consumer's own allocation seam can adopt lib/poison.cyr's
+# poison_alloc / poison_allocator(). A redzone overWRITE is COUNTED, not trapped: a harness
+# must assert `fl_poison_violations() == 0` (or call poison_sweep()) to see it.
 #
 # ⚠ NEVER READS THE ENVIRONMENT AT RUN TIME. An allocator reading an env var would drag in a
 # parse dependency it should not have. It is switched on at COMPILE time by the

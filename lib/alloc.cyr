@@ -61,6 +61,18 @@ include "lib/syscalls.cyr"
 
 include "lib/atomic.cyr"
 
+# 6.6.18 — POISON MODE reaches alloc(). Under `#define CYRIUS_POISON` (what `cyrius fuzz
+# --poison` sets) every alloc() block gets a leading and a trailing redzone and sits on the
+# poison core's live list; arenas become an accounting shell over those blocks. ⛔ EVERY
+# poison line in this file is under `#ifdef CYRIUS_POISON`, never a run-time `if`: this file
+# is COMPILER SOURCE, no compiler build defines the flag, and so cycc's bytes on all seven
+# forks are unchanged (an unconditional include here broke the seed chain at 6.6.6).
+# Invariant: poison never changes which requests succeed, alloc_used() / arena_used(), or
+# the zero-init of user bytes. agnos and cx alloc() are not instrumented. CHANGELOG [6.6.18]
+#ifdef CYRIUS_POISON
+include "lib/poison.cyr"
+#endif
+
 var _alloc_lock = 0;
 
 # v6.3.17 (PF-02): single-threaded fast path. The v6.0.64 spinlock+2-fences is only
@@ -295,6 +307,10 @@ fn alloc(size): i64 {
     # validated OUTSIDE the lock so bad calls never contend.
     if (size <= 0) { return 0; }
     if (size > ALLOC_MAX) { return 0; }
+    #ifdef CYRIUS_POISON
+    var pz_req = size;
+    size = size + _POISON_HDR + _POISON_RZ + _POISON_RZ;
+    #endif
     # Align to 8 bytes (local — outside the lock).
     size = (size + 7) & (0 - 8);
     # --- critical section: chunk state + _linux_new_chunk are shared ---
@@ -309,7 +325,13 @@ fn alloc(size): i64 {
     var ptr = _heap_ptr;
     _heap_ptr = ptr + size;
     _heap_used = _heap_used + size;
+    #ifdef CYRIUS_POISON
+    _heap_used = _heap_used - size + ((pz_req + 7) & (0 - 8));   # alloc_used() counts the REQUEST
+    #endif
     _alloc_lock_release();
+    #ifdef CYRIUS_POISON
+    return _poison_arm_alloc(ptr, pz_req);                       # armed + published outside the lock
+    #endif
     return ptr;
 }
 
@@ -329,6 +351,9 @@ fn alloc(size): i64 {
 #
 # Reset only when nothing from the previous epoch will be read again.
 fn alloc_reset(): i64 {
+    #ifdef CYRIUS_POISON
+    poison_forget_all();     # every listed block dies here, and its address is re-issued
+    #endif
     _alloc_lock_acquire();
     # Scrub the reused span of the FIRST chunk before rewinding, so a later
     # alloc() can't read the prior occupant's bytes (memory-reuse info-leak,

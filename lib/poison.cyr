@@ -52,6 +52,10 @@ var _poison_head = 0;
 # Head of the fl live list: lib/freelist.cyr's poisoned blocks, doubly linked through blk+16
 # (prev) / blk+24 (next) because fl blocks ARE recycled and must leave the list at fl_free.
 var _poison_fl_head = 0;
+# Bytes the redzones and headers added to the macOS / Windows bump heap since the last
+# alloc_reset — their alloc_used() subtracts it, so poison never changes what it reports.
+# Updated under alloc.cyr's lock.
+var _poison_overhead = 0;
 # Spinlock over the live-block lists. Its own lock, not alloc.cyr's or freelist.cyr's: the
 # poison paths run after those are released, so nothing ever nests.
 var _poison_lock = 0;
@@ -334,8 +338,31 @@ fn poison_forget_all(): i64 {
 # The seam: a poisoned allocation any custom allocator can adopt (6.6.18)
 # ================================================================
 
-# 1 when alloc() itself arms its blocks (CYRIUS_POISON on Linux, macOS, Windows).
-fn _poison_alloc_armed(): i64 { return 0; }
+# 1 when alloc() itself arms its blocks: CYRIUS_POISON on Linux, macOS and Windows. The
+# agnos and cx alloc() bodies are not instrumented (no fuzz path or gate runs them); there
+# the seam and the arenas fall back to arming their own blocks.
+fn _poison_alloc_armed(): i64 {
+    #ifdef CYRIUS_POISON
+    #ifdef CYRIUS_TARGET_LINUX
+    return 1;
+    #endif
+    #ifdef CYRIUS_TARGET_MACOS
+    return 1;
+    #endif
+    #ifdef CYRIUS_TARGET_WIN
+    return 1;
+    #endif
+    #endif
+    return 0;
+}
+
+# alloc()'s poison arm (CYRIUS_POISON): `blk` is a span of _poison_bump_total(req) bytes
+# fresh from the heap (zeroed). Arm it as an `alloc` block, publish it, return the user ptr.
+fn _poison_arm_alloc(blk, req): i64 {
+    var u = _poison_arm_bump(blk, req, 1);
+    _poison_publish(blk);
+    return u;
+}
 
 # Allocate `n` bytes with both redzones armed and the block on the live list, whatever the
 # compile flag. The `fn(n): ptr` shape a hook-style seam (sadish's sd_alloc) can point at.
