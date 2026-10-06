@@ -19,14 +19,14 @@ cbt). **CVE-78**; the next free id is **79**. Per the user's decision (2026-10-0
 change only: all 12 folded stdlibs regenerate in ONE wave after the tag, and their re-vendor, the log / ws /
 ws_server fold bundles and the tls_native mirror retirement are 6.6.19 (R1–R3).
 
-**Gate (merged tree):** GATE-LINE-TBD
+**Gate (merged tree):** `scripts/release-gate.sh` **GREEN** on `6ff4dc27` (2026-10-06, 11:27–12:11): self-host fixpoint, ARM binary lockstep (step 1b), seed → cybs → cycc byte-identical (6/6), full check.sh — 191 of 191 shell gates produced a result, 0 failed, the 2 named agnos-parity SKIPs — and cross-OS self-host + the `crossos/` suite on REAL ecb, ach, cass and pi (all `SELFHOST_OK` + `LIBTEST_OK`; the first real-hardware run of the folded aarch64 syscall code on pi and ecb after the review fixes). `verify-store`: every tagged slot OK. Two merged-tree check.sh runs before it found one merge interaction (the dce_pe_macho gate pasting `async_win.cyr` into a Mach-O build, fixed `3ba91969`).
 
 **Size:** cycc **1,582,088 B** (`.text` **1,402,392**), +1,048 B over 6.6.17's 1,581,040 (DCE's reason helpers, +928; the
 `ESCPOPS` literal argument and the >6-argument refusal — the fold itself is aarch64 backend code); `build/cycc-native-aarch64`
 regenerated (`cyrius pulsar`), 2,042,184 → **1,323,392 B** (−718,792, −35.2 %) — now smaller than x86 cycc. api-surface 5,816 → **5,827** (+11, `lib/poison.cyr`). `lib/*.cyr` 105 → **106**. `.tcyr`
 473 → **481** (crossos 193 → **196**); shell gates 361 → **368**.
 
-**Bench:** BENCH-TBD
+**Bench:** self_compile **987 ms** at the gate. Same-box interleaved A/B vs 6.6.17 (15 runs each): own source 986 → 989 ms (+0.4 %), same input (6.6.17's source) 984 ms (−0.1 %) — flat. x86 `cycc` +1,048 B; `cycc-native-aarch64` −718,792 B (−35.2 %).
 
 ### Security
 
