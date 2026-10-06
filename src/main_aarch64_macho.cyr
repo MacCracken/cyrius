@@ -425,6 +425,8 @@ if (_epi_km_pre == 0) {
 }
 
 EEXIT(S);
+# 6.6.18: the shared ESYSXLAT stubs for variable syscall numbers, after all code (emit.cyr).
+ESYSX_STUBS(S);
 
 # Fixup + ELF + write
 FIXUP(S);

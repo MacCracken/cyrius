@@ -1,0 +1,69 @@
+# syscall_number_nonliteral.tcyr — 6.6.18: a syscall number held in a VARIABLE, at every arity
+# class the arm64 Mach-O stubs split on.
+#
+# On aarch64 a number only known at run time no longer inlines the 82-row ESYSXLAT chain at the
+# site: it calls ONE shared translation stub, emitted after EEXIT (src/backend/aarch64/emit.cyr
+# `_esx_stub_site` / `ESYSX_STUBS`). On arm64 macOS there is one stub per ARITY, because that
+# chain reads the call's argc (the pipe row needs the fds pointer, the nanosleep emulation argc 3)
+# and ESYSCALL's post-svc pipe fixup must still see Darwin pipe in x16. This file issues getpid
+# (argc 1), pipe (argc 2), nanosleep 35 (argc 3) and write (argc 4) through a `var` and checks
+# each against the literal / the bytes it moved. Runs on pi and ecb (the stubs) and on every
+# other host as the reference. Windows routes a variable number through EPE_SYSCALL_DYNAMIC and
+# spells none of these, so it passes trivially there.
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/syscalls.cyr"
+include "lib/assert.cyr"
+
+alloc_init();
+test_group("variable syscall numbers through the shared ESYSXLAT stubs");
+assert_eq(1, 1, "the file runs on every target");
+
+#ifndef CYRIUS_TARGET_WIN
+var _nv_n = 0;
+var _nv_fds[16];
+var _nv_buf[16];
+var _nv_ts[16];
+
+_nv_n = SYS_GETPID;
+assert_eq(syscall(_nv_n), syscall(SYS_GETPID), "argc 1: getpid through a variable equals the literal");
+
+# pipe at argc 2: the x86 number everywhere it is routed, Darwin's aarch64 peer spelling on arm64
+# macOS (the Mach-O pipe row, emitted only for argc >= 2, plus ESYSCALL's fd-store fixup).
+_nv_n = 22;
+#ifdef CYRIUS_TARGET_MACOS
+#ifdef CYRIUS_ARCH_AARCH64
+_nv_n = 59;
+#endif
+#endif
+assert_eq(syscall(_nv_n, &_nv_fds), 0, "argc 2: pipe through a variable");
+var _nv_r = load32(&_nv_fds);
+var _nv_w = load32(&_nv_fds + 4);
+assert_eq(_nv_r != _nv_w, 1, "the pipe's two fds differ");
+
+_nv_n = SYS_WRITE;
+assert_eq(syscall(_nv_n, _nv_w, "nv", 2), 2, "argc 4: write through a variable");
+assert_eq(syscall(SYS_READ, _nv_r, &_nv_buf, 8), 2, "the pipe delivers the 2 bytes");
+assert_eq(load8(&_nv_buf + 1), 118, "and they are the bytes written ('v')");
+syscall(SYS_CLOSE, _nv_r);
+syscall(SYS_CLOSE, _nv_w);
+
+# x86-macOS routes nanosleep 35 only as a LITERAL (a parse-time reroute to poll); its runtime
+# chain has no 35 row, so a variable 35 is SIGSYS there by design — skip that one host.
+var _nv_sleep = 1;
+#ifdef CYRIUS_TARGET_MACOS
+#ifdef CYRIUS_ARCH_X86
+_nv_sleep = 0;
+#endif
+#endif
+if (_nv_sleep == 1) {
+    _nv_n = 35;
+    store64(&_nv_ts, 0);
+    store64(&_nv_ts + 8, 2000000);
+    assert_eq(syscall(_nv_n, &_nv_ts, 0), 0, "argc 3: nanosleep 35 (2 ms) through a variable");
+}
+#endif
+
+var r = assert_summary();
+syscall(60, r);

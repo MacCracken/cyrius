@@ -113,12 +113,18 @@ for bin in build/cycc build/cc5 build/cycc-native-aarch64 bootstrap/asm; do
             # before. Same 700K–2M reasoning as build/cycc above; aarch64 runs ~15% larger
             # than x86 (1,505,480 vs 1,293,880 at 6.6.5), which the upper bound allows for.
             # CHANGELOG [6.6.5]
-            # 6.6.17: 2M → 3M. The ratio is no longer ~15 %: ESYSXLAT copies its whole
-            # translation chain into every aarch64 syscall site (2,042,184 vs x86 1,581,040 at
-            # 6.6.17, +29 %). The 6.6.18 compile-time fold is planned to cut ~593 KB; lower the
-            # bound again then. A truncated or contaminated binary is still far outside it.
-            if [ "$size" -lt 700000 ] || [ "$size" -gt 3000000 ]; then
-                _fail "$bin size ${size}B outside the expected 700K–3M range — refusing commit"
+            # 6.6.18: 3M → 2M, build/cycc's band again. 6.6.17 raised it because ESYSXLAT
+            # copied its whole translation chain into every aarch64 syscall site (2,042,184 B,
+            # +29 % over x86). The 6.6.18 compile-time fold (XLAT-1/2) put the ARM compiler at
+            # 1,323,392 B — ~16 % SMALLER than x86 cycc's 1,582,088 — so it no longer runs
+            # larger than x86. 2M leaves ~680 KB of headroom (~170 releases at ~4 KB each), and
+            # an UN-folded build (2,042,184 B and growing with every row) now sits OUTSIDE the
+            # band, so the hook trips on a lost fold as well as on gross corruption. The real
+            # check of the fold is tests/gates/platform/esysxlat_fold.sh axis 1; this band is
+            # the backstop. Pinned by tests/gates/toolchain/precommit_arm_size_band.sh.
+            # CHANGELOG [6.6.18]
+            if [ "$size" -lt 700000 ] || [ "$size" -gt 2000000 ]; then
+                _fail "$bin size ${size}B outside the expected 700K–2M range (an un-folded ESYSXLAT build is ~2.04 MB) — refusing commit"
                 status=1
             fi
             ;;

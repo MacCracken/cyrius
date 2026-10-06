@@ -826,6 +826,18 @@ fn _macho_warn_short(sc_num, argc): i64 {
 # attributed to a call. The cursor is past the call's `)`; walk back over the balanced
 # parentheses to its `syscall` token so the site is the call, not the `;` after it. The
 # routed-number list is a note printed ONCE per compile, not once per site.
+# 6.6.18 — the generic syscall path (every backend's ESCPOPS) pops the number plus at most six
+# arguments: x86 into rdi..r9, aarch64 into x0..x5, cx into r2..r7. An 8th pushed value was left
+# on the stack and the pops shifted by one, so the call ran with an ARGUMENT as its number and
+# leaked 16 bytes — and on arm64 macOS a variable number at that arity left its `bl .` placeholder
+# unpatched (an infinite loop). Refused by name instead. The PE parse-time reroutes that take
+# more (WSARecv/WSASend at 8, WSAIoctl at 10) return before ESCPOPS and are unaffected.
+# CHANGELOG [6.6.18]
+fn _sc_argc_refuse(S, n): i64 {
+    if (n <= 7) { return 0; }
+    ERR_MSG(S, "syscall() takes at most 6 arguments after the number: no backend passes a 7th (it would be popped as the syscall number)", 120);
+    return 1;
+}
 var _pe_unrouted_noted = 0;
 fn _pe_warn_unrouted(S, sc_num, argc): i64 {
     var ti = GTI(S) - 1;
@@ -3129,7 +3141,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
             _cfo = 0;
             return 0;
         }
-        ESCPOPS(S, argc);
+        ESCPOPS(S, argc, sc_num);   # sc_num >= 0: aarch64 folds the ESYSXLAT chain (6.6.18)
         _cfo = 0;
         # Syscall arity check — warn if arg count doesn't match the
         # well-known arity for common Linux x86_64 syscalls.
