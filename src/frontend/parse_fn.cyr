@@ -756,9 +756,7 @@ fn PARSE_RETURN(S): i64 {
                             # mirroring PARSE_FNCALL's class check. Reject-only: the
                             # PCMPE/EPUSHR emission is untouched, so well-typed calls
                             # (and every SIMD-free call) stay byte-identical.
-                            var _tc_smask = 0;
                             var _tc_prefi = FINDFN(S, tcnoff);
-                            if (_tc_prefi >= 0) { _tc_smask = L64(_fnt_simdmask + _tc_prefi * 8); }
                             if (PEEKT(S) != 11) {
                                 var tcgo = 1;
                                 while (tcgo == 1) {
