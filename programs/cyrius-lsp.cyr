@@ -642,23 +642,56 @@ fn lsp_ident_at_position(buf, total, target_line, target_char): i64 {
     return s | (e << 32);
 }
 
-# Read a file into a freshly-allocated buf; return (buf, total) packed
-# with buf in low 56, total in high 8 bits — wait, total may exceed 8
-# bits. Actually return buf and write total to *total_out.
+# The largest document lsp_read_file reads: 64 MiB. Far past any cyrius source (lib/mabda.cyr,
+# the largest, is 1.4 MB) and well inside the 32-bit offsets lsp_ident_at_position packs.
+var _LSP_DOC_MAX = 67108864;
+
+# Read a file into a buffer sized by fstat; return the NUL-terminated buffer and write its
+# length to *total_out (0 and 0 when the file cannot be opened, sized or held). This read
+# through a fixed 1 MB buffer until 6.6.17, silently: a larger document was cut at 1 MB, so
+# definition / hover / references / semantic tokens past the cut found nothing (lib/mabda.cyr
+# and lib/sigil.cyr are both over 1 MB). A size over _LSP_DOC_MAX is refused by name on the
+# log. CHANGELOG [6.6.17]
 fn lsp_read_file(path, total_out): i64 {
+    store64(total_out, 0);
     var fd = sys_open(path, 0, 0);
-    if (fd < 0) { store64(total_out, 0); return 0; }
-    var buf = alloc(1048576);
+    if (fd < 0) { return 0; }
+    var st[144];   # STAT_BUFSZ bytes
+    var size = 0 - 1;
+    if (sys_fstat(fd, &st) == 0) { size = load64(&st + STAT_SIZE); }
+    if (size < 0 || size > _LSP_DOC_MAX) {
+        sys_close(fd);
+        _lsp_refuse_doc(path, size);
+        return 0;
+    }
+    var buf = alloc(size + 1);
+    if (buf == 0) { sys_close(fd); return 0; }
     var total = 0;
     var n = 1;
-    while (n > 0 && total < 1048575) {
-        n = syscall(0, fd, buf + total, 1048575 - total);
+    while (n > 0 && total < size) {
+        n = sys_read(fd, buf + total, size - total);
         if (n > 0) { total = total + n; }
     }
     sys_close(fd);
     store8(buf + total, 0);
     store64(total_out, total);
     return buf;
+}
+
+# Name a document lsp_read_file will not read: its path and size (or that fstat failed).
+fn _lsp_refuse_doc(path, size): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "not reading ");
+    str_builder_add_cstr(sb, path);
+    if (size < 0) {
+        str_builder_add_cstr(sb, ": fstat failed, so its size is unknown");
+    } else {
+        str_builder_add_cstr(sb, ": ");
+        str_builder_add_int(sb, size);
+        str_builder_add_cstr(sb, " bytes, over the 67108864-byte (64 MiB) document limit");
+    }
+    log_msg(str_data(str_builder_build(sb)));
+    return 0;
 }
 
 # Find cycc binary — check common locations

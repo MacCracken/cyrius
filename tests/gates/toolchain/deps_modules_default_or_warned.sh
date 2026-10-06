@@ -388,7 +388,7 @@ modules = ["dist/bar.cyr"]
 EOF
 run9 "$P"; rc2=$rc
 if [ "$rc1" -eq 0 ] && cmp -s "$W/d9e1/lib/foo.cyr" "$PD/dist/foo.cyr" \
-   && [ "$rc2" -eq 0 ] && [ -d "$H/deps/bar/main/.git" ] && cmp -s "$W/d9e2/lib/bar.cyr" "$W/barmain.expect" \
+   && [ "$rc2" -eq 0 ] && [ -d "$H/deps/bar/.untagged/.git" ] && cmp -s "$W/d9e2/lib/bar.cyr" "$W/barmain.expect" \
    && ! grep -q 'not a usable tag' "$W/d9e1.err" "$W/d9e2.err"; then
     ok "D9e tagless path = \"../pathdep\" and a tagless git dep (default branch): both resolve, no tag refusal"
 else bad "D9e (rc1=$rc1 rc2=$rc2): $(cat "$W/d9e1.out" "$W/d9e1.err" "$W/d9e2.out" "$W/d9e2.err" | head -6)"; fi

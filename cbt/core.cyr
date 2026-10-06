@@ -86,6 +86,11 @@ var _dep_lock_active = 0;
 # at all in that case, and a host with no working hasher (wine has no certutil) must not
 # lose every stdlib-only build to it. `deps --verify` still names each uncovered file.
 var _dep_lock_soft = 0;
+# 6.6.17 — when non-zero, the vec of lib/ paths `cyrius lib sync` wrote: cmd_deps_lock then
+# re-hashes only those and keeps every other file's loaded row byte for byte.
+var _dep_lock_only = 0;
+# The verb the stdlib-leaf guard's refusal names in its `--relock` advice.
+var _dep_lock_guard_verb = "deps";
 # v5.11.58: --strict-pin flag — when 1, compile() augments the
 # child's envp with CYRIUS_STRICT_PIN=1 so cycc's pin-drift check
 # (added v5.11.57) exits non-zero on mismatch instead of warning.
@@ -646,15 +651,26 @@ fn _macho_fill_environ(buf, cap): i64 {
 # v6.0.85 — Windows env-read. There is no /proc/self/environ on Windows, so
 # resolve CYRIUS_HOME / USERPROFILE via kernel32!GetEnvironmentVariableA (the
 # 0xF015 PE reroute). Without this the wrapper defaulted _home=/root and
-# `cyrius build` could never find cycc.exe on Windows. Each name gets its own
-# static buffer so the two reads don't clobber each other.
+# `cyrius build` could never find cycc.exe on Windows. `dst` holds 512 B or more.
 #ifdef CYRIUS_TARGET_WIN
-var _win_home_buf[512];
-var _win_chome_buf[512];
 fn _win_getenv_into(name, dst): i64 {
     var n = syscall(0xF015, name, dst, 512);   # GetEnvironmentVariableA
     if (n == 0) { return 0; }                  # unset / empty
+    if (n >= 512) { return 0; }                # too long: the buffer was NOT written (6.6.17)
     return dst;                                # NUL-terminated by the API
+}
+
+# The value of `name` in a buffer sized to it, or 0 when unset or empty. A first call with no
+# buffer returns the size it needs (with its NUL). For the home, where a 512-B buffer turned a
+# longer value into "". CHANGELOG [6.6.17]
+fn _win_getenv_alloc(name): i64 {
+    var need = syscall(0xF015, name, 0, 0);
+    if (need <= 1) { return 0; }
+    var buf = alloc(need + 1);
+    var n = syscall(0xF015, name, buf, need + 1);
+    if (n == 0 || n > need) { return 0; }
+    store8(buf + n, 0);
+    return buf;
 }
 #endif
 
@@ -787,6 +803,79 @@ fn _cbt_env_str(name): i64 {
     #endif
 }
 
+# ── The home: ONE rule with cycc's `lib/` include fallback ──────────────────────────────
+# CYRIUS_HOME when set and non-empty, else HOME/.cyrius — the rule of `_init_cyrius_lib`
+# (src/frontend/lex.cyr, C10 at 6.6.16): the FIRST occurrence of a name wins (as getenv and
+# cycc), an EMPTY value is unset, and the WHOLE environment is read. Until 6.6.17 the CLI took
+# the LAST duplicate, kept an empty CYRIUS_HOME as the home "" (root-anchored paths), and read
+# only the first 32 KB of the environment, so a CYRIUS_HOME past it was invisible to the CLI
+# and still honoured by cycc: two stdlibs. On Windows a value of 512+ B came back as an
+# unwritten buffer, the home "". Not shared code: cycc's scanner is a Linux-only raw-syscall
+# reader with fixed 2 KB buffers kept small for the seed's bootstrap compiler; this one also
+# covers the macOS entry-stack envp and Windows. Two differences stay, both where cycc has NO
+# fallback and the CLI still needs a home, so neither makes the two read different stdlibs:
+# a home over 1,984 B (cycc's buffer, CVE-34's bound) the CLI uses as given, and with no
+# usable CYRIUS_HOME or HOME at all the CLI uses /root/.cyrius. Neither tool ever falls through
+# from a set CYRIUS_HOME to HOME. CHANGELOG [6.6.17]
+
+# The value of the FIRST `name` entry (`name` includes its `=`, `nl` bytes) in the
+# NUL-separated block eb[0..en), or 0 when there is none or it is empty — a later duplicate
+# never replaces the first, empty or not.
+fn _cbt_env_first(eb, en, name, nl): i64 {
+    var ei = 0;
+    while (ei < en) {
+        if (en - ei > nl && memeq(eb + ei, name, nl) == 1) {
+            if (load8(eb + ei + nl) == 0) { return 0; }
+            return eb + ei + nl;
+        }
+        while (ei < en && load8(eb + ei) != 0) { ei = ei + 1; }
+        ei = ei + 1;
+    }
+    return 0;
+}
+
+# The whole POSIX environment as one NUL-separated block with a NUL past its end; its length
+# is stored at `lenp`. Linux: /proc/self/environ read to EOF (procfs reports size 0, so the
+# buffer grows); macOS: the entry-stack envp, sized before it is copied.
+fn _cbt_environ(lenp): i64 {
+    #ifdef CYRIUS_TARGET_MACOS
+    var envp = _macho_envp();
+    var tot = 2;
+    if (envp != 0) {
+        var mi = 0;
+        while (load64(envp + mi * 8) != 0) { tot = tot + strlen(load64(envp + mi * 8)) + 1; mi = mi + 1; }
+    }
+    var mb = alloc(tot);
+    var mn = _macho_fill_environ(mb, tot);
+    store8(mb + mn, 0);
+    store64(lenp, mn);
+    return mb;
+    #endif
+    #ifndef CYRIUS_TARGET_MACOS
+    var cap = 65536;
+    var buf = alloc(cap);
+    var n = 0;
+    var fd = file_open("/proc/self/environ", 0, 0);
+    if (fd >= 0) {
+        var r = 1;
+        while (r > 0) {
+            if (n + 1 >= cap) {
+                var nb = alloc(cap * 2);
+                memcpy(nb, buf, n);
+                buf = nb;
+                cap = cap * 2;
+            }
+            r = file_read(fd, buf + n, cap - 1 - n);
+            if (r > 0) { n = n + r; }
+        }
+        file_close(fd);
+    }
+    store8(buf + n, 0);
+    store64(lenp, n);
+    return buf;
+    #endif
+}
+
 fn find_tools(): i64 {
     # v6.0.34/6.0.58: on arm64-macОS default to aarch64 so current_cc() picks
     # cycc_aarch64 (the native macho cycc); on x86-macОS keep the X86 default
@@ -798,39 +887,23 @@ fn find_tools(): i64 {
     _arch = ARCH_AARCH64;
     #endif
     #endif
-    # Read environment to find HOME and CYRIUS_HOME
-    var env_buf = alloc(32768);
-    var env_n = file_read_all("/proc/self/environ", env_buf, 32767);
-    # macOS: /proc/self/environ doesn't exist; read envp off the entry stack.
-    #ifdef CYRIUS_TARGET_MACOS
-    env_n = _macho_fill_environ(env_buf, 32768);
-    #endif
+    # The home: one rule with cycc's include fallback — see _cbt_env_first / _cbt_environ.
+    # CHANGELOG [6.6.17]
     var proc_home = 0;
     var cyrius_home = 0;
-    if (env_n > 0) {
-        store8(env_buf + env_n, 0);
-        var ei = 0;
-        while (ei < env_n) {
-            if (memeq(env_buf + ei, "HOME=", 5) == 1) {
-                proc_home = env_buf + ei + 5;
-            }
-            if (memeq(env_buf + ei, "CYRIUS_HOME=", 12) == 1) {
-                cyrius_home = env_buf + ei + 12;
-            }
-            if (memeq(env_buf + ei, "CYRIUS_RESOLVED=", 16) == 1) {
-                if (load8(env_buf + ei + 16) == 49) { _cyrius_resolved = 1; }
-            }
-            # Skip to next null
-            while (ei < env_n) {
-                if (load8(env_buf + ei) == 0) { ei = ei + 1; break; }
-                ei = ei + 1;
-            }
-        }
-    }
-    # Windows: /proc parse above read nothing — resolve via GetEnvironmentVariableA.
+    #ifndef CYRIUS_TARGET_WIN
+    var env_lp[8];
+    var env_buf = _cbt_environ(&env_lp);
+    var env_n = load64(&env_lp);
+    proc_home = _cbt_env_first(env_buf, env_n, "HOME=", 5);
+    cyrius_home = _cbt_env_first(env_buf, env_n, "CYRIUS_HOME=", 12);
+    var env_rv = _cbt_env_first(env_buf, env_n, "CYRIUS_RESOLVED=", 16);
+    if (env_rv != 0) { if (load8(env_rv) == 49) { _cyrius_resolved = 1; } }
+    #endif
+    # Windows: no environ block to scan — GetEnvironmentVariableA, sized to the value.
     #ifdef CYRIUS_TARGET_WIN
-    proc_home = _win_getenv_into("USERPROFILE", &_win_home_buf);
-    cyrius_home = _win_getenv_into("CYRIUS_HOME", &_win_chome_buf);
+    proc_home = _win_getenv_alloc("USERPROFILE");
+    cyrius_home = _win_getenv_alloc("CYRIUS_HOME");
     # 6.6.11 (I3): the loop guard too. The scan above is the only place `_cyrius_resolved`
     # was set, and it reads nothing on PE — so `CYRIUS_RESOLVED=1`, the documented escape
     # from a pin, was ignored by cyrius.exe. CHANGELOG [6.6.11]

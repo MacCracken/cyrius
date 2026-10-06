@@ -234,7 +234,7 @@ TAGC=$(git -C "$O" rev-parse '1.0.0^{commit}')
 [ -n "$TAGC" ] || { echo "FAIL: deps_git_cache_verified: origin tag has no commit"; exit 1; }
 
 C="$H/deps/foo/1.0.0"          # the shared cache the resolver uses for the tagged dep
-CU="$H/deps/foo/main"          # ...and for the untagged one
+CU="$H/deps/foo/.untagged"     # ...and for the untagged one (6.6.17: not <name>/main)
 REC_FAIL=""; REC_RUN=0
 
 sha_of()  { [ -f "$1" ] && $SHACMD "$1" | cut -d' ' -f1 || echo MISSING; }

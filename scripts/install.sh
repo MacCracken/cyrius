@@ -16,6 +16,10 @@
 
 set -e
 
+# 6.6.17: whether CYRIUS_HOME was DEFAULTED — then it is the user's store by definition, and
+# the --refresh-only released-slot guard treats it as live whether or not it resolves.
+_CYRIUS_HOME_DEFAULTED=0
+[ -n "${CYRIUS_HOME:-}" ] || _CYRIUS_HOME_DEFAULTED=1
 CYRIUS_HOME="${CYRIUS_HOME:-$HOME/.cyrius}"
 REPO="MacCracken/cyrius"
 VERSION="${CYRIUS_VERSION:-}"
@@ -83,6 +87,26 @@ info() { printf "  ${GREEN}>${RESET} %s\n" "$1"; }
 warn() { printf "  ${YELLOW}!${RESET} %s\n" "$1"; }
 err()  { printf "  ${RED}x${RESET} %s\n" "$1" >&2; exit 1; }
 
+# The physical path of directory $1 whether or not it exists yet: its deepest EXISTING
+# ancestor, resolved, with the missing components appended (a missing $HOME too). Never fails,
+# so it is safe in an assignment under `set -e`. CHANGELOG [6.6.17]
+_rs_real() {
+    _rp="$1"
+    while [ "$_rp" != "/" ] && [ "${_rp%/}" != "$_rp" ]; do _rp="${_rp%/}"; done
+    [ -n "$_rp" ] || _rp="/"
+    _rtail=""
+    while [ ! -d "$_rp" ]; do
+        _rtail="/$(basename "$_rp")$_rtail"
+        _rp="$(dirname "$_rp")"
+    done
+    _rbase="$( (cd "$_rp" 2>/dev/null && pwd -P) || true )"
+    [ -n "$_rbase" ] || return 0
+    _rout="${_rbase%/}$_rtail"
+    [ -n "$_rout" ] || _rout="/"
+    printf '%s\n' "$_rout"
+    return 0
+}
+
 # ── v6.6.4: a RELEASED version's snapshot is written from its tag, never from a drifted tree ──
 # Returns 0 when the refresh may proceed. Sets _RS_TREE_MATCHES_TAG (yes / no / untagged) for
 # the SOURCE_COMMIT stamp. See the --refresh-only contract at the top of this file.
@@ -105,9 +129,14 @@ _released_slot_guard() {
             _rs_live=0    # written from a drifted tree before: a throwaway being reused
         fi
     fi
-    _rs_home_real="$(cd "$CYRIUS_HOME" 2>/dev/null && pwd -P)"
-    _rs_user_real="$(cd "${HOME:-/nonexistent}/.cyrius" 2>/dev/null && pwd -P)"
+    # 6.6.17: resolved whether or not they exist yet. A bare `$(cd … && pwd -P)` failed the
+    # assignment under `set -e` when either directory was missing, so --refresh-only exited 1
+    # with no message on a store-less HOME — and a home about to be CREATED as $HOME/.cyrius
+    # (even under a $HOME that does not exist) is still the user's store.
+    _rs_home_real="$(_rs_real "$CYRIUS_HOME")"
+    _rs_user_real="$(_rs_real "${HOME:-/nonexistent}/.cyrius")"
     [ -n "$_rs_home_real" ] && [ "$_rs_home_real" = "$_rs_user_real" ] && _rs_live=1
+    [ "$_CYRIUS_HOME_DEFAULTED" = 1 ] && _rs_live=1    # unset CYRIUS_HOME: the user's store, outright
     if [ -z "$(git for-each-ref --count=1 refs/tags 2>/dev/null)" ]; then
         # NO tags at all (a --no-tags / shallow clone): "not yet cut" and "not fetched" are
         # indistinguishable, so a live destination cannot be verified — fail CLOSED.

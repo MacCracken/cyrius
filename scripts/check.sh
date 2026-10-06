@@ -1519,6 +1519,10 @@ _chk_gate "$ROOT/tests/gates/toolchain/walkers_fail_closed_unreadable_dir.sh"
 # LSP's fixed row / names / paths / file caps answered null past the cut).
 _chk_gate "$ROOT/tests/gates/toolchain/lsp_indexes_every_decl_spelling.sh"
 
+# 6.6.17 — cyrius-lsp reads the open document sized by fstat (it was a fixed 1 MB read, so a
+# definition past the cut answered null) and refuses a document over 64 MiB by name.
+_chk_gate "$ROOT/tests/gates/toolchain/lsp_reads_whole_document.sh"
+
 # 6.6.7 (bite 10) — the NEXT version-bump can rewrite every document anchor in the live tree.
 # Step 5's stamp sed admitted only a date in the parenthetical, so the hand-annotated stamp
 # matched nothing and the bump exited 0 (twice: 6.6.7, and — measured — 6.6.8); steps 3/4
@@ -1744,6 +1748,11 @@ _chk_gate "$ROOT/tests/gates/diagnostics/deprecated_every_call_path.sh"
 # reachable-undefined refusal, so nothing has to run.
 _chk_gate "$ROOT/tests/gates/toolchain/include_fallback_cyrius_home.sh"
 
+# 6.6.17 — the CLI picks its home by cycc's rule (first duplicate wins, empty = unset, the whole
+# environment read): `cyrius which` and an include-fallback probe agree on every row; a 600+ B
+# CYRIUS_HOME is read by cyrius.exe under wine (SKIP by name without wine).
+_chk_gate "$ROOT/tests/gates/toolchain/cli_home_matches_cycc.sh"
+
 # 6.6.9 (bite 3) — a second struct/union with a different layout (the first silently won) and
 # an enum constant over a zero/computed global of the same name are warned, not silent.
 _chk_gate "$ROOT/tests/gates/frontend/redefinition_layout_and_enum_over_var.sh"
@@ -1808,6 +1817,11 @@ _chk_gate "$ROOT/tests/gates/toolchain/deps_cache_capture_failure_named.sh"
 # stdlib leaf is locked, a stdlib-only project gets its first lock (deps AND build), an empty
 # lock is present-but-empty, and `deps --verify` fails a file with no lock line, by name.
 _chk_gate "$ROOT/tests/gates/toolchain/deps_lock_new_leaf_locked.sh"
+
+# 6.6.17 — `cyrius lib sync` is held to the 6.6.4 stdlib-leaf guard (a snapshot moved under an
+# unchanged pin is refused by name, nothing written; `--relock` accepts) and re-locks only the
+# rows it wrote: removed files' rows dropped, every other row kept, commit pins kept.
+_chk_gate "$ROOT/tests/gates/toolchain/lib_sync_relocks.sh"
 
 # 6.6.9 (bite 10, CVE-49) — no cbt string literal names a shared /tmp/ path, and `cyrius self`
 # stages both compilers in the private 0700 temp dir (the /bin/sh script at /tmp/cyr_*_$$ is
