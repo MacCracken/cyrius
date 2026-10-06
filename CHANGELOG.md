@@ -23,6 +23,30 @@ bundles' new requires blocks retire the hand-kept workarounds they made unnecess
   API surface unchanged (5,827). `fold_table_matches_vendored`, `lib_freshness`, `fold_namespace_collisions`,
   `folds_agnos_parity` (12/12 on Linux and agnos) and `stdlib_modules_self_sufficient` pass.
 
+### Folds (R2, R3)
+
+- **R2 — `lib/log.cyr`, `lib/ws.cyr` and `lib/ws_server.cyr` include their folds and compile alone**
+  (sakshi; bayan; bayan + sandhi), 0 undefined functions on x86 Linux, agnos, PE, x86 Mach-O, arm64 Mach-O
+  and aarch64. `stdlib_modules_self_sufficient.sh`'s PENDING tier (and its axis 2, which held their
+  residual to fold-only names) is retired: axis 1 now holds every first-party module, its pair floor is
+  derived (`PUB_FLOOR` x 5 = 340; 345 measured). The axis-4 floors were re-measured — they had sat at
+  6.6.11's values (73/74/73/74/69/72) while R1 lifted the counts eleven, since every fold now compiles
+  alone — and set to linux 87, agnos 88, PE 87, Mach-O 88, cx 72, aarch64 86 (R2's +3 on each strict
+  target). Mutation: `ws.cyr`'s bayan include removed -> axis 1 RED on all 5 strict targets
+  (`base64_encode`) and axis 4 below every strict floor. Cost, accepted at planning: ws alone 94 -> 497
+  KB, ws_server 110 KB -> 2.2 MB (sandhi brings the TLS stack).
+  - **`log.cyr`'s level map was wrong, and the include exposed it.** `_log_to_sk` returned literals 4..0
+    from a sakshi numbering with no FATAL level; sakshi is FATAL 0 .. TRACE 5, so `log_init(LOG_INFO)` set
+    sakshi to WARN and every `log_info` was dropped. It maps BY NAME now (`LOG_FATAL` -> `SK_ERROR`,
+    because fatal goes out through `sakshi_error`). `tests/tcyr/stdlib/log_kv_bounded.tcyr` defined
+    `sakshi_*` stubs ahead of log.cyr; with sakshi included they are duplicates and the real ones won, so
+    it routes the real sakshi into a recording emit hook and asserts the threshold for INFO / TRACE /
+    FATAL (the old literals: 20 of 33 rows RED).
+  - `stdlib_alloc_refusal_sentinels.sh`'s ws_server probe stubbed `sandhi_server_find_header` ahead of
+    ws_server.cyr; ws_server's calls now bind to sandhi's own, so the handshake drives the real lookup
+    on a real upgrade request: four header-lookup rows (k=1..4) then concat / digest / sha1 at k=5..8
+    (floor 11 -> 15 rows). Mutation: ws_server's concat check removed -> rc 139.
+
 ## [6.6.18] — 2026-10-06
 
 The 6.6.18 distlib + poison release — the 6.6.18 row of roadmap.md § *The 6.6.x tail*. **P4 option 2**: a fold's

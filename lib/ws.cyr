@@ -1,12 +1,8 @@
 # ws.cyr — WebSocket protocol (RFC 6455)
 # Usage: include "lib/ws.cyr"
-# Includes its own first-party definers (6.6.11): syscalls.cyr, alloc.cyr, string.cyr, net.cyr.
-# NOT self-sufficient yet — the PENDING tier of
-# tests/gates/toolchain/stdlib_modules_self_sufficient.sh, which holds that the residual is
-# fold names ONLY: base64_encode from lib/bayan.cyr (base64.cyr was folded into bayan). bayan
-# is a distlib bundle that strips its own includes, so including it here does not make this
-# file compile alone; that waits on raw-includable fold bundles (roadmap, "Fold bundles that
-# are raw-includable").
+# Self-sufficient: includes syscalls.cyr, alloc.cyr, string.cyr, net.cyr and the bayan fold
+# (base64_encode — base64.cyr was folded into bayan), whose bundle carries its own requires
+# block since 6.6.19 R1. CHANGELOG [6.6.19]
 #
 # Client-side WebSocket over existing TCP connections.
 # Handles framing, masking, ping/pong, close handshake.
@@ -21,6 +17,7 @@ include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 include "lib/string.cyr"
 include "lib/net.cyr"
+include "lib/bayan.cyr"
 
 # WebSocket opcodes
 enum WsOpcode {

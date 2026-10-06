@@ -3,9 +3,11 @@
 #
 # ⛔ THE DEFECT: the msg / key / val copies had no bound, so a logged caller-controlled
 # value longer than the scratch overwrote the fn's own locals and return address. A 4 KB
-# value exited 139 before the sink was reached. The sink here is a recording stub (the
-# real one is lib/sakshi.cyr, which log.cyr leaves to its caller), so this file checks
-# exactly what the sink was handed: its length, its prefix and its "..." mark.
+# value exited 139 before the sink was reached. The sink is the REAL lib/sakshi.cyr, which
+# log.cyr includes itself since 6.6.19 R2, routed to a recording emit hook — so this file checks
+# exactly what the sink was handed: its length, its prefix and its "..." mark. (Until 6.6.19 it
+# defined sakshi_* stubs ahead of log.cyr; with sakshi now included they are duplicates and
+# "last definition wins" — the real ones — so the stubs would record nothing.)
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 include "lib/string.cyr"
@@ -22,14 +24,11 @@ fn _sink(msg, len): i64 {
     store8(&_sink_buf + i, 0);
     return 0;
 }
-fn sakshi_set_level(l): i64 { return 0; }
-fn sakshi_error(m, n): i64 { return _sink(m, n); }
-fn sakshi_warn(m, n): i64 { return _sink(m, n); }
-fn sakshi_info(m, n): i64 { return _sink(m, n); }
-fn sakshi_debug(m, n): i64 { return _sink(m, n); }
-fn sakshi_trace(m, n): i64 { return _sink(m, n); }
 
 include "lib/log.cyr"
+
+# sakshi's SK_OUT_HOOK subscriber: (ts, level, category, msg, msg_len, kv).
+fn _sink_hook(ts, level, cat, msg, len, kv): i64 { return _sink(msg, len); }
 
 # A fresh NUL-terminated run of n copies of byte c.
 fn _run(n, c): i64 {
@@ -43,6 +42,15 @@ fn _sink_at(i): i64 { return load8(&_sink_buf + i); }
 
 fn main(): i64 {
     alloc_init();
+    log_init(LOG_INFO);
+    sakshi_set_emit_hook(&_sink_hook);
+    # 6.6.19: log's levels reach sakshi BY NAME (literals from an older numbering set WARN here
+    # and dropped every log_info).
+    assert_eq(sakshi_get_level(), SK_INFO, "log_init(LOG_INFO): sakshi's threshold is SK_INFO");
+    log_init(LOG_TRACE);
+    assert_eq(sakshi_get_level(), SK_TRACE, "log_init(LOG_TRACE): sakshi's threshold is SK_TRACE");
+    log_init(LOG_FATAL);
+    assert_eq(sakshi_get_level(), SK_ERROR, "log_init(LOG_FATAL): SK_ERROR (fatal goes through sakshi_error)");
     log_init(LOG_INFO);
 
     # an ordinary line is untouched

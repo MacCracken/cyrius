@@ -338,9 +338,13 @@ syscall(60, ec);
 CYR
 
 # ── the WebSocket server (lib/ws_server.cyr) ──
-# sandhi_server_find_header is stubbed WITHOUT allocating (lib/sandhi.cyr would drag the TLS
-# stack in for one symbol, and its allocs are sandhi's, not this file's), so the handshake's
-# first allocations are its own: concat (k=1), digest (k=2), then sha1's two (k=3, 4).
+# The handshake runs the REAL sandhi_server_find_header on a real upgrade request: since 6.6.19
+# R2 lib/ws_server.cyr includes lib/sandhi.cyr itself, and the stub this probe used to define
+# ahead of it is no longer what ws_server's calls bind to (it stayed in the binary and was never
+# called, so concat's k=1 row read "never reached"). find_header allocates one copy per header
+# found, so the handshake's first four allocations are the four lookups (k=1..4, each refused ->
+# that header reads absent -> 0) and its own follow: concat (k=5), digest (k=6), then sha1's two
+# (k=7, 8).
 # ⚠ ws_server_recv's two rows follow the same zero-length reasoning as ws_recv_frame's: an
 # unchecked recv BUFFER only writes through (store8 at 0 + 0) for an empty frame, and an
 # unchecked OUT copy only does (memcpy to 0) for a non-empty one.
@@ -354,15 +358,10 @@ include "lib/fmt.cyr"
 include "lib/tagged.cyr"
 include "lib/net.cyr"
 include "lib/bayan.cyr"
-
-fn sandhi_server_find_header(buf, blen, name): i64 {
-    if (streq(name, "Upgrade") == 1) { return "websocket"; }
-    if (streq(name, "Connection") == 1) { return "Upgrade"; }
-    if (streq(name, "Sec-WebSocket-Version") == 1) { return "13"; }
-    if (streq(name, "Sec-WebSocket-Key") == 1) { return "dGhlIHNhbXBsZSBub25jZQ=="; }
-    return 0;
-}
 include "lib/ws_server.cyr"
+
+var _WSS_REQ = "GET / HTTP/1.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n";
+fn _wss_hs(fd): i64 { return ws_server_handshake(fd, _WSS_REQ, strlen(_WSS_REQ)); }
 include "rows.cyr"
 
 # A server handle reading one unmasked FIN|TEXT frame of `n` <= 3 bytes. Allocates — call it
@@ -385,10 +384,12 @@ fn main(): i64 {
     _fi_arm(1); _refused("ws_server_new", 1, ws_server_new(ofd), 0);
     _fi_arm(2); _served("ws_server_new", 2, ws_server_new(ofd) != 0);
 
-    _fi_arm(1); _refused("ws_server_handshake concat", 1, ws_server_handshake(ofd, "x", 1), 0);
-    _fi_arm(2); _refused("ws_server_handshake digest", 2, ws_server_handshake(ofd, "x", 1), 0);
-    _fi_arm(3); _refused("ws_server_handshake sha1 buf", 3, ws_server_handshake(ofd, "x", 1), 0);
-    _fi_arm(4); _refused("ws_server_handshake sha1 w", 4, ws_server_handshake(ofd, "x", 1), 0);
+    var hk = 1;
+    while (hk <= 4) { _fi_arm(hk); _refused("ws_server_handshake header lookup", hk, _wss_hs(ofd), 0); hk = hk + 1; }
+    _fi_arm(5); _refused("ws_server_handshake concat", 5, _wss_hs(ofd), 0);
+    _fi_arm(6); _refused("ws_server_handshake digest", 6, _wss_hs(ofd), 0);
+    _fi_arm(7); _refused("ws_server_handshake sha1 buf", 7, _wss_hs(ofd), 0);
+    _fi_arm(8); _refused("ws_server_handshake sha1 w", 8, _wss_hs(ofd), 0);
 
     var ws = ws_server_new(ofd);
     _fi_arm(1); _refused("ws_server_send_close payload", 1, ws_server_send_close(ws, 1000, "bye"), 0 - 1);
@@ -429,5 +430,5 @@ _run_probe probe; n=$_n
 _run_probe ws_probe; nw=$_n
 [ "$nw" -ge 12 ] || fail "only $nw rows ran in ws_probe (floor 12)"
 _run_probe wss_probe; ns=$_n
-[ "$ns" -ge 11 ] || fail "only $ns rows ran in wss_probe (floor 11)"
+[ "$ns" -ge 15 ] || fail "only $ns rows ran in wss_probe (floor 15; 11 until 6.6.19 added the four header-lookup rows)"
 echo "PASS: stdlib_alloc_refusal_sentinels ($n + $nw ws + $ns ws_server rows: every refused alloc returned its sentinel, every count exact)"
