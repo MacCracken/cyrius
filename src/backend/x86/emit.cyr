@@ -822,31 +822,75 @@ fn ECALLPTR_PE(S, n): i64 {
     # until ConnectEx (7-arg) hit it. Stack (top→bottom): [a_{n-1}]..[a4] a3 a2 a1 a0
     # callee. rax = args base throughout; args + callee dropped with one `add rsp` at
     # the end (net-equivalent to the old pops). See CHANGELOG [6.4.43].
+    # ⛔ 6.6.17 (a11) — every displacement and immediate below was ONE signed byte (`disp8` /
+    # `83 /5 ib`), so from 16 arguments the frame size (32 + 8 per stack argument) reached 128
+    # and `sub rsp, 0x80` sign-extended to `add rsp, 128`; the reg-arg loads, the stack-arg copies
+    # and the final drop overflowed the same way (measured under wine: 16 and 20 args page-fault,
+    # 13 is right). Each now takes the 32-bit form once it does not fit a signed byte (no byte
+    # changes below that). And a frame of a page or more is PROBED a page at a time before the
+    # stores: Windows commits the stack through one guard page, and a single `sub rsp` past it
+    # faults (the ESUBRSP probe, on r10 — rax / rcx / rdx / r8 / r9 / r11 are live). CHANGELOG [6.6.17]
     var nextra = n - 4;
     EB(S, 0x48); EB(S, 0x89); EB(S, 0xE0);                            # mov rax, rsp (args base)
-    EB(S, 0x48); EB(S, 0x8B); EB(S, 0x48); EB(S, (nextra + 3) * 8);   # mov rcx, [rax+..] (a0)
-    EB(S, 0x48); EB(S, 0x8B); EB(S, 0x50); EB(S, (nextra + 2) * 8);   # mov rdx, [rax+..] (a1)
-    EB(S, 0x4C); EB(S, 0x8B); EB(S, 0x40); EB(S, (nextra + 1) * 8);   # mov r8,  [rax+..] (a2)
-    EB(S, 0x4C); EB(S, 0x8B); EB(S, 0x48); EB(S, nextra * 8);         # mov r9,  [rax+..] (a3)
-    EB(S, 0x4C); EB(S, 0x8B); EB(S, 0x58); EB(S, (nextra + 4) * 8);   # mov r11, [rax+..] (callee)
+    _pe_cp_mem(S, 0x48, 0x8B, 1, 0, (nextra + 3) * 8);                # mov rcx, [rax+..] (a0)
+    _pe_cp_mem(S, 0x48, 0x8B, 2, 0, (nextra + 2) * 8);                # mov rdx, [rax+..] (a1)
+    _pe_cp_mem(S, 0x4C, 0x8B, 0, 0, (nextra + 1) * 8);                # mov r8,  [rax+..] (a2)
+    _pe_cp_mem(S, 0x4C, 0x8B, 1, 0, nextra * 8);                      # mov r9,  [rax+..] (a3)
+    _pe_cp_mem(S, 0x4C, 0x8B, 3, 0, (nextra + 4) * 8);                # mov r11, [rax+..] (callee)
     EB(S, 0x53);                                                     # push rbx
     EB(S, 0x48); EB(S, 0x89); EB(S, 0xE3);                           # mov rbx, rsp (anchor)
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xE4); EB(S, 0xF0);              # and rsp, -16
     var framesize = 32 + nextra * 8;
     if ((framesize & 15) != 0) { framesize = framesize + 8; }
-    EB(S, 0x48); EB(S, 0x83); EB(S, 0xEC); EB(S, framesize);         # sub rsp, framesize
+    _pe_cp_sub_rsp(S, framesize);                                    # sub rsp, framesize (probed)
     var j = 0;
     while (j < nextra) {
-        EB(S, 0x4C); EB(S, 0x8B); EB(S, 0x50); EB(S, (nextra - 1 - j) * 8);      # mov r10, [rax+..]
-        EB(S, 0x4C); EB(S, 0x89); EB(S, 0x54); EB(S, 0x24); EB(S, 0x20 + j * 8); # mov [rsp+..], r10
+        _pe_cp_mem(S, 0x4C, 0x8B, 2, 0, (nextra - 1 - j) * 8);       # mov r10, [rax+..]
+        _pe_cp_mem(S, 0x4C, 0x89, 2, 4, 0x20 + j * 8);               # mov [rsp+..], r10
         j = j + 1;
     }
     EB(S, 0x41); EB(S, 0xFF); EB(S, 0xD3);                           # call r11 (callee)
     EB(S, 0x48); EB(S, 0x89); EB(S, 0xDC);                           # mov rsp, rbx (restore)
     EB(S, 0x5B);                                                     # pop rbx
-    EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, (n + 1) * 8);       # add rsp, (n+1)*8 (drop args + callee)
+    _pe_cp_rsp_imm(S, 0xC4, (n + 1) * 8);                            # add rsp, (n+1)*8 (drop args + callee)
     _flags_reflect_rax = 0;
     _xdepth = _xd_after;
+    return 0;
+}
+# `rex op modrm [disp]` for a [base + disp] operand: `reg` = the register's low 3 bits, `rm` = 0
+# for [rax], 4 for [rsp] (a SIB byte 0x24 follows). disp8 when it fits a signed byte, else disp32.
+fn _pe_cp_mem(S, rex, op, reg, rm, disp): i64 {
+    EB(S, rex); EB(S, op);
+    if (disp <= 127) {
+        EB(S, 0x40 | (reg << 3) | rm);
+        if (rm == 4) { EB(S, 0x24); }
+        EB(S, disp);
+        return 0;
+    }
+    EB(S, 0x80 | (reg << 3) | rm);
+    if (rm == 4) { EB(S, 0x24); }
+    EDISP32(S, disp);
+    return 0;
+}
+# `sub rsp, imm` (ext 0xEC) / `add rsp, imm` (ext 0xC4): imm8 when it fits a signed byte, else imm32.
+fn _pe_cp_rsp_imm(S, ext, v): i64 {
+    EB(S, 0x48);
+    if (v <= 127) { EB(S, 0x83); EB(S, ext); EB(S, v); return 0; }
+    EB(S, 0x81); EB(S, ext); EDISP32(S, v);
+    return 0;
+}
+# `sub rsp, sz`, probed a page at a time when sz is a page or more (ESUBRSP's sequence on r10):
+#   lea r10, [rsp - sz]; .p: cmp rsp, r10; jbe .d; sub rsp, 0x1000; mov [rsp], rsp; jmp .p;
+#   .d: mov rsp, r10
+fn _pe_cp_sub_rsp(S, sz): i64 {
+    if (sz < 4096) { return _pe_cp_rsp_imm(S, 0xEC, sz); }
+    EB(S, 0x4C); EB(S, 0x8D); EB(S, 0x94); EB(S, 0x24); EDISP32(S, 0 - sz);   # lea r10, [rsp - sz]
+    EB(S, 0x4C); EB(S, 0x39); EB(S, 0xD4);                                    # cmp rsp, r10   (.p)
+    EB(S, 0x76); EB(S, 0x0D);                                                 # jbe .d (+13)
+    EB(S, 0x48); EB(S, 0x81); EB(S, 0xEC); EDISP32(S, 0x1000);                # sub rsp, 0x1000
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0x24); EB(S, 0x24);                       # mov [rsp], rsp
+    EB(S, 0xEB); EB(S, 0xEE);                                                 # jmp .p (-18)
+    EB(S, 0x4C); EB(S, 0x89); EB(S, 0xD4);                                    # mov rsp, r10   (.d)
     return 0;
 }
 
