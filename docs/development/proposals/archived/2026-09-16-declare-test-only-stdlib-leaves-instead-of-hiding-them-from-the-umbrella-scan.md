@@ -1,6 +1,25 @@
 # Proposal — let a package declare test-only stdlib leaves, instead of hiding them from the umbrella scan
 
-**Filed:** 2026-09-16 · **Status:** 🟡 OPEN — for maintainer direction
+**Filed:** 2026-09-16 · **Status:** ✅ **SHIPPED in 6.6.18** as **option 2** (merged 2026-10-06; archived). Original status:
+🟡 OPEN — for maintainer direction.
+
+> ### ✅ Resolution — 6.6.18 (CHANGELOG [6.6.18], *Distlib — P4 option 2*)
+>
+> - **Shipped: option 2 — the compile-verify fixpoint is the ONLY authority for a `.deps` sidecar.** The umbrella
+>   scan (source 1 below), the `[deps] stdlib` union (source 2) and the profile prune are gone; the seed is the `lib/`
+>   includes the bundled modules keep, and source 3 derives everything else. No `dev-stdlib` key and no
+>   `[lib] umbrella` — nothing to declare, because a test-only leaf the bundle never references is never derived.
+>   rekha's nine leaves become what its bundle actually calls.
+> - **Three prerequisites the planning simulation missed** (each measured: without it a fold published a broken
+>   sidecar once the union was gone): D1 — the verify's snapshot index read depth-0 `lib/*.cyr` only, so a FAMILY
+>   directory (`lib/unicode/`, niyama) was invisible; D2 — a name nothing could own was a silent `continue`, now
+>   named as a warning; D3 — the verify compiles for agnos too (six targets), and an in-unit declarer that still
+>   failed on a target is not the owner (mabda's agnos-only `io`).
+> - **Also shipped:** every bundle carries a compile-verified requires block (raw-includable, D5); a failed build
+>   names the stdlib leaf to declare (`hint: … add it to [deps] stdlib`).
+> - **Not in 6.6.18 (user decision 2026-10-06):** the 12 folded stdlibs regenerate in ONE wave after the tag;
+>   re-vendoring them, the log / ws / ws_server fold bundles and the tls_native mirror retirement are 6.6.19 (R1–R3).
+>   Consumers: [`ecosystem-migration-6.6.18.md`](../../ecosystem-migration-6.6.18.md).
 **Filed by:** rekha (0.4.4), first consumer to hit it. Everything below is measured against
 cyrius 6.6.4, not inferred.
 

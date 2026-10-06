@@ -182,7 +182,7 @@ peephole that runs only under opt-in `CYRIUS_IR=3`) — is now [roadmap_6.md](ro
 `ir_const_fold` ordering constraint", a base roadmap_6.md had already retracted on 2026-10-02.)*
 
 ### P4 — test-only stdlib leaves, instead of hiding them from the umbrella scan
-[`proposals/2026-09-16-declare-test-only-stdlib-leaves-instead-of-hiding-them-from-the-umbrella-scan.md`](proposals/2026-09-16-declare-test-only-stdlib-leaves-instead-of-hiding-them-from-the-umbrella-scan.md)
+[`proposals/archived/2026-09-16-declare-test-only-stdlib-leaves-instead-of-hiding-them-from-the-umbrella-scan.md`](proposals/archived/2026-09-16-declare-test-only-stdlib-leaves-instead-of-hiding-them-from-the-umbrella-scan.md)
 
 **Placed: 6.6.18** (2026-10-02), **option 2**: the compile-verify fixpoint is the only authority (simulated on 7 producers × 4 targets, 0 undefined). Fleet-wide: 73 of 76 published sidecars name an unused `assert`, 53 of 53 an unused `bench` (+35 % consumer binary). Drop the `dev-stdlib` key and `[lib] umbrella` shapes. Reverses the v6.5.10 "union" stance.
 
@@ -220,7 +220,7 @@ quieter, not safer.
 
 
 ### P6 — `cyrius fuzz --poison` through a custom allocator seam
-[`proposals/2026-09-20-fuzz-poison-should-follow-a-custom-allocator-seam.md`](proposals/2026-09-20-fuzz-poison-should-follow-a-custom-allocator-seam.md)
+[`proposals/archived/2026-09-20-fuzz-poison-should-follow-a-custom-allocator-seam.md`](proposals/archived/2026-09-20-fuzz-poison-should-follow-a-custom-allocator-seam.md)
 
 **Placed: 6.6.18** (2026-10-02), widened: `alloc()` is never poisoned and 60 of 95 fuzzing repos get nothing. Pack S1–S6 + `poison_allocator()`: a leading redzone, a live-block sweep, a settable fill byte with an A/B run, `alloc()` / arena redzones (`lib/alloc.cyr` is compiler source — full gate). Drop the manifest / interposition shape; guard pages → backlog.
 

@@ -1,8 +1,18 @@
 # `cyrius fuzz` cannot see an out-of-bounds READ — every overread in every consumer is invisible to it
 
-**Status:** ✅ **RESOLVED** — shipped in **v6.5.29** as `cyrius fuzz --poison`. See `CHANGELOG.md` [6.5.29].
+**Status:** ✅ **RESOLVED** — `fl_alloc` half shipped in **v6.5.29** as `cyrius fuzz --poison`; the `alloc()` half in **6.6.18** (P6). See `CHANGELOG.md` [6.5.29] and [6.6.18].
 
-> Delivered exactly what the filing asked for and no more: redzones around `fl_alloc`
+> ⛔ **Corrected 2026-10-06 (6.6.18).** The v6.5.29 resolution below said it "delivered exactly what
+> the filing asked for". It did not: the filing asks for redzones around **`alloc` / `fl_alloc`**
+> allocations (§ *What we need*), and `alloc` — the bump allocator this filing's own 127-byte overread
+> came from — got none. v6.5.29 shipped the `fl_alloc` half and dropped the other without filing it;
+> that is how 60 of 95 fuzzing repos got nothing from `--poison`. The `alloc()` half shipped in
+> 6.6.18 with P6 ([`proposals/archived/2026-09-20-fuzz-poison-should-follow-a-custom-allocator-seam.md`](../../proposals/archived/2026-09-20-fuzz-poison-should-follow-a-custom-allocator-seam.md)):
+> `alloc()` and arena redzones under `CYRIUS_POISON`, a leading redzone and a live-block sweep, and
+> an overwrite that stops the harness (exit 86) instead of being counted. An overREAD is still silent
+> under plain `--poison`; `--poison=ab` catches it by diffing two fills.
+>
+> *Original v6.5.29 resolution:* Delivered exactly what the filing asked for and no more: redzones around `fl_alloc`
 > allocations poisoned with a known pattern (0xA5), a check that COUNTS violations at free
 > (`fl_poison_violations()`), and quarantine-on-free so use-after-free reads the pattern
 > instead of the block's old contents. No shadow memory, per the filing's own "full ASAN-grade
