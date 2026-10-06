@@ -909,8 +909,23 @@ fn async_read(fd, buf, len): i64 {
     return syscall(0, fd, buf, len);
 }
 
-# Wait for `fd` readable. TODO(R1-iocp): overlapped wait. Present so consumers link.
+# Wait for SOCKET `fd` to be readable, or until `ms` milliseconds elapse (`ms` < 0: no limit).
+# Returns 1 if it became readable — data, a hang-up, or a pending connection on a listening
+# socket — and 0 if the wait ended without it (the timeout, or an error). The epoll backend's
+# contract, over ws2_32!WSAPoll (fd_wait_ready, 0xF04A, verified on cass).
+# ⚠ SOCKETS ONLY: WSAPoll knows nothing of other HANDLEs (a pipe, a file, a console), so for
+# those this answers 0 at once rather than waiting — the Windows reactor is socket-only too.
+# CHANGELOG [6.6.19]
+fn async_await_readable_ms(fd, ms): i64 {
+    if (fd_wait_ready(fd, 0, ms) == 1) { return 1; }
+    return 0;
+}
+
+# Wait without limit for SOCKET `fd` to become readable; always 0 (the Linux contract). ⛔ Until
+# 6.6.19 this was a no-op that returned at once, so sandhi's cooperative accept loop spun at
+# 100 % CPU on Windows. CHANGELOG [6.6.19]
 fn async_await_readable(fd): i64 {
+    async_await_readable_ms(fd, 0 - 1);
     return 0;
 }
 
