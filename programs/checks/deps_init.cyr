@@ -168,6 +168,20 @@ fn _deps_requires_gate(): i64 {
 # auto-pulls those leaves — so a consumer declaring just `[deps.<pkg>]` (no
 # hand-authored `requires`) gets them in scope, in topological order. This
 # gate proves the full producer→sidecar→consumer chain end-to-end.
+# Remove every file in `dir` (one level), then the directory.
+fn _ds_clear_dir(dir): i64 {
+    var ents = dir_list(str_from(dir));
+    var i = 0;
+    while (ents != 0 && i < vec_len(ents)) {
+        var e = str_data(vec_get(ents, i));
+        i = i + 1;
+        if (load8(e) == 46) { continue; }
+        sys_unlink(_lk_path(_lk_path(dir, "/"), e));
+    }
+    sys_rmdir(dir);
+    return 0;
+}
+
 fn _deps_sidecar_gate(): i64 {
     var label = "cyrius distlib emits dist/<pkg>.deps + cyrius deps auto-resolves its leaves with no hand-authored `requires` — v6.2.47 dependency-model lever 1 Phase A (producer sidecar)";
 
@@ -177,14 +191,16 @@ fn _deps_sidecar_gate(): i64 {
         return 0;
     }
 
-    # --- Producer: a fold whose module includes lib/fnptr + lib/ct (captured)
-    #     and a src/ self-ref (NOT captured). `cyrius distlib` → sidecar.
+    # --- Producer: a fold whose module includes lib/fnptr + lib/ct (kept, so captured), a
+    #     src/ self-ref (NOT captured), and CALLS clock_now_ns() from lib/chrono.cyr, which it
+    #     does not include — the compile-verified fixpoint must derive `chrono`.
     var fd = _tmp_path("audit_deps_sidecar_fold_");
     sys_mkdir(fd, 0x1ED);
     _write_file(_lk_path(fd, "/mymod.cyr"),
-        "include \"lib/fnptr.cyr\"\ninclude \"lib/ct.cyr\"\ninclude \"src/self.cyr\"\n\nfn _sc_thing(): i64 { return 1; }\n");
-    # Umbrella include-hub (v6.2.48): declares a leaf (keccak) that NO folded
-    # module includes directly — proves the umbrella scan captures it.
+        "include \"lib/fnptr.cyr\"\ninclude \"lib/ct.cyr\"\ninclude \"src/self.cyr\"\n\nfn _sc_thing(): i64 { return clock_now_ns(); }\n");
+    # ⛔ 6.6.18 (P4 option 2): the umbrella include-hub is NOT an input any more. Its leaf
+    # (keccak), which no folded module includes or uses, must stay OUT of the sidecar and out of
+    # the consumer's lib/ — through 6.6.17 the umbrella scan (v6.2.48) published it.
     sys_mkdir(_lk_path(fd, "/src"), 0x1ED);
     _write_file(_lk_path(fd, "/src/lib.cyr"), "include \"lib/keccak.cyr\"\n");
     _write_file(_lk_path(fd, "/cyrius.cyml"),
@@ -193,8 +209,9 @@ fn _deps_sidecar_gate(): i64 {
     var pec = _exec_in_dir(fd, cyrius_bin, "distlib", pout);
     var sidecar = _lk_path(fd, "/dist/scfold.deps");
     var got_sidecar = file_exists(sidecar);
-    # Sidecar must list fnptr (lib/) and NOT self (src/ skipped).
+    # Sidecar must list fnptr (kept lib/) and chrono (derived), NOT self (src/) and NOT keccak.
     var has_fnptr = 0;
+    var has_chrono = 0;
     var has_keccak = 0;
     var has_self = 1;
     if (got_sidecar == 1) {
@@ -204,12 +221,13 @@ fn _deps_sidecar_gate(): i64 {
             store8(sb + sn, 0);
             if (_find_str_from(sb, sn, 0, "fnptr", 5) >= 0) { has_fnptr = 1; }
             if (_find_str_from(sb, sn, 0, "keccak", 6) >= 0) { has_keccak = 1; }
+            if (_find_str_from(sb, sn, 0, "chrono", 6) >= 0) { has_chrono = 1; }
             if (_find_str_from(sb, sn, 0, "self", 4) < 0) { has_self = 0; }
         }
     }
 
     # --- Consumer: declares [deps.scfold] with NO `requires`; the sidecar
-    #     auto-pulls fnptr + ct into the consumer's lib/.
+    #     auto-pulls fnptr + ct + chrono into the consumer's lib/, and never keccak.
     var cd = _tmp_path("audit_deps_sidecar_consumer_");
     sys_mkdir(cd, 0x1ED);
     var ccyml = str_builder_new();
@@ -222,6 +240,7 @@ fn _deps_sidecar_gate(): i64 {
     var got_fnptr = file_exists(_lk_path(cd, "/lib/fnptr.cyr"));
     var got_ct = file_exists(_lk_path(cd, "/lib/ct.cyr"));
     var got_keccak = file_exists(_lk_path(cd, "/lib/keccak.cyr"));
+    var got_chrono = file_exists(_lk_path(cd, "/lib/chrono.cyr"));
 
     # Cleanup before reporting so a failed assertion still cleans up.
     sys_unlink(pout);
@@ -234,13 +253,9 @@ fn _deps_sidecar_gate(): i64 {
     sys_rmdir(_lk_path(fd, "/src"));
     sys_unlink(_lk_path(fd, "/cyrius.cyml"));
     sys_rmdir(fd);
-    sys_unlink(_lk_path(cd, "/lib/fnptr.cyr"));
-    sys_unlink(_lk_path(cd, "/lib/ct.cyr"));
-    sys_unlink(_lk_path(cd, "/lib/keccak.cyr"));
-    sys_unlink(_lk_path(cd, "/lib/scfold.cyr"));
+    _ds_clear_dir(_lk_path(cd, "/lib"));   # chrono brings its own closure; remove whatever landed
     sys_unlink(_lk_path(cd, "/cyrius.lock"));
     sys_unlink(_lk_path(cd, "/cyrius.cyml"));
-    sys_rmdir(_lk_path(cd, "/lib"));
     sys_rmdir(cd);
 
     var fail = 0;
@@ -248,21 +263,21 @@ fn _deps_sidecar_gate(): i64 {
         _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
         _p(": distlib did not emit dist/scfold.deps (exit "); print_num(pec); println(")");
         fail = 1;
-    } elif (has_fnptr != 1 || has_keccak != 1 || has_self != 0) {
+    } elif (has_fnptr != 1 || has_chrono != 1 || has_keccak != 0 || has_self != 0) {
         _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
-        println(": sidecar wrong (needs folded leaf 'fnptr' + umbrella-only 'keccak', NOT src/ 'self')");
+        println(": sidecar wrong (needs kept leaf 'fnptr' + derived 'chrono'; NOT umbrella-only 'keccak', NOT src/ 'self')");
         fail = 1;
     } elif (cec != 0) {
         _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
         _p(": consumer deps (no requires) exited "); print_num(cec); println(" (expected 0)");
         fail = 1;
-    } elif (got_fnptr != 1 || got_ct != 1 || got_keccak != 1) {
+    } elif (got_fnptr != 1 || got_ct != 1 || got_chrono != 1 || got_keccak != 0) {
         _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
-        println(": sidecar did not auto-pull fnptr+ct+keccak (umbrella) into the consumer's lib/");
+        println(": sidecar did not auto-pull fnptr+ct+chrono into the consumer's lib/, or vendored the umbrella-only keccak");
         fail = 1;
     } else {
         _p("  "); _p(ANSI_GREEN); _p("PASS"); _p(ANSI_RESET);
-        println(": distlib sidecar (folded + umbrella src/lib.cyr leaves) auto-resolves with no `requires`");
+        println(": distlib sidecar (kept + compile-derived leaves; the umbrella is not an input) auto-resolves with no `requires`");
     }
     _check(label, fail);
     return fail;
