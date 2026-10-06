@@ -21,14 +21,19 @@
 # only when a stop flag is configured; this primitive is what lets that go back to
 # parking in epoll. The old name is kept as a wrapper returning 0, so no call site moves.
 #
-# SCOPE. `lib/async.cyr`'s epoll body is gated NOT-agnos AND NOT-win (lib/async.cyr:42-43),
-# so this pair is Linux-path only by construction — Windows has lib/async_win.cyr and
-# agnos has lib/async_agnos.cyr. cx never reaches it (no syscall peer is included there at
-# all, so the body does not compile). No cross-target axis is owed here.
+# SCOPE. Axes 1-6 run the Linux epoll body (`lib/async.cyr` is gated NOT-agnos AND NOT-win;
+# cx never reaches it). ⛔ Until 6.6.19 that was the ONLY definition: on macOS and Windows
+# async_await_readable was a no-op returning 0 at once, so sandhi's cooperative accept loop spun
+# at 100 % CPU there and async_await_readable_ms did not exist. Axis 7 pins the peers: macOS
+# (lib/async_macos.cyr, BSD poll) and Windows (lib/async_win.cyr, WSAPoll) define it over
+# fd_wait_ready, agnos (lib/async_agnos.cyr) over the socket adapter's readiness stash, each
+# legacy wrapper delegates with no bound, and a probe calling it builds for all three. They RUN in
+# tests/tcyr/crossos/async_await_readable_ms.tcyr on ecb, ach and cass, and agnos under the fake
+# kernel (tests/gates/platform/agnos_peer_fake_kernel.sh axis 8).
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
-CC="$ROOT/build/cycc"
+CC=${CYCC:-"$ROOT/build/cycc"}
 D=$(mktemp -d) && [ -d "$D" ] || { echo "FAIL: async_await_readable_ms: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$D"' EXIT
 fails=0
@@ -53,10 +58,10 @@ include "lib/async.cyr"'
 # Build + run a probe body, echoing the exit code. 124 = timed out (hung).
 runprobe() {
     printf '%s\n%s\n' "$PRE" "$1" > "$D/p.cyr"
-    cat "$D/p.cyr" | "$CC" > "$D/p.bin" 2>/dev/null
-    chmod +x "$D/p.bin" 2>/dev/null
-    timeout 10 "$D/p.bin" >/dev/null 2>&1
-    echo $?
+    "$CC" < "$D/p.cyr" > "$D/p.bin" 2>/dev/null || true
+    chmod +x "$D/p.bin" 2>/dev/null || true
+    prc=0; timeout 10 "$D/p.bin" >/dev/null 2>&1 || prc=$?
+    echo "$prc"
 }
 
 # ── AXIS 1: a bounded wait RETURNS on an idle fd instead of parking forever. This is the
@@ -149,10 +154,40 @@ check "legacy wrapper returns 0" 42 "$(cat "$D/a5")"
 # Guards against someone "simplifying" the wrapper back into a hardcoded wait.
 echo "axis 6 — the _ms body passes ms through to sys_epoll_wait:"
 body=$(awk '/^fn async_await_readable_ms\(/,/^}/' lib/async.cyr)
-n_par=$(printf '%s\n' "$body" | grep -cE 'sys_epoll_wait\(epfd, &revents, 1, ms\)')
+n_par=$(printf '%s\n' "$body" | grep -cE 'sys_epoll_wait\(epfd, &revents, 1, ms\)' || true)
 check "sys_epoll_wait(..., ms)" 1 "$n_par"
-n_lit=$(printf '%s\n' "$body" | grep -cE 'sys_epoll_wait\(.*0 - 1\)')
+n_lit=$(printf '%s\n' "$body" | grep -cE 'sys_epoll_wait\(.*0 - 1\)' || true)
 check "no hardcoded -1 left in _ms" 0 "$n_lit"
+
+# ── AXIS 7 (6.6.19): the macOS and Windows peers define the bounded wait and delegate to it.
+# Structural (each body read fn-line to closing brace) plus a build: a probe that calls it must
+# compile for x86 Mach-O, PE and agnos with no undefined function — before 6.6.19 all refused it.
+echo "axis 7 — macOS, Windows and agnos define async_await_readable_ms and the legacy wait delegates:"
+_fnbody() { awk -v n="fn $2(" 'index($0, n) == 1 {p = 1} p {print} p && /^}/ {exit}' "$1"; }
+for f in lib/async_macos.cyr lib/async_win.cyr; do
+    b=$(_fnbody "$f" async_await_readable_ms)
+    check "$f: async_await_readable_ms(fd, ms) passes ms to fd_wait_ready" 1 \
+        "$(printf '%s\n' "$b" | grep -cE 'fd_wait_ready\(fd, 0, ms\)')"
+    l=$(_fnbody "$f" async_await_readable)
+    check "$f: async_await_readable delegates with no bound" 1 \
+        "$(printf '%s\n' "$l" | grep -cE 'async_await_readable_ms\(fd, 0 - 1\)')"
+done
+# agnos (6.6.19): no poll at all — the socket adapter's readiness stash (_agnos_fd_ready), run
+# under the scripted fake kernel by tests/gates/platform/agnos_peer_fake_kernel.sh axis 8.
+b=$(_fnbody lib/async_agnos.cyr async_await_readable_ms)
+check "lib/async_agnos.cyr: async_await_readable_ms probes _agnos_fd_ready(fd) before and after each sleep, and honours ms" "2 yes" \
+    "$(printf '%s\n' "$b" | grep -cE 'if \(_agnos_fd_ready\(fd\) != 0\) \{ return 1; \}' || true) $(printf '%s\n' "$b" | grep -qE 'el >= ms' && echo yes || echo no)"
+l=$(_fnbody lib/async_agnos.cyr async_await_readable)
+check "lib/async_agnos.cyr: async_await_readable delegates with no bound" 1 \
+    "$(printf '%s\n' "$l" | grep -cE 'async_await_readable_ms\(fd, 0 - 1\)' || true)"
+printf '%s\n%s\n' "$PRE" 'fn main(): i64 { alloc_init(); return async_await_readable_ms(0 - 1, 0); }
+var r = main();
+sys_exit(r);' > "$D/x.cyr"
+for tgt in CYRIUS_MACHO CYRIUS_TARGET_WIN CYRIUS_TARGET_AGNOS; do
+    rc=0; env "$tgt=1" "$CC" < "$D/x.cyr" > "$D/x.bin" 2> "$D/x.err" || rc=$?
+    nu=$(grep -c "undefined function 'async_await_readable_ms'" "$D/x.err" || true)
+    check "$tgt=1: a probe calling async_await_readable_ms builds (rc, undefined)" "0 0" "$rc $nu"
+done
 
 echo ""
 if [ "$fails" = "0" ]; then

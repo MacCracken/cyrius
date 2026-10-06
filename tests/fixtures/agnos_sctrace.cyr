@@ -85,6 +85,14 @@
 #   asshort — fork#96 answers 5; the result pipe answers 3 bytes, then 0 (EOF): a body that died
 #             before it had written its whole result.
 # PTRACE_SYSEMU does not execute fork, so each run proves ONE side of it; only agnos-qemu runs both.
+# The sk* modes (6.6.19) drive the readiness stash behind lib/async_agnos.cyr's
+# async_await_readable_ms. In all of them uptime_ms#40 answers 10 * (call# + 1) — the clock
+# advances 10 ms per read — and sleep_ms#41 answers 0:
+#   acclate  — sock_accept#57 answers -1 (nothing pending) three times, then conn 2, then -1 for
+#              ever: a conn arrives during the wait, and a SECOND #57 would find nothing.
+#   accnever — #57 answers -1 for ever: nothing ever arrives.
+#   rcvlate  — sock_recv#49 answers 0 (WOULD_BLOCK) three times, then ONE byte 'P' (poked into
+#              the child), then two bytes "QQ" (min(len, 2)), then 0 for ever.
 # In every mode sock_recv#49 answers 0 (WOULD_BLOCK) unless the mode says otherwise,
 # sock_connect#47 / sock_listen#56 answer id 0, sock_peer#106 answers 127.0.0.1:8080 packed
 # ((0x7F000001 << 16) | 8080) and net_config#61 field 0 (net_ip) answers 10.0.2.15.
@@ -300,7 +308,39 @@ fn _st_rg_hangs(mode): i64 {
     return 0;
 }
 
+# 1 iff `mode` is one of the sk* (readiness-stash) modes.
+fn _st_is_sk(mode): i64 {
+    if (_st_mode_is(mode, "acclate") == 1) { return 1; }
+    if (_st_mode_is(mode, "accnever") == 1) { return 1; }
+    if (_st_mode_is(mode, "rcvlate") == 1) { return 1; }
+    return 0;
+}
+
 #ifdef CYRIUS_ARCH_X86
+# The answer table of the sk* modes; bytes a #49 delivers are poked into the child at a2.
+fn _st_sk_answer(pid, mode, nr, k, regs): i64 {
+    if (nr == 40) { return 10 * (k + 1); }
+    if (nr == 57) {
+        if (_st_mode_is(mode, "acclate") == 1) {
+            if (k == 3) { return 2; }
+        }
+        return 0 - 1;
+    }
+    if (nr == 49) {
+        if (_st_mode_is(mode, "rcvlate") == 1) {
+            var len = load64(regs + 96);
+            if (k == 3) { _st_poke_bytes(pid, load64(regs + 104), 80, 1); return 1; }
+            if (k == 4) {
+                if (len > 2) { len = 2; }
+                _st_poke_bytes(pid, load64(regs + 104), 81, len);
+                return len;
+            }
+        }
+        return 0;
+    }
+    return _st_answer(mode, nr, k, load64(regs + 112), load64(regs + 96));
+}
+
 # Write the u64 `v` into the child at `addr` (PTRACE_POKEDATA).
 fn _st_poke(pid, addr, v): i64 {
     syscall(101, 5, pid, addr, v);
@@ -543,6 +583,7 @@ fn main(): i64 {
         if (nr >= 0) { if (nr < 128) { k = load64(&counts + nr * 8); store64(&counts + nr * 8, k + 1); } }
         var ans = 0;
         if (_st_is_rg(mode) == 1) { ans = _st_rg_answer(pid, mode, nr, k, &regs); }
+        elif (_st_is_sk(mode) == 1) { ans = _st_sk_answer(pid, mode, nr, k, &regs); }
         else { ans = _st_answer(mode, nr, k, load64(&regs + 112), load64(&regs + 96)); }
         store64(&regs + 80, ans);
         syscall(101, 13, pid, 0, &regs);    # PTRACE_SETREGS

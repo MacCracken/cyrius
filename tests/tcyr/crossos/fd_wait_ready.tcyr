@@ -6,7 +6,7 @@
 # filing): a peer could pin a client thread for ever. Bounding them needs one wait on a
 # caller-owned fd that works on every target, and the stdlib had none — process.cyr's
 # _proc_poll_in is read-only and private, net.cyr's WSAPoll is the Windows connect wait, and
-# async_await_readable_ms needs a coroutine. Each peer's wrapper is a different mechanism:
+# async_await_readable_ms is read-only (macOS and Windows build it on this wait since 6.6.19). Each peer's wrapper is a different mechanism:
 #   * Linux x86_64 — poll(7) itself;
 #   * aarch64-Linux — ESYSXLAT turns 7 into ppoll(73) and the int ms into a timespec;
 #   * macOS (arm64 and Intel) — 7 becomes BSD poll(230);

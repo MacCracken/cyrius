@@ -22,7 +22,7 @@ R=$(cd "$(dirname "$0")/../../.." && pwd)
 T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: agnos_peer_fake_kernel: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$T"' EXIT
 cd "$R" || exit 2
-CC="$R/build/cycc"
+CC=${CYCC:-"$R/build/cycc"}
 [ -x "$CC" ] || { echo "FAIL agnos_peer_fake_kernel: no build/cycc"; exit 1; }
 fails=0
 check() {
@@ -368,6 +368,106 @@ if CYRIUS_TARGET_AGNOS=1 "$CC" < cbt/cyrius.cyr > "$T/cli.bin" 2>"$T/cli.err"; t
 else
     echo "  FAIL: cbt/cyrius.cyr does not compile for agnos:"; grep -E '^error' "$T/cli.err" | head -5; fails=$((fails + 1))
 fi
+
+# ── axis 8 — async_await_readable_ms over the readiness stash (6.6.19) ────────────────────────
+# agnos has no non-consuming readiness probe, so the wait PRE-ACCEPTS a listener's conn and PEEKS
+# a conn's first byte; the next accept / read must deliver what the probe took — exactly once,
+# and with no further kernel call for it. Before 6.6.19 these probes did not build
+# (async_await_readable_ms was undefined on agnos; async_await_readable was a no-op).
+echo "axis 8 — async_await_readable_ms: the readiness stash (pre-accept, peek) is delivered, once (6.6.19):"
+cat > "$T/a8.cyr" <<'EOF'
+include "lib/alloc.cyr"
+include "lib/tagged.cyr"
+include "lib/net.cyr"
+include "lib/async.cyr"
+#ifndef NEVER
+var l_t, l = tcp_socket();
+sock_bind(l, INADDR_LOOPBACK(), 8080);
+sock_listen(l, 4);
+syscall(999, 110, 0);
+syscall(999, 111, async_await_readable_ms(l, 0 - 1));
+var a_t, a = sock_accept(l);
+syscall(999, 112, is_err_result(a_t) * 100 + _agnos_fd_conn(a));
+#endif
+var l2_t, l2 = tcp_socket();
+sock_bind(l2, INADDR_LOOPBACK(), 8081);
+sock_listen(l2, 4);
+syscall(999, 113, 0);
+syscall(999, 114, async_await_readable_ms(l2, 50));
+sys_exit(0);
+EOF
+run "$T/a8.cyr" acclate
+check "a conn arriving during the wait: 1, after 4 #57s with a sleep_ms#41 between probes" "1 4 3" \
+    "$(mark 111) $(between 110 57) $(between 110 41)"
+check "  the following sock_accept is Ok(conn 2) and issues NO #57 (the stash hands it over)" "2 0" \
+    "$(mark 112) $(between 111 57)"
+{ printf '#define NEVER 1\n'; cat "$T/a8.cyr"; } > "$T/a8n.cyr"
+run "$T/a8n.cyr" accnever
+n41=$(between 113 41); n57=$(between 113 57)
+check "nothing arrives, ms = 50: 0 once the clock passes the deadline, sleeping between probes (#41 >= 1, #57 <= 12)" \
+    "0 yes yes" "$(mark 114) $([ "$n41" -ge 1 ] && echo yes || echo no) $([ "$n57" -le 12 ] && echo yes || echo no)"
+cat > "$T/a8c.cyr" <<'EOF'
+include "lib/alloc.cyr"
+include "lib/tagged.cyr"
+include "lib/net.cyr"
+include "lib/async.cyr"
+var l_t, l = tcp_socket();
+sock_bind(l, INADDR_LOOPBACK(), 8080);
+sock_listen(l, 4);
+async_await_readable_ms(l, 0 - 1);
+syscall(999, 120, 0);
+sys_close(l);
+syscall(999, 121, 0);
+sys_exit(0);
+EOF
+run "$T/a8c.cyr" acclate
+check "closing a listener holding a pre-accepted conn closes that conn (#50 2), then the listener (#50 0)" "2 0" \
+    "$(awk '$1 == "sc" && $2 == 999 { if (on) exit; if ($3 == 120) { on = 1; next } } on && $1 == "sc" && $2 == 50 { printf "%s%s", s, $3; s = " " }' "$T/run.log")"
+cat > "$T/a8r.cyr" <<'EOF'
+include "lib/alloc.cyr"
+include "lib/tagged.cyr"
+include "lib/net.cyr"
+include "lib/async.cyr"
+var c_t, c = tcp_socket();
+sock_connect(c, INADDR_LOOPBACK(), 8080);
+var buf[16];
+store64(&buf, 0);
+store64(&buf + 8, 0);
+syscall(999, 140, 0);
+syscall(999, 141, async_await_readable_ms(c, 0 - 1));
+syscall(999, 142, 0);
+#ifdef REUSE
+sys_close(c);
+var d_t, d = tcp_socket();
+sock_connect(d, INADDR_LOOPBACK(), 8080);
+syscall(999, 145, 0);
+syscall(999, 146, sys_read(d, &buf, 8));
+syscall(999, 147, load64(&buf));
+#endif
+#ifndef REUSE
+#ifdef VIA_BLOCK
+var n = _agnos_sock_recv_block(_agnos_fd_conn(c), &buf, 8, 1000000);
+#endif
+#ifndef VIA_BLOCK
+var n = sys_read(c, &buf, 8);
+#endif
+syscall(999, 143, n);
+syscall(999, 144, load64(&buf));
+#endif
+sys_exit(0);
+EOF
+run "$T/a8r.cyr" rcvlate
+check "a byte arriving during the wait: 1, after 4 #49s" "1 4" "$(mark 141) $(between 140 49)"
+check "  sys_read delivers the peeked byte FIRST, then ONE non-blocking #49 for the rest: 3 bytes 'PQQ'" \
+    "3 5329232 1" "$(mark 143) $(mark 144) $(between 142 49)"
+{ printf '#define VIA_BLOCK 1\n'; cat "$T/a8r.cyr"; } > "$T/a8b.cyr"
+run "$T/a8b.cyr" rcvlate
+check "  so does _agnos_sock_recv_block read by conn id (tls_native's _tn_agnos_read_full path)" \
+    "3 5329232 1" "$(mark 143) $(mark 144) $(between 142 49)"
+{ printf '#define REUSE 1\n'; cat "$T/a8r.cyr"; } > "$T/a8u.cyr"
+run "$T/a8u.cyr" rcvlate
+check "  and a conn closed with a byte still stashed takes it with it: the reused conn id reads 'QQ' only" \
+    "2 20817" "$(mark 146) $(mark 147)"
 
 echo ""
 if [ "$fails" = "0" ]; then

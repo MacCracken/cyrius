@@ -15,11 +15,16 @@
 # which is only possible if two things are running at once.
 #
 # ⚠ GUARDED BY CAPABILITY, NOT BY TARGET NAME AND NOT BY ERRNO (the v6.5.36 lesson).
-# `THREADS_CONCURRENT` is published by each backend: 1 for Linux clone threads, arm64-macOS
-# pthread threads and Windows CreateThread threads, 0 for the two serial peers (x86-macOS,
-# agnos). Guarding on the
+# `THREADS_CONCURRENT` is published by each backend: 1 for Linux clone threads, macOS threads
+# (arm64 libSystem pthreads; x86 raw bsdthread since 6.6.19) and Windows CreateThread threads,
+# 0 for the serial peer agnos (and cx, which has no second thread). Guarding on the
 # capability means this file starts asserting automatically the day another peer becomes real,
 # instead of needing someone to remember to un-guard it.
+#
+# ⚠ THE CAPABILITY ITSELF IS PINNED ON macOS. Guarding on it alone cannot see a backend that
+# regresses to serial AND declares it honestly — x86 macOS declared 0 until 6.6.19, and this
+# file then passed there vacuously. Both Mach-O arches now start real threads and block in the
+# channel, so on macOS the two values are asserted, not just consulted.
 #
 # ⚠ THE SPIN IS BOUNDED so a serial target FAILS rather than HANGS. A hang in the cross-OS leg
 # takes down the release gate instead of reddening one test, which is a strictly worse signal.
@@ -50,6 +55,11 @@ fn _rv_worker(arg): i64 {
 
 fn main(): i64 {
     alloc_init();
+
+    #ifdef CYRIUS_TARGET_MACOS
+    assert_eq(THREADS_CONCURRENT, 1, "macOS (arm64 and x86): thread_create starts a real thread");
+    assert_eq(CHAN_BLOCKING, 1, "macOS (arm64 and x86): the channel blocks");
+    #endif
 
     if (THREADS_CONCURRENT == 1) {
         store64(&_rv_cell, 0);

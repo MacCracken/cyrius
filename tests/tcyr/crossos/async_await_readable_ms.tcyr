@@ -1,0 +1,227 @@
+# async_await_readable_ms.tcyr — 6.6.19: async_await_readable_ms(fd, ms) is a REAL bounded wait
+# on every host target, and the legacy async_await_readable(fd) really waits.
+#
+# ⛔ WHY. Until 6.6.19 async_await_readable_ms existed only in lib/async.cyr's Linux (epoll) arm,
+# and on macOS and Windows async_await_readable was a no-op that returned 0 at once. sandhi's
+# cooperative server — the one caller — makes its listener non-blocking, takes EAGAIN from accept
+# and then calls async_await_readable(sfd) to park until a connection is pending; with the no-op
+# it SPUN at 100 % CPU on macOS and Windows. Each peer now waits with its own mechanism (epoll on
+# Linux, BSD poll on both Mach-O arches, ws2_32!WSAPoll on Windows), so only running it on each
+# host proves it. agnos is gated under the local fake kernel (agnos_peer_fake_kernel.sh axis 8).
+#
+# ROWS, over a loopback TCP pair this file owns:
+#   1. an empty socket, 200 ms: 0, after about the bound (>= 150 ms, < 2 s);
+#   2. one byte written: 1, at once;
+#   3. the peer closed: 1 (a hang-up is ready; the read after it is EOF);
+#   4. a listening socket with nothing pending, 150 ms: 0 after about the bound; a client
+#      connects: 1, and sock_accept then succeeds (the sandhi case);
+#   5. THREADS_CONCURRENT == 1: the legacy async_await_readable(listener) BLOCKS until a helper
+#      thread connects 300 ms later (>= 250 ms), then returns 0 and the accept succeeds.
+# ⚠ A WATCHDOG THREAD ends the process if the file has not finished within WD_DEADLINE_MS, so a
+# wait that ignores its bound (or a legacy wait that is never woken) FAILS instead of hanging the
+# cross-OS leg. Where there is no second thread there is no unbounded wait either (row 5 is
+# skipped), and every other wait here is bounded by its own argument.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/str.cyr"
+include "lib/vec.cyr"
+include "lib/tagged.cyr"
+include "lib/io.cyr"
+include "lib/net.cyr"
+include "lib/chrono.cyr"
+include "lib/thread.cyr"
+include "lib/async.cyr"
+include "lib/assert.cyr"
+
+#ifndef CYRIUS_TARGET_AGNOS
+# Generous on purpose (a loaded Windows host, qemu): a passing run finishes in about 1 s.
+var WD_DEADLINE_MS = 30000;
+var _aw_done = 0;
+
+# End every thread in the process with `code`.
+fn _aw_exit_all(code): i64 {
+    #ifdef CYRIUS_TARGET_MACOS
+    syscall(60, code);         # Darwin exit(2) ends the whole process
+    #endif
+    #ifndef CYRIUS_TARGET_MACOS
+    sys_exit_group(code);
+    #endif
+    return 0;
+}
+
+fn _aw_watchdog(arg): i64 {
+    var waited = 0;
+    while (waited < WD_DEADLINE_MS) {
+        if (load64(&_aw_done) != 0) { return 0; }
+        sleep_ms(50);
+        waited = waited + 50;
+    }
+    println("  FAIL: watchdog — a wait did not return within WD_DEADLINE_MS (it ignored its bound, or was never woken)");
+    _aw_exit_all(3);
+    return 0;
+}
+
+fn _aw_ms_since(t0): i64 { return (clock_now_ns() - t0) / 1000000; }
+
+# The port (host order) socket `fd` is bound to, or -1.
+fn _aw_port(fd): i64 {
+    var sa[16];
+    var sl[8];
+    store64(&sl, 16);
+    if (sys_getsockname(fd, &sa, &sl) != 0) { return 0 - 1; }
+    return ((load8(&sa + 2) & 0xFF) << 8) | (load8(&sa + 3) & 0xFF);
+}
+
+# A listener on 127.0.0.1:0, or -1.
+fn _aw_listener(): i64 {
+    var lt, lfd = tcp_socket();
+    assert_eq(is_err_result(lt), 0, "listener tcp_socket");
+    if (is_err_result(lt) == 1) { return 0 - 1; }
+    var bt, bv = sock_bind(lfd, INADDR_LOOPBACK(), 0);
+    assert_eq(is_err_result(bt), 0, "bind 127.0.0.1:0");
+    var st, sv = sock_listen(lfd, 4);
+    assert_eq(is_err_result(st), 0, "listen");
+    if (is_err_result(st) == 1) { sock_close(lfd); return 0 - 1; }
+    return lfd;
+}
+
+# A client socket connected to `port` on loopback, or -1.
+fn _aw_connect(port): i64 {
+    var ct, cfd = tcp_socket();
+    if (is_err_result(ct) == 1) { return 0 - 1; }
+    var kt, kv = sock_connect(cfd, INADDR_LOOPBACK(), port);
+    if (is_err_result(kt) == 1) { sock_close(cfd); return 0 - 1; }
+    return cfd;
+}
+
+# A connected loopback TCP pair: client fd at out[0], accepted fd at out[8]; 0, or -1.
+fn _aw_pair(out): i64 {
+    var lfd = _aw_listener();
+    if (lfd < 0) { return 0 - 1; }
+    var cfd = _aw_connect(_aw_port(lfd));
+    assert(cfd >= 0, "connect to the listener");
+    if (cfd < 0) { sock_close(lfd); return 0 - 1; }
+    var at, afd = sock_accept(lfd);
+    assert_eq(is_err_result(at), 0, "accept");
+    sock_close(lfd);
+    if (is_err_result(at) == 1) { sock_close(cfd); return 0 - 1; }
+    sock_set_recv_timeout(cfd, 5, 0);    # a broken wait must fail the read after it, not hang it
+    sock_set_recv_timeout(afd, 5, 0);
+    store64(out, cfd);
+    store64(out + 8, afd);
+    return 0;
+}
+
+fn _aw_socket_rows(): i64 {
+    var p = alloc(16);
+    if (_aw_pair(p) != 0) { return 0; }
+    var cfd = load64(p);
+    var afd = load64(p + 8);
+
+    test_group("6.6.19 — async_await_readable_ms: an empty socket times out after about the bound");
+    var t0 = clock_now_ns();
+    var r = async_await_readable_ms(cfd, 200);
+    var el = _aw_ms_since(t0);
+    assert_eq(r, 0, "an empty socket, 200 ms: 0 (timed out)");
+    assert(el >= 150, "…after about the bound (>= 150 ms), not at once");
+    assert(el < 2000, "…and not much later (< 2 s)");
+
+    test_group("6.6.19 — async_await_readable_ms: one byte makes it readable");
+    assert_eq(sock_send_all(afd, "x", 1), 1, "the server sends 1 byte");
+    t0 = clock_now_ns();
+    assert_eq(async_await_readable_ms(cfd, 2000), 1, "readable: 1");
+    assert(_aw_ms_since(t0) < 1000, "…at once (< 1 s), not after the bound");
+    var buf = alloc(16);
+    var rt, rv = sock_recv(cfd, buf, 16);
+    assert_eq(rv, 1, "the read after the wait returns the byte");
+
+    test_group("6.6.19 — async_await_readable_ms: a peer that closed reads as ready");
+    sock_close(afd);
+    t0 = clock_now_ns();
+    assert_eq(async_await_readable_ms(cfd, 2000), 1, "the peer closed: 1");
+    assert(_aw_ms_since(t0) < 1000, "…at once (< 1 s)");
+    var et, ev = sock_recv(cfd, buf, 16);
+    assert_eq(ev, 0, "…and the read after it is EOF");
+    sock_close(cfd);
+    return 0;
+}
+
+fn _aw_listen_rows(): i64 {
+    test_group("6.6.19 — async_await_readable_ms: a listener is readable once a connection is pending");
+    var lfd = _aw_listener();
+    if (lfd < 0) { return 0; }
+    sock_set_nonblocking(lfd);
+    var t0 = clock_now_ns();
+    var r = async_await_readable_ms(lfd, 150);
+    var el = _aw_ms_since(t0);
+    assert_eq(r, 0, "nothing pending, 150 ms: 0");
+    assert(el >= 100, "…after about the bound (>= 100 ms)");
+    assert(el < 2000, "…and not much later (< 2 s)");
+    var cfd = _aw_connect(_aw_port(lfd));
+    assert(cfd >= 0, "a client connects");
+    t0 = clock_now_ns();
+    assert_eq(async_await_readable_ms(lfd, 2000), 1, "a connection is pending: 1");
+    assert(_aw_ms_since(t0) < 1000, "…at once (< 1 s)");
+    var at, afd = sock_accept(lfd);
+    assert_eq(is_err_result(at), 0, "…and sock_accept then succeeds (the sandhi case)");
+    if (is_err_result(at) == 0) { sock_close(afd); }
+    if (cfd >= 0) { sock_close(cfd); }
+    sock_close(lfd);
+    return 0;
+}
+
+var _aw_port_late = 0;
+var _aw_late_fd = 0 - 1;
+
+fn _aw_late_connector(arg): i64 {
+    sleep_ms(300);
+    _aw_late_fd = _aw_connect(_aw_port_late);
+    return 0;
+}
+
+fn _aw_legacy_rows(): i64 {
+    test_group("6.6.19 — async_await_readable (no bound) blocks until a connection is pending");
+    var lfd = _aw_listener();
+    if (lfd < 0) { return 0; }
+    sock_set_nonblocking(lfd);
+    _aw_port_late = _aw_port(lfd);
+    var t0 = clock_now_ns();
+    var t = thread_create(&_aw_late_connector, 0);
+    assert_neq(t, 0, "the connector thread starts");
+    if (t == 0) { sock_close(lfd); return 0; }
+    assert_eq(async_await_readable(lfd), 0, "the legacy wait returns 0");
+    var el = _aw_ms_since(t0);
+    assert(el >= 250, "…but only once the connection was made (>= 250 ms) — it really waited");
+    thread_join(t);
+    var at, afd = sock_accept(lfd);
+    assert_eq(is_err_result(at), 0, "…and sock_accept then succeeds");
+    if (is_err_result(at) == 0) { sock_close(afd); }
+    if (_aw_late_fd >= 0) { sock_close(_aw_late_fd); }
+    sock_close(lfd);
+    return 0;
+}
+#endif
+
+fn main(): i64 {
+    alloc_init();
+    #ifndef CYRIUS_TARGET_AGNOS
+    if (THREADS_CONCURRENT == 1) {
+        assert_neq(thread_create_detached(&_aw_watchdog, 0), 0, "the watchdog thread starts");
+    }
+    _aw_socket_rows();
+    _aw_listen_rows();
+    if (THREADS_CONCURRENT == 1) { _aw_legacy_rows(); }
+    store64(&_aw_done, 1);
+    #endif
+    assert_eq(1, 1, "async_await_readable_ms probe completed");
+    var r = assert_summary();
+    return r;
+}
+var ec = main();
+#ifdef CYRIUS_TARGET_MACOS
+syscall(60, ec);
+#endif
+#ifndef CYRIUS_TARGET_MACOS
+sys_exit_group(ec);
+#endif

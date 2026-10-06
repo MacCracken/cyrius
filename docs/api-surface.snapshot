@@ -112,6 +112,7 @@ async::future_pending/1
 async::task_join/2
 async_agnos::async_accept/2
 async_agnos::async_await_readable/1
+async_agnos::async_await_readable_ms/2
 async_agnos::async_connect/3
 async_agnos::async_interval/5
 async_agnos::async_join_all/4
@@ -136,6 +137,7 @@ async_agnos::async_with_timeout/3
 async_agnos::task_join/2
 async_macos::async_accept/2
 async_macos::async_await_readable/1
+async_macos::async_await_readable_ms/2
 async_macos::async_connect/3
 async_macos::async_interval/5
 async_macos::async_join_all/4
@@ -160,6 +162,7 @@ async_macos::async_with_timeout/3
 async_macos::task_join/2
 async_win::async_accept/2
 async_win::async_await_readable/1
+async_win::async_await_readable_ms/2
 async_win::async_connect/3
 async_win::async_interval/5
 async_win::async_join_all/4
@@ -5088,10 +5091,7 @@ thread_macos::gettid/0
 thread_macos::thread_create/2
 thread_macos::thread_create/2
 thread_macos::thread_create_detached/2
-thread_macos::thread_create_detached/2
 thread_macos::thread_is_done/1
-thread_macos::thread_is_done/1
-thread_macos::thread_join/1
 thread_macos::thread_join/1
 thread_win::chan_close/1
 thread_win::chan_new/1
