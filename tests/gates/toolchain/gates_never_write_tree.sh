@@ -1308,7 +1308,7 @@ for g in $(find tests/gates -name '*.sh' | LC_ALL=C sort) scripts/check.sh; do
     h=$(_wine_shared "$g")
     [ -n "$h" ] && { echo "$h" | sed "s|^|FAIL: axis 9: $g:|"; bad9=1; }
 done
-# Floor: 23 gates run wine at 6.6.17 (derive: the grep above, over tests/gates/**/*.sh).
+# Floor: 24 gates run wine at 6.6.17 (derive: the grep above, over tests/gates/**/*.sh).
 if [ "$n9" -lt 150 ] || [ "$nwine9" -lt 20 ]; then
     echo "FAIL: axis 9: scanned $n9 scripts / $nwine9 that run wine (floors 150 / 20) — the scan read nothing"; FAIL=1
 elif [ "$bad9" != 0 ]; then
