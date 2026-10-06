@@ -143,6 +143,22 @@ fn typed_captures(): i64 {
     return fncall1(d1, 0) * 10 + fncall1(d2, 0);
 }
 
+# ── a block's `var` shadows only inside its block ───────────────────────────────────────────────
+# Before 6.6.17 a `var b` in ANY block of a closure body hid the enclosing `b` for the WHOLE body,
+# so a read outside the block took a GLOBAL `b`, silently (measured 100 where 2 is right).
+var sb = 99;
+var si = 77;
+fn block_scoped(): i64 {
+    var sb = 1;
+    var g = |x| { if (x > 5) { var sb = 5; } return sb + x; };
+    var h = |x| { var r = sb; if (x > 0) { var sb = 50; r = r + sb; } return r + sb; };
+    return callptr(g, 1) * 1000 + callptr(h, 1);
+}
+fn for_scoped(si): i64 {
+    var g = |x| { for (var si = 0; si < 2; si = si + 1) { x = x + 1; } return si + x; };
+    return callptr(g, 10);
+}
+
 # ── a top-level outer closure ───────────────────────────────────────────────────────────────────
 var tl_outer = |x| { var k = |y| x * 10 + y; return callptr(k, 2); };
 
@@ -164,4 +180,6 @@ var esc = mk_escape(4);
 assert_eq(fncall1(esc, 1), 42, "an escaped capture-of-a-capture called at top level");
 assert_eq(typed_captures(), 12, "a cstr / Str capture of a capture dispatches by its own type");
 assert_eq(callptr(tl_outer, 4), 42, "a top-level outer closure's param in a nested closure");
+assert_eq(block_scoped(), 2052, "a block's var does not hide the enclosing name outside the block");
+assert_eq(for_scoped(3), 15, "a for header's var does not hide the enclosing name after the loop");
 var r = assert_summary();

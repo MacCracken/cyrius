@@ -300,8 +300,10 @@ fn _cl_prescan_captures(S, cl_zero): i64 {
     if (_cl_ncap > 0) { _cl_capturing = 1; }
     return 0;
 }
-# Walk one closure body from the cursor: a block body to its closing `}`, an expression body to
-# the `;` / `,` / unmatched `)` `]` `}` that ends it; the cursor is left AT that token.
+# Walk one closure body from the cursor: a block body (`is_block` 1) to its closing `}`, an
+# expression body (0) to the `;` / `,` / unmatched `)` `]` `}` that ends it, a parenthesised group
+# (2, a `for` header) to its unmatched `)`; the cursor is left AT that token. Every `{` is walked
+# as its own scope (`_cl_prescan_nested`).
 # ⛔ 6.6.17 — A NESTED CLOSURE'S BLOCK BODY IS ITS OWN SCOPE. It is walked by a recursive call
 # and the `var` names it declares leave the shadow set when it ends: they used to stay, so
 # `|x| { var k = |y| { var b = y; return b; }; return b + x; }` stopped capturing the enclosing
@@ -316,17 +318,18 @@ fn _cl_prescan_body(S, is_block): i64 {
         var t = PEEKT(S);
         if (t == 12) { go = 0; }
         elif (t == 13) {
-            if (_tok_is_closure_body(S, GTI(S)) == 1) {
-                _cl_prescan_nested(S);
-                t = 0 - 1;                     # consumed through its `}`
-            } else { depth = depth + 1; }
+            _cl_prescan_nested(S);             # any block is a scope (6.6.17)
+            t = 0 - 1;                         # consumed through its `}`
         }
-        elif (t == 14) { if (depth == 0) { go = 0; } else { depth = depth - 1; } }
-        elif (is_block == 0) {
+        elif (t == 14) { go = 0; }
+        elif (t == 55) {
+            if (TOKTYP(S, GTI(S) + 1) == 10) { _cl_prescan_for(S); t = 0 - 1; }
+        }
+        elif (is_block != 1) {
             if (t == 10 || t == 28) { depth = depth + 1; }
             elif (t == 11 || t == 29) { if (depth == 0) { go = 0; } else { depth = depth - 1; } }
-            elif (t == 5 && depth == 0) { go = 0; }
-            elif (t == 31 && depth == 0) { go = 0; }
+            elif (t == 5 && depth == 0) { if (is_block == 0) { go = 0; } }
+            elif (t == 31 && depth == 0) { if (is_block == 0) { go = 0; } }
         }
         if (go == 1) {
             if (t == 3) { prev_var = 1; }
@@ -341,8 +344,22 @@ fn _cl_prescan_body(S, is_block): i64 {
     }
     return 0;
 }
-# Cursor at a nested closure's body `{`: walk it, leave the cursor past its `}`, and drop the
-# names it declared from the shadow set.
+# Cursor at `for (`: the header's `var` and the loop body are one scope (the for statement's
+# own SCOPE_PUSH) — walked with `is_block` 2 (a parenthesised group: only its `)` ends it), then
+# the body block. Leaves the cursor past the body. CHANGELOG [6.6.17]
+fn _cl_prescan_for(S): i64 {
+    var mk = _cl_nshadow;
+    STI(S, GTI(S) + 2);                  # `for (`
+    _cl_prescan_body(S, 2);
+    if (PEEKT(S) == 11) { STI(S, GTI(S) + 1); }
+    if (PEEKT(S) == 13) { _cl_prescan_nested(S); }
+    _cl_nshadow = mk;
+    return 0;
+}
+# Cursor at a block's `{` — a nested closure's body or any other block (6.6.17: a block's `var`
+# shadows an enclosing name only inside it; it used to hide the name for the WHOLE closure
+# body, so a read after the block took a GLOBAL of that name, silently): walk it, leave the
+# cursor past its `}`, and drop the names it declared from the shadow set.
 fn _cl_prescan_nested(S): i64 {
     var mk = _cl_nshadow;
     STI(S, GTI(S) + 1);
