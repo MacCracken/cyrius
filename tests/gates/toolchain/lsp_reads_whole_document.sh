@@ -11,8 +11,9 @@
 #   far_use     definition at a use past 1 MB answers the declaration on line 0.
 #   over_limit  a 64 MiB + 1 B (sparse) document is not read: the log names the path and size,
 #               the request answers null, and the server still answers the next request.
-#   at_limit    a document of exactly 64 MiB is read: no refusal is logged.
-# Old LSP: far_use and over_limit FAIL.
+#   at_limit    a document of exactly 64 MiB is read whole: a definition at its last line (past
+#               64 MiB - 20 B) answers line 0, and no refusal is logged.
+# Old LSP: far_use, over_limit and at_limit FAIL.
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
 G=lsp_reads_whole_document
@@ -69,12 +70,22 @@ if grep -qF "not reading $BIG: 67108865 bytes" "$W/big.err" && grep -q '"id":2,"
 else
     fail "over_limit — log: $(tail -2 "$W/big.err" | tr '\n' ' ') / responses: $(grep -o '"id":[23][^}]*' "$W/big.out" | tr '\n' ' ')"
 fi
-EDGE="$W/edge.cyr"; truncate -s 67108864 "$EDGE"
-hover "$EDGE" "$W/edge.err" "$W/edge.out"
-if ! grep -q 'not reading' "$W/edge.err" && grep -q '"id":3,' "$W/edge.out"; then
-    echo "  ok: at_limit — a document of exactly 64 MiB is read"
+# at_limit: exactly 64 MiB — the declaration on line 0, a sparse hole, and a use on line 2 at
+# the very end; a definition request there must answer line 0 (read past 1 MB, not refused).
+EDGE="$W/edge.cyr"
+printf 'fn zz_edge(): i64 { return 1; }\n' > "$EDGE"
+TAIL='\nvar q = zz_edge();\n'
+truncate -s $(( 67108864 - $(printf "$TAIL" | wc -c) )) "$EDGE" && printf "$TAIL" >> "$EDGE"
+[ "$(wc -c < "$EDGE" | tr -d ' ')" = 67108864 ] || { echo "FAIL: $G: the at_limit document is not 64 MiB"; exit 1; }
+{ msg '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}'
+  msg '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file://'"$EDGE"'","languageId":"cyrius","version":1,"text":""}}}'
+  msg '{"jsonrpc":"2.0","id":2,"method":"textDocument/definition","params":{"textDocument":{"uri":"file://'"$EDGE"'"},"position":{"line":2,"character":9}}}'
+  msg '{"jsonrpc":"2.0","id":3,"method":"shutdown"}'; } | lsp "$W/edge.err" > "$W/edge.out"
+if ! grep -q 'not reading' "$W/edge.err" \
+   && grep -q '"id":2,"result":{"uri":"file://'"$EDGE"'","range":{"start":{"line":0,' "$W/edge.out"; then
+    echo "  ok: at_limit — in a document of exactly 64 MiB, a definition at its last line answers line 0"
 else
-    fail "at_limit — a 64 MiB document: $(tail -2 "$W/edge.err" | tr '\n' ' ')"
+    fail "at_limit — a 64 MiB document: $(tail -1 "$W/edge.err") / $(grep -o '"id":2[^}]*' "$W/edge.out" | head -1)"
 fi
 
 [ "$FAIL" = 0 ] || exit 1
