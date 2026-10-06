@@ -6,6 +6,507 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [6.6.17] — 2026-10-05
 
+The 6.6.17 manifest release — the second row of roadmap.md § *The 6.6.x tail*: **P1**, `cyrius.cyml` as the build
+tool's configuration (one declared key vocabulary, one reader of the whole manifest, one precedence rule —
+argument > environment > manifest > default — shown by `cyrius build --print-config`, and `[build] dce` / `defines`
+/ `test` read at last); **P5-A**, `cyrius coverage` over RUN programs (text coverage; execution coverage is P5-B in
+v6.7.x); and the **pass-1 DRY** — the seven compiler forks now share one top-level scan. Also every find the 6.6.16
+lane reviews filed into "6.6.17 also takes": the compiler's silent wrong values (struct returns through a handle,
+small `*T` parameters, generic instances that lost their type arguments, a u128 global, ordinals past 64, wide
+indirect calls on Windows and cx), the loud grammar gaps (pointer fields and linked lists, method chains, nested
+closure capture, nested generic arguments, attributes in impl bodies) and the `p + n` rule — `sizeof(T)` at every
+site (user decision) — plus diagnostics, TLS / platform / stdlib, cbt, and the harness. Growing the compiler past
+2048 fns broke the seed chain: cybs had never lexed a leading `_`, which is fixed in cybs itself. Seven lanes
+(srca, srcb, srcc, lib, man, tool, gate). **CVE-77**; the next free id is **78**.
+
+**Gate (merged tree):** GATE-LINE-TBD
+
+**Size:** cycc **1,581,040 B** (`.text` **1,400,760**), +45,680 B over 6.6.16's 1,535,360 (the c1 DRY alone was
+−4,208 B); `build/cycc-native-aarch64` regenerated (`cyrius pulsar`), **2,042,184 B**. api-surface 5,811 → **5,816**
+(+5, the agnos socket peers). `.tcyr` 453 → **473** (crossos 182 → **193**); shell gates 339 → **361**.
+
+**Bench:** BENCH-TBD
+
+### Security
+
+- **CVE-77 (P3): on Windows, a server ctx's system trust set honours each root's store PURPOSE** (lib l1; the
+  trust-store half of CVE-75). `tls_native_set_ca_system` exported the CurrentUser `ROOT` store once, filtered for
+  serverAuth, and handed that one set to every ctx — so a SERVER ctx, which verifies CLIENT chains, anchored client
+  identities at roots Windows trusts for server authentication only (6.6.16's CVE-75 enforced a CA certificate's own
+  extendedKeyUsage, not the root program's per-root purpose, `CERT_ENHKEY_USAGE_PROP_ID`). The store policy
+  (`_tn_w_policy`, `_tn_w_dated`, `_tn_w_eku_purpose`, `_tn_w_export`) now takes the chain purpose, and a server ctx
+  loads a second set — prop 9 must name clientAuth (or anyExtendedKeyUsage, or be absent); a Disable / NotBefore
+  date scoped to serverAuth alone does not refuse a root, one covering clientAuth does — read, parsed and published
+  once per process like the first (`_tn_ca_load_into`), and warmed by `tls_init_main`. Measured on cass: the client
+  set is 45 roots against the server set's 41 (four NotBefore distrusts are scoped to serverAuth only); the stock
+  store holds no serverAuth-only root, so exposure there is zero and the defect is pinned on memory stores. POSIX
+  bundles carry no per-root purpose; both roles keep sharing one set. `tests/tcyr/crossos/tls_system_trust_store.tcyr`
+  (132/132 on cass: the client set re-derived from the real store, the policy row by row, and a client chain refused
+  at a `[serverAuth]` store root and verified at a `[clientAuth]` one); `tls_first_use_threads.tcyr` Windows rows.
+  Entry in `docs/audit/2026-09-03-security-audit.md`.
+
+### Manifest — P1 (`cyrius.cyml` is the build tool's configuration)
+
+- **`cyrius help manifest` — every key, declared once, with what reads it** (m1). `[build] test` was declared by
+  41 manifests and `[build] defines` by 3, and nothing read either; v6.5.49's `[build]` fallback had shipped inert
+  for the same reason (it read `src` while 120 of 125 manifests wrote `entry`). Measured read-only over the 126
+  `~/Repos` manifests: 33 distinct keys (`tests/fixtures/manifest/ecosystem_keys.txt`). The vocabulary lives in ONE
+  place, `cbt/manifest.cyr`: section, key, status — **read**, **held** (recognised, not read yet, warned), **dropped**
+  (never read, warned) or **info** — synonyms (`[build] src` for `entry`, resolved there and nowhere else), each
+  key's environment / argument channel and its reader. The guide gains the same "Manifest keys" table. `cyrius init
+  --bin` and `cyrius port` now write `output = "build/{PROJ}"` (the scaffold's CI already built there; a bare
+  `cyrius build` dropped the binary in the repo root). Gate `tests/gates/toolchain/manifest_key_inventory.sh` —
+  its expected set is what consumers WRITE (the census, the init templates, package-format.md), never the
+  vocabulary's own; axis 6 checks every key and synonym behaves at runtime as its status says.
+- **One manifest reader — the whole file, parsed as TOML** (m2). Each key family had its own capped scanner:
+  `[build]` / `[package]` / `[sections]` reads and distlib / lib sync stopped at 32,767 B, `_auto_deps` at 65,535
+  (it printed "larger than 65535 bytes" and built on), `publish` hunted the substring "modules" through 4,095 B.
+  Measured on 6.6.16: a `[build]` at byte 44,000 made `cyrius build` print its usage and exit 1. Each scanner had its
+  own value rule too — `entry = 'src/main.cyr'` read as absent, a multi-line array line starting with `[` ended the
+  section, a `[build]` in the CYML prose body was read as configuration. Now the manifest is read WHOLE (refused by
+  name past 16 MiB; grown to fit, so it works on PE), the CYML body is cut, one line walker steps over every value
+  it is not reading, and values are TOML (`"…"` with escapes and `\uXXXX`, `'…'` verbatim, booleans, arrays). Every
+  consumer goes through it; `cyrius package` (which read the manifest and used nothing) now compiles `[build] entry`
+  into `[build] output`; an unreadable dependency manifest is named, not skipped. Gate
+  `tests/gates/toolchain/manifest_one_reader.sh` (8 axes, all red on 6.6.16).
+- **`cyrius build --print-config` — every value and where it came from** (m3). Every `[build]` key resolves through
+  ONE rule — argument > environment > manifest > default, no per-key exceptions — written lowest rung first so each
+  higher one overwrites it (`_cfg_resolve_build`). `--print-config [<source> [<output>]]` prints each value with its
+  origin (`(manifest: [build] src)` names the synonym read; `(argument: <source>)`, `(environment: CYRIUS_DCE)`,
+  `(default)`) and exits 0 before the dep resolver runs, writing neither `lib/` nor `build/`; `package.version` is
+  shown as the build gets it (`${file:VERSION}` expanded, `(unset)` with the reason). Gate
+  `tests/gates/toolchain/build_print_config.sh` over six verbatim consumer manifests (kashi, crab, ark, sigil,
+  hisab, kriya), expected values parsed from the fixtures by awk, not taken from the reader.
+- **`[build] dce` and `defines` are read at every rung; `strict` and `target` held; `features` dropped** (m4).
+  `defines` was declared by ark, sakshi and sigil and read by nothing; DCE was switched on by environment on ~200 CI
+  lines in 57 repos with no manifest key. Now `--dce` (new) / `CYRIUS_DCE` / `dce = true` and `-D` /
+  `CYRIUS_DEFINES=A,B` (new) / `defines = [...]` apply to every `cyrius build` in the project (sigil's fuzz loop now
+  builds each harness with its manifest's `-D SIGIL_SMOKE`); `-D` on `test` / `run` / `bench` stays a command-line
+  choice. The compiler receives the resolved value: on POSIX an injected `CYRIUS_DCE=1` REPLACES an inherited
+  `CYRIUS_DCE=0` (cycc reads the first entry); on Windows the CLI sets `CYRIUS_DCE` on itself and puts `--strict`,
+  `--allow-undef` and `--syntax-only` on cycc.exe's command line — compile()'s PE arm passed none of them, so on
+  cyrius.exe lint's syntax pre-pass and distlib's bundle self-check compiled as ordinary builds. `CYRIUS_DCE` takes
+  `1` or `0`; unset or empty is no rung; anything else is refused by name (`CYRIUS_DCE=true` silently meant off). A
+  mistyped `dce = "yes"` and a define holding a control character are refused by name. **`[build] strict` is held,
+  with no effect:** `cycc --strict` has done nothing since 6.3.2 (a reachable undefined fn is an error by default;
+  `--allow-undef` downgrades it — 18032a97), so the key is warned and not read, the `CYRIUS_STRICT` channel the first
+  cut added is gone before release, `cyrius build --strict` is still accepted and passed through, and
+  `--print-config` marks it `[held: no effect since 6.3.2]` (README says the same). `[build] target` is held and
+  `[build] features` dropped, each warned by name with what to use instead; an unknown `[build]` key is warned, a
+  declared synonym is not. Gates `tests/gates/toolchain/build_config_precedence.sh` (a stub cycc records the argv
+  and `CYRIUS_DCE` it was handed; ark's and sigil's verbatim `defines` resolve) and
+  `build_config_windows_arm.sh` (a PE stub compiler under a private wine prefix).
+- **Bare `cyrius test` runs `[build] test`, then `tests/`, each file once** (m5). 41 manifests declare it (37
+  `src/test.cyr`, the init template; 3 `tests/<name>.tcyr`; crab the directory `tests`) and nothing read it. The init
+  templates and 25 consumer CIs say bare `cyrius test` "picks up the [build].test entry AND auto-discovers
+  tests/*.tcyr"; only the second half was true, so kashi's 393 assertions never ran in CI and a project with no
+  `tests/` failed "No .tcyr files found". Measured: a declared `src/test.cyr` that exits 3 — 6.6.16 ran only
+  `tests/` and exited 0. Now the declared target(s) run first — a file as-is, a directory's `.tcyr` recursively, a
+  list of either — then the `tests/` walk; a file both name runs once; a declared path that does not exist is a
+  named failure; with the key absent nothing changes, and `cyrius test <file>` / `cyrius tests [dir]` never read it.
+  33 of the 37 `src/test.cyr` are 10–16-line stubs that exit 0. Gate `tests/gates/toolchain/test_runs_build_test.sh`.
+- **Manifest keys compare whole, and `[deps.NAME]` values are TOML strings** (m6). The hyphen premise was the other
+  way round: `test` vs `test-only` was already refused, but `_toml_key_at` took a key that is the TAIL of a
+  hyphenated one — `dev-stdlib = ["math"]` above `stdlib` made `cyrius deps` vendor math.cyr and none of the
+  declared leaves (and `display-name` above `name` named distlib's bundle). `path` / `git` / `tag` / `target` were
+  read as "skip to the next `"` in the file", so `path = '../foo'` resolved the next double-quoted string (measured:
+  `app/./src/foo.cyr`); a `'…'` array element was dropped; a `"…"` in a `#` comment inside an array was read as an
+  element. Now they are TOML strings (a value that is not one refuses the section by name), array elements of
+  either quoting are read, comments skipped, and the array search stops at the key's own line. ⚠ One
+  consumer-visible change: a `]` inside a `#` comment within a string array used to END the array — agnostic's
+  `[deps] stdlib` silently dropped its "patra" and "sigil" leaves and aethersafha picked up a duplicate "thread";
+  both now read as written (agnostic's include order moves; both orders build). Gate
+  `tests/gates/toolchain/toml_key_boundary_and_values.sh` (6 axes, 5 red before).
+
+### Coverage — P5-A (RUN programs as a corpus)
+
+- **`cyrius coverage` takes RUN programs as a corpus** (m7). rekha tests with 25 `programs/*_test.cyr` (~13,000
+  lines of checks) and has no `tests/`, so coverage — whose corpus was `tests/**/*.tcyr` only — read ~0 % for an API
+  exercised hard; sadish, dhancha, setu and mishran read the same. `[coverage] programs = ["programs/*_test.cyr"]`
+  (through the one reader) or `--programs <glob>` (repeatable; it REPLACES the manifest list) adds each match,
+  counted exactly as a `.tcyr` is (whole identifiers in code; comments and strings blanked); `*` / `?` stay inside
+  one path segment; a glob matching nothing or a missing program is a named failure; a corpus program is never
+  measured surface. `--per-entry` lists, per corpus entry, the public fns it references. An unknown `[coverage]` key
+  is warned. ⚠ TEXT coverage — the reference count `.tcyr` corpora get since 6.6.8 — not execution coverage: **P5-B**
+  (instrumented build + run) is v6.7.x with the bounds-checked mode, and the P5 proposal stays OPEN. Gate
+  `tests/gates/toolchain/coverage_run_programs.sh` (a rekha-shaped fixture).
+
+### Compiler — one top-level scan (the pass-1 DRY)
+
+- **The seven compiler forks share ONE top-level scan** (c1). Each `src/main*.cyr` carried its own pass-1
+  declaration scan, pass-2 dispatch and enum-init walk — 21 loops, ~1,000 lines — so a new top-level form had to be
+  added seven times and the fork that missed it broke on its own target only (`#io` v5.8.20, `#pure` v6.2.2, the
+  v6.4.26 PE-reroute stubs only cass's `cycc_cx` caught, `#inline` at 6.6.3, the directive arms at 6.6.9). They are
+  now `_tl_pass1` / `_tl_pass2` / `_tl_enum_inits` in `src/frontend/parse_fn.cyr` (small helpers, for cybs), three
+  calls per fork; the one real difference — `object;` is a declaration only where an object writer exists (main.cyr,
+  main_win.cyr) — is an explicit `objok` argument. Proven logic-preserving: every fork's compiler, old vs new, emits
+  byte-identical output for its own self-build on each recipe (x86 ELF, aarch64 cross + native, arm64 Mach-O on
+  ecb, x86 Mach-O on ach, PE cross and under wine, cx) and for the whole 453-file tcyr corpus through each;
+  `scripts/differential.sh` GREEN (default and `CYRIUS_DCE=1`). cycc −4,208 B. Gate
+  `tests/gates/frontend/toplevel_scan_shared.sh` (each fork calls each scan once and reads no token itself; RED on
+  all seven forks at the slot open); `directive_fork_parity`, `private_forward_reference` and
+  `toplevel_decl_block_closure` now check the shared scans.
+- **Every driver sets its target flags before pass 1** (c1c). Pass 1 records parameter shapes by `_TARGET_PE` (Win64
+  passes a 16 / 32-byte vector by address), and every driver set the flags after it — so a FORWARD call to a
+  value-form vector-param fn was marshalled SysV-style on Windows (a page fault under wine; the callee defined first
+  ran). Corpus byte-identical through every fork except the new test's PE output.
+  `tests/tcyr/crossos/vector_param_forward_call.tcyr` (x86, qemu-aarch64, cx, wine, real cass).
+
+### Compiler — silent wrong values
+
+- **`return p;` from a by-value struct fn, where `p` is a pointer-mode local or a `*T` parameter, returns the struct
+  it points at** (a1). Both return arms addressed the local's SLOTS, and a handle's slot holds an address: `fn mk(n):
+  Pt { var p: Pt = alloc(16); p.x = n; p.y = n + 1; return p; }` gave `{140448913948680, 10}` where `{10, 11}` is
+  right (x86, aarch64, PE, cx); `fn r8(p: *B8): B8 { return p; }` returned the ADDRESS. 6.6.16's C2 fixed the
+  assignment path; the return path was missed. The handle is now copied through its address into an inline temp
+  (`_ret_local_inline`; byte-exact for a 3/5/6/7-byte struct, `_ret_small_ptrp`); `Str` / `Result` / `Option` /
+  `Tagged` handles are untouched; ~15,800 ecosystem files hold no fn of the changed shape.
+  `tests/tcyr/crossos/struct_ptrmode_return_copy.tcyr` (17 rows).
+- **A `p: *T` parameter is an 8-byte pointer whatever T's size** (a2). `MARK_SMALL_STRUCT` ran on every
+  struct-typed parameter and made a `*T` to a struct of 8 B or less "the struct": `fn rd(p: *B1) { return p.v; }`
+  returned the pointer, `p.v = n` overwrote it (x86, aarch64, PE, cx; methods, generic `*T` instances and
+  forwarding inherited it), and a closure capturing such a parameter read the pointer as the field. The mark now
+  skips a `*T`, and a capture whose snapshot carries the `*T` mark loads through it.
+  `tests/tcyr/lang/ptr_param_small_struct.tcyr` (17 rows, 16 red before).
+- **An inlined generic instance binds its own type arguments** (a3). The inline replay of a one-statement generic
+  bound T to the call's INFERRED arguments, which an explicit `f<i16>(..)` never sets: `fn szof<T>(x: T) { return
+  sizeof(T); }` returned 8 for `szof<i16>(1)` inside a fn (2 at top level, which never inlines), and a generic
+  forwarding its T lost it (`var y: T = 253` read 253 at i8, `var a: T[4]` was 32 B at i32). Each instance now
+  records its type arguments (a lazily allocated per-fn table, no brk change). The direct `var a: T[N]` shapes were
+  already right since 6.6.16's C8 (pinned as controls). `tests/tcyr/lang/generic_instance_inline_binding.tcyr` (18
+  rows, 11 red before).
+- **A vector-typed global owns its 16 / 32 bytes** (a3). `var g: f64v2 = 0;` was one 8-byte slot: `f64v2_add(&g,
+  &h)` wrote the second lane over the next global (`&after - &g` = 8 on every target), and the value-form uses each
+  moved one word. The global now takes the vector's size and is used through `&g`; a value-form read, write or
+  non-zero initializer is refused by name (a value-form vector is a local). No vector global exists in `~/Repos`.
+  `tests/tcyr/crossos/vector_global_storage.tcyr` (10 rows), `type_name_refused.sh` axis 5.
+- **`var X: u128 = 5;` at module scope holds 5** (a4). The static-init bake every image writer shares
+  (`_EMIT_GVAR_STATIC_INITS`) wrote only 8 / 4 / 2 / 1-byte slots, so a u128 global in the declaration block read 0
+  on x86 ELF, aarch64, both Mach-O and PE (cx keeps the runtime store and was right). It now writes the low word,
+  as the runtime store does. `tests/tcyr/crossos/u128_global_static_init.tcyr` (12 rows, 4 red before).
+- **`var a, b = f();` where `f` returns ONE value is a compile error naming `f`** (a5). The second name took whatever
+  `rdx` held, in a fn and at top level, on every release through 6.6.16. Pass 1 records per fn whether its body
+  PROVABLY returns one value (every `return` single, not a whole call, not a tuple; the body ends in a `return`; no
+  `ret2`, `asm` or `?`), so a forward call is judged too; a generic instance inherits its base's bit. Not refused:
+  a declared tuple, `: stack`, Result / Option / Tagged, a vector, a struct over 8 B, a forwarding wrapper, a body
+  that falls off its end after a pair call. `multi-value destructure binds 2 names, but 'one' returns 1 value - bind
+  it to one name`. The top-level destructure ABOVE the first statement had no contract at all (`var a, b = 42;`
+  compiled there); it now runs PARSE_VAR's checks. No `~/Repos` destructure targets a refused fn.
+  `tests/gates/diagnostics/destructure_one_value_refused.sh` (20 rows, the 11 refusal rows red before).
+- **A `var` in an `elif` body, or in the `else` after one, ends at its `}`** (a6). PARSE_ELIF had no
+  SCOPE_PUSH / POP: in a fn three arms each declaring `var t` were "duplicate variable"; at top level, with `var t =
+  5;` before the chain, `t` read 0 after an elif that declared one and 30 after the else — silently.
+  `tests/tcyr/lang/elif_else_block_scope.tcyr` (10 rows).
+- **A generic whose pair-ness depends on its type argument propagates `?`** (a7). `fn w<T>(p: T, d) { return
+  p.div(d); }` is a `: stack` pair at T = Pt and one value at T = Qt; the resolver answered for the TEMPLATE, so
+  `w(p, d)?` took the boxed lowering and dereferenced the tag: rc 139 on x86, aarch64 and PE. A generic call now
+  resolves to its instance first. `tests/tcyr/lang/generic_instance_pair_flag.tcyr` (9 rows).
+- **In a generic instance at T = f64 a parameter `x: T` is an `f64`** (a9). It was an untyped word — `x + x` added
+  1.5's BITS as integers — while a local `var y: T` there has been an f64 since 6.6.16. The same loss was in the
+  inline replay, whose parameter record carried vector types only, so `#inline fn d(x: f64) { return x + x; }` (and
+  every one-statement f64 instance) added integers too; the record now carries f64 / f32. The ABI does not move (an
+  f64 parameter still arrives in an integer register on every backend). `tests/tcyr/lang/generic_f64_param.tcyr`.
+- **A parameter's ABI kind holds at any ordinal, past 64 parameters** (a10). Each per-fn kind mask is one i64 (the
+  struct mask's bit 62 is the by-value-self flag; the SysV vector mask uses two bits each), and `1 << pc` wraps at 64:
+  on a 70-parameter fn parameter 66's struct bit landed on parameter 2 and 67's `: Str` bit on 3 (a struct local
+  passed by ADDRESS, a literal `str_from`-wrapped); ordinal 62 was never address-passed; a value-form vector at 40 was
+  refused. An ordinal past a mask's range now lives in a per-fn overflow row (lazy, grown on demand, no brk change) —
+  **no parameter count is refused** — read by every per-ordinal reader; the field-argument struct-id row
+  (SFPSID / GFPSID) grows past 62 too. `tests/tcyr/crossos/param_kind_past_64.tcyr` (8 rows),
+  `struct_copy_source_type_refused.sh` R1c / R1d / A3.
+- **Windows: `callptr` passes any number of arguments, and a wide frame is probed a page at a time** (a11, both
+  hazards "reasoned, not measured" — measured, and real). `ECALLPTR_PE` encoded every displacement and immediate as
+  ONE signed byte, so from 16 arguments `sub rsp, 0x80` became `add rsp, 128`: 0xC0000005 on cass at 16 and 20
+  arguments. Each now takes its 32-bit form above 127. And the frame was one `sub rsp` past the stack's single guard
+  page: a 2000-argument call at the bottom of a deep recursion was 0xC0000005 on cass (wine does not model the
+  guard page); a frame of a page or more is now probed (ESUBRSP's sequence on r10).
+- **cx: a call with 12 or more arguments** (a11). Argument k rides r(3+k), so from 12 arguments r14 / r15 are
+  argument registers — and every emitter between the caller's pops and the callee's stores used them as scratch: a
+  12-argument weighted sum read argument 11 as a frame address (12581018 where 650 is right), for a direct call too.
+  The call boundary uses r251 / r252. `tests/tcyr/crossos/callptr_many_args.tcyr` (10 rows on every host + two Win64
+  rows, 600 arguments and 2000 at depth 20000; 12/12 on cass), `cx_indirect_call.sh` axis 5.
+- **`h.name.len` on a `name: Str` field read the NEXT field** (c7). A `: Str` field is one 8-byte slot holding the
+  Str's address, but the chained-field walk treated it as an inline struct: with `struct Holder { name: Str; n; }`,
+  `h.name.len` returned `h.n` (77 for a 3-byte string), `h.name.data` the handle, and `h.name.len = 2` overwrote
+  `h.n` — through a local, a global, a parameter, a call result and a nested struct. A step into a Str field now
+  loads the slot and applies the step through it. `tests/tcyr/crossos/str_field_chain.tcyr` (11 of 12 red before;
+  green on real ecb and ach).
+- **A `Str` two steps away reaches `base_str`, and I11 types it** (c3). `println(w.h.name)` and `println(gid<Str>(s))`
+  (a generic declared `: T` with T = Str) took the cstring base: they printed the header's pointer bytes and
+  `strlen()` read 3 for a 5-byte string, and a `: cstring` param drew no warning. The classifier now walks nested
+  struct fields and types a generic `: T` return by T's binding at the call. `overload_str_dispatch.tcyr` +16 rows
+  (11 red before), `str_cstring_arg_shapes.sh` axis 4.
+
+### Compiler — language
+
+- **Pointer fields, pointer returns, and linked lists** (b3). `name: *T` (a struct or union field) and `fn f(): *T`
+  (and a multi-value return element) parse as an 8-byte pointer — before, `expected identifier, got '*'` for every T.
+  T is resolved by name (an unknown T is refused), including a struct declared BELOW or the struct being declared:
+  such a field records T and is sized when loaded, so `struct Node { val; next: *Node; }` steps 16, not the 8 the
+  half-declared struct measured, and two structs can point at each other; `*Box<i32>` steps the INSTANCE (8), not
+  the base generic (16). A field chain goes THROUGH a pointer field (`a.next.val`, `a.next.next.val = 3`,
+  `a.next.twice()` — the pointer is parked in a pointer-mode temp and the chain continues), and a `*Struct` LOCAL
+  or GLOBAL takes dot syntax as a `p: *Struct` parameter always has (`p.val`, `p.val = 3`, `p.m(..)`; `p = q` rebinds,
+  never copies), as does a `fn f(): *Struct` result (`f().next.val`). So the canonical walk compiles:
+  `var p: *Node = head; while (p != 0) { s = s + p.val; p = p.next; }`. Two other readers of the grammar learned it
+  too: the fn-definition rough scan (a `: *Pt` fn segfaulted with the parser alone fixed) and `#derive(accessors)`
+  (its field walk stopped at the `*`). `tests/tcyr/lang/pointer_field_return_types.tcyr` (linked, chains, ptr_locals,
+  call_ptr and a linked-list walk; x86, aarch64, PE), `typed_pointer_warn_sign.sh` axis 9.
+- **Method chains** (b4). A method call's result takes `.field` and `.method(..)` to any depth, as a value and as a
+  statement — `var u: Str = s.clone().cat(t);`, `p.bump().bump().sum()`, `mkp(3).bump().sum()`; before, the `.` was
+  `expected ';', got '.'` everywhere (a free call's result has taken `.field` / `.m()` since 6.6.12). Each link's
+  result is held as `_call_field` holds a call's (retptr temp, rax:rdx temp, inline temp, a pointer-mode slot for a
+  Str). At top level a chain on a struct-returning method is refused by name (a struct result needs a fn frame).
+  `tests/tcyr/crossos/method_chain.tcyr` (18 rows), `call_result_field.sh` C1–C3.
+- **A closure nested in a closure captures through every enclosing level** (b1). The capture tables were one global
+  set a nested closure literal overwrote, and a closure's snapshot held only the enclosing closure's own locals:
+  `fn mk(b) { var g = |x| { var k = |y| { return h(y + b); }; .. }; .. }` was `undefined variable 'b'`; an outer
+  closure that merely CONTAINED a nested one lost its own captures after it. Each closure literal now saves and
+  restores the whole enclosing capture context, a capture of a capture copies the word(s) out of the enclosing env,
+  and the pre-scan mirrors the parser's scopes — a `var` in a block hides a captured name only inside that block
+  (it used to make a later read of the name silently take a GLOBAL of the same name). The guide's "captured closures
+  are flat" — a compiler limit written down as a rule — is replaced by the nested-capture rule.
+  `tests/tcyr/crossos/closure_nested_capture.tcyr` (16 rows + the block / for scoping rows; 22 errors on the old
+  compiler). (b2 — a nested `fn` inside a closure body — was already the named error since 6.6.16 C5; nothing to
+  change.)
+- **Type arguments nest wherever a type is written** (b5). `SKIP_GENERICS` stopped at the first `>` and did not know
+  the lexer's folded `>>`, so `var x: Vec<Box<i64>> = ..;` ran to end of file; it now counts levels and can owe a
+  closer to the enclosing list (`var b: Box<Vec<i64>>;`, `idv<Vec<i64>>(x)`, a field `items: Vec<Box<i64>>;`).
+  `sizeof(Box<i32>)` (in an expression and in `#assert`) is the instance's size; a multi-value return element takes
+  type arguments (`(Box<i64>, i64)`). `tests/tcyr/frontend/nested_type_args.tcyr` (17 rows + 2 `#assert`s).
+- **Attributes land on their item** (b6). A pending `#must_use` / `#deprecated` / `#pure` / `#io` / `#alloc` /
+  `#inline` / `#regalloc` / `#naked` before a top-level statement that first instantiates a generic was consumed by
+  the instance (`#deprecated` there marked `g$i32`, so every `g<i32>` call warned); the instance emitter now parks
+  them. And every directive works inside an `impl` body on the method it precedes (the loop took only `pub` and
+  `fn`: `#deprecated("..")` was `expected '}'`), through the one top-level dispatcher; a dot call `p.m(..)` gets
+  `#deprecated` at every call, `#pure`'s `#io` / `#alloc` warning and `#must_use` (on the last method of a chain).
+  `tests/gates/diagnostics/attribute_lands_on_its_item.sh`, `deprecated_every_call_path.sh` fixtures `geninst` /
+  `impl_attr` (that gate now survives `bash -eo pipefail`).
+- **`p + n` on a `*T` steps `sizeof(T)` elements at every site** (b7; ⚠ **behaviour change**). The step depended on
+  where `p` was declared (measured on the slot-open compiler): a local `*i8` / `*i16` / `*i32` stepped 1 and every
+  other local `*T` 8 (`*u8` and `*Pt` included); a parameter and a captured `*T` 1 whatever T; a declaration-block
+  global 8; a later global 1 / 2 / 4 / 8 by T; and `p += n` 1 everywhere. Two parameter cells were not pointer
+  arithmetic at all: `p + 1` on a `p: *f32` was an f32 ADD of the pointer's bits, and on a `p: *Pt` it dispatched
+  `Pt_add`. Now `p + n`, `p - n`, `p += n` and `p -= n` step `sizeof(T)` for a local, a parameter, a capture at any
+  depth, a global in either zone, a `*T` field and a `: *T` result; a `*T` parameter or capture loads as a pointer,
+  so `var q: *T = p;` no longer warns `assigning non-pointer to typed pointer`. With it (b7-diff, b7-call): `q - p` of
+  two `*T` is the ELEMENT count (`(q - p) / sizeof(T)`), a difference of pointers with different element sizes is
+  refused by name, `&a - &b` stays a byte difference, `n + p` steps like `p + n`; and a call's result is a plain
+  value unless the callee declares `: *T` — the expression scale was ambient state, so with `p: *i64`, `f(p) + 1`,
+  `load64(p) + 1`, `fncall1(&f, p) + 1` and `q.m(p) + 1` each added 8 (silent, pre-existing on every call form). A
+  `*T` slot stays an 8-byte word (6.6.16 C8). **Decision record:** the user chose "`sizeof(T)` at every site; any
+  site whose step changes gets a named compile error this release"; the integrator added "a shape with 0 measured
+  ecosystem reliance switches with no error"; the measurement found **0** `*T` declarations in the `src/` and `lib/`
+  of 143 repos (3,137 files, vendored stdlib dropped; vidya's teaching examples use `*i64` locals, step 8 under both
+  rules), so EVERY shape switched silently, with no transition error; the user accepted that on 2026-10-05 ("*T is
+  fine for now, note usage"). In-tree, only `typed_pointer_slot_width.tcyr` pinned the old steps (7 rows, moved to
+  the rule). `tests/tcyr/crossos/typed_pointer_step.tcyr` (34 rows + `call_results` + `differences` +
+  `generic_pointee`), `typed_pointer_warn_sign.sh` axes 10–11 (the gate honours `$CYCC`). The guide's *Pointers*
+  states the one rule.
+- **Not a defect: a module-scope array redeclared after a statement is a NEW variable** (a8, premise false). In the
+  declaration zone a redeclared array already reuses its slot exactly as a scalar does, and a size / type change is
+  already the named one-definition error (6.6.6's `_gv_fold`); after the first statement a redeclaration starts a
+  new variable for scalars AND arrays alike — the rule 6.6.6 kept on purpose and the guide documents ("Declaring a
+  global twice"), which `tls12_handshake_msgs.tcyr` relies on. Nothing changed.
+
+### Diagnostics
+
+- **A tail call's `private` error names the call, not the `}` after it** (c2; C9's twin). `return pv(x);` on line 3
+  was reported at `4:1`; it now takes the call-site token for the location AND the caller's file, so a tail call on
+  the last line of an included file is judged from that file: `<source>:3:15`.
+- **`expected '}', got end of file` names `<file>:line:col`** (c2). The EOF token carried the line one past the last
+  file-map span, so a one-line unterminated fn reported `error:3:24:` with no file, an unterminated fn in an included
+  file showed a `#@file` marker as its excerpt, and a source with no final newline lost its excerpt. The EOF token
+  now sits just past the last byte of real source: `<source>:1:24`, `inc.cyr:2:24`.
+  `tests/gates/diagnostics/diag_location_eof_and_tail_private.sh` (14 rows, 8 red before).
+- **A fn defined inside a top-level block is prescanned — which also fixes a forward call that crashed** (c4, c4b).
+  `_prescan_tail` skipped each top-level statement whole, so a fn inside `if (..) { fn f(..) { .. } }` (or a
+  `while`, an `else`, with or without an attribute line before it) drew `undefined function 'f'` from an earlier
+  caller — and a struct argument, which the callee reads through its address, was pushed by value: rc 139.
+  `tests/tcyr/lang/toplevel_block_fn_forward_call.tcyr`, `false_warnings_valid_shapes.sh` B1 / B1a / B2.
+- **`assigning non-pointer to typed pointer` no longer fires on a value of the local's own type** (c4): `a = GP` (a
+  pointer-mode struct global), `b = q.name()` (a `: Str` method), `b = q.name` / `b = w.q.name` (a `: Str` field).
+  An integer, another struct type's global, an i64 field or method still warn (row P2 counts exactly four).
+- **I11 names `x.data()` too** (c3): the Str → `: cstring` warning listed `x.data` and `str_data(x)` but not the
+  method spelling.
+- **A `#deprecated` / `#assert` message no longer ships in the binary** (c5). The lexer's string pool is copied into
+  every binary whole, so a string only a diagnostic reads cost its bytes (+16 B for `"use new_f"`; 88 of 454 tcyr
+  binaries carried at least one, mostly the 120-byte `#derive` layout backstop). Right after such a literal is lexed
+  it moves to a side table and the pool winds back (it is the last string, so no offset moves; an interned message
+  stays). No heap-map region, no brk change. `tests/gates/codegen/compile_time_strings_not_emitted.sh`.
+- **`CYRIUS_NO_WARN_PIN_DRIFT=1` / `CYRIUS_STRICT_PIN=1` are read from the whole environment** (c6). `_env_var_is_1`
+  read `/proc/self/environ` into 4096 B, so either knob past the first 4 KB was ignored. It now reads to EOF in
+  chunks, matching across chunk boundaries; the first entry decides. `include_fallback_cyrius_home.sh` +6 rows per
+  compiler (20 red before). READFILE's store-slot fallback, which truncated a composed path at 4095 B, now refuses an
+  over-long path by name (`_rf_fits`) — unreachable through the preprocessor's 767-B bound, enforced anyway.
+- **cycc.exe honours `--syntax-only`** (c1b). `main_win.cyr` never read it, so `cyrius lint`'s pre-pass got a full
+  resolving compile on Windows. `tests/gates/platform/syntax_only_flag_pe.sh`.
+
+### Bootstrap
+
+- **cybs lexes a leading `_`; the seed chain broke the moment the compiler passed 2048 fns** (c1a, b3-seed, a5-seed).
+  cybs's lexer dispatch had no arm for `_` (it fell to `lexer_skip`, which discards the byte), so in gen1 — cybs's
+  compile of `src/main.cyr` — `_fi` WAS `fi`, a local `_x` captured reads of a global `x`, and `fn _aq` / `fn aq`
+  were one fn (measured `aq()*10 + _aq()` = 22, not 21). `_PARSE_FN_DEF_IMPL` declares both `fi` and a compaction
+  counter `_fi`, so gen1 wrote every fn's code-end record (`SFNE`) at a wrong index — invisible in the bytes (gen2 ==
+  build/cycc held), visible only as gen1's DCE note (57 unreachable fns where cycc says 73). While the fn tables sat
+  in their fixed 8192-slot regions the stray writes landed in slack; when the compiler registered its 2049th fn the
+  tables grew into packed buffers, the write landed in `_fnt_structmask`, a tail call lost its TCO and seed-derive
+  went RED on changes that fixpointed byte-identically. Three lanes hit it independently. Fixed at the root — a
+  two-instruction `_` arm in cybs's dispatch; the seed→cybs→seed closure holds (`asm.cyr` has no leading-underscore
+  identifier); gen1 now matches build/cycc on all 453 tcyr (41 differed). The source renames (`_fi` → `_fxi`,
+  READFILE's `_allow_parent` / `_allow_abs`, whose aliasing made gen1 ignore `CYRIUS_ALLOW_PARENT_INCLUDES`) are kept
+  as harmless; srca's `cybs_underscore_alias.sh`, which FORBADE names differing by a leading `_` — a bootstrap limit
+  written down as a rule — was dropped at the merge in favour of the root fix. Gate
+  `tests/gates/toolchain/cybs_leading_underscore.sh` (closure; local, fn and global-vs-local pairs distinct; gen1 ==
+  build/cycc on two ~6,100-fn programs; RED on all four rows with the slot-open cybs).
+- **`seed-derive-cycc.sh` step 6/6: gen1 must report exactly gen2's diagnostics compiling `src/main.cyr`** (b3-seed).
+  Byte-identical output proves gen1 emitted the right bytes, not that it computed everything right; the step fails
+  on the slot-open tree (57 vs 73) and passes now.
+
+### TLS / platform / stdlib
+
+- **`tls_supports_early_data()` reads 0 whenever the native backend is active** (l2) — the twin of 6.6.16's
+  resumption probe: it read the libssl symbol cache only, so once anything had loaded libssl in-process it answered
+  1 under native, where every 0-RTT verb refuses. `tls_libssl_session_cache.tcyr` (a spied group that runs in
+  check.sh, and a real-libssl group).
+- **Every `lib/tls.cyr` verb dispatches on the ctx or hook handle it is given, and answers a null handle** (l3). The
+  verbs read the global `_tls_backend`, which only says what the NEXT connect / accept builds, so after
+  `tls_set_backend` a ctx reached the wrong backend (measured on 6.6.16: a native ctx's `tls_get_session` with libssl
+  active handed libssl a NULL `SSL`, rc 139; a libssl ctx's `tls_close` with native active wrote `TLS_STATE_CLOSED`
+  over the `SSL_CTX` and never freed it), and the session-callback / `tls_ctx_set_max_early_data` verbs were an rc
+  139 on a null handle. A shim is native when its +8 (libssl's `SSL*`) is 0; a hook handle carries a backend tag at
+  the APPENDED `TLS_CTX_OFF_BACKEND_TAG` (+616; **`TLS_CTX_LEN` 616 → 624**), a non-canonical 64-bit value no
+  `SSL_CTX` can hold; every handle verb answers its documented 0 / -1 for a null handle first; an orphaned libssl
+  introspection latch (a claim inherited through fork()) makes the introspection verbs refuse before they read their
+  ctx. `tests/tcyr/crypto/tls_ctx_backend_dispatch.tcyr` (26 rows red and then rc 139 on the 6.6.16 lib), a
+  real-libssl group; `lib-tls-contract.md` amended.
+- **Windows `async_relay_once` relays between sockets** (l4). It used ReadFile / WriteFile on a Winsock SOCKET:
+  measured on cass, the read returned 0 (a false EOF) and nothing was relayed. A socket now goes through `recv` /
+  `send` (reroutes 0xF048 / 0xF047); WSAENOTSOCK sends a file or pipe HANDLE back to ReadFile / WriteFile.
+  `tests/tcyr/crossos/async_relay_once_socket.tcyr` (9 red on cass before; 19/19 on cass, ecb, ach, pi);
+  `pe_wsa_lasterr_masked.sh` axis 4 pins the never-zero `_asw_wsa_err`.
+- **Two concurrency tests now fail when they fail** (l4). `async_relay_once_no_deadlock.tcyr` returned 0 whatever
+  its asserts said (on cass `1 passed, 7 failed`, exit 0); `async_timeout_result.tcyr` asserted 42 on every non-Linux
+  target though Windows refuses `async_timeout` (-1) — cass exited 1. Each now checks its target's contract, with an
+  `#ifdef`-guarded named SKIP row where the call does not exist. Neither is in the cross-OS leg, which is why nothing
+  saw them.
+- **`lib/async_win.cyr` reads its kernel32 BOOLs masked to 32 bits, and the IOCP connect task checks its bind** (l5;
+  6.6.16 N5's class). SetWaitableTimer, RegisterWaitForSingleObject and CreateProcessW results were tested raw, so
+  dirty upper bits would read a failure as success (a hung reactor); the timeout sentinel discarded both results and
+  now degrades as its create-failure path documents; `_async_connect_task` ignored its `bind(0.0.0.0:0)`. ABI-latent
+  (cass's kernel32 zero-extends); `pe_wsa_lasterr_masked.sh` axis 5 (6 rows red before).
+- **The agnos peer defines `sys_socket` / `sys_bind` / `sys_listen` / `sys_connect` / `sys_accept4`** (l6). Each was
+  a link failure for a portable caller built for agnos. agnos has no syscall for any of them, so they are built on
+  `lib/net.cyr`'s tagged-fd adapter over sock_connect#47 / sock_listen#56 / sock_accept#57 / sock_peer#106, at the
+  Linux-common arity, answering -errno; a shape agnos cannot express (UDP, IPv6, AF_UNIX, SOCK_NONBLOCK) declines -38;
+  `sys_bind` keeps CVE-48's address rule; `sys_accept4` is non-blocking (-11 when nothing is pending) and checks its
+  address-length arguments before taking a connection. No `SYS_*` number minted. `agnos_peer_fake_kernel.sh` axes
+  5–6. API snapshot +5.
+- **`cbt/cyrius.cyr` compiles for `CYRIUS_TARGET_AGNOS=1`** (l6) — it stopped at ~110 errors. The CLI's verbs run
+  cycc through fork / execve / waitpid, which the agnos peer does not provide, so the agnos build answers `version`
+  and `help` and refuses every other verb by name (compile there with `cycc` directly); the Linux CLI is
+  byte-identical. `agnos_peer_fake_kernel.sh` axis 7.
+
+### Tooling (cbt)
+
+- **`cyrius lib sync` re-locks the files it writes, under the 6.6.4 stdlib-leaf guard** (t1). It copied the pinned
+  snapshot over `lib/` and never touched `cyrius.lock`, so after a pin move `deps --verify` failed until the lock was
+  regenerated from empty (kriya 1.7.3: `72 verified, 39 failed`; yantra used `rm -rf lib cyrius.lock`). Now it plans
+  every copy first; under an unchanged pin a destination whose locked hash differs from the snapshot is refused by
+  name and NOTHING is written; it re-hashes only the rows for files it wrote, drops rows for files gone from disk,
+  keeps every other row byte for byte, and carries commit pins forward. `cyrius lib sync --relock` accepts a moved
+  snapshot explicitly. **Pin-move order:** run `lib sync` before `deps` / `build` (see *Known*).
+  `tests/gates/toolchain/lib_sync_relocks.sh` (8 axes).
+- **An untagged git dep no longer shares a `tag = "main"` dep's cache dir** (t2). Both lived at
+  `<home>/deps/<name>/main`, so one served the other's bytes or was refused as a "tampered cache". The untagged key
+  is `<name>/.untagged` (CVE-76's validator refuses a `.`-led tag component), and the no-home temp fallback uses the
+  same layout. No `~/Repos` manifest declares either shape. `tests/gates/toolchain/deps_untagged_cache_not_aliased.sh`.
+- **The CLI picks its home by cycc's rule** (t3). `find_tools` took the LAST duplicate `HOME` / `CYRIUS_HOME`, kept an
+  empty `CYRIUS_HOME` as the home `""`, and read only the first 32 KB of the environment; on Windows a `CYRIUS_HOME`
+  over 512 B read as `""`. It now reads the whole environment and takes the first non-empty value, as cycc does; a
+  gate holds the two to one rule. `cyrius which` with no compiler printed a null pointer (rc 139); it now names the
+  failure. `tests/gates/toolchain/cli_home_matches_cycc.sh` (10 rows, 8 red before; smoked on ecb, ach, qemu).
+- **cyrius-lsp reads an open document whole, sized by fstat** (t4). `lsp_read_file` read through a fixed 1 MB buffer
+  without reporting the cut (`lib/mabda.cyr` 1.37 MB and `lib/sigil.cyr` 1.32 MB are over it): a definition request
+  ~1.2 MB in answered `null`. A document over 64 MiB is refused with its path on the log.
+  `tests/gates/toolchain/lsp_reads_whole_document.sh`.
+- **`install.sh --refresh-only` no longer exits silently when `$HOME/.cyrius` does not exist** (t5). A bare
+  `$(cd "$X" && pwd -P)` assignment under `set -e` exited 1 with no message. `_rs_real` resolves a home whether or not
+  it exists (deepest existing ancestor + the missing components), so a throwaway home proceeds and a store about to
+  be created at `$HOME/.cyrius` from a drifted tree at a tagged VERSION is refused by name like any live store.
+  `released_slot_written_from_tag.sh` axes 4g–4j.
+
+### Harness
+
+- **`audit_scope_covers_suite.sh`: ~750 s → ~15 s** (g1). It ran `cyrius audit` four times over a copy of the tree,
+  and 97 % of each run was the tests stage, which the gate never reads. The scratch copy drops every `.tcyr` /
+  `.bcyr`, so the probe is the only test, and axis 1 reads the banner off the base run; RED as before when
+  `_aw_is_cyr_variant` is broken.
+- **check.sh's `.tcyr` phase runs the libssl groups** (g2). It ran every test with no `HOME`, so `lib/fdlopen.cyr`
+  could not find its helper and `tls_libssl_read_errors`, `tls_libssl_session_cache` and `tls_libssl_worker_thread`
+  SKIPPED on every check.sh and release-gate run (6, 27 and 3 assertions against 348, 60 and 83). Each test now gets a
+  private `HOME` holding a copy of the helper the toolchain under test would use; the invoking `$HOME` is only read.
+  `tests/gates/toolchain/check_tcyr_home_has_helper.sh`.
+- **The wine gates leave nothing behind and never write the user's HOME** (g3). 6.6.16's private `WINEPREFIX` left
+  three leftovers: `$HOME/.cache` shader caches, server dirs in `/tmp/.wine-<uid>` (about 570 had piled up) and
+  running wineservers. Every wine gate now also privatises `HOME` / `XDG_CACHE_HOME` and tears down with
+  `_wine_down` (scoped `-k`, `-w`, the server dir named from the prefix's device / inode — stat'ed BEFORE the prefix
+  is deleted). `gates_never_write_tree.sh` axis 9 enforces all of it (self-tested on 19 bad shapes); 13 gates now
+  survive `bash -eo pipefail`.
+- **The path-A drift row reads each `parse_*.cyr` whole** (g4). It read them into 256 KB, which `parse_decl.cyr`,
+  `parse_expr.cyr` and `parse_fn.cyr` (474,667 B) outgrew — a direct emit in their tails read PASS. Sized by fstat,
+  must yield `st_size` bytes, and the last `fn` the scan saw must be the file's last.
+  `tests/gates/toolchain/check_parse_drift_reads_whole.sh`.
+- **Two gates compiled against the live store's lib instead of the tree's** (g5). `private_per_item_rejected.sh`
+  axes 4 / 6 and `undefined_tail_call_refused.sh`'s qemu row compiled where `lib/` is not on disk, through cycc's
+  include fallback; they now stage a `CYRIUS_HOME` from the tree (a canary axis proves it is the one read).
+- **No gate reads the gitignored cross compilers** (g6, g7). `alloc_failure_returns_zero.sh` and
+  `syscall_wrapper_pass.sh` read `build/cycc_aarch64` / `build/cycc_win` — absent in a fresh worktree, stale
+  otherwise; the latter's rows dropped out silently and ran `build/cycc_win` through binfmt_misc in the user's own
+  wine prefix. Both now build from the tree into their mktemp dir; a missing wine is a named SKIP and a closing floor
+  fails a row that neither ran nor skipped.
+- Already fixed at the 6.6.16 integration, struck from this release's list: lint's dead `sizeof: unknown type`
+  context entry (41019b4d) and the `macos_arm64_real_threads.sh` driver description (4b2606f2).
+
+### Integration
+
+The seven lanes merged with text conflicts only in `programs/checks/main.cyr` / `scripts/check.sh` (neighbouring
+gate registrations), `lex.cyr` / `parse_fn.cyr` (the seed renames) and three hunks of `parse_decl.cyr`, each a
+combination of both sides: `_field_load_on` (srcc's Str-field step + srcb's pointer-field hop), `PARSE_FIELD_STORE`
+(srcb's `_store_hop` loop + the saved Str-field hop) and `PARSE_VAR` (srca's vector-global sizing + srcb's pointee
+type). Two wine gates added by other lanes were adapted to g3's teardown rule (d5d04e78
+`cli_home_matches_cycc.sh`, ebdcc7ab `build_config_windows_arm.sh`). The first merged check.sh found a regression
+no lane could see: g2's private-HOME tcyr phase sent `tls_libssl_worker_thread`'s fork-inherited-latch row down
+l3's new per-ctx dispatch with a stack buffer for a ctx (SIGSEGV) — fixed in lib (23508d3d). The pre-commit hook's
+ARM size band moved 700K–2M → 700K–3M: ESYSXLAT inlines its translation chain at every aarch64 syscall site, so
+the ARM compiler is ~29 % larger than x86 (lower it again after the 6.6.18 ESYSXLAT fold).
+
+### Downstream
+
+Nothing here gates the release; each repo adopts when it pins ≥ 6.6.17 (notes filed in each repo):
+- **kashi** — bare `cyrius test` now runs `src/test.cyr` (393 assertions) for the first time in its CI.
+- **crab** — its CI comment "`cyrius test` DOES NOT RUN THE `[build].test` ENTRY" becomes false.
+- **ark, sakshi, sigil** — `[build] defines` is read; the `-D` on their `cyrius build` CI lines is redundant. The ~57
+  repos with `CYRIUS_DCE=1 cyrius build` CI lines can use `[build] dce = true`.
+- **rekha, sadish, dhancha, setu, mishran** — `[coverage] programs` puts their RUN programs in the corpus.
+- **kriya, yantra** — `lib sync --full` after a pin move leaves a lock `deps --verify` accepts.
+  ⚠ **agnosai, ai-hwaccel** (and one agnostic workflow), whose CI runs `lib sync` → `deps` with no
+  `deps --verify`, can turn RED: a lock committed after a build-first pin move carries the previous pin's rows, which
+  `lib sync` now refuses (`--relock`).
+- **agnostic** — two `[deps] stdlib` leaves it lost to a `]` in a comment are back; its include order moves.
+- **agnos** — informational: the BSD socket names are portable wrappers on agnos; the CLI answers version / help only.
+- Scaffolds from `cyrius init --bin` / `cyrius port` before 6.6.17 have `output = "{PROJ}"`.
+- No repo declares a `*T`, so the `p + n` rule changes no consumer.
+
+### Known / not fixed
+
+- Everything the 6.6.17 lanes and reviewers met outside their items — among them `var p: Node = h` (h: `*Node`)
+  copying the struct while the ≤ 8 B mirror stores the POINTER (a v6.7.x bind-vs-copy question), aarch64 / cx calls
+  with ~250–300+ arguments, a method call on a field (`h.name.len()`) and compound assignment on a field
+  (`h.n += 1`), `deps` / `build` before `lib sync` after a pin move, and the agnos CLI's process layer — is in
+  roadmap.md's *Potential backlog* under "Found by the 6.6.17 lanes".
+
 ## [6.6.16] — 2026-10-05
 
 The 6.6.16 repair release — the first row of roadmap.md § *The 6.6.x tail*: the compiler's silent miscompiles
