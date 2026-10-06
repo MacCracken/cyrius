@@ -839,6 +839,21 @@ var _tls_introspect_state        = 0;   # 0 / 1 resolving / 2 done (6.6.14)
 # flag (fenced on aarch64) the fast path reads. Callers are the main-thread libssl arms, so — as in
 # _tls_init — a claim held by someone else can only be one inherited through fork(): the caller does
 # not wait for it, and each arm's own null-pointer checks refuse whatever was left unresolved.
+# 1 when the introspection latch is ORPHANED: claimed (state 1) and never published, seen from the
+# main thread — the only thread that ever claims it, so there it can only be a claim inherited
+# through fork() from a parent caught mid-resolve. The introspection verbs then fail closed BEFORE
+# they read anything through their ctx (6.6.17: since l3 they read the ctx's backend tag first, and
+# the 6.6.14 row that pins this inheritance passes a stand-in buffer, not a ctx — reading its +8
+# from the stack sent it down the native arm with a garbage pointer, SIGSEGV in a minimal
+# environment). The state is read first, so a process that never claimed it pays one load; a
+# worker never treats the main thread's in-flight claim as an orphan.
+fn _tls_introspect_orphaned(): i64 {
+    if (atomic_load(&_tls_introspect_state) != 1) { return 0; }
+    if (_tls_introspect_resolved == 1) { return 0; }        # published, just before its state
+    if (_tls_libssl_thread_ok() == 0) { return 0; }
+    return 1;
+}
+
 fn _tls_resolve_introspect(): i64 {
     if (_tls_introspect_resolved == 1) { return 0; }
     if (atomic_cas(&_tls_introspect_state, 0, 1) == 1) {
@@ -870,6 +885,7 @@ fn _tls_resolve_introspect_syms(): i64 {
 # its byte length, or 0 if none was negotiated.
 fn tls_get_alpn_selected(ctx, buf, bufmax): i64 {
     if (ctx == 0) { return 0; }
+    if (_tls_introspect_orphaned() == 1) { return 0; }     # before the ctx is read (6.6.17)
     #ifndef CYRIUS_TLS_LIBSSL
     if (_tls_shim_native(ctx) == 1) { return tls_native_get_alpn_selected(load64(ctx), buf, bufmax); }
     #endif
@@ -898,6 +914,7 @@ fn tls_get_alpn_selected(ctx, buf, bufmax): i64 {
 # consumers SHA-256 it.
 fn tls_get_peer_spki_der(ctx, buf, bufmax): i64 {
     if (ctx == 0) { return 0; }
+    if (_tls_introspect_orphaned() == 1) { return 0; }     # before the ctx is read (6.6.17)
     #ifndef CYRIUS_TLS_LIBSSL
     if (_tls_shim_native(ctx) == 1) { return tls_native_get_peer_spki_der(load64(ctx), buf, bufmax); }
     #endif
