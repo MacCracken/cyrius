@@ -213,11 +213,16 @@ fn _poison_cat_hex(buf, pos, n): i64 {
 
 # Report one detection: a single stderr line, counted, and fatal (exit 86) when trapping.
 #   kind: 1 alloc, 2 arena, 3 fl, 4 seam, 0 unknown (header undecodable)
-#   side: 1 leading, 2 trailing, 3 after-free, 4 header
+#   side: 1 leading, 2 trailing, 3 after-free, 4 header, 5 double free (its own line)
 fn _poison_report(kind, side, blk, req, nbad): i64 {
     _poison_viol = _poison_viol + 1;
     var line[192];
-    var pos = _poison_cat(&line, 0, "poison: redzone overwrite \xe2\x80\x94 ");
+    var pos = 0;
+    if (side == 5) {
+        pos = _poison_cat(&line, 0, "poison: double free \xe2\x80\x94 ");
+    } else {
+        pos = _poison_cat(&line, 0, "poison: redzone overwrite \xe2\x80\x94 ");
+    }
     if (kind == 0) { pos = _poison_cat(&line, pos, "unknown"); }
     if (kind == 1) { pos = _poison_cat(&line, pos, "alloc"); }
     if (kind == 2) { pos = _poison_cat(&line, pos, "arena"); }
@@ -227,6 +232,12 @@ fn _poison_report(kind, side, blk, req, nbad): i64 {
     pos = _poison_cat_hex(&line, pos, blk);
     pos = _poison_cat(&line, pos, " (");
     pos = _poison_cat_dec(&line, pos, req);
+    if (side == 5) {
+        pos = _poison_cat(&line, pos, " bytes)\n");
+        syscall(1, 2, &line, pos);
+        if (_poison_trap == 1) { sys_exit_group(86); }
+        return 0;
+    }
     pos = _poison_cat(&line, pos, " bytes): ");
     pos = _poison_cat_dec(&line, pos, nbad);
     pos = _poison_cat(&line, pos, " byte(s) changed [");
@@ -468,10 +479,21 @@ fn _poison_block(n, kind): i64 {
 # Free a pointer from poison_alloc (or, under CYRIUS_POISON, from alloc()): check it, then
 # quarantine it — its bytes become fill and it stays listed DEAD, so a read after free sees
 # the fill and a write after free is found by the next sweep. The memory is never reused.
+# A second free of a block already DEAD is reported as a double free (and is fatal under the
+# compile flag) — re-quarantining it silently would hide the bug. (_poison_kill itself stays
+# idempotent: arena quarantine may meet an already-dead block legitimately.)
 fn poison_free(p): i64 {
     if (p == 0) { return 0; }
+    var blk = p - _POISON_RZ - _POISON_HDR;
     _poison_lock_acquire();
-    _poison_kill(p - _POISON_RZ - _POISON_HDR);
+    var meta = load64(blk + 8);
+    var dead = 0;
+    if (_poison_meta_ok(meta) == 1) { dead = (meta >> 55) & 1; }
+    if (dead == 1) {
+        _poison_report((meta >> 48) & 15, 5, p, meta & 0xFFFFFFFFFFFF, 0);
+    } else {
+        _poison_kill(blk);
+    }
     _poison_lock_release();
     return 0;
 }
