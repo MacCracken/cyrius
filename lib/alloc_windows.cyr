@@ -89,6 +89,13 @@ fn alloc(size) {
     # v5.8.37 — lazy-init the heap if alloc_init() was never called
     # (now race-safe). See lib/alloc.cyr header for the migration note.
     if (_heap_base == 0) { alloc_init(); }
+    #ifdef CYRIUS_POISON
+    # 6.6.18 review: the reserve-fit decision alloc_used() reports must be the NON-poison one.
+    # The redzones fill the reserve sooner, so a request that fits without poison can take the
+    # `big` path here; the shadow counter advances by the rounded request exactly when the
+    # non-poison request would have fit the reserve, whichever path the poisoned block takes.
+    var pz_cnt = _poison_shadow_take(pz_req, _heap_end - _heap_base);
+    #endif
     var ptr = _heap_ptr;
     var new_ptr = ptr + size;
     # Overflow check: wrapped pointer = arithmetic overflow.
@@ -109,20 +116,20 @@ fn alloc(size) {
     # 2026-07-11-macos-windows-large-single-allocation-path.md.
     if (new_ptr > _heap_end) {
         var big = syscall(9, 0, size, 3, 0x22, 0 - 1, 0);
+        #ifdef CYRIUS_POISON
+        if (big <= 0) { _poison_shadow_undo(pz_req, pz_cnt); }
+        #endif
         _alloc_lock_release();
         if (big <= 0) { return 0; }
         #ifdef CYRIUS_POISON
-        return _poison_arm_alloc(big, pz_req);
+        return _poison_arm_alloc(big, pz_req, pz_cnt);
         #endif
         return big;
     }
     _heap_ptr = new_ptr;
-    #ifdef CYRIUS_POISON
-    _poison_overhead = _poison_overhead + size - ((pz_req + 7) & (0 - 8));   # alloc_used() counts the REQUEST
-    #endif
     _alloc_lock_release();
     #ifdef CYRIUS_POISON
-    return _poison_arm_alloc(ptr, pz_req);       # armed + published outside the lock
+    return _poison_arm_alloc(ptr, pz_req, pz_cnt);   # armed + published outside the lock
     #endif
     return ptr;
 }
@@ -144,7 +151,7 @@ fn alloc_reset() {
     if (span > 0) { _alloc_zero(_heap_base, span); }
     _heap_ptr = _heap_base;
     #ifdef CYRIUS_POISON
-    _poison_overhead = 0;
+    _poison_shadow = 0;
     _poison_hidden = 0;
     #endif
     _alloc_lock_release();
@@ -154,7 +161,7 @@ fn alloc_reset() {
 # Bytes used from the heap.
 fn alloc_used() {
     #ifdef CYRIUS_POISON
-    return _heap_ptr - _heap_base - _poison_overhead - _poison_hidden;
+    return _poison_shadow - _poison_hidden;
     #endif
     return _heap_ptr - _heap_base;
 }

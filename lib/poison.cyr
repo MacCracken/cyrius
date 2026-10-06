@@ -40,7 +40,7 @@ var _poison_next_sweep = 1024;
 # A poisoned BUMP block (poison_alloc, the seam wrappers, and — under CYRIUS_POISON — alloc()
 # and arenas) is laid out
 #     blk+0    next on the global live list
-#     blk+8    meta: req (bits 0..47) | kind << 48 | FORGET bit 53 | REPORTED bit 54
+#     blk+8    meta: req (bits 0..47) | kind << 48 | COUNTED bit 52 | FORGET bit 53 | REPORTED bit 54
 #                    | DEAD bit 55 | fill << 56
 #     blk+16   next on the OWNER's list (an arena's, a wrapper's), else 0
 #     blk+24   leading redzone, _POISON_RZ bytes of fill
@@ -60,10 +60,11 @@ var _poison_fl_head = 0;
 # many older blocks it could not reach.
 var _poison_nlisted = 0;
 var _poison_fl_n = 0;
-# Bytes the redzones and headers added to the macOS / Windows bump heap since the last
-# alloc_reset — their alloc_used() subtracts it, so poison never changes what it reports.
-# Updated under alloc.cyr's lock.
-var _poison_overhead = 0;
+# macOS / Windows: the bump offset alloc() WOULD have reached without poison — it advances by
+# the rounded request exactly when the non-poison request would have fit the reserve, so
+# their alloc_used() (and the reserve-or-`big` split it reflects) is the non-poison one even
+# though the redzones fill the real reserve sooner. Updated under alloc.cyr's lock.
+var _poison_shadow = 0;
 # Bytes of alloc() blocks that serve ARENA requests (and the 8 extra header bytes per arena).
 # Without poison those bytes live inside the arena's own chunk, so alloc_used() subtracts them:
 # poison never changes what alloc_used() reports.
@@ -442,10 +443,29 @@ fn _poison_alloc_armed(): i64 {
 
 # alloc()'s poison arm (CYRIUS_POISON): `blk` is a span of _poison_bump_total(req) bytes
 # fresh from the heap (zeroed). Arm it as an `alloc` block, publish it, return the user ptr.
-fn _poison_arm_alloc(blk, req): i64 {
+# `counted` (meta bit 52) records whether alloc_used() counted this request — always on
+# Linux; on macOS / Windows only when the non-poison request would have fit the reserve.
+# An arena that takes the block hides exactly what was counted.
+fn _poison_arm_alloc(blk, req, counted): i64 {
     var u = _poison_arm_bump(blk, req, 1);
+    if (counted == 1) { store64(blk + 8, load64(blk + 8) | (1 << 52)); }
     _poison_publish(blk);
     return u;
+}
+
+# macOS / Windows alloc(), under its lock: advance the shadow offset when the non-poison
+# request would fit a reserve of `cap` bytes. Returns 1 when it counted.
+fn _poison_shadow_take(req, cap): i64 {
+    var r8 = (req + 7) & (0 - 8);
+    if (_poison_shadow - _poison_hidden + r8 > cap) { return 0; }
+    _poison_shadow = _poison_shadow + r8;
+    return 1;
+}
+
+# The allocation failed after it was counted: take it back. Under alloc.cyr's lock.
+fn _poison_shadow_undo(req, counted): i64 {
+    if (counted == 1) { _poison_shadow = _poison_shadow - ((req + 7) & (0 - 8)); }
+    return 0;
 }
 
 # Allocate `n` bytes with both redzones armed and the block on the live list, whatever the
@@ -688,9 +708,11 @@ fn _poison_fl_check(blk): i64 {
 fn _poison_arena_new(capacity): i64 {
     var a = alloc(64);
     if (a == 0) { return 0; }
-    _poison_lock_acquire();
-    _poison_hidden = _poison_hidden + 8;    # the non-poison header is 56 bytes
-    _poison_lock_release();
+    if (((load64(a - _POISON_RZ - _POISON_HDR + 8) >> 52) & 1) == 1) {
+        _poison_lock_acquire();
+        _poison_hidden = _poison_hidden + 8;    # the non-poison header is 56 bytes
+        _poison_lock_release();
+    }
     var ch = alloc(capacity + 16);
     if (ch == 0) { return 0; }
     store64(ch, 0);
@@ -711,10 +733,12 @@ fn _poison_arena_new(capacity): i64 {
 fn _poison_arena_take(a, req): i64 {
     var u = _poison_block(req, 2);
     if (u == 0) { return 0; }
-    _poison_lock_acquire();
-    _poison_hidden = _poison_hidden + ((req + 7) & (0 - 8));
-    _poison_lock_release();
     var blk = u - _POISON_RZ - _POISON_HDR;
+    if (((load64(blk + 8) >> 52) & 1) == 1) {      # only what alloc_used() counted is hidden
+        _poison_lock_acquire();
+        _poison_hidden = _poison_hidden + ((req + 7) & (0 - 8));
+        _poison_lock_release();
+    }
     store64(blk + 16, load64(a + 56));
     store64(a + 56, blk);
     return u;
