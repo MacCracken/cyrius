@@ -3129,7 +3129,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
             _cfo = 0;
             return 0;
         }
-        ESCPOPS(S, argc);
+        ESCPOPS(S, argc, sc_num);   # sc_num >= 0: aarch64 folds the ESYSXLAT chain (6.6.18)
         _cfo = 0;
         # Syscall arity check — warn if arg count doesn't match the
         # well-known arity for common Linux x86_64 syscalls.

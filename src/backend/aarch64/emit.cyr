@@ -1767,7 +1767,150 @@ fn _macho_arm_routes(n): i64 {
 # Pop syscall args (LIFO — last pushed = first popped)
 # Push order: syscall_num, arg1, arg2, ..., argN
 # Pop order: argN first, syscall_num last
-fn ESCPOPS(S, n): i64 {
+# 6.6.18 — a LITERAL syscall number's ESYSXLAT chain is folded at compile time.
+# ESYSXLAT emits every row inline at every site (82 rows, 1,184 B on ELF at 6.6.18 — 36 % of
+# the native compiler). When the number is a compile-time constant the outcome is known, so the
+# chain is emitted as always and then DECODED and SIMULATED in place: cur = the literal; for each
+# row in emission order whose `cmp x8,#src` equals cur, the row's body is kept (copied down) and a
+# final `movz x8,#d` sets cur = d; every other row, and every cmp/b.ne, is dropped. Running the
+# chain's own order is what keeps every ordering rule (flock above poll, epoll_wait below pipe,
+# the at-family below getcwd/symlink, 263->35 below 35->101, the alias band last) true by
+# construction, and decode-after-emit leaves the row SOURCE untouched — the ~11 gates that read
+# ESYSXLAT's hex words keep reading the truth.
+# ⛔ Relocating a body is only sound under an invariant this fn CHECKS, loudly, on every fold (a
+# violation stops the build — never a silent fallback to the inline chain): rows tile the chain
+# exactly as `cmp x8,#src` / `b.ne +4k` / k-1 body words; x8 is written only by a `movz x8` that
+# is the body's LAST word (ELF) and a Mach-O body ends in `movz x16`; a flag reader follows a
+# flag setter inside its own body (the dropped cmp's flags are gone); and no body word is
+# PC-relative to anything outside its body (B / B.cond / CBZ / TBZ must land in the body; ADR,
+# ADRP, LDR-literal, BL and register branches are refused outright).
+# ⚠ No literal `EW(S, 0xF1…1F)` may appear here: raw_syscall_literals_routed.sh derives its
+# allowlist from exactly those words inside ESYSXLAT. CHANGELOG [6.6.18]
+fn _esx_sext(v, bits): i64 {
+    if (v >= (1 << (bits - 1))) { return v - (1 << bits); }
+    return v;
+}
+fn _esx_fold_die(st, q, src, why): i64 {
+    PRSTR("error: internal: ESYSXLAT fold refused the row at chain word ");
+    PRNUM((q - st) / 4);
+    PRSTR(" (cmp x8,#");
+    PRNUM(src);
+    PRSTR("): ");
+    PRSTR(why);
+    PRSTR("\n");
+    syscall(SYS_EXIT, 1);
+    return 0;
+}
+# 0 when body [bs, be) relocates soundly, else why not. A load/store naming x8 as Rt, Rt2 or Rn
+# counts as an x8 write — conservative (a store of x8 is refused too), never silently wrong.
+fn _esx_body_bad(cb, bs, be): i64 {
+    var lastw = load32(cb + be - 4);
+    var hi = be;
+    if ((lastw & 0xFFE0001F) == 0xD2800008) { hi = be - 4; }   # never branch past the movz x8
+    var fl = 0;
+    var o = bs;
+    while (o < be) {
+        var w = load32(cb + o);
+        if ((w & 0x1F000000) == 0x10000000) { return "ADR/ADRP in a row body"; }
+        if ((w & 0x3B000000) == 0x18000000) { return "LDR (literal) in a row body"; }
+        if ((w & 0xFC000000) == 0x94000000) { return "BL in a row body"; }
+        if ((w & 0xFE000000) == 0xD6000000) { return "a register branch in a row body"; }
+        var br = 0;
+        var d = 0;
+        if ((w & 0xFC000000) == 0x14000000) { br = 1; d = _esx_sext(w & 0x3FFFFFF, 26); }
+        if ((w & 0xFF000010) == 0x54000000) { br = 2; d = _esx_sext((w >> 5) & 0x7FFFF, 19); }
+        if ((w & 0x7E000000) == 0x34000000) { br = 1; d = _esx_sext((w >> 5) & 0x7FFFF, 19); }
+        if ((w & 0x7E000000) == 0x36000000) { br = 1; d = _esx_sext((w >> 5) & 0x3FFF, 14); }
+        var rf = 0;
+        if (br == 2) { rf = 1; }
+        var dp = w & 0x1FE00000;
+        if (dp == 0x1A000000) { rf = 1; }    # ADC/SBC
+        if (dp == 0x1A400000) { rf = 1; }    # CCMP/CCMN
+        if (dp == 0x1A800000) { rf = 1; }    # CSEL/CSINC/CSINV/CSNEG
+        if (rf == 1) { if (fl == 0) { return "a flag reader before any flag setter in its body"; } }
+        if (br != 0) {
+            var t = o + d * 4;
+            if (t < bs) { return "a branch that leaves its row body"; }
+            if (t > hi) { return "a branch that leaves its row body"; }
+        }
+        if ((w & 0x20000000) != 0) {
+            if ((w & 0x1F000000) == 0x11000000) { fl = 1; }   # ADDS/SUBS imm (cmp/cmn)
+            if ((w & 0x1F000000) == 0x0B000000) { fl = 1; }   # ADDS/SUBS reg
+        }
+        if (((w >> 29) & 3) == 3) {
+            if ((w & 0x1F800000) == 0x12000000) { fl = 1; }   # ANDS imm (tst)
+            if ((w & 0x1F000000) == 0x0A000000) { fl = 1; }   # ANDS reg
+        }
+        var wx8 = 0;
+        if ((w & 0x0A000000) == 0x08000000) {
+            if (((w >> 5) & 0x1F) == 8) { wx8 = 1; }
+            if ((w & 0x1F) == 8) { wx8 = 1; }
+            if ((w & 0x3A000000) == 0x28000000) { if (((w >> 10) & 0x1F) == 8) { wx8 = 1; } }
+        } else {
+            if (br == 0) { if ((w & 0x1F) == 8) { wx8 = 1; } }
+        }
+        if (wx8 == 1) {
+            if (o + 4 != be) { return "x8 written before the body's last word"; }
+            if ((w & 0xFFE0001F) != 0xD2800008) { return "x8 written by something other than movz x8"; }
+            if (_TARGET_MACHO == 2) { return "x8 written in a Mach-O row (the chain compares x8)"; }
+        }
+        o = o + 4;
+    }
+    if (_TARGET_MACHO == 2) {
+        if ((lastw & 0xFFE0001F) != 0xD2800010) { return "a Mach-O row body that does not end in movz x16"; }
+    }
+    return 0;
+}
+fn _esx_fold(S, st, lit): i64 {
+    var en = GCP(S);
+    var cb = _codebuf_base;
+    var p = st;
+    if (_TARGET_MACHO == 2) {
+        if (load32(cb + p) != 0xD29FFFF0) { _esx_fold_die(st, p, 0 - 1, "no chain head (movz x16,#0xFFFF)"); }
+        p = p + 4;
+    }
+    var q = p;
+    while (q < en) {
+        var c = load32(cb + q);
+        var src = (c >> 10) & 0xFFF;
+        if ((c & 0xFFC003FF) != 0xF100011F) { _esx_fold_die(st, q, 0 - 1, "not a cmp x8,#imm row head"); }
+        var b = load32(cb + q + 4);
+        if ((b & 0xFF00001F) != 0x54000001) { _esx_fold_die(st, q, src, "no b.ne after the cmp"); }
+        var k = (b >> 5) & 0x7FFFF;
+        if (k < 2) { _esx_fold_die(st, q, src, "an empty row body"); }
+        if (q + 4 + k * 4 > en) { _esx_fold_die(st, q, src, "a row that overruns the chain"); }
+        var why = _esx_body_bad(cb, q + 8, q + 4 + k * 4);
+        if (why != 0) { _esx_fold_die(st, q, src, why); }
+        q = q + 4 + k * 4;
+    }
+    var cur = lit;
+    var out = st;
+    var hit = 0;
+    q = p;
+    while (q < en) {
+        var src2 = (load32(cb + q) >> 10) & 0xFFF;
+        var e2 = q + 4 + ((load32(cb + q + 4) >> 5) & 0x7FFFF) * 4;
+        if (src2 == cur) {
+            hit = 1;
+            var r = q + 8;
+            while (r < e2) {
+                var bw = load32(cb + r);
+                store32(cb + out, bw);
+                out = out + 4;
+                r = r + 4;
+            }
+            var lw = load32(cb + e2 - 4);
+            if ((lw & 0xFFE0001F) == 0xD2800008) { cur = (lw >> 5) & 0xFFFF; }
+        }
+        q = e2;
+    }
+    # Mach-O: every body ends in movz x16 (checked above), so the head matters only on a miss.
+    if (_TARGET_MACHO == 2) { if (hit == 0) { store32(cb + out, 0xD29FFFF0); out = out + 4; } }
+    SCP(S, out);
+    return 0;
+}
+
+fn ESCPOPS(S, n, lit): i64 {
     # LIFO: last pushed (argN) pops first, first pushed (syscall_num) pops last
     # For syscall(num, a1, a2, a3, a4, a5, a6):
     #   Push order: num, a1, a2, a3, a4, a5, a6
@@ -1793,7 +1936,9 @@ fn ESCPOPS(S, n): i64 {
         }
     }
     _esx_argc = n;          # the Mach-O pointer emulations key on it (EMACHO_NANOSLEEP_ARM, _esx_short)
+    var xst = GCP(S);
     ESYSXLAT(S);
+    if (lit >= 0) { _esx_fold(S, xst, lit); }   # a compile-time number: keep only what runs
     _esx_argc = 7;
     ESYSCALL(S);
     return 0;

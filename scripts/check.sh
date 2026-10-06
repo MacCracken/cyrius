@@ -1990,3 +1990,8 @@ _chk_gate "$ROOT/tests/gates/platform/pe_last_error_reroute.sh"
 _chk_gate "$ROOT/tests/gates/platform/pe_wsa_lasterr_masked.sh"
 
 _chk_gate "$ROOT/tests/gates/platform/process_errno_constants_every_target.sh"
+
+# 6.6.18 (XLAT-1) — aarch64 folds a literal syscall number's ESYSXLAT chain at compile time (no
+# `cmp x8` word left on ELF or arm64 Mach-O; qemu -strace twins against the runtime chain, named
+# SKIP without qemu-aarch64). Cross-builds cycc_aarch64 from src with $CYCC.
+_chk_gate "$ROOT/tests/gates/platform/esysxlat_fold.sh"

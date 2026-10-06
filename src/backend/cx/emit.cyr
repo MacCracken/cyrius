@@ -249,7 +249,7 @@ fn EMOVRDI(S): i64 { CX_EMIT(S, 2, 2, 0, 0); return 0; }  # mov r2, r0 (for exit
 # Syscall arg pop: VM convention is r1=number, r2-r7=args
 # x86 push order: number, arg1, arg2, ... (left to right)
 # Pop order (reverse): last arg first, number last
-fn ESCPOPS(S, n): i64 {
+fn ESCPOPS(S, n, lit): i64 {   # lit: the aarch64 fold's literal number; unused here
     # Pop args into r(n+1) down to r2
     if (n >= 7) { CX_EMIT(S, 129, 7, 0, 0); }
     if (n >= 6) { CX_EMIT(S, 129, 6, 0, 0); }
