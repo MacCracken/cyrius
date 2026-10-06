@@ -12,6 +12,8 @@
 #   tail     a direct emit appended to parse_fn.cyr (past 256 KB) -> FAIL naming parse_fn.cyr
 #   huge     parse_types.cyr replaced by a 17 MiB (sparse) file    -> FAIL, refused by name
 #   missing  parse_ctrl.cyr removed                               -> FAIL, "missing"
+#   window   the read-back window opens on a mid-line `fn `      -> PASS (6.6.17 review: offset 0
+#            of the window used to count as a line start, a spurious "truncated" FAIL)
 # MUTATION (measured by hand, not run here): the read capped back at 262144 bytes fails rows
 # tree (the scan read 262144 bytes, fstat says ...) and tail.
 #
@@ -73,9 +75,18 @@ check "the row fails" 1 "$(row "$T/miss")"
 check "  naming parse_ctrl.cyr as missing" yes \
     "$(grep -q 'parse_ctrl.cyr — missing' "$T/miss.out" && echo yes || echo no)"
 
+echo "row window: the tail read's first byte is \`fn \` in mid-line, the file's last fn far above it"
+stage "$T/win"
+# pd_real at offset 0 is the only line-start fn; the last 64 KiB open with "fn " right after
+# "# x", so offset 0 of the read-back window is NOT a line start. Exactly 65536 bytes of fill.
+{ printf 'fn pd_real(S): i64 {\n    return 0;\n}\n# x'
+  awk 'BEGIN { printf "fn "; for (i = 0; i < 1023; i++) { for (j = 0; j < 63; j++) printf "a"; printf "\n" }
+               for (j = 0; j < 61; j++) printf "a" }'; } > "$T/win/src/frontend/parse_ctrl.cyr"
+check "the row passes (a mid-line \`fn \` at the window's edge is not the last fn)" 0 "$(row "$T/win")"
+
 if [ "$fails" -gt 0 ]; then
     echo "FAIL: $NAME: $fails problem(s)"
-    for r in tree tail huge miss; do [ -f "$T/$r.out" ] && { echo "  -- $r"; sed 's/^/     /' "$T/$r.out" | head -6; }; done
+    for r in tree tail huge miss win; do [ -f "$T/$r.out" ] && { echo "  -- $r"; sed 's/^/     /' "$T/$r.out" | head -6; }; done
     exit 1
 fi
 echo "PASS: $NAME (the drift row reads each parse_*.cyr whole, through its last fn; a tail emit past 256 KB, an absurd size and a missing file each fail by name)"

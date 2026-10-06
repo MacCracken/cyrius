@@ -76,15 +76,16 @@ fn _cyrfmt_comment_braces_gate(): i64 {
 # file. A missing file is a failure too: the scan cannot vouch for what it never read.
 # Gate: tests/gates/toolchain/check_parse_drift_reads_whole.sh. CHANGELOG [6.6.17]
 
-# Offset of the last `fn ` that starts a line in buf[0..n), or -1.
-fn _pd_last_fn(buf, n): i64 {
+# Offset of the last `fn ` that starts a line in buf[0..n), or -1. Offset 0 counts as a line
+# start only when bol0 is 1 (the buffer begins at the file's first byte).
+fn _pd_last_fn(buf, n, bol0): i64 {
     var i = n - 3;
     while (i >= 0) {
         if (load8(buf + i) == 102) {
             if (load8(buf + i + 1) == 110) {
                 if (load8(buf + i + 2) == 32) {
-                    if (i == 0) { return 0; }
-                    if (load8(buf + i - 1) == 10) { return i; }
+                    if (i == 0) { if (bol0 == 1) { return 0; } }
+                    if (i > 0) { if (load8(buf + i - 1) == 10) { return i; } }
                 }
             }
         }
@@ -111,7 +112,9 @@ fn _pd_tail_last_fn(path, size): i64 {
             if (r <= 0) { go = 0; } else { got = got + r; if (got >= k) { go = 0; } }
         }
         file_close(fd);
-        var at = _pd_last_fn(t, got);
+        var bol0 = 0;
+        if (k == size) { bol0 = 1; }
+        var at = _pd_last_fn(t, got, bol0);
         if (at >= 0) { return size - k + at; }
         if (k >= size) { return 0 - 1; }
         k = k + k;
@@ -171,7 +174,7 @@ fn _parse_drift_load(path, len_out): i64 {
         return 0;
     }
     store8(buf + total, 0);
-    var seen = _pd_last_fn(buf, total);
+    var seen = _pd_last_fn(buf, total, 1);
     var real = _pd_tail_last_fn(path, size);
     if (real < 0 || seen != real) {
         _pd_fail(path, "the scan did not reach the file's last fn (read from its end): a truncated file");
