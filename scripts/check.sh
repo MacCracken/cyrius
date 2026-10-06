@@ -1818,8 +1818,9 @@ _chk_gate "$ROOT/tests/gates/toolchain/deps_cache_capture_failure_named.sh"
 # lock is present-but-empty, and `deps --verify` fails a file with no lock line, by name.
 _chk_gate "$ROOT/tests/gates/toolchain/deps_lock_new_leaf_locked.sh"
 
-# 6.6.17 — `cyrius lib sync` re-locks cyrius.lock from what it vendored (rows for removed files
-# dropped, changed hashes updated, commit pins kept); `--no-lock` / `--dry-run` write no lock.
+# 6.6.17 — `cyrius lib sync` is held to the 6.6.4 stdlib-leaf guard (a snapshot moved under an
+# unchanged pin is refused by name, nothing written; `--relock` accepts) and re-locks only the
+# rows it wrote: removed files' rows dropped, every other row kept, commit pins kept.
 _chk_gate "$ROOT/tests/gates/toolchain/lib_sync_relocks.sh"
 
 # 6.6.9 (bite 10, CVE-49) — no cbt string literal names a shared /tmp/ path, and `cyrius self`

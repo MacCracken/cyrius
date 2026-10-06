@@ -59,7 +59,7 @@ fn usage(): i64 {
     println("  distlib [--all|--check] [--modular] [profile]   bundle src/ into dist/ (--all = base + every [lib.X]; --check = verify, don't write)");
     println("  self                            self-hosting check (cycc==cycc)");
     println("  clean                           remove build/ contents");
-    println("  lib sync [--dry-run] [--full] [--no-lock]   vendor declared [deps].stdlib from pin (--full = whole snapshot), re-lock cyrius.lock");
+    println("  lib sync [--dry-run] [--full] [--no-lock] [--relock]   vendor declared [deps].stdlib from pin (--full = whole snapshot), re-lock what it wrote");
     println("");
     println("Project:");
     println("  init [--lib|--agent|--cmtools|--dry-run] <name | .>   scaffold a new project");

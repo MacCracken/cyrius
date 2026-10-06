@@ -4427,8 +4427,9 @@ fn _dep_lock_guard_stdlib_leaf(src, dst): i64 {
     sys_write(STDERR_FD, src, strlen(src));
     var m5 = "\n  refusing to vendor or re-lock this leaf. Either change the pin ([package].cyrius; an unpinned manifest follows the installed toolchain), or run";
     sys_write(STDERR_FD, m5, strlen(m5));
-    var m6 = " `cyrius deps --relock` to accept the new content explicitly.\n";
-    sys_write(STDERR_FD, m6, strlen(m6));
+    _ew(" `cyrius ");
+    _ew(_dep_lock_guard_verb);
+    _ew(" --relock` to accept the new content explicitly.\n");
     _dep_lock_refused = _dep_lock_refused + 1;
     return 3;
 }
@@ -4528,6 +4529,16 @@ fn _dep_lock_unhashable_err(): i64 {
     return 1;
 }
 
+# 1 iff the NUL-terminated `path` is in the vec of C strings `v`.
+fn _dep_path_in(v, path): i64 {
+    var i = 0;
+    while (i < vec_len(v)) {
+        if (streq(vec_get(v, i), path) == 1) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+
 # v6.0.2 — recursively hash every `.cyr` under `dir`, writing
 # `<sha256hex>  <path>\n` per file to the `_aw_open` handle `lock_h`. Returns the count.
 # Recurses into subdirs (e.g. `lib/unicode/`) so nested stdlib modules
@@ -4547,6 +4558,19 @@ fn _deps_lock_dir(dir, lock_h): i64 {
     while (li < vec_len(files)) {
         var path = vec_get(files, li);
         li = li + 1;
+        # 6.6.17: `lib sync` re-locks only what it wrote; any other file keeps its row as
+        # loaded (none, if it had none). CHANGELOG [6.6.17]
+        if (_dep_lock_only != 0 && _dep_path_in(_dep_lock_only, path) == 0) {
+            var kept = _lock_file_hash_lookup(path);
+            if (kept != 0) {
+                _aw_write(lock_h, kept, 64);
+                _aw_write(lock_h, "  ", 2);
+                _aw_write(lock_h, path, strlen(path));
+                _aw_write(lock_h, "\n", 1);
+                count = count + 1;
+            }
+            continue;
+        }
         var hash = _sha256sum_file(path);
         if (hash == 0) {
             # v6.6.6: RECORDED, not skipped — cmd_deps_lock aborts on it. CHANGELOG [6.6.6]
