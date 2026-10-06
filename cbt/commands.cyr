@@ -683,25 +683,53 @@ fn _fuzz_run_one(path, passcnt_ptr, failcnt_ptr, found_ptr): i64 {
     # is bite 24d's shape at a caller bite 24d did not reach. Live, not latent:
     # `CYRIUS_HOME=<empty> cyrius fuzz h.fcyr` printed `  h.fcyr   error: cycc not found.
     # Install Cyrius or set CYRIUS_HOME.` / `COMPILE FAIL`. CHANGELOG [6.6.6].
+    # 6.6.18 (poison-10) — the compiler CHILD's stderr is captured too, and relayed only
+    # once the verdict has closed the line. `_progress_open` covers cbt's own named errors,
+    # not the child's: `note: N unreachable fns (...)` landed between the padded path and
+    # `PASS` on every harness with a dead fn. A capture that cannot be created fails OPEN
+    # (compile() keeps our stderr), exactly as before. CHANGELOG [6.6.18]
+    var errf = _cbt_tmpfile("fuzz_err");
     _progress_open = 1;
+    _cc_stderr_to = errf;
     var fr = compile(path, tmpbin);
+    _cc_stderr_to = 0;
     _progress_open = 0;
     if (fr == 0) {
         var ec = run_binary_timed(tmpbin, _run_timeout_ms(), 0);
         sys_unlink(tmpbin);
         if (ec == 0) {
             println("PASS");
+            _fuzz_relay_capture(errf);
             store64(passcnt_ptr, load64(passcnt_ptr) + 1);
             return 0;
         }
         println("FAIL");
+        _fuzz_relay_capture(errf);
         store64(failcnt_ptr, load64(failcnt_ptr) + 1);
         return 1;
     }
     println("COMPILE FAIL");
+    _fuzz_relay_capture(errf);
     store64(failcnt_ptr, load64(failcnt_ptr) + 1);
     sys_unlink(tmpbin);
     return 1;
+}
+
+# Copy a compile() stderr capture to our stderr whole (chunked: a COMPILE FAIL can be long),
+# then remove it. Absent capture = nothing to relay. CHANGELOG [6.6.18]
+fn _fuzz_relay_capture(errf): i64 {
+    var fd = sys_open(errf, O_RDONLY, 0);
+    if (fd >= 0) {
+        var buf[4096];
+        var n = sys_read(fd, &buf, 4096);
+        while (n > 0) {
+            sys_write(STDERR_FD, &buf, n);
+            n = sys_read(fd, &buf, 4096);
+        }
+        sys_close(fd);
+    }
+    sys_unlink(errf);
+    return 0;
 }
 
 # v6.5.7: RECURSIVE, matching `_tests_walk` — see the note on _bench_walk_dir.
