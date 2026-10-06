@@ -139,6 +139,17 @@ fn call_results(): i64 {
     return 0;
 }
 
+# ── a pointer to a generic instance steps the instance's size (it stepped the base's) ──────────
+struct Box2<T> { v: T; w: T; }
+fn box_param(p: *Box2<i16>): i64 { return d(p + 1, p); }
+fn generic_pointee(): i64 {
+    var bp: *Box2<i32> = &buf;
+    assert_eq(d(bp + 1, bp), 8, "*Box2<i32> steps sizeof(Box2<i32>)");
+    assert_eq(sizeof(Box2<i32>), 8, "sizeof(Box2<i32>)");
+    assert_eq(box_param(&buf), 4, "a *Box2<i16> param steps 4");
+    return 0;
+}
+
 # ── pointer difference and `n + p` (C rules) ────────────────────────────────────────────────
 # Before 6.6.17 `q - p` scaled the right pointer by the left one's step (`*i16`: -4090 where 3 is
 # right) and `n + p` stepped 1.
@@ -164,6 +175,7 @@ alloc_init();
 locals();
 call_results();
 differences(&buf);
+generic_pointee();
 params(&buf, &buf, &buf, &buf);
 compound(&buf);
 captures();

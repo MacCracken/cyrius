@@ -23,6 +23,13 @@ struct Q { p: *Pt; b: *u8; w: *i32; pp: **Pt; tail; }
 union U { p: *Pt; raw; }
 #derive(accessors)
 struct D { p: *Pt; w: i32; tail; }
+# 6.6.17 (review): a pointer to the struct being declared, or to one declared below, is sized
+# when it is used — `next + 1` stepped the struct's size SO FAR (8 for Node, 8 for N3), and
+# `p: *Later` was refused "declared after its use".
+struct Node { val; next: *Node; }
+struct N3 { next: *N3; a; b; }
+struct MA { p: *MB; n; }
+struct MB { x; y; q: *MA; }
 
 fn name_of(h: *PH): *Str { return h.name; }      # the filed shape
 fn first(q: *Q): *Pt { return q.p; }
@@ -93,8 +100,25 @@ fn derived(): i64 {
     return 0;
 }
 
+fn linked(): i64 {
+    var n: Node;
+    n.next = &arr;
+    assert_eq(n.next + 1 == &arr + 16, 1, "a self-referential *Node field steps sizeof(Node)");
+    var t: N3;
+    t.next = &arr;
+    assert_eq(t.next + 1 == &arr + 24, 1, "*N3 declared before N3's other fields steps 24");
+    var a: MA;
+    a.p = &arr;
+    assert_eq(a.p + 1 == &arr + 24, 1, "a *MB field, MB declared below, steps sizeof(MB)");
+    var b: MB;
+    b.q = &arr;
+    assert_eq(b.q + 1 == &arr + 16, 1, "mutually-referencing structs: *MA steps sizeof(MA)");
+    return 0;
+}
+
 alloc_init();
 layout();
+linked();
 derived();
 field_steps();
 return_steps();

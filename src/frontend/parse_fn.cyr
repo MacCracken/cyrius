@@ -3841,7 +3841,7 @@ fn _mark_ptr_param(S): i64 {
     # behind the slot's bit 56, which `_param_record` sets (see `_sl_marks`). Cursor on T; an
     # unknown T is refused by `_tn_param_check`, so this is quiet. `**T` steps a pointer's 8.
     var ps = 8;
-    if (PEEKT(S) != 8) { ps = _tn_ptr_step(S, GTI(S), 0 - 1, 1); }
+    if (PEEKT(S) != 8) { ps = _ptr_step_peek(S, 0 - 1, 1); }
     SSLICE_W(S, GFLC(S), 0 - 0x7E00 - ps);
     return 0;
 }

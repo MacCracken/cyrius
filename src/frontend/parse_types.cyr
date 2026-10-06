@@ -390,7 +390,7 @@ fn _ptr_annot(S, vnoff, quiet): i64 {
         STI(S, GTI(S) + 1);
         n = n + 1;
     }
-    var ps = _tn_ptr_step(S, GTI(S), vnoff, quiet);
+    var ps = _ptr_step_peek(S, vnoff, quiet);
     if (n > 1) { ps = 8; }
     if (PEEKT(S) == 2 || PEEKT(S) == 105) {
         STI(S, GTI(S) + 1);
@@ -398,11 +398,35 @@ fn _ptr_annot(S, vnoff, quiet): i64 {
     } elif (quiet == 0) { ERR_EXPECT(S, 2); }
     return ps;
 }
+# The step of `*T` with the cursor on T, which does not move: `_tn_ptr_step`, except that a
+# generic struct with arguments is its INSTANCE (`*Box<i32>` steps sizeof(Box<i32>), as `var b:
+# Box<i32>` declares it — it stepped the base's size), sized as `_sizeof_type` sizes it. Pass 1
+# (`quiet`) sizes an instance only when its arguments resolve already. CHANGELOG [6.6.17]
+fn _ptr_step_peek(S, vnoff, quiet): i64 {
+    var ti = GTI(S);
+    var ps = _tn_ptr_step(S, ti, vnoff, quiet);
+    if (TOKTYP(S, ti) != 2) { return ps; }
+    if (TOKTYP(S, ti + 1) != 19) { return ps; }
+    var sid = FINDSTRUCT(S, TOKVAL(S, ti));
+    if (sid <= 0) { return ps; }
+    if (quiet == 1) { if (_targs_resolvable(S, ti + 2) == 0) { return ps; } }
+    STI(S, ti + 1);
+    var g = _gen_ann_sid(S, sid);
+    STI(S, ti);
+    if (g > 0) { if (g != sid) { ps = STRUCTSZ(S, g - 1); } }
+    return ps;
+}
 # A `name: *T` field (cursor on its `:`): an 8-byte field whose loads carry T's step.
-var _fld_ps = 0;   # per field-pool entry: the step of a `*T` field, 0 for any other field
+# ⛔ 6.6.17 (review) — a pointer to a STRUCT is sized when the field is LOADED, not when it is
+# declared: inside its own definition a struct has the size of the fields so far
+# (`struct Node { val; next: *Node; }` stepped 8, not 16), and a struct declared further down
+# (`struct A { p: *B; }`) was refused "declared after its use", so two structs could not point
+# at each other. Such a field records T's token (`0 - (ti + 1)`); `_fld_ps_get` sizes it.
+var _fld_ps = 0;   # per field-pool entry: the step of a `*T` field (or T's token), 0 otherwise
 fn _add_ptr_field(S, si, fnoff): i64 {
     STI(S, GTI(S) + 1);                     # consume ':'
-    var ps = _ptr_annot(S, fnoff, 0);
+    var ps = _fld_ptr_late(S);
+    if (ps == 0) { ps = _ptr_annot(S, fnoff, 0); }
     var ent = L64(S + 0x1AA018 + si * 8) + (L64(S + 0x1A8018 + si * 8) & 0x7FFFFFFFFFFFFFFF);
     var top = L64(S + 0x1AC018);
     ADDFIELD(S, si, fnoff);
@@ -412,11 +436,29 @@ fn _add_ptr_field(S, si, fnoff): i64 {
     S64(_fld_ps + ent * 8, ps);
     return 0;
 }
+# Cursor on the `*` of a field's `*T`: when T (one `*`) names a struct — this one, one declared
+# above, or one declared below — consume the annotation and return `0 - (ti + 1)` (T's token);
+# else 0, cursor untouched.
+fn _fld_ptr_late(S): i64 {
+    var ti = GTI(S) + 1;
+    if (TOKTYP(S, ti) != 2) { return 0; }
+    var noff = TOKVAL(S, ti);
+    if (FINDSTRUCT(S, noff) <= 0) { if (_declared_later(S, noff, 40, 101) == 0) { return 0; } }
+    STI(S, ti + 1);
+    SKIP_GENERICS(S);
+    return 0 - (ti + 1);
+}
 fn _fld_ps_get(S, si, fi): i64 {
     if (_fld_ps == 0) { return 0; }
     var ent = (L64(S + 0x1AA018 + si * 8) + fi) & 0x7FFFFFFFFFFFFFFF;
     if (ent >= 8192) { return 0; }
-    return L64(_fld_ps + ent * 8);
+    var v = L64(_fld_ps + ent * 8);
+    if (v >= 0) { return v; }
+    var sv = GTI(S);
+    STI(S, 0 - v - 1);
+    var ps = _ptr_step_peek(S, 0 - 1, 1);
+    STI(S, sv);
+    return ps;
 }
 # A `fn f(): *T` return (cursor on the `*`): recorded as an i64 return plus T's step, which a
 # call to it carries (`_call_ret_ps`). `quiet` 1 in pass 1 (`_prescan_fn_sig`), which only
