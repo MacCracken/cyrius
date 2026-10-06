@@ -917,27 +917,46 @@ fn GFDS(S, fi): i64 { if (_fnt_defstart == 0) { return 0; } return L64(_fnt_defs
 fn SFDS(S, fi, v): i64 { if (_fnt_defstart == 0) { _fnt_defstart = alloc(131072 * 8); } S64(_fnt_defstart + fi * 8, v); return 0; }
 # 6.6.12 — the struct id of each ADDRESS-passed struct parameter (the `_fnt_structmask` bits), so
 # a call site can check a struct-typed FIELD argument against the parameter (`take(r.v)`). Per fn:
-# 0, or a 62-word row allocated on the first such parameter; lazy at the max fn cap like
+# 0, or a growable row allocated on the first such parameter; lazy at the max fn cap like
 # _fnt_tparams, so the brk layout does not move. Written by pass 1 (`_prescan_params`) and by the
 # definition (PARSE_FN_DEF), which is the only writer for a generic INSTANCE — its `p: T` is
 # known only once T is bound. 0 = not recorded (the check is skipped). CHANGELOG [6.6.12]
 var _fnt_psid = 0;
+# 6.6.17 (a10 review): the row is [capacity][one word per ordinal] and GROWS — it stopped at
+# ordinal 62 (the struct mask's width), so from parameter 62 a field of another struct type was
+# passed to a by-value struct parameter without the check (`_fla_push_arg`).
 fn SFPSID(S, fi, pc, sid): i64 {
-    if (pc >= 62) { return 0; }
     if (sid <= 0) { return 0; }
+    if (fi < 0) { return 0; }
     if (_fnt_psid == 0) { _fnt_psid = alloc(131072 * 8); }
     var row = L64(_fnt_psid + fi * 8);
-    if (row == 0) { row = alloc(62 * 8); S64(_fnt_psid + fi * 8, row); }
-    S64(row + pc * 8, sid);
+    var cap = 0;
+    if (row != 0) { cap = load64(row); }
+    if (pc >= cap) {
+        row = _psid_grow(row, cap, pc);
+        S64(_fnt_psid + fi * 8, row);
+    }
+    S64(row + 8 + pc * 8, sid);
     return 0;
+}
+fn _psid_grow(row, cap, pc): i64 {
+    var ncap = 64;
+    while (ncap <= pc) { ncap = ncap * 2; }
+    var nr = alloc(8 + ncap * 8);
+    var i = 0;
+    while (i < ncap) { store64(nr + 8 + i * 8, 0); i = i + 1; }
+    i = 0;
+    while (i < cap) { store64(nr + 8 + i * 8, load64(row + 8 + i * 8)); i = i + 1; }
+    store64(nr, ncap);
+    return nr;
 }
 fn GFPSID(S, fi, pc): i64 {
     if (_fnt_psid == 0) { return 0; }
     if (fi < 0) { return 0; }
-    if (pc >= 62) { return 0; }
     var row = L64(_fnt_psid + fi * 8);
     if (row == 0) { return 0; }
-    return L64(row + pc * 8);
+    if (pc >= load64(row)) { return 0; }
+    return L64(row + 8 + pc * 8);
 }
 # 6.6.17 (a3) — a generic INSTANCE's type arguments (`_instantiate_generic_fn`'s conc0 / conc1),
 # two words per fn, 0 = not an instance. Lazy-alloc'd at the max fn cap like _fnt_tparams, so the

@@ -5426,7 +5426,8 @@ fn _fn_self_byval(fi): i64 {
 
 # 6.6.12 — record the struct id of an ADDRESS-passed struct parameter (see SFPSID, util.cyr).
 fn _psid_note(S, fi, pc, sid, mask): i64 {
-    if (((mask >> pc) & 1) == 0) { return 0; }
+    if (pc < 62) { if (((mask >> pc) & 1) == 0) { return 0; } }
+    elif ((_pm_row_get(fi, pc) & 1) == 0) { return 0; }   # 6.6.17 (a10): the overflow row
     return SFPSID(S, fi, pc, sid);
 }
 # Pass 1's half: a parameter typed with struct `base` — its address-passed bit follows the
