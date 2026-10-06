@@ -19,13 +19,13 @@ site (user decision) — plus diagnostics, TLS / platform / stdlib, cbt, and the
 2048 fns broke the seed chain: cybs had never lexed a leading `_`, which is fixed in cybs itself. Seven lanes
 (srca, srcb, srcc, lib, man, tool, gate). **CVE-77**; the next free id is **78**.
 
-**Gate (merged tree):** GATE-LINE-TBD
+**Gate (merged tree):** `scripts/release-gate.sh` **GREEN** on `54764d9a` (2026-10-06, 00:02–00:43): self-host fixpoint, ARM binary lockstep (step 1b), seed → cybs → cycc byte-identical (incl. the new step 6/6), full check.sh — 189 of 189 shell gates produced a result, 0 failed, 2 named agnos-parity SKIPs (`agnos_monotonic_clock_rdtsc`, `agnos_sysinfo_tail_parity`, as at 6.6.15) — and cross-OS self-host + the `crossos/` suite on REAL ecb, ach, cass and pi (all `SELFHOST_OK` + `LIBTEST_OK`; 6.6.16 had been tagged without this leg). `verify-store`: every tagged slot OK. Two full merged-tree check.sh runs before it found four integration defects, all fixed above.
 
 **Size:** cycc **1,581,040 B** (`.text` **1,400,760**), +45,680 B over 6.6.16's 1,535,360 (the c1 DRY alone was
 −4,208 B); `build/cycc-native-aarch64` regenerated (`cyrius pulsar`), **2,042,184 B**. api-surface 5,811 → **5,816**
 (+5, the agnos socket peers). `.tcyr` 453 → **473** (crossos 182 → **193**); shell gates 339 → **361**.
 
-**Bench:** BENCH-TBD
+**Bench:** self_compile **985 ms** at the gate. Same-box interleaved A/B (15 runs each): 6.6.16 compiling its own source 931 ms vs 6.6.17 compiling its own 982 ms (+5.5 %); on the SAME input (6.6.16's source) 932 vs 945 ms (+1.4 %) — so most of the delta is the compiler's own source growing (+905 lines), the growth tax, not a slower compiler.
 
 ### Security
 
