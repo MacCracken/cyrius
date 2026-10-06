@@ -1677,6 +1677,12 @@ _chk_gate "$ROOT/tests/gates/toolchain/check_gate_census.sh"
 # two full STREQ walks and every reference a reverse one).
 _chk_gate "$ROOT/tests/gates/frontend/globals_scale_linear.sh"
 
+# 6.6.19 (B0b) — string-literal interning is LINEAR in the literal count: LEX scanned the whole
+# string pool for every new literal (3k 573 ms, 9k 4,983 ms; a 1.9 MB literal ahead of 3k small
+# ones 11.4 s vs 0.92 s after them). Ratio rows (N vs 2N literals < 3.0x; blob before vs after
+# < 2.0x) + semantic rows (sharing unchanged, B0a's repro, a #deprecated message wound back).
+_chk_gate "$ROOT/tests/gates/frontend/string_intern_scale_linear.sh"
+
 # 6.6.10 (bite 2) — a TOP-LEVEL destructure grows the var table before storing its names:
 # gi1+1/gi1+2 were written before SVCNT, past the 8192 band (aliasing var_sizes[0]/var_types[0]:
 # a lost name, or g0 silently read 0) and at the grown 16384 cap into the next table. 8 rows,
