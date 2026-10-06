@@ -107,6 +107,23 @@ mk 'defines = ["ALPHA"]\n'; bld CYRIUS_DEFINES=BETA -- -D GAMMA; want "defines a
 mk "defines = ['ALPHA', \"BETA\"]\n"; bld --; want "defines: a literal and a basic string" "$EXIT" 3
 [ "$FAIL" = "$x" ] && echo "  ok defines: none -> manifest ALPHA -> CYRIUS_DEFINES=BETA wins -> -D GAMMA wins over it (by the program's exit code)"
 
+# ── defines reach `cyrius fuzz` harnesses too (6.6.18; P1: defines apply to every build) ──
+# Before, only `-D` reached a harness — `[build] defines` and CYRIUS_DEFINES were read by
+# `cyrius build` alone. Same precedence as the build: -D > CYRIUS_DEFINES > manifest.
+x=$FAIL
+mkdir -p "$W/p/fuzz"
+printf 'var code = 9;\n#ifdef ALPHA\ncode = 0;\n#endif\nsyscall(60, code);\n' > "$W/p/fuzz/f.fcyr"
+fz() { ( cd "$W/p" && env -u CYRIUS_DEFINES CYRIUS_HOME="$W/stub" CYRIUS_RESOLVED=1 "$@" ) > "$W/fz.out" 2>&1 || true; }
+mk 'defines = ["ALPHA"]\n'
+fz "$W/cyrius" fuzz
+grep -qE '^  fuzz/f\.fcyr +PASS$' "$W/fz.out" || fail "fuzz: [build] defines = [\"ALPHA\"] did not reach the harness: $(grep 'f\.fcyr' "$W/fz.out")"
+fz env CYRIUS_DEFINES=BETA "$W/cyrius" fuzz
+grep -qE '^  fuzz/f\.fcyr +FAIL$' "$W/fz.out" || fail "fuzz: CYRIUS_DEFINES=BETA did not replace the manifest's ALPHA: $(grep 'f\.fcyr' "$W/fz.out")"
+fz env CYRIUS_DEFINES=BETA "$W/cyrius" fuzz -D ALPHA
+grep -qE '^  fuzz/f\.fcyr +PASS$' "$W/fz.out" || fail "fuzz: -D ALPHA did not win over CYRIUS_DEFINES: $(grep 'f\.fcyr' "$W/fz.out")"
+rm -rf "$W/p/fuzz"
+[ "$FAIL" = "$x" ] && echo "  ok fuzz: [build] defines reach every harness; CYRIUS_DEFINES replaces them; -D wins"
+
 # ── refusals ────────────────────────────────────────────────────────────────────────────
 x=$FAIL
 mk 'dce = "yes"\n'; bld --
@@ -142,4 +159,4 @@ done
 [ "$FAIL" = "$x" ] && echo "  ok consumers: ark's and sigil's [build] defines (verbatim) resolve from the manifest"
 
 [ "$FAIL" = 0 ] || exit 1
-echo "PASS: build_config_precedence (dce / defines at every rung; strict held; refusals; held, dropped, unknown keys)"
+echo "PASS: build_config_precedence (dce / defines at every rung, for build and fuzz; strict held; refusals; held, dropped, unknown keys)"
