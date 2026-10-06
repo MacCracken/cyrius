@@ -39,7 +39,8 @@
 #
 # On the tree before the fix: 52 of 114 rows red.
 # 6.6.17 added two fixtures: `impl_attr` (a `#deprecated` impl method) and `geninst` (a pending
-# attribute before a statement that instantiates a generic lands on the next fn, not the instance).
+# attribute before a statement that instantiates a generic lands on the next fn, not the instance),
+# and made every exit-code capture `rc=0; cmd || rc=$?`, so the gate runs under `bash -eo pipefail`.
 # MUTATION LEDGER (6.6.16: a copy of the tree with ONE edit, its compilers rebuilt by this gate):
 #   a. `_prescan_dep_take` takes nothing (no pass-1 record)     -> 43 red: every call parsed before
 #        its definition (filed 3 6, tailregion 2 5, addr 2, method 6, agg 6, pair 3, generic 2 3) on
@@ -326,7 +327,7 @@ for fx in "$T"/fx/*.cyr; do
     n=$(basename "$fx" .cyr)
     NFX=$((NFX + 1))
     if [ -f "$T/fx/$n.lines" ]; then sort -n "$T/fx/$n.lines" > "$T/want.$n"
-    else grep -n '#W' "$fx" | cut -d: -f1 | sort -n > "$T/want.$n"; fi
+    else { grep -n '#W' "$fx" || true; } | cut -d: -f1 | sort -n > "$T/want.$n"; fi
     NROWS=$((NROWS + $(wc -l < "$T/want.$n")))
     # The twin swaps the attribute for an `#assert` carrying the SAME string literal: the lexer's
     # string pool is emitted whole, so the message text is in .rodata either way; a comment would
@@ -335,8 +336,8 @@ for fx in "$T"/fx/*.cyr; do
     grep -q '^#deprecated' "$T/strip.$n.cyr" && { _bad "$n: the stripped twin still carries an attribute"; continue; }
     for c in $COMPILERS; do
         if [ "$c" = main_cx ] && [ "$n" = pair ]; then continue; fi
-        "$T/$c" < "$fx" > "$T/a.bin" 2> "$T/a.err"; arc=$?
-        "$T/$c" < "$T/strip.$n.cyr" > "$T/s.bin" 2> "$T/s.err"; src=$?
+        arc=0; "$T/$c" < "$fx" > "$T/a.bin" 2> "$T/a.err" || arc=$?
+        src=0; "$T/$c" < "$T/strip.$n.cyr" > "$T/s.bin" 2> "$T/s.err" || src=$?
         if [ "$arc" -ne 0 ] || [ ! -s "$T/a.bin" ]; then
             _bad "$n [$c]: the fixture did not compile (rc $arc)"; sed 's/^/      /' "$T/a.err" | head -3; continue
         fi
@@ -344,7 +345,7 @@ for fx in "$T"/fx/*.cyr; do
         if cmp -s "$T/got" "$T/want.$n"; then _ok
         else
             _bad "$n [$c]: deprecation warnings on lines {$(tr '\n' ' ' < "$T/got")} — want exactly one on each of {$(tr '\n' ' ' < "$T/want.$n")}"
-            grep 'is deprecated' "$T/a.err" | sed 's/^/      /' | head -12
+            { grep 'is deprecated' "$T/a.err" || true; } | sed 's/^/      /' | head -12
         fi
         if [ "$src" -ne 0 ] || grep -q 'is deprecated' "$T/s.err"; then _bad "$n [$c]: the attribute-free twin failed (rc $src) or warned"
         elif cmp -s "$T/a.bin" "$T/s.bin"; then _ok
@@ -403,11 +404,11 @@ var rc = main();
 syscall(60, rc);
 EOF
 sed 's/^#deprecated(\(.*\))$/#assert 1, \1;/' "$T/async.cyr" > "$T/async_twin.cyr"
-CYRIUS_ASYNC=1 "$T/x86" < "$T/async.cyr" > "$T/a.bin" 2> "$T/a.err"; arc=$?
+arc=0; CYRIUS_ASYNC=1 "$T/x86" < "$T/async.cyr" > "$T/a.bin" 2> "$T/a.err" || arc=$?
 CYRIUS_ASYNC=1 "$T/x86" < "$T/async_twin.cyr" > "$T/s.bin" 2> "$T/s.err"
 got=$(sed -n "s/^warning:<source>:\([0-9]*:[0-9]*\): 'old_a' is deprecated: a old$/\1/p" "$T/a.err" | tr '\n' ' ')
 if [ "$arc" -eq 0 ] && [ "$got" = "3:28 7:25 " ] && [ "$(grep -c 'is deprecated' "$T/a.err")" -eq 2 ]; then _ok
-else _bad "async: want 'old_a' warned at 3:28 and 7:25 only (rc $arc), got {$got}"; grep 'is deprecated' "$T/a.err" | sed 's/^/      /'
+else _bad "async: want 'old_a' warned at 3:28 and 7:25 only (rc $arc), got {$got}"; { grep 'is deprecated' "$T/a.err" || true; } | sed 's/^/      /'
 fi
 if [ -s "$T/a.bin" ] && cmp -s "$T/a.bin" "$T/s.bin" && ! grep -q 'is deprecated' "$T/s.err"; then _ok
 else _bad "async: the binary changed with the attribute, or the twin warned"
@@ -417,7 +418,7 @@ fi
 printf '#deprecated\nfn f(a): i64 { return a; }\nvar r = f(1);\nsyscall(60, r);\n' > "$T/bare_pre.cyr"
 printf 'var z = 0;\nz = 1;\n#deprecated\nfn f(a): i64 { return a; }\nvar r = f(1);\nsyscall(60, r);\n' > "$T/bare_post.cyr"
 for b in bare_pre bare_post; do
-    "$T/x86" < "$T/$b.cyr" > "$T/a.bin" 2> "$T/a.err"; rc=$?
+    rc=0; "$T/x86" < "$T/$b.cyr" > "$T/a.bin" 2> "$T/a.err" || rc=$?
     if [ "$rc" -ne 0 ] && grep -q '#deprecated needs a message string' "$T/a.err" && ! grep -q 'is deprecated' "$T/a.err"; then _ok
     else _bad "$b: a bare #deprecated was not refused by name (rc $rc)"
     fi
