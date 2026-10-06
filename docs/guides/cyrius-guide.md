@@ -2286,8 +2286,12 @@ allocators into poisoning ones (6.6.18, P6):
 - **NOT covered:** a read that jumps a whole redzone into a live neighbour, a read past a logical
   bound inside one allocation, stack and static memory, agnos and cx. There are no guard pages.
 
-Code that uses the seam without the compile flag (`poison_alloc`, `poison_allocator()`) works
-with no flag at all; after `alloc_reset()` it calls `poison_forget_all()` to drop the live list.
+**Routing your own allocator through it.** A hook-style seam points at `poison_alloc` (the
+`fn(n): ptr` shape — `sd_alloc_set(&poison_alloc)` for sadish's); an `_a` API takes
+`poison_allocator()` (`vec_new_a(poison_allocator())`); an existing Allocator is wrapped with
+`poison_allocator_over(inner)`, which zeroes what it hands out and checks and forgets its blocks on
+reset. The seam needs no compile flag; after `alloc_reset()` such code calls `poison_forget_all()` to
+drop the live list.
 `poison_reset()` resets the violation counter only.
 
 ## Linter
