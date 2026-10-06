@@ -1,6 +1,21 @@
 # Proposal — let `cyrius fuzz --poison` follow a custom allocator seam, not only the freelist
 
-**Filed:** 2026-09-20 · **Status:** 🟡 OPEN — for maintainer direction
+**Filed:** 2026-09-20 · **Status:** ✅ **SHIPPED in 6.6.18**, widened (merged 2026-10-06; archived). Original status:
+🟡 OPEN — for maintainer direction.
+
+> ### ✅ Resolution — 6.6.18 (CHANGELOG [6.6.18], *Poison — P6*)
+>
+> - **Shipped — the seam:** `lib/poison.cyr` with `poison_alloc` / `poison_free` (the `fn(n): ptr` shape
+>   `sd_alloc` can point at), `poison_allocator()` for any `_a` API and `poison_allocator_over(inner)` around any
+>   Allocator. rekha can route `sd_alloc` through it.
+> - **Widened (the 2026-10-02 plan):** `alloc()` itself (bump heap and `big` path, Linux / macOS / Windows) and
+>   arenas carry redzones under `CYRIUS_POISON` — 60 of 95 fuzzing repos had got nothing — plus a LEADING redzone,
+>   a live-block list and `poison_sweep()`, a settable fill byte, and `cyrius fuzz --poison=ab` (two fills, outputs
+>   diffed — the overread detector this proposal asked for). An overwrite now stops the harness with exit 86 instead
+>   of being counted (0 of 194 ecosystem harnesses read the counter).
+> - **Dropped:** the manifest / interposition shape. **Backlog:** guard pages (roadmap.md *Potential backlog*).
+> - **Not covered** (the guide's *Fuzzing with `--poison`*): a read that jumps a redzone into a live neighbour, a
+>   read past a logical bound inside one allocation, stack and static memory, agnos and cx `alloc()`.
 **Filed by:** rekha (0.4.12), which parses untrusted font bytes and had to hand-build a 2,100-line
 substitute. Measured against cyrius 6.6.6.
 

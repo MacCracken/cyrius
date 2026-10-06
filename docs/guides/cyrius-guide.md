@@ -1997,6 +1997,8 @@ cyrius lint|fmt|doc a.cyr b.cyr          # 1..N files, every one processed (v6.6
 cyrius tests [dir]                       # recursively run every .tcyr under dir (default tests/)
 cyrius bench [path|dir]                  # discover + run *.bcyr (recursive; v6.5.7)
 cyrius fuzz [path|dir]                   # discover + run *.fcyr harnesses (recursive; v6.5.7)
+cyrius fuzz --poison [path|dir]          # poisoning allocators + redzones; an overwrite exits 86 (6.6.18)
+cyrius fuzz --poison=ab [path|dir]       # also run each harness at fill 0xA5 and 0x5A; outputs must match (6.6.18)
 cyrius self                              # self-host check: compile THIS HOST's compiler fork twice, cmp (v6.6.6)
 cyrius soak [N]                          # N-iter built-in self-host + tests/scyr/*.scyr (v5.7.38)
 cyrius smoke                             # tests/smcyr/*.smcyr fail-fast (v5.7.38)
@@ -2060,9 +2062,9 @@ cyrius lsp                               # build + install cyrius-lsp into ~/.cy
 > Pinned by `tests/gates/toolchain/coverage_run_programs.sh`.
 >
 > ⚠ **`distlib` regenerates and `--check`s sidecars on an x86-64 Linux host only** (v6.6.11).
-> The `.deps` sidecar is compile-verified against EVERY target — x86-64 Linux, Windows and
-> macOS, aarch64 Linux and macOS — and records the union, so it no longer depends on the host
-> that ran it (it used to be the host's `#ifdef` arms only, and `--check` drifted between a Mac
+> The `.deps` sidecar is compile-verified against EVERY target — x86-64 Linux, Windows, macOS
+> and agnos (6.6.18), aarch64 Linux and macOS — and records every leaf any of them needs, so it no
+> longer depends on the host that ran it (it used to be the host's `#ifdef` arms only, and `--check` drifted between a Mac
 > and Linux CI). Only an x86-64 Linux CLI has a compiler per target (`cycc` by environment, plus
 > `cycc_aarch64`), so on macOS, Windows and aarch64 `distlib` refuses by name instead of
 > publishing a host-shaped sidecar. A verify that does not converge in 6 rounds is a refusal,
@@ -2098,11 +2100,25 @@ encoder under a fresh version string, which is exactly how sankoch 2.7.6's gzip 
 shipped with all nine sub-bundles still buggy. `--all` replaces the N+1 per-profile ritual.
 
 Each bundle also emits a `dist/<lib>.deps` sidecar naming the stdlib leaves the fold needs in
-scope. Since v6.5.10 the base bundle's sidecar is the declared `[deps] stdlib` **unioned** with
-an include-scan of the bundled sources, so it cannot under-report against either — an
-under-reporting sidecar silently switched OFF `cyrius deps`' own consumer check. Profiles keep
-the pruned inference (a profile is a narrow module subset, so unioning the whole declaration in
-would over-report and fail a legitimately-narrow consumer).
+scope. **Since 6.6.18 the compile-verify is the only authority for it** (P4 option 2): the sidecar
+starts from the `lib/` includes the bundled modules keep, and the verify fixpoint adds exactly the
+leaves the bundle needs to compile on every target. The producer's `[deps] stdlib` declaration, its
+umbrella includes and its test-only leaves (`assert`, `bench`) do not reach it — from v6.5.10 to
+6.6.17 the whole declaration was merged in, which published every producer's test leaves to every
+consumer and hid real gaps behind a declaration. `[deps] stdlib` still drives auto-prepend and
+`cyrius deps` for the package's OWN builds. A family directory (`lib/unicode/`) is one leaf, named
+by the family; a profile's sidecar is verified the same way as the base bundle's.
+
+The bundle carries the same leaves, in the same order, as a compile-verified **requires block**
+(`# Requires (compile-verified; the leaves of dist/<pkg>.deps):` and one `include
+"lib/<leaf>.cyr"` per leaf), so `include "dist/<pkg>.cyr"` alone compiles. `--check` against an
+older bundle says `the committed bundle predates cyrius 6.6.18's requires block — run cyrius
+distlib --all`. A name the converged verify could attribute to no leaf, named dep or bundled module
+is printed as a warning with the targets it fails on (a deliberate consumer hook shows up there).
+A non-symbol failure on agnos alone is a warning too. A consumer whose build fails on a leaf it
+never declared gets the remedy under the error — `hint: '<name>' is defined by stdlib leaf
+'<leaf>' — add it to [deps] stdlib in cyrius.cyml`; see
+[ecosystem-migration-6.6.18.md](../development/ecosystem-migration-6.6.18.md).
 
 ```toml
 # cyrius.cyml
@@ -2235,6 +2251,48 @@ come from `sha256sum`, or `shasum -a 256` where there is no `sha256sum` (macOS 1
 `sys_fork` does not exist there, so no git command can run. A pre-populated cache resolves with
 a one-line warning that it was NOT verified, rather than failing with a reason that would be
 untrue.
+
+## Fuzzing with `--poison`
+
+`cyrius fuzz --poison` builds every harness with `#define CYRIUS_POISON`, which turns the stdlib
+allocators into poisoning ones (6.6.18, P6):
+
+- **What is covered.** `alloc()` (the bump heap and the `big` own-mapping path, on Linux, macOS and
+  Windows), arenas, `fl_alloc`, and any `_a` API you hand `poison_allocator()` or
+  `poison_allocator_over(inner)`. Each block gets a 32-byte LEADING and a trailing redzone filled
+  with the poison byte (0xA5 by default; `poison_fill_set(b)` takes 1..255), sits on a live list,
+  and is filled and quarantined when freed — never reused. agnos and cx `alloc()` are not
+  instrumented (the seam still compiles there).
+- **When a write is seen.** Every poisoned allocation checks the previous block's redzones; a full
+  `poison_sweep()` runs each time the poisoned-allocation count reaches a power of two (from
+  1,024 on); `assert_summary()` sweeps before it reports. You can call `poison_sweep()` yourself —
+  it returns how many blocks are bad.
+- **What happens.** The first overwrite prints one line on stderr —
+  `poison: redzone overwrite — <alloc|arena|fl|seam> block <addr> (<req> bytes): <n> byte(s)
+  changed [leading|trailing|after-free|header]` — and the harness exits **86**, a code reserved for
+  poison. A harness that wants to keep going (to assert on `poison_violations()`, say) calls
+  `poison_trap_set(0)`; one may also assert on the stderr line. Without the compile flag,
+  `fl_poison_enable()` at run time poisons `fl_alloc` blocks and only counts.
+- **Reads.** An overread does not trap: the harness reads the fill and carries on.
+  `--poison=ab` catches it by compiling and running every harness twice — fill 0xA5, then 0x5A
+  (`#define CYRIUS_POISON_B`) — and passing only when both legs exit 0 with byte-identical stdout
+  (`FAIL (A/B diverged at byte N)` otherwise). It doubles the time, and a harness that prints
+  timings or seeds from the clock diverges by itself. A harness may also compare a read against
+  `poison_fill()`.
+- **Arenas under poison** run their bookkeeping on the request, so `arena_used` /
+  `arena_remaining` and every accept / refuse decision are the non-poison values, but an arena
+  never re-issues an address after `arena_reset` — do not assert pointer identity across a reset
+  in a fuzz harness.
+- **NOT covered:** a read that jumps a whole redzone into a live neighbour, a read past a logical
+  bound inside one allocation, stack and static memory, agnos and cx. There are no guard pages.
+
+**Routing your own allocator through it.** A hook-style seam points at `poison_alloc` (the
+`fn(n): ptr` shape — `sd_alloc_set(&poison_alloc)` for sadish's); an `_a` API takes
+`poison_allocator()` (`vec_new_a(poison_allocator())`); an existing Allocator is wrapped with
+`poison_allocator_over(inner)`, which zeroes what it hands out and checks and forgets its blocks on
+reset. The seam needs no compile flag; after `alloc_reset()` such code calls `poison_forget_all()` to
+drop the live list.
+`poison_reset()` resets the violation counter only.
 
 ## Linter
 
@@ -4351,6 +4409,13 @@ a *different, valid syscall*. Measured under `qemu-aarch64 -strace` before v6.6.
 (x86 `ftruncate`) ran **tee**, raw 46 (`sendmsg`) ran **ftruncate**, raw 44 (`sendto`) ran
 fstatfs, raw 35 (`nanosleep`) ran `unlinkat(0, NULL, 0)`, raw 87 (`unlink`) ran
 timerfd_gettime and raw 83 (`mkdir`) ran fdatasync. The build succeeded and printed nothing.
+
+Since 6.6.18 a literal (compile-time-constant) syscall number is translated at compile time, by
+simulating the `ESYSXLAT` chain in its own order — so every ordering rule below still applies, and
+the site carries only the row bodies that would run; a number held in a variable calls one shared
+stub that runs the chain at run time. Neither changes WHICH syscall a number reaches.
+A generic `syscall()` with more than six arguments after the number is refused by name
+(PE's Winsock reroutes, which take more, are unaffected).
 
 The rules, in order:
 
