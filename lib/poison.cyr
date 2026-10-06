@@ -49,6 +49,9 @@ var _POISON_HDR = 24;
 # except by poison_forget_all() / a wrapper's reset: a freed block stays listed, DEAD, so a
 # write after free is still seen.
 var _poison_head = 0;
+# Head of the fl live list: lib/freelist.cyr's poisoned blocks, doubly linked through blk+16
+# (prev) / blk+24 (next) because fl blocks ARE recycled and must leave the list at fl_free.
+var _poison_fl_head = 0;
 # Spinlock over the live-block lists. Its own lock, not alloc.cyr's or freelist.cyr's: the
 # poison paths run after those are released, so nothing ever nests.
 var _poison_lock = 0;
@@ -306,6 +309,12 @@ fn poison_sweep(): i64 {
         if (r != 0) { n = n + 1; }
         if (r < 0) { b = 0; } else { b = load64(b); }
     }
+    b = _poison_fl_head;
+    while (b != 0) {
+        var rf = _poison_fl_check(b);
+        if (rf != 0) { n = n + 1; }
+        if (rf < 0) { b = 0; } else { b = load64(b + 24); }
+    }
     _poison_lock_release();
     return n;
 }
@@ -431,4 +440,94 @@ fn poison_allocator_over(inner): i64 {
     store64(st + 8, 0);
     return allocator_new(&_poison_va_alloc, &_poison_va_realloc, &_poison_va_free,
       &_poison_va_reset, st);
+}
+
+# ================================================================
+# The fl live list (lib/freelist.cyr's poisoned layout — see its header) (6.6.18)
+# ================================================================
+# blk+8 cls/total, blk+16 prev, blk+24 next, blk+32 meta, blk+40 leading RZ, u = blk+40+RZ.
+# The list and the checks live HERE so poison_sweep() needs nothing from freelist.cyr.
+
+# Capacity of an fl block (payload past its 16-byte header): `_fl_block_size(cls) - 16`,
+# which is 16 << cls for the nine classes, or total - 16 on the large path.
+fn _poison_fl_cap(blk): i64 {
+    var cls = load64(blk + 8);
+    if (cls > 8) { return cls - 16; }
+    if (cls < 0) { return 0 - 1; }
+    return 16 << cls;
+}
+
+# Push an armed fl block. Caller holds _poison_lock.
+fn _poison_fl_link(blk): i64 {
+    store64(blk + 16, 0);
+    store64(blk + 24, _poison_fl_head);
+    if (_poison_fl_head != 0) { store64(_poison_fl_head + 16, blk); }
+    _poison_fl_head = blk;
+    return 0;
+}
+
+# Unlink an fl block and clear its links (so a second free of it no longer decodes as
+# listed). Caller holds _poison_lock.
+fn _poison_fl_unlink(blk): i64 {
+    var pv = load64(blk + 16);
+    var nx = load64(blk + 24);
+    if (pv == 0) { _poison_fl_head = nx; } else { store64(pv + 24, nx); }
+    if (nx != 0) { store64(nx + 16, pv); }
+    store64(blk + 16, 0);
+    store64(blk + 24, 0);
+    return 0;
+}
+
+# 1 when `blk` decodes as a poisoned fl block that is ON the live list: an fl meta word whose
+# fill matches the leading redzone's last byte, a sane header, and list links that point back
+# at it. Anything else (a double free, a header an underwrite smashed) is 0. Caller holds
+# _poison_lock.
+fn _poison_fl_owns(blk): i64 {
+    var meta = load64(blk + 32);
+    var fill = meta >> 56;
+    if (fill == 0) { return 0; }
+    if (((meta >> 48) & 15) != 3) { return 0; }
+    if (load8(blk + 40 + _POISON_RZ - 1) != fill) { return 0; }
+    var cls = load64(blk + 8);
+    if (cls > 8) {
+        if ((blk & 4095) != 0) { return 0; }
+    }
+    if (cls < 0) { return 0; }
+    if ((meta & 0xFFFFFFFFFFFF) > _poison_fl_cap(blk)) { return 0; }
+    var pv = load64(blk + 16);
+    if (pv == 0) {
+        if (_poison_fl_head != blk) { return 0; }
+    } else {
+        if (load64(pv + 24) != blk) { return 0; }
+    }
+    var nx = load64(blk + 24);
+    if (nx != 0) {
+        if (load64(nx + 16) != blk) { return 0; }
+    }
+    return 1;
+}
+
+# Check one listed fl block's two redzones against the fill it recorded. Returns the changed
+# byte count, or -1 for an undecodable header (a walk stops there). Reported once.
+fn _poison_fl_check(blk): i64 {
+    var meta = load64(blk + 32);
+    var fill = meta >> 56;
+    var req = meta & 0xFFFFFFFFFFFF;
+    var u = blk + 40 + _POISON_RZ;
+    var cap = _poison_fl_cap(blk);
+    if (fill == 0 || ((meta >> 48) & 15) != 3 || cap < 0 || req > cap) {
+        if (((meta >> 54) & 1) == 0) { _poison_report(3, 4, u, 0, 8); }
+        return 0 - 1;
+    }
+    var lead = _poison_count_bad(blk + 40, _POISON_RZ, fill);
+    var bad = lead + _poison_count_bad(u + req, blk + 16 + cap - u - req, fill);
+    if (bad > 0) {
+        if (((meta >> 54) & 1) == 0) {
+            store64(blk + 32, meta | (1 << 54));
+            var side = 2;
+            if (lead > 0) { side = 1; }
+            _poison_report(3, side, u, req, bad);
+        }
+    }
+    return bad;
 }
