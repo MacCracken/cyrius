@@ -710,6 +710,8 @@ fn _fuzz_run_one(path, passcnt_ptr, failcnt_ptr, found_ptr): i64 {
         return 1;
     }
     println("COMPILE FAIL");
+    _cbt_relay_file(errf);
+    _cc_undef_hints(errf);
     _fuzz_relay_capture(errf);
     store64(failcnt_ptr, load64(failcnt_ptr) + 1);
     sys_unlink(tmpbin);
@@ -816,16 +818,7 @@ fn _fuzz_ab_finish(path, bin_a, errf, passcnt_ptr, failcnt_ptr): i64 {
 # Copy a compile() stderr capture to our stderr whole (chunked: a COMPILE FAIL can be long),
 # then remove it. Absent capture = nothing to relay. CHANGELOG [6.6.18]
 fn _fuzz_relay_capture(errf): i64 {
-    var fd = sys_open(errf, O_RDONLY, 0);
-    if (fd >= 0) {
-        var buf[4096];
-        var n = sys_read(fd, &buf, 4096);
-        while (n > 0) {
-            sys_write(STDERR_FD, &buf, n);
-            n = sys_read(fd, &buf, 4096);
-        }
-        sys_close(fd);
-    }
+    _cbt_relay_file(errf);
     sys_unlink(errf);
     return 0;
 }
@@ -4354,6 +4347,103 @@ fn _distlib_report_unowned(out_path, names, masks): i64 {
     var msg = str_data(str_builder_build(sb));
     sys_write(STDERR_FD, msg, strlen(msg));
     return 0;
+}
+
+# 6.6.18 — for each undefined name in a failed compile's captured stderr, name the stdlib leaf
+# that defines it (see _cc_own_err_begin, cbt/build.cyr). Uses the distlib snapshot index (D1:
+# families included), the dispatcher rule (a peer's symbol is its dispatcher's) and the fold
+# rule (a fold bundle is named only when nothing else declares the name). Silent when there is
+# no snapshot, no undefined name, or no stdlib declarer.
+fn _cc_undef_hints(path): i64 {
+    var n = 0;
+    var b = file_read_whole(path, &n);
+    if (b == 0 || n <= 0) { return 0; }
+    var names = vec_new();
+    _distlib_collect_undefined(b, n, names);
+    if (vec_len(names) == 0) { return 0; }
+    var root = _distlib_stdlib_root();
+    if (root == 0) { return 0; }
+    if (_distlib_snap_cache(root) != 0) { return 0; }
+    var i = 0;
+    var shown = 0;
+    while (i < vec_len(names) && shown < 12) {
+        var nm = vec_get(names, i);
+        i = i + 1;
+        var own = _cc_hint_owner(root, nm);
+        if (own == 0) { continue; }
+        # Already auto-prepended: the leaf is in scope and does not define it HERE (an #ifdef
+        # arm) — "add it" would be wrong advice.
+        if (_cc_hint_in_scope(own) == 1) { continue; }
+        var sb = str_builder_new();
+        str_builder_add_cstr(sb, "hint: '");
+        str_builder_add_cstr(sb, nm);
+        str_builder_add_cstr(sb, "' is defined by stdlib leaf '");
+        str_builder_add_cstr(sb, own);
+        str_builder_add_cstr(sb, "' — add it to [deps] stdlib in cyrius.cyml\n");
+        var m = str_data(str_builder_build(sb));
+        sys_write(STDERR_FD, m, strlen(m));
+        shown = shown + 1;
+    }
+    return 0;
+}
+
+# 1 when `lib/<leaf>.cyr` (or a member of `lib/<leaf>/`) is already in the auto-prepend list.
+fn _cc_hint_in_scope(leaf): i64 {
+    if (_dep_includes == 0) { return 0; }
+    var ll = strlen(leaf);
+    var i = 0;
+    while (i < vec_len(_dep_includes)) {
+        var inc = vec_get(_dep_includes, i);
+        i = i + 1;
+        var il = strlen(inc);
+        if (il >= ll + 5 && memeq(inc, "lib/", 4) == 1 && memeq(inc + 4, leaf, ll) == 1) {
+            var c = load8(inc + 4 + ll);
+            if (c == 47) { return 1; }
+            if (c == 46 && il == ll + 8) { return 1; }
+        }
+    }
+    return 0;
+}
+
+# The stdlib leaf that defines `nm` for a hint, or 0: the declarers mapped to their dispatchers,
+# folds dropped while a non-fold declares it, then — if several remain — the one `nm` is
+# prefixed with (`sakshi_span_enter` -> sakshi), else the candidates joined "a' or 'b".
+fn _cc_hint_owner(root, nm): i64 {
+    var nlen = strlen(nm);
+    var cands = vec_new();
+    var folds = vec_new();
+    var nonfold = 0;
+    var i = 0;
+    while (i < vec_len(_dl_snap_names)) {
+        var raw = vec_get(_dl_snap_names, i);
+        var set = vec_get(_dl_snap_sets, i);
+        i = i + 1;
+        if (_src_ids_has(set, nm, nlen) == 0) { continue; }
+        var owner = _distlib_resolve_dispatcher(root, raw);
+        if (_distlib_vec_has(cands, owner) == 1) { continue; }
+        var f = _distlib_is_fold(root, raw);
+        if (f == 0) { nonfold = 1; }
+        vec_push(cands, owner);
+        vec_push(folds, f);
+    }
+    _distlib_drop_folds(cands, 0, folds, nonfold);
+    if (vec_len(cands) == 0) { return 0; }
+    if (vec_len(cands) == 1) { return vec_get(cands, 0); }
+    var k = 0;
+    while (k < vec_len(cands)) {
+        var c = vec_get(cands, k);
+        var cl = strlen(c);
+        if (cl < nlen && memeq(nm, c, cl) == 1 && load8(nm + cl) == 95) { return c; }
+        k = k + 1;
+    }
+    var sb = str_builder_new();
+    k = 0;
+    while (k < vec_len(cands) && k < 3) {
+        if (k > 0) { str_builder_add_cstr(sb, "' or '"); }
+        str_builder_add_cstr(sb, vec_get(cands, k));
+        k = k + 1;
+    }
+    return str_data(str_builder_build(sb));
 }
 
 fn _distlib_stdlib_root(): i64 {
