@@ -846,8 +846,9 @@ nbr=$(sed 's/^[[:space:]]*//' "$TMP/out" | grep -c '^\[')
 # whose `[deps] stdlib` names "chrono" (or "bench") without "syscalls" stopped building for
 # Windows with `undefined function 'sys_qpc_ns'` — where 6.6.4's `syscall(228)` had built.
 # Nothing in-repo saw it: every in-repo consumer pulls lib/syscalls.cyr. The vendoring
-# closure cannot rescue it either — `_distlib_union_declared_stdlib` (cbt/commands.cyr)
-# derives its edges from literal `include "lib/X.cyr"` lines, and neither file has one.
+# closure cannot rescue it either — it derives its edges from literal `include "lib/X.cyr"`
+# lines, and neither file has one. (This comment named `_distlib_union_declared_stdlib`, which
+# 6.6.18 removed — P4; the sidecar is compile-verified now.)
 # Both now spell 0xF038/0xF039 raw. This axis CROSS-BUILDS the two probes for PE rather
 # than grepping for the wrapper name, so it also fails if the raw route stops compiling.
 for mod in chrono bench; do

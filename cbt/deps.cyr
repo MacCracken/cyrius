@@ -1005,7 +1005,8 @@ fn _toml_key_at(buf, n, si, klen): i64 {
     # ⛔ v6.5.37 (A5) — AND REJECT A MATCH THAT SITS AFTER AN INLINE `#`. THIS IS THE FOURTH
     # OCCURRENCE OF THE COMMENT-PROSE CLASS, AND IT WAS IN THE HELPER INTRODUCED TO END IT.
     # v6.5.17 fixed it in cmd_deps (bayan) and introduced this shared helper; v6.5.30 fixed
-    # the un-swept copy in _distlib_union_declared_stdlib (niyama). Both fixes assumed the
+    # the un-swept copy in distlib's `[deps] stdlib` union (niyama; the union itself was
+    # removed at 6.6.18, P4). Both fixes assumed the
     # guard above — leading whitespace then `#` — covers comments. It does not: it walks ONLY
     # the leading whitespace and breaks at the first non-space, so a `#` that opens a comment
     # MID-LINE is never seen. Reproduced at 6.5.36 with one line of ordinary prose:

@@ -3250,7 +3250,7 @@ fn _distlib_valid_profile(p): i64 {
 # Checking only the flat form would drop `unicode` from every sidecar that legitimately
 # needs it — the exact family the v6.5.31 fix exists for.
 #
-# ⚠ Resolution mirrors `_distlib_leaf_referenced_d` (repo `lib/` first, then the global
+# ⚠ Resolution mirrors the resolver's preference (repo `lib/` first, then the global
 # snapshot) rather than calling `_dep_find_stdlib_dir()`, which `sys_exit(1)`s when a pin is
 # not installed — a distlib run must not die on that.
 #
@@ -3665,7 +3665,11 @@ fn _distlib_verify_fail(what, path): i64 {
 # published as if it were. `named_deps` is the manifest's `[deps.<name>]` set (a cstr vec).
 fn _distlib_verify_leaves(leaves, out_path, named_deps): i64 {
     var root = _distlib_stdlib_root();
-    if (root == 0) { return 0; }          # no snapshot: nothing to verify against, keep as-is
+    if (root == 0) {
+        # 6.6.18 (D4): the verify is the ONLY authority now — nothing else can vouch for the set.
+        var nsm = "distlib: no stdlib snapshot for the pinned cyrius (versions/<pin>/lib or <home>/lib) — the sidecar cannot be verified; NOT written";
+        return _distlib_verify_fail(nsm, out_path);
+    }
     if (_distlib_verify_host_ok(out_path) == 0) { return 0 - 1; }
     var m = _distlib_mirror_make(root);
     if (m == 0) { return 0 - 1; }
@@ -4229,9 +4233,9 @@ fn _distlib_report_unowned(out_path, names, masks): i64 {
     var sb = str_builder_new();
     str_builder_add_cstr(sb, "warn: distlib: ");
     str_builder_add_cstr(sb, out_path);
-    str_builder_add_cstr(sb, " uses ");
+    str_builder_add_cstr(sb, ": ");
     str_builder_add_int(sb, n);
-    str_builder_add_cstr(sb, " name(s) still undefined after the sidecar verify converged — no stdlib leaf, named dep or bundled module defines them there (a consumer must supply them, or the bundle is short):\n");
+    str_builder_add_cstr(sb, " name(s) still undefined after the sidecar verify converged — the bundle, its leaves and its named deps' modules use them, and no stdlib leaf defines them there (a consumer must supply them, or something is short):\n");
     var i = 0;
     while (i < n && i < 40) {
         str_builder_add_cstr(sb, "  ");
@@ -4283,7 +4287,7 @@ fn _distlib_stdlib_root(): i64 {
 #
 # The convention throughout the tree is that a peer is named `<dispatcher>_<something>`
 # (`syscalls` -> `syscalls_x86_64_linux`, `tls_native` -> `tls_native_hs13`) and the
-# dispatcher includes it — the same convention `_distlib_leaf_referenced_d`'s `isown` guard
+# dispatcher includes it — the same convention the verify's own-identifier set (`_distlib_own_peers`)
 # already relies on. Walk the underscore-separated prefixes and return the shortest one that
 # is a real leaf AND actually includes this peer; requiring the include is what stops a
 # coincidental name prefix from hijacking the answer.
@@ -4680,38 +4684,6 @@ fn _distlib_capture_lib_leaf(leaves, line, ll): i64 {
     return 0;
 }
 
-# v6.2.48 (deps lever 1): scan an umbrella include-hub `path` for `lib/`
-# includes and capture them into `leaves`. Folds often keep their stdlib
-# `lib/` requirements in the umbrella (sigil → src/lib.cyr, libro →
-# src/main.cyr) rather than in the individual folded modules, so scanning
-# only the folded modules yields an INCOMPLETE sidecar. No-op if absent.
-fn _distlib_scan_umbrella(leaves, path): i64 {
-    if (file_exists(path) == 0) { return 0; }
-    var un = 0;
-    var ubuf = file_read_whole(path, &un);    # 6.6.9: whole, not _file_size-sized (-38 on PE)
-    if (ubuf == 0 || un <= 0) { return 0; }
-    var upos = 0;
-    while (upos < un) {
-        var uls = upos;
-        while (upos < un && load8(ubuf + upos) != 10) { upos = upos + 1; }
-        var ule = upos;
-        if (upos < un) { upos = upos + 1; }
-        var ulp = uls;
-        while (ulp < ule) {
-            var uc = load8(ubuf + ulp);
-            if (uc != 32 && uc != 9) { break; }
-            ulp = ulp + 1;
-        }
-        if (ulp < ule && load8(ubuf + ulp) != 35) {
-            var ull = ule - ulp;
-            if (ull >= 8 && memeq(ubuf + ulp, "include ", 8) == 1) {
-                _distlib_capture_lib_leaf(leaves, ubuf + ulp, ull);
-            }
-        }
-    }
-    return 0;
-}
-
 var _distlib_modular = 0;   # v6.2.50 Phase C: `--modular` → per-module dist + index
 # v6.5.8: `--check` regenerates into a sibling temp and byte-compares instead of writing.
 var _distlib_check = 0;
@@ -5089,245 +5061,6 @@ fn _distlib_modular_emit(pkg_name, modules, mbuf, mlen): i64 {
     return 0;
 }
 
-# v6.4.48 — per-profile `.deps` pruning. The umbrella scan (src/lib.cyr) captures
-# the WHOLE fold's stdlib leaves, which is right for the full bundle but wrong for a
-# `[lib.<profile>]` subset: a `sha`-only profile was getting the entire crypto suite's
-# deps (bayan / keccak / mldsa-adjacent / thread / process …). Prune req_leaves to
-# only the leaves the profile's bundle actually references. (Full-bundle path unchanged.)
-# (`_distlib_ident_char` / `_distlib_bundle_refs` moved to cbt/core.cyr as
-# `_src_ident_char` / `_src_refs_ident`, shared with cyrius coverage. CHANGELOG [6.6.8]; the
-# per-name scan was replaced by a set built once per bundle in 6.6.10.)
-
-# Return 1 if the bundle references any symbol DECLARED at top level in leaf lib/<leaf>.cyr
-# — a fn, a var or an enum member, in every spelling (cbt/srcscan.cyr `_src_decls`).
-# `refs` is the bundle's identifier set (_src_ids, built ONCE per bundle from its blanked
-# text). Conservative: on any read failure or a leaf we can't inspect, keep it (return 1)
-# so we never drop a real dep.
-# ⛔ 6.6.10: this matched column-0 `fn ` / `var ` only, so a leaf whose symbols are
-# `pub fn` / attributed / indented was pruned and had to be RE-ADDED by the verify loop
-# (`sidecar: re-added 1 leaf(s) the inference missed`) — or, attributed or indented, was
-# lost outright. And each declaration was a memeq scan of the whole bundle (O(bundle × decls)).
-fn _distlib_leaf_referenced(leaf, refs): i64 {
-    return _distlib_leaf_referenced_d(leaf, refs, 0);
-}
-
-fn _distlib_leaf_referenced_d(leaf, refs, depth): i64 {
-    # Resolve the leaf: repo-vendored lib/<leaf>.cyr first, else the global
-    # stdlib snapshot <CYRIUS_HOME>/lib/<leaf>.cyr (a package vendors only its
-    # declared deps, but the umbrella can name others that live only globally).
-    var psb = str_builder_new();
-    str_builder_add_cstr(psb, "lib/");
-    str_builder_add_cstr(psb, leaf);
-    str_builder_add_cstr(psb, ".cyr");
-    var path = str_data(str_builder_build(psb));
-    if (file_exists(path) == 0) {
-        if (_home == 0) { return 1; }
-        var gsb = str_builder_new();
-        str_builder_add_cstr(gsb, _home);
-        str_builder_add_cstr(gsb, "/lib/");
-        str_builder_add_cstr(gsb, leaf);
-        str_builder_add_cstr(gsb, ".cyr");
-        path = str_data(str_builder_build(gsb));
-        if (file_exists(path) == 0) { return 1; }
-    }
-    # Read WHOLE (6.6.9): the 1 MiB cap cut mabda.cyr (1,368,705 B) and sigil.cyr off mid-file,
-    # so a declaration past the cap could not keep its leaf.
-    var llen = 0;
-    var lbuf = file_read_whole(path, &llen);
-    if (lbuf == 0 || llen <= 0) { return 1; }
-    # v6.5.29 — a leaf that is a DISPATCHER defines almost nothing itself. `lib/syscalls.cyr`
-    # is 8 KB of `#ifdef` + `include` with TWO top-level definitions; every `sys_*` wrapper
-    # lives in a per-arch peer it includes. Scanning only this file therefore found no
-    # referenced symbol and the leaf was pruned away — dropping exactly the leaf a consumer
-    # cannot build without. Recurse one level into the leaf's own `include "lib/X.cyr"` lines
-    # so a dispatcher is judged by what it BRINGS, not by what it literally spells.
-    # Depth 1 is enough for every dispatcher in the tree and cannot loop.
-    if (depth < 1) {
-        var leaflen = strlen(leaf);
-        var ip = 0;
-        while (ip < llen) {
-            var ibol = 0;
-            if (ip == 0) { ibol = 1; } elif (load8(lbuf + ip - 1) == 10) { ibol = 1; }
-            if (ibol == 1 && ip + 13 < llen && memeq(lbuf + ip, "include \"lib/", 13) == 1) {
-                var ns2 = ip + 13;
-                var ne2 = ns2;
-                while (ne2 < llen && load8(lbuf + ne2) != 34) { ne2 = ne2 + 1; }
-                # Strip the trailing ".cyr" so the peer is named the way a leaf is named.
-                if (ne2 - ns2 > 4 && memeq(lbuf + ne2 - 4, ".cyr", 4) == 1) { ne2 = ne2 - 4; }
-                # ⛔ ONLY recurse into a leaf's PRIVATE peers — those whose name starts with
-                # the leaf's own name. That is the convention throughout the tree
-                # (`syscalls` → `syscalls_x86_64_linux`, `tls_native` → `tls_native_hs13`) and
-                # the guard is load-bearing, not decoration: a dispatcher like `tls_native`
-                # ALSO includes common leaves (`alloc`, `string`, `io`, `sigil`, …), so an
-                # unguarded recursion keeps `tls_native` alive merely because the bundle
-                # references `io`. Measured: without this, sit's `read` profile — which exists
-                # precisely to drop the TLS stack — retained `tls_native` while none of its 27
-                # top-level symbols appeared anywhere in the bundle.
-                var plen2 = ne2 - ns2;
-                var isown = 0;
-                if (plen2 > leaflen) {
-                    if (memeq(lbuf + ns2, leaf, leaflen) == 1) { isown = 1; }
-                }
-                if (isown == 1 && plen2 > 0) {
-                    var peer = alloc(plen2 + 1);
-                    memcpy(peer, lbuf + ns2, plen2);
-                    store8(peer + plen2, 0);
-                    if (_distlib_leaf_referenced_d(peer, refs, depth + 1) == 1) { return 1; }
-                }
-            }
-            while (ip < llen && load8(lbuf + ip) != 10) { ip = ip + 1; }
-            ip = ip + 1;
-        }
-    }
-    # The include scan above reads the RAW text (a path is a string literal); the declaration
-    # reader wants it blanked. lbuf is this call's own copy.
-    _src_blank_noncode(lbuf, llen);
-    var offs = vec_new();
-    var lens = vec_new();
-    var kinds = vec_new();
-    _src_decls(lbuf, llen, offs, lens, kinds);
-    var k = 0;
-    while (k < vec_len(offs)) {
-        var kd = vec_get(kinds, k);
-        if (kd == SRC_DECL_FN || kd == SRC_DECL_VAR || kd == SRC_DECL_MEMBER) {
-            if (_src_ids_has(refs, lbuf + vec_get(offs, k), vec_get(lens, k)) == 1) { return 1; }
-        }
-        k = k + 1;
-    }
-    return 0;
-}
-
-# Prune `leaves` to those a profile bundle at `bundle_path` actually references.
-# v6.5.10: union the manifest's DECLARED `[deps] stdlib` into the sidecar's leaf set.
-#
-# THE FILED DEFECT (setu 0.8.2, 2026-08-07). `dist/<lib>.deps` says it lists "stdlib
-# leaves this fold requires in scope", but it was built ONLY by scanning the bundled
-# module sources for literal `include "lib/X.cyr"` lines — so it captured what a module
-# INCLUDES, never what it REFERENCES through the declaration. setu emitted 8 leaves
-# against a declared 12; the four missing (`result`, `net`, `chrono`, `args`) are all
-# referenced at top level in `src/client.cyr`.
-#
-# Three hypotheses were measured and falsified by the filer before it was filed: it is
-# not the declaration (deleting `assert` from `[deps] stdlib` left it in the sidecar), it
-# is not an inline-comment parse bug (adding a comment to `vec` left it present), and it
-# is not a direct-symbol scan either. It was simply a different, smaller thing than its
-# own header claimed.
-#
-# ⭐ AND A WRONG SIDECAR SWITCHES OFF cyrius's OWN CONSUMER CHECK. `cyrius deps` validates
-# a consumer's `[deps] stdlib` against the dep's sidecar — correctly and loudly. Measured:
-# with a corrected 12-leaf sidecar an under-declaring consumer got a hard error naming
-# `chrono` and `args`; with the raw 8-leaf one the same consumer built **OK**, silently,
-# on agnos. So this did not merely mislead a human reader — it disabled the machine check
-# that exists to catch exactly this mistake.
-#
-# UNION, not replace: the inferred include-scan can legitimately catch a leaf the author
-# forgot to declare, so taking both can never under-report relative to either source.
-fn _distlib_union_declared_stdlib(leaves, mbuf, mlen): i64 {
-    # v6.5.30 — the comment above USED to say "same key-boundary rules cmd_deps uses". It
-    # was not the same: cmd_deps moved to the shared `_toml_key_at` helper, which also
-    # rejects a match sitting inside a QUOTED VALUE, and this hand-rolled copy never did.
-    #
-    # ⛔ THE FILED CONSEQUENCE. niyama's `[package] description` reads "...foldable into
-    # stdlib per sandhi pattern" ELEVEN LINES above the real `[deps] stdlib` key. The
-    # identifier-boundary guard passes (preceded by a space), the comment guard passes (not a
-    # `#` line), so the scan locked onto the description, `_parse_toml_str_array` walked
-    # forward to the next `[` — a SECTION HEADER — and returned empty. Zero leaves meant
-    # `vec_len(req_leaves) > 0` was false and `cyrius distlib` wrote **no sidecar at all**,
-    # silently, on a bundle that was otherwise correct.
-    #
-    # ⚠ THIS IS THE SAME BUG, THE SAME PHRASE AND THE SAME FILE-SHAPE AS THE bayan DEFECT
-    # FIXED AT v6.5.17 — bayan's description says "foldable into stdlib per the sandhi
-    # pattern" too. That fix corrected `cmd_deps` and introduced `_toml_key_at`; it did not
-    # sweep the other two copies of the scan, so the identical defect sat here for thirteen
-    # releases and re-surfaced through a different consumer. GREP THE SHAPE, NOT THE SITE.
-    var found = 0 - 1;
-    var si = 0;
-    while (si < mlen) {
-        if (memeq(mbuf + si, "stdlib", 6) == 1) {
-            if (_toml_key_at(mbuf, mlen, si, 6) == 1) {
-                # Defence-in-depth, mirroring cmd_deps: a key that yields ZERO leaves is not
-                # the `stdlib` key. Keep scanning instead of committing to the first match.
-                if (vec_len(_parse_toml_str_array(mbuf, mlen, si)) > 0) { found = si; si = mlen; }
-            }
-        }
-        si = si + 1;
-    }
-    if (found < 0) { return 0; }
-    # Expand `[groups]` refs so a declared group name lands as its LEAVES, not as a
-    # bogus leaf named after the group.
-    _dep_parse_groups(mbuf, mlen);
-    _dep_register_default_std_group();
-    var mods = _dep_expand_groups(_parse_toml_str_array(mbuf, mlen, found));
-    var added = 0;
-    var i = 0;
-    while (i < vec_len(mods)) {
-        var nm = vec_get(mods, i);
-        var dup = 0;
-        var j = 0;
-        while (j < vec_len(leaves)) {
-            if (streq(vec_get(leaves, j), nm) == 1) { dup = 1; }
-            j = j + 1;
-        }
-        if (dup == 0) { vec_push(leaves, nm); added = added + 1; }
-        i = i + 1;
-    }
-    return added;
-}
-
-#
-# ⛔ 6.6.9 — ONLY CODE IS A REFERENCE. The bundle was matched as raw text, so a stdlib name in a
-# `#` comment or a string literal kept its leaf: "Safe to run twice" kept `process` (`fn run`),
-# and with it `vec`, `str` and `fmt` through the verify loop — vani's `core` sidecar went from 3
-# leaves to 8 on a comment edit. The bundle's non-code bytes are blanked once, length-preserving,
-# with the shared lexer-faithful blanker (cbt/core.cyr `_src_blank_noncode`: char literals before
-# strings, attribute tokens and `#define`/`#if` bodies kept as code). No cyrius construct resolves
-# a fn/var named in a string — `#pe_import`/`#deprecated`/`#derive` strings are foreign symbols,
-# messages and paths — and the compile-verified loop is the backstop in any case.
-# ⚠ An `include "lib/<leaf>.cyr"` line IS a reference even though its path is a string: the
-# bundle keeps those lines (v6.2.48), and in a consumer's build that include must resolve. The
-# raw scan only honoured it by accident (when the leaf declared a fn named like its file); it
-# is now read explicitly, before blanking.
-# ⚠ Residual, by design: the matcher sees NAMES, not resolutions, so a parameter or local that
-# reuses a stdlib top-level name (`fn f(run)`) still keeps that name's leaf — the safe direction.
-fn _distlib_prune_profile_leaves(leaves, bundle_path): i64 {
-    if (file_exists(bundle_path) == 0) { return leaves; }
-    var bl = 0;
-    var bb = file_read_whole(bundle_path, &bl);
-    if (bb == 0 || bl <= 0) { return leaves; }
-    var incl = vec_new();
-    _distlib_scan_lib_includes(incl, bb, bl);
-    _src_blank_noncode(bb, bl);
-    # 6.6.10: the bundle is tokenised ONCE; every leaf declaration is then one lookup.
-    var refs = _src_ids_new(bl);
-    if (refs == 0) { return leaves; }
-    if (_src_ids_add_text(refs, bb, bl) != 0) { return leaves; }   # keep all: the safe direction
-    var kept = vec_new();
-    var i = 0;
-    while (i < vec_len(leaves)) {
-        var lf = vec_get(leaves, i);
-        if (_distlib_vec_has(incl, lf) == 1) { vec_push(kept, lf); }
-        elif (_distlib_leaf_referenced(lf, refs) == 1) { vec_push(kept, lf); }
-        i = i + 1;
-    }
-    return kept;
-}
-
-# Collect into `out` the leaf of every `include "lib/<leaf>.cyr"` line in buf[0, n) — the line's
-# first token, after indentation. Same capture rules as the module scan (`_distlib_capture_lib_leaf`).
-fn _distlib_scan_lib_includes(out, buf, n): i64 {
-    var p = 0;
-    while (p < n) {
-        var ls = _src_skip_ws(buf, p, n);
-        var le = ls;
-        while (le < n && load8(buf + le) != 10) { le = le + 1; }
-        if (le - ls >= 8 && memeq(buf + ls, "include ", 8) == 1) {
-            _distlib_capture_lib_leaf(out, buf + ls, le - ls);
-        }
-        p = le + 1;
-    }
-    return 0;
-}
-
 fn cmd_distlib(profile): i64 {
     if (_distlib_valid_profile(profile) == 0) {
         _err("invalid profile name (allowed: [a-zA-Z0-9_-]{1,32})");
@@ -5562,14 +5295,18 @@ fn cmd_distlib(profile): i64 {
         return 1;
     }
 
-    # v6.2.48 (deps lever 1): a fold's modules often rely on an umbrella
-    # include-hub for their stdlib `lib/` deps rather than `include`-ing them
-    # directly (sigil's crypto modules USE ct/keccak but it's `src/lib.cyr`
-    # that carries the includes; libro uses `src/main.cyr`). Scan the umbrella
-    # convention(s) so the sidecar captures the fold's FULL `lib/` requirement
-    # set, not just what the folded modules directly include.
-    _distlib_scan_umbrella(req_leaves, "src/lib.cyr");
-    _distlib_scan_umbrella(req_leaves, "src/main.cyr");
+    # ⭐ 6.6.18 (D4, P4 option 2) — THE COMPILE-VERIFY FIXPOINT IS THE ONLY AUTHORITY FOR THE
+    # SIDECAR. The seed is just the `lib/` includes the bundled modules KEEP (above) — those lines
+    # ship in the bundle, so they are a hard requirement of the artifact itself. Three text
+    # inferences used to feed it and are gone: the umbrella scan of src/lib.cyr + src/main.cyr
+    # (v6.2.48), the `[deps] stdlib` union (v6.5.10) and the profile prune (v6.4.48). The union
+    # published a package's TEST-ONLY leaves to every consumer — 75 ecosystem sidecars name
+    # `assert` and 68 of those bundles reference no assert symbol; 51 of 53 name `bench` and use
+    # none of it — and it hid real gaps (niyama's `unicode`, mabda's agnos `io`, D1/D3) behind a
+    # declaration. Every filed case the inferences existed for (setu: referenced but not
+    # included; ranga / sit: empty profile sidecars; the v6.4.48 sha-profile over-report) is now
+    # derived by the compiler. `[deps] stdlib` still feeds auto-prepend and `cyrius deps` for the
+    # package's OWN builds; it never reaches the published sidecar. CHANGELOG [6.6.18]
 
     # v6.2.48: a captured `lib/X` that matches a `[deps.X]` named dep is NOT a
     # stdlib leaf — it resolves as a fold via the consumer's transitive
@@ -5577,45 +5314,6 @@ fn cmd_distlib(profile): i64 {
     # (once transitively, once as a bogus stdlib pull) → duplicate-fn errors.
     # Collect the named-dep names so they're EXCLUDED from the sidecar below.
     var named_deps = _distlib_named_deps(mbuf, mlen);   # v6.2.51 closeout: shared helper (was duplicated here + in _distlib_modular_emit)
-
-    # v6.5.10: fold the DECLARED `[deps] stdlib` into the sidecar's leaf set.
-    #
-    # v6.5.29 — THIS NOW RUNS FOR PROFILES TOO, and the ORDER is the fix. It used to be
-    # base-only, with the stated reason that a profile is a narrow subset so unioning the
-    # whole declaration would over-report. That reasoning was sound about over-reporting and
-    # wrong about the remedy: it left profiles on include-scan inference ALONE, and the
-    # toolchain's own documented convention (`cyrius-guide.md`: "includes are auto-prepended —
-    # source files only need project includes") means a conforming project has NO stdlib
-    # include lines to scan. Two individually-reasonable rules that jointly guarantee an
-    # EMPTY profile sidecar for anyone who follows the guide. Filed twice — ranga (M5,
-    # header-only sidecars for `[lib.spectral]`/`[lib.hwaccel]`) and sit (v1.4.0, no sidecar
-    # file at all for `[lib.read]`) — and they are ONE defect, not two.
-    #
-    # ⛔ The union must come BEFORE the prune, not instead of it. Over-reporting is prevented
-    # by the prune NARROWING the union to what the profile bundle actually references — a
-    # positive filter — rather than by withholding the leaves entirely, which under-reports to
-    # zero. Same intent, achieved by construction.
-    var _decl_added = _distlib_union_declared_stdlib(req_leaves, mbuf, mlen);
-    if (_verbose == 1 && _decl_added > 0) {
-        sys_write(STDOUT_FD, "  sidecar: +", 12);
-        fmt_int(_decl_added);
-        println(" leaf/leaves from the declared [deps] stdlib");
-    }
-
-    # v6.4.48 — for a `[lib.<profile>]` subset, prune the leaf set to only those the profile
-    # bundle actually references. Without this a `sha` profile's sidecar carried the whole
-    # crypto suite's stdlib chain. Full-bundle path (profile == 0) keeps the complete set.
-    if (profile != 0) {
-        var _pre_prune = vec_len(req_leaves);
-        req_leaves = _distlib_prune_profile_leaves(req_leaves, out_path);
-        if (_verbose == 1) {
-            sys_write(STDOUT_FD, "  sidecar: profile prune ", 25);
-            fmt_int(_pre_prune);
-            sys_write(STDOUT_FD, " -> ", 4);
-            fmt_int(vec_len(req_leaves));
-            println(" leaf/leaves");
-        }
-    }
 
     # v6.2.47 (deps lever 1, Phase A producer side): emit the dep sidecar
     # `dist/<pkg>.deps` — one stdlib leaf per line — capturing the
@@ -5639,9 +5337,9 @@ fn cmd_distlib(profile): i64 {
         return 1;
     }
     if (_verified_added > 0) {
-        sys_write(STDOUT_FD, "  sidecar: re-added ", 20);
+        sys_write(STDOUT_FD, "  sidecar: ", 11);
         fmt_int(_verified_added);
-        println(" leaf(s) the inference missed (compile-verified)");
+        println(" leaf(s), compile-verified");
     }
     # ⛔ v6.5.37 (A7) — AND REMOVE A SIDECAR THAT NO LONGER DESCRIBES ANYTHING.
     # The `> 0` guard below is deliberate (v6.5.29: a package with genuinely no leaves should

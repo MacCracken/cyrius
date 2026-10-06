@@ -32,6 +32,15 @@
 # MUTATIONS (6.6.10, run by hand): the prune back on column-0 `fn `/`var ` → 11, 12, 13, 14,
 # 15 FAIL; the attribution back on it → 11, 12 FAIL (0 leaves, rc 0); the unbalanced-file
 # check removed (`raw == 0` → continue) → 16 FAIL.
+#
+# ⭐ 6.6.18 (D4, P4 option 2) — THE PRUNE AND THE UNION ARE GONE. The compile-verify fixpoint
+# is the sidecar's only authority, so every axis here now reads "present / absent via the
+# VERIFY": a profile gets exactly the leaves its own bundle leaves undefined (plus its kept
+# includes), which is scoped by construction. Axes 9 and 11-15 asserted the leaf was kept BY
+# THE PRUNE (no "re-added" line); with no prune that distinction is gone and the assertions
+# are dropped — each leaf must simply be present, which is what a consumer needs. The
+# `[deps] stdlib` line below is no longer an input to any sidecar (it still drives this
+# package's own auto-prepend).
 set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 # 6.6.11 (K8): a candidate CLI / compiler can be tested — CYRIUS_BIN / CYCC, as every gate takes.
@@ -223,7 +232,7 @@ fi
 echo "  ok premise: both bundles built (base + profile)"
 
 fail=0
-leaves() { grep -v '^#' "$1" 2>/dev/null | grep -v '^$' | sort | tr '\n' ' '; }
+leaves() { grep -v '^#' "$1" 2>/dev/null | grep -v '^$' | sort | tr '\n' ' ' || true; }   # || true: an all-comment sidecar under pipefail
 
 # --- axis 1: THE HEADLINE — the profile sidecar must EXIST ---
 if [ ! -f dist/pf-small.deps ]; then
@@ -235,7 +244,7 @@ fi
 # --- axis 2: it must not simply copy the base (no over-report) ---
 B=$(leaves dist/pf.deps); S=$(leaves dist/pf-small.deps)
 if [ "$B" = "$S" ]; then
-    echo "  FAIL axis 2: profile sidecar equals the base's [$B] — the prune did not narrow it"; fail=1
+    echo "  FAIL axis 2: profile sidecar equals the base's [$B] — it is not scoped to the profile"; fail=1
 else
     echo "  ok axis 2: profile [$S] is narrower than base [$B]"
 fi
@@ -300,17 +309,13 @@ for pr in words chr inc; do
 done
 WD=$(leaves dist/pf-words.deps); CH=$(leaves dist/pf-chr.deps); IN=$(leaves dist/pf-inc.deps)
 case " $WD " in
-    *" heavy "*) echo "  FAIL axis 8: 'heavy' kept in [$WD] though pf-words names heavy_do only in a comment and a string — the prune is matching raw text (vani: a comment edit took dist/vani-core.deps from 3 leaves to 8)"; fail=1 ;;
+    *" heavy "*) echo "  FAIL axis 8: 'heavy' kept in [$WD] though pf-words names heavy_do only in a comment and a string — a comment or string is being read as a reference (vani, pre-6.6.18: a comment edit took dist/vani-core.deps from 3 leaves to 8)"; fail=1 ;;
     *) echo "  ok axis 8: a comment- or string-only mention keeps no leaf [$WD]" ;;
 esac
-# ⚠ The PRUNE must keep it, not the compile-verified loop: the loop re-adds a leaf whose symbol
-# is undefined, so "heavy is in the sidecar" alone passes even when the blanker ate the call
-# (measured: a blanker with no char-literal arm passed that weaker form). `re-added` in the log
-# is the loop repairing the prune.
+# (Through 6.6.17 this asserted the PRUNE kept it, not the loop; 6.6.18 removed the prune, so
+# the compiler — which never misreads a char literal — is the only reader left.)
 case " $CH " in
-    *" heavy "*) if grep -q 're-added' "$W/chr.log"; then
-            echo "  FAIL axis 9 (anti-vacuous for 8): 'heavy' was dropped by the prune and only re-added by the verify loop — a char literal was read as a string opening and blanked the call after it"; fail=1
-        else echo "  ok axis 9: a real call after a char literal keeps 'heavy' at the prune"; fi ;;
+    *" heavy "*) echo "  ok axis 9: a real call after a char literal keeps 'heavy' (via the verify)" ;;
     *) echo "  FAIL axis 9 (anti-vacuous for 8): 'heavy' missing from [$CH] — e_five() calls heavy_do"; fail=1 ;;
 esac
 case " $IN " in
@@ -325,9 +330,7 @@ spelled() {   # $1 profile, $2 leaf, $3 axis, $4 spelling
     fi
     L=$(leaves "dist/pf-$1.deps")
     case " $L " in
-        *" $2 "*) if grep -q 're-added' "$W/$1.log"; then
-                echo "  FAIL axis $3: '$2' ($4) was dropped by the prune and only re-added by the verify loop"; fail=1
-            else echo "  ok axis $3: a $4 leaf is kept by the prune itself [$L]"; fi ;;
+        *" $2 "*) echo "  ok axis $3: a $4 leaf is present via the verify [$L]" ;;
         *) echo "  FAIL axis $3: '$2' missing from [$L] — its only symbol is spelled '$4', and the sidecar was written without it"; fail=1 ;;
     esac
 }

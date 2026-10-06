@@ -260,6 +260,13 @@ mkdir -p "$D/bin"
   || { echo "FAIL: cbt/cyrius.cyr does not build:"; tail -3 "$D/clib.err"; exit 1; }
 cp "$CC" "$D/bin/cycc" && chmod +x "$D/bin/cyrfmt" "$D/bin/cyrius" "$D/bin/cycc" || { echo "FAIL: cannot stage $D/bin"; exit 1; }
 mkdir -p "$D/home"
+# 6.6.18 (D4): distlib's sidecar verify is the only authority now, so a run with no stdlib
+# snapshot REFUSES instead of publishing unverified. Axis 7's home gets the tree's lib/ as its
+# `<home>/lib` snapshot (read-only — the verify mirrors it under dist/), and the CLI gets the
+# aarch64 cross compiler beside it, as every distlib verify needs.
+mkdir -p "$D/home/.cyrius" && ln -s "$ROOT/lib" "$D/home/.cyrius/lib" \
+  && "$CC" < src/main_aarch64.cyr > "$D/bin/cycc_aarch64" 2>/dev/null && chmod +x "$D/bin/cycc_aarch64" \
+  || { echo "FAIL: cannot stage the distlib snapshot / cycc_aarch64 for axis 7"; exit 1; }
 _lim() { ( trap '' XFSZ && ulimit -f 2 && exec "$@" ); }
 
 # axis 5: cyrfmt --write

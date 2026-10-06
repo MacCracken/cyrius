@@ -18,7 +18,14 @@
 #           CYRIUS_DCE unset.
 #   axis 3  `cyrius lint f.cyr` -> its syntax pre-pass hands cycc.exe `--allow-undef` and
 #           `--syntax-only`, as the POSIX argv does (6.6.17 review: the PE arm dropped both).
-#   axis 4  `cyrius distlib` -> the bundle self-check hands cycc.exe `--allow-undef` only.
+#   axis 4  `cyrius distlib` on cyrius.exe REFUSES by name before any compile, and writes no
+#           sidecar. ⚠ 6.6.18 (D4): this axis read "the bundle self-check hands cycc.exe
+#           `--allow-undef` only", reached through the one path that let a non-x86-Linux CLI
+#           finish distlib — a snapshot-less run, where the verify was SKIPPED and the sidecar
+#           published unverified. The verify is the sidecar's only authority now, so that path
+#           refuses ("no stdlib snapshot"), and with a snapshot the 6.6.11 per-target refusal
+#           applies; the self-check is unreachable on PE. `--allow-undef` on the PE arm is
+#           still pinned by axis 3 (lint's pre-pass).
 # wine is not hardware: the release gate's cass leg is the verification on real Windows.
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -112,11 +119,13 @@ if run '' lint src/main.cyr; then
 fi
 [ "$FAIL" = "$x" ] && echo "  ok axis 3: lint's syntax pre-pass hands cycc.exe --allow-undef and --syntax-only"
 x=$FAIL
-if run '\n[lib]\nmodules = ["src/lib.cyr"]\n' distlib; then
-    has_flag --allow-undef || fail "axis 4: distlib's bundle self-check did not hand cycc.exe --allow-undef: $(head -1 "$W/stub.log")"
-    has_flag --syntax-only && fail "axis 4: distlib's self-check handed cycc.exe --syntax-only"
-fi
-[ "$FAIL" = "$x" ] && echo "  ok axis 4: distlib's bundle self-check hands cycc.exe --allow-undef (and not --syntax-only)"
+printf '[package]\nname = "p"\n\n[build]\nentry = "src/main.cyr"\noutput = "build/p.exe"\n\n[lib]\nmodules = ["src/lib.cyr"]\n' > "$W/p/cyrius.cyml"
+rm -f "$W/stub.log"
+d4rc=0; ( cd "$W/p" && env -u CYRIUS_DCE -u CYRIUS_STRICT CYRIUS_HOME="$W/home" CYRIUS_RESOLVED=1 timeout 300 wine "$W/home/bin/cyrius.exe" distlib ) > "$W/out" 2>&1 || d4rc=$?
+[ "$d4rc" -ne 0 ] || fail "axis 4: cyrius.exe distlib exited 0 — the sidecar cannot be verified on this host"
+grep -q 'NOT written' "$W/out" || fail "axis 4: cyrius.exe distlib did not refuse by name: $(head -3 "$W/out" | tr '\n' ' ')"
+[ -f "$W/p/dist/p.deps" ] && fail "axis 4: cyrius.exe distlib wrote an unverified sidecar"
+[ "$FAIL" = "$x" ] && echo "  ok axis 4: cyrius.exe distlib refuses by name (rc $d4rc) and writes no unverified sidecar"
 
 [ "$FAIL" = 0 ] || exit 1
 echo "PASS: build_config_windows_arm (dce, --strict, --allow-undef, --syntax-only reach the compiler on the PE arm, under wine)"
