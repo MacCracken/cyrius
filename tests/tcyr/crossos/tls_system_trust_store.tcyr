@@ -21,7 +21,7 @@
 # over-long or malformed property), the policy is then run rule by rule on stores the test builds in
 # MEMORY: the fixture root with exactly the properties each row names.
 # A SERVER ctx (it verifies CLIENT chains) gets, on Windows, a second set: the roots the store trusts
-# for CLIENT authentication (CVE-TBD(l1), 6.6.17 — it was handed the serverAuth set, so a root Windows
+# for CLIENT authentication (CVE-77, 6.6.17 — it was handed the serverAuth set, so a root Windows
 # trusts for server authentication only anchored an mTLS client identity). The client-purpose rows
 # re-derive that set from the real store, run the policy rule by rule for the client purpose on the
 # memory stores, and verify one client chain end to end against a root whose store purposes are
@@ -158,7 +158,7 @@ fn test_planted_bundle_ignored(): i64 {
     var inbuf = 0;
     if (_tn_ca_len > 0) { inbuf = _ts_contains(_tn_ca_buf, _tn_ca_len, b, bl); }
     assert_eq(inbuf, 0, "the planted PEM is not in the cached system bundle");
-    # The client-purpose set a server ctx loads (CVE-TBD(l1)) reads the store too, never the file.
+    # The client-purpose set a server ctx loads (CVE-77) reads the store too, never the file.
     var sc = _tn_ctx_new(TLS_ROLE_SERVER);
     assert_eq(tls_native_set_ca_system(sc), TLS_OK, "a server ctx's system set loads while the file is planted");
     var inbuf2 = 0;
@@ -474,7 +474,7 @@ fn _ts_store_policy(pu, bundle, blen, refused): i64 {
 fn test_store_policy(): i64 {
     test_group("Windows: the bundle is exactly the ROOT store's TLS roots, re-derived here");
     _ts_store_policy(_TN_PURPOSE_SERVER, _tn_ca_buf, _tn_ca_len, _tn_ca_sys_refused);
-    # CVE-TBD(l1): a server ctx's set is the store's CLIENT-authentication roots.
+    # CVE-77: a server ctx's set is the store's CLIENT-authentication roots.
     test_group("Windows: a server ctx's bundle is exactly the ROOT store's clientAuth roots, re-derived here");
     var sv = _tn_ctx_new(TLS_ROLE_SERVER);
     assert_eq(tls_native_set_ca_system(sv), TLS_OK, "a server ctx loads the client-purpose set");
@@ -741,7 +741,7 @@ fn test_policy_rows(): i64 {
     return 0;
 }
 
-# ── CVE-TBD(l1): the same policy for the CLIENT purpose (a server ctx's set) ─────────────────────
+# ── CVE-77: the same policy for the CLIENT purpose (a server ctx's set) ─────────────────────
 # Before 6.6.17 the store had one export, for serverAuth, and a server ctx installed it: a root
 # whose store purposes are [serverAuth] anchored a CLIENT chain. Each row runs _tn_w_export for the
 # client purpose; the server-purpose twin of the defect row is the control.
@@ -811,7 +811,7 @@ var _TM_NOW = 1893456000;   # 2030-01-01: inside the eku fixtures' 2025 .. 2049 
 # root_none and leaf_r — the root carries NO extendedKeyUsage of its own, so the store property is
 # the only purpose in play.
 fn test_policy_client_chain(): i64 {
-    test_group("Windows: a client chain anchored at a [serverAuth]-only store root is refused (CVE-TBD(l1))");
+    test_group("Windows: a client chain anchored at a [serverAuth]-only store root is refused (CVE-77)");
     var fns[32];
     assert_eq(_tn_w_crypt32(&fns), 1, "crypt32 loads and resolves");
     var root = hex_decode("308201583081fea00302010202021001300a06082a8648ce3d04030230133111300f06035504030c08656b752d726f6f74301e170d3235303130313030303030305a170d3439313233313030303030305a30133111300f06035504030c08656b752d726f6f743059301306072a8648ce3d020106082a8648ce3d030107034200041763b07248785b27e9c9af80c984898fbf0bf24afbdb1e8d52696e5b98bf4a87831b987df0ae8d25a3e82e746ba58a480ee1e1c29b59ec76f8e0bc26bfef92c0a3423040300f0603551d130101ff040530030101ff300e0603551d0f0101ff040403020106301d0603551d0e04160414ec71bed0abc8e63f9529b24854c0280971a77161300a06082a8648ce3d0403020349003046022100efff514f0ebbbff3f778b4daa6a146cd5d2ad51cdbd1b723df03de86f5c9d186022100fd452d345bf2c837d4c0c606be6e8ac25249a2e1bfa7b42cbecef00ef8bb613d", 696);

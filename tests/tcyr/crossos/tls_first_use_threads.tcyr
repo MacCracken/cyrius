@@ -230,7 +230,7 @@ fn test_init_main(recs): i64 {
     assert_eq(tls_init_main(), 1, "a second call returns 1");
     assert_eq(alloc_used() - a0, 0, "a second call allocates nothing");
     #ifdef CYRIUS_TARGET_WIN
-    # 6.6.17: on Windows a server ctx installs a second, client-purpose set (CVE-TBD(l1)); the
+    # 6.6.17: on Windows a server ctx installs a second, client-purpose set (CVE-77); the
     # warm loads it too, so an mTLS server's first tls_native_set_ca_system allocates nothing.
     assert_eq(atomic_load(&_tn_ca_cl_state), 2, "Windows: the warm loaded the client-purpose set as well");
     var sv = _tn_ctx_new(TLS_ROLE_SERVER);

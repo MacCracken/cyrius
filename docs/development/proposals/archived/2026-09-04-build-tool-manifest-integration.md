@@ -1,6 +1,22 @@
 # Proposal — `cyrius.cyml` as the build tool's actual configuration, not a partly-read file
 
-**Filed:** 2026-09-04 · **Status:** 🟡 OPEN — for maintainer direction
+**Filed:** 2026-09-04 · **Status:** ✅ **SHIPPED in 6.6.17** (merged 2026-10-05; archived). Original status:
+🟡 OPEN — for maintainer direction.
+
+> ### ✅ Resolution — 6.6.17 (CHANGELOG [6.6.17], *Manifest — P1*)
+>
+> - **Shipped:** one declared key vocabulary in `cbt/manifest.cyr` (`cyrius help manifest`; each key read / held /
+>   dropped / info, synonyms resolved in one place), gated against what consumers WRITE — the ecosystem census,
+>   the init templates and package-format.md — never the vocabulary's own spelling (this proposal's v6.5.49
+>   lesson); one reader of the whole manifest as TOML (the 32 KB / 64 KB / 4 KB capped scanners gone); one
+>   precedence rule for every key — argument > environment > manifest > default — shown by
+>   `cyrius build --print-config`; `[build] test` run by bare `cyrius test` (then `tests/`), `[build] dce` and
+>   `[build] defines` read at every rung; `cyrius init --bin` writes `output = "build/{PROJ}"`.
+> - **Held:** `[build] target` (recognised, warned by name, not read); `[build] strict` — held with NO effect,
+>   because `cycc --strict` has done nothing since 6.3.2 (a reachable undefined fn is an error by default); the
+>   key is warned, `cyrius build --strict` is still accepted, and no `CYRIUS_STRICT` channel exists.
+> - **Dropped:** `[build] features` (never read; warned by name).
+> - **Backlog:** named profiles (`[build.PROFILE]`) — roadmap.md *Potential backlog*, "Found by the 6.6.17 lanes".
 
 > ### ⛔ Update v6.5.51 — the v6.5.49 slice shipped INERT, and the reason belongs in this proposal
 >

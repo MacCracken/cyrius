@@ -2140,7 +2140,7 @@ var _tn_ca_sys_skipped = 0;  # blocks of the bundle the set could not use       
 # not in the bundle, counted into `_tn_ca_sys_skipped`. Always 0 elsewhere.
 # Written by the claim holder only, in _tn_ca_read_win. CHANGELOG [6.6.14]
 var _tn_ca_sys_refused = 0;
-# ⛔ CVE-TBD(l1) — THE STORE'S PURPOSE IS THE CHAIN'S PURPOSE. The set above is the system roots
+# ⛔ CVE-77 — THE STORE'S PURPOSE IS THE CHAIN'S PURPOSE. The set above is the system roots
 # trusted for SERVER authentication, which a CLIENT ctx anchors a server chain to. A SERVER ctx
 # anchors CLIENT chains (mTLS, _TN_PURPOSE_CLIENT), and Windows records per root which purposes
 # its root program trusts it for (CERT_ENHKEY_USAGE_PROP_ID): tls_native_set_ca_system gave an
@@ -2227,7 +2227,7 @@ fn _tn_ca_load_into(st, pbuf, plen, pset, pskip, pref, purpose): i64 {
 # the ctx's allocator. Records the set's skipped count for tls_native_ca_skipped. A bundle with no
 # usable root is TLS_ERR_CERT_INVALID every time (the ctx keeps any set it had), as
 # tls_native_set_ca_bundle answers it. A SERVER ctx (it verifies client chains) gets, on Windows,
-# the roots the store trusts for client authentication (CVE-TBD(l1), above); a client ctx, and
+# the roots the store trusts for client authentication (CVE-77, above); a client ctx, and
 # every ctx elsewhere, the roots trusted for server authentication.
 fn tls_native_set_ca_system(ctx): i64 {
     if (ctx == 0) { return TLS_ERR_INVALID_PARAM; }
@@ -2313,7 +2313,7 @@ fn _tn_ca_read(buf, cap, refused, purpose): i64 {
 # WHICH ROOTS: the ones the root's own properties and the Disallowed store say Windows trusts for TLS
 # server authentication — the policy only ever REMOVES roots, and anything it cannot judge is refused.
 # (A server ctx's set asks the same of CLIENT authentication — every "serverAuth" below reads
-# "clientAuth" for it; CVE-TBD(l1) at `_tn_ca_cl_state`.)
+# "clientAuth" for it; CVE-77 at `_tn_ca_cl_state`.)
 #   - a root whose root-program purposes (CERT_ENHKEY_USAGE_PROP_ID) leave out serverAuth is not a
 #     TLS anchor (cass: 6, e.g. Thawte Timestamping CA) — the analogue of the Mozilla trust bits the
 #     POSIX bundles are already filtered by;

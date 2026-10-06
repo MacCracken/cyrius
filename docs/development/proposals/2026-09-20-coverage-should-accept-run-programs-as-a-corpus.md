@@ -1,6 +1,9 @@
 # Proposal — let `cyrius coverage` take RUN programs as a corpus, not just `.tcyr` suites
 
-**Filed:** 2026-09-20 · **Status:** 🟡 OPEN — for maintainer direction
+**Filed:** 2026-09-20 · **Status:** 🟡 **OPEN — A shipped 6.6.17; B (execution coverage) v6.7.x.** A (P5-A): RUN
+programs as a TEXT corpus — `[coverage] programs = ["programs/*_test.cyr"]`, `cyrius coverage --programs <glob>`,
+and the `--per-entry` view (CHANGELOG [6.6.17]). B (P5-B, instrumented build + run) lands with the v6.7.x
+bounds-checked mode; this proposal stays open until it does.
 **Filed by:** rekha (0.4.12), which has 25 test programs, ~13,000 lines of assertions, and no
 coverage number at all. Measured against cyrius 6.6.6.
 
