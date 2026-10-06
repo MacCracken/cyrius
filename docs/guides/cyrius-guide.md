@@ -551,6 +551,26 @@ complete struct's size. A pointer to a generic instance (`*Box<i32>`) steps the 
 size, `sizeof(Box<i32>)`. Before 6.6.17 both positions were the parse error
 `expected identifier, got '*'`.
 
+A `*Struct` variable — a local, a global or a parameter — takes **dot syntax**: `p.val`,
+`p.val = 3`, `p.next.val`, `p.m(..)` read and write through the pointer, and `p = q` rebinds
+the pointer (it never copies the struct). So does the result of a fn declared `: *Struct`
+(`first(h).next.val`, `first(h).m(..)`). Before 6.6.17 only a parameter did; a `*Node` local
+or global was "no struct type in scope", and such a call's result "does not return a struct".
+
+A field chain goes **through** a pointer field to a struct the way `p.val` does: `a.next.val`, `a.next.next.val = 3`, `a.next.twice()`, from a local, a global, a
+parameter, a closure capture, a call result (`mk().first.next.val`) or a longer chain, in a fn
+and at top level. (Before 6.6.17 it was `expected ';', got '.'`.)
+
+```
+struct Node { val; next: *Node; }
+fn sum(head: *Node): i64 {
+    var s = 0;
+    var p: *Node = head;
+    while (p != 0) { s = s + p.val; p = p.next; }
+    return s;
+}
+```
+
 ## Structs
 
 ```

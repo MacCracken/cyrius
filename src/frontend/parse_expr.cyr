@@ -1367,6 +1367,7 @@ fn _call_field(S): i64 {
     if (fi < 0) { if (_syntax_only == 0) { return 0; } }   # an undefined callee reports itself
     var sid = 0;
     if (fi >= 0) { sid = GFRS(S, fi); }
+    if (sid <= 0) { if (_call_ptr_field(S, ti, fi) == 1) { return 1; } }   # 6.6.17: `: *T`
     if (sid <= 0 || GINFN(S) != 1) {
         # --syntax-only: a return type from a sibling file reads as a scalar, so stay silent.
         if (_syntax_only == 0) {

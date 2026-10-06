@@ -15,6 +15,7 @@ include "lib/syscalls.cyr"
 include "lib/string.cyr"
 include "lib/alloc.cyr"
 include "lib/str.cyr"
+include "lib/fnptr.cyr"
 include "lib/assert.cyr"
 
 struct Pt { x; y; }
@@ -116,8 +117,89 @@ fn linked(): i64 {
     return 0;
 }
 
+# ── a field chain THROUGH a pointer field (6.6.17) ─────────────────────────────────────────────
+# `a.next.val` was `expected ';', got '.'`: a `*T` field was an untyped word to the chain
+# resolver. It now continues through the pointer like a `p: *Node` parameter's `p.val`.
+impl NodeOps for Node { fn twice(self): i64 { return load64(self) * 2; } }
+struct LHold { k; n: Node; }
+struct LWrap { w; first: *Node; }
+fn mkw(f): LWrap { var r: LWrap; r.w = 1; r.first = f; return r; }
+var GL = Node { 0, 0 };
+fn walk_sum(head: *Node): i64 {
+    var s = 0;
+    var p: *Node = head;
+    while (p != 0) { s = s + p.val; p = p.next; }
+    return s;
+}
+var GP: *Node = 0;
+# A `*Node` LOCAL / GLOBAL takes dot syntax like a `p: *Node` parameter (6.6.17; it was "no struct
+# type in scope"), and `p = q` rebinds the pointer — it never copies the struct.
+# `fn f(): *Node` — the call's result takes dot syntax too (6.6.17; it was "cannot take a field of
+# the result of 'first_of': it does not return a struct").
+fn first_of(h: *Node): *Node { return h; }
+fn call_ptr(): i64 {
+    var a: Node;
+    var b: Node;
+    a.val = 4; b.val = 50; a.next = &b; b.next = 0;
+    assert_eq(first_of(&a).val, 4, "f().val");
+    assert_eq(first_of(&a).next.val, 50, "f().next.val");
+    assert_eq(first_of(&a).twice(), 8, "f().twice()");
+    assert_eq(first_of(&a).next.val + 1, 51, "f().next.val + 1");
+    return 0;
+}
+fn ptr_locals(): i64 {
+    var a: Node;
+    var b: Node;
+    a.val = 1; b.val = 20; a.next = &b; b.next = 0;
+    var q: *Node = &a;
+    q.val = 5;
+    assert_eq(a.val, 5, "q.val = 5 writes through a *Node local");
+    assert_eq(q.next.val, 20, "q.next.val");
+    assert_eq(q.twice(), 10, "q.twice()");
+    var r: *Node = &b;
+    q = r;
+    assert_eq(q.val, 20, "q = r rebinds the pointer");
+    assert_eq(a.val, 5, "...and copies nothing into a");
+    assert_eq(q + 1 == &b + 16, 1, "a *Node local still steps sizeof(Node)");
+    GP = &a;
+    assert_eq(GP.val, 5, "a *Node global: GP.val");
+    GP.next.val = 21;
+    assert_eq(b.val, 21, "GP.next.val = 21");
+    assert_eq(GP.twice(), 10, "GP.twice()");
+    return 0;
+}
+fn chains(): i64 {
+    var a: Node;
+    var b: Node;
+    var c: Node;
+    a.val = 1; b.val = 20; c.val = 300;
+    a.next = &b; b.next = &c; c.next = 0;
+    assert_eq(a.next.val, 20, "a.next.val");
+    assert_eq(a.next.next.val, 300, "a.next.next.val");
+    a.next.next.val = 3;
+    assert_eq(c.val, 3, "a.next.next.val = 3 writes c");
+    assert_eq(walk_sum(&a), 24, "a linked-list walk summing .val");
+    assert_eq(a.next.twice(), 40, "a.next.twice(): a method through the pointer");
+    var h: LHold;
+    h.n.next = &b;
+    assert_eq(h.n.next.val, 20, "through an inline field chain");
+    GL.next = &c;
+    assert_eq(GL.next.val, 3, "through a global");
+    assert_eq(mkw(&a).first.next.val, 20, "through a call result");
+    var f = || a.next.val + 1;
+    assert_eq(callptr(f), 21, "through a closure capture");
+    return 0;
+}
+
 alloc_init();
 layout();
+chains();
+ptr_locals();
+call_ptr();
+var tn = Node { 7, 0 };
+tn.next = &tn;
+tn.next.next.val = 9;
+assert_eq(tn.val, 9, "at top level, read and write");
 linked();
 derived();
 field_steps();
