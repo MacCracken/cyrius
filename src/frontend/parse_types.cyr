@@ -304,8 +304,17 @@ fn _tn_var_ann(S, ti, vnoff): i64 {
 # (`_cl_snap_ptr_step`). CHANGELOG [6.6.17]
 # `ps` is PARSE_VAR's pscale: > 0 a pointer's step; 0 or `0 - sid` / a vector descriptor for
 # anything else, which is the SLTYPE as it stands.
-fn _sl_ptr_type(S, li, ps): i64 {
-    if (ps > 0) { if (ps != 8) { SLTYPE(S, li, 0); return 0; } }
+# ⛔ 6.6.17 — a `*Struct` local takes dot syntax like a `p: *Struct` parameter (`p.val`,
+# `p.next.val`, `p.m()`; it was "no struct type in scope"): its SLTYPE is `0 - sid` with no
+# inline mark (`_sl_marks` clears one), so field access reads THROUGH the slot, while a value read
+# stays a plain pointer word (`_load_lt`, behind the slot's bit 56) and `p = p.next` rebinds it.
+# `ann` is the annotation's first token.
+fn _sl_ptr_type(S, li, ps, ann): i64 {
+    if (ps > 0) {
+        var sid = _ptr_ann_sid(S, ann);
+        if (sid > 0) { SLTYPE(S, li, 0 - sid); return 0; }
+        if (ps != 8) { SLTYPE(S, li, 0); return 0; }
+    }
     SLTYPE(S, li, ps);
     return 0;
 }
@@ -313,8 +322,57 @@ fn _sl_marks(S, li, sgn, st, sw, ps): i64 {
     if (sgn == 1) { if (sw == 0) { SSLICE_W(S, li, 0 - st); } }
     if (ps > 0) {
         SSLICE_W(S, li, 0 - 0x7E00 - ps);
+        SLAGG(S, li, 0);                 # a pointer is never an inline struct (MARK_SMALL_STRUCT)
         SLPTRP(S, li);
     }
+    return 0;
+}
+# The struct a pointer annotation `*T` at token `ann` (its `*`) points at — T a struct or a
+# generic instance, one `*` — else 0.
+fn _ptr_ann_sid(S, ann): i64 {
+    if (ann <= 0) { return 0; }
+    if (TOKTYP(S, ann) != 8) { return 0; }
+    return _ptr_tok_sid(S, ann + 1);
+}
+fn _ptr_tok_sid(S, ti): i64 {
+    if (TOKTYP(S, ti) != 2) { return 0; }
+    var sid = FINDSTRUCT(S, TOKVAL(S, ti));
+    if (sid <= 0) { return 0; }
+    if (TOKTYP(S, ti + 1) != 19) { return sid; }
+    var sv = GTI(S);
+    STI(S, ti + 1);
+    var g = _gen_ann_sid(S, sid);
+    STI(S, sv);
+    if (g > 0) { return g; }
+    return sid;
+}
+# A `*T` GLOBAL: its step as before (`0 - ps` in the var-type table), and T's struct, when it is
+# one, in a side table — so `G.val` reads through it (`_gv_recv_sid`, `_gv_holds_addr`).
+var _gv_psid = 0;
+fn _gv_ptr_type(S, vi, ps, ann): i64 {
+    SVTYPE(S, vi, 0 - ps);
+    var sid = _ptr_ann_sid(S, ann);
+    if (sid <= 0) { return 0; }
+    if (_gv_psid == 0) { _gv_psid = alloc(1048576 * 8); }
+    if (vi < 1048576) { S64(_gv_psid + vi * 8, sid); }
+    return 0;
+}
+fn _gv_ptr_sid(S, vi): i64 {
+    if (_gv_psid == 0) { return 0; }
+    if (vi < 0) { return 0; }
+    if (vi >= 1048576) { return 0; }
+    return L64(_gv_psid + vi * 8);
+}
+# The struct a global receiver `vi` names for `.field`: a `*T` global's T, else its var type.
+fn _gv_recv_sid(S, vi): i64 {
+    var p = _gv_ptr_sid(S, vi);
+    if (p > 0) { return p; }
+    return GVTYPE(S, vi);
+}
+# 1 = global `vi`'s slot HOLDS the struct's address: a pointer-mode struct global, or a `*T` one.
+fn _gv_holds_addr(S, vi): i64 {
+    if (GVPM(S, vi) == 1) { return 1; }
+    if (_gv_ptr_sid(S, vi) > 0) { return 1; }
     return 0;
 }
 # The step of a typed-pointer slot `li` (a local or a `p: *T` parameter), 0 when it is none.
@@ -455,16 +513,7 @@ fn _fld_ptr_sid(S, si, fi): i64 {
     if (ent >= 8192) { return 0; }
     var v = L64(_fld_ps + ent * 8);
     if (v >= 0) { return 0; }
-    var ti = 0 - v - 1;
-    var sid = FINDSTRUCT(S, TOKVAL(S, ti));
-    if (sid <= 0) { return 0; }
-    if (TOKTYP(S, ti + 1) != 19) { return sid; }
-    var sv = GTI(S);
-    STI(S, ti + 1);
-    var g = _gen_ann_sid(S, sid);
-    STI(S, sv);
-    if (g > 0) { return g; }
-    return sid;
+    return _ptr_tok_sid(S, 0 - v - 1);
 }
 fn _fld_ps_get(S, si, fi): i64 {
     if (_fld_ps == 0) { return 0; }

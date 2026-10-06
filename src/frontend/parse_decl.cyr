@@ -482,7 +482,7 @@ fn _resolve_field_base_addr(S, idx, sid): i64 {
         # initialised from an expression yielding an address (`var G: P = mk();`),
         # which the global path records in `_var_ptrmode`. Before 6.6.5 the global
         # branch was unconditionally inline, so `G.y` read the wrong 8 bytes (0 for 22).
-        if (GVPM(S, idx) == 1) {
+        if (_gv_holds_addr(S, idx) == 1) {   # 6.6.17: a `*T` global too
             EVLOAD(S, idx);
             EMOVCA(S);
         } else { EVADDR_X1(S, idx); }
@@ -1049,7 +1049,7 @@ fn PARSE_FIELD_LOAD(S, noff): i64 {
                 _had_error = 1; sid = 0;
             }
         }
-        else { sid = GVTYPE(S, idx); }
+        else { sid = _gv_recv_sid(S, idx); }   # 6.6.17: a `*T` global's T
     }
     _field_load_on(S, noff, fnoff, pfl_beg, idx, sid);
     return 0;
@@ -1143,6 +1143,10 @@ fn _ptr_hop(S, idx, sid, off, psid): i64 {
     _resolve_field_base_addr(S, idx, sid);
     if (off > 0) { EADDIMM_X1(S, off); }
     EFIELD_LOAD_W(S, 8);
+    return _ptr_park(S, psid);
+}
+# rax = a pointer to struct `psid`: park it as a pointer-mode receiver (see `_ptr_hop`).
+fn _ptr_park(S, psid): i64 {
     if (GINFN(S) == 1) {
         var t = _ptr_temp(S, psid);
         EFLSTORE(S, t);
@@ -1264,7 +1268,7 @@ fn _field_load_on(S, noff, fnoff, pfl_beg, idx, sid): i64 {
             # 6.6.5: the recorded layout, same reader as field access (see _local_struct_is_ptr).
             if (_local_struct_is_ptr(S, mli, 0 - sid) == 1) { EFLLOAD(S, mli); } else { EFLADDR(S, mli); }
         } else {
-            if (GVPM(S, idx) == 1) { EVLOAD(S, idx); } else { EVADDR(S, idx); }
+            if (_gv_holds_addr(S, idx) == 1) { EVLOAD(S, idx); } else { EVADDR(S, idx); }
         }
         EPUSHR(S);
         # Parse remaining args.
@@ -1486,7 +1490,7 @@ fn PARSE_FIELD_STORE(S, noff): i64 {
                 _had_error = 1; sid = 0;
             }
         }
-        else { sid = GVTYPE(S, idx); }
+        else { sid = _gv_recv_sid(S, idx); }   # 6.6.17: a `*T` global's T
     }
     # v6.5.19: the assignment side of the same class — `e.size = 1;` with the
     # struct declared elsewhere. See ERR_IDENT (src/common/util.cyr).
@@ -3553,7 +3557,7 @@ fn PARSE_GVAR_REG(S): i64 {
                 SVTYPE(S, vcnt, ann_sid);
                 if (STRUCTSZ(S, ann_sid - 1) > 8) { SVPM(S, vcnt, 1); } else { SVPM(S, vcnt, 2); }
             }
-            elif (psc > 0) { SVTYPE(S, vcnt, 0 - psc); }
+            elif (psc > 0) { _gv_ptr_type(S, vcnt, psc, ann_ti); }   # 6.6.17: + T
         }
     }
     # v6.5.0 Phase 2b: stamp this global's owning file if the file opted into
@@ -5398,7 +5402,7 @@ fn PARSE_VAR(S): i64 {
                 } elif (dfc != 0) {
                     SLTYPE(S, li, dfc);   # 6.6.11: `var t = p.y;` — see _decl_float_copy
                 } else {
-                    _sl_ptr_type(S, li, pscale);   # 6.6.16: a `*i8`/`*i16`/`*i32` slot is 8 bytes, not 1/2/4
+                    _sl_ptr_type(S, li, pscale, ann_ti);   # 6.6.16: 8 bytes; 6.6.17: `*Struct` dot syntax
                 }
                 EFLSTORE(S, li);
             }
@@ -5445,7 +5449,7 @@ fn PARSE_VAR(S): i64 {
             }
         } else {
             S64(_vars_base + vcnt * 8, 8);
-            if (pscale > 0) { SVTYPE(S, vcnt, 0 - pscale); }
+            if (pscale > 0) { _gv_ptr_type(S, vcnt, pscale, ann_ti); }   # 6.6.17: + T
             if (dfc != 0) { SVTYPE(S, vcnt, dfc); }   # 6.6.11: see _decl_float_copy
             # 6.6.5 — a STRUCT-annotated global declared on the PARSE_PROG path (any `var`
             # after the first top-level statement) recorded no type at all, so `G.y` was

@@ -125,10 +125,35 @@ struct LHold { k; n: Node; }
 struct LWrap { w; first: *Node; }
 fn mkw(f): LWrap { var r: LWrap; r.w = 1; r.first = f; return r; }
 var GL = Node { 0, 0 };
-fn walk_sum(p: *Node): i64 {
+fn walk_sum(head: *Node): i64 {
     var s = 0;
+    var p: *Node = head;
     while (p != 0) { s = s + p.val; p = p.next; }
     return s;
+}
+var GP: *Node = 0;
+# A `*Node` LOCAL / GLOBAL takes dot syntax like a `p: *Node` parameter (6.6.17; it was "no struct
+# type in scope"), and `p = q` rebinds the pointer — it never copies the struct.
+fn ptr_locals(): i64 {
+    var a: Node;
+    var b: Node;
+    a.val = 1; b.val = 20; a.next = &b; b.next = 0;
+    var q: *Node = &a;
+    q.val = 5;
+    assert_eq(a.val, 5, "q.val = 5 writes through a *Node local");
+    assert_eq(q.next.val, 20, "q.next.val");
+    assert_eq(q.twice(), 10, "q.twice()");
+    var r: *Node = &b;
+    q = r;
+    assert_eq(q.val, 20, "q = r rebinds the pointer");
+    assert_eq(a.val, 5, "...and copies nothing into a");
+    assert_eq(q + 1 == &b + 16, 1, "a *Node local still steps sizeof(Node)");
+    GP = &a;
+    assert_eq(GP.val, 5, "a *Node global: GP.val");
+    GP.next.val = 21;
+    assert_eq(b.val, 21, "GP.next.val = 21");
+    assert_eq(GP.twice(), 10, "GP.twice()");
+    return 0;
 }
 fn chains(): i64 {
     var a: Node;
@@ -156,6 +181,7 @@ fn chains(): i64 {
 alloc_init();
 layout();
 chains();
+ptr_locals();
 var tn = Node { 7, 0 };
 tn.next = &tn;
 tn.next.next.val = 9;
