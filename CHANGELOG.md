@@ -6,7 +6,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [6.6.18] — 2026-10-06
 
-## [6.6.17] — 2026-10-05
+## [6.6.17] — 2026-10-06
 
 The 6.6.17 manifest release — the second row of roadmap.md § *The 6.6.x tail*: **P1**, `cyrius.cyml` as the build
 tool's configuration (one declared key vocabulary, one reader of the whole manifest, one precedence rule —
