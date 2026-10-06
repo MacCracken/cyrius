@@ -171,4 +171,17 @@ if grep -q 'compaction declined' "$WORK/a6.err"; then fail "axis 6: static x86 E
 pbuild "$CYCC" "$WORK/p0.cyr" "$WORK/a7.err" CYRIUS_DCE=1 CYRIUS_TARGET_WIN=1
 if grep -q 'compaction declined' "$WORK/a7.err"; then fail "axis 7: a PE build with no dead code reported a decline: $(cat "$WORK/a7.err")"; fi
 
-echo "PASS: dce_pe_macho_layout_declines_compaction (PE payload pinned at $A; Mach-O $MA B stable; ELF $EA -> $EB B; declines named on PE, x86 Mach-O, --pie, shared; and past the 4096-run registry)"
+# axis 8: every aarch64 target NOP-fills only, and says so. One FIXUP call site covers aarch64 ELF,
+# native aarch64 and arm64 Mach-O, so the cross-compiler is built from THIS tree (never a stale
+# build/cycc_aarch64). Target word and reason are asserted — NOT a NOP byte count, which moves
+# whenever aarch64 codegen changes size.
+xrc=0
+"$CYCC" < src/main_aarch64.cyr > "$WORK/cc_x" 2> "$WORK/cc_x.err" || xrc=$?
+[ "$xrc" = 0 ] && [ -s "$WORK/cc_x" ] || fail "axis 8: cannot cross-build cycc_aarch64 from src/main_aarch64.cyr (rc $xrc): $(tail -1 "$WORK/cc_x.err")"
+chmod +x "$WORK/cc_x"
+pbuild "$WORK/cc_x" "$WORK/p3.cyr" "$WORK/a8elf.err" CYRIUS_DCE=1
+declined "axis 8 (aarch64 ELF)" "$WORK/a8elf.err" "aarch64 ELF" "no compaction repair model"
+pbuild "$WORK/cc_x" "$WORK/p3.cyr" "$WORK/a8mo.err" CYRIUS_DCE=1 CYRIUS_MACHO_ARM=1
+declined "axis 8 (arm64 Mach-O)" "$WORK/a8mo.err" "arm64 Mach-O" "no compaction repair model"
+
+echo "PASS: dce_pe_macho_layout_declines_compaction (PE payload pinned at $A; Mach-O $MA B stable; ELF $EA -> $EB B; declines named on PE, x86 Mach-O, --pie, shared;, aarch64 ELF, arm64 Mach-O and past the 4096-run registry)"
