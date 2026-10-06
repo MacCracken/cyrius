@@ -30,8 +30,9 @@
 #   revert pulsar's step 4 to its own copy loop (verbatim)     → axis 6 red
 #   make verify-store never set `bad`                          → axis 7 red
 #   make --restore skip the lib loop                           → axis 8 red
-#   6.6.17: the guard's home resolution back to `$(cd … && pwd -P)` → axes 4g 4h 4i red
-#           (rc 1, no message); resolving a missing home as empty     → axis 4h red
+#   6.6.17: the guard's home resolution back to `$(cd … && pwd -P)` → axes 4g 4h 4i 4j red
+#           (rc 1, no message); resolving a missing home as empty     → axis 4h red;
+#           resolving only one missing level (the first cut)           → axis 4j red
 set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT"
@@ -165,6 +166,14 @@ rc=0; if ( cd "$R" && env -u CYRIUS_HOME HOME="$NH" sh scripts/install.sh --refr
 if [ "$rc" -eq 0 ] && grep -q 'return 1' "$NH/.cyrius/versions/9.9.9/lib/probe.cyr"; then
     ok "store-less HOME, tree == tag: the store is created from the tag"
 else bad "axis 4i (rc=$rc): $(head -2 "$W/a4i.err" | tr '\n' ' ')"; fi
+# 4j: $HOME ITSELF does not exist, CYRIUS_HOME unset, drifted → still the user's store: refused
+# (the first cut resolved both homes as empty there, and wrote the drifted tree — review, 6.6.17)
+printf 'fn probe_lib(): i64 { return 2; }\n' > "$R/lib/probe.cyr"
+rc=0; if ( cd "$R" && env -u CYRIUS_HOME HOME="$W/gone/home" sh scripts/install.sh --refresh-only > "$W/a4j.out" 2> "$W/a4j.err" ); then rc=0; else rc=$?; fi
+if [ "$rc" -ne 0 ] && grep -q "CUT RELEASE" "$W/a4j.err" && [ ! -e "$W/gone" ]; then
+    ok "HOME missing, CYRIUS_HOME unset, drifted: refused by name, nothing created"
+else bad "axis 4j (rc=$rc): $(head -1 "$W/a4j.err")"; fi
+( cd "$R" && git checkout -q -- lib/probe.cyr )
 
 # ── axis 5: `cyrius lsp` refuses to write bin/ of a live released slot — DETERMINISTIC: the
 #    guard runs BEFORE the compile and reads git from the CWD, so the mini-repo (tag 9.9.9,
