@@ -548,6 +548,20 @@ complete struct's size. A pointer to a generic instance (`*Box<i32>`) steps the 
 size, `sizeof(Box<i32>)`. Before 6.6.17 both positions were the parse error
 `expected identifier, got '*'`.
 
+A field chain goes **through** a pointer field to a struct the way a `p: *Node` parameter's
+`p.val` does: `a.next.val`, `a.next.next.val = 3`, `a.next.twice()`, from a local, a global, a
+parameter, a closure capture, a call result (`mk().first.next.val`) or a longer chain, in a fn
+and at top level. (Before 6.6.17 it was `expected ';', got '.'`.)
+
+```
+struct Node { val; next: *Node; }
+fn sum(p: *Node): i64 {
+    var s = 0;
+    while (p != 0) { s = s + p.val; p = p.next; }
+    return s;
+}
+```
+
 ## Structs
 
 ```

@@ -448,6 +448,24 @@ fn _fld_ptr_late(S): i64 {
     SKIP_GENERICS(S);
     return 0 - (ti + 1);
 }
+# The pointee struct of a `name: *T` field — T a struct, or a generic instance — else 0. 6.6.17
+fn _fld_ptr_sid(S, si, fi): i64 {
+    if (_fld_ps == 0) { return 0; }
+    var ent = (L64(S + 0x1AA018 + si * 8) + fi) & 0x7FFFFFFFFFFFFFFF;
+    if (ent >= 8192) { return 0; }
+    var v = L64(_fld_ps + ent * 8);
+    if (v >= 0) { return 0; }
+    var ti = 0 - v - 1;
+    var sid = FINDSTRUCT(S, TOKVAL(S, ti));
+    if (sid <= 0) { return 0; }
+    if (TOKTYP(S, ti + 1) != 19) { return sid; }
+    var sv = GTI(S);
+    STI(S, ti + 1);
+    var g = _gen_ann_sid(S, sid);
+    STI(S, sv);
+    if (g > 0) { return g; }
+    return sid;
+}
 fn _fld_ps_get(S, si, fi): i64 {
     if (_fld_ps == 0) { return 0; }
     var ent = (L64(S + 0x1AA018 + si * 8) + fi) & 0x7FFFFFFFFFFFFFFF;
