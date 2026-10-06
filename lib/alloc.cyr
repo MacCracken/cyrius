@@ -330,7 +330,7 @@ fn alloc(size): i64 {
     #endif
     _alloc_lock_release();
     #ifdef CYRIUS_POISON
-    return _poison_arm_alloc(ptr, pz_req);                       # armed + published outside the lock
+    return _poison_arm_alloc(ptr, pz_req, 1);                    # armed + published outside the lock
     #endif
     return ptr;
 }

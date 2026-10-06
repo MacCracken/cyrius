@@ -40,7 +40,7 @@ var _poison_next_sweep = 1024;
 # A poisoned BUMP block (poison_alloc, the seam wrappers, and — under CYRIUS_POISON — alloc()
 # and arenas) is laid out
 #     blk+0    next on the global live list
-#     blk+8    meta: req (bits 0..47) | kind << 48 | FORGET bit 53 | REPORTED bit 54
+#     blk+8    meta: req (bits 0..47) | kind << 48 | COUNTED bit 52 | FORGET bit 53 | REPORTED bit 54
 #                    | DEAD bit 55 | fill << 56
 #     blk+16   next on the OWNER's list (an arena's, a wrapper's), else 0
 #     blk+24   leading redzone, _POISON_RZ bytes of fill
@@ -56,10 +56,15 @@ var _poison_head = 0;
 # Head of the fl live list: lib/freelist.cyr's poisoned blocks, doubly linked through blk+16
 # (prev) / blk+24 (next) because fl blocks ARE recycled and must leave the list at fl_free.
 var _poison_fl_head = 0;
-# Bytes the redzones and headers added to the macOS / Windows bump heap since the last
-# alloc_reset — their alloc_used() subtracts it, so poison never changes what it reports.
-# Updated under alloc.cyr's lock.
-var _poison_overhead = 0;
+# How many blocks each list holds, so a walk that must stop at a smashed header can say how
+# many older blocks it could not reach.
+var _poison_nlisted = 0;
+var _poison_fl_n = 0;
+# macOS / Windows: the bump offset alloc() WOULD have reached without poison — it advances by
+# the rounded request exactly when the non-poison request would have fit the reserve, so
+# their alloc_used() (and the reserve-or-`big` split it reflects) is the non-poison one even
+# though the redzones fill the real reserve sooner. Updated under alloc.cyr's lock.
+var _poison_shadow = 0;
 # Bytes of alloc() blocks that serve ARENA requests (and the 8 extra header bytes per arena).
 # Without poison those bytes live inside the arena's own chunk, so alloc_used() subtracts them:
 # poison never changes what alloc_used() reports.
@@ -209,11 +214,16 @@ fn _poison_cat_hex(buf, pos, n): i64 {
 
 # Report one detection: a single stderr line, counted, and fatal (exit 86) when trapping.
 #   kind: 1 alloc, 2 arena, 3 fl, 4 seam, 0 unknown (header undecodable)
-#   side: 1 leading, 2 trailing, 3 after-free, 4 header
+#   side: 1 leading, 2 trailing, 3 after-free, 4 header, 5 double free (its own line)
 fn _poison_report(kind, side, blk, req, nbad): i64 {
     _poison_viol = _poison_viol + 1;
     var line[192];
-    var pos = _poison_cat(&line, 0, "poison: redzone overwrite \xe2\x80\x94 ");
+    var pos = 0;
+    if (side == 5) {
+        pos = _poison_cat(&line, 0, "poison: double free \xe2\x80\x94 ");
+    } else {
+        pos = _poison_cat(&line, 0, "poison: redzone overwrite \xe2\x80\x94 ");
+    }
     if (kind == 0) { pos = _poison_cat(&line, pos, "unknown"); }
     if (kind == 1) { pos = _poison_cat(&line, pos, "alloc"); }
     if (kind == 2) { pos = _poison_cat(&line, pos, "arena"); }
@@ -223,6 +233,12 @@ fn _poison_report(kind, side, blk, req, nbad): i64 {
     pos = _poison_cat_hex(&line, pos, blk);
     pos = _poison_cat(&line, pos, " (");
     pos = _poison_cat_dec(&line, pos, req);
+    if (side == 5) {
+        pos = _poison_cat(&line, pos, " bytes)\n");
+        syscall(1, 2, &line, pos);
+        if (_poison_trap == 1) { sys_exit_group(86); }
+        return 0;
+    }
     pos = _poison_cat(&line, pos, " bytes): ");
     pos = _poison_cat_dec(&line, pos, nbad);
     pos = _poison_cat(&line, pos, " byte(s) changed [");
@@ -278,26 +294,39 @@ fn _poison_publish(blk): i64 {
     if (h != 0) { _poison_check_bump(h); }
     store64(blk, h);
     _poison_head = blk;
+    _poison_nlisted = _poison_nlisted + 1;
     var sw = _poison_tick();
     _poison_lock_release();
     if (sw == 1) { poison_sweep(); }
     return 0;
 }
 
+# 1 when `meta` can be a poisoned bump block's meta word: a nonzero fill, a known kind, and
+# a request alloc() could have accepted.
+fn _poison_meta_ok(meta): i64 {
+    if ((meta >> 56) == 0) { return 0; }
+    var kind = (meta >> 48) & 15;
+    if (kind == 0 || kind > 4) { return 0; }
+    if ((meta & 0xFFFFFFFFFFFF) > 0x80000000) { return 0; }
+    return 1;
+}
+
 # Check one bump block. Returns the number of changed bytes (0 = intact), or -1 when the
 # header itself is not a poisoned block's (smashed by a wide overflow from below): its list
-# link cannot be trusted either, so a walk stops there. A block is REPORTED (and counted)
-# the first time it is found bad; later sweeps still return it as bad but stay quiet.
+# link cannot be trusted either, so a walk stops there. A decodable block is REPORTED (and
+# counted) the first time it is found bad; later sweeps still return it as bad but stay quiet.
+# ⛔ An UNDECODABLE header is reported EVERY time: its REPORTED bit is a bit of whatever was
+# written over it (0x4141... has it set), so reading it would silence the very detection.
 fn _poison_check_bump(blk): i64 {
     var meta = load64(blk + 8);
+    var u = blk + _POISON_HDR + _POISON_RZ;
+    if (_poison_meta_ok(meta) == 0) {
+        _poison_report(0, 4, u, 0, 8);
+        return 0 - 1;
+    }
     var fill = meta >> 56;
     var req = meta & 0xFFFFFFFFFFFF;
     var kind = (meta >> 48) & 15;
-    var u = blk + _POISON_HDR + _POISON_RZ;
-    if (fill == 0 || kind == 0 || kind > 4 || req > 0x80000000) {
-        if (((meta >> 54) & 1) == 0) { _poison_report(0, 4, u, 0, 8); }
-        return 0 - 1;
-    }
     var span = (req + 7) & (0 - 8);
     var bad = 0;
     var side = 3;
@@ -339,20 +368,43 @@ fn _poison_kill(blk): i64 {
 fn poison_sweep(): i64 {
     var n = 0;
     _poison_lock_acquire();
+    var seen = 0;
     var b = _poison_head;
     while (b != 0) {
         var r = _poison_check_bump(b);
+        seen = seen + 1;
         if (r != 0) { n = n + 1; }
-        if (r < 0) { b = 0; } else { b = load64(b); }
+        if (r < 0) {
+            _poison_report_stop(b + _POISON_HDR + _POISON_RZ, _poison_nlisted - seen);
+            b = 0;
+        } else { b = load64(b); }
     }
+    seen = 0;
     b = _poison_fl_head;
     while (b != 0) {
         var rf = _poison_fl_check(b);
+        seen = seen + 1;
         if (rf != 0) { n = n + 1; }
-        if (rf < 0) { b = 0; } else { b = load64(b + 24); }
+        if (rf < 0) {
+            _poison_report_stop(b + 40 + _POISON_RZ, _poison_fl_n - seen);
+            b = 0;
+        } else { b = load64(b + 24); }
     }
     _poison_lock_release();
     return n;
+}
+
+# A walk stopped at a smashed header: the link past it is as untrustworthy as the header, so
+# say so — and how many older listed blocks went unchecked — rather than look clean.
+fn _poison_report_stop(u, left): i64 {
+    var line[160];
+    var pos = _poison_cat(&line, 0, "poison: sweep stopped at block ");
+    pos = _poison_cat_hex(&line, pos, u);
+    pos = _poison_cat(&line, pos, " (header overwritten): ");
+    pos = _poison_cat_dec(&line, pos, left);
+    pos = _poison_cat(&line, pos, " older block(s) not checked\n");
+    syscall(1, 2, &line, pos);
+    return 0;
 }
 
 # Stop tracking every bump block (the lists only — the memory is untouched). Call it after
@@ -362,6 +414,7 @@ fn poison_sweep(): i64 {
 fn poison_forget_all(): i64 {
     _poison_lock_acquire();
     _poison_head = 0;
+    _poison_nlisted = 0;
     _poison_lock_release();
     return 0;
 }
@@ -390,10 +443,29 @@ fn _poison_alloc_armed(): i64 {
 
 # alloc()'s poison arm (CYRIUS_POISON): `blk` is a span of _poison_bump_total(req) bytes
 # fresh from the heap (zeroed). Arm it as an `alloc` block, publish it, return the user ptr.
-fn _poison_arm_alloc(blk, req): i64 {
+# `counted` (meta bit 52) records whether alloc_used() counted this request — always on
+# Linux; on macOS / Windows only when the non-poison request would have fit the reserve.
+# An arena that takes the block hides exactly what was counted.
+fn _poison_arm_alloc(blk, req, counted): i64 {
     var u = _poison_arm_bump(blk, req, 1);
+    if (counted == 1) { store64(blk + 8, load64(blk + 8) | (1 << 52)); }
     _poison_publish(blk);
     return u;
+}
+
+# macOS / Windows alloc(), under its lock: advance the shadow offset when the non-poison
+# request would fit a reserve of `cap` bytes. Returns 1 when it counted.
+fn _poison_shadow_take(req, cap): i64 {
+    var r8 = (req + 7) & (0 - 8);
+    if (_poison_shadow - _poison_hidden + r8 > cap) { return 0; }
+    _poison_shadow = _poison_shadow + r8;
+    return 1;
+}
+
+# The allocation failed after it was counted: take it back. Under alloc.cyr's lock.
+fn _poison_shadow_undo(req, counted): i64 {
+    if (counted == 1) { _poison_shadow = _poison_shadow - ((req + 7) & (0 - 8)); }
+    return 0;
 }
 
 # Allocate `n` bytes with both redzones armed and the block on the live list, whatever the
@@ -427,10 +499,21 @@ fn _poison_block(n, kind): i64 {
 # Free a pointer from poison_alloc (or, under CYRIUS_POISON, from alloc()): check it, then
 # quarantine it — its bytes become fill and it stays listed DEAD, so a read after free sees
 # the fill and a write after free is found by the next sweep. The memory is never reused.
+# A second free of a block already DEAD is reported as a double free (and is fatal under the
+# compile flag) — re-quarantining it silently would hide the bug. (_poison_kill itself stays
+# idempotent: arena quarantine may meet an already-dead block legitimately.)
 fn poison_free(p): i64 {
     if (p == 0) { return 0; }
+    var blk = p - _POISON_RZ - _POISON_HDR;
     _poison_lock_acquire();
-    _poison_kill(p - _POISON_RZ - _POISON_HDR);
+    var meta = load64(blk + 8);
+    var dead = 0;
+    if (_poison_meta_ok(meta) == 1) { dead = (meta >> 55) & 1; }
+    if (dead == 1) {
+        _poison_report((meta >> 48) & 15, 5, p, meta & 0xFFFFFFFFFFFF, 0);
+    } else {
+        _poison_kill(blk);
+    }
     _poison_lock_release();
     return 0;
 }
@@ -480,9 +563,17 @@ fn _poison_va_reset(state): i64 {
     var link = &_poison_head;
     var c = _poison_head;
     while (c != 0) {
-        var nx = load64(c);
-        if (((load64(c + 8) >> 53) & 1) == 1) { store64(link, nx); } else { link = c; }
-        c = nx;
+        # A smashed header ends the walk (its link is garbage); blocks past it stay listed.
+        if (_poison_meta_ok(load64(c + 8)) == 0) {
+            c = 0;
+        } else {
+            var nx = load64(c);
+            if (((load64(c + 8) >> 53) & 1) == 1) {
+                store64(link, nx);
+                _poison_nlisted = _poison_nlisted - 1;
+            } else { link = c; }
+            c = nx;
+        }
     }
     store64(state + 8, 0);
     _poison_lock_release();
@@ -532,6 +623,7 @@ fn _poison_fl_link(blk): i64 {
     store64(blk + 24, _poison_fl_head);
     if (_poison_fl_head != 0) { store64(_poison_fl_head + 16, blk); }
     _poison_fl_head = blk;
+    _poison_fl_n = _poison_fl_n + 1;
     return 0;
 }
 
@@ -544,6 +636,7 @@ fn _poison_fl_unlink(blk): i64 {
     if (nx != 0) { store64(nx + 16, pv); }
     store64(blk + 16, 0);
     store64(blk + 24, 0);
+    _poison_fl_n = _poison_fl_n - 1;
     return 0;
 }
 
@@ -584,8 +677,13 @@ fn _poison_fl_check(blk): i64 {
     var req = meta & 0xFFFFFFFFFFFF;
     var u = blk + 40 + _POISON_RZ;
     var cap = _poison_fl_cap(blk);
-    if (fill == 0 || ((meta >> 48) & 15) != 3 || cap < 0 || req > cap) {
-        if (((meta >> 54) & 1) == 0) { _poison_report(3, 4, u, 0, 8); }
+    var cls = load64(blk + 8);
+    # Undecodable: reported EVERY time — its REPORTED bit would be a bit of the garbage.
+    var badhdr = 0;
+    if (fill == 0 || ((meta >> 48) & 15) != 3 || cap < 0 || req > cap) { badhdr = 1; }
+    if (cls > 8 && (blk & 4095) != 0) { badhdr = 1; }
+    if (badhdr == 1) {
+        _poison_report(3, 4, u, 0, 8);
         return 0 - 1;
     }
     var lead = _poison_count_bad(blk + 40, _POISON_RZ, fill);
@@ -610,9 +708,11 @@ fn _poison_fl_check(blk): i64 {
 fn _poison_arena_new(capacity): i64 {
     var a = alloc(64);
     if (a == 0) { return 0; }
-    _poison_lock_acquire();
-    _poison_hidden = _poison_hidden + 8;    # the non-poison header is 56 bytes
-    _poison_lock_release();
+    if (((load64(a - _POISON_RZ - _POISON_HDR + 8) >> 52) & 1) == 1) {
+        _poison_lock_acquire();
+        _poison_hidden = _poison_hidden + 8;    # the non-poison header is 56 bytes
+        _poison_lock_release();
+    }
     var ch = alloc(capacity + 16);
     if (ch == 0) { return 0; }
     store64(ch, 0);
@@ -633,10 +733,12 @@ fn _poison_arena_new(capacity): i64 {
 fn _poison_arena_take(a, req): i64 {
     var u = _poison_block(req, 2);
     if (u == 0) { return 0; }
-    _poison_lock_acquire();
-    _poison_hidden = _poison_hidden + ((req + 7) & (0 - 8));
-    _poison_lock_release();
     var blk = u - _POISON_RZ - _POISON_HDR;
+    if (((load64(blk + 8) >> 52) & 1) == 1) {      # only what alloc_used() counted is hidden
+        _poison_lock_acquire();
+        _poison_hidden = _poison_hidden + ((req + 7) & (0 - 8));
+        _poison_lock_release();
+    }
     store64(blk + 16, load64(a + 56));
     store64(a + 56, blk);
     return u;
