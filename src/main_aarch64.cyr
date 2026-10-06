@@ -441,9 +441,10 @@ if (_mono_env != 0) {
     }
 }
 
-# Pass 1: Pre-scan to register all global vars and structs (no fn bodies)
-_tl_pass1(S, 0);   # 6.6.17: the ONE pass-1 scan, shared by every fork (src/frontend/parse_fn.cyr)
-
+# 6.6.17 — the TARGET flags are read BEFORE pass 1: `_prescan_params` records each fn's
+# parameter shapes by `_TARGET_PE` (a Win64 vector parameter is passed by address), so with the
+# flag set after pass 1 a forward call to a vector-param fn was marshalled SysV-style and the PE
+# callee faulted. tests/tcyr/crossos/vector_param_forward_call.tcyr. CHANGELOG [6.6.17]
 # Mach-O output via CYRIUS_MACHO_ARM=1 (aarch64 cross-compiler path)
 var _macho_arm_env = _read_env("CYRIUS_MACHO_ARM");
 if (_macho_arm_env != 0) {
@@ -451,6 +452,10 @@ if (_macho_arm_env != 0) {
         _TARGET_MACHO = 2;
     }
 }
+
+# Pass 1: Pre-scan to register all global vars and structs (no fn bodies)
+_tl_pass1(S, 0);   # 6.6.17: the ONE pass-1 scan, shared by every fork (src/frontend/parse_fn.cyr)
+
 
 # v6.3.5 AR-01 — monomorphization opt-in is now read BEFORE pass-1 (see above,
 # v6.3.39 aarch64 parity). This site retired.

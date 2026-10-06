@@ -340,14 +340,19 @@ EW(S, 0x910003FC);  # mov x28, sp
 # Emit initial branch over fn bodies (aarch64: B +0, patch later)
 var jmp_patch = EJMP0(S);
 
-# Pass 1: Pre-scan to register all global vars and structs (no fn bodies)
-_tl_pass1(S, 0);   # 6.6.17: the ONE pass-1 scan, shared by every fork (src/frontend/parse_fn.cyr)
-
+# 6.6.17 — the TARGET flags are read BEFORE pass 1: `_prescan_params` records each fn's
+# parameter shapes by `_TARGET_PE` (a Win64 vector parameter is passed by address), so with the
+# flag set after pass 1 a forward call to a vector-param fn was marshalled SysV-style and the PE
+# callee faulted. tests/tcyr/crossos/vector_param_forward_call.tcyr. CHANGELOG [6.6.17]
 # cycc_macho runs on Apple Silicon; its default output target is Mach-O
 # ARM64. Forced here rather than env-gated because this variant only
 # makes sense on macOS — a Mac user invoking it without the env var
 # would otherwise silently emit Linux aarch64 ELF, which is surprising.
 _TARGET_MACHO = 2;
+
+# Pass 1: Pre-scan to register all global vars and structs (no fn bodies)
+_tl_pass1(S, 0);   # 6.6.17: the ONE pass-1 scan, shared by every fork (src/frontend/parse_fn.cyr)
+
 
 # v6.3.5 AR-01 — opt-in monomorphization substrate (CYRIUS_MONOMORPH=1; default off; see util.cyr).
 var _mono_env = _read_env("CYRIUS_MONOMORPH");

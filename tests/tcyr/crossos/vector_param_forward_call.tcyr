@@ -1,0 +1,47 @@
+# vector_param_forward_call.tcyr — 6.6.17: a call to a fn with a value-form VECTOR parameter,
+# parsed BEFORE that fn's definition, passes the vector the way the target's ABI does.
+#
+# THE DEFECT (Windows). Pass 1 records each fn's parameter shapes so a forward call is
+# marshalled right; on Win64 a 16/32-byte vector parameter is passed by ADDRESS, on SysV in
+# vector registers, and `_prescan_params` picks by `_TARGET_PE`. The driver set `_TARGET_PE`
+# AFTER pass 1, so the forward call was marshalled SysV-style and the PE callee read a
+# register as a pointer: a page fault (wine), while the same code with the callee first ran.
+# The target flags are now known before pass 1 in every fork. A callee defined first is the
+# control row.
+include "lib/assert.cyr"
+
+fn first_lo(v: f64v2): i64 { return load64(&v + 0); }
+
+fn early(): i64 {
+    var x: f64v2;
+    store64(&x + 0, 0x1111);
+    store64(&x + 8, 0x2222);
+    var r = late_lo(x) + late_hi(x);
+    return r;
+}
+fn early_two(): i64 {
+    var a: f64v2;
+    var b: f64v2;
+    store64(&a + 0, 7);
+    store64(&a + 8, 9);
+    store64(&b + 0, 20);
+    store64(&b + 8, 6);
+    var r = late_sum(5, a, b);
+    return r;
+}
+fn early_control(): i64 {
+    var x: f64v2;
+    store64(&x + 0, 0x4444);
+    store64(&x + 8, 0);
+    var r = first_lo(x);
+    return r;
+}
+
+fn late_lo(v: f64v2): i64 { return load64(&v + 0); }
+fn late_hi(v: f64v2): i64 { return load64(&v + 8); }
+fn late_sum(k, p: f64v2, q: f64v2): i64 { return k + load64(&p + 0) + load64(&p + 8) + load64(&q + 0) + load64(&q + 8); }
+
+assert_eq(early(), 0x3333, "forward calls passing one f64v2");
+assert_eq(early_two(), 47, "a forward call mixing an int and two f64v2");
+assert_eq(early_control(), 0x4444, "control: the callee defined first");
+var r = assert_summary();
