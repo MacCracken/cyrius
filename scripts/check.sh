@@ -805,6 +805,11 @@ _chk_gate "$ROOT/tests/gates/codegen/ir_edges_scaling.sh"
 # assertion with a non-zero control so it cannot go vacuous.
 _chk_gate "$ROOT/tests/gates/codegen/stack_enum_no_alloc.sh"
 
+# 6.6.17 — a string only a diagnostic reads (a `#deprecated` / `#assert` message, #derive's
+# generated ones too) leaves no bytes in the binary: the lexer moves it to a side table. Binaries
+# that differ only in such messages are byte-identical; the messages still print.
+_chk_gate "$ROOT/tests/gates/codegen/compile_time_strings_not_emitted.sh"
+
 # v6.5.56 P0: identifier dedup must be an EXACT compare. It was a PREFIX compare that happened to
 # be exact only while `bucket = klen` put one length per chain; v6.5.50's content hash removed
 # that invariant without adding the terminator check it had been standing in for, so a shorter
@@ -1081,6 +1086,11 @@ _chk_gate "$ROOT/tests/gates/codegen/dce_data_vaddr_frozen.sh"
 # four warnings measured in BOTH positions on every runnable fork, plus #assert, bare
 # #deprecated and cx #naked rows.
 _chk_gate "$ROOT/tests/gates/frontend/directive_fork_parity.sh"
+
+# 6.6.17: the top-level scans (pass 1, pass 2, enum inits) live ONCE in src/frontend/parse_fn.cyr
+# and every src/main*.cyr fork calls them; a fork that re-grows its own copy (reads PEEKT, calls
+# a scan arm) is refused. Static — the byte-identical proof of the DRY is in CHANGELOG [6.6.17].
+_chk_gate "$ROOT/tests/gates/frontend/toplevel_scan_shared.sh"
 
 # v6.5.64: a fixed-lane vector op on three &local operands must emit the DIRECT form (two rbp
 # loads, the packed op, one store) with its result reload ELIDED by SLASE — while a real batch
@@ -1749,6 +1759,16 @@ _chk_gate "$ROOT/tests/gates/diagnostics/nested_fn_refused.sh"
 # operator dispatch, the PE vector paths, a generic instance, an `#inline` / generic re-parse;
 # a tail call is reported at 14:18, not the next token. Binaries identical without the attribute.
 _chk_gate "$ROOT/tests/gates/diagnostics/deprecated_every_call_path.sh"
+
+# 6.6.17 — C9's twin for `private`: a tail call's error names its own line, not the `}` after it;
+# and `expected '}', got end of file` names <file>:line:col just past the last source byte (it
+# had no file and a line past the end, and an included file's EOF showed a `#@file` marker).
+_chk_gate "$ROOT/tests/gates/diagnostics/diag_location_eof_and_tail_private.sh"
+
+# 6.6.17 — four false warnings on valid code, each with a row proving the warning still fires on
+# a wrong shape: `undefined function` for a fn in a top-level block called earlier, and `assigning
+# non-pointer to typed pointer` for a same-typed global, a `: Str` method and a `: Str` field.
+_chk_gate "$ROOT/tests/gates/diagnostics/false_warnings_valid_shapes.sh"
 
 # 6.6.16 (C10) — cycc's `lib/...` include fallback reads CYRIUS_HOME's store slot, else HOME's,
 # from the WHOLE environment: both orders, empty = unset, no fall-through to HOME, past 4 KB / 8 KB

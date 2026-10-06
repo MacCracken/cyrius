@@ -1855,15 +1855,17 @@ fn _cl_cap_esl(S, noff): i64 {
 }
 
 var _sca_shape = 0;   # how the argument's head is written: 0 `x`, 1 `f(..)`, 2 `g<..>(..)`
-var _sca_di = 0;      # the `.` of the one `.f` / `.m(..)` step after the head, 0 when none
+var _sca_di = 0;      # the `.` of the LAST `.f` / `.m(..)` step after the head, 0 when none
+var _sca_d0 = 0;      # the `.` of the FIRST step (6.6.17: nested fields `a.b.name` are several)
 # What the hint wraps in str_cstr(..): 0 `..`, 1 the head as written (`x.data` -> x), 2 the
 # argument as written, 3 the IDENT inside `str_data(x)`.
 var _sca_op = 0;
 # What the argument at the cursor hands a `: cstring` param: 1 a Str, 2 a Str's data pointer
-# (`x.data`, `str_data(..)`), 0 not known. Only a head (`x`, `f(..)`, `g<..>(..)`) with at most
-# ONE step after it (`.f`, `.m(..)`) that together END the argument is typed: `x.f.g`,
-# `x.m().n()`, `s + 8` and `load64(p)` are 0.
-# A pure peek (it writes only `_sca_shape` / `_sca_di` / `_sca_op`, which the warning recomputes),
+# (`x.data`, `x.data()`, `str_data(..)`), 0 not known. Only a head (`x`, `f(..)`, `g<..>(..)`,
+# a generic `: T` by T's binding) followed by nested STRUCT fields and then at most one `.f` /
+# `.m(..)` step, together ENDING the argument, is typed (6.6.17: `a.b.name`): `x.m().n()`,
+# a step into a Str field, `s + 8` and `load64(p)` are 0.
+# A pure peek (it writes only `_sca_shape` / `_sca_di` / `_sca_d0` / `_sca_op`, which the warning recomputes),
 # and it does not depend on CYRIUS_TYPE_CHECK: PARSE_FNCALL's overload dispatcher routes
 # `base(x, ..)` to `base_str` exactly when this answers 1 for the FIRST argument, so a first
 # argument the warning would call "Str-typed" never reaches a base that has an arity-compatible
@@ -1878,6 +1880,7 @@ fn _str_arg_kind(S, ssid): i64 {
     var ti = GTI(S);
     _sca_shape = 0;
     _sca_di = 0;
+    _sca_d0 = 0;
     if (TOKTYP(S, ti) != 2) { return 0; }
     if (_tok_ends_arg(S, ti + 1) == 1) {
         _sca_op = 2;
@@ -1907,6 +1910,7 @@ fn _str_call_kind(S, ti, o, ssid): i64 {
     var cfi = FINDFN(S, TOKVAL(S, ti));
     var rs = 0;
     if (cfi >= 0) { rs = GFRS(S, cfi); }
+    if (rs <= 0) { if (cfi >= 0) { rs = _gen_ret_bound(S, cfi, ti, o); } }   # 6.6.17: `: T`
     if (_tok_ends_arg(S, e + 1) == 0) {
         if (TOKTYP(S, e + 1) != 41) { return 0; }
         var k = _str_step_kind(S, e + 1, rs, ssid);
@@ -1930,17 +1934,22 @@ fn _str_step_kind(S, di, rsid, ssid): i64 {
     if (TOKTYP(S, di + 1) != 2) { return 0; }
     if (rsid <= 0) { return 0; }
     _sca_di = di;
+    if (_sca_d0 == 0) { _sca_d0 = di; }
     if (TOKTYP(S, di + 2) == 10) {
         _sca_op = 2;
         var e = _tok_close_paren(S, di + 2);
         if (e < 0) { return 0; }
         if (_tok_ends_arg(S, e + 1) == 0) { return 0; }
+        if (_str_data_call(S, di, e, rsid, ssid) == 1) { return 2; }   # 6.6.17: `x.data()`
         var mf = FINDFN(S, BUILD_METHOD_NAME(S, rsid - 1, TOKVAL(S, di + 1)));
         if (mf < 0) { return 0; }
         if (GFRS(S, mf) == ssid) { return 1; }
         return 0;
     }
-    if (_tok_ends_arg(S, di + 2) == 0) { return 0; }
+    if (_tok_ends_arg(S, di + 2) == 0) {
+        var nk = _str_nested_step(S, di, rsid, ssid);   # 6.6.17: `a.b.name`
+        return nk;
+    }
     if (rsid == ssid) {
         _sca_op = 1;
         if (_noff_is(S, TOKVAL(S, di + 1), "data", 4) == 1) { return 2; }
@@ -1953,10 +1962,93 @@ fn _str_step_kind(S, di, rsid, ssid): i64 {
     return 0;
 }
 
+# 6.6.17 — `a.b.name`: a field that does not end the argument continues the chain when it is a
+# nested STRUCT and the next step is a field, as PARSE_FIELD_LOAD walks it (`_rlf_more`). A
+# `: Str` field is never stepped INTO (it is a pointer slot, not an inline struct), and a
+# `.m(..)` after a nested field is not parsed at all, so neither is typed.
+fn _str_nested_step(S, di, rsid, ssid): i64 {
+    if (TOKTYP(S, di + 2) != 41) { return 0; }
+    if (TOKTYP(S, di + 3) != 2) { return 0; }
+    if (TOKTYP(S, di + 4) == 10) { return 0; }
+    if (rsid == ssid) { return 0; }
+    var fx = FINDFIELD(S, rsid - 1, TOKVAL(S, di + 1));
+    if (fx < 0) { return 0; }
+    var ft = GETFTYPE(S, rsid - 1, fx);
+    if (ft <= 0) { return 0; }
+    if (ft == ssid) { return 0; }
+    var k = _str_step_kind(S, di + 2, ft, ssid);
+    return k;
+}
+# 6.6.17 — `x.data()` on a Str is its data pointer, the method spelling of `x.data` and
+# `str_data(x)` (I11 named those two and was silent on this one). 1 when the step at `di`, its
+# `)` at `e`, is exactly that.
+fn _str_data_call(S, di, e, rsid, ssid): i64 {
+    if (rsid != ssid) { return 0; }
+    if (e != di + 3) { return 0; }
+    if (_noff_is(S, TOKVAL(S, di + 1), "data", 4) == 0) { return 0; }
+    _sca_op = 1;
+    return 1;
+}
+# 6.6.17 — what a generic declared `: T` returns at THIS call: the struct T is bound to, by the
+# explicit type argument (`g<Str>(..)`) or by the argument the call infers it from (`g(s)`) — the
+# binding `_gen_resolve_call` instantiates on. A peek: no instance is minted here. 0 when T is not
+# bound to a struct (the call returns a scalar, as before).
+fn _gen_ret_bound(S, fi, ti, o): i64 {
+    if (_MONOMORPH_OK == 0) { return 0; }
+    var w = _gen_ret_tparam(S, fi);
+    if (w < 0) { return 0; }
+    var c = 0;
+    if (o != ti + 1) { c = _gen_explicit_targ(S, ti, w); }
+    else { c = _gen_infer_tp(S, fi, o, w); }
+    if (c > 0) { return c; }
+    return 0;
+}
+# Which type parameter (0 / 1) generic `fi` names as its return type, read from its signature
+# (`fn g<T>(..): T`), else -1.
+fn _gen_ret_tparam(S, fi): i64 {
+    var tp = GFTP(S, fi);
+    if (tp == 0) { return 0 - 1; }
+    var ds = GFDS(S, fi);
+    if (ds <= 0) { return 0 - 1; }
+    var i = ds;                                  # the fn's name (GFDS = the `fn` token + 1)
+    var n = GTCNT(S);
+    while (i < n) { if (TOKTYP(S, i) == 10) { break; } i = i + 1; }
+    var e = _tok_close_paren(S, i);
+    if (e < 0) { return 0 - 1; }
+    if (TOKTYP(S, e + 1) != 49) { return 0 - 1; }
+    if (TOKTYP(S, e + 2) != 2) { return 0 - 1; }
+    var rn = TOKVAL(S, e + 2);
+    var t0 = tp & 0xFFFFFFFF;
+    var t1 = (tp >> 32) & 0xFFFFFFFF;
+    if (t0 != 0) { if (rn == t0 - 1) { return 0; } }
+    if (t1 != 0) { if (rn == t1 - 1) { return 1; } }
+    return 0 - 1;
+}
+# The struct named by explicit type argument `w` of the call at `ti` (`g<A>(` / `g<A, B>(`), when
+# it is a single name; 0 otherwise (a scalar or a nested generic is not a Str).
+fn _gen_explicit_targ(S, ti, w): i64 {
+    var a = ti + 2;
+    if (w == 1) {
+        if (TOKTYP(S, a + 1) != 31) { return 0; }
+        a = a + 2;
+    }
+    if (TOKTYP(S, a) != 2) { return 0; }
+    var nt = TOKTYP(S, a + 1);
+    if (nt != 20) { if (nt != 31) { return 0; } }
+    var sid = FINDSTRUCT(S, TOKVAL(S, a));
+    return sid;
+}
+
 # The argument as written: the head (`x`, `f(..)`, `g<..>(..)`), then its step (`.f`, `.m(..)`).
 fn _sca_print_arg(S): i64 {
     _sca_print_head(S);
     if (_sca_di > 0) {
+        var d = _sca_d0;
+        while (d < _sca_di) {                     # the nested fields before the last step
+            syscall(SYS_WRITE, 2, ".", 1);
+            PRSTR(S + 0xEC00000 + TOKVAL(S, d + 1));
+            d = d + 2;
+        }
         syscall(SYS_WRITE, 2, ".", 1);
         PRSTR(S + 0xEC00000 + TOKVAL(S, _sca_di + 1));
         if (TOKTYP(S, _sca_di + 2) == 10) { _sca_print_call_args(S, _sca_di + 1); }
@@ -2903,10 +2995,9 @@ fn _DEPRECATED_WARN(S, fi, noff, ti): i64 {
     syscall(SYS_WRITE, 2, "' is deprecated", 15);
     var _dep_msg = GFDM(S, fi);
     if (_dep_msg != 0) {
-        var _dep_off = _dep_msg >> 32;
         var _dep_len = _dep_msg & 0xFFFFFFFF;
         syscall(SYS_WRITE, 2, ": ", 2);
-        syscall(SYS_WRITE, 2, S + 0x21A000 + _dep_off, _dep_len);
+        syscall(SYS_WRITE, 2, _lit_ptr(S, _dep_msg), _dep_len);   # 6.6.17: a side-table message
     }
     syscall(SYS_WRITE, 2, "\n", 1);
     return 1;
@@ -2950,7 +3041,7 @@ fn _gen_inherit_dep(S, spec, base_fi): i64 {
 # the warning names. CHANGELOG [6.6.16]
 fn _callee_site_checks(S, fi, noff, ti): i64 {
     if (fi < 0) { return 0; }
-    _vis_check(S, fi, noff);
+    _vis_check(S, fi, noff, ti);
     _DEPRECATED_WARN(S, fi, noff, ti);
     return 0;
 }
@@ -3026,21 +3117,23 @@ var _visdef_vec = 0;
 # rather than reasoned about.
 var _vis_stamp_seq = 0;
 var _vis_swept_seq = 0 - 1;
-fn _vis_check(S, fi, noff): i64 {
+fn _vis_check(S, fi, noff, ti): i64 {
     if (fi < 0) { return 0; }                    # unresolved name — nothing to judge
     if (GFFI(S, fi) == 0) {
         # Owner unknown. If it also has no body yet, this may be a forward reference to a
         # definition that has not been stamped — re-judge it at the end of the parse.
-        if (L64(_fnt_offsets + fi * 8) < 0) { _vis_defer(S, fi); }
+        if (L64(_fnt_offsets + fi * 8) < 0) { _vis_defer(S, fi, ti); }
         return 0;
     }
     if ((GFLG(S, fi) & 64) == 0) { return 0; }   # callee not private — the common path
     var callee = GFFI(S, fi);
     if (callee == 0) { return 0; }               # callee origin unknown
-    # The CALLER's file comes from the token being parsed, not from `_cur_fn_ix`: the
+    # The CALLER's file comes from the call's own token, not from `_cur_fn_ix`: the
     # inline-replay path re-parses a callee's body tokens while `_cur_fn_ix` still
     # names the enclosing fn, so asking the fn table would answer for the wrong file.
-    var caller = FM_FILEID(S, GTLINE(S, GTI(S))) + 1;
+    # 6.6.17: `ti`, not the cursor — a tail call fires this past `);`, so the cursor named
+    # the NEXT token (`return pv(x);` was reported at the `}` below it). CHANGELOG [6.6.17]
+    var caller = FM_FILEID(S, GTLINE(S, ti)) + 1;
     if (caller == 0) { return 0; }
     if (caller == callee) { return 0; }          # same file — allowed
     # v6.5.0 Phase 3 — HARD ERROR by default, via the v6.3.2 undefined-fn playbook:
@@ -3053,7 +3146,7 @@ fn _vis_check(S, fi, noff): i64 {
     # A fail-fast exit here would make adopting `private` on a large file an
     # N-compile-cycles-to-find-N-callers exercise.
     syscall(SYS_WRITE, 2, "error:", 6);
-    _err_head(S);
+    _err_head_at(S, ti);
     syscall(SYS_WRITE, 2, ": '", 3);
     PRSTR(S + 0xEC00000 + noff);
     syscall(SYS_WRITE, 2, "' is private to its file\n", 25);
@@ -3064,13 +3157,13 @@ fn _vis_check(S, fi, noff): i64 {
 # 6.6.5 — record a reference whose callee had no owner yet: (fi, caller fid + 1, token).
 # Kept as its own fn so cybs sees a small body (the global/call fan-out rule). Lazy vec:
 # a compile with no unstamped reference allocates nothing.
-fn _vis_defer(S, fi): i64 {
-    var dcaller = FM_FILEID(S, GTLINE(S, GTI(S))) + 1;
+fn _vis_defer(S, fi, ti): i64 {
+    var dcaller = FM_FILEID(S, GTLINE(S, ti)) + 1;
     if (dcaller == 0) { return 0; }
     if (_visdef_vec == 0) { _visdef_vec = vec_new(); }
     vec_push(_visdef_vec, fi);
     vec_push(_visdef_vec, dcaller);
-    vec_push(_visdef_vec, GTI(S));
+    vec_push(_visdef_vec, ti);
     return 0;
 }
 
@@ -5218,7 +5311,7 @@ fn _classify_return_type(S, rt_noff): i64 {
 }
 
 # v6.3.5 CO-01 — pass-1 fn-signature prescan. Three small helpers that, when
-# called from a fork's pass-1 loop in place of the old inline fn-skip, register
+# called from the pass-1 scan (_tl_scan1) in place of the old inline fn-skip, register
 # every top-level fn AND record its ABI metadata (param masks, param count,
 # variadic flag, struct/scalar return) BEFORE pass-2 emits any call. That makes
 # forward calls — a call lexically before its definition — read the correct
@@ -5578,8 +5671,8 @@ fn _warn_undefined_prepass(S): i64 {
     return 0;
 }
 
-# 6.6.9 — THE top-level directive dispatcher. Every fork's pass-1 scan calls it with
-# arm=0 (consume only), every fork's pass-2 dispatch and PARSE_PROG call it with arm=1
+# 6.6.9 — THE top-level directive dispatcher. The pass-1 scan (_tl_scan1) calls it with
+# arm=0 (consume only), the pass-2 dispatch (_tl_scan2) and PARSE_PROG call it with arm=1
 # (arm the pending flag PARSE_FN_DEF transfers onto the next fn). Returns 1 when the
 # token at the cursor was a directive it handled, 0 otherwise.
 #
@@ -5916,7 +6009,15 @@ fn _prescan_skip_stmt(S): i64 {
     while (go == 1) {
         var t = PEEKT(S);
         if (t == 12) { return hasfn; }                              # EOF
-        if (t == 32) { hasfn = 1; }
+        if (t == 32) {
+            hasfn = 1;
+            # 6.6.17 — a definition at statement position INSIDE the statement's block
+            # (`if (..) { fn f(..) { .. } }`, which PARSE_PROG accepts) is prescanned like a
+            # top-level one. It was skipped, so a call parsed before it warned "undefined
+            # function" and — the same miscompile 6.6.5 fixed after the first statement — an
+            # address-passed struct argument was pushed by value: rc 139. CHANGELOG [6.6.17]
+            if (_prescan_block_fn(S, dep) == 1) { continue; }
+        }
         if (t == 10 || t == 13 || t == 28) { dep = dep + 1; }
         if (t == 11 || t == 14 || t == 29) { dep = dep - 1; }
         STI(S, GTI(S) + 1);
@@ -5931,12 +6032,24 @@ fn _prescan_skip_stmt(S): i64 {
     return hasfn;
 }
 
-# 6.6.5 — pass 1 stops at the first top-level STATEMENT (`else { scan = 0; }` in every
-# fork), but PARSE_PROG keeps accepting `fn` definitions after it — relaxed ordering. So
-# every fn below the first statement was unstamped: reachable from any file by a
-# preceding call, and address-passed struct params silently miscompiled. This walks the
-# REST of the stream registering only those fns; statements are skipped (a top-level
-# `var` registers itself on the PARSE_PROG path, so it must NOT be handled here).
+# Prescan the `fn` at the cursor when it opens a definition inside a block (`dep` >= 1, right
+# after `{`, `;` or `}`). The signature walk consumes the whole definition, braces balanced, so
+# the caller's depth is unchanged. Returns 1 when it consumed one.
+fn _prescan_block_fn(S, dep): i64 {
+    if (dep < 1) { return 0; }
+    var pt = TOKTYP(S, GTI(S) - 1);
+    if (pt != 13) { if (pt != 5) { if (pt != 14) { return 0; } } }
+    if (TOKTYP(S, GTI(S) + 1) != 2) { return 0; }
+    _prescan_fn_sig(S);
+    return 1;
+}
+
+# 6.6.5 — pass 1 stops at the first top-level STATEMENT (_tl_scan1 returns 0), but
+# PARSE_PROG keeps accepting `fn` definitions after it — relaxed ordering. So every fn
+# below the first statement was unstamped: reachable from any file by a preceding call,
+# and address-passed struct params silently miscompiled. This walks the REST of the stream
+# registering only those fns; statements are skipped (a top-level `var` registers itself
+# on the PARSE_PROG path, so it must NOT be handled here).
 #
 # The cursor and module are saved and restored, so pass 2 starts exactly where it did.
 # SMOD(0) because PARSE_PROG runs after pass 2's module reset. CHANGELOG [6.6.5]
@@ -5958,7 +6071,7 @@ fn _prescan_tail_loop(S): i64 {
     while (go == 1) {
         var t = PEEKT(S);
         if (t == 12) { go = 0; }                       # EOF
-        # ⚠ _IS_FN_KW, not a bare `t == 32`: every fork's pass-1 loop asks _IS_FN_KW, so a
+        # ⚠ _IS_FN_KW, not a bare `t == 32`: the pass-1 scan (_tl_scan1) asks _IS_FN_KW, so a
         # bare test here would make the two scanners disagree about what a DEFINITION is and
         # an `async fn` after the first top-level statement would stay unstamped. Not
         # reachable today (PARSE_PROG rejects `async` there on 6.6.4 and on this build), and
@@ -5969,10 +6082,201 @@ fn _prescan_tail_loop(S): i64 {
         elif (t == 109 || t == 122 || t == 125 || t == 126 || t == 127 || t == 133 || t == 163) { STI(S, GTI(S) + 1); }
         elif (t == 124) { _tl_deprecated(S, 0); }       # the pass-1 arm itself, so it records too
         # ⚠ 6.6.16 — a statement holding a `fn` (a definition inside a top-level block, which
-        # PARSE_PROG accepts) is where pass 2 hands a pending `#deprecated`. That fn is never
-        # prescanned, so drop the pending here rather than let it land on the NEXT top-level
-        # fn — the one pass 2 leaves unmarked, whose every call would then warn falsely.
+        # PARSE_PROG accepts) is where pass 2 hands a pending `#deprecated`. Since 6.6.17 that fn
+        # is prescanned (`_prescan_block_fn`), which takes the pending itself; whatever is left
+        # is dropped here rather than let it land on the NEXT top-level fn — the one pass 2
+        # leaves unmarked, whose every call would then warn falsely.
         elif (_prescan_skip_stmt(S) == 1) { _pre_dep_pending = 0; }
+    }
+    return 0;
+}
+
+# 6.6.17 — THE top-level declaration scans, shared by all seven src/main*.cyr forks: pass 1
+# (register), pass 2 (define) and the enum-init walk. Each fork used to carry its own copy of
+# all three — 21 loops — so a new top-level form had to be added seven times, and the fork
+# that missed it broke on its own target only (#io v5.8.20, #pure v6.2.2, the 6.6.3 #inline
+# consume, the 6.6.9 directive arms). A new top-level form goes HERE, once; the
+# toplevel_scan_shared gate refuses a fork that re-grows a copy. `objok` is 1 on the two
+# forks with an object writer (main.cyr, main_win.cyr): there `object;` selects mode 3;
+# elsewhere it is not a declaration and ends the scan ("unexpected object"). CHANGELOG [6.6.17]
+fn _tl_pass1(S, objok): i64 {
+    STI(S, 0);
+    var go = 1;
+    while (go == 1) { go = _tl_scan1(S, objok); }
+    # pass 1 stops at the first top-level statement, but PARSE_PROG keeps defining fns after it
+    _prescan_tail(S);
+    SMOD(S, 0);
+    return 0;
+}
+
+# One pass-1 step: consume one top-level declaration and return 1, or return 0 at the first
+# token that is not one (the first statement). The arms only peek until they match.
+fn _tl_scan1(S, objok): i64 {
+    var t = PEEKT(S);
+    if (t == 72) { _tl_mod(S); return 1; }
+    if (_TL_VIS(S) == 1) { return 1; }
+    if (t == 74) { _tl_use(S); return 1; }
+    if (t == 40) { PARSE_STRUCT_DEF(S); return 1; }
+    if (t == 101) { PARSE_UNION_DEF(S); return 1; }
+    if (t == 3) { PARSE_GVAR_REG(S); return 1; }
+    if (_tl_directive(S, 0) == 1) { return 1; }
+    if (_IS_FN_KW(S) == 1) { _prescan_fn_sig(S); return 1; }   # v6.3.5 CO-01: register + ABI masks
+    if (t == 60) { PARSE_ENUM_DEF(S, 0); return 1; }
+    var r = _tl_scan1_mode(S, t, objok);
+    return r;
+}
+
+fn _tl_scan1_mode(S, t, objok): i64 {
+    if (_TOK_IS_KERNEL(S) == 1) { _tl_kmode(S, 1); return 1; }
+    if (t == 78) { _tl_kmode(S, 2); return 1; }
+    if (t == 79) { if (objok == 1) { _tl_kmode(S, 3); return 1; } }
+    if (t == 77) { _prescan_impl(S); return 1; }
+    return 0;
+}
+
+# `kernel;` / `shared;` / `object;` — set kernel_mode (pass 1). Pass 2 only skips them.
+fn _tl_kmode(S, m): i64 {
+    S64(S + 0x18FCA0, m);
+    _tl_skip_mode(S);
+    return 0;
+}
+
+fn _tl_skip_mode(S): i64 {
+    STI(S, GTI(S) + 1);
+    if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); }
+    return 0;
+}
+
+# `mod name;` — set the module prefix (both passes).
+fn _tl_mod(S): i64 {
+    STI(S, GTI(S) + 1);
+    if (PEEKT(S) == 2) { SMOD(S, PEEKV(S)); STI(S, GTI(S) + 1); }
+    if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); }
+    return 0;
+}
+
+# `use modname.funcname;` — register the alias funcname -> modname_funcname (pass 1).
+fn _tl_use(S): i64 {
+    STI(S, GTI(S) + 1);
+    if (PEEKT(S) == 2) {
+        var umod = PEEKV(S);
+        STI(S, GTI(S) + 1);
+        if (PEEKT(S) == 41) {
+            STI(S, GTI(S) + 1);
+            if (PEEKT(S) == 2) {
+                var ufn = PEEKV(S);
+                STI(S, GTI(S) + 1);
+                _tl_use_alias(S, umod, ufn);
+            }
+        }
+    }
+    if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); }
+    return 0;
+}
+
+# Append the mangled `mod_fn` to tok_names (NPOS is stable after lexing) and record the alias
+# in the use table. v5.11.65 (CVE-05): bounded by the actual source lengths.
+fn _tl_use_alias(S, umod, ufn): i64 {
+    var uc = GUSEC(S);
+    S64(S + 0x18FFD0 + uc * 8, ufn);
+    var _ulen1 = 0; while (load8(S + 0xEC00000 + umod + _ulen1) != 0) { _ulen1 = _ulen1 + 1; }
+    var _ulen2 = 0; while (load8(S + 0xEC00000 + ufn + _ulen2) != 0) { _ulen2 = _ulen2 + 1; }
+    NPOS_GUARD(S, _ulen1 + 1 + _ulen2 + 1);
+    var apos = GNPOS(S);
+    var ri = 0;
+    var rc = load8(S + 0xEC00000 + umod + ri);
+    while (rc != 0) { store8(S + 0xEC00000 + apos, rc); apos = apos + 1; ri = ri + 1; rc = load8(S + 0xEC00000 + umod + ri); }
+    store8(S + 0xEC00000 + apos, 95); apos = apos + 1;
+    ri = 0; rc = load8(S + 0xEC00000 + ufn + ri);
+    while (rc != 0) { store8(S + 0xEC00000 + apos, rc); apos = apos + 1; ri = ri + 1; rc = load8(S + 0xEC00000 + ufn + ri); }
+    store8(S + 0xEC00000 + apos, 0); apos = apos + 1;
+    var alias_noff = GNPOS(S);
+    SNPOS(S, apos);
+    S64(S + 0x1901D0 + uc * 8, alias_noff);
+    SUSEC(S, uc + 1);
+    return 0;
+}
+
+# Pass 2: define fns, impls and enum constructors; skip what pass 1 already registered.
+fn _tl_pass2(S, objok): i64 {
+    STI(S, 0);
+    var go = 1;
+    while (go == 1) { go = _tl_scan2(S, objok); }
+    SMOD(S, 0);
+    return 0;
+}
+
+fn _tl_scan2(S, objok): i64 {
+    var t = PEEKT(S);
+    if (t == 72) { _tl_mod(S); return 1; }
+    if (_TL_VIS(S) == 1) { return 1; }
+    if (t == 74) { _tl_skip_use(S); return 1; }
+    if (t == 40) { _tl_skip_struct(S); return 1; }
+    if (t == 101) { _tl_skip_union(S); return 1; }
+    if (t == 60) { PARSE_ENUM_DEF(S, 2); return 1; }   # constructor bodies, before the jmp patch
+    if (_TOK_IS_KERNEL(S) == 1) { _tl_skip_mode(S); return 1; }
+    # 6.6.9: ONE dispatcher arms every fn attribute and evaluates #assert. See _tl_directive.
+    if (_tl_directive(S, 1) == 1) { return 1; }
+    var r = _tl_scan2_def(S, t, objok);
+    return r;
+}
+
+fn _tl_scan2_def(S, t, objok): i64 {
+    if (_IS_FN_KW(S) == 1) {
+        # v6.5.17: EVERY fn body is parsed, reachable or not — reachability is a codegen
+        # concern (CYRIUS_DCE=1, backend/x86/fixup.cyr), not a parsing one. A parse-time body
+        # skip once made garbage in an uncalled fn compile GREEN on x86 and fail on aarch64
+        # (tests/gates/frontend/dead_fn_body_syntax_checked.sh).
+        # v6.3.11 (G): consume a leading `async` and arm the lowering PARSE_FN_DEF consumes.
+        if (PEEKT(S) == 134) { _pending_async = 1; STI(S, GTI(S) + 1); }
+        PARSE_FN_DEF(S);
+        return 1;
+    }
+    if (t == 3) { _skip_gvar_decl(S); return 1; }   # 6.6.6: a `;` inside a closure body is not the end
+    if (t == 77) { PARSE_IMPL(S); return 1; }
+    if (t == 78) { _tl_skip_mode(S); return 1; }
+    if (t == 79) { if (objok == 1) { _tl_skip_mode(S); return 1; } }
+    return 0;
+}
+
+fn _tl_skip_use(S): i64 {
+    while (PEEKT(S) != 5) { if (PEEKT(S) == 12) { break; } STI(S, GTI(S) + 1); }
+    if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); }
+    return 0;
+}
+
+# A struct (with its optional `<T>` list) or a union was parsed in pass 1: skip to its `}`.
+fn _tl_skip_struct(S): i64 {
+    STI(S, GTI(S) + 1); STI(S, GTI(S) + 1);
+    if (PEEKT(S) == 19) { while (PEEKT(S) != 20) { STI(S, GTI(S) + 1); } STI(S, GTI(S) + 1); }
+    _tl_skip_body(S);
+    return 0;
+}
+
+fn _tl_skip_union(S): i64 {
+    STI(S, GTI(S) + 1); STI(S, GTI(S) + 1);
+    _tl_skip_body(S);
+    return 0;
+}
+
+fn _tl_skip_body(S): i64 {
+    if (PEEKT(S) != 13) { ERR(S); }
+    STI(S, GTI(S) + 1);
+    var go = 1;
+    while (go == 1) { if (PEEKT(S) == 14) { go = 0; } else { STI(S, GTI(S) + 1); } }
+    STI(S, GTI(S) + 1);
+    return 0;
+}
+
+# Enum initialisations, emitted FIRST (before the gvar inits, which may call fns that read
+# enum values). Walks the whole token stream; the caller restores the cursor.
+fn _tl_enum_inits(S): i64 {
+    STI(S, 0);
+    var go = 1;
+    while (go == 1) {
+        if (PEEKT(S) == 60) { PARSE_ENUM_DEF(S, 1); }
+        else { if (PEEKT(S) == 12) { go = 0; }
+            else { STI(S, GTI(S) + 1); } }
     }
     return 0;
 }

@@ -39,7 +39,8 @@
 # passed. The fix removed the fifteen copies of the dispatch (7 forks x 2 passes + PARSE_PROG)
 # in favour of ONE fn, `_tl_directive` (src/frontend/parse_fn.cyr), and this gate now checks:
 #   axis 1   STRUCTURE — no fork and no PARSE_PROG dispatches a directive token itself; each
-#            fork calls _tl_directive once per pass. (A fork that re-grows its own branch for a
+#            fork runs the shared scans (6.6.17: _tl_pass1 / _tl_pass2, src/frontend/parse_fn.cyr),
+#            which call _tl_directive once per pass. (A fork that re-grows its own branch for a
 #            token is exactly how the drift started.)
 #   axis 2   #inline non-inert + the #inline→#derive survival shape (unchanged, v6.6.3).
 #   axis 2c  THE WARNINGS: #deprecated("m"), a discarded #must_use result, #pure→#io and
@@ -79,9 +80,16 @@ for f in $FORKS; do
   # 1b — ... or arms a pending flag itself
   hits=$(grep -nE "($FLAGS) = " "src/$f" | cut -d: -f1 | tr '\n' ' ')
   [ -n "$hits" ] && bad="$bad\n    src/$f:$hits arms a directive flag itself"
-  # 1c — exactly one consume call (pass 1) and one arm call (pass 2)
-  n0=$(grep -c '_tl_directive(S, 0) == 1' "src/$f"); n1=$(grep -c '_tl_directive(S, 1) == 1' "src/$f")
-  [ "$n0" -eq 1 ] && [ "$n1" -eq 1 ] || bad="$bad\n    src/$f: _tl_directive pass-1 x$n0, pass-2 x$n1 (expected 1 and 1)"
+  # 1c — the fork runs the SHARED scans (6.6.17), which make the consume and the arm call;
+  # toplevel_scan_shared.sh pins the rest of that structure
+  n0=$(grep -c '^_tl_pass1(S, [01]);' "src/$f"); n1=$(grep -c '^_tl_pass2(S, [01]);' "src/$f")
+  [ "$n0" -eq 1 ] && [ "$n1" -eq 1 ] || bad="$bad\n    src/$f: _tl_pass1 x$n0, _tl_pass2 x$n1 (expected 1 and 1)"
+done
+# 1c' — the shared pass-1 scan consumes (arm=0) and the shared pass-2 scan arms (arm=1), once each
+for pr in "_tl_scan1 0" "_tl_scan2 1"; do
+  set -- $pr
+  nb=$(awk -v n="fn $1(" 'index($0, n) == 1 {on=1} on {print} on && /^}/ {exit}' src/frontend/parse_fn.cyr | grep -c "_tl_directive(S, $2) == 1")
+  [ "$nb" -eq 1 ] || bad="$bad\n    src/frontend/parse_fn.cyr: $1 calls _tl_directive(S, $2) x$nb (expected 1)"
 done
 # 1d — PARSE_PROG (the post-first-statement path) goes through the same fn
 pp=$(awk '/^fn PARSE_PROG\(S\)/{on=1} on{print} on&&/^}/{exit}' src/frontend/parse.cyr)

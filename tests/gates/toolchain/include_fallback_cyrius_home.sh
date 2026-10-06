@@ -161,6 +161,19 @@ drift() {
     [ "$_c" -eq "$_w" ] && _ok || _bad "[$LBL] $_n: $_c pin-drift warnings, expected $_w"
 }
 
+# strict <name> VAR=VAL... — CYRIUS_STRICT_PIN=1 must REFUSE the pinned-elsewhere build (6.6.17).
+strict() {
+    _n=$1; shift
+    _rc=0
+    if [ "$RUN" = - ]; then
+        ( cd "$T/pin" && env -i "$@" "$BIN" < mc.cyr > "$T/o" 2> "$T/e" ) || _rc=$?
+    else
+        ( cd "$T/pin" && env -i "$@" "$RUN" "$BIN" < mc.cyr > "$T/o" 2> "$T/e" ) || _rc=$?
+    fi
+    if [ "$_rc" -ne 0 ] && grep -q 'toolchain drift (CYRIUS_STRICT_PIN)' "$T/e"; then _ok
+    else _bad "[$LBL] $_n: CYRIUS_STRICT_PIN=1 did not refuse (rc $_rc)"; fi
+}
+
 NCOMP=0
 while read -r LBL BIN RUN NATIVE; do
     NCOMP=$((NCOMP + 1))
@@ -206,6 +219,15 @@ while read -r LBL BIN RUN NATIVE; do
     drift 1 mh drift_home_branch HOME="$A"
     drift 0 mh drift_no_home
     drift 0 mh drift_overlong_chome CYRIUS_HOME="$B1985" HOME="$A"
+    # 6.6.17 — the opt-out knobs are read from the WHOLE environ too (`_env_var_is_1` was ONE
+    # 4096-B read, so a knob past 4 KB was ignored): past 4 KB, past 8 KB, across the 4096-B
+    # boundary (PAD= + 4080 B + NUL puts the knob at byte 4085); a value other than `1` is unset.
+    drift 0 mc drift_nowarn CYRIUS_HOME="$B" CYRIUS_NO_WARN_PIN_DRIFT=1
+    drift 0 mc drift_nowarn_pad5000 CYRIUS_HOME="$B" PAD="$P5000" CYRIUS_NO_WARN_PIN_DRIFT=1
+    drift 0 mc drift_nowarn_pad9000 PAD="$P9000" CYRIUS_HOME="$B" CYRIUS_NO_WARN_PIN_DRIFT=1
+    drift 0 mc drift_nowarn_split PAD="$(pad 4080)" CYRIUS_NO_WARN_PIN_DRIFT=1 CYRIUS_HOME="$B"
+    drift 1 mc drift_nowarn_not_one CYRIUS_HOME="$B" PAD="$P5000" CYRIUS_NO_WARN_PIN_DRIFT=11
+    strict drift_strict_pad5000 CYRIUS_HOME="$B" PAD="$P5000" CYRIUS_STRICT_PIN=1
 done < "$T/compilers"
 
 [ "$NCOMP" -ge 1 ] || _bad "no compiler ran (floor 1)"
@@ -216,5 +238,5 @@ if [ "$fail" -ne 0 ]; then
     echo "FAIL $G: $fail failed, $pass passed"
     exit 1
 fi
-echo "PASS $G: $pass rows over $NCOMP compilers [$(cut -d' ' -f1 "$T/compilers" | tr '\n' ' ')] — CYRIUS_HOME's slot before HOME's in both orders, empty = unset, no fall-through, the whole environ read (past 4 KB / 8 KB and across read boundaries), the 1984-B bound never truncated, pin drift once on either branch"
+echo "PASS $G: $pass rows over $NCOMP compilers [$(cut -d' ' -f1 "$T/compilers" | tr '\n' ' ')] — CYRIUS_HOME's slot before HOME's in both orders, empty = unset, no fall-through, the whole environ read (past 4 KB / 8 KB and across read boundaries), the 1984-B bound never truncated, pin drift once on either branch, its opt-out knobs read past 4 KB too"
 exit 0

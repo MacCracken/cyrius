@@ -2908,6 +2908,74 @@ fn _asg_rejudge(S, idx, t, g): i64 {
 # 6.6.11: also arms the struct-typed FIELD source (`q = b.v;`, see `_fla_arm`) when the destination
 # is a struct, and type-checks every recorded struct result against it — a <= 8 B one (`_sc_tmp`
 # -3, value in rax) included — before any exit. CHANGELOG [6.6.11]
+# The assignment's RHS type, read before PCMPE consumes it, for the typed-pointer warning in
+# `_PARSE_STMT_IMPL`: a call's declared return (v6.5.28 — `t = str_new(..)` warned while the
+# identical `var t = str_new(..)` did not) and, since 6.6.17, a RHS that is ONE primary of the
+# destination local's own struct type: `a = GP` (a pointer-mode struct global), `b = q.name()`
+# (a method declared `: Str`), `c = h.name` (a `: Str` field, nested fields walked). Each of those
+# warned "assigning non-pointer to typed pointer" about a value of exactly the local's type.
+# Its own fn so `_PARSE_STMT_IMPL` carries one reference here, not seven (cybs's ceiling).
+fn _asg_ret_peek(S, noff): i64 {
+    _asg_ret_sid = 0;
+    if (PEEKT(S) != 2) { return 0; }
+    if (TOKTYP(S, GTI(S) + 1) == 10) {
+        var fi = FINDFN(S, PEEKV(S));
+        if (fi >= 0) { _asg_ret_sid = GFRS(S, fi); }
+        return 0;
+    }
+    if (GINFN(S) == 0) { return 0; }
+    var li = FINDLOCAL(S, noff);
+    if (li < 0) { return 0; }
+    var lt = GLTYPE(S, li);
+    if (lt >= 0) { return 0; }
+    if (lt <= 0 - 2048) { return 0; }
+    var rs = _asg_rhs_sid(S);
+    if (rs == 0 - lt) { _asg_ret_sid = rs; }
+    return 0;
+}
+# The struct ONE primary at the cursor evaluates to when it ends at `;`: a name (`_arg_name_sid`:
+# a typed local, a capture, a pointer-mode struct global), or a name followed by nested struct
+# fields ending in a `: Str` field or a method call (`<Struct>_<m>`'s declared return). An inline
+# struct field is not a pointer, so it is not typed here. 0 otherwise. A peek.
+fn _asg_rhs_sid(S): i64 {
+    var ti = GTI(S);
+    var nt = TOKTYP(S, ti + 1);
+    if (nt == 5) {
+        var r = _arg_name_sid(S, PEEKV(S));
+        return r;
+    }
+    if (nt != 41) { return 0; }
+    var k = _asg_rhs_steps(S, ti + 1, _recv_sid(S, PEEKV(S)));
+    return k;
+}
+fn _asg_rhs_steps(S, di, rsid): i64 {
+    while (rsid > 0) {
+        if (TOKTYP(S, di + 1) != 2) { return 0; }
+        if (TOKTYP(S, di + 2) == 10) {
+            var e = _tok_close_paren(S, di + 2);
+            if (e < 0) { return 0; }
+            if (TOKTYP(S, e + 1) != 5) { return 0; }
+            var mf = FINDFN(S, BUILD_METHOD_NAME(S, rsid - 1, TOKVAL(S, di + 1)));
+            if (mf < 0) { return 0; }
+            var ms = GFRS(S, mf);
+            if (ms < 0) { ms = 0; }
+            return ms;
+        }
+        var fx = FINDFIELD(S, rsid - 1, TOKVAL(S, di + 1));
+        if (fx < 0) { return 0; }
+        var ft = GETFTYPE(S, rsid - 1, fx);
+        if (TOKTYP(S, di + 2) == 5) {
+            if (IS_STR_FIELD(S, ft) == 1) { return ft; }
+            return 0;
+        }
+        if (TOKTYP(S, di + 2) != 41) { return 0; }
+        if (IS_STR_FIELD(S, ft) == 1) { return 0; }   # a Str field is a pointer slot: no walk INTO it
+        rsid = ft;
+        di = di + 2;
+    }
+    return 0;
+}
+
 fn _pcmpe_struct_assign(S, noff): i64 {
     var st = GTI(S);
     _agc_operand(S, noff);
@@ -3482,10 +3550,9 @@ fn _PARSE_STMT_IMPL(S): i64 {
                 if (PEEKT(S) == 30) {
                     # String token value is (offset << 32) | length
                     var sv = PEEKV(S);
-                    var soff = sv >> 32;
                     var slen = sv & 0xFFFFFFFF;
                     syscall(SYS_WRITE, 2, ": ", 2);
-                    syscall(SYS_WRITE, 2, S + 0x21A000 + soff, slen);
+                    syscall(SYS_WRITE, 2, _lit_ptr(S, sv), slen);   # 6.6.17: a side-table message
                 }
                 syscall(SYS_WRITE, 2, "\n", 1);
                 # 6.6.11: record, don't exit. A top-level #assert runs in the declaration phase,
@@ -3913,13 +3980,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
             # v6.6.0 — `x = f();` where f returns a `: stack` pair keeps the tag and drops the
             # payload, silently. Same refusal as the declaration form. CHANGELOG [6.6.0].
             _refuse_lossy_pair(S);
-            _asg_ret_sid = 0;
-            if (PEEKT(S) == 2) {
-                if (TOKTYP(S, GTI(S) + 1) == 10) {
-                    var _ar_fi = FINDFN(S, PEEKV(S));
-                    if (_ar_fi >= 0) { _asg_ret_sid = GFRS(S, _ar_fi); }
-                }
-            }
+            _asg_ret_peek(S, noff);   # 6.6.17: the RHS's declared type, before PCMPE moves on
             if (_pcmpe_struct_assign(S, noff) == 1) { return 0; }   # PCMPE + a method/operator struct result (6.6.6)
         }
         # Type check at assignment
@@ -4016,7 +4077,7 @@ fn PARSE_PROG(S): i64 {
         if (typ == 12) { go = 0; }
         else { if (typ == 14) { go = 0; }
             else { if (_tl_directive(S, 1) == 1) {
-                    # 6.6.9: the SAME dispatcher every fork's pass 2 calls, so an attribute written
+                    # 6.6.9: the SAME dispatcher the pass-2 scan (_tl_scan2) calls, so an attribute written
                     # after the first top-level statement behaves exactly like one written before it.
                     # (This was a 15th copy; bare `#deprecated` errored here and was a silent no-op
                     # there.) `#assert` also lands here and is evaluated via PARSE_STMT. See _tl_directive.
