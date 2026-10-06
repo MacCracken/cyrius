@@ -19,11 +19,12 @@
 #      also guards B0b's interning index at the CLI level.
 #   7. near the pool: a 2,097,150-byte embed (the per-file cap) COMPILES and its length is right,
 #      in a fixture with no [package] version and no other literal (#@pkgver would add one).
-#   8. collisions — what the user sees: an embed NAME equal to a 0-arity stdlib fn (alloc_reset)
-#      warns `duplicate fn` at the stdlib's line (the LATER definition, in a real file) and builds;
-#      one equal to `alloc` (arity 1) is the v6.5.37 arity-mismatch ERROR naming lib/alloc.cyr; a
-#      SEPARATE included file calling NAME() gets the bytes (the prelude shares <source>'s file
-#      id, and visibility is keyed on file id since 6.5.38).
+#   8. collisions are REFUSED by cbt, by name: a NAME equal to a stdlib fn (alloc_reset, and alloc of
+#      another arity), a NAME whose NAME_len is one (`vec` -> vec_len), a fn in src/ and a var in a
+#      [build] module. ("Last definition wins" was the earlier rule: in the build the stdlib's
+#      definition silently won over the embed; in a CONSUMER of a bundle the embed silently replaced
+#      the stdlib fn.) A SEPARATE included file calling NAME() gets the bytes (the prelude shares
+#      <source>'s file id, and visibility is keyed on file id since 6.5.38).
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -121,27 +122,31 @@ br
 [ "$brc" = 0 ] && [ "$run" = 0 ] || fail "axis 7: a 2,097,150-byte embed (cbt's per-file cap) does not compile and check out (build $brc, run $run): $(grep -E 'error' "$W/b.out" | head -1) — cbt's cap and cycc's pool disagree"
 [ "$FAIL" = "$x" ] && echo "  ok axis 7: a 2,097,150-byte embed — the per-file cap — compiles, length and NUL right"
 
-# ── axis 8: collisions ───────────────────────────────────────────────────────────────────
+# ── axis 8: collisions are REFUSED, never "last definition wins" ─────────────────────────
 x=$FAIL
-ln_reset=$(grep -n '^fn alloc_reset(): i64' "$P/lib/alloc.cyr" | cut -d: -f1)
-ln_alloc=$(grep -n '^fn alloc(size): i64' "$P/lib/alloc.cyr" | cut -d: -f1)
-[ -n "$ln_reset" ] && [ -n "$ln_alloc" ] || fail "axis 8: lib/alloc.cyr no longer has fn alloc_reset() / fn alloc(size) — re-pick the collision fixtures"
-printf 'include "lib/alloc.cyr"\nalloc_init();\nsyscall(60, alloc_reset_len());\n' > "$P/main.cyr"
-mf main.cyr 'alloc_reset = "data/s.txt"'
-br
-[ "$brc" = 0 ] && [ "$run" = 3 ] || fail "axis 8 same arity: the build failed or alloc_reset_len() is not 3 (build $brc, run $run)"
-grep -q "warning:lib/alloc.cyr:$ln_reset:1: duplicate fn 'alloc_reset'" "$W/b.out" || fail "axis 8 same arity: no duplicate-fn warning at lib/alloc.cyr:$ln_reset: $(grep -E 'warn|error' "$W/b.out" | head -1)"
+# owned <label> <[embed] line> <expected text>: the build exits non-zero, names it, builds nothing
+owned() {
+    mf main.cyr "$2"; br
+    [ "$brc" != 0 ] || fail "axis 8 $1: an [embed] colliding with an existing definition built (run $run)"
+    grep -qF "$3" "$W/b.out" || fail "axis 8 $1: no '$3' refusal: $(grep -E 'error|warn' "$W/b.out" | head -1)"
+}
 printf 'include "lib/alloc.cyr"\nalloc_init();\nsyscall(60, 0);\n' > "$P/main.cyr"
-mf main.cyr 'alloc = "data/s.txt"'
-br
-[ "$brc" != 0 ] || fail "axis 8 arity: an embed named alloc (arity 0 against alloc(size)) built"
-grep -q "error:lib/alloc.cyr:$ln_alloc:1: duplicate fn 'alloc' disagrees about arity" "$W/b.out" || fail "axis 8 arity: no arity-mismatch error at lib/alloc.cyr:$ln_alloc: $(grep -E 'error' "$W/b.out" | head -1)"
+owned "stdlib fn"     'alloc_reset = "data/s.txt"' 'error: cyrius.cyml [embed] alloc_reset: alloc_reset is already declared by lib/'
+owned "stdlib arity"  'alloc = "data/s.txt"'       'error: cyrius.cyml [embed] alloc: alloc is already declared by lib/'
+owned "NAME_len"      'vec = "data/s.txt"'         'error: cyrius.cyml [embed] vec: vec_len is already declared by lib/vec.cyr'
+printf 'fn PROJ_FN(): i64 { return 1; }\n' > "$P/src/proj.cyr"
+owned "src/ fn"       'PROJ_FN = "data/s.txt"'     'error: cyrius.cyml [embed] PROJ_FN: PROJ_FN is already declared by src/proj.cyr'
+rm -f "$P/src/proj.cyr"
+mkdir -p "$P/mods"; printf 'var MOD_V = 3;\n' > "$P/mods/m.cyr"
+{ printf '[build]\nentry = "main.cyr"\noutput = "build/main"\nmodules = ["mods/m.cyr"]\n[embed]\nMOD_V = "data/s.txt"\n'; } > "$P/cyrius.cyml"; br
+[ "$brc" != 0 ] && grep -qF 'error: cyrius.cyml [embed] MOD_V: MOD_V is already declared by mods/m.cyr' "$W/b.out" \
+    || fail "axis 8 [build] modules: a NAME a [build] module declares was not refused (exit $brc): $(grep error "$W/b.out" | head -1)"
 printf 'fn other(): i64 { return load8(GREET() + 2); }\n' > "$P/src/other.cyr"
 printf 'include "src/other.cyr"\nsyscall(60, other());\n' > "$P/main.cyr"
 mf main.cyr 'GREET = "data/s.txt"'
 br
 [ "$brc" = 0 ] && [ "$run" = 99 ] || fail "axis 8 other file: an included file calling GREET() did not get the bytes (build $brc, run $run, want 99)"
-[ "$FAIL" = "$x" ] && echo "  ok axis 8: same-arity collision warns at the stdlib line, arity mismatch errors naming lib/alloc.cyr, another file calls NAME()"
+[ "$FAIL" = "$x" ] && echo "  ok axis 8: a NAME / NAME_len the stdlib, src/ or a [build] module declares is refused by name; another file calls NAME()"
 
 [ "$FAIL" = 0 ] || { echo "FAIL: embed_build ($FAIL)"; exit 1; }
 echo "PASS: embed_build"

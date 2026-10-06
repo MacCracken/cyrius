@@ -2019,9 +2019,11 @@ instruction.
 
 - `NAME` is an identifier (`[A-Za-z_][A-Za-z0-9_]*`, at most 64 characters) and not a reserved
   word (`match`, `syscall`, `sizeof`, `load8`, …): it becomes `fn NAME()`. `X` and `X_len` cannot
-  both be declared, and a name may appear once. A NAME equal to a function your program or the
-  stdlib defines collides like any duplicate function: same arity, a `duplicate fn` warning at the
-  later definition (which wins); different arity, an error.
+  both be declared, and a name may appear once. A `NAME` or `NAME_len` that is already declared —
+  by any leaf of the pinned stdlib snapshot, by `[build] entry` or `[build] modules`, or by a `.cyr`
+  under `src/` or `lib/` — is refused (`[embed] vec` is, because of `vec_len`): left to "the last
+  definition wins", the stdlib would silently win in your build, and the embed would silently
+  replace the stdlib function in every consumer of a bundle that carries it.
 - The path is relative to the project and stays inside it: no leading `/`, no `\`, no `:` (a
   drive, or an NTFS stream such as `.git::$INDEX_ALLOCATION`), no `..`, no control character, no
   `.git` component (in any case). **No symlink anywhere

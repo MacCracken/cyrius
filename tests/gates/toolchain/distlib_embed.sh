@@ -16,7 +16,8 @@
 #   4. a [lib.p] module calling D() / D_len() with no `embed` listed makes distlib FAIL naming D and
 #      `[lib.p] embed` — not the 6.6.18 "still undefined" warning, which a bundle calling a
 #      consumer's hook legitimately gets.
-#   5. `[lib] embed = ["NOPE"]` (not declared in [embed]) is refused by name.
+#   5. `[lib] embed = ["NOPE"]` (not declared in [embed]) is refused by name; an [embed] NAME the
+#      pinned stdlib snapshot declares (vec_new) is refused before any bundle is written.
 #   6. `--modular` writes dist/x/embed_D.cyr and an index row `embed_D = []`, and the module that
 #      calls D() lists "embed_D" as a sibling.
 #   7. `cyrius lint` passes on the bundle (the literal's line carries #skip-lint).
@@ -109,7 +110,17 @@ rc=0; run "$P" distlib > "$W/o" 2>&1 || rc=$?
 [ "$rc" != 0 ] && grep -qF 'error: cyrius.cyml [lib] embed names NOPE, which [embed] does not declare' "$W/o" \
     || fail "axis 5: [lib] embed = [\"NOPE\"] was not refused by name (exit $rc): $(head -2 "$W/o" | tr '\n' ' ')"
 cp "$W/keep.cyml" "$P/cyrius.cyml"
-[ "$FAIL" = "$x" ] && echo "  ok axis 5: an undeclared NAME in [lib] embed is refused by name"
+# 5b: a NAME the pinned stdlib snapshot declares (vec_new, in the home's lib) is refused before any
+# bundle is written — a consumer including the bundle after its stdlib would have vec_new()
+# REPLACED by the bytes (measured: `vec: alloc failed`, exit 1, a duplicate-fn warning only).
+sed 's/^F = "data\/f.bin"$/F = "data\/f.bin"\nvec_new = "data\/f.bin"/; s/^embed = \["F"\]$/embed = ["F", "vec_new"]/' "$W/keep.cyml" > "$P/cyrius.cyml"
+rm -f "$P/dist/x-face.cyr"
+rc=0; run "$P" distlib face > "$W/o" 2>&1 || rc=$?
+[ "$rc" != 0 ] && grep -qF 'error: cyrius.cyml [embed] vec_new: vec_new is already declared by the stdlib leaf vec' "$W/o" \
+    || fail "axis 5b: [embed] vec_new (a stdlib fn) was not refused by name (exit $rc): $(head -2 "$W/o" | tr '\n' ' ')"
+[ -e "$P/dist/x-face.cyr" ] && fail "axis 5b: a bundle was written anyway"
+cp "$W/keep.cyml" "$P/cyrius.cyml"
+[ "$FAIL" = "$x" ] && echo "  ok axis 5: an undeclared NAME in [lib] embed is refused by name; a NAME the stdlib snapshot declares is refused before any bundle is written"
 
 # ── axis 6 ───────────────────────────────────────────────────────────────────────────────
 x=$FAIL

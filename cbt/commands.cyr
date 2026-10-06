@@ -4828,6 +4828,123 @@ fn _distlib_leaf_defining(root, name): i64 {
     return 0;
 }
 
+# ── [embed] NAME collisions (6.6.19) ───────────────────────────────────────────────────────────
+# An [embed] NAME (or NAME_len) that another top-level declaration in scope already owns is
+# REFUSED, never left to "last definition wins": in the producer's build the prelude comes FIRST, so
+# the stdlib / project definition wins and NAME() silently returns ITS result; in a consumer that
+# includes a bundle carrying the embed, the bundle comes AFTER the stdlib, so the embed silently
+# REPLACES the stdlib fn (measured: `[embed] vec_new` in a bundle -> `vec: alloc failed`, exit 1,
+# and only a `duplicate fn` warning; the distlib self-check passed). Owners checked: every leaf of
+# the pinned stdlib snapshot (the D1 index, _distlib_snap_cache), and the project's own sources —
+# `[build] entry`, `[build] modules`, every .cyr under src/ and lib/ (dist/ is the output, never
+# an owner). Called once from _embed_load; returns the number refused (each named).
+var _emb_hit = 0;
+
+fn _embed_owner_refuse(e, nm, where): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, nm);
+    str_builder_add_cstr(sb, " is already declared by ");
+    str_builder_add_cstr(sb, where);
+    str_builder_add_cstr(sb, "; the generated ");
+    str_builder_add_cstr(sb, nm);
+    str_builder_add_cstr(sb, "() would silently replace it or be replaced by it (the last definition wins) — in this build and in every consumer of a bundle that carries it; choose another name");
+    _embed_refuse(_embed_e_name(e), 0, str_data(str_builder_build(sb)));
+    vec_push(_emb_hit, e);
+    return 1;
+}
+
+# Refuse every entry not yet refused whose NAME / NAME_len is in `set` (a _src_ids set).
+fn _embed_owner_check(set, ents, where): i64 {
+    var n = 0;
+    var i = 0;
+    while (i < vec_len(ents)) {
+        var e = vec_get(ents, i);
+        i = i + 1;
+        var seen = 0;
+        var k = 0;
+        while (k < vec_len(_emb_hit)) { if (vec_get(_emb_hit, k) == e) { seen = 1; } k = k + 1; }
+        if (seen == 1) { continue; }
+        var nm = _embed_e_name(e);
+        var nl = strlen(nm);
+        if (_src_ids_has(set, nm, nl) == 1) { n = n + _embed_owner_refuse(e, nm, where); continue; }
+        var sb = str_builder_new();
+        str_builder_add_cstr(sb, nm);
+        str_builder_add_cstr(sb, "_len");
+        var ln = str_data(str_builder_build(sb));
+        if (_src_ids_has(set, ln, nl + 4) == 1) { n = n + _embed_owner_refuse(e, ln, where); }
+    }
+    return n;
+}
+
+fn _embed_owner_file(path, ents): i64 {
+    var got = 0;
+    var fb = file_read_whole(path, &got);
+    if (fb == 0 || got <= 0) { return 0; }   # unreadable: the compile that includes it names it
+    _src_blank_noncode(fb, got);
+    var offs = vec_new();
+    var lens = vec_new();
+    var kinds = vec_new();
+    _src_decls(fb, got, offs, lens, kinds);
+    var set = _src_ids_new(vec_len(offs) * 8 + 8);
+    if (set == 0) { return 0; }
+    var k = 0;
+    while (k < vec_len(offs)) {
+        _src_ids_add(set, fb + vec_get(offs, k), vec_get(lens, k));
+        k = k + 1;
+    }
+    return _embed_owner_check(set, ents, path);
+}
+
+# Every .cyr under `dir` (links are not followed; depth-capped like dir_walk).
+fn _embed_owner_dir(dir, ents, depth): i64 {
+    if (depth > 16 || is_dir(str_from(dir)) != 1) { return 0; }
+    var v = vec_new();
+    if (dir_list_checked(str_from(dir), v) < 0) { return 0; }
+    var n = 0;
+    var i = 0;
+    while (i < vec_len(v)) {
+        var ed = str_data(vec_get(v, i));
+        i = i + 1;
+        var el = strlen(ed);
+        if (el == 0 || load8(ed) == 46) { continue; }
+        var fp = _distlib_join(dir, ed);
+        if (is_symlink(str_from(fp)) == 1) { continue; }
+        if (is_dir(str_from(fp)) == 1) { n = n + _embed_owner_dir(fp, ents, depth + 1); continue; }
+        if (el > 4 && memeq(ed + el - 4, ".cyr", 4) == 1) { n = n + _embed_owner_file(fp, ents); }
+    }
+    return n;
+}
+
+fn _embed_collisions(ents): i64 {
+    _emb_hit = vec_new();
+    var n = 0;
+    var root = _distlib_stdlib_root();
+    if (root != 0) {
+        if (_distlib_snap_cache(root) != 0) { return 1; }
+        var i = 0;
+        while (i < vec_len(_dl_snap_names)) {
+            var sb = str_builder_new();
+            str_builder_add_cstr(sb, "the stdlib leaf ");
+            str_builder_add_cstr(sb, vec_get(_dl_snap_names, i));
+            str_builder_add_cstr(sb, " (");
+            str_builder_add_cstr(sb, root);
+            str_builder_add_cstr(sb, ")");
+            n = n + _embed_owner_check(vec_get(_dl_snap_sets, i), ents, str_data(str_builder_build(sb)));
+            i = i + 1;
+        }
+    }
+    var ent = _mf_key_str("build", "entry");
+    if (ent != 0) { n = n + _embed_owner_file(ent, ents); }
+    var bm = _mf_strs("build", "modules");
+    if (bm != 0) {
+        var j = 0;
+        while (j < vec_len(bm)) { n = n + _embed_owner_file(vec_get(bm, j), ents); j = j + 1; }
+    }
+    n = n + _embed_owner_dir("src", ents, 0);
+    n = n + _embed_owner_dir("lib", ents, 0);
+    return n;
+}
+
 # Pull every undefined symbol name out of a captured cycc diagnostic stream.
 fn _distlib_collect_undefined(errbuf, elen, names): i64 {
     var p = 0;

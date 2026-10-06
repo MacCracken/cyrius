@@ -967,6 +967,9 @@ fn _embed_load(): i64 {
             bad = 1;
         }
     }
+    # A NAME / NAME_len another declaration in scope owns (the stdlib snapshot, the project's own
+    # sources) is refused, never left to "last definition wins" (cbt/commands.cyr).
+    if (bad == 0 && vec_len(out) > 0) { bad = _embed_collisions(out); }
     if (bad > 0) {
         _embed_state = 2;
         return 0 - 1;
