@@ -54,14 +54,17 @@ set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
 CC="$ROOT/build/cycc"
-CCA="$ROOT/build/cycc_aarch64"
 
 [ -x "$CC" ] || { echo "FAIL: alloc_failure_returns_zero: build/cycc missing"; exit 1; }
 W=$(mktemp -d) && [ -d "$W" ] || { echo "FAIL: alloc_failure_returns_zero: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 # A PRIVATE wine prefix under $W, never the user's ~/.wine: its one wineserver is shared by
 # every concurrent check.sh on the box. The EXIT kill is scoped to THIS prefix and also removes
 # its server socket dir (/tmp/.wine-<uid>/server-<dev>-<ino>). CHANGELOG [6.6.16]
+# 6.6.17: wine's own HOME and XDG_CACHE_HOME are under $W too — a fresh prefix writes
+# $HOME/.cache (mesa shader caches) — and `wineserver -k` leaves the server dir behind, so
+# _wine_down removes it. CHANGELOG [6.6.17]
 WP="$W/wine"
+WHM="$W/whome"
 _wine_down() {
     [ -d "$WP" ] || return 0
     _ws="/tmp/.wine-$(id -u)/server-$(stat -c '%D' "$WP" 2>/dev/null)-$(printf '%x' "$(stat -c '%i' "$WP" 2>/dev/null || echo 0)")"
@@ -72,6 +75,13 @@ _wine_down() {
 trap '_wine_down; rm -rf "$W"' EXIT
 FAIL=0
 fail() { echo "FAIL: alloc_failure_returns_zero: $*"; FAIL=1; }
+# ⛔ 6.6.17: the aarch64 cross compiler is built FROM THIS TREE into $W. It was read from
+# build/cycc_aarch64, which is gitignored — absent in a fresh worktree (axis 1 failed "compiler
+# for aarch64 missing") and stale whenever src/ has moved since its last rebuild, so the axis
+# could test a compiler the tree no longer produces. CHANGELOG [6.6.17]
+CCA="$W/cca"
+"$CC" < src/main_aarch64.cyr > "$CCA" 2> "$W/cca.err" && chmod +x "$CCA" \
+    || { echo "FAIL: alloc_failure_returns_zero: could not build the aarch64 cross compiler from src/main_aarch64.cyr"; sed -n 1,3p "$W/cca.err"; exit 1; }
 
 # ── axis 1: freelist.cyr included alone compiles on every target ─────────────────────
 printf 'include "lib/freelist.cyr";\nvar _p = fl_alloc(8);\nsyscall(60, 0);\n' > "$W/alone.cyr"
@@ -154,7 +164,7 @@ if ! command -v wine >/dev/null 2>&1; then
     echo "  SKIP: axis 3 (PE alloc_init abort) — wine not installed; axis 3s still checked"
     GATE_SKIPS=$((${GATE_SKIPS:-0} + 1))
 else
-    export WINEPREFIX="$WP" WINEDEBUG=-all WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d'
+    export WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d'
     CYRIUS_TARGET_WIN=1 "$CC" < "$W/winit.cyr" > "$W/winit.exe" 2>/dev/null || fail "axis 3: the PE probe did not compile"
     wrc=0; ( cd "$W" && WINEDEBUG=-all timeout 120 wine ./winit.exe > wo.txt 2> we.txt ) || wrc=$?
     if [ "$wrc" -ne 1 ]; then

@@ -88,7 +88,20 @@ SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"   # absolute: captured BE
 cd "$ROOT"
 CC="${CC:-$ROOT/build/cycc}"
 T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: stack_param_homing_matrix: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
-trap 'rm -rf "$T"' EXIT INT TERM
+# A PRIVATE wine prefix, and wine's own HOME / XDG_CACHE_HOME, under $T — never the user's
+# ~/.wine or ~/.cache (a fresh prefix writes $HOME/.cache: mesa shader caches). The EXIT
+# teardown stops THIS prefix's wineserver and removes its server dir
+# (/tmp/.wine-<uid>/server-<dev>-<ino>), which `wineserver -k` leaves behind. CHANGELOG [6.6.17]
+WP="$T/wine"
+WHM="$T/whome"
+_wine_down() {
+    [ -d "$WP" ] || return 0
+    _ws="/tmp/.wine-$(id -u)/server-$(stat -c '%D' "$WP" 2>/dev/null)-$(printf '%x' "$(stat -c '%i' "$WP" 2>/dev/null || echo 0)")"
+    WINEPREFIX="$WP" wineserver -k >/dev/null 2>&1 || true
+    WINEPREFIX="$WP" wineserver -w >/dev/null 2>&1 || true
+    rm -rf "$_ws" || true
+}
+trap '_wine_down; rm -rf "$T"' EXIT INT TERM
 ulimit -c 0 2>/dev/null || true
 ROWS_FLOOR=212      # every leg but cx
 ROWS_CX_FLOOR=167   # cx: no 9-16 B rax:rdx rows (see gen)
@@ -397,8 +410,8 @@ else "$T/cc_cx" < "$T/probe_cx.cyr" > "$T/p.cyx" 2> /dev/null || true
 
 # ── Win64 PE (wine — NOT hardware) ────────────────────────────────────────────────────────
 if command -v wine > /dev/null 2>&1; then
-    # A throwaway prefix, so nothing of the user's ~/.wine is read or written.
-    export WINEPREFIX="$T/wine" WINEDEBUG=-all WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d'
+    # A throwaway prefix and wine HOME, so nothing of the user's ~/.wine or ~/.cache is touched.
+    export WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d'
     "$CC" < "$ROOT/src/main_win.cyr" > "$T/cc_win" 2> /dev/null && chmod +x "$T/cc_win" || true
     if [ ! -s "$T/cc_win" ]; then echo "  FAIL: [win64] could not build the PE cross-compiler"; fail=1
     else "$T/cc_win" < "$T/probe.cyr" > "$T/p.exe" 2> /dev/null || true

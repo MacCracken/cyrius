@@ -72,7 +72,20 @@ LABEL_FLOOR=6
 [ -f "$ROOT/src/main_win.cyr" ] || { echo "  FAIL: src/main_win.cyr is missing"; exit 1; }
 
 D=$(mktemp -d) && [ -d "$D" ] || { echo "FAIL: mktemp"; exit 1; }
-trap 'rm -rf "$D"' EXIT
+# A PRIVATE wine prefix, and wine's own HOME / XDG_CACHE_HOME, under $D — never the user's
+# ~/.wine or ~/.cache (a fresh prefix writes $HOME/.cache: mesa shader caches). The EXIT
+# teardown stops THIS prefix's wineserver and removes its server dir
+# (/tmp/.wine-<uid>/server-<dev>-<ino>), which `wineserver -k` leaves behind. CHANGELOG [6.6.17]
+WP="$D/wp"
+WHM="$D/whome"
+_wine_down() {
+    [ -d "$WP" ] || return 0
+    _ws="/tmp/.wine-$(id -u)/server-$(stat -c '%D' "$WP" 2>/dev/null)-$(printf '%x' "$(stat -c '%i' "$WP" 2>/dev/null || echo 0)")"
+    WINEPREFIX="$WP" wineserver -k >/dev/null 2>&1 || true
+    WINEPREFIX="$WP" wineserver -w >/dev/null 2>&1 || true
+    rm -rf "$_ws" || true
+}
+trap '_wine_down; rm -rf "$D"' EXIT
 fail=0
 cd "$ROOT" || exit 1
 ulimit -c 0
@@ -83,7 +96,7 @@ printf 'fn main(): i64 { return 7; }\nvar e = main();\n' > "$D/tiny.cyr"
 printf 'include "lib/alloc.cyr"\ninclude "lib/string.cyr"\ninclude "lib/fmt.cyr"\ninclude "lib/io.cyr"\nfn main(): i64 { return 7; }\nvar e = main();\n' > "$D/heavy.cyr"
 
 labels() {   # the meter row names printed on stderr, one per line
-    grep -oE '^  [a-z_]+:' "$1" | tr -d ' :' | sort
+    { grep -oE '^  [a-z_]+:' "$1" || true; } | tr -d ' :' | sort
 }
 
 # --- axis 1: the Linux oracle, and the anti-vacuous pair ---
@@ -112,8 +125,8 @@ elif ! command -v objdump > /dev/null 2>&1; then
     echo "  SKIP axis 2: objdump not available (a strings scan is NOT a substitute — cycc carries the name as a literal in its own reroute-warning text whether or not it imports it)"
     GATE_SKIPS=$((${GATE_SKIPS:-0} + 1))
 else
-    nimp=$(objdump -x "$D/cycc.exe" 2>/dev/null | sed -n '/DLL Name/,$p' | grep -c 'GetEnvironmentVariableA')
-    ncf=$(objdump -x "$D/cycc.exe" 2>/dev/null | sed -n '/DLL Name/,$p' | grep -c 'CreateFileW')
+    nimp=$(objdump -x "$D/cycc.exe" 2>/dev/null | sed -n '/DLL Name/,$p' | grep -c 'GetEnvironmentVariableA' || true)
+    ncf=$(objdump -x "$D/cycc.exe" 2>/dev/null | sed -n '/DLL Name/,$p' | grep -c 'CreateFileW' || true)
     if [ "$ncf" -lt 1 ]; then
         echo "  FAIL axis 2 (anti-vacuous): the import directory could not be read at all (CreateFileW is missing too)"
         fail=1
@@ -132,7 +145,7 @@ elif ! command -v wine > /dev/null 2>&1; then
     echo "  SKIP axes 3-4: wine absent — the PE BEHAVIOUR of the knobs is covered only by the cass leg"
     GATE_SKIPS=$((${GATE_SKIPS:-0} + 1))
 else
-    export WINEPREFIX="$D/wp" WINEDEBUG=-all
+    export WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all
     export WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d'
 
     CYRIUS_STATS=1 wine "$D/cycc.exe" < "$D/tiny.cyr" > /dev/null 2> "$D/pe_set.err"
@@ -151,9 +164,9 @@ else
 
     CYRIUS_DCE=1 wine "$D/cycc.exe" < "$D/heavy.cyr" > /dev/null 2> "$D/pe_dce.err"
     wine "$D/cycc.exe" < "$D/heavy.cyr" > /dev/null 2> "$D/pe_nodce.err"
-    noped=$(grep -c 'bytes NOPed' "$D/pe_dce.err")
-    invited=$(grep -c 'set CYRIUS_DCE=1 to eliminate' "$D/pe_nodce.err")
-    still=$(grep -c 'set CYRIUS_DCE=1 to eliminate' "$D/pe_dce.err")
+    noped=$(grep -c 'bytes NOPed' "$D/pe_dce.err" || true)
+    invited=$(grep -c 'set CYRIUS_DCE=1 to eliminate' "$D/pe_nodce.err" || true)
+    still=$(grep -c 'set CYRIUS_DCE=1 to eliminate' "$D/pe_dce.err" || true)
     if [ "$invited" -lt 1 ]; then
         echo "  FAIL axis 4 (anti-vacuous): the unset PE run printed no DCE note at all, so the set run proves nothing"
         fail=1
@@ -163,7 +176,7 @@ else
     else
         echo "  ok axis 4: cycc.exe honours CYRIUS_DCE too — a second knob, read in a different source file"
     fi
-    rm -rf "$D/wp"
+    _wine_down; rm -rf "$D/wp"
 fi
 
 if [ "$fail" = "0" ]; then

@@ -32,7 +32,19 @@ D=$(mktemp -d) && [ -d "$D" ] || { echo "FAIL: syscall_wrapper_pass: mktemp -d f
 # v6.6.6: every probe path is under $D — they were FIXED names under /tmp (cyx_gate_probe,
 # cyx_gate_file), which two concurrent check.sh runs shared. Probes spell the dir @D@ and
 # mkprobe instantiates it. CHANGELOG [6.6.6]
-trap 'rm -rf "$D"' EXIT
+# 6.6.17: a PRIVATE wine prefix, and wine's own HOME / XDG_CACHE_HOME, under $D for the
+# cycc.exe row below — never the user's ~/.wine or ~/.cache. The EXIT teardown stops THIS
+# prefix's wineserver and removes its server dir, which `wineserver -k` leaves behind.
+WP="$D/wine"
+WHM="$D/whome"
+_wine_down() {
+    [ -d "$WP" ] || return 0
+    _ws="/tmp/.wine-$(id -u)/server-$(stat -c '%D' "$WP" 2>/dev/null)-$(printf '%x' "$(stat -c '%i' "$WP" 2>/dev/null || echo 0)")"
+    WINEPREFIX="$WP" wineserver -k >/dev/null 2>&1 || true
+    WINEPREFIX="$WP" wineserver -w >/dev/null 2>&1 || true
+    rm -rf "$_ws" || true
+}
+trap '_wine_down; rm -rf "$D"' EXIT
 fails=0
 
 check() {
@@ -434,10 +446,21 @@ tgt() {
     env $2 "$1" < "$D/xt.cyr" > "$D/o.bin" 2>/dev/null || rc=$?
     if [ "$rc" = "0" ] && [ -s "$D/o.bin" ]; then echo yes; else echo no; fi
 }
-check "x86-64 Linux"   yes "$(tgt "$CC" CYRIUS_X=0)"
-check "macOS x86 (Mach-O)" yes "$(tgt "$CC" CYRIUS_MACHO=1)"
-check "agnos"          yes "$(tgt "$CC" CYRIUS_TARGET_AGNOS=1)"
-check "Windows PE (in-tree emitter)" yes "$(tgt "$CC" CYRIUS_TARGET_WIN=1)"
+# ⛔ 6.6.17 — EVERY COMPILE ROW RUNS OR SAYS WHY NOT. The aarch64 and Windows rows read the
+# gitignored build/cycc_aarch64 / build/cycc_win and were skipped, SILENTLY, when those were
+# absent (a fresh worktree) — and ran a stale binary when they were old. Both compilers are now
+# built from this tree into $D. build/cycc_win is a PE32+ file that only ran at all because the
+# box's binfmt_misc hands MZ files to wine — in the SHARED ~/.wine, with the real HOME; it now
+# runs under an explicit private wine (`_wine_down` above). Every row goes through `trow`, a
+# missing wine is a NAMED skip (exit 77), and the closing floor fails a row that did neither.
+# CHANGELOG [6.6.17]
+NTROW=6; TROWS=0; TSKIPS=0
+trow() { check "$1" yes "$2"; TROWS=$((TROWS + 1)); }
+tskip() { echo "  SKIP: $1 — $2"; TSKIPS=$((TSKIPS + 1)); }
+trow "x86-64 Linux" "$(tgt "$CC" CYRIUS_X=0)"
+trow "macOS x86 (Mach-O)" "$(tgt "$CC" CYRIUS_MACHO=1)"
+trow "agnos" "$(tgt "$CC" CYRIUS_TARGET_AGNOS=1)"
+trow "Windows PE (in-tree emitter)" "$(tgt "$CC" CYRIUS_TARGET_WIN=1)"
 # v6.6.5 — the Mach-O build must also be SILENT. An unrouted number does not fail the
 # compile; it prints "syscall N not routed" and then SIGSYS-kills the process at runtime, so
 # a compile-only axis passes over exactly the failure this file exists to prevent. A bare
@@ -458,14 +481,32 @@ if [ -s "$D/cc_a64" ]; then
 else
     check "the aarch64 cross compiler built" yes no
 fi
-[ -x build/cycc_aarch64 ] && check "aarch64" yes "$(tgt build/cycc_aarch64 CYRIUS_X=0)"
-[ -x build/cycc_win ]     && check "Windows PE" yes "$(tgt build/cycc_win CYRIUS_X=0)"
+if [ -s "$D/cc_a64" ]; then
+    trow "aarch64 (cross compiler built from src/main_aarch64.cyr)" "$(tgt "$D/cc_a64" CYRIUS_X=0)"
+else
+    trow "aarch64 (cross compiler built from src/main_aarch64.cyr)" no
+fi
+# The shipped PE compiler (install.sh's recipe: main_win.cyr through build/cycc with
+# CYRIUS_TARGET_WIN=1 -> PE32+), run under a private wine.
+CYRIUS_TARGET_WIN=1 "$CC" < src/main_win.cyr > "$D/cycc_win.exe" 2>/dev/null || true
+if [ ! -s "$D/cycc_win.exe" ]; then
+    trow "Windows PE (cycc.exe built from src/main_win.cyr)" no
+elif ! command -v wine > /dev/null 2>&1; then
+    tskip "Windows PE (cycc.exe under wine)" "wine not installed (the cass hardware leg covers it)"
+else
+    export WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d'
+    wrc=0
+    timeout 300 wine "$D/cycc_win.exe" < "$D/xt.cyr" > "$D/w.bin" 2>/dev/null || wrc=$?
+    trow "Windows PE (cycc.exe built from src/main_win.cyr, under wine)" "$( [ "$wrc" = 0 ] && [ -s "$D/w.bin" ] && echo yes || echo no)"
+fi
+check "every cross-compile row ran or is a NAMED skip (none dropped silently)" "$NTROW" "$((TROWS + TSKIPS))"
 # cx is EXCLUDED on purpose: src/main_cx.cyr predefines no target macro, so lib/syscalls.cyr
 # includes no peer at all and lib/io.cyr has never compiled there. Pre-existing, not this
 # pass's regression — verified against the committed io.cyr, which fails identically.
 
 echo ""
 if [ "$fails" = "0" ]; then
+    if [ "$TSKIPS" -gt 0 ]; then echo "SKIP: syscall-wrapper-pass — $TSKIPS cross-compile row(s) above could not run; every one that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
     echo "PASS: syscall-wrapper-pass — chdir/signal_default/x*/fchownat behave and cross-compile"
     exit 0
 fi

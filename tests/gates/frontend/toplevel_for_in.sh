@@ -45,7 +45,20 @@ ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC="${CYCC:-$ROOT/build/cycc}"
 [ -x "$CC" ] || { echo "FAIL: toplevel_for_in: $CC missing"; exit 1; }
 WORK=$(mktemp -d) && [ -d "$WORK" ] || { echo "FAIL: mktemp"; exit 1; }
-trap 'rm -rf "$WORK"' EXIT
+# A PRIVATE wine prefix, and wine's own HOME / XDG_CACHE_HOME, under $WORK — never the user's
+# ~/.wine or ~/.cache (a fresh prefix writes $HOME/.cache: mesa shader caches). The EXIT
+# teardown stops THIS prefix's wineserver and removes its server dir
+# (/tmp/.wine-<uid>/server-<dev>-<ino>), which `wineserver -k` leaves behind. CHANGELOG [6.6.17]
+WP="$WORK/wp"
+WHM="$WORK/whome"
+_wine_down() {
+    [ -d "$WP" ] || return 0
+    _ws="/tmp/.wine-$(id -u)/server-$(stat -c '%D' "$WP" 2>/dev/null)-$(printf '%x' "$(stat -c '%i' "$WP" 2>/dev/null || echo 0)")"
+    WINEPREFIX="$WP" wineserver -k >/dev/null 2>&1 || true
+    WINEPREFIX="$WP" wineserver -w >/dev/null 2>&1 || true
+    rm -rf "$_ws" || true
+}
+trap '_wine_down; rm -rf "$WORK"' EXIT
 ulimit -c 0 2>/dev/null || true
 cd "$ROOT"   # the collection rows include lib/alloc.cyr + lib/vec.cyr from the tree
 NFAIL=0
@@ -188,7 +201,7 @@ if command -v wine > /dev/null 2>&1; then
     WCC="$WORK/wcc.sh"
     printf '#!/bin/sh\nCYRIUS_TARGET_WIN=1 exec "%s"\n' "$CC" > "$WCC"; chmod +x "$WCC"
     WRUN="$WORK/wrun.sh"
-    printf '#!/bin/sh\nWINEPREFIX="%s" WINEDEBUG=-all WINEDLLOVERRIDES="winemenubuilder.exe=d;mscoree=d;mshtml=d" exec wine "$1"\n' "$WORK/wp" > "$WRUN"; chmod +x "$WRUN"
+    printf '#!/bin/sh\nWINEPREFIX="%s" HOME="%s" XDG_CACHE_HOME="%s/.cache" WINEDEBUG=-all WINEDLLOVERRIDES="winemenubuilder.exe=d;mscoree=d;mshtml=d" exec wine "$1"\n' "$WP" "$WHM" "$WHM" > "$WRUN"; chmod +x "$WRUN"
     cross_leg pe "$WCC" "$WRUN"
 else echo "  SKIP: PE leg (wine not installed)"; GATE_SKIPS=$((${GATE_SKIPS:-0} + 1)); fi
 

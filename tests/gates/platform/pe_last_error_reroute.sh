@@ -47,7 +47,20 @@ TC="$ROOT/tests/tcyr/crossos/fs_dirlist.tcyr"
 [ -f "$TC" ] || { echo "FAIL: pe_last_error_reroute: $TC is missing"; exit 1; }
 
 D=$(mktemp -d) && [ -d "$D" ] || { echo "FAIL: pe_last_error_reroute: mktemp -d failed"; exit 1; }
-trap 'rm -rf "$D"' EXIT INT TERM
+# A PRIVATE wine prefix, and wine's own HOME / XDG_CACHE_HOME, under $D — never the user's
+# ~/.wine or ~/.cache (a fresh prefix writes $HOME/.cache: mesa shader caches). The EXIT
+# teardown stops THIS prefix's wineserver and removes its server dir
+# (/tmp/.wine-<uid>/server-<dev>-<ino>), which `wineserver -k` leaves behind. CHANGELOG [6.6.17]
+WP="$D/wp"
+WHM="$D/whome"
+_wine_down() {
+    [ -d "$WP" ] || return 0
+    _ws="/tmp/.wine-$(id -u)/server-$(stat -c '%D' "$WP" 2>/dev/null)-$(printf '%x' "$(stat -c '%i' "$WP" 2>/dev/null || echo 0)")"
+    WINEPREFIX="$WP" wineserver -k >/dev/null 2>&1 || true
+    WINEPREFIX="$WP" wineserver -w >/dev/null 2>&1 || true
+    rm -rf "$_ws" || true
+}
+trap '_wine_down; rm -rf "$D"' EXIT INT TERM
 
 pass=0; fail=0
 ok()  { pass=$((pass + 1)); }
@@ -59,8 +72,7 @@ build() {  # $1 = file stem, $2 = the syscall's argument list
 }
 
 # axis 1: routed at argc 1, reported at argc 2.
-build g "0xF04B"
-rc=$?
+rc=0; build g "0xF04B" || rc=$?
 if [ "$rc" -ne 0 ] || [ ! -s "$D/g.exe" ]; then bad "axis 1: syscall(0xF04B) did not build for PE (rc $rc)"
 elif grep -q "syscall 61515 with" "$D/g.err"; then bad "axis 1: syscall(0xF04B) is reported as not routed"
 else ok; fi
@@ -70,7 +82,7 @@ else bad "axis 1: syscall(0xF04B, 0) (one argument too many) was not reported"; 
 
 # axis 2: the note names 0xF04B and reaches its own end.
 if grep -q '^  note: CYRIUS_TARGET_WIN=1 routes' "$D/s.err"; then
-    note=$(grep '^  note: CYRIUS_TARGET_WIN=1 routes' "$D/s.err")
+    note=$(grep '^  note: CYRIUS_TARGET_WIN=1 routes' "$D/s.err" || true)
     case "$note" in
         *'+ 0xF04B (kernel32: GetLastError).') ok ;;
         *'0xF04B (kernel32: GetLastError)'*) bad "axis 2: the note names 0xF04B but does not END with it — its byte count is wrong" ;;
@@ -101,7 +113,7 @@ if [ "$nnext" -lt 2 ]; then
 elif [ "$nread" != "$nnext" ]; then
     bad "axis 4: $nnext FindNextFileW loop(s) but $nread read GetLastError, then FindClose, then test for ERROR_NO_MORE_FILES (18) — a failed listing ends like a complete one"
 else ok; fi
-wide=$(for f in "$ROOT"/lib/*.cyr; do code "$f" | grep -nE 'syscall\((61465|61462), *&w' | sed "s|^|${f#$ROOT/}:|"; done)
+wide=$(for f in "$ROOT"/lib/*.cyr; do code "$f" | { grep -nE 'syscall\((61465|61462), *&w' || true; } | sed "s|^|${f#$ROOT/}:|"; done)
 if [ -n "$wide" ]; then
     bad "axis 4: 0xF016/0xF019 handed a stdlib-widened buffer (they take the narrow UTF-8 path since 6.6.12): $(printf '%s' "$wide" | head -3 | tr '\n' ' ')"
 else ok; fi
@@ -115,9 +127,9 @@ else
         bad "axis 5: the PE build of fs_dirlist.tcyr produced no binary: $(grep -m2 '^error' "$D/t.err" | tr '\n' ' ')"
     else
         mkdir -p "$D/w" && cp "$D/t.exe" "$D/w/t.exe"
-        ( cd "$D/w" && ulimit -c 0; LANG=C.UTF-8 WINEPREFIX="$D/wp" WINEDEBUG=-all \
+        wrc=0; ( cd "$D/w" && ulimit -c 0; LANG=C.UTF-8 WINEPREFIX="$D/wp" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all \
             WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' \
-            wine t.exe > "$D/t.out" 2>&1 ); wrc=$?
+            wine t.exe > "$D/t.out" 2>&1 ) || wrc=$?
         sum=$(sed -n 's/^\([0-9][0-9]*\) passed, \([0-9][0-9]*\) failed.*/\1 \2/p' "$D/t.out" | tail -1)
         np=${sum% *}; nf=${sum#* }
         if [ -z "$sum" ]; then

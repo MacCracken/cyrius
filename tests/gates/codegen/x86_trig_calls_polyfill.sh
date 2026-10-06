@@ -25,7 +25,11 @@ T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL x86_trig_calls_polyfill: mktemp -d
 # A PRIVATE wine prefix under $T, never the user's ~/.wine: its one wineserver is shared by
 # every concurrent check.sh on the box. The EXIT kill is scoped to THIS prefix and also removes
 # its server socket dir (/tmp/.wine-<uid>/server-<dev>-<ino>). CHANGELOG [6.6.16]
+# 6.6.17: wine's own HOME and XDG_CACHE_HOME are under $T too — a fresh prefix writes
+# $HOME/.cache (mesa shader caches) — and `wineserver -k` leaves the server dir behind, so
+# _wine_down removes it. CHANGELOG [6.6.17]
 WP="$T/wine"
+WHM="$T/whome"
 _wine_down() {
     [ -d "$WP" ] || return 0
     _ws="/tmp/.wine-$(id -u)/server-$(stat -c '%D' "$WP" 2>/dev/null)-$(printf '%x' "$(stat -c '%i' "$WP" 2>/dev/null || echo 0)")"
@@ -61,8 +65,7 @@ for fmt in elf pe macho; do
         pe)    envv="CYRIUS_TARGET_WIN=1" ;;
         macho) envv="CYRIUS_MACHO=1" ;;
     esac
-    env $envv "$CC" < "$T/nomath.cyr" > "$T/nm.$fmt" 2> "$T/nm.$fmt.err"
-    rc=$?
+    rc=0; env $envv "$CC" < "$T/nomath.cyr" > "$T/nm.$fmt" 2> "$T/nm.$fmt.err" || rc=$?
     if [ "$rc" -ne 1 ]; then
         echo "  FAIL [$fmt] axis 1: f64_sin without lib/math.cyr exited $rc, expected 1"; fail=1
     elif ! grep -q 'f64_sin requires include "lib/math.cyr"' "$T/nm.$fmt.err" \
@@ -75,8 +78,8 @@ for fmt in elf pe macho; do
         echo "  FAIL [$fmt] axis 2: the probe with lib/math.cyr did not compile"; fail=1; continue; }
     if [ -n "$OBJDUMP" ]; then
         "$OBJDUMP" -d "$T/m.$fmt" > "$T/m.$fmt.dis" 2>&1
-        ins=$(grep -c . "$T/m.$fmt.dis")
-        x87=$(grep -cE '[[:space:]](fsin|fcos|fsincos)([[:space:]]|$)' "$T/m.$fmt.dis")
+        ins=$(grep -c . "$T/m.$fmt.dis" || true)
+        x87=$(grep -cE '[[:space:]](fsin|fcos|fsincos)([[:space:]]|$)' "$T/m.$fmt.dis" || true)
         if [ "$ins" -lt 1000 ]; then
             echo "  FAIL [$fmt] axis 2: only $ins disassembly lines — llvm-objdump did not read the binary"; fail=1
         elif [ "$x87" -ne 0 ]; then
@@ -88,16 +91,16 @@ for fmt in elf pe macho; do
 done
 
 chmod +x "$T/m.elf"
-"$T/m.elf"; got=$?
+got=0; "$T/m.elf" || got=$?
 if [ "$got" -ne 42 ]; then
     echo "  FAIL [elf] axis 3: sin(pi) / sin(1e19) / cos(DBL_MAX) row $got is not correctly rounded"; fail=1
 else
     echo "  ok [elf] axis 3: sin(pi), sin(1e19), cos(DBL_MAX) are the correctly rounded bits"
 fi
 if command -v wine > /dev/null 2>&1; then
-    export WINEPREFIX="$WP" WINEDEBUG=-all WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d'
+    export WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d'
     cp "$T/m.pe" "$T/m.exe"
-    wine "$T/m.exe" > /dev/null 2>&1; got=$?
+    got=0; wine "$T/m.exe" > /dev/null 2>&1 || got=$?
     if [ "$got" -ne 42 ]; then
         echo "  FAIL [pe] axis 3: under wine, row $got is not correctly rounded"; fail=1
     else

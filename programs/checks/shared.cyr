@@ -10,8 +10,13 @@
 # tcyr/output gates can fail on a crash-before-summary or nonzero-after-pass —
 # the bytes-only return is unchanged, so existing callers keep working.
 fn _exec_capture_clean(bin_path, buf, buflen): i64 {
+    return _exec_capture_envp(bin_path, buf, buflen, EMPTY_ENVP);
+}
+
+# `_exec_capture_clean` with a caller-chosen environment (the .tcyr phase's `_tcyr_envp`).
+fn _exec_capture_envp(bin_path, buf, buflen, envp): i64 {
     var _st[16];
-    var n = regression_exec_capture_status(bin_path, buf, buflen, EMPTY_ENVP, &_st);
+    var n = regression_exec_capture_status(bin_path, buf, buflen, envp, &_st);
     _last_exec_ec = load64(&_st);
     _last_exec_sig = load64(&_st + 8);
     return n;

@@ -85,7 +85,20 @@ FLOOR=18
 [ -f "$SRC" ] || { echo "  FAIL: $SRC is missing — the cross-OS companion for this gate is gone"; exit 1; }
 
 D=$(mktemp -d) && [ -d "$D" ] || { echo "FAIL: mktemp"; exit 1; }
-trap 'rm -rf "$D"' EXIT
+# A PRIVATE wine prefix, and wine's own HOME / XDG_CACHE_HOME, under $D — never the user's
+# ~/.wine or ~/.cache (a fresh prefix writes $HOME/.cache: mesa shader caches). The EXIT
+# teardown stops THIS prefix's wineserver and removes its server dir
+# (/tmp/.wine-<uid>/server-<dev>-<ino>), which `wineserver -k` leaves behind. CHANGELOG [6.6.17]
+WP="$D/wp"
+WHM="$D/whome"
+_wine_down() {
+    [ -d "$WP" ] || return 0
+    _ws="/tmp/.wine-$(id -u)/server-$(stat -c '%D' "$WP" 2>/dev/null)-$(printf '%x' "$(stat -c '%i' "$WP" 2>/dev/null || echo 0)")"
+    WINEPREFIX="$WP" wineserver -k >/dev/null 2>&1 || true
+    WINEPREFIX="$WP" wineserver -w >/dev/null 2>&1 || true
+    rm -rf "$_ws" || true
+}
+trap '_wine_down; rm -rf "$D"' EXIT
 fail=0
 
 want=$(grep -v '^[[:space:]]*#' "$SRC" | grep -cE 'assert_eq\(')
@@ -112,7 +125,7 @@ if [ ! -s "$D/ff_elf" ]; then
     fail=1
 else
     chmod +x "$D/ff_elf"
-    ( cd "$D" && ulimit -c 0; ./ff_elf > "$D/elf.out" 2>&1 ); rc=$?
+    rc=0; ( cd "$D" && ulimit -c 0; ./ff_elf > "$D/elf.out" 2>&1 ) || rc=$?
     got=$(ran_count "$D/elf.out")
     if [ "$rc" != "0" ] || [ "$got" != "$want" ]; then
         echo "  FAIL axis 1 (POSIX oracle): native run exited $rc, reported '$got' of $want rows"
@@ -146,19 +159,19 @@ else
     xfany=$(xf_arm | grep -cE 'syscall\((7[45]|SYS_F(DATA)?SYNC),|sys_f(data)?sync\(')
     npeer=$(grep -v '^[[:space:]]*#' "$ROOT/lib/syscalls_windows.cyr" | grep -oE 'syscall\((7[45]|SYS_F(DATA)?SYNC),' | wc -l | tr -d ' ')
     need=$((nsites + nxf + npeer))
-    ncf=$(grep -c 'CreateFileW' "$D/imp")
-    nfb=$(grep -c 'FlushFileBuffers' "$D/imp")
-    ntail=$(awk '/cmp[[:space:]]+\$0x1,%eax/ {p=1; next} p && /sbb[[:space:]]+%rax,%rax/ {n++} {p=0} END {print n+0}' "$D/dis")
+    ncf=$(grep -c 'CreateFileW' "$D/imp" || true)
+    nfb=$(grep -c 'FlushFileBuffers' "$D/imp" || true)
+    ntail=$(awk '/cmp[[:space:]]+\$0x1,%eax/ {p=1; next} p && /sbb[[:space:]]+%rax,%rax/ {n++} {p=0} END {print n+0}' "$D/dis" || true)
     # MoveFileExW call sites, found by the IAT slot they call through (6.6.11: the argument
     # setup that used to anchor this — `lea 0x230(%rsp),%rdx` — went away when the path widen
     # moved into a probed frame; the call target is register- and frame-independent).
-    mvslot=$(objdump -p "$D/ff.exe" 2>/dev/null | awk '$NF == "MoveFileExW" {print $1; exit}')
+    mvslot=$(objdump -p "$D/ff.exe" 2>/dev/null | awk '$NF == "MoveFileExW" {print $1; exit}' || true)
     mvva=""
     [ -n "$mvslot" ] && mvva=$(printf '0x%x' $((0x140000000 + 0x$mvslot)))
     nmv=0; nwt=0
     if [ -n "$mvva" ]; then
-        nmv=$(grep -cE "call[[:space:]]+\*0x[0-9a-f]+\(%rip\)[[:space:]]+# $mvva\$" "$D/dis")
-        nwt=$(awk -v va="$mvva" '/mov[[:space:]]+\$0x9,%r8d/ {p=1; next} p && $NF == va && /call/ {n++} {p=0} END {print n+0}' "$D/dis")
+        nmv=$(grep -cE "call[[:space:]]+\*0x[0-9a-f]+\(%rip\)[[:space:]]+# $mvva\$" "$D/dis" || true)
+        nwt=$(awk -v va="$mvva" '/mov[[:space:]]+\$0x9,%r8d/ {p=1; next} p && $NF == va && /call/ {n++} {p=0} END {print n+0}' "$D/dis" || true)
     fi
     # (d): "<switches> <74 candidates> <75 candidates> <74 arms that flush> <75 arms that flush>"
     dyn=$(awk '
@@ -210,9 +223,9 @@ elif ! command -v wine > /dev/null 2>&1; then
     GATE_SKIPS=$((${GATE_SKIPS:-0} + 1))
 else
     mkdir -p "$D/w" && cp "$D/ff.exe" "$D/w/ff.exe"
-    ( cd "$D/w" && ulimit -c 0; WINEPREFIX="$D/wp" WINEDEBUG=-all \
+    rc=0; ( cd "$D/w" && ulimit -c 0; WINEPREFIX="$D/wp" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all \
         WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' \
-        wine ff.exe > "$D/pe.out" 2> "$D/pe.err" ); rc=$?
+        wine ff.exe > "$D/pe.out" 2> "$D/pe.err" ) || rc=$?
     got=$(ran_count "$D/pe.out")
     if [ "$rc" != "0" ] || [ "$got" != "$want" ]; then
         echo "  FAIL axis 3 (wine): PE run exited $rc, reported '$got' of $want rows"
@@ -221,7 +234,7 @@ else
     else
         echo "  ok axis 3: $got of $want rows hold on PE under wine (hardware: the cass cross-OS leg)"
     fi
-    rm -rf "$D/wp"
+    _wine_down; rm -rf "$D/wp"
 fi
 
 if [ "$fail" = "0" ]; then

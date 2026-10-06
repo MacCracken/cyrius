@@ -122,7 +122,20 @@ PFLOOR=33
 [ -f "$PSRC" ] || { echo "  FAIL: $PSRC is missing — the cross-OS companion for the path-encoding fix is gone"; exit 1; }
 
 D=$(mktemp -d) && [ -d "$D" ] || { echo "FAIL: mktemp"; exit 1; }
-trap 'rm -rf "$D"' EXIT
+# A PRIVATE wine prefix, and wine's own HOME / XDG_CACHE_HOME, under $D — never the user's
+# ~/.wine or ~/.cache (a fresh prefix writes $HOME/.cache: mesa shader caches). The EXIT
+# teardown stops THIS prefix's wineserver and removes its server dir
+# (/tmp/.wine-<uid>/server-<dev>-<ino>), which `wineserver -k` leaves behind. CHANGELOG [6.6.17]
+WP="$D/wp"
+WHM="$D/whome"
+_wine_down() {
+    [ -d "$WP" ] || return 0
+    _ws="/tmp/.wine-$(id -u)/server-$(stat -c '%D' "$WP" 2>/dev/null)-$(printf '%x' "$(stat -c '%i' "$WP" 2>/dev/null || echo 0)")"
+    WINEPREFIX="$WP" wineserver -k >/dev/null 2>&1 || true
+    WINEPREFIX="$WP" wineserver -w >/dev/null 2>&1 || true
+    rm -rf "$_ws" || true
+}
+trap '_wine_down; rm -rf "$D"' EXIT
 fail=0
 
 # Static expectation: assert_* sites outside any CYRIUS_TARGET_WIN guard count for both builds;
@@ -165,7 +178,7 @@ if [ ! -s "$D/elf" ]; then
 else
     chmod +x "$D/elf"
     mkdir -p "$D/n"
-    ( cd "$D/n" && ulimit -c 0; ../elf > "$D/elf.out" 2>&1 ); rc=$?
+    rc=0; ( cd "$D/n" && ulimit -c 0; ../elf > "$D/elf.out" 2>&1 ) || rc=$?
     got=$(ran_count "$D/elf.out")
     if [ "$rc" != "0" ] || [ "$got" != "$want_elf" ]; then
         echo "  FAIL axis 1 (POSIX oracle): native run exited $rc, reported '$got' of $want_elf rows"
@@ -186,12 +199,12 @@ elif ! command -v objdump > /dev/null 2>&1; then
     echo "  SKIP axis 2: objdump not available"
 else
     objdump -d "$D/t.exe" > "$D/dis" 2>/dev/null
-    fixed=$(grep -cE 'movq?[[:space:]]+\$0x80,0x28\(%rsp\)' "$D/dis")
-    sites=$(grep -cE 'mov[[:space:]]+%r8,0x28\(%rsp\)' "$D/dis")
-    base=$(grep -cE 'mov[[:space:]]+\$0x80,%r8d' "$D/dis")
-    rp=$(grep -cE 'or[[:space:]]+\$0x200000,%r8d' "$D/dis")
-    bs=$(grep -cE 'or[[:space:]]+\$0x2000000,%r8d' "$D/dis")
-    imp=$(objdump -p "$D/t.exe" 2>/dev/null | grep -cE '[[:space:]]GetFileInformationByHandleEx$')
+    fixed=$(grep -cE 'movq?[[:space:]]+\$0x80,0x28\(%rsp\)' "$D/dis" || true)
+    sites=$(grep -cE 'mov[[:space:]]+%r8,0x28\(%rsp\)' "$D/dis" || true)
+    base=$(grep -cE 'mov[[:space:]]+\$0x80,%r8d' "$D/dis" || true)
+    rp=$(grep -cE 'or[[:space:]]+\$0x200000,%r8d' "$D/dis" || true)
+    bs=$(grep -cE 'or[[:space:]]+\$0x2000000,%r8d' "$D/dis" || true)
+    imp=$(objdump -p "$D/t.exe" 2>/dev/null | grep -cE '[[:space:]]GetFileInformationByHandleEx$' || true)
     if [ "$fixed" != "0" ]; then
         echo "  FAIL axis 2: $fixed open site(s) still pass the FIXED dwFlagsAndAttributes 0x80 — O_NOFOLLOW/O_DIRECTORY are ignored again"
         fail=1
@@ -222,9 +235,9 @@ elif ! command -v wine > /dev/null 2>&1; then
     echo "  SKIP axis 3: wine absent — the PE behaviour of these rows is covered only by the cass leg"
 else
     mkdir -p "$D/w" && cp "$D/t.exe" "$D/w/t.exe"
-    ( cd "$D/w" && ulimit -c 0; WINEPREFIX="$D/wp" WINEDEBUG=-all \
+    rc=0; ( cd "$D/w" && ulimit -c 0; WINEPREFIX="$D/wp" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all \
         WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' \
-        wine t.exe > "$D/pe.out" 2> "$D/pe.err2" ); rc=$?
+        wine t.exe > "$D/pe.out" 2> "$D/pe.err2" ) || rc=$?
     got=$(ran_count "$D/pe.out")
     if [ "$rc" != "0" ] || [ "$got" != "$want_pe" ]; then
         echo "  FAIL axis 3 (wine): PE run exited $rc, reported '$got' of $want_pe rows"
@@ -237,7 +250,7 @@ else
     # its services) running past `wine`'s exit. Ended inline, scoped to OUR prefix — never a
     # bare `wineserver -k` (see cbt_fork_sites_have_pe_arm.sh: that kills other lanes' wine).
     WINEPREFIX="$D/wp" wineserver -k > /dev/null 2>&1 || true
-    rm -rf "$D/wp"
+    _wine_down; rm -rf "$D/wp"
 fi
 
 # --- axis 2b: the path-encoding shape (6.6.11) ---
@@ -252,7 +265,7 @@ else
     objdump -d "$D/p.exe" > "$D/pdis" 2>/dev/null
     objdump -p "$D/p.exe" > "$D/pimp" 2>/dev/null
     calls_to() {   # $1 = kernel32 import name -> call sites through its IAT slot
-        slot=$(awk -v n="$1" '$NF == n {print $1; exit}' "$D/pimp")
+        slot=$(awk -v n="$1" '$NF == n {print $1; exit}' "$D/pimp" || true)
         [ -n "$slot" ] || { echo 0; return; }
         va=$(printf '0x%x' $((0x140000000 + 0x$slot)))
         grep -cE "call[[:space:]]+\*0x[0-9a-f]+\(%rip\)[[:space:]]+# $va\$" "$D/pdis"
@@ -262,12 +275,12 @@ else
     nga=$(calls_to GetFileAttributesW); nff=$(calls_to FindFirstFileW)   # narrow since 6.6.12
     want_w=$((ncf + ncd + ndf + nrd + nga + nff + 2 * nmv))
     frames=$((ncf + ncd + ndf + nrd + nga + nff + nmv))
-    nw=$(grep -cE 'mov[[:space:]]+\$0xfde9,%ecx' "$D/pdis")
-    n8=$(awk '/mov[[:space:]]+\$0xfde9,%ecx/ {p=1; next} p && /mov[[:space:]]+\$0x8,%edx/ {n++} {p=0} END {print n+0}' "$D/pdis")
-    nlong=$(grep -cE 'cmp[[:space:]]+\$0xf8,%eax' "$D/pdis")
-    nprobe=$(grep -cE 'test[[:space:]]+%rsp,\(%rsp\)' "$D/pdis")
-    nloop=$(grep -cE 'mov[[:space:]]+%ax,\(%rdi,%rcx,2\)|cmp[[:space:]]+\$0x104,%ecx' "$D/pdis")
-    nimp=$(grep -cE '[[:space:]](MultiByteToWideChar|GetFullPathNameW)$' "$D/pimp")
+    nw=$(grep -cE 'mov[[:space:]]+\$0xfde9,%ecx' "$D/pdis" || true)
+    n8=$(awk '/mov[[:space:]]+\$0xfde9,%ecx/ {p=1; next} p && /mov[[:space:]]+\$0x8,%edx/ {n++} {p=0} END {print n+0}' "$D/pdis" || true)
+    nlong=$(grep -cE 'cmp[[:space:]]+\$0xf8,%eax' "$D/pdis" || true)
+    nprobe=$(grep -cE 'test[[:space:]]+%rsp,\(%rsp\)' "$D/pdis" || true)
+    nloop=$(grep -cE 'mov[[:space:]]+%ax,\(%rdi,%rcx,2\)|cmp[[:space:]]+\$0x104,%ecx' "$D/pdis" || true)
+    nimp=$(grep -cE '[[:space:]](MultiByteToWideChar|GetFullPathNameW)$' "$D/pimp" || true)
     if [ "$ncf" -lt 1 ] || [ "$ncd" -lt 1 ] || [ "$ndf" -lt 1 ] || [ "$nrd" -lt 1 ] || [ "$nmv" -lt 1 ] || [ "$nga" -lt 1 ] || [ "$nff" -lt 1 ]; then
         echo "  FAIL axis 2b (anti-vacuous): the PE build does not reach every narrow-path reroute (CreateFileW $ncf, CreateDirectoryW $ncd, DeleteFileW $ndf, RemoveDirectoryW $nrd, MoveFileExW $nmv, GetFileAttributesW $nga, FindFirstFileW $nff call site(s))"
         fail=1
@@ -309,7 +322,7 @@ if [ ! -s "$D/pelf" ]; then
 else
     chmod +x "$D/pelf"
     mkdir -p "$D/pn"
-    ( cd "$D/pn" && ulimit -c 0; ../pelf > "$D/pelf.out" 2>&1 ); rc=$?
+    rc=0; ( cd "$D/pn" && ulimit -c 0; ../pelf > "$D/pelf.out" 2>&1 ) || rc=$?
     got=$(ran_count "$D/pelf.out")
     if [ "$rc" != "0" ] || [ "$got" != "$pwant_elf" ]; then
         echo "  FAIL axis 4 (POSIX oracle): native run exited $rc, reported '$got' of $pwant_elf rows"
@@ -325,9 +338,9 @@ elif ! command -v wine > /dev/null 2>&1; then
     echo "  SKIP axis 4 (wine): wine absent — the PE rows are covered only by the cass leg"
 else
     mkdir -p "$D/pw" && cp "$D/p.exe" "$D/pw/p.exe"
-    ( cd "$D/pw" && ulimit -c 0; LANG=C.UTF-8 LC_ALL=C.UTF-8 WINEPREFIX="$D/wp" WINEDEBUG=-all \
+    rc=0; ( cd "$D/pw" && ulimit -c 0; LANG=C.UTF-8 LC_ALL=C.UTF-8 WINEPREFIX="$D/wp" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all \
         WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' \
-        wine p.exe > "$D/p.out" 2> "$D/p.err2" ); rc=$?
+        wine p.exe > "$D/p.out" 2> "$D/p.err2" ) || rc=$?
     got=$(ran_count "$D/p.out")
     if [ "$rc" != "0" ] || [ "$got" != "$pwant_pe" ]; then
         echo "  FAIL axis 4 (wine): PE run exited $rc, reported '$got' of $pwant_pe path rows"
@@ -337,7 +350,7 @@ else
         echo "  ok axis 4: $got of $pwant_pe path rows hold on PE under wine (hardware: the cass cross-OS leg)"
     fi
     WINEPREFIX="$D/wp" wineserver -k > /dev/null 2>&1 || true
-    rm -rf "$D/wp"
+    _wine_down; rm -rf "$D/wp"
 fi
 
 if [ "$fail" = "0" ]; then

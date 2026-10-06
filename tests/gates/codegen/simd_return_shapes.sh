@@ -93,7 +93,11 @@ W=$(mktemp -d) && [ -d "$W" ] || { echo "FAIL: mktemp"; exit 1; }
 # its server socket dir (/tmp/.wine-<uid>/server-<dev>-<ino>). The bare `wineserver -k` this trap
 # ran before 6.6.16 killed the DEFAULT prefix's server on any exit before the export below.
 # CHANGELOG [6.6.16]
+# 6.6.17: wine's own HOME and XDG_CACHE_HOME are under $W too — a fresh prefix writes
+# $HOME/.cache (mesa shader caches) — and `wineserver -k` leaves the server dir behind, so
+# _wine_down removes it. CHANGELOG [6.6.17]
 WP="$W/wine"
+WHM="$W/whome"
 _wine_down() {
     [ -d "$WP" ] || return 0
     _ws="/tmp/.wine-$(id -u)/server-$(stat -c '%D' "$WP" 2>/dev/null)-$(printf '%x' "$(stat -c '%i' "$WP" 2>/dev/null || echo 0)")"
@@ -316,7 +320,7 @@ fi
 
 if command -v wine > /dev/null 2>&1; then
     echo "win64 (wine — EMULATION, not hardware; the PE arm is the one this refusal sits in front of):"
-    export WINEPREFIX="$W/wine" WINEDEBUG=-all WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d'
+    export WINEPREFIX="$W/wine" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d'
     if cat src/main_win.cyr | "$CC" > "$W/cycc_win" 2>/dev/null && [ -s "$W/cycc_win" ]; then
         chmod +x "$W/cycc_win"
         wr_() { cp "$1" "$1.exe"; timeout 180 wine "$1.exe"; }

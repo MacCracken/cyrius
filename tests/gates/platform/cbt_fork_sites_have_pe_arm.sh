@@ -136,8 +136,20 @@ T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: cbt_fork_sites_have_pe_arm: mktem
 # where several gates run wine concurrently. The two sibling gates that kill wineserver
 # (cli_args_never_dropped.sh, stack_param_homing_matrix.sh) do it inline after the
 # prefix is set, never from a trap. CHANGELOG [6.6.6].
+# A PRIVATE wine prefix, and wine's own HOME / XDG_CACHE_HOME, under $T — never the user's
+# ~/.wine or ~/.cache (a fresh prefix writes $HOME/.cache: mesa shader caches). The EXIT
+# teardown stops THIS prefix's wineserver and removes its server dir
+# (/tmp/.wine-<uid>/server-<dev>-<ino>), which `wineserver -k` leaves behind. CHANGELOG [6.6.17]
 WP="$T/wine"
-trap '[ -d "$WP" ] && WINEPREFIX="$WP" wineserver -k > /dev/null 2>&1; rm -rf "$T"' EXIT
+WHM="$T/whome"
+_wine_down() {
+    [ -d "$WP" ] || return 0
+    _ws="/tmp/.wine-$(id -u)/server-$(stat -c '%D' "$WP" 2>/dev/null)-$(printf '%x' "$(stat -c '%i' "$WP" 2>/dev/null || echo 0)")"
+    WINEPREFIX="$WP" wineserver -k >/dev/null 2>&1 || true
+    WINEPREFIX="$WP" wineserver -w >/dev/null 2>&1 || true
+    rm -rf "$_ws" || true
+}
+trap '_wine_down; rm -rf "$T"' EXIT
 
 # ── THE DETECTOR. For one source file, print one line per `sys_fork()` CALL (comments and
 # string literals masked first, because three files in cbt/ discuss `sys_fork` in prose
@@ -366,7 +378,7 @@ if ! command -v wine > /dev/null 2>&1 || ! command -v winepath > /dev/null 2>&1;
 elif [ ! -s "$T/cc_win" ]; then
     echo "  FAIL: axis 4 cannot run — the PE compiler was not built in axis 3"; fails=$((fails + 1))
 else
-    export WINEPREFIX="$WP" WINEDEBUG=-all WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d'
+    export WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d'
     WN="$T/wn"; mkdir -p "$WN/bin" "$WN/w/src" "$WN/w/lib"
     build_pe() {
         if ! "$T/cc_win" < "$1" > "$2" 2> "$T/bp.err"; then
@@ -391,8 +403,8 @@ else
     check "wine: the staging path translated (floor)" yes "$([ -n "$WH" ] && echo yes || echo no)"
     WT=$(WINEDEBUG=-all timeout 120 wine cmd /c 'echo %TEMP%' 2> /dev/null | tr -d '\r')
     WTU=$(winepath -u "$WT" 2> /dev/null)
-    ls -d "$WTU"/cyrius-* 2> /dev/null | LC_ALL=C sort > "$T/wt_before"
-    wrun() { ( cd "$WN/w" && WINEDEBUG=-all CYRIUS_HOME="$WH" timeout 900 wine "$WN/bin/cyrius.exe" "$@" > "$T/out" 2> "$T/err" ); RC=$?; }
+    ls -d "$WTU"/cyrius-* 2> /dev/null | LC_ALL=C sort > "$T/wt_before" || true
+    wrun() { RC=0; ( cd "$WN/w" && WINEDEBUG=-all CYRIUS_HOME="$WH" timeout 900 wine "$WN/bin/cyrius.exe" "$@" > "$T/out" 2> "$T/err" ) || RC=$?; }
 
     wrun build --target=cx p.cyr p.cyx
     check "wine: build --target=cx succeeds" 0 "$RC"
@@ -467,7 +479,7 @@ else
     # against this tree's parent: the same five verbs leave 2 directories before the
     # 0xF03B RemoveDirectoryW reroute and 0 after. This row is a DELTA over the verbs axis
     # 4 already ran, so it costs nothing extra.
-    ls -d "$WTU"/cyrius-* 2> /dev/null | LC_ALL=C sort > "$T/wt_after"
+    ls -d "$WTU"/cyrius-* 2> /dev/null | LC_ALL=C sort > "$T/wt_after" || true
     check "⭐ wine: the verbs above left no cyrius-* directory in %TEMP%" 0 \
         "$(comm -13 "$T/wt_before" "$T/wt_after" | wc -l | tr -d ' ')"
     for d in $(comm -13 "$T/wt_before" "$T/wt_after"); do rmdir "$d" 2> /dev/null || true; done
@@ -500,7 +512,7 @@ EOF
         echo "  FAIL: the xrmdir probe did not cross-build for PE"; grep -E '^error' "$T/rd.err" | head -2
         fails=$((fails + 1))
     else
-        ( cd "$T/rdp" && WINEDEBUG=-all timeout 300 wine "$T/rd.exe" > /dev/null 2>&1 ); RDP=$?
+        RDP=0; ( cd "$T/rdp" && WINEDEBUG=-all timeout 300 wine "$T/rd.exe" > /dev/null 2>&1 ) || RDP=$?
         check "  ⭐ PREMISE: xrmdir really removes a directory on PE (5 behaviours)" 0 "$RDP"
         check "  …and left nothing behind" 0 "$(ls -A "$T/rdp" | wc -l | tr -d ' ')"
     fi

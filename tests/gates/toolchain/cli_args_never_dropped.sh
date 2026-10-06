@@ -152,7 +152,20 @@ if [ ! -x "$ROOT/build/cycc" ]; then
 fi
 
 T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: cli_args_never_dropped: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
-trap 'rm -rf "$T"' EXIT
+# A PRIVATE wine prefix, and wine's own HOME / XDG_CACHE_HOME, under $T — never the user's
+# ~/.wine or ~/.cache (a fresh prefix writes $HOME/.cache: mesa shader caches). The EXIT
+# teardown stops THIS prefix's wineserver and removes its server dir
+# (/tmp/.wine-<uid>/server-<dev>-<ino>), which `wineserver -k` leaves behind. CHANGELOG [6.6.17]
+WP="$T/wine"
+WHM="$T/whome"
+_wine_down() {
+    [ -d "$WP" ] || return 0
+    _ws="/tmp/.wine-$(id -u)/server-$(stat -c '%D' "$WP" 2>/dev/null)-$(printf '%x' "$(stat -c '%i' "$WP" 2>/dev/null || echo 0)")"
+    WINEPREFIX="$WP" wineserver -k >/dev/null 2>&1 || true
+    WINEPREFIX="$WP" wineserver -w >/dev/null 2>&1 || true
+    rm -rf "$_ws" || true
+}
+trap '_wine_down; rm -rf "$T"' EXIT
 HOME_DIR="$T/home"
 mkdir -p "$HOME_DIR/bin" "$HOME_DIR/versions/$(cat VERSION)"
 cp "$ROOT/build/cycc" "$HOME_DIR/bin/cycc" && chmod +x "$HOME_DIR/bin/cycc"
@@ -229,8 +242,7 @@ treehash() { ( cd "$1" && { find . | LC_ALL=C sort; find . -type f | LC_ALL=C so
 
 run_in() {   # $1 dir, rest: command. Captures rc, stdout, stderr; sets RC/OUT/ERR files.
     d="$1"; shift
-    ( cd "$d" && "$@" > "$T/out" 2> "$T/err" )
-    RC=$?
+    RC=0; ( cd "$d" && "$@" > "$T/out" 2> "$T/err" ) || RC=$?
 }
 
 echo "axis 0 — CENSUS: every verb main() dispatches has a row here (or a reason):"
@@ -248,7 +260,7 @@ VERBS=$(awk '
         }
     }
 ' cbt/cyrius.cyr | LC_ALL=C sort -u)
-NVERBS=$(printf '%s\n' "$VERBS" | grep -c .)
+NVERBS=$(printf '%s\n' "$VERBS" | grep -c . || true)
 check "census found a plausible number of verbs (>= 30)" yes "$([ "$NVERBS" -ge 30 ] && echo yes || echo no)"
 # COVERED *IS* the axis-2 probe list — one variable, read by both the census and the
 # probe loop, so a verb cannot pass the census without being probed. (v6.6.5 round-2
@@ -300,7 +312,7 @@ mk_warnfile() {   # $1 dest, $2 count — each line trips the tab-indent warning
 }
 mk_warnfile "$W/warn3.cyr" 3
 run_in "$W" "$HOME_DIR/bin/cyrlint" warn3.cyr
-NW=$(awk '/ warnings$/ {n=$1} END {print n+0}' "$T/out")
+NW=$(awk '/ warnings$/ {n=$1} END {print n+0}' "$T/out" || true)
 check "fixture really produces warnings (floor)" yes "$([ "$NW" -ge 1 ] && echo yes || echo no)"
 EXPECT=$NW; [ "$EXPECT" -gt 255 ] && EXPECT=255
 run_in "$W" "$CY" lint --exit-with-count warn3.cyr
@@ -309,7 +321,7 @@ run_in "$W" "$CY" lint warn3.cyr --exit-with-count
 check "lint warn3 --exit-with-count (trailing) == the stdout count" "$EXPECT" "$RC"
 mk_warnfile "$W/warn300.cyr" 300
 run_in "$W" "$CY" lint warn300.cyr --exit-with-count
-BIG=$(awk '/ warnings$/ {n=$1} END {print n+0}' "$T/out")
+BIG=$(awk '/ warnings$/ {n=$1} END {print n+0}' "$T/out" || true)
 check "the 300-fn fixture really exceeds 255 warnings (floor)" yes "$([ "$BIG" -gt 255 ] && echo yes || echo no)"
 check "⭐ >255 warnings CLAMPS to 255, it does not wrap to 0" 255 "$RC"
 
@@ -451,7 +463,7 @@ done
 # each file's single-file count, read off stdout and added up by the shell.
 mk_warnfile "$W/warn6.cyr" 6
 run_in "$W" "$HOME_DIR/bin/cyrlint" warn6.cyr
-NW6=$(awk '/ warnings$/ {n=$1} END {print n+0}' "$T/out")
+NW6=$(awk '/ warnings$/ {n=$1} END {print n+0}' "$T/out" || true)
 SUM=$((NW + NW6)); [ "$SUM" -gt 255 ] && SUM=255
 run_in "$W" "$CY" lint --exit-with-count warn3.cyr warn6.cyr
 check "cyrius lint --exit-with-count a b == the shell's sum of the per-file counts" "$SUM" "$RC"
@@ -482,8 +494,7 @@ M="$T/many"; mkdir -p "$M"
 i=0; while [ "$i" -lt 129 ]; do cp "$W/clean.cyr" "$M/m$i.cyr"; i=$((i + 1)); done
 cp "$W/d.cyr" "$M/m129.cyr"
 # shellcheck disable=SC2046
-( cd "$M" && "$CY" --quiet lint $(ls | LC_ALL=C sort) --strict-deferrals > "$T/out" 2> "$T/err" )
-RC=$?
+RC=0; ( cd "$M" && "$CY" --quiet lint $(ls | LC_ALL=C sort) --strict-deferrals > "$T/out" 2> "$T/err" ) || RC=$?
 check "⭐ 130 files, the bad one LAST, still exits 2 (no silent cap)" 2 "$RC"
 check "  …and all 130 were linted (shell-counted)" 130 "$(grep -c '^=== cyrlint: ' "$T/out" || true)"
 
@@ -609,7 +620,7 @@ echo "axis 11 — HELP AND PARSER CANNOT DRIFT: every flag in --help is accepted
 for v in build run test tests bench fuzz check lint fmt doc vet deny coverage capacity deps clean lib version audit api-surface distlib soak doctest header; do
     run_in "$W" "$CY" "$v" --help
     check "$v --help exits 0" 0 "$RC"
-    HELPFLAGS=$(grep -o -- '--[a-z0-9-]*' "$T/out" | LC_ALL=C sort -u)
+    HELPFLAGS=$(grep -o -- '--[a-z0-9-]*' "$T/out" | LC_ALL=C sort -u || true)
     check "  …and lists at least the 3 common flags" yes \
         "$([ "$(printf '%s\n' "$HELPFLAGS" | grep -c .)" -ge 3 ] && echo yes || echo no)"
     bad=0
@@ -654,7 +665,7 @@ run_in "$W" "$HOME_DIR/bin/cyrlint" --strict-deferrals clean.cyr d.cyr
 check "cyrlint --strict-deferrals clean d (deferral LAST) == 2" 2 "$RC"
 # cyrdoc --check clamps like cyrlint does: 300 undocumented must not wrap to 44.
 run_in "$W" "$HOME_DIR/bin/cyrdoc" --check undoc300.cyr
-UD=$(awk '/ undocumented / {n=$3} END {print n+0}' "$T/out")
+UD=$(awk '/ undocumented / {n=$3} END {print n+0}' "$T/out" || true)
 check "the 300-fn fixture really exceeds 255 undocumented (floor, read off stdout)" yes "$([ "$UD" -gt 255 ] && echo yes || echo no)"
 check "⭐ cyrdoc --check with >255 undocumented CLAMPS to 255" 255 "$RC"
 run_in "$W" "$CY" doc undoc300.cyr --check
@@ -691,13 +702,13 @@ FH="$T/fakehome"; mkdir -p "$FH"
 bin_probe() {   # $1 binary, $2 verb, $3 max operands
     b="$1"; v="$2"; mx="$3"
     HB=$(treehash "$W"); HH=$(treehash "$HOME_DIR")
-    ( cd "$W" && HOME="$FH" "$HOME_DIR/bin/$b" "$v" --zz-cli-probe > "$T/out" 2> "$T/err" ); RC=$?
+    RC=0; ( cd "$W" && HOME="$FH" "$HOME_DIR/bin/$b" "$v" --zz-cli-probe > "$T/out" 2> "$T/err" ) || RC=$?
     ne_check "$b $v --zz-cli-probe is refused" "$RC"
     check "  …and NAMES the token" 1 "$(grep -c -- '--zz-cli-probe' "$T/err" || true)"
     ops=""; k=0
     while [ "$k" -le "$mx" ]; do ops="$ops opnd$k"; k=$((k + 1)); done
     # shellcheck disable=SC2086
-    ( cd "$W" && HOME="$FH" "$HOME_DIR/bin/$b" "$v" $ops > "$T/out" 2> "$T/err" ); RC=$?
+    RC=0; ( cd "$W" && HOME="$FH" "$HOME_DIR/bin/$b" "$v" $ops > "$T/out" 2> "$T/err" ) || RC=$?
     ne_check "$b $v with $((mx + 1)) operand(s) (max $mx) is refused" "$RC"
     check "  …and names the first EXTRA one (opnd$mx)" 1 "$(grep -c "opnd$mx" "$T/err" || true)"
     check "  …and wrote nothing (tree + CYRIUS_HOME)" "$HB$HH" "$(treehash "$W")$(treehash "$HOME_DIR")"
@@ -716,15 +727,15 @@ done
 check "cyriusly verbs with no rule" 0 "$norule"
 # The filed shape verbatim: a mistyped --global used to be DROPPED and the LOCAL pin
 # path taken; `install --dry-run` used to install a version literally named --dry-run.
-( cd "$W" && HOME="$FH" "$HOME_DIR/bin/cyriusly" use 6.6.4 --globl > "$T/out" 2> "$T/err" ); RC=$?
+RC=0; ( cd "$W" && HOME="$FH" "$HOME_DIR/bin/cyriusly" use 6.6.4 --globl > "$T/out" 2> "$T/err" ) || RC=$?
 ne_check "⭐ cyriusly use 6.6.4 --globl is refused (it took the LOCAL path, exit 0)" "$RC"
 check "  …and names --globl" 1 "$(grep -c -- "'--globl'" "$T/err" || true)"
-( cd "$W" && HOME="$FH" "$HOME_DIR/bin/cyriusly" install --dry-run > "$T/out" 2> "$T/err" ); RC=$?
+RC=0; ( cd "$W" && HOME="$FH" "$HOME_DIR/bin/cyriusly" install --dry-run > "$T/out" 2> "$T/err" ) || RC=$?
 ne_check "⭐ cyriusly install --dry-run is refused" "$RC"
 check "  …and no version named --dry-run appeared" no "$([ -e "$HOME_DIR/versions/--dry-run" ] && echo yes || echo no)"
-( cd "$W" && HOME="$FH" "$HOME_DIR/bin/cyriusly" use --global > "$T/out" 2> "$T/err" ); RC=$?
+RC=0; ( cd "$W" && HOME="$FH" "$HOME_DIR/bin/cyriusly" use --global > "$T/out" 2> "$T/err" ) || RC=$?
 ne_check "cyriusly use --global with NO version is refused (it printed the version, flag dropped)" "$RC"
-( cd "$W" && HOME="$FH" "$HOME_DIR/bin/cyriusly" which > "$T/out" 2> "$T/err" ); RC=$?
+RC=0; ( cd "$W" && HOME="$FH" "$HOME_DIR/bin/cyriusly" which > "$T/out" 2> "$T/err" ) || RC=$?
 check "ANTI-VACUOUS: cyriusly which (no operands) still works" 0 "$RC"
 ARK=$(known_cmds programs/ark.cyr _ark_known_cmd)
 check "ark census found its verbs (>= 8)" yes "$([ "$(printf '%s\n' "$ARK" | grep -c .)" -ge 8 ] && echo yes || echo no)"
@@ -739,7 +750,7 @@ done
 check "ark verbs with no rule" 0 "$norule"
 # The verb NAME is judged before its operand count: an unknown command with arguments
 # must say so, not complain about the arity of a command that does not exist.
-( cd "$W" && "$HOME_DIR/bin/ark" create a.ark a.txt x > "$T/out" 2> "$T/err" ); RC=$?
+RC=0; ( cd "$W" && "$HOME_DIR/bin/ark" create a.ark a.txt x > "$T/out" 2> "$T/err" ) || RC=$?
 ne_check "ark create a.ark a.txt x is refused" "$RC"
 check "  …as an UNKNOWN COMMAND, not an operand-count error" 1 "$(grep -c '^unknown command: create' "$T/err" || true)"
 
@@ -811,7 +822,7 @@ echo "axis 16 — --exit-with-count must not switch the strict checks OFF:"
 # switched off by its neighbour. Expected values: max(the stdout count, 2), computed here.
 maxof() { if [ "$1" -gt "$2" ]; then echo "$1"; else echo "$2"; fi; }
 run_in "$W" "$HOME_DIR/bin/cyrlint" d.cyr
-ND=$(awk '/ warnings$/ {n=$1} END {print n+0}' "$T/out")
+ND=$(awk '/ warnings$/ {n=$1} END {print n+0}' "$T/out" || true)
 check "premise: d.cyr has fewer than 2 warnings, so a lost verdict cannot hide behind the count" yes "$([ "$ND" -lt 2 ] && echo yes || echo no)"
 EXP=$(maxof "$ND" 2)
 for spec in "--exit-with-count --strict-deferrals d.cyr" "--strict-deferrals --exit-with-count d.cyr" "d.cyr --strict-deferrals --exit-with-count" "--exit-with-count --strict-deferrals clean.cyr d.cyr"; do
@@ -824,7 +835,7 @@ for spec in "--exit-with-count --strict-deferrals d.cyr" "--strict-deferrals --e
 done
 mk_warnfile "$W/warn1.cyr" 1
 run_in "$W" "$HOME_DIR/bin/cyrlint" warn1.cyr
-N1=$(awk '/ warnings$/ {n=$1} END {print n+0}' "$T/out")
+N1=$(awk '/ warnings$/ {n=$1} END {print n+0}' "$T/out" || true)
 check "premise: warn1.cyr has exactly 1 warning (count < the strict verdict)" 1 "$N1"
 run_in "$W" "$CY" lint warn1.cyr --exit-with-count --strict
 check "cyrius lint warn1 --exit-with-count --strict == max(1, 2)" "$(maxof "$N1" 2)" "$RC"
@@ -840,16 +851,16 @@ SE="$T/se"; mkdir -p "$SE"; : > "$SE/in.efi"; : > "$SE/key.der"; : > "$SE/cert.d
 for spec in "in.efi key.der cert.der --dry-run" "in.efi key.der cert.der out.efi --verify-only" "--zz-cli-probe in.efi key.der cert.der out.efi"; do
     HS=$(treehash "$SE")
     # shellcheck disable=SC2086
-    ( cd "$SE" && "$T/cyrsign-efi.real" $spec > "$T/out" 2> "$T/err" ); RC=$?
+    RC=0; ( cd "$SE" && "$T/cyrsign-efi.real" $spec > "$T/out" 2> "$T/err" ) || RC=$?
     ne_check "cyrsign-efi $spec is refused" "$RC"
-    tok=$(printf '%s\n' $spec | grep -- '^-' | head -1)
+    tok=$(printf '%s\n' $spec | grep -- '^-' | head -1 || true)
     check "  …naming '$tok' as an unknown option" 1 "$(grep -c -- "unknown option '$tok'" "$T/err" || true)"
     check "  …and wrote nothing (no file named after the flag)" "$HS" "$(treehash "$SE")"
 done
-( cd "$SE" && "$T/cyrsign-efi.real" in.efi key.der cert.der out.efi opnd4 > "$T/out" 2> "$T/err" ); RC=$?
+RC=0; ( cd "$SE" && "$T/cyrsign-efi.real" in.efi key.der cert.der out.efi opnd4 > "$T/out" 2> "$T/err" ) || RC=$?
 ne_check "cyrsign-efi with 5 operands is refused" "$RC"
 check "  …naming the extra one" 1 "$(grep -c "extra argument 'opnd4'" "$T/err" || true)"
-( cd "$SE" && "$T/cyrsign-efi.real" in.efi key.der cert.der out.efi > "$T/out" 2> "$T/err" ); RC=$?
+RC=0; ( cd "$SE" && "$T/cyrsign-efi.real" in.efi key.der cert.der out.efi > "$T/out" 2> "$T/err" ) || RC=$?
 check "ANTI-VACUOUS: four operands pass the argument check (then fail on the EMPTY input)" 1 "$(grep -c 'cannot read PE input' "$T/err" || true)"
 # cyrius-init / port: ONE project per invocation (the last positional used to win).
 IN="$T/initw"; mkdir -p "$IN"
@@ -951,7 +962,7 @@ else
     # A THROWAWAY prefix under $T, so the leg reads and writes nothing of the user's
     # ~/.wine (and HOME is already $T/h). winemenubuilder/mono/gecko are disabled so a
     # fresh prefix neither writes desktop entries nor tries to download runtimes.
-    export WINEPREFIX="$T/wine" WINEDEBUG=-all WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d'
+    export WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d'
     WN="$T/wn"; mkdir -p "$WN/bin" "$WN/w"
     "$ROOT/build/cycc" < "$ROOT/src/main_win.cyr" > "$T/cc_win" 2> "$T/build.err" && chmod +x "$T/cc_win"
     build_pe() {   # $1 source, $2 dest — refuse an empty or non-PE artifact
@@ -971,10 +982,9 @@ else
     WH=$(winepath -w "$WN" 2> /dev/null)
     WTEMP=$(WINEDEBUG=-all timeout 120 wine cmd /c 'echo %TEMP%' 2> /dev/null | tr -d '\r')
     WTEMPU=$(winepath -u "$WTEMP" 2> /dev/null)
-    ls -d "$WTEMPU"/cyrius-* 2> /dev/null | LC_ALL=C sort > "$T/wtemp_before"
+    ls -d "$WTEMPU"/cyrius-* 2> /dev/null | LC_ALL=C sort > "$T/wtemp_before" || true
     wrun() {   # rest: arguments to cyrius.exe; runs in $WN/w
-        ( cd "$WN/w" && WINEDEBUG=-all CYRIUS_HOME="$WH" timeout 120 wine "$WN/bin/cyrius.exe" "$@" > "$T/out" 2> "$T/err" )
-        RC=$?
+        RC=0; ( cd "$WN/w" && WINEDEBUG=-all CYRIUS_HOME="$WH" timeout 120 wine "$WN/bin/cyrius.exe" "$@" > "$T/out" 2> "$T/err" ) || RC=$?
     }
     check "wine: the staging path translated (floor)" yes "$([ -n "$WH" ] && echo yes || echo no)"
     wrun lint d.cyr --strict-deferrals
@@ -1022,7 +1032,7 @@ else
         echo "  FAIL: wine: could not set HKCU\\Environment TEMP for the base probe"; fails=$((fails + 1))
     fi
     # Our own debris, if any survived (a non-empty directory is NOT removed, by contract).
-    ls -d "$WTEMPU"/cyrius-* 2> /dev/null | LC_ALL=C sort > "$T/wtemp_after"
+    ls -d "$WTEMPU"/cyrius-* 2> /dev/null | LC_ALL=C sort > "$T/wtemp_after" || true
     NEWT=$(comm -13 "$T/wtemp_before" "$T/wtemp_after")
     check "wine: and the runs above left no temp directory behind" "" "$NEWT"
     for d in $NEWT; do rmdir "$d" 2> /dev/null || true; done

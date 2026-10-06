@@ -64,12 +64,20 @@ G=toplevel_indirect_call
 CC=${CYCC:-"$ROOT/build/cycc"}
 [ -x "$CC" ] || { echo "FAIL $G: no compiler at $CC"; exit 1; }
 T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL $G: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
+# A PRIVATE wine prefix, and wine's own HOME / XDG_CACHE_HOME, under $T — never the user's
+# ~/.wine or ~/.cache (a fresh prefix writes $HOME/.cache: mesa shader caches). The EXIT
+# teardown stops THIS prefix's wineserver and removes its server dir
+# (/tmp/.wine-<uid>/server-<dev>-<ino>), which `wineserver -k` leaves behind. CHANGELOG [6.6.17]
 WP="$T/wp"
-_cleanup() {
-    if [ -d "$WP" ] && command -v wineserver > /dev/null 2>&1; then WINEPREFIX="$WP" wineserver -k > /dev/null 2>&1; fi
-    rm -rf "$T"
+WHM="$T/whome"
+_wine_down() {
+    [ -d "$WP" ] || return 0
+    _ws="/tmp/.wine-$(id -u)/server-$(stat -c '%D' "$WP" 2>/dev/null)-$(printf '%x' "$(stat -c '%i' "$WP" 2>/dev/null || echo 0)")"
+    WINEPREFIX="$WP" wineserver -k >/dev/null 2>&1 || true
+    WINEPREFIX="$WP" wineserver -w >/dev/null 2>&1 || true
+    rm -rf "$_ws" || true
 }
-trap _cleanup EXIT
+trap '_wine_down; rm -rf "$T"' EXIT
 ulimit -c 0 2>/dev/null
 REPRO=docs/development/issues/repros/2026-10-03-hisab-toplevel-fncall-capturing-closure-segv.cyr
 TCYR=tests/tcyr/crossos/closure_escape_dispatch.tcyr
@@ -133,7 +141,7 @@ fi
 # ── row 3: PE under wine, private prefix ────────────────────────────────────────────────────
 if command -v wine > /dev/null 2>&1; then
     printf '#!/bin/sh\nCYRIUS_TARGET_WIN=1 exec "%s"\n' "$T/x86" > "$T/wcc"; chmod +x "$T/wcc"
-    printf '#!/bin/sh\nWINEPREFIX="%s" WINEDEBUG=-all WINEDLLOVERRIDES="winemenubuilder.exe=d;mscoree=d;mshtml=d" exec wine "$1"\n' "$WP" > "$T/wrun"
+    printf '#!/bin/sh\nWINEPREFIX="%s" HOME="%s" XDG_CACHE_HOME="%s/.cache" WINEDEBUG=-all WINEDLLOVERRIDES="winemenubuilder.exe=d;mscoree=d;mshtml=d" exec wine "$1"\n' "$WP" "$WHM" "$WHM" > "$T/wrun"
     chmod +x "$T/wrun"
     _want pe_repro "$T/wcc" "$T/wrun" "$REPRO" "the filed repro (PE)"
     _want pe_tcyr "$T/wcc" "$T/wrun" "$TCYR" "closure_escape_dispatch.tcyr (PE)"

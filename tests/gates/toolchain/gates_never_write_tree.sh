@@ -174,6 +174,19 @@
 #   z5. detector: trap rule off / private() always    -> axis 9 self-test FAIL (trap_after_export
 #      true / the "%s" runner form off / the inline      / not_private / c_wrapper / second_call +
 #      form off / the wine-call rule off                 c_inline / bare, winepath_first, fn_arg)
+#   z6. axis 9 (6.6.17): x86_trig's export loses      -> axis 9 FAIL naming that gate's line (HOME /
+#      HOME + XDG_CACHE_HOME; a runner's HOME="%s"       XDG_CACHE_HOME missing); `no EXIT trap
+#      removed (toplevel_for_in); an inline call loses   stops …` / `… removes its server dir`
+#      XDG (pe_open_flag_translation); pe_fsync's trap
+#      back to `rm -rf "$D"`; fork_version_parity's
+#      `_wine_down` without its server-dir rm; the
+#      `_wine_down;` before pe_fsync's `rm -rf "$D/wp"`
+#   z7. detector: the teardown rule off / HOME + XDG  -> axis 9 self-test FAIL (no_teardown, kill_no_
+#      dropped from the wine-call rule / the HOME=       rmdir, straight_teardown / no_home, no_xdg,
+#      word boundary off                                 home_not_private / cyrius_home_only)
+#   z8. (6.6.17 review) fork_version_parity's       -> axis 9 FAIL (`removes a server dir NOT
+#      `_wine_down` stats "$T" instead of "$WP";         derived from the prefix it kills`) / the
+#      the detector's from_prefix rule off               stat_wrong_operand self-test FAIL
 # Real tree -> PASS.
 #
 # ⚠ Runs ONLY against a scratch copy. It never runs a gate against the real tree it lives in.
@@ -1004,7 +1017,7 @@ elif [ "$st6" = 0 ]; then
     echo "  ok: axis 6: $n6 tests/tcyr + tests/fixtures files name no fixed /tmp path ($nallow allowlisted non-path literals) and bind no fixed port (self-tested on 6 shapes + 1 clean file)"
 fi
 
-# ── axis 9: STATIC — no gate runs wine in the SHARED default prefix ────────────────────
+# ── axis 9: STATIC — no gate runs wine in the SHARED default prefix, or leaves it running ──
 # v6.6.16 (G4). Axes 5-8 are about /tmp, ports and the repo root. This one is about the last
 # shared directory a check.sh run touches: the user's ~/.wine, and the ONE wineserver that
 # serves it. 8 gates ran `wine` / `winepath` with no WINEPREFIX, so every concurrent check.sh
@@ -1012,20 +1025,33 @@ fi
 # simd_return_shapes.sh's EXIT trap ran a bare `wineserver -k`, which (before its private
 # prefix was exported, i.e. on any early exit) killed the DEFAULT prefix's server under every
 # other wine job on the machine: cbt_fork_sites_have_pe_arm.sh's 6.6.6 fix, one gate over.
-# A gate that runs wine sets a PRIVATE prefix under its own mktemp dir, by one of four spellings,
-# each accepted here and each self-tested as a clean fixture:
-#   export   `export WINEPREFIX="$T/wine" …` before the first wine/winepath call (line order)
-#   inline   `WINEPREFIX="$D/wp" wine …` on the call's own logical line (`\` continuations joined)
-#   wrapper  a generated runner: `printf '…WINEPREFIX="%s" … exec wine "$1"…' "$T/wp" > "$WRUN"`
-#   scoped   every `wineserver` call carries an inline `WINEPREFIX=<private>` — or follows the
-#            export in straight-line code; inside a `trap` it MUST be inline, because a trap
-#            runs on an early exit, before the export ever did
+# ⛔ 6.6.17 (g3) — A PRIVATE PREFIX WAS NOT THE WHOLE OF IT. Measured after G4: a fresh prefix
+# still writes $HOME/.cache/{mesa_shader_cache,radv_builtin_shaders} into the user's HOME, and
+# 14 of the 23 wine gates left their prefix's wineserver running, or (all of them) its server
+# dir /tmp/.wine-<uid>/server-<dev>-<ino> behind — `wineserver -k` does not remove that dir;
+# /tmp/.wine-1000 held ~570 of them. So a gate that runs wine now also gives every wine /
+# winepath a private HOME and XDG_CACHE_HOME, and its EXIT trap stops the prefix's server and
+# removes the server dir (`_wine_down` in each gate).
+# Each variable — WINEPREFIX, HOME, XDG_CACHE_HOME — is private by one of three spellings, each
+# accepted here and each self-tested as a clean fixture:
+#   export   `export WINEPREFIX="$T/wine" HOME=… XDG_CACHE_HOME=… …` before the first call (line order)
+#   inline   `WINEPREFIX="$D/wp" HOME=… XDG_CACHE_HOME=… wine …` on the call's own logical line
+#   wrapper  a generated runner: `printf '…WINEPREFIX="%s" HOME="%s" … exec wine "$1"…' "$T/wp" …`
+# and every `wineserver` call carries an inline `WINEPREFIX=<private>` — or follows the export
+# in straight-line code; inside a `trap` it MUST be inline, because a trap runs on an early
+# exit, before the export ever did. The TEARDOWN is read from the LAST `trap … EXIT` line plus
+# the bodies of the functions it calls (two levels): one line kills with an inline private
+# prefix, and one line `rm`s the server dir (a /tmp/.wine- literal, or a variable assigned one).
+# And no line outside a function `rm`s the PREFIX itself (any spelling a WINEPREFIX= took, or a
+# variable holding one) unless a teardown function is called first on that line: 5 gates
+# deleted it after their wine leg, so the EXIT teardown found nothing to stat and their server
+# and its dir outlived them.
 # "Private" = the value is "$V/…" (or "%s" filled from one) where V was assigned a mktemp, or a
 # path under such a V (followed through further assignments). "Runs wine" = `wine`/`wine64`/
 # `winepath` followed by an operand (a $-expansion, ./ or ..\, X.exe, cmd, reg, -flag) — so
 # prose ("wine not installed"), `command -v wine` and comments do not count. Line order stands
 # in for straight-line order: an export in an earlier, untaken branch would read as set (the
-# 22 gates use none of that shape). This file is excluded: its fixtures spell the bad shapes.
+# 23 gates use none of that shape). This file is excluded: its fixtures spell the bad shapes.
 cat > "$W/wine9.awk" <<'AWK'
 function dref(s,    v) {   # does s expand a mktemp-derived variable?
     for (v in DV) if (match(s, "\\$(\\{" v "\\}|" v ")([^A-Za-z0-9_]|$)")) return 1
@@ -1036,15 +1062,73 @@ function val(s,    c, e) {  # the value at the start of s (just after `NAME=`)
     if (c == "\"" || c == "'") { e = index(substr(s, 2), c); return (e ? substr(s, 2, e - 1) : substr(s, 2)) }
     match(s, /^[^ \t;&|)]*/); return substr(s, 1, RLENGTH)
 }
-function private(s, pos,    v, rest) {   # is the WINEPREFIX= whose value starts at pos private?
+function private(s, pos,    v, rest) {   # is the NAME= whose value starts at pos private?
     v = val(substr(s, pos)); rest = substr(s, pos + length(v))
     return dref(v) || (index(v, "%s") && dref(rest))
 }
-function inline_ok(s, p,    pre, k, off, last, t) {   # a private WINEPREFIX= before column p
+function inline_ok(s, p, nm,    pre, k, off, last, t, b) {   # a private NAME= before column p
     pre = substr(s, 1, p - 1); last = 0; off = 0; t = pre
-    while ((k = index(t, "WINEPREFIX=")) > 0) { last = off + k; off = off + k; t = substr(pre, off + 1) }
-    return last ? private(s, last + 11) : 0
+    while ((k = index(t, nm "=")) > 0) {
+        # a word boundary (`CYRIUS_HOME=` is not `HOME=`), or a printf's `\n`
+        b = (off + k > 1) ? substr(pre, off + k - 1, 1) : ""
+        if (b !~ /[A-Za-z0-9_]/ || (off + k > 2 && substr(pre, off + k - 2, 2) == "\\n")) last = off + k
+        off = off + k; t = substr(pre, off + 1)
+    }
+    return last ? private(s, last + length(nm) + 1) : 0
 }
+function scoped_kill(s,    t, off, p) {   # a `wineserver -k` with an inline private prefix
+    t = s; off = 0
+    while (match(t, /(^|[^A-Za-z0-9_.$\/-])wineserver[ \t]+-k/)) {
+        p = off + RSTART; off = off + RSTART + RLENGTH - 1; t = substr(s, off + 1)
+        if (inline_ok(s, p + 1, "WINEPREFIX")) { KV = inline_val(s, p + 1, "WINEPREFIX"); return 1 }
+    }
+    return 0
+}
+function inline_val(s, p, nm,    pre, k, off, last, t, b) {   # the value of the last NAME= before p
+    pre = substr(s, 1, p - 1); last = 0; off = 0; t = pre
+    while ((k = index(t, nm "=")) > 0) {
+        b = (off + k > 1) ? substr(pre, off + k - 1, 1) : ""
+        if (b !~ /[A-Za-z0-9_]/ || (off + k > 2 && substr(pre, off + k - 2, 2) == "\\n")) last = off + k
+        off = off + k; t = substr(pre, off + 1)
+    }
+    return last ? val(substr(s, last + length(nm) + 1)) : ""
+}
+function rms_server_dir(s,    v) {   # an `rm` of /tmp/.wine-…, literally or through a variable
+    if (s !~ /(^|[^A-Za-z0-9_.-])rm[ \t]/) return 0
+    if (index(s, "/tmp/.wine-")) { RMV = s; return 1 }
+    for (v in SV) if (match(s, "\\$(\\{" v "\\}|" v ")([^A-Za-z0-9_]|$)")) { RMV = SVV[v]; return 1 }
+    return 0
+}
+function from_prefix(t, kv,    u, m, op, nd, ni, f) {   # the dir name stats the KILLED prefix, %D and %i
+    u = t; nd = 0; ni = 0
+    while (match(u, /stat[ \t]+-c[ \t]+'?%[Di]'?[ \t]+[^ \t)]+/)) {
+        m = substr(u, RSTART, RLENGTH); u = substr(u, RSTART + RLENGTH)
+        op = m; sub(/^stat[ \t]+-c[ \t]+/, "", op); f = substr(op, 1, 1) == "'" ? substr(op, 3, 1) : substr(op, 2, 1)
+        sub(/^'?%[Di]'?[ \t]+/, "", op); gsub(/"/, "", op)
+        if (op != kv) return 0
+        if (f == "D") nd = 1; else ni = 1
+    }
+    return nd && ni
+}
+function names(s, sp,    k, off, t, c) {   # does s spell sp as a whole word/path (not $WPX, not $D/wp/x)?
+    t = s; off = 0
+    while ((k = index(t, sp)) > 0) {
+        c = substr(s, off + k + length(sp), 1)
+        if (c !~ /[A-Za-z0-9_\/.-]/) return off + k
+        off = off + k; t = substr(s, off + 1)
+    }
+    return 0
+}
+function teardown(L, depth,    s, n, w, k, f) {   # add trap line L and the fns it calls to TD
+    s = LL[L]; TD[++ntd] = s
+    if (depth >= 2) return
+    n = split(s, w, /[^A-Za-z0-9_]+/)
+    for (k = 1; k <= n; k++) if ((w[k] in FS0) && !(w[k] in SEEN)) {
+        SEEN[w[k]] = 1
+        for (f = FS0[w[k]]; f <= FE0[w[k]]; f++) if (f in LL) teardown(f, depth + 1)
+    }
+}
+BEGIN { VN[1] = "WINEPREFIX"; VN[2] = "HOME"; VN[3] = "XDG_CACHE_HOME" }
 {
     raw = $0
     if (raw ~ /^[ \t]*#/) raw = ""
@@ -1053,45 +1137,114 @@ function inline_ok(s, p,    pre, k, off, last, t) {   # a private WINEPREFIX= be
     cont = (LL[ln] ~ /\\$/); if (cont) sub(/\\$/, "", LL[ln])
 }
 END {
-    # mktemp-derived variables: V=$(mktemp …), then any V="$U/…" with U derived (3 passes)
+    # mktemp-derived variables: V=$(mktemp …), then any V="$U/…" with U derived (3 passes);
+    # SV = variables assigned a /tmp/.wine- path (a server dir)
     for (i = 1; i <= nl; i++) {
         s = LL[ORD[i]]; t = s
         while (match(t, /(^|[ \t;&|(])[A-Za-z_][A-Za-z0-9_]*=/)) {
             a = substr(t, RSTART, RLENGTH); sub(/^[ \t;&|(]/, "", a); nm = substr(a, 1, length(a) - 1)
             t = substr(t, RSTART + RLENGTH); v = val(t)
+            if (index(v, "/tmp/.wine-")) { SV[nm] = 1; SVV[nm] = s }
             if (v ~ /^\$\([ \t]*([^ \t)]*\/)?mktemp([ \t)]|$)/ || t ~ /^`([^ \t`]*\/)?mktemp/) DV[nm] = 1
-            else if (nm != "WINEPREFIX") { AS[nm] = AS[nm] SUBSEP v }
+            else if (nm != "WINEPREFIX" && nm != "HOME" && nm != "XDG_CACHE_HOME") { AS[nm] = AS[nm] SUBSEP v }
         }
     }
     for (pass = 0; pass < 3; pass++) for (nm in AS) if (!(nm in DV)) {
         n = split(AS[nm], vs, SUBSEP)
         for (j = 1; j <= n; j++) for (d in DV) if (match(vs[j], "^\\$(\\{" d "\\}|" d ")(/|$)")) DV[nm] = 1
     }
-    expok = 0; pend = ""
+    # function bodies (line spans) and the last EXIT trap, for the teardown rule
+    infn = ""; lasttrap = 0
     for (i = 1; i <= nl; i++) {
         L = ORD[i]; s = LL[L]
-        if (match(s, /(^|[ \t;&|(])export[ \t]+([A-Za-z_][A-Za-z0-9_]*=[^ \t]*[ \t]+)*WINEPREFIX=/)) expok = private(s, RSTART + RLENGTH)
-        else if (match(s, /^[ \t]*WINEPREFIX=/)) pend = s
-        if (match(s, /(^|[ \t;&|(])export[ \t]+WINEPREFIX([ \t;]|$)/) && pend != "") expok = private(pend, index(pend, "WINEPREFIX=") + 11)
-        if (s ~ /(^|[ \t;&|(])unset[ \t]+WINEPREFIX/) expok = 0
+        if (infn == "" && match(s, /^[ \t]*[A-Za-z_][A-Za-z0-9_]*[ \t]*\(\)[ \t]*\{/)) {
+            f = s; sub(/^[ \t]*/, "", f); sub(/[ \t]*\(.*$/, "", f)
+            FS0[f] = L; FE0[f] = L
+            if (s !~ /\}[ \t;]*$/) infn = f
+        } else if (infn != "") {
+            FE0[infn] = L; INFN[L] = 1
+            if (s ~ /^[ \t]*\}[ \t;]*$/) infn = ""
+        }
+        if (s ~ /(^|[ \t;&|])trap[ \t]/ && s ~ /[ \t](EXIT|0)([ \t;]|$)/) lasttrap = L
+    }
+    # the prefix's spellings: every WINEPREFIX= value ("%s" runners aside), plus "$V" for a V
+    # assigned one of them and the value of a V spelled as one ("$WP" <-> "$D/wp")
+    for (i = 1; i <= nl; i++) {
+        s = LL[ORD[i]]; t = s; off = 0
+        while ((k = index(t, "WINEPREFIX=")) > 0) {
+            v = val(substr(s, off + k + 11)); off = off + k + 10; t = substr(s, off + 1)
+            if (v != "" && !index(v, "%s")) PFX[v] = 1
+        }
+    }
+    for (nm in AS) { n = split(AS[nm], vs, SUBSEP); for (j = 1; j <= n; j++) if (vs[j] in PFX) { PFX["$" nm] = 1; PFX["${" nm "}"] = 1 } }
+    for (sp in PFX) if (match(sp, /^\$\{?[A-Za-z_][A-Za-z0-9_]*\}?$/)) {
+        nm = sp; gsub(/[${}]/, "", nm)
+        if (nm in AS) { n = split(AS[nm], vs, SUBSEP); for (j = 1; j <= n; j++) if (vs[j] != "") PFX2[vs[j]] = 1 }
+    }
+    for (sp in PFX2) PFX[sp] = 1
+    # teardown functions: a body with a scoped kill AND a server-dir rm
+    for (f in FS0) { tk = 0; tr = 0; for (j = FS0[f]; j <= FE0[f]; j++) if (j in LL) { if (scoped_kill(LL[j])) tk = 1; if (rms_server_dir(LL[j])) tr = 1 }; if (tk && tr) TDF[f] = 1 }
+    for (vi = 1; vi <= 3; vi++) { EXP[VN[vi]] = 0; pend[VN[vi]] = "" }
+    runs = 0
+    for (i = 1; i <= nl; i++) {
+        L = ORD[i]; s = LL[L]
+        for (vi = 1; vi <= 3; vi++) {
+            nm = VN[vi]
+            if (match(s, "(^|[ \t;&|(])export[ \t]+([A-Za-z_][A-Za-z0-9_]*=[^ \t]*[ \t]+)*" nm "=")) EXP[nm] = private(s, RSTART + RLENGTH)
+            else if (match(s, "^[ \t]*" nm "=")) pend[nm] = s
+            if (match(s, "(^|[ \t;&|(])export[ \t]+" nm "([ \t;]|$)") && pend[nm] != "") EXP[nm] = private(pend[nm], index(pend[nm], nm "=") + length(nm) + 1)
+            if (match(s, "(^|[ \t;&|(])unset[ \t]+" nm "([ \t;]|$)")) EXP[nm] = 0
+        }
         t = s; off = 0
         while (match(t, /(^|[^A-Za-z0-9_.$\/-])(wine|wine64|winepath)[ \t]+("?\$|"?\.\.?[\/\\]|[A-Za-z0-9_.\\-]*\.exe|cmd[ \t]|reg[ \t]|start[ \t]|-[A-Za-z])/)) {
             p = off + RSTART; off = off + RSTART + RLENGTH - 1; t = substr(s, off + 1)
-            if (!inline_ok(s, p + 1) && !expok) { print L ": runs wine with NO private WINEPREFIX (the shared ~/.wine): " s; break }
+            runs = 1; miss = ""
+            for (vi = 1; vi <= 3; vi++) if (!inline_ok(s, p + 1, VN[vi]) && !EXP[VN[vi]]) miss = miss (miss == "" ? "" : ", ") VN[vi]
+            if (miss != "") { print L ": runs wine with no private " miss " (WINEPREFIX: the shared ~/.wine; HOME / XDG_CACHE_HOME: a fresh prefix writes the user's ~/.cache): " s; break }
+        }
+        if (match(s, /(^|[^A-Za-z0-9_.-])rm[ \t]/) && !(L in INFN)) {
+            rp = RSTART; hit = 0
+            for (sp in PFX) if ((q = names(s, sp)) > rp) hit = 1
+            if (hit) {
+                okd = 0
+                for (f in TDF) if ((q = names(s, f)) > 0 && q < rp) okd = 1
+                if (!okd) print L ": removes the wine prefix while its wineserver may still run (the server and its /tmp/.wine-<uid> dir outlive it, and the EXIT teardown can no longer find them — call the teardown first): " s
+            }
         }
         t = s; off = 0
         while (match(t, /(^|[^A-Za-z0-9_.$\/-])wineserver[ \t]/)) {
             p = off + RSTART; off = off + RSTART + RLENGTH - 1; t = substr(s, off + 1)
             if (substr(s, 1, p) ~ /(command[ \t]+-[vV]|which|type)[ \t]+$/) continue   # an existence probe, not a run (6.6.16)
-            if (inline_ok(s, p + 1)) continue
+            if (inline_ok(s, p + 1, "WINEPREFIX")) continue
             if (s ~ /^[ \t]*trap[ \t]/) { print L ": an UNSCOPED wineserver in a trap (an early exit kills the DEFAULT prefix's server): " s; break }
-            if (!expok) { print L ": an UNSCOPED wineserver (no private WINEPREFIX set yet): " s; break }
+            if (!EXP["WINEPREFIX"]) { print L ": an UNSCOPED wineserver (no private WINEPREFIX set yet): " s; break }
         }
+    }
+    if (runs) {
+        ok_k = 0; ok_r = 0; kvs = ""; rmvs = ""
+        if (lasttrap) {
+            teardown(lasttrap, 0)
+            for (k = 1; k <= ntd; k++) {
+                if (scoped_kill(TD[k])) { ok_k = 1; kvs = KV }
+                if (rms_server_dir(TD[k])) { ok_r = 1; rmvs = RMV }
+            }
+        }
+        # 6.6.17 (review): the dir removed must be THIS prefix's — `stat "$T"` for `stat "$WP"`
+        # passes every other rule and removes a dir no server ever made
+        if (ok_k && ok_r && !from_prefix(rmvs, kvs)) print lasttrap ": the EXIT teardown removes a server dir NOT derived from the prefix it kills (`stat -c %D` / `%i` of " kvs "): " rmvs
+        if (!ok_k || !ok_r) print (lasttrap ? lasttrap : 0) ": runs wine but no EXIT trap " (ok_k ? "" : "stops this prefix's wineserver (an inline-scoped `wineserver -k`)") (!ok_k && !ok_r ? " and " : "") (ok_r ? "" : "removes its server dir (/tmp/.wine-<uid>/server-<dev>-<ino>, which -k leaves behind)") (lasttrap ? ": " LL[lasttrap] : "")
     }
 }
 AWK
 _wine_shared() { awk -f "$W/wine9.awk" "$1"; }
 mkdir -p "$W/fx9"
+# A teardown the clean fixtures share — the shape every wine gate carries as `_wine_down`.
+_fx9_down() {   # $1 = the mktemp var name, $2 = the prefix var name
+    printf '_wine_down() {\n    [ -d "$%s" ] || return 0\n' "$2"
+    printf '    _ws="/tmp/.wine-$(id -u)/server-$(stat -c %%D "$%s")-$(printf %%x "$(stat -c %%i "$%s")")"\n' "$2" "$2"
+    printf '    WINEPREFIX="$%s" wineserver -k >/dev/null 2>&1 || true\n    rm -rf "$_ws" || true\n}\n' "$2"
+    printf 'trap '"'"'_wine_down; rm -rf "$%s"'"'"' EXIT\n' "$1"
+}
 printf 'T=$(mktemp -d) && [ -d "$T" ] || { echo no; exit 1; }\nWINEDEBUG=-all wine "$T/m.exe" > /dev/null 2>&1; got=$?\n' > "$W/fx9/bare.sh"
 printf 'W=$(mktemp -d) && [ -d "$W" ] || { echo no; exit 1; }\nexport WINEDEBUG=-all\nwp() { winepath -w "$1" 2>/dev/null; }\nexport WINEPREFIX="$W/wine"\n' > "$W/fx9/winepath_first.sh"
 printf 'T=$(mktemp -d) && [ -d "$T" ] || { echo no; exit 1; }\nassert_version "win PE under wine (main_win.cyr)" wine "$T/cycc.exe" || exit 1\n' > "$W/fx9/fn_arg.sh"
@@ -1105,16 +1258,49 @@ printf 'wineserver -k > /dev/null 2>&1 || true\n' > "$W/fx9/kill_bare.sh"
   printf 'trap '"'"'wineserver -k >/dev/null 2>&1; rm -rf "$W"'"'"' EXIT\n'; } > "$W/fx9/trap_after_export.sh"
 printf 'T=$(mktemp -d) && [ -d "$T" ] || { echo no; exit 1; }\nexport WINEPREFIX="$HOME/.wine" WINEDEBUG=-all\nwine "$T/a.exe"\n' > "$W/fx9/not_private.sh"
 printf 'T=$(mktemp -d) && [ -d "$T" ] || { echo no; exit 1; }\nprintf '"'"'#!/bin/sh\\nexec wine "$1"\\n'"'"' > "$T/wr"\n' > "$W/fx9/wrapper_bare.sh"
-printf 'D=$(mktemp -d) && [ -d "$D" ] || { echo no; exit 1; }\n( cd "$D" && WINEPREFIX="$D/wp" wine a.exe )\n( cd "$D" && wine ./b.exe )\n' > "$W/fx9/second_call.sh"
-# the four accepted spellings, one clean fixture each — and the prose / probe look-alikes
+printf 'D=$(mktemp -d) && [ -d "$D" ] || { echo no; exit 1; }\n( cd "$D" && WINEPREFIX="$D/wp" HOME="$D/h" XDG_CACHE_HOME="$D/h/.cache" wine a.exe )\n( cd "$D" && wine ./b.exe )\n' > "$W/fx9/second_call.sh"
+# 6.6.17 — the HOME / XDG_CACHE_HOME and teardown rules: each shape is otherwise clean
+{ printf 'T=$(mktemp -d) && [ -d "$T" ] || { echo no; exit 1; }\nWP="$T/wine"\n'; _fx9_down T WP
+  printf 'export WINEPREFIX="$WP" XDG_CACHE_HOME="$T/h/.cache" WINEDEBUG=-all\nwine "$T/a.exe"\n'; } > "$W/fx9/no_home.sh"
+{ printf 'T=$(mktemp -d) && [ -d "$T" ] || { echo no; exit 1; }\nWP="$T/wine"\n'; _fx9_down T WP
+  printf 'export WINEPREFIX="$WP" HOME="$T/h" WINEDEBUG=-all\nwine "$T/a.exe"\n'; } > "$W/fx9/no_xdg.sh"
+{ printf 'T=$(mktemp -d) && [ -d "$T" ] || { echo no; exit 1; }\nWP="$T/wine"\n'; _fx9_down T WP
+  printf 'export WINEPREFIX="$WP" HOME="$HOME/.cache/x" XDG_CACHE_HOME="$T/h/.cache"\nwine "$T/a.exe"\n'; } > "$W/fx9/home_not_private.sh"
+{ printf 'T=$(mktemp -d) && [ -d "$T" ] || { echo no; exit 1; }\nWP="$T/wine"\ntrap '"'"'rm -rf "$T"'"'"' EXIT\n'
+  printf 'export WINEPREFIX="$WP" HOME="$T/h" XDG_CACHE_HOME="$T/h/.cache"\nwine "$T/a.exe"\nWINEPREFIX="$WP" wineserver -k\n'; } > "$W/fx9/no_teardown.sh"
 { printf 'T=$(mktemp -d) && [ -d "$T" ] || { echo no; exit 1; }\nWP="$T/wine"\n'
-  printf 'export WINEPREFIX="$WP" WINEDEBUG=-all WINEDLLOVERRIDES='"'"'mscoree=d'"'"'\nwp() { winepath -w "$1"; }\n'
+  printf '_wine_down() {\n    WINEPREFIX="$WP" wineserver -k >/dev/null 2>&1 || true\n    WINEPREFIX="$WP" wineserver -w >/dev/null 2>&1 || true\n}\n'
+  printf 'trap '"'"'_wine_down; rm -rf "$T"'"'"' EXIT\n'
+  printf 'export WINEPREFIX="$WP" HOME="$T/h" XDG_CACHE_HOME="$T/h/.cache"\nwine "$T/a.exe"\n'; } > "$W/fx9/kill_no_rmdir.sh"
+{ printf 'T=$(mktemp -d) && [ -d "$T" ] || { echo no; exit 1; }\nWP="$T/wine"\n'; _fx9_down T WP
+  printf 'trap '"'"'rm -rf "$T"'"'"' EXIT\n'
+  printf 'export WINEPREFIX="$WP" HOME="$T/h" XDG_CACHE_HOME="$T/h/.cache"\nwine "$T/a.exe"\n_wine_down\n'; } > "$W/fx9/straight_teardown.sh"
+# the prefix deleted mid-gate while its server lives: the EXIT teardown then finds no prefix to
+# stat, and the server and its /tmp/.wine-<uid> dir outlive the gate (measured: 5 gates did this)
+{ printf 'D=$(mktemp -d) && [ -d "$D" ] || { echo no; exit 1; }\nWP="$D/wp"\n'; _fx9_down D WP
+  printf '( cd "$D" && WINEPREFIX="$D/wp" HOME="$D/h" XDG_CACHE_HOME="$D/h/.cache" wine t.exe )\nrm -rf "$D/wp"\n'; } > "$W/fx9/prefix_rm_live.sh"
+{ printf 'D=$(mktemp -d) && [ -d "$D" ] || { echo no; exit 1; }\nWP="$D/wp"\n'; _fx9_down D WP
+  printf 'export WINEPREFIX="$WP" HOME="$D/h" XDG_CACHE_HOME="$D/h/.cache"\nwine "$D/t.exe"\nrm -rf "$WP" "$D/x"\n'; } > "$W/fx9/prefix_rm_var.sh"
+{ printf 'D=$(mktemp -d) && [ -d "$D" ] || { echo no; exit 1; }\nWP="$D/wp"\n'; _fx9_down D WP
+  printf 'export WINEPREFIX="$WP" HOME="$D/h" XDG_CACHE_HOME="$D/h/.cache"\nwine "$D/t.exe"\n_wine_down; rm -rf "$D/wp"\nrm -rf "$D/wp/drive_c/x" "$WPX"\n'; } > "$W/fx9/c_prefix_rm_after_down.sh"
+# the server dir named from something OTHER than the prefix it kills (`stat "$T"`)
+{ printf 'T=$(mktemp -d) && [ -d "$T" ] || { echo no; exit 1; }\nWP="$T/wine"\n'
+  printf '_wine_down() {\n    _ws="/tmp/.wine-$(id -u)/server-$(stat -c %%D "$T")-$(printf %%x "$(stat -c %%i "$T")")"\n'
+  printf '    WINEPREFIX="$WP" wineserver -k >/dev/null 2>&1 || true\n    rm -rf "$_ws" || true\n}\n'
+  printf 'trap '"'"'_wine_down; rm -rf "$T"'"'"' EXIT\nexport WINEPREFIX="$WP" HOME="$T/h" XDG_CACHE_HOME="$T/h/.cache"\nwine "$T/a.exe"\n'; } > "$W/fx9/stat_wrong_operand.sh"
+# `CYRIUS_HOME=` on the call is not `HOME=` (the word boundary)
+{ printf 'T=$(mktemp -d) && [ -d "$T" ] || { echo no; exit 1; }\nWP="$T/wine"\n'; _fx9_down T WP
+  printf 'export WINEPREFIX="$WP" XDG_CACHE_HOME="$T/h/.cache"\nCYRIUS_HOME="$T/ch" wine "$T/a.exe"\n'; } > "$W/fx9/cyrius_home_only.sh"
+# the three accepted spellings, one clean fixture each — and the prose / probe look-alikes
+{ printf 'T=$(mktemp -d) && [ -d "$T" ] || { echo no; exit 1; }\nWP="$T/wine"\nWHM="$T/whome"\n'; _fx9_down T WP
+  printf 'export WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all WINEDLLOVERRIDES='"'"'mscoree=d'"'"'\nwp() { winepath -w "$1"; }\n'
   printf 'wine cmd /c '"'"'echo %%TEMP%%'"'"'\ntimeout 120 wine "..\\\\bin\\\\x.exe" demo\nwineserver -k > /dev/null 2>&1 || true\n'; } > "$W/fx9/c_export.sh"
-{ printf 'D=$(mktemp -d) && [ -d "$D" ] || { echo no; exit 1; }\n'
-  printf '( cd "$D/w" && ulimit -c 0; WINEPREFIX="$D/wp" WINEDEBUG=-all \\\n    wine t.exe > "$D/t.out" 2>&1 ); wrc=$?\n'
+{ printf 'D=$(mktemp -d) && [ -d "$D" ] || { echo no; exit 1; }\nWS="/tmp/.wine-$(id -u)/server-$(stat -c %%D "$D/wp")-$(printf %%x "$(stat -c %%i "$D/wp")")"\n'
+  printf 'trap '"'"'WINEPREFIX="$D/wp" wineserver -k > /dev/null 2>&1; rm -rf "$WS" "$D"'"'"' EXIT\n'
+  printf '( cd "$D/w" && ulimit -c 0; WINEPREFIX="$D/wp" HOME="$D/wh" XDG_CACHE_HOME="$D/wh/.cache" WINEDEBUG=-all \\\n    wine t.exe > "$D/t.out" 2>&1 ); wrc=$?\n'
   printf 'WINEPREFIX="$D/wp" wineserver -k > /dev/null 2>&1 || true\n'; } > "$W/fx9/c_inline.sh"
-{ printf 'T=$(mktemp -d) && [ -d "$T" ] || { echo no; exit 1; }\nWRUN="$T/wrun"\n'
-  printf 'printf '"'"'#!/bin/sh\\nWINEPREFIX="%%s" WINEDEBUG=-all exec wine "$1"\\n'"'"' "$T/wp" > "$WRUN"; chmod +x "$WRUN"\n'; } > "$W/fx9/c_wrapper.sh"
+{ printf 'T=$(mktemp -d) && [ -d "$T" ] || { echo no; exit 1; }\nWP="$T/wp"\nWRUN="$T/wrun"\n'; _fx9_down T WP
+  printf 'printf '"'"'#!/bin/sh\\nWINEPREFIX="%%s" HOME="%%s" XDG_CACHE_HOME="%%s/.cache" WINEDEBUG=-all exec wine "$1"\\n'"'"' "$WP" "$T/wh" "$T/wh" > "$WRUN"; chmod +x "$WRUN"\n'; } > "$W/fx9/c_wrapper.sh"
 { printf 'T=$(mktemp -d) && [ -d "$T" ] || { echo no; exit 1; }\nWP="$T/wine"\n'
   printf 'trap '"'"'[ -d "$WP" ] && WINEPREFIX="$WP" wineserver -k > /dev/null 2>&1; rm -rf "$T"'"'"' EXIT\n'
   printf '_wine_down() { WINEPREFIX="$WP" wineserver -k >/dev/null 2>&1; WINEPREFIX="$WP" wineserver -w >/dev/null 2>&1; }\n'; } > "$W/fx9/c_scoped.sh"
@@ -1127,12 +1313,24 @@ printf 'D=$(mktemp -d) && [ -d "$D" ] || { echo no; exit 1; }\n( cd "$D" && WINE
 { printf 'T=$(mktemp -d) && [ -d "$T" ] || { echo no; exit 1; }\nWP="$T/wp"\n'
   printf 'if [ -d "$WP" ] && command -v wineserver > /dev/null 2>&1; then WINEPREFIX="$WP" wineserver -k > /dev/null 2>&1; fi\n'; } > "$W/fx9/c_probe.sh"
 printf 'command -v wineserver > /dev/null 2>&1 && wineserver -k > /dev/null 2>&1\n' > "$W/fx9/probe_then_bare.sh"
-st9=0
-for f in bare winepath_first fn_arg trap_bare trap_after_export kill_bare not_private wrapper_bare second_call probe_then_bare; do
-    [ -n "$(_wine_shared "$W/fx9/$f.sh")" ] || { echo "FAIL: axis 9 self-test: a shared-prefix wine shape ('$f') was not flagged"; st9=1; }
+st9=0; nbad9=0
+# <fixture> <the reason it must be flagged FOR> — a shape flagged only for some OTHER rule would
+# let the rule it exists for be switched off unnoticed
+for fr in "bare|no private WINEPREFIX" "winepath_first|no private WINEPREFIX" "fn_arg|no private WINEPREFIX" \
+          "trap_bare|UNSCOPED wineserver in a trap" "trap_after_export|UNSCOPED wineserver in a trap" \
+          "kill_bare|UNSCOPED wineserver (no private" "not_private|no private WINEPREFIX" \
+          "wrapper_bare|no private WINEPREFIX" "second_call|no private WINEPREFIX" \
+          "probe_then_bare|UNSCOPED wineserver (no private" "no_home|no private HOME (" \
+          "no_xdg|no private XDG_CACHE_HOME (" "home_not_private|no private HOME (" \
+          "cyrius_home_only|no private HOME (" "prefix_rm_live|removes the wine prefix while" \
+          "prefix_rm_var|removes the wine prefix while" "stat_wrong_operand|NOT derived from the prefix" \
+          "no_teardown|no EXIT trap stops this prefix" "kill_no_rmdir|no EXIT trap removes its server dir" \
+          "straight_teardown|no EXIT trap stops this prefix"; do
+    f=${fr%%|*}; why=${fr#*|}; nbad9=$((nbad9 + 1))
+    _wine_shared "$W/fx9/$f.sh" | grep -qF -- "$why" || { echo "FAIL: axis 9 self-test: the '$f' shape was not flagged for '$why': $(_wine_shared "$W/fx9/$f.sh" | head -2)"; st9=1; }
 done
-[ "$(_wine_shared "$W/fx9/second_call.sh" | cut -d: -f1)" = 3 ] || { echo "FAIL: axis 9 self-test: an inline prefix on ONE call excused the next call (second_call)"; st9=1; }
-for f in c_export c_inline c_wrapper c_scoped c_prose c_probe; do
+[ "$(_wine_shared "$W/fx9/second_call.sh" | cut -d: -f1 | head -1)" = 3 ] || { echo "FAIL: axis 9 self-test: an inline prefix on ONE call excused the next call (second_call)"; st9=1; }
+for f in c_export c_inline c_wrapper c_scoped c_prose c_probe c_prefix_rm_after_down; do
     [ -z "$(_wine_shared "$W/fx9/$f.sh")" ] || { echo "FAIL: axis 9 self-test: an isolated spelling ('$f') was flagged: $(_wine_shared "$W/fx9/$f.sh")"; st9=1; }
 done
 [ "$st9" = 0 ] || FAIL=1
@@ -1144,14 +1342,14 @@ for g in $(find tests/gates -name '*.sh' | LC_ALL=C sort) scripts/check.sh; do
     h=$(_wine_shared "$g")
     [ -n "$h" ] && { echo "$h" | sed "s|^|FAIL: axis 9: $g:|"; bad9=1; }
 done
-# Floor: 22 gates run wine at 6.6.16 (derive: the grep above, over tests/gates/**/*.sh).
+# Floor: 24 gates run wine at 6.6.17 (derive: the grep above, over tests/gates/**/*.sh).
 if [ "$n9" -lt 150 ] || [ "$nwine9" -lt 20 ]; then
     echo "FAIL: axis 9: scanned $n9 scripts / $nwine9 that run wine (floors 150 / 20) — the scan read nothing"; FAIL=1
 elif [ "$bad9" != 0 ]; then
     FAIL=1
 elif [ "$st9" = 0 ]; then
-    echo "  ok: axis 9: all $nwine9 gates that run wine use a private WINEPREFIX under their own mktemp dir, and no wineserver call is unscoped ($n9 scripts scanned; self-tested on 10 shapes + 6 clean spellings)"
+    echo "  ok: axis 9: all $nwine9 gates that run wine give it a private WINEPREFIX, HOME and XDG_CACHE_HOME under their own mktemp dir, kill no unscoped wineserver, and stop their server and remove its server dir on EXIT, never deleting the prefix under a live server ($n9 scripts scanned; self-tested on $nbad9 shapes + 7 clean spellings)"
 fi
 
 if [ "$FAIL" != 0 ]; then echo "FAIL: gates_never_write_tree"; exit 1; fi
-echo "PASS gates_never_write_tree (static: no gate or check.sh writes a path under \$ROOT but gitignored build/ outputs, edits one in place, or backs one up and restores it; every temp dir is a checked mktemp and no gate or check-driver path is a fixed /tmp name; no gate runs wine outside a private WINEPREFIX or kills an unscoped wineserver; no test check.sh runs names a fixed /tmp path or binds a fixed port; dynamic: the 4 gates that did leave a stamped scratch tree untouched under 4 TMPDIR faults; the generator fails a short write)"
+echo "PASS gates_never_write_tree (static: no gate or check.sh writes a path under \$ROOT but gitignored build/ outputs, edits one in place, or backs one up and restores it; every temp dir is a checked mktemp and no gate or check-driver path is a fixed /tmp name; no gate runs wine outside a private WINEPREFIX, HOME and XDG_CACHE_HOME, kills an unscoped wineserver, or leaves its wineserver or server dir behind on exit; no test check.sh runs names a fixed /tmp path or binds a fixed port; dynamic: the 4 gates that did leave a stamped scratch tree untouched under 4 TMPDIR faults; the generator fails a short write)"
