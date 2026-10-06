@@ -49,8 +49,9 @@ Since the v6.1.21 native-default flip there are **two** transports behind one co
    loaded through fdlopen (a minimal `%fs` TCB stub deadlocks libssl's pthread init at its first
    `SSL_CTX_new`).
 
-`lib/tls.cyr` dispatches on the process-wide backend; the verb contract below is identical for
-both unless a row says otherwise. Consumers MUST treat the transport as **opaque**:
+The process-wide backend (`tls_set_backend`) decides what the NEXT connect / accept builds; every
+verb on an existing ctx or hook handle dispatches on the backend that built it (6.6.17 — see
+"Session resumption"). The verb contract below is identical for both unless a row says otherwise. Consumers MUST treat the transport as **opaque**:
 
 - All handles (`ctx`, `handle` in hooks, `session`) are integer pointers; consumers may store and
   pass them, but MUST NOT dereference them or assume their layout. The hook's `handle` is an
@@ -66,7 +67,7 @@ both unless a row says otherwise. Consumers MUST treat the transport as **opaque
 
 | Verb | Returns | Contract |
 |------|---------|----------|
-| `tls_set_backend(b)` | 0 / -1 | Selects `TLS_BACKEND_NATIVE` (1) or `TLS_BACKEND_LIBSSL` (0) for every later verb. -1 when `b` is unknown or not compiled in (native in a libssl-only build). Process-global, a plain store: set it once, before any thread connects (see "Thread safety"). The I/O verbs dispatch on the CURRENT backend, not on the one that made the ctx — do not switch while a ctx is open. |
+| `tls_set_backend(b)` | 0 / -1 | Selects `TLS_BACKEND_NATIVE` (1) or `TLS_BACKEND_LIBSSL` (0) for every later connect / accept (`tls_connect*`, `tls_accept*`) and for the process-wide probes (`tls_available`, `tls_init_main`, `tls_supports_*`). -1 when `b` is unknown or not compiled in (native in a libssl-only build). Process-global, a plain store: set it once, before any thread connects (see "Thread safety"). A ctx or hook handle keeps the backend that built it: since 6.6.17 every verb on one dispatches on that (through 6.6.16 the I/O verbs read the CURRENT backend, so a switch while a ctx was open handed it to the wrong one). |
 | `tls_get_backend()` | `TLS_BACKEND_NATIVE` / `TLS_BACKEND_LIBSSL` | The active backend: native by default, libssl in a `-D CYRIUS_TLS_LIBSSL` build. |
 
 ## Verb inventory (the contract surface)

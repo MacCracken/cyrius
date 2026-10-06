@@ -106,7 +106,8 @@ var _tls_backend = 1;
 var _tls_backend = 0;
 #endif
 
-# Select the active TLS backend (TLS_BACKEND_LIBSSL / TLS_BACKEND_NATIVE).
+# Select the active TLS backend (TLS_BACKEND_LIBSSL / TLS_BACKEND_NATIVE): what the NEXT connect /
+# accept builds. A ctx or hook handle keeps the backend that built it (6.6.17, _tls_shim_native).
 # Returns 0 on success, -1 if the requested backend isn't compiled in.
 fn tls_set_backend(b): i64 {
     #ifndef CYRIUS_TLS_LIBSSL
