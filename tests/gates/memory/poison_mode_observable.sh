@@ -55,7 +55,9 @@ while (i < 40) { if (load8(p + i) != fl_poison_byte()) { leaked = 1; } i = i + 1
 syscall(60, leaked);
 EOF
 
-# A harness that OVERWRITES by one byte; the violation counter must see it.
+# A harness that OVERWRITES an fl block by one byte. 6.6.18: under --poison the overwrite is
+# FATAL at fl_free (report line + exit 86), so this harness must FAIL there; it only exits 0
+# itself when the counter saw the overwrite and nothing trapped.
 cat > "$D/overwrite.fcyr" <<'EOF'
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
@@ -68,6 +70,32 @@ while (i < 65) { store8(p + i, 0x37); i = i + 1; }
 fl_free(p);
 if (fl_poison_violations() == 1) { syscall(60, 0); }
 syscall(60, 7);
+EOF
+
+# 6.6.18 — an overwrite past an alloc() block. Before 6.6.18 alloc() had no redzone at all,
+# so this harness passed under --poison: the overwrite landed in the next block's bytes.
+cat > "$D/alloc_overwrite.fcyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+alloc_init();
+var p = alloc(16);
+store8(p + 16, 1);
+var q = alloc(16);
+syscall(60, 0);
+EOF
+
+# 6.6.18 — assert_summary() sweeps under the flag: a corrupted block that nothing else ever
+# looks at (no later allocation, no free) still fails the run. The harness opts out of the
+# trap so the summary is what sees it.
+cat > "$D/summary_sweep.fcyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/assert.cyr"
+alloc_init();
+poison_trap_set(0);
+var p = alloc(16);
+store8(p + 16, 1);
+syscall(60, assert_summary());
 EOF
 
 run() { "$CLI" fuzz "$1" ${2-} > "$D/out.txt" 2>&1 || true; }
@@ -95,10 +123,30 @@ run "$D/overread.fcyr"
 if [ "$(verdict)" = "fail" ]; then echo "  ok axis 4: the same overread is NOT flagged without --poison (mode is genuinely opt-in)"
 else echo "  FAIL axis 4 (anti-vacuous): the overread was flagged with poison OFF — poison is always on"; fail=1; fi
 
-# --- axis 5: an out-of-bounds WRITE is counted by the redzone check ---
+# --- axis 5: an out-of-bounds WRITE fails the harness under --poison (6.6.18: was "counted") ---
+# The counted behaviour checked nothing for anyone: 0 of 194 ecosystem harnesses read
+# fl_poison_violations(). Under the compile flag the detection now reports and exits 86.
 run "$D/overwrite.fcyr" --poison
-if [ "$(verdict)" = "pass" ]; then echo "  ok axis 5: a one-byte overflow is caught by the redzone at free"
-else echo "  FAIL axis 5: a one-byte overflow was not counted — the redzone is not armed or not checked"; fail=1; fi
+if [ "$(verdict)" = "fail" ] && grep -q "poison: redzone overwrite" "$D/out.txt"; then echo "  ok axis 5: a one-byte fl overflow FAILS the harness under --poison, with the report line"
+else echo "  FAIL axis 5: a one-byte fl overflow did not fail the harness with a 'poison: redzone overwrite' line — the redzone is not armed, not checked, or not fatal"; fail=1; fi
+
+# --- axis 7: an overwrite past an alloc() block fails under --poison (6.6.18) ---
+run "$D/alloc_overwrite.fcyr" --poison
+if [ "$(verdict)" = "fail" ] && grep -q "poison: redzone overwrite" "$D/out.txt"; then echo "  ok axis 7: a one-byte overflow of an alloc() block FAILS under --poison, at the next allocation"
+else echo "  FAIL axis 7: an alloc() overflow was not seen under --poison — alloc() is not redzoned, or the previous-block check is missing"; fail=1; fi
+
+# --- axis 8 (ANTI-VACUOUS for axis 7): the same harness PASSES without --poison ---
+run "$D/alloc_overwrite.fcyr"
+if [ "$(verdict)" = "pass" ]; then echo "  ok axis 8: the same alloc() overflow is invisible without --poison (the mode is opt-in)"
+else echo "  FAIL axis 8 (anti-vacuous): the alloc() harness failed with poison OFF — poison is always on, or the harness is broken"; fail=1; fi
+
+# --- axis 9: assert_summary() sweeps under --poison; the same harness passes without it ---
+run "$D/summary_sweep.fcyr" --poison
+r9a=$(verdict)
+run "$D/summary_sweep.fcyr"
+r9b=$(verdict)
+if [ "$r9a" = "fail" ] && [ "$r9b" = "pass" ]; then echo "  ok axis 9: assert_summary() fails a run whose only overwrite nothing else looked at (and only under --poison)"
+else echo "  FAIL axis 9: assert_summary() under --poison=$r9a (want fail), without=$r9b (want pass) — the summary does not sweep"; fail=1; fi
 
 # --- axis 6: the flag is positional-independent and not eaten as the path argument ---
 "$CLI" fuzz --poison "$D/mode.fcyr" > "$D/out.txt" 2>&1 || true

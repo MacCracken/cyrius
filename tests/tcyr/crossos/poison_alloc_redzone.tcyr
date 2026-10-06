@@ -1,0 +1,75 @@
+#define CYRIUS_POISON
+# poison_alloc_redzone.tcyr — 6.6.18 CROSS-HOST: under CYRIUS_POISON, alloc() blocks carry a
+# leading and a trailing redzone on Linux, macOS and Windows — the heap path AND the `big`
+# (own-mapping) path — and poison changes nothing alloc_used() reports.
+#
+# ⛔ BEFORE 6.6.18 `--poison` instrumented lib/freelist.cyr only. alloc() — the allocator
+# nearly every consumer uses — handed out blocks with no redzone, so a read past alloc(16)
+# returned the NEXT block's live bytes (measured rc=3 with a probe), exactly the sit-shaped
+# disclosure poison mode exists to expose. The `#define` on line 1 is how `cyrius fuzz
+# --poison` reaches a harness; it switches the mode on for this whole program.
+#
+# ⭐ IN crossos/ DELIBERATELY: the macOS and Windows alloc() bodies are separate files with
+# two return paths each (the bump heap and the `big` mapping) and they only run on real
+# hardware — the release gate's cross-OS leg executes this directory and nothing else.
+# The test traps nothing (poison_trap_set(0)) and restores every byte it clobbers, so the
+# assert_summary() sweep finds a clean heap.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/assert.cyr"
+
+fn main(): i64 {
+    poison_trap_set(0);
+    alloc_init();
+    poison_reset();
+    var fill = poison_fill();
+    test_group("alloc() redzones under CYRIUS_POISON (6.6.18)");
+
+    var p = alloc(16);
+    assert_nonnull(p, "alloc(16)");
+    assert_eq(load8(p + 16), fill, "a read one past alloc(16) yields the fill, not the next block");
+    assert_eq(load8(p - 1), fill, "a read one before the block yields the fill");
+    assert_eq(load64(p), 0, "user bytes are zero-initialised");
+    assert_eq(load64(p + 8), 0, "user bytes are zero-initialised (tail)");
+    var odd = alloc(13);
+    assert_eq(load8(odd + 13), fill, "an odd request is guarded from its exact end");
+
+    assert_eq(poison_sweep(), 0, "a clean heap sweeps clean");
+    store8(p + 16, 0x41);
+    assert_eq(poison_sweep(), 1, "a 1-byte overwrite past alloc(16): sweep == 1");
+    store8(p + 16, fill);
+    assert_eq(poison_sweep(), 0, "restored: sweep == 0");
+
+    # The `big` path: bigger than the bump heap on every target (macOS 256 MB reserve,
+    # Windows 16 MB, Linux 256 MB chunk grain) — its own mapping, armed the same way.
+    var big = alloc(300000000);
+    assert_nonnull(big, "a 300 MB alloc() succeeds");
+    assert_eq(load8(big + 300000000), fill, "big path: trailing redzone");
+    assert_eq(load8(big - 1), fill, "big path: leading redzone");
+    assert_eq(load64(big + 299999992), 0, "big path: user bytes zero");
+    store8(big - 2, 7);
+    assert_eq(poison_sweep(), 1, "an underwrite of the big block is seen");
+    store8(big - 2, fill);
+
+    test_group("accounting is unchanged by poison");
+    var u0 = alloc_used();
+    var i = 0;
+    while (i < 100) { alloc(16); i = i + 1; }
+    assert_eq(alloc_used() - u0, 1600, "100 x alloc(16) moves alloc_used() by 1600");
+    assert_eq(alloc(0), 0, "alloc(0) is still refused");
+    assert_eq(alloc(0 - 8), 0, "a negative request is still refused");
+
+    test_group("alloc_reset forgets the lists");
+    store8(odd + 13, 0x41);      # stale corruption that the reset must not report later
+    alloc_reset();
+    assert_eq(alloc_used(), 0, "alloc_used() == 0 after reset");
+    assert_eq(poison_sweep(), 0, "after alloc_reset no stale block is reported");
+    var q = alloc(32);
+    assert_eq(load8(q + 32), fill, "a block after the reset is armed again");
+    assert_eq(load64(q), 0, "and zeroed");
+
+    var r = assert_summary();
+    return r;
+}
+var ec = main();
+syscall(60, ec);

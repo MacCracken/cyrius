@@ -1,0 +1,61 @@
+# poison_fill_byte.tcyr — 6.6.18: the poison fill is a settable byte owned by lib/poison.cyr,
+# and a freelist block remembers the fill it was ARMED with.
+#
+# Before 6.6.18 the fill was the constant 0xA5 in three places in lib/freelist.cyr, so the
+# A/B differential (run a harness under two fills and compare) had nothing to vary, and a
+# fill read back by a harness could not be told apart from data that happened to be 0xA5.
+# The per-block record matters once the fill can change: a block armed under one fill and
+# freed under another must not score a false violation.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/freelist.cyr"
+include "lib/assert.cyr"
+
+fn main(): i64 {
+    alloc_init();
+    test_group("poison fill byte (6.6.18)");
+    poison_trap_set(0);          # counted, even if compiled with CYRIUS_POISON
+    fl_poison_enable();
+    fl_poison_reset();
+
+    assert_eq(poison_fill(), 165, "default fill is 0xA5");
+    assert_eq(fl_poison_byte(), 165, "fl_poison_byte() follows the core");
+    assert_eq(poison_fill_set(90), 165, "poison_fill_set returns the previous fill");
+    assert_eq(fl_poison_byte(), 90, "fl_poison_byte() reports the new fill");
+
+    # A fresh block's redzone reads the new fill.
+    var p = fl_alloc(32);
+    assert_eq(load8(p + 32), 90, "a read past the request yields the SET fill (0x5A)");
+    assert_eq(load8(p + 40), 90, "further past the request too");
+    fl_free(p);
+
+    # Zero (and out-of-range) is refused: a zero fill would make poisoned blocks undecodable.
+    assert_eq(poison_fill_set(0), 0 - 1, "poison_fill_set(0) is refused");
+    assert_eq(poison_fill_set(256), 0 - 1, "poison_fill_set(256) is refused");
+    assert_eq(poison_fill(), 90, "a refused set leaves the fill unchanged");
+
+    # Per-block fill: armed under 0xA5, freed under 0x5A -> no false violation.
+    poison_fill_set(165);
+    fl_poison_reset();
+    var q = fl_alloc(40);
+    var i = 0;
+    while (i < 40) { store8(q + i, 0x11); i = i + 1; }
+    poison_fill_set(90);
+    fl_free(q);
+    assert_eq(fl_poison_violations(), 0, "a fill change between alloc and free is not a violation");
+
+    # The one-byte overflow is still counted under a changed fill.
+    fl_poison_reset();
+    var r = fl_alloc(64);
+    i = 0;
+    while (i < 65) { store8(r + i, 0x37); i = i + 1; }
+    fl_free(r);
+    assert_eq(fl_poison_violations(), 1, "a ONE-byte overflow is still detected");
+
+    poison_fill_set(165);
+    fl_poison_disable();
+    var rr = assert_summary();
+    return rr;
+}
+var ec = main();
+syscall(60, ec);

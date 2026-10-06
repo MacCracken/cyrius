@@ -25,10 +25,14 @@
 #   * cycc's own source: 1,251,864 -> 1,215,000 bytes. Both land at 0x600000 — no crossing,
 #     so a gate built on it passes against the BROKEN compiler.
 #   * synthetic dead code sized past 2 MB: DCE lists the fns as dead but does NOT compact.
-#     `DECODE_WALK_OK` fails on the generated bodies and the pass correctly bails (that
-#     fail-safe is the v6.5.72 lesson). Measured at 400 fns it compacts (220,701 bytes
-#     eliminated); at 4,200 and at 22,000 it NOPs and stops. So the fixture cannot be grown
-#     into the regime under test.
+#     Measured at 400 fns it compacts (220,701 bytes eliminated); at 4,200 and at 22,000 it
+#     NOPs and stops. ⚠ CORRECTED 6.6.18: this read "`DECODE_WALK_OK` fails on the generated
+#     bodies". It does not. The repair registry holds 4,096 dead-code runs (one per dead fn,
+#     `_wpnr_add`, src/common/util.cyr) and a saturated registry declines the whole pass —
+#     measured: 4,096 one-line dead fns compact, 4,097 decline, and since 6.6.18 the note says
+#     so ("compaction declined on x86_64 ELF: more than 4096 dead-code runs"). So the bound is
+#     the run count, not the body: ≤4,096 dead fns of ≳520 B each would cross a 2 MB bucket,
+#     and this gate could be made behavioural that way. Until then it stays structural.
 # Pinning the mechanism and SAYING so beats a behavioural-looking check that cannot fail —
 # the same call `deps_family_expansion_ordered.sh` documents for its own case.
 #

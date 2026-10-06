@@ -79,6 +79,10 @@ fn alloc(size) {
     # Pure validation OUTSIDE the v6.0.64 alloc lock (no shared state).
     if (size <= 0) { return 0; }
     if (size > ALLOC_MAX) { return 0; }
+    #ifdef CYRIUS_POISON
+    var pz_req = size;       # 6.6.18: redzone room, after the checks on the REQUEST
+    size = size + _POISON_HDR + _POISON_RZ + _POISON_RZ;
+    #endif
     size = (size + 7) & (0 - 8);
     # --- critical section (shared bump pointer) ---
     _alloc_lock_acquire();
@@ -107,10 +111,19 @@ fn alloc(size) {
         var big = syscall(9, 0, size, 3, 0x22, 0 - 1, 0);
         _alloc_lock_release();
         if (big <= 0) { return 0; }
+        #ifdef CYRIUS_POISON
+        return _poison_arm_alloc(big, pz_req);
+        #endif
         return big;
     }
     _heap_ptr = new_ptr;
+    #ifdef CYRIUS_POISON
+    _poison_overhead = _poison_overhead + size - ((pz_req + 7) & (0 - 8));   # alloc_used() counts the REQUEST
+    #endif
     _alloc_lock_release();
+    #ifdef CYRIUS_POISON
+    return _poison_arm_alloc(ptr, pz_req);       # armed + published outside the lock
+    #endif
     return ptr;
 }
 
@@ -118,6 +131,9 @@ fn alloc(size) {
 # memory is invalidated (same contract as Linux peer). Locked so a
 # concurrent alloc() can't observe a half-updated bump pointer.
 fn alloc_reset() {
+    #ifdef CYRIUS_POISON
+    poison_forget_all();     # 6.6.18: every listed block dies here, and its address is re-issued
+    #endif
     _alloc_lock_acquire();
     # Scrub the reclaimed span before rewinding so a later alloc() can't read
     # the prior occupant's bytes (memory-reuse info-leak, CVE-2026-34988 class;
@@ -127,11 +143,18 @@ fn alloc_reset() {
     var span = _heap_ptr - _heap_base;
     if (span > 0) { _alloc_zero(_heap_base, span); }
     _heap_ptr = _heap_base;
+    #ifdef CYRIUS_POISON
+    _poison_overhead = 0;
+    _poison_hidden = 0;
+    #endif
     _alloc_lock_release();
     return 0;
 }
 
 # Bytes used from the heap.
 fn alloc_used() {
+    #ifdef CYRIUS_POISON
+    return _heap_ptr - _heap_base - _poison_overhead - _poison_hidden;
+    #endif
     return _heap_ptr - _heap_base;
 }
