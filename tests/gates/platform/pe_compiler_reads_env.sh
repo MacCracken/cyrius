@@ -96,7 +96,7 @@ printf 'fn main(): i64 { return 7; }\nvar e = main();\n' > "$D/tiny.cyr"
 printf 'include "lib/alloc.cyr"\ninclude "lib/string.cyr"\ninclude "lib/fmt.cyr"\ninclude "lib/io.cyr"\nfn main(): i64 { return 7; }\nvar e = main();\n' > "$D/heavy.cyr"
 
 labels() {   # the meter row names printed on stderr, one per line
-    grep -oE '^  [a-z_]+:' "$1" | tr -d ' :' | sort
+    { grep -oE '^  [a-z_]+:' "$1" || true; } | tr -d ' :' | sort
 }
 
 # --- axis 1: the Linux oracle, and the anti-vacuous pair ---
@@ -125,8 +125,8 @@ elif ! command -v objdump > /dev/null 2>&1; then
     echo "  SKIP axis 2: objdump not available (a strings scan is NOT a substitute — cycc carries the name as a literal in its own reroute-warning text whether or not it imports it)"
     GATE_SKIPS=$((${GATE_SKIPS:-0} + 1))
 else
-    nimp=$(objdump -x "$D/cycc.exe" 2>/dev/null | sed -n '/DLL Name/,$p' | grep -c 'GetEnvironmentVariableA')
-    ncf=$(objdump -x "$D/cycc.exe" 2>/dev/null | sed -n '/DLL Name/,$p' | grep -c 'CreateFileW')
+    nimp=$(objdump -x "$D/cycc.exe" 2>/dev/null | sed -n '/DLL Name/,$p' | grep -c 'GetEnvironmentVariableA' || true)
+    ncf=$(objdump -x "$D/cycc.exe" 2>/dev/null | sed -n '/DLL Name/,$p' | grep -c 'CreateFileW' || true)
     if [ "$ncf" -lt 1 ]; then
         echo "  FAIL axis 2 (anti-vacuous): the import directory could not be read at all (CreateFileW is missing too)"
         fail=1
@@ -164,9 +164,9 @@ else
 
     CYRIUS_DCE=1 wine "$D/cycc.exe" < "$D/heavy.cyr" > /dev/null 2> "$D/pe_dce.err"
     wine "$D/cycc.exe" < "$D/heavy.cyr" > /dev/null 2> "$D/pe_nodce.err"
-    noped=$(grep -c 'bytes NOPed' "$D/pe_dce.err")
-    invited=$(grep -c 'set CYRIUS_DCE=1 to eliminate' "$D/pe_nodce.err")
-    still=$(grep -c 'set CYRIUS_DCE=1 to eliminate' "$D/pe_dce.err")
+    noped=$(grep -c 'bytes NOPed' "$D/pe_dce.err" || true)
+    invited=$(grep -c 'set CYRIUS_DCE=1 to eliminate' "$D/pe_nodce.err" || true)
+    still=$(grep -c 'set CYRIUS_DCE=1 to eliminate' "$D/pe_dce.err" || true)
     if [ "$invited" -lt 1 ]; then
         echo "  FAIL axis 4 (anti-vacuous): the unset PE run printed no DCE note at all, so the set run proves nothing"
         fail=1

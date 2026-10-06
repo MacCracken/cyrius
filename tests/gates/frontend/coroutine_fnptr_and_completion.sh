@@ -91,7 +91,7 @@ run() {     # <name> <want stdout> <what>
     CYRIUS_ASYNC=1 "$CC" < "$T/$1.cyr" > "$T/$1.bin" 2> "$T/$1.err" || rc=$?
     if [ "$rc" -ne 0 ]; then bad "$3: rc $rc: $(grep '^error' "$T/$1.err" | head -1)"; return; fi
     chmod +x "$T/$1.bin"
-    got=$( (ulimit -c 0; timeout 30 "$T/$1.bin") 2>/dev/null); e=$?
+    e=0; got=$( (ulimit -c 0; timeout 30 "$T/$1.bin") 2>/dev/null) || e=$?
     if [ "$e" -ne 0 ]; then bad "$3: exit $e (output '$got')"
     elif [ "$got" = "$2" ]; then ok "$3: $got"
     else bad "$3: printed '$got', want '$2'"; fi
@@ -224,7 +224,7 @@ run e '0 0 0 7 7 7 7 7 7 7 1' "E: a finished loop coroutine does not resume; its
 # "backward rel32 jmp, then jmp +0" must not occur. Mutation: push the jmp before the
 # `_cur_fn_coro` test again -> M RED (1 occurrence).
 if [ -s "$T/e.bin" ]; then
-    mdead=$(od -An -v -tx1 "$T/e.bin" | tr -d '\n' | grep -o 'e9 [0-9a-f][0-9a-f] [0-9a-f][0-9a-f] [0-9a-f][0-9a-f] ff e9 00 00 00 00' | wc -l | tr -d ' ')
+    mdead=$(od -An -v -tx1 "$T/e.bin" | tr -d '\n' | grep -o 'e9 [0-9a-f][0-9a-f] [0-9a-f][0-9a-f] [0-9a-f][0-9a-f] ff e9 00 00 00 00' | wc -l | tr -d ' ' || true)
     if [ "$mdead" = 0 ]; then ok "M: no dead jmp +0 after a coroutine's resume dispatch"
     else bad "M: $mdead dead \`jmp +0\` after a backward jmp in E's coroutine (the unreachable fall-through jmp is back)"; fi
 else bad "M: E's binary is missing, so the dead-jmp check could not look"; fi
@@ -490,7 +490,7 @@ xrun() {    # <runner> <compiler> <tag> <want> <what>
     CYRIUS_ASYNC=1 "$2" < "$T/$3.cyr" > "$T/$3.x" 2> "$T/$3.xerr" || rc=$?
     if [ "$rc" -ne 0 ]; then bad "$5: rc $rc: $(grep '^error' "$T/$3.xerr" | head -1)"; return; fi
     chmod +x "$T/$3.x"
-    got=$( (ulimit -c 0; timeout 60 "$1" "$T/$3.x") 2>/dev/null); e=$?
+    e=0; got=$( (ulimit -c 0; timeout 60 "$1" "$T/$3.x") 2>/dev/null) || e=$?
     if [ "$e" -ne 0 ]; then bad "$5: exit $e (output '$got')"
     elif [ "$got" = "$4" ]; then ok "$5: $got"
     else bad "$5: printed '$got', want '$4'"; fi

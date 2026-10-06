@@ -51,7 +51,7 @@ _bad() { echo "  FAIL: $1"; fail=$((fail + 1)); }
 CYRIUS_MACHO=1 "$CC" < src/main_x86_macho.cyr > "$T/mx" 2> "$T/mx.err"
 if [ ! -s "$T/mx" ]; then _bad "the x86 Mach-O compiler did not build"; sed -n 1,3p "$T/mx.err"
 else
-  n=$(grep -c 'syscall 12 not routed' "$T/mx.err")
+  n=$(grep -c 'syscall 12 not routed' "$T/mx.err" || true)
   if [ "$n" -ne 0 ]; then _bad "building the x86 Mach-O compiler warns about an unrouted brk $n time(s)"; else pass=$((pass + 1)); fi
 fi
 
@@ -76,7 +76,7 @@ else
       if [ "$(head -c 4 "$T/$b.lin.o" | od -An -tx1 | tr -d ' ')" != "7f454c46" ] || [ "$(od -An -tu1 -j16 -N1 "$T/$b.lin.o" | tr -d ' ')" != "1" ]; then
         _bad "$b: the Linux compiler's output is not an ELF relocatable (anti-vacuous)"; continue
       fi
-      CYRIUS_TARGET_WIN=0 wine "$T/cycc.exe" < "$fx" > "$T/$b.pe.o" 2> "$T/$b.pe.err"; rc=$?
+      rc=0; CYRIUS_TARGET_WIN=0 wine "$T/cycc.exe" < "$fx" > "$T/$b.pe.o" 2> "$T/$b.pe.err" || rc=$?
       if [ "$rc" -ne 0 ]; then _bad "$b: cycc.exe (CYRIUS_TARGET_WIN=0) rc $rc — $(grep -m1 '^error' "$T/$b.pe.err")"
       elif ! cmp -s "$T/$b.lin.o" "$T/$b.pe.o"; then _bad "$b: the Windows-hosted .o differs from the Linux .o"
       else pass=$((pass + 1)); fi

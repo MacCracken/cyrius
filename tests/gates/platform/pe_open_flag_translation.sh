@@ -143,7 +143,7 @@ if [ ! -s "$D/oft_elf" ]; then
     fail=1
 else
     chmod +x "$D/oft_elf"
-    ( cd "$D" && ulimit -c 0; ./oft_elf > "$D/elf.out" 2>&1 ); rc=$?
+    rc=0; ( cd "$D" && ulimit -c 0; ./oft_elf > "$D/elf.out" 2>&1 ) || rc=$?
     got=$(ran_count "$D/elf.out")
     if [ "$rc" != "0" ] || [ "$got" != "$want" ]; then
         echo "  FAIL axis 1 (POSIX oracle): native run exited $rc, reported '$got' of $want rows"
@@ -165,14 +165,14 @@ elif ! command -v objdump > /dev/null 2>&1; then
     GATE_SKIPS=$((${GATE_SKIPS:-0} + 1))
 else
     objdump -d "$D/oft.exe" > "$D/dis" 2>/dev/null
-    hard=$(grep -cE 'mov[[:space:]]+\$0xc0000000,%edx' "$D/dis")
-    a_edx=$(grep -cE 'mov[[:space:]]+%r9d,%edx' "$D/dis")
-    a_app=$(grep -cE 'or[[:space:]]+\$0x4,%r9d' "$D/dis")
+    hard=$(grep -cE 'mov[[:space:]]+\$0xc0000000,%edx' "$D/dis" || true)
+    a_edx=$(grep -cE 'mov[[:space:]]+%r9d,%edx' "$D/dis" || true)
+    a_app=$(grep -cE 'or[[:space:]]+\$0x4,%r9d' "$D/dis" || true)
     # The access word and the disposition word are NOT independent: Win32 refuses
     # TRUNCATE_EXISTING unless GENERIC_WRITE is in dwDesiredAccess (ERROR_INVALID_PARAMETER,
     # measured on cass — and wine does NOT enforce it, so axis 3 is blind to this half).
     # That makes this grep the only local guard on it.
-    a_gw=$(grep -cE 'or[[:space:]]+\$0x40000000,%r9d' "$D/dis")
+    a_gw=$(grep -cE 'or[[:space:]]+\$0x40000000,%r9d' "$D/dis" || true)
     if [ "$hard" != "0" ]; then
         echo "  FAIL axis 2: $hard site(s) still load dwDesiredAccess from the hardcoded 0xC0000000 — the flag word is being ignored"
         fail=1
@@ -198,9 +198,9 @@ elif ! command -v wine > /dev/null 2>&1; then
     GATE_SKIPS=$((${GATE_SKIPS:-0} + 1))
 else
     mkdir -p "$D/w" && cp "$D/oft.exe" "$D/w/oft.exe"
-    ( cd "$D/w" && ulimit -c 0; WINEPREFIX="$D/wp" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all \
+    rc=0; ( cd "$D/w" && ulimit -c 0; WINEPREFIX="$D/wp" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all \
         WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' \
-        wine oft.exe > "$D/pe.out" 2> "$D/pe.err" ); rc=$?
+        wine oft.exe > "$D/pe.out" 2> "$D/pe.err" ) || rc=$?
     got=$(ran_count "$D/pe.out")
     if [ "$rc" != "0" ] || [ "$got" != "$want" ]; then
         echo "  FAIL axis 3 (wine): PE run exited $rc, reported '$got' of $want rows"

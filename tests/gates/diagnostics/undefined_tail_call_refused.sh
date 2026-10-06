@@ -82,7 +82,7 @@ EOF
 
 # refuse <compiler> <fixture> <needle> — rc 1, the needle on stderr, no output
 refuse() {
-  "$T/$1" < "$T/$2.cyr" > "$T/o" 2>"$T/e"; rc=$?
+  rc=0; "$T/$1" < "$T/$2.cyr" > "$T/o" 2>"$T/e" || rc=$?
   if [ "$rc" -ne 1 ]; then _bad "$1 $2: rc $rc, expected 1 (a reachable undefined call must be refused)"; sed 's/^/      /' "$T/e" | grep -v '^      note\|routes n=' | head -3; return; fi
   if ! grep -q "$3" "$T/e"; then _bad "$1 $2: refused without naming it ('$3' missing)"; sed 's/^/      /' "$T/e" | head -3; return; fi
   pass=$((pass + 1))
@@ -101,7 +101,7 @@ refuse cx deadfirst 'undefined function(s) called (cx backend)'
 # (cx has no reachability pass — it refuses every undefined call — so it is checked for the
 # warning line only.)
 for c in x86 aarch64 win cx; do
-  "$T/$c" < "$T/deadtail.cyr" > "$T/o" 2>"$T/e"; rc=$?
+  rc=0; "$T/$c" < "$T/deadtail.cyr" > "$T/o" 2>"$T/e" || rc=$?
   if [ "$c" != cx ]; then
     if [ "$rc" -ne 0 ] || [ ! -s "$T/o" ]; then _bad "$c deadtail: rc $rc — an undefined call in an UNREACHABLE fn must still build"; continue; fi
   fi
@@ -111,7 +111,7 @@ done
 
 # ── --allow-undef still downgrades (the refusal is not unconditional) ──────────────────────
 for c in x86 aarch64; do
-  "$T/$c" --allow-undef < "$T/tail.cyr" > "$T/o" 2>"$T/e"; rc=$?
+  rc=0; "$T/$c" --allow-undef < "$T/tail.cyr" > "$T/o" 2>"$T/e" || rc=$?
   if [ "$rc" -ne 0 ] || [ ! -s "$T/o" ]; then _bad "$c --allow-undef tail: rc $rc, expected a binary"; else pass=$((pass + 1)); fi
 done
 
@@ -121,7 +121,7 @@ if command -v qemu-aarch64 >/dev/null 2>&1; then
   # ⛔ 6.6.17: compiled from the ROOT like every row above. It used to compile inside $T, where
   # `include "lib/syscalls.cyr"` resolves through cycc's $CYRIUS_HOME / $HOME/.cyrius fallback —
   # the live store's lib, not this tree's — and failed under a store-less HOME. CHANGELOG [6.6.17]
-  ( ulimit -c 0 && "$T/aarch64" --allow-undef < "$T/tail.cyr" > "$T/tail_a64" 2>/dev/null && chmod +x "$T/tail_a64" && cd "$T" && sh -c 'qemu-aarch64 ./tail_a64' >/dev/null 2>&1 ) 2>/dev/null; rc=$?
+  rc=0; ( ulimit -c 0 && "$T/aarch64" --allow-undef < "$T/tail.cyr" > "$T/tail_a64" 2>/dev/null && chmod +x "$T/tail_a64" && cd "$T" && sh -c 'qemu-aarch64 ./tail_a64' >/dev/null 2>&1 ) 2>/dev/null || rc=$?
   if [ "$rc" -eq 132 ] || [ "$rc" -eq 139 ]; then pass=$((pass + 1)); else _bad "aarch64 --allow-undef tail binary exited $rc under qemu, expected the UDF trap (132)"; fi
 fi
 

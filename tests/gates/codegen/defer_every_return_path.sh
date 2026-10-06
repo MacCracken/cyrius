@@ -97,7 +97,7 @@ var rr = main();
 sys_exit(rr);
 EOF
 if CYRIUS_ASYNC=1 "$T/stage1" < "$T/as.cyr" > "$T/as.x" 2>"$T/as.err" && [ -s "$T/as.x" ]; then
-  chmod +x "$T/as.x"; timeout 20 "$T/as.x" > /dev/null 2>&1; r=$?
+  r=0; chmod +x "$T/as.x"; timeout 20 "$T/as.x" > /dev/null 2>&1 || r=$?
   if [ "$r" -eq 0 ]; then ok "host: async fn tail return runs its defer (and the local-first control)"
   else bad "host: async fn rows exit $r (10/11 = the tail row: value / defer; 20/21 = the control)"; fi
 else bad "host: the async probe did not compile"; sed -n 1,3p "$T/as.err"; fi
@@ -114,7 +114,7 @@ if "$T/stage1" < "$T/iw.cyr" > "$T/iw.x" 2>"$T/iw.err" && [ -s "$T/iw.x" ]; then
   if grep -q "#inline ignored: body has a defer/secret block" "$T/iw.err"; then
     ok "host: an #inline fn with a defer is refused by name (warning)"
   else bad "host: an #inline fn with a defer compiled with no 'body has a defer/secret block' warning"; fi
-  chmod +x "$T/iw.x"; timeout 20 "$T/iw.x" > /dev/null 2>&1; r=$?
+  r=0; chmod +x "$T/iw.x"; timeout 20 "$T/iw.x" > /dev/null 2>&1 || r=$?
   [ "$r" -eq 16 ] && ok "host: that fn is called, not replayed (exit 16)" || bad "host: the #inline-with-defer probe exited $r, want 16"
 else bad "host: the #inline-with-defer probe did not compile"; fi
 
@@ -123,10 +123,10 @@ if command -v qemu-aarch64 > /dev/null 2>&1; then
   if "$T/stage1" < "$R/src/main_aarch64.cyr" > "$T/cc_a64" 2>/dev/null && [ -s "$T/cc_a64" ]; then
     chmod +x "$T/cc_a64"
     "$T/cc_a64" < "$TC" > "$T/tc.a" 2>"$T/tc.aerr" && chmod +x "$T/tc.a"
-    (cd "$T" && timeout 120 qemu-aarch64 ./tc.a > "$T/tc.aout" 2>&1); r=$?
+    r=0; (cd "$T" && timeout 120 qemu-aarch64 ./tc.a > "$T/tc.aout" 2>&1) || r=$?
     [ "$r" -eq 0 ] && ok "a64: crossos defer tcyr ($(tail -1 "$T/tc.aout"))" || { bad "a64: crossos defer tcyr exit $r"; grep FAIL "$T/tc.aout" | head -5; }
     CYRIUS_ASYNC=1 "$T/cc_a64" < "$T/as.cyr" > "$T/as.a" 2>/dev/null && chmod +x "$T/as.a"
-    (cd "$T" && timeout 60 qemu-aarch64 ./as.a > /dev/null 2>&1); r=$?
+    r=0; (cd "$T" && timeout 60 qemu-aarch64 ./as.a > /dev/null 2>&1) || r=$?
     [ "$r" -eq 0 ] && ok "a64: async fn tail return runs its defer" || bad "a64: async fn rows exit $r"
   else bad "a64: could not build src/main_aarch64.cyr"; fi
 else echo "  SKIP: a64 leg — qemu-aarch64 not installed"; GATE_SKIPS=$((${GATE_SKIPS:-0} + 1)); fi
@@ -136,7 +136,7 @@ if command -v wine > /dev/null 2>&1; then
   export WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d'
   CYRIUS_TARGET_WIN=1 "$T/stage1" < "$TC" > "$T/tc.exe" 2>"$T/tc.werr"
   if [ -s "$T/tc.exe" ]; then
-    (cd "$T" && timeout 180 wine ./tc.exe > "$T/tc.wout" 2>/dev/null); r=$?
+    r=0; (cd "$T" && timeout 180 wine ./tc.exe > "$T/tc.wout" 2>/dev/null) || r=$?
     [ "$r" -eq 0 ] && ok "pe: crossos defer tcyr under wine ($(tail -1 "$T/tc.wout" | tr -d '\r'))" || { bad "pe: crossos defer tcyr exit $r"; grep FAIL "$T/tc.wout" | head -5; }
   else bad "pe: crossos defer tcyr did not compile"; fi
 else echo "  SKIP: pe leg — wine not installed"; GATE_SKIPS=$((${GATE_SKIPS:-0} + 1)); fi
@@ -202,7 +202,7 @@ if "$T/stage1" < "$R/src/main_cx.cyr" > "$T/cc_cx" 2>/dev/null && [ -s "$T/cc_cx
    "$T/stage1" < "$R/programs/cxvm.cyr" > "$T/cxvm" 2>/dev/null && [ -s "$T/cxvm" ]; then
   chmod +x "$T/cc_cx" "$T/cxvm"
   if "$T/cc_cx" < "$T/cx.cyr" > "$T/cx.cyx" 2>"$T/cx.err" && [ -s "$T/cx.cyx" ]; then
-    timeout 60 "$T/cxvm" < "$T/cx.cyx" > "$T/cx.out" 2>&1; r=$?
+    r=0; timeout 60 "$T/cxvm" < "$T/cx.cyx" > "$T/cx.out" 2>&1 || r=$?
     [ "$r" -eq 0 ] && ok "cx: 22 tail / pair / arity-3 / ret2 / f64v2 / f64v4 / ?-Err / Ok rows" || { bad "cx: $r rows failed"; sed 's/^/        /' "$T/cx.out" | head -8; }
   else bad "cx: the cx program did not compile"; sed -n 1,3p "$T/cx.err"; fi
 else bad "cx: could not build src/main_cx.cyr / programs/cxvm.cyr"; fi

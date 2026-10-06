@@ -93,15 +93,13 @@ HW=$(wp "$W/home")
 fail=0
 
 # ── axis 1 / 1b: the pinned version is NOT installed ─────────────────────────────────────
-( cd "$P" && CYRIUS_HOME="$HW" CYRIUS_RESOLVED=1 timeout 120 wine "$W/home/bin/cyrius.exe" --version > "$W/a1.log" 2>&1 )
-rc=$?
+rc=0; ( cd "$P" && CYRIUS_HOME="$HW" CYRIUS_RESOLVED=1 timeout 120 wine "$W/home/bin/cyrius.exe" --version > "$W/a1.log" 2>&1 ) || rc=$?
 if [ "$rc" -eq 0 ] && grep -q "manifest-pin: $PIN (drift" "$W/a1.log"; then
     echo "  ok axis 1: CYRIUS_RESOLVED=1 is honoured (exit 0, drift note)"
 else
     echo "  FAIL axis 1: CYRIUS_RESOLVED=1 with an uninstalled pin: exit $rc"; sed -n '1,3p' "$W/a1.log" | sed 's/^/    /'; fail=1
 fi
-( cd "$P" && CYRIUS_HOME="$HW" timeout 120 wine "$W/home/bin/cyrius.exe" --version > "$W/a1b.log" 2>&1 )
-rc=$?
+rc=0; ( cd "$P" && CYRIUS_HOME="$HW" timeout 120 wine "$W/home/bin/cyrius.exe" --version > "$W/a1b.log" 2>&1 ) || rc=$?
 if [ "$rc" -eq 1 ] && grep -q "versions/$PIN/bin/cyrius.exe" "$W/a1b.log"; then
     echo "  ok axis 1b: without it, an uninstalled pin is refused naming bin/cyrius.exe"
 else
@@ -111,8 +109,7 @@ fi
 # ── axis 2: the pinned slot is installed (a probe) ───────────────────────────────────────
 mkdir -p "$W/home/versions/$PIN/bin"
 cp "$W/probe.exe" "$W/home/versions/$PIN/bin/cyrius.exe"
-( cd "$P" && CYRIUS_HOME="$HW" timeout 120 wine "$W/home/bin/cyrius.exe" probe-verb "x y" > "$W/a2.log" 2>&1 )
-rc=$?
+rc=0; ( cd "$P" && CYRIUS_HOME="$HW" timeout 120 wine "$W/home/bin/cyrius.exe" probe-verb "x y" > "$W/a2.log" 2>&1 ) || rc=$?
 if [ "$rc" -eq 37 ]; then
     echo "  ok axis 2: redirected to versions/$PIN/bin/cyrius.exe with the args and the guard; its exit code (37) propagated"
 else
@@ -124,8 +121,7 @@ fi
 cp "$W/home/bin/cyrius.exe" "$W/home/versions/$PIN/bin/cyrius.exe"
 # A short deadline: without the guard each cyrius.exe spawns the next one, forever (the
 # job object each runs in ends the chain when `timeout` ends the first).
-( cd "$P" && CYRIUS_HOME="$HW" timeout 30 wine "$W/home/bin/cyrius.exe" --version > "$W/a3.log" 2>&1 )
-rc=$?
+rc=0; ( cd "$P" && CYRIUS_HOME="$HW" timeout 30 wine "$W/home/bin/cyrius.exe" --version > "$W/a3.log" 2>&1 ) || rc=$?
 if [ "$rc" -eq 0 ] && grep -q "manifest-pin: $PIN" "$W/a3.log"; then
     echo "  ok axis 3: the redirected cyrius.exe honours the guard and runs the verb"
 else

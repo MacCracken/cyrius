@@ -403,8 +403,8 @@ else
     check "wine: the staging path translated (floor)" yes "$([ -n "$WH" ] && echo yes || echo no)"
     WT=$(WINEDEBUG=-all timeout 120 wine cmd /c 'echo %TEMP%' 2> /dev/null | tr -d '\r')
     WTU=$(winepath -u "$WT" 2> /dev/null)
-    ls -d "$WTU"/cyrius-* 2> /dev/null | LC_ALL=C sort > "$T/wt_before"
-    wrun() { ( cd "$WN/w" && WINEDEBUG=-all CYRIUS_HOME="$WH" timeout 900 wine "$WN/bin/cyrius.exe" "$@" > "$T/out" 2> "$T/err" ); RC=$?; }
+    ls -d "$WTU"/cyrius-* 2> /dev/null | LC_ALL=C sort > "$T/wt_before" || true
+    wrun() { RC=0; ( cd "$WN/w" && WINEDEBUG=-all CYRIUS_HOME="$WH" timeout 900 wine "$WN/bin/cyrius.exe" "$@" > "$T/out" 2> "$T/err" ) || RC=$?; }
 
     wrun build --target=cx p.cyr p.cyx
     check "wine: build --target=cx succeeds" 0 "$RC"
@@ -479,7 +479,7 @@ else
     # against this tree's parent: the same five verbs leave 2 directories before the
     # 0xF03B RemoveDirectoryW reroute and 0 after. This row is a DELTA over the verbs axis
     # 4 already ran, so it costs nothing extra.
-    ls -d "$WTU"/cyrius-* 2> /dev/null | LC_ALL=C sort > "$T/wt_after"
+    ls -d "$WTU"/cyrius-* 2> /dev/null | LC_ALL=C sort > "$T/wt_after" || true
     check "⭐ wine: the verbs above left no cyrius-* directory in %TEMP%" 0 \
         "$(comm -13 "$T/wt_before" "$T/wt_after" | wc -l | tr -d ' ')"
     for d in $(comm -13 "$T/wt_before" "$T/wt_after"); do rmdir "$d" 2> /dev/null || true; done
@@ -512,7 +512,7 @@ EOF
         echo "  FAIL: the xrmdir probe did not cross-build for PE"; grep -E '^error' "$T/rd.err" | head -2
         fails=$((fails + 1))
     else
-        ( cd "$T/rdp" && WINEDEBUG=-all timeout 300 wine "$T/rd.exe" > /dev/null 2>&1 ); RDP=$?
+        RDP=0; ( cd "$T/rdp" && WINEDEBUG=-all timeout 300 wine "$T/rd.exe" > /dev/null 2>&1 ) || RDP=$?
         check "  ⭐ PREMISE: xrmdir really removes a directory on PE (5 behaviours)" 0 "$RDP"
         check "  …and left nothing behind" 0 "$(ls -A "$T/rdp" | wc -l | tr -d ' ')"
     fi
