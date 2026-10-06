@@ -106,6 +106,26 @@ fn main(): i64 {
     assert_eq(poison_violations(), 1, "the geometric full sweep (at 1024 allocations) finds a buried block");
     store8(deep - 1, fill);
 
+    test_group("a smashed header is reported every time (6.6.18 review)");
+    var s1 = poison_alloc(16);
+    var s2 = poison_alloc(16);
+    poison_alloc(16);
+    var hdr = s2 - 32 - 24;              # s2's header: next, meta
+    var save_next = load64(hdr);
+    var save_meta = load64(hdr + 8);
+    store64(hdr, 0x4141414141414141);
+    store64(hdr + 8, 0x4141414141414141);    # its REPORTED bit (54) reads as set
+    poison_reset();
+    assert_eq(poison_sweep(), 1, "a sweep reaching a smashed header counts it bad");
+    assert_eq(poison_violations(), 1, "and REPORTS it, although the garbage has bit 54 set");
+    poison_sweep();
+    assert_eq(poison_violations(), 2, "reported again on the next sweep (no bit of the garbage trusted)");
+    store64(hdr, save_next);
+    store64(hdr + 8, save_meta);
+    poison_reset();
+    assert_eq(poison_sweep(), 0, "restored: the walk reaches every block again");
+    assert_eq(load8(s1 + 16), fill, "an older block past the restored header is still armed");
+
     test_group("poison_forget_all");
     store8(p + 20, 0x41);
     poison_forget_all();

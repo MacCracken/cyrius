@@ -56,6 +56,10 @@ var _poison_head = 0;
 # Head of the fl live list: lib/freelist.cyr's poisoned blocks, doubly linked through blk+16
 # (prev) / blk+24 (next) because fl blocks ARE recycled and must leave the list at fl_free.
 var _poison_fl_head = 0;
+# How many blocks each list holds, so a walk that must stop at a smashed header can say how
+# many older blocks it could not reach.
+var _poison_nlisted = 0;
+var _poison_fl_n = 0;
 # Bytes the redzones and headers added to the macOS / Windows bump heap since the last
 # alloc_reset — their alloc_used() subtracts it, so poison never changes what it reports.
 # Updated under alloc.cyr's lock.
@@ -278,26 +282,39 @@ fn _poison_publish(blk): i64 {
     if (h != 0) { _poison_check_bump(h); }
     store64(blk, h);
     _poison_head = blk;
+    _poison_nlisted = _poison_nlisted + 1;
     var sw = _poison_tick();
     _poison_lock_release();
     if (sw == 1) { poison_sweep(); }
     return 0;
 }
 
+# 1 when `meta` can be a poisoned bump block's meta word: a nonzero fill, a known kind, and
+# a request alloc() could have accepted.
+fn _poison_meta_ok(meta): i64 {
+    if ((meta >> 56) == 0) { return 0; }
+    var kind = (meta >> 48) & 15;
+    if (kind == 0 || kind > 4) { return 0; }
+    if ((meta & 0xFFFFFFFFFFFF) > 0x80000000) { return 0; }
+    return 1;
+}
+
 # Check one bump block. Returns the number of changed bytes (0 = intact), or -1 when the
 # header itself is not a poisoned block's (smashed by a wide overflow from below): its list
-# link cannot be trusted either, so a walk stops there. A block is REPORTED (and counted)
-# the first time it is found bad; later sweeps still return it as bad but stay quiet.
+# link cannot be trusted either, so a walk stops there. A decodable block is REPORTED (and
+# counted) the first time it is found bad; later sweeps still return it as bad but stay quiet.
+# ⛔ An UNDECODABLE header is reported EVERY time: its REPORTED bit is a bit of whatever was
+# written over it (0x4141... has it set), so reading it would silence the very detection.
 fn _poison_check_bump(blk): i64 {
     var meta = load64(blk + 8);
+    var u = blk + _POISON_HDR + _POISON_RZ;
+    if (_poison_meta_ok(meta) == 0) {
+        _poison_report(0, 4, u, 0, 8);
+        return 0 - 1;
+    }
     var fill = meta >> 56;
     var req = meta & 0xFFFFFFFFFFFF;
     var kind = (meta >> 48) & 15;
-    var u = blk + _POISON_HDR + _POISON_RZ;
-    if (fill == 0 || kind == 0 || kind > 4 || req > 0x80000000) {
-        if (((meta >> 54) & 1) == 0) { _poison_report(0, 4, u, 0, 8); }
-        return 0 - 1;
-    }
     var span = (req + 7) & (0 - 8);
     var bad = 0;
     var side = 3;
@@ -339,20 +356,43 @@ fn _poison_kill(blk): i64 {
 fn poison_sweep(): i64 {
     var n = 0;
     _poison_lock_acquire();
+    var seen = 0;
     var b = _poison_head;
     while (b != 0) {
         var r = _poison_check_bump(b);
+        seen = seen + 1;
         if (r != 0) { n = n + 1; }
-        if (r < 0) { b = 0; } else { b = load64(b); }
+        if (r < 0) {
+            _poison_report_stop(b + _POISON_HDR + _POISON_RZ, _poison_nlisted - seen);
+            b = 0;
+        } else { b = load64(b); }
     }
+    seen = 0;
     b = _poison_fl_head;
     while (b != 0) {
         var rf = _poison_fl_check(b);
+        seen = seen + 1;
         if (rf != 0) { n = n + 1; }
-        if (rf < 0) { b = 0; } else { b = load64(b + 24); }
+        if (rf < 0) {
+            _poison_report_stop(b + 40 + _POISON_RZ, _poison_fl_n - seen);
+            b = 0;
+        } else { b = load64(b + 24); }
     }
     _poison_lock_release();
     return n;
+}
+
+# A walk stopped at a smashed header: the link past it is as untrustworthy as the header, so
+# say so — and how many older listed blocks went unchecked — rather than look clean.
+fn _poison_report_stop(u, left): i64 {
+    var line[160];
+    var pos = _poison_cat(&line, 0, "poison: sweep stopped at block ");
+    pos = _poison_cat_hex(&line, pos, u);
+    pos = _poison_cat(&line, pos, " (header overwritten): ");
+    pos = _poison_cat_dec(&line, pos, left);
+    pos = _poison_cat(&line, pos, " older block(s) not checked\n");
+    syscall(1, 2, &line, pos);
+    return 0;
 }
 
 # Stop tracking every bump block (the lists only — the memory is untouched). Call it after
@@ -362,6 +402,7 @@ fn poison_sweep(): i64 {
 fn poison_forget_all(): i64 {
     _poison_lock_acquire();
     _poison_head = 0;
+    _poison_nlisted = 0;
     _poison_lock_release();
     return 0;
 }
@@ -480,9 +521,17 @@ fn _poison_va_reset(state): i64 {
     var link = &_poison_head;
     var c = _poison_head;
     while (c != 0) {
-        var nx = load64(c);
-        if (((load64(c + 8) >> 53) & 1) == 1) { store64(link, nx); } else { link = c; }
-        c = nx;
+        # A smashed header ends the walk (its link is garbage); blocks past it stay listed.
+        if (_poison_meta_ok(load64(c + 8)) == 0) {
+            c = 0;
+        } else {
+            var nx = load64(c);
+            if (((load64(c + 8) >> 53) & 1) == 1) {
+                store64(link, nx);
+                _poison_nlisted = _poison_nlisted - 1;
+            } else { link = c; }
+            c = nx;
+        }
     }
     store64(state + 8, 0);
     _poison_lock_release();
@@ -532,6 +581,7 @@ fn _poison_fl_link(blk): i64 {
     store64(blk + 24, _poison_fl_head);
     if (_poison_fl_head != 0) { store64(_poison_fl_head + 16, blk); }
     _poison_fl_head = blk;
+    _poison_fl_n = _poison_fl_n + 1;
     return 0;
 }
 
@@ -544,6 +594,7 @@ fn _poison_fl_unlink(blk): i64 {
     if (nx != 0) { store64(nx + 16, pv); }
     store64(blk + 16, 0);
     store64(blk + 24, 0);
+    _poison_fl_n = _poison_fl_n - 1;
     return 0;
 }
 
@@ -584,8 +635,13 @@ fn _poison_fl_check(blk): i64 {
     var req = meta & 0xFFFFFFFFFFFF;
     var u = blk + 40 + _POISON_RZ;
     var cap = _poison_fl_cap(blk);
-    if (fill == 0 || ((meta >> 48) & 15) != 3 || cap < 0 || req > cap) {
-        if (((meta >> 54) & 1) == 0) { _poison_report(3, 4, u, 0, 8); }
+    var cls = load64(blk + 8);
+    # Undecodable: reported EVERY time — its REPORTED bit would be a bit of the garbage.
+    var badhdr = 0;
+    if (fill == 0 || ((meta >> 48) & 15) != 3 || cap < 0 || req > cap) { badhdr = 1; }
+    if (cls > 8 && (blk & 4095) != 0) { badhdr = 1; }
+    if (badhdr == 1) {
+        _poison_report(3, 4, u, 0, 8);
         return 0 - 1;
     }
     var lead = _poison_count_bad(blk + 40, _POISON_RZ, fill);
