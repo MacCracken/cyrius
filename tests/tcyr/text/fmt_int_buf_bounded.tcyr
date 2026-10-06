@@ -1,0 +1,89 @@
+# fmt_int_buf_bounded.tcyr — CVE-78: fmt_int_buf writes only its answer.
+#
+# ⛔ THE DEFECT. fmt_int_buf(n, buf) built its digits in place from buf+23 downward and then
+# shifted them to buf+0, so EVERY call wrote 24 bytes at buf whatever the number's length.
+# A `buf + pos` caller with less room overran: fmt_float_buf formats the integer and the
+# fraction at `buf + pos` inside fmt_float's own 32-byte stack buffer, and heap callers
+# (`alloc(32) + 10` in a TLS test, patra / bench / yantra's `buf + off`) wrote past their
+# blocks. Each probe here fills a block with 0xEE and asserts the bytes past the answer
+# (and its NUL) are untouched.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/vec.cyr"
+include "lib/fmt.cyr"
+include "lib/assert.cyr"
+
+fn _fill(p, n, b): i64 {
+    var i = 0;
+    while (i < n) { store8(p + i, b); i = i + 1; }
+    return 0;
+}
+
+# Count bytes in [p+from, p+to) that are not 0xEE.
+fn _changed(p, from, to): i64 {
+    var bad = 0;
+    var i = from;
+    while (i < to) { if (load8(p + i) != 0xEE) { bad = bad + 1; } i = i + 1; }
+    return bad;
+}
+
+fn main(): i64 {
+    alloc_init();
+    test_group("fmt_int_buf writes len + NUL only (CVE-78)");
+    var b = alloc(64);
+    if (b == 0) { return 1; }
+    _fill(b, 64, 0xEE);
+    var n = fmt_int_buf(47233, b);
+    assert_eq(n, 5, "47233 -> 5 chars");
+    assert_eq(streq(b, "47233"), 1, "47233 text unchanged");
+    assert_eq(_changed(b, 6, 64), 0, "bytes 6..63 untouched");
+
+    _fill(b, 64, 0xEE);
+    n = fmt_int_buf(0, b);
+    assert_eq(n, 1, "0 -> 1 char");
+    assert_eq(streq(b, "0"), 1, "0 text");
+    assert_eq(_changed(b, 2, 64), 0, "0: bytes 2..63 untouched");
+
+    _fill(b, 64, 0xEE);
+    n = fmt_int_buf(0 - 9223372036854775807 - 1, b);
+    assert_eq(n, 20, "i64::MIN -> 20 chars");
+    assert_eq(streq(b, "-9223372036854775808"), 1, "i64::MIN text");
+    assert_eq(_changed(b, 21, 64), 0, "i64::MIN: bytes 21..63 untouched");
+
+    # The `alloc(32) + 10` shape: 22 bytes of room is plenty for "12345" + NUL.
+    var c = alloc(64);
+    if (c == 0) { return 1; }
+    _fill(c, 64, 0xEE);
+    n = fmt_int_buf(12345, c + 10);
+    assert_eq(streq(c + 10, "12345"), 1, "buf+pos text");
+    assert_eq(_changed(c, 0, 10), 0, "buf+pos: bytes before untouched");
+    assert_eq(_changed(c, 16, 64), 0, "buf+pos: bytes 16..63 untouched");
+
+    test_group("fmt_float_buf stays inside its bound (CVE-78)");
+    _fill(c, 64, 0xEE);
+    n = fmt_float_buf(f64_from(1000000000000000), c, 2);
+    store8(c + n, 0);
+    assert_eq(streq(c, "1000000000000000.00"), 1, "1e15 text unchanged");
+    # Old code: the fraction's fmt_int_buf at c+17 wrote scratch up to c+40.
+    assert_eq(_changed(c, 32, 64), 0, "1e15: bytes 32..63 untouched");
+
+    # A finite value past i64 range: the documented worst case, max(43, 22 + decimals).
+    var big = f64_mul(f64_from(1000000000000000), f64_from(1000000000000000));
+    big = f64_sub(f64_from(0), big);
+    _fill(c, 64, 0xEE);
+    n = fmt_float_buf(big, c, 2);
+    assert_lte(n, 42, "-1e30 length within the bound");
+    assert_eq(_changed(c, 43, 64), 0, "-1e30: bytes 43..63 untouched");
+
+    # fmt_float's own stack buffer: these overran `var buf[32]` (a smashed frame).
+    fmt_float(big, 2);
+    fmt_float(f64_from(3), 50);
+    syscall(1, 1, "\n", 1);
+    assert(1, "fmt_float survives the worst case");
+
+    var r = assert_summary();
+    return r;
+}
+var r = main();
+syscall(60, r);
