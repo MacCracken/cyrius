@@ -997,11 +997,17 @@ fn _cc_env_retarget(tv): i64 {
 # 4th parameter when that file is next touched. CHANGELOG [6.5.19].
 #ifdef CYRIUS_TARGET_WIN
 fn _win_compile_spawn_err(cc, source, output, errfile): i64 {
-    # 6.6.17: `errfile` may be 0 (stderr stays on the console), and a resolved `strict` adds
-    # `--strict` — cycc_win reads it from GetCommandLineW (src/main_win.cyr). This is now the one
-    # Windows compile spawn in compile(), so the flag cannot be lost on the other path.
-    var fl = "";
-    if (_strict == 1) { fl = " --strict"; }
+    # 6.6.17: `errfile` may be 0 (stderr stays on the console), and the compiler flags the POSIX
+    # arm puts in argv go on the command line, in the same order — `--strict`, `--allow-undef`
+    # (the distlib bundle self-check, lint's pre-pass), `--syntax-only` (lint's pre-pass).
+    # cycc_win reads its flags from GetCommandLineW (src/main_win.cyr). Before this NONE of them
+    # crossed this arm, so on cyrius.exe lint's pre-pass and distlib's self-check compiled as
+    # ordinary builds. This is the one Windows compile spawn in compile().
+    var fsb = str_builder_new();
+    if (_strict == 1) { str_builder_add_cstr(fsb, " --strict"); }
+    if (_cc_allow_undef == 1) { str_builder_add_cstr(fsb, " --allow-undef"); }
+    if (_cc_syntax_only == 1) { str_builder_add_cstr(fsb, " --syntax-only"); }
+    var fl = str_data(str_builder_build(fsb));
     var elen = 0;
     if (errfile != 0) { elen = strlen(errfile); }
     # v6.6.6 — sized from the paths, not a fixed 16 KiB; `_w_cmdbuf` refuses by

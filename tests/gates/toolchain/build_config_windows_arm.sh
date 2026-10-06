@@ -1,6 +1,7 @@
 #!/bin/sh
 # build_config_windows_arm.sh — 6.6.17 (P1 item 1, the PE arm). On Windows the resolved `[build]
-# dce` reaches the compiler, and a `--strict` argument is passed through as on POSIX.
+# dce` reaches the compiler, and the flags the POSIX arm puts in argv (`--strict`,
+# `--allow-undef`, `--syntax-only`) go on cycc.exe's command line.
 #
 # WHY: Win32 has no fork/execve, so compile()'s Windows arm hands `cmd /s /c "cc" < src > out` to
 # CreateProcessW — and that arm passed NEITHER: no CYRIUS_DCE in the child's environment (POSIX
@@ -13,7 +14,11 @@
 # log; the tree's cyrius.exe runs it under a PRIVATE wine prefix.
 #   axis 1  [build] dce = true + `cyrius build --strict` -> the stub sees `--strict` and
 #           CYRIUS_DCE=1.
-#   axis 2  (anti-vacuous) neither -> no `--strict`, CYRIUS_DCE unset.
+#   axis 2  (anti-vacuous) a plain build -> no `--strict` / `--allow-undef` / `--syntax-only`,
+#           CYRIUS_DCE unset.
+#   axis 3  `cyrius lint f.cyr` -> its syntax pre-pass hands cycc.exe `--allow-undef` and
+#           `--syntax-only`, as the POSIX argv does (6.6.17 review: the PE arm dropped both).
+#   axis 4  `cyrius distlib` -> the bundle self-check hands cycc.exe `--allow-undef` only.
 # wine is not hardware: the release gate's cass leg is the verification on real Windows.
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -74,26 +79,42 @@ CYR
 "$W/cc_win" < "$W/stub.cyr" > "$W/home/bin/cycc.exe" 2> "$W/stub.err" && [ -s "$W/home/bin/cycc.exe" ] \
     || { echo "FAIL: build_config_windows_arm: the stub compiler does not build:"; tail -3 "$W/stub.err"; exit 1; }
 printf 'fn main(): i64 { return 0; }\nvar r = main();\n' > "$W/p/src/main.cyr"
-run() {   # run <extra [build] lines> [cli args...]
+printf 'fn lib_fn(): i64 { return 1; }\n' > "$W/p/src/lib.cyr"
+run() {   # run <extra manifest lines> <verb> [args...]
     m=$1; shift
     printf '[package]\nname = "p"\n\n[build]\nentry = "src/main.cyr"\noutput = "build/p.exe"\n%b' "$m" > "$W/p/cyrius.cyml"
     rm -f "$W/stub.log"
-    ( cd "$W/p" && env -u CYRIUS_DCE -u CYRIUS_STRICT CYRIUS_HOME="$W/home" CYRIUS_RESOLVED=1 timeout 300 wine "$W/home/bin/cyrius.exe" build "$@" ) > "$W/out" 2>&1 || true
+    ( cd "$W/p" && env -u CYRIUS_DCE -u CYRIUS_STRICT CYRIUS_HOME="$W/home" CYRIUS_RESOLVED=1 timeout 300 wine "$W/home/bin/cyrius.exe" "$@" ) > "$W/out" 2>&1 || true
     [ -f "$W/stub.log" ] || { fail "the stub compiler never ran: $(head -3 "$W/out" | tr '\n' ' ')"; return 1; }
     return 0
 }
+has_flag() { head -1 "$W/stub.log" | grep -q -- " $1"; }
 
-if run 'dce = true\n' --strict; then
-    grep -q ' --strict' "$W/stub.log" || fail "axis 1: cyrius build --strict did not put --strict on cycc.exe's command line: $(head -1 "$W/stub.log")"
+if run 'dce = true\n' build --strict; then
+    has_flag --strict || fail "axis 1: cyrius build --strict did not put --strict on cycc.exe's command line: $(head -1 "$W/stub.log")"
     grep -qx 'dce=1' "$W/stub.log" || fail "axis 1: [build] dce = true did not reach cycc.exe as CYRIUS_DCE=1: $(tail -1 "$W/stub.log")"
 fi
 [ "$FAIL" = 0 ] && echo "  ok axis 1: [build] dce and --strict reach cycc.exe (CYRIUS_DCE=1 in its environment, --strict on its command line)"
 x=$FAIL
-if run ''; then
-    grep -q ' --strict' "$W/stub.log" && fail "axis 2: --strict reached cycc.exe with no strict configured"
+if run '' build; then
+    has_flag --strict && fail "axis 2: --strict reached cycc.exe with no strict configured"
+    has_flag --allow-undef && fail "axis 2: --allow-undef reached cycc.exe from a plain build"
+    has_flag --syntax-only && fail "axis 2: --syntax-only reached cycc.exe from a plain build"
     grep -qx 'dce=unset' "$W/stub.log" || fail "axis 2: CYRIUS_DCE reached cycc.exe with no dce configured: $(tail -1 "$W/stub.log")"
 fi
-[ "$FAIL" = "$x" ] && echo "  ok axis 2: with neither configured, cycc.exe sees no --strict and no CYRIUS_DCE"
+[ "$FAIL" = "$x" ] && echo "  ok axis 2: a plain build hands cycc.exe no --strict, --allow-undef, --syntax-only or CYRIUS_DCE"
+x=$FAIL
+if run '' lint src/main.cyr; then
+    has_flag --allow-undef || fail "axis 3: lint's pre-pass did not hand cycc.exe --allow-undef: $(head -1 "$W/stub.log")"
+    has_flag --syntax-only || fail "axis 3: lint's pre-pass did not hand cycc.exe --syntax-only: $(head -1 "$W/stub.log")"
+fi
+[ "$FAIL" = "$x" ] && echo "  ok axis 3: lint's syntax pre-pass hands cycc.exe --allow-undef and --syntax-only"
+x=$FAIL
+if run '\n[lib]\nmodules = ["src/lib.cyr"]\n' distlib; then
+    has_flag --allow-undef || fail "axis 4: distlib's bundle self-check did not hand cycc.exe --allow-undef: $(head -1 "$W/stub.log")"
+    has_flag --syntax-only && fail "axis 4: distlib's self-check handed cycc.exe --syntax-only"
+fi
+[ "$FAIL" = "$x" ] && echo "  ok axis 4: distlib's bundle self-check hands cycc.exe --allow-undef (and not --syntax-only)"
 
 [ "$FAIL" = 0 ] || exit 1
-echo "PASS: build_config_windows_arm (dce and --strict reach the compiler on the PE arm, under wine)"
+echo "PASS: build_config_windows_arm (dce, --strict, --allow-undef, --syntax-only reach the compiler on the PE arm, under wine)"
