@@ -15,6 +15,8 @@
 #      no key a consumer writes is warned "not a known key" (6.6.17 review: `src` was).
 #   2. operands win: `--print-config a.cyr out` reports both as `argument`, over the manifest.
 #   3. no manifest: entry / output are `(unset)  (default)`; strict false; defines [].
+#   3b. package.version is what the build gets: `${file:VERSION}` expanded, `(unset)` when the
+#      file is missing (it printed the raw template while the build had no CYRIUS_PKG_VERSION).
 #   4. `--strict` and `-D X` are `argument` (strict marked held: no effect since 6.3.2).
 #   5. it builds nothing and resolves nothing: a project with [deps] stdlib gets no lib/ and no
 #      build/, exit 0.
@@ -74,6 +76,17 @@ has "$W/a3.out" '  build.output = (unset)  (default)' "axis 3"
 has "$W/a3.out" '  build.strict = false  (default)  [held: no effect since 6.3.2]' "axis 3"
 has "$W/a3.out" '  build.defines = []  (default)' "axis 3"
 [ "$FAIL" = "$x" ] && echo "  ok axis 3: with no manifest every key reports its default"
+
+# ── axis 3b: package.version is what the BUILD gets ────────────────────────────────────
+x=$FAIL
+mkdir -p "$W/v"
+printf '[package]\nname = "v"\nversion = "${file:VERSION}"\n' > "$W/v/cyrius.cyml"
+pc "$W/v" > "$W/a3b.out" 2>&1 || true
+has "$W/a3b.out" '  package.version = (unset)  (manifest: [package] version ${file:VERSION} does not resolve; the build gets no CYRIUS_PKG_VERSION)' "axis 3b (VERSION missing)"
+printf '7.8.9\n' > "$W/v/VERSION"
+pc "$W/v" > "$W/a3b.out" 2>&1 || true
+has "$W/a3b.out" '  package.version = "7.8.9"  (manifest: [package] version)' "axis 3b (VERSION present)"
+[ "$FAIL" = "$x" ] && echo "  ok axis 3b: package.version prints the expanded \${file:VERSION}, and (unset) when it does not resolve"
 
 # ── axis 4: flags are arguments ─────────────────────────────────────────────────────────
 x=$FAIL

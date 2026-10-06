@@ -867,10 +867,19 @@ fn _cfg_resolve_build(src_arg, out_arg): i64 {
     if (_cfg_mf_strs(_CK_PROGRAMS, "coverage", "programs") != 0) { return 1; }
     if (_cfg_mf_str(_CK_PKG_NAME, "package", "name") != 0) { return 1; }
     if (_cfg_mf_str(_CK_PKG_VERSION, "package", "version") != 0) { return 1; }
-    var pv = _cfg_val(_CK_PKG_VERSION);   # the value the build sees: `${file:PATH}` expanded
+    # package.version is printed as the BUILD sees it: `${file:PATH}` expanded, and unset (no
+    # CYRIUS_PKG_VERSION at all) when the file it names cannot be read — not the raw template.
+    var pv = _cfg_val(_CK_PKG_VERSION);
     if (pv != 0) {
         var pe = _dep_expand_file_interp(pv, strlen(pv));
-        if (pe != 0) { store64(&_cfg_v + _CK_PKG_VERSION * 8, pe); }
+        store64(&_cfg_v + _CK_PKG_VERSION * 8, pe);
+        if (pe == 0) {
+            var vsb = str_builder_new();
+            str_builder_add_cstr(vsb, "[package] version ");
+            str_builder_add_cstr(vsb, pv);
+            str_builder_add_cstr(vsb, " does not resolve; the build gets no CYRIUS_PKG_VERSION");
+            store64(&_cfg_w + _CK_PKG_VERSION * 8, str_data(str_builder_build(vsb)));
+        }
     }
     if (_cfg_mf_str(_CK_PKG_CYRIUS, "package", "cyrius") != 0) { return 1; }
     if (_cfg_mf_str(_CK_SECTIONS_BASE, "sections", "base") != 0) { return 1; }
