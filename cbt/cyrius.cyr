@@ -54,7 +54,9 @@ fn _cbt_agnos_main(): i64 {
 }
 
 var _cbt_agnos_rc = _cbt_agnos_main();
-sys_exit(_cbt_agnos_rc);
+# The same exit form as the main path below (this block makes no temp dir, so there is nothing
+# for _cbt_exit to remove — and a bare sys_exit here is what cli_temp_dir_no_leak.sh refuses).
+syscall(SYS_EXIT, _cbt_agnos_rc);
 #endif
 #ifndef CYRIUS_TARGET_AGNOS
 include "lib/string.cyr"
