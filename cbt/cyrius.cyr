@@ -1066,12 +1066,17 @@ fn main(): i64 {
                 return 1;
             }
         }
-        # 6.6.7: say what is covered. The old "redzones + fill + quarantine-on-free ACTIVE" read
-        # as whole-program coverage; only lib/freelist.cyr blocks are instrumented, and a redzone
-        # overwrite is COUNTED, not trapped. CHANGELOG [6.6.7]
+        # 6.6.7: say what is covered — the banner must never over-claim. 6.6.18 (poison-9): the
+        # poison core now instruments alloc(), arenas, fl_alloc and poison_alloc /
+        # poison_allocator blocks, and an overwrite TRAPS (exit 86); what it still cannot see is
+        # listed, not implied. CHANGELOG [6.6.18]
         if (_poison_mode == 1) {
-            println("poison mode: fl_alloc/fl_free blocks only (fill + redzone + quarantine-on-free)");
-            println("  NOT covered: alloc(), arenas, custom allocator seams; redzone overwrites are counted — assert fl_poison_violations() == 0");
+            println("poison mode: alloc(), arenas, fl_alloc and poison_alloc / poison_allocator blocks — leading + trailing redzones, fill 0xA5");
+            println("  an overwrite stops the harness with exit 86; an overread shows up under --poison=ab (or assert on poison_fill())");
+            println("  NOT covered: a read that jumps a redzone into a live neighbour, a read past a logical bound inside one allocation, stack and static memory, agnos and cx targets; no guard pages");
+            if (_poison_ab == 1) {
+                println("  --poison=ab: each harness is compiled and run twice (fill 0xA5, then 0x5A) and both runs must exit 0 with identical output");
+            }
         }
         return cmd_fuzz(_cli_pos_at(0));
     }

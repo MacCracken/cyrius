@@ -19,8 +19,10 @@
 #   5  CYRIUS_POISON_B is popped after each B leg and -D defines survive: a run over TWO
 #      overread harnesses fails BOTH (a leaked B define makes the second one's legs identical),
 #      and -D ABPROBE still reaches every leg.
+#   6  (poison-9) the `--poison` banner names alloc() and arenas as COVERED, mentions exit 86,
+#      and no longer says "NOT covered: alloc()"; the ab run adds its two-fill line.
 # Old code (a2c60583): `--poison=ab` is not a value fuzz accepts, there is no differential and
-# the banner says alloc() is not covered — axes 1, 3, 4, 5 fail.
+# the banner says alloc() is not covered — axes 1, 3, 4, 5, 6 fail.
 set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -104,5 +106,12 @@ rc=0; O5=$(fz two -D ABPROBE --poison=ab) || rc=$?
 n5=$(echo "$O5" | grep -c 'FAIL (A/B diverged' || true)
 [ "$n5" -eq 2 ] || fail "axis 5: $n5 of 2 overread harnesses diverged in one run — CYRIUS_POISON_B leaked into the next harness or -D ABPROBE was lost: $(echo "$O5" | grep 'two/')"
 
-echo "PASS: poison_ab_differential (an overread fails A/B and passes plain --poison; clean passes; a bad mode is refused; a one-leg exit fails; the B define never leaks)"
+# ── axis 6 (poison-9) ────────────────────────────────────────────────────────────────
+echo "$O1" | grep -q '^poison mode: alloc(), arenas' || fail "axis 6: the --poison banner does not name alloc() and arenas as covered: $(echo "$O1" | grep -i poison | head -2)"
+echo "$O1" | grep -q 'exit 86' || fail "axis 6: the banner does not say an overwrite stops the harness with exit 86"
+echo "$O1" | grep -q 'NOT covered: alloc()' && fail "axis 6: the banner still says alloc() is not covered"
+echo "$O1B" | grep -q -- '--poison=ab: each harness is compiled and run twice (fill 0xA5, then 0x5A)' || fail "axis 6: the ab run does not name its two fills"
+echo "$O1" | grep -q -- '--poison=ab: each harness' && fail "axis 6: plain --poison printed the ab line"
+
+echo "PASS: poison_ab_differential (an overread fails A/B and passes plain --poison; clean passes; a bad mode is refused; a one-leg exit fails; the B define never leaks; the banner states the coverage)"
 exit 0
