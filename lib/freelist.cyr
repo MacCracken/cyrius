@@ -279,10 +279,11 @@ fn _fl_arena_alloc(bsize): i64 {
 # one." That is exactly what this implements.
 #
 # ⚠ SCOPE (6.6.18): this file's blocks — the alloc-side fill, both redzones, the live list and
-# quarantine-on-free. Under CYRIUS_POISON lib/alloc.cyr's alloc() is redzoned too (Linux, macOS,
-# Windows; not agnos / cx), and a consumer's own allocation seam can adopt lib/poison.cyr's
-# poison_alloc / poison_allocator(). A redzone overWRITE is COUNTED, not trapped: a harness
-# must assert `fl_poison_violations() == 0` (or call poison_sweep()) to see it.
+# quarantine-on-free. Under CYRIUS_POISON lib/alloc.cyr's alloc() and arenas are redzoned too
+# (Linux, macOS, Windows; not agnos / cx), and a consumer's own allocation seam can adopt
+# lib/poison.cyr's poison_alloc / poison_allocator(). Under the compile flag a redzone
+# overWRITE is FATAL (report line, exit 86); with only a run-time fl_poison_enable() it is
+# COUNTED — assert `fl_poison_violations() == 0` or `poison_sweep() == 0` to see it.
 #
 # ⚠ NEVER READS THE ENVIRONMENT AT RUN TIME. An allocator reading an env var would drag in a
 # parse dependency it should not have. It is switched on at COMPILE time by the
@@ -371,7 +372,9 @@ fn _fl_redzone_arm(blk, size): i64 {
     _poison_set(u + size, blk + 16 + _fl_capacity(blk) - u - size, fill);
     _poison_lock_acquire();
     _poison_fl_link(blk);
+    var sw = _poison_tick();
     _poison_lock_release();
+    if (sw == 1) { poison_sweep(); }
     return u;
 }
 

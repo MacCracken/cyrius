@@ -90,6 +90,22 @@ fn main(): i64 {
     store8(f + 5, fill);
     assert_eq(poison_sweep(), 0, "restored");
 
+    test_group("seen without a harness sweep (6.6.18 poison-7)");
+    poison_reset();
+    var h1 = poison_alloc(16);
+    store8(h1 + 16, 0x41);
+    poison_alloc(16);            # the next allocation checks the previous block
+    assert_eq(poison_violations(), 1, "an overflow of the previous block is seen at the next allocation");
+    store8(h1 + 16, fill);
+    var deep = poison_alloc(16);
+    poison_alloc(16);
+    store8(deep - 1, 0x41);      # not the head any more: only a full sweep can see it
+    poison_reset();
+    var k = 0;
+    while (k < 1100) { poison_alloc(8); k = k + 1; }
+    assert_eq(poison_violations(), 1, "the geometric full sweep (at 1024 allocations) finds a buried block");
+    store8(deep - 1, fill);
+
     test_group("poison_forget_all");
     store8(p + 20, 0x41);
     poison_forget_all();

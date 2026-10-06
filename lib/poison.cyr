@@ -33,6 +33,10 @@ var _POISON_RZ = 32;
 var _poison_viol = 0;
 # 1 = a detection reports and EXITS 86; 0 = it reports and is counted.
 var _poison_trap = 0;
+# Poisoned allocations published so far, and the count at which the next full sweep runs
+# (1024, then doubling: total sweep cost O(N log N)).
+var _poison_npub = 0;
+var _poison_next_sweep = 1024;
 # A poisoned BUMP block (poison_alloc, the seam wrappers, and — under CYRIUS_POISON — alloc()
 # and arenas) is laid out
 #     blk+0    next on the global live list
@@ -63,6 +67,14 @@ var _poison_hidden = 0;
 # Spinlock over the live-block lists. Its own lock, not alloc.cyr's or freelist.cyr's: the
 # poison paths run after those are released, so nothing ever nests.
 var _poison_lock = 0;
+
+# ⛔ 6.6.18: under the compile flag (`cyrius fuzz --poison`) a detection is FATAL — it prints
+# the report line and exits 86. A counted overwrite was invisible fleet-wide: no consumer
+# harness read fl_poison_violations(). A runtime fl_poison_enable() without the flag keeps
+# counting, and poison_trap_set(0) opts out. Exit code 86 is reserved for poison.
+#ifdef CYRIUS_POISON
+var _poison_trap_on = poison_trap_set(1);
+#endif
 
 # `#define CYRIUS_POISON_B` (the A/B differential's second run) starts with a different fill,
 # so a byte that leaked from a redzone differs between the two runs.
@@ -247,12 +259,27 @@ fn _poison_arm_bump(blk, req, kind): i64 {
     return u;
 }
 
-# Push an armed bump block onto the global live list.
+# Count one poisoned allocation; 1 when it is time for a full sweep (the count reached the
+# next power of two >= 1024). Caller holds _poison_lock.
+fn _poison_tick(): i64 {
+    _poison_npub = _poison_npub + 1;
+    if (_poison_npub < _poison_next_sweep) { return 0; }
+    _poison_next_sweep = _poison_next_sweep * 2;
+    return 1;
+}
+
+# Push an armed bump block onto the global live list. First the CURRENT head — the previous
+# poisoned allocation — has its redzones checked, so an overflow is seen at the very next
+# allocation rather than only at a sweep; and every 2^k allocations a full sweep runs.
 fn _poison_publish(blk): i64 {
     _poison_lock_acquire();
-    store64(blk, _poison_head);
+    var h = _poison_head;
+    if (h != 0) { _poison_check_bump(h); }
+    store64(blk, h);
     _poison_head = blk;
+    var sw = _poison_tick();
     _poison_lock_release();
+    if (sw == 1) { poison_sweep(); }
     return 0;
 }
 
@@ -496,8 +523,10 @@ fn _poison_fl_cap(blk): i64 {
     return 16 << cls;
 }
 
-# Push an armed fl block. Caller holds _poison_lock.
+# Push an armed fl block, after checking the current head (the previous poisoned fl block).
+# Caller holds _poison_lock.
 fn _poison_fl_link(blk): i64 {
+    if (_poison_fl_head != 0) { _poison_fl_check(_poison_fl_head); }
     store64(blk + 16, 0);
     store64(blk + 24, _poison_fl_head);
     if (_poison_fl_head != 0) { store64(_poison_fl_head + 16, blk); }
