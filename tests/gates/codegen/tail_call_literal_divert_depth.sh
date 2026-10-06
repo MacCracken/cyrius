@@ -203,14 +203,18 @@ sed -n '/^fn _tc_args_divert/,/^}/p' src/frontend/parse_fn.cyr | grep -q '_tc_st
 TCB=$(sed -n '/^fn _tc_str_literal_arg/,/^}/p' src/frontend/parse_fn.cyr)
 echo "$TCB" | grep -q 'if (t == 30)' \
   || { echo "  FAIL: tail_call_literal_divert [source_criterion]: _tc_str_literal_arg no longer tests for a string-literal token"; fail=1; }
-echo "$TCB" | grep -q 'mask & (1 << pos)' \
+# 6.6.17 (a10): both sides ask ONE per-argument reader, `_pm_str` (the overflow row past ordinal 61),
+# so the criterion is that each calls it with its own position and that it reads _fnt_strmask.
+sed -n '/^fn _pm_str(/,/}/p' src/frontend/parse_fn.cyr | grep -q '_fnt_strmask + fi \* 8' \
+  || { echo "  FAIL: tail_call_literal_divert [source_criterion]: _pm_str no longer reads the per-argument _fnt_strmask bit"; fail=1; }
+echo "$TCB" | grep -q '_pm_str(fi, pos)' \
   || { echo "  FAIL: tail_call_literal_divert [source_criterion]: _tc_str_literal_arg no longer tests the callee's per-ARGUMENT _fnt_strmask bit — it would divert calls whose literal is in a position the wrap never touches"; fail=1; }
 echo "$TCB" | grep -q 'first = 1' \
   || { echo "  FAIL: tail_call_literal_divert [source_criterion]: _tc_str_literal_arg no longer tracks the FIRST token of each argument"; fail=1; }
 FPB=$(sed -n '/^fn _try_push_str_literal_arg/,/^}/p' src/frontend/parse_fn.cyr)
 echo "$FPB" | grep -q 'if (PEEKT(S) != 30) { return 0; }' \
   || { echo "  FAIL: tail_call_literal_divert [source_criterion]: _try_push_str_literal_arg no longer wraps only a literal at an argument's FIRST token — the tail path's predicate is now mis-matched"; fail=1; }
-echo "$FPB" | grep -q '_fnt_strmask + fi \* 8) & (1 << argc)' \
+echo "$FPB" | grep -q '_pm_str(fi, argc)' \
   || { echo "  FAIL: tail_call_literal_divert [source_criterion]: _try_push_str_literal_arg no longer gates on the per-argument strmask bit — the tail path's predicate is now mis-matched"; fail=1; }
 
 [ "$fail" = 0 ] && echo "  PASS: the tail path's \`: Str\` literal divert fires on exactly the arguments PARSE_FNCALL would wrap (an argument's FIRST token, and only where the callee's per-argument strmask bit is set) — both call positions agree, and an already-wrapped literal keeps its TCO under a pinned ${STACK_KB}K stack"
