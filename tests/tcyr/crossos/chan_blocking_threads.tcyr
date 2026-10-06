@@ -9,14 +9,14 @@
 # chan_try_send.tcyr is single-threaded, and the thread tests never block in a channel.
 #
 # GUARDED BY CAPABILITY, never by target name (the v6.5.36 lesson). CHAN_BLOCKING is exported
-# by every thread backend: 1 on Linux, arm64 macOS and Windows; 0 on x86 macOS, agnos and cx,
-# whose bodies run inline, so a blocking receive could never be woken.
+# by every thread backend: 1 on Linux, macOS (arm64; x86 since 6.6.19) and Windows; 0 on agnos
+# and cx, whose bodies run inline, so a blocking receive could never be woken.
 #   CHAN_BLOCKING == 1: a consumer started first blocks in chan_recv, then takes N values in
 #     FIFO order from a producer thread; chan_close wakes blocked receivers, which get 0; a
 #     chan_send on a full channel waits until a consumer drains it, and chan_close wakes it
 #     with -1; four producers and four consumers on a cap-1 channel lose and duplicate nothing,
 #     and neither does one producer feeding three consumers (a saturated worker pool).
-#   CHAN_BLOCKING == 0: the serial contract. On x86 macOS and agnos chan_recv answers 0 at once
+#   CHAN_BLOCKING == 0: the serial contract. On agnos chan_recv answers 0 at once
 #     on an empty channel and chan_send fails at once on a full one (cx spins there instead).
 #
 # ⚠ EVERY WAIT HAS A DEADLINE, so a regression FAILS here instead of hanging the cross-OS leg

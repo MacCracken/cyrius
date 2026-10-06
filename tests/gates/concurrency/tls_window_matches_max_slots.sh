@@ -1,8 +1,8 @@
 #!/bin/sh
 # Gate: the serial thread peers' TLS save-window covers the FULL slot range (v6.5.39).
 #
-# THE DEFECT. macOS and agnos have no real thread path, so `thread_create` runs the body
-# INLINE and emulates thread-local isolation by hand: snapshot the caller's slots, zero them
+# THE DEFECT. A serial peer (agnos today; x86 macOS until 6.6.19) has no real thread path, so
+# `thread_create` runs the body INLINE and emulates thread-local isolation by hand: snapshot the caller's slots, zero them
 # for the body, restore afterwards. Both peers snapshotted only the first **16** slots while
 # `TLOCAL_MAX_SLOTS` is **128** — so a body's write to any slot >= 16 leaked straight back
 # into the caller, which is precisely what that code exists to prevent. Slots 16-127 are the
@@ -31,7 +31,7 @@ MAX=$(grep -E '^var TLOCAL_MAX_SLOTS = [0-9]+;' "$ROOT/lib/thread_local.cyr" | g
 [ -n "$MAX" ] || fail "could not read TLOCAL_MAX_SLOTS from lib/thread_local.cyr — the gate is blind, not the code clean"
 [ "$MAX" -gt 0 ] || fail "TLOCAL_MAX_SLOTS parsed as '$MAX'"
 
-for f in lib/thread_macos.cyr lib/thread_agnos.cyr; do
+for f in lib/thread_agnos.cyr; do
     # ── axis 1: the save buffer is at least as large as the slot range ─────────────
     # ⚠ Extract the BRACKETED number, not "the first number on the line": a naive
     # `grep -oE '[0-9]+'` yields 64 first — out of the TYPE NAME `i64` — and silently
@@ -86,4 +86,19 @@ for fn in thread_local_get thread_local_set; do
         || fail "lib/thread_local.cyr: $fn does not go through _tlocal_base() — every thread would share one slot array"
 done
 
-echo "PASS: tls_window_matches_max_slots (TLOCAL_MAX_SLOTS=$MAX; both serial peers save the full range and are bounded by the constant)"
+# ── axis 5 (6.6.19): lib/thread_macos.cyr carries NO inline-snapshot path at all ─────
+# Both Mach-O arches start real threads now (x86 over bsdthread, with gs-base TLS), so the
+# save/zero/restore emulation must not survive anywhere in the file: on a real thread it is a
+# race on the caller's slots, and a body run inline is the serial backend THREADS_CONCURRENT = 1
+# denies. x86's isolation comes from a per-thread header behind the gs base, so the x86-macOS
+# `_tlocal_base()` must read it rather than hand every thread the process-global array.
+grep -q 'var save:' "$ROOT/lib/thread_macos.cyr" \
+    && fail "lib/thread_macos.cyr still carries a TLS snapshot buffer (var save:) — both macOS arches run real threads, so that emulation is a race on the caller's slots"
+grep -q 'fncall1(fp, arg)' "$ROOT/lib/thread_macos.cyr" \
+    && fail "lib/thread_macos.cyr runs a thread body inline (fncall1(fp, arg)) — the serial backend is gone from both macOS arches"
+XB=$(awk '/^#ifndef CYRIUS_ARCH_AARCH64$/{a=1} a&&/^#endif$/{a=0} a' "$ROOT/lib/thread_local.cyr" \
+    | awk 'index($0, "fn _tlocal_base(") == 1 {p=1} p {print} p && /^}/ {exit}')
+printf '%s' "$XB" | grep -q '_tls_gs_word0()' \
+    || fail "lib/thread_local.cyr: the x86-macOS _tlocal_base() does not read the per-thread gs header — every real thread would share one slot array"
+
+echo "PASS: tls_window_matches_max_slots (TLOCAL_MAX_SLOTS=$MAX; the serial peer saves the full range bounded by the constant; macOS snapshots nothing and x86-macOS reads per-thread gs slots)"

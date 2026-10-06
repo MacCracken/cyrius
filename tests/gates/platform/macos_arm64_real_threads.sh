@@ -12,7 +12,7 @@
 # pthread_t against libpthread INTERNALS — sig@0x00 (guarded by a per-process ptr_munge cookie),
 # fun@0x90, arg@0x98, tsd@0xE0, a PAC modifier — none of which is stable ABI. The v6.5.43
 # bsdthread routes are NOT wrong and are NOT removed: they are what the x86-macOS backend, a
-# static no-libSystem binary where registration DOES work, will use.
+# static no-libSystem binary where registration DOES work, uses (6.6.19; axis 6).
 #
 # ⚠ THE SLOT NUMBER IS NOT ARBITRARY and axis 3 is why this gate exists at all: __got[5] must
 # actually be bound to _pthread_create. If someone reorders the GOT symbol list, this emitter
@@ -80,10 +80,44 @@ grep -qE '^var THREADS_CONCURRENT = 1;' "$ROOT/lib/thread_win.cyr" \
     || fail "lib/thread_win.cyr's thread_create is CreateThread (real threads) but it does not declare THREADS_CONCURRENT = 1"
 grep -qE '^var THREADS_CONCURRENT = 1;' "$ROOT/lib/thread.cyr" \
     || fail "lib/thread.cyr uses real clone(2) threads but does not declare THREADS_CONCURRENT = 1"
-grep -qE '^var THREADS_CONCURRENT = 1;' "$ROOT/lib/thread_macos.cyr" \
-    || fail "lib/thread_macos.cyr declares no concurrent arm64 arm"
-grep -qE '^var THREADS_CONCURRENT = 0;' "$ROOT/lib/thread_macos.cyr" \
-    || fail "lib/thread_macos.cyr declares no serial x86 arm — x86-macOS is a static no-libSystem binary and CANNOT use pthread_create"
+# macOS (6.6.19): BOTH Mach-O arches start real threads, so thread_macos.cyr declares each
+# capability ONCE, unconditionally, as 1 — and each arm's MECHANISM is read to justify it.
+# ⚠ `_tc_body` above reads the FIRST `fn thread_create(` in a file, which in thread_macos.cyr is
+# the arm64 arm; the x86 arm is read out of its own `#ifndef CYRIUS_ARCH_AARCH64` block.
+TM="$ROOT/lib/thread_macos.cyr"
+_tm_arm() { awk -v g="$1" '$0 == g {a = 1; next} a && /^#endif$/ {exit} a' "$TM"; }
+_tm_fn() { awk -v n="fn $1(" 'index($0, n) == 1 {p = 1} p {print} p && /^}/ {exit}'; }
+X86=$(_tm_arm '#ifndef CYRIUS_ARCH_AARCH64')
+A64=$(_tm_arm '#ifdef CYRIUS_ARCH_AARCH64')
+[ -n "$X86" ] && [ -n "$A64" ] || fail "could not read thread_macos.cyr's two arch arms — the gate is blind, not the code clean"
+NTC=$(grep -cE '^var THREADS_CONCURRENT = ' "$TM" || true)
+NCB=$(grep -cE '^var CHAN_BLOCKING = ' "$TM" || true)
+[ "$NTC" = 1 ] && [ "$NCB" = 1 ] \
+    || fail "lib/thread_macos.cyr declares THREADS_CONCURRENT $NTC times and CHAN_BLOCKING $NCB times — both arches are real, so each is declared once, unconditionally"
+grep -qE '^var THREADS_CONCURRENT = 1;' "$TM" && grep -qE '^var CHAN_BLOCKING = 1;' "$TM" \
+    || fail "lib/thread_macos.cyr does not declare THREADS_CONCURRENT = 1 and CHAN_BLOCKING = 1"
+printf '%s\n' "$A64" | _tm_fn thread_create | grep -q 'syscall(1700, ' \
+    || fail "the arm64 arm's thread_create no longer calls pthread_create (1700), so THREADS_CONCURRENT = 1 is not justified there"
+XTC=$(printf '%s\n' "$X86" | _tm_fn thread_create)
+printf '%s' "$XTC" | grep -q 'sys_bsdthread_create(' \
+    || fail "the x86 arm's thread_create does not call sys_bsdthread_create — x86 macOS has no other way to start a thread (no libSystem, no __got)"
+if printf '%s' "$XTC" | grep -q 'fncall1('; then
+    fail "the x86 arm's thread_create runs a body inline (fncall1) — that is the pre-6.6.19 serial backend, and THREADS_CONCURRENT = 1 would be a lie"
+fi
+# The trampoline never returns (there is no return address above it): it ends the thread with
+# bsdthread_terminate, which also frees the thread's own stack — join does not.
+LAST=$(printf '%s\n' "$X86" | _tm_fn _thr_start | grep -oE 'sys_[a-z_]+\(' | tail -1)
+[ "$LAST" = "sys_bsdthread_terminate(" ] \
+    || fail "the x86 trampoline _thr_start does not end in sys_bsdthread_terminate (last call: '$LAST') — it would return off the top of a stack with no return address"
+# bsdthread_register succeeds with POSITIVE feature bits (ach: 0x400001DF) and answers -EINVAL
+# once registered, inherited across fork: `r != 0` would refuse every thread.
+REG=$(printf '%s\n' "$X86" | _tm_fn _thr_register)
+printf '%s' "$REG" | grep -q 'if (r < 0)' && printf '%s' "$REG" | grep -q '0 - 22' \
+    || fail "_thr_register must accept r >= 0 (feature bits) and -22 (already registered, inherited across fork)"
+# -22 means "ours" only while nothing else registers first. The syscall peers DEFINE the wrapper.
+OTHER=$(grep -l 'sys_bsdthread_register(' "$ROOT"/lib/*.cyr | grep -v '/lib/thread_macos\.cyr$' \
+    | while read -r f; do grep 'sys_bsdthread_register(' "$f" | grep -qv '^fn sys_bsdthread_register(' && echo "$f"; done || true)
+[ -z "$OTHER" ] || fail "a lib/ file other than thread_macos.cyr calls sys_bsdthread_register — _thr_register would read its registration as its own: $OTHER"
 
 # ── axis 7: pthread_create's int result is sign-extended (sxtw x0, w0) ───────────────────
 # AAPCS64 leaves x0[63:32] unspecified for an int return and thread_macos.cyr's `rc != 0` reads
@@ -120,4 +154,4 @@ NPAIR=$(awk 'p == "d63f0200" && $0 == "93407c00" {n++} {p = $0} END {print n + 0
 [ "$NBLR" -ge 2 ] || fail "the probe holds $NBLR blr x16 words — expected at least the two pthread_create calls (the reader is blind)"
 [ "$NPAIR" = 2 ] || fail "$NPAIR of the probe's 2 pthread_create calls are followed by sxtw x0, w0 — the int result's upper half reaches \`rc != 0\` unextended"
 
-echo "PASS macos_arm64_real_threads (1700 -> __got[$SLOT] = _pthread_create, arm64-Mach-O-guarded, stubbed in every fork, THREADS_CONCURRENT honest on every backend: 1 on Linux, arm64-macOS and Windows, 0 on x86-macOS and agnos; the int result sign-extended at $NPAIR/2 emitted sites)"
+echo "PASS macos_arm64_real_threads (1700 -> __got[$SLOT] = _pthread_create, arm64-Mach-O-guarded, stubbed in every fork, THREADS_CONCURRENT honest on every backend: 1 on Linux, both macOS arches (pthread_create / bsdthread_create) and Windows, 0 on agnos; the int result sign-extended at $NPAIR/2 emitted sites)"

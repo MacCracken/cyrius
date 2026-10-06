@@ -940,8 +940,9 @@ Two capabilities, exported by every thread peer, say what a target can do — as
 test a target name: `THREADS_CONCURRENT` (1 = `thread_create` starts a second thread; 0 = the
 body runs inline at create) and `CHAN_BLOCKING` (1 = `chan_recv` / `chan_send` block and any
 number of producer and consumer threads may share the ring; 0 = no second thread exists to end
-a wait). `CHAN_BLOCKING`: Linux 1 · arm64 macOS 1 · Windows 1 · x86 macOS 0 · agnos 0 · cx 0
-(6.6.16). A pool of workers that loops on `chan_recv` needs `CHAN_BLOCKING == 1`.
+a wait). Both capabilities: Linux 1 · macOS 1 (arm64 and x86) · Windows 1 · agnos 0 · cx 0
+(6.6.16; x86 macOS was 0 until 6.6.19 started real bsdthread threads there). A pool of workers
+that loops on `chan_recv` needs `CHAN_BLOCKING == 1`.
 
 ⚠ `chan_*` here is the **in-process MPMC thread channel**. agnos's kernel
 channel syscalls (`#97 chan_op`, minted v6.5.8) are deliberately named
