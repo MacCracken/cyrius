@@ -219,7 +219,8 @@ worktrees.
 
 Nothing here gates the release. ⚠ **The 12 folded stdlibs** (sakshi, bayan, sandhi, sigil, ganita, niyama, mabda,
 vani, yantra, yukti, patra, sankoch) regenerate in ONE wave after the tag — our own work, sakshi first (its first
-distlib-generated sidecar). Filings (notes in each repo, not fixed from here): **takumi** declares `sandhi` but not
+distlib-generated sidecar). Filings (notes in each repo, not fixed from here; takumi's is filed, samvada's waits for
+a clean roadmap, the rest are filed after the tag): **takumi** declares `sandhi` but not
 `sakshi` and reached `lib/sakshi.cyr` only through sigil's old sidecar — declare it; **samvada** has no Windows
 `sys_recvmsg` wrapper (D2 names it through mabda); **rekha** drops its prelude and CI sidecar pin and can adopt
 `--poison[=ab]`; **kriya, puka** — `--poison` now covers `alloc()`, and an overwrite exits 86; **agora** re-evaluates
