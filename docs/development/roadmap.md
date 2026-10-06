@@ -61,7 +61,7 @@ CHANGELOG; do not re-add shipped slots here.
 **v6.6.7–v6.6.12 were the repair batch** (2026-09-27 → 2026-09-30, CLOSED): the 30 issues filed after
 6.6.6, split by the user across three releases, then each release's own review finds, which the user
 placed into 6.6.10–6.6.12 — and 6.6.12 also took the backlog's repair items and every sibling follow-up.
-It spent **CVE-46 … CVE-58** (the next free id is now **77**) and shipped each release together with the sibling
+It spent **CVE-46 … CVE-58** (the next free id is now **78** — CVE-77 was spent at 6.6.17) and shipped each release together with the sibling
 patch releases it needed. Per-release detail is in the CHANGELOG; the process rules it settled are in
 *Standing notes* below.
 
@@ -71,7 +71,7 @@ The language list that was Phase 3 moved to **v6.7.x**, which RISC-V vacates for
 *The shape of v6.6.x*.
 
 **The 6.6.x tail (accepted 2026-10-02):** 6.6.15 SHIPPED 2026-10-03 (tag `6.6.15` @ `2f1ed9d1`; CVE-68 … CVE-73);
-6.6.16 SHIPPED 2026-10-05 (tag `6.6.16` @ `09848672`; CVE-74 … CVE-76; the next free id is **77**). Every further
+6.6.16 SHIPPED 2026-10-05 (tag `6.6.16` @ `09848672`; CVE-74 … CVE-76); 6.6.17 spends **CVE-77**, so the next free id is **78**. Every further
 6.6.16 lane-review find is filed into 6.6.17 (user, 2026-10-04/05); **6.6.17 is open**.
 
 ---
