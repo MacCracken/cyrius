@@ -292,6 +292,16 @@ if (_vn > 0) {
                 }
             }
         }
+        # "--sy" (--syntax-only) — the same flag as main.cyr's (see _syntax_only, util.cyr).
+        # 6.6.17: this fork never read it, so `cyrius lint`'s pre-pass on Windows got a full
+        # resolving compile. chars s(115) y(121).
+        if (_vi + 4 <= _vn) {
+            if (load8(&_vbuf + _vi) == 45 && load8(&_vbuf + _vi + 1) == 45) {
+                if (load8(&_vbuf + _vi + 2) == 115 && load8(&_vbuf + _vi + 3) == 121) {
+                    _syntax_only = 1;
+                }
+            }
+        }
         # "--al" (--allow-undef, v6.3.2) — downgrade the default reachable-undef hard error to a warning. chars a(97) l(108).
         if (_vi + 4 <= _vn) {
             if (load8(&_vbuf + _vi) == 45 && load8(&_vbuf + _vi + 1) == 45) {
@@ -344,6 +354,10 @@ if (_vw != 0) {
                             if (load8(_vw + _wi + 4) == 115) {
                                 if (load8(_vw + _wi + 6) == 116) {
                                     _strict_mode = 1;
+                                }
+                                # "--sy" (--syntax-only, 6.6.17): UTF-16 s(115) y(121)
+                                if (load8(_vw + _wi + 6) == 121) {
+                                    _syntax_only = 1;
                                 }
                             }
                             # "--al" (--allow-undef, v6.3.2): UTF-16 a(97) l(108)
