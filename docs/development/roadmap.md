@@ -39,7 +39,7 @@ closeout), and the unscheduled 6.x backlog. Whole-cycle framing, the v6.7.x lang
 
 ## Where we are
 
-**Current head: v6.6.17** (2026-10-06) — **SHIPPED** (tag `6.6.17` @ `c2e7eef9`; store slot refreshed at the tag) · cycc
+**Current head: v6.6.18** (2026-10-06) — **slot open** (6.6.17 shipped: tag `6.6.17` @ `c2e7eef9`) · cycc
 **1,581,040 B** (`.text` **1,400,760**) · `cycc-native-aarch64` **2,042,184 B** · seed-derive **GREEN** · cross-OS
 **GREEN** on ecb/ach/cass/pi · self_compile **985 ms** · **473** `.tcyr` (**193** in `crossos/`) · **105** `lib/*.cyr` ·
 **361** shell gates under `tests/gates/<bucket>/` · **0 open issues** · **5 open proposals** · the next free CVE id is **78**.
@@ -63,7 +63,7 @@ closeout, then **v6.7.0** (*The 6.6.x tail* below).
 | Phase | Slots | What goes here |
 |---|---|---|
 | **1 — repair** | `.1` – `.16` | ✅ **SHIPPED** — the repair window (.1–.6), the repair batch (.7–.12), memory + reported issues (.13), the TLS follow-ups (.14), curves + the compiler leaks (.15), repair (.16). See [completed-phases.md](completed-phases.md) § *v6.6.x*. |
-| **2 — the 6.6.x tail** | `.17` – `.19` | The release sequence ACCEPTED 2026-10-02 (see *The 6.6.x tail*): `.17` manifest (✅ SHIPPED 2026-10-06), **`.18` distlib + poison**, `.19` embed + macOS threads. |
+| **2 — the 6.6.x tail** | `.17` – `.19` | The release sequence ACCEPTED 2026-10-02 (see *The 6.6.x tail*): `.17` manifest (✅ SHIPPED 2026-10-06), **`.18` distlib + poison (OPEN 2026-10-06)**, `.19` embed + macOS threads. |
 | **3 — closeout** | `.20` | The full closeout pass, like every minor (user, 2026-10-02: done before any v6.7.x work). Then **v6.7.0**. |
 | ~~**Committed ergonomics**~~ | — | **Moved to v6.7.x** with P3 `const fn` (user, 2026-10-01) — see [roadmap_6.md](roadmap_6.md). |
 
@@ -83,7 +83,7 @@ reviews and a synthesis, archived at
 
 | Release | Contents |
 |---|---|
-| **6.6.18** distlib + poison | **P4** option 2 (the compile-verify fixpoint is the authority; one sibling regeneration wave); **P6** widened (`poison_allocator()`, leading redzone, live-block sweep, settable fill byte, `alloc()` / arena redzones; guard pages → backlog); the log / ws / ws_server fold bundles; the ESYSXLAT compile-time fold (~593 KB of `cycc-native-aarch64`; then lower the pre-commit ARM size band, raised 700K–2M → 700K–3M at 6.6.17); DCE's honest "compaction declined: <why>" note; the missing `sxtw`. |
+| **6.6.18** distlib + poison — **OPEN 2026-10-06** | **P4** option 2 (the compile-verify fixpoint is the authority; one sibling regeneration wave); **P6** widened (`poison_allocator()`, leading redzone, live-block sweep, settable fill byte, `alloc()` / arena redzones; guard pages → backlog); the log / ws / ws_server fold bundles; the ESYSXLAT compile-time fold (~593 KB of `cycc-native-aarch64`; then lower the pre-commit ARM size band, raised 700K–2M → 700K–3M at 6.6.17); DCE's honest "compaction declined: <why>" note; the missing `sxtw`. |
 | **6.6.19** | **P2** `[embed]` (generated in cbt before `#@srcline` — never an in-band marker that reads files, the CVE-45 class; `[lib.PROFILE]` scoping; the interning perf fix B0b); x86-macOS real threads + `async_await_readable_ms` on macOS / agnos / Windows (*Open questions* 3). The release to trim if 6.7.0 should come sooner. |
 | **6.6.20** closeout | The full closeout pass (CLAUDE.md § Closeout, [cycle-discipline.md](cycle-discipline.md)): the release gate, heap / dead-code / refactor / code-review / cleanup passes, a security re-scan, the downstream check, vidya (`types.cyml` still stamps 6.6.1), the backlog re-triage, `verify-store`. |
 | **6.7.0** | The language arc ([roadmap_6.md](roadmap_6.md)): traits first, with the ADR and the one reserved-word survey at the open; P3 `const fn` after `const` and the if-expression; P5's execution half designed with C2. |
