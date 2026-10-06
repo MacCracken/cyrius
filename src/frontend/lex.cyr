@@ -2038,6 +2038,163 @@ fn _lex_side_put(src, n): i64 {
     _lex_side_n = o + n;
     return o;
 }
+# 6.6.19 — STRING INTERNING LOOKS A LITERAL UP IN AN INDEX instead of scanning the pool. LEX used
+# to compare every new literal against EVERY segment of str_data, byte by byte, so N literals cost
+# N x pool bytes: 3,000 small literals 573 ms, 9,000 4,983 ms, and one 1.9 MB literal ahead of
+# 3,000 small ones 11.4 s (the same program with it after them: 0.92 s).
+#
+# Why the output is BYTE-IDENTICAL. The scan visits segment starts (offset 0 and every offset
+# after a NUL) in pool order and takes the first whose window (slen + 1 bytes) equals the literal
+# and its terminator. For a literal with NO NUL that window is a whole segment: it starts after a
+# NUL and holds none before its last byte. So the first match is the FIRST segment equal to the
+# literal, which is exactly what the index keeps (an equal segment indexed later never replaces
+# it). A literal holding a NUL can match across segments, so it keeps the scan VERBATIM
+# (`_lex_intern_scan`, B0a's committed-window rule). CHANGELOG [6.6.19]
+#
+# The index is synced LAZILY over [upto, sstart) before each lookup. That is sound because only
+# the lexer writes str_data and the committed pool always ends in a terminator, so `upto` is
+# always a segment start; the one writer that winds the pool back (`_lex_dir_msg_fix`) goes back
+# only to the current literal's own start, which is >= upto. A wind-back below `upto` (a re-lex)
+# rebuilds the index from 0. The handle is alloc'd on first use — no heap-map region:
+#   +0 table (16-byte entries: FNV-1a of the segment, its pool offset + 1; 0 = empty)
+#   +8 mask (slots - 1)   +16 entries in use   +24 upto
+var _lex_ix = 0;
+# The pool offset `interned` resolves to, or -1: a new literal is appended.
+fn _lex_intern(S, sstart, slen): i64 {
+    var lit = S + 0x21A000 + sstart;
+    var i = 0;
+    while (i < slen) {
+        if (load8(lit + i) == 0) {
+            var r = _lex_intern_scan(S, sstart, slen);
+            return r;
+        }
+        i = i + 1;
+    }
+    _lex_intern_catchup(S, sstart);
+    var f = _lex_intern_find(S, sstart, slen);
+    return f;
+}
+# ⛔ The window compared at `si` (slen + 1 bytes) must lie wholly in the COMMITTED pool,
+# below sstart: past it is this literal's own copy, which the next literal overwrites once
+# this one is interned. A literal holding a NUL matched there and aliased onto bytes that
+# were not its own (`"a"`, `"a\0a"`, `"zzzz"`: X+2 read 'z'). A NUL-free literal never
+# reaches sstart (the byte before it is a terminator), so it is unaffected. CHANGELOG [6.6.15]
+fn _lex_intern_scan(S, sstart, slen): i64 {
+    var interned = 0 - 1;
+    var si = 0;
+    while (si + slen < sstart) {
+        var eq = 1;
+        var sk = 0;
+        while (sk <= slen) {
+            if (load8(S + 0x21A000 + si + sk) != load8(S + 0x21A000 + sstart + sk)) { eq = 0; break; }
+            sk = sk + 1;
+        }
+        if (eq == 1) { interned = si; si = sstart; }
+        else {
+            while (si < sstart) { if (load8(S + 0x21A000 + si) == 0) { si = si + 1; break; } si = si + 1; }
+        }
+    }
+    return interned;
+}
+# The first pool offset whose segment is the (NUL-free) literal at `sstart`, or -1.
+fn _lex_intern_find(S, sstart, slen): i64 {
+    var pool = S + 0x21A000;
+    var a = _lex_ix_probe(pool, _lex_fnv(pool + sstart, slen), sstart, slen);
+    var o = load64(a + 8);
+    return o - 1;
+}
+# Index the segments in [upto, end); a pool wound back below `upto` is re-indexed from 0.
+fn _lex_intern_catchup(S, end): i64 {
+    if (_lex_ix == 0) { _lex_ix = alloc(32); _lex_ix_alloc(4096); }
+    if (end < load64(_lex_ix + 24)) { _lex_ix_alloc(4096); }
+    var pool = S + 0x21A000;
+    var p = load64(_lex_ix + 24);
+    while (p < end) {
+        var q = p;
+        while (q < end) { if (load8(pool + q) == 0) { break; } q = q + 1; }
+        _lex_ix_add(pool, p, q - p);
+        p = q + 1;
+    }
+    store64(_lex_ix + 24, end);
+    return 0;
+}
+# A fresh, empty table of `slots` entries; nothing indexed.
+fn _lex_ix_alloc(slots): i64 {
+    store64(_lex_ix, alloc(slots * 16));
+    store64(_lex_ix + 8, slots - 1);
+    store64(_lex_ix + 16, 0);
+    store64(_lex_ix + 24, 0);
+    return 0;
+}
+fn _lex_fnv(p, n): i64 {
+    var h = 0xcbf29ce484222325;
+    var i = 0;
+    while (i < n) {
+        h = h ^ load8(p + i);
+        h = h * 0x100000001b3;
+        i = i + 1;
+    }
+    return h;
+}
+# The entry whose segment is the `n` bytes at pool + `off` (hash `h`), or the empty entry it
+# would go in. A stored segment matches when its first `n` bytes are those and its NUL is next.
+fn _lex_ix_probe(pool, h, off, n): i64 {
+    var tab = load64(_lex_ix);
+    var mask = load64(_lex_ix + 8);
+    var s = h & mask;
+    while (load64(tab + s * 16 + 8) != 0) {
+        var e = tab + s * 16;
+        if (load64(e) == h) {
+            if (_lex_seg_eq(pool + load64(e + 8) - 1, pool + off, n) == 1) { return e; }
+        }
+        s = (s + 1) & mask;
+    }
+    return tab + s * 16;
+}
+fn _lex_seg_eq(a, b, n): i64 {
+    var i = 0;
+    while (i < n) {
+        if (load8(a + i) != load8(b + i)) { return 0; }
+        i = i + 1;
+    }
+    if (load8(a + n) != 0) { return 0; }
+    return 1;
+}
+# Index the segment at pool + `off` (`n` bytes): an equal segment already indexed keeps its
+# entry, so every entry is the FIRST offset of its bytes. Doubles at half full.
+fn _lex_ix_add(pool, off, n): i64 {
+    var h = _lex_fnv(pool + off, n);
+    var e = _lex_ix_probe(pool, h, off, n);
+    if (load64(e + 8) != 0) { return 0; }
+    store64(e, h);
+    store64(e + 8, off + 1);
+    var used = load64(_lex_ix + 16) + 1;
+    store64(_lex_ix + 16, used);
+    if (used * 2 > load64(_lex_ix + 8)) { _lex_ix_grow(); }
+    return 0;
+}
+# Re-home every entry into a table twice the size (entries are distinct: no compare needed).
+fn _lex_ix_grow(): i64 {
+    var old = load64(_lex_ix);
+    var n = load64(_lex_ix + 8) + 1;
+    var tab = alloc(n * 32);
+    var mask = n * 2 - 1;
+    var i = 0;
+    while (i < n) {
+        var h = load64(old + i * 16);
+        var v = load64(old + i * 16 + 8);
+        if (v != 0) {
+            var s = h & mask;
+            while (load64(tab + s * 16 + 8) != 0) { s = (s + 1) & mask; }
+            store64(tab + s * 16, h);
+            store64(tab + s * 16 + 8, v);
+        }
+        i = i + 1;
+    }
+    store64(_lex_ix, tab);
+    store64(_lex_ix + 8, mask);
+    return 0;
+}
 # 1 when string token `tc` is a directive's message: `#deprecated ( STRING`, or the message slot of
 # an `#assert ATOM [OP ATOM] [,] STRING` (the grammar `_tl_assert` / PARSE_STMT's arm consume).
 fn _lex_is_dir_msg(S, tc): i64 {
@@ -2692,28 +2849,10 @@ fn LEX(S): i64 {
                                                                                                                                     # Add null terminator after string literal
                                                                                                                                     store8(S + 0x21A000 + spos, 0);
                                                                                                                                     var slen = spos - sstart;
-                                                                                                                                    # String interning: check if an identical string already
-                                                                                                                                    # exists in str_data. If so, reuse its offset — deduplicates string
-                                                                                                                                    # literals so pointer-identity comparison works.
-                                                                                                                                    # ⛔ The window compared at `si` (slen + 1 bytes) must lie wholly in the COMMITTED pool,
-                                                                                                                                    # below sstart: past it is this literal's own copy, which the next literal overwrites once
-                                                                                                                                    # this one is interned. A literal holding a NUL matched there and aliased onto bytes that
-                                                                                                                                    # were not its own (`"a"`, `"a\0a"`, `"zzzz"`: X+2 read 'z'). A NUL-free literal never
-                                                                                                                                    # reaches sstart (the byte before it is a terminator), so it is unaffected. CHANGELOG [6.6.15]
-                                                                                                                                    var interned = 0 - 1;
-                                                                                                                                    var si = 0;
-                                                                                                                                    while (si + slen < sstart) {
-                                                                                                                                        var eq = 1;
-                                                                                                                                        var sk = 0;
-                                                                                                                                        while (sk <= slen) {
-                                                                                                                                            if (load8(S + 0x21A000 + si + sk) != load8(S + 0x21A000 + sstart + sk)) { eq = 0; break; }
-                                                                                                                                            sk = sk + 1;
-                                                                                                                                        }
-                                                                                                                                        if (eq == 1) { interned = si; si = sstart; }
-                                                                                                                                        else {
-                                                                                                                                            while (si < sstart) { if (load8(S + 0x21A000 + si) == 0) { si = si + 1; break; } si = si + 1; }
-                                                                                                                                        }
-                                                                                                                                    }
+                                                                                                                                    # String interning: an identical literal already in str_data is reused (its offset), so
+                                                                                                                                    # pointer-identity comparison works. `_lex_intern` looks a NUL-free literal up in an index
+                                                                                                                                    # and scans for one holding a NUL. CHANGELOG [6.6.19]
+                                                                                                                                    var interned = _lex_intern(S, sstart, slen);
                                                                                                                                     if (interned >= 0) {
                                                                                                                                         sstart = interned;
                                                                                                                                     } else {
