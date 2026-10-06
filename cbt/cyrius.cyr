@@ -1121,6 +1121,13 @@ fn main(): i64 {
 
     if (streq(cmd, "which") == 1) {
         if (_cli_operands_ok("which", 0, 0) == 0) { return 1; }
+        # 6.6.17: no compiler found is said by name — `println(0)` was a SIGSEGV (rc 139).
+        if (_cc == 0) {
+            _ew("error: which: no cycc found (looked beside this cyrius, in ");
+            _ew(_home);
+            _ew("/bin, and ./build)\n");
+            return 1;
+        }
         println(_cc);
         return 0;
     }

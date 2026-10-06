@@ -812,9 +812,11 @@ fn _cbt_env_str(name): i64 {
 # and still honoured by cycc: two stdlibs. On Windows a value of 512+ B came back as an
 # unwritten buffer, the home "". Not shared code: cycc's scanner is a Linux-only raw-syscall
 # reader with fixed 2 KB buffers kept small for the seed's bootstrap compiler; this one also
-# covers the macOS entry-stack envp and Windows. One difference stays by construction: cycc
-# has no fallback for a home over 1,984 B (CVE-34's bound) and the CLI uses it — neither ever
-# falls through to HOME, so the two never read different stdlibs. CHANGELOG [6.6.17]
+# covers the macOS entry-stack envp and Windows. Two differences stay, both where cycc has NO
+# fallback and the CLI still needs a home, so neither makes the two read different stdlibs:
+# a home over 1,984 B (cycc's buffer, CVE-34's bound) the CLI uses as given, and with no
+# usable CYRIUS_HOME or HOME at all the CLI uses /root/.cyrius. Neither tool ever falls through
+# from a set CYRIUS_HOME to HOME. CHANGELOG [6.6.17]
 
 # The value of the FIRST `name` entry (`name` includes its `=`, `nl` bytes) in the
 # NUL-separated block eb[0..en), or 0 when there is none or it is empty — a later duplicate
@@ -885,7 +887,8 @@ fn find_tools(): i64 {
     _arch = ARCH_AARCH64;
     #endif
     #endif
-    # The home: one rule with cycc's include fallback — see _cbt_home_env. CHANGELOG [6.6.17]
+    # The home: one rule with cycc's include fallback — see _cbt_env_first / _cbt_environ.
+    # CHANGELOG [6.6.17]
     var proc_home = 0;
     var cyrius_home = 0;
     #ifndef CYRIUS_TARGET_WIN

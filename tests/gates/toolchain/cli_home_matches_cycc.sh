@@ -15,8 +15,9 @@
 # reads /proc/self/environ).
 # PE (under wine when installed): a 600+ B CYRIUS_HOME is picked; GetEnvironmentVariableA was
 # given 512, so a longer value left the buffer unwritten and the home read as "".
-# Old CLI: rows dup_chome, dup_home, empty_chome, empty_then_set, big_ahead, big_ahead_home and
-# pe_long_chome FAIL.
+# no_compiler: `cyrius which` with no compiler anywhere names it and exits 1 (it SIGSEGV'd).
+# Old CLI: rows dup_chome, dup_home, empty_chome, empty_then_set, big_ahead, big_ahead_home,
+# no_compiler and pe_long_chome FAIL.
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
 G=cli_home_matches_cycc
@@ -113,6 +114,15 @@ row empty_chome     B  CYRIUS_HOME= HOME="$W/B"
 row empty_then_set  B  CYRIUS_HOME= CYRIUS_HOME="$W/A" HOME="$W/B"
 row big_ahead       A  "$BIG" CYRIUS_HOME="$W/A" HOME="$W/B"
 row big_ahead_home  B  "$BIG" HOME="$W/B"
+
+# no_compiler: no cycc beside the CLI, in the home or in ./build — `which` says so by name and
+# exits 1 (it printed a null pointer: SIGSEGV, rc 139, before and after the home fix).
+rc=0; ( cd "$W/cwd" && "$EE" CYRIUS_RESOLVED=1 HOME="$W/missing" -- "$W/cli/cyrius" which > "$W/nc.out" 2> "$W/nc.err" ) || rc=$?
+if [ "$rc" -eq 1 ] && grep -q 'no cycc found' "$W/nc.err" && [ ! -s "$W/nc.out" ]; then
+    echo "  ok: no_compiler — \`cyrius which\` names the missing compiler, rc 1"
+else
+    echo "FAIL: $G: no_compiler — \`cyrius which\` with no compiler anywhere: rc=$rc, stderr: $(head -1 "$W/nc.err")"; FAIL=1
+fi
 
 # ── PE: a CYRIUS_HOME of 512+ B (GetEnvironmentVariableA was given 512, so a longer value left
 # the buffer unwritten and the home read as "") ─────────────────────────────────────────────
