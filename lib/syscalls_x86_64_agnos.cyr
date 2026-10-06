@@ -2125,12 +2125,18 @@ fn sys_connect(fd, sockaddr, addrlen): i64 {
 # agnos — none pending is -11 (EAGAIN), as on a non-blocking Linux listener. The connection's
 # tagged fd; a non-zero `srcaddr` receives its peer as a sockaddr_in (sock_peer#106, with
 # sys_getpeername's `srcaddrlen` truncation rule; an agnos older than 1.57.7 has no #106 and
-# `*srcaddrlen` reads 0). `flags`: SOCK_CLOEXEC is accepted; anything else declines -38 BEFORE a
-# connection is taken. Errors: -88 (ENOTSOCK), -22 (EINVAL: not listening), -11, -24 (EMFILE: the
-# fd table is full — the accepted connection is closed, never leaked).
+# `*srcaddrlen` reads 0). `flags`: SOCK_CLOEXEC is accepted; anything else declines -38. Errors:
+# -88 (ENOTSOCK), -22 (EINVAL: not listening, or a negative `*srcaddrlen`), -14 (EFAULT: a
+# `srcaddr` with no `srcaddrlen`), -11, -24 (EMFILE: the fd table is full — the accepted
+# connection is closed, never leaked). Every argument is checked BEFORE #57, so a connection the
+# kernel hands over is never taken and then dropped by a refusal.
 fn sys_accept4(fd, srcaddr, srcaddrlen, flags): i64 {
     if (_agnos_is_sock_fd(fd) == 0) { return 0 - 88; }
     if ((flags & (~0x80000)) != 0) { return 0 - 38; }
+    if (srcaddr != 0) {
+        if (srcaddrlen == 0) { return 0 - 14; }      # Linux: EFAULT (it reads *addrlen)
+        if (load32(srcaddrlen) > 0x7FFFFFFF) { return 0 - 22; }   # a negative i32 capacity
+    }
     var lid = _agnos_fd_listen(fd);
     if (lid < 0) { return 0 - 22; }
     var cid = sys_sock_accept(lid);

@@ -330,10 +330,20 @@ sys_listen(l, 4);
 syscall(999, 100, sys_accept4(l, 0, 0, 0));
 var c = sys_socket(2, 1, 0);
 syscall(999, 101, sys_connect(c, &sa, 16));
+var pa[16];
+var al[8];
+store64(&al, 0xFFFFFFFF);
+syscall(999, 102, 0);
+var e1 = sys_accept4(l, &pa, 0, 0);
+var e2 = sys_accept4(l, &pa, &al, 0);
+syscall(999, 103, e1 * 1000 + e2);
 sys_exit(0);
 EOF
 run "$T/a5b.cyr" noacc
 check "nothing pending (#57 -1) is -11 (EAGAIN), as on a non-blocking Linux listener" "-11" "$(mark 100)"
+run "$T/a5b.cyr" plain
+check "an address with no length is -14 (EFAULT), a negative length -22 — checked BEFORE #57 is issued" \
+    "-14022 0" "$(mark 103) $(between 102 57)"
 run "$T/a5b.cyr" noconn
 check "a refused connect (#47 -1) is -111 (ECONNREFUSED)" "-111" "$(mark 101)"
 run "$T/a5b.cyr" oldnet
