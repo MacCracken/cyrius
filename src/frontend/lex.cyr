@@ -746,6 +746,21 @@ fn _check_cyml_pin_drift(): i64 {
 }
 
 # Read a file into buffer at dst, return bytes read. Path must be null-terminated.
+# 1 when a fallback path — `pre` bytes of prefix, then `path` from byte `skip` — fits READFILE's
+# 4096-B buffer with its NUL; else it names the include and returns 0 (the caller returns -1,
+# which the preprocessor turns into a hard error). CHANGELOG [6.6.17]
+fn _rf_fits(path, skip, pre): i64 {
+    var n = 0;
+    while (load8(path + n) != 0) { n = n + 1; }
+    if (pre + n - skip <= 4095) { return 1; }
+    syscall(SYS_WRITE, 2, "error: include path too long for the fallback directory (", 57);
+    PRNUM(pre + n - skip);
+    syscall(SYS_WRITE, 2, " bytes, the limit is 4095): ", 28);
+    syscall(SYS_WRITE, 2, path, n);
+    syscall(SYS_WRITE, 2, "\n", 1);
+    return 0;
+}
+
 fn READFILE(path, dst, maxsz): i64 {
     # CVE-02: reject path traversal (.. components) UNLESS explicitly
     # allowed via CYRIUS_ALLOW_PARENT_INCLUDES=1. Bote (and any project
@@ -814,21 +829,18 @@ fn READFILE(path, dst, maxsz): i64 {
         if (_cyrius_lib_len > 0) {
             if (load8(path) == 108) { if (load8(path + 1) == 105) { if (load8(path + 2) == 98) { if (load8(path + 3) == 47) {
                             # Build fallback path: _cyrius_lib + (path + 4)
-                            # v6.4.81 (CVE-33): both copies below were unbounded
-                            # into a 512-BYTE local (`var x[N]` local = N bytes).
-                            # Widened to 4096 and both loops stop at 4095. ⚠ The cap
-                            # is NOT reached today, and must not be: a truncated
-                            # path is a PREFIX that can name a different existing
-                            # file. `path` is at most 767 B (PP_FNAME_TOO_LONG,
-                            # CVE-39) and `_cyrius_lib_len` at most ~2013 B (a home
-                            # over 1984 B disables the fallback, `_env_cap_end`), so
-                            # the composed path is <= ~2776 B. Raise either bound and
-                            # this copy must refuse by name instead. (6.6.17)
+                            # v6.4.81 (CVE-33): the copies were unbounded into a 512-B
+                            # local. 6.6.17: a path that does not fit is REFUSED by
+                            # name (`_rf_fits`) — the loops used to stop at 4095 and
+                            # open the PREFIX, which can name a different file. Not
+                            # reachable today (`path` <= 767 B, PP_FNAME_TOO_LONG;
+                            # the slot prefix <= ~2013 B), enforced all the same.
+                            if (_rf_fits(path, 4, _cyrius_lib_len) == 0) { return 0 - 1; }
                             var fbuf[4096];
                             var fi = 0;
-                            while (fi < _cyrius_lib_len) { if (fi >= 4095) { break; } store8(&fbuf + fi, load8(&_cyrius_lib + fi)); fi = fi + 1; }
+                            while (fi < _cyrius_lib_len) { store8(&fbuf + fi, load8(&_cyrius_lib + fi)); fi = fi + 1; }
                             var pi = 4;
-                            while (load8(path + pi) != 0) { if (fi >= 4095) { break; } store8(&fbuf + fi, load8(path + pi)); fi = fi + 1; pi = pi + 1; }
+                            while (load8(path + pi) != 0) { store8(&fbuf + fi, load8(path + pi)); fi = fi + 1; pi = pi + 1; }
                             store8(&fbuf + fi, 0);
                             if (SYS_OPEN == 2) { fd = syscall(SYS_OPEN, &fbuf, 0, 0); }
                             else { fd = syscall(SYS_OPEN, 0 - 100, &fbuf, 0, 0); }
@@ -850,15 +862,15 @@ fn READFILE(path, dst, maxsz): i64 {
     # already passed, and would recurse.
     if (fd < 0) {
         if (_pp_incdir_len > 0) {
-            # The 4095 cap below is unreachable for the same reason as the store-slot copy's:
-            # `_pp_incdir` <= 480 B (PP_SCAN_INCDIR) + '/' + `path` <= 767 B. (6.6.17)
+            # 6.6.17: refused by name when it does not fit, as the store-slot copy above.
+            if (_rf_fits(path, 0, _pp_incdir_len + 1) == 0) { return 0 - 1; }
             var ibuf[4096];
             var ii2 = 0;
-            while (ii2 < _pp_incdir_len) { if (ii2 >= 4094) { break; } store8(&ibuf + ii2, load8(&_pp_incdir + ii2)); ii2 = ii2 + 1; }
+            while (ii2 < _pp_incdir_len) { store8(&ibuf + ii2, load8(&_pp_incdir + ii2)); ii2 = ii2 + 1; }
             store8(&ibuf + ii2, 47);
             ii2 = ii2 + 1;
             var pj = 0;
-            while (load8(path + pj) != 0) { if (ii2 >= 4095) { break; } store8(&ibuf + ii2, load8(path + pj)); ii2 = ii2 + 1; pj = pj + 1; }
+            while (load8(path + pj) != 0) { store8(&ibuf + ii2, load8(path + pj)); ii2 = ii2 + 1; pj = pj + 1; }
             store8(&ibuf + ii2, 0);
             if (SYS_OPEN == 2) { fd = syscall(SYS_OPEN, &ibuf, 0, 0); }
             else { fd = syscall(SYS_OPEN, 0 - 100, &ibuf, 0, 0); }
