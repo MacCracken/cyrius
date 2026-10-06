@@ -32,7 +32,7 @@ V=$(tr -d '[:space:]' < "$R/VERSION")
 H="$T/home"
 mkdir -p "$H/versions/$V/lib" || { echo "FAIL private_per_item_rejected: cannot stage a CYRIUS_HOME under $T"; exit 1; }
 for e in "$R"/lib/*; do ln -s "$e" "$H/versions/$V/lib/" || { echo "FAIL private_per_item_rejected: cannot stage $e"; exit 1; }; done
-[ -e "$H/versions/$V/lib/syscalls.cyr" ] || { echo "FAIL private_per_item_rejected: the staged home has no lib/syscalls.cyr"; exit 1; }
+[ "$(readlink "$H/versions/$V/lib/syscalls.cyr")" = "$R/lib/syscalls.cyr" ] || { echo "FAIL private_per_item_rejected: the staged home's lib/syscalls.cyr is not this tree's ($(readlink "$H/versions/$V/lib/syscalls.cyr"))"; exit 1; }
 
 # axis 1 — the per-item form must HARD ERROR and say why.
 printf 'include "lib/syscalls.cyr"\nprivate fn helper(): i64 { return 7; }\nfn main(): i64 { syscall(60, helper(), 0, 0, 0, 0); return 0; }\n' > "$T/a1.cyr"
