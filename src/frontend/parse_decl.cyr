@@ -1166,6 +1166,26 @@ fn _load_hop(S, noff, beg, idx, sid, off): i64 {
     STI(S, GTI(S) + 1);                 # the field / method name
     return _field_load_on(S, noff, fnoff, beg, h, ps);
 }
+# 6.6.17 — `f().val`, `f().next.val`, `f().m(..)` for `fn f(): *T`, T a struct: the call's result
+# is a pointer, so it is parked as a pointer-mode receiver and the chain continues from it, as for
+# a `*T` local. (It was "cannot take a field of the result of 'f': it does not return a struct".)
+# Cursor just past the callee name at `ti`; 1 = consumed. A generic callee is left to the refusal.
+fn _call_ptr_field(S, ti, fi): i64 {
+    if (fi < 0) { return 0; }
+    if (_fn_rpsid == 0) { return 0; }
+    var psid = L64(_fn_rpsid + fi * 8);
+    if (psid <= 0) { return 0; }
+    if (TOKTYP(S, ti + 1) != 10) { return 0; }
+    STI(S, ti + 1);
+    PARSE_FNCALL(S, TOKVAL(S, ti));
+    var h = _ptr_park(S, psid);
+    STI(S, GTI(S) + 1);                 # `.`
+    var fnoff = PEEKV(S);
+    STI(S, GTI(S) + 1);
+    _field_load_on(S, TOKVAL(S, ti), fnoff, ti, h, psid);
+    _cfo = 0;
+    return 1;
+}
 # The store path's hop: the new receiver in `_hop_idx` / `_hop_sid`, and the leaf field resolved in
 # it (`_rlf_*`, its type returned). A method there (`n.next.m();` — a statement) is parsed as a
 # call and the statement finished: -1000.

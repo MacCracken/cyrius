@@ -531,7 +531,13 @@ fn _fld_ps_get(S, si, fi): i64 {
 # call to it carries (`_call_ret_ps`). `quiet` 1 in pass 1 (`_prescan_fn_sig`), which only
 # records it; pass 2 (PARSE_FN_DEF) refuses an unknown T and sets the fn's return scalar.
 var _fn_rps = 0;   # per fn: the step of a `*T` return, 0 for any other return
+var _fn_rpsid = 0; # per fn: T's struct for a `*T` return (6.6.17, `_call_ptr_field`), else 0
 fn _ret_ptr_annot(S, fi, quiet): i64 {
+    var psid = _ptr_ann_sid(S, GTI(S));
+    if (psid > 0) {
+        if (_fn_rpsid == 0) { _fn_rpsid = alloc(131072 * 8); }
+        S64(_fn_rpsid + fi * 8, psid);
+    }
     var ps = _ptr_annot(S, 0 - 1, quiet);
     SFRS(S, fi, 0 - 8);
     if (_fn_rps == 0) { _fn_rps = alloc(131072 * 8); }

@@ -134,6 +134,19 @@ fn walk_sum(head: *Node): i64 {
 var GP: *Node = 0;
 # A `*Node` LOCAL / GLOBAL takes dot syntax like a `p: *Node` parameter (6.6.17; it was "no struct
 # type in scope"), and `p = q` rebinds the pointer — it never copies the struct.
+# `fn f(): *Node` — the call's result takes dot syntax too (6.6.17; it was "cannot take a field of
+# the result of 'first_of': it does not return a struct").
+fn first_of(h: *Node): *Node { return h; }
+fn call_ptr(): i64 {
+    var a: Node;
+    var b: Node;
+    a.val = 4; b.val = 50; a.next = &b; b.next = 0;
+    assert_eq(first_of(&a).val, 4, "f().val");
+    assert_eq(first_of(&a).next.val, 50, "f().next.val");
+    assert_eq(first_of(&a).twice(), 8, "f().twice()");
+    assert_eq(first_of(&a).next.val + 1, 51, "f().next.val + 1");
+    return 0;
+}
 fn ptr_locals(): i64 {
     var a: Node;
     var b: Node;
@@ -182,6 +195,7 @@ alloc_init();
 layout();
 chains();
 ptr_locals();
+call_ptr();
 var tn = Node { 7, 0 };
 tn.next = &tn;
 tn.next.next.val = 9;
