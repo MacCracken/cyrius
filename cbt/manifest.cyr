@@ -1,0 +1,1009 @@
+# ================================================================
+# cbt/manifest.cyr — cyrius.cyml as the build tool's CONFIGURATION (6.6.17, P1)
+# ================================================================
+#
+# WHY THIS FILE EXISTS. The manifest was read partially and inconsistently: some keys were
+# load-bearing, some decorative, and nothing distinguished them. `[build] test` was declared by
+# 41 manifests and read by nothing (kashi's 393 assertions never ran in CI); `[build] defines`
+# was declared by 3 and read by nothing; and v6.5.49's `[build]` fallback shipped INERT because
+# it read `src` while 120 of 125 manifests wrote `entry`. An inert key cannot be observed to be
+# wrong. So every key the docs, the `cyrius init` templates or the ecosystem use is declared
+# ONCE, below, with what reads it — and `cyrius help manifest` prints that table, the guide's
+# table mirrors it, and tests/gates/toolchain/manifest_key_inventory.sh checks the two against
+# each other and against what consumers actually write. CHANGELOG [6.6.17].
+
+# ── THE DECLARED KEY VOCABULARY ───────────────────────────────────
+# One row per key: "section|key|status|synonyms|environment|argument|read by".
+#   status   read    — something in the toolchain reads it
+#            held    — recognised, deliberately NOT read yet; a present key is warned by name
+#            dropped — never read; a present key is warned by name
+#            info    — metadata for people and package recipes; never changes a build
+#   section  `deps.*` / `lib.*` stand for every `[deps.NAME]` / `[lib.PROFILE]`; key `*` for any
+#            name (a `[features]` feature, a `[groups]` group).
+#   synonyms resolved HERE and nowhere else (`entry` first, then `src`).
+# Precedence for every key: argument > environment > manifest > default. A `-` channel means the
+# key has no such rung.
+fn _mf_vocab_a(i): i64 {
+    if (i == 0) { return "package|name|read|-|-|-|bundle name (cyrius distlib); the cyrius-source-repo check"; }
+    if (i == 1) { return "package|version|read|-|-|-|CYRIUS_PKG_VERSION (${file:PATH} expands)"; }
+    if (i == 2) { return "package|cyrius|read|-|-|-|the toolchain pin: re-exec into versions/<v>, its stdlib"; }
+    if (i == 3) { return "package|description|info|-|-|-|people and package recipes"; }
+    if (i == 4) { return "package|license|info|-|-|-|people and package recipes"; }
+    if (i == 5) { return "package|language|info|-|-|-|people and package recipes"; }
+    if (i == 6) { return "package|repository|info|-|-|-|people and package recipes"; }
+    if (i == 7) { return "build|entry|read|src|-|<source>|cyrius build, cyrius package: the source"; }
+    if (i == 8) { return "build|output|read|-|-|<output>|cyrius build, cyrius package: the output (a default)"; }
+    if (i == 9) { return "build|test|read|-|-|<file>...|bare cyrius test: these (file / dir / list), then tests/"; }
+    if (i == 10) { return "build|modules|read|-|-|-|every compile: these files prepended before the entry"; }
+    if (i == 11) { return "build|dce|read|-|CYRIUS_DCE|--dce|cyrius build: dead-code elimination (bool)"; }
+    if (i == 12) { return "build|strict|held|-|-|--strict|has had no effect since 6.3.2: a reachable undefined function is an error by default; --allow-undef downgrades it"; }
+    if (i == 13) { return "build|defines|read|-|CYRIUS_DEFINES|-D|cyrius build: one #define per name"; }
+    if (i == 14) { return "build|target|held|-|-|-|pass --target / --aarch64 / --win / --agnos on the command line"; }
+    if (i == 15) { return "build|features|dropped|-|-|-|features are [features] + --features"; }
+    if (i == 16) { return "coverage|programs|read|-|-|--programs|cyrius coverage: RUN programs in the corpus (globs)"; }
+    if (i == 17) { return "sections|base|read|-|-|-|bare-metal builds: the image load base"; }
+    return 0;
+}
+
+fn _mf_vocab_b(i): i64 {
+    if (i == 18) { return "deps|stdlib|read|-|-|-|cyrius deps: stdlib leaves vendored into lib/ and auto-prepended"; }
+    if (i == 19) { return "deps.*|git|read|-|-|-|cyrius deps: the repository to clone"; }
+    if (i == 20) { return "deps.*|tag|read|-|-|-|cyrius deps: the tag to check out"; }
+    if (i == 21) { return "deps.*|path|read|-|-|-|cyrius deps: a local checkout instead of git"; }
+    if (i == 22) { return "deps.*|modules|read|-|-|-|cyrius deps: the files to vendor"; }
+    if (i == 23) { return "deps.*|modular|read|-|-|-|cyrius deps: sub-modules from dist/<name>/"; }
+    if (i == 24) { return "deps.*|requires|read|-|-|-|cyrius deps: stdlib leaves the dep needs in scope"; }
+    if (i == 25) { return "deps.*|optional|read|-|-|--features|cyrius deps: resolve only when a feature names it"; }
+    if (i == 26) { return "deps.*|target|read|-|-|--target|cyrius deps: resolve only for a matching target"; }
+    if (i == 27) { return "lib|modules|read|-|-|-|cyrius distlib: the base bundle"; }
+    if (i == 28) { return "lib.*|modules|read|-|-|<profile>|cyrius distlib <profile>"; }
+    if (i == 29) { return "features|default|read|-|-|--no-default-features|cyrius deps: features on by default"; }
+    if (i == 30) { return "features|*|read|-|-|--features|cyrius deps: a feature and the optional deps it turns on"; }
+    if (i == 31) { return "groups|*|read|-|-|-|cyrius deps: a named group of stdlib leaves"; }
+    if (i == 32) { return "release|bins|read|-|-|-|release.yml, install.sh, cyrius pulsar"; }
+    if (i == 33) { return "release|cross_bins|read|-|-|-|release.yml, install.sh, cyrius pulsar"; }
+    if (i == 34) { return "release|scripts|read|-|-|-|release.yml, install.sh"; }
+    return 0;
+}
+
+fn _mf_vocab(i): i64 {
+    if (i < 18) { return _mf_vocab_a(i); }
+    return _mf_vocab_b(i);
+}
+
+# Field `f` (0-based) of vocabulary row `row`, as a fresh cstr.
+fn _mf_vocab_field(row, f): i64 {
+    var i = 0;
+    var k = 0;
+    while (k < f) {
+        while (load8(row + i) != 0 && load8(row + i) != 124) { i = i + 1; }
+        if (load8(row + i) == 0) { return ""; }
+        i = i + 1;
+        k = k + 1;
+    }
+    var s = i;
+    while (load8(row + i) != 0 && load8(row + i) != 124) { i = i + 1; }
+    var out = alloc(i - s + 1);
+    memcpy(out, row + s, i - s);
+    store8(out + i - s, 0);
+    return out;
+}
+
+# 1 when `key` is one of the comma-separated names in `syns` (a vocabulary synonyms field).
+fn _mf_syn_has(syns, key): i64 {
+    var kl = strlen(key);
+    var i = 0;
+    while (load8(syns + i) != 0) {
+        var s = i;
+        while (load8(syns + i) != 0 && load8(syns + i) != 44) { i = i + 1; }
+        if (i - s == kl && memeq(syns + s, key, kl) == 1) { return 1; }
+        if (load8(syns + i) == 44) { i = i + 1; }
+    }
+    return 0;
+}
+
+# The vocabulary row for `key` in `section`, or 0 when the key is not declared. A declared
+# SYNONYM finds its key's row (`[build] src` is `entry`'s — the first cut warned that `src` "is
+# not a known key" while reading it). A `[deps.NAME]` section looks up `deps.*`, a
+# `[lib.PROFILE]` one `lib.*`; a `*` key matches any name.
+fn _mf_vocab_row(section, key): i64 {
+    var sec = section;
+    if (strlen(section) > 5 && memeq(section, "deps.", 5) == 1) { sec = "deps.*"; }
+    if (strlen(section) > 4 && memeq(section, "lib.", 4) == 1) { sec = "lib.*"; }
+    var wild = 0;
+    var i = 0;
+    var row = _mf_vocab(0);
+    while (row != 0) {
+        if (streq(_mf_vocab_field(row, 0), sec) == 1) {
+            var k = _mf_vocab_field(row, 1);
+            if (streq(k, key) == 1) { return row; }
+            if (_mf_syn_has(_mf_vocab_field(row, 3), key) == 1) { return row; }
+            if (streq(k, "*") == 1) { wild = row; }
+        }
+        i = i + 1;
+        row = _mf_vocab(i);
+    }
+    return wild;
+}
+
+fn _mf_pad(s, w): i64 {
+    var l = strlen(s);
+    sys_write(STDOUT_FD, s, l);
+    while (l < w) { sys_write(STDOUT_FD, " ", 1); l = l + 1; }
+    sys_write(STDOUT_FD, " ", 1);
+    return 0;
+}
+
+# `cyrius help manifest` — the vocabulary, one key per line.
+fn _mf_vocab_print(): i64 {
+    println("cyrius.cyml keys. status: read = something reads it; held = recognised, not read yet");
+    println("(warned when present); dropped = never read (warned when present); info = metadata for");
+    println("people and package recipes, never changes a build.");
+    println("Every key resolves argument > environment > manifest > default; `-` = no such channel.");
+    println("`cyrius build --print-config` shows the value each key resolved to and where it came from.");
+    println("");
+    sys_write(STDOUT_FD, "  ", 2);
+    _mf_pad("section", 12); _mf_pad("key", 12); _mf_pad("status", 8); _mf_pad("synonyms", 8);
+    _mf_pad("environment", 15); _mf_pad("argument", 22);
+    println("read by");
+    var i = 0;
+    var row = _mf_vocab(0);
+    while (row != 0) {
+        var sb = str_builder_new();
+        str_builder_add_cstr(sb, "[");
+        str_builder_add_cstr(sb, _mf_vocab_field(row, 0));
+        str_builder_add_cstr(sb, "]");
+        sys_write(STDOUT_FD, "  ", 2);
+        _mf_pad(str_data(str_builder_build(sb)), 12);
+        _mf_pad(_mf_vocab_field(row, 1), 12);
+        _mf_pad(_mf_vocab_field(row, 2), 8);
+        _mf_pad(_mf_vocab_field(row, 3), 8);
+        _mf_pad(_mf_vocab_field(row, 4), 15);
+        _mf_pad(_mf_vocab_field(row, 5), 22);
+        var rb = _mf_vocab_field(row, 6);
+        sys_write(STDOUT_FD, rb, strlen(rb));
+        sys_write(STDOUT_FD, "\n", 1);
+        i = i + 1;
+        row = _mf_vocab(i);
+    }
+    return 0;
+}
+
+# ================================================================
+# THE READER — one function family for every manifest read in the CLI.
+# ================================================================
+# ⛔ WHY ONE. The CLI carried a separate hand-rolled scanner per key family — `[build]` (32,767-byte
+# cap), `[package] cyrius` / `version` / `name` (32,767 each, three copies), `[sections] base`
+# (32,767), `_auto_deps` (65,535) and `distlib` / `publish` (32,767 and 4,095) — none of which could
+# see a key past its cap: measured, a `[build]` starting at byte 44,000 made `cyrius build` print
+# its usage and exit 1 although the keys were there. Each also had its own value rule: a
+# single-quoted value (`entry = 'src/main.cyr'`) read as absent, and the line walkers had no
+# notion of a multi-line array, so a line inside one that began with `[` read as a section
+# header. Now the manifest is read WHOLE (grown to fit, refused by name past 16 MiB) and parsed by
+# one line walker that steps over every value it is not reading. CHANGELOG [6.6.17].
+
+var _MF_MAX = 16777216;   # a manifest past 16 MiB is refused by name, not read
+var _mf_buf = 0;          # the manifest's TOML header (a CYML body after a `---` line is cut)
+var _mf_len = 0;
+var _mf_state = 0;        # 0 = not read yet, 1 = loaded, 2 = no manifest, 3 = refused
+var _mf_path = 0;
+var _toml_bad = 0;        # set by a getter: the key is PRESENT but its value is malformed / mistyped
+
+fn _toml_eol(buf, n, p): i64 {
+    while (p < n && load8(buf + p) != 10) { p = p + 1; }
+    if (p < n) { return p + 1; }
+    return n;
+}
+
+fn _toml_skip_ws(buf, n, p): i64 {
+    while (p < n) {
+        var c = load8(buf + p);
+        if (c != 32 && c != 9 && c != 13) { return p; }
+        p = p + 1;
+    }
+    return p;
+}
+
+# A bare-key byte: A-Z a-z 0-9 _ - (TOML), plus `.` so a dotted key reads as ONE token and never
+# as its last segment.
+fn _toml_keych(c): i64 {
+    if (c >= 48 && c <= 57) { return 1; }
+    if (c >= 65 && c <= 90) { return 1; }
+    if (c >= 97 && c <= 122) { return 1; }
+    if (c == 95 || c == 45 || c == 46) { return 1; }
+    return 0;
+}
+
+fn _toml_hex(c): i64 {
+    if (c >= 48 && c <= 57) { return c - 48; }
+    if (c >= 97 && c <= 102) { return c - 87; }
+    if (c >= 65 && c <= 70) { return c - 55; }
+    return 0 - 1;
+}
+
+# Append code point `cp` to `out` at `o` as UTF-8; returns the new offset.
+fn _toml_put_cp(out, o, cp): i64 {
+    if (cp < 128) { store8(out + o, cp); return o + 1; }
+    if (cp < 2048) {
+        store8(out + o, 192 | (cp >> 6));
+        store8(out + o + 1, 128 | (cp & 63));
+        return o + 2;
+    }
+    if (cp < 65536) {
+        store8(out + o, 224 | (cp >> 12));
+        store8(out + o + 1, 128 | ((cp >> 6) & 63));
+        store8(out + o + 2, 128 | (cp & 63));
+        return o + 3;
+    }
+    store8(out + o, 240 | (cp >> 18));
+    store8(out + o + 1, 128 | ((cp >> 12) & 63));
+    store8(out + o + 2, 128 | ((cp >> 6) & 63));
+    store8(out + o + 3, 128 | (cp & 63));
+    return o + 4;
+}
+
+# Offset just past the string that opens at buf[p] (`"`, `'`, `"""` or `'''`). An unterminated
+# single-line string stops at its line end.
+fn _toml_skip_string(buf, n, p): i64 {
+    var q = load8(buf + p);
+    if (p + 2 < n && load8(buf + p + 1) == q && load8(buf + p + 2) == q) {
+        var i = p + 3;
+        while (i + 2 < n) {
+            var c = load8(buf + i);
+            if (q == 34 && c == 92) { i = i + 2; continue; }
+            if (c == q && load8(buf + i + 1) == q && load8(buf + i + 2) == q) {
+                i = i + 3;
+                if (i < n && load8(buf + i) == q) { i = i + 1; }     # `""""` / `"""""` close
+                if (i < n && load8(buf + i) == q) { i = i + 1; }
+                return i;
+            }
+            i = i + 1;
+        }
+        return n;
+    }
+    var j = p + 1;
+    while (j < n) {
+        var d = load8(buf + j);
+        if (d == 10) { return j; }
+        if (d == q) { return j + 1; }
+        if (q == 34 && d == 92) { j = j + 1; }
+        j = j + 1;
+    }
+    return n;
+}
+
+# Offset just past the value at buf[p]: a string, an array or inline table (nested, multi-line,
+# with strings and comments inside), or — for a bare token — p itself (the line walker then steps
+# to the end of the line).
+fn _toml_skip_value(buf, n, p): i64 {
+    if (p >= n) { return n; }
+    var c = load8(buf + p);
+    if (c == 34 || c == 39) { return _toml_skip_string(buf, n, p); }
+    if (c != 91 && c != 123) { return p; }
+    var depth = 0;
+    while (p < n) {
+        c = load8(buf + p);
+        if (c == 34 || c == 39) { p = _toml_skip_string(buf, n, p); continue; }
+        if (c == 35) {
+            while (p < n && load8(buf + p) != 10) { p = p + 1; }
+            continue;
+        }
+        if (c == 91 || c == 123) { depth = depth + 1; }
+        if (c == 93 || c == 125) {
+            depth = depth - 1;
+            if (depth == 0) { return p + 1; }
+        }
+        p = p + 1;
+    }
+    return n;
+}
+
+# Parse the line at `p` into `info` (4 x 8 B): kind (0 = blank / comment / not a key line,
+# 1 = `[table]`, 2 = `[[array]]`, 3 = `key = value`), name offset, name length, value offset.
+# Returns where the NEXT line starts — past a multi-line value, so no line inside one is ever
+# taken for a header or a key.
+fn _toml_line(buf, n, p, info): i64 {
+    store64(info, 0);
+    p = _toml_skip_ws(buf, n, p);
+    if (p >= n) { return n; }
+    var c = load8(buf + p);
+    if (c == 91) {
+        var k = 1;
+        var s = p + 1;
+        if (s < n && load8(buf + s) == 91) { k = 2; s = s + 1; }
+        s = _toml_skip_ws(buf, n, s);
+        var e = s;
+        while (e < n && load8(buf + e) != 93 && load8(buf + e) != 10) { e = e + 1; }
+        var t = e;
+        while (t > s && (load8(buf + t - 1) == 32 || load8(buf + t - 1) == 9)) { t = t - 1; }
+        store64(info, k);
+        store64(info + 8, s);
+        store64(info + 16, t - s);
+        return _toml_eol(buf, n, e);
+    }
+    var ks = p;
+    var ke = p;
+    if (c == 34 || c == 39) {
+        var qe = _toml_skip_string(buf, n, p);
+        ks = p + 1;
+        ke = qe - 1;
+        p = qe;
+    } else {
+        while (p < n && _toml_keych(load8(buf + p)) == 1) { p = p + 1; }
+        ke = p;
+    }
+    if (ke <= ks) { return _toml_eol(buf, n, p); }
+    p = _toml_skip_ws(buf, n, p);
+    if (p >= n || load8(buf + p) != 61) { return _toml_eol(buf, n, p); }
+    p = _toml_skip_ws(buf, n, p + 1);
+    store64(info, 3);
+    store64(info + 8, ks);
+    store64(info + 16, ke - ks);
+    store64(info + 24, p);
+    return _toml_eol(buf, n, _toml_skip_value(buf, n, p));
+}
+
+# Offset of the value of `key` in `[section]`, or -1. Names compare WHOLE: `test` is not
+# `test-only`, `name` is not `display-name`, and `[build]` is not `[build.debug]`. The first
+# occurrence wins.
+fn _toml_find(buf, n, section, key): i64 {
+    var info[32];
+    var sl = strlen(section);
+    var kl = strlen(key);
+    var insec = 0;
+    var p = 0;
+    while (p < n) {
+        p = _toml_line(buf, n, p, &info);
+        var kind = load64(&info);
+        if (kind == 1 || kind == 2) {
+            insec = 0;
+            if (kind == 1 && load64(&info + 16) == sl) {
+                if (memeq(buf + load64(&info + 8), section, sl) == 1) { insec = 1; }
+            }
+        } elif (kind == 3 && insec == 1) {
+            if (load64(&info + 16) == kl) {
+                if (memeq(buf + load64(&info + 8), key, kl) == 1) { return load64(&info + 24); }
+            }
+        }
+    }
+    return 0 - 1;
+}
+
+# The keys present in `[section]`, in file order, as a vec of fresh cstrs (empty when the section
+# is absent).
+fn _toml_section_keys(buf, n, section): i64 {
+    var out = vec_new();
+    var info[32];
+    var sl = strlen(section);
+    var insec = 0;
+    var p = 0;
+    while (p < n) {
+        p = _toml_line(buf, n, p, &info);
+        var kind = load64(&info);
+        if (kind == 1 || kind == 2) {
+            insec = 0;
+            if (kind == 1 && load64(&info + 16) == sl) {
+                if (memeq(buf + load64(&info + 8), section, sl) == 1) { insec = 1; }
+            }
+        } elif (kind == 3 && insec == 1) {
+            var kl = load64(&info + 16);
+            var k = alloc(kl + 1);
+            memcpy(k, buf + load64(&info + 8), kl);
+            store8(k + kl, 0);
+            vec_push(out, k);
+        }
+    }
+    return out;
+}
+
+# The single-line string at buf[p] — basic `"…"` (escapes decoded) or literal `'…'` (verbatim:
+# TOML literal strings have NO escapes) — as a fresh cstr, with the offset past its closing quote
+# stored in *endp. 0 when buf[p] is not a quote; 0 with _toml_bad set when the string is
+# unterminated on its line, carries an invalid escape, or is a multi-line `"""` / `'''` string.
+fn _toml_str_at(buf, n, p, endp): i64 {
+    if (p >= n) { return 0; }
+    var q = load8(buf + p);
+    if (q != 34 && q != 39) { return 0; }
+    if (p + 2 < n && load8(buf + p + 1) == q && load8(buf + p + 2) == q) { _toml_bad = 1; return 0; }
+    var e = p + 1;
+    while (e < n) {
+        var c = load8(buf + e);
+        if (c == 10) { _toml_bad = 1; return 0; }
+        if (c == q) { break; }
+        if (q == 34 && c == 92) { e = e + 1; }
+        e = e + 1;
+    }
+    if (e >= n) { _toml_bad = 1; return 0; }
+    var out = alloc(e - p + 1);
+    var o = 0;
+    var i = p + 1;
+    while (i < e) {
+        var b = load8(buf + i);
+        if (q == 34 && b == 92) {
+            var x = load8(buf + i + 1);
+            i = i + 2;
+            if (x == 110) { store8(out + o, 10); o = o + 1; }
+            elif (x == 116) { store8(out + o, 9); o = o + 1; }
+            elif (x == 114) { store8(out + o, 13); o = o + 1; }
+            elif (x == 98) { store8(out + o, 8); o = o + 1; }
+            elif (x == 102) { store8(out + o, 12); o = o + 1; }
+            elif (x == 34 || x == 92) { store8(out + o, x); o = o + 1; }
+            elif (x == 117 || x == 85) {
+                var nd = 4;
+                if (x == 85) { nd = 8; }
+                var cp = 0;
+                var k = 0;
+                while (k < nd) {
+                    if (i + k >= e) { _toml_bad = 1; return 0; }
+                    var h = _toml_hex(load8(buf + i + k));
+                    if (h < 0) { _toml_bad = 1; return 0; }
+                    cp = cp * 16 + h;
+                    k = k + 1;
+                }
+                if (cp > 1114111) { _toml_bad = 1; return 0; }
+                i = i + nd;
+                o = _toml_put_cp(out, o, cp);
+            } else { _toml_bad = 1; return 0; }
+        } else {
+            store8(out + o, b);
+            o = o + 1;
+            i = i + 1;
+        }
+    }
+    store8(out + o, 0);
+    store64(endp, e + 1);
+    return out;
+}
+
+# A string, or an array of strings, at buf[p] as a vec of cstrs — `key = "x"` reads as ["x"].
+# 0 with _toml_bad set for any other value, or an array holding a non-string.
+fn _toml_strs_at(buf, n, p): i64 {
+    var out = vec_new();
+    var e = 0;
+    if (p < n && (load8(buf + p) == 34 || load8(buf + p) == 39)) {
+        var s = _toml_str_at(buf, n, p, &e);
+        if (s == 0) { _toml_bad = 1; return 0; }
+        vec_push(out, s);
+        return out;
+    }
+    if (p >= n || load8(buf + p) != 91) { _toml_bad = 1; return 0; }
+    p = p + 1;
+    while (p < n) {
+        var c = load8(buf + p);
+        if (c == 32 || c == 9 || c == 13 || c == 10 || c == 44) { p = p + 1; continue; }
+        if (c == 35) {
+            while (p < n && load8(buf + p) != 10) { p = p + 1; }
+            continue;
+        }
+        if (c == 93) { return out; }
+        if (c != 34 && c != 39) { _toml_bad = 1; return 0; }
+        var s2 = _toml_str_at(buf, n, p, &e);
+        if (s2 == 0) { _toml_bad = 1; return 0; }
+        vec_push(out, s2);
+        p = e;
+    }
+    _toml_bad = 1;
+    return 0;
+}
+
+# The STRING value of the `key = value` whose key name ends at buf[p] — for the per-key line
+# scanners in cbt/deps.cyr (`[deps.X] path / git / tag / target`). 0 with _toml_bad set when the
+# value is not a single-line TOML string. Those scanners used to skip to the next `"` in the FILE,
+# so `tag = 'v1'` read whatever double-quoted string came next. CHANGELOG [6.6.17].
+fn _toml_value_str_after_key(buf, n, p): i64 {
+    _toml_bad = 0;
+    p = _toml_skip_ws(buf, n, p);
+    if (p >= n || load8(buf + p) != 61) {
+        _toml_bad = 1;
+        return 0;
+    }
+    p = _toml_skip_ws(buf, n, p + 1);
+    var e = 0;
+    var s = _toml_str_at(buf, n, p, &e);
+    if (s == 0) { _toml_bad = 1; }
+    return s;
+}
+
+# 1 when the bytes at p end a bare token (space, `#`, `,`, a closing bracket or the line end).
+fn _toml_tok_end(buf, n, p): i64 {
+    if (p >= n) { return 1; }
+    var c = load8(buf + p);
+    if (c == 32 || c == 9 || c == 13 || c == 10 || c == 35 || c == 44 || c == 93 || c == 125) { return 1; }
+    return 0;
+}
+
+# ── the manifest ──────────────────────────────────────────────────────────────────────────
+# The CYML header ends at a line that starts `---`; everything after it is prose.
+fn _mf_header_len(b, n): i64 {
+    var i = 0;
+    while (i + 3 < n) {
+        if (load8(b + i) == 10 && memeq(b + i + 1, "---", 3) == 1) { return i; }
+        i = i + 1;
+    }
+    return n;
+}
+
+# Load ./cyrius.cyml (legacy: ./cyrius.toml) WHOLE, once per process (nothing in the CLI changes
+# directory, and the one in-process manifest write — `cyrius update`'s toml migration — writes the
+# same TOML). Returns 1 when loaded, 0 when there is no manifest, -1 when it exists and could not
+# be read or is larger than 16 MiB (named once).
+fn _mf_load(): i64 {
+    if (_mf_state == 1) { return 1; }
+    if (_mf_state == 2) { return 0; }
+    if (_mf_state == 3) { return 0 - 1; }
+    var path = "cyrius.cyml";
+    if (file_exists(path) == 0) { path = "cyrius.toml"; }
+    if (file_exists(path) == 0) {
+        _mf_state = 2;
+        return 0;
+    }
+    _mf_path = path;
+    var n = 0;
+    var b = file_read_whole_max(path, _MF_MAX, &n);
+    if (b == 0) {
+        _mf_state = 3;
+        if (n == 0 - 27) { _err_ctx("the manifest is larger than 16 MiB; refusing to read it", path); }
+        else { _err_ctx("cannot read the manifest", path); }
+        return 0 - 1;
+    }
+    _mf_len = _mf_header_len(b, n);
+    store8(b + _mf_len, 0);
+    _mf_buf = b;
+    _mf_state = 1;
+    return 1;
+}
+
+# `[section] key` as a fresh cstr, or 0 when absent (or no manifest). A present key whose value is
+# not a string also answers 0, with _toml_bad set — the caller decides whether that is an error.
+fn _mf_str(section, key): i64 {
+    _toml_bad = 0;
+    if (_mf_load() != 1) { return 0; }
+    var v = _toml_find(_mf_buf, _mf_len, section, key);
+    if (v < 0) { return 0; }
+    var e = 0;
+    var s = _toml_str_at(_mf_buf, _mf_len, v, &e);
+    if (s == 0) { _toml_bad = 1; }
+    return s;
+}
+
+# `[section] key` as 1 / 0; -1 when absent, -2 when present but not `true` / `false`.
+fn _mf_bool(section, key): i64 {
+    _toml_bad = 0;
+    if (_mf_load() != 1) { return 0 - 1; }
+    var v = _toml_find(_mf_buf, _mf_len, section, key);
+    if (v < 0) { return 0 - 1; }
+    if (v + 4 <= _mf_len && memeq(_mf_buf + v, "true", 4) == 1) {
+        if (_toml_tok_end(_mf_buf, _mf_len, v + 4) == 1) { return 1; }
+    }
+    if (v + 5 <= _mf_len && memeq(_mf_buf + v, "false", 5) == 1) {
+        if (_toml_tok_end(_mf_buf, _mf_len, v + 5) == 1) { return 0; }
+    }
+    _toml_bad = 1;
+    return 0 - 2;
+}
+
+# `[section] key` — a string or an array of strings — as a vec of cstrs; 0 when absent, 0 with
+# _toml_bad set when present with another type.
+fn _mf_strs(section, key): i64 {
+    _toml_bad = 0;
+    if (_mf_load() != 1) { return 0; }
+    var v = _toml_find(_mf_buf, _mf_len, section, key);
+    if (v < 0) { return 0; }
+    return _toml_strs_at(_mf_buf, _mf_len, v);
+}
+
+fn _mf_has(section, key): i64 {
+    if (_mf_load() != 1) { return 0; }
+    if (_toml_find(_mf_buf, _mf_len, section, key) < 0) { return 0; }
+    return 1;
+}
+
+# The key `[section] key` was actually read under — `key` itself or, when that is absent, the
+# first synonym the vocabulary declares for it (`[build] src` for `entry`) — or 0 when neither is
+# present. The ONE place synonyms resolve.
+fn _mf_key_used(section, key): i64 {
+    if (_mf_has(section, key) == 1) { return key; }
+    var row = _mf_vocab_row(section, key);
+    if (row == 0) { return 0; }
+    var syn = _mf_vocab_field(row, 3);
+    if (streq(syn, "-") == 1) { return 0; }
+    if (_mf_has(section, syn) == 1) { return syn; }
+    return 0;
+}
+
+# `_mf_str` through the synonym rule.
+fn _mf_key_str(section, key): i64 {
+    var k = _mf_key_used(section, key);
+    if (k == 0) {
+        _toml_bad = 0;
+        return 0;
+    }
+    return _mf_str(section, k);
+}
+
+# ================================================================
+# THE RESOLVED CONFIGURATION — one precedence for every key
+# ================================================================
+# argument > environment > manifest > default, the same for every key (no per-key exceptions; a
+# key with no argument or environment channel simply has no such rung). Resolution writes the
+# lowest rung first and lets each higher one overwrite it, so the order IS the code.
+# `cyrius build --print-config` prints every value with the rung it came from. CHANGELOG [6.6.17].
+var _CFG_DEFAULT = 0;
+var _CFG_MANIFEST = 1;
+var _CFG_ENV = 2;
+var _CFG_ARG = 3;
+var _CFG_N = 12;
+var _CK_ENTRY = 0;
+var _CK_OUTPUT = 1;
+var _CK_DCE = 2;
+var _CK_STRICT = 3;
+var _CK_DEFINES = 4;
+var _CK_TEST = 5;
+var _CK_MODULES = 6;
+var _CK_PROGRAMS = 7;
+var _CK_PKG_NAME = 8;
+var _CK_PKG_VERSION = 9;
+var _CK_PKG_CYRIUS = 10;
+var _CK_SECTIONS_BASE = 11;
+# 1 when the resolved `dce` is on and did NOT come from the environment: compile() then hands cycc
+# CYRIUS_DCE=1, replacing any inherited value (an argument beats CYRIUS_DCE=0).
+var _cfg_dce_inject = 0;
+var _cfg_warned = 0;
+var _cfg_v[16];   # the value: a cstr (0 = unset), a bool, or a vec of cstrs (0 = empty)
+var _cfg_o[16];   # the origin rung
+var _cfg_w[16];   # where on that rung: "[build] src", "CYRIUS_DCE", "--dce", "<source>"
+
+fn _cfg_name(i): i64 {
+    if (i == _CK_ENTRY) { return "build.entry"; }
+    if (i == _CK_OUTPUT) { return "build.output"; }
+    if (i == _CK_DCE) { return "build.dce"; }
+    if (i == _CK_STRICT) { return "build.strict"; }
+    if (i == _CK_DEFINES) { return "build.defines"; }
+    if (i == _CK_TEST) { return "build.test"; }
+    if (i == _CK_MODULES) { return "build.modules"; }
+    if (i == _CK_PROGRAMS) { return "coverage.programs"; }
+    if (i == _CK_PKG_NAME) { return "package.name"; }
+    if (i == _CK_PKG_VERSION) { return "package.version"; }
+    if (i == _CK_PKG_CYRIUS) { return "package.cyrius"; }
+    return "sections.base";
+}
+
+# 0 = string, 1 = bool, 2 = list
+fn _cfg_kind(i): i64 {
+    if (i == _CK_DCE || i == _CK_STRICT) { return 1; }
+    if (i == _CK_DEFINES || i == _CK_TEST || i == _CK_MODULES || i == _CK_PROGRAMS) { return 2; }
+    return 0;
+}
+
+fn _cfg_put(i, v, o, w): i64 {
+    store64(&_cfg_v + i * 8, v);
+    store64(&_cfg_o + i * 8, o);
+    store64(&_cfg_w + i * 8, w);
+    return 0;
+}
+fn _cfg_val(i): i64 { return load64(&_cfg_v + i * 8); }
+fn _cfg_org(i): i64 { return load64(&_cfg_o + i * 8); }
+
+fn _cfg_reset(): i64 {
+    var i = 0;
+    while (i < _CFG_N) {
+        _cfg_put(i, 0, _CFG_DEFAULT, 0);
+        i = i + 1;
+    }
+    return 0;
+}
+
+# "[section] key" — where a manifest value came from.
+fn _cfg_where(section, key): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "[");
+    str_builder_add_cstr(sb, section);
+    str_builder_add_cstr(sb, "] ");
+    str_builder_add_cstr(sb, key);
+    return str_data(str_builder_build(sb));
+}
+
+fn _cfg_bad(section, key, want): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "cyrius.cyml ");
+    str_builder_add_cstr(sb, _cfg_where(section, key));
+    str_builder_add_cstr(sb, " must be ");
+    str_builder_add_cstr(sb, want);
+    _err(str_data(str_builder_build(sb)));
+    return 1;
+}
+
+# Manifest rungs. Each returns 0, or 1 after naming a value of the wrong type.
+fn _cfg_mf_str(i, section, key): i64 {
+    var k = _mf_key_used(section, key);
+    if (k == 0) { return 0; }
+    var v = _mf_str(section, k);
+    if (v == 0) { return _cfg_bad(section, k, "a string"); }
+    _cfg_put(i, v, _CFG_MANIFEST, _cfg_where(section, k));
+    return 0;
+}
+
+fn _cfg_mf_bool(i, section, key): i64 {
+    var b = _mf_bool(section, key);
+    if (b == 0 - 1) { return 0; }
+    if (b < 0) { return _cfg_bad(section, key, "true or false"); }
+    _cfg_put(i, b, _CFG_MANIFEST, _cfg_where(section, key));
+    return 0;
+}
+
+fn _cfg_mf_strs(i, section, key): i64 {
+    var v = _mf_strs(section, key);
+    if (_toml_bad == 1) { return _cfg_bad(section, key, "a string or an array of strings"); }
+    if (v == 0) { return 0; }
+    _cfg_put(i, v, _CFG_MANIFEST, _cfg_where(section, key));
+    return 0;
+}
+
+# The environment value of `name`, or 0 when it is unset or empty. POSIX reads the CLI's own envp
+# (`_envp` — the one every child inherits, so this is what cycc would see); Windows asks
+# GetEnvironmentVariableA.
+fn _cfg_env(name): i64 {
+    #ifdef CYRIUS_TARGET_WIN
+    var wb = alloc(512);
+    var wv = _win_getenv_into(name, wb);
+    if (wv == 0) { return 0; }
+    if (load8(wv) == 0) { return 0; }
+    return wv;
+    #endif
+    #ifndef CYRIUS_TARGET_WIN
+    if (_envp == 0) { return 0; }
+    var nl = strlen(name);
+    var i = 0;
+    while (load64(_envp + i * 8) != 0) {
+        var e = load64(_envp + i * 8);
+        if (memeq(e, name, nl) == 1 && load8(e + nl) == 61) {
+            if (load8(e + nl + 1) == 0) { return 0; }
+            return e + nl + 1;
+        }
+        i = i + 1;
+    }
+    return 0;
+    #endif
+}
+
+# Environment rungs. A bool variable takes `1` (on) or `0` (an explicit OFF that beats the
+# manifest); unset or EMPTY is no rung at all (a CI matrix exporting `CYRIUS_DCE=$dce` with an
+# empty $dce); anything else is refused by name rather than silently read as off — cycc itself
+# treats every value but "1" as off, so `CYRIUS_DCE=true` was a silent no. Returns 0, or 1 after
+# naming the value.
+fn _cfg_env_bool(i, name): i64 {
+    var e = _cfg_env(name);
+    if (e == 0) { return 0; }
+    var b = 0 - 1;
+    if (streq(e, "1") == 1) { b = 1; }
+    if (streq(e, "0") == 1) { b = 0; }
+    if (b < 0) {
+        var sb = str_builder_new();
+        str_builder_add_cstr(sb, name);
+        str_builder_add_cstr(sb, " must be 0 or 1 (or unset)");
+        _err_ctx(str_data(str_builder_build(sb)), e);
+        return 1;
+    }
+    _cfg_put(i, b, _CFG_ENV, name);
+    return 0;
+}
+
+fn _cfg_env_csv(i, name): i64 {
+    var e = _cfg_env(name);
+    if (e == 0) { return 0; }
+    var v = _split_csv(e);
+    if (vec_len(v) == 0) { return 0; }
+    _cfg_put(i, v, _CFG_ENV, name);
+    return 0;
+}
+
+# A define reaches the compile as one `#define NAME` line, so a name that is empty or carries a
+# control byte (a newline would START A NEW SOURCE LINE in the materialized unit) is refused.
+fn _cfg_defines_ok(v, where): i64 {
+    if (v == 0) { return 0; }
+    var i = 0;
+    while (i < vec_len(v)) {
+        var d = vec_get(v, i);
+        var bad = 0;
+        if (load8(d) == 0) { bad = 1; }
+        var j = 0;
+        while (load8(d + j) != 0) {
+            if (load8(d + j) < 32 || load8(d + j) == 127) { bad = 1; }
+            j = j + 1;
+        }
+        if (bad == 1) {
+            _err_ctx("a define is empty or holds a control character", where);
+            return 1;
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# Warn, once, about every key present in `[section]` that nothing reads: a HELD or DROPPED key by
+# name with what to do instead, and a key the vocabulary does not declare at all (a typo reads as
+# silence otherwise — an inert key cannot be observed to be wrong).
+fn _cfg_warn_section(section): i64 {
+    if (_mf_state != 1) { return 0; }
+    var keys = _toml_section_keys(_mf_buf, _mf_len, section);
+    var i = 0;
+    while (i < vec_len(keys)) {
+        var k = vec_get(keys, i);
+        i = i + 1;
+        var row = _mf_vocab_row(section, k);
+        var sb = str_builder_new();
+        str_builder_add_cstr(sb, "cyrius.cyml ");
+        str_builder_add_cstr(sb, _cfg_where(section, k));
+        if (row == 0) {
+            str_builder_add_cstr(sb, " is not a known key and nothing reads it (cyrius help manifest lists them)");
+        } else {
+            var st = _mf_vocab_field(row, 2);
+            if (streq(st, "held") == 1) { str_builder_add_cstr(sb, " is HELD and not read: "); }
+            elif (streq(st, "dropped") == 1) { str_builder_add_cstr(sb, " is DROPPED and ignored: "); }
+            else { continue; }
+            str_builder_add_cstr(sb, _mf_vocab_field(row, 6));
+        }
+        _warn(str_data(str_builder_build(sb)));
+    }
+    return 0;
+}
+
+# Resolve the configuration `cyrius build` acts on. `src_arg` / `out_arg` are its operands (0 when
+# not given). Returns 0, or 1 after naming what is wrong.
+fn _cfg_resolve_build(src_arg, out_arg): i64 {
+    _cfg_reset();
+    if (_mf_load() < 0) { return 1; }
+    if (_cfg_warned == 0) {
+        _cfg_warned = 1;
+        _cfg_warn_section("build");
+    }
+    if (_cfg_mf_str(_CK_ENTRY, "build", "entry") != 0) { return 1; }
+    if (_cfg_mf_str(_CK_OUTPUT, "build", "output") != 0) { return 1; }
+    if (_cfg_mf_bool(_CK_DCE, "build", "dce") != 0) { return 1; }
+    if (_cfg_mf_strs(_CK_DEFINES, "build", "defines") != 0) { return 1; }
+    if (_cfg_defines_ok(_cfg_val(_CK_DEFINES), "cyrius.cyml [build] defines") != 0) { return 1; }
+    if (_cfg_mf_strs(_CK_TEST, "build", "test") != 0) { return 1; }
+    if (_cfg_mf_strs(_CK_MODULES, "build", "modules") != 0) { return 1; }
+    if (_cfg_mf_strs(_CK_PROGRAMS, "coverage", "programs") != 0) { return 1; }
+    if (_cfg_mf_str(_CK_PKG_NAME, "package", "name") != 0) { return 1; }
+    if (_cfg_mf_str(_CK_PKG_VERSION, "package", "version") != 0) { return 1; }
+    # package.version is printed as the BUILD sees it: `${file:PATH}` expanded, and unset (no
+    # CYRIUS_PKG_VERSION at all) when the file it names cannot be read — not the raw template.
+    var pv = _cfg_val(_CK_PKG_VERSION);
+    if (pv != 0) {
+        var pe = _dep_expand_file_interp(pv, strlen(pv));
+        store64(&_cfg_v + _CK_PKG_VERSION * 8, pe);
+        if (pe == 0) {
+            var vsb = str_builder_new();
+            str_builder_add_cstr(vsb, "[package] version ");
+            str_builder_add_cstr(vsb, pv);
+            str_builder_add_cstr(vsb, " does not resolve; the build gets no CYRIUS_PKG_VERSION");
+            store64(&_cfg_w + _CK_PKG_VERSION * 8, str_data(str_builder_build(vsb)));
+        }
+    }
+    if (_cfg_mf_str(_CK_PKG_CYRIUS, "package", "cyrius") != 0) { return 1; }
+    if (_cfg_mf_str(_CK_SECTIONS_BASE, "sections", "base") != 0) { return 1; }
+    if (_cfg_env_bool(_CK_DCE, "CYRIUS_DCE") != 0) { return 1; }
+    _cfg_env_csv(_CK_DEFINES, "CYRIUS_DEFINES");
+    if (_cfg_org(_CK_DEFINES) == _CFG_ENV) {
+        if (_cfg_defines_ok(_cfg_val(_CK_DEFINES), "CYRIUS_DEFINES") != 0) { return 1; }
+    }
+    if (src_arg != 0) { _cfg_put(_CK_ENTRY, src_arg, _CFG_ARG, "<source>"); }
+    if (_cli_has("--dce") == 1) { _cfg_put(_CK_DCE, 1, _CFG_ARG, "--dce"); }
+    if (out_arg != 0) { _cfg_put(_CK_OUTPUT, out_arg, _CFG_ARG, "<output>"); }
+    # `strict` is HELD (cycc --strict has had no effect since 6.3.2); the argument is still
+    # accepted and passed through, the manifest key is warned and not read, and there is no
+    # environment channel — an inert key must not look like a setting.
+    if (_cli_has("--strict") == 1) { _cfg_put(_CK_STRICT, 1, _CFG_ARG, "--strict"); }
+    var defs = _cli_values("-D");
+    if (vec_len(defs) > 0) { _cfg_put(_CK_DEFINES, defs, _CFG_ARG, "-D"); }
+    return 0;
+}
+
+# `[build] test` for a bare `cyrius test` (its argument rung is the operand list, which takes the
+# other path entirely). Returns the declared targets (a vec) or 0, and -1 after naming a value of
+# the wrong type.
+fn _cfg_resolve_test(): i64 {
+    if (_mf_load() < 0) { return 0 - 1; }
+    var v = _mf_strs("build", "test");
+    if (_toml_bad == 1) {
+        _cfg_bad("build", "test", "a path or an array of paths");
+        return 0 - 1;
+    }
+    return v;
+}
+
+# Hand the resolved values to the compile.
+fn _cfg_apply_build(): i64 {
+    _strict = _cfg_val(_CK_STRICT);
+    _cfg_dce_inject = 0;
+    if (_cfg_val(_CK_DCE) == 1 && _cfg_org(_CK_DCE) != _CFG_ENV) { _cfg_dce_inject = 1; }
+    _defines = 0;
+    var d = _cfg_val(_CK_DEFINES);
+    if (d != 0) { if (vec_len(d) > 0) { _defines = d; } }
+    return 0;
+}
+
+fn _cfg_out(s): i64 {
+    sys_write(STDOUT_FD, s, strlen(s));
+    return 0;
+}
+
+fn _cfg_print_value(i): i64 {
+    var v = _cfg_val(i);
+    var k = _cfg_kind(i);
+    if (k == 1) {
+        if (v == 1) { return _cfg_out("true"); }
+        return _cfg_out("false");
+    }
+    if (k == 2) {
+        _cfg_out("[");
+        if (v != 0) {
+            var j = 0;
+            while (j < vec_len(v)) {
+                if (j > 0) { _cfg_out(", "); }
+                _cfg_out("\"");
+                _cfg_out(vec_get(v, j));
+                _cfg_out("\"");
+                j = j + 1;
+            }
+        }
+        return _cfg_out("]");
+    }
+    if (v == 0) { return _cfg_out("(unset)"); }
+    _cfg_out("\"");
+    _cfg_out(v);
+    return _cfg_out("\"");
+}
+
+fn _cfg_print_row(i): i64 {
+    _cfg_out("  ");
+    _cfg_out(_cfg_name(i));
+    _cfg_out(" = ");
+    _cfg_print_value(i);
+    _cfg_out("  (");
+    var o = _cfg_org(i);
+    if (o == _CFG_DEFAULT) { _cfg_out("default"); }
+    if (o == _CFG_MANIFEST) { _cfg_out("manifest"); }
+    if (o == _CFG_ENV) { _cfg_out("environment"); }
+    if (o == _CFG_ARG) { _cfg_out("argument"); }
+    var w = load64(&_cfg_w + i * 8);
+    if (w != 0) {
+        _cfg_out(": ");
+        _cfg_out(w);
+    }
+    _cfg_out(")");
+    if (i == _CK_STRICT) { _cfg_out("  [held: no effect since 6.3.2]"); }
+    _cfg_out("\n");
+    return 0;
+}
+
+# `cyrius build --print-config [<source> [<output>]]` — resolve, print every value with its origin,
+# exit 0 WITHOUT building (and without resolving deps: it runs ahead of the dep resolver).
+fn _cfg_print_config(src_arg, out_arg): i64 {
+    if (_cfg_resolve_build(src_arg, out_arg) != 0) { return 1; }
+    _cfg_out("cyrius build configuration (argument > environment > manifest > default)\n");
+    _cfg_out("  manifest: ");
+    if (_mf_state == 1) { _cfg_out(_mf_path); } else { _cfg_out("(none)"); }
+    _cfg_out("\n");
+    var i = 0;
+    while (i < _CFG_N) {
+        _cfg_print_row(i);
+        i = i + 1;
+    }
+    return 0;
+}
+
+# Windows: set NAME=VALUE on this process, so the cmd.exe that runs the compiler inherits it
+# (there is no envp to hand CreateProcessW here). kernel32!SetEnvironmentVariableA by
+# GetProcAddress — no PE reroute exists for it — as `_win_redirect_to_pinned` does. 0 = set.
+#ifdef CYRIUS_TARGET_WIN
+fn _win_setenv(name, val): i64 {
+    var k32 = syscall(0xF013, "kernel32.dll");                    # GetModuleHandleA
+    var set_env = 0;
+    if (k32 != 0) { set_env = syscall(0xF014, k32, "SetEnvironmentVariableA"); }   # GetProcAddress
+    if (set_env == 0) { return 1; }
+    if ((callptr(set_env, name, val) & 4294967295) == 0) { return 1; }
+    return 0;
+}
+#endif

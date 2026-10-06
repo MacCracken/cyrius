@@ -1,0 +1,53 @@
+[package]
+name = "ark"
+# ⚠ Read from the VERSION file, not restated here — every other repo in the ecosystem
+# uses this form. Hardcoding it made cyrius.cyml a SECOND source of truth and it drifted:
+# VERSION said 1.4.2 while this said 1.4.1 (v6.6.2). Same class as the `.cyrius-toolchain`
+# file removed in the same release.
+version = "${file:VERSION}"
+description = "ark - Cyrius port"
+license = "GPL-3.0-only"
+language = "cyrius"
+cyrius = "6.6.2"
+
+[build]
+entry = "src/main.cyr"
+output = "ark"
+defines = ["ARK_MAIN"]
+
+[deps]
+stdlib = ["string", "fmt", "alloc", "vec", "str", "slice", "syscalls", "io", "args", "assert", "hashmap", "tagged", "fs", "freelist", "chrono", "process", "result", "fnptr", "bench", "bayan", "ct", "random", "keccak", "thread_local", "sankoch", "sync", "trait", "sakshi", "thread", "net", "async", "atomic", "mmap", "dynlib", "fdlopen", "regression", "http", "tls", "ws"]
+
+[deps.sigil]
+git = "https://github.com/MacCracken/sigil.git"
+path = "../sigil"
+tag = "3.12.16"
+modules = ["dist/sigil.cyr"]
+
+[deps.nous]
+git = "https://github.com/MacCracken/nous.git"
+path = "../nous"
+tag = "1.4.0"
+modules = ["dist/nous.cyr"]
+
+# mela — AGNOS marketplace layer (signed/integrity-checked/transparency-logged).
+# 0.9.3 namespaced its public API (mela_*) so it co-bundles with nous without
+# symbol collisions. agnostik + sandhi are mela's transitive deps; sandhi
+# supplies the HTTP/TLS transport for marketplace downloads.
+[deps.mela]
+git = "https://github.com/MacCracken/mela.git"
+path = "../mela"
+tag = "1.0.3"
+modules = ["dist/mela.cyr"]
+
+[deps.agnostik]
+git = "https://github.com/MacCracken/agnostik.git"
+path = "../agnostik"
+tag = "1.6.0"
+modules = ["dist/agnostik.cyr"]
+
+[deps.sandhi]
+git = "https://github.com/MacCracken/sandhi.git"
+path = "../sandhi"
+tag = "1.9.16"
+modules = ["dist/sandhi.cyr"]

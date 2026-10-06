@@ -30,7 +30,7 @@ cyrius = "6.4.62"           # toolchain pin (cycc — the top compiler binary)
 [build]
 entry = "src/main.cyr"
 test = "src/test.cyr"
-output = "kybernet"        # binary name
+output = "build/kybernet"  # a default for a bare `cyrius build`, not an assertion
 
 [deps]
 stdlib = ["string", "fmt", "alloc", "io", "vec", "str", "syscalls", "assert"]

@@ -1848,6 +1848,45 @@ _chk_gate "$ROOT/tests/gates/toolchain/check_driver_skip_is_not_pass.sh"
 # once (tests/tcyr/CORPUS_FLOOR); every CI self-host step uses cross-os-selfhost.sh's fork.
 _chk_gate "$ROOT/tests/gates/toolchain/ci_steps_delegate_to_driver.sh"
 
+# 6.6.17 (P1) — every cyrius.cyml key the ecosystem, the init templates and package-format.md
+# use is declared in `cyrius help manifest` (read / held / dropped / info), and the guide's table
+# says the same. The expected keys come from what consumers write, not from the vocabulary.
+_chk_gate "$ROOT/tests/gates/toolchain/manifest_key_inventory.sh"
+
+# 6.6.17 (P1) — every [build] / [package] / [sections] read goes through ONE reader that reads the
+# WHOLE manifest (refused by name past 16 MiB) and parses values as TOML: a [build] past 64 KiB, a
+# key after a multi-line array, literal / escaped strings, the CYML body, `cyrius package`.
+_chk_gate "$ROOT/tests/gates/toolchain/manifest_one_reader.sh"
+
+# 6.6.17 (P1) — `cyrius build --print-config` prints every value with its origin (argument >
+# environment > manifest > default) and builds / resolves nothing; checked against verbatim
+# consumer manifests, with the expected values parsed from the fixtures by awk.
+_chk_gate "$ROOT/tests/gates/toolchain/build_print_config.sh"
+
+# 6.6.17 (P1) — [build] dce / strict / defines resolve argument > environment > manifest > default
+# at every rung, observed where they land (a stub cycc's argv + CYRIUS_DCE, the program's exit
+# code); mistyped values refused; held target / dropped features / unknown keys warned by name.
+_chk_gate "$ROOT/tests/gates/toolchain/build_config_precedence.sh"
+
+# 6.6.17 (P1) — on Windows the resolved dce / strict reach cycc.exe (CYRIUS_DCE in its
+# environment, --strict on its command line): a PE stub compiler under a private wine prefix.
+# SKIP by name without wine.
+_chk_gate "$ROOT/tests/gates/toolchain/build_config_windows_arm.sh"
+
+# 6.6.17 (P1) — bare `cyrius test` runs [build] test (file / dir / list) first, then tests/, each
+# file once; a missing target is a named failure; absent key = unchanged; an argument wins.
+_chk_gate "$ROOT/tests/gates/toolchain/test_runs_build_test.sh"
+
+# 6.6.17 (P1 m6) — manifest keys compare whole (`dev-stdlib` is not `stdlib`, `test-only` is not
+# `test`) and [deps.NAME] path / git / tag / target are TOML strings: `'…'` reads, a bare value is
+# refused by name, a quoted word in a comment inside an array is not an element.
+_chk_gate "$ROOT/tests/gates/toolchain/toml_key_boundary_and_values.sh"
+
+# 6.6.17 (P5-A) — `cyrius coverage` takes RUN programs as a TEXT corpus ([coverage] programs, or
+# --programs which wins), `*` within one path segment, empty globs named, corpus programs not
+# measured, and --per-entry names which entry references which fn. Execution coverage is v6.7.x.
+_chk_gate "$ROOT/tests/gates/toolchain/coverage_run_programs.sh"
+
 # 6.6.10 (bite 12) — the check driver runs only tools it BUILT from this tree in this run:
 # all nine executables it runs come from its private run dir, planted build/ stubs and a
 # ~/.cyrius/bin copy are ignored, and a tool that does not compile is a FAIL naming it.

@@ -320,69 +320,36 @@ fn run_cx(cyx_path): i64 {
 
 # v6.3.3 #5: parse `[sections] base = "0x.."` from the cwd's cyrius.cyml and build
 # a "CYRIUS_KERNEL_BASE=0x.." env string (alloc'd) for the cycc spawn, or 0 if the
-# block / key is absent. Same line-scan idiom as `_parse_toml_str_array` in cbt/deps.cyr; cbt is
-# cycc-compiled (no cybs limits). Only consulted on bare-metal builds. The `[sections]`
+# block / key is absent. Only consulted on bare-metal builds. The `[sections]`
 # block is bare-metal section-placement control (deliverable #5); today it exposes the
 # image load base — the one knob a freestanding kernel/firmware consumer needs.
 fn _sections_base_env(): i64 {
-    if (file_exists("cyrius.cyml") == 0) { return 0; }
-    var buf = alloc(32768);
-    var n = file_read_all("cyrius.cyml", buf, 32767);
-    if (n <= 0) { return 0; }
-    var pos = 0;
-    while (pos < n) {
-        if (memeq(buf + pos, "[sections]", 10) == 1 && _toml_section_at(buf, n, pos) == 1) { break; }
-        pos = pos + 1;
-    }
-    if (pos >= n) { return 0; }
-    pos = pos + 10;
-    while (pos < n) {
-        while (pos < n && (load8(buf + pos) == 10 || load8(buf + pos) == 32 || load8(buf + pos) == 9)) { pos = pos + 1; }
-        if (pos >= n) { return 0; }
-        if (load8(buf + pos) == 91) { return 0; }   # '[' — next section ends the block
-        if (memeq(buf + pos, "base", 4) == 1) {
-            var after = pos + 4;
-            while (after < n && (load8(buf + after) == 32 || load8(buf + after) == 9)) { after = after + 1; }
-            if (after < n && load8(buf + after) == 61) {   # '='
-                after = after + 1;
-                while (after < n && (load8(buf + after) == 32 || load8(buf + after) == 9)) { after = after + 1; }
-                if (after < n && load8(buf + after) == 34) {   # '"'
-                    after = after + 1;
-                    var out = alloc(64);
-                    var pfx = "CYRIUS_KERNEL_BASE=";
-                    var pi = 0;
-                    while (load8(pfx + pi) != 0) { store8(out + pi, load8(pfx + pi)); pi = pi + 1; }
-                    var vi = 0;
-                    while (after < n && load8(buf + after) != 34 && load8(buf + after) != 10 && vi < 40) {
-                        store8(out + pi + vi, load8(buf + after));
-                        vi = vi + 1; after = after + 1;
-                    }
-                    store8(out + pi + vi, 0);
-                    # Parse the numeric base from the copied "0x.." value (for the D6 report).
-                    _section_base_val = 0;
-                    if (load8(out + pi) == 48 && (load8(out + pi + 1) == 120 || load8(out + pi + 1) == 88)) {
-                        var hp = pi + 2;
-                        var acc = 0;
-                        var hc = load8(out + hp);
-                        while (hc != 0) {
-                            var dd = 0 - 1;
-                            if (hc >= 48 && hc <= 57) { dd = hc - 48; }
-                            elif (hc >= 97 && hc <= 102) { dd = hc - 97 + 10; }
-                            elif (hc >= 65 && hc <= 70) { dd = hc - 65 + 10; }
-                            if (dd < 0) { break; }
-                            acc = acc * 16 + dd;
-                            hp = hp + 1; hc = load8(out + hp);
-                        }
-                        _section_base_val = acc;
-                    }
-                    return out;
-                }
-                return 0;
-            }
+    # 6.6.17: through the one reader (cbt/manifest.cyr) — this was a 32,767-byte scan of its own.
+    var v = _mf_str("sections", "base");
+    if (v == 0) { return 0; }
+    var vl = strlen(v);
+    var out = alloc(vl + 20);
+    memcpy(out, "CYRIUS_KERNEL_BASE=", 19);
+    memcpy(out + 19, v, vl + 1);
+    # Parse the numeric base from the "0x.." value (for the D6 report).
+    _section_base_val = 0;
+    if (load8(v) == 48 && (load8(v + 1) == 120 || load8(v + 1) == 88)) {
+        var hp = 2;
+        var acc = 0;
+        var hc = load8(v + hp);
+        while (hc != 0) {
+            var dd = 0 - 1;
+            if (hc >= 48 && hc <= 57) { dd = hc - 48; }
+            elif (hc >= 97 && hc <= 102) { dd = hc - 97 + 10; }
+            elif (hc >= 65 && hc <= 70) { dd = hc - 65 + 10; }
+            if (dd < 0) { break; }
+            acc = acc * 16 + dd;
+            hp = hp + 1;
+            hc = load8(v + hp);
         }
-        while (pos < n && load8(buf + pos) != 10) { pos = pos + 1; }
+        _section_base_val = acc;
     }
-    return 0;
+    return out;
 }
 
 # v6.4.73 — the manifest auto-prepend, factored out of compile() so it has exactly
@@ -1030,19 +997,36 @@ fn _cc_env_retarget(tv): i64 {
 # 4th parameter when that file is next touched. CHANGELOG [6.5.19].
 #ifdef CYRIUS_TARGET_WIN
 fn _win_compile_spawn_err(cc, source, output, errfile): i64 {
-    # v6.6.6 — sized from the four paths, not a fixed 16 KiB; `_w_cmdbuf` refuses by
+    # 6.6.17: `errfile` may be 0 (stderr stays on the console), and the compiler flags the POSIX
+    # arm puts in argv go on the command line, in the same order — `--strict`, `--allow-undef`
+    # (the distlib bundle self-check, lint's pre-pass), `--syntax-only` (lint's pre-pass).
+    # cycc_win reads its flags from GetCommandLineW (src/main_win.cyr). Before this NONE of them
+    # crossed this arm, so on cyrius.exe lint's pre-pass and distlib's self-check compiled as
+    # ordinary builds. This is the one Windows compile spawn in compile().
+    var fsb = str_builder_new();
+    if (_strict == 1) { str_builder_add_cstr(fsb, " --strict"); }
+    if (_cc_allow_undef == 1) { str_builder_add_cstr(fsb, " --allow-undef"); }
+    if (_cc_syntax_only == 1) { str_builder_add_cstr(fsb, " --syntax-only"); }
+    var fl = str_data(str_builder_build(fsb));
+    var elen = 0;
+    if (errfile != 0) { elen = strlen(errfile); }
+    # v6.6.6 — sized from the paths, not a fixed 16 KiB; `_w_cmdbuf` refuses by
     # name past Windows' 32,767-character command line. See lib/process_win.cyr.
-    var wbuf = _w_cmdbuf(strlen(cc) + strlen(source) + strlen(output) + strlen(errfile));
+    var wbuf = _w_cmdbuf(strlen(cc) + strlen(source) + strlen(output) + elen + strlen(fl));
     if (wbuf == 0) { _err_ctx("compiler spawn", cc); return 1; }
     var o = 0;
     o = _w_append_cstr(wbuf, o, "cmd /s /c \"\"");
     o = _w_append_cstr(wbuf, o, cc);
-    o = _w_append_cstr(wbuf, o, "\" < \"");
+    o = _w_append_cstr(wbuf, o, "\"");
+    o = _w_append_cstr(wbuf, o, fl);
+    o = _w_append_cstr(wbuf, o, " < \"");
     o = _w_append_cstr(wbuf, o, source);
     o = _w_append_cstr(wbuf, o, "\" > \"");
     o = _w_append_cstr(wbuf, o, output);
-    o = _w_append_cstr(wbuf, o, "\" 2> \"");
-    o = _w_append_cstr(wbuf, o, errfile);
+    if (errfile != 0) {
+        o = _w_append_cstr(wbuf, o, "\" 2> \"");
+        o = _w_append_cstr(wbuf, o, errfile);
+    }
     o = _w_append_cstr(wbuf, o, "\"\"");
     _w_terminate(wbuf, o);
     var pi[24];
@@ -1195,8 +1179,17 @@ fn compile(source, output): i64 {
     # path doesn't yet have — tracked for follow-up. See CHANGELOG [6.0.85].
     #ifdef CYRIUS_TARGET_WIN
     var wrc = 0;
-    if (_cc_stderr_to != 0) { wrc = _win_compile_spawn_err(cc, actual_source, output, _cc_stderr_to); }
-    else { wrc = _win_compile_spawn(cc, actual_source, output); }
+    # 6.6.17: a resolved `dce` reaches cycc through the environment it inherits, and `strict`
+    # through its command line — neither crossed this arm before (CYRIUS_DCE only if the user's
+    # own environment held it; `--strict` never), so [build] dce / strict were inert here.
+    if (_cfg_dce_inject == 1) {
+        if (_win_setenv("CYRIUS_DCE", "1") != 0) {
+            if (tmp_src != 0) { sys_unlink(tmp_src); }
+            _err("could not set CYRIUS_DCE=1 for the compiler ([build] dce / --dce)");
+            return 1;
+        }
+    }
+    wrc = _win_compile_spawn_err(cc, actual_source, output, _cc_stderr_to);
     if (tmp_src != 0) { sys_unlink(tmp_src); }
     # v6.6.6 (bite 24 review) — the PE arm's status; see `_cc_last_exit`. `wrc` is what
     # `_win_wait_close` read out of the cmd.exe that ran the compiler, i.e. the compiler's
@@ -1323,18 +1316,26 @@ fn compile(source, output): i64 {
         # cycc reads PIE from its own cmdline or from CYRIUS_PIE=1; the env is the form
         # available here.
         if (_pie_target == 1) { sp_extra = sp_extra + 1; }
+        if (_cfg_dce_inject == 1) { sp_extra = sp_extra + 1; }   # 6.6.17: [build] dce / --dce
         if (_baremetal_target == 1) { sp_extra = sp_extra + 2; }   # CYRIUS_KERNEL + CYRIUS_ELF64_KERNEL
         if (_baremetal_target == 1 && _section_base_env_ptr != 0) { sp_extra = sp_extra + 1; }   # v6.3.3 #5 CYRIUS_KERNEL_BASE
         if (sp_extra > 0) {
             var sp_count = 0;
             while (load64(_envp + sp_count * 8) != 0) { sp_count = sp_count + 1; }
             var sp_envp = alloc((sp_count + sp_extra + 1) * 8);
+            # 6.6.17: an injected CYRIUS_DCE=1 REPLACES an inherited CYRIUS_DCE (an argument beats
+            # CYRIUS_DCE=0 in the environment, and cycc reads the first entry).
             var sp_ej = 0;
+            var sp_ni = 0;
             while (sp_ej < sp_count) {
-                store64(sp_envp + sp_ej * 8, load64(_envp + sp_ej * 8));
+                var sp_e = load64(_envp + sp_ej * 8);
+                if (_cfg_dce_inject == 0 || _cc_pfx(sp_e, "CYRIUS_DCE=") == 0) {
+                    store64(sp_envp + sp_ni * 8, sp_e);
+                    sp_ni = sp_ni + 1;
+                }
                 sp_ej = sp_ej + 1;
             }
-            var sp_ni = sp_count;
+            if (_cfg_dce_inject == 1) { store64(sp_envp + sp_ni * 8, "CYRIUS_DCE=1"); sp_ni = sp_ni + 1; }
             if (_strict_pin == 1) { store64(sp_envp + sp_ni * 8, "CYRIUS_STRICT_PIN=1"); sp_ni = sp_ni + 1; }
             if (_agnos_target == 1) { store64(sp_envp + sp_ni * 8, "CYRIUS_TARGET_AGNOS=1"); sp_ni = sp_ni + 1; }
             if (_win_target == 1) { store64(sp_envp + sp_ni * 8, "CYRIUS_TARGET_WIN=1"); sp_ni = sp_ni + 1; }

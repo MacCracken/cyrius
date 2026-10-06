@@ -1,0 +1,38 @@
+# What the ecosystem's cyrius.cyml files actually declare: <manifests declaring it> <section> <key>.
+# Measured 2026-10-05 over the 126 manifests at ~/Repos/*/cyrius.cyml (TOML header only — a CYML body after
+# a '---' line is prose; comment lines skipped; [deps.NAME] -> deps.*, [lib.PROFILE] -> lib.*). Re-measure with
+# the awk in tests/gates/toolchain/manifest_key_inventory.sh's header. Consumed by that gate: every row must be
+# a key in `cyrius help manifest` — the vocabulary is checked against what consumers WRITE, not against itself.
+3 build defines
+120 build entry
+125 build output
+5 build src
+41 build test
+126 deps stdlib
+74 deps.* git
+75 deps.* modules
+8 deps.* optional
+22 deps.* path
+74 deps.* tag
+2 deps.* target
+1 features accel
+6 features default
+1 features gpu
+1 features hwaccel
+1 features mcp
+1 features sandbox
+1 features scheduler
+1 features spectral
+1 features tpm
+74 lib modules
+20 lib.* modules
+126 package cyrius
+126 package description
+125 package language
+126 package license
+126 package name
+90 package repository
+126 package version
+5 release bins
+4 release cross_bins
+1 release scripts

@@ -1794,6 +1794,109 @@ now refused rather than silently building a do-nothing program, and every form p
 `=== N passed, M failed ===` summary — the single-file form used not to, which made it
 unscriptable.
 
+## Manifest keys (`cyrius.cyml`)
+
+Every key the docs, the `cyrius init` templates or the ecosystem use is declared once in the
+CLI (`cbt/manifest.cyr`) with what reads it; `cyrius help manifest` prints that table and this
+one mirrors it (`tests/gates/toolchain/manifest_key_inventory.sh` checks both against each
+other and against what the ecosystem's manifests actually write). Status: **read** — something
+reads it; **held** — recognised, deliberately not read yet, warned by name when present;
+**dropped** — never read, warned by name when present; **info** — metadata for people and
+package recipes, never changes a build. Synonyms are resolved in that one place: `[build] src`
+is read only when `entry` is absent. (Before 6.6.17 `[build] test` and `[build] defines` were
+declared by 41 and 3 manifests and read by nothing.)
+
+**One precedence for every key: argument > environment > manifest > default.** An operand or
+flag beats an environment variable, which beats the manifest, which beats the built-in default;
+a key with no argument or environment channel (a `—` above) simply has no such rung. The whole
+manifest is read (a manifest past 16 MiB is refused by name) and values are TOML: `"…"` with
+escapes, `'…'` verbatim, `true`/`false`, arrays (multi-line, with comments); a CYML body after
+a `---` line is prose, never configuration. Keys compare whole — `dev-stdlib` is not `stdlib`,
+`test-only` is not `test` — and that holds in `[deps.NAME]` too, where `path` / `git` / `tag` /
+`target` must be TOML strings (`tag = 'v1'` reads `v1`; a bare `tag = v1` is refused by name).
+
+`[build]` carries what used to be retyped on every CI line (6.6.17):
+
+```toml
+[build]
+entry = "programs/smoke.cyr"
+output = "build/sakshi-smoke"
+defines = ["SAKSHI_SMOKE"]   # one `#define NAME` each; -D NAME / CYRIUS_DEFINES=A,B replace the list
+dce = true                   # dead-code elimination; --dce / CYRIUS_DCE=1 (CYRIUS_DCE=0 turns it off)
+```
+
+They configure every `cyrius build` in the project — a bare one AND `cyrius build <other source>
+<out>` (sigil's fuzz loop builds each harness with `-D SIGIL_SMOKE` from its manifest); `-D` on
+`test` / `run` / `bench` stays a command-line choice. `CYRIUS_DCE` takes `1` or `0`; unset or
+empty is no rung at all, and any other value (`CYRIUS_DCE=true`) is refused by name — cycc
+itself reads every value but `1` as off, so it used to be a silent no.
+`[build] test` (a file, a directory, or a list of either — `src/test.cyr` is what `cyrius init`
+writes) is what a bare `cyrius test` runs FIRST, before every `.tcyr` under `tests/`; a file both
+name runs once, and a declared path that does not exist is a named failure. Before 6.6.17
+nothing read the key, so a declared `src/test.cyr` never ran — 41 manifests declared one. A
+mistyped value (`dce = "yes"`) is refused by name, and so is a define holding a control
+character (it would start a new source line in the compiled unit). `[build] target` is **held**
+(pass `--target` / `--aarch64` / `--win` / `--agnos`), `[build] features` is **dropped** (features
+are `[features]` + `--features`), and a key the vocabulary does not know — a typo — is warned
+by name instead of being silently inert; a declared synonym (`src`) is not unknown.
+`[build] strict` is **held** and warned when present: `cycc --strict` has had no effect since
+6.3.2 — a reachable undefined function is an error by default and `--allow-undef` downgrades it
+— so there is nothing for the key to switch. `cyrius build --strict` is still accepted and passed
+through, for scripts that spell it; it changes nothing.
+
+`cyrius build --print-config [<source> [<output>]]` resolves the configuration and prints each
+value with the rung it came from, then exits 0 — it builds nothing and resolves no deps:
+
+```
+$ cyrius build --print-config
+cyrius build configuration (argument > environment > manifest > default)
+  manifest: cyrius.cyml
+  build.entry = "src/main.cyr"  (manifest: [build] src)
+  build.output = "build/hisab"  (manifest: [build] output)
+  build.dce = true  (environment: CYRIUS_DCE)
+  build.strict = false  (default)  [held: no effect since 6.3.2]
+  build.defines = []  (default)
+  ...
+```
+
+| Section | Key | Status | Synonyms | Environment | Argument | Read by |
+|---|---|---|---|---|---|---|
+| `[package]` | `name` | read | — | — | — | bundle name (cyrius distlib); the cyrius-source-repo check |
+| `[package]` | `version` | read | — | — | — | CYRIUS_PKG_VERSION (`${file:PATH}` expands) |
+| `[package]` | `cyrius` | read | — | — | — | the toolchain pin: re-exec into `versions/<v>`, its stdlib |
+| `[package]` | `description` | info | — | — | — | people and package recipes |
+| `[package]` | `license` | info | — | — | — | people and package recipes |
+| `[package]` | `language` | info | — | — | — | people and package recipes |
+| `[package]` | `repository` | info | — | — | — | people and package recipes |
+| `[build]` | `entry` | read | `src` | — | `<source>` | cyrius build, cyrius package: the source |
+| `[build]` | `output` | read | — | — | `<output>` | cyrius build, cyrius package: the output (a default) |
+| `[build]` | `test` | read | — | — | `<file>...` | bare cyrius test: these (file / dir / list), then tests/ |
+| `[build]` | `modules` | read | — | — | — | every compile: these files prepended before the entry |
+| `[build]` | `dce` | read | — | `CYRIUS_DCE` | `--dce` | cyrius build: dead-code elimination (bool) |
+| `[build]` | `strict` | held | — | — | `--strict` | has had no effect since 6.3.2: a reachable undefined function is an error by default; --allow-undef downgrades it |
+| `[build]` | `defines` | read | — | `CYRIUS_DEFINES` | `-D` | cyrius build: one #define per name |
+| `[build]` | `target` | held | — | — | — | pass --target / --aarch64 / --win / --agnos on the command line |
+| `[build]` | `features` | dropped | — | — | — | features are [features] + --features |
+| `[coverage]` | `programs` | read | — | — | `--programs` | cyrius coverage: RUN programs in the corpus (globs) |
+| `[sections]` | `base` | read | — | — | — | bare-metal builds: the image load base |
+| `[deps]` | `stdlib` | read | — | — | — | cyrius deps: stdlib leaves vendored into lib/ and auto-prepended |
+| `[deps.*]` | `git` | read | — | — | — | cyrius deps: the repository to clone |
+| `[deps.*]` | `tag` | read | — | — | — | cyrius deps: the tag to check out |
+| `[deps.*]` | `path` | read | — | — | — | cyrius deps: a local checkout instead of git |
+| `[deps.*]` | `modules` | read | — | — | — | cyrius deps: the files to vendor |
+| `[deps.*]` | `modular` | read | — | — | — | cyrius deps: sub-modules from `dist/<name>/` |
+| `[deps.*]` | `requires` | read | — | — | — | cyrius deps: stdlib leaves the dep needs in scope |
+| `[deps.*]` | `optional` | read | — | — | `--features` | cyrius deps: resolve only when a feature names it |
+| `[deps.*]` | `target` | read | — | — | `--target` | cyrius deps: resolve only for a matching target |
+| `[lib]` | `modules` | read | — | — | — | cyrius distlib: the base bundle |
+| `[lib.*]` | `modules` | read | — | — | `<profile>` | `cyrius distlib <profile>` |
+| `[features]` | `default` | read | — | — | `--no-default-features` | cyrius deps: features on by default |
+| `[features]` | `*` | read | — | — | `--features` | cyrius deps: a feature and the optional deps it turns on |
+| `[groups]` | `*` | read | — | — | — | cyrius deps: a named group of stdlib leaves |
+| `[release]` | `bins` | read | — | — | — | release.yml, install.sh, cyrius pulsar |
+| `[release]` | `cross_bins` | read | — | — | — | release.yml, install.sh, cyrius pulsar |
+| `[release]` | `scripts` | read | — | — | — | release.yml, install.sh |
+
 ## Build Tool & Dependencies
 
 ```sh
@@ -1802,6 +1905,7 @@ cyrius build src/main.cyr build/myapp   # resolves deps + compiles
 cyrius deps                              # manually resolve deps
 cyrius build -v src/main.cyr build/myapp # verbose (shows compiler, binary size)
 cyrius test tests/test.tcyr             # resolve deps + compile + run
+cyrius test                              # [build] test first (6.6.17), then every .tcyr under tests/, each once
 cyrius test a.tcyr b.tcyr -D FEATURE     # 1..N files; -D/-DNAME reaches test/run/bench/fuzz/check too (v6.6.5)
 cyrius run src/main.cyr host 443         # compile + run; everything AFTER the source is the program's argv (v6.6.5)
 cyrius run prog.cyx                      # run cx bytecode via cxvm — arguments are REFUSED (cx has no guest argv yet)
@@ -1816,6 +1920,7 @@ cyrius distlib [profile]                 # bundle src/ modules into dist/{name}.
 cyrius distlib --all                     # regenerate the base bundle AND every [lib.X] profile (v6.5.8)
 cyrius distlib --check                   # verify bundles are current — compares BYTES, writes nothing (v6.5.8)
 cyrius coverage [--full] [--min <pct>]   # reference coverage of src/ (--min 0..100 gates CI; -v or a failed --min names the misses, 6.6.8; `main` is not counted, 6.6.11)
+cyrius coverage --programs 'programs/*_test.cyr' --per-entry   # RUN programs join the corpus (6.6.17); which entry references which fn
 cyrius capacity [--check] [src]          # report compiler capacity / CI gate; no arg = THIS HOST's fork (v6.6.6)
 cyrius pulsar                            # x86-64 LINUX ONLY: rebuild cycc + cross bins + tools, then install
 cyrius lsp                               # build + install cyrius-lsp into ~/.cyrius/bin/
@@ -1856,6 +1961,19 @@ cyrius lsp                               # build + install cyrius-lsp into ~/.cy
 > count. A `src/` whose only public fn is `main` has nothing to measure and gets the
 > "no public functions found … not a pass" error. Pinned by
 > `tests/gates/toolchain/coverage_corpus_and_failopen.sh` axis 20.
+>
+> ⚠ **`coverage` takes RUN programs as a corpus** (6.6.17). A project that tests with
+> self-checking programs (`programs/*_test.cyr`, no `tests/`) read ~0 %: the corpus was
+> `tests/**/*.tcyr` only. `[coverage] programs = ["programs/*_test.cyr"]` in cyrius.cyml, or
+> `--programs <glob>` (repeatable; it replaces the manifest list), adds each matched file to the
+> corpus, counted exactly as a `.tcyr` is — whole identifiers in code, comments and strings
+> blanked. `*` / `?` stay inside one path segment (`programs/*_test.cyr` does not reach
+> `programs/sub/`); a glob that matches nothing, or a program that does not exist, is a named
+> failure; a corpus program is a test, so it is never counted as measured surface. `--per-entry`
+> lists, for every corpus entry, the public fns it references. ⚠ This is TEXT coverage — a
+> reference count, the same measure `.tcyr` corpora get — not execution coverage: building and
+> running instrumented programs (P5-B) is v6.7.x, alongside the bounds-checked build mode.
+> Pinned by `tests/gates/toolchain/coverage_run_programs.sh`.
 >
 > ⚠ **`distlib` regenerates and `--check`s sidecars on an x86-64 Linux host only** (v6.6.11).
 > The `.deps` sidecar is compile-verified against EVERY target — x86-64 Linux, Windows and

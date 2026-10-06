@@ -31,7 +31,14 @@
 # (comments, strings and char literals blanked). Unreferenced names are listed under -v
 # and whenever --min fails. Residual, inherent to NAME-based coverage: a test local or
 # parameter that shares a fn's name still counts. CHANGELOG [6.6.8]
-fn cmd_coverage(full, min_pct, root_arg): i64 {
+# 6.6.17 (P5-A): RUN PROGRAMS join the corpus — `programs` is a vec of globs (`--programs`, else
+# `[coverage] programs`), each matched file read whole, blanked and counted exactly as a .tcyr is.
+# This is TEXT coverage (the same reference count .tcyr corpora get), NOT execution coverage —
+# that is P5-B, v6.7.x. A corpus program is a test, so it leaves the measured surface (the '.'
+# fallback would otherwise count it and let it reference itself). `per_entry` adds the view of
+# which corpus entry references which public fn. rekha, sadish, dhancha, setu and mishran test
+# with programs/*_test.cyr and read ~0%. CHANGELOG [6.6.17]
+fn cmd_coverage(full, min_pct, root_arg, programs, per_entry): i64 {
 
     # Scan root: an explicit callout wins, then lib/ for --full, else the project's own
     # src/ (recursive).
@@ -60,7 +67,22 @@ fn cmd_coverage(full, min_pct, root_arg): i64 {
         if (streq(root, ".") == 1) { println("/, recursive; top-level lib/ + dist/ excluded); reference coverage"); }
         else { println("/, recursive); reference coverage"); }
     }
+    # 6.6.17 (P5-A): expand the RUN-program globs first, so a glob that matches nothing fails
+    # before anything is reported (measuring a corpus that is not there is not a pass).
+    var prog_files = 0;
+    if (programs != 0) {
+        if (vec_len(programs) > 0) {
+            prog_files = _cov_expand_programs(programs);
+            if (prog_files == 0) { return 1; }
+            sys_write(STDOUT_FD, "  corpus: tests/**/*.tcyr + ", 28);
+            fmt_int(vec_len(prog_files));
+            println(" RUN program(s), as text (references, not execution)");
+        }
+    }
     println("");
+    var ent_path = vec_new();                 # corpus entries, for --per-entry
+    var ent_off = vec_new();
+    var ent_len = vec_new();
 
     # Collect all tests/tcyr content into one searchable corpus, via dir_walk +
     # an inline str_ends_with suffix test. (Written to sidestep find_files, which
@@ -138,6 +160,9 @@ fn cmd_coverage(full, min_pct, root_arg): i64 {
                     # so an unclosed string cannot run on into the next file. CHANGELOG [6.6.8]
                     if (n > 0) {
                         _src_blank_noncode(corpus + corpus_len, n);
+                        vec_push(ent_path, str_data(tf));
+                        vec_push(ent_off, corpus_len);
+                        vec_push(ent_len, n);
                         corpus_len = corpus_len + n;
                     }
                     ti = ti + 1;
@@ -146,6 +171,38 @@ fn cmd_coverage(full, min_pct, root_arg): i64 {
                 ti = ti + 1;
             }
         }
+    }
+    # 6.6.17 (P5-A): each RUN program, whole, blanked like a test.
+    var pfi = 0;
+    while (prog_files != 0 && pfi < vec_len(prog_files)) {
+        var pf = vec_get(prog_files, pfi);
+        pfi = pfi + 1;
+        var pn = 0;
+        var pb = file_read_whole(pf, &pn);
+        if (pb == 0) {
+            _err_ctx("coverage: cannot read program", pf);
+            return 1;
+        }
+        while (corpus_len + pn + 1 > corpus_cap) {
+            if (corpus_cap >= 268435456) {
+                _err_ctx("coverage corpus exceeded 256 MiB while reading", pf);
+                return 1;
+            }
+            var gb = alloc(corpus_cap * 2);
+            if (gb == 0) {
+                _err("coverage: out of memory growing the test corpus");
+                return 1;
+            }
+            memcpy(gb, corpus, corpus_len);
+            corpus = gb;
+            corpus_cap = corpus_cap * 2;
+        }
+        memcpy(corpus + corpus_len, pb, pn);
+        _src_blank_noncode(corpus + corpus_len, pn);
+        vec_push(ent_path, pf);
+        vec_push(ent_off, corpus_len);
+        vec_push(ent_len, pn);
+        corpus_len = corpus_len + pn;
     }
     store8(corpus + corpus_len, 0);
     # 6.6.10: ONE pass over the corpus. Every identifier goes into a set once, and each public
@@ -165,6 +222,9 @@ fn cmd_coverage(full, min_pct, root_arg): i64 {
     # src/ root". CHANGELOG [6.6.8]
     var srcs = _cov_sources(root);
     if (srcs == 0) { return 1; }             # 6.6.10: a directory could not be listed (named)
+    if (prog_files != 0) { srcs = _cov_drop_corpus(srcs, prog_files); }
+    var all_path = vec_new();                 # every public fn, for --per-entry
+    var all_name = vec_new();
 
     var total_files = 0;
     var covered_files = 0;
@@ -218,6 +278,10 @@ fn cmd_coverage(full, min_pct, root_arg): i64 {
             if (ns >= 0) {
                 pub_fns = pub_fns + 1;
                 total_fns = total_fns + 1;
+                if (per_entry == 1) {
+                    vec_push(all_path, spath);
+                    vec_push(all_name, str_from_buf(lbuf + ns, fname_len));
+                }
                 # ⛔ 6.6.8: a WHOLE-IDENTIFIER match over a corpus whose comments, strings and
                 # char literals are blanked. A raw substring match counted `check_due` as
                 # referenced by every `check_due_at(` and `str_lt` by a comment naming it, so
@@ -286,6 +350,9 @@ fn cmd_coverage(full, min_pct, root_arg): i64 {
     # Name the misses under -v and whenever the gate fails: a failed gate with only a
     # percentage tells a project nothing about WHAT to cover. CHANGELOG [6.6.8]
     if (_verbose == 1 || gate_fail == 1) { _cov_print_misses(miss_path, miss_name); }
+    if (per_entry == 1) {
+        if (_cov_print_per_entry(corpus, ent_path, ent_off, ent_len, all_path, all_name) != 0) { return 1; }
+    }
     if (min_pct >= 0) {
         if (gate_fail == 1) {
             sys_write(STDERR_FD, "coverage gate FAILED: ", 22);
@@ -372,6 +439,217 @@ fn _cov_print_misses(miss_path, miss_name): i64 {
         mi = mi + 1;
     }
     return 0;
+}
+
+# 6.6.17 (P5-A) — `--per-entry`: for each corpus entry (a .tcyr or a RUN program), the public fns
+# it references — whole identifiers in its CODE, the rule the totals use, read from the entry's
+# own slice of the blanked corpus.
+fn _cov_print_per_entry(corpus, ent_path, ent_off, ent_len, all_path, all_name): i64 {
+    println("");
+    println("-- References by corpus entry --");
+    var ei = 0;
+    while (ei < vec_len(ent_path)) {
+        var off = vec_get(ent_off, ei);
+        var len = vec_get(ent_len, ei);
+        var set = _src_ids_new(len);
+        if (set == 0 || _src_ids_add_text(set, corpus + off, len) != 0) {
+            _err("coverage: out of memory indexing a corpus entry");
+            return 1;
+        }
+        var hit = vec_new();
+        var fi = 0;
+        while (fi < vec_len(all_name)) {
+            var nm = vec_get(all_name, fi);
+            if (_src_ids_has(set, str_data(nm), str_len(nm)) == 1) { vec_push(hit, fi); }
+            fi = fi + 1;
+        }
+        var ep = vec_get(ent_path, ei);
+        sys_write(STDOUT_FD, "  ", 2);
+        sys_write(STDOUT_FD, ep, strlen(ep));
+        sys_write(STDOUT_FD, ": ", 2);
+        fmt_int(vec_len(hit));
+        sys_write(STDOUT_FD, " of ", 4);
+        fmt_int(vec_len(all_name));
+        println(" public fns");
+        var hi = 0;
+        while (hi < vec_len(hit)) {
+            var k = vec_get(hit, hi);
+            var sp = vec_get(all_path, k);
+            var sn = vec_get(all_name, k);
+            sys_write(STDOUT_FD, "      ", 6);
+            sys_write(STDOUT_FD, sp, strlen(sp));
+            sys_write(STDOUT_FD, ": ", 2);
+            sys_write(STDOUT_FD, str_data(sn), str_len(sn));
+            println("");
+            hi = hi + 1;
+        }
+        ei = ei + 1;
+    }
+    return 0;
+}
+
+# A corpus program is a TEST, not measured surface: drop every source path (a vec of Str) that
+# names one of `progs` (normalized cstrs).
+fn _cov_drop_corpus(srcs, progs): i64 {
+    var out = vec_new();
+    var i = 0;
+    while (i < vec_len(srcs)) {
+        var sp = vec_get(srcs, i);
+        i = i + 1;
+        var np = _test_norm(str_data(sp));
+        var keep = 1;
+        var j = 0;
+        while (j < vec_len(progs)) {
+            if (streq(vec_get(progs, j), np) == 1) { keep = 0; }
+            j = j + 1;
+        }
+        if (keep == 1) { vec_push(out, sp); }
+    }
+    return out;
+}
+
+fn _cov_has_wild(p): i64 {
+    var i = 0;
+    while (load8(p + i) != 0) {
+        if (load8(p + i) == 42 || load8(p + i) == 63) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# Shell-glob match of cstr `s` against `pat`: `*` is any run and `?` any one byte, NEITHER crossing
+# a `/` (so `programs/*_test.cyr` does not reach programs/sub/). 1 or 0.
+fn _cov_glob(pat, s): i64 {
+    var pi = 0;
+    var si = 0;
+    var sp = 0 - 1;
+    var ss = 0 - 1;
+    while (load8(s + si) != 0) {
+        var pc = load8(pat + pi);
+        var sc = load8(s + si);
+        if (pc == 42) {
+            sp = pi;
+            ss = si;
+            pi = pi + 1;
+            continue;
+        }
+        if (pc != 0 && (pc == sc || (pc == 63 && sc != 47))) {
+            pi = pi + 1;
+            si = si + 1;
+            continue;
+        }
+        if (sp >= 0 && load8(s + ss) != 47) {
+            ss = ss + 1;
+            si = ss;
+            pi = sp + 1;
+            continue;
+        }
+        return 0;
+    }
+    while (load8(pat + pi) == 42) { pi = pi + 1; }
+    if (load8(pat + pi) == 0) { return 1; }
+    return 0;
+}
+
+fn _cov_cstr_cmp(a, b): i64 {
+    var i = 0;
+    while (1 == 1) {
+        var ca = load8(a + i);
+        var cb = load8(b + i);
+        if (ca != cb) { return ca - cb; }
+        if (ca == 0) { return 0; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn _cov_push_unique(v, p): i64 {
+    var i = 0;
+    while (i < vec_len(v)) {
+        if (streq(vec_get(v, i), p) == 1) { return 0; }
+        i = i + 1;
+    }
+    vec_push(v, p);
+    return 1;
+}
+
+# Files under `dir` matching `pat`, descending at most `depth` more directory levels (a `*` never
+# crosses a `/`, so the pattern's own `/` count bounds the walk). 0, or 1 after naming a directory
+# that could not be listed.
+fn _cov_glob_walk(dir, depth, pat, out): i64 {
+    var ents = _cbt_list_dir(dir, "its programs were NOT read");
+    if (ents == 0) { return 1; }
+    var i = 0;
+    while (i < vec_len(ents)) {
+        var nm = str_data(vec_get(ents, i));
+        i = i + 1;
+        var full = nm;
+        if (streq(dir, ".") == 0) { full = make_path(dir, nm); }
+        if (is_dir(str_from(full)) == 1) {
+            if (depth > 0 && is_symlink(str_from(full)) == 0) {
+                if (_cov_glob_walk(full, depth - 1, pat, out) != 0) { return 1; }
+            }
+        } elif (_cov_glob(pat, full) == 1) {
+            _cov_push_unique(out, full);
+        }
+    }
+    return 0;
+}
+
+# 6.6.17 (P5-A): the RUN programs a list of globs names, sorted and de-duplicated. A literal path
+# must be a file; a glob must match at least one — either miss is a named failure (0), because a
+# typo'd glob would otherwise drop the whole programs corpus and the percentage with it.
+fn _cov_expand_programs(pats): i64 {
+    var out = vec_new();
+    var i = 0;
+    while (i < vec_len(pats)) {
+        var pat = _test_norm(vec_get(pats, i));
+        i = i + 1;
+        if (_cov_has_wild(pat) == 0) {
+            if (file_exists(pat) == 0 || is_dir(str_from(pat)) == 1) {
+                _err_ctx("coverage: no such program (--programs / [coverage] programs)", pat);
+                return 0;
+            }
+            _cov_push_unique(out, pat);
+            continue;
+        }
+        # the literal directory before the first wildcard, and how many `/` follow it
+        var w = 0;
+        while (load8(pat + w) != 42 && load8(pat + w) != 63) { w = w + 1; }
+        var cut = 0 - 1;
+        var k = 0;
+        while (k < w) {
+            if (load8(pat + k) == 47) { cut = k; }
+            k = k + 1;
+        }
+        var dir = ".";
+        if (cut > 0) {
+            dir = alloc(cut + 1);
+            memcpy(dir, pat, cut);
+            store8(dir + cut, 0);
+        }
+        var depth = 0;
+        k = cut + 1;
+        while (load8(pat + k) != 0) {
+            if (load8(pat + k) == 47) { depth = depth + 1; }
+            k = k + 1;
+        }
+        var m = vec_new();
+        if (is_dir(str_from(dir)) == 1) {
+            if (_cov_glob_walk(dir, depth, pat, m) != 0) { return 0; }
+        }
+        if (vec_len(m) == 0) {
+            _err_ctx("coverage: this programs glob matches no file", pat);
+            return 0;
+        }
+        var mi = 0;
+        while (mi < vec_len(m)) {
+            _cov_push_unique(out, vec_get(m, mi));
+            mi = mi + 1;
+        }
+    }
+    vec_sort_by(out, &_cov_cstr_cmp);
+    return out;
 }
 
 # ================================================================

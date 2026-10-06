@@ -9,7 +9,7 @@ cyrius = "{CYRIUS_VER}"
 [build]
 entry = "src/main.cyr"
 test = "src/test.cyr"
-output = "{PROJ}"
+output = "build/{PROJ}"
 
 [deps]
 stdlib = ["string", "fmt", "alloc", "io", "vec", "str", "syscalls", "assert", "bench"]

@@ -26,6 +26,8 @@ include "cbt/core.cyr"
 # v6.6.5: THE ONE ARGUMENT RULE — after core (it reads core's globals), before build
 # (compile() reads _pie_target).
 include "cbt/cli_args.cyr"
+# 6.6.17: the manifest reader — before build (compile() reads its resolved configuration).
+include "cbt/manifest.cyr"
 include "cbt/build.cyr"
 include "cbt/commands.cyr"
 include "cbt/project.cyr"
@@ -98,6 +100,7 @@ fn usage(): i64 {
     println("  which                           show path to cycc");
     println("  hooks install                   install the build-artifact pre-commit hook");
     println("  help                            show this help");
+    println("  help manifest                   list the cyrius.cyml keys: what reads each, and which are held / dropped");
     return 0;
 }
 
@@ -578,6 +581,12 @@ fn main(): i64 {
     # The BEGIN/END markers are the gate's parse anchors: keep the verbs between
     # them and keep every OTHER streq(cmd, ...) a real dispatch site.
     # CHANGELOG [6.5.19].
+    # 6.6.17: `cyrius build --print-config` resolves the configuration and prints it, then exits
+    # WITHOUT building — so it runs here, ahead of the dep resolver below, which writes lib/.
+    if (streq(cmd, "build") == 1 && _cli_has("--print-config") == 1) {
+        if (_cli_operands_ok("build", 0, 2) == 0) { return 1; }
+        return _cfg_print_config(_cli_pos_at(0), _cli_pos_at(1));
+    }
     # AUTO_DEPS_VERBS BEGIN
     if (streq(cmd, "build") == 1 || streq(cmd, "run") == 1 || streq(cmd, "test") == 1 || streq(cmd, "tests") == 1 || streq(cmd, "bench") == 1 || streq(cmd, "fuzz") == 1 || streq(cmd, "soak") == 1 || streq(cmd, "smoke") == 1 || streq(cmd, "check") == 1 || streq(cmd, "audit") == 1 || streq(cmd, "capacity") == 1 || streq(cmd, "distlib") == 1 || streq(cmd, "doctest") == 1 || streq(cmd, "publish") == 1 || streq(cmd, "package") == 1) {
         # AUTO_DEPS_VERBS END
@@ -659,21 +668,16 @@ fn main(): i64 {
         # NAMED "--strict"; `cyrius build s o -DCUDA` used to drop the define; a third
         # operand was ignored. All three are errors or honoured now.
         if (_cli_operands_ok("build", 0, 2) == 0) { return 1; }
-        var b_src = _cli_pos_at(0);
-        var b_out = _cli_pos_at(1);
+        # v6.5.49/.51 — `[build] entry` (synonym `src`) and `[build] output` fill whichever
+        # operand was NOT given; the command line always wins. 6.6.17: every [build] key resolves
+        # through ONE precedence — argument > environment > manifest > default (cbt/manifest.cyr).
+        if (_cfg_resolve_build(_cli_pos_at(0), _cli_pos_at(1)) != 0) { return 1; }
+        _cfg_apply_build();
+        var b_src = _cfg_val(_CK_ENTRY);
+        var b_out = _cfg_val(_CK_OUTPUT);
         _build_paths_from_manifest = 0;
-        # v6.5.49/.51 — fall back to `[build] entry` (legacy synonym `src`) and
-        # `[build] output` in ./cyrius.cyml for whichever argument was NOT given.
-        # The command line always WINS; the manifest is consulted only for the gaps.
-        if (b_src == 0) {
-            b_src = _manifest_build_key("entry", 5);
-            if (b_src == 0) { b_src = _manifest_build_key("src", 3); }
-            _build_paths_from_manifest = 2;
-        }
-        if (b_out == 0) {
-            b_out = _manifest_build_key("output", 6);
-            if (_build_paths_from_manifest == 0) { _build_paths_from_manifest = 1; }
-        }
+        if (_cfg_org(_CK_OUTPUT) == _CFG_MANIFEST) { _build_paths_from_manifest = 1; }
+        if (_cfg_org(_CK_ENTRY) == _CFG_MANIFEST) { _build_paths_from_manifest = 2; }
         if (b_src == 0 || b_out == 0) {
             _cli_usage("build");
             _cli_help_extra("build");
@@ -724,8 +728,14 @@ fn main(): i64 {
         #
         # ONE root, deliberately: tests/tcyr lives UNDER tests/, so walking both
         # recursively would visit every file in it TWICE (axis 7's double-count).
+        # 6.6.17 (P1): `[build] test` runs FIRST when declared, then the tests/ walk — what the
+        # init templates and 25 consumer CIs always said bare `cyrius test` did; each file once.
         _pass = 0; _fail = 0;
         _tests_found = 0;
+        var t_decl = _cfg_resolve_test();
+        if (t_decl == 0 - 1) { return 1; }
+        _tests_seen = vec_new();
+        if (t_decl != 0) { _tests_run_declared(t_decl); }
         if (is_dir(str_from("tests")) == 1) {
             _tests_walk("tests");
         }
@@ -1019,7 +1029,19 @@ fn main(): i64 {
                 return 1;
             }
         }
-        return cmd_coverage(_cli_has("--full"), cov_min, _cli_pos_at(0));
+        # 6.6.17 (P5-A): RUN programs join the corpus — `--programs <glob>` (repeatable) beats
+        # `[coverage] programs` in ./cyrius.cyml, the one precedence every key follows.
+        var cov_progs = _cli_values("--programs");
+        if (vec_len(cov_progs) == 0) {
+            if (_mf_load() < 0) { return 1; }
+            _cfg_warn_section("coverage");
+            cov_progs = _mf_strs("coverage", "programs");
+            if (_toml_bad == 1) {
+                _cfg_bad("coverage", "programs", "a glob or an array of globs");
+                return 1;
+            }
+        }
+        return cmd_coverage(_cli_has("--full"), cov_min, _cli_pos_at(0), cov_progs, _cli_has("--per-entry"));
     }
 
     if (streq(cmd, "doctest") == 1) {
@@ -1143,6 +1165,10 @@ fn main(): i64 {
     if (is_help == 0) { is_help = streq(cmd, "--help"); }
     if (is_help == 0) { is_help = streq(cmd, "-h"); }
     if (is_help == 1) {
+        # 6.6.17: `cyrius help manifest` — the declared cyrius.cyml key vocabulary.
+        if (cmd_idx + 1 < argc()) {
+            if (streq(argv(cmd_idx + 1), "manifest") == 1) { return _mf_vocab_print(); }
+        }
         usage();
         return 0;
     }
