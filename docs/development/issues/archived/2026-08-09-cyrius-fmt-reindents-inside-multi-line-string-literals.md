@@ -126,6 +126,6 @@ one place it is not consulted.
 
 ## Related
 
-`docs/development/proposals/2026-08-10-embed-data-files-as-source-strings.md` — the
+`docs/development/proposals/archived/2026-08-10-embed-data-files-as-source-strings.md` — the
 ergonomics gap that makes projects hand-write multi-line literals in the first place. A
 first-class embed would remove most of the exposure to this bug, but not the bug.

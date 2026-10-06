@@ -6,8 +6,27 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [6.6.19] — 2026-10-06
 
-The fold release: the 12 folded stdlibs the post-6.6.18 wave released are re-vendored, then the fold
-bundles' new requires blocks retire the hand-kept workarounds they made unnecessary.
+The fold release, P2 and real threads on x86 macOS. **Folds (R1–R3)**: the 12 folded stdlibs the post-6.6.18 wave
+released are re-vendored byte-identical from their tags, and their bundles' new requires blocks retire the hand-kept
+workarounds they made unnecessary (`log` / `ws` / `ws_server` include their folds; `tls_native` drops its mirror of
+sigil's leaves). **Compiler (B0b)**: `LEX` interns a string literal through an index of the pool's segments instead of
+a scan of the whole pool — output byte-identical, self_compile **−6.7 %**, and the shape `[embed]` produces (a 1.9 MB
+literal ahead of 3,000 small ones) **11.4 s → ~0.9 s**. **P2, `[embed]`**: `NAME = "path"` in `cyrius.cyml` gives every
+compile the file's bytes as `NAME()` / `NAME_len()`, read at build time, and `cyrius distlib` carries the embeds a
+bundle names — agnosai's 2026-08-10 proposal; four hardening fixes a security review found **before release** (so no
+CVE id is spent). **Threads / async**: x86 macOS starts real threads (T1), and `async_await_readable_ms` exists on
+macOS and Windows (A1) and agnos (A2), where the legacy `async_await_readable` now really waits instead of returning
+at once. Three lanes (intern, embed, threads) after R1–R3 on main. The next free CVE id stays **79**.
+
+**Gate (merged tree):** GATE-LINE-TBD
+
+**Size:** cycc **1,586,184 B** (`.text` **1,405,464**), +4,096 B over 6.6.18's 1,582,088 (`.text` +3,072, B0b's interning
+index — no other lane changes the compiler); `build/cycc-native-aarch64` regenerated, 1,323,392 → **1,323,400 B** (at the
+slot open it still carried the 6.6.18 version string). api-surface **5,827**, unchanged (+3 `async_await_readable_ms`
+peers, −3 duplicate `thread_macos::` rows that T1 hoisted out of the arm64 `#ifdef`). `lib/*.cyr` **106**, unchanged.
+`.tcyr` 481 → **482** (crossos 196 → **197**); shell gates 368 → **372**.
+
+**Bench:** BENCH-TBD (the intern lane measured self_compile 1,000 → 933 ms, median of 11 alternating runs; min 999 → 929).
 
 ### Folds (R1)
 
@@ -64,6 +83,220 @@ bundles' new requires blocks retire the hand-kept workarounds they made unnecess
   row; sandhi's sigil dep undeclared -> RED ("reaches lib/sigil.cyr ... without declaring it").
   `pe_reloc_cap_full_stdlib.sh` extracted that preamble from the parity gate, so the same 28-module list
   now lives in it (truncated to 18 -> axis 0 RED).
+
+### Compiler — string interning by index (B0b)
+
+- **String interning is an index, not a scan of the whole pool.** `LEX` interned every new string literal by
+  comparing it, byte by byte, against EVERY segment of the string pool, so N literals cost N × pool bytes: 3,000 small
+  literals compiled in 573 ms and 9,000 in 4,983 ms (3,000 integer globals: 18 ms), and one 1.9 MB literal placed
+  AHEAD of 3,000 small ones took 11.4 s against 0.92 s placed after them — the shape `[embed]` produces, since cbt
+  writes the embed into the prelude ahead of every other literal. A literal with no NUL is now looked up in a lazily
+  `alloc`'d FNV-1a index of the pool's NUL-delimited segments, keyed to each segment's FIRST offset (`_lex_intern` /
+  `_lex_intern_catchup` / `_lex_intern_find` / `_lex_ix_*`, `src/frontend/lex.cyr`); a literal holding a NUL keeps
+  6.6.15's committed-window scan verbatim (`_lex_intern_scan`). **The output is byte-identical** — for a NUL-free
+  literal the scan's first match is always the first pool segment of equal content — proven by the two-step self-host
+  fixpoint (the 6.6.19-open cycc and the new one build the same compiler from this tree) and by compiling all 481
+  `tests/tcyr` files plus 135 programs / fuzz / bench / cbt sources with both compilers (every binary and every
+  diagnostic identical; the 6 other forks identical too). No heap-map region and no brk change (the index is
+  `alloc`'d, like `_lex_side_put` and `_fvh_*`); the index catches up segment-aligned before each lookup and rebuilds
+  from 0 if the pool is ever wound back below it. `LEX` lost the loop (fewer references for cybs); seed-derive GREEN,
+  and gen1 (cybs's output) compiles the NUL tests and the stdlib tcyr to the same bytes as the new cycc.
+  **self_compile 1,000 → 933 ms (−6.7 %)**; the `[embed]` build gate's 2 MB case 18.2 s → 937 ms.
+  New gate `tests/gates/frontend/string_intern_scale_linear.sh`: N vs 2N literals must cost < 3.0x (tree 1.8x; the old
+  scan 3.8x), the 1.9 MB literal before vs after 3,000 literals < 2.0x (tree 1.0x; old 13.8x), plus semantic rows green
+  on both compilers (identical literals share an address, `"b"` after `"a\0b"` is X+2, the B0a repro, a `#deprecated`
+  message wound out of the pool, the blob's FNV round-trip). Mutation: the scan restored → both ratio rows RED (3.7x,
+  11.6x). Cross-OS self-host OK on pi, ecb, ach and cass.
+
+### Embed — P2 (`[embed]`)
+
+agnosai's proposal (2026-08-10, P2): four consumers (agnosai, agnostic, rekha, sankoch) kept a script that turned a
+data file into a generated `.cyr` and checked it in, so an edited data file shipped stale until someone re-ran it.
+`[embed]` reads the file at build time instead. The guide gains *Embedding data files: [embed]* (E4).
+
+- **`[embed]` is read, and refused by name, through the one manifest reader** (E1). It was ignored without a word: a
+  project declaring `[embed] PRESET = "data/x.json"` built with exit 0, no warning and no `--print-config` row.
+  `cbt/manifest.cyr` `_embed_load` now validates every entry and reads each file ONCE — opened `O_NOFOLLOW`, sized and
+  read from that fd, memoized per process so every unit of a `cyrius test` run sees the same bytes — and refuses,
+  naming `cyrius.cyml [embed] NAME`, the path and the reason: an absolute path, `..`, a `\`, a drive (`C:`), a control
+  byte, **any symlink on the path** and **any `.git` component** (any case, plus the Win32 aliases `.git.` / `GIT~1`:
+  actions/checkout keeps the job token in `.git/config`); a missing file, a directory or a non-regular file; one file
+  over 2,097,150 B or a set whose (len + 1) sum passes 2,097,151 (cycc's string pool, `str_data`, less the NUL `LEX`
+  needs — every entry's size is listed); a NAME that is not `[A-Za-z_][A-Za-z0-9_]{0,63}` or is reserved (119 names:
+  `TOKNAME_BUILTIN`, the `IS_KEYWORD_TOK` keywords, and the identifier-spelled intrinsics `sizeof` / `mulh64` /
+  `fncall0..8`, which sit in neither `util.cyr` table — `fn sizeof()` declares and its call is a parse error); `X`
+  beside `X_len`; a duplicate; and the inline-table / array / `[embed.X]` set forms (explicit entries only).
+  `--print-config` shows `embed = ["PRESET=data/x.json"]  (manifest: [embed])`. New gate
+  `embed_manifest_refusals.sh` (28 rows RED on the 6.6.19-open CLI, which built every one of them);
+  `manifest_key_inventory.sh` axis 6 probes `[embed]` with a real file.
+- **`[embed]` bytes reach source as `NAME()` / `NAME_len()`** (E2). Every compile carries each entry as
+  `fn NAME(): i64 { return "<escaped>"; }` plus `fn NAME_len(): i64 { return N; }`, generated by cbt (`_embed_render`,
+  `cbt/build.cyr`) into the materialized unit right after `#@pkgver` and BEFORE the dep includes and `#@srcline` —
+  line-neutral (an entry error on line 3 still reports `<source>:3`). A function, not a `var`: a top-level string
+  `var` is a deferred runtime store, which an x86 `kernel;` build runs after its program. Generated plain text, never a
+  compiler marker that reads a file (the CVE-45 class). Escaping: 0x20–0x7E raw except `"` and `\`, every other byte
+  `\xHH`, so each literal is one pure-ASCII line no preprocessor rule can see into. Rendered once per process
+  (`cyrius test` compiles many units). Measured: a 2,000,000-byte random embed + stdlib + 3,000 small literals
+  round-trips in 937 ms, against 509 ms for the same bytes hand-written and included last (before B0b: 18.2 s — the
+  embed sits FIRST in the pool and the old interning re-scanned it for every later literal). New gate `embed_build.sh`
+  (12 rows RED on the 6.6.19-open CLI).
+- **`cyrius distlib` carries the embeds a bundle names, and verifies the bundle alone** (E3). `[lib] embed = ["NAME",
+  …]` (base bundle) / `[lib.P] embed` (profile P) write those entries after the bundle header — the same generated
+  text a build prepends — and nothing else rides along (rekha's 1.6 MB face must never reach `dist/rekha.cyr`), so
+  `distlib --check` becomes the freshness gate the consumers' generators hand-rolled: an edited data file names the
+  bundle STALE. An undeclared NAME is refused by name; an EMBED-ONLY profile is legal (`[lib.face] embed = ["FACE"]`
+  with no modules is a bundle of the bytes — rekha's migration; a profile with neither is still "no modules found");
+  `--modular` writes `dist/<pkg>/embed_<NAME>.cyr` with an `embed_<NAME> = []` index row and lists it as a sibling of
+  every module that names the accessor. The bundle is verified ALONE: the per-target verify children AND the
+  in-process self-check (saved / cleared / restored — not a fork) now drop the producer's `[embed]` prelude **and its
+  `[build] modules`**, which `_materialize_source` had prepended whatever `_skip_deps` said — measured on the
+  6.6.19-open CLI, a `[lib.p]` bundle reading a global only a `[build]` module defines verified green (exit 0) and
+  would not compile at a consumer, and the base bundle compiled every module twice. A name still undefined at the
+  converged verify that is a declared embed accessor is REFUSED naming the key and the NAME (6.6.18's unowned report
+  only warns, rightly, for a consumer's hook). New gate `distlib_embed.sh` (12 rows RED on the 6.6.19-open CLI); the
+  14 existing distlib gates stay green. (`cyrius distlib p --check` is refused — `--check` covers every profile, and
+  says so.)
+- **Real hosts:** a 1.9 MB random `[embed]` whose FNV-1a-32 is verified in-program exits 42 on Linux, ecb, ach, pi and
+  cass (under `C:\cyrius-tests`) through the cross-built CLI and compiler; on cass `'C:\x'`, `'\x'` and a junction
+  (`mklink /J`, the PE reparse-point arm of `is_symlink`) are refused by name, exit 1.
+
+**Security hardening (E-S1…E-S4).** A narrow security review of the lane found two MAJOR, one MINOR and three NIT
+issues before the feature shipped; all are fixed here. `[embed]` had never been released, so no CVE id is spent.
+
+- **A `:` anywhere in a path is refused** (E-S1). Only `X:` was refused, so on Windows the NTFS stream forms
+  `.git::$INDEX_ALLOCATION/config` and `.git:$I30:$INDEX_ALLOCATION/config` — whose component text is not `.git` —
+  opened `.git/config` through CreateFile (git's CVE-2019-1352 class; read on cass), and `file:stream` read an
+  alternate data stream. Verified refused on cass through the PE CLI.
+- **An `[embed]` NAME / NAME_len that something in scope already declares is refused** (E-S2): any leaf of the pinned
+  stdlib snapshot (the D1 index), `[build] entry` / `modules`, any `.cyr` under `src/` or `lib/`. "Last definition
+  wins" was silent both ways: the stdlib won in the producer's build (`NAME()` returned ITS result), and in a consumer
+  of a bundle the embed replaced the stdlib fn (`[embed] vec_new` → `vec: alloc failed`, exit 1, a warning only).
+  `[embed] vec` is refused for `vec_len`.
+- **The embed file is opened by walking its path with `openat`** (E-S3) on Linux and x86 macOS — `openat(dirfd,
+  component, O_DIRECTORY | O_NOFOLLOW)` from a handle on the project root, the leaf `O_NOFOLLOW` — closing the window
+  between the per-prefix link check and the open. ⚠ **Residual on Windows and Apple Silicon**: PE keeps the
+  per-component reparse-point check plus a whole-path `O_NOFOLLOW` open, so a directory swapped for a junction between
+  them is followed (the fix, `GetFinalPathNameByHandleW` on the opened handle + containment under the project root,
+  needs a new PE reroute); macOS arm64's `SYS_OPENAT` is rerouted to BSD `open` DROPPING the dirfd (Linux `AT_FDCWD`
+  −100 ≠ Darwin −2, so a straight row to `openat` would break every open), so it uses the same whole-path open until a
+  dirfd-preserving route exists. Both need concurrent write access to the checkout during the build; both are in
+  roadmap.md's *Potential backlog*.
+- **8.3 short names, HFS+-ignorable code points and hard links are refused** (E-S4): any `~` + digit component, git's
+  protectHFS list (U+200C–200F, U+202A–202E, U+206A–206F, U+FEFF), and `st_nlink > 1` from `fstat` on the fd that is
+  read.
+- Real hosts after the fixes: a nested-path 1.9 MB FNV round-trip → 42 on ecb, ach, pi and cass; the hard-link refusal
+  on ecb, ach and pi; `C:\x`, `\x`, a junction and the NTFS stream forms refused on cass.
+
+**Stated limits** (guide + here): the 2 MiB pool is SHARED with the program's own literals (pkgver, stdlib, entry), so
+real embeds stay well under it, and a mix that overflows it falls through to cycc's unnamed "string data buffer full
+(2MB limit)"; explicit entries only — the proposal's `{dir, glob, prefix}` set form and assets over 2 MiB are met
+only as named refusals; every binary of a project (each test binary too) carries every declared embed, even unused
+and even under DCE; `cyrius-lsp` does not read the manifest, so `NAME()` shows as undefined there; a prelude error is
+still attributed to `<source>` (cbt vets names to pre-empt it); symlinks are refused outright (stricter than
+`dir_walk`'s 6.5.12 follow, by decision).
+
+### Threads / async
+
+- **x86 macOS has real threads** (T1). `lib/thread_macos.cyr`'s x86 arm ran every thread body INLINE inside
+  `thread_create` (`THREADS_CONCURRENT` = `CHAN_BLOCKING` = 0, a lock-free serial ring whose `chan_recv` answered 0
+  when empty). It now starts real threads over the raw Darwin routes the static, no-libSystem x86 Mach-O can use:
+  `bsdthread_register` once (success is `r >= 0` — ach answers feature bits 0x400001DF — and −EINVAL means "already
+  registered", which is inherited across fork), `bsdthread_create(..., PTHREAD_START_CUSTOM)` on a 2 MiB mmap'd stack
+  with a `PROT_NONE` guard page, entering a trampoline `_thr_start(pth, port, func, ctl, stk, flags)` whose register
+  map is exactly cyrius's SysV spill order, and `bsdthread_terminate`, which unmaps the thread's own stack (so join
+  never munmaps, and a detached thread strands only its 48-byte control block). Per-thread TLS lives behind the **gs
+  base**, installed with machdep call 3 (`thread_fast_set_cthread_self64`, inline asm, `clc` first); the kernel
+  restores it on every switch, unlike arm64's TPIDR_EL0. The main thread keeps `_tlocal_macos` in place, and a program
+  that never creates a thread (cycc included) never touches gs. `thread_join` / `thread_is_done` /
+  `thread_create_detached` and the `__ulock`-parked locked channel are now shared by both Mach-O arches, the x86 serial
+  ring is deleted, and `THREADS_CONCURRENT` = `CHAN_BLOCKING` = 1 are declared once, unconditionally. The file is
+  guarded by `CYRIUS_TARGET_MACOS` and includes `sync.cyr`, so it still compiles alone on every target. On ach (Intel,
+  macOS 13.7.8) the full `tests/tcyr/crossos` suite passes 196/196 with real concurrency (`thread_runs_concurrently`'s
+  rendezvous, `chan_blocking_threads` 49/49, `thread_tls_slot_isolation`, `sync_mutex_contended`,
+  `freelist_thread_safe`, `tls_first_use_threads`, `fork_then_thread`, `thread_detach`, `tls_native_pem_key_once`).
+  `thread_runs_concurrently.tcyr` now pins `THREADS_CONCURRENT` = `CHAN_BLOCKING` = 1 on macOS (2 failed on the old
+  tree on ach); `macos_arm64_real_threads.sh` axis 6 reads each Mach-O arm's mechanism (x86: `bsdthread_create`, no
+  `fncall1`, the trampoline ends in terminate, register accepts `r >= 0` and −22, nothing else in `lib/` registers) and
+  `tls_window_matches_max_slots.sh` axis 5 forbids any inline-snapshot path in `thread_macos.cyr` and requires the x86
+  `_tlocal_base()` to read the gs header (both RED on the old tree). Closes roadmap.md *Open questions* 3.
+- **`async_await_readable_ms(fd, ms)` on macOS and Windows; the legacy `async_await_readable` really waits there**
+  (A1). The bounded wait existed only in `lib/async.cyr`'s Linux epoll arm, and on macOS and Windows
+  `async_await_readable` was a no-op returning 0 at once — so sandhi's cooperative server (non-blocking listener,
+  EAGAIN, then `async_await_readable(sfd)`) spun at 100 % CPU on both. `lib/async_macos.cyr` and `lib/async_win.cyr`
+  now define it over `fd_wait_ready` (one BSD `poll` on both Mach-O arches; ws2_32 `WSAPoll` on Windows — sockets
+  only, another HANDLE answers 0 at once, as the Windows reactor is socket-only too), returning 1 readable / 0
+  timeout-EINTR-not-open with the Linux contract, and the legacy wrapper is `async_await_readable_ms(fd, -1); return
+  0;` exactly as on Linux. (`fd_wait_ready` is already cross-OS verified, so it was taken over a new kqueue helper;
+  `async_timeout` is untouched.) New `tests/tcyr/crossos/async_await_readable_ms.tcyr` (34 asserts, with a watchdog
+  thread so a wait that ignores its bound FAILS in 30 s instead of hanging — mutation-tested on Linux: exit 3 at
+  30.06 s): an empty socket times out after the bound, one byte / a closed peer read ready at once, an idle listener
+  times out and then reads ready once a client connects, and the unbounded legacy wait on a listener blocks until a
+  helper thread connects 300 ms later. 34/34 on Linux, ach, ecb and cass; on the old tree it does not build for
+  Mach-O or PE. `async_await_readable_ms.sh` axis 7 pins the peers structurally and builds a caller for x86 Mach-O and
+  PE (6 FAILs on the old tree); the gate now also survives `bash -eo pipefail` and honours `$CYCC`.
+  `lib/syscalls_linux_common.cyr`'s change is comment-only (`fd_wait_ready`'s "needs a coroutine" note corrected).
+- **agnos: `async_await_readable_ms` and a real `async_await_readable`** (A2). agnos has no readiness probe that
+  leaves data in place — `sock_accept#57` and `sock_recv#49` both consume, and the kernel's `epoll#21` never sees a
+  conn — so `async_await_readable` was a no-op and the bounded form did not exist; sandhi's cooperative accept loop
+  spun. The socket adapter (`lib/syscalls_x86_64_agnos.cyr`) gains a **readiness stash**: `_agnos_fd_ready(fd)`
+  pre-accepts a listener's pending conn into `_agnos_listen_pend` (per listen fd slot) or peeks ONE byte of a conn —
+  or its EOF — into `_agnos_peek`, keyed by kernel conn id (0..7). `sys_sock_accept` hands a pre-accepted conn out
+  before issuing #57 (so `sock_accept` and `sys_accept4` both consume it); the peeked byte is delivered inside
+  `_agnos_sock_recv_block` — which `sys_read` AND tls_native's `_tn_agnos_read_full` both go through — followed by ONE
+  non-blocking #49 for the rest; the stash is cleared whenever the conn id is closed (`sys_close`, `sys_sock_close`) or
+  handed out again (#47 / #57), and closing a listener closes a stranded pre-accepted conn. `lib/async_agnos.cyr`'s
+  `async_await_readable_ms(fd, ms)` probes, then sleeps (`sleep_ms#41`, 1 → 32 ms backoff capped by the time left)
+  until ready or the deadline, timing it with chrono's monotonic `clock_now_ms` or the naps taken, whichever is larger
+  — so a clock that stands still (a refused boot on agnos ≤ 1.57.6) still reaches the deadline; an fd the probe cannot
+  see (pipe, file, keyboard) answers 1 at once, because agnos 1.57.8+ reads of those block. The legacy wait delegates
+  with no bound. `agnos_peer_fake_kernel.sh` axis 8 (new fixture modes `acclate`, `accnever`, `rcvlate`) drives a late
+  conn, a deadline with nothing arriving, a listener closed with a stashed conn, a late byte read through both
+  `sys_read` and `_agnos_sock_recv_block`, and a conn closed with a byte stashed (14 FAILs on the old tree: the probes
+  do not build); `async_await_readable_ms.sh` axis 7 also pins the agnos peer and builds a caller for agnos. No new
+  syscall number, no kernel change. ⚠ Verified under the PTRACE_SYSEMU fake kernel only — a boot test of sandhi's
+  cooperative server on agnos is filed with agnos.
+- Lane verify: Cross-OS `crossos` 197/197 on ach, ecb, cass and pi; all 7 forks byte-identical against the lane base;
+  seed-derive GREEN.
+
+### Integration
+
+R1–R3 landed on main first (`16502e4d`, `043435e2`, `e302001d`; tcyr 481/481). The three lanes were cut from
+`1ea6757b` and merged in the order intern (`d65484d3`), embed (`a4f53e49` — it merged main at `c7139b74` first, so
+`embed_build.sh`'s axis 6, the 2 MB-embed timing row, went GREEN on B0b: 937 ms vs 509 ms hand-written-last; its
+merged tree: tcyr 481 / 0, toolchain 136 / 0), threads (`f4f054ac`). The integration commit `e804cc44` holds what
+no lane owned: `stdlib_modules_self_sufficient.sh`'s aarch64 floor 86 → **87** (T1 leaves `thread_macos.cyr` empty off
+macOS, so aarch64 counts 87 — the gate's own rule raises the floor with the count), and the
+`tls_window_matches_max_slots` driver row in `programs/checks/main.cyr`, whose text still said macOS had no real
+thread path. `docs/api-surface.snapshot` was regenerated once, after A2.
+
+### Downstream
+
+Nothing here gates the release. Notes, filed in each repo after the tag and never orders — adopting a change is the
+sibling's call at its own pin bump (⛔ none bumps its pin before 6.6.19 is tagged):
+
+- **agnosai** (`scripts/gen-presets.sh` + the checked-in `presets_data.cyr`), **agnostic** (`gen-presets.sh` outright,
+  and the escaping half of `gen-webgui.sh` — its CSP hashing stays), **rekha** (`scripts/face2cyr.py` + the 1.65 MB
+  `fonts/face_data.cyr` → `[lib.face] embed`), **sankoch** (folded stdlib: `scripts/brotli_dict2cyr.py` +
+  `nul-literal-gate.py` retire upstream, then cyrius re-vendors `lib/sankoch.cyr`) — each can retire its python / shell
+  embed generator for `[embed]`.
+- **sigil** — the `_crypto_needs_block` comment ("macOS keep it process-global") is stale: both macOS arches have
+  per-thread TLS. **sandhi** — `_sandhi_server_pool_inline` can test `CHAN_BLOCKING` instead of `CYRIUS_TARGET_LINUX`,
+  and the stop-flag idle path can use `async_await_readable_ms` instead of `sleep_ms` on every target. **agnos** — a
+  non-destructive readiness probe (a blocking epoll over VFS_SOCK, or #57 returning a VFS_SOCK fd) would let the
+  cyrius peer drop A2's stash; and a boot test of sandhi's `run_async` server is asked for.
+
+### Known / not fixed
+
+All in roadmap.md's *Potential backlog*:
+
+- The E-S3 residual above (PE: a `GetFinalPathNameByHandleW` reroute; macOS arm64: an `openat` route that keeps the
+  dirfd).
+- `sizeof` sits in neither of `util.cyr`'s reserved tables (`fn sizeof()` declares; calling it is a parse error) — the
+  `[embed]` reserved list reads `_is_ident_intrinsic` / `_IS_FNCALL_NAME` to cover it.
+- The macOS-arm64 `cyrius` CLI looks for `cycc_aarch64` in `CYRIUS_HOME/bin` (the ecb smoke had to supply one) — check
+  whether that is intended.
+- Some gates leave temp dirs in `TMPDIR` (the 9.9.9 installer staging, `cyrius-<pid>` test dirs).
+- The redefined-fn binding find from the R2 / R3 work (filed at the slot open).
 
 ## [6.6.18] — 2026-10-06
 
