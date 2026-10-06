@@ -35,7 +35,9 @@ _wine_down() {
     rm -rf "$_ws" || true
 }
 trap '_wine_down; rm -rf "$W"' EXIT
-export WINEPREFIX="$WP" WINEDEBUG=-all WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d'
+mkdir -p "$W/whome"
+# wine's own HOME / XDG_CACHE_HOME stay under $W too: a fresh prefix writes $HOME/.cache.
+export WINEPREFIX="$WP" HOME="$W/whome" XDG_CACHE_HOME="$W/whome/.cache" WINEDEBUG=-all WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d'
 FAIL=0
 fail() { echo "  FAIL: $*"; FAIL=$((FAIL + 1)); }
 
