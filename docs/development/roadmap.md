@@ -396,7 +396,6 @@ priority surfaces.
   - P6 S7, poison guard pages — the one way to catch a read that jumps a whole redzone. Constraints: `mprotect`;
     16 KiB pages on Apple arm64; `VirtualProtect` reaches no stdlib path today; agnos `cyr_mprotect` is a no-op, so
     an agnos run must REPORT "unguarded", never claim the coverage.
-  - The guide-example axis for `poison_ab_differential.sh` (the poison-11 bite; the docs lane does not edit `tests/`).
   - `dce_eliminates.sh` exits 7 silently under `bash -eo pipefail` (it passes under `sh`, which is how check.sh runs it).
   - `cbt/commands.cyr`'s comment "dir_list is non-recursive, so fuzz and tests are disjoint" is stale since v6.5.7.
   - Two `check.sh` selectors in parallel in ONE worktree collide on `build/cyrius_check` — run them in parallel only

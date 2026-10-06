@@ -21,6 +21,10 @@
 #      and -D ABPROBE still reaches every leg.
 #   6  (poison-9) the `--poison` banner names alloc() and arenas as COVERED, mentions exit 86,
 #      and no longer says "NOT covered: alloc()"; the ab run adds its two-fill line.
+#   7  (poison-11) the guide's "Fuzzing with --poison" idioms hold: `vec_new_a(poison_allocator())`
+#      works as an Allocator, and a write one byte past a `poison_alloc(16)` block makes the harness
+#      FAIL with the documented `poison: redzone overwrite — seam block` line and exit 86; the same
+#      harness without the write PASSes (anti-vacuous).
 # Old code (a2c60583): `--poison=ab` is not a value fuzz accepts, there is no differential and
 # the banner says alloc() is not covered — axes 1, 3, 4, 5, 6 fail.
 set -eu
@@ -113,5 +117,33 @@ echo "$O1" | grep -q 'NOT covered: alloc()' && fail "axis 6: the banner still sa
 echo "$O1B" | grep -q -- '--poison=ab: each harness is compiled and run twice (fill 0xA5, then 0x5A)' || fail "axis 6: the ab run does not name its two fills"
 echo "$O1" | grep -q -- '--poison=ab: each harness' && fail "axis 6: plain --poison printed the ab line"
 
-echo "PASS: poison_ab_differential (an overread fails A/B and passes plain --poison; clean passes; a bad mode is refused; a one-leg exit fails; the B define never leaks; the banner states the coverage)"
+# ── axis 7 (poison-11): the guide's seam idioms and its documented report line ──────────
+cat > "$P/gseam.fcyr" <<'EOF'
+include "lib/alloc.cyr"
+include "lib/vec.cyr"
+fn main(): i64 {
+    alloc_init();
+    var v = vec_new_a(poison_allocator());
+    vec_push(v, 1);
+    vec_push(v, 2);
+    if (vec_len(v) != 2) { return 2; }
+    var p = poison_alloc(16);
+    store8(p, 1);
+#ifdef GSEAM_OVER
+    store8(p + 16, 1);
+#endif
+    poison_sweep();
+    return 0;
+}
+var r = main();
+syscall(60, r);
+EOF
+rc=0; O7=$(fz gseam.fcyr --poison -D GSEAM_OVER) || rc=$?
+[ "$rc" -ne 0 ] || fail "axis 7: a write past a poison_alloc(16) block passed under --poison"
+echo "$O7" | grep -q 'poison: redzone overwrite — seam block' || fail "axis 7: the documented report line is missing: $(echo "$O7" | grep -i poison | head -3)"
+echo "$O7" | grep -q '86' || fail "axis 7: the harness did not report exit 86: $(echo "$O7" | tail -2)"
+rc=0; O7c=$(fz gseam.fcyr --poison) || rc=$?
+[ "$rc" -eq 0 ] || fail "axis 7: the guide's seam idioms (vec_new_a(poison_allocator()), poison_alloc) FAIL without any overwrite: $(echo "$O7c" | tail -3)"
+
+echo "PASS: poison_ab_differential (an overread fails A/B and passes plain --poison; clean passes; a bad mode is refused; a one-leg exit fails; the B define never leaks; the banner states the coverage; the guide's seam idioms and report line hold)"
 exit 0
