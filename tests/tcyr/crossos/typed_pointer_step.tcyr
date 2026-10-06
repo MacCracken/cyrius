@@ -117,8 +117,31 @@ fn fields_and_returns(): i64 {
 }
 fn ret_pt(): *Pt { return &buf; }
 
+# ── a call's result is a plain value unless the callee declares `: *T` ─────────────────────
+# Before 6.6.17 it carried its LAST ARGUMENT's scale: `f(p) + 1` with `p: *i64` added 8.
+struct Q2 { a; }
+fn f_int(x): i64 { return 100; }
+fn Q2_m(self, x): i64 { return 100; }
+fn g_int<T>(x: T, y): i64 { return 100; }
+fn call_results(): i64 {
+    var p: *i64 = &buf;
+    var q: Q2;
+    q.a = 0;
+    var cl = |x| x;
+    store64(&buf, 0);
+    assert_eq(f_int(p) + 1, 101, "f(p) + 1, p: *i64");
+    assert_eq(load64(p) + 1, 1, "load64(p) + 1");
+    assert_eq(fncall1(&f_int, p) + 1, 101, "fncall1(&f, p) + 1");
+    assert_eq(callptr(cl, p) - p + 1, 1, "callptr(cl, p) - p + 1");
+    assert_eq(q.m(p) + 1, 101, "q.m(p) + 1");
+    assert_eq(g_int<i32>(1, p) + 1, 101, "g<i32>(1, p) + 1");
+    assert_eq(d(ret_pt() + 1, ret_pt()), 24, "a declared `: *Pt` return still steps 24");
+    return 0;
+}
+
 alloc_init();
 locals();
+call_results();
 params(&buf, &buf, &buf, &buf);
 compound(&buf);
 captures();

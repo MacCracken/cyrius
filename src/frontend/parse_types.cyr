@@ -430,11 +430,12 @@ fn _ret_ptr_annot(S, fi, quiet): i64 {
     if (quiet == 0) { _cur_fn_ret_scalar = 0 - 8; }
     return 0;
 }
+# 6.6.17: and 0 for every other callee — the result is a plain value, whatever scale the last
+# argument left (`_call_scale_fix`).
 fn _call_ret_ps(S, fi): i64 {
-    if (fi < 0) { return 0; }
-    if (_fn_rps == 0) { return 0; }
-    var ps = L64(_fn_rps + fi * 8);
-    if (ps > 0) { SPSC(S, ps); }
+    var ps = 0;
+    if (fi >= 0) { if (_fn_rps != 0) { ps = L64(_fn_rps + fi * 8); } }
+    SPSC(S, ps);
     return 0;
 }
 

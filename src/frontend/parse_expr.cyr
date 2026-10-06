@@ -1145,7 +1145,9 @@ fn PARSE_FACTOR(S): i64 {
     _rd_enter(S);
     var _xd0 = _xdepth;
     var _xt0 = PEEKT(S);
+    var _ti0 = GTI(S);
     var _rc = _PARSE_FACTOR_IMPL(S);
+    _call_scale_fix(S, _ti0);   # 6.6.17: a call's result scales by its declared return only
     _rd_exit();
     # 6.6.5 — `syscall(…)` (token 24) is stack-NEUTRAL by construction: it pushes its
     # arguments and every backend's emitter consumes exactly those, leaving the result in
@@ -1437,6 +1439,33 @@ fn _explicit_generic_call(S, noff, fi): i64 {
     _ta_explicit = 1;
     if (_spec >= 0) { PARSE_FNCALL(S, L64(_fnt_names + _spec * 8)); _call_ret_ps(S, _spec); }
     else { PARSE_FNCALL(S, noff); }
+    return 0;
+}
+# ⛔ 6.6.17 — A CALL'S RESULT CARRIED ITS LAST ARGUMENT'S POINTER SCALE. The arguments are parsed
+# as expressions inside the call's factor, and nothing reset the scale the last one left, so with
+# `p: *i64` the value of `f(p) + 1` was f's result + 8, as was `load64(p) + 1`, `fncall1(&f, p) + 1`
+# and `callptr(cl, p) - p` (p scaled by 8 too). Silent wrong values. A call's result now scales
+# only by the callee's DECLARED return type: `fn f(): *T` steps sizeof(T) (`_fn_rps`), anything
+# else — every builtin, `callptr` / `fncallN`, an untyped or scalar return — is a plain value.
+# `ti` is the factor's first token; only a factor that IS one whole call `name(..)` /
+# `name<..>(..)` / `builtin(..)` is judged — one continuing past the `)` (`mk(p).f`) sets its own.
+# The method arm sets its result's scale itself (`_call_ret_ps`). CHANGELOG [6.6.17]
+fn _call_scale_fix(S, ti): i64 {
+    var t = TOKTYP(S, ti);
+    var o = 0 - 1;
+    if (t == 2) { o = _gcall_open(S, ti); }
+    elif (TOKTYP(S, ti + 1) == 10) {
+        if (t == 137) { o = ti + 1; }                       # callptr
+        elif (TOKNAME_BUILTIN(t) != 0) { o = ti + 1; }
+    }
+    if (o < 0) { return 0; }
+    if (GTI(S) != _call_close(S, o) + 1) { return 0; }
+    var ps = 0;
+    if (t == 2) {
+        var fi = FINDFN(S, TOKVAL(S, ti));
+        if (fi >= 0) { if (_fn_rps != 0) { ps = L64(_fn_rps + fi * 8); } }
+    }
+    SPSC(S, ps);
     return 0;
 }
 # After a plain call `name(..)` to fn `fi` (-1: unresolved): a scalar f64 return (sentinel -9) is
