@@ -1,0 +1,138 @@
+# fl_poison_lead_and_live.tcyr — 6.6.18: a poisoned fl block has a LEADING redzone, sits on a
+# live list poison_sweep() walks, and its layout is decoded from the block, not the mode flag.
+#
+# Before 6.6.18 the poisoned fl layout had a trailing redzone only, checked only at fl_free:
+# `load8(p - 1)` read the cls header (0), an underwrite was invisible, and an overwrite of a
+# block that is never freed was never seen. Poisoned-ness must be decoded FROM THE BLOCK
+# because the mode is a run-time toggle — a block allocated in one mode and freed in the
+# other, freed at the wrong header, corrupts the free list (a naive leading-redzone layout
+# hands the same block out twice here).
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/freelist.cyr"
+include "lib/assert.cyr"
+
+var _sizes: i64[9];
+
+fn main(): i64 {
+    alloc_init();
+    poison_trap_set(0);
+    fl_poison_enable();
+    fl_poison_reset();
+    poison_reset();
+    var fill = poison_fill();
+
+    test_group("leading redzone (class + large paths)");
+    var p = fl_alloc(40);
+    var lead = 0;
+    var i = 1;
+    while (i <= 32) { if (load8(p - i) == fill) { lead = lead + 1; } i = i + 1; }
+    assert_eq(lead, 32, "class path: p-1 .. p-32 read the fill");
+    assert_eq(load8(p + 40), fill, "class path: trailing redzone");
+    var q = fl_alloc(10000);
+    lead = 0;
+    i = 1;
+    while (i <= 32) { if (load8(q - i) == fill) { lead = lead + 1; } i = i + 1; }
+    assert_eq(lead, 32, "large path: q-1 .. q-32 read the fill");
+    assert_eq(load8(q + 10000), fill, "large path: trailing redzone");
+
+    test_group("the live sweep sees fl blocks that are never freed");
+    assert_eq(poison_sweep(), 0, "clean: sweep == 0");
+    store8(p + 40, 0x41);
+    assert_eq(poison_sweep(), 1, "a 1-byte overwrite on a never-freed fl block: sweep == 1");
+    store8(p + 40, fill);
+    assert_eq(poison_sweep(), 0, "restored: sweep == 0");
+    store8(q - 1, 0x41);
+    assert_eq(poison_sweep(), 1, "an underwrite into the large block's leading redzone is seen");
+    store8(q - 1, fill);
+    fl_free(q);
+    fl_free(p);
+    fl_poison_reset();
+    assert_eq(poison_sweep(), 0, "freed blocks leave the live list");
+
+    test_group("fill change between alloc and free");
+    var f = fl_alloc(24);
+    var oldf = poison_fill_set(90);
+    fl_free(f);
+    poison_fill_set(oldf);
+    assert_eq(fl_poison_violations(), 0, "no false violation");
+
+    test_group("toggle safety");
+    fl_poison_disable();
+    var a = fl_alloc(40);       # plain
+    fl_poison_enable();
+    var b = fl_alloc(40);       # poisoned
+    fl_free(a);                 # plain block freed with the mode ON
+    fl_poison_disable();
+    fl_free(b);                 # poisoned block freed with the mode OFF
+    fl_poison_enable();
+    assert_eq(fl_poison_violations(), 0, "cross-mode frees are not violations");
+    store64(&_sizes, 8);
+    store64(&_sizes + 8, 24);
+    store64(&_sizes + 16, 50);
+    store64(&_sizes + 24, 100);
+    store64(&_sizes + 32, 200);
+    store64(&_sizes + 40, 400);
+    store64(&_sizes + 48, 900);
+    store64(&_sizes + 56, 1900);
+    store64(&_sizes + 64, 4000);
+    # Long-lived blocks: a duplicate hand-out would overwrite their tags.
+    var keep_on = fl_alloc(50);
+    fl_poison_disable();
+    var keep_off = fl_alloc(50);
+    store64(keep_on, 777001);
+    store64(keep_off, 777002);
+    var dup = 0;
+    var torn = 0;
+    var tag = 1000;
+    var c = 0;
+    while (c < 9) {
+        var sz = load64(&_sizes + c * 8);
+        i = 0;
+        while (i < 2000) {
+            if ((i & 1) == 0) { fl_poison_enable(); } else { fl_poison_disable(); }
+            var x = fl_alloc(sz);
+            if (i % 3 == 0) { fl_poison_enable(); } else { fl_poison_disable(); }
+            var y = fl_alloc(sz);
+            if (x == y) { dup = dup + 1; }
+            if (x == keep_on || x == keep_off || y == keep_on || y == keep_off) { dup = dup + 1; }
+            store64(x, tag);
+            store64(y, tag + 1);
+            if (load64(x) != tag) { torn = torn + 1; }
+            if (load64(y) != tag + 1) { torn = torn + 1; }
+            if (i % 5 < 2) { fl_poison_enable(); } else { fl_poison_disable(); }
+            fl_free(x);
+            if (i % 7 < 3) { fl_poison_enable(); } else { fl_poison_disable(); }
+            fl_free(y);
+            tag = tag + 2;
+            i = i + 1;
+        }
+        c = c + 1;
+    }
+    assert_eq(dup, 0, "2,000 cycles x 9 classes, toggling: no block handed out twice");
+    assert_eq(torn, 0, "no tag torn");
+    assert_eq(load64(keep_on), 777001, "a long-lived poisoned block was never re-issued");
+    assert_eq(load64(keep_off), 777002, "a long-lived plain block was never re-issued");
+    assert_eq(fl_poison_violations(), 0, "no violation across the toggling run");
+    fl_poison_enable();
+    assert_eq(poison_sweep(), 0, "live list clean after the run");
+
+    test_group("an undecodable free is reported, not recycled");
+    var d = fl_alloc(40);
+    fl_free(d);
+    fl_free(d);                  # double free: no longer on the list
+    assert_eq(fl_poison_violations(), 1, "a double free of a poisoned block is a violation");
+    var e1 = fl_alloc(40);
+    var e2 = fl_alloc(40);
+    assert_neq(e1, e2, "the double-freed block was not pushed twice");
+    fl_free(e1);
+    fl_free(e2);
+
+    fl_free(keep_on);
+    fl_free(keep_off);
+    fl_poison_disable();
+    var r = assert_summary();
+    return r;
+}
+var ec = main();
+syscall(60, ec);
