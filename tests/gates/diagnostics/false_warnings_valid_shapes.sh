@@ -12,7 +12,7 @@
 #      `a = GP` (a pointer-mode struct global), `b = q.name()` (a method declared `: Str`),
 #      `b = q.name` / `b = w.q.name` (a `: Str` field, nested). Controls: an integer, a global of
 #      ANOTHER struct type, an i64 field and an i64 method still warn — one each.
-# RED on the slot-open compiler (4a37046b): B1 and P1.
+# RED on the slot-open compiler (4a37046b): B1, B1a and P1.
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || { echo "FAIL: false_warnings_valid_shapes: cannot cd to $ROOT"; exit 1; }
@@ -47,6 +47,19 @@ if (z == 0) {
 syscall(60, early());
 EOF
 chk "B1 (fns in top-level blocks, called earlier)" b1.cyr "undefined function" 0 42
+# B1a (review find): an attribute line before the block fn kept it unprescanned
+cat > "$D/b1a.cyr" <<'EOF'
+fn early(): i64 { return inner(1) + deep(0); }
+var z = 0;
+if (z == 0) {
+    #pure
+    fn inner(x): i64 { return x + 40; }
+    #deprecated("use something else")
+    fn deep(x): i64 { return x + 1; }
+}
+syscall(60, early());
+EOF
+chk "B1a (attributed fns in a top-level block)" b1a.cyr "undefined function" 0 42
 cat > "$D/b2.cyr" <<'EOF'
 fn early(): i64 { return nowhere(1); }
 var z = 0;

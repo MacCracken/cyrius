@@ -1957,6 +1957,10 @@ _chk_gate "$ROOT/tests/gates/frontend/struct_field_type_unknown_refused.sh"
 _chk_gate "$ROOT/tests/gates/platform/agnos_proc_kill_tree_refused.sh"
 _chk_gate "$ROOT/tests/gates/platform/cx_compiler_reads_env.sh"
 _chk_gate "$ROOT/tests/gates/platform/object_mode_non_elf_refused.sh"
+
+# 6.6.17 — the Windows fork honours `--syntax-only` (cbt passes it to cycc.exe for `cyrius lint`);
+# x86, the PE cross and cycc.exe under wine, each with an anti-vacuous no-flag row.
+_chk_gate "$ROOT/tests/gates/platform/syntax_only_flag_pe.sh"
 _chk_gate "$ROOT/tests/gates/platform/pe_hosted_elf_object.sh"
 _chk_gate "$ROOT/tests/gates/platform/pe_job_reroutes_routed.sh"
 

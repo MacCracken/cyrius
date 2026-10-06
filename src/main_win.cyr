@@ -292,6 +292,16 @@ if (_vn > 0) {
                 }
             }
         }
+        # "--sy" (--syntax-only) — the same flag as main.cyr's (see _syntax_only, util.cyr).
+        # 6.6.17: this fork never read it, so `cyrius lint`'s pre-pass on Windows got a full
+        # resolving compile. chars s(115) y(121).
+        if (_vi + 4 <= _vn) {
+            if (load8(&_vbuf + _vi) == 45 && load8(&_vbuf + _vi + 1) == 45) {
+                if (load8(&_vbuf + _vi + 2) == 115 && load8(&_vbuf + _vi + 3) == 121) {
+                    _syntax_only = 1;
+                }
+            }
+        }
         # "--al" (--allow-undef, v6.3.2) — downgrade the default reachable-undef hard error to a warning. chars a(97) l(108).
         if (_vi + 4 <= _vn) {
             if (load8(&_vbuf + _vi) == 45 && load8(&_vbuf + _vi + 1) == 45) {
@@ -344,6 +354,10 @@ if (_vw != 0) {
                             if (load8(_vw + _wi + 4) == 115) {
                                 if (load8(_vw + _wi + 6) == 116) {
                                     _strict_mode = 1;
+                                }
+                                # "--sy" (--syntax-only, 6.6.17): UTF-16 s(115) y(121)
+                                if (load8(_vw + _wi + 6) == 121) {
+                                    _syntax_only = 1;
                                 }
                             }
                             # "--al" (--allow-undef, v6.3.2): UTF-16 a(97) l(108)
@@ -569,12 +583,10 @@ if (_mono_env != 0) {
     }
 }
 
-# Pass 1: Pre-scan to register all global vars and structs (no fn bodies)
-_tl_pass1(S, 1);   # 6.6.17: the ONE pass-1 scan, shared by every fork (src/frontend/parse_fn.cyr)
-
-# v6.5.17 — the DCE pre-scan referenced-name bitmap is GONE with the parse-time
-# body skip it fed. See src/main.cyr for the full note.
-
+# 6.6.17 — the TARGET flags are read BEFORE pass 1: `_prescan_params` records each fn's
+# parameter shapes by `_TARGET_PE` (a Win64 vector parameter is passed by address), so with the
+# flag set after pass 1 a forward call to a vector-param fn was marshalled SysV-style and the PE
+# callee faulted. tests/tcyr/crossos/vector_param_forward_call.tcyr. CHANGELOG [6.6.17]
 # Mach-O output via CYRIUS_MACHO=1 (x86_64) or CYRIUS_MACHO_ARM=1 (ARM64)
 var _macho_env = _read_env("CYRIUS_MACHO");
 if (_macho_env != 0) {
@@ -612,6 +624,13 @@ if (_efi_env != 0) {
         _TARGET_EFI_APPLICATION = 1;
     }
 }
+
+
+# Pass 1: Pre-scan to register all global vars and structs (no fn bodies)
+_tl_pass1(S, 1);   # 6.6.17: the ONE pass-1 scan, shared by every fork (src/frontend/parse_fn.cyr)
+
+# v6.5.17 — the DCE pre-scan referenced-name bitmap is GONE with the parse-time
+# body skip it fed. See src/main.cyr for the full note.
 
 # cycc: opt-in IR recording via CYRIUS_IR=1|2
 var _ir_env = _read_env("CYRIUS_IR");

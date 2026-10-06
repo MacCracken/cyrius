@@ -24,6 +24,16 @@ fn early_struct(): i64 {
 fn early_scalar(): i64 { return blk_twice(21); }
 fn early_nested(): i64 { return blk_deep(40); }
 fn early_else(): i64 { return blk_else(1); }
+# An ATTRIBUTE line before the block fn (review find, 6.6.17): `#pure fn` was not prescanned —
+# the check wanted `{` / `;` / `}` right before `fn` — so these crashed exactly like the bare form.
+fn mkp(): Pt { var p: Pt; p.x = 10; p.y = 20; p.z = 12; return p; }
+fn early_pure(): i64 { var p = mkp(); var r = at_pure(p); return r; }
+fn early_inline(): i64 { var p = mkp(); var r = at_inline(p); return r; }
+fn early_regalloc(): i64 { var p = mkp(); var r = at_regalloc(p); return r; }
+fn early_must_use(): i64 { var p = mkp(); var r = at_must_use(p); return r; }
+fn early_io(): i64 { var p = mkp(); var r = at_io(p); return r; }
+fn early_alloc(): i64 { var p = mkp(); var r = at_alloc(p); return r; }
+fn early_deprecated(): i64 { var p = mkp(); var r = at_deprecated(p); return r; }
 
 var blk_on = 1;
 if (blk_on == 1) {
@@ -39,9 +49,32 @@ if (blk_on == 1) {
 if (blk_on == 0) { blk_on = 9; } else {
     fn blk_else(x): i64 { return x + 41; }
 }
+if (blk_on == 2) {
+    #pure
+    fn at_pure(q: Pt): i64 { return q.x + q.y + q.z; }
+    #inline
+    fn at_inline(q: Pt): i64 { return q.x + q.y + q.z; }
+    #regalloc
+    fn at_regalloc(q: Pt): i64 { return q.x + q.y + q.z; }
+    #must_use
+    fn at_must_use(q: Pt): i64 { return q.x + q.y + q.z; }
+    #io
+    fn at_io(q: Pt): i64 { return q.x + q.y + q.z; }
+    #alloc
+    fn at_alloc(q: Pt): i64 { return q.x + q.y + q.z; }
+    #deprecated("only a test")
+    fn at_deprecated(q: Pt): i64 { return q.x + q.y + q.z; }
+}
 
 assert_eq(early_struct(), 42, "a struct argument to a block fn, called before its definition");
 assert_eq(early_scalar(), 42, "the second of two fns in one block");
 assert_eq(early_nested(), 42, "a fn in a while inside an if");
 assert_eq(early_else(), 42, "a fn in an else block");
+assert_eq(early_pure(), 42, "#pure before a block fn");
+assert_eq(early_inline(), 42, "#inline before a block fn");
+assert_eq(early_regalloc(), 42, "#regalloc before a block fn");
+assert_eq(early_must_use(), 42, "#must_use before a block fn");
+assert_eq(early_io(), 42, "#io before a block fn");
+assert_eq(early_alloc(), 42, "#alloc before a block fn");
+assert_eq(early_deprecated(), 42, "#deprecated before a block fn");
 var r = assert_summary();

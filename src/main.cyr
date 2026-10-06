@@ -1388,18 +1388,10 @@ if (_mono_env != 0) {
     }
 }
 
-# Pass 1: Pre-scan to register all global vars and structs (no fn bodies)
-_tl_pass1(S, 1);   # 6.6.17: the ONE pass-1 scan, shared by every fork (src/frontend/parse_fn.cyr)
-
-# v6.5.17 — the DCE pre-scan referenced-name bitmap that used to be built here
-# is GONE with the parse-time body skip it fed (see the `fn` dispatch in pass 2).
-# It was an approximation twice over: keyed on a name-pool OFFSET, so a module-
-# mangled `mod_fn` definition never matched its own call sites, and blind to the
-# difference between "this identifier is a call to my fn" and "some other file
-# uses that word as a local", so `fn n(x)` looked live and `fn name(x)` looked
-# dead. Real elimination lives in backend/x86/fixup.cyr (CYRIUS_DCE=1), on the
-# compiled result, where reachability actually belongs.
-
+# 6.6.17 — the TARGET flags are read BEFORE pass 1: `_prescan_params` records each fn's
+# parameter shapes by `_TARGET_PE` (a Win64 vector parameter is passed by address), so with the
+# flag set after pass 1 a forward call to a vector-param fn was marshalled SysV-style and the PE
+# callee faulted. tests/tcyr/crossos/vector_param_forward_call.tcyr. CHANGELOG [6.6.17]
 # Mach-O output via CYRIUS_MACHO=1 (x86_64) or CYRIUS_MACHO_ARM=1 (ARM64)
 var _macho_env = _read_env("CYRIUS_MACHO");
 if (_macho_env != 0) {
@@ -1484,6 +1476,19 @@ if (_efi_env != 0) {
 }
 
 # cycc: opt-in IR recording via CYRIUS_IR=1|2
+
+# Pass 1: Pre-scan to register all global vars and structs (no fn bodies)
+_tl_pass1(S, 1);   # 6.6.17: the ONE pass-1 scan, shared by every fork (src/frontend/parse_fn.cyr)
+
+# v6.5.17 — the DCE pre-scan referenced-name bitmap that used to be built here
+# is GONE with the parse-time body skip it fed (see the `fn` dispatch in pass 2).
+# It was an approximation twice over: keyed on a name-pool OFFSET, so a module-
+# mangled `mod_fn` definition never matched its own call sites, and blind to the
+# difference between "this identifier is a call to my fn" and "some other file
+# uses that word as a local", so `fn n(x)` looked live and `fn name(x)` looked
+# dead. Real elimination lives in backend/x86/fixup.cyr (CYRIUS_DCE=1), on the
+# compiled result, where reachability actually belongs.
+
 var _ir_env = _read_env("CYRIUS_IR");
 # v6.5.2 — SNAPSHOT the mode character; do NOT hold the pointer.
 # `_read_env` (src/backend/common/runtime.cyr:110) returns `&_env_scratch`, ONE shared

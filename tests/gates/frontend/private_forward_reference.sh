@@ -272,7 +272,10 @@ ok() {
 # into a block, so a forward cross-file call to one in a `private` file resolved with no owner
 # and only `_vis_check`'s deferral caught it (re-judged once the definition was stamped).
 # 6.6.17: the prescan stamps it (`_prescan_block_fn`), so the call is judged directly; the row
-# still pins EXACTLY one report either way.
+# still pins EXACTLY one report either way. ⚠ The deferral (`_vis_defer`) is now reached by NO
+# legal program: measured with a compiler printing at `_vis_defer`, 0 hits over the 455 tcyr,
+# programs/, this row and c2's tail-call P3 row — every definition PARSE_PROG accepts is
+# prescanned (`async fn` / `case:` fns inside a block are refused). It stays as the backstop.
 #
 # ⚠ 6.6.16 PORTED THE FIXTURE. Until then it nested `inner_secret` inside another fn's
 # body — the other shape pass 1 cannot stamp, measured accepted + SIGSEGV (rc 139) on 6.6.4.
