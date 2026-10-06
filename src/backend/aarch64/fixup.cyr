@@ -75,6 +75,7 @@ fn _wx_data_vaddr(S, entry, cp): i64 {
 var _wx_dbase_frozen = 0;
 
 fn FIXUP(S): i64 {
+    _esx_stubs_drained();   # 6.6.18: a `bl .` placeholder left unpatched would loop for ever
     # Check for Mach-O ARM64 output mode
     var _ma_env = _read_env("CYRIUS_MACHO_ARM");
     if (_ma_env != 0) {

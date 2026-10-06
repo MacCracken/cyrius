@@ -1,6 +1,7 @@
 #!/bin/sh
 # esysxlat_fold.sh — 6.6.18: aarch64 folds a LITERAL syscall number's ESYSXLAT chain at compile
-# time (src/backend/aarch64/emit.cyr `_esx_fold`).
+# time (src/backend/aarch64/emit.cyr `_esx_fold`, XLAT-1) and sends a VARIABLE number through
+# one shared per-class stub (`_esx_stub_site` / `ESYSX_STUBS`, XLAT-2).
 #
 # Before 6.6.18 every `syscall(N, …)` site carried the whole x86->aarch64 translation chain
 # inline — 82 rows, 1,184 B on ELF — 36 % of the native compiler (2,042,184 B -> 1,321,856 B
@@ -21,9 +22,18 @@
 #           and nanosleep 35 at argc 2 (EMACHO_NANOSLEEP_ARM is argc-3 only) — so exactly 4
 #           heads among 9 sites. Old code: one head per site. (read 0 / write 1 are NOT used: on
 #           arm64 Mach-O they are parse-time __got reroutes, never an ESCPOPS site.)
+#   axis 4  XLAT-2 (fails on the old code): the twin probe's variable-number sites share ONE
+#           chain — its `cmp x8` count equals ESYSXLAT's ELF row count, derived from the source
+#           (old: one chain per site). Every aarch64 driver calls ESYSX_STUBS between EEXIT and
+#           FIXUP, FIXUP asserts the site list drained, and a driver mutant WITHOUT the call is
+#           refused at FIXUP instead of shipping `bl .` — an infinite loop (critic #8).
+#   axis 5  a `#naked` fn keeps its own inline chain (x30 is its live return address): two
+#           chains in the probe, and it returns correctly under qemu.
+#   axis 6  arm64 Mach-O: variable numbers at arities 1, 2, 2, 3 share 3 class stubs (3 heads;
+#           the chain depends on _esx_argc). Old code: 4.
 #
 # MUTATION LEDGER (measured 6.6.18, outside the gate):
-#   (a) bypass the fold (`if (lit >= 0)` -> `if (lit >= 99999)`)      -> axis 1 FAILS, axis 3 FAILS
+#   (a) bypass the fold (ESYSXLAT without _esx_fold for a literal)  -> axis 1 FAILS (1,804 cmp x8 words)
 #   (b) keep only each kept body's LAST word                          -> axis 2 FAILS: ppoll gets a NULL
 #                                                                         timeout and blocks (qemu bounded
 #                                                                         at 30 s, the marker never runs)
@@ -32,6 +42,9 @@
 #       live number needs a second match today. Written down rather than claimed.
 #   (d) an ADR word placed in a row body (critic #7)                  -> every aarch64 build stops:
 #       "error: internal: ESYSXLAT fold refused the row … ADR/ADRP in a row body"
+#   (e) drop the `#naked` carve-out in _esx_stub_site                 -> axis 5 FAILS (82 cmp x8 words,
+#                                                                         want 164)
+#   (f) per-site chains (XLAT-2 reverted)                             -> axis 4 FAILS (1,804 for 22 sites)
 set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -89,12 +102,40 @@ N1=$(_ncmp8 "$T/lit.bin")
 [ "$N1" = 0 ] || fail "$N1 cmp x8,#imm words in a probe whose $NSITE syscall numbers are all literals — the ESYSXLAT chain was not folded"
 echo "  axis 1: $NSITE literal sites, $NSVC svc, 0 cmp x8,#imm"
 
+# ── the twin probe: the literal block, a gettid marker, then the same calls through a `var` ──
+{ _hdr; _lit; echo 'syscall(178);'; _var; } > "$T/twin.cyr"
+rc=0; "$T/cca" < "$T/twin.cyr" > "$T/twin.bin" 2> "$T/twin.err" || rc=$?
+[ "$rc" = 0 ] && [ -s "$T/twin.bin" ] || fail "the twin probe did not compile (rc $rc): $(head -3 "$T/twin.err")"
+chmod +x "$T/twin.bin"
+
+# ── axis 4: the variable-number sites share ONE chain (XLAT-2) ───────────────────────────────
+# The ELF row count is derived from the emitter source the way raw_syscall_literals_routed.sh
+# derives it (`cmp x8,#N` words inside ESYSXLAT's body), so a new row moves both sides.
+NROWS=$(awk '/^fn ESYSXLAT\(/{on=1} on && /^fn / && !/^fn ESYSXLAT\(/{on=0} on' "$ROOT/src/backend/aarch64/emit.cyr" \
+    | grep -o 'EW(S, 0xF1[0-9A-Fa-f]\{6\})' | sed 's/EW(S, //; s/)//' \
+    | awk '{ w = strtonum($1); if (and(w, 0xFFC003FF) == 0xF100011F) n++ } END { print n + 0 }')
+[ "$NROWS" -ge 40 ] || fail "decoded only $NROWS ELF rows from ESYSXLAT — the reader or the emitter shape moved"
+N4=$(_ncmp8 "$T/twin.bin")
+[ "$N4" = "$NROWS" ] || fail "$N4 cmp x8,#imm words for $NSITE variable-number sites — want exactly one shared chain ($NROWS rows), not one per site"
+for d in main_aarch64 main_aarch64_native main_aarch64_macho; do
+    awk '/^EEXIT\(S\);/ {e = NR} /^ESYSX_STUBS\(S\);/ {s = NR} /^FIXUP\(S\);/ {f = NR} END {exit !(e && s && f && e < s && s < f)}' \
+        "$ROOT/src/$d.cyr" || fail "src/$d.cyr does not call ESYSX_STUBS(S) between EEXIT(S) and FIXUP(S)"
+done
+awk -v n="fn FIXUP(" 'index($0, n) == 1 {s = 1} s && /_esx_stubs_drained\(\)/ {f = 1} s && /^}/ {exit} END {exit !f}' \
+    "$ROOT/src/backend/aarch64/fixup.cyr" || fail "aarch64 FIXUP does not assert the stub-site list is drained (_esx_stubs_drained)"
+# behavioural (critic #8): a driver that skips ESYSX_STUBS must stop at FIXUP, not ship `bl .`
+sed '/^ESYSX_STUBS(S);$/d' "$ROOT/src/main_aarch64.cyr" > "$T/nostub.cyr"
+[ "$(wc -l < "$T/nostub.cyr")" -lt "$(wc -l < "$ROOT/src/main_aarch64.cyr")" ] || fail "could not build the no-stub driver mutant"
+rc=0; (cd "$ROOT" && "$CC" < "$T/nostub.cyr" > "$T/ccm" 2> "$T/ccm.err") || rc=$?
+[ "$rc" = 0 ] && [ -s "$T/ccm" ] || fail "cross-building the no-stub driver mutant failed (rc $rc)"
+chmod +x "$T/ccm"
+rc=0; "$T/ccm" < "$T/twin.cyr" > "$T/nostub.bin" 2> "$T/nostub.err" || rc=$?
+[ "$rc" != 0 ] && grep -q 'reached FIXUP unpatched' "$T/nostub.err" \
+    || fail "a driver without ESYSX_STUBS compiled variable-number sites (rc $rc) — FIXUP must refuse, or the output loops on 'bl .'"
+echo "  axis 4: $NSITE variable-number sites, one shared chain ($NROWS rows); 3 drivers call ESYSX_STUBS; a driver without it is refused at FIXUP"
+
 # ── axis 2: every literal site makes the syscall its runtime-chain twin makes ───────────────
 if command -v qemu-aarch64 >/dev/null 2>&1; then
-    { _hdr; _lit; echo 'syscall(178);'; _var; } > "$T/twin.cyr"
-    rc=0; "$T/cca" < "$T/twin.cyr" > "$T/twin.bin" 2> "$T/twin.err" || rc=$?
-    [ "$rc" = 0 ] && [ -s "$T/twin.bin" ] || fail "the twin probe did not compile (rc $rc): $(head -3 "$T/twin.err")"
-    chmod +x "$T/twin.bin"
     # bounded: a wrongly-folded ppoll (NULL timeout) or nanosleep blocks for ever — mutant (b) did
     rc=0; (cd "$T" && timeout 30 qemu-aarch64 -strace ./twin.bin > /dev/null 2> "$T/st") || rc=$?
     sed 's/^[0-9]* //' "$T/st" | grep -v '^exit' > "$T/st2" || true
@@ -114,6 +155,23 @@ if command -v qemu-aarch64 >/dev/null 2>&1; then
     echo "  axis 2: $NL strace lines, each identical to its runtime-chain twin"
 else
     echo "  axis 2: SKIP (qemu-aarch64 absent) — the semantic twin check did not run"
+fi
+
+# ── axis 5: a #naked fn keeps its own inline chain (x30 is its live return address) ──────────
+printf '%s\n' 'var _fn = 0;' 'var _nk = 0;' 'var _o = 0;' '#naked' 'fn _nk_call() {' '    _nk = syscall(_fn);' \
+    '    asm { 0xC0; 0x03; 0x5F; 0xD6; }' '}' '_fn = 172;' '_o = syscall(_fn);' '_nk_call();' \
+    'if (_nk == _o) { syscall(60, 42); }' 'syscall(60, 7);' > "$T/nk.cyr"
+rc=0; "$T/cca" < "$T/nk.cyr" > "$T/nk.bin" 2> "$T/nk.err" || rc=$?
+[ "$rc" = 0 ] && [ -s "$T/nk.bin" ] || fail "the #naked probe did not compile (rc $rc): $(head -3 "$T/nk.err")"
+N5=$(_ncmp8 "$T/nk.bin")
+[ "$N5" = $((2 * NROWS)) ] || fail "$N5 cmp x8,#imm words in the #naked probe — want $((2 * NROWS)): the shared stub plus the #naked fn's own inline chain"
+if command -v qemu-aarch64 >/dev/null 2>&1; then
+    chmod +x "$T/nk.bin"
+    rc=0; (cd "$T" && timeout 30 qemu-aarch64 ./nk.bin > /dev/null 2>&1) || rc=$?
+    [ "$rc" = 42 ] || fail "the #naked probe exited $rc (want 42; 124 = hung) — its variable-number syscall lost x30 or its result"
+    echo "  axis 5: #naked keeps its inline chain (2 chains) and returns under qemu"
+else
+    echo "  axis 5: 2 chains (the qemu run of the #naked probe SKIPPED: qemu-aarch64 absent)"
 fi
 
 # ── axis 3: Mach-O keeps the chain head only where no row routes ─────────────────────────────
@@ -138,4 +196,14 @@ N3=$(_ncmp8 "$T/mo.bin")
 _words "$T/mo.bin" | grep -c '^d2800290$' > /dev/null || fail "getpid 39 lost its Darwin route (movz x16,#20)"
 echo "  axis 3: Mach-O 9 literal sites, $NHEAD heads (the 4 unrouted), 0 cmp x8,#imm"
 
-echo "PASS esysxlat_fold (literal syscall numbers carry no ESYSXLAT chain on ELF-aarch64 or arm64 Mach-O; the folded calls match their runtime-chain twins)"
+# ── axis 6: Mach-O variable numbers share one stub PER ARITY (the chain reads _esx_argc) ────
+printf '%s\n' 'var _fn = 0;' 'var _fb[64];' '_fn = 20; syscall(_fn);' '_fn = 6; syscall(_fn, 0 - 1);' \
+    '_fn = 92; syscall(_fn, 0 - 1);' '_fn = 188; syscall(_fn, &_fb, &_fb);' > "$T/mv.cyr"
+rc=0; CYRIUS_MACHO_ARM=1 "$T/cca" < "$T/mv.cyr" > "$T/mv.bin" 2> "$T/mv.err" || rc=$?
+[ "$rc" = 0 ] && [ -s "$T/mv.bin" ] || fail "the Mach-O variable-number probe did not compile (rc $rc): $(head -3 "$T/mv.err")"
+NH6=$(_words "$T/mv.bin" | grep -c '^d29ffff0$' || true)
+[ "$NH6" = 3 ] || fail "$NH6 chain heads for 4 variable-number Mach-O sites at arities 1, 2, 2, 3 — want 3 (one stub per arity class)"
+_words "$T/mv.bin" | grep -c '^d65f03c0$' > /dev/null || fail "no ret in the Mach-O probe — the class stubs are missing"
+echo "  axis 6: Mach-O 4 variable-number sites at 3 arities -> $NH6 class stubs"
+
+echo "PASS esysxlat_fold (literal syscall numbers carry no ESYSXLAT chain on ELF-aarch64 or arm64 Mach-O and match their runtime twins; variable numbers share one stub per class; #naked keeps its inline chain)"

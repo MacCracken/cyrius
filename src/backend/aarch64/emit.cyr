@@ -1910,6 +1910,81 @@ fn _esx_fold(S, st, lit): i64 {
     return 0;
 }
 
+# 6.6.18 — a NON-literal number calls ONE shared translation stub per class instead of inlining
+# the chain at every site: `bl <stub>` (a placeholder recorded here, patched by ESYSX_STUBS once
+# the stubs exist after EEXIT). The class is 0 on ELF and the arity on arm64 Mach-O, whose chain
+# depends on `_esx_argc` (_esx_short, EMACHO_NANOSLEEP_ARM). Clobbering x30 is safe in a framed fn
+# (EFNEPI reloads it) and at top level (never returns); a `#naked` fn has the return address LIVE
+# in x30, so it keeps the inline chain.
+# ⛔ These are RESOLVED `bl`s with no fixup-table entry: a future aarch64 code-moving pass (the
+# DCE whole-program compaction x86 has and aarch64 does not) must repair them. And a path that
+# reaches FIXUP without ESYSX_STUBS would ship `bl .` (an infinite loop) — FIXUP asserts the list
+# is drained (_esx_stubs_drained). CHANGELOG [6.6.18]
+var _esx_sl = 0;     # alloc()'d list of {code offset, class} pairs, 16 B each
+var _esx_ns = 0;
+var _esx_scap = 0;
+fn _esx_stub_site(S, n): i64 {
+    if (_cur_fn_naked == 1) { ESYSXLAT(S); return 0; }
+    if (_esx_ns >= _esx_scap) {
+        var nc = _esx_scap * 2;
+        if (nc < 64) { nc = 64; }
+        var nl = alloc(nc * 16);
+        if (nl == 0) { PRSTR("error: ESYSXLAT stub sites: alloc failed\n"); syscall(SYS_EXIT, 1); }
+        var i = 0;
+        while (i < _esx_ns * 2) { store64(nl + i * 8, load64(_esx_sl + i * 8)); i = i + 1; }
+        _esx_sl = nl;
+        _esx_scap = nc;
+    }
+    var cls = 0;
+    if (_TARGET_MACHO == 2) { cls = n; }
+    store64(_esx_sl + _esx_ns * 16, GCP(S));
+    store64(_esx_sl + _esx_ns * 16 + 8, cls);
+    _esx_ns = _esx_ns + 1;
+    EW(S, 0x94000000);      # bl . — placeholder, patched by ESYSX_STUBS
+    return 0;
+}
+# Called by every aarch64 driver between EEXIT and FIXUP: outside every fn's range, so the DCE
+# NOP-fill never touches a stub and nothing falls into one, and patched before the DCE byte-scan.
+fn ESYSX_STUBS(S): i64 {
+    var c = 0;
+    while (c < 8) {
+        var stub = 0 - 1;
+        var i = 0;
+        while (i < _esx_ns) {
+            if (load64(_esx_sl + i * 16 + 8) == c) {
+                if (stub < 0) {
+                    stub = GCP(S);
+                    if (c > 0) { _esx_argc = c; }
+                    ESYSXLAT(S);
+                    _esx_argc = 7;
+                    EW(S, 0xD65F03C0);   # ret
+                }
+                var site = load64(_esx_sl + i * 16);
+                if (load32(_codebuf_base + site) != 0x94000000) {
+                    PRSTR("error: internal: ESYSXLAT stub site at code offset ");
+                    PRNUM(site);
+                    PRSTR(" is no longer its bl placeholder (did a pass move code?)\n");
+                    syscall(SYS_EXIT, 1);
+                }
+                store32(_codebuf_base + site, 0x94000000 | (((stub - site) >> 2) & 0x3FFFFFF));
+            }
+            i = i + 1;
+        }
+        c = c + 1;
+    }
+    _esx_ns = 0;
+    return 0;
+}
+fn _esx_stubs_drained(): i64 {
+    if (_esx_ns != 0) {
+        PRSTR("error: internal: ");
+        PRNUM(_esx_ns);
+        PRSTR(" variable-number syscall site(s) reached FIXUP unpatched — this driver never called ESYSX_STUBS\n");
+        syscall(SYS_EXIT, 1);
+    }
+    return 0;
+}
+
 fn ESCPOPS(S, n, lit): i64 {
     # LIFO: last pushed (argN) pops first, first pushed (syscall_num) pops last
     # For syscall(num, a1, a2, a3, a4, a5, a6):
@@ -1937,8 +2012,8 @@ fn ESCPOPS(S, n, lit): i64 {
     }
     _esx_argc = n;          # the Mach-O pointer emulations key on it (EMACHO_NANOSLEEP_ARM, _esx_short)
     var xst = GCP(S);
-    ESYSXLAT(S);
-    if (lit >= 0) { _esx_fold(S, xst, lit); }   # a compile-time number: keep only what runs
+    if (lit >= 0) { ESYSXLAT(S); _esx_fold(S, xst, lit); }   # a compile-time number: keep what runs
+    else { _esx_stub_site(S, n); }                         # else: one shared stub per class
     _esx_argc = 7;
     ESYSCALL(S);
     return 0;
