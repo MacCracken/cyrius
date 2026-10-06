@@ -56,6 +56,10 @@ var _poison_fl_head = 0;
 # alloc_reset — their alloc_used() subtracts it, so poison never changes what it reports.
 # Updated under alloc.cyr's lock.
 var _poison_overhead = 0;
+# Bytes of alloc() blocks that serve ARENA requests (and the 8 extra header bytes per arena).
+# Without poison those bytes live inside the arena's own chunk, so alloc_used() subtracts them:
+# poison never changes what alloc_used() reports.
+var _poison_hidden = 0;
 # Spinlock over the live-block lists. Its own lock, not alloc.cyr's or freelist.cyr's: the
 # poison paths run after those are released, so nothing ever nests.
 var _poison_lock = 0;
@@ -368,18 +372,26 @@ fn _poison_arm_alloc(blk, req): i64 {
 # compile flag. The `fn(n): ptr` shape a hook-style seam (sadish's sd_alloc) can point at.
 # Returns 0 when n <= 0 or the backing alloc() fails.
 fn poison_alloc(n): i64 {
+    return _poison_block(n, 4);
+}
+
+# A poisoned, listed bump block of `n` bytes tagged `kind`: alloc()'s own block where alloc()
+# arms them, else a block this file arms.
+fn _poison_block(n, kind): i64 {
     if (n <= 0) { return 0; }
     if (n > 0x80000000) { return 0; }
     if (_poison_alloc_armed() == 1) {
         var p = alloc(n);
         if (p == 0) { return 0; }
-        var hb = p - _POISON_RZ - _POISON_HDR;
-        store64(hb + 8, (load64(hb + 8) & 0xFFF0FFFFFFFFFFFF) | (4 << 48));   # kind: seam
+        if (kind != 1) {
+            var hb = p - _POISON_RZ - _POISON_HDR;
+            store64(hb + 8, (load64(hb + 8) & 0xFFF0FFFFFFFFFFFF) | (kind << 48));
+        }
         return p;
     }
     var blk = alloc(_poison_bump_total(n));
     if (blk == 0) { return 0; }
-    var u = _poison_arm_bump(blk, n, 4);
+    var u = _poison_arm_bump(blk, n, kind);
     _poison_publish(blk);
     return u;
 }
@@ -557,4 +569,61 @@ fn _poison_fl_check(blk): i64 {
         }
     }
     return bad;
+}
+
+# ================================================================
+# Arenas under CYRIUS_POISON — an accounting shell (lib/alloc.cyr calls these) (6.6.18)
+# ================================================================
+
+# arena_new with a 64-byte header: the 56-byte layout plus a+56, the head of the list of
+# blocks this arena handed out (threaded through each block's owner link, blk+16).
+fn _poison_arena_new(capacity): i64 {
+    var a = alloc(64);
+    if (a == 0) { return 0; }
+    _poison_lock_acquire();
+    _poison_hidden = _poison_hidden + 8;    # the non-poison header is 56 bytes
+    _poison_lock_release();
+    var ch = alloc(capacity + 16);
+    if (ch == 0) { return 0; }
+    store64(ch, 0);
+    store64(ch + 8, capacity);
+    var base = ch + 16;
+    store64(a, base);
+    store64(a + 8, base);
+    store64(a + 16, base + capacity);
+    store64(a + 24, 0);                # ARENA_FULL_NULL — alloc.cyr declares it below this file
+    store64(a + 32, ch);
+    store64(a + 40, ch);
+    store64(a + 48, capacity);
+    store64(a + 56, 0);
+    return a;
+}
+
+# Serve an accepted arena request: a redzoned block of exactly `req` bytes, owned by `a`.
+fn _poison_arena_take(a, req): i64 {
+    var u = _poison_block(req, 2);
+    if (u == 0) { return 0; }
+    _poison_lock_acquire();
+    _poison_hidden = _poison_hidden + ((req + 7) & (0 - 8));
+    _poison_lock_release();
+    var blk = u - _POISON_RZ - _POISON_HDR;
+    store64(blk + 16, load64(a + 56));
+    store64(a + 56, blk);
+    return u;
+}
+
+# arena_reset / arena_free: check every block the arena owns, quarantine it (fill + DEAD — it
+# stays on the live list, so a write through a stale pointer is found by the next sweep), and
+# drop the owner list. The memory is never reused: fuzz-only growth.
+fn _poison_arena_quarantine(a): i64 {
+    _poison_lock_acquire();
+    var b = load64(a + 56);
+    while (b != 0) {
+        var nx = load64(b + 16);
+        _poison_kill(b);
+        b = nx;
+    }
+    store64(a + 56, 0);
+    _poison_lock_release();
+    return 0;
 }

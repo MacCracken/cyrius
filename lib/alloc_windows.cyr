@@ -145,6 +145,7 @@ fn alloc_reset() {
     _heap_ptr = _heap_base;
     #ifdef CYRIUS_POISON
     _poison_overhead = 0;
+    _poison_hidden = 0;
     #endif
     _alloc_lock_release();
     return 0;
@@ -153,7 +154,7 @@ fn alloc_reset() {
 # Bytes used from the heap.
 fn alloc_used() {
     #ifdef CYRIUS_POISON
-    return _heap_ptr - _heap_base - _poison_overhead;
+    return _heap_ptr - _heap_base - _poison_overhead - _poison_hidden;
     #endif
     return _heap_ptr - _heap_base;
 }
