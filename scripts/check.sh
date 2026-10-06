@@ -1995,3 +1995,7 @@ _chk_gate "$ROOT/tests/gates/platform/process_errno_constants_every_target.sh"
 # `cmp x8` word left on ELF or arm64 Mach-O; qemu -strace twins against the runtime chain, named
 # SKIP without qemu-aarch64). Cross-builds cycc_aarch64 from src with $CYCC.
 _chk_gate "$ROOT/tests/gates/platform/esysxlat_fold.sh"
+
+# 6.6.18 (XLAT-4) — the pre-commit hook's build/cycc-native-aarch64 band is 700K–2M: a COPY of
+# scripts/hooks/pre-commit in a throwaway `git init` refuses an un-folded 2,042,184 B build.
+_chk_gate "$ROOT/tests/gates/toolchain/precommit_arm_size_band.sh"
