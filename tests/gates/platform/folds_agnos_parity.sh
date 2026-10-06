@@ -9,18 +9,19 @@
 # only ever built for the host. Found at v6.5.1 only because escalating an arity
 # mismatch from warning to error made the six fatal instead of silent.
 #
-# WHY PARITY, not "must compile". The distlib bundles deliberately do NOT carry their
-# stdlib dependencies — `cyrius.cyml` documents that the consumer supplies them via
-# `[deps] stdlib`. So a bundle failing to build in isolation proves nothing about
-# agnos; it usually just means this harness under-included. Comparing the SAME source
-# against BOTH targets isolates the real class — target-specific ABI breakage — and is
-# immune to include gaps: a dep that fails on both is a harness limitation, and a dep
-# that builds on Linux but not agnos is the bug.
+# ⭐ 6.6.19 R3 — EACH FOLD IS INCLUDED ALONE: no hand-supplied stdlib leaves. Until 6.6.18 the
+# distlib bundles stripped their stdlib includes and the consumer supplied them, so this gate
+# carried a LEAVES preamble (26 modules) ahead of every probe, and a fold its preamble could not
+# bring up on Linux was a SKIP ("a harness limitation"). Since 6.6.19 R1 every bundle begins with
+# a compile-verified `# Requires` include block, so a probe is the fold's declared FOLD deps (the
+# closure below — the bundle does not include another fold it was not built against) plus the
+# fold, and NOTHING else. A fold that does not build for Linux that way, or that leaves any
+# function undefined, is a FAIL — its requires block (or a declared dep's) is short — not a SKIP:
+# there is no harness left to blame. A leaf the old preamble supplied would have hidden exactly
+# that, which is why no preamble is allowed back.
 #
-# COVERAGE IS PARTIAL AND SAID SO OUT LOUD. Deps that cannot be brought up on Linux
-# with the preamble below are reported as SKIP with the symbol that stopped them, never
-# silently dropped — a gate that hides what it did not check reads as "all clear" when
-# it is not. Raising coverage means extending LEAVES until the SKIP list is empty.
+# WHY PARITY still matters: the same probe built for agnos isolates target-specific ABI breakage
+# (the yukti class above) — a fold that builds for Linux but not agnos is the bug.
 #
 # MUTATION PROOF (6.6.8 — each fold against its OWN declared deps, see below):
 #   * the pre-6.6.8 shared preamble restored (sakshi, sigil, patra, yukti back in LEAVES) ->
@@ -29,6 +30,12 @@
 #   * yukti dropped from vani's FOLD_DEPS row -> RED, "vani uses 'YUKTI_AUDIO_CAPTURE' from
 #     yukti, which vani does not declare" (and, locally, the row disagrees with vani's own
 #     cyrius.cyml).
+# MUTATION PROOF (6.6.19 R3, measured):
+#   * `include "lib/random.cyr"` removed from lib/sigil.cyr's requires block -> RED, "sigil
+#     leaves 'random_bytes' undefined" (the pre-R3 gate stayed GREEN: its LEAVES preamble
+#     supplied random through lib/tls.cyr) — the leaves are not hand-supplied any more.
+#   * the include walk blinded (its grep never matches) -> RED on the anti-vacuous row
+#     (the walk from lib/sandhi.cyr does not reach lib/sigil.cyr).
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -39,52 +46,18 @@ CC="$ROOT/build/cycc"
 D=$(mktemp -d) && [ -d "$D" ] || { echo "FAIL: folds-agnos-parity: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$D"' EXIT
 
-# ⛔ 6.6.8 — EACH FOLD IS BUILT AGAINST THE STDLIB LEAVES PLUS ITS OWN DECLARED FOLD DEPS,
-# AND NOTHING ELSE. This gate used to put ONE preamble — the leaves AND sakshi, sigil, patra,
-# yukti — ahead of every fold. So a fold could compile only because ANOTHER fold it never
-# declared happened to be in scope, and the gate read green over it: that is exactly how mabda
-# and vani built for agnos on yukti's placeholder `SYS_IOCTL = 9001` (yukti 2.3.12 deleted it,
-# and both broke), and how sandhi borrowed yukti's `SYS_SOCKET` on PE. The preamble is now
-# LEAVES only, each probe adds the fold's declared closure (FOLD_DEPS, below — the fold
-# entries of each sibling's `cyrius.cyml` `stdlib = [...]` / `[deps.*]`), and a symbol the
-# compiler reports undefined that some OTHER fold defines is a FAIL naming the borrow, on
-# Linux as well as agnos. CHANGELOG [6.6.8]
-#
-# The leaves, dependency-ordered. `tests/gates/platform/pe_reloc_cap_full_stdlib.sh` extracts
-# this block (from `LEAVES='` to the `lib/tls.cyr` line) — keep that shape.
-LEAVES='include "lib/syscalls.cyr"
-include "lib/string.cyr"
-include "lib/alloc.cyr"
-include "lib/result.cyr"
-include "lib/str.cyr"
-include "lib/fmt.cyr"
-include "lib/vec.cyr"
-include "lib/hashmap.cyr"
-include "lib/io.cyr"
-include "lib/fs.cyr"
-include "lib/fnptr.cyr"
-include "lib/tagged.cyr"
-include "lib/mmap.cyr"
-include "lib/net.cyr"
-include "lib/ws.cyr"
-include "lib/math.cyr"
-include "lib/chrono.cyr"
-include "lib/thread.cyr"
-include "lib/thread_local.cyr"
-include "lib/process.cyr"
-include "lib/dynlib.cyr"
-include "lib/fdlopen.cyr"
-include "lib/tls.cyr"'
-# Leaves two folds declare that the preamble above never carried: sandhi's `async`, and
-# niyama's `unicode` normalization tables (it was SKIPped for a missing `NFD` until 6.6.8).
-EXTRA_LEAVES='include "lib/async.cyr"
-include "lib/unicode/_decode.cyr"
-include "lib/unicode/categories.cyr"
-include "lib/unicode/_categories_data.cyr"
-include "lib/unicode/casefold.cyr"
-include "lib/unicode/_casefold_data.cyr"
-include "lib/unicode/normalize.cyr"
-include "lib/unicode/_normalize_data.cyr"'
+# ⛔ 6.6.8 — EACH FOLD IS BUILT AGAINST ITS OWN DECLARED FOLD DEPS AND NOTHING ELSE. This gate
+# used to put ONE preamble — the leaves AND sakshi, sigil, patra, yukti — ahead of every fold. So
+# a fold could compile only because ANOTHER fold it never declared happened to be in scope, and
+# the gate read green over it: that is exactly how mabda and vani built for agnos on yukti's
+# placeholder `SYS_IOCTL = 9001` (yukti 2.3.12 deleted it, and both broke), and how sandhi
+# borrowed yukti's `SYS_SOCKET` on PE. Each probe adds the fold's declared closure (FOLD_DEPS,
+# below — the fold entries of each sibling's `cyrius.cyml` `stdlib = [...]` / `[deps.*]`), and a
+# symbol the compiler reports undefined that some OTHER fold defines is a FAIL naming the borrow,
+# on Linux as well as agnos. CHANGELOG [6.6.8]. Since a bundle now INCLUDES what it needs (6.6.19),
+# a borrow can also arrive as an include: the walk below follows every include from the fold
+# (through first-party modules, e.g. yantra -> lib/ws.cyr -> bayan) and fails on a fold reached
+# that the fold does not declare.
 
 # The fold set is DERIVED from docs/ecosystem.md's fold table (the same rows
 # fold_table_matches_vendored.sh reads), never listed here.
@@ -153,32 +126,66 @@ _definer() {  # $1 sym, $2 allowed fold names
     return 0
 }
 
-# Build fold $1 with closure $2 for Linux and agnos. Prints findings; returns 0 ok, 1 FAIL,
-# 2 SKIP (not buildable on Linux for a reason no fold explains — a harness leaf gap).
+# The folds an include walk from lib/$1.cyr reaches (other than $1), through first-party
+# modules; a fold reached is recorded and not walked (its own deps are its own row).
+_folds_reached() {
+    _seen=" $1 "; _queue="$1"; _hit=""
+    while [ -n "$(echo $_queue)" ]; do
+        _nq=""
+        for _m in $_queue; do
+            for _i in $(grep -hoE '^[[:space:]]*include "lib/[a-z0-9_/]+\.cyr"' "lib/$_m.cyr" 2>/dev/null \
+                    | sed -E 's/.*"lib\/([a-z0-9_\/]+)\.cyr"/\1/'); do
+                case "$_seen" in *" $_i "*) continue ;; esac
+                _seen="$_seen$_i "
+                case " $FOLDS " in
+                    *" $_i "*) _hit="$_hit $_i" ;;
+                    *) _nq="$_nq $_i" ;;
+                esac
+            done
+        done
+        _queue=$_nq
+    done
+    echo $_hit
+}
+
+# Build fold $1 with closure $2 for Linux and agnos — the closure's folds, then the fold, and
+# nothing else. Prints findings; returns 0 ok, 1 FAIL.
 probe() {
     _d=$1; _cl=$2
-    { printf '%s\n%s\n' "$LEAVES" "$EXTRA_LEAVES"
-      for _x in $_cl; do printf 'include "lib/%s.cyr"\n' "$_x"; done
+    { for _x in $_cl; do printf 'include "lib/%s.cyr"\n' "$_x"; done
       printf 'include "lib/%s.cyr"\nfn main(): i64 { return 0; }\n' "$_d"; } > "$D/p.cyr"
     "$CC" < "$D/p.cyr" > /dev/null 2>"$D/lin.err"; _lrc=$?
     CYRIUS_TARGET_AGNOS=1 "$CC" < "$D/p.cyr" > /dev/null 2>"$D/ag.err"; _arc=$?
     # A symbol undefined on either target that an UNDECLARED fold defines is a borrow —
     # whether it stopped the build (a variable) or became a trap stub (a function: only a
     # warning, so the build "succeeds").
-    _borrow=0
+    # Any other undefined symbol is the bundle's own: with no hand-supplied leaves, its requires
+    # block (or a declared dep's) is short. An undefined FUNCTION is a ud2 trap stub, not a link
+    # error, so it fails here even when the build "succeeds".
+    _bad=0
     for _sym in $(cat "$D/lin.err" "$D/ag.err" | grep -oE "undefined (variable|function) '[A-Za-z_0-9]+'" \
             | sed "s/.*'\(.*\)'/\1/" | sort -u); do
         _by=$(_definer "$_sym" "$_d $_cl")
         if [ -n "$_by" ]; then
             echo "  FAIL: $_d uses '$_sym' from $_by, which $_d does not declare (declared: ${_cl:-none}) — cross-fold borrowing"
-            _borrow=1
+        else
+            echo "  FAIL: $_d leaves '$_sym' undefined with only its declared fold deps (${_cl:-none}) in scope — its # Requires block is short; a bundle must compile alone"
         fi
+        _bad=1
     done
-    [ "$_borrow" = "1" ] && return 1
+    [ "$_bad" = "1" ] && return 1
+    # A fold reached through an include that the fold does not declare is a borrow too.
+    for _r in $(_folds_reached "$_d"); do
+        case " $_cl " in
+            *" $_r "*) : ;;
+            *) echo "  FAIL: $_d reaches lib/$_r.cyr through its includes without declaring it (declared: ${_cl:-none}) — cross-fold borrowing"; _bad=1 ;;
+        esac
+    done
+    [ "$_bad" = "1" ] && return 1
     if [ "$_lrc" != "0" ]; then
-        _sym=$(grep -m1 -oE "undefined (variable|function) '[A-Za-z_0-9]+'" "$D/lin.err" || true)
-        LAST_SKIP="${_sym:-see stderr}"
-        return 2
+        echo "  FAIL: $_d does not build for Linux with only its declared fold deps (${_cl:-none}) in scope:"
+        grep -E "^error" "$D/lin.err" | head -4 | sed 's/^/      /'
+        return 1
     fi
     if [ "$_arc" != "0" ]; then
         # Attribute to the file the compiler names: with declared closures a break in a DEP
@@ -196,17 +203,7 @@ probe() {
 }
 
 checked=0
-skipped=0
 fails=0
-skiplist=""
-
-# The preamble itself carries no fold — the whole point.
-for _f in $FOLDS; do
-    if printf '%s\n%s\n' "$LEAVES" "$EXTRA_LEAVES" | grep -q "lib/$_f\.cyr"; then
-        echo "  FAIL: the shared LEAVES preamble includes the fold lib/$_f.cyr — every probe would borrow from it"
-        fails=$((fails + 1))
-    fi
-done
 
 for d in $FOLDS; do
     dd=$(fold_deps "$d")
@@ -233,17 +230,14 @@ for d in $FOLDS; do
     fi
     rc=0
     probe "$d" "$(closure_of "$d")" || rc=$?
-    case "$rc" in
-        0) checked=$((checked + 1)) ;;
-        1) checked=$((checked + 1)); fails=$((fails + 1)) ;;
-        2) skipped=$((skipped + 1))
-           skiplist="$skiplist
-    SKIP: $d — not buildable in this harness on Linux either ($LAST_SKIP); extend LEAVES to cover it" ;;
-    esac
+    checked=$((checked + 1))
+    [ "$rc" = 0 ] || fails=$((fails + 1))
 done
 
-# ANTI-VACUOUS: the borrow detector must fire. yukti uses patra's constants (it declares
-# patra); built WITHOUT patra it has to be reported as borrowing from patra.
+# ANTI-VACUOUS: the borrow detectors must fire. yukti uses patra's constants (it declares
+# patra); built WITHOUT patra it has to be reported as borrowing from patra. And sandhi's
+# bundle includes sigil (a declared dep), so the include walk from sandhi has to reach it — a
+# walk that reaches nothing would pass every fold's include check while checking nothing.
 if [ -f lib/yukti.cyr ] && [ -f lib/patra.cyr ]; then
     rc=0
     probe yukti "sakshi" > "$D/anti.out" 2>&1 || rc=$?
@@ -254,27 +248,24 @@ if [ -f lib/yukti.cyr ] && [ -f lib/patra.cyr ]; then
     fi
 fi
 
-# Never silent about what was not covered.
-if [ "$skipped" != "0" ]; then
-    printf '%s\n' "  $skipped of $NFOLDS folds NOT checked (reported, not hidden):$skiplist"
-fi
+case " $(_folds_reached sandhi) " in
+    *" sigil "*) : ;;
+    *) echo "  FAIL: anti-vacuous — the include walk from lib/sandhi.cyr did not reach lib/sigil.cyr (sandhi's requires block includes it): the walk is blind"
+       fails=$((fails + 1)) ;;
+esac
 
-# v6.6.6: a FLOOR on what was actually checked. Skips are reported, not hidden — but a run in
-# which (nearly) every fold was skipped has checked nothing and must not read as PASS. Since
-# 6.6.8 a normal run checks 12 of 12 (niyama gained its unicode leaves); the floor is 10, so a
-# fold falling out of the harness is tolerated and a broken harness is not.
+# v6.6.6: a FLOOR on what was actually checked — a run that checked (nearly) nothing must not
+# read as PASS. Since 6.6.19 there is no SKIP: every fold in the table is checked (12 of 12).
 # Mutation (6.6.6): build/cycc replaced by `exit 1` in a scratch copy -> this gate FAILs "0/12
 # checked"; the 6.6.5 gate PASSed the same run. TMPDIR=/nonexistent and a chmod-555 TMPDIR -> FAIL.
 if [ "$checked" -lt 10 ]; then
-    echo "FAIL: folds-agnos-parity — only $checked/$NFOLDS folds were checked (floor 10; $skipped skipped) — the harness, not the folds, is broken"
+    echo "FAIL: folds-agnos-parity — only $checked/$NFOLDS folds were checked (floor 10) — the harness, not the folds, is broken"
     exit 1
 fi
 
 if [ "$fails" = "0" ]; then
-    # 6.6.11 (K1): an axis that could not run makes the gate a SKIP (77), never a PASS.
-    if [ "$skipped" != "0" ]; then echo "SKIP: folds_agnos_parity — $skipped fold(s) above could not be built in this harness; every fold that was checked passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-    echo "PASS: folds-agnos-parity — $checked/$NFOLDS folded stdlibs build for BOTH Linux and agnos, each against the leaves plus its OWN declared fold deps only ($skipped skipped)"
+    echo "PASS: folds-agnos-parity — $checked/$NFOLDS folded stdlibs build for BOTH Linux and agnos ALONE (no stdlib leaves supplied), each with only its OWN declared fold deps in scope, no undefined symbol and no undeclared fold reached"
     exit 0
 fi
-echo "FAIL: folds-agnos-parity — $fails of $checked checked folds break on agnos"
+echo "FAIL: folds-agnos-parity — $fails of $checked checked folds fail above (an agnos ABI break, a short requires block, or a cross-fold borrow)"
 exit 1

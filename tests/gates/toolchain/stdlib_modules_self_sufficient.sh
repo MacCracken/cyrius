@@ -95,6 +95,7 @@
 #   f. the undefined-function detector blinded (its grep never matches) -> axis 0 FAIL on all
 #      six targets (6.6.9 re-measure; 6.6.6 inverted the check, same result)
 #   g. (6.6.7) lib/tls_native.cyr's sys / chrono / random includes removed -> axes 1 and 4 FAIL
+#      (retired 6.6.19 R3: they mirrored sigil's sidecar, and sigil's bundle includes them itself)
 # MUTATION LEDGER (6.6.9 bite 7, each measured against this file)
 #   h. lib/syscalls.cyr's trailing alloc include removed -> axis 1 FAIL on linux, agnos and
 #      aarch64 (syscalls, sys, random, hashseed, freelist: 'alloc'); axis 4 on those and cx

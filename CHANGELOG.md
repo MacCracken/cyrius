@@ -46,6 +46,24 @@ bundles' new requires blocks retire the hand-kept workarounds they made unnecess
     ws_server.cyr; ws_server's calls now bind to sandhi's own, so the handshake drives the real lookup
     on a real upgrade request: four header-lookup rows (k=1..4) then concat / digest / sha1 at k=5..8
     (floor 11 -> 15 rows). Mutation: ws_server's concat check removed -> rc 139.
+- **R3 — the native TLS stack drops its mirror of sigil's leaves, and `folds_agnos_parity` includes each
+  fold alone.** `lib/tls_native.cyr` hand-included freelist, vec, hashmap, fs, result, str, bayan, ct,
+  keccak, thread, thread_local, sys and random ahead of sigil only because sigil's bundle used to strip
+  them (CHANGELOG [6.1.25], [6.5.29], [6.0.53], [6.6.7]); sigil's requires block carries them now. It
+  keeps what its OWN code calls — syscalls, alloc, string, chrono, io, fnptr, and atomic, which it called
+  (`atomic_cas` / `_load` / `_store`, `atomic_fence` on aarch64) without including — proven by compiling
+  it with sigil removed: every name left undefined is a sigil name, on x86 Linux, agnos, PE, x86 Mach-O,
+  arm64 Mach-O and aarch64; with sigil it compiles with 0 undefined on all six. The 40 TLS tcyr pass.
+  `folds_agnos_parity.sh` no longer carries a 26-module LEAVES preamble: each probe is the fold's declared
+  fold-dep closure plus the fold, nothing else, so a fold that does not build that way, or leaves ANY
+  symbol undefined, FAILs (its requires block is short) instead of SKIPping as "a harness limitation";
+  and an include walk fails a fold that reaches an undeclared fold through its includes (yantra ->
+  `lib/ws.cyr` -> bayan is the shape). 12/12 pass on Linux and agnos, 46 s -> 14 s. Mutations: `include
+  "lib/random.cyr"` removed from sigil's requires block -> RED ("sigil leaves 'random_bytes' undefined";
+  the old gate stayed GREEN, its preamble supplied random); the walk blinded -> RED on its anti-vacuous
+  row; sandhi's sigil dep undeclared -> RED ("reaches lib/sigil.cyr ... without declaring it").
+  `pe_reloc_cap_full_stdlib.sh` extracted that preamble from the parity gate, so the same 28-module list
+  now lives in it (truncated to 18 -> axis 0 RED).
 
 ## [6.6.18] — 2026-10-06
 

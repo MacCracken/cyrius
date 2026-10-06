@@ -29,24 +29,45 @@ ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC="$ROOT/build/cycc"
 [ -x "$CC" ] || { echo "SKIP: build/cycc missing"; exit 77; }
 cd "$ROOT"
-G="tests/gates/platform/folds_agnos_parity.sh"
-[ -f "$G" ] || { echo "SKIP: $G missing (source of the dependency-ordered preamble)"; exit 77; }
 D=$(mktemp -d) && [ -d "$D" ] || { echo "FAIL: pe_reloc_cap_full_stdlib: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$D"' EXIT
 fail=0
 
-# Reuse the sibling gate's OWN preamble rather than re-listing it, so the two cannot drift.
-# ⚠ A hand-rolled two-include probe is NOT a substitute: including a fold without its
-# declared dependencies yields undefined ORDINARY stdlib names (alloc, memcpy, file_open,
-# map_new, fncall1..6), which read exactly like missing Windows-peer wrappers and were once
-# recorded as such. Use the real preamble or the result is meaningless.
-# 6.6.8: that gate's shared block is now the stdlib LEAVES only (each of its probes adds the
-# fold's own declared deps), so the four folds this full-stdlib build always carried are
-# appended here, in the same order, to keep the reloc load this gate was measured at.
-sed -n "/^LEAVES='/,/^include \"lib\/tls.cyr\"'/p" "$G" \
-  | sed "s/^LEAVES='//; s/'\$//" > "$D/pre.txt"
-printf 'include "lib/sakshi.cyr"\ninclude "lib/sigil.cyr"\ninclude "lib/patra.cyr"\ninclude "lib/yukti.cyr"\n' >> "$D/pre.txt"
-printf 'include "lib/random.cyr"\n' >> "$D/pre.txt"
+# The FULL-STDLIB preamble this gate was measured at: 23 stdlib modules, dependency-ordered, then
+# four folds and lib/random.cyr. Until 6.6.19 it was extracted from folds_agnos_parity.sh's LEAVES
+# block; that gate includes each fold ALONE now (6.6.19 R3) and has no preamble, so the list lives
+# here. It is a reloc LOAD, not a dependency list — each fold's bundle carries its own requires
+# block — so do not shorten it to "what the folds need": that would stop measuring the ceiling.
+cat > "$D/pre.txt" <<'PRE'
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/result.cyr"
+include "lib/str.cyr"
+include "lib/fmt.cyr"
+include "lib/vec.cyr"
+include "lib/hashmap.cyr"
+include "lib/io.cyr"
+include "lib/fs.cyr"
+include "lib/fnptr.cyr"
+include "lib/tagged.cyr"
+include "lib/mmap.cyr"
+include "lib/net.cyr"
+include "lib/ws.cyr"
+include "lib/math.cyr"
+include "lib/chrono.cyr"
+include "lib/thread.cyr"
+include "lib/thread_local.cyr"
+include "lib/process.cyr"
+include "lib/dynlib.cyr"
+include "lib/fdlopen.cyr"
+include "lib/tls.cyr"
+include "lib/sakshi.cyr"
+include "lib/sigil.cyr"
+include "lib/patra.cyr"
+include "lib/yukti.cyr"
+include "lib/random.cyr"
+PRE
 
 npre=$(grep -c '^include' "$D/pre.txt" || true)
 # axis 0 — anti-vacuous: if the preamble did not extract, every build below is trivial and
@@ -55,7 +76,7 @@ if [ "$npre" -lt 20 ]; then
     echo "  FAIL axis 0 (anti-vacuous): only $npre preamble includes extracted (expected 20+) — the probe is not a full-stdlib build, so it proves nothing about the ceiling"
     exit 1
 fi
-echo "  ok axis 0: extracted a $npre-module full-stdlib preamble from $G"
+echo "  ok axis 0: a $npre-module full-stdlib preamble"
 
 # --- axis 1: the largest folds must BUILD for Windows ---
 # mabda is the biggest reloc consumer; yukti is the one SYS_IOCTL used to block; sigil is a
