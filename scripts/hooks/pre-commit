@@ -113,8 +113,12 @@ for bin in build/cycc build/cc5 build/cycc-native-aarch64 bootstrap/asm; do
             # before. Same 700K–2M reasoning as build/cycc above; aarch64 runs ~15% larger
             # than x86 (1,505,480 vs 1,293,880 at 6.6.5), which the upper bound allows for.
             # CHANGELOG [6.6.5]
-            if [ "$size" -lt 700000 ] || [ "$size" -gt 2000000 ]; then
-                _fail "$bin size ${size}B outside the expected 700K–2M range — refusing commit"
+            # 6.6.17: 2M → 3M. The ratio is no longer ~15 %: ESYSXLAT copies its whole
+            # translation chain into every aarch64 syscall site (2,042,184 vs x86 1,581,040 at
+            # 6.6.17, +29 %). The 6.6.18 compile-time fold is planned to cut ~593 KB; lower the
+            # bound again then. A truncated or contaminated binary is still far outside it.
+            if [ "$size" -lt 700000 ] || [ "$size" -gt 3000000 ]; then
+                _fail "$bin size ${size}B outside the expected 700K–3M range — refusing commit"
                 status=1
             fi
             ;;
