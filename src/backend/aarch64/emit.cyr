@@ -1937,7 +1937,13 @@ fn EMACHO_PTHREAD_CREATE_ARM(S): i64 {
     EPOPARG(S, 1);                 # ldr x1, [sp], #16 — attr (0 = default)
     EPOPARG(S, 0);                 # ldr x0, [sp], #16 — &pthread_t out
     EW(S, 0x910043FF);             # add sp, sp, #16 — discard sc_num
-    _EMACHO_BLR_GOT(S, 5);         # __got[5] = _pthread_create; returns 0 / errno in x0
+    _EMACHO_BLR_GOT(S, 5);         # __got[5] = _pthread_create; 0 / errno as an int in w0
+    # ⚠ AAPCS64 leaves x0[63:32] unspecified for an int result, and lib/thread_macos.cyr's
+    # `rc != 0` reads all 64 bits — a success with dirty upper bits would read as failure and
+    # leak a running thread. ecb measures zero upper bits today, so this is conformance, not an
+    # observed fault; it is the one __got int-result site that lacked it (all nine slots
+    # audited — EMACHO_FORK_ARM below has the same word). CHANGELOG [6.6.18]
+    EW(S, 0x93407C00);             # sxtw x0, w0
     return 0;
 }
 

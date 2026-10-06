@@ -85,4 +85,39 @@ grep -qE '^var THREADS_CONCURRENT = 1;' "$ROOT/lib/thread_macos.cyr" \
 grep -qE '^var THREADS_CONCURRENT = 0;' "$ROOT/lib/thread_macos.cyr" \
     || fail "lib/thread_macos.cyr declares no serial x86 arm — x86-macOS is a static no-libSystem binary and CANNOT use pthread_create"
 
-echo "PASS macos_arm64_real_threads (1700 -> __got[$SLOT] = _pthread_create, arm64-Mach-O-guarded, stubbed in every fork, THREADS_CONCURRENT honest on every backend: 1 on Linux, arm64-macOS and Windows, 0 on x86-macOS and agnos)"
+# ── axis 7: pthread_create's int result is sign-extended (sxtw x0, w0) ───────────────────
+# AAPCS64 leaves x0[63:32] unspecified for an int return and thread_macos.cyr's `rc != 0` reads
+# all 64 bits, so a success with dirty upper bits reads as failure while the thread runs. ecb
+# measures clean upper bits today, so this is conformance: hardware cannot catch a regression,
+# which is why (b) checks the EMITTED words. (a) source order, the macos_arm64_libsystem_fork
+# axis 7 shape; (b) a cross-built probe with exactly two 1700 sites and no 1701 must carry two
+# `blr x16` (0xD63F0200) words immediately followed by `sxtw x0, w0` (0x93407C00). Measured at
+# 6.6.18: old 0, patched 2. CHANGELOG [6.6.18]
+PB=$(awk -v n="fn EMACHO_PTHREAD_CREATE_ARM(" 'index($0, n) == 1 {s = 1} s {print} s && /^}/ {exit}' "$AE")
+LBLR=$(printf '%s\n' "$PB" | awk '/_EMACHO_BLR_GOT\(S, 5\)/ {print NR; exit}')
+LSX=$(printf '%s\n' "$PB" | awk '/EW\(S, 0x93407C00\)/ {print NR; exit}')
+LRET=$(printf '%s\n' "$PB" | awk '/return 0;/ {r = NR} END {print r}')
+[ -n "$LSX" ] || fail "EMACHO_PTHREAD_CREATE_ARM has no sxtw x0, w0 (0x93407C00) — pthread_create returns an int and x0's upper half is unspecified"
+[ -n "$LBLR" ] && [ -n "$LRET" ] && [ "$LBLR" -lt "$LSX" ] && [ "$LSX" -lt "$LRET" ] \
+    || fail "the sxtw must follow _EMACHO_BLR_GOT(S, 5) and precede the return"
+CC=${CYCC:-"$ROOT/build/cycc"}
+T=$(mktemp -d) && [ -d "$T" ] || fail "mktemp -d"
+trap 'rm -rf "$T"' EXIT
+rc=0; (cd "$ROOT" && "$CC" < src/main_aarch64.cyr > "$T/cca" 2> "$T/cca.err") || rc=$?
+[ "$rc" = 0 ] && [ -s "$T/cca" ] || fail "cross-building cycc_aarch64 from src failed (rc $rc): $(head -3 "$T/cca.err")"
+chmod +x "$T/cca"
+cat > "$T/p.cyr" <<'PROBE'
+fn _p_body(a): i64 { return a; }
+var _p_tid = 0;
+var _p_r1 = syscall(1700, &_p_tid, 0, &_p_body, 0);
+var _p_r2 = syscall(1700, &_p_tid, 0, &_p_body, 1);
+PROBE
+rc=0; CYRIUS_MACHO_ARM=1 "$T/cca" < "$T/p.cyr" > "$T/p.bin" 2> "$T/p.err" || rc=$?
+[ "$rc" = 0 ] && [ -s "$T/p.bin" ] || fail "the arm64 Mach-O probe did not compile (rc $rc): $(head -3 "$T/p.err")"
+od -An -v -tx4 "$T/p.bin" | tr -s ' ' '\n' > "$T/w"
+NBLR=$(awk '$0 == "d63f0200" {n++} END {print n + 0}' "$T/w")
+NPAIR=$(awk 'p == "d63f0200" && $0 == "93407c00" {n++} {p = $0} END {print n + 0}' "$T/w")
+[ "$NBLR" -ge 2 ] || fail "the probe holds $NBLR blr x16 words — expected at least the two pthread_create calls (the reader is blind)"
+[ "$NPAIR" = 2 ] || fail "$NPAIR of the probe's 2 pthread_create calls are followed by sxtw x0, w0 — the int result's upper half reaches \`rc != 0\` unextended"
+
+echo "PASS macos_arm64_real_threads (1700 -> __got[$SLOT] = _pthread_create, arm64-Mach-O-guarded, stubbed in every fork, THREADS_CONCURRENT honest on every backend: 1 on Linux, arm64-macOS and Windows, 0 on x86-macOS and agnos; the int result sign-extended at $NPAIR/2 emitted sites)"
