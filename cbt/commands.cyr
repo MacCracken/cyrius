@@ -3389,8 +3389,14 @@ fn _distlib_splice_file(sb, path): i64 {
 # 1 iff the cstr vec `v` (0 = empty) holds `name`.
 fn _distlib_vec_has(v, name): i64 {
     if (v == 0) { return 0; }
+    return _distlib_vec_has_n(v, vec_len(v), name);
+}
+
+# 1 when one of the first `n` entries of cstr vec `v` equals `name`.
+fn _distlib_vec_has_n(v, n, name): i64 {
+    if (v == 0) { return 0; }
     var i = 0;
-    while (i < vec_len(v)) {
+    while (i < n && i < vec_len(v)) {
         if (streq(vec_get(v, i), name) == 1) { return 1; }
         i = i + 1;
     }
@@ -3664,6 +3670,7 @@ fn _distlib_verify_leaves(leaves, out_path, named_deps): i64 {
     var m = _distlib_mirror_make(root);
     if (m == 0) { return 0 - 1; }
     var e0 = _err_count;
+    _dl_agnos_warned = 0;
     var r = _distlib_verify_rounds(leaves, out_path, named_deps, root, m);
     _distlib_mirror_drop();
     # 6.6.10: a directory the verify could not list (named where it happened) means it
@@ -3686,14 +3693,23 @@ fn _distlib_verify_leaves(leaves, out_path, named_deps): i64 {
 # environment; cycc_aarch64 emits aarch64 Linux and Mach-O). Any other host REFUSES by name
 # rather than publishing a host-shaped sidecar — the store slots of macOS, Windows and
 # aarch64 hosts carry only native compilers. CHANGELOG [6.6.11]
-var _DL_TGT_N = 5;
+# ⭐ 6.6.18 (D3) — AND agnos, the SIXTH. 10 of the 12 folds (49 ecosystem bundles) carry
+# `#ifdef CYRIUS_TARGET_AGNOS` arms the verify never compiled: mabda's `O_RDWR` is defined on
+# agnos only by lib/io.cyr's agnos arm, so its sidecar was short there. Target 5 is cycc with
+# CYRIUS_TARGET_AGNOS=1. Its undefined names are attributed like any target's, but a NON-symbol
+# failure on agnos ALONE is a named warning, not a refusal (_distlib_target_collect): the five
+# targets above stay authoritative, so ~62 producers never built for agnos are not refused at
+# their pin bump. CHANGELOG [6.6.18]
+var _DL_TGT_N = 6;
+var _DL_TGT_AGNOS = 5;
 
 fn _distlib_tgt_name(t): i64 {
     if (t == 0) { return "x86_64-linux"; }
     if (t == 1) { return "x86_64-windows"; }
     if (t == 2) { return "x86_64-macos"; }
     if (t == 3) { return "aarch64-linux"; }
-    return "aarch64-macos";
+    if (t == 4) { return "aarch64-macos"; }
+    return "x86_64-agnos";
 }
 
 # The environment entry that selects target `t` for its compiler ("" = the compiler's default).
@@ -3701,11 +3717,12 @@ fn _distlib_tgt_env(t): i64 {
     if (t == 1) { return "CYRIUS_TARGET_WIN=1"; }
     if (t == 2) { return "CYRIUS_MACHO=1"; }
     if (t == 4) { return "CYRIUS_MACHO_ARM=1"; }
+    if (t == 5) { return "CYRIUS_TARGET_AGNOS=1"; }
     return "";
 }
 
 fn _distlib_tgt_cc(t): i64 {
-    if (t >= 3) { return _cc_arm; }
+    if (t == 3 || t == 4) { return _cc_arm; }
     return _cc;
 }
 
@@ -3719,7 +3736,7 @@ fn _distlib_verify_host_ok(out_path): i64 {
     #endif
     #endif
     if (x86lin == 0) {
-        var hm = "distlib: the sidecar verify compiles the bundle for every target (x86_64 Linux, Windows and macOS; aarch64 Linux and macOS), and only an x86_64 Linux CLI has a compiler for each — regenerate or --check sidecars there. Sidecar NOT written";
+        var hm = "distlib: the sidecar verify compiles the bundle for every target (x86_64 Linux, Windows, macOS and agnos; aarch64 Linux and macOS), and only an x86_64 Linux CLI has a compiler for each — regenerate or --check sidecars there. Sidecar NOT written";
         _distlib_verify_fail(hm, out_path);
         return 0;
     }
@@ -3767,6 +3784,9 @@ fn _distlib_merge_names(names, masks, got, bit): i64 {
 # Each child writes its own `dlverifyerr<t>` / `dlverifyout<t>`, and compile()'s own temps carry
 # the child's pid. POSIX only — `_distlib_verify_host_ok` has already refused anywhere else.
 
+var _dl_agnos_warned = 0;   # the agnos-only warning is printed once per verify (reset there)
+var _dl_agnos_skip = 0;     # this round's agnos compile failed without a symbol: it reports nothing
+
 # Fork the compile of `entry` for target `t` (stderr to `verr`); answers the child's pid, or -1.
 fn _distlib_target_spawn(entry, t, vout, verr): i64 {
     # Unreachable on PE (`_distlib_verify_host_ok` refuses first), and `sys_fork` there is a -1
@@ -3811,6 +3831,21 @@ fn _distlib_target_collect(out_path, t, pid, verr, names, masks, quiet): i64 {
     xunlink(verr);
     var got = vec_new();
     if (ebuf != 0 && elen > 0) { _distlib_collect_undefined(ebuf, elen, got); }
+    if (vec_len(got) == 0 && crc != 0 && t == _DL_TGT_AGNOS && quiet == 0) {
+        # 6.6.18 (D3): agnos is checked, not yet required — see _DL_TGT_N. Named once per run.
+        _dl_agnos_skip = 1;
+        if (_dl_agnos_warned == 0 && _quiet == 0) {
+            _dl_agnos_warned = 1;
+            if (ebuf != 0 && elen > 0) { _distlib_show_errors(ebuf, elen); }
+            var asb = str_builder_new();
+            str_builder_add_cstr(asb, "warn: distlib: ");
+            str_builder_add_cstr(asb, out_path);
+            str_builder_add_cstr(asb, ": the bundle with its leaves does not compile for x86_64-agnos (above), and no symbol is missing — agnos is checked but not required, so the sidecar does not cover agnos-only needs\n");
+            var am = str_data(str_builder_build(asb));
+            sys_write(STDERR_FD, am, strlen(am));
+        }
+        return 0;
+    }
     if (vec_len(got) == 0 && crc != 0) {
         if (quiet == 1) { return 0 - 1; }   # an earlier target already said it
         # Failed, and not for a missing symbol: say what the compiler said — its `error`
@@ -3830,6 +3865,7 @@ fn _distlib_target_collect(out_path, t, pid, verr, names, masks, quiet): i64 {
 fn _distlib_verify_targets(entry, out_path, names, masks): i64 {
     var pids = vec_new();
     var errs = vec_new();
+    _dl_agnos_skip = 0;
     var t = 0;
     while (t < _DL_TGT_N) {
         var tsb = str_builder_new();
@@ -3897,43 +3933,104 @@ fn _distlib_add_targets(sb, mask): i64 {
 # on PE only (syscalls_windows lacks it), and `sigil.cyr` sorts before every syscalls peer, so
 # the first declarer would put the sigil monolith in mihi's sidecar on EVERY host. So, over
 # every declarer, each mapped to its dispatcher:
-#   - one of them already in the unit (a recorded leaf or a named dep) => it is the target's
-#     own gap, nothing to add: answers 1 and sets `_dl_own_raw` = 0 (one in the unit-only
-#     scope is returned as the owner, so the scope rule below still applies to it);
-#   - else the declarers that are a dispatcher's PEER name that target's canonical definer —
-#     exactly one dispatcher => it;
+#   - one ALREADY IN THIS ROUND'S UNIT (a leaf it was built from, the scope it was built with,
+#     or a named dep) is SKIPPED: the target still left the name undefined, so that declarer
+#     demonstrably does not define it there. ⛔ 6.6.18 (D3): this answered "the target's own
+#     gap, nothing to add" — mabda includes lib/syscalls.cyr, whose peers declare O_RDWR, but
+#     on agnos only lib/io.cyr's agnos arm defines it, so `io` was never found;
+#   - one recorded THIS round (not compiled yet) => next round's unit decides: answers 1 with
+#     `_dl_own_raw` = 0; one put in the unit-only scope this round is returned as the owner, so
+#     the caller's scope rule still applies to it;
+#   - else, among the out-of-unit declarers, FOLD BUNDLES (a distlib header) drop out whenever
+#     any NON-fold file declares the name, in the unit or not — the 6.6.11 mihi rule: EINTR is
+#     undefined on PE, its only out-of-unit declarer is the sigil fold, and a fold's copy is
+#     never the answer when the name has a real home — and the declarers that are a
+#     dispatcher's PEER name that target's canonical definer: exactly one dispatcher => it;
 #   - else exactly one non-peer declarer => it;
 #   - else (two or more candidates either way) it is a named refusal: answers -1.
-# Answers 0 when nothing declares it, 1 with `_dl_own_raw` / `_dl_own_owner` set otherwise.
+# Answers 0 when no out-of-unit declarer exists (the name is then reported by D2's warning),
+# 1 with `_dl_own_raw` / `_dl_own_owner` set otherwise. `unit_n` / `scope0`: the leaves and the
+# scope this round's unit was built from (leaves only ever grow, so its first `unit_n`).
 var _dl_own_raw = 0;
 var _dl_own_owner = 0;
 
-fn _distlib_partial_owner(root, nm, mask, leaves, named_deps, scope): i64 {
+# 1 when snapshot leaf root/<raw>.cyr is a fold BUNDLE (a `cyrius distlib` / bundle.sh header in
+# its first 2 KB). Read through a stack buffer: this runs per candidate, and a whole-file read
+# of a 1 MB fold would be retained by the arena for every call.
+fn _distlib_is_fold(root, raw): i64 {
+    var fsb = str_builder_new();
+    str_builder_add_cstr(fsb, _distlib_join(root, raw));
+    str_builder_add_cstr(fsb, ".cyr");
+    var fd = sys_open(str_data(str_builder_build(fsb)), O_RDONLY, 0);
+    if (fd < 0) { return 0; }
+    var hb[2048];
+    var n = sys_read(fd, &hb, 2048);
+    sys_close(fd);
+    var q = 0;
+    while (q + 28 <= n) {
+        if (memeq(&hb + q, "Generated by: cyrius distlib", 28) == 1) { return 1; }
+        if (memeq(&hb + q, "Bundled distribution of", 23) == 1) { return 1; }
+        q = q + 1;
+    }
+    return 0;
+}
+
+# Drop the fold-bundle entries of the parallel vecs (`flags` 1 = fold) when `nonfold` (a
+# non-fold declarer exists); answers how many remain.
+fn _distlib_drop_folds(a, b, flags, nonfold): i64 {
+    if (nonfold == 0) { return vec_len(a); }
+    var w = 0;
+    var i = 0;
+    while (i < vec_len(flags)) {
+        if (vec_get(flags, i) == 0) {
+            vec_set(a, w, vec_get(a, i));
+            if (b != 0) { vec_set(b, w, vec_get(b, i)); }
+            w = w + 1;
+        }
+        i = i + 1;
+    }
+    while (vec_len(a) > w) { vec_pop(a); }
+    if (b != 0) { while (vec_len(b) > w) { vec_pop(b); } }
+    return w;
+}
+
+fn _distlib_partial_owner(root, nm, mask, leaves, named_deps, scope, unit_n, scope0): i64 {
     _dl_own_raw = 0;
     _dl_own_owner = 0;
     var nlen = strlen(nm);
     var peer_raw = vec_new();
     var peer_own = vec_new();
+    var peer_fold = vec_new();
     var solo = vec_new();
+    var solo_fold = vec_new();
+    var nonfold = 0;
     var i = 0;
     while (i < vec_len(_dl_snap_names)) {
         var set = vec_get(_dl_snap_sets, i);
         var raw = vec_get(_dl_snap_names, i);
         i = i + 1;
         if (_src_ids_has(set, nm, nlen) == 0) { continue; }
+        var fold = _distlib_is_fold(root, raw);
+        if (fold == 0) { nonfold = 1; }
         var owner = _distlib_resolve_dispatcher(root, raw);
-        if (_distlib_vec_has(leaves, owner) == 1 || _distlib_vec_has(named_deps, owner) == 1) { return 1; }
-        if (_distlib_vec_has(leaves, raw) == 1) { return 1; }
-        # In the unit-only scope: the caller's scope rule decides (it never outranks "ours").
+        # In this round's unit already, and the name is still undefined there: not its definer.
+        if (_distlib_vec_has(named_deps, owner) == 1) { continue; }
+        if (_distlib_vec_has_n(leaves, unit_n, owner) == 1 || _distlib_vec_has_n(leaves, unit_n, raw) == 1) { continue; }
+        if (_distlib_vec_has(scope0, owner) == 1 || _distlib_vec_has(scope0, raw) == 1) { continue; }
+        # Recorded this round, not compiled yet: the next round's unit answers.
+        if (_distlib_vec_has(leaves, owner) == 1 || _distlib_vec_has(leaves, raw) == 1) { return 1; }
+        # In the unit-only scope this round: the caller's scope rule decides (it never outranks "ours").
         if (_distlib_vec_has(scope, owner) == 1 || _distlib_vec_has(scope, raw) == 1) {
             _dl_own_raw = raw;
             _dl_own_owner = owner;
             return 1;
         }
         if (streq(owner, raw) == 0) {
-            if (_distlib_vec_has(peer_own, owner) == 0) { vec_push(peer_own, owner); vec_push(peer_raw, raw); }
-        } elif (_distlib_vec_has(solo, raw) == 0) { vec_push(solo, raw); }
+            if (_distlib_vec_has(peer_own, owner) == 0) { vec_push(peer_own, owner); vec_push(peer_raw, raw); vec_push(peer_fold, fold); }
+        } elif (_distlib_vec_has(solo, raw) == 0) { vec_push(solo, raw); vec_push(solo_fold, fold); }
     }
+    _distlib_drop_folds(peer_own, peer_raw, peer_fold, nonfold);
+    _distlib_drop_folds(solo, 0, solo_fold, nonfold);
     if (vec_len(peer_own) == 1) {
         _dl_own_raw = vec_get(peer_raw, 0);
         _dl_own_owner = vec_get(peer_own, 0);
@@ -3961,7 +4058,7 @@ fn _distlib_partial_owner(root, nm, mask, leaves, named_deps, scope): i64 {
         str_builder_add_cstr(rsb, vec_get(cands, k));
         k = k + 1;
     }
-    str_builder_add_cstr(rsb, ") — declare the right one in [deps] stdlib. Sidecar NOT written");
+    str_builder_add_cstr(rsb, ") — include the right leaf from a bundled module. Sidecar NOT written");
     _err(str_data(str_builder_build(rsb)));
     return 0 - 1;
 }
@@ -3980,6 +4077,10 @@ fn _distlib_verify_rounds(leaves, out_path, named_deps, root, m): i64 {
         # undefined symbols and silently re-added nothing while looking like it worked. The
         # includes below are RELATIVE: ./lib first, the snapshot mirror as the fallback.
         var esb = str_builder_new();
+        var unit_n = vec_len(leaves);         # D3: what THIS round's unit is built from
+        var scope0 = vec_new();
+        var s0 = 0;
+        while (s0 < vec_len(scope)) { vec_push(scope0, vec_get(scope, s0)); s0 = s0 + 1; }
         var li = 0;
         while (li < vec_len(leaves)) {
             var lf = vec_get(leaves, li);
@@ -4021,6 +4122,9 @@ fn _distlib_verify_rounds(leaves, out_path, named_deps, root, m): i64 {
         if (vt != 0) { return 0 - 1; }
         if (vec_len(names) == 0) { return added_total; }
         var all_mask = (1 << _DL_TGT_N) - 1;
+        # D3: an agnos compile that failed without a symbol reported nothing, so "every
+        # target" means the five that did — else every name would read as partial.
+        if (_dl_agnos_skip == 1) { all_mask = all_mask - (1 << _DL_TGT_AGNOS); }
         var own = 0;
         var added_here = 0;
         var recorded_here = 0;
@@ -4042,7 +4146,7 @@ fn _distlib_verify_rounds(leaves, out_path, named_deps, root, m): i64 {
                 if (raw != 0) { owner = _distlib_resolve_dispatcher(root, raw); }
             } else {
                 # Undefined on SOME targets only: see _distlib_partial_owner.
-                var po = _distlib_partial_owner(root, nm, nmask, leaves, named_deps, scope);
+                var po = _distlib_partial_owner(root, nm, nmask, leaves, named_deps, scope, unit_n, scope0);
                 if (po < 0) { return 0 - 1; }
                 if (po == 1 && _dl_own_raw == 0) { continue; }   # already in the unit
                 raw = _dl_own_raw;
