@@ -718,12 +718,16 @@ fn FIXUP(S): i64 {
                                     store8(_codebuf_base + nop_i, 0x90);
                                     nop_i = nop_i + 1;
                                 }
-                                # v6.5.72: hand the fill to the whole-program compactor so the
-                                # bytes are REMOVED rather than overwritten. The comment above
-                                # calls NOP-fill an "intentional tradeoff" because "code shifting
-                                # would break cycc==cycc byte-identity" — disproved at v6.5.68.
-                                _wpnr_add(S, dfoff, dfend - dfoff);
                             }
+                            # v6.5.72: hand the fill to the whole-program compactor so the
+                            # bytes are REMOVED rather than overwritten. The comment above
+                            # calls NOP-fill an "intentional tradeoff" because "code shifting
+                            # would break cycc==cycc byte-identity" — disproved at v6.5.68.
+                            # 6.6.18: the run is recorded whether or not the flag is set. Unset,
+                            # nothing consumes it (wp_compact runs only under CYRIUS_DCE=1), but the
+                            # 4,096-run cap is then known, so the unset hint cannot promise an
+                            # elimination the flag would decline (runtime.cyr _dce_hint_tail).
+                            _wpnr_add(S, dfoff, dfend - dfoff);
                         }
                     }
                 }

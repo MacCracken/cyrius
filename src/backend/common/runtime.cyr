@@ -108,7 +108,7 @@ fn _mode_unsupported(S, a64): i64 {
 # 6.6.18 — CYRIUS_DCE=1 compaction: ONE predicate DECIDES and REPORTS. Six paths declined
 # compaction and said nothing: PE, x86 Mach-O, `--pie`, `shared;`, every aarch64 target, and a
 # saturated repair registry on the one target that does compact (static x86 ELF). The last is a
-# cliff: 4,096 dead fns compact to 4,456 B, 4,097 leave 278,888 B — and it was misdiagnosed on
+# cliff: 4,096 dead fns compact to 4,456 B, 4,097 leave 201,064 B (one-line fns) — and it was misdiagnosed on
 # record as a DECODE_WALK_OK bail. The x86 FIXUP gates wp_compact on `why == 0`, so the note
 # cannot drift from the decision; wp_compact keeps its own guards (the CYRIUS_IR=3 seam uses
 # them) and FIXUP flags any refusal this does not classify. 0 = compaction will run.
@@ -152,7 +152,8 @@ fn _dce_nop_tail(S, a64, why, nbytes): i64 {
 }
 # The CYRIUS_DCE-unset hint. It promised "set CYRIUS_DCE=1 to eliminate" on every target, including
 # the ones that can never eliminate (dce_eliminates.sh records that broken promise from v6.5.72).
-# With the flag unset the registry is empty, so only the per-target reasons can show here.
+# Unset, FIXUP still records the dead-code runs, so the 4,096-run cap shows here too; the jump and
+# switch registries record only under CYRIUS_DCE=1 / CYRIUS_IR, so those two caps cannot.
 fn _dce_hint_tail(S, a64, why): i64 {
     if (why == 0) {
         PRSTR(" bytes — set CYRIUS_DCE=1 to eliminate, CYRIUS_DCE_VERBOSE=1 to list)\n");

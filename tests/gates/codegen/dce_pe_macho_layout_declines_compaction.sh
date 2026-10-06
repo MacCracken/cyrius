@@ -120,7 +120,9 @@ fn main(): i64 { return 7; }
 var e = main();
 EOF
 { echo 'shared;'; cat "$WORK/p3.cyr"; } > "$WORK/p3s.cyr"
-printf 'fn main(): i64 { return 7; }\nvar e = main();\n' > "$WORK/p0.cyr"
+# A dead fn the length decoder refuses (0x06 is invalid in 64-bit mode), so nothing is NOP-safe:
+# dead code present, zero bytes padded.
+printf 'fn dead_x(): i64 {\n    asm { 0x06; }\n    return 0;\n}\nfn main(): i64 { return 7; }\nvar e = main();\n' > "$WORK/p0.cyr"
 
 pbuild() {  # pbuild <compiler> <src> <errfile> <env-assignments...> — stderr kept for the axes
     pcc="$1"; psrc="$2"; perr="$3"; shift 3
@@ -167,9 +169,12 @@ pbuild "$CYCC" "$WORK/p3.cyr" "$WORK/a6.err" CYRIUS_DCE=1
 grep -q 'dead code eliminated' "$WORK/a6.err" || fail "axis 6: static x86 ELF no longer compacts the probe: $(cat "$WORK/a6.err")"
 if grep -q 'compaction declined' "$WORK/a6.err"; then fail "axis 6: static x86 ELF compacted and ALSO reported a decline: $(cat "$WORK/a6.err")"; fi
 
-# axis 7: nothing dead, nothing to decline — a PE build with no dead code prints no decline
+# axis 7: nothing padded, nothing to decline — a PE build whose only dead fn is not NOP-safe
+# reports "0 bytes NOPed" and no decline (anti-vacuous: the note itself must be there)
 pbuild "$CYCC" "$WORK/p0.cyr" "$WORK/a7.err" CYRIUS_DCE=1 CYRIUS_TARGET_WIN=1
-if grep -q 'compaction declined' "$WORK/a7.err"; then fail "axis 7: a PE build with no dead code reported a decline: $(cat "$WORK/a7.err")"; fi
+grep -q '^note: 1 unreachable fns (0 bytes NOPed' "$WORK/a7.err" \
+    || fail "axis 7: the probe no longer yields a dead fn with 0 NOP-safe bytes — it proves nothing: $(cat "$WORK/a7.err")"
+if grep -q 'compaction declined' "$WORK/a7.err"; then fail "axis 7: a PE build that padded 0 bytes reported a decline: $(cat "$WORK/a7.err")"; fi
 
 # axis 8: every aarch64 target NOP-fills only, and says so. One FIXUP call site covers aarch64 ELF,
 # native aarch64 and arm64 Mach-O, so the cross-compiler is built from THIS tree (never a stale
@@ -203,6 +208,10 @@ pbuild "$CYCC" "$WORK/p3.cyr" "$WORK/a9pie.err" CYRIUS_PIE=1
 hinted "axis 9 (--pie)" "$WORK/a9pie.err" "x86_64 ELF (--pie)"
 pbuild "$WORK/cc_x" "$WORK/p3.cyr" "$WORK/a9a64.err" CYRIUS_DCE_UNSET=1
 hinted "axis 9 (aarch64 ELF)" "$WORK/a9a64.err" "aarch64 ELF"
+# the eliminating target past the 4,096-run registry: =1 would decline, so unset must not promise
+pbuild "$CYCC" "$WORK/g4097.cyr" "$WORK/a9cap.err" CYRIUS_DCE_UNSET=1
+hinted "axis 9 (4097 dead fns, unset)" "$WORK/a9cap.err" "x86_64 ELF"
+grep -q 'more than 4096 dead-code runs' "$WORK/a9cap.err" || fail "axis 9 (4097 dead fns, unset): the hint does not name the registry cap: $(cat "$WORK/a9cap.err")"
 # anti-vacuous: the one target that DOES eliminate keeps the promise, word for word
 pbuild "$CYCC" "$WORK/p3.cyr" "$WORK/a9elf.err" CYRIUS_DCE_UNSET=1
 grep -q '^note: [0-9]* unreachable fns ([0-9]* bytes .*set CYRIUS_DCE=1 to eliminate, CYRIUS_DCE_VERBOSE=1 to list)$' "$WORK/a9elf.err" \
