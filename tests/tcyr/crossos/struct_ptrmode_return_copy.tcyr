@@ -39,6 +39,14 @@ fn P3_twice(self: P3): P3 { var p: P3 = alloc(24); p.x = self.x * 2; p.y = self.
 # Controls: a `*T` parameter returned by value (copied through since 6.6.6).
 fn fw2(p: *P2): P2 { return p; }
 fn fw3(p: *P3): P3 { return p; }
+# ...and the class of 8 B or less, which returns the VALUE in rax: `return p;` handed back the
+# ADDRESS there (6.6.17 review) — fixed by `_ret_small_ptrp`. B6 is 6 bytes (copied 4 + 2).
+struct B8 { v; }
+struct B4 { a: i32; }
+struct B6 { a: i32; b: i16; }
+fn fw8(p: *B8): B8 { return p; }
+fn fw4(p: *B4): B4 { return p; }
+fn fw6(p: *B6): B6 { return p; }
 
 fn t_p1() { var a: P1 = mk1(7); return a.x; }
 fn t_p2() { var b: P2 = mk2(10); return b.x * 100 + b.y; }
@@ -54,6 +62,9 @@ fn t_m2() { var s: P2; s.x = 3; s.y = 4; var b: P2 = s.twice(); return b.x * 100
 fn t_m3() { var s: P3; s.x = 1; s.y = 2; s.z = 3; var c: P3 = s.twice(); return c.x * 10000 + c.y * 100 + c.z; }
 fn t_fw2() { var s: P2; s.x = 8; s.y = 9; var b: P2 = fw2(&s); s.x = 0; return b.x * 100 + b.y; }
 fn t_fw3() { var s: P3; s.x = 1; s.y = 2; s.z = 3; var c: P3 = fw3(&s); s.y = 0; return c.x * 10000 + c.y * 100 + c.z; }
+fn t_fw8() { var s: B8; s.v = 5; var c: B8 = fw8(&s); s.v = 0; return c.v; }
+fn t_fw4() { var s: B4; s.a = 0 - 7; var c: B4 = fw4(&s); s.a = 0; return c.a; }
+fn t_fw6() { var s: B6; s.a = 300; s.b = 0 - 2; var c: B6 = fw6(&s); s.a = 0; return c.a * 10 + c.b; }
 
 alloc_init();
 assert_eq(t_p1(), 7, "8 B handle-shaped local returns its value (control)");
@@ -70,4 +81,7 @@ assert_eq(t_m2(), 608, "method returning a 16 B handle by value");
 assert_eq(t_m3(), 20406, "method returning a 24 B handle by value");
 assert_eq(t_fw2(), 809, "control: a 16 B `*T` parameter returned by value");
 assert_eq(t_fw3(), 10203, "control: a 24 B `*T` parameter returned by value");
+assert_eq(t_fw8(), 5, "an 8 B `*T` parameter returned by value is its struct, not its address");
+assert_eq(t_fw4(), 0 - 7, "a 4 B `*T` parameter returned by value (signed i32 field)");
+assert_eq(t_fw6(), 2998, "a 6 B `*T` parameter returned by value: {300, -2}");
 var r = assert_summary();

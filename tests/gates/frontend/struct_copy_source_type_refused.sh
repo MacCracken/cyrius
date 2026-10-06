@@ -124,6 +124,15 @@ refuse "R3 gen<Pt>(r.q), a generic instance" "$MA" \
 refuse "R4 p.plus(r.q), a method" "$MA" \
     "${T}fn go(): i64 { var r: RB; var p: Pt; return p.plus(r.q); } syscall(60, go());"
 
+# 6.6.17 (a10 review): the parameter's struct id was recorded only below ordinal 62, so from
+# parameter 62 the check was silently skipped (R1c compiled; R1 was refused).
+P62='a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17, a18, a19, a20, a21, a22, a23, a24, a25, a26, a27, a28, a29, a30, a31, a32, a33, a34, a35, a36, a37, a38, a39, a40, a41, a42, a43, a44, a45, a46, a47, a48, a49, a50, a51, a52, a53, a54, a55, a56, a57, a58, a59, a60, a61'
+A62='0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61'
+refuse "R1c take62(.., r.q), the struct at ordinal 62" "$MA 'take62'" \
+    "${T}fn take62(${P62}, p: Pt): i64 { return p.x; } fn go(): i64 { var r: RB; return take62(${A62}, r.q); } syscall(60, go());"
+refuse "R1d take65(.., r.q), the struct at ordinal 65" "$MA 'take65'" \
+    "${T}fn take65(${P62}, b0, b1, b2, p: Pt): i64 { return p.x; } fn go(): i64 { var r: RB; return take65(${A62}, 0, 0, 0, r.q); } syscall(60, go());"
+
 echo "=== a top-level copy-init from a source of another struct type (V4) ==="
 refuse "R5 leading block, a named global" "$MV" \
     "${T}var GQ = Q { 1, 2, 3 }; var G: Pt = GQ; syscall(60, G.x);"
@@ -151,6 +160,11 @@ accept "A2 var G: Pt = A; / = GR.v; (both paths)" \
     "${T}var A = Pt { 3, 4 }; var GR = RB { 5, 6, 0, 0, 0, 0 }; var G: Pt = A; var H: Pt = GR.v; syscall(1, 1, \"\", 0); var J: Pt = A; var K: Pt = GR.v; syscall(60, G.x * 10 + G.y + H.x * 10 + H.y + J.x * 10 + J.y + K.x * 10 + K.y);" \
     180 \
     "${T}var A = Pt { 3, 4 }; var GR = RB { 5, 6, 0, 0, 0, 0 }; syscall(60, (A.x * 10 + A.y + GR.v.x * 10 + GR.v.y) * 2);"
+
+accept "A3 take65(.., r.v), the declared type at ordinal 65" \
+    "${T}fn take65(${P62}, b0, b1, b2, p: Pt): i64 { return p.x * 10 + p.y; } fn go(): i64 { var r: RB; r.v.x = 3; r.v.y = 4; return take65(${A62}, 0, 0, 0, r.v); } syscall(60, go());" \
+    34 \
+    "${T}fn go(): i64 { var r: RB; r.v.x = 3; r.v.y = 4; return r.v.x * 10 + r.v.y; } syscall(60, go());"
 
 echo "  $pass passed, $fail failed ($nrefuse refusal rows, $naccept acceptance rows)"
 [ "$fail" -eq 0 ]
