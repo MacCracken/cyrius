@@ -1,0 +1,195 @@
+# typed_pointer_step.tcyr — 6.6.17 — `p + n` / `p - n` / `p += n` / `p -= n` on a `*T` step
+# sizeof(T) elements, at EVERY site: a local, a parameter, a closure-captured local (one level and
+# two), a global declared in the leading declaration block or after the first statement, a
+# `name: *T` field and a `fn f(): *T` result. (`*u8` 1, `*i16` 2, `*i32` / `*u32` / `*f32` 4, `*i64`
+# 8, `*Pt` sizeof(Pt) = 24, `**T` 8.)
+#
+# Before 6.6.17 (measured on the 6.6.17-open compiler) the step depended on the SITE: a local
+# `*i8`/`*i16`/`*i32` stepped 1 and every other local 8 (`*u8` 8, `*Pt` 8); a parameter 1 whatever T;
+# a captured `*T` 1; a declaration-block global 8; a later global 1/2/4/8 by T; and `p += n` 1
+# everywhere. Two parameter cells were not a step at all: `p + 1` on a `*f32` parameter was a FLOAT
+# add of the pointer's bits, and on a `*Pt` parameter it dispatched `Pt_add`. No source in the
+# ecosystem declared a `*T` (drafts b7-measure), so the user's decision was one rule, no refusal.
+# Every row is the BYTE distance `d(p + n, p)`, computed outside the pointer expression.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+include "lib/assert.cyr"
+
+struct Pt { x; y; z; }
+struct Hold { p: *Pt; b: *u8; }
+var buf[512];
+
+fn d(a, b): i64 { return a - b; }
+
+fn locals(): i64 {
+    var a: *u8 = &buf;
+    var b: *i16 = &buf;
+    var c: *i32 = &buf;
+    var e: *i64 = &buf;
+    var f: *f32 = &buf;
+    var g: *u32 = &buf;
+    var h: *Pt = &buf;
+    var k: **Pt = &buf;
+    assert_eq(d(a + 1, a), 1, "local *u8 + 1");
+    assert_eq(d(b + 3, b), 6, "local *i16 + 3");
+    assert_eq(d(c + 2, c), 8, "local *i32 + 2");
+    assert_eq(d(e + 1, e), 8, "local *i64 + 1");
+    assert_eq(d(f + 1, f), 4, "local *f32 + 1");
+    assert_eq(d(g + 1, g), 4, "local *u32 + 1");
+    assert_eq(d(h + 2, h), 48, "local *Pt + 2");
+    assert_eq(d(k + 1, k), 8, "local **Pt + 1");
+    assert_eq(d(h + 3 - 1, h), 48, "local *Pt + 3 - 1");
+    var q: *Pt = h + 1;
+    assert_eq(d(q, h), 24, "var q: *Pt = h + 1");
+    return 0;
+}
+
+fn params(a: *u8, c: *i32, f: *f32, h: *Pt): i64 {
+    assert_eq(d(a + 5, a), 5, "param *u8 + 5");
+    assert_eq(d(c + 1, c), 4, "param *i32 + 1");
+    assert_eq(d(f + 2, f), 8, "param *f32 + 2 (a pointer, not a float add)");
+    assert_eq(d(h + 1, h), 24, "param *Pt + 1 (pointer arithmetic, no Pt_add)");
+    h.y = 77;
+    assert_eq(load64(&buf + 8), 77, "param *Pt: h.y still writes through the pointer");
+    var c2: *i32 = c;
+    assert_eq(d(c2 + 1, c2), 4, "a *i32 param copied into a *i32 local");
+    return 0;
+}
+
+fn compound(c: *i32): i64 {
+    var c0 = c;
+    c += 3;
+    assert_eq(d(c, c0), 12, "param *i32 += 3");
+    c -= 1;
+    assert_eq(d(c, c0), 8, "param *i32 -= 1");
+    var h: *Pt = &buf;
+    var h0 = h;
+    h += 1;
+    assert_eq(d(h, h0), 24, "local *Pt += 1");
+    var a: *u8 = &buf;
+    var a0 = a;
+    a += 7;
+    assert_eq(d(a, a0), 7, "local *u8 += 7");
+    var n = 10;
+    n += 3;
+    assert_eq(n, 13, "an untyped local += 3 is unchanged");
+    return 0;
+}
+
+fn captures(): i64 {
+    var h: *Pt = &buf;
+    var c: *i16 = &buf;
+    var f1 = || d(h + 1, h);
+    var f2 = |n| d(c + n, c);
+    assert_eq(callptr(f1), 24, "captured *Pt + 1");
+    assert_eq(callptr(f2, 3), 6, "captured *i16 + 3");
+    var f3 = |x| { var k = |y| d(h + y, h); return callptr(k, x); };
+    assert_eq(callptr(f3, 2), 48, "a capture of a capture, *Pt + 2");
+    return 0;
+}
+
+fn cap_param(p: *i32): i64 {
+    var f = || d(p + 1, p);
+    return callptr(f);
+}
+
+var D_u8: *u8 = 0;
+var D_pt: *Pt = 0;
+var D_i32: *i32 = 0;
+fn decl_globals(): i64 {
+    D_u8 = &buf; D_pt = &buf; D_i32 = &buf;
+    assert_eq(d(D_u8 + 1, D_u8), 1, "declaration-block global *u8 + 1");
+    assert_eq(d(D_pt + 1, D_pt), 24, "declaration-block global *Pt + 1");
+    assert_eq(d(D_i32 + 2, D_i32), 8, "declaration-block global *i32 + 2");
+    var g0 = D_i32;
+    D_i32 += 1;
+    assert_eq(d(D_i32, g0), 4, "declaration-block global *i32 += 1");
+    return 0;
+}
+
+fn fields_and_returns(): i64 {
+    var hd: Hold;
+    hd.p = &buf; hd.b = &buf;
+    assert_eq(d(hd.p + 1, hd.p), 24, "a *Pt field + 1");
+    assert_eq(d(hd.b + 1, hd.b), 1, "a *u8 field + 1");
+    return 0;
+}
+fn ret_pt(): *Pt { return &buf; }
+
+# ── a call's result is a plain value unless the callee declares `: *T` ─────────────────────
+# Before 6.6.17 it carried its LAST ARGUMENT's scale: `f(p) + 1` with `p: *i64` added 8.
+struct Q2 { a; }
+fn f_int(x): i64 { return 100; }
+fn Q2_m(self, x): i64 { return 100; }
+fn g_int<T>(x: T, y): i64 { return 100; }
+fn call_results(): i64 {
+    var p: *i64 = &buf;
+    var q: Q2;
+    q.a = 0;
+    var cl = |x| x;
+    store64(&buf, 0);
+    assert_eq(f_int(p) + 1, 101, "f(p) + 1, p: *i64");
+    assert_eq(load64(p) + 1, 1, "load64(p) + 1");
+    assert_eq(fncall1(&f_int, p) + 1, 101, "fncall1(&f, p) + 1");
+    assert_eq(callptr(cl, p) - p + 1, 1, "callptr(cl, p) - p + 1");
+    assert_eq(q.m(p) + 1, 101, "q.m(p) + 1");
+    assert_eq(g_int<i32>(1, p) + 1, 101, "g<i32>(1, p) + 1");
+    assert_eq(d(ret_pt() + 1, ret_pt()), 24, "a declared `: *Pt` return still steps 24");
+    return 0;
+}
+
+# ── a pointer to a generic instance steps the instance's size (it stepped the base's) ──────────
+struct Box2<T> { v: T; w: T; }
+fn box_param(p: *Box2<i16>): i64 { return d(p + 1, p); }
+fn generic_pointee(): i64 {
+    var bp: *Box2<i32> = &buf;
+    assert_eq(d(bp + 1, bp), 8, "*Box2<i32> steps sizeof(Box2<i32>)");
+    assert_eq(sizeof(Box2<i32>), 8, "sizeof(Box2<i32>)");
+    assert_eq(box_param(&buf), 4, "a *Box2<i16> param steps 4");
+    return 0;
+}
+
+# ── pointer difference and `n + p` (C rules) ────────────────────────────────────────────────
+# Before 6.6.17 `q - p` scaled the right pointer by the left one's step (`*i16`: -4090 where 3 is
+# right) and `n + p` stepped 1.
+fn differences(p: *i16): i64 {
+    var q: *i16 = p + 3;
+    assert_eq(q - p, 3, "*i16 q - p is an element count");
+    var a: *Pt = &buf;
+    var b: *Pt = a + 2;
+    assert_eq(b - a, 2, "*Pt b - a");
+    assert_eq(a - b, 0 - 2, "*Pt a - b is negative");
+    assert_eq((b - a) + 1, 3, "an element count is a plain value");
+    var c: *i64 = &buf;
+    assert_eq(d(2 + c, c), 16, "2 + c steps like c + 2");
+    assert_eq(2 + c - c, 2, "2 + c - c");
+    var e = &buf + 16;
+    assert_eq(e - &buf, 16, "plain addresses: a byte difference, as before");
+    var n = 3;
+    assert_eq(d(c - n, c), 0 - 24, "c - n still steps n elements");
+    return 0;
+}
+
+alloc_init();
+locals();
+call_results();
+differences(&buf);
+generic_pointee();
+params(&buf, &buf, &buf, &buf);
+compound(&buf);
+captures();
+assert_eq(cap_param(&buf), 4, "a captured *i32 parameter + 1");
+decl_globals();
+fields_and_returns();
+assert_eq(d(ret_pt() + 1, ret_pt()), 24, "a *Pt return + 1");
+
+var A_u8: *u8 = &buf;
+var A_pt: *Pt = &buf;
+fn after_globals(): i64 {
+    assert_eq(d(A_u8 + 3, A_u8), 3, "later global *u8 + 3");
+    assert_eq(d(A_pt + 1, A_pt), 24, "later global *Pt + 1");
+    return 0;
+}
+after_globals();
+var r = assert_summary();

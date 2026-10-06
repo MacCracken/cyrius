@@ -288,47 +288,64 @@ fn _tn_var_ann(S, ti, vnoff): i64 {
     return _tn_ann(S, ti, vnoff);
 }
 
-# ⛔ 6.6.16 — A LOCAL `*i8` / `*i16` / `*i32` TRUNCATED THE POINTER. Its pointer scale (1/2/4)
-# was written as the local's SLTYPE, and a positive SLTYPE below 8 IS a narrow scalar's width
-# (parse_expr.cyr: "no sub-i64 typed pointers exist, so 1/2/4 are always scalars"): the slot was
-# stored and loaded 1/2/4 bytes wide, so `var p: *i8 = &buf;` held the low byte of the address —
-# `p == &buf` false, `load8(p + 1)` SIGSEGV, silently. A `*T` local is an 8-byte pointer whatever
-# T is: SLTYPE 0, a plain word, whose `+` is byte arithmetic — the scale these three already had
-# (the scalar path reset it to 1), so no arithmetic changes. `*i64` and every other `*T` keep
-# SLTYPE 8, the scale-8 typed pointer. Globals and params never had the leak (8-byte slots).
-# CHANGELOG [6.6.16]
+# ⛔ 6.6.17 — `p + n` ON A `*T` STEPS sizeof(T) ELEMENTS, AT EVERY SITE (the user's decision,
+# 2026-10-05). The step used to depend on WHERE the pointer was declared: a local `*i8` / `*i16` /
+# `*i32` stepped 1 and every other local `*T` 8 (so `*u8` stepped 8 and `*Pt` 8); a parameter 1
+# whatever T (a `*f32` parameter was even an f32, so `p + 1` was a float add, and a `*Pt` one
+# dispatched `Pt_add`); a closure-captured `*T` 1; a declaration-block global 8; a global after
+# the first statement 1/2/4/8 by T; and `p += n` 1 everywhere. Measured across ~/Repos: no source
+# declares a `*T` at all, so nothing relied on the old steps (drafts b7-measure).
+# A `*T` slot stays a full 8-byte word (6.6.16 C8: a narrow SLTYPE truncated the pointer). The
+# step is carried on the slot as a MARK in the slice-width table, `0 - 0x7E00 - step`, read only
+# when bit 56 of the depth word says the slot is a typed pointer (SLPTRP — set here for a local,
+# by `_param_record` for a parameter): the slice-width table is not reset for a parameter's slot,
+# so a mark is only trusted behind that bit, which every slot gets fresh. A step-8 local keeps
+# SLTYPE 8, the load path it always had. The mark rides the closure snapshot with the depth word
+# (`_cl_snap_ptr_step`). CHANGELOG [6.6.17]
+# `ps` is PARSE_VAR's pscale: > 0 a pointer's step; 0 or `0 - sid` / a vector descriptor for
+# anything else, which is the SLTYPE as it stands.
 fn _sl_ptr_type(S, li, ps): i64 {
-    if (ps > 0) { if (ps < 8) { SLTYPE(S, li, 0); return 0; } }
+    if (ps > 0) { if (ps != 8) { SLTYPE(S, li, 0); return 0; } }
     SLTYPE(S, li, ps);
     return 0;
 }
-# ... but the slot's width is not its pointer-ness: an SLTYPE-0 load leaves the expression scale
-# 0, "not a pointer", so `var q: *i16 = p;` / `= p + 1` warned "assigning non-pointer to typed
-# pointer" about a pointer (the narrow slot had loaded with scale 1, the byte step these three
-# keep). So such a local also carries a MARK, read at its load to set scale 1 again — on an
-# 8-byte load. Scale 1 multiplies by nothing (EPTR_SCALE), so no emitted byte changes; only the
-# two "non-pointer" warnings read it. The mark lives in the slice-width table (SSLICE_W), the
-# same table as the sign mark: slice code reads only a POSITIVE width and the sign mark (-1 / -2
-# / -4) is read only for SLTYPE 1..7, so this SLTYPE-0 slot's `0 - 0x7E00` is seen by nothing
-# else, and it rides the closure local snapshot with the rest of the table.
 fn _sl_marks(S, li, sgn, st, sw, ps): i64 {
     if (sgn == 1) { if (sw == 0) { SSLICE_W(S, li, 0 - st); } }
-    if (ps > 0) { if (ps < 8) { SSLICE_W(S, li, 0 - 0x7E00); } }
+    if (ps > 0) {
+        SSLICE_W(S, li, 0 - 0x7E00 - ps);
+        SLPTRP(S, li);
+    }
+    return 0;
+}
+# The step of a typed-pointer slot `li` (a local or a `p: *T` parameter), 0 when it is none.
+fn _slot_ptr_step(S, li): i64 {
+    if (GLPTRP(S, li) == 0) { return 0; }
+    var w = GSLICE_W(S, li);
+    if (w <= 0 - 0x7E01) { return 0 - w - 0x7E00; }
+    return 8;
+}
+# The type a VALUE read of local `li` is made at (PARSE_FACTOR, `x OP= ..`): a typed pointer is a
+# plain word (0) whatever its SLTYPE says — a `p: *f32` parameter's slot is typed f32 and a
+# `p: *Pt` one `0 - sid` (that is what `p.x` reads through), but its VALUE is an address, so it is
+# neither a float nor an operator-overloading operand. Step-8 locals keep SLTYPE 8.
+fn _load_lt(S, li): i64 {
+    var lt = GLTYPE(S, li);
+    if (GLPTRP(S, li) == 0) { return lt; }
+    if (lt == 8) { return 8; }
     return 0;
 }
 # An SLTYPE-0 local was just loaded: its marks — the untyped-float flag (_UFV_L) and the pointer
-# mark above.
+# step above.
 fn _sl_load_marks(S, li): i64 {
     _UFV_L(S, li);
-    if (GSLICE_W(S, li) == 0 - 0x7E00) { SPSC(S, 1); }
+    var ps = _slot_ptr_step(S, li);
+    if (ps > 0) { SPSC(S, ps); }
     return 0;
 }
 
-# The pointer annotation `*T` at token `ti` (T, the token after the `*`): the pointer scale,
-# with T resolved — an unknown T is refused (it was taken silently). 8 for every T but the
-# signed i8 / i16 / i32, which keep their 1 / 2 / 4: a global declared after the first
-# statement scales by it. uN deliberately keeps 8 (what it always had). A local `*iN` must NOT
-# make its slot that wide — see _sl_ptr_type. `**T` and `*u128` are left to their callers.
+# The pointer annotation `*T` at token `ti` (T, the token after the `*`), resolved — an unknown T
+# is refused (it was taken silently). 6.6.17: only a slice element `[*T]` / `slice<*T>` asks this
+# now (whose width is a pointer's 8); every `*T` variable's step is sizeof(T), `_tn_ptr_step`.
 fn _tn_ptr(S, ti, vnoff): i64 {
     if (TOKTYP(S, ti) != 2) { return 8; }
     var c = _tn_resolve_at(S, ti);
@@ -338,6 +355,130 @@ fn _tn_ptr(S, ti, vnoff): i64 {
     }
     if (_tn_class(c) == 1) { return _tn_val(c); }
     return 8;
+}
+
+# 6.6.17 — sizeof(T) for the pointer annotation `*T` at token `ti` (T, the token after the `*`):
+# the step of `p + n` on such a pointer. T is resolved as _tn_ptr resolves it: an unknown T is
+# refused once (`quiet` 1, pass 1: not reported — pass 2 reads it again) and steps 8; a bound
+# type parameter steps by its argument's size, an unbound one by its i64 base's 8.
+fn _tn_ptr_step(S, ti, vnoff, quiet): i64 {
+    if (TOKTYP(S, ti) == 105) { return 16; }      # *u128
+    if (TOKTYP(S, ti) != 2) { return 8; }
+    var w = 0;
+    var b = _tp_resolve(S, TOKVAL(S, ti));
+    if (b != 0) { w = _tn_bytes(S, _tn_from_rc(b)); }
+    else {
+        var c = _tn_resolve_at(S, ti);
+        if (c == 0) {
+            if (quiet == 0) { _tn_refuse(S, ti, " as the target of pointer ", vnoff); }
+            return 8;
+        }
+        w = _tn_bytes(S, c);
+    }
+    if (w < 1) { return 8; }
+    return w;
+}
+# ⛔ 6.6.17 — `name: *T` (a struct or union field) and `fn f(): *T` (a return type, a multi-value
+# return element) did not parse — `expected identifier, got '*'` — while `var p: *T` and a
+# `p: *T` parameter did. Each is an 8-byte pointer. Cursor on the first `*`: consumes the `*`s,
+# T and any `<..>` after it, and returns the step of `p + n` on the value — sizeof(T), 8 for a
+# pointer to a pointer — which a field load / a call result carries as its pointer scale, so
+# `var q: *T = h.p;` / `= f();` is not "assigning non-pointer to typed pointer". CHANGELOG [6.6.17]
+fn _ptr_annot(S, vnoff, quiet): i64 {
+    var n = 0;
+    while (PEEKT(S) == 8) {
+        STI(S, GTI(S) + 1);
+        n = n + 1;
+    }
+    var ps = _ptr_step_peek(S, vnoff, quiet);
+    if (n > 1) { ps = 8; }
+    if (PEEKT(S) == 2 || PEEKT(S) == 105) {
+        STI(S, GTI(S) + 1);
+        SKIP_GENERICS(S);
+    } elif (quiet == 0) { ERR_EXPECT(S, 2); }
+    return ps;
+}
+# The step of `*T` with the cursor on T, which does not move: `_tn_ptr_step`, except that a
+# generic struct with arguments is its INSTANCE (`*Box<i32>` steps sizeof(Box<i32>), as `var b:
+# Box<i32>` declares it — it stepped the base's size), sized as `_sizeof_type` sizes it. Pass 1
+# (`quiet`) sizes an instance only when its arguments resolve already. CHANGELOG [6.6.17]
+fn _ptr_step_peek(S, vnoff, quiet): i64 {
+    var ti = GTI(S);
+    var ps = _tn_ptr_step(S, ti, vnoff, quiet);
+    if (TOKTYP(S, ti) != 2) { return ps; }
+    if (TOKTYP(S, ti + 1) != 19) { return ps; }
+    var sid = FINDSTRUCT(S, TOKVAL(S, ti));
+    if (sid <= 0) { return ps; }
+    if (quiet == 1) { if (_targs_resolvable(S, ti + 2) == 0) { return ps; } }
+    STI(S, ti + 1);
+    var g = _gen_ann_sid(S, sid);
+    STI(S, ti);
+    if (g > 0) { if (g != sid) { ps = STRUCTSZ(S, g - 1); } }
+    return ps;
+}
+# A `name: *T` field (cursor on its `:`): an 8-byte field whose loads carry T's step.
+# ⛔ 6.6.17 (review) — a pointer to a STRUCT is sized when the field is LOADED, not when it is
+# declared: inside its own definition a struct has the size of the fields so far
+# (`struct Node { val; next: *Node; }` stepped 8, not 16), and a struct declared further down
+# (`struct A { p: *B; }`) was refused "declared after its use", so two structs could not point
+# at each other. Such a field records T's token (`0 - (ti + 1)`); `_fld_ps_get` sizes it.
+var _fld_ps = 0;   # per field-pool entry: the step of a `*T` field (or T's token), 0 otherwise
+fn _add_ptr_field(S, si, fnoff): i64 {
+    STI(S, GTI(S) + 1);                     # consume ':'
+    var ps = _fld_ptr_late(S);
+    if (ps == 0) { ps = _ptr_annot(S, fnoff, 0); }
+    var ent = L64(S + 0x1AA018 + si * 8) + (L64(S + 0x1A8018 + si * 8) & 0x7FFFFFFFFFFFFFFF);
+    var top = L64(S + 0x1AC018);
+    ADDFIELD(S, si, fnoff);
+    if (L64(S + 0x1AC018) == top) { return 0; }   # refused (and reported) by ADDFIELD
+    if (ent >= 8192) { return 0; }
+    if (_fld_ps == 0) { _fld_ps = alloc(8192 * 8); }
+    S64(_fld_ps + ent * 8, ps);
+    return 0;
+}
+# Cursor on the `*` of a field's `*T`: when T (one `*`) names a struct — this one, one declared
+# above, or one declared below — consume the annotation and return `0 - (ti + 1)` (T's token);
+# else 0, cursor untouched.
+fn _fld_ptr_late(S): i64 {
+    var ti = GTI(S) + 1;
+    if (TOKTYP(S, ti) != 2) { return 0; }
+    var noff = TOKVAL(S, ti);
+    if (FINDSTRUCT(S, noff) <= 0) { if (_declared_later(S, noff, 40, 101) == 0) { return 0; } }
+    STI(S, ti + 1);
+    SKIP_GENERICS(S);
+    return 0 - (ti + 1);
+}
+fn _fld_ps_get(S, si, fi): i64 {
+    if (_fld_ps == 0) { return 0; }
+    var ent = (L64(S + 0x1AA018 + si * 8) + fi) & 0x7FFFFFFFFFFFFFFF;
+    if (ent >= 8192) { return 0; }
+    var v = L64(_fld_ps + ent * 8);
+    if (v >= 0) { return v; }
+    var sv = GTI(S);
+    STI(S, 0 - v - 1);
+    var ps = _ptr_step_peek(S, 0 - 1, 1);
+    STI(S, sv);
+    return ps;
+}
+# A `fn f(): *T` return (cursor on the `*`): recorded as an i64 return plus T's step, which a
+# call to it carries (`_call_ret_ps`). `quiet` 1 in pass 1 (`_prescan_fn_sig`), which only
+# records it; pass 2 (PARSE_FN_DEF) refuses an unknown T and sets the fn's return scalar.
+var _fn_rps = 0;   # per fn: the step of a `*T` return, 0 for any other return
+fn _ret_ptr_annot(S, fi, quiet): i64 {
+    var ps = _ptr_annot(S, 0 - 1, quiet);
+    SFRS(S, fi, 0 - 8);
+    if (_fn_rps == 0) { _fn_rps = alloc(131072 * 8); }
+    S64(_fn_rps + fi * 8, ps);
+    if (quiet == 0) { _cur_fn_ret_scalar = 0 - 8; }
+    return 0;
+}
+# 6.6.17: and 0 for every other callee — the result is a plain value, whatever scale the last
+# argument left (`_call_scale_fix`).
+fn _call_ret_ps(S, fi): i64 {
+    var ps = 0;
+    if (fi >= 0) { if (_fn_rps != 0) { ps = L64(_fn_rps + fi * 8); } }
+    SPSC(S, ps);
+    return 0;
 }
 
 # A slice element `[T]` / `slice<T>` at token `ti`: its width. A bound type parameter is its
@@ -373,6 +514,22 @@ fn _tn_sizeof(S, ti, asrt): i64 {
     _tn_refuse(S, ti, " in #assert sizeof", 0 - 1);
     _panic = 1;
     return 0;
+}
+
+# ⛔ 6.6.17 — `sizeof(T<..>)` did not parse (`expected ')', got '<'`). Cursor on T: its size, T
+# and any `<..>` consumed. A generic struct with arguments is the INSTANCE `var b: Box<i32>`
+# declares (`_gen_ann_sid`), so `sizeof(Box<i32>)` is what that variable occupies; any other
+# `T<..>` (`Vec<i64>`, a handle) is T's own size. `asrt` as _tn_sizeof's.
+fn _sizeof_type(S, asrt): i64 {
+    var ti = GTI(S);
+    var sz = _tn_sizeof(S, ti, asrt);
+    STI(S, ti + 1);
+    if (PEEKT(S) != 19) { return sz; }
+    var sid = 0;
+    if (TOKTYP(S, ti) == 2) { sid = FINDSTRUCT(S, TOKVAL(S, ti)); }
+    var g = _gen_ann_sid(S, sid);
+    if (g > 0) { if (g != sid) { sz = STRUCTSZ(S, g - 1); } }
+    return sz;
 }
 
 # A parameter's type name at the cursor (PARSE_FN_DEF; `ptc` its _classify_param_type class).
@@ -424,7 +581,7 @@ fn _tn_ret_report(S, ti): i64 {
         PRSTR("  note: a generic fn returns its first or second type parameter, and none under CYRIUS_MONOMORPH=0\n");
     } else {
         ERR_IDENT(S, "type ", TOKVAL(S, ti), " cannot be a fn return type", 0 - 1);
-        PRSTR("  note: a return type is a struct, i8/i16/i32/i64, f64, a vector type, Result, Option, Tagged or cstring; return an i64 (no annotation) for the others\n");
+        PRSTR("  note: a return type is a struct, i8/i16/i32/i64, f64, a vector type, Result, Option, Tagged, cstring or a pointer *T; return an i64 (no annotation) for the others\n");
     }
     _panic = 0;
     return 0;
@@ -1192,7 +1349,7 @@ fn _refuse_field_type(S, tnoff, fnoff, snoff): i64 {
     } else {
         ERR_IDENT(S, "unknown type ", tnoff, " for struct field ", fnoff);
         _tn_prefix_note(S, tnoff);   # 6.6.16
-        PRSTR("  note: a field type is a struct or union declared above it, i8/i16/i32/i64, u8/u16/u32/u64, f32, f64, bool, cstring, Result, Option, Tagged, an enum, or Vec / Vec<T> (missing include?)\n");
+        PRSTR("  note: a field type is a struct or union declared above it, i8/i16/i32/i64, u8/u16/u32/u64, f32, f64, bool, cstring, Result, Option, Tagged, an enum, Vec / Vec<T>, or a pointer *T (missing include?)\n");
     }
     _panic = 0;
     return 0;
@@ -1238,6 +1395,25 @@ fn _vec_elem_code(S, si, fnoff, etoff): i64 {
     return 0;
 }
 
+# A `Vec<T>` field's element, cursor on T: its code (`_vec_elem_code`, which refuses an unknown
+# name), T and the `>` closing `Vec<` consumed. 6.6.17: T may take type arguments of its own —
+# `items: Vec<Box<i64>>` was `expected '>', got '<'`. They are skipped, not instantiated: this
+# runs inside a struct definition, whose fields must stay contiguous in the field pool, and the
+# element code is read only by the derive codecs. The lexer's `>>` closes T's list AND the
+# `Vec<` one, which `_ta_pending_gt` carries.
+fn _vec_field_elem(S, si, fnoff): i64 {
+    if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
+    var etoff = PEEKV(S);
+    STI(S, GTI(S) + 1);                     # consume the element type name
+    var elemc = _vec_elem_code(S, si, fnoff, etoff);
+    _ta_pending_gt = 0;
+    if (PEEKT(S) == 19) { _ta_pending_gt = _skip_targ_list(S); }
+    if (_ta_pending_gt > 0) { _ta_pending_gt = _ta_pending_gt - 1; return elemc; }
+    if (PEEKT(S) != 20) { ERR_EXPECT(S, 20); }
+    STI(S, GTI(S) + 1);                     # consume >
+    return elemc;
+}
+
 fn PARSE_STRUCT_DEF(S): i64 {
     var _sdefstart = GTI(S);   # v6.3.10: the `struct` token, for generic instance re-emit
     STI(S, GTI(S) + 1);  # consume STRUCT
@@ -1270,7 +1446,8 @@ fn PARSE_STRUCT_DEF(S): i64 {
             var fnoff = PEEKV(S);
             STI(S, GTI(S) + 1);
             # Check for type annotation: field: Type
-            if (PEEKT(S) == 49) {
+            if (PEEKT(S) == 49 && TOKTYP(S, GTI(S) + 1) == 8) { _add_ptr_field(S, si, fnoff); }   # 6.6.17: `: *T`
+            elif (PEEKT(S) == 49) {
                 STI(S, GTI(S) + 1);
                 if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
                 var tnoff = PEEKV(S);
@@ -1302,12 +1479,7 @@ fn PARSE_STRUCT_DEF(S): i64 {
                     if (ftname & 0xFFFFFFFF == 0x636556) {
                         if (PEEKT(S) == 19) {
                             STI(S, GTI(S) + 1);   # consume <
-                            if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
-                            var etoff = PEEKV(S);
-                            STI(S, GTI(S) + 1);   # consume element type name
-                            var elemc = _vec_elem_code(S, si, fnoff, etoff);   # 6.6.10: refuses an unknown name
-                            if (PEEKT(S) != 20) { ERR_EXPECT(S, 20); }
-                            STI(S, GTI(S) + 1);   # consume >
+                            var elemc = _vec_field_elem(S, si, fnoff);   # 6.6.17: + a nested `<..>`
                             var _vsent = MKVEC(S, elemc);
                             ADDFIELDTYPED(S, si, fnoff, _vsent);
                         } else {
@@ -1363,7 +1535,8 @@ fn PARSE_UNION_DEF(S): i64 {
             if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
             var fnoff = PEEKV(S);
             STI(S, GTI(S) + 1);
-            if (PEEKT(S) == 49) {
+            if (PEEKT(S) == 49 && TOKTYP(S, GTI(S) + 1) == 8) { _add_ptr_field(S, si, fnoff); }   # 6.6.17: `: *T`
+            elif (PEEKT(S) == 49) {
                 STI(S, GTI(S) + 1);
                 if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
                 var tnoff = PEEKV(S);
@@ -1375,12 +1548,7 @@ fn PARSE_UNION_DEF(S): i64 {
                 if (ftname & 0xFFFFFFFF == 0x636556) {
                     if (PEEKT(S) == 19) {
                         STI(S, GTI(S) + 1);   # consume <
-                        if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
-                        var etoff = PEEKV(S);
-                        STI(S, GTI(S) + 1);   # consume element type name
-                        var elemc = _vec_elem_code(S, si, fnoff, etoff);   # 6.6.10: refuses an unknown name
-                        if (PEEKT(S) != 20) { ERR_EXPECT(S, 20); }
-                        STI(S, GTI(S) + 1);   # consume >
+                        var elemc = _vec_field_elem(S, si, fnoff);   # 6.6.17: + a nested `<..>`
                         var _vsent = MKVEC(S, elemc);
                         ADDFIELDTYPED(S, si, fnoff, _vsent);
                     } else {

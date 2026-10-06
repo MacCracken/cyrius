@@ -753,12 +753,10 @@ fn READFILE(path, dst, maxsz): i64 {
     # the override; default behavior stays strict for untrusted-source
     # builds. `cyrius build` can set the env automatically when it
     # resolves deps with a relative `..` path.
-    # 6.6.17: `ap_env` / `aa_env`, not `_allow_parent` / `_allow_abs` — cybs reads a leading `_` as
-    # nothing, so each aliased its `allow_*` flag (tests/gates/toolchain/cybs_underscore_alias.sh).
-    var ap_env = _read_env("CYRIUS_ALLOW_PARENT_INCLUDES");
+    var _env_parent = _read_env("CYRIUS_ALLOW_PARENT_INCLUDES");
     var allow_parent = 0;
-    if (ap_env != 0) {
-        if (load8(ap_env) == 49 && load8(ap_env + 1) == 0) {
+    if (_env_parent != 0) {
+        if (load8(_env_parent) == 49 && load8(_env_parent + 1) == 0) {
             allow_parent = 1;
         }
     }
@@ -788,10 +786,10 @@ fn READFILE(path, dst, maxsz): i64 {
     # `lib/` fallback below builds its own path from CYRIUS_HOME or HOME
     # (`_init_cyrius_lib`) and opens it directly (not through this guard), so it
     # is unaffected.
-    var aa_env = _read_env("CYRIUS_ALLOW_ABSOLUTE_INCLUDES");
+    var _env_abs = _read_env("CYRIUS_ALLOW_ABSOLUTE_INCLUDES");
     var allow_abs = 0;
-    if (aa_env != 0) {
-        if (load8(aa_env) == 49 && load8(aa_env + 1) == 0) {
+    if (_env_abs != 0) {
+        if (load8(_env_abs) == 49 && load8(_env_abs + 1) == 0) {
             allow_abs = 1;
         }
     }

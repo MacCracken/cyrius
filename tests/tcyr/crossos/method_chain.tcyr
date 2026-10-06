@@ -1,0 +1,78 @@
+# method_chain.tcyr — 6.6.17 — a METHOD CALL's result takes `.field` and `.method(..)`, chained to
+# any depth, as a value and as a bare statement: `s.clone().cat(t)`, `p.bump().bump().sum()`.
+#
+# Before 6.6.17 the method arm returned straight after the call, so the `.` after it was a syntax
+# error in every position — `expected ';', got '.'` / `expected ')', got '.'` (measured on the
+# 6.6.17-open compiler, the filed `s.clone().cat(t)` included) — while a FREE call's result has
+# taken `.field` / `.m()` since 6.6.12. The result is held where a call's is: a > 16 B struct in its
+# retptr temp, a 9-16 B one (rax:rdx) in a temp, a <= 8 B struct in an inline temp and a `Str`
+# handle in a pointer-mode slot. The refusals (a result that is no struct, a chain at top level)
+# are pinned by tests/gates/frontend/call_result_field.sh rows C1-C3.
+#
+# CROSS-HOST: each of the three struct-return classes (rax, the rax:rdx pair, the retptr) is a
+# per-backend ABI, and Win64 returns the 9-16 B class through a retptr.
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/str.cyr"
+include "lib/assert.cyr"
+
+struct P { x; y; }          # 16 B: the rax:rdx pair class (a retptr on Win64)
+struct B { a; b; c; }       # 24 B: the retptr class
+struct W { v; }             # 8 B: in rax
+impl Pm for P {
+    fn bump(self: P): P { var r: P; r.x = self.x + 1; r.y = self.y * 2; return r; }
+    fn sum(self: P): i64 { return self.x * 10 + self.y; }
+    fn big(self: P): B { var r: B; r.a = self.x; r.b = self.y; r.c = 7; return r; }
+    fn w(self: P): W { var r: W; r.v = self.x + self.y; return r; }
+    fn grow(self): P { var r: P; r.x = load64(self) + 100; r.y = 0; return r; }
+}
+impl Bm for B {
+    fn tot(self: B): i64 { return self.a + self.b + self.c; }
+    fn back(self: B): P { var r: P; r.x = self.c; r.y = self.a; return r; }
+}
+impl Wm for W {
+    fn dbl(self: W): W { var r: W; r.v = self.v * 2; return r; }
+    fn get(self: W): i64 { return self.v; }
+}
+fn mkp(a): P { var r: P; r.x = a; r.y = a; return r; }
+
+fn struct_chains(): i64 {
+    var p = P { 1, 2 };
+    assert_eq(p.bump().sum(), 24, "pair result . method");
+    assert_eq(p.bump().bump().sum(), 38, "pair . pair . method");
+    assert_eq(p.bump().x, 2, "pair result . field");
+    assert_eq(p.big().tot(), 10, "retptr result . method");
+    assert_eq(p.big().c, 7, "retptr result . field");
+    assert_eq(p.big().back().bump().sum(), 82, "retptr . pair . pair . method");
+    assert_eq(p.w().dbl().dbl().get(), 12, "rax result . rax . rax . method");
+    assert_eq(p.w().dbl().v, 6, "rax result . field");
+    assert_eq(p.grow().sum(), 1010, "an untyped-self method's result . method");
+    assert_eq(mkp(3).bump().sum(), 46, "a call result . method . method");
+    var q: P = p.bump().bump();
+    assert_eq(q.sum(), 38, "a chain into a typed declaration");
+    q = p.big().back();
+    assert_eq(q.x * 10 + q.y, 71, "a chain assigned to a struct");
+    assert_eq(p.sum() + p.bump().sum(), 36, "a chain inside an expression");
+    assert_eq(p.x * 10 + p.y, 12, "the receiver is unchanged");
+    p.bump().sum();                      # a bare statement
+    p.big().back();
+    return 0;
+}
+
+fn str_chains(): i64 {
+    var s: Str = str_from("ab");
+    var t: Str = str_from("cd");
+    var u: Str = s.clone().cat(t);       # the filed shape
+    assert_eq(u.len(), 4, "s.clone().cat(t)");
+    assert_eq(s.clone().cat(t).len(), 4, "s.clone().cat(t).len()");
+    assert_eq(s.clone().cat(t).cat(t).len(), 6, "three links on a Str");
+    assert_eq(s.len(), 2, "the receiver is unchanged");
+    s.clone().cat(t);                    # a bare statement
+    return 0;
+}
+
+alloc_init();
+struct_chains();
+str_chains();
+var r = assert_summary();

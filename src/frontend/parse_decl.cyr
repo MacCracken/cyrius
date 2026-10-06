@@ -1077,6 +1077,75 @@ fn PARSE_FIELD_LOAD(S, noff): i64 {
     return 0;
 }
 
+# ⛔ 6.6.17 — A METHOD CALL'S RESULT TAKES `.field` AND `.method(..)` (`s.clone().cat(t)`,
+# `p.bump().bump().sum()`, as a value or a statement). The method arm returned straight after
+# the call, so the `.` was a syntax error in every position (`expected ';', got '.'`), while a
+# free call's result has taken both since 6.6.12 (`_call_field`). The result goes where
+# `_call_field` puts a call's: a > 16 B struct in the temp `_sc_pre` gave it, a 9-16 B one in a
+# temp `_sc_pre_m` asks for when a chain follows, a <= 8 B struct in an inline temp and a `Str`
+# handle in a pointer-mode one — and this body runs again on that temp, so a chain reaches any
+# depth. A result that is no struct, and a chain at top level (no frame), are refused by name.
+# The method a `.m(..)` expression ENDED with (-1 when it ended with a field or anything else) —
+# what `p.m(..);` as a statement discards, for #must_use (parse.cyr `_stmt_method_call`).
+var _mcall_last = 0 - 1;
+fn _mchain_at(S, k): i64 {
+    if (TOKTYP(S, k) != 41) { return 0; }
+    if (TOKTYP(S, k + 1) != 2) { return 0; }
+    return 1;
+}
+# `_sc_pre` for the method arm (cursor on the call's `(`): a 9-16 B result followed by a chain
+# needs its temp as much as one a destination asked for.
+fn _sc_pre_m(S, fi, noff, beg): i64 {
+    if (_mchain_at(S, _call_close(S, GTI(S)) + 1) == 0) { return _sc_pre(S, fi, noff, beg); }
+    var w = _sc_want;
+    _sc_want = beg;
+    var t = _sc_pre(S, fi, noff, beg);
+    _sc_want = w;
+    return t;
+}
+# After the method call `fi` (`t` = its temp, -1 for none; cursor past its `)`): 1 = a chain on
+# its result was parsed (rax = its value), 0 = none follows.
+fn _method_chain(S, fi, noff, beg, t): i64 {
+    if (_mchain_at(S, GTI(S)) == 0) { return 0; }
+    _mcall_last = 0 - 1;                # the chain's own last method, if it ends with one
+    var sid = 0;
+    if (fi >= 0) { sid = GFRS(S, fi); }
+    if (sid <= 0) {
+        if (_syntax_only == 0) { ERR_IDENT(S, "cannot take a field of the result of ", noff, ": it does not return a struct", 0 - 1); }
+        _mchain_skip(S);
+        return 1;
+    }
+    if (GINFN(S) != 1) {
+        if (_syntax_only == 0) { _refuse_toplevel_struct_call(S, noff); }
+        _mchain_skip(S);
+        return 1;
+    }
+    if (t < 0) { t = _mchain_temp(S, sid); }
+    STI(S, GTI(S) + 1);                 # consume `.`
+    var fnoff = PEEKV(S);
+    STI(S, GTI(S) + 1);                 # consume the field / method name
+    _field_load_on(S, noff, fnoff, beg, 0 - 2 - t, sid);
+    _cfo = 0;
+    return 1;
+}
+# rax = a struct result returned in rax (a <= 8 B struct's bytes, or a `Str` handle): stored in a
+# fresh temp laid out as `_struct_call_emit` lays out a class-0 result. Returns the temp's slot.
+fn _mchain_temp(S, sid): i64 {
+    var t = 0;
+    if (STRUCTSZ(S, sid - 1) > 8) { t = _ptr_temp(S, sid); }
+    else { t = _agg_temp(S, sid); }
+    EFLSTORE(S, t);
+    return t;
+}
+# The rest of a refused chain: every `.name` and `(..)`.
+fn _mchain_skip(S): i64 {
+    while (_mchain_at(S, GTI(S)) == 1) {
+        STI(S, GTI(S) + 2);
+        if (PEEKT(S) == 10) { STI(S, _call_close(S, GTI(S)) + 1); }
+    }
+    return 0;
+}
+
 # PARSE_FIELD_LOAD past the base: the receiver resolved to (idx, sid) in PARSE_FIELD_LOAD's
 # encoding, the cursor just past `.name` (`fnoff`). A method call, or the field and any nested
 # chain loaded at the leaf's width and signedness. `noff` names the receiver in diagnostics and
@@ -1135,7 +1204,7 @@ fn _field_load_on(S, noff, fnoff, pfl_beg, idx, sid): i64 {
         # which this path never supplied: `var r: P3 = b.mk(2)`, `b.mk(3);` and `r = b.mk(5)`
         # SIGSEGV'd (the callee took `self` as its retptr). `_sc_pre` allocates the temp and, on
         # x86/cx, pushes its address as int arg 0 BEFORE `self`. CHANGELOG [6.6.6]
-        var m_rt = _sc_pre(S, mfi, mname, pfl_beg);
+        var m_rt = _sc_pre_m(S, mfi, mname, pfl_beg);   # 6.6.17: and a temp when a chain follows
         var m_n0 = _sc_n0;
         # Push &var as first arg (self) — handle locals and globals.
         # v6.6.4: mirror _resolve_field_base_addr. A local struct is either POINTER-mode
@@ -1213,11 +1282,15 @@ fn _field_load_on(S, noff, fnoff, pfl_beg, idx, sid): i64 {
         _simd_arg_second_pass(S, &m_simd_table, load64(&m_st + 8));
         _sc_x8(S, mfi, m_rt);        # 6.6.6: aarch64's retptr register
         _callee_site_checks(S, mfi, mname, m_ti - 1);   # v6.6.4: `s.method()` is its own call path
+        _pure_effect_warn(S, mfi, mname);               # 6.6.17: and #pure's #io / #alloc check
         var mfoff = L64(_fnt_offsets + mfi * 8);
         if (mfoff >= 0) { ECALLTO(S, mfoff); }
         else { ECALLFIX(S, mfi); }
         ECALLCLEAN(S, m_int_argc);
         _sc_post(S, mfi, mname, pfl_beg, m_rt);   # 6.6.6: the pair store / value, and the record
+        _call_ret_ps(S, mfi);                     # 6.6.17: a `*T` return's pointer scale
+        _mcall_last = mfi;                             # 6.6.17: for a statement's #must_use
+        _method_chain(S, mfi, mname, pfl_beg, m_rt);   # 6.6.17: `.field` / `.m(..)` on the result
         return 0;
     }
 
@@ -1287,6 +1360,8 @@ fn _field_load_type(S, si, fi): i64 {
     var k = GFFK(S, si, fi);
     if (k == 1) { SESTYPE(S, F64_TYID); }
     if (k == 2) { SESTYPE(S, F32_TYID); }
+    var ps = _fld_ps_get(S, si, fi);   # 6.6.17: a `name: *T` field is a pointer (_add_ptr_field)
+    if (ps > 0) { SPSC(S, ps); }
     return 0;
 }
 
@@ -3285,9 +3360,9 @@ fn PARSE_GVAR_REG(S): i64 {
     if (PEEKT(S) == 49) {
         STI(S, GTI(S) + 1);
         ann_ti = GTI(S);
-        # 6.6.16 (C8): `*T` names a type (T resolved whole, an unknown T refused); the
-        # declaration block's global pointer keeps scale 8 whatever T is, as it always had.
-        if (PEEKT(S) == 8) { STI(S, GTI(S) + 1); _tn_ptr(S, GTI(S), noff); psc = 8; STI(S, GTI(S) + 1); SKIP_GENERICS(S); }
+        # 6.6.16 (C8): `*T` names a type (T resolved whole, an unknown T refused). 6.6.17: its
+        # scale is sizeof(T), as at every other site (it was 8 here whatever T was).
+        if (PEEKT(S) == 8) { psc = _ptr_annot(S, noff, 0); }
         elif (PEEKT(S) == 105) { ann_scalar = 16; STI(S, GTI(S) + 1); }
         else {
             if (PEEKT(S) == 2) {
@@ -4514,12 +4589,9 @@ fn PARSE_VAR(S): i64 {
         STI(S, GTI(S) + 1);  # consume :
         ann_ti = GTI(S);
         if (PEEKT(S) == 8) {
-            # Pointer type `*T`: T resolved by its WHOLE name, an unknown T refused; the scale
-            # (8, or 1/2/4 for *i8/*i16/*i32) — a local keeps an 8-byte slot (_sl_ptr_type).
-            STI(S, GTI(S) + 1);  # consume *
-            pscale = _tn_ptr(S, GTI(S), noff);   # 6.6.16 (C8)
-            STI(S, GTI(S) + 1);
-            SKIP_GENERICS(S);
+            # Pointer type `*T`: T resolved by its WHOLE name, an unknown T refused; the scale is
+            # sizeof(T) (6.6.17) — a local keeps an 8-byte slot (_sl_ptr_type).
+            pscale = _ptr_annot(S, noff, 0);
         } elif (PEEKT(S) == 28) {
             # v5.8.9 §1: `[T]` slice type sugar — `var x: [u8] = ...`.
             # v5.8.10 §2: 16-byte {ptr, len} slot (u128 path).

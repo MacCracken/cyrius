@@ -170,8 +170,8 @@ whole`). A type with no place at a site is refused once, its `<..>` with it
 and read any other name as a silent `i64`; `sizeof(f64)`, `sizeof(u8)` and `sizeof(bool)`
 did not compile. A parameter still takes `Str`, `cstring`, `Result`, `Option` and `Tagged`
 by name, without their `include`. A return type is a struct, `i8`..`i64`, `f64`, a vector
-type, `Result`, `Option`, `Tagged` or `cstring` — `fn f(): u8` is refused by name (return an
-`i64`). `cyrius lint` (`--syntax-only`) resolves no type names, so it never reports these.
+type, `Result`, `Option`, `Tagged`, `cstring` or a pointer `*T` (6.6.17) — `fn f(): u8` is
+refused by name (return an `i64`). `cyrius lint` (`--syntax-only`) resolves no type names, so it never reports these.
 
 ### Arrays: byte vs slot sizing (v6.2.1)
 
@@ -520,13 +520,36 @@ var b = *(p + 1);      # 20 (adds 8 bytes, not 1)
 
 A `*T` variable is an 8-byte address whatever `T` is, and `*p` always loads 8 bytes
 (use `load8` / `load16` / `load32` for narrower reads). `T` must name a type
-([Type names](#type-names-6616)). Only `p + n` depends on the spelling, and it is what it
-has always been: a local `*i64` (or `*u8`, `*Pt`, …) steps 8 bytes, a local `*i8` /
-`*i16` / `*i32` steps 1, a `*T` parameter steps 1, and a global steps 8 when declared in
-the leading declaration block and 1 / 2 / 4 / 8 by `T` after the first statement. When
-the step matters, write the byte offset on an untyped address (`&buf + i * 4`).
+([Type names](#type-names-6616)). **`p + n`, `p - n`, `p += n` and `p -= n` step
+`sizeof(T)` elements, wherever `p` is declared** — a local, a parameter, a global, a
+closure capture, a struct field or a fn result: `*u8` / `*i8` step 1, `*i16` 2, `*i32` /
+`*u32` / `*f32` 4, `*i64` 8, `*Pt` `sizeof(Pt)`, a pointer to a pointer 8. A `*T` value
+is a pointer, not a `T`: `p + 1` on a `p: *f32` parameter is address arithmetic (not a
+float add), and on a `p: *Pt` parameter it is not `Pt`'s `+` overload — `p.x` still reads
+through it. To step in bytes, use an untyped address (`&buf + i * 4`, or `var q = p;`).
+`n + p` steps like `p + n`. `q - p` of two pointers with the same element size is the number
+of elements between them (`(q - p) / sizeof(T)`, a plain integer); two pointers with
+different element sizes (`*i64 - *u8`, `*Pt - &buf`) are a compile error — there is no
+honest unit — so subtract plain addresses for a byte count. A call's result is a pointer
+only when the fn declares `: *T`; `f(p) + 1` adds 1 whatever `p` is. (Before 6.6.17,
+`q - p` scaled `q`'s partner and read garbage, `n + p` stepped 1, and a call's result kept
+its last argument's step.)
+⚠ Before 6.6.17 the step depended on where `p` was declared: a local `*i8` / `*i16` /
+`*i32` stepped 1 and every other local `*T` 8 (`*u8` too), a parameter or a captured
+`*T` 1, a global 8 in the leading declaration block and 1 / 2 / 4 / 8 by `T` after the
+first statement, and `p += n` 1 everywhere. No source in the ecosystem declared a `*T`,
+so the rule changed without a transition error.
 ⛔ Before 6.6.16 a **local** `var p: *i8` / `*i16` / `*i32` was stored in 1 / 2 / 4
 bytes, truncating the address: `p == &buf` was false and `load8(p + 1)` crashed.
+
+`*T` is also a struct or union **field** type and a fn **return** type (and a multi-value
+return element) — `struct PH { name: *Str; }`, `fn first(q: *Q): *Pt`. Either is an 8-byte
+pointer whose value steps `sizeof(T)` like any other, so it binds to a `*T` local without a
+warning. A field may point at the struct being declared or at one declared below it
+(`struct Node { val; next: *Node; }`, two structs pointing at each other); it steps the
+complete struct's size. A pointer to a generic instance (`*Box<i32>`) steps the instance's
+size, `sizeof(Box<i32>)`. Before 6.6.17 both positions were the parse error
+`expected identifier, got '*'`.
 
 ## Structs
 
@@ -595,6 +618,14 @@ does not return a struct is refused too, and so is an assignment to a result's f
 position; `var s = mk(3).n + 1;` also typed `s` as `Box` and looked for an undefined `Box_add`.
 All of these were loud: nothing compiled wrong.
 
+A **method's** result takes `.field` and `.method(..)` the same way, chained to any depth, as a
+value or as a bare statement (since 6.6.17): `var u: Str = s.clone().cat(t);`,
+`p.bump().bump().sum()`, `p.big().c`. Each link's result is held like a call's (a frame
+temporary), so the receiver is untouched. At top level a chain on a struct-returning method is
+refused by name, as a call result's field is, and a chain on a method that returns no struct is
+`cannot take a field of the result of 'T_m': it does not return a struct`. Before 6.6.17 the `.`
+after a method call was `expected ';', got '.'` in every position.
+
 ### Field types (v6.6.10)
 
 A field is untyped (`x;`, 8 bytes, i64) or annotated `x: T`, where `T` is one of:
@@ -609,6 +640,7 @@ A field is untyped (`x;`, 8 bytes, i64) or annotated `x: T`, where `T` is one of
 | `bool`, `cstring`, `Result`, `Option`, `Tagged`, an enum | 8 | An enum may be declared before or after the struct. `bool` since 6.6.16 (it was refused). |
 | a struct or union | its size | Stored **inline**. It must be declared ABOVE the struct that uses it. |
 | `Vec` / `Vec<T>` | 8 | A handle. |
+| `*T` (any type name `T`) | 8 | A pointer: `p.f + n` steps `sizeof(T)` (see [Pointers](#pointers)). Since 6.6.17. |
 | a type parameter of the struct being declared (`struct Box<T> { v: T; }`) | per instance | |
 
 ⚠ The field widths are layout (and ABI). `u8`..`u32` and `f32` have always taken 8 bytes;
@@ -1732,6 +1764,25 @@ same way on every target and whether they sit before or after the first
 top-level statement — before 6.6.9 only x86_64 honoured them ahead of it.
 A top-level `#assert` is a declaration-phase directive, on one line or
 wrapped: structs, enums and fns may follow it.
+
+An attribute belongs to the **fn definition it precedes**, with any statements in between:
+`#must_use` / `y = g<i32>(1);` / `fn b()` marks `b`, not the `g$i32` instance the statement
+mints (before 6.6.17 the instance took it — `b();` was silent and every `g<i32>` call warned
+`#deprecated`). Every directive also works **inside an `impl` body**, on the method it precedes
+(6.6.17; it was `expected '}', got unknown`), and the dot call `p.m(..)` gets the checks a
+plain call gets — `#deprecated` at every call (a call parsed before the `impl` included),
+`#must_use` when `p.m(..);` discards the result (the last method of a chain, `p.bump().m();`),
+`#pure`'s `#io` / `#alloc` check:
+
+```
+struct Acct { bal; }
+impl Ops for Acct {
+    #must_use
+    fn take(self, n): i64 { store64(self, load64(self) - n); return load64(self); }
+    #deprecated("use take")
+    fn withdraw(self, n): i64 { return Acct_take(self, n); }
+}
+```
 
 `#assert A OP B, "message";` checks a compile-time fact and stops the build
 with `#assert failed: message` when it does not hold. Each operand is ONE
@@ -2962,8 +3013,27 @@ error to declare more. A capturing closure with eight arguments cannot be
 called through `fncall8` (there is no `fncall9` for the environment to ride in);
 use `callptr`, which has no arity ladder. `fncallN` and `callptr` dispatch
 closures the same way at **top level** as inside a function (since 6.6.16; before
-that a top-level `fncallN` on a capturing closure crashed). Captured closures are
-flat (no capture of a capture across two nested closure levels).
+that a top-level `fncallN` on a capturing closure crashed).
+
+**Nested closures capture through every enclosing level (6.6.17).** A closure written inside
+another closure may read the inner closure's own locals, the outer closure's params and
+locals, and the enclosing function's locals and params — at any depth. Each level captures by
+value at its own construction: the outer closure captures what any closure nested in it reads,
+and the inner closure copies that captured value out of the outer one's environment when it is
+built.
+
+```
+fn adder(a): i64 {
+    var f = |x| |y| a + x + y;       # curried: the inner closure reads `a` and `x`
+    return callptr(callptr(f, 10), 2);   # a + 12
+}
+```
+
+⚠ Before 6.6.17 this did not compile: the inner closure's reference to an enclosing
+function's variable was refused `undefined variable`, and an outer capturing closure that merely
+contained a nested closure lost its own captures after it (refused the same way). This section
+used to call it "captured closures are flat", which was a compiler limit, not a rule. Pinned by
+`tests/tcyr/crossos/closure_nested_capture.tcyr`.
 
 ## Generic Functions
 
@@ -3068,6 +3138,15 @@ alloc(16);` ahead of the first top-level statement reads and writes `G.v.x` and 
 `G` where a `W1<Pt>` is expected (6.6.11; before it a global declared in that leading
 block was typed as the base `W1`, where `v: T` is an i64 — `G.v.x` failed to parse and
 `w1s(G)` read the wrong storage). A global declared after a statement already did.
+
+**Type arguments nest (6.6.17)** wherever a type is written — `var x: Vec<Box<i64>>`,
+`var b: Box<Vec<i64>>`, `var z: Box<Box<i32>>`, a parameter, a global, a `Vec<Box<i64>>`
+field, `idv<Vec<i64>>(x)`, and a multi-value return element `(Box<i64>, i64)` — with the
+lexer's `>>` closing two lists. `sizeof(T<..>)` is the size of the instance the same
+annotation declares — what `var b: Box<i32>` occupies (4 for the `Box` above, 16 for
+`Pair<i64>`); `sizeof(Vec<i64>)` is a handle's 8. Before 6.6.17 `Vec<Box<i64>>` ran to the end of the file
+(`expected '=', got end of file`), `Box<Vec<i64>>` and a `Vec<Box<..>>` field were refused,
+and `sizeof(Box<i64>)` and `(Box<i64>, i64)` were `expected ')', got '<'`.
 
 **Status & limits (6.6.10).** Generic functions and structs are supported over
 i64, narrow scalars (`i32`/`i16`/`i8`), and struct type arguments, inferred or

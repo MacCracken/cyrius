@@ -130,8 +130,15 @@ fn _cl_lfi_copy(dst, src, n): i64 {
 # local.
 fn _cl_snap_find(S, noff): i64 {
     if (_cl_snap == 0) { return 0 - 1; }
-    var i = _cl_snap_n - 1;
-    while (i >= 0) {
+    # 6.6.17: the enclosing fn's locals first — one of them shadows a capture of the same name —
+    # then the enclosing closure's captures (`_cl_snap_nl`).
+    var r = _cl_snap_find_in(S, noff, 0, _cl_snap_nl);
+    if (r < 0) { r = _cl_snap_find_in(S, noff, _cl_snap_nl, _cl_snap_n); }
+    return r;
+}
+fn _cl_snap_find_in(S, noff, lo, hi): i64 {
+    var i = hi - 1;
+    while (i >= lo) {
         var sn = L64(_cl_snap + i * 8);
         if (sn >= 0) { if (STREQ(S, sn, noff) == 1) { return i; } }
         i = i - 1;
@@ -179,6 +186,9 @@ fn _cl_snap_type(esl): i64 {
 fn _cl_snap_is_sptr(S, esl): i64 {
     if (_cl_snap == 0) { return 0; }
     if (esl < 0) { return 0; }
+    # 6.6.17: an enclosing closure's capture carries the answer its own snapshot gave (bit 57 of
+    # the entry's word, `_cl_snap_extend`) — the parameter span is that closure's, not the fn's.
+    if (esl >= _cl_snap_nl) { return (L64(_cl_snap + _cl_snap_n * 8 + esl * 8) >> 57) & 1; }
     if (esl >= L64(_cl_snap + _cl_snap_ps_off(_cl_snap_n))) { return 0; }
     if (_cl_snap_span(esl) != 0) { return 0; }
     var t = _cl_snap_type(esl);
@@ -188,6 +198,16 @@ fn _cl_snap_is_sptr(S, esl): i64 {
     if (STRUCTSZ(S, sid - 1) <= 8) { return 0; }
     if (_classify_param_type(S, L64(S + 0x1A6018 + (sid - 1) * 8)) != 0) { return 0; }
     return 1;
+}
+# 6.6.17 — the step of enclosing slot `esl` when it is a typed pointer (`_slot_ptr_step`, read
+# from the snapshot: bit 56 of its depth word, the mark in its slice-width word), else 0. A
+# capture of one loaded with scale 0, so `p + 1` stepped 1 and `var q: *T = p;` warned.
+fn _cl_snap_ptr_step(esl): i64 {
+    if (_cl_snap == 0) { return 0; }
+    if (((L64(_cl_snap + _cl_snap_n * 8 + esl * 8) >> 56) & 1) == 0) { return 0; }
+    var w = L64(_cl_snap + _cl_snap_n * 24 + esl * 8);
+    if (w <= 0 - 0x7E01) { return 0 - w - 0x7E00; }
+    return 8;
 }
 # Word offset of capture `capi` inside the env object (slot 0 is the fn pointer).
 fn _cl_cap_woff(capi): i64 {
@@ -217,6 +237,8 @@ fn _CL_CAP_WORDS_RA(S, capi): i64 {
 # aggregate dispatches, exactly as the enclosing-local and global rungs decide it.
 # CHANGELOG [6.6.5]
 fn _CL_CAP_OPTYPE(S, esl, capi): i64 {
+    var ps = _cl_snap_ptr_step(esl);   # 6.6.17: a captured typed pointer carries its step
+    if (ps > 0) { SPSC(S, ps); return 0; }
     if (_cl_snap_span(esl) < 1) { return 0; }
     var t = _cl_snap_type(esl);
     if (t >= 0) { return 0; }
@@ -259,6 +281,8 @@ fn _cl_shadow_find(S, noff): i64 {
 # enclosing local (in the snapshot). Restores the cursor; populates _cl_cap_slots
 # + sets _cl_capturing. This runs BEFORE the closure prologue so the env-param
 # decision (capturing → hidden arg0) can be made in one pass.
+# 6.6.17: the walk covers every NESTED closure's body too, so a name a nested closure reads is
+# captured here first and is there for it to capture in turn (`_cl_ctx_enter`).
 fn _cl_prescan_captures(S, cl_zero): i64 {
     _cl_ncap = 0;
     _cl_nshadow = 0;
@@ -276,48 +300,225 @@ fn _cl_prescan_captures(S, cl_zero): i64 {
     }
     var is_block = 0;
     if (PEEKT(S) == 13) { is_block = 1; STI(S, GTI(S) + 1); }
+    _cl_prescan_body(S, is_block);
+    STI(S, save_ti);
+    _cl_capturing = 0;
+    if (_cl_ncap > 0) { _cl_capturing = 1; }
+    return 0;
+}
+# Walk one closure body from the cursor: a block body (`is_block` 1) to its closing `}`, an
+# expression body (0) to the `;` / `,` / unmatched `)` `]` `}` that ends it, a parenthesised group
+# (2, a `for` header) to its unmatched `)`; the cursor is left AT that token. Every `{` is walked
+# as its own scope (`_cl_prescan_nested`).
+# ⛔ 6.6.17 — A NESTED CLOSURE'S BLOCK BODY IS ITS OWN SCOPE. It is walked by a recursive call
+# and the `var` names it declares leave the shadow set when it ends: they used to stay, so
+# `|x| { var k = |y| { var b = y; return b; }; return b + x; }` stopped capturing the enclosing
+# `b` the outer body reads. An expression body counts `{ }` as nesting too — a nested block
+# body (`|x| |y| { var t = y; return t + b; }`) or a struct literal holds `;` / `,` that do not
+# end the expression, and stopping there dropped every capture after it. CHANGELOG [6.6.17]
+fn _cl_prescan_body(S, is_block): i64 {
     var depth = 0;
     var prev_var = 0;
     var go = 1;
     while (go == 1) {
         var t = PEEKT(S);
         if (t == 12) { go = 0; }
-        elif (is_block == 1) {
-            if (t == 13) { depth = depth + 1; }
-            elif (t == 14) { if (depth == 0) { go = 0; } else { depth = depth - 1; } }
+        elif (t == 13) {
+            _cl_prescan_nested(S);             # any block is a scope (6.6.17)
+            t = 0 - 1;                         # consumed through its `}`
         }
-        else {
+        elif (t == 14) { go = 0; }
+        elif (t == 55) {
+            if (TOKTYP(S, GTI(S) + 1) == 10) { _cl_prescan_for(S); t = 0 - 1; }
+        }
+        elif (is_block != 1) {
             if (t == 10 || t == 28) { depth = depth + 1; }
             elif (t == 11 || t == 29) { if (depth == 0) { go = 0; } else { depth = depth - 1; } }
-            elif (t == 5 && depth == 0) { go = 0; }
-            elif (t == 31 && depth == 0) { go = 0; }
-            elif (t == 14 && depth == 0) { go = 0; }
+            elif (t == 5 && depth == 0) { if (is_block == 0) { go = 0; } }
+            elif (t == 31 && depth == 0) { if (is_block == 0) { go = 0; } }
         }
         if (go == 1) {
             if (t == 3) { prev_var = 1; }
             elif (t == 2) {
                 var noff = PEEKV(S);
                 if (prev_var == 1) { _cl_shadow_add(S, noff); prev_var = 0; }
-                else {
-                    var is_call = 0;
-                    if (TOKTYP(S, GTI(S) + 1) == 10) { is_call = 1; }
-                    if (is_call == 0) {
-                        if (FINDLOCAL(S, noff) < 0) {
-                            if (_cl_shadow_find(S, noff) < 0) {
-                                var esl = _cl_snap_find(S, noff);
-                                if (esl >= 0) { _cl_cap_add(S, esl); }
-                            }
-                        }
-                    }
-                }
+                else { _cl_prescan_ident(S, noff); }
             }
             else { prev_var = 0; }
-            STI(S, GTI(S) + 1);
+            if (t != 0 - 1) { STI(S, GTI(S) + 1); }
         }
     }
-    STI(S, save_ti);
-    _cl_capturing = 0;
-    if (_cl_ncap > 0) { _cl_capturing = 1; }
+    return 0;
+}
+# Cursor at `for (`: the header's `var` and the loop body are one scope (the for statement's
+# own SCOPE_PUSH) — walked with `is_block` 2 (a parenthesised group: only its `)` ends it), then
+# the body block. Leaves the cursor past the body. CHANGELOG [6.6.17]
+fn _cl_prescan_for(S): i64 {
+    var mk = _cl_nshadow;
+    STI(S, GTI(S) + 2);                  # `for (`
+    _cl_prescan_body(S, 2);
+    if (PEEKT(S) == 11) { STI(S, GTI(S) + 1); }
+    if (PEEKT(S) == 13) { _cl_prescan_nested(S); }
+    _cl_nshadow = mk;
+    return 0;
+}
+# Cursor at a block's `{` — a nested closure's body or any other block (6.6.17: a block's `var`
+# shadows an enclosing name only inside it; it used to hide the name for the WHOLE closure
+# body, so a read after the block took a GLOBAL of that name, silently): walk it, leave the
+# cursor past its `}`, and drop the names it declared from the shadow set.
+fn _cl_prescan_nested(S): i64 {
+    var mk = _cl_nshadow;
+    STI(S, GTI(S) + 1);
+    _cl_prescan_body(S, 1);
+    _cl_nshadow = mk;
+    if (PEEKT(S) == 14) { STI(S, GTI(S) + 1); }
+    return 0;
+}
+# One identifier read in a closure body: capture it when it is a free variable.
+fn _cl_prescan_ident(S, noff): i64 {
+    if (TOKTYP(S, GTI(S) + 1) == 10) { return 0; }   # a call name
+    if (FINDLOCAL(S, noff) >= 0) { return 0; }
+    if (_cl_shadow_find(S, noff) >= 0) { return 0; }
+    var esl = _cl_snap_find(S, noff);
+    if (esl >= 0) { _cl_cap_add(S, esl); }
+    return 0;
+}
+
+# ⛔ 6.6.17 — A CLOSURE NESTED IN A CAPTURING CLOSURE CAPTURES THROUGH IT. The capture tables
+# (`_cl_ncap`, `_cl_cap_slots`, `_cl_cap_w`) were one global set that a nested closure literal
+# overwrote, and its snapshot held only the enclosing closure's own LOCALS. So the inner closure
+# could not see a variable the outer one had captured (`fn mk(b) { |x| { |y| y + b } }` was
+# refused `undefined variable 'b'`; the guide wrote it down as "captured closures are flat"),
+# and the outer closure, once a nested one had been parsed, lost its own captures: it was
+# refused the same way, and its env was sized from the INNER closure's list.
+# Now each closure literal saves the enclosing CAPTURE CONTEXT as one block and puts it back
+# after its own env is built, and its snapshot gets one extra entry per enclosing capture
+# (`_cl_snap_nl` marks where they start). Capturing such an entry copies the word(s) out of the
+# enclosing closure's env (`_cl_emit_cap_word`) — by value, at construction, like any capture.
+# Block layout: [0] _cl_capturing, [8] _cl_env_lidx, [16] _cl_snap, [24] _cl_snap_n,
+# [32] _cl_snap_nl, [40] _cl_ncap, then _cl_ncap slots, then _cl_ncap widths. CHANGELOG [6.6.17]
+fn _cl_ctx_save(): i64 {
+    var b = alloc(48 + _cl_ncap * 16);
+    store64(b, _cl_capturing);
+    store64(b + 8, _cl_env_lidx);
+    store64(b + 16, _cl_snap);
+    store64(b + 24, _cl_snap_n);
+    store64(b + 32, _cl_snap_nl);
+    store64(b + 40, _cl_ncap);
+    var i = 0;
+    while (i < _cl_ncap) {
+        store64(b + 48 + i * 8, L64(&_cl_cap_slots + i * 8));
+        store64(b + 48 + _cl_ncap * 8 + i * 8, L64(&_cl_cap_w + i * 8));
+        i = i + 1;
+    }
+    return b;
+}
+fn _cl_ctx_restore(b): i64 {
+    _cl_capturing = load64(b);
+    _cl_env_lidx = load64(b + 8);
+    _cl_snap = load64(b + 16);
+    _cl_snap_n = load64(b + 24);
+    _cl_snap_nl = load64(b + 32);
+    _cl_ncap = load64(b + 40);
+    var i = 0;
+    while (i < _cl_ncap) {
+        S64(&_cl_cap_slots + i * 8, load64(b + 48 + i * 8));
+        S64(&_cl_cap_w + i * 8, load64(b + 48 + _cl_ncap * 8 + i * 8));
+        i = i + 1;
+    }
+    return 0;
+}
+fn _cl_ctx_slot(b, i): i64 { return load64(b + 48 + i * 8); }
+fn _cl_ctx_w(b, i): i64 { return load64(b + 48 + load64(b + 40) * 8 + i * 8); }
+# Word offset of capture `capi` in the env a saved context describes (`_cl_cap_woff`'s twin).
+fn _cl_ctx_woff(b, capi): i64 {
+    var off = 1;
+    var i = 0;
+    while (i < capi) {
+        off = off + _cl_ctx_w(b, i);
+        i = i + 1;
+    }
+    return off;
+}
+# Enter a closure literal: save the enclosing capture context (returned, for `_cl_ctx_restore`)
+# and install the closure's snapshot — the enclosing locals `locsnap` (n entries), extended by
+# the enclosing closure's captures when it has any.
+fn _cl_ctx_enter(S, locsnap, n): i64 {
+    var b = _cl_ctx_save();
+    var m = 0;
+    if (_cl_capturing == 1) { if (_cl_env_lidx >= 0) { m = _cl_ncap; } }
+    var x = locsnap;
+    if (m > 0) { x = _cl_snap_extend(S, locsnap, n, m); }
+    _cl_snap = x;
+    _cl_snap_n = n + m;
+    _cl_snap_nl = n;
+    return b;
+}
+# A copy of snapshot `ls` (n entries, `_cl_save_locals`' layout) with one entry appended per
+# capture of the enclosing closure (m of them), each carrying the name and metadata of the slot
+# it captured — read from the ENCLOSING snapshot, which is still installed. Depth 0; bit 57 of
+# the word records `_cl_snap_is_sptr` (the parameter span it is judged by is not this one's).
+fn _cl_snap_extend(S, ls, n, m): i64 {
+    var t = n + m;
+    var x = alloc(_cl_snap_ps_off(t) + 8);
+    var i = 0;
+    while (i < n) {
+        _cl_snap_cp(x, t, i, ls, n, i);
+        i = i + 1;
+    }
+    var j = 0;
+    while (j < m) {
+        var e = L64(&_cl_cap_slots + j * 8);
+        _cl_snap_cp(x, t, n + j, _cl_snap, _cl_snap_n, e);
+        var dw = L64(_cl_snap + _cl_snap_n * 8 + e * 8) & (0 - 4294967296);
+        if (_cl_snap_is_sptr(S, e) == 1) { dw = dw | (1 << 57); }
+        S64(x + t * 8 + (n + j) * 8, dw);
+        j = j + 1;
+    }
+    if (n > 0) { S64(x + _cl_snap_ps_off(t), L64(ls + _cl_snap_ps_off(n))); }
+    return x;
+}
+# Entry `si` of snapshot `src` (`sn` entries) into entry `i` of snapshot `x` (`t` entries).
+fn _cl_snap_cp(x, t, i, src, sn, si): i64 {
+    S64(x + i * 8, L64(src + si * 8));
+    S64(x + t * 8 + i * 8, L64(src + sn * 8 + si * 8));
+    S64(x + t * 16 + i * 8, L64(src + sn * 16 + si * 8));
+    S64(x + t * 24 + i * 8, L64(src + sn * 24 + si * 8));
+    store8(x + t * 32 + i, load8(src + sn * 32 + si));
+    return 0;
+}
+# The env object of the closure just parsed: its size in bytes, and the copy of each capture's
+# words into it (`ib` = that closure's saved context; the ENCLOSING context is live again).
+fn _cl_env_bytes(ib): i64 { return _cl_ctx_woff(ib, load64(ib + 40)) * 8; }
+fn _cl_emit_env_caps(S, obj_slot, ib): i64 {
+    var nl = load64(ib + 32);
+    var ci = 0;
+    while (ci < load64(ib + 40)) {
+        var w = _cl_ctx_w(ib, ci);
+        var wo = _cl_ctx_woff(ib, ci);
+        var base = _cl_ctx_slot(ib, ci);
+        var k = 0;
+        while (k < w) {
+            EFLLOAD(S, obj_slot);
+            EADDRA_IMM(S, (wo + k) * 8);   # rax = &env[woff+k] (dest)
+            EPUSHR(S);
+            _cl_emit_cap_word(S, base, nl, k);
+            EPOPC(S);                      # rcx = dest
+            ESTORE64(S);
+            k = k + 1;
+        }
+        ci = ci + 1;
+    }
+    return 0;
+}
+# rax = word k of the captured slot `base`: an enclosing local's (6.6.5: word k of an inline
+# aggregate lives at slot base - k), or — for an entry past `nl` — the enclosing closure's own
+# capture `base - nl`, read from that closure's env.
+fn _cl_emit_cap_word(S, base, nl, k): i64 {
+    if (base < nl) { EFLLOAD(S, base - k); return 0; }
+    _CL_CAP_WORDS_RA(S, base - nl);
+    if (k > 0) { EADDRA_IMM(S, k * 8); }
+    ELOAD64(S);
     return 0;
 }
 
@@ -967,7 +1168,9 @@ fn PARSE_FACTOR(S): i64 {
     _rd_enter(S);
     var _xd0 = _xdepth;
     var _xt0 = PEEKT(S);
+    var _ti0 = GTI(S);
     var _rc = _PARSE_FACTOR_IMPL(S);
+    _call_scale_fix(S, _ti0);   # 6.6.17: a call's result scales by its declared return only
     _rd_exit();
     # 6.6.5 — `syscall(…)` (token 24) is stack-NEUTRAL by construction: it pushes its
     # arguments and every backend's emitter consumes exactly those, leaving the result in
@@ -1236,6 +1439,7 @@ fn _explicit_generic_call(S, noff, fi): i64 {
     if (_ta_do == 0) {
         _ta_explicit = 1;               # set right before the call that reads it (see below)
         PARSE_FNCALL(S, noff);          # all-i64: call the base
+        _call_ret_ps(S, fi);            # 6.6.17: a `*T` return's pointer scale
         return 0;
     }
     # non-i64: monomorphize on demand + call the specialized fn.
@@ -1257,8 +1461,44 @@ fn _explicit_generic_call(S, noff, fi): i64 {
     # ⚠ `_ta_explicit` is set only NOW: the instance body just emitted makes calls of its own,
     # and the first of them would have taken the flag as its own and skipped its inference.
     _ta_explicit = 1;
-    if (_spec >= 0) { PARSE_FNCALL(S, L64(_fnt_names + _spec * 8)); }
+    if (_spec >= 0) { PARSE_FNCALL(S, L64(_fnt_names + _spec * 8)); _call_ret_ps(S, _spec); }
     else { PARSE_FNCALL(S, noff); }
+    return 0;
+}
+# ⛔ 6.6.17 — A CALL'S RESULT CARRIED ITS LAST ARGUMENT'S POINTER SCALE. The arguments are parsed
+# as expressions inside the call's factor, and nothing reset the scale the last one left, so with
+# `p: *i64` the value of `f(p) + 1` was f's result + 8, as was `load64(p) + 1`, `fncall1(&f, p) + 1`
+# and `callptr(cl, p) - p` (p scaled by 8 too). Silent wrong values. A call's result now scales
+# only by the callee's DECLARED return type: `fn f(): *T` steps sizeof(T) (`_fn_rps`), anything
+# else — every builtin, `callptr` / `fncallN`, an untyped or scalar return — is a plain value.
+# `ti` is the factor's first token; only a factor that IS one whole call `name(..)` /
+# `name<..>(..)` / `builtin(..)` is judged — one continuing past the `)` (`mk(p).f`) sets its own.
+# The method arm sets its result's scale itself (`_call_ret_ps`). CHANGELOG [6.6.17]
+fn _call_scale_fix(S, ti): i64 {
+    var t = TOKTYP(S, ti);
+    var o = 0 - 1;
+    if (t == 2) { o = _gcall_open(S, ti); }
+    elif (TOKTYP(S, ti + 1) == 10) {
+        if (t == 137) { o = ti + 1; }                       # callptr
+        elif (TOKNAME_BUILTIN(t) != 0) { o = ti + 1; }
+    }
+    if (o < 0) { return 0; }
+    if (GTI(S) != _call_close(S, o) + 1) { return 0; }
+    var ps = 0;
+    if (t == 2) {
+        var fi = FINDFN(S, TOKVAL(S, ti));
+        if (fi >= 0) { if (_fn_rps != 0) { ps = L64(_fn_rps + fi * 8); } }
+    }
+    SPSC(S, ps);
+    return 0;
+}
+# After a plain call `name(..)` to fn `fi` (-1: unresolved): a scalar f64 return (sentinel -9) is
+# in xmm0 — bring it back into rax and type the expression F64_TYID (v6.4.55; EMOVQ_A_X0 is a no-op
+# on aarch64/cx) — and a `*T` return carries T's step as the pointer scale (6.6.17).
+fn _call_ret_marks(S, fi): i64 {
+    if (fi < 0) { return 0; }
+    if (GFRS(S, fi) == 0 - 9) { EMOVQ_A_X0(S); SESTYPE(S, F64_TYID); }
+    _call_ret_ps(S, fi);
     return 0;
 }
 
@@ -1530,8 +1770,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
                 # 6.6.16 (C8): the one type-name resolver — a bound type parameter its argument's
                 # size, else the WHOLE name (u8..u64, f32, f64, bool, cstring, an enum, a vector, a
                 # struct), else refused by name. sizeof(f64) / sizeof(u8) did not compile. CHANGELOG [6.6.16]
-                szval = _tn_sizeof(S, GTI(S), 0);
-                STI(S, GTI(S) + 1);
+                szval = _sizeof_type(S, 0);   # 6.6.17: + `<..>` (_sizeof_type)
             }
             if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
             STI(S, GTI(S) + 1);
@@ -1631,8 +1870,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
             # and tag the expr F64_TYID so a bare +,-,*,/,compare on the call result
             # dispatches to the f64 emitters, not integer ops. EMOVQ_A_X0 = `movq rax,
             # xmm0` on x86/PE/macho, a no-op on aarch64/cx (value already in x0/r0).
-            var _f64r_fi = FINDFN(S, noff);
-            if (_f64r_fi >= 0) { if (GFRS(S, _f64r_fi) == 0 - 9) { EMOVQ_A_X0(S); SESTYPE(S, F64_TYID); } }
+            _call_ret_marks(S, FINDFN(S, noff));   # 6.6.17: + a `*T` return's pointer scale
             _cfo = 0;
             return 0;
         }
@@ -1736,7 +1974,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
                         STI(S, GTI(S) + 1);  # consume ]
                         return 0;
                     } }
-                var lt = GLTYPE(S, li);
+                var lt = _load_lt(S, li);   # 6.6.17: a typed pointer's value is a plain word
                 # v6.2.19 math arc: f64/f32 locals — load the 8-byte value and tag
                 # the expression f64/f32 so PEXPR/PARSE_TERM route operators to the
                 # f64 builtins (skip the SPSC pointer-scale + sub-word paths below).
@@ -3131,12 +3369,9 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         # cursor is at the first param (the opening `|` was consumed above); the
         # pre-scan seeds the shadow set with params, collects captured enclosing
         # slots, and restores the cursor.
-        var cl_saved_capturing = _cl_capturing;
-        var cl_saved_env_lidx = _cl_env_lidx;
-        var cl_saved_snap = _cl_snap;
-        var cl_saved_snap_n = _cl_snap_n;
-        _cl_snap = cl_locsnap;
-        _cl_snap_n = cl_saved_flc;
+        # 6.6.17: the whole enclosing capture context, and a snapshot that also lists the
+        # enclosing closure's captures (`_cl_ctx_enter`).
+        var cl_ctx = _cl_ctx_enter(S, cl_locsnap, cl_saved_flc);
         _cl_prescan_captures(S, cl_zero);
         var cl_cap_shift = 0;
         if (_cl_capturing == 1) { cl_cap_shift = 1; }
@@ -3280,10 +3515,9 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         _cl_restore_locals(S, cl_locsnap, cl_saved_flc);
         # v6.3.8 — restore capture state so the enclosing context resolves
         # identifiers normally again (and nested closures see their own state).
-        _cl_capturing = cl_saved_capturing;
-        _cl_env_lidx = cl_saved_env_lidx;
-        _cl_snap = cl_saved_snap;
-        _cl_snap_n = cl_saved_snap_n;
+        # 6.6.17: this closure's capture list is kept aside for its env, below.
+        var cl_inner = _cl_ctx_save();
+        _cl_ctx_restore(cl_ctx);
         if (cl_cap_shift == 1) {
             # v6.3.8 — CAPTURING closure: build the heap env object (the closure
             # value) — a (1+ncap)-word block with the fn pointer at [0] and the
@@ -3298,7 +3532,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
                 # diagnostic. The compile is already failed; there is nothing to emit.
                 return 0;
             }
-            EMOVI(S, _cl_cap_woff(_cl_ncap) * 8);   # rax = size (6.6.5: words, not captures)
+            EMOVI(S, _cl_env_bytes(cl_inner));   # rax = size (6.6.5: words, not captures)
             EPUSHR(S);
             ECALLPOPS(S, 1);                 # → rdi
             ECALLFIX(S, cl_alloc_fi);        # rax = obj
@@ -3328,23 +3562,8 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
             # inline aggregate lives at slot (base - k) and lands at env[woff + k], so
             # `env + woff*8 + k*8` addresses field k exactly as `&base + k*8` does in the
             # enclosing frame — which is what lets the body reuse the ordinary field math.
-            var cl_ci = 0;
-            while (cl_ci < _cl_ncap) {
-                var cl_w = L64(&_cl_cap_w + cl_ci * 8);
-                var cl_wo = _cl_cap_woff(cl_ci);
-                var cl_base = L64(&_cl_cap_slots + cl_ci * 8);
-                var cl_k = 0;
-                while (cl_k < cl_w) {
-                    EFLLOAD(S, cl_obj_slot);
-                    EADDRA_IMM(S, (cl_wo + cl_k) * 8);   # rax = &env[woff+k] (dest)
-                    EPUSHR(S);
-                    EFLLOAD(S, cl_base - cl_k);          # rax = captured word k
-                    EPOPC(S);                            # rcx = dest
-                    ESTORE64(S);
-                    cl_k = cl_k + 1;
-                }
-                cl_ci = cl_ci + 1;
-            }
+            # 6.6.17: a capture of the enclosing closure's own capture copies from its env.
+            _cl_emit_env_caps(S, cl_obj_slot, cl_inner);
             EFLLOAD(S, cl_obj_slot);          # closure value = the object pointer
             # v6.5.17 — TAG IT. Bit 63 makes the value self-identifying, so any
             # indirect call site can dispatch it (load [obj+0], pass obj as the
@@ -4502,6 +4721,74 @@ fn _PARSE_TERM_IMPL(S): i64 {
     return 0;
 }
 
+# ⛔ 6.6.17 — POINTER ARITHMETIC BY THE C RULES, on both operand orders. `+` / `-` scaled the RIGHT
+# operand by the LEFT one's step whatever the right one was, so with `p, q: *i16` the difference
+# `q - p` was `q - 2p`'s bits (`var q: *i16 = p + 3; q - p` read -4090 where 3 is right), and
+# `n + p` with the integer on the left stepped 1 where `p + n` steps sizeof(T). Now (ps = the
+# left operand's step, rs = the right one's, both 0 for a plain value):
+#   p + n, p - n      the integer steps ps (unchanged)
+#   n + p             the integer steps rs — `+` commutes (`_int_plus_ptr`)
+#   p - q             the ELEMENT count (p - q) / ps when ps == rs; a NAMED ERROR when the steps
+#                     differ (`*i64 - *u8`, `*Pt - &buf`) — the result has no honest unit. Two
+#                     pointers to different types of the same size cannot be told apart: the step
+#                     is all a pointer value carries. Plain addresses (`&a - &b`, step 1 each) stay
+#                     a byte difference, as they always were.
+# CHANGELOG [6.6.17]
+fn _ptr_add(S, ps): i64 {
+    var rs = GPSC(S);
+    if (ps == 0) { if (rs > 1) { return _int_plus_ptr(S, rs); } }
+    EPTR_SCALE(S, ps);
+    EMOVCA(S);
+    EUNSPILL(S);
+    EADDR(S);
+    SPSC(S, ps);
+    return 0;
+}
+# Stack = n, rax = p: rax = n * rs + p (EIMUL clobbers rcx, so n goes round the stack).
+fn _int_plus_ptr(S, rs): i64 {
+    EMOVCA(S);           # rcx = p
+    EUNSPILL(S);         # rax = n
+    EPUSHR(S);           # push n
+    EMOVI(S, 0);
+    EADDR(S);            # rax = p
+    EPOPC(S);            # rcx = n
+    EPUSHR(S);           # push p
+    EMOVI(S, rs);
+    EIMUL(S);            # rax = n * rs
+    EPOPC(S);            # rcx = p
+    EADDR(S);
+    SPSC(S, rs);
+    return 0;
+}
+fn _ptr_sub(S, ps): i64 {
+    var rs = GPSC(S);
+    if (ps > 0) { if (rs > 0) { return _ptr_diff(S, ps, rs); } }
+    EPTR_SCALE(S, ps);
+    EMOVCA(S);
+    EPOPR(S);
+    ESUBR(S);
+    SPSC(S, ps);
+    return 0;
+}
+fn _ptr_diff(S, ps, rs): i64 {
+    if (rs != ps) {
+        ERR_MSG(S, "pointer difference of pointers with different element sizes; for a byte count subtract plain addresses (`var a = p;`)", 117);
+    }
+    EMOVCA(S);
+    EPOPR(S);
+    ESUBR(S);            # rax = p - q, in bytes
+    if (ps > 1) {
+        EPUSHR(S);
+        EMOVI(S, ps);
+        EMOVCA(S);
+        EPOPR(S);
+        ECQO(S);
+        EIDIV(S);        # / sizeof(T)
+    }
+    SPSC(S, 0);
+    return 0;
+}
+
 fn EPTR_SCALE(S, ps): i64 {
     # rax has the offset value; multiply by pointer scale
     # mov rcx, rax; mov rax, ps; imul rcx → rax = offset * scale
@@ -4755,10 +5042,10 @@ fn _PEXPR_IMPL(S): i64 {
                         var cfr = _cfv + crv;
                         if (cfr >= 0) {
                             STI(S, GTI(S) + 1); SCP(S, _cfp); EMOVI(S, cfr); _cfv = cfr;
-                        } else { ESPILL(S); SPSC(S, 0); _RHS_T(S); EPTR_SCALE(S, ps); EMOVCA(S); EUNSPILL(S); EADDR(S); SPSC(S, ps); _cfo = 0; }
+                        } else { ESPILL(S); SPSC(S, 0); _RHS_T(S); _ptr_add(S, ps); ps = GPSC(S); _cfo = 0; }
                     }
-                    else { ESPILL(S); SPSC(S, 0); _RHS_T(S); EPTR_SCALE(S, ps); EMOVCA(S); EUNSPILL(S); EADDR(S); SPSC(S, ps); _cfo = 0; }
-                } else { ESPILL(S); SPSC(S, 0); _RHS_T(S); EPTR_SCALE(S, ps); EMOVCA(S); EUNSPILL(S); EADDR(S); SPSC(S, ps); _cfo = 0; }
+                    else { ESPILL(S); SPSC(S, 0); _RHS_T(S); _ptr_add(S, ps); ps = GPSC(S); _cfo = 0; }
+                } else { ESPILL(S); SPSC(S, 0); _RHS_T(S); _ptr_add(S, ps); ps = GPSC(S); _cfo = 0; }
             }
             if (addst <= 0) { _INT_F64_MIX(S); }
         }
@@ -4783,10 +5070,10 @@ fn _PEXPR_IMPL(S): i64 {
                             var cfr = _cfv - crv;
                             if (cfr >= 0) {
                                 STI(S, GTI(S) + 1); SCP(S, _cfp); EMOVI(S, cfr); _cfv = cfr;
-                            } else { EPUSHR(S); SPSC(S, 0); _RHS_T(S); EPTR_SCALE(S, ps); EMOVCA(S); EPOPR(S); ESUBR(S); SPSC(S, ps); _cfo = 0; }
+                            } else { EPUSHR(S); SPSC(S, 0); _RHS_T(S); _ptr_sub(S, ps); ps = GPSC(S); _cfo = 0; }
                         }
-                        else { EPUSHR(S); SPSC(S, 0); _RHS_T(S); EPTR_SCALE(S, ps); EMOVCA(S); EPOPR(S); ESUBR(S); SPSC(S, ps); _cfo = 0; }
-                    } else { EPUSHR(S); SPSC(S, 0); _RHS_T(S); EPTR_SCALE(S, ps); EMOVCA(S); EPOPR(S); ESUBR(S); SPSC(S, ps); _cfo = 0; }
+                        else { EPUSHR(S); SPSC(S, 0); _RHS_T(S); _ptr_sub(S, ps); ps = GPSC(S); _cfo = 0; }
+                    } else { EPUSHR(S); SPSC(S, 0); _RHS_T(S); _ptr_sub(S, ps); ps = GPSC(S); _cfo = 0; }
                 }
                 if (subst <= 0) { _INT_F64_MIX(S); }
             }

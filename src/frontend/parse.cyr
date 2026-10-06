@@ -1044,6 +1044,10 @@ var _cl_capturing = 0;
 var _cl_ncap = 0;
 var _cl_snap = 0;
 var _cl_snap_n = 0;
+# 6.6.17 — entries [0, _cl_snap_nl) of `_cl_snap` are the enclosing fn's LOCALS; entries
+# [_cl_snap_nl, _cl_snap_n) are the enclosing closure's own CAPTURES, so a closure nested in a
+# capturing closure can capture them in turn (`_cl_ctx_enter`). CHANGELOG [6.6.17]
+var _cl_snap_nl = 0;
 var _cl_nshadow = 0;
 var _cl_env_lidx = 0;
 # ⛔ 6.6.5 — A fn-LOCAL STATIC ARRAY IS NOT A PROGRAM-WIDE GLOBAL NAME.
@@ -2552,8 +2556,7 @@ fn _EVAL_CONST_ATOM(S): i64 {
             # 6.6.16 (C8): the one resolver, as the expression's sizeof — and u128 (a keyword token,
             # it was `expected ')'` here). An unknown name is refused naming it. CHANGELOG [6.6.16]
             if (PEEKT(S) == 2 || PEEKT(S) == 105) {
-                szval = _tn_sizeof(S, GTI(S), 1);
-                STI(S, GTI(S) + 1);
+                szval = _sizeof_type(S, 1);   # 6.6.17: + `<..>` (_sizeof_type)
             }
             if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
             STI(S, GTI(S) + 1);
@@ -2801,10 +2804,15 @@ fn _asg_compound_tok(S): i64 {
 # bytes, so `a >>= 1` on a u8 global followed by `var b: u8 = 1;` shifted b's byte down into a:
 # 130 where 2 is right. A narrow local is its own 8-byte frame slot, so the full-width load
 # read whatever an earlier full-width store had left above the low byte. CHANGELOG [6.6.12]
+# 6.6.17: and records the slot's pointer step (`_asg_cstep`), which `_asg_compound_op` applies to
+# `p += n` / `p -= n` as `p + n` applies it — the compound form never scaled at all.
+var _asg_cstep = 0;
 fn _asg_compound_load(S, noff): i64 {
+    _asg_cstep = 0;
     var li = FINDLOCAL(S, noff);
     if (li >= 0) {
-        var lt = GLTYPE(S, li);
+        var lt = _load_lt(S, li);
+        _asg_cstep = _slot_ptr_step(S, li);
         if (lt > 0) { if (lt < 8) {
                 var lw = lt;
                 if (GSLICE_W(S, li) < 0) { lw = 0 - lt; }   # signed: movsx (parse_expr.cyr)
@@ -2824,6 +2832,7 @@ fn _asg_compound_load(S, noff): i64 {
             EVLOAD_W(S, gi, gw);
             return GVTYPE(S, gi);
         }
+        if (GVTYPE(S, gi) < 0) { _asg_cstep = 0 - GVTYPE(S, gi); }   # a typed-pointer global
         EVLOAD(S, gi);
         return GVTYPE(S, gi);
     }
@@ -2882,8 +2891,11 @@ fn _asg_compound_float(S, fop, lt): i64 {
 # combined value in rax for the caller's store. %, &, |, ^, <<, >> on a float slot take the
 # integer arm, as they always have.
 fn _asg_compound_op(S, cop, lt): i64 {
+    var st = _asg_cstep;
+    _asg_cstep = 0;
     EPUSHR(S);
     PCMPE(S);
+    if (st > 1) { if (cop == 6 || cop == 7) { EPTR_SCALE(S, st); } }   # 6.6.17: `p += n` steps T
     var fop = _asg_float_fop(cop, lt);
     if (fop >= 0) { return _asg_compound_float(S, fop, lt); }
     EMOVCA(S);   # rcx = expr; pop rax = x; rax = x OP rcx
@@ -2898,6 +2910,7 @@ fn _asg_compound_op(S, cop, lt): i64 {
     elif (cop == 36) { EXORR(S); }
     elif (cop == 38) { ESHLCL(S); }
     elif (cop == 39) { ESHRCL(S); }
+    if (st > 0) { if (cop == 6 || cop == 7) { SPSC(S, st); } }   # 6.6.17: the result is the pointer
     return 0;
 }
 
@@ -3368,9 +3381,14 @@ fn _stmt_explicit_generic(S, noff): i64 {
 # (`_pair_callee_at`: the receiver's `T_m`), as the other two statement forms read theirs. Cursor
 # on the DOT after the receiver `noff`; consumes through the `;`. One call in _PARSE_STMT_IMPL
 # (the cybs per-function cap). CHANGELOG [6.6.16]
+# 6.6.17: and #must_use, as a discarded `f(..);` warns — an impl method takes the attribute since
+# 6.6.17 (`_impl_attrs`). The method the statement ENDED with is the one discarded (`_mcall_last`:
+# `p.bump().mu();` discards `mu`'s result; `p.mu().x;` used it).
 fn _stmt_method_call(S, noff): i64 {
     var pair = _callee_returns_pair_at(S, GTI(S) - 1);
+    _mcall_last = 0 - 1;
     PARSE_FIELD_LOAD(S, noff);
+    if (_mcall_last >= 0) { if (PEEKT(S) == 5) { _must_use_warn(S, L64(_fnt_names + _mcall_last * 8)); } }
     _stmt_qmark(S, pair);
     if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
     STI(S, GTI(S) + 1);

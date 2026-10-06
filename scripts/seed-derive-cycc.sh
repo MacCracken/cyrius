@@ -44,23 +44,23 @@ trap "rm -rf $TMP" EXIT
 
 echo "=== seed -> cybs -> cycc derivation (seed: $(wc -c < "$SEED") bytes) ==="
 
-echo "  [1/5] seed assembles bootstrap/cybs.cyr -> cybs"
+echo "  [1/6] seed assembles bootstrap/cybs.cyr -> cybs"
 cat bootstrap/cybs.cyr | "$SEED" > "$TMP/cybs"
 chmod +x "$TMP/cybs"
 
-echo "  [2/5] closure: cybs(bootstrap/asm.cyr) == bootstrap/asm"
+echo "  [2/6] closure: cybs(bootstrap/asm.cyr) == bootstrap/asm"
 cat bootstrap/asm.cyr | "$TMP/cybs" > "$TMP/asm2"
 if ! cmp -s "$TMP/asm2" "$SEED"; then
     echo "  FAIL: closure broken — cybs does not reproduce the seed" >&2
     exit 1
 fi
 
-echo "  [3/5] cybs compiles src/main.cyr -> gen1"
+echo "  [3/6] cybs compiles src/main.cyr -> gen1"
 cat src/main.cyr | "$TMP/cybs" > "$TMP/gen1"
 chmod +x "$TMP/gen1"
 
-echo "  [4/5] gen1 compiles src/main.cyr -> gen2 ; gen2 == build/cycc"
-cat src/main.cyr | "$TMP/gen1" > "$TMP/gen2"
+echo "  [4/6] gen1 compiles src/main.cyr -> gen2 ; gen2 == build/cycc"
+cat src/main.cyr | "$TMP/gen1" > "$TMP/gen2" 2> "$TMP/gen1.err"
 chmod +x "$TMP/gen2"
 if ! cmp -s "$TMP/gen2" build/cycc; then
     echo "  FAIL: seed-derived cycc != committed build/cycc" >&2
@@ -69,11 +69,25 @@ if ! cmp -s "$TMP/gen2" build/cycc; then
     exit 1
 fi
 
-echo "  [5/5] fixpoint: gen2 compiles src/main.cyr -> gen3 ; gen2 == gen3"
-cat src/main.cyr | "$TMP/gen2" > "$TMP/gen3"
+echo "  [5/6] fixpoint: gen2 compiles src/main.cyr -> gen3 ; gen2 == gen3"
+cat src/main.cyr | "$TMP/gen2" > "$TMP/gen3" 2> "$TMP/gen2.err"
 chmod +x "$TMP/gen3"
 if ! cmp -s "$TMP/gen2" "$TMP/gen3"; then
     echo "  FAIL: self-host fixpoint diverged" >&2
+    exit 1
+fi
+
+# ⛔ 6.6.17 — gen2 == build/cycc proves gen1 EMITTED the right bytes, not that gen1 COMPUTED
+# everything right. Until cybs's lexer arm for `_` (6.6.17) its lexer dropped the leading `_`s
+# of EVERY name (`fn aq` / `fn _aq` were one fn, a local `_fi` the same slot as `fi`), so in
+# _PARSE_FN_DEF_IMPL gen1 recorded every fn's code end at
+# the wrong index, and the only trace for many releases was its DCE note (57 unreachable fns
+# where cycc says 73). It turned into wrong BYTES the day the compiler passed 2048 fns and the
+# fn table grew (the stray write overran into `_fnt_structmask`). gen1 must say what gen2 says.
+echo "  [6/6] gen1 and gen2 report the same diagnostics compiling src/main.cyr"
+if ! cmp -s "$TMP/gen1.err" "$TMP/gen2.err"; then
+    echo "  FAIL: the seed-built gen1 computes differently from cycc (gen2) — a cybs miscompile" >&2
+    diff "$TMP/gen1.err" "$TMP/gen2.err" | head -10 >&2
     exit 1
 fi
 

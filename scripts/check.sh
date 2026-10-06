@@ -1775,6 +1775,11 @@ _chk_gate "$ROOT/tests/gates/diagnostics/diag_location_eof_and_tail_private.sh"
 # non-pointer to typed pointer` for a same-typed global, a `: Str` method and a `: Str` field.
 _chk_gate "$ROOT/tests/gates/diagnostics/false_warnings_valid_shapes.sh"
 
+# 6.6.17 — a fn attribute lands on the definition it precedes: not on a generic instance a
+# top-level statement mints in between, and on an impl method (whose body refused every
+# directive); #must_use and #pure's #io / #alloc checks reach the dot call `p.m(..)`.
+_chk_gate "$ROOT/tests/gates/diagnostics/attribute_lands_on_its_item.sh"
+
 # 6.6.16 (C10) — cycc's `lib/...` include fallback reads CYRIUS_HOME's store slot, else HOME's,
 # from the WHOLE environment: both orders, empty = unset, no fall-through to HOME, past 4 KB / 8 KB
 # and across read boundaries, the 1984-B bound never truncated — x86, aarch64, cx, the PE cross and

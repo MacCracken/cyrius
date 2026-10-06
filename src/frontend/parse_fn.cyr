@@ -3322,6 +3322,33 @@ fn _OV_ARITY_OK(S, fi, argc): i64 {
     return 0;
 }
 
+# v5.8.20: #pure caller cannot call #io / #alloc callees. Warning
+# (not error) for downstream incremental adoption — same shape as
+# #must_use / #deprecated diagnostics. The annotation ramp happens
+# gradually; cyrlint --strict will escalate to error in a follow-up.
+# 6.6.17: one fn, so the method arm (`p.m(..)`, `_field_load_on`) runs it too — an impl
+# method takes `#io` / `#alloc` since 6.6.17 (`_impl_attrs`).
+fn _pure_effect_warn(S, fi, noff): i64 {
+    if (_cur_fn_is_pure != 1) { return 0; }
+    if (fi < 0) { return 0; }
+    var fl = GFLG(S, fi);
+    if (fl & 16 != 0) {
+        syscall(SYS_WRITE, 2, "warning:", 8);
+        _err_head(S);
+        syscall(SYS_WRITE, 2, ": #pure fn calls #io fn '", 25);
+        PRSTR(S + 0xEC00000 + noff);
+        syscall(SYS_WRITE, 2, "'\n", 2);
+    }
+    if (fl & 32 != 0) {
+        syscall(SYS_WRITE, 2, "warning:", 8);
+        _err_head(S);
+        syscall(SYS_WRITE, 2, ": #pure fn calls #alloc fn '", 28);
+        PRSTR(S + 0xEC00000 + noff);
+        syscall(SYS_WRITE, 2, "'\n", 2);
+    }
+    return 0;
+}
+
 fn PARSE_FNCALL(S, noff): i64 {
     STI(S, GTI(S) + 1);  # consume (
     # Check for inline candidate
@@ -3451,27 +3478,7 @@ fn PARSE_FNCALL(S, noff): i64 {
     # _callee_site_checks). It names the first token after the `(` we just consumed,
     # which is on the call-site's line.
     _callee_site_checks_here(S, fi, noff, 0);
-    var _dep_flags = GFLG(S, fi);
-    # v5.8.20: #pure caller cannot call #io / #alloc callees. Warning
-    # (not error) for downstream incremental adoption — same shape as
-    # #must_use / #deprecated diagnostics. The annotation ramp happens
-    # gradually; cyrlint --strict will escalate to error in a follow-up.
-    if (_cur_fn_is_pure == 1) {
-        if (_dep_flags & 16 != 0) {
-            syscall(SYS_WRITE, 2, "warning:", 8);
-            _err_head(S);
-            syscall(SYS_WRITE, 2, ": #pure fn calls #io fn '", 25);
-            PRSTR(S + 0xEC00000 + noff);
-            syscall(SYS_WRITE, 2, "'\n", 2);
-        }
-        if (_dep_flags & 32 != 0) {
-            syscall(SYS_WRITE, 2, "warning:", 8);
-            _err_head(S);
-            syscall(SYS_WRITE, 2, ": #pure fn calls #alloc fn '", 28);
-            PRSTR(S + 0xEC00000 + noff);
-            syscall(SYS_WRITE, 2, "'\n", 2);
-        }
-    }
+    _pure_effect_warn(S, fi, noff);   # v5.8.20 (6.6.17: shared with the method arm)
     # ⛔ 6.6.6 — A >16 B STRUCT-RETURNING CALLEE WRITES ITS RESULT THROUGH A HIDDEN RETPTR, and
     # until 6.6.6 only `var p: S = f(..)` supplied one. Everywhere else — an expression
     # statement, an argument, `return f(..)` in a non-struct fn — the user args were marshalled
@@ -3836,6 +3843,7 @@ fn PARSE_IMPL(S): i64 {
     while (igo == 1) {
         if (PEEKT(S) == 14) { igo = 0; }
         else {
+            _impl_attrs(S, 1);         # 6.6.17: `#deprecated` / `#must_use` / ... on a method
             if (_TL_VIS(S) == 1) { }   # v6.5.0: `pub`/`public` on an impl method
             if (PEEKT(S) == 32) { PARSE_FN_DEF(S); }
             else { igo = 0; }
@@ -3847,23 +3855,46 @@ fn PARSE_IMPL(S): i64 {
     return 0;
 }
 
-# Skip generic parameters <T, U, ...> if present
-fn SKIP_GENERICS(S): i64 {
-    if (PEEKT(S) == 19) {
-        STI(S, GTI(S) + 1);  # consume <
-        var ggo = 1;
-        while (ggo == 1) {
-            if (PEEKT(S) == 20) { ggo = 0; }
-            # v6.5.19: EOF guard. `fn f<`, `struct S<`, `enum E<` truncated here span
-            # a loop whose only exit was `>`; this skipper emits no diagnostic, so
-            # `_had_error` stayed 0 and the v6.4.62 watchdog never ticked — cycc HUNG
-            # outright. See _wd_eof_tick (src/common/util.cyr) and CVE-39.
-            elif (PEEKT(S) == 12) { ggo = 0; }
-            else { STI(S, GTI(S) + 1); }
-        }
-        STI(S, GTI(S) + 1);  # consume >
-    }
+# ⛔ 6.6.17 — DIRECTIVES IN AN impl BODY. Its loop took only `pub` and `fn`, so `#deprecated("..")`
+# before a method was "expected '}', got unknown" (#must_use / #pure / #io / #alloc / #inline /
+# #regalloc / #naked and #assert alike). They go through THE top-level dispatcher
+# (`_tl_directive`): arm 1 in pass 2 arms an attribute for the method PARSE_FN_DEF parses next;
+# arm 0 in pass 1 (`_prescan_impl_body`) consumes, and records a `#deprecated` for the method it
+# registers, so a call parsed before the impl warns too.
+fn _impl_attrs(S, arm): i64 {
+    while (_tl_directive(S, arm) == 1) { }
     return 0;
+}
+
+# Skip generic parameters <T, U, ...> if present
+# ⛔ 6.6.17: NESTED. It stopped at the first `>` and knew no `>>`, so `Vec<Box<i64>>` — whose
+# tail the lexer makes ONE `>>` token — ran to the end of the file (`expected '=', got end of
+# file`), and `Vec<Box<i64> >` left a `>` behind. See `_skip_targ_list`.
+fn SKIP_GENERICS(S): i64 {
+    if (PEEKT(S) == 19) { _skip_targ_list(S); }
+    return 0;
+}
+# Cursor on a `<`: consume through the `>` that closes it, nested lists included (`>>` / `>>>`
+# close two / three levels). Returns how many levels the last closer closed BEYOND this list — an
+# enclosing type-argument list's `>` the lexer folded into the same token (`Box<Vec<i64>>`'s
+# `>>`, seen from `Vec`), which the caller owes to `_consume_gt` (`_ta_pending_gt`).
+# v6.5.19: EOF guard. `fn f<`, `struct S<`, `enum E<` truncated here span a loop whose only exit
+# was `>`; this skipper emits no diagnostic, so `_had_error` stayed 0 and the v6.4.62 watchdog
+# never ticked — cycc HUNG outright. See _wd_eof_tick (src/common/util.cyr) and CVE-39.
+fn _skip_targ_list(S): i64 {
+    var d = 0;
+    var go = 1;
+    while (go == 1) {
+        var t = PEEKT(S);
+        if (t == 12) { return 0; }
+        if (t == 19) { d = d + 1; }
+        elif (t == 20) { d = d - 1; }
+        elif (t == 39) { d = d - 2; }
+        elif (t == 152) { d = d - 3; }
+        STI(S, GTI(S) + 1);
+        if (d <= 0) { go = 0; }
+    }
+    return 0 - d;
 }
 
 # v6.3.9 (F-fns): capture a generic param list `<T, U>` at a fn signature, returning
@@ -3938,6 +3969,12 @@ fn _infer_conc_at_cursor(S): i64 {
 # slot >= 64, where a pointer then read as a by-value struct and was copied in. CHANGELOG [6.6.16]
 fn _mark_ptr_param(S): i64 {
     _cur_fn_ptrp = GFLC(S) + 1;
+    # 6.6.17: and its step, sizeof(T), as a mark on the slot the parameter takes next — read only
+    # behind the slot's bit 56, which `_param_record` sets (see `_sl_marks`). Cursor on T; an
+    # unknown T is refused by `_tn_param_check`, so this is quiet. `**T` steps a pointer's 8.
+    var ps = 8;
+    if (PEEKT(S) != 8) { ps = _ptr_step_peek(S, 0 - 1, 1); }
+    SSLICE_W(S, GFLC(S), 0 - 0x7E00 - ps);
     return 0;
 }
 # 6.6.16 (C7) — an int-class parameter's slot facts, once its SLTYPE is set: an `async fn` refuses
@@ -4738,7 +4775,9 @@ fn _instantiate_generic_fn(S, base_fi, conc0, conc1): i64 {
     _inst_base_fi = base_fi;
     _inst_conc0 = conc0;
     _inst_conc1 = conc1;
+    var attrs = _attr_park();         # 6.6.17: a pending attribute is the next definition's
     PARSE_FN_DEF(S);
+    _attr_unpark(attrs);
     _inst_name = 0;
     _inst_base_fi = 0 - 1;
     _inst_conc0 = 0;
@@ -4759,6 +4798,40 @@ fn _instantiate_generic_fn(S, base_fi, conc0, conc1): i64 {
     _gen_inst_record(S, spec, base_fi, conc0, conc1);   # 6.6.17 (a3, a5)
     _gen_inherit_dep(S, spec, base_fi);              # 6.6.16: `#deprecated` reaches instances
     return spec;
+}
+
+# ⛔ 6.6.17 — A PENDING fn ATTRIBUTE BELONGS TO THE DEFINITION IT PRECEDES, NOT TO AN INSTANCE.
+# The instance above is emitted by PARSE_FN_DEF itself, which consumed whatever `#must_use` /
+# `#deprecated` / `#pure` / ... was armed: an attribute written before a top-level statement that
+# instantiates `g<i32>` marked `g$i32` (deprecated — every call to it warned) and was gone by the
+# `fn` it preceded (`#must_use` silent there). Parked around the instance and put back. The
+# instance still inherits the BASE's own `#deprecated` (`_gen_inherit_dep`).
+fn _attr_park(): i64 {
+    var b = alloc(80);
+    store64(b, _regalloc_pending);       _regalloc_pending = 0;
+    store64(b + 8, _must_use_pending);   _must_use_pending = 0;
+    store64(b + 16, _deprecated_pending); _deprecated_pending = 0;
+    store64(b + 24, _deprecated_msg_pending); _deprecated_msg_pending = 0;
+    store64(b + 32, _pure_pending);      _pure_pending = 0;
+    store64(b + 40, _io_pending);        _io_pending = 0;
+    store64(b + 48, _alloc_pending);     _alloc_pending = 0;
+    store64(b + 56, _naked_pending);     _naked_pending = 0;
+    store64(b + 64, _inline_pending);    _inline_pending = 0;
+    store64(b + 72, _pub_pending);       _pub_pending = 0;
+    return b;
+}
+fn _attr_unpark(b): i64 {
+    _regalloc_pending = load64(b);
+    _must_use_pending = load64(b + 8);
+    _deprecated_pending = load64(b + 16);
+    _deprecated_msg_pending = load64(b + 24);
+    _pure_pending = load64(b + 32);
+    _io_pending = load64(b + 40);
+    _alloc_pending = load64(b + 48);
+    _naked_pending = load64(b + 56);
+    _inline_pending = load64(b + 64);
+    _pub_pending = load64(b + 72);
+    return 0;
 }
 
 # v6.3.10 (generic structs): instantiate `Box<conc>` → a deduped specialized struct.
@@ -4886,6 +4959,8 @@ fn _parse_one_type_arg(S): i64 {
     if (base_sid <= 0 || GSTP(S, base_sid - 1) == 0) {
         var _c1 = _classify_return_type(S, noff);    # `<` but not a generic struct
         _reject_special_type_arg(S, _c1);
+        # 6.6.17: and its own `<..>` (`Box<Vec<i64>>`), which was left for the enclosing list.
+        _ta_pending_gt = _ta_pending_gt + _skip_targ_list(S);
         return _c1;
     }
     STI(S, GTI(S) + 1);                              # consume the nested `<`
@@ -5289,19 +5364,10 @@ fn _parse_multiret_sig(S, fi, quiet): i64 {
     var n = 0;
     var go = 1;
     while (go == 1) {
-        if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); return n; }
-        var t = _classify_return_type(S, PEEKV(S));
-        # Unknown element type keeps the token stream in sync as a plain i64 slot
-        # rather than desyncing the parse — same tactic as the `_syntax_only` arm
-        # on the single-value path below. 6.6.16 (C8): a name that is no type at all is
-        # refused by name (it compiled silently as i64); every type name stays accepted.
-        if (t == 0) {
-            if (quiet == 0) { _tn_mret_check(S, GTI(S)); }
-            t = 0 - 8;
-        }
+        if (PEEKT(S) != 2) { if (PEEKT(S) != 8) { ERR_EXPECT(S, 2); return n; } }
+        var t = _mret_elem(S, fi, quiet);
         if (n < 3) { SFRT(S, fi, n, t); }
         n = n + 1;
-        STI(S, GTI(S) + 1);                 # consume the type IDENT
         if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); } else { go = 0; }
     }
     if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); return n; }
@@ -5313,6 +5379,30 @@ fn _parse_multiret_sig(S, fi, quiet): i64 {
     SFRN(S, fi, n);
     SFRS(S, fi, MULTIRET_SID);
     return n;
+}
+
+# One element of a multi-value return type (cursor on it), consumed; its return code.
+# Unknown element type keeps the token stream in sync as a plain i64 slot
+# rather than desyncing the parse — same tactic as the `_syntax_only` arm
+# on the single-value path below. 6.6.16 (C8): a name that is no type at all is
+# refused by name (it compiled silently as i64); every type name stays accepted.
+# 6.6.17: a `*T` element is an i64 slot too (`_ptr_annot`).
+# 6.6.17: and an element takes type arguments (`(Box<i64>, i64)`), resolved as a single return
+# type's are (`_gtype_sid`): it was `expected ')', got '<'`.
+fn _mret_elem(S, fi, quiet): i64 {
+    if (PEEKT(S) == 8) {
+        _ptr_annot(S, 0 - 1, quiet);
+        return 0 - 8;
+    }
+    var t = _classify_return_type(S, PEEKV(S));
+    if (t == 0) {
+        if (quiet == 0) { _tn_mret_check(S, GTI(S)); }
+        t = 0 - 8;
+    }
+    if (t > 0) { t = _gtype_sid(S, fi, t); }
+    STI(S, GTI(S) + 1);                 # consume the type IDENT
+    SKIP_GENERICS(S);
+    return t;
 }
 
 fn _classify_return_type(S, rt_noff): i64 {
@@ -5662,7 +5752,8 @@ fn _prescan_fn_sig(S): i64 {
                 # v6.5.21 — `: (T1, T2[, T3])`. Recorded HERE in pass 1 so a
                 # FORWARD call can arity-check against a fn defined later.
                 _parse_multiret_sig(S, fi, 1);
-            } else {
+            } elif (PEEKT(S) == 8) { _ret_ptr_annot(S, fi, 1); }   # 6.6.17: `: *T`
+            else {
                 if (PEEKT(S) == 2) {
                     var rtc = _classify_return_type(S, PEEKV(S));
                     if (rtc > 0) { rtc = _gtype_sid(S, fi, rtc); }   # 6.6.10: `: Box<Pt>`
@@ -6197,6 +6288,7 @@ fn _prescan_impl_body(S): i64 {
         elif (t == 73) { _TL_VIS(S); }                 # `public` on a method
         elif (t == 153) { _TL_VIS(S); }                # `private` — marked by _PRIV_PRESCAN
         elif (t == 32) { _prescan_fn_sig(S); }
+        elif (_tl_directive(S, 0) == 1) { }            # 6.6.17: directives on a method (_impl_attrs)
         else { go = 0; }
     }
     return 0;
@@ -7452,7 +7544,8 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                 # i64)` called as `f(7, 9)` gave a = 9 and b = 0. Exactly the
                 # failure the v6.3.9 note above describes for `: T`, in the arm
                 # that catches every return type which is not a bare IDENT.
-                if (PEEKT(S) != 10) { _cur_fn_ret_stash = 8; }
+                # 6.6.17: nor is a `: *T` pointer return (one word in rax).
+                if (PEEKT(S) != 10) { if (PEEKT(S) != 8) { _cur_fn_ret_stash = 8; } }
             }
         }
     }
@@ -7963,7 +8056,8 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
         if (PEEKT(S) == 10) {
             _parse_multiret_sig(S, fi, 0);
             _cur_fn_ret_scalar = MULTIRET_SID;
-        } else {
+        } elif (PEEKT(S) == 8) { _ret_ptr_annot(S, fi, 0); }   # 6.6.17: `: *T`
+        else {
             if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
             var rt_noff = PEEKV(S);
             # v6.3.5 CO-01 — classify the return type via the shared
@@ -9094,17 +9188,16 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                     # Stage 2: shift fixup-table CPs added during this fn.
                     # FIXUP later patches via these CPs — they must reflect
                     # post-compaction positions.
+                    # ⛔ 6.6.17: not `_fi` — until cybs's lexer arm for `_` (6.6.17), cybs (the
+                    # seed-built bootstrap compiler) dropped the leading `_`s of EVERY name, so
+                    # `_fi` WAS this fn's `fi` in gen1: the fn-end record went to the wrong slot,
+                    # harmless until the fn table grew past 2048 (`_fnt_codeend` then overran
+                    # into `_fnt_structmask`).
                     var _fc0 = L64(S + 0x1A6010);
                     var _fcn = GFCNT(S);
-                    # ⛔ 6.6.17 — NOT `_fi`: cybs (the seed-built bootstrap compiler) does not start an
-                    # identifier at `_`, so it lexes `_fi` as `fi` — THIS fn's own `fi` — and the loop
-                    # below then overwrote the fn index (SFNE recorded the code end under the wrong fn,
-                    # and DCE saw no calls). Latent since this loop landed; it broke seed-derive the
-                    # moment the cybs-built cycc took a path that reads `fi` after it. No two names in
-                    # one fn may differ only by leading underscores (gates/toolchain/underscore_alias).
-                    var _cfx = _fc0;
-                    while (_cfx < _fcn) {
-                        var _fa = _fixup_base + _cfx * 16;
+                    var _fxi = _fc0;
+                    while (_fxi < _fcn) {
+                        var _fa = _fixup_base + _fxi * 16;
                         var _fcp = L64(_fa);
                         var _fsh = 0;
                         var _ni2 = 0;
@@ -9114,7 +9207,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                             _ni2 = _ni2 + 1;
                         }
                         S64(_fa, _fcp - _fsh);
-                        _cfx = _cfx + 1;
+                        _fxi = _fxi + 1;
                     }
                     # Stage 3: shift jump-target table entries (used by LASE
                     # / BB analysis at IR>0; harmless to update at IR=0).

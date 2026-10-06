@@ -21,7 +21,7 @@
 # a genuine typed pointer, which is also the case that never worked before this fix.
 set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
-CC="$ROOT/build/cycc"
+CC=${CYCC:-"$ROOT/build/cycc"}
 [ -x "$CC" ] || { echo "SKIP: build/cycc missing"; exit 77; }
 cd "$ROOT"
 T=$(mktemp --suffix=.cyr) && [ -f "$T" ] || { echo "FAIL: typed_pointer_warn_sign: mktemp --suffix=.cyr failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
@@ -193,6 +193,73 @@ rc=0
 "$O" >/dev/null 2>&1 || rc=$?
 if [ "$rc" -ne 42 ]; then echo "  FAIL axis 8 (anti-vacuous): '&buf + 3' addressed byte $rc, not byte 3 — the pointer scale is re-scaling byte arithmetic"; fail=1
 else echo "  ok axis 8: &x + n stays BYTE arithmetic (scale 1)"; fi
+
+# --- axis 9 (6.6.17): a `name: *T` field and a `fn f(): *T` result ARE pointers ---
+# Both positions were parse errors before 6.6.17. Their value carries T's step as its pointer
+# scale, so binding it to a `*T` local must not warn; axes 4 and 6 keep the warning reachable.
+cat > "$T" <<'EOF'
+include "lib/syscalls.cyr"
+struct Pt { x; y; }
+struct H { p: *Pt; n; }
+var arr[4];
+fn first(h: *H): *Pt { return h.p; }
+fn main(): i64 {
+    var h: H;
+    h.p = &arr; h.n = 0;
+    var a: *Pt = h.p;
+    var b: *Pt = first(&h);
+    return 0;
+}
+var ec = main();
+syscall(60, ec);
+EOF
+crc=0
+"$CC" < "$T" > "$O" 2>"$E" || crc=$?
+n=$(warns)
+if [ "$crc" -ne 0 ]; then echo "  FAIL axis 9: a *T field / a *T return did not compile (rc $crc)"; fail=1
+elif [ "$n" -ne 0 ]; then echo "  FAIL axis 9: a *T field / a *T return bound to a *T local warned $n time(s)"; fail=1
+else echo "  ok axis 9: a *T field and a *T return are pointers"; fi
+
+# --- axis 10 (6.6.17): a `*T` PARAMETER, a CAPTURED `*T` local and `G += n` on a `*T` global are
+# pointers — each loaded (or left) with scale 0 before 6.6.17, so these copies warned falsely.
+cat > "$T" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+var arr[8];
+var G: *i32 = 0;
+fn f(p: *i32): i64 {
+    var q: *i32 = p;
+    var c: *i16 = &arr;
+    var k = || { var r: *i16 = c; return r; };
+    G = &arr;
+    G += 1;
+    return callptr(k) + q;
+}
+var ec = 0;
+syscall(60, ec);
+EOF
+crc=0
+"$CC" < "$T" > "$O" 2>"$E" || crc=$?
+n=$(warns)
+if [ "$crc" -ne 0 ]; then echo "  FAIL axis 10: the fixture did not compile (rc $crc)"; fail=1
+elif [ "$n" -ne 0 ]; then echo "  FAIL axis 10: a *T param / a captured *T / G += n warned $n time(s)"; fail=1
+else echo "  ok axis 10: a *T param, a captured *T and G += n are pointers"; fi
+
+# --- axis 11 (6.6.17): a difference of pointers with different element sizes is refused by name.
+# It used to scale the right pointer by the left one's step and compile a meaningless number.
+cat > "$T" <<'EOF'
+include "lib/syscalls.cyr"
+var arr[8];
+fn f(p: *i64, b: *u8): i64 { return p - b; }
+var ec = 0;
+syscall(60, ec);
+EOF
+crc=0
+"$CC" < "$T" > "$O" 2>"$E" || crc=$?
+if [ "$crc" -ne 0 ] && grep -q "pointer difference of pointers with different element sizes" "$E"; then
+    echo "  ok axis 11: *i64 - *u8 is refused by name"
+else echo "  FAIL axis 11: *i64 - *u8 was not refused by name (rc $crc)"; fail=1; fi
 
 [ "$fail" -eq 0 ] || { echo "FAIL: typed-pointer-warn-sign"; exit 1; }
 echo "PASS: typed-pointer-warn-sign — warns on typed pointers only, not on width/float-annotated locals"

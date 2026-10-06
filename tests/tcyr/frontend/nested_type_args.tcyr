@@ -1,0 +1,80 @@
+# nested_type_args.tcyr — 6.6.17 — type arguments nest, wherever a type is written.
+#
+# Before 6.6.17 (measured on the 6.6.17-open compiler):
+#   * `var x: Vec<Box<i64>> = ..;` ran to the end of the file (`expected '=', got end of file`):
+#     the shared skipper SKIP_GENERICS stopped at the first `>` and did not know the lexer's `>>`;
+#   * `var b: Box<Vec<i64>>;` was `expected '=', got '<'` and `idv<Vec<i64>>(x)` was
+#     `undefined variable 'i64'` (a non-generic type argument's own `<..>` was left behind);
+#   * `sizeof(Box<i64>)` and a multi-value return element `(Box<i64>, i64)` were
+#     `expected ')', got '<'`;
+#   * a field `items: Vec<Box<i64>>;` was `expected '>', got '<'`.
+# A generic struct with arguments is its INSTANCE everywhere: `sizeof(Box<i32>)` is what
+# `var b: Box<i32>` occupies.
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/vec.cyr"
+include "lib/assert.cyr"
+
+struct Pt { x; y; }
+struct Box<T> { v: T; w: T; }
+struct Bag { items: Vec<Box<i64>>; n; }
+union Un { items: Vec<Box<i32>>; raw; }
+
+#assert sizeof(Box<i32>) == 8
+#assert sizeof(Box<Box<i32>>) == 16
+
+fn idv<T>(x: T): T { return x; }
+fn two(a): (Box<i64>, i64) { return (a, 5); }
+fn three(a): (Box<Box<i32>>, i64, Vec<Box<i64>>) { return (a, 6, a + 1); }
+fn takes(v: Vec<Box<i64>>, k: Box<Box<i32>>): i64 { return vec_get(v, 0) + k.v.v; }
+
+var gv: Vec<Box<i64>> = 0;
+
+fn sizes(): i64 {
+    assert_eq(sizeof(Box<i32>), 8, "sizeof(Box<i32>) is the instance");
+    assert_eq(sizeof(Box<i64>), 16, "sizeof(Box<i64>)");
+    assert_eq(sizeof(Box<Pt>), 32, "sizeof(Box<Pt>)");
+    assert_eq(sizeof(Box<Box<i32>>), 16, "sizeof(Box<Box<i32>>)");
+    assert_eq(sizeof(Vec<i64>), 8, "sizeof(Vec<i64>) is a handle");
+    assert_eq(sizeof(Box<Vec<i64>>), 16, "sizeof(Box<Vec<i64>>)");
+    assert_eq(sizeof(Bag), 16, "a Vec<Box<i64>> field is a handle");
+    return 0;
+}
+
+fn declarations(): i64 {
+    var x: Vec<Box<i64>> = vec_new();
+    vec_push(x, 41);
+    assert_eq(vec_get(x, 0), 41, "var x: Vec<Box<i64>>");
+    var x2: Vec<Box<i64> > = x;
+    assert_eq(vec_get(x2, 0), 41, "var x2: Vec<Box<i64> > (spaced)");
+    var b: Box<Vec<i64>>;
+    b.v = x; b.w = 3;
+    assert_eq(vec_get(b.v, 0) + b.w, 44, "var b: Box<Vec<i64>>");
+    var z: Box<Box<i32>>;
+    z.v.v = 5; z.w.w = 6;
+    assert_eq(z.v.v + z.w.w, 11, "var z: Box<Box<i32>>");
+    assert_eq(takes(x, z), 46, "params typed Vec<Box<i64>> and Box<Box<i32>>");
+    var y = idv<Vec<i64>>(x);
+    assert_eq(vec_get(y, 0), 41, "idv<Vec<i64>>(x)");
+    gv = x;
+    assert_eq(vec_get(gv, 0), 41, "a global Vec<Box<i64>>");
+    var bag: Bag;
+    bag.items = x; bag.n = 2;
+    assert_eq(vec_get(bag.items, 0) + bag.n, 43, "a Vec<Box<i64>> field and the field after it");
+    return 0;
+}
+
+fn multi(): i64 {
+    var p, n = two(3);
+    assert_eq(p + n, 8, "a (Box<i64>, i64) return");
+    var a, b, c = three(10);
+    assert_eq(a + b + c, 27, "a (Box<Box<i32>>, i64, Vec<Box<i64>>) return");
+    return 0;
+}
+
+alloc_init();
+sizes();
+declarations();
+multi();
+var r = assert_summary();
