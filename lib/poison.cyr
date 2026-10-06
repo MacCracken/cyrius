@@ -208,7 +208,8 @@ fn _poison_cat_hex(buf, pos, n): i64 {
 }
 
 # Report one detection: a single stderr line, counted, and fatal (exit 86) when trapping.
-#   kind: 1 alloc, 2 arena, 3 fl, 4 seam, 0 unknown (header undecodable)     side: 1 leading, 2 trailing, 3 after-free, 4 header
+#   kind: 1 alloc, 2 arena, 3 fl, 4 seam, 0 unknown (header undecodable)
+#   side: 1 leading, 2 trailing, 3 after-free, 4 header
 fn _poison_report(kind, side, blk, req, nbad): i64 {
     _poison_viol = _poison_viol + 1;
     var line[192];
@@ -246,8 +247,8 @@ fn _poison_bump_total(req): i64 {
 
 # Arm `blk` (a span of _poison_bump_total(req) bytes) for a `req`-byte request of `kind`:
 # write the header and both redzones with the current fill. The user bytes are not touched.
-# Returns the user pointer. Not yet published — call _poison_publish once armed, so a
-# concurrent sweep never sees an unarmed block.
+# Returns the user pointer. The block is unpublished on return — call _poison_publish once
+# armed, so a concurrent sweep never sees an unarmed block.
 fn _poison_arm_bump(blk, req, kind): i64 {
     var fill = _poison_fill;
     store64(blk, 0);

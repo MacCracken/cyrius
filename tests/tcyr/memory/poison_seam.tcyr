@@ -76,7 +76,7 @@ fn main(): i64 {
     var q2 = alloc_via(ar, 64);
     i = 0;
     while (i < 64) { store8(q2 + i, 0x33); i = i + 1; }
-    assert_eq(poison_sweep(), 0, "after reset the wrapper's blocks are forgotten: reused arena memory is not a false positive");
+    assert_eq(poison_sweep(), 0, "after reset the wrapper's blocks are forgotten (no false positive)");
 
     test_group("poison_free quarantines");
     var f = poison_alloc(32);
