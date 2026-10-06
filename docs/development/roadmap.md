@@ -484,6 +484,39 @@ information only), the retired agnosys copies.
   `core/pmm.cyr:330` because `core/vmm.cyr` is included only under `ARCH_X86_64`. The agnos stdlib peer also gains
   a `sys_setsockopt` decline stub (N8). agnos `e8553c47`.
 
+**Recorded in each repo on 2026-10-05 (the 6.6.17 filings; docs commits, not pushed — each opens with "nothing to
+do until cyrius 6.6.17 is tagged and out")**: one line each below. Not filed: **ark** and **bote** (their
+`docs/development/roadmap.md` has uncommitted changes — ark's `[build] defines` note, bote's `lib sync` note stay
+here until it is clean), **mishran** (no roadmap or issues dir; its P5-A note is the sadish / dhancha one), and the
+two generic notes with no per-repo list — the ~57 repos with `CYRIUS_DCE=1 cyrius build` CI lines (`[build] dce =
+true`) and scaffolds from `cyrius init --bin` / `cyrius port` before 6.6.17 (`output = "{PROJ}"`) — which live in
+CHANGELOG [6.6.17] *Downstream* (no ecosystem sweep).
+- **agnos** — the BSD socket names are portable wrappers on the agnos peer (no new syscall number); the CLI builds
+  for agnos but answers version / help only. agnos `267b200d`.
+- **kashi** — bare `cyrius test` runs `[build] test` (`src/test.cyr`, 393 assertions) for the first time in CI;
+  check it is green before the pin bump. kashi `fdadf99`.
+- **crab** — its CI comment "`cyrius test` DOES NOT RUN THE `[build].test` ENTRY" becomes false; `test = "tests"`
+  runs each file once. crab `b932a53`.
+- **sakshi** — `[build] defines` is read; the CI `-D SAKSHI_SMOKE` is redundant. sakshi `e2f3a0a`.
+- **sigil** — `[build] defines` is read for every `cyrius build` (the fuzz loop included); the CI `-D SIGIL_SMOKE`
+  is redundant. sigil `6acc021`.
+- **rekha** (P5's filer) — `[coverage] programs` / `--programs` / `--per-entry` (text coverage; P5-B is v6.7.x);
+  its "blind to programs/" CI comment can be revised. rekha `a4005be`.
+- **sadish** — the same P5-A note. sadish `f6f6ad4`.
+- **dhancha** — the same P5-A note. dhancha `13c8aa5`.
+- **setu** — the same P5-A note, as an information issue (setu keeps no roadmap.md). setu `f3c7b6b`.
+- **kriya** — the `lib sync --full` lock complaint is fixed; run `lib sync` before `deps` / `build` after a pin
+  move (`--relock` otherwise). kriya `8275490`.
+- **yantra** — the `rm -rf lib cyrius.lock` regeneration recipe is no longer needed. yantra `20d8260`.
+- **agnostik** — CI runs `lib sync` → `deps` → `deps --verify`: no change; a moved snapshot now fails at
+  `lib sync` by name. agnostik `07720f0`.
+- **nein** — the same `lib sync` note. nein `cc55e18`.
+- **agnostic** — the same `lib sync` note, ⚠ plus one workflow without `deps --verify` that CAN go red; and its
+  `[deps] stdlib` "patra" / "sigil" leaves, lost to a `]` in a comment, are read again (m6). agnostic `9d5e9a9`.
+- **agnosai** — ⚠ CAN go red at the pin bump: CI runs `lib sync` → `deps` with no `deps --verify`, and `lib sync`
+  now refuses a lock's previous-pin rows (`--relock`). agnosai `2ab334d`.
+- **ai-hwaccel** — the same ⚠ `lib sync` note as agnosai. ai-hwaccel `85d7985`.
+
 ---
 
 ## Potential backlog — 6.x-cycle, unscheduled (NOT parked to 7.x)
