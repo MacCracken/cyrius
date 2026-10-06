@@ -63,6 +63,7 @@ fn _mf_vocab_b(i): i64 {
     if (i == 32) { return "release|bins|read|-|-|-|release.yml, install.sh, cyrius pulsar"; }
     if (i == 33) { return "release|cross_bins|read|-|-|-|release.yml, install.sh, cyrius pulsar"; }
     if (i == 34) { return "release|scripts|read|-|-|-|release.yml, install.sh"; }
+    if (i == 35) { return "embed|*|read|-|-|-|every compile: the file's bytes as NAME() / NAME_len(), prepended before the entry"; }
     return 0;
 }
 
@@ -622,6 +623,357 @@ fn _mf_key_str(section, key): i64 {
 }
 
 # ================================================================
+# [embed] — a data file's bytes as source (6.6.19, P2)
+# ================================================================
+# `[embed] NAME = "path"` makes every compile carry the file's bytes as `NAME()` (a pointer to
+# them, NUL-terminated) and `NAME_len()` (their count) — cbt/build.cyr `_embed_render` writes
+# the module. It is the one manifest key that copies a file VERBATIM INTO A BUILT ARTIFACT, so
+# what it may read is narrow, and every refusal names `cyrius.cyml [embed] NAME`:
+#   · NAME is an identifier, and not a reserved word: the module is `fn NAME()`, and an error in
+#     that prelude is blamed on the ENTRY file (`<source>:N`), so cbt has to catch it first.
+#   · the path is relative, with no `..`, no `\`, no drive, no control byte and no `.git`
+#     component (actions/checkout leaves the job token in .git/config, which passes every other
+#     rule); and no SYMLINK anywhere on it — an untrusted checkout must not ship out-of-project
+#     bytes inside a release binary, and "inside the project" cannot be read off the path text
+#     once a link is involved (dir_walk follows links since 6.5.12; this deliberately does not).
+#   · a regular file, opened ONCE (O_NOFOLLOW) and read from that fd here: the bytes the build
+#     embeds are the bytes that were checked, and every unit of a `cyrius test` run sees the same.
+#   · it fits cycc's string pool (below), alone and together.
+# One path string per entry: the proposal's {dir, glob, prefix} set form is refused by name.
+# CHANGELOG [6.6.19].
+#
+# cycc's string pool `str_data` is 2,097,152 bytes (heap map 0x21A000, src/main.cyr), and LEX
+# (src/frontend/lex.cyr) refuses a literal once `spos + 1 >= 2097152` after its NUL: the pool
+# holds 2,097,151 bytes, NULs included, so one literal is at most 2,097,150. It is SHARED with
+# the program's own literals (the pkgver, the stdlib, the entry), so real embeds stay well under.
+var _EMBED_POOL = 2097151;
+var _embed_state = 0;      # 0 = not read, 1 = read (_embed_all), 2 = refused (already named)
+var _embed_all = 0;        # vec of 32-byte entries { name, path, bytes, len }, in file order
+
+fn _embed_e_name(e): i64 { return load64(e); }
+fn _embed_e_path(e): i64 { return load64(e + 8); }
+fn _embed_e_bytes(e): i64 { return load64(e + 16); }
+fn _embed_e_len(e): i64 { return load64(e + 24); }
+
+# The names a module `fn NAME()` cannot take. DERIVED (tests/gates/toolchain/
+# embed_manifest_refusals.sh checks this list against the compiler): every TOKNAME_BUILTIN name
+# and every IS_KEYWORD_TOK statement keyword (src/common/util.cyr), plus the identifier-spelled
+# intrinsics PARSE_FACTOR lowers inline — `sizeof` / `mulh64` (_is_ident_intrinsic,
+# src/frontend/parse.cyr) and `fncall0`..`fncall8` (_IS_FNCALL_NAME) — which sit in neither
+# table: `fn sizeof()` declares, and its call is a parse error.
+fn _embed_reserved_list(): i64 {
+    return " syscall load8 store8 load16 load32 load64 store16 store32 store64 f64_add f64_sub f64_mul f64_div f64_from f64_to f64_eq f64_lt f64_gt f64_neg f64_abs f64_floor f64_ceil f64_sin f64_cos f64_exp f64_ln f64_log2 f64_exp2 f64v_add f64v_sub f64v_mul f64_round f64v_div f64v_sqrt f64v_abs f64v_fmadd ret2 rethi f64_atan union bitget bitset bitclr u128 defer secret f64v_dot f64v_scale f64v_axpy f32_from f32_to async await f32v_add f32v_sub f32v_mul f32v_fmadd f32v_dot iv_add iv_sub iv_mul iv_dp8 f32v8_add f32v8_sub f32v8_mul f32v8_fma f32v8_dot f64v256_add f64v256_sub f64v256_mul f64v256_div f64v256_fmadd f64v256_dot f64v256_scale f64v256_abs f64v256_sqrt f64_le f64_ge f64_trunc private var if while else fn return struct asm elif break continue for switch case default enum mod pub public use match in impl shared object stack f64_sqrt callptr sizeof mulh64 fncall0 fncall1 fncall2 fncall3 fncall4 fncall5 fncall6 fncall7 fncall8 ";
+}
+
+fn _embed_reserved(name): i64 {
+    var l = _embed_reserved_list();
+    var ll = strlen(l);
+    var nl = strlen(name);
+    var i = 0;
+    while (i + nl + 1 < ll) {
+        if (load8(l + i) == 32 && load8(l + i + nl + 1) == 32) {
+            if (memeq(l + i + 1, name, nl) == 1) { return 1; }
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# 0 when `name` can be an [embed] NAME, else why not.
+fn _embed_name_bad(name): i64 {
+    var n = strlen(name);
+    var ok = 1;
+    if (n == 0 || n > 64) { ok = 0; }
+    var i = 0;
+    while (i < n) {
+        var c = load8(name + i);
+        var w = 0;
+        if (c == 95 || (c >= 65 && c <= 90) || (c >= 97 && c <= 122)) { w = 1; }
+        if (i > 0 && c >= 48 && c <= 57) { w = 1; }
+        if (w == 0) { ok = 0; }
+        i = i + 1;
+    }
+    if (ok == 0) { return "is not a valid name: it becomes the functions NAME() and NAME_len(), so it must be an identifier ([A-Za-z_][A-Za-z0-9_]*, at most 64 characters)"; }
+    if (_embed_reserved(name) == 1) { return "is a reserved word in cyrius (a keyword or a builtin), so fn NAME() cannot be declared; choose another name"; }
+    return 0;
+}
+
+# 1 when path component buf[s..e) is `.git` as a case-insensitive filesystem or Windows sees
+# it: any case, trailing dots / spaces dropped (Win32 strips them), or the 8.3 alias GIT~1.
+fn _embed_is_dotgit(buf, s, e): i64 {
+    while (e > s && (load8(buf + e - 1) == 46 || load8(buf + e - 1) == 32)) { e = e - 1; }
+    var n = e - s;
+    var want = ".git";
+    if (n == 5) { want = "git~1"; }
+    elif (n != 4) { return 0; }
+    var i = 0;
+    while (i < n) {
+        var c = load8(buf + s + i);
+        if (c >= 65 && c <= 90) { c = c + 32; }
+        if (c != load8(want + i)) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+
+# 0 when `path` is a relative, in-project, link-free path, else why not.
+fn _embed_path_bad(path): i64 {
+    var n = strlen(path);
+    if (n == 0) { return "the path is empty"; }
+    if (load8(path) == 47) { return "the path is absolute; an [embed] path is relative to the project"; }
+    if (n >= 2 && load8(path + 1) == 58) {
+        var d = load8(path) | 32;
+        if (d >= 97 && d <= 122) { return "the path names a drive (X:); an [embed] path is relative to the project"; }
+    }
+    var i = 0;
+    while (i < n) {
+        var c = load8(path + i);
+        if (c == 92) { return "the path holds a backslash; write [embed] paths with / (a \\ is a separator on Windows and would step past these checks)"; }
+        if (c < 32 || c == 127) { return "the path holds a control character"; }
+        i = i + 1;
+    }
+    var s = 0;
+    i = 0;
+    while (i <= n) {
+        if (i == n || load8(path + i) == 47) {
+            if (i - s == 2 && load8(path + s) == 46 && load8(path + s + 1) == 46) {
+                return "the path climbs out with ..; an [embed] path stays inside the project";
+            }
+            if (_embed_is_dotgit(path, s, i) == 1) {
+                return "the path reaches into .git; an [embed] never reads the repository's own metadata (actions/checkout keeps the job token in .git/config)";
+            }
+            if (i > s) {
+                var pre = alloc(i + 1);
+                memcpy(pre, path, i);
+                store8(pre + i, 0);
+                if (is_symlink(str_from(pre)) == 1) {
+                    var sb = str_builder_new();
+                    str_builder_add_cstr(sb, "the path passes through a symlink (");
+                    str_builder_add_cstr(sb, pre);
+                    str_builder_add_cstr(sb, "); [embed] refuses links: an untrusted checkout must not ship bytes from outside the project inside a binary");
+                    return str_data(str_builder_build(sb));
+                }
+            }
+            s = i + 1;
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# The file at `path` read through ONE fd: the bytes (NUL-terminated) with their count at *lenp,
+# or 0 with the reason at *whyp.
+fn _embed_e_dir(): i64 { return "is a directory; an [embed] names one regular file"; }
+fn _embed_read(path, lenp, whyp): i64 {
+    if (is_dir(str_from(path)) == 1) { store64(whyp, _embed_e_dir()); return 0; }
+    var fl = O_RDONLY | O_NOFOLLOW;
+    #ifndef CYRIUS_TARGET_WIN
+    fl = fl | O_NONBLOCK;   # a FIFO must not hang the build; its lseek below refuses it
+    #endif
+    var fd = file_open(path, fl, 0);
+    if (fd < 0) {
+        if (file_exists(path) == 0) { store64(whyp, "the file does not exist"); }
+        else { store64(whyp, "the file cannot be opened"); }
+        return 0;
+    }
+    var size = xlseek(fd, 0, 2);
+    var probe[8];
+    if (size < 0 || xlseek(fd, 0, 0) != 0) {
+        file_close(fd);
+        store64(whyp, "is not a regular file");
+        return 0;
+    }
+    if (size > _EMBED_POOL - 1) {
+        var dr = file_read(fd, &probe, 1);
+        file_close(fd);
+        if (dr < 0) { store64(whyp, _embed_e_dir()); return 0; }
+        var sb = str_builder_new();
+        str_builder_add_cstr(sb, "is ");
+        str_builder_add_int(sb, size);
+        str_builder_add_cstr(sb, " bytes; one embed holds at most 2097150 (cycc's 2 MiB string pool, less the literal's NUL, and the pool is shared with the program's own strings)");
+        store64(whyp, str_data(str_builder_build(sb)));
+        return 0;
+    }
+    var buf = alloc(size + 1);
+    var off = 0;
+    var r = 1;
+    while (off < size && r > 0) {
+        r = file_read(fd, buf + off, size - off);
+        if (r > 0) { off = off + r; }
+    }
+    var more = 0;
+    if (r >= 0) { more = file_read(fd, &probe, 1); }
+    file_close(fd);
+    if (r < 0 || more < 0) {
+        if (r == 0 - 21 || more == 0 - 21) { store64(whyp, _embed_e_dir()); }
+        else { store64(whyp, "the file cannot be read"); }
+        return 0;
+    }
+    if (off != size || more > 0) { store64(whyp, "the file changed while it was being read"); return 0; }
+    store8(buf + size, 0);
+    store64(lenp, size);
+    return buf;
+}
+
+# "cyrius.cyml [embed] NAME = "path": why" (the path part only when there is one).
+fn _embed_refuse(disp, path, why): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "cyrius.cyml [embed] ");
+    str_builder_add_cstr(sb, disp);
+    if (path != 0) {
+        str_builder_add_cstr(sb, " = \"");
+        str_builder_add_cstr(sb, path);
+        str_builder_add_cstr(sb, "\"");
+    }
+    str_builder_add_cstr(sb, ": ");
+    str_builder_add_cstr(sb, why);
+    _err(str_data(str_builder_build(sb)));
+    return 1;
+}
+
+# 1 when `a` is `b` + "_len".
+fn _embed_is_len_of(a, b): i64 {
+    var bl = strlen(b);
+    if (strlen(a) != bl + 4) { return 0; }
+    if (memeq(a, b, bl) == 0) { return 0; }
+    return memeq(a + bl, "_len", 4);
+}
+
+# One `NAME = value` line of [embed] (the value at _mf_buf[vp]): validated, read and pushed onto
+# `out`; 0, or 1 after naming what is wrong. `seen` holds every NAME so far, valid or not.
+fn _embed_entry(out, seen, name, disp, vp): i64 {
+    var why = _embed_name_bad(name);
+    if (why != 0) { return _embed_refuse(disp, 0, why); }
+    var k = 0;
+    while (k < vec_len(seen)) {
+        var o = vec_get(seen, k);
+        k = k + 1;
+        var clash = 0;
+        if (streq(o, name) == 1) { why = "is declared twice"; clash = 1; }
+        elif (_embed_is_len_of(name, o) == 1 || _embed_is_len_of(o, name) == 1) {
+            var sb = str_builder_new();
+            str_builder_add_cstr(sb, "collides with [embed] ");
+            str_builder_add_cstr(sb, o);
+            str_builder_add_cstr(sb, " (NAME_len() is the length accessor of NAME)");
+            why = str_data(str_builder_build(sb));
+            clash = 1;
+        }
+        if (clash == 1) {
+            vec_push(seen, name);
+            return _embed_refuse(disp, 0, why);
+        }
+    }
+    vec_push(seen, name);
+    var c = 0;
+    if (vp < _mf_len) { c = load8(_mf_buf + vp); }
+    if (c == 123) { return _embed_refuse(disp, 0, "is an inline table; [embed] takes one path string per entry (the {dir, glob, prefix} set form is not supported: list each file)"); }
+    if (c == 91) { return _embed_refuse(disp, 0, "is an array; [embed] takes one path string per entry"); }
+    if (c != 34 && c != 39) { return _embed_refuse(disp, 0, "must be a path string"); }
+    _toml_bad = 0;
+    var e = 0;
+    var path = _toml_str_at(_mf_buf, _mf_len, vp, &e);
+    if (path == 0) { return _embed_refuse(disp, 0, "is not a single-line TOML string (a multi-line string, or an invalid escape: write a literal 'path')"); }
+    _toml_bad = 0;
+    why = _embed_path_bad(path);
+    if (why != 0) { return _embed_refuse(disp, path, why); }
+    var len = 0;
+    var bytes = _embed_read(path, &len, &why);
+    if (bytes == 0) { return _embed_refuse(disp, path, why); }
+    var ent = alloc(32);
+    store64(ent, name);
+    store64(ent + 8, path);
+    store64(ent + 16, bytes);
+    store64(ent + 24, len);
+    vec_push(out, ent);
+    return 0;
+}
+
+# The [embed] entries — validated, each file read once — as a vec (empty when there is no
+# manifest or no [embed]), or -1 after naming every refusal. Read once per process.
+fn _embed_load(): i64 {
+    if (_embed_state == 1) { return _embed_all; }
+    if (_embed_state == 2) { return 0 - 1; }
+    var ml = _mf_load();
+    if (ml < 0) { return 0 - 1; }
+    var out = vec_new();
+    var seen = vec_new();
+    var bad = 0;
+    var info[32];
+    var insec = 0;
+    var p = 0;
+    while (ml == 1 && p < _mf_len) {
+        p = _toml_line(_mf_buf, _mf_len, p, &info);
+        var kind = load64(&info);
+        if (kind == 1 || kind == 2) {
+            insec = 0;
+            var hs = _mf_buf + load64(&info + 8);
+            var hl = load64(&info + 16);
+            var is_e = 0;
+            if (hl == 5 && memeq(hs, "embed", 5) == 1) { is_e = 1; }
+            if (hl > 6 && memeq(hs, "embed.", 6) == 1) { is_e = 2; }
+            if (is_e == 1 && kind == 1) { insec = 1; }
+            elif (is_e != 0) {
+                _err("cyrius.cyml: [embed] is one table of NAME = \"path\" entries; a [embed.X] / [[embed]] section is not read (the {dir, glob, prefix} set form is not supported: list each file)");
+                bad = bad + 1;
+            }
+        } elif (kind == 3 && insec == 1) {
+            var ks = load64(&info + 8);
+            var kl = load64(&info + 16);
+            var name = alloc(kl + 1);
+            memcpy(name, _mf_buf + ks, kl);
+            store8(name + kl, 0);
+            var disp = name;
+            if (ks > 0) {
+                var q = load8(_mf_buf + ks - 1);
+                if (q == 34 || q == 39) {
+                    disp = alloc(kl + 3);
+                    store8(disp, q);
+                    memcpy(disp + 1, name, kl);
+                    store8(disp + kl + 1, q);
+                    store8(disp + kl + 2, 0);
+                }
+            }
+            bad = bad + _embed_entry(out, seen, name, disp, load64(&info + 24));
+        }
+    }
+    if (bad == 0 && vec_len(out) > 0) {
+        var total = 0;
+        var i = 0;
+        while (i < vec_len(out)) {
+            total = total + _embed_e_len(vec_get(out, i)) + 1;
+            i = i + 1;
+        }
+        if (total > _EMBED_POOL) {
+            var sb = str_builder_new();
+            str_builder_add_cstr(sb, "cyrius.cyml [embed]: together the embeds need ");
+            str_builder_add_int(sb, total);
+            str_builder_add_cstr(sb, " bytes of cycc's string pool (each file plus its NUL), more than the 2097151 it holds, before the program's own strings:");
+            i = 0;
+            while (i < vec_len(out)) {
+                var en = vec_get(out, i);
+                str_builder_add_cstr(sb, "\n    [embed] ");
+                str_builder_add_cstr(sb, _embed_e_name(en));
+                str_builder_add_cstr(sb, " = \"");
+                str_builder_add_cstr(sb, _embed_e_path(en));
+                str_builder_add_cstr(sb, "\": ");
+                str_builder_add_int(sb, _embed_e_len(en));
+                str_builder_add_cstr(sb, " bytes");
+                i = i + 1;
+            }
+            _err(str_data(str_builder_build(sb)));
+            bad = 1;
+        }
+    }
+    if (bad > 0) {
+        _embed_state = 2;
+        return 0 - 1;
+    }
+    _embed_all = out;
+    _embed_state = 1;
+    return out;
+}
+
+# ================================================================
 # THE RESOLVED CONFIGURATION — one precedence for every key
 # ================================================================
 # argument > environment > manifest > default, the same for every key (no per-key exceptions; a
@@ -632,7 +984,7 @@ var _CFG_DEFAULT = 0;
 var _CFG_MANIFEST = 1;
 var _CFG_ENV = 2;
 var _CFG_ARG = 3;
-var _CFG_N = 12;
+var _CFG_N = 13;
 var _CK_ENTRY = 0;
 var _CK_OUTPUT = 1;
 var _CK_DCE = 2;
@@ -645,6 +997,7 @@ var _CK_PKG_NAME = 8;
 var _CK_PKG_VERSION = 9;
 var _CK_PKG_CYRIUS = 10;
 var _CK_SECTIONS_BASE = 11;
+var _CK_EMBED = 12;        # 6.6.19: the [embed] entries, as "NAME=path" (manifest > default only)
 # 1 when the resolved `dce` is on and did NOT come from the environment: compile() then hands cycc
 # CYRIUS_DCE=1, replacing any inherited value (an argument beats CYRIUS_DCE=0).
 var _cfg_dce_inject = 0;
@@ -665,13 +1018,14 @@ fn _cfg_name(i): i64 {
     if (i == _CK_PKG_NAME) { return "package.name"; }
     if (i == _CK_PKG_VERSION) { return "package.version"; }
     if (i == _CK_PKG_CYRIUS) { return "package.cyrius"; }
-    return "sections.base";
+    if (i == _CK_SECTIONS_BASE) { return "sections.base"; }
+    return "embed";
 }
 
 # 0 = string, 1 = bool, 2 = list
 fn _cfg_kind(i): i64 {
     if (i == _CK_DCE || i == _CK_STRICT) { return 1; }
-    if (i == _CK_DEFINES || i == _CK_TEST || i == _CK_MODULES || i == _CK_PROGRAMS) { return 2; }
+    if (i == _CK_DEFINES || i == _CK_TEST || i == _CK_MODULES || i == _CK_PROGRAMS || i == _CK_EMBED) { return 2; }
     return 0;
 }
 
@@ -848,6 +1202,27 @@ fn _cfg_warn_section(section): i64 {
     return 0;
 }
 
+# The [embed] rung: every entry validated and read (the refusals are named by _embed_load), shown
+# as "NAME=path". It has no argument or environment channel.
+fn _cfg_mf_embed(): i64 {
+    var ev = _embed_load();
+    if (ev < 0) { return 1; }
+    if (vec_len(ev) == 0) { return 0; }
+    var v = vec_new();
+    var i = 0;
+    while (i < vec_len(ev)) {
+        var e = vec_get(ev, i);
+        var sb = str_builder_new();
+        str_builder_add_cstr(sb, _embed_e_name(e));
+        str_builder_add_cstr(sb, "=");
+        str_builder_add_cstr(sb, _embed_e_path(e));
+        vec_push(v, str_data(str_builder_build(sb)));
+        i = i + 1;
+    }
+    _cfg_put(_CK_EMBED, v, _CFG_MANIFEST, "[embed]");
+    return 0;
+}
+
 # Resolve the configuration `cyrius build` acts on. `src_arg` / `out_arg` are its operands (0 when
 # not given). Returns 0, or 1 after naming what is wrong.
 fn _cfg_resolve_build(src_arg, out_arg): i64 {
@@ -883,6 +1258,7 @@ fn _cfg_resolve_build(src_arg, out_arg): i64 {
     }
     if (_cfg_mf_str(_CK_PKG_CYRIUS, "package", "cyrius") != 0) { return 1; }
     if (_cfg_mf_str(_CK_SECTIONS_BASE, "sections", "base") != 0) { return 1; }
+    if (_cfg_mf_embed() != 0) { return 1; }
     if (_cfg_env_bool(_CK_DCE, "CYRIUS_DCE") != 0) { return 1; }
     _cfg_env_csv(_CK_DEFINES, "CYRIUS_DEFINES");
     if (_cfg_org(_CK_DEFINES) == _CFG_ENV) {

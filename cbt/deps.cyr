@@ -2680,6 +2680,12 @@ fn _auto_deps(): i64 {
         _err("cyrius.cyml [build] modules must be a string or an array of strings");
         return 1;
     }
+    # 6.6.19: `[embed]` beside it, for the same reason (before the `[deps]` early return): every
+    # entry validated and each file read once, here, so a refused one fails the verb by name.
+    var ee = _embed_load();
+    if (ee < 0) { return 1; }
+    _embeds = 0;
+    if (vec_len(ee) > 0) { _embeds = ee; }
     if (has_deps == 0) { return 0; }
     var dr = cmd_deps();
     return dr;
