@@ -1,21 +1,24 @@
 #!/bin/sh
-# build_config_precedence.sh — 6.6.17 (P1 item 1). `[build] dce`, `strict` and `defines` are read,
-# each resolves argument > environment > manifest > default, and what the compiler RECEIVES is
-# the resolved value. `[build] target` (held), `[build] features` (dropped) and an unknown
-# `[build]` key are warned by name.
+# build_config_precedence.sh — 6.6.17 (P1 item 1). `[build] dce` and `defines` are read, each
+# resolves argument > environment > manifest > default, and what the compiler RECEIVES is the
+# resolved value. `[build] strict` is HELD (cycc --strict has had no effect since 6.3.2): warned,
+# not read, no environment channel; `--strict` passes through. `[build] target` (held),
+# `[build] features` (dropped) and an unknown `[build]` key are warned by name; the declared
+# synonym `src` is not.
 #
 # WHY: `[build] defines` was declared by 3 manifests (ark, sakshi, sigil) and read by nothing —
 # their CI lines repeat it as `-D`; DCE was set by env on ~200 CI lines across 57 repos with no
-# manifest key; there was no [build] strict. Each key is checked at every rung, and the effect is
-# observed where it lands: a STUB compiler (a shell script standing in for cycc) records the argv
-# and the CYRIUS_DCE it was handed and then runs the real cycc, and the built program's exit code
-# encodes which defines reached it.
+# manifest key. Each key is checked at every rung, and the effect is observed where it lands: a
+# STUB compiler (a shell script standing in for cycc) records the argv and the CYRIUS_DCE it was
+# handed and then runs the real cycc, and the built program's exit code encodes which defines
+# reached it.
 #
-# ROWS, per key: default; manifest beats default; environment beats manifest; argument beats
-# environment. Plus: a mistyped value is refused by name and builds nothing; a define holding a
-# newline is refused (it would start a new source line in the compiled unit); held / dropped /
-# unknown keys warn by name and the build still succeeds; the consumer manifests that DECLARE
-# defines (ark, sigil — verbatim fixtures) now resolve them.
+# ROWS, per read key: default; manifest beats default; environment beats manifest; argument beats
+# environment. CYRIUS_DCE: empty = unset, 0 / 1 accepted, anything else refused by name. Plus: a
+# mistyped value is refused by name and builds nothing; a define holding a newline is refused (it
+# would start a new source line in the compiled unit); held / dropped / unknown keys warn by name
+# and the build still succeeds; the consumer manifests that DECLARE defines (ark, sigil —
+# verbatim fixtures) now resolve them.
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -77,13 +80,23 @@ mk 'dce = true\n'; bld CYRIUS_DCE=0 -- --dce; want "dce argument beats environme
 pcfg CYRIUS_DCE=0 > "$W/pc"; grep -qF '  build.dce = false  (environment: CYRIUS_DCE)' "$W/pc" || fail "dce: --print-config does not report the environment rung"
 [ "$FAIL" = "$x" ] && echo "  ok dce: default unset -> manifest 1 (eliminated) -> CYRIUS_DCE=0 wins -> --dce wins over it"
 
-# ── strict ──────────────────────────────────────────────────────────────────────────────
+# ── strict: HELD (cycc --strict has had no effect since 6.3.2) ──────────────────────────
+# The manifest key is warned and NOT read, there is no environment channel, and the argument is
+# still accepted and passed through (back-compat) — an inert key must not look like a setting.
 x=$FAIL
 mk ''; bld --; want "strict default" "$(has_strict)" no
-mk 'strict = true\n'; bld --; want "strict manifest" "$(has_strict)" yes
-mk 'strict = true\n'; bld CYRIUS_STRICT=0 --; want "strict environment beats manifest" "$(has_strict)" no
-mk 'strict = true\n'; bld CYRIUS_STRICT=0 -- --strict; want "strict argument beats environment" "$(has_strict)" yes
-[ "$FAIL" = "$x" ] && echo "  ok strict: default off -> manifest on -> CYRIUS_STRICT=0 wins -> --strict wins over it (seen in cycc's argv)"
+mk 'strict = true\n'; bld --; want "strict manifest is not read" "$(has_strict)" no
+grep -q 'warn: cyrius.cyml \[build\] strict is HELD and not read: has had no effect since 6.3.2' "$W/out" || fail "a manifest strict was not warned by name"
+mk ''; bld CYRIUS_STRICT=1 --; want "CYRIUS_STRICT is not a channel" "$(has_strict)" no
+mk ''; bld -- --strict; want "strict argument passed through" "$(has_strict)" yes
+[ "$FAIL" = "$x" ] && echo "  ok strict: held — [build] strict warned and unread, CYRIUS_STRICT ignored, --strict passed through"
+
+# ── environment values ──────────────────────────────────────────────────────────────────
+x=$FAIL
+mk 'dce = true\n'; bld CYRIUS_DCE= --; want "an EMPTY CYRIUS_DCE is unset (the manifest's true stands)" "$DCE" 1
+mk ''; bld CYRIUS_DCE=true --
+[ "$RC" -ne 0 ] && grep -q 'CYRIUS_DCE must be 0 or 1 (or unset): true' "$W/out" && [ "$EXIT" = none ] || fail "CYRIUS_DCE=true was not refused by name (rc $RC, built: $EXIT)"
+[ "$FAIL" = "$x" ] && echo "  ok environment: CYRIUS_DCE empty = unset, 0/1 accepted, 'true' refused by name"
 
 # ── defines ─────────────────────────────────────────────────────────────────────────────
 x=$FAIL
@@ -109,9 +122,13 @@ mk 'target = "aarch64"\nfeatures = ["gpu"]\noutptu = "build/typo"\n'; bld --
 grep -q 'warn: cyrius.cyml \[build\] target is HELD' "$W/out" || fail "a held [build] target was not warned by name"
 grep -q 'warn: cyrius.cyml \[build\] features is DROPPED' "$W/out" || fail "a dropped [build] features was not warned by name"
 grep -q 'warn: cyrius.cyml \[build\] outptu is not a known key' "$W/out" || fail "an unknown [build] key was not warned by name"
-mk 'dce = false\nstrict = false\ndefines = []\n'; bld --
+mk 'dce = false\ndefines = []\ntest = "src/main.cyr"\nmodules = []\n'; bld --
 grep -q 'warn:' "$W/out" && fail "a manifest of known keys warned: $(grep 'warn:' "$W/out" | head -1)"
-[ "$FAIL" = "$x" ] && echo "  ok warnings: held target, dropped features and a typo'd key are named; known keys are not"
+# the declared synonym: `src` for `entry` (cyrius itself, hisab, prakash, cyrius-doom ... write it)
+printf '[package]\nname = "p"\n\n[build]\nsrc = "src/main.cyr"\noutput = "build/p"\n' > "$W/p/cyrius.cyml"; bld --
+[ "$EXIT" = 0 ] || fail "[build] src did not build (rc $RC)"
+grep -q 'warn:' "$W/out" && fail "the declared synonym src warned: $(grep 'warn:' "$W/out" | head -1)"
+[ "$FAIL" = "$x" ] && echo "  ok warnings: held target, dropped features and a typo'd key are named; known keys and the src synonym are not"
 
 # ── what consumers declared ─────────────────────────────────────────────────────────────
 x=$FAIL
@@ -125,4 +142,4 @@ done
 [ "$FAIL" = "$x" ] && echo "  ok consumers: ark's and sigil's [build] defines (verbatim) resolve from the manifest"
 
 [ "$FAIL" = 0 ] || exit 1
-echo "PASS: build_config_precedence (dce / strict / defines at every rung; refusals; held, dropped, unknown keys)"
+echo "PASS: build_config_precedence (dce / defines at every rung; strict held; refusals; held, dropped, unknown keys)"

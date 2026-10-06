@@ -289,6 +289,8 @@ fn _cli_help_extra(verb): i64 {
         println("  --check-lib-sync   fail the build if ./lib/ is a stale version vs the pinned snapshot (CI)");
         println("  --pie              emit a position-independent executable (CYRIUS_PIE=1)");
         println("  --dce              dead-code elimination for this build (CYRIUS_DCE=1; [build] dce)");
+        println("  --strict           passed to cycc; no effect since 6.3.2 (a reachable undefined fn is");
+        println("                     an error by default; --allow-undef downgrades it)");
         println("  --print-config     print every [build] value and where it came from (argument >");
         println("                     environment > manifest > default); build nothing, resolve no deps");
         println("  <source>/<output> may be omitted when ./cyrius.cyml declares [build] entry / output.");

@@ -162,17 +162,19 @@ ident buffer / `tok_names` 512 KB (v6.4.76; 128 KB → 256 KB at v5.11.18 → 51
 ## Build Tool (cyrius)
 
 ```
-Build:     build [--aarch64|--win|--agnos] [--no-deps] [--strict] [--features <list>],
+Build:     build [--aarch64|--win|--agnos] [--no-deps] [--dce] [--features <list>] [--print-config],
+           ([--strict] is accepted and passed to cycc, but has had no effect since 6.3.2: a reachable
+            undefined function is an error by default; --allow-undef downgrades it)
            run, test, tests [dir], bench, check, self, clean
            distlib [--all|--check] [--modular] [profile] — bundle src/ into dist/
            lib sync [--dry-run] [--full] — vendor declared [deps].stdlib from pin
 Deps:      deps [--no-lock|--verify] — resolve [deps] from cyrius.cyml into lib/ (auto-runs on build)
 Project:   init, package, publish, install, update, port
 Quality:   audit [--internal[=platform-check]], fuzz, fmt, lint, doc, vet, deny, capacity
-Testing:   coverage [--full] [--min <pct>], doctest, soak [N], smoke
+Testing:   coverage [--full] [--min <pct>] [--programs <glob>] [--per-entry], doctest, soak [N], smoke
 Signing:   sign-efi <pe> <key.der> <cert.der> <out> — Authenticode-sign a PE for UEFI Secure Boot (v6.4.47)
 LSP:       lsp — build/install cyrius-lsp (also auto-installed via cyriusly setup)
-Info:      version [--project], which, repl, hooks install, help
+Info:      version [--project], which, repl, hooks install, help [manifest]
 ```
 
 Dependencies declared in `cyrius.cyml` are auto-resolved on `build`/`run`/`test`:

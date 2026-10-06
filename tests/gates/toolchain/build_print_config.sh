@@ -11,10 +11,11 @@
 #
 # AXES
 #   1. every consumer fixture: build.entry / build.output / package.name equal the fixture's own
-#      values, origin `manifest` naming the key actually written (`[build] src` for hisab).
+#      values, origin `manifest` naming the key actually written (`[build] src` for hisab), and
+#      no key a consumer writes is warned "not a known key" (6.6.17 review: `src` was).
 #   2. operands win: `--print-config a.cyr out` reports both as `argument`, over the manifest.
 #   3. no manifest: entry / output are `(unset)  (default)`; strict false; defines [].
-#   4. `--strict` and `-D X` are `argument`.
+#   4. `--strict` and `-D X` are `argument` (strict marked held: no effect since 6.3.2).
 #   5. it builds nothing and resolves nothing: a project with [deps] stdlib gets no lib/ and no
 #      build/, exit 0.
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -49,6 +50,8 @@ for f in tests/fixtures/manifest/consumers/*.cyml; do
     has "$W/c/$nm.out" "  build.entry = \"$ev\"  (manifest: [build] $ek)" "axis 1 ($nm)"
     has "$W/c/$nm.out" "  build.output = \"$ov\"  (manifest: [build] output)" "axis 1 ($nm)"
     has "$W/c/$nm.out" "  package.name = \"$pn\"  (manifest: [package] name)" "axis 1 ($nm)"
+    # a key consumers write is never "unknown" — hisab's `src` is entry's declared synonym
+    grep -q 'is not a known key' "$W/c/$nm.out" && fail "axis 1 ($nm): a key this consumer writes was warned as unknown: $(grep 'is not a known key' "$W/c/$nm.out" | head -1)"
     n=$((n + 1))
 done
 [ "$n" -ge 6 ] || fail "axis 1: only $n consumer fixtures checked (floor 6)"
@@ -68,14 +71,14 @@ pc "$W/none" > "$W/a3.out" 2>&1 || true
 has "$W/a3.out" '  manifest: (none)' "axis 3"
 has "$W/a3.out" '  build.entry = (unset)  (default)' "axis 3"
 has "$W/a3.out" '  build.output = (unset)  (default)' "axis 3"
-has "$W/a3.out" '  build.strict = false  (default)' "axis 3"
+has "$W/a3.out" '  build.strict = false  (default)  [held: no effect since 6.3.2]' "axis 3"
 has "$W/a3.out" '  build.defines = []  (default)' "axis 3"
 [ "$FAIL" = "$x" ] && echo "  ok axis 3: with no manifest every key reports its default"
 
 # ── axis 4: flags are arguments ─────────────────────────────────────────────────────────
 x=$FAIL
 pc "$W/none" --strict -D ALPHA -DBETA > "$W/a4.out" 2>&1 || true
-has "$W/a4.out" '  build.strict = true  (argument: --strict)' "axis 4"
+has "$W/a4.out" '  build.strict = true  (argument: --strict)  [held: no effect since 6.3.2]' "axis 4"
 has "$W/a4.out" '  build.defines = ["ALPHA", "BETA"]  (argument: -D)' "axis 4"
 [ "$FAIL" = "$x" ] && echo "  ok axis 4: --strict and -D report as arguments"
 

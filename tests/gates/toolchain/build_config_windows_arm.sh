@@ -1,17 +1,19 @@
 #!/bin/sh
 # build_config_windows_arm.sh — 6.6.17 (P1 item 1, the PE arm). On Windows the resolved `[build]
-# dce` and `strict` reach the compiler too.
+# dce` reaches the compiler, and a `--strict` argument is passed through as on POSIX.
 #
 # WHY: Win32 has no fork/execve, so compile()'s Windows arm hands `cmd /s /c "cc" < src > out` to
-# CreateProcessW — and that arm passed NEITHER: no `--strict` on the command line (POSIX puts it
-# in argv), no CYRIUS_DCE in the child's environment (POSIX appends it to envp). `cyrius build
-# --strict` and every manifest key wired this release would have been inert on cyrius.exe.
+# CreateProcessW — and that arm passed NEITHER: no CYRIUS_DCE in the child's environment (POSIX
+# appends it to envp), no `--strict` on the command line (POSIX puts it in argv). `[build] dce`
+# would have been inert on cyrius.exe. (`--strict` has had no effect in cycc since 6.3.2; it is
+# passed through for parity, and `[build] strict` is held — see build_config_precedence.sh.)
 #
 # HOW: a STUB compiler (a PE program standing in for cycc.exe) writes the command line it was
 # started with (GetCommandLineW) and the CYRIUS_DCE it inherited (GetEnvironmentVariableA) to a
 # log; the tree's cyrius.exe runs it under a PRIVATE wine prefix.
-#   axis 1  [build] dce = true + strict = true -> the stub sees `--strict` and CYRIUS_DCE=1.
-#   axis 2  (anti-vacuous) a manifest with neither -> no `--strict`, CYRIUS_DCE unset.
+#   axis 1  [build] dce = true + `cyrius build --strict` -> the stub sees `--strict` and
+#           CYRIUS_DCE=1.
+#   axis 2  (anti-vacuous) neither -> no `--strict`, CYRIUS_DCE unset.
 # wine is not hardware: the release gate's cass leg is the verification on real Windows.
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -72,19 +74,20 @@ CYR
 "$W/cc_win" < "$W/stub.cyr" > "$W/home/bin/cycc.exe" 2> "$W/stub.err" && [ -s "$W/home/bin/cycc.exe" ] \
     || { echo "FAIL: build_config_windows_arm: the stub compiler does not build:"; tail -3 "$W/stub.err"; exit 1; }
 printf 'fn main(): i64 { return 0; }\nvar r = main();\n' > "$W/p/src/main.cyr"
-run() {   # run <extra [build] lines>
-    printf '[package]\nname = "p"\n\n[build]\nentry = "src/main.cyr"\noutput = "build/p.exe"\n%b' "$1" > "$W/p/cyrius.cyml"
+run() {   # run <extra [build] lines> [cli args...]
+    m=$1; shift
+    printf '[package]\nname = "p"\n\n[build]\nentry = "src/main.cyr"\noutput = "build/p.exe"\n%b' "$m" > "$W/p/cyrius.cyml"
     rm -f "$W/stub.log"
-    ( cd "$W/p" && env -u CYRIUS_DCE -u CYRIUS_STRICT CYRIUS_HOME="$W/home" CYRIUS_RESOLVED=1 timeout 300 wine "$W/home/bin/cyrius.exe" build ) > "$W/out" 2>&1 || true
+    ( cd "$W/p" && env -u CYRIUS_DCE -u CYRIUS_STRICT CYRIUS_HOME="$W/home" CYRIUS_RESOLVED=1 timeout 300 wine "$W/home/bin/cyrius.exe" build "$@" ) > "$W/out" 2>&1 || true
     [ -f "$W/stub.log" ] || { fail "the stub compiler never ran: $(head -3 "$W/out" | tr '\n' ' ')"; return 1; }
     return 0
 }
 
-if run 'dce = true\nstrict = true\n'; then
-    grep -q ' --strict' "$W/stub.log" || fail "axis 1: [build] strict = true did not put --strict on cycc.exe's command line: $(head -1 "$W/stub.log")"
+if run 'dce = true\n' --strict; then
+    grep -q ' --strict' "$W/stub.log" || fail "axis 1: cyrius build --strict did not put --strict on cycc.exe's command line: $(head -1 "$W/stub.log")"
     grep -qx 'dce=1' "$W/stub.log" || fail "axis 1: [build] dce = true did not reach cycc.exe as CYRIUS_DCE=1: $(tail -1 "$W/stub.log")"
 fi
-[ "$FAIL" = 0 ] && echo "  ok axis 1: [build] dce + strict reach cycc.exe (--strict on its command line, CYRIUS_DCE=1 in its environment)"
+[ "$FAIL" = 0 ] && echo "  ok axis 1: [build] dce and --strict reach cycc.exe (CYRIUS_DCE=1 in its environment, --strict on its command line)"
 x=$FAIL
 if run ''; then
     grep -q ' --strict' "$W/stub.log" && fail "axis 2: --strict reached cycc.exe with no strict configured"
@@ -93,4 +96,4 @@ fi
 [ "$FAIL" = "$x" ] && echo "  ok axis 2: with neither configured, cycc.exe sees no --strict and no CYRIUS_DCE"
 
 [ "$FAIL" = 0 ] || exit 1
-echo "PASS: build_config_windows_arm (dce + strict reach the compiler on the PE arm, under wine)"
+echo "PASS: build_config_windows_arm (dce and --strict reach the compiler on the PE arm, under wine)"

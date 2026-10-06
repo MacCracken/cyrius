@@ -22,6 +22,14 @@
 #   4. the guide's "Manifest keys" table equals the vocabulary (section, key, status, synonyms,
 #      environment, argument) — in both directions.
 #   5. self-test: a census row the vocabulary lacks IS reported (the detector is not blind).
+#   6. the STATUS COLUMN IS TRUE AT RUNTIME, for every key of the sections `cyrius build
+#      --print-config` resolves ([package], [build], [coverage], [sections]): a manifest
+#      declaring a `read` key (or one of its synonyms) shows it with origin `manifest: [s] key` and
+#      warns nothing; a `held` / `dropped` key is warned BY NAME and resolves nothing; an `info`
+#      key does neither. (6.6.17 review: `[build] src` — a declared synonym that WAS read — warned
+#      "is not a known key", and `[build] strict` was listed `read` for a no-op. A vocabulary
+#      checked only against itself is the v6.5.49 trap.) The other sections' readers are other
+#      verbs (deps, distlib, release tooling), each pinned by its own gates.
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -29,7 +37,7 @@ CC=${CYCC:-"$ROOT/build/cycc"}
 W=$(mktemp -d) && [ -d "$W" ] || { echo "FAIL: manifest_key_inventory: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$W"' EXIT
 FAIL=0
-fail() { echo "  FAIL: $*"; FAIL=1; }
+fail() { echo "  FAIL: $*"; FAIL=$((FAIL + 1)); }
 
 "$CC" < cbt/cyrius.cyr > "$W/cyrius" 2> "$W/build.err" || { echo "FAIL: manifest_key_inventory: cbt/cyrius.cyr does not build"; tail -3 "$W/build.err"; exit 1; }
 chmod +x "$W/cyrius"
@@ -99,5 +107,35 @@ printf '# probe\n1 build entry\n1 build no_such_key\n1 features anything\n' > "$
 got=$(missing_from "$W/probe")
 [ "$got" = "build no_such_key" ] && echo "  ok axis 5: the detector reports an undeclared key and only that one" || fail "axis 5 self-test: expected exactly 'build no_such_key', got '$got'"
 
+# ── axis 6: the status column at runtime ─────────────────────────────────────────────────
+mkdir -p "$W/rt"
+# probe <section> <key> — print-config with a manifest declaring only that key; "x", else true
+probe() {
+    printf '[%s]\n%s = "x"\n' "$1" "$2" > "$W/rt/cyrius.cyml"
+    ( cd "$W/rt" && env -u CYRIUS_DCE -u CYRIUS_DEFINES CYRIUS_RESOLVED=1 "$W/cyrius" build --print-config ) > "$W/rt.out" 2>&1 || true
+    if grep -q 'must be true or false' "$W/rt.out"; then
+        printf '[%s]\n%s = true\n' "$1" "$2" > "$W/rt/cyrius.cyml"
+        ( cd "$W/rt" && env -u CYRIUS_DCE -u CYRIUS_DEFINES CYRIUS_RESOLVED=1 "$W/cyrius" build --print-config ) > "$W/rt.out" 2>&1 || true
+    fi
+}
+x=$FAIL; nrt=0
+while read -r sec key st syn _env _arg; do
+    case "$sec" in package|build|coverage|sections) ;; *) continue ;; esac
+    names=$key; [ "$st" = read ] && [ "$syn" != "-" ] && names="$key $(printf '%s' "$syn" | tr ',' ' ')"
+    for k in $names; do
+        probe "$sec" "$k"; nrt=$((nrt + 1))
+        row=$(grep -c "(manifest: \[$sec\] $k)" "$W/rt.out" || true)
+        warned=$(grep -c "warn: cyrius.cyml \[$sec\] $k " "$W/rt.out" || true)
+        case "$st" in
+            read) [ "$row" -ge 1 ] && [ "$warned" = 0 ] || fail "axis 6: [$sec] $k is listed READ, but --print-config shows it $row time(s) from the manifest and warns $warned time(s): $(grep -E 'warn:|error:' "$W/rt.out" | head -1)" ;;
+            held|dropped) [ "$row" = 0 ] && grep -q "warn: cyrius.cyml \[$sec\] $k is $(printf '%s' "$st" | tr a-z A-Z)" "$W/rt.out" \
+                    || fail "axis 6: [$sec] $k is listed $st, but it resolved $row time(s) / was not warned as $st" ;;
+            info) [ "$row" = 0 ] && [ "$warned" = 0 ] || fail "axis 6: [$sec] $k is listed info, but it resolved ($row) or warned ($warned)" ;;
+        esac
+    done
+done < "$W/vocab"
+[ "$nrt" -ge 18 ] || fail "axis 6: only $nrt keys probed at runtime (floor 18) — the vocabulary read nothing"
+[ "$FAIL" = "$x" ] && echo "  ok axis 6: all $nrt [package]/[build]/[coverage]/[sections] keys and synonyms behave as their status says (read resolves silently, held/dropped warn and resolve nothing, info does neither)"
+
 [ "$FAIL" = 0 ] || exit 1
-echo "PASS: manifest_key_inventory (vocabulary vs census vs templates vs guide)"
+echo "PASS: manifest_key_inventory (vocabulary vs census vs templates vs guide vs runtime)"

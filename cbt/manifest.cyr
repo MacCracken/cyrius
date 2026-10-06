@@ -36,7 +36,7 @@ fn _mf_vocab_a(i): i64 {
     if (i == 9) { return "build|test|read|-|-|<file>...|bare cyrius test: these (file / dir / list), then tests/"; }
     if (i == 10) { return "build|modules|read|-|-|-|every compile: these files prepended before the entry"; }
     if (i == 11) { return "build|dce|read|-|CYRIUS_DCE|--dce|cyrius build: dead-code elimination (bool)"; }
-    if (i == 12) { return "build|strict|read|-|CYRIUS_STRICT|--strict|cyrius build: passes cycc --strict (bool)"; }
+    if (i == 12) { return "build|strict|held|-|-|--strict|has had no effect since 6.3.2: a reachable undefined function is an error by default; --allow-undef downgrades it"; }
     if (i == 13) { return "build|defines|read|-|CYRIUS_DEFINES|-D|cyrius build: one #define per name"; }
     if (i == 14) { return "build|target|held|-|-|-|pass --target / --aarch64 / --win / --agnos on the command line"; }
     if (i == 15) { return "build|features|dropped|-|-|-|features are [features] + --features"; }
@@ -89,8 +89,23 @@ fn _mf_vocab_field(row, f): i64 {
     return out;
 }
 
-# The vocabulary row for `key` in `section`, or 0 when the key is not declared. A `[deps.NAME]`
-# section looks up `deps.*`, a `[lib.PROFILE]` one `lib.*`; a `*` key matches any name.
+# 1 when `key` is one of the comma-separated names in `syns` (a vocabulary synonyms field).
+fn _mf_syn_has(syns, key): i64 {
+    var kl = strlen(key);
+    var i = 0;
+    while (load8(syns + i) != 0) {
+        var s = i;
+        while (load8(syns + i) != 0 && load8(syns + i) != 44) { i = i + 1; }
+        if (i - s == kl && memeq(syns + s, key, kl) == 1) { return 1; }
+        if (load8(syns + i) == 44) { i = i + 1; }
+    }
+    return 0;
+}
+
+# The vocabulary row for `key` in `section`, or 0 when the key is not declared. A declared
+# SYNONYM finds its key's row (`[build] src` is `entry`'s — the first cut warned that `src` "is
+# not a known key" while reading it). A `[deps.NAME]` section looks up `deps.*`, a
+# `[lib.PROFILE]` one `lib.*`; a `*` key matches any name.
 fn _mf_vocab_row(section, key): i64 {
     var sec = section;
     if (strlen(section) > 5 && memeq(section, "deps.", 5) == 1) { sec = "deps.*"; }
@@ -102,6 +117,7 @@ fn _mf_vocab_row(section, key): i64 {
         if (streq(_mf_vocab_field(row, 0), sec) == 1) {
             var k = _mf_vocab_field(row, 1);
             if (streq(k, key) == 1) { return row; }
+            if (_mf_syn_has(_mf_vocab_field(row, 3), key) == 1) { return row; }
             if (streq(k, "*") == 1) { wild = row; }
         }
         i = i + 1;
@@ -750,13 +766,24 @@ fn _cfg_env(name): i64 {
     #endif
 }
 
-# Environment rungs. A bool variable is on only when it is exactly "1" — cycc's own rule for
-# CYRIUS_DCE, so `CYRIUS_DCE=0` (or any other value) is an explicit OFF that beats the manifest.
+# Environment rungs. A bool variable takes `1` (on) or `0` (an explicit OFF that beats the
+# manifest); unset or EMPTY is no rung at all (a CI matrix exporting `CYRIUS_DCE=$dce` with an
+# empty $dce); anything else is refused by name rather than silently read as off — cycc itself
+# treats every value but "1" as off, so `CYRIUS_DCE=true` was a silent no. Returns 0, or 1 after
+# naming the value.
 fn _cfg_env_bool(i, name): i64 {
     var e = _cfg_env(name);
     if (e == 0) { return 0; }
-    var b = 0;
+    var b = 0 - 1;
     if (streq(e, "1") == 1) { b = 1; }
+    if (streq(e, "0") == 1) { b = 0; }
+    if (b < 0) {
+        var sb = str_builder_new();
+        str_builder_add_cstr(sb, name);
+        str_builder_add_cstr(sb, " must be 0 or 1 (or unset)");
+        _err_ctx(str_data(str_builder_build(sb)), e);
+        return 1;
+    }
     _cfg_put(i, b, _CFG_ENV, name);
     return 0;
 }
@@ -811,7 +838,7 @@ fn _cfg_warn_section(section): i64 {
             str_builder_add_cstr(sb, " is not a known key and nothing reads it (cyrius help manifest lists them)");
         } else {
             var st = _mf_vocab_field(row, 2);
-            if (streq(st, "held") == 1) { str_builder_add_cstr(sb, " is HELD, not read in this release: "); }
+            if (streq(st, "held") == 1) { str_builder_add_cstr(sb, " is HELD and not read: "); }
             elif (streq(st, "dropped") == 1) { str_builder_add_cstr(sb, " is DROPPED and ignored: "); }
             else { continue; }
             str_builder_add_cstr(sb, _mf_vocab_field(row, 6));
@@ -833,7 +860,6 @@ fn _cfg_resolve_build(src_arg, out_arg): i64 {
     if (_cfg_mf_str(_CK_ENTRY, "build", "entry") != 0) { return 1; }
     if (_cfg_mf_str(_CK_OUTPUT, "build", "output") != 0) { return 1; }
     if (_cfg_mf_bool(_CK_DCE, "build", "dce") != 0) { return 1; }
-    if (_cfg_mf_bool(_CK_STRICT, "build", "strict") != 0) { return 1; }
     if (_cfg_mf_strs(_CK_DEFINES, "build", "defines") != 0) { return 1; }
     if (_cfg_defines_ok(_cfg_val(_CK_DEFINES), "cyrius.cyml [build] defines") != 0) { return 1; }
     if (_cfg_mf_strs(_CK_TEST, "build", "test") != 0) { return 1; }
@@ -848,8 +874,7 @@ fn _cfg_resolve_build(src_arg, out_arg): i64 {
     }
     if (_cfg_mf_str(_CK_PKG_CYRIUS, "package", "cyrius") != 0) { return 1; }
     if (_cfg_mf_str(_CK_SECTIONS_BASE, "sections", "base") != 0) { return 1; }
-    _cfg_env_bool(_CK_DCE, "CYRIUS_DCE");
-    _cfg_env_bool(_CK_STRICT, "CYRIUS_STRICT");
+    if (_cfg_env_bool(_CK_DCE, "CYRIUS_DCE") != 0) { return 1; }
     _cfg_env_csv(_CK_DEFINES, "CYRIUS_DEFINES");
     if (_cfg_org(_CK_DEFINES) == _CFG_ENV) {
         if (_cfg_defines_ok(_cfg_val(_CK_DEFINES), "CYRIUS_DEFINES") != 0) { return 1; }
@@ -857,6 +882,9 @@ fn _cfg_resolve_build(src_arg, out_arg): i64 {
     if (src_arg != 0) { _cfg_put(_CK_ENTRY, src_arg, _CFG_ARG, "<source>"); }
     if (_cli_has("--dce") == 1) { _cfg_put(_CK_DCE, 1, _CFG_ARG, "--dce"); }
     if (out_arg != 0) { _cfg_put(_CK_OUTPUT, out_arg, _CFG_ARG, "<output>"); }
+    # `strict` is HELD (cycc --strict has had no effect since 6.3.2); the argument is still
+    # accepted and passed through, the manifest key is warned and not read, and there is no
+    # environment channel — an inert key must not look like a setting.
     if (_cli_has("--strict") == 1) { _cfg_put(_CK_STRICT, 1, _CFG_ARG, "--strict"); }
     var defs = _cli_values("-D");
     if (vec_len(defs) > 0) { _cfg_put(_CK_DEFINES, defs, _CFG_ARG, "-D"); }
@@ -935,7 +963,9 @@ fn _cfg_print_row(i): i64 {
         _cfg_out(": ");
         _cfg_out(w);
     }
-    _cfg_out(")\n");
+    _cfg_out(")");
+    if (i == _CK_STRICT) { _cfg_out("  [held: no effect since 6.3.2]"); }
+    _cfg_out("\n");
     return 0;
 }
 

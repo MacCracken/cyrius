@@ -1823,10 +1823,13 @@ entry = "programs/smoke.cyr"
 output = "build/sakshi-smoke"
 defines = ["SAKSHI_SMOKE"]   # one `#define NAME` each; -D NAME / CYRIUS_DEFINES=A,B replace the list
 dce = true                   # dead-code elimination; --dce / CYRIUS_DCE=1 (CYRIUS_DCE=0 turns it off)
-strict = true                # passes cycc --strict; --strict / CYRIUS_STRICT=1
 ```
 
-They configure `cyrius build`; `-D` on `test` / `run` / `bench` stays a command-line choice.
+They configure every `cyrius build` in the project — a bare one AND `cyrius build <other source>
+<out>` (sigil's fuzz loop builds each harness with `-D SIGIL_SMOKE` from its manifest); `-D` on
+`test` / `run` / `bench` stays a command-line choice. `CYRIUS_DCE` takes `1` or `0`; unset or
+empty is no rung at all, and any other value (`CYRIUS_DCE=true`) is refused by name — cycc
+itself reads every value but `1` as off, so it used to be a silent no.
 `[build] test` (a file, a directory, or a list of either — `src/test.cyr` is what `cyrius init`
 writes) is what a bare `cyrius test` runs FIRST, before every `.tcyr` under `tests/`; a file both
 name runs once, and a declared path that does not exist is a named failure. Before 6.6.17
@@ -1835,8 +1838,11 @@ mistyped value (`dce = "yes"`) is refused by name, and so is a define holding a 
 character (it would start a new source line in the compiled unit). `[build] target` is **held**
 (pass `--target` / `--aarch64` / `--win` / `--agnos`), `[build] features` is **dropped** (features
 are `[features]` + `--features`), and a key the vocabulary does not know — a typo — is warned
-by name instead of being silently inert. ⚠ `cycc --strict` has changed nothing since 6.3.2,
-when a reachable undefined function became an error by default; `strict` passes it faithfully.
+by name instead of being silently inert; a declared synonym (`src`) is not unknown.
+`[build] strict` is **held** and warned when present: `cycc --strict` has had no effect since
+6.3.2 — a reachable undefined function is an error by default and `--allow-undef` downgrades it
+— so there is nothing for the key to switch. `cyrius build --strict` is still accepted and passed
+through, for scripts that spell it; it changes nothing.
 
 `cyrius build --print-config [<source> [<output>]]` resolves the configuration and prints each
 value with the rung it came from, then exits 0 — it builds nothing and resolves no deps:
@@ -1848,7 +1854,7 @@ cyrius build configuration (argument > environment > manifest > default)
   build.entry = "src/main.cyr"  (manifest: [build] src)
   build.output = "build/hisab"  (manifest: [build] output)
   build.dce = true  (environment: CYRIUS_DCE)
-  build.strict = false  (default)
+  build.strict = false  (default)  [held: no effect since 6.3.2]
   build.defines = []  (default)
   ...
 ```
@@ -1867,7 +1873,7 @@ cyrius build configuration (argument > environment > manifest > default)
 | `[build]` | `test` | read | — | — | `<file>...` | bare cyrius test: these (file / dir / list), then tests/ |
 | `[build]` | `modules` | read | — | — | — | every compile: these files prepended before the entry |
 | `[build]` | `dce` | read | — | `CYRIUS_DCE` | `--dce` | cyrius build: dead-code elimination (bool) |
-| `[build]` | `strict` | read | — | `CYRIUS_STRICT` | `--strict` | cyrius build: passes cycc --strict (bool) |
+| `[build]` | `strict` | held | — | — | `--strict` | has had no effect since 6.3.2: a reachable undefined function is an error by default; --allow-undef downgrades it |
 | `[build]` | `defines` | read | — | `CYRIUS_DEFINES` | `-D` | cyrius build: one #define per name |
 | `[build]` | `target` | held | — | — | — | pass --target / --aarch64 / --win / --agnos on the command line |
 | `[build]` | `features` | dropped | — | — | — | features are [features] + --features |
