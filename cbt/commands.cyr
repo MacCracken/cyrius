@@ -3505,11 +3505,12 @@ fn _distlib_mirror_drop(): i64 {
     return 0;
 }
 
-# Append the include line(s) for stdlib leaf `lf` to the unit: `include "lib/<lf>.cyr"`, or
-# one line per `.cyr` of the family directory `lib/<lf>/` in name order. A leaf that is
-# neither (not in the snapshot) adds nothing.
-fn _distlib_unit_leaf(esb, m, lf): i64 {
-    var lib = _distlib_join(m, "lib");
+# Append the include line(s) for stdlib leaf `lf` to `esb`: `include "lib/<lf>.cyr"`, or
+# one line per `.cyr` of the family directory `<lib>/<lf>/` in name order. A leaf that is
+# neither (not in the snapshot) adds nothing. ⭐ 6.6.18 (D5): THE ONE EXPANDER — the verify
+# unit (lib = its mirror's lib/) and the bundle's requires block (lib = the snapshot) both
+# call it, so the block can never drift from what was compile-verified.
+fn _distlib_unit_leaf(esb, lib, lf): i64 {
     var lbase = _distlib_join(lib, lf);
     var fsb = str_builder_new();
     str_builder_add_cstr(fsb, lbase);
@@ -4091,13 +4092,13 @@ fn _distlib_verify_rounds(leaves, out_path, named_deps, root, m): i64 {
             li = li + 1;
             # A leaf that is a NAMED DEP is the consumer's pinned module, included below.
             if (_distlib_vec_has(named_deps, lf) == 1) { continue; }
-            _distlib_unit_leaf(esb, m, lf);
+            _distlib_unit_leaf(esb, _distlib_join(m, "lib"), lf);
         }
         # Leaves taken in only because a named dep's own leaf list brings them (see the
         # classification below): in the unit, never recorded.
         var si = 0;
         while (si < vec_len(scope)) {
-            _distlib_unit_leaf(esb, m, vec_get(scope, si));
+            _distlib_unit_leaf(esb, _distlib_join(m, "lib"), vec_get(scope, si));
             si = si + 1;
         }
         if (_dep_nd_modules != 0) {
@@ -5061,6 +5062,104 @@ fn _distlib_modular_emit(pkg_name, modules, mbuf, mlen): i64 {
     return 0;
 }
 
+# ⭐ 6.6.18 (D5) — EVERY BUNDLE CARRIES A COMPILE-VERIFIED REQUIRES BLOCK, so a bundle is
+# raw-includable: `include "dist/<pkg>.cyr"` and nothing else compiles. Most folds' modules
+# include nothing (they rely on `[deps] stdlib` auto-prepend or an umbrella), so nothing
+# survived into the bundle: 10 of the 12 vendored folds left 3-207 names undefined included
+# alone, and lib/log.cyr / ws.cyr / ws_server.cyr could not include theirs. The block is the
+# sidecar as include lines — same leaves, same order (the final verify unit's, so a compiling
+# order is reproduced), families expanded by `_distlib_unit_leaf` — written between the
+# header lines (which lib_freshness.sh and the fold detector parse) and the first module.
+# Named deps are NOT emitted (the consumer decides that path; a profile lands as
+# lib/<name>-<prof>.cyr). No leaves, no block. A `cyrius deps` consumer is unaffected:
+# include-once is keyed on the literal path, the same lines it auto-prepends.
+# The header line that ends the bundle header; the block goes right after it.
+var _DL_HDR_END = "# Do not edit -- rebuild with: cyrius distlib\n";
+var _DL_REQ_MARK = "# Requires (compile-verified; the leaves of ";
+
+# 1 when a leaf name may become an include path: non-empty, [A-Za-z0-9_/-] only (so no `..`,
+# no quote, no newline), no leading, trailing or doubled '/'. A `/` stays legal: a module that
+# keeps `include "lib/unicode/categories.cyr"` records the leaf `unicode/categories`.
+fn _distlib_leaf_name_ok(lf): i64 {
+    var n = strlen(lf);
+    if (n == 0 || load8(lf) == 47 || load8(lf + n - 1) == 47) { return 0; }
+    var i = 0;
+    while (i < n) {
+        var c = load8(lf + i);
+        var ok = 0;
+        if (c >= 97 && c <= 122) { ok = 1; }
+        elif (c >= 65 && c <= 90) { ok = 1; }
+        elif (c >= 48 && c <= 57) { ok = 1; }
+        elif (c == 95 || c == 45) { ok = 1; }
+        elif (c == 47 && load8(lf + i + 1) != 47) { ok = 1; }
+        if (ok == 0) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+
+# Rewrite bundle `out_path` with the requires block for `leaves` (named deps skipped). The
+# block names `deps_path` (the committed sidecar's path, also under --check). 0, or 1 named.
+fn _distlib_write_requires(out_path, deps_path, leaves, named_deps): i64 {
+    var root = _distlib_stdlib_root();
+    if (root == 0) { _err_ctx("distlib: no stdlib snapshot to expand the requires block — bundle NOT rewritten", out_path); return 1; }
+    var blk = str_builder_new();
+    var nl = 0;
+    var i = 0;
+    while (i < vec_len(leaves)) {
+        var lf = vec_get(leaves, i);
+        i = i + 1;
+        if (_distlib_vec_has(named_deps, lf) == 1) { continue; }
+        if (_distlib_leaf_name_ok(lf) == 0) {
+            _err_ctx("distlib: a sidecar leaf is not a safe include path (allowed: [A-Za-z0-9_/-]) — bundle NOT rewritten", lf);
+            return 1;
+        }
+        _distlib_unit_leaf(blk, root, lf);
+        nl = nl + 1;
+    }
+    if (nl == 0) { return 0; }
+    var n = 0;
+    var b = file_read_whole(out_path, &n);
+    if (b == 0 || n <= 0) { _err_ctx("distlib: cannot read the bundle back to add its requires block", out_path); return 1; }
+    var hl = strlen(_DL_HDR_END);
+    var at = 0 - 1;
+    var q = 0;
+    while (at < 0 && q + hl <= n) {
+        if (memeq(b + q, _DL_HDR_END, hl) == 1) { at = q + hl; }
+        q = q + 1;
+    }
+    if (at < 0) { _err_ctx("distlib: the bundle has no header to place its requires block after", out_path); return 1; }
+    var fd = _aw_open(out_path);
+    if (fd == 0) { _err_ctx("cannot create", out_path); return 1; }
+    _aw_write(fd, b, at);
+    _aw_write(fd, "\n", 1);
+    _aw_write(fd, _DL_REQ_MARK, strlen(_DL_REQ_MARK));
+    _aw_write(fd, deps_path, strlen(deps_path));
+    _aw_write(fd, "):\n", 3);
+    var bs = str_data(str_builder_build(blk));
+    _aw_write(fd, bs, strlen(bs));
+    _aw_write(fd, b + at, n - at);
+    if (_aw_commit(fd) != 0) {
+        _err_ctx("distlib: write failed (previous bundle left as it was)", out_path);
+        return 1;
+    }
+    return 0;
+}
+
+# 1 when bundle `path` carries a requires block (a 6.6.18+ bundle with leaves).
+fn _distlib_has_requires(path): i64 {
+    var n = 0;
+    var b = file_read_whole(path, &n);
+    if (b == 0 || n <= 0) { return 0; }
+    var ml = strlen(_DL_REQ_MARK);
+    var q = 0;
+    while (q + ml <= n && q < 65536) {
+        if (memeq(b + q, _DL_REQ_MARK, ml) == 1) { return 1; }
+        q = q + 1;
+    }
+    return 0;
+}
+
 fn cmd_distlib(profile): i64 {
     if (_distlib_valid_profile(profile) == 0) {
         _err("invalid profile name (allowed: [a-zA-Z0-9_-]{1,32})");
@@ -5341,6 +5440,23 @@ fn cmd_distlib(profile): i64 {
         fmt_int(_verified_added);
         println(" leaf(s), compile-verified");
     }
+    # 6.6.18 (D5): the requires block — see _distlib_write_requires. Same under --check, so the
+    # regenerated temp is compared WITH its block.
+    var rq_sb = str_builder_new();
+    var rqpl = strlen(real_path);
+    if (rqpl > 4 && memeq(real_path + rqpl - 4, ".cyr", 4) == 1) {
+        var rqstem = alloc(rqpl - 3);
+        memcpy(rqstem, real_path, rqpl - 4);
+        store8(rqstem + rqpl - 4, 0);
+        str_builder_add_cstr(rq_sb, rqstem);
+    } else {
+        str_builder_add_cstr(rq_sb, real_path);
+    }
+    str_builder_add_cstr(rq_sb, ".deps");
+    if (_distlib_write_requires(out_path, str_data(str_builder_build(rq_sb)), req_leaves, named_deps) != 0) {
+        if (_distlib_check == 1) { xunlink(out_path); }
+        return 1;
+    }
     # ⛔ v6.5.37 (A7) — AND REMOVE A SIDECAR THAT NO LONGER DESCRIBES ANYTHING.
     # The `> 0` guard below is deliberate (v6.5.29: a package with genuinely no leaves should
     # not gain a stray file) but it only decides whether to WRITE. It never removed an
@@ -5439,6 +5555,7 @@ fn cmd_distlib(profile): i64 {
     # for the informational compile below — it would be N spurious compiles (14 for sigil)
     # of a temp we are about to delete.
     if (_distlib_check == 1) {
+        var rq_has = _distlib_has_requires(out_path);
         var same = _distlib_files_same(out_path, real_path);
         var dp_sb = str_builder_new();
         var dopl = strlen(out_path);
@@ -5483,6 +5600,11 @@ fn cmd_distlib(profile): i64 {
             sys_write(STDERR_FD, "  STALE: ", 9);
             sys_write(STDERR_FD, real_path, strlen(real_path));
             sys_write(STDERR_FD, "\n", 1);
+            # 6.6.18 (D5): every pre-6.6.18 bundle with leaves reads STALE — say why.
+            if (rq_has == 1 && file_exists(real_path) == 1 && _distlib_has_requires(real_path) == 0) {
+                var rqm = "    the committed bundle predates cyrius 6.6.18's requires block — run cyrius distlib --all\n";
+                sys_write(STDERR_FD, rqm, strlen(rqm));
+            }
             return 0;
         }
         sys_write(STDOUT_FD, "  current: ", 11);
