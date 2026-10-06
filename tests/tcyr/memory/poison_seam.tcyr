@@ -1,0 +1,103 @@
+# poison_seam.tcyr — 6.6.18: the poison seam a custom allocator adopts, the live-block list,
+# and poison_sweep(). Plain `cyrius test`, no compile flag: the seam poisons whatever the flag.
+#
+# Before 6.6.18 poison mode reached lib/freelist.cyr's blocks only. Memory from alloc(), from
+# an arena or from a consumer's own allocator seam (sadish's sd_alloc hook, the `_a` vtable
+# that agnosai / agnostic / sandhi / bayan thread through) was never redzoned, so an overread
+# there returned plausible heap bytes, and an overwrite was seen only if the block was later
+# fl_free'd — a block that is never freed was never checked.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/vec.cyr"
+include "lib/poison.cyr"
+include "lib/assert.cyr"
+
+fn main(): i64 {
+    alloc_init();
+    poison_trap_set(0);
+    poison_reset();
+    var fill = poison_fill();
+
+    test_group("poison_alloc through a fn-pointer seam");
+    var fp = &poison_alloc;
+    var p = fncall1(fp, 16);
+    assert_nonnull(p, "the seam returns a block");
+    assert_eq(load8(p + 16), fill, "a read one past the request yields the fill");
+    assert_eq(load8(p + 47), fill, "the trailing redzone spans RZ bytes");
+    assert_eq(load8(p - 1), fill, "a read one BEFORE the block yields the fill (leading redzone)");
+    assert_eq(load8(p - 32), fill, "the leading redzone spans RZ bytes");
+    assert_eq(load64(p), 0, "user bytes are zero-initialised");
+    assert_eq(load64(p + 8), 0, "user bytes are zero-initialised (tail)");
+    var odd = poison_alloc(13);
+    assert_eq(load8(odd + 13), fill, "an odd-sized request is guarded from its exact end");
+
+    test_group("the live sweep sees a block that is never freed");
+    assert_eq(poison_sweep(), 0, "clean heap: sweep == 0");
+    store8(p + 16, 0x41);
+    assert_eq(poison_sweep(), 1, "a 1-byte overwrite on a never-freed block: sweep == 1");
+    assert_eq(poison_violations(), 1, "the detection is counted once");
+    assert_eq(poison_sweep(), 1, "still bad on the next sweep");
+    assert_eq(poison_violations(), 1, "but not counted twice");
+    poison_reset();
+    assert_eq(poison_violations(), 0, "poison_reset() clears the counter");
+    assert_eq(poison_sweep(), 1, "and leaves the list: the block is still found");
+    store8(p + 16, fill);
+    assert_eq(poison_sweep(), 0, "restored: sweep == 0");
+    store8(p - 3, 0x41);
+    assert_eq(poison_sweep(), 1, "an underwrite into the leading redzone is seen");
+    store8(p - 3, fill);
+
+    test_group("vec over poison_allocator()");
+    var pa = poison_allocator();
+    var v = vec_new_a(pa);
+    var i = 0;
+    while (i < 1000) { vec_push_a(pa, v, i * 7); i = i + 1; }
+    var ok = 1;
+    i = 0;
+    while (i < 1000) { if (vec_get(v, i) != i * 7) { ok = 0; } i = i + 1; }
+    assert_eq(ok, 1, "1000 pushes through grow-reallocs: every value intact");
+    assert_eq(poison_sweep(), 0, "no redzone touched by vec's own code");
+
+    test_group("poison_allocator_over(arena_allocator(4096))");
+    var ar = arena_allocator(4096);
+    var pw = poison_allocator_over(ar);
+    var used0 = arena_used(allocator_state(ar));
+    var q = alloc_via(pw, 24);
+    assert_nonnull(q, "the wrapper allocates");
+    assert_gt(arena_used(allocator_state(ar)), used0 + 24, "arena_used grows by the block AND its redzones");
+    assert_eq(load8(q + 24), fill, "the wrapped block's trailing redzone");
+    assert_eq(load8(q - 1), fill, "the wrapped block's leading redzone");
+    assert_eq(load64(q), 0, "user bytes are zeroed even from a reused arena");
+    store8(q + 24, 1);
+    assert_eq(poison_sweep(), 1, "an overwrite of a wrapped block is seen");
+    store8(q + 24, fill);
+    reset_via(pw);
+    assert_eq(arena_used(allocator_state(ar)), 0, "reset reaches the inner arena");
+    var q2 = alloc_via(ar, 64);
+    i = 0;
+    while (i < 64) { store8(q2 + i, 0x33); i = i + 1; }
+    assert_eq(poison_sweep(), 0, "after reset the wrapper's blocks are forgotten: reused arena memory is not a false positive");
+
+    test_group("poison_free quarantines");
+    var f = poison_alloc(32);
+    store64(f, 1234);
+    poison_free(f);
+    assert_eq(load8(f), fill, "a read after free yields the fill");
+    assert_eq(load8(f + 31), fill, "the whole span is quarantined");
+    assert_eq(poison_sweep(), 0, "a freed, untouched block is clean");
+    store8(f + 5, 9);
+    assert_eq(poison_sweep(), 1, "a write after free is found by the sweep");
+    store8(f + 5, fill);
+    assert_eq(poison_sweep(), 0, "restored");
+
+    test_group("poison_forget_all");
+    store8(p + 20, 0x41);
+    poison_forget_all();
+    assert_eq(poison_sweep(), 0, "a forgotten list is not walked");
+    store8(p + 20, fill);
+
+    var r = assert_summary();
+    return r;
+}
+var ec = main();
+syscall(60, ec);

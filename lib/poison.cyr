@@ -33,6 +33,22 @@ var _POISON_RZ = 32;
 var _poison_viol = 0;
 # 1 = a detection reports and EXITS 86; 0 = it reports and is counted.
 var _poison_trap = 0;
+# A poisoned BUMP block (poison_alloc, the seam wrappers, and — under CYRIUS_POISON — alloc()
+# and arenas) is laid out
+#     blk+0    next on the global live list
+#     blk+8    meta: req (bits 0..47) | kind << 48 | FORGET bit 53 | REPORTED bit 54
+#                    | DEAD bit 55 | fill << 56
+#     blk+16   next on the OWNER's list (an arena's, a wrapper's), else 0
+#     blk+24   leading redzone, _POISON_RZ bytes of fill
+#     u = blk+24+RZ  the user's `req` bytes, zero-initialised like alloc()
+#     u+req    trailing redzone: RZ bytes plus the 8-alignment slack, all fill
+# so a block spans _POISON_HDR + 2*RZ + round8(req) bytes, and every field the sweep needs
+# (size, fill, state) is read from the block itself.
+var _POISON_HDR = 24;
+# Head of the global live list of bump blocks (newest first). Blocks are never unlinked
+# except by poison_forget_all() / a wrapper's reset: a freed block stays listed, DEAD, so a
+# write after free is still seen.
+var _poison_head = 0;
 # Spinlock over the live-block lists. Its own lock, not alloc.cyr's or freelist.cyr's: the
 # poison paths run after those are released, so nothing ever nests.
 var _poison_lock = 0;
@@ -169,11 +185,12 @@ fn _poison_cat_hex(buf, pos, n): i64 {
 }
 
 # Report one detection: a single stderr line, counted, and fatal (exit 86) when trapping.
-#   kind: 1 alloc, 2 arena, 3 fl, 4 seam      side: 1 leading, 2 trailing, 3 after-free, 4 header
+#   kind: 1 alloc, 2 arena, 3 fl, 4 seam, 0 unknown (header undecodable)     side: 1 leading, 2 trailing, 3 after-free, 4 header
 fn _poison_report(kind, side, blk, req, nbad): i64 {
     _poison_viol = _poison_viol + 1;
     var line[192];
     var pos = _poison_cat(&line, 0, "poison: redzone overwrite \xe2\x80\x94 ");
+    if (kind == 0) { pos = _poison_cat(&line, pos, "unknown"); }
     if (kind == 1) { pos = _poison_cat(&line, pos, "alloc"); }
     if (kind == 2) { pos = _poison_cat(&line, pos, "arena"); }
     if (kind == 3) { pos = _poison_cat(&line, pos, "fl"); }
@@ -193,4 +210,225 @@ fn _poison_report(kind, side, blk, req, nbad): i64 {
     syscall(1, 2, &line, pos);
     if (_poison_trap == 1) { sys_exit_group(86); }
     return 0;
+}
+
+# ================================================================
+# Bump blocks: arm, publish, check, kill (6.6.18)
+# ================================================================
+
+# Bytes a poisoned bump block needs for a `req`-byte request.
+fn _poison_bump_total(req): i64 {
+    return _POISON_HDR + _POISON_RZ + ((req + 7) & (0 - 8)) + _POISON_RZ;
+}
+
+# Arm `blk` (a span of _poison_bump_total(req) bytes) for a `req`-byte request of `kind`:
+# write the header and both redzones with the current fill. The user bytes are not touched.
+# Returns the user pointer. Not yet published — call _poison_publish once armed, so a
+# concurrent sweep never sees an unarmed block.
+fn _poison_arm_bump(blk, req, kind): i64 {
+    var fill = _poison_fill;
+    store64(blk, 0);
+    store64(blk + 8, req | (kind << 48) | (fill << 56));
+    store64(blk + 16, 0);
+    _poison_set(blk + _POISON_HDR, _POISON_RZ, fill);
+    var u = blk + _POISON_HDR + _POISON_RZ;
+    _poison_set(u + req, _POISON_RZ + ((req + 7) & (0 - 8)) - req, fill);
+    return u;
+}
+
+# Push an armed bump block onto the global live list.
+fn _poison_publish(blk): i64 {
+    _poison_lock_acquire();
+    store64(blk, _poison_head);
+    _poison_head = blk;
+    _poison_lock_release();
+    return 0;
+}
+
+# Check one bump block. Returns the number of changed bytes (0 = intact), or -1 when the
+# header itself is not a poisoned block's (smashed by a wide overflow from below): its list
+# link cannot be trusted either, so a walk stops there. A block is REPORTED (and counted)
+# the first time it is found bad; later sweeps still return it as bad but stay quiet.
+fn _poison_check_bump(blk): i64 {
+    var meta = load64(blk + 8);
+    var fill = meta >> 56;
+    var req = meta & 0xFFFFFFFFFFFF;
+    var kind = (meta >> 48) & 15;
+    var u = blk + _POISON_HDR + _POISON_RZ;
+    if (fill == 0 || kind == 0 || kind > 4 || req > 0x80000000) {
+        if (((meta >> 54) & 1) == 0) { _poison_report(0, 4, u, 0, 8); }
+        return 0 - 1;
+    }
+    var span = (req + 7) & (0 - 8);
+    var bad = 0;
+    var side = 3;
+    if (((meta >> 55) & 1) == 1) {
+        bad = _poison_count_bad(blk + _POISON_HDR, _POISON_RZ + span + _POISON_RZ, fill);
+    } else {
+        var lead = _poison_count_bad(blk + _POISON_HDR, _POISON_RZ, fill);
+        bad = lead + _poison_count_bad(u + req, _POISON_RZ + span - req, fill);
+        side = 2;
+        if (lead > 0) { side = 1; }
+    }
+    if (bad > 0) {
+        if (((meta >> 54) & 1) == 0) {
+            store64(blk + 8, meta | (1 << 54));
+            _poison_report(kind, side, u, req, bad);
+        }
+    }
+    return bad;
+}
+
+# Check, then quarantine a bump block: the WHOLE span (redzones and user bytes) becomes its
+# own fill, then it is marked DEAD — fill first, so a concurrent sweep sees either a live
+# block with intact redzones or a dead one that is all fill. Caller holds _poison_lock.
+fn _poison_kill(blk): i64 {
+    var meta = load64(blk + 8);
+    if (((meta >> 55) & 1) == 1) { return _poison_check_bump(blk); }   # already dead
+    var r = _poison_check_bump(blk);
+    if (r < 0) { return r; }
+    meta = load64(blk + 8);
+    var req = meta & 0xFFFFFFFFFFFF;
+    _poison_set(blk + _POISON_HDR, _POISON_RZ + ((req + 7) & (0 - 8)) + _POISON_RZ, meta >> 56);
+    store64(blk + 8, meta | (1 << 55));
+    return r;
+}
+
+# Check every listed block now. Returns how many are bad (a live block's redzone changed, a
+# dead block's span written after free, or an undecodable header). Each bad block is reported
+# and counted in poison_violations() once, the first time a sweep or check finds it.
+fn poison_sweep(): i64 {
+    var n = 0;
+    _poison_lock_acquire();
+    var b = _poison_head;
+    while (b != 0) {
+        var r = _poison_check_bump(b);
+        if (r != 0) { n = n + 1; }
+        if (r < 0) { b = 0; } else { b = load64(b); }
+    }
+    _poison_lock_release();
+    return n;
+}
+
+# Stop tracking every bump block (the lists only — the memory is untouched). Call it after
+# alloc_reset() in a program that uses poison_alloc / poison_allocator WITHOUT CYRIUS_POISON:
+# the reset re-issues those addresses, and a listed block there reads as corrupt. Under
+# CYRIUS_POISON alloc_reset() does this itself.
+fn poison_forget_all(): i64 {
+    _poison_lock_acquire();
+    _poison_head = 0;
+    _poison_lock_release();
+    return 0;
+}
+
+# ================================================================
+# The seam: a poisoned allocation any custom allocator can adopt (6.6.18)
+# ================================================================
+
+# 1 when alloc() itself arms its blocks (CYRIUS_POISON on Linux, macOS, Windows).
+fn _poison_alloc_armed(): i64 { return 0; }
+
+# Allocate `n` bytes with both redzones armed and the block on the live list, whatever the
+# compile flag. The `fn(n): ptr` shape a hook-style seam (sadish's sd_alloc) can point at.
+# Returns 0 when n <= 0 or the backing alloc() fails.
+fn poison_alloc(n): i64 {
+    if (n <= 0) { return 0; }
+    if (n > 0x80000000) { return 0; }
+    if (_poison_alloc_armed() == 1) {
+        var p = alloc(n);
+        if (p == 0) { return 0; }
+        var hb = p - _POISON_RZ - _POISON_HDR;
+        store64(hb + 8, (load64(hb + 8) & 0xFFF0FFFFFFFFFFFF) | (4 << 48));   # kind: seam
+        return p;
+    }
+    var blk = alloc(_poison_bump_total(n));
+    if (blk == 0) { return 0; }
+    var u = _poison_arm_bump(blk, n, 4);
+    _poison_publish(blk);
+    return u;
+}
+
+# Free a pointer from poison_alloc (or, under CYRIUS_POISON, from alloc()): check it, then
+# quarantine it — its bytes become fill and it stays listed DEAD, so a read after free sees
+# the fill and a write after free is found by the next sweep. The memory is never reused.
+fn poison_free(p): i64 {
+    if (p == 0) { return 0; }
+    _poison_lock_acquire();
+    _poison_kill(p - _POISON_RZ - _POISON_HDR);
+    _poison_lock_release();
+    return 0;
+}
+
+# Allocator vtable entries. state == 0: the global poison_alloc; otherwise a wrapper state
+# { inner Allocator, owner-list head }.
+fn _poison_va_alloc(state, n): i64 {
+    if (state == 0) { return poison_alloc(n); }
+    if (n <= 0) { return 0; }
+    if (n > 0x80000000) { return 0; }
+    var blk = alloc_via(load64(state), _poison_bump_total(n));
+    if (blk == 0) { return 0; }
+    var u = _poison_arm_bump(blk, n, 4);
+    _poison_set(u, n, 0);                 # the inner allocator may hand back used memory
+    store64(blk + 16, load64(state + 8));
+    store64(state + 8, blk);
+    _poison_publish(blk);
+    return u;
+}
+
+fn _poison_va_realloc(state, old_ptr, old_size, new_size): i64 {
+    var np = _poison_va_alloc(state, new_size);
+    if (np == 0) { return 0; }
+    if (old_ptr != 0) {
+        var c = old_size;
+        if (new_size < c) { c = new_size; }
+        var i = 0;
+        while (i < c) { store8(np + i, load8(old_ptr + i)); i = i + 1; }
+    }
+    return np;
+}
+
+fn _poison_va_free(state, p): i64 { return poison_free(p); }
+
+# Reset. The global seam: a no-op (bump memory is never reused). A wrapper: check every block
+# it handed out, unlink them all from the live list, then reset the inner allocator — whose
+# memory is about to be re-issued, so a listed block there would read as corrupt.
+fn _poison_va_reset(state): i64 {
+    if (state == 0) { return 0; }
+    _poison_lock_acquire();
+    var b = load64(state + 8);
+    while (b != 0) {
+        _poison_check_bump(b);
+        store64(b + 8, load64(b + 8) | (1 << 53));
+        b = load64(b + 16);
+    }
+    var link = &_poison_head;
+    var c = _poison_head;
+    while (c != 0) {
+        var nx = load64(c);
+        if (((load64(c + 8) >> 53) & 1) == 1) { store64(link, nx); } else { link = c; }
+        c = nx;
+    }
+    store64(state + 8, 0);
+    _poison_lock_release();
+    return reset_via(load64(state));
+}
+
+# An Allocator whose every block comes from poison_alloc: pass it to any `_a` API
+# (vec_new_a, str_from_a, ...) or to a consumer's own seam.
+fn poison_allocator(): i64 {
+    return allocator_new(&_poison_va_alloc, &_poison_va_realloc, &_poison_va_free,
+      &_poison_va_reset, 0);
+}
+
+# Wrap any Allocator: each block is drawn from `inner` with room for both redzones, armed,
+# zeroed and listed. reset_via on the wrapper checks and forgets its blocks, then resets
+# `inner`. Returns 0 when inner is 0 or the wrapper cannot be allocated.
+fn poison_allocator_over(inner): i64 {
+    if (inner == 0) { return 0; }
+    var st = alloc(16);
+    if (st == 0) { return 0; }
+    store64(st, inner);
+    store64(st + 8, 0);
+    return allocator_new(&_poison_va_alloc, &_poison_va_realloc, &_poison_va_free,
+      &_poison_va_reset, st);
 }
