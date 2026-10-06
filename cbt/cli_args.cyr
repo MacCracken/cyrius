@@ -108,7 +108,7 @@ fn _cli_spec_a(verb): i64 {
     if (streq(verb, "test") == 1) { return "--dry-run"; }
     if (streq(verb, "tests") == 1) { return "--dry-run"; }
     if (streq(verb, "bench") == 1) { return ""; }
-    if (streq(verb, "fuzz") == 1) { return "--poison"; }
+    if (streq(verb, "fuzz") == 1) { return "--poison?"; }
     if (streq(verb, "check") == 1) { return "--with-deps"; }
     if (streq(verb, "capacity") == 1) { return "--check|--json"; }
     if (streq(verb, "soak") == 1) { return ""; }

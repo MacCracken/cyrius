@@ -1056,6 +1056,16 @@ fn main(): i64 {
         # v6.5.29: `--poison` turns on the allocator poison mode for every harness in
         # this run. `cyrius fuzz f --poisn` used to run with poison SILENTLY OFF.
         if (_cli_operands_ok("fuzz", 0, 1) == 0) { return 1; }
+        # 6.6.18 (poison-8): `--poison=ab` is the A/B differential; any other value is refused
+        # by name rather than run as plain `--poison`. CHANGELOG [6.6.18]
+        var pval = _cli_val("--poison");
+        if (pval != 0) {
+            if (streq(pval, "ab") == 1) { _poison_ab = 1; }
+            else {
+                _err_ctx("fuzz: unknown --poison mode (only 'ab': --poison or --poison=ab)", pval);
+                return 1;
+            }
+        }
         # 6.6.7: say what is covered. The old "redzones + fill + quarantine-on-free ACTIVE" read
         # as whole-program coverage; only lib/freelist.cyr blocks are instrumented, and a redzone
         # overwrite is COUNTED, not trapped. CHANGELOG [6.6.7]
