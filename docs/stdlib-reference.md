@@ -1003,8 +1003,8 @@ Cooperative async runtime with epoll event loop. Tasks are function pointers sch
 | `async_run` | `async_run(rt) → 0` | Run all spawned tasks to completion; blocks until done |
 | `async_sleep_ms` | `async_sleep_ms(ms) → 0/-1` | Sleep for ms milliseconds (via timerfd + epoll) |
 | `async_read` | `async_read(fd, buf, len) → n` | Non-blocking read via fcntl O_NONBLOCK |
-| `async_await_readable_ms` | `async_await_readable_ms(fd, ms) → 1/0` | v6.5.6 — wait at most `ms` (< 0: no limit) for fd to be readable (data, a hang-up, or a pending connection on a listener); 1 = readable, 0 = timeout / EINTR / not open. epoll on Linux, BSD poll on macOS and WSAPoll on Windows (sockets only; another HANDLE answers 0 at once) since 6.6.19 |
-| `async_await_readable` | `async_await_readable(fd) → 0` | Block without limit until fd is readable: `async_await_readable_ms(fd, -1)`. On macOS and Windows a no-op that returned at once until 6.6.19 |
+| `async_await_readable_ms` | `async_await_readable_ms(fd, ms) → 1/0` | v6.5.6 — wait at most `ms` (< 0: no limit) for fd to be readable (data, a hang-up, or a pending connection on a listener); 1 = readable, 0 = timeout / EINTR / not open. epoll on Linux, BSD poll on macOS and WSAPoll on Windows (sockets only; another HANDLE answers 0 at once) since 6.6.19; on agnos the socket adapter's readiness probe pre-accepts / peeks one byte into a stash the next accept / read delivers first, and a non-socket fd answers 1 at once (its read blocks) |
+| `async_await_readable` | `async_await_readable(fd) → 0` | Block without limit until fd is readable: `async_await_readable_ms(fd, -1)`. On macOS, Windows and agnos a no-op that returned at once until 6.6.19 |
 | `async_timeout` | `async_timeout(fp, arg, ms) → result/-1` | Run function with timeout (ms); uses fork/pipe/epoll |
 | `cancel_token_new` | `cancel_token_new() → tok` | Create cancellation token (0 = live) |
 | `cancel_token_signal` | `cancel_token_signal(tok) → 0/-1` | Signal cancellation (atomic_store) |
