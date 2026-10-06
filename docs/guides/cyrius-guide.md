@@ -542,7 +542,11 @@ bytes, truncating the address: `p == &buf` was false and `load8(p + 1)` crashed.
 `*T` is also a struct or union **field** type and a fn **return** type (and a multi-value
 return element) — `struct PH { name: *Str; }`, `fn first(q: *Q): *Pt`. Either is an 8-byte
 pointer whose value steps `sizeof(T)` like any other, so it binds to a `*T` local without a
-warning. Before 6.6.17 both positions were the parse error `expected identifier, got '*'`.
+warning. A field may point at the struct being declared or at one declared below it
+(`struct Node { val; next: *Node; }`, two structs pointing at each other); it steps the
+complete struct's size. A pointer to a generic instance (`*Box<i32>`) steps the instance's
+size, `sizeof(Box<i32>)`. Before 6.6.17 both positions were the parse error
+`expected identifier, got '*'`.
 
 ## Structs
 
