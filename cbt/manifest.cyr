@@ -633,13 +633,22 @@ fn _mf_key_str(section, key): i64 {
 # what it may read is narrow, and every refusal names `cyrius.cyml [embed] NAME`:
 #   · NAME is an identifier, and not a reserved word: the module is `fn NAME()`, and an error in
 #     that prelude is blamed on the ENTRY file (`<source>:N`), so cbt has to catch it first.
-#   · the path is relative, with no `..`, no `\`, no drive, no control byte and no `.git`
+#   · the path is relative, with no `..`, no `\`, no `:`, no control byte and no `.git`
 #     component (actions/checkout leaves the job token in .git/config, which passes every other
 #     rule); and no SYMLINK anywhere on it — an untrusted checkout must not ship out-of-project
 #     bytes inside a release binary, and "inside the project" cannot be read off the path text
 #     once a link is involved (dir_walk follows links since 6.5.12; this deliberately does not).
-#   · a regular file, opened ONCE (O_NOFOLLOW) and read from that fd here: the bytes the build
-#     embeds are the bytes that were checked, and every unit of a `cyrius test` run sees the same.
+#   · a regular file, opened ONCE and read from that fd here: the bytes the build embeds are the
+#     bytes that were checked, and every unit of a `cyrius test` run sees the same. On Linux and
+#     x86 macOS the open WALKS the path — openat(dirfd, component, O_DIRECTORY | O_NOFOLLOW) from a
+#     handle on the project root, the leaf O_NOFOLLOW — so no component can be swapped for a link
+#     between the per-prefix check and the open (_embed_open).
+#     ⚠ RESIDUAL, stated: on Windows and on macOS arm64 the open is the whole path with O_NOFOLLOW,
+#     which covers the LAST component only, so a directory swapped for a link/junction between the
+#     per-prefix check and the open is not caught. PE needs a GetFinalPathNameByHandleW
+#     containment check (a new PE reroute); macOS arm64 has no dirfd openat (its stdlib's SYS_OPENAT
+#     56 is rerouted to BSD open(5), dropping the dirfd). Both are backlog items; the window needs
+#     concurrent write access to the checkout during the build.
 #   · it fits cycc's string pool (below), alone and together.
 # One path string per entry: the proposal's {dir, glob, prefix} set form is refused by name.
 # CHANGELOG [6.6.19].
@@ -767,16 +776,59 @@ fn _embed_path_bad(path): i64 {
 # The file at `path` read through ONE fd: the bytes (NUL-terminated) with their count at *lenp,
 # or 0 with the reason at *whyp.
 fn _embed_e_dir(): i64 { return "is a directory; an [embed] names one regular file"; }
-fn _embed_read(path, lenp, whyp): i64 {
-    if (is_dir(str_from(path)) == 1) { store64(whyp, _embed_e_dir()); return 0; }
+# Open `path` (already checked by _embed_path_bad) for reading. POSIX targets with a real dirfd
+# openat WALK it: a handle on the project root, then openat(dirfd, component, O_DIRECTORY |
+# O_NOFOLLOW) per directory and O_NOFOLLOW on the leaf, so a component swapped for a link after
+# the per-prefix check fails the open. The fd, or a negative errno.
+fn _embed_open(path): i64 {
     var fl = O_RDONLY | O_NOFOLLOW;
     #ifndef CYRIUS_TARGET_WIN
-    fl = fl | O_NONBLOCK;   # a FIFO must not hang the build; its lseek below refuses it
+    fl = fl | O_NONBLOCK;   # a FIFO must not hang the build; its lseek in _embed_read refuses it
+    var walk = 1;
+    #ifdef CYRIUS_TARGET_MACOS
+    #ifdef CYRIUS_ARCH_AARCH64
+    walk = 0;               # no dirfd openat there (see the header): the whole-path open below
     #endif
-    var fd = file_open(path, fl, 0);
+    #endif
+    if (walk == 1) {
+        var dfd = file_open(".", O_RDONLY | O_DIRECTORY, 0);
+        if (dfd < 0) { return dfd; }
+        var n = strlen(path);
+        var comp = alloc(n + 1);
+        var s = 0;
+        var i = 0;
+        while (i <= n) {
+            if (i == n || load8(path + i) == 47) {
+                if (i > s) {
+                    memcpy(comp, path + s, i - s);
+                    store8(comp + i - s, 0);
+                    if (i == n) {
+                        var lf = sys_openat(dfd, comp, fl, 0);
+                        file_close(dfd);
+                        return lf;
+                    }
+                    var nd = sys_openat(dfd, comp, O_RDONLY | O_DIRECTORY | O_NOFOLLOW, 0);
+                    file_close(dfd);
+                    if (nd < 0) { return nd; }
+                    dfd = nd;
+                }
+                s = i + 1;
+            }
+            i = i + 1;
+        }
+        file_close(dfd);
+        return 0 - 21;      # the path ends in `/`: a directory
+    }
+    #endif
+    return file_open(path, fl, 0);
+}
+
+fn _embed_read(path, lenp, whyp): i64 {
+    if (is_dir(str_from(path)) == 1) { store64(whyp, _embed_e_dir()); return 0; }
+    var fd = _embed_open(path);
     if (fd < 0) {
         if (file_exists(path) == 0) { store64(whyp, "the file does not exist"); }
-        else { store64(whyp, "the file cannot be opened"); }
+        else { store64(whyp, "the file cannot be opened through a link-free path (a component is a link, or it changed while it was checked)"); }
         return 0;
     }
     var size = xlseek(fd, 0, 2);
