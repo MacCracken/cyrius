@@ -7,6 +7,58 @@
 # Interactive: repl
 # Info:      version, which, help
 
+# ⛔ 6.6.17 — THE agnos BUILD OF THE CLI IS A REFUSAL, NOT A PORT. Every verb below drives cycc
+# (and git, and the tools) as a CHILD PROCESS through fork / execve / waitpid / dup2 and the Linux
+# file-syscall shapes, and the agnos peer keeps its own (a length-carrying sys_unlink, a one-arg
+# sys_waitpid, no execve / dup2 — agnos spawns through spawn_path#43). Built for
+# CYRIUS_TARGET_AGNOS=1 the file used to stop at ~110 arity errors and 4 undefined fns; it now
+# builds this block alone: `version` and `help` answer, every other verb says it is not available
+# on agnos and exits 1 — compile there with cycc directly. Porting the verbs is cbt's process layer
+# moving onto lib/process_agnos.cyr (roadmap). The rest of the file is the `#ifndef` below.
+# CHANGELOG [6.6.17]
+#ifdef CYRIUS_TARGET_AGNOS
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/alloc.cyr"
+include "lib/io.cyr"
+include "lib/args.cyr"
+include "lib/syscalls.cyr"
+include "src/version_str.cyr"
+
+# Write the cstring `s` to fd `fd`.
+fn _cbt_agnos_say(fd, s): i64 { return sys_write(fd, s, strlen(s)); }
+
+fn _cbt_agnos_main(): i64 {
+    alloc_init();
+    args_init();
+    var cmd = "help";
+    if (argc() > 1) { cmd = argv(1); }
+    if (streq(cmd, "version") == 1 || streq(cmd, "--version") == 1) {
+        _cbt_agnos_say(1, "cyrius ");
+        _cbt_agnos_say(1, _VERSION_TOOLCHAIN);
+        _cbt_agnos_say(1, " (agnos: version and help only)\n");
+        return 0;
+    }
+    var is_help = 0;
+    if (streq(cmd, "help") == 1 || streq(cmd, "--help") == 1 || streq(cmd, "-h") == 1) { is_help = 1; }
+    if (is_help == 0) {
+        _cbt_agnos_say(2, "cyrius: '");
+        _cbt_agnos_say(2, cmd);
+        _cbt_agnos_say(2, "' is not available in the agnos build of the CLI\n");
+    }
+    _cbt_agnos_say(2, "The agnos build answers `version` and `help` only: its verbs run cycc as a child process\n");
+    _cbt_agnos_say(2, "(fork / execve / waitpid), which the agnos peer does not provide in those shapes.\n");
+    _cbt_agnos_say(2, "Compile on agnos with cycc directly:  cycc < prog.cyr > prog\n");
+    if (is_help == 1) { return 0; }
+    return 1;
+}
+
+var _cbt_agnos_rc = _cbt_agnos_main();
+# The same exit form as the main path below (this block makes no temp dir, so there is nothing
+# for _cbt_exit to remove — and a bare sys_exit here is what cli_temp_dir_no_leak.sh refuses).
+syscall(SYS_EXIT, _cbt_agnos_rc);
+#endif
+#ifndef CYRIUS_TARGET_AGNOS
 include "lib/string.cyr"
 include "lib/fmt.cyr"
 include "lib/alloc.cyr"
@@ -1194,3 +1246,4 @@ _cbt_tmpdir_cleanup();
 # called clock_gettime on aarch64 instead of exit, dropping the
 # exit code on the floor.
 syscall(SYS_EXIT, exit_code);
+#endif

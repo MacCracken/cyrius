@@ -49,8 +49,9 @@ Since the v6.1.21 native-default flip there are **two** transports behind one co
    loaded through fdlopen (a minimal `%fs` TCB stub deadlocks libssl's pthread init at its first
    `SSL_CTX_new`).
 
-`lib/tls.cyr` dispatches on the process-wide backend; the verb contract below is identical for
-both unless a row says otherwise. Consumers MUST treat the transport as **opaque**:
+The process-wide backend (`tls_set_backend`) decides what the NEXT connect / accept builds; every
+verb on an existing ctx or hook handle dispatches on the backend that built it (6.6.17 — see
+"Session resumption"). The verb contract below is identical for both unless a row says otherwise. Consumers MUST treat the transport as **opaque**:
 
 - All handles (`ctx`, `handle` in hooks, `session`) are integer pointers; consumers may store and
   pass them, but MUST NOT dereference them or assume their layout. The hook's `handle` is an
@@ -66,7 +67,7 @@ both unless a row says otherwise. Consumers MUST treat the transport as **opaque
 
 | Verb | Returns | Contract |
 |------|---------|----------|
-| `tls_set_backend(b)` | 0 / -1 | Selects `TLS_BACKEND_NATIVE` (1) or `TLS_BACKEND_LIBSSL` (0) for every later verb. -1 when `b` is unknown or not compiled in (native in a libssl-only build). Process-global, a plain store: set it once, before any thread connects (see "Thread safety"). The I/O verbs dispatch on the CURRENT backend, not on the one that made the ctx — do not switch while a ctx is open. |
+| `tls_set_backend(b)` | 0 / -1 | Selects `TLS_BACKEND_NATIVE` (1) or `TLS_BACKEND_LIBSSL` (0) for every later connect / accept (`tls_connect*`, `tls_accept*`) and for the process-wide probes (`tls_available`, `tls_init_main`, `tls_supports_*`). -1 when `b` is unknown or not compiled in (native in a libssl-only build). Process-global, a plain store: set it once, before any thread connects (see "Thread safety"). A ctx or hook handle keeps the backend that built it: since 6.6.17 every verb on one dispatches on that (through 6.6.16 the I/O verbs read the CURRENT backend, so a switch while a ctx was open handed it to the wrong one). |
 | `tls_get_backend()` | `TLS_BACKEND_NATIVE` / `TLS_BACKEND_LIBSSL` | The active backend: native by default, libssl in a `-D CYRIUS_TLS_LIBSSL` build. |
 
 ## Verb inventory (the contract surface)
@@ -78,7 +79,7 @@ both unless a row says otherwise. Consumers MUST treat the transport as **opaque
 | `tls_available()` | 1 / 0 | Returns 1 once libssl has been successfully bootstrapped via fdlopen and the critical-symbol set has resolved — since 6.6.13 that set includes the five host-binding symbols (see "Server identity" below), so a libssl that cannot bind the leaf to `host` reads 0 rather than connecting unverified. Idempotent; runs `_tls_init` lazily. Returns 0 forever within the process once init has failed (no retry). Safe to call before any other verb. (Native backend: always 1.) |
 | `tls_init_main()` | 1 / 0 | **6.6.13.** Warm the stack once — call it on the MAIN thread before spawning TLS workers. Returns `tls_available()`'s verdict. Native: installs the main thread's crypto block and builds every lazy table a handshake reaches (SHA-256/-384/-512, AES-GCM, Ed25519, the P-256 and P-384 sign/verify tables, the X.509 OID, validity-date and PEM tables) plus the system CA bundle cache. Recommended, not required (see "Thread safety"). Idempotent; once warmed a call allocates nothing; harmless on a worker (it installs nothing over the worker's own thread-local block). libssl: runs `_tls_init` — main thread only. |
 | `tls_supports_session_resumption()` | 1 / 0 | Returns 1 iff the ACTIVE backend is libssl and the loaded libssl exposes `SSL_get1_session` + `SSL_set_session` + `SSL_SESSION_free` + `SSL_CTX_ctrl` (the cache mode's setter: `SSL_CTX_set_session_cache_mode` is a macro over it, and through 6.6.15 the probe asked dlsym for the macro's name, so it read 0 on every OpenSSL 3). Probe BEFORE installing session callbacks. It reads the symbol cache only: 0 until libssl has been loaded (`tls_available()` or a connect on the libssl backend). **0 whenever the native backend is active (6.6.16)**, even with libssl loaded in-process — the native backend has no session resumption through this surface, and the session verbs refuse there (see "Session resumption"). |
-| `tls_supports_early_data()` | 1 / 0 | Returns 1 iff the linked libssl exposes the FULL 0-RTT client-correctness surface (write + read + max_early_data setter + get_early_data_status + SESSION_get_max_early_data). Probe BEFORE attempting any 0-RTT send/recv. Like the resumption probe: 0 until libssl has loaded. |
+| `tls_supports_early_data()` | 1 / 0 | Returns 1 iff the ACTIVE backend is libssl and the loaded libssl exposes the FULL 0-RTT client-correctness surface (write + read + max_early_data setter + get_early_data_status + SESSION_get_max_early_data). Probe BEFORE attempting any 0-RTT send/recv. Like the resumption probe: 0 until libssl has loaded, and **0 whenever the native backend is active (6.6.17)**, even with libssl loaded in-process — the 0-RTT verbs refuse there. |
 
 ### Connect — fused (legacy + ALPN-hook)
 
@@ -92,7 +93,7 @@ corresponding `tls_set_*` / `tls_ctx_*` verb):
 
 | | libssl | native |
 |---|---|---|
-| Trust store | `SSL_CTX_set_default_verify_paths` | `tls_native_set_ca_system`: POSIX — the first readable of `/etc/ssl/cert.pem`, `/etc/ssl/certs/ca-certificates.crt`, `/etc/pki/tls/certs/ca-bundle.crt`, `/etc/ssl/ca-bundle.pem`; **Windows (6.6.14) — never those paths** (drive-relative there: `C:\etc\ssl\cert.pem`, which any local user can create — CVE-65) **but the CurrentUser `ROOT` store**, through crypt32 loaded from System32, filtered by the root-program properties: a root whose purposes (prop 9) leave out serverAuth is not taken and a certificate in the `Disallowed` store never is; a root with a Disable date (props 104/122) or a NotBefore date (126/127) covering serverAuth, with root-program name constraints (84), or with a property that cannot be read or parsed is **refused whole** — the verifier has no per-root date or name bound, so it fails closed (a leaf issued before a NotBefore date is rejected where SChannel accepts it; cass: 41 roots taken, 12 refused). Read and parsed ONCE per process into a shared, immutable root set — after the first connect a connect costs 0 B for its roots, and `tls_native_ca_skipped(handle)` counts the certificate blocks it could not use (a P-521 root today; since 6.6.14 a malformed block — an unmatched BEGIN, bad base64 — which is skipped while the rest of the bundle installs; on Windows also the refused roots). With no store at all no roots are installed, so a verifying connect fails until the hook installs a trust store (`tls_ctx_load_verify_locations`). ⚠ Not Windows parity, in either direction: the auto-updated disallowed CTL in the registry is not consulted and `Disallowed` is applied to roots only, never to a server's intermediates or leaf; and Windows downloads roots it does not yet hold on demand when its own chain engine meets them, while the native client sees only the roots already in the store (those servers fail `TLS_ERR_CERT_INVALID`). |
+| Trust store | `SSL_CTX_set_default_verify_paths` | `tls_native_set_ca_system`: POSIX — the first readable of `/etc/ssl/cert.pem`, `/etc/ssl/certs/ca-certificates.crt`, `/etc/pki/tls/certs/ca-bundle.crt`, `/etc/ssl/ca-bundle.pem`; **Windows (6.6.14) — never those paths** (drive-relative there: `C:\etc\ssl\cert.pem`, which any local user can create — CVE-65) **but the CurrentUser `ROOT` store**, through crypt32 loaded from System32, filtered by the root-program properties: a root whose purposes (prop 9) leave out serverAuth is not taken and a certificate in the `Disallowed` store never is; a root with a Disable date (props 104/122) or a NotBefore date (126/127) covering serverAuth, with root-program name constraints (84), or with a property that cannot be read or parsed is **refused whole** — the verifier has no per-root date or name bound, so it fails closed (a leaf issued before a NotBefore date is rejected where SChannel accepts it; cass: 41 roots taken, 12 refused). Read and parsed ONCE per process into a shared, immutable root set — after the first connect a connect costs 0 B for its roots, and `tls_native_ca_skipped(handle)` counts the certificate blocks it could not use (a P-521 root today; since 6.6.14 a malformed block — an unmatched BEGIN, bad base64 — which is skipped while the rest of the bundle installs; on Windows also the refused roots). With no store at all no roots are installed, so a verifying connect fails until the hook installs a trust store (`tls_ctx_load_verify_locations`). **A SERVER ctx (it verifies client chains) gets the roots trusted for CLIENT authentication (6.6.17, CVE-TBD(l1))**: on Windows a second set, filtered by the same rules with clientAuth in place of serverAuth (prop 9 must name clientAuth (or anyExtendedKeyUsage, or no prop 9); a Disable / NotBefore date scoped to serverAuth only does not refuse it), loaded once and shared like the first; a POSIX bundle has no per-root purpose, so there both roles share one set. ⚠ Behaviour change for a Windows server ctx vs 6.6.16, in BOTH directions, matching SChannel: a root whose purposes leave out clientAuth is no longer taken, and a root whose purposes name clientAuth but not serverAuth, or whose Disable / NotBefore distrust is scoped to serverAuth only, now is (cass: 41 → 45 roots for a server ctx; a client ctx's set is unchanged). ⚠ Not Windows parity, in either direction: the auto-updated disallowed CTL in the registry is not consulted and `Disallowed` is applied to roots only, never to a server's intermediates or leaf; and Windows downloads roots it does not yet hold on demand when its own chain engine meets them, while the native client sees only the roots already in the store (those servers fail `TLS_ERR_CERT_INVALID`). |
 | Verification | `SSL_CTX_set_verify(..., SSL_VERIFY_PEER, 0)` | `TLS_VERIFY_PEER`: the chain must reach a trusted, in-window CA root, with keyUsage, extendedKeyUsage and pathLen honoured (CVE-17), and the leaf must match `host` (CVE-18). Both are checked INSIDE the handshake, before it reports success, so the native handshake never yields a connected-but-unverified channel. **extendedKeyUsage binds EVERY certificate of the path (6.6.16, CVE-75)** — the leaf, each intermediate and the trust root: one that carries the extension must list serverAuth (a server chain) or clientAuth (a client chain, below); absent means unrestricted. A wrongly purposed CA is skipped while the path is built, so a chain through a rightly purposed duplicate (a cross-signed or re-issued CA) still verifies. ⚠ Two deliberate differences from OpenSSL 3.6.5: anyExtendedKeyUsage satisfies the purpose at every depth (RFC 5280 §4.2.1.12; OpenSSL honours it at none), and OpenSSL fails on the first issuer candidate it picks when that one is wrongly purposed, where the native verifier tries the next. |
 | Protocol versions | libssl's defaults | TLS 1.2 – 1.3 (`tls_native_set_version_range` on the hook's handle narrows it) |
 
@@ -308,7 +309,8 @@ CertificateRequest is sent — while native is never looser than asked and reque
   intermediates it sends — must chain to a trusted, in-window CA root of the server ctx, with
   keyUsage, extendedKeyUsage (clientAuth or anyExtendedKeyUsage) and pathLen honoured — the
   extendedKeyUsage on every CA of the path too, the trust root included (6.6.16), so a
-  serverAuth-only CA in the server's trust set vouches for no client — and its
+  serverAuth-only CA in the server's trust set vouches for no client, and (6.6.17) a Windows
+  system root whose STORE purposes leave out clientAuth is not in a server ctx's system set — and its
   CertificateVerify must verify under the leaf's key. **A server with no trust roots refuses every
   presented certificate** (fail closed, as OpenSSL does). No hostname is checked. The same rules
   in TLS 1.3 and TLS 1.2: a server ctx accepts 1.2 by default, and the 1.2 server sends a
@@ -515,7 +517,7 @@ an earlier `tls_dlsym` + `fncall*` call site. New consumers MUST use these in pr
 These verbs (and the callbacks and 0-RTT verbs below) wrap libssl. The native backend has no
 client-side session resumption or 0-RTT through this surface: probe
 `tls_supports_session_resumption()` (0 under the native backend) / `tls_supports_early_data()`
-(0 in a process that has never loaded libssl). **On the native backend every verb here that takes
+(0 under the native backend since 6.6.17, and in a process that has never loaded libssl). **On the native backend every verb here that takes
 a ctx or a hook handle refuses with the "unsupported" answer its row names, without touching
 libssl (6.6.16)** — whether or not libssl has been loaded in the process. Through 6.6.15 they
 checked only that their libssl symbol was resolved, and anything that loads libssl in-process (a
@@ -524,6 +526,17 @@ handed the native ctx's +8 (0) or the native handle — the native ctx, not an `
 libssl, which wrote into native memory (measured: `tls_ctx_set_max_early_data` changed 4 bytes at
 offset 1024 of a 616-byte native ctx). `tls_session_free` and `tls_session_get_max_early_data`
 take a session, which only a libssl connection produces, and behave the same on either backend.
+**Since 6.6.17 "native" is a property of the ctx, not of the active backend**: a ctx or hook handle
+keeps the backend that built it (`tls_set_backend` decides only what the next connect / accept
+builds), so a native ctx refuses here even while libssl is the active backend, and a libssl ctx or
+`SSL_CTX` reaches libssl even while native is — through 6.6.16 the active backend decided, so a
+native ctx's `tls_get_session` after a switch to libssl handed libssl a NULL `SSL` (SIGSEGV), and a
+libssl ctx's `tls_close` after a switch to native ran `tls_native_close` on its `SSL_CTX`. The same
+holds for every other verb that takes a ctx (`tls_read`, `tls_write`, `tls_close`, the `*_complete`
+pair, `tls_set_deadline`, the introspection verbs) or a hook handle (`tls_set_alpn`,
+`tls_set_verify`, the `tls_ctx_*` verbs). And every verb here answers a NULL ctx / handle with that
+same "unsupported" value (6.6.17: the three session-callback setters and
+`tls_ctx_set_max_early_data` SIGSEGVed inside libssl on one).
 
 | Verb | Signature | Returns | Contract |
 |------|-----------|---------|----------|
@@ -758,7 +771,7 @@ is a contract amendment — it amends this file in the same patch and says so in
 entry.
 
 Internal implementation details — the shim's layout (40 bytes on libssl: `SSL_CTX*`, `SSL*`,
-socket, deadline, the sticky error; 40 bytes on native), the native ctx layout (`TLS_CTX_LEN`, 584 bytes at 6.6.14),
+socket, deadline, the sticky error; 40 bytes on native), the native ctx layout (`TLS_CTX_LEN`, 624 bytes at 6.6.17 — +616 is the backend tag),
 the `_fn_*` symbol cache, `_tls_libssl_handle`, the fdlopen bootstrap sequence — are NOT contract.
 Stdlib maintainers may restructure them freely so long as the public behaviour above is preserved.
 

@@ -20,6 +20,13 @@
 # the host happens to hold (cass's Disallowed store is empty, no root there carries prop 84 or an
 # over-long or malformed property), the policy is then run rule by rule on stores the test builds in
 # MEMORY: the fixture root with exactly the properties each row names.
+# A SERVER ctx (it verifies CLIENT chains) gets, on Windows, a second set: the roots the store trusts
+# for CLIENT authentication (CVE-TBD(l1), 6.6.17 — it was handed the serverAuth set, so a root Windows
+# trusts for server authentication only anchored an mTLS client identity). The client-purpose rows
+# re-derive that set from the real store, run the policy rule by rule for the client purpose on the
+# memory stores, and verify one client chain end to end against a root whose store purposes are
+# [serverAuth] (refused) and [clientAuth] (verifies). POSIX bundles carry no per-root purpose, so
+# there a server ctx shares the client ctx's set (one row pins that).
 # Every host verifies one real chain offline, at a fixed time: www.microsoft.com's (leaf, Microsoft
 # TLS G2 RSA CA OCSP 04, Microsoft TLS RSA Root G2) to DigiCert Global Root G2, which is in the
 # Windows store and in every POSIX bundle.
@@ -151,6 +158,12 @@ fn test_planted_bundle_ignored(): i64 {
     var inbuf = 0;
     if (_tn_ca_len > 0) { inbuf = _ts_contains(_tn_ca_buf, _tn_ca_len, b, bl); }
     assert_eq(inbuf, 0, "the planted PEM is not in the cached system bundle");
+    # The client-purpose set a server ctx loads (CVE-TBD(l1)) reads the store too, never the file.
+    var sc = _tn_ctx_new(TLS_ROLE_SERVER);
+    assert_eq(tls_native_set_ca_system(sc), TLS_OK, "a server ctx's system set loads while the file is planted");
+    var inbuf2 = 0;
+    if (_tn_ca_cl_len > 0) { inbuf2 = _ts_contains(_tn_ca_cl_buf, _tn_ca_cl_len, b, bl); }
+    assert_eq(inbuf2, 0, "  and the planted PEM is not in it");
     # Remove only what this test created.
     if (made_pem == 1) { assert_eq(xunlink("/etc/ssl/cert.pem"), 0, "the planted file is removed"); }
     if (made_ssl == 1) { assert_eq(xrmdir("/etc/ssl"), 0, "the created /etc/ssl is removed"); }
@@ -198,6 +211,23 @@ fn test_system_roots(): i64 {
     assert_eq(tls_native_set_ca_system(d), TLS_OK, "a second ctx installs too");
     assert_eq(alloc_used() - u0, 0, "and allocates nothing: the set is loaded once, shared");
     assert_eq(load64(d + TLS_CTX_OFF_CA_ROOT), load64(c + TLS_CTX_OFF_CA_ROOT), "the same set");
+    # A SERVER ctx (it verifies client chains) loads the system roots too.
+    var sv = _tn_ctx_new(TLS_ROLE_SERVER);
+    assert_eq(tls_native_set_ca_system(sv), TLS_OK, "a server ctx: tls_native_set_ca_system TLS_OK");
+    assert_gt(_ts_installed(sv), 0, "  and installs roots");
+    #ifndef CYRIUS_TARGET_WIN
+    assert_eq(load64(sv + TLS_CTX_OFF_CA_ROOT), load64(c + TLS_CTX_OFF_CA_ROOT),
+      "POSIX: the same set as a client ctx (a bundle has no per-root purpose)");
+    #endif
+    #ifdef CYRIUS_TARGET_WIN
+    assert_neq(load64(sv + TLS_CTX_OFF_CA_ROOT), load64(c + TLS_CTX_OFF_CA_ROOT),
+      "Windows: a different set from a client ctx's — the roots trusted for client authentication");
+    var sv2 = _tn_ctx_new(TLS_ROLE_SERVER);
+    var u1 = alloc_used();
+    assert_eq(tls_native_set_ca_system(sv2), TLS_OK, "a second server ctx installs too");
+    assert_eq(alloc_used() - u1, 0, "  allocating nothing: the client-purpose set is loaded once, shared");
+    assert_eq(load64(sv2 + TLS_CTX_OFF_CA_ROOT), load64(sv + TLS_CTX_OFF_CA_ROOT), "  the same set");
+    #endif
     return 0;
 }
 
@@ -242,6 +272,7 @@ fn test_real_chain(): i64 {
 #ifdef CYRIUS_TARGET_WIN
 var _TS_NOT_FOUND = 0x80092004;     # CRYPT_E_NOT_FOUND
 var _ts_oid_sa = 0;                 # 06 08 2B 06 01 05 05 07 03 01 — serverAuth, as a whole TLV
+var _ts_oid_ca = 0;                 # 06 08 2B 06 01 05 05 07 03 02 — clientAuth
 var _ts_oid_any = 0;                # 06 04 55 1D 25 00 — anyExtendedKeyUsage
 var _ts_pbuf = 0;                   # one property value
 
@@ -258,10 +289,12 @@ fn _ts_prop(fns, cc, id): i64 {
     return load32(&cb);
 }
 
-# serverAuth or anyExtendedKeyUsage anywhere in a purpose list, as a whole TLV — a different
-# reading from the library's element walk.
-fn _ts_names_server(n): i64 {
-    if (_ts_contains(_ts_pbuf, n, _ts_oid_sa, 10) == 1) { return 1; }
+# serverAuth (`pu` = _TN_PURPOSE_SERVER) or clientAuth (_TN_PURPOSE_CLIENT), or anyExtendedKeyUsage,
+# anywhere in a purpose list, as a whole TLV — a different reading from the library's element walk.
+fn _ts_names(n, pu): i64 {
+    var want = _ts_oid_sa;
+    if (pu == _TN_PURPOSE_CLIENT) { want = _ts_oid_ca; }
+    if (_ts_contains(_ts_pbuf, n, want, 10) == 1) { return 1; }
     if (_ts_contains(_ts_pbuf, n, _ts_oid_any, 6) == 1) { return 1; }
     return 0;
 }
@@ -306,32 +339,32 @@ fn _ts_eku_ok(n): i64 {
 }
 
 # 1 when `cc` carries the dated distrust property `d` (104 Disable, 126 NotBefore) and its purpose
-# scope `e` (122, 127) is absent — every purpose — malformed, or names serverAuth /
+# scope `e` (122, 127) is absent — every purpose — malformed, or names purpose `pu` /
 # anyExtendedKeyUsage.
-fn _ts_dated(fns, cc, d, e): i64 {
+fn _ts_dated(fns, cc, d, e, pu): i64 {
     var nd = _ts_prop(fns, cc, d);
     if (nd == 0 - 1) { return 0; }
     if (nd == 0 - 2) { return 1; }
     var ne = _ts_prop(fns, cc, e);
     if (ne < 0) { return 1; }
     if (_ts_eku_ok(ne) == 0) { return 1; }
-    if (_ts_names_server(ne) == 1) { return 1; }
+    if (_ts_names(ne, pu) == 1) { return 1; }
     return 0;
 }
 
-# What Windows' root-program properties say about `cc` for TLS: 1 an anchor, 0 not a TLS root,
-# 2 refused by the library — distrusted by a date that covers TLS (Disable 104 / 122 or NotBefore
-# 126 / 127), confined by root-program name constraints (84), or a purpose list it cannot read.
-fn _ts_expect(fns, cc): i64 {
+# What Windows' root-program properties say about `cc` for TLS purpose `pu`: 1 an anchor, 0 not a
+# root for it, 2 refused by the library — distrusted by a date that covers it (Disable 104 / 122 or
+# NotBefore 126 / 127), confined by root-program name constraints (84), or a purpose list it cannot read.
+fn _ts_expect(fns, cc, pu): i64 {
     var n = _ts_prop(fns, cc, 9);
     if (n == 0 - 2) { return 2; }    # unreadable: the library refuses and counts it
     if (n >= 0) {
         if (_ts_eku_ok(n) == 0) { return 2; }
-        if (_ts_names_server(n) == 0) { return 0; }
+        if (_ts_names(n, pu) == 0) { return 0; }
     }
     if (_ts_prop(fns, cc, 84) != 0 - 1) { return 2; }
-    if (_ts_dated(fns, cc, 104, 122) == 1) { return 2; }
-    if (_ts_dated(fns, cc, 126, 127) == 1) { return 2; }
+    if (_ts_dated(fns, cc, 104, 122, pu) == 1) { return 2; }
+    if (_ts_dated(fns, cc, 126, 127, pu) == 1) { return 2; }
     return 1;
 }
 
@@ -347,11 +380,12 @@ fn _ts_listed(list, nd, der, dlen): i64 {
     return 0;
 }
 
-# Windows: the exported bundle is exactly the ROOT store's TLS roots — re-derived here from the
-# store, certificate by certificate, with the test's own reading of the properties.
-fn test_store_policy(): i64 {
-    test_group("Windows: the bundle is exactly the ROOT store's TLS roots, re-derived here");
+# Windows: the exported bundle for purpose `pu` (`bundle`[0..`blen`), `refused` roots) is exactly the
+# ROOT store's roots for it — re-derived here from the store, certificate by certificate, with the
+# test's own reading of the properties.
+fn _ts_store_policy(pu, bundle, blen, refused): i64 {
     _ts_oid_sa = hex_decode("06082b06010505070301", 20);
+    _ts_oid_ca = hex_decode("06082b06010505070302", 20);
     _ts_oid_any = hex_decode("0604551d2500", 12);
     _ts_pbuf = alloc(65536);
     var fns[32];
@@ -389,7 +423,7 @@ fn test_store_policy(): i64 {
         total = total + 1;
         var der = load64(c + 8);
         var dlen = load32(c + 16);
-        var x = _ts_expect(&fns, c);
+        var x = _ts_expect(&fns, c, pu);
         if (x != 0) {
             if (_ts_listed(dlist, nd, der, dlen) == 1) { x = 0; }
         }
@@ -399,12 +433,12 @@ fn test_store_policy(): i64 {
         var got = 0;
         if (dlen < 40000) {
             var pl = _ts_pem(pem, der, dlen);
-            got = _ts_contains(_tn_ca_buf, _tn_ca_len, pem, pl);
+            got = _ts_contains(bundle, blen, pem, pl);
         }
         if (x == 1) {
             if (got != 1) { wrong = wrong + 1; }
         }
-        if (_ts_dated(&fns, c, 126, 127) == 1) {
+        if (_ts_dated(&fns, c, 126, 127, pu) == 1) {
             nb_tls = nb_tls + 1;
             if (got != 0) { nb_in = nb_in + 1; }
         }
@@ -431,9 +465,21 @@ fn test_store_policy(): i64 {
     assert_gt(total, 0, "the ROOT store has certificates");
     assert_gt(want_in, 0, "some are TLS roots");
     assert_eq(wrong, 0, "each ROOT certificate is in the bundle exactly when Windows trusts it for TLS");
-    assert_eq(_ts_blocks(_tn_ca_buf, _tn_ca_len), want_in, "the bundle holds exactly those");
+    assert_eq(_ts_blocks(bundle, blen), want_in, "the bundle holds exactly those");
     assert_eq(nb_in, 0, "no root whose NotBefore distrust (126 / 127) covers TLS is in the bundle");
-    assert_eq(_tn_ca_sys_refused, want_ref, "the roots the policy refuses are the refused count");
+    assert_eq(refused, want_ref, "the roots the policy refuses are the refused count");
+    return 0;
+}
+
+fn test_store_policy(): i64 {
+    test_group("Windows: the bundle is exactly the ROOT store's TLS roots, re-derived here");
+    _ts_store_policy(_TN_PURPOSE_SERVER, _tn_ca_buf, _tn_ca_len, _tn_ca_sys_refused);
+    # CVE-TBD(l1): a server ctx's set is the store's CLIENT-authentication roots.
+    test_group("Windows: a server ctx's bundle is exactly the ROOT store's clientAuth roots, re-derived here");
+    var sv = _tn_ctx_new(TLS_ROLE_SERVER);
+    assert_eq(tls_native_set_ca_system(sv), TLS_OK, "a server ctx loads the client-purpose set");
+    assert_gt(_tn_ca_cl_len, 0, "  its bundle has bytes");
+    _ts_store_policy(_TN_PURPOSE_CLIENT, _tn_ca_cl_buf, _tn_ca_cl_len, _tn_ca_cl_refused);
     return 0;
 }
 
@@ -450,11 +496,18 @@ var _tm_props = 0;      # the row's properties: [id][ptr][len], up to 8
 var _tm_n = 0;
 var _tm_pem = 0;        # the fixture root as the PEM block the library must write
 var _tm_pem_len = 0;
+var _tm_pu = 0;         # the purpose _tm_run exports for (TlsChainPurpose; SERVER unless a row says)
+var _tm_cert = 0;       # the certificate the row puts in ROOT (DER) — the fixture root unless a row says
+var _tm_cert_len = 0;
+var _tm_out = 0;        # the last export's bundle and byte count (the end-to-end rows parse it)
+var _tm_out_len = 0;
 
 var _TM_SA = "300a06082b06010505070301";                            # [serverAuth]
 var _TM_CS = "300a06082b06010505070303";                            # [codeSigning]
 var _TM_CS_SA = "301406082b0601050507030306082b06010505070301";     # [codeSigning, serverAuth]
 var _TM_ANY = "30060604551d2500";                                   # [anyExtendedKeyUsage]
+var _TM_CA = "300a06082b06010505070302";                            # [clientAuth]
+var _TM_SA_CA = "301406082b0601050507030106082b06010505070302";     # [serverAuth, clientAuth]
 var _TM_DATE = "0080e9e6f9c7d901";                                  # a FILETIME
 
 fn _tm_reset(): i64 {
@@ -516,7 +569,7 @@ fn _tm_run(fns, dis_holds, cap): i64 {
     var cc[8];
     store64(&cc, 0);
     # X509_ASN_ENCODING, CERT_STORE_ADD_ALWAYS, and the store's context back.
-    if ((callptr(_tm_add, root, 1, _ts_p256, _ts_p256_len, 4, &cc) & 0xFFFFFFFF) == 0) { ok = 0; }
+    if ((callptr(_tm_add, root, 1, _tm_cert, _tm_cert_len, 4, &cc) & 0xFFFFFFFF) == 0) { ok = 0; }
     if (load64(&cc) == 0) { ok = 0; }
     var i = 0;
     while (i < _tm_n) {
@@ -529,7 +582,7 @@ fn _tm_run(fns, dis_holds, cap): i64 {
         i = i + 1;
     }
     if (dis_holds == 1) {
-        if ((callptr(_tm_add, dis, 1, _ts_p256, _ts_p256_len, 4, 0) & 0xFFFFFFFF) == 0) { ok = 0; }
+        if ((callptr(_tm_add, dis, 1, _tm_cert, _tm_cert_len, 4, 0) & 0xFFFFFFFF) == 0) { ok = 0; }
     }
     if (dis_holds == 2) {
         if ((callptr(_tm_add, dis, 1, _ts_mr, _ts_mr_len, 4, 0) & 0xFFFFFFFF) == 0) { ok = 0; }
@@ -540,8 +593,10 @@ fn _tm_run(fns, dis_holds, cap): i64 {
         var buf = alloc(cap);
         var nref[8];
         store64(&nref, 0 - 1);
-        var total = _tn_w_export(fns, root, dis, buf, cap, &nref);
+        var total = _tn_w_export(fns, root, dis, buf, cap, &nref, _tm_pu);
         var r = load64(&nref);
+        _tm_out = buf;
+        _tm_out_len = total;
         got = 0 - 1;
         if (total == 0) {
             if (r == 0) { got = 0; }
@@ -572,6 +627,9 @@ fn test_policy_rows(): i64 {
     assert_neq(_tm_setp, 0, "CertSetCertificateContextProperty resolves");
     assert_neq(_tm_free, 0, "CertFreeCertificateContext resolves");
     _tm_props = alloc(8 * 24);
+    _tm_cert = _ts_p256;
+    _tm_cert_len = _ts_p256_len;
+    _tm_pu = _TN_PURPOSE_SERVER;
     _tm_pem = alloc(2048);
     _tm_pem_len = _ts_pem(_tm_pem, _ts_p256, _ts_p256_len);
     var cap = 4096;
@@ -682,6 +740,118 @@ fn test_policy_rows(): i64 {
     assert_eq(_tm_run(&fns, 0, 300), 2, "a root that does not fit the buffer: refused, counted");
     return 0;
 }
+
+# ── CVE-TBD(l1): the same policy for the CLIENT purpose (a server ctx's set) ─────────────────────
+# Before 6.6.17 the store had one export, for serverAuth, and a server ctx installed it: a root
+# whose store purposes are [serverAuth] anchored a CLIENT chain. Each row runs _tn_w_export for the
+# client purpose; the server-purpose twin of the defect row is the control.
+fn test_policy_rows_client(): i64 {
+    test_group("Windows: the store policy for CLIENT authentication (a server ctx's set), row by row");
+    var fns[32];
+    assert_eq(_tn_w_crypt32(&fns), 1, "crypt32 loads and resolves");
+    var cap = 4096;
+    _tm_pu = _TN_PURPOSE_CLIENT;
+    assert_eq(_tm_run(&fns, 0, cap), 1, "no property: exported");
+    _tm_with(9, _TM_SA);
+    assert_eq(_tm_run(&fns, 0, cap), 0, "purposes [serverAuth]: NOT a client root, not counted (6.6.16: exported)");
+    _tm_with(9, _TM_CA);
+    assert_eq(_tm_run(&fns, 0, cap), 1, "purposes [clientAuth]: exported");
+    _tm_with(9, _TM_SA_CA);
+    assert_eq(_tm_run(&fns, 0, cap), 1, "purposes [serverAuth, clientAuth]: exported");
+    _tm_with(9, _TM_CS_SA);
+    assert_eq(_tm_run(&fns, 0, cap), 0, "purposes [codeSigning, serverAuth]: not a client root");
+    _tm_with(9, _TM_ANY);
+    assert_eq(_tm_run(&fns, 0, cap), 1, "purposes [anyExtendedKeyUsage]: exported");
+    _tm_with(9, "3000");
+    assert_eq(_tm_run(&fns, 0, cap), 0, "purposes []: not a client root");
+    _tm_with(9, "3100");
+    assert_eq(_tm_run(&fns, 0, cap), 2, "purposes with the wrong tag: refused, counted");
+    _tm_with(84, "3000");
+    assert_eq(_tm_run(&fns, 0, cap), 2, "root-program name constraints: refused, counted");
+    assert_eq(_tm_run(&fns, 1, cap), 0, "in Disallowed: excluded, not counted");
+    # A dated distrust is scoped by ITS purpose list, read for the client purpose.
+    _tm_with(104, _TM_DATE);
+    assert_eq(_tm_run(&fns, 0, cap), 2, "a disable date for every purpose: refused");
+    _tm_with(104, _TM_DATE);
+    _tm_with(122, _TM_CA);
+    assert_eq(_tm_run(&fns, 0, cap), 2, "a disable date for [clientAuth]: refused");
+    _tm_with(104, _TM_DATE);
+    _tm_with(122, _TM_SA);
+    assert_eq(_tm_run(&fns, 0, cap), 1, "a disable date for [serverAuth] only: exported for client authentication");
+    _tm_with(126, _TM_DATE);
+    _tm_with(127, _TM_CA);
+    assert_eq(_tm_run(&fns, 0, cap), 2, "a NotBefore date for [clientAuth]: refused");
+    _tm_with(126, _TM_DATE);
+    _tm_with(127, _TM_CS_SA);
+    assert_eq(_tm_run(&fns, 0, cap), 1, "a NotBefore date for [codeSigning, serverAuth]: exported for client authentication");
+    _tm_with_bytes(9, _tm_long(1), 694);
+    assert_eq(_tm_run(&fns, 0, cap), 0, "a 694-byte purpose list ending in serverAuth: not a client root");
+    # The mirror, for the server purpose: a [clientAuth] root is not a TLS server anchor.
+    _tm_pu = _TN_PURPOSE_SERVER;
+    _tm_with(9, _TM_CA);
+    assert_eq(_tm_run(&fns, 0, cap), 0, "server purpose, purposes [clientAuth]: not a server root");
+    _tm_with(9, _TM_SA);
+    assert_eq(_tm_run(&fns, 0, cap), 1, "server purpose, purposes [serverAuth]: exported (control)");
+    return 0;
+}
+
+# The exported bundle, installed on a ctx of `role`, verifying leaf_r for `pu`: the verdict.
+fn _tm_verify(role, leaf, pu): i64 {
+    var ctx = _tn_ctx_new(role);
+    if (_tm_out_len <= 0) { return 0 - 99; }
+    if (tls_native_set_ca_bundle(ctx, _tm_out, _tm_out_len, 0) != TLS_OK) { return 0 - 98; }
+    return _tn_verify_chain(ctx, leaf, 0, _TM_NOW, pu);
+}
+
+var _TM_NOW = 1893456000;   # 2030-01-01: inside the eku fixtures' 2025 .. 2049 window
+
+# End to end: a client identity issued by a root whose STORE purposes are [serverAuth] does not
+# verify on a server ctx built from the export; one whose purposes include clientAuth does. The root
+# (CN=eku-root) and leaf (CN=localhost, serverAuth + clientAuth) are tls_native_ca_eku.tcyr's
+# root_none and leaf_r — the root carries NO extendedKeyUsage of its own, so the store property is
+# the only purpose in play.
+fn test_policy_client_chain(): i64 {
+    test_group("Windows: a client chain anchored at a [serverAuth]-only store root is refused (CVE-TBD(l1))");
+    var fns[32];
+    assert_eq(_tn_w_crypt32(&fns), 1, "crypt32 loads and resolves");
+    var root = hex_decode("308201583081fea00302010202021001300a06082a8648ce3d04030230133111300f06035504030c08656b752d726f6f74301e170d3235303130313030303030305a170d3439313233313030303030305a30133111300f06035504030c08656b752d726f6f743059301306072a8648ce3d020106082a8648ce3d030107034200041763b07248785b27e9c9af80c984898fbf0bf24afbdb1e8d52696e5b98bf4a87831b987df0ae8d25a3e82e746ba58a480ee1e1c29b59ec76f8e0bc26bfef92c0a3423040300f0603551d130101ff040530030101ff300e0603551d0f0101ff040403020106301d0603551d0e04160414ec71bed0abc8e63f9529b24854c0280971a77161300a06082a8648ce3d0403020349003046022100efff514f0ebbbff3f778b4daa6a146cd5d2ad51cdbd1b723df03de86f5c9d186022100fd452d345bf2c837d4c0c606be6e8ac25249a2e1bfa7b42cbecef00ef8bb613d", 696);
+    var leaf = _ts_cert(hex_decode("308201ac30820151a0030201020202100b300a06082a8648ce3d04030230133111300f06035504030c08656b752d726f6f74301e170d3235303130313030303030305a170d3439313233313030303030305a30143112301006035504030c096c6f63616c686f73743059301306072a8648ce3d020106082a8648ce3d03010703420004575ac13fb3b90dbd31c06aeda389c41844ba2b605eedaeae8744d0ad8356173fb7e4a92ca439b4d2d0e475d575c474b762940fe9ff0c54342a431d22d9f522e5a3819330819030090603551d1304023000300e0603551d0f0101ff040403020780301d0603551d250416301406082b0601050507030106082b0601050507030230140603551d11040d300b82096c6f63616c686f7374301d0603551d0e04160414a69e141ae52b49164e934b9577d373aa850aab51301f0603551d23041830168014ec71bed0abc8e63f9529b24854c0280971a77161300a06082a8648ce3d0403020349003046022100bd0c7b53f3770f5bfd09fe63cacd9c6ceefddc676413f1a942c29c4a5854d241022100958dfd9011a1da93bb80788723bd6f30224b6543e3ee1453cb623c3fb32bc42e", 864), 432);
+    assert_neq(leaf, 0, "the client leaf parses");
+    _tm_cert = root;
+    _tm_cert_len = 348;
+    _tm_pem_len = _ts_pem(_tm_pem, root, 348);
+    var cap = 4096;
+    # Store purposes [serverAuth]: the server-purpose export anchors a SERVER chain (control) ...
+    _tm_pu = _TN_PURPOSE_SERVER;
+    _tm_with(9, _TM_SA);
+    assert_eq(_tm_run(&fns, 0, cap), 1, "[serverAuth] root: in the server-purpose export");
+    assert_eq(_tm_verify(TLS_ROLE_CLIENT, leaf, _TN_PURPOSE_SERVER), TLS_OK,
+      "  control: a client ctx on that export verifies the leaf as a TLS server");
+    # ... and the client-purpose export, which a server ctx installs, does not hold it.
+    _tm_pu = _TN_PURPOSE_CLIENT;
+    _tm_with(9, _TM_SA);
+    assert_eq(_tm_run(&fns, 0, cap), 0, "[serverAuth] root: NOT in the client-purpose export");
+    _tm_out_len = 0;
+    # The chain against what 6.6.16 installed on a server ctx (the server-purpose export):
+    _tm_pu = _TN_PURPOSE_SERVER;
+    _tm_with(9, _TM_SA);
+    _tm_run(&fns, 0, cap);
+    var old_way = _tm_verify(TLS_ROLE_SERVER, leaf, _TN_PURPOSE_CLIENT);
+    assert_eq(old_way, TLS_OK, "  (the 6.6.16 shape: the serverAuth set on a server ctx verified this client — the defect)");
+    # Store purposes [clientAuth]: the client-purpose export holds it, and the client chain verifies.
+    _tm_pu = _TN_PURPOSE_CLIENT;
+    _tm_with(9, _TM_CA);
+    assert_eq(_tm_run(&fns, 0, cap), 1, "[clientAuth] root: in the client-purpose export");
+    assert_eq(_tm_verify(TLS_ROLE_SERVER, leaf, _TN_PURPOSE_CLIENT), TLS_OK,
+      "  a server ctx on that export verifies the leaf as a TLS client");
+    _tm_with(9, _TM_SA_CA);
+    assert_eq(_tm_run(&fns, 0, cap), 1, "[serverAuth, clientAuth] root: in the client-purpose export");
+    assert_eq(_tm_verify(TLS_ROLE_SERVER, leaf, _TN_PURPOSE_CLIENT), TLS_OK, "  and the client chain verifies");
+    _tm_cert = _ts_p256;
+    _tm_cert_len = _ts_p256_len;
+    _tm_pem_len = _ts_pem(_tm_pem, _ts_p256, _ts_p256_len);
+    return 0;
+}
 #endif
 
 # Every target: a system load that found no usable bundle because the store refused every root
@@ -721,6 +891,8 @@ fn main(): i64 {
     #ifdef CYRIUS_TARGET_WIN
     test_store_policy();
     test_policy_rows();
+    test_policy_rows_client();
+    test_policy_client_chain();
     #endif
     test_all_refused_counted();
     return assert_summary();

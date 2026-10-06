@@ -31,11 +31,19 @@
 #           Anything else (`return syscall(0xF033, ...)`, `if (syscall(...) == 0)`) is RED.
 #   axis 3  lib/async_win.cyr: every `var X = callptr(...)` (the ConnectEx / AcceptEx BOOLs) is
 #           used only as `X & 0xFFFFFFFF`.
-#   axis 4  each never-zero error helper (_sw_wsa_err, _net_wsa_err, _tn_win_sockerr) masks and
-#           maps an error of 0 to -1, so a failure can never read as success.
+#   axis 4  each never-zero error helper (_sw_wsa_err, _net_wsa_err, _tn_win_sockerr and, 6.6.17,
+#           lib/async_win.cyr's _asw_wsa_err) masks and maps an error of 0 to -1, so a failure can
+#           never read as success.
+#   axis 5  (6.6.17) lib/async_win.cyr: the kernel32 BOOLs — SetWaitableTimer (0xF02F),
+#           RegisterWaitForSingleObject (0xF02D), CreateProcessW (0xF005 / 61445) — follow the axis 2
+#           rules (their emitters ESETTIMER_PE / EREGWAIT_PE / ECREATEPROC_PE do not extend eax
+#           either: the interval and process tasks tested `== 0` raw), and the connect task's bind
+#           (0xF025) is never DISCARDED (it was: a failed bind surfaced as a ConnectEx error). The
+#           Windows build measured on cass zero-extends these too, so this axis is static as well.
 #   self    the scanner is run on a CLEAN fixture (must pass) and on one mutant per rule (each
 #           must fail) before it scans lib/, so a scanner that went blind cannot read GREEN.
-#   floors  >= 7 WSAGetLastError sites, >= 25 int-reroute sites, >= 2 callptr sites, >= 3 files.
+#   floors  >= 7 WSAGetLastError sites, >= 25 int-reroute sites, >= 2 callptr sites, >= 3 files,
+#           >= 6 async_win kernel32 BOOL sites.
 #
 # MUTATION LEDGER — built and run 2026-10-04 (lane net, bite net-3; x86_64 Linux), each mutant
 # applied to a scratch copy of the tree and the gate run from that copy:
@@ -47,10 +55,13 @@
 #   async_win WSAIoctl back to `if (syscall(0xF027, ...) != 0)`          axis 2 FAIL
 #   async_win ConnectEx back to `if (cr == 0)`                           axis 3 FAIL
 #   _sw_wsa_err without the `e == 0` → -1 line                           axis 4 FAIL
+#   (6.6.17) _asw_wsa_err without its `e == 0` → -1 line, or unmasked    axis 4 FAIL (each)
 #   _net_wsa_err's `& 0xFFFFFFFF` dropped                                axes 1 and 4 FAIL
 #   async_win WSARecv back to `if (rc != 0)`                             axis 2 FAIL
 #   async_win getaddrinfo back to `if (syscall(0xF02B, ...) != 0)`       axis 2 FAIL
 #   the whole slot-open lib/ (0bf9b773)                                  19 rows FAIL (axes 1-4)
+#   (6.6.17, lane lib l5) the 4a37046b lib/async_win.cyr                  axis 5 FAIL: 6 rows (the
+#     interval task's two raw `== 0`, the process task's, CreateProcessW's `ok` twice, the bind)
 # No compiler and no wine: the gate cds to its ROOT and passes from any cwd.
 # Exit 77 = could not run (the SKIP protocol). CHANGELOG [6.6.16]
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd) || { echo "FAIL: pe_wsa_lasterr_masked: cannot resolve ROOT"; exit 1; }
@@ -101,14 +112,16 @@ scan() {
     BEGIN {
         split("61475 61477 61478 61479 61480 61481 61482 61483 61490 61491 61494 61495", a, " ")
         for (k in a) INTSET[a[k]] = 1
-        nw = 0; ni = 0; nc = 0; nh = 0
+        split("61485 61487 61445", bb, " ")         # async_win kernel32 BOOLs (axis 5)
+        for (k in bb) BOOLSET[bb[k]] = 1
+        nw = 0; ni = 0; nc = 0; nh = 0; nb = 0
     }
     FNR == 1 { nv = 0; infn = ""; nfiles++ }
     {
         line = strip($0)
         if (line ~ /^fn[ \t]/) { nv = 0; infn = line; sub(/^fn[ \t]+/, "", infn); sub(/\(.*/, "", infn) }
         # axis 4: the never-zero helpers
-        if (infn == "_sw_wsa_err" || infn == "_net_wsa_err" || infn == "_tn_win_sockerr") {
+        if (infn == "_sw_wsa_err" || infn == "_net_wsa_err" || infn == "_tn_win_sockerr" || infn == "_asw_wsa_err") {
             if (line ~ /^fn[ \t]/) { H[infn, "m"] = 0; H[infn, "z"] = 0; HS[infn] = FILENAME }
             if (line ~ /syscall\([ \t]*(0[xX][fF]024|61476)[ \t]*\)[ \t]*&[ \t]*0[xX][fF][fF][fF][fF][fF][fF][fF][fF]/) H[infn, "m"] = 1
             if (line ~ /if[ \t]*\([ \t]*e[ \t]*==[ \t]*0[ \t]*\)[ \t]*\{[ \t]*return[ \t]+0[ \t]*-[ \t]*1[ \t]*;/) H[infn, "z"] = 1
@@ -148,6 +161,25 @@ scan() {
             cp = closeparen(s, p)
             argtxt = substr(s, p + 1); sub(/[,)].*/, "", argtxt); gsub(/[ \t]/, "", argtxt)
             nvv = numval(argtxt)
+            if (FILENAME ~ /async_win\.cyr$/ && (nvv "") in BOOLSET) {
+                nb++
+                pre = substr(s, 1, st - 1)
+                if (cp == 0) { bad("axis5", "syscall(" argtxt ", ...) spans lines — the scanner cannot verify it") }
+                else {
+                    post = substr(s, cp + 1)
+                    if (pre ~ /(^|[{;])[ \t]*$/ && post ~ /^[ \t]*;/) { }                   # discarded
+                    else if (masked(post)) { }                                               # masked in place
+                    else if (pre ~ /(^|[{;])[ \t]*var[ \t]+[A-Za-z_][A-Za-z0-9_]*[ \t]*=[ \t]*$/ && post ~ /^[ \t]*;/) {
+                        vn = pre; sub(/^.*var[ \t]+/, "", vn); sub(/[ \t]*=.*$/, "", vn)
+                        nv++; VN[nv] = vn; VA[nv] = "axis5"; VW[nv] = "syscall(" argtxt ") (a BOOL)"
+                    }
+                    else bad("axis5", "kernel32 BOOL from syscall(" argtxt ", ...) tested or returned unmasked — only eax is defined")
+                }
+            }
+            if (FILENAME ~ /async_win\.cyr$/ && nvv == 61477 && cp != 0) {
+                pre = substr(s, 1, st - 1); post = substr(s, cp + 1)
+                if (pre ~ /(^|[{;])[ \t]*$/ && post ~ /^[ \t]*;/) bad("axis5", "the bind (0xF025) result is discarded — a failed bind must fail the task")
+            }
             if ((nvv "") in INTSET) {
                 ni++
                 pre = substr(s, 1, st - 1)
@@ -178,7 +210,7 @@ scan() {
             else if (!H[h, "z"]) printf "BAD axis4 %s: %s does not map an error of 0 to -1 (`if (e == 0) { return 0 - 1; }`)\n", HS[h], h
             else nh++
         }
-        printf "COUNT %d %d %d %d\n", nw, ni, nc, nh
+        printf "COUNT %d %d %d %d %d\n", nw, ni, nc, nh, nb
     }' "$@"
 }
 
@@ -209,9 +241,19 @@ fn s1(x): i64 {
 EOF
 cp "$D/fx/clean.cyr" "$D/fx/async_win.cyr"
 printf 'fn c(f): i64 {\n    var cr = callptr(f, 0);\n    if ((cr & 0xFFFFFFFF) == 0) { return 1; }\n    return 0;\n}\n' >> "$D/fx/async_win.cyr"
+cat >> "$D/fx/async_win.cyr" <<'EOF'
+fn t(x, d): i64 {
+    if ((syscall(0xF02F, x, d, 0, 0, 0, 0) & 0xFFFFFFFF) == 0) { return 0 - 1; }
+    syscall(0xF02D, d, x, 0, 0, 0, 8);
+    var ok = syscall(61445, d);
+    if ((ok & 0xFFFFFFFF) == 0) { return 0; }
+    if ((syscall(0xF025, x, d, 16) & 0xFFFFFFFF) != 0) { return 0 - 1; }
+    return 1;
+}
+EOF
 out=$(scan "$D/fx/async_win.cyr")
 if printf '%s\n' "$out" | grep -q '^BAD'; then bad "self: the clean fixture is flagged: $(printf '%s' "$out" | grep '^BAD' | head -3 | tr '\n' ' ')"
-elif ! printf '%s\n' "$out" | grep -q '^COUNT 2 5 1 1$'; then bad "self: the clean fixture counts read '$(printf '%s' "$out" | tail -1)', want 'COUNT 2 5 1 1'"
+elif ! printf '%s\n' "$out" | grep -q '^COUNT 2 6 1 1 3$'; then bad "self: the clean fixture counts read '$(printf '%s' "$out" | tail -1)', want 'COUNT 2 6 1 1 3'"
 else ok; fi
 
 mutant() {  # $1 = expected axis, $2 = sed expression, $3 = label
@@ -229,6 +271,9 @@ mutant axis2 's/if ((syscall(0xF027, \(.*\)) \& 0xFFFFFFFF) != 0)/if (syscall(0x
 mutant axis2 's/return _net_wsa_rc(syscall(0xF025, x, 0, 16));/return syscall(0xF025, x, 0, 16);/' "returned raw"
 mutant axis3 's/if ((cr \& 0xFFFFFFFF) == 0)/if (cr == 0)/'                        "callptr BOOL unmasked"
 mutant axis4 '/if (e == 0) { return 0 - 1; }/d'                                   "helper may return 0"
+mutant axis5 's/if ((syscall(0xF02F, x, d, 0, 0, 0, 0) \& 0xFFFFFFFF) == 0)/if (syscall(0xF02F, x, d, 0, 0, 0, 0) == 0)/' "SetWaitableTimer BOOL unmasked"
+mutant axis5 's/if ((ok \& 0xFFFFFFFF) == 0) { return 0; }/if (ok == 0) { return 0; }/' "CreateProcessW BOOL var unmasked"
+mutant axis5 's/if ((syscall(0xF025, x, d, 16) \& 0xFFFFFFFF) != 0) { return 0 - 1; }/syscall(0xF025, x, d, 16);/' "bind discarded"
 
 # ── the tree ───────────────────────────────────────────────────────────────────────────────────
 FILES=$(find lib -name '*.cyr' | LC_ALL=C sort)
@@ -241,17 +286,18 @@ if [ -n "$bads" ]; then
     fail=$((fail + $(printf '%s\n' "$bads" | wc -l)))
 else ok; fi
 set -- $(printf '%s\n' "$out" | grep '^COUNT' | tail -1)
-nw=${2:-0}; ni=${3:-0}; nc=${4:-0}; nh=${5:-0}
+nw=${2:-0}; ni=${3:-0}; nc=${4:-0}; nh=${5:-0}; nb=${6:-0}
 nfiles=$(grep -l -e '0xF024' -e '61476' $FILES 2>/dev/null | wc -l)
 [ "$nw" -ge 7 ]  && ok || bad "floor: $nw WSAGetLastError sites in lib/ (want >= 7) — the scan went blind or a site moved"
 [ "$ni" -ge 25 ] && ok || bad "floor: $ni int-reroute sites in lib/ (want >= 25)"
 [ "$nc" -ge 2 ]  && ok || bad "floor: $nc async_win callptr sites (want >= 2: ConnectEx, AcceptEx)"
-[ "$nh" -eq 3 ]  && ok || bad "axis 4: $nh of the 3 never-zero helpers (_sw_wsa_err, _net_wsa_err, _tn_win_sockerr) found and correct"
+[ "$nh" -eq 4 ]  && ok || bad "axis 4: $nh of the 4 never-zero helpers (_sw_wsa_err, _net_wsa_err, _tn_win_sockerr, _asw_wsa_err) found and correct"
 [ "$nfiles" -ge 3 ] && ok || bad "floor: $nfiles files carry WSAGetLastError (want >= 3)"
+[ "$nb" -ge 6 ]  && ok || bad "floor: $nb async_win kernel32 BOOL sites (want >= 6: two SetWaitableTimer, three RegisterWait, CreateProcessW)"
 
 if [ "$fail" -ne 0 ]; then
     echo "FAIL: pe_wsa_lasterr_masked: $fail failed, $pass passed"
     exit 1
 fi
-echo "PASS: pe_wsa_lasterr_masked ($pass checks; $nw WSAGetLastError sites, $ni int-reroute sites, $nc callptr BOOLs, $nh helpers)"
+echo "PASS: pe_wsa_lasterr_masked ($pass checks; $nw WSAGetLastError sites, $ni int-reroute sites, $nc callptr BOOLs, $nh helpers, $nb kernel32 BOOLs)"
 exit 0

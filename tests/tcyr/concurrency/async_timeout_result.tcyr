@@ -14,8 +14,10 @@
 # The fix (lib/async.cyr, CHANGELOG [6.6.10]) checks pipe, fork and epoll, and accepts a result
 # only on an exact 8-byte read; everything else reaps the child and returns -1.
 #
-# Rows (Linux x86_64 + aarch64 only — every other target's async_timeout runs the body inline,
-# so the rows print a named SKIP there):
+# Rows (Linux x86_64 + aarch64 only — they need rlimits, /bin/sh and pidfds; every other target
+# prints a named SKIP and checks its own contract instead: macOS and agnos fork the body too
+# (42 comes back), Windows REFUSES async_timeout (-1, the body never runs — 6.6.10). Until 6.6.17
+# that row asserted 42 on every non-Linux target, so on cass it failed and the file exited 1.):
 #   ok        a body returning 42                 -> 42
 #   early     a body that calls exit(3)            -> -1   (was the previous call's 42 / junk)
 #   killed    a body that SIGKILLs itself          -> -1   (no core dump, so no HUP delay)
@@ -53,6 +55,11 @@ include "lib/async.cyr"
 include "lib/assert.cyr"
 
 fn _at_ok(arg): i64 { return arg + 40; }
+var _at_ran = 0;
+fn _at_mark(arg): i64 {
+    _at_ran = 1;
+    return arg;
+}
 fn _at_early(arg): i64 { sys_exit(3); return 7; }
 
 #ifdef CYRIUS_TARGET_LINUX
@@ -362,8 +369,14 @@ fn main(): i64 {
     _at_forker_rows();
     #endif
     #ifndef CYRIUS_TARGET_LINUX
-    println("    SKIP: async_timeout forks only on Linux; this target runs the body inline (no pipe, no fork, no stale result to read)");
-    assert_eq(async_timeout(&_at_ok, 2, 1000), 42, "inline: a body returning 42 gives 42");
+    println("    SKIP: the Linux rows (rlimits, /bin/sh, pidfd) — this target checks its own async_timeout contract");
+    #ifdef CYRIUS_TARGET_WIN
+    assert_eq(async_timeout(&_at_mark, 7, 1000), 0 - 1, "Windows: async_timeout is refused (-1; no fork to bound)");
+    assert_eq(_at_ran, 0, "  ... and the body never ran");
+    #endif
+    #ifndef CYRIUS_TARGET_WIN
+    assert_eq(async_timeout(&_at_ok, 2, 1000), 42, "a forked body returning 42 gives 42");
+    #endif
     #endif
     return assert_summary();
 }

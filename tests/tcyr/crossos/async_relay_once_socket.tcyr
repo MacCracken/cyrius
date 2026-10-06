@@ -1,0 +1,163 @@
+# async_relay_once_socket.tcyr — 6.6.17: async_relay_once relays between SOCKETS on every target,
+# and still between a socket and a file.
+#
+# ⛔ THE DEFECT (Windows). lib/async_win.cyr's async_relay_once read with sys_read and wrote with
+# sys_write, i.e. ReadFile / WriteFile, on a Winsock SOCKET. Measured on cass (6.6.16) over two
+# loopback pairs with five bytes waiting: the read returned 0 — a false EOF — and nothing was
+# relayed; the epoll / kqueue / agnos arms never had the problem (a socket is an fd there). The
+# Windows arm now reads with recv and writes with send (reroutes 0xF048 / 0xF047), falling back to
+# ReadFile / WriteFile when Winsock answers WSAENOTSOCK, so a file or pipe HANDLE still relays.
+#
+# ROWS (every target but agnos, which has no host in the release gate — a named SKIP there):
+#   socket -> socket   5 bytes waiting on A's server end are relayed into B's client end: 5, and
+#                      B's server end reads "hello" (6.6.16 on cass: 0, nothing relayed)
+#   EOF                A's client end closed: the relay answers 0 (a clean EOF), not an error
+#   file -> socket     a file's 6 bytes relayed into a socket: 6, and the peer reads them
+#   socket -> file     a socket's 4 bytes relayed into a file: 4, and the file holds them
+# Cross-OS because the socket/handle split is a Windows-only distinction.
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/str.cyr"
+include "lib/vec.cyr"
+include "lib/tagged.cyr"
+include "lib/fmt.cyr"
+include "lib/syscalls.cyr"
+include "lib/io.cyr"
+include "lib/net.cyr"
+include "lib/chrono.cyr"
+include "lib/fnptr.cyr"
+include "lib/atomic.cyr"
+include "lib/async.cyr"
+
+#ifndef CYRIUS_TARGET_AGNOS
+# The port (host order) socket `fd` is bound to, or -1.
+fn _ar_port(fd): i64 {
+    var sa[16];
+    var sl[8];
+    store64(&sl, 16);
+    if (sys_getsockname(fd, &sa, &sl) != 0) { return 0 - 1; }
+    return ((load8(&sa + 2) & 0xFF) << 8) | (load8(&sa + 3) & 0xFF);
+}
+
+var _ar_afd = 0 - 1;   # the accepted (server) end of the last pair
+
+# A connected loopback TCP pair: the client fd (the accepted end in _ar_afd), or -1.
+fn _ar_pair(): i64 {
+    var lt, lfd = tcp_socket();
+    if (is_err_result(lt) == 1) { return 0 - 1; }
+    var bt, bv = sock_bind(lfd, INADDR_LOOPBACK(), 0);
+    if (is_err_result(bt) == 1) { sock_close(lfd); return 0 - 1; }
+    var st, sv = sock_listen(lfd, 4);
+    if (is_err_result(st) == 1) { sock_close(lfd); return 0 - 1; }
+    var port = _ar_port(lfd);
+    if (port <= 0) { sock_close(lfd); return 0 - 1; }
+    var ct, cfd = tcp_socket();
+    if (is_err_result(ct) == 1) { sock_close(lfd); return 0 - 1; }
+    var kt, kv = sock_connect(cfd, INADDR_LOOPBACK(), port);
+    if (is_err_result(kt) == 1) { sock_close(cfd); sock_close(lfd); return 0 - 1; }
+    var at, afd = sock_accept(lfd);
+    sock_close(lfd);
+    if (is_err_result(at) == 1) { sock_close(cfd); return 0 - 1; }
+    _ar_afd = afd;
+    # Every read in this file is bounded: a relay that moves nothing must fail a row, not hang it.
+    sock_set_recv_timeout(cfd, 3, 0);
+    sock_set_recv_timeout(afd, 3, 0);
+    return cfd;
+}
+
+# Read exactly `n` bytes from socket `fd` into `buf` (several recvs if need be): the count read.
+fn _ar_recv_n(fd, buf, n): i64 {
+    var got = 0;
+    var tries = 0;
+    while (got < n && tries < 50) {
+        var rt, rv = sock_recv(fd, buf + got, n - got);
+        if (is_err_result(rt) == 1) { return got; }
+        if (rv == 0) { return got; }
+        got = got + rv;
+        tries = tries + 1;
+    }
+    return got;
+}
+
+fn test_socket_relay(): i64 {
+    test_group("async_relay_once between two sockets (6.6.16 on Windows: a false EOF, nothing relayed)");
+    var rt = async_new();
+    assert_neq(rt, 0, "an async runtime");
+    var ca = _ar_pair();
+    var sa = _ar_afd;
+    var cb = _ar_pair();
+    var sb = _ar_afd;
+    assert_eq(ca >= 0, 1, "loopback pair A");
+    assert_eq(cb >= 0, 1, "loopback pair B");
+    if (ca < 0 || cb < 0) { return 0; }
+    assert_eq(sock_send_all(ca, "hello", 5), 5, "5 bytes sent on A's client end");
+    sleep_ms(50);
+    var buf = alloc(64);
+    var n = async_relay_once(rt, sa, cb, buf, 64);
+    assert_eq(n, 5, "socket -> socket: all 5 bytes relayed");
+    var rb = alloc(64);
+    assert_eq(_ar_recv_n(sb, rb, 5), 5, "  and B's server end reads 5 bytes");
+    assert_eq(memeq(rb, "hello", 5), 1, "  ... 'hello'");
+    sock_close(ca);
+    sleep_ms(50);
+    assert_eq(async_relay_once(rt, sa, cb, buf, 64), 0, "A's client end closed: the relay answers 0 (EOF)");
+    sock_close(sa);
+    sock_close(cb);
+    sock_close(sb);
+    return 0;
+}
+
+fn test_file_relay(): i64 {
+    test_group("async_relay_once between a file and a socket, both ways");
+    var rt = async_new();
+    var path = test_scratch("cyrius_ar_relay");
+    xunlink(path);
+    assert_eq(file_write_all(path, "relay!", 6), 6, "a 6-byte file");
+    var c = _ar_pair();
+    var s = _ar_afd;
+    assert_eq(c >= 0, 1, "a loopback pair");
+    if (c < 0) { return 0; }
+    var fd = file_open(path, 0, 0);
+    assert_eq(fd >= 0, 1, "the file opens");
+    var buf = alloc(64);
+    assert_eq(async_relay_once(rt, fd, c, buf, 64), 6, "file -> socket: 6 bytes relayed");
+    file_close(fd);
+    var rb = alloc(64);
+    assert_eq(_ar_recv_n(s, rb, 6), 6, "  and the peer reads 6 bytes");
+    assert_eq(memeq(rb, "relay!", 6), 1, "  ... 'relay!'");
+    assert_eq(sock_send_all(s, "back", 4), 4, "4 bytes sent the other way");
+    sleep_ms(50);
+    var out = test_scratch("cyrius_ar_out");
+    xunlink(out);
+    var wfd = file_open(out, 577, 420);           # O_WRONLY | O_CREAT | O_TRUNC, 0644
+    assert_eq(wfd >= 0, 1, "an output file opens");
+    assert_eq(async_relay_once(rt, c, wfd, buf, 64), 4, "socket -> file: 4 bytes relayed");
+    file_close(wfd);
+    var fb = alloc(64);
+    assert_eq(file_read_all(out, fb, 64), 4, "  and the file holds 4 bytes");
+    assert_eq(memeq(fb, "back", 4), 1, "  ... 'back'");
+    sock_close(c);
+    sock_close(s);
+    xunlink(path);
+    xunlink(out);
+    return 0;
+}
+#endif
+
+fn main(): i64 {
+    alloc_init();
+    #ifdef CYRIUS_TARGET_AGNOS
+    test_group("agnos: SKIP — no host in the release gate runs this target");
+    assert(1 == 1, "agnos: named SKIP");
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
+    test_socket_relay();
+    test_file_relay();
+    #endif
+    var r = assert_summary();
+    return r;
+}
+
+var ec = main();
+syscall(60, ec);
