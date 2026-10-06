@@ -328,7 +328,7 @@ done
 # so every fold compiles alone) the counts were linux 84, agnos 85, PE 84, Mach-O 85, cx 72,
 # aarch64 83 — eleven above the 6.6.11 floors (73 74 73 74 69 72), which nobody had raised;
 # R2's log / ws / ws_server add 3 on each strict target (cx unchanged: they stay outside it).
-FLOORS="linux:87 agnos:88 pe:87 macho:88 cx:72 aarch64:86"
+FLOORS="linux:87 agnos:88 pe:87 macho:88 cx:72 aarch64:87"
 x=0; summary=""
 for tf in $FLOORS; do
     t=${tf%%:*}; fl=${tf#*:}
