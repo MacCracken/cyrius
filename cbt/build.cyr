@@ -2,6 +2,53 @@
 # Core operations
 # ================================================================
 
+# 6.6.20 — A FAILED FORK IS A NAMED FAILURE, AND A WAIT IS DECODED ONLY WHEN IT ANSWERED.
+# `sys_fork` answers -errno when it fails (a process limit — `ulimit -u`, a cgroup pids.max —
+# or memory), and every spawner here went straight on to `sys_waitpid(-errno, ...)`: wait4 on
+# a process GROUP, which fails and writes nothing, followed by a decode of a status slot that
+# nothing wrote (locals are not zeroed). The stack decided the verdict. In compile() it read as
+# "exited 0", so `cyrius build` under `ulimit -u 1` printed `OK (0 bytes)`, exited 0 and renamed
+# its empty write-probe over a working binary; `cyrius fmt --check` returned 184. The same
+# unwritten slot is decoded when the wait itself fails (an inherited SIGCHLD=SIG_IGN makes the
+# kernel reap the child and wait4 answer ECHILD), so both go through here now. CHANGELOG [6.6.20]
+
+# "error: could not start <what>: fork failed (error N)". Answers 0.
+fn _cbt_fork_failed(what, pid): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "could not start ");
+    str_builder_add_cstr(sb, what);
+    str_builder_add_cstr(sb, ": fork failed (error ");
+    str_builder_add_int(sb, 0 - pid);
+    str_builder_add_cstr(sb, ")");
+    # EAGAIN is 11 on Linux and 35 on Darwin; neither is a fork errno on the other.
+    if (pid == 0 - 11 || pid == 0 - 35) {
+        str_builder_add_cstr(sb, " — the process limit is reached (ulimit -u, cgroup pids.max)");
+    }
+    _err(str_data(str_builder_build(sb)));
+    return 0;
+}
+
+# Reap the forked child `pid` and answer its raw wait status, or -1 after naming why there is
+# none: the slot is zeroed first, an EINTR is retried, and the status is read only when wait4
+# answered `pid` itself.
+fn _cbt_wait_status(pid, what): i64 {
+    var st[8];
+    store64(&st, 0);
+    var w = sys_waitpid(pid, &st, 0);
+    while (w == 0 - 4) { w = sys_waitpid(pid, &st, 0); }
+    if (w == pid) { return load32(&st); }
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "could not read the exit status of ");
+    str_builder_add_cstr(sb, what);
+    str_builder_add_cstr(sb, ": wait failed (error ");
+    str_builder_add_int(sb, 0 - w);
+    str_builder_add_cstr(sb, ")");
+    # ECHILD is 10 on Linux and Darwin alike.
+    if (w == 0 - 10) { str_builder_add_cstr(sb, " — is SIGCHLD ignored in this environment?"); }
+    _err(str_data(str_builder_build(sb)));
+    return 0 - 1;
+}
+
 # v6.1.12: `cyrius build --target=js <source.tsx> <output.js>` — surface cycc's
 # `--emit-js` (v6.1.11 TS/TSX → browser-JS emitter) through the CLI. Distinct
 # from the native compile path: cycc reads the source as a PATH arg and writes
@@ -42,6 +89,7 @@ fn _emit_js(source, output): i64 {
     var tmp_out = str_data(str_builder_build(tmp_out_sb));
     sys_unlink(tmp_out);
     var pid = sys_fork();
+    if (pid < 0) { _cbt_fork_failed("the compiler (--emit-js)", pid); return 1; }   # 6.6.20
     if (pid == 0) {
         var ofd = sys_open(tmp_out, O_WRONLY | O_CREAT | O_TRUNC, 0x1ED);
         if (ofd < 0) { sys_exit(1); }
@@ -57,10 +105,8 @@ fn _emit_js(source, output): i64 {
         sys_execve(cc, &argv, _envp);
         sys_exit(127);
     }
-    var status_buf[1];
-    sys_waitpid(pid, &status_buf, 0);
-    var status = load32(&status_buf);
-    if (WIFEXITED(status) == 1) {
+    var status = _cbt_wait_status(pid, "the compiler (--emit-js)");   # 6.6.20
+    if (status >= 0 && WIFEXITED(status) == 1) {
         if (WEXITSTATUS(status) == 0) {
             sys_unlink(output);
             # v6.6.6 (bite 24a) — `file_rename`, CHECKED. Was a raw `syscall(82, …)` with
@@ -116,6 +162,7 @@ fn _ensure_cc_cx(): i64 {
     return 1;
     #endif
     var pid = sys_fork();
+    if (pid < 0) { _cbt_fork_failed("the cx compiler build (cycc_cx)", pid); return 1; }   # 6.6.20
     if (pid == 0) {
         var sfd = sys_open("src/main_cx.cyr", O_RDONLY, 0);
         if (sfd < 0) { sys_exit(1); }
@@ -131,10 +178,8 @@ fn _ensure_cc_cx(): i64 {
         sys_execve(cc, &argv, _envp);
         sys_exit(127);
     }
-    var status_buf[1];
-    sys_waitpid(pid, &status_buf, 0);
-    var status = load32(&status_buf);
-    if (WIFEXITED(status) == 1) {
+    var status = _cbt_wait_status(pid, "the cx compiler build (cycc_cx)");   # 6.6.20
+    if (status >= 0 && WIFEXITED(status) == 1) {
         if (WEXITSTATUS(status) == 0) {
             sys_chmod(out, 0x1ED);
             _cc_cx = out;
@@ -171,6 +216,7 @@ fn _emit_cx(source, output): i64 {
     return 1;
     #endif
     var pid = sys_fork();
+    if (pid < 0) { _cbt_fork_failed("the cx compiler (cycc_cx)", pid); return 1; }   # 6.6.20
     if (pid == 0) {
         var sfd = sys_open(source, O_RDONLY, 0);
         if (sfd < 0) { sys_exit(1); }
@@ -186,10 +232,8 @@ fn _emit_cx(source, output): i64 {
         sys_execve(cc, &argv, _envp);
         sys_exit(127);
     }
-    var status_buf[1];
-    sys_waitpid(pid, &status_buf, 0);
-    var status = load32(&status_buf);
-    if (WIFEXITED(status) == 1) {
+    var status = _cbt_wait_status(pid, "the cx compiler (cycc_cx)");   # 6.6.20
+    if (status >= 0 && WIFEXITED(status) == 1) {
         if (WEXITSTATUS(status) == 0) {
             sys_unlink(output);
             # v6.6.6 (bite 24a) — `file_rename`, CHECKED; same defect and same fix as
@@ -234,6 +278,7 @@ fn _ensure_cxvm(): i64 {
     return 1;
     #endif
     var pid = sys_fork();
+    if (pid < 0) { _cbt_fork_failed("the cxvm build", pid); return 1; }   # 6.6.20
     if (pid == 0) {
         var sfd = sys_open("programs/cxvm.cyr", O_RDONLY, 0);
         if (sfd < 0) { sys_exit(1); }
@@ -249,10 +294,8 @@ fn _ensure_cxvm(): i64 {
         sys_execve(cc, &argv, _envp);
         sys_exit(127);
     }
-    var status_buf[1];
-    sys_waitpid(pid, &status_buf, 0);
-    var status = load32(&status_buf);
-    if (WIFEXITED(status) == 1) {
+    var status = _cbt_wait_status(pid, "the cxvm build");   # 6.6.20
+    if (status >= 0 && WIFEXITED(status) == 1) {
         if (WEXITSTATUS(status) == 0) {
             sys_chmod(out, 0x1ED);
             _cxvm = out;
@@ -296,6 +339,7 @@ fn run_cx(cyx_path): i64 {
     return _win_run_cx(vm, cyx_path);
     #endif
     var pid = sys_fork();
+    if (pid < 0) { _cbt_fork_failed(vm, pid); return 127; }   # 6.6.20 — as run_binary_timed
     if (pid == 0) {
         var fd = sys_open(cyx_path, O_RDONLY, 0);
         if (fd < 0) { sys_exit(1); }
@@ -310,9 +354,8 @@ fn run_cx(cyx_path): i64 {
         sys_execve(vm, av, _envp);
         sys_exit(127);
     }
-    var status_buf[1];
-    sys_waitpid(pid, &status_buf, 0);
-    var status = load32(&status_buf);
+    var status = _cbt_wait_status(pid, vm);   # 6.6.20
+    if (status < 0) { return 1; }
     if (WIFEXITED(status) == 1) { return WEXITSTATUS(status); }
     if (WIFSIGNALED(status) == 1) { return 128 + WTERMSIG(status); }
     return 1;
@@ -1436,8 +1479,8 @@ fn compile(source, output): i64 {
     # and the pre-fork output-probe bail-out is a fourth that was leaking: it returns
     # above the fork, so the post-waitpid unlink is unreachable from it. When adding an
     # early return anywhere after this point, add the unlink with it — the sites are
-    # the `#ifdef CYRIUS_TARGET_WIN` block, the `probe_fd < 0` block, and the one above
-    # the success/failure split.
+    # the `#ifdef CYRIUS_TARGET_WIN` block, the `probe_fd < 0` block, the failed-fork
+    # block (6.6.20), and the one above the success/failure split.
     # (The directory itself is left to `_cbt_tmpdir_cleanup` at exit — one place, all
     # targets, PE included since 6.6.6's RemoveDirectoryW reroute. An empty 0700
     # directory costs an inode; the 2.8 GB was the files.)
@@ -1523,6 +1566,17 @@ fn compile(source, output): i64 {
     if (_baremetal_target == 1) { _section_base_env_ptr = _sections_base_env(); }
     var own_err = _cc_own_err_begin();
     var pid = sys_fork();
+    if (pid < 0) {
+        # 6.6.20 — no child, so no status: say so, and leave nothing behind — the stderr capture
+        # (resetting `_cc_stderr_to` for the next compile in this process), the preprocessed
+        # source, and the write-probe's EMPTY `tmp_out`, which the old fall-through renamed over
+        # `output`. `_cc_last_exit` stays -1. See `_cbt_fork_failed`. CHANGELOG [6.6.20]
+        _cbt_fork_failed("the compiler", pid);
+        _cc_own_err_end(own_err, 1);
+        if (tmp_src != 0) { sys_unlink(tmp_src); }
+        sys_unlink(tmp_out);
+        return 1;
+    }
     if (pid == 0) {
         var sfd = sys_open(actual_source, O_RDONLY, 0);
         if (sfd < 0) { sys_exit(1); }
@@ -1559,21 +1613,20 @@ fn compile(source, output): i64 {
         sys_execve(cc, cc_argv, _cc_child_envp(inj, strip));
         sys_exit(127);
     }
-    var status_buf[1];
-    sys_waitpid(pid, &status_buf, 0);
-    var own_st = load32(&status_buf);
+    # 6.6.20: -1 when the wait could not be read (named there) — then this is a failure, and
+    # `_cc_last_exit` stays -1, whatever the child may have written.
+    var status = _cbt_wait_status(pid, "the compiler");
     var own_rc = 1;
-    if (WIFEXITED(own_st) == 1) { own_rc = WEXITSTATUS(own_st); }
+    if (status >= 0 && WIFEXITED(status) == 1) { own_rc = WEXITSTATUS(status); }
     _cc_own_err_end(own_err, own_rc);
     # The compiler child has been reaped, so it is done with the preprocessed source.
     # Unlink here, ABOVE the success/failure split, so neither return path can skip it.
     if (tmp_src != 0) { sys_unlink(tmp_src); }
-    var status = load32(&status_buf);
     # v6.6.6 (bite 24 review) — record the child's REAL status; see `_cc_last_exit`.
     # Left at -1 when the child was signalled, because then there is no exit status to
     # report and a caller must not invent one.
-    if (WIFEXITED(status) == 1) { _cc_last_exit = WEXITSTATUS(status); }
-    if (WIFEXITED(status) == 1) {
+    if (status >= 0 && WIFEXITED(status) == 1) { _cc_last_exit = WEXITSTATUS(status); }
+    if (status >= 0 && WIFEXITED(status) == 1) {
         if (WEXITSTATUS(status) == 0) {
             # Atomic rename: tmp_out → output. Old `output` (if any)
             # is replaced atomically; on rename failure, neither is
@@ -1610,7 +1663,7 @@ fn compile(source, output): i64 {
     # Compile failed: unlink the partial tmp output. The original
     # `output` (if any) is preserved untouched.
     sys_unlink(tmp_out);
-    if (_verbose == 1) {
+    if (_verbose == 1 && status >= 0) {
         sys_write(STDERR_FD, "[verbose] compile failed (exit ", 31);
         var ebuf[24];
         var elen = fmt_int_buf(WEXITSTATUS(status), &ebuf);
@@ -1631,6 +1684,7 @@ fn sys_system(cmd): i64 {
     #endif
     var argv[40];   # N BYTES per CLAUDE.md buffer contract: 4 ptrs need 32 B
     var pid = sys_fork();
+    if (pid < 0) { _cbt_fork_failed("/bin/sh", pid); return 127; }   # 6.6.20
     if (pid == 0) {
         store64(&argv, "/bin/sh");
         store64(&argv + 8, "-c");
@@ -1639,10 +1693,8 @@ fn sys_system(cmd): i64 {
         sys_execve("/bin/sh", &argv, _envp);
         sys_exit(127);
     }
-    var status_buf[1];
-    sys_waitpid(pid, &status_buf, 0);
-    var status = load32(&status_buf);
-    if (WIFEXITED(status) == 1) { return WEXITSTATUS(status); }
+    var status = _cbt_wait_status(pid, "/bin/sh");   # 6.6.20
+    if (status >= 0 && WIFEXITED(status) == 1) { return WEXITSTATUS(status); }
     return 1;
 }
 
@@ -1863,8 +1915,8 @@ fn _run_wait_timed(pid, timeout_ms): i64 {
     #ifndef CYRIUS_TARGET_WIN
     var status_buf[1];
     if (timeout_ms <= 0) {
-        sys_waitpid(pid, &status_buf, 0);
-        var status0 = load32(&status_buf);
+        var status0 = _cbt_wait_status(pid, "the program");   # 6.6.20: -1 = no status to read
+        if (status0 < 0) { return 1; }
         if (WIFEXITED(status0) == 1) { return WEXITSTATUS(status0); }
         if (WIFSIGNALED(status0) == 1) { return 128 + WTERMSIG(status0); }
         return 1;
@@ -2502,6 +2554,7 @@ fn run_tool_vec(tool, args): i64 {
     #endif
     #ifndef CYRIUS_TARGET_WIN
     var pid = sys_fork();
+    if (pid < 0) { _cbt_fork_failed(tool, pid); return 127; }   # 6.6.20
     if (pid == 0) {
         var n = vec_len(args);
         var av = alloc((n + 2) * 8);
@@ -2515,9 +2568,8 @@ fn run_tool_vec(tool, args): i64 {
         sys_execve(tool, av, _envp);
         sys_exit(127);
     }
-    var status_buf[1];
-    sys_waitpid(pid, &status_buf, 0);
-    var status = load32(&status_buf);
+    var status = _cbt_wait_status(pid, tool);   # 6.6.20
+    if (status < 0) { return 1; }
     if (WIFEXITED(status) == 1) { return WEXITSTATUS(status); }
     if (WIFSIGNALED(status) == 1) { return 128 + WTERMSIG(status); }
     return 1;
@@ -2595,6 +2647,7 @@ fn _co_run_sh(cmd): i64 {
     #endif
     var envp = _envp;
     var pid = sys_fork();
+    if (pid < 0) { _cbt_fork_failed("/bin/sh", pid); return 127; }   # 6.6.20
     if (pid == 0) {
         var argv[32];                         # 4 char* slots
         store64(&argv, "/bin/sh");
@@ -2604,10 +2657,8 @@ fn _co_run_sh(cmd): i64 {
         sys_execve("/bin/sh", &argv, envp);
         sys_exit(127);
     }
-    var st[8];
-    sys_waitpid(pid, &st, 0);
-    var status = load32(&st);
-    if (WIFEXITED(status) == 1) { return WEXITSTATUS(status); }
+    var status = _cbt_wait_status(pid, "/bin/sh");   # 6.6.20
+    if (status >= 0 && WIFEXITED(status) == 1) { return WEXITSTATUS(status); }
     return 1;
 }
 

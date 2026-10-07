@@ -2725,6 +2725,12 @@ fn cmd_capacity(source, check_mode, json_mode): i64 {
     #endif
     #ifndef CYRIUS_TARGET_WIN
     var pid = sys_fork();
+    if (pid < 0) {
+        # 6.6.20: no child, no status — see `_cbt_fork_failed`. CHANGELOG [6.6.20]
+        _cbt_fork_failed("the compiler for capacity stats", pid);
+        if (cap_source != source) { sys_unlink(cap_source); }
+        return 1;
+    }
     if (pid == 0) {
         var sfd = sys_open(cap_source, O_RDONLY, 0);
         if (sfd < 0) { sys_exit(1); }
@@ -2755,15 +2761,13 @@ fn cmd_capacity(source, check_mode, json_mode): i64 {
         sys_execve("/bin/sh", &sh_argv, _envp);
         sys_exit(127);
     }
-    var status_buf[8];
-    sys_waitpid(pid, &status_buf, 0);
+    var cap_status = _cbt_wait_status(pid, "the compiler for capacity stats");   # 6.6.20
     # v6.5.19: the second _materialize_source caller, same leak as compile()'s —
     # the preprocessed temp was never removed. Same "we made it" test (the fn returns
     # `source` itself when no prepend was needed).
     if (cap_source != source) { sys_unlink(cap_source); }
     cap_rc = 1;
-    var cap_status = load32(&status_buf);
-    if (WIFEXITED(cap_status) == 1) { cap_rc = WEXITSTATUS(cap_status); }
+    if (cap_status >= 0 && WIFEXITED(cap_status) == 1) { cap_rc = WEXITSTATUS(cap_status); }
     #endif
     var cap_failed = 1;
     if (cap_rc == 0) { cap_failed = 0; }

@@ -1915,6 +1915,13 @@ _chk_gate "$ROOT/tests/gates/toolchain/build_config_windows_arm.sh"
 # helpers run for all 8 flag combinations (the old fixed argv[32] held 4 slots for 5 writers).
 _chk_gate "$ROOT/tests/gates/toolchain/compile_flag_list.sh"
 
+# 6.6.20 (CBTB-03) — a failed fork is a NAMED failure in every forking verb and in the LSP: under
+# `ulimit -u 1` build keeps the old binary and leaves no temp (it used to print `OK (0 bytes)`, exit
+# 0 and rename its empty write-probe over the binary), and `hooks install` no longer reports a hook
+# it never installed. Derived half: every sys_fork in cbt/ + cyrius-lsp is checked and no
+# sys_waitpid result is discarded. SKIP by name where the limit is not enforced (root).
+_chk_gate "$ROOT/tests/gates/toolchain/cli_fork_failure_named.sh"
+
 # 6.6.17 (P1) — bare `cyrius test` runs [build] test (file / dir / list) first, then tests/, each
 # file once; a missing target is a named failure; absent key = unchanged; an argument wins.
 _chk_gate "$ROOT/tests/gates/toolchain/test_runs_build_test.sh"
