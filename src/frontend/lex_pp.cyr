@@ -3729,23 +3729,25 @@ fn PP_DEFINED(S, src_base, pos): i64 {
 # 0 (fail-closed: block skipped). Used by the v5.4.19 `#ifplat`
 # directive; the comparison hashes are computed at call time from
 # the same literal strings that compiler bootstrap would register.
-fn PP_IFPLAT_MATCH(S, pos): i64 {
+# `base` is the buffer the directive sits in, as PP_DEFINED's `src_base`: S + _SRCB for
+# PP_PASS, PP_IFDEF_PASS's uncapped `tmp` (its S + _SRCB copy stops at 1 MiB). 6.6.20
+fn PP_IFPLAT_MATCH(S, base, pos): i64 {
     # Skip leading whitespace (spaces and tabs — 6.6.20, see PP_SEP)
-    pos = PP_SEP(S + _SRCB, pos);
+    pos = PP_SEP(base, pos);
     var target_hash = 0;
     # "x86" = 78 38 36 — 3 chars, must be followed by a terminator
-    if (load8(S + _SRCB + pos) == 120 && load8(S + _SRCB + pos + 1) == 56 && load8(S + _SRCB + pos + 2) == 54) {
-        var nc = load8(S + _SRCB + pos + 3);
+    if (load8(base + pos) == 120 && load8(base + pos + 1) == 56 && load8(base + pos + 2) == 54) {
+        var nc = load8(base + pos + 3);
         if (nc == 32 || nc == 9 || nc == 10 || nc == 13 || nc == 0) {
             target_hash = PP_HASH_CSTR("CYRIUS_ARCH_X86");
         }
     }
     # "aarch64" = 61 61 72 63 68 36 34 — 7 chars, must be followed by a terminator
     if (target_hash == 0) {
-        if (load8(S + _SRCB + pos) == 97 && load8(S + _SRCB + pos + 1) == 97 && load8(S + _SRCB + pos + 2) == 114
-          && load8(S + _SRCB + pos + 3) == 99 && load8(S + _SRCB + pos + 4) == 104
-          && load8(S + _SRCB + pos + 5) == 54 && load8(S + _SRCB + pos + 6) == 52) {
-            var nc = load8(S + _SRCB + pos + 7);
+        if (load8(base + pos) == 97 && load8(base + pos + 1) == 97 && load8(base + pos + 2) == 114
+          && load8(base + pos + 3) == 99 && load8(base + pos + 4) == 104
+          && load8(base + pos + 5) == 54 && load8(base + pos + 6) == 52) {
+            var nc = load8(base + pos + 7);
             if (nc == 32 || nc == 9 || nc == 10 || nc == 13 || nc == 0) {
                 target_hash = PP_HASH_CSTR("CYRIUS_ARCH_AARCH64");
             }
@@ -4094,7 +4096,7 @@ fn PP_PASS(S): i64 {
             if (handled == 0) { if (ISIFPLAT(S + _SRCB, dip, bl) == 1) {
                     var _s = 3;
                     if (skip_depth == 0) {
-                        if (PP_IFPLAT_MATCH(S, dip + 8) == 1) { _s = 0; }
+                        if (PP_IFPLAT_MATCH(S, S + _SRCB, dip + 8) == 1) { _s = 0; }
                         else { _s = 1; }
                     }
                     store8(S + 0x197F10 + pp_depth, _s);
@@ -4555,6 +4557,23 @@ fn PP_IFDEF_PASS(S): i64 {
                         if (_s != 0) { skip_depth = skip_depth + 1; }
                         ip = PP_SKIPLINE(tmp, ip, bl); op = _pp_a64_open(tmp, dip + 8, 1 * 8 + _s, pp_depth - 1, out, op); bol = 1; handled = 1;
                     } }
+                # #ifplat / #endplat in an INCLUDED file (6.6.20). This pass had no arm for
+                # either, so both were comments here: both arms of an included `#ifplat`
+                # compiled, and once a stray `#endif` became an error, an included
+                # `#ifplat x86` ... `#endif` (the guide's own spelling) was refused. Mirrors
+                # PP_PASS's arms, with `tmp` as the base (PP_IFPLAT_MATCH reads the uncapped
+                # buffer, as PP_DEFINED does). CHANGELOG [6.6.20]
+                if (handled == 0) { if (ISIFPLAT(tmp, dip, bl) == 1) {
+                        var _s = 3;
+                        if (skip_depth == 0) {
+                            if (PP_IFPLAT_MATCH(S, tmp, dip + 8) == 1) { _s = 0; }
+                            else { _s = 1; }
+                        }
+                        store8(S + 0x197F10 + pp_depth, _s);
+                        pp_depth = pp_depth + 1;
+                        if (_s != 0) { skip_depth = skip_depth + 1; }
+                        ip = PP_SKIPLINE(tmp, ip, bl); op = _pp_a64_open(tmp, dip + 8, 2 * 8 + _s, pp_depth - 1, out, op); bol = 1; handled = 1;
+                    } }
                 if (handled == 0) { if (ISIF(tmp, dip, bl) == 1) {
                         var _s = 3;
                         if (skip_depth == 0) {
@@ -4593,6 +4612,14 @@ fn PP_IFDEF_PASS(S): i64 {
                             if (_s != 0) { skip_depth = skip_depth - 1; }
                             pp_depth = pp_depth - 1;
                         } else { _pp_stray(S, tmp, dip, 2); }
+                        ip = PP_SKIPLINE(tmp, ip, bl); op = _pp_a64_close(S, 2, pp_depth, out, op); bol = 1; handled = 1;
+                    } }
+                if (handled == 0) { if (ISENDPLAT(tmp, dip, bl) == 1) {
+                        if (pp_depth > 0) {
+                            var _s = load8(S + 0x197F10 + pp_depth - 1);
+                            if (_s != 0) { skip_depth = skip_depth - 1; }
+                            pp_depth = pp_depth - 1;
+                        } else { _pp_stray(S, tmp, dip, 3); }
                         ip = PP_SKIPLINE(tmp, ip, bl); op = _pp_a64_close(S, 2, pp_depth, out, op); bol = 1; handled = 1;
                     } }
                 # v6.5.20 — line-exact, no marker; see the PP_PASS twin. This is the pass

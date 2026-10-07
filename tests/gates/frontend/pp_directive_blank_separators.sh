@@ -44,18 +44,33 @@
 # put back on the opener's file). An ecosystem survey (19,635 cyrius files under ~/Repos)
 # found no depth-0 stray and no block left open at end of file, so nothing real goes red.
 #
+# AND `#ifplat` / `#endplat` ARE DIRECTIVES IN AN INCLUDED FILE (rows f1-f3, e9, e10, g).
+# PP_IFDEF_PASS — the pass that reads included files — had no arm for either, so both were
+# comments there: both arms of an included `#ifplat aarch64` compiled on x86 (rc 0; a
+# conflicting definition only drew a duplicate-symbol warning), and once a stray `#endif`
+# became an error, an included `#ifplat x86` ... `#endif` — the guide's own spelling — was
+# REFUSED as "#endif without a matching #if". Rows f1-f3 are scored against their
+# `#ifdef CYRIUS_ARCH_*` / `#endif` twin (same exit, BYTE-IDENTICAL binary): f3 sits past the
+# first MiB of the stream, where PP_IFDEF_PASS's S + _SRCB copy ends, so PP_IFPLAT_MATCH must
+# read the uncapped buffer it is handed. An ecosystem survey found no included `#ifplat`.
+#
 # MUTATION LEDGER (2026-10-06, cycc 1,582,456 B; each applied to a scratch copy of src/ + lib/,
 # a compiler built from it with the good cycc, the gate run against it via CYRIUS_CC):
 #   N1 PP_SEP skips nothing (`return pos;`) → q7, q5, s1, s2 (their TWINS misread: the
 #      twin-exit anchor is what catches these), s4, g
 #   N2 PP_HASH's TAB terminator deleted → p1, p2, p3, p4, q7, q10, s3
 #   N3 ISIF's separator back to `!= 32` → q5
-#   N4 _pp_stray reports nothing → e1, e2, e3, e4, e7
-#   N5 _pp_unclosed reports nothing → e5, e6, e8
-#   N6 _pp_unclosed's marker restore skipped → e8 alone (the error names <source>, the
-#      file the stream had moved on to, instead of i8.cyr)
+#   N4 _pp_stray reports nothing → e1, e2, e3, e4, e7, e9
+#   N5 _pp_unclosed reports nothing → e5, e6, e8, e10
+#   N6 _pp_unclosed's marker restore skipped → e8, e10 (the error names <source>, the
+#      file the stream had moved on to, instead of the included file)
 #   N7 ISIF's lower-case-`d` refusal restored → s2
-#   e696746d's compiler → 24 of 25 rows FAIL (only the balanced guard g passes)
+#   P1 PP_IFDEF_PASS's PP_IFPLAT_MATCH reads S + _SRCB (the 1 MiB copy) → f3
+#   P2 PP_IFDEF_PASS's ISIFPLAT arm never taken → f1, f2, f3, e10, g
+#   P3 PP_IFDEF_PASS's ISENDPLAT arm never taken → f1, e9, g
+#   e696746d's compiler → 30 of 30 rows FAIL (f2, f3 and g on the duplicate-symbol warning
+#   both compiled arms draw). 1553be2f's (the lane before the included-#ifplat arms) → f1, f2,
+#   f3, e9, e10 and g FAIL; f2 / f3 there are the false "#else without a matching #if".
 set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT"
@@ -152,8 +167,52 @@ printf '# inc\nvar q = 1;\n#ifdef NOPE\nvar z = 2;\n' > "$D/i8.cyr"
 printf 'var w8 = 1;\n' > "$D/j8.cyr"
 err_row e8 'include "i8.cyr"\ninclude "j8.cyr"\nvar w = 3;\nsyscall(60, q);\n' 'error:i8.cyr:3:1: this #if / #ifdef / #ifndef / #ifplat has no matching #endif'
 
+# An included-`#ifplat` row: $1 name, $2 the INCLUDED file (printf format), $3 the exit it must
+# give, $4 description. Its twin spells every `#ifplat x86` / `#ifplat aarch64` / `#endplat` as
+# `#ifdef CYRIUS_ARCH_X86` / `#ifdef CYRIUS_ARCH_AARCH64` / `#endif`, which PP_IFDEF_PASS has
+# always honoured; the two live under the same file name in sibling directories, so the pair
+# must match byte for byte. $5, when set, is a file both include first (f3's padding).
+inc_row() {
+    mkdir -p "$D/$1/a" "$D/$1/b"
+    printf "$2" > "$D/$1/a/inc.cyr"
+    sed 's/#ifplat x86/#ifdef CYRIUS_ARCH_X86/; s/#ifplat aarch64/#ifdef CYRIUS_ARCH_AARCH64/; s/#endplat/#endif/' \
+        "$D/$1/a/inc.cyr" > "$D/$1/b/inc.cyr"
+    for v in a b; do
+        if [ -n "${5:-}" ]; then cp "$D/$5" "$D/$1/$v/pad.cyr"; printf 'include "pad.cyr"\n' > "$D/$1/$v/m.cyr"
+        else : > "$D/$1/$v/m.cyr"; fi
+        printf 'include "inc.cyr"\nsyscall(60, q);\n' >> "$D/$1/$v/m.cyr"
+    done
+    rc=0; ( cd "$D/$1/b" && "$CC" < m.cyr > m.bin 2> m.err ) || rc=$?
+    twin=-; if [ "$rc" -eq 0 ] && [ -s "$D/$1/b/m.bin" ]; then chmod +x "$D/$1/b/m.bin"; twin=0; "$D/$1/b/m.bin" >/dev/null 2>&1 || twin=$?; fi
+    if [ "$twin" != "$3" ]; then
+        printf '  FAIL: row %s TWIN exits %s, want %s: %s\n' "$1" "$twin" "$3" "$(head -1 "$D/$1/b/m.err" | cut -c1-80)"
+        fail=$((fail+1)); return 0
+    fi
+    rc=0; ( cd "$D/$1/a" && "$CC" < m.cyr > m.bin 2> m.err ) || rc=$?
+    got=-; if [ "$rc" -eq 0 ] && [ -s "$D/$1/a/m.bin" ]; then chmod +x "$D/$1/a/m.bin"; got=0; "$D/$1/a/m.bin" >/dev/null 2>&1 || got=$?; fi
+    if [ "$got" = "$3" ] && [ ! -s "$D/$1/a/m.err" ] && cmp -s "$D/$1/a/m.bin" "$D/$1/b/m.bin"; then
+        printf '  ok: row %s — %s (exit %s, byte-identical to the #ifdef CYRIUS_ARCH_* twin)\n' "$1" "$4" "$got"
+        pass=$((pass+1))
+    else
+        printf '  FAIL: row %s — %s: rc %s exit %s (want %s, silent, byte-identical to the twin), stderr: %s\n' "$1" "$4" "$rc" "$got" "$3" \
+            "$(head -1 "$D/$1/a/m.err" | cut -c1-90)"
+        fail=$((fail+1))
+    fi
+}
+inc_row f1 'var q = 3;\n#ifplat aarch64\nq = 13;\n#endplat\n' 3 'an included `#ifplat aarch64` arm is skipped on x86'
+inc_row f2 '#ifplat x86\nvar q = 1;\n#else\nvar q = 2;\n#endif\n' 1 'an included `#ifplat x86` ... `#else` ... `#endif` builds and takes the x86 arm'
+# f3: the same block past the first MiB of the stream (1,320,000 B of comment lines in front).
+awk 'BEGIN { for (i = 0; i < 20000; i++) printf "# padding line %05d ............................................\n", i }' > "$D/pad.cyr"
+inc_row f3 '#ifplat x86\nvar q = 1;\n#else\nvar q = 2;\n#endif\n' 1 'an included `#ifplat x86` past the first MiB reads its own operand' pad.cyr
+printf '# inc\nvar q = 1;\n#endplat\n' > "$D/i9.cyr"
+err_row e9 'include "i9.cyr"\nsyscall(60, q);\n' 'error:i9.cyr:3:1: #endplat without a matching #if'
+printf '# inc\nvar q = 1;\n#ifplat aarch64\nvar z = 2;\n' > "$D/i10.cyr"
+err_row e10 'include "i10.cyr"\nsyscall(60, q);\n' 'error:i10.cyr:3:1: this #if / #ifdef / #ifndef / #ifplat has no matching #endif'
+
 # Over-correction guard: balanced nesting, every directive kind, both passes (main + included).
-printf '#ifdef NOPE\nvar a = 1;\n#elif FOO == 2\nvar a = 2;\n#else\n#ifplat x86\nvar a = 3;\n#endplat\n#ifndef CYRIUS_ARCH_X86\nvar a = 4;\n#endif\n#endif\n' > "$D/g1.cyr"
+# g1's `#ifplat aarch64` arm redefines `a` AFTER the x86 one, so an included `#ifplat` that is
+# not evaluated shows up here too (exit 19 and a duplicate-symbol warning).
+printf '#ifdef NOPE\nvar a = 1;\n#elif FOO == 2\nvar a = 2;\n#else\n#ifplat x86\nvar a = 3;\n#endplat\n#ifplat aarch64\nvar a = 9;\n#endplat\n#ifndef CYRIUS_ARCH_X86\nvar a = 4;\n#endif\n#endif\n' > "$D/g1.cyr"
 printf '#define FOO 1\ninclude "g1.cyr"\n#if FOO == 1\nvar b = 10;\n#else\nvar b = 20;\n#endif\nsyscall(60, a + b);\n' > "$D/g.cyr"
 build_run g
 if [ "$rc" -eq 0 ] && [ "$got" = 13 ] && [ ! -s "$D/g.err" ]; then
@@ -168,4 +227,4 @@ if [ "$fail" -gt 0 ]; then
     printf 'FAIL: pp-directive-blank-separators — %s of %s rows failed\n' "$fail" "$((pass+fail))"
     exit 1
 fi
-printf 'PASS: pp-directive-blank-separators — %s/%s rows green (16 separator shapes vs their single-space twins, 8 stray/unclosed refusals, 1 balanced guard)\n' "$pass" "$pass"
+printf 'PASS: pp-directive-blank-separators — %s/%s rows green (16 separator shapes vs their single-space twins, 3 included #ifplat blocks vs their #ifdef twins, 10 stray/unclosed refusals, 1 balanced guard)\n' "$pass" "$pass"
