@@ -24,8 +24,10 @@
 #           is really removed.
 #   axis 2  every derived verb has EXACTLY ONE entry. An entry is a line indented two spaces;
 #           its verb is its first token. A verb's first entry is its line; a LATER entry for
-#           the same verb is legal only as a two-token sub-form (`audit --internal`,
-#           `version --project`, `help manifest`), and a sub-form may not repeat.
+#           the same verb is legal only as a two-token sub-form whose second token is a word or
+#           a --flag (`audit --internal`, `version --project`, `help manifest`) — never an
+#           operand placeholder `<…>` / `[…]` — and whose two tokens repeat no earlier entry's,
+#           the verb's first entry included (so a second `hooks install` is a duplicate).
 #   axis 3  every entry names a dispatched verb (statically), and the BUILT CLI does not
 #           answer "Unknown command" for it (at runtime — a second oracle). The runtime
 #           oracle is proven able to fire on a verb that does not exist. Verbs whose whole
@@ -54,6 +56,12 @@
 #   M9  `(also --version)` dropped — an alias named nowhere                   1 fail  (axis 1)
 #   M10 `which` taken out of _cli_known_verb (main() still dispatches it)     1 fail  (axis 3, runtime)
 #   M11 the `repl` entry printed with no description                          1 fail  (axis 4)
+#   M12 a second `vet <source.cyr>` entry (a two-token first entry repeated)  1 fail  (axis 2)
+#   M13 a second `soak [N]` entry                                             1 fail  (axis 2)
+#   M14 a second `hooks install` entry                                        1 fail  (axis 2)
+#   M15 a second `bench [file.bcyr|dir]` entry                                1 fail  (axis 2)
+#       (M12-M15 each PASSED before the first entry's two tokens were recorded and a sub-form's
+#        second token was required to be a word or --flag)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -158,11 +166,16 @@ else
     echo "  ok axis 4: one description column ($(cat "$W/col")), every entry described, no stray or doubled lines"
 fi
 
-# axis 2: exactly one entry per verb; later entries only as distinct two-token sub-forms.
+# axis 2: exactly one entry per verb; later entries only as distinct two-token sub-forms whose
+# second token is a word or a --flag. The FIRST entry's two leading tokens are recorded too, so a
+# repeat of a two-token first entry (`vet <source.cyr>`, `soak [N]`, `hooks install`) is a DUP,
+# not a sub-form of itself; an operand placeholder (`<…>`, `[…]`) never makes a sub-form.
 awk -F'\t' '
-    { if (!($1 in seen)) { seen[$1] = 1; next }
+    { if (!($1 in seen)) { seen[$1] = 1; sf[$3] = 1; next }
       if ($2 != 2) { print "DUP " $1 " :: a second entry for this verb (not a two-token sub-form)"; next }
-      if ($3 in sf) { print "DUP " $1 " :: sub-form \"" $3 "\" listed twice"; next }
+      split($3, p, " ")
+      if (p[2] !~ /^(--)?[a-z][a-z0-9=-]*$/) { print "DUP " $1 " :: a second entry for this verb (\"" p[2] "\" is an operand, not a sub-form word or --flag)"; next }
+      if ($3 in sf) { print "DUP " $1 " :: \"" $3 "\" listed twice"; next }
       sf[$3] = 1 }
 ' "$W/entries" > "$W/dups"
 while IFS= read -r l; do fail "axis 2: $l"; done < "$W/dups"
