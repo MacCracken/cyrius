@@ -1,6 +1,7 @@
 #!/bin/sh
 # refresh_never_installs_a_stale_bin.sh — `install.sh --refresh-only` rebuilds every bin it
-# installs (or refuses), and verify-store judges the one untracked bin it can rebuild.
+# installs whenever anything it is built from changed (or refuses), and verify-store judges the
+# one untracked bin it can rebuild.
 #
 # 6.6.20 (RS-02). `cybs` — the bootstrap compiler, the root of the seed → cybs → cycc chain —
 # is listed in cyrius.cyml `bins` but has no programs/cybs.cyr. `_rebuild_stale` returned 0 for
@@ -21,6 +22,20 @@
 #           (and cybs is not among them); --restore re-assembles cybs + restores asm; the report
 #           is then clean (anti-vacuous: a correct slot verifies OK)
 #
+# 6.6.20 (RS-03). `_rebuild_stale`'s dependency roots were per-bin — "lib" for programs/<bin>,
+# "lib cbt" for `cyrius` — while programs/cyrius-lsp.cyr includes cbt/srcscan.cyr (6.6.10),
+# programs/ark.cyr includes programs/nous_stub.cyr and cbt/cyrius.cyr includes
+# src/version_str.cyr; and build/cycc was no dependency at all. An edit to any of those left
+# the installed binary stale against a fresh compile. Axes run in a tree carrying the real
+# sources of those three bins, with mtimes SET (sources + compiler 2020, bins 2021, edit 2022):
+#   axis 5  the first refresh builds all three
+#   axis 6  ANTI-VACUOUS control: nothing newer than the bins → nothing rebuilt
+#   axis 7  edit cbt/srcscan.cyr      → cyrius-lsp rebuilt; installed == a fresh compile
+#   axis 8  edit programs/nous_stub.cyr → ark rebuilt; installed == a fresh compile
+#   axis 9  edit src/version_str.cyr  → cyrius rebuilt; installed == a fresh compile
+#           (each edit axis first proves its edit changes that bin's code)
+#   axis 10 build/cycc newer than the bins → all rebuilt
+#
 # Mutation ledger (MEASURED in a scratch ROOT at 6.6.20 — re-run, don't trust):
 #   install.sh + verify-store.sh as they were at 6.6.19              → axes 1 2 3 4 4r red
 #   the `cybs) _rebuild_cybs` arm made a no-op                       → axes 1 3 red
@@ -28,10 +43,16 @@
 #   the closure `cmp` dropped from _rebuild_cybs                      → axis 3 red
 #   verify_slot never judges cybs                                     → axis 4 red
 #   restore_slot never re-assembles cybs                              → axis 4r red
+#   install.sh as of the RS-02 commit (per-bin roots, no cycc dep)    → axes 7 8 9 10 red
+#   the union cut back to "lib"                                       → axes 7 8 9 red
+#   the union cut back to "lib cbt" (the old `cyrius` arm)            → axes 8 9 red
+#   the `build/cycc -nt build/<bin>` dependency dropped               → axis 10 red
 set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT"
 G=refresh_never_installs_a_stale_bin
+CC=${CYCC:-"$ROOT/build/cycc"}
+[ -x "$CC" ] || { echo "FAIL: $G: $CC missing"; exit 1; }
 command -v git >/dev/null 2>&1 || { echo "SKIP: $G: git not found"; exit 77; }
 [ "$(uname -s)/$(uname -m)" = Linux/x86_64 ] || { echo "SKIP: $G: the seed (bootstrap/asm) is an x86-64 Linux ELF"; exit 77; }
 W=$(mktemp -d) && [ -d "$W" ] || { echo "FAIL: $G: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
@@ -130,6 +151,67 @@ if [ "$rc" -eq 0 ] && cmp -s "$S4/bin/cybs" "$W/cybs.expected" && cmp -s "$S4/bi
    && [ "$rc2" -eq 0 ] && grep -q '9.9.9    OK' "$W/a4b.out" && grep -q '0 BAD' "$W/a4b.out"; then
     ok "verify-store --restore: cybs re-assembled from the tag, the seed restored, the report is then clean"
 else bad "axis 4r (rc=$rc, report rc=$rc2): $(tail -3 "$W/a4r.out" | tr '\n' ' ') / $(tail -2 "$W/a4b.out" | tr '\n' ' ')"; fi
+
+# ── RS-03 (6.6.20): the dependency set is every include root of every bin, and the compiler ──
+# programs/<bin> took "lib" only (cyrius-lsp includes cbt/srcscan.cyr, ark programs/nous_stub.cyr)
+# and `cyrius` took "lib cbt" (cbt/cyrius.cyr includes src/version_str.cyr); build/cycc was no
+# dependency at all. A tree carrying the real sources of those three bins, in its own `git init`
+# (no commits, no tags — no enclosing repo is consulted; the override covers the reused slot).
+# Times are SET, not slept on: sources + compiler at 2020, built bins at 2021, an edit at 2022.
+L="$W/lsp"; mkdir -p "$L/build" "$L/scripts" "$L/programs" "$L/src"
+cp "$ROOT/scripts/install.sh" "$L/scripts/"
+cp -RL "$ROOT/lib" "$ROOT/cbt" "$L/"
+cp "$ROOT/programs/cyrius-lsp.cyr" "$ROOT/programs/ark.cyr" "$ROOT/programs/nous_stub.cyr" "$L/programs/"
+cp "$ROOT/src/version_str.cyr" "$L/src/"
+cp "$CC" "$L/build/cycc"; chmod +x "$L/build/cycc"
+printf '9.9.9\n' > "$L/VERSION"
+printf '[release]\nbins = ["cycc", "cyrius", "cyrius-lsp", "ark"]\ncross_bins = []\nscripts = []\n' > "$L/cyrius.cyml"
+( cd "$L" && git init -q )
+HL="$W/homeL"; SL="$HL/versions/9.9.9/bin"
+_lrefresh() {  # _lrefresh <tag> → rc echoed
+    rc=0
+    ( cd "$L" && HOME="$W/userhome" CYRIUS_HOME="$HL" CYRIUS_REFRESH_RELEASED=1 sh scripts/install.sh --refresh-only \
+        > "$W/$1.out" 2> "$W/$1.err" ) || rc=$?
+    echo "$rc"
+}
+_settle() {
+    find "$L/lib" "$L/cbt" "$L/src" "$L/programs" -name '*.cyr' -exec touch -t 202001010000 {} +
+    touch -t 202001010000 "$L/build/cycc"
+    for b in cyrius cyrius-lsp ark; do touch -t 202101010000 "$L/build/$b"; done
+}
+_fresh() {  # _fresh <bin> <source> → $W/fresh.<bin>, compiled from the tree as install.sh does
+    ( cd "$L" && ./build/cycc < "$2" > "$W/fresh.$1" 2>/dev/null )
+}
+# _edit_axis <name> <bin> <source> <file> <sed-expr> <what>
+_edit_axis() {
+    cp "$SL/$2" "$W/before.$2"
+    cp "$L/$4" "$W/orig.edit"; sed -i "$5" "$L/$4"
+    if cmp -s "$W/orig.edit" "$L/$4"; then bad "axis $1: the probe edit to $4 changed nothing — re-derive it"; return 0; fi
+    touch -t 202201010000 "$L/$4"
+    rc=$(_lrefresh "a$1"); _fresh "$2" "$3"
+    if cmp -s "$W/fresh.$2" "$W/before.$2"; then bad "axis $1: the edit to $4 does not change $2's code — the axis would pass vacuously"
+    elif [ "$rc" -eq 0 ] && grep -q "rebuilt $2 from $3" "$W/a$1.out" && cmp -s "$SL/$2" "$W/fresh.$2"; then
+        ok "$6: $2 rebuilt and the installed binary == a fresh compile"
+    else bad "axis $1 (rc=$rc): $2 not rebuilt / installed STALE vs a fresh compile — $(grep -h -m1 -E 'rebuilt|refus' "$W/a$1.out" "$W/a$1.err" | tr '\n' ' ')"; fi
+    _settle
+}
+rc=$(_lrefresh a5)
+if [ "$rc" -eq 0 ] && grep -q 'rebuilt cyrius-lsp' "$W/a5.out" && grep -q 'rebuilt ark' "$W/a5.out" && grep -q 'rebuilt cyrius from' "$W/a5.out"; then
+    ok "first refresh of the dependency tree builds cyrius, cyrius-lsp and ark"
+else bad "axis 5 (rc=$rc): $(head -3 "$W/a5.err" | tr '\n' ' ')"; fi
+_settle
+rc=$(_lrefresh a6)
+if [ "$rc" -eq 0 ] && ! grep -qE 'rebuilt (cyrius|cyrius-lsp|ark) from' "$W/a6.out"; then
+    ok "nothing newer than the bins: nothing is rebuilt (anti-vacuous — the union does not rebuild every time)"
+else bad "axis 6 (rc=$rc): a no-op refresh rebuilt: $(grep -E 'rebuilt' "$W/a6.out" | tr '\n' ' ')"; fi
+_edit_axis 7 cyrius-lsp programs/cyrius-lsp.cyr cbt/srcscan.cyr 's/"#io"/"#iq"/' "an edit to cbt/srcscan.cyr (included by programs/cyrius-lsp.cyr)"
+_edit_axis 8 ark programs/ark.cyr programs/nous_stub.cyr '0,/return 0;/s//return 7;/' "an edit to programs/nous_stub.cyr (included by programs/ark.cyr)"
+_edit_axis 9 cyrius cbt/cyrius.cyr src/version_str.cyr 's/^\(var _VERSION_TOOLCHAIN *= *\)"[^"]*"/\1"9.9.9-probe"/' "an edit to src/version_str.cyr (included by cbt/cyrius.cyr)"
+touch -t 202201010000 "$L/build/cycc"
+rc=$(_lrefresh a10)
+if [ "$rc" -eq 0 ] && grep -q 'rebuilt cyrius-lsp' "$W/a10.out" && grep -q 'rebuilt ark' "$W/a10.out" && grep -q 'rebuilt cyrius from' "$W/a10.out"; then
+    ok "a build/cycc newer than the bins rebuilds them (the compiler is a dependency)"
+else bad "axis 10 (rc=$rc): $(grep -E 'rebuilt' "$W/a10.out" | tr '\n' ' ')"; fi
 
 echo "$G: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

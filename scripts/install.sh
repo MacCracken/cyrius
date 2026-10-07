@@ -387,29 +387,39 @@ if [ "$REFRESH_ONLY" -eq 1 ]; then
     #
     # Staleness rule: rebuild if binary is missing OR ANY dependency mtime is
     # newer than binary mtime. Dependencies = the direct `$source` PLUS every
-    # `.cyr` under the bin's include roots ($3, default "lib"; cross bins add
-    # "src"). v6.2.34: the pre-fix rule only compared the binary against its
+    # `.cyr` under EVERY include root a bin can reach ($_REFRESH_DEPROOTS) PLUS
+    # build/cycc itself. v6.2.34: the pre-fix rule only compared the binary against its
     # DIRECT source — so a `lib/*.cyr` fix left `build/<bin>` looking fresh vs
     # its unchanged `programs/<bin>.cyr` and was never rebuilt. That shipped a
     # still-broken `cyriusly` (the exec_cmd /bin/sh fix lived in lib/process.cyr,
     # not programs/cyriusly.cyr) even though `--refresh-only`'s contract is "no
     # stale binary." Resolving exact transitive includes in POSIX sh is fragile,
     # so we treat the whole include root as the dep set — conservative (an
-    # unrelated lib touch rebuilds all bins) but never ships stale. Errors are
+    # unrelated touch rebuilds all bins, ~2.5 s) but never ships stale. Errors are
     # surfaced (no `2>/dev/null` swallow) so cycc warnings stay visible.
+    #
+    # ⛔ 6.6.20 (RS-03): ONE root set for every bin, not a per-bin list. The per-bin lists
+    # rotted exactly as v6.5.19 (below) warned: programs/<bin> got "lib" only while
+    # programs/cyrius-lsp.cyr includes cbt/srcscan.cyr and programs/ark.cyr includes
+    # programs/nous_stub.cyr, and `cyrius` got "lib cbt" while cbt/cyrius.cyr includes
+    # src/version_str.cyr — an edit to any of those left the installed binary stale, measured.
+    # And the COMPILER was never a dependency: a rebuilt build/cycc left every tool compiled
+    # by the old one. A union cannot rot when a bin grows an include; the roots that exist are
+    # taken (a missing one would fail `find`, and with it the assignment under `set -e`).
+    _REFRESH_DEPROOTS=""
+    for _rd in lib cbt src programs; do [ -d "$_rd" ] && _REFRESH_DEPROOTS="$_REFRESH_DEPROOTS $_rd"; done
     _rebuild_stale() {
         local target="$1"
         local source="$2"
-        local deproots="${3:-lib}"
         # 6.6.20: a mapped source that does not exist REFUSES. This was `return 0`, and the
         # copy loop below then installed build/$target as it stood — for `cybs` (which has no
         # programs/cybs.cyr) a 12,344 B June binary that cannot compile src/main.cyr, in 17
         # slots, each stamped tree-matches-tag: yes. CHANGELOG [6.6.20]
         [ -f "$source" ] || err "cyrius.cyml [release] lists '$target' but its source $source does not exist — refusing to install a build/$target that nothing rebuilt (give it a rebuild rule in scripts/install.sh)"
-        if [ -x "build/$target" ] && [ "build/$target" -nt "$source" ]; then
-            # Direct source is older than the binary; check include-root deps.
+        if [ -x "build/$target" ] && [ "build/$target" -nt "$source" ] && ! [ "build/cycc" -nt "build/$target" ]; then
+            # Direct source and the compiler are older than the binary; check include-root deps.
             local newer_dep
-            newer_dep=$(find $deproots -name '*.cyr' -newer "build/$target" -print -quit 2>/dev/null)
+            newer_dep=$(find $_REFRESH_DEPROOTS -name '*.cyr' -newer "build/$target" -print -quit 2>/dev/null)
             if [ -z "$newer_dep" ]; then
                 return 0
             fi
@@ -470,6 +480,8 @@ if [ "$REFRESH_ONLY" -eq 1 ]; then
         case "$bin" in
             cycc)    : ;;  # seed-bootstrapped, never rebuilt by --refresh-only
             cybs)    _rebuild_cybs ;;
+            # (6.6.20: every bin now takes the one union root set, _REFRESH_DEPROOTS — the
+            # per-bin "lib cbt" below still missed src/version_str.cyr.)
             # v6.5.19: deproots MUST include `cbt` — this is the v6.2.34 bug one
             # directory over, and it silently withheld every CLI fix. `cbt/cyrius.cyr`
             # is a 45 KB shim that `include`s six siblings (core/build/commands/
@@ -482,14 +494,14 @@ if [ "$REFRESH_ONLY" -eq 1 ]; then
             # That breaks the contract this function documents ("never ships stale")
             # AND the CLAUDE.md build recipe, which tells you `--refresh-only`
             # "rebuilds the CLI after cbt/ changes" — it did not.
-            cyrius) _rebuild_stale "cyrius" "cbt/cyrius.cyr" "lib cbt" ;;
+            cyrius) _rebuild_stale "cyrius" "cbt/cyrius.cyr" ;;
             *)      _rebuild_stale "$bin"    "programs/${bin}.cyr" ;;
         esac
     done
     for cbin in $_R_CROSS; do
         case "$cbin" in
-            cycc_aarch64) _rebuild_stale "cycc_aarch64" "src/main_aarch64.cyr" "lib src" ;;
-            cycc_cx) _rebuild_stale "cycc_cx" "src/main_cx.cyr" "lib src" ;;   # cx arc: cx bytecode compiler (plain build/cycc, no env — like cycc_aarch64)
+            cycc_aarch64) _rebuild_stale "cycc_aarch64" "src/main_aarch64.cyr" ;;
+            cycc_cx) _rebuild_stale "cycc_cx" "src/main_cx.cyr" ;;   # cx arc: cx bytecode compiler (plain build/cycc, no env — like cycc_aarch64)
             cycc-native-aarch64)
                 # v6.0.7 — native aarch64 self-host. Built by piping
                 # src/main_aarch64_native.cyr through build/cycc_aarch64
