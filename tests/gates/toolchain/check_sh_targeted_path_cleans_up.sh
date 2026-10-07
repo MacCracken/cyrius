@@ -176,6 +176,8 @@ FNR == 1 { hd = "" }
     # as violations at the 6.6.6 lane merge. Track the single-quoted program and skip it.
     if (inq) { if (gsub(/'/, "'", c) % 2 == 1) inq = 0; next }
     if (c ~ /sh[ \t]+-c[ \t]*'/ && gsub(/'/, "'", c) % 2 == 1) { inq = 1; next }
+    # ...and the one-line form, `sh -c '... && exec "$2" ...' _ a b`: drop the body.
+    gsub(/sh[ \t]+-c[ \t]*'[^']*'/, "sh -c ''", c)
     # `exec` in COMMAND position only: start of line, or after ; & | { or then/else/do.
     # Without this, prose containing the word ("the exec scanner") matches and the census
     # flags its own error messages — measured on this gate's first run.
