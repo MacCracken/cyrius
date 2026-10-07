@@ -1475,6 +1475,11 @@ fn SESTYPE(S, v): i64 { S64(S + 0x1903D8, v); return 0; }
 # Variable index of last struct expression (for address-based operator dispatch)
 fn GESVAR(S): i64 { return L64(S + 0x1903E0); }
 fn SESVAR(S, v): i64 { S64(S + 0x1903E0, v); return 0; }
+# 6.6.20 — the struct a bare NAME in operand position denotes, at EVERY size (SESVAR's encodings;
+# -1 = none). SESVAR keeps recording only the operands passed by address under the documented
+# operator ABI (over 8 B); this one is read only for a `*S` operand of 8 B or less
+# (`_op_operand_sv`, parse_expr.cyr). Reset with SESVAR at every factor. CHANGELOG [6.6.20]
+var _esv_name = 0 - 1;
 
 # Module system. (GPUB/SPUB were scaffolded for the `pub` visibility check
 # in docs/development/module-manifest-design.md but never wired up in the

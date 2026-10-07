@@ -90,6 +90,14 @@ W_CTL=$(mkw ctl 'include "lib/syscalls.cyr"
 fn fc(a) { if (a > 1) { return 1; } return 0; }
 fn main(): i64 { syscall(60, fc(5), 0,0,0,0); return 0; }
 var e = main();')
+# 6.6.20: a `*T` parameter keeps a fn off the replay (it lost its pointer step there), so the
+# directive cannot be honoured and must say so — before 6.6.20 it was honoured, and miscompiled.
+W_PTR=$(mkw ptr 'include "lib/syscalls.cyr"
+var B[64];
+#inline
+fn fp(p: *i32) { return p + 1; }
+fn main(): i64 { syscall(60, fp(&B) - &B, 0,0,0,0); return 0; }
+var e = main();')
 W_OK=$(mkw ok 'include "lib/syscalls.cyr"
 #inline
 fn f2(a, b) { return a + b; }
@@ -97,6 +105,7 @@ fn main(): i64 { syscall(60, f2(20,22), 0,0,0,0); return 0; }
 var e = main();')
 [ "$W_ARITY" -ge 1 ] || { echo "FAIL inline_directive axis2: a 3-param #inline was silently ignored (no warning)"; exit 1; }
 [ "$W_CTL" -ge 1 ]   || { echo "FAIL inline_directive axis2: a control-flow-bodied #inline was silently ignored (no warning)"; exit 1; }
+[ "$W_PTR" -ge 1 ]   || { echo "FAIL inline_directive axis2: a #inline with a *T parameter was silently ignored (no warning)"; exit 1; }
 [ "$W_OK" -eq 0 ]    || { echo "FAIL inline_directive axis2: an HONOURABLE #inline warned — the warning is firing indiscriminately"; exit 1; }
 
 # ── axis 3 — it must be worth something. Ratio, measured back-to-back. ──────────────────────

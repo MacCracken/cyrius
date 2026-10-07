@@ -1,0 +1,360 @@
+# ptr_param_bare_struct.tcyr — 6.6.20 — a bare struct NAME passed to a `p: *T` parameter passes
+# the struct's ADDRESS, whatever T's size.
+#
+# ⛔ THE DEFECT, 6.6.17 through 6.6.19. 6.6.17 (a2) made a `p: *T` parameter a pointer at every
+# size of T in the CALLEE, but the caller decided "push the address" from the callee's
+# address-passed bit, which only a T over 8 B set (`_param_wants_struct_ptr`). So `rd3(a)` with
+# `p: *P3` (24 B) took `&a`, while `rd1(s)` with `p: *S1` (8 B) pushed s's VALUE and the callee
+# dereferenced it: SIGSEGV on x86_64 and aarch64, "guest address out of range" on cx — and when
+# the struct's one word happened to be an address (`struct W { buf; }`), a silent read or write
+# through it into an unrelated object. Every bare shape: a local, a declared local, a global, a
+# by-value parameter passed on, a field, a generic instance, a `*Box<i32>` instance, a method
+# argument, a forward call, a closure capture. Before 6.6.17 reads gave the value and writes were
+# silently lost. Now every size takes the address (the rule T over 8 B already had); `&s` is
+# unchanged and stays the documented spelling.
+#
+# ⛔ AND A STRUCT-VALUED CALL RESULT (6.6.20 review). A struct of 8 B or less comes back in rax, and
+# given to a `*S1` parameter its VALUE was pushed — `rd1(mk(5))`, `rd1(idg<S1>(s))`,
+# `rd1(s.dup())`, `rd1(s + t)`: SIGSEGV on x86_64 and aarch64, a crash under wine, a failed row on
+# cx — while every form over 8 B took its frame temp's address. Now it lands in a frame temp too and
+# the temp's address is passed (`call_results` below, each with its over-8-byte control). At top
+# level there is no frame, so those forms are refused by name (tests/gates/codegen/
+# stack_param_homing_matrix.sh, `toplevel-small-ptr-arg`).
+#
+# ⛔ AND AN OVERLOADED OPERATOR'S `*S` OPERAND (6.6.20 review). The operator ABI passes a one-word
+# struct operand by VALUE, so `fn S1_sub(a: *S1, b: *S1)` with `s - t` dereferenced s's value —
+# SIGSEGV on x86_64 and aarch64, a crash under wine, "guest address out of range" on cx — while
+# `fn P3_sub(a: *P3, b: *P3)` with `a - b` worked. A `*S` operand now gets an address at every
+# size, by the same rule as a call argument: a bare name (local, global, capture, `(name)`) its
+# own, so a write through it reaches the caller; a struct VALUE (a call, method or operator
+# result, `-s`) a frame temp holding it; and an operand that is ALREADY an address — `&t`, a `*S1`
+# parameter or variable, an untyped variable holding `&t`, a call returning `*S1` or i64, `&G` —
+# passes through unchanged (`operators` and `address_operands` below, each with its `*P3`
+# control; at top level a struct value is refused by name — stack_param_homing_matrix.sh,
+# `toplevel-small-ptr-operand`). A whole struct-typed FIELD operand passes the field's own
+# address at every size, as `wr1(h.inner, 8)` does: `b - h.p` with a `*P3` or by-value `P3`
+# operand SIGSEGV'd through 6.6.19, and a `*W` field operand was a copy a write never reached.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+include "lib/assert.cyr"
+
+struct S1 { v; }                     # 8 B
+struct B4 { a: i32; }                # 4 B
+struct B2 { a: i32; b: i32; }        # 8 B, two fields
+struct P3 { x; y; z; }               # 24 B (control: it always took the address)
+struct W { buf; }                    # 8 B, a word that can hold an address
+struct HI { k; inner: S1; }
+struct HP { k; p: P3; w: W; }
+struct P4 { buf; y; z; }             # 24 B (control for the captured *W operand)
+struct Box<T> { v: T; w: T; }
+
+fn rd1(p: *S1) { return p.v; }
+fn wr1(p: *S1, n) { p.v = n; return 0; }
+fn rd4(p: *B4) { return p.a; }
+fn rd2(p: *B2) { return p.b; }
+fn rd3(p: *P3) { return p.y; }
+fn bump3(p: *P3) { p.x = p.x + 1; return p.x; }
+fn setbuf(p: *W, n) { p.buf = n; return 0; }
+fn rdbox(p: *Box<i32>) { return p.w; }
+fn rdg<T>(p: *T) { return p.v; }
+fn wrg<T>(p: *T, n) { p.b = n; return 0; }
+fn pass_on(b: S1) { return rd1(b); }
+fn tail_bare(): i64 { var s = S1 { 31 }; return rd1(s); }
+fn early_caller(): i64 { var s = S1 { 17 }; return rd_late(s); }
+fn rd_late(p: *S1) { return p.v + 1; }
+fn S1_sum(self: *S1, o: *S1) { return self.v + o.v; }
+fn clo_bare(): i64 { var s = S1 { 5 }; var f = || rd1(s); return callptr(f); }
+fn clo_nested(): i64 { var s = S1 { 5 }; var f = |x| { var k = |y| rd1(s) + y; return callptr(k, x); }; return callptr(f, 2); }
+fn clo_ptr(p: *S1): i64 { var f = || rd1(p); return callptr(f); }
+fn clo_byv(b: S1): i64 { var f = || rd1(b); return callptr(f); }
+fn clo_big(): i64 { var a = P3 { 1, 22, 3 }; var g = || rd3(a); return callptr(g); }
+fn mk1(n): S1 { var s = S1 { n }; return s; }
+fn mkb2(n): B2 { var s = B2 { 1, n }; return s; }
+fn mkbox(n): Box<i32> { var b: Box<i32>; b.v = 1; b.w = n; return b; }
+fn mk3(n): P3 { var a = P3 { 1, n, 3 }; return a; }
+fn mk1g<T>(n): S1 { var s = S1 { n }; return s; }
+fn mk3g<T>(n): P3 { var a = P3 { 1, n, 3 }; return a; }
+fn idg<T>(x: T): T { return x; }
+fn S1_dup(self: *S1): S1 { var d = S1 { self.v + 1 }; return d; }
+fn P3_dup(self: *P3): P3 { var d = P3 { self.x, self.y + 1, self.z }; return d; }
+fn S1_add(a: S1, b: S1): S1 { var r = S1 { a.v + b.v }; return r; }
+fn P3_add(a: P3, b: P3): P3 { var r = P3 { a.x + b.x, a.y + b.y, a.z + b.z }; return r; }
+fn S1_sub(a: *S1, b: *S1): S1 { var r = S1 { a.v - b.v }; return r; }
+fn S1_mul(a: S1, b: *S1): S1 { var r = S1 { a.v * b.v }; return r; }
+fn S1_div(a: *S1, b: S1): S1 { var r = S1 { a.v / b.v }; return r; }
+fn B2_sub(a: *B2, b: *B2): B2 { var r = B2 { a.a - b.a, a.b - b.b }; return r; }
+fn P3_sub(a: *P3, b: *P3): P3 { var r = P3 { a.x - b.x, a.y - b.y, a.z - b.z }; return r; }
+fn P3_mul(a: *P3, b: *P3): i64 { a.y = a.y + 100; return a.y + b.y; }
+fn W_add(a: *W, b: *W): i64 { a.buf = a.buf + 100; return a.buf + b.buf; }
+fn W_sub(a: *W, b: *W): i64 { b.buf = b.buf + 100; return a.buf + b.buf; }
+fn P3_div(a: *P3, b: *P3): i64 { b.y = b.y + 100; return a.y + b.y; }
+fn P4_add(a: *P4, b: *P4): i64 { a.buf = a.buf + 100; return a.buf + b.buf; }
+fn B4_sub(a: *B4, b: *B4): P3 { var r = P3 { a.a, a.a - b.a, b.a }; return r; }
+fn B4_add(a: *B4, b: *B4): P3 { a.a = a.a + 100; var r = P3 { a.a, a.a + b.a, b.a }; return r; }
+fn B4_mul(a: B4, b: *B4): P3 { var r = P3 { a.a, a.a * b.a, b.a }; return r; }
+fn B4_div(a: *B4, b: B4): P3 { var r = P3 { a.a, a.a / b.a, b.a }; return r; }
+fn mk4(n): B4 { var s = B4 { n }; return s; }
+fn op_byv_params(b: S1, t: S1): i64 { var r: S1 = b - t; return r.v; }
+fn op_ptr_param_sub(q: *S1): i64 { var s = S1 { 9 }; var u: S1 = s - q; return u.v; }
+fn op_ptr_param_mul(q: *S1): i64 { var s = S1 { 9 }; var u: S1 = s * q; return u.v; }
+fn op_ptr_param3(q: *P3): i64 { var a = P3 { 1, 9, 3 }; var c: P3 = a - q; return c.y; }
+fn getp(p): i64 { return p; }
+fn tail_call1(): i64 { return rd1(mk1(33)); }
+fn tail_call3(): i64 { return rd3(mk3(34)); }
+
+var G = S1 { 11 };
+var GB = B2 { 1, 4 };
+var GO1 = S1 { 9 };
+var GO2 = S1 { 2 };
+var GP1 = P3 { 1, 9, 3 };
+var GP2 = P3 { 1, 5, 3 };
+fn gps(): *S1 { return &GO2; }
+fn gpp3(): *P3 { return &GP2; }
+
+fn locals(): i64 {
+    var s = S1 { 5 };
+    assert_eq(rd1(s), 5, "bare S1 local: rd1(s)");
+    assert_eq(rd1(&s), 5, "control: rd1(&s)");
+    wr1(s, 9);
+    assert_eq(s.v, 9, "bare S1 local: wr1(s, 9) writes s");
+    var d: S1;
+    d.v = 6;
+    assert_eq(rd1(d), 6, "bare declared S1 local");
+    var c = B4 { 3 };
+    assert_eq(rd4(c), 3, "bare B4 (4 B) local");
+    var e = B2 { 3, 7 };
+    assert_eq(rd2(e), 7, "bare B2 (i32 + i32) local");
+    var heap = alloc(16);
+    store64(heap, 77);
+    var w = W { heap };
+    setbuf(w, 9);
+    assert_eq(w.buf, 9, "bare W local: setbuf(w, 9) writes w.buf");
+    assert_eq(load64(heap), 77, "bare W local: and not the object w.buf pointed at");
+    var a = P3 { 1, 22, 3 };
+    assert_eq(rd3(a), 22, "control: bare P3 (24 B) local");
+    bump3(a);
+    assert_eq(a.x, 2, "control: bare P3 local written through");
+    return 0;
+}
+
+fn other_shapes(): i64 {
+    assert_eq(rd1(G), 11, "bare S1 global");
+    wr1(G, 12);
+    assert_eq(G.v, 12, "bare S1 global written through");
+    assert_eq(rd2(GB), 4, "bare B2 global");
+    var t = S1 { 8 };
+    assert_eq(pass_on(t), 8, "a by-value S1 parameter passed on to *S1");
+    var h: HI;
+    h.k = 1; h.inner.v = 6;
+    wr1(h.inner, 8);
+    assert_eq(h.inner.v, 8, "an inline S1 field written through");
+    assert_eq(rd1(h.inner), 8, "an inline S1 field read through");
+    var s = S1 { 5 };
+    assert_eq(rdg<S1>(s), 5, "generic instance rdg<S1>(s)");
+    var u = B2 { 1, 2 };
+    wrg<B2>(u, 9);
+    assert_eq(u.b, 9, "generic instance wrg<B2>(u, 9) writes u");
+    var bx: Box<i32>;
+    bx.v = 3; bx.w = 6;
+    assert_eq(rdbox(bx), 6, "a *Box<i32> (8 B instance) parameter");
+    var o = S1 { 7 };
+    assert_eq(s.sum(o), 12, "a *S1 method argument");
+    assert_eq(early_caller(), 18, "a forward call (the callee is defined below)");
+    assert_eq(tail_bare(), 31, "return rd1(s);");
+    return 0;
+}
+
+fn closures(): i64 {
+    assert_eq(clo_bare(), 5, "a captured S1 passed to *S1");
+    assert_eq(clo_nested(), 7, "a capture of a capture");
+    var s = S1 { 5 };
+    assert_eq(clo_ptr(&s), 5, "a captured *S1 parameter passed on");
+    var t = S1 { 7 };
+    assert_eq(clo_byv(t), 7, "a captured by-value S1 parameter");
+    assert_eq(clo_big(), 22, "control: a captured P3 passed to *P3");
+    return 0;
+}
+
+fn call_results(): i64 {
+    assert_eq(rd1(mk1(5)), 5, "rd1(mk1(5)): a free call returning S1");
+    assert_eq(rd3(mk3(6)), 6, "control: rd3(mk3(6))");
+    assert_eq(rd1(mk1g<i64>(7)), 7, "rd1(mk1g<i64>(7)): an explicit generic call returning S1");
+    assert_eq(rd3(mk3g<i64>(8)), 8, "control: rd3(mk3g<i64>(8))");
+    var s = S1 { 8 };
+    var a = P3 { 1, 9, 3 };
+    assert_eq(rd1(idg<S1>(s)), 8, "rd1(idg<S1>(s)): a generic instance returning T = S1");
+    assert_eq(rd3(idg<P3>(a)), 9, "control: rd3(idg<P3>(a))");
+    assert_eq(rd1(s.dup()), 9, "rd1(s.dup()): a method returning S1");
+    assert_eq(rd3(a.dup()), 10, "control: rd3(a.dup())");
+    var t = S1 { 2 };
+    var b = P3 { 1, 5, 3 };
+    assert_eq(rd1(s + t), 10, "rd1(s + t): an operator returning S1");
+    assert_eq(rd3(a + b), 14, "control: rd3(a + b)");
+    assert_eq(wr1(mk1(5), 9), 0, "wr1(mk1(5), 9): a write through the temp");
+    assert_eq(rd2(mkb2(6)), 6, "rd2(mkb2(6)): an i32 + i32 result");
+    assert_eq(rdbox(mkbox(4)), 4, "rdbox(mkbox(4)): a Box<i32> (8 B instance) result");
+    assert_eq(rdg<S1>(mk1(3)), 3, "rdg<S1>(mk1(3)): into a `p: *T` generic parameter");
+    var o = S1 { 3 };
+    assert_eq(s.sum(mk1(4)), 12, "s.sum(mk1(4)): a call result as a *S1 method argument");
+    assert_eq(s.sum(o.dup()), 12, "s.sum(o.dup()): a method result as a *S1 method argument");
+    assert_eq(rd1(mk1(rd1(mk1(6)))), 6, "nested: rd1(mk1(rd1(mk1(6))))");
+    assert_eq(tail_call1(), 33, "return rd1(mk1(33));");
+    assert_eq(tail_call3(), 34, "control: return rd3(mk3(34));");
+    var f = || rd1(mk1(13));
+    assert_eq(callptr(f), 13, "a closure: || rd1(mk1(13))");
+    return 0;
+}
+
+# ⛔ An operand whose VALUE is already an address passes through unchanged — review round 2 put it
+# in a frame temp too, so the operator fn read the ADDRESS as the struct: `s * &t` answered 24 on
+# x86, 224 on aarch64, 88 on cx, and `s - &t` / `s - q` gave 1 and 121 with no diagnostic.
+fn address_operands(): i64 {
+    var s = S1 { 9 };
+    var t = S1 { 3 };
+    var a = P3 { 1, 9, 3 };
+    var b = P3 { 1, 5, 3 };
+    var m1: S1 = s * &t;
+    assert_eq(m1.v, 27, "s * &t: S1_mul(a: S1, b: *S1)");
+    var m2: S1 = s - &t;
+    assert_eq(m2.v, 6, "s - &t: S1_sub(a: *S1, b: *S1)");
+    var c1: P3 = a - &b;
+    assert_eq(c1.y, 4, "control: a - &b, P3_sub(a: *P3, b: *P3)");
+    assert_eq(op_ptr_param_sub(&t), 6, "s - q: q a *S1 parameter");
+    assert_eq(op_ptr_param_mul(&t), 27, "s * q: q a *S1 parameter");
+    assert_eq(op_ptr_param3(&b), 4, "control: a - q, q a *P3 parameter");
+    var pp = &t;
+    var m3: S1 = s * pp;
+    assert_eq(m3.v, 27, "s * pp: an untyped local holding &t");
+    var bp = &b;
+    var c3: P3 = a - bp;
+    assert_eq(c3.y, 4, "control: a - bp, an untyped local holding &b");
+    var tp: *S1 = &t;
+    var m4: S1 = s * tp;
+    assert_eq(m4.v, 27, "s * tp: a *S1 local");
+    var bq: *P3 = &b;
+    var c4: P3 = a - bq;
+    assert_eq(c4.y, 4, "control: a - bq, a *P3 local");
+    var m5: S1 = s * gps();
+    assert_eq(m5.v, 18, "s * gps(): a call returning *S1");
+    var c5: P3 = a - gpp3();
+    assert_eq(c5.y, 4, "control: a - gpp3(), a call returning *P3");
+    var m6: S1 = s * getp(&t);
+    assert_eq(m6.v, 27, "s * getp(&t): a call returning an i64 address");
+    var c6: P3 = a - getp(&b);
+    assert_eq(c6.y, 4, "control: a - getp(&b)");
+    var m7: S1 = s * &GO2;
+    assert_eq(m7.v, 18, "s * &GO2: a global's address");
+    var c7: P3 = a - &GP2;
+    assert_eq(c7.y, 4, "control: a - &GP2");
+    return 0;
+}
+
+fn operators(): i64 {
+    var s = S1 { 9 };
+    var t = S1 { 3 };
+    var a = P3 { 1, 9, 3 };
+    var b = P3 { 1, 5, 3 };
+    var u: S1 = s - t;
+    assert_eq(u.v, 6, "s - t: S1_sub(a: *S1, b: *S1)");
+    var c: P3 = a - b;
+    assert_eq(c.y, 4, "control: a - b, P3_sub(a: *P3, b: *P3)");
+    var x = B2 { 9, 7 };
+    var y = B2 { 2, 3 };
+    var z: B2 = x - y;
+    assert_eq(z.a, 7, "x - y: B2_sub (i32 + i32, 8 B), field a");
+    assert_eq(z.b, 4, "x - y: B2_sub (i32 + i32, 8 B), field b");
+    var m: S1 = s * t;
+    assert_eq(m.v, 27, "s * t: S1_mul(a: S1, b: *S1), the right operand by address");
+    var d: S1 = s / t;
+    assert_eq(d.v, 3, "s / t: S1_div(a: *S1, b: S1), the left operand by address");
+    var g: S1 = GO1 - GO2;
+    assert_eq(g.v, 7, "GO1 - GO2: global S1 operands");
+    var gp: P3 = GP1 - GP2;
+    assert_eq(gp.y, 4, "control: GP1 - GP2, global P3 operands");
+    var w1 = W { 5 };
+    var w2 = W { 2 };
+    assert_eq(w1 + w2, 107, "w1 + w2: W_add(a: *W, b: *W)");
+    assert_eq(w1.buf, 105, "w1 + w2: the write through a *W operand reaches w1");
+    assert_eq(a * b, 114, "control: a * b, P3_mul(a: *P3, b: *P3)");
+    assert_eq(a.y, 109, "control: the write through a *P3 operand reaches a");
+    assert_eq((w1) + w2, 207, "(w1) + w2: a parenthesised name");
+    assert_eq(w1.buf, 205, "(w1) + w2: the write reaches w1");
+    var r1: S1 = s - (t - t);
+    assert_eq(r1.v, 9, "s - (t - t): an operator result as the right operand");
+    var r2: S1 = s - mk1(4);
+    assert_eq(r2.v, 5, "s - mk1(4): a call result as the right operand");
+    var r3: S1 = s - t * t;
+    assert_eq(r3.v, 0, "s - t * t: a product as the right operand");
+    var r5: S1 = -s - t;
+    assert_eq(r5.v, 0 - 12, "-s - t: a left operand that is not a name");
+    var h: HI;
+    h.k = 1; h.inner.v = 30;
+    var r6: S1 = t - h.inner;
+    assert_eq(r6.v, 0 - 27, "t - h.inner: a field as the right operand");
+    var r7: S1 = t - (h.inner);
+    assert_eq(r7.v, 0 - 27, "t - (h.inner): a parenthesised field");
+    var hp: HP;
+    hp.k = 1; hp.p.x = 1; hp.p.y = 2; hp.p.z = 3; hp.w.buf = 5;
+    var c6: P3 = b - hp.p;
+    assert_eq(c6.y, 3, "control: b - hp.p, a P3 field to *P3 (SIGSEGV through 6.6.19)");
+    var c7: P3 = b + hp.p;
+    assert_eq(c7.y, 7, "control: b + hp.p, a P3 field to by-value P3 (SIGSEGV through 6.6.19)");
+    var c8: P3 = b - (hp.p);
+    assert_eq(c8.y, 3, "control: b - (hp.p), a parenthesised P3 field");
+    var w3 = W { 2 };
+    assert_eq(w3 - hp.w, 107, "w3 - hp.w: W_sub(a: *W, b: *W) given a field");
+    assert_eq(hp.w.buf, 105, "w3 - hp.w: the write through the field operand reaches hp.w");
+    assert_eq(b / hp.p, 107, "control: b / hp.p, P3_div(a: *P3, b: *P3) given a field");
+    assert_eq(hp.p.y, 102, "control: the write through a P3 field operand reaches hp.p");
+    var f = || { var q: S1 = s - t; return q.v; };
+    assert_eq(callptr(f), 6, "|| s - t: captured S1 operands");
+    var cw1 = W { 5 };
+    var cw2 = W { 2 };
+    var cp1 = P4 { 5, 0, 0 };
+    var cp2 = P4 { 2, 0, 0 };
+    var fw = || { return cw1 + cw2; };
+    var gw = || { return cp1 + cp2; };
+    var fw1 = callptr(fw);
+    var fw2 = callptr(fw);
+    assert_eq(fw2 - fw1, 100, "|| cw1 + cw2: a write through a captured *W operand persists");
+    var gw1 = callptr(gw);
+    var gw2 = callptr(gw);
+    assert_eq(gw2 - gw1, 100, "control: || cp1 + cp2, a captured *P4 operand");
+    assert_eq(op_byv_params(s, t), 6, "b - t: by-value S1 parameters as operands");
+    var e4 = B4 { 9 };
+    var f4 = B4 { 2 };
+    var p1: P3 = e4 - f4;
+    assert_eq(p1.y, 7, "e4 - f4: B4_sub(*B4, *B4) returning P3 through a retptr");
+    var p2: P3 = e4 - mk4(4);
+    assert_eq(p2.y, 5, "e4 - mk4(4): a call result as the right operand, P3 result");
+    var p3: P3 = -e4 - f4;
+    assert_eq(p3.y, 0 - 11, "-e4 - f4: a left operand that is not a name, P3 result");
+    var p4: P3 = e4 * f4;
+    assert_eq(p4.y, 18, "e4 * f4: B4_mul(a: B4, b: *B4), P3 result");
+    var p5: P3 = e4 / f4;
+    assert_eq(p5.y, 4, "e4 / f4: B4_div(a: *B4, b: B4), P3 result");
+    var p6: P3 = e4 + f4;
+    assert_eq(p6.y, 111, "e4 + f4: B4_add(*B4, *B4), P3 result");
+    assert_eq(e4.a, 109, "e4 + f4: the write through a *B4 operand reaches e4");
+    return 0;
+}
+
+alloc_init();
+locals();
+other_shapes();
+closures();
+call_results();
+operators();
+address_operands();
+var Gt = S1 { 40 };
+assert_eq(rd1(Gt), 40, "at top level: a bare S1 global");
+var Gop: S1 = GO1 - GO2;
+assert_eq(Gop.v, 7, "at top level: GO1 - GO2, global *S1 operands");
+var Gw1 = W { 1 };
+var Gw2 = W { 2 };
+assert_eq(Gw1 + Gw2, 103, "at top level: Gw1 + Gw2");
+assert_eq(Gw1.buf, 101, "at top level: the write through a *W operand reaches Gw1");
+var Gm: S1 = GO1 * &GO2;
+assert_eq(Gm.v, 18, "at top level: GO1 * &GO2, an address operand needs no frame");
+var r = assert_summary();

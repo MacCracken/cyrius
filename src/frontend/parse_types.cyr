@@ -492,6 +492,41 @@ fn _add_ptr_field(S, si, fnoff): i64 {
     if (ent >= 8192) { return 0; }
     if (_fld_ps == 0) { _fld_ps = alloc(8192 * 8); }
     S64(_fld_ps + ent * 8, ps);
+    if (ps < 0) { _fld_pb_note(S, ent, si); }
+    return 0;
+}
+# ⛔ 6.6.20 — the binding a late `*S<..>` field is re-read under. `_fld_ps_get` / `_fld_ptr_sid`
+# re-read the DEFINITION's tokens at the USE site, under whatever type parameters were bound
+# there: in a plain fn `struct L<T> { next: *L<T>; }`'s T was unbound — `a.next + 1` stepped the
+# base L whatever the instance, and `a.next.v` was refused "unknown type 'T'" even on L<i64> —
+# and in `fn k<T>` the struct's T silently took k's binding, so `a.next.w = 9` wrote with another
+# instance's layout, past the end of the struct. Recorded per entry: the struct's own parameters
+# (GSTP, set before its fields parse) bound as they are now — an instance's arguments, or the i64
+# base's -8 for the definition itself. Any other binding is dropped (a non-generic struct's field
+# names no parameter). 4 words per entry: n0, c0, n1, c1 (`_tp_bind`'s pairs). CHANGELOG [6.6.20]
+var _fld_pb = 0;
+fn _fld_pb_note(S, ent, si): i64 {
+    if (_fld_pb == 0) { _fld_pb = alloc(8192 * 32); }
+    var b = _fld_pb + ent * 32;
+    var stp = GSTP(S, si);
+    var n0 = stp & 0xFFFFFFFF;
+    var n1 = (stp >> 32) & 0xFFFFFFFF;
+    S64(b, 0); S64(b + 8, 0); S64(b + 16, 0); S64(b + 24, 0);
+    if (n0 != 0) { S64(b, n0 - 1); S64(b + 8, _tp_or_base(S, n0 - 1)); }
+    if (n1 != 0) { S64(b + 16, n1 - 1); S64(b + 24, _tp_or_base(S, n1 - 1)); }
+    return 0;
+}
+fn _tp_or_base(S, noff): i64 {
+    var c = _tp_resolve(S, noff);
+    if (c == 0) { return 0 - 8; }
+    return c;
+}
+# Replace the binding in force with entry `ent`'s; the caller saved it and puts it back.
+fn _fld_pb_bind(S, ent): i64 {
+    _tp_clear(S);
+    if (_fld_pb == 0) { return 0; }
+    var b = _fld_pb + ent * 32;
+    _tp_n0 = L64(b); _tp_c0 = L64(b + 8); _tp_n1 = L64(b + 16); _tp_c1 = L64(b + 24);
     return 0;
 }
 # Cursor on the `*` of a field's `*T`: when T (one `*`) names a struct — this one, one declared
@@ -513,7 +548,11 @@ fn _fld_ptr_sid(S, si, fi): i64 {
     if (ent >= 8192) { return 0; }
     var v = L64(_fld_ps + ent * 8);
     if (v >= 0) { return 0; }
-    return _ptr_tok_sid(S, 0 - v - 1);
+    var sv_n0 = _tp_n0; var sv_c0 = _tp_c0; var sv_n1 = _tp_n1; var sv_c1 = _tp_c1;
+    _fld_pb_bind(S, ent);
+    var sid = _ptr_tok_sid(S, 0 - v - 1);
+    _tp_n0 = sv_n0; _tp_c0 = sv_c0; _tp_n1 = sv_n1; _tp_c1 = sv_c1;
+    return sid;
 }
 fn _fld_ps_get(S, si, fi): i64 {
     if (_fld_ps == 0) { return 0; }
@@ -521,10 +560,13 @@ fn _fld_ps_get(S, si, fi): i64 {
     if (ent >= 8192) { return 0; }
     var v = L64(_fld_ps + ent * 8);
     if (v >= 0) { return v; }
+    var sv_n0 = _tp_n0; var sv_c0 = _tp_c0; var sv_n1 = _tp_n1; var sv_c1 = _tp_c1;
+    _fld_pb_bind(S, ent);
     var sv = GTI(S);
     STI(S, 0 - v - 1);
     var ps = _ptr_step_peek(S, 0 - 1, 1);
     STI(S, sv);
+    _tp_n0 = sv_n0; _tp_c0 = sv_c0; _tp_n1 = sv_n1; _tp_c1 = sv_c1;
     return ps;
 }
 # A `fn f(): *T` return (cursor on the `*`): recorded as an i64 return plus T's step, which a
@@ -532,7 +574,20 @@ fn _fld_ps_get(S, si, fi): i64 {
 # records it; pass 2 (PARSE_FN_DEF) refuses an unknown T and sets the fn's return scalar.
 var _fn_rps = 0;   # per fn: the step of a `*T` return, 0 for any other return
 var _fn_rpsid = 0; # per fn: T's struct for a `*T` return (6.6.17, `_call_ptr_field`), else 0
+# ⛔ 6.6.20 — a generic INSTANCE's `: *T` is read under the instance's binding, as `_gtype_sid`
+# reads `: Box<T>`: PARSE_FN_DEF binds T only around the parameter loop and the body, and the
+# return type sits between them, so every instance recorded the unbound T's i64 step (8) and
+# `gr<i32>(..) + 1` stepped 8. The binding in force is put back after. CHANGELOG [6.6.20]
 fn _ret_ptr_annot(S, fi, quiet): i64 {
+    var sv_n0 = _tp_n0; var sv_c0 = _tp_c0; var sv_n1 = _tp_n1; var sv_c1 = _tp_c1;
+    if (_MONOMORPH_OK == 1) { if (_inst_conc0 != 0) { if (GFTP(S, fi) != 0) {
+                _bind_generic_call(S, fi, _inst_conc0, _inst_conc1);
+            } } }
+    _ret_ptr_record(S, fi, quiet);
+    _tp_n0 = sv_n0; _tp_c0 = sv_c0; _tp_n1 = sv_n1; _tp_c1 = sv_c1;
+    return 0;
+}
+fn _ret_ptr_record(S, fi, quiet): i64 {
     var psid = _ptr_ann_sid(S, GTI(S));
     if (psid > 0) {
         if (_fn_rpsid == 0) { _fn_rpsid = alloc(131072 * 8); }

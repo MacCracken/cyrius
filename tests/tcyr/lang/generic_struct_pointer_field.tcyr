@@ -1,0 +1,144 @@
+# generic_struct_pointer_field.tcyr — 6.6.20 — a `*S<..>` field of a GENERIC struct names the
+# instance its own type arguments make, wherever the field is used.
+#
+# Before 6.6.20 such a field (`struct L<T> { v: T; w: T; next: *L<T>; }`) was re-read from the
+# DEFINITION's tokens at each use, under whatever type parameters were bound at the use site:
+#   - in a plain fn, T was unbound: `a.next + 1` stepped the base L (24) for L<i16> (12) and L<i32>
+#     (16) alike, and `a.next.v` was refused "unknown type 'T' as a type argument" — even on L<i64>,
+#     so no generic self-linked struct could chain `.next.v` outside a generic fn;
+#   - inside `fn k<T>`, the struct's T silently took k's binding: `a.next.v` on an L<i16> read with
+#     L<i64>'s layout (5 + 1 << 16), and `a.next.w = 9` wrote 8 bytes at offset 8 of a 12-byte
+#     struct — past its end;
+#   - `struct Q<U> { head: *L<U>; }` stepped the base too, and the base `L` inside `fn h<T>`
+#     stepped L<h's T>.
+# Plain `*T` fields and concrete `*M<i16>` fields were right and are the controls.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/assert.cyr"
+
+struct Pt { x; y; }
+struct L<T> { v: T; w: T; next: *L<T>; }
+struct Q<U> { n: U; head: *L<U>; }
+struct P2<A, B> { a: A; b: B; next: *P2<A, B>; }
+struct M<T> { v: T; w: T; next: *M<i16>; }
+struct V<T> { a: T; data: *T; }
+struct Fw<T> { v: T; p: *Bw<T>; }                 # a generic struct declared BELOW
+struct Bw<U> { x: U; y: U; }
+
+var buf[128];
+var G: L<i16> = L<i16> { 0, 0, 0 };
+
+fn d(a, b): i64 { return a - b; }
+
+fn plain_steps(): i64 {
+    var a: L<i16>;
+    var c: L<i32>;
+    var e: L<i64>;
+    var f: L<Pt>;
+    a.next = &buf; c.next = &buf; e.next = &buf; f.next = &buf;
+    assert_eq(sizeof(L<i16>), 12, "sizeof(L<i16>)");
+    assert_eq(d(a.next + 1, &buf), 12, "L<i16>: next + 1 steps sizeof(L<i16>)");
+    assert_eq(d(c.next + 1, &buf), 16, "L<i32>: next + 1 steps sizeof(L<i32>)");
+    assert_eq(d(e.next + 1, &buf), 24, "L<i64>: next + 1 steps sizeof(L<i64>)");
+    assert_eq(d(f.next + 1, &buf), sizeof(L<Pt>), "L<Pt>: next + 1 steps sizeof(L<Pt>)");
+    var q: Q<i16>;
+    q.head = &buf;
+    assert_eq(d(q.head + 1, &buf), 12, "Q<i16>: head: *L<U> steps sizeof(L<i16>)");
+    var p: P2<i16, i32>;
+    p.next = &buf;
+    assert_eq(d(p.next + 1, &buf), sizeof(P2<i16, i32>), "P2<i16, i32>: two parameters");
+    var fw: Fw<i16>;
+    fw.p = &buf;
+    assert_eq(d(fw.p + 1, &buf), 4, "Fw<i16>: *Bw<T>, Bw declared below, steps sizeof(Bw<i16>)");
+    var m: M<i64>;
+    m.next = &buf;
+    assert_eq(d(m.next + 1, &buf), 12, "control: a concrete *M<i16> field");
+    var vd: V<i16>;
+    vd.data = &buf;
+    assert_eq(d(vd.data + 1, &buf), 2, "control: a plain *T field, V<i16>");
+    return 0;
+}
+
+fn plain_chains(): i64 {
+    var a: L<i16>;
+    var b: L<i16>;
+    b.v = 7; b.w = 1; b.next = 0;
+    a.next = &b;
+    assert_eq(a.next.v, 7, "L<i16>: a.next.v");
+    assert_eq(a.next.w, 1, "L<i16>: a.next.w");
+    a.next.w = 9;
+    assert_eq(b.w, 9, "L<i16>: a.next.w = 9 writes b.w");
+    assert_eq(b.next, 0, "L<i16>: ... and nothing past it");
+    var e: L<i64>;
+    var e2: L<i64>;
+    e2.v = 300; e2.w = 0; e2.next = 0;
+    e.next = &e2;
+    assert_eq(e.next.v, 300, "L<i64> (the base): e.next.v");
+    var q: Q<i16>;
+    q.head = &b;
+    assert_eq(q.head.w, 9, "Q<i16>: q.head.w");
+    var fw: Fw<i16>;
+    var bw: Bw<i16>;
+    bw.x = 4; bw.y = 5;
+    fw.p = &bw;
+    assert_eq(fw.p.y, 5, "Fw<i16>: fw.p.y through a struct declared below");
+    G.next = &b;
+    assert_eq(G.next.w, 9, "a global L<i16>: G.next.w");
+    return 0;
+}
+
+# The struct's T must not take the enclosing generic fn's binding, whatever the fn's
+# parameter is called.
+fn k_inside<T>(x: T): i64 {
+    var a: L<i16>;
+    var bb: L<i16>;
+    var after: L<i16>;
+    bb.v = 5; bb.w = 1; bb.next = 0;
+    after.v = 66;
+    a.next = &bb;
+    assert_eq(a.next.v, 5, "in fn k<T>: a.next.v reads L<i16>'s v");
+    assert_eq(a.next.w, 1, "in fn k<T>: a.next.w reads L<i16>'s w");
+    a.next.w = 9;
+    assert_eq(bb.w, 9, "in fn k<T>: a.next.w = 9 writes bb.w");
+    assert_eq(bb.next, 0, "in fn k<T>: ... and not bb.next");
+    assert_eq(d(a.next + 1, a.next), 12, "in fn k<T>: a.next + 1 steps sizeof(L<i16>)");
+    return 0;
+}
+fn g_inside<U>(x: U): i64 {
+    var a: L<i16>;
+    a.next = &buf;
+    return d(a.next + 1, &buf);
+}
+fn base_inside<T>(x: T): i64 {
+    var a: L;
+    a.next = &buf;
+    return d(a.next + 1, &buf);
+}
+fn conv<T>(src: *L<T>, dst: *L<i64>): i64 {
+    dst.next.v = src.v;
+    dst.next.w = 77;
+    return 0;
+}
+fn generic_fns(): i64 {
+    k_inside<i64>(1);
+    k_inside<i8>(1);
+    assert_eq(g_inside<i64>(1), 12, "in fn g<U>, U = i64: L<i16> next + 1");
+    assert_eq(g_inside<i16>(1), 12, "in fn g<U>, U = i16: L<i16> next + 1");
+    assert_eq(base_inside<i8>(1), 24, "the base L in fn h<T>, T = i8, steps L<i64>'s 24");
+    var a: L<i16>;
+    a.v = 3; a.w = 0; a.next = 0;
+    var d0: L<i64>;
+    var d1: L<i64>;
+    d1.v = 0; d1.w = 0; d1.next = 0;
+    d0.next = &d1;
+    conv<i16>(&a, &d0);
+    assert_eq(d1.v, 3, "conv<i16>: dst.next.v = src.v (dst is an L<i64>)");
+    assert_eq(d1.w, 77, "conv<i16>: dst.next.w = 77");
+    return 0;
+}
+
+alloc_init();
+plain_steps();
+plain_chains();
+generic_fns();
+var r = assert_summary();

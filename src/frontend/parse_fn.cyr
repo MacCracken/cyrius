@@ -1469,14 +1469,18 @@ fn _try_push_struct_addr_arg(S, fi, argc): i64 {
     # retptr callee falls through to PARSE_FNCALL, which refuses it by name; a rax:rdx one is
     # refused here (as first committed it fell through too, and PARSE_FNCALL refuses only the
     # retptr class, so `hy(p2(1, 2))` compiled clean and SIGSEGV'd). CHANGELOG [6.6.6]
-    if (nx == 10) { if (GINFN(S) != 1) { return _refuse_toplevel_pair_arg(S); } }
+    if (nx == 10) { if (GINFN(S) != 1) { return _refuse_toplevel_struct_arg(S); } }
+    # 6.6.20: and `h(mkg<S1>(..))` at top level (it fell to the value push).
+    if (nx == 19) { if (GINFN(S) != 1) { if (_call_dotted(S, GTI(S)) == 0) {
+                if (_gcall_open(S, GTI(S)) >= 0) { return _refuse_toplevel_struct_arg(S); }
+            } } }
     # 6.6.10 (bite 7 review): an explicit `idp<i32>(4)` too — it fell to the value push (SIGSEGV).
     var o = 0 - 1;
     if (GINFN(S) == 1) { o = _gcall_open(S, GTI(S)); }
     if (o >= 0) {
         # 6.6.12: `take(mk(p).v)` — the argument is a FIELD of the result, taken like `take(b.v)`.
         if (_call_dotted(S, GTI(S)) == 1) { return _push_struct_expr_arg(S, fi, argc); }
-        if (_ret_agg_class(S, _gen_resolve_call(S, GTI(S))) == 0) { return 0; }   # 6.6.10: the instance's class
+        if (_arg_call_class(S) == 0) { return 0; }   # 6.6.10: the instance's class
         if (_call_is_whole_arg(S, o - 1) == 0) { return 0; }
         EFLADDR(S, _struct_call_into_temp(S));
         EPUSHR(S);
@@ -1487,7 +1491,10 @@ fn _try_push_struct_addr_arg(S, fi, argc): i64 {
     if (nx != 31) { if (nx != 11) { return _push_struct_expr_arg(S, fi, argc); } }
     var li = 0 - 1;
     if (GINFN(S) == 1) { li = FINDLOCAL(S, PEEKV(S)); }
-    if (li < 0) { return _push_struct_addr_global(S); }
+    if (li < 0) {
+        if (_push_struct_addr_cap(S) == 1) { return 1; }
+        return _push_struct_addr_global(S);
+    }
     var lt = GLTYPE(S, li);
     if (lt >= 0) { return 0; }          # must be a struct-typed local (SLTYPE = -sid)
     # v6.4.31: on SysV/aarch64 a SIMD local is register-passed (XMM/V) — never
@@ -1508,6 +1515,20 @@ fn _try_push_struct_addr_arg(S, fi, argc): i64 {
     if (_is_simd_any(S, lt) == 1) { if (_TARGET_PE == 0) { return 0; } }
     else { _sa_ptr = _local_struct_is_ptr(S, li, lt); }
     if (_sa_ptr == 1) { EFLLOAD(S, li); } else { EFLADDR(S, li); }
+    EPUSHR(S);
+    STI(S, GTI(S) + 1);                 # consume IDENT
+    return 1;
+}
+
+# ⛔ 6.6.20 — the CLOSURE-CAPTURE arm. A captured struct of 8 B or less is one env word holding
+# the struct BY VALUE, and it was pushed as that value — harmless while only a struct over 8 B was
+# address-passed (its one word holds the struct's address), fatal once a `p: *S` parameter of any
+# size is: `|| rd1(s)` SIGSEGV'd where `|| rd3(a)` worked. `_CL_CAP_BASE_RA` is the address for
+# every shape (the env word's own address, or the address it holds). Returns 1 when handled.
+fn _push_struct_addr_cap(S): i64 {
+    var cx = _CL_CAP_FIELD_IDX(S, PEEKV(S));
+    if (cx >= 0 - 1) { return 0; }
+    _CL_CAP_BASE_RA(S, 0 - 1000000 - cx, _cap_fld_sid);
     EPUSHR(S);
     STI(S, GTI(S) + 1);                 # consume IDENT
     return 1;
@@ -2498,14 +2519,37 @@ fn _refuse_toplevel_pair_init(S, pscale, ti): i64 {
     return 0;
 }
 
-# `h(p2(..))` at top level, `h` taking the struct by address and `p2` returning it in rax:rdx:
-# there is no frame to put the pair in, so refuse it by name. Always returns 0 — the argument
-# is then pushed by the ordinary path, and `_had_error` keeps the binary from being written.
-fn _refuse_toplevel_pair_arg(S): i64 {
-    if (_ret_agg_class(S, _gen_resolve_call(S, GTI(S))) != 1) { return 0; }   # 6.6.10: the instance's class
-    if (_call_is_whole_arg(S, GTI(S)) == 0) { return 0; }
+# `h(p2(..))` at top level, `h` taking the struct by address and `p2` returning it in rax:rdx —
+# or (6.6.20) a struct of 8 B or less in rax: there is no frame to put the result in, so refuse
+# it by name. Always returns 0 — the argument is then pushed by the ordinary path, and
+# `_had_error` keeps the binary from being written.
+fn _refuse_toplevel_struct_arg(S): i64 {
+    var c = _arg_call_class(S);   # 6.6.10: the instance's class
+    if (c != 1) { if (c != 3) { return 0; } }
+    if (_call_is_whole_arg(S, _gcall_open(S, GTI(S)) - 1) == 0) { return 0; }
     _refuse_toplevel_struct_call(S, PEEKV(S));
     return 0;
+}
+
+# ⛔ 6.6.20 — the class of the struct the call at the cursor (`name(` / `name<..>(`) returns, for
+# an address-passed parameter: `_ret_agg_class`'s 2 / 1, or 3 for a struct of 8 B or less, which
+# comes back in rax. That class was 0 here and its value was pushed: harmless while only a struct
+# over 8 B was address-passed (a smaller result cannot be one), fatal once a `p: *S` parameter of
+# any size is — `rd1(mk())` with `p: *S1` SIGSEGV'd where `rd3(mk3())` took its temp's address.
+fn _arg_call_class(S): i64 {
+    var fi = _gen_resolve_call(S, GTI(S));
+    var c = _ret_agg_class(S, fi);
+    if (c != 0) { return c; }
+    if (_ret_small_struct(S, fi) == 1) { return 3; }
+    return 0;
+}
+# 1 = fn `fi` returns a struct of 8 B or less (by value, in rax).
+fn _ret_small_struct(S, fi): i64 {
+    if (fi < 0) { return 0; }
+    var sid = GFRS(S, fi);
+    if (sid <= 0) { return 0; }
+    if (STRUCTSZ(S, sid - 1) > 8) { return 0; }
+    return 1;
 }
 
 # ⭐ 6.6.6 (bite 14 review) — A METHOD CALL OR AN OVERLOADED OPERATOR RETURNING A STRUCT BY
@@ -2729,10 +2773,26 @@ fn _push_struct_expr_arg(S, fi, argc): i64 {
     _fla_arg = fa;
     if (_fla_hit == 1) { return _fla_push_arg(S, fi, argc); }
     var t = _sc_whole(S, st);
+    if (t == 0 - 3) { t = _sc_small_temp(S); }   # 6.6.20
     if (t >= 0) { EFLADDR(S, t); }
     if (t == 0 - 1) { _refuse_toplevel_struct_call(S, _sc_fn); }
     EPUSHR(S);
     return 1;
+}
+
+# ⛔ 6.6.20 — a whole method / operator result of 8 B or less (`_sc_whole` -3: the value is in rax,
+# no temp) given to an address-passed parameter: stored into a frame temp, whose slot is returned
+# for the caller to push the ADDRESS of. Its value was pushed, which only a `p: *S` parameter of
+# 8 B or less can receive — `rd1(s.dup())` SIGSEGV'd where `rd3(a.dup())` worked. At top level
+# there is no frame: refused by name (-2, the value is pushed and no binary is written).
+fn _sc_small_temp(S): i64 {
+    if (GINFN(S) != 1) {
+        _refuse_toplevel_struct_call(S, _sc_fn);
+        return 0 - 2;
+    }
+    var t = _agg_temp(S, _sc_sid);
+    EFLSTORE(S, t);
+    return t;
 }
 
 # The recorded field source as by-value argument `argc` of `fn`: checked against the parameter's
@@ -2743,18 +2803,78 @@ fn _push_struct_expr_arg(S, fi, argc): i64 {
 # here instead, which had no frame to use at top level (there the callee got the field itself);
 # with the callee's copy that temp was a second copy. Returns 1. CHANGELOG [6.6.12] [6.6.16]
 fn _fla_push_arg(S, fi, argc): i64 {
+    _fla_addr(S, fi, argc);
+    EPUSHR(S);           # on a refusal it keeps the argument count; no binary is written
+    return 1;
+}
+# rax = the recorded field's address, as by-value / `*S` argument `argc` of `fi` (refused by name
+# when the parameter's struct differs). Shared with an operator's right operand (`_op_rhs`).
+fn _fla_addr(S, fi, argc): i64 {
     _fla_hit = 0;
     var ps = GFPSID(S, fi, argc);
     if (ps > 0) { if (ps != _fla_ft) {
-            ERR_IDENT(S, "cannot pass ", _fla_name, " to a by-value parameter of a different struct type in a call to ", L64(_fnt_names + fi * 8));
-            EPUSHR(S);   # keeps the argument count; no binary is written
-            return 1;
+            ERR_IDENT(S, "cannot pass ", _fla_name, " to a parameter of a different struct type in a call to ", L64(_fnt_names + fi * 8));
+            return 0;
         } }
     _fsc_src_x1(S, 0);
     EMOVI(S, 0);
     EADDR(S);            # rax = x1
-    EPUSHR(S);
-    return 1;
+    return 0;
+}
+
+# ⛔ 6.6.20 — THE RIGHT OPERAND OF AN OVERLOADED OPERATOR, parsed (PARSE_TERM) and classified for
+# operand 1 of fn `fi`, the way `_try_push_struct_addr_arg` classifies a call argument. Returns its
+# encoding for `_OP_OPERAND_ADDR` (-1 = the value in rax, pushed as it is). For an ADDRESS-passed
+# operand (a `*S` at any size, a by-value struct over 8 B):
+#   - a whole struct-typed FIELD (`b - h.p`, `w2 - h.w`, `(h.p)`) passes the field's own address,
+#     as `take(h.p)` does — its first word was pushed and dereferenced: SIGSEGV for `*P3` and
+#     by-value `P3` (6.6.16 through 6.6.19), and for `*W` a copy that lost a write through it;
+#   - for a `*S` of 8 B or less, a whole free call returning such a struct (`s - mk1(4)`, class 3)
+#     is a struct VALUE (`_op_call_end`, decided before the parse as the call path decides it), as
+#     is a method / operator result (`_sc_beg` is cleared so only this operand's record matches);
+#     `_op_operand_sv` decides the rest.
+fn _op_rhs(S, fi): i64 {
+    var rb = GTI(S);
+    var arm = 0;
+    if (fi >= 0) { arm = _pm_struct(fi, 1); }
+    var fw = _fla_want;
+    var fo = _fla_opd;
+    var fp = _fla_opdp;
+    var ce = 0 - 1;
+    if (arm == 1) {
+        _fla_want = rb;
+        _fla_opd = rb;
+        if (TOKTYP(S, rb) == 10) { _fla_want = rb + 1; _fla_opdp = rb + 1; }
+        _fla_hit = 0;
+        if (_op_small_ptr(S, fi, 1) == 1) { _sc_beg = 0 - 1; ce = _op_call_end(S); }
+    }
+    PARSE_TERM(S);
+    if (arm == 1) {
+        _fla_want = fw;
+        _fla_opd = fo;
+        _fla_opdp = fp;
+        if (_fla_hit == 1) { _fla_addr(S, fi, 1); return 0 - 1; }
+    }
+    var sv = 1;
+    if (GTI(S) != ce) { sv = _op_is_sval(S, rb, GTI(S)); }
+    return _op_operand_sv(S, fi, 1, GESVAR(S), _op_bare(S, rb, GTI(S)), sv);
+}
+# The token after a whole free call `name(..)` / `name<..>(..)` at the cursor that returns a struct
+# of 8 B or less (`_arg_call_class` 3), or -1.
+fn _op_call_end(S): i64 {
+    var o = _gcall_open(S, GTI(S));
+    if (o < 0) { return 0 - 1; }
+    if (_call_dotted(S, GTI(S)) == 1) { return 0 - 1; }
+    if (_arg_call_class(S) != 3) { return 0 - 1; }
+    return _call_close(S, o) + 1;
+}
+# 1 = token type `t` continues a TERM after a factor (PARSE_TERM's loop and its postfix `?`), or
+# continues the factor itself (`.`, `[`, `(`) — so a field just loaded is not the whole operand.
+fn _op_term_cont(t): i64 {
+    if (t == 8 || t == 119 || t == 9 || t == 34) { return 1; }
+    if (t == 38 || t == 39 || t == 152 || t == 120 || t == 121) { return 1; }
+    if (t == 124 || t == 41 || t == 28 || t == 10) { return 1; }
+    return 0;
 }
 
 # `return s.m(..);` / `return a + b;` in a >16 B struct-returning fn, the call returning this same
@@ -4016,6 +4136,27 @@ fn _param_record(S, li, pnoff, is_async): i64 {
     if (_cur_fn_ptrp != li + 1) { MARK_SMALL_STRUCT(S, li, GLTYPE(S, li)); }
     if (_cur_fn_ptrp == li + 1) { SLPTRP(S, li); }
     _cur_fn_ptrp = 0;
+    return 0;
+}
+# v6.3.37 (C1) — why a fn's PARAMETERS keep it off the inline replay: 3 a struct/Str/Result/Option/
+# Tagged parameter (SLTYPE = -sid), 6 a `name: *T` parameter, 0 neither. The replay re-registers a
+# parameter by NAME with only the type GFIPT packs (`_inl_bind_param`) — vectors and f64/f32 —
+# so a struct's SLTYPE is lost (`s.field` mis-parses) and so is a pointer's bit 56 and step mark
+# (`_sl_marks`): an inlined `p + 1` stepped 1 whatever T, and on a `*f32` it was a FLOAT add of
+# the pointer's bits, while the same fn out of line stepped sizeof(T) (6.6.17 b7 missed this
+# site). Such a fn falls back to a call, which handles both correctly. Vectors stay inlinable.
+# ⛔ 6.6.20 — this walks SLOTS 0.._cur_fn_pslots-1, not parameters 0..pc-1: a wide vector takes
+# GVEC_NSLOTS slots, so after `v: f64v2` the next parameter sits at slot 2 and a by-parameter
+# walk never saw it — `fn sx(v: f64v2, s: Pt)` was replayed and crashed the compiler. Fillers
+# are untyped and never carry bit 56 (every registration writes SLDEP first). CHANGELOG [6.6.20]
+fn _inl_param_why(S): i64 {
+    var li = 0;
+    while (li < _cur_fn_pslots) {
+        if (GLPTRP(S, li) == 1) { return 6; }
+        var t = GLTYPE(S, li);
+        if (t < 0) { if (_is_simd_any(S, t) == 0) { return 3; } }
+        li = li + 1;
+    }
     return 0;
 }
 # ⛔ 6.6.17 (a9) — an f64 / f32 parameter's slot tag, and the same tag for the INLINE replay. The
@@ -5534,12 +5675,31 @@ fn _prescan_skip_fn(S): i64 {
 # address-pass it. Str/Result/Option/Tagged are 16 B structs by NAME but classify
 # non-zero → excluded (they hold a heap handle, value-passed). Used by both passes
 # to build _fnt_structmask consistently, and by PARSE_FNCALL to gate the address push.
-fn _param_wants_struct_ptr(S, tnoff): i64 {
+# ⛔ 6.6.20 — and for a `p: *S` parameter (`isptr` 1: a `*` preceded the type) at EVERY size of S:
+# 6.6.17 (a2) made such a parameter a pointer at every size in the callee, but this bit — the
+# caller's "push the address" — was set only over 8 B, so `rd1(s)` with `p: *S1` pushed s's VALUE
+# and the callee dereferenced it (SIGSEGV, or a silent read / write through whatever s held),
+# while `rd3(a)` with `p: *P3` took `&a`. One rule for both sizes. CHANGELOG [6.6.20]
+fn _param_wants_struct_ptr(S, tnoff, isptr): i64 {
     if (_classify_param_type(S, tnoff) != 0) { return 0; }
     var sid = FINDSTRUCT(S, tnoff);
     if (sid <= 0) { return 0; }
+    if (isptr == 1) { return 1; }
     if (STRUCTSZ(S, sid - 1) <= 8) { return 0; }
     return 1;
+}
+# 1 = the parameter being parsed was declared `name: *T` (`_mark_ptr_param` marked the slot it
+# takes next; `_param_record` clears the mark).
+fn _ptrp_now(S): i64 {
+    if (_cur_fn_ptrp == GFLC(S) + 1) { return 1; }
+    return 0;
+}
+# A type-parameter-typed parameter resolved to struct `sid` is address-passed over 8 B, and
+# behind a `*` at every size (`_param_wants_struct_ptr`).
+fn _tp_param_addr(S, sid): i64 {
+    if (_ptrp_now(S) == 1) { return 1; }
+    if (STRUCTSZ(S, sid - 1) > 8) { return 1; }
+    return 0;
 }
 
 # ⛔ 6.6.11 — BIT 62 OF `_fnt_structmask`: "param 0 is a declared plain struct of 8 B or less,
@@ -5618,9 +5778,9 @@ fn _psid_note(S, fi, pc, sid, mask): i64 {
 # instance (`_gtype_param_mask`), and the sid is recorded. Returns the instance sid; the updated
 # mask is the second return, `_psid_mask` (read it immediately).
 var _psid_mask = 0;
-fn _psid_scan(S, fi, pc, base, mask): i64 {
+fn _psid_scan(S, fi, pc, base, mask, isptr): i64 {
     var inst = _gtype_sid(S, fi, base);
-    _psid_mask = _gtype_param_mask(S, mask, pc, base, inst);
+    _psid_mask = _gtype_param_mask(S, mask, pc, base, inst, isptr);
     _psid_note(S, fi, pc, inst, _psid_mask);
     return inst;
 }
@@ -5661,7 +5821,8 @@ fn _prescan_params_scan(S, fi): i64 {
                 if (PEEKT(S) == 2) { STI(S, GTI(S) + 1); }   # param name
                 if (PEEKT(S) == 49) {                        # ': Type'
                     STI(S, GTI(S) + 1);                      # consume ':'
-                    if (PEEKT(S) == 8) { STI(S, GTI(S) + 1); }   # skip '*' (pointer)
+                    var _pptr = 0;
+                    if (PEEKT(S) == 8) { STI(S, GTI(S) + 1); _pptr = 1; }   # skip '*' (pointer)
                     if (PEEKT(S) == 2) {
                         var c = _classify_param_type(S, PEEKV(S));
                         if (c == 1) { str_mask = _pmw(str_mask, pc, 2); }
@@ -5679,10 +5840,10 @@ fn _prescan_params_scan(S, fi): i64 {
                         elif (c == 8) { if (_TARGET_PE == 1) { struct_mask = _pmw(struct_mask, pc, 1); } else { simd_mask = _pmw2(simd_mask, pc, 3); } }  # f32v4 (16-byte; mask=3 distinguishes from f64v2=1)
                         elif (c <= 0 - 2048) { if (_TARGET_PE == 1) { struct_mask = _pmw(struct_mask, pc, 1); } else { simd_mask = _pmw2(simd_mask, pc, 1); } }  # v6.4.7: integer 128-bit vector → 16-byte/1-XMM (mask 1)
                         # v6.3.36 (issue [5]) — plain struct >8 B param → address-passed.
-                        if (_param_wants_struct_ptr(S, PEEKV(S)) == 1) { struct_mask = _pmw(struct_mask, pc, 1); }
+                        if (_param_wants_struct_ptr(S, PEEKV(S), _pptr) == 1) { struct_mask = _pmw(struct_mask, pc, 1); }
                         # 6.6.10: `r: Box<Pt>` — the instance's size decides (see _gtype_sid).
                         var _pb = FINDSTRUCT(S, PEEKV(S));
-                        if (_pb > 0) { _pb = _psid_scan(S, fi, pc, _pb, struct_mask); struct_mask = _psid_mask; }
+                        if (_pb > 0) { _pb = _psid_scan(S, fi, pc, _pb, struct_mask, _pptr); struct_mask = _psid_mask; }
                         STI(S, GTI(S) + 1);                  # consume type name
                         SKIP_GENERICS(S);                    # `: Vec<i64>` etc.
                     }
@@ -5970,16 +6131,19 @@ fn _ret_targ_parse(S, base): i64 {
     return base;
 }
 # A parameter typed `Name<..>` resolved to an instance: its address-passed bit follows the
-# INSTANCE's size (`_param_wants_struct_ptr` sized the base by name).
-fn _gtype_param_mask(S, mask, pc, base, inst): i64 {
+# INSTANCE's size (`_param_wants_struct_ptr` sized the base by name) — or, behind a `*` (`isptr`),
+# is set at every size (6.6.20).
+fn _gtype_param_mask(S, mask, pc, base, inst, isptr): i64 {
     if (inst == base) { return mask; }
+    var want = isptr;
+    if (STRUCTSZ(S, inst - 1) > 8) { want = 1; }
     if (pc >= 62) {   # 6.6.17 (a10): the overflow row (`_pmw`)
         _pm_row_clr(_cur_fn_ix, pc, 1);
-        if (STRUCTSZ(S, inst - 1) > 8) { _pm_row_or(_cur_fn_ix, pc, 1); }
+        if (want == 1) { _pm_row_or(_cur_fn_ix, pc, 1); }
         return mask;
     }
     mask = mask & (0 - 1 - (1 << pc));
-    if (STRUCTSZ(S, inst - 1) > 8) { mask = mask | (1 << pc); }
+    if (want == 1) { mask = mask | (1 << pc); }
     return mask;
 }
 
@@ -8015,12 +8179,12 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                     elif (_ptc == 8) { pt_simd_class = 1; pt_simd_sid = 2121; }  # f32v4
                     elif (_ptc <= 0 - 2048) { pt_simd_class = 1; pt_simd_sid = 0 - _ptc; }  # v6.4.7: integer 128-bit vector (16-byte/1-XMM, SLTYPE = sentinel)
                     # v6.3.36 (issue [5]) — plain struct >8 B param → address-passed.
-                    if (_param_wants_struct_ptr(S, tnoff) == 1) { struct_mask = _pmw(struct_mask, pc, 1); }
+                    if (_param_wants_struct_ptr(S, tnoff, _ptrp_now(S)) == 1) { struct_mask = _pmw(struct_mask, pc, 1); }
                     pt_sid = FINDSTRUCT(S, tnoff);
                     # 6.6.10: `r: Box<Pt>` is the instance, sized as one (see _gtype_sid).
                     if (pt_sid > 0) {
                         var _pgi = _gtype_sid(S, fi, pt_sid);
-                        struct_mask = _gtype_param_mask(S, struct_mask, pc, pt_sid, _pgi);
+                        struct_mask = _gtype_param_mask(S, struct_mask, pc, pt_sid, _pgi, _ptrp_now(S));
                         pt_sid = _pgi;
                     }
                     # v6.3.9 (F-fns): param `: T` under an active generic binding.
@@ -8040,7 +8204,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                             # above sees only "T" (not a struct) so it can't set the bit; set
                             # it here from the resolved sid. <=8 B resolved structs stay
                             # value-passed (bit clear), matching the non-generic ABI.
-                            if (STRUCTSZ(S, _ptpc - 1) > 8) { struct_mask = _pmw(struct_mask, pc, 1); }
+                            if (_tp_param_addr(S, _ptpc) == 1) { struct_mask = _pmw(struct_mask, pc, 1); }   # 6.6.20: + `p: *T`
                         }
                     }
                     _tn_param_check(S, pnoff, fi, _ptc);   # 6.6.16 (C8): an unknown name is refused by name
@@ -8549,20 +8713,11 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
         # offsets) capacity is untouched. Only fires under _INLINE_OK/_MONOMORPH_OK
         # (this whole block is gated) → default cycc self-host is byte-identical.
         if (btokens > 32) { can_inline = 0; if (_inl_why == 0) { _inl_why = 2; } }
-        # v6.3.37 (C1) — a struct/Str/Result/Option/Tagged param (SLTYPE = -sid) cannot
-        # ride the inline-replay path: the replay re-registers the param slot by NAME
-        # only (never re-applying the struct SLTYPE the fn-def set), so `s.field` in the
-        # body mis-parses → spurious 'unexpected ;'. Exclude such fns → they fall back to
-        # a normal/tail call, which handles the struct-param ABI correctly. The param
-        # slots 0..pc-1 still hold their SLTYPE here (body locals take slots >= pc).
-        # f64v2(-20)/f64v4(-21) are register-class (not dot-accessed) → stay inlinable.
+        # v6.3.37 (C1) — a struct-typed or `*T` parameter cannot ride the inline replay;
+        # `_inl_param_why` says why and walks the parameter SLOTS.
         if (can_inline == 1) {
-            var _psi = 0;
-            while (_psi < pc) {
-                var _pslt = GLTYPE(S, _psi);
-                if (_pslt < 0) { if (_is_simd_any(S, _pslt) == 0) { can_inline = 0; if (_inl_why == 0) { _inl_why = 3; } } }   # struct param → not inlinable; SIMD vectors stay inlinable
-                _psi = _psi + 1;
-            }
+            var _pwhy = _inl_param_why(S);   # 6.6.20: by SLOT, and a `*T` parameter too (see there)
+            if (_pwhy != 0) { can_inline = 0; if (_inl_why == 0) { _inl_why = _pwhy; } }
         }
         if (can_inline == 1) {
             var sci = GFBS(S, fi);
@@ -8617,6 +8772,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                 if (_inl_why == 3) { WARN(S, "#inline ignored: struct/aggregate parameter", 43); }
                 if (_inl_why == 4) { WARN(S, "#inline ignored: body has control flow or a var declaration", 59); }
                 if (_inl_why == 5) { WARN(S, "#inline ignored: body has a defer/secret block", 46); }
+                if (_inl_why == 6) { WARN(S, "#inline ignored: pointer (*T) parameter", 39); }
             }
         }
     }

@@ -193,7 +193,7 @@ var r = m(); syscall(60, r);
 refuse M1 "cannot copy 'q' into a variable of a different struct" "${T}fn m(): i64 { var q: Pt = mkbq(1).q; return q.x; }
 var r = m(); syscall(60, r);
 "
-refuse M2 "cannot pass 'q' to a by-value parameter of a different struct type in a call to 'ptv'" "${T}fn m(): i64 { return ptv(mkbq(1).q); }
+refuse M2 "cannot pass 'q' to a parameter of a different struct type in a call to 'ptv'" "${T}fn m(): i64 { return ptv(mkbq(1).q); }
 var r = m(); syscall(60, r);
 "
 refuse R1 "struct-return fn: return must be a bare local identifier" "${T}fn f3(): P3 { return mk3(1).a; }

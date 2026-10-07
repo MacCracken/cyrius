@@ -649,6 +649,8 @@ var _fla_name = 0;
 var _fla_lit = 0 - 1;   # `_fla_want` when a struct literal armed it (6.6.12): `,` / `}` also end the source
 var _fla_arg = 0 - 1;   # `_fla_want` when a by-value struct ARGUMENT armed it (6.6.12): `,` / `)`
 var _fla_stp = 0 - 1;   # `_fla_want` when a classic-for STEP armed it (6.6.20): `)`
+var _fla_opd = 0 - 1;   # `_fla_want` when an operator's address-passed right OPERAND armed it (6.6.20, `_op_rhs`)
+var _fla_opdp = 0 - 1;  # ... and when that operand is parenthesised, `(h.p)`: it ends at its `)`
 
 fn _fsc_reset(): i64 {
     _fsc_li = 0 - 1;
@@ -894,9 +896,15 @@ fn _fst_odd(S, idx, sid, off, nb): i64 {
 # `;` follows — record it for `_fsc_copy` and emit nothing. Returns 1 when taken.
 # 6.6.12: a struct literal's nested-field source (`B2 { a.v, 5 }`) ends at `,` or `}`, and a
 # by-value struct argument (`take(r.v, 5)`) at `,` or `)`.
+# 6.6.20: an operator's right operand (a TERM) ends at any token that does not continue the term;
+# a parenthesised one at its `)`, when the token after it does not continue the term either.
 fn _fla_lit_end(S): i64 {
     if (_fla_arg == _fla_want) { if (PEEKT(S) == 31 || PEEKT(S) == 11) { return 1; } }
     if (_fla_stp == _fla_want) { if (PEEKT(S) == 11) { return 1; } }
+    if (_fla_opd == _fla_want) { if (_op_term_cont(PEEKT(S)) == 0) { return 1; } }
+    if (_fla_opdp == _fla_want) { if (PEEKT(S) == 11) {
+            if (_op_term_cont(TOKTYP(S, GTI(S) + 1)) == 0) { return 1; }
+        } }
     if (_fla_lit != _fla_want) { return 0; }
     if (PEEKT(S) == 31) { return 1; }
     if (PEEKT(S) == 14) { return 1; }
