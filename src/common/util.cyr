@@ -596,13 +596,21 @@ var _codebuf_base = 0;
 #
 # Layout, in the 0x60000-0x100000 band freed when v6.5.40 relocated the identifier pool to
 # 0xEC00000 (verified: `S + 0x60000` has zero live users):
-#   WPJS  0x60000  49152 x 8B   disp32 SOURCE cps
+#   WPJS  0x60000  49152 x 8B   disp32 SOURCE cps — the FIRST 49152; then alloc'd (below)
 #   WPNR  0xC0000   4096 x 24B  (cp, len, cum) NOP runs + 4096 records of merge scratch
 #   WPSW  0xF0000   4096 x 16B  (table_cp, nent) switch jump tables
-# Measured on a cycc self-compile: 32,438 sources, 2,079 runs. Overflow sets a flag and the
-# whole pass declines — never a partial repair. CHANGELOG [6.5.68]
+# Measured on a cycc self-compile at 6.6.20 (CYRIUS_IR=3 and CYRIUS_DCE=1 alike): 43,028
+# sources, 2,605 runs, 0 switch tables (v6.5.68: 32,438 sources, 2,079 runs). A saturated
+# registry sets a flag and the whole pass declines — never a partial repair. CHANGELOG [6.5.68]
+#
+# 6.6.20 — WPJS GROWS. Its fixed 49,152 slots were 88 % used by cycc's own build, and one more
+# source past them declined the whole compaction. The 49,153rd moves the registry to alloc'd
+# storage, doubling (_wpjs_grow); _wpjs_ovf now means only that the alloc failed. Every reader
+# goes through _wpjs_base. CHANGELOG [6.6.20]
 var _wpjs_n = 0;      # disp32 sources recorded
 var _wpjs_ovf = 0;
+var _wpjs_base = 0;   # S + 0x60000 until the first grow, then the alloc'd copy
+var _wpjs_cap = 0;    # 0 until the first record; 49152, then doubling
 var _wpnr_n = 0;      # NOP runs recorded
 var _wpnr_ovf = 0;
 var _wpsw_n = 0;      # switch jump tables recorded
@@ -614,9 +622,23 @@ var _wp_deleted = 0;
 # ⚠ The entry-trampoline form, which must record UNCONDITIONALLY. `IR_SENABLE` runs after the
 # trampoline is emitted (main.cyr), so at that moment `IR_ENABLED` is 0 even under CYRIUS_IR=3 —
 # gating this one would drop the single site nothing else repairs.
+fn _wpjs_grow(S): i64 {
+    if (_wpjs_base == 0) { _wpjs_base = S + 0x60000; _wpjs_cap = 49152; return 1; }
+    var nc = _wpjs_cap * 2;
+    var nb = alloc(nc * 8);
+    if (nb == 0) { return 0; }
+    var i = 0;
+    while (i < _wpjs_n) { store64(nb + i * 8, load64(_wpjs_base + i * 8)); i = i + 1; }
+    _wpjs_base = nb;
+    _wpjs_cap = nc;
+    return 1;
+}
 fn _wpjs_add_raw(S, cp): i64 {
-    if (_wpjs_n < 49152) { S64(S + 0x60000 + _wpjs_n * 8, cp); _wpjs_n = _wpjs_n + 1; }
-    else { _wpjs_ovf = 1; }
+    if (_wpjs_n >= _wpjs_cap) {
+        if (_wpjs_grow(S) == 0) { _wpjs_ovf = 1; return 0; }
+    }
+    S64(_wpjs_base + _wpjs_n * 8, cp);
+    _wpjs_n = _wpjs_n + 1;
     return 0;
 }
 # ⭐ GATED, because recording on a build that will never compact is pure cost — measured

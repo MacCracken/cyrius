@@ -1646,7 +1646,7 @@ fn wp_compact(S): i64 {
     # amount, so the displacement is recomputed rather than adjusted by one delta.
     var ji = 0;
     while (ji < _wpjs_n) {
-        var src = L64(S + 0x60000 + ji * 8);
+        var src = L64(_wpjs_base + ji * 8);
         var da = _codebuf_base + src;
         var disp = load8(da) | (load8(da + 1) << 8) | (load8(da + 2) << 16) | (load8(da + 3) << 24);
         if (disp >= 0x80000000) { disp = disp - 0x100000000; }
@@ -1811,8 +1811,8 @@ fn wp_compact(S): i64 {
     # first pass's deletions and every repair is double-counted.
     var rj = 0;
     while (rj < _wpjs_n) {
-        var rc = L64(S + 0x60000 + rj * 8);
-        S64(S + 0x60000 + rj * 8, rc - _wp_shift(S, rc));
+        var rc = L64(_wpjs_base + rj * 8);
+        S64(_wpjs_base + rj * 8, rc - _wp_shift(S, rc));
         rj = rj + 1;
     }
     var rs = 0;

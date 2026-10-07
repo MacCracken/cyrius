@@ -42,14 +42,20 @@
 #                                        and `scratch + 0x60000` (x86 fixup) merely CONTAIN the
 #                                        literal and must not move. (v5.11.18 128→256KB,
 #                                        v6.4.76 256→512KB)
-#   0x60000   wpjs          [393216]      v6.5.68 whole-program compaction registry: 49152 × 8 B
-#                                        disp32 SOURCE cps (_wpjs_add, util.cyr). Filled only under
-#                                        CYRIUS_IR / CYRIUS_DCE=1; overflow sets _wpjs_ovf and
-#                                        wp_compact declines the whole pass.
+#   0x60000   wpjs          [393216]      v6.5.68 whole-program compaction registry: the FIRST 49152
+#                                        × 8 B disp32 SOURCE cps (_wpjs_add, util.cyr), filled only
+#                                        under CYRIUS_IR / CYRIUS_DCE=1. cycc's own build records
+#                                        43,028 (6.6.20). Since 6.6.20 the 49,153rd moves the registry
+#                                        to alloc'd storage, doubling (_wpjs_grow) — it used to set
+#                                        _wpjs_ovf and decline the whole pass. Readers go through
+#                                        _wpjs_base.
 #   0xC0000   wpnr          [196608]      4096 × 24 B (cp, len, cum) NOP runs + 4096 records of
-#                                        merge scratch (_wpnr_add; overflow → _wpnr_ovf, declines)
+#                                        merge scratch (_wpnr_add; overflow → _wpnr_ovf, declines;
+#                                        cycc: 2,605 runs)
 #   0xF0000   wpsw          [65536]       4096 × 16 B (table_cp, nent) switch jump tables
 #                                        (_wpsw_add; overflow → _wpsw_ovf, declines). Ends 0x100000.
+#                                        A decline is NAMED on both paths (_wp_registry_why): the
+#                                        CYRIUS_DCE=1 note and, since 6.6.20, the CYRIUS_IR=3 seam.
 #
 # --- Struct tables (v3.6.6: expanded to 64 structs) ---
 #   0x18E630  (FREED v6.0.47)             was struct_names → relocated to 0x1A6018 [1024], cap 256→1024
@@ -243,6 +249,10 @@
 #                                        at 0x1A0000, so these get the full [8192] — no off-by-one).
 #                                        Reset at fn start. Populated by EJCC/EJMP/EJMP0/ECALLTO.
 #                                        Read by compact_nops to remap intra-fn jump disps.
+#                                        The count saturates at 1024 and the `_jsn < 1024` gate
+#                                        (parse_fn.cyr) then skips that fn's NOP compaction —
+#                                        correct, unoptimised. One fn in cycc itself saturates it
+#                                        (measured 6.6.20).
 #   0x1A2008  nop_run_cnt   [8]           v5.6.27: per-fn count of NOP runs
 #   0x1A2010  nop_run_tbl   [16384]       v5.6.27: 1024 × 16B (cp, len) NOP run entries.
 #                                        Reset at fn start. Populated by picker patches.
@@ -625,6 +635,12 @@
 #                                        the 13 MB gap after fixup_tbl is the only place the PAIR fits)
 #   0x217B000 ir_live_out        [1048576] (not cx) 131072 BB live-out reg-bitmaps × 8B → ends 0x227B000 (v6.5.23)
 #   0x5E9D000 ir_nodes           [16 MB]   (not cx) relocated from 0xA3A000 to the arena top (v6.3.28; see src/common/ir.cyr)
+#                                        Margin (6.6.20 audit, CYRIUS_IR=1): cycc itself uses 448,518 of
+#                                        the 1,048,576 nodes and 42,715 of the 131,072 BBs, but sixteen
+#                                        stdlib folds (8.3 MB preprocessed) reach 1,017,828 nodes (97 %)
+#                                        and 107,437 BBs (82 %) — the loud "IR node buffer full" stops an
+#                                        IR build at about a third of the 24 MB preprocess cap. Sizing
+#                                        the IR family from one alloc'd arena is on the roadmap backlog.
 #   0x6E9D000 ir_cp              [4 MB]    (not cx) relocated from 0xF7B000 to the arena top (v6.3.28); ends 0x729D000
 #
 #   0xF600000 brk-final                   246 MB — the arena END every driver requests (brk on Linux /
@@ -2006,6 +2022,14 @@ if (IR_ENABLED(S) == 1) {
         syscall(SYS_WRITE, 2, " runs, ", 7);
         PRNUM(_wpsw_n);
         syscall(SYS_WRITE, 2, " switch tables)\n", 16);
+    }
+    # 6.6.20: a saturated registry declined the whole pass here with no word — the IR passes'
+    # NOPs simply stayed in the binary. Name it, as the CYRIUS_DCE=1 note does. CHANGELOG [6.6.20]
+    var _wpwhy = _wp_registry_why();
+    if (_wpwhy != 0) {
+        PRSTR("wp-compact declined: ");
+        PRSTR(_wpwhy);
+        PRSTR(" (the IR passes' NOPs stay in place)\n");
     }
     # CYRIUS_IR=2: verbose dump
     if (_ir_mode == 50) { ir_dump(S); }

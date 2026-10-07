@@ -1233,6 +1233,12 @@ _chk_gate "$ROOT/tests/gates/ir-opt/ir3_substrate_correctness.sh"
 # now applies only when the bisection knob asks. -8.5% frame accesses on consumer programs.
 _chk_gate "$ROOT/tests/gates/ir-opt/regalloc_cross_bb.sh"
 
+# 6.6.20 — the whole-program compaction registries. WPJS (rel32/disp32 sources) was a fixed
+# 49,152 slots that cycc's own build fills to 88 %, and one more declined the whole pass; it now
+# spills to alloc'd storage. A registry that does saturate is named on the CYRIUS_IR=3 path too,
+# which declined in silence (the CYRIUS_DCE=1 path has named it since 6.6.18).
+_chk_gate "$ROOT/tests/gates/ir-opt/wp_compact_registry_caps.sh"
+
 # ⛔ v6.6.1 — `f64_exp`/`f64_exp2` returned NaN for ±inf on BOTH the native x87 path and the
 # aarch64 polyfill: the range reduction subtracts a multiple of the argument from itself, so
 # ±inf becomes `inf - inf`. Filed from ganita's P(-1) audit, where sinh/cosh(±inf) came back NaN

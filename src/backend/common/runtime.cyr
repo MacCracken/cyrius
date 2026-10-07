@@ -120,8 +120,15 @@ fn _dce_compact_why(S, a64): i64 {
     if (fmt == 1) { return "its stub table is reached through rip-relative disp32s this pass cannot repair"; }
     if (_pie_mode != 0) { return "position-independent code reaches data through rip-relative disp32s this pass cannot repair"; }
     if (L64(S + 0x18FCA0) > 1) { return "a shared object reaches data through rip-relative disp32s this pass cannot repair"; }
+    var rw = _wp_registry_why();
+    return rw;
+}
+# A saturated repair registry, named — shared by the CYRIUS_DCE=1 note above and the
+# CYRIUS_IR=3 seam in main.cyr, which declined on the same flags and said nothing. 0 = none.
+# CHANGELOG [6.6.20]
+fn _wp_registry_why(): i64 {
     if (_wpnr_ovf == 1) { return "more than 4096 dead-code runs, the repair registry cap"; }
-    if (_wpjs_ovf == 1) { return "more than 49152 rel32/disp32 sources, the repair registry cap"; }
+    if (_wpjs_ovf == 1) { return "the rel32/disp32 source registry could not grow (alloc failed)"; }
     if (_wpsw_ovf == 1) { return "more than 4096 switch tables, the repair registry cap"; }
     return 0;
 }
