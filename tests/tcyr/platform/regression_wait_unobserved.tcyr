@@ -132,8 +132,10 @@ fn _sigign_rows_dir_ssh(envp): i64 {
         assert_eq(_real_or_unobserved(e2, 255), 1, "ssh_remote_exec_capture: -1 or ssh's real 255, never 0");
         assert_eq(e3, 0, "ssh_skip_check: 0 (not reachable), never 1");
     } else {
-        var sk = "  SKIP: ssh_remote_exit / ssh_remote_exec_capture / ssh_skip_check rows — no /usr/bin/ssh or /bin/ssh\n";
+        var sk = "  SKIP: ssh_remote_exit / ssh_remote_exec_capture / ssh_skip_check rows";
         sys_write(1, sk, strlen(sk));
+        var sk2 = " — no /usr/bin/ssh or /bin/ssh\n";
+        sys_write(1, sk2, strlen(sk2));
     }
     if (have_scp == 1) {
         assert_eq(_real_or_unobserved(e4, 1), 1, "scp_to: -1 or scp's real 1, never 0");
