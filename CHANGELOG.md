@@ -60,6 +60,18 @@ Tests: `tests/tcyr/crossos/traits_checked.tcyr` (13), `impl_self_typed.tcyr` (14
 ⚠ Found on the way and fixed in the same bites: cybs (the bootstrap compiler) rejects a call with seven or
 more arguments with a bare "syntax error" — seed-derive caught a 7-argument helper call; it takes six now.
 
+### CLI
+
+- **`cyrius --help` reorganised by task** (user request at the 6.7.0 open): Build & run · Test · Code quality & API ·
+  Project & dependencies · Toolchain · Interactive · Help, one description column. Every verb the CLI dispatches is
+  listed exactly once — six had no line (`api-surface`, `capacity`, `header`, `install`, `publish`, `pulsar`) — and
+  the duplicated `audit --internal=platform-check` line and a doubled blank line are gone. Four wrong operand
+  summaries corrected (`build`'s operands are optional and default to `[build] entry` / `output`; `test`, `bench`,
+  `fuzz` take an optional file or directory, `fuzz` defaulting to `fuzz/` + `tests/`). No command, flag or
+  behaviour changed; `cyrius`, `help`, `-h` and `--help` print the same bytes. New gate
+  `tests/gates/toolchain/help_lists_every_verb.sh` derives the verb set from the dispatcher (floor 39) and checks
+  each is listed once, no listed verb is undispatched, the column, and `cyrius <verb> --help` (15 mutations).
+
 ### Bootstrap
 
 - **cybs refuses a call with 7+ arguments by name** instead of a bare "syntax error". cybs passes only the six
