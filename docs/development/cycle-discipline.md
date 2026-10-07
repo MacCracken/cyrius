@@ -197,7 +197,7 @@ floor, a re-triage that keeps re-pinning the same item).
   a result, F failed, S named SKIPs · self-host fixpoint + ARM lockstep (after `cyrius pulsar`) · seed-derive ·
   cross-OS ecb / ach / cass / pi `SELFHOST_OK` + `LIBTEST_OK` · self_compile N ms · cycc N B (`.text` N B) ·
   `cycc-native-aarch64` N B⟩. At the slot open: cycc **1,586,184 B** (`.text` 1,405,464) · `cycc-native-aarch64`
-  1,323,400 B · **372** shell gates (376 registered with the 4 `scripts/*-gate.sh`) · **482** `.tcyr` (197
+  1,323,400 B · **372** shell gates under `tests/gates/` (376 registered, `sh scripts/check.sh --registry | wc -l`, with the 4 `scripts/` gates — three `*-gate.sh` and `differential-smoke.sh`) · **482** `.tcyr` (197
   `crossos/`) · api-surface 5,827 · self_compile 923 ms (the 6.6.19 gate).
 - **Heap map** (HEAP-01…12): `heapmap.sh` **102 regions, 0 overlaps** — but it parses `src/main.cyr` only;
   run over the six fork maps the same parser FAILS (the three aarch64 maps 1 overlap each, `main_win` 3,
