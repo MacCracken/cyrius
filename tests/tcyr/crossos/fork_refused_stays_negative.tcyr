@@ -155,7 +155,7 @@ fn main(): i64 {
         syscall(1, 2, note, strlen(note));
         assert_eq(v, 42, "premise: as root the fork is not refused (verdict 42)");
     } else {
-        assert_eq(v, 40, "the refused fork came back -EAGAIN (41 = it came back 0 and the parent took the child's branch)");
+        assert_eq(v, 40, "the refused fork came back -EAGAIN (41 = it came back 0: the parent ran the child's branch)");
     }
     #endif
     #endif
