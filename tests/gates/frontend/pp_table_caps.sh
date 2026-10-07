@@ -14,10 +14,25 @@
 #    main source (PP_PASS) and in an included file (PP_IFDEF_PASS); 65 levels are refused at
 #    the 65th directive; 9000 levels are refused by the same message. CVE-TBD.
 #
+# B. The function-like macro table (S+0x192000.., 16 macros). The 17th function-like #define
+#    was silently DISCARDED (stored only inside `if (msi < 16)`, no else): a same-name fn was
+#    called instead (exit 99 where 10 is right), or the use failed as a misleading "undefined
+#    function". A redefinition took its own slot and was never used (first match wins and
+#    expansion runs after every definition is in), and a function-like #define in an INCLUDED
+#    file became a plain flag — never a macro. Fix: PP_MACRO_SLOT refuses the 17th and a
+#    redefinition by name; PP_DEFINE_INCLUDED refuses the included form by name. Rows: 16
+#    macros expand; the 17th is refused by name with and without a same-name fn; a
+#    redefinition is refused; an included function-like #define is refused, located in the
+#    included file; one inside a false #ifdef in an included file is NOT refused, and an
+#    included object-like #define still works.
+#
 # MUTATION LEDGER (6.6.20, mutant = this tree with the named change, built by build/cycc and
 # run as CYCC=<mutant>):
 #   A1. PP_PUSH_LEVEL's `d >= 64` check deleted (the pre-6.6.20 behaviour)  -> RED: every A
 #       refusal row (main + include + deep)
+#   B1. PP_MACRO_SLOT's `_pp_macro_count >= 16` refusal deleted            -> RED: B 17th rows
+#   B2. PP_MACRO_SLOT's redefinition refusal deleted                       -> RED: B redefinition
+#   B3. PP_IFDEF_PASS calls PP_DEFINE again, not PP_DEFINE_INCLUDED         -> RED: B included row
 #   real tree                                                              -> GREEN
 set -eu
 
@@ -92,8 +107,26 @@ nest deep.cyr 9000 '#ifdef PPCAP_NOPE'
 printf 'var g = 7;\nsyscall(60, g);\n' >> "$WORK/deep.cyr"
 refuse "main source, 9000 levels" deep.cyr "$NEST_MSG"
 
+# ── B. function-like macro table ─────────────────────────────────────────────────────────
+# fill <n>: n distinct function-like macros M1..Mn.
+fill() { awk -v n="$1" 'BEGIN { for (i = 1; i <= n; i++) printf "#define M%d(x) (x + %d)\n", i, i }'; }
+{ fill 15; echo '#define SIXTEENTH(x) (x * 2)'; echo 'var r = SIXTEENTH(5);'; echo 'syscall(60, r);'; } > "$WORK/mac16.cyr"
+accept "16 function-like macros, the 16th expands" mac16.cyr 10
+{ fill 16; echo '#define SEVENTEENTH(x) (x * 2)'; echo 'fn SEVENTEENTH(x) { return 99; }'; echo 'var r = SEVENTEENTH(5);'; echo 'syscall(60, r);'; } > "$WORK/mac17.cyr"
+refuse "17th function-like macro beside a same-name fn" mac17.cyr "<source>:17:1: too many function-like #define macros (max 16): 'SEVENTEENTH'"
+{ fill 16; echo '#define SEVENTEENTH(x) (x * 2)'; echo 'var r = SEVENTEENTH(5);'; echo 'syscall(60, r);'; } > "$WORK/mac17u.cyr"
+refuse "17th function-like macro, no fn" mac17u.cyr "too many function-like #define macros (max 16): 'SEVENTEENTH'"
+printf '#define A(x) (x + 1)\n#define A(x) (x + 2)\nvar r = A(5);\nsyscall(60, r);\n' > "$WORK/redef.cyr"
+refuse "function-like macro redefined" redef.cyr "<source>:2:1: function-like macro 'A' is already defined"
+printf '#define INC_DBL(x) (x * 2)\n' > "$WORK/incdbl.cyr"
+printf 'include "incdbl.cyr"\nfn INC_DBL(x) { return 77; }\nvar r = INC_DBL(5);\nsyscall(60, r);\n' > "$WORK/incfn.cyr"
+refuse "function-like macro in an included file" incfn.cyr "incdbl.cyr:1:1: function-like macro 'INC_DBL' is defined in an included file"
+printf '#ifdef PPCAP_NOPE\n#define INC_SKIP(x) (x * 2)\n#endif\n#define INC_FLAG 3\n#if INC_FLAG == 3\nvar g = 5;\n#endif\n' > "$WORK/incskip.cyr"
+printf 'include "incskip.cyr"\nsyscall(60, g);\n' > "$WORK/incskipm.cyr"
+accept "included file: skipped function-like #define, live object-like #define" incskipm.cyr 5
+
 if [ "$NFAIL" != 0 ]; then
     echo "FAIL: pp_table_caps: $NFAIL failure(s) across $NROWS rows"
     exit 1
 fi
-echo "PASS: pp_table_caps: $NROWS rows — #if-family nesting refused past 64 levels in both passes (6.6.20)"
+echo "PASS: pp_table_caps: $NROWS rows — #if-family nesting refused past 64 levels in both passes; function-like macro table refuses the 17th, a redefinition and an included definition by name (6.6.20)"

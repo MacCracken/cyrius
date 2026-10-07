@@ -881,6 +881,39 @@ fn _pp_lineno_at(S, base, upto): i64 {
 # (`_had_error` fails the compile); `_panic` is left alone — there is no parse cascade to
 # suppress yet, and setting it swallowed the first real parse error. CHANGELOG [6.6.10]
 fn _pp_err_at(S, base, pos, msg): i64 {
+    _pp_err_head(S, base, pos);
+    PRSTR(msg);
+    syscall(SYS_WRITE, 2, "\n", 1);
+    _had_error = 1;
+    return 0;
+}
+
+# 6.6.20 — _pp_err_at with the offending NAME in the message: `pre`, the identifier at
+# `base + npos`, `post`. A table that is full or refuses an entry says WHICH entry, so the
+# reader does not have to count #define lines to find it. CHANGELOG [6.6.20]
+fn _pp_err_name_at(S, base, pos, pre, npos, post): i64 {
+    _pp_err_head(S, base, pos);
+    PRSTR(pre);
+    _pp_write_ident(base + npos);
+    PRSTR(post);
+    syscall(SYS_WRITE, 2, "\n", 1);
+    _had_error = 1;
+    return 0;
+}
+
+# Write the identifier at `p` (letters, digits, `_`; at most 64 bytes) to stderr.
+fn _pp_write_ident(p): i64 {
+    var n = 0;
+    while (n < 64) {
+        if (PP_IDBYTE(load8(p + n)) == 0) { break; }
+        n = n + 1;
+    }
+    syscall(SYS_WRITE, 2, p, n);
+    return n;
+}
+
+# `error:<file>:<line>:<col>: ` — or a bare `error: ` for `base` 0. See _pp_err_at.
+fn _pp_err_head(S, base, pos): i64 {
     syscall(SYS_WRITE, 2, "error:", 6);
     if (base == 0) { syscall(SYS_WRITE, 2, " ", 1); }
     else {
@@ -900,9 +933,6 @@ fn _pp_err_at(S, base, pos, msg): i64 {
         PRNUM(pos - ls + 1);
         syscall(SYS_WRITE, 2, ": ", 2);
     }
-    PRSTR(msg);
-    syscall(SYS_WRITE, 2, "\n", 1);
-    _had_error = 1;
     return 0;
 }
 
@@ -3360,6 +3390,25 @@ fn PP_FIND_MACRO(S, ip): i64 {
     return 0 - 1;
 }
 
+# 6.6.20 — the slot for the function-like `#define` at `dip` (main source, PP_PASS), or -1
+# when it is refused BY NAME. Until 6.6.20 the 17th function-like macro was silently
+# DISCARDED (the store sat in `if (msi < 16)` with no else), so a same-name fn was called in
+# its place or the use failed as a misleading "undefined function". A redefinition took a
+# slot of its own and was never used either: PP_FIND_MACRO returns the first match, and the
+# expansion pass runs after every definition is in, so no later definition could ever apply.
+# Both are refused, located, report-and-continue like PP_DEFINE's cap. CHANGELOG [6.6.20]
+fn PP_MACRO_SLOT(S, dip): i64 {
+    if (PP_FIND_MACRO(S, dip + 8) >= 0) {
+        _pp_err_name_at(S, S + _SRCB, dip, "function-like macro '", dip + 8, "' is already defined (a function-like #define cannot be redefined)");
+        return 0 - 1;
+    }
+    if (_pp_macro_count >= 16) {
+        _pp_err_name_at(S, S + _SRCB, dip, "too many function-like #define macros (max 16): '", dip + 8, "' does not fit");
+        return 0 - 1;
+    }
+    return _pp_macro_count;
+}
+
 # Expand macro invocation: NAME(arg1, arg2)
 # Reads args from input at ip, substitutes into body, writes to out+op
 # Returns new ip position (after the closing paren)
@@ -3593,6 +3642,29 @@ fn PP_DEFINE(S, src_base, pos): i64 {
     }
     store64(S + 0x190880 + _pp_flag_count * 8, defval);
     _pp_flag_count = _pp_flag_count + 1;
+    return 0;
+}
+
+# 6.6.20 — a `#define` in INCLUDED content (PP_IFDEF_PASS, `dip` at the `#`). Only PP_PASS
+# stores function-like macros, and it reads the main source alone, so a function-like
+# `#define NAME(x) ...` in an included file went to PP_DEFINE and became a FLAG named NAME:
+# never a macro, a call to it compiled against a same-name fn if there was one, and it used
+# up a flag slot. Refused by name; an object-like define goes to PP_DEFINE as before. The
+# name scan mirrors PP_PASS's: a `(` before the first space / tab / newline makes it a
+# function-like macro. CHANGELOG [6.6.20]
+fn PP_DEFINE_INCLUDED(S, src_base, dip): i64 {
+    var dp = dip + 8;
+    var dc = load8(src_base + dp);
+    while (dc != 0) {
+        if (dc == 40) {
+            _pp_err_name_at(S, src_base, dip, "function-like macro '", dip + 8, "' is defined in an included file; a function-like #define is supported only in the main source");
+            return 0;
+        }
+        if (dc == 32 || dc == 9 || dc == 10) { break; }
+        dp = dp + 1;
+        dc = load8(src_base + dp);
+    }
+    PP_DEFINE(S, src_base, dip + 8);
     return 0;
 }
 
@@ -3898,8 +3970,8 @@ fn PP_PASS(S): i64 {
                     }
                     if (is_macro == 1) {
                         # Store macro inline: copy line text to storage
-                        var msi = _pp_macro_count;
-                        if (msi < 16) {
+                        var msi = PP_MACRO_SLOT(S, dip);
+                        if (msi >= 0) {
                             var mip = dip + 8;
                             store64(S + 0x192000 + msi * 8, PP_HASH_ID(S + _SRCB, mip));
                             store64(S + 0x192080 + msi * 8, _pp_macro_text_pos);
@@ -4415,7 +4487,7 @@ fn PP_IFDEF_PASS(S): i64 {
                     if (load8(tmp + dip + 1) == 64) { _pp_note_marker(tmp, dip, bl); }
                 }
                 if (ISDEFINE(tmp, dip, bl) == 1) {
-                    if (skip_depth == 0) { PP_DEFINE(S, tmp, dip + 8); }
+                    if (skip_depth == 0) { PP_DEFINE_INCLUDED(S, tmp, dip); }
                     ip = PP_SKIPLINE(tmp, ip, bl); store8(out + op, 10); op = op + 1; bol = 1; handled = 1;
                 }
                 if (handled == 0) { if (ISIFDEF(tmp, dip, bl) == 1) {
