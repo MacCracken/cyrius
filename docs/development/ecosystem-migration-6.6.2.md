@@ -96,7 +96,7 @@
 > `fuzz/` trees no CI step runs** — passing today, ungated.
 >
 > ⚠ **`cyrius distlib` OOM-kills the runner** — filed as
-> [`issues/2026-09-11-distlib-leaf-validation-oom.md`](issues/2026-09-11-distlib-leaf-validation-oom.md),
+> [`issues/2026-09-11-distlib-leaf-validation-oom.md`](issues/archived/2026-09-11-distlib-leaf-validation-oom.md),
 > pinned in `roadmap.md`. ~30 GB in leaf validation; GitHub reports the kernel
 > OOM-kill as `Error: The operation was canceled`. **Not module count** — kavach 44,
 > sankhya 36, hisab 35 all complete; bote's 30 dies. The discriminator is
@@ -654,7 +654,7 @@ lint/bench steps. The genuine ones:
 - **bote** `ci.yml:125`, **commandress** `ci.yml:120`, **abaco** `ci.yml:144`, **t-ron** `ci.yml:248`.
 
 **2. `#inline` / `#derive` — a 10-repo cluster.** See
-[`issues/2026-09-11-inline-directive-disarms-derive.md`](issues/2026-09-11-inline-directive-disarms-derive.md),
+[`issues/2026-09-11-inline-directive-disarms-derive.md`](issues/archived/2026-09-11-inline-directive-disarms-derive.md),
 which was updated with the measured blast radius: **60 poisoned files across 10 repos**, five of
 which are poisoned only through a *vendored bundle* and have no local fix. Bisected `dist/naad.cyr`
 to the trigger — the first `#inline`, **920 lines before** the `struct` the error names.
@@ -759,7 +759,7 @@ per-item notes record.
 
 ### 1. The `#inline` / `#derive` cluster — 10 repos, HARD BLOCK
 
-[`issues/2026-09-11-inline-directive-disarms-derive.md`](issues/2026-09-11-inline-directive-disarms-derive.md)
+[`issues/2026-09-11-inline-directive-disarms-derive.md`](issues/archived/2026-09-11-inline-directive-disarms-derive.md)
 
 `#inline` anywhere in a compile unit makes every LATER `#derive(...)` fail to parse, with
 the error naming the innocent `struct`. Bisected in `dist/naad.cyr`: the trigger is the
@@ -777,7 +777,7 @@ Isolated: `#must_use` does NOT trigger it, only `#inline`; and `#derive` BEFORE 
 
 ### 2. `cyrius.lock` is written in an unstable ORDER — every consumer CI gate
 
-[`issues/2026-09-12-cyrius-lock-unstable-order.md`](issues/2026-09-12-cyrius-lock-unstable-order.md)
+[`issues/2026-09-12-cyrius-lock-unstable-order.md`](issues/archived/2026-09-12-cyrius-lock-unstable-order.md)
 
 `cyrius deps` emits lock entries in hash-table iteration order: stable on one machine,
 different on another. A byte-exact `git diff --exit-code -- cyrius.lock` therefore fails
@@ -797,7 +797,7 @@ it once the lock is emitted sorted.
 
 ### 3. `cyrius distlib` OOM-kills the runner
 
-[`issues/2026-09-11-distlib-leaf-validation-oom.md`](issues/2026-09-11-distlib-leaf-validation-oom.md)
+[`issues/2026-09-11-distlib-leaf-validation-oom.md`](issues/archived/2026-09-11-distlib-leaf-validation-oom.md)
 
 ~30 GB in leaf validation; GitHub reports the kernel OOM-kill as
 `Error: The operation was canceled`. **Not module count** — kavach 44, sankhya 36, hisab 35

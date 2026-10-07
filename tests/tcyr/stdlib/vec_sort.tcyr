@@ -1,6 +1,6 @@
 # Test: vec_sort_by + vec_select_nth — the v6.5.4 ordering primitives.
 #
-# Closes docs/development/issues/2026-07-28-agnosai-no-nlogn-sort-in-stdlib.md.
+# Closes docs/development/issues/archived/2026-07-28-agnosai-no-nlogn-sort-in-stdlib.md.
 # Every case is checked against an INDEPENDENT reference (ref_sort below, a plain
 # insertion sort written against vec_get/vec_set and sharing no code with the
 # implementation), so a bug in the introsort cannot alias into the expected value.

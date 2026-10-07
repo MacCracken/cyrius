@@ -39,7 +39,7 @@
 # Mutation-proven: deleting either `_wx_dbase_frozen` guard reddens this gate, and restores
 # the sankhya segfault.
 #
-# See docs/development/issues/sankhya-dce-bench-segfault.md
+# See docs/development/issues/archived/sankhya-dce-bench-segfault.md
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)

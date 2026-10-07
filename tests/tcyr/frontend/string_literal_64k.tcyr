@@ -1,6 +1,6 @@
 # string_literal_64k.tcyr — v6.6.4 — a string literal >= 65536 bytes reads back shifted.
 #
-# Filed by agnos/rekha (docs/development/issues/2026-09-13-agnos-large-string-literal-loses-first-byte.md):
+# Filed by agnos/rekha (docs/development/issues/archived/2026-09-13-agnos-large-string-literal-loses-first-byte.md):
 # a 410 KB TrueType face embedded as literal data hashed wrong; the byte COUNT was intact, the
 # CONTENT was the right bytes moved down by one. Root cause: src/frontend/lex.cyr packed the
 # literal token as `(sstart << 16) | slen` — 16 bits for the length — so a length >= 65536 ORed

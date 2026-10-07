@@ -279,8 +279,9 @@ fn http_get(url): i64 {
     # int. Pre-fix: `var fd = tcp_socket(); if (fd < 0)` never fired
     # (fd is a positive heap ptr) and subsequent syscalls received
     # the Result ptr as a fd. Now: explicit is_err_result + payload
-    # unwrap, mirroring the lib/sandhi.cyr / regression-tls-live.sh
-    # call shape.
+    # unwrap, mirroring the lib/sandhi.cyr / TLS live-gate call shape
+    # (then regression-tls-live.sh; now the check driver's
+    # `_tls_live_gate`, programs/checks/services.cyr).
     var fd_r_tag, fd_r = tcp_socket();
     if (is_err_result(fd_r_tag) == 1) {
         var err = alloc(24);

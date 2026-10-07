@@ -34,7 +34,7 @@
 # Mutation-proven: restoring the per-call read (drop `_distlib_snap_cache`) takes this
 # fixture to 772 MB and reddens the threshold.
 #
-# See docs/development/issues/2026-09-11-distlib-leaf-validation-oom.md
+# See docs/development/issues/archived/2026-09-11-distlib-leaf-validation-oom.md
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)

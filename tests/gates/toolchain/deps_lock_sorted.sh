@@ -31,7 +31,7 @@
 # `_deps_lock_dir` in cbt/deps.cyr and this gate reddens: the lock comes back in readdir
 # order, which on this filesystem is not sorted. Verified before commit.
 #
-# See docs/development/issues/2026-09-12-cyrius-lock-unstable-order.md
+# See docs/development/issues/archived/2026-09-12-cyrius-lock-unstable-order.md
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)

@@ -1,5 +1,5 @@
 # Test: lib/str.cyr str_split runtime byte/Str dispatch (v5.10.43)
-# Closes `docs/development/issues/2026-05-03-str-split-sep-treated-as-pointer.md`.
+# Closes `docs/development/issues/archived/2026-05-03-str-split-sep-treated-as-pointer.md`.
 include "lib/alloc.cyr"
 include "lib/string.cyr"
 include "lib/fmt.cyr"

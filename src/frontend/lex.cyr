@@ -539,7 +539,7 @@ fn _init_cyrius_lib(): i64 {
 # skew, works on all four hosts, no single-sentinel false negative). Removing them
 # also drops ~80 lines of global/call-heavy frontend from cycc (a cybs-ceiling
 # liability). `CYRIUS_NO_WARN_SHADOW_LIB` is still honored by the wrapper check.
-# See docs/development/issues/2026-07-14-converge-cycc-shadow-lib-sentinel.md.
+# See docs/development/issues/archived/2026-07-14-converge-cycc-shadow-lib-sentinel.md.
 
 # v5.11.57: shared opt-out env probe. Returns 1 if
 # /proc/self/environ contains "<name>=1\0", 0 otherwise. Used

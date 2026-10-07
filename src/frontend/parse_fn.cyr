@@ -7132,7 +7132,10 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     # alignment regression (v5.5.21 fix interacts with auto-enable's
     # code-size growth in some shape that v5.5.21's per-array pad
     # misses; reproduces with `var rk[240]` + SSE m128 ops in
-    # `tests/regression-inline-asm-discard.sh`). Investigation pinned
+    # the inline-asm-discard regression — then
+    # `tests/regression-inline-asm-discard.sh`, now the check driver's
+    # `_inline_asm_discard_gate` over tests/fixtures/inline_asm_discard/).
+    # Investigation pinned
     # to v5.6.23 with proper alignment-debug budget. The picker
     # correctness fix (loop-back time-share — extend last_cp = ra_end)
     # is shipped here for opt-in #regalloc fns.

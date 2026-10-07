@@ -183,7 +183,7 @@ fn munmap_stack(addr, size): i64 {
 # the parent has already overwritten on its way through
 # `store64(t, r); return t;`. The race crashed every
 # `thread_create + thread_join` (filed by majra in
-# docs/development/issues/majra-cbarrier-arrive-and-wait-crash.md;
+# docs/development/issues/archived/majra-cbarrier-arrive-and-wait-crash.md;
 # investigated v5.4.9, fixed v5.4.10).
 #
 # The fix: do the entire clone + child-trampoline in one inline

@@ -50,7 +50,7 @@ pass=0
 _bad() { echo "  FAIL: $1"; fail=$((fail + 1)); }
 NEEDLE='SINGLE value here'
 
-# The filed repro (docs/development/issues/archived/2026-09-23-kybernet-mixed-return-...md), verbatim
+# The filed repro (docs/development/issues/archived/2026-09-23-kybernet-mixed-return-diagnostic-misfires-on-nullary-none.md), verbatim
 # apart from the trailing exit so it can be run.
 cat > "$T/kyb.cyr" <<'EOF'
 include "lib/string.cyr"

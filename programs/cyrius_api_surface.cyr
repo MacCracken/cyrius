@@ -929,6 +929,8 @@ fn main() {
     # don't pick up cyrius stdlib fns that churn across cyrius
     # releases. Filing:
     #   agnosys/docs/development/issues/2026-05-06-cyrius-api-surface-derive-blind.md §4
+    #   (agnosys is retired; the filing survives in agnodrm's
+    #   docs/development/issues/archive/; CHANGELOG [5.9.11])
     var scope_project = 0;
     var snapshot_path = DEFAULT_SNAPSHOT;
     # v6.6.5 — `--updat`, `--scope=projct`, the `--snapshot PATH` SPACE form and a

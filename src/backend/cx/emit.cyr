@@ -1304,7 +1304,7 @@ fn EX87POP(S): i64 { return 0; }
 # ptrs · r14/r15=addr+imm scratch · r0/r1=values · r3=accumulator. Loop guard:
 # `lt r0,i,n` (op 50) then `jz r0,done` (op 81); back-edge via EJMP/EPATCH.
 # Value-form params/returns stay stubbed (ESTOREPARM_*/ELOAD_* above) — deferred,
-# see docs/development/issues/2026-07-09-cx-valueform-simd-params-returns.md.
+# see docs/development/issues/archived/2026-07-09-cx-valueform-simd-params-returns.md.
 
 # Load the pointer/scalar held in frame local `idx` into `reg` (local idx lives
 # at [fp − (idx+1)*8], same convention as EFLLOAD_F64V2_PAIR).

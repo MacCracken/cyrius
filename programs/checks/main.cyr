@@ -9,7 +9,8 @@
 #   1. Self-host two-step (cycc → cc5b byte-identical)
 #   2. Heap-map audit (sh tests/gates/memory/heapmap.sh)
 #   3. Test suite (every .tcyr file under tests/tcyr/)
-#   4. ~50 regression gates (sh tests/regression-X.sh)
+#   4. the shell gates (tests/gates/<bucket>/*.sh since v6.5.11 — each
+#      registered by exact path here or in scripts/check.sh)
 #   5. Format walk (cyrfmt across lib/)
 #   6. Lint walk (cyrlint across lib/)
 #

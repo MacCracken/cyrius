@@ -720,7 +720,7 @@ fn tls_set_verify(handle, mode, callback): i64 {
 }
 
 # ---- Typed pre-handshake trust-store + mTLS config verbs (v6.2.8) ----
-# The residual of docs/development/issues/2026-05-22-cyrius-native-tls-in-6.0.x.md:
+# The residual of docs/development/issues/archived/2026-05-22-cyrius-native-tls-in-6.0.x.md:
 # backend-agnostic replacements for sandhi's remaining `tls_dlsym("SSL_CTX_*")`
 # trust/mTLS callers (src/tls_policy/apply.cyr). Native ENFORCES via the
 # tls_native trust-store + client-auth machinery; libssl routes to the SSL_CTX_*

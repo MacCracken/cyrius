@@ -239,7 +239,7 @@ fi
     # NB: `case N: { return N; }` — RETURN, deliberately, and do not "simplify" these
     # bodies to assign-and-fall-out. Two pre-existing switch defects (both reproduced
     # against the HEAD compiler, both filed in
-    # docs/development/issues/2026-08-11-switch-case-body-only-exits-safely-via-return.md)
+    # docs/development/issues/archived/2026-08-11-switch-case-body-only-exits-safely-via-return.md)
     # make any other exit from a case body unsafe:
     #   * `break` inside switch/match emits an UNPATCHED jump — PARSE_SWITCH and
     #     PARSE_MATCH never touch the 0x18F840 break chain that PARSE_WHILE/PARSE_FOR

@@ -1255,7 +1255,7 @@ fn SFVB(S, fi, v): i64 { if (_fnvb_base == 0) { _fnvb_base = alloc(131072 * 8); 
 # gvars detected by PARSE_GVAR_REG. FIXUP-time emit paths read these
 # and pre-write into the var area, eliminating the runtime store
 # sequence and fixing the kmode-entry init-order bug filed at
-# docs/development/issues/2026-05-18-gvar-init-order-zero-reads.md.
+# docs/development/issues/archived/2026-05-18-gvar-init-order-zero-reads.md.
 # Zero == not statically initialized (BSS-zero already correct, so
 # leave the runtime emit path in place — observable behavior is
 # identical, no need to fork).

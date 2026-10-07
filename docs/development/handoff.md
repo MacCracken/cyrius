@@ -65,7 +65,7 @@ slots have NOT been re-numbered — that is the user's call.
   forward calls with a struct parameter. Pass 1 now stamps every definition and is the authority
   on visibility. The filing's "cannot pack — a name-pool design decision" was wrong; see its
   *Corrections to this filing*.
-- **[`2026-09-13-fn-local-global-slots-shadow-other-files.md`](issues/2026-09-13-fn-local-global-slots-shadow-other-files.md)**
+- **[`2026-09-13-fn-local-global-slots-shadow-other-files.md`](issues/archived/2026-09-13-fn-local-global-slots-shadow-other-files.md)**
   — a fn-local struct literal / oversized array is a GLOBAL slot in the flat namespace and
   shadows other files' globals (was a silent miscompile; since bite ③'s stamps a misattributed
   diagnostic).

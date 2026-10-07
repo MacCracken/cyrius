@@ -2143,7 +2143,8 @@ fn EMITELF_OBJ(S): i64 {
     # GLOBAL `_cyrius_init`s across modules pass through cyrld
     # without collision. Standard `ld` linking *multiple*
     # cyrius `.o`s would still error — that case is what cyrld
-    # is for; tests/regression-linker.sh exercises it.
+    # is for; the check driver's `_linker_gate` (programs/checks/services.cyr,
+    # the `linker` suite) exercises it over tests/fixtures/linker/.
     #
     # Bonus: GLOBAL also fixes the spec-non-conformance the old
     # comment flagged (locals must precede globals in .symtab) —
