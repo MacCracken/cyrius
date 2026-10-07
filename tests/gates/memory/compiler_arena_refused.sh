@@ -50,11 +50,17 @@ mk cx   src/main_cx.cyr      "$CC"
 mk xwin src/main_win.cyr     "$CC"
 printf 'var x = 7;\nsyscall(60, x);\n' > "$T/p.cyr"
 
+# Run "$3"... under `ulimit $1 $2` in a SUBSHELL: the limit binds only the command, and the
+# `exec` replaces the subshell (which inherits none of this script's traps), never this script —
+# so the EXIT trap above still runs (check_sh_targeted_path_cleans_up.sh axis 3's census).
+# A limit the shell cannot set is exit 3, never a silent unlimited run.
+ulrun() { ( ulimit -c 0; ulimit "$1" "$2" || exit 3; shift 2; exec "$@" ); }
+
 # one row: $1 label, $2 ulimit flag, $3 limit (KiB), $4 command
 limited() {
     rows=$((rows + 1))
     rc=0
-    sh -c "ulimit -c 0; ulimit $2 $3; exec $4" < "$T/p.cyr" > "$T/o" 2> "$T/e" || rc=$?
+    ulrun "$2" "$3" "$4" < "$T/p.cyr" > "$T/o" 2> "$T/e" || rc=$?
     if [ "$rc" != 1 ] || ! grep -q 'cannot map the 246 MiB compiler arena' "$T/e"; then
         bad "$1 ulimit $2 $3: rc $rc, stderr '$(head -c 160 "$T/e" | tr '\n' ' ')' (want rc 1 naming the compiler arena)"
     fi
@@ -73,7 +79,7 @@ if command -v qemu-aarch64 >/dev/null 2>&1; then
     named=0; segv=0
     for v in 300000 350000 400000 450000 500000 600000; do
         rc=0
-        sh -c "ulimit -c 0; ulimit -v $v; exec qemu-aarch64 $T/a64n" < "$T/p.cyr" > "$T/o" 2> "$T/e" || rc=$?
+        ulrun -v "$v" qemu-aarch64 "$T/a64n" < "$T/p.cyr" > "$T/o" 2> "$T/e" || rc=$?
         grep -q 'cannot map the 246 MiB compiler arena' "$T/e" && named=$((named + 1))
         [ "$rc" -ge 128 ] && [ "$rc" != 255 ] && { segv=$((segv + 1)); echo "    native_qemu ulimit -v $v: rc $rc (a signal)"; }
     done
