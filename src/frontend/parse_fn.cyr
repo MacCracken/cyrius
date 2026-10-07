@@ -2803,18 +2803,78 @@ fn _sc_small_temp(S): i64 {
 # here instead, which had no frame to use at top level (there the callee got the field itself);
 # with the callee's copy that temp was a second copy. Returns 1. CHANGELOG [6.6.12] [6.6.16]
 fn _fla_push_arg(S, fi, argc): i64 {
+    _fla_addr(S, fi, argc);
+    EPUSHR(S);           # on a refusal it keeps the argument count; no binary is written
+    return 1;
+}
+# rax = the recorded field's address, as by-value / `*S` argument `argc` of `fi` (refused by name
+# when the parameter's struct differs). Shared with an operator's right operand (`_op_rhs`).
+fn _fla_addr(S, fi, argc): i64 {
     _fla_hit = 0;
     var ps = GFPSID(S, fi, argc);
     if (ps > 0) { if (ps != _fla_ft) {
             ERR_IDENT(S, "cannot pass ", _fla_name, " to a parameter of a different struct type in a call to ", L64(_fnt_names + fi * 8));
-            EPUSHR(S);   # keeps the argument count; no binary is written
-            return 1;
+            return 0;
         } }
     _fsc_src_x1(S, 0);
     EMOVI(S, 0);
     EADDR(S);            # rax = x1
-    EPUSHR(S);
-    return 1;
+    return 0;
+}
+
+# ⛔ 6.6.20 — THE RIGHT OPERAND OF AN OVERLOADED OPERATOR, parsed (PARSE_TERM) and classified for
+# operand 1 of fn `fi`, the way `_try_push_struct_addr_arg` classifies a call argument. Returns its
+# encoding for `_OP_OPERAND_ADDR` (-1 = the value in rax, pushed as it is). For an ADDRESS-passed
+# operand (a `*S` at any size, a by-value struct over 8 B):
+#   - a whole struct-typed FIELD (`b - h.p`, `w2 - h.w`, `(h.p)`) passes the field's own address,
+#     as `take(h.p)` does — its first word was pushed and dereferenced: SIGSEGV for `*P3` and
+#     by-value `P3` (6.6.16 through 6.6.19), and for `*W` a copy that lost a write through it;
+#   - for a `*S` of 8 B or less, a whole free call returning such a struct (`s - mk1(4)`, class 3)
+#     is a struct VALUE (`_op_call_end`, decided before the parse as the call path decides it), as
+#     is a method / operator result (`_sc_beg` is cleared so only this operand's record matches);
+#     `_op_operand_sv` decides the rest.
+fn _op_rhs(S, fi): i64 {
+    var rb = GTI(S);
+    var arm = 0;
+    if (fi >= 0) { arm = _pm_struct(fi, 1); }
+    var fw = _fla_want;
+    var fo = _fla_opd;
+    var fp = _fla_opdp;
+    var ce = 0 - 1;
+    if (arm == 1) {
+        _fla_want = rb;
+        _fla_opd = rb;
+        if (TOKTYP(S, rb) == 10) { _fla_want = rb + 1; _fla_opdp = rb + 1; }
+        _fla_hit = 0;
+        if (_op_small_ptr(S, fi, 1) == 1) { _sc_beg = 0 - 1; ce = _op_call_end(S); }
+    }
+    PARSE_TERM(S);
+    if (arm == 1) {
+        _fla_want = fw;
+        _fla_opd = fo;
+        _fla_opdp = fp;
+        if (_fla_hit == 1) { _fla_addr(S, fi, 1); return 0 - 1; }
+    }
+    var sv = 1;
+    if (GTI(S) != ce) { sv = _op_is_sval(S, rb, GTI(S)); }
+    return _op_operand_sv(S, fi, 1, GESVAR(S), _op_bare(S, rb, GTI(S)), sv);
+}
+# The token after a whole free call `name(..)` / `name<..>(..)` at the cursor that returns a struct
+# of 8 B or less (`_arg_call_class` 3), or -1.
+fn _op_call_end(S): i64 {
+    var o = _gcall_open(S, GTI(S));
+    if (o < 0) { return 0 - 1; }
+    if (_call_dotted(S, GTI(S)) == 1) { return 0 - 1; }
+    if (_arg_call_class(S) != 3) { return 0 - 1; }
+    return _call_close(S, o) + 1;
+}
+# 1 = token type `t` continues a TERM after a factor (PARSE_TERM's loop and its postfix `?`), or
+# continues the factor itself (`.`, `[`, `(`) — so a field just loaded is not the whole operand.
+fn _op_term_cont(t): i64 {
+    if (t == 8 || t == 119 || t == 9 || t == 34) { return 1; }
+    if (t == 38 || t == 39 || t == 152 || t == 120 || t == 121) { return 1; }
+    if (t == 124 || t == 41 || t == 28 || t == 10) { return 1; }
+    return 0;
 }
 
 # `return s.m(..);` / `return a + b;` in a >16 B struct-returning fn, the call returning this same

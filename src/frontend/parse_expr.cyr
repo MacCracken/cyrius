@@ -4885,19 +4885,47 @@ fn _OP_OPERAND_ADDR(S, svar): i64 {
 # a pointer at every size in the callee — so `fn S1_sub(a: *S1, b: *S1)` with `s - t` dereferenced
 # s's value: SIGSEGV on x86_64 and aarch64, a crash under wine, "guest address out of range" on cx,
 # with no diagnostic, while `fn P3_sub(a: *P3, b: *P3)` with `a - b` worked (6.6.16 gave the right
-# answer for both). The same rule as a call argument (`_param_wants_struct_ptr`): a `*S` operand
-# gets an address at every size — a bare named local, global or capture its OWN (so a write
-# through it reaches the caller, as `rd1(s)` does), any other value a frame temp holding it, and
-# at top level, where there is no frame, the operand is refused by name. Every operand of a
-# by-value or over-8-byte parameter keeps exactly the address-or-value it had. Returns the
-# operand's encoding for `_OP_OPERAND_ADDR` (-1 = push the value in rax). CHANGELOG [6.6.20]
-fn _op_operand_sv(S, fi, k, svar, bare): i64 {
+# answer for both). The same rule as a call argument (`_try_push_struct_addr_arg`), decided from
+# what the operand IS once it is parsed:
+#   - a bare struct name (`s`, `(s)` — local, global, capture) passes its OWN address, so a write
+#     through it reaches the caller, as `rd1(s)` does;
+#   - a struct VALUE (`sval`: a call, method or operator result, `-s`) lands in a frame temp whose
+#     address is passed — at top level, where there is no frame, it is refused by name;
+#   - a whole struct-typed field passes its own address (`_op_rhs`);
+#   - anything else is already an address or an untyped word — `&t`, a `*S1` variable, a call
+#     returning a pointer, a literal — and is passed through unchanged, as `rd1(&t)` / `rd1(q)`
+#     pass it. (Review round 2 put EVERY operand that was not a bare name into a temp, so
+#     `s * &t` handed the operator fn the address of a word holding t's address.)
+# Every operand of a by-value or over-8-byte parameter keeps exactly the address-or-value it had.
+# Returns the operand's encoding for `_OP_OPERAND_ADDR` (-1 = push the value in rax). CHANGELOG [6.6.20]
+fn _op_operand_sv(S, fi, k, svar, bare, sval): i64 {
     if (_op_small_ptr(S, fi, k) == 0) { return svar; }
     if (bare == 1) { if (_esv_name != 0 - 1) { return _esv_name; } }
+    if (sval == 0) { return svar; }
     if (GINFN(S) != 1) { return _refuse_toplevel_op_operand(S, fi, k); }
     var t = _agg_temp(S, GFPSID(S, fi, k));
     EFLSTORE(S, t);
     return 0 - 2 - t;
+}
+# The LEFT operand, tokens [beg, opti), already parsed and in rax: its encoding for operand 0.
+# It dispatched, so its recorded type is the struct: a name, or a value such as `-s`.
+fn _op_lhs_sv(S, fi, beg, opti): i64 {
+    var bare = _op_bare(S, beg, opti);
+    return _op_operand_sv(S, fi, 0, GESVAR(S), bare, _op_is_sval(S, beg, opti));
+}
+# 1 = the operand [b, e) just parsed is a struct VALUE: its recorded type is a struct (a name
+# under `-` / `~` / parentheses, `k * s`), or it is one whole method / operator result of 8 B or
+# less (`_sc_post_small`'s record, -3: the value is in rax), bare or in parentheses. `&s`, a `*S`
+# variable, a call returning a pointer or an integer and a literal record no struct type.
+fn _op_is_sval(S, b, e): i64 {
+    var st = GESTYPE(S);
+    if (st > 0) { if (st < 2048) { return 1; } }
+    if (_sc_tmp != 0 - 3) { return 0; }
+    if (_sc_beg == b) { if (_sc_end == e) { return 1; } }
+    if (TOKTYP(S, b) != 10) { return 0; }
+    if (_sc_beg != b + 1) { return 0; }
+    if (_sc_end != e - 1) { return 0; }
+    return 1;
 }
 # 1 = operand `k` of operator fn `fi` is a `*S` parameter of a struct of 8 B or less.
 fn _op_small_ptr(S, fi, k): i64 {
@@ -4923,7 +4951,7 @@ fn _refuse_toplevel_op_operand(S, fi, k): i64 {
     _err_head(S);
     if (k == 0) { PRSTR(": the left operand of '"); } else { PRSTR(": the right operand of '"); }
     PRSTR(S + 0xEC00000 + L64(_fnt_names + fi * 8));
-    PRSTR("' is passed by address (a `*` parameter), and a value that is not a variable needs a fn's frame to hold it — name it in a variable, or compute it inside a fn\n");
+    PRSTR("' is passed by address (a `*` parameter), and a struct value that is not a variable needs a fn's frame to hold it — name it in a variable, or compute it inside a fn\n");
     _had_error = 1;
     return 0 - 1;
 }
@@ -4937,13 +4965,10 @@ fn EMIT_OP_DISPATCH(S, stype, op_str, op_len, beg): i64 {
     }
     var opti = GTI(S) - 1;   # the operator, just consumed — the call the warning names (6.6.16)
     # For struct vars, push address instead of value (6.6.20: and for a `*S` operand at any size)
-    var svar = _op_operand_sv(S, ofp, 0, GESVAR(S), _op_bare(S, beg, opti));
+    var svar = _op_lhs_sv(S, ofp, beg, opti);
     _OP_OPERAND_ADDR(S, svar);
     EPUSHR(S);
-    var rb = GTI(S);
-    PARSE_TERM(S);
-    # rhs: check if it also has a struct var
-    var rsvar = _op_operand_sv(S, ofp, 1, GESVAR(S), _op_bare(S, rb, GTI(S)));
+    var rsvar = _op_rhs(S, ofp);   # the rhs, parsed: a struct var's address too (6.6.20: _op_rhs)
     _OP_OPERAND_ADDR(S, rsvar);
     EPUSHR(S);
     var opnoff = BUILD_OP_NAME(S, stype, op_str, op_len);
@@ -4986,20 +5011,17 @@ fn _op_fn_peek(S, stype, op_str, op_len): i64 {
 # and on x86/cx the retptr must go BELOW it — so it is parked in a frame word first.
 fn _EMIT_OP_DISPATCH_AGG(S, stype, op_str, op_len, beg): i64 {
     var opti = GTI(S) - 1;   # the operator (see EMIT_OP_DISPATCH)
-    var svar = GESVAR(S);
     var opnoff = BUILD_OP_NAME(S, stype, op_str, op_len);
     var ofi = FINDFN(S, opnoff);
     if (ofi < 0) { ofi = REGFN(S, opnoff); }
-    svar = _op_operand_sv(S, ofi, 0, svar, _op_bare(S, beg, opti));   # 6.6.20: a `*S` operand
+    var svar = _op_lhs_sv(S, ofi, beg, opti);   # GESVAR, or (6.6.20) a `*S` operand's address
     var park = 0 - 1;
     if (svar == 0 - 1) { park = _op_park_lhs(S, ofi); }
     var t = _sc_pre(S, ofi, opnoff, beg);
     var n = 2 + _sc_n0;
     if (park >= 0) { EFLLOAD(S, park); } else { _OP_OPERAND_ADDR(S, svar); }
     EPUSHR(S);
-    var rb = GTI(S);
-    PARSE_TERM(S);
-    var rsvar = _op_operand_sv(S, ofi, 1, GESVAR(S), _op_bare(S, rb, GTI(S)));
+    var rsvar = _op_rhs(S, ofi);
     _OP_OPERAND_ADDR(S, rsvar);
     EPUSHR(S);
     ECALLPOPS(S, n);

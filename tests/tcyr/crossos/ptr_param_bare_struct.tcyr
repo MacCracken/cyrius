@@ -25,10 +25,15 @@
 # struct operand by VALUE, so `fn S1_sub(a: *S1, b: *S1)` with `s - t` dereferenced s's value —
 # SIGSEGV on x86_64 and aarch64, a crash under wine, "guest address out of range" on cx — while
 # `fn P3_sub(a: *P3, b: *P3)` with `a - b` worked. A `*S` operand now gets an address at every
-# size: a bare name (local, global, capture, `(name)`) its own, so a write through it reaches the
-# caller; any other operand a frame temp holding its value (`operators` below, with the `*P3`
-# controls; at top level such an operand is refused by name — stack_param_homing_matrix.sh,
-# `toplevel-small-ptr-operand`).
+# size, by the same rule as a call argument: a bare name (local, global, capture, `(name)`) its
+# own, so a write through it reaches the caller; a struct VALUE (a call, method or operator
+# result, `-s`) a frame temp holding it; and an operand that is ALREADY an address — `&t`, a `*S1`
+# parameter or variable, an untyped variable holding `&t`, a call returning `*S1` or i64, `&G` —
+# passes through unchanged (`operators` and `address_operands` below, each with its `*P3`
+# control; at top level a struct value is refused by name — stack_param_homing_matrix.sh,
+# `toplevel-small-ptr-operand`). A whole struct-typed FIELD operand passes the field's own
+# address at every size, as `wr1(h.inner, 8)` does: `b - h.p` with a `*P3` or by-value `P3`
+# operand SIGSEGV'd through 6.6.19, and a `*W` field operand was a copy a write never reached.
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 include "lib/fnptr.cyr"
@@ -40,6 +45,8 @@ struct B2 { a: i32; b: i32; }        # 8 B, two fields
 struct P3 { x; y; z; }               # 24 B (control: it always took the address)
 struct W { buf; }                    # 8 B, a word that can hold an address
 struct HI { k; inner: S1; }
+struct HP { k; p: P3; w: W; }
+struct P4 { buf; y; z; }             # 24 B (control for the captured *W operand)
 struct Box<T> { v: T; w: T; }
 
 fn rd1(p: *S1) { return p.v; }
@@ -80,12 +87,19 @@ fn B2_sub(a: *B2, b: *B2): B2 { var r = B2 { a.a - b.a, a.b - b.b }; return r; }
 fn P3_sub(a: *P3, b: *P3): P3 { var r = P3 { a.x - b.x, a.y - b.y, a.z - b.z }; return r; }
 fn P3_mul(a: *P3, b: *P3): i64 { a.y = a.y + 100; return a.y + b.y; }
 fn W_add(a: *W, b: *W): i64 { a.buf = a.buf + 100; return a.buf + b.buf; }
+fn W_sub(a: *W, b: *W): i64 { b.buf = b.buf + 100; return a.buf + b.buf; }
+fn P3_div(a: *P3, b: *P3): i64 { b.y = b.y + 100; return a.y + b.y; }
+fn P4_add(a: *P4, b: *P4): i64 { a.buf = a.buf + 100; return a.buf + b.buf; }
 fn B4_sub(a: *B4, b: *B4): P3 { var r = P3 { a.a, a.a - b.a, b.a }; return r; }
 fn B4_add(a: *B4, b: *B4): P3 { a.a = a.a + 100; var r = P3 { a.a, a.a + b.a, b.a }; return r; }
 fn B4_mul(a: B4, b: *B4): P3 { var r = P3 { a.a, a.a * b.a, b.a }; return r; }
 fn B4_div(a: *B4, b: B4): P3 { var r = P3 { a.a, a.a / b.a, b.a }; return r; }
 fn mk4(n): B4 { var s = B4 { n }; return s; }
 fn op_byv_params(b: S1, t: S1): i64 { var r: S1 = b - t; return r.v; }
+fn op_ptr_param_sub(q: *S1): i64 { var s = S1 { 9 }; var u: S1 = s - q; return u.v; }
+fn op_ptr_param_mul(q: *S1): i64 { var s = S1 { 9 }; var u: S1 = s * q; return u.v; }
+fn op_ptr_param3(q: *P3): i64 { var a = P3 { 1, 9, 3 }; var c: P3 = a - q; return c.y; }
+fn getp(p): i64 { return p; }
 fn tail_call1(): i64 { return rd1(mk1(33)); }
 fn tail_call3(): i64 { return rd3(mk3(34)); }
 
@@ -95,6 +109,8 @@ var GO1 = S1 { 9 };
 var GO2 = S1 { 2 };
 var GP1 = P3 { 1, 9, 3 };
 var GP2 = P3 { 1, 5, 3 };
+fn gps(): *S1 { return &GO2; }
+fn gpp3(): *P3 { return &GP2; }
 
 fn locals(): i64 {
     var s = S1 { 5 };
@@ -190,6 +206,50 @@ fn call_results(): i64 {
     return 0;
 }
 
+# ⛔ An operand whose VALUE is already an address passes through unchanged — review round 2 put it
+# in a frame temp too, so the operator fn read the ADDRESS as the struct: `s * &t` answered 24 on
+# x86, 224 on aarch64, 88 on cx, and `s - &t` / `s - q` gave 1 and 121 with no diagnostic.
+fn address_operands(): i64 {
+    var s = S1 { 9 };
+    var t = S1 { 3 };
+    var a = P3 { 1, 9, 3 };
+    var b = P3 { 1, 5, 3 };
+    var m1: S1 = s * &t;
+    assert_eq(m1.v, 27, "s * &t: S1_mul(a: S1, b: *S1)");
+    var m2: S1 = s - &t;
+    assert_eq(m2.v, 6, "s - &t: S1_sub(a: *S1, b: *S1)");
+    var c1: P3 = a - &b;
+    assert_eq(c1.y, 4, "control: a - &b, P3_sub(a: *P3, b: *P3)");
+    assert_eq(op_ptr_param_sub(&t), 6, "s - q: q a *S1 parameter");
+    assert_eq(op_ptr_param_mul(&t), 27, "s * q: q a *S1 parameter");
+    assert_eq(op_ptr_param3(&b), 4, "control: a - q, q a *P3 parameter");
+    var pp = &t;
+    var m3: S1 = s * pp;
+    assert_eq(m3.v, 27, "s * pp: an untyped local holding &t");
+    var bp = &b;
+    var c3: P3 = a - bp;
+    assert_eq(c3.y, 4, "control: a - bp, an untyped local holding &b");
+    var tp: *S1 = &t;
+    var m4: S1 = s * tp;
+    assert_eq(m4.v, 27, "s * tp: a *S1 local");
+    var bq: *P3 = &b;
+    var c4: P3 = a - bq;
+    assert_eq(c4.y, 4, "control: a - bq, a *P3 local");
+    var m5: S1 = s * gps();
+    assert_eq(m5.v, 18, "s * gps(): a call returning *S1");
+    var c5: P3 = a - gpp3();
+    assert_eq(c5.y, 4, "control: a - gpp3(), a call returning *P3");
+    var m6: S1 = s * getp(&t);
+    assert_eq(m6.v, 27, "s * getp(&t): a call returning an i64 address");
+    var c6: P3 = a - getp(&b);
+    assert_eq(c6.y, 4, "control: a - getp(&b)");
+    var m7: S1 = s * &GO2;
+    assert_eq(m7.v, 18, "s * &GO2: a global's address");
+    var c7: P3 = a - &GP2;
+    assert_eq(c7.y, 4, "control: a - &GP2");
+    return 0;
+}
+
 fn operators(): i64 {
     var s = S1 { 9 };
     var t = S1 { 3 };
@@ -226,16 +286,41 @@ fn operators(): i64 {
     assert_eq(r2.v, 5, "s - mk1(4): a call result as the right operand");
     var r3: S1 = s - t * t;
     assert_eq(r3.v, 0, "s - t * t: a product as the right operand");
-    var r4: S1 = s - 4;
-    assert_eq(r4.v, 5, "s - 4: a literal right operand is the S1's word");
     var r5: S1 = -s - t;
     assert_eq(r5.v, 0 - 12, "-s - t: a left operand that is not a name");
     var h: HI;
     h.k = 1; h.inner.v = 30;
     var r6: S1 = t - h.inner;
     assert_eq(r6.v, 0 - 27, "t - h.inner: a field as the right operand");
+    var r7: S1 = t - (h.inner);
+    assert_eq(r7.v, 0 - 27, "t - (h.inner): a parenthesised field");
+    var hp: HP;
+    hp.k = 1; hp.p.x = 1; hp.p.y = 2; hp.p.z = 3; hp.w.buf = 5;
+    var c6: P3 = b - hp.p;
+    assert_eq(c6.y, 3, "control: b - hp.p, a P3 field to *P3 (SIGSEGV through 6.6.19)");
+    var c7: P3 = b + hp.p;
+    assert_eq(c7.y, 7, "control: b + hp.p, a P3 field to by-value P3 (SIGSEGV through 6.6.19)");
+    var c8: P3 = b - (hp.p);
+    assert_eq(c8.y, 3, "control: b - (hp.p), a parenthesised P3 field");
+    var w3 = W { 2 };
+    assert_eq(w3 - hp.w, 107, "w3 - hp.w: W_sub(a: *W, b: *W) given a field");
+    assert_eq(hp.w.buf, 105, "w3 - hp.w: the write through the field operand reaches hp.w");
+    assert_eq(b / hp.p, 107, "control: b / hp.p, P3_div(a: *P3, b: *P3) given a field");
+    assert_eq(hp.p.y, 102, "control: the write through a P3 field operand reaches hp.p");
     var f = || { var q: S1 = s - t; return q.v; };
     assert_eq(callptr(f), 6, "|| s - t: captured S1 operands");
+    var cw1 = W { 5 };
+    var cw2 = W { 2 };
+    var cp1 = P4 { 5, 0, 0 };
+    var cp2 = P4 { 2, 0, 0 };
+    var fw = || { return cw1 + cw2; };
+    var gw = || { return cp1 + cp2; };
+    var fw1 = callptr(fw);
+    var fw2 = callptr(fw);
+    assert_eq(fw2 - fw1, 100, "|| cw1 + cw2: a write through a captured *W operand persists");
+    var gw1 = callptr(gw);
+    var gw2 = callptr(gw);
+    assert_eq(gw2 - gw1, 100, "control: || cp1 + cp2, a captured *P4 operand");
     assert_eq(op_byv_params(s, t), 6, "b - t: by-value S1 parameters as operands");
     var e4 = B4 { 9 };
     var f4 = B4 { 2 };
@@ -261,6 +346,7 @@ other_shapes();
 closures();
 call_results();
 operators();
+address_operands();
 var Gt = S1 { 40 };
 assert_eq(rd1(Gt), 40, "at top level: a bare S1 global");
 var Gop: S1 = GO1 - GO2;
@@ -269,4 +355,6 @@ var Gw1 = W { 1 };
 var Gw2 = W { 2 };
 assert_eq(Gw1 + Gw2, 103, "at top level: Gw1 + Gw2");
 assert_eq(Gw1.buf, 101, "at top level: the write through a *W operand reaches Gw1");
+var Gm: S1 = GO1 * &GO2;
+assert_eq(Gm.v, 18, "at top level: GO1 * &GO2, an address operand needs no frame");
 var r = assert_summary();
