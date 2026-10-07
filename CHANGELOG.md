@@ -1078,6 +1078,14 @@ argument count (CVE-82), `#if` nesting (CVE-85), attribute lines (CVE-86) and aa
 
 ### Tooling, gates and scripts
 
+- **CI's qemu installs no longer hang on a plain-http mirror** (found on 6.6.20's own CI run: ~10 minutes in
+  *Install qemu-user*, every index file `Ign:` after a full timeout). The steps' workaround for the flaky Azure mirror
+  sed'ed the runner's mirror list to `http://archive.ubuntu.com`, whose port 80 times out from GitHub's runners; apt
+  only reached the list's https entry after each timeout. The three install steps (`ci.yml` aarch64 + kernel boot,
+  `release.yml` aarch64) now run `scripts/ci-apt-install.sh`: an https-only mirror list (archive.ubuntu.com,
+  mirrors.edge.kernel.org), plain-http Ubuntu URIs rewritten to https, per-file timeouts and retries, no network when
+  the package is already present, and an 8-minute step timeout. In an Ubuntu 24.04 container seeded with the dead
+  http entry: 19 s, all https, no `Ign:`.
 - **`install.sh --refresh-only` no longer installs a stale `cybs`, and `verify-store.sh` no longer vouches for one**
   (g-install, RS-02, P2). `cybs` is a `[release] bins` entry with no `programs/cybs.cyr`, and `_rebuild_stale`
   returned success for a source that does not exist, so the copy loop installed whatever gitignored `build/cybs` the

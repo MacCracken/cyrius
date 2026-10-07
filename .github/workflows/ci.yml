@@ -415,13 +415,10 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4 (pinned 2026-06-19, latest-in-major)
       - name: Install qemu-user
-        run: |
-          # Swap Azure Ubuntu mirror to canonical — azure.archive.ubuntu.com
-          # has been DNS-flaky on GH-hosted runners (746 B/s, 5min timeouts).
-          sudo sed -i 's|azure.archive.ubuntu.com|archive.ubuntu.com|g' /etc/apt/sources.list /etc/apt/sources.list.d/*.list 2>/dev/null || true
-          sudo sed -i 's|azure.archive.ubuntu.com|archive.ubuntu.com|g' /etc/apt/apt-mirrors.txt 2>/dev/null || true
-          sudo apt-get update
-          sudo apt-get install -y qemu-user-static
+        timeout-minutes: 8   # a dead mirror is a red step, never the 6h default
+        # HTTPS mirrors only, bounded — the old sed to http://archive.ubuntu.com timed out on
+        # every index file (~10 min at 6.6.20). See scripts/ci-apt-install.sh.
+        run: sh scripts/ci-apt-install.sh qemu-user-static
       - name: Setup compilers
         run: |
           chmod +x build/cycc
@@ -1452,11 +1449,10 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4 (pinned 2026-06-19, latest-in-major)
       - name: Install qemu-system-x86
-        run: |
-          # full-system emulation (qemu-system-x86_64) — NOT qemu-user-static.
-          sudo sed -i 's|azure.archive.ubuntu.com|archive.ubuntu.com|g' /etc/apt/sources.list /etc/apt/sources.list.d/*.list 2>/dev/null || true
-          sudo apt-get update
-          sudo apt-get install -y qemu-system-x86
+        timeout-minutes: 8   # a dead mirror is a red step, never the 6h default
+        # full-system emulation (qemu-system-x86_64) — NOT qemu-user-static. HTTPS mirrors only,
+        # bounded: see scripts/ci-apt-install.sh.
+        run: sh scripts/ci-apt-install.sh qemu-system-x86
       - name: Build cycc + aarch64 cross + cyrius CLI
         run: |
           chmod +x build/cycc
