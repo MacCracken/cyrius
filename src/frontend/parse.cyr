@@ -1437,6 +1437,19 @@ fn _rp_patch_here(S): i64 {
     }
     return 0;
 }
+# ⛔ 6.6.20 — THE f64 RETURN BOX, ONCE, AT THE LANDING (`rs` = the return scalar of the fn whose
+# returns land here). A `: f64` fn carries its value boxed in rax (x0 / r0) and the x86-family
+# ABI wants it in xmm0, which every call site reads back (`_call_ret_marks`). The box used to sit
+# on three PARSE_RETURN arms only, so a bare `return;`, falling off the end, the `ret2` builtin,
+# a `?` early return and an inlined `: f64` callee all handed back whatever the last f64 op left
+# in xmm0 on x86 / PE / x86 Mach-O, while aarch64 / cx (a no-op box) were right. Every return of
+# the fn jmps to the landing, so one box here covers every arm, present and future; a tail call
+# never reaches it and is diverted unless its callee boxes too (`_tc_f64_ret_divert`). The defer
+# walker runs after this and EDEFER_SAVE keeps xmm0. CHANGELOG [6.6.20]
+fn _ret_box_f64(S, rs): i64 {
+    if (rs == 0 - 9) { EMOVQ_X0_A(S); }
+    return 0;
+}
 # Run the reached defer blocks LIFO: save the return convention, check each flag, jmp to the
 # block, which jmps back. ⚠ EDEFER_SAVE/RESTORE (per backend) keep EVERY return register of
 # EVERY return convention — the pair, the arity-3 slot, the f64 / vector registers — because a

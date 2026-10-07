@@ -601,14 +601,14 @@ fn FINDLOCAL(S, noff): i64 {
 # loses it grows the stack (6.6.5 measured a correct program turned into rc 139). Each test is
 # the exact question of the thing it protects, never an approximation. CHANGELOG [6.6.7]
 fn _tc_must_divert(S, cfi, ti_after): i64 {
-    if (_tc_frame_divert(S) == 1) { return 1; }
+    if (_tc_frame_divert(S, cfi) == 1) { return 1; }
     if (_tc_callee_divert(S, cfi) == 1) { return 1; }
     if (_tc_args_divert(S, cfi, ti_after) == 1) { return 1; }
     if (_tc_generic_divert(S, cfi, ti_after) == 1) { return 1; }   # 6.6.10
     return 0;
 }
 # What THIS fn must still do after the callee returns, or what its frame must outlive.
-fn _tc_frame_divert(S): i64 {
+fn _tc_frame_divert(S, cfi): i64 {
     # 6.6.7 — a fn with a `defer` or `secret var` ANYWHERE in its body: the jmp skipped the walker,
     # so the block never ran and a secret was never zeroised (CVE-47). The WHOLE body, prescanned
     # at its `{` (`_body_has_defer`) — a registered-so-far count misses a loop whose tail return
@@ -632,6 +632,7 @@ fn _tc_frame_divert(S): i64 {
     # `_refuse_pair_return` / `_refuse_simd_return` see the shape.
     if (_cur_fn_ret_pair == 1) { if (_pair_ret_call_ok(S) == 0) { return 1; } }
     if (_cur_fn_returns_vector(S) == 1) { if (_simd_ret_call_ok(S) == 0) { return 1; } }
+    if (_tc_f64_ret_divert(S, cfi) == 1) { return 1; }   # 6.6.20: the scalar f64 class
     # v6.4.31 — a SIMD-returning fn on Win64 returns through a hidden retptr in RCX, which the tail
     # path's argument marshalling overwrites (`return f32v4_make(...)` SIGSEGV'd).
     if (_TARGET_PE == 1) {
@@ -639,6 +640,21 @@ fn _tc_frame_divert(S): i64 {
             if (_cur_fn_returns_vector(S) == 1) { return 1; }
         }
     }
+    return 0;
+}
+# 6.6.20 — the SCALAR f64 class, the same rule as the pair / vector lines above. On the x86
+# family a `: f64` fn hands its result back in xmm0 (`_ret_box_f64` at the return landing) and
+# every call site reads xmm0 (`_call_ret_marks`), so a `jmp` is right only into a callee that
+# boxes too: `return f64_max(a, b);` from a `: f64` fn returned the operand the last compare
+# left in xmm0 — the SMALLER one — exit 0. A `: f64` callee keeps its tail call, so self- and
+# mutual f64 recursion stay TCO (the prescan records GFRS for a fn declared below). aarch64 and
+# cx return an f64 in x0 / r0, the integer register, so there is nothing to divert for.
+fn _tc_f64_ret_divert(S, cfi): i64 {
+    if (_cur_fn_ret_scalar != 0 - 9) { return 0; }
+    if (_AARCH64_BACKEND != 0) { return 0; }
+    if (_TARGET_CX != 0) { return 0; }
+    if (cfi < 0) { return 1; }
+    if (GFRS(S, cfi) != 0 - 9) { return 1; }
     return 0;
 }
 # What the CALLEE needs from PARSE_FNCALL that the tail path's plain argument loop never does.
@@ -893,7 +909,6 @@ fn PARSE_RETURN(S): i64 {
                 EPOPR(S);                                                           # rax = b
                 EMOVRDXRAX(S);                                                      # rdx = b
                 EPOPR(S);                                                           # rax = a
-                if (_cur_fn_ret_scalar == 0 - 9) { EMOVQ_X0_A(S); }
                 if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);  # consume )
                 if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); } STI(S, GTI(S) + 1);    # consume ;
                 var rp3 = EJMP0(S);
@@ -910,18 +925,8 @@ fn PARSE_RETURN(S): i64 {
             # rax = b, stack = a → mov rdx, rax; pop rax
             EMOVRDXRAX(S);
             EPOPR(S);
-            # v6.5.21: a `: f64` fn returning a TUPLE silently lost its FIRST
-            # value. This branch returns early, so it never reached the
-            # `_cur_fn_ret_scalar == 0 - 9` box below (:939) — yet the CALL SITE
-            # unboxes unconditionally (`movq rax, xmm0`, parse_expr.cyr:609) for
-            # any `: f64` callee. rax therefore arrived holding whatever f64 op
-            # last touched xmm0: `fn f(a: f64, b: f64): f64 { return (a*b, a+b); }`
-            # with 3.0/4.0 handed back 7 for BOTH values instead of 12 and 7, at
-            # rc=0 with no diagnostic. Box the first value here so the caller's
-            # unbox recovers it; rdx still carries the second, untouched.
-            # x86-family only — EMOVQ_X0_A is a no-op on aarch64/cx, which is
-            # why aarch64 was already correct. CHANGELOG [6.5.21].
-            if (_cur_fn_ret_scalar == 0 - 9) { EMOVQ_X0_A(S); }
+            # A `: f64` fn's first value is boxed into xmm0 at the return landing
+            # (`_ret_box_f64`), not here; rdx carries the second. CHANGELOG [6.5.21], [6.6.20]
             if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);  # consume )
             if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); } STI(S, GTI(S) + 1);  # consume ;
             var rp = EJMP0(S);
@@ -1292,7 +1297,8 @@ fn PARSE_RETURN(S): i64 {
     # unconditionally and rejected an empty expression. Now: peek for
     # `;` BEFORE calling PCMPE; if present, emit `mov rax, 0` + jump
     # to epilogue (matches `return 0;` codegen byte-for-byte at this
-    # position).
+    # position — in a `: f64` fn too, since 6.6.20 boxes rax into xmm0
+    # once at the landing for every arm, `_ret_box_f64`).
     if (PEEKT(S) == 5) {
         EMOVI(S, 0);
         STI(S, GTI(S) + 1);                             # consume ';'
@@ -1301,11 +1307,8 @@ fn PARSE_RETURN(S): i64 {
         return 0;
     }
     PCMPE(S);
-    # v6.4.55: scalar f64 return (sentinel -9) — cyrius boxes the f64 as its IEEE-754
-    # bit-pattern in rax; SysV/Win64 return a double in xmm0, so move rax→xmm0 before
-    # the epilogue. EMOVQ_X0_A is `movq xmm0, rax` on x86/PE/macho, a no-op on
-    # aarch64/cx (value already in x0/r0 = their return reg). CHANGELOG [6.4.55].
-    if (_cur_fn_ret_scalar == 0 - 9) { EMOVQ_X0_A(S); }
+    # v6.4.55: scalar f64 return (sentinel -9) — the rax→xmm0 move SysV/Win64 want is emitted
+    # once at the return landing since 6.6.20 (`_ret_box_f64`), so it covers every arm.
     if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
     STI(S, GTI(S) + 1);
     # Emit jmp to epilogue (record as return patch)
@@ -3667,6 +3670,7 @@ fn PARSE_FNCALL(S, noff): i64 {
                         EPATCH(S, vec_get(rp_vec, ri));
                         ri = ri + 1;
                     }
+                    _ret_box_f64(S, _cfrs);   # 6.6.20: the replay's landing boxes for the CALLEE
                     vec_truncate(rp_vec, saved_rpc);
                     SIDEP(S, GIDEP(S) - 1);
                     # v6.3.9 (F-fns): restore the enclosing generic binding.
@@ -8401,6 +8405,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     # over THIS fn's ranges [_defer_base, count) and [_rp_base, len). CHANGELOG [6.6.7]
     _defer_emit_init(S, defer_init_jmp, body_cp);
     _rp_patch_here(S);
+    _ret_box_f64(S, _cur_fn_ret_scalar);   # 6.6.20: every return arm, and falling off the end
     _defer_emit_walk(S);
     # 6.6.7 — a coroutine's suspend exits return 0 to the runtime WITHOUT completing the body,
     # so they land HERE, past the walker: a defer runs once, when the body really returns.

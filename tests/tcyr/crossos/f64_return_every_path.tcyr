@@ -1,0 +1,92 @@
+# f64_return_every_path.tcyr — a `: f64` fn hands back its value on EVERY return path.
+#
+# THE BUG (fixed 6.6.20). cyrius carries an f64 boxed in the integer accumulator; on the x86
+# family (Linux, Windows PE, Intel Mac) a `: f64` fn must move it into xmm0 before it returns,
+# because every call site reads xmm0 back (`movq rax, xmm0`). That move sat on three PARSE_RETURN
+# arms only, so these all returned whatever the LAST f64 operation had left in xmm0 — exit 0, no
+# diagnostic — while aarch64 / cx (where the move is a no-op) were right:
+#   - a tail call into a fn that is not `: f64` (`return f64_max(a, b);` gave the SMALLER operand)
+#   - the same over the register ceiling (7 args SysV, 5 args Win64)
+#   - a bare `return;`
+#   - the `ret2(a, b)` builtin
+#   - an `#inline` `: f64` callee replayed into a caller that is not `: f64`
+# The fix boxes once at the return landing and diverts a tail call whose callee does not box.
+#
+# ⚠ CROSS-HOST because the defect is target-shaped: x86 / PE / x86 Mach-O failed, aarch64 passed.
+# The recursion rows guard the other direction: a `: f64` -> `: f64` tail call must KEEP its jmp
+# (a self-recursive call that loses it overflows the stack at this depth).
+include "lib/assert.cyr"
+include "lib/math.cyr"
+
+# Untyped helpers that RETURN one f64 and leave a DIFFERENT one in xmm0.
+fn h(x) { var y = f64_add(x, x); var z = f64_mul(x, x); return y; }
+fn h5(a, b, c, d, e) { var y = f64_add(a, a); var z = f64_mul(a, a); return y; }
+fn h7(a, b, c, d, e, f, g) { var y = f64_add(a, a); var z = f64_mul(a, a); return y; }
+# A `: f64` callee over the register ceiling: keeps the tail path, takes its call-and-land arm.
+fn f7(a, b, c, d, e, f, g): f64 { var z = f64_mul(a, a); var y = f64_add(a, a); return y; }
+
+fn tail_untyped(x): f64 { return h(x); }
+fn tail_untyped5(x): f64 { return h5(x, 1, 2, 3, 4); }
+fn tail_untyped7(x): f64 { return h7(x, 1, 2, 3, 4, 5, 6); }
+fn tail_f64_7(x): f64 { return f7(x, 1, 2, 3, 4, 5, 6); }
+fn bigger(a, b): f64 { return f64_max(a, b); }
+fn smaller(a, b): f64 { return f64_min(a, b); }
+fn clampit(x): f64 { return f64_clamp(x, f64_from(2), f64_from(5)); }
+fn bare(x): f64 {
+    var q = f64_mul(f64_from(7), f64_from(7));
+    if (x > 0) { return; }
+    return f64_from(5);
+}
+fn pair(a, b): f64 { ret2(f64_mul(a, b), f64_add(a, b)); }
+#inline
+fn idf(x): f64 { return x; }
+fn inlined(x) { var q = f64_mul(f64_from(7), f64_from(7)); var r = idf(x); return f64_to(r); }
+var dsq = 0;
+fn with_defer(x): f64 {
+    defer { dsq = f64_to(f64_mul(x, x)); }
+    return h(x);
+}
+
+# `: f64` -> `: f64` tail calls: self-recursive, and mutual through a fn declared BELOW.
+fn countf(n, acc): f64 {
+    if (n == 0) { return acc; }
+    return countf(n - 1, f64_add(acc, f64_from(1)));
+}
+fn evenf(n, acc): f64 {
+    if (n == 0) { return acc; }
+    return oddf(n - 1, f64_add(acc, f64_from(1)));
+}
+fn oddf(n, acc): f64 {
+    if (n == 0) { return f64_add(acc, f64_from(1000)); }
+    return evenf(n - 1, f64_add(acc, f64_from(1)));
+}
+
+fn check_f64_returns(): i64 {
+    test_group("tail call into a callee that is not : f64");
+    var three = f64_from(3);
+    var eight = f64_from(8);
+    assert_eq(f64_to(tail_untyped(three)), 6, "return h(x): 2x, not the x*x h left in xmm0");
+    assert_eq(f64_to(bigger(three, eight)), 8, "return f64_max(a, b): the larger operand");
+    assert_eq(f64_to(smaller(eight, three)), 3, "return f64_min(a, b): the smaller operand");
+    assert_eq(f64_to(clampit(f64_from(9))), 5, "return f64_clamp(x, 2, 5): clamped to 5");
+    test_group("over the register ceiling");
+    assert_eq(f64_to(tail_untyped5(three)), 6, "5 args (the Win64 ceiling) into an untyped callee");
+    assert_eq(f64_to(tail_untyped7(three)), 6, "7 args (the SysV ceiling) into an untyped callee");
+    assert_eq(f64_to(tail_f64_7(three)), 6, "7 args into a : f64 callee");
+    test_group("bare return, ret2, an inlined callee, a defer");
+    assert_eq(f64_to(bare(1)), 0, "bare `return;` gives 0.0");
+    assert_eq(f64_to(bare(0)), 5, "the other arm still gives 5.0");
+    var r = pair(three, f64_from(4));
+    var hi = rethi();
+    assert_eq(f64_to(r), 12, "ret2 in a : f64 fn: the first value");
+    assert_eq(f64_to(hi), 7, "ret2 in a : f64 fn: the second value");
+    assert_eq(inlined(f64_from(5)), 5, "#inline : f64 callee in an untyped caller");
+    assert_eq(f64_to(with_defer(three)), 6, "a defer that clobbers xmm0 keeps the return value");
+    assert_eq(dsq, 9, "the defer ran");
+    test_group(": f64 -> : f64 tail calls keep their jmp");
+    assert_eq(f64_to(countf(1000000, f64_from(0))), 1000000, "self-recursive, 1,000,000 deep");
+    assert_eq(f64_to(evenf(1000001, f64_from(0))), 1001001, "mutual through a fn declared below");
+    return 0;
+}
+check_f64_returns();
+var r = assert_summary();
