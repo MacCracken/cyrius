@@ -392,7 +392,8 @@ Eleven more names are reserved although that table does not hold them: the
 ordinary identifiers and the compiler lowers every call to them BY NAME (`_is_ident_intrinsic`
 in `src/frontend/parse.cyr`, `_IS_FNCALL_NAME` in `src/frontend/parse_expr.cyr`), so since
 6.6.20 declaring one — a fn, a parameter, a closure parameter, a `var` of any kind (local,
-global, destructured, `stack`, `secret`) or a `for` binding — is refused at the name:
+global, destructured, `stack`, `secret`), a `for` binding, or a `use mod.NAME;` alias (which binds
+the bare name) — is refused at the name:
 
 ```
 fn mulh64(a, b): i64 { return a + b; }
@@ -405,8 +406,9 @@ but every `mulh64(..)` was still the intrinsic, a user `fn fncall1(a, b)` compil
 `fncall1(5, 6)` called THROUGH `5`, and a `var sizeof` made every later read a parse error.
 The one legitimate declarer is `lib/fnptr.cyr`, whose `fncall0`..`fncall8` definitions are what
 make the indirect-call lowering available — an included file named `fnptr.cyr` may declare
-those. A mangled name declares nothing callable as `sizeof(`, so an impl method `x.sizeof()`
-or a `mod` fn of that name is accepted.
+those. A mangled definition is accepted, so an impl method `x.sizeof()` or a `mod` fn of that
+name compiles (call it `m_sizeof()`); re-exposing it under the bare name with `use m.sizeof;` is
+the refused alias.
 
 ## Control Flow
 

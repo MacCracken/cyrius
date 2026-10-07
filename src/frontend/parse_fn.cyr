@@ -6491,6 +6491,9 @@ fn _tl_use(S): i64 {
             STI(S, GTI(S) + 1);
             if (PEEKT(S) == 2) {
                 var ufn = PEEKV(S);
+                # 6.6.20: `use m.mulh64;` binds the BARE name, so it is a declaration of it —
+                # the call would lower to the intrinsic. No fnptr.cyr exemption (isfn 0).
+                _RSV_INTRINSIC_DECL(S, ufn, GTI(S), 0);
                 STI(S, GTI(S) + 1);
                 _tl_use_alias(S, umod, ufn);
             }

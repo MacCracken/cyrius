@@ -16,7 +16,9 @@
 # AXIS 2 — every other declaration form is refused the same way: param, generic param (judged
 #   once, not again per instance), closure param, local var, top-level var (declaration zone and
 #   after top-level code), each name of a local / global destructure, `stack var`, `secret var`,
-#   a `for` binding.
+#   a `for` binding, and a `use mod.NAME;` alias — which binds the BARE name, so a mangled
+#   `m_mulh64` re-exposed by `use m.mulh64;` ran the intrinsic (2) and `use m.fncall1;` SIGSEGV'd,
+#   the two filed defects again.
 # AXIS 3 — THE ONE LEGITIMATE DECLARER: lib/fnptr.cyr's fncall0..8 ARE the lowering's enabler
 #   (it is gated on FINDFN) and cybs calls them in gen1, so an included file whose BASENAME is
 #   `fnptr.cyr` may declare them — from lib/, from another directory, or bare. The exemption is
@@ -24,8 +26,9 @@
 #   user `fn fncall1` beside an included lib/fnptr.cyr is still refused.
 # AXIS 4 — ANTI-VACUOUS: the intrinsics still work (fncallN in an expression, as a statement
 #   and at top level; mulh64; sizeof), near-misses (`mulh64x`, `fncall9`, `sizeofx`, `fncall`)
-#   are ordinary names, and a mangled name — an impl method `sizeof`, a `mod` fn — is accepted,
-#   because nothing can call it as `sizeof(`. And a NUMBER where a name belongs is still the plain
+#   are ordinary names, a mangled definition — an impl method `sizeof`, a `mod` fn — is accepted
+#   (only its bare re-exposure by `use` is refused), and `use m.foo;` of an ordinary name still
+#   aliases. And a NUMBER where a name belongs is still the plain
 #   `expected identifier` error, never a fault.
 #
 # MUTATION PROOF (6.6.20):
@@ -37,6 +40,9 @@
 #     method `sizeof` refused).
 #   * parse.cyr _RSV_INTRINSIC_DECL: the `TOKTYP(S, ti) != 2` guard dropped -> the three
 #     number-as-a-name rows RED (rc 139: the number was read as a name-pool offset).
+#   * parse_fn.cyr _tl_use: the _RSV_INTRINSIC_DECL call dropped -> the four use_* rows RED, 14
+#     assertions (use_mh / use_mh_top compile and run 2, use_fc compiles and SIGSEGVs, use_sz is
+#     only the bare `expected identifier` parse error).
 #
 # Exit 77 = could not run (no compiler); never 0 for that.
 set -u
@@ -107,6 +113,11 @@ refused dt_global3 'fn three(): (i64, i64, i64) { return (1, 2, 3); }\nvar a, b,
 refused stk_var    'fn main(): i64 { stack var mulh64[16]; return 1; }\nsyscall(60, main());\n' mulh64
 refused sec_var    'fn main(): i64 { secret var sizeof[16]; return 1; }\nsyscall(60, main());\n' sizeof
 refused for_bind   'fn main(): i64 { var s = 0; for fncall5 in 0..3 { s = s + 1; } return s; }\nsyscall(60, main());\n' fncall5
+# `use m.NAME;` binds the bare name: each used to compile and run the filed defect again.
+refused use_mh     'mod m;\nfn mulh64(a, b): i64 { return 77; }\nmod n;\nuse m.mulh64;\nfn f(): i64 { return mulh64(4611686018427387904, 8); }\nsyscall(60, n_f());\n' mulh64
+refused use_mh_top 'mod m;\nfn mulh64(a, b): i64 { return 77; }\nuse m.mulh64;\nsyscall(60, mulh64(4611686018427387904, 8));\n' mulh64
+refused use_fc     'include "lib/fnptr.cyr"\nmod m;\nfn fncall1(a, b): i64 { return 77; }\nmod n;\nuse m.fncall1;\nfn f(): i64 { return fncall1(5, 6); }\nsyscall(60, n_f());\n' fncall1
+refused use_sz     'mod m;\nfn sizeof(): i64 { return 77; }\nmod n;\nuse m.sizeof;\nfn f(): i64 { return sizeof(); }\nsyscall(60, n_f());\n' sizeof
 
 echo "axis 3 — only a file named fnptr.cyr may declare fncall0..8:"
 FN2='fn add(a, b): i64 { return a + b; }\nfn main(): i64 { return fncall2(&add, 3, 4); }\nsyscall(60, main());\n'
@@ -139,6 +150,7 @@ runs intrinsics 'fn main(): i64 { return mulh64(0x8000000000000000, 16) + sizeof
 runs near_miss  'fn mulh64x(a, b): i64 { return a + b; }\nfn fncall9(a): i64 { return a; }\nfn sizeofx(a): i64 { return a; }\nvar fncall = 1;\nvar sizeof_t = 2;\nsyscall(60, mulh64x(3, 4) + fncall9(fncall) + sizeofx(sizeof_t));\n' 10
 runs impl_meth  'struct Foo { a; }\nimpl Sz for Foo { fn sizeof(self): i64 { return 9; } }\nfn main(): i64 { var f = Foo { 1 }; return f.sizeof(); }\nsyscall(60, main());\n' 9
 runs mod_fn     'mod m;\nfn sizeof(): i64 { return 6; }\nsyscall(60, m_sizeof());\n' 6
+runs use_alias  'mod m;\nfn foo(a, b): i64 { return 77; }\nmod n;\nuse m.foo;\nfn f(): i64 { return foo(1, 2); }\nsyscall(60, n_f());\n' 77
 
 echo ""
 if [ "$fails" = 0 ]; then
