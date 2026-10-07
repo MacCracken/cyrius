@@ -55,7 +55,7 @@ var AT_EMPTY_PATH = 4096;          # 0x1000
 # warning, no fault. Consequence, measured on real ecb: `xrmdir` has never worked on
 # macOS-arm64 since it shipped at v6.5.2, and `sys_fchownat` returned -22 the first time
 # it was ever RUN there. The host suite cannot see any of this; only
-# vr01_syscall_wrappers.tcyr on hardware can.
+# tests/tcyr/crossos/syscall_wrappers.tcyr on hardware can.
 #ifdef CYRIUS_TARGET_MACOS
 var AT_REMOVEDIR = 128;            # 0x0080
 var AT_SYMLINK_NOFOLLOW = 32;      # 0x0020
@@ -952,7 +952,7 @@ fn sys_getpeername(fd, addr, addrlen): i64 {
 
 # getsockname(fd, addr, addrlen) — the LOCAL address of a socket. 0 / -errno.
 # Succeeds on an unconnected socket (unlike getpeername), which is what
-# vr01_getpeername_xlat.tcyr uses to prove 51 and 52 are not swapped.
+# tests/tcyr/crossos/getpeername_xlat.tcyr uses to prove 51 and 52 are not swapped.
 fn sys_getsockname(fd, addr, addrlen): i64 {
     return syscall(SYS_GETSOCKNAME, fd, addr, addrlen);
 }

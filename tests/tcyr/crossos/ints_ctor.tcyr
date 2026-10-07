@@ -7,7 +7,7 @@
 # the integer-vector type + return/receive ABI on ecb (macOS) + pi (aarch64).
 # Gated on CYRIUS_HAS_VAL_SIMD_PARAMS — defined on every target since v6.4.31/.32, so
 # this RUNS on cass. (Older wording claimed a cass skip; stale since .31.) Cf.
-# vr01_f32v4_ctor. Verified on x86 and aarch64 via qemu-aarch64.
+# crossos/f32v4_ctor.tcyr. Verified on x86 and aarch64 via qemu-aarch64.
 include "lib/assert.cyr"
 include "lib/simd.cyr"
 include "lib/syscalls.cyr"

@@ -18,7 +18,7 @@
 # — it is explicitly NOT the proof.
 #
 # Linux-only: this drives the raw futex ABI. macOS/Windows join through
-# bsdthread/WaitForSingleObject (lib/thread_win.cyr), covered by vr01_thread_spawn.tcyr.
+# bsdthread/WaitForSingleObject (lib/thread_win.cyr), covered by crossos/thread_spawn.tcyr.
 include "lib/assert.cyr"
 include "lib/alloc.cyr"
 include "lib/string.cyr"
