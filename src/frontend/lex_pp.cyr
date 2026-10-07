@@ -3409,6 +3409,19 @@ fn PP_MACRO_SLOT(S, dip): i64 {
     return _pp_macro_count;
 }
 
+# ⛔ 6.6.20 (CVE-TBD) — refuse, naming the macro, an expansion PP_EXPAND cannot do inside its
+# fixed buffers. A hard error like PP_MACRO_TEXT_FULL: the expansion is mid-copy and has no
+# honest partial result. `def` is the stored definition, `NAME(params) body`. CHANGELOG [6.6.20]
+fn PP_MACRO_REFUSE(def, why): i64 {
+    PRSTR("error: function-like macro '");
+    _pp_write_ident(def);
+    PRSTR("': ");
+    PRSTR(why);
+    syscall(SYS_WRITE, 2, "\n", 1);
+    syscall(SYS_EXIT, 1);
+    return 0;
+}
+
 # Expand macro invocation: NAME(arg1, arg2)
 # Reads args from input at ip, substitutes into body, writes to out+op
 # Returns new ip position (after the closing paren)
@@ -3430,11 +3443,21 @@ fn PP_EXPAND(S, mi, ip, bl, out, op): i64 {
     var dp = 0;
     while (load8(def + dp) != 40) { dp = dp + 1; }
     dp = dp + 1;  # skip (
-    # Read param names from definition
-    var pnames[512];   # up to 8 params, 64 bytes each
+    # Read param names from definition.
+    # ⛔ 6.6.20 (CVE-TBD) — pnames and args below are fn-local `var x[512]`, i.e. 512 BYTES
+    # each, packed NUL-separated (there is no per-param stride — this line used to say "up to 8
+    # params, 64 bytes each", which described a layout that never existed). Neither copy was
+    # bounded: a 516-byte argument came out as an EMPTY expansion and compiled clean (a
+    # silent miscompile), 518+ smashed PP_EXPAND's frame and cycc died of SIGSEGV, and a
+    # ~600-byte parameter list did the same from the definition side. Each loop stores at most
+    # one byte per pass; both refuse past 511 bytes of names / arguments and separators, so
+    # the copy never writes past index 511. CHANGELOG [6.6.20]
+    var pnames[512];
     var pcnt = 0;
     var pp = 0;
     while (load8(def + dp) != 41) {
+        if (pp >= 511) { PP_MACRO_REFUSE(def, "its parameter names exceed 511 bytes"); }
+        if (load8(def + dp) == 0) { PP_MACRO_REFUSE(def, "its parameter list has no closing ')'"); }
         if (load8(def + dp) == 44) { store8(&pnames + pp, 0); pp = pp + 1; pcnt = pcnt + 1; dp = dp + 1; }
         elif (load8(def + dp) == 32) { dp = dp + 1; }
         else { store8(&pnames + pp, load8(def + dp)); pp = pp + 1; dp = dp + 1; }
@@ -3451,12 +3474,13 @@ fn PP_EXPAND(S, mi, ip, bl, out, op): i64 {
     }
     ip = ip + 1;  # skip (
     # Read args from input (comma-separated, handle nested parens)
-    var args[512];    # up to 8 args, 64 bytes each
+    var args[512];    # 512 bytes, NUL-separated — bounded below (see pnames)
     var acnt = 0;
     var ap = 0;
     var depth = 0;
     while (ip < bl) {
         var c = load8(S + _SRCB + ip);
+        if (ap >= 512) { PP_MACRO_REFUSE(def, "an invocation's arguments exceed 511 bytes"); }
         if (c == 40) { depth = depth + 1; store8(&args + ap, c); ap = ap + 1; }
         elif (c == 41) {
             if (depth == 0) { store8(&args + ap, 0); ap = ap + 1; acnt = acnt + 1; ip = ip + 1; break; }

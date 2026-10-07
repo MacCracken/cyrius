@@ -36,6 +36,18 @@
 #    by the conditionals after it and not by those before it, in the main source and in an
 #    included file.
 #
+# D. PP_EXPAND copies a macro's parameter names and an invocation's arguments into fn-local
+#    `var pnames[512]` / `var args[512]` — 512 BYTES each — and neither copy was bounded (CVE-40
+#    bounded only the #define BODY copy). A 516-byte argument came out as an EMPTY expansion
+#    and compiled clean (`f()` returned 0 where 7 is right — a silent miscompile); 518+ smashed
+#    PP_EXPAND's frame and cycc died of SIGSEGV; a ~600-byte parameter list did the same from
+#    the definition side, and a parameter list with no `)` read past the stored definition
+#    (SIGSEGV). Fix: both loops refuse, naming the macro, past 511 bytes of names / arguments
+#    and separators, and the parameter loop stops at the definition's end. Rows: the largest
+#    argument list and parameter list that fit expand correctly; one byte more, the 516-byte
+#    silent-miscompile shape and 600 bytes are refused by name; a parameter list with no `)`
+#    is refused by name. CVE-TBD.
+#
 # MUTATION LEDGER (6.6.20, mutant = this tree with the named change, built by build/cycc and
 # run as CYCC=<mutant>):
 #   A1. PP_PUSH_LEVEL's `d >= 64` check deleted (the pre-6.6.20 behaviour)  -> RED: every A
@@ -45,6 +57,9 @@
 #   B3. PP_IFDEF_PASS calls PP_DEFINE again, not PP_DEFINE_INCLUDED         -> RED: B included row
 #   C1. PP_DEFINE's PP_FLAG_SLOT lookup forced to -1 (append, the pre-6.6.20 behaviour)
 #                                                                          -> RED: every C row
+#   D1. PP_EXPAND's `ap >= 512` argument bound deleted                      -> RED: D argument rows
+#   D2. PP_EXPAND's `pp >= 511` parameter bound deleted                     -> RED: D parameter rows
+#   D3. PP_EXPAND's end-of-definition stop deleted                          -> RED: D no-`)` row
 #   real tree                                                              -> GREEN
 set -eu
 
@@ -152,8 +167,34 @@ printf "$REDEF" > "$WORK/redefinc.cyr"
 printf 'include "redefinc.cyr"\nsyscall(60, a + b + c);\n' > "$WORK/redefim.cyr"
 accept "redefinition, included file: the latest value wins from there on" redefim.cyr 21
 
+# ── D. PP_EXPAND's parameter / argument buffers ─────────────────────────────────────────
+ARG_MSG="error: function-like macro 'PICK': an invocation's arguments exceed 511 bytes"
+PAR_MSG="error: function-like macro 'PICK': its parameter names exceed 511 bytes"
+# argsrc <file> <n>: PICK("<n a's>", 7) inside a fn — the arguments, separators included, are
+# n + 5 bytes (two quotes, a NUL, " 7"), so n = 506 is exactly 511.
+argsrc() {
+    awk -v n="$2" 'BEGIN { s = ""; for (i = 0; i < n; i++) s = s "a";
+        print "#define PICK(a, b) b"; print "fn f(): i64 {"; printf "    return PICK(\"%s\", 7);\n", s;
+        print "}"; print "var r = f();"; print "syscall(60, r);" }' > "$WORK/$1"
+}
+# parsrc <file> <n>: #define PICK(<n p's>, b) b — the names and separators are n + 2 bytes,
+# so n = 509 is exactly 511.
+parsrc() {
+    awk -v n="$2" 'BEGIN { s = ""; for (i = 0; i < n; i++) s = s "p";
+        printf "#define PICK(%s, b) b\n", s; print "var r = PICK(1, 7);"; print "syscall(60, r);" }' > "$WORK/$1"
+}
+argsrc arg506.cyr 506; accept "arguments of exactly 511 bytes expand" arg506.cyr 7
+argsrc arg507.cyr 507; refuse "arguments of 512 bytes" arg507.cyr "$ARG_MSG"
+argsrc arg516.cyr 516; refuse "the 516-byte silent-miscompile shape" arg516.cyr "$ARG_MSG"
+argsrc arg600.cyr 600; refuse "arguments of 605 bytes (SIGSEGV before 6.6.20)" arg600.cyr "$ARG_MSG"
+parsrc par509.cyr 509; accept "parameter names of exactly 511 bytes expand" par509.cyr 7
+parsrc par510.cyr 510; refuse "parameter names of 512 bytes" par510.cyr "$PAR_MSG"
+parsrc par600.cyr 600; refuse "parameter names of 602 bytes (SIGSEGV before 6.6.20)" par600.cyr "$PAR_MSG"
+printf '#define BAD(a\nvar r = BAD(1);\nsyscall(60, 5);\n' > "$WORK/noparen.cyr"
+refuse "a parameter list with no ')' (SIGSEGV before 6.6.20)" noparen.cyr "error: function-like macro 'BAD': its parameter list has no closing ')'"
+
 if [ "$NFAIL" != 0 ]; then
     echo "FAIL: pp_table_caps: $NFAIL failure(s) across $NROWS rows"
     exit 1
 fi
-echo "PASS: pp_table_caps: $NROWS rows — #if-family nesting refused past 64 levels in both passes; function-like macro table refuses the 17th, a redefinition and an included definition by name; a repeated #define reuses its flag slot and the latest value wins (6.6.20)"
+echo "PASS: pp_table_caps: $NROWS rows — #if-family nesting refused past 64 levels in both passes; function-like macro table refuses the 17th, a redefinition and an included definition by name; a repeated #define reuses its flag slot and the latest value wins; macro parameter / argument copies are bounded and refused by name (6.6.20)"

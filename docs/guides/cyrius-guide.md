@@ -1755,6 +1755,10 @@ is one). Until 6.6.20 several of these were silent.
   latest definition wins. (Before 6.6.20 every repeat took a slot of its own —
   `include "lib/sandhi.cyr"` used 12 of the 16 — and the FIRST value was read
   forever.)
+- **A function-like macro's parameter list, and one invocation's arguments: 511
+  bytes each**, counting the separators. Past either the compile is refused,
+  naming the macro. (Before 6.6.20 a 516-byte argument silently expanded to
+  nothing, and longer ones crashed the compiler.)
 
 `#ifplat <plat>` (v5.4.19) is a tighter spelling for arch / OS dispatch:
 
