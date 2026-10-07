@@ -191,6 +191,7 @@ var _mf_len = 0;
 var _mf_state = 0;        # 0 = not read yet, 1 = loaded, 2 = no manifest, 3 = refused
 var _mf_path = 0;
 var _toml_bad = 0;        # set by a getter: the key is PRESENT but its value is malformed / mistyped
+var _toml_unclosed = 0;   # set by a skip that ran off the end: a `"""` / `'''` string, array or inline table
 
 fn _toml_eol(buf, n, p): i64 {
     while (p < n && load8(buf + p) != 10) { p = p + 1; }
@@ -262,6 +263,7 @@ fn _toml_skip_string(buf, n, p): i64 {
             }
             i = i + 1;
         }
+        _toml_unclosed = 1;
         return n;
     }
     var j = p + 1;
@@ -298,6 +300,7 @@ fn _toml_skip_value(buf, n, p): i64 {
         }
         p = p + 1;
     }
+    _toml_unclosed = 1;
     return n;
 }
 
@@ -526,10 +529,65 @@ fn _mf_header_len(b, n): i64 {
     return n;
 }
 
+# A value that never closes — an array, an inline table or a `"""` / `'''` string with no end —
+# runs to the end of the header, and the line walker steps past EVERY later table with it: one
+# missing `]` or quote (`keywords = ["a, "b"]`) made [build], [deps] and [embed] read as absent
+# without a word — a build that silently dropped its `defines` — while `cyrius deps` (a byte
+# scanner) still vendored the [deps] the build could not see. Refused by name: the key and the
+# line its value opens on. A single-line string stops at its line end and swallows nothing, so it
+# is not this check's. 0, or 1 after naming it. CHANGELOG [6.6.20].
+fn _mf_unclosed(): i64 {
+    var info[32];
+    var hk = 0;
+    var hs = 0;
+    var hl = 0;
+    var p = 0;
+    _toml_unclosed = 0;
+    while (p < _mf_len) {
+        var at = p;
+        p = _toml_line(_mf_buf, _mf_len, p, &info);
+        var kind = load64(&info);
+        if (kind == 1 || kind == 2) {
+            hk = kind;
+            hs = _mf_buf + load64(&info + 8);
+            hl = load64(&info + 16);
+        }
+        if (_toml_unclosed == 1) {
+            if (kind == 3) { at = load64(&info + 24); }
+            var ln = 1;
+            var i = 0;
+            while (i < at) { if (load8(_mf_buf + i) == 10) { ln = ln + 1; } i = i + 1; }
+            var sb = str_builder_new();
+            str_builder_add_cstr(sb, _mf_path);
+            str_builder_add_cstr(sb, ":");
+            str_builder_add_int(sb, ln);
+            str_builder_add_cstr(sb, ": ");
+            if (kind == 3) {
+                if (hk == 2) { str_builder_add_cstr(sb, "["); }
+                if (hk != 0) {
+                    str_builder_add_cstr(sb, "[");
+                    str_builder_add(sb, str_new(hs, hl));
+                    str_builder_add_cstr(sb, "]");
+                }
+                if (hk == 2) { str_builder_add_cstr(sb, "]"); }
+                if (hk != 0) { str_builder_add_cstr(sb, " "); }
+                str_builder_add(sb, str_new(_mf_buf + load64(&info + 8), load64(&info + 16)));
+                str_builder_add_cstr(sb, " opens a value that never closes");
+            } else {
+                str_builder_add_cstr(sb, "a quoted key opens a string that never closes");
+            }
+            str_builder_add_cstr(sb, " (an array, inline table or \"\"\"/''' string with no end): every line after it would be read as part of it; close it");
+            _err(str_data(str_builder_build(sb)));
+            return 1;
+        }
+    }
+    return 0;
+}
+
 # Load ./cyrius.cyml (legacy: ./cyrius.toml) WHOLE, once per process (nothing in the CLI changes
 # directory, and the one in-process manifest write — `cyrius update`'s toml migration — writes the
 # same TOML). Returns 1 when loaded, 0 when there is no manifest, -1 when it exists and could not
-# be read or is larger than 16 MiB (named once).
+# be read, is larger than 16 MiB or holds a value that never closes (named once).
 fn _mf_load(): i64 {
     if (_mf_state == 1) { return 1; }
     if (_mf_state == 2) { return 0; }
@@ -552,6 +610,10 @@ fn _mf_load(): i64 {
     _mf_len = _mf_header_len(b, n);
     store8(b + _mf_len, 0);
     _mf_buf = b;
+    if (_mf_unclosed() != 0) {
+        _mf_state = 3;
+        return 0 - 1;
+    }
     _mf_state = 1;
     return 1;
 }

@@ -20,6 +20,13 @@
 #   6. `cyrius package` compiles [build] entry into [build] output.
 #   7. a manifest past 16 MiB is refused BY NAME (non-zero exit), not truncated.
 #   8. STATIC: no fixed-cap read of a manifest path is left in cbt/ (self-tested on the old body).
+#   9. (6.6.20, CBTB-06) a value that never closes — an array, an inline table, a `"""` string, an
+#      array with a missing quote (`["a, "b"]`) — is REFUSED by name, key and line, by `cyrius build`
+#      and `cyrius deps` alike. On 6.6.17-6.6.19 it ran to the end of the header and the walker
+#      stepped past every later table: `[build] defines` after it was dropped from a build that
+#      exited 0, while `cyrius deps` (a byte scanner) still vendored the [deps] the build could not
+#      see. Anti-over-reach: a header whose last byte is a closing `]` right before `---`, and a
+#      manifest with no trailing newline (9 live ecosystem manifests end that way), still build.
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -103,5 +110,40 @@ left=$(capped cbt/*.cyr || true)
 [ -z "$left" ] && echo "  ok axis 8: no fixed-cap read of a manifest path in cbt/ (detector self-tested)" \
     || fail "axis 8: a manifest is still read through a fixed cap: $left"
 
+# ── axis 9: a value that never closes is refused by name ────────────────────────────────
+mkdir -p "$W/a9/src"
+printf 'fn main(): i64 {\n#ifdef FEATURE\nreturn 7;\n#endif\nreturn 3;\n}\nvar r = main();\nsyscall(60, r);\n' > "$W/a9/src/main.cyr"
+TQ='"""'
+A9=0
+fail9() { fail "$@"; A9=1; }
+# unclosed <label> <line 3 of the manifest> <expected "cyrius.cyml:N: <key>" text>
+unclosed() {
+    printf '[package]\nname = "a9"\n%s\n\n[build]\nentry = "src/main.cyr"\noutput = "build/u"\ndefines = ["FEATURE"]\n' "$2" > "$W/a9/cyrius.cyml"
+    rm -rf "$W/a9/build"
+    rc=0; cli "$W/a9" build src/main.cyr build/u > "$W/a9.out" 2>&1 || rc=$?
+    [ "$rc" -ne 0 ] || fail9 "axis 9 $1: cyrius build exited 0 (the program exits $(runs "$W/a9/build/u"); 7 = the define after the break was read)"
+    [ -e "$W/a9/build/u" ] && fail9 "axis 9 $1: a refused manifest still built build/u"
+    grep -qF "error: $3 opens a value that never closes" "$W/a9.out" || fail9 "axis 9 $1: no '$3 opens a value that never closes' refusal: $(head -2 "$W/a9.out" | tr '\n' ' ')"
+}
+unclosed "array"         'modules = ["src/main.cyr"'    'cyrius.cyml:3: [package] modules'
+unclosed "inline table"  'meta = { a = "b"'             'cyrius.cyml:3: [package] meta'
+unclosed "triple string" "description = ${TQ}"         'cyrius.cyml:3: [package] description'
+unclosed "missing quote" 'keywords = ["a, "b"]'         'cyrius.cyml:3: [package] keywords'
+# `cyrius deps` reads through the same reader: it refuses too, instead of vendoring what build cannot see
+printf '[package]\nname = "a9"\nkeywords = ["a", "b"\n\n[deps]\nstdlib = ["string"]\n' > "$W/a9/cyrius.cyml"
+rm -rf "$W/a9/lib"
+rc=0; cli "$W/a9" deps > "$W/a9.out" 2>&1 || rc=$?
+[ "$rc" -ne 0 ] && grep -qF 'error: cyrius.cyml:3: [package] keywords opens a value that never closes' "$W/a9.out" \
+    || fail9 "axis 9 deps: cyrius deps did not refuse the same manifest by name (rc $rc): $(head -2 "$W/a9.out" | tr '\n' ' ')"
+[ -e "$W/a9/lib/string.cyr" ] && fail9 "axis 9 deps: cyrius deps vendored [deps] from a manifest the build refuses"
+# anti-over-reach: a closing `]` as the header's LAST byte (right before `---`), and no trailing newline
+printf '[package]\nname = "a9"\n\n[build]\nentry = "src/main.cyr"\noutput = "build/c1"\ndefines = ["FEATURE"]\n---\nprose with [ an open bracket\n' > "$W/a9/cyrius.cyml"
+rm -rf "$W/a9/build"; cli "$W/a9" build > "$W/a9.out" 2>&1
+[ "$(runs "$W/a9/build/c1")" = 7 ] || fail9 "axis 9 closed-before-body: a header ending in a closed array was refused or misread: $(head -2 "$W/a9.out" | tr '\n' ' ')"
+printf '[package]\nname = "a9"\n\n[build]\nentry = "src/main.cyr"\noutput = "build/c2"\ndefines = ["FEATURE"]' > "$W/a9/cyrius.cyml"
+rm -rf "$W/a9/build"; cli "$W/a9" build > "$W/a9.out" 2>&1
+[ "$(runs "$W/a9/build/c2")" = 7 ] || fail9 "axis 9 no trailing newline: a manifest ending in a closed array with no newline was refused or misread: $(head -2 "$W/a9.out" | tr '\n' ' ')"
+[ "$A9" = 0 ] && echo "  ok axis 9: an unclosed array / inline table / \"\"\" string / missing quote is refused by name, key and line (build and deps); a header ending in ] and a file with no newline build"
+
 [ "$FAIL" = 0 ] || exit 1
-echo "PASS: manifest_one_reader (whole manifest, TOML values, CYML body, package, 16 MiB refusal)"
+echo "PASS: manifest_one_reader (whole manifest, TOML values, CYML body, package, 16 MiB refusal, unclosed values)"
