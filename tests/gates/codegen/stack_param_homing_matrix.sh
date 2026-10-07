@@ -539,6 +539,35 @@ var f = byv(mk(5)) + byv(Gs.dup()) + rd1(Gs);
 syscall(60, a + b + c + d + e + f);
 EOF
 refuse_all toplevel-small-ptr-arg "$T/rt8.cyr" "returns a struct by value" 5
+# 6.6.20 (review) — an overloaded operator's `*S` operand of 8 B OR LESS at TOP LEVEL. In a fn an
+# operand that is not a bare name lands in a frame temp whose address is passed (tests/tcyr/
+# crossos/ptr_param_bare_struct.tcyr, `operators`); at top level there is no frame, and the
+# operand's VALUE was pushed, which the operator fn dereferenced — SIGSEGV. Refused: a call result,
+# a literal, an operator result (to S1_mul's `b: *S1`) and a left operand that is not a name
+# (`-Gs`). Not refused, so the count is exact: global operands (`Gs - Gt`, `(Gs) - Gt`), a
+# by-value operand (`Gs / mk(2)`, `Gs + mk(3)`), and `(Gs - Gt) - Gt`, whose outer `-` is not an
+# operator call. Mutation: `_op_operand_sv` without its top-level refusal -> RED ("0 times, want 4").
+cat > "$T/rt9.cyr" <<'EOF'
+struct S1 { v; }
+fn S1_sub(a: *S1, b: *S1): S1 { var r = S1 { a.v - b.v }; return r; }
+fn S1_mul(a: S1, b: *S1): S1 { var r = S1 { a.v * b.v }; return r; }
+fn S1_div(a: *S1, b: S1): S1 { var r = S1 { a.v / b.v }; return r; }
+fn S1_add(a: S1, b: S1): S1 { var r = S1 { a.v + b.v }; return r; }
+fn mk(n): S1 { var s = S1 { n }; return s; }
+var Gs = S1 { 9 };
+var Gt = S1 { 2 };
+var a: S1 = Gs - mk(1);
+var b: S1 = Gs - 4;
+var c: S1 = Gs * (Gt - Gt);
+var d: S1 = -Gs - Gt;
+var e: S1 = Gs - Gt;
+var f: S1 = (Gs) - Gt;
+var g: S1 = Gs / mk(2);
+var h: S1 = Gs + mk(3);
+var i: S1 = (Gs - Gt) - Gt;
+syscall(60, a.v + b.v + c.v + d.v + e.v + f.v + g.v + h.v + i.v);
+EOF
+refuse_all toplevel-small-ptr-operand "$T/rt9.cyr" "operand of .* is passed by address" 4
 # 6.6.6 bite 16c — A 9-16 BYTE STRUCT RETURN (rax:rdx) ACCEPTED ANY RETURN EXPRESSION. The pair
 # branch in PARSE_RETURN handled `return IDENT;` for a matching local and fell through to the
 # SCALAR path for everything else, so a call returning a DIFFERENT struct (`s2` returns a 24 B P3
