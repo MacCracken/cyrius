@@ -744,26 +744,49 @@ fn _tc_sarg_divert(S, cfi, ti_open): i64 {
     return 1;
 }
 # 1 = the argument tokens [st, st + n) into an address-passed parameter cannot push an address in
-# this frame: a bare local that is not struct-typed (its value), a bare `*T` parameter (the pointer
-# it holds), a bare global (`_push_struct_addr_global`: its value, the pointer its slot holds or
-# its own address — never a frame's), or `ptr.field` through a `*T` parameter (the pointee's
-# field). Everything else answers 0, including a pointer-MODE struct local, whose pointer the
-# tokens cannot vouch for. Read-only: FINDLOCAL / `_findvar_core`, never FINDVAR, whose
-# visibility report belongs to the argument's own parse.
+# this frame: a bare local that is not struct-typed (its value), a bare pointer-typed slot — a
+# `p: *T` parameter or a `var x: *T` local (GLPTRP: the pointer it holds; such a slot is never an
+# inline struct, and only `&local` puts this frame's address in it, which `_fn_local_addr` diverts),
+# a bare global (`_push_struct_addr_global`: its value, the pointer its slot holds or its own
+# address — never a frame's), `ptr.field` through a pointer-typed slot (the pointee's field), or a
+# plain call that pushes its VALUE (`_tc_sarg_call_ok`). Everything else answers 0, including a
+# pointer-MODE struct local, whose pointer the tokens cannot vouch for. Read-only: FINDLOCAL /
+# `_findvar_core`, never FINDVAR, whose visibility report belongs to the argument's own parse.
 fn _tc_sarg_ok(S, st, n): i64 {
     if (TOKTYP(S, st) != 2) { return 0; }
     var li = FINDLOCAL(S, TOKVAL(S, st));
     if (n == 1) {
         if (li < 0) { if (_findvar_core(S, TOKVAL(S, st)) >= 0) { return 1; } return 0; }
         if (GLTYPE(S, li) >= 0) { return 1; }
-        if (_is_ptr_param(S, li) == 1) { return 1; }
+        if (GLPTRP(S, li) == 1) { return 1; }
         return 0;
+    }
+    if (TOKTYP(S, st + 1) == 10) {
+        var ok = _tc_sarg_call_ok(S, st, n);
+        return ok;
     }
     if (n != 3) { return 0; }
     if (TOKTYP(S, st + 1) != 41) { return 0; }
     if (TOKTYP(S, st + 2) != 2) { return 0; }
-    if (_is_ptr_param(S, li) == 1) { return 1; }
+    if (GLPTRP(S, li) == 1) { return 1; }
     return 0;
+}
+# 1 = the argument [st, st + n) is the whole call `name(..)` to a plain fn that hands back a VALUE:
+# `_try_push_struct_addr_arg` takes a temp's address only for an aggregate-returning callee
+# (`_ret_agg_class` != 0), so this one is pushed as the word it returns, e.g. a pointer
+# (`return walk(nxt(p), ..)`). A value-form vector return is left diverted (on Win64 it lands in
+# a hidden-retptr temp in this frame), and so is a generic (its instance's class is resolved by
+# the call's own parse). The call's own address-passed arguments ask the same question, so
+# `nxt(s)` with `s` an inline local — whose address `nxt` may hand back — still diverts.
+fn _tc_sarg_call_ok(S, st, n): i64 {
+    if (_call_close(S, st + 1) != st + n - 1) { return 0; }
+    var fi = FINDFN(S, TOKVAL(S, st));
+    if (fi < 0) { return 0; }
+    if (GFTP(S, fi) != 0) { return 0; }
+    if (_ret_agg_class(S, fi) != 0) { return 0; }
+    if (_is_simd_any(S, GFRS(S, fi)) == 1) { return 0; }
+    if (_tc_sarg_divert(S, fi, st + 1) == 1) { return 0; }
+    return 1;
 }
 
 # Parse return expr ;  (uses PCMPE so return a == b; works)

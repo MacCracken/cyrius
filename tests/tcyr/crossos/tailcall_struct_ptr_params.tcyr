@@ -15,12 +15,16 @@
 # wrapper that tail-calls it with a `jmp` puts it at the SAME depth (the wrapper's frame is gone),
 # and a wrapper that calls it normally puts it DEEPER. So every row asserts both the value and
 # the depth — exactly, with no reliance on a freed frame happening to be overwritten.
-#   - kept (same depth): a forwarded `*T` parameter, an untyped pointer local, a global struct into
-#     `*T` and into a by-value `T` (the global's own address is pushed), and a field reached
-#     through a `*T` parameter (the pointee's field address is pushed);
+#   - kept (same depth): a forwarded `*T` parameter, an untyped pointer local, a typed `*T` local
+#     (one forwarding a parameter, one holding a heap pointer), a global struct into `*T` and into
+#     a by-value `T` (the global's own address is pushed), a field reached through a `*T`
+#     parameter or a `*T` local (the pointee's field address is pushed), and a plain call that
+#     returns a pointer (its value is pushed);
 #   - diverted (deeper): an inline struct local, a field of one, a forwarded by-value parameter (an
 #     inline copy in this frame since 6.6.16), a struct call's temp, a pointer-mode struct local,
-#     and a value-form vector local (address-passed on Win64, vector-register-passed elsewhere).
+#     a `*T` local holding `&local`, a plain call given an inline struct local (the call may hand
+#     that frame address back), and a value-form vector local (address-passed on Win64,
+#     vector-register-passed elsewhere).
 # The deep rows run 1,000,000 levels, past any default stack (1 MB on Windows): the real shapes.
 #
 # ⚠ CROSS-HOST because the tail-call epilogue and the address-passing ABI are per backend, and the
@@ -52,6 +56,8 @@ fn dVec(v: f64v2, k) {
 }
 fn mk(a, b, c): P3 { var r = P3 { a, b, c }; return r; }
 fn mkv(a, b): f64v2 { var r: f64v2; store64(&r + 0, a); store64(&r + 8, b); return r; }
+fn idp(p: *P3) { return p; }
+fn hp3(a, b, c): *P3 { var h = alloc(24); store64(h, a); store64(h + 8, b); store64(h + 16, c); return h; }
 fn _same(m, base): i64 { if (m == base) { return 1; } return 0; }
 fn _deeper(m, base): i64 { if (m < base) { return 1; } return 0; }
 
@@ -61,6 +67,10 @@ fn t_raw(k) { var h = alloc(24); store64(h, 7); store64(h + 8, 8); store64(h + 1
 fn t_glob(k) { return dP(G, k); }
 fn t_globv(k) { return dV(G, k); }
 fn t_fld(w: *W, k) { return dP(w.inner, k); }
+fn t_tloc(q: *P3, k) { var x: *P3 = q; return dP(x, k); }
+fn t_theap(k) { var h: *P3 = hp3(7, 8, 9); return dP(h, k); }
+fn t_tfld(w: *W, k) { var x: *W = w; return dP(x.inner, k); }
+fn t_pcall(q: *P3, k) { return dP(idp(q), k); }
 # --- diverted: the argument is an address in this frame -----------------------------------------
 fn t_loc(k) { var s = P3 { 1, 2, 3 }; return dP(s, k); }
 fn t_locv(k) { var s = P3 { 1, 2, 3 }; return dV(s, k); }
@@ -70,12 +80,29 @@ fn t_bvv(p: P3, k) { return dV(p, k); }
 fn t_call(k) { return dP(mk(4, 5, 6), k); }
 fn t_pmode(k) { var b: P3 = alloc(24); b.a = 7; b.b = 8; b.c = 9; return dP(b, k); }
 fn t_vec(k) { var v: f64v2 = mkv(30, 12); return dVec(v, k); }
+fn t_tamp(k) { var s = P3 { 1, 2, 3 }; var x: *P3 = &s; return dP(x, k); }
+fn t_pcloc(k) { var s = P3 { 1, 2, 3 }; return dP(idp(s), k); }
 
 # --- deep: the real shapes, 1,000,000 levels --------------------------------------------------
-struct Node { v; next; }
+struct Node { v; next: *Node; }
 fn walk(p: *Node, acc) {
     if (p == 0) { return acc; }
     return walk(p.next, acc + p.v);
+}
+fn walkl(p: *Node, acc) {
+    if (p == 0) { return acc; }
+    var nx: *Node = p.next;
+    return walkl(nx, acc + p.v);
+}
+fn walkc(p: *Node, acc) {
+    if (p == 0) { return acc; }
+    var cur: *Node = p;
+    return walkc(cur.next, acc + cur.v);
+}
+fn nxt(p: *Node) { return p.next; }
+fn walkn(p: *Node, acc) {
+    if (p == 0) { return acc; }
+    return walkn(nxt(p), acc + p.v);
 }
 fn cntq(q: *P3, n, acc) {
     if (n == 0) { return acc; }
@@ -127,6 +154,18 @@ fn check_struct_ptr_tailcalls(): i64 {
     r = t_fld(w2, 1);
     assert_eq(r, 67, "`w.inner` through a `*W` parameter: value");
     assert_eq(_same(_dmark, baseP), 1, "`w.inner` through a `*W` parameter: kept");
+    r = t_tloc(q, 1);
+    assert_eq(r, 13, "a `*T` local forwarding a parameter: value");
+    assert_eq(_same(_dmark, baseP), 1, "a `*T` local forwarding a parameter: kept");
+    r = t_theap(1);
+    assert_eq(r, 25, "a `*T` local holding a heap pointer: value");
+    assert_eq(_same(_dmark, baseP), 1, "a `*T` local holding a heap pointer: kept");
+    r = t_tfld(w2, 1);
+    assert_eq(r, 67, "`x.inner` through a `*W` local: value");
+    assert_eq(_same(_dmark, baseP), 1, "`x.inner` through a `*W` local: kept");
+    r = t_pcall(q, 1);
+    assert_eq(r, 13, "a plain call returning a pointer: value");
+    assert_eq(_same(_dmark, baseP), 1, "a plain call returning a pointer: kept");
 
     test_group("diverted: the argument is an address in the caller's frame");
     r = t_loc(1);
@@ -153,6 +192,12 @@ fn check_struct_ptr_tailcalls(): i64 {
     r = t_vec(1);
     assert_eq(r, 43, "a value-form vector local: value");
     assert_eq(_deeper(_dmark, baseVec), 1, "a value-form vector local: diverted");
+    r = t_tamp(1);
+    assert_eq(r, 7, "a `*T` local holding `&local`: value");
+    assert_eq(_deeper(_dmark, baseP), 1, "a `*T` local holding `&local`: diverted");
+    r = t_pcloc(1);
+    assert_eq(r, 7, "a plain call given an inline struct local: value");
+    assert_eq(_deeper(_dmark, baseP), 1, "a plain call given an inline struct local: diverted");
 
     test_group("deep: 1,000,000 levels in constant stack");
     var head = 0;
@@ -165,6 +210,9 @@ fn check_struct_ptr_tailcalls(): i64 {
         i = i + 1;
     }
     assert_eq(walk(head, 0), 1000000, "walk(p.next, ..) over a 1,000,000-node list (p: *Node)");
+    assert_eq(walkl(head, 0), 1000000, "`var nx: *Node = p.next; return walkl(nx, ..)`");
+    assert_eq(walkc(head, 0), 1000000, "`return walkc(cur.next, ..)` through a `*Node` local");
+    assert_eq(walkn(head, 0), 1000000, "`return walkn(nxt(p), ..)`: a pointer-returning call");
     assert_eq(cntq(q, 1000000, 0), 3000000, "a forwarded `q: *T` parameter");
     assert_eq(cntg(G, 1000000, 0), 20000000, "a global struct into `*T`");
     assert_eq(cntv(G, 1000000, 0), 30000000, "a global struct into a by-value `T`");
