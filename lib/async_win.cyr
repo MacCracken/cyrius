@@ -629,13 +629,15 @@ fn async_with_timeout(rt, handle, ms): i64 {
     if (handle == 0) { return 0; }
     if (load64(handle + 16) == TASK_DONE) { return 1; }
     var ctx = alloc_via(load64(rt + 32), 80);   # +wait-registration @72
-    # Out of memory: -1, as the Linux arm answers. With no sentinel, `_async_pump(rt, handle, 0)`
-    # would wait for the handle alone — a deadline that never fires. CHANGELOG [6.6.20]
+    # Out of memory — for the sentinel's context or for its task — is -1, as the Linux arm
+    # answers: the context was stored through 0, and with no sentinel `_async_pump(rt, handle, 0)`
+    # waits for the handle alone, a deadline that never fires. CHANGELOG [6.6.20]
     if (ctx == 0) { return 0 - 1; }
     store64(ctx + 40, 0);
     store64(ctx + 48, rt);
     store64(ctx + 64, ms);
     var sentinel = async_spawn(rt, &_async_timeout_sentinel, ctx);
+    if (sentinel == 0) { return 0 - 1; }
     _async_pump(rt, handle, sentinel);
     var completed = 0;
     if (load64(handle + 16) == TASK_DONE) { completed = 1; }
