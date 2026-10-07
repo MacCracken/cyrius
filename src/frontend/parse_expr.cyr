@@ -4871,8 +4871,10 @@ fn _op_local_dispatches(S, li): i64 {
 # one decision. An inline local IS the struct, so its address is `&slot`; an address-passed
 # by-value parameter's slot HOLDS the struct's address, so the operand is the slot's CONTENT.
 # Passing `&slot` there handed the operator fn a pointer-to-pointer. CHANGELOG [6.6.6]
-fn _op_operand_local(S, li): i64 {
+# 6.6.20: `ofi` / `ord` = the operator fn and this operand's parameter (`_sarg_escapes`).
+fn _op_operand_local(S, li, ofi, ord): i64 {
     if (_local_is_sptr_param(S, li) == 1) { EFLLOAD(S, li); return 0; }
+    _sarg_escapes(ofi, ord, 0);   # the operator fn may hold an address in this frame
     EFLADDR(S, li);
     return 0;
 }
@@ -4881,14 +4883,14 @@ fn _op_operand_local(S, li): i64 {
 # 6.6.5 — the operand address for an overloaded operator. `svar >= 0` is a global slot;
 # `svar <= -2` is the LOCAL encoding `-2 - li` (the same one PARSE_FIELD_LOAD uses), added so
 # a multi-word struct LOCAL can be passed by address exactly as a global already was.
-fn _OP_OPERAND_ADDR(S, svar): i64 {
+fn _OP_OPERAND_ADDR(S, svar, ofi, ord): i64 {
     # 6.6.5 — the CAPTURE band (`-1000000 - capi`) is tested FIRST: it is also `<= -2`, so the
     # local arm below would read it as a nonsense slot index. `_CL_CAP_OPTYPE` only ever puts a
     # MULTI-WORD capture here, and those words ARE the aggregate, so `&env[woff]` is its
     # address with no load — the same convention `_CL_CAP_BASE_RA` uses. CHANGELOG [6.6.5]
     if (svar <= 0 - 1000000) { _CL_CAP_WORDS_RA(S, 0 - 1000000 - svar); return 0; }
     if (svar >= 0) { EVADDR(S, svar); return 0; }
-    if (svar <= 0 - 2) { _op_operand_local(S, 0 - 2 - svar); }
+    if (svar <= 0 - 2) { _op_operand_local(S, 0 - 2 - svar, ofi, ord); }
     return 0;
 }
 
@@ -4978,10 +4980,10 @@ fn EMIT_OP_DISPATCH(S, stype, op_str, op_len, beg): i64 {
     var opti = GTI(S) - 1;   # the operator, just consumed — the call the warning names (6.6.16)
     # For struct vars, push address instead of value (6.6.20: and for a `*S` operand at any size)
     var svar = _op_lhs_sv(S, ofp, beg, opti);
-    _OP_OPERAND_ADDR(S, svar);
+    _OP_OPERAND_ADDR(S, svar, ofp, 0);
     EPUSHR(S);
     var rsvar = _op_rhs(S, ofp);   # the rhs, parsed: a struct var's address too (6.6.20: _op_rhs)
-    _OP_OPERAND_ADDR(S, rsvar);
+    _OP_OPERAND_ADDR(S, rsvar, ofp, 1);
     EPUSHR(S);
     var opnoff = BUILD_OP_NAME(S, stype, op_str, op_len);
     ECALLPOPS(S, 2);
@@ -5031,10 +5033,10 @@ fn _EMIT_OP_DISPATCH_AGG(S, stype, op_str, op_len, beg): i64 {
     if (svar == 0 - 1) { park = _op_park_lhs(S, ofi); }
     var t = _sc_pre(S, ofi, opnoff, beg);
     var n = 2 + _sc_n0;
-    if (park >= 0) { EFLLOAD(S, park); } else { _OP_OPERAND_ADDR(S, svar); }
+    if (park >= 0) { EFLLOAD(S, park); } else { _OP_OPERAND_ADDR(S, svar, ofi, 0); }
     EPUSHR(S);
     var rsvar = _op_rhs(S, ofi);
-    _OP_OPERAND_ADDR(S, rsvar);
+    _OP_OPERAND_ADDR(S, rsvar, ofi, 1);
     EPUSHR(S);
     ECALLPOPS(S, n);
     _sc_x8(S, ofi, t);

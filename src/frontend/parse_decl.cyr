@@ -676,6 +676,15 @@ fn _fsc_src_x1(S, boff): i64 {
     _agc_addr_x1(S, _fsc_li, _fsc_gv, boff);
     return 0;
 }
+# 6.6.20 — 1 = the recorded FIELD source's base is an inline aggregate in this frame: the same
+# question `_resolve_field_base_addr` answers when it takes `&slot` rather than loading the slot.
+# A global's base, a closure capture's (the heap env) and a pointer-mode local's are not.
+fn _fsc_src_in_frame(S): i64 {
+    if (_fsc_fidx >= 0 - 1) { return 0; }
+    if (_fsc_fidx <= 0 - 1000000) { return 0; }
+    if (_local_struct_is_ptr(S, 0 - 2 - _fsc_fidx, 0 - _fsc_fsid) == 1) { return 0; }
+    return 1;
+}
 
 # Copy `nb` bytes from the recorded source into the field at `off` of the struct `idx`/`sid`
 # (PARSE_FIELD_STORE's encoding).
@@ -1319,7 +1328,9 @@ fn _field_load_on(S, noff, fnoff, pfl_beg, idx, sid): i64 {
         } elif (idx < 0 - 1) {
             var mli = 0 - idx - 2;
             # 6.6.5: the recorded layout, same reader as field access (see _local_struct_is_ptr).
-            if (_local_struct_is_ptr(S, mli, 0 - sid) == 1) { EFLLOAD(S, mli); } else { EFLADDR(S, mli); }
+            # 6.6.20: an inline receiver's `self` is an address in this frame, as `&s` is: a method
+            # may hand it back — unless it copies a by-value `self: T` (`_sarg_escapes`).
+            if (_local_struct_is_ptr(S, mli, 0 - sid) == 1) { EFLLOAD(S, mli); } else { _sarg_escapes(mfi, 0, 0); EFLADDR(S, mli); }
         } else {
             if (_gv_holds_addr(S, idx) == 1) { EVLOAD(S, idx); } else { EVADDR(S, idx); }
         }
