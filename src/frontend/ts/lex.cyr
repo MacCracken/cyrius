@@ -252,10 +252,6 @@ var TS_TOK_JSX_FRAGMENT_CLOSE     = 312;     # `</>`
 # Helper fns — heap accessors (all relative to ts_base)
 # ================================================================
 
-fn TS_GPOS(ts_base): i64 {
-    return load64(ts_base + TS_LEX_STATE_OFF + TS_LS_POS);
-}
-
 fn TS_SPOS(ts_base, p): i64 {
     store64(ts_base + TS_LEX_STATE_OFF + TS_LS_POS, p);
     return 0;
@@ -307,10 +303,6 @@ fn TS_ADDTOK(ts_base, typ, val): i64 {
 # Read accessors (used by tests + parser later).
 fn TS_PEEKT(ts_base, idx): i64 {
     return load64(ts_base + TS_TOK_TYPES_OFF + idx * 8);
-}
-
-fn TS_PEEKV(ts_base, idx): i64 {
-    return load64(ts_base + TS_TOK_VALUES_OFF + idx * 8);
 }
 
 fn TS_PEEKLINE(ts_base, idx): i64 {
@@ -1405,68 +1397,6 @@ fn TS_LEX_JSX_BYTE_SKIP(src, src_len, start): i64 {
     return p;
 }
 
-fn TS_LEX_JSX_BALANCE_BRACES(ts_base, src, src_len, start): i64 {
-    var p = start;
-    var bd = 1;
-    while (p < src_len && bd > 0) {
-        var c = load8(src + p);
-        if (c == 123) { bd = bd + 1; p = p + 1; }
-        elif (c == 125) {
-            bd = bd - 1;
-            if (bd == 0) { return p; }
-            p = p + 1;
-        } elif (c == 34) {                # "string"
-            p = p + 1;
-            while (p < src_len && load8(src + p) != 34) {
-                if (load8(src + p) == 92 && p + 1 < src_len) { p = p + 1; }
-                p = p + 1;
-            }
-            if (p < src_len) { p = p + 1; }
-        } elif (c == 39) {                # 'string'
-            p = p + 1;
-            while (p < src_len && load8(src + p) != 39) {
-                if (load8(src + p) == 92 && p + 1 < src_len) { p = p + 1; }
-                p = p + 1;
-            }
-            if (p < src_len) { p = p + 1; }
-        } elif (c == 96) {                # `template`
-            p = p + 1;
-            while (p < src_len && load8(src + p) != 96) {
-                if (load8(src + p) == 92 && p + 1 < src_len) { p = p + 2; }
-                elif (load8(src + p) == 36 && p + 1 < src_len && load8(src + p + 1) == 123) {
-                    var tbd = 1;
-                    p = p + 2;
-                    while (p < src_len && tbd > 0) {
-                        var tc = load8(src + p);
-                        if (tc == 123) { tbd = tbd + 1; }
-                        elif (tc == 125) { tbd = tbd - 1; }
-                        p = p + 1;
-                    }
-                } else { p = p + 1; }
-            }
-            if (p < src_len) { p = p + 1; }
-        } elif (c == 60) {                # `<` — JSX shape detection
-            # If this looks like JSX (`<TAG`, `</TAG`, or `<>`), byte-skip
-            # past the balanced JSX so apostrophes / quotes in JSX TEXT
-            # don't trip the string-delim handlers above. Otherwise (LT
-            # operator), walk one char.
-            if (p + 1 < src_len) {
-                var nc = load8(src + p + 1);
-                var is_jsx = 0;
-                if (nc == 47) { is_jsx = 1; }
-                elif (nc == 62) { is_jsx = 1; }
-                elif (TS_ISIDSTART(nc) == 1) { is_jsx = 1; }
-                if (is_jsx == 1) {
-                    var skipped = TS_LEX_JSX_BYTE_SKIP(src, src_len, p);
-                    if (skipped > p) { p = skipped; }
-                    else { p = p + 1; }
-                } else { p = p + 1; }
-            } else { p = p + 1; }
-        } else { p = p + 1; }
-    }
-    return src_len;                       # unbalanced
-}
-
 # Skip whitespace + line/block comments inside a JSX tag.
 # JSX tags allow comments between attributes (TS extension), e.g.:
 #   <input
@@ -1520,17 +1450,6 @@ fn TS_LEX_JSX_SKIP_WS(ts_base, src, src_len, start): i64 {
 # Markers 4/5 are dispatched at TS_LEX's main-loop top (alongside
 # template body 0/1). Marker 8 is handled by the existing
 # `{`/`}` operators (JSX_EXPR_CLOSE on matching `}`).
-
-# Skip ASCII whitespace (no comment handling — used in raw text scan).
-fn TS_LEX_JSX_TEXT_SKIP_WS_INLINE(ts_base, src, src_len, p): i64 {
-    while (p < src_len) {
-        var c = load8(src + p);
-        if (c == 32 || c == 9 || c == 13) { p = p + 1; }
-        elif (c == 10) { TS_INCLINE(ts_base); p = p + 1; }
-        else { return p; }
-    }
-    return p;
-}
 
 # Mode 4 (JSX_TAG) — emits one attr / transition per call.
 # Caller has cursor positioned somewhere inside the open or close tag
@@ -1681,182 +1600,6 @@ fn TS_LEX_JSX_TEXT(ts_base, src, src_len, p): i64 {
     }
     TS_SETERR(ts_base, 19);
     return 0 - 1;
-}fn _TS_LEX_JSX_WALK(ts_base, src, src_len, start) {
-    if (start + 1 >= src_len) { return 0 - 1; }
-    var n = load8(src + start + 1);
-    var ok = 0;
-    if (n == 47) { ok = 1; }                  # `/` close-tag start (recurse case)
-    elif (n == 62) { ok = 1; }                # `>` fragment
-    elif (TS_ISIDSTART(n) == 1) { ok = 1; }
-    if (ok == 0) { return 0 - 1; }
-
-    # Generic-arrow disambig: `<T extends ...>(args) =>` is NOT JSX.
-    # Scan ahead for matching `>` at depth 0; bail if next char is `(`.
-    # Same heuristic as TS_LEX_JSX_SKIP (proven on .ts corpus).
-    var ck = start + 1;
-    var ck_depth = 0;
-    var ck_done = 0;
-    var ck_max = start + 256;
-    while (ck_done == 0) {
-        if (ck >= src_len || ck >= ck_max) { ck_done = 1; }
-        else {
-            var cc = load8(src + ck);
-            if (cc == 60) { ck_depth = ck_depth + 1; ck = ck + 1; }
-            elif (cc == 62) {
-                if (ck_depth == 0) {
-                    if (ck + 1 < src_len) {
-                        var aft = load8(src + ck + 1);
-                        if (aft == 40) { return 0 - 1; }   # `(` — generic arrow
-                    }
-                    ck_done = 1;
-                } else { ck_depth = ck_depth - 1; ck = ck + 1; }
-            } elif (cc == 47) { ck_done = 1; }
-            elif (cc == 34) {
-                ck = ck + 1;
-                while (ck < src_len && load8(src + ck) != 34) { ck = ck + 1; }
-                if (ck < src_len) { ck = ck + 1; }
-            } elif (cc == 39) {
-                ck = ck + 1;
-                while (ck < src_len && load8(src + ck) != 39) { ck = ck + 1; }
-                if (ck < src_len) { ck = ck + 1; }
-            }
-            else { ck = ck + 1; }
-        }
-    }
-
-    # Structural walk — emit tokens. Bails return -1; the
-    # TS_LEX_JSX wrapper rolls back leaked emissions on bail.
-    var p = start;
-    var depth = 0;
-    var done_jsx = 0;
-    while (done_jsx == 0) {
-        if (p >= src_len) { return 0 - 1; }   # unbalanced — bail
-        var c = load8(src + p);
-        if (c == 60) {                         # `<`
-            if (p + 1 >= src_len) { return 0 - 1; }
-            var c1 = load8(src + p + 1);
-            if (c1 == 62) {                    # `<>` fragment open
-                TS_ADDTOK(ts_base, TS_TOK_JSX_FRAGMENT_OPEN, 0);
-                depth = depth + 1;
-                p = p + 2;
-            } elif (c1 == 47) {                # `</...`
-                if (p + 2 < src_len && load8(src + p + 2) == 62) {
-                    # `</>` fragment close
-                    TS_ADDTOK(ts_base, TS_TOK_JSX_FRAGMENT_CLOSE, 0);
-                    p = p + 3;
-                    depth = depth - 1;
-                    if (depth == 0) { done_jsx = 1; }
-                } else {
-                    TS_ADDTOK(ts_base, TS_TOK_JSX_CLOSE_START, 0);
-                    p = p + 2;
-                    p = TS_LEX_JSX_SKIP_WS(ts_base, src, src_len, p);
-                    if (p < src_len && TS_ISIDSTART(load8(src + p)) == 1) {
-                        var nm_s = p;
-                        var nm_e = TS_LEX_JSX_SCAN_NAME(src, src_len, p);
-                        TS_ADDTOK(ts_base, TS_TOK_JSX_TAG_NAME, TS_PACK_SPAN(nm_s, nm_e - nm_s));
-                        p = nm_e;
-                    }
-                    p = TS_LEX_JSX_SKIP_WS(ts_base, src, src_len, p);
-                    if (p >= src_len || load8(src + p) != 62) { return 0 - 1; }
-                    TS_ADDTOK(ts_base, TS_TOK_JSX_CLOSE_END, 0);
-                    p = p + 1;
-                    depth = depth - 1;
-                    if (depth == 0) { done_jsx = 1; }
-                }
-            } elif (TS_ISIDSTART(c1) == 1) {
-                # Open tag
-                TS_ADDTOK(ts_base, TS_TOK_JSX_OPEN_START, 0);
-                p = p + 1;
-                var tn_s = p;
-                var tn_e = TS_LEX_JSX_SCAN_NAME(src, src_len, p);
-                TS_ADDTOK(ts_base, TS_TOK_JSX_TAG_NAME, TS_PACK_SPAN(tn_s, tn_e - tn_s));
-                p = tn_e;
-                # Attribute loop
-                var inner_done = 0;
-                while (inner_done == 0) {
-                    p = TS_LEX_JSX_SKIP_WS(ts_base, src, src_len, p);
-                    if (p >= src_len) { return 0 - 1; }
-                    var ic = load8(src + p);
-                    if (ic == 62) {
-                        TS_ADDTOK(ts_base, TS_TOK_JSX_OPEN_END, 0);
-                        depth = depth + 1;
-                        p = p + 1;
-                        inner_done = 1;
-                    } elif (ic == 47) {
-                        if (p + 1 < src_len && load8(src + p + 1) == 62) {
-                            TS_ADDTOK(ts_base, TS_TOK_JSX_SELF_CLOSE, 0);
-                            p = p + 2;
-                            inner_done = 1;
-                            if (depth == 0) { done_jsx = 1; }
-                        } else { return 0 - 1; }
-                    } elif (ic == 123) {
-                        # Spread or expr attr — `{...x}` or `{x ? a : b}` etc.
-                        TS_ADDTOK(ts_base, TS_TOK_JSX_EXPR_OPEN, 0);
-                        var be = TS_LEX_JSX_BALANCE_BRACES(ts_base, src, src_len, p + 1);
-                        if (be >= src_len) { return 0 - 1; }
-                        TS_ADDTOK(ts_base, TS_TOK_JSX_EXPR_CLOSE, 0);
-                        p = be + 1;
-                    } elif (TS_ISIDSTART(ic) == 1) {
-                        var an_s = p;
-                        var an_e = TS_LEX_JSX_SCAN_NAME(src, src_len, p);
-                        TS_ADDTOK(ts_base, TS_TOK_JSX_ATTR_NAME, TS_PACK_SPAN(an_s, an_e - an_s));
-                        p = an_e;
-                        # Optional `=value`
-                        if (p < src_len && load8(src + p) == 61) {
-                            p = p + 1;
-                            if (p < src_len) {
-                                var av = load8(src + p);
-                                if (av == 34) {
-                                    var avs = p + 1;
-                                    p = p + 1;
-                                    while (p < src_len && load8(src + p) != 34) {
-                                        if (load8(src + p) == 92 && p + 1 < src_len) { p = p + 1; }
-                                        p = p + 1;
-                                    }
-                                    if (p >= src_len) { return 0 - 1; }
-                                    TS_ADDTOK(ts_base, TS_TOK_JSX_ATTR_VALUE_STRING, TS_PACK_SPAN(avs, p - avs));
-                                    p = p + 1;
-                                } elif (av == 39) {
-                                    var avs2 = p + 1;
-                                    p = p + 1;
-                                    while (p < src_len && load8(src + p) != 39) {
-                                        if (load8(src + p) == 92 && p + 1 < src_len) { p = p + 1; }
-                                        p = p + 1;
-                                    }
-                                    if (p >= src_len) { return 0 - 1; }
-                                    TS_ADDTOK(ts_base, TS_TOK_JSX_ATTR_VALUE_STRING, TS_PACK_SPAN(avs2, p - avs2));
-                                    p = p + 1;
-                                } elif (av == 123) {
-                                    TS_ADDTOK(ts_base, TS_TOK_JSX_EXPR_OPEN, 0);
-                                    var be2 = TS_LEX_JSX_BALANCE_BRACES(ts_base, src, src_len, p + 1);
-                                    if (be2 >= src_len) { return 0 - 1; }
-                                    TS_ADDTOK(ts_base, TS_TOK_JSX_EXPR_CLOSE, 0);
-                                    p = be2 + 1;
-                                } else { return 0 - 1; }
-                            }
-                        }
-                    } else { return 0 - 1; }
-                }
-            } else { return 0 - 1; }
-        } elif (c == 123) {                    # `{` — expression child
-            TS_ADDTOK(ts_base, TS_TOK_JSX_EXPR_OPEN, 0);
-            var be3 = TS_LEX_JSX_BALANCE_BRACES(ts_base, src, src_len, p + 1);
-            if (be3 >= src_len) { return 0 - 1; }
-            TS_ADDTOK(ts_base, TS_TOK_JSX_EXPR_CLOSE, 0);
-            p = be3 + 1;
-        } else {
-            # JSX text — accumulate until next `<` or `{`
-            var tx_s = p;
-            while (p < src_len && load8(src + p) != 60 && load8(src + p) != 123) {
-                if (load8(src + p) == 10) { TS_INCLINE(ts_base); }
-                p = p + 1;
-            }
-            if (p > tx_s) {
-                TS_ADDTOK(ts_base, TS_TOK_JSX_TEXT, TS_PACK_SPAN(tx_s, p - tx_s));
-            }
-        }
-    }
-    return p;
 }
 
 # TS_LEX_JSX (v5.7.6 P4.3d) — mode-driven entry. Emits the FIRST

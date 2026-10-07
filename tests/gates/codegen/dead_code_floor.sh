@@ -32,7 +32,7 @@ fails=0
 # ── axis 1 — per-fork ceiling on src/-defined unreachable fns ─────────────────────────────────
 _ceiling() {
     case $1 in
-        x86)  echo 19 ;;   # cycc                       (src/main.cyr)
+        x86)  echo 13 ;;   # cycc                       (src/main.cyr)
         a64)  echo 97 ;;   # cycc_aarch64 cross          (src/main_aarch64.cyr)
         cx)   echo 99 ;;   # cyrius-x                    (src/main_cx.cyr)
         win)  echo 51 ;;   # PE32+                       (src/main_win.cyr, CYRIUS_TARGET_WIN=1)
