@@ -77,7 +77,8 @@ fn main(): i64 {
     assert_eq(tls_native_server_load_creds(ctx), TLS_OK, "the Ed25519 creds load");
 
     test_group("6.6.20 — the arena holds the seed once (KEY_MAT), and signing adds no copy");
-    assert_eq(_count_seed(load64(st), load64(st + 8), seed), 1, "after load_creds: one copy (KEY_MAT; the scan sees it)");
+    var lo = load64(st);
+    assert_eq(_count_seed(lo, load64(st + 8), seed), 1, "after load_creds: one copy (KEY_MAT; the scan sees it)");
     var msg = "TLS 1.3, server CertificateVerify -- a message to sign";
     var mlen = strlen(msg);
     var sig[128];
@@ -89,7 +90,7 @@ fn main(): i64 {
         k = k + 1;
     }
     assert_eq(ok, 3, "three Ed25519 signatures, 64 bytes each");
-    assert_eq(_count_seed(load64(st), load64(st + 8), seed), 1, "after three signatures: still one copy (it was 4)");
+    assert_eq(_count_seed(lo, load64(st + 8), seed), 1, "after three signatures: still one copy (it was 4)");
 
     test_group("6.6.20 — the signatures are still right");
     assert_eq(load64(&scheme), TLS_SIG_ED25519, "scheme ed25519 (0x0807)");
