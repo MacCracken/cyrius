@@ -27,7 +27,7 @@
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
-CC="${CYRIUS_GATE_CC:-$ROOT/build/cycc}"
+CC=${CYCC:-"$ROOT/build/cycc"}
 [ -x "$CC" ] || { echo "FAIL: wp_compact_registry_caps: no compiler at $CC"; exit 1; }
 D=$(mktemp -d) && [ -d "$D" ] || { echo "FAIL: wp_compact_registry_caps: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$D"' EXIT
