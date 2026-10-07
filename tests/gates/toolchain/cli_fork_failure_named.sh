@@ -29,6 +29,12 @@
 #   4  derived: every `sys_fork()` in cbt/ and programs/cyrius-lsp.cyr is checked for failure in
 #      its fn (or handed back to the caller), and no `sys_waitpid` result is thrown away.
 #   5  control: without the limit, the same build succeeds (the rows are about the limit).
+#   6  ⭐ an inherited SIGCHLD ignore (`trap '' CHLD; exec cyrius ...` — under it the kernel reaps
+#      every child and wait4 answers ECHILD): the CLI resets SIGCHLD at start-up, so a good
+#      build succeeds and a failing one fails on the COMPILER's verdict, old binary kept. Then
+#      the backstop, in a scratch CLI built with that reset deleted: the unreadable status is
+#      named ("wait failed"), the old binary is kept and no temp is left — never decoded as
+#      "exited 0" (6.6.19: `OK (0 bytes)`, exit 0, an empty file over a working binary).
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
 G=cli_fork_failure_named
@@ -148,18 +154,21 @@ printf 'fn main(): i64 { return 42; }\nvar r = main();\nsyscall(60, r);\n' > "$W
 printf 'fn  x( ) :i64{return 1;}\n' > "$W/p/bad.cyr"
 printf 'let x: number = 1;\n' > "$W/p/t.ts"
 printf 'stale js\n' > "$W/p/old.js"
-# cyrius with an empty private TMPDIR per run; $1 = "lim" (under ulimit -u 1) or "free"
+# SIGCHLD ignored, as an exec'd program inherits it (bash and dash both pass `trap ''` on).
+ign() { ( trap '' CHLD; exec "$@" ); }
+# cyrius ($CLI, default the tree's) with an empty private TMPDIR per run; $1 = "lim" (under
+# ulimit -u 1), "ign" (SIGCHLD ignored) or "free"
 cy() {
     mode=$1; shift
     rm -rf "$W/t"; mkdir -p "$W/t"
     RC=0
-    if [ "$mode" = lim ]; then
-        ( cd "$WD" && lim env -i HOME="$H" PATH=/usr/bin:/bin TMPDIR="$W/t" CYRIUS_HOME="$H" CYRIUS_RESOLVED=1 \
-            "$W/cyrius" "$@" ) > "$W/out" 2>&1 || RC=$?
-    else
-        ( cd "$WD" && env -i HOME="$H" PATH=/usr/bin:/bin TMPDIR="$W/t" CYRIUS_HOME="$H" CYRIUS_RESOLVED=1 \
-            "$W/cyrius" "$@" ) > "$W/out" 2>&1 || RC=$?
-    fi
+    case $mode in
+        lim) pre=lim ;;
+        ign) pre=ign ;;
+        *)   pre= ;;
+    esac
+    ( cd "$WD" && $pre env -i HOME="$H" PATH=/usr/bin:/bin TMPDIR="$W/t" CYRIUS_HOME="$H" CYRIUS_RESOLVED=1 \
+        "${CLI:-$W/cyrius}" "$@" ) > "$W/out" 2>&1 || RC=$?
 }
 # named <row>: non-zero, and the fork failure named
 named() {
@@ -231,5 +240,46 @@ grep -q "could not start $LH/.cyrius/bin/cyrius: fork failed" "$W/lsp.err" \
 grep -q '"id":2,' "$W/lsp.out" || fail "axis 3: the server did not answer shutdown after the failed spawns"
 [ "$FAIL" = "$x" ] && echo "  ok axis 3: both LSP diagnostics spawns log the fork failure, and the server goes on"
 
+# ── axis 6 — an inherited SIGCHLD ignore ────────────────────────────────────────────────
+x=$FAIL
+# Precondition: the exec'd program really starts with SIGCHLD (17, bit 16) ignored here.
+sigign=$(ign grep '^SigIgn:' /proc/self/status | awk '{ print $2 }')
+case $sigign in
+    *[13579bdfBDF]????) ;;
+    *) echo "FAIL: $G: axis 6: 'trap '' CHLD; exec' did not leave SIGCHLD ignored here (SigIgn $sigign) — the rows would test nothing"; exit 1 ;;
+esac
+WD="$W/p"
+printf 'fn main(): i64 { return nope; }\nvar r = main();\n' > "$W/p/src/bad.cyr"
+cp "$W/good" "$W/p/out"
+cy ign build src/bad.cyr out
+[ "$RC" -ne 0 ] || fail "axis 6: a failing compile exited 0 with SIGCHLD ignored: $(head -2 "$W/out" | tr '\n' ' ')"
+grep -q "undefined variable 'nope'" "$W/out" && grep -q 'FAILED (compiler exit 1)' "$W/out" \
+    || fail "axis 6: a failing compile was not judged on the compiler's own verdict: $(head -4 "$W/out" | tr '\n' ' ')"
+cmp -s "$W/p/out" "$W/good" || fail "axis 6: a failing compile replaced the existing binary"
+[ -z "$(left)" ] || fail "axis 6: files left in the CLI's private temp dir: $(left)"
+rm -f "$W/p/out"
+cy ign build src/main.cyr out
+[ "$RC" = 0 ] && cmp -s "$W/p/out" "$W/good" \
+    || fail "axis 6: a good build failed with SIGCHLD ignored (rc $RC) — the CLI did not make its children waitable: $(head -2 "$W/out" | tr '\n' ' ')"
+[ "$FAIL" = "$x" ] && echo "  ok axis 6a: SIGCHLD ignored — the CLI resets it, so a good build succeeds and a failing one fails on the compiler's verdict (old binary kept)"
+
+x=$FAIL
+# The backstop: the same CLI with its start-up reset deleted, so wait4 really answers ECHILD.
+sed '/^[ \t]*_cbt_children_waitable();/d' cbt/cyrius.cyr > "$W/noreset.cyr"
+nd=$(( $(wc -l < cbt/cyrius.cyr) - $(wc -l < "$W/noreset.cyr") ))
+[ "$nd" = 1 ] || fail "axis 6: expected to delete the one start-up _cbt_children_waitable() call in cbt/cyrius.cyr, deleted $nd"
+"$CC" < "$W/noreset.cyr" > "$W/cyrius-noreset" 2> "$W/n.err" && chmod +x "$W/cyrius-noreset" \
+    || { echo "FAIL: $G: the scratch CLI without the reset does not build"; tail -3 "$W/n.err"; exit 1; }
+for src in src/bad.cyr src/main.cyr; do
+    cp "$W/good" "$W/p/out"
+    CLI="$W/cyrius-noreset" cy ign build "$src" out
+    [ "$RC" -ne 0 ] || fail "axis 6 backstop ($src): exited 0 with no readable exit status: $(head -2 "$W/out" | tr '\n' ' ')"
+    grep -q 'could not read the exit status of the compiler: wait failed (error 10)' "$W/out" \
+        || fail "axis 6 backstop ($src): the unreadable status is not named: $(head -3 "$W/out" | tr '\n' ' ')"
+    cmp -s "$W/p/out" "$W/good" || fail "axis 6 backstop ($src): the existing binary was replaced ($(wc -c < "$W/p/out" | tr -d ' ') B)"
+    [ -z "$(left)" ] || fail "axis 6 backstop ($src): files left in the CLI's private temp dir: $(left)"
+done
+[ "$FAIL" = "$x" ] && echo "  ok axis 6b: backstop — without the reset, an unreadable exit status is named, the old binary kept and no temp left (never decoded as 'exited 0')"
+
 [ "$FAIL" = 0 ] || exit 1
-echo "PASS: $G (a failed fork is named by every forking verb and the LSP, nothing is replaced or left behind, and no wait status is decoded unwritten)"
+echo "PASS: $G (a failed fork is named by every forking verb and the LSP, nothing is replaced or left behind, and no wait status is decoded unwritten — an inherited SIGCHLD ignore included)"

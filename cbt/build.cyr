@@ -49,6 +49,24 @@ fn _cbt_wait_status(pid, what): i64 {
     return 0 - 1;
 }
 
+# Make the CLI's children waitable: SIGCHLD back to SIG_DFL, once, at start-up (main).
+# An ignored SIGCHLD is INHERITED across execve, and under it the kernel reaps every child
+# itself, so wait4 answers ECHILD and no exit status exists: `bash -c "trap '' CHLD; exec
+# cyrius build ..."` could not judge any compile. Before 6.6.20 the stack decided instead
+# (`OK (0 bytes)`, exit 0, an empty file renamed over a working binary). Resetting here makes
+# every verb work in such an environment, and every child the CLI spawns inherits the default
+# rather than the ignore; `_cbt_wait_status` stays as the backstop, refusing by name a status
+# it cannot read. No signals on Windows, so nothing to reset there. CHANGELOG [6.6.20]
+fn _cbt_children_waitable(): i64 {
+    #ifdef CYRIUS_TARGET_LINUX
+    signal_default(SIGCHLD);
+    #endif
+    #ifdef CYRIUS_TARGET_MACOS
+    signal_default(SIGCHLD);
+    #endif
+    return 0;
+}
+
 # v6.1.12: `cyrius build --target=js <source.tsx> <output.js>` — surface cycc's
 # `--emit-js` (v6.1.11 TS/TSX → browser-JS emitter) through the CLI. Distinct
 # from the native compile path: cycc reads the source as a PATH arg and writes
