@@ -16,8 +16,16 @@ the address keeps its `jmp`, and on the next iteration it hands the callee a poi
 the `jmp` just freed. Silent wrong value, exit 0.
 
 6.6.20 (lane s-ret) closed this for a callee with an ADDRESS-PASSED parameter (a struct over 8 B as
-`p: T` / `p: *T`, a Win64 vector): inside any loop such a call always diverts, as on 6.6.19. It is
-still open for every other callee.
+`p: T`, a struct of ANY size as `p: *T`, a Win64 vector): inside any loop such a call always
+diverts, as on 6.6.19. It is still open for every other callee.
+
+⚠ The `*T` at 8 B or less is new in that list: lane s-ptr (RPF-04, same release) made such a
+parameter address-passed, so the integrated compiler diverts a tail call to it inside a loop, which
+6.6.19 kept. Measured at integration: a 1,000,000-deep `while (1) { if (n == 0) { return acc; }
+return walk1(p, n - 1, acc + p.v); }` with `p: *S1` (8 B) exits 64 on 6.6.19 and 139 (x86 /
+aarch64; a stack overflow under wine) on 6.6.20; outside a loop it runs in constant stack on both.
+Option (a) below would make every callee pay that price; until it is chosen, this one shape is the
+documented cost (CHANGELOG [6.6.20], RPF-03).
 
 ## Reproduction
 
