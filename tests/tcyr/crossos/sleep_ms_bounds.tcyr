@@ -18,6 +18,10 @@
 #   3. POSIX hosts: sys_nanosleep refuses a negative tv_sec, a negative tv_nsec and a tv_nsec of
 #      1e9 with -22 (EINVAL) at once, and sleeps a valid 1 ms request; a helper thread's
 #      4294967.3 s request is still asleep 400 ms later (its ms has low 32 bits of 4).
+#   4. lib/async.cyr's async_sleep_ms, whose Windows and agnos peers call the kernel directly
+#      rather than through sleep_ms: a negative ms returns at once, and (THREADS_CONCURRENT == 1)
+#      a helper thread's async_sleep_ms(2^32 + 5) is still asleep 400 ms later — the Windows
+#      peer handed the 64-bit ms to Sleep(DWORD) and slept 5 ms.
 # ⚠ A WATCHDOG THREAD ends the process with 3 if the file has not finished within WD_DEADLINE_MS,
 # so a sleep that ignores the guard FAILS instead of hanging the cross-OS leg.
 include "lib/syscalls.cyr"
@@ -26,12 +30,14 @@ include "lib/string.cyr"
 include "lib/fmt.cyr"
 include "lib/chrono.cyr"
 include "lib/thread.cyr"
+include "lib/async.cyr"
 include "lib/assert.cyr"
 
 var WD_DEADLINE_MS = 30000;
 var _sl_done = 0;
 var _sl_helper_woke = 0;
 var _sl_ns_woke = 0;
+var _sl_async_woke = 0;
 
 # End every thread in the process with `code` (helpers may still be asleep).
 fn _sl_exit_all(code): i64 {
@@ -90,6 +96,28 @@ fn _sl_wide_rows(): i64 {
     return 0;
 }
 
+fn _sl_wide_async_sleeper(arg): i64 {
+    async_sleep_ms(0x100000000 + 5);
+    store64(&_sl_async_woke, 1);
+    return 0;
+}
+
+fn _sl_async_rows(): i64 {
+    test_group("6.6.20 — async_sleep_ms: a negative ms returns at once, one above INT_MAX is clamped");
+    var t0 = clock_now_ns();
+    async_sleep_ms(0 - 5);
+    assert(_sl_ms_since(t0) < 1000, "async_sleep_ms(-5) returns at once (< 1 s), not never");
+    if (THREADS_CONCURRENT == 1) {
+        var t = thread_create_detached(&_sl_wide_async_sleeper, 0);
+        assert_neq(t, 0, "the async sleeper thread starts");
+        if (t != 0) {
+            sleep_ms(400);
+            assert_eq(load64(&_sl_async_woke), 0, "async_sleep_ms(2^32 + 5) is still asleep 400 ms later (not 5 ms)");
+        }
+    }
+    return 0;
+}
+
 #ifndef CYRIUS_TARGET_WIN
 #ifndef CYRIUS_TARGET_AGNOS
 #ifndef CYRIUS_TARGET_CX
@@ -138,6 +166,7 @@ fn main(): i64 {
     }
     _sl_short_rows();
     if (THREADS_CONCURRENT == 1) { _sl_wide_rows(); }
+    _sl_async_rows();
     #ifndef CYRIUS_TARGET_WIN
     #ifndef CYRIUS_TARGET_AGNOS
     #ifndef CYRIUS_TARGET_CX

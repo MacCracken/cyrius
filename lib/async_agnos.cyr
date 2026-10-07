@@ -309,6 +309,7 @@ fn async_resolve(rt, ns_addr, ns_port, host): i64 {
 # so this is a faithful sleep, not a stub. Guard ms<=0 (the kernel caps at 1 h).
 fn async_sleep_ms(ms): i64 {
     if (ms <= 0) { return 0; }
+    if (ms > 0x7FFFFFFF) { ms = 0x7FFFFFFF; }   # as sleep_ms clamps on every arm (6.6.20)
     sys_sleep_ms(ms);
     return 0;
 }

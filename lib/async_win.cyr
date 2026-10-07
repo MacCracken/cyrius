@@ -897,9 +897,12 @@ fn async_run_process(rt, path, argv, envp, ms): i64 {
     return 0 - 2;
 }
 
-# Sleep for `ms` milliseconds via the kernel32 Sleep reroute (0xF00F, exists).
+# Sleep for `ms` milliseconds via the kernel32 Sleep reroute (0xF00F, exists). Sleep takes a
+# DWORD: an ms above INT_MAX is clamped (as sleep_ms does), never truncated to its low 32 bits —
+# 2^32 + 5 slept 5 ms, and 0xFFFFFFFF is INFINITE. CHANGELOG [6.6.20]
 fn async_sleep_ms(ms): i64 {
     if (ms <= 0) { return 0; }
+    if (ms > 0x7FFFFFFF) { ms = 0x7FFFFFFF; }
     syscall(0xF00F, ms);        # Sleep(dwMilliseconds)
     return 0;
 }
