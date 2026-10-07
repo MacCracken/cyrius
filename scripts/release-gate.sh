@@ -21,17 +21,103 @@
 #                           (the ONE tracked cross-bin; nothing checked it and it went
 #                            ~60 releases stale — v6.6.6. Skipped under --quick.)
 #   2. SEED DERIVE          seed -> cybs -> cycc byte-identical          [the critical one]
-#   3. check.sh             all gates green
-#   4. cross-OS self-host   ecb (macOS) + cass (Windows) + pi (aarch64), REAL hardware
+#   3. check.sh             all gates green; a SKIP fails unless RG_SKIP_ALLOW names it
+#   4. cross-OS self-host   ecb (macOS-arm64) + ach (Intel-Mac) + cass (Windows) + pi
+#                           (aarch64), REAL hardware
 #   5. bench                record self_compile + cycc size              (non-blocking)
 #
 # Usage:
 #   sh scripts/release-gate.sh            full gate (run before tag/handoff)
 #   sh scripts/release-gate.sh --quick    steps 1-3 only (LOCAL ITERATION — NOT release-ready)
+#   sh scripts/release-gate.sh --check-verdict <check.sh output> <its exit status>
+#                                         step 3's verdict alone, over a saved run; runs
+#                                         nothing (tests/gates/toolchain/release_gate_check_verdict.sh)
+
+# Step 3 — the gates allowed to SKIP (exit 77, "could not run its check"), by exact path, one
+# per line. ANY other SKIP fails the step. check.sh itself exits 0 over a SKIP ("GREEN, with N
+# gate(s) SKIPPED"), and this gate used to take that 0, so the one mandated pre-tag gate went
+# green over gates that never checked anything (CI runs its delegated rows under
+# CYRIUS_CHECK_NO_SKIP=1; this did not). Each entry needs its reason; widening the list is a
+# decision, not a fix. CHANGELOG [6.6.20]
+#   agnos_monotonic_clock_rdtsc  axis 5's refused-calibration fallback is unreachable on a
+#                                mirshi that answers #95 (the dev box's does)
+#   agnos_sysinfo_tail_parity    its runtime axis's pre-1.57.9 path is unreachable on a mirshi
+#                                that fills sched_kicks (the dev box's does)
+RG_SKIP_ALLOW="tests/gates/platform/agnos_monotonic_clock_rdtsc.sh
+tests/gates/platform/agnos_sysinfo_tail_parity.sh"
+
+# Step 3's verdict over a check.sh output file <$1> and its exit status <$2>. Prints what it
+# read; returns 1 with the reason in _RG_WHY. A function so a gate can drive it with fixtures.
+_rg_check_verdict() {
+    _RG_WHY=""
+    # The DRIVER's tally — the check binary prints it on the line after its ════ rule, as
+    # `N passed, M failed, K skipped (T total)`. The old `grep "passed, N failed" | tail -1`
+    # took the LAST such line, which in a full run is a shell gate's own count. Exactly one
+    # line may match, or the verdict says it cannot tell which is the driver's.
+    _rg_dl=$(awk -v rule='════════════════════════' \
+        'prev == rule && /^[0-9]+ passed, [0-9]+ failed, [0-9]+ skipped \([0-9]+ total\)/ { print } { prev = $0 }' "$1")
+    _rg_dn=$(printf '%s\n' "$_rg_dl" | grep -c . || true)
+    echo "  driver: ${_rg_dl:-<no tally line>}"
+    # v6.6.6: check.sh prints its own end-of-run summary naming what failed and what NEVER RAN
+    # — the actionable part, and "NOT RUN" is not a pass.
+    sed -n '/check.sh summary/,$p' "$1" | sed 's/^/  /'
+    if [ "$2" != "0" ]; then
+        grep -E "^  FAIL|^  SKIP|NOT RUN" "$1" | tail -12
+        _RG_WHY="check.sh exited $2 — see its summary above (the binary's 'N passed, M failed' line does NOT cover the shell gates)"
+        return 1
+    fi
+    if [ "$_rg_dn" != "1" ]; then
+        _RG_WHY="cannot identify the check driver's tally line (found $_rg_dn lines of the shape 'N passed, M failed, K skipped (T total)' after its rule; expected exactly 1)"
+        return 1
+    fi
+    case "$_rg_dl" in
+        *", 0 failed,"*) ;;
+        *) _RG_WHY="the check driver reports failures: $_rg_dl"; return 1 ;;
+    esac
+    # Every SKIP check.sh lists (shell gates and the driver's own rows) must be allowlisted,
+    # and the list must agree with its own `skipped:` count — a summary we cannot parse is red.
+    _rg_ns=$(sed -n '/check.sh summary/,$p' "$1" | sed -n 's/^  skipped: *\([0-9][0-9]*\) .*/\1/p' | head -1)
+    if [ -z "$_rg_ns" ]; then
+        _RG_WHY="check.sh's summary carries no 'skipped: N' count — cannot tell what was skipped"
+        return 1
+    fi
+    _rg_sk=$(sed -n '/check.sh summary/,$p' "$1" | awk '
+        /^  SKIPPED / { inl = 1; next }
+        inl && /^    / { sub(/^    /, ""); sub(/^\(driver row\) /, ""); print; next }
+        { inl = 0 }')
+    _rg_skn=$(printf '%s\n' "$_rg_sk" | grep -c . || true)
+    if [ "$_rg_skn" != "$_rg_ns" ]; then
+        _RG_WHY="check.sh says $_rg_ns skipped but lists $_rg_skn — cannot tell what was skipped"
+        return 1
+    fi
+    _rg_bad=""
+    if [ -n "$_rg_sk" ]; then
+        _rg_bad=$(printf '%s\n' "$_rg_sk" | while IFS= read -r _rg_s; do
+            if printf '%s\n' "$RG_SKIP_ALLOW" | grep -qxF -e "$_rg_s"; then
+                echo "  allowed SKIP: $_rg_s" >&2
+            else
+                printf ' %s' "$_rg_s"
+            fi
+        done)
+    fi
+    if [ -n "$_rg_bad" ]; then
+        _RG_WHY="check.sh SKIPPED gate(s) not on RG_SKIP_ALLOW:$_rg_bad — a gate that could not run its check is not a pass"
+        return 1
+    fi
+    return 0
+}
+
+if [ "${1:-}" = "--check-verdict" ]; then
+    [ -f "${2:-}" ] && [ -n "${3:-}" ] ||
+        { echo "usage: sh scripts/release-gate.sh --check-verdict <check.sh output> <its exit status>" >&2; exit 2; }
+    if _rg_check_verdict "$2" "$3"; then echo "STEP 3: GREEN"; exit 0; fi
+    echo "STEP 3: RED — $_RG_WHY"
+    exit 1
+fi
 
 cd "$(dirname "$0")/.." || exit 2
 QUICK=0
-[ "$1" = "--quick" ] && QUICK=1
+[ "${1:-}" = "--quick" ] && QUICK=1
 
 # $2 (optional) is a file holding the failed command's stderr, printed with the verdict.
 # v6.6.6: every compile below used to send stderr to /dev/null, so a failing one printed
@@ -142,21 +228,14 @@ step "3/5" "check.sh (full gate suite)"
 # release gate reported GREEN over a red gate. Found when the fileid-substrate
 # matcher broke and the release gate did not notice.
 #
+# 6.6.20: the verdict is `_rg_check_verdict` (top of this file): check.sh's exit status, the
+# DRIVER's tally line (not the last "passed, N failed" a shell gate printed), and every SKIP
+# on RG_SKIP_ALLOW — check.sh exits 0 over a SKIP, and that 0 used to be taken as green.
+#
 # `|| rc=$?` keeps this working under `set -e`.
 rc=0
 sh scripts/check.sh > "$T/check.out" 2>&1 || rc=$?
-LINE=$(grep -E "passed, [0-9]+ failed" "$T/check.out" | tail -1)
-echo "  $LINE"
-echo "$LINE" | grep -q ", 0 failed" || { tail -8 "$T/check.out"; fail "check.sh has failures"; }
-# v6.6.6: check.sh now runs EVERY gate and prints its own end-of-run summary naming what
-# failed and what NEVER RAN (it used to abort at the first red row under `set -e`, so the
-# shell gates after the check binary silently did not execute). Show that block — it is the
-# actionable part, and "NOT RUN" is not a pass.
-sed -n '/check.sh summary/,$p' "$T/check.out" | sed 's/^/  /'
-if [ "$rc" != "0" ]; then
-    grep -E "^  FAIL|^  SKIP|NOT RUN" "$T/check.out" | tail -12
-    fail "check.sh exited $rc — see its summary above (the binary's 'N passed, M failed' line does NOT cover the shell gates)"
-fi
+_rg_check_verdict "$T/check.out" "$rc" || fail "$_RG_WHY"
 
 if [ "$QUICK" = "1" ]; then
     rm -rf "$T"

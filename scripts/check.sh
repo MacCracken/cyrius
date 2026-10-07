@@ -1339,6 +1339,12 @@ _chk_gate "$ROOT/tests/gates/toolchain/build_refuses_compiler_overwrite.sh"
 # a redirected HOME, so it is safe in check.sh where funcgate-stage.sh itself is not.
 _chk_gate "$ROOT/tests/gates/toolchain/funcgate_refuses_live_home.sh"
 
+# 6.6.20 — release-gate.sh step 3's verdict over a check.sh run, driven with fixtures through
+# `release-gate.sh --check-verdict` (it runs neither check.sh nor the release gate). Step 3
+# took check.sh's exit 0 over SKIPped gates (check.sh exits 0 on "GREEN, with N SKIPPED") and
+# printed the last shell gate's tally as the driver's. Every SKIP must now be on RG_SKIP_ALLOW.
+_chk_gate "$ROOT/tests/gates/toolchain/release_gate_check_verdict.sh"
+
 # v6.6.4: a RELEASED version's install slot is written from its TAG, never from a drifted
 # tree. `install.sh --refresh-only` (and through it `cyrius pulsar`), `cyrius lsp` and the
 # retired CLAUDE.md hand-copy recipe all keyed a store write on the working-tree VERSION —
