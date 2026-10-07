@@ -111,10 +111,16 @@ got=$(missing_from "$W/probe")
 
 # ── axis 6: the status column at runtime ─────────────────────────────────────────────────
 mkdir -p "$W/rt"
-# probe <section> <key> — print-config with a manifest declaring only that key; "x", else true
+# probe <section> <key> — print-config with a manifest declaring only that key; "x", else a
+# version (the toolchain pin), else true
 probe() {
     printf '[%s]\n%s = "x"\n' "$1" "$2" > "$W/rt/cyrius.cyml"
     ( cd "$W/rt" && env -u CYRIUS_DCE -u CYRIUS_DEFINES CYRIUS_RESOLVED=1 "$W/cyrius" build --print-config ) > "$W/rt.out" 2>&1 || true
+    # 6.6.20: `[package] cyrius` is a path component, so "x" is refused by name — probe a version
+    if grep -q 'is not a version' "$W/rt.out"; then
+        printf '[%s]\n%s = "0.0.1"\n' "$1" "$2" > "$W/rt/cyrius.cyml"
+        ( cd "$W/rt" && env -u CYRIUS_DCE -u CYRIUS_DEFINES CYRIUS_RESOLVED=1 "$W/cyrius" build --print-config ) > "$W/rt.out" 2>&1 || true
+    fi
     if grep -q 'must be true or false' "$W/rt.out"; then
         printf '[%s]\n%s = true\n' "$1" "$2" > "$W/rt/cyrius.cyml"
         ( cd "$W/rt" && env -u CYRIUS_DCE -u CYRIUS_DEFINES CYRIUS_RESOLVED=1 "$W/cyrius" build --print-config ) > "$W/rt.out" 2>&1 || true

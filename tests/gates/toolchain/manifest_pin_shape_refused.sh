@@ -191,8 +191,12 @@ run 0 version
 if ! command -v wine >/dev/null 2>&1 || ! command -v winepath >/dev/null 2>&1; then
     echo "  axis 6 SKIPPED: wine not installed (the cass leg of the release gate runs the PE CLI on hardware)"
 else
-    export WINEPREFIX="$WP" WINEDEBUG=-all WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d'
-    PH="$W/pe/home"; mkdir -p "$PH/.cyrius/versions" "$W/pe/proj" "$W/pe/whome"
+    # a PRIVATE prefix, HOME and XDG_CACHE_HOME under $W for every wine / winepath call (a fresh
+    # prefix writes $HOME/.cache), torn down by `_wine_down` — tests/gates/toolchain/
+    # gates_never_write_tree.sh axis 9
+    mkdir -p "$W/pe/whome"
+    export WINEPREFIX="$WP" HOME="$W/pe/whome" XDG_CACHE_HOME="$W/pe/whome/.cache" WINEDEBUG=-all WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d'
+    PH="$W/pe/home"; mkdir -p "$PH/.cyrius/versions" "$W/pe/proj"
     a6=0
     if ! ( cd "$ROOT" && "$CC" < src/main_win.cyr > "$W/pe/cc_win" 2>/dev/null && chmod +x "$W/pe/cc_win" \
             && "$W/pe/cc_win" < cbt/cyrius.cyr > "$W/pe/cyrius.exe" 2>/dev/null ); then
@@ -210,8 +214,7 @@ else
         pe_run() {  # pe_run <raw TOML pin> <verb> -> RC, $W/out
             printf '[package]\nname = "pinprobe"\nversion = "0.1.0"\ncyrius = %s\n' "$1" > "$W/pe/proj/cyrius.cyml"
             RC=0
-            ( cd "$W/pe/proj" && env -u CYRIUS_RESOLVED HOME="$W/pe/whome" XDG_CACHE_HOME="$W/pe/whome/.cache" \
-                CYRIUS_HOME="$HW" timeout 120 wine "$W/pe/cyrius.exe" "$2" ) > "$W/out" 2>&1 || RC=$?
+            ( cd "$W/pe/proj" && env -u CYRIUS_RESOLVED CYRIUS_HOME="$HW" timeout 120 wine "$W/pe/cyrius.exe" "$2" ) > "$W/out" 2>&1 || RC=$?
         }
         # versions\..\..\.. from <pe>/home/.cyrius is <pe>: the payload sits at <pe>/evil/payload
         pe_run '"../../../evil/payload"' version
