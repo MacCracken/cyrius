@@ -72,9 +72,15 @@ bad() { echo "  FAIL $1"; sed -n '1,3p' "$W/err" 2>/dev/null | LC_ALL=C tr -c '[
     || { echo "FAIL: $NAME — could not build programs/cyriusly.cyr"; exit 1; }
 
 mkdir -p "$W/fakebin"
+# The installer it "serves" records CYRIUS_VERSION. 6.6.20 (SEC-07): cyriusly downloads the installer
+# to a private file (`-o`) before running it — `curl | sh` exited 0 when the fetch failed — so the
+# fake honours `-o`, and writes to stdout only when it is not given.
 cat > "$W/fakebin/curl" <<EOF
 #!/bin/sh
 printf '%s\n' "\$*" >> "$W/curl.log"
+out=""
+while [ \$# -gt 0 ]; do case "\$1" in -o) out=\$2; shift 2 ;; *) shift ;; esac; done
+if [ -n "\$out" ]; then exec > "\$out"; fi
 printf 'printf "%%s\\\\n" "\$CYRIUS_VERSION" > "%s/installed"\n' "$W"
 EOF
 chmod +x "$W/fakebin/curl"

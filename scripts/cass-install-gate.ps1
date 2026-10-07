@@ -12,11 +12,15 @@ param([string]$Tarball, [string]$Test, [string]$RunDir = "")
 $ErrorActionPreference = "Stop"
 
 if ([string]::IsNullOrEmpty($RunDir)) { $RunDir = $env:USERPROFILE }
+$installer = Join-Path $RunDir "install.ps1"
 
 $env:CYRIUS_HOME = Join-Path $RunDir "iw"
 Remove-Item -Recurse -Force $env:CYRIUS_HOME -ErrorAction SilentlyContinue
 
-& powershell -ExecutionPolicy Bypass -File (Join-Path $RunDir "install.ps1") -Tarball $Tarball -NoPath
+# -AllowUnsigned: the tarball is this gate's own unsigned local build (build-windows-tarball.sh), which
+# is exactly what the override is for. Without it the pillar is green only while cass has no
+# cyrsign.exe on PATH - install.ps1 refuses an unsigned tarball whenever a trusted verifier exists.
+& powershell -ExecutionPolicy Bypass -File $installer -Tarball $Tarball -NoPath -AllowUnsigned
 if ($LASTEXITCODE -ne 0) { Write-Host "INSTALL FAIL ($LASTEXITCODE)"; exit 1 }
 
 $out = Join-Path $RunDir "tw.exe"

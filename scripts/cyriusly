@@ -7,6 +7,12 @@ CYRIUS_HOME="${CYRIUS_HOME:-$HOME/.cyrius}"
 
 current() { cat "$CYRIUS_HOME/current" 2>/dev/null || echo "none"; }
 
+# 6.6.20 (SEC-07): the oldest scripts/install.sh `install` will run — the first that refuses a
+# stripped signature on a release since 6.2.31. See the `install)` arm; the same value is
+# `_CY_INSTALLER_FLOOR` in programs/cyriusly.cyr (tests/gates/toolchain/install_signature_required.sh
+# holds the two in step). Raise both whenever an installer fix must reach every `cyriusly install`.
+_CY_INSTALLER_FLOOR="6.6.20"
+
 # 6.6.20 (RS-04): a version operand is a path component — `uninstall` deletes
 # "$CYRIUS_HOME/versions/$2", `use` links it, `install` fetches the tag it names. None of them
 # checked it, so `cyriusly uninstall ../versions` deleted the WHOLE store, the active version
@@ -99,13 +105,26 @@ case "${1:-help}" in
         # env var leaked into curl-only and `sh` ran install.sh
         # without seeing it → resolved "latest" from GitHub API.
         #
-        # CVE-21 (v6.2.30): fetch install.sh from the immutable TAG ($2),
-        # not the mutable `main` branch. Pre-fix, a main-branch compromise
-        # instantly hit every `cyriusly install` even when pinning a tag —
-        # the installer and the release it installs now come from the same
-        # immutable ref. ($2 is always a concrete version here; the empty
-        # check above already rejected the no-arg form.)
-        curl -sSf "https://raw.githubusercontent.com/MacCracken/cyrius/$2/scripts/install.sh" | CYRIUS_VERSION="$2" sh
+        # CVE-21 (v6.2.30): fetch install.sh from an immutable TAG, never
+        # the mutable `main` branch. Pre-fix, a main-branch compromise
+        # instantly hit every `cyriusly install` even when pinning a tag.
+        #
+        # ⛔ 6.6.20 (SEC-07): the tag is max($2, _CY_INSTALLER_FLOOR), never $2 alone. Fetching
+        # the TARGET's installer meant `install 6.6.15` ran 6.6.15's own install.sh, which skipped
+        # the signature whenever SHA256SUMS was missing — with a trusted cyrsign present and
+        # signed-since 6.6.19, a stripped, tampered 6.6.15 installed and went ACTIVE, the verifier
+        # never called. The floor's installer refuses that (every release since 6.2.31 is signed);
+        # an upgrade still runs the target's own. Same rule, same floor, as programs/cyriusly.cyr
+        # (`_CY_INSTALL_SH`). Fetched to a private file, not piped: `curl | sh` exited 0 when the
+        # fetch failed. CHANGELOG [6.6.20]
+        ref=$2
+        [ "$(printf '%s\n%s\n' "$2" "$_CY_INSTALLER_FLOOR" | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)" = "$2" ] || ref=$_CY_INSTALLER_FLOOR
+        [ "$ref" = "$2" ] || echo "  installer: scripts/install.sh from tag $ref (cyriusly never runs an installer older than $_CY_INSTALLER_FLOOR)"
+        d=$(mktemp -d) && [ -d "$d" ] || { echo "cyriusly: mktemp -d failed - no private directory to stage the installer in" >&2; exit 1; }
+        trap 'rm -rf "$d"' EXIT
+        curl -sSf "https://raw.githubusercontent.com/MacCracken/cyrius/$ref/scripts/install.sh" -o "$d/install.sh" \
+            || { echo "cyriusly: could not fetch scripts/install.sh from tag $ref - nothing was installed" >&2; exit 1; }
+        CYRIUS_VERSION="$2" sh "$d/install.sh"
         ;;
 
     setup)
