@@ -592,9 +592,10 @@ fn FINDLOCAL(S, noff): i64 {
 # return does: not the return landing, not the defer walker, not PARSE_FNCALL. Every obligation
 # PARSE_FNCALL or the epilogue carries therefore had to be re-discovered here, one silent wrong
 # value at a time, and bolted on as its own `tc_has_addr = 1` line — fifteen diverts by 6.6.7
-# (plus five checks copied into the emission itself: arity, #pure, #deprecated, SIMD_TC and the
-# Win64 argument ceiling), spread over two hundred lines, while the standing note and a code
-# comment each counted four. The diverts live in these four predicates now; a new obligation is
+# (plus checks copied into the emission itself: arity, #pure, #deprecated and the Win64 argument
+# ceiling — a fifth, SIMD_TC, was unreachable behind `_tc_callee_divert`'s SIMD lines and went in
+# 6.6.20), spread over two hundred lines, while the standing note and a code comment each counted
+# four. The diverts live in these four predicates now; a new obligation is
 # a new line HERE. 1 = take the normal
 # call path. ⚠ Every test is read-only (FINDFN, masks, token peeks) — order is free.
 # ⚠ Over-diverting is NOT free: it costs the tail call, and a self-recursive tail call that
@@ -668,7 +669,8 @@ fn _tc_callee_divert(S, cfi): i64 {
     if (cfi < 0) { return 0; }
     # (v6.3.36's "any address-passed param diverts" is per ARGUMENT since 6.6.20: `_tc_sarg_divert`.)
     # v6.4.53 — value-form SIMD params travel in vector registers; the tail path loads only the
-    # integer ones (`return f32v4_add(v, v)` returned v).
+    # integer ones (`return f32v4_add(v, v)` returned v). These two lines also make PARSE_FNCALL's
+    # SIMD argument class check the only one a tail-shaped call needs (6.6.20).
     if (L64(_fnt_simdmask + cfi * 8) != 0) { return 1; }
     if (_pm_row_any(cfi, 0xC0) != 0) { return 1; }   # 6.6.17 (a10)
     # v6.5.1 — an overload-suffix sibling: the `_str`/`_int` dispatch lives only in PARSE_FNCALL
@@ -822,34 +824,15 @@ fn PARSE_RETURN(S): i64 {
                             # cursor is past `);`, on the NEXT statement. CHANGELOG [6.6.16]
                             var _tc_wti = GTI(S);
                             var tcargc = 0;
-                            # SIMD_TC (v6.4.15): the tail-call path bypasses
-                            # PARSE_FNCALL, so a value-form SIMD arg mismatched to the
-                            # callee's SIMD param (e.g. f64v2 where f32v4 is expected)
-                            # was accepted silently. Read the callee's param mask
-                            # up-front (FINDFN is read-only — the real FINDFN/REGFN
-                            # registration below is unchanged, so fn-table order and
-                            # codegen are byte-identical) and reject a mismatch,
-                            # mirroring PARSE_FNCALL's class check. Reject-only: the
-                            # PCMPE/EPUSHR emission is untouched, so well-typed calls
-                            # (and every SIMD-free call) stay byte-identical.
+                            # The callee's param masks, read up-front (FINDFN is read-only — the
+                            # FINDFN/REGFN registration below is unchanged). A callee with a
+                            # value-form SIMD param never gets here: `_tc_callee_divert` sends it to
+                            # PARSE_FNCALL, whose class check is the only one (the v6.4.15 SIMD_TC
+                            # copy that stood here was unreachable; removed 6.6.20).
                             var _tc_prefi = FINDFN(S, tcnoff);
                             if (PEEKT(S) != 11) {
                                 var tcgo = 1;
                                 while (tcgo == 1) {
-                                    var _tc_cls = _pm_simd(_tc_prefi, tcargc);   # 6.6.17 (a10)
-                                    if (_tc_cls > 0) {
-                                        if (PEEKT(S) != 2) { ERR_MSG(S, "value-form SIMD arg must be a local IDENT", 41); }
-                                        var _tc_alli = FINDLOCAL(S, PEEKV(S));
-                                        if (_tc_alli < 0) { ERR_MSG(S, "value-form SIMD arg: IDENT not found as a local", 47); }
-                                        var _tc_alt = GLTYPE(S, _tc_alli);
-                                        if (_tc_cls == 1) {
-                                            if (_is_simd128(S, _tc_alt) == 0) { ERR_MSG(S, "value-form SIMD arg must be a 16-byte vector", 44); }
-                                        } elif (_tc_cls == 3) {
-                                            if (_tc_alt != 0 - 2121) { ERR_MSG(S, "value-form SIMD arg type mismatch (callee expects f32v4)", 56); }
-                                        } else {
-                                            if (_tc_alt != 0 - 2125) { ERR_MSG(S, "value-form SIMD arg type mismatch (callee expects f64v4)", 56); }
-                                        }
-                                    }
                                     _check_str_cstring_arg(S, _tc_prefi, tcargc, tcnoff);   # 6.6.13 I11
                                     # 6.6.20: an address-passed argument is pushed as PARSE_FNCALL
                                     # pushes it; `_tc_sarg_divert` ruled out a frame address.
