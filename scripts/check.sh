@@ -1165,10 +1165,12 @@ _chk_gate "$ROOT/tests/gates/frontend/derive_accessors_inlined.sh"
 _chk_gate "$ROOT/tests/gates/codegen/dce_eliminates.sh"
 
 # 6.6.20: the compiler's own dead code is a RATCHET. In all 7 forks, every unreachable fn
-# defined under src/ is on a recorded floor (tests/fixtures/dead_code_floor.txt), and one that
-# newly goes dead is NAMED — the closeout dead-code pass found the arm64 Mach-O writer (15.8 KB)
-# compiled into every x86-family compiler, a superseded TS JSX walker, and backend stubs "kept
-# for parse.cyr" that no shared file referenced; a floor recorded only in prose had let them sit.
+# defined under src/ is on a recorded floor (tests/fixtures/dead_code_floor.txt); one that
+# newly goes dead FAILS by name, and so does a floor entry that is no longer dead (so the floor
+# cannot keep an allowance nobody uses). The closeout dead-code pass found the arm64 Mach-O
+# writer (15.8 KB) compiled into every x86-family compiler, a superseded TS JSX walker, and
+# backend stubs "kept for parse.cyr" that no shared file referenced; a floor recorded only in
+# prose had let them sit.
 _chk_gate "$ROOT/tests/gates/codegen/dead_code_floor.sh"
 
 

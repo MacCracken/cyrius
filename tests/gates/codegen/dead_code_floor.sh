@@ -1,5 +1,6 @@
 #!/bin/sh
-# dead_code_floor.sh — 6.6.20. The compiler's own dead code is a RATCHET, not a note.
+# dead_code_floor.sh — 6.6.20. The compiler's own dead code is a RATCHET, not a note: it fails
+# when a src/ fn newly goes dead AND when a floor entry stops being dead.
 #
 # ⛔ WHY. cycc prints `note: N unreachable fns` on every build, and the closeout's dead-code pass
 # "records the floor" — in prose, which nothing reads back. Measured at the 6.6.20 open: x86 cycc
@@ -16,7 +17,9 @@
 #           it, move it to the backend/fork that calls it (the 6.6.20 `_gvar_bytes_named` /
 #           emit_arm64.cyr fix), or — only if it is genuinely external surface, or dead here and
 #           live in another fork that compiles the same file — add it to the floor. A floor
-#           entry that is no longer dead is reported, not failed: drop it.
+#           entry that is no longer dead (the fn went live, or was deleted) FAILS too: drop it,
+#           or rerun --write. Only noting it would leave the allowance in place, so the same fn
+#           could later go dead in that fork again and never be named.
 #           ⚠ A list, not a per-fork count: a count lets one fn going live hide another going
 #           dead, and when it trips it can only print the whole floor.
 #           ⚠ The parse is cross-checked against the compiler's own `note: N unreachable fns`,
@@ -75,6 +78,11 @@ if [ -s "$T/a64.bin" ]; then
     chmod +x "$T/a64.bin"
     _fork a64n ""                   "$T/a64.bin" src/main_aarch64_native.cyr
     _fork a64m "CYRIUS_MACHO_ARM=1" "$T/a64.bin" src/main_aarch64_macho.cyr
+else
+    # A cross build that exits 0 with no output would otherwise skip both aarch64-hosted forks
+    # and let the PASS line claim 7 forks after checking 5.
+    echo "FAIL dead_code_floor axis1: the aarch64 cross compiler (a64) produced no binary, so a64n (main_aarch64_native.cyr) and a64m (main_aarch64_macho.cyr) were NOT checked"
+    fails=$((fails + 1))
 fi
 sort -u "$T/actual" -o "$T/actual"
 
@@ -106,8 +114,9 @@ if [ -s "$T/new" ]; then
     fails=$((fails + 1))
 fi
 if [ -s "$T/gone" ]; then
-    echo "  note: $(wc -l < "$T/gone" | tr -d ' ') floor entr(y/ies) no longer dead (FN FORK) — drop from tests/fixtures/dead_code_floor.txt (or rerun with --write):"
+    echo "FAIL dead_code_floor axis1: $(wc -l < "$T/gone" | tr -d ' ') floor entr(y/ies) no longer dead (FN FORK) — the fn went live or was deleted; drop it from tests/fixtures/dead_code_floor.txt (or rerun with --write and review the diff):"
     sed 's/^/    /' "$T/gone"
+    fails=$((fails + 1))
 fi
 
 # ── axis 2 — no never-read top-level globals in src/ ──────────────────────────────────────────
