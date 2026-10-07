@@ -1,0 +1,57 @@
+# const_fold_int_min_div.tcyr — the top-level constant folder divides INT_MIN by -1 without
+# taking the compiler down (6.6.20, RPD-06).
+#
+# THE DEFECT (measured at 6.6.19, x86_64 Linux). `_CF_TERM` (src/frontend/parse_decl.cyr), the
+# folder behind a top-level `var X = <constant expr>;`, an array initializer element (6.6.16) and
+# an enum-constant fold, guarded a zero divisor only. x86 `idiv` traps on INT_MIN / -1 and
+# INT_MIN % -1, so
+#
+#     var X = (0 - 0x7FFFFFFFFFFFFFFF - 1) / (0 - 1);
+#
+# killed cycc itself with SIGFPE ("Floating point exception", rc 136) — no diagnostic, no output.
+# The same on 6.5.73. THE FIX: a -1 divisor folds as the wrapping negation (`/`) and 0 (`%`), which
+# is the same quotient / remainder for every other dividend, so no folded value that compiled
+# before changes.
+#
+# WHY A CROSS-HOST TEST: the crash is in the COMPILER and depends on the host it runs on — x86
+# (Linux, Intel-Mac, Windows) traps, arm64 `sdiv` does not. Each host's native cycc compiles this
+# file; on an x86 host without the fix the file does not compile at all.
+include "lib/assert.cyr"
+
+# The filed shapes: a scalar global and a hex-spelled INT_MIN. (The scalar `%` twin is NOT here:
+# it folds to 0, and a folded ZERO still takes the runtime-store path — BSS is already zero, see
+# PARSE_GVAR_REG — so the program would execute INT_MIN % -1 at startup, which traps on x86 like
+# any RUNTIME INT_MIN / -1. That is runtime division, not the folder; `%` is pinned through the
+# array initializers below, which bake their whole image.)
+var QMIN = (0 - 0x7FFFFFFFFFFFFFFF - 1) / (0 - 1);
+var QHEX = 0x8000000000000000 / (0 - 1);
+# A -1 divisor on ordinary dividends: the rewrite must give exactly what `/` and `%` give.
+var QPOS = 10 / (0 - 1);
+var QNEG = (0 - 7) / (0 - 1);
+var RPOS = 7 % (0 - 1);
+var RNEG = (0 - 7) % (0 - 1);
+var QONE = 9 / 1;
+var RTWO = (0 - 9) % 2;
+# A global array initializer element (the 6.6.16 caller), both operators.
+var ARR: i64[3] = { 1, (0 - 0x7FFFFFFFFFFFFFFF - 1) % (0 - 1), (0 - 0x7FFFFFFFFFFFFFFF - 1) / (0 - 1) };
+# Through an enum constant, in an array initializer (folded with enum names resolved).
+enum CfMax { CF_MAX = 0x7FFFFFFFFFFFFFFF; }
+var EARR: i64[2] = { (0 - CF_MAX - 1) / (0 - 1), (0 - CF_MAX - 1) % (0 - 1) };
+
+fn int_min(): i64 { return 0 - 0x7FFFFFFFFFFFFFFF - 1; }
+
+assert_eq(QMIN, int_min(), "INT_MIN / -1 folds to INT_MIN (wrapping)");
+assert_eq(QHEX, int_min(), "0x8000000000000000 / -1 folds to INT_MIN");
+assert_eq(QPOS, 0 - 10, "10 / -1");
+assert_eq(QNEG, 7, "-7 / -1");
+assert_eq(RPOS, 0, "7 % -1");
+assert_eq(RNEG, 0, "-7 % -1");
+assert_eq(QONE, 9, "9 / 1 (unchanged path)");
+assert_eq(RTWO, 0 - 1, "-9 % 2 (unchanged path, truncating)");
+assert_eq(ARR[0], 1, "array element 0");
+assert_eq(ARR[1], 0, "array element INT_MIN % -1");
+assert_eq(ARR[2], int_min(), "array element INT_MIN / -1");
+assert_eq(EARR[0], int_min(), "enum-fold INT_MIN / -1");
+assert_eq(EARR[1], 0, "enum-fold INT_MIN % -1");
+
+var r = assert_summary();
