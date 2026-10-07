@@ -3485,12 +3485,12 @@ fn PP_EXPAND(S, mi, ip, bl, out, op): i64 {
     var pp = 0;
     while (load8(def + dp) != 41) {
         if (load8(def + dp) == 44) { store8(&pnames + pp, 0); pp = pp + 1; pcnt = pcnt + 1; dp = dp + 1; }
-        elif (load8(def + dp) == 32) { dp = dp + 1; }
+        elif (PP_DBLANK(load8(def + dp)) == 1) { dp = dp + 1; }   # space or TAB (6.6.20, PP_SEP)
         else { store8(&pnames + pp, load8(def + dp)); pp = pp + 1; dp = dp + 1; }
     }
     if (pp > 0) { store8(&pnames + pp, 0); pp = pp + 1; pcnt = pcnt + 1; }
     dp = dp + 1;  # skip )
-    if (load8(def + dp) == 32) { dp = dp + 1; }  # skip space after )
+    if (PP_DBLANK(load8(def + dp)) == 1) { dp = dp + 1; }  # skip a space or TAB after )
     # Read body text from definition (rest after params)
     var body = def + dp;
     # Skip name in input to find (

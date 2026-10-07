@@ -28,6 +28,10 @@
 #   s3  `#define FOO<TAB>bar(1)`           → stored as a function-like macro `FOO<TAB>bar`
 #   s4  `#ifdef  CYRIUS_ARCH_X86` (2 sp)   → the #else arm
 #   s6  `#define<TAB>ADD(a, b) (a + b)`    → no macro at all (`undefined function 'ADD'`)
+#   s7  `#define ADD(a,<TAB>b) (a + b)`    → the parameter was named `<TAB>b`, so `b` in the
+#                                            body was never substituted: with an outer
+#                                            `var b = 10`, `ADD(3, 4)` was 13 (PP_EXPAND's
+#                                            parameter reader skipped a space only)
 #
 # ⭐ EVERY ROW IS SCORED AGAINST ITS SINGLE-SPACE TWIN, NOT A NUMBER: the twin is the same
 # file with each blank run in the directive line collapsed to one space (s2: `dbg` renamed
@@ -65,12 +69,14 @@
 #   N6 _pp_unclosed's marker restore skipped → e8, e10 (the error names <source>, the
 #      file the stream had moved on to, instead of the included file)
 #   N7 ISIF's lower-case-`d` refusal restored → s2
+#   N8 PP_EXPAND's parameter reader skips a space only again → s7
 #   P1 PP_IFDEF_PASS's PP_IFPLAT_MATCH reads S + _SRCB (the 1 MiB copy) → f3
 #   P2 PP_IFDEF_PASS's ISIFPLAT arm never taken → f1, f2, f3, e10, g
 #   P3 PP_IFDEF_PASS's ISENDPLAT arm never taken → f1, e9, g
-#   e696746d's compiler → 30 of 30 rows FAIL (f2, f3 and g on the duplicate-symbol warning
+#   e696746d's compiler → 31 of 31 rows FAIL (f2, f3 and g on the duplicate-symbol warning
 #   both compiled arms draw). 1553be2f's (the lane before the included-#ifplat arms) → f1, f2,
-#   f3, e9, e10 and g FAIL; f2 / f3 there are the false "#else without a matching #if".
+#   f3, e9, e10 and g FAIL; f2 / f3 there are the false "#else without a matching #if"; 43445323's
+#   → s7 alone.
 set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT"
@@ -140,6 +146,7 @@ sep_row s2 'var r = 7;\n#define dbg 1\n#if dbg == 1\nr = 1;\n#else\nr = 2;\n#end
 sep_row s3 '#define FOO\tbar(1)\n#ifdef FOO\nvar r = 1;\n#else\nvar r = 2;\n#endif\nsyscall(60, r);\n' "$T1" 1 '`#define FOO<TAB>bar(1)` defines FOO, not a macro `FOO<TAB>bar`'
 sep_row s4 '#ifdef  CYRIUS_ARCH_X86\nvar r = 1;\n#else\nvar r = 2;\n#endif\nsyscall(60, r);\n' "$T2" 1 '`#ifdef  X` (two spaces) sees X'
 sep_row s6 '#define\tADD(a, b) (a + b)\nvar r = ADD(3, 4);\nsyscall(60, r);\n' "$T1" 7 '`#define<TAB>ADD(a, b)` is a function-like macro'
+sep_row s7 '#define ADD(a,\tb) (a + b)\nvar b = 10;\nvar r = ADD(3, 4);\nsyscall(60, r);\n' "$T1" 7 '`#define ADD(a,<TAB>b)` substitutes b (the outer `var b` is not read)'
 
 # A stray / unclosed row: $1 name, $2 the source, $3 the diagnostic it must print
 # (a grep -F fixed string, file:line:col included).
@@ -227,4 +234,4 @@ if [ "$fail" -gt 0 ]; then
     printf 'FAIL: pp-directive-blank-separators — %s of %s rows failed\n' "$fail" "$((pass+fail))"
     exit 1
 fi
-printf 'PASS: pp-directive-blank-separators — %s/%s rows green (16 separator shapes vs their single-space twins, 3 included #ifplat blocks vs their #ifdef twins, 10 stray/unclosed refusals, 1 balanced guard)\n' "$pass" "$pass"
+printf 'PASS: pp-directive-blank-separators — %s/%s rows green (17 separator shapes vs their single-space twins, 3 included #ifplat blocks vs their #ifdef twins, 10 stray/unclosed refusals, 1 balanced guard)\n' "$pass" "$pass"
