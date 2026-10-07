@@ -2377,7 +2377,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         # are bound into __DATA_CONST.__got[N] in EMITMACHO_ARM64 get short-
         # circuited here instead of falling through to ESYSXLAT+svc (which
         # needs BSD-number translation and has lingering edge cases). Slot
-        # indices must match the symbol order in macho/emit.cyr's symtab +
+        # indices must match the symbol order in macho/emit_arm64.cyr's symtab +
         # bind opcodes + indirect symtab. Mirror of the PE syscall-reroute
         # block below (v5.4.4/5.4.7/5.5.1/5.5.2 bundle).
         #   syscall(0, fd, buf, len) → __got[2] = libSystem._read   (v5.5.14)

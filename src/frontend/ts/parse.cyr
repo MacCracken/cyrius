@@ -429,11 +429,6 @@ fn TS_PARSE_TOK_VAL(ts_base): i64 {
     return load64(ts_base + TS_TOK_VALUES_OFF + i * 8);
 }
 
-fn TS_PARSE_TOK_LINE(ts_base): i64 {
-    var i = load64(ts_base + TS_PARSE_STATE_OFF + TS_PS_TOK_IDX);
-    return load64(ts_base + TS_TOK_LINES_OFF + i * 8);
-}
-
 fn TS_PARSE_CONSUME(ts_base): i64 {
     var i = load64(ts_base + TS_PARSE_STATE_OFF + TS_PS_TOK_IDX);
     store64(ts_base + TS_PARSE_STATE_OFF + TS_PS_TOK_IDX, i + 1);

@@ -74,7 +74,6 @@ var _pe_rdata_rva        = 0;
 var _pe_rdata_file_off   = 0;
 var _pe_rdata_vsize      = 0;
 var _pe_rdata_file_size  = 0;
-var _pe_rdata_gvar_off   = 0;   # always 0 — gvars at the start of rdata
 var _pe_rdata_str_off    = 0;   # = totvar (strings follow gvars)
 var _pe_rdata_totvar     = 0;   # snapshot of totvar computed inside _pe_layout
 var _pe_rdata_spos       = 0;   # snapshot of GSPOS(S)
@@ -1646,7 +1645,6 @@ fn _pe_layout(S): i64 {
     var spos = GSPOS(S);
     _pe_rdata_totvar = totvar;
     _pe_rdata_spos   = spos;
-    _pe_rdata_gvar_off = 0;
     _pe_rdata_str_off  = totvar;
 
     _pe_rdata_file_off = _pe_idata_file_off + _pe_idata_file_size;

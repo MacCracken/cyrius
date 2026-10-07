@@ -564,9 +564,9 @@ fn FINDFN(S, noff): i64 {
 # See util.cyr for the definition.
 
 # NOTE: Arch-specific function emit functions (EFNPRO, ESUBRSP, EFNEPI,
-# ECALLTO, ECALLFIX, EPOPARG, ECALLPOPS, ECALLCLEAN, EDISP32,
-# ESTOREREGPARM, ESTORESTACKPARM, ESTOREPARM, EFLLOAD, EFLSTORE)
-# are in the arch-specific emit files:
+# ECALLTO, ECALLFIX, EPOPARG, ECALLPOPS, ECALLCLEAN, ESTOREREGPARM,
+# ESTORESTACKPARM, ESTOREPARM, EFLLOAD, EFLSTORE) are in the
+# arch-specific emit files (EDISP32 is x86-only):
 #   x86_64:  src/backend/x86/emit.cyr
 #   aarch64: src/backend/aarch64/emit.cyr
 
@@ -6168,21 +6168,6 @@ fn _warn_large_static(totvar, dvb, dcn): i64 {
         syscall(SYS_WRITE, 2, " bytes inside ", 14);
         PRNUM(dcn);
         syscall(SYS_WRITE, 2, " unreachable fn(s) — DCE NOPs code but keeps .bss; restructure with alloc() or move the static into a reachable consumer\n", 123);
-    }
-    return 0;
-}
-
-# Byte size of the global var named exactly `lit` (a C string), or 0 when there is none.
-# main_cx.cyr uses it to leave lib/alloc_cx.cyr's own heap out of the static-data advisory.
-fn _gvar_bytes_named(S, lit): i64 {
-    var vi = 0;
-    var n = GVCNT(S);
-    while (vi < n) {
-        var p = S + 0xEC00000 + L64(_varn_base + vi * 8);
-        var k = 0;
-        while (load8(p + k) != 0 && load8(p + k) == load8(lit + k)) { k = k + 1; }
-        if (load8(p + k) == 0 && load8(lit + k) == 0) { return L64(_vars_base + vi * 8); }
-        vi = vi + 1;
     }
     return 0;
 }

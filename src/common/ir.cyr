@@ -1298,12 +1298,10 @@ fn ir_build_bbs(S): i64 {
 # connect to successor BBs. Uses CP tracking to match jump targets.
 # Returns number of edges added.
 
-# Find which BB contains the given codebuf offset (binary search)
-
 # Find the BB that contains a NOP landing pad whose arg1 matches patch_off.
 # Scans all nodes (not just first) because multiple NOPs can land in one BB.
 # v6.5.54 — `lo` is the first BB of the function the jump lives in. Both finders used to
-# scan from BB 0 across the WHOLE program, and _ir_find_bb_for_patch nested a scan of every
+# scan from BB 0 across the WHOLE program, and the patch finder nested a scan of every
 # node inside that, so ir_build_edges was O(jumps x program). MEASURED on a cycc self-compile:
 # 29,499 BBs, CYRIUS_IR=3 at 13,967 ms against the default path's 672 ms — 21x, and it is
 # ALL here, not in the optimization passes (with FOLD/LASE/DCE/DSE all off it was still
@@ -1337,10 +1335,6 @@ fn _ir_find_bb_for_patch_at(S, patch_off, lo): i64 {
     return 0 - 1;
 }
 
-fn _ir_find_bb_for_patch(S, patch_off): i64 {
-    return _ir_find_bb_for_patch_at(S, patch_off, 0);
-}
-
 fn _ir_find_bb_for_cp_at(S, target_cp, lo): i64 {
     var bcnt = IR_BCNT(S);
     var pass = 0;
@@ -1366,10 +1360,6 @@ fn _ir_find_bb_for_cp_at(S, target_cp, lo): i64 {
         pass = pass + 1;
     }
     return 0 - 1;
-}
-
-fn _ir_find_bb_for_cp(S, target_cp): i64 {
-    return _ir_find_bb_for_cp_at(S, target_cp, 0);
 }
 
 fn ir_build_edges(S): i64 {

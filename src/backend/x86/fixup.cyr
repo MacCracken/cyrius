@@ -322,7 +322,7 @@ fn FIXUP(S): i64 {
                         # Shared: patch rel32 for LEA; else: patch imm64.
                         # PE32+ (v5.4.8): gvars live in .rdata at
                         # ImageBase + _pe_rdata_rva + prefix_sum[idx]
-                        # (_pe_rdata_gvar_off is 0 by construction).
+                        # (gvars sit at the start of .rdata).
                         if (idx < vcnt) {
                             var tgt0 = dbase + L64(pfx + idx * 8);
                             if (_TARGET_PE == 1) {

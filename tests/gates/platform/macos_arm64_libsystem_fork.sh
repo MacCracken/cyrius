@@ -38,7 +38,7 @@ set -e
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 PE="$ROOT/src/frontend/parse_expr.cyr"
 AE="$ROOT/src/backend/aarch64/emit.cyr"
-ME="$ROOT/src/backend/macho/emit.cyr"
+ME="$ROOT/src/backend/macho/emit_arm64.cyr"
 SA="$ROOT/lib/syscalls_aarch64_linux.cyr"
 SM="$ROOT/lib/syscalls_macos.cyr"
 fail() { echo "FAIL macos_arm64_libsystem_fork: $1" >&2; exit 1; }

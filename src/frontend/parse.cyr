@@ -12,13 +12,9 @@ var _regalloc_pending = 0;
 # v5.6.3: pending-flag for `#must_use` → next `fn` definition. Lexer
 # token 122 sets this; PARSE_FN_DEF consumes it when resolving `fi`,
 # storing bit 0 into fn_flags at 0x17A000. Call-site discard detection
-# lives at PARSE_STMT's expression-statement path: it tracks the
-# outermost call's fi in `_stmt_topcall_fi` and warns if that fn's
-# must_use bit is set when the statement terminates without the
-# result being used (assignment, comparison, or as a sub-expression
-# argument — see PARSE_FACTOR for the tracking site).
+# is _must_use_warn, called from PARSE_STMT's expression-statement arms
+# when a call is the whole statement (its result dropped).
 var _must_use_pending = 0;
-var _stmt_topcall_fi = 0 - 1;
 # v5.6.3: `@unsafe { ... }` block depth. Incremented on entry to an
 # unsafe block; decremented on exit. A nested unsafe block (depth > 1
 # at entry) emits an advisory warning. No runtime cost — the block

@@ -1,0 +1,96 @@
+# dead_code_floor.txt — the unreachable fns DEFINED UNDER src/ that each compiler fork carries.
+# Read by tests/gates/codegen/dead_code_floor.sh; regenerate with its --write and REVIEW the diff.
+# One line per fn: NAME FORK... — x86 = cycc (main.cyr), a64 = cycc_aarch64 cross
+# (main_aarch64.cyr), cx = cyrius-x (main_cx.cyr), win = PE32+ (main_win.cyr), x86m = x86-macOS
+# (main_x86_macho.cyr), a64n = aarch64-native (main_aarch64_native.cyr), a64m = arm64-macOS
+# (main_aarch64_macho.cyr). Each is live in another fork that compiles the same file (IR
+# passes only the x86 backend drives, PE- or Mach-O-only emitters, ...) — except TS_PEEKLINE,
+# which tests/tcyr/frontend/ts_lex_combined.tcyr calls.
+EADD_RSP_IMM8 win x86m
+EALIGN_RSP_16 win
+EMITMACHO_EXEC a64 a64m
+EMOV_R14_RCX win x86m
+EMOV_R15_RDX win x86m
+EMOV_RCX_R14 win x86m
+EMOV_RDX_R15 win x86m
+EPARK_EFI_RSP x86m
+ESUB_RSP_IMM8 x86m
+GFNE cx
+IR_BB_COUNT a64 a64m a64n cx x86m
+IR_BB_FIRST a64 a64m a64n cx x86m
+IR_BB_SUCC0 a64 a64m a64n cx win x86m
+IR_BB_SUCC1 a64 a64m a64n cx win x86m
+IR_BCNT a64 a64m a64n cx x86m
+IR_ECNT a64 a64m a64n cx x86m
+IR_LIVEIN a64 a64m a64n cx win x86m
+IR_LIVEOUT a64 a64m a64n cx win x86m
+IR_NODE_A1 a64 a64m a64n cx x86m
+IR_NODE_A2 a64 a64m a64n cx x86m
+IR_NODE_FL a64 a64m a64n cx x86m
+IR_NODE_OP a64 a64m a64n cx x86m
+IR_SBCNT a64 a64m a64n cx x86m
+IR_SCURBB a64 a64m a64n cx x86m
+IR_SECNT a64 a64m a64n cx x86m
+IR_SENABLE a64 a64m a64n cx x86m
+IR_SLIVEIN a64 a64m a64n cx win x86m
+IR_SLIVEOUT a64 a64m a64n cx win x86m
+TS_PEEKLINE x86
+_EMIT_GVAR_STATIC_INITS cx
+_IR_REC a64 a64m a64n cx
+_IR_REC1 a64 a64m a64n cx
+_check_cyml_pin_drift a64m win x86m
+_codebuf_grow cx
+_dce_drift_check a64 a64m a64n
+_env_var_is_1 a64m win x86m
+_ev1_step a64m win x86m
+_find_fn_by_name a64 a64m a64n cx x86m
+_fnhash_health a64 a64m a64n cx x86m
+_gvk_arm a64 a64m a64n cx win x86m
+_ir_bb_transfer a64 a64m a64n cx win x86m
+_ir_clobbers_rax a64 a64m a64n cx x86m
+_ir_compute_fold a64 a64m a64n cx win x86m
+_ir_def_rax_pure a64 a64m a64n cx win x86m
+_ir_def_rcx_any a64 a64m a64n cx win x86m
+_ir_def_rcx_pure a64 a64m a64n cx win x86m
+_ir_emovi_size a64 a64m a64n cx win x86m
+_ir_find_bb_for_cp_at a64 a64m a64n cx x86m
+_ir_find_bb_for_patch_at a64 a64m a64n cx x86m
+_ir_find_spill_intervals a64 a64m a64n cx win x86m
+_ir_is_foldable_binop a64 a64m a64n cx win x86m
+_ir_liveness_bail a64 a64m a64n cx win x86m
+_ir_op_opaque_stack a64 a64m a64n cx win x86m
+_ir_opname a64 a64m a64n cx x86m
+_ir_set_bb a64 a64m a64n cx x86m
+_ir_succ_livein a64 a64m a64n cx win x86m
+_ir_succ_union a64 a64m a64n cx win x86m
+_ir_uses_rax a64 a64m a64n cx win x86m
+_ir_uses_rcx a64 a64m a64n cx win x86m
+_ir_write_emovi_at a64 a64m a64n cx win x86m
+_parse_hex_env a64m a64n win x86m
+_prof_clock_ns a64 a64m a64n win x86m
+_prov_kill a64 a64m a64n cx
+_prov_read a64 a64m a64n cx
+_wp_inside a64 a64m a64n cx
+_wp_shift a64 a64m a64n cx
+_wp_sort_prefix a64 a64m a64n cx
+_wpjs_add a64 a64m a64n cx
+_wpjs_add_raw a64 a64m a64n cx
+_wpnr_add a64 a64m a64n cx
+ir_add_edge a64 a64m a64n cx x86m
+ir_apply_lase a64 a64m a64n cx win x86m
+ir_bb_new a64 a64m a64n cx x86m
+ir_bb_set_cond a64 a64m a64n cx x86m
+ir_bb_set_succ a64 a64m a64n cx x86m
+ir_build_bbs a64 a64m a64n cx x86m
+ir_build_edges a64 a64m a64n cx x86m
+ir_const_fold a64 a64m a64n cx win x86m
+ir_count_exit_bbs a64 a64m a64n cx win x86m
+ir_dce_capped a64 a64m a64n cx win x86m
+ir_dead_store_capped a64 a64m a64n cx win x86m
+ir_dump a64 a64m a64n cx x86m
+ir_emit1 a64 a64m a64n cx
+ir_lase a64 a64m a64n cx x86m
+ir_liveness_cfg a64 a64m a64n cx win x86m
+ir_reset a64 a64m a64n cx x86m
+ir_set_bb a64 a64m a64n cx x86m
+wp_compact a64 a64m a64n cx

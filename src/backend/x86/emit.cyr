@@ -58,23 +58,10 @@ var _last_push_cp = 0 - 1;
 var _last_emovca_cp = 0 - 1;
 var _last_movca_popr_cp = 0 - 1;
 
-# Stub so parse.cyr's `_AARCH64_BACKEND == 1` branches can reference
-# aarch64 emit primitives without the x86 build emitting an
-# "undefined function" warning. Dead on x86 at runtime.
-fn EW(S, w): i64 { return 0; }
-# v5.9.26 — Phase 2b-aarch64 struct-copy in PARSE_RETURN
-# references _EFP_ADDR_X9 from the aarch64 backend. Stub here for
-# the same dead-on-x86 reason as EW above.
-fn _EFP_ADDR_X9(S, disp): i64 { return 0; }
-# v5.9.26 — caller-side aarch64 retptr load via X8. Stub on x86
-# (the x86 caller path uses EFLADDR + EPUSHR + ECALLPOPS instead).
+# v5.9.26 — caller-side aarch64 retptr load via X8. parse_fn.cyr's
+# `_AARCH64_BACKEND == 1` branches reference it, so x86 carries this stub
+# (dead at runtime; the x86 caller path uses EFLADDR + EPUSHR + ECALLPOPS).
 fn EFLADDR_X8(S, lli): i64 { return 0; }
-# v5.9.39 — Mach-O ARM PIE-safe `&fn_name` / closure-literal emit
-# in parse_expr.cyr's `_AARCH64_BACKEND == 1` branch references
-# the aarch64 ADRP+ADD primitives. Stubs here for the same
-# dead-on-x86 reason as EW / _EFP_ADDR_X9 above.
-fn EADRP(S, reg): i64 { return 0; }
-fn EADD_IMM12(S, reg): i64 { return 0; }
 
 fn EB(S, b): i64 {
     var cp = GCP(S);
@@ -169,7 +156,6 @@ fn EPOPR(S): i64 {
 # add `_xdepth` to each copy by hand. Every frontend spill site (parse_expr.cyr) is unchanged.
 # CHANGELOG [6.6.20]
 var _INLINE_OK = 0;
-var _LOOPVAR_OK = 0;  # loop var r12 caching disabled (caused 2x regression + stack corruption)
 fn ESPILL(S): i64 { EPUSHR(S); return 0; }
 fn EUNSPILL(S): i64 { EPOPR(S); return 0; }
 fn EMOVCA(S): i64 { if (_IR_REC0(S, IR_MOV_CA) == 1) { return 0; } E3(S, 0xC18948); _last_emovca_cp = GCP(S); return 0; }
@@ -4240,11 +4226,9 @@ fn ETLFRAME_CLOSE(S, patch, nslots): i64 {
 
 # Emit pop into arg register for arg N.
 # SysV x86_64: n=0..5 → rdi/rsi/rdx/rcx/r8/r9.
-# Win64   (v5.5.3): n=0..3 → rcx/rdx/r8/r9. n>=4 falls through to
-# the SysV encoding (incorrect on Win64 — proper stack-arg handling
-# queued for v5.5.4). Cyrius-to-cyrius call sites with >=5 args are
-# out of scope for v5.5.3 and will mis-compile under CYRIUS_TARGET_WIN
-# until v5.5.4 lands the shadow-space + stack-arg shuttle.
+# Win64   (v5.5.3): n=0..3 → rcx/rdx/r8/r9. Every PE caller (ECALLPOPS,
+# ECALLPTR_PE) pops here only when n <= 4 and loads a wider call's args by
+# stack offset instead, so n >= 4 never reaches this under _TARGET_PE.
 fn EPOPARG(S, n): i64 {
     _xdepth = _xdepth - 1;   # 6.6.5: one pending push consumed, whichever register it lands in
     if (_TARGET_PE == 1) {
