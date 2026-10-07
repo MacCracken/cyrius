@@ -648,6 +648,7 @@ var _fla_ft = 0;
 var _fla_name = 0;
 var _fla_lit = 0 - 1;   # `_fla_want` when a struct literal armed it (6.6.12): `,` / `}` also end the source
 var _fla_arg = 0 - 1;   # `_fla_want` when a by-value struct ARGUMENT armed it (6.6.12): `,` / `)`
+var _fla_stp = 0 - 1;   # `_fla_want` when a classic-for STEP armed it (6.6.20): `)`
 
 fn _fsc_reset(): i64 {
     _fsc_li = 0 - 1;
@@ -895,6 +896,7 @@ fn _fst_odd(S, idx, sid, off, nb): i64 {
 # by-value struct argument (`take(r.v, 5)`) at `,` or `)`.
 fn _fla_lit_end(S): i64 {
     if (_fla_arg == _fla_want) { if (PEEKT(S) == 31 || PEEKT(S) == 11) { return 1; } }
+    if (_fla_stp == _fla_want) { if (PEEKT(S) == 11) { return 1; } }
     if (_fla_lit != _fla_want) { return 0; }
     if (PEEKT(S) == 31) { return 1; }
     if (PEEKT(S) == 14) { return 1; }
@@ -932,8 +934,9 @@ fn _fla_arm(st, dt): i64 {
     return 0;
 }
 
-# `q = b.v;` after the armed PCMPE recorded the field: 1 = copied (`;` consumed).
-fn _fla_assign(S, noff): i64 {
+# `q = b.v;` after the armed PCMPE recorded the field: 1 = copied (`term` consumed: `;`, or `)`
+# for a classic-for step).
+fn _fla_assign(S, noff, term): i64 {
     _fla_hit = 0;
     _agc_operand(S, noff);
     if (_AGG_ASSIGN_TYPE_ERR(S, _agc_t, 0 - _fla_ft, noff, _fla_name) == 1) { return 0; }
@@ -941,8 +944,8 @@ fn _fla_assign(S, noff): i64 {
     if (_agc_pp != 0) { dli = _AGC_DREF(dli); }   # 6.6.16 (C2): a handle copies through it too
     _agc_copy_bytes(S, dli, _agc_gvi, 0 - 2, 0 - 1, STRUCTSZ(S, _fla_ft - 1));
     if (_agc_gvi >= 0) { SLVAR(S, _agc_gvi); }   # never a deref-band handle: G is not written
-    if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
-    STI(S, GTI(S) + 1);   # consume ';'
+    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
+    STI(S, GTI(S) + 1);   # consume the terminator
     return 1;
 }
 
@@ -4399,7 +4402,7 @@ fn _try_struct_copy_init(S, noff, pscale): i64 {
 # Mirrors PARSE_VAR's receive exactly, including the Win64 retptr branch: on PE a 16/32-byte
 # return is written through a hidden pointer, so the destination address is pushed as arg 0
 # rather than a pair being stored after the call.
-fn _try_vector_call_assign(S, noff): i64 {
+fn _try_vector_call_assign(S, noff, term): i64 {
     if (GINFN(S) != 1) { return 0; }
     if (PEEKT(S) != 2) { return 0; }
     if (TOKTYP(S, GTI(S) + 1) != 10) { return 0; }
@@ -4438,8 +4441,8 @@ fn _try_vector_call_assign(S, noff): i64 {
         if (vns == 4) { EFLSTORE_F64V4_PAIR(S, dst_li); }
         else { EFLSTORE_F64V2_PAIR(S, dst_li); }
     }
-    if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
-    STI(S, GTI(S) + 1);   # consume ';'
+    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
+    STI(S, GTI(S) + 1);   # consume the terminator
     return 1;
 }
 

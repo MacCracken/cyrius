@@ -18,6 +18,8 @@
 #       pass 1 cannot see it (a pointer-mode slot) while the replay can (a whole struct), and the
 #       value store that disagreement fell back to still put the first word in the slot (139).
 #
+# 6.6.20 (RPD-04): R12-R16 — the same refusals for the STEP of a classic `for`, which compiled clean.
+#
 # Refusal rows are checked on the MESSAGE, that it is the ONLY error, and that no binary was
 # written. Acceptance rows are checked against the exit code AND a field-by-field CONTROL.
 # The layout / copy half is pinned by tests/tcyr/crossos/struct_field_value_copy.tcyr.
@@ -32,6 +34,8 @@
 #   `_gci_toplevel` skips `_AGG_ASSIGN_TYPE_ERR`    -> RED R7 R8
 #   `_gci_init` returns 0 (value store) instead of  -> RED R10 R11 (compiled clean; the
 #     `_gci_below` when pass 1 saw no inline source      binaries SIGSEGV)
+#   6.6.20: `_for_step_assign` without `_for_step_aggregate` (the 6.6.19 step)
+#                                                   -> RED R12 R13 R14 R15 R16 (compiled clean)
 #   real tree                                       -> GREEN
 #
 # Exit 77 = could not run (the SKIP protocol): no compiler, or no scratch directory.
@@ -150,6 +154,25 @@ refuse "R10 a named global declared below" "cannot copy-init 'B' $MB (declare th
     "${T}var B: Pt = A; var A = Pt { 3, 4 }; fn go(): i64 { return B.x * 10 + B.y; } syscall(60, go());"
 refuse "R11 a field of a global declared below" "cannot copy-init 'G' $MB (declare the source first): 'BX'" \
     "${T}var G: Pt = BX.v; var BX = RB { 3, 4, 9, 0, 0, 0 }; fn go(): i64 { return G.x * 10 + G.y; } syscall(60, go());"
+
+echo "=== a classic-for STEP refuses what the statement refuses (6.6.20, RPD-04) ==="
+# The step `for (..; ..; a = q)` skipped the statement's whole-aggregate dispatch and stored ONE
+# word: every row below compiled clean (rc 0, no diagnostic) where the statement form is refused.
+# The values half (the step copies every word) is tests/tcyr/crossos/for_step_struct_assign.tcyr.
+SQ='fn mkq(): Q { var r: Q = Q { 1, 2, 3 }; return r; }
+fn mk4(): f64v4 { var r: f64v4; return r; }
+var GQ = Q { 1, 2, 3 }; var G: Pt = Pt { 0, 0 };
+'
+refuse "R12 step a = q, a local of another type" "$MV" \
+    "${T}${SQ}fn go(): i64 { var a: Pt; var q: Q; var i = 0; for (i = 0; i < 1; a = q) { i = i + 1; } return a.x; } syscall(60, go());"
+refuse "R13 step a = r.q, a field of another type" "$MV" \
+    "${T}${SQ}fn go(): i64 { var a: Pt; var r: RB; var i = 0; for (i = 0; i < 1; a = r.q) { i = i + 1; } return a.x; } syscall(60, go());"
+refuse "R14 step a = mkq(), a call returning another" "$MV" \
+    "${T}${SQ}fn go(): i64 { var a: Pt; var i = 0; for (i = 0; i < 1; a = mkq()) { i = i + 1; } return a.x; } syscall(60, go());"
+refuse "R15 step G = GQ, a global of another type" "$MV" \
+    "${T}${SQ}fn go(): i64 { var i = 0; for (i = 0; i < 1; G = GQ) { i = i + 1; } return G.x; } syscall(60, go());"
+refuse "R16 step v = mk4(), another vector width" "vector return type does not match the assigned variable" \
+    "${T}${SQ}fn go(): i64 { var v: f64v2; var i = 0; for (i = 0; i < 1; v = mk4()) { i = i + 1; } return 0; } syscall(60, go());"
 
 echo "=== the same shapes with the declared type (no false refusal) ==="
 accept "A1 take(r.v), gen<Pt>(r.v), p.plus(r.v)" \

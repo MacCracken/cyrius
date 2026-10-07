@@ -2715,7 +2715,7 @@ fn _agc_src_operand(S, onoff): i64 {
 # performs. Through a temp rather than straight into `x`, so an argument that reads `x` (or is
 # `x`, address-passed) sees the old value. At top level there is no frame for the temp: a
 # retptr callee is refused by PARSE_FNCALL, a rax:rdx one here. CHANGELOG [6.6.6]
-fn _try_struct_call_assign(S, noff): i64 {
+fn _try_struct_call_assign(S, noff, term): i64 {
     # ⛔ 6.6.10 (bite 7 review): `name<..>(` too, and the fn the call REACHES. `r = mk(p);` into a
     # `Box<Pt>` local compared the base's `Box` return, missed, and fell to the scalar store —
     # fields stale, silently; the explicit `r = mk<Pt>(p);` did the same once its return type
@@ -2723,7 +2723,7 @@ fn _try_struct_call_assign(S, noff): i64 {
     var o = _gcall_open(S, GTI(S));
     if (o < 0) { return 0; }
     var fi = _gen_resolve_call(S, GTI(S));
-    if (_call_follow(S, o - 1) != 5) { return 0; }
+    if (_call_follow(S, o - 1) != term) { return 0; }
     var n = _agc_operand(S, noff);
     # ⛔ 6.6.11 — THE TYPE CHECK COMES BEFORE EVERY EXIT. `p = mkq();` (Q into a Pt) returned 0 at
     # the sid test below and the scalar store kept one word, silently; a <= 8 B result had already
@@ -2744,8 +2744,8 @@ fn _try_struct_call_assign(S, noff): i64 {
     if (_agc_pp != 0) { dli = _AGC_DREF(dli); }   # 6.6.16 (C2): a handle copies through it too
     var t = _struct_call_into_temp(S);
     _agc_from_temp(S, t, dli, dgv, n, GFRS(S, fi));
-    if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
-    STI(S, GTI(S) + 1);   # consume ';'
+    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
+    STI(S, GTI(S) + 1);   # consume the terminator
     return 1;
 }
 
@@ -2943,7 +2943,8 @@ fn _asg_rejudge(S, idx, t, g): i64 {
 # emitter stores the result in a temp and records it (`_sc_pre` / `_sc_post`, parse_fn.cyr); this
 # replaces the statement's PCMPE and takes that temp when the record spans the whole right-hand
 # side. `r = b.mk(5)` SIGSEGV'd, `q = b.mp(3)` kept rax only. Returns 1 when the statement is done
-# (`;` consumed); 0 leaves the ordinary store to run, exactly as after a plain PCMPE.
+# (`;` consumed — `term`, which is `)` for a classic-for step); 0 leaves the ordinary store to
+# run, exactly as after a plain PCMPE.
 # 6.6.11: also arms the struct-typed FIELD source (`q = b.v;`, see `_fla_arm`) when the destination
 # is a struct, and type-checks every recorded struct result against it — a <= 8 B one (`_sc_tmp`
 # -3, value in rax) included — before any exit. CHANGELOG [6.6.11]
@@ -3015,16 +3016,19 @@ fn _asg_rhs_steps(S, di, rsid): i64 {
     return 0;
 }
 
-fn _pcmpe_struct_assign(S, noff): i64 {
+fn _pcmpe_struct_assign(S, noff, term): i64 {
     var st = GTI(S);
     _agc_operand(S, noff);
     _fla_arm(st, _agc_t);
+    var fs = _fla_stp;
+    if (term == 11) { _fla_stp = st; }   # 6.6.20: a for step's field source ends at `)`
     var w = _sc_arm(S);
     PCMPE(S);
     _asg_ufv = _UFV_IS_FLOAT(S);   # 6.6.11: here, while _FBR_KIND is still valid (see _asg_rejudge)
     _sc_want = w;
     _fla_want = 0 - 1;
-    if (_fla_hit == 1) { return _fla_assign(S, noff); }
+    _fla_stp = fs;
+    if (_fla_hit == 1) { return _fla_assign(S, noff, term); }
     var t = _sc_whole(S, st);
     if (t == 0 - 2) { return 0; }
     var n = _agc_operand(S, noff);
@@ -3037,14 +3041,14 @@ fn _pcmpe_struct_assign(S, noff): i64 {
     var pdli = _agc_li;
     if (_agc_pp != 0) { pdli = _AGC_DREF(pdli); }   # 6.6.16 (C2): a handle too
     _agc_from_temp(S, t, pdli, _agc_gvi, n, _sc_sid);
-    if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
-    STI(S, GTI(S) + 1);   # consume ';'
+    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
+    STI(S, GTI(S) + 1);   # consume the terminator
     return 1;
 }
 
-fn _try_aggregate_copy_assign(S, noff): i64 {
+fn _try_aggregate_copy_assign(S, noff, term): i64 {
     if (PEEKT(S) != 2) { return 0; }
-    if (TOKTYP(S, GTI(S) + 1) != 5) { return 0; }
+    if (TOKTYP(S, GTI(S) + 1) != term) { return 0; }
     # ⛔ 6.6.5 — THIS USED TO OPEN `if (GINFN(S) != 1) return 0;` AND THEN `FINDLOCAL` BOTH
     # SIDES, so no global could ever reach it and `B = A` between two inline struct GLOBALS
     # copied EIGHT BYTES — the whole struct's first word, silently, at top level and inside a
@@ -4010,16 +4014,16 @@ fn _PARSE_STMT_IMPL(S): i64 {
             # gap sitting behind it (2026-08-14-typed-ptr-warn-ignores-declared-return-type).
             # ⚠ Must be read BEFORE PCMPE — afterwards the token cursor has moved past the
             # callee name and FINDFN would resolve nothing.
-            if (_try_aggregate_copy_assign(S, noff) == 1) { return 0; }
-            if (_try_struct_call_assign(S, noff) == 1) { return 0; }   # 6.6.6
+            if (_try_aggregate_copy_assign(S, noff, 5) == 1) { return 0; }
+            if (_try_struct_call_assign(S, noff, 5) == 1) { return 0; }   # 6.6.6
             # v6.5.61 — `r = f(...)` into a VECTOR local needs the 16/32-byte receive the
             # declaration form has; without it this fell to the 8-byte EFLSTORE below.
-            if (_try_vector_call_assign(S, noff) == 1) { return 0; }
+            if (_try_vector_call_assign(S, noff, 5) == 1) { return 0; }
             # v6.6.0 — `x = f();` where f returns a `: stack` pair keeps the tag and drops the
             # payload, silently. Same refusal as the declaration form. CHANGELOG [6.6.0].
             _refuse_lossy_pair(S);
             _asg_ret_peek(S, noff);   # 6.6.17: the RHS's declared type, before PCMPE moves on
-            if (_pcmpe_struct_assign(S, noff) == 1) { return 0; }   # PCMPE + a method/operator struct result (6.6.6)
+            if (_pcmpe_struct_assign(S, noff, 5) == 1) { return 0; }   # PCMPE + a method/operator struct result (6.6.6)
         }
         # Type check at assignment
         var aps = GPSC(S);

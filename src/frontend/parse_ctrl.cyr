@@ -277,6 +277,20 @@ fn _cont_close(S, base): i64 {
 # of it. The copy that stood here had no float routing (`x += 0.25` on an f64 added bit
 # patterns: 2 iterations, not 4) and knew five of the ten ops. See _asg_compound_tok.
 # 6.6.12: out of PARSE_FOR, next to the subscript step (cybs per-fn reference cap).
+# ⛔ 6.6.20 — A PLAIN `=` STEP RUNS THE STATEMENT ARM'S WHOLE-AGGREGATE DISPATCH, in the
+# statement's order (_PARSE_STMT_IMPL): 6.6.12 shared the STORE and left this dispatch out, so a
+# struct or vector right-hand side stored ONE word — `for (..; ..; a = b)` on a 24-byte struct
+# left a.y / a.z stale, and a call, method, field, vector call or copy did the same, silently,
+# while a different-struct source and a `: stack` pair compiled clean. Each helper takes the
+# terminator: the step ends at `)` (11), not `;`. 1 = the copy is done. CHANGELOG [6.6.20]
+fn _for_step_aggregate(S, noff): i64 {
+    if (_try_aggregate_copy_assign(S, noff, 11) == 1) { return 1; }
+    if (_try_struct_call_assign(S, noff, 11) == 1) { return 1; }
+    if (_try_vector_call_assign(S, noff, 11) == 1) { return 1; }
+    _refuse_lossy_pair(S);
+    var r = _pcmpe_struct_assign(S, noff, 11);   # PCMPE + `_asg_ufv`, as in the statement
+    return r;
+}
 fn _for_step_assign(S, noff): i64 {
     var step_cop = _asg_compound_tok(S);
     if (step_cop == 0) {
@@ -288,8 +302,9 @@ fn _for_step_assign(S, noff): i64 {
         _asg_compound_op(S, step_cop, step_lt);
         _asg_ufv = 0 - 1;   # a compound step keeps the kind-3 flag (see _asg_rejudge)
     } else {
-        PCMPE(S);
-        _asg_ufv = _UFV_IS_FLOAT(S);   # 6.6.11: a plain step re-judges, as the statement does
+        # 6.6.11: a plain step re-judges (`_asg_ufv`), as the statement does — set by
+        # `_pcmpe_struct_assign`'s PCMPE.
+        if (_for_step_aggregate(S, noff) == 1) { return 0; }
     }
     var idx = 0 - 1;
     if (GINFN(S) == 1) { idx = FINDLOCAL(S, noff); }
