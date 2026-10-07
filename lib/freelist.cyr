@@ -517,6 +517,10 @@ fn fl_free(ptr): i64 {
         # page-aligned; one that is not was never a large block (a header an underwrite
         # smashed) and munmap'ing `cls` bytes from it would unmap a neighbour.
         if ((blk & 4095) != 0) {
+            # A poisoned block whose last leading-redzone byte was ZEROED (`p[-1] = 0`, the
+            # off-by-one NUL) decodes as plain and lands here; if `ptr - 72` is a listed block it
+            # is that block — [leading] damage, freed. CHANGELOG [6.6.20]
+            if (_poison_fl_listed(ptr - _FL_PHDR - _POISON_RZ) == 1) { return _fl_free_poisoned(ptr); }
             _fl_poison_viol = _fl_poison_viol + 1;
             _poison_report(3, 4, ptr, 0, 8);
             return 0;

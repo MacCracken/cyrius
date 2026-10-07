@@ -83,6 +83,56 @@ fn main(): i64 {
     assert_eq(got, 0, "and nothing reports the same write a second time");
     fl_free(r);
 
+    # A ZERO written at p[-1] (the off-by-one NUL) makes the byte fl_free decodes the layout
+    # from read as plain: the "cls" it then sees is seven fill bytes and a 0, which took the
+    # smashed-header report — the same wrong `[header]`, then the `[leading]` re-report, and
+    # the block leaked. fl_free now asks whether `p - 72` is a listed poisoned block first.
+    test_group("a ZERO written at p[-1] is the same [leading] damage, freed (6.6.20)");
+    fl_poison_reset();
+    var z = fl_alloc(100);
+    store8(z - 1, 0);
+    assert_eq(_cap_begin(), 0, "pipe for the zero-underwrite capture");
+    fl_free(z);
+    got = _cap_end(out, 1024);
+    assert_eq(_has(out, "(100 bytes): 1 byte(s) changed [leading]"), 1,
+      "reported with its real size, count and side");
+    assert_eq(_has(out, "[header]"), 0, "not as a smashed header");
+    assert_eq(fl_poison_violations(), 1, "one violation");
+    assert_eq(_cap_begin(), 0, "pipe for the zero-underwrite realloc + sweep capture");
+    var zr = fl_alloc(100);
+    sw = poison_sweep();
+    got = _cap_end(out, 1024);
+    assert_eq(zr, z, "the block was freed: the next same-class fl_alloc recycles it");
+    assert_eq(sw, 0, "the next sweep is clean");
+    assert_eq(got, 0, "and nothing reports the same write a second time");
+    fl_free(zr);
+    # The large (munmap) path: a poisoned block over 4 KiB decodes the same way.
+    fl_poison_reset();
+    var zl = fl_alloc(6000);
+    store8(zl - 1, 0);
+    assert_eq(_cap_begin(), 0, "pipe for the large zero-underwrite capture");
+    fl_free(zl);
+    sw = poison_sweep();
+    got = _cap_end(out, 1024);
+    assert_eq(_has(out, "(6000 bytes): 1 byte(s) changed [leading]"), 1,
+      "a large block: reported with its real size, count and side");
+    assert_eq(_has(out, "[header]"), 0, "a large block: not as a smashed header");
+    assert_eq(sw, 0, "a large block: unlisted at free, so the sweep does not see it again");
+    # Control: a PLAIN block's genuinely smashed header, with poisoned blocks listed, is still
+    # refused as `[header]` (the walk finds no listed block at its `p - 72`).
+    var keep = fl_alloc(100);
+    fl_poison_disable();
+    var pl = fl_alloc(100);
+    store64(pl - 8, 0x0001020304050607);
+    fl_poison_reset();
+    assert_eq(_cap_begin(), 0, "pipe for the plain smashed-header capture");
+    fl_free(pl);
+    got = _cap_end(out, 1024);
+    assert_eq(_has(out, "[header]"), 1, "control: a plain block's smashed header is still `[header]`");
+    assert_eq(fl_poison_violations(), 1, "control: one violation");
+    fl_poison_enable();
+    fl_free(keep);
+
     test_group("controls: trailing damage, and a double free is still refused");
     var t = fl_alloc(100);
     store8(t + 100, 9);

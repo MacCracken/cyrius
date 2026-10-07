@@ -668,6 +668,30 @@ fn _poison_fl_owns(blk): i64 {
     return 1;
 }
 
+# 1 when `blk` is on the fl live list, found by WALKING the list: `blk` itself is never read,
+# so this is safe for an address that may not be mapped (fl_free asks it about `ptr - 72` of a
+# block that decoded as plain, which can sit at the start of an arena mapping). Used only on
+# fl_free's smashed-header path, so the O(n) walk costs nothing on a clean free. Bounded by
+# _poison_fl_n, like the sweep it mirrors. CHANGELOG [6.6.20]
+fn _poison_fl_listed(blk): i64 {
+    if (_poison_fl_n == 0) { return 0; }
+    _poison_lock_acquire();
+    var hit = 0;
+    var left = _poison_fl_n;
+    var b = _poison_fl_head;
+    while (b != 0) {
+        if (b == blk) {
+            hit = 1;
+            b = 0;
+        } else {
+            left = left - 1;
+            if (left <= 0) { b = 0; } else { b = load64(b + 24); }
+        }
+    }
+    _poison_lock_release();
+    return hit;
+}
+
 # Check one listed fl block's two redzones against the fill it recorded. Returns the changed
 # byte count, or -1 for an undecodable header (a walk stops there). Reported once.
 fn _poison_fl_check(blk): i64 {
