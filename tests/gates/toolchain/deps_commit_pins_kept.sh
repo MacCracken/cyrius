@@ -30,9 +30,10 @@
 # an order set by which deps the run re-verified, so alternating gatings flipped the block — the
 # 6.6.3 churn class for `git diff --exit-code -- cyrius.lock` (K13).
 #
-# THE CRLF HALF (CBTB-05). `_dep_lock_load` and `_lock_buf_hash_lookup` were made CRLF-tolerant
-# at 6.6.4/6.6.9; their two siblings were not. `_lock_commit_lookup` kept the `\r` on the TAG
-# field, matched no line and returned 0 — "no pin" — so on a CRLF checkout (a plain
+# THE CRLF HALF (CBTB-05). `_dep_lock_load` and `_lock_buf_hash_lookup` have been CRLF-tolerant
+# since 6.6.4 (6.6.9 only factored the hash lookup into a buffer form for `--verify`); 6.6.4's
+# review fixed those readers and missed their two siblings. `_lock_commit_lookup` kept the `\r`
+# on the TAG field, matched no line and returned 0 — "no pin" — so on a CRLF checkout (a plain
 # `git -c core.autocrlf=true clone` makes one) a repointed tag was vendored and re-pinned at
 # exit 0, exactly where CVE-21 matters (fresh clone, fresh cache). `deps --verify` read each path
 # up to the `\n` and failed every file "cannot hash" (fail-closed, but false).
