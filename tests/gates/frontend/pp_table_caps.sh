@@ -31,10 +31,12 @@
 #    unconditional `#define LINUX` cost four, `include "lib/sandhi.cyr"` alone used 12 and a
 #    consumer could add only 4 #defines before "too many preprocessor #define/flag entries" —
 #    and a redefinition's value was never read (PP_GETVAL returns the first match). Fix:
-#    PP_FLAG_SLOT; a repeat reuses its slot and the LATEST value wins from that point on. Rows:
-#    20 identical #defines compile; sandhi plus 6 user #defines compile; a redefinition is seen
-#    by the conditionals after it and not by those before it, in the main source and in an
-#    included file.
+#    PP_FLAG_SLOT; a repeat reuses its slot and the LATEST value wins for the conditionals
+#    after it in the same file (not across an include — a known gap: a file's conditionals are
+#    evaluated before an included file's #defines are registered). Rows: 20 identical #defines
+#    compile; sandhi plus 6 user #defines compile; a redefinition is seen by the conditionals
+#    after it in its file and not by those before it, in the main source and in an included
+#    file.
 #
 # D. PP_EXPAND copies a macro's parameter names and an invocation's arguments into fn-local
 #    `var pnames[512]` / `var args[512]` — 512 BYTES each — and neither copy was bounded (CVE-40
@@ -172,10 +174,10 @@ accept "lib/sandhi.cyr plus 6 user #defines" sandhi6.cyr 6
 # iff the stale value were still read after it. Want 21.
 REDEF='#define X 1\n#if X == 1\nvar a = 1;\n#endif\n#define X 2\n#if X == 2\nvar b = 20;\n#endif\nvar c = 0;\n#if X == 1\nc = 100;\n#endif\n'
 printf "$REDEF"'syscall(60, a + b + c);\n' > "$WORK/redefv.cyr"
-accept "redefinition, main source: the latest value wins from there on" redefv.cyr 21
+accept "redefinition, main source: the latest value wins for the rest of the file" redefv.cyr 21
 printf "$REDEF" > "$WORK/redefinc.cyr"
 printf 'include "redefinc.cyr"\nsyscall(60, a + b + c);\n' > "$WORK/redefim.cyr"
-accept "redefinition, included file: the latest value wins from there on" redefim.cyr 21
+accept "redefinition, included file: the latest value wins for the rest of the file" redefim.cyr 21
 
 # ── D. PP_EXPAND's parameter / argument buffers ─────────────────────────────────────────
 ARG_MSG="error: function-like macro 'PICK': an invocation's arguments exceed 511 bytes"

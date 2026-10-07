@@ -3684,8 +3684,9 @@ fn PP_PREDEFINE(S, name): i64 {
 # own: lib/sigil.cyr's four unconditional `#define LINUX` cost four of the 16 (an
 # `include "lib/sandhi.cyr"` alone used 12, leaving a consumer 4), and a redefinition's
 # value was never read, because PP_GETVAL / PP_DEFINED return the FIRST match. A repeat now
-# reuses its slot and overwrites the value: the latest definition wins, from that point on.
-# CHANGELOG [6.6.20]
+# reuses its slot and overwrites the value: the latest definition wins for the conditionals
+# after it in the same file. (Not across an include: a file's conditionals are evaluated
+# before an included file's #defines are registered — a known gap.) CHANGELOG [6.6.20]
 fn PP_FLAG_SLOT(S, h): i64 {
     var di = 0;
     while (di < _pp_flag_count) {
@@ -3737,8 +3738,8 @@ fn PP_DEFINE(S, src_base, pos): i64 {
 # `#define NAME(x) ...` in an included file went to PP_DEFINE and became a FLAG named NAME:
 # never a macro, a call to it compiled against a same-name fn if there was one, and it used
 # up a flag slot. Refused by name; an object-like define goes to PP_DEFINE as before. The
-# name scan mirrors PP_PASS's: a `(` before the first space / tab / newline makes it a
-# function-like macro. CHANGELOG [6.6.20]
+# name ends at the first space, TAB or newline; a `(` before that makes it a function-like
+# macro. CHANGELOG [6.6.20]
 fn PP_DEFINE_INCLUDED(S, src_base, dip): i64 {
     var dp = dip + 8;
     var dc = load8(src_base + dp);
