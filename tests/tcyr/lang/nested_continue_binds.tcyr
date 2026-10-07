@@ -27,8 +27,11 @@
 # next-free index (it was also the while-mode flag), so the inner `for` started over at entry 0
 # and stole the outer one's pending jump — 30 where 26 is right on x86, a `b .` hang on aarch64
 # and cx, a fault through a closure or a generic instance. Sections 8-12 TAKE the outer
-# `continue`, which is the hang off x86, so they live here (the check suite runs this file on
-# x86); tests/tcyr/crossos/continue_binds_across_while.tcyr carries the timeout-safe shapes.
+# `continue`, which is the hang off x86, so they live here and not in crossos/: check.sh runs
+# this file on x86, and CI's native-arm64 job runs the whole tests/tcyr corpus with no per-test
+# timeout, so there a regression of these shapes (or of sections 1-7) shows as a HANG until the
+# job's timeout, not a fast failure. tests/tcyr/crossos/continue_binds_across_while.tcyr carries
+# the timeout-safe shapes the release gate runs on the real hosts.
 
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
