@@ -6979,16 +6979,20 @@ var _dup_prev_fid = 0;
 # an XMM argument it takes from a GPR, a C string where it reads a `Str`. Measured before this
 # check: a scalar first `mk()` and a struct-returning last one SIGSEGV'd (a call between them used
 # to bind the first and run). Same reasoning as the v6.5.37 arity error, for the rest of the call
-# signature: the return type (unannotated is i64), a multi-value count, variadic, and the
-# per-parameter vector / struct / Str / cstring / Result / Option / Tagged masks. Saved from the
-# earlier definition before this one overwrites them; compared once this one's signature is read.
-# An arity difference is left to the arity error.
+# signature: the return type (unannotated is i64), a multi-value count, variadic, the
+# per-parameter vector / struct / Str / cstring / Result / Option / Tagged masks, the same kinds
+# for the ordinals past those masks' widths (the overflow row, `_pm_row_get`), the struct type
+# of every address-passed struct parameter (GFPSID — `f(p: A)` then `f(p: B)` made B's body copy
+# B's size out of the caller's A) and every vector parameter's type (`_dsg_vec_note`, for Win64).
+# Saved from the earlier definition before this one overwrites them; compared once this one's
+# signature is read. An arity difference is left to the arity error.
 var _dsg_on = 0;
 var _dsg_pc = 0;
 var _dsg_rs = 0;
 var _dsg_rn = 0;
 var _dsg_va = 0;
 var _dsg_mk[8];   # the earlier definition's seven parameter masks (a bare top-level array is N*8 B)
+var _dsg_ord = 0;   # and its per-ordinal facts: [count][overflow kind, struct id, vector type]
 fn _dsg_rs_norm(v): i64 { if (v == 0) { return 0 - 8; } return v; }
 # Parameter mask `k` of fn `fi`: the ones that change what a call passes or how it is checked.
 fn _dsg_mask(fi, k): i64 {
@@ -7001,6 +7005,59 @@ fn _dsg_mask(fi, k): i64 {
     if (k == 6) { t = _fnt_tagmask; }
     return L64(t + fi * 8);
 }
+# The struct id of parameter `i` when it is an address-passed struct, else 0.
+fn _dsg_psid(S, fi, i): i64 {
+    if (_pm_struct(fi, i) == 0) { return 0; }
+    return GFPSID(S, fi, i);
+}
+# A REDEFINED fn's VECTOR parameter types, per ordinal (the descriptor `pt_simd_sid`): Win64
+# passes every vector by address under the struct mask and leaves the SIMD mask 0, so the masks
+# alone could not tell `f(v: f64v2)` from `f(v: f64v4)` there, and the 32-byte body copied 32
+# bytes out of the caller's 16 (SysV refuses the pair through the SIMD mask). Lazy, at the max fn
+# cap like _fnt_tparams, and written only for flag 2048 — a program without a redefinition never
+# allocates it. Rows are [capacity][one word per ordinal] (`_psid_grow`).
+var _fnt_dsgv = 0;
+fn _dsg_vec_note(S, fi, pc, vsid): i64 {
+    if ((GFLG(S, fi) & 2048) == 0) { return 0; }
+    if (_fnt_dsgv == 0) { _fnt_dsgv = alloc(131072 * 8); }
+    var row = L64(_fnt_dsgv + fi * 8);
+    var cap = 0;
+    if (row != 0) { cap = load64(row); }
+    if (pc >= cap) {
+        row = _psid_grow(row, cap, pc);
+        S64(_fnt_dsgv + fi * 8, row);
+    }
+    S64(row + 8 + pc * 8, vsid);
+    return 0;
+}
+fn _dsg_vec_get(fi, pc): i64 {
+    if (_fnt_dsgv == 0) { return 0; }
+    var row = L64(_fnt_dsgv + fi * 8);
+    if (row == 0) { return 0; }
+    if (pc >= load64(row)) { return 0; }
+    return L64(row + 8 + pc * 8);
+}
+# Zero one [capacity][word per ordinal] row of a per-fn table (0 = none).
+fn _dsg_row_zero(t, fi): i64 {
+    if (t == 0) { return 0; }
+    var row = L64(t + fi * 8);
+    if (row == 0) { return 0; }
+    var n = load64(row);
+    var i = 0;
+    while (i < n) { store64(row + 8 + i * 8, 0); i = i + 1; }
+    return 0;
+}
+# A REDEFINED fn's struct-id and vector-type rows start empty at each definition's parameter
+# list. Neither is rewritten wholesale like the masks — pass 1 leaves the LAST definition's
+# struct ids in its row, and a parameter kind that records no id (a Win64 vector) would leave
+# that stale id under the earlier definition — so without this the comparison could read the
+# same value on both sides. Only for flag 2048: every other fn's rows are untouched.
+fn _dsg_def_reset(S, fi): i64 {
+    if ((GFLG(S, fi) & 2048) == 0) { return 0; }
+    _dsg_row_zero(_fnt_psid, fi);
+    _dsg_row_zero(_fnt_dsgv, fi);
+    return 0;
+}
 fn _dsg_save(S, fi): i64 {
     _dsg_on = 1;
     _dsg_pc = L64(_fnt_params + fi * 8);
@@ -7009,6 +7066,29 @@ fn _dsg_save(S, fi): i64 {
     _dsg_va = GFVA(S, fi);
     var k = 0;
     while (k < 7) { S64(&_dsg_mk + k * 8, _dsg_mask(fi, k)); k = k + 1; }
+    var n = _dsg_pc;
+    if (n < 0) { n = 0; }
+    _dsg_ord = alloc(8 + n * 24);
+    store64(_dsg_ord, n);
+    var i = 0;
+    while (i < n) {
+        store64(_dsg_ord + 8 + i * 24, _pm_row_get(fi, i));
+        store64(_dsg_ord + 16 + i * 24, _dsg_psid(S, fi, i));
+        store64(_dsg_ord + 24 + i * 24, _dsg_vec_get(fi, i));
+        i = i + 1;
+    }
+    return 0;
+}
+# 1 when an ordinal's overflow kind, struct id or vector type differs from the saved definition's.
+fn _dsg_ord_differs(S, fi): i64 {
+    var n = load64(_dsg_ord);
+    var i = 0;
+    while (i < n) {
+        if (_pm_row_get(fi, i) != load64(_dsg_ord + 8 + i * 24)) { return 1; }
+        if (_dsg_psid(S, fi, i) != load64(_dsg_ord + 16 + i * 24)) { return 1; }
+        if (_dsg_vec_get(fi, i) != load64(_dsg_ord + 24 + i * 24)) { return 1; }
+        i = i + 1;
+    }
     return 0;
 }
 fn _dsg_check(S, fi, noff, ti): i64 {
@@ -7024,7 +7104,12 @@ fn _dsg_check(S, fi, noff, ti): i64 {
         if (what == 0) { if (_dsg_mask(fi, k) != L64(&_dsg_mk + k * 8)) { what = 2; } }
         k = k + 1;
     }
+    if (what == 0) { if (_dsg_ord_differs(S, fi) == 1) { what = 2; } }
     if (what == 0) { return 0; }
+    return _dsg_report(S, noff, ti, what, _dup_prev_fid);
+}
+# The error both checks print. `fid` is the earlier definition's origin (GFFI form).
+fn _dsg_report(S, noff, ti, what, fid): i64 {
     syscall(SYS_WRITE, 2, "error:", 6);
     _err_head_at(S, ti);
     syscall(SYS_WRITE, 2, ": duplicate fn '", 16);
@@ -7034,7 +7119,7 @@ fn _dsg_check(S, fi, noff, ti): i64 {
     if (what == 2) { syscall(SYS_WRITE, 2, "parameter types", 15); }
     if (what == 3) { syscall(SYS_WRITE, 2, "variadic parameter list", 23); }
     syscall(SYS_WRITE, 2, " with the one in ", 17);
-    _fm_print_fid(S, _dup_prev_fid);
+    _fm_print_fid(S, fid);
     syscall(SYS_WRITE, 2, " (last definition wins, so calls compiled against that one would reach this body through the wrong calling convention)\n", 119);
     _had_error = 1;
     return 0;
@@ -7810,6 +7895,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     var simd_pc = 0;
     var int_pc = 0;
     _stkp_reset();   # 6.6.6: this fn's deferred stack-param homes (see _stkp_defer)
+    _dsg_def_reset(S, fi);   # 6.6.20: a redefinition's struct ids / vector types are its own
     var option_mask = 0;
     var tagged_mask = 0;
     var struct_mask = _selfbv_bit(S, GTI(S) - 1);   # v6.3.36: bit N = plain struct >8 B param; 6.6.11: bit 62
@@ -7946,6 +8032,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
             # (pc++ + comma-consume) at the end.
             if (pt_simd_class > 0) {
                 if (_is_async == 1) { _refuse_async_simd_param(S, pnoff); }   # 6.6.6
+                _dsg_vec_note(S, fi, pc, pt_simd_sid);   # 6.6.20: a redefinition's vector types
                 var simd_slots = 2;     # f64v2 / f32v4 (128-bit)
                 var simd_sid = pt_simd_sid;   # 2093 f64v2 / 2125 f64v4 / 2121 f32v4
                 if (pt_simd_class == 2) {

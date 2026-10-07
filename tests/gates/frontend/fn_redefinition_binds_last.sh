@@ -210,9 +210,9 @@ _want x86_naked_ir3 "$T/ir3cc" "" "$T/naked_ir3.cyr" 1 "#naked redefinition unde
 # Every call now reaches the last body, so a call compiled against an earlier definition arrives
 # with that one's calling convention. The arity half has been an error since 6.5.37; the rest of
 # the signature is refused the same way (src/frontend/parse_fn.cyr `_dsg_check`).
-_refused() {  # <label> <want-text> <source-text>
+_refused() {  # <label> <want-text> <source-text> [compiler, default the x86 one]
     printf '%s\n' "$3" > "$T/$1.cyr"
-    _rc=0; "$T/x86" < "$T/$1.cyr" > "$T/$1.bin" 2> "$T/$1.err" || _rc=$?
+    _rc=0; ${4:-"$T/x86"} < "$T/$1.cyr" > "$T/$1.bin" 2> "$T/$1.err" || _rc=$?
     if [ "$_rc" -eq 0 ]; then
         _bad "$1: compiled (exit 0) — a call compiled against the earlier definition reaches a body called differently"
     elif ! grep -q "disagrees about its $2" "$T/$1.err"; then
@@ -239,9 +239,61 @@ _refused sig_variadic "variadic parameter list" 'fn f(a, ...): i64 { return 1; }
 fn h(): i64 { var x = f(1, 2, 3); return x; }
 fn f(a): i64 { return 2; }
 var r = h(); syscall(60, r);'
+# A struct parameter of ANOTHER struct type: the masks agree (both address-passed), the struct id
+# does not — B's body copied B's 64 bytes out of the caller's 24-byte A (it ran: exit 1).
+_refused sig_struct_type "parameter types" 'struct A { a; b; c; }
+struct B { a; b; c; d; e; f; g; h; }
+fn f(p: A): i64 { return p.a + p.c; }
+fn h(): i64 { var x = A { 1, 2, 3 }; return f(x) + 0; }
+fn f(p: B): i64 { return p.a + p.h; }
+syscall(60, h());'
+# A parameter past the per-fn masks' width (ordinal 63) lives in the overflow row only: a `Str`
+# there against a plain one differs nowhere else.
+_p62=$(i=0; while [ $i -lt 63 ]; do printf 'p%d, ' $i; i=$((i + 1)); done)
+_a62=$(i=0; while [ $i -lt 63 ]; do printf '%d, ' $((i % 5)); i=$((i + 1)); done)
+_refused sig_overflow_row "parameter types" "include \"lib/string.cyr\"
+include \"lib/str.cyr\"
+fn w(${_p62}p63: Str): i64 { return 2; }
+fn h(): i64 { return w(${_a62}\"abc\") + 0; }
+fn w(${_p62}p63): i64 { return 1; }
+syscall(60, h());"
+# Win64 passes every vector by address under the struct mask, so only the recorded vector type
+# tells a 16-byte from a 32-byte one there (SysV refuses the pair through the SIMD mask). The PE
+# compile is the check: no wine needed.
+printf '#!/bin/sh\nCYRIUS_TARGET_WIN=1 exec "%s"\n' "$T/x86" > "$T/pecc"; chmod +x "$T/pecc"
+_vec_pair='include "lib/simd.cyr"
+fn f(v: f64v2): i64 { return 2; }
+fn h(): i64 { var a: f64v2 = f64v2_make(1, 2); return f(a) + 0; }
+fn f(v: f64v4): i64 { return 1; }
+syscall(60, h());'
+_refused sig_vector_pe "parameter types" "$_vec_pair" "$T/pecc"
+# ...and a vector against a struct of the same 16 bytes at the same ordinal: both set the PE
+# struct bit, and pass 1 leaves the struct's id in the row under the vector's definition — the
+# per-definition reset of both rows (`_dsg_def_reset`) is what keeps the two sides apart.
+_refused sig_vector_struct_pe "parameter types" 'include "lib/simd.cyr"
+struct Q { a; b; }
+fn f(v: f64v2): i64 { return 2; }
+fn h(): i64 { var a: f64v2 = f64v2_make(1, 2); return f(a) + 0; }
+fn f(p: Q): i64 { return p.a; }
+syscall(60, h());' "$T/pecc"
 # ANTI-VACUOUS: the same convention spelled differently still only warns, and binds the last.
 printf 'fn f(): i64 { return 1; }\nfn h(): i64 { var x = f(); return x; }\nfn f() { return 2; }\nvar r = h(); syscall(60, r);\n' > "$T/sig_same.cyr"
 _want sig_same "$T/x86" "" "$T/sig_same.cyr" 2 "an unannotated redefinition of a ': i64' fn (same convention)"
+# ...and so do the same struct type, the same overflow-row kind and the same vector type.
+printf 'struct A { a; b; c; }\nfn f(p: A): i64 { return p.a + 10; }\nfn h(): i64 { var x = A { 1, 2, 3 }; return f(x) + 0; }\nfn f(p: A): i64 { return p.a + p.c; }\nsyscall(60, h());\n' > "$T/sig_same_struct.cyr"
+_want sig_same_struct "$T/x86" "" "$T/sig_same_struct.cyr" 4 "the same struct parameter type (binds the last; was 11)"
+printf '%s\n' "include \"lib/string.cyr\"
+include \"lib/str.cyr\"
+fn w(${_p62}p63: Str): i64 { return 2; }
+fn h(): i64 { return w(${_a62}\"abc\") + 0; }
+fn w(${_p62}p63: Str): i64 { return 1; }
+syscall(60, h());" > "$T/sig_same_row.cyr"
+_want sig_same_row "$T/x86" "" "$T/sig_same_row.cyr" 1 "the same overflow-row kind at ordinal 63 (binds the last; was 2)"
+printf '%s\n' "$_vec_pair" | sed 's/f64v4): i64 { return 1/f64v2): i64 { return 1/' > "$T/sig_same_vec.cyr"
+_want sig_same_vec "$T/x86" "" "$T/sig_same_vec.cyr" 1 "the same vector parameter type (binds the last; was 2)"
+_rc=0; "$T/pecc" < "$T/sig_same_vec.cyr" > "$T/sig_same_vec.exe" 2> "$T/sig_same_vec.perr" || _rc=$?
+if [ "$_rc" -ne 0 ]; then _bad "sig_same_vec_pe: the same vector type refused on PE (rc $_rc): $(grep -m1 '^error' "$T/sig_same_vec.perr" | cut -c1-140)"
+else pass=$((pass + 1)); fi
 
 # ── row 2: aarch64 under qemu ───────────────────────────────────────────────────────────────
 if command -v qemu-aarch64 > /dev/null 2>&1; then
