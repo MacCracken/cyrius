@@ -2365,13 +2365,17 @@ fn _CF_TERM(S): i64 {
             _cf_ti = _cf_ti + 1;
             var d = _CF_FACTOR(S);
             if (d == 0) { _cf_ok = 0; return 0; }
-            v = v / d;
+            # A -1 divisor folds as the wrapping negation: idiv traps (SIGFPE) on INT_MIN / -1 and
+            # took the compiler down; for every other value it is the same quotient. CHANGELOG [6.6.20]
+            if (d == 0 - 1) { v = 0 - v; }
+            else { v = v / d; }
         }
         elif (t == 34) {
             _cf_ti = _cf_ti + 1;
             var m = _CF_FACTOR(S);
             if (m == 0) { _cf_ok = 0; return 0; }
-            v = v % m;
+            if (m == 0 - 1) { v = 0; }
+            else { v = v % m; }
         }
         elif (t == 38) { _cf_ti = _cf_ti + 1; v = v << _CF_FACTOR(S); }
         elif (t == 39) { _cf_ti = _cf_ti + 1; v = v >> _CF_FACTOR(S); }
