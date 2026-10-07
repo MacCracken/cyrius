@@ -1764,6 +1764,7 @@ fn EMACHO_EXIT_ARM(S): i64 { return 0; }
 fn EMACHO_READ_ARM(S): i64 { return 0; }
 fn EMACHO_WRITE_ARM(S): i64 { return 0; }
 fn EMMAP_PE(S): i64 { return 0; }
+fn EMUNMAP_PE(S): i64 { return 0; }   # 6.6.20 VirtualFree munmap reroute (x86-only real impl)
 fn ENANOSLEEP_PE(S): i64 { return 0; }
 fn EOPEN_PE(S): i64 { return 0; }
 fn EPE_SYSCALL_DYNAMIC(S, argc): i64 { return 0; }

@@ -89,6 +89,7 @@ fn EOPEN_PE(S)   { return 0; }
 fn ECLOSE_PE(S)  { return 0; }
 fn ELSEEK_PE(S)  { return 0; }
 fn EMMAP_PE(S)   { return 0; }
+fn EMUNMAP_PE(S): i64 { return 0; }   # 6.6.20 VirtualFree munmap reroute (x86-only real impl)
 fn EWAIT_PE(S)       { return 0; }   # v6.0.51 Win32 process-creation reroutes
 fn EGETEXIT_PE(S)    { return 0; }   # (x86-only real impl; aarch64 stubs for
 fn ESETHANDLE_PE(S)  { return 0; }   #  parse_expr.cyr symbol resolution — these

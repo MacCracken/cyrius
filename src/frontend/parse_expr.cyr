@@ -862,8 +862,8 @@ fn _pe_warn_unrouted(S, sc_num, argc): i64 {
     if (_pe_unrouted_noted == 1) { return 0; }
     _pe_unrouted_noted = 1;
     syscall(SYS_WRITE, 2,
-      "  note: CYRIUS_TARGET_WIN=1 routes, each at its own arity, n=0,1,2,3,8,9,35,60,74,75,83,87,228 + 0xF001-0xF005 (process creation) + 0xF006 (cmdline) + 0xF007-0xF00A (threading) + 0xF00B-0xF00E (thread-local) + 0xF00F (sleep) + 0xF010-0xF011 (CommandLineToArgvW/LocalFree) + 0xF012 (CreateDXGIFactory1) + 0xF013-0xF015 (GetModuleHandleA/GetProcAddress/GetEnvironmentVariableA) + 0xF016-0xF019 (FindFirstFileW/FindNextFileW/FindClose/GetFileAttributesW) + 0xF01A (ProcessPrng CSPRNG) + 0xF01B (GetSystemTimeAsFileTime) + 0xF01C (GetCurrentProcessId) + 0xF01D (TerminateProcess) + 0xF01E (WSAStartup) + 0xF01F-0xF021 (IOCP: CreateIoCompletionPort/GetQueuedCompletionStatus/PostQueuedCompletionStatus) + 0xF022-0xF02C (ws2_32: WSASocketW/closesocket/WSAGetLastError/bind/getsockopt/WSAIoctl/connect/WSARecv/WSASend/getaddrinfo/freeaddrinfo) + 0xF02D-0xF032 (kernel32/ws2_32: RegisterWaitForSingleObject/CreateWaitableTimerW/SetWaitableTimer/UnregisterWaitEx/CancelIoEx/setsockopt) + 0xF033 (ws2_32: listen) + 0xF034 (kernel32: MoveFileExW) + 0xF035 (kernel32: DeleteFileW) + 0xF036-0xF037 (ws2_32: getpeername/getsockname) + 0xF038-0xF039 (kernel32: QueryPerformanceCounter/QueryPerformanceFrequency) + 0xF03A-0xF03B (kernel32: GetModuleFileNameW/RemoveDirectoryW) + 0xF03D-0xF03F (kernel32: GetFileInformationByHandleEx/CreateSymbolicLinkW/SetEndOfFile) + 0xF040-0xF044 (kernel32: CreateJobObjectW/AssignProcessToJobObject/TerminateJobObject/ResumeThread/SetInformationJobObject) + 0xF045-0xF04A (ws2_32: accept/shutdown/send/recv/ioctlsocket/WSAPoll) + 0xF04B (kernel32: GetLastError).\n",
-      1584);
+      "  note: CYRIUS_TARGET_WIN=1 routes, each at its own arity, n=0,1,2,3,8,9,11,35,60,74,75,83,87,228 + 0xF001-0xF005 (process creation) + 0xF006 (cmdline) + 0xF007-0xF00A (threading) + 0xF00B-0xF00E (thread-local) + 0xF00F (sleep) + 0xF010-0xF011 (CommandLineToArgvW/LocalFree) + 0xF012 (CreateDXGIFactory1) + 0xF013-0xF015 (GetModuleHandleA/GetProcAddress/GetEnvironmentVariableA) + 0xF016-0xF019 (FindFirstFileW/FindNextFileW/FindClose/GetFileAttributesW) + 0xF01A (ProcessPrng CSPRNG) + 0xF01B (GetSystemTimeAsFileTime) + 0xF01C (GetCurrentProcessId) + 0xF01D (TerminateProcess) + 0xF01E (WSAStartup) + 0xF01F-0xF021 (IOCP: CreateIoCompletionPort/GetQueuedCompletionStatus/PostQueuedCompletionStatus) + 0xF022-0xF02C (ws2_32: WSASocketW/closesocket/WSAGetLastError/bind/getsockopt/WSAIoctl/connect/WSARecv/WSASend/getaddrinfo/freeaddrinfo) + 0xF02D-0xF032 (kernel32/ws2_32: RegisterWaitForSingleObject/CreateWaitableTimerW/SetWaitableTimer/UnregisterWaitEx/CancelIoEx/setsockopt) + 0xF033 (ws2_32: listen) + 0xF034 (kernel32: MoveFileExW) + 0xF035 (kernel32: DeleteFileW) + 0xF036-0xF037 (ws2_32: getpeername/getsockname) + 0xF038-0xF039 (kernel32: QueryPerformanceCounter/QueryPerformanceFrequency) + 0xF03A-0xF03B (kernel32: GetModuleFileNameW/RemoveDirectoryW) + 0xF03D-0xF03F (kernel32: GetFileInformationByHandleEx/CreateSymbolicLinkW/SetEndOfFile) + 0xF040-0xF044 (kernel32: CreateJobObjectW/AssignProcessToJobObject/TerminateJobObject/ResumeThread/SetInformationJobObject) + 0xF045-0xF04A (ws2_32: accept/shutdown/send/recv/ioctlsocket/WSAPoll) + 0xF04B (kernel32: GetLastError).\n",
+      1587);
     return 0;
 }
 
@@ -953,6 +953,14 @@ fn _PE_ROUTE_FLUSH(S, sc_num, argc): i64 {
     if (argc == 2) {
         if (sc_num == 74) { EFLUSHFB_PE(S); return 1; }
         if (sc_num == 75) { EFLUSHFB_PE(S); return 1; }
+    }
+    # 6.6.20: munmap (11), argc == 3 → kernel32!VirtualFree(addr, 0, MEM_RELEASE) (EMUNMAP_PE).
+    # Another LINUX number routed by its own value, so it rides this helper rather than adding an
+    # inline arm (and its call reference) to `_PARSE_FACTOR_IMPL`. Before it every PE munmap
+    # returned -38 and released nothing — fl_free leaked each large block. A var-held 11 reaches
+    # `_pe_dyn_arity3`, which routes it the same way. CHANGELOG [6.6.20]
+    if (argc == 3) {
+        if (sc_num == 11) { EMUNMAP_PE(S); return 1; }
     }
     # 6.6.9: the file-handle table is reached THROUGH this helper, so the inline chain in
     # `_PARSE_FACTOR_IMPL` gains no reference (see _PE_ROUTE_PERFCOUNTER on the cybs limit).
@@ -2359,6 +2367,8 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         #   syscall(3, fd)                 → CloseHandle             (v5.5.1)
         #   syscall(8, fd, off, whence)    → SetFilePointerEx        (v5.5.1)
         #   syscall(9, addr, len, ...)     → VirtualAlloc            (v5.5.1)
+        #   syscall(11, addr, len)         → VirtualFree(MEM_RELEASE) (6.6.20,
+        #                                    via _PE_ROUTE_FLUSH — no inline arm)
         #   syscall(60, code)              → ExitProcess             (v5.4.4)
         # Other syscall numbers still fall through with a warning and
         # produce a non-functional binary; wrap them in syscalls_windows.cyr
@@ -3071,8 +3081,8 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
                 _cfo = 0;
                 return 0;
             }
-            # v6.6.7: fsync (74) / fdatasync (75) → FlushFileBuffers. Same helper-fn
-            # treatment, same cybs reason.
+            # v6.6.7: fsync (74) / fdatasync (75) → FlushFileBuffers; 6.6.20: munmap (11) →
+            # VirtualFree. Same helper-fn treatment, same cybs reason.
             if (_PE_ROUTE_FLUSH(S, sc_num, argc) == 1) {
                 _cfo = 0;
                 return 0;

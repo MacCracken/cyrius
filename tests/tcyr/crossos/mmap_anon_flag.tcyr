@@ -39,8 +39,9 @@ fn main(): i64 {
     assert_eq(MAP_ANONYMOUS, 32, "Linux/agnos MAP_ANONYMOUS is 32");
 #endif
 
-    # Windows has no mmap — cyr_mmap's syscall(9) is not a PE path. Value check only.
-#ifndef CYRIUS_TARGET_WIN
+    # 6.6.20: Windows runs this group too. It sat behind `#ifndef CYRIUS_TARGET_WIN` on the
+    # claim that "cyr_mmap's syscall(9) is not a PE path" — false (EMMAP_PE → VirtualAlloc), and
+    # the guard hid that munmap (11) had NO reroute there: cyr_munmap read -38 on PE.
     test_group("mmap_anon returns memory that is actually writable");
     var p = mmap_anon(4096);
     assert_neq(p, 0, "mmap_anon(4096) returned a mapping (0 = the EBADF-shaped failure)");
@@ -50,7 +51,6 @@ fn main(): i64 {
     assert_eq(load64(p + 4088), 2596069104, "last 8 bytes of the page round-trip");
     var rc = cyr_munmap(p, 4096);
     assert_eq(rc, 0, "cyr_munmap released the mapping");
-#endif
 
     var r = assert_summary();
     return r;

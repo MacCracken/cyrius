@@ -2728,6 +2728,48 @@ fn EMMAP_PE(S): i64 {
     return 0;
 }
 
+# 6.6.20 — Win64 munmap: `syscall(11, addr, length)` → VirtualFree(lpAddress, 0, MEM_RELEASE).
+# Stack on entry (top→bottom): [length] [addr] [sc_nr=11].
+#
+# THE BUG IT CLOSES. Syscall 11 had no PE reroute, so every munmap on Windows returned -38 and
+# released nothing: fl_free's large-block path (lib/freelist.cyr), cyr_munmap and sys_munmap
+# leaked the WHOLE mapping each call — four fl_alloc(8 MiB)/fl_free rounds under wine left four
+# live mappings at growing addresses where Linux reused one, and sigil's argon2* leaked its
+# m_cost arena per hash.
+#
+# `length` is DROPPED: MEM_RELEASE requires dwSize == 0 and frees the whole reservation that
+# VirtualAlloc returned at `addr`. So a partial or offset munmap is NOT expressible on PE — a
+# non-base `addr` fails (harmless, -EINVAL), and the base with a SHORTER length releases the
+# whole region, which would leave the caller's tail a use-after-free. No PE-reachable caller
+# does that: fl_free unmaps the block it mapped, cyr_munmap/sys_munmap pass their own mapping,
+# and the thread-stack / dynlib / fdlopen unmappers are not PE paths.
+#
+# The BOOL (eax only — the upper half of rax is not defined) becomes munmap's contract:
+# 0 on success, -22 (-EINVAL) on failure. Same rbx-anchored 16-byte align as EMMAP_PE.
+# CHANGELOG [6.6.20]
+fn EMUNMAP_PE(S): i64 {
+    _pe_ensure_vfree(S);
+    var vf_idx = _pe_vfree_get();
+    EB(S, 0x58);                                        # pop rax (length — dropped)
+    EB(S, 0x59);                                        # pop rcx (lpAddress)
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x08); # add rsp, 8 (drop sc_nr)
+    EB(S, 0x31); EB(S, 0xD2);                           # xor edx, edx (dwSize = 0)
+    EB(S, 0x41); EB(S, 0xB8); EDISP32(S, 0x8000);       # mov r8d, MEM_RELEASE
+    EB(S, 0x53);                                        # push rbx
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xE3);              # mov rbx, rsp
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xE4); EB(S, 0xF0); # and rsp, -16
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xEC); EB(S, 0x20); # sub rsp, 0x20 (shadow)
+    EB(S, 0xFF); EB(S, 0x15);                           # call [rip+VirtualFree]
+    _pe_iat_fixup_add(S, GCP(S), vf_idx);
+    EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xDC);              # mov rsp, rbx
+    EB(S, 0x5B);                                        # pop rbx
+    EB(S, 0x83); EB(S, 0xF8); EB(S, 0x01);              # cmp eax, 1 (CF iff FALSE)
+    EB(S, 0x48); EB(S, 0x19); EB(S, 0xC0);              # sbb rax, rax (0 / -1)
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xE0); EB(S, 0xEA); # and rax, -22 (0 / -EINVAL)
+    return 0;
+}
+
 # ================================================================
 # v6.1.16 — Runtime PE syscall dispatch for NON-LITERAL numbers.
 #
@@ -2817,6 +2859,22 @@ fn _pe_dyn_arity2(S, disp): i64 {
     return 0;
 }
 
+# The arity-3 arm of `EPE_SYSCALL_DYNAMIC`, in its own function for the same cybs reason as
+# `_pe_dyn_arity2`. Routes mkdir(83), clock(228), nanosleep(35) and — since 6.6.20 — munmap(11),
+# the same Linux numbers the LITERAL path routes at argc 3 (11 through `_PE_ROUTE_FLUSH`). Before
+# 6.6.20 a `var n = 11; syscall(n, p, len)` returned -38 here with no compile-time warning (this
+# arity has members, so an unmatched number is only an honest -38 at run time). CHANGELOG [6.6.20]
+fn _pe_dyn_arity3(S, disp): i64 {
+    _pe_dyn_load(S, disp);
+    var q0 = _pe_dyn_cmp(S, 83);  ECREATEDIR_PE(S); var e0 = EJMP0(S); EPATCH(S, q0);
+    var q1 = _pe_dyn_cmp(S, 228); EGETTICKS_PE(S);  var e1 = EJMP0(S); EPATCH(S, q1);
+    var q2 = _pe_dyn_cmp(S, 35);  ENANOSLEEP_PE(S); var e2 = EJMP0(S); EPATCH(S, q2);
+    var q3 = _pe_dyn_cmp(S, 11);  EMUNMAP_PE(S);    var e3 = EJMP0(S); EPATCH(S, q3);
+    _pe_dyn_nomatch(S, 3);
+    EPATCH(S, e0); EPATCH(S, e1); EPATCH(S, e2); EPATCH(S, e3);
+    return 0;
+}
+
 # Emit the runtime switch. Returns 1 if argc is routable on PE (cmp/jne over the
 # routable syscalls of this arity; unknown number → -38). Returns 2 if NO
 # routable syscall has this arity — emits an honest -38/-ENOSYS no-op
@@ -2836,12 +2894,7 @@ fn EPE_SYSCALL_DYNAMIC(S, argc): i64 {
         return 1;
     }
     if (argc == 3) {
-        _pe_dyn_load(S, disp);
-        var q0 = _pe_dyn_cmp(S, 83);  ECREATEDIR_PE(S); var e0 = EJMP0(S); EPATCH(S, q0);
-        var q1 = _pe_dyn_cmp(S, 228); EGETTICKS_PE(S);  var e1 = EJMP0(S); EPATCH(S, q1);
-        var q2 = _pe_dyn_cmp(S, 35);  ENANOSLEEP_PE(S); var e2 = EJMP0(S); EPATCH(S, q2);
-        _pe_dyn_nomatch(S, argc);
-        EPATCH(S, e0); EPATCH(S, e1); EPATCH(S, e2);
+        _pe_dyn_arity3(S, disp);
         return 1;
     }
     if (argc == 2) {

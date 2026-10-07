@@ -484,6 +484,18 @@ fn _pe_ensure_vallo(S): i64 {
 }
 fn _pe_vallo_get(): i64 { return _pe_vallo_idx; }
 
+# 6.6.20: VirtualFree, for the `syscall(11, addr, len)` (munmap) reroute, EMUNMAP_PE.
+# CHANGELOG [6.6.20]
+var _pe_vfree_ready       = 0;
+var _pe_vfree_idx         = 0;
+fn _pe_ensure_vfree(S): i64 {
+    if (_pe_vfree_ready == 1) { return 0; }
+    _pe_register_kernel32(S, &_pe_vfree_idx, "VirtualFree");
+    _pe_vfree_ready = 1;
+    return 0;
+}
+fn _pe_vfree_get(): i64 { return _pe_vfree_idx; }
+
 var _pe_createf_ready     = 0;
 var _pe_createf_idx       = 0;
 fn _pe_ensure_createf(S): i64 {

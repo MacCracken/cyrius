@@ -1,0 +1,74 @@
+# munmap_releases_mapping.tcyr — 6.6.20: munmap RELEASES the mapping on every target, and
+# fl_free's large-block path therefore does not grow the address space.
+#
+# ⛔ THE DEFECT. The PE backend had no reroute for syscall 11, so every munmap on Windows
+# returned -38 and released nothing. fl_free unmaps every block over 4 KiB and ignores the
+# result, so each large fl_alloc/fl_free pair LEAKED its whole mapping: four 8 MiB rounds under
+# wine returned 14876688, 23330832, 31784976, 40239120 (+8 MiB + 64 KiB granularity each) where
+# Linux reuses one address. sigil's argon2* fl_allocs its m_cost arena per hash, so a Windows
+# server hashing logins leaked m_cost KiB per attempt. The literal number and a number held in
+# a var were both unrouted (the var form with no compile-time warning at all).
+#
+# THE FIX. syscall(11, addr, len) → kernel32!VirtualFree(addr, 0, MEM_RELEASE), on the literal
+# path (parse_expr.cyr `_PE_ROUTE_FLUSH`) and the var path (`_pe_dyn_arity3`), BOOL → 0 / -22.
+# MEM_RELEASE frees the whole reservation and needs dwSize == 0, so an OFFSET munmap is not
+# expressible on PE: it fails with -EINVAL (the last PE-only row pins that contract).
+#
+# THE BOUND. 8 rounds of fl_alloc(8 MiB)/fl_free. A leak keeps 8 live, non-overlapping
+# mappings, so the spread of the 8 addresses is at least 7 blocks (~56 MiB). Released, the
+# kernel reuses the region (every host measured returns ONE address); the row allows a spread
+# under 3 blocks so an allocator that alternates between two holes still passes.
+#
+# MUTATIONS (6.6.20, wine 11.19): the pre-fix compiler -> 5 rows RED (the spread row, and
+# cyr_munmap / sys_munmap / both var-held rows read -38); only the var-path arm dropped
+# (`_pe_dyn_arity3`) -> the 2 var-held rows RED; only the literal arm dropped is green HERE (an
+# unrouted literal falls back to the same runtime switch) and RED in
+# tests/gates/platform/pe_unrouted_warning_names_site.sh, which pins that a literal 11 is not
+# warned. Linux, aarch64 (qemu) and wine all measured green with the fix. CHANGELOG [6.6.20]
+include "lib/freelist.cyr"
+include "lib/mmap.cyr"
+include "lib/assert.cyr"
+
+var MB8 = 8388608;
+
+test_group("fl_free of a large block releases its mapping");
+var lo = 0;
+var hi = 0;
+var k = 0;
+while (k < 8) {
+    var q = fl_alloc(MB8);
+    if (q == 0) { break; }
+    store8(q + MB8 - 1, 42);
+    if (k == 0 || q < lo) { lo = q; }
+    if (k == 0 || q > hi) { hi = q; }
+    fl_free(q);
+    k = k + 1;
+}
+assert_eq(k, 8, "eight fl_alloc(8 MiB) rounds were granted");
+assert_lt(hi - lo, 3 * MB8, "the 8 freed blocks did not pile up (spread < 3 blocks; a leak is >= 7)");
+
+test_group("munmap of a whole mapping returns 0");
+var p = mmap_anon(1048576);
+assert_neq(p, 0, "mmap_anon(1 MiB) returned a mapping");
+store64(p + 1048568, 7);
+assert_eq(load64(p + 1048568), 7, "its last word is writable");
+assert_eq(cyr_munmap(p, 1048576), 0, "cyr_munmap (literal syscall 11) released it");
+
+#ifdef CYRIUS_TARGET_WIN
+# sys_munmap is the Windows peer's wrapper (the Linux peers define none). A number held in a
+# variable reaches EPE_SYSCALL_DYNAMIC's arity-3 switch, not the literal route; both must route
+# 11. Other targets: syscall_number_nonliteral.tcyr covers var-held numbers.
+test_group("PE: sys_munmap and a var-held 11 are routed; an offset munmap is refused");
+var p2 = mmap_anon(65536);
+assert_neq(p2, 0, "a second mapping");
+assert_eq(sys_munmap(p2, 65536), 0, "sys_munmap (lib/syscalls_windows.cyr) released it");
+var p3 = mmap_anon(65536);
+assert_neq(p3, 0, "a third mapping");
+var nr = 11;
+assert_eq(syscall(nr, p3 + 4096, 4096), 0 - 22, "an offset munmap is -EINVAL (VirtualFree frees only a base)");
+store8(p3 + 4096, 9);
+assert_eq(load8(p3 + 4096), 9, "and left the mapping intact");
+assert_eq(syscall(nr, p3, 65536), 0, "the var-held 11 released the mapping");
+#endif
+
+var r = assert_summary();
