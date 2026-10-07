@@ -1451,8 +1451,8 @@ fn SESVAR(S, v): i64 { S64(S + 0x1903E0, v); return 0; }
 
 # Module system. (GPUB/SPUB were scaffolded for the `pub` visibility check
 # in docs/development/module-manifest-design.md but never wired up in the
-# compiler — removed to stop tracking dead state. The 0x18FED0
-# pub_flags region remains reserved in the heap map.)
+# compiler — removed to stop tracking dead state. Their 0x18FED0 pub_flags
+# region is FREED in the heap map since 6.6.20.)
 fn GMOD(S): i64 { return L64(S + 0x18FEC8); }
 fn SMOD(S, v): i64 { S64(S + 0x18FEC8, v); return 0; }
 fn GUSEC(S): i64 { return L64(S + 0x1903D0); }
@@ -2720,7 +2720,7 @@ fn _AGG_ASSIGN_TYPE_ERR(S, td, ts, dnoff, snoff): i64 {
 
 # ── Compiler-state heap zero-init (v5.8.63) ──────────────────────────
 # Writes the post-brk scratch-state region (S+0x18C100..S+0x1903F8 +
-# IR state at S+0xF3A000..S+0xF3A028 (5 counters; relocated out of the
+# IR state at S+0xF3A000..S+0xF3A028 (4 counters; relocated out of the
 # fixup_tbl-overlapping 0x174A0xx band @ v6.1.41) + global-var-init slots) to
 # zero, with two sentinel-value exceptions:
 #   - 0x18FCB0 = -1 (last_var: initial "no-var" sentinel)
@@ -2756,8 +2756,7 @@ fn _HEAP_INIT_SCRATCH(S): i64 {
     S64(S + 0xF3A000, 0);    # ir_node_count
     S64(S + 0xF3A008, 0);    # ir_block_count   (v6.1.41: was 0x174A008, inside fixup_tbl)
     S64(S + 0xF3A010, 0);    # ir_cur_block     (v6.1.41: was 0x174A010)
-    S64(S + 0xF3A018, 0);    # ir_edge_count    (v6.1.41: was 0x174A018)
-    S64(S + 0xF3A020, 0);    # ir_enabled       (v6.1.41: was 0x174A020)
+    S64(S + 0xF3A020, 0);    # ir_enabled       (v6.1.41: was 0x174A020; 0xF3A018, the edge count, is gone with the edge list — 6.6.20)
     # Struct state
     S64(S + 0x18F830, 0);
     # Condition patch state

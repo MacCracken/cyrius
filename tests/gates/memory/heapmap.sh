@@ -37,21 +37,90 @@ if [ -n "$FORK_MAP" ]; then
     FAILS=$((FAILS + 1))
 fi
 
+# Source files the reference check reads (every src/ module, main.cyr included). The floor
+# keeps a broken find from making the check vacuous: there are 36 compiler modules (6.6.20).
+SRCS=$(find src -name '*.cyr' | sort)
+NSRC=$(printf '%s\n' "$SRCS" | grep -c . || true)
+if [ "$NSRC" -lt 30 ]; then
+    echo "FAIL: heapmap: expected at least 30 compiler sources under src/, found $NSRC"
+    exit 1
+fi
+
 # Extract heap map entries from main.cyr.
 # Format:  #   0xOFFSET  name  [BYTES]  description
 # Some names have array syntax: name[N] — the [N] is element count, not byte size.
-# The byte size is the LAST [NUMBER] on the line.
+# The byte size is the FIRST bracketed size on the line (see below).
+#
+# 6.6.20 — TWO LAYOUTS, and the map tags which one a region belongs to. The cx bytecode
+# driver (src/main_cx.cyr) shares every other driver's layout but adds regions of its own:
+#   (cx only)  the region exists only in the cx driver's layout
+#   (not cx)   the cx driver never touches it (it is free there)
+#   (nested    the region deliberately sits inside another one (skipped by the overlap
+#              checks, which is what the tag has always meant; still reference-checked)
+# The overlap check runs once per layout: the shared layout is every untagged and
+# (not cx) region, the cx layout every untagged and (cx only) one.
+#
+# 6.6.20 (HEAP-07) — every mapped region must be NAMED BY CODE: its offset must appear as
+# a hex literal in code (comments and strings stripped) of the layout it belongs to — a
+# (cx only) region in src/main_cx.cyr or src/backend/cx/, any other region outside them.
+# The map had three regions no code of their layout used: pub_flags (never written or
+# read), ir_edges (written, capped at 8192, never read — its writer is gone), and the 3 MB
+# codebuf at 0x41A000, which since v6.4.49 only the cx driver touched. A phantom map entry
+# is not harmless: the map is machine-read, so it reserves bytes and hides real overlaps
+# (the v6.5.26 "DCE bitmap" phantom manufactured one).
 
-awk '
+awk -v mainf="$MAIN" '
 BEGIN { n = 0; errors = 0; warnings = 0 }
 
-# Match heap map comment lines.
+function is_cx_file(f) {
+    return (f ~ /(^|\/)main_cx\.cyr$/ || f ~ /(^|\/)backend\/cx\//)
+}
+function in_layout(i, lay) {
+    if (nest[i]) { return 0 }
+    if (lay == "shared") { return !cxo[i] }
+    return !notcx[i]
+}
+# Sort the regions of one layout by offset and report overlaps (and, for the shared
+# layout, the listing and tight gaps). Returns the overlap count.
+function check_layout(lay, listing,    idx, m, i, j, k, t, e, gap, errs) {
+    m = 0
+    for (i = 0; i < n; i++) { if (in_layout(i, lay)) { idx[m] = i; m++ } }
+    for (i = 1; i < m; i++) {
+        j = i
+        while (j > 0 && offsets[idx[j]] < offsets[idx[j-1]]) {
+            t = idx[j]; idx[j] = idx[j-1]; idx[j-1] = t
+            j--
+        }
+    }
+    errs = 0
+    for (k = 0; k < m; k++) {
+        i = idx[k]
+        e = offsets[i] + sizes[i]
+        if (listing) { printf "  0x%05X  +%-6d  -> 0x%05X  %s\n", offsets[i], sizes[i], e, names[i] }
+        if (k < m - 1) {
+            j = idx[k+1]
+            gap = offsets[j] - e
+            if (gap < 0) {
+                printf "  ** OVERLAP (%s layout): %s (ends 0x%05X) overlaps %s (starts 0x%05X) by %d bytes **\n", \
+                    lay, names[i], e, names[j], offsets[j], -gap
+                errs++
+            } else if (listing && gap > 0 && gap < 16) {
+                printf "  ~~ WARNING: %d-byte gap before %s ~~\n", gap, names[j]
+                warnings++
+            }
+        }
+    }
+    nlay[lay] = m
+    return errs
+}
+
+# Match heap map comment lines (main.cyr only).
 # v5.5.40: relaxed the space requirement from `  +` (2+) to ` +` (1+)
 # — previously, entries where the hex offset was 7+ chars wide (e.g.
 # 0x11A000, 0x150B000) had only ONE space before the name due to
 # column alignment, which silently dropped them from the audit.
 # Every region past 0xFC000 was invisible until this fix.
-/^#   0x[0-9A-Fa-f]+ +[a-zA-Z_]/ {
+FILENAME == mainf && /^#   0x[0-9A-Fa-f]+ +[a-zA-Z_]/ {
     # Extract offset
     match($0, /0x[0-9A-Fa-f]+/)
     offset_str = substr($0, RSTART, RLENGTH)
@@ -100,55 +169,68 @@ BEGIN { n = 0; errors = 0; warnings = 0 }
     }
 
     if (name != "" && size > 0) {
-        # Skip entries marked (nested — intentionally inside a larger region
-        if ($0 ~ /\(nested/) { next }
         offsets[n] = strtonum(offset_str)
         sizes[n] = size
         names[n] = name
+        nest[n] = ($0 ~ /\(nested/) ? 1 : 0
+        cxo[n] = ($0 ~ /\(cx only\)/) ? 1 : 0
+        notcx[n] = ($0 ~ /\(not cx\)/) ? 1 : 0
+        if (cxo[n] && notcx[n]) {
+            printf "  ** %s is tagged both (cx only) and (not cx) **\n", name
+            errors++
+        }
         n++
+    }
+    next
+}
+
+# Code lines of every source: collect the hex literals each layout names.
+{
+    code = $0
+    if (code ~ /^[ \t]*#/) { next }
+    gsub(/"([^"\\]|\\.)*"/, "\"\"", code)
+    sub(/#.*/, "", code)
+    cxf = is_cx_file(FILENAME)
+    while (match(code, /0x[0-9A-Fa-f]+/)) {
+        v = strtonum(substr(code, RSTART, RLENGTH))
+        if (cxf) { refcx[v] = 1 } else { refshared[v] = 1 }
+        code = substr(code, RSTART + RLENGTH)
     }
 }
 
 END {
-    # Sort by offset (insertion sort)
-    for (i = 1; i < n; i++) {
-        j = i
-        while (j > 0 && offsets[j] < offsets[j-1]) {
-            t = offsets[j]; offsets[j] = offsets[j-1]; offsets[j-1] = t
-            t = sizes[j]; sizes[j] = sizes[j-1]; sizes[j-1] = t
-            t = names[j]; names[j] = names[j-1]; names[j-1] = t
-            j--
-        }
-    }
+    printf "Heap map: %d regions parsed from %s\n\n", n, mainf
+    errors += check_layout("shared", 1)
+    errors += check_layout("cx", 0)
+    printf "\n  shared layout: %d regions; cx layout: %d regions\n", nlay["shared"], nlay["cx"]
 
-    printf "Heap map: %d regions parsed from %s\n\n", n, "src/main.cyr"
-
+    unref = 0
     for (i = 0; i < n; i++) {
-        end_addr = offsets[i] + sizes[i]
-        printf "  0x%05X  +%-6d  -> 0x%05X  %s\n", offsets[i], sizes[i], end_addr, names[i]
-
-        if (i < n - 1) {
-            gap = offsets[i+1] - end_addr
-            if (gap < 0) {
-                printf "  ** OVERLAP: %s (ends 0x%05X) overlaps %s (starts 0x%05X) by %d bytes **\n", \
-                    names[i], end_addr, names[i+1], offsets[i+1], -gap
-                errors++
-            } else if (gap >= 0 && gap < 16 && gap > 0) {
-                printf "  ~~ WARNING: %d-byte gap before %s ~~\n", gap, names[i+1]
-                warnings++
+        if (cxo[i]) {
+            if (!(offsets[i] in refcx)) {
+                printf "  ** UNREFERENCED: %s at 0x%X is (cx only), but no cx code (src/main_cx.cyr, src/backend/cx/) names that offset **\n", names[i], offsets[i]
+                unref++
             }
+        } else if (!(offsets[i] in refshared)) {
+            if (offsets[i] in refcx) {
+                printf "  ** UNREFERENCED: %s at 0x%X is named only by cx code — tag it (cx only), or free it **\n", names[i], offsets[i]
+            } else {
+                printf "  ** UNREFERENCED: %s at 0x%X — no code names that offset (a phantom region: free it) **\n", names[i], offsets[i]
+            }
+            unref++
         }
     }
+    errors += unref
 
     printf "\n"
     if (errors > 0) {
-        printf "FAIL: %d overlap(s), %d warning(s)\n", errors, warnings
+        printf "FAIL: %d error(s) (overlaps, unreferenced regions), %d warning(s)\n", errors, warnings
         exit 1
     } else {
-        printf "PASS: no overlaps (%d regions, %d warnings)\n", n, warnings
+        printf "PASS: no overlaps, every region named by code (%d regions, %d warnings)\n", n, warnings
     }
 }
-' "$MAIN" || FAILS=$((FAILS + 1))
+' $SRCS || FAILS=$((FAILS + 1))
 
 if [ "$FAILS" -gt 0 ]; then
     echo "FAIL: heapmap: $FAILS check(s) failed"

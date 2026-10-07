@@ -69,7 +69,9 @@
 #   0x18FCE0  dce_dead_fn_count  [8]      DCE-warning scratch: unreachable fns HOLDING statics (6.6.10; was every dead fn)
 #   0x18FCE8  kernel_load_base [8]        v6.3.3 #5: settable kernel ELF base (0 = built-in default)
 #   0x18FEC8  current_module [8]
-#   0x18FED0  pub_flags     [256]
+#   0x18FED0  (FREED 6.6.20)             was pub_flags [256] — scaffolded for `pub` and never
+#                                         written or read (GPUB/SPUB were removed long before);
+#                                         256 B free up to use_from at 0x18FFD0
 #   0x18FFD0  use_from      [512]         64 use alias source names
 #   0x1901D0  use_to        [512]         64 use alias target names
 #   0x1903D0  use_count     [8]
@@ -416,7 +418,16 @@
 #                                        headroom absorbed in the closeout shift.
 #
 # --- Large buffers ---
-#   0x41A000 codebuf       [3145728]     3MB generated machine code — INITIAL base only; GROWABLE as of v6.2.0 (Phase 0): `_codebuf_base`/`_codebuf_cap`, EB relocates off-heap (2x, 64 MiB ceiling) when cp nears the cap — see util.cyr _codebuf_grow. (v5.7.27 — was 1MB pre-v5.7.27; bumped to absorb cyrius-ts test-compile pressure (94% on ts_parse_p52-54 across v5.7.24-v5.7.26)) (v3.5.2). Pulled DOWN 2.24 MB at v5.11.68 to abut str_data end (was 0x64A000).
+#   0x41A000  (FREED 6.6.20 on the x86, aarch64, PE and Mach-O drivers — was codebuf [3145728], the
+#                                        INITIAL base of the growable code buffer. Since v6.4.49 those six
+#                                        drivers take `_codebuf_base = alloc(8388608)` off-heap, so for four
+#                                        minors this line mapped 3 MB that only cx touched. History: 1 MB
+#                                        pre-v5.7.27, 3 MB after; pulled down to abut str_data at v5.11.68.)
+#   0x41A000 cx_brk_shadow [524296]     (cx only) main_cx.cyr sets `_codebuf_base = S + 0x41A000`, so the
+#                                        shared break/continue chain (parse.cyr _PARSE_BREAK, parse_ctrl.cyr)
+#                                        keeps its rel32 links here, indexed by the cx code offset. cx's EB
+#                                        refuses cp >= 524288, and a link is an 8-byte read-modify-write,
+#                                        hence 524288 + 8. cx's real bytecode is at 0x54A000.
 #   0x7400000 input_buf     [25165824]   24MB raw stdin + preprocessor WORKING buffer.
 #                                        v6.5.39: RELOCATED here (arena top) from 0x4D9D000, and
 #                                        grown 16 -> 24 MB. It sat directly ON TOP of
@@ -464,10 +475,14 @@
 #     0xA3A000 was reclaimed by fn_param_struct_mask above. ir_blocks etc. unchanged.) ---
 #   0xB3A000 ir_blocks    [4194304]     131072 basic blocks × 32 bytes (v6.5.23: 32768 -> 131072;
 #                                        grew DOWN into the free 0xA4A000-0xE3A000 gap. The cap is NOT one
-#                                        constant — it is coupled to ir_edges + ir_live_in + ir_live_out,
-#                                        all sized by BLOCK COUNT, and all four moved together.)
+#                                        constant — it is coupled to ir_live_in + ir_live_out, both sized
+#                                        by BLOCK COUNT, and they moved together (ir_edges did too, until
+#                                        6.6.20 removed it).)
 #   0xF3A000 ir_state     [4096]        IR builder state (counters, current BB)
-#   0xF3B000 ir_edges     [1048576]     131072 CFG edges × 8 bytes (v6.5.23; into the 0xF7B000 gap)
+#   0xF3B000  (FREED 6.6.20)             was ir_edges [1048576] — WRITE-ONLY: ir_add_edge stored every
+#                                        CFG edge here, capped itself at 8192 (cycc's own build has 52,725)
+#                                        and nothing read the list back. The CFG is the BB succ fields in
+#                                        ir_blocks. 1 MB free up to 0xF7B000 (itself free since v6.3.28).
 #   0xF7B000 (FREED v6.3.28)             was ir_cp → relocated to 0x6E9D000 (arena top)
 #
 # --- Fixup table — NEW slot (v5.5.37) ---

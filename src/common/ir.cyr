@@ -14,8 +14,8 @@
 #   0x6E9D000  ir_cp       [4MB]   1048576 node CP offsets × 4 bytes (relocated
 #              from 0xF7B000). ir_nodes ends 0x6E9D000; ir_cp ends 0x729D000.
 #   0xB3A000  ir_blocks   [1MB]   32768 blocks × 32 bytes  (unchanged)
-#   0xF3A000 ir_state    [4KB]   counters + current state (IR_NCNT/BCNT/CURBB/ECNT/ENABLED @ 0xF3A000..028)
-#   0xF3B000 ir_edges    [256KB] 32768 edges × 8 bytes
+#   0xF3A000 ir_state    [4KB]   counters + current state (IR_NCNT/BCNT/CURBB @ 0xF3A000..010,
+#              ENABLED @ 0xF3A020; 0xF3A018 held the edge count until 6.6.20)
 #
 # IRNode (16 bytes):
 #   +0: opcode (i16) + flags (i16) packed in low 32 bits
@@ -194,8 +194,6 @@ fn IR_BCNT(S): i64 { return L64(S + 0xF3A008); }
 fn IR_SBCNT(S, v): i64 { S64(S + 0xF3A008, v); return 0; }
 fn IR_CURBB(S): i64 { return L64(S + 0xF3A010); }
 fn IR_SCURBB(S, v): i64 { S64(S + 0xF3A010, v); return 0; }
-fn IR_ECNT(S): i64 { return L64(S + 0xF3A018); }
-fn IR_SECNT(S, v): i64 { S64(S + 0xF3A018, v); return 0; }
 fn IR_ENABLED(S): i64 { return L64(S + 0xF3A020); }
 fn IR_SENABLE(S, v): i64 { S64(S + 0xF3A020, v); return 0; }
 
@@ -353,23 +351,11 @@ fn ir_bb_set_cond(S, bi, true_bb, false_bb): i64 {
     return 0;
 }
 
-# Add a CFG edge (for analysis passes)
-fn ir_add_edge(S, from_bb, to_bb): i64 {
-    var ec = IR_ECNT(S);
-    if (ec >= 8192) { return 0; }
-    var base = S + 0xF3B000 + ec * 8;
-    store64(base, (from_bb & 0xFFFFFFFF) | ((to_bb & 0xFFFFFFFF) << 32));
-    IR_SECNT(S, ec + 1);
-    return 0;
-}
-
-
 # Reset IR state (between functions or at start of compilation)
 fn ir_reset(S): i64 {
     IR_SNCNT(S, 0);
     IR_SBCNT(S, 0);
     IR_SCURBB(S, 0 - 1);
-    IR_SECNT(S, 0);
     return 0;
 }
 
@@ -1232,7 +1218,6 @@ fn ir_build_bbs(S): i64 {
     if (ncnt == 0) { return 0; }
 
     IR_SBCNT(S, 0);
-    IR_SECNT(S, 0);
 
     # First BB starts at node 0
     var cur_bb = ir_bb_new(S);
@@ -1374,7 +1359,9 @@ fn _ir_find_bb_for_cp(S, target_cp): i64 {
 
 fn ir_build_edges(S): i64 {
     var bcnt = IR_BCNT(S);
-    IR_SECNT(S, 0);
+    # The CFG is the BB succ fields (ir_bb_set_succ / ir_bb_set_cond); `edges` only counts them
+    # for the `ir:` stats line. A separate edge list at S+0xF3B000 was write-only, and capped at
+    # 8,192 of the 52,725 edges cycc's own build has: removed. CHANGELOG [6.6.20]
     var edges = 0;
 
     var bi = 0;
@@ -1396,7 +1383,6 @@ fn ir_build_edges(S): i64 {
                     var target_bb = _ir_find_bb_for_patch_at(S, patch_off, fn_lo);
                     if (target_bb >= 0) {
                         ir_bb_set_succ(S, bi, target_bb);
-                        ir_add_edge(S, bi, target_bb);
                         edges = edges + 1;
                     }
                 }
@@ -1407,7 +1393,6 @@ fn ir_build_edges(S): i64 {
                 var target_bb = _ir_find_bb_for_cp_at(S, target_cp, fn_lo);
                 if (target_bb >= 0) {
                     ir_bb_set_succ(S, bi, target_bb);
-                    ir_add_edge(S, bi, target_bb);
                     edges = edges + 1;
                 }
             }
@@ -1415,7 +1400,6 @@ fn ir_build_edges(S): i64 {
                 # Conditional — fall-through to next BB + jump to patch target
                 # Fall-through (condition false — continues to next BB)
                 if (bi + 1 < bcnt) {
-                    ir_add_edge(S, bi, bi + 1);
                     edges = edges + 1;
                 }
                 # Jump target (condition true — resolved via patch offset)
@@ -1426,7 +1410,6 @@ fn ir_build_edges(S): i64 {
                         var fall_bb = bi;
                         if (bi + 1 < bcnt) { fall_bb = bi + 1; }
                         ir_bb_set_cond(S, bi, fall_bb, target_bb);
-                        ir_add_edge(S, bi, target_bb);
                         edges = edges + 1;
                     }
                 }
@@ -1435,7 +1418,6 @@ fn ir_build_edges(S): i64 {
                 # Fall-through to next BB
                 if (bi + 1 < bcnt) {
                     ir_bb_set_succ(S, bi, bi + 1);
-                    ir_add_edge(S, bi, bi + 1);
                     edges = edges + 1;
                 }
             }
