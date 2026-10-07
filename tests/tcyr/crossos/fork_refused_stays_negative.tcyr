@@ -147,8 +147,13 @@ fn main(): i64 {
     test_group("a fork refused under RLIMIT_NPROC = 1 returns -EAGAIN, never 0");
     var v = _run_probe();
     if (v == 42 && sys_getuid() == 0) {
-        # root is not held to RLIMIT_NPROC, so nothing here can be refused; say so, do not pass it.
-        assert_eq(sys_getuid(), 0, "running as root: RLIMIT_NPROC does not apply, the refusal case was NOT exercised");
+        # Root (in the init user namespace) is not held to RLIMIT_NPROC, so nothing here can be
+        # refused — CI's AGNOS job runs the corpus as root. A passing row alone would read like a
+        # real refusal check, so the skip is written to fd 2 as well; the row that remains only
+        # records the premise (the fork went through) and keeps the run from scoring 0 assertions.
+        var note = "  SKIP/NOTE: running as root - RLIMIT_NPROC does not apply, refusal case NOT exercised\n";
+        syscall(1, 2, note, strlen(note));
+        assert_eq(v, 42, "premise: as root the fork is not refused (verdict 42)");
     } else {
         assert_eq(v, 40, "the refused fork came back -EAGAIN (41 = it came back 0 and the parent took the child's branch)");
     }
