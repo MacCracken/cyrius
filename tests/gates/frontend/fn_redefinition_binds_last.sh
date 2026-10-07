@@ -276,6 +276,29 @@ fn f(v: f64v2): i64 { return 2; }
 fn h(): i64 { var a: f64v2 = f64v2_make(1, 2); return f(a) + 0; }
 fn f(p: Q): i64 { return p.a; }
 syscall(60, h());' "$T/pecc"
+# `async fn` against a plain one: a call to one receives a Future, to the other the value. Refused
+# in pass 1, both orders (async-then-plain SIGSEGV'd at the await; plain-then-async bound the
+# first body with no warning, its body being `f$impl`).
+printf '#!/bin/sh\nCYRIUS_ASYNC=1 exec "%s"\n' "$T/x86" > "$T/acc"; chmod +x "$T/acc"
+_ASYNC_PRE='include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/vec.cyr"
+include "lib/syscalls.cyr"
+include "lib/fnptr.cyr"
+include "lib/async.cyr"'
+_refused sig_async_then_plain '`async` marker' "$_ASYNC_PRE
+async fn f(): i64 { return 5; }
+fn h(): i64 { var fu = f(); return await fu; }
+fn f(): i64 { return 7; }
+fn main(): i64 { alloc_init(); return h(); }
+syscall(60, main());" "$T/acc"
+_refused sig_plain_then_async '`async` marker' "$_ASYNC_PRE
+fn f(): i64 { return 5; }
+fn h(): i64 { return f() + 0; }
+async fn f(): i64 { return 7; }
+fn main(): i64 { alloc_init(); return h(); }
+syscall(60, main());" "$T/acc"
 # ANTI-VACUOUS: the same convention spelled differently still only warns, and binds the last.
 printf 'fn f(): i64 { return 1; }\nfn h(): i64 { var x = f(); return x; }\nfn f() { return 2; }\nvar r = h(); syscall(60, r);\n' > "$T/sig_same.cyr"
 _want sig_same "$T/x86" "" "$T/sig_same.cyr" 2 "an unannotated redefinition of a ': i64' fn (same convention)"
@@ -294,6 +317,18 @@ _want sig_same_vec "$T/x86" "" "$T/sig_same_vec.cyr" 1 "the same vector paramete
 _rc=0; "$T/pecc" < "$T/sig_same_vec.cyr" > "$T/sig_same_vec.exe" 2> "$T/sig_same_vec.perr" || _rc=$?
 if [ "$_rc" -ne 0 ]; then _bad "sig_same_vec_pe: the same vector type refused on PE (rc $_rc): $(grep -m1 '^error' "$T/sig_same_vec.perr" | cut -c1-140)"
 else pass=$((pass + 1)); fi
+# ...and an async fn redefined by an async one binds every call to the LAST constructor: a plain
+# Future's caller now gets the coroutine's (was SIGSEGV — the first constructor built a plain
+# Future around the coroutine's body).
+printf '%s\n' "$_ASYNC_PRE
+fn g0(): i64 { return 0; }
+async fn f(a): i64 { return a + 5; }
+fn h(): i64 { var fu = f(0); var r = future_force(fu); r = future_force(fu); r = future_force(fu); return r; }
+async fn f(a): i64 { var s1 = await g0(); return a + 7; }
+fn h2(): i64 { var fu = f(0); var r = future_force(fu); r = future_force(fu); r = future_force(fu); return r; }
+fn main(): i64 { alloc_init(); return h() * 10 + h2(); }
+syscall(60, main());" > "$T/async_ctor.cyr"
+_want async_ctor "$T/acc" "" "$T/async_ctor.cyr" 77 "an async fn redefined as a coroutine (was 139)"
 
 # ── row 2: aarch64 under qemu ───────────────────────────────────────────────────────────────
 if command -v qemu-aarch64 > /dev/null 2>&1; then

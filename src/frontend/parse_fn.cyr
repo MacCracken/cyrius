@@ -5764,6 +5764,7 @@ fn _prescan_fn_sig(S): i64 {
         if (_ptp != 0) { _gen_record(S, fi, GTI(S)); }   # 6.6.10: stub + carrier facts, by name
         # 6.6.10 — mark `async fn` HERE, so a coroutine's `await f(..)` classifies a callee
         # defined further down (`_await_operand_is_future`). CHANGELOG [6.6.10]
+        var _pas0 = GFAS(S, fi);   # 6.6.20: whether an EARLIER definition was async
         if (_pasync == 1) { SFAS(S, fi, 1); }
         # 6.6.5 — def-start for EVERY prescanned fn, not just generics. It is how pass 2
         # finds the entry THIS definition owns (_fn_by_defti), and it is what lets a
@@ -5772,8 +5773,14 @@ fn _prescan_fn_sig(S): i64 {
         # 6.6.20: an entry that already holds ANOTHER definition is a redefinition — fn flag
         # 2048, read where a call would otherwise bind to the body in hand at that point (the
         # inline replay; a generic's instance source). Left as the LAST definition's start.
+        # One that disagrees with an earlier one about `async` is refused (_dsg_async_check).
         var _pds = GFDS(S, fi);
-        if (_pds != 0) { if (_pds != start_ti + 1) { SFLG(S, fi, GFLG(S, fi) | 2048); } }
+        if (_pds != 0) {
+            if (_pds != start_ti + 1) {
+                SFLG(S, fi, GFLG(S, fi) | 2048);
+                _dsg_async_check(S, fi, noff, start_ti, _pas0, _pasync);
+            }
+        }
         SFDS(S, fi, start_ti + 1);
         SFFI(S, fi, _pfid + 1);
         if (_ppriv == 1) { SFLG(S, fi, GFLG(S, fi) | 64); }
@@ -6669,6 +6676,18 @@ fn _async_refuse_arity(S, fi_f, noff_f, pc): i64 {
     return 1;
 }
 
+# 6.6.20 — the constructor's entry is set through `_fn_redirect`, like a plain definition's: an
+# `async fn` redefined by another `async fn` binds every call to the LAST constructor (a call
+# compiled between the two baked the first one's entry, whose Future shape may not even match —
+# a plain Future against a coroutine's SIGSEGV'd). `async` against plain is refused in pass 1
+# (`_dsg_async_check`). CHANGELOG [6.6.20]
+fn _async_ctor_entry(S, fi_f, noff_f): i64 {
+    var ti = GFDS(S, fi_f) - 1;   # its `fn` token, for the backstop's diagnostic
+    if (ti < 0) { ti = 0; }
+    _fn_redirect(S, fi_f, noff_f, ti);
+    S64(_fnt_offsets + fi_f * 8, GCP(S));
+    return 0;
+}
 # v6.3.11 (G): emit the Future constructor for an `async fn`. The body has already
 # been emitted (as `f$impl`, fi_impl, with pc params); this synthesizes the
 # user-named fn `f(p0..p{pc-1})` whose body allocates a Future heap object
@@ -6684,7 +6703,7 @@ fn _async_emit_constructor(S, noff_f, fi_impl, pc): i64 {
     SFAS(S, fi_f, 1);
     S64(_fnt_params + fi_f * 8, pc);
     if (_async_refuse_arity(S, fi_f, noff_f, pc) == 1) {
-        S64(_fnt_offsets + fi_f * 8, GCP(S));
+        _async_ctor_entry(S, fi_f, noff_f);
         return 0;
     }
     # Refused BEFORE any code: ERR_MSG does not exit, and the body below handed -1 to
@@ -6693,7 +6712,7 @@ fn _async_emit_constructor(S, noff_f, fi_impl, pc): i64 {
     # undefined function" refusal. CHANGELOG [6.6.9]
     if (alloc_fi < 0) {
         ERR_MSG(S, "an async fn needs include \"lib/alloc.cyr\" for its Future heap object", 68);
-        S64(_fnt_offsets + fi_f * 8, GCP(S));
+        _async_ctor_entry(S, fi_f, noff_f);
         return 0;
     }
     # --- save enclosing (top-level) state; the constructor is its own fn ---
@@ -6707,7 +6726,7 @@ fn _async_emit_constructor(S, noff_f, fi_impl, pc): i64 {
     # fall-through here (the previous byte is f$impl's `ret`) or already jumps over the whole
     # definition (PARSE_PROG's fn_skip, the generic re-emit). The jmp sat in no fn's range,
     # so the DCE seed pass took it as a root and kept the NEXT fn alive. CHANGELOG [6.6.11]
-    S64(_fnt_offsets + fi_f * 8, GCP(S));
+    _async_ctor_entry(S, fi_f, noff_f);
     EFNPRO(S);
     # params p0..p{pc-1} → anonymous local slots 0..pc-1
     # ⛔ v6.5.70: this used to read `if (i < 6) { ESTOREPARM(S, i, i, 0); }` — TWO defects in
@@ -6985,7 +7004,8 @@ var _dup_prev_fid = 0;
 # of every address-passed struct parameter (GFPSID — `f(p: A)` then `f(p: B)` made B's body copy
 # B's size out of the caller's A) and every vector parameter's type (`_dsg_vec_note`, for Win64).
 # Saved from the earlier definition before this one overwrites them; compared once this one's
-# signature is read. An arity difference is left to the arity error.
+# signature is read. An arity difference is left to the arity error; `async` against plain is
+# refused in pass 1 (`_dsg_async_check`).
 var _dsg_on = 0;
 var _dsg_pc = 0;
 var _dsg_rs = 0;
@@ -7118,11 +7138,24 @@ fn _dsg_report(S, noff, ti, what, fid): i64 {
     if (what == 1) { syscall(SYS_WRITE, 2, "return type", 11); }
     if (what == 2) { syscall(SYS_WRITE, 2, "parameter types", 15); }
     if (what == 3) { syscall(SYS_WRITE, 2, "variadic parameter list", 23); }
+    if (what == 4) { syscall(SYS_WRITE, 2, "`async` marker", 14); }
     syscall(SYS_WRITE, 2, " with the one in ", 17);
     _fm_print_fid(S, fid);
     syscall(SYS_WRITE, 2, " (last definition wins, so calls compiled against that one would reach this body through the wrong calling convention)\n", 119);
     _had_error = 1;
     return 0;
+}
+# 6.6.20 — `async fn f` against a plain `fn f`: a call to an async fn receives a Future, a call to
+# a plain one the value, so once the last definition wins, one side reads the other's result as
+# the wrong thing (measured: async-then-plain SIGSEGV'd at the `await`; plain-then-async bound
+# the FIRST body with no warning at all, the async body being registered as `f$impl`). Refused
+# here, in PASS 1, because it is the only place both definitions are seen under ONE entry: in
+# pass 2 the async one's body is `f$impl` and its constructor never reaches the duplicate path,
+# and GFAS is set by ANY async definition of the name. Called on a redefinition (`_pds`), with
+# `was` = whether an earlier definition was async (GFAS before this one sets it), `now` = this.
+fn _dsg_async_check(S, fi, noff, ti, was, now): i64 {
+    if (was == now) { return 0; }
+    return _dsg_report(S, noff, ti, 4, GFFI(S, fi));
 }
 
 fn _PARSE_FN_DEF_IMPL(S): i64 {
