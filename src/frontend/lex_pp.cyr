@@ -3422,6 +3422,41 @@ fn PP_MACRO_REFUSE(def, why): i64 {
     return 0;
 }
 
+# 6.6.20 — refuse, naming the macro, an invocation whose argument count is not the macro's
+# parameter count, or that never closes. PP_EXPAND never compared the two: extra arguments
+# were dropped, and too few made the substitution walk past the last argument THIS call wrote
+# into stale bytes of `args` left by an earlier call (`PICK(9)` after `PICK(3, 4)`, with
+# `#define PICK(a, b) b`, compiled clean and took 4). A zero-parameter macro is invoked as
+# `Z()` / `Z( )`: one blank argument counts as none. `args` holds `acnt` NUL-terminated
+# arguments. Unlocated, like PP_MACRO_REFUSE. CHANGELOG [6.6.20]
+fn PP_MACRO_ARGCHECK(def, pcnt, acnt, args, closed): i64 {
+    if (closed == 0) { PP_MACRO_REFUSE(def, "an invocation has no closing ')'"); }
+    var given = acnt;
+    if (pcnt == 0) {
+        if (acnt == 1) {
+            var i = 0;
+            var blank = 1;
+            while (load8(args + i) != 0) {
+                var c = load8(args + i);
+                if (c != 32) { if (c != 9) { if (c != 10) { if (c != 13) { blank = 0; } } } }
+                i = i + 1;
+            }
+            if (blank == 1) { given = 0; }
+        }
+    }
+    if (given == pcnt) { return 0; }
+    PRSTR("error: function-like macro '");
+    _pp_write_ident(def);
+    PRSTR("': takes ");
+    PRNUM(pcnt);
+    if (pcnt == 1) { PRSTR(" argument, given "); }
+    else { PRSTR(" arguments, given "); }
+    PRNUM(given);
+    syscall(SYS_WRITE, 2, "\n", 1);
+    syscall(SYS_EXIT, 1);
+    return 0;
+}
+
 # Expand macro invocation: NAME(arg1, arg2)
 # Reads args from input at ip, substitutes into body, writes to out+op
 # Returns new ip position (after the closing paren)
@@ -3478,12 +3513,13 @@ fn PP_EXPAND(S, mi, ip, bl, out, op): i64 {
     var acnt = 0;
     var ap = 0;
     var depth = 0;
+    var closed = 0;
     while (ip < bl) {
         var c = load8(S + _SRCB + ip);
         if (ap >= 512) { PP_MACRO_REFUSE(def, "an invocation's arguments exceed 511 bytes"); }
         if (c == 40) { depth = depth + 1; store8(&args + ap, c); ap = ap + 1; }
         elif (c == 41) {
-            if (depth == 0) { store8(&args + ap, 0); ap = ap + 1; acnt = acnt + 1; ip = ip + 1; break; }
+            if (depth == 0) { store8(&args + ap, 0); ap = ap + 1; acnt = acnt + 1; ip = ip + 1; closed = 1; break; }
             depth = depth - 1; store8(&args + ap, c); ap = ap + 1;
         }
         elif (c == 44) {
@@ -3493,6 +3529,7 @@ fn PP_EXPAND(S, mi, ip, bl, out, op): i64 {
         else { store8(&args + ap, c); ap = ap + 1; }
         ip = ip + 1;
     }
+    PP_MACRO_ARGCHECK(def, pcnt, acnt, &args, closed);   # 6.6.20: count must match
     # Substitute: walk body, replace param names with args
     var bi = 0;
     while (load8(body + bi) != 0) {

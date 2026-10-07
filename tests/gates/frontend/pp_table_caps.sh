@@ -46,7 +46,14 @@
 #    and separators, and the parameter loop stops at the definition's end. Rows: the largest
 #    argument list and parameter list that fit expand correctly; one byte more, the 516-byte
 #    silent-miscompile shape and 600 bytes are refused by name; a parameter list with no `)`
-#    is refused by name. CVE-TBD.
+#    is refused by name. PP_EXPAND never compared an invocation's argument count with the
+#    macro's parameter count either: extra arguments were dropped, and too few made the
+#    substitution read stale bytes of `args` left by an EARLIER call (`#define PICK(a, b) b`,
+#    `PICK(3, 4)` then `PICK(9)` compiled clean and the second took 4 — a silent miscompile).
+#    Fix: PP_MACRO_ARGCHECK refuses a count mismatch and an invocation with no `)` by name;
+#    a zero-parameter macro is still invoked as `Z()` / `Z( )`. Rows: too few, too many, an
+#    argument to a zero-parameter macro and an unclosed invocation are refused; `Z()`, `Z( )`,
+#    an empty single argument, a nested call and a wrapped call still expand. CVE-TBD.
 #
 # MUTATION LEDGER (6.6.20, mutant = this tree with the named change, built by build/cycc and
 # run as CYCC=<mutant>):
@@ -60,6 +67,9 @@
 #   D1. PP_EXPAND's `ap >= 512` argument bound deleted                      -> RED: D argument rows
 #   D2. PP_EXPAND's `pp >= 511` parameter bound deleted                     -> RED: D parameter rows
 #   D3. PP_EXPAND's end-of-definition stop deleted                          -> RED: D no-`)` row
+#   D4. PP_EXPAND's PP_MACRO_ARGCHECK call deleted                          -> RED: D count rows
+#   D5. PP_MACRO_ARGCHECK's `closed == 0` refusal deleted                   -> RED: D unclosed row
+#   D6. PP_MACRO_ARGCHECK's blank-argument exemption deleted                -> RED: D `Z()` rows
 #   real tree                                                              -> GREEN
 set -eu
 
@@ -192,9 +202,29 @@ parsrc par510.cyr 510; refuse "parameter names of 512 bytes" par510.cyr "$PAR_MS
 parsrc par600.cyr 600; refuse "parameter names of 602 bytes (SIGSEGV before 6.6.20)" par600.cyr "$PAR_MSG"
 printf '#define BAD(a\nvar r = BAD(1);\nsyscall(60, 5);\n' > "$WORK/noparen.cyr"
 refuse "a parameter list with no ')' (SIGSEGV before 6.6.20)" noparen.cyr "error: function-like macro 'BAD': its parameter list has no closing ')'"
+# Argument count. The too-few row is the stale-args shape: the second call's missing `b` read
+# the 4 the first call left in `args` (exit 44 where a refusal is right).
+printf '#define PICK(a, b) b\nvar x = PICK(3, 4);\nvar y = PICK(9);\nsyscall(60, x * 10 + y);\n' > "$WORK/few.cyr"
+refuse "too few arguments (read a previous call's argument before 6.6.20)" few.cyr "error: function-like macro 'PICK': takes 2 arguments, given 1"
+printf '#define PICK(a, b) b\nvar x = PICK(5, 6, 7);\nsyscall(60, x);\n' > "$WORK/many.cyr"
+refuse "too many arguments (the extra was dropped before 6.6.20)" many.cyr "error: function-like macro 'PICK': takes 2 arguments, given 3"
+printf '#define ONE(a) (a + 1)\nvar x = ONE(4, 5);\nsyscall(60, x);\n' > "$WORK/one2.cyr"
+refuse "two arguments to a one-parameter macro" one2.cyr "error: function-like macro 'ONE': takes 1 argument, given 2"
+printf '#define Z() 42\nvar x = Z(5);\nsyscall(60, x);\n' > "$WORK/zarg.cyr"
+refuse "an argument to a zero-parameter macro" zarg.cyr "error: function-like macro 'Z': takes 0 arguments, given 1"
+printf '#define ADD(a, b) (a + b)\nvar x = 1;\nsyscall(60, x);\nADD(1, 2' > "$WORK/unclosed.cyr"
+refuse "an invocation with no ')'" unclosed.cyr "error: function-like macro 'ADD': an invocation has no closing ')'"
+printf '#define Z() 42\nvar x = Z();\nsyscall(60, x);\n' > "$WORK/z0.cyr"
+accept "zero-parameter macro, Z()" z0.cyr 42
+printf '#define Z() 42\nvar x = Z( );\nsyscall(60, x);\n' > "$WORK/z0s.cyr"
+accept "zero-parameter macro, Z( )" z0s.cyr 42
+printf '#define ONE(a) (7 a)\nvar x = ONE();\nsyscall(60, x);\n' > "$WORK/one0.cyr"
+accept "one-parameter macro, an empty argument" one0.cyr 7
+printf '#define ADD(a, b) (a + b)\nfn g(p, q) { return p * q; }\nvar x = ADD(g(2, 3), 4);\nvar y = ADD(1,\n2);\nsyscall(60, x + y);\n' > "$WORK/nestwrap.cyr"
+accept "nested call and wrapped call keep their counts" nestwrap.cyr 13
 
 if [ "$NFAIL" != 0 ]; then
     echo "FAIL: pp_table_caps: $NFAIL failure(s) across $NROWS rows"
     exit 1
 fi
-echo "PASS: pp_table_caps: $NROWS rows — #if-family nesting refused past 64 levels in both passes; function-like macro table refuses the 17th, a redefinition and an included definition by name; a repeated #define reuses its flag slot and the latest value wins; macro parameter / argument copies are bounded and refused by name (6.6.20)"
+echo "PASS: pp_table_caps: $NROWS rows — #if-family nesting refused past 64 levels in both passes; function-like macro table refuses the 17th, a redefinition and an included definition by name; a repeated #define reuses its flag slot and the latest value wins; macro parameter / argument copies are bounded and an argument-count mismatch refused, by name (6.6.20)"

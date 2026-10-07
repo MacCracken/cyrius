@@ -1749,7 +1749,11 @@ is one). Until 6.6.20 several of these were silent.
   is refused (expansion runs after every definition is read, so only one
   definition could ever apply), and a function-like `#define` in an included file
   is refused by name — it was never a macro there. (Before 6.6.20 all three were
-  silently ignored.)
+  silently ignored.) An invocation must pass exactly as many arguments as the
+  macro has parameters — `Z()` or `Z( )` for none — and a mismatch is refused,
+  naming the macro. (Before 6.6.20 an extra argument was dropped and a missing one
+  read a previous invocation's argument.) Arguments are split at every comma
+  outside parentheses; known gap: that includes a comma inside a string literal.
 - **`#define` names: 16, including the target's builtins** (`CYRIUS_ARCH_*`,
   `CYRIUS_TARGET_*`, … — three on x86_64 Linux). A name counts once however often it
   is defined, and a redefinition's value applies to every `#if` after it — the
