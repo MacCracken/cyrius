@@ -1350,8 +1350,8 @@ _chk_gate "$ROOT/tests/gates/toolchain/funcgate_refuses_live_home.sh"
 _chk_gate "$ROOT/tests/gates/toolchain/released_slot_written_from_tag.sh"
 
 # 6.6.20 (RS-02): `--refresh-only` installs no bin it did not rebuild. cybs (no programs/
-# source) shipped a June build/cybs into 17 slots stamped tree-matches-tag: yes;
-# a bin or cross-bin whose mapped source is missing, or whose rebuild
+# source) shipped a June build/cybs into 16 tagged slots, each stamped tree-matches-tag: yes,
+# plus the in-flight 6.6.20; a bin or cross-bin whose mapped source is missing, or whose rebuild
 # fails, now REFUSES; verify-store re-assembles cybs from the tag and names every bin it could
 # not verify. Mini repos + mktemp homes only — never the live ~/.cyrius.
 _chk_gate "$ROOT/tests/gates/toolchain/refresh_never_installs_a_stale_bin.sh"

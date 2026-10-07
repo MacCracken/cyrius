@@ -6,8 +6,9 @@
 # 6.6.20 (RS-02). `cybs` — the bootstrap compiler, the root of the seed → cybs → cycc chain —
 # is listed in cyrius.cyml `bins` but has no programs/cybs.cyr. `_rebuild_stale` returned 0 for
 # a missing source, and the copy loop then installed whatever gitignored build/cybs the clone
-# held: a 12,344 B June binary that prints `syntax error` on src/main.cyr, in 17 slots
-# (6.6.3–6.6.9, 6.6.11–6.6.20), each stamped `tree-matches-tag: yes`. verify-store judged only
+# held: a 12,344 B June binary that prints `syntax error` on src/main.cyr, in 16 tagged slots
+# (6.6.3–6.6.9, 6.6.11–6.6.19), each stamped `tree-matches-tag: yes`, plus the in-flight
+# 6.6.20. verify-store judged only
 # the TRACKED bins and named only the cross-bins as unverified, so it reported every one OK.
 #
 # Everything runs in mktemp trees against mktemp homes (HOME too) — never the live ~/.cyrius.

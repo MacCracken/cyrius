@@ -388,8 +388,9 @@ if [ "$REFRESH_ONLY" -eq 1 ]; then
     #   - cross_bins <other>      → REFUSED: no rebuild rule
     # A bin or cross-bin whose mapped source does not exist, or whose rebuild fails, is a
     # REFUSAL, never a copy of whatever sits at build/<bin>: that copy is how a June build/cybs
-    # reached 17 slots (CHANGELOG [6.6.20]). The only bins copied as they stand are the two
-    # TRACKED ones, cycc and cycc-native-aarch64, which the release gate verifies.
+    # reached 16 tagged slots, each stamped tree-matches-tag: yes, plus the in-flight 6.6.20
+    # (CHANGELOG [6.6.20]). The only bins copied as they stand are the two TRACKED ones,
+    # cycc and cycc-native-aarch64, which the release gate verifies.
     #
     # Staleness rule: rebuild if binary is missing OR ANY dependency mtime is
     # newer than binary mtime. Dependencies = the direct `$source` PLUS every
@@ -419,8 +420,9 @@ if [ "$REFRESH_ONLY" -eq 1 ]; then
         local source="$2"
         # 6.6.20: a mapped source that does not exist REFUSES. This was `return 0`, and the
         # copy loop below then installed build/$target as it stood — for `cybs` (which has no
-        # programs/cybs.cyr) a 12,344 B June binary that cannot compile src/main.cyr, in 17
-        # slots, each stamped tree-matches-tag: yes. CHANGELOG [6.6.20]
+        # programs/cybs.cyr) a 12,344 B June binary that cannot compile src/main.cyr, in 16
+        # tagged slots, each stamped tree-matches-tag: yes, plus the in-flight 6.6.20.
+        # CHANGELOG [6.6.20]
         [ -f "$source" ] || err "cyrius.cyml [release] lists '$target' but its source $source does not exist — refusing to install a build/$target that nothing rebuilt (give it a rebuild rule in scripts/install.sh)"
         if [ -x "build/$target" ] && [ "build/$target" -nt "$source" ] && ! [ "build/cycc" -nt "build/$target" ]; then
             # Direct source and the compiler are older than the binary; check include-root deps.

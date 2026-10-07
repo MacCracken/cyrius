@@ -52,8 +52,9 @@ _tag_release_bins() {
 # 6.6.20: cybs is NOT tracked, but it is DETERMINISTIC from the tag — the tag's seed
 # (bootstrap/asm) assembling the tag's bootstrap/cybs.cyr, bootstrap.sh's recipe — so it is
 # rebuilt and compared instead of trusted. Until 6.6.20 `--refresh-only` copied whatever
-# gitignored build/cybs sat in the clone: 17 slots held a June binary that cannot compile
-# src/main.cyr, each stamped tree-matches-tag: yes, and this script reported them OK.
+# gitignored build/cybs sat in the clone: 16 tagged slots, each stamped tree-matches-tag: yes,
+# plus the in-flight 6.6.20, held a June binary that cannot compile src/main.cyr, and this
+# script reported them OK.
 # $1 = version, $2 = out. 0 = built · 2 = cannot judge here (not at the tag, or this host
 # cannot run the x86-64 Linux seed) · 1 = the tag's seed failed on its own source.
 _tag_cybs() {
