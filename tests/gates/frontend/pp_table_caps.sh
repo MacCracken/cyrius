@@ -236,6 +236,12 @@ printf '#define\tINCF(x) x\n' > "$WORK/tabinc_r.cyr"
 printf 'include "tabinc_r.cyr"\nvar x = 1;\nsyscall(60, x);\n' > "$WORK/tabinc.cyr"
 refuse "function-like macro after a TAB in an included file" tabinc.cyr "tabinc_r.cyr:1:1: function-like macro 'INCF' is defined in an included file"
 
+# Integration row (6.6.20, s-ppcaps x s-pplex): s-pplex taught PP_IFDEF_PASS to evaluate #ifplat in
+# an INCLUDED file — an eighth push site, which must take the same 64-level cap.
+awk 'BEGIN { for (i = 0; i < 65; i++) print "#ifplat x86_64"; for (i = 0; i < 65; i++) print "#endplat" }' > "$WORK/ipl65_r.cyr"
+printf 'include "ipl65_r.cyr"\nvar x = 1;\nsyscall(60, x);\n' > "$WORK/ipl65.cyr"
+refuse "included file, 65 x '#ifplat'" ipl65.cyr "$NEST_MSG"
+
 if [ "$NFAIL" != 0 ]; then
     echo "FAIL: pp_table_caps: $NFAIL failure(s) across $NROWS rows"
     exit 1

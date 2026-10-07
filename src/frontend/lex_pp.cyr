@@ -4732,8 +4732,7 @@ fn PP_IFDEF_PASS(S): i64 {
                             if (PP_IFPLAT_MATCH(S, tmp, dip + 8) == 1) { _s = 0; }
                             else { _s = 1; }
                         }
-                        store8(S + 0x197F10 + pp_depth, _s);
-                        pp_depth = pp_depth + 1;
+                        pp_depth = PP_PUSH_LEVEL(S, tmp, dip, pp_depth, _s);   # 6.6.20: the 64-level cap here too
                         if (_s != 0) { skip_depth = skip_depth + 1; }
                         ip = PP_SKIPLINE(tmp, ip, bl); op = _pp_a64_open(tmp, dip + 8, 2 * 8 + _s, pp_depth - 1, out, op); bol = 1; handled = 1;
                     } }

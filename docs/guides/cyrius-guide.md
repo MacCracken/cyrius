@@ -1802,11 +1802,10 @@ unnoticed.
 compile is refused with an error that names the limit (and the entry, where there
 is one). Until 6.6.20 several of these were silent.
 - **Nesting: 64 levels** of `#if` / `#ifdef` / `#ifndef` / `#ifplat` in the main
-  source, and of `#if` / `#ifdef` / `#ifndef` within each included file (an
-  included file starts its own count). The 65th is refused at its line. (Before
-  6.6.20 deeper nesting wrote through compiler state and could silently change the
-  binary.) Known gap: `#ifplat` is not evaluated inside an included file — both
-  arms compile there; use `#ifdef CYRIUS_ARCH_*` in included files.
+  source and within each included file (an included file starts its own count;
+  `#ifplat` is evaluated there too since 6.6.20). The 65th is refused at its line.
+  (Before 6.6.20 deeper nesting wrote through compiler state and could silently
+  change the binary.)
 - **Function-like macros (`#define NAME(a, b) …`): 16, in the main source only.**
   The 17th is refused by name, a second `#define` of the same function-like name
   is refused (expansion runs after every definition is read, so only one
