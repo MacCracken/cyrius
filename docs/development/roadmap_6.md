@@ -189,6 +189,11 @@ file keeps only a pointer: one authority per active minor.
      copy or refuse for BOTH sizes; the `≤ 8 B` pointer store is wrong whichever is chosen. Probes: the 6.6.20
      backlog audit's `d1*.cyr`.
 5. **Methods on nested fields and chains**: `b.v.sum()`, `mk(3).v.sum()`.
+   - **And the result type of a method call on an 8-byte struct** (moved from roadmap.md's backlog at the 6.6.20
+     re-triage, BACKLOG-07): an UNTYPED `var u = s.clone(); u.len()` infers the method's struct return type for
+     16- and 24-byte structs (rc 2, measured at 6.6.20) but not for a one-field 8-byte struct (`no struct type in
+     scope for 'u'`); a free call's 8-byte struct result (`var u = mk(); u.len()`) IS inferred. Fix it with the
+     other method-resolution work here, or sooner in a repair release with the other inference gaps.
 6. **Dispatch stays static (ADR-004).** Trait objects remain the `lib/trait.cyr` library pattern: a
    vtable + data fat pointer, called through `fncall`. Compiler-native `dyn` would amend ADR-004. That is
    the one design question to settle at the open, and the default is no.

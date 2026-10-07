@@ -397,8 +397,9 @@ priority surfaces.
     (`h.n += 1`) is `expected '='` — a missing common feature, **v6.7.x** candidate.
   - `p[i]` on a `*T` is refused (no element descriptor) — with `p + n` now `sizeof(T)` everywhere, a typed-pointer
     subscript is the natural next step (**v6.7.x** candidate).
-  - An UNTYPED `var u = s.clone();` does not take a method's struct return type (`u.len()`: "no struct type in
-    scope"); a free call's result is inferred.
+  - ~~An UNTYPED `var u = s.clone();` does not take a method's struct return type~~ → **narrowed and moved to
+    [roadmap_6.md](roadmap_6.md) § v6.7.x A5** at the 6.6.20 re-triage: it is fixed for structs over 8 bytes and
+    fails only for an 8-byte (one-field) struct (BACKLOG-07).
   - A generic-struct FIELD `b: Box<i32>;` is `expected identifier, got '<'`; `#derive` on a struct with a
     `Vec<Box<i64>>` field stops its field walk at the nested `<` (later accessors undefined — loud).
   - `#pure`'s `#io` / `#alloc` check reads the callee's flags at the call, so a call to an `#io` fn defined LATER is
