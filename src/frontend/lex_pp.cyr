@@ -45,7 +45,8 @@ fn ISDEFINE(S, pos, bl): i64 {
     # skipped whitespace here, that offset would be wrong. ISDEFINE
     # stays strict; directive detection remains col-0 for #define.
     if (pos + 8 >= bl) { return 0; }
-    # "#define " = 23 64 65 66 69 6E 65 20
+    # "#define " = 23 64 65 66 69 6E 65 20 — the separator may be a space or a tab (6.6.20;
+    # see PP_SEP)
     if (load8(S + pos) != 35) { return 0; }
     if (load8(S + pos + 1) != 100) { return 0; }
     if (load8(S + pos + 2) != 101) { return 0; }
@@ -53,7 +54,7 @@ fn ISDEFINE(S, pos, bl): i64 {
     if (load8(S + pos + 4) != 105) { return 0; }
     if (load8(S + pos + 5) != 110) { return 0; }
     if (load8(S + pos + 6) != 101) { return 0; }
-    if (load8(S + pos + 7) != 32) { return 0; }
+    if (PP_DBLANK(load8(S + pos + 7)) == 0) { return 0; }
     return 1;
 }
 
@@ -70,6 +71,66 @@ fn PP_SKIP_WS(S, pos, bl): i64 {
         pos = pos + 1;
     }
     return pos;
+}
+
+# ⛔ 6.6.20 — THE separator rule for a directive's operands: a RUN of blanks, spaces AND
+# tabs, skipped from `pos`. TAB is ordinary whitespace in the language (`var<TAB>r = 9;`
+# compiles) and PP_SKIP_WS / PP_NAMEBOUND / _pp_a64_sym already took it, but the predicates
+# (ISIFDEF, ISDEFINE, ...) wanted exactly one SPACE after the keyword and PP_HASH ended a
+# name at a space only — so, silently, with no diagnostic: `#ifdef CYRIUS_ARCH_X86<TAB>`
+# took the #else arm on x86, `#define FOO<TAB>1` left FOO undefined, `#ifdef<TAB>X` was a
+# comment (its body compiled unconditionally), and `#define FOO  1` (two spaces) defined
+# FOO as 0. Every operand reader now skips with this and every name ends at a tab.
+# CHANGELOG [6.6.20]
+fn PP_SEP(base, pos): i64 {
+    while (PP_DBLANK(load8(base + pos)) == 1) { pos = pos + 1; }
+    return pos;
+}
+
+# ⛔ 6.6.20 — `#else` / `#elif` / `#endif` / `#endplat` (`k` 0..3) with NO open block is an
+# ERROR. It was "ignored silently rather than abort", which is what let a malformed OPENER
+# pass unnoticed: `#ifdef<TAB>X` and `#if dbg == 1` were read as comments, so the code they
+# guarded compiled unconditionally and the `#endif` that should have closed them landed at
+# depth 0 and vanished. Reported at the stray's own line (`_pp_err_at`), and the build fails.
+# An ecosystem survey (19,635 .cyr/.tcyr/.bcyr/.fcyr under ~/Repos) found no depth-0 stray
+# and no block left open at the end of a file. CHANGELOG [6.6.20]
+fn _pp_stray(S, base, pos, k): i64 {
+    if (k == 0) { _pp_err_at(S, base, pos, "#else without a matching #if / #ifdef / #ifndef / #ifplat"); }
+    if (k == 1) { _pp_err_at(S, base, pos, "#elif without a matching #if / #ifdef / #ifndef / #ifplat"); }
+    if (k == 2) { _pp_err_at(S, base, pos, "#endif without a matching #if / #ifdef / #ifndef / #ifplat"); }
+    if (k == 3) { _pp_err_at(S, base, pos, "#endplat without a matching #if / #ifdef / #ifndef / #ifplat"); }
+    return 0;
+}
+
+# The mirror: a block still open at the end of the pass. `pos` is the opener of the
+# OUTERMOST block left open. It was silent too — a false `#ifdef NOPE` with no `#endif`
+# dropped every line after it, the rest of an included file and everything that followed
+# it. In PP_IFDEF_PASS (`base` is its copy of the stream) the file attribution has moved on
+# to the last marker in the stream by now, so it is put back on the one the opener sits
+# under first. CHANGELOG [6.6.20]
+fn _pp_unclosed(S, base, pos, bl): i64 {
+    if (base != S + _SRCB) {
+        var q = pos;
+        var go = 1;
+        while (go == 1) {
+            if (q == 0) { go = 0; }
+            else {
+                q = q - 1;
+                var atbol = 0;
+                if (q == 0) { atbol = 1; }
+                elif (load8(base + q - 1) == 10) { atbol = 1; }
+                if (atbol == 1) {
+                    if (load8(base + q) == 35) {
+                        if (load8(base + q + 1) == 64) {
+                            if (load8(base + q + 2) == 102) { _pp_note_marker(base, q, bl); go = 0; }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    _pp_err_at(S, base, pos, "this #if / #ifdef / #ifndef / #ifplat has no matching #endif");
+    return 0;
 }
 
 # v6.6.6 — THE preprocessor's lexical state machine. One copy, shared by all
@@ -304,8 +365,8 @@ fn _pp_a64_open(base, pos, ks, d, out, op): i64 {
     var b = 1 << d;
     var ni = 0;
     var ne = 0;
+    pos = PP_SEP(base, pos);   # 6.6.20: a blank RUN, tabs included, before the operand (PP_SEP)
     if (kind == 2) {
-        while (load8(base + pos) == 32) { pos = pos + 1; }
         if (_pp_a64_sym(base, pos, "aarch64") == 1) { ni = 1; }
         if (_pp_a64_sym(base, pos, "x86") == 1) { ne = 1; }
     }
@@ -381,7 +442,7 @@ fn ISIFDEF(S, pos, bl): i64 {
     if (load8(S + pos + 3) != 100) { return 0; }
     if (load8(S + pos + 4) != 101) { return 0; }
     if (load8(S + pos + 5) != 102) { return 0; }
-    if (load8(S + pos + 6) != 32) { return 0; }
+    if (PP_DBLANK(load8(S + pos + 6)) == 0) { return 0; }   # space or tab (6.6.20, PP_SEP)
     return 1;
 }
 
@@ -399,7 +460,7 @@ fn ISIFNDEF(S, pos, bl): i64 {
     if (load8(S + pos + 4) != 100) { return 0; }
     if (load8(S + pos + 5) != 101) { return 0; }
     if (load8(S + pos + 6) != 102) { return 0; }
-    if (load8(S + pos + 7) != 32)  { return 0; }
+    if (PP_DBLANK(load8(S + pos + 7)) == 0) { return 0; }   # space or tab (6.6.20, PP_SEP)
     return 1;
 }
 
@@ -431,19 +492,21 @@ fn ISELIF(S, pos, bl): i64 {
     if (load8(S + pos + 2) != 108) { return 0; }
     if (load8(S + pos + 3) != 105) { return 0; }
     if (load8(S + pos + 4) != 102) { return 0; }
-    if (load8(S + pos + 5) != 32)  { return 0; }
+    if (PP_DBLANK(load8(S + pos + 5)) == 0) { return 0; }   # space or tab (6.6.20, PP_SEP)
     return 1;
 }
 
-# "#if " = 23 69 66 20
+# "#if " = 23 69 66 20 — the separator may be a space or a tab (6.6.20, PP_SEP).
+# ⚠ 6.6.20 — this carried `if (load8(S + pos + 4) == 100) { return 0; }`, "must NOT be
+# #ifdef". It never did that job (`#ifdef` already fails at pos + 3, which must be a blank),
+# and the one thing it DID do was refuse every `#if` whose condition starts with a lower-case
+# `d`: `#if dbg == 1` was read as a comment, so BOTH arms compiled. Deleted. CHANGELOG [6.6.20]
 fn ISIF(S, pos, bl): i64 {
     if (pos + 4 >= bl) { return 0; }
     if (load8(S + pos) != 35) { return 0; }
     if (load8(S + pos + 1) != 105) { return 0; }
     if (load8(S + pos + 2) != 102) { return 0; }
-    if (load8(S + pos + 3) != 32) { return 0; }
-    # Must NOT be #ifdef (check 5th char isn't 'd')
-    if (load8(S + pos + 4) == 100) { return 0; }
+    if (PP_DBLANK(load8(S + pos + 3)) == 0) { return 0; }
     return 1;
 }
 
@@ -452,18 +515,18 @@ fn ISIF(S, pos, bl): i64 {
 # Returns 1 (true) or 0 (false)
 # v5.6.42: src_base for source reads (see PP_HASH above).
 fn PP_EVAL_IF(S, src_base, pos): i64 {
-    # Skip whitespace
-    while (load8(src_base + pos) == 32) { pos = pos + 1; }
+    # Skip whitespace (spaces and tabs — 6.6.20, see PP_SEP)
+    pos = PP_SEP(src_base, pos);
     # Get name value
     var lhs = PP_GETVAL(S, src_base, pos);
     # Skip name
-    while (load8(src_base + pos) != 32) {
+    while (PP_DBLANK(load8(src_base + pos)) == 0) {
         if (load8(src_base + pos) == 10) { return lhs != 0; }
         if (load8(src_base + pos) == 0) { return lhs != 0; }
         pos = pos + 1;
     }
     # Skip whitespace
-    while (load8(src_base + pos) == 32) { pos = pos + 1; }
+    pos = PP_SEP(src_base, pos);
     # Read operator
     var op1 = load8(src_base + pos);
     var op2 = load8(src_base + pos + 1);
@@ -474,7 +537,7 @@ fn PP_EVAL_IF(S, src_base, pos): i64 {
     if (op1 == 60) { if (op2 == 61) { op = 6; pos = pos + 2; } elif (op2 != 61) { op = 4; pos = pos + 1; } }
     if (op == 0) { return lhs != 0; }
     # Skip whitespace
-    while (load8(src_base + pos) == 32) { pos = pos + 1; }
+    pos = PP_SEP(src_base, pos);
     # Parse RHS integer
     var rhs = 0;
     var rc = load8(src_base + pos);
@@ -525,7 +588,7 @@ fn ISIFPLAT(S, pos, bl): i64 {
     if (load8(S + pos + 4) != 108) { return 0; }
     if (load8(S + pos + 5) != 97)  { return 0; }
     if (load8(S + pos + 6) != 116) { return 0; }
-    if (load8(S + pos + 7) != 32)  { return 0; }
+    if (PP_DBLANK(load8(S + pos + 7)) == 0) { return 0; }   # space or tab (6.6.20, PP_SEP)
     return 1;
 }
 
@@ -3236,6 +3299,7 @@ fn PP_HASH_ID(S, pos): i64 {
         if (pc == 10) { return h; }
         if (pc == 13) { return h; }
         if (pc == 32) { return h; }
+        if (pc == 9) { return h; }    # 6.6.20, see PP_SEP
         if (pc == 40) { return h; }
         h = h * 31 + pc;
         pi = pi + 1;
@@ -3557,6 +3621,7 @@ fn PP_HASH(src_base, pos): i64 {
         if (pc == 13) { return h; }
         if (pc == 0) { return h; }
         if (pc == 32) { return h; }
+        if (pc == 9) { return h; }    # 6.6.20: a TAB ends a name too — see PP_SEP
         h = h * 31 + pc;
         pi = pi + 1;
         pc = load8(src_base + pos + pi);
@@ -3565,7 +3630,7 @@ fn PP_HASH(src_base, pos): i64 {
 }
 
 # Hash a null-terminated cstr using the same polynomial as PP_HASH,
-# stopping at the first terminator byte (\0, \n, \r, space). Used by
+# stopping at the first terminator byte (\0, \n, \r, space, tab). Used by
 # PP_PREDEFINE to register compiler-builtin defines (e.g. the
 # CYRIUS_ARCH_* marker) from a plain C string instead of a preprocessor
 # source position.
@@ -3577,6 +3642,7 @@ fn PP_HASH_CSTR(name): i64 {
         if (c == 10) { return h; }
         if (c == 13) { return h; }
         if (c == 32) { return h; }
+        if (c == 9) { return h; }     # same terminators as PP_HASH (6.6.20)
         h = h * 31 + c;
         i = i + 1;
         c = load8(name + i);
@@ -3604,20 +3670,24 @@ fn PP_PREDEFINE(S, name): i64 {
 fn PP_DEFINE(S, src_base, pos): i64 {
     # 6.6.10: stop at the cap — see PP_PREDEFINE. CHANGELOG [6.6.10]
     if (_pp_flag_count >= 16) { _pp_err_at(S, src_base, pos, "too many preprocessor #define/flag entries (max 16)"); return 0; }
+    pos = PP_SEP(src_base, pos);
     var h = PP_HASH(src_base, pos);
     store64(S + 0x190800 + _pp_flag_count * 8, h);
-    # Check for value: #define NAME VALUE (skip name, find space, parse int)
+    # Check for value: #define NAME VALUE (skip name, find the blank run, parse int).
+    # 6.6.20: the name ends at a tab as well as a space, and the WHOLE run of blanks before
+    # the value is skipped — it skipped exactly one byte, so `#define FOO  1` defined FOO as
+    # 0 and `#if FOO == 1` took the other arm. See PP_SEP. CHANGELOG [6.6.20]
     var vi = 0;
     var vc = load8(src_base + pos + vi);
-    while (vc != 32) {
+    while (PP_DBLANK(vc) == 0) {
         if (vc == 10) { break; }
         if (vc == 0) { break; }
         vi = vi + 1;
         vc = load8(src_base + pos + vi);
     }
     var defval = 0;
-    if (vc == 32) {
-        vi = vi + 1;
+    if (PP_DBLANK(vc) == 1) {
+        vi = PP_SEP(src_base, pos + vi) - pos;
         var dvc = load8(src_base + pos + vi);
         while (dvc >= 48) {
             if (dvc > 57) { break; }
@@ -3633,7 +3703,7 @@ fn PP_DEFINE(S, src_base, pos): i64 {
 
 # Look up value of a #define'd name (returns 0 if not found)
 fn PP_GETVAL(S, src_base, pos): i64 {
-    var h = PP_HASH(src_base, pos);
+    var h = PP_HASH(src_base, PP_SEP(src_base, pos));
     var di = 0;
     while (di < _pp_flag_count) {
         if (load64(S + 0x190800 + di * 8) == h) {
@@ -3645,7 +3715,7 @@ fn PP_GETVAL(S, src_base, pos): i64 {
 }
 
 fn PP_DEFINED(S, src_base, pos): i64 {
-    var h = PP_HASH(src_base, pos);
+    var h = PP_HASH(src_base, PP_SEP(src_base, pos));   # 6.6.20: `#ifdef<TAB>X`, `#ifdef  X`
     var di = 0;
     while (di < _pp_flag_count) {
         if (load64(S + 0x190800 + di * 8) == h) { return 1; }
@@ -3661,13 +3731,13 @@ fn PP_DEFINED(S, src_base, pos): i64 {
 # directive; the comparison hashes are computed at call time from
 # the same literal strings that compiler bootstrap would register.
 fn PP_IFPLAT_MATCH(S, pos): i64 {
-    # Skip leading whitespace
-    while (load8(S + _SRCB + pos) == 32) { pos = pos + 1; }
+    # Skip leading whitespace (spaces and tabs — 6.6.20, see PP_SEP)
+    pos = PP_SEP(S + _SRCB, pos);
     var target_hash = 0;
     # "x86" = 78 38 36 — 3 chars, must be followed by a terminator
     if (load8(S + _SRCB + pos) == 120 && load8(S + _SRCB + pos + 1) == 56 && load8(S + _SRCB + pos + 2) == 54) {
         var nc = load8(S + _SRCB + pos + 3);
-        if (nc == 32 || nc == 10 || nc == 13 || nc == 0) {
+        if (nc == 32 || nc == 9 || nc == 10 || nc == 13 || nc == 0) {
             target_hash = PP_HASH_CSTR("CYRIUS_ARCH_X86");
         }
     }
@@ -3677,7 +3747,7 @@ fn PP_IFPLAT_MATCH(S, pos): i64 {
           && load8(S + _SRCB + pos + 3) == 99 && load8(S + _SRCB + pos + 4) == 104
           && load8(S + _SRCB + pos + 5) == 54 && load8(S + _SRCB + pos + 6) == 52) {
             var nc = load8(S + _SRCB + pos + 7);
-            if (nc == 32 || nc == 10 || nc == 13 || nc == 0) {
+            if (nc == 32 || nc == 9 || nc == 10 || nc == 13 || nc == 0) {
                 target_hash = PP_HASH_CSTR("CYRIUS_ARCH_AARCH64");
             }
         }
@@ -3906,6 +3976,7 @@ fn PP_PASS(S): i64 {
     # v5.9.34 — `in_comment` added (vyakarana 1.0.2 fix); v6.6.6 folded both it
     # and `escape_next` into PP_LEXST's `lst`.
     var in_string = 0;
+    var open0 = 0;   # 6.6.20: the opener of the outermost open block, for _pp_unclosed
     while (ip < bl) {
         var c = load8(S + _SRCB + ip);
         var handled = 0;
@@ -3917,16 +3988,21 @@ fn PP_PASS(S): i64 {
         # so directive prefixes inside string literals aren't
         # processed.
         var dip = PP_SKIP_WS(S + _SRCB, ip, bl);
+        var d0 = pp_depth;
         if (bol == 1 && in_string == 0) {
             if (ISDEFINE(S + _SRCB, dip, bl) == 1) {
                 if (skip_depth == 0) {
                     # Check for macro with args: #define NAME(
-                    var dp = dip + 8;
+                    # 6.6.20: the name follows a RUN of blanks and ends at a tab too — with
+                    # `#define FOO<TAB>bar(1)` this walked past the tab, found the `(` and stored
+                    # a function-like macro named `FOO<TAB>bar`. See PP_SEP.
+                    var dp = PP_SEP(S + _SRCB, dip + 8);
+                    var dname = dp;
                     var is_macro = 0;
                     while (dp < bl) {
                         var dc = load8(S + _SRCB + dp);
                         if (dc == 40) { is_macro = 1; break; }
-                        if (dc == 32) { break; }
+                        if (PP_DBLANK(dc) == 1) { break; }
                         if (dc == 10) { break; }
                         dp = dp + 1;
                     }
@@ -3934,7 +4010,7 @@ fn PP_PASS(S): i64 {
                         # Store macro inline: copy line text to storage
                         var msi = _pp_macro_count;
                         if (msi < 16) {
-                            var mip = dip + 8;
+                            var mip = dname;
                             store64(S + 0x192000 + msi * 8, PP_HASH_ID(S + _SRCB, mip));
                             store64(S + 0x192080 + msi * 8, _pp_macro_text_pos);
                             var mdst = S + 0x193000 + _pp_macro_text_pos;
@@ -4014,9 +4090,8 @@ fn PP_PASS(S): i64 {
                     ip = PP_SKIPLINE(S + _SRCB, ip, bl); op = _pp_a64_open(S + _SRCB, dip + 8, 1 * 8 + _s, pp_depth - 1, out, op); bol = 1; handled = 1;
                 } }
             # #ifplat PLAT (v5.4.19) — sugar for #ifdef CYRIUS_ARCH_<UPPER>.
-            # Must come before ISIF so "#ifp..." doesn't match the 4-byte
-            # "#if " prefix check (ISIF explicitly rejects byte 4 == 'd'
-            # but not 'p'). Paired with ISENDPLAT below.
+            # Paired with ISENDPLAT below. (ISIF wants a blank at byte 3, so
+            # "#ifp..." can never match it; the order is not load-bearing.)
             if (handled == 0) { if (ISIFPLAT(S + _SRCB, dip, bl) == 1) {
                     var _s = 3;
                     if (skip_depth == 0) {
@@ -4044,15 +4119,14 @@ fn PP_PASS(S): i64 {
             #   1 → 0 (was search; else body emits)       skip_depth--
             #   2 → 2 no-op (already done)
             #   3 → 3 no-op (outer skipping)
-            # Unbalanced #else (pp_depth == 0) is a programmer error;
-            # ignore silently rather than abort — matches existing
-            # ISENDIF behavior when skip_depth underflows.
+            # 6.6.20: an unbalanced #else / #elif / #endif / #endplat (pp_depth == 0)
+            # is REPORTED — see _pp_stray. It used to be ignored silently.
             if (handled == 0) { if (ISELSE(S + _SRCB, dip, bl) == 1) {
                     if (pp_depth > 0) {
                         var _s = load8(S + 0x197F10 + pp_depth - 1);
                         if (_s == 0) { store8(S + 0x197F10 + pp_depth - 1, 2); skip_depth = skip_depth + 1; }
                         elif (_s == 1) { store8(S + 0x197F10 + pp_depth - 1, 0); skip_depth = skip_depth - 1; }
-                    }
+                    } else { _pp_stray(S, S + _SRCB, dip, 0); }
                     ip = PP_SKIPLINE(S + _SRCB, ip, bl); op = _pp_a64_close(S, 0, pp_depth - 1, out, op); bol = 1; handled = 1;
                 } }
             # #elif COND (v5.6.1) — transition like #else for states 0/2/3
@@ -4068,7 +4142,7 @@ fn PP_PASS(S): i64 {
                                 skip_depth = skip_depth - 1;
                             }
                         }
-                    }
+                    } else { _pp_stray(S, S + _SRCB, dip, 1); }
                     ip = PP_SKIPLINE(S + _SRCB, ip, bl); op = _pp_a64_close(S, 1, pp_depth - 1, out, op); bol = 1; handled = 1;
                 } }
             # v6.5.24 — `#@srcline`: set the `<source>` line bias from THIS marker's own
@@ -4113,7 +4187,7 @@ fn PP_PASS(S): i64 {
                         var _s = load8(S + 0x197F10 + pp_depth - 1);
                         if (_s != 0) { skip_depth = skip_depth - 1; }
                         pp_depth = pp_depth - 1;
-                    }
+                    } else { _pp_stray(S, S + _SRCB, dip, 2); }
                     ip = PP_SKIPLINE(S + _SRCB, ip, bl); op = _pp_a64_close(S, 2, pp_depth, out, op); bol = 1; handled = 1;
                 } }
             # #endplat — semantically identical to #endif, visually pairs
@@ -4124,7 +4198,7 @@ fn PP_PASS(S): i64 {
                         var _s = load8(S + 0x197F10 + pp_depth - 1);
                         if (_s != 0) { skip_depth = skip_depth - 1; }
                         pp_depth = pp_depth - 1;
-                    }
+                    } else { _pp_stray(S, S + _SRCB, dip, 3); }
                     ip = PP_SKIPLINE(S + _SRCB, ip, bl); op = _pp_a64_close(S, 2, pp_depth, out, op); bol = 1; handled = 1;
                 } }
             # v6.5.20 — `#derive` is now LINE-EXACT and carries NO marker. v6.5.19 had it
@@ -4229,6 +4303,7 @@ fn PP_PASS(S): i64 {
                         bol = 1; handled = 1;
                     } } }
         }
+        if (d0 == 0) { if (pp_depth > 0) { open0 = dip; } }
         # Default: copy byte to output (if not skipping)
         if (handled == 0) {
             if (skip_depth == 0) {
@@ -4275,6 +4350,7 @@ fn PP_PASS(S): i64 {
             if (c == 10) { bol = 1; } else { bol = 0; }
         }
     }
+    if (pp_depth > 0) { _pp_unclosed(S, S + _SRCB, open0, bl); }   # 6.6.20
     # Check preprocess output size. Buffer is 8MB at 0x459D000
     # (v5.11.33 — was 2MB at 0x44A000 pre-relocation; raised to absorb
     # sandhi-folded stdlib growth + headroom into v6.x).
@@ -4437,6 +4513,7 @@ fn PP_IFDEF_PASS(S): i64 {
         # lines. CHANGELOG [6.6.6]
         var lst = 0;
         var in_string = 0;
+        var open0 = 0;   # 6.6.20: see PP_PASS
         while (ip < bl) {
             var c = load8(tmp + ip);
             var handled = 0;
@@ -4444,6 +4521,7 @@ fn PP_IFDEF_PASS(S): i64 {
             # whitespace — see PP_PASS for the rationale. v5.8.40 —
             # also gated on `in_string == 0`.
             var dip = PP_SKIP_WS(tmp, ip, bl);
+            var d0 = pp_depth;
             if (bol == 1 && in_string == 0) {
                 # v6.5.0 Phase 1 — remember which file we are copying FROM, so a nested
                 # include below can emit a correct RESUME marker. This only OBSERVES the
@@ -4494,7 +4572,7 @@ fn PP_IFDEF_PASS(S): i64 {
                             var _s = load8(S + 0x197F10 + pp_depth - 1);
                             if (_s == 0) { store8(S + 0x197F10 + pp_depth - 1, 2); skip_depth = skip_depth + 1; }
                             elif (_s == 1) { store8(S + 0x197F10 + pp_depth - 1, 0); skip_depth = skip_depth - 1; }
-                        }
+                        } else { _pp_stray(S, tmp, dip, 0); }
                         ip = PP_SKIPLINE(tmp, ip, bl); op = _pp_a64_close(S, 0, pp_depth - 1, out, op); bol = 1; handled = 1;
                     } }
                 if (handled == 0) { if (ISELIF(tmp, dip, bl) == 1) {
@@ -4507,7 +4585,7 @@ fn PP_IFDEF_PASS(S): i64 {
                                     skip_depth = skip_depth - 1;
                                 }
                             }
-                        }
+                        } else { _pp_stray(S, tmp, dip, 1); }
                         ip = PP_SKIPLINE(tmp, ip, bl); op = _pp_a64_close(S, 1, pp_depth - 1, out, op); bol = 1; handled = 1;
                     } }
                 if (handled == 0) { if (ISENDIF(tmp, dip, bl) == 1) {
@@ -4515,7 +4593,7 @@ fn PP_IFDEF_PASS(S): i64 {
                             var _s = load8(S + 0x197F10 + pp_depth - 1);
                             if (_s != 0) { skip_depth = skip_depth - 1; }
                             pp_depth = pp_depth - 1;
-                        }
+                        } else { _pp_stray(S, tmp, dip, 2); }
                         ip = PP_SKIPLINE(tmp, ip, bl); op = _pp_a64_close(S, 2, pp_depth, out, op); bol = 1; handled = 1;
                     } }
                 # v6.5.20 — line-exact, no marker; see the PP_PASS twin. This is the pass
@@ -4592,6 +4670,7 @@ fn PP_IFDEF_PASS(S): i64 {
                             bol = 1; handled = 1;
                         } } }
             }
+            if (d0 == 0) { if (pp_depth > 0) { open0 = dip; } }
             if (handled == 0) {
                 if (skip_depth == 0) { store8(out + op, c); op = op + 1; }
                 # v6.5.19 — keep a skipped line's newline; see the PP_PASS twin.
@@ -4605,6 +4684,7 @@ fn PP_IFDEF_PASS(S): i64 {
                 if (c == 10) { bol = 1; } else { bol = 0; }
             }
         }
+        if (pp_depth > 0) { _pp_unclosed(S, tmp, open0, bl); }   # 6.6.20
         # Size guard on the fixpoint output. v4.8.4 added the original
         # 1 MB cap after bote reported silent overrun → downstream
         # corruption (`lib/assert.cyr:3: expected '=', got string`).

@@ -1737,6 +1737,15 @@ The full set: `#ifdef`, `#ifndef`, `#else`, `#elif`, `#endif`. State is
 tracked per nesting level — `#elif` after a taken `#ifdef` is correctly
 suppressed, and nested blocks skip cleanly inside a parent's skip path.
 
+A directive's keyword, name and value are separated by any run of spaces and TABS
+(v6.6.20). Before that only a single space separated them, silently: `#ifdef X<TAB>`
+looked up a name ending in a tab and took the other arm, `#ifdef<TAB>X` was a comment
+(so its body compiled unconditionally), and `#define FOO  1` with two spaces defined
+FOO as 0. An `#else` / `#elif` / `#endif` / `#endplat` with no open block, and a block
+still open at the end of the input, are ERRORS naming the directive's file and line
+(v6.6.20) — they used to be ignored, which is how the malformed openers above went
+unnoticed.
+
 `#ifplat <plat>` (v5.4.19) is a tighter spelling for arch / OS dispatch:
 
 ```
