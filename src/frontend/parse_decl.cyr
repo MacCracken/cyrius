@@ -4119,6 +4119,15 @@ fn _sci_global_src(S, snoff, pscale): i64 {
     return gvi;
 }
 
+# 6.7.0 — a `*T` GLOBAL source of `var q: T = G;`: `_agc_copy_bytes`'s dereferenced-global band
+# (`0 - 1000 - gvi`: the slot holds the address), else 0.
+fn _sci_gptr_src(S, snoff, pscale): i64 {
+    var gvi = FINDVAR(S, snoff);
+    if (gvi < 0) { return 0; }
+    if (_gv_ptr_sid(S, gvi) != 0 - pscale) { return 0; }
+    return 0 - 1000 - gvi;
+}
+
 # ⛔ 6.6.13 — `var q: T = <capture>;` inside a closure. With no capture rung this fell to the
 # scalar init, which bound q as a POINTER to the capture's words: into the env for an inline
 # capture (`q.x = q.x + 1` persisted from one call to the next, 4 then 5) and into the CALLER's
@@ -4318,19 +4327,24 @@ fn _try_struct_copy_init(S, noff, pscale): i64 {
     # assignment form of the same hole; this is the declaration form. `_sci_gsrc` is the
     # global's slot, or -1 for the local source. CHANGELOG [6.6.5]
     _sci_gsrc = 0 - 1;
+    var _ptr_src = 0;   # 6.7.0: the source is a `*T` — copied THROUGH it at every size
     var _cs = 0;
     if (src_li < 0) { _cs = _sci_cap_src(S, TOKVAL(S, ci_ti), noff, pscale); }   # 6.6.13
     if (_cs == 2) { return 0; }
     if (_cs == 1) { src_li = 0 - 2; }
     elif (src_li < 0) {
-        var _gs = _sci_global_src(S, TOKVAL(S, ci_ti), pscale);
-        if (_gs < 0) {
-            # 6.6.6 — a struct-typed GLOBAL source of a DIFFERENT type is a type error, not a
-            # fall-through to the scalar init. See `_AGG_ASSIGN_TYPE_ERR`. CHANGELOG [6.6.6]
-            _AGG_ASSIGN_TYPE_ERR(S, pscale, _sci_gsrc_type(S, TOKVAL(S, ci_ti)), noff, TOKVAL(S, ci_ti));
-            return 0;
+        var _gp = _sci_gptr_src(S, TOKVAL(S, ci_ti), pscale);   # 6.7.0: a `*T` global
+        if (_gp <= 0 - 1000) { _sci_gsrc = _gp; _ptr_src = 1; }
+        if (_ptr_src == 0) {
+            var _gs = _sci_global_src(S, TOKVAL(S, ci_ti), pscale);
+            if (_gs < 0) {
+                # 6.6.6 — a struct-typed GLOBAL source of a DIFFERENT type is a type error, not a
+                # fall-through to the scalar init. See `_AGG_ASSIGN_TYPE_ERR`. CHANGELOG [6.6.6]
+                _AGG_ASSIGN_TYPE_ERR(S, pscale, _sci_gsrc_type(S, TOKVAL(S, ci_ti)), noff, TOKVAL(S, ci_ti));
+                return 0;
+            }
+            _sci_gsrc = _gs;
         }
-        _sci_gsrc = _gs;
     }
     else {
         # 6.6.6 — this bail USED to be the whole answer to a type mismatch, and it falls through
@@ -4353,7 +4367,13 @@ fn _try_struct_copy_init(S, noff, pscale): i64 {
         # `return y;` copied the pointer slot as if it were the struct. `y = x;` has copied through
         # since 6.6.6 (`_agc_operand`); the declaration now takes the same addressed copy.
         # CHANGELOG [6.6.11]
-        if (GLAGG(S, src_li) == 0) {
+        # ⛔ 6.7.0 (A4, BACKLOG-06) — `var q: T = p;` WITH `p: *T` COPIES, AT BOTH SIZES (the user's
+        # decision, 2026-10-07). A `*T` parameter of 8 B or less fell to the scalar init, which
+        # stored the POINTER into q's inline word (`q.v` read an address); a `*T` local did the
+        # same at 8 B and BOUND q to `*p` over 8 B (`q.v = 5` wrote the original). It is copied
+        # through the pointer now, whatever T's size; aliasing is spelled `var q: *T = p;`.
+        if (GLPTRP(S, src_li) == 1) { src_li = _AGC_DREF(src_li); _ptr_src = 1; }
+        elif (GLAGG(S, src_li) == 0) {
             if (_local_is_sptr_param(S, src_li) == 0) { return 0; }
             src_li = _AGC_DREF(src_li);
         }
@@ -4370,7 +4390,7 @@ fn _try_struct_copy_init(S, noff, pscale): i64 {
     else {
         var dst_sid = 0 - pscale;
         var sz = STRUCTSZ(S, dst_sid - 1);
-        if (sz <= 8) { return 0; }
+        if (sz <= 8) { if (_ptr_src == 0) { return 0; } }   # 6.7.0: a `*T` source copies at 8 B too
         var aligned = (sz + 7) & (0 - 8);
         nslots = aligned / 8;
     }
@@ -4398,7 +4418,7 @@ fn _try_struct_copy_init(S, noff, pscale): i64 {
     # Word-by-word copy: a's word i → b's word i (slot named - i). A LOCAL source is named at
     # its deepest slot so its word i is `src_li - i`; a GLOBAL's fields ascend from its named
     # slot so its word i is `_sci_gsrc + i`.
-    if (_sci_gsrc >= 0 || src_li <= 0 - 1000 || src_li == 0 - 2) {
+    if (_sci_gsrc >= 0 || _sci_gsrc <= 0 - 1000 || src_li <= 0 - 1000 || src_li == 0 - 2) {
         # A global source is addressed and byte-exact — its slot index is not a word index
         # and reading `ceil(sz/8)` words would run past its neighbour. See `_agc_copy_bytes`.
         # 6.6.11: so is an address-passed parameter (`src_li` in the `_AGC_DREF` band).

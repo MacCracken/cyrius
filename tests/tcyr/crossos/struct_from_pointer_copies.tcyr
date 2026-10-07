@@ -1,0 +1,46 @@
+# struct_from_pointer_copies.tcyr — 6.7.0 (arc A4, BACKLOG-06). `var q: T = p;` with `p: *T` COPIES
+# `*p` into q, at every size (the user's decision, 2026-10-07); aliasing is spelled `var q: *T = p;`.
+#
+# Before 6.7.0 the result depended on where p came from and how big T was: a `*T` PARAMETER of 8 B
+# or less stored the pointer itself into q's inline word (`q.v` read an address), a `*T` LOCAL did
+# the same at 8 B and BOUND q to `*p` over 8 B (`q.v = 5` wrote the original). Each row reads the
+# copy, writes it, and checks the original is untouched. A pointer-mode HANDLE local
+# (`var a: N2 = alloc(..)`) is not a `*T` and still binds (`P *b = a`, CHANGELOG [6.6.5]).
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/assert.cyr"
+
+struct B1 { v; }
+struct N2 { v; w; }
+struct Odd { a: i8; b: i16; }
+
+var GB = B1 { 7 };
+var GP: *B1 = &GB;
+
+fn par8(p: *B1): i64 { var q: B1 = p; var r = q.v; q.v = 5; return r * 10 + p.v; }
+fn par16(p: *N2): i64 { var q: N2 = p; var r = q.w; q.w = 1; return r * 10 + p.w; }
+fn loc8(): i64 { var b = B1 { 7 }; var p: *B1 = &b; var q: B1 = p; var r = q.v; q.v = 5; return r * 10 + b.v; }
+fn loc16(): i64 { var b = N2 { 7, 8 }; var p: *N2 = &b; var q: N2 = p; var r = q.w; q.w = 1; return r * 10 + b.w; }
+fn glob8(): i64 { var q: B1 = GP; var r = q.v; q.v = 3; return r * 10 + GB.v; }
+fn odd3(p: *Odd): i64 { var q: Odd = p; return q.a * 100 + q.b; }
+fn handle(): i64 { var a: N2 = alloc(16); a.v = 4; a.w = 5; var b: N2 = a; b.v = 9; return a.v; }
+impl Show for N2 { fn cp(self): i64 { var q: N2 = self; q.v = 1; return q.w * 10 + self.v; } }
+
+fn run(): i64 {
+    var b = B1 { 7 };
+    var n = N2 { 7, 8 };
+    var o = Odd { 3, 42 };
+    assert_eq(par8(&b), 77, "*T parameter, 8 B: a copy (was the pointer itself)");
+    assert_eq(par16(&n), 88, "*T parameter, 16 B: a copy");
+    assert_eq(loc8(), 77, "*T local, 8 B: a copy (was the pointer itself)");
+    assert_eq(loc16(), 88, "*T local, 16 B: a copy (was a bind)");
+    assert_eq(glob8(), 77, "*T global, 8 B: a copy");
+    assert_eq(odd3(&o), 342, "*T parameter, 3 B narrow fields: a byte-exact copy");
+    assert_eq(n.cp(), 87, "var q: T = self in a method: a copy");
+    assert_eq(handle(), 9, "a pointer-mode handle local still binds");
+    return 0;
+}
+
+alloc_init();
+run();
+var r = assert_summary();
