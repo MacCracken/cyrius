@@ -4855,6 +4855,7 @@ fn _op_local_dispatches(S, li): i64 {
 # Passing `&slot` there handed the operator fn a pointer-to-pointer. CHANGELOG [6.6.6]
 fn _op_operand_local(S, li): i64 {
     if (_local_is_sptr_param(S, li) == 1) { EFLLOAD(S, li); return 0; }
+    _fn_local_addr = 1;   # 6.6.20: the operator fn holds an address in this frame (`_tc_sarg_divert`)
     EFLADDR(S, li);
     return 0;
 }

@@ -623,7 +623,8 @@ fn _tc_frame_divert(S, cfi): i64 {
     # later force re-ran the tail. CHANGELOG [6.6.8]
     if (_cur_fn_coro == 1) { return 1; }
     # v6.5.14 — a pointer to a local laundered through a variable (`var p = &buf; return f(p);`):
-    # the epilogue frees the frame the callee reads. Set wherever this fn materialises `&local`.
+    # the epilogue frees the frame the callee reads. Set wherever this fn materialises `&local`,
+    # and since 6.6.20 wherever it pushes such an address implicitly (`_tc_sarg_divert`, rule 1).
     if (_fn_local_addr == 1) { return 1; }
     # 6.6.6 — a struct-returning CALLER copies into its own retptr, which a `jmp` cannot do.
     if (_cur_fn_ret_sid > 0) { if (_cur_fn_ret_stash > 0) { return 1; } }
@@ -667,7 +668,7 @@ fn _tc_callee_divert(S, cfi): i64 {
     # 6.6.6 — a >16 B struct-returning callee writes through a retptr the tail path never passes.
     if (_ret_agg_class(S, cfi) == 2) { return 1; }
     if (cfi < 0) { return 0; }
-    # (v6.3.36's "any address-passed param diverts" is per ARGUMENT since 6.6.20: `_tc_sarg_divert`.)
+    # (v6.3.36's "any address-passed param diverts" is three exact rules since 6.6.20: `_tc_sarg_divert`.)
     # v6.4.53 — value-form SIMD params travel in vector registers; the tail path loads only the
     # integer ones (`return f32v4_add(v, v)` returned v). These two lines also make PARSE_FNCALL's
     # SIMD argument class check the only one a tail-shaped call needs (6.6.20).
@@ -702,91 +703,42 @@ fn _tc_args_divert(S, cfi, ti_after): i64 {
     # FIRST token AND that argument's mask bit is set): looser forms were measured to cost a
     # self-recursive tail call its TCO.
     if (_tc_str_literal_arg(S, ti_after, cfi) == 1) { return 1; }
-    if (_tc_sarg_divert(S, cfi, ti_after) == 1) { return 1; }   # 6.6.20
+    if (_tc_sarg_divert(cfi) == 1) { return 1; }   # 6.6.20
     return 0;
 }
-# ⛔ 6.6.20 — AN ADDRESS-PASSED PARAMETER IS A PER-ARGUMENT QUESTION. Any address-passed parameter
-# (a struct over 8 B as `p: T` or `p: *T`, a Win64 value-form vector) used to divert EVERY tail call
-# to its fn, so a `p: *Node` list walk, `return walk(p.next, acc + p.v);`, recursed with `call` and
-# a 2,000,000-node list overflowed the stack — a pointer argument carries no frame address. The
-# tail arm now pushes such an argument exactly as PARSE_FNCALL does (`_try_push_struct_addr_arg`:
-# a global struct's address, a field's address through a pointer), so the only hazard left is the
-# one a `jmp` adds — a pushed address INTO THIS FRAME: an inline struct local, a by-value
-# parameter's localized copy (6.6.16 C7), a Win64 vector local, a struct call's or an operator's
-# temp, a field of any of those. `ti_open` = the call's `(`. CHANGELOG [6.6.20]
-fn _tc_sarg_divert(S, cfi, ti_open): i64 {
+# ⛔ 6.6.20 — AN ADDRESS-PASSED PARAMETER NO LONGER COSTS EVERY TAIL CALL. Any address-passed
+# parameter (a struct over 8 B as `p: T` or `p: *T`, a Win64 value-form vector) used to divert EVERY
+# tail call to its fn, so a `p: *Node` list walk, `return walk(p.next, acc + p.v);`, recursed with
+# `call` and a 2,000,000-node list overflowed the stack — a pointer argument carries no frame
+# address. The tail arm now pushes each argument exactly as PARSE_FNCALL does
+# (`_try_push_struct_addr_arg`), so the one hazard left is the one a `jmp` adds: an address IN THIS
+# FRAME reaching the callee, directly or laundered through a value (`var x = idp(s); return dP(x, k);`
+# — the pointer `idp` hands back is `&s`). Three rules close it, none a guess at an argument's shape:
+#   1. `_fn_local_addr` (`_tc_frame_divert`) is set wherever this fn hands an address in its own
+#      frame to anything: `&local`, and every implicit push of one — an inline aggregate argument
+#      (a by-value parameter's copy included), a struct call's or method's temp, a field of a frame
+#      aggregate, a method's `self`, an operator's operand.
+#   2. That flag is set-SO-FAR, which is the whole question only where nothing after the return can
+#      run before it: outside every loop (the only backward jumps; a `defer` body and a coroutine
+#      already divert). Inside a loop a later `x = &s;` runs before the next iteration's return, so
+#      an address-passed callee keeps 6.6.19's divert there — this line.
+#   3. The call's OWN arguments can create such an address after this decision (`dQ(G, s.me())`,
+#      `dP(idu(idp(s)), k)`): the arm emits an ordinary call when they did (`_tc_after_args_divert`).
+# CHANGELOG [6.6.20]
+fn _tc_sarg_divert(cfi): i64 {
     if (_smask_args(cfi) == 0) { return 0; }
-    var i = ti_open + 1;
-    var depth = 0;
-    var pos = 0;
-    var st = i;
-    var n = GTCNT(S);
-    while (i < n) {
-        var t = TOKTYP(S, i);
-        if (t == 12) { return 1; }                                   # EOF: the normal path reports it
-        var endarg = 0;
-        if (depth == 0) { if (t == 31) { endarg = 1; } if (t == 11) { endarg = 2; } }
-        if (endarg > 0) {
-            if (_pm_struct(cfi, pos) == 1) { if (_tc_sarg_ok(S, st, i - st) == 0) { return 1; } }
-            if (endarg == 2) { return 0; }
-            pos = pos + 1;
-            st = i + 1;
-        } else {
-            if (t == 10) { depth = depth + 1; }
-            if (t == 28) { depth = depth + 1; }
-            if (t == 13) { depth = depth + 1; }
-            if (t == 11) { depth = depth - 1; }
-            if (t == 29) { depth = depth - 1; }
-            if (t == 14) { depth = depth - 1; }
-        }
-        i = i + 1;
-    }
-    return 1;
-}
-# 1 = the argument tokens [st, st + n) into an address-passed parameter cannot push an address in
-# this frame: a bare local that is not struct-typed (its value), a bare pointer-typed slot — a
-# `p: *T` parameter or a `var x: *T` local (GLPTRP: the pointer it holds; such a slot is never an
-# inline struct, and only `&local` puts this frame's address in it, which `_fn_local_addr` diverts),
-# a bare global (`_push_struct_addr_global`: its value, the pointer its slot holds or its own
-# address — never a frame's), `ptr.field` through a pointer-typed slot (the pointee's field), or a
-# plain call that pushes its VALUE (`_tc_sarg_call_ok`). Everything else answers 0, including a
-# pointer-MODE struct local, whose pointer the tokens cannot vouch for. Read-only: FINDLOCAL /
-# `_findvar_core`, never FINDVAR, whose visibility report belongs to the argument's own parse.
-fn _tc_sarg_ok(S, st, n): i64 {
-    if (TOKTYP(S, st) != 2) { return 0; }
-    var li = FINDLOCAL(S, TOKVAL(S, st));
-    if (n == 1) {
-        if (li < 0) { if (_findvar_core(S, TOKVAL(S, st)) >= 0) { return 1; } return 0; }
-        if (GLTYPE(S, li) >= 0) { return 1; }
-        if (GLPTRP(S, li) == 1) { return 1; }
-        return 0;
-    }
-    if (TOKTYP(S, st + 1) == 10) {
-        var ok = _tc_sarg_call_ok(S, st, n);
-        return ok;
-    }
-    if (n != 3) { return 0; }
-    if (TOKTYP(S, st + 1) != 41) { return 0; }
-    if (TOKTYP(S, st + 2) != 2) { return 0; }
-    if (GLPTRP(S, li) == 1) { return 1; }
+    if (_loop_depth > 0) { return 1; }
     return 0;
 }
-# 1 = the argument [st, st + n) is the whole call `name(..)` to a plain fn that hands back a VALUE:
-# `_try_push_struct_addr_arg` takes a temp's address only for an aggregate-returning callee
-# (`_ret_agg_class` != 0), so this one is pushed as the word it returns, e.g. a pointer
-# (`return walk(nxt(p), ..)`). A value-form vector return is left diverted (on Win64 it lands in
-# a hidden-retptr temp in this frame), and so is a generic (its instance's class is resolved by
-# the call's own parse). The call's own address-passed arguments ask the same question, so
-# `nxt(s)` with `s` an inline local — whose address `nxt` may hand back — still diverts.
-fn _tc_sarg_call_ok(S, st, n): i64 {
-    if (_call_close(S, st + 1) != st + n - 1) { return 0; }
-    var fi = FINDFN(S, TOKVAL(S, st));
-    if (fi < 0) { return 0; }
-    if (GFTP(S, fi) != 0) { return 0; }
-    if (_ret_agg_class(S, fi) != 0) { return 0; }
-    if (_is_simd_any(S, GFRS(S, fi)) == 1) { return 0; }
-    if (_tc_sarg_divert(S, fi, st + 1) == 1) { return 0; }
-    return 1;
+# Once the tail arm has evaluated its arguments into their registers: 1 = emit an ordinary call
+# instead of the `jmp`. Over the register ceiling the epilogue would free the stack arguments
+# ECALLPOPS wrote (6.6.5); and when evaluating an argument took an address in this frame
+# (`_fn_local_addr`, 0 when the arm began — `_tc_frame_divert`), it would free what that address
+# points at. CHANGELOG [6.6.20]
+fn _tc_after_args_divert(argc): i64 {
+    if (argc > _ARG_REG_COUNT()) { return 1; }
+    if (_fn_local_addr == 1) { return 1; }
+    return 0;
 }
 
 # Parse return expr ;  (uses PCMPE so return a == b; works)
@@ -858,7 +810,8 @@ fn PARSE_RETURN(S): i64 {
                                 while (tcgo == 1) {
                                     _check_str_cstring_arg(S, _tc_prefi, tcargc, tcnoff);   # 6.6.13 I11
                                     # 6.6.20: an address-passed argument is pushed as PARSE_FNCALL
-                                    # pushes it; `_tc_sarg_divert` ruled out a frame address.
+                                    # pushes it; one that takes an address in this frame sets
+                                    # `_fn_local_addr`, read by `_tc_after_args_divert` below.
                                     if (_try_push_struct_addr_arg(S, _tc_prefi, tcargc) == 0) {
                                         PCMPE(S);
                                         EPUSHR(S);
@@ -912,9 +865,10 @@ fn PARSE_RETURN(S): i64 {
                             # the reason frontend/expr_in_fn_args and stdlib/flags failed as PE.
                             # `_ARG_REG_COUNT()` is the same function the closure ABI uses, so
                             # the two cannot drift. CHANGELOG [6.6.5]
-                            if (tcargc > _ARG_REG_COUNT()) {
-                                # over the register ceiling: normal call (stack args would be
-                                # clobbered by the tail-call epilogue)
+                            if (_tc_after_args_divert(tcargc) == 1) {
+                                # a normal call: over the register ceiling (the tail-call epilogue
+                                # would clobber the stack args), or an argument took an address in
+                                # this frame (6.6.20)
                                 var foff2 = L64(_fnt_offsets + tcfi * 8);
                                 if (foff2 >= 0) { ECALLTO(S, foff2); }
                                 else { ECALLFIX(S, tcfi); }
@@ -1551,6 +1505,7 @@ fn _try_push_struct_addr_arg(S, fi, argc): i64 {
         if (_call_dotted(S, GTI(S)) == 1) { return _push_struct_expr_arg(S, fi, argc); }
         if (_ret_agg_class(S, _gen_resolve_call(S, GTI(S))) == 0) { return 0; }   # 6.6.10: the instance's class
         if (_call_is_whole_arg(S, o - 1) == 0) { return 0; }
+        _fn_local_addr = 1;   # 6.6.20: the callee holds an address in this frame (`_tc_sarg_divert`)
         EFLADDR(S, _struct_call_into_temp(S));
         EPUSHR(S);
         return 1;
@@ -1580,7 +1535,9 @@ fn _try_push_struct_addr_arg(S, fi, argc): i64 {
     var _sa_ptr = 0;
     if (_is_simd_any(S, lt) == 1) { if (_TARGET_PE == 0) { return 0; } }
     else { _sa_ptr = _local_struct_is_ptr(S, li, lt); }
-    if (_sa_ptr == 1) { EFLLOAD(S, li); } else { EFLADDR(S, li); }
+    # 6.6.20: an inline aggregate (a by-value parameter's copy too, 6.6.16 C7) is pushed as an
+    # address in this frame, exactly as `&s` is — see `_tc_sarg_divert`.
+    if (_sa_ptr == 1) { EFLLOAD(S, li); } else { _fn_local_addr = 1; EFLADDR(S, li); }
     EPUSHR(S);
     STI(S, GTI(S) + 1);                 # consume IDENT
     return 1;
@@ -2802,7 +2759,7 @@ fn _push_struct_expr_arg(S, fi, argc): i64 {
     _fla_arg = fa;
     if (_fla_hit == 1) { return _fla_push_arg(S, fi, argc); }
     var t = _sc_whole(S, st);
-    if (t >= 0) { EFLADDR(S, t); }
+    if (t >= 0) { _fn_local_addr = 1; EFLADDR(S, t); }   # 6.6.20: a temp in this frame
     if (t == 0 - 1) { _refuse_toplevel_struct_call(S, _sc_fn); }
     EPUSHR(S);
     return 1;
@@ -2823,6 +2780,7 @@ fn _fla_push_arg(S, fi, argc): i64 {
             EPUSHR(S);   # keeps the argument count; no binary is written
             return 1;
         } }
+    if (_fsc_src_in_frame(S) == 1) { _fn_local_addr = 1; }   # 6.6.20: see `_tc_sarg_divert`
     _fsc_src_x1(S, 0);
     EMOVI(S, 0);
     EADDR(S);            # rax = x1

@@ -1,14 +1,27 @@
 # tailcall_struct_ptr_params.tcyr — a tail call into a fn with an ADDRESS-PASSED parameter (a
-# struct over 8 B as `p: T` or `p: *T`, a Win64 value-form vector) keeps its `jmp` unless the
-# argument it pushes is an address in the caller's own frame.
+# struct over 8 B as `p: T` or `p: *T`, a Win64 value-form vector) keeps its `jmp` unless an
+# address in the caller's own frame can reach the callee.
 #
 # THE BUG (fixed 6.6.20). Any address-passed parameter diverted EVERY tail call to its fn onto
 # the normal call path, whatever the argument was. So the shape the 6.6.16 by-value migration
 # recommends for a mutating callee, a `p: *Node` list walk —
 #     fn walk(p: *Node, acc) { if (p == 0) { return acc; } return walk(p.next, acc + p.v); }
 # — recursed with `call`, and a long list overflowed the stack (rc 139; the untyped twin ran in
-# constant stack). The tail arm now pushes such an argument exactly as an ordinary call does, and
-# diverts only when that push would be an address in the frame the `jmp` frees.
+# constant stack). The tail arm now pushes such an argument exactly as an ordinary call does.
+#
+# THE HAZARD THE DIVERT STOOD FOR is an address in the frame the `jmp` frees reaching the callee —
+# not only as the argument itself but LAUNDERED through a value: `var x = idp(s); return dP(x, k);`
+# hands `dP` the `&s` that `idp` returned, and `x` is an ordinary pointer local. The first cut of
+# this fix vetted the argument's shape and kept that call (a silent wrong value). What keeps a
+# `jmp` sound now, each pinned by rows below:
+#   1. any address in this frame handed to anything sets the fn's escape flag, `&s` or implicit —
+#      an inline struct argument, a by-value parameter's copy, a struct call's temp, a field of an
+#      inline struct, a method's `self`, an operator's operand — and every LATER tail call diverts;
+#   2. inside a loop that flag is not yet set when a lexically earlier return runs on the next
+#      iteration, so there an address-passed callee always diverts;
+#   3. an address created while evaluating the tail call's OWN arguments (`dQ(G, s.me())`,
+#      `dP(idu(idp(s)), k)`) turns that call into an ordinary call.
+# Rules 1 and 3 cover a callee with no address-passed parameter too (`dU`).
 #
 # HOW A ROW TELLS A KEPT TAIL CALL FROM A DIVERTED ONE. Each probe callee stores the address of
 # one of its own locals in `_dmark`. Called directly from the checker it lands at some depth; a
@@ -16,15 +29,14 @@
 # and a wrapper that calls it normally puts it DEEPER. So every row asserts both the value and
 # the depth — exactly, with no reliance on a freed frame happening to be overwritten.
 #   - kept (same depth): a forwarded `*T` parameter, an untyped pointer local, a typed `*T` local
-#     (one forwarding a parameter, one holding a heap pointer), a global struct into `*T` and into
-#     a by-value `T` (the global's own address is pushed), a field reached through a `*T`
-#     parameter or a `*T` local (the pointee's field address is pushed), and a plain call that
-#     returns a pointer (its value is pushed);
+#     (one forwarding a parameter, one holding a heap pointer), a pointer-mode struct local (its
+#     heap pointer), a global struct into `*T` and into a by-value `T` (the global's own address is
+#     pushed), a field reached through a `*T` parameter or a `*T` local (the pointee's field), a
+#     plain call that returns a pointer, and a return that runs BEFORE the fn's frame address exists;
 #   - diverted (deeper): an inline struct local, a field of one, a forwarded by-value parameter (an
-#     inline copy in this frame since 6.6.16), a struct call's temp, a pointer-mode struct local,
-#     a `*T` local holding `&local`, a plain call given an inline struct local (the call may hand
-#     that frame address back), and a value-form vector local (address-passed on Win64,
-#     vector-register-passed elsewhere).
+#     inline copy in this frame since 6.6.16), a struct call's temp, a value-form vector local
+#     (address-passed on Win64, vector-register-passed elsewhere), `&local`, a call given an inline
+#     struct local, and every laundered shape of rules 1-3.
 # The deep rows run 1,000,000 levels, past any default stack (1 MB on Windows): the real shapes.
 #
 # ⚠ CROSS-HOST because the tail-call epilogue and the address-passing ABI are per backend, and the
@@ -56,7 +68,25 @@ fn dVec(v: f64v2, k) {
 }
 fn mk(a, b, c): P3 { var r = P3 { a, b, c }; return r; }
 fn mkv(a, b): f64v2 { var r: f64v2; store64(&r + 0, a); store64(&r + 8, b); return r; }
+fn dQ(p: *P3, q) {
+    var j1 = 901; var j2 = 902; var j3 = 903; var j4 = 904; var j5 = 905; var j6 = 906;
+    _dmark = &j1;
+    return p.a + load64(q) + load64(q + 8) + load64(q + 16) + (j1 + j2 + j3 + j4 + j5 + j6) - 5421;
+}
+fn dU(q, k) {
+    var j1 = 901; var j2 = 902; var j3 = 903; var j4 = 904; var j5 = 905; var j6 = 906;
+    _dmark = &j1;
+    return load64(q) + load64(q + 8) + load64(q + 16) + k + (j1 + j2 + j3 + j4 + j5 + j6) - 5421;
+}
 fn idp(p: *P3) { return p; }
+fn idpt(p: *P3): *P3 { return p; }
+fn idu(p) { return p; }
+fn p3_set(p: *P3, v) { p.a = v; return p; }
+# A method and an operator that hand their receiver / operand back: legal, and exactly how an
+# address in the caller's frame comes back out as a value.
+fn P3_me(self) { return self; }
+fn P3_add(a, b) { return a; }
+fn P3_cp(self: *P3): P3 { var r = P3 { self.a, self.b, self.c }; return r; }
 fn hp3(a, b, c): *P3 { var h = alloc(24); store64(h, a); store64(h + 8, b); store64(h + 16, c); return h; }
 fn _same(m, base): i64 { if (m == base) { return 1; } return 0; }
 fn _deeper(m, base): i64 { if (m < base) { return 1; } return 0; }
@@ -71,6 +101,13 @@ fn t_tloc(q: *P3, k) { var x: *P3 = q; return dP(x, k); }
 fn t_theap(k) { var h: *P3 = hp3(7, 8, 9); return dP(h, k); }
 fn t_tfld(w: *W, k) { var x: *W = w; return dP(x.inner, k); }
 fn t_pcall(q: *P3, k) { return dP(idp(q), k); }
+fn t_pmode(k) { var b: P3 = alloc(24); b.a = 7; b.b = 8; b.c = 9; return dP(b, k); }
+# The address appears only AFTER this return, and no loop can bring it back round.
+fn t_before(q: *P3, k, c) {
+    if (c == 1) { return dP(q, k); }
+    var s = P3 { 1, 2, 3 };
+    return dP(s, k);
+}
 # --- diverted: the argument is an address in this frame -----------------------------------------
 fn t_loc(k) { var s = P3 { 1, 2, 3 }; return dP(s, k); }
 fn t_locv(k) { var s = P3 { 1, 2, 3 }; return dV(s, k); }
@@ -78,10 +115,48 @@ fn t_ifld(k) { var w: W; w.x = 0; w.inner.a = 4; w.inner.b = 5; w.inner.c = 6; r
 fn t_bvp(p: P3, k) { return dP(p, k); }
 fn t_bvv(p: P3, k) { return dV(p, k); }
 fn t_call(k) { return dP(mk(4, 5, 6), k); }
-fn t_pmode(k) { var b: P3 = alloc(24); b.a = 7; b.b = 8; b.c = 9; return dP(b, k); }
 fn t_vec(k) { var v: f64v2 = mkv(30, 12); return dVec(v, k); }
 fn t_tamp(k) { var s = P3 { 1, 2, 3 }; var x: *P3 = &s; return dP(x, k); }
 fn t_pcloc(k) { var s = P3 { 1, 2, 3 }; return dP(idp(s), k); }
+# --- diverted: an address in this frame laundered through a value --------------------------------
+# rule 1: an earlier implicit push of a frame address.
+fn t_idl(k) { var s = P3 { 1, 2, 3 }; var x = idp(s); return dP(x, k); }
+fn t_idc(k) { var x = idp(mk(1, 2, 3)); return dP(x, k); }
+fn t_idf(k) { var w: W; w.x = 0; w.inner.a = 1; w.inner.b = 2; w.inner.c = 3; var x = idp(w.inner); return dP(x, k); }
+fn t_idv(p: P3, k) { var x = idp(p); return dP(x, k); }
+fn t_idm(q: *P3, k) { var x = idp(q.cp()); return dP(x, k); }
+fn t_rep(p: *P3, k) { var s = P3 { 1, 2, 3 }; p = idpt(s); return dP(p, k); }
+fn t_bld(k) { var s = P3 { 0, 2, 3 }; var x = p3_set(s, 1); return dP(x, k); }
+fn t_self(k) { var s = P3 { 1, 2, 3 }; var x = s.me(); return dP(x, k); }
+fn t_oper(k) { var s = P3 { 1, 2, 3 }; var t = P3 { 4, 5, 6 }; var x = s + t; return dP(x, k); }
+fn t_ul(k) { var s = P3 { 1, 2, 3 }; var x = idp(s); return dU(x, k); }
+# rule 2: the address is taken AFTER the return in the source, BEFORE it at run time.
+fn t_lpa(k) {
+    var s = P3 { 1, 2, 3 };
+    var x = 0;
+    var i = 0;
+    while (i < 2) {
+        if (i == 1) { return dP(x, k); }
+        x = &s;
+        i = i + 1;
+    }
+    return 0;
+}
+fn t_lpc(k) {
+    var s = P3 { 1, 2, 3 };
+    var x = 0;
+    var i = 0;
+    while (i < 2) {
+        if (i == 1) { return dP(x, k); }
+        x = idp(s);
+        i = i + 1;
+    }
+    return 0;
+}
+# rule 3: the tail call's own arguments create the address.
+fn t_nsp(k) { var s = P3 { 1, 2, 3 }; return dQ(G, s.me()); }
+fn t_inu(k) { var s = P3 { 1, 2, 3 }; return dP(idu(idp(s)), k); }
+fn t_um(k) { var s = P3 { 1, 2, 3 }; return dU(s.me(), k); }
 
 # --- deep: the real shapes, 1,000,000 levels --------------------------------------------------
 struct Node { v; next: *Node; }
@@ -136,6 +211,10 @@ fn check_struct_ptr_tailcalls(): i64 {
     var baseV = _dmark;
     dVec(vv, 0);
     var baseVec = _dmark;
+    dQ(q, w2);
+    var baseQ = _dmark;
+    dU(w2, 0);
+    var baseU = _dmark;
     var r = 0;
 
     test_group("kept: the tail call reaches the callee at the caller's depth");
@@ -166,6 +245,15 @@ fn check_struct_ptr_tailcalls(): i64 {
     r = t_pcall(q, 1);
     assert_eq(r, 13, "a plain call returning a pointer: value");
     assert_eq(_same(_dmark, baseP), 1, "a plain call returning a pointer: kept");
+    r = t_pmode(1);
+    assert_eq(r, 25, "a pointer-mode struct local into `*T`: value");
+    assert_eq(_same(_dmark, baseP), 1, "a pointer-mode struct local into `*T`: kept");
+    r = t_before(q, 1, 1);
+    assert_eq(r, 13, "a return before the frame address exists: value");
+    assert_eq(_same(_dmark, baseP), 1, "a return before the frame address exists: kept");
+    r = t_before(q, 1, 0);
+    assert_eq(r, 7, "the same fn's return after it: value");
+    assert_eq(_deeper(_dmark, baseP), 1, "the same fn's return after it: diverted");
 
     test_group("diverted: the argument is an address in the caller's frame");
     r = t_loc(1);
@@ -186,9 +274,6 @@ fn check_struct_ptr_tailcalls(): i64 {
     r = t_call(1);
     assert_eq(r, 16, "a struct call's temp into `*T`: value");
     assert_eq(_deeper(_dmark, baseP), 1, "a struct call's temp into `*T`: diverted");
-    r = t_pmode(1);
-    assert_eq(r, 25, "a pointer-mode struct local into `*T`: value");
-    assert_eq(_deeper(_dmark, baseP), 1, "a pointer-mode struct local into `*T`: diverted");
     r = t_vec(1);
     assert_eq(r, 43, "a value-form vector local: value");
     assert_eq(_deeper(_dmark, baseVec), 1, "a value-form vector local: diverted");
@@ -198,6 +283,53 @@ fn check_struct_ptr_tailcalls(): i64 {
     r = t_pcloc(1);
     assert_eq(r, 7, "a plain call given an inline struct local: value");
     assert_eq(_deeper(_dmark, baseP), 1, "a plain call given an inline struct local: diverted");
+
+    test_group("diverted: an address in the caller's frame laundered through a value");
+    r = t_idl(1);
+    assert_eq(r, 7, "`var x = idp(s)` (an inline local): value");
+    assert_eq(_deeper(_dmark, baseP), 1, "`var x = idp(s)` (an inline local): diverted");
+    r = t_idc(1);
+    assert_eq(r, 7, "`var x = idp(mk(..))` (a struct call's temp): value");
+    assert_eq(_deeper(_dmark, baseP), 1, "`var x = idp(mk(..))` (a struct call's temp): diverted");
+    r = t_idf(1);
+    assert_eq(r, 7, "`var x = idp(w.inner)` (a field of an inline local): value");
+    assert_eq(_deeper(_dmark, baseP), 1, "`var x = idp(w.inner)` (a field of an inline local): diverted");
+    r = t_idv(q, 1);
+    assert_eq(r, 13, "`var x = idp(p)` (a by-value parameter's copy): value");
+    assert_eq(_deeper(_dmark, baseP), 1, "`var x = idp(p)` (a by-value parameter's copy): diverted");
+    r = t_idm(q, 1);
+    assert_eq(r, 13, "`var x = idp(q.cp())` (a method result's temp): value");
+    assert_eq(_deeper(_dmark, baseP), 1, "`var x = idp(q.cp())` (a method result's temp): diverted");
+    r = t_rep(q, 1);
+    assert_eq(r, 7, "`p = idpt(s)` on a `*T` parameter: value");
+    assert_eq(_deeper(_dmark, baseP), 1, "`p = idpt(s)` on a `*T` parameter: diverted");
+    r = t_bld(1);
+    assert_eq(r, 7, "a builder `p3_set(s, 1)` returning its argument: value");
+    assert_eq(_deeper(_dmark, baseP), 1, "a builder `p3_set(s, 1)` returning its argument: diverted");
+    r = t_self(1);
+    assert_eq(r, 7, "`var x = s.me()` (a method's `self`): value");
+    assert_eq(_deeper(_dmark, baseP), 1, "`var x = s.me()` (a method's `self`): diverted");
+    r = t_oper(1);
+    assert_eq(r, 7, "`var x = s + t` (an operator's operand): value");
+    assert_eq(_deeper(_dmark, baseP), 1, "`var x = s + t` (an operator's operand): diverted");
+    r = t_ul(1);
+    assert_eq(r, 7, "`var x = idp(s)` into an untyped callee: value");
+    assert_eq(_deeper(_dmark, baseU), 1, "`var x = idp(s)` into an untyped callee: diverted");
+    r = t_lpa(1);
+    assert_eq(r, 7, "`x = &s` after the return, inside a loop: value");
+    assert_eq(_deeper(_dmark, baseP), 1, "`x = &s` after the return, inside a loop: diverted");
+    r = t_lpc(1);
+    assert_eq(r, 7, "`x = idp(s)` after the return, inside a loop: value");
+    assert_eq(_deeper(_dmark, baseP), 1, "`x = idp(s)` after the return, inside a loop: diverted");
+    r = t_nsp(1);
+    assert_eq(r, 16, "`dQ(G, s.me())` (the untyped argument): value");
+    assert_eq(_deeper(_dmark, baseQ), 1, "`dQ(G, s.me())` (the untyped argument): diverted");
+    r = t_inu(1);
+    assert_eq(r, 7, "`dP(idu(idp(s)), k)`: value");
+    assert_eq(_deeper(_dmark, baseP), 1, "`dP(idu(idp(s)), k)`: diverted");
+    r = t_um(1);
+    assert_eq(r, 7, "`dU(s.me(), k)` into an untyped callee: value");
+    assert_eq(_deeper(_dmark, baseU), 1, "`dU(s.me(), k)` into an untyped callee: diverted");
 
     test_group("deep: 1,000,000 levels in constant stack");
     var head = 0;

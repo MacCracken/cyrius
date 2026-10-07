@@ -1023,7 +1023,9 @@ var _flc_hwm = 0;
 # v5.8.16 §8 guarded only the SYNTACTIC form `return f(&local)`; a pointer
 # laundered through a variable (`var p = &buf; ... return f(p);`) walked straight
 # past it. Reset per fn in PARSE_FN_DEF; read by the tail-call guard in
-# parse_fn.cyr. See CHANGELOG [6.5.14].
+# parse_fn.cyr. See CHANGELOG [6.5.14]. 6.6.20: also set where an address in this
+# frame is pushed WITHOUT a `&` — an inline aggregate argument, a temp, a field of a
+# frame aggregate, a method's `self`, an operator's operand (`_tc_sarg_divert`).
 var _fn_local_addr = 0;
 # v6.3.7 — set to 1 when the current fn emits a closure literal. Closures are
 # emitted INLINE in the enclosing fn's code range (jumped over), so the enclosing
