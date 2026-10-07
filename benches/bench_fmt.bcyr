@@ -10,7 +10,7 @@ include "lib/str.cyr"
 include "lib/bench.cyr"
 
 fn work_fmt_int_small() {
-    var buf[8];
+    var buf[24];    # fmt_int_buf's contract is 21 bytes, whatever the value
     fmt_int_buf(42, &buf);
     return 0;
 }
