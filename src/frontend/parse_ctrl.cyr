@@ -210,11 +210,10 @@ fn PARSE_WHILE(S): i64 {
     var saved_ltop = L64(S + 0x18F838);
     var saved_brk = L64(S + 0x18F840);
     # v6.6.3 — a `while` must DECLARE while-mode, not inherit the enclosing loop's.
-    # 0x18F898 doubles as a mode flag (0 = jump straight to loop top, >0 = forward-patch
-    # to a C-style for's step). PARSE_WHILE never wrote it, so a `while` nested inside a
-    # `for` saw the for's non-zero count and sent its `continue` to the FOR's step —
-    # measured on 6.6.2: `while` inside `for`, continue on the first iteration, produced
-    # 0 where 6 was right. Same family as the array-aliasing fix below, opposite half.
+    # 0x18F898 is the `continue` mode (0 = jump straight to loop top, 1 = a forward jump to
+    # a `for`'s step, see `_cont_vec`). PARSE_WHILE never wrote it, so a `while` nested in a
+    # `for` sent its `continue` to the FOR's step (6.6.2: 0 where 6 was right). Zeroing it
+    # is safe since 6.6.20: it is no longer also the index of the pending-jump array.
     var saved_cfw = L64(S + 0x18F898);
     S64(S + 0x18F898, 0);
     var loop_top = GCP(S);
@@ -253,6 +252,23 @@ fn PARSE_WHILE(S): i64 {
     S64(S + 0x18F840, saved_brk);
     S64(S + 0x18F898, saved_cfw);
     SLVAR(S, saved_lv);
+    return 0;
+}
+
+# A `for` opens its `continue` range: forward-jump mode, its jumps appended above every
+# enclosing `for`'s (see `_cont_vec`, parse.cyr). Returns its base. CHANGELOG [6.6.20]
+fn _cont_open(S): i64 {
+    if (_cont_vec == 0) { _cont_vec = vec_new(); }
+    S64(S + 0x18F898, 1);
+    return vec_len(_cont_vec);
+}
+# The `for`'s body ended: patch its own `continue`s (base up) to here, its step, and drop them.
+fn _cont_close(S, base): i64 {
+    var n = vec_len(_cont_vec);
+    var i = base;
+    while (i < n) { EPATCH(S, vec_get(_cont_vec, i)); i = i + 1; }
+    vec_truncate(_cont_vec, base);
+    S64(S + 0x18F898, 0);
     return 0;
 }
 
@@ -370,9 +386,7 @@ fn PARSE_FOR(S): i64 {
                 _efl_store_cp = 0 - 1;   # v6.3.30: for-in loop-top back-edge → kill reload-elim tracker
                 S64(S + 0x18F838, fitop);
                 S64(S + 0x18F840, 0);
-                # v6.6.3: base, NOT 1 — see the C-style site below for the full why.
-                var ficfwb = fiscfw; if (ficfwb < 1) { ficfwb = 1; }
-                S64(S + 0x18F898, ficfwb);
+                var ficfwb = _cont_open(S);   # 6.6.20: see `_cont_vec`
                 # v5.6.14: IR_NOP landing pad at for-in loop top.
                 var _ire_fi1 = IR_ENABLED(S);
                 if (_ire_fi1 >= 1) { ir_emit(S, IR_NOP, 0, fitop, 0); }
@@ -407,11 +421,7 @@ fn PARSE_FOR(S): i64 {
                 if (PEEKT(S) != 13) { ERR_EXPECT(S, 13); } STI(S, GTI(S) + 1);
                 _loop_body(S, 1);   # 6.6.7: counts the loop for break/continue
                 if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); } STI(S, GTI(S) + 1);
-                # Patch continue to here (before step)
-                var ficfwn = L64(S + 0x18F898) - 1;
-                var ficfwi = ficfwb - 1;
-                while (ficfwi < ficfwn) { EPATCH(S, L64(S + 0x18F8A0 + ficfwi * 8)); ficfwi = ficfwi + 1; }
-                S64(S + 0x18F898, 0);
+                _cont_close(S, ficfwb);   # continue lands here, before the step
                 # Step: idx = idx + 1
                 _HTLOAD(S, fili);
                 EPUSHR(S);
@@ -449,9 +459,7 @@ fn PARSE_FOR(S): i64 {
             _efl_store_cp = 0 - 1;   # v6.3.30: range-for loop-top back-edge → kill reload-elim tracker
             S64(S + 0x18F838, fitop);
             S64(S + 0x18F840, 0);
-            # v6.6.3: base, NOT 1 — see the C-style site below for the full why.
-            var ficfwb2 = fiscfw; if (ficfwb2 < 1) { ficfwb2 = 1; }
-            S64(S + 0x18F898, ficfwb2);
+            var ficfwb2 = _cont_open(S);   # 6.6.20: see `_cont_vec`
             # v5.6.14: IR_NOP landing pad at range-for loop top.
             var _ire_fi2 = IR_ENABLED(S);
             if (_ire_fi2 >= 1) { ir_emit(S, IR_NOP, 0, fitop, 0); }
@@ -467,11 +475,7 @@ fn PARSE_FOR(S): i64 {
             if (PEEKT(S) != 13) { ERR_EXPECT(S, 13); } STI(S, GTI(S) + 1);
             _loop_body(S, 1);   # 6.6.7: counts the loop for break/continue
             if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); } STI(S, GTI(S) + 1);
-            # Patch all continues to here (before step)
-            var ficfwn = L64(S + 0x18F898) - 1;
-            var ficfwi = ficfwb2 - 1;
-            while (ficfwi < ficfwn) { EPATCH(S, L64(S + 0x18F8A0 + ficfwi * 8)); ficfwi = ficfwi + 1; }
-            S64(S + 0x18F898, 0);
+            _cont_close(S, ficfwb2);   # continue lands here, before the step
             # Step: var = var + 1
             _HTLOAD(S, fili);
             EPUSHR(S);
@@ -505,19 +509,12 @@ fn PARSE_FOR(S): i64 {
     _efl_store_cp = 0 - 1;   # v6.3.30: loop-top back-edge target → kill reload-elim tracker
     S64(S + 0x18F838, ltop);
     S64(S + 0x18F840, 0);
-    # v6.6.3 — BASE, NOT 1. 0x18F8A0 is ONE flat 8-entry patch array shared by every
-    # nesting level, and 0x18F898 is the next-free index (1-based; 0 means while-mode).
-    # Resetting it to 1 on entry made a nested loop start writing at index 0 again and
-    # OVERWRITE the enclosing loop's recorded jump. Measured on 6.6.2: the inner
-    # `continue` ended up patched to the OUTER latch (so it abandoned the rest of the
-    # outer body) and the outer `continue` was never patched at all (so it became a
-    # no-op) — silent wrong code, no diagnostic, in a construct that reads as correct.
-    # Trigger was lexical: the outer `continue` had to appear BEFORE the nested loop, so
-    # that it claimed index 0 first and had it stolen. Filed by hisab building a 32x32
-    # product table. Starting at the enclosing loop's next-free index makes the ranges
-    # disjoint; each loop then patches only [its base, its own count).
-    var cfwb = scfw; if (cfwb < 1) { cfwb = 1; }
-    S64(S + 0x18F898, cfwb);
+    # A nested loop must never start over the enclosing loop's pending `continue` jumps:
+    # it then OVERWROTE one, the inner `continue` was patched to the OUTER step and the
+    # outer one never patched (a no-op on x86, `b .` on aarch64). v6.6.3 fixed it for a
+    # `for` directly in a `for`, 6.6.20 through a `while` / closure / generic instance —
+    # the base is the length of `_cont_vec` (parse.cyr). CHANGELOG [6.6.3] [6.6.20]
+    var cfwb = _cont_open(S);
     # v5.6.14: IR_NOP landing pad at classic-for loop top.
     var _ire_for = IR_ENABLED(S);
     if (_ire_for >= 1) { ir_emit(S, IR_NOP, 0, ltop, 0); }
@@ -542,11 +539,7 @@ fn PARSE_FOR(S): i64 {
     _loop_body(S, 0);   # 6.6.7: counts the loop (the for's scope is already open)
     if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); }
     STI(S, GTI(S) + 1);
-    # Patch continue forward jump to here (step expression)
-    var cfwn = L64(S + 0x18F898) - 1;
-    var cfwi = cfwb - 1;
-    while (cfwi < cfwn) { EPATCH(S, L64(S + 0x18F8A0 + cfwi * 8)); cfwi = cfwi + 1; }
-    S64(S + 0x18F898, 0);
+    _cont_close(S, cfwb);   # continue lands here, the step expression
     # Emit step: replay as assignment or compound assignment
     var sti = GTI(S);
     STI(S, sst);
