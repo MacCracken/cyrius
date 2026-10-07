@@ -1,6 +1,7 @@
 #!/bin/sh
 # deps_commit_pins_kept.sh — 6.6.20. A CVE-21 `commit\t` pin in cyrius.lock survives every
-# resolve that does not re-verify its dep, so a repointed tag is still REFUSED afterwards.
+# resolve that does not re-verify its dep, so a repointed tag is still REFUSED afterwards —
+# and it is still read when the lock is checked out CRLF.
 #
 # THE DEFECT (6.6.20 closeout audit, CBTB-01). cmd_deps resets `_dep_commit_lines` to a fresh
 # vec on every run and pushes a pin only for a tagged dep it cloned and verified in THAT run;
@@ -21,6 +22,13 @@
 # dep of a gated-out dep is declared only in that dep's own manifest, which is never read
 # while it is gated out.
 #
+# THE CRLF HALF (CBTB-05). `_dep_lock_load` and `_lock_buf_hash_lookup` were made CRLF-tolerant
+# at 6.6.4/6.6.9; their two siblings were not. `_lock_commit_lookup` kept the `\r` on the TAG
+# field, matched no line and returned 0 — "no pin" — so on a CRLF checkout (a plain
+# `git -c core.autocrlf=true clone` makes one) a repointed tag was vendored and re-pinned at
+# exit 0, exactly where CVE-21 matters (fresh clone, fresh cache). `deps --verify` read each path
+# up to the `\n` and failed every file "cannot hash" (fail-closed, but false).
+#
 # AXES (every origin is a local file:// repo — no network):
 #   K1  setup: `deps --features gpu --aarch64` pins all five tagged deps (anti-vacuous floor)
 #   K2  a feature-less, x86 `deps` with the override dir present keeps all five pins, same shas
@@ -31,10 +39,18 @@
 #   K7  path-override dep: override dir removed, tag repointed → refused by name
 #   K8  a tag bump re-pins the dep and leaves exactly ONE line for it (no stale-pin pile-up)
 #   K9  the merged lock verifies (`deps --verify`: N verified, 0 failed)
+#   K10 the lock converted to CRLF: a repointed tag is still refused by name (CBTB-05 — the
+#       pin lookup kept the `\r` on the TAG field, matched nothing and returned "no pin")
+#   K11 `deps --verify` on that CRLF lock: N verified, 0 failed (it read `lib/x.cyr\r` and
+#       failed every file "cannot hash")
 #
-# Mutation ledger (measured in a scratch root): restoring cmd_deps_lock's `if (fresh) …
-# else (inherited)` → K2–K9 red; carrying every inherited line without the name match (the
-# fresh-line check always 0) → K2 K3 K8 red (a duplicate line per re-verified dep).
+# Mutation ledger (measured in a scratch root): the slot-open (6.6.20) CLI → every axis but
+# K1 red; restoring cmd_deps_lock's `if (fresh) … else (inherited)` → K2–K11 red; carrying
+# every inherited line without the name match (the fresh-line check always 0) → K2 K3 K8 red
+# (a duplicate line per re-verified dep); dropping the CR strip in _lock_commit_lookup → K10
+# red; dropping the one in cmd_deps_verify → K11 red. A repoint must make a NEW commit: the
+# second repoint of one origin used to be an empty `git commit`, the tag never moved, and the
+# CRLF axis passed nothing (caught while measuring this ledger).
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
 G=deps_commit_pins_kept
@@ -118,8 +134,12 @@ _cy() { ( cd "$P" && HOME="$W/nohome" CYRIUS_HOME="$H" CYRIUS_RESOLVED=1 CYRIUS_
 pin_of() { tr -d '\r' < "$P/cyrius.lock" | awk -F"$TAB" -v n="$1" '$1 == "commit" && $3 == n { print $2 }'; }
 npins()  { tr -d '\r' < "$P/cyrius.lock" | grep -c "^commit$TAB" || true; }
 pinset() { for _n in good opt optdep tgt ovr; do printf '%s=%s ' "$_n" "$(pin_of "$_n" | tr '\n' ',')"; done; }
-repoint() {   # $1 = origin name: move its v1 to a commit vendoring different bytes
-    ( cd "$W/o/$1" && printf 'fn %s_f(): i64 { return 666; }\n' "$1" > "dist/$1.cyr" && git commit -qam evil && git tag -f v1 > /dev/null 2>&1 )
+NREP=0
+repoint() {   # $1 = origin name: move its v1 to a NEW commit vendoring different bytes (unique
+              # per call — a second repoint of one origin must not be an empty commit)
+    NREP=$((NREP + 1))
+    ( cd "$W/o/$1" && printf 'fn %s_f(): i64 { return %s; }\n' "$1" "$((665 + NREP))" > "dist/$1.cyr" && git commit -qam "evil $NREP" && git tag -f v1 > /dev/null 2>&1 ) \
+      || bad "repoint $1: could not move v1"
 }
 restore() {   # $1 = origin name, $2 = the original sha: put v1 back, drop the (evil) cache entry
     git -C "$W/o/$1" tag -f v1 "$2" > /dev/null 2>&1; rm -rf "$H/deps/$1"
@@ -179,6 +199,22 @@ else bad "K8 (rc=$rc, $gl line(s) for good, pins: $(pinset)): $(grep -m2 -i 'err
 rc=0; if _cy deps --verify > "$W/k9.out" 2>&1; then rc=0; else rc=$?; fi
 if [ "$rc" -eq 0 ] && grep -qE '[1-9][0-9]* verified, 0 failed' "$W/k9.out"; then ok "K9 the merged lock verifies: $(tail -1 "$W/k9.out")"
 else bad "K9 (rc=$rc): $(tail -2 "$W/k9.out")"; fi
+
+# ── K10/K11: a CRLF checkout of the lock (`git -c core.autocrlf=true clone` makes one) ────
+#    K10: the pin is still READ — a repointed tag is refused, not TOFU-re-pinned (CBTB-05)
+#    K11: `deps --verify` reads each path without its `\r` (it failed every file "cannot hash")
+sed -i 's/$/\r/' "$P/cyrius.lock"
+ncr=$(tr -cd '\r' < "$P/cyrius.lock" | wc -c | tr -d ' ')
+[ "$ncr" -ge 7 ] || bad "K10 setup: the lock is not CRLF ($ncr CRs)"
+refused K10-crlf opt --features gpu
+# K11 re-applies the CRLF form itself, so it does not depend on K10 having left it
+tr -d '\r' < "$P/cyrius.lock" | sed 's/$/\r/' > "$W/k11.lock" && cp "$W/k11.lock" "$P/cyrius.lock"
+ncr=$(tr -cd '\r' < "$P/cyrius.lock" | wc -c | tr -d ' ')
+rc=0; if _cy deps --verify > "$W/k11.out" 2>&1; then rc=0; else rc=$?; fi
+ncr2=$(tr -cd '\r' < "$P/cyrius.lock" | wc -c | tr -d ' ')
+if [ "$rc" -eq 0 ] && grep -qE '[1-9][0-9]* verified, 0 failed' "$W/k11.out" && [ "$ncr2" = "$ncr" ]; then
+    ok "K11 CRLF lock: --verify reads it ($(tail -1 "$W/k11.out")), lock left CRLF"
+else bad "K11 (rc=$rc): $(head -2 "$W/k11.out" | tr '\r' '~') … $(tail -1 "$W/k11.out")"; fi
 
 echo "$G: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

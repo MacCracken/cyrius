@@ -23,7 +23,8 @@
 #
 # Two more defects the review found ride along: bare `cyrius deps --lock` re-hashed lib/ with
 # `_dep_commit_lines == 0` and DROPPED every CVE-21 commit pin (A6); a CRLF checkout of the
-# lock silently turned the guard OFF (A7 — it now fails closed, like `--verify` always did).
+# lock silently turned the guard OFF (A7 — it now fails closed; since 6.6.20 `--verify` and
+# the commit-pin lookup read a CRLF lock too, see deps_commit_pins_kept.sh).
 #
 # Everything runs in a mktemp CYRIUS_HOME with the CLI built FROM SOURCE dropped in as the
 # pin's own wrapper (pin == its version → no re-exec), so the resolver under test is the

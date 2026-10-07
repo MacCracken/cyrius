@@ -4051,27 +4051,32 @@ fn _lock_commit_lookup(name, git, tag): i64 {
     while (pos < ln) {
         var le = pos;
         while (le < ln && load8(lbuf + le) != 10) { le = le + 1; }
+        # A CRLF checkout (`git -c core.autocrlf=true clone`) leaves `\r` on the TAG field, so
+        # no line matched and this returned 0 — "no pin": the moved-tag refusal was skipped and
+        # the tag TOFU-re-pinned. Every field is read up to `lw`. CHANGELOG [6.6.20]
+        var lw = le;
+        if (lw > pos && load8(lbuf + lw - 1) == 13) { lw = lw - 1; }
         # Commit line marker: "commit" + TAB (0x09).
-        if (le - pos > 7 && memeq(lbuf + pos, "commit", 6) == 1 && load8(lbuf + pos + 6) == 9) {
+        if (lw - pos > 7 && memeq(lbuf + pos, "commit", 6) == 1 && load8(lbuf + pos + 6) == 9) {
             var p = pos + 7;
             # `well` stays 1 only if each of the 3 internal field separators
             # (sha|name, name|git, git|tag) is actually a tab — a truncated line
             # leaves it 0 and is treated as corruption when the name matches.
             var well = 1;
             var sha_s = p;
-            while (p < le && load8(lbuf + p) != 9) { p = p + 1; }
+            while (p < lw && load8(lbuf + p) != 9) { p = p + 1; }
             var sha_e = p;
-            if (p < le) { p = p + 1; } else { well = 0; }
+            if (p < lw) { p = p + 1; } else { well = 0; }
             var name_s = p;
-            while (p < le && load8(lbuf + p) != 9) { p = p + 1; }
+            while (p < lw && load8(lbuf + p) != 9) { p = p + 1; }
             var name_e = p;
-            if (p < le) { p = p + 1; } else { well = 0; }
+            if (p < lw) { p = p + 1; } else { well = 0; }
             var git_s = p;
-            while (p < le && load8(lbuf + p) != 9) { p = p + 1; }
+            while (p < lw && load8(lbuf + p) != 9) { p = p + 1; }
             var git_e = p;
-            if (p < le) { p = p + 1; } else { well = 0; }
+            if (p < lw) { p = p + 1; } else { well = 0; }
             var tag_s = p;
-            var tag_e = le;
+            var tag_e = lw;
             var nm_ok = 0;
             if (name_e - name_s == strlen(name) && memeq(lbuf + name_s, name, name_e - name_s) == 1) { nm_ok = 1; }
             if (nm_ok == 1 && well == 0) { return -1; }   # corrupt pin for this dep → fail closed
@@ -4611,6 +4616,10 @@ fn cmd_deps_verify(): i64 {
         while (path_end < n && load8(buf + path_end) != 10) { path_end = path_end + 1; }
 
         var plen = path_end - path_start;
+        # A CRLF checkout of the lock: the path stops before the `\r`, or every file failed
+        # "cannot hash" (`lib/x.cyr\r` does not exist). `path_end` itself stays on the `\n`
+        # the next line starts after. CHANGELOG [6.6.20]
+        if (plen > 0 && load8(buf + path_end - 1) == 13) { plen = plen - 1; }
         var path = alloc(plen + 1);
         memcpy(path, buf + path_start, plen);
         store8(path + plen, 0);
