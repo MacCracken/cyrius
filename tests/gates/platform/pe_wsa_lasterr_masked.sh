@@ -40,10 +40,24 @@
 #           either: the interval and process tasks tested `== 0` raw), and the connect task's bind
 #           (0xF025) is never DISCARDED (it was: a failed bind surfaced as a ConnectEx error). The
 #           Windows build measured on cass zero-extends these too, so this axis is static as well.
+#           (6.6.20) WIDENED to lib/process_win.cyr and lib/syscalls_windows.cyr, and to
+#           GetExitCodeProcess (0xF002 / 61442), CreatePipe (0xF004 / 61444), ProcessPrng
+#           (0xF01A / 61466) and TerminateProcess (0xF01D / 61469): EGETEXIT_PE / ECREATEPIPE_PE /
+#           EPROCPRNG_PE / ETERMINATE_PE end at `mov rsp, rbx; pop rbx` with no extension either,
+#           and 6.6.17 masked only async_win's copies — process_win tested CreateProcessW,
+#           GetExitCodeProcess and CreatePipe `== 0` / `!= 0` raw, returned TerminateProcess raw,
+#           and sys_getrandom tested ProcessPrng `!= 0` raw (a CSPRNG failure with a dirty upper
+#           half would have read as success and returned an unfilled buffer).
+#           (6.6.20, review) and GetExitCodeProcess (0xF002 / 61442) is never DISCARDED, anywhere
+#           in lib/: lib/async_win.cyr's process task threw the BOOL away twice and decoded a
+#           zeroed code buffer, so a failed query read as exit 0 for a child nobody observed
+#           (the RLM-01 class: a status nobody wrote). A failure cannot be provoked on a live
+#           process handle, so this rule is static; tests/tcyr/crossos/async_process_unobserved.tcyr
+#           runs the changed path on Windows and pins the real codes.
 #   self    the scanner is run on a CLEAN fixture (must pass) and on one mutant per rule (each
 #           must fail) before it scans lib/, so a scanner that went blind cannot read GREEN.
 #   floors  >= 7 WSAGetLastError sites, >= 25 int-reroute sites, >= 2 callptr sites, >= 3 files,
-#           >= 6 async_win kernel32 BOOL sites.
+#           >= 6 async_win kernel32 BOOL sites, >= 8 in process_win.cyr + syscalls_windows.cyr.
 #
 # MUTATION LEDGER — built and run 2026-10-04 (lane net, bite net-3; x86_64 Linux), each mutant
 # applied to a scratch copy of the tree and the gate run from that copy:
@@ -62,6 +76,12 @@
 #   the whole slot-open lib/ (0bf9b773)                                  19 rows FAIL (axes 1-4)
 #   (6.6.17, lane lib l5) the 4a37046b lib/async_win.cyr                  axis 5 FAIL: 6 rows (the
 #     interval task's two raw `== 0`, the process task's, CreateProcessW's `ok` twice, the bind)
+#   (6.6.20, lane l-plat) the e696746d lib/process_win.cyr + lib/syscalls_windows.cyr
+#                                                                       axis 5 FAIL: 8 rows (CreateProcessW's
+#     `ok` tested and returned, GetExitCodeProcess x3, CreatePipe's `pr`, TerminateProcess returned
+#     raw, ProcessPrng)
+#   (6.6.20, review) the 7fc4f513 lib/async_win.cyr (both GetExitCodeProcess results discarded)
+#                                                                       axis 5 FAIL: 2 rows
 # No compiler and no wine: the gate cds to its ROOT and passes from any cwd.
 # Exit 77 = could not run (the SKIP protocol). CHANGELOG [6.6.16]
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd) || { echo "FAIL: pe_wsa_lasterr_masked: cannot resolve ROOT"; exit 1; }
@@ -112,9 +132,11 @@ scan() {
     BEGIN {
         split("61475 61477 61478 61479 61480 61481 61482 61483 61490 61491 61494 61495", a, " ")
         for (k in a) INTSET[a[k]] = 1
-        split("61485 61487 61445", bb, " ")         # async_win kernel32 BOOLs (axis 5)
+        # kernel32 BOOLs (axis 5): SetWaitableTimer, RegisterWait, CreateProcessW, and (6.6.20)
+        # GetExitCodeProcess, CreatePipe, ProcessPrng, TerminateProcess
+        split("61485 61487 61445 61442 61444 61466 61469", bb, " ")
         for (k in bb) BOOLSET[bb[k]] = 1
-        nw = 0; ni = 0; nc = 0; nh = 0; nb = 0
+        nw = 0; ni = 0; nc = 0; nh = 0; nb = 0; nbo = 0
     }
     FNR == 1 { nv = 0; infn = ""; nfiles++ }
     {
@@ -161,8 +183,8 @@ scan() {
             cp = closeparen(s, p)
             argtxt = substr(s, p + 1); sub(/[,)].*/, "", argtxt); gsub(/[ \t]/, "", argtxt)
             nvv = numval(argtxt)
-            if (FILENAME ~ /async_win\.cyr$/ && (nvv "") in BOOLSET) {
-                nb++
+            if (FILENAME ~ /(async_win|process_win|syscalls_windows)\.cyr$/ && (nvv "") in BOOLSET) {
+                if (FILENAME ~ /async_win\.cyr$/) nb++; else nbo++
                 pre = substr(s, 1, st - 1)
                 if (cp == 0) { bad("axis5", "syscall(" argtxt ", ...) spans lines — the scanner cannot verify it") }
                 else {
@@ -175,6 +197,10 @@ scan() {
                     }
                     else bad("axis5", "kernel32 BOOL from syscall(" argtxt ", ...) tested or returned unmasked — only eax is defined")
                 }
+            }
+            if (nvv == 61442 && cp != 0) {
+                pre = substr(s, 1, st - 1); post = substr(s, cp + 1)
+                if (pre ~ /(^|[{;])[ \t]*$/ && post ~ /^[ \t]*;/) bad("axis5", "the GetExitCodeProcess (0xF002) result is discarded — a failed query leaves the code buffer unwritten, and decoding it reads as exit 0")
             }
             if (FILENAME ~ /async_win\.cyr$/ && nvv == 61477 && cp != 0) {
                 pre = substr(s, 1, st - 1); post = substr(s, cp + 1)
@@ -210,7 +236,7 @@ scan() {
             else if (!H[h, "z"]) printf "BAD axis4 %s: %s does not map an error of 0 to -1 (`if (e == 0) { return 0 - 1; }`)\n", HS[h], h
             else nh++
         }
-        printf "COUNT %d %d %d %d %d\n", nw, ni, nc, nh, nb
+        printf "COUNT %d %d %d %d %d %d\n", nw, ni, nc, nh, nb, nbo
     }' "$@"
 }
 
@@ -253,7 +279,7 @@ fn t(x, d): i64 {
 EOF
 out=$(scan "$D/fx/async_win.cyr")
 if printf '%s\n' "$out" | grep -q '^BAD'; then bad "self: the clean fixture is flagged: $(printf '%s' "$out" | grep '^BAD' | head -3 | tr '\n' ' ')"
-elif ! printf '%s\n' "$out" | grep -q '^COUNT 2 6 1 1 3$'; then bad "self: the clean fixture counts read '$(printf '%s' "$out" | tail -1)', want 'COUNT 2 6 1 1 3'"
+elif ! printf '%s\n' "$out" | grep -q '^COUNT 2 6 1 1 3 0$'; then bad "self: the clean fixture counts read '$(printf '%s' "$out" | tail -1)', want 'COUNT 2 6 1 1 3 0'"
 else ok; fi
 
 mutant() {  # $1 = expected axis, $2 = sed expression, $3 = label
@@ -275,6 +301,42 @@ mutant axis5 's/if ((syscall(0xF02F, x, d, 0, 0, 0, 0) \& 0xFFFFFFFF) == 0)/if (
 mutant axis5 's/if ((ok \& 0xFFFFFFFF) == 0) { return 0; }/if (ok == 0) { return 0; }/' "CreateProcessW BOOL var unmasked"
 mutant axis5 's/if ((syscall(0xF025, x, d, 16) \& 0xFFFFFFFF) != 0) { return 0 - 1; }/syscall(0xF025, x, d, 16);/' "bind discarded"
 
+# (6.6.20) the same axis over process_win.cyr / syscalls_windows.cyr: a clean fixture under each
+# name passes and counts its BOOL sites; each mutant fails on axis 5.
+cat > "$D/fx/process_win.cyr" <<'EOF'
+fn p(a, h, c): i64 {
+    var ok = syscall(61445, a);
+    if ((ok & 0xFFFFFFFF) == 0) { return 0; }
+    if ((syscall(61442, h, c) & 0xFFFFFFFF) == 0) { return 0 - 1; }
+    var pr = syscall(0xF004, a, c, h, 0);
+    if ((pr & 0xFFFFFFFF) == 0) { return 0; }
+    syscall(61469, h, 1);
+    return syscall(61469, h, 137) & 0xFFFFFFFF;
+}
+EOF
+cat > "$D/fx/syscalls_windows.cyr" <<'EOF'
+fn sys_getrandom(buf, len, flags): i64 {
+    if ((syscall(0xF01A, buf, len) & 0xFFFFFFFF) != 0) { return len; }
+    return 0 - 1;
+}
+EOF
+out=$(scan "$D/fx/process_win.cyr" "$D/fx/syscalls_windows.cyr")
+if printf '%s\n' "$out" | grep -q '^BAD'; then bad "self: the clean process_win / syscalls_windows fixture is flagged: $(printf '%s' "$out" | grep '^BAD' | head -3 | tr '\n' ' ')"
+elif ! printf '%s\n' "$out" | grep -q '^COUNT 0 0 0 0 0 6$'; then bad "self: the clean process_win / syscalls_windows counts read '$(printf '%s' "$out" | tail -1)', want 'COUNT 0 0 0 0 0 6'"
+else ok; fi
+mutant_in() {  # $1 = fixture basename, $2 = sed expression, $3 = label
+    sed "$2" "$D/fx/$1" > "$D/fx/m/$1"
+    if cmp -s "$D/fx/$1" "$D/fx/m/$1"; then bad "self: mutant '$3' did not apply"; return; fi
+    if scan "$D/fx/m/$1" | grep -q "^BAD axis5 "; then ok
+    else bad "self: mutant '$3' is not caught on axis5"; fi
+}
+mutant_in process_win.cyr 's/if ((ok \& 0xFFFFFFFF) == 0)/if (ok == 0)/'                         "process_win CreateProcessW BOOL var unmasked"
+mutant_in process_win.cyr 's/if ((syscall(61442, h, c) \& 0xFFFFFFFF) == 0)/if (syscall(61442, h, c) == 0)/' "GetExitCodeProcess BOOL unmasked"
+mutant_in process_win.cyr 's/if ((syscall(61442, h, c) \& 0xFFFFFFFF) == 0) { return 0 - 1; }/syscall(61442, h, c);/' "GetExitCodeProcess BOOL discarded"
+mutant_in process_win.cyr 's/if ((pr \& 0xFFFFFFFF) == 0)/if (pr == 0)/'                         "CreatePipe BOOL var unmasked"
+mutant_in process_win.cyr 's/return syscall(61469, h, 137) \& 0xFFFFFFFF;/return syscall(61469, h, 137);/' "TerminateProcess BOOL returned raw"
+mutant_in syscalls_windows.cyr 's/if ((syscall(0xF01A, buf, len) \& 0xFFFFFFFF) != 0)/if (syscall(0xF01A, buf, len) != 0)/' "ProcessPrng BOOL unmasked"
+
 # ── the tree ───────────────────────────────────────────────────────────────────────────────────
 FILES=$(find lib -name '*.cyr' | LC_ALL=C sort)
 [ -n "$FILES" ] || { echo "FAIL: pe_wsa_lasterr_masked: no lib/**/*.cyr found"; exit 1; }
@@ -286,7 +348,7 @@ if [ -n "$bads" ]; then
     fail=$((fail + $(printf '%s\n' "$bads" | wc -l)))
 else ok; fi
 set -- $(printf '%s\n' "$out" | grep '^COUNT' | tail -1)
-nw=${2:-0}; ni=${3:-0}; nc=${4:-0}; nh=${5:-0}; nb=${6:-0}
+nw=${2:-0}; ni=${3:-0}; nc=${4:-0}; nh=${5:-0}; nb=${6:-0}; nbo=${7:-0}
 nfiles=$(grep -l -e '0xF024' -e '61476' $FILES 2>/dev/null | wc -l)
 [ "$nw" -ge 7 ]  && ok || bad "floor: $nw WSAGetLastError sites in lib/ (want >= 7) — the scan went blind or a site moved"
 [ "$ni" -ge 25 ] && ok || bad "floor: $ni int-reroute sites in lib/ (want >= 25)"
@@ -294,10 +356,11 @@ nfiles=$(grep -l -e '0xF024' -e '61476' $FILES 2>/dev/null | wc -l)
 [ "$nh" -eq 4 ]  && ok || bad "axis 4: $nh of the 4 never-zero helpers (_sw_wsa_err, _net_wsa_err, _tn_win_sockerr, _asw_wsa_err) found and correct"
 [ "$nfiles" -ge 3 ] && ok || bad "floor: $nfiles files carry WSAGetLastError (want >= 3)"
 [ "$nb" -ge 6 ]  && ok || bad "floor: $nb async_win kernel32 BOOL sites (want >= 6: two SetWaitableTimer, three RegisterWait, CreateProcessW)"
+[ "$nbo" -ge 8 ] && ok || bad "floor: $nbo process_win + syscalls_windows kernel32 BOOL sites (want >= 8: CreateProcessW, GetExitCodeProcess x3, CreatePipe, TerminateProcess x2, ProcessPrng)"
 
 if [ "$fail" -ne 0 ]; then
     echo "FAIL: pe_wsa_lasterr_masked: $fail failed, $pass passed"
     exit 1
 fi
-echo "PASS: pe_wsa_lasterr_masked ($pass checks; $nw WSAGetLastError sites, $ni int-reroute sites, $nc callptr BOOLs, $nh helpers, $nb kernel32 BOOLs)"
+echo "PASS: pe_wsa_lasterr_masked ($pass checks; $nw WSAGetLastError sites, $ni int-reroute sites, $nc callptr BOOLs, $nh helpers, $nb + $nbo kernel32 BOOLs)"
 exit 0

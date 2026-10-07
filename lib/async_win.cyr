@@ -857,9 +857,10 @@ fn _async_process_task(ctx): i64 {
             # blocking reap (returns the real exit code — better than a hang or a leak).
             syscall(61441, hProcess, 4294967295);   # WaitForSingleObject(INFINITE)
             var c0[8]; store64(&c0, 0);
-            syscall(61442, hProcess, &c0);           # GetExitCodeProcess
+            var g0 = syscall(61442, hProcess, &c0);  # GetExitCodeProcess (BOOL: eax only)
             syscall(3, load64(ctx + 80)); syscall(3, hProcess);
             _asw_job_close(ctx);
+            if ((g0 & 0xFFFFFFFF) == 0) { return 0 - 1; }   # not observed: c0 is not an exit 0
             return load32(&c0);
         }
         store64(ctx + 88, load64(&wh));
@@ -868,9 +869,12 @@ fn _async_process_task(ctx): i64 {
     }
     var hProcess = load64(ctx + 72);
     syscall(0xF030, load64(ctx + 88), 0 - 1);       # UnregisterWaitEx (drain the exit callback)
+    # A failed GetExitCodeProcess leaves `code` zeroed: decoding it read as exit 0 for a child
+    # nobody observed. Not observed is -1, as on Linux and macOS. CHANGELOG [6.6.20]
     var code[8]; store64(&code, 0);
-    syscall(61442, hProcess, &code);                # GetExitCodeProcess
+    var got = syscall(61442, hProcess, &code);      # GetExitCodeProcess (BOOL: eax only)
     var ec = load32(&code);
+    if ((got & 0xFFFFFFFF) == 0) { ec = 0 - 1; }
     syscall(3, load64(ctx + 80));                   # CloseHandle(hThread)
     syscall(3, hProcess);                           # CloseHandle(hProcess)
     _asw_job_close(ctx);
@@ -908,9 +912,12 @@ fn async_run_process(rt, path, argv, envp, ms): i64 {
     return 0 - 2;
 }
 
-# Sleep for `ms` milliseconds via the kernel32 Sleep reroute (0xF00F, exists).
+# Sleep for `ms` milliseconds via the kernel32 Sleep reroute (0xF00F, exists). Sleep takes a
+# DWORD: an ms above INT_MAX is clamped (as sleep_ms does), never truncated to its low 32 bits —
+# 2^32 + 5 slept 5 ms, and 0xFFFFFFFF is INFINITE. CHANGELOG [6.6.20]
 fn async_sleep_ms(ms): i64 {
     if (ms <= 0) { return 0; }
+    if (ms > 0x7FFFFFFF) { ms = 0x7FFFFFFF; }
     syscall(0xF00F, ms);        # Sleep(dwMilliseconds)
     return 0;
 }
@@ -922,7 +929,7 @@ fn async_read(fd, buf, len): i64 {
 
 # Wait for SOCKET `fd` to be readable, or until `ms` milliseconds elapse (`ms` < 0: no limit).
 # Returns 1 if it became readable — data, a hang-up, or a pending connection on a listening
-# socket — and 0 if the wait ended without it (the timeout, or an error). The epoll backend's
+# socket — and 0 if the wait ended without it (the timeout, or an error). The Linux backend's
 # contract, over ws2_32!WSAPoll (fd_wait_ready, 0xF04A, verified on cass).
 # ⚠ SOCKETS ONLY: WSAPoll knows nothing of other HANDLEs (a pipe, a file, a console), so for
 # those this answers 0 at once rather than waiting — the Windows reactor is socket-only too.

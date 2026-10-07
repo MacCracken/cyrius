@@ -671,10 +671,10 @@ fn async_read(fd, buf, len): i64 {
 # Wait for `fd` to be readable, or until `ms` milliseconds elapse (`ms` < 0: no limit). Returns 1
 # if it became readable — data, a hang-up, or a pending connection on a listening socket — and 0
 # if the wait ended without it: the timeout, EINTR, or an fd that is not open (at once, never a
-# hang). Same contract as the epoll backend (lib/async.cyr); a bounded wait is what lets a
-# cooperative server re-check a stop flag between waits. One BSD poll through fd_wait_ready
-# (lib/syscalls_linux_common.cyr, verified on ecb and ach). Inside a runtime, park with
-# async_wait_fd instead. CHANGELOG [6.6.19]
+# hang). Same contract as the Linux backend (lib/async.cyr), which since 6.6.20 is the same
+# fd_wait_ready; a bounded wait is what lets a cooperative server re-check a stop flag between
+# waits. One BSD poll through fd_wait_ready (lib/syscalls_linux_common.cyr, verified on ecb and
+# ach). Inside a runtime, park with async_wait_fd instead. CHANGELOG [6.6.19]
 fn async_await_readable_ms(fd, ms): i64 {
     if (fd_wait_ready(fd, 0, ms) == 1) { return 1; }
     return 0;

@@ -145,11 +145,12 @@ fn _ts_path_arg_gate(): i64 {
         sys_exit(127);
     }
     var stbuf[1];
-    _regression_wait_deadline(pid, &stbuf, _regression_timeout_ms());
+    var reaped = _regression_wait_deadline(pid, &stbuf, _regression_timeout_ms());
     sys_unlink(garbage_path);
     var status = load32(&stbuf);
     var ec = 0 - 1;
-    if (WIFEXITED(status) == 1) { ec = WEXITSTATUS(status); }
+    # 6.6.20: decode only a status waitpid wrote — not after the deadline, not unobserved.
+    if (reaped == 1) { if (WIFEXITED(status) == 1) { ec = WEXITSTATUS(status); } }
 
     var fail = 0;
     if (ec != 0) {
@@ -190,7 +191,9 @@ fn _ts_mode_run(fixture_path, mode_flag): i64 {
     }
     sys_close(fd);
     var stbuf[1];
-    _regression_wait_deadline(pid, &stbuf, _regression_timeout_ms());
+    var reaped = _regression_wait_deadline(pid, &stbuf, _regression_timeout_ms());
+    if (reaped == 0) { return 0 - 2; }   # the DEADLINE (6.6.20: was decoded as a status)
+    if (reaped < 0) { return 0 - 1; }    # never observed: waitpid wrote no status
     var status = load32(&stbuf);
     if (WIFEXITED(status) == 1) { return WEXITSTATUS(status); }
     return 0 - 1;
@@ -251,7 +254,9 @@ fn _emit_js_to_file(fixture_path, out_path): i64 {
     }
     sys_close(fd); sys_close(ofd);
     var stbuf[1];
-    _regression_wait_deadline(pid, &stbuf, _regression_timeout_ms());
+    var reaped = _regression_wait_deadline(pid, &stbuf, _regression_timeout_ms());
+    if (reaped == 0) { return 0 - 2; }   # the DEADLINE (6.6.20: was decoded as a status)
+    if (reaped < 0) { return 0 - 1; }    # never observed: waitpid wrote no status
     var status = load32(&stbuf);
     if (WIFEXITED(status) == 1) { return WEXITSTATUS(status); }
     return 0 - 1;

@@ -273,7 +273,7 @@ fn _win_create_process_job(wcmdline, hStdOut, wenv, pi, kill_on_close): i64 {
     store64(&a + 64, &si);                       # lpStartupInfo
     store64(&a + 72, pi);                        # lpProcessInformation
     var ok = syscall(61445, &a);                 # CreateProcessW
-    if (ok == 0) { return 0; }
+    if ((ok & 0xFFFFFFFF) == 0) { return 0; }    # BOOL: only eax is defined (6.6.20)
     var job = _win_job_start(pi, kill_on_close);
     if (job < 0) {                               # could not be resumed: it was terminated
         syscall(3, load64(pi + 8));
@@ -281,7 +281,7 @@ fn _win_create_process_job(wcmdline, hStdOut, wenv, pi, kill_on_close): i64 {
         return 0;
     }
     if (job > 0) { _win_job_put(load64(pi), job); }
-    return ok;
+    return ok & 0xFFFFFFFF;
 }
 
 # ⛔ 6.6.8 — A DEADLINE ON WINDOWS TOO, AND NO "exit 0" FOR A WAIT THAT NEVER HAPPENED.
@@ -344,7 +344,7 @@ fn _win_wait_handle(h): i64 {
     if (wr != 0) { return 0 - 1; }                # WAIT_FAILED (or anything but signalled)
     var code[8];
     store64(&code, 0);
-    if (syscall(61442, h, &code) == 0) { return 0 - 1; }   # GetExitCodeProcess failed
+    if ((syscall(61442, h, &code) & 0xFFFFFFFF) == 0) { return 0 - 1; }   # GetExitCodeProcess failed (BOOL: eax only)
     return load32(&code);
 }
 
@@ -435,8 +435,11 @@ fn _win_watch_end(t, wd): i64 {
 # (nonzero=success). The Windows analogue of kill(pid, SIGKILL) — Win32 has no
 # signals, so a runaway child can only be stopped this way.
 # See 2026-07-08-windows-pe-surface-no-terminateprocess.md.
+# ⚠ Every kernel32 BOOL in this file (CreateProcessW, GetExitCodeProcess, CreatePipe,
+# TerminateProcess) is masked to 32 bits: their PE emitters define only eax, the upper half is
+# the callee's to leave dirty, so a raw `== 0` could read a failure as success. CHANGELOG [6.6.20]
 fn _win_terminate(hProcess, exitCode): i64 {
-    return syscall(61469, hProcess, exitCode);    # TerminateProcess(hProcess, exitCode)
+    return syscall(61469, hProcess, exitCode) & 0xFFFFFFFF;   # TerminateProcess — BOOL: eax only
 }
 
 # v6.4.26 — wait for the process in `pi` up to `ms` milliseconds; if it does not
@@ -462,7 +465,7 @@ fn _win_wait_timeout(pi, ms, killed_out): i64 {
     var code[8];
     store64(&code, 0);
     if (wr == 0) {
-        if (syscall(61442, hProcess, &code) != 0) { ec = load32(&code); }   # GetExitCodeProcess
+        if ((syscall(61442, hProcess, &code) & 0xFFFFFFFF) != 0) { ec = load32(&code); }   # GetExitCodeProcess
     }
     _win_job_release(hProcess, 0);
     syscall(3, hThread);                           # CloseHandle(hThread)
@@ -491,7 +494,7 @@ fn _win_wait_tree(pi, ms, killed_out): i64 {
     var code[8];
     store64(&code, 0);
     if (wr == 0) {
-        if (syscall(61442, hProcess, &code) != 0) { ec = load32(&code); }
+        if ((syscall(61442, hProcess, &code) & 0xFFFFFFFF) != 0) { ec = load32(&code); }
     }
     _win_job_release(hProcess, 1);
     syscall(3, load64(pi + 8));                    # CloseHandle(hThread)
@@ -538,7 +541,7 @@ fn _win_make_pipe(wr_out): i64 {
     store64(&sa + 8, 0);
     store64(&sa + 16, 1);
     var pr = syscall(61444, &pipeh, &pipeh + 8, &sa, 0);   # CreatePipe
-    if (pr == 0) { return 0; }
+    if ((pr & 0xFFFFFFFF) == 0) { return 0; }    # BOOL: only eax is defined (6.6.20)
     var hRead = load64(&pipeh);
     var hWrite = load64(&pipeh + 8);
     syscall(61443, hRead, 1, 0);                  # SetHandleInformation(hRead, INHERIT, 0)

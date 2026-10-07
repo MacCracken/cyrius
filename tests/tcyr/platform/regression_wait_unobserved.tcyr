@@ -15,6 +15,21 @@
 # in a SECOND, unchecked one; `regression_exec_with_arg_capture_both_status` is the one-run
 # verb they now use, and its merged capture must still end with stdout's trailer.
 #
+# 6.6.20: the five verbs 6.6.7 missed — `regression_exec_in_dir3` and the ssh / scp verbs
+# (`ssh_skip_check`, `scp_to`, `ssh_remote_exit`, `ssh_remote_exec_capture`) — still discarded
+# the wait's result and decoded the status buffer. Their SIG_IGN rows zero the stack first, so
+# an undecodable status reads as 0 ("exit 0" / "reachable", the fail-open answer) instead of
+# whatever a previous call left there, and the bug cannot hide behind a lucky -1. The ssh / scp
+# rows are hermetic: `-o BogusOption=1` makes ssh refuse its command line (255) and scp its
+# arguments (1) before any network, and they SKIP by name where /usr/bin/ssh or scp is absent.
+# A deadline sub-run (CYRIUS_CHECK_TIMEOUT=1) pins the other half: a child that traps TERM and
+# exits 0 when the deadline ends it must read -2, not the 0 it exited with.
+# 6.6.20 also: `regression_run_with_timeout` had its OWN poll loop with no waitpid-error arm, so
+# under SIG_IGN it spun the whole bound, counted a phantom deadline kill and returned -2 for a
+# child that succeeded. Its rows: -1 or the real code, at once, and no deadline counted — plus
+# its timeout_ms <= 0 contract (an immediate kill, -2), which routing it through the shared wait
+# must not turn into an unbounded one.
+#
 # Self-spawning: argv(1) = "say", or CY_RWU_CHILD in the environment for the no-arg verbs.
 #
 # 6.6.10: the file used not to COMPILE for PE (SIGCHLD; the corpus cross-compile ratchet,
@@ -34,6 +49,7 @@ include "lib/args.cyr"
 include "lib/tagged.cyr"
 include "lib/fs.cyr"
 include "lib/net.cyr"
+include "lib/chrono.cyr"
 include "lib/regression.cyr"
 
 var OUT = "3 warnings\n";
@@ -48,6 +64,89 @@ fn _say(): i64 {
 fn _ok_or_unobserved(code): i64 {
     if (code == 0 - 1) { return 1; }
     if (code == 73) { return 1; }
+    return 0;
+}
+
+# -1 (not observed) or the child's real exit code `real`; anything else — 0 above all — is a
+# status nobody wrote.
+fn _real_or_unobserved(code, real): i64 {
+    if (code == 0 - 1) { return 1; }
+    if (code == real) { return 1; }
+    return 0;
+}
+
+# Zero 4 KiB of stack below the caller, so a verb called next from the same frame finds 0 in an
+# uninitialised status buffer: decoding it then reads "exit 0", deterministically.
+fn _rwu_zero_stack(): i64 {
+    var z[4096];
+    memset(&z, 0, 4096);
+    return load64(&z);
+}
+
+fn _rwu_have(path): i64 {
+    if (file_exists(path) == 1) { return 1; }
+    return 0;
+}
+
+# The 6.6.20 rows: the exec-in-dir and ssh / scp verbs under SIG_IGN, each after a zeroed stack.
+# POSIX only: agnos has no dup2, exec or ssh (the file is compiled there by the corpus ratchet).
+fn _sigign_rows_dir_ssh(envp): i64 {
+    #ifndef CYRIUS_TARGET_WIN
+    #ifndef CYRIUS_TARGET_AGNOS
+    var kills0 = regression_deadline_kills();
+    signal_ignore(SIGCHLD);
+    var rt0 = clock_now_ms();
+    var w1 = regression_run_with_timeout(argv(0), 5000, envp);
+    var rtel = clock_now_ms() - rt0;
+    signal_default(SIGCHLD);
+    assert_eq(_ok_or_unobserved(w1), 1, "run_with_timeout: -1 or the real 73, never -2");
+    assert(rtel < 3000, "…well inside its 5 s bound (it used to spin the whole bound)");
+    assert_eq(regression_deadline_kills(), kills0, "…and no phantom deadline kill is counted");
+    var have_ssh = _rwu_have("/usr/bin/ssh") | _rwu_have("/bin/ssh");
+    var have_scp = _rwu_have("/usr/bin/scp") | _rwu_have("/bin/scp");
+    signal_ignore(SIGCHLD);
+    _rwu_zero_stack();
+    var d1 = regression_exec_in_dir3(".", argv(0), "say", 0, 0, 0, envp);
+    var e1 = 0;
+    var e2 = 0;
+    var e3 = 0;
+    var e4 = 0;
+    if (have_ssh == 1) {
+        _rwu_zero_stack();
+        e1 = regression_ssh_remote_exit("-o", "BogusOption=1", envp);
+        _rwu_zero_stack();
+        e2 = regression_ssh_remote_exec_capture("-o", "BogusOption=1", "/dev/null", envp);
+        _rwu_zero_stack();
+        e3 = regression_ssh_skip_check("-oBogusOption=1");
+    }
+    if (have_scp == 1) {
+        var saved = sys_fcntl(2, 0, 10);                # F_DUPFD: keep our stderr
+        var dn = sys_open("/dev/null", 1, 0);           # scp_to leaves the child's stderr ours,
+        if (dn >= 0) { sys_dup2(dn, 2); sys_close(dn); }   # and scp prints its usage there
+        _rwu_zero_stack();
+        e4 = regression_scp_to("nohost.invalid", "-oBogusOption=1", "y", envp);
+        if (saved >= 0) { sys_dup2(saved, 2); sys_close(saved); }
+    }
+    signal_default(SIGCHLD);
+    assert_eq(_ok_or_unobserved(d1), 1, "exec_in_dir3: -1 or the real 73, never a status nobody wrote");
+    if (have_ssh == 1) {
+        assert_eq(_real_or_unobserved(e1, 255), 1, "ssh_remote_exit: -1 or ssh's real 255, never 0");
+        assert_eq(_real_or_unobserved(e2, 255), 1, "ssh_remote_exec_capture: -1 or ssh's real 255, never 0");
+        assert_eq(e3, 0, "ssh_skip_check: 0 (not reachable), never 1");
+    } else {
+        var sk = "  SKIP: ssh_remote_exit / ssh_remote_exec_capture / ssh_skip_check rows";
+        sys_write(1, sk, strlen(sk));
+        var sk2 = " — no /usr/bin/ssh or /bin/ssh\n";
+        sys_write(1, sk2, strlen(sk2));
+    }
+    if (have_scp == 1) {
+        assert_eq(_real_or_unobserved(e4, 1), 1, "scp_to: -1 or scp's real 1, never 0");
+    } else {
+        var sc = "  SKIP: scp_to row — no /usr/bin/scp or /bin/scp\n";
+        sys_write(1, sc, strlen(sc));
+    }
+    #endif
+    #endif
     return 0;
 }
 
@@ -72,6 +171,7 @@ fn _sigign_rows(tag, buf, st, envp, noenv): i64 {
     assert_eq(s2, 0, "…no invented signal death");
     assert_eq(_ok_or_unobserved(c3), 1, "exec_run: -1 or the real 73, never -2");
     #endif
+    _sigign_rows_dir_ssh(envp);
     return 0;
 }
 
@@ -104,6 +204,22 @@ fn main(): i64 {
         _sigign_rows("SIGCHLD = SIG_IGN, untimed (CYRIUS_CHECK_TIMEOUT=0)", buf, st, envp, noenv);
         return assert_summary();
     }
+    if (getenv("CY_RWU_DEADLINE") != 0) {
+        test_group("a deadline is -2, never the status of the child it killed (CYRIUS_CHECK_TIMEOUT=1)");
+        var k0 = regression_deadline_kills();
+        var dl = regression_exec_in_dir3(".", "/bin/sh", "-c", "trap 'exit 0' TERM; sleep 30 & wait", 0, 0, envp);
+        assert_eq(dl, 0 - 2, "exec_in_dir3: a TERM-trapping child ended at the deadline reads -2, not its exit 0");
+        assert_eq(regression_deadline_kills(), k0 + 1, "…and the deadline kill is counted");
+        return assert_summary();
+    }
+
+    test_group("run_with_timeout: the real code, and timeout_ms <= 0 is still an immediate kill");
+    assert_eq(regression_run_with_timeout(argv(0), 5000, envp), 73, "run_with_timeout: the child's 73");
+    var k0 = regression_deadline_kills();
+    var rt1 = clock_now_ms();
+    assert_eq(regression_run_with_timeout(argv(0), 0, envp), 0 - 2, "timeout_ms 0: -2 (ended at once)");
+    assert(clock_now_ms() - rt1 < 5000, "…promptly, not an unbounded wait");
+    assert_eq(regression_deadline_kills(), k0 + 1, "…and counted as a deadline kill");
 
     test_group("capture_both_status: one run, both streams, its own status");
     var n = regression_exec_with_arg_capture_both_status(argv(0), "say", buf, 4096, noenv, st);
@@ -122,6 +238,13 @@ fn main(): i64 {
     store64(senv + 8, "CY_RWU_SUB=1");
     store64(senv + 16, 0);
     assert_eq(regression_exec_run(argv(0), senv), 0, "the untimed SIG_IGN rows all passed");
+
+    test_group("the deadline sub-run");
+    var denv = alloc(24);
+    store64(denv, "CYRIUS_CHECK_TIMEOUT=1");
+    store64(denv + 8, "CY_RWU_DEADLINE=1");
+    store64(denv + 16, 0);
+    assert_eq(regression_exec_run(argv(0), denv), 0, "a deadline reads -2 in the exec-in-dir verb");
 
     var r = assert_summary();
     return r;

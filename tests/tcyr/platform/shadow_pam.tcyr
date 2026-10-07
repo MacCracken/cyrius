@@ -10,6 +10,14 @@ include "lib/fnptr.cyr"
 include "lib/shadow.cyr"
 include "lib/pam.cyr"
 
+# Zero 4 KiB of stack below the caller, so a fn called next from the same frame finds 0 in an
+# uninitialised local (pam_unix_authenticate's wait-status buffer).
+fn _sp_zero_stack(): i64 {
+    var z[4096];
+    memset(&z, 0, 4096);
+    return load64(&z);
+}
+
 alloc_init();
 
 test_group("lib/shadow.cyr (non-root path)");
@@ -61,6 +69,25 @@ if (avail == 0) {
     var r2 = pam_unix_authenticate("_nosuch_user_v5527_", "any");
     assert(r2 >= 0, "nonexistent-user auth does not return infrastructure error");
     assert(r2 != 0, "nonexistent-user auth is not PAM_AUTH_OK");
+
+    #ifdef CYRIUS_TARGET_LINUX
+    test_group("lib/pam.cyr — a verdict nobody observed fails closed");
+
+    # 6.6.20: pam_unix_authenticate discarded waitpid's result and decoded its status buffer.
+    # Under an inherited SIGCHLD = SIG_IGN the kernel auto-reaps unix_chkpwd, waitpid fails
+    # ECHILD and the buffer is never written — and a stale 0 there read as "exit 0" =
+    # PAM_AUTH_OK for a WRONG password (its consumer is a setuid-root sudo replacement).
+    # The stack is zeroed right before each call, so the unwritten slot reads 0
+    # deterministically and the fail-open answer cannot hide behind a lucky non-zero word.
+    signal_ignore(SIGCHLD);
+    _sp_zero_stack();
+    var r3 = pam_unix_authenticate("root", "___definitely_not_the_root_password_v5527___");
+    _sp_zero_stack();
+    var r4 = pam_unix_authenticate("_nosuch_user_v5527_", "any");
+    signal_default(SIGCHLD);
+    assert_eq(r3, PAM_AUTH_FAIL, "SIGCHLD = SIG_IGN: a wrong password is PAM_AUTH_FAIL, never PAM_AUTH_OK");
+    assert_eq(r4, PAM_AUTH_FAIL, "SIGCHLD = SIG_IGN: an unknown user is PAM_AUTH_FAIL, never PAM_AUTH_OK");
+    #endif
 }
 
 var r = assert_summary();
