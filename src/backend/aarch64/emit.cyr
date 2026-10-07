@@ -500,6 +500,9 @@ fn ESYSCALL(S): i64 {
         # and runs the parent path → broken fork. x16 holds the BSD num
         # (preserved across svc) and x1 survives csneg, so: if fork and
         # child, zero x0. Gated on x16==2 → no-op for every other syscall.
+        # No error test is needed here, unlike the x86 twin (EMACHO_PROC_FIXUP, 6.6.20): XNU's
+        # arm64 syscall return ZEROES x1 on an error, so a refused fork never reads as the child.
+        # Measured on ecb; held by tests/tcyr/crossos/fork_refused_stays_negative.tcyr.
         EW(S, 0xF1000A1F);      # cmp x16, #2   (fork?)
         EW(S, 0x54000081);      # b.ne +16      (not fork → skip 3)
         EW(S, 0xF100043F);      # cmp x1, #1    (child?)
