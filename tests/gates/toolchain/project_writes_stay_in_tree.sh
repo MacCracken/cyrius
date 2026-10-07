@@ -48,6 +48,8 @@
 #   13  the cx tools JIT-built into build/ (cxvm by `cyrius run x.cyx`, cycc_cx by
 #       `cyrius build --target=cx`) REPLACE a committed build/cxvm / build/cycc_cx link — the
 #       O_TRUNC open they used planted the binary, mode 0755, where the link pointed
+#   14  cyrius distlib's self-check entry `.distchk<pid>.cyr` (project root): a committed link at
+#       that name is removed and the entry created fresh, never written through
 #
 # MUTATION LEDGER (6.6.20; each run against a copy of the fixed tree; real tree GREEN, the
 # pre-fix tree RED on every refusal axis with axis 8 GREEN):
@@ -64,6 +66,7 @@
 #   M10 _io_replace_target_in: no .git check on a hop (_io_path_meta_why) -> 10 11 12 RED
 #   M11 _io_path_meta_why compares case-SENSITIVELY                     -> 12 (.GIT) RED (only it)
 #   M12 cbt _cx_jit_build opens `out` O_TRUNC again (the pre-fix open)    -> 13 RED (only it)
+#   M13 distlib opens .distchk<pid>.cyr O_TRUNC again (the pre-fix open)  -> 14 RED (only it)
 #   (the alias families — HFS-ignorable code points, `:stream`, trailing dots/spaces, GIT~1 and
 #   other 8.3 names — are pinned row by row in tests/tcyr/crossos/replace_in_tree_link_rules.tcyr,
 #   each one's mutation RED there)
@@ -358,6 +361,26 @@ run "$P" "$D/a13c.out" "$D/bin/cyrius" build --target=cx src/a.cyr build/a.cyx
 { [ -f "$P/build/cycc_cx" ] && [ ! -L "$P/build/cycc_cx" ]; } || { fail "axis 13: build/cycc_cx is not the freshly built file (rc=$rc):"; sed 's/^/      /' "$D/a13c.out" | head -3; a=1; }
 ls "$P/build" | grep -q '\.tmp\.' && { fail "axis 13: a JIT-build temp was left in build/: $(ls "$P/build" | tr '\n' ' ')"; a=1; }
 [ "$a" = 0 ] && echo "  ok: axis 13: the JIT-built cxvm and cycc_cx REPLACE a committed build/cxvm / build/cycc_cx link (temp + rename); nothing written where it pointed"
+
+# ── axis 14: distlib's self-check entry, `.distchk<pid>.cyr` in the project root ──
+# It was written with file_write_all (O_TRUNC), which follows a committed link; a checkout can
+# plant one per pid for a range (a CI container's pids are small and steady). Deterministic here:
+# the shell plants `.distchk$$.cyr` and EXECs the CLI, which keeps that pid. The sidecar verify
+# needs an aarch64 compiler beside the CLI before it reaches the self-check, so one is built.
+a=0
+if ! "$CC" < src/main_aarch64.cyr > "$D/bin/cycc_aarch64" 2> "$D/cca64.err" || [ ! -s "$D/bin/cycc_aarch64" ]; then
+    echo "FAIL: project_writes_stay_in_tree: src/main_aarch64.cyr does not build:"; tail -3 "$D/cca64.err"; exit 1
+fi
+chmod +x "$D/bin/cycc_aarch64"
+P="$D/p14"; mkdir -p "$P/src"
+printf '[package]\nname = "dlp"\nversion = "0.1.0"\ncyrius = "%s"\n\n[lib]\nmodules = ["src/lib.cyr"]\n' "$VER" > "$P/cyrius.cyml"
+echo 'fn dlp_one(): i64 { return 1; }' > "$P/src/lib.cyr"
+run "$P" "$D/a14.out" sh -c 'ln -s "$1" ".distchk$$.cyr" && echo $$ > .planted && exec "$2" distlib' _ "$V/planted_dl" "$D/bin/cyrius"
+[ -e "$V/planted_dl" ] && { fail "axis 14: cyrius distlib wrote its self-check entry THROUGH .distchk<pid>.cyr into $V/planted_dl: $(head -1 "$V/planted_dl")"; a=1; }
+[ "$rc" -eq 0 ] || { fail "axis 14: cyrius distlib failed (rc=$rc):"; sed 's/^/      /' "$D/a14.out" | head -3; a=1; }
+[ -f "$P/.planted" ] && [ ! -e "$P/.distchk$(cat "$P/.planted").cyr" ] && [ ! -L "$P/.distchk$(cat "$P/.planted").cyr" ] \
+  || { fail "axis 14: the planted .distchk<pid>.cyr is still there — the self-check never reached it (pid not kept?)"; a=1; }
+[ "$a" = 0 ] && echo "  ok: axis 14: cyrius distlib removes a committed .distchk<pid>.cyr link and creates its self-check entry fresh; nothing written where it pointed"
 
 [ "$FAIL" = 0 ] || exit 1
 echo "PASS: project_writes_stay_in_tree (cyrius update, deps --lock, build's relock, cyriusly use, cyrius fmt and cyrius port write through a link only to a file inside the project and outside its .git, refuse every other link by name and write nothing; in-tree links still written through)"

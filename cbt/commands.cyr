@@ -6181,8 +6181,18 @@ fn cmd_distlib(profile): i64 {
     var dl_errf = _cbt_tmpfile("distlib_err");
     var dl_retired = 0;
     var dl_cap = 0;
-    if (file_write_all(dl_entry, dl_src, strlen(dl_src)) >= 0) {
-        dl_wrote = 1;
+    # ⛔ 6.6.20 (CVE-TBD): the entry is the PROJECT's `.distchk<pid>.cyr`, and a name that exists
+    # is removed, never followed — `file_write_all` (O_TRUNC) wrote through a committed link
+    # there, so a checkout planting `.distchk<N>.cyr -> <any path>` for a range of pids (a CI
+    # container's are small and steady) had `cyrius distlib` create or truncate that file.
+    xunlink(dl_entry);
+    var dl_efd = file_create_exclusive(dl_entry, 0x1A4);
+    if (dl_efd >= 0) {
+        var dl_ew = _io_write_full(dl_efd, dl_src, strlen(dl_src));
+        if (file_close(dl_efd) < 0) { dl_ew = 0 - 1; }
+        if (dl_ew >= 0) { dl_wrote = 1; } else { xunlink(dl_entry); }
+    }
+    if (dl_wrote == 1) {
         # 6.6.20 (CBT-02): the capture is created HERE, so a compile() that bails before its child
         # opens it still leaves an (empty) file to read back, and "cannot read it" means only that.
         var dl_cfd = sys_open(dl_errf, O_WRONLY | O_CREAT | O_TRUNC, 0x180);
