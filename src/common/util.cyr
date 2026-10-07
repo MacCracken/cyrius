@@ -2762,7 +2762,7 @@ fn _HEAP_INIT_SCRATCH(S): i64 {
     S64(S + 0x18F830, 0);
     # Condition patch state
     S64(S + 0x18F888, 0);
-    # Continue forward patch (for-loop, relocated v3.3.12)
+    # continue mode (0 = to the loop top, 1 = to a for's step; jumps in _cont_vec)
     S64(S + 0x18F898, 0);
     # Global-var-init bookkeeping (gvar_cnt + scratch slots)
     S64(S + 0x19A000, 0);
