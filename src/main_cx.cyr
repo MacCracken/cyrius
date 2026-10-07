@@ -1,6 +1,11 @@
 # Cyrius-X Compiler — emits .cyx bytecode instead of ELF
 # Usage: cat prog.cyr | ./build/cycc_cx > prog.cyx
 # Run:   cat prog.cyx | ./build/cxvm
+#
+# HEAP MAP — none here: src/main.cyr carries the ONE heap map. This driver uses its
+# layout plus the regions tagged `(cx only)` there (the bytecode buffer at 0x54A000, the
+# fixup table at 0x150B000, the break-chain shadow at 0x41A000), and never touches the
+# ones tagged `(not cx)`. tests/gates/memory/heapmap.sh checks both layouts. CHANGELOG [6.6.20]
 
 enum Sys { SYS_READ = 0; SYS_WRITE = 1; SYS_OPEN = 2; SYS_CLOSE = 3; SYS_BRK = 12; SYS_EXIT = 60; }
 

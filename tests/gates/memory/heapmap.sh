@@ -68,9 +68,19 @@ fi
 # codebuf at 0x41A000, which since v6.4.49 only the cx driver touched. A phantom map entry
 # is not harmless: the map is machine-read, so it reserves bytes and hides real overlaps
 # (the v6.5.26 "DCE bitmap" phantom manufactured one).
+#
+# 6.6.20 (HEAP-06) — and the converse: every `S + 0x…` literal in code must land inside a
+# region of its layout, or be the arena end the `brk-final` line records (no region may end
+# past it either). The map was missing live state: the three WP-compaction registries at
+# 0x60000-0x100000 (since v6.5.68, under a sentence calling that band FREE), the PP
+# #derive/include/#if band at 0x197000, the pp-flag VALUES at 0x190880, the cx driver's
+# bytecode buffer and fixup table, and five size-less lines the parser skipped (the core
+# scalars, the fn state, the macro tables, eight fn tables). The macro-table line, once it
+# had a size, showed the #ref read buffer and the macro tables time-share 14 KB — now a
+# recorded invariant instead of an accident.
 
 awk -v mainf="$MAIN" '
-BEGIN { n = 0; errors = 0; warnings = 0 }
+BEGIN { n = 0; errors = 0; warnings = 0; arena_end = 0; nlit = 0 }
 
 function is_cx_file(f) {
     return (f ~ /(^|\/)main_cx\.cyr$/ || f ~ /(^|\/)backend\/cx\//)
@@ -168,6 +178,7 @@ FILENAME == mainf && /^#   0x[0-9A-Fa-f]+ +[a-zA-Z_]/ {
         else if (unit == "MB" || unit == "M") { size = size * 1048576 }
     }
 
+    if (name == "brk-final") { arena_end = strtonum(offset_str) }
     if (name != "" && size > 0) {
         offsets[n] = strtonum(offset_str)
         sizes[n] = size
@@ -191,6 +202,15 @@ FILENAME == mainf && /^#   0x[0-9A-Fa-f]+ +[a-zA-Z_]/ {
     gsub(/"([^"\\]|\\.)*"/, "\"\"", code)
     sub(/#.*/, "", code)
     cxf = is_cx_file(FILENAME)
+    scan = code
+    while (match(scan, /(^|[^A-Za-z0-9_])S[ \t]*\+[ \t]*0x[0-9A-Fa-f]+/)) {
+        ms = RSTART; ml = RLENGTH
+        lit = substr(scan, ms, ml)
+        sub(/^.*0x/, "0x", lit)
+        key = (cxf ? "cx" : "shared") SUBSEP strtonum(lit)
+        if (!(key in litwhere)) { litwhere[key] = FILENAME ":" FNR; nlit++ }
+        scan = substr(scan, ms + ml)
+    }
     while (match(code, /0x[0-9A-Fa-f]+/)) {
         v = strtonum(substr(code, RSTART, RLENGTH))
         if (cxf) { refcx[v] = 1 } else { refshared[v] = 1 }
@@ -222,12 +242,48 @@ END {
     }
     errors += unref
 
+    # The arena end, and every `S + 0x…` literal inside a region of its layout.
+    if (arena_end == 0) {
+        printf "  ** no `brk-final` line: the map must record the arena end **\n"
+        errors++
+    }
+    for (i = 0; i < n; i++) {
+        if (arena_end > 0 && offsets[i] + sizes[i] > arena_end) {
+            printf "  ** %s ends 0x%X, past the arena end 0x%X (brk-final) **\n", names[i], offsets[i] + sizes[i], arena_end
+            errors++
+        }
+    }
+    if (nlit < 100) {
+        printf "  ** only %d distinct S + 0x... literals found under src/ — the scan is broken **\n", nlit
+        errors++
+    }
+    unmapped = 0
+    PROCINFO["sorted_in"] = "@ind_str_asc"
+    for (key in litwhere) {
+        split(key, kp, SUBSEP)
+        lay = kp[1]
+        v = kp[2] + 0
+        if (v == arena_end) { continue }
+        hit = 0
+        for (i = 0; i < n; i++) {
+            if (lay == "shared" && cxo[i]) { continue }
+            if (lay == "cx" && notcx[i]) { continue }
+            if (v >= offsets[i] && v < offsets[i] + sizes[i]) { hit = 1; break }
+        }
+        if (!hit) {
+            printf "  ** UNMAPPED: S + 0x%X (%s) lies in no %s-layout region of the map **\n", v, litwhere[key], lay
+            unmapped++
+        }
+    }
+    errors += unmapped
+    printf "  %d distinct S + 0x... literals checked against the map\n", nlit
+
     printf "\n"
     if (errors > 0) {
-        printf "FAIL: %d error(s) (overlaps, unreferenced regions), %d warning(s)\n", errors, warnings
+        printf "FAIL: %d error(s) (overlaps, unreferenced or unmapped regions), %d warning(s)\n", errors, warnings
         exit 1
     } else {
-        printf "PASS: no overlaps, every region named by code (%d regions, %d warnings)\n", n, warnings
+        printf "PASS: no overlaps, every region named by code, every literal mapped (%d regions, %d warnings)\n", n, warnings
     }
 }
 ' $SRCS || FAILS=$((FAILS + 1))
