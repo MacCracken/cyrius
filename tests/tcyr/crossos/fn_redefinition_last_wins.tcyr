@@ -40,7 +40,8 @@ fn rd_c(): i64 { return 2; }
 fn rd_c_second(): i64 { return rd_c() + 0; }
 fn rd_c(): i64 { return 1; }
 
-# Recursion inside the FIRST body reaches the last one too.
+# Recursion: the winning body's recursive call stays in the winning body. (The first body is never
+# entered at all — its entry is now the jump to the last one.)
 fn rd_r(n): i64 { if (n == 0) { return 50; } return rd_r(n - 1) + 0; }
 fn rd_r(n): i64 { if (n == 0) { return 1; } return n + rd_r(n - 1); }
 
@@ -63,6 +64,12 @@ struct RdP { a; b; c; }
 fn rd_mk(): RdP { var p = RdP { a: 1, b: 2, c: 3 }; return p; }
 fn rd_mk_mid(): i64 { var p: RdP = rd_mk(); return p.a + p.b + p.c; }
 fn rd_mk(): RdP { var p = RdP { a: 10, b: 20, c: 30 }; return p; }
+
+# A struct passed BY ADDRESS (over 8 bytes): the same struct type in both definitions, so the
+# redefinition is accepted, and a call compiled between them hands the last body its argument.
+fn rd_sp(p: RdP): i64 { return p.a; }
+fn rd_sp_mid(): i64 { var p = RdP { a: 4, b: 5, c: 6 }; return rd_sp(p) + 0; }
+fn rd_sp(p: RdP): i64 { return p.a + p.b + p.c; }
 
 # A multi-value return.
 fn rd_two(): (i64, i64) { return (1, 2); }
@@ -100,6 +107,7 @@ assert_eq(rd_g_inst_mid(), 7, "generic: an instance minted between the definitio
 assert_eq(rd_g_inst_after(), 7, "generic: an instance call after both definitions reaches the last (was 6)");
 assert_eq(rd_g_base_mid(), 7, "generic: the i64 base called between the definitions reaches the last (was 6)");
 assert_eq(rd_mk_mid(), 60, "struct-returning fn: a call between the definitions reaches the last (was 6)");
+assert_eq(rd_sp_mid(), 15, "struct parameter by address: a call between the definitions reaches the last (was 4)");
 assert_eq(rd_two_mid(), 34, "multi-value return: a call between the definitions reaches the last (was 12)");
 assert_eq(rd_m_dot(), 1, "method: a dot call between the impl blocks reaches the last (was 2)");
 assert_eq(rd_m_named(), 1, "method: a mangled-name call between the impl blocks reaches the last (was 2)");

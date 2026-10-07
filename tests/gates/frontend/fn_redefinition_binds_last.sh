@@ -19,29 +19,43 @@
 # ⭐ THE FIX (src/frontend/parse_fn.cyr `_fn_redirect`, the per-backend EFNREDIRECT): when a
 # redefinition's body starts, the EARLIER entry becomes a jump to it — `jmp rel32` (x86_64 ELF /
 # Mach-O / PE), `b imm26` (aarch64 ELF / Mach-O), opcode 80 (cx) — so every reference already
-# compiled against it follows, whatever its shape; a third definition chains. The jump sits in no
-# fn's range, so the dead-code pass takes it as a root and keeps the winning body; its rel32 is
-# registered for whole-program compaction. Two call shapes never reach an entry, and read pass 1's
-# new fn flag 2048 (a later definition exists) instead: the INLINE REPLAY of an #inline (or a
-# generic base) body is refused for a redefined fn, and a generic instance is minted from the LAST
-# definition's tokens (pass 2 no longer overwrites pass 1's def-start for a redefinition).
-# Programs with no redefinition are byte-identical (the code runs only for one). Because every call
-# now reaches the last body, a redefinition must be CALLED the same way as the one it replaces:
-# like the v6.5.37 arity error, a different return type, multi-value count, variadic-ness or
-# parameter mask (vector / struct / Str / cstring / Result / Option / Tagged) is refused.
+# compiled against it follows, whatever its shape; a third definition chains. An `async fn`'s
+# Future constructor takes the same road (`_async_ctor_entry`). The jump sits in no fn's range,
+# so the dead-code pass takes it as a root and keeps the winning body; its rel32 is registered
+# ONCE for whole-program compaction — a `#naked` body opens with the defer-init jump, which has
+# already registered those very bytes, and compaction repairs every registry entry independently,
+# so a second entry shifted the displacement twice. Two call shapes never reach an entry, and read
+# pass 1's new fn flag 2048 (a later definition exists) instead: the INLINE REPLAY of an #inline
+# (or a generic base) body is refused for a redefined fn, and a generic instance is minted from
+# the LAST definition's tokens (pass 2 no longer overwrites pass 1's def-start for a
+# redefinition). Programs with no redefinition are byte-identical (the code runs only for one).
+# Because every call now reaches the last body, a redefinition must be CALLED the same way as the
+# one it replaces: like the v6.5.37 arity error, a different return type, multi-value count,
+# variadic-ness, parameter mask (vector / struct / Str / cstring / Result / Option / Tagged),
+# parameter kind past the masks' width (the overflow row), struct type of an address-passed
+# struct parameter, or vector type (Win64 passes every vector under the struct mask) is refused
+# (`_dsg_check`), and so is `async fn` against a plain fn, in pass 1 (`_dsg_async_check`).
 #
 # ROWS (compilers are BUILT FROM THIS TREE into a private dir; build/cycc_* is never read)
 #   1. x86_64: the filed repro exits 1 (was 2) and reports no unreachable fn (the winner was);
 #      the three-shape repro exits 111 (was 212); tests/tcyr/crossos/fn_redefinition_last_wins.tcyr
-#      exits 0 (22 shapes: forward, direct, tail, expression, &fn, top level, three definitions,
-#      recursion, #inline, generic instance + base, struct return, multi-value return, methods,
-#      a library helper replaced after the library); under CYRIUS_DCE=1 a dead fn between the
-#      earlier entry and the winner is ELIMINATED and the redirect still lands (exits 1).
-#   1b. x86_64: a redefinition that disagrees about how it is CALLED — return type (scalar vs
-#      struct, a multi-value count), a struct parameter, variadic — is an ERROR naming what
-#      differs; the same convention spelled differently (`: i64` vs unannotated) still compiles
-#      and binds the last. (Every call reaching the last body is what makes such a pair unsound:
-#      with the redirect alone the return-type pair SIGSEGV'd.)
+#      exits 0 (23 shapes: forward, direct, tail, expression, &fn, top level, three definitions,
+#      recursion, #inline, generic instance + base, struct return, a struct parameter passed by
+#      address, multi-value return, methods, a library helper replaced after the library); under
+#      CYRIUS_DCE=1 a dead fn between the earlier entry and the winner is ELIMINATED and the
+#      redirect still lands (exits 1); the same for `#naked` definitions under CYRIUS_DCE=1 (was
+#      139) and, with live store-heavy fns between them, under CYRIUS_IR=3 (was 60).
+#   1b. a redefinition that disagrees about how it is CALLED is an ERROR naming what differs:
+#      return type (scalar vs struct, a multi-value count), a struct parameter, variadic, another
+#      struct type at the same parameter (it ran: B's body copied 64 bytes out of a 24-byte A), a
+#      `Str` at ordinal 63 (the overflow row only), f64v2 against f64v4 and an f64v2 against a
+#      16-byte struct under CYRIUS_TARGET_WIN=1 (compile only), and `async fn` against plain in
+#      both orders under CYRIUS_ASYNC=1 (async-then-plain SIGSEGV'd; plain-then-async bound the
+#      first body with no warning). ANTI-VACUOUS: the same convention spelled differently (`: i64`
+#      vs unannotated), the same struct type, the same row kind and the same vector type (also
+#      compiled for PE) still compile and bind the last; and an async fn redefined as a coroutine
+#      binds the LAST constructor (77; was 139 — the first built a plain Future round the
+#      coroutine's body).
 #   2. aarch64 under qemu-aarch64 (src/main_aarch64.cyr): both repros and the .tcyr.
 #   3. cx under cxvm (src/main_cx.cyr, programs/cxvm.cyr): both repros and the .tcyr. The release
 #      gate's cross-OS leg never runs cx; this row is cx's only coverage.
@@ -50,24 +64,37 @@
 #   Mach-O (x86_64 and arm64) runs the .tcyr on ecb / ach through the release gate's crossos leg.
 #
 # MUTATION LEDGER (measured 6.6.20: each mutant ONE edit to the tree, this gate run against it,
-# so every compiler is rebuilt from the mutated source; 19 rows):
-#   a. the `_fn_redirect(...)` call removed from PARSE_FN_DEF       -> 14 red: the repros 2 / 212
-#        on x86, aarch64, cx and PE, the .tcyr 11 rows on each, the DCE row 2, and the
-#        unreachable-fn note is back
-#   b. `_wpjs_add` dropped from x86 EFNREDIRECT                      -> 1 red: the DCE row (139 —
+# so every compiler is rebuilt from the mutated source; 32 rows):
+#   a. the `_fn_redirect(...)` call removed from PARSE_FN_DEF       -> 20 red: the repros 2 / 212
+#        on x86, aarch64, cx and PE, the .tcyr on each (12 of its 23 assertions), the
+#        unreachable-fn note, the three DCE / IR=3 rows (2), and the four same-signature rows
+#        (sig_same 1, sig_same_struct 11, sig_same_row 2, sig_same_vec 2 — each binds the FIRST
+#        definition)
+#   b. `_wpjs_add` dropped from x86 EFNREDIRECT                      -> 1 red: x86_dce (139 —
 #        elimination moved the winner and left the jump's rel32 stale)
-#   c. the pass-1 flag (2048) never set                              -> 4 red: the .tcyr on every
-#        backend (its #inline row and three generic rows)
-#   d. the inline refusal dropped                                    -> 4 red: the .tcyr on every
+#   b2. EFNREDIRECT's registry scan dropped (register twice)        -> 2 red: x86_naked_dce (139)
+#        and x86_naked_ir3 (60) — the naked body's own jump had registered the same rel32
+#   c. the pass-1 flag (2048) never set                              -> 7 red: the .tcyr on every
+#        backend (its #inline row and three generic rows), sig_vector_pe and
+#        sig_vector_struct_pe (vector types are recorded for flag 2048 only), and sig_same_vec
+#        (a SIMD-parameter fn is inline-replayed from the first body)
+#   d. the inline refusal dropped                                    -> 5 red: the .tcyr on every
 #        backend (the #inline row and the generic-base row — a generic base is replayed too)
+#        and sig_same_vec
 #   e. pass 2's def-start write no longer skipped for a redefinition -> 4 red: the .tcyr on every
 #        backend (its two generic-instance rows)
-#   f. the `_dsg_check(...)` call removed                            -> 4 red: every row 1b refusal
-#        compiles (and the return-type pair, run, SIGSEGVs)
-#   g. `_dsg_rs_norm` without the unannotated == `: i64` rule        -> 1 red: the anti-vacuous
-#        row 1b (a same-convention redefinition refused)
-#   pre-fix tree (src/ of the 6.6.20 slot open, e696746d)            -> 19 red, 0 green (row 1b's
-#        four refusals compile; its anti-vacuous row exits 1, the FIRST definition)
+#   f. the `_dsg_check(...)` call removed                            -> 8 red: every row 1b refusal
+#        but the async pair compiles (and the return-type pair, run, SIGSEGVs)
+#   g. `_dsg_rs_norm` without the unannotated == `: i64` rule        -> 1 red: sig_same refused
+#   h. `_dsg_ord_differs` not consulted                              -> 4 red: sig_struct_type,
+#        sig_overflow_row, sig_vector_pe, sig_vector_struct_pe; dropping only its struct-id /
+#        overflow-kind / vector-type comparison -> 1 red each (the first three, in that order)
+#   i. the `_dsg_def_reset(...)` call removed                        -> 1 red: sig_vector_struct_pe
+#        (pass 1 left the struct's id under the vector's definition; both sides read the same)
+#   j. the `_dsg_async_check(...)` call removed                      -> 2 red: the async pair
+#   k. `_async_ctor_entry` without its `_fn_redirect`                -> 1 red: async_ctor (139)
+#   pre-fix tree (src/ of the 6.6.20 slot open, e696746d)            -> 31 red, 1 green (the green
+#        is sig_same_vec_pe, a compile-only anti-vacuous row)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -367,5 +394,5 @@ if [ "$skips" -gt 0 ]; then
     echo "SKIP $G: $skips leg(s) above could not run; all $pass that ran passed (exit 77: a SKIP, not a PASS)"
     exit 77
 fi
-echo "PASS $G: $pass rows — a redefined fn binds every call to its LAST definition (the filed repro exits 1, the three call shapes 111, fn_redefinition_last_wins.tcyr passes on x86_64, aarch64/qemu, cx/cxvm and PE/wine; the winner is not reported unreachable and survives dead-code elimination with the redirect repaired)"
+echo "PASS $G: $pass rows — a redefined fn binds every call to its LAST definition (the filed repro exits 1, the three call shapes 111, fn_redefinition_last_wins.tcyr passes on x86_64, aarch64/qemu, cx/cxvm and PE/wine; the winner is not reported unreachable and survives dead-code elimination with the redirect repaired, #naked included; a redefinition called differently, or async against plain, is refused)"
 exit 0
