@@ -50,6 +50,8 @@
 # no-prepend build), every other axis green — which is exactly how this shipped.
 # Delete the `pulsar` allow-list row and axis 2 goes RED for pulsar; delete `pulsar`'s
 # `cmd_pulsar` call and axis 3 goes RED for the now-stale exemption.
+# Drop the `&name` address-of scan from the analyser -> axis 4 RED for `tests` alone (its walk
+# reaches cmd_test only through `&_tests_walk_one`), every other row unchanged (6.6.20).
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -116,6 +118,19 @@ FNR == 1 { curfn = "" }
     while (match(t, /[A-Za-z_][A-Za-z0-9_]*[ ]*\(/)) {
         nm = substr(t, RSTART, RLENGTH);
         sub(/[ ]*\($/, "", nm);
+        if (curfn != "") edge[curfn SUBSEP nm] = 1;
+        if (iscli) lcall[FNR] = lcall[FNR] " " nm;
+        t = substr(t, RSTART + RLENGTH);
+    }
+    # An ADDRESS-OF (`&name`) is a potential call edge: the fn is handed to something that
+    # calls it through a pointer. 6.6.20 REFACTOR-09 made the tests/fuzz/bench walkers one
+    # `_corpus_walk_d` that runs each file via `fncall2(load64(cd + 8), ...)` on
+    # `&_tests_walk_one`, and with only `name(` counted `tests` stopped reaching compile()
+    # (axis 4 RED) though it compiles exactly as before. `&&` is not an address-of.
+    t = line;
+    while (match(t, /(^|[^&])&[A-Za-z_][A-Za-z0-9_]*/)) {
+        nm = substr(t, RSTART, RLENGTH);
+        sub(/^[^&]?&/, "", nm);
         if (curfn != "") edge[curfn SUBSEP nm] = 1;
         if (iscli) lcall[FNR] = lcall[FNR] " " nm;
         t = substr(t, RSTART + RLENGTH);
