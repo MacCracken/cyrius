@@ -1,0 +1,112 @@
+# tls_native_ed25519_sign_wipe.tcyr — 6.6.20: native TLS's Ed25519 signer leaves no copy of the
+# long-term private seed behind.
+#
+# ⛔ THE DEFECT. `_tn_sign` (lib/tls_native_hs13.cyr — the one signer of the TLS 1.3
+# CertificateVerify, the 1.2 ServerKeyExchange and the 1.2 client CertificateVerify) expanded an
+# Ed25519 key with `ed25519_keypair(kmat, sk64, pk32)` into two `_tn_alloc` buffers and never wiped
+# them. sigil writes `seed || pk` into sk_out, so every Ed25519 signature left ONE MORE COPY of the
+# private seed in the no-free heap, or in the connection's arena until it was reset — a server
+# accumulated one per handshake. The expanded key is a `secret var` now, zeroised on every return.
+#
+# HOW (no socket — the signer is called directly on a server ctx built on an arena):
+#   axis 1  the arena holds the seed exactly ONCE after load_creds (KEY_MAT — the control that
+#           proves the scan sees it), and still exactly once after three signatures (it was 4).
+#   axis 2  the signatures are still right: 64 bytes, scheme ed25519, and they verify.
+#   axis 3  the expanded key does not survive on the stack either: `_dead_scan`, called from the
+#           same frame right after the signer returns, reads its own UNINITIALISED array over the
+#           released frames and finds no copy of the seed. Its control, `_plain_copy`, leaves the
+#           seed in a plain local at the same depth and the window MUST find it — or it is not
+#           looking where the signer's frame was. (A plain `var sk64[64]` fails this axis.)
+# MUTATION (6.6.20): the pre-fix _tn_alloc buffers fail axis 1 (4 copies); a plain, non-secret
+# `var sk64[64]` passes axis 1 and fails axis 3. CHANGELOG [6.6.20]
+#define CYRIUS_TLS_NATIVE
+include "lib/str.cyr"
+include "lib/chrono.cyr"
+include "lib/random.cyr"
+include "lib/tls_native.cyr"
+include "lib/tls.cyr"
+include "lib/assert.cyr"
+
+# Ed25519 self-signed leaf for CN=127.0.0.1 (cert DER 320 B; PKCS#8 key 48 B, seed at +16).
+var cert = hex_decode("3082013c3081efa00302010202146f270712a3903ffd2c16beb02b1ddac6d8ec2e31300506032b657030143112301006035504030c093132372e302e302e31301e170d3236303631313034333035395a170d3236303631323034333035395a30143112301006035504030c093132372e302e302e31302a300506032b6570032100b83296da752a714efff5d1ac23384bd55e1d3e7a09b52d9f5aa3b248cb52388fa3533051301d0603551d0e04160414da1359a574f0e44c08a2c4a0953feb245e258069301f0603551d23041830168014da1359a574f0e44c08a2c4a0953feb245e258069300f0603551d130101ff040530030101ff300506032b6570034100e37e115584d6d72ae3adf09fff610f2ee2771691b853b5e3be1558e3738cf032fa239b682be3faf4b4d2ef30e31da3729de0913837f93ef3b5cc305c35c3380a", 640);
+var key = hex_decode("302e020100300506032b657004220420ea5da8171db67e4e169e246d8f7223ee88110129914478f8b49ffc898780df10", 96);
+
+# 1 iff the 32 bytes at p equal the seed.
+fn _is_seed(p, seed): i64 {
+    var i = 0;
+    while (i < 32) {
+        if (load8(p + i) != load8(seed + i)) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+
+# Copies of the 32-byte seed in [lo, hi).
+fn _count_seed(lo, hi, seed): i64 {
+    var n = 0;
+    var p = lo;
+    while (p + 32 <= hi) {
+        if (load8(p) == load8(seed)) { n = n + _is_seed(p, seed); }
+        p = p + 1;
+    }
+    return n;
+}
+
+# Copies of the seed in this fn's own UNINITIALISED array — i.e. in the stack the frames released
+# just before it was called. Keeps no copy of the seed itself (it compares through `seed`).
+fn _dead_scan(seed): i64 {
+    var w[32768];
+    return _count_seed(&w, &w + 32768, seed);
+}
+
+# Control for _dead_scan: a plain (non-secret) local copy of the seed, left in a released frame.
+fn _plain_copy(seed): i64 {
+    var t[64];
+    memcpy(&t, seed, 32);
+    memcpy(&t + 32, seed, 32);
+    return load8(&t) & 0;
+}
+
+fn main(): i64 {
+    alloc_init();
+    var seed = key + 16;
+    var al = arena_allocator(262144);
+    var st = allocator_state(al);
+    var ctx = tls_native_new_server_in(al, cert, 320, key, 48);
+    assert_neq(ctx, 0, "a native server ctx on the arena");
+    assert_eq(tls_native_server_load_creds(ctx), TLS_OK, "the Ed25519 creds load");
+
+    test_group("6.6.20 — the arena holds the seed once (KEY_MAT), and signing adds no copy");
+    var lo = load64(st);
+    assert_eq(_count_seed(lo, load64(st + 8), seed), 1, "after load_creds: one copy (KEY_MAT; the scan sees it)");
+    var msg = "TLS 1.3, server CertificateVerify -- a message to sign";
+    var mlen = strlen(msg);
+    var sig[128];
+    var scheme[8];
+    var k = 0;
+    var ok = 0;
+    while (k < 3) {
+        if (_tn_sign(ctx, msg, mlen, &sig, 128, &scheme) == 64) { ok = ok + 1; }
+        k = k + 1;
+    }
+    assert_eq(ok, 3, "three Ed25519 signatures, 64 bytes each");
+    assert_eq(_count_seed(lo, load64(st + 8), seed), 1, "after three signatures: still one copy (it was 4)");
+
+    test_group("6.6.20 — the signatures are still right");
+    assert_eq(load64(&scheme), TLS_SIG_ED25519, "scheme ed25519 (0x0807)");
+    var sk[64];
+    var pk[32];
+    ed25519_keypair(seed, &sk, &pk);
+    assert_eq(ed25519_verify(&pk, msg, mlen, &sig), 1, "the signature verifies under the leaf's public key");
+    memset(&sk, 0, 64);
+
+    test_group("6.6.20 — no copy of the seed survives in the released stack");
+    _plain_copy(seed);
+    assert_gte(_dead_scan(seed), 1, "control: a plain local copy left at the same depth IS seen");
+    _tn_sign(ctx, msg, mlen, &sig, 128, &scheme);
+    assert_eq(_dead_scan(seed), 0, "after _tn_sign returns: no copy of the seed in its released frame");
+
+    return assert_summary();
+}
+var r = main();
+syscall(60, r);

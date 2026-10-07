@@ -1,0 +1,140 @@
+# net_connect_nb_so_error.tcyr — 6.6.20: lib/net.cyr's POSIX net_connect_sa_nb reports a
+# non-blocking connect as connected only when getsockopt(SO_ERROR) SUCCEEDED and read 0.
+#
+# ⛔ THE DEFECT. After poll() said the socket was writable, the POSIX arm zeroed its SO_ERROR
+# buffer, called getsockopt and DROPPED its return value, then read the buffer: a getsockopt that
+# failed left the 0 it was primed with, and a refused (or otherwise failed) connect came back as
+# _NET_CONN_NB_OK. The 6.6.11 Windows arm does the opposite on purpose — it primes the buffer with
+# 1 ("an unwritten value is no success") and requires getsockopt's own result to be 0; the POSIX
+# arm now does the same.
+#
+# HOW. getsockopt(SO_ERROR) on a live socket does not fail by itself, so on Linux this file makes
+# it fail: a seccomp filter (arch-checked first, native syscall number per arch) answers EBADF to
+# every getsockopt, and a non-blocking connect to a CLOSED loopback port — EINPROGRESS, then poll
+# reports the refusal — must still not read as connected. Before the filter, the same pair of
+# connects is the control on every target that has sockets: a listener connects, a closed port
+# does not. Where the filter cannot be installed (qemu-user, a kernel without seccomp) the Linux
+# group is a named SKIP, never a pass. macOS shares the POSIX arm and cannot make getsockopt fail.
+# MUTATION (6.6.20): the pre-6.6.20 arm (buffer primed 0, return value dropped) fails the
+# filtered row — the refused connect reads as connected (0). CHANGELOG [6.6.20]
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/tagged.cyr"
+include "lib/io.cyr"
+include "lib/net.cyr"
+include "lib/assert.cyr"
+
+#ifndef CYRIUS_TARGET_AGNOS
+# The port (host order) socket `fd` is bound to, or -1.
+fn _se_port(fd): i64 {
+    var sa[16];
+    var sl[8];
+    store64(&sl, 16);
+    if (sys_getsockname(fd, &sa, &sl) != 0) { return 0 - 1; }
+    return ((load8(&sa + 2) & 0xFF) << 8) | (load8(&sa + 3) & 0xFF);
+}
+
+# A loopback port nothing listens on: bind a socket to port 0, read the port, close it.
+fn _se_dead_port(): i64 {
+    var t, s = tcp_socket();
+    if (is_err_result(t) == 1) { return 0 - 1; }
+    var bt, bv = sock_bind(s, INADDR_LOOPBACK(), 0);
+    var p = _se_port(s);
+    sock_close(s);
+    return p;
+}
+
+# net_connect_nb on a fresh socket to 127.0.0.1:port; the socket is closed afterwards.
+fn _se_connect(port): i64 {
+    var t, c = tcp_socket();
+    if (is_err_result(t) == 1) { return 0 - 99; }
+    var r = net_connect_nb(c, INADDR_LOOPBACK(), port, 2000);
+    sock_close(c);
+    return r;
+}
+#endif
+
+#ifdef CYRIUS_TARGET_LINUX
+# The NATIVE getsockopt number (what a seccomp filter sees), per arch.
+#ifdef CYRIUS_ARCH_AARCH64
+var _SE_NR_GETSOCKOPT = 209;
+#endif
+#ifdef CYRIUS_ARCH_X86
+var _SE_NR_GETSOCKOPT = 55;
+#endif
+
+# One classic-BPF instruction at index i of the filter at p.
+fn _se_ins(p, i, code, jt, jf, k): i64 {
+    store16(p + i * 8, code);
+    store8(p + i * 8 + 2, jt);
+    store8(p + i * 8 + 3, jf);
+    store32(p + i * 8 + 4, k);
+    return 0;
+}
+
+# Install a filter that answers EBADF to every getsockopt from this process and allows the rest.
+# Returns 0, or the failing step's (negative) result.
+fn _se_deny_getsockopt(): i64 {
+    var f[48];
+    _se_ins(&f, 0, 0x20, 0, 0, 4);                              # ld  [arch]
+    _se_ins(&f, 1, 0x15, 0, 3, AUDIT_ARCH_NATIVE);              # jeq native ? next : allow
+    _se_ins(&f, 2, 0x20, 0, 0, 0);                              # ld  [nr]
+    _se_ins(&f, 3, 0x15, 0, 1, _SE_NR_GETSOCKOPT);              # jeq getsockopt ? next : allow
+    _se_ins(&f, 4, 0x06, 0, 0, 0x00050000 | 9);                 # ret ERRNO(EBADF)
+    _se_ins(&f, 5, 0x06, 0, 0, 0x7FFF0000);                     # ret ALLOW
+    var prog[16];
+    store64(&prog, 6);
+    store64(&prog + 8, &f);
+    var r = sys_prctl(38, 1, 0, 0, 0);                          # PR_SET_NO_NEW_PRIVS
+    if (r != 0) { return r; }
+    return sys_seccomp(1, 0, &prog);                            # SECCOMP_SET_MODE_FILTER
+}
+#endif
+
+fn main(): i64 {
+    alloc_init();
+
+    #ifdef CYRIUS_TARGET_AGNOS
+    var skip_a = "  SKIP (agnos): net_connect_sa_nb fails closed on agnos (no fcntl / connect-by-sockaddr)\n";
+    sys_write(1, skip_a, strlen(skip_a));
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
+    test_group("6.6.20 — control: a listener connects, a closed port does not");
+    var lt, lfd = tcp_socket();
+    assert_eq(is_err_result(lt), 0, "tcp_socket for the listener");
+    var lbt, lbv = sock_bind(lfd, INADDR_LOOPBACK(), 0);
+    assert_eq(is_err_result(lbt), 0, "bind 127.0.0.1:0");
+    var llt, llv = sock_listen(lfd, 4);
+    assert_eq(is_err_result(llt), 0, "listen");
+    var lport = _se_port(lfd);
+    assert_gt(lport, 0, "the listener's port");
+    assert_eq(_se_connect(lport), _NET_CONN_NB_OK, "net_connect_nb to the listener is connected");
+    var dead = _se_dead_port();
+    assert_gt(dead, 0, "a closed loopback port");
+    assert_neq(_se_connect(dead), _NET_CONN_NB_OK, "net_connect_nb to the closed port is not connected");
+
+    #ifdef CYRIUS_TARGET_LINUX
+    test_group("6.6.20 — a getsockopt(SO_ERROR) that fails is not success (Linux, seccomp)");
+    var ir = _se_deny_getsockopt();
+    if (ir != 0) {
+        var skip_s = "  SKIP: no seccomp filter here (qemu-user / no seccomp); the filtered rows did not run\n";
+        sys_write(1, skip_s, strlen(skip_s));
+    } else {
+        var sb[8];
+        var sl[8];
+        store64(&sb, 0);
+        store64(&sl, 4);
+        assert_eq(syscall(55, lfd, SOL_SOCKET, SO_ERROR, &sb, &sl), 0 - 9,
+            "the filter works: getsockopt(SO_ERROR) now answers -EBADF");
+        assert_eq(_se_connect(dead), _NET_CONN_NB_ERR,
+            "a refused connect whose SO_ERROR cannot be read is an error (it read as connected)");
+    }
+    #endif
+    sock_close(lfd);
+    #endif
+
+    return assert_summary();
+}
+var r = main();
+syscall(60, r);

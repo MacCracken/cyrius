@@ -1,0 +1,80 @@
+# tls_shim_alloc_refused.tcyr — 6.6.20: a refused 40-byte shim allocation makes the native
+# tls_accept_alloc_in / tls_connect_alloc_in return 0, never a store through 0.
+#
+# ⛔ THE DEFECT. The native server's Phase 1 (_tls_native_accept_alloc_in, lib/tls.cyr) built the
+# ctx, loaded the creds, ran the hook, then took its 40-byte shim with `_tn_alloc_a(a, 40)` and
+# stored through it unchecked — so an arena (or a global heap) that ran out exactly there was a
+# SIGSEGV inside the stdlib instead of the "ctx-pre-handshake or 0" docs/development/
+# lib-tls-contract.md promises. 6.6.10 added the check to the CLIENT twin's shim only: its census
+# matched `alloc(`, and the server site was already spelled `_tn_alloc_a(a, 40)`.
+#
+# HOW. No socket is needed: Phase 1 does no I/O. The shim is the LAST allocation either fn makes
+# from `a`, so after a warm-up call (anything parsed once per process lands on the global heap
+# first) a measuring call on a fresh arena gives the exact footprint u; an arena of capacity u - 1
+# then serves every allocation but the shim, and an arena of capacity u serves all of them.
+# MUTATION (6.6.20): dropping the server's `if (ctx == 0) { return 0; }` — the process dies with
+# SIGSEGV at the refused accept row; dropping the client's — the same at the connect row.
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/io.cyr"
+include "lib/tls.cyr"
+
+var _sr_cert = 0;              # DER, self-signed P-256, CN = SAN DNS = localhost, CA:TRUE
+var _sr_cert_len = 406;
+var _sr_key = 0;               # PKCS#8 DER
+var _sr_key_len = 138;
+
+# Phase 1 of a native server accept on an arena of capacity `cap`; returns the shim (or 0) and
+# writes the arena's bytes used through `used_out`.
+fn _sr_accept(cap, used_out): i64 {
+    var creds: i64[4];
+    store64(&creds, _sr_cert);
+    store64(&creds + 8, _sr_cert_len);
+    store64(&creds + 16, _sr_key);
+    store64(&creds + 24, _sr_key_len);
+    var a = arena_allocator(cap);
+    var c = tls_accept_alloc_in(a, 5, &creds, 0, 0);
+    store64(used_out, arena_used(allocator_state(a)));
+    return c;
+}
+
+# Phase 1 of a native client connect on an arena of capacity `cap` (as _sr_accept).
+fn _sr_connect(cap, used_out): i64 {
+    var a = arena_allocator(cap);
+    var c = tls_connect_alloc_in(a, 5, "localhost", 0, 0);
+    store64(used_out, arena_used(allocator_state(a)));
+    return c;
+}
+
+fn main(): i64 {
+    alloc_init();
+    _sr_cert = hex_decode("3082019230820139a003020102021437416048df98b49fd5b278db00ebd0e1f87b6d40300a06082a8648ce3d04030230143112301006035504030c096c6f63616c686f7374301e170d3236303130313030303030305a170d3336303130313030303030305a30143112301006035504030c096c6f63616c686f73743059301306072a8648ce3d020106082a8648ce3d030107034200040d7a46bc307511f24a53dcf973e0dfe2058db48d7db8b3941fa80176641ad78da12b801a12494d49312bf5b0ac312f3d50bca2282126fddd03652013bf8b49c5a3693067301d0603551d0e041604143bdd6c2d487f854851f408356e66880375bd6743301f0603551d230418301680143bdd6c2d487f854851f408356e66880375bd6743300f0603551d130101ff040530030101ff30140603551d11040d300b82096c6f63616c686f7374300a06082a8648ce3d04030203470030440220365bd112f9b8faec50c9b4a2cf7ec487cc424901870b8156b349dba15e1cde8102200c1ec7f6eefec5bc9976f55a70608b07d669c78183fa08e9a863370d17e39df3", 812);
+    _sr_key = hex_decode("308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b0201010420666340f5e33734c31438ae0abd2370b72da193b44565625051bbc79a344535dda144034200040d7a46bc307511f24a53dcf973e0dfe2058db48d7db8b3941fa80176641ad78da12b801a12494d49312bf5b0ac312f3d50bca2282126fddd03652013bf8b49c5", 276);
+    var u[8];
+    var w[8];
+
+    test_group("6.6.20 — tls_accept_alloc_in: a refused shim allocation returns 0");
+    assert_neq(_sr_accept(131072, &w), 0, "warm-up accept on a roomy arena builds a shim");
+    var c1 = _sr_accept(131072, &u);
+    var used = load64(&u);
+    assert_neq(c1, 0, "measuring accept builds a shim");
+    assert_gte(used, 40, "the measured footprint holds at least the 40-byte shim");
+    assert_eq(_sr_accept(used - 1, &w), 0, "capacity u - 1 (everything but the shim fits) returns 0, not a SIGSEGV");
+    assert_eq(load64(&w), used - 40, "  ...and the refusal came at the shim: every earlier allocation was served");
+    assert_neq(_sr_accept(used, &w), 0, "capacity u (the exact footprint) builds a shim");
+
+    test_group("6.6.20 — tls_connect_alloc_in: the client twin returns 0 the same way");
+    assert_neq(_sr_connect(131072, &w), 0, "warm-up connect on a roomy arena builds a shim");
+    var c2 = _sr_connect(131072, &u);
+    var cused = load64(&u);
+    assert_neq(c2, 0, "measuring connect builds a shim");
+    assert_gte(cused, 40, "the measured footprint holds at least the 40-byte shim");
+    assert_eq(_sr_connect(cused - 1, &w), 0, "capacity u - 1 returns 0");
+    assert_eq(load64(&w), cused - 40, "  ...and the refusal came at the shim");
+    assert_neq(_sr_connect(cused, &w), 0, "capacity u builds a shim");
+
+    return assert_summary();
+}
+var r = main();
+syscall(60, r);

@@ -10,7 +10,13 @@
 # closes the timerfd it had just opened). async_interval also closes its timerfd when no task
 # could own it. CHANGELOG [6.6.10]
 #
-# Linux x86_64 + aarch64 (the epoll reactor in lib/async.cyr); other targets print a named SKIP.
+# 6.6.20: the Windows IOCP peer (lib/async_win.cyr) had the same seven unchecked contexts, and
+# the agnos peer two (async_recv / async_send) — 6.6.10 checked the Linux and macOS arms, and
+# the alloc census matched only the `alloc(` spelling, so it never saw `alloc_via(`. The Windows
+# group below runs the same rows on PE (wine locally; check.sh compiles it for PE). CHANGELOG [6.6.20]
+#
+# Linux x86_64 + aarch64 (the epoll reactor in lib/async.cyr) and Windows (the IOCP peer); other
+# targets print a named SKIP.
 
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
@@ -26,10 +32,11 @@ include "lib/assert.cyr"
 var _aar_refuse = 0;
 var _aar_rt = 0;
 # An Allocator that serves `alloc` until told to refuse: mode 1 refuses everything, mode 2 only
-# the 64-byte task struct (TASK_SIZE), so a verb gets its context and then fails to spawn.
+# the task struct (TASK_SIZE: 64 bytes on Linux, 56 on Windows), so a verb gets its context and
+# then fails to spawn.
 fn _aar_alloc(state, size): i64 {
     if (_aar_refuse == 1) { return 0; }
-    if (_aar_refuse == 2) { if (size == 64) { return 0; } }
+    if (_aar_refuse == 2) { if (size == TASK_SIZE) { return 0; } }
     return alloc(size);
 }
 fn _aar_realloc(state, p, old, sz): i64 { return 0; }
@@ -85,13 +92,46 @@ fn _aar_rows(): i64 {
 }
 #endif
 
+#ifdef CYRIUS_TARGET_WIN
+fn _aar_rows_win(): i64 {
+    test_group("Windows IOCP verbs under a refusing allocator");
+    var al = allocator_new(&_aar_alloc, &_aar_realloc, &_aar_free, &_aar_reset, 0);
+    var rt = async_new_in(al);
+    _aar_rt = rt;
+    assert_eq(rt != 0, 1, "runtime built while the allocator still serves");
+    var h = async_spawn(rt, &_aar_task, 0);
+    assert_eq(h != 0, 1, "a task spawned while the allocator still serves");
+    var buf = alloc(64);
+    _aar_refuse = 1;
+    assert_eq(async_connect(rt, 0x0100007F, 9), 0, "async_connect: 0, no store through null");
+    assert_eq(async_accept(rt, 0), 0, "async_accept: 0");
+    assert_eq(async_recv(rt, 0, buf, 64), 0, "async_recv: 0");
+    assert_eq(async_send(rt, 1, buf, 1), 0, "async_send: 0");
+    assert_eq(async_resolve(rt, 0x0100007F, 53, "example.com"), 0, "async_resolve: 0");
+    assert_eq(async_interval(rt, &_aar_tick, 0, 50, 0), 0, "async_interval: 0");
+    assert_eq(async_with_timeout(rt, h, 50), 0 - 1, "async_with_timeout: -1 (no sentinel, no deadline)");
+    # Mode 2: the context is served, the task struct is not. `h` is still pending and would
+    # complete if pumped, so without the sentinel check this reads 1, not a hang.
+    _aar_refuse = 2;
+    assert_eq(async_interval(rt, &_aar_tick, 0, 50, 0), 0, "async_interval: 0 when its task cannot be spawned");
+    assert_eq(async_with_timeout(rt, h, 50), 0 - 1, "async_with_timeout: -1 when its sentinel cannot be spawned");
+    _aar_refuse = 0;
+    return 0;
+}
+#endif
+
 fn main(): i64 {
     alloc_init();
     #ifdef CYRIUS_TARGET_LINUX
     _aar_rows();
     #endif
+    #ifdef CYRIUS_TARGET_WIN
+    _aar_rows_win();
+    #endif
     #ifndef CYRIUS_TARGET_LINUX
-    println("    SKIP: the epoll reactor verbs are lib/async.cyr's Linux arm; this target routes to its own peer");
+    #ifndef CYRIUS_TARGET_WIN
+    println("    SKIP: these rows cover the Linux reactor and the Windows IOCP peer; this target has its own");
+    #endif
     #endif
     return assert_summary();
 }

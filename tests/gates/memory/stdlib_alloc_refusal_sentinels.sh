@@ -24,9 +24,11 @@
 #   * chan_new's `buf` check (k=2)              -> rc 1   (returned a channel over a 0 buffer)
 #   * normalize: the 6.6.9 step-buffer `return off` -> rc 1 (a SHORTER string, returned as success);
 #     dropping the -1 propagation in the walk    -> rc 1 at the nested row (k=4)
-#   * each of lib/ws.cyr's four checks (ws_new, the handshake buffer, the sender's masked copy,
-#     CVE-53's ws_recv_frame payload) and lib/ws_server.cyr's six (ws_server_new, concat,
-#     digest, ws_server_send_close, the recv buffer, the recv copy) -> rc 139 in its probe
+#   * each of lib/ws.cyr's three checks (ws_new, the handshake buffer, CVE-53's ws_recv_frame
+#     payload) and lib/ws_server.cyr's six (ws_server_new, concat, digest, ws_server_send_close,
+#     the recv buffer, the recv copy) -> rc 139 in its probe. (lib/ws.cyr's sender had a fourth,
+#     its masked copy; 6.6.20 removed that allocation, and its two rows now pin that the sender
+#     allocates nothing — restoring an alloc there fails them "allocated MORE".)
 #   * every lib/ file at its pre-6.6.10 state   -> rc 139 at the first row
 # Linux x86_64 only (the harness is host-built); the static census covers the other targets.
 set -u
@@ -316,11 +318,14 @@ fn main(): i64 {
     _fi_arm(1); _refused("ws_connect ws_new", 1, ws_connect(0 - 1, "/p", "h"), 0);
     _fi_arm(3); _refused("ws_connect request buf", 3, _connect_state(ws_connect(0 - 1, "/p", "h")), WS_CLOSED);
 
-    # the sender's masked copy
+    # the sender allocates NOTHING (6.6.20): its masked copy was an alloc(len) taken after the
+    # header was sent — refused for len > 0 it left a header with no payload, and alloc(0) made
+    # every empty frame report -1. It is a stack buffer now, so an armed first alloc must never
+    # be reached, for a payload frame and an empty one alike.
     var ow = ws_new(sys_open("wsout.bin", 577, 420));
     store64(ow + 8, WS_OPEN);
-    _fi_arm(1); _refused("_ws_send_frame masked", 1, ws_send_text(ow, "hi"), 0 - 1);
-    _fi_arm(2); _served("_ws_send_frame", 2, ws_send_text(ow, "hi") == 2);
+    _fi_arm(1); _served("_ws_send_frame allocates nothing (2-byte frame)", 1, ws_send_text(ow, "hi") == 2);
+    _fi_arm(1); _served("_ws_send_frame allocates nothing (ws_ping)", 1, ws_ping(ow) == 0);
 
     # CVE-53: the payload allocation (zero-length frame — see the note above this probe)
     var w0 = _frame_ws(0);

@@ -1583,6 +1583,12 @@ _chk_gate "$ROOT/tests/gates/platform/agnos_peer_fake_kernel.sh"
 # is -11, not EOF; a stalled send is retried. Fake-kernel tiers + a live mirshi TCP exchange.
 _chk_gate "$ROOT/tests/gates/platform/agnos_sock_recv_bound.sh"
 
+# 6.6.20 (NET-01) — lib/ws.cyr's ws_close closes its socket through sock_close, never a raw
+# syscall(3) (agnos spawn: no FIN, a leaked conn slot, a disarmed endowment; Windows CloseHandle
+# on a SOCKET). Fake-kernel axes (#50 not #3, the slot reused, 10 cycles on 8 slots) + a PE
+# disassembly of the ws_close body (calls sock_close, never the CloseHandle import).
+_chk_gate "$ROOT/tests/gates/platform/ws_close_socket_route.sh"
+
 # 6.6.13 (I8-prim) — _agnos_sock_send_dl(rearm=0) bounds an agnos socket send by the CALLER's
 # deadline (the whole transfer, progress or not); rearm=1 — sys_write's route — keeps the 6.6.7
 # stall bound. agnos has no poll, so this is native TLS's write deadline there. Fake kernel.

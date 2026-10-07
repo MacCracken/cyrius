@@ -13,9 +13,14 @@
 # THE RULE (the awk below). A `v = alloc(` — `var` or plain assignment, globals included — is
 # a HIT when the FIRST later line of the same fn that names `v` is not a zero check
 # (`v == 0`, `v != 0`, `v <= 0`, `v < 1`, `v > 0`, `0 == v`, `!v`, `if (v)`) and not
-# `return v;`. A reassignment `v = <rhs without v>` is not a use (it replaces the value); a use
+# `return v;`. A reassignment `v = <rhs without v>` is not a use (it replaces the value) — a
+# second allocation into `v` included, which then becomes the site that must be checked; a use
 # on the alloc line itself is a hit; no mention before the fn's closing `}` is a hit (the
 # value escapes unchecked — e.g. into a global). Comments and string literals are masked.
+# THE SPELLINGS: `alloc(`, and since 6.6.20 the allocator-handle and TLS-ctx choke points that
+# refuse with the same 0 — `alloc_via(`, `_tn_alloc(`, `_tn_alloc_a(`. The census matched
+# `alloc(` only, which is how the native TLS server's `_tn_alloc_a(a, 40)` shim stored through
+# an unchecked 0 past the 6.6.10 sweep (CHANGELOG [6.6.20], NET-02).
 # SCOPE: lib/*.cyr + lib/*/*.cyr minus the vendored folds, which are read from
 # docs/ecosystem.md's fold table (fix those upstream, never in the fold).
 #
@@ -24,7 +29,8 @@
 #   2  anti-vacuous floors: folds excluded >= 10, files scanned >= 80, alloc sites >= 150
 #      (200 until 6.6.13, when the native TLS client's 45 raw `alloc(` sites moved to the
 #      ctx-allocator choke point `_tn_alloc(` — still zero-checked, no longer this census's
-#      shape: 238 -> 193. The floor guards a scan that silently matches nothing, not the count.)
+#      shape: 238 -> 193; 6.6.20 made `alloc_via(` / `_tn_alloc(` / `_tn_alloc_a(` its shape
+#      again: 197 -> 399. The floor guards a scan that silently matches nothing, not the count.)
 #   3  the census: every hit must be on the ALLOWLIST (a NEW unchecked alloc fails, named), and
 #      every allowlist entry must still be a hit — a fixed site FAILS until its line is deleted
 #      here, so the list can only SHRINK
@@ -80,14 +86,14 @@ FNR == 1 { flush_all(); fn = "<top>" }
     }
     if (s ~ /^}/) { flush_all(); fn = "<top>"; next }
     nv = ""
-    if (match(s, /(^|[^A-Za-z0-9_.])(var[ \t]+)?[A-Za-z_][A-Za-z0-9_]*[ \t]*(:[ \t]*[A-Za-z0-9_]+[ \t]*)?=[ \t]*alloc\(/)) {
+    if (match(s, /(^|[^A-Za-z0-9_.])(var[ \t]+)?[A-Za-z_][A-Za-z0-9_]*[ \t]*(:[ \t]*[A-Za-z0-9_]+[ \t]*)?=[ \t]*(alloc|alloc_via|_tn_alloc|_tn_alloc_a)\(/)) {
         m = substr(s, RSTART, RLENGTH); rest = substr(s, RSTART + RLENGTH)
         sub(/^[^A-Za-z_]*/, "", m); sub(/^var[ \t]+/, "", m)
         nv = m; sub(/[^A-Za-z0-9_].*$/, "", nv)
         pre = substr(s, 1, RSTART)
     }
     for (v in pline) {
-        if (v == nv) { hit(v); continue }
+        if (v == nv) { continue }      # a second allocation into v replaces it (tracked below)
         if (!mentions(s, v)) continue
         if (zcheck(s, v) || match(s, "return[ \t]+" v "[ \t]*;")) { delete pline[v]; delete pfn[v] }
         else if (reassigns(s, v)) { }
@@ -110,7 +116,7 @@ NS=$(wc -l < "$W/files" | tr -d ' ')
 # shellcheck disable=SC2046
 scan $(cat "$W/files") > "$W/hits"
 # shellcheck disable=SC2046
-NA=$(grep -hcE '(^|[^A-Za-z0-9_.])[A-Za-z_][A-Za-z0-9_]*[ \t]*(:[ \t]*[A-Za-z0-9_]+[ \t]*)?=[ \t]*alloc\(' $(cat "$W/files") | awk '{s+=$1} END {print s+0}')
+NA=$(grep -hcE '(^|[^A-Za-z0-9_.])[A-Za-z_][A-Za-z0-9_]*[ \t]*(:[ \t]*[A-Za-z0-9_]+[ \t]*)?=[ \t]*(alloc|alloc_via|_tn_alloc|_tn_alloc_a)\(' $(cat "$W/files") | awk '{s+=$1} END {print s+0}')
 if [ "${1:-}" = "--list" ]; then cat "$W/hits"; exit 0; fi
 
 echo "axis 1: the detector finds exactly the planted unchecked shapes"
@@ -162,11 +168,42 @@ fn bad_late(n): i64 {
     if (c == 0) { return 0; }
     return c;
 }
+fn ok_spellings(al, ctx): i64 {
+    var p = alloc_via(al, 8);
+    if (p == 0) { return 0; }
+    var q = _tn_alloc(ctx, 8);
+    if (q == 0) { return 0; }
+    var r = _tn_alloc_a(al, 8);
+    if (r == 0) { return 0; }
+    return r;
+}
+fn bad_via(al): i64 {
+    var f = alloc_via(al, 8);
+    store64(f, 1);
+    return f;
+}
+fn bad_tn(ctx): i64 {
+    var t = _tn_alloc(ctx, 8);
+    store64(t, 1);
+    return t;
+}
+fn bad_tn_a(al): i64 {
+    var s = _tn_alloc_a(al, 40);
+    store64(s, 1);
+    return s;
+}
+fn bad_reassign(n, al): i64 {
+    var k = 0;
+    if (al == 0) { k = alloc(n); }
+    if (al != 0) { k = alloc_via(al, n); }
+    store64(k, 1);
+    return k;
+}
 CYR
 scan "$W/fx.cyr" | sed 's/^[^ ]* //' > "$W/fxhits"
-printf 'bad_next d\nbad_sameline e\nbad_escape _g\nbad_late c\n' | sort > "$W/fxwant"
+printf 'bad_next d\nbad_sameline e\nbad_escape _g\nbad_late c\nbad_via f\nbad_tn t\nbad_tn_a s\nbad_reassign k\n' | sort > "$W/fxwant"
 sort "$W/fxhits" > "$W/fxgot"
-cmp -s "$W/fxgot" "$W/fxwant" || { _fail "axis 1: the detector's hits on the fixture are not the planted four:"; diff "$W/fxwant" "$W/fxgot" | sed 's/^/      /'; }
+cmp -s "$W/fxgot" "$W/fxwant" || { _fail "axis 1: the detector's hits on the fixture are not the planted eight:"; diff "$W/fxwant" "$W/fxgot" | sed 's/^/      /'; }
 
 echo "axis 2: anti-vacuous floors"
 [ "$NF" -ge 10 ] || _fail "axis 2: only $NF vendored folds read from docs/ecosystem.md (floor 10) — the fold table moved?"

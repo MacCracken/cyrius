@@ -1339,7 +1339,11 @@ fn _tls_native_accept_alloc_in(a, sock, creds, hook_fp, hook_ctx): i64 {
     if (hook_fp != 0) {
         if (fncall2(hook_fp, hook_ctx, nctx) != 0) { return 0; }
     }
+    # 6.6.20: checked, as the client twin's is — a refused shim was stored through (a SIGSEGV in
+    # the stdlib, where the contract promises "ctx-pre-handshake or 0"). Pinned by
+    # tests/tcyr/crypto/tls_shim_alloc_refused.tcyr. CHANGELOG [6.6.20]
     var ctx = _tn_alloc_a(a, 40);
+    if (ctx == 0) { return 0; }
     store64(ctx, nctx);
     store64(ctx + 8, 0);
     store64(ctx + 16, sock);

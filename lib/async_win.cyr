@@ -390,6 +390,7 @@ fn _async_connect_task(ctx): i64 {
 # task_join) is the connected socket, or -1 on failure. v6.4.43 (IOCP).
 fn async_connect(rt, addr, port): i64 {
     var ctx = alloc_via(load64(rt + 32), 104);
+    if (ctx == 0) { return 0; }      # out of memory: no task (async_spawn's own OOM answer). CHANGELOG [6.6.20]
     store64(ctx + 40, 0);
     store64(ctx + 48, 0);
     store64(ctx + 56, addr);
@@ -444,6 +445,7 @@ fn _async_accept_task(ctx): i64 {
 # with the IOCP (`syscall(0xF01F, listen_sock, load64(rt), 0, 0)`). v6.4.44 R3 (async "W"-arc server).
 fn async_accept(rt, listen_sock): i64 {
     var ctx = alloc_via(load64(rt + 32), 144);
+    if (ctx == 0) { return 0; }      # out of memory: no task (async_spawn's own OOM answer). CHANGELOG [6.6.20]
     store64(ctx + 40, 0);
     store64(ctx + 48, 0);
     store64(ctx + 56, listen_sock);
@@ -479,6 +481,7 @@ fn _async_recv_task(ctx): i64 {
 # count. v6.4.43.
 fn async_recv(rt, fd, buf, len): i64 {
     var ctx = alloc_via(load64(rt + 32), 104);
+    if (ctx == 0) { return 0; }      # out of memory: no task (async_spawn's own OOM answer). CHANGELOG [6.6.20]
     store64(ctx + 40, 0);
     store64(ctx + 48, fd);
     store64(ctx + 56, buf);
@@ -512,6 +515,7 @@ fn _async_send_task(ctx): i64 {
 # Returns a task handle whose result (via task_join) is the byte count. v6.4.43.
 fn async_send(rt, fd, buf, len): i64 {
     var ctx = alloc_via(load64(rt + 32), 104);
+    if (ctx == 0) { return 0; }      # out of memory: no task (async_spawn's own OOM answer). CHANGELOG [6.6.20]
     store64(ctx + 40, 0);
     store64(ctx + 48, fd);
     store64(ctx + 56, buf);
@@ -549,6 +553,7 @@ fn _async_resolve_task(ctx): i64 {
 # to async_connect — or -1. Blocking (run-to-completion) for R1. v6.4.43.
 fn async_resolve(rt, ns_addr, ns_port, host): i64 {
     var ctx = alloc_via(load64(rt + 32), 16);
+    if (ctx == 0) { return 0; }      # out of memory: no task (async_spawn's own OOM answer). CHANGELOG [6.6.20]
     store64(ctx, host);
     store64(ctx + 8, rt);
     return async_spawn(rt, &_async_resolve_task, ctx);
@@ -624,10 +629,15 @@ fn async_with_timeout(rt, handle, ms): i64 {
     if (handle == 0) { return 0; }
     if (load64(handle + 16) == TASK_DONE) { return 1; }
     var ctx = alloc_via(load64(rt + 32), 80);   # +wait-registration @72
+    # Out of memory — for the sentinel's context or for its task — is -1, as the Linux arm
+    # answers: the context was stored through 0, and with no sentinel `_async_pump(rt, handle, 0)`
+    # waits for the handle alone, a deadline that never fires. CHANGELOG [6.6.20]
+    if (ctx == 0) { return 0 - 1; }
     store64(ctx + 40, 0);
     store64(ctx + 48, rt);
     store64(ctx + 64, ms);
     var sentinel = async_spawn(rt, &_async_timeout_sentinel, ctx);
+    if (sentinel == 0) { return 0 - 1; }
     _async_pump(rt, handle, sentinel);
     var completed = 0;
     if (load64(handle + 16) == TASK_DONE) { completed = 1; }
@@ -696,6 +706,7 @@ fn _async_interval_task(ctx): i64 {
 fn async_interval(rt, fp, arg, ms, tok): i64 {
     if (ms <= 0) { return 0; }
     var ctx = alloc_via(load64(rt + 32), 104);
+    if (ctx == 0) { return 0; }      # out of memory: no task (async_spawn's own OOM answer). CHANGELOG [6.6.20]
     store64(ctx + 40, 0);
     store64(ctx + 48, rt);
     store64(ctx + 56, 0);
