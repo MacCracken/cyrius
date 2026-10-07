@@ -173,18 +173,12 @@ include "src/backend/aarch64/fixup.cyr"
 # MAIN
 # ================================================================
 
-# v5.11.63: --strict parity with main.cyr (which has had it since
-# v5.4.19). When --strict appears anywhere in cmdline, set
-# _strict_mode = 1; aarch64 fixup.cyr's undef-fn check exits with
-# code 1 instead of just warning. The SYS_OPEN == 2 branch handles
-# both x86_64 host (cross-compile path: openat is unavailable as
-# SYS_OPEN; use direct open) and aarch64 host (native path: SYS_OPEN
-# resolves to openat, needs AT_FDCWD = -100 as first arg). The same
-# block lands verbatim in main_aarch64_macho.cyr +
-# main_aarch64_native.cyr so all three variants link against the
-# shared backend/aarch64/fixup.cyr that reads _strict_mode. See
-# CHANGELOG [5.11.63].
-var _strict_mode = 0;
+# Command-line flags from /proc/self/cmdline (v5.11.63). The SYS_OPEN == 2
+# branch handles both the x86_64 host (cross-compile path: plain open) and
+# the aarch64 host (native path: SYS_OPEN resolves to openat, needs
+# AT_FDCWD = -100 as first arg). `--strict` is ACCEPTED and does nothing — a
+# reachable undefined fn is a hard error by default since v6.3.2; see
+# src/main.cyr. CHANGELOG [6.6.20]
 var _allow_undef = 0;   # v6.3.2: --allow-undef downgrades the now-default reachable-undef hard error (aarch64/fixup.cyr gates on `_allow_undef == 0`)
 var _vbuf[256];
 var _vfd = 0;
@@ -209,14 +203,6 @@ if (_vn > 0) {
                 if (load8(&_vbuf + _vi + 2) == 118 && load8(&_vbuf + _vi + 3) == 101) {
                     _write_out_all(_VERSION_STR_CYCC_AARCH64, _VERSION_LEN_CYCC_AARCH64);
                     syscall(SYS_EXIT, 0);
-                }
-            }
-        }
-        # "--st" (--strict) — set flag, keep parsing
-        if (_vi + 4 <= _vn) {
-            if (load8(&_vbuf + _vi) == 45 && load8(&_vbuf + _vi + 1) == 45) {
-                if (load8(&_vbuf + _vi + 2) == 115 && load8(&_vbuf + _vi + 3) == 116) {
-                    _strict_mode = 1;
                 }
             }
         }

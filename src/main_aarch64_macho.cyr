@@ -179,7 +179,7 @@ include "src/backend/aarch64/fixup.cyr"
 # reads the entry stack this driver already parks in x28 for _read_env — the
 # mechanism that has been carrying CYRIUS_MACHO_ARM since v6.0.33.
 # CHANGELOG [6.6.6]
-var _strict_mode = 0;
+# `--strict` is ACCEPTED and does nothing since 6.6.20 (see src/main.cyr).
 var _allow_undef = 0;   # v6.3.2: --allow-undef downgrades the now-default reachable-undef hard error (aarch64/fixup.cyr gates on `_allow_undef == 0`)
 # #ifdef-guarded because _ARGV_FLAGS_MACHO is itself compiled only into macOS
 # builds (it reads the parked entry stack through inline asm). This driver is
@@ -193,7 +193,6 @@ if ((_vflags & 1) == 1) {
     _write_out_all(_VERSION_STR_CYCC_AARCH64, _VERSION_LEN_CYCC_AARCH64);
     syscall(SYS_EXIT, 0);
 }
-if ((_vflags & 2) == 2) { _strict_mode = 1; }
 if ((_vflags & 4) == 4) { _allow_undef = 1; }
 #endif
 

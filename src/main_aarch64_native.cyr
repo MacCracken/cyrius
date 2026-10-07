@@ -157,7 +157,8 @@ include "src/backend/aarch64/fixup.cyr"
 # here (emit_fmt is never 2 on native-Linux). The cross + macho forks
 # define the real fn via their macho include; this native-only stub
 # resolves the symbol (silences the cross-build "undefined function"
-# warning; FATAL under --strict) without pulling in the Mach-O emitter.
+# warning; a reachable one is FATAL by default since v6.3.2) without pulling
+# in the Mach-O emitter.
 # Same dead-branch justification as aarch64/emit.cyr's _PE stub cohort.
 # See CHANGELOG [6.2.44].
 fn EMITMACHO_ARM64(S): i64 { return 0; }
@@ -166,12 +167,10 @@ fn EMITMACHO_ARM64(S): i64 { return 0; }
 # MAIN
 # ================================================================
 
-# v5.11.63: --strict parity with main.cyr. Same block as the Linux
-# aarch64 cross-compiler (main_aarch64.cyr); native path resolves
-# SYS_OPEN to openat(56) so the AT_FDCWD = -100 branch fires. Shared
-# backend/aarch64/fixup.cyr reads `_strict_mode` after the patch loop.
-# See CHANGELOG [5.11.63].
-var _strict_mode = 0;
+# Command-line flags from /proc/self/cmdline — the same block as the Linux
+# aarch64 cross-compiler (main_aarch64.cyr); the native path resolves SYS_OPEN
+# to openat(56) so the AT_FDCWD = -100 branch fires. `--strict` is ACCEPTED and
+# does nothing (see src/main.cyr). CHANGELOG [6.6.20]
 var _allow_undef = 0;   # v6.3.2: --allow-undef downgrades the now-default reachable-undef hard error (aarch64/fixup.cyr gates on `_allow_undef == 0`)
 var _vbuf[256];
 var _vfd = 0;
@@ -193,13 +192,6 @@ if (_vn > 0) {
                 if (load8(&_vbuf + _vi + 2) == 118 && load8(&_vbuf + _vi + 3) == 101) {
                     _write_out_all(_VERSION_STR_CYCC_AARCH64, _VERSION_LEN_CYCC_AARCH64);
                     syscall(SYS_EXIT, 0);
-                }
-            }
-        }
-        if (_vi + 4 <= _vn) {
-            if (load8(&_vbuf + _vi) == 45 && load8(&_vbuf + _vi + 1) == 45) {
-                if (load8(&_vbuf + _vi + 2) == 115 && load8(&_vbuf + _vi + 3) == 116) {
-                    _strict_mode = 1;
                 }
             }
         }

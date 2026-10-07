@@ -551,11 +551,9 @@ fn FIXUP(S): i64 {
     # v5.11.59: reachability-filtered undef-fn check (moved from
     # before the patch loop). Same shape as x86 — locate host fn
     # for each undef'd fixup's coff; skip the warning if host is
-    # dead. v5.11.63 added the cross-arch `_strict_mode` parity —
-    # `main_aarch64.cyr` declares the global + parses `--strict`
-    # from /proc/self/cmdline; the strict-exit below mirrors
-    # x86/fixup.cyr lines 729-738 so `cycc_aarch64 --strict` exits
-    # with code 1 on any reachable undef ref.
+    # dead. The refusal below mirrors x86/fixup.cyr's, so a reachable
+    # undef ref exits 1 on both backends (v6.3.2 default; `--allow-undef`
+    # downgrades it).
     var u59_ufi = 0;
     while (u59_ufi < fcnt_pre) {
         var u59_ufaddr = _fixup_base + u59_ufi * 16;
@@ -602,11 +600,8 @@ fn FIXUP(S): i64 {
         }
         u59_ufi = u59_ufi + 1;
     }
-    # v5.11.63: --strict parity with x86 (which has had it since
-    # v5.4.19). Filtered-out (dead-host) refs above did NOT bump
-    # undef_count, so strict mode only fires on reachable undef refs
-    # — matching x86's exit-on-strict semantics exactly. `_strict_mode`
-    # is declared + cmdline-parsed in `src/main_aarch64.cyr`.
+    # Filtered-out (dead-host) refs above did NOT bump undef_count, so
+    # the refusal fires only on reachable undef refs, as on x86.
     # v6.3.2: REACHABLE undefined-fn call → hard error by DEFAULT (was
     # --strict-only). `--allow-undef` (`_allow_undef`) downgrades to a warning.
     # Byte-identical wording with x86/fixup.cyr (cross-arch parity).

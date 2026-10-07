@@ -2850,13 +2850,14 @@ fn _ARGV_FLAG_ONE(p): i64 {
     if (c == 0) { return 0; }
     var d = load8(p + 3);
     if (c == 118) { if (d == 101) { return 1; } }    # --ve(rsion)
-    if (c == 115) { if (d == 116) { return 2; } }    # --st(rict)
     if (c == 97) { if (d == 108) { return 4; } }     # --al(low-undef)
     return 0;
 }
 
 # Scan argv for cycc's flags on macOS. Returns a bitmask:
-#   1 = --version   2 = --strict   4 = --allow-undef
+#   1 = --version   4 = --allow-undef
+# Bit 2 was --strict until 6.6.20: the flag is a no-op (a reachable undefined fn is a
+# hard error by default since v6.3.2) and the global it set was never read. Not reused.
 #
 # WHY this exists (v6.6.6): macOS has no /proc/self/cmdline, so the /proc scan
 # every Linux driver uses reads NOTHING here — on Darwin the failed open()

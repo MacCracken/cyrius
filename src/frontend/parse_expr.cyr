@@ -2613,7 +2613,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
                 }
             }
             # v6.0.54: GetCommandLineW for the Windows args.cyr branch
-            # (lib/args_win.cyr) + cycc's own --version/--strict. 0 args,
+            # (lib/args_win.cyr) + cycc's own command-line flags. 0 args,
             # returns the UTF-16LE command-line LPWSTR in rax.
             if (sc_num == 61446) {
                 if (argc == 1) {
@@ -4980,7 +4980,7 @@ fn _op_park_lhs(S, fi): i64 {
 # Assumes lhs is already pushed and rhs is pushed right before the call
 # (ECALLPOPS consumes 2 stack args). If the helper isn't defined at
 # link time the standard "undefined function" diagnostic fires on the
-# generated call — with the v5.6.0 `--strict` flag that's a hard-error.
+# generated call — a hard error by default since v6.3.2.
 fn EMIT_OVF_CALL(S, fname_str): i64 {
     var flen = 0;
     while (load8(fname_str + flen) != 0) { flen = flen + 1; }
