@@ -340,13 +340,18 @@ fn ws_recv(ws): i64 {
     return 0;
 }
 
-# Close WebSocket connection
+# Close WebSocket connection. Closes the socket too — the caller must not close ws_fd(ws) again.
+# ⛔ Through lib/net.cyr's sock_close, never a raw syscall(3): #3 is close(2) only where a
+# translation table makes it so. On agnos it is spawn — the socket was never closed (no FIN, its
+# conn-table slot leaked, so the 9th one made tcp_socket() fail) and the stray spawn's failure
+# path disarmed the caller's CH_ENDOW endowment; on Windows it is CloseHandle, which does not
+# close a SOCKET. Pinned by tests/gates/platform/ws_close_socket_route.sh. CHANGELOG [6.6.20]
 fn ws_close(ws): i64 {
     if (ws_state(ws) == WS_OPEN) {
         _ws_send_frame(ws, WS_OP_CLOSE, "", 0);
         store64(ws + 8, WS_CLOSING);
     }
-    syscall(3, ws_fd(ws));
+    sock_close(ws_fd(ws));
     store64(ws + 8, WS_CLOSED);
     return 0;
 }
