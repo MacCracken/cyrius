@@ -1011,8 +1011,8 @@ fn PP_REANCHOR_CUR(S, out, op, tmp, ip): i64 {
 # ⛔ v6.5.45 (CVE-39) — THE BOUND IS 768, NOT 4096, AND THE DIFFERENCE WAS A SILENT
 # MISCOMPILE. The heap map declared `0x190400 include_fname [4096]` and all three capture loops
 # guarded at 4095 from that number, but TWO live things sit inside that declared span:
-#   S+0x190700  PP_EXPAND's output-write-cursor return slot (:2334 store / :3166 load) — 768 B in
-#   S+0x190800  the `#ifdef` FEATURE-FLAG TABLE (:2368/:2379), 1024 B in
+#   S+0x190700  PP_EXPAND's output-write-cursor return slot (PP_EXPAND stores, PP_MACRO_PASS loads) — 768 B in
+#   S+0x190800  the `#ifdef` FEATURE-FLAG TABLE (PP_PREDEFINE / PP_DEFINE), 1024 B in
 # So an include or `#ref` path of 768 characters or more corrupts the preprocessor's own output
 # cursor — expanded macro text then lands at the wrong offset — and past 1024 it overwrites the
 # hashes of CYRIUS_ARCH_X86, CYRIUS_TARGET_MACOS and friends, after which `#ifdef` selects the
@@ -3603,23 +3603,50 @@ fn PP_HASH_CSTR(name): i64 {
 # `#ifdef CYRIUS_ARCH_AARCH64` / `#ifdef CYRIUS_ARCH_X86` to gate
 # architecture-specific asm blocks without per-arch lib files.
 fn PP_PREDEFINE(S, name): i64 {
-    # 6.6.10: ERR_MSG returns (v6.4.62), so the cap stops the store itself — the 17th hash
-    # landed on value[0] at S+0x190880. CHANGELOG [6.6.10]
-    if (_pp_flag_count >= 16) { _pp_err_at(S, 0, 0, "too many preprocessor #define/flag entries (max 16)"); return 0; }
     var h = PP_HASH_CSTR(name);
-    store64(S + 0x190800 + _pp_flag_count * 8, h);
-    store64(S + 0x190880 + _pp_flag_count * 8, 0);
-    _pp_flag_count = _pp_flag_count + 1;
+    # 6.6.20: a name already in the table keeps its slot — see PP_FLAG_SLOT. CHANGELOG [6.6.20]
+    var slot = PP_FLAG_SLOT(S, h);
+    if (slot < 0) {
+        # 6.6.10: ERR_MSG returns (v6.4.62), so the cap stops the store itself — the 17th hash
+        # landed on value[0] at S+0x190880. CHANGELOG [6.6.10]
+        if (_pp_flag_count >= 16) { _pp_err_at(S, 0, 0, "too many preprocessor #define/flag entries (max 16)"); return 0; }
+        slot = _pp_flag_count;
+        _pp_flag_count = _pp_flag_count + 1;
+    }
+    store64(S + 0x190800 + slot * 8, h);
+    store64(S + 0x190880 + slot * 8, 0);
     return 0;
+}
+
+# 6.6.20 — the flag-table slot already holding name hash `h`, or -1. PP_DEFINE and
+# PP_PREDEFINE used to APPEND unconditionally, so every repeat of a name took a slot of its
+# own: lib/sigil.cyr's four unconditional `#define LINUX` cost four of the 16 (an
+# `include "lib/sandhi.cyr"` alone used 12, leaving a consumer 4), and a redefinition's
+# value was never read, because PP_GETVAL / PP_DEFINED return the FIRST match. A repeat now
+# reuses its slot and overwrites the value: the latest definition wins, from that point on.
+# CHANGELOG [6.6.20]
+fn PP_FLAG_SLOT(S, h): i64 {
+    var di = 0;
+    while (di < _pp_flag_count) {
+        if (load64(S + 0x190800 + di * 8) == h) { return di; }
+        di = di + 1;
+    }
+    return 0 - 1;
 }
 
 # v5.6.42: src_base separated from S — see PP_HASH above. Source reads
 # come from src_base+pos; flag-table writes stay at S+0x190800/0x190880.
 fn PP_DEFINE(S, src_base, pos): i64 {
-    # 6.6.10: stop at the cap — see PP_PREDEFINE. CHANGELOG [6.6.10]
-    if (_pp_flag_count >= 16) { _pp_err_at(S, src_base, pos, "too many preprocessor #define/flag entries (max 16)"); return 0; }
     var h = PP_HASH(src_base, pos);
-    store64(S + 0x190800 + _pp_flag_count * 8, h);
+    # 6.6.20: a repeated name reuses its slot, so the cap counts NAMES — see PP_FLAG_SLOT.
+    var slot = PP_FLAG_SLOT(S, h);
+    if (slot < 0) {
+        # 6.6.10: stop at the cap — see PP_PREDEFINE. CHANGELOG [6.6.10]
+        if (_pp_flag_count >= 16) { _pp_err_at(S, src_base, pos, "too many preprocessor #define/flag entries (max 16)"); return 0; }
+        slot = _pp_flag_count;
+        _pp_flag_count = _pp_flag_count + 1;
+    }
+    store64(S + 0x190800 + slot * 8, h);
     # Check for value: #define NAME VALUE (skip name, find space, parse int)
     var vi = 0;
     var vc = load8(src_base + pos + vi);
@@ -3640,8 +3667,7 @@ fn PP_DEFINE(S, src_base, pos): i64 {
             dvc = load8(src_base + pos + vi);
         }
     }
-    store64(S + 0x190880 + _pp_flag_count * 8, defval);
-    _pp_flag_count = _pp_flag_count + 1;
+    store64(S + 0x190880 + slot * 8, defval);
     return 0;
 }
 

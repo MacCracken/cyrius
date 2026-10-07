@@ -1749,6 +1749,12 @@ is one). Until 6.6.20 several of these were silent.
   definition could ever apply), and a function-like `#define` in an included file
   is refused by name — it was never a macro there. (Before 6.6.20 all three were
   silently ignored.)
+- **`#define` names: 16, including the target's builtins** (`CYRIUS_ARCH_*`,
+  `CYRIUS_TARGET_*`, … — three on x86_64 Linux). A name counts once however often it
+  is defined, and a redefinition's value applies to every `#if` after it — the
+  latest definition wins. (Before 6.6.20 every repeat took a slot of its own —
+  `include "lib/sandhi.cyr"` used 12 of the 16 — and the FIRST value was read
+  forever.)
 
 `#ifplat <plat>` (v5.4.19) is a tighter spelling for arch / OS dispatch:
 

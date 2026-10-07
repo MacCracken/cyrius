@@ -26,6 +26,16 @@
 #    included file; one inside a false #ifdef in an included file is NOT refused, and an
 #    included object-like #define still works.
 #
+# C. The #define / flag table (S+0x190800, 16 names incl. the target's builtins). PP_DEFINE
+#    APPENDED every definition, so a repeated name took a slot each time — lib/sigil.cyr's four
+#    unconditional `#define LINUX` cost four, `include "lib/sandhi.cyr"` alone used 12 and a
+#    consumer could add only 4 #defines before "too many preprocessor #define/flag entries" —
+#    and a redefinition's value was never read (PP_GETVAL returns the first match). Fix:
+#    PP_FLAG_SLOT; a repeat reuses its slot and the LATEST value wins from that point on. Rows:
+#    20 identical #defines compile; sandhi plus 6 user #defines compile; a redefinition is seen
+#    by the conditionals after it and not by those before it, in the main source and in an
+#    included file.
+#
 # MUTATION LEDGER (6.6.20, mutant = this tree with the named change, built by build/cycc and
 # run as CYCC=<mutant>):
 #   A1. PP_PUSH_LEVEL's `d >= 64` check deleted (the pre-6.6.20 behaviour)  -> RED: every A
@@ -33,6 +43,8 @@
 #   B1. PP_MACRO_SLOT's `_pp_macro_count >= 16` refusal deleted            -> RED: B 17th rows
 #   B2. PP_MACRO_SLOT's redefinition refusal deleted                       -> RED: B redefinition
 #   B3. PP_IFDEF_PASS calls PP_DEFINE again, not PP_DEFINE_INCLUDED         -> RED: B included row
+#   C1. PP_DEFINE's PP_FLAG_SLOT lookup forced to -1 (append, the pre-6.6.20 behaviour)
+#                                                                          -> RED: every C row
 #   real tree                                                              -> GREEN
 set -eu
 
@@ -125,8 +137,23 @@ printf '#ifdef PPCAP_NOPE\n#define INC_SKIP(x) (x * 2)\n#endif\n#define INC_FLAG
 printf 'include "incskip.cyr"\nsyscall(60, g);\n' > "$WORK/incskipm.cyr"
 accept "included file: skipped function-like #define, live object-like #define" incskipm.cyr 5
 
+# ── C. #define / flag table ──────────────────────────────────────────────────────────────
+awk 'BEGIN { for (i = 0; i < 20; i++) print "#define PPCAP_SAME 1"; print "syscall(60, 4);" }' > "$WORK/same20.cyr"
+accept "20 identical #defines (one slot)" same20.cyr 4
+ln -s "$ROOT/lib" "$WORK/lib"
+{ echo 'include "lib/sandhi.cyr"'; awk 'BEGIN { for (i = 0; i < 6; i++) printf "#define PPCAP_USER%d 1\n", i }'; echo 'syscall(60, 6);'; } > "$WORK/sandhi6.cyr"
+accept "lib/sandhi.cyr plus 6 user #defines" sandhi6.cyr 6
+# a = 1 iff `X == 1` held BEFORE the redefinition, b = 20 iff `X == 2` holds after it, c = 100
+# iff the stale value were still read after it. Want 21.
+REDEF='#define X 1\n#if X == 1\nvar a = 1;\n#endif\n#define X 2\n#if X == 2\nvar b = 20;\n#endif\nvar c = 0;\n#if X == 1\nc = 100;\n#endif\n'
+printf "$REDEF"'syscall(60, a + b + c);\n' > "$WORK/redefv.cyr"
+accept "redefinition, main source: the latest value wins from there on" redefv.cyr 21
+printf "$REDEF" > "$WORK/redefinc.cyr"
+printf 'include "redefinc.cyr"\nsyscall(60, a + b + c);\n' > "$WORK/redefim.cyr"
+accept "redefinition, included file: the latest value wins from there on" redefim.cyr 21
+
 if [ "$NFAIL" != 0 ]; then
     echo "FAIL: pp_table_caps: $NFAIL failure(s) across $NROWS rows"
     exit 1
 fi
-echo "PASS: pp_table_caps: $NROWS rows — #if-family nesting refused past 64 levels in both passes; function-like macro table refuses the 17th, a redefinition and an included definition by name (6.6.20)"
+echo "PASS: pp_table_caps: $NROWS rows — #if-family nesting refused past 64 levels in both passes; function-like macro table refuses the 17th, a redefinition and an included definition by name; a repeated #define reuses its flag slot and the latest value wins (6.6.20)"
