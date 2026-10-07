@@ -2667,8 +2667,10 @@ fn _EMOV_X16(S, v): i64 {
 # v6.0.57: ldr/str xN, [sp, #imm] (unsigned offset, 64-bit; imm a multiple of
 # 8). For the >6-arg ECALLPOPS memory-shuffle — loads/stores WITHOUT moving sp.
 # The scaled imm12 reaches 32760, i.e. a call of 2048 args; past that the old
-# single form carried the offset into the opc bits (an `ldr` became a prefetch),
-# so a wider call reads its offset into x16 and uses the register-offset form.
+# single form carried the offset into opc bit 22 — an `ldr` (which already has it)
+# read a slot 32 KiB too low, and the shuffle's `str` assembled as an `ldr`, so
+# the store vanished — so a wider call reads its offset into x16 and uses the
+# register-offset form.
 # CHANGELOG [6.6.20]
 fn ELDR_SP(S, reg, imm): i64 {
     if (imm <= 32760) { EW(S, 0xF94003E0 | ((imm / 8) << 10) | reg); return 0; }
@@ -2720,9 +2722,10 @@ fn ECALLPOPS(S, n): i64 {
 # ⛔ 6.6.20 — this was ONE `add sp, sp, #imm12` with nothing guarding the
 # immediate, so from 262 args ((262-6)*16 = 4096) the carry landed in the
 # LSL #12 bit: `add sp, sp, #0, lsl #12` at 262 (sp never restored — a looped
-# call walked off the stack), +64 KiB instead of +4112 at 263, and from 519 args
-# the carry reached the opcode (SIGILL). Silent until something touched the
-# displaced sp. Split the way EPATCHFRAME / EADDRA_IMM are. Every call shape
+# call walked off the stack), +64 KiB instead of +4112 at 263. At 518 the carry
+# reached bit 23 — an `addg` on an MTE core such as qemu's default cpu (sp
+# silently leaked), SIGILL on pi and Apple Silicon — and SIGILL everywhere from
+# 519. Silent until something touched the displaced sp. Split the way EPATCHFRAME / EADDRA_IMM are. Every call shape
 # (direct, callptr, method, operator, tail-call fallback) unwinds here.
 # CHANGELOG [6.6.20]
 fn ECALLCLEAN(S, n): i64 {
@@ -2805,7 +2808,9 @@ fn ESTORESTACKPARM(S, pidx, disp, pc): i64 {
         EW(S, 0xF94003A9 | ((soff / 8) << 10));   # ldr x9, [x29, #soff] (scaled imm12)
     } else {
         # 6.6.20 — past 32760 (a fn of 2054+ params) the scaled imm12 carried into
-        # the opc bits; read the offset into x16. CHANGELOG [6.6.20]
+        # opc bit 22, which `ldr` already has: the load read a slot 32 KiB too low
+        # (at 2054, `ldr x9, [x29]` — the saved fp). Read the offset into x16.
+        # CHANGELOG [6.6.20]
         _EMOV_X16(S, soff);
         EW(S, 0xF8706BA9);                        # ldr x9, [x29, x16]
     }

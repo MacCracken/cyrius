@@ -1431,8 +1431,9 @@ _chk_gate "$ROOT/tests/gates/codegen/stack_param_homing_matrix.sh"
 
 # 6.6.20: an aarch64 call of ANY width takes back exactly the stack it pushed and reads every
 # argument. ECALLCLEAN's `add sp, sp, #imm12` was unguarded: from 262 arguments sp was never
-# restored (`#0, lsl #12`), at 263 it moved 64 KiB, from 519 SIGILL; the [sp,#imm] marshalling
-# past 2048 arguments and the callee's [x29,#imm] past 2053 parameters overflowed the same way.
+# restored (`#0, lsl #12`), at 263 it moved 64 KiB, at 518 an MTE `addg` (SIGILL on pi / Apple
+# Silicon), SIGILL everywhere from 519; the [sp,#imm] marshalling past 2048 arguments read slots
+# 32 KiB low (its `str` became an `ldr`) and the callee's [x29,#imm] past 2053 parameters likewise.
 # Static words derived in the shell + qemu-aarch64 runs at the measured thresholds (named SKIP
 # without qemu) + the host oracle. Hardware: tests/tcyr/crossos/wide_call_stack_unwind.tcyr.
 _chk_gate "$ROOT/tests/gates/codegen/wide_call_stack_unwind.sh"
