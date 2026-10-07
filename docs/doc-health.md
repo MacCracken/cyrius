@@ -32,7 +32,8 @@ type: state
 > `roadmap.md`. **CLAUDE.md** still told contributors to add a `vr01_` test for every new syscall
 > wrapper (retired at v6.5.11 — a file so named opts OUT of the cross-OS leg), as did the guide and
 > four other docs; its reserved-word class missed the two builtins `IS_KEYWORD_TOK` lists by hand.
-> **58 source / test / workflow comments** pointed at issue files that had moved to `archived/`.
+> **102 source / test / workflow comments** pointed at issue files that had moved to `archived/` (44 of
+> them by the short `issues/<f>.md` form or wrapped across a line, which the first scan did not match).
 > **roadmap.md** still called 6.6.18 OPEN and 6.6.19 MERGED, carried five backlog claims that were
 > materially wrong, and a cyrlint item pointed at a roadmap slot that had not existed for a month.
 >

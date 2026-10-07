@@ -255,8 +255,10 @@ floor, a re-triage that keeps re-pinning the same item).
 - **Docs** (CLN-04/06/07/08/09/12): the public figures had **frozen at v6.6.1 for nineteen releases** (README,
   faq, platform-status, size-comparisons, stdlib-modules — re-derived); doc-health marked a v6.3.0 README
   Fresh (re-derived row by row); `handoff.md` was stale again and is **archived** (state.md is the handoff);
-  CLAUDE.md and the guide still prescribed `vr01_` tests (which opt OUT of the cross-OS leg); 58 + 5 comment
-  pointers and 4 deleted-script references re-pointed.
+  CLAUDE.md and the guide still prescribed `vr01_` tests (which opt OUT of the cross-OS leg), and nine code
+  comments still named `vr01_` fixtures; 102 comment pointers into `issues/archived/` (44 of them missed by the
+  first scan — the short `issues/<f>.md` form and wrapped paths), 9 sibling-repo pointers and 5 deleted-script
+  references re-pointed.
 - **Met during the closeout, outside the findings**: the 37 qemu core dumps (5.6 GB) in the repo root were
   already gone by the time their lane looked (CLN-14); `/tmp/cyrius-*` went 962 → 2 at the audit and was
   back to **49** by 19:34 the same day (every pid dead, **33** non-empty — a killed `cyrius check`'s
