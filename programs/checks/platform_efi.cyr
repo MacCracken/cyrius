@@ -1971,9 +1971,19 @@ fn _efi_stdlib_fallback_gate(): i64 {
     var reaped = _regression_wait_deadline(pid, &status_buf, _regression_timeout_ms());
     sys_unlink(src_path);
 
+    # 6.6.20: a deadline or an unobserved child wrote no status — it is a FAIL, never decoded,
+    # and the message says which (not a "status=" nobody wrote).
+    if (reaped != 1) {
+        sys_unlink(bin_path);
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        if (reaped == 0) { _p(": cycc hit the deadline"); }
+        else { _p(": cycc was never observed (waitpid failed)"); }
+        println(" with CYRIUS_TARGET_EFI=1 + include \"lib/fnptr.cyr\"");
+        _check(label, 1);
+        return 1;
+    }
     var status = load32(&status_buf);
-    # 6.6.20: a deadline or an unobserved child wrote no status — it is a FAIL, never decoded.
-    if (reaped != 1 || WIFEXITED(status) == 0 || WEXITSTATUS(status) != 0) {
+    if (WIFEXITED(status) == 0 || WEXITSTATUS(status) != 0) {
         sys_unlink(bin_path);
         _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
         _p(": cycc exited non-zero (status="); print_num(status);
