@@ -1023,6 +1023,22 @@ fn PP_MACRO_TEXT_FULL(): i64 {
     return 0;
 }
 
+# ⛔ 6.6.20 (CVE-TBD) — push one #ifdef / #ifndef / #ifplat / #if level onto the per-level
+# state stack at S+0x197F10 and return the new depth. The stack is 64 bytes, one per level,
+# and none of the seven push sites (PP_PASS 4, PP_IFDEF_PASS 3) checked it: each deeper level
+# wrote its state byte upward through live compiler state, and at ~344K levels into
+# gvar_initval, which _EMIT_GVAR_STATIC_INITS bakes into the image — a silent miscompile.
+# A hard error like PP_MACRO_TEXT_FULL, located: the matching #endif would pop a level that
+# was never pushed, so continuing is not an option. CHANGELOG [6.6.20]
+fn PP_PUSH_LEVEL(S, base, pos, d, st): i64 {
+    if (d >= 64) {
+        _pp_err_at(S, base, pos, "#if/#ifdef/#ifndef/#ifplat nesting exceeds 64 levels");
+        syscall(SYS_EXIT, 1);
+    }
+    store8(S + 0x197F10 + d, st);
+    return d + 1;
+}
+
 
 fn PP_MARK_INCLUDED(S, fname): i64 {
     var cnt = L64(S + 0x197F00);
@@ -3802,7 +3818,8 @@ fn PP_PASS(S): i64 {
     var bol = 1;
     var skip_depth = 0;
     # v5.6.1: pp_depth tracks the index into the per-level state stack
-    # at S+0x197F10 (64-byte cap, one byte per nesting level). Shared
+    # at S+0x197F10 (64-byte cap, one byte per nesting level — enforced
+    # by PP_PUSH_LEVEL since 6.6.20, unchecked before). Shared
     # with skip_depth: skip_depth == number of stack entries with
     # state != 0. See the directive handler comments below for the
     # state machine.
@@ -3931,7 +3948,7 @@ fn PP_PASS(S): i64 {
             }
             # #ifdef / #ifndef / #ifplat / #if (v5.6.1 state-stack
             # rewrite). Per-level state lives at S+0x197F10[pp_depth],
-            # one byte per level, cap 64 levels. Encoding:
+            # one byte per level, cap 64 levels (PP_PUSH_LEVEL). Encoding:
             #   0 = EMITTING    — branch emits; outer emits
             #   1 = SEARCHING   — branch skips, no true match yet; outer emits
             #   2 = DONE        — true branch already taken; skip rest
@@ -3946,8 +3963,7 @@ fn PP_PASS(S): i64 {
                         if (PP_DEFINED(S, S + _SRCB, dip + 7) == 1) { _s = 0; }
                         else { _s = 1; }
                     }
-                    store8(S + 0x197F10 + pp_depth, _s);
-                    pp_depth = pp_depth + 1;
+                    pp_depth = PP_PUSH_LEVEL(S, S + _SRCB, dip, pp_depth, _s);
                     if (_s != 0) { skip_depth = skip_depth + 1; }
                     ip = PP_SKIPLINE(S + _SRCB, ip, bl); op = _pp_a64_open(S + _SRCB, dip + 7, 0 * 8 + _s, pp_depth - 1, out, op); bol = 1; handled = 1;
                 } }
@@ -3957,8 +3973,7 @@ fn PP_PASS(S): i64 {
                         if (PP_DEFINED(S, S + _SRCB, dip + 8) == 0) { _s = 0; }
                         else { _s = 1; }
                     }
-                    store8(S + 0x197F10 + pp_depth, _s);
-                    pp_depth = pp_depth + 1;
+                    pp_depth = PP_PUSH_LEVEL(S, S + _SRCB, dip, pp_depth, _s);
                     if (_s != 0) { skip_depth = skip_depth + 1; }
                     ip = PP_SKIPLINE(S + _SRCB, ip, bl); op = _pp_a64_open(S + _SRCB, dip + 8, 1 * 8 + _s, pp_depth - 1, out, op); bol = 1; handled = 1;
                 } }
@@ -3972,8 +3987,7 @@ fn PP_PASS(S): i64 {
                         if (PP_IFPLAT_MATCH(S, dip + 8) == 1) { _s = 0; }
                         else { _s = 1; }
                     }
-                    store8(S + 0x197F10 + pp_depth, _s);
-                    pp_depth = pp_depth + 1;
+                    pp_depth = PP_PUSH_LEVEL(S, S + _SRCB, dip, pp_depth, _s);
                     if (_s != 0) { skip_depth = skip_depth + 1; }
                     ip = PP_SKIPLINE(S + _SRCB, ip, bl); op = _pp_a64_open(S + _SRCB, dip + 8, 2 * 8 + _s, pp_depth - 1, out, op); bol = 1; handled = 1;
                 } }
@@ -3983,8 +3997,7 @@ fn PP_PASS(S): i64 {
                         if (PP_EVAL_IF(S, S + _SRCB, dip + 4) == 1) { _s = 0; }
                         else { _s = 1; }
                     }
-                    store8(S + 0x197F10 + pp_depth, _s);
-                    pp_depth = pp_depth + 1;
+                    pp_depth = PP_PUSH_LEVEL(S, S + _SRCB, dip, pp_depth, _s);
                     if (_s != 0) { skip_depth = skip_depth + 1; }
                     ip = PP_SKIPLINE(S + _SRCB, ip, bl); op = _pp_a64_open(S + _SRCB, dip + 4, 3 * 8 + _s, pp_depth - 1, out, op); bol = 1; handled = 1;
                 } }
@@ -4411,8 +4424,7 @@ fn PP_IFDEF_PASS(S): i64 {
                             if (PP_DEFINED(S, tmp, dip + 7) == 1) { _s = 0; }
                             else { _s = 1; }
                         }
-                        store8(S + 0x197F10 + pp_depth, _s);
-                        pp_depth = pp_depth + 1;
+                        pp_depth = PP_PUSH_LEVEL(S, tmp, dip, pp_depth, _s);
                         if (_s != 0) { skip_depth = skip_depth + 1; }
                         ip = PP_SKIPLINE(tmp, ip, bl); op = _pp_a64_open(tmp, dip + 7, 0 * 8 + _s, pp_depth - 1, out, op); bol = 1; handled = 1;
                     } }
@@ -4422,8 +4434,7 @@ fn PP_IFDEF_PASS(S): i64 {
                             if (PP_DEFINED(S, tmp, dip + 8) == 0) { _s = 0; }
                             else { _s = 1; }
                         }
-                        store8(S + 0x197F10 + pp_depth, _s);
-                        pp_depth = pp_depth + 1;
+                        pp_depth = PP_PUSH_LEVEL(S, tmp, dip, pp_depth, _s);
                         if (_s != 0) { skip_depth = skip_depth + 1; }
                         ip = PP_SKIPLINE(tmp, ip, bl); op = _pp_a64_open(tmp, dip + 8, 1 * 8 + _s, pp_depth - 1, out, op); bol = 1; handled = 1;
                     } }
@@ -4433,8 +4444,7 @@ fn PP_IFDEF_PASS(S): i64 {
                             if (PP_EVAL_IF(S, tmp, dip + 4) == 1) { _s = 0; }
                             else { _s = 1; }
                         }
-                        store8(S + 0x197F10 + pp_depth, _s);
-                        pp_depth = pp_depth + 1;
+                        pp_depth = PP_PUSH_LEVEL(S, tmp, dip, pp_depth, _s);
                         if (_s != 0) { skip_depth = skip_depth + 1; }
                         ip = PP_SKIPLINE(tmp, ip, bl); op = _pp_a64_open(tmp, dip + 4, 3 * 8 + _s, pp_depth - 1, out, op); bol = 1; handled = 1;
                     } }
