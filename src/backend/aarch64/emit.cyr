@@ -2043,10 +2043,6 @@ fn EEXIT(S): i64 {
 # FIXUP_ADRP_LDR in aarch64/fixup.cyr.
 fn EMACHO_EXIT_ARM(S): i64 {
     # EPOPR is the verified post-indexed pop into x0 (encoding 0xF84107E0).
-    # The EPOPRDI/SI/DX/R10/R8/R9 family was corrected to true post-index
-    # (0xF84107E0|N) in v6.2.34 — the prior 0xF8410FE0 was PRE-indexed and
-    # contradicted its comments (latent only; the family is unreferenced in
-    # the aarch64 build).
     EPOPR(S);                      # ldr x0, [sp], #16 — exit code (arg1, top of stack)
     EW(S, 0x910043FF);             # add sp, sp, #16 — discard sc_num
     # Record ftype=5 __got-ref fixup at the adrp that follows.

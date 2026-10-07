@@ -564,9 +564,9 @@ fn FINDFN(S, noff): i64 {
 # See util.cyr for the definition.
 
 # NOTE: Arch-specific function emit functions (EFNPRO, ESUBRSP, EFNEPI,
-# ECALLTO, ECALLFIX, EPOPARG, ECALLPOPS, ECALLCLEAN, EDISP32,
-# ESTOREREGPARM, ESTORESTACKPARM, ESTOREPARM, EFLLOAD, EFLSTORE)
-# are in the arch-specific emit files:
+# ECALLTO, ECALLFIX, EPOPARG, ECALLPOPS, ECALLCLEAN, ESTOREREGPARM,
+# ESTORESTACKPARM, ESTOREPARM, EFLLOAD, EFLSTORE) are in the
+# arch-specific emit files (EDISP32 is x86-only):
 #   x86_64:  src/backend/x86/emit.cyr
 #   aarch64: src/backend/aarch64/emit.cyr
 
