@@ -15,12 +15,13 @@
 #
 # AXES (a throwaway CYRIUS_HOME holding 6.6.18 + the ACTIVE 6.6.19; a fake `curl` first on PATH,
 # so nothing reaches the network: it logs its argv and emits a script recording CYRIUS_VERSION)
-#   1  uninstall `../versions`, `..`, `6.6.19/`, `6.6.18/../6.6.19`, `./6.6.18` -> exit 1, named,
-#      both versions and `current` intact                                     (binary + shell)
+#   1  uninstall `../versions`, `..`, `6.6.19/`, `6.6.18/../6.6.19`, `./6.6.18`, `6..6` -> exit 1,
+#      named, both versions and `current` intact (`6..6` is the ONLY row the `..` ban alone
+#      refuses: the others also fail the leading digit or the `/`)          (binary + shell)
 #   2  install `6.6.19;touch M`, `$(touch M)`, `6.6.19 | touch M` -> exit 1, named, curl never
 #      run, no marker                                                         (binary + shell)
-#   3  use `../versions` (the binary's local pin and --global, the shell's switch) -> exit 1,
-#      cyrius.cyml and the bin/lib links untouched                           (binary + shell)
+#   3  use `../versions` and `6..6` (the binary's local pin and --global, the shell's switch) ->
+#      exit 1, cyrius.cyml and the bin/lib links untouched                   (binary + shell)
 #   4  controls: uninstall 6.6.18 removes it and keeps 6.6.19; uninstall of the active 6.6.19 is
 #      still refused; install 6.6.20 runs curl once, on the TAG's installer
 #      (`/cyrius/6.6.20/scripts/install.sh` — never the mutable `main`, CVE-21), and install.sh sees
@@ -50,7 +51,10 @@
 # reported as pins, the unquoted pin and the literal string read as the GLOBAL default); checking
 # the pin with `_cy_version_ok`'s rule (no `_`) turns the `6.6.20_rc` control RED. The base
 # `_cmd_cmdtools` (a `sh scripts/cyriusly cmdtools <a> <t>` line through `_exec_shell`) turns axis
-# 5 and both axis-7 injection rows RED.
+# 5 and both axis-7 injection rows RED. Before the `6..6` rows, deleting the `..` ban from either
+# peer left the gate green (every other row also fails the leading digit or the `/`); with them,
+# dropping it from `_cy_shape_ok` turns axes 1 and 3 [bin] (and axis 6's `6..6` pin) RED, and
+# dropping `|*..*` from `need_version` turns axes 1 and 3 [sh] RED.
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -111,12 +115,12 @@ refused() {   # refused <label> <snapshot before> — exit 1, named, nothing tou
 for P in bin sh; do
     # ── axis 1: uninstall ───────────────────────────────────────────────────────────────
     a1=0
-    for v in ../versions .. 6.6.19/ 6.6.18/../6.6.19 ./6.6.18; do
+    for v in ../versions .. 6.6.19/ 6.6.18/../6.6.19 ./6.6.18 6..6; do
         store; B=$(snap)
         run "$P" uninstall "$v"
         refused "axis 1 [$P] uninstall '$v'" "$B" || a1=1
     done
-    [ "$a1" -eq 0 ] && echo "  ok axis 1 [$P]: uninstall refuses five path-shaped operands; the store is intact"
+    [ "$a1" -eq 0 ] && echo "  ok axis 1 [$P]: uninstall refuses five path-shaped operands and '6..6'; the store is intact"
 
     # ── axis 2: install ─────────────────────────────────────────────────────────────────
     a2=0
@@ -129,15 +133,17 @@ for P in bin sh; do
 
     # ── axis 3: use ─────────────────────────────────────────────────────────────────────
     a3=0
-    store; B=$(snap)
-    run "$P" use ../versions
-    refused "axis 3 [$P] use ../versions" "$B" || a3=1
+    for v in ../versions 6..6; do
+        store; B=$(snap)
+        run "$P" use "$v"
+        refused "axis 3 [$P] use $v" "$B" || a3=1
+    done
     if [ "$P" = bin ]; then
         store; B=$(snap)
         run bin use ../versions --global
         refused "axis 3 [bin] use ../versions --global" "$B" || a3=1
     fi
-    [ "$a3" -eq 0 ] && echo "  ok axis 3 [$P]: use refuses a path-shaped version; no pin written, no link moved"
+    [ "$a3" -eq 0 ] && echo "  ok axis 3 [$P]: use refuses a path-shaped version and '6..6'; no pin written, no link moved"
 
     # ── axis 4: controls ────────────────────────────────────────────────────────────────
     a4=0
