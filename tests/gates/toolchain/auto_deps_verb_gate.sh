@@ -95,6 +95,21 @@ function strip(s,   i, c, out, inq, prev) {
     }
     return out;
 }
+# 6.7.0: the CALL edges are read from a copy with the CONTENT of every string literal blanked — the
+# `cyrius --help` text "compile (default: [build] entry/output)" was taken as a call to compile(),
+# and `-h` (whose region calls usage()) as a compiling verb. `line` keeps the strings: the verb
+# regions are found by reading `streq(cmd, "X")`.
+function mask(s,   i, c, out, inq, prev) {
+    out = ""; inq = 0; prev = "";
+    for (i = 1; i <= length(s); i++) {
+        c = substr(s, i, 1);
+        if (c == "\"" && prev != "\\") { inq = 1 - inq; out = out c; }
+        else if (inq == 1) out = out " ";
+        else out = out c;
+        if (c == "\\" && prev == "\\") prev = ""; else prev = c;
+    }
+    return out;
+}
 BEGIN { mb = 0; me = 0; ncli = 0 }
 FNR == 1 { curfn = "" }
 {
@@ -114,7 +129,7 @@ FNR == 1 { curfn = "" }
     # verb region runs to EOF and swallows the top-level `var exit_code = main();`
     # — and main reaches compile, so -h was reported as a compiling verb.
     if (iscli && main_start > 0 && main_end == 0 && FNR > main_start && line ~ /^}/) main_end = FNR;
-    t = line;
+    t = mask(line);
     while (match(t, /[A-Za-z_][A-Za-z0-9_]*[ ]*\(/)) {
         nm = substr(t, RSTART, RLENGTH);
         sub(/[ ]*\($/, "", nm);
@@ -127,7 +142,7 @@ FNR == 1 { curfn = "" }
     # `_corpus_walk_d` that runs each file via `fncall2(load64(cd + 8), ...)` on
     # `&_tests_walk_one`, and with only `name(` counted `tests` stopped reaching compile()
     # (axis 4 RED) though it compiles exactly as before. `&&` is not an address-of.
-    t = line;
+    t = mask(line);
     while (match(t, /(^|[^&])&[A-Za-z_][A-Za-z0-9_]*/)) {
         nm = substr(t, RSTART, RLENGTH);
         sub(/^[^&]?&/, "", nm);
