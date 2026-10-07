@@ -1345,6 +1345,11 @@ _chk_gate "$ROOT/tests/gates/toolchain/funcgate_refuses_live_home.sh"
 # printed the last shell gate's tally as the driver's. Every SKIP must now be on RG_SKIP_ALLOW.
 _chk_gate "$ROOT/tests/gates/toolchain/release_gate_check_verdict.sh"
 
+# 6.6.20 — every cross-OS leg (release-gate step 4: ecb, ach, cass, pi) runs the same three cx
+# checks: the guest-I/O fixture (42), the thread fixture (255) and the native cycc_cx round
+# trip. The ach leg ran the thread fixture only. Static: it reads cross-os-selfhost.sh.
+_chk_gate "$ROOT/tests/gates/toolchain/cross_os_legs_cx_parity.sh"
+
 # v6.6.4: a RELEASED version's install slot is written from its TAG, never from a drifted
 # tree. `install.sh --refresh-only` (and through it `cyrius pulsar`), `cyrius lsp` and the
 # retired CLAUDE.md hand-copy recipe all keyed a store write on the working-tree VERSION —
