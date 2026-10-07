@@ -494,6 +494,7 @@ fn main(): i64 {
     alloc_init();
     args_init();
     load_environ();
+    _cbt_children_waitable();   # 6.6.20 — an inherited SIGCHLD ignore made no child waitable
     find_tools();
     set_arch(ARCH_X86);
     # v6.0.34: an arm64 (Apple Silicon) Mach-O wrapper defaults to aarch64 so

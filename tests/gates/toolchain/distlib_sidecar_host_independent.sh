@@ -22,7 +22,10 @@
 #   1. a leaf whose per-target arms call five different leaves: all five are recorded.
 #   2. the same sidecar with CYRIUS_TARGET_WIN=1 / CYRIUS_MACHO=1 / CYRIUS_MACHO_ARM=1 /
 #      CYRIUS_TARGET_AGNOS=1 in the
-#      environment (the CLI's children inherit it since 6.6.11 B09) — byte-identical.
+#      environment (the CLI's children inherit it since 6.6.11 B09) — byte-identical. And
+#      (6.6.20) with more than 8 KiB of environment: each target compile's selector used to be
+#      APPENDED after the inherited entries, past the 8191 bytes cycc's `_read_env` reads, so
+#      Windows / macOS / agnos all verified as Linux and their leaves fell out of the union.
 #   3. the mihi shape: EINTRZ undefined on PE only, owned by the recorded dispatcher's peers;
 #      the monoliths that also declare it (`aaa_mono`, …) are NOT recorded.
 #   4. the canonical definer: the same shape with the dispatcher NOT declared — the dispatcher
@@ -163,12 +166,14 @@ done
 
 # ── axis 2: the target env of the shell does not change the answer ─────────────────────
 cp "$P1/dist/hprobe.deps" "$WORK/base.deps"
-for ev in CYRIUS_TARGET_WIN=1 CYRIUS_MACHO=1 CYRIUS_MACHO_ARM=1 CYRIUS_TARGET_AGNOS=1; do
+for ev in CYRIUS_TARGET_WIN=1 CYRIUS_MACHO=1 CYRIUS_MACHO_ARM=1 CYRIUS_TARGET_AGNOS=1 \
+          "PAD=$(head -c 9000 /dev/zero | tr '\0' x)"; do
     rm -f "$P1/dist/hprobe.deps"
+    evn=$(printf '%s' "$ev" | cut -c1-32)
     O2=$( cd "$P1" && env "$ev" CYRIUS_HOME="$WORK/home" CYRIUS_RESOLVED=1 "$WORK/bin/cyrius" distlib 2>&1 ) || true
-    [ -f "$P1/dist/hprobe.deps" ] || fail "axis 2: no sidecar written under $ev: $(echo "$O2" | grep -i error | head -3)"
+    [ -f "$P1/dist/hprobe.deps" ] || fail "axis 2: no sidecar written under $evn: $(echo "$O2" | grep -i error | head -3)"
     cmp -s "$WORK/base.deps" "$P1/dist/hprobe.deps" \
-        || fail "axis 2: under $ev the sidecar is [$(leaves "$P1")], not [$(grep -v '^#' "$WORK/base.deps" | tr '\n' ' ')]"
+        || fail "axis 2: under $evn the sidecar is [$(leaves "$P1")], not [$(grep -v '^#' "$WORK/base.deps" | tr '\n' ' ')]"
 done
 
 # ── axis 3: the mihi shape — a PE-only gap in a RECORDED dispatcher adds nothing ─────────

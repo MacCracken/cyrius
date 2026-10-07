@@ -33,6 +33,7 @@ mkdir -p "$W/stub/bin"
 cat > "$W/stub/bin/cycc" <<STUB
 #!/bin/sh
 { printf 'argv:'; for a in "\$@"; do printf ' %s' "\$a"; done; printf '\ndce:%s\n' "\${CYRIUS_DCE-unset}"; } > "$W/stub.log"
+tr '\\0' '\\n' < /proc/\$\$/environ > "$W/stub.env" 2>/dev/null || true
 exec "$CC" "\$@"
 STUB
 chmod +x "$W/stub/bin/cycc"
@@ -123,6 +124,55 @@ fz env CYRIUS_DEFINES=BETA "$W/cyrius" fuzz -D ALPHA
 grep -qE '^  fuzz/f\.fcyr +PASS$' "$W/fz.out" || fail "fuzz: -D ALPHA did not win over CYRIUS_DEFINES: $(grep 'f\.fcyr' "$W/fz.out")"
 rm -rf "$W/p/fuzz"
 [ "$FAIL" = "$x" ] && echo "  ok fuzz: [build] defines reach every harness; CYRIUS_DEFINES replaces them; -D wins"
+
+# ── the CLI's own entries beat inherited ones, at any environment size (6.6.20) ──────────
+# compile() APPENDED what it injects after the inherited environment, and cycc takes the FIRST
+# entry of a name and (Linux `_read_env`) reads only the first 8191 bytes. So an inherited
+# CYRIUS_TARGET_WIN=0 / CYRIUS_PIE=0 / CYRIUS_STRICT_PIN=0 / CYRIUS_TARGET_AGNOS=0 beat the
+# argument, an inherited CYRIUS_MACHO=1 turned `--win` into a Mach-O named .exe, and past 8 KiB of
+# environment every injected entry was invisible (`--win` gave an ELF, `--dce` eliminated nothing,
+# a bare-metal target came out ELF32) — rc 0 every time. These rows run the REAL compiler: the
+# stub's `sh` re-exports its environment, which collapses duplicate names and reorders entries,
+# i.e. it would hide exactly this. The stub row at the end checks the envp itself.
+x=$FAIL
+mkdir -p "$W/real/bin"; ln -s "$CC" "$W/real/bin/cycc"
+PAD="PAD=$(head -c 9000 /dev/zero | tr '\0' x)"
+printf 'kernel;\nvar k = 1;\n' > "$W/p/src/k.cyr"
+rb() {  # rb <env assignments...> -- <cli args...> : build with the REAL compiler; sets RC
+    envs=""; while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do envs="$envs $1"; shift; done; [ "$#" -gt 0 ] && shift
+    rm -f "$W/p/o.bin"
+    RC=0
+    ( cd "$W/p" && env -u CYRIUS_DCE -u CYRIUS_STRICT -u CYRIUS_DEFINES -u CYRIUS_TARGET_WIN -u CYRIUS_TARGET_EFI \
+        -u CYRIUS_TARGET_AGNOS -u CYRIUS_MACHO -u CYRIUS_MACHO_ARM -u CYRIUS_PIE -u CYRIUS_STRICT_PIN \
+        -u CYRIUS_KERNEL -u CYRIUS_ELF64_KERNEL $envs CYRIUS_HOME="$W/real" CYRIUS_RESOLVED=1 "$W/cyrius" build "$@" ) > "$W/out" 2>&1 || RC=$?
+}
+magic() { od -An -tx1 -N4 "$W/p/o.bin" 2>/dev/null | tr -d ' \n'; }
+mk ''
+rb CYRIUS_TARGET_WIN=0 -- --win src/main.cyr o.bin; want "--win beats an inherited CYRIUS_TARGET_WIN=0 (MZ)" "$(magic | cut -c1-4)" 4d5a
+rb CYRIUS_MACHO=1 -- --win src/main.cyr o.bin; want "--win drops an inherited CYRIUS_MACHO=1 (MZ, not Mach-O)" "$(magic | cut -c1-4)" 4d5a
+rb "$PAD" -- --win src/main.cyr o.bin; want "--win past 8 KiB of environment (MZ)" "$(magic | cut -c1-4)" 4d5a
+rb CYRIUS_PIE=0 -- --pie src/main.cyr o.bin; want "--pie beats an inherited CYRIUS_PIE=0 (e_type ET_DYN)" "$(od -An -tu2 -j16 -N2 "$W/p/o.bin" 2>/dev/null | tr -d ' ')" 3
+rb -- --agnos src/main.cyr o.bin; cp "$W/p/o.bin" "$W/agnos.bin" 2>/dev/null
+rb -- src/main.cyr o.bin; cp "$W/p/o.bin" "$W/plain.bin" 2>/dev/null
+cmp -s "$W/agnos.bin" "$W/plain.bin" && fail "--agnos: the agnos build equals the Linux build (the row cannot tell them apart)"
+rb CYRIUS_TARGET_AGNOS=0 -- --agnos src/main.cyr o.bin
+cmp -s "$W/p/o.bin" "$W/agnos.bin" || fail "--agnos does not beat an inherited CYRIUS_TARGET_AGNOS=0 (output is not the agnos build)"
+mk 'dce = false\n'
+rb "$PAD" -- --dce src/main.cyr o.bin
+grep -q 'dead code eliminated' "$W/out" || fail "--dce past 8 KiB of environment: the compiler did not eliminate: $(grep 'unreachable' "$W/out" | head -1)"
+mk ''
+rb "$PAD" -- --target x86_64-bare-metal-elf src/k.cyr o.bin
+want "a bare-metal target past 8 KiB of environment is ELF64 (EI_CLASS 2)" "$(od -An -tu1 -j4 -N1 "$W/p/o.bin" 2>/dev/null | tr -d ' ')" 2
+printf '[package]\nname = "p"\ncyrius = "6.6.1"\n\n[build]\nentry = "src/main.cyr"\noutput = "build/p"\n' > "$W/p/cyrius.cyml"
+rb -- src/main.cyr o.bin
+[ "$RC" = 0 ] && grep -q 'drift' "$W/out" || fail "strict-pin control: a drifted pin without --strict-pin should warn and build (rc $RC)"
+rb CYRIUS_STRICT_PIN=0 -- --strict-pin src/main.cyr o.bin
+[ "$RC" -ne 0 ] && grep -q 'drift' "$W/out" || fail "--strict-pin does not beat an inherited CYRIUS_STRICT_PIN=0: a drifted pin built (rc $RC)"
+# What the compiler RECEIVES: the injected entry FIRST, and the inherited one of the same name gone.
+mk ''; bld CYRIUS_PIE=0 -- --pie
+want "the child's first environment entry is the injected CYRIUS_PIE=1" "$(head -1 "$W/stub.env" 2>/dev/null)" CYRIUS_PIE=1
+want "the inherited CYRIUS_PIE=0 is dropped (one CYRIUS_PIE entry)" "$(grep -c '^CYRIUS_PIE=' "$W/stub.env" 2>/dev/null)" 1
+[ "$FAIL" = "$x" ] && echo "  ok injected entries: --win / --pie / --agnos / --strict-pin beat an inherited =0, --win drops CYRIUS_MACHO=1, and --win / --dce / bare metal hold past 8 KiB of environment (the injected entry is FIRST, the inherited same-name one dropped)"
 
 # ── refusals ────────────────────────────────────────────────────────────────────────────
 x=$FAIL

@@ -2,6 +2,71 @@
 # Core operations
 # ================================================================
 
+# 6.6.20 — A FAILED FORK IS A NAMED FAILURE, AND A WAIT IS DECODED ONLY WHEN IT ANSWERED.
+# `sys_fork` answers -errno when it fails (a process limit — `ulimit -u`, a cgroup pids.max —
+# or memory), and every spawner here went straight on to `sys_waitpid(-errno, ...)`: wait4 on
+# a process GROUP, which fails and writes nothing, followed by a decode of a status slot that
+# nothing wrote (locals are not zeroed). The stack decided the verdict. In compile() it read as
+# "exited 0", so `cyrius build` under `ulimit -u 1` printed `OK (0 bytes)`, exited 0 and renamed
+# its empty write-probe over a working binary; `cyrius fmt --check` returned 184. The same
+# unwritten slot is decoded when the wait itself fails (an inherited SIGCHLD=SIG_IGN makes the
+# kernel reap the child and wait4 answer ECHILD), so both go through here now. CHANGELOG [6.6.20]
+
+# "error: could not start <what>: fork failed (error N)". Answers 0.
+fn _cbt_fork_failed(what, pid): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "could not start ");
+    str_builder_add_cstr(sb, what);
+    str_builder_add_cstr(sb, ": fork failed (error ");
+    str_builder_add_int(sb, 0 - pid);
+    str_builder_add_cstr(sb, ")");
+    # EAGAIN is 11 on Linux and 35 on Darwin; neither is a fork errno on the other.
+    if (pid == 0 - 11 || pid == 0 - 35) {
+        str_builder_add_cstr(sb, " — the process limit is reached (ulimit -u, cgroup pids.max)");
+    }
+    _err(str_data(str_builder_build(sb)));
+    return 0;
+}
+
+# Reap the forked child `pid` and answer its raw wait status, or -1 after naming why there is
+# none: the slot is zeroed first, an EINTR is retried, and the status is read only when wait4
+# answered `pid` itself.
+fn _cbt_wait_status(pid, what): i64 {
+    var st[8];
+    store64(&st, 0);
+    var w = sys_waitpid(pid, &st, 0);
+    while (w == 0 - 4) { w = sys_waitpid(pid, &st, 0); }
+    if (w == pid) { return load32(&st); }
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "could not read the exit status of ");
+    str_builder_add_cstr(sb, what);
+    str_builder_add_cstr(sb, ": wait failed (error ");
+    str_builder_add_int(sb, 0 - w);
+    str_builder_add_cstr(sb, ")");
+    # ECHILD is 10 on Linux and Darwin alike.
+    if (w == 0 - 10) { str_builder_add_cstr(sb, " — is SIGCHLD ignored in this environment?"); }
+    _err(str_data(str_builder_build(sb)));
+    return 0 - 1;
+}
+
+# Make the CLI's children waitable: SIGCHLD back to SIG_DFL, once, at start-up (main).
+# An ignored SIGCHLD is INHERITED across execve, and under it the kernel reaps every child
+# itself, so wait4 answers ECHILD and no exit status exists: `bash -c "trap '' CHLD; exec
+# cyrius build ..."` could not judge any compile. Before 6.6.20 the stack decided instead
+# (`OK (0 bytes)`, exit 0, an empty file renamed over a working binary). Resetting here makes
+# every verb work in such an environment, and every child the CLI spawns inherits the default
+# rather than the ignore; `_cbt_wait_status` stays as the backstop, refusing by name a status
+# it cannot read. No signals on Windows, so nothing to reset there. CHANGELOG [6.6.20]
+fn _cbt_children_waitable(): i64 {
+    #ifdef CYRIUS_TARGET_LINUX
+    signal_default(SIGCHLD);
+    #endif
+    #ifdef CYRIUS_TARGET_MACOS
+    signal_default(SIGCHLD);
+    #endif
+    return 0;
+}
+
 # v6.1.12: `cyrius build --target=js <source.tsx> <output.js>` — surface cycc's
 # `--emit-js` (v6.1.11 TS/TSX → browser-JS emitter) through the CLI. Distinct
 # from the native compile path: cycc reads the source as a PATH arg and writes
@@ -42,6 +107,7 @@ fn _emit_js(source, output): i64 {
     var tmp_out = str_data(str_builder_build(tmp_out_sb));
     sys_unlink(tmp_out);
     var pid = sys_fork();
+    if (pid < 0) { _cbt_fork_failed("the compiler (--emit-js)", pid); return 1; }   # 6.6.20
     if (pid == 0) {
         var ofd = sys_open(tmp_out, O_WRONLY | O_CREAT | O_TRUNC, 0x1ED);
         if (ofd < 0) { sys_exit(1); }
@@ -57,10 +123,8 @@ fn _emit_js(source, output): i64 {
         sys_execve(cc, &argv, _envp);
         sys_exit(127);
     }
-    var status_buf[1];
-    sys_waitpid(pid, &status_buf, 0);
-    var status = load32(&status_buf);
-    if (WIFEXITED(status) == 1) {
+    var status = _cbt_wait_status(pid, "the compiler (--emit-js)");   # 6.6.20
+    if (status >= 0 && WIFEXITED(status) == 1) {
         if (WEXITSTATUS(status) == 0) {
             sys_unlink(output);
             # v6.6.6 (bite 24a) — `file_rename`, CHECKED. Was a raw `syscall(82, …)` with
@@ -116,6 +180,7 @@ fn _ensure_cc_cx(): i64 {
     return 1;
     #endif
     var pid = sys_fork();
+    if (pid < 0) { _cbt_fork_failed("the cx compiler build (cycc_cx)", pid); return 1; }   # 6.6.20
     if (pid == 0) {
         var sfd = sys_open("src/main_cx.cyr", O_RDONLY, 0);
         if (sfd < 0) { sys_exit(1); }
@@ -131,10 +196,8 @@ fn _ensure_cc_cx(): i64 {
         sys_execve(cc, &argv, _envp);
         sys_exit(127);
     }
-    var status_buf[1];
-    sys_waitpid(pid, &status_buf, 0);
-    var status = load32(&status_buf);
-    if (WIFEXITED(status) == 1) {
+    var status = _cbt_wait_status(pid, "the cx compiler build (cycc_cx)");   # 6.6.20
+    if (status >= 0 && WIFEXITED(status) == 1) {
         if (WEXITSTATUS(status) == 0) {
             sys_chmod(out, 0x1ED);
             _cc_cx = out;
@@ -171,6 +234,7 @@ fn _emit_cx(source, output): i64 {
     return 1;
     #endif
     var pid = sys_fork();
+    if (pid < 0) { _cbt_fork_failed("the cx compiler (cycc_cx)", pid); return 1; }   # 6.6.20
     if (pid == 0) {
         var sfd = sys_open(source, O_RDONLY, 0);
         if (sfd < 0) { sys_exit(1); }
@@ -186,10 +250,8 @@ fn _emit_cx(source, output): i64 {
         sys_execve(cc, &argv, _envp);
         sys_exit(127);
     }
-    var status_buf[1];
-    sys_waitpid(pid, &status_buf, 0);
-    var status = load32(&status_buf);
-    if (WIFEXITED(status) == 1) {
+    var status = _cbt_wait_status(pid, "the cx compiler (cycc_cx)");   # 6.6.20
+    if (status >= 0 && WIFEXITED(status) == 1) {
         if (WEXITSTATUS(status) == 0) {
             sys_unlink(output);
             # v6.6.6 (bite 24a) — `file_rename`, CHECKED; same defect and same fix as
@@ -234,6 +296,7 @@ fn _ensure_cxvm(): i64 {
     return 1;
     #endif
     var pid = sys_fork();
+    if (pid < 0) { _cbt_fork_failed("the cxvm build", pid); return 1; }   # 6.6.20
     if (pid == 0) {
         var sfd = sys_open("programs/cxvm.cyr", O_RDONLY, 0);
         if (sfd < 0) { sys_exit(1); }
@@ -249,10 +312,8 @@ fn _ensure_cxvm(): i64 {
         sys_execve(cc, &argv, _envp);
         sys_exit(127);
     }
-    var status_buf[1];
-    sys_waitpid(pid, &status_buf, 0);
-    var status = load32(&status_buf);
-    if (WIFEXITED(status) == 1) {
+    var status = _cbt_wait_status(pid, "the cxvm build");   # 6.6.20
+    if (status >= 0 && WIFEXITED(status) == 1) {
         if (WEXITSTATUS(status) == 0) {
             sys_chmod(out, 0x1ED);
             _cxvm = out;
@@ -296,6 +357,7 @@ fn run_cx(cyx_path): i64 {
     return _win_run_cx(vm, cyx_path);
     #endif
     var pid = sys_fork();
+    if (pid < 0) { _cbt_fork_failed(vm, pid); return 127; }   # 6.6.20 — as run_binary_timed
     if (pid == 0) {
         var fd = sys_open(cyx_path, O_RDONLY, 0);
         if (fd < 0) { sys_exit(1); }
@@ -310,9 +372,8 @@ fn run_cx(cyx_path): i64 {
         sys_execve(vm, av, _envp);
         sys_exit(127);
     }
-    var status_buf[1];
-    sys_waitpid(pid, &status_buf, 0);
-    var status = load32(&status_buf);
+    var status = _cbt_wait_status(pid, vm);   # 6.6.20
+    if (status < 0) { return 1; }
     if (WIFEXITED(status) == 1) { return WEXITSTATUS(status); }
     if (WIFSIGNALED(status) == 1) { return 128 + WTERMSIG(status); }
     return 1;
@@ -1129,7 +1190,8 @@ var _cc_stderr_to = 0;
 # the compiler and the target per compile. When `_cc_override` is non-zero compile() runs that
 # binary instead of current_cc(); when `_cc_target_env` is non-zero the child's environment is
 # ours MINUS every target selector (CYRIUS_TARGET_WIN/EFI/AGNOS, CYRIUS_MACHO, CYRIUS_MACHO_ARM),
-# PLUS `_cc_target_env` itself unless it is "". Stripping is the point: B09 made every child
+# with `_cc_target_env` itself FIRST unless it is "" (`_cc_child_envp`; 6.6.20 — it was appended,
+# so past 8 KiB of environment every target verified as Linux). Stripping is the point: B09 made every child
 # inherit the whole environment, so a CYRIUS_TARGET_WIN=1 left in a shell would otherwise turn
 # the "x86_64-linux" compile into a PE one. Both are opt-in and reset by the caller. POSIX
 # arm only — the verify refuses to run on any other host. CHANGELOG [6.6.11]
@@ -1153,21 +1215,119 @@ fn _cc_env_is_target(e): i64 {
     return 0;
 }
 
-# `_envp` without its target selectors, plus `tv` when it is not "". A fresh NULL-terminated array.
-fn _cc_env_retarget(tv): i64 {
+# 6.6.20 — the flag-driven entries compile() injects into the compiler child's environment,
+# pushed onto `inj` in order; answers 1 when one of them selects the TARGET (--win, --agnos, a
+# bare-metal --target), so the inherited target selectors must go (`_cc_child_envp`).
+#   --strict-pin  CYRIUS_STRICT_PIN=1: cycc's pin-drift check fails instead of warning (v5.11.58,
+#                 the CI gating path).
+#   --agnos       CYRIUS_TARGET_AGNOS=1 (v6.0.49);  --win  CYRIUS_TARGET_WIN=1, a PE32+ (v6.0.52).
+#                 Distinct emit targets — do not combine.
+#   --poison      CYRIUS_POISON=1 (v6.5.29, fuzz);  --pie  CYRIUS_PIE=1 (v6.6.5).
+#   dce           CYRIUS_DCE=1 from `[build] dce` / `--dce` (6.6.17) — only when the resolved value
+#                 did not come FROM the environment, which the child then inherits as it is.
+#   bare metal    CYRIUS_KERNEL=1 + CYRIUS_ELF64_KERNEL=1, and CYRIUS_KERNEL_BASE from
+#                 `[sections] base` (v6.3.3 #5).
+fn _cc_child_inject(inj): i64 {
+    var tgt = 0;
+    if (_cfg_dce_inject == 1) { vec_push(inj, "CYRIUS_DCE=1"); }
+    if (_strict_pin == 1) { vec_push(inj, "CYRIUS_STRICT_PIN=1"); }
+    if (_agnos_target == 1) { vec_push(inj, "CYRIUS_TARGET_AGNOS=1"); tgt = 1; }
+    if (_win_target == 1) { vec_push(inj, "CYRIUS_TARGET_WIN=1"); tgt = 1; }
+    if (_poison_mode == 1) { vec_push(inj, "CYRIUS_POISON=1"); }
+    if (_pie_target == 1) { vec_push(inj, "CYRIUS_PIE=1"); }
+    if (_baremetal_target == 1) {
+        vec_push(inj, "CYRIUS_KERNEL=1");
+        vec_push(inj, "CYRIUS_ELF64_KERNEL=1");
+        if (_section_base_env_ptr != 0) { vec_push(inj, _section_base_env_ptr); }
+        tgt = 1;
+    }
+    return tgt;
+}
+
+# 6.6.20 — THE compiler child's environment, for every POSIX compile: the injected entries
+# (`inj`, a vec of "NAME=value" cstrs) FIRST, then each inherited entry that no injected entry
+# names and — when `strip_tgt` is 1 — that is not a target selector. Answers `_envp` itself
+# when there is nothing to inject or strip; otherwise a fresh NULL-terminated array.
+# ⚠ FIRST is the fix, not a nicety. cycc takes the FIRST entry of a name, and its Linux
+# `_read_env` sees only the first 8191 bytes of the environment, so the old APPENDED entries
+# lost twice: an inherited CYRIUS_TARGET_WIN=0 / CYRIUS_PIE=0 / CYRIUS_STRICT_PIN=0 beat
+# `--win` / `--pie` / `--strict-pin`, and past 8 KiB of environment every injected entry was
+# invisible — `cyrius build --win` wrote an ELF named .exe and `--strict-pin` only warned,
+# rc 0 both. Dropping same-NAME inherited entries is hygiene on top (6.6.17 did it for
+# CYRIUS_DCE alone), and stripping the selectors stops an inherited CYRIUS_MACHO=1 turning
+# `--win` into a Mach-O. Two builders (this block and the distlib verify's retarget, which
+# also appended) are now this one. CHANGELOG [6.6.20]
+fn _cc_child_envp(inj, strip_tgt): i64 {
+    var ni = vec_len(inj);
+    if (ni == 0 && strip_tgt == 0) { return _envp; }
     var n = 0;
     while (load64(_envp + n * 8) != 0) { n = n + 1; }
-    var out = alloc((n + 2) * 8);
+    var out = alloc((ni + n + 1) * 8);
     var o = 0;
+    while (o < ni) { store64(out + o * 8, vec_get(inj, o)); o = o + 1; }
     var i = 0;
     while (i < n) {
         var e = load64(_envp + i * 8);
-        if (_cc_env_is_target(e) == 0) { store64(out + o * 8, e); o = o + 1; }
+        if (_cc_env_keep(e, inj, strip_tgt) == 1) { store64(out + o * 8, e); o = o + 1; }
         i = i + 1;
     }
-    if (strlen(tv) > 0) { store64(out + o * 8, tv); o = o + 1; }
     store64(out + o * 8, 0);
     return out;
+}
+
+# 1 when the inherited entry `e` survives into the compiler child (see `_cc_child_envp`).
+fn _cc_env_keep(e, inj, strip_tgt): i64 {
+    if (strip_tgt == 1 && _cc_env_is_target(e) == 1) { return 0; }
+    var i = 0;
+    while (i < vec_len(inj)) {
+        if (_cc_env_same_name(e, vec_get(inj, i)) == 1) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+
+# 1 when env entries `e` and `f` set the same NAME: `f`'s bytes up to and including its '='
+# begin `e`. An `f` with no '=' names nothing.
+fn _cc_env_same_name(e, f): i64 {
+    var k = 0;
+    while (load8(f + k) != 0 && load8(f + k) != 61) { k = k + 1; }
+    if (load8(f + k) != 61) { return 0; }
+    if (strlen(e) <= k) { return 0; }
+    return memeq(e, f, k + 1);
+}
+
+# 6.6.20 — THE compiler flags compile() passes, in order, as a vec of cstr. ONE list for both
+# spawn arms: the POSIX argv is built from it (`_run_argv`, sized from it) and the PE command
+# line joins it (`_win_compile_spawn_err`). There were two hand-kept copies, and the POSIX one
+# sat in a fixed `var argv[32]` — four slots — that v6.5.19's `--syntax-only` gave a fifth
+# writer (cc + three flags + NUL), unreachable only because no verb sets all three today.
+#   --strict       `cyrius build --strict`; accepted, no effect since 6.3.2 (back-compat).
+#   --allow-undef  the distlib bundle self-check and lint's pre-pass (`_cc_allow_undef`).
+#   --syntax-only  lint's pre-pass only: "does this PARSE?" without resolution, so a missing
+#                  include cannot hide a syntax error. The output is garbage under it — the
+#                  only caller compiles to a temp and unlinks it. See `_syntax_only` in src/.
+# CHANGELOG [6.6.20]
+fn _cc_flags(): i64 {
+    var v = vec_new();
+    if (_strict == 1) { vec_push(v, "--strict"); }
+    if (_cc_allow_undef == 1) { vec_push(v, "--allow-undef"); }
+    if (_cc_syntax_only == 1) { vec_push(v, "--syntax-only"); }
+    return v;
+}
+
+#ifdef CYRIUS_TARGET_WIN
+# `_cc_flags` as " --a --b" for cycc.exe's command line ("" when there are none) — the PE
+# arm's view of the one list the POSIX argv is built from. CHANGELOG [6.6.20]
+fn _cc_flags_cmdline(): i64 {
+    var fsb = str_builder_new();
+    var flags = _cc_flags();
+    var i = 0;
+    while (i < vec_len(flags)) {
+        str_builder_add_cstr(fsb, " ");
+        str_builder_add_cstr(fsb, vec_get(flags, i));
+        i = i + 1;
+    }
+    return str_data(str_builder_build(fsb));
 }
 
 # The Windows twin of the child-side dup2 below. lib/process_win.cyr's
@@ -1175,7 +1335,6 @@ fn _cc_env_retarget(tv): i64 {
 # the console; this adds the `2> "err"` leg. Kept HERE rather than in lib/ so the
 # capture lands with its only caller — fold it back into `_win_compile_spawn` as a
 # 4th parameter when that file is next touched. CHANGELOG [6.5.19].
-#ifdef CYRIUS_TARGET_WIN
 fn _win_compile_spawn_err(cc, source, output, errfile): i64 {
     # 6.6.17: `errfile` may be 0 (stderr stays on the console), and the compiler flags the POSIX
     # arm puts in argv go on the command line, in the same order — `--strict`, `--allow-undef`
@@ -1183,11 +1342,7 @@ fn _win_compile_spawn_err(cc, source, output, errfile): i64 {
     # cycc_win reads its flags from GetCommandLineW (src/main_win.cyr). Before this NONE of them
     # crossed this arm, so on cyrius.exe lint's pre-pass and distlib's self-check compiled as
     # ordinary builds. This is the one Windows compile spawn in compile().
-    var fsb = str_builder_new();
-    if (_strict == 1) { str_builder_add_cstr(fsb, " --strict"); }
-    if (_cc_allow_undef == 1) { str_builder_add_cstr(fsb, " --allow-undef"); }
-    if (_cc_syntax_only == 1) { str_builder_add_cstr(fsb, " --syntax-only"); }
-    var fl = str_data(str_builder_build(fsb));
+    var fl = _cc_flags_cmdline();
     var elen = 0;
     if (errfile != 0) { elen = strlen(errfile); }
     # v6.6.6 — sized from the paths, not a fixed 16 KiB; `_w_cmdbuf` refuses by
@@ -1342,8 +1497,8 @@ fn compile(source, output): i64 {
     # and the pre-fork output-probe bail-out is a fourth that was leaking: it returns
     # above the fork, so the post-waitpid unlink is unreachable from it. When adding an
     # early return anywhere after this point, add the unlink with it — the sites are
-    # the `#ifdef CYRIUS_TARGET_WIN` block, the `probe_fd < 0` block, and the one above
-    # the success/failure split.
+    # the `#ifdef CYRIUS_TARGET_WIN` block, the `probe_fd < 0` block, the failed-fork
+    # block (6.6.20), and the one above the success/failure split.
     # (The directory itself is left to `_cbt_tmpdir_cleanup` at exit — one place, all
     # targets, PE included since 6.6.6's RemoveDirectoryW reroute. An empty 0700
     # directory costs an inode; the 2.8 GB was the files.)
@@ -1429,6 +1584,17 @@ fn compile(source, output): i64 {
     if (_baremetal_target == 1) { _section_base_env_ptr = _sections_base_env(); }
     var own_err = _cc_own_err_begin();
     var pid = sys_fork();
+    if (pid < 0) {
+        # 6.6.20 — no child, so no status: say so, and leave nothing behind — the stderr capture
+        # (resetting `_cc_stderr_to` for the next compile in this process), the preprocessed
+        # source, and the write-probe's EMPTY `tmp_out`, which the old fall-through renamed over
+        # `output`. `_cc_last_exit` stays -1. See `_cbt_fork_failed`. CHANGELOG [6.6.20]
+        _cbt_fork_failed("the compiler", pid);
+        _cc_own_err_end(own_err, 1);
+        if (tmp_src != 0) { sys_unlink(tmp_src); }
+        sys_unlink(tmp_out);
+        return 1;
+    }
     if (pid == 0) {
         var sfd = sys_open(actual_source, O_RDONLY, 0);
         if (sfd < 0) { sys_exit(1); }
@@ -1448,109 +1614,37 @@ fn compile(source, output): i64 {
             if (efd >= 0) { sys_dup2(efd, 2); sys_close(efd); }
         }
 
-        # v5.11.63: pass --strict in argv when the wrapper flag was
-        # set. cycc/cycc_aarch64 read /proc/self/cmdline at startup
-        # (since v5.4.19 / v5.11.63 respectively) — a single
-        # `--strict` token anywhere past argv[0] sets _strict_mode,
-        # which fixup.cyr's strict-exit reads after the patch loop.
-        # argv[32] = 4 × 8 B (cc + optional "--strict" + optional
-        # "--allow-undef" + NUL). v6.5.14 widened this from 24 for the
-        # distlib self-check; keep it in step with the flags below.
-        var argv[32];
-        store64(&argv, cc);
-        var ax = 1;
-        if (_strict == 1) {
-            store64(&argv + ax * 8, "--strict");
-            ax = ax + 1;
-        }
-        if (_cc_allow_undef == 1) {
-            store64(&argv + ax * 8, "--allow-undef");
-            ax = ax + 1;
-        }
-        # v6.5.19: `cyrius lint`'s pre-pass only. Makes cycc answer "does this PARSE?"
-        # without resolution, so a missing include cannot hide the file's syntax
-        # errors. THE OUTPUT IS GARBAGE UNDER THIS FLAG — the only caller compiles to
-        # a temp and unlinks it. See _cc_syntax_only / _syntax_only.
-        if (_cc_syntax_only == 1) {
-            store64(&argv + ax * 8, "--syntax-only");
-            ax = ax + 1;
-        }
-        store64(&argv + ax * 8, 0);
-        # 6.6.11: a per-target compile (the distlib verify) gets its target and nothing else's.
+        # [cc, flags..., NUL], sized from THE flag list (`_cc_flags`, which the PE arm joins
+        # into its command line). This was a fixed `var argv[32]` — four slots — with five
+        # writers once v6.5.19 added `--syntax-only`. CHANGELOG [6.6.20]
+        var cc_argv = _run_argv(cc, _cc_flags(), 0);
+        # The child's environment: what the CLI injects FIRST, then the inherited entries it
+        # does not override (`_cc_child_envp`). 6.6.11: a per-target compile (the distlib
+        # verify) gets its target and nothing else's.
+        var inj = vec_new();
+        var strip = 1;
         if (_cc_target_env != 0) {
-            sys_execve(cc, &argv, _cc_env_retarget(_cc_target_env));
-            sys_exit(127);
-        }
-        # v5.11.58: when --strict-pin is set, augment envp with
-        # CYRIUS_STRICT_PIN=1 so cycc's pin-drift check (added
-        # v5.11.57) exits non-zero on mismatch. CI gating path.
-        # v6.0.49: clone _envp + append per-flag vars (--strict-pin →
-        # CYRIUS_STRICT_PIN=1; --agnos → CYRIUS_TARGET_AGNOS=1). v6.0.52: --win →
-        # CYRIUS_TARGET_WIN=1 (cross-emit a Windows PE32+). Any combination can be
-        # set; --win and --agnos are distinct emit targets (don't combine).
-        var sp_extra = 0;
-        if (_strict_pin == 1) { sp_extra = sp_extra + 1; }
-        if (_agnos_target == 1) { sp_extra = sp_extra + 1; }
-        if (_win_target == 1) { sp_extra = sp_extra + 1; }
-        if (_poison_mode == 1) { sp_extra = sp_extra + 1; }
-        # v6.6.5 — `--pie` is real now. The guide's PIE section (6.6.4 line 2724) had
-        # documented `cyrius build --pie src dst` for months while the build loop had no --pie arm,
-        # so the flag hit "unknown flag" and the documented recipe could never have run.
-        # cycc reads PIE from its own cmdline or from CYRIUS_PIE=1; the env is the form
-        # available here.
-        if (_pie_target == 1) { sp_extra = sp_extra + 1; }
-        if (_cfg_dce_inject == 1) { sp_extra = sp_extra + 1; }   # 6.6.17: [build] dce / --dce
-        if (_baremetal_target == 1) { sp_extra = sp_extra + 2; }   # CYRIUS_KERNEL + CYRIUS_ELF64_KERNEL
-        if (_baremetal_target == 1 && _section_base_env_ptr != 0) { sp_extra = sp_extra + 1; }   # v6.3.3 #5 CYRIUS_KERNEL_BASE
-        if (sp_extra > 0) {
-            var sp_count = 0;
-            while (load64(_envp + sp_count * 8) != 0) { sp_count = sp_count + 1; }
-            var sp_envp = alloc((sp_count + sp_extra + 1) * 8);
-            # 6.6.17: an injected CYRIUS_DCE=1 REPLACES an inherited CYRIUS_DCE (an argument beats
-            # CYRIUS_DCE=0 in the environment, and cycc reads the first entry).
-            var sp_ej = 0;
-            var sp_ni = 0;
-            while (sp_ej < sp_count) {
-                var sp_e = load64(_envp + sp_ej * 8);
-                if (_cfg_dce_inject == 0 || _cc_pfx(sp_e, "CYRIUS_DCE=") == 0) {
-                    store64(sp_envp + sp_ni * 8, sp_e);
-                    sp_ni = sp_ni + 1;
-                }
-                sp_ej = sp_ej + 1;
-            }
-            if (_cfg_dce_inject == 1) { store64(sp_envp + sp_ni * 8, "CYRIUS_DCE=1"); sp_ni = sp_ni + 1; }
-            if (_strict_pin == 1) { store64(sp_envp + sp_ni * 8, "CYRIUS_STRICT_PIN=1"); sp_ni = sp_ni + 1; }
-            if (_agnos_target == 1) { store64(sp_envp + sp_ni * 8, "CYRIUS_TARGET_AGNOS=1"); sp_ni = sp_ni + 1; }
-            if (_win_target == 1) { store64(sp_envp + sp_ni * 8, "CYRIUS_TARGET_WIN=1"); sp_ni = sp_ni + 1; }
-            if (_poison_mode == 1) { store64(sp_envp + sp_ni * 8, "CYRIUS_POISON=1"); sp_ni = sp_ni + 1; }
-            if (_pie_target == 1) { store64(sp_envp + sp_ni * 8, "CYRIUS_PIE=1"); sp_ni = sp_ni + 1; }
-            if (_baremetal_target == 1) {
-                store64(sp_envp + sp_ni * 8, "CYRIUS_KERNEL=1"); sp_ni = sp_ni + 1;
-                store64(sp_envp + sp_ni * 8, "CYRIUS_ELF64_KERNEL=1"); sp_ni = sp_ni + 1;
-                if (_section_base_env_ptr != 0) { store64(sp_envp + sp_ni * 8, _section_base_env_ptr); sp_ni = sp_ni + 1; }   # v6.3.3 #5
-            }
-            store64(sp_envp + sp_ni * 8, 0);
-            sys_execve(cc, &argv, sp_envp);
+            if (strlen(_cc_target_env) > 0) { vec_push(inj, _cc_target_env); }
         } else {
-            sys_execve(cc, &argv, _envp);
+            strip = _cc_child_inject(inj);
         }
+        sys_execve(cc, cc_argv, _cc_child_envp(inj, strip));
         sys_exit(127);
     }
-    var status_buf[1];
-    sys_waitpid(pid, &status_buf, 0);
-    var own_st = load32(&status_buf);
+    # 6.6.20: -1 when the wait could not be read (named there) — then this is a failure, and
+    # `_cc_last_exit` stays -1, whatever the child may have written.
+    var status = _cbt_wait_status(pid, "the compiler");
     var own_rc = 1;
-    if (WIFEXITED(own_st) == 1) { own_rc = WEXITSTATUS(own_st); }
+    if (status >= 0 && WIFEXITED(status) == 1) { own_rc = WEXITSTATUS(status); }
     _cc_own_err_end(own_err, own_rc);
     # The compiler child has been reaped, so it is done with the preprocessed source.
     # Unlink here, ABOVE the success/failure split, so neither return path can skip it.
     if (tmp_src != 0) { sys_unlink(tmp_src); }
-    var status = load32(&status_buf);
     # v6.6.6 (bite 24 review) — record the child's REAL status; see `_cc_last_exit`.
     # Left at -1 when the child was signalled, because then there is no exit status to
     # report and a caller must not invent one.
-    if (WIFEXITED(status) == 1) { _cc_last_exit = WEXITSTATUS(status); }
-    if (WIFEXITED(status) == 1) {
+    if (status >= 0 && WIFEXITED(status) == 1) { _cc_last_exit = WEXITSTATUS(status); }
+    if (status >= 0 && WIFEXITED(status) == 1) {
         if (WEXITSTATUS(status) == 0) {
             # Atomic rename: tmp_out → output. Old `output` (if any)
             # is replaced atomically; on rename failure, neither is
@@ -1587,7 +1681,7 @@ fn compile(source, output): i64 {
     # Compile failed: unlink the partial tmp output. The original
     # `output` (if any) is preserved untouched.
     sys_unlink(tmp_out);
-    if (_verbose == 1) {
+    if (_verbose == 1 && status >= 0) {
         sys_write(STDERR_FD, "[verbose] compile failed (exit ", 31);
         var ebuf[24];
         var elen = fmt_int_buf(WEXITSTATUS(status), &ebuf);
@@ -1608,6 +1702,7 @@ fn sys_system(cmd): i64 {
     #endif
     var argv[40];   # N BYTES per CLAUDE.md buffer contract: 4 ptrs need 32 B
     var pid = sys_fork();
+    if (pid < 0) { _cbt_fork_failed("/bin/sh", pid); return 127; }   # 6.6.20
     if (pid == 0) {
         store64(&argv, "/bin/sh");
         store64(&argv + 8, "-c");
@@ -1616,10 +1711,8 @@ fn sys_system(cmd): i64 {
         sys_execve("/bin/sh", &argv, _envp);
         sys_exit(127);
     }
-    var status_buf[1];
-    sys_waitpid(pid, &status_buf, 0);
-    var status = load32(&status_buf);
-    if (WIFEXITED(status) == 1) { return WEXITSTATUS(status); }
+    var status = _cbt_wait_status(pid, "/bin/sh");   # 6.6.20
+    if (status >= 0 && WIFEXITED(status) == 1) { return WEXITSTATUS(status); }
     return 1;
 }
 
@@ -1840,8 +1933,8 @@ fn _run_wait_timed(pid, timeout_ms): i64 {
     #ifndef CYRIUS_TARGET_WIN
     var status_buf[1];
     if (timeout_ms <= 0) {
-        sys_waitpid(pid, &status_buf, 0);
-        var status0 = load32(&status_buf);
+        var status0 = _cbt_wait_status(pid, "the program");   # 6.6.20: -1 = no status to read
+        if (status0 < 0) { return 1; }
         if (WIFEXITED(status0) == 1) { return WEXITSTATUS(status0); }
         if (WIFSIGNALED(status0) == 1) { return 128 + WTERMSIG(status0); }
         return 1;
@@ -2479,6 +2572,7 @@ fn run_tool_vec(tool, args): i64 {
     #endif
     #ifndef CYRIUS_TARGET_WIN
     var pid = sys_fork();
+    if (pid < 0) { _cbt_fork_failed(tool, pid); return 127; }   # 6.6.20
     if (pid == 0) {
         var n = vec_len(args);
         var av = alloc((n + 2) * 8);
@@ -2492,9 +2586,8 @@ fn run_tool_vec(tool, args): i64 {
         sys_execve(tool, av, _envp);
         sys_exit(127);
     }
-    var status_buf[1];
-    sys_waitpid(pid, &status_buf, 0);
-    var status = load32(&status_buf);
+    var status = _cbt_wait_status(pid, tool);   # 6.6.20
+    if (status < 0) { return 1; }
     if (WIFEXITED(status) == 1) { return WEXITSTATUS(status); }
     if (WIFSIGNALED(status) == 1) { return 128 + WTERMSIG(status); }
     return 1;
@@ -2572,6 +2665,7 @@ fn _co_run_sh(cmd): i64 {
     #endif
     var envp = _envp;
     var pid = sys_fork();
+    if (pid < 0) { _cbt_fork_failed("/bin/sh", pid); return 127; }   # 6.6.20
     if (pid == 0) {
         var argv[32];                         # 4 char* slots
         store64(&argv, "/bin/sh");
@@ -2581,10 +2675,8 @@ fn _co_run_sh(cmd): i64 {
         sys_execve("/bin/sh", &argv, envp);
         sys_exit(127);
     }
-    var st[8];
-    sys_waitpid(pid, &st, 0);
-    var status = load32(&st);
-    if (WIFEXITED(status) == 1) { return WEXITSTATUS(status); }
+    var status = _cbt_wait_status(pid, "/bin/sh");   # 6.6.20
+    if (status >= 0 && WIFEXITED(status) == 1) { return WEXITSTATUS(status); }
     return 1;
 }
 
