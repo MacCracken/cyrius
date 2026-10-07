@@ -46,5 +46,23 @@ if grep -q 'syscall 11 with' "$D/mu.err"; then
     bad "a literal syscall(11, p, len) still warns as unrouted on PE:"; head -c 300 "$D/mu.err"; echo
 fi
 
+# 6.6.20: the PE COMPILER's own build warns only where a call is really unrouted. Built the way
+# scripts/build-windows-tarball.sh makes cycc.exe — src/main_win.cyr through its cross-compiler;
+# `CYRIUS_TARGET_WIN=1 build/cycc` never printed these two. runtime.cyr's CYRIUS_SYMS openat shim
+# is the `SYS_OPEN != 2` arm, dead in a PE compiler (main_win.cyr: SYS_OPEN = 2), and is compiled
+# out under CYRIUS_TARGET_WIN; lex_pp.cyr's munmap of its 24 MB preprocessor buffer is routed
+# (VirtualFree) and now frees it. Before 6.6.20 both warned in every cycc.exe build.
+( cd "$ROOT" && "$CC" < src/main_win.cyr > "$D/ccw" 2> /dev/null ) && chmod +x "$D/ccw" \
+    || bad "the PE cross-compiler (src/main_win.cyr) did not build"
+if [ -x "$D/ccw" ]; then
+    ( cd "$ROOT" && "$D/ccw" < src/main_win.cyr > "$D/cycc.exe" 2> "$D/self.err" ) || bad "cycc.exe did not build"
+    [ -s "$D/cycc.exe" ] || bad "the cycc.exe build produced no binary"
+    for f in runtime.cyr lex_pp.cyr; do
+        if grep -q "^warning:src/[a-z/]*/$f:[0-9]*:[0-9]*: syscall [0-9]* with [0-9]* argument(s) is not routed" "$D/self.err"; then
+            bad "the cycc.exe build still warns an unrouted syscall in $f:"; grep "/$f:" "$D/self.err" | head -c 300; echo
+        fi
+    done
+fi
+
 [ "$fail" = 0 ] || exit 1
-echo "PASS: PE unrouted-syscall warning names n, its arity and <file>:<line>:<col>; the routed list is one note (6.6.10); a literal munmap is routed, unwarned (6.6.20)"
+echo "PASS: PE unrouted-syscall warning names n, its arity and <file>:<line>:<col>; the routed list is one note (6.6.10); a literal munmap is routed, unwarned, and the cycc.exe build warns at neither runtime.cyr nor lex_pp.cyr (6.6.20)"

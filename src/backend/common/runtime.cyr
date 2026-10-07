@@ -199,7 +199,12 @@ fn _emit_sym_dump(S, base): i64 {
     if (sym_path == 0) { return 0; }
     var symfd = 0;
     if (SYS_OPEN == 2) { symfd = syscall(SYS_OPEN, sym_path, 0x241, 0x1A4); }
+    # The openat shim is dead in a PE compiler (main_win.cyr declares SYS_OPEN = 2) and its
+    # 4-argument open is not a PE route, so it drew a "not routed" warning in every cycc.exe
+    # build — noise that hides a real unrouted call. Compiled out there. CHANGELOG [6.6.20]
+#ifndef CYRIUS_TARGET_WIN
     else { symfd = syscall(SYS_OPEN, 0 - 100, sym_path, 0x241, 0x1A4); }
+#endif
     if (symfd < 0) { return 0; }
     var sym_fnc = GFNC(S);
     var sfi = 0;
