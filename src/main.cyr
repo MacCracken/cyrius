@@ -523,7 +523,8 @@
 #                                        writers (RECFIX / ECALLFIX / the closure fixup in
 #                                        backend/cx/emit.cyr, main_cx.cyr's FIXUP) hardcode S + 0x150B000
 #                                        and refuse fc >= 1048576; main_cx.cyr points the shared
-#                                        _fixup_base at the same table. It overlaps fixup_tbl and
+#                                        _fixup_base at the same table and leaves _fixup_cap 0, so
+#                                        GFCNT never grows it elsewhere (6.6.20). It overlaps fixup_tbl and
 #                                        ir_live_in/out, which the cx driver never touches. Ends 0x250B000.
 #
 #   (fixup_tbl ends 0x207B000. Two pseudo-entries stood here, "brk-fixup-end" and

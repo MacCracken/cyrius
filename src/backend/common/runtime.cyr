@@ -313,8 +313,8 @@ fn _prof_clock_ns(): i64 {
 # error checks that spuriously rejected big programs (the v6.1.38 cap-
 # unification was the last fixed-region patch before this migration).
 # Note: cx/emit.cyr has its own RECFIX (fixed cap 1048576, region
-# 0x150B000) — it never inits _fixup_cap, so the `_fixup_cap != 0`
-# guard in GFCNT leaves the cx path on its original fixed storage.
+# 0x150B000) — main_cx.cyr leaves _fixup_cap at 0, so the `_fixup_cap != 0`
+# guard in GFCNT leaves the cx path on its fixed storage (6.6.20; v6.5.13 had set it).
 fn RECFIX(S, idx): i64 {
     var fc = GFCNT(S);
     var addr = _fixup_base + fc * 16;

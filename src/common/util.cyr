@@ -229,8 +229,10 @@ fn _fixup_grow(S): i64 {
 # one global compare per call; readers (count < cap) never trigger it.
 fn GFCNT(S): i64 {
     var c = L64(S + 0x18FCA8);
-    # _fixup_cap==0 → growable fixup not inited (the cx backend keeps its own
-    # fixed 0x150B000 table; also guards any pre-init call) → skip the grow.
+    # _fixup_cap==0 → no grow: before a driver's init, and on cx for good — its table is the
+    # FIXED (cx only) cx_fixup_tbl in main.cyr's map, whose writers and FIXUP walk hardcode
+    # S + 0x150B000, so main_cx.cyr leaves the cap at 0 and the writers refuse at 1048576.
+    # (v6.5.13 had set it, which let this grow move the shared _fixup_base off that table.)
     if (_fixup_cap != 0 && c >= _fixup_cap) { _fixup_grow(S); }
     return c;
 }

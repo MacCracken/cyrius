@@ -37,6 +37,19 @@ if [ -n "$FORK_MAP" ]; then
     FAILS=$((FAILS + 1))
 fi
 
+# 6.6.20 (review): the cx driver's fixup table is FIXED — cx_fixup_tbl, tagged (cx only) in the
+# map — because its writers and its FIXUP walk hardcode S + 0x150B000. GFCNT (util.cyr) grows
+# the SHARED _fixup_base whenever _fixup_cap is non-zero, so cx code that sets the cap re-arms
+# the split v6.5.13 introduced: the grow moves _fixup_base to an alloc'd copy those writers
+# never see. Only an explicit 0 may be assigned there.
+CX_CAP=$(grep -nE '^[^#]*_fixup_cap[[:space:]]*=[^=]' src/main_cx.cyr src/backend/cx/*.cyr \
+    | grep -vE '_fixup_cap[[:space:]]*=[[:space:]]*0[[:space:]]*;' || true)
+if [ -n "$CX_CAP" ]; then
+    echo "FAIL: heapmap: cx code sets _fixup_cap — GFCNT would grow _fixup_base off cx_fixup_tbl (S + 0x150B000)"
+    echo "$CX_CAP" | sed 's/^/    /'
+    FAILS=$((FAILS + 1))
+fi
+
 # Source files the reference check reads (every src/ module, main.cyr included). The floor
 # keeps a broken find from making the check vacuous: there are 36 compiler modules (6.6.20).
 SRCS=$(find src -name '*.cyr' | sort)
