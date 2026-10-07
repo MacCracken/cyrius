@@ -180,6 +180,89 @@ floor, a re-triage that keeps re-pinning the same item).
 - Follow-ups spawned: <issues / patches>
 -->
 
+### v6.6.x → v6.7.0 closeout — 2026-10-06 (ran 6.6.20)
+
+> ⚠ **DRAFT — written by the docs lane before the merge.** Every `⟨INTEGRATION: …⟩` marker is a figure only
+> the merged tree can give; fill it, then delete this note. The audit figures below are from the closeout
+> audit at `e696746d` (the 6.6.20 slot open), not from the merged tree.
+
+- **How it ran**: one audit of the whole checklist at `e696746d` — 17 passes (heap, dead code, refactor, nine
+  code-review lenses over the minor's diffs, cleanup, security, downstream, vidya, backlog) — produced **141
+  findings** (6 P0 · 9 P1 · 35 P2 · 65 P3 · 26 cosmetic); every one of the **44 P0–P2 bugs** was then
+  re-proven by an independent verifier before any fix started. They were fixed in **28 parallel worktree
+  lanes** (14 `src/`, 14 cbt / lib / gates / docs), merged once, and the gate run once on the merged tree
+  (user, 2026-10-06: "find ways to parallelize as much of the fixes as possible"). The user promoted three
+  backlog items into the release the same day (BACKLOG-01/02/03).
+- **Gates** ⟨INTEGRATION: the merged tree's `scripts/release-gate.sh` — check.sh N of N shell gates produced
+  a result, F failed, S named SKIPs · self-host fixpoint + ARM lockstep (after `cyrius pulsar`) · seed-derive ·
+  cross-OS ecb / ach / cass / pi `SELFHOST_OK` + `LIBTEST_OK` · self_compile N ms · cycc N B (`.text` N B) ·
+  `cycc-native-aarch64` N B⟩. At the slot open: cycc **1,586,184 B** (`.text` 1,405,464) · `cycc-native-aarch64`
+  1,323,400 B · **372** shell gates (376 registered with the 4 `scripts/*-gate.sh`) · **482** `.tcyr` (197
+  `crossos/`) · api-surface 5,827 · self_compile 923 ms (the 6.6.19 gate).
+- **Heap map** (HEAP-01…12): `heapmap.sh` **102 regions, 0 overlaps** — but it parses `src/main.cyr` only;
+  run over the six fork maps the same parser FAILS (the three aarch64 maps 1 overlap each, `main_win` 3,
+  x86 Mach-O and cx parse 0 regions). **v6.6.x added no fixed heap offset** (151 distinct `S + 0x…` literals,
+  the identical set at 6.5.73) and consumed no FREED hole (18; ~15.7 KB free in the scalar band). It found
+  **two silent miscompiles from unbounded writes into fixed regions** — the `#ifdef` nesting stack (HEAP-01)
+  and the 64-entry `use` alias table (HEAP-02) — plus the 17th function-like macro dropped silently
+  (HEAP-03). Dead bands: the 3 MB codebuf band at 0x41A000 on six forks, `ir_edges`, `pub_flags`. Caps under
+  25 % headroom: WPJS 12 % (cycc under IR=3), `jump_src` saturated in one cycc fn, IR nodes at 97 % on a
+  16-fold build. Stale heap facts in vidya and ADR-003 refreshed (HEAP-11). ⟨INTEGRATION: the merged map's
+  region count, and whether the fork-map drift (HEAP-05…10) closed⟩.
+- **Dead code** (DEAD-01…10): floor at the slot open **73 fns / 36,937 B** on x86 (aarch64 cross 149, cx
+  151, PE 108, aarch64 native 149, arm64 macOS 153, x86 macOS 138); v6.5.73's 77 / 37,345 B reproduced on
+  its own tree. One fn went dead this minor (`_gvar_bytes_named`). Classified: 17 remove, 6 live only in
+  another fork (the arm64 Mach-O writer, **15.8 KB dead in every x86-family compiler**), 50 keep (49 stdlib
+  + `TS_PEEKLINE`). Every removal measured in scratch first: floor → **50 fns / 10,082 B**, cycc −28,912 B.
+  ⟨INTEGRATION: the merged floor — `note: N unreachable fns (N bytes)`⟩.
+- **Refactor + code review**: the dominant shape was **a fix that reached one sibling and not the others**
+  — `--syntax-only` in 2 of 7 forks (so `cyrius lint` refuses valid files on pi / ecb / ach, REFACTOR-01),
+  `cyrius deps`' own `[deps.NAME]` walker outside 6.6.17's one manifest reader, three environment readers of
+  which one still reads 8 KB, three leaf-name rules for one token; and in the code review, CVE-40's bound
+  applied to the macro body but not its arguments (LEX-EXPR-01), 6.6.3's continue fix one nesting level
+  short (RPF-01), CVE-78's fix on one of `fmt`'s two paths (RLM-04/05), the 6.6.10 alloc census missing
+  `_tn_alloc_a(` (NET-02). Silent miscompiles found: RPF-01 (continue through a `while`), RPF-02 (a `: f64`
+  fn's tail call, bare `return;` or fall-off hands back a stale xmm0), RPD-01 (inline replay drops a `*T` pointer step),
+  HEAP-01 / HEAP-02, REVBE-01 (DCE compaction on `kernel;` and `CYRIUS_WX=0`). P0 outside the compiler:
+  **CBT-01** — a cloned repo's `[package] cyrius` pin was path-traversed into an `execve` (code execution
+  on ANY verb).
+- **Security re-scan**: `~/.cache/cyrius-6620/audit/security.md` — SEC-01…SEC-09, ids proposed from
+  CVE-79. SEC-01 = CBT-01 and SEC-09 = CBTB-02 are in lanes. ⚠ **SEC-02…SEC-08 (two P1: `[build] output`
+  reaching a shell / cmd.exe unquoted; `update` / `deps --lock` writing through checkout symlinks) never
+  reached `findings.json`** — the security pass's structured result was cut off — so no lane carries them.
+  ⟨INTEGRATION / user: placed, fixed, or deferred with a named reason⟩. CVE ids are assigned at integration
+  (the next free id is 79) and the September audit file + CLAUDE.md counters move in the same commit.
+- **Downstream pins** (DOWNSTREAM-01): **clean** — 126 manifests read from git HEAD: 6.6.2 ×56, 6.6.3 ×10,
+  6.6.6 ×29, 6.6.9 ×2, 6.6.10 ×3, 6.6.11 ×3, 6.6.12 ×1, 6.6.14 ×8, 6.6.18 ×12 (the folds), 6.6.20 ×1 (cyrius);
+  gpumm is not a git repo (working copy 6.6.2). **None below 6.6.2; no working copy differs from its HEAD.**
+  All 12 folds pin 6.6.18, their latest tags equal `docs/ecosystem.md`'s rows, and the 11 tracked `dist/`
+  bundles `cmp` identical to `lib/` (yantra's `dist/` is gitignored). The 66 repos on 6.6.2 / 6.6.3 are
+  consumers — filings only; they bump when they choose to. Every repo named in roadmap.md *Sibling follow-ups*
+  exists in `~/Repos`.
+- **Vidya** (VIDYA-01…14, lane d-vidya): coverage of the minor's features is good (refreshed at every tag
+  6.6.13–6.6.19); the rot is in entries written before the release that changed them — `types.cyml`'s
+  structural facts stamped 6.6.1 (14 stale facts), and **nine older claims that now describe false
+  behaviour**, each disproved by a compiled probe. ⟨INTEGRATION: confirm the d-vidya lane's refresh landed⟩.
+- **Backlog re-triage** (BACKLOG-00…14): all **61** *Potential backlog* bullets re-verified against the tree —
+  **54 live** (5 with a materially wrong claim, corrected in place), **3 shipped**, **2 partly shipped**, **2
+  obsolete**, and **1 removed item that recurred** (the race-gate flake, root-caused). The v6.7.x candidates
+  moved into roadmap_6.md § v6.7.x (two were duplicates there); the DCE arc's spec moved there ahead of the
+  rotation; roadmap-future's NFKC row struck as shipped and its cyrlint gates re-pinned (they pointed at a slot
+  that had not existed for a month). **0 open issues · 2 open proposals** (both correctly open). Placement
+  rule clean: nothing codegen or runtime parked at 7.x.
+- **Docs** (CLN-04/06/07/08/09/12): the public figures had **frozen at v6.6.1 for nineteen releases** (README,
+  faq, platform-status, size-comparisons, stdlib-modules — re-derived); doc-health marked a v6.3.0 README
+  Fresh (re-derived row by row); `handoff.md` was stale again and is **archived** (state.md is the handoff);
+  CLAUDE.md and the guide still prescribed `vr01_` tests (which opt OUT of the cross-OS leg); 58 + 5 comment
+  pointers and 4 deleted-script references re-pointed.
+- **Met during the closeout, outside the findings**: the 37 qemu core dumps (5.6 GB) in the repo root were
+  already gone by the time their lane looked (CLN-14); `/tmp/cyrius-*` went 962 → 2 at the audit and keep
+  reappearing from killed CLI runs (the CLN-03 class — ⟨INTEGRATION: check `/tmp`, not only `$TMPDIR`,
+  after the merged check.sh⟩).
+- **Follow-ups spawned** ⟨INTEGRATION: every finding a lane skipped or could not pack, with its named reason;
+  DEAD-10, HEAP-12, LEX-EXPR-04 went to the backlog by decision (DECISIONS.md); the backlog's proposed order
+  (B)–(F) is the user's to promote⟩.
+
 ### v6.5.x → v6.6.0 closeout — 2026-09-06 (ran **v6.5.73**)
 
 - **Gates**: check.sh **240** passed / 0 failed (was 150 at the v6.5.0 closeout — +90 this minor)
