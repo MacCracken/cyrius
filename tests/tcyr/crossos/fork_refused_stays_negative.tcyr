@@ -1,0 +1,166 @@
+# fork_refused_stays_negative.tcyr — CROSS-HOST: a fork the kernel REFUSES returns -EAGAIN,
+# never 0. Runs on ecb (macOS arm64) + ach (Intel Mac) + pi (aarch64) + Linux x86_64 through the
+# release gate's cross-OS leg; Windows (no fork) and agnos compile the file and assert nothing.
+#
+# ⛔ THE DEFECT (6.6.20). Darwin's raw fork returns the child's pid in BOTH processes and marks
+# the child with a second return register: rdx == 1 on Intel, x1 == 1 on arm64. Both Mach-O
+# backends turn that into POSIX fork with a post-syscall fixup — "fork, and rdx/x1 == 1: return
+# 0". The x86 one (EMACHO_PROC_FIXUP) did not test for an error first, and a refused fork (carry
+# set) writes rax only: rdx keeps the CALLER's value. So a fork refused with EAGAIN while rdx
+# happened to hold 1 came back 0, and the parent ran the child's branch with no child in
+# existence — measured on ach with the 6.6.19 compiler: verdict 41. The pipe arm next to it got
+# its `test rax, rax; js` at 6.6.10 (darwin_short_arity_sigsys.tcyr); the fork arm did not.
+# arm64 has the same-shaped fixup with no error test, but XNU's arm64 syscall return ZEROES x1
+# on an error — measured on ecb with the 6.6.19 compiler and x1 primed to 1: verdict 40. That
+# row pins the kernel behaviour the arm64 fixup relies on; if it ever changes, it goes red.
+#
+# HOW THE PROBE GETS A REFUSAL. RLIMIT_NPROC = 1 makes the kernel refuse every fork by a
+# non-root user (the user already runs more than one process). Linux sets it in-process; on
+# macOS setrlimit is not routed, so the child re-runs this binary through `/bin/sh -c 'ulimit -u
+# 1 && exec ...'` and the probe checks the limit really is 1 before trusting the answer.
+# HOW IT PRIMES THE STALE REGISTER. The raw fork is issued with the child marker already in the
+# second return register: on x86 a two-value return (`ret2(0, 1)`) leaves 1 in rdx right before
+# `syscall(57)`, which writes only rax (the auditor's probe got there through a `% 2`); arm64-macOS
+# `syscall(220, 17, 1, ...)` puts 1 in x1 (the clone row is Darwin's raw fork, which ignores its
+# arguments — sys_fork itself goes through libSystem since 6.6.13, so only this raw spelling
+# reaches the fixup). Linux aarch64 clone takes x1 as the child's stack, so there it stays 0.
+#
+# The probe never asserts; its verdict is its exit code, decoded by the parent:
+#   40 refused with -EAGAIN (correct)            41 the refused fork came back 0 (the defect)
+#   42 the fork SUCCEEDED (limit not enforced)   43 the limit is not 1 (the setup failed)
+#   44 setrlimit failed                          45 refused, but not with -EAGAIN
+#   46 the macOS re-exec through /bin/sh failed
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/syscalls.cyr"
+include "lib/args.cyr"
+
+#ifndef CYRIUS_TARGET_WIN
+#ifndef CYRIUS_TARGET_AGNOS
+fn _nproc_resource(): i64 {
+    #ifdef CYRIUS_TARGET_MACOS
+    return 7;
+    #endif
+    return 6;
+}
+
+fn _eagain(): i64 {
+    #ifdef CYRIUS_TARGET_MACOS
+    return 35;
+    #endif
+    return 11;
+}
+
+# rax:rdx = 0:1. A two-value return leaves its second value in rdx, and a one-argument
+# syscall() writes only rax, so the 1 is still in rdx when the fork traps.
+fn _rdx_one() { ret2(0, 1); }
+
+# The raw fork, with the child marker (1) already in the register Darwin leaves unwritten on
+# failure. Returns what the syscall returned.
+fn _raw_fork_primed(): i64 {
+    var r = 0 - 1000;
+    #ifdef CYRIUS_ARCH_X86
+    _rdx_one();
+    r = syscall(57);
+    #endif
+    #ifdef CYRIUS_ARCH_AARCH64
+    #ifdef CYRIUS_TARGET_MACOS
+    r = syscall(220, 17, 1, 0, 0, 0);
+    #endif
+    #ifndef CYRIUS_TARGET_MACOS
+    r = syscall(220, 17, 0, 0, 0, 0);
+    #endif
+    #endif
+    return r;
+}
+
+fn _probe(): i64 {
+    var rl: i64[2];
+    if (sys_getrlimit(_nproc_resource(), &rl) != 0) { return 43; }
+    #ifndef CYRIUS_TARGET_MACOS
+    store64(&rl, 1);
+    var sr = 0 - 1;
+    #ifdef CYRIUS_ARCH_X86
+    sr = syscall(160, 6, &rl);
+    #endif
+    #ifdef CYRIUS_ARCH_AARCH64
+    sr = syscall(164, 6, &rl);
+    #endif
+    if (sr != 0) { return 44; }
+    if (sys_getrlimit(6, &rl) != 0) { return 43; }
+    #endif
+    if (load64(&rl) != 1) { return 43; }
+    var r = _raw_fork_primed();
+    if (r == 0) { return 41; }
+    if (r > 0) {
+        var st = 0;
+        sys_waitpid(r, &st, 0);
+        return 42;
+    }
+    if (r == 0 - _eagain()) { return 40; }
+    return 45;
+}
+
+# Runs the probe in a child (so the lowered limit dies with it) and returns its verdict, or
+# 100 + the signal that killed it.
+fn _run_probe(): i64 {
+    var pid = sys_fork();
+    if (pid < 0) { return 0 - 1; }
+    if (pid == 0) {
+        #ifdef CYRIUS_TARGET_MACOS
+        var av: i64[5];
+        store64(&av, "/bin/sh");
+        store64(&av + 8, "-c");
+        store64(&av + 16, "ulimit -u 1 && exec \"$0\" fork-probe");
+        store64(&av + 24, argv(0));
+        store64(&av + 32, 0);
+        var ev: i64[1];
+        store64(&ev, 0);
+        sys_execve("/bin/sh", &av, &ev);
+        sys_exit(46);
+        #endif
+        sys_exit(_probe());
+    }
+    var st = 0;
+    if (sys_waitpid(pid, &st, 0) != pid) { return 0 - 2; }
+    if (WIFSIGNALED(st) == 1) { return 100 + WTERMSIG(st); }
+    return WEXITSTATUS(st);
+}
+#endif
+#endif
+
+fn main(): i64 {
+    alloc_init();
+    args_init();
+    #ifdef CYRIUS_TARGET_WIN
+    # The premise of the skip, asserted: this row goes red the day PE grows a fork.
+    assert_eq(sys_fork(), 0 - 1, "premise: PE has no fork (sys_fork fails closed), so there is no refusal to test");
+    #endif
+    #ifdef CYRIUS_TARGET_AGNOS
+    var arl: i64[2];
+    assert_eq(sys_getrlimit(6, &arl), 0 - 38, "premise: agnos has no RLIMIT_NPROC, so nothing refuses a fork this way");
+    #endif
+    #ifndef CYRIUS_TARGET_WIN
+    #ifndef CYRIUS_TARGET_AGNOS
+    if (argc() > 1) { return _probe(); }
+    test_group("a fork refused under RLIMIT_NPROC = 1 returns -EAGAIN, never 0");
+    var v = _run_probe();
+    if (v == 42 && sys_getuid() == 0) {
+        # Root (in the init user namespace) is not held to RLIMIT_NPROC, so nothing here can be
+        # refused — CI's AGNOS job runs the corpus as root. A passing row alone would read like a
+        # real refusal check, so the skip is written to fd 2 as well; the row that remains only
+        # records the premise (the fork went through) and keeps the run from scoring 0 assertions.
+        var note = "  SKIP/NOTE: running as root - RLIMIT_NPROC does not apply, refusal case NOT exercised\n";
+        syscall(1, 2, note, strlen(note));
+        assert_eq(v, 42, "premise: as root the fork is not refused (verdict 42)");
+    } else {
+        assert_eq(v, 40, "the refused fork came back -EAGAIN (41 = it came back 0: the parent ran the child's branch)");
+    }
+    #endif
+    #endif
+    var r = assert_summary();
+    return r;
+}
+var ec = main();
+syscall(60, ec);

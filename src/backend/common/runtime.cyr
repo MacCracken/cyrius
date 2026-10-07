@@ -113,6 +113,8 @@ fn _mode_unsupported(S, a64): i64 {
 # cannot drift from the decision; wp_compact keeps its own guards (the CYRIUS_IR=3 seam uses
 # them) and FIXUP flags any refusal this does not classify. 0 = compaction will run.
 # `a64` = 1 from the aarch64 FIXUP. CHANGELOG [6.6.18]
+# Since 6.6.20 `kernel;` and CYRIUS_WX=0 decline too, so compaction runs ONLY on the W^X
+# static x86 ELF layout — the one that freezes the data segment. CHANGELOG [6.6.20]
 fn _dce_compact_why(S, a64): i64 {
     if (a64 == 1) { return "aarch64 has no compaction repair model yet"; }
     var fmt = _emit_fmt(S);
@@ -120,6 +122,11 @@ fn _dce_compact_why(S, a64): i64 {
     if (fmt == 1) { return "its stub table is reached through rip-relative disp32s this pass cannot repair"; }
     if (_pie_mode != 0) { return "position-independent code reaches data through rip-relative disp32s this pass cannot repair"; }
     if (L64(S + 0x18FCA0) > 1) { return "a shared object reaches data through rip-relative disp32s this pass cannot repair"; }
+    # 6.6.20: the data addresses are patched in BEFORE compaction; only the W^X layout pins the
+    # data segment where it was (_wx_dbase_frozen). A kernel image and CYRIUS_WX=0 place data
+    # right after the code, so compacting moved it under every patched address. CHANGELOG [6.6.20]
+    if (L64(S + 0x18FCA0) == 1) { return "a kernel image places its data directly after the code, so the data addresses patched in before compaction would go stale"; }
+    if (_wx_active(S) == 0) { return "the single RWX segment places its data directly after the code, so the data addresses patched in before compaction would go stale"; }
     if (_wpnr_ovf == 1) { return "more than 4096 dead-code runs, the repair registry cap"; }
     if (_wpjs_ovf == 1) { return "more than 49152 rel32/disp32 sources, the repair registry cap"; }
     if (_wpsw_ovf == 1) { return "more than 4096 switch tables, the repair registry cap"; }
@@ -132,6 +139,8 @@ fn _dce_target_word(S, a64): i64 {
     if (fmt == 1) { return "x86_64 Mach-O"; }
     if (_pie_mode != 0) { return "x86_64 ELF (--pie)"; }
     if (L64(S + 0x18FCA0) > 1) { return "x86_64 ELF (shared;)"; }
+    if (L64(S + 0x18FCA0) == 1) { return "x86_64 ELF (kernel;)"; }
+    if (_wx_active(S) == 0) { return "x86_64 ELF (CYRIUS_WX=0)"; }
     return "x86_64 ELF";
 }
 # The reason rides INSIDE the existing `note: N unreachable fns (...)` line, never on a line of

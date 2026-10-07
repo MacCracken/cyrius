@@ -399,10 +399,19 @@ fn ESYSCALL(S): i64 {
 # pipe stored -errno and a stale rdx over the caller's fds and returned 0 (measured on ach with
 # SIGSYS ignored: a -ENOSYS pipe came back 0 with 0x...FFFFFFB2 written through rdi). Found by
 # tests/tcyr/crossos/darwin_short_arity_sigsys.tcyr. CHANGELOG [6.6.10]
+# ⛔ 6.6.20: the FORK arm two lines up had the same hole and kept it — it tested rdx with no
+# error test at all. A failed fork (carry set) writes rax only; rdx keeps the CALLER's value,
+# so a fork refused with EAGAIN while rdx happened to hold 1 (a `% 2` remainder, a third
+# syscall argument) came back 0 and the parent ran the child's branch. Now `test rax, rax;
+# js` skips the child test on an error, as the pipe arm does (measured on ach: the 6.6.19
+# fixup turned a refused fork into 0). The arm64 twin needs no test — XNU zeroes x1 on an
+# error there. Gated by tests/tcyr/crossos/fork_refused_stays_negative.tcyr. CHANGELOG [6.6.20]
 fn EMACHO_PROC_FIXUP(S): i64 {
     EB(S, 0x41); EB(S, 0x5B);                            # pop r11  (recover Linux num)
     EB(S, 0x49); EB(S, 0x83); EB(S, 0xFB); EB(S, 0x39);  # cmp r11, 57  (fork?)
-    EB(S, 0x75); EB(S, 0x09);                            # jne +9
+    EB(S, 0x75); EB(S, 0x0E);                            # jne +14
+    EB(S, 0x48); EB(S, 0x85); EB(S, 0xC0);               # test rax, rax
+    EB(S, 0x78); EB(S, 0x09);                            # js  +9  (rax<0 error → rdx is stale)
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xFA); EB(S, 0x01);  # cmp rdx, 1   (child?)
     EB(S, 0x75); EB(S, 0x03);                            # jne +3
     EB(S, 0x48); EB(S, 0x31); EB(S, 0xC0);               # xor rax, rax (child → 0)

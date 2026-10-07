@@ -1689,7 +1689,9 @@ fn wp_compact(S): i64 {
     #                          EJCC/EJMP/EJMP0/ECALLTO while this holds ECALLFIX.
     #   ftype 3 (fn address)  — an ABSOLUTE fn VA: rewrite it from the shifted `_fnt_offsets`.
     #   everything else       — absolute DATA addresses, and data does not move when code shrinks
-    #                          (measured: `.rodata`/`.bss` land at identical vaddrs either way).
+    #                          UNDER W^X only (`_wx_dbase_frozen` pins the data segment). A kernel
+    #                          image and CYRIUS_WX=0 put data right after the code, so the x86
+    #                          FIXUP declines compaction there (runtime.cyr _dce_compact_why).
     #
     # ⛔ IT MUST RUN HERE, BEFORE STAGE 2. It reads a fixup CP and writes four bytes AT that CP
     # in the code buffer — so it needs PRE-compaction coordinates, exactly like stage 1. Placed
