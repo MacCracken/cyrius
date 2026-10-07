@@ -67,12 +67,15 @@ EOF
 # Build via the same include-prepend the CLI performs, without depending on a `cyrius` on PATH.
 SRC="$WORK/all.cyr"
 : > "$SRC"
-for m in "$WORK"/lib/*.cyr; do cat "$m" >> "$SRC"; done
+# `include` lines, not the files' bytes: since 6.6.20 lib/fnptr.cyr's fncall0..8 are exempt from
+# the reserved-intrinsic refusal only as an INCLUDED fnptr.cyr; pasted into the main source they
+# are refused, as any user fn of that name is.
+for m in "$WORK"/lib/*.cyr; do echo "include \"lib/$(basename "$m")\"" >> "$SRC"; done
 cat "$WORK/src/main.cyr" >> "$SRC"
 
 build() {  # build <outfile> <env-assignments...>
     out="$1"; shift
-    if ! env "$@" "$CYCC" < "$SRC" > "$out" 2>"$WORK/err.txt"; then
+    if ! (cd "$WORK" && env "$@" "$CYCC" < "$SRC" > "$out" 2>"$WORK/err.txt"); then
         fail "compile failed for $out: $(tail -1 "$WORK/err.txt")"
     fi
     [ -s "$out" ] || fail "compile produced an empty $out"
