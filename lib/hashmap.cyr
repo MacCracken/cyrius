@@ -195,13 +195,16 @@ fn map_count(m): i64 { return load64(m + 16); }
 # drops every tombstone without growing. What does NOT change, because consumers walk
 # map_entries/map_cap and depend on it: a delete never moves an entry, and neither does an
 # overwrite of a key already present (the rebuild check runs only once the key is known new).
+# lib/hashmap_fast.cyr had the same tombstone defect and fixed it at 6.6.8.
 # ⚠ THE SAME-CAPACITY REBUILD IS IN PLACE AND ALLOCATES NOTHING (_map_rebuild_in_place). The
 # default allocator is a bump whose free is a no-op, so a rebuild into a fresh array leaked the
 # old one on every rebuild — ~27 B per churned key, without bound (27.5 MB over 1M rounds at
 # 5000 live) — and made a steady-size insert fallible where it had needed no memory at all.
 # Only doubling allocates, and a map that has reached its steady size never doubles again
 # (the one exception is a table with no EMPTY slot at all — see _map_rebuild_in_place).
-# The same defect was fixed in lib/hashmap_fast.cyr at 6.6.8. CHANGELOG [6.6.20]
+# ⛔ hashmap_fast still has THIS defect: its same-capacity _fhm_rehash allocates three fresh
+# arrays and never releases the old ones, so steady-size fhm churn still leaks (filed:
+# docs/development/issues/stdlib-hashmap-fast-same-capacity-rehash-leak.md). CHANGELOG [6.6.20]
 fn _map_tombp(m): i64 { return load64(m) + load64(m + 8) * 24; }
 fn _map_u64_tombp(m): i64 { return load64(m) + load64(m + 8) * 16; }
 
