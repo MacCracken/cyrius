@@ -685,7 +685,8 @@ fn _tests_walk_one(path, cd): i64 {
 }
 
 fn _tests_walk(dir): i64 {
-    return _corpus_walk(dir, _corpus_cd(".tcyr", &_tests_walk_one, "test", "its tests were NOT run (counted as a failure)"), &_pass, &_fail, 0);
+    var cd = _corpus_cd(".tcyr", &_tests_walk_one, "test", "its tests were NOT run (counted as a failure)");
+    return _corpus_walk(dir, cd, &_pass, &_fail, 0);
 }
 
 fn cmd_tests(dir): i64 {
@@ -887,7 +888,8 @@ fn _fuzz_walk_one(path, cd): i64 {
 }
 
 fn _fuzz_walk_dir(dir, passcnt_ptr, failcnt_ptr, found_ptr): i64 {
-    return _corpus_walk(dir, _corpus_cd(".fcyr", &_fuzz_walk_one, "fuzz", "its harnesses were NOT run (counted as a failure)"), passcnt_ptr, failcnt_ptr, found_ptr);
+    var cd = _corpus_cd(".fcyr", &_fuzz_walk_one, "fuzz", "its harnesses were NOT run (counted as a failure)");
+    return _corpus_walk(dir, cd, passcnt_ptr, failcnt_ptr, found_ptr);
 }
 
 fn cmd_fuzz(source): i64 {
@@ -1000,7 +1002,8 @@ fn _bench_walk_one(path, cd): i64 {
 # v6.0.62 and bench/fuzz were never brought along.
 # v6.5.12: depth-bounded; the walk itself is _corpus_walk_d (6.6.20).
 fn _bench_walk_dir(dir, passcnt_ptr, failcnt_ptr, found_ptr): i64 {
-    return _corpus_walk(dir, _corpus_cd(".bcyr", &_bench_walk_one, "bench", "its benchmarks were NOT run (counted as a failure)"), passcnt_ptr, failcnt_ptr, found_ptr);
+    var cd = _corpus_cd(".bcyr", &_bench_walk_one, "bench", "its benchmarks were NOT run (counted as a failure)");
+    return _corpus_walk(dir, cd, passcnt_ptr, failcnt_ptr, found_ptr);
 }
 
 fn cmd_bench(source): i64 {
@@ -6228,11 +6231,13 @@ fn cmd_distlib(profile): i64 {
         return 1;
     }
     if (dl_cap == 0) {
-        _err_ctx("distlib: cannot create the bundle self-check's diagnostics capture, so the RETIRED-name check cannot run — bundle NOT verified", dl_errf);
+        var mcap = "distlib: cannot create the self-check capture — RETIRED-name check NOT run, bundle NOT verified";
+        _err_ctx(mcap, dl_errf);
         return 1;
     }
     if (dl_retired == 0 - 1) {
-        _err_ctx("distlib: cannot read back the bundle self-check's diagnostics whole, so the RETIRED-name check did not run — bundle NOT verified", out_path);
+        var mrd = "distlib: the self-check capture was not read whole — RETIRED-name check NOT run, bundle NOT verified";
+        _err_ctx(mrd, out_path);
         return 1;
     }
     if (dl_retired != 0) {
