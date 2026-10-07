@@ -128,13 +128,14 @@ Five steps, fail-fast, in this order (`--quick` runs 1–3 only and is NOT relea
 
 - [ ] **1** self-host fixpoint byte-identical (and `build/cycc == cycc(src)`) · **2** seed-derive (`seed→cybs→cycc`) byte-identical
 - [ ] **3** check.sh all-green (record N) — the gate checks check.sh's **exit status**, not just its `N passed, 0 failed` line, because the shell gates run *after* the check binary and its summary does not cover them
-- [ ] **4** cross-OS on all **four** hosts, sequentially — **ecb** (macOS-arm64) · **ach** (Intel-Mac x86-macho) · **cass** (Windows PE) · **pi** (aarch64) — each `SELFHOST_OK` **and** VR-01 `LIBTEST_OK` on REAL hardware
+- [ ] **4** cross-OS on all **four** hosts, sequentially — **ecb** (macOS-arm64) · **ach** (Intel-Mac x86-macho) · **cass** (Windows PE) · **pi** (aarch64) — each `SELFHOST_OK` **and** `tests/tcyr/crossos/` `LIBTEST_OK` on REAL hardware
 - [ ] **5** bench recorded (self_compile ms + cycc B) — non-blocking, but the number goes in the CHANGELOG
 
 `ach` is a **first-class gate host, not a tail** — it was added to this loop at v6.4.59 after
-the Intel-Mac toolchain rotted ungated for ~2.5 minors (`scripts/release-gate.sh:108` is a flat
-`for H in ecb ach cass pi`). Step 4 runs the `vr01_` glob and **prints its own coverage** —
-"corpus: N of M tcyr selected by glob" — so a subset can no longer read as authoritative;
+the Intel-Mac toolchain rotted ungated for ~2.5 minors (`scripts/release-gate.sh` step 4 is a flat
+`for H in ecb ach cass pi`). Step 4 runs the `tests/tcyr/crossos/` SUBDIRECTORY (the `vr01_`
+filename glob it used until v6.5.11 is retired) and **prints its own coverage** —
+"corpus: N of M tcyr selected by subdir" — so a subset can no longer read as authoritative;
 `CYRIUS_CROSS_OS_FULL=1` runs the whole corpus instead (opt-in: ~75 s on ecb, and the blind
 region still holds known platform gaps, so defaulting to full would wedge every release behind
 a separate arc).

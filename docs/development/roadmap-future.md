@@ -47,7 +47,7 @@ Phase 5 completed the whole packed-SIMD arc on the remaining three backends: **a
 (v6.4.28 f32v4/f32v8, .29 f32v8-free via 2×128 fallback, .30 integer vectors + `iv_dp8` — the **last
 SIMD XFAIL removed**), **Win64 PE value-form params + returns** (.31), and **cx bytecode per-lane
 emitters** (.32). Packed SIMD now runs on all four backends; all `simd_*` ARM XFAILs are gone and the
-`vr01_simd_*` fixtures run real emitters cross-OS on ecb/pi/cass. **Finish-outs at .53**: the duplicate-arg
+`tests/tcyr/crossos/simd_*` fixtures run real emitters cross-OS on ecb/pi/cass. **Finish-outs at .53**: the duplicate-arg
 `f(v, v)` bug — root cause was the *tail-call* path taking no second XMM pass, fixed on all targets — plus
 i64v2 packed multiply. Only caveat, **re-verified 2026-08-07 at v6.5.10**
 (`src/backend/aarch64/emit.cyr:2882-2884` — re-derived 2026-08-11; the line numbers have now moved twice, from `:2639-2641` to `:2691-2693` to here, so

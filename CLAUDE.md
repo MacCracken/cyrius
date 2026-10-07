@@ -459,7 +459,8 @@ per-session memory files so they survive environment changes.
   surfacing seven real defects; five of the seven were half-fixes that stopped at the first
   symptom (`AT_FDCWD` without its sibling `AT_*` flags, `STAT_SIZE` without the rest of the
   struct, `unlink` without `rmdir`, three of four link syscalls mapped). Every new syscall
-  wrapper needs a `vr01_` companion.
+  wrapper needs a companion test in `tests/tcyr/crossos/` (the directory is the selector — a
+  `vr01_`-named file anywhere else is never run off-host).
 - When restoring/fixing user configs, restore only what was there — no unrequested "sensible defaults".
 
 ## DO NOT

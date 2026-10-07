@@ -1502,9 +1502,9 @@ Packed SIMD is **Phase 5 complete on all four backends** as of v6.4.32. The
   (`_CX_VLOOP_BIN`, cxvm opcodes through `0x68`) (v6.4.32).
 
 The former `simd_f32v4` / `simd_ints` / `simd_f32v8` ARM `XFAIL`s were all
-removed at v6.4.30; the `vr01_simd_f32v4_neon` / `vr01_simd_ints_neon` /
-`vr01_simd_cx` cross-OS fixtures run the real emitters on pi (aarch64) and are
-verified on real hardware. Every vector type is available on every backend.
+removed at v6.4.30; the `tests/tcyr/crossos/simd_f32v4_neon.tcyr` /
+`simd_ints_neon.tcyr` / `simd_cx.tcyr` cross-OS fixtures run the real emitters on
+pi (aarch64) and are verified on real hardware. Every vector type is available on every backend.
 The one caveat: the aarch64 *native 256-bit* `f32v8` emitters are return-0
 stubs that are never reached at runtime — `lib/simd.cyr` routes `f32v8`
 through native `f32v4` NEON, so the verb still works on aarch64; only a native
@@ -3684,8 +3684,10 @@ for this whole family: `xrmdir` had been **broken on macOS-arm64 since the day i
 because the Mach-O branch mapped `unlinkat` to Darwin's `unlink` with an arg-shift that
 dropped the dirfd and the flag — right for `unlink`, fatal for `rmdir`, which is the same
 syscall distinguished only by `AT_REMOVEDIR`. Five of the seven defects found there were
-half-fixes that stopped at the first symptom. If you add a wrapper, add a `vr01_` test with
-it, or it is never run off-host.
+half-fixes that stopped at the first symptom. If you add a wrapper, add a test for it under
+`tests/tcyr/crossos/`, or it is never run off-host — the release gate's cross-OS leg selects
+that DIRECTORY (the old `vr01_` filename prefix was retired at v6.5.11; a file named that way
+anywhere else is not run on the other hosts).
 
 ## Allocators & Arenas
 
