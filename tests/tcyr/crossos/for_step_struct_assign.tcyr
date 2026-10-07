@@ -5,16 +5,21 @@
 # (`_asg_store_slot`), but not onto the dispatch the statement runs in FRONT of that store for an
 # aggregate right-hand side (_PARSE_STMT_IMPL: `_try_aggregate_copy_assign`,
 # `_try_struct_call_assign`, `_try_vector_call_assign`, `_refuse_lossy_pair`,
-# `_pcmpe_struct_assign`). Every one of those also ended at a hard-coded `;`, and a step ends at
-# `)`. So a struct or vector step stored ONE word, silently: `a = b` on a 24-byte struct left
+# `_pcmpe_struct_assign`). Four of those five (all but `_refuse_lossy_pair`) — and `_fla_assign`,
+# which the last one ends in — also ended at a hard-coded `;`, and a step ends at `)`. So a
+# struct or vector step stored ONE word, silently: `a = b` on a 24-byte struct left
 # a.y / a.z stale ({4,2,3} where {4,5,6} is right), and the same for a global, a call returning
-# the struct (retptr and rax:rdx), a method, a struct-typed field, a vector call (lane 0 got rax
-# garbage) and a vector copy. The two refusals the statement makes (a different struct type, a
-# `: stack` pair) compiled clean as a step; those are pinned by
+# the struct (retptr and rax:rdx), a method, a struct-typed field and a vector copy. The
+# vector-call step `v = mkv(11, 22)` differed by target: on x86 and aarch64 lane 0 took the return
+# register's leftover (2 where 1122 is right); on Win64 the step pushed no hidden retptr, so the
+# callee wrote its 16 bytes through the call's FIRST ARGUMENT — memory corruption, a page fault at
+# 0xB (that 11) before the rows after it ran. The two refusals the statement makes (a different
+# struct type, a `: stack` pair) compiled clean as a step; those are pinned by
 # tests/gates/frontend/struct_copy_source_type_refused.sh and stack_enum_lossy_context.sh.
 #
 # CROSS-HOST: the copy, the retptr / pair receive and the vector receive are emitted per backend
-# (x86, PE retptr, Mach-O, aarch64, cx).
+# (x86, PE retptr, Mach-O, aarch64). cx refuses the 16 B pair-return rows by name
+# (`int-class 16B struct pair-return ABI not supported`), so this file does not compile there.
 include "lib/syscalls.cyr"
 include "lib/string.cyr"
 include "lib/alloc.cyr"
