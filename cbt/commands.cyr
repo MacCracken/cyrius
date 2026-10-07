@@ -1245,35 +1245,14 @@ fn _self_step_failed(step, rc, src, cc): i64 {
     return 0;
 }
 
-# v6.2.40: parse `[deps].stdlib = [...]` from the cwd's cyrius.cyml,
-# returning a vec of declared module-name cstrings (or 0 if absent).
-# Key-boundary-aware (mirrors cmd_deps' Phase-1 search) so a comment
-# mentioning "stdlib" or a `[lib] modules = [...]` array isn't matched.
-# Reuses _parse_toml_str_array (cbt/deps.cyr).
+# v6.2.40: `[deps] stdlib = [...]` from the cwd's cyrius.cyml as a vec of declared module-name
+# cstrings, or 0 if absent / empty. 6.6.20: through `_dep_declared_stdlib` (cbt/deps.cyr), the
+# one reader `cyrius deps` uses — this was the third copy of a raw byte scan for `stdlib`.
 fn _libsync_declared_mods(): i64 {
     # 6.6.17: the WHOLE manifest through the one reader (this read 32,767 bytes).
     if (_mf_load() != 1) { return 0; }
-    var buf = _mf_buf;
-    var n = _mf_len;
-    # v6.5.30 — route through the SHARED `_toml_key_at` (cbt/deps.cyr) instead of a
-    # hand-rolled guard pair. The inline version checked the identifier boundary and the
-    # comment line but NOT whether the match sits inside a QUOTED VALUE, so a
-    # `description = "... foldable into stdlib per sandhi pattern"` matched as the key.
-    # `_toml_key_at` counts unescaped quotes from line start and rejects an odd count.
-    # ⛔ Third copy of one scan; `cmd_deps` was fixed at v6.5.17/.29 and these two were not.
-    var si = 0;
-    while (si < n) {
-        if (memeq(buf + si, "stdlib", 6) == 1) {
-            if (_toml_key_at(buf, n, si, 6) == 1) {
-                # Keep scanning when the key yields nothing: `_parse_toml_str_array` is
-                # positional and returns empty if it lands on a section header, so
-                # committing to the first match can silently disable the whole result.
-                var mods = _parse_toml_str_array(buf, n, si);
-                if (vec_len(mods) > 0) { return mods; }
-            }
-        }
-        si = si + 1;
-    }
+    var mods = _dep_declared_stdlib(_mf_buf, _mf_len);
+    if (mods != 0 && vec_len(mods) > 0) { return mods; }
     return 0;
 }
 
@@ -5186,39 +5165,18 @@ fn cmd_distlib_all(check): i64 {
 # matching a `[deps.X]` block is a fold (resolved transitively), not a stdlib
 # leaf. Shared by the sidecar emit + the `--modular` index emit (was duplicated).
 fn _distlib_named_deps(mbuf, mlen): i64 {
+    # v6.5.28 anchored this to a section header (a `[deps.X]` in comment PROSE registered X —
+    # filed from patra, where it silently dropped a real dep from the sidecar). 6.6.20: the
+    # resolver's own header pass (`_dep_hdr_name`, cbt/deps.cyr), so a `[deps.X]` inside a `"""`
+    # value is not a header either, and `[ deps.X ]` is one — the set `cyrius deps` resolves.
     var named_deps = vec_new();
-    var ndi = 0;
-    # v6.5.28 — ANCHOR THE SCAN TO A SECTION HEADER. This matched "[deps." ANYWHERE in the
-    # manifest, so a `[deps.X]` written in COMMENT PROSE registered X as a named dep. Filed
-    # from patra, where a comment explaining the layout silently deleted a real dep from the
-    # generated sidecar — the bundle stayed correct, so nothing failed; the packaging just
-    # quietly lost an entry.
-    # A real section header is at the START of a line (TOML allows leading whitespace) and is
-    # never inside a `#` comment. `bol` tracks line starts; `in_cmt` suppresses the rest of a
-    # comment line. Both are needed: anchoring alone still matches a comment that BEGINS with
-    # `[deps.x]`, which is exactly how documentation examples are usually written.
-    var bol = 1;
-    var in_cmt = 0;
-    while (ndi < mlen) {
-        var ndc = load8(mbuf + ndi);
-        if (ndc == 10) { bol = 1; in_cmt = 0; ndi = ndi + 1; }
-        elif (in_cmt == 1) { ndi = ndi + 1; }
-        elif (ndc == 35) { in_cmt = 1; ndi = ndi + 1; }        # '#' opens a comment
-        elif (bol == 1 && (ndc == 32 || ndc == 9)) { ndi = ndi + 1; }   # leading indent keeps bol
-        elif (bol == 1 && ndi + 6 <= mlen && memeq(mbuf + ndi, "[deps.", 6) == 1) {
-            var nns = ndi + 6;
-            var nne = nns;
-            while (nne < mlen && load8(mbuf + nne) != 93) { nne = nne + 1; }
-            var nnl = nne - nns;
-            if (nnl > 0) {
-                var nd = alloc(nnl + 1);
-                memcpy(nd, mbuf + nns, nnl);
-                store8(nd + nnl, 0);
-                vec_push(named_deps, nd);
-            }
-            ndi = nne;
-            bol = 0;
-        } else { bol = 0; ndi = ndi + 1; }
+    var info[32];
+    var p = 0;
+    while (p < mlen) {
+        p = _toml_line(mbuf, mlen, p, &info);
+        var hc = 0;
+        var nd = _dep_hdr_name(mbuf, mlen, &info, &hc);
+        if (nd != 0 && strlen(nd) > 0) { vec_push(named_deps, nd); }
     }
     return named_deps;
 }
@@ -5257,7 +5215,7 @@ fn _distlib_mentions(buf, n, name): i64 {
 }
 
 fn _distlib_modular_emit(pkg_name, modules, mbuf, mlen): i64 {
-    if (_dep_reject_unsafe_name(pkg_name) == 1) { return 1; }   # CVE-32: producer-side pkg name (no `/`/`..` in dist/<pkg>)
+    if (_distlib_bad_pkg_name(pkg_name) == 1) { return 1; }   # CVE-32: producer-side pkg name (dist/<pkg>/)
     sys_mkdir("dist", 0x1ED);
     var dir_sb = str_builder_new();
     str_builder_add_cstr(dir_sb, "dist/");
@@ -5313,7 +5271,7 @@ fn _distlib_modular_emit(pkg_name, modules, mbuf, mlen): i64 {
         if (file_exists(mod_path) == 0) {
             # v6.2.52 (user: make it fail-loud): a missing module is a HARD ERROR,
             # not a warning — a partial dist silently drops a sub-unit + its index entry.
-            _err_ctx("distlib --modular: module not found", mod_path);
+            _err_ctx("distlib --modular: module not found", _shown(mod_path));   # 6.6.20: shown escaped
             return 1;
         }
         # basename (last path component, strip `.cyr`)
@@ -5333,7 +5291,7 @@ fn _distlib_modular_emit(pkg_name, modules, mbuf, mlen): i64 {
         # emit duplicate index keys (resolver is first-match-wins → silently lost
         # transitive deps). Fail loud instead.
         if (_dep_list_has(seen_bases, base) == 1) {
-            _err_ctx("distlib --modular: duplicate module basename collides in dist/", base);
+            _err_ctx("distlib --modular: duplicate module basename collides in dist/", _shown(base));
             return 1;
         }
         vec_push(seen_bases, base);
@@ -5347,7 +5305,7 @@ fn _distlib_modular_emit(pkg_name, modules, mbuf, mlen): i64 {
         # to be skipped silently, and a short write truncated it, both with exit 0.
         var mod_out = str_data(str_builder_build(of_sb));
         var mfd = _aw_open(mod_out);
-        if (mfd == 0) { _err_ctx("distlib --modular: cannot write", mod_out); return 1; }
+        if (mfd == 0) { _err_ctx("distlib --modular: cannot write", _shown(mod_out)); return 1; }
         _aw_write(mfd, "# ", 2);
         _aw_write(mfd, base, strlen(base));
         _aw_write(mfd, " (cyrius distlib --modular)\n\n", 29);
@@ -5361,7 +5319,7 @@ fn _distlib_modular_emit(pkg_name, modules, mbuf, mlen): i64 {
         # v6.2.51 (closeout): fail loud on a >1MB module — a silent truncation
         # would drop trailing `include`s from the index leaf list → missing-dep SIGILL.
         if (flen >= 1048575 && _file_size(mod_path) > 1048575) {
-            _err_ctx("distlib --modular: module exceeds 1024KB read cap (truncated)", mod_path);
+            _err_ctx("distlib --modular: module exceeds 1024KB read cap (truncated)", _shown(mod_path));
             _aw_abort(mfd);
             return 1;
         }
@@ -5408,6 +5366,15 @@ fn _distlib_modular_emit(pkg_name, modules, mbuf, mlen): i64 {
                     if (kl > 4 && memeq(fbuf + ke - 4, ".cyr", 4) == 1) { kl = kl - 4; }
                     if (kl > 0) {
                         var leaf = alloc(kl + 1); memcpy(leaf, fbuf + ks, kl); store8(leaf + kl, 0);
+                        # 6.6.20: the index row is a consumer's `lib:<leaf>`, so it obeys the ONE
+                        # leaf rule (_dep_leaf_ok) — this wrote any text between the quotes. Refused
+                        # before the index; earlier sub-module files are already committed by here.
+                        if (_dep_leaf_ok(leaf) == 0) {
+                            var bad_why = "distlib --modular: an include names a stdlib leaf that is not a safe name";
+                            _err_ctx(bad_why, _cat2(_shown(leaf), " (allowed: [A-Za-z0-9_/-]) — no index written"));
+                            _aw_abort(mfd);
+                            return 1;
+                        }
                         var is_nd = 0;
                         var ci = 0;
                         while (ci < vec_len(named_deps)) {
@@ -5428,7 +5395,10 @@ fn _distlib_modular_emit(pkg_name, modules, mbuf, mlen): i64 {
             _aw_write(mfd, fbuf + ls, ll);
             _aw_write(mfd, "\n", 1);
         }
-        if (_aw_commit(mfd) != 0) { _err_ctx("distlib --modular: write failed (left as it was)", mod_out); return 1; }
+        if (_aw_commit(mfd) != 0) {
+            _err_ctx("distlib --modular: write failed (left as it was)", _shown(mod_out));
+            return 1;
+        }
         # 6.6.19 (E3): a module that names a carried embed's accessor lists its sub-module as a
         # sibling, so resolving the module brings the bytes (a comment mention only over-pulls).
         var ej = 0;
@@ -5480,27 +5450,6 @@ fn _distlib_modular_emit(pkg_name, modules, mbuf, mlen): i64 {
 var _DL_HDR_END = "# Do not edit -- rebuild with: cyrius distlib\n";
 var _DL_REQ_MARK = "# Requires (compile-verified; the leaves of ";
 
-# 1 when a leaf name may become an include path: non-empty, [A-Za-z0-9_/-] only (so no `..`,
-# no quote, no newline), no leading, trailing or doubled '/'. A `/` stays legal: a module that
-# keeps `include "lib/unicode/categories.cyr"` records the leaf `unicode/categories`.
-fn _distlib_leaf_name_ok(lf): i64 {
-    var n = strlen(lf);
-    if (n == 0 || load8(lf) == 47 || load8(lf + n - 1) == 47) { return 0; }
-    var i = 0;
-    while (i < n) {
-        var c = load8(lf + i);
-        var ok = 0;
-        if (c >= 97 && c <= 122) { ok = 1; }
-        elif (c >= 65 && c <= 90) { ok = 1; }
-        elif (c >= 48 && c <= 57) { ok = 1; }
-        elif (c == 95 || c == 45) { ok = 1; }
-        elif (c == 47 && load8(lf + i + 1) != 47) { ok = 1; }
-        if (ok == 0) { return 0; }
-        i = i + 1;
-    }
-    return 1;
-}
-
 # Rewrite bundle `out_path` with the requires block for `leaves` (named deps skipped). The
 # block names `deps_path` (the committed sidecar's path, also under --check). 0, or 1 named.
 fn _distlib_write_requires(out_path, deps_path, leaves, named_deps): i64 {
@@ -5513,8 +5462,9 @@ fn _distlib_write_requires(out_path, deps_path, leaves, named_deps): i64 {
         var lf = vec_get(leaves, i);
         i = i + 1;
         if (_distlib_vec_has(named_deps, lf) == 1) { continue; }
-        if (_distlib_leaf_name_ok(lf) == 0) {
-            _err_ctx("distlib: a sidecar leaf is not a safe include path (allowed: [A-Za-z0-9_/-]) — bundle NOT rewritten", lf);
+        if (_dep_leaf_ok(lf) == 0) {
+            var why_lf = "distlib: a sidecar leaf is not a safe include path (allowed: [A-Za-z0-9_/-]) — bundle NOT rewritten";
+            _err_ctx(why_lf, _shown(lf));
             return 1;
         }
         # 6.6.18 review: a leaf the snapshot does not have would leave the block SHORT of its
@@ -5601,7 +5551,7 @@ fn _distlib_embed_select(lsec): i64 {
             str_builder_add_cstr(sb, "cyrius.cyml ");
             str_builder_add_cstr(sb, _dl_embed_key);
             str_builder_add_cstr(sb, " names ");
-            str_builder_add_cstr(sb, nm);
+            str_builder_add_cstr(sb, _shown(nm));   # 6.6.20: shown escaped
             str_builder_add_cstr(sb, ", which [embed] does not declare (a bundle carries [embed] entries by NAME)");
             _err(str_data(str_builder_build(sb)));
             bad = bad + 1;
@@ -5657,6 +5607,19 @@ fn _distlib_embed_unlisted(out_path, names): i64 {
     return n;
 }
 
+# 1 after naming it when `[package] name` cannot name a bundle: it becomes `dist/<name>.cyr`, the
+# `dist/<name>/` modular dir and the bundle's first header line, so it takes the profile rule
+# ([A-Za-z0-9_-], 1-32 characters — every package name in the ecosystem). It took the dep-name
+# rule, which let `name = "nm\nvar INJECTED = 7;\n#"` write `dist/nm?var INJECTED = 7;?#.cyr`
+# with a live `var INJECTED = 7;` line in the bundle header. CHANGELOG [6.6.20].
+fn _distlib_bad_pkg_name(name): i64 {
+    if (_distlib_valid_profile(name) == 1) { return 0; }
+    _ew("error: distlib: [package] name '");
+    _ew_shown(name);
+    _ew("' cannot name a bundle (allowed: [A-Za-z0-9_-], 1-32 characters) — nothing written\n");
+    return 1;
+}
+
 fn cmd_distlib(profile): i64 {
     if (_distlib_valid_profile(profile) == 0) {
         _err("invalid profile name (allowed: [a-zA-Z0-9_-]{1,32})");
@@ -5678,10 +5641,10 @@ fn cmd_distlib(profile): i64 {
     # had no guards at all — a comment (`# The package name = "…"`), a `display_name` tail and a
     # traversal `name = "../victim/pwned"` each hijacked the bundle. 6.6.17: `[package] name`
     # through the one reader (cbt/manifest.cyr) — anchored to [package], whole-key, comment- and
-    # string-aware — and `_dep_reject_unsafe_name` before the first sys_open.
+    # string-aware — and `_distlib_bad_pkg_name` (6.6.20: the bundle-name rule) before the first sys_open.
     var pkg_name = _mf_str("package", "name");
     if (pkg_name == 0) { pkg_name = "lib"; }
-    if (_dep_reject_unsafe_name(pkg_name) != 0) { return 1; }
+    if (_distlib_bad_pkg_name(pkg_name) == 1) { return 1; }
 
     # The `# Version:` header: `[package] version` from the manifest, else ./VERSION
     # (_project_version, cbt/core.cyr). 6.6.20 (REFACTOR-11): this read ./VERSION alone, under a
@@ -5820,7 +5783,7 @@ fn cmd_distlib(profile): i64 {
         if (file_exists(mod_path) == 0) {
             # v6.2.52 (user: make it fail-loud): a missing module is a HARD ERROR,
             # not a warning — a partial bundle silently drops a module.
-            _err_ctx("distlib: module not found", mod_path);
+            _err_ctx("distlib: module not found", _shown(mod_path));   # 6.6.20: shown escaped
             _aw_abort(ofd);
             return 1;
         }
@@ -5859,7 +5822,7 @@ fn cmd_distlib(profile): i64 {
         # v6.2.51 (closeout): fail loud on a >1MB module rather than silently
         # truncating the bundle + dropping its trailing include/leaf lines.
         if (flen >= 1048575 && _file_size(mod_path) > 1048575) {
-            _err_ctx("distlib: module exceeds 1024KB read cap (truncated)", mod_path);
+            _err_ctx("distlib: module exceeds 1024KB read cap (truncated)", _shown(mod_path));
             _aw_abort(ofd);
             return 1;
         }

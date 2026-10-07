@@ -21,6 +21,14 @@
 # v6.2.51 traversal guard covered sub-module / index / package names, never this one).
 # CVE-76 (6.6.16): the same class on the TAG — `tag = "../../../esc/sub"` made git mkdir
 # outside the cache, and a tag naming an existing dir printed `rm -rf` advice for it (D9).
+# 6.6.20 (CVE-TBD): the NAME rule caught up with the tag rule — `[deps.]` / `[deps..]` aliased
+# another dep's cache root, and `\`, control bytes and a header spanning lines passed (D8b-D8f).
+# 6.6.20 (CVE-TBD): a `modules` entry with a `..` component vendored any readable file into lib/
+# and exited 0, root or transitive; it, and a leading `/` or `\`, is refused by name (D10).
+# 6.6.20 (CVE-TBD): D10 refuses a path that SPELLS its way out; a tag that COMMITS a link
+# (`dist/x.cyr -> /abs/secret`, `dist -> /dir`) was followed by the copy and vendored with rc 0
+# and a verified commit pin, with or without a `modules` key. Any dep file read through a link
+# below the dep root — module, default, modular file or index, .deps sidecar — is refused (D11).
 #
 # Hermetic: a mktemp CYRIUS_HOME with the CLI built FROM SOURCE as the pin's own wrapper,
 # local file:// origins, no /etc/gitconfig or ~/.gitconfig (GIT_CONFIG_NOSYSTEM +
@@ -42,8 +50,22 @@
 #   also refuse `/` inside a tag                           -> D9d red
 #   drop the empty-tag refusal                             -> D9f red
 #   print the refused tag raw (no \xNN escape)            -> D9f red
-# D5 (modules = []) and D7 (optional / target gates) are the anti-over-reach axes: every
-# mutant above leaves them green, and so must the fix. D9d (plain + slash tags) and D9e
+#   6.6.20: drop the empty / `.`-led name rule              -> D8b D8c D8f red
+#   6.6.20: print the refused name raw (no \xNN escape)     -> D8d D8e D8f red
+#   6.6.20: drop the `\` / control-byte name rule           -> D8d D8e D8f red
+#   6.6.20: dry-run skips `[deps.]` again (`i - ls > 7`)    -> D8f red
+#   6.6.20: drop the `..`-component modules rule            -> D10a D10b red
+#   6.6.20: drop the leading `/` / `\` modules rule          -> D10a red (the absolute row)
+#   6.6.20: split modules components on `/` only            -> D10a red (the `..\\x` row)
+#   6.6.20: drop the link check in the modules loop          -> D11a D11b D11c D11f red
+#   6.6.20: drop the link check on the .deps sidecar         -> D11e red
+#   6.6.20: drop the link check on the modular index.cyml    -> D11d red
+#   6.6.20: drop the link check on the modular sub-module    -> D11d red
+#   6.6.20: check only the whole path, not each component    -> D11b red (the `dist ->` dir link)
+#   6.6.20: check the dep ROOT's own components too          -> D11g red
+#   6.6.20: take the lib/<base> fallback before the link check -> D11h red (the dangling default)
+# D5 (modules = []), D7 (optional / target gates), D10c and D11g are the anti-over-reach axes: every
+# mutant above leaves them green (but the last, which IS the over-reach D11g pins), and so must the fix. D9d (plain + slash tags) and D9e
 # (tagless path / git deps) are the tag check's anti-over-reach rows.
 set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -415,7 +437,318 @@ if [ "$d9f" -eq 7 ] && grep -qxF "error: [deps.foo] tag '' $REFUSAL_TAIL" "$W/d9
     ok "D9f tag = \"\", '-x', '/abs', '.hidden', 'a/.b', a backslash and a control byte: each refused (rc 1, git never invoked, no lock), the ESC shown as \\x1b"
 else bad "D9f ($d9f of 7 refused): $(head -1 "$W/d9f7.err")"; fi
 
+# ── D8b-D8f: 6.6.20 (CVE-TBD) — the rest of the unusable header NAMES ───────────────────
+# `_dep_reject_unsafe_name` refused only `/` and `..`, so `[deps.]` and `[deps..]` passed and
+# their clone dir `<home>/deps/<name>/<tag>` became `<home>/deps//<tag>` / `<home>/deps/./<tag>`
+# — ANOTHER dep's NAME directory (a foreign checkout cloned AS `<home>/deps/<tag>`, and the
+# tamper refusal printed `rm -rf <home>/deps/./victim`, every cached tag of victim). `\` and
+# control bytes passed too, and the name was echoed raw (a terminal escape out of a transitive
+# manifest; the scan ran across newlines, so a header could span lines).
+REFUSE_NAME_TAIL="is not a usable dep name (empty, \`.\`-led, or holding \`/\`, \`\\\`, \`..\` or a control byte, it would make a path) — section refused"
+# D8b: the root's `[deps.]`, `[deps..]` (aimed at a planted victim's whole cache root) and `[deps..x]`.
+freshcache; mkdir -p "$H/deps/victim/v1"; printf 'kept\n' > "$H/deps/victim/v1/marker"
+d8b=0
+for nm in '' '.' '.x'; do
+    P="$W/d8b$d8b"; mkp "$P" <<EOF
+[deps.$nm]
+git = "file://$F"
+tag = "victim"
+modules = ["dist/foo.cyr"]
+EOF
+    run9 "$P"
+    if [ "$rc" -eq 1 ] && grep -qxF "error: [deps.$nm] $REFUSE_NAME_TAIL" "$P.err" && [ ! -s "$W/git.log" ] \
+       && [ ! -f "$P/cyrius.lock" ] && ! grep -q 'rm -rf' "$P.err" "$P.out" && [ ! -e "$P/lib/foo.cyr" ]; then
+        d8b=$((d8b+1))
+    else echo "    D8b name '$nm': rc=$rc git=[$(head -1 "$W/git.log")] $(head -3 "$P.err")"; d8b=$((d8b+10)); fi
+done
+if [ "$d8b" -eq 3 ] && [ "$(ls -A "$H/deps")" = victim ] && [ "$(cat "$H/deps/victim/v1/marker")" = kept ] \
+   && [ "$(ls -A "$H/deps/victim")" = v1 ]; then
+    ok "D8b [deps.], [deps..] and [deps..x]: each refused by name (rc 1, git never invoked, no lock, no rm -rf advice); the planted victim cache is untouched"
+else bad "D8b ($d8b): deps=[$(ls -A "$H/deps" | tr '\n' ' ')] victim=[$(ls -A "$H/deps/victim" 2>/dev/null | tr '\n' ' ')]"; fi
+
+# D8c: a TRANSITIVE `[deps.]` (tdot 1.0.0 declares one at foo 2.0.0) — refused, never cloned.
+TD="$O/tdot"; mkdir -p "$TD/dist"
+( cd "$TD" && git init -q . && printf 'fn tdot_v(): i64 { return 6; }\n' > dist/tdot.cyr \
+  && printf '[package]\nname = "tdot"\nversion = "1.0.0"\nlanguage = "cyrius"\n\n[deps.]\ngit = "file://%s"\ntag = "2.0.0"\nmodules = ["dist/foo.cyr"]\n' "$F" > cyrius.cyml \
+  && git add -A && git commit -qm v1 && git tag 1.0.0 )
+freshcache
+P="$W/d8c"; mkp "$P" <<EOF
+[deps.tdot]
+git = "file://$TD"
+tag = "1.0.0"
+modules = ["dist/tdot.cyr"]
+EOF
+run9 "$P"
+if [ "$rc" -eq 1 ] && grep -qxF "error: [deps.] $REFUSE_NAME_TAIL" "$P.err" && [ -f "$P/lib/tdot.cyr" ] \
+   && [ "$(ls -A "$H/deps")" = tdot ] && [ ! -e "$H/deps/2.0.0" ] && ! grep -qF "file://$F" "$W/git.log" \
+   && [ ! -f "$P/cyrius.lock" ] && [ ! -e "$P/lib/foo.cyr" ]; then
+    ok "D8c a TRANSITIVE [deps.]: refused by name, rc 1, foo's origin never fetched, nothing cloned AS \$CYRIUS_HOME/deps/2.0.0"
+else bad "D8c (rc=$rc deps=[$(ls -A "$H/deps" | tr '\n' ' ')]): $(head -3 "$P.err")"; fi
+
+# D8d: a control byte (ESC) and a backslash in the name — refused, and SHOWN escaped, never raw.
+freshcache
+P="$W/d8d1"; mkp "$P" <<EOF
+[deps.ev${ESC}[2Jil]
+git = "file://$F"
+tag = "2.0.0"
+modules = ["dist/foo.cyr"]
+EOF
+run9 "$P"; rc1=$rc
+P="$W/d8d2"; mkp "$P" <<EOF
+[deps.a\\b]
+git = "file://$F"
+tag = "2.0.0"
+modules = ["dist/foo.cyr"]
+EOF
+run9 "$P"; rc2=$rc
+if [ "$rc1" -eq 1 ] && grep -qxF "error: [deps.ev\\x1b[2Jil] $REFUSE_NAME_TAIL" "$W/d8d1.err" && ! grep -qF "$ESC" "$W/d8d1.err" "$W/d8d1.out" \
+   && [ "$rc2" -eq 1 ] && grep -qxF "error: [deps.a\\b] $REFUSE_NAME_TAIL" "$W/d8d2.err" \
+   && [ -z "$(ls -A "$H/deps")" ] && [ ! -f "$W/d8d1/cyrius.lock" ] && [ ! -f "$W/d8d2/cyrius.lock" ]; then
+    ok "D8d a name holding ESC (shown as \\x1b, no raw ESC on either stream) and one holding a backslash: refused, rc 1, nothing cloned"
+else bad "D8d (rc1=$rc1 rc2=$rc2): $(head -2 "$W/d8d1.err" | od -c | head -3) $(head -1 "$W/d8d2.err")"; fi
+
+# D8e: a header that runs across lines — `[deps.a` / `forged line` / `]` — is refused, and no
+# line of the manifest is replayed onto the terminal as a line of its own.
+freshcache
+P="$W/d8e"; mkp "$P" <<EOF
+[deps.a
+forged line
+]
+git = "file://$F"
+tag = "2.0.0"
+modules = ["dist/foo.cyr"]
+EOF
+run9 "$P"
+if [ "$rc" -eq 1 ] && [ ! -s "$W/git.log" ] && [ -z "$(ls -A "$H/deps")" ] && [ ! -f "$P/cyrius.lock" ] \
+   && ! grep -q '^forged line' "$P.err" "$P.out" && [ ! -e "$P/lib/foo.cyr" ]; then
+    ok "D8e a [deps.a header spanning lines: refused, rc 1, git never invoked, no forged line on the terminal"
+else bad "D8e (rc=$rc git=[$(head -1 "$W/git.log")]): $(head -3 "$P.err")"; fi
+
+# D8f: `deps --dry-run` agrees with the real run: it lists `[deps.]` (it skipped it) as refused,
+# exits 1, shows a control byte escaped — and still lists a usable name (anti-over-reach).
+P="$W/d8f"; mkp "$P" <<EOF
+[deps.foo]
+git = "file://$F"
+tag = "2.0.0"
+
+[deps.]
+git = "file://$F"
+tag = "2.0.0"
+
+[deps.e${ESC}x]
+git = "file://$F"
+EOF
+rc=0; ( cd "$P" && "$CY" deps --dry-run > "$P.out" 2> "$P.err" ) || rc=$?
+if [ "$rc" -eq 1 ] && grep -qxF "  foo" "$P.out" && grep -qxF "error: [deps.] $REFUSE_NAME_TAIL" "$P.err" \
+   && grep -qxF "error: [deps.e\\x1bx] $REFUSE_NAME_TAIL" "$P.err" && ! grep -qF "$ESC" "$P.err" "$P.out" \
+   && [ ! -d "$P/lib" ] && [ ! -f "$P/cyrius.lock" ]; then
+    ok "D8f deps --dry-run: lists foo, refuses [deps.] and the ESC name by the resolver's own line (escaped), rc 1, writes nothing"
+else bad "D8f (rc=$rc): out=[$(cat "$P.out" | tr '\n' '|')] err=[$(head -2 "$P.err")]"; fi
+
+# ── D10: 6.6.20 (CVE-TBD) — a `modules` entry that leaves the dep's tree ──────────────────
+# `[deps.X] modules` entries are joined onto the dep's dir and copied into lib/, so
+# `"../secret"` vendored ANY readable file (lib/X_secret) and exited 0 — from the root or from a
+# transitive manifest. A leading `/` was never read (it joins as `<dep>//abs`, "not found");
+# it is refused by the same line now, and so is a `\`-separated `..` (Windows' separator).
+SECRET='TOP SECRET 6620'
+printf '%s\n' "$SECRET" > "$W/secret"; printf '%s\n' "$SECRET" > "$W/secret.cyr"
+SIB="$W/sib"; mkdir -p "$SIB/dist" "$SIB/src"; printf 'fn sib_v(): i64 { return 8; }\n' > "$SIB/dist/sib.cyr"
+mkdir -p "$SIB/v..2"; printf 'fn sib_w(): i64 { return 9; }\n' > "$SIB/v..2/w.cyr"
+MODS_TAIL='is not a path inside the dep (absolute, or a `..` component) — section refused'
+secret_vendored() { [ -d "$1/lib" ] && grep -rqF "$SECRET" "$1/lib"; }
+# D10a: root path dep — `../secret`, a `..` mid-path, an absolute path, a `\`-separated `..`.
+d10=0; d10n=0
+for m in '../secret' 'dist/../../secret' "$W/secret.cyr" '..\\secret'; do
+    d10n=$((d10n+1)); P="$W/d10a$d10n"; mkp "$P" <<EOF
+[deps.sib]
+path = "$SIB"
+modules = ["dist/sib.cyr", "$m"]
+EOF
+    run9 "$P"
+    shown=$(printf '%s' "$m" | sed 's/\\\\/\\/g')
+    if [ "$rc" -eq 1 ] && grep -qxF "error: [deps.sib] modules entry \"$shown\" $MODS_TAIL" "$P.err" \
+       && ! secret_vendored "$P" && [ ! -e "$P/lib/sib.cyr" ] && [ ! -f "$P/cyrius.lock" ]; then
+        d10=$((d10+1))
+    else echo "    D10a entry '$m': rc=$rc lib=[$(ls "$P/lib" 2>/dev/null | tr '\n' ' ')] $(head -2 "$P.err")"; fi
+done
+if [ "$d10" -eq 4 ]; then
+    ok "D10a modules '../secret', 'dist/../../secret', an absolute path and '..\\\\secret': each refused by name, rc 1, nothing vendored, no lock"
+else bad "D10a ($d10 of 4 refused)"; fi
+
+# D10b: the same from a TRANSITIVE manifest — tmod 1.0.0 declares foo with `../../../../secret`
+# (from foo's clone dir <home>/deps/foo/2.0.0 that is $W/secret). Refused before foo's clone.
+TM="$O/tmod"; mkdir -p "$TM/dist"
+( cd "$TM" && git init -q . && printf 'fn tmod_v(): i64 { return 3; }\n' > dist/tmod.cyr \
+  && printf '[package]\nname = "tmod"\nversion = "1.0.0"\nlanguage = "cyrius"\n\n[deps.foo]\ngit = "file://%s"\ntag = "2.0.0"\nmodules = ["../../../../secret"]\n' "$F" > cyrius.cyml \
+  && git add -A && git commit -qm v1 && git tag 1.0.0 )
+freshcache
+P="$W/d10b"; mkp "$P" <<EOF
+[deps.tmod]
+git = "file://$TM"
+tag = "1.0.0"
+modules = ["dist/tmod.cyr"]
+EOF
+run9 "$P"
+if [ "$rc" -eq 1 ] && grep -qxF "error: [deps.foo] modules entry \"../../../../secret\" $MODS_TAIL" "$P.err" \
+   && [ -f "$P/lib/tmod.cyr" ] && ! secret_vendored "$P" && ! grep -qF "file://$F" "$W/git.log" && [ ! -f "$P/cyrius.lock" ]; then
+    ok "D10b a TRANSITIVE modules entry '../../../../secret': refused by name, rc 1, foo never cloned, nothing vendored from outside"
+else bad "D10b (rc=$rc lib=[$(ls "$P/lib" 2>/dev/null | tr '\n' ' ')]): $(head -2 "$P.err")"; fi
+
+# D10c: anti-over-reach — `./dist/sib.cyr` and a `..` INSIDE a component (`v..2/w.cyr`) vendor.
+P="$W/d10c"; mkp "$P" <<EOF
+[deps.sib]
+path = "$SIB"
+modules = ["./dist/sib.cyr", "v..2/w.cyr"]
+EOF
+run9 "$P"
+if [ "$rc" -eq 0 ] && cmp -s "$P/lib/sib.cyr" "$SIB/dist/sib.cyr" && cmp -s "$P/lib/sib_w.cyr" "$SIB/v..2/w.cyr" \
+   && ! grep -q 'not a path inside' "$P.err"; then
+    ok "D10c modules './dist/sib.cyr' and 'v..2/w.cyr' (a .. inside a name, not a component): vendored, rc 0"
+else bad "D10c (rc=$rc lib=[$(ls "$P/lib" 2>/dev/null | tr '\n' ' ')]): $(head -2 "$P.err")"; fi
+
+# ── D11: 6.6.20 (CVE-TBD) — a dep file that passes through a SYMLINK ──────────────────────
+# D10 refuses a path that SPELLS its way out. The copy opens with sys_open, which follows links,
+# so a tag that COMMITS `dist/x.cyr -> /abs/secret` (or `dist -> /dir`) vendored the target into
+# lib/ with a verified commit pin and rc 0 — with or without a `modules` key (the I10a default is
+# dist/<name>.cyr), from the root or a transitive manifest. The CVE-43 cache verify passes: the
+# link IS the tag's content. Every component below the dep root is checked; the root is not.
+# lnk 1.0.0: dist/lnk.cyr -> $W/secret.cyr (absolute)   2.0.0: the same, relative from the cache
+# 3.0.0: dist -> $W/sdir (a DIRECTORY link)              4.0.0: modular, dist/lnk/a.cyr a link
+# 5.0.0: modular, dist/lnk/index.cyml a link             6.0.0: dist/lnk.deps (the sidecar) a link
+# 7.0.0: dist/lnk.cyr a DANGLING link, beside a regular lib/lnk.cyr (the modules loop's fallback)
+LK="$O/lnk"; mkdir -p "$LK" "$W/sdir"; printf '%s\n' "$SECRET" > "$W/sdir/lnk.cyr"
+printf 'a = []\n# %s\n' "$SECRET" > "$W/secret.cyml"; printf '%s\n' "$SECRET" > "$W/secret.deps"
+lnktag() { ( cd "$LK" && git add -A && git commit -qm "$1" && git tag "$1" ); rm -rf "$LK/dist"; mkdir -p "$LK/dist"; }
+( cd "$LK" && git init -q . ); mkdir -p "$LK/dist"
+ln -s "$W/secret.cyr" "$LK/dist/lnk.cyr"; lnktag 1.0.0
+ln -s ../../../../../secret.cyr "$LK/dist/lnk.cyr"; lnktag 2.0.0
+rmdir "$LK/dist"; ln -s "$W/sdir" "$LK/dist"; ( cd "$LK" && git add -A && git commit -qm 3.0.0 && git tag 3.0.0 )
+rm -f "$LK/dist"; mkdir -p "$LK/dist/lnk"; printf 'a = []\n' > "$LK/dist/lnk/index.cyml"; ln -s "$W/secret.cyr" "$LK/dist/lnk/a.cyr"; lnktag 4.0.0
+mkdir -p "$LK/dist/lnk"; ln -s "$W/secret.cyml" "$LK/dist/lnk/index.cyml"; printf 'fn lnk_a(): i64 { return 4; }\n' > "$LK/dist/lnk/a.cyr"; lnktag 5.0.0
+printf 'fn lnk_v(): i64 { return 6; }\n' > "$LK/dist/lnk.cyr"; ln -s "$W/secret.deps" "$LK/dist/lnk.deps"; lnktag 6.0.0
+mkdir -p "$LK/lib"; printf 'fn lnk_v(): i64 { return 7; }\n' > "$LK/lib/lnk.cyr"; ln -s "$W/absent/lnk.cyr" "$LK/dist/lnk.cyr"; lnktag 7.0.0
+[ "$(git -C "$LK" cat-file -p '1.0.0:dist/lnk.cyr')" = "$W/secret.cyr" ] && [ "$(git -C "$LK" ls-tree 3.0.0 dist | cut -c1-6)" = 120000 ] \
+    && [ "$(git -C "$LK" cat-file -p '7.0.0:dist/lnk.cyr')" = "$W/absent/lnk.cyr" ] && git -C "$LK" cat-file -e '7.0.0:lib/lnk.cyr' \
+    || { echo "FAIL: $G: D11 origin fixture not built (the tags must COMMIT the links)"; exit 1; }
+LINK_TAIL="— a dependency's files are read only from inside its own tree; refused"
+# $1 = project, $2 = the refused file below the dep root, $3 = the dep's root
+link_refused() {
+    [ "$rc" -eq 1 ] && grep -qF "error: [deps.lnk] $2 passes through a symlink ($3/" "$1.err" && grep -qF "$LINK_TAIL" "$1.err" \
+      && ! secret_vendored "$1" && ! grep -qF "$SECRET" "$1.err" "$1.out" && [ ! -f "$1/cyrius.lock" ]
+}
+lnkp() {   # $1 = project dir, $2 = tag, $3 = "m" for a modules key
+    if [ "$3" = m ]; then mkp "$1" <<EOF
+[deps.lnk]
+git = "file://$LK"
+tag = "$2"
+modules = ["dist/lnk.cyr"]
+EOF
+    else mkp "$1" <<EOF
+[deps.lnk]
+git = "file://$LK"
+tag = "$2"
+EOF
+    fi
+}
+# D11a: ROOT git dep — absolute and relative link, with and without a modules key.
+d11=0
+for tg in 1.0.0 2.0.0; do for mk in m d; do
+    freshcache; P="$W/d11a_${tg}_$mk"; lnkp "$P" "$tg" "$mk"; run "$P"
+    if link_refused "$P" dist/lnk.cyr "$H/deps/lnk/$tg" && [ ! -e "$P/lib/lnk.cyr" ]; then d11=$((d11+1))
+    else echo "    D11a tag $tg ($mk): rc=$rc lib=[$(ls "$P/lib" 2>/dev/null | tr '\n' ' ')] $(head -2 "$P.err")"; fi
+done; done
+if [ "$d11" -eq 4 ]; then
+    ok "D11a root git dep committing dist/lnk.cyr as an absolute and as a relative link, with and without modules: each refused by name, rc 1, nothing vendored, no lock"
+else bad "D11a ($d11 of 4 refused)"; fi
+# D11b: a DIRECTORY link (`dist -> $W/sdir`) is caught at its own component.
+freshcache; P="$W/d11b"; lnkp "$P" 3.0.0 m; run "$P"
+if link_refused "$P" dist/lnk.cyr "$H/deps/lnk/3.0.0" && grep -qF "passes through a symlink ($H/deps/lnk/3.0.0/dist)" "$P.err"; then
+    ok "D11b a tag committing dist itself as a link to a directory: refused at the dist component, rc 1, nothing vendored"
+else bad "D11b (rc=$rc lib=[$(ls "$P/lib" 2>/dev/null | tr '\n' ' ')]): $(head -2 "$P.err")"; fi
+# D11c: the same through a TRANSITIVE manifest — tl 1.0.0-4.0.0 declare lnk (abs/rel x modules/none).
+TL="$O/tl"; mkdir -p "$TL/dist"; ( cd "$TL" && git init -q . ); printf 'fn tl_v(): i64 { return 1; }\n' > "$TL/dist/tl.cyr"
+n=0
+for spec in '1.0.0 m' '1.0.0 d' '2.0.0 m' '2.0.0 d'; do
+    set -- $spec; n=$((n+1))
+    { printf '[package]\nname = "tl"\nversion = "%s.0.0"\nlanguage = "cyrius"\n\n[deps.lnk]\ngit = "file://%s"\ntag = "%s"\n' "$n" "$LK" "$1"
+      [ "$2" = m ] && printf 'modules = ["dist/lnk.cyr"]\n'; true; } > "$TL/cyrius.cyml"
+    ( cd "$TL" && git add -A && git commit -qm "t$n" && git tag "$n.0.0" )
+done
+d11=0; n=0
+for spec in '1.0.0 m' '1.0.0 d' '2.0.0 m' '2.0.0 d'; do
+    set -- $spec; n=$((n+1))
+    freshcache; P="$W/d11c_$n"; mkp "$P" <<EOF
+[deps.tl]
+git = "file://$TL"
+tag = "$n.0.0"
+modules = ["dist/tl.cyr"]
+EOF
+    run "$P"
+    if link_refused "$P" dist/lnk.cyr "$H/deps/lnk/$1" && [ -f "$P/lib/tl.cyr" ] && [ ! -e "$P/lib/lnk.cyr" ]; then d11=$((d11+1))
+    else echo "    D11c tl $n.0.0 (lnk $1, $2): rc=$rc lib=[$(ls "$P/lib" 2>/dev/null | tr '\n' ' ')] $(head -2 "$P.err")"; fi
+done
+if [ "$d11" -eq 4 ]; then
+    ok "D11c a TRANSITIVE [deps.lnk] at the absolute and the relative link, with and without modules: each refused by name, rc 1, no lib/lnk.cyr, no lock"
+else bad "D11c ($d11 of 4 refused)"; fi
+# D11d: modular — a sub-module file that is a link, and an index.cyml that is a link.
+d11=0
+for spec in '4.0.0 dist/lnk/a.cyr' '5.0.0 dist/lnk/index.cyml'; do
+    set -- $spec
+    freshcache; P="$W/d11d_$1"; mkp "$P" <<EOF
+[deps.lnk]
+git = "file://$LK"
+tag = "$1"
+modular = ["a"]
+EOF
+    run "$P"
+    if link_refused "$P" "$2" "$H/deps/lnk/$1" && [ ! -e "$P/lib/lnk_a.cyr" ]; then d11=$((d11+1))
+    else echo "    D11d tag $1 ($2): rc=$rc lib=[$(ls "$P/lib" 2>/dev/null | tr '\n' ' ')] $(head -2 "$P.err")"; fi
+done
+if [ "$d11" -eq 2 ]; then
+    ok "D11d modular: a linked sub-module file and a linked index.cyml are each refused by name, rc 1, no lib/lnk_a.cyr, no lock"
+else bad "D11d ($d11 of 2 refused)"; fi
+# D11e: the `.deps` sidecar next to a module is a link — refused before it is read (its lines
+# would otherwise be echoed back as refused leaf names).
+freshcache; P="$W/d11e"; lnkp "$P" 6.0.0 m; run "$P"
+if link_refused "$P" dist/lnk.deps "$H/deps/lnk/6.0.0" && [ ! -e "$P/lib/lnk.cyr" ]; then
+    ok "D11e a linked dist/lnk.deps sidecar: refused by name before it is read, rc 1, its target's text on no stream"
+else bad "D11e (rc=$rc lib=[$(ls "$P/lib" 2>/dev/null | tr '\n' ' ')]): $(head -2 "$P.err")"; fi
+# D11h: a DANGLING dist/lnk.cyr beside a regular lib/lnk.cyr. file_exists follows the link and
+# reads it as absent, and the modules loop then fell back to lib/<base> BEFORE the link check, so
+# the I10a default (strictly dist/<name>.cyr) vendored lib/lnk.cyr, rc 0 with a lock. The primary
+# path is checked first: refused by name, with and without a modules key.
+d11=0
+for mk in d m; do
+    freshcache; P="$W/d11h_$mk"; lnkp "$P" 7.0.0 "$mk"; run "$P"
+    if link_refused "$P" dist/lnk.cyr "$H/deps/lnk/7.0.0" && [ ! -e "$P/lib/lnk.cyr" ]; then d11=$((d11+1))
+    else echo "    D11h ($mk): rc=$rc lib=[$(ls "$P/lib" 2>/dev/null | tr '\n' ' ')] $(head -2 "$P.err")"; fi
+done
+if [ "$d11" -eq 2 ]; then
+    ok "D11h a tag committing dist/lnk.cyr as a DANGLING link beside a regular lib/lnk.cyr, with and without modules: refused by name, rc 1, no lib/lnk.cyr, no lock"
+else bad "D11h ($d11 of 2 refused)"; fi
+# D11f: a PATH dep is held to the same rule.
+PL="$W/plk"; mkdir -p "$PL/dist"; ln -s "$W/secret.cyr" "$PL/dist/lnk.cyr"
+P="$W/d11f"; mkp "$P" <<EOF
+[deps.lnk]
+path = "$PL"
+EOF
+run "$P"
+if link_refused "$P" dist/lnk.cyr "$PL"; then
+    ok "D11f a path dep whose dist/lnk.cyr is a link: refused by name, rc 1, nothing vendored"
+else bad "D11f (rc=$rc): $(head -2 "$P.err")"; fi
+# D11g: anti-over-reach — the dep ROOT may be a link (a path dep reached through one).
+ln -s "$SIB" "$W/sibl"
+P="$W/d11g"; mkp "$P" <<EOF
+[deps.sib]
+path = "$W/sibl"
+modules = ["dist/sib.cyr"]
+EOF
+run "$P"
+if [ "$rc" -eq 0 ] && cmp -s "$P/lib/sib.cyr" "$SIB/dist/sib.cyr" && ! grep -q 'symlink' "$P.err"; then
+    ok "D11g a path dep whose ROOT is a link vendors as before (only components below the root are checked), rc 0"
+else bad "D11g (rc=$rc): $(head -2 "$P.err")"; fi
+
 echo "$G: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1
-[ "$pass" -ge 15 ] || { echo "FAIL: $G: only $pass axes ran (floor 15)"; exit 1; }
-echo "PASS: $G — a modules-less [deps.X] is resolved from dist/X.cyr or warned and counted; unsafe names and tags refused"
+[ "$pass" -ge 31 ] || { echo "FAIL: $G: only $pass axes ran (floor 31)"; exit 1; }
+echo "PASS: $G — a modules-less [deps.X] is resolved from dist/X.cyr or warned and counted; unsafe names, tags, module paths and linked dep files refused"

@@ -492,24 +492,6 @@ fn _toml_strs_at(buf, n, p): i64 {
     return 0;
 }
 
-# The STRING value of the `key = value` whose key name ends at buf[p] — for the per-key line
-# scanners in cbt/deps.cyr (`[deps.X] path / git / tag / target`). 0 with _toml_bad set when the
-# value is not a single-line TOML string. Those scanners used to skip to the next `"` in the FILE,
-# so `tag = 'v1'` read whatever double-quoted string came next. CHANGELOG [6.6.17].
-fn _toml_value_str_after_key(buf, n, p): i64 {
-    _toml_bad = 0;
-    p = _toml_skip_ws(buf, n, p);
-    if (p >= n || load8(buf + p) != 61) {
-        _toml_bad = 1;
-        return 0;
-    }
-    p = _toml_skip_ws(buf, n, p + 1);
-    var e = 0;
-    var s = _toml_str_at(buf, n, p, &e);
-    if (s == 0) { _toml_bad = 1; }
-    return s;
-}
-
 # 1 when the bytes at p end a bare token (space, `#`, `,`, a closing bracket or the line end).
 fn _toml_tok_end(buf, n, p): i64 {
     if (p >= n) { return 1; }
@@ -869,7 +851,7 @@ fn _embed_path_bad(path): i64 {
                 if (is_symlink(str_from(pre)) == 1) {
                     var sb = str_builder_new();
                     str_builder_add_cstr(sb, "the path passes through a symlink (");
-                    str_builder_add_cstr(sb, pre);
+                    str_builder_add_cstr(sb, _shown(pre));
                     str_builder_add_cstr(sb, "); [embed] refuses links: an untrusted checkout must not ship bytes from outside the project inside a binary");
                     return str_data(str_builder_build(sb));
                 }
@@ -990,14 +972,19 @@ fn _embed_read(path, lenp, whyp): i64 {
     return buf;
 }
 
-# "cyrius.cyml [embed] NAME = "path": why" (the path part only when there is one).
+# "cyrius.cyml [embed] NAME = "path": why" (the path part only when there is one). The NAME and
+# the path are the manifest's own bytes, so they are shown through `_shown` (cbt/deps.cyr): a
+# refused path is often refused BECAUSE it holds a control byte (`_embed_path_bad`), and since
+# 6.6.17 `\u001b` in a TOML string is one — echoed raw it was a terminal escape (an OSC title
+# set) out of the manifest. Shown escaped, an invisible HFS+-ignorable code point is visible too.
+# CHANGELOG [6.6.20] (CVE-TBD).
 fn _embed_refuse(disp, path, why): i64 {
     var sb = str_builder_new();
     str_builder_add_cstr(sb, "cyrius.cyml [embed] ");
-    str_builder_add_cstr(sb, disp);
+    str_builder_add_cstr(sb, _shown(disp));
     if (path != 0) {
         str_builder_add_cstr(sb, " = \"");
-        str_builder_add_cstr(sb, path);
+        str_builder_add_cstr(sb, _shown(path));
         str_builder_add_cstr(sb, "\"");
     }
     str_builder_add_cstr(sb, ": ");
@@ -1129,7 +1116,7 @@ fn _embed_load(): i64 {
                 str_builder_add_cstr(sb, "\n    [embed] ");
                 str_builder_add_cstr(sb, _embed_e_name(en));
                 str_builder_add_cstr(sb, " = \"");
-                str_builder_add_cstr(sb, _embed_e_path(en));
+                str_builder_add_cstr(sb, _shown(_embed_e_path(en)));
                 str_builder_add_cstr(sb, "\": ");
                 str_builder_add_int(sb, _embed_e_len(en));
                 str_builder_add_cstr(sb, " bytes");
