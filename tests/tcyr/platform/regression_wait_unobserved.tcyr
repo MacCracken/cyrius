@@ -89,8 +89,10 @@ fn _rwu_have(path): i64 {
 }
 
 # The 6.6.20 rows: the exec-in-dir and ssh / scp verbs under SIG_IGN, each after a zeroed stack.
+# POSIX only: agnos has no dup2, exec or ssh (the file is compiled there by the corpus ratchet).
 fn _sigign_rows_dir_ssh(envp): i64 {
     #ifndef CYRIUS_TARGET_WIN
+    #ifndef CYRIUS_TARGET_AGNOS
     var kills0 = regression_deadline_kills();
     signal_ignore(SIGCHLD);
     var rt0 = clock_now_ms();
@@ -143,6 +145,7 @@ fn _sigign_rows_dir_ssh(envp): i64 {
         var sc = "  SKIP: scp_to row — no /usr/bin/scp or /bin/scp\n";
         sys_write(1, sc, strlen(sc));
     }
+    #endif
     #endif
     return 0;
 }
