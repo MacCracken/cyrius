@@ -254,6 +254,42 @@ check "a literal [package] version wins over a VERSION file that disagrees" "7.0
 printf '[package]\nname = "vv"\n\n[lib]\nmodules = ["src/a.cyr"]\n' > "$D/v/cyrius.cyml"
 check "no [package] version: ./VERSION, as before" "2.3.4" "$(vhdr)"
 
+# ── axis 10: `cyrius publish` tags the version the bundle stamps (6.6.20, REFACTOR-11) ──────
+# Publish read ./VERSION alone, so once distlib stamped the manifest's version a project whose two
+# disagreed tagged vVERSION over a bundle saying `# Version: <manifest>`. It now tags
+# `_project_version()` — the source distlib stamps — and refuses two that disagree before anything
+# is generated. The version is joined into a `git tag` shell line, so one that is not a tag name
+# is refused, never run. `git` is a recorder first on PATH: nothing is tagged for real.
+echo "axis 10 — publish tags the version the bundle stamps; two that disagree are refused:"
+mkdir -p "$D/pb/src" "$D/pbin"
+printf '#!/bin/sh\necho "git $*" >> "%s/git.log"\n' "$D" > "$D/pbin/git" && chmod +x "$D/pbin/git"
+printf 'fn pb_one(): i64 { return 1; }\n' > "$D/pb/src/a.cyr"
+pub() { rm -f "$D/git.log"; PRC=0; ( cd "$D/pb" && PATH="$D/pbin:$PATH" timeout 300 "$CY" publish > "$D/op" 2>&1 ) || PRC=$?; }
+tagged() { sed -n 's/^git tag -a v\([^ ]*\) .*/\1/p' "$D/git.log" 2>/dev/null | head -1; }
+printf '[package]\nname = "pb"\nversion = "4.5.6"\n\n[lib]\nmodules = ["src/a.cyr"]\n' > "$D/pb/cyrius.cyml"
+pub
+check "no VERSION file: rc 0 (it was refused as 'no VERSION file')" 0 "$PRC"
+check "  it tags the [package] version" "4.5.6" "$(tagged)"
+check "  and the bundle it ships stamps the same" 1 "$(grep -cx '# Version: 4.5.6' "$D/pb/dist/pb.cyr" 2>/dev/null || true)"
+rm -rf "$D/pb/dist"
+printf '4.5.5\n' > "$D/pb/VERSION"
+pub
+check "VERSION disagrees with [package] version: exit NON-zero" 1 "$([ "$PRC" -ne 0 ] && echo 1 || echo 0)"
+check "  refused by name" 1 "$(grep -c 'two versions disagree' "$D/op" || true)"
+check "  nothing tagged" "" "$(tagged)"
+check "  nothing generated" 0 "$([ -e "$D/pb/dist" ] && echo 1 || echo 0)"
+printf '[package]\nname = "pb"\nversion = "${file:VERSION}"\n\n[lib]\nmodules = ["src/a.cyr"]\n' > "$D/pb/cyrius.cyml"
+pub
+check 'version = "${file:VERSION}": rc 0' 0 "$PRC"
+check "  it tags VERSION's contents" "4.5.5" "$(tagged)"
+check "  and the bundle stamps the same" 1 "$(grep -cx '# Version: 4.5.5' "$D/pb/dist/pb.cyr" 2>/dev/null || true)"
+rm -rf "$D/pb/dist"
+printf '4.5.5;touch PWNED\n' > "$D/pb/VERSION"
+pub
+check "a version that is not a tag name: exit NON-zero" 1 "$([ "$PRC" -ne 0 ] && echo 1 || echo 0)"
+check "  the shell never ran it" 0 "$([ -e "$D/pb/PWNED" ] && echo 1 || echo 0)"
+check "  nothing tagged" "" "$(tagged)"
+
 if [ "$fails" = "0" ]; then
     echo "PASS: distlib-bundle-selfcheck — the bundle is really compiled; broken bundles are fatal"
     exit 0

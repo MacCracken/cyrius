@@ -6370,9 +6370,63 @@ fn _mem_starts(p, lit, n): i64 {
     return 1;
 }
 
+# 6.6.20 (REFACTOR-11): the version `cyrius publish` tags is the one the bundle stamps —
+# `_project_version()`: the manifest's `[package] version` (`${file:PATH}` expanded), else
+# ./VERSION. Publish read ./VERSION alone, so once distlib stamped the manifest's, a project whose
+# two disagreed tagged vVERSION over a bundle saying `# Version: <manifest>`. Two sources that
+# disagree are refused, not settled by precedence — one of them is stale and only the author knows
+# which — and before anything is generated. ⛔ CVE-TBD: the version is joined into a `git tag`
+# shell line, and a ./VERSION holding `1.0;touch PWNED` RAN `touch` — so a version holding a byte
+# outside a tag name's charset is refused rather than run. Returns the version, or 0 after naming
+# the refusal.
+fn _publish_version(): i64 {
+    var mver = _dep_read_cyml_package_version();
+    if (mver != 0) {
+        if (load8(mver) == 0) { mver = 0; }
+    }
+    var fver = _dep_expand_file_interp("${file:VERSION}", 15);
+    if (mver == 0 && fver == 0) {
+        _err("publish: no version — cyrius.cyml has no [package] version and there is no ./VERSION");
+        return 0;
+    }
+    if (mver != 0 && fver != 0) {
+        if (streq(mver, fver) == 0) {
+            var dsb = str_builder_new();
+            str_builder_add_cstr(dsb, mver);
+            str_builder_add_cstr(dsb, " (cyrius.cyml [package] version) vs ");
+            str_builder_add_cstr(dsb, fver);
+            str_builder_add_cstr(dsb, " (./VERSION)");
+            _err_ctx("publish: the project's two versions disagree — not tagging", str_data(str_builder_build(dsb)));
+            _info("      Make one follow the other: version = \"${file:VERSION}\" in cyrius.cyml.");
+            return 0;
+        }
+    }
+    var ver = _project_version();
+    var ok = 1;
+    if (load8(ver) == 0) { ok = 0; }
+    var i = 0;
+    while (ok == 1 && load8(ver + i) != 0) {
+        var c = load8(ver + i);
+        var good = 0;
+        if (c >= 48 && c <= 57) { good = 1; }                          # 0-9
+        if (c >= 65 && c <= 90) { good = 1; }                          # A-Z
+        if (c >= 97 && c <= 122) { good = 1; }                         # a-z
+        if (c == 46 || c == 45 || c == 43 || c == 95) { good = 1; }    # . - + _
+        if (good == 0) { ok = 0; }
+        i = i + 1;
+    }
+    if (ok == 0) {
+        _err_ctx("publish: the version is not a tag name (0-9 A-Z a-z . - + _ only) — not tagging", ver);
+        return 0;
+    }
+    return ver;
+}
+
 fn cmd_publish(): i64 {
-    var ver = read_file_str("VERSION");
-    if (ver == 0) { _err("no VERSION file"); return 1; }
+    # 6.6.17: the one manifest reader; a malformed manifest is named before anything else.
+    if (_mf_load() < 0) { return 1; }
+    var ver = _publish_version();
+    if (ver == 0) { return 1; }
 
     _status("=== cyrius publish ===");
     sys_write(STDOUT_FD, "  version: ", 11);
@@ -6381,7 +6435,6 @@ fn cmd_publish(): i64 {
     # Step 1: distlib if manifest has modules. 6.6.17: asked of the one reader — `[build]` or
     # `[lib]` declares `modules` — instead of a raw substring hunt for "modules" through the first
     # 4,095 bytes, which a comment satisfied and a key past byte 4,095 did not.
-    if (_mf_load() < 0) { return 1; }
     if (_mf_has("build", "modules") == 1 || _mf_has("lib", "modules") == 1) {
         _status("  distlib...");
         # v6.5.19: was a bare `cmd_distlib(0);`. distlib's return value is
