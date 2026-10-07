@@ -163,19 +163,22 @@ Re-derived at 6.6.20 from the heap map in `src/main.cyr` (the authority — this
 ## Build Tool (cyrius)
 
 ```
-Build:     build [--aarch64|--win|--agnos] [--no-deps] [--dce] [--features <list>] [--print-config],
-           ([--strict] is accepted and passed to cycc, but has had no effect since 6.3.2: a reachable
-            undefined function is an error by default; --allow-undef downgrades it)
-           run, test, tests [dir], bench, check, self, clean
-           distlib [--all|--check] [--modular] [profile] — bundle src/ into dist/
-           lib sync [--dry-run] [--full] — vendor declared [deps].stdlib from pin
-Deps:      deps [--no-lock|--verify] — resolve [deps] from cyrius.cyml into lib/ (auto-runs on build)
-Project:   init, package, publish, install, update, port
-Quality:   audit [--internal[=platform-check]], fuzz, fmt, lint, doc, vet, deny, capacity
-Testing:   coverage [--full] [--min <pct>] [--programs <glob>] [--per-entry], doctest, soak [N], smoke
-Signing:   sign-efi <pe> <key.der> <cert.der> <out> — Authenticode-sign a PE for UEFI Secure Boot (v6.4.47)
-LSP:       lsp — build/install cyrius-lsp (also auto-installed via cyriusly setup)
-Info:      version [--project], which, repl, hooks install, help [manifest]
+Build & run:             build [--aarch64|--win|--agnos] [--no-deps] [--dce] [--features <list>] [--print-config],
+                         ([--strict] is accepted and passed to cycc, but has had no effect since 6.3.2: a reachable
+                          undefined function is an error by default; --allow-undef downgrades it)
+                         run, check, clean
+Test:                    test, tests [dir], bench, fuzz, doctest, smoke, soak [N],
+                         coverage [--full] [--min <pct>] [--programs <glob>] [--per-entry]
+Code quality & API:      fmt, lint, doc, vet, deny, audit [--internal[=platform-check]], api-surface, header
+Project & dependencies:  init, port, update, package, publish, install
+                         deps [--no-lock|--verify] — resolve [deps] from cyrius.cyml into lib/ (auto-runs on build)
+                         lib sync [--dry-run] [--full] — vendor declared [deps].stdlib from pin
+                         distlib [--all|--check] [--modular] [profile] — bundle src/ into dist/
+Toolchain:               self, pulsar, capacity, which, version [--project], hooks install
+                         lsp — build/install cyrius-lsp (also auto-installed via cyriusly setup)
+                         sign-efi <pe> <key.der> <cert.der> <out> — Authenticode-sign a PE for UEFI Secure Boot (v6.4.47)
+Interactive:             repl
+Help:                    help [manifest] — `cyrius --help` lists every command, `cyrius <command> --help` its flags
 ```
 
 Dependencies declared in `cyrius.cyml` are auto-resolved on `build`/`run`/`test`:
