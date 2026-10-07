@@ -93,6 +93,16 @@ while (rr < 3) {
     var rshr = realloc_via(ral, rsrc, 32, 8);
     assert_eq(load8(rshr), 7, "shrink: the first byte is copied");
     assert_eq(load8(rshr + 7), 14, "shrink: the last kept byte is copied");
+    # The shrink BOUND: a copy of old_size here writes 24 bytes past the 8-byte block. All
+    # three allocators hand out never-written (zero) heap at this point, so the 24 bytes just
+    # past new_size must still be 0 — a copy-old_size mutant leaves 15..38 there.
+    var rpast = 0;
+    rk = 8;
+    while (rk < 32) {
+        if (load8(rshr + rk) != 0) { rpast = rpast + 1; }
+        rk = rk + 1;
+    }
+    assert_eq(rpast, 0, "shrink: nothing past new_size is written (the copy is min(old, new))");
     var rnul = realloc_via(ral, 0, 32, 16);     # a copy from address 0 would fault
     assert(rnul != 0, "realloc from a 0 old_ptr allocates and copies nothing");
     rr = rr + 1;
