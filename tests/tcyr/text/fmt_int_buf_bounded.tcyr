@@ -41,7 +41,9 @@ fn _ff(bits, d, w, want): i64 {
     return streq(w, want);
 }
 
-# fmt_float(bits, d) to stdout, captured through a pipe; 1 when the text is `want`.
+# fmt_float(bits, d) to stdout, captured through a pipe; 1 when the text is `want`. Not on agnos:
+# the capture parks stdout with sys_dup2, which the agnos peer does not define (main SKIPs by name).
+#ifndef CYRIUS_TARGET_AGNOS
 fn _ffout(bits, d, want): i64 {
     var fds[16];
     if (sys_pipe(&fds) != 0) { return 0; }
@@ -64,6 +66,7 @@ fn _ffout(bits, d, want): i64 {
     store8(&got + n, 0);
     return streq(&got, want);
 }
+#endif
 
 fn main(): i64 {
     alloc_init();
@@ -155,12 +158,21 @@ fn main(): i64 {
     assert_eq(_ff(0x441B1AE4D6E2EF50, 1, w, "1.2e+20"), 1, "exact tie 1.25e20 -> even");
     assert_eq(_ff(0x442B1AE4D6E2EF50, 0, w, "2.0e+20"), 1, "exact tie 2.5e20 -> even");
     # fmt_float pads decimals past 18 INSIDE the mantissa, before the exponent.
+    #ifdef CYRIUS_TARGET_AGNOS
+    # 6.6.20: a named SKIP on agnos — the corpus cross-compile ratchet
+    # (tests/gates/toolchain/tcyr_corpus_cross_compiles.sh). These four rows read fmt_float's
+    # stdout back through a capture that needs sys_dup2, which the agnos peer does not define.
+    var _agnos_skip = "  SKIP (agnos): the 4 fmt_float stdout rows need a stdout capture, and the agnos peer defines no sys_dup2\n";
+    sys_write(1, _agnos_skip, strlen(_agnos_skip));
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
     assert_eq(_ffout(0x7E37E43C8800759C, 2, "1.00e+300"), 1, "fmt_float(1e300, 2)");
     assert_eq(_ffout(0xFE37E43C8800759C, 2, "-1.00e+300"), 1, "fmt_float(-1e300, 2)");
     assert_eq(_ffout(0x7E37E43C8800759C, 20, "1.00000000000000005300e+300"), 1,
       "fmt_float(1e300, 20): padding before e+300");
     assert_eq(_ffout(0x43E0000000000000, 20, "9223372036854775808.00000000000000000000"), 1,
       "fmt_float(2^63, 20)");
+    #endif
 
     # fmt_float's own stack buffer: these overran `var buf[32]` (a smashed frame).
     fmt_float(big, 2);

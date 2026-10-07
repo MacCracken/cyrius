@@ -15,8 +15,13 @@ include "lib/assert.cyr"
 var _cap_rd = 0;
 var _cap_wr = 0;
 
-# Route stderr (the poison reports) into a pipe until _cap_end.
+# Route stderr (the poison reports) into a pipe until _cap_end. agnos cannot (no sys_dup2 on
+# its peer): -1 there, and main SKIPs by name before any capture.
 fn _cap_begin(): i64 {
+    #ifdef CYRIUS_TARGET_AGNOS
+    return 0 - 1;
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
     var fds[16];
     if (sys_pipe(&fds) != 0) { return 0 - 1; }
     _cap_rd = load32(&fds);
@@ -24,11 +29,14 @@ fn _cap_begin(): i64 {
     sys_dup2(2, 97);                 # park the real stderr on a free fd
     sys_dup2(_cap_wr, 2);
     return 0;
+    #endif
 }
 
 # Restore stderr; read what was captured into `buf` (NUL-terminated). Returns its length.
 fn _cap_end(buf, cap): i64 {
+    #ifndef CYRIUS_TARGET_AGNOS
     sys_dup2(97, 2);
+    #endif
     sys_close(97);
     sys_close(_cap_wr);
     var got = 0;
@@ -54,6 +62,15 @@ fn _has(buf, needle): i64 {
 }
 
 fn main(): i64 {
+    #ifdef CYRIUS_TARGET_AGNOS
+    # 6.6.20: a named SKIP on agnos — the corpus cross-compile ratchet
+    # (tests/gates/toolchain/tcyr_corpus_cross_compiles.sh). Every group below reads the poison
+    # report back from a stderr capture, and the capture parks stderr with sys_dup2, which the
+    # agnos peer does not define. Nothing is counted: 0 passed, 0 total.
+    var _agnos_skip = "  SKIP (agnos): every group reads its poison report from a stderr capture, and the agnos peer defines no sys_dup2\n";
+    sys_write(1, _agnos_skip, strlen(_agnos_skip));
+    return assert_summary();
+    #endif
     alloc_init();
     poison_trap_set(0);
     fl_poison_enable();
