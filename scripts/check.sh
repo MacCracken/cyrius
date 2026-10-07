@@ -1910,6 +1910,11 @@ _chk_gate "$ROOT/tests/gates/toolchain/build_config_precedence.sh"
 # SKIP by name without wine.
 _chk_gate "$ROOT/tests/gates/toolchain/build_config_windows_arm.sh"
 
+# 6.6.20 (REFACTOR-10 / CBTB-10) — compile() hands the compiler its flags from ONE list
+# (`_cc_flags`): the POSIX argv is built and sized from it, the PE command line joins it. The real
+# helpers run for all 8 flag combinations (the old fixed argv[32] held 4 slots for 5 writers).
+_chk_gate "$ROOT/tests/gates/toolchain/compile_flag_list.sh"
+
 # 6.6.17 (P1) — bare `cyrius test` runs [build] test (file / dir / list) first, then tests/, each
 # file once; a missing target is a named failure; absent key = unchanged; an argument wins.
 _chk_gate "$ROOT/tests/gates/toolchain/test_runs_build_test.sh"

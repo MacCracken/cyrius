@@ -1170,12 +1170,45 @@ fn _cc_env_retarget(tv): i64 {
     return out;
 }
 
+# 6.6.20 — THE compiler flags compile() passes, in order, as a vec of cstr. ONE list for both
+# spawn arms: the POSIX argv is built from it (`_run_argv`, sized from it) and the PE command
+# line joins it (`_win_compile_spawn_err`). There were two hand-kept copies, and the POSIX one
+# sat in a fixed `var argv[32]` — four slots — that v6.5.19's `--syntax-only` gave a fifth
+# writer (cc + three flags + NUL), unreachable only because no verb sets all three today.
+#   --strict       `cyrius build --strict`; accepted, no effect since 6.3.2 (back-compat).
+#   --allow-undef  the distlib bundle self-check and lint's pre-pass (`_cc_allow_undef`).
+#   --syntax-only  lint's pre-pass only: "does this PARSE?" without resolution, so a missing
+#                  include cannot hide a syntax error. The output is garbage under it — the
+#                  only caller compiles to a temp and unlinks it. See `_syntax_only` in src/.
+# CHANGELOG [6.6.20]
+fn _cc_flags(): i64 {
+    var v = vec_new();
+    if (_strict == 1) { vec_push(v, "--strict"); }
+    if (_cc_allow_undef == 1) { vec_push(v, "--allow-undef"); }
+    if (_cc_syntax_only == 1) { vec_push(v, "--syntax-only"); }
+    return v;
+}
+
+#ifdef CYRIUS_TARGET_WIN
+# `_cc_flags` as " --a --b" for cycc.exe's command line ("" when there are none) — the PE
+# arm's view of the one list the POSIX argv is built from. CHANGELOG [6.6.20]
+fn _cc_flags_cmdline(): i64 {
+    var fsb = str_builder_new();
+    var flags = _cc_flags();
+    var i = 0;
+    while (i < vec_len(flags)) {
+        str_builder_add_cstr(fsb, " ");
+        str_builder_add_cstr(fsb, vec_get(flags, i));
+        i = i + 1;
+    }
+    return str_data(str_builder_build(fsb));
+}
+
 # The Windows twin of the child-side dup2 below. lib/process_win.cyr's
 # `_win_compile_spawn` builds `cmd /s /c ""cc" < "src" > "out""` and leaves stderr on
 # the console; this adds the `2> "err"` leg. Kept HERE rather than in lib/ so the
 # capture lands with its only caller — fold it back into `_win_compile_spawn` as a
 # 4th parameter when that file is next touched. CHANGELOG [6.5.19].
-#ifdef CYRIUS_TARGET_WIN
 fn _win_compile_spawn_err(cc, source, output, errfile): i64 {
     # 6.6.17: `errfile` may be 0 (stderr stays on the console), and the compiler flags the POSIX
     # arm puts in argv go on the command line, in the same order — `--strict`, `--allow-undef`
@@ -1183,11 +1216,7 @@ fn _win_compile_spawn_err(cc, source, output, errfile): i64 {
     # cycc_win reads its flags from GetCommandLineW (src/main_win.cyr). Before this NONE of them
     # crossed this arm, so on cyrius.exe lint's pre-pass and distlib's self-check compiled as
     # ordinary builds. This is the one Windows compile spawn in compile().
-    var fsb = str_builder_new();
-    if (_strict == 1) { str_builder_add_cstr(fsb, " --strict"); }
-    if (_cc_allow_undef == 1) { str_builder_add_cstr(fsb, " --allow-undef"); }
-    if (_cc_syntax_only == 1) { str_builder_add_cstr(fsb, " --syntax-only"); }
-    var fl = str_data(str_builder_build(fsb));
+    var fl = _cc_flags_cmdline();
     var elen = 0;
     if (errfile != 0) { elen = strlen(errfile); }
     # v6.6.6 — sized from the paths, not a fixed 16 KiB; `_w_cmdbuf` refuses by
@@ -1448,38 +1477,13 @@ fn compile(source, output): i64 {
             if (efd >= 0) { sys_dup2(efd, 2); sys_close(efd); }
         }
 
-        # v5.11.63: pass --strict in argv when the wrapper flag was
-        # set. It is accepted and has NO EFFECT since 6.3.2: a reachable
-        # undefined fn is an error by default (`--allow-undef` downgrades
-        # it), and nothing in the compiler reads the flag any more — the
-        # fixup pass's strict-exit this comment used to cite is gone.
-        # Passed through for back-compat only (the help text says so).
-        # argv[32] = 4 × 8 B (cc + optional "--strict" + optional
-        # "--allow-undef" + NUL). v6.5.14 widened this from 24 for the
-        # distlib self-check; keep it in step with the flags below.
-        var argv[32];
-        store64(&argv, cc);
-        var ax = 1;
-        if (_strict == 1) {
-            store64(&argv + ax * 8, "--strict");
-            ax = ax + 1;
-        }
-        if (_cc_allow_undef == 1) {
-            store64(&argv + ax * 8, "--allow-undef");
-            ax = ax + 1;
-        }
-        # v6.5.19: `cyrius lint`'s pre-pass only. Makes cycc answer "does this PARSE?"
-        # without resolution, so a missing include cannot hide the file's syntax
-        # errors. THE OUTPUT IS GARBAGE UNDER THIS FLAG — the only caller compiles to
-        # a temp and unlinks it. See _cc_syntax_only / _syntax_only.
-        if (_cc_syntax_only == 1) {
-            store64(&argv + ax * 8, "--syntax-only");
-            ax = ax + 1;
-        }
-        store64(&argv + ax * 8, 0);
+        # [cc, flags..., NUL], sized from THE flag list (`_cc_flags`, which the PE arm joins
+        # into its command line). This was a fixed `var argv[32]` — four slots — with five
+        # writers once v6.5.19 added `--syntax-only`. CHANGELOG [6.6.20]
+        var cc_argv = _run_argv(cc, _cc_flags(), 0);
         # 6.6.11: a per-target compile (the distlib verify) gets its target and nothing else's.
         if (_cc_target_env != 0) {
-            sys_execve(cc, &argv, _cc_env_retarget(_cc_target_env));
+            sys_execve(cc, cc_argv, _cc_env_retarget(_cc_target_env));
             sys_exit(127);
         }
         # v5.11.58: when --strict-pin is set, augment envp with
@@ -1531,9 +1535,9 @@ fn compile(source, output): i64 {
                 if (_section_base_env_ptr != 0) { store64(sp_envp + sp_ni * 8, _section_base_env_ptr); sp_ni = sp_ni + 1; }   # v6.3.3 #5
             }
             store64(sp_envp + sp_ni * 8, 0);
-            sys_execve(cc, &argv, sp_envp);
+            sys_execve(cc, cc_argv, sp_envp);
         } else {
-            sys_execve(cc, &argv, _envp);
+            sys_execve(cc, cc_argv, _envp);
         }
         sys_exit(127);
     }
