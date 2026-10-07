@@ -28,20 +28,47 @@ V="$(tr -d '[:space:]' < VERSION)"
 # more than one installed version. CYRIUS_FUNCGATE_ALLOW_LIVE=1 is the deliberate
 # override; a temp-dir target needs no override at all.
 _fg_abort() { echo "funcgate-stage: REFUSING to rm -rf $1" >&2; echo "  $2" >&2; exit 1; }
+# The physical path of directory $1 whether or not it exists yet: its deepest EXISTING
+# ancestor, resolved with `cd && pwd -P`, plus the missing tail. A copy of install.sh's
+# `_rs_real` (no realpath(1) — this runs on the AGNOS container too). Never fails.
+_fg_real() {
+    _rp="$1"
+    while [ "$_rp" != "/" ] && [ "${_rp%/}" != "$_rp" ]; do _rp="${_rp%/}"; done
+    [ -n "$_rp" ] || _rp="/"
+    _rtail=""
+    while [ ! -d "$_rp" ]; do
+        _rtail="/$(basename "$_rp")$_rtail"
+        _rp="$(dirname "$_rp")"
+    done
+    _rbase="$( (cd "$_rp" 2>/dev/null && pwd -P) || true )"
+    [ -n "$_rbase" ] || _rbase="$_rp"
+    _rout="${_rbase%/}$_rtail"
+    [ -n "$_rout" ] || _rout="/"
+    printf '%s\n' "$_rout"
+}
+# True when $1 is $2 or lies inside it (both physical paths, $2 != "/").
+_fg_within() { case "$1/" in "$2"/*) return 0 ;; esac; return 1; }
 if [ "${CYRIUS_FUNCGATE_ALLOW_LIVE:-0}" != "1" ]; then
-    # Canonicalise without realpath(1) — this runs on the AGNOS container too.
-    if [ -d "$H" ]; then _H_ABS="$(cd "$H" 2>/dev/null && pwd -P)" || _H_ABS="$H"
-    else _H_ABS="$H"; fi
-    case "$_H_ABS" in
-        /|"$HOME"|"$HOME"/) _fg_abort "$_H_ABS" "that is / or \$HOME." ;;
-    esac
-    [ "$_H_ABS" = "${CYRIUS_HOME_REAL:-$HOME/.cyrius}" ] &&
-        _fg_abort "$_H_ABS" "that is the live toolchain store. Stage into a temp dir."
+    # EVERY side of every compare is a physical path. Comparing `pwd -P` of the target with the
+    # raw strings $HOME / $HOME/.cyrius let a symlinked HOME (Fedora Atomic, FreeBSD: /home is a
+    # link), a trailing slash on HOME, or a symlinked target straight past the guard; and an
+    # equality test missed a PARENT of HOME and the repo root. CHANGELOG [6.6.20]
+    _H_R="$(_fg_real "$H")"
+    _HOME_R="$(_fg_real "${HOME:-/}")"
+    _ST_R="$(_fg_real "${CYRIUS_HOME_REAL:-${HOME:-/}/.cyrius}")"
+    _CWD_R="$(pwd -P)"
+    [ "$_H_R" = "/" ] && _fg_abort "$_H_R" "that is /."
+    _fg_within "$_HOME_R" "$_H_R" &&
+        _fg_abort "$_H_R" "that is \$HOME ($_HOME_R) or a directory holding it."
+    _fg_within "$_ST_R" "$_H_R" &&
+        _fg_abort "$_H_R" "that is the live toolchain store ($_ST_R) or a directory holding it. Stage into a temp dir."
+    _fg_within "$_CWD_R" "$_H_R" &&
+        _fg_abort "$_H_R" "that is the working directory ($_CWD_R) or a directory holding it — the source tree."
     # A tree with 2+ installed versions is a real store no matter where it lives.
-    if [ -d "$_H_ABS/versions" ]; then
-        _nv=$(ls -1 "$_H_ABS/versions" 2>/dev/null | wc -l | tr -d ' ')
+    if [ -d "$_H_R/versions" ]; then
+        _nv=$(ls -1 "$_H_R/versions" 2>/dev/null | wc -l | tr -d ' ')
         [ "${_nv:-0}" -gt 1 ] &&
-            _fg_abort "$_H_ABS" "it holds $_nv installed versions. Set CYRIUS_FUNCGATE_ALLOW_LIVE=1 if you truly mean it."
+            _fg_abort "$_H_R" "it holds $_nv installed versions. Set CYRIUS_FUNCGATE_ALLOW_LIVE=1 if you truly mean it."
     fi
 fi
 

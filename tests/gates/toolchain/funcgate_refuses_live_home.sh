@@ -39,13 +39,16 @@ cd "$ROOT"
 
 # ── axis 1: target IS the user's live store → refuse, and leave it untouched ─────────
 # HOME is redirected so the axis exercises the real `$HOME/.cyrius` branch without ever
-# pointing the script at the actual store on this box.
-mkdir -p "$WORK/h1/.cyrius/versions/6.5.9" "$WORK/h1/.cyrius/versions/6.6.1"
+# pointing the script at the actual store on this box. ONE installed version on purpose:
+# with two, axis 2's count heuristic refuses first and the `$HOME/.cyrius` compare is never
+# reached — a mutation that deleted that compare left this axis green until 6.6.20.
+mkdir -p "$WORK/h1/.cyrius/versions/6.5.9"
 echo "sentinel" > "$WORK/h1/.cyrius/versions/6.5.9/marker"
 if HOME="$WORK/h1" sh "$STAGE" /bin/true /bin/true "$WORK/h1/.cyrius" >"$WORK/o1" 2>&1; then
     fail "axis 1: staging into \$HOME/.cyrius was ALLOWED"
 fi
 grep -q 'REFUSING to rm -rf' "$WORK/o1" || fail "axis 1: refused but printed no reason"
+grep -q 'live toolchain store' "$WORK/o1" || fail "axis 1: wrong refusal reason: $(cat "$WORK/o1")"
 [ -f "$WORK/h1/.cyrius/versions/6.5.9/marker" ] || fail "axis 1: store was destroyed anyway"
 
 # ── axis 2: any tree holding 2+ installed versions is a store, wherever it lives ─────
@@ -74,4 +77,51 @@ grep -q '^staged CYRIUS_HOME=' "$WORK/o4" || fail "axis 4: staged but printed no
 [ -d "$WORK/fresh/versions" ] || fail "axis 4: nothing was staged"
 [ -L "$WORK/fresh/bin" ] || fail "axis 4: bin symlink not created"
 
-echo "PASS: funcgate_refuses_live_home (4 axes)"
+# ── axes 5-10: every side of the compare is a PHYSICAL path (6.6.20) ─────────────────
+# The guard compared `pwd -P` of the target with the RAW strings $HOME and $HOME/.cyrius, so
+# any spelling of HOME that is not already physical — a symlinked home (Fedora Atomic and
+# FreeBSD link /home), a symlinked parent, a trailing slash — walked straight past it, and an
+# equality test never saw a PARENT of HOME or the source tree itself. Each of these deleted
+# the tree before the fix. They run from a FAKE repo root (VERSION, lib/, the init source) so
+# that a regression in axis 10 wipes a scratch copy, never this checkout.
+FR="$WORK/root"
+mkdir -p "$FR/lib" "$FR/programs"
+echo "6.6.99" > "$FR/VERSION"; echo "# a" > "$FR/lib/a.cyr"; echo "# init" > "$FR/programs/cyrius-init.cyr"
+_refuses() { # <axis> <home> <target> <survivor-file>
+    if (cd "$FR" && HOME="$2" sh "$STAGE" /bin/true /bin/true "$3") >"$WORK/o$1" 2>&1; then
+        fail "axis $1: staging into $3 (HOME=$2) was ALLOWED"
+    fi
+    grep -q 'REFUSING to rm -rf' "$WORK/o$1" || fail "axis $1: refused but printed no reason"
+    [ -f "$4" ] || fail "axis $1: refused, but $4 was destroyed anyway"
+}
+
+# axis 5: HOME is a symlink; target "$HOME/" (the trailing slash makes rm -rf follow the link)
+mkdir -p "$WORK/s5/hreal/Documents"; echo precious > "$WORK/s5/hreal/Documents/thesis.txt"
+ln -s "$WORK/s5/hreal" "$WORK/s5/hlink"
+_refuses 5 "$WORK/s5/hlink" "$WORK/s5/hlink/" "$WORK/s5/hreal/Documents/thesis.txt"
+
+# axis 6: HOME is a symlink; target "$HOME/.cyrius", a ONE-version store
+mkdir -p "$WORK/s6/hreal/.cyrius/versions/6.6.19"; echo s > "$WORK/s6/hreal/.cyrius/versions/6.6.19/marker"
+ln -s "$WORK/s6/hreal" "$WORK/s6/hlink"
+_refuses 6 "$WORK/s6/hlink" "$WORK/s6/hlink/.cyrius" "$WORK/s6/hreal/.cyrius/versions/6.6.19/marker"
+
+# axis 7: a symlinked PARENT (home -> var/home, the Fedora Atomic layout); target "$HOME"
+mkdir -p "$WORK/s7/var/home/user/Documents"; echo precious > "$WORK/s7/var/home/user/Documents/thesis.txt"
+ln -s var/home "$WORK/s7/home"
+_refuses 7 "$WORK/s7/home/user" "$WORK/s7/home/user" "$WORK/s7/var/home/user/Documents/thesis.txt"
+
+# axis 8: HOME carries a trailing slash; target "$HOME/.cyrius" spelled from it, one version
+mkdir -p "$WORK/s8/h/.cyrius/versions/6.6.19"; echo s > "$WORK/s8/h/.cyrius/versions/6.6.19/marker"
+_refuses 8 "$WORK/s8/h/" "$WORK/s8/h//.cyrius" "$WORK/s8/h/.cyrius/versions/6.6.19/marker"
+
+# axis 9: the target is a PARENT of HOME — an equality test never sees it
+mkdir -p "$WORK/s9/users/me/Documents"; echo precious > "$WORK/s9/users/me/Documents/thesis.txt"
+_refuses 9 "$WORK/s9/users/me" "$WORK/s9/users" "$WORK/s9/users/me/Documents/thesis.txt"
+
+# axis 10: the target is the working directory — the script runs from a repo root, so that
+# is the source tree
+echo precious > "$FR/precious.src"
+_refuses 10 "$WORK/h1" "$FR" "$FR/precious.src"
+[ -f "$FR/VERSION" ] || fail "axis 10: refused, but the fake repo root was wiped anyway"
+
+echo "PASS: funcgate_refuses_live_home (10 axes)"
