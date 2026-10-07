@@ -820,7 +820,7 @@ fn _embed_has_short83(buf, s, e): i64 {
 # a committed `VERSION -> ../x` link, the [embed] rules' own bypass); `[build] output` is the
 # binary written (SEC-02 — `../../.local/bin/git` placed a 0755 binary outside the checkout). ONE
 # checker for the three, so a path rule added for one key reaches the others. CHANGELOG [6.6.20]
-# (CVE-TBD)
+# (CVE-99)
 var _PP_EMBED = 0;
 var _PP_FILE = 1;
 var _PP_OUT = 2;
@@ -1025,7 +1025,7 @@ fn _proj_read(path, lenp, whyp, kind): i64 {
 # refused path is often refused BECAUSE it holds a control byte (`_proj_path_bad`), and since
 # 6.6.17 `\u001b` in a TOML string is one — echoed raw it was a terminal escape (an OSC title
 # set) out of the manifest. Shown escaped, an invisible HFS+-ignorable code point is visible too.
-# CHANGELOG [6.6.20] (CVE-TBD).
+# CHANGELOG [6.6.20] (CVE-95).
 fn _embed_refuse(disp, path, why): i64 {
     var sb = str_builder_new();
     str_builder_add_cstr(sb, "cyrius.cyml [embed] ");
@@ -1449,7 +1449,7 @@ fn _cfg_mf_embed(): i64 {
     return 0;
 }
 
-# 6.6.20 (SEC-02, CVE-TBD) — `[build] output` AS THE MANIFEST GIVES IT is the binary `cyrius build`
+# 6.6.20 (SEC-02, CVE-97) — `[build] output` AS THE MANIFEST GIVES IT is the binary `cyrius build`
 # and `cyrius package` write (0755), so it is a path in the project: `_proj_path_bad(_PP_OUT)` — no
 # absolute path, `..`, `\`, `:`, `.git` component, link anywhere on it, control byte, `"`, `%` or
 # `!`. Measured on 2ac318b0: `../escaped_out bin;touch PWNED`, an absolute path and `lnk/x` through
@@ -1508,7 +1508,7 @@ fn _cfg_resolve_build(src_arg, out_arg): i64 {
     }
     if (_cfg_mf_str(_CK_PKG_CYRIUS, "package", "cyrius") != 0) { return 1; }
     # the pin's SHAPE goes through the one pin reader, which refuses a malformed one by name — or
-    # `--print-config` under CYRIUS_RESOLVED=1 printed a traversal pin raw, exit 0. CVE-TBD (6.6.20)
+    # `--print-config` under CYRIUS_RESOLVED=1 printed a traversal pin raw, exit 0. CVE-79 (6.6.20)
     if (_cfg_val(_CK_PKG_CYRIUS) != 0) { _dep_read_cyml_cyrius_field(); }
     if (_cfg_mf_str(_CK_SECTIONS_BASE, "sections", "base") != 0) { return 1; }
     if (_cfg_mf_embed() != 0) { return 1; }

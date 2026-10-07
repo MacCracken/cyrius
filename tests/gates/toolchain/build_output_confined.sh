@@ -1,5 +1,5 @@
 #!/bin/sh
-# build_output_confined.sh — 6.6.20 (SEC-02, CVE-TBD). A manifest's `[build] output` is the 0755
+# build_output_confined.sh — 6.6.20 (SEC-02, CVE-97). A manifest's `[build] output` is the 0755
 # binary `cyrius build` writes; on macOS it was handed UNQUOTED to `/bin/sh -c "codesign -s - -f
 # <output>"` and on Windows it is cmd.exe's quoted redirect target, where a `"` ends the operand
 # and the rest of the line runs (`out.exe" & echo X> pwned.txt & "y` ran under wine). On Linux the

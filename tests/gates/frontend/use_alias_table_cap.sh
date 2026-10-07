@@ -1,6 +1,6 @@
 #!/bin/sh
 # Gate: the `use mod.fn;` alias table is bounded — the 65th alias is REFUSED by name, never
-# stored (6.6.20, HEAP-02, CVE-TBD; SECURITY).
+# stored (6.6.20, HEAP-02, CVE-81; SECURITY).
 #
 # THE DEFECT (measured at 6.6.19, x86_64 Linux, no diagnostic): `_tl_use_alias`
 # (src/frontend/parse_fn.cyr) stored alias #uc at use_from[uc] / use_to[uc] with no cap. The two

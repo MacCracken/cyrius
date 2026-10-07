@@ -1829,7 +1829,7 @@ _chk_gate "$ROOT/tests/gates/frontend/string_intern_scale_linear.sh"
 # both caps.
 _chk_gate "$ROOT/tests/gates/frontend/toplevel_destructure_var_cap.sh"
 
-# 6.6.20 (HEAP-02, CVE-TBD) — the `use mod.fn;` alias table refuses its 65th entry by name before
+# 6.6.20 (HEAP-02, CVE-81) — the `use mod.fn;` alias table refuses its 65th entry by name before
 # any store: use_from / use_to abut, so the 65th alias re-bound alias #1 (a silent wrong call) and
 # later ones walked the heap to gvar_cnt (SIGSEGV past ~5062). 5 rows: 64 resolves, 65/200/5100 refused.
 _chk_gate "$ROOT/tests/gates/frontend/use_alias_table_cap.sh"
@@ -1984,20 +1984,20 @@ _chk_gate "$ROOT/tests/gates/toolchain/macho_fill_environ_bounded.sh"
 # 6.6.11 (B09: I3) — cyrius.exe honours CYRIUS_RESOLVED=1 and runs a pinned versions/<pin>/bin/
 # cyrius.exe as a child (sys_execve is a -1 stub on PE), propagating its exit code. Wine; 77 without.
 _chk_gate "$ROOT/tests/gates/toolchain/cli_pe_pinned_redirect.sh"
-# 6.6.20 (CVE-TBD) — a `[package].cyrius` pin that is not a version's shape (a leading digit, then
+# 6.6.20 (CVE-79) — a `[package].cyrius` pin that is not a version's shape (a leading digit, then
 # [0-9A-Za-z._-], no `..`) is refused by name at the one reader: a traversal pin made the redirect
 # execve a repo-shipped payload/bin/cyrius on every verb, and lib sync / deps / distlib / the lock /
 # --version / --print-config used it under CYRIUS_RESOLVED=1. The PE axis runs under wine (named
 # SKIP without it; cass runs it on hardware).
 _chk_gate "$ROOT/tests/gates/toolchain/manifest_pin_shape_refused.sh"
-# 6.6.20 (SEC-04, CVE-TBD) — `[package] version = "${file:PATH}"` is read by the [embed] rules
+# 6.6.20 (SEC-04, CVE-99) — `[package] version = "${file:PATH}"` is read by the [embed] rules
 # (_proj_path_bad + the link-free _proj_read): `../x`, an absolute path, a committed `VERSION ->
 # ../x` link, `.git/config`, a hard link, a FIFO (it HUNG the build) and a file past 511 bytes are
 # refused by name, and a value holding a control byte (a two-line file, a literal `\n`) is refused
 # — it is written after `#@pkgver`, where a line break started a new SOURCE line. The ./VERSION
 # fallback (`_project_version`: distlib's stamp, `cyrius package`) reads through the same checks.
 _chk_gate "$ROOT/tests/gates/toolchain/pkgver_file_interp_confined.sh"
-# 6.6.20 (SEC-02, CVE-TBD) — a manifest [build] output is confined to the project (it reached
+# 6.6.20 (SEC-02, CVE-97) — a manifest [build] output is confined to the project (it reached
 # /bin/sh unquoted on macOS and was cmd.exe's redirect target on Windows); codesign runs by argv.
 _chk_gate "$ROOT/tests/gates/toolchain/build_output_confined.sh"
 # 6.6.20 (RS-04) — cyriusly's version operand is a version (a leading digit, [0-9A-Za-z.-], no
@@ -2005,7 +2005,7 @@ _chk_gate "$ROOT/tests/gates/toolchain/build_output_confined.sh"
 # deleted the whole store, the active version included, and `install` spliced the operand into a
 # /bin/sh -c line. A fake curl on PATH; nothing reaches the network.
 _chk_gate "$ROOT/tests/gates/toolchain/cyriusly_version_operand_refused.sh"
-# 6.6.20 (SEC-07, CVE-TBD) — with a trusted verifier present, a release at or above the first
+# 6.6.20 (SEC-07, CVE-101) — with a trusted verifier present, a release at or above the first
 # signed release (6.2.31) whose SHA256SUMS / .sig cannot be fetched is REFUSED by name in
 # install.sh, ci.sh and install.ps1: the TOFU signed-since floor only guarded versions at/above the
 # highest one verified locally, so a tampered 6.6.15 (or anything, with no floor file, or an
@@ -2050,7 +2050,7 @@ _chk_gate "$ROOT/tests/gates/toolchain/lib_sync_relocks.sh"
 # gone), names a failed step, refuses a 0-byte compiler (the script scored it PASS), and leaves
 # nothing behind; `_copy_binary` leaves no dst when it fails (the macOS stage leak).
 _chk_gate "$ROOT/tests/gates/toolchain/cbt_no_shared_tmp_paths.sh"
-# 6.6.20 (SEC-05, CVE-TBD) — a crash-safe replace's sibling temp ("<path>.cyrtmp.<pid>.<ctr>",
+# 6.6.20 (SEC-05, CVE-100) — a crash-safe replace's sibling temp ("<path>.cyrtmp.<pid>.<ctr>",
 # predictable) is created O_EXCL|O_NOFOLLOW: a link planted there redirected file_write_atomic /
 # _aw_open's write into the file it named and was renamed over the path. cyrfmt --write and
 # deps --lock skip planted names, refuse by name when 64 are taken; only _io_tmp_open builds it.
@@ -2207,7 +2207,7 @@ _chk_gate "$ROOT/tests/gates/platform/pe_last_error_reroute.sh"
 # mutant self-test. The values are pinned on cass by tests/tcyr/crossos/fd_wait_ready.tcyr.
 _chk_gate "$ROOT/tests/gates/platform/pe_wsa_lasterr_masked.sh"
 
-# 6.6.20 (sec-pe SEC-08, CVE-TBD) — on Windows a System32 program is started by its absolute
+# 6.6.20 (sec-pe SEC-08, CVE-102) — on Windows a System32 program is started by its absolute
 # GetSystemDirectoryW path, never by a bare name: CreateProcessW searches the PARENT'S CURRENT
 # DIRECTORY before System32, so a cmd.exe committed to a checkout ran on every `cyrius build` and a
 # committed certutil.exe forged `deps --lock`'s hashes (measured on cass). Axis 0 (static): no

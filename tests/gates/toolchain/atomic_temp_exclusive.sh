@@ -1,6 +1,6 @@
 #!/bin/sh
 # Gate: the sibling temp a crash-safe replace writes through is created EXCLUSIVELY — a name
-# planted there is never opened, followed or truncated (6.6.20 SEC-05, CVE-TBD).
+# planted there is never opened, followed or truncated (6.6.20 SEC-05, CVE-100).
 #
 # THE BUG. lib/io.cyr `file_write_atomic` and cbt/core.cyr `_aw_open` wrote through
 # "<path>.cyrtmp.<pid>.<ctr>" — the pid and a counter from 1, so PREDICTABLE — opened

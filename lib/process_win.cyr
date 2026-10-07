@@ -82,7 +82,7 @@ fn _w_cmdbuf(nchars): i64 {
     return alloc(need);
 }
 
-# ⛔ 6.6.20 (CVE-TBD) — A SYSTEM PROGRAM IS STARTED BY ITS ABSOLUTE PATH, NEVER BY A BARE NAME.
+# ⛔ 6.6.20 (CVE-102) — A SYSTEM PROGRAM IS STARTED BY ITS ABSOLUTE PATH, NEVER BY A BARE NAME.
 # CreateProcessW with no lpApplicationName resolves a bare first token by SEARCHING, and the
 # documented order visits the PARENT'S CURRENT DIRECTORY before System32 (the caller's own
 # directory, the current directory, the system directories, then PATH). Every Windows
@@ -150,7 +150,7 @@ fn _win_sys_exe(name): i64 {
     return p;
 }
 
-# 6.6.20 (SEC-02, CVE-TBD) — 1 when `s` CANNOT be one double-quoted operand of a `cmd /s /c`
+# 6.6.20 (SEC-02, CVE-97) — 1 when `s` CANNOT be one double-quoted operand of a `cmd /s /c`
 # line. Inside cmd's quotes `& | < > ^ ( )` are literal; three things are not: a `"` ENDS the
 # operand, so the rest of the line runs as cmd's own commands (`out.exe" & echo X> pwned.txt &
 # "y` as cyrius build's output ran its echo under wine); `%NAME%` expands even quoted (`q%OS%z`
@@ -837,7 +837,7 @@ fn exec_env_str(args, env): i64 {
 # bare first token via CreateProcessW directly — shell metacharacters became
 # literal argv and nothing piped. See CHANGELOG; mirrors the POSIX
 # /bin/sh -c fix in lib/process.cyr.
-# 6.6.20 (CVE-TBD): cmd.exe by its absolute path (`_win_sys_exe`), and the command runs with
+# 6.6.20 (CVE-102): cmd.exe by its absolute path (`_win_sys_exe`), and the command runs with
 # NoDefaultCurrentDirectoryInExePath set, so cmd's OWN search for a bare program in `cmdline`
 # (`git tag …` from `cyrius publish`) skips the current directory as /bin/sh does — measured on
 # cass: a planted `.\git.exe`-shaped program ran without it and "is not recognized" with it. An

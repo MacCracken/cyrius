@@ -909,7 +909,7 @@ fn _lex_attr_is(base, q, n, w, ap): i64 {
     return k;
 }
 
-# ⛔ 6.6.20 (CVE-TBD) — THE ONE LIST of `#` attributes: the `#` at `base + q` (bounded by
+# ⛔ 6.6.20 (CVE-86) — THE ONE LIST of `#` attributes: the `#` at `base + q` (bounded by
 # `n`) spells one of them, packed `token * 16 + name length`, else 0 (the `#` opens a
 # comment). LEX emits the token and keeps lexing the SAME LINE as code.
 #

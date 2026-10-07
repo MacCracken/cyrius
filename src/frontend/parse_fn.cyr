@@ -6814,7 +6814,7 @@ fn _tl_use(S): i64 {
 
 # Append the mangled `mod_fn` to tok_names (NPOS is stable after lexing) and record the alias
 # in the use table. v5.11.65 (CVE-05): bounded by the actual source lengths.
-# 6.6.20 (CVE-TBD): use_from / use_to hold 64 entries each and ABUT (use_from[64] is use_to[0],
+# 6.6.20 (CVE-81): use_from / use_to hold 64 entries each and ABUT (use_from[64] is use_to[0],
 # use_to[64] the count), so the 65th alias silently re-bound alias #1 and later ones walked the
 # heap up to gvar_cnt. Refuse BEFORE any store; ERR_MSG does not exit, so the return is the stop.
 fn _tl_use_alias(S, umod, ufn): i64 {

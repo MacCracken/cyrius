@@ -52,7 +52,7 @@
 #      `"` — it appeared as the file name in a diagnostic. FM_BUILD now requires
 #      the marker at a LINE START, the way `#@incdir` requires byte 0.
 #   10 census: FM_BUILD's scan is gated on FM_ATBOL
-#   11-21 (6.6.20, CVE-TBD) an ATTRIBUTE line holding a multi-line string cannot
+#   11-21 (6.6.20, CVE-86) an ATTRIBUTE line holding a multi-line string cannot
 #      forge the marker. The lexer lexes an attribute's line (`#assert`, `#inline`,
 #      ...) as CODE, strings included; PP_LEXST read every `#` in code as a comment,
 #      so after `#assert 1 == 1, "x<LF>"` the PP took the literal's closing quote for an
@@ -332,7 +332,7 @@ else
     fail=$((fail+1))
 fi
 
-# ── axes 11-21 — 6.6.20 (CVE-TBD): an ATTRIBUTE line holding a multi-line string. The
+# ── axes 11-21 — 6.6.20 (CVE-86): an ATTRIBUTE line holding a multi-line string. The
 #    lexer lexes the rest of an attribute line (`#assert`, `#inline`, ...) as CODE, string
 #    literals included; the preprocessor read every `#` in code as a comment opener. So
 #    after `#assert 1 == 1, "x<LF>"` the PP took the literal's CLOSING quote for an opening

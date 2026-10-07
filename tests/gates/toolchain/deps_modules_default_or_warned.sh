@@ -21,11 +21,11 @@
 # v6.2.51 traversal guard covered sub-module / index / package names, never this one).
 # CVE-76 (6.6.16): the same class on the TAG — `tag = "../../../esc/sub"` made git mkdir
 # outside the cache, and a tag naming an existing dir printed `rm -rf` advice for it (D9).
-# 6.6.20 (CVE-TBD): the NAME rule caught up with the tag rule — `[deps.]` / `[deps..]` aliased
+# 6.6.20 (CVE-87): the NAME rule caught up with the tag rule — `[deps.]` / `[deps..]` aliased
 # another dep's cache root, and `\`, control bytes and a header spanning lines passed (D8b-D8f).
-# 6.6.20 (CVE-TBD): a `modules` entry with a `..` component vendored any readable file into lib/
+# 6.6.20 (CVE-88): a `modules` entry with a `..` component vendored any readable file into lib/
 # and exited 0, root or transitive; it, and a leading `/` or `\`, is refused by name (D10).
-# 6.6.20 (CVE-TBD): D10 refuses a path that SPELLS its way out; a tag that COMMITS a link
+# 6.6.20 (CVE-88): D10 refuses a path that SPELLS its way out; a tag that COMMITS a link
 # (`dist/x.cyr -> /abs/secret`, `dist -> /dir`) was followed by the copy and vendored with rc 0
 # and a verified commit pin, with or without a `modules` key. Any dep file read through a link
 # below the dep root — module, default, modular file or index, .deps sidecar — is refused (D11).
@@ -437,7 +437,7 @@ if [ "$d9f" -eq 7 ] && grep -qxF "error: [deps.foo] tag '' $REFUSAL_TAIL" "$W/d9
     ok "D9f tag = \"\", '-x', '/abs', '.hidden', 'a/.b', a backslash and a control byte: each refused (rc 1, git never invoked, no lock), the ESC shown as \\x1b"
 else bad "D9f ($d9f of 7 refused): $(head -1 "$W/d9f7.err")"; fi
 
-# ── D8b-D8f: 6.6.20 (CVE-TBD) — the rest of the unusable header NAMES ───────────────────
+# ── D8b-D8f: 6.6.20 (CVE-87) — the rest of the unusable header NAMES ───────────────────
 # `_dep_reject_unsafe_name` refused only `/` and `..`, so `[deps.]` and `[deps..]` passed and
 # their clone dir `<home>/deps/<name>/<tag>` became `<home>/deps//<tag>` / `<home>/deps/./<tag>`
 # — ANOTHER dep's NAME directory (a foreign checkout cloned AS `<home>/deps/<tag>`, and the
@@ -545,7 +545,7 @@ if [ "$rc" -eq 1 ] && grep -qxF "  foo" "$P.out" && grep -qxF "error: [deps.] $R
     ok "D8f deps --dry-run: lists foo, refuses [deps.] and the ESC name by the resolver's own line (escaped), rc 1, writes nothing"
 else bad "D8f (rc=$rc): out=[$(cat "$P.out" | tr '\n' '|')] err=[$(head -2 "$P.err")]"; fi
 
-# ── D10: 6.6.20 (CVE-TBD) — a `modules` entry that leaves the dep's tree ──────────────────
+# ── D10: 6.6.20 (CVE-88) — a `modules` entry that leaves the dep's tree ──────────────────
 # `[deps.X] modules` entries are joined onto the dep's dir and copied into lib/, so
 # `"../secret"` vendored ANY readable file (lib/X_secret) and exited 0 — from the root or from a
 # transitive manifest. A leading `/` was never read (it joins as `<dep>//abs`, "not found");
@@ -606,7 +606,7 @@ if [ "$rc" -eq 0 ] && cmp -s "$P/lib/sib.cyr" "$SIB/dist/sib.cyr" && cmp -s "$P/
     ok "D10c modules './dist/sib.cyr' and 'v..2/w.cyr' (a .. inside a name, not a component): vendored, rc 0"
 else bad "D10c (rc=$rc lib=[$(ls "$P/lib" 2>/dev/null | tr '\n' ' ')]): $(head -2 "$P.err")"; fi
 
-# ── D11: 6.6.20 (CVE-TBD) — a dep file that passes through a SYMLINK ──────────────────────
+# ── D11: 6.6.20 (CVE-88) — a dep file that passes through a SYMLINK ──────────────────────
 # D10 refuses a path that SPELLS its way out. The copy opens with sys_open, which follows links,
 # so a tag that COMMITS `dist/x.cyr -> /abs/secret` (or `dist -> /dir`) vendored the target into
 # lib/ with a verified commit pin and rc 0 — with or without a `modules` key (the I10a default is

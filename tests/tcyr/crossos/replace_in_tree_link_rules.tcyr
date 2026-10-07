@@ -1,4 +1,4 @@
-# replace_in_tree_link_rules.tcyr — 6.6.20 (CVE-TBD): lib/io.cyr's `_io_replace_target_in`, the
+# replace_in_tree_link_rules.tcyr — 6.6.20 (CVE-98): lib/io.cyr's `_io_replace_target_in`, the
 # one helper every CLI writer of a PROJECT file goes through (cyrius update, deps --lock and the
 # auto-deps relock, cyriusly use, cyrius fmt, cyrius port). A symlink is followed only to a file
 # inside `root`: every hop RELATIVE, never climbing above `root` with `..`, never passing a

@@ -12,7 +12,7 @@
 # (O_TRUNC, then one write) — it did detect the short count, but only after the USER'S SOURCE had
 # already been truncated. The old note here said "cyrius doesn't expose sys_rename yet";
 # `file_write_atomic` has existed since v6.4.57. CHANGELOG [6.6.6]
-# ⛔ 6.6.20 (CVE-TBD): a symlinked source is written through only to a file inside the tree it
+# ⛔ 6.6.20 (CVE-98): a symlinked source is written through only to a file inside the tree it
 # was named from (`_cf_replace`) — `cyrius fmt src/*.cyr` in a checkout holding a committed
 # `src/x.cyr -> ~/.bashrc` reformatted the file it named. CHANGELOG [6.6.20]
 

@@ -193,7 +193,7 @@ fn PP_LEXST_INSTR(st): i64 {
     return 0;
 }
 
-# ⛔ 6.6.20 (CVE-TBD) — PP_LEXST for the byte at `base + i` (`n` = the buffer's length),
+# ⛔ 6.6.20 (CVE-86) — PP_LEXST for the byte at `base + i` (`n` = the buffer's length),
 # with the one rule a byte-at-a-time machine cannot see: in code, a `#` that spells one of
 # the lexer's ten ATTRIBUTE words does not open a comment, because LEX keeps lexing that
 # line as code. EVERY pass walks its buffer through this, never through PP_LEXST directly.
@@ -264,7 +264,7 @@ fn PP_NEUT_FMARK(base, n): i64 {
     return 0;
 }
 
-# ⛔ 6.6.20 (CVE-TBD) — 1 iff `base + i` STARTS A LINE and holds FM_BUILD's exact 8-byte
+# ⛔ 6.6.20 (CVE-86) — 1 iff `base + i` STARTS A LINE and holds FM_BUILD's exact 8-byte
 # key `#@file "`, whatever the string state. FM_BUILD mints a marker at any line start
 # (FM_ATBOL) and has no idea of strings, so this is the one place a string skip can hide a
 # forgery from the neutraliser and not from the consumer.
@@ -1156,7 +1156,7 @@ fn PP_MACRO_TEXT_FULL(): i64 {
     return 0;
 }
 
-# ⛔ 6.6.20 (CVE-TBD) — push one #ifdef / #ifndef / #ifplat / #if level onto the per-level
+# ⛔ 6.6.20 (CVE-85) — push one #ifdef / #ifndef / #ifplat / #if level onto the per-level
 # state stack at S+0x197F10 and return the new depth. The stack is 64 bytes, one per level,
 # and none of the seven push sites (PP_PASS 4, PP_IFDEF_PASS 3) checked it: each deeper level
 # wrote its state byte upward through live compiler state, and at ~344K levels into
@@ -3512,7 +3512,7 @@ fn PP_MACRO_SLOT(S, dip, nm): i64 {
     return _pp_macro_count;
 }
 
-# ⛔ 6.6.20 (CVE-TBD) — refuse, naming the macro, an expansion PP_EXPAND cannot do inside its
+# ⛔ 6.6.20 (CVE-82) — refuse, naming the macro, an expansion PP_EXPAND cannot do inside its
 # fixed buffers. A hard error like PP_MACRO_TEXT_FULL: the expansion is mid-copy and has no
 # honest partial result. `def` is the stored definition, `NAME(params) body`. CHANGELOG [6.6.20]
 fn PP_MACRO_REFUSE(def, why): i64 {
@@ -3582,7 +3582,7 @@ fn PP_EXPAND(S, mi, ip, bl, out, op): i64 {
     while (load8(def + dp) != 40) { dp = dp + 1; }
     dp = dp + 1;  # skip (
     # Read param names from definition.
-    # ⛔ 6.6.20 (CVE-TBD) — pnames and args below are fn-local `var x[512]`, i.e. 512 BYTES
+    # ⛔ 6.6.20 (CVE-82) — pnames and args below are fn-local `var x[512]`, i.e. 512 BYTES
     # each, packed NUL-separated (there is no per-param stride — this line used to say "up to 8
     # params, 64 bytes each", which described a layout that never existed). Neither copy was
     # bounded: a 516-byte argument came out as an EMPTY expansion and compiled clean (a

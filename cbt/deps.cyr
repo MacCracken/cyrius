@@ -310,7 +310,7 @@ fn _dep_copy_file(src, dst): i64 {
 #
 # See CHANGELOG [5.11.17]; 6.6.17 reads it through the one manifest reader.
 #
-# ⛔ CVE-TBD (6.6.20) — THE PIN IS A PATH COMPONENT, AND AT THE REDIRECT IT IS EXECUTED.
+# ⛔ CVE-79 (6.6.20) — THE PIN IS A PATH COMPONENT, AND AT THE REDIRECT IT IS EXECUTED.
 # Every caller joins it into `<home>/versions/<pin>/...`, and `_try_redirect_to_pinned`
 # execve's `<home>/versions/<pin>/bin/cyrius` before any verb runs. The value was never
 # checked, so a cloned repo's `cyrius = "../../(...)/proc/self/cwd/payload"` ran the repo's
@@ -399,7 +399,7 @@ fn _dep_read_cyml_package_version(): i64 {
 # control byte: cbt writes it after `#@pkgver` on a line of its own, so a line break started a new
 # SOURCE line (a multi-line file's lines compiled, and the compiler echoed them — `.git/config`'s
 # `extraheader` included; `version = "1.0\nsyscall(...)"` ran). `label` names the value in the
-# refusal. CHANGELOG [6.6.20] (CVE-TBD)
+# refusal. CHANGELOG [6.6.20] (CVE-99)
 fn _dep_expand_file_interp(raw, rlen): i64 {
     return _dep_expand_file_interp_at(raw, rlen, "cyrius.cyml [package] version");
 }
@@ -1431,7 +1431,7 @@ fn _dep_target_matches(t): i64 {
 # `[deps..]` cloned into `<home>/deps/./<tag>`, i.e. ANOTHER dep's cache root), or holding `/`,
 # `\` (a Windows separator), `..` or a control byte (a header name is echoed in errors, and the
 # old scan ran across newlines). The same set the tag rule refuses (_dep_reject_unsafe_tag),
-# less the `/` a tag may hold. CHANGELOG [6.6.20] (CVE-TBD).
+# less the `/` a tag may hold. CHANGELOG [6.6.20] (CVE-87).
 fn _dep_name_unsafe(name): i64 {
     if (load8(name) == 0 || load8(name) == 46) { return 1; }   # empty, '.'-led
     var i = 0;
@@ -1563,7 +1563,7 @@ fn _dep_modules_refused(dep_name, mods): i64 {
 # copy opens with sys_open, which follows links, so a tag COMMITTING `dist/x.cyr -> /abs/secret`
 # (or `dist -> /dir`) vendored the target into lib/ with a verified commit pin and exit 0. The
 # CVE-43 cache verify cannot see it — the link IS the tag's content. Every component is checked,
-# as [embed] does (_proj_path_bad); the root itself is the operator's. CHANGELOG [6.6.20] (CVE-TBD)
+# as [embed] does (_proj_path_bad); the root itself is the operator's. CHANGELOG [6.6.20] (CVE-88)
 fn _dep_src_link(full, rootlen): i64 {
     var n = strlen(full);
     var j = rootlen;
@@ -1701,7 +1701,7 @@ fn _dep_pull_submodule(dep_src, pkg, submod, stdlib_dir, seen): i64 {
     str_builder_add_cstr(ip_sb, "/index.cyml");
     var ip = str_data(str_builder_build(ip_sb));
     var dsl = strlen(dep_src);
-    var ilk = _dep_src_link(ip, dsl);   # 6.6.20 (CVE-TBD): read only from inside the dep's tree
+    var ilk = _dep_src_link(ip, dsl);   # 6.6.20 (CVE-88): read only from inside the dep's tree
     if (ilk != 0) { return _dep_refuse_src_link(pkg, ip + dsl + 1, ilk); }
     var deps = _dep_read_index_deps(ip, submod);
     if (deps != 0) {
@@ -1753,7 +1753,7 @@ fn _dep_pull_submodule(dep_src, pkg, submod, stdlib_dir, seen): i64 {
         var _l1 = _dep_dest_is_linked(dst_full);
         if (_l1 != 0) { return _dep_refuse_symlinked_dest(_l1); }
     }
-    var slk = _dep_src_link(src, dsl);   # 6.6.20 (CVE-TBD): checked before the unlink
+    var slk = _dep_src_link(src, dsl);   # 6.6.20 (CVE-88): checked before the unlink
     if (slk != 0) { return errs + _dep_refuse_src_link(pkg, src + dsl + 1, slk); }
     sys_unlink(dst_full);
     var cr = _dep_copy_file(src, dst_full);
@@ -1914,7 +1914,7 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
             # — the consumer's or any TRANSITIVE dep's — naming `[deps.../../x]` made
             # `cyrius deps` mkdir and clone OUTSIDE `<home>/deps`. Refused before any
             # path is derived; the rest of the section is skipped by the outer scan.
-            # 6.6.20 (CVE-TBD): `[deps.]` / `[deps..]` / `[deps..x]`, `\` and control bytes too
+            # 6.6.20 (CVE-87): `[deps.]` / `[deps..]` / `[deps..x]`, `\` and control bytes too
             # (_dep_name_unsafe) — the empty and dot names aliased ANOTHER dep's cache root.
             if (_dep_name_unsafe(dep_name) == 1) {
                 _dep_refuse_name(dep_name);
@@ -2012,7 +2012,7 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                 errors = errors + 1;
                 continue;
             }
-            # 6.6.20 (CVE-TBD): a `modules` entry is joined onto the dep's tree and copied into
+            # 6.6.20 (CVE-88): a `modules` entry is joined onto the dep's tree and copied into
             # lib/, so `"../secret"` vendored any readable file and exited 0. Refused, like the tag
             # above, before any gate, clone or copy (transitive `path` confinement is separate).
             if (dep_modules != 0 && _dep_modules_refused(dep_name, dep_modules) > 0) {
@@ -2391,7 +2391,7 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                     str_builder_add_cstr(sb, "/");
                     str_builder_add_cstr(sb, mod_path);
                     var src = str_data(str_builder_build(sb));
-                    # 6.6.20 (CVE-TBD): the file — and below, its .deps sidecar — is read only
+                    # 6.6.20 (CVE-88): the file — and below, its .deps sidecar — is read only
                     # from inside the dep's tree; a committed link is refused by name, uncopied.
                     # The PRIMARY path is checked before the `lib/<base>` fallback: a dangling
                     # link reads as absent to file_exists, and must not be resolved around.
@@ -2871,7 +2871,7 @@ fn _auto_deps(): i64 {
     if (ee < 0) { return 1; }
     # 6.6.20 (SEC-04): `[package] version` beside it — a `${file:PATH}` checked by the [embed]
     # rules, a value holding a control byte refused — so a verb that compiles fails by name here,
-    # before a compile writes it after `#@pkgver`. CHANGELOG [6.6.20] (CVE-TBD)
+    # before a compile writes it after `#@pkgver`. CHANGELOG [6.6.20] (CVE-99)
     if (_dep_read_cyml_package_version() < 0) { return 1; }
     _embeds = 0;
     if (vec_len(ee) > 0) { _embeds = ee; }
@@ -3036,7 +3036,7 @@ fn cmd_update(): i64 {
         str_builder_add_cstr(tc_sb, "\n");
         var tc_str = str_data(str_builder_build(tc_sb));
         # v6.6.6: crash-safe and checked — was file_write_all with the result dropped.
-        # 6.6.20 (CVE-TBD): a link here is followed only inside the project — a checkout's
+        # 6.6.20 (CVE-98): a link here is followed only inside the project — a checkout's
         # `.cyrius-toolchain -> ~/.profile` was overwritten with the version string.
         if (_io_replace_atomic_in(".", ".cyrius-toolchain", tc_str, strlen(tc_str)) != 0) {
             if (_io_contain_link != 0) { _io_contain_refusal("error"); return 1; }
@@ -3070,7 +3070,7 @@ fn cmd_update(): i64 {
             var cyml_str = str_data(str_builder_build(cyml_sb));
             # v6.6.6: the toml is deleted ONLY once the cyml is fully on disk — the unchecked
             # file_write_all here could leave a truncated cyml AND delete the only good copy.
-            # 6.6.20 (CVE-TBD): `file_exists` is 0 for a DANGLING link, so a checkout's
+            # 6.6.20 (CVE-98): `file_exists` is 0 for a DANGLING link, so a checkout's
             # `cyrius.cyml -> ~/.ssh/authorized_keys` reached here and CREATED that file from its
             # own cyrius.toml. A link is followed only inside the project; the toml is kept.
             if (_io_replace_atomic_in(".", "cyrius.cyml", cyml_str, strlen(cyml_str)) != 0) {
@@ -3115,7 +3115,7 @@ fn _sha256sum_file(path): i64 {
     # lowercase hex digest, then a "completed" line. Capture via CreateProcessW
     # (process_win exec_capture) and parse line 2. Makes `cyrius deps --lock`
     # round-trip on native Windows (no WSL/git-bash).
-    # 6.6.20 (CVE-TBD): certutil.exe by its absolute System32 path. A bare `certutil` was
+    # 6.6.20 (CVE-102): certutil.exe by its absolute System32 path. A bare `certutil` was
     # searched for in the project directory first, so a checkout's own certutil.exe ran and
     # chose every hash `--lock` wrote and `--verify` compared (measured on cass).
     #ifdef CYRIUS_TARGET_WIN
@@ -4790,7 +4790,7 @@ fn cmd_deps_lock(): i64 {
     # after every bump, so the block grows without bound and can pass 64 KB on its own —
     # _lock_commit_lookup reads the whole file since 6.6.20 (CHANGELOG [6.6.20]).
     # cmd_deps_verify skips these lines; resolution checks them.
-    # ⛔ ALWAYS MERGE the inherited pins (CVE-TBD, 6.6.20). A resolve pins only the tagged deps
+    # ⛔ ALWAYS MERGE the inherited pins (CVE-83, 6.6.20). A resolve pins only the tagged deps
     # it verified THIS run, and this used to write those OR (bare `--lock`, v6.6.4) the inherited
     # ones — so a resolve that skipped a dep dropped its pin and kept its lib/ hash row: an
     # optional dep without its feature, a `target =` miss, every transitive dep of a gated-out

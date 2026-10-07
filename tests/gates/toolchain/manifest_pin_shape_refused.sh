@@ -1,6 +1,6 @@
 #!/bin/sh
 # Gate: a malformed `[package].cyrius` pin is REFUSED by name — never joined into a path, never
-# executed, never read as "no pin" (6.6.20, CVE-TBD).
+# executed, never read as "no pin" (6.6.20, CVE-79).
 #
 # THE BUG. `_try_redirect_to_pinned` (cbt/cyrius.cyr) built `<home>/versions/<pin>/bin/cyrius`
 # from the raw manifest value and execve'd it before any verb ran; the only check was

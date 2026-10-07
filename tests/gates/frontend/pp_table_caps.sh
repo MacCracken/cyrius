@@ -12,7 +12,7 @@
 #    clean compile that exited 49 where 0 is right). Fix: PP_PUSH_LEVEL refuses depth 65 with
 #    a located error, in BOTH passes. Rows: 64 levels compile and run for every arm in the
 #    main source (PP_PASS) and in an included file (PP_IFDEF_PASS); 65 levels are refused at
-#    the 65th directive; 9000 levels are refused by the same message. CVE-TBD.
+#    the 65th directive; 9000 levels are refused by the same message. CVE-85.
 #
 # B. The function-like macro table (S+0x192000.., 16 macros). The 17th function-like #define
 #    was silently DISCARDED (stored only inside `if (msi < 16)`, no else): a same-name fn was
@@ -55,7 +55,7 @@
 #    Fix: PP_MACRO_ARGCHECK refuses a count mismatch and an invocation with no `)` by name;
 #    a zero-parameter macro is still invoked as `Z()` / `Z( )`. Rows: too few, too many, an
 #    argument to a zero-parameter macro and an unclosed invocation are refused; `Z()`, `Z( )`,
-#    an empty single argument, a nested call and a wrapped call still expand. CVE-TBD.
+#    an empty single argument, a nested call and a wrapped call still expand. CVE-82.
 #
 # MUTATION LEDGER (6.6.20, mutant = this tree with the named change, built by build/cycc and
 # run as CYCC=<mutant>):

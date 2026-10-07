@@ -151,7 +151,7 @@ fn _emit_js(source, output): i64 {
 }
 
 # cx arc: build `src` with `cc` into `out` — a tool the CLI then RUNS (cycc_cx, cxvm). 0, or 1
-# with nothing left behind. ⛔ 6.6.20 (CVE-TBD): through `<out>.tmp.<pid>` (unlinked first, then
+# with nothing left behind. ⛔ 6.6.20 (CVE-98): through `<out>.tmp.<pid>` (unlinked first, then
 # O_CREAT|O_EXCL, so a name that exists — a committed dangling link included — is refused, never
 # followed) renamed over `out`, so a link AT `out` is replaced, never written through. Both
 # callers opened `./build/cxvm` / `./build/cycc_cx` with O_TRUNC, which follows a final link: a
@@ -1334,7 +1334,7 @@ fn _cc_flags_cmdline(): i64 {
     return str_data(str_builder_build(fsb));
 }
 
-# 6.6.20 (SEC-02, CVE-TBD) — 1 when `s` can be a quoted `cmd /s /c` operand, else 0 after NAMING
+# 6.6.20 (SEC-02, CVE-97) — 1 when `s` can be a quoted `cmd /s /c` operand, else 0 after NAMING
 # why not (`role` says which: "the output", "the source"). The rule is lib/process_win.cyr's
 # `_w_cmd_operand_bad` — a `"`, a `%` or a control byte — and every cmd-line builder in cbt asks it
 # of each path before building: this compile spawn, `_win_run_cx`, `_win_cmdline_cap`,
@@ -1374,7 +1374,7 @@ fn _win_compile_spawn_err(cc, source, output, errfile): i64 {
     if (errfile != 0) { elen = strlen(errfile); }
     # v6.6.6 — sized from the paths, not a fixed 16 KiB; `_w_cmdbuf` refuses by
     # name past Windows' 32,767-character command line. See lib/process_win.cyr.
-    # 6.6.20 (CVE-TBD): cmd.exe by its absolute path — a bare `cmd` was searched for in the
+    # 6.6.20 (CVE-102): cmd.exe by its absolute path — a bare `cmd` was searched for in the
     # project directory first (lib/process_win.cyr `_win_sys_exe`).
     var ce = _win_sys_exe("cmd.exe");
     if (ce == 0) { _err_ctx("compiler spawn", cc); return 1; }
@@ -1753,7 +1753,7 @@ fn sys_system(cmd): i64 {
 # x86-macOS (codesign -s - may reject there; its stderr goes to /dev/null, and the unsigned
 # binary runs there anyway). Hoisted from cmd_build's inline v6.0.38 codesign so
 # every run path signs. See CHANGELOG [6.0.66].
-# ⛔ 6.6.20 (SEC-02, CVE-TBD) — ARGV, NO SHELL. This was `sys_system("codesign -s - -f " + path +
+# ⛔ 6.6.20 (SEC-02, CVE-97) — ARGV, NO SHELL. This was `sys_system("codesign -s - -f " + path +
 # " 2>/dev/null")`: /bin/sh -c with the path UNQUOTED, and `path` is `cyrius build`'s output, the
 # manifest's `[build] output` included — on ecb `output = "out;touch PWNED"` created PWNED. Now
 # /usr/bin/codesign (by its path: no PATH lookup either) gets the path as ONE argv element, a

@@ -339,7 +339,7 @@ fn _try_redirect_to_pinned(): i64 {
 
     # Build pinned binary path: ~/.cyrius/versions/<pin>/bin/cyrius. `pin` is one path component
     # by now: the reader refused any other shape by name (a traversal pin executed a repo-shipped
-    # payload/bin/cyrius here — CVE-TBD, CHANGELOG [6.6.20]).
+    # payload/bin/cyrius here — CVE-79, CHANGELOG [6.6.20]).
     var sb = str_builder_new();
     str_builder_add_cstr(sb, _home);
     str_builder_add_cstr(sb, "/versions/");

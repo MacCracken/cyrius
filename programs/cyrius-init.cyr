@@ -1337,7 +1337,7 @@ fn _run_port(start): i64 {
             str_builder_add_cstr(ab, _sv_olddir);
             str_builder_add_cstr(ab, "/**/__pycache__/\n/build/\n");
             var add = str_data(str_builder_build(ab));
-            # 6.6.20 (CVE-TBD): an O_APPEND open follows a link, so a checkout's committed
+            # 6.6.20 (CVE-98): an O_APPEND open follows a link, so a checkout's committed
             # `.gitignore -> ~/.bashrc` had the port lines appended to it. A link is followed only
             # to a file inside the project being ported (lib/io.cyr _io_replace_target_in), and the
             # file it resolves to is opened O_NOFOLLOW. That is what holds on WINDOWS, which has no

@@ -6182,7 +6182,7 @@ fn cmd_distlib(profile): i64 {
     var dl_errf = _cbt_tmpfile("distlib_err");
     var dl_retired = 0;
     var dl_cap = 0;
-    # ⛔ 6.6.20 (CVE-TBD): the entry is the PROJECT's `.distchk<pid>.cyr`, and a name that exists
+    # ⛔ 6.6.20 (CVE-98): the entry is the PROJECT's `.distchk<pid>.cyr`, and a name that exists
     # is removed, never followed — `file_write_all` (O_TRUNC) wrote through a committed link
     # there, so a checkout planting `.distchk<N>.cyr -> <any path>` for a range of pids (a CI
     # container's are small and steady) had `cyrius distlib` create or truncate that file.
@@ -6371,7 +6371,7 @@ fn _mem_starts(p, lit, n): i64 {
 # ./VERSION. Publish read ./VERSION alone, so once distlib stamped the manifest's, a project whose
 # two disagreed tagged vVERSION over a bundle saying `# Version: <manifest>`. Two sources that
 # disagree are refused, not settled by precedence — one of them is stale and only the author knows
-# which — and before anything is generated. ⛔ CVE-TBD: the version is joined into a `git tag`
+# which — and before anything is generated. ⛔ CVE-92: the version is joined into a `git tag`
 # shell line, and a ./VERSION holding `1.0;touch PWNED` RAN `touch` — so a version holding a byte
 # outside a tag name's charset is refused rather than run. Returns the version, or 0 after naming
 # the refusal.

@@ -282,7 +282,7 @@ fn _write_cyml_cyrius_pin(ver_cstr): i64 {
     # v6.6.6: the user's manifest is replaced crash-safe and the write is CHECKED — this was an
     # unchecked file_write_all, so a full disk truncated cyrius.cyml and `use` still said it
     # worked. CHANGELOG [6.6.6]
-    # 6.6.20 (CVE-TBD): a link here is followed only to a file inside the project — a checkout's
+    # 6.6.20 (CVE-98): a link here is followed only to a file inside the project — a checkout's
     # `cyrius.cyml -> <another project>/cyrius.cyml` had THAT manifest's pin rewritten.
     if (_io_replace_atomic_in(".", "cyrius.cyml", out, out_n) != 0) {
         if (_io_contain_link != 0) { _io_contain_refusal("error"); return 1; }
@@ -297,7 +297,7 @@ fn _write_cyml_cyrius_pin(ver_cstr): i64 {
 # v5.11.25 dispatcher: tells the user which version a `cyrius` in
 # this cwd would actually use.
 #
-# ⛔ 6.6.20 (CBT-01's second reader, CVE-TBD) — this reads `[package].cyrius` with its own inline
+# ⛔ 6.6.20 (CBT-01's second reader, CVE-79) — this reads `[package].cyrius` with its own inline
 # scan, and it printed the value raw: a manifest pinning `"6.6<ESC>]0;owned<BEL>…../../x"` set the
 # terminal title and cleared the screen, and a traversal pin was reported as a valid pin while
 # `cyrius` itself refuses that manifest. The value now gets the CLI reader's rule
