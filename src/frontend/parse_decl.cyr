@@ -2892,12 +2892,16 @@ fn _gv_prior(S, noff, below, owner): i64 {
     return 0 - 1;
 }
 
-# Same storage: width, type marker, layout mode, signedness.
+# Same storage: width, type marker, layout mode, signedness — and the two side tables a
+# global's type also lives in: a `*T` global's T (`_gv_psid`; `*M` and `*Q` of one size share
+# GVTYPE) and the vector mark (SVVEC; f64v2 and u128 share GVTYPE 0 and width 16). CHANGELOG [6.6.20]
 fn _gv_same_shape(S, a, b): i64 {
     if (L64(_vars_base + a * 8) != L64(_vars_base + b * 8)) { return 0; }
     if (GVTYPE(S, a) != GVTYPE(S, b)) { return 0; }
     if (GVPM(S, a) != GVPM(S, b)) { return 0; }
     if (GVSGN(S, a) != GVSGN(S, b)) { return 0; }
+    if (_gv_ptr_sid(S, a) != _gv_ptr_sid(S, b)) { return 0; }
+    if (GVVEC(S, a) != GVVEC(S, b)) { return 0; }
     return 1;
 }
 
@@ -2912,6 +2916,10 @@ fn _gv_clear(S, vi): i64 {
     SVGAI(S, vi, 0);   # 6.6.16 (C1): an array initializer's blob
     if (GVPM(S, vi) != 0) { SVPM(S, vi, 0); }
     if (GVFI(S, vi) != 0) { SVFI(S, vi, 0); }
+    # The side tables too, or the next global at this index inherits a `*T`'s struct or the
+    # vector mark (a struct global then read through its first word). CHANGELOG [6.6.20]
+    if (GVVEC(S, vi) != 0) { SVVEC(S, vi, 0); }
+    if (_gv_ptr_sid(S, vi) != 0) { S64(_gv_psid + vi * 8, 0); }
     return 0;
 }
 

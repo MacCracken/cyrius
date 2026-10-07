@@ -26,9 +26,9 @@
 # redeclaration at all (the last definition written once, or an assignment in its place),
 # compiled by the same compiler — so a row cannot pass by both sides sharing one defect.
 #
-# LEGS: host x86_64 (every row), cx (A/B/D/L/N/P, via the tree's own main_cx + cxvm — the only
-# target where the value is STORED rather than baked into the image), aarch64 under
-# qemu-aarch64 when installed (A/B/D/L/N/P; qemu is not hardware — the crossos tcyr covers that).
+# LEGS: host x86_64 (every row), cx (A/B/D/L/N/Q1/Q2/P, via the tree's own main_cx + cxvm — the
+# only target where the value is STORED rather than baked into the image), aarch64 under
+# qemu-aarch64 when installed (A/B/D/L/N/Q1/Q2/P; qemu is not hardware — the crossos tcyr covers that).
 #
 # MUTATION LEDGER (6.6.6 — each mutant is a scratch tree whose src/ carries the mutation, built
 # by build/cycc and run as CYCC=<mutant>, so the cx and aarch64 legs are built from it too):
@@ -49,6 +49,11 @@
 #                                                    -> RED rows L P, cx L P, a64 L P
 #   m14 ... only on cx (the non-cx image path kept)    -> RED cx L P only
 #   real tree                                      -> GREEN (20 host rows, 6 cx, 6 aarch64)
+# 6.6.20 (the side tables, rows Q1-Q6 + R, cx/aarch64 Q1 Q2):
+#   m15 fix reverted (6.6.19 _gv_clear + _gv_same_shape)  -> RED rows Q1 Q2 Q3 Q4 Q6 R, cx Q1 Q2, a64 Q1 Q2
+#   m16 only the _gv_same_shape half                       -> RED rows Q1 Q2 Q3 Q4 Q5 Q6, cx Q1 Q2, a64 Q1 Q2
+#   m17 only the _gv_clear half                            -> RED row R only
+#   real tree                                      -> GREEN (27 host rows, 8 cx, 8 aarch64)
 # Row H is a guard, not a detector: a fn body already read the last declaration before 6.6.6.
 set -eu
 
@@ -138,6 +143,40 @@ _row M 77 'enum E { K = 5; }\nvar K = 5;\nvar b = K;\nvar K = 7;\nfn g() { retur
 # N — a var over an enum constant with the value ZERO: an early read sees 0, not the enum's 5
 _row N 10 'enum E { K = 5; }\nvar b = K;\nvar K = 0;\nsyscall(60, b + 10);\n' \
           'var K = 0;\nvar b = K;\nsyscall(60, b + 10);\n'
+# Q — 6.6.17's per-global SIDE TABLES (a `*T` global's struct, `_gv_psid`; the vector mark,
+#     SVVEC) survived a folded redeclaration, so the NEXT global registered at the vacated index
+#     inherited them. Q1: a by-value struct global was read through its first word as a pointer
+#     (SIGSEGV); Q2: a pointer-mode struct global read the old struct's offsets (silently 1);
+#     Q3: an int global after a vector redeclaration was refused as a vector; Q4: a field store.
+_row Q1 6 'struct M { x; y; }\nstruct Q { x; y; }\nvar G: *M = 0;\nvar G: *M = 0;\nvar X: Q = Q { 5, 6 };\nfn t() { return X.y; }\nsyscall(60, t());\n' \
+          'struct M { x; y; }\nstruct Q { x; y; }\nvar G: *M = 0;\nvar X: Q = Q { 5, 6 };\nfn t() { return X.y; }\nsyscall(60, t());\n'
+_row Q2 2 'struct M { x; y; }\nstruct Q { y; x; }\nvar buf[16];\nvar G: *M = 0;\nvar G: *M = 0;\nvar X: Q = getq();\nfn getq() { store64(&buf, 1); store64(&buf + 8, 2); return &buf; }\nfn t() { return X.x; }\nsyscall(60, t());\n' \
+          'struct M { x; y; }\nstruct Q { y; x; }\nvar buf[16];\nvar G: *M = 0;\nvar X: Q = getq();\nfn getq() { store64(&buf, 1); store64(&buf + 8, 2); return &buf; }\nfn t() { return X.x; }\nsyscall(60, t());\n'
+_row Q3 5 'var V: f64v2 = 0;\nvar V: f64v2 = 0;\nvar Z = 5;\nfn t() { return Z; }\nsyscall(60, t());\n' \
+          'var V: f64v2 = 0;\nvar Z = 5;\nfn t() { return Z; }\nsyscall(60, t());\n'
+_row Q4 9 'struct M { x; y; }\nstruct Q { x; y; }\nvar G: *M = 0;\nvar G: *M = 0;\nvar X: Q = Q { 0, 6 };\nfn t() { X.y = 9; return X.y; }\nsyscall(60, t());\n' \
+          'struct M { x; y; }\nstruct Q { x; y; }\nvar G: *M = 0;\nvar X: Q = Q { 0, 6 };\nfn t() { X.y = 9; return X.y; }\nsyscall(60, t());\n'
+# Q5/Q6 — the clear and the shape check must land TOGETHER: with the shape check alone, a
+#     same-shape redeclaration of the global at the vacated index compared its stale `*T` struct
+#     (Q5) or vector mark (Q6) against a clean slot and was refused as a different type.
+_row Q5 3 'struct M { x; y; }\nvar G: *M = 0;\nvar G: *M = 0;\nvar H = 0;\nvar H = 3;\nsyscall(60, H);\n' \
+          'struct M { x; y; }\nvar G: *M = 0;\nvar H = 3;\nsyscall(60, H);\n'
+_row Q6 4 'var W: f64v2 = 0;\nvar W: f64v2 = 0;\nvar H = 0;\nvar H = 4;\nsyscall(60, H);\n' \
+          'var W: f64v2 = 0;\nvar H = 4;\nsyscall(60, H);\n'
+# R — a redeclaration that changes only what the side tables hold is a different type, refused
+#     by name: `*M` -> `*Q` of one size (GVTYPE is `0 - size` for both, so `G.x` read M's offset),
+#     and a 16-byte vector <-> u128 (both GVTYPE 0, width 16).
+NROWS=$((NROWS + 1))
+printf 'struct M { x; y; }\nstruct Q { y; x; }\nvar G: *M = 0;\nvar G: *Q = 0;\nsyscall(60, 0);\n' > "$WORK/r1.cyr"
+printf 'var V: f64v2 = 0;\nvar V: u128 = 0;\nsyscall(60, 0);\n' > "$WORK/r2.cyr"
+printf 'var V: u128 = 0;\nvar V: f64v2 = 0;\nsyscall(60, 0);\n' > "$WORK/r3.cyr"
+for f in r1 r2 r3; do
+    if "$CC" < "$WORK/$f.cyr" > "$WORK/$f.bin" 2> "$WORK/$f.err"; then
+        bad "row R ($f): a side-table-only type change COMPILED"
+    elif ! grep -q "redeclared with a different type or size" "$WORK/$f.err"; then
+        bad "row R ($f): refused without the redeclaration diagnostic: $(head -c 200 "$WORK/$f.err")"
+    fi
+done
 # I — a declaration-zone redeclaration that changes the type or size is refused by name
 NROWS=$((NROWS + 1))
 printf 'var a = 5;\nvar a: i32 = 7;\nsyscall(60, a);\n' > "$WORK/i1.cyr"
@@ -206,7 +245,9 @@ if build "$ROOT/src/main_cx.cyr" "$WORK/cycc_cx" && build "$ROOT/programs/cxvm.c
                 'B|7|var a = 5;\nvar b = a;\nvar a = 7;\nsyscall(60, b);\n' \
                 'D|91|var n = 0;\nfn f5() { n = n + 1; return 5; }\nvar a = f5();\nvar b = a;\nvar a = 9;\nsyscall(60, b * 10 + n);\n' \
                 'L|77|enum E { K = 5; }\nvar b = K;\nvar K = 7;\nfn g() { return K; }\nsyscall(60, b * 10 + g());\n' \
-                'N|10|enum E { K = 5; }\nvar b = K;\nvar K = 0;\nsyscall(60, b + 10);\n'; do
+                'N|10|enum E { K = 5; }\nvar b = K;\nvar K = 0;\nsyscall(60, b + 10);\n' \
+                'Q1|6|struct M { x; y; }\nstruct Q { x; y; }\nvar G: *M = 0;\nvar G: *M = 0;\nvar X: Q = Q { 5, 6 };\nfn t() { return X.y; }\nsyscall(60, t());\n' \
+                'Q2|2|struct M { x; y; }\nstruct Q { y; x; }\nvar buf[16];\nvar G: *M = 0;\nvar G: *M = 0;\nvar X: Q = getq();\nfn getq() { store64(&buf, 1); store64(&buf + 8, 2); return &buf; }\nfn t() { return X.x; }\nsyscall(60, t());\n'; do
         id=${spec%%|*}; rest=${spec#*|}; want=${rest%%|*}; src=${rest#*|}
         printf '%b' "$src" > "$WORK/x.cyr"
         if "$WORK/cycc_cx" < "$WORK/x.cyr" > "$WORK/x.cyx" 2> /dev/null && [ -s "$WORK/x.cyx" ]; then
@@ -236,7 +277,9 @@ if command -v qemu-aarch64 > /dev/null 2>&1; then
                     'B|7|var a = 5;\nvar b = a;\nvar a = 7;\nsyscall(60, b);\n' \
                     'D|91|var n = 0;\nfn f5() { n = n + 1; return 5; }\nvar a = f5();\nvar b = a;\nvar a = 9;\nsyscall(60, b * 10 + n);\n' \
                     'L|77|enum E { K = 5; }\nvar b = K;\nvar K = 7;\nfn g() { return K; }\nsyscall(60, b * 10 + g());\n' \
-                    'N|10|enum E { K = 5; }\nvar b = K;\nvar K = 0;\nsyscall(60, b + 10);\n'; do
+                    'N|10|enum E { K = 5; }\nvar b = K;\nvar K = 0;\nsyscall(60, b + 10);\n' \
+                    'Q1|6|struct M { x; y; }\nstruct Q { x; y; }\nvar G: *M = 0;\nvar G: *M = 0;\nvar X: Q = Q { 5, 6 };\nfn t() { return X.y; }\nsyscall(60, t());\n' \
+                    'Q2|2|struct M { x; y; }\nstruct Q { y; x; }\nvar buf[16];\nvar G: *M = 0;\nvar G: *M = 0;\nvar X: Q = getq();\nfn getq() { store64(&buf, 1); store64(&buf + 8, 2); return &buf; }\nfn t() { return X.x; }\nsyscall(60, t());\n'; do
             id=${spec%%|*}; rest=${spec#*|}; want=${rest%%|*}; src=${rest#*|}
             printf '%b' "$src" > "$WORK/y.cyr"
             if "$WORK/cycc_a64" < "$WORK/y.cyr" > "$WORK/y.bin" 2> /dev/null && [ -s "$WORK/y.bin" ]; then
@@ -266,9 +309,9 @@ fi
 
 # Floor, DERIVED from this file: every host row that was declared must have run.
 DECL=$(grep -c '^_row ' "$0")
-DECL=$((DECL + 5))   # rows I, K, K2, K3 and P are hand-rolled
+DECL=$((DECL + 6))   # rows I, K, K2, K3, P and R are hand-rolled
 [ "$NROWS" -eq "$DECL" ] || bad "floor: $NROWS host rows ran, $DECL declared"
-[ "$NCX" -eq 6 ] || bad "floor: $NCX cx rows ran, want 6"
+[ "$NCX" -eq 8 ] || bad "floor: $NCX cx rows ran, want 8"
 
 if [ "$NFAIL" -ne 0 ]; then
     echo "FAIL: global_redeclaration_one_definition: $NFAIL check(s) failed"
