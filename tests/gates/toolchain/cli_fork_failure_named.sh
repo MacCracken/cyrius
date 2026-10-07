@@ -23,7 +23,8 @@
 #   2  ⭐ every forking verb under `ulimit -u 1`: non-zero, "fork failed" named, and no damage —
 #      build keeps the old binary byte-for-byte and leaves no temp (not even the CLI's private
 #      temp dir's contents); --target=js keeps the old .js; the cx compiler / cxvm JIT builds,
-#      --target=cx, `run x.cyx`, fmt, run, capacity, self, and `hooks install` (sys_system).
+#      --target=cx, `run x.cyx`, fmt, run, capacity, self, `hooks install` (sys_system), and
+#      distlib's per-target sidecar verify (refused for that reason, not "does not compile").
 #   3  the LSP's two diagnostics spawns (raw cycc outside a project, the `cyrius` wrapper inside
 #      one) log the fork failure instead of publishing silently empty diagnostics.
 #   4  derived: every `sys_fork()` in cbt/ and programs/cyrius-lsp.cyr is checked for failure in
@@ -219,6 +220,24 @@ cy lim hooks install; named "hooks install (sys_system)"
 [ -f "$W/x/.git/hooks/pre-commit" ] && fail "hooks install: a hook was installed by a shell that never ran"
 grep -q 'installed build-artifact pre-commit hook' "$W/out" && fail "hooks install: reported success"
 [ "$FAIL" = "$x" ] && echo "  ok axis 2c: self and hooks install name the fork failure (no verdict, no hook)"
+
+x=$FAIL
+# distlib: a project with no [deps] (so nothing is hashed or vendored first, which would fork
+# earlier) reaches the six concurrent per-target compiles. Its own home: the stdlib snapshot the
+# verify needs, and a stub cycc_aarch64 (it is checked for, never run — no fork succeeds).
+DH="$W/dlhome"; mkdir -p "$DH/bin" "$DH/versions/$(cat VERSION)" "$W/dl/src"
+ln -s "$CC" "$DH/bin/cycc"; cp "$W/stubtool" "$DH/bin/cycc_aarch64"
+cp -R lib "$DH/versions/$(cat VERSION)/lib"
+printf '[package]\nname = "dlp"\nversion = "0.1.0"\ncyrius = "%s"\n\n[lib]\nmodules = ["src/lib.cyr"]\n' "$(cat VERSION)" > "$W/dl/cyrius.cyml"
+printf 'fn dlp_one(): i64 { return 1; }\n' > "$W/dl/src/lib.cyr"
+WD="$W/dl"; H0=$H; H=$DH
+cy lim distlib; named "distlib (the sidecar verify's per-target compiles)"
+H=$H0
+grep -q 'sidecar verify: the compile for x86_64-linux never started' "$W/out" \
+    || fail "distlib: the refusal does not give the fork as its reason: $(grep 'sidecar' "$W/out" | tail -1)"
+grep -q 'does not compile' "$W/out" && fail "distlib: a compile that never started was reported as one that does not compile"
+ls "$W/dl/dist" 2>/dev/null | grep -q '\.deps$' && fail "distlib: a sidecar was written for a verify that never ran"
+[ "$FAIL" = "$x" ] && echo "  ok axis 2d: distlib's sidecar verify names each target's fork failure and refuses for that reason (no sidecar)"
 
 # ── axis 3 — the LSP's diagnostics spawns ───────────────────────────────────────────────
 x=$FAIL
