@@ -6927,9 +6927,10 @@ fn _fileid_dump_arm(): i64 {
 # (they arrive in the coroutine frame). CHANGELOG [6.6.6]
 var _stkp_vec = 0;
 # 6.6.17 (a10): and the fn's parameter-kind overflow row (`_pmw`) — the definition's own loop
-# rewrites it, as the S64 stores rewrite the masks; pass 1's row must not survive under it (on PE,
-# pass 1 runs before `_TARGET_PE` is set and records SysV shapes). Called once, at the top of
-# the parameter loop, with `_cur_fn_ix` already the fn being defined.
+# rebuilds it, as its S64 stores rewrite the masks. The masks are replaced whole; the row is only
+# ever OR-ed into (`_pm_row_or`), so it is cleared here first, or whatever pass 1 recorded for this
+# fn index would survive under pass 2's answer instead of being replaced by it. Called once, at
+# the top of the parameter loop, with `_cur_fn_ix` already the fn being defined.
 fn _stkp_reset(): i64 {
     if (_stkp_vec == 0) { _stkp_vec = vec_new(); }
     vec_truncate(_stkp_vec, 0);
