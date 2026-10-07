@@ -75,9 +75,10 @@ NBLK=$(ls "$WORK"/blk_*.cyr 2>/dev/null | wc -l | tr -d ' ')
 
 # ── axis 1: no example may fail with a STALE-API error ──────────────────────────────────
 # ONE pattern for every axis (detection AND display): the stale-API errors plus a reserved word
-# used as an identifier (`fn use()`). Axis 4 reuses it unchanged, so the two non-excused classes
-# hold guide-wide, not only for the include-less blocks.
-STALE_PAT="expects [0-9]+ arguments, got [0-9]+|undefined function '(payload|tag|tagged_new)'|returns two values|got reserved keyword"
+# used as an identifier (`fn use()`) — or, since 6.6.20, an identifier-spelled intrinsic declared
+# as a name (`fn mulh64`, `var sizeof`: `reserved intrinsic name`). Axis 4 reuses it unchanged, so
+# the two non-excused classes hold guide-wide, not only for the include-less blocks.
+STALE_PAT="expects [0-9]+ arguments, got [0-9]+|undefined function '(payload|tag|tagged_new)'|returns two values|got reserved keyword|reserved intrinsic name"
 STALE=""
 for f in "$WORK"/blk_*.cyr; do
     "$CYCC" < "$f" > /dev/null 2>"$f.err" || true

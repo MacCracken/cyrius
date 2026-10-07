@@ -6970,6 +6970,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     # `Type_method` / `mod_fn` first, so this call finds that exact string and REUSES it
     # instead of minting a second copy; pool growth is unchanged either way.
     noff = _mod_name_intern(S, mmod, noff);
+    _RSV_INTRINSIC_DECL(S, noff, _defstart_ti + 1, 1);   # 6.6.20: `fn mulh64` / `fn fncallN` / `fn sizeof`
     # v6.3.11 (G): async fn — the user name `f` becomes a Future constructor
     # (synthesized after the body, below); the body itself is emitted under `f$impl`.
     # Generic async (`async fn f<T>`) is deferred — error rather than miscompile.
@@ -7734,6 +7735,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
             }
             if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
             var pnoff = PEEKV(S);
+            _RSV_INTRINSIC_DECL(S, pnoff, GTI(S), 0);   # 6.6.20: a param named `sizeof` / `mulh64` / `fncallN`
             STI(S, GTI(S) + 1);
             # Optional type annotation: fn f(x: Str, y: Vec<i64>, ...)
             # If the type is Str, set bit pc in str_mask for auto-coercion.

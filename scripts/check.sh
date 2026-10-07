@@ -827,6 +827,13 @@ _chk_gate "$ROOT/tests/gates/frontend/lexid_prefix_exact.sh"
 # small args). 7 refusal rows, 3 anti-vacuous sizing rows, 3 mulh64x/intrinsic rows.
 _chk_gate "$ROOT/tests/gates/frontend/sizeof_whole_name.sh"
 
+# 6.6.20 (BACKLOG-03): the identifier-spelled intrinsics sizeof / mulh64 / fncall0..8 are
+# RESERVED as declared names. They sit in neither util.cyr reserved table, so `fn mulh64`
+# compiled and every call got the intrinsic, `fn fncall1(a, b)` compiled and its call jumped
+# through `a` (SIGSEGV), and `var sizeof` declared with every read a parse error. Every
+# declaration form is refused by name; only a file named fnptr.cyr may declare fncall0..8.
+_chk_gate "$ROOT/tests/gates/frontend/intrinsic_names_reserved.sh"
+
 # v6.5.56: `private fn h()` must be rejected rather than silently privatising the whole file
 # (twelve releases live, no diagnostic). Axes 2-3 keep the fix honest: the own-line and
 # `private;` forms are the legitimate spellings and must keep working.

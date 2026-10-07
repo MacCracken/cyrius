@@ -3423,6 +3423,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
             while (cpgo == 1) {
                 if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
                 var cpnoff = PEEKV(S);
+                _RSV_INTRINSIC_DECL(S, cpnoff, GTI(S), 0);   # 6.6.20: a closure param `|sizeof|`
                 STI(S, GTI(S) + 1);
                 var cpli = GFLC(S);
                 S64(S + 0x5D9D000 + cpli * 8, cpnoff);

@@ -296,6 +296,7 @@ fn PARSE_FOR(S): i64 {
         STI(S, GTI(S) + 1);
         if (PEEKT(S) == 76) {
             var finoff = TOKVAL(S, fiti);
+            _RSV_INTRINSIC_DECL(S, finoff, fiti, 0);   # 6.6.20: `for sizeof in ..`
             STI(S, GTI(S) + 1);
             PCMPE(S);
             # Check: range (..) or collection?

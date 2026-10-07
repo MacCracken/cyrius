@@ -2533,6 +2533,65 @@ fn _is_ident_intrinsic(S, noff): i64 {
     return _is_mulh64_word(S, noff);
 }
 
+# ⛔ 6.6.20 — THE IDENTIFIER-SPELLED INTRINSICS ARE RESERVED NAMES. `sizeof` / `mulh64`
+# (_is_ident_intrinsic) and `fncall0`..`fncall8` (_IS_FNCALL_NAME) lex as plain IDENTs and are
+# lowered BY NAME at the call, so they sit in neither of util.cyr's reserved tables
+# (TOKNAME_BUILTIN / IS_KEYWORD_TOK) and nothing refused them as a declaration:
+#   * `fn mulh64(a, b)` compiled and every call got the intrinsic (the fn: "unreachable");
+#   * `fn fncall1(a, b)` compiled and `fncall1(5, 6)` called THROUGH 5 — SIGSEGV;
+#   * `fn sizeof()` / `var sizeof` / a param `mulh64` declared, and every use was a parse
+#     error about a `(` that was never wanted.
+# Lexer tokens would have meant re-plumbing every by-name site and could not express the one
+# legitimate declarer below, so the refusal is made where a NAME IS DECLARED: fn, param,
+# closure param, local / `stack` / global var, `for` binding. A module- or impl-mangled name
+# (`m_sizeof`, `T_mulh64`) is not callable as `sizeof(`, so a fn is judged AFTER mangling.
+# ⚠ THE ONE LEGITIMATE DECLARER is lib/fnptr.cyr's `fncall0`..`fncall8`: those definitions ARE
+# the lowering's enabler (it is gated on FINDFN, so a program that never included fnptr still
+# gets "undefined function"), and cybs — which has no lowering — calls them in gen1. Exempt by
+# FILE: an included file whose basename is `fnptr.cyr` (every copy in the ecosystem, surveyed
+# 6.6.20, is one). CHANGELOG [6.6.20]
+fn _rsv_in_fnptr(S, ti): i64 {
+    var fid = FM_FILEID(S, GTLINE(S, ti));
+    if (fid == 0 - 1) { return 1; }   # file map overflowed: unknowable — keep the pre-6.6.20 answer
+    if (fid <= 0) { return 0; }
+    var p = S + 0x721000 + fid - 1;
+    var n = 0;
+    while (load8(p + n) != 0) { n = n + 1; }
+    if (n < 9) { return 0; }
+    var q = p + n - 9;
+    if (load64(q) != 0x79632E7274706E66) { return 0; }   # "fnptr.cy"
+    if (load8(q + 8) != 114) { return 0; }               # "r"
+    if (n == 9) { return 1; }
+    if (load8(q - 1) == 47) { return 1; }                # '/'
+    if (load8(q - 1) == 92) { return 1; }                # '\'
+    return 0;
+}
+
+# Refuse declaring `noff` (its name token is `ti`) when it spells an identifier intrinsic.
+# `isfn` = 1 for a fn definition, the only kind lib/fnptr.cyr's exemption applies to. An
+# instance re-parses its base's tokens, so it was already judged there. 1 = refused.
+# ⚠ Only an IDENT token's value is a name offset: every caller has already reported a non-IDENT
+# (`var 140737488355327 = 1;`), and reading its NUMBER as an offset into the name pool faulted.
+fn _RSV_INTRINSIC_DECL(S, noff, ti, isfn): i64 {
+    if (TOKTYP(S, ti) != 2) { return 0; }
+    if (_inst_name != 0) { return 0; }
+    if (_is_ident_intrinsic(S, noff) == 0) {
+        if (_IS_FNCALL_NAME(S, noff) == 0) { return 0; }
+        if (isfn == 1) { if (_rsv_in_fnptr(S, ti) == 1) { return 0; } }
+    }
+    var sv = GTI(S);
+    STI(S, ti);
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    PRSTR(": reserved intrinsic name '");
+    PRSTR(S + 0xEC00000 + noff);
+    PRSTR("' (cannot be used as an identifier: the compiler lowers every call to it; rename the fn/variable/param)\n");
+    _err_excerpt(S);
+    STI(S, sv);
+    _had_error = 1;
+    return 1;
+}
+
 # Evaluate a single constant atom for #assert: number literal, sizeof(T), or an enum
 # constant (`NAME` / `Enum.NAME`, 6.6.10). Returns the constant value. Advances TI past the
 # consumed tokens.
@@ -3749,6 +3808,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
         STI(S, GTI(S) + 1);                         # consume 'var'
         if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }    # need IDENT
         var stk_noff = PEEKV(S);
+        _RSV_INTRINSIC_DECL(S, stk_noff, GTI(S), 0);   # 6.6.20: `stack var sizeof`
         STI(S, GTI(S) + 1);                         # consume IDENT
         if (PEEKT(S) != 28) { ERR_EXPECT(S, 28); }  # need '['
         STI(S, GTI(S) + 1);                         # consume '['
