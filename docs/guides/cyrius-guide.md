@@ -1740,9 +1740,10 @@ suppressed, and nested blocks skip cleanly inside a parent's skip path.
 **Preprocessor limits.** Each table below is fixed-size, and past its limit the
 compile is refused with an error that names the limit (and the entry, where there
 is one). Until 6.6.20 several of these were silent.
-- **Nesting: 64 levels** of `#if` / `#ifdef` / `#ifndef` / `#ifplat`, counted
-  across includes. The 65th is refused at its line. (Before 6.6.20 deeper nesting
-  wrote through compiler state and could silently change the binary.)
+- **Nesting: 64 levels** of `#if` / `#ifdef` / `#ifndef` / `#ifplat` within one
+  file (an included file starts its own count). The 65th is refused at its line.
+  (Before 6.6.20 deeper nesting wrote through compiler state and could silently
+  change the binary.)
 - **Function-like macros (`#define NAME(a, b) …`): 16, in the main source only.**
   The 17th is refused by name, a second `#define` of the same function-like name
   is refused (expansion runs after every definition is read, so only one
