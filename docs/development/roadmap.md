@@ -483,10 +483,14 @@ priority surfaces.
     **Filed in agnos** (user, 2026-10-02): `agnos/docs/development/issues/2026-10-02-sock-send-ignores-the-caller-deadline.md`.
   - `tls_native_set_client_cert` sizes its decode at `TLS_CA_MAX_ROOTS` (300) entries; sigil 3.13.7's
     `pem_count_cert_blocks` could size it exactly.
-  - sigil (its repo) — the TPM helpers probe `/dev/tpmrm0` and spawn `/usr/bin/tpm2_*` by rooted path,
-    drive-relative on Windows if reachable on PE (the CVE-65 class, an executable this time); its check.sh
-    builds at predictable `/tmp/sigil_{t,b,f}_$$` paths. sandhi (its repo): `lib/sandhi.cyr` ~1589 still
-    calls the tls ctx a 24-byte struct.
+  - ~~sigil (its repo) — the TPM helpers probe `/dev/tpmrm0` and spawn `/usr/bin/tpm2_*` by rooted path; its
+    check.sh builds at predictable `/tmp/sigil_{t,b,f}_$$` paths~~ → ✅ **SHIPPED upstream and folded**: sigil
+    3.13.8's `scripts/check.sh` works in a private `mktemp -d` under `$TMPDIR`, and sigil 3.13.9's
+    `agnosys_rooted_paths_untrusted` makes every rooted TPM / tool / sysfs probe fail closed on Windows (cyrius
+    CVE-73, folded at 6.6.15). Struck at the 6.6.20 re-triage (BACKLOG-11).
+  - sandhi (its repo, a FILING only): its `src/http/conn.cyr` comment (`lib/sandhi.cyr` ~1604 in the fold) still
+    calls the stdlib `tls_connect` ctx "a 24-byte struct"; `lib/tls.cyr` allocates `_TLS_LIBSSL_SHIM_LEN` (40) for
+    the libssl shim since 6.6.13. Not yet recorded in sandhi's roadmap / issues — file it there at its next release.
 - **Found by the 6.6.12 premise check and lanes (2026-09-30; backlog, not placed — only the user promotes).**
   Met in passing, not swept for. Its three ⚠ silent-memory-corruption items were promoted to **6.6.13**
   (M1–M3) on 2026-10-01.
