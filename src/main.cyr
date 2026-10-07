@@ -710,8 +710,9 @@ var _vn = 0;
 # guard below — written for Linux — would fire on garbage and walk the
 # parse loop off `_vbuf` → SIGSEGV. Skip the /proc scan on macho; `_vn`
 # stays 0 so the flag-parse block is bypassed. cycc still compiles from
-# stdin. --version/--strict/--lex-ts flags on macho need stack-argv
-# (layer 4 — Darwin entry stack: argc/argv/envp/apple). See issue
+# stdin. The dedicated macho drivers (main_x86_macho.cyr, main_aarch64_macho.cyr)
+# read --version / --allow-undef / --syntax-only off the Darwin entry stack
+# instead (_ARGV_FLAGS_MACHO, src/common/util.cyr). See issue
 # 2026-06-02-macos-x86-release-no-compiler.md.
 #else
 if (SYS_OPEN == 2) { _vfd = syscall(SYS_OPEN, "/proc/self/cmdline", 0, 0); }

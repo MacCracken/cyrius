@@ -796,7 +796,7 @@ fn _pe_ensure_getlasterr(S): i64 {
 fn _pe_getlasterr_get(): i64 { return _pe_getlasterr_idx; }
 
 # v6.0.54: GetCommandLineW auto-import for the Windows args.cyr branch
-# (lib/args_win.cyr) and cycc's own --version/--strict on Windows.
+# (lib/args_win.cyr) and cycc's own --version/--syntax-only on Windows.
 # kernel32!GetCommandLineW() takes no args, returns the process's
 # UTF-16LE command-line LPWSTR in rax. Lazily registered on the first
 # `syscall(0xF006)` the parser sees under `_TARGET_PE == 1`.
