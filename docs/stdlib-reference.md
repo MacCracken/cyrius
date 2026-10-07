@@ -1001,7 +1001,7 @@ Cooperative async runtime with epoll event loop. Tasks are function pointers sch
 | `async_new` | `async_new() → rt` | Create new async runtime (epoll-based) |
 | `async_spawn` | `async_spawn(rt, fp, arg) → task` | Schedule task on runtime (function pointer + argument) |
 | `async_run` | `async_run(rt) → 0` | Run all spawned tasks to completion; blocks until done |
-| `async_sleep_ms` | `async_sleep_ms(ms) → 0/-1` | Sleep for ms milliseconds (via timerfd + epoll) |
+| `async_sleep_ms` | `async_sleep_ms(ms) → 0/-1` | Sleep for ms milliseconds (Linux: a timerfd; elsewhere the platform sleep). `ms <= 0` returns at once; above INT_MAX it is clamped on Windows / agnos, never truncated (6.6.20) |
 | `async_read` | `async_read(fd, buf, len) → n` | Non-blocking read via fcntl O_NONBLOCK |
 | `async_await_readable_ms` | `async_await_readable_ms(fd, ms) → 1/0` | v6.5.6 — wait at most `ms` (< 0: no limit) for fd to be readable (data, a hang-up, or a pending connection on a listener); 1 = readable (a regular file is always readable), 0 = timeout / EINTR / not open (at once, never a hang); an `ms` above INT_MAX is clamped to it. One `fd_wait_ready` on every host target: poll(2) on Linux (since 6.6.20 — the epoll body it replaced read a regular file as a timeout and hung for ever on a closed fd), BSD poll on macOS and WSAPoll on Windows (sockets only; another HANDLE answers 0 at once) since 6.6.19; on agnos the socket adapter's readiness probe pre-accepts / peeks one byte into a stash the next accept / read delivers first, and a non-socket fd answers 1 at once (its read blocks) |
 | `async_await_readable` | `async_await_readable(fd) → 0` | Block without limit until fd is readable: `async_await_readable_ms(fd, -1)`. On macOS, Windows and agnos a no-op that returned at once until 6.6.19 |
@@ -1371,7 +1371,7 @@ Time and duration utilities for wall-clock and monotonic clocks. Includes: sysca
 | `clock_now_ms` | `clock_now_ms() → i64` | Current monotonic time in milliseconds |
 | `clock_epoch_secs` | `clock_epoch_secs() → i64` | Current wall-clock epoch seconds |
 | `clock_epoch_ns` | `clock_epoch_ns() → i64` | Current wall-clock epoch nanoseconds |
-| `sleep_ms` | `sleep_ms(ms)` | Sleep for ms milliseconds (portable across Linux/macOS/Windows) |
+| `sleep_ms` | `sleep_ms(ms)` | Sleep for ms milliseconds (portable across Linux/macOS/Windows/agnos). `ms < 0` sleeps 0; above INT_MAX it sleeps INT_MAX (~24.8 days), never its low 32 bits (6.6.20) |
 | `dur_new` | `dur_new(secs, nsecs) → ptr` | Create duration struct {secs, nsecs} |
 | `dur_secs` | `dur_secs(d) → i64` | Get seconds component |
 | `dur_nsecs` | `dur_nsecs(d) → i64` | Get nanoseconds component |
@@ -1836,7 +1836,7 @@ Testing-stdlib primitives: display formatting, buffer scanning, process executio
 | `regression_file_contains_substr` | `regression_file_contains_substr(path, substr) → 0/1` | Read file and check for substring |
 | `regression_pipe_to_bin_capture` | `regression_pipe_to_bin_capture(bin_path, src_path, out_path, envp) → exit` | Pipe src to binary stdin; capture stdout to file; return exit code |
 | `regression_pipe_to_bin` | `regression_pipe_to_bin(bin_path, src_path, envp) → exit` | Thin wrapper: pipe to binary with /dev/null output |
-| `regression_run_with_timeout` | `regression_run_with_timeout(bin_path, timeout_ms, envp) → exit` | Fork+exec with wall-clock timeout (100ms poll); returns -2 on timeout |
+| `regression_run_with_timeout` | `regression_run_with_timeout(bin_path, timeout_ms, envp) → exit` | Fork+exec with a wall-clock timeout (waited in 1 / 10 / 50 ms slices; the child's tree is ended at the deadline). Returns the exit code, 128+sig on a signal, -2 on timeout, -1 on a fork failure or a child that was never observed (waitpid failed — e.g. an inherited SIGCHLD = SIG_IGN). `timeout_ms <= 0` is an immediate kill (-2) (6.6.20) |
 | `regression_exec_capture` | `regression_exec_capture(bin_path, buf, buflen, envp) → bytes` | Run binary, capture stdout; returns bytes read |
 | `regression_exec_run` | `regression_exec_run(bin_path, envp) → exit` | Run binary (no args), discard I/O; return exit code |
 | `regression_exec_with_arg_capture` | `regression_exec_with_arg_capture(bin_path, arg, buf, buflen, envp) → bytes` | Run binary with one arg, capture stdout |
@@ -1844,13 +1844,13 @@ Testing-stdlib primitives: display formatting, buffer scanning, process executio
 | `regression_exec_with_arg_capture_both_status` | `regression_exec_with_arg_capture_both_status(bin_path, arg, buf, buflen, envp, st) → bytes` | The same, and report how that ONE run ended: `st[0]` = exit / 128+sig / -2 deadline / -1 not observed, `st[1]` = 1 on a signal death (6.6.7). Count markers and judge the run from the same capture |
 | `regression_network_probe` | `regression_network_probe(addr_ipv4, port, timeout_ms) → 0/1` | TCP reachability probe (non-blocking connect + poll) |
 | `regression_ssh_target` | `regression_ssh_target(env_name, default_name) → name` | Resolve SSH target (env override or default) |
-| `regression_ssh_skip_check` | `regression_ssh_skip_check(target) → 0/1` | Test SSH reachability via ssh -o BatchMode |
-| `regression_scp_to` | `regression_scp_to(target, local_path, remote_path, envp) → exit` | SCP local file to remote host |
-| `regression_ssh_remote_exit` | `regression_ssh_remote_exit(target, command, envp) → exit` | SSH remote command, discard I/O; return exit code |
-| `regression_ssh_remote_exec_capture` | `regression_ssh_remote_exec_capture(target, command, out_path, envp) → exit` | SSH remote command, capture stdout to file |
-| `regression_codesign_remote` | `regression_codesign_remote(target, remote_path, envp) → exit` | SSH remote: chmod +x && codesign -s - (macOS adhoc signing) |
-| `regression_exec_in_dir3` | `regression_exec_in_dir3(work_dir, bin_path, arg1, arg2, arg3, out_path, envp) → exit` | Run binary with up to 3 args in cwd; capture stdout; trailing 0 args skipped |
-| `regression_exec_in_dir3_env` | `regression_exec_in_dir3_env(work_dir, bin_path, arg1, arg2, arg3, env_extras_vec, out_path, envp) → exit` | Variant of regression_exec_in_dir3 with extra environment variables |
+| `regression_ssh_skip_check` | `regression_ssh_skip_check(target) → 0/1` | Test SSH reachability via ssh -o BatchMode; 0 also when the probe hit the deadline or was never observed (6.6.20) |
+| `regression_scp_to` | `regression_scp_to(target, local_path, remote_path, envp) → exit` | SCP local file to remote host. Returns scp's exit status, -2 on the deadline, -1 on a fork failure, a signal, or a child that was never observed (6.6.20) |
+| `regression_ssh_remote_exit` | `regression_ssh_remote_exit(target, command, envp) → exit` | SSH remote command, discard I/O. Returns the exit code, 128+sig on a signal, -2 on the deadline, -1 on any other failure, including a child that was never observed (6.6.20) |
+| `regression_ssh_remote_exec_capture` | `regression_ssh_remote_exec_capture(target, command, out_path, envp) → exit` | SSH remote command, capture stdout to file. Returns the exit status, -2 on the deadline, -1 on any other failure, including a child that was never observed (6.6.20) |
+| `regression_codesign_remote` | `regression_codesign_remote(target, remote_path, envp) → exit` | SSH remote: chmod +x && codesign -s - (macOS adhoc signing); returns as `regression_ssh_remote_exit` |
+| `regression_exec_in_dir3` | `regression_exec_in_dir3(work_dir, bin_path, arg1, arg2, arg3, out_path, envp) → exit` | Run binary with up to 3 args in cwd; capture stdout; trailing 0 args skipped. Returns the exit status, -2 on the deadline, -1 on any other failure, including a child that was never observed (6.6.20) |
+| `regression_exec_in_dir3_env` | `regression_exec_in_dir3_env(work_dir, bin_path, arg1, arg2, arg3, env_extras_vec, out_path, envp) → exit` | Variant of regression_exec_in_dir3 with extra environment variables; same returns |
 
 
 ## Folded sibling distfiles
