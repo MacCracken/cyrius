@@ -598,38 +598,95 @@ fn _tests_run_declared(targets): i64 {
     return 0;
 }
 
-fn _tests_walk_d(dir, depth): i64 {
+# ⭐ 6.6.20 (REFACTOR-09) — ONE corpus walker behind `cyrius test`/`tests` (.tcyr), `fuzz`
+# (.fcyr) and `bench` (.bcyr). There were three hand-synced copies, and every walker fix had to be
+# made three times: v6.5.12's depth cap, `elif` and never-descend-a-symlink, then 6.6.10's
+# unlistable-directory failure. They differed only in the extension, two message words and what
+# runs a file, which is what the descriptor `cd` (built by _corpus_cd) carries:
+#   +0  ext        ".tcyr" / ".fcyr" / ".bcyr"
+#   +8  run_fp     fn(path, cd) — runs ONE file; its result is the runner's to count
+#   +16 noun       "<noun> walk depth cap" in the depth-cap warning
+#   +24 what       _cbt_list_dir's tail for a directory that cannot be listed
+#   +32 pass_ptr   i64 counters the runner and the walker share
+#   +40 fail_ptr
+#   +48 found_ptr  set to 1 by an unlistable directory; 0 when the caller reads "found nothing
+#                  but counted a failure" itself (the tests walk)
+# THE RULES, each once a separate fix in each copy:
+#   * depth-capped at 64 — `is_dir` follows symlinks, so a link to an ancestor once re-descended
+#     to PATH_MAX (41 passed for a tree holding ONE .tcyr) (v6.5.12);
+#   * a SYMLINKED directory is never descended (the loop guard); a symlinked FILE still runs;
+#   * a directory named `x.fcyr` is a directory — `elif`, never handed to the runner, which gave
+#     `error: not a file` + a failure over a healthy tree (v6.5.12);
+#   * an ABSENT directory is an empty scope; one that exists and cannot be listed is a FAILED run
+#     by name — `dir_list` read it as empty, so its files silently did not run (6.6.10);
+#   * a name that is ONLY the extension (the dotfile `.tcyr`) is not a corpus file.
+# Returns how many files were handed to the runner. CHANGELOG [6.6.20]
+fn _corpus_walk_d(dir, cd, depth): i64 {
     if (depth > 64) {
-        sys_write(STDERR_FD, "warning: test walk depth cap (64) hit — symlink loop? subtree skipped: ", 73);
-        sys_write(STDERR_FD, dir, strlen(dir));
-        sys_write(STDERR_FD, "\n", 1);
+        _ew("warning: ");
+        _ew(load64(cd + 16));
+        _ew(" walk depth cap (64) hit — symlink loop? subtree skipped: ");
+        _ew(dir);
+        _ew("\n");
         return 0;
     }
-    # 6.6.10: a directory that cannot be listed is a FAILED run, by name — `dir_list` read it
-    # as empty, so its tests silently did not run and the verdict stayed green. CHANGELOG [6.6.10]
-    var entries = _cbt_list_dir(dir, "its tests were NOT run (counted as a failure)");
-    if (entries == 0) { _fail = _fail + 1; return 1; }
+    if (is_dir(str_from(dir)) == 0) { return 0; }
+    var entries = _cbt_list_dir(dir, load64(cd + 24));
+    if (entries == 0) {
+        var fcnt = load64(cd + 40);
+        store64(fcnt, load64(fcnt) + 1);
+        if (load64(cd + 48) != 0) { store64(load64(cd + 48), 1); }
+        return 0;
+    }
+    var ext = load64(cd);
+    var el = strlen(ext);
+    var n = 0;
     var ei = 0;
     while (ei < vec_len(entries)) {
         var name = vec_get(entries, ei);
-        var full = make_path(dir, str_data(name));
-        # v6.5.12: never DESCEND a symlink (lib/fs.cyr:is_symlink). A link to an
-        # ancestor previously re-entered the same subtree, inflating the pass count.
+        var nd = str_data(name);
+        var nl = str_len(name);
+        var full = make_path(dir, nd);
         if (is_dir(str_from(full)) == 1) {
-            # Descend only a REAL directory. A symlinked dir is skipped (loop guard);
-            # a symlinked FILE falls through to the .tcyr arm below and still runs.
-            if (is_symlink(str_from(full)) == 0) { _tests_walk_d(full, depth + 1); }
-        }
-        elif (str_ends_with(name, str_from(".tcyr")) == 1) {
-            _tests_found = 1;
-            if (_tests_first_run(full) == 1) { cmd_test(full); }
+            if (is_symlink(str_from(full)) == 0) { n = n + _corpus_walk_d(full, cd, depth + 1); }
+        } elif (nl > el) {
+            if (memeq(nd + nl - el, ext, el) == 1) {
+                n = n + 1;
+                fncall2(load64(cd + 8), full, cd);
+            }
         }
         ei = ei + 1;
     }
+    return n;
+}
+
+# A corpus descriptor for _corpus_walk_d; the counters are filled in by _corpus_walk.
+fn _corpus_cd(ext, run_fp, noun, what): i64 {
+    var cd = alloc(56);
+    store64(cd, ext);
+    store64(cd + 8, run_fp);
+    store64(cd + 16, noun);
+    store64(cd + 24, what);
+    return cd;
+}
+
+fn _corpus_walk(dir, cd, pass_ptr, fail_ptr, found_ptr): i64 {
+    store64(cd + 32, pass_ptr);
+    store64(cd + 40, fail_ptr);
+    store64(cd + 48, found_ptr);
+    return _corpus_walk_d(dir, cd, 0);
+}
+
+# The tests walk's runner: once per file per bare `cyrius test` (see _tests_first_run).
+fn _tests_walk_one(path, cd): i64 {
+    _tests_found = 1;
+    if (_tests_first_run(path) == 1) { cmd_test(path); }
     return 0;
 }
 
-fn _tests_walk(dir): i64 { return _tests_walk_d(dir, 0); }
+fn _tests_walk(dir): i64 {
+    return _corpus_walk(dir, _corpus_cd(".tcyr", &_tests_walk_one, "test", "its tests were NOT run (counted as a failure)"), &_pass, &_fail, 0);
+}
 
 fn cmd_tests(dir): i64 {
     _pass = 0; _fail = 0; _tests_found = 0;
@@ -823,52 +880,14 @@ fn _fuzz_relay_capture(errf): i64 {
     return 0;
 }
 
-# v6.5.7: RECURSIVE, matching `_tests_walk` — see the note on _bench_walk_dir.
-# v6.5.12: depth-bounded — see _tests_walk_d.
-fn _fuzz_walk_dir_d(dir, passcnt_ptr, failcnt_ptr, found_ptr, depth): i64 {
-    if (depth > 64) {
-        sys_write(STDERR_FD, "warning: fuzz walk depth cap (64) hit — symlink loop? subtree skipped\n", 72);
-        return 0;
-    }
-    # 6.6.10: an ABSENT dir is nothing to run (fuzz/ is optional); one that exists and cannot
-    # be listed is a failure by name. `file_exists` is an open(), which fails on a mode-000
-    # directory, so it answered "absent" for exactly the case that must fail. CHANGELOG [6.6.10]
-    if (is_dir(str_from(dir)) == 0) { return 0; }
-    var entries = _cbt_list_dir(dir, "its harnesses were NOT run (counted as a failure)");
-    if (entries == 0) {
-        store64(found_ptr, 1);
-        store64(failcnt_ptr, load64(failcnt_ptr) + 1);
-        return 0;
-    }
-    var fi = 0;
-    var n = 0;
-    while (fi < vec_len(entries)) {
-        var name = vec_get(entries, fi);
-        var nd = str_data(name);
-        var nl = str_len(name);
-        var sub = make_path(dir, nd);
-        if (is_dir(str_from(sub)) == 1) {
-            if (is_symlink(str_from(sub)) == 0) {
-                n = n + _fuzz_walk_dir_d(sub, passcnt_ptr, failcnt_ptr, found_ptr, depth + 1);
-            }
-        }
-        # v6.5.12: `elif`, NOT a second `if`. A DIRECTORY named `x.fcyr` satisfied BOTH
-        # arms — recursed into, then handed to compile() as a file — giving
-        # `error: not a file` + COMPILE FAIL + a non-zero exit over a healthy tree.
-        # `_tests_walk` (:199) already used `elif`; these two were the divergent siblings.
-        elif (nl > 5) {
-            if (memeq(nd + nl - 5, ".fcyr", 5) == 1) {
-                n = n + 1;
-                _fuzz_run_one(make_path(dir, nd), passcnt_ptr, failcnt_ptr, found_ptr);
-            }
-        }
-        fi = fi + 1;
-    }
-    return n;
+# v6.5.7: RECURSIVE, matching `_tests_walk` — see the note on _bench_walk_dir. The walk itself
+# is _corpus_walk_d (6.6.20); fuzz/ is optional, so an absent root is nothing to run.
+fn _fuzz_walk_one(path, cd): i64 {
+    return _fuzz_run_one(path, load64(cd + 32), load64(cd + 40), load64(cd + 48));
 }
 
 fn _fuzz_walk_dir(dir, passcnt_ptr, failcnt_ptr, found_ptr): i64 {
-    return _fuzz_walk_dir_d(dir, passcnt_ptr, failcnt_ptr, found_ptr, 0);
+    return _corpus_walk(dir, _corpus_cd(".fcyr", &_fuzz_walk_one, "fuzz", "its harnesses were NOT run (counted as a failure)"), passcnt_ptr, failcnt_ptr, found_ptr);
 }
 
 fn cmd_fuzz(source): i64 {
@@ -957,6 +976,18 @@ fn _bench_run_one(path): i64 {
     return ec;
 }
 
+# One .bcyr for _corpus_walk_d: compile and run it, and count the verdict.
+fn _bench_walk_one(path, cd): i64 {
+    store64(load64(cd + 48), 1);
+    sys_write(STDOUT_FD, "  ", 2);
+    sys_write(STDOUT_FD, path, strlen(path));
+    sys_write(STDOUT_FD, "\n", 1);
+    var cnt = load64(cd + 40);
+    if (_bench_run_one(path) == 0) { cnt = load64(cd + 32); }
+    store64(cnt, load64(cnt) + 1);
+    return 0;
+}
+
 # Walk `dir` for `*.bcyr` files and run each via _bench_run_one.
 # Updates *passcnt / *failcnt / *found via caller-owned i64 storage.
 # Returns the number of benches attempted.
@@ -965,56 +996,9 @@ fn _bench_run_one(path): i64 {
 # ran, and the command reported success over it. A subfolder callout has always
 # been intended to work; the plural `cyrius tests <dir>` verb has recursed since
 # v6.0.62 and bench/fuzz were never brought along.
-# v6.5.12: depth-bounded — see _tests_walk_d.
-fn _bench_walk_dir_d(dir, passcnt_ptr, failcnt_ptr, found_ptr, depth): i64 {
-    if (depth > 64) {
-        sys_write(STDERR_FD, "warning: bench walk depth cap (64) hit — symlink loop? subtree skipped\n", 73);
-        return 0;
-    }
-    # 6.6.10: as _fuzz_walk_dir_d — absent is nothing to run, unlistable is a failure.
-    if (is_dir(str_from(dir)) == 0) { return 0; }
-    var entries = _cbt_list_dir(dir, "its benchmarks were NOT run (counted as a failure)");
-    if (entries == 0) {
-        store64(found_ptr, 1);
-        store64(failcnt_ptr, load64(failcnt_ptr) + 1);
-        return 0;
-    }
-    var fi = 0;
-    var n = 0;
-    while (fi < vec_len(entries)) {
-        var name = vec_get(entries, fi);
-        var nd = str_data(name);
-        var nl = str_len(name);
-        var sub = make_path(dir, nd);
-        if (is_dir(str_from(sub)) == 1) {
-            if (is_symlink(str_from(sub)) == 0) {
-                n = n + _bench_walk_dir_d(sub, passcnt_ptr, failcnt_ptr, found_ptr, depth + 1);
-            }
-        }
-        # v6.5.12: `elif` — see the note in _fuzz_walk_dir. Same divergence.
-        elif (nl > 5) {
-            if (memeq(nd + nl - 5, ".bcyr", 5) == 1) {
-                store64(found_ptr, 1);
-                var path = make_path(dir, nd);
-                sys_write(STDOUT_FD, "  ", 2);
-                sys_write(STDOUT_FD, path, strlen(path));
-                sys_write(STDOUT_FD, "\n", 1);
-                var ec = _bench_run_one(path);
-                if (ec == 0) {
-                    store64(passcnt_ptr, load64(passcnt_ptr) + 1);
-                } else {
-                    store64(failcnt_ptr, load64(failcnt_ptr) + 1);
-                }
-                n = n + 1;
-            }
-        }
-        fi = fi + 1;
-    }
-    return n;
-}
-
+# v6.5.12: depth-bounded; the walk itself is _corpus_walk_d (6.6.20).
 fn _bench_walk_dir(dir, passcnt_ptr, failcnt_ptr, found_ptr): i64 {
-    return _bench_walk_dir_d(dir, passcnt_ptr, failcnt_ptr, found_ptr, 0);
+    return _corpus_walk(dir, _corpus_cd(".bcyr", &_bench_walk_one, "bench", "its benchmarks were NOT run (counted as a failure)"), passcnt_ptr, failcnt_ptr, found_ptr);
 }
 
 fn cmd_bench(source): i64 {
