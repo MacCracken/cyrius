@@ -1,5 +1,5 @@
 # Test: kybernet 1.1.5 socket-syscall wrappers (v5.11.18 Part B)
-# Closes `docs/development/issues/2026-05-11-kybernet-socket-syscall-wrappers.md`.
+# Closes `docs/development/issues/archived/2026-05-11-kybernet-socket-syscall-wrappers.md`.
 #
 # Seven wrappers (x86_64 + aarch64 mirrored):
 #   sys_socket, sys_bind, sys_listen, sys_connect,

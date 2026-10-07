@@ -2488,7 +2488,7 @@ fn _audit_sweep(): i64 {
     # Do NOT substitute `file_exists("src/main.cyr")` (the v6.0.1 conflation bug) and do
     # NOT test for a `[deps]` section — cyrius.cyml HAS one, so that would wrongly drop
     # lib/ here. Verified: predicate == 1 in this repo, 0 in stiva, 0 in /tmp.
-    # (issues/2026-07-24-audit-sweep-fmt-lint-walks-vendored-lib.md)
+    # (issues/archived/2026-07-24-audit-sweep-fmt-lint-walks-vendored-lib.md)
     var _in_cyrius_repo = _dep_is_cyrius_source_repo();
     var dirs = vec_new();
     if (_in_cyrius_repo == 1) {
@@ -2513,7 +2513,7 @@ fn _audit_sweep(): i64 {
     if (vec_len(dirs) == 0) { vec_push(dirs, str_from(".")); }
     # Say what was walked. A stage that reports a verdict without its scope reads as
     # authoritative when it is not — the same defect as the release gate's silent
-    # `vr01_` subset (issues/2026-07-14-release-gate-cross-os-runs-only-vr01-glob.md).
+    # `vr01_` subset (issues/archived/2026-07-14-release-gate-cross-os-runs-only-vr01-glob.md).
     sys_write(STDOUT_FD, "  scope:", 8);
     var _sd = 0;
     while (_sd < vec_len(dirs)) {
@@ -5756,7 +5756,7 @@ fn cmd_distlib(profile): i64 {
     # so the single blank between header and first module marker
     # comes for free. Writing an extra blank here produced the
     # bundle-line-6 cyrlint double-blank warning (see
-    # issues/2026-05-27-cyrius-distlib-blank-lines.md, cause 1).
+    # issues/archived/2026-05-27-cyrius-distlib-blank-lines.md, cause 1).
 
     # v6.0.9 — track previous-line-blank to collapse runs of ≥2
     # consecutive blanks. The include-strip step drops `include`

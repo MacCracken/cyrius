@@ -39,7 +39,7 @@
 # Mutation-proven: deleting either `_wx_dbase_frozen` guard reddens this gate, and restores
 # the sankhya segfault.
 #
-# See docs/development/issues/sankhya-dce-bench-segfault.md
+# See docs/development/issues/archived/sankhya-dce-bench-segfault.md
 #
 # 6.6.20 — THE FREEZE IS A W^X-ONLY FIX (rows 6-7). Two layouts have no gap to freeze into: a
 # `kernel;` image (ELF32 multiboot and CYRIUS_ELF64_KERNEL=1) and CYRIUS_WX=0 (one RWX PT_LOAD)

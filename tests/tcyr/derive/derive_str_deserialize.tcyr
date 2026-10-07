@@ -12,7 +12,7 @@
 # `Name_from_json_str` already `str_new`'d the bytes correctly —
 # this test guards BOTH paths so they can't diverge again.
 #
-# Closes issues/2026-07-01-derive-serialize-str-field-deserialize-broken.md.
+# Closes issues/archived/2026-07-01-derive-serialize-str-field-deserialize-broken.md.
 
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"

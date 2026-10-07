@@ -222,7 +222,7 @@ assert_eq(forty_cases(40), 0 - 1, "default beyond range");
 # v6.5.20 — NON-`return` EXIT ROUTES, one mirror per regime above.
 #
 # Acceptance criterion 4 of
-# docs/development/issues/2026-08-11-switch-case-body-only-exits-safely-via-return.md:
+# docs/development/issues/archived/2026-08-11-switch-case-body-only-exits-safely-via-return.md:
 # every case body in this file ended in `return`, "which is precisely the blind spot".
 # That is why 269 .tcyr and four hosts stayed green while a table-regime switch whose
 # bodies FELL OUT jumped into the middle of an instruction (SIGSEGV with a `default:`,

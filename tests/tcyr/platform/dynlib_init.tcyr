@@ -118,7 +118,7 @@ assert(tloc != 0, "uselocale(0) returns non-null thread-local locale");
 
 # v5.5.24 — dynlib_bootstrap_environ. Sidesteps NULL-__environ
 # SIGSEGVs in getenv / NSS internals. Not a full NSS fix; see
-# docs/development/issues/dynlib-nss-bootstrap.md.
+# docs/development/issues/archived/dynlib-nss-bootstrap.md.
 test_group("dynlib_bootstrap_environ");
 assert_eq(dynlib_bootstrap_environ(0), 1, "dynlib_bootstrap_environ(null) returns 1");
 var be = dynlib_bootstrap_environ(hc);
@@ -134,7 +134,7 @@ if (fp_getenv != 0) {
 
 # v5.5.25 — dynlib_read_auxv / dynlib_auxv_get primitives.
 # Shipped as the narrow piece that fell out of the NSS-dispatch
-# investigation. See docs/development/issues/dynlib-nss-bootstrap.md.
+# investigation. See docs/development/issues/archived/dynlib-nss-bootstrap.md.
 test_group("dynlib_read_auxv + dynlib_auxv_get");
 var abuf = alloc(4096);
 assert(abuf != 0, "auxv buffer alloc succeeds");

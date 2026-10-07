@@ -6,7 +6,7 @@
 # be defined AFTER the arrays (a global declared after the first bare statement is not
 # visible to functions defined earlier — the secondary symptom). Arch-neutral (sizing is
 # in the shared frontend); the byte gap between two consecutive i64 globals is the size.
-# See issues/2026-07-05-toplevel-bare-array-8x-undersize.md.
+# See issues/archived/2026-07-05-toplevel-bare-array-8x-undersize.md.
 include "lib/assert.cyr"
 include "lib/syscalls.cyr"
 

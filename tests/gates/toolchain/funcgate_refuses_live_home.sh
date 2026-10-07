@@ -10,7 +10,7 @@
 # `_try_redirect_to_pinned()` fires before command dispatch, so those repos could not run
 # ANY cyrius verb — not `build`, not `lint`, not `--version`.
 #
-# ⚠ THE ONLY PROTECTION WAS A SENTENCE. `docs/development/handoff.md` carried
+# ⚠ THE ONLY PROTECTION WAS A SENTENCE. `docs/development/handoff.md` (archived 6.6.20) carried
 # "Never pass $HOME/.cyrius as a staging target to funcgate-stage.sh" as a standing rule.
 # A rule in a document is not a guard: it protects only the reader who happens to have
 # read it, and this tree's own history says handoff.md sat stale for thirty-eight

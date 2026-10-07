@@ -21,7 +21,7 @@
 # Exits 0 only if the WHOLE flow works; a distinct non-zero code per failing step:
 #   10 init    11 lib-sync(dir-walk)   12 deps   13 fib-build   14 fib-run/alloc
 #   15 non-reproducible   16 map-build   17 map-run(hashmap/str). See
-# docs/development/issues/2026-06-04-shipped-broken-functionality-found-by-consumers.md.
+# docs/development/issues/archived/2026-06-04-shipped-broken-functionality-found-by-consumers.md.
 set -e
 
 CY="${1:?usage: funcgate-posix.sh <cyrius-bin> <scratch> <CYRIUS_HOME>}"

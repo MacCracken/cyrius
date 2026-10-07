@@ -1413,7 +1413,7 @@ fn lint_file(buf, total): i64 {
             # v5.10.10 — char-literal skip mirrors the v5.10.6 cyrfmt fix (agnostik
             # 5.10.9 filed 694 false `unmatched closing brace` warnings on every `}`
             # after a `str_builder_putc(sb, '}')` call; agnostik/docs/development/
-            # issues/cyrlint-char-literal-brace-bug-2026-05-09.md). v6.6.5 — the delta
+            # issues/archive/cyrlint-char-literal-brace-bug-2026-05-09.md). v6.6.5 — the delta
             # comes from _lx_line, whose string state crosses lines (see there).
             brace_depth += line_delta;
 
@@ -1446,7 +1446,7 @@ fn lint_file(buf, total): i64 {
 # Mabda v3 Step 4f.ii hit this on hardware-iter work and burned
 # 30+ minutes on a "wedged GPU" misdiagnosis before a CPU
 # regression test pinned the actual cause. Filed at
-# `docs/development/issues/2026-04-28-global-init-order-forward-
+# `docs/development/issues/archived/2026-04-28-global-init-order-forward-
 # ref.md`.
 #
 # Rule: walk the file twice. Pass 1 collects every TOP-LEVEL

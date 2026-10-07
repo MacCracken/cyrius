@@ -1,6 +1,6 @@
 # v5.11.64 — top-level `var X = INT_LITERAL ;` static-init via
 # file-image bytes (no runtime store).
-# Filing: docs/development/issues/2026-05-18-gvar-init-order-zero-reads.md
+# Filing: docs/development/issues/archived/2026-05-18-gvar-init-order-zero-reads.md
 # (agnos xHCI Attempt 64 QEMU root-cause).
 #
 # Pre-v5.11.64: `var X = N;` at module top emitted a runtime store

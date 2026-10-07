@@ -357,7 +357,7 @@
 #                                        eliminating the runtime store
 #                                        sequence. Solves the kmode-entry
 #                                        init-order bug filed at
-#                                        docs/development/issues/
+#                                        docs/development/issues/archived/
 #                                        2026-05-18-gvar-init-order-zero-reads.md
 #                                        (agnos xHCI Attempt 64). Slot uses
 #                                        v5.11.19 freed-region (was
@@ -1351,7 +1351,7 @@ if (_kern_env != 0) {
 # v6.3.3 #5: CYRIUS_KERNEL_BASE=0x<hex> sets the kernel load/link base — the
 # `[sections] base` manifest key flows in through this env (cbt appends it). Default
 # unset -> cell 0x18FCE8 stays 0 -> _kernel_load_base() returns the built-in 0x100000
-# -> cycc byte-identical. Resolves issues/2026-06-19-kernel-load-base-settable.md.
+# -> cycc byte-identical. Resolves issues/archived/2026-06-19-kernel-load-base-settable.md.
 var _kbase_env = _read_env("CYRIUS_KERNEL_BASE");
 if (_kbase_env != 0) {
     var _kb = _parse_hex_env(_kbase_env);

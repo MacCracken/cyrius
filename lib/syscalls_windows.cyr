@@ -445,7 +445,7 @@ fn sys_brk(addr) {
 # (uninitialised buffer / clock-ns / PID-mix) — a predictable mask/TXID/key is
 # worse than a failed op (exactly what CVE-19 closed). `flags` is ignored
 # (Linux getrandom flags have no ProcessPrng analog). See
-# issues/2026-06-11-windows-entropy-primitive.md.
+# issues/archived/2026-06-11-windows-entropy-primitive.md.
 # The BOOL is masked to 32 bits: EPROCPRNG_PE defines only eax, so a failure whose upper half
 # was dirty would read as success and hand back an unfilled buffer. CHANGELOG [6.6.20]
 fn sys_getrandom(buf, len, flags): i64 {
@@ -954,7 +954,7 @@ fn sys_fdatasync(fd): i64 { return syscall(75, fd); }
 # on Windows. Winsock returns 0 on success, SOCKET_ERROR (-1) with WSAGetLastError =
 # WSAENOTCONN (10057) on an unconnected socket (NOT the POSIX errno space). Consumers
 # still treat <0 as "peer unknown" and fail open — sandhi's peer API already does.
-# Closes docs/development/issues/2026-07-14-windows-getpeername-reroute-missing.md
+# Closes docs/development/issues/archived/2026-07-14-windows-getpeername-reroute-missing.md
 #
 # Normalize to the POSIX contract consumers check (`r < 0` = failure): ws2_32
 # returns 0 on success (peer written) or SOCKET_ERROR (int -1). These reroutes define
@@ -1004,7 +1004,7 @@ fn sys_listen(fd, backlog): i64 {
 # 10 MHz on Win10+, i.e. a 100 ns tick) and is monotonic since system start.
 #
 # Both return BOOL (nonzero = success) and write a 64-bit count at the pointer arg.
-# Filed as part of docs/development/issues/2026-09-16-mabda-lib-bench-min-minus-mean-floor.md
+# Filed as part of docs/development/issues/archived/2026-09-16-mabda-lib-bench-min-minus-mean-floor.md
 # QueryPerformanceCounter(&count): writes the current 64-bit performance count at `ptr`.
 # Returns the Win32 BOOL (nonzero = success). Monotonic since system start.
 fn sys_qpc(ptr): i64 {

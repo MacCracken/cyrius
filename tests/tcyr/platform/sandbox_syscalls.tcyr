@@ -1,5 +1,5 @@
 # Test: kavach P1 sandbox-relevant syscall wrappers (v5.11.0)
-# Closes `docs/development/issues/2026-05-10-kavach-sandbox-syscall-wrappers.md`.
+# Closes `docs/development/issues/archived/2026-05-10-kavach-sandbox-syscall-wrappers.md`.
 #
 # Six wrappers (x86_64 + aarch64 mirrored):
 #   sys_fchmod, sys_setresuid, sys_setresgid, sys_prctl,

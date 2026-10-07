@@ -1,5 +1,5 @@
 # Test: lib/process.cyr exec_* Str-shape variants (v5.10.44)
-# Closes `docs/development/issues/2026-05-10-process-exec-str-cstr-ambiguity.md`.
+# Closes `docs/development/issues/archived/2026-05-10-process-exec-str-cstr-ambiguity.md`.
 include "lib/alloc.cyr"
 include "lib/string.cyr"
 include "lib/fmt.cyr"

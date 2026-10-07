@@ -121,7 +121,8 @@ jobs:
           # ~/.cyrius/bin/cycc_aarch64`. Local install.sh has always placed
           # cross_bins in bin/ (scripts/install.sh:100); release tarball
           # now matches. Canonical upstream report:
-          # yukti/docs/development/issues/2026-04-30-cyrius-cycc-aarch64-packaging.md.
+          # yukti/docs/development/issues/2026-04-30-cyrius-cc5-aarch64-packaging.md
+          # (in the yukti repo; CHANGELOG [5.8.2]).
           [ -f "build/cycc_aarch64" ] && cp "build/cycc_aarch64" "$STAGE/bin/"
           # v6.1.16: ship the PE cross-compiler alongside cycc_aarch64 (built
           # above). Without this, pinned-release installs have no cycc_win and

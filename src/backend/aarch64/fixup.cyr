@@ -19,7 +19,7 @@
 # Default 0x40000000 (the canonical AArch64 kernel base); a `[sections] base = "0x.."`
 # manifest key (or CYRIUS_KERNEL_BASE env) overrides via state cell 0x18FCE8. Mirrors
 # the x86 accessor so _entry_base + EMITELF_KERNEL read ONE base — no partial-edit
-# garble. Byte-identical when the cell is 0. See issues/2026-06-19-kernel-load-base-settable.md.
+# garble. Byte-identical when the cell is 0. See issues/archived/2026-06-19-kernel-load-base-settable.md.
 fn _kernel_load_base(S): i64 {
     var b = L64(S + 0x18FCE8);
     if (b != 0) { return b; }

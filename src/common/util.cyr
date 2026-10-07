@@ -443,7 +443,7 @@ var _fnt_cap = 0;
 # let the fn count past 8192 (fi >= 8192), index fi of each wrote into slot
 # (fi-8192) of the NEXT table — silent metadata corruption with no diagnostic, and
 # the capacity warning went quiet at the same moment (it divides by the live
-# _fnt_cap). See issues/2026-07-23-fn-table-growth-past-8192-corrupts-fixed-side-
+# _fnt_cap). See issues/archived/2026-07-23-fn-table-growth-past-8192-corrupts-fixed-side-
 # tables.md.
 #
 # Fix follows the SAME lazy-alloc-at-max-cap pattern already used for the fn-indexed
@@ -1301,7 +1301,7 @@ fn SFVB(S, fi, v): i64 { if (_fnvb_base == 0) { _fnvb_base = alloc(131072 * 8); 
 # gvars detected by PARSE_GVAR_REG. FIXUP-time emit paths read these
 # and pre-write into the var area, eliminating the runtime store
 # sequence and fixing the kmode-entry init-order bug filed at
-# docs/development/issues/2026-05-18-gvar-init-order-zero-reads.md.
+# docs/development/issues/archived/2026-05-18-gvar-init-order-zero-reads.md.
 # Zero == not statically initialized (BSS-zero already correct, so
 # leave the runtime emit path in place — observable behavior is
 # identical, no need to fork).

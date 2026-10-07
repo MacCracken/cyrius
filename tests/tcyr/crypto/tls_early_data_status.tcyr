@@ -1,6 +1,6 @@
 # v5.10.34 — TLS 1.3 0-RTT acceptance status + per-session max-early-data
 # probe. Sandhi 1.3.2 client-side 0-RTT unblocker (filed
-# /home/macro/Repos/sandhi/docs/issues/2026-05-10-stdlib-tls-early-data-status.md).
+# sandhi/docs/development/issues/archive/2026-05-10-stdlib-tls-early-data-status.md).
 #
 # Tests two new typed wrappers:
 #   tls_get_early_data_status(ctx)       — wraps SSL_get_early_data_status

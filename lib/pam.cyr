@@ -16,7 +16,7 @@
 #   exit status: 0 = password correct, non-zero = fail.
 #
 # This is the Path-B escape hatch documented in
-# docs/development/issues/dynlib-nss-bootstrap.md: consumers that
+# docs/development/issues/archived/dynlib-nss-bootstrap.md: consumers that
 # can't shell out to `/usr/bin/su` and can't read /etc/shadow
 # directly (because they're not root) use this helper. Works
 # against any NSS backend the system is configured for (files,

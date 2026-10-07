@@ -2719,7 +2719,7 @@ fn EMUNMAP_PE(S): i64 {
 # `var _SK_SYS_WRITE = 1;`) leaves `sc_num == -1`, no case matches, and
 # the generic ESCPOPS path emits the Linux `0F 05` syscall instruction,
 # which faults / silently no-ops on Windows. Issue:
-# docs/development/issues/2026-06-09-pe-syscall-variable-number-not-rerouted.md
+# docs/development/issues/archived/2026-06-09-pe-syscall-variable-number-not-rerouted.md
 #
 # Fix: when the number is non-literal, emit a runtime switch on it.
 # argc is fixed at the call site (only the NUMBER is dynamic), so we

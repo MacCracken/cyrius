@@ -1,7 +1,13 @@
+> 📦 **ARCHIVED 2026-10-06 at the v6.6.x closeout (6.6.20, CLN-08) — frozen at v6.6.4.** This was
+> `docs/development/handoff.md`. It went stale again — sixteen releases this time (6.6.4 → 6.6.19), after the runs its own header lists — under its own
+> "refresh or delete this file when the next release ships", with no gate to notice; the volatile state it
+> duplicated lives in [`state.md`](../state.md) (refreshed every release) and [`roadmap.md`](../roadmap.md). Read
+> those, not this. Links below were re-pointed for the new location; nothing else was changed.
+
 # Handoff — **v6.6.4 is tagged (`84130a7a`), gate-GREEN, store reconciled.** Nothing is mid-arc.
 
-> **Written 2026-09-14, at the v6.6.4 bump.** Read this, then [`CLAUDE.md`](../../CLAUDE.md), then
-> [`state.md`](state.md), then [`roadmap.md`](roadmap.md).
+> **Written 2026-09-14, at the v6.6.4 bump.** Read this, then [`CLAUDE.md`](../../../CLAUDE.md), then
+> [`state.md`](../state.md), then [`roadmap.md`](../roadmap.md).
 >
 > ⚠ **Refresh or delete this file when the next release ships. A stale handoff is worse than
 > none, and this file is the repeat offender**: it sat at 6.5.10 for ten releases, then 6.5.20
@@ -50,14 +56,14 @@
 
 ## Start here next: slot `.3` (lands as 6.6.5) plus the two filed issues
 
-[`roadmap.md`](roadmap.md) is the single authority. The repair window's labels have drifted
+[`roadmap.md`](../roadmap.md) is the single authority. The repair window's labels have drifted
 from the version numbers (6.6.3 = the sweep's repairs, 6.6.4 = the post-handoff filings); the
 slots have NOT been re-numbered — that is the user's call.
 
 - ✅ **`.3` — per-item `private`.** The hard error shipped at v6.5.56; what was still live and
   is fixed in **6.6.5 (bite 3)** is that the rejection printed TWICE and privatised the file
   anyway, so a legitimate sibling fn was reported `is private to its file` at its caller.
-- ✅ **[`2026-09-13-private-impl-method-forward-call-fail-open.md`](issues/archived/2026-09-13-private-impl-method-forward-call-fail-open.md)
+- ✅ **[`2026-09-13-private-impl-method-forward-call-fail-open.md`](../issues/archived/2026-09-13-private-impl-method-forward-call-fail-open.md)
   — SHIPPED in 6.6.5 (bite 3), together with slot `.3` above.** It was not only the impl skip:
   `mod` fns, every fn after the first top-level statement and anything above the `private` line
   were unstamped too, and the same root produced FALSE refusals in ordinary include order (the
@@ -65,11 +71,11 @@ slots have NOT been re-numbered — that is the user's call.
   forward calls with a struct parameter. Pass 1 now stamps every definition and is the authority
   on visibility. The filing's "cannot pack — a name-pool design decision" was wrong; see its
   *Corrections to this filing*.
-- **[`2026-09-13-fn-local-global-slots-shadow-other-files.md`](issues/2026-09-13-fn-local-global-slots-shadow-other-files.md)**
+- **[`2026-09-13-fn-local-global-slots-shadow-other-files.md`](../issues/archived/2026-09-13-fn-local-global-slots-shadow-other-files.md)**
   — a fn-local struct literal / oversized array is a GLOBAL slot in the flat namespace and
   shadows other files' globals (was a silent miscompile; since bite ③'s stamps a misattributed
   diagnostic).
-- ✅ **[`2026-09-17-simd-arg-with-six-or-more-int-args-miscompiles.md`](issues/archived/2026-09-17-simd-arg-with-six-or-more-int-args-miscompiles.md)
+- ✅ **[`2026-09-17-simd-arg-with-six-or-more-int-args-miscompiles.md`](../issues/archived/2026-09-17-simd-arg-with-six-or-more-int-args-miscompiles.md)
   — FIXED in 6.6.6 (bite 1).** A value-form vector next to SIX or more int-class arguments bound
   the later ints to the wrong slots (`n6(v, 1,2,3,4,5,6)` → 123406) on every backend. The filing's
   "a change to the calling convention on each target" was wrong: no caller and no convention
@@ -79,13 +85,13 @@ slots have NOT been re-numbered — that is the user's call.
   🆕 FILED from its review (different defects), then fixed in bite 14: ✅ `var p: S = f(v, …)`
   pushed a vector as an int at any arity — and skipped every other callee gate (14a; review: the
   four PE-only vector-retptr own-calls had no arity check either, now shared,
-  [`…-struct-valued-assign-call-pushes-simd-args-as-ints`](issues/archived/2026-09-19-struct-valued-assign-call-pushes-simd-args-as-ints.md));
-  ✅ a 7+-field enum variant read the wrong stack args (14b, [`…-enum-variant-ctor-seven-plus-fields-…`](issues/archived/2026-09-19-enum-variant-ctor-seven-plus-fields-reads-wrong-stack-args.md));
+  [`…-struct-valued-assign-call-pushes-simd-args-as-ints`](../issues/archived/2026-09-19-struct-valued-assign-call-pushes-simd-args-as-ints.md));
+  ✅ a 7+-field enum variant read the wrong stack args (14b, [`…-enum-variant-ctor-seven-plus-fields-…`](../issues/archived/2026-09-19-enum-variant-ctor-seven-plus-fields-reads-wrong-stack-args.md));
   ✅ a struct-valued call outside a `var` initializer had no destination — >16 B SIGSEGV, 9-16 B
   dropped rdx; top level now refused by name — and, from the review, the METHOD-call and
   OVERLOADED-OPERATOR forms (`b.mk(..)`, `a + b` returning a struct) and a top-level 9-16 B call
-  into a struct param, all of which 14c's first cut missed (14c, [`…-retptr-struct-call-outside-var-init-crashes`](issues/archived/2026-09-19-retptr-struct-call-outside-var-init-crashes.md));
-  ✅ an `async fn` never captured a vector param — now refused by name (14d, [`…-async-fn-simd-param-not-captured`](issues/archived/2026-09-19-async-fn-simd-param-not-captured.md)).
+  into a struct param, all of which 14c's first cut missed (14c, [`…-retptr-struct-call-outside-var-init-crashes`](../issues/archived/2026-09-19-retptr-struct-call-outside-var-init-crashes.md));
+  ✅ an `async fn` never captured a vector param — now refused by name (14d, [`…-async-fn-simd-param-not-captured`](../issues/archived/2026-09-19-async-fn-simd-param-not-captured.md)).
 - **`.4`–`.5` — DCE cannot compact on PE or x86 Mach-O** (rip-relative repair + re-run
   `_pe_layout` after compaction — both, or the binary looks fine and faults later).
 - ⛔ **`.6` stays unassigned.**
@@ -152,7 +158,7 @@ patra/sigil/mirshi at source; an emitter-DERIVED allowlist gate.
 
 ## Standing rules that bit hardest here
 
-Full set in [`CLAUDE.md`](../../CLAUDE.md). The ones that mattered this session:
+Full set in [`CLAUDE.md`](../../../CLAUDE.md). The ones that mattered this session:
 
 - ⛔ **A sibling repo pinned to an UNRELEASED cyrius is not releasable** — say so in the first
   line of any hand-back, not in a parenthetical.

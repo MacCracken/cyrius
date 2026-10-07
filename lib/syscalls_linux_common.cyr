@@ -110,7 +110,7 @@ fn sys_fchmodat(dirfd, path, mode, flags): i64 {
 # until a consumer needs it. The two-#ifdef form keeps syscall(280) out of the
 # Mach-O emit entirely (no "syscall not routed" warning). The arch-Linux ESYSXLAT
 # maps 280→88 (utimensat); only the Darwin syscall table lacks it.
-# See issues/2026-06-08-macho-arm-at-family-darwin-syscall-mappings.md, CHANGELOG [6.1.20].
+# See issues/archived/2026-06-08-macho-arm-at-family-darwin-syscall-mappings.md, CHANGELOG [6.1.20].
 fn sys_utimensat(dirfd, path, times, flags): i64 {
     #ifdef CYRIUS_TARGET_MACOS
     return 0 - 78;

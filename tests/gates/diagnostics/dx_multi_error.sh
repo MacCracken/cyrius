@@ -49,7 +49,7 @@ grep -q 'unexpected character' "$E" && { echo "FAIL: garbage input stopped in th
 #     is input ending MID-CONSTRUCT. Fixed by clamping PEEKT to EOF past GTCNT,
 #     inside the existing `_had_error` guard (zero hot-path cost).
 #     Bound is generous (200) so it fails on a 166K regression, not on message churn.
-#     (issues/2026-07-24-truncated-input-166k-line-error-cascade.md)
+#     (issues/archived/2026-07-24-truncated-input-166k-line-error-cascade.md)
 for _trunc in 'include "lib/syscalls.cyr"\nvar x = f64_sqrt' \
               'include "lib/syscalls.cyr"\nfn f() { var a = iv_add;\n' \
               'include "lib/syscalls.cyr"\nvar y = 1 +' \

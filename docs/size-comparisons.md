@@ -4,7 +4,10 @@
 > languages and platforms. Referenced by external articles and the
 > agnosticos project. Updated as new compiler versions ship.
 >
-> **Last measured**: 2026-09-08, at Cyrius v6.6.1 (Cyrius self-host figures re-measured; the
+> **Last measured**: 2026-10-06, at the Cyrius v6.6.20 slot open (= the v6.6.19 tag): the three Cyrius exit42
+> rows re-measured on `build/cycc` and RUN (504 / 4,448 / 1,536, unchanged; ELF exits 42, the PE build exits 42
+> under wine), and the self-host figures below re-read from the tagged 6.6.19 install slot. Before that:
+> 2026-09-08, at Cyrius v6.6.1 (Cyrius self-host figures re-measured; the
 > C / Rust / Go / Zig sweep below is carried from the 2026-08-20 pass at v6.5.33 — those
 > toolchains have not been re-run, and that is stated rather than implied. Previously a
 > fresh C / Rust / Go / Zig sweep on this box — every row below was re-measured, none
@@ -28,8 +31,8 @@
 
 | Language | Toolchain | Invocation | Bytes | × Cyrius |
 |----------|-----------|-----------|------:|---------:|
-| **Cyrius** (`CYRIUS_WX=0`) | cycc 6.6.1 | single `RWE` `PT_LOAD`, opt-out | 504 | 0.11× |
-| **Cyrius** (default, W^X) | cycc 6.6.1 | `echo 'syscall(60, 42);' \| cycc` | **4,448** | 1× |
+| **Cyrius** (`CYRIUS_WX=0`) | cycc 6.6.20 | single `RWE` `PT_LOAD`, opt-out | 504 | 0.11× |
+| **Cyrius** (default, W^X) | cycc 6.6.20 | `echo 'syscall(60, 42);' \| cycc` | **4,448** | 1× |
 | Zig | 0.16.0 `-OReleaseSmall` Windows PE | `zig build-exe -target x86_64-windows -OReleaseSmall` | 4,608 | 1.0× |
 | Zig | 0.16.0 `-OReleaseSmall` | `zig build-exe -OReleaseSmall` | 4,840 | 1.1× |
 | C (GCC) | gcc 16.1.1 `-O2 -s` | `gcc -O2 -s` | 14,320 | 3× |
@@ -63,7 +66,7 @@ across both toolchain versions.
 
 | Language | Toolchain | Invocation | Bytes | × Cyrius |
 |----------|-----------|-----------|------:|---------:|
-| **Cyrius** | cycc 6.6.1 Linux cross-build | `CYRIUS_TARGET_WIN=1 cycc` | **1,536** | 1× |
+| **Cyrius** | cycc 6.6.20 Linux cross-build | `CYRIUS_TARGET_WIN=1 cycc` | **1,536** | 1× |
 | **Cyrius** | cycc_win native (on Windows) | `cycc_win.exe < exit42.cyr` | 1,536 | 1× (byte-identical to the cross-build) |
 | Zig | 0.16.0 `-OReleaseSmall` | `zig build-exe -target x86_64-windows -OReleaseSmall` | 4,608 | 3× |
 | Go | go 1.26.2 `-s -w` | `GOOS=windows GOARCH=amd64 go build -ldflags="-s -w"` | 1,492,992 | 972× |
@@ -102,8 +105,8 @@ across both toolchain versions.
 
 ## Cyrius self-host context
 
-For perspective, the Cyrius compiler itself (cycc) is **1,247,608 B**
-(~1,218 KB / ~1.19 MB) on Linux ELF at v6.6.1. It compiles itself byte-identically.
+For perspective, the Cyrius compiler itself (cycc) is **1,586,184 B**
+(~1,549 KiB / ~1.59 MB) on Linux ELF at v6.6.19. It compiles itself byte-identically.
 At v5.5.10 it also compiles itself byte-identically on Windows
 (cycc_win.exe native → out.exe matches Linux cross-build md5).
 That's the whole self-hosting compiler — TLS / atomics / dynlib /
@@ -116,24 +119,25 @@ aarch64 NEON, Win64 PE value-form, and cx bytecode per-lane loops
 (SIMD Phase 5 complete, v6.4.4–v6.4.32) / TS/TSX → JS emit (`cycc
 --emit-js`) — in less disk than Rust's stripped debug exit42.
 
-- Cyrius cycc (Linux ELF): **1,247,608 B** (v6.6.1)
-- cycc_aarch64 (Linux aarch64 cross): **783,784 B** (v6.6.1; the
-  v5.11.59 full DCE bitmap pass for aarch64 fixup.cyr — mirroring the
-  x86 path since v5.10.x — accounts for the bulk over earlier v5.11.x)
-- cycc_win (Windows PE cross): **1,154,048 B** (v6.6.1; PE format
+- Cyrius cycc (Linux ELF): **1,586,184 B** (v6.6.19; 1,247,608 B at v6.6.1)
+- cycc_aarch64 (Linux aarch64 cross): **1,114,920 B** (v6.6.19)
+- cycc_win (Windows PE cross): **1,561,088 B** (v6.6.19; PE format
   overhead + v5.5.35 .reloc + v5.6.31 DllChar 0x0160 + v5.11.47-.49
   EFI Application emit deltas + v6.1.16 lib/sync.cyr portable mutex +
   v6.1.17 PE nanosleep routing + v6.1.18 Windows directory enumeration)
-- cycc_cx (cyrius-x bytecode cross): **606,104 B** (v6.5.10)
-- cycc-native-aarch64 (aarch64-hosted, pi-verified): **940,536 B**
-- cycc compiles itself in ~650 ms (no cache, no incremental build —
-  just `cat src/main.cyr | cycc > cycc_new`; 648 / 652 ms at v6.5.10).
-- Core toolchain: **6,385,008 B (~6.1 MB)** across compiler
+- cycc_cx (cyrius-x bytecode cross): **1,019,744 B** (v6.6.19)
+- cycc-native-aarch64 (aarch64-hosted, pi-verified): **1,323,400 B** (v6.6.19; −35.2 % at
+  6.6.18, when the ESYSXLAT chain became a compile-time fold)
+- cycc compiles itself in ~920 ms (no cache, no incremental build —
+  just `cat src/main.cyr | cycc > cycc_new`; 923 ms at the v6.6.19 release gate, 648 / 652 ms at v6.5.10).
+- Core toolchain: **8,718,168 B (~8.3 MB)** across compiler
   + 4 cross-compilers + linker (cyrld) + LSP (cyrius-lsp) + formatter
   (cyrfmt) + linter (cyrlint) + doc tool (cyrdoc) + CLI (cyrius)
-  + init/port (cyrius-init). The installed `~/.cyrius/bin/` directory
-  measures 35,138,369 B in total, ~27 MB of which is the two `cyrsign*`
-  Authenticode helpers (~14 MB each on disk).
+  + init/port (cyrius-init), from the tagged v6.6.19 install slot. The installed
+  `~/.cyrius/bin/` directory measures 12,440,524 B in total, ~3 MB of which is the two
+  `cyrsign*` Authenticode helpers (~1.5 MB each). *(This block read 6,385,008 B and
+  35,138,369 B — "~14 MB each" helpers — until 6.6.20; the README had corrected both at
+  v6.6.1 and this file was never told.)*
 
 Growth since v5.6.43 (2026-04-25 → 2026-05-13):
 +291,224 B / +55% across 5 minors + ~50 patches. Drivers: O7 IR pass
@@ -142,10 +146,10 @@ infrastructure (v5.8.21–v5.8.27), `?` propagation operator
 (v5.8.29 + v5.8.31 PARSE_STMT extension). The compiler is still
 in the same order of magnitude as a stripped Rust hello-world.
 
-Whole-history growth to v6.6.1 (2026-04-25 → 2026-09-08):
-531,888 → 1,247,608 B, +715,720 B / +135%. Across the v6.4.x SIMD
+Whole-history growth to v6.6.19 (2026-04-25 → 2026-10-06):
+531,888 → 1,586,184 B, +1,054,296 B / +198% (1,247,608 B, +135 %, at v6.6.1). Across the v6.4.x SIMD
 arc, the v6.5.x visibility + perf work, and everything between, that
-is still 3.4× a stripped Rust exit42 — for a compiler, linker driver,
+is still ~4.7× a stripped Rust exit42 (339,160 B) — for a compiler, linker driver,
 five backends and a TypeScript frontend.
 
 ## What this means

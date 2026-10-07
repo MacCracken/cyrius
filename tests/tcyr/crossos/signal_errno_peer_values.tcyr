@@ -24,7 +24,7 @@
 # claimed the whole `STAT_*` family diverged, because `syscalls_aarch64_linux.cyr`
 # carries its own `#ifdef CYRIUS_TARGET_MACOS` arm and a naive parse reads the branch
 # that is not taken. `STAT_*` is correct and is deliberately NOT asserted here.
-# See issues/2026-08-07-macos-arm64-inherits-linux-signal-and-errno-constants.md.
+# See issues/archived/2026-08-07-macos-arm64-inherits-linux-signal-and-errno-constants.md.
 include "lib/assert.cyr"
 include "lib/alloc.cyr"
 include "lib/string.cyr"

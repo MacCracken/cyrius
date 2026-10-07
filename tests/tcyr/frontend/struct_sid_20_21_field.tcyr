@@ -1,5 +1,5 @@
 # struct_sid_20_21_field.tcyr — v6.4.14 regression for the struct-id 20/21 ↔
-# f64v2/f64v4 SIMD-sentinel collision (docs/development/issues/
+# f64v2/f64v4 SIMD-sentinel collision (docs/development/issues/archived/
 # 2026-07-06-struct-sid-20-21-simd-sentinel-collision.md).
 #
 # BUG (pre-v6.4.14): a struct-typed local's type is stored as SLTYPE = (0 - sid).

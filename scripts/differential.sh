@@ -7,7 +7,7 @@
 # / cross-BB DSE / float peephole — the pulled-in v6.3.2x perf arc) and a SILENT
 # miscompile: a refactor may legitimately change HOW cycc works internally, but
 # must not change WHAT bytes it emits for existing programs.
-# (VR-03, docs/development/issues/2026-06-10-verification-coverage-gaps.md.)
+# (VR-03, docs/development/issues/archived/2026-06-10-verification-coverage-gaps.md.)
 #
 # Historically this was muscle memory — a ~338-input old-vs-new corpus + DCE
 # torture re-assembled by hand each refactor (v6.1.5/.6/.8). Now it is code, so

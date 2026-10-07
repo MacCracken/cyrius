@@ -270,7 +270,7 @@ fn PARSE_ARRAY(S, noff, ew, sgn, eb, ann_ti): i64 {
     # follows it (pass 2, this PARSE_ARRAY) — a silent 8× under-size → BSS overflow /
     # memory corruption (agnos fpctxsw_payload ring-3 #PF). True in-function locals (GINFN
     # ==1) keep the legacy N-byte rounding; the sa_on stack-array path below is inert at
-    # top level. See issues/2026-07-05-toplevel-bare-array-8x-undersize.md.
+    # top level. See issues/archived/2026-07-05-toplevel-bare-array-8x-undersize.md.
     elif (GINFN(S) != 1) { aligned = (asz * 8 + 7) & (0 - 8); }
     # v6.3.13 (thread-safe array locals): a `var arr[N]` INSIDE a function goes to a
     # per-thread STACK slot block (the struct-local mechanism) instead of the shared
@@ -2278,7 +2278,7 @@ fn PARSE_GVAR_ARR(S, noff, sti, ew, sgn, eb): i64 {
 # The fix is to widen what counts as statically-initialisable, so foldable
 # expressions get baked into the image exactly like plain literals. No ordering
 # change, no risk to the multiboot invariant.
-# (issues/2026-07-23-cyrius-module-scope-var-expr-initializer-zero.md)
+# (issues/archived/2026-07-23-cyrius-module-scope-var-expr-initializer-zero.md)
 #
 # PRECEDENCE IS LOAD-BEARING AND IS *NOT* C's. This folder must agree with
 # PEXPR/PARSE_TERM exactly, or it would bake in a different value than the
@@ -5135,7 +5135,7 @@ fn PARSE_VAR(S): i64 {
                     # inferred behavior (byte-identical). Without this the inferred local
                     # got a scalar slot and the callee wrote its aggregate to a garbage
                     # retptr → SIGSEGV.
-                    # Closes issues/2026-06-28-inferred-struct-local-from-call-segfaults.md.
+                    # Closes issues/archived/2026-06-28-inferred-struct-local-from-call-segfaults.md.
                     if ((pscale == 0) && (_look_sid > 0)) {
                         var _inf_sz = STRUCTSZ(S, _look_sid - 1);
                         if (_inf_sz > 16) { pscale = 0 - _look_sid; }

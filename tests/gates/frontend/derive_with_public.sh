@@ -21,7 +21,7 @@
 # Mutation-proven: reverting the visibility skip reddens axis 1; forcing `vis` unconditional
 # reddens axis 5.
 #
-# See docs/development/issues/2026-09-11-derive-cannot-combine-with-public.md
+# See docs/development/issues/archived/2026-09-11-derive-cannot-combine-with-public.md
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)

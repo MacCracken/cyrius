@@ -6,7 +6,38 @@ type: state
 
 # Documentation Health — cyrius
 
-> **Last refresh**: 2026-09-08 (**v6.6.1**). A numbers sweep — every figure below was
+> **Last refresh**: 2026-10-06 (**v6.6.20**, the v6.6.x closeout doc sync — CLN-04/06/07/08/09/12,
+> HEAP-11, BACKLOG-00…14). Every figure below was **re-derived from the tree or from the tagged
+> 6.6.19 install slot** (`~/.cyrius/versions/6.6.19`, stamped `tree-matches-tag: yes`), not carried.
+> What it found, and it is the same shape as every sweep before it:
+>
+> **The public figures had frozen at v6.6.1 — nineteen releases.** `README.md`, `faq.md`,
+> `platform-status.md`, `size-comparisons.md` and `stdlib-modules.md` all still cited cycc 1,247,608 B
+> (live 1,586,184), 102 stdlib modules (106 — the index had never heard of `boxed`, `alloc_cx`,
+> `tls_hostid` or `poison`), 5,152 API fns (5,827), 301 `.tcyr` (482) and a 144-gate count (372).
+> `size-comparisons.md` still carried the 35 MB installed-tree figure "because the `cyrsign` helpers
+> are ~14 MB each" that the README itself had corrected at v6.6.1 — a correction made in one file and
+> never propagated to its sibling. The README's *Caps + heap* paragraph still described a 512 KB
+> identifier pool, a 32,768-fn ceiling and a doubling 3 MB codebuf, all retired by v6.5.40; ADR-003's
+> layout table was worse (input_buf at 0x0, output_buf in-heap, the heap top at 0x5E1D000).
+>
+> **This ledger marked stale rows ✅ Fresh.** README (`v6.3.0 / cycc 1,075,136 B`) and CLAUDE.md
+> (`Version field at 6.2.0`) were both ✅ in the Tier 1 table — three minors old. A "Fresh" verdict
+> with nothing re-checking it is a claim, not a status; every row below now carries the date the
+> file was last touched (`git log -1`) and what this sweep did or did not re-verify.
+>
+> **`handoff.md` went stale again — sixteen releases (6.6.4 → 6.6.19)** — and is now ARCHIVED
+> (`development/archive/handoff-v6.6.4.md`) rather than refreshed a sixth time: there is no gate for
+> it, and the volatile state it duplicated lives in `state.md` (refreshed every release) and
+> `roadmap.md`. **CLAUDE.md** still told contributors to add a `vr01_` test for every new syscall
+> wrapper (retired at v6.5.11 — a file so named opts OUT of the cross-OS leg), as did the guide and
+> four other docs; its reserved-word class missed the two builtins `IS_KEYWORD_TOK` lists by hand.
+> **102 source / test / workflow comments** pointed at issue files that had moved to `archived/` (44 of
+> them by the short `issues/<f>.md` form or wrapped across a line, which the first scan did not match).
+> **roadmap.md** still called 6.6.18 OPEN and 6.6.19 MERGED, carried five backlog claims that were
+> materially wrong, and a cyrlint item pointed at a roadmap slot that had not existed for a month.
+>
+> *Previous*: 2026-09-08 (**v6.6.1**). A numbers sweep — every figure below was
 > **re-derived from the tree**, not carried. What it found, and the shape is consistent:
 > **README.md had not been touched since 2026-08-16 and contradicted itself** (270 vs 260
 > `.tcyr`; 100 vs 99 stdlib modules in the same file). Its compiler size, fold versions, gate
@@ -294,20 +325,22 @@ type: state
 > ⚖️ Same caveat as 6.6.5: that is the ONLY `vidya/` edit — the per-minor structural refresh
 > is a closeout item and was not run here.
 
-## At a glance — inventory (bucket counts last fully re-tallied 2026-06-04 at the v6.0.62 sweep; per-tier sections re-anchored to the 2026-06-12 v6.1.41 closeout doc-sync — the rollup counts here lag and are approximate)
+## At a glance — inventory (anchors and bucket table re-derived 2026-10-06 at the v6.6.20 closeout)
 
-**~105 markdown files** across the repo (+1 from 2026-05-18: `scripts/shims/README.md` added at v5.11.69 alongside the 3 CLI-shim moves). The 4 guide-shape docs (`tutorial`, `editor-integration`, `faq`, `cyrius-guide`) moved from `docs/` flat → `docs/guides/` subdirectory; no count delta. **Current-cycle anchors (2026-09-08, v6.6.1 — ALL DERIVED)**: check.sh **240 gates** · **144** shell gate scripts in `tests/gates/` (8 buckets) · cycc x86_64 fixpoint **1,247,608 B** · **301 .tcyr** (68 in `crossos/`) · **102 lib/*.cyr** · **84** programs · heap **102 regions** (gate-derived; a raw `grep` says 145 by also matching FREED markers — that miscount was made and caught inside this same sweep) · api-surface **5152** · reserved tokens **102** (26 statement + 76 builtin, disjoint) · core toolchain **6,893,216 B**; installed `~/.cyrius/bin` **10,249,873 B** · cross-OS ecb/ach/cass/pi `SELFHOST_OK` + `LIBTEST_OK` on real hardware · self_compile **731–734 ms** · **0** open issues / **387** archived · **3** open proposals · **57** non-archived markdown files (486 including the archive) · **31** dead internal links, all unresolvable-by-design. (**Prior anchors, 2026-08-07, v6.5.10**: check.sh **162 gates** · **41** shell gate scripts in `tests/` · cycc x86_64 fixpoint **1,141,792 B** · **260 .tcyr** (36 `vr01_`) · **99 lib/*.cyr** · **97** programs · heap **100 regions** · api-surface **4817** · cross-OS ecb/ach/cass/pi `SELFHOST_OK` + VR-01 `LIBTEST_OK` on real hardware · self_compile ~648-652 ms (⚠ 648-701 observed within one release — treat a single figure as noise) · **12** open issues / **299** archived. (**Prior anchors, 2026-08-03, v6.5.6**: check.sh 153 · cycc 1,133,440 B · 254 .tcyr · api-surface 4783 · 281 archived.) (**Prior anchors, 2026-07-23, v6.4.72**: check.sh 147 gates + QEMU boot · cycc x86_64 fixpoint 1,103,512 B · 251 .tcyr · 99 lib/*.cyr · 97 programs · heap 100 regions · highest SIMD builtin token 151 (`f32v8_dot`) · SIMD Phase 5 complete on all four backends (x86/aarch64/PE/cx) · cross-OS ecb/cass/pi `SELFHOST_OK` · self_compile ~620 ms.) (.63→.72 band: agnos GPU-syscall band **#82–#91** contiguous, bayan 1.2.1 f64 JSON round-trip, sandhi 1.9.1 getpeername fold, `cyrius coverage` project-`src/`-scope fix.) (**Prior anchors, 2026-07-12, v6.4.62**: check.sh 146 · cycc 1,103,568 B · 246 .tcyr · self_compile ~627 ms.) (**Prior anchors, 2026-07-10, v6.4.48**: check.sh 141 · cycc 1,091,000 B · 241 .tcyr · self_compile ~649 ms.) (**Prior anchors, 2026-07-09, v6.4.32**: check.sh 132 · cycc 1,077,592 B · 240 .tcyr · 98 lib/*.cyr · self_compile ~616 ms.) (**Prior anchors, 2026-07-06, v6.4.10**: check.sh 130 · cycc 1,057,568 B · 227 .tcyr · self_compile ~561 ms.) (**Prior anchors, 2026-06-28, v6.3.0**: check.sh **100/100** gates + QEMU boot gate · **192 .tcyr** · **98 lib/*.cyr** modules · cycc x86_64 **1,075,136 B** · cross `cycc_aarch64` 627,376 B / `cycc_win` 851,968 B / `cycc-native-aarch64` 947,280 B · api-surface **4352**.) Bucket counts:
+**59 non-archived markdown files** (**579** including the archives — `git ls-files '*.md'`, an archive being any `archive/` or `archived/` path). The per-tier tables below track **48** of the 59; the other **11** are not tracked and were not re-verified at 6.6.20: `CODE_OF_CONDUCT.md`, `CONTRIBUTING.md`, `SECURITY.md`, this file, the three `programs/cyrius-init-templates/*.md`, `keys/README.md`, `scripts/shims/README.md`, `scripts/macos-arm64-README.md` and one repro's `README.md`. *(This line read "~105 markdown files" from 2026-05-18 until 6.6.20 — a figure no derivation ever produced against the 57 / 59 the anchors carried.)* **Current-cycle anchors (2026-10-06, the v6.6.20 slot open = the v6.6.19 tag — ALL DERIVED)**: **376** registered check.sh shell gates (`sh scripts/check.sh --registry | wc -l`: **372** under `tests/gates/` in 8 buckets + 4 `scripts/` gates — three `*-gate.sh` and `differential-smoke.sh`; ~193 registered in `scripts/check.sh`, ~183 in the driver) · the v6.6.19 release gate GREEN (0 failed, 2 named agnos-parity SKIPs) · cycc x86_64 fixpoint **1,586,184 B** · `cycc-native-aarch64` **1,323,400 B** · **482 .tcyr** (197 in `crossos/`) · **106 lib/*.cyr** · **85** programs · heap **102 regions** (`heapmap.sh`) · api-surface **5,827** · reserved tokens **107** (26 statement + 79 `TOKNAME_BUILTIN` + 2 hand-listed builtins) · core toolchain **8,718,168 B**; installed bin **12,440,524 B** (the tagged 6.6.19 slot) · cross-OS ecb/ach/cass/pi `SELFHOST_OK` + `LIBTEST_OK` on real hardware (6.6.19 gate) · self_compile **923 ms** (6.6.19 gate) · **0** open issues / **473** archived · **2** open proposals / **34** archived · **59** non-archived markdown files (579 including the archives) · **0** dead internal links in live docs (38 inside archived / audit / CHANGELOG files, left as records). (**Prior anchors, 2026-09-08, v6.6.1**: check.sh **240 gates** · **144** shell gate scripts in `tests/gates/` (8 buckets) · cycc x86_64 fixpoint **1,247,608 B** · **301 .tcyr** (68 in `crossos/`) · **102 lib/*.cyr** · **84** programs · heap **102 regions** (gate-derived; a raw `grep` says 145 by also matching FREED markers — that miscount was made and caught inside this same sweep) · api-surface **5152** · reserved tokens **102** (26 statement + 76 builtin, disjoint) · core toolchain **6,893,216 B**; installed `~/.cyrius/bin` **10,249,873 B** · cross-OS ecb/ach/cass/pi `SELFHOST_OK` + `LIBTEST_OK` on real hardware · self_compile **731–734 ms** · **0** open issues / **387** archived · **3** open proposals · **57** non-archived markdown files (486 including the archive) · **31** dead internal links, all unresolvable-by-design. (**Prior anchors, 2026-08-07, v6.5.10**: check.sh **162 gates** · **41** shell gate scripts in `tests/` · cycc x86_64 fixpoint **1,141,792 B** · **260 .tcyr** (36 `vr01_`) · **99 lib/*.cyr** · **97** programs · heap **100 regions** · api-surface **4817** · cross-OS ecb/ach/cass/pi `SELFHOST_OK` + VR-01 `LIBTEST_OK` on real hardware · self_compile ~648-652 ms (⚠ 648-701 observed within one release — treat a single figure as noise) · **12** open issues / **299** archived. (**Prior anchors, 2026-08-03, v6.5.6**: check.sh 153 · cycc 1,133,440 B · 254 .tcyr · api-surface 4783 · 281 archived.) (**Prior anchors, 2026-07-23, v6.4.72**: check.sh 147 gates + QEMU boot · cycc x86_64 fixpoint 1,103,512 B · 251 .tcyr · 99 lib/*.cyr · 97 programs · heap 100 regions · highest SIMD builtin token 151 (`f32v8_dot`) · SIMD Phase 5 complete on all four backends (x86/aarch64/PE/cx) · cross-OS ecb/cass/pi `SELFHOST_OK` · self_compile ~620 ms.) (.63→.72 band: agnos GPU-syscall band **#82–#91** contiguous, bayan 1.2.1 f64 JSON round-trip, sandhi 1.9.1 getpeername fold, `cyrius coverage` project-`src/`-scope fix.) (**Prior anchors, 2026-07-12, v6.4.62**: check.sh 146 · cycc 1,103,568 B · 246 .tcyr · self_compile ~627 ms.) (**Prior anchors, 2026-07-10, v6.4.48**: check.sh 141 · cycc 1,091,000 B · 241 .tcyr · self_compile ~649 ms.) (**Prior anchors, 2026-07-09, v6.4.32**: check.sh 132 · cycc 1,077,592 B · 240 .tcyr · 98 lib/*.cyr · self_compile ~616 ms.) (**Prior anchors, 2026-07-06, v6.4.10**: check.sh 130 · cycc 1,057,568 B · 227 .tcyr · self_compile ~561 ms.) (**Prior anchors, 2026-06-28, v6.3.0**: check.sh **100/100** gates + QEMU boot gate · **192 .tcyr** · **98 lib/*.cyr** modules · cycc x86_64 **1,075,136 B** · cross `cycc_aarch64` 627,376 B / `cycc_win` 851,968 B / `cycc-native-aarch64` 947,280 B · api-surface **4352**.) Bucket counts:
 
 | Bucket | Count | What it means |
 |---|---|---|
-| ✅ **Fresh / touched in current cycle** | ~39 | Touched within the v6.x cycle-open + v5.x close; state.md / roadmap.md (rewritten at v6.0.0 cycle-open) / roadmap-future.md (new) / cycle-discipline.md / CHANGELOG / completed-phases (trimmed at .41) / cyrius-guide / tutorial / faq (**cycc-size refreshed 2026-05-17**) / stdlib-reference / benchmarks (**re-pointed at root BENCHMARKS.md 2026-05-18**) / ecosystem / editor-integration / platform-status (**cycc-size refreshed 2026-05-17**) / size-comparisons (**cycc-size refreshed 2026-05-17**) / 6 ADRs / 5 audits / 4 open proposals / dev/process-notes (**historical-frontmatter 2026-05-18**) / dev/module-manifest-design (**cyrius.toml→cyrius.cyml 2026-05-18**) / dev/crash-localization (**cc3→cycc + rename note 2026-05-18**) / dev/benchmarks (**historical-frontmatter 2026-05-18**) / arch/cyrius.md (**doc-currency frontmatter 2026-05-18**) / arch/package-format (**schema refresh + cycc examples 2026-05-18**) / ffi/struct-packing (**verified accurate 2026-05-18**) / threat-model (v5.10.35 refresh) / fncall-abi (v5.10.35 verified) / lib-tls-contract.md / **NEW: `/BENCHMARKS.md` at repo root** (auto-gen by `scripts/bench-history.sh`) |
-| 🟡 **Stale — refresh in place** | ~6 | **P2 prose-currency flagged by the 2026-06-04 sweep** (see notes): tutorial.md "Everything is a 64-bit integer / no floats" now false (float + f64v2/f64v4 SIMD shipped); faq.md perf answer pinned to v6.0.3 (needs a bench re-run, not just a size swap); cyrius-guide.md + stdlib-reference.md "v6.0.0 removes legacy io fns" never happened (Result + legacy coexist); octal literals undocumented in the guide; size-comparisons/BENCHMARKS perf tables on a stale baseline. Prose-judgment, deferred to the vidya/follow-up pass. |
-| 🟠 **Read-through outstanding** | ~5 | **Structural gaps (P1) flagged 2026-06-04** — human-led re-write needed: `stdlib-reference.md` (native TLS 1.3 + ~40 shipped modules have zero API surface); `cyrius-guide.md` AGNOS include block (~L828-850) references nonexistent files across 3 sibling repos; `architecture/cyrius.md` frozen at a v5.6.43 snapshot + 4 dead `regression-*.sh` refs; `platform-status.md` missing UEFI target row (AGNOS userspace row added v6.0.87); **`migration-strategy.md`** still frozen at v5.7.39 (trigger long passed). (`lib-tls-contract.md` + `threat-model.md` were updated for the two-backend native-TLS model in the v6.0.83 sweep — no longer outstanding.) |
-| 🔵 **Probably evergreen** | ~4 | ADR-002/-003/-004 (everything-is-i64, fixed-heap-layout, convention-based-dispatch) + cycle-discipline.md — load-bearing principles; re-read pass quarterly, not weekly. |
-| 📦 **Archive — frozen by design** | ~50 | `docs/development/archive/` (6) + `docs/development/issues/archived/` (41 — +1 since 2026-05-17 for commandress papercut filing) + `docs/development/proposals/archived/` (3 — unchanged). Verified — frozen by design. |
+| ✅ **Fresh — re-verified at 6.6.20** | 22 | Tier 1: `README.md`, `CHANGELOG.md`, `CLAUDE.md`, `VERSION`, `BENCHMARKS.md`, `cyrius-guide.md`, `faq.md`, `stdlib-modules.md`, `ecosystem.md`, `size-comparisons.md`, `api-surface.snapshot` · Tier 2: `package-format.md` · Tier 3: `state.md`, `roadmap.md`, `roadmap_6.md`, `roadmap-future.md`, `completed-phases.md`, `cycle-discipline.md`, `ecosystem-migration-6.6.18.md`, `dev-tools-linux.md`, `lib-tls-contract.md` · Tier 4: ADR-003. |
+| 🟡 **Stale in part — refresh in place** | 4 | `platform-status.md` (only the x86 size and the cross-host line re-derived), `architecture/cyrius.md` (per-platform table "as of v6.4.62"), `threat-model.md` (no CVE past CVE-29), `module-manifest-design.md` (the 6.6.17 manifest keys are documented elsewhere). |
+| 🟠 **Read-through outstanding** | 1 | `stdlib-reference.md` — coverage of the 106 modules last counted at v6.5.10. |
+| 🔵 **Evergreen / not re-verified at 6.6.20** | 12 | `tutorial.md`, `docs/benchmarks.md`, `editor-integration.md`, `benchmark-regimes.md`, `crash-localization.md`, ADR-001/-002/-004/-005/-006, `fncall-abi.md`, `struct-packing.md`. |
+| 🗄 **Historical, kept in place** | 5 | `ecosystem-migration-6.6.2.md`, `ecosystem-migration-6.6.13.md`, and the banner-bounded `migration-strategy.md`, `development/benchmarks.md`, `process-notes.md`. |
+| 📄 **Point-in-time, not refreshed** | 5 | The 3 active audits (Tier 5) and the 2 open proposals (Tier 6). |
+| 📦 **Archive — frozen by design** | 520 | `docs/development/archive/` (**8**) + `docs/development/issues/archived/` (**473**) + `docs/development/proposals/archived/` (**34**) + `docs/audit/archived/` (**5**). |
 | ❓ **Open strategic question** | 0 | None. |
 
-Numbers approximate; rolls up from the per-tier tables below.
+Counted from the per-tier tables below at 6.6.20 (44 table rows + 5 point-in-time files; `VERSION` and `api-surface.snapshot` are rows but not markdown). *(Until 6.6.20 this table was the 2026-06-04 sweep's — ~39 fresh, an archive of 41 issues and 3 proposals — under a heading that called it current.)*
 
 **Why now**: doc-health convention adopted at v5.10.34 alongside the sandhi 1.3.2 TLS unblocker. The cyrius doc tree has been actively maintained (CHANGELOG is canonical per CLAUDE.md, state.md refreshes every release, vidya sync at every minor closeout) but the *aggregate* currency has no surface — this file is that surface.
 
@@ -333,24 +366,27 @@ Also closed: 1 issue filing (commandress papercut → archived) from the .60-.63
 
 ## Tier 1 — Structural docs (root + `/docs` root)
 
+> Re-derived 2026-10-06 (v6.6.20). **Last touched** is `git log -1` at the 6.6.20 slot open or this
+> sweep's commit; **Status** says what was re-verified, not what was assumed.
+
 | File | Last touched | Status | Action |
 |---|---|---|---|
-| `README.md` | 2026-06-28 | ✅ Fresh | Refreshed to **v6.3.0 / cycc 1,075,136 B** (cross: `cycc_aarch64` 627,376 B / `cycc_win` 851,968 B) in the 2026-06-28 doc-staleness sweep; check.sh 92→**100**, heap 99→**96** regions, mabda fold 3.4.2→**3.4.4**; the Caps+heap section flags fn-tables/fixup_tbl/codebuf **and the var-family** as growable. Prior content (still accurate): LSP size 108,600 B; heap = anonymous-mmap chunk allocator (v6.1.19) + `alloc_init` idempotent (v6.1.23); native TLS 1.3 default backend (since v6.1.21); stdlib category table extracted to [`stdlib-modules.md`](stdlib-modules.md). |
-| `CHANGELOG.md` | 2026-06-12 | ✅ Fresh | **Source of truth per CLAUDE.md.** Through **v6.2.0** (Phase-0 growable-region foundation: fixup_tbl/fn-tables/codebuf + `cyrius init` CI/release; see CHANGELOG). Refreshed every release. |
-| `CLAUDE.md` | 2026-06-12 | ✅ Fresh | Process + procedures + project-identity. Release rule #6 (benchmark every release); `build/` policy (cc3 dropped early). Version field at `6.2.0` (bumped by `version-bump.sh`). |
-| `VERSION` | 2026-06-12 | ✅ Fresh | Single source of truth for version (`6.1.41` at last edit). Bumped via `scripts/version-bump.sh`. |
-| `BENCHMARKS.md` (root) | 2026-06-08 | ✅ Fresh | Auto-generated by `scripts/bench-history.sh` (3-tier suite); history in `bench-history.csv`. **Refreshed every-release (v6.1.15)** — self_compile ~**498 ms** (479/503/498 across .13/.14/.15, box noise), cycc 1,038,584 B. **Benchmarking is an every-release gate** (CLAUDE.md Release rule #6), not closeout-only. |
-| `docs/guides/cyrius-guide.md` | 2026-06-08 | ✅ Fresh | **2026-06-08 sweep**: false "everything is i64 / no floats" framing corrected (f64 + `f64v2`/`f64v4` are a deliberate ADR-002 exception); octal-literal (`0o755`) **Number Literals** subsection added (verified vs `LEXOCT` in lex.cyr); the AGNOS `include` block (nonexistent sibling-repo paths) rewritten to the real `cyrius.cyml` named-dep mechanism (one defunct kybernet init-block removed); `var buf[256]`="2048 B" claim fixed (N **bytes**, not N i64 slots). |
-| `docs/guides/tutorial.md` | 2026-06-08 | ✅ Fresh | **2026-06-08 sweep**: same false i64/no-floats framing corrected; otherwise the early-v5.10.x onboarding content stands. |
-| `docs/guides/faq.md` | 2026-06-08 | ✅ Fresh | **Refreshed 2026-06-08 (v6.1.15)**: size/version → ~1.0 MB / v6.1.15; self_compile ~500 ms (drift narrative re-stated as "settled ~480–500 ms", not "drifted up to ~570"); i64/no-floats overclaim fixed; native-TLS + 3-platform-self-host capability present. |
-| `docs/stdlib-modules.md` | 2026-06-10 | ✅ Fresh | **New 2026-06-10 (v6.1.24)**: categorized module *inventory* (98 modules, Core/Types/.../GPU) + fold-in lineage + first-party additions, **extracted from the README** (which now keeps a slim summary + link). Cross-links `stdlib-reference.md` (per-fn API) + `ecosystem.md` (live pins). The category table's fold tags are *initial* fold versions, not current pins. Refresh when a `lib/*.cyr` module is added/removed (module count) or a new fold lands. |
-| `docs/stdlib-reference.md` | 2026-06-09 | 🟠 Read-through | **Coverage now ~65 of 98 lib modules** (authored 33 → 65 in the v6.1.18 sweep — Concurrency / Math & SIMD / Crypto / Data & Encoding / Networking-TLS&WebSockets incl. the sovereign `tls_native` / Systems & FFI / Testing & Internal Tooling all added; the long-standing 33/90 gap mostly cleared). Remaining undocumented is by-design (folded sibling distfiles + platform sub-includes `*_win`/`*_macos`/`syscalls_*` + generated `agnosys`). Mirrors `docs/api-surface.snapshot` cadence. |
-| `docs/benchmarks.md` | 2026-05-18 | ✅ Fresh | **Re-pointed 2026-05-18**: was pointing at `docs/development/benchmarks.md` (frozen v5.6.x narrative); now points at `/BENCHMARKS.md` at repo root (auto-gen by `scripts/bench-history.sh`) as canonical-current. Pointer hub for the three bench surfaces (auto-gen / binary-size / historical perf arc). |
-| `docs/ecosystem.md` | 2026-05-06 | ✅ Fresh | Stdlib + downstream-consumer map. Refreshed at niyama-fold ship. |
-| `docs/guides/editor-integration.md` | 2026-05-02 | ✅ Fresh | LSP + editor configs. |
-| `docs/size-comparisons.md` | 2026-06-08 | ✅ Fresh | **cycc-size refreshed 2026-06-08 (v6.1.15)**: → **1,038,584 B** (cycc) / 593,384 B (cycc_aarch64) / 805,888 B (cycc_win). cycc vs gcc/clang/rustc binary size table (comparison-tool figures still from the 2026-05-03 sweep). |
-| `docs/platform-status.md` | 2026-06-08 | ✅ Fresh | **2026-06-08 (v6.1.0)**: size marker → ~931 KB / v6.1.4; **UEFI Application target row added** (PE32+, `_TARGET_EFI_APPLICATION`, OVMF smoke, gate `programs/checks/platform_efi.cyr`). Prior (v6.0.87): AGNOS-userspace row + macOS-x86 (`ach` self-hosts) + Windows COM/Win64 callptr (real cass). |
-| `docs/api-surface.snapshot` | 2026-05-11 | ✅ Fresh | Generated artifact (not hand-written). Regenerated at every release; gate in `check.sh`. |
+| `README.md` | 2026-10-06 | ✅ Fresh (re-derived 6.6.20) | Every figure re-derived (CLN-09): cycc 1,586,184 B, the cross / LSP / linker / toolchain sizes from the tagged 6.6.19 slot, 106 modules with current fold versions, 5,827 API fns, 482 `.tcyr`, 376 registered gates, 107 reserved tokens, the *Caps + heap* paragraph from the heap map. It had been frozen at v6.6.1 while this table called a v6.3.0 snapshot Fresh. |
+| `CHANGELOG.md` | 2026-10-06 | ✅ Fresh | **Source of truth per CLAUDE.md.** Through **v6.6.19**; the `[6.6.20]` section is written at the closeout's integration. |
+| `CLAUDE.md` | 2026-10-06 | ✅ Fresh (re-derived 6.6.20) | Version 6.6.20 (version-bump). Derived counts re-derived (CLN-06: lib 106, programs 85, the reserved class 107 with `f64_sqrt` / `callptr`, the src listing), the `vr01_` instruction replaced (CLN-04), stale `file:line` cites cited by name. |
+| `VERSION` | 2026-10-06 | ✅ Fresh | `6.6.20`. Single source of truth; bumped only by `scripts/version-bump.sh`. |
+| `BENCHMARKS.md` (root) | 2026-10-06 | ✅ Fresh | Auto-generated by `scripts/bench-history.sh` at every release gate (6.6.19: self_compile 923 ms). |
+| `docs/guides/cyrius-guide.md` | 2026-10-06 | ✅ Fresh | Covers the minor's features (`[embed]`, `--print-config`, `help manifest`, `--poison`, `#deprecated`, `f64_le`/`ge`/`trunc`, the value-form `Result`, pointer fields — checked by the 6.6.20 cleanup audit). 6.6.20 replaced its `vr01_` wrapper instruction and the aarch64 `f32v8` "return-0 stubs" caveat. |
+| `docs/guides/tutorial.md` | 2026-09-06 | 🔵 Not re-verified at 6.6.20 | No version or size claims to drift; onboarding prose. |
+| `docs/guides/faq.md` | 2026-10-06 | ✅ Fresh (re-derived 6.6.20) | Self-compile and size re-derived (923 ms / 1,586,184 B at v6.6.19). |
+| `docs/stdlib-modules.md` | 2026-10-06 | ✅ Fresh (re-derived 6.6.20) | 106 modules; `boxed`, `alloc_cx`, `tls_hostid`, `poison` indexed (none was). Refresh when a `lib/*.cyr` module is added or removed. |
+| `docs/stdlib-reference.md` | 2026-10-06 | 🟠 Read-through (coverage) | Per-function API; touched every release a surface changes. Coverage of the 106 modules was last counted at v6.5.10 (65 of 99); re-count at the next doc sweep. Mirrors `docs/api-surface.snapshot`. |
+| `docs/benchmarks.md` | 2026-08-07 | 🔵 Evergreen | Pointer hub for the three bench surfaces (`/BENCHMARKS.md`, size comparisons, the historical perf arc). |
+| `docs/ecosystem.md` | 2026-10-06 | ✅ Fresh (verified 6.6.20) | The 12 fold rows equal each fold's latest tag (the 6.6.20 downstream check; `fold_table_matches_vendored` gates it). |
+| `docs/guides/editor-integration.md` | 2026-07-12 | 🔵 Not re-verified at 6.6.20 | LSP + editor configs. |
+| `docs/size-comparisons.md` | 2026-10-06 | ✅ Fresh (re-measured 6.6.20) | The three Cyrius exit42 rows re-measured and RUN (504 / 4,448 / 1,536, unchanged); the self-host block re-read from the tagged 6.6.19 slot — it still carried the 35 MB installed-tree error the README had fixed at v6.6.1. The C / Rust / Go / Zig sweep is still the v6.5.33 one, as its header says. |
+| `docs/platform-status.md` | 2026-10-06 | 🟡 Partly re-derived | The x86 cycc size and the cross-host line (crossos 197 at the 6.6.19 gate) re-derived at 6.6.20; the rows are as verified 2026-09-08 and its header now says so. Full row-by-row re-check due at the next sweep. |
+| `docs/api-surface.snapshot` | 2026-10-06 | ✅ Generated | 5,827 lines. Regenerated by `cyrius_api_surface`; gated in `check.sh`. |
 
 ---
 
@@ -358,31 +394,35 @@ Also closed: 1 issue filing (commandress papercut → archived) from the .60-.63
 
 | File | Last touched | Status | Action |
 |---|---|---|---|
-| `cyrius.md` | 2026-06-08 | ✅ Fresh | **2026-06-08 sweep**: the 4 dead `regression-*.sh` references (aarch64-syscalls / aarch64-native-selfhost / macho-exit / pe-exit — all deleted scripts) repointed to the current `programs/checks/` gates run via `scripts/check.sh`. Prior (**2026-05-18**): doc-currency frontmatter + binary-rename history. Core architecture narrative (Phases 0-11, principles, bootstrap lineage) is durable reference material. |
-| `package-format.md` | 2026-05-18 | ✅ Fresh | **2026-05-18 sweep**: cyrius.toml → cyrius.cyml schema refresh + cycc in build examples + currency frontmatter. `.ark` format unchanged. |
+| `cyrius.md` | 2026-07-12 | 🟡 Stale in part | Principles and the self-hosting framing are durable; its per-platform table is "as of v6.4.62". Re-verify the table at the next sweep. |
+| `package-format.md` | 2026-10-05 | ✅ Fresh | Touched for 6.6.17's manifest work. |
 
 ---
 
 ## Tier 3 — Operational / Development (`docs/development/`)
 
-> **Important framing**: state.md + roadmap.md + completed-phases.md form the **canonical operational surface**. CLAUDE.md delegates volatile state to state.md, and roadmap.md is the slot-pinning artifact. These three rotate every release; everything else in this tier rotates per-need.
+> **Important framing**: state.md + roadmap.md + completed-phases.md form the **canonical operational surface**. CLAUDE.md delegates volatile state to state.md, and roadmap.md is the slot-pinning artifact. These three rotate every release; everything else in this tier rotates per-need. **`handoff.md` is archived (2026-10-06)** — there is no separate handoff file any more; state.md is the handoff.
 
 | File | Last touched | Status | Action |
 |---|---|---|---|
-| `state.md` | 2026-10-03 | ✅ Fresh | Current-state table only — refreshed at every release. **2026-10-03 handoff:** 6.6.15 merged with the release gate GREEN (cross-OS ecb/ach/cass/pi, check.sh 156/156, `.tcyr` 439/439, bench 876 ms) and awaiting the tag; CVE-68 … CVE-73 (next 74); sigil 3.13.9 folded; next up 6.6.16 repair. |
-| `roadmap.md` | 2026-10-03 | ✅ Fresh | The **active minor only** (v6.6.x): *Where we are*, the v6.6.x shape, **The 6.6.x tail** (the release sequence the user accepted 2026-10-02: 6.6.15–6.6.19, the 6.6.20 closeout, then v6.7.0), **6.6.15** (open), 6.6.13 and 6.6.14 condensed, the DCE arc (re-placed after v6.7.x), Phase 2 with each proposal's placement, sibling follow-ups, the Potential backlog (placements noted; five resolved items removed with evidence), *Open questions* (3 placed, 4 decided: a named >8 B struct argument is a COPY). |
-| `roadmap_6.md` | 2026-10-01 | ✅ Fresh | **2026-10-01 re-plan (user):** gained the **v6.7.x language-arc spec** — A: real traits; B: the missing common features; C: the language list carried from v6.6.x — with a measured premise table. RISC-V re-homed to v6.8.x/v6.9.x; stale pointers fixed (the "active minor (v6.5.x)" see-also line, and the v6.6.x row's head of v6.6.1). Earlier history, still accurate in outline: **new 2026-06-08 (v6.1.0)** — whole-v6.x-cycle reference: framing, per-minor budgeting, v6.2.x → v6.5.x, "what comes after v6.x", + a one-screen **v6.0.x-COMPLETE** summary (the 90+ per-item v6.0.x entries removed; canonical detail = CHANGELOG + completed-phases.md). The cycle-level companion to roadmap.md (active minor) + roadmap-future.md (beyond). |
-| `roadmap-future.md` | 2026-10-01 | ✅ Fresh | **2026-10-01:** trait-bounded generics re-pointed to the v6.7.x arc (no longer demand-gated); RISC-V's timing note re-pointed to v6.8/v6.9. **New 2026-05-20** — long-term watching list extracted from retired roadmap-old.md. Unpinned language items (Hardware 128-bit div-mod, Phase 3-full varargs, cycc per-block scoping, incremental compilation), speculative type-system work (post-monomorphization generics, effect tracking), ~v7.0 "Cyrius ONE" public-release manuscript pin. Items may pull forward into a v6.x minor when consumer pressure or user direction surfaces. |
-| `ecosystem-migration-6.6.2.md` | 2026-09-30 | 🗄 Historical, kept in place | The v6.6.0 value-form sweep worklist. **CLOSED 2026-09-12**; its header says so since 2026-09-30 (re-derived: all 125 sibling manifests pin ≥ 6.6.2, no first-party caller of the retired `payload`). Not moved to `archive/`: `docs/retired-symbols.allow` (read by `removed_symbol_census.sh`) and the `lib/boxed.cyr` / `lib/tagged.cyr` comments cite this path. |
-| `cycle-discipline.md` | 2026-05-13 | 🔵 Evergreen | **New 2026-05-13** — durable operating principles extracted from accumulated v5.9.x–v5.11.x feedback (slot acceptance, bottom-to-top priority, premise-check at slot entry, cross-host smoke wrapper, cycle-close shape). Referenced from `CLAUDE.md` Key References and `roadmap.md`. Refresh only when a new principle proves durable across at least one subsequent cycle. |
-| `completed-phases.md` | 2026-07-06 | ✅ Fresh | Historical release narrative. Trimmed 627 → 95 lines at v5.11.41 per the doc-canonical phase-out track (Phase 0–11 retrospective preserved; v0.9.x → v5.9.x per-version narrative dropped — duplicated by CHANGELOG + vidya + state.md). Per CLAUDE.md, this is where shipped-cycle summaries land at minor closeout. **2026-07-06 (v6.4.10)**: added the **v6.4.x SIMD compute arc** narrative block (f32v4 128-bit .4 → f32v8 256-bit AVX2/Phase-4-close .9, integer vectors + iv_dp8 BitNet dot, the first VEX/AVX the toolchain emits; x86 COMPLETE / aarch64 NEON Phase 5 deferred) + the v6.4.0–.3 openers + the .10 interim items. |
-| `benchmarks.md` | 2026-05-18 | ✅ Fresh | **Historical-frontmatter added 2026-05-18**: explicitly bounded to v5.6.x perf miniarc; pointers at `/BENCHMARKS.md` (current) + CHANGELOG (per-arc events). No drift — the page IS frozen by design. |
-| `process-notes.md` | 2026-05-18 | ✅ Fresh | **Historical-frontmatter added 2026-05-18**: explicitly bounded to pre-v5.0.0 phases; pointers at CLAUDE.md + cycle-discipline.md + state.md + CHANGELOG for current process / state / shipped work. cc2/cc3 references retained in dated narrative entries. |
-| `threat-model.md` | 2026-05-10 | ✅ Fresh | **Refreshed 2026-05-10 (v5.10.35)**: added fdlopen-helper + libssl trust boundaries; CVE-02 path-traversal mitigation note; stdlib TLS surface table (v5.6.37 / v5.10.21 / v5.10.27 / v5.10.34 + security caveats for 0-RTT replay + verify-callback override); "Zero external dependencies" → "Zero external **language** dependencies" (stdlib bridges to libssl/libc via fdlopen). |
-| `module-manifest-design.md` | 2026-05-18 | ✅ Fresh | **2026-05-18 sweep**: mechanical `cyrius.toml` → `cyrius.cyml` (11 occurrences) since the v5.5.x manifest rename. `[deps]` + `[deps.stdlib]` design unchanged — schema is still canonical. |
-| `migration-strategy.md` | 2026-06-08 | 📦 Historical | **Resolved 2026-06-08 (v6.1.0 sweep)** — banner-marked at the top as a frozen v5.7.39 historical snapshot (superseded, not maintained), pointing readers at `ecosystem.md` / `state.md` / `completed-phases.md` / CHANGELOG for current state. Kept in place (not deleted) as a record of the original migration framing. The long-standing 🟠 read-through is now closed by the banner. |
-| `crash-localization.md` | 2026-05-18 | ✅ Fresh | **2026-05-18 sweep**: cc3 → cycc in usage examples + binary-rename note (cc3 → cycc at v5.0.0; → cyc at v6.0.0 per CLAUDE.md). CYRIUS_SYMS mechanism itself stable since v4.3.1. Open-bugs section trimmed (libro Heisenbug from v3.4.8+ resolved). |
-| `lib-tls-contract.md` | 2026-10-01 | ✅ Fresh | Stdlib TLS contract spec (caught by 2026-05-13 sweep — never tracked before). Sister doc to `threat-model.md`'s TLS surface table. **Re-pinned to the 6.6.13 surface 2026-10-01** (it had stayed at v5.10.42 while the native default, the trust/mTLS and server verbs landed): every public `tls_*` verb, both backends' defaults, one I/O return table, the deadline, the ChangeCipherSpec rule, server identity and thread safety. Verify at next minor closeout. |
+| `state.md` | 2026-10-06 | ✅ Fresh (reconciled 6.6.20) | 6.6.19 SHIPPED (tag `f5a5175a`), 6.6.20 = the closeout in progress; the ecosystem row is the 6.6.20 downstream check. It had said 6.6.19 was "awaiting the tag" against an integration commit (CLN-07). The `cycc` row is gated by the doc-stamp row and is re-stamped at integration. |
+| `roadmap.md` | 2026-10-06 | ✅ Fresh (re-triaged 6.6.20) | The active minor: 6.6.18 / 6.6.19 SHIPPED, 6.6.20 in progress, the backlog re-triaged (61 bullets; struck / corrected / re-pinned in place — BACKLOG-00…14), the DCE arc spec moved to roadmap_6.md ahead of the v6.7.x rotation. Its `Current head:` stamp is gated by the doc-stamp row and `version_bump_doc_anchors.sh`. |
+| `roadmap_6.md` | 2026-10-06 | ✅ Fresh | v6.7.x spec gained the backlog's v6.7.x candidates (A4 `Struct = *Struct` corrected, A4 `o.m()` vs `T_m(o)`, A5 8-byte method-return inference, B8 compound assignment on a field, C3 generic-struct fields) and the DCE compaction arc's spec. |
+| `roadmap-future.md` | 2026-10-06 | ✅ Fresh | NFKC/NFKD struck as shipped (v5.8.60), the cyrlint gates re-pinned, the aarch64 `f32v8` caveat and the self_compile figures corrected, the imm12 "class CLOSED" line re-opened (6.6.20). |
+| `completed-phases.md` | 2026-10-06 | ✅ Fresh | v6.6.x band gained 6.6.18, 6.6.19 and an in-progress 6.6.20 row (integration completes it). |
+| `cycle-discipline.md` | 2026-10-06 | ✅ Fresh | The Closeout checklist + ledger; the v6.6.x → v6.7.0 ledger entry is drafted at 6.6.20 (gate placeholders filled at integration). |
+| `ecosystem-migration-6.6.2.md` | 2026-10-06 | 🗄 Historical, kept in place | The v6.6.0 value-form sweep worklist, CLOSED 2026-09-12; five dead issue links re-pointed at 6.6.20. Not moved to `archive/`: `docs/retired-symbols.allow` and the `lib/boxed.cyr` / `lib/tagged.cyr` comments cite this path. |
+| `ecosystem-migration-6.6.13.md` | 2026-10-01 | 🗄 Historical census | The `f64_le` / `f64_ge` / `f64_trunc` builtin census (6.6.13). Re-derive before acting on any figure, as it says. |
+| `ecosystem-migration-6.6.18.md` | 2026-10-06 | ✅ Current consumer note | The 6.6.18 sidecar-delta note for consumers at their pin bump. |
+| `dev-tools-linux.md` | 2026-10-06 | ✅ Fresh | Per-environment toolchain; 6.6.20 fixed its cross-OS paragraph (the `vr01_` pointer, "one host at a time" — safe concurrently since v6.6.6). |
+| `benchmark-regimes.md` | 2026-10-01 | 🔵 Evergreen ledger | Which bench rows are comparable; extend it when a measurement regime changes. |
+| `lib-tls-contract.md` | 2026-10-05 | ✅ Fresh | Stdlib TLS contract, re-pinned to the 6.6.13 surface 2026-10-01 and touched for 6.6.16. Verify at the next minor closeout. |
+| `threat-model.md` | 2026-07-12 | 🟡 Not re-verified since 2026-07-12 | It names no CVE past CVE-29; the classes found since (CVE-30 … CVE-78) are not reflected. Re-read at the next full security audit. |
+| `migration-strategy.md` | 2026-09-06 | 📦 Historical | Banner-marked frozen v5.7.39 snapshot. |
+| `crash-localization.md` | 2026-07-12 | 🔵 Not re-verified at 6.6.20 | The `CYRIUS_SYMS` mechanism. |
+| `module-manifest-design.md` | 2026-05-18 | 🟡 Stale in part | The `[deps]` design is canonical; the 6.6.17 manifest work (`[build]` keys, `--print-config`, `[coverage]`, `[embed]`) is documented in the guide, not here. |
+| `benchmarks.md` | 2026-05-19 | 📦 Historical | Bounded to the v5.6.x perf arc by its frontmatter. |
+| `process-notes.md` | 2026-06-04 | 📦 Historical | Bounded to pre-v5.0.0 phases by its frontmatter. |
 
 ---
 
@@ -392,31 +432,27 @@ Also closed: 1 issue filing (commandress papercut → archived) from the .60-.63
 
 | File | Last touched | Status | Notes |
 |---|---|---|---|
-| `001-assembly-cornerstone.md` | 2026-04-12 | 🔵 Evergreen | Foundational principle. |
-| `002-everything-is-i64.md` | 2026-04-05 | 🔵 Evergreen | Foundational; **note**: the v5.10.28+ typed-simd arc adds `f64v2` / `f64v4` as 16/32-byte primitive types — value-type ABI is the first formal break from pure i64. ADR text should reflect this distinction at next minor closeout. |
-| `003-fixed-heap-layout.md` | 2026-04-09 | 🔵 Evergreen | Foundational; layout itself rotates (heap map in main.cyr) but the fixed-heap *principle* is durable. |
-| `004-convention-based-dispatch.md` | 2026-04-05 | 🔵 Evergreen | Foundational. |
-| `005-two-step-bootstrap.md` | 2026-04-09 | 🔵 Evergreen | Bootstrap chain principle. |
-| `006-registry-sovereignty.md` | 2026-05-05 | ✅ Fresh | Just refreshed during the niyama-fold-in cycle. Sovereignty pattern. |
-
-**Open question** — the agnosticos doc-health uses ADR-008 to cover its Cyrius pivot. Cyrius's own ADR series is steady at 6; no immediate gap. The originally-pinned v5.12.0 bare-metal kickoff was **retired at the 2026-05-12 tight-close** — bare-metal formalization + RISC-V rv64 moved to v6.2.x (RISC-V later re-homed to v6.6.x, 2026-06-27; bare-metal core shipped .27/.28). Re-evaluate at the v6.0.0 cut (cycc → cyc rename + first capability-expansion minor) if a major architectural decision lands without an ADR.
+| `001-assembly-cornerstone.md` | 2026-09-08 | 🔵 Evergreen | Foundational principle. |
+| `002-everything-is-i64.md` | 2026-07-06 | 🔵 Evergreen | Carries the SIMD-vector and float exceptions (its §2 and the closing note) — the distinction this ledger used to ask for is written. |
+| `003-fixed-heap-layout.md` | 2026-10-06 | ✅ Re-derived 6.6.20 | Its layout summary was five relocations stale (input_buf at 0x0, tok_names at 0x60000, output_buf in-heap, heap top 0x5E1D000, fn ceiling 32,768); re-derived from `src/main.cyr`'s HEAP MAP (HEAP-11). The map wins. |
+| `004-convention-based-dispatch.md` | 2026-04-05 | 🔵 Evergreen | Foundational; v6.7.x's traits ADR will amend it or sit beside it (roadmap_6.md § v6.7.x). |
+| `005-two-step-bootstrap.md` | 2026-06-28 | 🔵 Evergreen | Bootstrap chain principle. |
+| `006-registry-sovereignty.md` | 2026-05-05 | 🔵 Evergreen | Sovereignty pattern. |
 
 ---
 
 ## Tier 5 — Audits (`docs/audit/`)
 
-Periodic audit reports; per-audit timestamped (don't refresh in place — supersede with a new audit doc).
+Periodic audit reports; per-audit timestamped (don't refresh in place — supersede with a new audit doc, or append a finding with its CVE id).
 
-**0 active** + **5 archived** (`docs/audit/archived/`, new dir this 2026-06-09 sweep — all 5 audits archived with completion banners; user-approved). The next periodic security audit (per CLAUDE.md) will land a fresh artifact in `docs/audit/`.
-| File (in `archived/`) | Archived | Status |
-|---|---|---|
-| `2026-04-13-security-audit.md` | 2026-06-09 | ✅ Baseline — P0s + CVE-05/06/07/08 shipped; P2/P3 tail tracked as roadmap/accepted-design. Banner added. |
-| `2026-05-01-pre-5.8.0-audit.md` | 2026-06-09 | ✅ RESOLVED — must-fix shipped (v5.7.50/v5.8.0); methodology → CLAUDE.md P(-1) process. Banner added. |
-| `2026-04-26-stdlib-fn-collisions.md` | 2026-06-09 | ✅ RESOLVED (v5.7.9) — banner added. |
-| `2026-04-27-cx-direct-emit-inventory.md` | 2026-06-09 | ✅ RESOLVED (v5.7.12) — banner added. |
-| `2026-05-11-zero-call-stdlib.md` | 2026-06-09 | ✅ RESOLVED (v5.11.21) — banner added. |
+**3 active** + **5 archived** (`docs/audit/archived/`). *(This section read "0 active" from 2026-06-09 until 6.6.20, while three active audits accumulated.)*
 
-Per CLAUDE.md "Security Audit Process": next periodic security audit due before major releases. The v5.10.x close-out audit originally pinned here was **not run as a standalone artifact**; instead v5.11.41 shipped CVE-08 hardening (`cld` before `rep movsb`) per the 2026-04-13 audit's pinned P2 item. Remaining audit-pinned items: track against the v6.0.0 cut as the next natural full-audit boundary (major release, language-spec consolidation, cycc → cyc rename).
+| File | Status |
+|---|---|
+| `2026-09-03-security-audit.md` | The last full audit (cycc 6.5.45, CVE-38 … CVE-42); every CVE spent since is appended to it — through **CVE-78** (6.6.18). The next free id is **79**. |
+| `2026-07-27-security-audit.md` | Full audit at cycc 6.4.82 (CVE-32 … CVE-36; CVE-37 / CVE-38 withdrawn). |
+| `2026-06-10-deep-dive-review.md` | Deep-dive review at cycc 6.1.31 (… CVE-31). |
+| `archived/` (5) | 2026-04-13 security audit, 2026-05-01 pre-5.8.0, 2026-04-26 stdlib fn collisions, 2026-04-27 cx direct-emit inventory, 2026-05-11 zero-call stdlib — all with completion banners. |
 
 ---
 
@@ -424,45 +460,11 @@ Per CLAUDE.md "Security Audit Process": next periodic security audit due before 
 
 Open issues are tracked artifacts (filed by consumers or internal observation). Archived when resolved.
 
-### Open issues
-**Refreshed 2026-06-08 (v6.1.4).** Archived this cycle: `aarch64-eaddra-imm-12bit-mask`
-(fixed v6.1.2), `syscalls-at-family-stdlib` proposal (shipped v6.1.3). Current open set
-(`ls docs/development/issues/*.md`):
+**Re-derived 2026-10-06 (v6.6.20).** *(This section had listed the June 2026 open set — seven files, every one long since archived — until then.)*
 
-| File | Filed | Status |
-|---|---|---|
-| `issues/README.md` | varies | 🔵 Evergreen index |
-| `issues/archived/2026-05-27-yeo-cy-test-no-tsx-js-emit.md` | 2026-06-08 | ✅ Archived — TS/TSX → JS **emit** shipped (Phase D v6.1.10/.11; `cyrius build --target=js` .12; `async` fix .15). 3 adjacent papercuts closed v6.0.5. |
-| `issues/2026-06-02-macos-x86-release-no-compiler.md` | 2026-06-02 | 🟡 Open — **HELD** (Apple Intel EOL). x86-macho cycc layer-6 self-compile miscompile; arm64-macOS is the supported macOS target. |
-| `issues/2026-06-07-x86-macho-byte-array-literal-no-compile.md` | 2026-06-07 | 🟡 Open — x86-macOS cycc can't compile byte-array literals (same family as macos-x86 above). HELD. |
-| `issues/2026-06-08-macho-arm-at-family-darwin-syscall-mappings.md` | 2026-06-08 | 🟡 Open — **NEW (v6.1.3)**: macho-arm `fstatat`/`utimensat`/`linkat`/`renameat` lack Darwin ESYSXLAT mappings (pre-existing; Darwin lacks `utimensat` → needs design). openat/mkdirat/unlinkat/fchmodat work. Own slot. |
-| `issues/2026-06-06-sandhi-nonblocking-connect-not-darwin-ported.md` | 2026-06-06 | 🟡 Open — non-blocking `connect` not Darwin-ported (macho-arm socket-family x86-num mismatch). |
-| `issues/2026-06-04-shipped-broken-functionality-found-by-consumers.md` | 2026-06-04 | 🟡 Open — process/retrospective filing (the "found by ports" class). |
-| `issues/2026-06-03-ach-selfhosted-runner.md` | 2026-06-03 | 🟡 Open — ach (Intel-Mac) self-hosted CI runner registration (operator-side). |
-
-Other consumer-filed issues continue to land in consumer repos (sandhi / mabda / kavach / kybernet / bote / daimon / agnosys / agnosticos etc.) and are referenced by absolute path in the cyrius roadmap entry when they pin cyrius slots.
-
-**Repros subdir** (`issues/repros/`) — binary + source repros parked separately from issue-text files. Currently holds: `sankoch-2.0.1-deflate-non-roundtrip.{bin,cyr}`. Treat as a repro storage area, not a tracked-file directory.
-
-### Open proposals
-*(2 active after the 2026-06-09 full-sweep archival; see below.)*
-| File | Last touched | Status |
-|---|---|---|
-| `proposals/2026-05-20-syscalls-fsync-stdlib.md` | 2026-05-23 | 🔴 Open — `sys_fsync`/`sys_fdatasync` stdlib wrappers; marked out-of-scope for v5.x (hapi M4 uses raw `syscall(74)`). Decide ship-or-document-as-deferred. |
-| `proposals/2026-06-02-fdlopen-helper-trust-for-setuid-consumers.md` | 2026-06-02 | 🔴 Open — `fdlopen_init_trusted()` for setuid consumers; **HIGH-sev** shakti privilege-escalation blocker. NOT shipped as of v6.1.18 (code+doc gap). |
-
-### Archived proposals
-**10 files** in `proposals/archived/`. **+5 reclassified this 2026-06-09 full-sweep** (each verified shipped vs CHANGELOG, CI-safe, `git mv`-d from the active dir):
-- `2026-05-11-pie-support.md` — shipped **v6.1.6** (x86_64 PIE) + **v6.1.8** (aarch64); kernel-PIE deferred (AGNOS harness).
-- `2026-05-17-octal-literal-syntax.md` — shipped **v6.0.62** (`0o755` lexer + gate).
-- `2026-05-17-toml-single-bracket-sections.md` — shipped **v6.0.62** (`lib/toml.cyr` single-bracket `[section]`).
-- `2026-06-02-struct-field-cap-raise.md` — shipped **v6.0.47** (field cap 32→256, type-table 256→1024).
-- `cyrius-lsp-argv0-self-resolution.md` — shipped **v5.11.44** (was mis-filed in the active dir; CHANGELOG already named `archived/` as its home).
-- Prior: `2026-05-08-raise-return-cap.md` (v5.10.6), `2026-05-10-raise-compile-source-cap.md` (v5.11.33), `relax-uninitialized-var-or-improve-error.md` (v5.8.42), + 2 more.
-
-### Archived issues
-**41 files** in `issues/archived/` (+1 since 2026-05-17 for the .60-.63 ship arc closeout). Verified frozen by design — each archived alongside its resolution (CHANGELOG entry that closed it). 2026-05-18 growth driver:
-- `2026-05-17-commandress-stdlib-papercuts.md` → 5 items resolved across .60-.63: Items 6+7 → .60 (`lib/process.cyr` `_exec3` byte-contract + stderr dup2); Item 2 → .61 (`lib/toml.cyr` heap-alloc, −256 KB bss); Items 1+5 → .62 (cyrius init scaffold + dead-fn `.bss` attribution hint); aarch64 `_strict_mode` parity → .63. Items 3+4+8 deferred to v6.x as own filings/arcs.
+- **Open issues: 0** — `issues/` holds only `README.md`, `archived/` (**473** files) and `repros/` (binary + source repro storage, not tracked filings).
+- **Open proposals: 2** — `2026-07-05-const-eval-comptime.md` (P3 `const fn` → roadmap_6.md § v6.7.x C1; its header re-stamped at 6.6.20) and `2026-09-20-coverage-should-accept-run-programs-as-a-corpus.md` (P5: A shipped 6.6.17, B execution coverage → v6.7.x with C2). **34** archived.
+- Out-of-scope finds live in roadmap.md's *Potential backlog* (re-triaged at 6.6.20), not as issue files.
 
 Per the `feedback_close_to_archive_issues` memory pin: re-opens are a `git mv` back, not a re-file.
 
@@ -472,18 +474,18 @@ Per the `feedback_close_to_archive_issues` memory pin: re-opens are a `git mv` b
 
 | File | Last touched | Status | Notes |
 |---|---|---|---|
-| `fncall-abi.md` | 2026-04-25 | ✅ Fresh (verified 2026-05-10) | Spot-verified at v5.10.35 — content scoped to `fncallN` (int-class scalar calls); the v5.10.28-32 typed-simd ABI (`fn f(): f64v2`) is a separate codegen path not invoked via `fncallN`, so no update needed here. (Future: a sibling `docs/ffi/typed-simd-abi.md` may earn its own slot if consumers need a reference.) |
-| `struct-packing.md` | 2026-04-19 | ✅ Fresh (verified 2026-05-18) | **2026-05-18 sweep verified**: `fncallN` ABI for struct-by-value shims unchanged since v5.4.13 landing; `fncall2(shim_fp, ...)` pattern still canonical. mabda examples remain real. No update needed. |
+| `fncall-abi.md` | 2026-09-17 | 🔵 Not re-verified at 6.6.20 | `fncallN` (int-class scalar calls). |
+| `struct-packing.md` | 2026-04-19 | 🔵 Not re-verified at 6.6.20 | `fncallN` struct-by-value shims. |
 
 ---
 
-## Tier 8 — Archive (`docs/development/archive/`, `docs/development/issues/archived/`)
+## Tier 8 — Archive (`docs/development/archive/`, `docs/development/issues/archived/`, `docs/development/proposals/archived/`)
 
 | Path | Count | Status |
 |---|---|---|
-| `docs/development/archive/` | 6 | 📦 Frozen — historical (cyml-format, handoff doc, v5.3.0 emitter, 2026-04 benchmarks/aarch64 stdlib, lsp-claude consolidation) |
-| `docs/development/issues/archived/` | 41 | 📦 Frozen — resolved bugs (+1 since 2026-05-17 for the .60-.63 commandress papercut close listed above) |
-| `docs/development/proposals/archived/` | 3 | 📦 Frozen — shipped proposals (raise-return-cap v5.10.6, raise-compile-source-cap v5.11.33, uninitialized-var error v5.8.42) |
+| `docs/development/archive/` | 8 | 📦 Frozen — historical (cyml-format, two handoffs — v5.3.13 and **v6.6.4, archived 2026-10-06** — the v5.3.0 emitter, 2026-04 benchmarks / aarch64 stdlib, lsp-claude consolidation, the 2026-10-02 6.6.x-tail sequencing memo) |
+| `docs/development/issues/archived/` | 473 | 📦 Frozen — resolved issues |
+| `docs/development/proposals/archived/` | 34 | 📦 Frozen — shipped or closed proposals |
 
 Leave alone unless they need re-classification (e.g., something archived prematurely surfaces again).
 
@@ -522,7 +524,7 @@ Items that are *scheduled* doc decisions, not stale state. Surfaced here so they
 | # | Commitment | Trigger | Source | Notes |
 |---|---|---|---|---|
 | 1 | **Vidya sync per minor closeout** — `vidya/content/cyrius/*.cyml` (language, field_notes/{compiler,language}, implementation, types, dependencies, ecosystem) refreshed at every minor closeout per CLAUDE.md "Closeout Pass" step 11. Vidya entries reference cc-binary-name + version + non-obvious gotchas surfaced in the minor. | Every minor closeout | [`CLAUDE.md`](../CLAUDE.md) "Closeout Pass" §11 | Manual — `version-bump.sh` doesn't touch vidya. Cross-check version refs every closeout: vidya files saying `cycc 5.4.x` / `cycc 5.8.x` should match current VERSION (the historical `cc3 4.8.5`-style refs hold pre-v5.0.0 anchor context). |
-| 2 | **Periodic security audit** — full source scan for vulnerable patterns (sys_system / READFILE / bounds-check gaps / etc.) before major releases or after significant surface change. | Before each major release; cycle audit every 2-3 minors | [`CLAUDE.md`](../CLAUDE.md) "Security Audit Process" | Last full audit: 2026-04-13 + 2026-05-01 (pre-5.8.0). v5.11.41 shipped CVE-08 hardening + v5.11.65 CVE-05 mangle-path guard piecemeal. **TRIGGER PASSED**: the pinned "before the v6.0.0 cut" full audit did NOT run as a standalone artifact — v6.0.0→.3 shipped (rename + two codegen P1s + deps-lock fix) without it. **RESOLVED (leader, ~late May 2026):** the full audit WAS run ~2 weeks before the 2026-06-07 closeout — the prior "overdue / never ran" note here was stale (the artifact is not under cyrius's own `docs/audit/`, so it was filed at the ecosystem level, not this repo). The v6.0.91 closeout ran only the §9 *quick* re-scan (clean: no new vulnerability class in .88–.90; byte-array peephole bounds-checked — pass-1 cap + per-arch disp caps), which is all the closeout calls for. NOT overdue. **Separate, still open:** vidya `dependencies.cyml` dep catalog is stale beyond this cycle (sigil listed 2.9.3 vs current 3.7.7) — a fuller vidya refresh than the per-closeout gotchas add is its own task. |
+| 2 | **Periodic security audit** — full source scan for vulnerable patterns (sys_system / READFILE / bounds-check gaps / etc.) before major releases or after significant surface change. | Before each major release; cycle audit every 2-3 minors | [`CLAUDE.md`](../CLAUDE.md) "Security Audit Process" | **Current (re-derived 2026-10-06):** the last full audit is `docs/audit/2026-09-03-security-audit.md` (cycc 6.5.45), with every CVE spent since appended to it through CVE-78; the next free id is 79; 6.6.20's closeout ran the §9 re-scan as one of its audit passes. *History, as this cell read before:* Last full audit: 2026-04-13 + 2026-05-01 (pre-5.8.0). v5.11.41 shipped CVE-08 hardening + v5.11.65 CVE-05 mangle-path guard piecemeal. **TRIGGER PASSED**: the pinned "before the v6.0.0 cut" full audit did NOT run as a standalone artifact — v6.0.0→.3 shipped (rename + two codegen P1s + deps-lock fix) without it. **RESOLVED (leader, ~late May 2026):** the full audit WAS run ~2 weeks before the 2026-06-07 closeout — the prior "overdue / never ran" note here was stale (the artifact is not under cyrius's own `docs/audit/`, so it was filed at the ecosystem level, not this repo). The v6.0.91 closeout ran only the §9 *quick* re-scan (clean: no new vulnerability class in .88–.90; byte-array peephole bounds-checked — pass-1 cap + per-arch disp caps), which is all the closeout calls for. NOT overdue. **Separate, still open:** vidya `dependencies.cyml` dep catalog is stale beyond this cycle (sigil listed 2.9.3 vs current 3.7.7) — a fuller vidya refresh than the per-closeout gotchas add is its own task. |
 | 3 | **API surface snapshot regeneration** — `docs/api-surface.snapshot` regenerated as part of `check.sh`; gate fails if drift. | Every release | `cyrius_api_surface` binary; gate in [`scripts/check.sh`](../scripts/check.sh) | Already automated; included here for visibility. |
 
 ---

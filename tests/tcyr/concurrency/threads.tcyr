@@ -1,7 +1,7 @@
 # threads.tcyr — regression coverage for lib/thread.cyr (v5.4.10)
 #
 # Filed by majra after every `thread_create + thread_join` SIGSEGV'd
-# on cc5 5.4.x (docs/development/issues/majra-cbarrier-arrive-and-wait-crash.md).
+# on cc5 5.4.x (docs/development/issues/archived/majra-cbarrier-arrive-and-wait-crash.md).
 # Root cause: post-`clone(CLONE_VM)` child branch was plain cyrius
 # code that read locals via parent's inherited RBP — child stomped
 # parent's stack slots. Fixed v5.4.10 by routing the child trampoline

@@ -9,7 +9,7 @@
 # verifies the generated accessor produces the documented byte
 # offset 16 * 8 = 128.
 #
-# Closes docs/development/issues/2026-05-11-derive-accessors-16-field-cap.md.
+# Closes docs/development/issues/archived/2026-05-11-derive-accessors-16-field-cap.md.
 
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"

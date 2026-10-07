@@ -2108,7 +2108,7 @@ fn CHKDUPVAL(S, noff, newval): i64 {
 # index 1024 until 6.6.8 (large consumer stacks exceed it). var_enum_id (GVENUMID) is the
 # reliable, uncapped, growable per-symbol marker (1-based enum-id; 0 = plain var).
 # Fail loud so the collision surfaces at compile time — the fix is to rename the
-# variable. See issues/2026-07-01-string-literal-global-garbage-in-large-programs.md.
+# variable. See issues/archived/2026-07-01-string-literal-global-garbage-in-large-programs.md.
 #
 # 6.6.6: `_findvar_core`, not `FINDVAR` — this is the THIRD declaration-time probe, and it was
 # missed when the other two moved. It runs for every global whose initializer is NOT an int

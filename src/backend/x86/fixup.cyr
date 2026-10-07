@@ -25,7 +25,7 @@
 # EMITELF64_KERNEL — the issue's warned hazard was a partial edit leaving an
 # emitter's p_vaddr disagreeing with the fixups' base (boots to garbage). Reading
 # one accessor everywhere makes that impossible. Byte-identical when the cell is 0.
-# Resolves issues/2026-06-19-kernel-load-base-settable.md.
+# Resolves issues/archived/2026-06-19-kernel-load-base-settable.md.
 fn _kernel_load_base(S): i64 {
     var b = L64(S + 0x18FCE8);
     if (b != 0) { return b; }
@@ -2143,7 +2143,8 @@ fn EMITELF_OBJ(S): i64 {
     # GLOBAL `_cyrius_init`s across modules pass through cyrld
     # without collision. Standard `ld` linking *multiple*
     # cyrius `.o`s would still error — that case is what cyrld
-    # is for; tests/regression-linker.sh exercises it.
+    # is for; the check driver's `_linker_gate` (programs/checks/services.cyr,
+    # the `linker` suite) exercises it over tests/fixtures/linker/.
     #
     # Bonus: GLOBAL also fixes the spec-non-conformance the old
     # comment flagged (locals must precede globals in .symtab) —

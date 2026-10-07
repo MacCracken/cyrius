@@ -13,7 +13,7 @@
 # code: `error: expected '=', got identifier 'numbers'`, pointing at the comment's
 # SECOND WORD rather than at the cause. The set of words that broke a comment was
 # invisible to the author. Filed as
-# docs/development/issues/2026-09-19-lexer-attribute-prefix-swallows-comments.md.
+# docs/development/issues/archived/2026-09-19-lexer-attribute-prefix-swallows-comments.md.
 #
 # v6.6.6 added LEXATTRBOUND: an attribute name must be followed by whitespace or
 # end of input — or `(`, at the THREE sites that pass ap=1. Strictly more

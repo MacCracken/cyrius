@@ -1,7 +1,7 @@
 # NSS-dispatch investigation probe — v5.5.25 reference artifact.
 #
 # Confirms the findings recorded in
-# docs/development/issues/dynlib-nss-bootstrap.md:
+# docs/development/issues/archived/dynlib-nss-bootstrap.md:
 #
 #   * /proc/self/auxv read works (dynlib_read_auxv returns the raw
 #     (tag, value) pairs; dynlib_auxv_get looks up individual tags).
@@ -73,5 +73,5 @@ wrs("  +0x2a0 = 0x"); wrh(load64(rtld_ro + 0x2a0)); wrs("\n");
 wrs("  +0x2a8 = 0x"); wrh(load64(rtld_ro + 0x2a8)); wrs("\n");
 wrs("(both are 0 — ld.so's _dl_start never ran since we're static.)\n");
 
-wrs("\n=== probe done — see docs/development/issues/dynlib-nss-bootstrap.md ===\n");
+wrs("\n=== probe done — see docs/development/issues/archived/dynlib-nss-bootstrap.md ===\n");
 syscall(60, 0);

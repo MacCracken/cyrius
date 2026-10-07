@@ -1,5 +1,5 @@
 # Test: lib/process.cyr `_exec3` argv/envp buffer sizing (v5.11.60 Item 6).
-# Closes `docs/development/issues/2026-05-17-commandress-stdlib-papercuts.md`
+# Closes `docs/development/issues/archived/2026-05-17-commandress-stdlib-papercuts.md`
 # Item 6: pre-v5.11.60 `var argv[4]` reserved 4 BYTES (not 4 entries) of stack
 # and silently corrupted whatever sat after argv on every call that pushed
 # more than zero args. Symptom: `run_capture("/bin/echo", "hello", 0, ...)`

@@ -18,7 +18,9 @@
 #
 # Filed by agnosys 1.0.10 V1.1.0 migration (pam + netns + update
 # modules pushed the integration test compilation past the cap):
-# `agnosys/docs/development/issues/2026-05-06-cyrius-derive-accessors-32-struct-cap.md`.
+# `agnosys/docs/development/issues/2026-05-06-cyrius-derive-accessors-32-struct-cap.md`
+# (agnosys is retired; the filing survives in agnodrm's docs/development/issues/archive/;
+# CHANGELOG [5.9.5]).
 #
 # Fix: v5.9.5 reshuffles the 0x197XXX layout so per-struct tables
 # (struct_sizes[64], struct_names[64*32]) live at 0x197500..0x197F00

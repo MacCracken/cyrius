@@ -5,7 +5,7 @@
 # → tls_native_set_client_cert / _set_client_key), the client signs the client
 # CertificateVerify ("TLS 1.3, client CertificateVerify"), and the server
 # verifies that signature against the client leaf. Closes the mTLS half of the
-# residual in docs/development/issues/2026-05-22-cyrius-native-tls-in-6.0.x.md.
+# residual in docs/development/issues/archived/2026-05-22-cyrius-native-tls-in-6.0.x.md.
 # Cert/key are the Ed25519 self-signed pair from tls_native_ed25519.tcyr (the
 # same pair serves as both the server cert and the client cert here).
 #define CYRIUS_TLS_NATIVE

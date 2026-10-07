@@ -17,7 +17,7 @@
 # line and continued onto a line starting with `include "`,
 # OR a tool's source that synthesizes the pattern at column 0
 # inside a literal) — was treated as a real include directive.
-# Filed as `docs/development/issues/2026-05-01-preprocessor-include-pattern-in-string-literals.md`
+# Filed as `docs/development/issues/archived/2026-05-01-preprocessor-include-pattern-in-string-literals.md`
 # at the v5.7.49 vidya audit; vidya entry at
 # `vidya/content/cyrius/ecosystem.cyml:685-713` documents the
 # byte-store workaround.

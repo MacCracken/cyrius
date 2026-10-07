@@ -3,7 +3,8 @@
 #
 # Bug history (agnosys 1.1.12 re-file 2026-05-07,
 # `agnosys/docs/development/issues/2026-05-07-cyrius-derive-
-# serialize-incomplete.md`): the auto-generated `_from_json`
+# serialize-incomplete.md`; agnosys is retired, the filing survives in
+# agnodrm's docs/development/issues/archive/): the auto-generated `_from_json`
 # body emitted `<typename>_from_json(...)` for every typed
 # field that wasn't `Str`. i64 fields hit `i64_from_json(...)`
 # — a fn that never existed in stdlib. cc5 emitted `warning:

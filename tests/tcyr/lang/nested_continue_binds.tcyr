@@ -21,7 +21,7 @@
 # outer loop"; instrumenting showed the outer loop runs its full trip count and it is the
 # outer BODY AFTER the nested loop that is skipped. Counts here are measured, not inferred.
 #
-# Closes issues/2026-09-11-nested-continue-binds-to-wrong-loop.md.
+# Closes issues/archived/2026-09-11-nested-continue-binds-to-wrong-loop.md.
 #
 # 6.6.20 — THE SAME DEFECT ONE LEVEL DEEPER: a `while` BETWEEN the two `for`s. `while` zeroed the
 # next-free index (it was also the while-mode flag), so the inner `for` started over at entry 0

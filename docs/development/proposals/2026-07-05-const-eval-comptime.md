@@ -3,10 +3,11 @@
 **Filed:** 2026-07-05 (by a shabdakosh consumer during its v3.0.0 Rust→CYRIUS port —
 surfaced porting `dictionary/static_dict.rs`, which is `phf`-feature-gated)
 **Status:** PROPOSED — a **capability-gap tracker**, not an urgent fix. Large feature,
-narrow immediate payoff; wants maintainer direction on scope before any work.
+narrow immediate payoff. Its scope is decided (the rung was chosen 2026-07-07 — see below); it
+needs no further direction before work starts.
 **Priority:** low / not a release-blocker. The generated-`.cyr` idiom already covers the
 *bulk* of compile-time-data needs; this is about the residual *computation* gap.
-**Placement:** **v6.6.x item 2 — UNCHANGED, and NOT an exit from 6.5.x.** It was pinned to 6.6.x before this re-triage with its scope already chosen; leaving it there honours the pin rather than moving 6.5.x work out.
+**Placement:** **v6.7.x, item C1** of [`roadmap_6.md`](../roadmap_6.md) § v6.7.x — moved there with the rest of the language list on 2026-10-01 (user), after `const` (B1) and the if-expression (B3). *(Re-stamped at the 6.6.20 closeout; this line read "v6.6.x item 2 — UNCHANGED" from the v6.5.21 re-triage until then.)*
 
 > **⟳ Re-stamped 2026-08-14 at v6.5.21 (backlog re-triage).** ⛔ **CORRECTS A MIS-CLASSIFICATION.** A first pass labelled this BLOCKED-ON-MAINTAINER for 'which rung'; an adversarial re-check REFUTED it: **the rung was chosen 2026-07-07**, recorded at `roadmap_6.md:144-149` — **option 1 `const fn`** primary, **option 3 `#phf`** fallback, option 4 declined. **No maintainer decision is outstanding.** Premise otherwise holds (0 hits at 6.5.21). ~~⚠ Rungs 1–2 reuse the `ir_const_fold` fixpoint (`src/common/ir.cyr:747`) which Slot 3 rewrites — build const-eval AFTER Slot 3 or pay the churn twice.~~ *(Struck 2026-10-04 — see the correction block below.)*
 

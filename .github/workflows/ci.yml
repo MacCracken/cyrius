@@ -185,7 +185,8 @@ jobs:
         run: |
           chmod +x build/cycc
           cat cbt/cyrius.cyr | ./build/cycc > ./build/cyrius 2>/dev/null && chmod +x ./build/cyrius
-          # cyrld is needed by tests/regression-linker.sh + the
+          # cyrld is needed by the check driver's linker gate
+          # (`_linker_gate`, programs/checks/services.cyr) + the
           # v5.4.9 _cyrius_init handshake gate further down. Build
           # it from source against the just-verified cycc so the
           # gate exercises the same toolchain the rest of the job
@@ -543,7 +544,7 @@ jobs:
           # backend bug OR a phase-gated feature gap — it STILL runs on ARM, so
           # when the gap closes the test passes and CI prints "XPASS: … remove
           # from XFAIL" (a self-cleaning workaround, not a silent SKIP). Tracked
-          # in docs/development/issues/2026-07-05-aarch64-f32v4-xfail-phase5.md.
+          # in docs/development/issues/archived/2026-07-05-aarch64-f32v4-xfail-phase5.md.
           chmod +x a64/cycc_native_a64
           CC=a64/cycc_native_a64
           SKIP="math_pack_integration"
@@ -551,7 +552,7 @@ jobs:
           # EMIT_F32V_LOOP/FMADD/DOT), f32v8 (v6.4.29, free via the 2×128-bit fallback), and
           # int-vectors (v6.4.30, EMIT_IVEC_BINOP add/sub/mul .16b/.8h/.4s/.2d + EMIT_IVEC_DP8
           # uxtl/sxtl+smlal widening dot) all pass on native arm64. Cross-OS-gated by
-          # vr01_simd_f32v4_neon + vr01_simd_ints_neon. (v6.4.30 also fixed the STUR/LDUR Q
+          # tests/tcyr/crossos/{simd_f32v4_neon,simd_ints_neon}.tcyr. (v6.4.30 also fixed the STUR/LDUR Q
           # imm9 large-frame limit that had blocked simd_ints from compiling on aarch64.)
           XFAIL=""
           pass=0; fail=0; xfail=0; xpass=0; skip=0
@@ -859,7 +860,7 @@ jobs:
         # (verified byte-for-byte on ecb); a red here is a real macOS regression that
         # blocks, like windows-native. Folded in from the standalone funcgate job so
         # the macOS native suite owns its own end-to-end gate.
-        # Issue: docs/development/issues/2026-06-04-shipped-broken-functionality-found-by-consumers.md
+        # Issue: docs/development/issues/archived/2026-06-04-shipped-broken-functionality-found-by-consumers.md
         run: |
           set -e
           V=$(tr -d '[:space:]' < VERSION)
@@ -885,7 +886,7 @@ jobs:
   # `cyrius audit` → `scripts/cross-os-selfhost.sh ach`; self-hosts byte-identical
   # ~0.95 s/pass). SECURITY: never run untrusted fork PRs on self-hosted hardware
   # — gated to push / workflow_dispatch / same-repo PRs only.
-  # See docs/development/issues/2026-06-03-ach-selfhosted-runner.md.
+  # See docs/development/issues/archived/2026-06-03-ach-selfhosted-runner.md.
   macho-x86-native:
     name: Mach-O x86 Native (ach, self-hosted)
     needs: [macho]
@@ -1080,7 +1081,7 @@ jobs:
           # This job cross-builds PE on Linux and cannot execute it, so the byte checks
           # below are a cheap per-push canary for encoding typos. The BEHAVIOURAL gate
           # is tests/tcyr/crossos/win64_stack_args.tcyr, which runs on real cass via the
-          # release gate's vr01_ glob (arity 5/9/10/17 + nested).
+          # release gate's crossos/ subdir (arity 5/9/10/17 + nested).
           pass=0; fail=0
           for test in \
             "w_arg5:fn f(a,b,c,d,e){return a+b+c+d+e;} syscall(60, f(10, 20, 3, 8, 1));:42" \

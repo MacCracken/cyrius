@@ -23,7 +23,7 @@
 # BLAST RADIUS at 6.6.2: 60 poisoned files across 10 repos (naad, svara, dhvani, nidhi,
 # garjan, jalwa, ghurni, prani, shabda, shabdakosh). Five of those had no local fix —
 # they were poisoned only through a vendored bundle, `lib/naad.cyr` alone blocking six
-# consumers. Closes issues/2026-09-11-inline-directive-disarms-derive.md.
+# consumers. Closes issues/archived/2026-09-11-inline-directive-disarms-derive.md.
 #
 # ORDER MATTERS, so both orders are tested: `#derive` BEFORE the first `#inline` always
 # worked (pass 1 had not yet terminated), which is why the defect looked positional.

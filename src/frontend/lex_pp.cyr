@@ -2755,7 +2755,7 @@ fn PP_DERIVE_SERIALIZE_BODY(S, out, op): i64 {
                         # this pairs-based parser doesn't produce — v_is_str(v) would read
                         # a JTAG from a Str header and always fail, leaving the field 0 →
                         # a NULL Str crashes re-serialize.
-                        # See issues/2026-07-01-derive-serialize-str-field-deserialize-broken.md.
+                        # See issues/archived/2026-07-01-derive-serialize-str-field-deserialize-broken.md.
                         op = op + PP_EMIT_STR(out, op, "if (v != 0) { store64(ptr + ");
                         op = op + PP_EMIT_INT(out, op, load64(S + 0x200000 + fi * 8));
                         op = op + PP_EMIT_STR(out, op, ", v); }\n");

@@ -972,7 +972,7 @@ fn ir_dce_capped(S, cap): i64 {
 # substrate the v6.3.28 copy-prop + v6.3.29 cross-BB DSE consume. The register
 # allocation/rewrite that would CONSUME this liveness is deferred to a later slot
 # (the in-place-patch emit model can't grow a `push`→`mov reg` instruction; see
-# docs/development/issues/2026-07-02-ir-regalloc-rewrite-needs-reemit.md).
+# docs/development/issues/archived/2026-07-02-ir-regalloc-rewrite-needs-reemit.md).
 #
 # cybs note (feedback_seed_derive_mandatory_cybs_limits): kept as several small
 # helpers chained by regular (non-tail) calls so no single fn trips the bootstrap
@@ -1087,7 +1087,7 @@ fn ir_count_exit_bbs(S): i64 {
 # eliminating the memory traffic. This pass COUNTS the promotable intervals; it
 # does NOT allocate or rewrite — the rewrite needs the IR re-emit path (the
 # in-place-patch emit model can't grow `push`(1B)→`mov reg`(3B)); deferred to a
-# later slot (see docs/development/issues/2026-07-02-ir-regalloc-rewrite-needs-reemit.md).
+# later slot (see docs/development/issues/archived/2026-07-02-ir-regalloc-rewrite-needs-reemit.md).
 
 # Ops that break the clean-span guarantee: they may touch [rsp] (RAW/inline-asm),
 # consume stack args (CALL_POPS/CALL_CLEAN), transfer control (SWITCH/TAIL_JMP),

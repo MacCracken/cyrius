@@ -23,7 +23,7 @@ V="$(tr -d '[:space:]' < VERSION)"
 # installed version — which is exactly what happened on 2026-09-07, taking the
 # entire versions/ store with it and leaving 104 pinned sibling repos unable to
 # run any `cyrius` verb. The only protection until now was a sentence in
-# docs/development/handoff.md, and a sentence is not a guard.
+# docs/development/handoff.md (archived 6.6.20; that sentence is in its git history), and a sentence is not a guard.
 # Refuse when the target is the user's real store, or any tree that already holds
 # more than one installed version. CYRIUS_FUNCGATE_ALLOW_LIVE=1 is the deliberate
 # override; a temp-dir target needs no override at all.
