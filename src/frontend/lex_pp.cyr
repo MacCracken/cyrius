@@ -881,6 +881,39 @@ fn _pp_lineno_at(S, base, upto): i64 {
 # (`_had_error` fails the compile); `_panic` is left alone — there is no parse cascade to
 # suppress yet, and setting it swallowed the first real parse error. CHANGELOG [6.6.10]
 fn _pp_err_at(S, base, pos, msg): i64 {
+    _pp_err_head(S, base, pos);
+    PRSTR(msg);
+    syscall(SYS_WRITE, 2, "\n", 1);
+    _had_error = 1;
+    return 0;
+}
+
+# 6.6.20 — _pp_err_at with the offending NAME in the message: `pre`, the identifier at
+# `base + npos`, `post`. A table that is full or refuses an entry says WHICH entry, so the
+# reader does not have to count #define lines to find it. CHANGELOG [6.6.20]
+fn _pp_err_name_at(S, base, pos, pre, npos, post): i64 {
+    _pp_err_head(S, base, pos);
+    PRSTR(pre);
+    _pp_write_ident(base + npos);
+    PRSTR(post);
+    syscall(SYS_WRITE, 2, "\n", 1);
+    _had_error = 1;
+    return 0;
+}
+
+# Write the identifier at `p` (letters, digits, `_`; at most 64 bytes) to stderr.
+fn _pp_write_ident(p): i64 {
+    var n = 0;
+    while (n < 64) {
+        if (PP_IDBYTE(load8(p + n)) == 0) { break; }
+        n = n + 1;
+    }
+    syscall(SYS_WRITE, 2, p, n);
+    return n;
+}
+
+# `error:<file>:<line>:<col>: ` — or a bare `error: ` for `base` 0. See _pp_err_at.
+fn _pp_err_head(S, base, pos): i64 {
     syscall(SYS_WRITE, 2, "error:", 6);
     if (base == 0) { syscall(SYS_WRITE, 2, " ", 1); }
     else {
@@ -900,9 +933,6 @@ fn _pp_err_at(S, base, pos, msg): i64 {
         PRNUM(pos - ls + 1);
         syscall(SYS_WRITE, 2, ": ", 2);
     }
-    PRSTR(msg);
-    syscall(SYS_WRITE, 2, "\n", 1);
-    _had_error = 1;
     return 0;
 }
 
@@ -981,8 +1011,8 @@ fn PP_REANCHOR_CUR(S, out, op, tmp, ip): i64 {
 # ⛔ v6.5.45 (CVE-39) — THE BOUND IS 768, NOT 4096, AND THE DIFFERENCE WAS A SILENT
 # MISCOMPILE. The heap map declared `0x190400 include_fname [4096]` and all three capture loops
 # guarded at 4095 from that number, but TWO live things sit inside that declared span:
-#   S+0x190700  PP_EXPAND's output-write-cursor return slot (:2334 store / :3166 load) — 768 B in
-#   S+0x190800  the `#ifdef` FEATURE-FLAG TABLE (:2368/:2379), 1024 B in
+#   S+0x190700  PP_EXPAND's output-write-cursor return slot (PP_EXPAND stores, PP_MACRO_PASS loads) — 768 B in
+#   S+0x190800  the `#ifdef` FEATURE-FLAG TABLE (PP_PREDEFINE / PP_DEFINE), 1024 B in
 # So an include or `#ref` path of 768 characters or more corrupts the preprocessor's own output
 # cursor — expanded macro text then lands at the wrong offset — and past 1024 it overwrites the
 # hashes of CYRIUS_ARCH_X86, CYRIUS_TARGET_MACOS and friends, after which `#ifdef` selects the
@@ -1021,6 +1051,22 @@ fn PP_MACRO_TEXT_FULL(): i64 {
     syscall(SYS_WRITE, 2, "error: #define bodies exceed the 16 KB macro text pool\n", 55);
     syscall(SYS_EXIT, 1);
     return 0;
+}
+
+# ⛔ 6.6.20 (CVE-TBD) — push one #ifdef / #ifndef / #ifplat / #if level onto the per-level
+# state stack at S+0x197F10 and return the new depth. The stack is 64 bytes, one per level,
+# and none of the seven push sites (PP_PASS 4, PP_IFDEF_PASS 3) checked it: each deeper level
+# wrote its state byte upward through live compiler state, and at ~344K levels into
+# gvar_initval, which _EMIT_GVAR_STATIC_INITS bakes into the image — a silent miscompile.
+# A hard error like PP_MACRO_TEXT_FULL, located: the matching #endif would pop a level that
+# was never pushed, so continuing is not an option. CHANGELOG [6.6.20]
+fn PP_PUSH_LEVEL(S, base, pos, d, st): i64 {
+    if (d >= 64) {
+        _pp_err_at(S, base, pos, "#if/#ifdef/#ifndef/#ifplat nesting exceeds 64 levels");
+        syscall(SYS_EXIT, 1);
+    }
+    store8(S + 0x197F10 + d, st);
+    return d + 1;
 }
 
 
@@ -3344,6 +3390,73 @@ fn PP_FIND_MACRO(S, ip): i64 {
     return 0 - 1;
 }
 
+# 6.6.20 — the slot for the function-like `#define` at `dip` (main source, PP_PASS), or -1
+# when it is refused BY NAME. Until 6.6.20 the 17th function-like macro was silently
+# DISCARDED (the store sat in `if (msi < 16)` with no else), so a same-name fn was called in
+# its place or the use failed as a misleading "undefined function". A redefinition took a
+# slot of its own and was never used either: PP_FIND_MACRO returns the first match, and the
+# expansion pass runs after every definition is in, so no later definition could ever apply.
+# Both are refused, located, report-and-continue like PP_DEFINE's cap. CHANGELOG [6.6.20]
+fn PP_MACRO_SLOT(S, dip): i64 {
+    if (PP_FIND_MACRO(S, dip + 8) >= 0) {
+        _pp_err_name_at(S, S + _SRCB, dip, "function-like macro '", dip + 8, "' is already defined (a function-like #define cannot be redefined)");
+        return 0 - 1;
+    }
+    if (_pp_macro_count >= 16) {
+        _pp_err_name_at(S, S + _SRCB, dip, "too many function-like #define macros (max 16): '", dip + 8, "' does not fit");
+        return 0 - 1;
+    }
+    return _pp_macro_count;
+}
+
+# ⛔ 6.6.20 (CVE-TBD) — refuse, naming the macro, an expansion PP_EXPAND cannot do inside its
+# fixed buffers. A hard error like PP_MACRO_TEXT_FULL: the expansion is mid-copy and has no
+# honest partial result. `def` is the stored definition, `NAME(params) body`. CHANGELOG [6.6.20]
+fn PP_MACRO_REFUSE(def, why): i64 {
+    PRSTR("error: function-like macro '");
+    _pp_write_ident(def);
+    PRSTR("': ");
+    PRSTR(why);
+    syscall(SYS_WRITE, 2, "\n", 1);
+    syscall(SYS_EXIT, 1);
+    return 0;
+}
+
+# 6.6.20 — refuse, naming the macro, an invocation whose argument count is not the macro's
+# parameter count, or that never closes. PP_EXPAND never compared the two: extra arguments
+# were dropped, and too few made the substitution walk past the last argument THIS call wrote
+# into stale bytes of `args` left by an earlier call (`PICK(9)` after `PICK(3, 4)`, with
+# `#define PICK(a, b) b`, compiled clean and took 4). A zero-parameter macro is invoked as
+# `Z()` / `Z( )`: one blank argument counts as none. `args` holds `acnt` NUL-terminated
+# arguments. Unlocated, like PP_MACRO_REFUSE. CHANGELOG [6.6.20]
+fn PP_MACRO_ARGCHECK(def, pcnt, acnt, args, closed): i64 {
+    if (closed == 0) { PP_MACRO_REFUSE(def, "an invocation has no closing ')'"); }
+    var given = acnt;
+    if (pcnt == 0) {
+        if (acnt == 1) {
+            var i = 0;
+            var blank = 1;
+            while (load8(args + i) != 0) {
+                var c = load8(args + i);
+                if (c != 32) { if (c != 9) { if (c != 10) { if (c != 13) { blank = 0; } } } }
+                i = i + 1;
+            }
+            if (blank == 1) { given = 0; }
+        }
+    }
+    if (given == pcnt) { return 0; }
+    PRSTR("error: function-like macro '");
+    _pp_write_ident(def);
+    PRSTR("': takes ");
+    PRNUM(pcnt);
+    if (pcnt == 1) { PRSTR(" argument, given "); }
+    else { PRSTR(" arguments, given "); }
+    PRNUM(given);
+    syscall(SYS_WRITE, 2, "\n", 1);
+    syscall(SYS_EXIT, 1);
+    return 0;
+}
+
 # Expand macro invocation: NAME(arg1, arg2)
 # Reads args from input at ip, substitutes into body, writes to out+op
 # Returns new ip position (after the closing paren)
@@ -3365,11 +3478,21 @@ fn PP_EXPAND(S, mi, ip, bl, out, op): i64 {
     var dp = 0;
     while (load8(def + dp) != 40) { dp = dp + 1; }
     dp = dp + 1;  # skip (
-    # Read param names from definition
-    var pnames[512];   # up to 8 params, 64 bytes each
+    # Read param names from definition.
+    # ⛔ 6.6.20 (CVE-TBD) — pnames and args below are fn-local `var x[512]`, i.e. 512 BYTES
+    # each, packed NUL-separated (there is no per-param stride — this line used to say "up to 8
+    # params, 64 bytes each", which described a layout that never existed). Neither copy was
+    # bounded: a 516-byte argument came out as an EMPTY expansion and compiled clean (a
+    # silent miscompile), 518+ smashed PP_EXPAND's frame and cycc died of SIGSEGV, and a
+    # ~600-byte parameter list did the same from the definition side. Each loop stores at most
+    # one byte per pass; both refuse past 511 bytes of names / arguments and separators, so
+    # the copy never writes past index 511. CHANGELOG [6.6.20]
+    var pnames[512];
     var pcnt = 0;
     var pp = 0;
     while (load8(def + dp) != 41) {
+        if (pp >= 511) { PP_MACRO_REFUSE(def, "its parameter names exceed 511 bytes"); }
+        if (load8(def + dp) == 0) { PP_MACRO_REFUSE(def, "its parameter list has no closing ')'"); }
         if (load8(def + dp) == 44) { store8(&pnames + pp, 0); pp = pp + 1; pcnt = pcnt + 1; dp = dp + 1; }
         elif (load8(def + dp) == 32) { dp = dp + 1; }
         else { store8(&pnames + pp, load8(def + dp)); pp = pp + 1; dp = dp + 1; }
@@ -3386,15 +3509,17 @@ fn PP_EXPAND(S, mi, ip, bl, out, op): i64 {
     }
     ip = ip + 1;  # skip (
     # Read args from input (comma-separated, handle nested parens)
-    var args[512];    # up to 8 args, 64 bytes each
+    var args[512];    # 512 bytes, NUL-separated — bounded below (see pnames)
     var acnt = 0;
     var ap = 0;
     var depth = 0;
+    var closed = 0;
     while (ip < bl) {
         var c = load8(S + _SRCB + ip);
+        if (ap >= 512) { PP_MACRO_REFUSE(def, "an invocation's arguments exceed 511 bytes"); }
         if (c == 40) { depth = depth + 1; store8(&args + ap, c); ap = ap + 1; }
         elif (c == 41) {
-            if (depth == 0) { store8(&args + ap, 0); ap = ap + 1; acnt = acnt + 1; ip = ip + 1; break; }
+            if (depth == 0) { store8(&args + ap, 0); ap = ap + 1; acnt = acnt + 1; ip = ip + 1; closed = 1; break; }
             depth = depth - 1; store8(&args + ap, c); ap = ap + 1;
         }
         elif (c == 44) {
@@ -3404,6 +3529,7 @@ fn PP_EXPAND(S, mi, ip, bl, out, op): i64 {
         else { store8(&args + ap, c); ap = ap + 1; }
         ip = ip + 1;
     }
+    PP_MACRO_ARGCHECK(def, pcnt, acnt, &args, closed);   # 6.6.20: count must match
     # Substitute: walk body, replace param names with args
     var bi = 0;
     while (load8(body + bi) != 0) {
@@ -3538,23 +3664,51 @@ fn PP_HASH_CSTR(name): i64 {
 # `#ifdef CYRIUS_ARCH_AARCH64` / `#ifdef CYRIUS_ARCH_X86` to gate
 # architecture-specific asm blocks without per-arch lib files.
 fn PP_PREDEFINE(S, name): i64 {
-    # 6.6.10: ERR_MSG returns (v6.4.62), so the cap stops the store itself — the 17th hash
-    # landed on value[0] at S+0x190880. CHANGELOG [6.6.10]
-    if (_pp_flag_count >= 16) { _pp_err_at(S, 0, 0, "too many preprocessor #define/flag entries (max 16)"); return 0; }
     var h = PP_HASH_CSTR(name);
-    store64(S + 0x190800 + _pp_flag_count * 8, h);
-    store64(S + 0x190880 + _pp_flag_count * 8, 0);
-    _pp_flag_count = _pp_flag_count + 1;
+    # 6.6.20: a name already in the table keeps its slot — see PP_FLAG_SLOT. CHANGELOG [6.6.20]
+    var slot = PP_FLAG_SLOT(S, h);
+    if (slot < 0) {
+        # 6.6.10: ERR_MSG returns (v6.4.62), so the cap stops the store itself — the 17th hash
+        # landed on value[0] at S+0x190880. CHANGELOG [6.6.10]
+        if (_pp_flag_count >= 16) { _pp_err_at(S, 0, 0, "too many preprocessor #define/flag entries (max 16)"); return 0; }
+        slot = _pp_flag_count;
+        _pp_flag_count = _pp_flag_count + 1;
+    }
+    store64(S + 0x190800 + slot * 8, h);
+    store64(S + 0x190880 + slot * 8, 0);
     return 0;
+}
+
+# 6.6.20 — the flag-table slot already holding name hash `h`, or -1. PP_DEFINE and
+# PP_PREDEFINE used to APPEND unconditionally, so every repeat of a name took a slot of its
+# own: lib/sigil.cyr's four unconditional `#define LINUX` cost four of the 16 (an
+# `include "lib/sandhi.cyr"` alone used 12, leaving a consumer 4), and a redefinition's
+# value was never read, because PP_GETVAL / PP_DEFINED return the FIRST match. A repeat now
+# reuses its slot and overwrites the value: the latest definition wins for the conditionals
+# after it in the same file. (Not across an include: a file's conditionals are evaluated
+# before an included file's #defines are registered — a known gap.) CHANGELOG [6.6.20]
+fn PP_FLAG_SLOT(S, h): i64 {
+    var di = 0;
+    while (di < _pp_flag_count) {
+        if (load64(S + 0x190800 + di * 8) == h) { return di; }
+        di = di + 1;
+    }
+    return 0 - 1;
 }
 
 # v5.6.42: src_base separated from S — see PP_HASH above. Source reads
 # come from src_base+pos; flag-table writes stay at S+0x190800/0x190880.
 fn PP_DEFINE(S, src_base, pos): i64 {
-    # 6.6.10: stop at the cap — see PP_PREDEFINE. CHANGELOG [6.6.10]
-    if (_pp_flag_count >= 16) { _pp_err_at(S, src_base, pos, "too many preprocessor #define/flag entries (max 16)"); return 0; }
     var h = PP_HASH(src_base, pos);
-    store64(S + 0x190800 + _pp_flag_count * 8, h);
+    # 6.6.20: a repeated name reuses its slot, so the cap counts NAMES — see PP_FLAG_SLOT.
+    var slot = PP_FLAG_SLOT(S, h);
+    if (slot < 0) {
+        # 6.6.10: stop at the cap — see PP_PREDEFINE. CHANGELOG [6.6.10]
+        if (_pp_flag_count >= 16) { _pp_err_at(S, src_base, pos, "too many preprocessor #define/flag entries (max 16)"); return 0; }
+        slot = _pp_flag_count;
+        _pp_flag_count = _pp_flag_count + 1;
+    }
+    store64(S + 0x190800 + slot * 8, h);
     # Check for value: #define NAME VALUE (skip name, find space, parse int)
     var vi = 0;
     var vc = load8(src_base + pos + vi);
@@ -3575,8 +3729,30 @@ fn PP_DEFINE(S, src_base, pos): i64 {
             dvc = load8(src_base + pos + vi);
         }
     }
-    store64(S + 0x190880 + _pp_flag_count * 8, defval);
-    _pp_flag_count = _pp_flag_count + 1;
+    store64(S + 0x190880 + slot * 8, defval);
+    return 0;
+}
+
+# 6.6.20 — a `#define` in INCLUDED content (PP_IFDEF_PASS, `dip` at the `#`). Only PP_PASS
+# stores function-like macros, and it reads the main source alone, so a function-like
+# `#define NAME(x) ...` in an included file went to PP_DEFINE and became a FLAG named NAME:
+# never a macro, a call to it compiled against a same-name fn if there was one, and it used
+# up a flag slot. Refused by name; an object-like define goes to PP_DEFINE as before. The
+# name ends at the first space, TAB or newline; a `(` before that makes it a function-like
+# macro. CHANGELOG [6.6.20]
+fn PP_DEFINE_INCLUDED(S, src_base, dip): i64 {
+    var dp = dip + 8;
+    var dc = load8(src_base + dp);
+    while (dc != 0) {
+        if (dc == 40) {
+            _pp_err_name_at(S, src_base, dip, "function-like macro '", dip + 8, "' is defined in an included file; a function-like #define is supported only in the main source");
+            return 0;
+        }
+        if (dc == 32 || dc == 9 || dc == 10) { break; }
+        dp = dp + 1;
+        dc = load8(src_base + dp);
+    }
+    PP_DEFINE(S, src_base, dip + 8);
     return 0;
 }
 
@@ -3802,7 +3978,8 @@ fn PP_PASS(S): i64 {
     var bol = 1;
     var skip_depth = 0;
     # v5.6.1: pp_depth tracks the index into the per-level state stack
-    # at S+0x197F10 (64-byte cap, one byte per nesting level). Shared
+    # at S+0x197F10 (64-byte cap, one byte per nesting level — enforced
+    # by PP_PUSH_LEVEL since 6.6.20, unchecked before). Shared
     # with skip_depth: skip_depth == number of stack entries with
     # state != 0. See the directive handler comments below for the
     # state machine.
@@ -3881,8 +4058,8 @@ fn PP_PASS(S): i64 {
                     }
                     if (is_macro == 1) {
                         # Store macro inline: copy line text to storage
-                        var msi = _pp_macro_count;
-                        if (msi < 16) {
+                        var msi = PP_MACRO_SLOT(S, dip);
+                        if (msi >= 0) {
                             var mip = dip + 8;
                             store64(S + 0x192000 + msi * 8, PP_HASH_ID(S + _SRCB, mip));
                             store64(S + 0x192080 + msi * 8, _pp_macro_text_pos);
@@ -3931,7 +4108,7 @@ fn PP_PASS(S): i64 {
             }
             # #ifdef / #ifndef / #ifplat / #if (v5.6.1 state-stack
             # rewrite). Per-level state lives at S+0x197F10[pp_depth],
-            # one byte per level, cap 64 levels. Encoding:
+            # one byte per level, cap 64 levels (PP_PUSH_LEVEL). Encoding:
             #   0 = EMITTING    — branch emits; outer emits
             #   1 = SEARCHING   — branch skips, no true match yet; outer emits
             #   2 = DONE        — true branch already taken; skip rest
@@ -3946,8 +4123,7 @@ fn PP_PASS(S): i64 {
                         if (PP_DEFINED(S, S + _SRCB, dip + 7) == 1) { _s = 0; }
                         else { _s = 1; }
                     }
-                    store8(S + 0x197F10 + pp_depth, _s);
-                    pp_depth = pp_depth + 1;
+                    pp_depth = PP_PUSH_LEVEL(S, S + _SRCB, dip, pp_depth, _s);
                     if (_s != 0) { skip_depth = skip_depth + 1; }
                     ip = PP_SKIPLINE(S + _SRCB, ip, bl); op = _pp_a64_open(S + _SRCB, dip + 7, 0 * 8 + _s, pp_depth - 1, out, op); bol = 1; handled = 1;
                 } }
@@ -3957,8 +4133,7 @@ fn PP_PASS(S): i64 {
                         if (PP_DEFINED(S, S + _SRCB, dip + 8) == 0) { _s = 0; }
                         else { _s = 1; }
                     }
-                    store8(S + 0x197F10 + pp_depth, _s);
-                    pp_depth = pp_depth + 1;
+                    pp_depth = PP_PUSH_LEVEL(S, S + _SRCB, dip, pp_depth, _s);
                     if (_s != 0) { skip_depth = skip_depth + 1; }
                     ip = PP_SKIPLINE(S + _SRCB, ip, bl); op = _pp_a64_open(S + _SRCB, dip + 8, 1 * 8 + _s, pp_depth - 1, out, op); bol = 1; handled = 1;
                 } }
@@ -3972,8 +4147,7 @@ fn PP_PASS(S): i64 {
                         if (PP_IFPLAT_MATCH(S, dip + 8) == 1) { _s = 0; }
                         else { _s = 1; }
                     }
-                    store8(S + 0x197F10 + pp_depth, _s);
-                    pp_depth = pp_depth + 1;
+                    pp_depth = PP_PUSH_LEVEL(S, S + _SRCB, dip, pp_depth, _s);
                     if (_s != 0) { skip_depth = skip_depth + 1; }
                     ip = PP_SKIPLINE(S + _SRCB, ip, bl); op = _pp_a64_open(S + _SRCB, dip + 8, 2 * 8 + _s, pp_depth - 1, out, op); bol = 1; handled = 1;
                 } }
@@ -3983,8 +4157,7 @@ fn PP_PASS(S): i64 {
                         if (PP_EVAL_IF(S, S + _SRCB, dip + 4) == 1) { _s = 0; }
                         else { _s = 1; }
                     }
-                    store8(S + 0x197F10 + pp_depth, _s);
-                    pp_depth = pp_depth + 1;
+                    pp_depth = PP_PUSH_LEVEL(S, S + _SRCB, dip, pp_depth, _s);
                     if (_s != 0) { skip_depth = skip_depth + 1; }
                     ip = PP_SKIPLINE(S + _SRCB, ip, bl); op = _pp_a64_open(S + _SRCB, dip + 4, 3 * 8 + _s, pp_depth - 1, out, op); bol = 1; handled = 1;
                 } }
@@ -4402,7 +4575,7 @@ fn PP_IFDEF_PASS(S): i64 {
                     if (load8(tmp + dip + 1) == 64) { _pp_note_marker(tmp, dip, bl); }
                 }
                 if (ISDEFINE(tmp, dip, bl) == 1) {
-                    if (skip_depth == 0) { PP_DEFINE(S, tmp, dip + 8); }
+                    if (skip_depth == 0) { PP_DEFINE_INCLUDED(S, tmp, dip); }
                     ip = PP_SKIPLINE(tmp, ip, bl); store8(out + op, 10); op = op + 1; bol = 1; handled = 1;
                 }
                 if (handled == 0) { if (ISIFDEF(tmp, dip, bl) == 1) {
@@ -4411,8 +4584,7 @@ fn PP_IFDEF_PASS(S): i64 {
                             if (PP_DEFINED(S, tmp, dip + 7) == 1) { _s = 0; }
                             else { _s = 1; }
                         }
-                        store8(S + 0x197F10 + pp_depth, _s);
-                        pp_depth = pp_depth + 1;
+                        pp_depth = PP_PUSH_LEVEL(S, tmp, dip, pp_depth, _s);
                         if (_s != 0) { skip_depth = skip_depth + 1; }
                         ip = PP_SKIPLINE(tmp, ip, bl); op = _pp_a64_open(tmp, dip + 7, 0 * 8 + _s, pp_depth - 1, out, op); bol = 1; handled = 1;
                     } }
@@ -4422,8 +4594,7 @@ fn PP_IFDEF_PASS(S): i64 {
                             if (PP_DEFINED(S, tmp, dip + 8) == 0) { _s = 0; }
                             else { _s = 1; }
                         }
-                        store8(S + 0x197F10 + pp_depth, _s);
-                        pp_depth = pp_depth + 1;
+                        pp_depth = PP_PUSH_LEVEL(S, tmp, dip, pp_depth, _s);
                         if (_s != 0) { skip_depth = skip_depth + 1; }
                         ip = PP_SKIPLINE(tmp, ip, bl); op = _pp_a64_open(tmp, dip + 8, 1 * 8 + _s, pp_depth - 1, out, op); bol = 1; handled = 1;
                     } }
@@ -4433,8 +4604,7 @@ fn PP_IFDEF_PASS(S): i64 {
                             if (PP_EVAL_IF(S, tmp, dip + 4) == 1) { _s = 0; }
                             else { _s = 1; }
                         }
-                        store8(S + 0x197F10 + pp_depth, _s);
-                        pp_depth = pp_depth + 1;
+                        pp_depth = PP_PUSH_LEVEL(S, tmp, dip, pp_depth, _s);
                         if (_s != 0) { skip_depth = skip_depth + 1; }
                         ip = PP_SKIPLINE(tmp, ip, bl); op = _pp_a64_open(tmp, dip + 4, 3 * 8 + _s, pp_depth - 1, out, op); bol = 1; handled = 1;
                     } }

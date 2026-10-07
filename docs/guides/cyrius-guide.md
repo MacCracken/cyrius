@@ -1737,6 +1737,39 @@ The full set: `#ifdef`, `#ifndef`, `#else`, `#elif`, `#endif`. State is
 tracked per nesting level — `#elif` after a taken `#ifdef` is correctly
 suppressed, and nested blocks skip cleanly inside a parent's skip path.
 
+**Preprocessor limits.** Each table below is fixed-size, and past its limit the
+compile is refused with an error that names the limit (and the entry, where there
+is one). Until 6.6.20 several of these were silent.
+- **Nesting: 64 levels** of `#if` / `#ifdef` / `#ifndef` / `#ifplat` in the main
+  source, and of `#if` / `#ifdef` / `#ifndef` within each included file (an
+  included file starts its own count). The 65th is refused at its line. (Before
+  6.6.20 deeper nesting wrote through compiler state and could silently change the
+  binary.) Known gap: `#ifplat` is not evaluated inside an included file — both
+  arms compile there; use `#ifdef CYRIUS_ARCH_*` in included files.
+- **Function-like macros (`#define NAME(a, b) …`): 16, in the main source only.**
+  The 17th is refused by name, a second `#define` of the same function-like name
+  is refused (expansion runs after every definition is read, so only one
+  definition could ever apply), and a function-like `#define` in an included file
+  is refused by name — it was never a macro there. (Before 6.6.20 all three were
+  silently ignored.) An invocation must pass exactly as many arguments as the
+  macro has parameters — `Z()` or `Z( )` for none — and a mismatch is refused,
+  naming the macro. (Before 6.6.20 an extra argument was dropped and a missing one
+  read a previous invocation's argument.) Arguments are split at every comma
+  outside parentheses; known gap: that includes a comma inside a string literal.
+- **`#define` names: 16, including the target's builtins** (`CYRIUS_ARCH_*`,
+  `CYRIUS_TARGET_*`, … — three on x86_64 Linux). A name counts once however often it
+  is defined, and a redefinition's value applies to the `#if`s that follow it in
+  the same file — there the latest definition wins. (Before 6.6.20 every repeat
+  took a slot of its own — `include "lib/sandhi.cyr"` used 12 of the 16 — and the
+  FIRST value was read forever.) Known gap: a file's `#if` / `#ifdef` is evaluated
+  before the `#define`s of a file it includes are registered, so a conditional
+  after an `include` sees neither a name nor a new value that the included file
+  defines.
+- **A function-like macro's parameter list, and one invocation's arguments: 511
+  bytes each**, counting the separators. Past either the compile is refused,
+  naming the macro. (Before 6.6.20 a 516-byte argument silently expanded to
+  nothing, and longer ones crashed the compiler.)
+
 `#ifplat <plat>` (v5.4.19) is a tighter spelling for arch / OS dispatch:
 
 ```
