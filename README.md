@@ -4,7 +4,7 @@
  
 A self-hosting compiler toolchain that bootstraps from a 29 KB binary with zero external dependencies. No Rust, no LLVM, no Python, no libc. Writes the [AGNOS](https://github.com/MacCracken/agnos) kernel, its own package manager, its own build tool, and (as of v5.11.49) bootable UEFI applications.
 
-~1.19 MB compiler. Self-hosting on x86_64 + aarch64 (cross + native), Windows PE cross (directory-listing available since v6.1.18), macOS Mach-O (arm64 + x86), UEFI Application emit (gnoboot bootloader unblocked at v5.11.49), cyrius-x bytecode. Position-independent (PIE) codegen on x86_64 + aarch64 (`--pie`), `.gnu.hash` dynamic linking, **W^X** userland ELF by default since v6.3.12 (separate `R E` / `RW ` `PT_LOAD` segments; `CYRIUS_WX=0` opts back to the historical single `RWE`), and a TS/TSX → JS emitter (`cycc --emit-js`). Packed-SIMD compute (v6.4.x, Phase 5 complete) — f32/f64/integer 128-bit + **256-bit AVX2** f32v8 (elementwise + FMA + horizontal dot) with CPUID runtime dispatch — complete on all four backends: x86 (SSE + AVX2), aarch64 NEON (v6.4.28–.30), Windows PE value-form params + returns (v6.4.31), and cx bytecode per-lane scalar loops (v6.4.32). Sovereign native TLS 1.3 — client + server, sigil-backed X.509 chain verification, no OpenSSL — is the **default** TLS backend since v6.1.21 (`-D CYRIUS_TLS_LIBSSL` opts back to the libssl bridge). `Result` / `Option` / `Either` are the **value form** since v6.6.0 — a payload variant returns `(tag, payload)` in a register pair, so construction allocates **zero bytes**. 102 stdlib modules + 0 git deps (folded sibling distfiles: sakshi 2.5.1 / patra 1.14.1 / sigil 3.12.16 / vani 1.2.4 / yukti 2.3.10 / sankoch 2.7.14 / sandhi 1.9.16 / niyama 1.0.10; mabda 4.1.1; **bayan 1.5.5** — data formats & big-int into `lib/bayan.cyr`; **ganita 1.2.4** — linear algebra + advanced math: matrix / linalg / transcendental into `lib/ganita.cyr`; **yantra 1.0.4** — UI/E2E testing into `lib/yantra.cyr`). 301 .tcyr + 1 soak + 1 smoke + 6 fuzz + 18 bench, 240 check.sh gates (144 of them shell gates) + QEMU boot gate.
+~1.59 MB compiler. Self-hosting on x86_64 + aarch64 (cross + native), Windows PE cross (directory-listing available since v6.1.18), macOS Mach-O (arm64 + x86), UEFI Application emit (gnoboot bootloader unblocked at v5.11.49), cyrius-x bytecode. Position-independent (PIE) codegen on x86_64 + aarch64 (`--pie`), `.gnu.hash` dynamic linking, **W^X** userland ELF by default since v6.3.12 (separate `R E` / `RW ` `PT_LOAD` segments; `CYRIUS_WX=0` opts back to the historical single `RWE`), and a TS/TSX → JS emitter (`cycc --emit-js`). Packed-SIMD compute (v6.4.x, Phase 5 complete) — f32/f64/integer 128-bit + **256-bit AVX2** f32v8 (elementwise + FMA + horizontal dot) with CPUID runtime dispatch — complete on all four backends: x86 (SSE + AVX2), aarch64 NEON (v6.4.28–.30), Windows PE value-form params + returns (v6.4.31), and cx bytecode per-lane scalar loops (v6.4.32). Sovereign native TLS 1.3 — client + server, sigil-backed X.509 chain verification, no OpenSSL — is the **default** TLS backend since v6.1.21 (`-D CYRIUS_TLS_LIBSSL` opts back to the libssl bridge). `Result` / `Option` / `Either` are the **value form** since v6.6.0 — a payload variant returns `(tag, payload)` in a register pair, so construction allocates **zero bytes**. 106 stdlib modules + 0 git deps (folded sibling distfiles: sakshi 2.5.7 / patra 1.15.2 / sigil 3.13.10 / vani 1.2.9 / yukti 2.3.15 / sankoch 2.8.1 / sandhi 1.10.8 / niyama 1.0.13; mabda 4.1.7; **bayan 1.5.12** — data formats & big-int into `lib/bayan.cyr`; **ganita 1.2.14** — linear algebra + advanced math: matrix / linalg / transcendental into `lib/ganita.cyr`; **yantra 1.0.8** — UI/E2E testing into `lib/yantra.cyr`). 482 .tcyr (197 of them the cross-OS set run on real macOS / Windows / aarch64 hardware) + 1 soak + 1 smoke + 6 fuzz + 19 bench, 372 shell gates under `tests/gates/` run by check.sh + QEMU boot gate.
 
 ## Install
 
@@ -94,24 +94,24 @@ syscall(60, r);
 
 | Metric | Value |
 |--------|-------|
-| Compiler (`cycc`) | **1,247,608 B** (~1.19 MB) x86_64 at v6.6.1 |
-| Cross compilers | `cycc_aarch64` 783,784 B, `cycc_win` 1,154,048 B, `cycc_cx` 698,992 B (cross-built); `cycc-native-aarch64` 940,536 B (aarch64-native, pi-verified) |
+| Compiler (`cycc`) | **1,586,184 B** (~1.59 MB) x86_64 at v6.6.19 (unchanged at the 6.6.20 slot open) |
+| Cross compilers | `cycc_aarch64` 1,114,920 B, `cycc_win` 1,561,088 B, `cycc_cx` 1,019,744 B (cross-built); `cycc-native-aarch64` 1,323,400 B (aarch64-native, pi-verified; −35.2 % at 6.6.18, the ESYSXLAT compile-time fold) — the v6.6.19 release's binaries |
 | Seed binary (`asm`) | **29,024 B** (committed binary root of trust; re-derivable from `archive/seed/` via `bootstrap/verify.sh`) |
 | Bootstrap compiler (`cybs`) | **12,344 B** (compiles all of `src/main.cyr`) |
-| LSP server (`cyrius-lsp`) | **119,600 B** (definition / documentSymbol / references / semanticTokens / hover) |
-| Linker (`cyrld`) | **919,600 B** |
-| External dependencies | **0** at the compiler level (0 git deps at stdlib level: mabda folded, now 4.1.1) |
-| Tests | **301** .tcyr + **6** .fcyr fuzz + **18** .bcyr bench + 1 .scyr soak + 1 .smcyr smoke (all readers recursive since v6.5.11 — the corpus lives in topical subfolders) |
-| Gates (`scripts/check.sh`) | **240** structural + runtime gates (240 passed / 0 failed at v6.6.1) + QEMU kernel boot gate. **144** of them are shell gates under `tests/gates/<bucket>/*.sh` (8 buckets since the v6.5.11 reorg — codegen, concurrency, diagnostics, frontend, ir-opt, memory, platform, toolchain) — some registered by exact path in `programs/checks/main.cyr`, the rest driven from `scripts/check.sh`; all 144 are live. ⚠ Never quote this number without re-deriving it: `find tests/gates -name '*.sh' | wc -l`. (Incl. PIE exec gate at v6.1.6, QEMU kernel boot gate at v6.2.28, deps-resolver gates `_deps_requires`/`_deps_sidecar`/`_deps_groups`/`_deps_modular` @ v6.2.46–.50, CVE-32 modular-traversal gate @ v6.2.51, the 8300-var `_var_grow_gate` @ v6.3.0, the lever-2 `_deps_features_gate` @ v6.3.1.) |
+| LSP server (`cyrius-lsp`) | **149,032 B** (definition / documentSymbol / references / semanticTokens / hover) |
+| Linker (`cyrld`) | **932,512 B** |
+| External dependencies | **0** at the compiler level (0 git deps at stdlib level: mabda folded, now 4.1.7) |
+| Tests | **482** .tcyr (**197** in `tests/tcyr/crossos/`, the set the release gate runs on real ecb / ach / cass / pi) + **6** .fcyr fuzz + **19** .bcyr bench + 1 .scyr soak + 1 .smcyr smoke (all readers recursive since v6.5.11 — the corpus lives in topical subfolders) |
+| Gates (`scripts/check.sh`) | **376** registered shell gates — **372** under `tests/gates/<bucket>/*.sh` (8 buckets since the v6.5.11 reorg — codegen, concurrency, diagnostics, frontend, ir-opt, memory, platform, toolchain) plus 4 `scripts/*-gate.sh`; some registered by exact path in `programs/checks/main.cyr`, the rest driven from `scripts/check.sh`, and every one of them is registered (`sh scripts/check.sh --registry`) — plus the check driver's built-in rows and the QEMU kernel boot gate. The v6.6.19 release gate ran it GREEN: 0 failed, 2 named agnos-parity SKIPs. ⚠ Never quote these numbers without re-deriving them: `find tests/gates -name '*.sh' \| wc -l`. (Incl. PIE exec gate at v6.1.6, QEMU kernel boot gate at v6.2.28, deps-resolver gates `_deps_requires`/`_deps_sidecar`/`_deps_groups`/`_deps_modular` @ v6.2.46–.50, CVE-32 modular-traversal gate @ v6.2.51, the 8300-var `_var_grow_gate` @ v6.3.0, the lever-2 `_deps_features_gate` @ v6.3.1.) |
 | Architectures | x86_64 + aarch64 (cross + native), Windows PE cross, macOS Mach-O (arm64 + x86), UEFI Application emit, cyrius-x bytecode (with SIMD codegen since v6.4.32) |
-| Stdlib modules | **102** (distfiles folded byte-identical; bayan 1.5.5 → `lib/bayan.cyr`, ganita 1.2.4 → `lib/ganita.cyr`, `lib/sys.cyr` system-introspection @ v6.1.28; see [docs/stdlib-modules.md](docs/stdlib-modules.md)) |
-| Public API surface | **5,152** public fns (`docs/api-surface.snapshot`, regenerated by `cyrius_api_surface`) |
+| Stdlib modules | **106** (distfiles folded byte-identical; bayan 1.5.12 → `lib/bayan.cyr`, ganita 1.2.14 → `lib/ganita.cyr`, `lib/sys.cyr` system-introspection @ v6.1.28; see [docs/stdlib-modules.md](docs/stdlib-modules.md)) |
+| Public API surface | **5,827** public fns (`docs/api-surface.snapshot`, regenerated by `cyrius_api_surface`) |
 | Cross-host CI | aarch64 Linux (Pi 4) + Apple Silicon macOS (ecb) + Intel macOS x86_64 Mach-O (ach, first-class release-gate host since v6.4.59) + Windows 11 PE, all SSH-wired |
-| Heap layout | 102 regions (the `heapmap` gate's own count — ⚠ a raw `grep -cE '^#   0x'` over `src/main.cyr` returns **145** because it also matches 18 `FREED` markers and the multi-scalar band lines that carry no `[BYTES]` field; run `sh tests/gates/memory/heapmap.sh` for the authoritative number), monotonic post-v5.11.68 full reorg (str_data at 0x21A000, codebuf at 0x41A000); the var-family + fn/fixup/codebuf tables are growable (relocatable bases) as of the v6.2.0/v6.3.0 Phase-0 migration; backed by an anonymous-mmap **chunk** bump allocator since v6.1.19 (was `brk`-backed — switched so glibc's `brk` arena can't collide with the fdlopen/libssl bridge), `alloc_init()` idempotent since v6.1.23 |
+| Heap layout | 102 regions (the `heapmap` gate's own count — ⚠ a raw `grep -cE '^#   0x'` over `src/main.cyr` returns **145** because it also matches the 18 `FREED` entries and the multi-scalar band lines that carry no `[BYTES]` field; run `sh tests/gates/memory/heapmap.sh` for the authoritative number), monotonic post-v5.11.68 full reorg (str_data at 0x21A000; the code buffer is an off-heap `alloc()` since v6.4.49 and the 0x41A000 band it used to occupy is only its historical base); the var-family + fn/fixup/codebuf tables are growable (relocatable bases) as of the v6.2.0/v6.3.0 Phase-0 migration; backed by an anonymous-mmap **chunk** bump allocator since v6.1.19 (was `brk`-backed — switched so glibc's `brk` arena can't collide with the fdlopen/libssl bridge), `alloc_init()` idempotent since v6.1.23 |
 
 ### Toolchain size comparison
 
-The core Cyrius toolchain totals **6,893,216 B (~6.57 MB)** re-measured at v6.6.1 across the compiler, four cross-compilers (aarch64 / Windows PE / native-aarch64 / cx bytecode), linker, LSP, formatter, linter, doc tool, init scaffolder (which is also the port utility), and `cyrius` CLI dispatcher. The installed `~/.cyrius/bin/` directory is larger — **10,249,873 B** (~9.8 MB, symlinks dereferenced) — mostly the two `cyrsign*` Authenticode helpers at ~1.4 MB each.
+The core Cyrius toolchain totals **8,718,168 B (~8.31 MB)** re-measured at v6.6.19 (the tagged install slot) across the compiler, four cross-compilers (aarch64 / Windows PE / native-aarch64 / cx bytecode), linker, LSP, formatter, linter, doc tool, init scaffolder (which is also the port utility), and `cyrius` CLI dispatcher. The installed `~/.cyrius/bin/` directory is larger — **12,440,524 B** (~11.9 MB, symlinks dereferenced) — mostly the two `cyrsign*` Authenticode helpers at ~1.5 MB each.
 
 > ⚠ Both figures were **re-measured**, not re-stamped. The previous text claimed 6,385,008 B and an installed tree of 35,138,369 B "because the two `cyrsign*` helpers are ~14 MB each" — they are 1,426,000 B and 1,413,088 B, a 10× error that had been carried as a stated explanation. A number with a reason attached is not more trustworthy than one without; re-run the measurement.
 
@@ -119,7 +119,7 @@ For order-of-magnitude context (approximate, per typical Linux distribution pack
 
 | Toolchain | Approximate size | Notes |
 |-----------|------------------|-------|
-| **Cyrius** (core toolchain) | **~6.57 MB** | Compiler + linker + LSP + fmt + lint + doc + 4 cross-compilers + init + CLI |
+| **Cyrius** (core toolchain) | **~8.31 MB** | Compiler + linker + LSP + fmt + lint + doc + 4 cross-compilers + init + CLI |
 | TCC (Tiny C Compiler, self-hosting) | ~500 KB | C compiler binary only; no LSP / linker / fmt |
 | `gcc` | ~150-200 MB | Compiler + dependencies; libc not included |
 | `rustc` | ~150 MB (binary) | + ~850 MB stdlib metadata |
@@ -133,31 +133,32 @@ Per-binary sizes for the Cyrius single-pipeline compile path:
 |-------|--------|------|
 | 1. Root of trust (source) | `bootstrap/asm` | 29 KB |
 | 2. Bootstrap compiler | `cybs` | ~12 KB |
-| 3. Full compiler | `cycc` | ~1.19 MB |
-| 4. Linker | `cyrld` | 920 KB |
+| 3. Full compiler | `cycc` | ~1.59 MB |
+| 4. Linker | `cyrld` | 933 KB |
 
 ### Language surface
 
 Source of truth: `TOKNAME_BUILTIN` + `IS_KEYWORD_TOK` in `src/common/util.cyr`. Don't re-derive these counts by grepping the lexer; two keyword paths and >8-char u64-compare names make a regex sweep under-count.
 
-> ⚠ **The "cannot drift" guarantee is narrower than this section used to claim.** It read that `IS_KEYWORD_TOK` *derives* from `TOKNAME_BUILTIN` "so the sets cannot drift" — but `IS_KEYWORD_TOK`'s own comment says that only covers the BUILTIN/intrinsic table; the 26 plain statement keywords are still enumerated separately, and "adding to one and not the other is exactly the drift that note claims is impossible." Measured at v6.6.1, three different builtin counts were live in the tree at once: **51** (a source comment in `util.cyr`), **67** (here and in `CLAUDE.md`), and **76** (the actual arm count). The table below is derived, not carried.
+> ⚠ **The "cannot drift" guarantee is narrower than this section used to claim.** It read that `IS_KEYWORD_TOK` *derives* from `TOKNAME_BUILTIN` "so the sets cannot drift" — but `IS_KEYWORD_TOK`'s own comment says that only covers the BUILTIN/intrinsic table; the 26 plain statement keywords are still enumerated separately, and "adding to one and not the other is exactly the drift that note claims is impossible." Measured at v6.6.1, three different builtin counts were live in the tree at once: **51** (a source comment in `util.cyr`), **67** (here and in `CLAUDE.md`), and **76** (the actual arm count). At 6.6.20 the table had drifted again, the other way: it counted `TOKNAME_BUILTIN` alone and missed the two builtins `IS_KEYWORD_TOK` lists by hand. The table below is derived, not carried.
 
 | Category | Reserved-token count | Examples |
 |----------|----------------------|----------|
 | Statement keywords (control flow, decl, modules, visibility) | **26** | `if` `while` `else` `elif` `for` `switch` `case` `default` `break` `continue` `return` `fn` `var` `struct` `enum` `impl` `mod` `use` `match` `in` `asm` `pub`/`public` `private` `shared` `object` `stack` |
 | Memory + bit + return ops | **14** | `load8/16/32/64` `store8/16/32/64` `bitget` `bitset` `bitclr` `ret2` `rethi` `u128` |
 | Other builtins | **6** | `syscall` `union` `defer` `secret` `async` `await` |
-| f64 / f32 / 128-bit SIMD math intrinsics | **47** | `f64_*` (21) `f64v_*` (10) `f32_from/to` (2) `f32v_*` (5) `iv_*` (4) `f32v8_*` (5) |
+| f64 / f32 / 128-bit SIMD math intrinsics | **50** | `f64_*` (24 — `f64_le` / `f64_ge` / `f64_trunc` joined at v6.6.13) `f64v_*` (10) `f32_from/to` (2) `f32v_*` (5) `iv_*` (4) `f32v8_*` (5) |
 | 256-bit AVX2 f64 vector intrinsics | **9** | `f64v256_add/sub/mul/div/abs/sqrt/dot/fmadd/scale` (the v6.5.38 ymm widening — this row was missing) |
+| Builtins `IS_KEYWORD_TOK` lists BY HAND (not in `TOKNAME_BUILTIN`) | **2** | `f64_sqrt` (token 136) `callptr` (137) — renumbered out of the table at v6.6.2; this table missed them until 6.6.20 |
 | Preprocessor directives (`#`-prefix) | — (not lexer tokens) | `#assert` `#regalloc` `#derive` `#pe_import` `#ref` `#@incdir` `#ifdef` (+ `#else` / `#elif` / `#ifndef` / `#ifplat`) |
 
-**102 total** lexer-reserved tokens (26 statement keywords + 76 in `TOKNAME_BUILTIN`; the two sets are disjoint — verified, zero overlap). C23 has 59 keywords for comparison. The math intrinsics (56 across both vector widths) are exposed as keywords because they emit specific instruction sequences and dispatch per-backend (x86 SSE/AVX2, aarch64 NEON, cx bytecode per-lane loops); in C those would be `__builtin_*` or library calls.
+**107 total** lexer-reserved tokens (26 statement keywords + 79 in `TOKNAME_BUILTIN` + 2 hand-listed builtins; the sets are disjoint — verified, zero overlap; re-derived at 6.6.20). C23 has 59 keywords for comparison. `sizeof`, `mulh64` and `fncall0..8` are intrinsics the parser recognises by NAME, not reserved tokens, so they are not in this count. The math intrinsics (60 across both vector widths, `f64_sqrt` included) are exposed as keywords because they emit specific instruction sequences and dispatch per-backend (x86 SSE/AVX2, aarch64 NEON, cx bytecode per-lane loops); in C those would be `__builtin_*` or library calls.
 
 ### Caps + heap
 
-ident buffer / `tok_names` 512 KB (v6.4.76; 128 KB → 256 KB at v5.11.18 → 512 KB — the pool END must stay ≤ 0x100000), input_buf 1 MB (v5.7.10), str_data 2 MB (v5.8.59), token arrays 1M-entry (v5.8.46), distlib per-module 1 MB (v6.4.10; was 256 KB at v5.7.36, matching cycc's own input_buf), preprocess buf 8 MB (v5.11.33), binary output_buf 1 GiB, off-heap `alloc()` on all platforms (v6.4.52; the 16 MB heap-top region it replaced is retired).
+Re-derived at 6.6.20 from the heap map in `src/main.cyr` (the authority — this paragraph read 512 KB / 32,768 fns / a 3 MB doubling codebuf, all retired, until then): identifier pool / `tok_names` **8 MB** at `S + 0xEC00000` (it was 512 KB at 0x60000; the low band is free since v6.5.22), input_buf **24 MB** (v6.5.39), preprocess_out **24 MB** (v6.5.39), str_data **2 MB** (v5.8.59), token arrays **4,194,304** entries (v6.5.39), distlib per-module 1 MB (v6.4.10), binary output **1 GiB** off-heap on all platforms (v6.4.52), off-heap `alloc()` on all platforms (v6.4.52; the 16 MB heap-top region it replaced is retired).
 
-**Growable as of v6.2.0 (Phase 0).** The three former pressure tables are no longer fixed caps — they relocate off-heap and double on demand, ending the cap-raise treadmill: **fn-tables** (was 8192-fn fixed → grow+rehash, 32768 ceiling), **fixup table** (was 1M fixed → grow, 64M-entry ceiling), **codebuf** (was 3 MB fixed → grow, 64 MiB ceiling; the cx bytecode backend keeps its own 512 KB region).
+**Growable as of v6.2.0 (Phase 0).** The three former pressure tables are no longer fixed caps — they relocate off-heap and grow on demand, ending the cap-raise treadmill: **fn-tables** (was 8192-fn fixed → grow+rehash from 2,048, **131,072** ceiling since v6.5.40), **fixup table** (was 1M fixed → grow, 64M-entry ceiling), **codebuf** (was 3 MB fixed → an 8 MiB off-heap base growing in +8 MiB steps since v6.4.49, 64 MiB ceiling; the cx bytecode backend keeps its own 512 KB region). The var table grows too (1,048,576 ceiling).
 
 ## Build Tool (cyrius)
 
@@ -189,9 +190,9 @@ modules = ["dist/mabda.cyr"]
 Named deps are namespaced: `lib/{depname}_{basename}` (e.g. `lib/mabda_types.cyr`).
 Includes are auto-prepended — source files only need project-specific includes.
 
-## Standard Library (102 modules + 0 git deps)
+## Standard Library (106 modules + 0 git deps)
 
-**102 `lib/*.cyr` modules** (first-party + vendored sibling distfiles
+**106 `lib/*.cyr` modules** (first-party + vendored sibling distfiles
 folded byte-identical, sandhi-pattern) with **0 git deps** — mabda folded
 at 4.1.1, dropping its transitive `agnosys` and leaving zero `[deps.*]`
 resolutions. Coverage spans core data structures, types (Option / Result),
@@ -240,7 +241,7 @@ src/
 ```
 bootstrap/asm (29,024 B committed binary -- root of trust)
   -> cybs (12,344 B compiler)
-    -> cycc (modular compiler + IR, 1,247,608 B at v6.6.1)
+    -> cycc (modular compiler + IR, 1,586,184 B at v6.6.19)
       -> cycc_aarch64, cycc_win, cycc-native-aarch64, cycc_cx (cross-compilers)
 ```
 
