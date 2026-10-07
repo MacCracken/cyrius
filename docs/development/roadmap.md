@@ -488,8 +488,11 @@ priority surfaces.
   - ~~cyrius-lsp `lsp_read_file` reads the open document through a fixed 1 MB buffer, silently.~~ → ✅ **SHIPPED
     6.6.17 (t4)**: it reads the document whole, sized by `fstat`, and refuses past `_LSP_DOC_MAX` (64 MiB) by name
     (CHANGELOG [6.6.17]; `tests/gates/toolchain/lsp_reads_whole_document.sh`). Struck at the 6.6.20 re-triage.
-  - `cyrius lib sync --full` does not re-lock `cyrius.lock`, so rows for files a repo does not vendor keep
-    stale hashes until a lock is regenerated from empty (kriya and yantra both hit it).
+  - ~~`cyrius lib sync --full` does not re-lock `cyrius.lock`~~ → ✅ **SHIPPED 6.6.17 (t1)**: `lib sync` re-hashes the
+    lock rows for the files it writes, and `lib sync --relock` accepts a moved snapshot (CHANGELOG [6.6.17];
+    `tests/gates/toolchain/lib_sync_relocks.sh`, 8 axes). Only the pin-move ORDER dependence remains — the
+    `deps` / `build` before `lib sync --full` bullet in *Found by the 6.6.17 lanes* (D12). Struck at the 6.6.20
+    re-triage.
   - Inside an aarch64 region (6.6.12 B05's `#@a+` markers) a raw literal that HAS an ESYSXLAT x86-compat
     row is still translated with no warning: `syscall(9, ..)` meant as native lgetxattr runs mmap (also 5 →
     fstat, 55 → getsockopt). Unchanged from 6.6.11 (the raw-literal warning only covers untranslated
