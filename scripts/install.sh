@@ -377,40 +377,65 @@ if [ "$REFRESH_ONLY" -eq 1 ]; then
     #
     # Source-mapping rules:
     #   - bins entry "cycc"     → seed-bootstrapped, NOT rebuilt here.
+    #   - bins entry "cybs"     → ASSEMBLED by the seed from bootstrap/cybs.cyr, every refresh
     #   - bins entry "cyrius"  → cbt/cyrius.cyr
     #   - bins entry <other>   → programs/<name>.cyr (cyrlint, cyrfmt, ark, …)
     #   - cross_bins "cycc_aarch64" → src/main_aarch64.cyr
-    #   - cross_bins <other>      → src/main_<arch>.cyr (future-proof)
+    #   - cross_bins "cycc_cx"      → src/main_cx.cyr
+    #   - cross_bins "cycc_win"     → src/main_win.cyr under CYRIUS_TARGET_WIN=1
+    #   - cross_bins "cycc-native-aarch64" → TRACKED, copied as committed (release-gate step 1b
+    #     holds it in lockstep with the tree; `cyrius pulsar` regenerates it)
+    #   - cross_bins <other>      → REFUSED: no rebuild rule
+    # A bin or cross-bin whose mapped source does not exist, or whose rebuild fails, is a
+    # REFUSAL, never a copy of whatever sits at build/<bin>: that copy is how a June build/cybs
+    # reached 16 tagged slots, each stamped tree-matches-tag: yes, plus the in-flight 6.6.20
+    # (CHANGELOG [6.6.20]). The only bins copied as they stand are the two TRACKED ones,
+    # cycc and cycc-native-aarch64, which the release gate verifies.
     #
     # Staleness rule: rebuild if binary is missing OR ANY dependency mtime is
     # newer than binary mtime. Dependencies = the direct `$source` PLUS every
-    # `.cyr` under the bin's include roots ($3, default "lib"; cross bins add
-    # "src"). v6.2.34: the pre-fix rule only compared the binary against its
+    # `.cyr` under EVERY include root a bin can reach ($_REFRESH_DEPROOTS) PLUS
+    # build/cycc itself. v6.2.34: the pre-fix rule only compared the binary against its
     # DIRECT source — so a `lib/*.cyr` fix left `build/<bin>` looking fresh vs
     # its unchanged `programs/<bin>.cyr` and was never rebuilt. That shipped a
     # still-broken `cyriusly` (the exec_cmd /bin/sh fix lived in lib/process.cyr,
     # not programs/cyriusly.cyr) even though `--refresh-only`'s contract is "no
     # stale binary." Resolving exact transitive includes in POSIX sh is fragile,
     # so we treat the whole include root as the dep set — conservative (an
-    # unrelated lib touch rebuilds all bins) but never ships stale. Errors are
+    # unrelated touch rebuilds all bins, ~2.5 s) but never ships stale. Errors are
     # surfaced (no `2>/dev/null` swallow) so cycc warnings stay visible.
+    #
+    # ⛔ 6.6.20 (RS-03): ONE root set for every bin, not a per-bin list. The per-bin lists
+    # rotted exactly as v6.5.19 (below) warned: programs/<bin> got "lib" only while
+    # programs/cyrius-lsp.cyr includes cbt/srcscan.cyr and programs/ark.cyr includes
+    # programs/nous_stub.cyr, and `cyrius` got "lib cbt" while cbt/cyrius.cyr includes
+    # src/version_str.cyr — an edit to any of those left the installed binary stale, measured.
+    # And the COMPILER was never a dependency: a rebuilt build/cycc left every tool compiled
+    # by the old one. A union cannot rot when a bin grows an include; the roots that exist are
+    # taken (a missing one would fail `find`, and with it the assignment under `set -e`).
+    _REFRESH_DEPROOTS=""
+    for _rd in lib cbt src programs; do [ -d "$_rd" ] && _REFRESH_DEPROOTS="$_REFRESH_DEPROOTS $_rd"; done
     _rebuild_stale() {
         local target="$1"
         local source="$2"
-        local deproots="${3:-lib}"
-        [ -f "$source" ] || return 0
-        if [ -x "build/$target" ] && [ "build/$target" -nt "$source" ]; then
-            # Direct source is older than the binary; check include-root deps.
+        # 6.6.20: a mapped source that does not exist REFUSES. This was `return 0`, and the
+        # copy loop below then installed build/$target as it stood — for `cybs` (which has no
+        # programs/cybs.cyr) a 12,344 B June binary that cannot compile src/main.cyr, in 16
+        # tagged slots, each stamped tree-matches-tag: yes, plus the in-flight 6.6.20.
+        # CHANGELOG [6.6.20]
+        [ -f "$source" ] || err "cyrius.cyml [release] lists '$target' but its source $source does not exist — refusing to install a build/$target that nothing rebuilt (give it a rebuild rule in scripts/install.sh)"
+        if [ -x "build/$target" ] && [ "build/$target" -nt "$source" ] && ! [ "build/cycc" -nt "build/$target" ]; then
+            # Direct source and the compiler are older than the binary; check include-root deps.
             local newer_dep
-            newer_dep=$(find $deproots -name '*.cyr' -newer "build/$target" -print -quit 2>/dev/null)
+            newer_dep=$(find $_REFRESH_DEPROOTS -name '*.cyr' -newer "build/$target" -print -quit 2>/dev/null)
             if [ -z "$newer_dep" ]; then
                 return 0
             fi
         fi
-        if [ ! -x "build/cycc" ]; then
-            warn "build/cycc missing — cannot rebuild $target from $source; falling back to existing binary"
-            return 1
-        fi
+        # A failed rebuild ABORTS the refresh (it always did: this script is `set -e`, and the
+        # old `return 1` here sat under a warning that promised a fallback to the existing
+        # binary that never happened). Said plainly now, before anything is copied.
+        [ -x "build/cycc" ] || err "build/cycc missing — cannot rebuild $target from $source; refusing to install a stale build/$target"
         local err_log
         err_log=$(mktemp) && [ -f "$err_log" ] || { echo "error: mktemp failed (TMPDIR=${TMPDIR:-/tmp})" >&2; exit 1; }
         if cat "$source" | ./build/cycc > "build/$target" 2>"$err_log"; then
@@ -430,13 +455,41 @@ if [ "$REFRESH_ONLY" -eq 1 ]; then
             sed 's/^/    /' "$err_log" >&2
             rm -f "$err_log"
             rm -f "build/$target"
-            return 1
+            err "refusing to refresh: $target did not build from $source (nothing was installed)"
         fi
+    }
+
+    # 6.6.20: cybs is the bootstrap compiler, ASSEMBLED by the seed — the one bin with no
+    # programs/ source, so `_rebuild_stale` never rebuilt it and every refresh shipped whatever
+    # gitignored build/cybs the clone happened to hold. Rebuilt EVERY refresh (milliseconds),
+    # with bootstrap/bootstrap.sh's recipe, and installed only once it passes the closure that
+    # proves it is the compiler the seed chain needs: it compiles bootstrap/asm.cyr to the
+    # seed byte for byte. CHANGELOG [6.6.20]
+    _rebuild_cybs() {
+        [ -f bootstrap/cybs.cyr ] && [ -x bootstrap/asm ] && [ -f bootstrap/asm.cyr ] \
+            || err "cyrius.cyml [release] lists cybs but bootstrap/cybs.cyr, bootstrap/asm or bootstrap/asm.cyr is missing — refusing to install a build/cybs that nothing rebuilt"
+        _cb_d=$(mktemp -d) && [ -d "$_cb_d" ] || { echo "error: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})" >&2; exit 1; }
+        if bootstrap/asm < bootstrap/cybs.cyr > "$_cb_d/cybs" 2> "$_cb_d/err" \
+           && chmod +x "$_cb_d/cybs" \
+           && "$_cb_d/cybs" < bootstrap/asm.cyr > "$_cb_d/asm" 2>> "$_cb_d/err" \
+           && cmp -s "$_cb_d/asm" bootstrap/asm \
+           && mv -f "$_cb_d/cybs" build/cybs; then
+            info "rebuilt cybs from bootstrap/cybs.cyr (seed-assembled; it compiles bootstrap/asm.cyr to the seed)"
+            rm -rf "$_cb_d"
+            return 0
+        fi
+        [ -s "$_cb_d/err" ] && sed 's/^/    /' "$_cb_d/err" >&2
+        rm -rf "$_cb_d"
+        rm -f build/cybs
+        err "refusing to refresh: cybs did not assemble from bootstrap/cybs.cyr, or the result does not compile bootstrap/asm.cyr to the seed (nothing was installed)"
     }
 
     for bin in $_R_BINS; do
         case "$bin" in
             cycc)    : ;;  # seed-bootstrapped, never rebuilt by --refresh-only
+            cybs)    _rebuild_cybs ;;
+            # (6.6.20: every bin now takes the one union root set, _REFRESH_DEPROOTS — the
+            # per-bin "lib cbt" below still missed src/version_str.cyr.)
             # v6.5.19: deproots MUST include `cbt` — this is the v6.2.34 bug one
             # directory over, and it silently withheld every CLI fix. `cbt/cyrius.cyr`
             # is a 45 KB shim that `include`s six siblings (core/build/commands/
@@ -449,14 +502,14 @@ if [ "$REFRESH_ONLY" -eq 1 ]; then
             # That breaks the contract this function documents ("never ships stale")
             # AND the CLAUDE.md build recipe, which tells you `--refresh-only`
             # "rebuilds the CLI after cbt/ changes" — it did not.
-            cyrius) _rebuild_stale "cyrius" "cbt/cyrius.cyr" "lib cbt" ;;
+            cyrius) _rebuild_stale "cyrius" "cbt/cyrius.cyr" ;;
             *)      _rebuild_stale "$bin"    "programs/${bin}.cyr" ;;
         esac
     done
     for cbin in $_R_CROSS; do
         case "$cbin" in
-            cycc_aarch64) _rebuild_stale "cycc_aarch64" "src/main_aarch64.cyr" "lib src" ;;
-            cycc_cx) _rebuild_stale "cycc_cx" "src/main_cx.cyr" "lib src" ;;   # cx arc: cx bytecode compiler (plain build/cycc, no env — like cycc_aarch64)
+            cycc_aarch64) _rebuild_stale "cycc_aarch64" "src/main_aarch64.cyr" ;;
+            cycc_cx) _rebuild_stale "cycc_cx" "src/main_cx.cyr" ;;   # cx arc: cx bytecode compiler (plain build/cycc, no env — like cycc_aarch64)
             cycc-native-aarch64)
                 # v6.0.7 — native aarch64 self-host. Built by piping
                 # src/main_aarch64_native.cyr through build/cycc_aarch64
@@ -496,19 +549,30 @@ if [ "$REFRESH_ONLY" -eq 1 ]; then
                 # rebuilt unconditionally (no -nt skip) so the unfreeze can't be
                 # skipped by the frozen binary's mtime. See issue
                 # 2026-06-03-windows-pe-syscall-surface-blocks-detection.md.
-                if [ -f src/main_win.cyr ] && [ -x build/cycc ]; then
-                    _cw_err=$(mktemp) && [ -f "$_cw_err" ] || { echo "error: mktemp failed (TMPDIR=${TMPDIR:-/tmp})" >&2; exit 1; }
-                    if cat src/main_win.cyr | CYRIUS_TARGET_WIN=1 ./build/cycc > build/cycc_win 2>"$_cw_err"; then
-                        chmod +x build/cycc_win
-                        info "rebuilt cycc_win from src/main_win.cyr (CYRIUS_TARGET_WIN=1 → PE32+)"
-                        [ -s "$_cw_err" ] && sed 's/^/    /' "$_cw_err" >&2
-                    else
-                        warn "rebuild of cycc_win failed:"; sed 's/^/    /' "$_cw_err" >&2; rm -f build/cycc_win
-                    fi
+                #
+                # 6.6.20: a missing source, a missing build/cycc or a failed compile REFUSES, as
+                # `_rebuild_stale` does for the bins. They used to skip silently or warn, and the
+                # copy loop then installed whatever build/cycc_win the clone held — measured: a
+                # broken src/main_win.cyr gave rc 0 and the slot kept the PE compiler built from
+                # the earlier source. CHANGELOG [6.6.20]
+                [ -f src/main_win.cyr ] || err "cyrius.cyml [release] cross_bins lists 'cycc_win' but its source src/main_win.cyr does not exist — refusing to install a build/cycc_win that nothing rebuilt"
+                [ -x build/cycc ] || err "build/cycc missing — cannot rebuild cycc_win from src/main_win.cyr; refusing to install a stale build/cycc_win"
+                _cw_err=$(mktemp) && [ -f "$_cw_err" ] || { echo "error: mktemp failed (TMPDIR=${TMPDIR:-/tmp})" >&2; exit 1; }
+                if cat src/main_win.cyr | CYRIUS_TARGET_WIN=1 ./build/cycc > build/cycc_win 2>"$_cw_err"; then
+                    chmod +x build/cycc_win
+                    info "rebuilt cycc_win from src/main_win.cyr (CYRIUS_TARGET_WIN=1 → PE32+)"
+                    [ -s "$_cw_err" ] && sed 's/^/    /' "$_cw_err" >&2
                     rm -f "$_cw_err"
+                else
+                    warn "rebuild of cycc_win from src/main_win.cyr failed:"
+                    sed 's/^/    /' "$_cw_err" >&2
+                    rm -f "$_cw_err" build/cycc_win
+                    err "refusing to refresh: cycc_win did not build from src/main_win.cyr (nothing was installed)"
                 fi
                 ;;
-            *) warn "unknown cross_bins entry '$cbin' — no rebuild rule, will copy existing build/$cbin if present" ;;
+            # 6.6.20: no rebuild rule is a REFUSAL — this arm used to warn and let the copy loop
+            # install whatever build/$cbin the clone held, built from nobody knows what.
+            *) err "cyrius.cyml [release] cross_bins lists '$cbin' but scripts/install.sh has no rebuild rule for it — refusing to install a build/$cbin that nothing rebuilt (give it a rebuild rule here)" ;;
         esac
     done
 
@@ -699,6 +763,18 @@ TARBALL="cyrius-${VERSION}-${ARCH}-${OS_SUFFIX}.tar.gz"
 # every "$TMPDIR/x" below then becomes "/x" — the install writes at the filesystem ROOT (and the
 # closing `rm -rf "$TMPDIR"` becomes `rm -rf ""`). CHANGELOG [6.6.6]
 TMPDIR=$(mktemp -d) && [ -d "$TMPDIR" ] || { echo "error: mktemp -d failed — no private directory to stage the install in" >&2; exit 1; }
+# 6.6.20: the staging dir (the tarball, its extracted tree, a source clone) is removed on EVERY
+# exit — each refusal below (`err` is `exit 1`), a `set -e` failure (a corrupt tarball's tar),
+# and a signal. It was removed in one place, at the end of a SUCCESSFUL install, so every
+# refusal left <TMPDIR>/tmp.XXXXXXXXXX/ behind holding the tarball and its tree (the 9.9.9
+# gate alone left three per check.sh). The signal traps EXIT, so the EXIT trap does the rm and
+# the script stops; a trap that only removed the dir would carry on without it. Held under its
+# own name so nothing that reassigns TMPDIR can redirect the rm. CHANGELOG [6.6.20]
+_INSTALL_STAGE="$TMPDIR"
+trap 'rm -rf "$_INSTALL_STAGE"' EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 installed=0
 
 # CYRIUS_INSTALL_TARBALL=/path/to/tarball installs from a local file
@@ -983,7 +1059,9 @@ if [ "$installed" -eq 0 ]; then
     info "bootstrapped from source"
 fi
 
-rm -rf "$TMPDIR"
+# (the staging dir goes with the EXIT trap above — not here: the steps below still run children
+# that inherit TMPDIR when the caller exported it, and clang pointed at a removed TMPDIR fails
+# "unable to make temporary file" — measured; gcc falls back to /tmp)
 
 # ── Set active version ──
 

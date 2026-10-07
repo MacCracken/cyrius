@@ -238,14 +238,17 @@ fn cmd_pulsar(): i64 {
     }
 
     # Step 3: rebuild tools
+    # 6.6.20: no "cybs" here — it has no programs/ source (this loop skipped it silently);
+    # install.sh --refresh-only below ASSEMBLES it from bootstrap/cybs.cyr every run. The
+    # table is `: i64[5]` (five SLOTS): `var tools[6]` was six BYTES, and its six store64s
+    # overran into the frame's other locals. CHANGELOG [6.6.20]
     _status("  tools...");
-    var tools[6];
+    var tools: i64[5];
     store64(&tools, "cyrfmt");
     store64(&tools + 8, "cyrlint");
     store64(&tools + 16, "cyrdoc");
-    store64(&tools + 24, "cybs");
-    store64(&tools + 32, "ark");
-    store64(&tools + 40, 0);
+    store64(&tools + 24, "ark");
+    store64(&tools + 32, 0);
     var ti = 0;
     while (load64(&tools + ti * 8) != 0) {
         var tool = load64(&tools + ti * 8);

@@ -24,13 +24,33 @@ _size() {
 
 status=0
 
+# 6.6.20: every check below reads the STAGED BLOB — what the commit will actually contain —
+# copied out of the index into a private temp dir. They read "$bin" from the WORKING TREE
+# before, and `git diff --cached` only decided whether to look, so a contaminated blob
+# committed whenever the working copy was good (measured: a 25-byte `MZ…` blob staged as
+# build/cycc, a good ELF copied back over the file, `git commit` passed and HEAD:build/cycc
+# was the MZ blob), and a staged artifact whose working file was deleted was never looked at.
+# Messages still name the path; the bytes judged are the index's. CHANGELOG [6.6.20]
+_stage=""
+
 for bin in build/cycc build/cc5 build/cycc-native-aarch64 bootstrap/asm; do
-    [ -e "$bin" ] || continue
     # Only inspect artifacts staged in this commit.
     git diff --cached --quiet -- "$bin" 2>/dev/null && continue
+    # A staged DELETION has no blob to judge (nothing of it is committed).
+    git cat-file -e ":$bin" 2>/dev/null || continue
+    if [ -z "$_stage" ]; then   # created on the first staged artifact, in THIS shell
+        _stage=$(mktemp -d) && [ -d "$_stage" ] || { echo "pre-commit: mktemp -d failed — cannot inspect the staged artifacts; refusing commit" >&2; exit 1; }
+        trap 'rm -rf "$_stage"' EXIT
+    fi
+    blob="$_stage/$(basename "$bin")"
+    if ! git cat-file blob ":$bin" > "$blob"; then
+        _fail "$bin: could not read the staged blob — refusing commit"
+        status=1
+        continue
+    fi
 
     # 1. Foreign-binary string signatures (the v5.11.43/.44 mabda/wgpu slip).
-    if strings "$bin" 2>/dev/null | grep -qE "mabda: gpu|wgpuDevice|compute_pipeline"; then
+    if strings "$blob" 2>/dev/null | grep -qE "mabda: gpu|wgpuDevice|compute_pipeline"; then
         _fail "$bin contains foreign-binary strings (mabda/wgpu/compute_pipeline) — refusing commit"
         _fail "  restore: cat src/main.cyr | build/cycc > /tmp/canonical && cp /tmp/canonical $bin"
         status=1
@@ -39,7 +59,7 @@ for bin in build/cycc build/cc5 build/cycc-native-aarch64 bootstrap/asm; do
 
     # 2. ELF magic — every tracked artifact here is ELF. Catches a Mach-O/PE
     #    binary cp'd over them.
-    magic=$(dd if="$bin" bs=1 count=4 2>/dev/null | od -An -tx1 | tr -d ' \n')
+    magic=$(dd if="$blob" bs=1 count=4 2>/dev/null | od -An -tx1 | tr -d ' \n')
     if [ "$magic" != "7f454c46" ]; then
         _fail "$bin is not an ELF binary (magic=$magic) — wrong-platform artifact? refusing commit"
         status=1
@@ -50,7 +70,7 @@ for bin in build/cycc build/cc5 build/cycc-native-aarch64 bootstrap/asm; do
     #    identical across arches, so verify the actual ISA: x86_64 (3e00) for
     #    cycc/cc5/asm, aarch64 (b700) for cycc-native-aarch64. Catches an
     #    aarch64 binary cp'd over an x86 slot (or vice-versa) — same magic.
-    emach=$(dd if="$bin" bs=1 skip=18 count=2 2>/dev/null | od -An -tx1 | tr -d ' \n')
+    emach=$(dd if="$blob" bs=1 skip=18 count=2 2>/dev/null | od -An -tx1 | tr -d ' \n')
     case "$bin" in
         build/cycc-native-aarch64) want=b700 ;;
         *)                         want=3e00 ;;
@@ -62,7 +82,7 @@ for bin in build/cycc build/cc5 build/cycc-native-aarch64 bootstrap/asm; do
     fi
 
     # 4. Size sanity — each binary sits in a known band.
-    size=$(_size "$bin")
+    size=$(_size "$blob")
     case "$bin" in
         build/cycc)
             # v6.5.53: upper bound 1200000 -> 2000000. cycc legitimately crossed 1.2 MB at

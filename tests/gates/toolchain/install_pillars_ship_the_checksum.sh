@@ -43,6 +43,9 @@
 #   4. STATIC, anti-drift on the other end: both macOS tarball builders must still WRITE the
 #      sidecar and copy it into OUT_DIR — an scp naming a file the builder stopped producing
 #      would fail on the Mac, far from the cause.
+#   5. (6.6.20, CLN-01) install.sh removes its staging dir on EVERY exit: the axis-3 runs
+#      stage in the gate's own TMPDIR, which must be empty after their three non-zero exits,
+#      and a TERM delivered mid-download (a fake `curl` signals its parent) leaves nothing.
 #
 # MUTATION LEDGER (measured 6.6.6, each in a scratch copy of the tree):
 #   a. cbt/commands.cyr as of 5a791030 (both pillars)      -> axis 1 FAIL (2 scp sites, 0
@@ -68,6 +71,12 @@
 #                                                             comment. It now requires a real
 #                                                             `test -f` / `[ -f` and ignores
 #                                                             whole-line comments.
+#   i. (6.6.20) install.sh's staging trap removed (the    -> axis 5(i) FAIL (3 staging dirs) +
+#      6.6.19 shape: rm only on the success path)            axis 5(ii) FAIL (1)
+#   j. (6.6.20) the trap as `trap 'rm …' EXIT INT TERM HUP` -> axis 5(ii) FAIL (rc 1, not 143;
+#      (the audit's first suggestion): the handler removes     "bootstrapping from source") —
+#      the dir and RETURNS, so the script carries on           the dir IS gone, so only the
+#                                                              exit status and the output see it
 # Real tree -> PASS.
 #
 # ⚠ NOT COVERED, and said plainly rather than implied — this enumeration is what a future
@@ -191,7 +200,7 @@ done < "$D/pillars"
 # A throwaway HOME and CYRIUS_HOME: nothing here touches the live store.
 a3=0
 V=9.9.9
-mkdir -p "$D/i/home" "$D/i/stage/cyrius-$V-aarch64-macos/bin" "$D/i/dist"
+mkdir -p "$D/i/home" "$D/i/stage/cyrius-$V-aarch64-macos/bin" "$D/i/dist" "$D/i/tmp"
 printf '#!/bin/sh\nexit 0\n' > "$D/i/stage/cyrius-$V-aarch64-macos/bin/cyrius"
 chmod +x "$D/i/stage/cyrius-$V-aarch64-macos/bin/cyrius"
 ( cd "$D/i/stage" && tar czf "$D/i/dist/cyrius-$V-aarch64-macos.tar.gz" "cyrius-$V-aarch64-macos" ) \
@@ -203,9 +212,11 @@ cp "$D/i/dist/cyrius-$V-aarch64-macos.tar.gz" "$D/i/dist/tampered.tar.gz"
 sed "s/cyrius-$V-aarch64-macos\.tar\.gz/tampered.tar.gz/" "$D/i/dist/cyrius-$V-aarch64-macos.tar.gz.sha256" > "$D/i/dist/tampered.tar.gz.sha256"
 printf 'X' >> "$D/i/dist/tampered.tar.gz"
 cp "$D/i/dist/tampered.tar.gz" "$D/i/dist/tampered_nosidecar.tar.gz"   # same bytes, no sidecar
+# 6.6.20: install.sh stages in the gate's OWN TMPDIR ($D/i/tmp), so nothing it leaves lands in
+# the caller's — and axis 5 can see what it left (it used to leave three staging dirs per run).
 _install() {  # _install <tarball> <home-suffix> -> output in $D/i/<suffix>.out, rc echoed
     rc=0
-    ( HOME="$D/i/home" CYRIUS_VERSION="$V" CYRIUS_HOME="$D/i/home/.c$2" \
+    ( HOME="$D/i/home" CYRIUS_VERSION="$V" CYRIUS_HOME="$D/i/home/.c$2" TMPDIR="$D/i/tmp" \
       CYRIUS_INSTALL_TARBALL="$1" sh scripts/install.sh ) > "$D/i/$2.out" 2>&1 || rc=$?
     echo "$rc"
 }
@@ -235,6 +246,34 @@ grep -q 'installing from local tarball' "$D/i/C.out" \
 _unpacked "$D/i/C.out" \
   || { fail "axis 3(c): with NO sidecar install.sh did not walk into the unpack — the SAME bytes B refused, so this is the control that makes 3(b)'s absence mean something:"; sed 's/^/      /' "$D/i/C.out" | tail -3; a3=1; }
 [ "$a3" = 0 ] && echo "  ok: axis 3: install.sh verifies a local tarball against its sidecar (rc $rcA), refuses a 1-byte tamper before unpacking (rc $rcB), and with NO sidecar never checks at all (rc $rcC) — which is what the pillars were doing"
+
+# ── axis 5 (6.6.20, CLN-01): install.sh removes its staging dir on EVERY exit ─────────────
+# It was removed only at the end of a SUCCESSFUL install: every refusal (`err` = exit 1), a
+# `set -e` failure and a signal left <TMPDIR>/tmp.XXXXXXXXXX/ holding the tarball and its tree.
+# (i) the three axis-3 runs above all EXIT NON-ZERO (a mismatch refusal, and the fixture's
+# aarch64-macos tree failing this host's unpack) — the TMPDIR they ran in must be empty;
+# (ii) a SIGNAL mid-install: a fake `curl` — the first child after the staging dir exists, on
+# the download path — sends TERM to install.sh, deterministically, and must leave nothing.
+a5=0
+left=$(ls -A "$D/i/tmp" 2>/dev/null)
+if [ "$rcA" = 0 ] || [ "$rcB" = 0 ] || [ "$rcC" = 0 ]; then
+    fail "axis 5: an axis-3 run exited 0 (rc $rcA/$rcB/$rcC) — the refusal paths this axis measures were not taken"; a5=1
+fi
+[ -z "$left" ] || { fail "axis 5(i): install.sh left its staging behind after refusing (rc $rcA/$rcB/$rcC): $(printf '%s ' $left)"; a5=1; }
+mkdir -p "$D/i/fakebin" "$D/i/tmpsig"
+printf '#!/bin/sh\nkill -TERM "$PPID"\nexit 1\n' > "$D/i/fakebin/curl"; chmod +x "$D/i/fakebin/curl"
+rcS=0
+( HOME="$D/i/home" CYRIUS_VERSION="$V" CYRIUS_HOME="$D/i/home/.cS" TMPDIR="$D/i/tmpsig" PATH="$D/i/fakebin:$PATH" \
+  sh scripts/install.sh ) > "$D/i/S.out" 2>&1 || rcS=$?
+grep -q "downloading Cyrius" "$D/i/S.out" \
+  || { fail "axis 5(ii): install.sh never reached the download (the fake curl was not run):"; sed 's/^/      /' "$D/i/S.out" | tail -3; a5=1; }
+# it STOPS at the signal (128+15) — a handler that only removed the dir would let the script
+# carry on into the source-bootstrap path with its staging gone
+[ "$rcS" = 143 ] || { fail "axis 5(ii): install.sh exited $rcS after a TERM, not 143 — it did not stop at the signal"; a5=1; }
+grep -q "bootstrapping from source" "$D/i/S.out" && { fail "axis 5(ii): install.sh carried on past the TERM into the source bootstrap"; a5=1; }
+leftS=$(ls -A "$D/i/tmpsig" 2>/dev/null)
+[ -z "$leftS" ] || { fail "axis 5(ii): a TERM mid-install left the staging dir behind (rc $rcS): $(printf '%s ' $leftS)"; a5=1; }
+[ "$a5" = 0 ] && echo "  ok: axis 5: install.sh leaves nothing in its TMPDIR — after three refusals (rc $rcA/$rcB/$rcC) and after a TERM mid-download (rc $rcS)"
 
 # ── axis 4: the builders still produce the sidecar the scp names ─────────────
 a4=0
