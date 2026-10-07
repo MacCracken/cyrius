@@ -59,6 +59,10 @@ check "bundle written" 1 "$([ -f dist/bp.cyr ] && echo 1 || echo 0)"
 check "no 'unresolved symbols' note on a clean bundle" 0 "$(grep -c 'unresolved symbols' "$D/o1" || true)"
 check "no 'cannot write output' (the /dev/null tell)" 0 "$(grep -c 'cannot write output' "$D/o1" || true)"
 check "no '1MB buffer' (the stdin-cap tell)" 0 "$(grep -c '1MB buffer' "$D/o1" || true)"
+# 6.6.20 (REFACTOR-11): the header's version is the manifest's [package] version — this project
+# has no VERSION file, and the header read `# Version: unknown`.
+check "the header stamps [package] version" 1 "$(grep -cx '# Version: 0.1.0' dist/bp.cyr || true)"
+check "and the report says v0.1.0" 1 "$(grep -c 'dist/bp.cyr: [0-9]* lines (v0.1.0)' "$D/o1" || true)"
 
 echo "axis 2 — ⭐ THE REGRESSION: a bundle that does not compile must FAIL, not reassure:"
 printf 'fn a_one(): i64 { return 1; }\nfn broken( {\n' > src/a.cyr
@@ -213,6 +217,22 @@ SOUT=$( cd "$D/s" && timeout 300 "$D/shim/cyrius" distlib 2>&1 ) || SRC=$?
 check "exit NON-zero" 1 "$([ "$SRC" -ne 0 ] && echo 1 || echo 0)"
 check "it says the bundle does not compile" 1 "$(printf '%s\n' "$SOUT" | grep -c 'the generated bundle does not compile' || true)"
 check "and relays the compiler's own error line" 1 "$(printf '%s\n' "$SOUT" | grep -c 'SYNTHETIC self-check failure only the compiler can name' || true)"
+
+# ── axis 9: where the `# Version:` header comes from (6.6.20, REFACTOR-11) ─────────────────
+# `[package] version` (with `${file:PATH}` expanded — the reader `#@pkgver` uses) wins; a manifest
+# with no version falls back to ./VERSION. distlib read ./VERSION alone, so axis 1's project (a
+# literal version, no VERSION file) shipped `# Version: unknown`.
+echo "axis 9 — the bundle's # Version: is the manifest's [package] version:"
+mkdir -p "$D/v/src"
+printf 'fn vv_one(): i64 { return 1; }\n' > "$D/v/src/a.cyr"
+vhdr() { ( cd "$D/v" && rm -rf dist && timeout 300 "$CY" distlib > "$D/ov" 2>&1 ); sed -n 's/^# Version: //p' "$D/v/dist/vv.cyr" 2>/dev/null | head -1; }
+printf '[package]\nname = "vv"\nversion = "${file:VERSION}"\n\n[lib]\nmodules = ["src/a.cyr"]\n' > "$D/v/cyrius.cyml"
+printf '2.3.4\n' > "$D/v/VERSION"
+check "version = \"\${file:VERSION}\" stamps VERSION's contents" "2.3.4" "$(vhdr)"
+printf '[package]\nname = "vv"\nversion = "7.0.1"\n\n[lib]\nmodules = ["src/a.cyr"]\n' > "$D/v/cyrius.cyml"
+check "a literal [package] version wins over a VERSION file that disagrees" "7.0.1" "$(vhdr)"
+printf '[package]\nname = "vv"\n\n[lib]\nmodules = ["src/a.cyr"]\n' > "$D/v/cyrius.cyml"
+check "no [package] version: ./VERSION, as before" "2.3.4" "$(vhdr)"
 
 if [ "$fails" = "0" ]; then
     echo "PASS: distlib-bundle-selfcheck — the bundle is really compiled; broken bundles are fatal"

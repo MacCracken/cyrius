@@ -5666,8 +5666,10 @@ fn cmd_distlib(profile): i64 {
     if (pkg_name == 0) { pkg_name = "lib"; }
     if (_dep_reject_unsafe_name(pkg_name) != 0) { return 1; }
 
-    # Extract version via cyml_expand_value
-    var pkg_ver = _version;
+    # The `# Version:` header: `[package] version` from the manifest, else ./VERSION
+    # (_project_version, cbt/core.cyr). 6.6.20 (REFACTOR-11): this read ./VERSION alone, under a
+    # comment that claimed cyml_expand_value. CHANGELOG [6.6.20]
+    var pkg_ver = _project_version();
 
     # Find modules list. With a profile, [lib.PROFILE] only; otherwise [build], then [lib].
     # 6.6.17: through the one reader (cbt/manifest.cyr), which steps over multi-line values, so a
