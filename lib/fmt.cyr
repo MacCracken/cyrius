@@ -177,7 +177,11 @@ fn fmt_int_buf(n, buf): i64 {
     return len;
 }
 
-# Convert hex number to string in buffer, return length
+# Convert hex number to string in buffer, return length.
+# Writes len + 1 <= 17 bytes at buf (up to 16 digits + NUL): a stack caller needs
+# `var b[24]`, not `[16]` — fmt_sprintf's %x scratch was 16 and its NUL landed on the
+# neighbouring slot (CVE-78's class). tests/gates/memory/fmt_buf_callers_sized.sh holds
+# every `&local` caller of this and fmt_int_buf (len + 1 <= 21) to it. CHANGELOG [6.6.20]
 fn fmt_hex_buf(n, buf): i64 {
     var bi = 15;
     if (n == 0) { store8(buf, 48); store8(buf + 1, 0); return 1; }
@@ -237,7 +241,7 @@ fn fmt_sprintf(buf, bufsz, format, args): i64 {
                 # %x — hex integer
                 var xval = vec_get(args, ai);
                 ai = ai + 1;
-                var xtmp[16];
+                var xtmp[24];             # fmt_hex_buf writes up to 17 (16 digits + NUL)
                 var xlen = fmt_hex_buf(xval, &xtmp);
                 if (bi + xlen > maxw) { xlen = maxw - bi; }
                 if (xlen > 0) { memcpy(buf + bi, &xtmp, xlen); bi = bi + xlen; }

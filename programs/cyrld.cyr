@@ -97,7 +97,7 @@ var FN_COUNT = 0;
 fn emsg(s): i64 { syscall(SYS_WRITE, 2, s, strlen(s)); return 0; }
 fn prints(s): i64 { syscall(SYS_WRITE, 1, s, strlen(s)); return 0; }
 fn printn(n): i64 { var b[24]; var l = fmt_int_buf(n, &b); syscall(SYS_WRITE, 1, &b, l); return 0; }
-fn printhex(n): i64 { var b[16]; var l = fmt_hex_buf(n, &b); syscall(SYS_WRITE, 1, &b, l); return 0; }
+fn printhex(n): i64 { var b[24]; var l = fmt_hex_buf(n, &b); syscall(SYS_WRITE, 1, &b, l); return 0; }
 
 # Read little-endian values at buf + off.
 fn read_u16(buf, off): i64 {
@@ -633,7 +633,7 @@ fn apply_relocations(): i64 {
             var target_va = resolve_sym_va(mi, r_sym);
             if (target_va < 0) {
                 emsg("error: unresolved symbol for reloc in module ");
-                var eb[16]; var el = fmt_int_buf(mi, &eb);
+                var eb[24]; var el = fmt_int_buf(mi, &eb);
                 syscall(SYS_WRITE, 2, &eb, el);
                 emsg("\n");
                 errs = errs + 1;
@@ -655,13 +655,13 @@ fn apply_relocations(): i64 {
                 # Would require a GOT. Not supported in static-link alpha3;
                 # flag as error so the user knows.
                 emsg("error: R_X86_64_GOTPCREL in module ");
-                var eb2[16]; var el2 = fmt_int_buf(mi, &eb2);
+                var eb2[24]; var el2 = fmt_int_buf(mi, &eb2);
                 syscall(SYS_WRITE, 2, &eb2, el2);
                 emsg(" (unsupported — no GOT in static link)\n");
                 errs = errs + 1;
             } else {
                 emsg("error: unknown reloc type ");
-                var eb3[16]; var el3 = fmt_int_buf(r_type, &eb3);
+                var eb3[24]; var el3 = fmt_int_buf(r_type, &eb3);
                 syscall(SYS_WRITE, 2, &eb3, el3);
                 emsg("\n");
                 errs = errs + 1;
@@ -1292,7 +1292,7 @@ fn main(): i64 {
     var errs = verify_resolution();
     report_merge(total);
     if (errs > 0) {
-        emsg("cyrld: "); var eb[16]; var el = fmt_int_buf(errs, &eb);
+        emsg("cyrld: "); var eb[24]; var el = fmt_int_buf(errs, &eb);
         syscall(SYS_WRITE, 2, &eb, el);
         emsg(" resolution error(s)\n");
         return 1;
@@ -1305,7 +1305,7 @@ fn main(): i64 {
     collect_functions();
     var rerrs = apply_relocations();
     if (rerrs > 0) {
-        emsg("cyrld: "); var reb[16]; var rel = fmt_int_buf(rerrs, &reb);
+        emsg("cyrld: "); var reb[24]; var rel = fmt_int_buf(rerrs, &reb);
         syscall(SYS_WRITE, 2, &reb, rel);
         emsg(" relocation error(s)\n");
         return 1;

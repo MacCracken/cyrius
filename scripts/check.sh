@@ -1949,6 +1949,12 @@ _chk_gate "$ROOT/tests/gates/memory/harness_alloc_refused.sh"
 # until its allowlist line is deleted), with a self-tested detector and a mutation row.
 _chk_gate "$ROOT/tests/gates/memory/stdlib_alloc_checked_census.sh"
 
+# 6.6.20 (RLM-05) — every `&local` buffer handed to fmt_hex_buf / fmt_int_buf holds the
+# callee's worst case (17 / 21 bytes): fmt_sprintf's %x scratch was [16] and its NUL landed
+# on the neighbouring slot. A census (latent: no run-time probe sees it), with a self-tested
+# detector, a floor and a mutation row.
+_chk_gate "$ROOT/tests/gates/memory/fmt_buf_callers_sized.sh"
+
 # 6.6.10 — gates added by bites that finished after lane T's registration pass, registered at
 # integration (check_gate_census axis 1 found them unregistered on the merged tree):
 # cx float unary ops run (bite 10); the dead-static hint on every backend (bite 10); integer
