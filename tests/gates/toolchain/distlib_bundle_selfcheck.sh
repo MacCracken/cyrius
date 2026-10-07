@@ -115,8 +115,11 @@ check "a broken >1 MB bundle still FAILS" 1 "$([ "$rc6" -ne 0 ] && echo 1 || ech
 
 cd "$ROOT" || exit 2
 echo ""
-if [ "$fails" = "0" ]; then
-    # ── axis: a RETIRED stdlib name must not walk through --allow-undef (v6.6.2) ────────
+# ⚠ 6.6.20: the RETIRED-name axes below used to sit INSIDE the `if [ "$fails" = "0" ]` that
+# prints PASS and exits 0, so their own `fails=$((fails + 1))` could never reach the verdict — a
+# bundle calling `payload` that self-checked clean printed "FAIL: …" and the gate still PASSED.
+# They now run unconditionally and count like every other axis.
+# ── axis 6: a RETIRED stdlib name must not walk through --allow-undef (v6.6.2) ────────
 # ⛔ The self-check downgrades undefined fns because a bundle omits the stdlib and the consumer
 # supplies it — correct. But the downgrade was BLANKET, so a bundle calling a name the stdlib no
 # longer HAS also passed and shipped. At the v6.6.0 cut `payload()` was deleted while 18 publisher
@@ -142,7 +145,42 @@ case "$LOUT" in
   *) echo "  ok: a bundle of live names still passes the self-check (1)" ;;
 esac
 
-echo "PASS: distlib-bundle-selfcheck — the bundle is really compiled; broken bundles are fatal"
+# ── axis 7: the RETIRED-name scan reads the WHOLE capture (6.6.20, CBT-02) ──────────────
+# ⛔ The scan read the self-check's stderr capture into a fixed 256 KB buffer, so a bundle whose
+# --allow-undef compile warned past 256 KB BEFORE reaching a retired name was written at rc 0 —
+# the blast door skipped by volume. 1,400 undefined hooks with ~190-byte names come to a ~310 KB
+# capture with `payload` on its last line. The same bundle with a short capture is axis 6.
+echo "axis 7 — a RETIRED name past 256 KB of warnings is still refused:"
+PAD=$(printf '%0190d' 0 | tr 0 x)
+{
+    echo 'fn rc_big(b): i64 {'
+    i=0
+    while [ "$i" -lt 1400 ]; do echo "    zz_hook_${PAD}_$i();"; i=$((i + 1)); done
+    echo '    payload(b);'
+    echo '    return 0;'
+    echo '}'
+} > "$D/r/src/m.cyr"
+rm -rf "$D/r/dist"
+BRC=0
+BOUT=$( cd "$D/r" && "$CY" distlib 2>&1 ) || BRC=$?
+check "exit NON-zero" 1 "$([ "$BRC" -ne 0 ] && echo 1 || echo 0)"
+check "refused as a RETIRED stdlib name" 1 "$(printf '%s\n' "$BOUT" | grep -c 'RETIRED stdlib name' || true)"
+check "naming payload" 1 "$(printf '%s\n' "$BOUT" | grep -c 'symbol: payload' || true)"
+# ANTI-VACUOUS: the capture really is past the old buffer, with the retired name beyond it. The
+# bundle the run left behind is compiled here the way the self-check compiles it (--allow-undef),
+# and the byte offset of the `payload` warning is read from the compiler's own stderr.
+if [ -f "$D/r/dist/rc.cyr" ]; then
+    ( cd "$D/r" && printf 'include "dist/rc.cyr"\n' | "$CC" --allow-undef > /dev/null 2> "$D/cap7" ) || true
+    capsz=$(wc -c < "$D/cap7" | tr -d ' ')
+    payoff=$(grep -b "undefined function 'payload'" "$D/cap7" | head -1 | cut -d: -f1)
+    check "the capture is over 256 KB (${capsz} B)" 1 "$([ "$capsz" -gt 262144 ] && echo 1 || echo 0)"
+    check "the payload warning starts past byte 262143 (at ${payoff:-none})" 1 "$([ -n "$payoff" ] && [ "$payoff" -gt 262143 ] && echo 1 || echo 0)"
+else
+    check "the bundle was written for the anti-vacuous measurement" 1 0
+fi
+
+if [ "$fails" = "0" ]; then
+    echo "PASS: distlib-bundle-selfcheck — the bundle is really compiled; broken bundles are fatal"
     exit 0
 fi
 echo "FAIL: distlib-bundle-selfcheck — $fails assertion(s) failed"

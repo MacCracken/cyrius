@@ -6198,19 +6198,25 @@ fn cmd_distlib(profile): i64 {
     var dl_wrote = 0;
     var dl_errf = _cbt_tmpfile("distlib_err");
     var dl_retired = 0;
+    var dl_cap = 0;
     if (file_write_all(dl_entry, dl_src, strlen(dl_src)) >= 0) {
         dl_wrote = 1;
-        _cc_allow_undef = 1;
-        _cc_stderr_to = dl_errf;
-        check_r = compile(dl_entry, dl_out);
-        _cc_stderr_to = 0;
-        _cc_allow_undef = 0;
-        # v6.6.2 — the blast-door check. Undefined fns are downgraded above; a RETIRED name is
-        # not a consumer's to supply and must still fail. See _distlib_retired_name.
-        var eb = alloc(262144);
-        var en = file_read_all(dl_errf, eb, 262143);
-        if (en > 0) { dl_retired = _distlib_scan_retired(eb, en); }
-        sys_unlink(dl_errf);
+        # 6.6.20 (CBT-02): the capture is created HERE, so a compile() that bails before its child
+        # opens it still leaves an (empty) file to read back, and "cannot read it" means only that.
+        var dl_cfd = sys_open(dl_errf, O_WRONLY | O_CREAT | O_TRUNC, 0x180);
+        if (dl_cfd >= 0) {
+            sys_close(dl_cfd);
+            dl_cap = 1;
+            _cc_allow_undef = 1;
+            _cc_stderr_to = dl_errf;
+            check_r = compile(dl_entry, dl_out);
+            _cc_stderr_to = 0;
+            _cc_allow_undef = 0;
+            # v6.6.2 — the blast-door check. Undefined fns are downgraded above; a RETIRED name is
+            # not a consumer's to supply and must still fail. See _distlib_retired_name.
+            dl_retired = _distlib_scan_retired_file(dl_errf);
+            sys_unlink(dl_errf);
+        }
         xunlink(dl_entry);
     }
     _skip_deps = dl_saved_skip;
@@ -6219,6 +6225,14 @@ fn cmd_distlib(profile): i64 {
     sys_unlink(dl_out);
     if (dl_wrote == 0) {
         _err_ctx("distlib: cannot write the bundle self-check entry", dl_entry);
+        return 1;
+    }
+    if (dl_cap == 0) {
+        _err_ctx("distlib: cannot create the bundle self-check's diagnostics capture, so the RETIRED-name check cannot run — bundle NOT verified", dl_errf);
+        return 1;
+    }
+    if (dl_retired == 0 - 1) {
+        _err_ctx("distlib: cannot read back the bundle self-check's diagnostics whole, so the RETIRED-name check did not run — bundle NOT verified", out_path);
         return 1;
     }
     if (dl_retired != 0) {
@@ -6279,6 +6293,21 @@ fn _distlib_retired_name(n): i64 {
     if (streq(n, "payload") == 1) { return 1; }
     if (streq(n, "tag") == 1) { return 1; }
     return 0;
+}
+
+# ⛔ 6.6.20 (CBT-02) — THE WHOLE CAPTURE, OR NO VERDICT. The self-check read its stderr capture
+# into a fixed 256 KB buffer and scanned that, so a bundle whose `--allow-undef` compile warned
+# more than ~256 KB before reaching a RETIRED name (measured: 1,400 long undefined hook names, a
+# 312 KB capture, `payload` on its last line) was written at rc 0 — the exact "self-checked GREEN,
+# detonated at the consumer" class the v6.6.2 blast door exists to stop. The capture is still on
+# disk when this runs, so it is read whole. Returns the RETIRED name, 0 when there is none, or -1
+# when the capture could not be read whole — never "none" for bytes nobody looked at.
+fn _distlib_scan_retired_file(path): i64 {
+    var n = 0;
+    var b = file_read_whole(path, &n);
+    if (b == 0) { return 0 - 1; }
+    if (n <= 0) { return 0; }
+    return _distlib_scan_retired(b, n);
 }
 
 # Scan a cycc stderr capture for `undefined function 'NAME'` and report the first RETIRED one.
