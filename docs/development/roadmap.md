@@ -39,11 +39,11 @@ closeout), and the unscheduled 6.x backlog. Whole-cycle framing, the v6.7.x lang
 
 ## Where we are
 
-**Current head: v6.6.20** (2026-10-06) — **the v6.6.x closeout, in progress** (6.6.19 shipped: tag `6.6.19` @ `f5a5175a`)
-· cycc **1,586,184 B** (`.text` **1,405,464**) at the slot open, unchanged from 6.6.19 · `cycc-native-aarch64` **1,323,400 B** ·
-seed-derive **GREEN** (6.6.19 gate) · cross-OS **GREEN** on ecb/ach/cass/pi (6.6.19 gate) · self_compile **923 ms** (6.6.19
-gate) · **482** `.tcyr` (**197** in `crossos/`) · **106** `lib/*.cyr` · **372** shell gates under `tests/gates/<bucket>/` ·
-api-surface **5,827** · **0 open issues** · **2 open proposals** · the next free CVE id is **79**.
+**Current head: v6.6.20** (2026-10-07) — **the v6.6.x closeout, merged; release gate pending** (6.6.19 shipped: tag `6.6.19` @ `f5a5175a`)
+· cycc **1,575,984 B** (`.text` **1,394,776**) · `cycc-native-aarch64` **1,325,704 B** · self-host fixpoint + seed-derive
+**GREEN** on the merged tree · cross-OS: the release gate's · self_compile: the release gate's · **506** `.tcyr` (**215** in
+`crossos/`) · **106** `lib/*.cyr` · **411** shell gates under `tests/gates/<bucket>/` · api-surface **5,827** · **4 open
+issues** · **2 open proposals** · the next free CVE id is **103**.
 
 > ⚠ **Every figure above was DERIVED on the day, not carried** (re-derived 2026-10-06 at the 6.6.20 slot open; integration re-derives them on the merged tree).
 > `version-bump.sh` rewrites the version token, replaces the `(…)` after it with the bump date, and
@@ -358,6 +358,26 @@ CHANGELOG [6.6.17] *Downstream* (no ecosystem sweep).
 > aarch64-region translated-row warning, mirshi's old-kernel mode, `async_iocp_pe` (cass), `gates_never_write_tree`
 > axis 9, agnos #48's deadline (agnos), the sandhi comment (a filing).
 
+- **Found by the 6.6.20 closeout and not fixed in it (2026-10-07; backlog — only the user promotes).**
+  - **A parenthesised struct argument to an address-passed parameter pushes the struct's VALUE**: `rd3((a))`
+    (`p: *P3`), `rd1((s))` (`p: *S1`), `rd1((mk1(4)))` — SIGSEGV on x86 / aarch64, an access violation on PE, a guest
+    error on cx. `_try_push_struct_addr_arg` keys every arm on the argument's first token being the name. (The
+    operator path takes the parenthesised forms since 6.6.20.) Pre-existing at 6.6.19.
+  - **A struct-returning call over 8 B as an operator's address-passed operand** — `s - mk3(4)`, `s - (mk3(4))` with
+    `fn P3_sub(a: *P3, b: *P3)`, and the by-value `a - bump(b)`: SIGSEGV on x86 and aarch64, a wrong value on cx.
+    `_op_rhs` gives only the <= 8 B class a temp. Pre-existing at 6.6.19.
+  - **`cyrius deps --verify` on a CRLF checkout of a committed `lib/`** (`core.autocrlf=true`, the Git for Windows
+    default) reports a hash mismatch for every file: the lock hashes the LF bytes. 6.6.20 made `cyrius.lock` itself
+    CRLF-tolerant, not the files it hashes. Remedy today: `.gitattributes` `lib/** -text`. Decision: normalise or
+    document.
+  - **The TRANSITIVE `[deps]` `path` confinement** (CVE-88 closed the `modules` `..` / committed-symlink vectors only):
+    a tagged dep's own `cyrius.cyml` declaring `[deps.evil] path = "<abs dir>"` still vendors from that directory.
+  - **Held back by decision (DECISIONS.md)**: folding constant `if (SYS_OPEN == 2)` arms at parse time (DEAD-10; the PE
+    warnings are gone via `#ifndef`), consolidating the IR heap bands into one `alloc()` arena (HEAP-12), `var f: f32 =
+    1.5` storing the f64 bits (LEX-EXPR-04, already listed).
+  - **16 store slots carry a stale `bin/cybs`** (g-install's RS-02 found `--refresh-only` installed an untracked
+    `build/cybs`; fixed for every future refresh). Restoring 6.6.3–6.6.9 and 6.6.11–6.6.19 is
+    `sh scripts/verify-store.sh --restore <v>` per slot — it writes the live store, so it is the user's to run.
 - **Found by the 6.6.19 lanes and their review (2026-10-06; backlog — only the user promotes).**
   - **The `[embed]` link race on Windows and Apple Silicon (E-S3 residual).** Linux and x86 macOS walk the path
     with `openat(dirfd, component, O_DIRECTORY | O_NOFOLLOW)`; PE keeps the per-component reparse-point check plus a
@@ -366,7 +386,7 @@ CHANGELOG [6.6.17] *Downstream* (no ecosystem sweep).
     macOS arm64's `SYS_OPENAT` 56 is rerouted to BSD `open` DROPPING the dirfd (Linux `AT_FDCWD` −100 ≠ Darwin −2,
     so a straight row to `openat` 463 would break every open) — needs a dirfd-preserving Mach-O route, with a
     companion in `tests/tcyr/crossos/`. Both need concurrent write access to the checkout during the build.
-  - ⚠ **`sizeof`, `mulh64` and `fncall0..8` are in neither of `util.cyr`'s reserved tables** — **BEING FIXED IN
+  - ⚠ **`sizeof`, `mulh64` and `fncall0..8` are in neither of `util.cyr`'s reserved tables** — **✅ FIXED IN
     6.6.20 (promoted by the user 2026-10-06; BACKLOG-03)**: a fn / var / param declaration with one of those names
     is refused by name. CORRECTED at the re-triage — the three are NOT the same shape: `fn sizeof()` declares and a
     call is a parse error (as this bullet said), but a user `fn mulh64(a, b)` compiles and every call SILENTLY binds
@@ -382,7 +402,7 @@ CHANGELOG [6.6.17] *Downstream* (no ecosystem sweep).
     dir, CLN-03 check.sh reaping EMPTY dead-pid `cyrius-<pid>` dirs — a non-empty one is kept; see the `/tmp` bullet
     below).
 - **Found by the 6.6.19 R2/R3 work (2026-10-06; backlog — only the user promotes).**
-  - ⚠ **A redefined fn binds a non-tail call to its FIRST definition** (a silent mis-binding) — **BEING FIXED IN
+  - ⚠ **A redefined fn binds a non-tail call to its FIRST definition** (a silent mis-binding) — **✅ FIXED IN
     6.6.20 (promoted by the user 2026-10-06; BACKLOG-01)**. Found as: in `stdlib_alloc_refusal_sentinels.sh`'s
     ws_server probe, a stub `sandhi_server_find_header` defined after `include "lib/ws_server.cyr"` was called from
     `main`, yet `ws_server_handshake` still called sandhi's version — while the compiler warns "last definition
@@ -428,11 +448,11 @@ priority surfaces.
     16 KiB pages on Apple arm64; `VirtualProtect` reaches no stdlib path today; agnos `cyr_mprotect` is a no-op, so
     an agnos run must REPORT "unguarded", never claim the coverage.
   - `dce_eliminates.sh` exits 7 silently under `bash -eo pipefail` (it passes under `sh`, which is how check.sh runs
-    it). **Placed in the 6.6.20 closeout.**
+    it). **✅ Fixed in the 6.6.20 closeout.**
   - `cbt/commands.cyr`'s comment "dir_list is non-recursive, so fuzz and tests are disjoint" is stale since v6.5.7.
-    **Placed in the 6.6.20 closeout.**
+    **✅ Fixed in the 6.6.20 closeout.**
   - Two `check.sh` selectors in parallel in ONE worktree collide on `build/cyrius_check` — run them in parallel only
-    across worktrees (or give the check driver a per-run output name). **Placed in the 6.6.20 closeout.**
+    across worktrees (or give the check driver a per-run output name). **✅ Fixed in the 6.6.20 closeout.**
   - ⚠ **A killed `cyrius` CLI run leaves a NON-EMPTY `cyrius-<pid>` dir in `/tmp`, and nothing reaps it.** The ~893
     dirs this bullet first counted were cleaned (2 left at the 6.6.20 audit), but the class is live: **49**
     `/tmp/cyrius-*` dirs by 19:34 on 2026-10-06, all created during the closeout's own lane runs, every pid dead,
@@ -446,7 +466,7 @@ priority surfaces.
   - ~~⚠ `Struct = *Struct` bind vs copy~~ → **moved to [roadmap_6.md](roadmap_6.md) § v6.7.x A4** at the 6.6.20
     re-triage, CORRECTED: `≤ 8 B` stores the pointer value (still a silent wrong value), but `> 8 B` BINDS (aliases) —
     it does not copy, so the walk this bullet described works (BACKLOG-06).
-  - ⚠ **aarch64: a call with 262 or more arguments silently corrupts `sp`** — **BEING FIXED IN 6.6.20 (promoted by
+  - ⚠ **aarch64: a call with 262 or more arguments silently corrupts `sp`** — **✅ FIXED IN 6.6.20 (promoted by
     the user 2026-10-06; BACKLOG-02)**. CORRECTED at the re-triage: this bullet said "~300 or more … dies with
     SIGILL"; the real threshold is **262** and the failure there is SILENT. `ECALLCLEAN`
     (`src/backend/aarch64/emit.cyr`) emits `add sp, sp, #((n - 6) * 16)` with no imm12 guard: n = 261 is
@@ -474,7 +494,7 @@ priority surfaces.
   - The aarch64, both Mach-O and cx forks ignore `--syntax-only` (only main.cyr and main_win.cyr read it), so
     `cyrius lint` / `check` do a full compile there — slower, harmless.
   - `_strict_mode` is set by six `src/main*.cyr` forks and read by none (`cycc --strict` has had no effect since
-    6.3.2) — a dead-code closeout item. **Placed in the 6.6.20 closeout** (DEAD-07).
+    6.3.2) — a dead-code closeout item. **✅ Fixed in the 6.6.20 closeout** (DEAD-07).
   - `cyrius deps` / `build` run after a pin move but BEFORE `lib sync --full` stamp the new pin over lock rows for
     files `deps` does not vendor, and `lib sync` then refuses (it names `--relock`). Removing the order dependence
     means `deps` re-vendoring or re-locking those rows on a pin change, which touches every consumer with a
