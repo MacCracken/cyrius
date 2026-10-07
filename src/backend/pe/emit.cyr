@@ -12,8 +12,8 @@
 #     below. No byte writes.
 #
 #   EMITPE_EXEC(S):
-#     Walks regions in file order, writes bytes into output_buf at
-#     S + 0x41A000 using the _pe_wXX helpers. Writes final image
+#     Walks regions in file order, writes bytes into the output buffer
+#     at _output_base using the _pe_wXX helpers. Writes final image
 #     size to S + 0x1903F8 (same dual-use slot FIXUP's ELF path uses).
 #
 # Constants:
@@ -1785,9 +1785,9 @@ fn _pe_layout(S): i64 {
         _pe_image_size = (_pe_reloc_rva + _pe_reloc_vsize + 0xFFF) & (0 - 0x1000);
     }
 
-    # CVE-23: enforce the 16 MB output_buf cap once the final on-disk image
-    # size is known (covers both _pe_image_file_size computation paths) —
-    # EMITPE_EXEC writes the whole image to S+0x4D9D000 with no internal guard.
+    # CVE-23: enforce the output-buffer cap (_output_cap) once the final on-disk
+    # image size is known (covers both _pe_image_file_size computation paths) —
+    # EMITPE_EXEC writes the whole image to _output_base with no internal guard.
     _check_output_cap(S, _pe_image_file_size);
     return 0;
 }
@@ -1795,8 +1795,8 @@ fn _pe_layout(S): i64 {
 # ================================================================
 # Pass 2: serialize
 # ================================================================
-# Walks regions in file order, writing bytes into output_buf at
-# S + 0x41A000. _pe_layout must have been called first. All
+# Walks regions in file order, writing bytes into the output buffer at
+# _output_base. _pe_layout must have been called first. All
 # loop-local vars are hoisted to the function top because cycc
 # treats sequential `var x` declarations in the same scope as
 # redeclaration (reassignment is the supported pattern).

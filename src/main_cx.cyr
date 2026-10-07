@@ -1,6 +1,11 @@
 # Cyrius-X Compiler — emits .cyx bytecode instead of ELF
 # Usage: cat prog.cyr | ./build/cycc_cx > prog.cyx
 # Run:   cat prog.cyx | ./build/cxvm
+#
+# HEAP MAP — none here: src/main.cyr carries the ONE heap map. This driver uses its
+# layout plus the regions tagged `(cx only)` there (the bytecode buffer at 0x54A000, the
+# fixup table at 0x150B000, the break-chain shadow at 0x41A000), and never touches the
+# ones tagged `(not cx)`. tests/gates/memory/heapmap.sh checks both layouts. CHANGELOG [6.6.20]
 
 enum Sys { SYS_READ = 0; SYS_WRITE = 1; SYS_OPEN = 2; SYS_CLOSE = 3; SYS_BRK = 12; SYS_EXIT = 60; }
 
@@ -187,7 +192,7 @@ _HEAP_INIT_SCRATCH(S);
 alloc_init();
 rp_vec = vec_new();
 # Phase 0 (v6.2.0): growable fn-tables — bases start AT the original fixed
-# offsets, mask 8191, cap 8192 (byte-identical under the old cap; REGFN grows
+# offsets; mask + cap are set below (4095 / 2048 since v6.5.40 / v6.5.51; REGFN grows
 # the family + rehashes when the count would exceed it). See util.cyr.
 _fnt_cstrmask = S + 0x93A000;
 _fnt_resmask = S + 0x94A000;
@@ -210,9 +215,11 @@ _fnt_namehash = S + 0x110000;
 _fnt_starthash = S + 0x114000;
 _fnt_hash_mask = 4095;   # v6.5.40: hash slots are 4 B now, so the fixed 16 KB regions hold 4096
 _fnt_cap = 2048;        # v6.5.51: HALF the fixed 4096-slot hash regions, so load stays <=50 % before the first grow (was 4096 = 100 % full)        # v6.5.40: was 8192 at 2 B/slot; _fnt_grow doubles from here
-# Phase 0 (v6.2.0): growable codebuf — base at the original 3 MB region,
-# cap 3145728 (byte-identical under the old cap; EB grows + relocates off-heap
-# when cp nears it). The cx backend's own 0x54A000 codebuf is separate + fixed.
+# Not a code buffer on cx: the SHARED break/continue chain (parse.cyr _PARSE_BREAK,
+# parse_ctrl.cyr) keeps its rel32 links at _codebuf_base + the code offset, so this points it
+# at the (cx only) cx_brk_shadow region of main.cyr's map. cx's bytecode is the fixed
+# cx_codebuf at 0x54A000 (backend/cx/emit.cyr EB, which refuses cp >= 524288 and never grows);
+# `_codebuf_cap` below is read only by the x86/aarch64 EB, which cx does not compile.
 _codebuf_base = S + 0x41A000;
 _varn_base = S + 0x11A000;
 _vars_base = S + 0x12A000;
@@ -230,10 +237,14 @@ _codebuf_cap = 3145728;
 # record a fn-pointer fixup — which is why cx's ELOAD_FN_ADDR was a return-0 stub
 # and `&fn` silently produced 0. cx's own writers (RECFIX / ECALLFIX / the closure
 # fixup in backend/cx/emit.cyr) all hardcode `S + 0x150B000`, so point the shared
-# base at the SAME table; the two addressing schemes must not diverge. Cap matches
-# ECALLFIX's own `fc >= 1048576` guard.
+# base at the SAME table; the two addressing schemes must not diverge.
+# ⛔ 6.6.20 — and `_fixup_cap` stays 0, so they never do. v6.5.13 also set it to 1048576
+# ("matches ECALLFIX's guard"), which ARMED GFCNT's grow: at that count it moved the shared
+# _fixup_base to an alloc'd copy while every cx writer and the FIXUP walk below kept using
+# S + 0x150B000. Each writer refuses at fc >= 1048576 right after, so nothing reached the copy
+# — a latent split, not a live one. The table is fixed (cx_fixup_tbl in main.cyr's map) and
+# the writers' refusal is its cap. tests/gates/memory/heapmap.sh. CHANGELOG [6.6.20]
 _fixup_base = S + 0x150B000;
-_fixup_cap = 1048576;
 
 # Read input (256KB, v3.4.19 — see src/main.cyr for rationale)
 var bl = 0;

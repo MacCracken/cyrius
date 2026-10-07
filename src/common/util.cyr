@@ -181,8 +181,8 @@ fn SENUMC(S, v): i64 {
 }
 fn GENUMVCNT(S, eid): i64 { return L64(S + 0x214008 + eid * 8); }
 fn SENUMVCNT(S, eid, v): i64 { S64(S + 0x214008 + eid * 8, v); return 0; }
-# v5.8.22 bite #2 — per-enum name (offset into S+0x60000 ident
-# pool) for diagnostic messages at exhaustive-match check time.
+# v5.8.22 bite #2 — per-enum name (offset into the tok_names ident
+# pool, S+0xEC00000) for diagnostic messages at exhaustive-match check time.
 # Written by PARSE_ENUM_DEF in pass 1 alongside variant tagging.
 # v5.8.24 — moved 0x214808 → 0x216008 to accommodate
 # enum_variant_count[] growing from 256 to 1024 slots.
@@ -229,8 +229,10 @@ fn _fixup_grow(S): i64 {
 # one global compare per call; readers (count < cap) never trigger it.
 fn GFCNT(S): i64 {
     var c = L64(S + 0x18FCA8);
-    # _fixup_cap==0 → growable fixup not inited (the cx backend keeps its own
-    # fixed 0x150B000 table; also guards any pre-init call) → skip the grow.
+    # _fixup_cap==0 → no grow: before a driver's init, and on cx for good — its table is the
+    # FIXED (cx only) cx_fixup_tbl in main.cyr's map, whose writers and FIXUP walk hardcode
+    # S + 0x150B000, so main_cx.cyr leaves the cap at 0 and the writers refuse at 1048576.
+    # (v6.5.13 had set it, which let this grow move the shared _fixup_base off that table.)
     if (_fixup_cap != 0 && c >= _fixup_cap) { _fixup_grow(S); }
     return c;
 }
@@ -431,9 +433,9 @@ var _sa_init = 0;
 # it at entry. Only set on the reachable (real-emit) path, so an unreachable async
 # fn that gets DCE-stubbed can't leak the flag to the next fn.
 var _pending_async = 0;
-var _fnt_namehash = 0;    # 0x110000 fn_name_hash (2 B/slot, name -> fi+1)
-var _fnt_starthash = 0;   # 0x114000 fn_start_hash (2 B/slot, start -> fi+1)
-var _fnt_hash_mask = 0;   # _fnt_cap - 1 (both hashes; cap is power-of-2)
+var _fnt_namehash = 0;    # 0x110000 fn_name_hash (4 B/slot since v6.5.40, name -> fi+1)
+var _fnt_starthash = 0;   # 0x114000 fn_start_hash (4 B/slot, start -> fi+1)
+var _fnt_hash_mask = 0;   # 2 * _fnt_cap - 1 (both hashes; load <= 50 % since v6.5.51)
 var _fnt_cap = 0;
 # v6.4.75 — the SIX fn-indexed side tables the v6.2.0 growable-fn_table migration
 # left behind at FIXED 8192-slot heap bands (0x100000, 0x14A000, 0x15A000,
@@ -596,13 +598,23 @@ var _codebuf_base = 0;
 #
 # Layout, in the 0x60000-0x100000 band freed when v6.5.40 relocated the identifier pool to
 # 0xEC00000 (verified: `S + 0x60000` has zero live users):
-#   WPJS  0x60000  49152 x 8B   disp32 SOURCE cps
+#   WPJS  0x60000  49152 x 8B   disp32 SOURCE cps — the FIRST 49152; then alloc'd (below)
 #   WPNR  0xC0000   4096 x 24B  (cp, len, cum) NOP runs + 4096 records of merge scratch
 #   WPSW  0xF0000   4096 x 16B  (table_cp, nent) switch jump tables
-# Measured on a cycc self-compile: 32,438 sources, 2,079 runs. Overflow sets a flag and the
-# whole pass declines — never a partial repair. CHANGELOG [6.5.68]
+# Measured on a cycc self-compile at 6.6.20 (CYRIUS_IR=3 and CYRIUS_DCE=1 alike): 43,028
+# sources, 2,605 runs, 0 switch tables (v6.5.68: 32,438 sources, 2,079 runs). WPNR is the one
+# that saturates: under CYRIUS_IR=3, 48 of the 482 tcyr files (the TLS, sandhi and ws programs
+# and the large-source tests) leave more than 4,096 IR NOP runs and the seam declines (6.6.20). A saturated
+# registry sets a flag and the whole pass declines — never a partial repair. CHANGELOG [6.5.68]
+#
+# 6.6.20 — WPJS GROWS. Its fixed 49,152 slots were 88 % used by cycc's own build, and one more
+# source past them declined the whole compaction. The 49,153rd moves the registry to alloc'd
+# storage, doubling (_wpjs_grow); _wpjs_ovf now means only that the alloc failed. Every reader
+# goes through _wpjs_base. CHANGELOG [6.6.20]
 var _wpjs_n = 0;      # disp32 sources recorded
 var _wpjs_ovf = 0;
+var _wpjs_base = 0;   # S + 0x60000 until the first grow, then the alloc'd copy
+var _wpjs_cap = 0;    # 0 until the first record; 49152, then doubling
 var _wpnr_n = 0;      # NOP runs recorded
 var _wpnr_ovf = 0;
 var _wpsw_n = 0;      # switch jump tables recorded
@@ -611,12 +623,28 @@ var _wp_fn_js0 = 0;   # WPJS watermark at the current fn's start
 var _wp_fn_sw0 = 0;   # WPSW watermark at the current fn's start
 var _wp_deleted = 0;
 
+# Grow WPJS: the first call claims the fixed 49,152-slot region at S+0x60000, each later one
+# doubles into alloc'd storage and copies the live entries. Returns 0 only when the alloc fails.
+fn _wpjs_grow(S): i64 {
+    if (_wpjs_base == 0) { _wpjs_base = S + 0x60000; _wpjs_cap = 49152; return 1; }
+    var nc = _wpjs_cap * 2;
+    var nb = alloc(nc * 8);
+    if (nb == 0) { return 0; }
+    var i = 0;
+    while (i < _wpjs_n) { store64(nb + i * 8, load64(_wpjs_base + i * 8)); i = i + 1; }
+    _wpjs_base = nb;
+    _wpjs_cap = nc;
+    return 1;
+}
 # ⚠ The entry-trampoline form, which must record UNCONDITIONALLY. `IR_SENABLE` runs after the
 # trampoline is emitted (main.cyr), so at that moment `IR_ENABLED` is 0 even under CYRIUS_IR=3 —
 # gating this one would drop the single site nothing else repairs.
 fn _wpjs_add_raw(S, cp): i64 {
-    if (_wpjs_n < 49152) { S64(S + 0x60000 + _wpjs_n * 8, cp); _wpjs_n = _wpjs_n + 1; }
-    else { _wpjs_ovf = 1; }
+    if (_wpjs_n >= _wpjs_cap) {
+        if (_wpjs_grow(S) == 0) { _wpjs_ovf = 1; return 0; }
+    }
+    S64(_wpjs_base + _wpjs_n * 8, cp);
+    _wpjs_n = _wpjs_n + 1;
     return 0;
 }
 # ⭐ GATED, because recording on a build that will never compact is pure cost — measured
@@ -669,12 +697,11 @@ var _codebuf_cap = 0;
 # it couldn't grow in place; lazy overcommit means only touched pages cost RAM.
 # Every emit/fixup/write site reaches the buffer through this base. CHANGELOG [6.4.51].
 var _output_base = 0;
-# The output buffer's real capacity, set per-driver: 1 GiB when the off-heap
-# `alloc` succeeds (Linux), else 16 MiB when it falls back to the fixed
-# S+0x4D9D000 region (macOS/Windows, whose allocators can't yet produce a >256 MiB
-# single region — a dedicated large-alloc path is the v6.4.52 follow-up; see
-# issue 2026-07-11-macos-windows-large-single-allocation-path.md). `_check_output_cap`
-# keys on this so the cap always matches the actual buffer.
+# The output buffer's real capacity, set per-driver: 1 GiB on every platform since
+# v6.4.52, and the six native-code drivers refuse to start when that alloc fails (cx
+# writes its bytecode straight from 0x54A000 and never sets it). (Until then macOS and
+# Windows fell back to the fixed 16 MiB S+0x4D9D000 region, retired since.)
+# `_check_output_cap` keys on this so the cap always matches the actual buffer.
 var _output_cap = 0;
 fn _codebuf_grow(S): i64 {
     var nc = _codebuf_cap + 8388608;   # v6.4.49: +8 MiB linear steps (was *2)
@@ -1451,8 +1478,8 @@ fn SESVAR(S, v): i64 { S64(S + 0x1903E0, v); return 0; }
 
 # Module system. (GPUB/SPUB were scaffolded for the `pub` visibility check
 # in docs/development/module-manifest-design.md but never wired up in the
-# compiler — removed to stop tracking dead state. The 0x18FED0
-# pub_flags region remains reserved in the heap map.)
+# compiler — removed to stop tracking dead state. Their 0x18FED0 pub_flags
+# region is FREED in the heap map since 6.6.20.)
 fn GMOD(S): i64 { return L64(S + 0x18FEC8); }
 fn SMOD(S, v): i64 { S64(S + 0x18FEC8, v); return 0; }
 fn GUSEC(S): i64 { return L64(S + 0x1903D0); }
@@ -2712,23 +2739,22 @@ fn _AGG_ASSIGN_TYPE_ERR(S, td, ts, dnoff, snoff): i64 {
 
 # ── Compiler-state heap zero-init (v5.8.63) ──────────────────────────
 # Writes the post-brk scratch-state region (S+0x18C100..S+0x1903F8 +
-# IR state at S+0xF3A000..S+0xF3A028 (5 counters; relocated out of the
+# IR state at S+0xF3A000..S+0xF3A028 (4 counters; relocated out of the
 # fixup_tbl-overlapping 0x174A0xx band @ v6.1.41) + global-var-init slots) to
 # zero, with two sentinel-value exceptions:
 #   - 0x18FCB0 = -1 (last_var: initial "no-var" sentinel)
 #   - 0x18FCB8 =  1 (cur_line: lexer line counter starts at 1)
 # All other slots zeroed.
 #
-# Universal across all 6 main_*.cyr entry points (main.cyr,
-# main_aarch64.cyr, main_aarch64_native.cyr, main_aarch64_macho.cyr,
+# Universal across all 7 drivers (main.cyr, main_aarch64.cyr,
+# main_aarch64_native.cyr, main_aarch64_macho.cyr, main_x86_macho.cyr,
 # main_cx.cyr, main_win.cyr). Pre-v5.8.63 each main inlined this
 # ~30-line block; extraction here
 # saves ~150 LOC of duplication. The aarch64 and cx mains over-zero
 # IR state (they include ir.cyr but don't actively use the IR
 # pipeline) — harmless because zero-init matches the post-brk
-# kernel-zeroed state, and brk extends through 0x4D9D000 in every
-# main (v5.11.68 reorg; was 0x56AD000 pre-.68) so the writes
-# land in mapped memory.
+# kernel-zeroed state, and every driver's arena runs to 0xF600000
+# (the heap map's brk-final line) so the writes land in mapped memory.
 fn _HEAP_INIT_SCRATCH(S): i64 {
     # Compiler-state scalars (BL, CP, VCNT, TCNT, TI, NPOS)
     S64(S + 0x18C100, 0);
@@ -2748,8 +2774,7 @@ fn _HEAP_INIT_SCRATCH(S): i64 {
     S64(S + 0xF3A000, 0);    # ir_node_count
     S64(S + 0xF3A008, 0);    # ir_block_count   (v6.1.41: was 0x174A008, inside fixup_tbl)
     S64(S + 0xF3A010, 0);    # ir_cur_block     (v6.1.41: was 0x174A010)
-    S64(S + 0xF3A018, 0);    # ir_edge_count    (v6.1.41: was 0x174A018)
-    S64(S + 0xF3A020, 0);    # ir_enabled       (v6.1.41: was 0x174A020)
+    S64(S + 0xF3A020, 0);    # ir_enabled       (v6.1.41: was 0x174A020; 0xF3A018, the edge count, is gone with the edge list — 6.6.20)
     # Struct state
     S64(S + 0x18F830, 0);
     # Condition patch state
@@ -2758,7 +2783,6 @@ fn _HEAP_INIT_SCRATCH(S): i64 {
     S64(S + 0x18F898, 0);
     # Global-var-init bookkeeping (gvar_cnt + scratch slots)
     S64(S + 0x19A000, 0);
-    S64(S + 0x197000, 0);
     S64(S + 0x197F00, 0);
     # Kernel mode
     S64(S + 0x18FCA0, 0);

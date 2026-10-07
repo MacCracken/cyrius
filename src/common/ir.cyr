@@ -3,19 +3,21 @@
 # Basic-block CFG between parse (frontend) and emit (backend).
 # Parse builds IR; lowering pass walks IR and calls emit functions.
 #
-# Memory layout (all relative to S):
-#   0x5E9D000  ir_nodes    [16MB]  1048576 nodes × 16 bytes  (v6.3.28: relocated
-#              from 0xA3A000 + cap 262144→1048576. cycc's own whole-program IR
-#              demands ~280K nodes — over the old cap → "IR node buffer full"
-#              abort → 0 bytes. The node/cp arrays were boxed against ir_blocks,
-#              so both moved to the arena TOP, above the v6.3.27 liveness arrays.
-#              IR is touched ONLY under CYRIUS_IR, so the larger region is lazy
-#              VA — zero real-memory cost on default builds.)
-#   0x6E9D000  ir_cp       [4MB]   1048576 node CP offsets × 4 bytes (relocated
-#              from 0xF7B000). ir_nodes ends 0x6E9D000; ir_cp ends 0x729D000.
-#   0xB3A000  ir_blocks   [1MB]   32768 blocks × 32 bytes  (unchanged)
-#   0xF3A000 ir_state    [4KB]   counters + current state (IR_NCNT/BCNT/CURBB/ECNT/ENABLED @ 0xF3A000..028)
-#   0xF3B000 ir_edges    [256KB] 32768 edges × 8 bytes
+# Memory layout (all relative to S). src/main.cyr's heap map is the registry —
+# tests/gates/memory/heapmap.sh checks it, not this list; these are the bases ir.cyr
+# addresses. All of it is touched ONLY under CYRIUS_IR, so it is lazy VA (zero
+# real-memory cost) on default builds.
+#   0x5E9D000  ir_nodes    [16MB]  1048576 nodes × 16 bytes (v6.3.28: relocated from
+#              0xA3A000 to the arena top, cap 262144 → 1048576). cycc's own build
+#              records 448,518 (6.6.20); "IR node buffer full" is a hard error.
+#   0x6E9D000  ir_cp       [4MB]   1048576 node CP offsets × 4 bytes (from 0xF7B000);
+#              ends 0x729D000.
+#   0xB3A000   ir_blocks   [4MB]   131072 blocks × 32 bytes (v6.5.23: 32768 → 131072)
+#   0x207B000  ir_live_in  [1MB]   131072 BB live-in bitmaps × 8 bytes (v6.5.23)
+#   0x217B000  ir_live_out [1MB]   131072 BB live-out bitmaps × 8 bytes (v6.5.23)
+#   0xF3A000   ir_state    [4KB]   counters + current state (IR_NCNT/BCNT/CURBB @
+#              0xF3A000..010, ENABLED @ 0xF3A020; 0xF3A018 held the edge count until
+#              6.6.20, when the write-only edge list at 0xF3B000 was removed)
 #
 # IRNode (16 bytes):
 #   +0: opcode (i16) + flags (i16) packed in low 32 bits
@@ -194,8 +196,6 @@ fn IR_BCNT(S): i64 { return L64(S + 0xF3A008); }
 fn IR_SBCNT(S, v): i64 { S64(S + 0xF3A008, v); return 0; }
 fn IR_CURBB(S): i64 { return L64(S + 0xF3A010); }
 fn IR_SCURBB(S, v): i64 { S64(S + 0xF3A010, v); return 0; }
-fn IR_ECNT(S): i64 { return L64(S + 0xF3A018); }
-fn IR_SECNT(S, v): i64 { S64(S + 0xF3A018, v); return 0; }
 fn IR_ENABLED(S): i64 { return L64(S + 0xF3A020); }
 fn IR_SENABLE(S, v): i64 { S64(S + 0xF3A020, v); return 0; }
 
@@ -267,7 +267,7 @@ fn IR_BB_SUCC1(S, bi): i64 { return (load64(S + 0xB3A000 + bi * 32 + 24) >> 32) 
 # ================================================================
 # Cross-BB liveness arrays (v6.3.27, analysis-only, gated under CYRIUS_IR)
 # ================================================================
-# Per-BB register-liveness bitmaps (one u64 each, indexed by BB id, ≤32768).
+# Per-BB register-liveness bitmaps (one u64 each, indexed by BB id, ≤131072).
 # Bit encoding widens the v5.6.16 2-bit DCE map: bit0=RAX, bit1=RCX, and (storage
 # reserved, no allocation meaning yet) bit2=RBX, bit3=R12, bit4=R13, bit5=R14,
 # bit6=R15. `ir_liveness_cfg` computes these as a CFG fixpoint; the register
@@ -276,10 +276,10 @@ fn IR_BB_SUCC1(S, bi): i64 { return (load64(S + 0xB3A000 + bi * 32 + 24) >> 32) 
 # `push`→`mov reg` instruction). Cross-BB liveness is the reusable substrate the
 # v6.3.28 copy-prop + v6.3.29 cross-BB DSE consume.
 #
-# Placed at the arena top (past local_types @ 0x5DDD000): live_in @ S+0x207B000,
-# live_out @ S+0x217B000, 256 KB each (32768 × 8). The S arena was bumped +512 KB
-# (0x207B000 → 0x5E9D000, main.cyr) to hold them. Zero-init by mmap/brk; only
-# touched under CYRIUS_IR, so the default emit path is unaffected.
+# live_in @ S+0x207B000, live_out @ S+0x217B000, 1 MB each (131072 × 8) — in the gap
+# after fixup_tbl since v6.5.23 (v6.3.27 put them at the arena top, 0x5E1D000, at 256 KB
+# each). Zero-init by mmap/brk; only touched under CYRIUS_IR, so the default emit path is
+# unaffected.
 fn IR_LIVEIN(S, bi): i64 { return load64(S + 0x207B000 + bi * 8); }
 fn IR_SLIVEIN(S, bi, v): i64 { store64(S + 0x207B000 + bi * 8, v); return 0; }
 fn IR_LIVEOUT(S, bi): i64 { return load64(S + 0x217B000 + bi * 8); }
@@ -353,23 +353,11 @@ fn ir_bb_set_cond(S, bi, true_bb, false_bb): i64 {
     return 0;
 }
 
-# Add a CFG edge (for analysis passes)
-fn ir_add_edge(S, from_bb, to_bb): i64 {
-    var ec = IR_ECNT(S);
-    if (ec >= 8192) { return 0; }
-    var base = S + 0xF3B000 + ec * 8;
-    store64(base, (from_bb & 0xFFFFFFFF) | ((to_bb & 0xFFFFFFFF) << 32));
-    IR_SECNT(S, ec + 1);
-    return 0;
-}
-
-
 # Reset IR state (between functions or at start of compilation)
 fn ir_reset(S): i64 {
     IR_SNCNT(S, 0);
     IR_SBCNT(S, 0);
     IR_SCURBB(S, 0 - 1);
-    IR_SECNT(S, 0);
     return 0;
 }
 
@@ -1232,7 +1220,6 @@ fn ir_build_bbs(S): i64 {
     if (ncnt == 0) { return 0; }
 
     IR_SBCNT(S, 0);
-    IR_SECNT(S, 0);
 
     # First BB starts at node 0
     var cur_bb = ir_bb_new(S);
@@ -1364,7 +1351,9 @@ fn _ir_find_bb_for_cp_at(S, target_cp, lo): i64 {
 
 fn ir_build_edges(S): i64 {
     var bcnt = IR_BCNT(S);
-    IR_SECNT(S, 0);
+    # The CFG is the BB succ fields (ir_bb_set_succ / ir_bb_set_cond); `edges` only counts them
+    # for the `ir:` stats line. A separate edge list at S+0xF3B000 was write-only, and capped at
+    # 8,192 of the 52,725 edges cycc's own build has: removed. CHANGELOG [6.6.20]
     var edges = 0;
 
     var bi = 0;
@@ -1386,7 +1375,6 @@ fn ir_build_edges(S): i64 {
                     var target_bb = _ir_find_bb_for_patch_at(S, patch_off, fn_lo);
                     if (target_bb >= 0) {
                         ir_bb_set_succ(S, bi, target_bb);
-                        ir_add_edge(S, bi, target_bb);
                         edges = edges + 1;
                     }
                 }
@@ -1397,7 +1385,6 @@ fn ir_build_edges(S): i64 {
                 var target_bb = _ir_find_bb_for_cp_at(S, target_cp, fn_lo);
                 if (target_bb >= 0) {
                     ir_bb_set_succ(S, bi, target_bb);
-                    ir_add_edge(S, bi, target_bb);
                     edges = edges + 1;
                 }
             }
@@ -1405,7 +1392,6 @@ fn ir_build_edges(S): i64 {
                 # Conditional — fall-through to next BB + jump to patch target
                 # Fall-through (condition false — continues to next BB)
                 if (bi + 1 < bcnt) {
-                    ir_add_edge(S, bi, bi + 1);
                     edges = edges + 1;
                 }
                 # Jump target (condition true — resolved via patch offset)
@@ -1416,7 +1402,6 @@ fn ir_build_edges(S): i64 {
                         var fall_bb = bi;
                         if (bi + 1 < bcnt) { fall_bb = bi + 1; }
                         ir_bb_set_cond(S, bi, fall_bb, target_bb);
-                        ir_add_edge(S, bi, target_bb);
                         edges = edges + 1;
                     }
                 }
@@ -1425,7 +1410,6 @@ fn ir_build_edges(S): i64 {
                 # Fall-through to next BB
                 if (bi + 1 < bcnt) {
                     ir_bb_set_succ(S, bi, bi + 1);
-                    ir_add_edge(S, bi, bi + 1);
                     edges = edges + 1;
                 }
             }
@@ -1654,7 +1638,7 @@ fn wp_compact(S): i64 {
     # amount, so the displacement is recomputed rather than adjusted by one delta.
     var ji = 0;
     while (ji < _wpjs_n) {
-        var src = L64(S + 0x60000 + ji * 8);
+        var src = L64(_wpjs_base + ji * 8);
         var da = _codebuf_base + src;
         var disp = load8(da) | (load8(da + 1) << 8) | (load8(da + 2) << 16) | (load8(da + 3) << 24);
         if (disp >= 0x80000000) { disp = disp - 0x100000000; }
@@ -1821,8 +1805,8 @@ fn wp_compact(S): i64 {
     # first pass's deletions and every repair is double-counted.
     var rj = 0;
     while (rj < _wpjs_n) {
-        var rc = L64(S + 0x60000 + rj * 8);
-        S64(S + 0x60000 + rj * 8, rc - _wp_shift(S, rc));
+        var rc = L64(_wpjs_base + rj * 8);
+        S64(_wpjs_base + rj * 8, rc - _wp_shift(S, rc));
         rj = rj + 1;
     }
     var rs = 0;

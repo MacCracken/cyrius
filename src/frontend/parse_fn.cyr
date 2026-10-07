@@ -9493,8 +9493,8 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                     # IR node CPs. CHANGELOG [6.5.68]
                     var _wpi = _wp_fn_js0;
                     while (_wpi < _wpjs_n) {
-                        var _wpc = L64(S + 0x60000 + _wpi * 8);
-                        S64(S + 0x60000 + _wpi * 8, _wpc - _nop_shift_at(S, _nrn, _wpc));
+                        var _wpc = L64(_wpjs_base + _wpi * 8);
+                        S64(_wpjs_base + _wpi * 8, _wpc - _nop_shift_at(S, _nrn, _wpc));
                         _wpi = _wpi + 1;
                     }
                     var _wsi = _wp_fn_sw0;

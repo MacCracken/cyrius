@@ -7,193 +7,11 @@
 # Build: cat src/main.cyr | ./build/cycc > /tmp/cycc && chmod +x /tmp/cycc
 # Self-host: cat src/main.cyr | /tmp/cycc > /tmp/cc5b && cmp /tmp/cycc /tmp/cc5b
 # ================================================================
-# HEAP MAP — Authoritative offset registry (v3.6.10)
+# HEAP MAP — none here: src/main.cyr carries the ONE heap map, and this fork
+# uses that layout (every `S + 0x…` offset lives in the shared modules).
+# tests/gates/memory/heapmap.sh FAILS if a fork carries a map line: the
+# copies that stood here had drifted from the live layout. CHANGELOG [6.6.20]
 # ================================================================
-# Check here FIRST before allocating new state.
-# Last full audit: v3.6.10. Verified by tests/gates/memory/heapmap.sh (47 regions, 0 warnings).
-#
-# --- Low heap: I/O + identifiers ---
-#   (0x00000-0x60000 is FREE since v6.5.22 — input_buf relocated to 0x7400000 (v6.5.39; was 0x4D9D000).
-#    Deliberately NOT a map entry: it is no longer a region.)
-#   0xEC00000 tok_names    [8388608]     8MB packed identifier strings — rebuilt by LEX.
-#                                        v6.5.40: 512KB→8MB, RELOCATED 0x60000→0xEC00000 (arena
-#                                        top). Could not grow in place — fn_name_hash sits at
-#                                        0x110000. 0x60000-0x100000 (640KB) is now FREE.
-#
-# --- Struct tables (v3.6.6: expanded to 64 structs) ---
-#   0x18E630  struct_names  [2048]        256 struct name offsets (cap 256, v5.7.17)
-#   0x18EE30  struct_fcounts[2048]        256 struct field counts (bit 63 = union; relocated v5.7.17)
-#   0x18F830  struct_count  [8]
-#
-# --- Compiler state (scalars) ---
-#   0x18C100  BL,CP,VCNT,TCNT,TI,NPOS    6 × 8 bytes
-#   0x18DA00  fn_count, in_fn, local_cnt
-#   0x18DA20  (FREED v6.0.88)             was ret_patches [2048] — migrated to rp_vec @ v6.0.7
-#   0x18E220  (FREED v6.0.88)             was ret_patch_cnt [8]
-#   0x18F838  loop_top      [8]
-#   0x18F840  break_patch   [8]
-#   0x18F848  extra_patches [64]          8 && condition patches
-#   0x18F888  extra_patch_cnt [8]
-#   0x18F890  ptr_scale     [8]
-#   0x18F898  continue_mode [8]           0 = continue jumps to the loop top, 1 = to a for's step
-#   0x18F8A0  (FREED v6.6.20)             was continue_patches [64] → _cont_vec (parse.cyr)
-#   0x18F900  defer_count   [8]           deferred blocks per function (max 8)
-#   0x18F908  defer_addrs   [64]          8 deferred block code offsets (LIFO)
-#   0x18FCA0  kernel_mode   [8]
-#   0x18FCA8  fixup_cnt     [8]
-#   0x18FCB0  last_var      [8]
-#   0x18FCB8  cur_line      [8]
-#   0x18FCC0  scope_depth   [8]
-#   0x18FCC8  str_pos       [8]           string write position (moved from 0x70000 in v4.6.2)
-#   0x18FCD0  data_size     [8]           total variable data bytes (moved from 0x70008 in v4.6.2)
-#   0x18FEC8  current_module [8]
-#   0x18FED0  pub_flags     [256]
-#   0x18FFD0  use_from      [512]         64 use alias source names
-#   0x1901D0  use_to        [512]         64 use alias target names
-#   0x1903D0  use_count     [8]
-#   0x1903D8  expr_stype    [8]
-#   0x1903E0  expr_var      [8]
-#   0x1903E8  inline_depth  [8]
-#   0x1903F0  expr_width    [8]
-#   0x1903F8  init_offset / elf_out_len [8]  (dual-use: init_offset pre-FIXUP, elf_out_len post-FIXUP)
-#   0x198000  (FREED v6.3.41)             was gvar_toks[8192]=1024 → relocated+grown to 0x729000[32768]=4096
-#   0x729000  gvar_toks     [32768]       first 4096 deferred global var inits (v6.3.41; count stays at 0x19A000);
-#                                         past that the table moves to alloc and doubles (v6.6.9 — no cap)
-#   0x19A000  gvar_cnt      [8]
-#   0x71A000  file_map_cnt  [8]           file:line error map entry count (v6.1.35: relocated from 0x19A100)
-#   0x71A040  file_map      [24576]       1024 entries × 24 B (start_line, line_count, fname_offset);
-#                                         CVE-31 cap 128→1024, relocated from 0x19A108 into the freed
-#                                         0x71A000 band (the .27 output_buf gap, below TS@0x800000)
-#   0x721000  file_map_str  [32768]       filename string scratch (v6.1.35: relocated from 0x19D000[4096])
-#   (0x19A100/0x19A108/0x19D000 now FREE — reclaimed by the v6.1.35 file_map move)
-#
-# --- Preprocessor + local var state ---
-#   0x190400  include_fname [768]         preprocessor include/#ref filename scratch
-#   0x190700  pp_expand_outpos [8]        PP_EXPAND's output-cursor return slot (CVE-39: this
-#                                         is why include_fname is 768, not 1024)
-#   0x190800  pp_flag_table [128]         #ifdef feature-flag name hashes, 16 slots
-#                                        v6.4.81 CVE-32: this was recorded one page high
-#                                        and 16x too small; no code has ever written that
-#                                        address (every use is 0x190400) and all three
-#                                        capture loops were unbounded, so heapmap.sh was
-#                                        validating a region that does not exist. Ends at
-#                                        0x191400, clear of the #ref read buffer 0x191800.
-#   0x191000  fn_local_names              local variable names
-#   0x191800  local_depths  [512]         scope depths per local
-#   0x192000  macro tables                16 macros: hashes 0x192000, offsets 0x192080,
-#                                        lengths 0x192100, bodies 0x193000 (16 KB pool, bounded
-#                                        v6.5.45 CVE-40; free to 0x197000 since 0x193400 FREED)
-#   0x192200  local_types                 local variable type tracking
-#
-# --- Function tables (relocated v4.7.1 — caps raised 2048 → 4096) ---
-#   0x1A0000  jump_src + nop_run + fn_start_fcnt (v5.6.27)
-#   0x9BA000 fn_names      [32768]       4096 function name offsets
-#   0x9CA000 fn_offsets    [32768]       4096 function code offsets
-#   0x9DA000 fn_params     [32768]       4096 function param counts
-#   0x9EA000 fn_body_start [32768]       4096 inline body start
-#   0x9FA000 fn_body_end   [32768]       4096 inline body end
-#   0xA0A000 fn_inline     [32768]       4096 inline flags
-#   0xA1A000 fn_param_str_mask [32768]   4096 Str-param bitmasks (v3.6.0)
-#   0xA2A000 fn_code_end   [32768]       4096 fn code END offsets (v4.4.0)
-# These fn-metadata tables sit at 0xA1A000/0xA2A000, BELOW the runtime
-# fixup_tbl base (0x107B000). The fixup_tbl is GROWABLE as of v6.2.0
-# (Phase 0 / AR-03): initial 1048576 × 16 B = 16 MiB at 0x107B000, then
-# _fixup_grow doubles it off the heap — see runtime.cyr RECFIX.
-#
-# --- Reclaimable / scratch ---
-#   0x1C0000  include_fnames[32768]       256 include-once filenames × 128 B (v4.8.4-alpha2)
-#   0x14A000  fn_regalloc   [65536]       8192 per-fn #regalloc flags (v4.8.4-alpha4; v5.11.19 doubled + relocated)
-#   0x1D8000  enum_const_val[65536]       8192 slots × 8 B, grown by _grow_g5 —
-#                                        PARSE_ENUM_DEF stores the RAW value per
-#                                        variant (presence = the GVECP byte map);
-#                                        read by PARSE_FACTOR to const-fold enum
-#                                        identifiers at parse time (v5.5.2)
-#   0x1DA000  (PHANTOM, removed from the map v6.5.26 — was "DCE bitmap [8192]".
-#             NOTHING in the tree ever read or wrote S + 0x1DA000: the only two hits
-#             were this map line and its main_win.cyr twin. The real DCE live set is a
-#             STACK array, `var live[4096]` in src/backend/x86/fixup.cyr and
-#             src/backend/aarch64/fixup.cyr. Because the map is MACHINE-READ, a phantom
-#             entry is not harmless: it reserved 8 KB that the corrected enum_const_val
-#             extent legitimately needs, so it manufactured a false overlap the moment a
-#             neighbouring size was told the truth. Second phantom of the v6.4.81 class.)
-#
-# --- Variable tables ---
-#   0x11A000 var_noffs     [65536]       8192 variable name offsets
-#   0x12A000 var_sizes     [65536]       8192 variable sizes
-#   0x13A000 var_types     [65536]       8192 variable type IDs
-#
-# --- Relocated string data (v3.6.7) ---
-#   0x14A000 (free band — was str_data pre-v5.8.59; see main.cyr for full lineage)
-#   0x21A000 str_data      [2097152]     2MB string literal bytes (v5.8.61 monotonic — see main.cyr)
-#
-# --- Large buffers ---
-#   (2 MB freed gap retired v5.11.68 — was preprocess_out [2097152] pre-v5.11.32,
-#                                        relocated to 0x459D000 at v5.11.33 +
-#                                        cap raised 2 MB → 8 MB. The 2 MB hole was
-#                                        absorbed by v5.11.68's full heap-map reorg.)
-#   0x41A000 codebuf       [3145728]     3MB generated machine code (v5.7.27)
-#   0x7400000 input_buf     [25165824]   24MB raw stdin + preprocessor WORKING buffer.
-#                                        v6.5.39: RELOCATED here (arena top) from 0x4D9D000, and
-#                                        grown 16 -> 24 MB. It sat directly ON TOP of
-#                                        preprocess_out, which is exactly what capped the
-#                                        preprocessor at 8 MB — a HARD build failure with no flag,
-#                                        whose only consumer-side answer was to hand-vendor a
-#                                        subset of their deps. Moving THIS buffer (one named
-#                                        constant, `_SRCB`) rather than preprocess_out (a bare
-#                                        literal at ~90 sites) is why the change is small.
-#                                        ⚠ Its cap must stay == the preprocess_out cap:
-#                                        PP_REF_PASS copies expanded output back into here.
-#                                        Passes write to preprocess_out and copy BACK here.
-#                                        0x100000-0x18F830 is occupied (fn_name_hash 0x110000 ..
-#                                        var_types 0x13A000). This is the RETIRED output_buf band
-#                                        (dead since v6.4.52), contiguous above preprocess_out and
-#                                        ending exactly at locals (0x5D9D000) — so reclaiming the
-#                                        band and raising the cap are ONE change.
-#                                        Passes write to preprocess_out and copy BACK here.
-#                                        Also retires the old input_buf/tok_names OVERLAP and its
-#                                        "pool end <= 0x100000" constraint.
-#   0x91A000 struct_ftypes [65536]       PACKED field pool (v6.0.47), 8192 flat entries × 8B, addr=(field_base[si]+fc)*8
-#   0x92A000 struct_fnames [65536]       PACKED field pool (v6.0.47), 8192 flat entries × 8B, addr=(field_base[si]+fc)*8
-#
-#   0x93A000 (fixup table: 16384 entries × 16 bytes ends at 0x9BA000)
-#
-# --- cycc IR region (v5.0.0) ---
-#   0xA3A000 ir_nodes      [4194304]     262144 IR nodes × 16 bytes
-#   0xB3A000 ir_blocks    [4194304]     131072 basic blocks × 32 bytes (v6.5.23: 32768 -> 131072;
-#                                        grew DOWN into the free 0xA4A000-0xE3A000 gap. The cap is NOT one
-#                                        constant — it is coupled to ir_edges + ir_live_in + ir_live_out,
-#                                        all sized by BLOCK COUNT, and all four moved together.)
-#   0xF3A000 ir_state     [4096]        IR builder state (counters, current BB)
-#   0xF3B000 ir_edges     [1048576]     131072 CFG edges × 8 bytes (v6.5.23; into the 0xF7B000 gap)
-#   0xF7B000 ir_cp        [1048576]     262144 node CP offsets × 4 bytes
-#
-#
-# --- LEXID dedup index (v5.10.40) ---
-#   0x457C000  lexid_count   [8]
-#   0x457C100  lexid_heads   [131072]       16384 × 8B content-hashed chain heads
-#                                            (v6.5.50: was [2048]/256 length-keyed buckets;
-#                                            absorbs the 128 KB hole freed at 0x457C900)
-#   0x457C900  lexid_entries [131072]
-#   (Full doc in src/main.cyr §LEXID_DEDUP)
-#
-#   0x459D000 preprocess_out [25165824]  24 MB expanded source buffer.
-#                                        v6.5.39: 8 -> 24 MB, taking the band input_buf
-#                                        vacated. Ends exactly at fn_local_names (0x5D9D000),
-#                                        which is the ceiling for this placement.
-#                                        Relocated here from 0x44A000 at v5.11.33
-#                                        + cap raised 2 MB → 8 MB. See
-#                                        CHANGELOG [5.11.33].
-#   0x5D9D000 local tables (CVE-24 v6.1.40) 4×128 KB per-fn slot-indexed tables → end 0x5E1D000 (the
-#                                        0x5F00000 VirtualAlloc below already covers them)
-#   0x5E1D000 brk-equivalent              ~94.1 MB (+512 KB local-table relocation @ v6.1.40;
-#                                        +16MB output_buf @ v6.1.27). 0x5F00000 VirtualAlloc (95 MB,
-#                                        ~908 KB headroom) covers it. v5.11.68 grew this from
-#                                        0x459D000 / 78.6 MB at v5.10.40 by the
-#                                        8 MB preprocess_out relocation;
-#                                        v5.10.40 grew from 0x457C000 / 78.5 MB
-#                                        at v5.8.61 by 132 KB LEXID dedup; was
-#                                        0x5100000 at .59-.60 / 0x5000000 /
-#                                        0x298B000.
 #
 # Token types:
 #   1=NUM 2=IDENT 3=VAR 4=EQ 5=SEMI 6=PLUS 7=MINUS 8=STAR 9=SLASH
@@ -369,22 +187,16 @@ if (_vw != 0) {
 # isn't rerouted). v5.5.8: use SYS_MMAP which works on both paths of
 # this file's build chain:
 #   - cycc (Linux) compiles main_win.cyr → cycc_win (Linux ELF):
-#     heap init runs on Linux, calls mmap(0, 32MB, PROT_RW=3,
+#     heap init runs on Linux, calls mmap(0, <arena>, PROT_RW=3,
 #     MAP_PRIVATE|MAP_ANONYMOUS=0x22, -1, 0) → valid region.
 #   - cycc_win compiles main_win.cyr → cycc_win.exe (PE):
 #     heap init runs on Windows, PE backend (v5.5.1) routes to
-#     VirtualAlloc(0, 32MB, MEM_COMMIT|MEM_RESERVE, PAGE_READWRITE).
+#     VirtualAlloc(0, <arena>, MEM_COMMIT|MEM_RESERVE, PAGE_READWRITE).
 #     The prot/flags/fd/offset are ignored by EMMAP_PE.
-# 32 MB covers the 21 MB heap with margin + page-alignment.
-# MMAP region sized at 0x5F00000 (95 MB) — covers the cyrius heap
-# layout through preprocess_out (brk-equivalent at 0x5D9D000 /
-# ~77.6 MB) plus 1.4 MB page-alignment slack. Synced with
-# main.cyr's brk extension.
-# Lineage: 0x5800000 / 88 MB through v5.11.67 ← 0x5000000 / 80 MB
-# pre-v5.11.33 (preprocess_out cap raise 2 MB → 8 MB grew it 8 MB).
-# v5.11.68 full heap-map reorg shrunk MMAP 0x5800000 → 0x4F00000 → 0x5F00000 @ v6.1.27
-# (-9.06 MB) tracking the brk reduction. PE EMMAP routes via
-# VirtualAlloc with prot/flags ignored.
+# <arena> is 0xF600000 (246 MiB): the brk-final line of src/main.cyr's heap
+# map, the arena end every driver requests. (This block quoted "32 MB" and then
+# "0x5F00000 (95 MB)" until 6.6.20; both were sizes of layouts long gone.) PE
+# EMMAP routes via VirtualAlloc with prot/flags ignored.
 var S = syscall(SYS_MMAP, 0, 0xF600000, 3, 0x22, 0 - 1, 0);   # v6.3.28: +IR arrays @ arena top (0x5E9D000..0x729D000); v6.4.21: +512 KB lexid_entries @ 0xF400000 (LEXID cap 16384→65536)
 # 6.6.20: CHECKED — the Linux host stage's mmap returns -errno and VirtualAlloc returns 0 when
 # refused (ulimit -v / -d on Linux); cycc then died on its first heap store with no message.
@@ -471,10 +283,11 @@ PP_PREDEFINE(S, "CYRIUS_HAS_VAL_SIMD_PARAMS");
 # Preprocess includes
 PREPROCESS(S);
 
-# Re-init ALL compiler state that the ifdef copy-back may have overwritten.
-# For expanded source >256KB, the copy-back writes past S+0x40000 into every
-# heap region up to S+bl. This mirrors the full initialization at lines 155-196
-# so every scalar starts fresh before LEX runs.
+# Re-init the compiler scalars so every one starts fresh before LEX runs (the same
+# slots _HEAP_INIT_SCRATCH zeroes, util.cyr). Written when input_buf sat at S+0 and
+# the #ifdef copy-back of a >256 KB expansion ran through every heap region up to
+# S+bl; since v6.5.39 input_buf is at S + 0x7400000 with the preprocess_out cap,
+# so the copy-back stays inside it and this is now a plain reset after PREPROCESS.
 S64(S + 0x18FCC8, 0);       # str_pos (moved from 0x70000 in 4.6.2)
 S64(S + 0x18FCD0, 0);       # data_size (moved from 0x70008 in 4.6.2)
 S64(S + 0x18C108, 0);       # CP
@@ -499,8 +312,7 @@ S64(S + 0x18F898, 0);       # continue_mode
 S64(S + 0x18FEC8, 0);       # current_module
 S64(S + 0x1903D0, 0);       # use_count
 S64(S + 0x19A000, 0);       # gvar_cnt
-S64(S + 0x197000, 0);       # macro state
-S64(S + 0x197F00, 0);       # macro state 2
+S64(S + 0x197F00, 0);       # include_count
 
 # Build file map from #@file markers (for file:line error messages)
 FM_BUILD(S);
