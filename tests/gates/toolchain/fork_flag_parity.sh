@@ -13,10 +13,22 @@
 #   strict   — `--strict` is ACCEPTED and does NOTHING (output byte-identical to no flag) on
 #              every runnable fork, and no fork declares `_strict_mode` again: the global was
 #              written by six argv walkers and read by nothing since v6.3.2. (DEAD-07)
+#   syntax   — `--syntax-only` makes a file whose only fault is an unresolved name compile
+#              clean (rc 0), and without it the same file is rc 1 naming the name
+#              (anti-vacuous). `cyrius lint`'s pre-pass passes the flag on every host; the
+#              aarch64 /proc walkers and the macOS argv scan never read it, so lint refused
+#              valid multi-file module files on pi, ecb and ach. (REFACTOR-01)
+#   pie      — every aarch64 compiler honours `--pie` and CYRIUS_PIE=1 (ET_DYN that runs) and
+#              defaults to ET_EXEC. The native fork read neither and wrote ET_EXEC, rc 0.
+#   macho    — the native aarch64 fork, which has no Mach-O emitter, REFUSES CYRIUS_MACHO_ARM=1
+#              by name (rc 1, no output). It compiled the program and wrote 0 bytes, rc 0.
 #
 # MUTATION LEDGER (6.6.20, scratch copies of src/, never the repo):
 #   real tree                                          -> GREEN
 #   `var _strict_mode = 0;` re-added to src/main.cyr   -> RED "strict: src/main.cyr declares _strict_mode"
+#   the `--sy` arm deleted from main_aarch64.cyr       -> RED "syntax a64_cross" + "syntax aarch64_qemu"
+#   the CYRIUS_PIE read deleted from the native fork   -> RED "pie native_qemu env: rc 0, e_type EXEC"
+#   the native CYRIUS_MACHO_ARM refusal deleted        -> RED "macho native_qemu: rc 0, 0 bytes out"
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || { echo "FAIL: fork_flag_parity: cannot cd to $ROOT"; exit 1; }
@@ -93,9 +105,57 @@ printf '%s\n' "$FORKS" | while IFS='|' read -r l c; do
     fi
     echo x >> "$T/nrows"
 done
+
+# ── syntax: --syntax-only honoured, its absence still resolves ──────────────────────────
+printf 'fn f(): i64 { return not_declared_anywhere; }\nvar r = f();\n' > "$T/u.cyr"
+printf '%s\n' "$FORKS" | grep -v '^cx|' | while IFS='|' read -r l c; do
+    a=0; $c --syntax-only < "$T/u.cyr" > "$T/y1" 2> "$T/y1.err" || a=$?
+    b=0; $c < "$T/u.cyr" > "$T/y2" 2> "$T/y2.err" || b=$?
+    [ "$a" = 0 ] || { echo "  FAIL: fork_flag_parity syntax $l: --syntax-only rc $a: $(grep -m1 error "$T/y1.err")"; echo x >> "$T/red"; }
+    { [ "$b" != 0 ] && grep -q not_declared_anywhere "$T/y2.err"; } \
+        || { echo "  FAIL: fork_flag_parity syntax $l: without the flag rc $b (want 1, naming the name)"; echo x >> "$T/red"; }
+    echo x >> "$T/nrows"
+done
+
+# ── pie / macho: the aarch64 compilers ──────────────────────────────────────────────────
+etype() { od -An -j16 -N2 -tx1 "$1" | tr -d ' \n'; }   # 0200 = ET_EXEC, 0300 = ET_DYN
+printf 'fn main(): i64 { return 42; }\n' > "$T/m.cyr"
+AFORKS="a64_cross|$T/a64x"
+[ "$HAVE_QEMU" = 1 ] && AFORKS="$AFORKS
+aarch64_qemu|qemu-aarch64 $T/a64
+native_qemu|qemu-aarch64 $T/a64n"
+printf '%s\n' "$AFORKS" | while IFS='|' read -r l c; do
+    for how in none env flag; do
+        rc=0
+        case $how in
+            none) $c < "$T/m.cyr" > "$T/pie" 2> "$T/pie.err" || rc=$? ;;
+            env)  env CYRIUS_PIE=1 $c < "$T/m.cyr" > "$T/pie" 2> "$T/pie.err" || rc=$? ;;
+            flag) $c --pie < "$T/m.cyr" > "$T/pie" 2> "$T/pie.err" || rc=$? ;;
+        esac
+        want=0300; [ $how = none ] && want=0200
+        got=$(etype "$T/pie")
+        echo x >> "$T/nrows"
+        if [ "$rc" != 0 ] || [ "$got" != "$want" ]; then
+            nm=EXEC; [ "$got" = 0300 ] && nm=DYN
+            echo "  FAIL: fork_flag_parity pie $l $how: rc $rc, e_type $nm ($got, want $want)"; echo x >> "$T/red"; continue
+        fi
+        if [ "$HAVE_QEMU" = 1 ]; then
+            chmod +x "$T/pie"; r=0; qemu-aarch64 "$T/pie" || r=$?
+            [ "$r" = 42 ] || { echo "  FAIL: fork_flag_parity pie $l $how: the binary exited $r (want 42)"; echo x >> "$T/red"; }
+        fi
+    done
+done
+if [ "$HAVE_QEMU" = 1 ]; then
+    rc=0; env CYRIUS_MACHO_ARM=1 qemu-aarch64 "$T/a64n" < "$T/m.cyr" > "$T/mo" 2> "$T/mo.err" || rc=$?
+    rows=$((rows + 1))
+    if [ "$rc" = 0 ] || [ -s "$T/mo" ] || ! grep -q CYRIUS_MACHO_ARM "$T/mo.err"; then
+        bad "macho native_qemu: rc $rc, $(wc -c < "$T/mo" | tr -d ' ') bytes out (want a refusal naming CYRIUS_MACHO_ARM, rc 1, no output)"
+    fi
+fi
+
 [ -f "$T/nrows" ] && rows=$((rows + $(wc -l < "$T/nrows")))
 [ -f "$T/red" ] && fail=$((fail + $(wc -l < "$T/red")))
 
 if [ "$fail" -ne 0 ]; then echo "FAIL fork_flag_parity: $fail of $rows row(s) red"; exit 1; fi
-echo "PASS fork_flag_parity: $rows rows — --strict accepted as a no-op on every runnable fork, _strict_mode gone"
+echo "PASS fork_flag_parity: $rows rows — --strict a no-op and --syntax-only honoured on every runnable fork; aarch64 --pie / CYRIUS_PIE; native refuses CYRIUS_MACHO_ARM"
 exit 0

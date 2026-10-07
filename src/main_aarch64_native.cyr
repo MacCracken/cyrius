@@ -195,11 +195,32 @@ if (_vn > 0) {
                 }
             }
         }
+        # "--sy" (--syntax-only) — the same flag as main.cyr's (see _syntax_only, util.cyr):
+        # `cyrius lint`'s pre-pass passes it, and without this arm a file whose only fault
+        # was a name defined in another file was refused as unparseable on this host.
+        # chars s(115) y(121). CHANGELOG [6.6.20]
+        if (_vi + 4 <= _vn) {
+            if (load8(&_vbuf + _vi) == 45 && load8(&_vbuf + _vi + 1) == 45) {
+                if (load8(&_vbuf + _vi + 2) == 115 && load8(&_vbuf + _vi + 3) == 121) {
+                    _syntax_only = 1;
+                }
+            }
+        }
         # "--al" (--allow-undef, v6.3.2) — downgrade the default reachable-undef hard error to a warning. chars a(97) l(108).
         if (_vi + 4 <= _vn) {
             if (load8(&_vbuf + _vi) == 45 && load8(&_vbuf + _vi + 1) == 45) {
                 if (load8(&_vbuf + _vi + 2) == 97 && load8(&_vbuf + _vi + 3) == 108) {
                     _allow_undef = 1;
+                }
+            }
+        }
+        # "--pie" — position-independent codegen, as in main_aarch64.cyr (also CYRIUS_PIE=1,
+        # read below). This fork had neither, so `cyrius build --pie` on an ARM host wrote a
+        # fixed-address ET_EXEC and exited 0. chars p(112) i(105) e(101). CHANGELOG [6.6.20]
+        if (_vi + 5 <= _vn) {
+            if (load8(&_vbuf + _vi) == 45 && load8(&_vbuf + _vi + 1) == 45) {
+                if (load8(&_vbuf + _vi + 2) == 112 && load8(&_vbuf + _vi + 3) == 105 && load8(&_vbuf + _vi + 4) == 101) {
+                    _pie_mode = 1;
                 }
             }
         }
@@ -304,23 +325,26 @@ var _poison_env_early = _read_env("CYRIUS_POISON");
 # Costs nothing when off. Set on all SEVEN forks, because a fuzz mode that exists only on
 # x86-Linux tells three other platforms' consumers nothing.
 if (_poison_env_early != 0) { PP_PREDEFINE(S, "CYRIUS_POISON"); }
-# v5.11.27 — port the env-driven CYRIUS_MACHO_ARM dispatch block that
-# main_aarch64.cyr:148-159 has carried since v5.5.16. Without it
-# lib/alloc.cyr's `#ifdef CYRIUS_TARGET_LINUX` branch is dead → alloc
-# undefined → every aarch64-native binary SIGILLs at first alloc().
-# See CHANGELOG [5.11.27].
+# CYRIUS_MACHO_ARM=1 is REFUSED by name here. This fork has no Mach-O emitter (it omits
+# backend/macho/emit.cyr; EMITMACHO_ARM64 above is a stub), so it used to predefine
+# CYRIUS_TARGET_MACOS, compile the whole program, and write ZERO bytes with exit 0. Mach-O
+# arm64 comes from the cross (cycc_aarch64) or from cycc on macOS. CHANGELOG [6.6.20]
 var _macho_arm_env_early = _read_env("CYRIUS_MACHO_ARM");
-var _is_macho_arm_build = 0;
 if (_macho_arm_env_early != 0) {
     if (load8(_macho_arm_env_early) == 49 && load8(_macho_arm_env_early + 1) == 0) {
-        _is_macho_arm_build = 1;
+        syscall(SYS_WRITE, 2, "error: CYRIUS_MACHO_ARM=1: this native aarch64-Linux cycc has no Mach-O emitter (use cycc_aarch64, or cycc on macOS)\n", 117);
+        syscall(SYS_EXIT, 1);
     }
 }
-if (_is_macho_arm_build == 1) {
-    PP_PREDEFINE(S, "CYRIUS_TARGET_MACOS");
-} else {
-    PP_PREDEFINE(S, "CYRIUS_TARGET_LINUX");
+# CYRIUS_PIE=1 mirrors the --pie flag above, as in main_aarch64.cyr. Read before any
+# codegen: the aarch64 emitter picks adrp/add over absolute addresses on _pie_mode.
+var _pie_env_early = _read_env("CYRIUS_PIE");
+if (_pie_env_early != 0) {
+    if (load8(_pie_env_early) == 49 && load8(_pie_env_early + 1) == 0) {
+        _pie_mode = 1;
+    }
 }
+PP_PREDEFINE(S, "CYRIUS_TARGET_LINUX");
 # v5.10.39 — non-PE targets support f64v2/f64v4 value-form param ABI.
 PP_PREDEFINE(S, "CYRIUS_HAS_VAL_SIMD_PARAMS");
 PREPROCESS(S);

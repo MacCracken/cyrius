@@ -194,6 +194,7 @@ if ((_vflags & 1) == 1) {
     syscall(SYS_EXIT, 0);
 }
 if ((_vflags & 4) == 4) { _allow_undef = 1; }
+if ((_vflags & 8) == 8) { _syntax_only = 1; }   # --syntax-only (see _syntax_only, util.cyr). CHANGELOG [6.6.20]
 #endif
 
 # Allocate heap via mmap — macOS has no brk. The Linux syscall number 9

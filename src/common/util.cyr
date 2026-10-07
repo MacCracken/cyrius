@@ -2851,11 +2851,14 @@ fn _ARGV_FLAG_ONE(p): i64 {
     var d = load8(p + 3);
     if (c == 118) { if (d == 101) { return 1; } }    # --ve(rsion)
     if (c == 97) { if (d == 108) { return 4; } }     # --al(low-undef)
+    if (c == 115) { if (d == 121) { return 8; } }    # --sy(ntax-only), 6.6.20
     return 0;
 }
 
 # Scan argv for cycc's flags on macOS. Returns a bitmask:
-#   1 = --version   4 = --allow-undef
+#   1 = --version   4 = --allow-undef   8 = --syntax-only
+# Bit 8 (6.6.20): `cyrius lint` passes --syntax-only on every POSIX host; without it a file
+# whose only fault was a name defined in another file was refused as unparseable on macOS.
 # Bit 2 was --strict until 6.6.20: the flag is a no-op (a reachable undefined fn is a
 # hard error by default since v6.3.2) and the global it set was never read. Not reused.
 #

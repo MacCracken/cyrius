@@ -274,6 +274,13 @@ case "$HOST" in
       && (cd _envp && env -i PATH="$D/_envfb:/usr/bin:/bin" HOME="$HOME" CYRIUS_HOME="$D/_envh" CYRIUS_RESOLVED=1 "$D/cyrius_native" deps > "$D/_env.log" 2>&1) \
       && test -s _envfb/sha256sum.hit' \
       || { echo "ENV_FAIL: ecb — a CLI child did not inherit PATH (the fake sha256sum first on PATH never ran; ~/$RD/_env.log)"; exit 1; }
+    # 6.6.20 — the macOS argv scan honours --syntax-only (_ARGV_FLAG_ONE bit 8). `cyrius lint`
+    # passes it on every POSIX host; this driver never read it, so lint refused a file whose only
+    # fault was a name defined in another file. Only this host can run the arm64 scan.
+    ssh $SSHO ecb "cd ~/$RD && "'printf "fn f(): i64 { return not_declared_anywhere; }\nvar r = f();\n" > _so.cyr \
+      && CYRIUS_MACHO_ARM=1 ./r1r --syntax-only < _so.cyr > /dev/null 2> _so.err \
+      && ! CYRIUS_MACHO_ARM=1 ./r1r < _so.cyr > /dev/null 2>> _so.err' \
+      || { echo "SYNTAX_FAIL: ecb — cycc --syntax-only refused a file whose only fault is an unresolved name, or plain cycc accepted it (~/$RD/_so.err)"; exit 1; }
     ;;
   ach)
     # x86 ELF cycc told to emit Mach-O builds the x86 Mach-O cycc (its driver
@@ -311,6 +318,11 @@ case "$HOST" in
       && (cd _envp && env -i PATH="$D/_envfb:/usr/bin:/bin" HOME="$HOME" CYRIUS_HOME="$D/_envh" CYRIUS_RESOLVED=1 "$D/cyrius_native" deps > "$D/_env.log" 2>&1) \
       && test -s _envfb/sha256sum.hit' \
       || { echo "ENV_FAIL: ach — a CLI child did not inherit PATH (the fake sha256sum first on PATH never ran; ~/$RD/_env.log)"; exit 1; }
+    # 6.6.20 — --syntax-only through the x86-macOS argv scan, as on ecb.
+    ssh $SSHO ach "cd ~/$RD && "'printf "fn f(): i64 { return not_declared_anywhere; }\nvar r = f();\n" > _so.cyr \
+      && ./r1 --syntax-only < _so.cyr > /dev/null 2> _so.err \
+      && ! ./r1 < _so.cyr > /dev/null 2>> _so.err' \
+      || { echo "SYNTAX_FAIL: ach — cycc --syntax-only refused a file whose only fault is an unresolved name, or plain cycc accepted it (~/$RD/_so.err)"; exit 1; }
     ;;
   pi)
     # x86 ELF -> aarch64-emitting cross-compiler -> NATIVE aarch64 cycc.
@@ -359,6 +371,19 @@ case "$HOST" in
     # a raw-syscall warning for that line — nothing here built it, so nothing saw it. The native fork
     # (n1) compiles cbt/cyrius.cyr with ZERO raw-syscall warnings and `cyrius run` of a
     # hello must exit 0 (the tar now carries cbt/).
+    # 6.6.20 — the native fork's flags on the hardware: --syntax-only (lint's pre-pass) on both
+    # ARM compilers, --pie and CYRIUS_PIE=1 give an ET_DYN that runs to 42 (the native fork read
+    # neither and wrote ET_EXEC), and CYRIUS_MACHO_ARM=1 is refused by name with no output (it
+    # wrote 0 bytes, rc 0 — the native fork has no Mach-O emitter).
+    ssh $SSHO pi "cd ~/$RD && "'printf "fn f(): i64 { return not_declared_anywhere; }\nvar r = f();\n" > _so.cyr \
+      && ./n1 --syntax-only < _so.cyr > /dev/null 2> _so.err && ! ./n1 < _so.cyr > /dev/null 2>> _so.err \
+      && ./r1 --syntax-only < _so.cyr > /dev/null 2>> _so.err \
+      && printf "fn main(): i64 { return 42; }\n" > _pm.cyr \
+      && ./n1 --pie < _pm.cyr > _pie1 && CYRIUS_PIE=1 ./n1 < _pm.cyr > _pie2 \
+      && [ "$(od -An -j16 -N2 -tx1 _pie1 | tr -d " \n")" = 0300 ] && [ "$(od -An -j16 -N2 -tx1 _pie2 | tr -d " \n")" = 0300 ] \
+      && chmod +x _pie1 _pie2 && (_p=0; ./_pie1 || _p=$?; [ $_p -eq 42 ]) && (_p=0; ./_pie2 || _p=$?; [ $_p -eq 42 ]) \
+      && (_m=0; CYRIUS_MACHO_ARM=1 ./n1 < _pm.cyr > _mo 2> _mo.err || _m=$?; [ $_m -eq 1 ] && [ ! -s _mo ] && grep -q CYRIUS_MACHO_ARM _mo.err)' \
+      || { echo "FLAG_FAIL: pi — the native compiler mishandled --syntax-only / --pie / CYRIUS_PIE / CYRIUS_MACHO_ARM (~/$RD/_so.err, _pie1, _pie2, _mo.err)"; exit 1; }
     ;;
   cass)
     # x86 ELF -> PE-emitting cross-compiler (cycc_win) -> native PE cycc.exe.
