@@ -15,6 +15,7 @@ include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 include "lib/fnptr.cyr"
 include "lib/assert.cyr"
+include "lib/simd.cyr"
 
 struct Pt { x; y; z; }
 struct Hold { p: *Pt; b: *u8; }
@@ -171,7 +172,51 @@ fn differences(p: *i16): i64 {
     return 0;
 }
 
+# ── the inline replay steps a `*T` parameter too (6.6.20) ───────────────────────────────────
+# `#inline` fns, one-statement generics and SIMD-parameter fns are re-parsed into the CALLER, and
+# that replay re-registered a parameter by name with only its vector / float type: a `*T`
+# parameter lost its pointer step, so `p + n` stepped 1 (`*f32`: a FLOAT add of the pointer's
+# bits, truncating it) while the same fn out of line stepped sizeof(T). Such fns are not replayed
+# now. And the parameter scan went by PARAMETER, not slot, so `fn sv_pt(v: f64v2, s: Pt)` was
+# replayed and the compiler crashed on the call. Each row is a value the out-of-line fn gives.
+#inline
+fn in_add(p: *i32): i64 { return d(p + 1, p); }
+#inline
+fn in_ret(p: *i32): *i32 { return p + 2; }
+#inline
+fn in_diff(q: *i32, p: *i32): i64 { return q - p; }
+#inline
+fn in_asg(p: *i32): *i32 { p += 3; return p; }
+#inline
+fn in_f32(p: *f32): i64 { return d(p + 1, p); }
+fn gs_ret<T>(p: *T): *T { return p + 2; }
+fn gs_diff<T>(q: *T, p: *T): i64 { return q - p; }
+fn sv_ptr(v: f64v2, p: *i32): *i32 { return p + 2; }
+fn sv_pt(v: f64v2, s: Pt): i64 { return s.y; }
+fn inline_replay(): i64 {
+    var b = &buf;
+    assert_eq(in_add(b), 4, "#inline *i32: p + 1");
+    assert_eq(d(in_ret(b), b), 8, "#inline *i32: returns p + 2");
+    assert_eq(in_diff(b + 16, b), 4, "#inline *i32: q - p is an element count");
+    assert_eq(d(in_asg(b), b), 12, "#inline *i32: p += 3");
+    assert_eq(in_f32(b), 4, "#inline *f32: p + 1 is a pointer step, not a float add");
+    assert_eq(d(gs_ret<i32>(b), b), 8, "one-statement generic gs_ret<i32>: p + 2");
+    assert_eq(d(gs_ret<i16>(b), b), 4, "gs_ret<i16>: p + 2");
+    assert_eq(d(gs_ret<i64>(b), b), 16, "gs_ret<i64>: p + 2");
+    assert_eq(d(gs_ret<f64>(b), b), 16, "gs_ret<f64>: p + 2, not an f64 add");
+    assert_eq(d(gs_ret<i8>(b), b), 2, "gs_ret<i8>: p + 2");
+    assert_eq(d(gs_ret<Pt>(b), b), 48, "gs_ret<Pt>: p + 2");
+    assert_eq(gs_diff<i32>(b + 16, b), 4, "gs_diff<i32>: q - p");
+    var v: f64v2;
+    assert_eq(d(sv_ptr(v, b), b), 8, "a SIMD-param fn: a trailing *i32 param + 2");
+    var s: Pt;
+    s.x = 5; s.y = 9; s.z = 1;
+    assert_eq(sv_pt(v, s), 9, "a SIMD param then a struct param (compiled, and reads s.y)");
+    return 0;
+}
+
 alloc_init();
+inline_replay();
 locals();
 call_results();
 differences(&buf);

@@ -4015,6 +4015,27 @@ fn _param_record(S, li, pnoff, is_async): i64 {
     _cur_fn_ptrp = 0;
     return 0;
 }
+# v6.3.37 (C1) — why a fn's PARAMETERS keep it off the inline replay: 3 a struct/Str/Result/Option/
+# Tagged parameter (SLTYPE = -sid), 6 a `name: *T` parameter, 0 neither. The replay re-registers a
+# parameter by NAME with only the type GFIPT packs (`_inl_bind_param`) — vectors and f64/f32 —
+# so a struct's SLTYPE is lost (`s.field` mis-parses) and so is a pointer's bit 56 and step mark
+# (`_sl_marks`): an inlined `p + 1` stepped 1 whatever T, and on a `*f32` it was a FLOAT add of
+# the pointer's bits, while the same fn out of line stepped sizeof(T) (6.6.17 b7 missed this
+# site). Such a fn falls back to a call, which handles both correctly. Vectors stay inlinable.
+# ⛔ 6.6.20 — this walks SLOTS 0.._cur_fn_pslots-1, not parameters 0..pc-1: a wide vector takes
+# GVEC_NSLOTS slots, so after `v: f64v2` the next parameter sits at slot 2 and a by-parameter
+# walk never saw it — `fn sx(v: f64v2, s: Pt)` was replayed and crashed the compiler. Fillers
+# are untyped and never carry bit 56 (every registration writes SLDEP first). CHANGELOG [6.6.20]
+fn _inl_param_why(S): i64 {
+    var li = 0;
+    while (li < _cur_fn_pslots) {
+        if (GLPTRP(S, li) == 1) { return 6; }
+        var t = GLTYPE(S, li);
+        if (t < 0) { if (_is_simd_any(S, t) == 0) { return 3; } }
+        li = li + 1;
+    }
+    return 0;
+}
 # ⛔ 6.6.17 (a9) — an f64 / f32 parameter's slot tag, and the same tag for the INLINE replay. The
 # replay re-registers a parameter by name with the type GFIPT recorded, which carried vector
 # descriptors only, so an inlined `x: f64` was an untyped word: `#inline fn d(x: f64) { return x
@@ -8324,20 +8345,11 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
         # offsets) capacity is untouched. Only fires under _INLINE_OK/_MONOMORPH_OK
         # (this whole block is gated) → default cycc self-host is byte-identical.
         if (btokens > 32) { can_inline = 0; if (_inl_why == 0) { _inl_why = 2; } }
-        # v6.3.37 (C1) — a struct/Str/Result/Option/Tagged param (SLTYPE = -sid) cannot
-        # ride the inline-replay path: the replay re-registers the param slot by NAME
-        # only (never re-applying the struct SLTYPE the fn-def set), so `s.field` in the
-        # body mis-parses → spurious 'unexpected ;'. Exclude such fns → they fall back to
-        # a normal/tail call, which handles the struct-param ABI correctly. The param
-        # slots 0..pc-1 still hold their SLTYPE here (body locals take slots >= pc).
-        # f64v2(-20)/f64v4(-21) are register-class (not dot-accessed) → stay inlinable.
+        # v6.3.37 (C1) — a struct-typed or `*T` parameter cannot ride the inline replay;
+        # `_inl_param_why` says why and walks the parameter SLOTS.
         if (can_inline == 1) {
-            var _psi = 0;
-            while (_psi < pc) {
-                var _pslt = GLTYPE(S, _psi);
-                if (_pslt < 0) { if (_is_simd_any(S, _pslt) == 0) { can_inline = 0; if (_inl_why == 0) { _inl_why = 3; } } }   # struct param → not inlinable; SIMD vectors stay inlinable
-                _psi = _psi + 1;
-            }
+            var _pwhy = _inl_param_why(S);   # 6.6.20: by SLOT, and a `*T` parameter too (see there)
+            if (_pwhy != 0) { can_inline = 0; if (_inl_why == 0) { _inl_why = _pwhy; } }
         }
         if (can_inline == 1) {
             var sci = GFBS(S, fi);
@@ -8392,6 +8404,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                 if (_inl_why == 3) { WARN(S, "#inline ignored: struct/aggregate parameter", 43); }
                 if (_inl_why == 4) { WARN(S, "#inline ignored: body has control flow or a var declaration", 59); }
                 if (_inl_why == 5) { WARN(S, "#inline ignored: body has a defer/secret block", 46); }
+                if (_inl_why == 6) { WARN(S, "#inline ignored: pointer (*T) parameter", 39); }
             }
         }
     }
