@@ -336,8 +336,10 @@ CHANGELOG [6.6.17] *Downstream* (no ecosystem sweep).
     sizeof()` declares, and calling it is a parse error. `mulh64` and `fncall0..8` are the same shape
     (`_is_ident_intrinsic` / `_IS_FNCALL_NAME`). Any tool that derives the reserved set from util.cyr alone misses
     them — `[embed]`'s list reads all four sources.
-  - **The macOS-arm64 `cyrius` CLI looks for `cycc_aarch64` in `CYRIUS_HOME/bin`** (the ecb `[embed]` smoke had to
-    supply one) — check whether that is intended for a native Mach-O host.
+  - ~~**The macOS-arm64 `cyrius` CLI looks for `cycc_aarch64` in `CYRIUS_HOME/bin`**~~ → answered at the 6.6.20
+    re-triage: **by design** — the arm64-macOS tarball ships `cycc_aarch64` as a copy of the native `cycc`
+    (`scripts/build-macos-arm64-tarball.sh`, "the same native arm64 binary") and the wrapper defaults to it
+    (`cbt/core.cyr`, `cbt/cyrius.cyr`); the ecb smoke lacked it only because it was not staged from the tarball.
   - **Some gates leave temp dirs in `TMPDIR`** — the 9.9.9 installer staging and `cyrius-<pid>` test dirs.
 - **Found by the 6.6.19 R2/R3 work (2026-10-06; backlog — only the user promotes).**
   - ⚠ **A redefined fn did not bind to its LAST definition in one build** (possible silent mis-binding): in
@@ -382,7 +384,9 @@ priority surfaces.
   - `cbt/commands.cyr`'s comment "dir_list is non-recursive, so fuzz and tests are disjoint" is stale since v6.5.7.
   - Two `check.sh` selectors in parallel in ONE worktree collide on `build/cyrius_check` — run them in parallel only
     across worktrees (or give the check driver a per-run output name).
-  - ~893 stale `/tmp/cyrius-*` directories on the dev box — the 6.6.20 closeout cleanup.
+  - ~~~893 stale `/tmp/cyrius-*` directories on the dev box~~ → cleaned (2 left at the 6.6.20 audit, both live
+    runs); struck at the 6.6.20 re-triage. The SOURCE — a CLI killed by a signal leaves its `cyrius-<pid>` dir — is
+    CLN-03, fixed in 6.6.20 by a dead-pid reap in check.sh.
 - **Found by the 6.6.17 lanes (2026-10-05; backlog, not placed — only the user promotes).** Met in passing by the
   6.6.17 implementers, reviewers and integrator, each pre-existing unless it says otherwise; not swept for.
   - ~~⚠ `Struct = *Struct` bind vs copy~~ → **moved to [roadmap_6.md](roadmap_6.md) § v6.7.x A4** at the 6.6.20
@@ -450,8 +454,11 @@ priority surfaces.
     every `CYRIUS_*` knob is missed past 8 KB of environment (the class the CLI fixed at 6.6.11 J4).
   - Windows `sys_setsockopt` is a -38 stub although `net.cyr` reaches setsockopt through ws2_32 (0xF032), so
     yantra's `TCP_NODELAY` is never set on PE.
-  - `lib/syscalls_macos.cyr` declares `SYS_ACCEPT4 = 288` and `sys_accept4` compiles for macOS, which has no
-    accept4 (not run).
+  - ~~`lib/syscalls_macos.cyr` declares `SYS_ACCEPT4 = 288` and `sys_accept4` compiles for macOS, which has no
+    accept4 (not run).~~ → obsolete (6.6.20 re-triage): `sys_accept4` on macOS is composed from `accept` (43) +
+    the fcntl wrappers since 6.5.16 (`lib/syscalls_linux_common.cyr`) and RUNS on ecb / ach in
+    `tests/tcyr/crossos/fd_nonblocking.tcyr`. Residual, cosmetic: the unused `SYS_ACCEPT4 = 288` constant (a raw
+    `syscall(SYS_ACCEPT4, ..)` there gets -ENOSYS).
   - TLS conformance: the 1.3 ECDSA arms of `_tn_verify_sig_scheme` do not bind the leaf's curve to the scheme
     (RFC 8446 §4.2.3); the 1.3 CertificateVerify and 1.2 ServerKeyExchange length checks use `>`, so trailing
     bytes inside the message are accepted.
