@@ -23,7 +23,11 @@
 #       character check never runs on a reused cache; reachable from a TRANSITIVE manifest)
 #   E7  `cyrius distlib` / `--modular`: "module not found: <[lib] modules entry>" raw
 #   E8  `cyrius = "9.9.9\u001b]0;pwned\u0007"`: the wrapper's and the resolver's "pins version …
-#       not installed" lines, and `--version`'s manifest-pin line, raw
+#       not installed" lines, and `--version`'s manifest-pin line, raw. Since the 6.6.20 pin-shape
+#       rule (CBT-01) a pin is [0-9A-Za-z._-] only, so a control byte can no longer reach those
+#       lines at all: the ONE reader refuses the pin first, and E8 now asserts that refusal shows
+#       the pin escaped on all three paths (deps, CYRIUS_RESOLVED=1 deps, CYRIUS_RESOLVED=1
+#       --version) and exits 1 on each.
 # 6.6.20 review round 2, MEASURED on 4360c717:
 #   E9  `cyrius distlib` with `[lib] embed = ["x\u001b]0;pwned\u0007"]`: "[lib] embed names <entry>,
 #       which [embed] does not declare" raw — a live OSC window-title sequence on stderr
@@ -41,9 +45,7 @@
 #   the declared git URL printed raw (_git_cache_refuse)  -> E6 red
 #   distlib's module-not-found ctx raw                    -> E7 (distlib) red
 #   distlib --modular's module-not-found ctx raw          -> E7 (--modular) red
-#   the wrapper's not-installed path raw                  -> E8 red
-#   the resolver's not-installed path raw                 -> E8 red
-#   --version's manifest-pin raw                          -> E8 red
+#   the pin-shape refusal prints the pin raw (_ew, not _ew_shown) -> E8 red (6.6.20 integration)
 #   distlib's undeclared [lib] embed entry raw              -> E9 red
 set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -245,20 +247,20 @@ if [ "$rc" -eq 1 ] && noraw "$P" && ! grep -q "$(printf '\007')" "$P.err" "$P.ou
     ok "E9 distlib with an OSC sequence in a [lib] embed entry: refused as undeclared, shown as \\x1b ... \\x07, rc 1, nothing raw"
 else bad "E9 (rc=$rc): $(head -2 "$P.err" | od -c | head -3)"; fi
 
-# E8: the `cyrius` PIN — the wrapper's not-installed line, the resolver's stdlib-dir line
-# (CYRIUS_RESOLVED=1 skips the wrapper) and `--version`'s manifest-pin line.
+# E8: the `cyrius` PIN. Since 6.6.20 (CBT-01) the one reader refuses a pin that is not a version's
+# shape before anything else reads it, so all three paths — the wrapper (deps), the resolver
+# (CYRIUS_RESOLVED=1 skips the wrapper) and --version — stop at that refusal, which must show the
+# pin escaped and exit 1.
 P="$W/e8"; mkdir -p "$P/src"
 printf '[package]\nname = "e8"\nversion = "0.0.1"\nlanguage = "cyrius"\ncyrius = "9.9.9\\u001b]0;pwned\\u0007"\n\n[deps]\nstdlib = ["string"]\n' > "$P/cyrius.cyml"
-PIN_SHOWN='9.9.9\x1b]0;pwned\x07'
+PIN_REFUSED="error: cyrius.cyml [package] cyrius = '9.9.9\\x1b]0;pwned\\x07' is not a version"
 run "$P" deps; rc8a=$rc; cp "$P.err" "$P.err.a"; cp "$P.out" "$P.out.a"
 rc8b=0; ( cd "$P" && CYRIUS_RESOLVED=1 "$CY" deps > "$P.out.b" 2> "$P.err.b" ) || rc8b=$?
 rc8c=0; ( cd "$P" && CYRIUS_RESOLVED=1 "$CY" --version > "$P.out.c" 2> "$P.err.c" ) || rc8c=$?
 cat "$P.err.a" "$P.err.b" "$P.err.c" > "$P.err"; cat "$P.out.a" "$P.out.b" "$P.out.c" > "$P.out"
-if [ "$rc8a" -eq 1 ] && [ "$rc8b" -eq 1 ] && [ "$rc8c" -eq 0 ] && noraw "$P" && ! grep -q "$(printf '\007')" "$P.err" "$P.out" \
-   && grep -qF "error: cyrius.cyml pins version $PIN_SHOWN but cyrius binary is not installed at $H/versions/$PIN_SHOWN/bin/cyrius" "$P.err.a" \
-   && grep -qF "error: cyrius.cyml pins version $PIN_SHOWN but it is not installed at $H/versions/$PIN_SHOWN/lib" "$P.err.b" \
-   && grep -qxF "  run: cyrius install $PIN_SHOWN" "$P.err.b" && grep -qF "manifest-pin: $PIN_SHOWN (drift" "$P.out.c"; then
-    ok "E8 a cyrius pin holding an OSC sequence: the wrapper's and the resolver's not-installed lines and --version's manifest-pin line show it as \\x1b ... \\x07, nothing raw"
+if [ "$rc8a" -eq 1 ] && [ "$rc8b" -eq 1 ] && [ "$rc8c" -eq 1 ] && noraw "$P" && ! grep -q "$(printf '\007')" "$P.err" "$P.out" \
+   && grep -qF "$PIN_REFUSED" "$P.err.a" && grep -qF "$PIN_REFUSED" "$P.err.b" && grep -qF "$PIN_REFUSED" "$P.err.c"; then
+    ok "E8 a cyrius pin holding an OSC sequence: refused as not a version on all three paths (wrapper, resolver, --version), shown as \\x1b ... \\x07, rc 1, nothing raw"
 else bad "E8 (rc=$rc8a/$rc8b/$rc8c): $(cat "$P.err" "$P.out" | head -4 | od -c | head -4)"; fi
 
 echo "$G: $pass passed, $fail failed"
