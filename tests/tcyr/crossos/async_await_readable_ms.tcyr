@@ -5,9 +5,9 @@
 # and on macOS and Windows async_await_readable was a no-op that returned 0 at once. sandhi's
 # cooperative server — the one caller — makes its listener non-blocking, takes EAGAIN from accept
 # and then calls async_await_readable(sfd) to park until a connection is pending; with the no-op
-# it SPUN at 100 % CPU on macOS and Windows. Each peer now waits with its own mechanism (epoll on
-# Linux, BSD poll on both Mach-O arches, ws2_32!WSAPoll on Windows), so only running it on each
-# host proves it. agnos is gated under the local fake kernel (agnos_peer_fake_kernel.sh axis 8).
+# it SPUN at 100 % CPU on macOS and Windows. Each peer now waits with its own mechanism (poll(2)
+# through fd_wait_ready on Linux, epoll until 6.6.20; BSD poll on both Mach-O arches;
+# ws2_32!WSAPoll on Windows), so only running it on each host proves it. agnos is gated under the local fake kernel (agnos_peer_fake_kernel.sh axis 8).
 #
 # ROWS, over a loopback TCP pair this file owns:
 #   1. an empty socket, 200 ms: 0, after about the bound (>= 150 ms, < 2 s);
