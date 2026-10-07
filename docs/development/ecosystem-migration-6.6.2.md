@@ -32,8 +32,11 @@
 > `path = "../bote"` chained into bote's own `path = "../majra"` and reached an
 > unreleased majra, while CI cloned bote 3.3.7 → majra 2.7.0. **31 repos carry such
 > overrides across 99 dep entries.** Tell: `cyrius deps` printing `N deps locked`
-> *without* a `M commit-pinned` suffix. Verify with `memory/ci-faithful.py`, which
-> stages the tracked tree and runs the workflow's own `run:` blocks under `bash -e`.
+> *without* a `M commit-pinned` suffix. *(6.6.20: the lock now keeps the pins earlier resolves
+> made, so the suffix can appear when this run verified nothing. Read the `(K re-verified)` it
+> now ends with instead: `0`, or any K below your tagged git deps, is the tell.)* Verify with
+> `memory/ci-faithful.py`, which stages the tracked tree and runs the workflow's own `run:`
+> blocks under `bash -e`.
 > ⚠ Stage **outside `~/Repos`** (so the override cannot resolve) **and outside
 > `/tmp`** — agnosai's `sandbox_spawn` suite asserts its inherited cwd does not
 > contain `/tmp`, and a `/tmp` staging root turns that into a false failure that
