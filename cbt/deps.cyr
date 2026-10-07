@@ -1487,6 +1487,40 @@ fn _dep_modules_refused(dep_name, mods): i64 {
     return bad;
 }
 
+# The first prefix of `full` BELOW its dep root (the first `rootlen` bytes) that is a symlink, as
+# a fresh cstr; 0 when none is. A dep's files — a module, the dist/<name>.cyr default, a modular
+# sub-module, its index.cyml, a .deps sidecar — are read only from inside the dep's own tree: the
+# copy opens with sys_open, which follows links, so a tag COMMITTING `dist/x.cyr -> /abs/secret`
+# (or `dist -> /dir`) vendored the target into lib/ with a verified commit pin and exit 0. The
+# CVE-43 cache verify cannot see it — the link IS the tag's content. Every component is checked,
+# as [embed] does (_embed_path_bad); the root itself is the operator's. CHANGELOG [6.6.20] (CVE-TBD)
+fn _dep_src_link(full, rootlen): i64 {
+    var n = strlen(full);
+    var j = rootlen;
+    while (j <= n) {
+        if (j > rootlen && (j == n || load8(full + j) == 47)) {
+            var pre = alloc(j + 1);
+            memcpy(pre, full, j);
+            store8(pre + j, 0);
+            if (is_symlink(str_from(pre)) == 1) { return pre; }
+        }
+        j = j + 1;
+    }
+    return 0;
+}
+
+# "error: [deps.<dep>] <rel> passes through a symlink (<link>) — …" — both shown escaped; 1.
+fn _dep_refuse_src_link(dep, rel, link): i64 {
+    _ew("error: [deps.");
+    _ew_shown(dep);
+    _ew("] ");
+    _ew_shown(rel);
+    _ew(" passes through a symlink (");
+    _ew_shown(link);
+    _ew(") — a dependency's files are read only from inside its own tree; refused\n");
+    return 1;
+}
+
 # 6.6.17 — the git-dep cache key: `<base>/<name>/<tag>`, and `<base>/<name>/.untagged` for an
 # untagged dep (the remote's default branch). The untagged clone used to live at
 # `<name>/main`, the very dir a `tag = "main"` dep resolves to, so whichever ran first served
@@ -1595,7 +1629,11 @@ fn _dep_pull_submodule(dep_src, pkg, submod, stdlib_dir, seen): i64 {
     str_builder_add_cstr(ip_sb, "/dist/");
     str_builder_add_cstr(ip_sb, pkg);
     str_builder_add_cstr(ip_sb, "/index.cyml");
-    var deps = _dep_read_index_deps(str_data(str_builder_build(ip_sb)), submod);
+    var ip = str_data(str_builder_build(ip_sb));
+    var dsl = strlen(dep_src);
+    var ilk = _dep_src_link(ip, dsl);   # 6.6.20 (CVE-TBD): read only from inside the dep's tree
+    if (ilk != 0) { return _dep_refuse_src_link(pkg, ip + dsl + 1, ilk); }
+    var deps = _dep_read_index_deps(ip, submod);
     if (deps != 0) {
         var di = 0;
         while (di < vec_len(deps)) {
@@ -1645,6 +1683,8 @@ fn _dep_pull_submodule(dep_src, pkg, submod, stdlib_dir, seen): i64 {
         var _l1 = _dep_dest_is_linked(dst_full);
         if (_l1 != 0) { return _dep_refuse_symlinked_dest(_l1); }
     }
+    var slk = _dep_src_link(src, dsl);   # 6.6.20 (CVE-TBD): checked before the unlink
+    if (slk != 0) { return errs + _dep_refuse_src_link(pkg, src + dsl + 1, slk); }
     sys_unlink(dst_full);
     var cr = _dep_copy_file(src, dst_full);
     if (cr == 0 || cr == 2) {
@@ -2218,7 +2258,10 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                 str_builder_add_cstr(dm_sb, dep_name);
                 str_builder_add_cstr(dm_sb, ".cyr");
                 var dm_rel = str_data(str_builder_build(dm_sb));
-                if (file_exists(_dep_join_path(dep_path, dm_rel)) == 1) {
+                var dm_full = _dep_join_path(dep_path, dm_rel);
+                # 6.6.20: a LINK there (even a dangling one) is taken too, so the copy loop
+                # refuses it by name rather than this warning calling the file absent.
+                if (file_exists(dm_full) == 1 || _dep_src_link(dm_full, strlen(dep_path)) != 0) {
                     dep_modules = vec_new();
                     vec_push(dep_modules, dm_rel);
                 } else {
@@ -2294,6 +2337,16 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                             if (file_exists(alt) == 1) { src = alt; }
                         }
                     }
+                    # 6.6.20 (CVE-TBD): the file — and below, its .deps sidecar — is read only
+                    # from inside the dep's tree; a committed link is refused by name, uncopied.
+                    var _dpl = strlen(dep_path);
+                    var _slk = _dep_src_link(src, _dpl);
+                    if (_slk != 0) {
+                        _dep_refuse_src_link(dep_name, src + _dpl + 1, _slk);
+                        errors = errors + 1;
+                        mi = mi + 1;
+                        continue;
+                    }
                     if (file_exists(src) == 0) {
                         sys_write(STDERR_FD, "error: [deps.", 13);
                         _ew_shown(dep_name);
@@ -2322,7 +2375,15 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                         store8(_sc_stem + _src_l - 4, 0);
                         str_builder_add_cstr(_sc_sb, _sc_stem);
                         str_builder_add_cstr(_sc_sb, ".deps");
-                        var _sc_leaves = _dep_read_sidecar(str_data(str_builder_build(_sc_sb)));
+                        var _sc_path = str_data(str_builder_build(_sc_sb));
+                        var _sc_lk = _dep_src_link(_sc_path, _dpl);
+                        if (_sc_lk != 0) {
+                            _dep_refuse_src_link(dep_name, _sc_path + _dpl + 1, _sc_lk);
+                            errors = errors + 1;
+                            mi = mi + 1;
+                            continue;
+                        }
+                        var _sc_leaves = _dep_read_sidecar(_sc_path);
                         if (_sc_leaves != 0) {
                             if (vec_len(_sc_leaves) > 0) {
                                 if (_dep_stdlib_seen == 0) { _dep_stdlib_seen_init(); }
