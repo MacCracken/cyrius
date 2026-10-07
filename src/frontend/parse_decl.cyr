@@ -3424,6 +3424,7 @@ fn PARSE_GVAR_REG(S): i64 {
     STI(S, GTI(S) + 1);  # consume VAR
     if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
     var noff = PEEKV(S);
+    _RSV_INTRINSIC_DECL(S, noff, GTI(S), 0);   # 6.6.20: a global `var sizeof` / `mulh64` / `fncallN`
     STI(S, GTI(S) + 1);
     # v6.6.0 — TOP-LEVEL DESTRUCTURE, pass 1. `var t, v = f();` is the only correct way to
     # receive a `: stack` enum, so once Result went to the value form a top-level Result bind
@@ -3436,6 +3437,7 @@ fn PARSE_GVAR_REG(S): i64 {
         STI(S, GTI(S) + 1);   # consume ,
         if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
         var dg2 = PEEKV(S);
+        _RSV_INTRINSIC_DECL(S, dg2, GTI(S), 0);
         STI(S, GTI(S) + 1);
         var dg3 = 0;
         var dgn = 2;
@@ -3443,6 +3445,7 @@ fn PARSE_GVAR_REG(S): i64 {
             STI(S, GTI(S) + 1);
             if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
             dg3 = PEEKV(S);
+            _RSV_INTRINSIC_DECL(S, dg3, GTI(S), 0);
             STI(S, GTI(S) + 1);
             dgn = 3;
         }
@@ -4570,12 +4573,14 @@ fn PARSE_VAR(S): i64 {
     # expect IDENT
     if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
     var noff = PEEKV(S);
+    _RSV_INTRINSIC_DECL(S, noff, GTI(S), 0);   # 6.6.20: `var sizeof` / `var mulh64` / `var fncallN`
     STI(S, GTI(S) + 1);
     # Multi-var destructure: var x, y[, z] = fn()
     if (PEEKT(S) == 31) {
         STI(S, GTI(S) + 1);  # consume ,
         if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
         var noff2 = PEEKV(S);
+        _RSV_INTRINSIC_DECL(S, noff2, GTI(S), 0);
         STI(S, GTI(S) + 1);
         # v6.5.21 — optional THIRD target: `var x, y, z = f();`
         var noff3 = 0;
@@ -4584,6 +4589,7 @@ fn PARSE_VAR(S): i64 {
             STI(S, GTI(S) + 1);  # consume ,
             if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
             noff3 = PEEKV(S);
+            _RSV_INTRINSIC_DECL(S, noff3, GTI(S), 0);
             STI(S, GTI(S) + 1);
             _dt_n = 3;
         }
