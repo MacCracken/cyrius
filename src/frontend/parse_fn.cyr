@@ -1469,14 +1469,18 @@ fn _try_push_struct_addr_arg(S, fi, argc): i64 {
     # retptr callee falls through to PARSE_FNCALL, which refuses it by name; a rax:rdx one is
     # refused here (as first committed it fell through too, and PARSE_FNCALL refuses only the
     # retptr class, so `hy(p2(1, 2))` compiled clean and SIGSEGV'd). CHANGELOG [6.6.6]
-    if (nx == 10) { if (GINFN(S) != 1) { return _refuse_toplevel_pair_arg(S); } }
+    if (nx == 10) { if (GINFN(S) != 1) { return _refuse_toplevel_struct_arg(S); } }
+    # 6.6.20: and `h(mkg<S1>(..))` at top level (it fell to the value push).
+    if (nx == 19) { if (GINFN(S) != 1) { if (_call_dotted(S, GTI(S)) == 0) {
+                if (_gcall_open(S, GTI(S)) >= 0) { return _refuse_toplevel_struct_arg(S); }
+            } } }
     # 6.6.10 (bite 7 review): an explicit `idp<i32>(4)` too — it fell to the value push (SIGSEGV).
     var o = 0 - 1;
     if (GINFN(S) == 1) { o = _gcall_open(S, GTI(S)); }
     if (o >= 0) {
         # 6.6.12: `take(mk(p).v)` — the argument is a FIELD of the result, taken like `take(b.v)`.
         if (_call_dotted(S, GTI(S)) == 1) { return _push_struct_expr_arg(S, fi, argc); }
-        if (_ret_agg_class(S, _gen_resolve_call(S, GTI(S))) == 0) { return 0; }   # 6.6.10: the instance's class
+        if (_arg_call_class(S) == 0) { return 0; }   # 6.6.10: the instance's class
         if (_call_is_whole_arg(S, o - 1) == 0) { return 0; }
         EFLADDR(S, _struct_call_into_temp(S));
         EPUSHR(S);
@@ -2515,14 +2519,37 @@ fn _refuse_toplevel_pair_init(S, pscale, ti): i64 {
     return 0;
 }
 
-# `h(p2(..))` at top level, `h` taking the struct by address and `p2` returning it in rax:rdx:
-# there is no frame to put the pair in, so refuse it by name. Always returns 0 — the argument
-# is then pushed by the ordinary path, and `_had_error` keeps the binary from being written.
-fn _refuse_toplevel_pair_arg(S): i64 {
-    if (_ret_agg_class(S, _gen_resolve_call(S, GTI(S))) != 1) { return 0; }   # 6.6.10: the instance's class
-    if (_call_is_whole_arg(S, GTI(S)) == 0) { return 0; }
+# `h(p2(..))` at top level, `h` taking the struct by address and `p2` returning it in rax:rdx —
+# or (6.6.20) a struct of 8 B or less in rax: there is no frame to put the result in, so refuse
+# it by name. Always returns 0 — the argument is then pushed by the ordinary path, and
+# `_had_error` keeps the binary from being written.
+fn _refuse_toplevel_struct_arg(S): i64 {
+    var c = _arg_call_class(S);   # 6.6.10: the instance's class
+    if (c != 1) { if (c != 3) { return 0; } }
+    if (_call_is_whole_arg(S, _gcall_open(S, GTI(S)) - 1) == 0) { return 0; }
     _refuse_toplevel_struct_call(S, PEEKV(S));
     return 0;
+}
+
+# ⛔ 6.6.20 — the class of the struct the call at the cursor (`name(` / `name<..>(`) returns, for
+# an address-passed parameter: `_ret_agg_class`'s 2 / 1, or 3 for a struct of 8 B or less, which
+# comes back in rax. That class was 0 here and its value was pushed: harmless while only a struct
+# over 8 B was address-passed (a smaller result cannot be one), fatal once a `p: *S` parameter of
+# any size is — `rd1(mk())` with `p: *S1` SIGSEGV'd where `rd3(mk3())` took its temp's address.
+fn _arg_call_class(S): i64 {
+    var fi = _gen_resolve_call(S, GTI(S));
+    var c = _ret_agg_class(S, fi);
+    if (c != 0) { return c; }
+    if (_ret_small_struct(S, fi) == 1) { return 3; }
+    return 0;
+}
+# 1 = fn `fi` returns a struct of 8 B or less (by value, in rax).
+fn _ret_small_struct(S, fi): i64 {
+    if (fi < 0) { return 0; }
+    var sid = GFRS(S, fi);
+    if (sid <= 0) { return 0; }
+    if (STRUCTSZ(S, sid - 1) > 8) { return 0; }
+    return 1;
 }
 
 # ⭐ 6.6.6 (bite 14 review) — A METHOD CALL OR AN OVERLOADED OPERATOR RETURNING A STRUCT BY
@@ -2746,10 +2773,26 @@ fn _push_struct_expr_arg(S, fi, argc): i64 {
     _fla_arg = fa;
     if (_fla_hit == 1) { return _fla_push_arg(S, fi, argc); }
     var t = _sc_whole(S, st);
+    if (t == 0 - 3) { t = _sc_small_temp(S); }   # 6.6.20
     if (t >= 0) { EFLADDR(S, t); }
     if (t == 0 - 1) { _refuse_toplevel_struct_call(S, _sc_fn); }
     EPUSHR(S);
     return 1;
+}
+
+# ⛔ 6.6.20 — a whole method / operator result of 8 B or less (`_sc_whole` -3: the value is in rax,
+# no temp) given to an address-passed parameter: stored into a frame temp, whose slot is returned
+# for the caller to push the ADDRESS of. Its value was pushed, which only a `p: *S` parameter of
+# 8 B or less can receive — `rd1(s.dup())` SIGSEGV'd where `rd3(a.dup())` worked. At top level
+# there is no frame: refused by name (-2, the value is pushed and no binary is written).
+fn _sc_small_temp(S): i64 {
+    if (GINFN(S) != 1) {
+        _refuse_toplevel_struct_call(S, _sc_fn);
+        return 0 - 2;
+    }
+    var t = _agg_temp(S, _sc_sid);
+    EFLSTORE(S, t);
+    return t;
 }
 
 # The recorded field source as by-value argument `argc` of `fn`: checked against the parameter's

@@ -12,6 +12,14 @@
 # argument, a forward call, a closure capture. Before 6.6.17 reads gave the value and writes were
 # silently lost. Now every size takes the address (the rule T over 8 B already had); `&s` is
 # unchanged and stays the documented spelling.
+#
+# ⛔ AND A STRUCT-VALUED CALL RESULT (6.6.20 review). A struct of 8 B or less comes back in rax, and
+# given to a `*S1` parameter its VALUE was pushed — `rd1(mk(5))`, `rd1(idg<S1>(s))`,
+# `rd1(s.dup())`, `rd1(s + t)`: SIGSEGV on x86_64 and aarch64, a crash under wine, a failed row on
+# cx — while every form over 8 B took its frame temp's address. Now it lands in a frame temp too and
+# the temp's address is passed (`call_results` below, each with its over-8-byte control). At top
+# level there is no frame, so those forms are refused by name (tests/gates/codegen/
+# stack_param_homing_matrix.sh, `toplevel-small-ptr-arg`).
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 include "lib/fnptr.cyr"
@@ -45,6 +53,19 @@ fn clo_nested(): i64 { var s = S1 { 5 }; var f = |x| { var k = |y| rd1(s) + y; r
 fn clo_ptr(p: *S1): i64 { var f = || rd1(p); return callptr(f); }
 fn clo_byv(b: S1): i64 { var f = || rd1(b); return callptr(f); }
 fn clo_big(): i64 { var a = P3 { 1, 22, 3 }; var g = || rd3(a); return callptr(g); }
+fn mk1(n): S1 { var s = S1 { n }; return s; }
+fn mkb2(n): B2 { var s = B2 { 1, n }; return s; }
+fn mkbox(n): Box<i32> { var b: Box<i32>; b.v = 1; b.w = n; return b; }
+fn mk3(n): P3 { var a = P3 { 1, n, 3 }; return a; }
+fn mk1g<T>(n): S1 { var s = S1 { n }; return s; }
+fn mk3g<T>(n): P3 { var a = P3 { 1, n, 3 }; return a; }
+fn idg<T>(x: T): T { return x; }
+fn S1_dup(self: *S1): S1 { var d = S1 { self.v + 1 }; return d; }
+fn P3_dup(self: *P3): P3 { var d = P3 { self.x, self.y + 1, self.z }; return d; }
+fn S1_add(a: S1, b: S1): S1 { var r = S1 { a.v + b.v }; return r; }
+fn P3_add(a: P3, b: P3): P3 { var r = P3 { a.x + b.x, a.y + b.y, a.z + b.z }; return r; }
+fn tail_call1(): i64 { return rd1(mk1(33)); }
+fn tail_call3(): i64 { return rd3(mk3(34)); }
 
 var G = S1 { 11 };
 var GB = B2 { 1, 4 };
@@ -113,10 +134,41 @@ fn closures(): i64 {
     return 0;
 }
 
+fn call_results(): i64 {
+    assert_eq(rd1(mk1(5)), 5, "rd1(mk1(5)): a free call returning S1");
+    assert_eq(rd3(mk3(6)), 6, "control: rd3(mk3(6))");
+    assert_eq(rd1(mk1g<i64>(7)), 7, "rd1(mk1g<i64>(7)): an explicit generic call returning S1");
+    assert_eq(rd3(mk3g<i64>(8)), 8, "control: rd3(mk3g<i64>(8))");
+    var s = S1 { 8 };
+    var a = P3 { 1, 9, 3 };
+    assert_eq(rd1(idg<S1>(s)), 8, "rd1(idg<S1>(s)): a generic instance returning T = S1");
+    assert_eq(rd3(idg<P3>(a)), 9, "control: rd3(idg<P3>(a))");
+    assert_eq(rd1(s.dup()), 9, "rd1(s.dup()): a method returning S1");
+    assert_eq(rd3(a.dup()), 10, "control: rd3(a.dup())");
+    var t = S1 { 2 };
+    var b = P3 { 1, 5, 3 };
+    assert_eq(rd1(s + t), 10, "rd1(s + t): an operator returning S1");
+    assert_eq(rd3(a + b), 14, "control: rd3(a + b)");
+    assert_eq(wr1(mk1(5), 9), 0, "wr1(mk1(5), 9): a write through the temp");
+    assert_eq(rd2(mkb2(6)), 6, "rd2(mkb2(6)): an i32 + i32 result");
+    assert_eq(rdbox(mkbox(4)), 4, "rdbox(mkbox(4)): a Box<i32> (8 B instance) result");
+    assert_eq(rdg<S1>(mk1(3)), 3, "rdg<S1>(mk1(3)): into a `p: *T` generic parameter");
+    var o = S1 { 3 };
+    assert_eq(s.sum(mk1(4)), 12, "s.sum(mk1(4)): a call result as a *S1 method argument");
+    assert_eq(s.sum(o.dup()), 12, "s.sum(o.dup()): a method result as a *S1 method argument");
+    assert_eq(rd1(mk1(rd1(mk1(6)))), 6, "nested: rd1(mk1(rd1(mk1(6))))");
+    assert_eq(tail_call1(), 33, "return rd1(mk1(33));");
+    assert_eq(tail_call3(), 34, "control: return rd3(mk3(34));");
+    var f = || rd1(mk1(13));
+    assert_eq(callptr(f), 13, "a closure: || rd1(mk1(13))");
+    return 0;
+}
+
 alloc_init();
 locals();
 other_shapes();
 closures();
+call_results();
 var Gt = S1 { 40 };
 assert_eq(rd1(Gt), 40, "at top level: a bare S1 global");
 var r = assert_summary();

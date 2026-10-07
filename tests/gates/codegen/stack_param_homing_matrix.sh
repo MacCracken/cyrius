@@ -508,6 +508,37 @@ var u = bb.mp(6);
 syscall(60, u);
 EOF
 refuse_all toplevel-method-op "$T/rm.cyr" "returns a struct by value" 7
+# 6.6.20 (review) — a struct result of 8 B OR LESS given to a `p: *S` parameter at TOP LEVEL. In a
+# fn it now lands in a frame temp whose address is passed (tests/tcyr/crossos/
+# ptr_param_bare_struct.tcyr); at top level there is no frame, and every form below pushed the
+# VALUE, which the callee dereferenced — SIGSEGV. A free call, an explicit generic call, a method
+# and an operator; plus `rdp2(mkg2<i64>(5))`, the explicit-generic 9-16 B sibling, which the
+# `nx == 10` arm never saw and which crashed the same way. `byv(..)` takes S1 BY VALUE (its value
+# is right) and `rd1(Gs)` is a global with an address — neither may be refused, so the count is
+# exact. Mutations, each -> RED ("3 times, want 5"): `_arg_call_class` without its class-3 arm;
+# `_sc_small_temp` without its top-level refusal; the `nx == 19` top-level arm removed.
+cat > "$T/rt8.cyr" <<'EOF'
+struct S1 { v; }
+struct P2 { x; y; }
+fn rd1(p: *S1): i64 { return p.v; }
+fn rdp2(p: *P2): i64 { return p.y; }
+fn byv(b: S1): i64 { return b.v; }
+fn mk(n): S1 { var s = S1 { n }; return s; }
+fn mkg<T>(n): S1 { var s = S1 { n }; return s; }
+fn mkg2<T>(n): P2 { var a = P2 { 1, n }; return a; }
+fn S1_dup(self: *S1): S1 { var d = S1 { self.v + 1 }; return d; }
+fn S1_add(a: S1, b: S1): S1 { var r = S1 { a.v + b.v }; return r; }
+var Gs = S1 { 4 };
+var Gt = S1 { 5 };
+var a = rd1(mk(5));
+var b = rd1(mkg<i64>(5));
+var c = rd1(Gs.dup());
+var d = rd1(Gs + Gt);
+var e = rdp2(mkg2<i64>(5));
+var f = byv(mk(5)) + byv(Gs.dup()) + rd1(Gs);
+syscall(60, a + b + c + d + e + f);
+EOF
+refuse_all toplevel-small-ptr-arg "$T/rt8.cyr" "returns a struct by value" 5
 # 6.6.6 bite 16c — A 9-16 BYTE STRUCT RETURN (rax:rdx) ACCEPTED ANY RETURN EXPRESSION. The pair
 # branch in PARSE_RETURN handled `return IDENT;` for a matching local and fell through to the
 # SCALAR path for everything else, so a call returning a DIFFERENT struct (`s2` returns a 24 B P3
