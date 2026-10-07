@@ -44,7 +44,7 @@ CC=${CYCC:-"$ROOT/build/cycc"}
 D=$(mktemp -d) && [ -d "$D" ] || { echo "SKIP: mktemp -d failed"; exit 77; }
 trap 'rm -rf "$D"' EXIT
 
-MA="to a by-value parameter of a different struct type in a call to"
+MA="to a parameter of a different struct type in a call to"
 MV="into a variable of a different struct/vector type"
 MB="from a global declared below it"
 pass=0; fail=0; nrefuse=0; naccept=0

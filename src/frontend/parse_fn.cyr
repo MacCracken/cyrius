@@ -2806,7 +2806,7 @@ fn _fla_push_arg(S, fi, argc): i64 {
     _fla_hit = 0;
     var ps = GFPSID(S, fi, argc);
     if (ps > 0) { if (ps != _fla_ft) {
-            ERR_IDENT(S, "cannot pass ", _fla_name, " to a by-value parameter of a different struct type in a call to ", L64(_fnt_names + fi * 8));
+            ERR_IDENT(S, "cannot pass ", _fla_name, " to a parameter of a different struct type in a call to ", L64(_fnt_names + fi * 8));
             EPUSHR(S);   # keeps the argument count; no binary is written
             return 1;
         } }
