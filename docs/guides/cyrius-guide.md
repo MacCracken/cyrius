@@ -1505,10 +1505,11 @@ The former `simd_f32v4` / `simd_ints` / `simd_f32v8` ARM `XFAIL`s were all
 removed at v6.4.30; the `tests/tcyr/crossos/simd_f32v4_neon.tcyr` /
 `simd_ints_neon.tcyr` / `simd_cx.tcyr` cross-OS fixtures run the real emitters on
 pi (aarch64) and are verified on real hardware. Every vector type is available on every backend.
-The one caveat: the aarch64 *native 256-bit* `f32v8` emitters are return-0
-stubs that are never reached at runtime — `lib/simd.cyr` routes `f32v8`
-through native `f32v4` NEON, so the verb still works on aarch64; only a native
-256-bit path (as opposed to 2×128-bit) stays x86-AVX2-only. The scalar `f64` /
+The one caveat: aarch64 has no *native 256-bit* path — its `f32v8` emitters
+delegate to the 4-lane NEON emitters (since 6.5.49; they were return-0 stubs
+before), and `lib/simd.cyr` routes `f32v8` through native `f32v4` NEON, so the
+verb works on aarch64; only a native 256-bit path (as opposed to 2×128-bit)
+stays x86-AVX2-only. The scalar `f64` /
 `f64v2` / `f64v4` ops (backed by SSE2 / NEON / cx scalar loops) are likewise
 available on every target.
 

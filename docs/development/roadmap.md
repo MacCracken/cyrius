@@ -525,11 +525,17 @@ priority surfaces.
   v6.2.2, and the v6.4.26 trap where a new `E*_PE` reroute needed return-0 stubs in aarch64 + cx
   and only `cass`'s `cycc_cx` caught the miss. Logic-preserving ⇒ gate is byte-identical
   self-host on all four hosts + seed-derive. Premise-check the fork count at slot entry.
+- **The two cyrlint gates — one bite** (re-pinned 2026-10-06 at the 6.6.20 re-triage; their detail is
+  [roadmap-future.md](roadmap-future.md) § *DX / cyrlint tooling*): a **bare-local-array slot-write** lint (a
+  `var a[N]` — N BYTES — written past its byte size as if it held N slots) and a **SYS_WRITE byte-length** gate
+  (`syscall(SYS_WRITE, fd, "literal", LEN)` with LEN ≠ the literal's byte length; 532 sites, 0 mismatches at
+  v6.5.33, so preventive). `programs/cyrlint.cyr` implements neither. They had pointed at a "named W2 fold-in slot"
+  that no longer existed — an unpinned deferral for a month. The slot-write half may fold into v6.7.x C2.
 - **DWARF debug-info emission** — backend/codegen work; slot it when a real debugger story is
   needed. Distinct from the DX diagnostics arc, which was only the error-reporting layer.
 - **Incremental compilation** — unpin condition: reconsider when cycc self-host crosses ~2 s. It
-  is **731–734 ms at 6.6.1** after 150+ releases, so the whole-program model is nowhere near the
-  threshold. ⚠ Read the trend with care: the same binary has measured a 52 ms spread across three
+  is **923 ms at 6.6.19** (the 2026-10-06 release gate; 731–734 ms at 6.6.1), so the whole-program
+  model is still well under the threshold. ⚠ Read the trend with care: the same binary has measured a 52 ms spread across three
   consecutive runs — **wider than most release-over-release deltas** — so a single number carries
   no signal. Every release's mandatory bench run IS the report.
 - **Reclaim the FREED compiler-state scalar holes** (fill-as-you-go, not a slot). Policy: the
@@ -613,7 +619,7 @@ whereupon it became 43 derived rows and shipped at `.51`. Assume the same of any
 
 1. **The self_compile budget — ANSWERED (user, 2026-07-29): the later performance track owns it.**
    The budget gets set as part of that track rather than pinned up front. Input for whoever opens
-   it: **731–734 ms · 1,247,608 B at 6.6.1**. A previously-floated candidate pair was *≤700 ms and
+   it: **923 ms · 1,586,184 B at 6.6.19** (731–734 ms · 1,247,608 B at 6.6.1). A previously-floated candidate pair was *≤700 ms and
    ≤1.20 MB at minor close* — ⚠ **both halves are now exceeded**, so that pair is an input to
    re-decide, not a target that was missed. Review together with item 2.
 2. **The self-compile growth-tax audit — ANSWERED (user, 2026-07-29): likely dropped, but

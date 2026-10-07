@@ -477,9 +477,9 @@ them.
 > (LSP / formatter / linter evolution)" and "agnos v2.0 alignment" at 7.x.** Both are
 > **PLACEMENT RULE violations** and both are hereby **re-homed to the 6.x line**:
 > - **LSP / formatter / linter evolution** — `cbt/`-resident tooling that reads and rewrites
->   cyrius source. The two cyrlint gates already have a named W2 fold-in slot in
->   [roadmap.md](roadmap.md); the rest belongs in that file's *potential backlog*, unscheduled
->   but 6.x. (Live evidence that this is real 6.x work, not a far-future aspiration: v6.5.7's
+>   cyrius source. The two cyrlint gates are a bullet in [roadmap.md](roadmap.md)'s *potential
+>   backlog* (re-pinned 2026-10-06 — the "named W2 fold-in slot" this line cited had gone with
+>   the v6.5.x slot list); the rest belongs there too, unscheduled but 6.x. (Live evidence that this is real 6.x work, not a far-future aspiration: v6.5.7's
 >   entry notes the LSP flags `sys_chdir` on every `programs/checks/main.cyr` edit, and v6.5.8
 >   shipped fixes to five `cyrius` verbs.)
 > - **agnos v2.0 alignment** — the syscall peer, i.e. runtime/ABI work, and the single most

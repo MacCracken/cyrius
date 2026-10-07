@@ -152,7 +152,7 @@ a duplicate-arg tail-call correctness fix on all targets + i64v2 packed multiply
 - **v6.4.32 — cx bytecode SIMD codegen** — per-lane scalar loops for every flat-array verb (`_CX_VLOOP_BIN`) + new cxvm opcodes `f32widen` 0x66 / `f32narrow` 0x67 / `fsqrt` 0x68. Fixed two pre-existing cx local-addressing bugs the SIMD stash exposed (`ELOAD_LOCAL_ADDR` return-0 stub → `&local` aliased; scalar load/store disp missed the regalloc reservation `EFLADDR` had). Portable `.cyx` is now a byte-exact SIMD correctness oracle; cross-OS fixture runs SIMD on real hardware.
 - **v6.4.53 — value-form SIMD finish-outs** (arc cleanup, deferred mid-Phase-5): the duplicate-arg `f(v,v)` tail-call path had no XMM second pass and returned garbage on ALL targets (the v6.4.31 guard covered only `_TARGET_PE`) — fixed everywhere; plus i64v2 packed multiply, the one integer op the "arc CLOSED" line at v6.4.7 had left unbuilt.
 
-Only caveat: the aarch64 *native* 256-bit f32v8 emitters remain return-0 stubs never reached at runtime — `lib/simd.cyr` routes f32v8 through native f32v4 NEON, so the verb works; native 256-bit stays x86-AVX2-only.
+Only caveat: the aarch64 *native* 256-bit f32v8 emitters remain return-0 stubs never reached at runtime — `lib/simd.cyr` routes f32v8 through native f32v4 NEON, so the verb works; native 256-bit stays x86-AVX2-only. *(Since 6.5.49 those emitters delegate to the 4-lane NEON ones instead of returning 0.)*
 
 ## v6.4.x — other releases
 
