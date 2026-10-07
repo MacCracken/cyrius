@@ -123,8 +123,8 @@ fn _help_row(syn, desc): i64 {
 
 fn _help_build(): i64 {
     println("Build & run:");
-    _help_row("build [--aarch64|--win|--agnos] [--no-deps] [--strict] [--pie] [--features <list>] [-D NAME]... <src> <out>",
-      "compile <src> into <out>, resolving [deps] first");
+    _help_row("build [--aarch64|--win|--agnos] [--no-deps] [--strict] [--pie] [--features <list>] [-D NAME]... [<src> [<out>]]",
+      "compile (default: [build] entry/output), resolving [deps] first");
     _help_row("run [--aarch64] <src.cyr> [args...]", "compile + run (args go to the program)");
     _help_row("check [--with-deps] <src.cyr>...", "syntax check (default: standalone)");
     _help_row("clean", "remove build/ contents");
@@ -133,7 +133,7 @@ fn _help_build(): i64 {
     _help_row("test [--aarch64] [test.tcyr...]", "compile + run each, check exit 0 (none: the whole suite)");
     _help_row("tests [--aarch64] [dir]", "recursively run all .tcyr under dir (default tests/)");
     _help_row("bench [file.bcyr|dir]", "compile + run benchmarks (default: benches/ + tests/)");
-    _help_row("fuzz [--poison[=ab]] [file.fcyr|dir]", "run fuzz harnesses (default fuzz/*.fcyr)");
+    _help_row("fuzz [--poison[=ab]] [file.fcyr|dir]", "run fuzz harnesses (default: fuzz/ + tests/)");
     _help_row("coverage [--full] [--min <pct>]",
       "reference coverage of project src/ (--full=vendored lib/; --min gates CI)");
     _help_row("doctest <file.cyr>", "run doc examples");
