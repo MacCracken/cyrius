@@ -127,6 +127,32 @@ fn dead2(a): i64 { if (a > 3) { return dead1(a, 2) + 7; } return dead1(a, 3) - 1
 fn g(): i64 { return 1; }
 var r = h(); syscall(60, r);
 EOF
+# The same with `#naked` definitions. A naked body OPENS with the defer-init jump, whose rel32 is
+# already in the whole-program jump registry at the very bytes the redirect rewrites; registered a
+# second time, compaction repaired it twice (SIGSEGV under CYRIUS_DCE=1; 60, not 1, under
+# CYRIUS_IR=3 with live store-heavy fns between the definitions).
+cat > "$T/naked_dce.cyr" <<'EOF'
+#naked
+fn g(): i64 { asm { 0xB8; 0x02; 0x00; 0x00; 0x00; 0xC3; } }
+fn d1(): i64 { var a = 1; var b = 2; var c = a + b; return c * 7 + 3; }
+fn d2(): i64 { var a = 4; var b = 5; var c = a * b; return c - 9; }
+fn h(): i64 { var x = g(); return x; }
+#naked
+fn g(): i64 { asm { 0xB8; 0x01; 0x00; 0x00; 0x00; 0xC3; } }
+syscall(60, h());
+EOF
+cat > "$T/naked_ir3.cyr" <<'EOF'
+var gs[64];
+#naked
+fn g(): i64 { asm { 0xB8; 0x02; 0x00; 0x00; 0x00; 0xC3; } }
+fn s1(): i64 { var a = 1; a = 2; a = 3; var b = a; b = 4; b = 5; store64(&gs, a + b); return a + b; }
+fn s2(): i64 { var a = 1; a = 2; a = 3; var b = a; b = 4; b = 5; store64(&gs + 8, a * b); return a * b; }
+fn s3(): i64 { var a = 1; a = 2; a = 3; var b = a; b = 4; b = 5; store64(&gs + 16, a - b); return a - b; }
+fn h(): i64 { var x = g(); return x + s1() * 0 + s2() * 0 + s3() * 0; }
+#naked
+fn g(): i64 { asm { 0xB8; 0x01; 0x00; 0x00; 0x00; 0xC3; } }
+syscall(60, h());
+EOF
 
 # _leg <label> <compile-cmd> <run-cmd> <source> : compile with "$2" < source, run with "$3"
 # (empty = native). Sets BRC (compile rc), BSZ (output size) and LRC (run rc; -1 = not run).
@@ -173,6 +199,12 @@ _want x86_dce "$T/dcc" "" "$T/dce.cyr" 1 "CYRIUS_DCE=1 with dead code between th
 if [ "$LRC" -ne -1 ] && ! grep -q 'dead code eliminated' "$T/x86_dce.err"; then
     _bad "x86_dce: nothing was eliminated, so the row did not move the winner (anti-vacuous)"
 fi
+_want x86_naked_dce "$T/dcc" "" "$T/naked_dce.cyr" 1 "#naked redefinition under CYRIUS_DCE=1 (was 139: the redirect's rel32 repaired twice)"
+if [ "$LRC" -ne -1 ] && ! grep -q 'dead code eliminated' "$T/x86_naked_dce.err"; then
+    _bad "x86_naked_dce: nothing was eliminated, so the row did not move the winner (anti-vacuous)"
+fi
+printf '#!/bin/sh\nCYRIUS_IR=3 exec "%s"\n' "$T/x86" > "$T/ir3cc"; chmod +x "$T/ir3cc"
+_want x86_naked_ir3 "$T/ir3cc" "" "$T/naked_ir3.cyr" 1 "#naked redefinition under CYRIUS_IR=3 (was 60)"
 
 # ── row 1b: a redefinition that disagrees about HOW it is called is refused ──────────────────
 # Every call now reaches the last body, so a call compiled against an earlier definition arrives
