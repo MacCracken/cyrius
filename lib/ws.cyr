@@ -7,11 +7,15 @@
 # Client-side WebSocket over existing TCP connections.
 # Handles framing, masking, ping/pong, close handshake.
 #
-#   var sock = tcp_connect("127.0.0.1", 8080);
+#   var ip = net_resolve_ipv4("localhost");            # a name or IPv4 literal; -1 if unresolved
+#   var st, sock = tcp_socket();                        # Result pair: check is_err_result(st)
+#   var ct, cv = sock_connect(sock, ip, 8080);          # likewise is_err_result(ct)
 #   var ws = ws_connect(sock, "/ws", "localhost");
-#   ws_send_text(ws, "hello");
-#   var msg = ws_recv(ws);
-#   ws_close(ws);
+#   if (ws_state(ws) == WS_OPEN) {
+#       ws_send_text(ws, "hello");
+#       var msg = ws_recv(ws);
+#   }
+#   ws_close(ws);                                       # closes the socket too — not sock_close again
 
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
