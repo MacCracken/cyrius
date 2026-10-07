@@ -18,7 +18,7 @@ CVE id is spent). **Threads / async**: x86 macOS starts real threads (T1), and `
 macOS and Windows (A1) and agnos (A2), where the legacy `async_await_readable` now really waits instead of returning
 at once. Three lanes (intern, embed, threads) after R1–R3 on main. The next free CVE id stays **79**.
 
-**Gate (merged tree):** GATE-LINE-TBD
+**Gate (merged tree):** `scripts/release-gate.sh` **GREEN** on `19ceb8c6` (2026-10-06, 16:20–17:01): self-host fixpoint (1,586,184 B), ARM binary lockstep (1,323,400 B), seed → cybs → cycc byte-identical, full check.sh — 192 of 192 shell gates produced a result, 0 failed, the 2 named agnos-parity SKIPs — and cross-OS self-host + the `crossos/` suite on REAL ecb, ach, cass and pi (all `SELFHOST_OK` + `LIBTEST_OK`; the first real-hardware run of x86-macOS real threads on ach in the merged tree). The merged check.sh before it had one load flake (`tls_first_use_thread_race`'s S0 port precondition), which passed 3/3 alone and in the gate.
 
 **Size:** cycc **1,586,184 B** (`.text` **1,405,464**), +4,096 B over 6.6.18's 1,582,088 (`.text` +3,072, B0b's interning
 index — no other lane changes the compiler); `build/cycc-native-aarch64` regenerated, 1,323,392 → **1,323,400 B** (at the
@@ -26,7 +26,7 @@ slot open it still carried the 6.6.18 version string). api-surface **5,827**, un
 peers, −3 duplicate `thread_macos::` rows that T1 hoisted out of the arm64 `#ifdef`). `lib/*.cyr` **106**, unchanged.
 `.tcyr` 481 → **482** (crossos 196 → **197**); shell gates 368 → **372**.
 
-**Bench:** BENCH-TBD (the intern lane measured self_compile 1,000 → 933 ms, median of 11 alternating runs; min 999 → 929).
+**Bench:** self_compile **923 ms** at the gate. Same-box interleaved A/B vs 6.6.18 (15 runs each): 987 → 923 ms own source (−6.5 %), 922 ms on 6.6.18's source (−6.6 %) — B0b's interning index.
 
 ### Folds (R1)
 
