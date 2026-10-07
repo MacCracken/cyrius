@@ -4,7 +4,1383 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [6.6.20] — 2026-10-06
+## [6.6.20] — 2026-10-07
+
+The v6.6.x closeout — the last row of roadmap.md § *The 6.6.x tail* before v6.7.0. The closeout passes (heap-map
+audit, dead-code audit, refactor, code review, cleanup, security re-scan, vidya, backlog re-triage, downstream check)
+ran as one audit workflow (`wf_ed01a9f8-8e1`) over the slot-open tree `e696746d`: **141 findings**, 44 of them P0–P2
+bugs, every one CONFIRMED by a skeptic pass that re-ran its repro. They were fixed over **28 lanes** (14 `src/`, 14
+CLI / stdlib / gates / docs), each through its own review rounds, and the user promoted three backlog silent
+miscompiles into the release: a call to a redefined fn binding its FIRST definition, aarch64 calls of 262+ arguments
+corrupting `sp`, and user fns named `mulh64` / `fncallN` mis-binding or crashing. The headline repairs: a `continue`
+patched to the wrong loop, `: f64` fns returning a stale xmm0 on x86 / Windows / Intel Mac, an inlined fn stepping a
+`*T` by one byte, a generic `: *T` result stepping 8 for every instance, the `#if` nesting stack and the `use` alias
+table writing through live compiler state, and a `[package] cyrius` pin that path-traversed into an `execve` (CVE-79,
+P0). Defaults taken where a finding needed a design call: a bare struct passed to a `*T` parameter takes its address
+at every size; release-gate step 3 fails on any SKIP outside a named allowlist; check.sh reaps dead CLI temp dirs (no
+CLI signal handling); a redefinition patches a jump at the old entry, so programs that redefine nothing compile to the
+same bytes; the intrinsic names are refused at declaration rather than lexed as tokens. Structurally: the arm64 Mach-O
+writer leaves every x86-family compiler, `src/common/heap_regions.cyr` is the drivers' one heap-region block,
+`heapmap.sh` checks every driver and every `S + 0x…` literal, and a per-fork dead-code floor is gated. Constant-arm
+folding (DEAD-10), one alloc'd IR arena (HEAP-12) and `var f: f32` literal rounding (LEX-EXPR-04) go to the backlog.
+**CVE-79 … CVE-102** (24; CVE-97…102 are the closeout security re-scan's findings, carried at integration); the next free id is **103**.
+
+**Gate (merged tree):** GATE-LINE-TBD
+
+**Size:** SIZE-LINE-TBD
+
+**Bench:** BENCH-TBD
+
+### Security
+
+All eighteen entries are appended to `docs/audit/2026-09-03-security-audit.md`.
+
+- **CVE-79 (P0): a `[package] cyrius` pin was joined into a path and EXECUTED** (c-pin, CBT-01; the security re-scan's
+  SEC-01). `_try_redirect_to_pinned` (`cbt/cyrius.cyr`) built `<home>/versions/<pin>/bin/cyrius` from the raw manifest
+  value and `execve`'d it before any verb ran, checking only `file_exists`: a cloned repo that ships an executable
+  `payload/bin/cyrius` and pins `cyrius = "../../(…)/proc/self/cwd/payload"` had it run by every verb — `cyrius
+  version`, `fmt`, `lint`, `build`, `deps`, a bare `cyrius` — verbs that never run repository code. A home-relative
+  pin needs no `/proc` (so macOS too); on Windows a backslash spelling did the same through `_win_redirect_to_pinned`
+  (reproduced under wine). Live since v5.11.25 for repos without `src/main.cyr`, and for every consumer since v6.5.37.
+  Under the documented `CYRIUS_RESOLVED=1` (which skips the redirect) the same value reached six more sites: `lib
+  sync` copied from the traversed directory into `./lib`, `deps` vendored from it and wrote it into `cyrius.lock`,
+  both distlib resolvers, the lib-freshness check, and `--version` / `build --print-config` printed it raw, terminal
+  escapes included. A second reader, `cyriusly use` with no operand, printed the pin raw (an OSC title-set and a
+  clear-screen reached the terminal) and called a traversal pin valid. Fix: the one CLI reader,
+  `_dep_read_cyml_cyrius_field` (`cbt/deps.cyr`), refuses by name — exit 1, non-printing bytes shown as `\xNN` — a pin
+  that is not a version's shape (a leading digit, then only `[0-9A-Za-z._-]`, no `..`; `/`, `\` and `:` are outside
+  the set) and a present pin that is not a string; neither is ever read as "no pin". `build --print-config` routes
+  through it. cyriusly's reader applies the same rule, refuses an unquoted pin and reads a TOML literal-string pin
+  (`'6.6.18'`). All 126 pins under `~/Repos` are plain `X.Y.Z`. Gate
+  `tests/gates/toolchain/manifest_pin_shape_refused.sh` (the payload on seven verbs, the home-relative and backslash
+  spellings, the `CYRIUS_RESOLVED=1` siblings, `6/x` / `6\x` / `6:x` with a payload where each would lead, controls, a
+  wine leg for `cyrius.exe`; RED with the reader reverted or with a charset admitting `/`, `\` or `:`);
+  `cyriusly_version_operand_refused.sh` axis 6.
+- **CVE-80 (P1): `lib/pam.cyr` authenticated a WRONG password under an inherited SIGCHLD = SIG_IGN** (l-plat; found by
+  the RLM-01 verifier). `pam_unix_authenticate` did a blocking `waitpid` on the `unix_chkpwd` helper, threw the result
+  away and decoded the status buffer anyway. A process that inherits SIGCHLD = SIG_IGN — it survives `execve`, and
+  whoever runs the program chooses it — has its children reaped by the kernel, so `waitpid` fails ECHILD, never writes
+  the buffer, and a stale 0 on the stack read as exit 0: `PAM_AUTH_OK`. Its consumer is shakti, a setuid-root sudo
+  replacement. Fix: the wait retries EINTR and returns `PAM_AUTH_FAIL` unless `waitpid` returned the helper's pid
+  (anything but a clean exit 0 is a fail; shakti maps it to "rejected", not to its `su` fallback).
+  `tests/tcyr/platform/shadow_pam.tcyr` gains two SIG_IGN rows, each after a zeroed stack (a wrong root password, an
+  unknown user); the 6.6.19 `pam.cyr` returns `PAM_AUTH_OK` on both. Filed in shakti: bump the pin, reset SIGCHLD at
+  startup.
+- **CVE-81 (P1): the 65th `use` alias overwrote the alias table and live compiler state** (s-decl, HEAP-02).
+  `_tl_use_alias` (`src/frontend/parse_fn.cyr`) stored alias #n at `use_from[n]` / `use_to[n]` unchecked; both tables
+  are 64 entries and abut, so with 65 aliases a call of the first alias's bare name resolved to whatever fn carried
+  the 65th alias's — rc 0, no diagnostic, a wrong call at run time. 66–120 aliases failed with a bogus "undefined
+  function", 199–5,062 compiled and called the wrong fn, 5,063+ crashed the compiler (SIGSEGV) after a bogus
+  "uninitialized variable". Every target: all seven forks share the code, and 6.5.73 had the same stores inline. Fix:
+  the 65th alias is refused, "too many `use` aliases (max 64)", before the first store (raising the cap would be a
+  heap-layout change; the refusal is not). Gate `tests/gates/frontend/use_alias_table_cap.sh` (64 aliases resolve; 65
+  / 200 / 5,100 refused by name; mutants — cap removed, cap at 63, the `return` dropped — each RED).
+- **CVE-82 (P1): `PP_EXPAND` copied a function-like macro's parameter names and arguments into 512-byte stack buffers
+  unbounded** (s-ppcaps, LEX-EXPR-01; a CVE-40 sibling). `var pnames[512]` and `var args[512]` are fn-local — 512
+  BYTES — and neither copy checked its index (CVE-40 at 6.5.45 bounded only the body copy): a 516-byte argument
+  expanded to nothing and compiled clean (`fn f(): i64 { return PICK("<516 a's>", 7); }` returned 0 where 7 is right),
+  518 bytes and up smashed the frame and cycc died of SIGSEGV, a ~600-byte parameter list did the same from the
+  definition side, and a parameter list with no `)` read past the stored definition. Since 6.5.73. Found while fixing
+  it, and folded in: the same function never compared an invocation's argument COUNT with the macro's — extra
+  arguments were dropped (`#define PICK(a, b) b`, `PICK(5, 6, 7)` took 6), too few made the substitution read stale
+  bytes of `args` left by an EARLIER call (`PICK(3, 4)` then `PICK(9)` took 4 — unbounded by the buffer when those
+  bytes hold no NUL), and an invocation with no `)` expanded whatever had been copied by end of input. Fix: both
+  copies refuse past 511 bytes of names / arguments and separators, the parameter scan stops at the definition's end,
+  and `PP_MACRO_ARGCHECK` refuses a count mismatch and an unclosed invocation — each a hard error naming the macro (`…
+  an invocation's arguments exceed 511 bytes`, `… takes 2 arguments, given 1`, `… an invocation has no closing ')'`).
+  `Z()` / `Z( )` still invoke a zero-parameter macro and `F()` still passes one empty argument. Gate
+  `tests/gates/frontend/pp_table_caps.sh` §D (17 rows; the pre-fix compiler fails all 6 buffer refusals, the
+  pre-count-check compiler the 5 count refusals; mutants D1–D6 each RED).
+- **CVE-83 (P1): a resolve that skipped a tagged git dep dropped its CVE-21 commit pin from `cyrius.lock`, and the
+  next resolve accepted a repointed tag** (c-lock, CBTB-01). `cmd_deps` pins only the tagged deps it cloned and
+  verified in THAT run, and `cmd_deps_lock` wrote either those fresh lines or (bare `--lock`, the 6.6.4 repair) the
+  inherited ones — never both. So any dep a resolve skipped lost its `commit` line while its `lib/` hash row stayed:
+  an `optional = true` dep resolved without its feature, a `target =` dep resolved on another target, every transitive
+  dep of a gated-out dep, a dep served by a `path =` override, every pin on a host with no git (PE) — through every
+  auto-deps verb (`build`, `run`, `test`, `bench`, `publish`, …), even when the build then failed. Measured on the
+  slot-open CLI: `deps --features gpu` reported 2 commit-pinned, plain `deps` 1; with the optional dep's tag repointed
+  and its cache cleared, `deps --features gpu` exited 0, vendored the new bytes and re-pinned — the trust-on-first-use
+  floor CVE-21 exists to close, on a routine workflow (a fresh CI checkout). Fix: `cmd_deps_lock` always merges — the
+  fresh lines plus every inherited `commit` line no fresh line supersedes, keyed exactly as `_lock_commit_lookup`
+  reads a pin (name, url-normalised git, tag; the first cut keyed on the name and review measured a diamond losing
+  `x@v2`'s pin that way) — and sorts the block by (name, git, tag), so alternating gatings no longer churn it.
+  `_lock_commit_lookup` reads the whole lock: its 64 KB window could put a dep's live pin past the cut once old-tag
+  lines are retained (the third fixed-window instance on `cyrius.lock`). ⚠ Behaviour: an old tag's line stays after a
+  tag bump (fail-closed; deleting `cyrius.lock` re-pins, as before); an existing lock's commit block is re-ordered
+  once, by the first 6.6.20 resolve, in the same change as the pin bump's `cyrius\t<pin>` trailer; the summary reads
+  `cyrius.lock: N deps locked, M commit-pinned (K re-verified)` — M distinct dep names in the merged lock, K the deps
+  THIS run checked against their origin (0 for an override-only resolve and for bare `--lock`, which keeps
+  ecosystem-migration-6.6.2.md's tell for an override that masked the tag). New gate
+  `tests/gates/toolchain/deps_commit_pins_kept.sh` (K1–K9, K2l, K12–K18: optional, transitive, target-gated and
+  path-override pins survive a feature-less `deps` and `build`, then refuse their repointed tags by name; a diamond; a
+  respelled url; 1,000 retained lines; a fork at the same tag; libro's two-names-one-repo shape; the slot-open CLI
+  fails every axis but K1, and each mutant of the drop key, the sort, the window and the summary turns its axes RED).
+- **CVE-84 (P1): Windows had no munmap route — every large `fl_free` / `cyr_munmap` leaked its whole mapping** (s-pe,
+  REV-LIB-PLATFORM-01; l-plat, RLM-07 and the comment half). The PE backend had no reroute for syscall 11: it returned
+  -38, with a warning on the literal path and none on a var-held number. `fl_free` unmaps every block over 4 KiB and
+  ignored the result, so each large `fl_alloc` / `fl_free` kept its mapping (four 8 MiB rounds under wine: four
+  distinct, growing addresses where Linux reuses one). sigil's argon2id / argon2i / argon2d `fl_alloc` their whole
+  m_cost arena per call, so a Windows server hashing logins leaked m_cost KiB of committed memory per attempt (19–64
+  MiB at OWASP settings) — growth driven by untrusted input; cycc.exe's own 24 MB preprocessor buffer stayed committed
+  to process exit. Fix: syscall 11 at arity 3 → `kernel32!VirtualFree(addr, 0, MEM_RELEASE)` — new `EMUNMAP_PE`
+  (rbx-anchored 16-byte align; `length` dropped, as MEM_RELEASE requires 0; the BOOL from eax becomes 0 / -22) on the
+  literal path, through `_PE_ROUTE_FLUSH` so `_PARSE_FACTOR_IMPL` gains no reference (cybs's per-fn limit), and on the
+  var path (`_pe_dyn_arity3`); return-0 stubs on aarch64 and cx. ⚠ A partial or offset munmap is not expressible on PE
+  (MEM_RELEASE frees the whole reservation): a non-base address answers -EINVAL; no PE-reachable caller unmaps a
+  sub-range. Both large-block frees in `lib/freelist.cyr` (plain and poison) go through `_fl_unmap` and return the
+  kernel's -errno when it refused, where they returned 0 with the mapping still there; `lib/syscalls_windows.cyr`'s
+  comments, which promised munmap and brk reroutes that did not exist, say what is routed. Tests:
+  `tests/tcyr/crossos/munmap_releases_mapping.tcyr` (8 rounds of 8 MiB within a 3-block address spread, `cyr_munmap`,
+  `sys_munmap`, the var-held 11, the offset -EINVAL contract; on cass in the cross-OS leg); `mmap_anon_flag.tcyr` and
+  `mmap_include_order.tcyr` lose a false `#ifndef CYRIUS_TARGET_WIN` that had hidden the -38 from the cross-OS gate;
+  `pe_unrouted_warning_names_site.sh` munmap rows; `tests/tcyr/crossos/freelist_unmap_failure_reported.tcyr` (a forged
+  out-of-range block makes Linux's munmap refuse: `fl_free` returns -22).
+- **CVE-85 (P2): `#if` / `#ifdef` / `#ifndef` / `#ifplat` nesting past 64 levels wrote through live compiler state**
+  (s-ppcaps, HEAP-01). The per-level state stack at `S+0x197F10` is 64 bytes, and no push site checked the depth: each
+  deeper level wrote its state byte upward through freed space, then `gvar_cnt`, the jump-target count (a loud
+  `function exceeds 1023 jump targets` at ~24.8K levels) and, at ~344K levels, `gvar_initval`, which
+  `_EMIT_GVAR_STATIC_INITS` bakes into the image — a clean compile whose uninitialised globals came out non-zero (exit
+  49 where 0 is right). Since v5.6.1. Fix: one helper, `PP_PUSH_LEVEL`, does every push and refuses depth 65 with a
+  located error (`error:<file>:<line>:<col>: #if/#ifdef/#ifndef/#ifplat nesting exceeds 64 levels`), in the main
+  source and in an included file. Real code nests at most 5 levels. Gate `pp_table_caps.sh` §A (64 levels compile and
+  run for every arm in both passes; 65 and 9,000 refused at the 65th directive; the pre-fix compiler fails all 8
+  refusal rows).
+  At integration the eighth push site — the included-file `#ifplat` arm the TAB/evaluation fix added — takes the same cap (`pp_table_caps.sh`, 65 included `#ifplat`).
+- **CVE-86 (P2): an attribute line holding a multi-line string desynced the preprocessor from the lexer — a forged
+  `#@file` defeated `private`** (s-pplex, LEX-EXPR-02; the CVE-45 / CVE-55 class). The lexer lexes the rest of an
+  attribute line (`#assert`, `#regalloc`, `#deprecated`, `#must_use`, `#pure`, `#io`, `#alloc`, `#naked`, `#inline`,
+  `#pe_import`) as CODE, string literals included, and a literal may hold a raw LF; the preprocessor read every such
+  `#` as a comment opener, so after `#assert 1 == 1, "x<LF>"` it took the literal's closing quote for an opening one
+  and believed the next line was string data. With rc 0 and no diagnostic: a `#@file "secret.cyr" 1` line there was
+  skipped by the forged-marker neutraliser and minted by FM_BUILD, so a `private` fn of secret.cyr was CALLED (all ten
+  attributes, from the main source and from an included file); a real `#ifdef CYRIUS_TARGET_WIN` there was skipped,
+  compiling the Windows-only arm on Linux; and a `#define` line INSIDE such a string was executed and cut out of the
+  program's data. Fix at the root: the ten attribute words are ONE list, `LEXATTRWORD` (`src/frontend/lex.cyr`,
+  replacing ten hand-unrolled byte chains), which LEX dispatches on and every preprocessor walk asks through
+  `PP_LEXST_AT` — 6.6.6 had declined this for fear two lists would drift; with one there is nothing to drift. Belt and
+  braces, `PP_NEUT_BOLMARK` neutralises FM_BUILD's exact 8-byte key `#@file "` at any line start whatever the string
+  state, which also closes the CVE-45 data-side residual. ⚠ Behaviour changes: a macro invocation whose arguments wrap
+  onto the next line on an attribute line expands again (6.6.6–6.6.19 failed it `undefined function`); a literal whose
+  next line opens `#@file "` now holds `# file ` there (the one shape that was already mis-compiled). Gate
+  `tests/gates/frontend/file_marker_forge_refused.sh` axes 11–26 (the slot-open compiler fails 14; mutants split the
+  two halves); `macro_invocation_boundary.sh` axis 11 re-pinned; `lexer_attribute_word_boundary.sh` census B0
+  re-derived from `LEXATTRWORD`. Not covered: `cyaudit` and `cyrius_api_surface` keep their own copies of the old
+  state machine (filed; Known).
+- **CVE-87 (P2): `[deps.]` / `[deps..]` / control-byte header names passed the CVE-62 guard** (c-deps, CBTB-02; the
+  re-scan's SEC-09). `_dep_reject_unsafe_name` refused only `/` and `..`: an empty name, a `.`-led one, a backslash
+  and control bytes passed, and the header scan ran across newlines, so a header could span lines. The name becomes
+  the clone dir `<home>/deps/<name>/<tag>`, so `[deps.]` / `[deps..]` made it ANOTHER dep's name directory: from the
+  root manifest or any transitive one a foreign checkout could be cloned as `<home>/deps/<tag>` (name-level cache
+  occupation — symlinks committed in it became that name's tag slots, and a later legitimate resolve verified a
+  planted symlink into the user's own repo and printed `reset --hard` / `clean -qffdx` advice for it), the tamper
+  refusal printed `rm -rf <home>/deps/./victim` (every cached tag of victim), and the name was echoed raw (a terminal
+  escape or a forged line). No content poisoning: the CVE-43 origin and tree-vs-tag checks held. Fix: one silent name
+  rule, `_dep_name_unsafe` (empty, `.`-led, `/`, `\`, `..`, a control byte), checked before any path is derived, root
+  or transitive; one refusal line, `_dep_refuse_name`, with the name escaped by the new `_shown` / `_ew_shown` printer
+  (CVE-76's tag printer, generalised — the CVE-76 refusal escapes the name too); `deps --dry-run` lists `[deps.]` and
+  refuses it the same way. Gate `deps_modules_default_or_warned.sh` D8b–D8f (RED on the slot-open CLI).
+- **CVE-88 (P2): a `[deps.X] modules` entry with `..`, or a dep file committed as a symlink, vendored any readable
+  file into `lib/`** (c-deps, BACKLOG-04). Each `modules` entry was joined onto the dep's dir and copied with no
+  check, so `modules = ["../secret"]` (or `dist/../../secret`) vendored any file the user can read into `lib/X_secret`
+  at exit 0 — from the root manifest or any TRANSITIVE one, where `../../../../secret` climbs out of the dep cache.
+  The same class without `..`: the copy follows links, so a git dep whose tag COMMITS `dist/x.cyr -> /abs/secret` (or
+  a relative link out of the cache, or `dist ->` a directory) vendored the target with rc 0 and a verified commit pin
+  — root or transitive, with or without a `modules` key (the default `dist/<name>.cyr` too), through a modular
+  sub-module or its `index.cyml` — and a linked `.deps` sidecar's lines were echoed back on stderr (a public CI log).
+  The CVE-43 cache verify passed: the link IS the tag's content. Path deps alike. Fix: an entry with a `..` component
+  (split on `/` and `\`) or a leading `/` / `\` is refused by name before any gate, clone or copy
+  (`_dep_mod_path_unsafe` / `_dep_modules_refused`; `./dist/x.cyr` and `v..2/w.cyr` stay legal; an absolute entry was
+  never itself a vector and is refused anyway). Every dep file is read only from inside the dep's tree:
+  `_dep_src_link` checks each component below the dep root for a symlink before any read — the primary path BEFORE its
+  `lib/<base>` fallback, so a dangling `dist/<name>.cyr` beside a regular `lib/<name>.cyr` is refused rather than
+  resolved around — and `_dep_refuse_src_link` names the file and the link; only the dep ROOT may itself be a link. No
+  clone in the dep cache and no `dist/` or `src/` under `~/Repos` holds a symlink. Gate
+  `deps_modules_default_or_warned.sh` D10a–D10c, D11a–D11h (floor 15 → 31). ⚠ Not closed: a TRANSITIVE manifest's
+  `path` still vendors any local file (Known).
+- **CVE-89 (P2): on a CRLF `cyrius.lock` the moved-tag check failed open, and `deps --verify` failed every file**
+  (c-lock, CBTB-05; a CVE-21 residual). 6.6.4 made `_dep_lock_load` and the hash lookup CRLF-tolerant and missed two
+  readers. `_lock_commit_lookup` kept the `\r` on the tag field, matched no line and answered "no pin", so on a CRLF
+  checkout — a plain `git -c core.autocrlf=true clone` makes one — a repointed tag on a fresh cache was vendored and
+  re-pinned at exit 0, skipping the CVE-21 refusal. `--verify` read each path up to the `\n` and reported every file
+  `cannot hash`: closed, but every failure false. Fix: both readers strip one trailing `\r` (a truncated line still
+  fails closed). Gate `deps_commit_pins_kept.sh` K10 (a CRLF lock and a repointed tag: refused by name, lock and
+  `lib/` untouched) and K11 (`--verify`: N verified, 0 failed, the lock still CRLF). ⚠ The 6.6.4 entry's note that
+  `--verify` on a CRLF lock "already failed loud" no longer describes the tool.
+- **CVE-90 (P2): aarch64 frame displacements past 64 KiB were emitted as a 16-bit `movz` — loads and stores landed 64
+  KiB off** (s-a64args; the BACKLOG-02 sibling, raised in its review). `_EFP_ADDR_X9` (the address of every local and
+  parameter past `ldur` / `stur`'s 256-byte reach), `EFLADDR_X8`'s large-frame arm (the X8 struct-result pointer) and
+  `ESTORESTACKPARM`'s destination arm built the displacement with ONE `movz #(abs & 0xFFFF)`, on a comment's word that
+  ">= 8192 locals are implausible" — but one `var buf[65536]` puts every later local past it. A local after a 64 KiB
+  buffer aliased a byte INSIDE the buffer, so writing the buffer rewrote the local; a fn of 8,192+ parameters homed
+  parameter 8,192 over the saved fp (SIGSEGV at 8,200). The shipped tree reached it: `programs/tail.cyr` (`var
+  buf[65536]` then `total`, `rgo`, …) — under qemu on the old build `total` aliased `buf + 65528`, so an input of
+  65,528 bytes or more wrote its own bytes into `total` and the next `read(0, &buf + total, 65536 - total)` went
+  wherever the input said (SIGSEGV on a 108 KB input). sigil's `ed25519_verify` (72 KiB of stack arrays) and mabda's
+  `_native_shader_compile_spirv` (82 KiB) address locals past 64 KiB, so every TLS / sigil / mabda consumer built for
+  aarch64 carried it (in `ed25519_verify` the one such local is dead before its alias is written — no wrong verdict
+  found; mabda not analysed). aarch64 ELF and arm64 Mach-O only; x86 / Win64 / x86 Mach-O use disp32. Fix: one helper,
+  `_EMOV_XN(rd, v)`, emits `movz` plus a `movk #hi, lsl #16` when v needs it, at all three sites (a frame is capped
+  far below 4 GiB). Output is byte-identical wherever no displacement passes 64 KiB and no call passes 261 arguments
+  (554 of 607 corpus files; each of the 53 that differ includes sigil or mabda, or is `tail.cyr` or the edited test).
+  Tested with BACKLOG-02: `tests/gates/codegen/wide_call_stack_unwind.sh` (n = 8,200 and a frame probe, under qemu and
+  natively) and `tests/tcyr/crossos/wide_call_stack_unwind.tcyr` (8,200-argument and frame rows; pi and ecb).
+- **CVE-91 (P2): `scripts/funcgate-stage.sh`'s live-home / store guard compared a physical path with raw ones, so a
+  symlinked `$HOME` walked past it to `rm -rf`** (g-gates, RS-01). The guard compared the target's PHYSICAL path (`cd
+  && pwd -P`) with the RAW strings `$HOME` and `$HOME/.cyrius`: on a symlinked home (Fedora Atomic and FreeBSD link
+  `/home`), a symlinked parent or a trailing slash on HOME, `funcgate-stage.sh … "$HOME/"` deleted the whole home and
+  `… "$HOME/.cyrius"` a one-version store; a PARENT of HOME, or the working directory (the source tree), was deleted
+  with no symlink at all; and a `..` after a missing directory passed as an unresolved string
+  (`"$HOME/missing/../.cyrius"` rewrote the live one-version store, `"$HOME/missing/.."` deleted `$HOME/bin`). An
+  operator script, not reachable from untrusted input. Fix: every side resolves to a physical path (a copy of
+  install.sh's `_rs_real`, no `realpath(1)`, so AGNOS still runs it); `/`, HOME or any directory holding it, the store
+  or any directory holding it, the working directory or any directory holding it, and a target with a `.` or `..`
+  component are refused. Gate `tests/gates/toolchain/funcgate_refuses_live_home.sh` 4 → 12 axes (axis 1 now on a
+  ONE-version store, so it exercises the store compare itself; axes 5–12 run from a scratch repo root, so a regression
+  wipes a copy, never the checkout; each fails against the old script).
+- **CVE-92 (P3): `cyrius publish` ran its version through the shell** (c-cmd; found in REFACTOR-11's review). The
+  version was joined unquoted into `git tag -a v<ver> -m 'Release v<ver>'` and handed to `sys_system`, so a
+  `./VERSION` holding `1.0;touch PWNED` ran `touch` (measured against the 6.6.19 CLI) — a contributor's one-line
+  VERSION change executed on the maintainer's machine at publish time. Fix: a version holding a byte outside a tag
+  name's charset (`0-9 A-Z a-z . - + _`) is refused by name and never reaches a shell — for `./VERSION` and for the
+  manifest version publish now reads (CLI section). Gate `distlib_bundle_selfcheck.sh` axis 10 (a `git` recorder first
+  on PATH; `4.5.5;touch PWNED` refused, nothing tagged or generated).
+- **CVE-93 (P3): `cyrius distlib`'s RETIRED-name blast door could be skipped by warning volume** (c-cmd, CBT-02). The
+  v6.6.2 check — a bundle calling a name the stdlib has RETIRED (`payload`, `tag`) must fail even under the
+  self-check's `--allow-undef` — scanned the self-check's stderr capture through a fixed 256 KB buffer: a bundle whose
+  compile warned more than that before the retired call (measured: 1,400 long undefined hook names, a 326,629-byte
+  capture, the `payload` warning at byte 326,490) was written at rc 0 — it would self-check green and detonate at the
+  consumer, the class the door exists to stop. Fix: the capture is read back WHOLE from disk
+  (`_distlib_scan_retired_file`); it is created before the compile, and one that cannot be created or read back whole
+  refuses the bundle by name instead of reading as "no retired name". Gate `distlib_bundle_selfcheck.sh` axis 7 (the
+  ~326 KB repro, with an anti-vacuous check that the capture is over 256 KB and the warning starts past byte 262,143).
+  That gate's RETIRED-name axes sat inside the `if [ "$fails" = "0" ]` that prints PASS, so they could never fail it
+  (with `payload` dropped from the retired list the old gate printed FAIL and still exited 0); they count now.
+- **CVE-94 (P3): `cyriusly uninstall ../versions` deleted the whole toolchain store, the active version included;
+  `install` spliced its operand into `sh -c`** (c-pin, RS-04; the re-scan's SEC-06). `uninstall` ran `rm -rf
+  <home>/versions/<ver>` through `/bin/sh -c` with no check on `<ver>`, and the active-version guard is a string
+  compare: on 6.6.19 `uninstall ../versions` printed "Uninstalled Cyrius ../versions", exit 0, every version gone, and
+  `uninstall 6.6.18/../6.6.19` deleted the ACTIVE one. `install '6.6.19;cmd'` ran `cmd` (`curl … |
+  CYRIUS_VERSION=<ver> sh`), `cmdtools 'list;cmd'` the same, and `use ../x` wrote that pin into `cyrius.cyml` or, with
+  `--global`, re-pointed `~/.cyrius/bin` outside the store. The shell twin `scripts/cyriusly` — what the aarch64 and
+  macOS tarballs ship as `bin/cyriusly`, and install.sh's fallback — had the uninstall and use halves. And, a CVE-21
+  residual, the compiled `install` fetched install.sh from the mutable `main` branch (v6.2.30 had moved only the twin
+  to the tag). Fix: both peers refuse, by name with exit 1, a version operand that is not a leading digit then
+  `[0-9A-Za-z.-]` with no `..`, in `use`, `install` and `uninstall`, ahead of the active-version guard; the compiled
+  `install` / `uninstall` / `cmdtools` run argv (a constant `/bin/sh -c` script with the operand as a positional
+  parameter, or the twin with its operands as arguments), so no shell parses an operand; `install` fetches
+  `…/cyrius/<version>/scripts/install.sh`. Gate `tests/gates/toolchain/cyriusly_version_operand_refused.sh` (both
+  peers against a throwaway store, a fake `curl`; the 6.6.19 tree deletes the store, runs the injected command and
+  fetches from `main`). Not covered: `cyriusly cmdtools` still finds the twin relative to the CURRENT directory
+  (filed; Known).
+- **CVE-95 (P3): manifest strings reached the terminal raw, and `[package] name` injected a live line into a distlib
+  bundle** (c-deps, REFACTOR-06 + CBTB-07). `cyrius deps` echoed manifest strings — a dep's `path`, its `git` URL (the
+  declared one, and the cached origin in the CVE-43 refusal, whose declared URL a transitive manifest controls),
+  `modules` entries, sub-module names and the paths built from them — raw into its errors and warnings, so the
+  consumer's manifest or any TRANSITIVE dep's could put a terminal escape sequence on the user's screen (clear it,
+  retitle the window via OSC, forge an earlier line). `[embed]`'s refusal printed the NAME and path it was refusing
+  for holding a control byte verbatim — and a TOML `\u001b` decodes to one since 6.6.17, so `[embed] X =
+  "a\u001b]0;pwned\u0007b"` sent a live OSC sequence through `cyrius build`. distlib's `[lib] modules` / `[lib] embed`
+  echoes, its refused requires leaves and every echo of the `cyrius` pin were raw too. And `cyrius distlib` checked
+  `[package] name` with the dep-name rule, which allowed a newline: `name = "nm\nvar INJECTED = 7;\n#"` wrote a bundle
+  whose header carried a LIVE `var INJECTED = 7;` — code a consumer compiles. Fix: every such echo goes through the
+  one escaping printer (`_ew_shown` / `_shown`: bytes below 32, 127 and above as `\xNN`, so an invisible
+  HFS+-ignorable code point is visible too), and every refusal is one line from the caller that knows what it refused;
+  recovery advice naming a clone dir stays raw so it can be pasted (its name and tag are refused for control bytes);
+  distlib's `[package] name` takes the profile rule `[A-Za-z0-9_-]{1,32}` (`_distlib_bad_pkg_name`; all 126 ecosystem
+  package names comply). Gates `tests/gates/toolchain/manifest_strings_shown_escaped.sh` (E1–E9, E4b) and
+  `embed_manifest_refusals.sh` axis 7.
+- **CVE-96 (P3): native TLS's Ed25519 signer left a copy of the long-term private seed in an allocator buffer on every
+  signature** (l-net, NET-05; defence in depth). `_tn_sign` (`lib/tls_native_hs13.cyr`, the one signer of the TLS 1.3
+  CertificateVerify, the 1.2 ServerKeyExchange and the 1.2 client CertificateVerify) expanded the key with
+  `ed25519_keypair(kmat, sk64, pk32)` into two `_tn_alloc` buffers and never wiped them; sigil writes `seed || pk`
+  into `sk_out`, so every Ed25519 handshake signature — a server's, and since 6.6.14 an mTLS client's — left one more
+  copy of the seed in the no-free heap or the connection's arena: a long-running server accumulated one per handshake.
+  CVE-70 had wiped the ephemeral ECDHE secrets only. (`KEY_MAT` itself lives in the same allocator for the ctx's
+  lifetime, which is why this is defence in depth rather than a new exposure class.) Fix: the expanded key is a
+  `secret var sk64[64]`, zeroised on every return, `pk32` a plain stack array, and the arm allocates nothing (its
+  `TLS_ERR_OOM` returns are gone). `tests/tcyr/crypto/tls_native_ed25519_sign_wipe.tcyr` (the arena holds the seed
+  once after `load_creds` and still once after three signatures — it was 4; a window over the released stack finds no
+  copy, against a planted control that must be found; x86_64, qemu-aarch64, wine).
+
+- **CVE-97 (P1) — a manifest `[build] output` reached `/bin/sh -c` unquoted on macOS (the ad-hoc codesign) and was cmd.exe's quoted redirect target on Windows — a `"` in it ran the rest of the line (measured under wine) — and on Linux it wrote the 0755 binary outside the checkout (`../`, absolute, through a committed directory link)** (sec-shell SEC-02). Fix: `cbt/manifest.cyr` `_cfg_output_refused` (new; the [embed] path rules `_proj_path_bad` applied to a manifest output — an output given as an argument stays the operator's), `cbt/build.cyr` `_macho_codesign` (execs `/usr/bin/codesign` by argv, no shell) and `_w_cmd_operand_ok` at every cmd.exe line builder, `lib/process_win.cyr` `_w_cmd_operand_bad` (a `"`, `%` or control byte is refused). Test: `tests/gates/toolchain/build_output_confined.sh` (mutation: the refusal off → 18 rows red).
+- **CVE-98 (P1) — `cyrius update`, `cyrius deps --lock` (and every auto-deps verb's relock), `cyriusly use`, `cyrius fmt --write` and `cyrius port` wrote a checkout's own files THROUGH a committed symlink to any path — a dangling `cyrius.cyml -> ~/.ssh/authorized_keys` beside a `cyrius.toml` holding a key line made `cyrius update` create the key file** (sec-symlink SEC-03). Fix: `lib/io.cyr` `_io_replace_target_in(root, rel)` / `_io_replace_atomic_in` / `_io_contain_refusal`: a link is followed only while every hop is relative, stays under the project root, passes no directory link, and never lands in or on `.git` (any spelling); every listed writer goes through it. Test: the sec-symlink gates registered in scripts/check.sh (containment rows per writer, `.git` rows, directory-link `..` rows).
+- **CVE-99 (P2) — `[package] version = "${file:PATH}"` read ANY file — absolute, `..`, `.git/config`, through a committed symlink, a FIFO (hang) — into the built binary (`#@pkgver`) and `--print-config`, and a multi-line value (or a literal with a `\n` escape) was compiled as SOURCE: the [embed] hardening's bypass; the ./VERSION fallback had the same reach** (sec-shell SEC-04). Fix: `cbt/manifest.cyr` `_proj_path_bad` / `_proj_read` (one checker for every manifest key that names a project file, shared with [embed]); `cbt/deps.cyr` `_dep_expand_file_interp` and `_project_version` read through it and refuse a control byte. Test: `tests/gates/toolchain/pkgver_file_interp_confined.sh`.
+- **CVE-100 (P2) — `file_write_atomic` (lib/io.cyr) and the CLI's `_aw_open` opened their predictable temp `"<path>.cyrtmp.<pid>.<ctr>"` with O_WRONLY|O_CREAT|O_TRUNC, so a symlink planted at the next name redirected the write into the file it named and was then renamed over the path (cyrsign `.sig`, cyrfmt `--write`, cyrius-init, sigil trust-store writes, the CLI's lock/index writes)** (sec-tmp SEC-05). Fix: `lib/io.cyr` `_io_tmp_open`: the temp is created O_EXCL|O_NOFOLLOW, a taken name is skipped (up to 64, then refused by name); `_aw_open` and `file_write_atomic` both use it. Test: `tests/gates/toolchain/atomic_temp_exclusive.sh`, `tests/tcyr/crossos/atomic_write_temp_exclusive.tcyr`.
+- **CVE-101 (P2) — with a trusted verifier present, a release whose signature had been STRIPPED installed — in all three installers (`scripts/install.sh` only required a signature at or above its local TOFU floor; `scripts/ci.sh` and `scripts/install.ps1` had no floor; install.ps1 also took the version from the download's own name); the compiled `cyriusly install` fetched `install.sh` from `main`, not the tag** (sec-install SEC-07 (+ SEC-06's remainder)). Fix: the first signed release (6.2.31) is a constant in all three installers: with a verifier present a release at or above it — or any malformed version — whose signature cannot be fetched is refused by name; an auto-resolved "latest" below it is refused; `CYRIUS_ALLOW_UNSIGNED=1` / `-AllowUnsigned` stays the explicit override; install.ps1 trusts no version the download names. Test: `tests/gates/toolchain/install_signature_required.sh` (install.sh / ci.sh / install.ps1 in step); install.ps1 measured on cass.
+- **CVE-102 (P2) — on Windows the CLI started `cmd` and `certutil` by a BARE name, and CreateProcessW searches the parent's current directory before System32: a `cmd.exe` committed to a checkout ran on its first `cyrius build`, and a committed `certutil.exe` chose the hashes `cyrius deps --lock` recorded (measured on cass, Windows 11)** (sec-pe SEC-08). Fix: `lib/process_win.cyr` `_win_sys_exe` (GetSystemDirectoryW via GetProcAddress + callptr) gives the quoted absolute path for every cmd.exe / certutil.exe spawn in `cbt/build.cyr`, `cbt/deps.cyr` and `lib/process_win.cyr`; a caller refuses when the directory cannot be read and never falls back to the bare name. Test: `tests/gates/platform/pe_system_programs_absolute.sh` (wine, planting in the caller's own directory), `tests/tcyr/crossos/system_programs_not_from_cwd.tcyr`.
+
+### Compiler
+
+Five compiler fixes are security items, listed above: the `use` alias table (CVE-81), `PP_EXPAND`'s buffers and
+argument count (CVE-82), `#if` nesting (CVE-85), attribute lines (CVE-86) and aarch64 frames past 64 KiB (CVE-90).
+
+- **A `continue` inside a `for` nested in a `while` nested in a `for` stole the outer `for`'s pending jump** (s-loop,
+  RPF-01, P0). The 6.6.3 nested-continue defect one level deeper: a `for`'s pending `continue` jumps lived in one flat
+  8-entry array at `S+0x18F8A0` whose next-free index (`S+0x18F898`) doubled as the while-mode flag, so a `while`
+  reset it to 0 and a `for` inside that `while` overwrote the enclosing `for`'s entry — the inner `continue` was
+  patched to the OUTER step and the outer one was never patched. On plain valid code with no diagnostic: 30 where 26
+  is right on x86 and PE (the unpatched `jmp` is rel32 0, a no-op), a HANG on aarch64 and cx (the unpatched branch is
+  `b .`), and SIGSEGV when the inner loop was in a closure body or a generic instance emitted inside the loop. Every
+  form of `for` (C-style, range, for-in), every release 6.6.0 … 6.6.19. Fix: the pending jumps live in one growable
+  vector (`_cont_vec`, `src/frontend/parse.cyr`); each `for` takes its base when it opens (`_cont_open`), patches only
+  its own entries and truncates back (`_cont_close`), so the ranges of a nest stay disjoint at any depth; `S+0x18F898`
+  is only the mode, the 64-byte array is FREED, and `PARSE_FOR`'s three open / patch blocks collapse onto the two
+  helpers. Every in-tree program compiles byte-identical (606 files).
+  `tests/tcyr/crossos/continue_binds_across_while.tcyr` (timeout-safe by construction: a regression is a wrong value
+  or a fault on every backend, never a hang) and `tests/tcyr/lang/nested_continue_binds.tcyr` §8–12 (the
+  TAKEN-outer-continue shapes, kept out of `crossos/` because broken they hang off x86).
+- **The 8-`continue` cap is gone** (s-loop, RPF-05, P3). Since 6.6.3 it counted the whole loop nest and blamed the
+  inner loop ("too many continue statements in loop (max 8)" on the inner loop's 4th when the outer had 5); with the
+  jumps in a vector it guards no fixed region, so it is removed, not reworded. `cap_errors_stop_storing.sh` continue
+  rows (400 `continue`s in one loop compile and run; the 5 + 4 nest runs).
+- **A `: f64` fn returned a stale value on x86, Windows and Intel Mac whenever it left through anything but a plain
+  `return expr;`** (s-ret, RPF-02, P0). An f64 rides boxed in the integer accumulator, and an x86-family `: f64` fn
+  must move it into xmm0, which every call site reads back; that move was emitted on three `return` arms only. So a
+  tail call into a callee that is not `: f64` (`fn bigger(a, b): f64 { return f64_max(a, b); }` returned the SMALLER
+  operand — `f64_max` leaves its last compare operand in xmm0), the same over the register ceiling, a bare `return;`,
+  `ret2(a, b)`, a `?` early return, and an `#inline` `: f64` callee replayed into a caller that is not `: f64` all
+  handed back whatever the last f64 operation left in xmm0, exit 0. aarch64 and cx were right. Fix: the move is
+  emitted once, at the return landing every arm jumps to (and at the inline replay's landing, keyed on the callee),
+  and a tail call out of a `: f64` fn keeps its `jmp` only into a `: f64` callee, so self- and mutually-recursive f64
+  tail calls stay constant-stack. Every `: f64` fn's bytes change (cycc declares none).
+  `tests/tcyr/crossos/f64_return_every_path.tcyr` (16 rows, 9 failing on 6.6.19 on x86 and PE; its 1,000,000-deep
+  recursion rows fail if f64 tail calls are over-diverted).
+- **An inlined fn stepped a `*T` parameter by 1 byte** (s-ptr, RPD-01, P0). The inline replay (`#inline` fns,
+  one-statement generic fns and every fn with a SIMD parameter) re-registered each parameter with only its vector /
+  f64 / f32 type, dropping the pointer bit and 6.6.17's `sizeof(T)` step: `p + n`, `q - p` and `p += n` stepped 1
+  byte, and on a `*f32` / `*f64` parameter `p + 1` was a FLOAT add of the pointer's bits (truncated to 32), while the
+  same fn called out of line stepped `sizeof(T)` — one fn, two addresses. `fn at<T>(p: *T, i) { return p + i; }` hit
+  it at every call, on x86_64, aarch64, PE and cx. Fix: a fn with a `*T` parameter is no longer an inline-replay
+  candidate (it is called), and `#inline` on one warns `#inline ignored: pointer (*T) parameter`. The candidacy scan
+  also walked parameters by COUNT over a SLOT map, so the parameter after a `v: f64v2` was never looked at — why `fn
+  sx(v: f64v2, s: Pt): i64 { return s.y; }` plus a call crashed the compiler; `_inl_param_why` walks the slots.
+  `typed_pointer_step.tcyr` +14 inline-replay rows (11 fail, and the file crashes the compiler, without the fix);
+  `inline_directive.sh` axis 2.
+- **A generic fn's `: *T` result stepped 8 for every instance** (s-ptr, RPD-02, P1). `gr<i32>(..) + 1` was 8 bytes
+  past the result (want 4), `gr<i16>` 8 (2), `gr<i8>(..) + 3` 24 (3), `gr<Pt>` 8 (24) — so `store32(gr<i32>(..) + i,
+  v)` wrote at `8 * i`, out of bounds. Two sites: the instance's return type was read with T UNBOUND (`: *T` sits
+  between the parameter loop and the body, where T is bound), and the call's scale was looked up on the TEMPLATE by
+  name. `_ret_ptr_annot` binds the instance's type arguments around the annotation, and `_call_scale_fix` resolves the
+  instance the call reaches (`_pair_gen_inst`) — which also covers an inferred struct call `gr(pt) + 1` and a
+  `gr<T>(x)` forwarded inside another generic's instance. An inferred SCALAR argument still binds the i64 base by
+  rule. `typed_pointer_step.tcyr` +14 generic-return rows (12 fail without).
+- **A redefined fn binds every call to its LAST definition, as the warning always said** (s-redef, BACKLOG-01, P1;
+  promoted by the user). A call to a fn already defined was compiled against the entry it had at that moment
+  (`ECALLTO`, fifteen frontend sites), while forward calls, tail calls and `&g` went through fixups to the final
+  entry: `fn g(): i64 { return 2; }  fn h(): i64 { var x = g(); return x; }  fn g(): i64 { return 1; }` made `h()`
+  return 2 — and reported the WINNING `g` as unreachable (`CYRIUS_DCE=1` eliminated it); direct, tail and expression
+  calls together gave 212 on x86_64, aarch64 and cx. Struct-returning calls, a struct passed by address, multi-value
+  returns, method calls between two `impl` blocks, a library's own call to a helper the program replaces after
+  `include` (the shape the 6.6.19 R2 / R3 work met: `ws_server_handshake` never called a stub
+  `sandhi_server_find_header`), an `#inline` first definition, a generic instance minted between the definitions and
+  an `async fn` redefined by another (SIGSEGV when the second was a coroutine) all bound the first. Not
+  build-specific, as the backlog bullet had it: any file with a call between the two definitions did this. Fix: when a
+  redefinition's body starts, `_fn_redirect` (`parse_fn.cyr`) turns the earlier entry into a jump to the new body —
+  the per-backend `EFNREDIRECT` writes `jmp rel32` on x86_64 (ELF, Mach-O, PE), `b imm26` on aarch64, opcode 80 on cx;
+  the async constructor goes through it too (`_async_ctor_entry`); a third definition chains. The jump lies in no fn's
+  range, so DCE roots the winner; on x86 its rel32 is registered once with whole-program compaction (a `#naked` body's
+  own defer-init jump may already have registered those bytes; registered twice, the displacement was shifted twice).
+  Pass 1 sets fn flag 2048 on an entry that already holds another definition: an inline replay of it is refused, and
+  pass 2 mints generic instances from the LAST definition's tokens. Only a redefinition runs this code — chosen over
+  routing every call through a fixup, which changes the bytes of programs that redefine nothing: 609 of 615 x86_64
+  corpus and fork compiles are byte-identical, and every one that differs redefines a fn. ⚠ Because every call now
+  reaches the last body, a redefinition must be CALLED the same way: one that differs in return type (unannotated
+  counts as `: i64`), multi-value count, variadic-ness, a parameter mask (vector, struct, `Str`, cstring, Result,
+  Option, Tagged), a parameter kind past the masks' width, an address-passed struct parameter's type, a vector
+  parameter's type (Win64 passes every vector by address) or the `async` marker is now an error naming what differs
+  (`duplicate fn 'mk' disagrees about its return type with the one in <file>`); a same-signature duplicate still only
+  warns, and the in-tree redefinitions all match. Gate `tests/gates/frontend/fn_redefinition_binds_last.sh` (32 rows
+  on x86_64, qemu-aarch64, cxvm and wine; the pre-fix tree fails 31; a mutation ledger in its header);
+  `tests/tcyr/crossos/fn_redefinition_last_wins.tcyr` (23 call shapes; base fails 14; Mach-O executes only at the
+  release gate's cross-OS leg).
+- **aarch64 calls of 262 or more arguments silently corrupted `sp`** (s-a64args, BACKLOG-02, P2; promoted by the
+  user). `ECALLCLEAN` took a call's stack arguments back with ONE `add sp, sp, #imm12` of (n − 6) × 16 bytes,
+  unguarded: at 262 the carry landed in the `LSL #12` bit (`add sp, sp, #0, lsl #12` — sp never restored; a looped
+  call walked off the stack), at 263 +64 KiB where +4,112 is right (sp climbed over the caller's frame; a looped call
+  overwrote its own counter and never ended), at 518 bit 23 (an `addg` on an MTE core such as qemu's default cpu,
+  SIGILL on pi and Apple Silicon), and from 519 SIGILL everywhere. Every call shape unwinds through it (direct,
+  `callptr`, method, operator, the tail-call fallback). The backlog's "~300 arguments → SIGILL" had the threshold and
+  the failure mode wrong, and roadmap-future's "imm12 class CLOSED" had missed the site. One bit further out in the
+  same sequence, the marshalling `ldr` / `str xN, [sp, #imm]` overflowed into opc bit 22 past **2,048 arguments**
+  (each `ldr` read 32 KiB low, and the shuffle's `str` assembled as an `ldr`, so the store vanished) and the callee's
+  `ldr x9, [x29, #imm]` past **2,053 parameters** (at 2,054 it read the saved fp) — wrong argument values, no
+  diagnostic. Fix: the cleanup splits the way `EPATCHFRAME` does (`add sp, sp, #hi, lsl #12` + `#lo`, with a
+  `movz/movk x16` arm past 16 MB), and both loads take the register-offset form through x16 past 32,760 (`_EMOV_XN`,
+  shared with CVE-90's fix). Same bite, cx: a frame of 64 KiB or more lowered sp by its size mod 64 KiB (`ESUBRSP`
+  reserved it with a lone `movi`, and `EPATCHFRAME` patched 16 bits), so callee frames landed INSIDE the caller's (on
+  cxvm a 65,480-byte buffer filled by a callee never finished); `ESUBRSP` always emits a `movhi r252` slot that
+  `EPATCHFRAME` patches (every cx fn prologue +4 bytes). Gate `tests/gates/codegen/wide_call_stack_unwind.sh` (13
+  thresholds checked as words the shell derives, run under qemu `-cpu cortex-a72` and natively as the oracle, a frame
+  probe, a cx axis; exits 77 — a SKIP, never a PASS — without qemu; 9 mutants each RED);
+  `tests/tcyr/crossos/wide_call_stack_unwind.tcyr` (the hardware twin, pi and ecb; its four frame rows also run on
+  cx); `callptr_many_args.tcyr`'s 600- and 2,000-argument rows now run on every target but cx.
+- **`sizeof`, `mulh64` and `fncall0`…`fncall8` are reserved as declared names** (s-names, BACKLOG-03, P2; promoted by
+  the user). These intrinsics lex as identifiers and are lowered BY NAME at the call, so neither of `util.cyr`'s
+  reserved tables holds them and nothing refused declaring them: `fn mulh64(a, b) { return 77; }` compiled and
+  `mulh64(2^62, 8)` returned the INTRINSIC's high word, 2 — a silent mis-binding on x86 and aarch64; `fn fncall1(a, b)
+  { return 77; }` compiled and `fncall1(5, 6)` called THROUGH 5 (SIGSEGV); `fn sizeof()`, `var sizeof` and a param or
+  global `mulh64` declared, and every later use was a parse error. The same came back through `use m.mulh64;` (a `use`
+  binds the bare name) and through a PAYLOAD enum variant, whose constructor is registered as a bare-named fn (`enum E
+  { A; mulh64(a, b); }` ran the intrinsic; `enum E : stack { A; fncall1(a); }` SIGSEGV'd with no include). Fix: a
+  declaration check, `_RSV_INTRINSIC_DECL`, at every declaration form — a fn (judged after `mod` / impl mangling, so
+  an impl method `x.sizeof()` and a `mod` fn stay legal), a param (once per generic fn), a closure param, every `var`
+  form (local, global, destructured, `stack`, `secret`), a `for` binding, a `use mod.NAME;` alias and a payload enum
+  variant: `error:<file>:L:C: reserved intrinsic name 'mulh64' (cannot be used as an identifier: the compiler lowers
+  every call to it; rename the fn/variable/param)`. An INCLUDED file named `fnptr.cyr` may declare `fncall0..8` —
+  `lib/fnptr.cyr`'s are the lowering's enabler, and cybs calls them in gen1; every `fn fncallN` in `~/Repos` (80
+  files) and the store (76) is in such a file, and nothing else in the ecosystem declares any of the 11 names. A check
+  rather than lexer tokens, which would re-plumb every by-name site and could not express that exemption. ⚠
+  `lib/fnptr.cyr` compiled AS THE ENTRY (`cyrius build lib/fnptr.cyr`, the LSP's check of that open file) now reports
+  its nine definitions — it is a library; include it. Documented edges: a UNIT variant spelled `sizeof` / `mulh64`
+  declares no fn and is accepted, but must be read qualified; past the file map's cap (1,024 entries / 32 KB of names)
+  the `fnptr.cyr` exemption fails open. Gate `tests/gates/frontend/intrinsic_names_reserved.sh` (206 assertions, the
+  two filed repros verbatim; the base compiler fails 162; mutation-proven seven ways); `guide_examples_compile.sh`'s
+  STALE_PAT refuses a guide example that declares one.
+- **A folded top-level redeclaration left its `*T` struct and vector mark on the next global** (s-decl, RPD-03, P1; a
+  6.6.17 regression). 6.6.17 added two per-global side tables — a `*T` global's struct (`_gv_psid`, so `G.val` reads
+  through it) and the vector mark (`SVVEC`) — but `_gv_clear`, which forgets a redeclaration that folds into the
+  existing global, reset only the main tables, and `_gv_same_shape` compared neither, so the next global registered at
+  the vacated index inherited both. `var G: *M = 0; var G: *M = 0; var X: Q = Q { 5, 6 };` compiled `X.y` as a read
+  through X's first word — SIGSEGV on x86_64 and aarch64 (cx exit 252), where 6.6.16 returned 6; a pointer-mode `var
+  X: Q = getq();` read M's field offsets silently; after a vector redeclaration a plain `var Z = 5;` was refused as a
+  vector global; and `*M` → `*Q` (one size) or `f64v2` ↔ `u128` folded with no diagnostic. Fix, in one change (either
+  half alone breaks a row): `_gv_clear` zeroes both side tables and `_gv_same_shape` requires equal `_gv_ptr_sid` and
+  `GVVEC`. `global_redeclaration_one_definition.sh` rows Q1–Q6 + R (Q1 / Q2 on cx and aarch64 under qemu too).
+- **A generic struct's `*S<..>` field read the USE site's type parameters** (s-ptr, RPD-05, P1 per the verifier).
+  `struct L<T> { v: T; w: T; next: *L<T>; }` sizes `next`'s pointee late, at each use, and re-read `L<T>` under
+  whatever binding was live THERE. In a plain fn T was unbound: `a.next + 1` stepped the base L (24) for `L<i16>` (12)
+  and `L<i32>` (16), and `a.next.v` was refused "unknown type 'T' as a type argument" even on `L<i64>` — no generic
+  self-linked struct could chain `.next.v` outside a generic fn, though the guide advertises it. Inside `fn k<T>` the
+  struct's T silently took k's binding: `a.next.v` on an `L<i16>` read with `L<i64>`'s layout (65541 where 5 is
+  right), and `a.next.w = 9` wrote 8 bytes at offset 8 of a 12-byte struct — past its end. Fix: each late `*S<..>`
+  field entry records its own struct's binding when the field is declared (`_fld_pb_note`: an instance's arguments, or
+  i64 for the base definition), and both re-read sites (`_fld_ps_get`, `_fld_ptr_sid`) run under it.
+  `tests/tcyr/lang/generic_struct_pointer_field.tcyr` (33 rows; does not compile without the fix).
+- **The step of a classic `for` assigned a whole struct or vector as ONE word** (s-loop, RPD-04, P2). 6.6.12 put the
+  step (`for (init; cond; a = b)`) on the statement arm's store but not on the aggregate dispatch the statement runs
+  in front of it, and four of those five helpers (plus `_fla_assign`) ended at a hard-coded `;` where a step ends at
+  `)`. With no diagnostic: `a = b` on a 24-byte struct left `a.y` / `a.z` stale ({4,2,3} where {4,5,6} is right) —
+  global or local, a call returning the struct (retptr and rax:rdx), a method, a struct-typed field, a vector copy; a
+  different struct type, a vector call of another width and a `: stack` pair compiled clean as a step though the
+  statement refuses them; and a vector-call step `v = mkv(11, 22)` took the return register's leftover on x86 and
+  aarch64, while **on Win64 the step pushed no hidden retptr, so the callee wrote its 16 bytes through the call's
+  first argument** (with `p = &buf` as that argument, a silent overwrite). Pre-existing (6.5.73 the same). Fix: the
+  five helpers take the assignment's terminator as a parameter — not a global, so a statement in a closure body inside
+  the step's right-hand side still ends at `;` — the struct-typed field record gets a step marker (`_fla_stp`), and a
+  plain `=` step runs the statement's whole sequence (`_for_step_aggregate`, `parse_ctrl.cyr`). Scalar steps and every
+  in-tree program compile to the same bytes. `tests/tcyr/crossos/for_step_struct_assign.tcyr` (14 rows: 1 of 14 passed
+  on x86 and aarch64 before, and on PE 9 failed and the run page-faulted); refusal rows
+  `struct_copy_source_type_refused.sh` R12–R16, `stack_enum_lossy_context.sh` axis8c.
+- **A bare struct passed to a `p: *T` parameter takes its ADDRESS at every size** (s-ptr, RPF-04, P2; the
+  user-delegated default). 6.6.17 (a2) made a `*T` parameter a pointer at every size in the callee, but the caller
+  decided "push the address" from the callee's address-passed bit, which only a T over 8 B set: `rd3(a)` with `p: *P3`
+  (24 B) took `&a`, while `rd1(s)` with `p: *S1` (8 B) pushed s's VALUE and the callee dereferenced it — SIGSEGV on
+  x86_64, aarch64 and PE, "guest address out of range" on cx, and a silent write into an unrelated heap object when
+  the struct's word was an address (`struct W { buf; }`). Every bare shape crashed: a local, a global, a by-value
+  parameter passed on, an inline field, a generic instance, a `*Box<i32>` instance, a method argument, a forward call,
+  a closure capture. Fix: the bit is set for a `*S` parameter at every size at all four sites —
+  `_param_wants_struct_ptr` in pass 1 (`_prescan_params_scan`, which gains the `*` flag it never recorded) and pass 2,
+  the type-parameter arm (`_tp_param_addr`) and the generic-instance mask (`_gtype_param_mask` / `_psid_scan`) — plus
+  a closure-capture arm (`_push_struct_addr_cap`). A struct-valued CALL RESULT of 8 B or less — `rd1(mk())`,
+  `rd1(idg<S1>(s))`, `rd1(s.dup())`, `rd1(s + t)` — lands in a frame temp whose address is passed; at top level there
+  is no frame, so each such form is refused by name ("'mk' returns a struct by value, and a struct result needs
+  storage in a fn's frame"), including the explicit-generic 9–16 B sibling `rdp2(mkg2<i64>(5))`, which also crashed.
+  `f(&x)` is unchanged. Such fns become address-passed callees, so RPF-03's rules (below) decide whether a tail call
+  into one keeps its `jmp`. A struct-typed field of another struct passed to a `*S` parameter is refused "cannot pass
+  'f' to a parameter of a different struct type in a call to 'g'". `tests/tcyr/crossos/ptr_param_bare_struct.tcyr`
+  (106 rows; green on x86_64, qemu-aarch64, wine PE and cxvm); `stack_param_homing_matrix.sh`
+  `toplevel-small-ptr-arg`.
+- **An overloaded operator's `*S` operand of 8 B or less is passed by ADDRESS, and a struct-typed FIELD operand passes
+  its own address** (s-ptr, RPF-04's operator half, P2; a 6.6.17 regression). The operator ABI passes a one-word
+  struct operand by VALUE, and 6.6.17 made a `p: *S` parameter a pointer at every size, so an operator fn declaring a
+  `*` operand of 8 B or less dereferenced the operand's value: `fn S1_sub(a: *S1, b: *S1)` with `s - t`, a two-field
+  `*B2`, the mixed `S1_mul(a: S1, b: *S1)` / `S1_div(a: *S1, b: S1)` and global operands all SIGSEGV'd on x86_64 and
+  aarch64, crashed under wine and faulted on cx, where 6.6.16 was right. An operand is now classified once parsed,
+  exactly as a call argument is: a bare struct name (a local, a global, a capture, or `(name)`) passes its own
+  address, so a write through the operand reaches the caller; a struct VALUE (a call, method or operator result, `-s`)
+  is stored into a frame temp whose address is passed, refused by name at top level; an operand already holding an
+  address or an untyped word (`&t`, a `*S1` parameter or local, a call returning `*S1` or i64, a literal) passes
+  through unchanged, as `rd1(&t)` / `rd1(4)` do. Separately, a whole struct-typed FIELD as an address-passed right
+  operand (`b - h.p`, `b - (h.p)`, with a `*P3` or a by-value `P3` operator fn) pushed the field's first word, which
+  the callee dereferenced — SIGSEGV on 6.6.16 through 6.6.19 — and a `*W` (8 B) field operand was copied, so a write
+  through it never reached `h.w`; the field's own address is passed now (`_fla_addr`), and a field of a different
+  struct type is refused by name. By-value and over-8-byte operands are unchanged: the 601-file corpus compiles
+  byte-identical except the test. `ptr_param_bare_struct.tcyr` `operators` and `address_operands` groups (each with
+  its `*P3` control); `stack_param_homing_matrix.sh` `toplevel-small-ptr-operand` (three refusals exact; `Gs * &Gt`
+  and `Gs - &Gt` must build).
+- **A tail call into a fn with an address-passed parameter keeps its `jmp` when no frame address can reach the
+  callee** (s-ret, RPF-03, P2). Any address-passed parameter — a struct over 8 B as `p: T` or `p: *T`, a Win64
+  value-form vector — diverted every `return f(..)` to it onto `call`, whatever the argument: the shape the 6.6.16
+  by-value migration recommends for a mutating callee, `fn walk(p: *Node, acc) { if (p == 0) { return acc; } return
+  walk(p.next, acc + p.v); }`, exited 139 on a 2,000,000-node list on every backend, where the untyped twin ran in
+  constant stack. The tail path now pushes each argument exactly as an ordinary call does
+  (`_try_push_struct_addr_arg`), and three rules decide (`_tc_sarg_divert`): (1) the fn's escape flag `_fn_local_addr`
+  — until now set only by `&local` — is also set wherever an address in this frame is pushed WITHOUT `&` to something
+  that may keep it (an inline aggregate argument, a struct call's or method's temp, a field of a frame aggregate, a
+  method's `self`, an operator's operand), except to an ordinary call whose callee copies that parameter into its own
+  frame in its prologue (a `p: T` over 8 B, a typed `self: T` or operator operand, a generic's instance, a Win64
+  value-form vector — recorded per fn in pass 1 and again, exactly, where the copy is emitted: `_fnt_bvcp` /
+  `_pm_copies`; never a `#naked` fn), and once set every later tail call in the fn diverts; (2) inside a loop, a call
+  to an address-passed callee keeps 6.6.19's divert; (3) an address created while the tail call's OWN arguments are
+  evaluated turns it into an ordinary call (`_tc_after_args_divert`). So a forwarded `*T` parameter, a pointer local,
+  a pointer-mode struct local, `p.field` through a pointer, a global struct and a pointer-returning call keep the tail
+  call outside a loop. Rules 1 and 3 also fix a frame address laundered into a callee with NO address-passed parameter
+  (`var x = idp(s); return rd(x, k);`), which read a freed frame on 6.6.19 too. ⚠ Deliberate behaviour change — some
+  tail calls 6.6.19 kept now take `call`: one later in a fn that passed an inline struct (a field of one, a struct
+  call's temp, a by-value parameter's copy) to a `*T` or untyped parameter, called a method with an untyped or `*T`
+  `self` on an inline receiver, used an operator whose fn takes untyped or `*T` operands on struct values, or passed
+  such a struct to a `#naked` fn — or does any of that inside the tail call's own arguments — because that callee may
+  keep the pointer and the `jmp` would free what it points at. Measured: a 1,000,000-deep self-recursion doing `var s
+  = P3 { 1, 2, 3 }; var v = sum3(s);` with `fn sum3(p: *P3)` before its tail call ran in constant stack on 6.6.19 and
+  overflows on 6.6.20 (exit 139 on x86 and aarch64, a stack-overflow exception on Windows). Workaround: take the
+  parameter by value (`fn sum3(p: P3)`) when the callee need not keep or modify the caller's struct, or move the
+  struct work into a helper fn. `tests/tcyr/crossos/tailcall_struct_ptr_params.tcyr` (117 assertions: each probe
+  callee records its stack depth, so every row asserts the value AND whether the call was kept or diverted, plus
+  seventeen 1,000,000-deep recursions — every by-value shape among them also constant-stack on 6.6.19). cycc's own
+  output is unchanged by the rules. The in-loop case for a callee with no address-passed parameter stays open (filed;
+  Known).
+- **The constant folder no longer kills the compiler on INT_MIN / −1** (s-decl, RPD-06, P3). `_CF_TERM`
+  (`parse_decl.cyr`), behind a top-level `var X = <constant expr>;`, a global array initializer element and an
+  enum-constant fold, guarded a zero divisor only, and x86 `idiv` traps on INT_MIN / −1 and INT_MIN % −1: `var X = (0 -
+  0x7FFFFFFFFFFFFFFF - 1) / (0 - 1);` crashed cycc with SIGFPE (rc 136, no diagnostic) on every x86 host —
+  pre-existing (6.5.73 the same). A −1 divisor now folds as the wrapping negation for `/` and 0 for `%`, the same
+  quotient and remainder for every other dividend, so nothing that folded before changes. Only a literal-only scalar
+  that folds to a non-zero value and array-initializer elements bake their image; a scalar that keeps its runtime
+  store (a folded zero such as `var R = INT_MIN % -1;`, or one naming an enum constant) still runs the division at
+  startup and traps there on x86, as any runtime INT_MIN / −1 does. `tests/tcyr/crossos/const_fold_int_min_div.tcyr`
+  (13 asserts; does not compile without the fix or with either half alone).
+
+### Preprocessor
+
+- **The 17th function-like `#define` is refused by name, and so are a redefinition and one in an included file**
+  (s-ppcaps, HEAP-03, P2). `PP_PASS` stored a function-like macro only inside `if (msi < 16)` with no else and then
+  consumed the line, so the 17th vanished: a same-name `fn` was called in its place (99 where 10 is right) or the use
+  failed as a misleading `undefined function`. A second `#define` of the same name took a slot of its own and was
+  never used (expansion runs after every definition is read, and the lookup returns the first match), and one in an
+  INCLUDED file went to the flag table — a flag, never a macro. Each is a located error now (`too many function-like
+  #define macros (max 16): 'NAME' does not fit`, `function-like macro 'NAME' is already defined (a function-like
+  #define cannot be redefined)`, `… is defined in an included file; a function-like #define is supported only in the
+  main source`) — refusal rather than latest-wins, because expansion after all definitions would apply a later body to
+  earlier uses. No consumer defines a function-like macro (lib/, the dep cache, every sibling tree surveyed).
+  `pp_table_caps.sh` §B.
+- **A repeated `#define` reuses its flag slot, and a redefined object-like `#define` takes its latest value**
+  (s-ppcaps, HEAP-04, P2). `PP_DEFINE` / `PP_PREDEFINE` appended every definition without looking the name up:
+  `lib/sigil.cyr`'s four unconditional `#define LINUX` cost four of the 16 slots, `include "lib/sandhi.cyr"` alone
+  used 12, and a sandhi consumer hit `too many preprocessor #define/flag entries (max 16)` at its fifth `#define`; and
+  since the lookup returns the first match, `#define X 1` / `#define X 2` read 1 forever, silently. A repeat now
+  overwrites its slot. ⚠ Latest-wins applies to the conditionals after the redefinition in the SAME file (an `#if`
+  before it still sees the old value). No stdlib output changes — sigil, sandhi, tls, sakshi and async compile
+  byte-identically, as does a 606-file corpus — and no ecosystem repo redefines a name with a different value.
+  `pp_table_caps.sh` §C.
+- **A TAB (or a second space) in a directive, a stray `#else` / `#endif`, an unclosed block and an included `#ifplat`
+  no longer silently compile the wrong arm** (s-pplex, LEX-EXPR-03, P2). TAB is whitespace in the language, but the
+  directive predicates wanted exactly one SPACE after the keyword, `PP_HASH` ended a name at a space only, and
+  `PP_DEFINE` skipped exactly one byte before a value. With rc 0 and an empty stderr: `#ifdef CYRIUS_ARCH_X86<TAB>`
+  took the `#else` arm on x86; `#ifndef X<TAB>`, `#ifplat x86<TAB>`, `#if FOO<TAB>== 3`, `#define FOO<TAB>1` and a
+  trailing tab misread their name; `#ifdef<TAB>X`, `#if<TAB>…` and `#ifplat<TAB>x86` were COMMENTS, so the guarded
+  code compiled unconditionally (both arms of an `#else`) and the `#endif` vanished at depth 0; `#define FOO  1` (two
+  spaces) defined FOO as 0; `#define ADD(a,<TAB>b) (a + b)` named its parameter `<TAB>b`, so with an outer `var b =
+  10` in scope `ADD(3, 4)` was 13; and ISIF's `must not be #ifdef` check could never see `#ifdef` and instead refused
+  every `#if` whose condition starts with a lower-case `d` (`#if dbg == 1` compiled both arms). Fix: one separator
+  rule, `PP_SEP` (a run of spaces and tabs), in every operand reader, any blank in a macro's parameter list
+  (`PP_DBLANK`), every name hash ending at a tab, the six predicates accepting a tab after the keyword, and ISIF's `d`
+  check deleted. A stray `#else` / `#elif` / `#endif` / `#endplat` and a block still open at end of input are now
+  ERRORS at their own file:line in both passes (`_pp_stray`, `_pp_unclosed`). And `#ifplat` / `#endplat` in an
+  INCLUDED file are directives now: PP_IFDEF_PASS had no arm for either, so both arms of an included `#ifplat aarch64`
+  compiled on x86 (and the stray-`#endif` error would otherwise have refused the guide's own `#ifplat x86 … #endif` in
+  an included file). A survey of 19,635 ecosystem `.cyr` / `.tcyr` / `.bcyr` / `.fcyr` files found no stray, no
+  unclosed block, no directive whose meaning the separator rule changes and no included `#ifplat`. New gate
+  `tests/gates/frontend/pp_directive_blank_separators.sh` (32 rows; the slot-open compiler fails all 32; 12 mutants
+  each RED).
+- **The guide's Preprocessor section** (s-ppcaps, s-pplex) gains a *Preprocessor limits* list — nesting 64, 16
+  function-like macros in the main source with an exact argument count, 16 `#define` names (builtins included)
+  latest-wins within a file, 511-byte parameter and argument lists — and stops teaching two shapes that silently pick
+  the wrong arm: `#elif CYRIUS_TARGET_WIN` (`#elif` reads a VALUE, and the target builtins are 0, so that arm is never
+  taken; the example now nests an `#ifdef` under `#else` and shows a real `#elif LEVEL == 2`, verified on x86 Linux
+  and PE under wine) and the `#ifplat` tokens `x86_64` / `riscv64` / `linux` / `macos` / `windows` / `baremetal` (only
+  `x86` and `aarch64` exist; any other skips the block). Known gaps it names: a conditional does not see an included
+  file's `#define`s, and a comma inside a string literal splits a macro argument.
+
+### Backends / platforms
+
+- **`CYRIUS_DCE=1` no longer corrupts a `kernel;` image or a `CYRIUS_WX=0` binary** (s-be, REVBE-01, P1). FIXUP
+  patches every absolute global and string address against the data base it computes BEFORE dead-code compaction, and
+  only the default W^X layout keeps the data segment there (6.6.3's `_wx_dbase_frozen`); a `kernel;` image (ELF32
+  multiboot and `CYRIUS_ELF64_KERNEL=1`) and a `CYRIUS_WX=0` binary place `.bss` / `.rodata` straight after the code,
+  so compaction moved the data from under every patched address. At 6.6.19 a `CYRIUS_DCE=1 CYRIUS_WX=0` probe (60 dead
+  fns) wrote 8 NULs where `data-ok` is right, the audit's own 60-dead-fn probe died of SIGSEGV, and a kernel image's
+  code kept storing to its pre-compaction `.bss` — past the image, which in a kernel scribbles memory instead of
+  faulting. Reachable through `cyrius build --dce` / `[build] dce` on a `kernel;` project; not a 6.6.x regression
+  (6.6.0 the same). `_dce_compact_why` declines both layouts and the unreachable-fns note names it (`compaction
+  declined on x86_64 ELF (kernel;)` / `x86_64 ELF (CYRIUS_WX=0)`, with the reason); the dead bodies are still
+  NOP-filled and the default W^X build still compacts. ⚠ A `kernel;` build's hint now reads "set CYRIUS_DCE=1 to
+  NOP-fill them; no compaction on x86_64 ELF (kernel;): …" even with `CYRIUS_DCE` unset. `dce_data_vaddr_frozen.sh`
+  rows 6–7 (a `CYRIUS_DCE=1 CYRIUS_WX=0` binary run; ELF32 and ELF64 kernel images whose data vaddrs must occur as
+  imm64 in `.text`; both fail on 6.6.19).
+- **On Intel macOS a refused `fork` no longer comes back as the child** (s-be, REVBE-05, P3). Darwin's raw fork marks
+  the child with `rdx == 1`, and the x86 Mach-O post-syscall fixup (`EMACHO_PROC_FIXUP`) turned "fork and rdx == 1"
+  into a return of 0 without testing for an error first; a failed fork (carry set) writes rax only, so a fork refused
+  with EAGAIN while rdx happened to hold 1 (a `% 2` remainder, a second return value) returned 0 and the parent ran
+  the child's branch with no child (measured on ach: RLIMIT_NPROC = 1, rdx primed). The fork arm now runs `test rax,
+  rax; js` before the rdx test, as 6.6.10 gave the pipe arm. The arm64 fixup needs no change: XNU's arm64 return
+  zeroes x1 on an error (measured on ecb); a comment records why, and the test's arm64 row pins the kernel behaviour.
+  `tests/tcyr/crossos/fork_refused_stays_negative.tcyr` (Linux x86_64 and aarch64, ach, ecb, pi; as root, where
+  RLIMIT_NPROC does not apply, it writes a named SKIP note and records only the premise row).
+- **A PE path reroute returned with Win64's nonvolatile rsi and rdi changed** (s-pe, REVBE-04, P3). `_pe_widen_path`
+  (6.6.11) works in rsi (the UTF-8 source) and rdi (the wide result), and `_pe_path_frame` / `_pe_path_unframe` saved
+  only rsp and rbx, so every fn that opened, created, deleted, renamed or stat'ed a path (CreateFileW,
+  CreateDirectoryW, DeleteFileW ×2, RemoveDirectoryW, MoveFileExW, FindFirstFileW, GetFileAttributesW) returned with
+  rsi = the path and rdi = a stack address — invisible to cyrius callers, a corrupted nonvolatile register for any
+  Windows caller of a cyrius callback (latent: the only one is a CreateThread proc, whose thunk reads neither). The
+  frame pushes rsi and rdi. `tests/tcyr/crossos/pe_path_reroutes_keep_nonvolatile.tcyr` (naked probes plant markers; 8
+  of 8 reroute rows RED before, under wine; on cass in the cross-OS leg).
+- **The PE compiler's own build no longer warns about syscalls it can never make** (s-pe + s-pplex, REVBE-06).
+  `_emit_sym_dump`'s openat arm (`src/backend/common/runtime.cyr`) and READFILE's three `else { syscall(SYS_OPEN, 0 -
+  100, ...) }` arms (`src/frontend/lex.cyr`) are the `SYS_OPEN != 2` path, dead in a PE compiler (`main_win.cyr`
+  declares `SYS_OPEN = 2`), and a 4-argument open is not a PE route, so every cycc_win build printed four "syscall 2
+  with 4 argument(s) is not routed" warnings — noise that buries a real one (the fifth, `lex_pp.cyr`'s munmap, was
+  real: CVE-84). They sit under `#ifndef CYRIUS_TARGET_WIN`; build/cycc and every non-PE fork are byte-identical, and
+  the PE compiler self-hosts byte-identical under wine. `pe_unrouted_warning_names_site.sh` builds the PE compiler
+  with install.sh's cycc_win recipe and fails on an unrouted-syscall warning at any of those sites. (Folding constant
+  arms instead, DEAD-10, is backlog.)
+- **Three x86 emitter duplicates collapsed; every emitted byte unchanged** (s-pe, REFACTOR-08). `EDELETEFILEW_PE` (the
+  0xF035 DeleteFileW reroute) was a byte-for-byte copy of `EDELETEF_PE` since 6.6.11 and is gone, 0xF035 routing to
+  the original; x86's `ESPILL` / `EUNSPILL`, verbatim copies of `EPUSHR` / `EPOPR` that 6.6.5 had to patch twice by
+  hand, delegate as aarch64 and cx already did; the rbx-anchored 16-byte align open-coded at 16 sites (15 kernel32
+  reroutes, `EMUNMAP_PE` included, plus ECALLPTR_PE's n ≤ 4 arm) is `_pe_align_frame` / `_pe_align_unframe`. cycc
+  −4,096 B; the 575-file tcyr + programs + tests/win corpus compiles byte-identical for x86-Linux, PE and x86-Mach-O.
+- Elsewhere in this entry: aarch64 calls of 262+ arguments and the cx frame-size fix (Compiler), aarch64 frames past
+  64 KiB (CVE-90), the PE munmap route (CVE-84).
+
+### Compiler forks, heap map and dead code
+
+- **`_strict_mode` is gone from every compiler fork; `--strict` stays a no-op** (s-forks + c-build, DEAD-07). Six
+  drivers declared the global and set it on `--strict` (`main_win.cyr` in both its argv walkers; 6.6.6 added two more
+  set-sites through the macOS `_ARGV_FLAG_ONE`), and nothing has read it since v6.3.2 made a reachable undefined fn a
+  hard error by default; nine comments said fixup reads it, and four more `--strict` comments in the backends and the
+  CLI's `compile()` / `_strict` comments were stale too. `cycc --strict` is accepted and changes nothing, as before.
+  New gate `tests/gates/toolchain/fork_flag_parity.sh` (`--strict` output byte-identical to no flag on every compiler,
+  cycc.exe under wine included; re-adding the global turns it red).
+- **Every fork reads `--syntax-only`, so `cyrius lint` no longer refuses valid module files on pi, ecb and ach**
+  (s-forks, REFACTOR-01 P1, REVBE-02 P2). 6.6.17 taught only `main_win.cyr` the flag: the aarch64 and native-aarch64
+  /proc argv walkers had no `--sy` arm and the macOS argv scan knew only `--version` / `--allow-undef`, so lint's
+  pre-pass ran a full, resolving compile there and refused any file using a name defined in another file ("does not
+  parse or compile, so lint checks were NOT run" — `cbt/cli_args.cyr`, `cbt/build.cyr`). The arm is in both walkers,
+  as bit 8 of `_ARGV_FLAG_ONE` (both Mach-O drivers), and in all four of `cycc_cx`'s per-target argv blocks (parity:
+  lint never invokes it). x86 `build/cycc` is byte-identical. The native aarch64 compiler — the `cycc` that `cyrius
+  pulsar` and `cyrius self` install on an ARM-Linux host — also ignored `--pie` / `CYRIUS_PIE=1` (a fixed-address
+  ET_EXEC, exit 0: hardening silently not applied) and `CYRIUS_KERNEL=1` / `CYRIUS_KERNEL_BASE` (a 65,896-byte
+  userland ELF where a kernel image was asked for), and with `CYRIUS_MACHO_ARM=1` wrote 0 bytes at rc 0; it reads the
+  first two now and refuses the last by name (`… this native aarch64-Linux cycc has no Mach-O emitter (use
+  cycc_aarch64, or cycc on macOS)`). The aarch64-linux tarball's `bin/cycc` (built from `main_aarch64.cyr`) already
+  read them. `fork_flag_parity.sh` syntax, pie, kernel and macho rows on every compiler (each fix deleted turns its
+  rows red); `scripts/cross-os-selfhost.sh` runs the `--syntax-only` probe through the real macOS argv scan on ecb and
+  ach, and the native fork's flag probes on pi.
+- **A compiler that cannot map its 246 MiB arena refuses by name instead of dying with SIGSEGV** (s-forks, HEAP-09,
+  P3). `main.cyr`, both aarch64 drivers and `main_cx.cyr`'s Linux arm grew the break by 0xF600000 and ignored the
+  result, and `main_win.cyr` and cx's Windows arm used the mmap / VirtualAlloc result unchecked, so under `ulimit -v`
+  / `ulimit -d` (CI runners, containers) cycc crashed on its first heap store with no message. Now `error: cannot map
+  the 246 MiB compiler arena (brk refused it; check ulimit -v / ulimit -d)` (or the mmap / VirtualAlloc wording), exit
+  1, as the Mach-O paths already did. And `cycc_cx` built for agnos had no arena at all — agnos syscall 12 is
+  `sync()`, which returns 0, so the arena base was 0 — it maps with agnos `mmap(27)` now, as `lib/alloc_agnos.cyr`
+  does, and refuses by name when the map fails. New gate `tests/gates/memory/compiler_arena_refused.sh` (x86, the
+  aarch64 cross, cx and the PE host stage under `ulimit -v`, the native fork under qemu across a limit sweep; three
+  agnos rows read the build).
+- **The compiler reads its WHOLE environment, so `--win` / `--pie` / `--agnos` / bare-metal no longer silently build
+  the wrong format in a large shell** (s-forks, REVBE-03 P2, REFACTOR-04 P2). `_read_env`
+  (`src/backend/common/env.cyr`), the reader behind every `CYRIUS_*` knob and target selector on every Linux-hosted
+  fork, made ONE 8,191-byte read of `/proc/self/environ`, and the CLI appends the entries it injects after the
+  inherited environment, so with more than ~8 KB of environment (nix shells, CI runners, a long PATH or LS_COLORS)
+  `cyrius build --win` wrote an ELF, `--pie` an ET_EXEC, `--agnos` a Linux binary and `[build] dce` did nothing — each
+  reported `OK`, rc 0 — and an entry straddling byte 8,191 was read SHORT (`CYRIUS_KERNEL_BASE=0x40000000` linked a
+  kernel at 0x400). It reads to EOF in 4 KB chunks now (`_re_step`), the first `NAME=` entry deciding. A value over
+  255 bytes is refused by name on every target instead of cut (`warning: ignoring NAME: its value is longer than 255
+  bytes`): the Linux and macOS arms handed back a 255-byte prefix, so a long `CYRIUS_SYMS` path opened its prefix
+  `O_TRUNC` and overwrote an unrelated file. `_env_var_is_1` is `_read_env(name) == "1"` (its private scanner is
+  gone), so every compiler knob shares one reader. New gate `tests/gates/platform/compiler_reads_whole_environment.sh`
+  (6.6.19's `env.cyr` fails 15 of its 19 rows); `include_fallback_cyrius_home.sh` +3 rows on all five compilers; ecb
+  and ach refuse a 270-byte `CYRIUS_SYMS` on the hardware. The CLI half (injections first) is REFACTOR-03, under CLI.
+- **`src/common/heap_regions.cyr` is the one copy of the drivers' heap-region block** (s-forks, REFACTOR-07, P3). The
+  45-line block (`_fixup_base = S + 0x107B000` … `_codebuf_cap`), byte-identical in six drivers, is one include at the
+  same spot — the include alone changes no compiler's bytes, and the seed chain still derives `build/cycc`. The four
+  drivers that open-coded the `fn main` auto-call lookup (both aarch64, both Mach-O) call `_find_fn_by_name(S, "main",
+  4)` like main.cyr and main_win.cyr, and `main_cx`'s two verbatim `/proc/self/cmdline` scans are one helper; those
+  two change the touched forks' bytes (the aarch64 cross 1,119,112 → 1,115,000 B, Linux `cycc_cx` 1,019,848 →
+  1,017,768 B) with the same behaviour, while x86 `cycc`, the PE host stage and `cycc.exe` are byte-identical. New
+  gate `tests/gates/toolchain/fork_shared_blocks_single_copy.sh`.
+- **The heap map is checked against the code, for every driver** (s-heapmap, HEAP-05…HEAP-08, HEAP-10; closeout item
+  4).
+  - **The fork drivers' maps had drifted, and nothing checked them** (HEAP-05). `heapmap.sh` read only `src/main.cyr`;
+    parsed the same way, the aarch64 copies each overlapped (lexid_entries still at its pre-v6.4.21 0x457C900) and
+    main_win's three times, under a header calling it "Authoritative offset registry (v3.6.10)". All seven drivers
+    share one layout: the four copies are a pointer to main.cyr (as `main_x86_macho.cyr` already was), and
+    `heapmap.sh` fails when any `src/main_*.cyr` carries a map-shaped line.
+  - **A write-only IR edge list and dead map regions removed** (HEAP-07). `ir_add_edge` stored every CFG edge at
+    S+0xF3B000, capped itself silently at 8,192 (cycc's own `CYRIUS_IR=1` build makes 52,725) and nothing read it back
+    — the CFG is the BB succ fields: deleted with its five call sites and `IR_ECNT` / `IR_SECNT` (the `edges` total
+    the `ir:` line prints is kept). `pub_flags` (0x18FED0, never written or read) is FREED; the 3 MB `codebuf` at
+    0x41A000, off-heap on every non-cx driver since v6.4.49, is FREED there and mapped as cx's break-chain shadow `(cx
+    only)`; `derive_count` (0x197000), whose only users were three zero stores, is FREED. `heapmap.sh` checks two
+    layouts (`(cx only)` / `(not cx)`), fails a region whose offset is not a hex literal in code of its layout, and
+    reports a region referenced only by zero stores as ZERO-ONLY. Same-source `CYRIUS_IR=1` / `=3` output and stderr
+    are byte-identical.
+  - **Live regions the map did not see are mapped, with sizes** (HEAP-06): the WP-compaction registries at
+    0x60000–0x100000 (v6.5.68; the map called that band FREE), the PP band at 0x197000, the pp-flag values at
+    0x190880, cx's bytecode buffer and fixup table, and eleven size-less lines the parser skipped. Sized, the macro
+    tables overlap the `#ref` read buffer by 14 KB — time-shared (PP_REF_PASS finishes before the first `#define` is
+    recorded), and the line records that invariant. `brk-final` said 0xF400000 / ~115 MB; every driver has requested
+    0xF600000 since v6.4.21. `heapmap.sh` reads it — no region may end past it — and every `S + 0x…` literal in `src/`
+    code must land in a region of its layout (the pre-fix map: 40 unmapped literals and lexid_entries past the arena
+    end).
+  - **The rel32 source registry grows instead of declining compaction, and the `CYRIUS_IR=3` seam names a decline**
+    (HEAP-08). The whole-program compaction registry for rel32 / disp32 sources was a fixed 49,152 slots — cycc's own
+    `CYRIUS_IR=3` + `CYRIUS_DCE=1` build fills 43,028 — and one source past the cap declined the whole pass, every
+    dead byte left NOP-filled; the 49,153rd now moves it to alloc'd storage, doubling. At the IR=3 seam a saturated
+    registry declined in silence; it prints `wp-compact declined: <why>` from the helper the `CYRIUS_DCE=1` note uses.
+    ⚠ Not rare: under `CYRIUS_IR=3` the NOP-run registry saturates on 48 of the 482 tcyr files (every TLS, sandhi and
+    ws program, the large-source tests), which now print it; their binaries are unchanged. The map records the
+    measured margins. New gate `tests/gates/ir-opt/wp_compact_registry_caps.sh` (five axes covering all three readers
+    of the grown registry and both seam notes).
+  - **Stale heap facts in compiler comments corrected** (HEAP-10): the fn hash tables (4,096 × 4 B, not "8192 × 2B"),
+    the fn-table mask and cap in all seven drivers, every driver's quoted arena size (it is 0xF600000, 246 MiB), the
+    post-PREPROCESS reset, `ir.cyr`'s IR layout, the identifier pool's old address and its "PHYSICAL CEILING", the 24
+    MB preprocess buffer, the code and output buffers, the 1 GiB output cap, the struct caps, `main_cx.cyr`'s
+    "growable 3 MB codebuf", and GFCNT's claim that cx keeps `_fixup_cap` at 0 — false since v6.5.13, and a latent
+    split: with the cap set, GFCNT's grow would move the shared `_fixup_base` while cx's writers and its FIXUP walk
+    hardcode S + 0x150B000 (each refuses at that count first, so nothing miscompiled). cx leaves `_fixup_cap` at 0 now
+    (only `cycc_cx` changes), and `heapmap.sh` fails otherwise.
+- **Dead code** (closeout item 5; s-dead, DEAD-01…DEAD-06, DEAD-08; s-ret, RPF-06; l-misc, DEAD-09).
+  - **The arm64 Mach-O writer is no longer compiled into every x86-family compiler** (DEAD-01). `EMITMACHO_ARM64` and
+    its four helpers lived in `src/backend/macho/emit.cyr`, which the x86 compiler, the PE cross and the x86-macOS
+    compiler include for the x86 writer — 15.8 KB of unreachable code there, 43 % of cycc's dead bytes. No `#ifdef`
+    can select them (`CYRIUS_ARCH_AARCH64` names the target of the compiling compiler, and `cycc_aarch64` is built by
+    x86 cycc), so they moved verbatim to `src/backend/macho/emit_arm64.cyr`, included only by `main_aarch64.cyr` and
+    `main_aarch64_macho.cyr`. The cross compiler's aarch64-ELF and arm64-Mach-O output is byte-identical on all 482
+    tcyr files.
+  - **The superseded TS JSX walker** (DEAD-02): `_TS_LEX_JSX_WALK` (v5.7.5), its helpers and three caller-less
+    accessors — 9.6 KB; `TS_LEX_JSX` replaced it at v5.7.6. `--emit-js` / `--lex-ts` / `--parse-ts` output is
+    byte-identical on every `.ts` / `.tsx` fixture (`TS_PEEKLINE` stays: a test calls it).
+  - **Shared fns dead in all seven forks, stubs and globals** (DEAD-03…06, DEAD-08): `GVEC_LANEB` / `GVEC_ISFLOAT` /
+    `GVEC_SIGNED`, `VEC_ELEM`, the `_ir_find_bb_for_patch` / `_cp` wrappers and `_pp_curfile_note` (a dead duplicate
+    whose length clamp sat inside its copy loop, so a file name of 4,092+ bytes would have looped forever); backend
+    stubs "kept for parse.cyr" that no shared file references (x86 4, cx 2 + 18, aarch64 17 — a future shared
+    reference is a hard "undefined function", so removal cannot fail silently); `_gvar_bytes_named` moved into the cx
+    backend (the one fn that went dead this minor); never-read globals `_LOOPVAR_OK` (declared twice in cx),
+    `_cx_spill_idx`, `_stmt_topcall_fi`, `_pe_rdata_gvar_off`.
+  - **The tail arm's unreachable SIMD_TC argument check** (s-ret, RPF-06): `_tc_callee_divert` already sends every
+    such callee to the normal call path. Old and new compilers emit identical bytes for the compiler, its forks and
+    the corpus.
+  - **`lib/alloc.cyr`: one shared realloc copy; the uncallable `_alloc_realloc_via` is gone** (l-misc, DEAD-09). It
+    claimed both allocators used it, had no caller in the ecosystem, and could not have been wired in (it took an
+    Allocator, while a vtable realloc entry gets the STATE); `_bump_realloc`, `_arena_realloc`, `_test_realloc` and
+    `_poison_va_realloc` each carried a copy of the same byte loop, and all four call `_alloc_copy_min` now
+    (underscore-private: no API change). `alloc_via_no_plumbing.sh` axis 3 (+6 structural rows); `alloc_iface.tcyr`
+    pins grow and shrink copy bounds on the bump, arena and test allocators.
+  - **The dead-code floor** (unreachable fns / bytes under `CYRIUS_DCE_VERBOSE=1`), measured on the s-dead lane tree:
+    x86 `cycc` 73 / 36,937 → **50 / 10,082 B** (49 stdlib fns — external API in lib/alloc, vec, fnptr, atomic — plus
+    `TS_PEEKLINE`); aarch64 cross 149 → 124; cx 151 → 124; PE 108 → 91; x86-macOS 138 → 121; aarch64-native 149 → 124;
+    arm64-macOS 153 → 128. Every `src/` fn left on it is live in another fork that compiles the same file, except
+    `TS_PEEKLINE`.
+    Merged tree: **52 unreachable fns / 10,597 B** on x86 (was 73 / 36,937 B at the slot open; `tests/fixtures/dead_code_floor.txt` regenerated, 84 fns / 381 fork entries).
+  - **New gate `tests/gates/codegen/dead_code_floor.sh`** (+ `tests/fixtures/dead_code_floor.txt`). In all seven forks
+    every unreachable fn defined under `src/` must be on its fork's row: a fn that newly goes dead FAILS by name, and
+    so does a floor entry that is no longer dead (an allowance nobody uses would let that fn go dead again unseen);
+    `--write` regenerates; a cross build that writes no binary fails naming the forks it could not check. Axis 2
+    refuses a top-level `var` in `src/` that is never read. `dce_eliminates.sh` derives its shrink floor — the R E
+    segment's `p_filesz` must shrink by at least half of what the pass reports eliminating — instead of v6.5.72's
+    16,384 B, which a 10 KB dead floor (moving the file in 4 KB pages) could never meet.
+
+### CLI (`cbt/`)
+
+- **`cyrius build` and every other forking verb reported success when the CLI could not fork — or could not wait**
+  (c-build, CBTB-03, P2). A failed `fork` returns `-errno`, and every spawner went straight on to `waitpid(-errno,
+  …)`, which waits on a process GROUP, fails and writes nothing, then read the status slot nothing had written (cyrius
+  does not zero locals). Under `ulimit -u 1`: `cyrius build` printed `OK (0 bytes)`, exited 0 and renamed its empty
+  write-probe temp over a working binary; `cyrius hooks install` claimed to have installed a hook it never copied;
+  `cyrius run x.cyx` exited 0; `cyrius self` reported the compiler "killed by signal" with a garbage number; `fmt
+  --check` returned 110 or 184; `--target=js` / `--target=cx` said `FAIL` with no reason; the LSP published empty
+  diagnostics; distlib refused its sidecar for the wrong reason. A failed WAIT read the same slot: under an inherited
+  SIGCHLD = SIG_IGN (`bash -c "trap '' CHLD; exec cyrius build src/bad.cyr out"`) a build that failed to compile
+  printed `OK (0 bytes)`, exited 0 and replaced a working binary with an empty file. Fix: `_cbt_fork_failed` names the
+  failure (`could not start <what>: fork failed (error N)`, with a process-limit hint for EAGAIN); `_cbt_wait_status`
+  zeroes the slot, retries EINTR and decodes only when `wait4` returned the child's pid (otherwise it names the
+  failure, with a "SIGCHLD ignored?" hint for ECHILD, and returns -1); `_cbt_children_waitable`, at the start of
+  `main()`, resets SIGCHLD to SIG_DFL on Linux and macOS, so every verb works under an inherited ignore and every
+  child inherits the default. Every spawner in `cbt/build.cyr`, `cmd_capacity`, the distlib sidecar verify (each
+  target's failed fork named; the refusal gives the real reason), `cbt/pulsar.cyr` (`_raw_last_how` 4 = fork failed, 5
+  = wait failed) and both `cyrius-lsp` diagnostics spawns use them, and failed spawns unlink their temps. New gate
+  `tests/gates/toolchain/cli_fork_failure_named.sh` (every forking verb, distlib's sidecar verify and both LSP spawns
+  under `ulimit -u 1`, each naming the failure, non-zero, old outputs byte for byte, no temp; the SIGCHLD axis, with
+  and without the start-up reset; a derived rule that every fork in `cbt/` and `cyrius-lsp` is checked and no
+  `sys_waitpid` result discarded; the pre-fix tree: 13 unchecked forks, 14 discarded waits, 32 failing rows; a named
+  SKIP as root).
+- **An inherited environment variable, or a large environment, no longer overrides the CLI's own target flags**
+  (c-build, REFACTOR-03, P2). `compile()` APPENDED the entries it injects after the inherited environment and stripped
+  only `CYRIUS_DCE`, while cycc uses the FIRST entry of a name: an inherited `CYRIUS_TARGET_WIN=0` / `CYRIUS_PIE=0` /
+  `CYRIUS_TARGET_AGNOS=0` / `CYRIUS_STRICT_PIN=0` beat `--win` / `--pie` / `--agnos` / `--strict-pin` (an ELF named
+  `.exe`, ET_EXEC, a Linux build, a drifted pin that only warned); an inherited `CYRIUS_MACHO=1` made `--win` write
+  Mach-O named `.exe`; and past 8 KiB of environment none of the injections were seen (with the compiler's old read,
+  REVBE-03: `--win` produced an ELF, `--dce` eliminated nothing, `--target x86_64-bare-metal-elf` an ELF32 image while
+  the CLI printed "x86_64 ELF64 multiboot2"). The distlib sidecar verify's own builder (`_cc_env_retarget`) appended
+  too, so in a padded environment the Windows and macOS targets were verified as Linux and their leaves dropped out of
+  the sidecar. Fix: one builder, `_cc_child_envp(inj, strip_tgt)`, puts the injected entries FIRST, drops every
+  inherited entry of the same name, and drops the target selectors when the build sets a target or the verify
+  retargets; `_cc_child_inject` owns the flag-to-entry mapping and `_cc_env_retarget` is gone.
+  `build_config_precedence.sh` (+10 rows through the REAL compiler — the stub's shell re-export would merge duplicates
+  and hide exactly this — and a row reading the child's environment from `/proc`);
+  `distlib_sidecar_host_independent.sh` axis 2 (a padded environment).
+- **`compile()`'s flag list is one list** (c-build, REFACTOR-10 + CBTB-10, P3). The POSIX argv and the PE command line
+  each kept a copy, and the POSIX one was a fixed `var argv[32]` — 4 slots — with 5 possible writers since
+  `--syntax-only` (cc, `--strict`, `--allow-undef`, `--syntax-only`, the NUL; latent, as no verb sets all three).
+  `_cc_flags()` is the one list; the POSIX child builds its argv on the heap from it (`_run_argv`) and the PE arm
+  joins it (`_cc_flags_cmdline`). New gate `tests/gates/toolchain/compile_flag_list.sh` (all 8 flag combinations
+  against the real helpers; each flag literal spelled exactly once in `cbt/build.cyr`; a one-slot-short mutant
+  caught).
+- **`cyrius clean` no longer deletes `build/cc5` and `build/cycc-native-aarch64`** (c-cmd, CBT-04, P3). `cmd_clean`'s
+  keep-set missed two of the three tracked binaries, so `cyrius clean` in the repo unlinked the one cross-bin that
+  cannot be rebuilt without ARM hardware (only `git checkout` brought it back). The keep-set is `_clean_keeps()`,
+  covering every tracked binary, and the summary says what was kept. New gate
+  `tests/gates/toolchain/clean_keeps_tracked_binaries.sh` (the tracked set derived from `.gitignore`'s `!/build/`
+  whitelist, cross-checked with `git ls-files build/`).
+- **One corpus walker behind `cyrius test` / `tests`, `fuzz` and `bench`** (c-cmd, REFACTOR-09, P3). Three hand-synced
+  copies of the directory walk each needed every fix three times (v6.5.12's depth cap, `elif` and
+  never-descend-a-symlink; 6.6.10's unlistable-directory failure); they are one `_corpus_walk_d` driven by a small
+  descriptor, the public walkers one-line wrappers. Where the copies disagreed: fuzz / bench's depth-cap warning now
+  names the directory, and a file named only by the extension (a dotfile `.tcyr`) is no longer run as a test. New gate
+  `tests/gates/toolchain/corpus_walk_rules.sh` pins the rules once per verb (nothing gated the v6.5.12 rules before).
+- **`cyrius distlib` says WHY a bundle fails its self-check** (c-cmd, CBT-03, P3). The RETIRED-name scan's stderr
+  capture also silenced `compile()`'s relay, so since v6.6.2 a bundle failing its self-check for any other reason
+  printed only `the generated bundle does not compile` and a generic hint. Its `error` lines are shown now (at most 8,
+  `_distlib_show_errors`, as the sidecar verify shows them — not the undefined-fn warnings `--allow-undef` puts ahead
+  of them), and the whole capture only when it holds no `error` line, so a compiler that dies without a diagnostic
+  still has its last word. `distlib_bundle_selfcheck.sh` axis 8.
+- **distlib's `# Version:` header is the manifest's `[package] version`, and `cyrius publish` tags the version its
+  bundle stamps** (c-cmd, REFACTOR-11, P3). distlib read the cwd `VERSION` file alone, so a project declaring `version
+  = "0.1.0"` with no `VERSION` file shipped `# Version: unknown` while its own build's `#@pkgver` said 0.1.0. New
+  `_project_version()` (`cbt/core.cyr`): `[package] version` through the reader `#@pkgver` uses (`${file:PATH}`
+  expanded), else `./VERSION`, else `unknown`. ⚠ A project whose literal manifest version disagrees with its `VERSION`
+  file now gets the manifest's (its `distlib --check` reads stale until regenerated); `${file:VERSION}` manifests are
+  unchanged. `cyrius publish` tags `_project_version()`, refuses — before distlib runs or anything is tagged — when
+  the manifest and `./VERSION` both name a version and differ (naming both, suggesting `version = "${file:VERSION}"`),
+  refuses a project with neither by name, and now publishes a manifest-only project (refused before as "no VERSION
+  file"). Its shell half is CVE-92. `distlib_bundle_selfcheck.sh` axes 1, 9, 10.
+- **`cyrius audit --internal=platform-check` runs exactly release-gate step 4** (c-cmd, CLN-05, P3). It passed the
+  `crossos` selector to ach only: pi and cass ran a bare self-host and ecb an inline self-host + exit-42 sequence
+  predating `cross-os-selfhost.sh`'s ecb arm (no platform libtest, no cx guards), while the ach comment claimed it
+  matched the others. Every host goes through one `_co_selfhost_leg` = `sh scripts/cross-os-selfhost.sh <host>
+  crossos`, the call `scripts/release-gate.sh` makes for `ecb ach cass pi`. New gate
+  `tests/gates/toolchain/audit_platform_check_matches_release_gate.sh` (a dry run with recorder scripts and `ssh` /
+  `scp` recorders — no host contacted; the 6.6.19 verb fails 6 rows).
+- **`[embed]` NAME collisions with a `[deps]` module are refused on the build that vendors the module** (c-manifest,
+  CBTB-04, P2). `_auto_deps` ran the whole `[embed]` load — validation and the NAME / NAME_len collision scan — before
+  `cmd_deps` and memoized the verdict, so the scan saw `lib/` as it was BEFORE vendoring: on a fresh checkout, or
+  after a dep change adding the name, a dep module declaring `NAME` (or only `NAME_len`) built with exit 0 and a
+  `duplicate fn` warning, and the dep's definition won (`NAME()` returned the dep's string; a dep `NAME_len` made the
+  program read past the embed into its own string pool). The 6.6.19 E-S2 promise held only on the second build.
+  Validation still runs ahead of any clone; with `[deps]` to resolve, the collision half runs once `cmd_deps` has
+  vendored `lib/` (`_embed_collide_vendored`), and a refusal is the memoized verdict `distlib` / `publish` reuse. Side
+  effect, intended: a stale `lib/` module from a dep version that dropped the name no longer refuses. `embed_build.sh`
+  axis 9.
+- **A `cyrius.cyml` value that never closes is refused by name, key and line** (c-manifest, CBTB-06, P2). Since
+  6.6.17's one manifest reader, an array, inline table or `"""` / `'''` string with no end ran to the end of the
+  header and the line walker stepped past EVERY later table with it: one missing quote — `keywords = ["a, "b"]` — made
+  `[build]`, `[deps]` and `[embed]` read as absent without a word (`cyrius build` exited 0 having dropped `[build]
+  defines` — a wrong binary — and `--print-config` showed every later key `(unset)`). `_mf_load` refuses for every
+  verb (`error: cyrius.cyml:3: [package] keywords opens a value that never closes (...)`); a closed value whose `]` is
+  the header's last byte (9 live manifests) and a file with no trailing newline are not flagged; 396 ecosystem and
+  dep-cache manifests have no hit. `manifest_one_reader.sh` axis 9.
+- **A leading UTF-8 byte-order mark no longer hides a manifest's first table** (c-manifest, CBTB-09, P3). The walker
+  skips only space, tab and CR, so a `cyrius.cyml` starting with a BOM (what Notepad writes) read a first-line
+  `[package]` — `name`, `version` and the toolchain pin — as absent without a word (`CYRIUS_PKG_VERSION` not emitted;
+  the pin's per-version stdlib isolation skipped), and in a transitive dep's manifest hid a first-line `[deps.X]`.
+  `_mf_bom_len` names the mark and both manifest reads (`_mf_load`, `cmd_deps`' transitive read) step over it.
+  `manifest_one_reader.sh` axis 10.
+- **On Windows an environment rung longer than 512 bytes is read** (c-manifest, CBTB-08, P3). `_cfg_env`'s PE arm read
+  through a fixed 512-byte buffer that answers 0 for a longer value, so on `cyrius.exe` a long `CYRIUS_DEFINES` was no
+  rung and `[build] defines` won silently; it reads through `_win_getenv_alloc`, 6.6.17's sized read.
+  `build_config_windows_arm.sh` axis 5 (under wine: a 719-byte value beats `[build] defines = ["A"]`).
+- **`cyrius deps` reads its manifest through the one reader** (c-deps, REFACTOR-02, P2). Its `[deps.NAME]` walker
+  matched headers as the literal `[deps.` and keys at column 0, outside 6.6.17's reader. Measured: an INDENTED `tag`
+  was dropped (rc 0, no commit pin, `lib/foo.cyr` the unreleased HEAD — the CVE-21 pin lost); indented `path` /
+  `modules` vendored nothing silently; `[ deps.foo ]` was ignored and `[deps.foo ]` vendored `lib/foo _foo.cyr`; a
+  `[deps.foo]` written inside a `"""` description resolved; a later `[docs] tag = …` or `[[bin]] tag = …` was read as
+  the dep's own key; `optional = tru` read as true; and the `[deps] stdlib` read was a section-blind byte scan, so a
+  description holding `stdlib = ["math"]` REPLACED the real key. Now on `_toml_line`: one header rule,
+  `_dep_hdr_name`, shared by the resolver, `deps --dry-run`, distlib's named-dep set and `_auto_deps` (whose fourth
+  rule had let a `[deps.]`-only manifest skip the resolve and build at rc 0); whole-key dispatch up to the next header
+  of either kind; `optional` as the bareword `true` / `false` only; a header with no `]` refused by name; `[deps]
+  stdlib` through `_toml_find` (`_dep_declared_stdlib`), as are `[groups]` / `[features]`. 0 of 336 manifests used
+  these shapes. New gate `tests/gates/toolchain/deps_manifest_shapes_read.sh` (R1–R14);
+  `distlib_named_deps_anchored.sh` axes 1–3 are behavioural now; `stdlib_key_scan_quoted.sh` axis 3 re-pointed.
+- **One leaf-name rule — `distlib --modular`'s `lib:unicode/categories` was refused by every consumer** (c-deps,
+  REFACTOR-05, P2). One token, three rules: the requires block allowed `/`, the `--modular` index emit checked
+  nothing, and a consumer checked a `lib:` entry with the dep-NAME rule, which refuses any `/` — so a module keeping
+  `include "lib/unicode/categories.cyr"` published at rc 0 and every consumer failed "unsafe dep name (path traversal
+  rejected)" (with a `lib/` file written anyway), while the same leaf through the sidecar resolved; sidecar lines and
+  `requires` entries had no check (`../../x` reached the copy guard). `_dep_leaf_ok` at every site, producer and
+  consumer, each refusal one named line with the leaf escaped. All 131 sibling and 415 cached sidecars pass the rule.
+  New gate `tests/gates/toolchain/deps_leaf_name_one_rule.sh` (L1 builds and RUNS the modular `/` route).
+- **The CLI no longer includes `lib/tagged.cyr`** (c-pin, CLN-13, P3). Nothing the CLI includes called a fn of it or
+  of the `lib/boxed.cyr` it brings in: 18 dead fns (1,418 B) in every CLI build (302 → 284 unreachable). New gate
+  `tests/gates/toolchain/cli_includes_all_used.sh` (a direct include whose module nothing else reaches must bring in a
+  referenced fn).
+
+### Stdlib (`lib/`)
+
+- **`lib/hashmap.cyr` no longer turns every miss into a full-table scan under delete + insert churn** (l-hash, RLM-03,
+  P2). `map_delete` / `map_u64_delete` left a tombstone, the grow trigger counted live entries only, and `_map_find`
+  stops only at an EMPTY slot, so a map held at a steady size by churn (sandhi's TLS session cache; majra's rate
+  limiter, heartbeat and relay dedup; ~30 ecosystem files delete) ran out of EMPTY slots after about 3× turnover, and
+  from then on every miss and new-key insert walked the whole table, often under the caller's lock. Answers stayed
+  correct; 5,000 live u64 keys: 40,000 churn rounds 566 → 8.8 ms, 2,000 misses afterwards 85 ms → 73 µs. 6.6.8 had
+  fixed `hashmap_fast.cyr` only. Fix: a tombstone count in one word AFTER the slot array (the 32-byte header and every
+  slot offset consumers read are unchanged); a new-key insert rebuilds when live + tombstones reach 70 % — doubling
+  only when live alone is past 35 %, otherwise rebuilding IN PLACE at the same capacity (one walk from a slot that was
+  already EMPTY moves each live entry to the first EMPTY slot on its probe path). The in-place rebuild allocates
+  nothing, so a map churned at a steady size allocates nothing once it has doubled to that size, and its inserts
+  cannot fail for memory (1,000,000 rounds at 5,000 live: 262,152 B — the one doubling — then 104 in-place rebuilds, 0
+  failed inserts). Deletes never move an entry and an overwrite never rebuilds, so walks that delete or overwrite as
+  they go stay valid; ⚠ a walk that inserts NEW keys as it goes may see an entry twice or miss one (no consumer found
+  does). `tests/tcyr/stdlib/hashmap_tombstones.tcyr` (279 rows on the cstr, Str and u64 surfaces; 40 fail on 6.6.19's
+  lib; 35 mutants killed); `docs/stdlib-reference.md` states the trigger and when an insert can fail.
+- **`fmt_float` / `fmt_float_buf` print the right number for |val| ≥ 2^63** (l-misc, RLM-04, P2). `f64_to` saturates
+  past i64 range and the fraction's carry then wrapped the integer negative: `1e300` printed
+  `-9131138316486228051.07`, `-1e300` `--9131…` (two signs), every huge value at 0 decimals `-2.0`, and exactly 2^63
+  an off-by-one `9223372036854775807.00` — ~200 consumer call sites could hit it. Every double ≥ 2^63 is whole, so
+  `_fmt_float_big` expands it exactly (base-1e9 limbs, integer arithmetic only): below 1e20 the exact integer
+  (`9223372036854775808.00`); from 1e20 a bounded exponent form `1.00e+300`, rounded half-even. The documented
+  `max(43, decimals + 24)` bound is unchanged. ⚠ Visible output change for |val| ≥ 1e20. Differentially checked
+  against a correctly rounded reference over 4,130 cases on x86, aarch64 and PE (60 on cx). `fmt_int_buf_bounded.tcyr`
+  now asserts the TEXT, not just the length (CVE-78's `-1e30` row passed with the wrong number; 20 rows fail on the
+  old code).
+- **`fmt_sprintf`'s `%x` wrote 17 bytes into a 16-byte stack buffer** (l-misc, RLM-05, P3; the one-byte sibling of
+  CVE-78, latent). `fmt_hex_buf` writes up to 17 bytes and the `%x` scratch was `var xtmp[16]`, so for any value with
+  a nibble at bit 60 or higher (every negative) the NUL landed on the neighbouring slot — dead after the call today,
+  one frame-layout change from a silent corruption. `programs/cyrld.cyr`'s `printhex`, five cyrld `fmt_int_buf`
+  scratches and `benches/bench_fmt.bcyr`'s `[8]` were short too; all are `[24]`, and `fmt_hex_buf` documents its
+  contract. New gate `tests/gates/memory/fmt_buf_callers_sized.sh` censuses every `&local` buffer passed to
+  `fmt_hex_buf` / `fmt_int_buf` across `lib/`, `programs/`, `cbt/`, `benches/` and `fuzz/` against the callee's worst
+  case (79 sites; self-tested detector).
+- **Poison arenas no longer read a header that an unarmed `alloc()` never wrote** (l-misc, RLM-06, P3). Under
+  `CYRIUS_POISON` `arena_new` goes to `_poison_arena_new` on every target, but agnos's and cx's `alloc()` do not arm
+  their blocks, and the arena still read the meta word at `a - 48` of its own `alloc(64)` — below the heap mapping for
+  a run's first allocation (SIGSEGV), otherwise the previous block's tail (a phantom `_poison_hidden` count). Guarded
+  with `_poison_alloc_armed()`, as `_poison_block` already was. `tests/tcyr/memory/poison_arena_unarmed_alloc.tcyr`.
+- **A poisoned fl underwrite is reported once, on the right side, and the block is freed** (l-misc, RLM-08).
+  `_poison_fl_owns` used the last leading-redzone byte in its ownership test, so `store8(q - 1, 7); fl_free(q)` read
+  "not owned": reported as `(0 bytes): 8 byte(s) changed [header]`, never freed, and reported again as `[leading]`
+  later; a ZERO there (an off-by-one NUL) took `fl_free`'s plain path to the same result. Ownership comes from the
+  meta word and the list links now, the redzone damage is sorted into leading or trailing, and `fl_free`'s
+  smashed-header branch asks `_poison_fl_listed` first. A nonzero or zero byte, on a small or a munmap-sized block,
+  gives one `[leading]` report and a freed block. `tests/tcyr/memory/fl_poison_underwrite_classified.tcyr`.
+- **`ws_close` closes its socket with `sock_close`, not a raw `syscall(3)`** (l-net, NET-01, P2). Syscall 3 is
+  close(2) only where a translation table makes it so (Linux x86_64 natively; aarch64 and macOS through their tables).
+  On agnos #3 is `spawn(elf_addr, elf_size)`: the socket was never closed (no FIN), its slot in the peer's 8-slot conn
+  table leaked — after eight `ws_close` calls `tcp_socket()` failed — and every failure path of that stray spawn
+  disarmed any armed CH_ENDOW endowment. On Windows syscall 3 at arity 1 is `CloseHandle`, which does not close a
+  SOCKET. ⚠ `ws_close` closes the socket: a caller must not close `ws_fd(ws)` again (yantra's `cdp_close` does —
+  filed). New gate `tests/gates/platform/ws_close_socket_route.sh` (the agnos fake kernel: #50 on conn 0, no #3, the
+  slot reused, ten cycles succeed; PE: the body calls `sock_close`, never the CloseHandle import).
+- **A native TLS server's Phase 1 returns 0 on a refused 40-byte shim allocation instead of crashing** (l-net, NET-02,
+  P2). `_tls_native_accept_alloc_in` (behind `tls_accept_alloc_in` / `tls_accept_alloc` / `tls_accept`) stored through
+  `_tn_alloc_a(a, 40)` unchecked — a SIGSEGV inside the stdlib where the contract promises "ctx-pre-handshake or 0";
+  6.6.10 had checked the CLIENT twin only, because its census matched `alloc(`.
+  `tests/tcyr/crypto/tls_shim_alloc_refused.tcyr` (an arena one byte short serves everything but the shim). The
+  census, `stdlib_alloc_checked_census.sh`, now matches `alloc_via(` / `_tn_alloc(` / `_tn_alloc_a(` too (197 → 399
+  sites) and treats a second allocation into a variable as a replacement; the nine unchecked contexts it surfaced are
+  fixed — the Windows IOCP peer's `async_connect` / `async_accept` / `async_recv` / `async_send` / `async_resolve` /
+  `async_interval` / `async_with_timeout` and the agnos peer's `async_recv` / `async_send` stored through 0 when an
+  `async_new_in` arena ran out (a page fault on Windows); each returns its arm's failure value, and Windows'
+  `async_with_timeout` is -1 when its deadline sentinel cannot be spawned (it pumped for a deadline that never fires).
+  `async_alloc_refused.tcyr` Windows group (11 / 11 under wine).
+- **An empty WebSocket client frame no longer reports failure after it was sent** (l-net, NET-03, P2).
+  `_ws_send_frame` sent the header, then took `alloc(len)` for the masked payload copy, and `alloc(0)` is 0 on all
+  five allocators — so since 6.6.10's `== 0` check `ws_ping`, `ws_send_text(ws, "")`, `ws_send_binary(ws, x, 0)` and
+  the close frame went out in full and returned -1 (a keepalive written `if (ws_ping(ws) < 0) close` dropped every
+  connection); for len > 0 a refused allocation left a header announcing bytes that never followed (the stream
+  desynchronised, the state still OPEN); and the copy was never reclaimed (409,600 B per 100 × 4 KiB frames). The
+  sender builds the frame in one 4,096-byte stack buffer, masking a fill at a time by the ABSOLUTE payload offset,
+  each fill through `sock_send_all`: it allocates nothing, an empty frame is not special, a frame under ~4 KiB is one
+  write. A negative length, and one of 4 GiB or more (the 64-bit length header carries the low 32 bits only — CVE-53's
+  bound — so it announced `len mod 2^32`), are refused before any I/O. `ws_client_short_write.tcyr` (+1 group: empty
+  frames, both refusals with nothing on the wire, a 5,000-byte frame across the fill boundary, a 70,000-byte frame
+  pinning absolute-offset masking); `stdlib_alloc_refusal_sentinels.sh` pins that the sender allocates nothing.
+- **POSIX `net_connect_sa_nb` no longer reads a failed `getsockopt(SO_ERROR)` as success** (l-net, NET-04, P3). After
+  `poll()` reported the socket writable, the Linux / macOS arm primed its SO_ERROR buffer with 0, dropped
+  `getsockopt`'s return value and read the buffer, so a failed `getsockopt` made a refused connect `_NET_CONN_NB_OK`.
+  Primed 1 now, and the connect counts only when `getsockopt` returned 0 and read 0, as 6.6.11's Windows arm does.
+  `tests/tcyr/crossos/net_connect_nb_so_error.tcyr` (a Linux seccomp filter makes `getsockopt` answer -EBADF,
+  asserted; a named SKIP where the filter cannot be installed, so its real aarch64 run is pi's leg).
+- **Linux `async_await_readable_ms` no longer hangs for ever on a closed fd or reads a readable file as a timeout**
+  (l-plat, REV-LIB-PLATFORM-02, P2). The Linux body built a one-fd epoll set and discarded `EPOLL_CTL_ADD`'s result;
+  epoll refuses a regular file (EPERM) and a closed or negative fd (EBADF), so the wait ran on an EMPTY set: a file
+  (stdin redirected from one, so the legacy `async_await_readable(0)` too) timed out after the full bound, a closed fd
+  with no bound never returned, and the kernel truncated `ms` to an int (2^32 + 200 ms returned after 200 ms) —
+  against 6.6.19's "same contract" doc on the macOS peer. It makes the one `fd_wait_ready(fd, 0, ms)` its macOS and
+  Windows peers make. `async_await_readable_ms.tcyr` rows 6–7; `async_await_readable_ms.sh` axis 6 pins it, axis 8
+  runs the cases.
+- **`sleep_ms` with a negative `ms` returns at once, and one above INT_MAX sleeps INT_MAX** (l-plat,
+  REV-LIB-PLATFORM-03, P2). Only `lib/chrono.cyr`'s agnos arm guarded `ms <= 0`: Linux and macOS issue `poll(NULL, 0,
+  ms)`, whose int timeout reads negative as "no limit", so a `sleep_ms(deadline - now)` gone negative never returned;
+  Windows' `Sleep(DWORD)` slept ~49.7 days; `sleep_ms(2^32 + 5)` slept 5 ms; and `0x80000000` hung on x86_64 (a
+  regression from v6.0.65's rewrite). Clamped above every arm (`sleep_ms(0)` still yields). Siblings: macOS
+  `sys_nanosleep` checks its timespec as Linux does (a negative field, or `tv_nsec` ≥ 1e9, is -22 with no sleep, where
+  it hung); the CLI's inlined `_run_sleep_ms`, Windows `async_sleep_ms` (`2^32 + 5` slept 5 ms, `0xFFFFFFFF` was
+  `Sleep(INFINITE)`) and agnos's take the clamp too. New `tests/tcyr/crossos/sleep_ms_bounds.tcyr`.
+- **Windows: `lib/process_win.cyr` and `sys_getrandom` mask kernel32 BOOLs** (l-plat, REV-LIB-PLATFORM-04, P3,
+  ABI-latent). 6.6.17 masked `lib/async_win.cyr` only; process_win tested CreateProcessW (and returned it),
+  GetExitCodeProcess ×3 and CreatePipe on the raw 64-bit register and returned TerminateProcess unmasked, and
+  `sys_getrandom` tested ProcessPrng with `!= 0`, so a CSPRNG failure whose upper half was dirty would have read as
+  success with the buffer unfilled. Every one is `& 0xFFFFFFFF` (cass's kernel32 zero-extends: nothing failed).
+  `pe_wsa_lasterr_masked.sh` axis 5 (+ "GetExitCodeProcess is never discarded").
+- **The regression verbs, the check driver's fork helpers and the async subprocess no longer decode a wait status
+  nobody wrote** (l-plat, RLM-01, P2). 6.6.7 made `_regression_wait_deadline` return -1 when waitpid never wrote the
+  status (a parent with an inherited SIGCHLD = SIG_IGN has its children auto-reaped) and 0 at the deadline, but taught
+  only three callers: `regression_exec_in_dir3` (and `_env`), `ssh_skip_check`, `scp_to`, `ssh_remote_exit` (and
+  `codesign_remote`) and `ssh_remote_exec_capture` decoded an uninitialised word — `/bin/false` read as exit 0, an
+  unreachable host as reachable, a TERM-trapping child ended at the deadline as success instead of -2 — and fifteen of
+  the check driver's own fork helpers (`programs/checks/`) did the same, so a gate could pass a child that failed.
+  Each checks the wait first now (deadline → -2, never observed → -1), and `ssh_remote_exit` returns 128 + sig on a
+  signal, as its doc said. The same class in the async subprocess: Linux `_async_process_task` reaped with a discarded
+  blocking `waitpid` (a child that exited 3 read 0 under SIG_IGN), and Windows' process task discarded the
+  `GetExitCodeProcess` BOOL at both sites; both return -1 now. Tests: `regression_wait_unobserved.tcyr` (SIG_IGN rows
+  for all five verbs after a zeroed stack; hermetic ssh / scp rows), new static gate
+  `tests/gates/toolchain/regression_wait_status_checked.sh` (every `_regression_wait_deadline` in `lib/regression.cyr`
+  and `programs/checks/` checked before its buffer is decoded; 21 rows red on the slot-open tree), new
+  `tests/tcyr/crossos/async_process_unobserved.tcyr`. The pam instance is CVE-80.
+- **`regression_run_with_timeout` no longer reads a waitpid error as the deadline** (l-plat, RLM-02, P2). Its own 100
+  ms WNOHANG loop had no `waitpid < 0` arm — the one wait 6.6.7's fix never reached: under SIG_IGN it spun the whole
+  timeout, counted a phantom deadline kill (the check driver then printed a false "TIMEOUT … killed at the deadline"),
+  returned -2 for a child that had succeeded, and SIGTERMed a pid already reaped and possibly reused. It waits through
+  `_regression_wait_deadline` (`timeout_ms <= 0` clamped to 1, still an immediate kill; the fixed 100 ms minimum per
+  call is gone). `regression_wait_unobserved.tcyr`.
+
+### Tooling, gates and scripts
+
+- **`install.sh --refresh-only` no longer installs a stale `cybs`, and `verify-store.sh` no longer vouches for one**
+  (g-install, RS-02, P2). `cybs` is a `[release] bins` entry with no `programs/cybs.cyr`, and `_rebuild_stale`
+  returned success for a source that does not exist, so the copy loop installed whatever gitignored `build/cybs` the
+  clone held — on the maintainer box a 12,344 B binary from 2026-06-20 that prints `syntax error` on `src/main.cyr`
+  and fails the seed closure — into 16 tagged store slots (6.6.3–6.6.9, 6.6.11–6.6.19) plus the in-flight 6.6.20, each
+  stamped `tree-matches-tag: yes` (the dirty probe cannot see ignored files); `verify-store.sh` judged only tracked
+  bins. Release tarballs were not affected (they run `bootstrap.sh`). Now the refresh assembles `cybs` every run with
+  bootstrap.sh's recipe and installs it only after the closure passes (it compiles `bootstrap/asm.cyr` to the seed
+  byte for byte); a bin — or cross-bin: `cycc_win` used to skip a missing `src/main_win.cyr` silently and only warn on
+  a failed compile — whose source is missing, whose rebuild fails or that has no rebuild rule refuses the refresh by
+  name instead of copying `build/<bin>`; only the two TRACKED bins are copied as they stand. `verify-store.sh`
+  re-assembles cybs from each tag, checks `bin/asm` against the tag's `bootstrap/asm`, names every installed bin it
+  could not verify, and `--restore` repairs both. `cbt/pulsar.cyr`'s tool table drops `cybs` and is `var tools:
+  i64[5]` — it was `var tools[6]`, six BYTES written with six `store64`s, a latent 40-byte overrun into dead locals. ⚠
+  `verify-store.sh` now reports those 16 slots BAD (`DIFFERS bin/cybs`); `sh scripts/verify-store.sh --restore <v>`
+  repairs each — the maintainer's call, since it writes the live store. New gate
+  `tests/gates/toolchain/refresh_never_installs_a_stale_bin.sh` (axes 1–4r, 11–14).
+- **`--refresh-only` rebuilds a bin when any of its include roots, or the compiler, changes** (g-install, RS-03, P2).
+  Staleness came from the bin's direct source plus a per-bin list of roots (`lib`; `lib cbt` for `cyrius`), but
+  `cyrius-lsp` includes `cbt/srcscan.cyr` (since 6.6.10), `ark` `programs/nous_stub.cyr` and `cyrius`
+  `src/version_str.cyr`, and a rebuilt `build/cycc` was no dependency at all — measured stale after a refresh. One
+  root set for every bin (`lib cbt src programs`, those that exist), and a `build/cycc` newer than the bin forces the
+  rebuild (any such edit rebuilds every program bin, ~2.5 s). Same gate, axes 5–10.
+- **The pre-commit hook judges the staged blob, not the working-tree file** (g-install, RS-05, P3). It used `git diff
+  --cached` only to decide what to look at, then read the WORKING-TREE file, so a contaminated blob staged with a good
+  file back in the working tree committed (measured: a 25-byte `MZ…` blob became `HEAD:build/cycc`), and a staged
+  artifact whose working file had been deleted was skipped unjudged. Each staged artifact's index copy (`git cat-file
+  blob :<path>`) is checked in a private temp dir; a staged deletion is skipped; an unreadable blob refuses the
+  commit. `precommit_arm_size_band.sh` rows 5–7 (the 6.6.19 hook fails all three). The hook reaches `.git/hooks/` at
+  the next `--refresh-only` / `cyrius hooks install`.
+- **`install.sh` no longer leaks its staging dir on a refusal** (g-install, CLN-01, P3). The staging `mktemp -d` was
+  removed in one place, at the end of a successful install, so every refusal (checksum, signature, a tarball with no
+  `bin/` — eleven sites), every `set -e` failure and any signal left the downloaded tarball and its extracted tree;
+  the 9.9.9 installer gate left three per check.sh run. An EXIT trap removes it (held as `_INSTALL_STAGE`, so nothing
+  reassigning TMPDIR redirects the rm), and HUP / INT / TERM exit 129 / 130 / 143 so the script stops rather than
+  carrying on without its staging dir; the success-path `rm -rf "$TMPDIR"` is gone, so later steps no longer run with
+  TMPDIR pointing at a removed directory. `install_pillars_ship_the_checksum.sh` axis 5.
+- **Release-gate step 3 no longer goes GREEN over SKIPped gates** (g-gates, RS-06, P3). check.sh exits 0 when nothing
+  failed but some gates SKIPped (exit 77), and step 3 took that 0 — the one mandated pre-tag gate passing over gates
+  that checked nothing, while CI runs its rows under `CYRIUS_CHECK_NO_SKIP=1` — and its tally (`grep … | tail -1`)
+  read the LAST shell gate's own count as the driver's. Its verdict is `_rg_check_verdict` now: check.sh's status, the
+  DRIVER's `N passed, M failed, K skipped (T total)` line (exactly one, or the step refuses to guess), every SKIP on
+  `RG_SKIP_ALLOW` (the two agnos-parity gates the dev box cannot exercise, each with its reason), and the SKIP list
+  agreeing with the summary's count. `release-gate.sh --check-verdict <output> <rc>` re-judges a saved run. ⚠ A new
+  SKIP (a tool missing) is a red step 3 by design — widen the list only as a decision. New gate
+  `tests/gates/toolchain/release_gate_check_verdict.sh` (10 axes over fixtures in check.sh's format, plus one pinning
+  the producers' format strings).
+- **The ach cross-OS leg runs x86-macOS cx guest I/O and the native `cycc_cx` round trip** (g-gates, RS-07, P3). The
+  ecb, pi and cass legs ran the portable guest-I/O fixture `_co_cx.cyx` (exit 42) and the `cycc_cx` compile-to-run
+  round trip; ach — whose tarball ships both `cxvm` and `cycc_cx` — ran only the thread fixture, so step 4 never ran
+  either on the hardware they ship to. It stages and runs all three now (run on real ach in review with tree-built
+  binaries: 42, a `.cyx` byte-identical to the Linux build, 42). New gate
+  `tests/gates/toolchain/cross_os_legs_cx_parity.sh` refuses any leg step 4 walks without them.
+- **The TLS race-gate port flake is root-caused** (g-gates, BACKLOG-05). Removed from the backlog as shipped at
+  6.6.14, it recurred at 6.6.19: `serve` in `tls_first_use_thread_race.sh` and `tls_libssl_hostname_binding.sh`
+  launches `openssl s_server … > LOG &` and waits for `ACCEPT` in LOG, but the `>` truncation runs in the backgrounded
+  child, so the parent's grep could read what LOG held before — and logs were reused (S0 forces the second server onto
+  the first's port and log name; the libssl gate used one log for every server). A stale `ACCEPT` read as ready: 30 of
+  300 under 16-core load. Each attempt gets a log name no earlier one used, created empty by the parent first. New
+  gate `tests/gates/concurrency/tls_serve_fresh_log.sh` (each gate's own `serve` against a fake `openssl`).
+- **check.sh reaps the CLI's dead temp dirs, and `test_runner_bounded.sh` cleans up after its SIGKILL** (g-gates,
+  CLN-03 + CLN-02, P3). `cyrius` removes `$TMPDIR/cyrius-<pid>[-t<nonce>][-<n>]` on a normal exit only, so SIGPIPE
+  (`cyrius … | head`), SIGKILL and the installed 6.6.0–6.6.5 CLIs left them (~900 once). `_chk_reap_dead_cli_tmpdirs`
+  rmdirs EMPTY dirs of exactly the CLI's name shape, owned by the user, whose pid is dead to both `kill -0` and `ps
+  -p` and older than `CYRIUS_CHECK_REAP_MINS` (240) — never by count, never a non-empty one (a SIGKILLed test's binary
+  is the CLI's post-mortem contract); no CLI signal-handling change (the design default). `test_runner_bounded.sh`
+  axis 2 removes the dir of the runner it SIGKILLs on purpose. `check_stale_home_reaper.sh` axes 7–11;
+  `bare_metal_forbidden_module.sh` axis 6 captures before grepping (a `| grep -q` could SIGPIPE the CLI).
+- **`dce_eliminates.sh` no longer exits 7 silently under `bash -eo pipefail`** (g-gates + s-dead, backlog C7). Its
+  `cmd; rc=$?` captures ended the gate at axis 3's float probe, which exits 7 by design; all three are `rc=0; cmd ||
+  rc=$?`. (s-dead also derived its shrink floor — under Dead code.)
+- **Two check.sh selectors started in one worktree no longer collide on `build/cyrius_check`** (g-gates, backlog C9).
+  The driver rebuild's side file was one fixed name, so concurrent runs truncated each other's half-written driver and
+  the second's `chmod` failed under `set -e`; side files are per run (`.new.<pid>`, `.err.<pid>`, removed by the EXIT
+  trap), the final rename shared and atomic. New gate `tests/gates/toolchain/check_concurrent_selectors_one_tree.sh`
+  (two real check.sh copies with a slow stub compiler; the 6.6.19 name fails it 3 of 3).
+- **Orphans** (g-gates, CLN-14). `tests/repro_parser_overflow.cyr`, a cc3 3.3.12 repro wired to no gate, moved to
+  `archive/tests/` with a header saying why (`large_source.tcyr` / `large_input.tcyr` cover large sources);
+  `build-macos-x86-tarball.sh` drops a `[ -f ]`-guarded copy of a `scripts/macos-x86-README.md` that never existed
+  (every x86-macOS tarball silently shipped no README). New gate `tests/gates/toolchain/tarball_inputs_exist.sh`. The
+  37 qemu core dumps (5.6 GB) the audit found in the repo root were already gone.
+- **`tests/tcyr/CORPUS_FLOOR` 407 → 503** (RS-08): it had not been ratcheted since 6.6.12 and sat 75 files below the corpus (506 `.tcyr` at the merge).
+
+### Docs and vidya
+
+- **Stale comments corrected across `src/`, `lib/`, `tests/`, `scripts/` and `programs/`** (s-dead + s-pplex, CLN-10;
+  l-misc + g-gates, CLN-11; l-misc, RLM-09; l-net, NET-06; s-ret, RPF-07; c-cmd, backlog C8). Comment-only; every
+  compiler byte-identical: the TS JSX tokenizer "NOT yet wired" (the dispatch target since v5.7.6), aarch64's "F64
+  STUBS" banner over the v5.7.30 implementation, `EPOPARG`'s Win64 note, ISIFNDEF's "`#else` lands later" (shipped in
+  v5.6.1); `vr01_*` names for tests at `tests/tcyr/crossos/` since v6.5.11 (`lib/simd.cyr`,
+  `lib/syscalls_linux_common.cyr`, three test headers, `syscall_wrapper_pass.sh`), `f64v2_ctor.tcyr`'s claim that PE
+  value-form SIMD is unsupported, `cross-os-selfhost.sh` calling its libtest an opt-in "FALLBACK, not the gate";
+  `lib/fdlopen.cyr`'s nonexistent `fdlopen_sym`, cyrld's "cc3's relocations"; `bench.cyr` / `freelist.cyr` /
+  `atomic.cyr` include notes (RLM-09); `lib/ws.cyr`'s usage example calling a `tcp_connect` that exists nowhere (now
+  `net_resolve_ipv4` + `tcp_socket` + `sock_connect`, checking `WS_OPEN`, saying `ws_close` closes the socket) and
+  `lib/http.cyr`'s stale `# Requires:` (NET-06); `_stkp_reset`'s reason (RPF-07); `cmd_fuzz` / `cmd_bench`'s
+  no-double-count note, false since v6.5.7 (C8: a symlinked SUBDIRECTORY is never walked twice, but a symlinked FILE
+  under `tests/` runs as a harness of its own).
+- **A new syscall wrapper's companion test goes in `tests/tcyr/crossos/`, not a `vr01_` file** (d-docs, CLN-04).
+  CLAUDE.md and the guide still said "add a `vr01_` test"; the prefix was retired at v6.5.11 and the release gate's
+  cross-OS leg selects the DIRECTORY, so a file written to the instruction never ran off-host — the macOS rot's exact
+  shape. Corrected there and in cycle-discipline.md, platform-status.md, roadmap-future.md and dev-tools-linux.md
+  (which also still said `cross-os-selfhost.sh` must run one host at a time — safe concurrently since v6.6.6), plus
+  nine present-tense code comments (`ci.yml` ×2 among them).
+- **CLAUDE.md's derived counts re-derived** (d-docs, CLN-06): `lib/*.cyr` 102 → 106, `programs/*.cyr` ~83 → 85;
+  `src/backend/common/env.cyr` and the generated `src/common/syscall_xlat.cyr` in the structure listing; the
+  reserved-word class is 79 `TOKNAME_BUILTIN` names + 2 hand-listed builtins (`f64_sqrt`, `callptr`, outside the table
+  since v6.6.2, so its "cannot drift" guarantee never covered them) + 26 statement keywords = **107**, with the
+  name-recognised intrinsics (`sizeof`, `mulh64`, `fncall0..8`) called out; version-bump's rewrite list names
+  `cyrius.cyml`; two stale `file:line` citations are cited by name; the vidya entry count is 632.
+- **state.md and completed-phases.md reconciled with the 6.6.19 tag** (d-docs, CLN-07). state.md still read "6.6.19 —
+  MERGED, awaiting the user's push + tag" beside a Gates row reading GREEN; completed-phases.md's v6.6.x band stopped
+  at 6.6.17 (6.6.18 and 6.6.19 rows added).
+- **README figures re-derived — frozen at v6.6.1** (d-docs, CLN-09): cycc 1,247,608 → 1,586,184 B, the cross
+  compilers, LSP, linker and the core-toolchain / installed-tree totals re-measured from the tagged 6.6.19 slot by the
+  v6.6.1 formula; stdlib 102 → 106 modules with the current fold versions; api-surface 5,152 → 5,827; `.tcyr` 301 →
+  482 (197 cross-OS; 18 benches); 376 registered shell gates with the command that derives it; the reserved-token
+  table 102 → 107; and the *Caps + heap* paragraph (a 512 KB identifier pool, a 32,768-fn ceiling, a doubling 3 MB
+  codebuf — all retired). The same frozen figures in faq.md, platform-status.md (its full-corpus caveat now names
+  every row's figure, tree and date), size-comparisons.md (its "35 MB because the `cyrsign` helpers are ~14 MB each" —
+  they are ~1.5 MB) and stdlib-modules.md (which had never indexed `boxed`, `alloc_cx`, `tls_hostid` or `poison`).
+- **Dead path pointers repointed** (d-docs, CLN-12): 102 source, test and workflow comments cited issue files since
+  moved to `issues/archived/` (58 by full path, 44 by the short form or wrapped across a line, which the first scan
+  missed); nine named sibling-repo filings by a stale path; five named deleted `regression-*.sh` scripts (now the
+  driver rows that replaced them); the agnos `sys_getrandom` comment called the Windows CSPRNG issue open (shipped
+  6.2.12). Comment-only in `src/` (byte-identical, seed-derive OK).
+- **doc-health.md re-derived row by row; `handoff.md` archived** (d-docs, CLN-08). The ledger, last refreshed at
+  v6.6.1, marked a v6.3.0 README and a "Version 6.2.0" CLAUDE.md row Fresh and said "0 active" audits; every row now
+  carries its last-touched date and what was re-verified. `handoff.md` still described v6.6.4, sixteen releases stale
+  under its own "refresh or delete" instruction, and is archived to `docs/development/archive/handoff-v6.6.4.md` —
+  `state.md` is the handoff. ⚠ The pure rename rode in `886662e3` and its banner and link fixes in `44faf171`: revert
+  them together or not at all.
+- **ADR-003's heap-layout summary re-derived** (d-docs, HEAP-11, the ADR half). It still placed input_buf at 0x00000,
+  a 256 KB tok_names at 0x60000, tok_types at 0x2D7C000, output_buf at 0x4D9D000 and the heap top at 0x5E1D000 with a
+  32,768-fn ceiling — all retired between v6.3.41 and v6.5.40. It follows main.cyr's HEAP MAP now (the `S + 0xF600000`
+  heap; the 24 MB input buffer, 32 MB token arrays and 8 MB identifier pool at the top; the output image and TS arena
+  off-map; the var family and deferred-init list growable) and says main.cyr wins.
+- **The roadmap re-triaged** (d-docs, BACKLOG-00, -06…-14; closeout item 12). roadmap.md still called 6.6.18 OPEN and
+  6.6.19 MERGED; the 12-fold wave is struck as shipped (its filings kept); the DCE compaction arc's spec moves to
+  roadmap_6.md § *Between v6.7.x and RISC-V*; the `const fn` proposal is v6.7.x C1. The backlog's "v6.7.x candidate"
+  bullets move into roadmap_6.md § v6.7.x, two corrected — `Struct = *Struct`: a struct over 8 B BINDS (aliases), it
+  does not copy; only the ≤ 8 B case (a stored pointer) is the silent wrong value — and untyped method-return
+  inference narrowed to the 8-byte case still failing; compound assignment on a field is B8. All 61 *Potential
+  backlog* bullets were re-verified against the tree — 55 live (five corrected in place), 2 shipped, 2 partly shipped,
+  2 obsolete — the race-gate flake recurred (root-caused above), the `/tmp/cyrius-<pid>` bullet stays open (49
+  dead-pid dirs were back the same evening, 33 non-empty, which CLN-03 does not reap), the cyrlint gates pinned to a
+  slot that no longer existed are re-pinned, and the three items the user promoted carry corrected records (a
+  redefined fn bound its FIRST definition in a 4-line file on all three backends, not in "one build"; aarch64 sp
+  corruption from 262 arguments, not "~300, SIGILL").
+- **The v6.6.x → v6.7.0 closeout ledger** (d-docs, DOWNSTREAM-01): `cycle-discipline.md` records the closeout — the
+  141 findings and how they were fixed, the heap map, the dead-code floor, the code-review shape (a fix that reached
+  one sibling and not the others), the security re-scan, the vidya and backlog counts — and the downstream check,
+  **clean**: 126 manifests, none below 6.6.2, no working copy drifting from its HEAD, all 12 folds equal to their
+  tags.
+- **vidya: the syntax reference and four `known_limitations` items taught retired behaviour** (d-vidya, VIDYA-01, -03,
+  -04). The POINTERS block still printed the pre-6.6.17 per-site step (an agent reading it expected +1 and got +4; it
+  is `sizeof(T)` at every site, `q - p` an element count); the agents read-first file said a missing include builds a
+  ud2 / SIGILL binary (a hard error since 6.3.2; `--allow-undef` added to the flag table); and "capturing closures
+  fail on PE", "`include` is unsupported in `kernel;`", "an operator receives a stack struct's first field" and "`a *
+  f64_from(2)` is a parse error" were each disproved by a 6.6.20 probe and rewritten.
+- **vidya: `tagged_new()` restored, `tag()` deleted, `lib/boxed.cyr` documented** (d-vidya, VIDYA-02). Five places
+  called `tagged_new()` deleted (restored at 6.6.2) and two called `tag()` "now identity" (deleted at 6.6.2); the new
+  `boxed_runtime_tag_box_v662` entry gives the 16-byte {tag, payload} contract and why a box exists (a value-form
+  `Err(5)` stored in a struct field or pushed to a vec keeps only the tag, silently).
+- **vidya: the reserved-word count is 107** (d-vidya, VIDYA-05). Five files said 67 or 76 / 102, and three that tokens
+  79 and 111 are double-assigned (false since 6.6.2's renumbering); each entry now gives the derive commands (the
+  audit's own 105 missed `f64_sqrt` / `callptr`).
+- **vidya: current-state stamps, caps and heap facts re-derived** (d-vidya, VIDYA-06…-12, HEAP-11's vidya half). The
+  distlib guidance (every fold carries a compile-verified requires block since 6.6.19); `types.cyml`'s
+  `compiler_structural_facts`, stamped 6.6.1 with 14 rotted facts; size and version stamps in core, index, tooling and
+  ecosystem (the five unlisted `[release].bins` added); ONE fold-version table (`dependencies.cyml`) instead of five
+  stale copies; the CURRENT CAPS block (fn_table 2,048 → 131,072, the identifier pool 8 MiB at 0xEC00000, var_table
+  1,048,576, fixups 64M, codebuf 8 → 64 MiB); "heap regions are fixed, there is no allocator" (the fn, var and fixup
+  tables and codebuf grow, and the output image is a 1 GiB off-heap alloc on the six native drivers); agents.cyml's
+  `ls tests/*.sh` rule (it matches nothing since v6.5.11: 372 gates under `tests/gates/<bucket>/`) and its
+  redeclaration rule (an error in a fn, a warning at top level, the last definition winning); stale heap addresses in
+  patterns, diagnostics_caps and types.
+- **vidya: the mixed `*T` subtraction gotcha** (d-vidya, VIDYA-14). `*T - untypedVar` is `p - n` — the var read as an
+  element COUNT, a garbage address with no diagnostic (the audit's "byte difference of 24" was one ASLR-lucky run) —
+  while `g - &buf` is refused "different element sizes"; the entry says how to get elements (two `*T`) and bytes (both
+  sides plain vars).
+- **vidya: the index files** (d-vidya, VIDYA-13) gain a v6.6.x block, and every section count is re-derived.
+
+### Integration
+
+- 28 fix lanes + 5 security lanes merged onto `trial-merge-6620`; conflicts resolved by hand: the check-driver registrations (s-loop × s-ppcaps), `lex_pp.cyr` (s-ppcaps × s-pplex: PP_MACRO_SLOT / PP_DEFINE_INCLUDED read the name after PP_SEP's blank run, +3 TAB rows), `x86/emit.cyr` (ESPILL delegating, `_LOOPVAR_OK` gone), the seven forks (s-forks' `heap_regions.cyr` × s-heapmap's map pointers and comments), `parse_decl.cyr` (s-loop × s-ptr markers), s-ret onto s-ptr (escape tracking extended to every frame-address push s-ptr added; a redefined fn's copy record is its LAST definition's), sec-pe × sec-shell (`process_win.cyr`, `build.cyr`). Integration fixes: the exec-past-trap census (`compiler_arena_refused.sh`), the auto-deps call-graph analyser (`&fn` is an edge), two stale allowlist rows, agnos SKIP guards for two dup2 tests, the `_ew_shown` rename (c-pin × c-deps), E8 of `manifest_strings_shown_escaped.sh` (the pin-shape refusal).
+
+### Downstream
+
+Nothing here gates the release. Notes, filed in each repo and never orders — adopting a change is the sibling's call
+at its own pin bump (⛔ none bumps its pin before 6.6.20 is tagged):
+
+- **shakti** — bump the pin to 6.6.20 (CVE-80) and reset SIGCHLD to SIG_DFL at startup. Filed:
+  `docs/development/issues/2026-10-06-pam-wait-unobserved-sigchld-ign.md` (shakti `f04d26d`, not pushed).
+- **yantra** (folded) — `_yantra_sleep_ms` passes an unguarded ms to `poll` (a negative ms hangs on Linux and macOS,
+  one past INT_MAX truncates, and on Windows syscall 7 is unrouted): use the stdlib `sleep_ms`. Filed in its roadmap
+  (yantra `4ec6ce7`, not pushed). And `cdp_close` calls `ws_close` and then `sock_close` on the same fd, which with
+  NET-01 is a double close on every target: drop the `sock_close` (text ready in the l-net lane's sibling note; to
+  file). Fix upstream, then re-vendor.
+- **sigil** (folded) — `src/mldsa.cyr:29`'s rationale ("cyrius routes no PE syscall 11 to VirtualFree …") is stale
+  once CVE-84 ships (the workspace pool stays worth keeping for speed); its four unconditional `#define LINUX`
+  (`ima_core`, `luks`, `tpm_core`, `dmverity`) are read by nothing. To file; fix upstream, never the fold.
+- **sandhi** (folded) — the "tls ctx is a 24-byte struct" comment (`src/http/conn.cyr:229`) against `lib/tls.cyr`'s
+  `_TLS_LIBSSL_SHIM_LEN = 40`, and a comment (folded at `lib/sandhi.cyr:14915`) saying the Linux wait "calls
+  sys_epoll_wait" (one `poll` since REV-LIB-PLATFORM-02). To file.
+- **majra** — `_majra_map_compact` can go at the `ratelimit.cyr` (`buckets`, `windows`) and `heartbeat.cyr` (`nodes`)
+  sites once majra pins 6.6.20 (their tombstones are counted now); `relay.cyr` must KEEP it for `seen`, whose
+  tombstones `_relay_dedup_drop_slot` writes by hand and the stdlib never counts (its "exactly what `map_delete` does"
+  comment is no longer true).
+- **agnos** — a `kernel;` build under `CYRIUS_DCE=1` now NOP-fills instead of compacting (REVBE-01), so the size lever
+  its `scripts/test.sh` suggests no longer shrinks a kernel image. Not filed by the lane.
+- **agnodrm** — four `qemu_repro_*.core` files (~9.5 MB each) are committed to its repo and tagged in 1.5.1, 1.6.0 and
+  1.6.2; removing them is a `git rm`, a `*.core` ignore line and a release there (the dep-cache copies are tag content
+  — deleting them would trip the CVE-43 cache verify). To file.
+- The lanes' read-only surveys found no consumer that meets a new refusal: no function-like `#define` anywhere, and no
+  object-like one redefined with a different value; no declaration of `sizeof` / `mulh64` / `fncallN` outside a
+  `fnptr.cyr`; all 126 pins plain `X.Y.Z` and all 126 package names inside distlib's profile rule; no `[deps.]`
+  header, no symlink in a dep clone or a `dist/` / `src/` tree, none of REFACTOR-02's manifest shapes (0 of 336); all
+  131 sibling and 415 cached sidecars inside the one leaf rule; no unclosed value or BOM in 396 manifests; no stray or
+  unclosed conditional, tab-bearing directive or included `#ifplat` in 19,635 source files.
+
+### Known / not fixed
+
+In roadmap.md's *Potential backlog* unless marked filed:
+
+- **Deferred at planning** (the batch's DECISIONS): DEAD-10 — constant `if (SYS_OPEN == 2)` arms are not folded, so
+  the dead arm is emitted at all 16 sites (REVBE-06's `#ifndef` replaces it for the PE warnings only); HEAP-12 — the
+  IR family spans five bands and the x86 per-fn compaction tables interleave with struct / defer tables, so sizing the
+  IR family from one alloc'd arena is the consolidation (main.cyr's ir_nodes line points here); LEX-EXPR-04 — `var f:
+  f32 = 1.5` stores the f64 bit pattern while `var a: f32[N] = { 1.5 }` rounds the same literal.
+- **Security re-scan findings no lane carried — a user decision** (the re-scan proposed ids that collide with the ones
+  assigned here; none is spent): SEC-02 (P1) `[build] output` reaches `/bin/sh` (macOS `codesign`) and `cmd.exe`
+  unquoted and places a binary outside the project (`output = 'out.exe" & echo INJECTED> pwned.txt & "y'` ran under
+  wine); SEC-03 (P1) `cyrius update` / `deps --lock` write THROUGH checkout symlinks (`cyrius.cyml ->
+  ~/.ssh/authorized_keys`); SEC-04 (P2) `[package] version = "${file:PATH}"` reads any file into the binary — the
+  `[embed]` hardening's bypass (`${file:.git/config}` lines become source); SEC-05 (P2) `file_write_atomic` /
+  `_aw_open` open a predictable temp name without `O_EXCL | O_NOFOLLOW`; SEC-07 (P2) the signed-since floor accepts a
+  stripped signature for a release below the local floor (install.ps1 has none); SEC-08 (P2, plausible, needs cass) PE
+  spawns `cmd` / `certutil` by bare name, so CreateProcessW may search the checkout first. (SEC-01 is CVE-79, SEC-06
+  CVE-94, SEC-09 CVE-87.)
+- **The dependency read side** (CVE-88's open half): a TRANSITIVE manifest's `path` still vendors any local file (a
+  git dep whose tag ships `[deps.evil] path = "<abs dir>" modules = ["secret.cyr"]` gives the consumer
+  `lib/evil_secret.cyr`, rc 0, a lock) — confining it to its own manifest's tree is a design item (54 legitimate root
+  `path = "../sibling"` uses); and a transitive `git = "<local path>"` clones any local repository into the cache and
+  vendors its files.
+- **Tail calls** (s-ret): a frame address taken LATER in a loop body than a tail call into a callee with NO
+  address-passed parameter still reads a freed frame (pre-existing since 6.5.14) — filed
+  `docs/development/issues/tail-call-in-loop-before-frame-address.md`; the fix costs TCO in loops, a choice for the
+  user. The RPF-03 behaviour change above is the sound answer, not a defect.
+- **Struct operands and arguments, pre-existing** (s-ptr, met in passing): a struct-typed FIELD as an operator's LEFT
+  operand never dispatches (`h.w + w2` is an integer add of the first word — silent); an operator result as a LEFT
+  operand does not re-dispatch (`(s - t) - t`; with P3 SIGSEGV); a struct-returning call as an operator's right
+  operand SIGSEGVs (`a - bump(b)`); a PARENTHESISED struct argument to an address-passed parameter pushes the value
+  (`rd3((a))`, `rd1((s))` — SIGSEGV); `h.s.dup()` is a parse error; a `p: *f64v2` / `*f32v4` parameter is classified
+  as a value-form vector (loud); `fncall1(&rd1, s)` is untyped and outside RPF-04's reach.
+- **Compiler, other open finds** (each to file or fix, and pin):
+  - (s-loop) PE: a call to an `f64v2`-returning fn outside the receive paths pushes no hidden retptr, so the callee
+    writes 16 bytes through argument 1 (`mkv(p, 22)` with `p = &buf` gives 220 where 12 is right under wine; `mkv(11,
+    22)` page-faults) — silent memory corruption, pre-existing, not in the audit. A `for` step skips `_IFS_CHECK` (an
+    int stored into an f64 slot warns as a statement, not as a step).
+  - (s-decl) `enum E { A = (0x7FFFFFFFFFFFFFFF); }` SIGSEGVs (rc 139) after printing the right diagnostic — a
+    parenthesised enum value holding a large literal (1,000,000 exits 1 cleanly; 2,147,483,646 and up crash); same on
+    6.6.19.
+  - (d-vidya) `*T - untypedVar` silently computes `p - var * sizeof(T)`; `g - &buf` (`g: *i64` over `i64[8]`) is
+    refused with a misleading "different element sizes"; a value-form Result in a struct field (`S { Err(5), 9 }`) or
+    `vec_push(v, Err(5))` keeps only the tag, silently, though `lib/boxed.cyr`'s header calls it a hard error.
+  - (s-ppcaps) a conditional never sees a `#define` made in a file it includes — an `#if X == 2` after an include that
+    redefines X takes the old arm, silently; a comma inside a string literal splits a macro argument (making the
+    argument scan string-aware alone would desync `PP_ARGS_ON_LINE`).
+  - (s-pplex) `cyaudit` and `cyrius_api_surface` carry their own copies of the old preprocessor state machine
+    (`cyaudit vet` reports "no dependencies" past a multi-line `#assert`) — filed
+    `docs/development/issues/tool-lexst-copies-miss-attribute-lines.md`.
+  - (s-names) a UNIT enum variant spelled `sizeof` / `mulh64` is accepted but must be read qualified
+    (`#derive(Serialize)` on that enum fails to parse); past the file map's cap the `fnptr.cyr` exemption fails open.
+  - (s-a64args) aarch64 `ESTRUCT_BYVAL_COPY` loads its byte count with a lone `movz`: a by-value struct result of 64
+    KiB or more would copy its size mod 64 KiB (read from the code, not run). cx's 248-argument limit is unchanged.
+  - (s-heapmap) the IR=3 seam's `wp-compact: N bytes reclaimed (M runs, K switch tables)` line always reads 0 runs and
+    0 tables (printed after the re-entrancy step cleared them); `&fn`, both closure forms and impl objects still
+    refuse `fc >= 1048576` on every backend although the native fixup table grows since v6.2.0; the WPNR 4,096-run
+    merge (48 of 482 tcyr files saturate it under IR=3; `wp_compact_registry_caps.sh` axis 5 must be re-measured when
+    it lands).
+  - (l-plat) `EMOVEFILEEX_PE` (`src/backend/x86/emit.cyr`) folds the MoveFileExW BOOL over an undefined upper half —
+    REV-LIB-PLATFORM-04's class in `src/`.
+- **CLI and tooling, open:**
+  - (c-pin) the compiled `cyriusly cmdtools` finds the shell twin relative to the CURRENT directory, so inside a
+    repository shipping `scripts/cyriusly` it runs that repository's script — filed
+    `docs/development/issues/2026-10-06-cyriusly-cmdtools-runs-the-cwd-script.md` (the x86_64 store ships no copy of
+    the twin, so it needs a packaging decision, a CVE id and a slot).
+  - (c-lock) `deps --verify` on a CRLF checkout of a COMMITTED `lib/` (`core.autocrlf=true`, Git for Windows' default)
+    reports a hash mismatch for every file — the lock is CRLF-tolerant now, the hashed files are not; today's remedy
+    is `lib/** -text` (and `cyrius.lock -text`) in `.gitattributes`; normalising versus documenting is a decision.
+  - (c-deps) the tag rule refuses C0 and DEL but not UTF-8 C1 (`\xc2\x9b`, a CSI on terminals that honour C1), and
+    recovery advice echoes a tag raw so it can be pasted.
+  - (c-cmd) `cyrius package` prints its `version:` from `./VERSION` (`_project_version()` is the one-line fix, in
+    `cbt/deps.cyr`); `cyrius lint`'s syntax pre-pass reads its compiler capture through a fixed 64 KB buffer (CVE-93's
+    shape on a non-security path).
+  - (c-build) `_try_redirect_to_pinned`'s `CYRIUS_RESOLVED=1` append is not routed through `_cc_child_envp` (harmless
+    today).
+  - (g-gates) `scripts/install.sh`'s `_rs_real`, which `funcgate-stage.sh` copied, leaves a `..` after a missing
+    directory unresolved, so a guard comparing its output can be walked past as CVE-91's was; install.sh writes
+    `build/cycc_win` with a plain `>` (two check.sh runs in one worktree can race on it — the C9 class);
+    `test_runner_bounded.sh` stops at axis 1b under `bash -eo pipefail` (it passes under `sh`, as check.sh runs it —
+    the C7 class); `_chk_home_is_owned`'s header says an unsignalable pid counts as ALIVE, but `kill -0 … 2>/dev/null`
+    treats EPERM as dead.
+  - (g-install) ⚠ the 16 store slots carrying a stale `bin/cybs` (RS-02) are repaired only by `verify-store.sh
+    --restore <v>`, which writes the live store — the maintainer's call; until it runs, the release gate's advisory
+    store step reports 16 BAD.
+  - (d-docs) dead-pid `/tmp/cyrius-<pid>` dirs holding a killed `cyrius check`'s temporaries (non-empty, in `/tmp`
+    rather than `$TMPDIR`) are not reaped by CLN-03.
+- **Stdlib, open:**
+  - (l-hash) `lib/hashmap_fast.cyr`'s same-capacity `_fhm_rehash` (6.6.8) rebuilds into three fresh arrays and never
+    releases the old ones (835,584 B over 3M rounds at 42.7 % live) — filed
+    `docs/development/issues/stdlib-hashmap-fast-same-capacity-rehash-leak.md`; `benches/bench_hashmap.bcyr`'s
+    lookup_hit row measures ten keys aliasing one stack buffer.
+  - (l-net) marking a client `WS_CLOSED` when a write fails after the header is out (NET-03's optional hardening) is
+    not done — the contract stays "a failed frame desynchronises the stream; close"; the other stdlib `# Requires:`
+    headers (atomic, math, str, several per-target peers) are unaudited.
+  - (l-misc) a poisoned underwrite that zeroes all eight bytes below the pointer still decodes as a small plain block
+    (covering it would put a list walk on every plain free).
+- **Not classed as security, by decision:** RPD-04's Win64 write-through (a miscompile of the program's own valid
+  code, not reachable from untrusted input — as 6.6.6 bite 14c's shipped) and REVBE-03's `CYRIUS_SYMS` clobber (the
+  environment is the user's own).
+- **Filing only:** agnodrm's four committed `qemu_repro_*.core` files (Downstream) — removing them is a commit and a
+  release in agnodrm, never a delete in the dep cache.
 
 ## [6.6.19] — 2026-10-06
 
