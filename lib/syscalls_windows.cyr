@@ -440,8 +440,10 @@ fn sys_brk(addr) {
 # worse than a failed op (exactly what CVE-19 closed). `flags` is ignored
 # (Linux getrandom flags have no ProcessPrng analog). See
 # issues/2026-06-11-windows-entropy-primitive.md.
+# The BOOL is masked to 32 bits: EPROCPRNG_PE defines only eax, so a failure whose upper half
+# was dirty would read as success and hand back an unfilled buffer. CHANGELOG [6.6.20]
 fn sys_getrandom(buf, len, flags): i64 {
-    if (syscall(0xF01A, buf, len) != 0) { return len; }
+    if ((syscall(0xF01A, buf, len) & 0xFFFFFFFF) != 0) { return len; }   # BOOL: only eax is defined
     return 0 - 1;
 }
 
