@@ -437,6 +437,7 @@ fn _cmd_use_v2(ver_cstr, is_global): i64 {
     if (load8(ver_cstr) == 0) {
         return _print_resolved_version();
     }
+    if (_cy_version_ok(ver_cstr) == 0) { return _cy_refuse_version(ver_cstr); }   # RS-04, 6.6.20
 
     var home = _cyrius_home();
     var hlen = strlen(home);
@@ -529,6 +530,78 @@ fn _exec_shell(cmd_line): i64 {
     return exec_cmd(cmd_line);
 }
 
+# ⛔ 6.6.20 (RS-04) — A VERSION OPERAND IS A PATH COMPONENT. `uninstall` deletes
+# `<home>/versions/<ver>`, `use` links or pins it, and `install` hands it to install.sh. None of
+# them checked it: `cyriusly uninstall ../versions` printed "Uninstalled Cyrius ../versions",
+# exit 0, and deleted the WHOLE store, the active version included (the active-version guard is
+# a string compare, so `../versions` never equals `6.6.19`); `install` spliced it into a
+# `/bin/sh -c` line. Accepted: a leading digit, then only [0-9A-Za-z.-], no `..` —
+# scripts/version-bump.sh's rule, so every real version passes. The shell twin
+# (scripts/cyriusly) applies the same rule. CHANGELOG [6.6.20]
+fn _cy_version_ok(v): i64 {
+    var c = load8(v);
+    if (c < 48 || c > 57) { return 0; }   # leading digit (also refuses "")
+    var i = 0;
+    while (c != 0) {
+        var ok = 0;
+        if (c >= 48 && c <= 57) { ok = 1; }
+        if (c >= 65 && c <= 90) { ok = 1; }
+        if (c >= 97 && c <= 122) { ok = 1; }
+        if (c == 46 || c == 45) { ok = 1; }   # . -
+        if (ok == 0) { return 0; }
+        if (c == 46 && load8(v + i + 1) == 46) { return 0; }   # '..'
+        i = i + 1;
+        c = load8(v + i);
+    }
+    return 1;
+}
+
+# Refuse `v` by name on stderr. Returns 1 (the verb's exit code).
+fn _cy_refuse_version(v): i64 {
+    _cy_err_tok("cyriusly: not a version: ", v);
+    var why = "  a version names a directory under <home>/versions: a leading digit, then only [0-9A-Za-z.-], no '..' (e.g. 6.6.20)\n";
+    syscall(1, 2, why, strlen(why));
+    return 1;
+}
+
+# Run `args` (a vec of cstrs; args[0] an absolute path) with THIS process's environment — HOME,
+# PATH and CYRIUS_HOME reach install.sh and rm exactly as they did through exec_cmd — and its
+# stdio. The argv is passed as-is: no shell parses an operand. 0..255 = the exit code, -2 = the
+# deadline killed it, -1 = nothing ran. 6.6.20 (RS-04): what install / uninstall run instead of
+# a `/bin/sh -c` line built from the operand.
+fn _cy_run_argv(args): i64 {
+    var n = vec_len(args);
+    var av = alloc((n + 1) * 8);
+    if (av == 0) { return 0 - 1; }
+    var i = 0;
+    while (i < n) {
+        store64(av + i * 8, vec_get(args, i));
+        i = i + 1;
+    }
+    store64(av + n * 8, 0);
+    var envp = _read_environ_envp();
+    if (envp == 0) {
+        envp = alloc(8);
+        if (envp == 0) { return 0 - 1; }
+        store64(envp, 0);
+    }
+    var ppid = sys_getpid();
+    var pid = sys_fork();
+    if (pid < 0) { return 0 - 1; }
+    if (pid == 0) {
+        _proc_child_guard(ppid);
+        sys_execve(vec_get(args, 0), av, envp);
+        sys_exit(127);
+    }
+    var stbuf[4];
+    var reaped = _proc_wait_deadline(pid, &stbuf, proc_timeout_ms());
+    if (reaped == 0) { return 0 - 2; }
+    if (reaped < 0) { return 0 - 1; }
+    var st = load32(&stbuf);
+    if (WIFEXITED(st) == 1) { return WEXITSTATUS(st); }
+    return 0 - 1;
+}
+
 # `cyriusly uninstall <ver>` — remove a version directory.
 # Recursive rm via `rm -rf` shell-out (rmdir-walk is future work).
 fn _cmd_uninstall(ver_cstr): i64 {
@@ -540,6 +613,9 @@ fn _cmd_uninstall(ver_cstr): i64 {
         syscall(1, 2, "Usage: cyriusly uninstall <version>\n", 36);
         return 1;
     }
+    # 6.6.20 (RS-04): BEFORE the active-version guard — that guard is a string compare, and
+    # `../versions` (the whole store) never equals the active version's name.
+    if (_cy_version_ok(ver_cstr) == 0) { return _cy_refuse_version(ver_cstr); }
     # Safety: refuse if active version
     var cur_buf[64];
     _cyrius_current_into(&cur_buf, 64);
@@ -564,14 +640,15 @@ fn _cmd_uninstall(ver_cstr): i64 {
         syscall(1, 1, " not installed.\n", 16);
         return 0;
     }
-    # Shell out for recursive rm (native recursive-rm helper is future
-    # work — file walk + sys_unlink + sys_rmdir is straightforward but
-    # not the highest-priority next port). Build "rm -rf <path>" and exec.
-    var cmd = alloc(hlen + vlen + 32);
-    memcpy(cmd, "rm -rf ", 7);
-    memcpy(cmd + 7, ver_dir, hlen + 10 + vlen);
-    store8(cmd + 7 + hlen + 10 + vlen, 0);
-    var rc = _exec_shell(cmd);
+    # Recursive rm through `rm` itself (a native walk is future work). 6.6.20 (RS-04): as ARGV —
+    # the shell script is a constant and the directory is its `$1`, so no shell parses the path.
+    var rm_args = vec_new();
+    vec_push(rm_args, "/bin/sh");
+    vec_push(rm_args, "-c");
+    vec_push(rm_args, "exec rm -rf -- \"$1\"");
+    vec_push(rm_args, "cyriusly-uninstall");
+    vec_push(rm_args, ver_dir);
+    var rc = _cy_run_argv(rm_args);
     if (rc != 0) {
         syscall(1, 2, "error: rm -rf failed\n", 21);
         return 1;
@@ -594,20 +671,21 @@ fn _cmd_install(ver_cstr): i64 {
         syscall(1, 2, "Usage: cyriusly install <version>\n", 34);
         return 1;
     }
+    if (_cy_version_ok(ver_cstr) == 0) { return _cy_refuse_version(ver_cstr); }   # RS-04, 6.6.20
     var vlen = strlen(ver_cstr);
     syscall(1, 1, "Installing Cyrius ", 18);
     syscall(1, 1, ver_cstr, vlen);
     syscall(1, 1, "...\n", 4);
-    # Build: curl -sSf URL | CYRIUS_VERSION=<ver> sh
-    var cmd_pre = "curl -sSf https://raw.githubusercontent.com/MacCracken/cyrius/main/scripts/install.sh | CYRIUS_VERSION=";
-    var pre_len = strlen(cmd_pre);
-    var cmd_suf = " sh";
-    var cmd = alloc(pre_len + vlen + 4);
-    memcpy(cmd, cmd_pre, pre_len);
-    memcpy(cmd + pre_len, ver_cstr, vlen);
-    memcpy(cmd + pre_len + vlen, " sh", 3);
-    store8(cmd + pre_len + vlen + 3, 0);
-    return _exec_shell(cmd);
+    # curl -sSf URL | CYRIUS_VERSION=<ver> sh — 6.6.20 (RS-04): the pipeline is a CONSTANT script
+    # and the URL and version are its `$1` / `$2`; the operand was spliced into this line before.
+    var in_args = vec_new();
+    vec_push(in_args, "/bin/sh");
+    vec_push(in_args, "-c");
+    vec_push(in_args, "curl -sSf \"$1\" | CYRIUS_VERSION=\"$2\" sh");
+    vec_push(in_args, "cyriusly-install");
+    vec_push(in_args, "https://raw.githubusercontent.com/MacCracken/cyrius/main/scripts/install.sh");
+    vec_push(in_args, ver_cstr);
+    return _cy_run_argv(in_args);
 }
 
 # `cyriusly update` — check GitHub releases API for latest tag.

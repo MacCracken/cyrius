@@ -7,6 +7,20 @@ CYRIUS_HOME="${CYRIUS_HOME:-$HOME/.cyrius}"
 
 current() { cat "$CYRIUS_HOME/current" 2>/dev/null || echo "none"; }
 
+# 6.6.20 (RS-04): a version operand is a path component — `uninstall` deletes
+# "$CYRIUS_HOME/versions/$2", `use` links it, `install` fetches the tag it names. None of them
+# checked it, so `cyriusly uninstall ../versions` deleted the WHOLE store, the active version
+# included (the active-version guard is a string compare). Same rule as programs/cyriusly.cyr
+# and scripts/version-bump.sh: a leading digit, then only [0-9A-Za-z.-], no `..`.
+need_version() {   # need_version <operand> — exits 1 naming it unless it is a version
+    case "$1" in
+        ''|*[!0-9A-Za-z.-]*|[!0-9]*|*..*)
+            echo "cyriusly: not a version: '$1'" >&2
+            echo "  a version names a directory under <home>/versions: a leading digit, then only [0-9A-Za-z.-], no '..' (e.g. 6.6.20)" >&2
+            exit 1 ;;
+    esac
+}
+
 # v6.6.6: replace each link IN PLACE — never remove the live one first, and both or neither.
 #
 # ⛔ `rm -rf "$CYRIUS_HOME/bin" "$CYRIUS_HOME/lib"` + two `ln -sf` left the user with NO
@@ -61,6 +75,7 @@ case "${1:-help}" in
 
     use)
         [ -z "$2" ] && echo "Usage: cyriusly use <version>" && exit 1
+        need_version "$2"
         [ ! -d "$CYRIUS_HOME/versions/$2" ] && echo "Version $2 not installed." && exit 1
         # v6.6.6: links FIRST, then `current` — `current` names the version the links serve, so
         # writing it first published a version the links might never reach — and say nothing
@@ -75,6 +90,7 @@ case "${1:-help}" in
 
     install)
         [ -z "$2" ] && echo "Usage: cyriusly install <version>" && exit 1
+        need_version "$2"
         echo "Installing Cyrius $2..."
         # CYRIUS_VERSION must be set on the `sh` invocation (the
         # consumer of install.sh's env), not on `curl` (whose env
@@ -185,6 +201,7 @@ case "${1:-help}" in
 
     uninstall)
         [ -z "$2" ] && echo "Usage: cyriusly uninstall <version>" && exit 1
+        need_version "$2"   # before the active-version guard: `../versions` never equals it
         cur=$(current)
         if [ "$2" = "$cur" ]; then
             echo "Cannot uninstall active version. Switch first: cyriusly use <other>"
