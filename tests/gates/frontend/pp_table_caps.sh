@@ -225,6 +225,17 @@ accept "one-parameter macro, an empty argument" one0.cyr 7
 printf '#define ADD(a, b) (a + b)\nfn g(p, q) { return p * q; }\nvar x = ADD(g(2, 3), 4);\nvar y = ADD(1,\n2);\nsyscall(60, x + y);\n' > "$WORK/nestwrap.cyr"
 accept "nested call and wrapped call keep their counts" nestwrap.cyr 13
 
+# Integration rows (6.6.20 merge of s-ppcaps x s-pplex): the macro table finds the NAME after a
+# run of blanks, as PP_PASS does since the TAB-separator fix — PP_MACRO_SLOT and
+# PP_DEFINE_INCLUDED used to assume `#define ` plus one space.
+printf '#define\tTF(x) (x + 1)\nvar x = TF(6);\nsyscall(60, x);\n' > "$WORK/tabdef.cyr"
+accept "function-like #define after a TAB" tabdef.cyr 7
+printf '#define TF(x) x\n#define\tTF(y) y\nvar x = TF(7);\nsyscall(60, x);\n' > "$WORK/tabredef.cyr"
+refuse "function-like redefinition after a TAB" tabredef.cyr "<source>:2:1: function-like macro 'TF' is already defined"
+printf '#define\tINCF(x) x\n' > "$WORK/tabinc_r.cyr"
+printf 'include "tabinc_r.cyr"\nvar x = 1;\nsyscall(60, x);\n' > "$WORK/tabinc.cyr"
+refuse "function-like macro after a TAB in an included file" tabinc.cyr "tabinc_r.cyr:1:1: function-like macro 'INCF' is defined in an included file"
+
 if [ "$NFAIL" != 0 ]; then
     echo "FAIL: pp_table_caps: $NFAIL failure(s) across $NROWS rows"
     exit 1
