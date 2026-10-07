@@ -2654,12 +2654,34 @@ fn EPOPARG(S, n): i64 {
     return 0;
 }
 
+# x16 = v, for an offset or stack adjustment no immediate field reaches (0 <= v < 2^32).
+# x16 (IP0) is a scratch the allocator never holds a value in (see EADDRA_IMM).
+fn _EMOV_X16(S, v): i64 {
+    EW(S, 0xD2800010 | ((v & 0xFFFF) << 5));                 # movz x16, #(v & 0xFFFF)
+    var hi = (v >> 16) & 0xFFFF;
+    if (hi != 0) { EW(S, 0xF2A00010 | (hi << 5)); }          # movk x16, #hi, LSL #16
+    return 0;
+}
+
 # Pop args into registers for function call
 # v6.0.57: ldr/str xN, [sp, #imm] (unsigned offset, 64-bit; imm a multiple of
-# 8). For the >6-arg ECALLPOPS memory-shuffle — loads/stores WITHOUT moving sp,
-# so it handles any arg count (the 12-bit scaled imm reaches ~32 KB).
-fn ELDR_SP(S, reg, imm): i64 { EW(S, 0xF94003E0 | ((imm / 8) << 10) | reg); return 0; }
-fn ESTR_SP(S, reg, imm): i64 { EW(S, 0xF90003E0 | ((imm / 8) << 10) | reg); return 0; }
+# 8). For the >6-arg ECALLPOPS memory-shuffle — loads/stores WITHOUT moving sp.
+# The scaled imm12 reaches 32760, i.e. a call of 2048 args; past that the old
+# single form carried the offset into the opc bits (an `ldr` became a prefetch),
+# so a wider call reads its offset into x16 and uses the register-offset form.
+# CHANGELOG [6.6.20]
+fn ELDR_SP(S, reg, imm): i64 {
+    if (imm <= 32760) { EW(S, 0xF94003E0 | ((imm / 8) << 10) | reg); return 0; }
+    _EMOV_X16(S, imm);
+    EW(S, 0xF8706BE0 | reg);                                 # ldr xREG, [sp, x16]
+    return 0;
+}
+fn ESTR_SP(S, reg, imm): i64 {
+    if (imm <= 32760) { EW(S, 0xF90003E0 | ((imm / 8) << 10) | reg); return 0; }
+    _EMOV_X16(S, imm);
+    EW(S, 0xF8306BE0 | reg);                                 # str xREG, [sp, x16]
+    return 0;
+}
 
 fn ECALLPOPS(S, n): i64 {
     if (n <= 6) {
@@ -2694,12 +2716,28 @@ fn ECALLPOPS(S, n): i64 {
     return 0;
 }
 
-# Stack cleanup after call with >6 args
+# Stack cleanup after call with >6 args: add sp, sp, #(nextra * 16).
+# ⛔ 6.6.20 — this was ONE `add sp, sp, #imm12` with nothing guarding the
+# immediate, so from 262 args ((262-6)*16 = 4096) the carry landed in the
+# LSL #12 bit: `add sp, sp, #0, lsl #12` at 262 (sp never restored — a looped
+# call walked off the stack), +64 KiB instead of +4112 at 263, and from 519 args
+# the carry reached the opcode (SIGILL). Silent until something touched the
+# displaced sp. Split the way EPATCHFRAME / EADDRA_IMM are. Every call shape
+# (direct, callptr, method, operator, tail-call fallback) unwinds here.
+# CHANGELOG [6.6.20]
 fn ECALLCLEAN(S, n): i64 {
     if (n > 6) {
-        # add sp, sp, #(nextra * 16)
         var extra = (n - 6) * 16;
-        EW(S, 0x910003FF | (extra << 10));  # add sp, sp, #imm12
+        if (extra < 4096) {
+            EW(S, 0x910003FF | (extra << 10));                    # add sp, sp, #extra
+        } elif (extra <= 0xFFFFFF) {
+            EW(S, 0x914003FF | (((extra >> 12) & 0xFFF) << 10));  # add sp, sp, #hi, LSL #12
+            var lo = extra & 0xFFF;
+            if (lo != 0) { EW(S, 0x910003FF | (lo << 10)); }      # add sp, sp, #lo
+        } else {
+            _EMOV_X16(S, extra);
+            EW(S, 0x8B3063FF);                                    # add sp, sp, x16
+        }
     }
     return 0;
 }
@@ -2763,8 +2801,14 @@ fn ESTORESTACKPARM(S, pidx, disp, pc): i64 {
     var nstack = pc - 6;
     var si = nstack - 1 - (pidx - 6);
     var soff = 16 + si * 16;
-    # ldr x9, [x29, #soff]   (soff positive, LDR imm12*8 range — 32760 max)
-    EW(S, 0xF94003A9 | ((soff / 8) << 10));
+    if (soff <= 32760) {
+        EW(S, 0xF94003A9 | ((soff / 8) << 10));   # ldr x9, [x29, #soff] (scaled imm12)
+    } else {
+        # 6.6.20 — past 32760 (a fn of 2054+ params) the scaled imm12 carried into
+        # the opc bits; read the offset into x16. CHANGELOG [6.6.20]
+        _EMOV_X16(S, soff);
+        EW(S, 0xF8706BA9);                        # ldr x9, [x29, x16]
+    }
     if (disp >= 0 - 256) {
         var off9 = disp & 0x1FF;
         EW(S, 0xF80003A9 | (off9 << 12));  # stur x9, [x29, #disp]
