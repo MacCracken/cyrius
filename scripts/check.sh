@@ -2184,6 +2184,16 @@ _chk_gate "$ROOT/tests/gates/platform/pe_last_error_reroute.sh"
 # mutant self-test. The values are pinned on cass by tests/tcyr/crossos/fd_wait_ready.tcyr.
 _chk_gate "$ROOT/tests/gates/platform/pe_wsa_lasterr_masked.sh"
 
+# 6.6.20 (sec-pe SEC-08, CVE-TBD) — on Windows a System32 program is started by its absolute
+# GetSystemDirectoryW path, never by a bare name: CreateProcessW searches the PARENT'S CURRENT
+# DIRECTORY before System32, so a cmd.exe committed to a checkout ran on every `cyrius build` and a
+# committed certutil.exe forged `deps --lock`'s hashes (measured on cass). Axis 0 (static): no
+# lib/ or cbt/ literal starts a command line with a bare System32 name. Axes 1-4 (wine; plant
+# beside the caller — wine does not search the cwd): build, test, capacity, deps --lock and the
+# stdlib's exec_cmd / _win_compile_spawn never run the plant. The cwd vector itself is graded on
+# real Windows by tests/tcyr/crossos/system_programs_not_from_cwd.tcyr. Whole-gate SKIP is exit 77.
+_chk_gate "$ROOT/tests/gates/platform/pe_system_programs_absolute.sh"
+
 _chk_gate "$ROOT/tests/gates/platform/process_errno_constants_every_target.sh"
 
 # 6.6.18 (XLAT-1) — aarch64 folds a literal syscall number's ESYSXLAT chain at compile time (no

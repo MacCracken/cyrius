@@ -82,6 +82,74 @@ fn _w_cmdbuf(nchars): i64 {
     return alloc(need);
 }
 
+# ⛔ 6.6.20 (CVE-TBD) — A SYSTEM PROGRAM IS STARTED BY ITS ABSOLUTE PATH, NEVER BY A BARE NAME.
+# CreateProcessW with no lpApplicationName resolves a bare first token by SEARCHING, and the
+# documented order visits the PARENT'S CURRENT DIRECTORY before System32 (the caller's own
+# directory, the current directory, the system directories, then PATH). Every Windows
+# `cyrius build` started `cmd /s /c …` that way from inside the project, so a `cmd.exe`
+# committed to a checkout ran on its first build, and a committed `certutil.exe` wrote the
+# hashes `cyrius deps --lock` recorded. Measured on cass (Windows 11): both ran. Wine does not
+# search the current directory — no gate could see it there — but it does search the caller's
+# own directory, which is where tests/gates/platform/pe_system_programs_absolute.sh plants.
+# `_win_sys_exe` gives `"<GetSystemDirectoryW>\<name>"`, quoted, as the command line's first
+# token: a token with a directory in it is never searched for. There is no PE reroute for
+# GetSystemDirectoryW; it is resolved through GetModuleHandleA / GetProcAddress (0xF013 /
+# 0xF014) and called with callptr, as cbt/ calls SetEnvironmentVariableA. CHANGELOG [6.6.20]
+var _win_sysdir_s = 0;
+
+# The system directory (`C:\WINDOWS\system32`) as a narrow string, cached. 0 when it cannot be
+# read or is not a drive-rooted printable-ASCII path — the callers refuse; none falls back to
+# the bare name.
+fn _win_sysdir(): i64 {
+    if (_win_sysdir_s != 0) { return _win_sysdir_s; }
+    var k32 = syscall(0xF013, "kernel32.dll");                  # GetModuleHandleA
+    if (k32 == 0) { return 0; }
+    var gsd = syscall(0xF014, k32, "GetSystemDirectoryW");     # GetProcAddress
+    if (gsd == 0) { return 0; }
+    var wb[528];                                                # 264 WCHARs: MAX_PATH + slack
+    var n = callptr(gsd, &wb, 260) & 0xFFFFFFFF;               # UINT: WCHARs, NUL excluded
+    if (n < 3 || n >= 260) { return 0; }                        # failed, or did not fit
+    var s = alloc(n + 1);
+    if (s == 0) { return 0; }
+    var i = 0;
+    while (i < n) {
+        var c = load16(&wb + i * 2);
+        if (c < 32 || c > 126 || c == 34) { return 0; }         # quoted below: no `"`
+        store8(s + i, c);
+        i = i + 1;
+    }
+    store8(s + n, 0);
+    var d = load8(s) | 32;
+    if (d < 97 || d > 122 || load8(s + 1) != 58 || load8(s + 2) != 92) { return 0; }   # `X:\`
+    _win_sysdir_s = s;
+    return s;
+}
+
+# `"<system directory>\<name>"` — a System32 program's quoted absolute path, for the first
+# token of a command line — or 0 after a NAMED refusal (the caller fails closed).
+fn _win_sys_exe(name): i64 {
+    var sd = _win_sysdir();
+    if (sd == 0) {
+        var m1 = "error: could not read the Windows system directory (GetSystemDirectoryW); refusing to start ";
+        sys_write(2, m1, strlen(m1));
+        sys_write(2, name, strlen(name));
+        var m2 = " by a bare name, which Windows would look for in the current directory first\n";
+        sys_write(2, m2, strlen(m2));
+        return 0;
+    }
+    var sl = strlen(sd);
+    var nl = strlen(name);
+    var p = alloc(sl + nl + 4);
+    if (p == 0) { return 0; }
+    store8(p, 34);
+    memcpy(p + 1, sd, sl);
+    store8(p + 1 + sl, 92);
+    memcpy(p + 2 + sl, name, nl);
+    store8(p + 2 + sl + nl, 34);
+    store8(p + 3 + sl + nl, 0);
+    return p;
+}
+
 # Build a writable UTF-16LE command line "cmd [arg1 [arg2]]" on the heap.
 # (CreateProcessW may modify lpCommandLine in place, so it must be writable
 # heap, never a read-only literal.) Returns the buffer pointer, 0 when the heap is exhausted
@@ -507,15 +575,18 @@ fn _win_wait_tree(pi, ms, killed_out): i64 {
 # fork/dup2/execve, so we hand the redirect to cmd.exe via CreateProcessW.
 # `cmd /s /c "<inner>"` strips ONLY the outermost quote pair (the /s rule), so
 # the inner per-path quotes + the `<` / `>` operators reach cmd intact:
-#   cmd /s /c ""C:\...\cycc.exe" < "src.cyr" > "out.exe""
-# Writes directly to `output` (SYS_RENAME is not a PE reroute, so the POSIX
-# atomic tmp+rename can't be used here). Returns the child exit code; 1 if the
-# spawn itself fails.
+#   "C:\WINDOWS\system32\cmd.exe" /s /c ""C:\...\cycc.exe" < "src.cyr" > "out.exe""
+# (cmd.exe by its absolute path — `_win_sys_exe`, 6.6.20). Writes directly to `output`
+# (SYS_RENAME is not a PE reroute, so the POSIX atomic tmp+rename can't be used here).
+# Returns the child exit code; 1 if the spawn itself fails.
 fn _win_compile_spawn(cc, source, output): i64 {
-    var wbuf = _w_cmdbuf(strlen(cc) + strlen(source) + strlen(output));
+    var ce = _win_sys_exe("cmd.exe");
+    if (ce == 0) { return 1; }
+    var wbuf = _w_cmdbuf(strlen(ce) + strlen(cc) + strlen(source) + strlen(output));
     if (wbuf == 0) { return 1; }
     var o = 0;
-    o = _w_append_cstr(wbuf, o, "cmd /s /c \"\"");
+    o = _w_append_cstr(wbuf, o, ce);
+    o = _w_append_cstr(wbuf, o, " /s /c \"\"");
     o = _w_append_cstr(wbuf, o, cc);
     o = _w_append_cstr(wbuf, o, "\" < \"");
     o = _w_append_cstr(wbuf, o, source);
@@ -744,11 +815,21 @@ fn exec_env_str(args, env): i64 {
 # bare first token via CreateProcessW directly — shell metacharacters became
 # literal argv and nothing piped. See CHANGELOG; mirrors the POSIX
 # /bin/sh -c fix in lib/process.cyr.
+# 6.6.20 (CVE-TBD): cmd.exe by its absolute path (`_win_sys_exe`), and the command runs with
+# NoDefaultCurrentDirectoryInExePath set, so cmd's OWN search for a bare program in `cmdline`
+# (`git tag …` from `cyrius publish`) skips the current directory as /bin/sh does — measured on
+# cass: a planted `.\git.exe`-shaped program ran without it and "is not recognized" with it. An
+# explicit `.\prog` still runs. `set` sits before the `&` with NO space (a space would be part
+# of the value).
 fn exec_cmd(cmdline): i64 {
-    var wbuf = _w_cmdbuf(strlen(cmdline));
+    var ce = _win_sys_exe("cmd.exe");
+    if (ce == 0) { return 0 - 1; }
+    var pre = " /s /c \"set NoDefaultCurrentDirectoryInExePath=1& ";
+    var wbuf = _w_cmdbuf(strlen(ce) + strlen(pre) + strlen(cmdline));
     if (wbuf == 0) { return 0 - 1; }
     var o = 0;
-    o = _w_append_cstr(wbuf, o, "cmd /s /c \"");
+    o = _w_append_cstr(wbuf, o, ce);
+    o = _w_append_cstr(wbuf, o, pre);
     o = _w_append_cstr(wbuf, o, cmdline);
     o = _w_append_cstr(wbuf, o, "\"");
     _w_terminate(wbuf, o);

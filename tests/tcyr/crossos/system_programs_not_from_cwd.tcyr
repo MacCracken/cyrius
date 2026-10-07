@@ -1,0 +1,191 @@
+# system_programs_not_from_cwd.tcyr — CROSS-HOST: a spawn of a SYSTEM program never runs a copy
+# the current directory planted. Runs on cass (Windows PE) through the release gate's cross-OS leg,
+# which selects this DIRECTORY; on ecb / ach / pi it pins only exec_cmd's exit status.
+#
+# ⛔ WHY (6.6.20, CVE-TBD). On Windows `exec_cmd` and every compile spawn started `cmd /s /c …` by
+# its BARE name, and CreateProcessW resolves a bare name by searching the parent's CURRENT
+# DIRECTORY before System32 — so a `cmd.exe` committed to a checkout ran on its first
+# `cyrius build`, and a committed `certutil.exe` chose `cyrius deps --lock`'s hashes. Measured on
+# cass; WINE CANNOT SHOW IT (its CreateProcess does not search the current directory), which is why
+# this file is in crossos/: the cass leg is the only run that can. cmd.exe is now named by its
+# GetSystemDirectoryW path (`_win_sys_exe`, lib/process_win.cyr), and `exec_cmd` runs its command
+# with NoDefaultCurrentDirectoryInExePath set, so cmd's OWN search for a bare program in the command
+# skips the current directory too, as /bin/sh does.
+#
+# THE MECHANISM: the test copies ITSELF into a scratch directory under the names a bare spawn would
+# look for (`cmd.exe`, `zzspplant.exe`), enters that directory, and runs `exec_cmd`. A copy knows
+# it is one by its own module file name and exits 42 at once, so "the planted copy ran" cannot read
+# as "the system program ran". Nothing is left behind: the copies and the directory are removed
+# before any assertion is graded.
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/io.cyr"
+include "lib/syscalls.cyr"
+include "lib/vec.cyr"
+include "lib/str.cyr"
+include "lib/args.cyr"
+include "lib/tagged.cyr"
+include "lib/process.cyr"
+
+#ifdef CYRIUS_TARGET_WIN
+# This executable's own full path, narrowed (GetModuleFileNameW). 0 when it cannot be read.
+fn _sp_self(): i64 {
+    var wb = alloc(4 * 2048 + 8);
+    var dst = alloc(4 * 2048 + 8);
+    if (wb == 0 || dst == 0) { return 0; }
+    var n = sys_self_exe_w(wb, 2048) & 0xFFFFFFFF;
+    if (n == 0 || n >= 2048) { return 0; }
+    store8(wb + n * 2, 0);
+    store8(wb + n * 2 + 1, 0);
+    _args_w2u8(wb, dst, 4 * 2048);
+    return dst;
+}
+
+# 1 when the last path component of `p` is `name`, ASCII case-insensitively.
+fn _sp_base_is(p, name): i64 {
+    var n = strlen(p);
+    var b = n;
+    while (b > 0) {
+        var c = load8(p + b - 1);
+        if (c == 92 || c == 47) { break; }
+        b = b - 1;
+    }
+    var nl = strlen(name);
+    if (n - b != nl) { return 0; }
+    var i = 0;
+    while (i < nl) {
+        if ((load8(p + b + i) | 32) != (load8(name + i) | 32)) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+
+# SetCurrentDirectoryA — no PE reroute (sys_chdir declines on PE), so by GetProcAddress.
+fn _sp_chdir(dir): i64 {
+    var k32 = syscall(0xF013, "kernel32.dll");
+    if (k32 == 0) { return 0; }
+    var f = syscall(0xF014, k32, "SetCurrentDirectoryA");
+    if (f == 0) { return 0; }
+    return callptr(f, dir) & 0xFFFFFFFF;
+}
+
+# 1 under wine: its ntdll exports wine_get_version, which no Windows ntdll has. Wine's cmd
+# searches the current directory but ignores NoDefaultCurrentDirectoryInExePath (measured, wine
+# 11.19), and its CreateProcess does not search the current directory at all — so under wine the
+# planted rows cannot discriminate and the bare-program row cannot pass; real Windows grades them.
+fn _sp_is_wine(): i64 {
+    var nt = syscall(0xF013, "ntdll.dll");
+    if (nt == 0) { return 0; }
+    if (syscall(0xF014, nt, "wine_get_version") != 0) { return 1; }
+    return 0;
+}
+
+# Clear `name` from this process's environment (SetEnvironmentVariableA(name, NULL)), so a value
+# the runner's environment already carried cannot pass a row that exec_cmd itself must earn.
+fn _sp_unsetenv(name): i64 {
+    var k32 = syscall(0xF013, "kernel32.dll");
+    if (k32 == 0) { return 0; }
+    var f = syscall(0xF014, k32, "SetEnvironmentVariableA");
+    if (f == 0) { return 0; }
+    return callptr(f, name, 0) & 0xFFFFFFFF;
+}
+
+# A planted copy: say so with the exit code and do nothing else.
+var _sp_me = _sp_self();
+if (_sp_me != 0) {
+    if (_sp_base_is(_sp_me, "cmd.exe") == 1 || _sp_base_is(_sp_me, "zzspplant.exe") == 1) { syscall(60, 42); }
+}
+
+fn _sp_join(a, b): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, a);
+    str_builder_add_cstr(sb, "\\");
+    str_builder_add_cstr(sb, b);
+    return str_data(str_builder_build(sb));
+}
+
+fn test_pe(): i64 {
+    test_group("Windows: cmd.exe is named by its System32 path");
+    var ce = _win_sys_exe("cmd.exe");
+    assert(ce != 0, "_win_sys_exe resolved cmd.exe");
+    if (ce == 0) { return 0; }
+    var cl = strlen(ce);
+    assert(load8(ce) == 34 && load8(ce + cl - 1) == 34, "the path is quoted for the command line");
+    assert(_sp_base_is(ce, "cmd.exe\"") == 1, "…and ends in \\cmd.exe");
+    var bare = alloc(cl);
+    memcpy(bare, ce + 1, cl - 2);
+    store8(bare + cl - 2, 0);
+    assert(load8(bare + 1) == 58 && load8(bare + 2) == 92, "…drive-rooted (X:\\)");
+    assert(file_exists(bare) == 1, "…and that file exists");
+
+    test_group("Windows: a planted cmd.exe / bare program in the current directory never runs");
+    assert(_sp_me != 0, "read this test's own path");
+    if (_sp_me == 0) { return 0; }
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "_sp_plant_");
+    str_builder_add_int(sb, sys_getpid());
+    var dir = str_data(str_builder_build(sb));
+    var p_cmd = _sp_join(dir, "cmd.exe");
+    var p_zz = _sp_join(dir, "zzspplant.exe");
+    sys_mkdir(dir, 0x1ED);
+    var n = 0;
+    var img = file_read_whole(_sp_me, &n);
+    var w1 = 0 - 1;
+    var w2 = 0 - 1;
+    if (img != 0) {
+        w1 = file_write_all(p_cmd, img, n);
+        w2 = file_write_all(p_zz, img, n);
+    }
+    var staged = 0;
+    if (img != 0 && w1 == n && w2 == n) { staged = 1; }
+    var rc1 = 0 - 100;
+    var rc2 = 0 - 100;
+    var rc3 = 0 - 100;
+    var rc4 = 0 - 100;
+    var entered = 0;
+    _sp_unsetenv("NoDefaultCurrentDirectoryInExePath");
+    if (staged == 1) { entered = _sp_chdir(dir); }
+    if (entered != 0) {
+        rc1 = exec_cmd("exit /b 3");
+        rc2 = exec_cmd("zzspplant");
+        rc3 = exec_cmd(".\\zzspplant.exe");
+        rc4 = exec_cmd("if defined NoDefaultCurrentDirectoryInExePath (exit /b 5) else (exit /b 6)");
+        _sp_chdir("..");
+    }
+    sys_unlink(p_cmd);
+    sys_unlink(p_zz);
+    sys_rmdir(dir);
+    assert(staged == 1, "staged two copies of this test in a scratch directory");
+    assert(entered != 0, "entered the scratch directory");
+    assert_eq(rc1, 3, "exec_cmd ran the System32 cmd.exe (42 = the directory's planted cmd.exe ran)");
+    assert_eq(rc4, 5, "exec_cmd's command runs with NoDefaultCurrentDirectoryInExePath set");
+    if (_sp_is_wine() == 0) {
+        assert(rc2 != 42, "cmd's own search for a bare program skipped the current directory");
+        assert(rc2 > 0, "…and reported it not found (a failure status, not a run)");
+    } else {
+        assert(1 == 1, "under wine: its cmd ignores the switch — the cass leg grades the bare-program row");
+    }
+    assert_eq(rc3, 42, "an explicit .\\prog still runs (the planted copy reports 42)");
+    assert_eq(file_exists(dir), 0, "the scratch directory was removed");
+    return 0;
+}
+#endif
+
+#ifndef CYRIUS_TARGET_WIN
+fn test_posix(): i64 {
+    test_group("POSIX: exec_cmd reports the shell's own status");
+    assert_eq(exec_cmd("exit 3"), 3, "exec_cmd(\"exit 3\") returns 3");
+    return 0;
+}
+#endif
+
+#ifdef CYRIUS_TARGET_WIN
+test_pe();
+#endif
+#ifndef CYRIUS_TARGET_WIN
+test_posix();
+#endif
+var r = assert_summary();
+syscall(60, r);
