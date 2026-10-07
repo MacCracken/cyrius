@@ -1129,7 +1129,8 @@ var _cc_stderr_to = 0;
 # the compiler and the target per compile. When `_cc_override` is non-zero compile() runs that
 # binary instead of current_cc(); when `_cc_target_env` is non-zero the child's environment is
 # ours MINUS every target selector (CYRIUS_TARGET_WIN/EFI/AGNOS, CYRIUS_MACHO, CYRIUS_MACHO_ARM),
-# PLUS `_cc_target_env` itself unless it is "". Stripping is the point: B09 made every child
+# with `_cc_target_env` itself FIRST unless it is "" (`_cc_child_envp`; 6.6.20 — it was appended,
+# so past 8 KiB of environment every target verified as Linux). Stripping is the point: B09 made every child
 # inherit the whole environment, so a CYRIUS_TARGET_WIN=1 left in a shell would otherwise turn
 # the "x86_64-linux" compile into a PE one. Both are opt-in and reset by the caller. POSIX
 # arm only — the verify refuses to run on any other host. CHANGELOG [6.6.11]
@@ -1153,21 +1154,85 @@ fn _cc_env_is_target(e): i64 {
     return 0;
 }
 
-# `_envp` without its target selectors, plus `tv` when it is not "". A fresh NULL-terminated array.
-fn _cc_env_retarget(tv): i64 {
+# 6.6.20 — the flag-driven entries compile() injects into the compiler child's environment,
+# pushed onto `inj` in order; answers 1 when one of them selects the TARGET (--win, --agnos, a
+# bare-metal --target), so the inherited target selectors must go (`_cc_child_envp`).
+#   --strict-pin  CYRIUS_STRICT_PIN=1: cycc's pin-drift check fails instead of warning (v5.11.58,
+#                 the CI gating path).
+#   --agnos       CYRIUS_TARGET_AGNOS=1 (v6.0.49);  --win  CYRIUS_TARGET_WIN=1, a PE32+ (v6.0.52).
+#                 Distinct emit targets — do not combine.
+#   --poison      CYRIUS_POISON=1 (v6.5.29, fuzz);  --pie  CYRIUS_PIE=1 (v6.6.5).
+#   dce           CYRIUS_DCE=1 from `[build] dce` / `--dce` (6.6.17) — only when the resolved value
+#                 did not come FROM the environment, which the child then inherits as it is.
+#   bare metal    CYRIUS_KERNEL=1 + CYRIUS_ELF64_KERNEL=1, and CYRIUS_KERNEL_BASE from
+#                 `[sections] base` (v6.3.3 #5).
+fn _cc_child_inject(inj): i64 {
+    var tgt = 0;
+    if (_cfg_dce_inject == 1) { vec_push(inj, "CYRIUS_DCE=1"); }
+    if (_strict_pin == 1) { vec_push(inj, "CYRIUS_STRICT_PIN=1"); }
+    if (_agnos_target == 1) { vec_push(inj, "CYRIUS_TARGET_AGNOS=1"); tgt = 1; }
+    if (_win_target == 1) { vec_push(inj, "CYRIUS_TARGET_WIN=1"); tgt = 1; }
+    if (_poison_mode == 1) { vec_push(inj, "CYRIUS_POISON=1"); }
+    if (_pie_target == 1) { vec_push(inj, "CYRIUS_PIE=1"); }
+    if (_baremetal_target == 1) {
+        vec_push(inj, "CYRIUS_KERNEL=1");
+        vec_push(inj, "CYRIUS_ELF64_KERNEL=1");
+        if (_section_base_env_ptr != 0) { vec_push(inj, _section_base_env_ptr); }
+        tgt = 1;
+    }
+    return tgt;
+}
+
+# 6.6.20 — THE compiler child's environment, for every POSIX compile: the injected entries
+# (`inj`, a vec of "NAME=value" cstrs) FIRST, then each inherited entry that no injected entry
+# names and — when `strip_tgt` is 1 — that is not a target selector. Answers `_envp` itself
+# when there is nothing to inject or strip; otherwise a fresh NULL-terminated array.
+# ⚠ FIRST is the fix, not a nicety. cycc takes the FIRST entry of a name, and its Linux
+# `_read_env` sees only the first 8191 bytes of the environment, so the old APPENDED entries
+# lost twice: an inherited CYRIUS_TARGET_WIN=0 / CYRIUS_PIE=0 / CYRIUS_STRICT_PIN=0 beat
+# `--win` / `--pie` / `--strict-pin`, and past 8 KiB of environment every injected entry was
+# invisible — `cyrius build --win` wrote an ELF named .exe and `--strict-pin` only warned,
+# rc 0 both. Dropping same-NAME inherited entries is hygiene on top (6.6.17 did it for
+# CYRIUS_DCE alone), and stripping the selectors stops an inherited CYRIUS_MACHO=1 turning
+# `--win` into a Mach-O. Two builders (this block and the distlib verify's retarget, which
+# also appended) are now this one. CHANGELOG [6.6.20]
+fn _cc_child_envp(inj, strip_tgt): i64 {
+    var ni = vec_len(inj);
+    if (ni == 0 && strip_tgt == 0) { return _envp; }
     var n = 0;
     while (load64(_envp + n * 8) != 0) { n = n + 1; }
-    var out = alloc((n + 2) * 8);
+    var out = alloc((ni + n + 1) * 8);
     var o = 0;
+    while (o < ni) { store64(out + o * 8, vec_get(inj, o)); o = o + 1; }
     var i = 0;
     while (i < n) {
         var e = load64(_envp + i * 8);
-        if (_cc_env_is_target(e) == 0) { store64(out + o * 8, e); o = o + 1; }
+        if (_cc_env_keep(e, inj, strip_tgt) == 1) { store64(out + o * 8, e); o = o + 1; }
         i = i + 1;
     }
-    if (strlen(tv) > 0) { store64(out + o * 8, tv); o = o + 1; }
     store64(out + o * 8, 0);
     return out;
+}
+
+# 1 when the inherited entry `e` survives into the compiler child (see `_cc_child_envp`).
+fn _cc_env_keep(e, inj, strip_tgt): i64 {
+    if (strip_tgt == 1 && _cc_env_is_target(e) == 1) { return 0; }
+    var i = 0;
+    while (i < vec_len(inj)) {
+        if (_cc_env_same_name(e, vec_get(inj, i)) == 1) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+
+# 1 when env entries `e` and `f` set the same NAME: `f`'s bytes up to and including its '='
+# begin `e`. An `f` with no '=' names nothing.
+fn _cc_env_same_name(e, f): i64 {
+    var k = 0;
+    while (load8(f + k) != 0 && load8(f + k) != 61) { k = k + 1; }
+    if (load8(f + k) != 61) { return 0; }
+    if (strlen(e) <= k) { return 0; }
+    return memeq(e, f, k + 1);
 }
 
 # 6.6.20 — THE compiler flags compile() passes, in order, as a vec of cstr. ONE list for both
@@ -1481,64 +1546,17 @@ fn compile(source, output): i64 {
         # into its command line). This was a fixed `var argv[32]` — four slots — with five
         # writers once v6.5.19 added `--syntax-only`. CHANGELOG [6.6.20]
         var cc_argv = _run_argv(cc, _cc_flags(), 0);
-        # 6.6.11: a per-target compile (the distlib verify) gets its target and nothing else's.
+        # The child's environment: what the CLI injects FIRST, then the inherited entries it
+        # does not override (`_cc_child_envp`). 6.6.11: a per-target compile (the distlib
+        # verify) gets its target and nothing else's.
+        var inj = vec_new();
+        var strip = 1;
         if (_cc_target_env != 0) {
-            sys_execve(cc, cc_argv, _cc_env_retarget(_cc_target_env));
-            sys_exit(127);
-        }
-        # v5.11.58: when --strict-pin is set, augment envp with
-        # CYRIUS_STRICT_PIN=1 so cycc's pin-drift check (added
-        # v5.11.57) exits non-zero on mismatch. CI gating path.
-        # v6.0.49: clone _envp + append per-flag vars (--strict-pin →
-        # CYRIUS_STRICT_PIN=1; --agnos → CYRIUS_TARGET_AGNOS=1). v6.0.52: --win →
-        # CYRIUS_TARGET_WIN=1 (cross-emit a Windows PE32+). Any combination can be
-        # set; --win and --agnos are distinct emit targets (don't combine).
-        var sp_extra = 0;
-        if (_strict_pin == 1) { sp_extra = sp_extra + 1; }
-        if (_agnos_target == 1) { sp_extra = sp_extra + 1; }
-        if (_win_target == 1) { sp_extra = sp_extra + 1; }
-        if (_poison_mode == 1) { sp_extra = sp_extra + 1; }
-        # v6.6.5 — `--pie` is real now. The guide's PIE section (6.6.4 line 2724) had
-        # documented `cyrius build --pie src dst` for months while the build loop had no --pie arm,
-        # so the flag hit "unknown flag" and the documented recipe could never have run.
-        # cycc reads PIE from its own cmdline or from CYRIUS_PIE=1; the env is the form
-        # available here.
-        if (_pie_target == 1) { sp_extra = sp_extra + 1; }
-        if (_cfg_dce_inject == 1) { sp_extra = sp_extra + 1; }   # 6.6.17: [build] dce / --dce
-        if (_baremetal_target == 1) { sp_extra = sp_extra + 2; }   # CYRIUS_KERNEL + CYRIUS_ELF64_KERNEL
-        if (_baremetal_target == 1 && _section_base_env_ptr != 0) { sp_extra = sp_extra + 1; }   # v6.3.3 #5 CYRIUS_KERNEL_BASE
-        if (sp_extra > 0) {
-            var sp_count = 0;
-            while (load64(_envp + sp_count * 8) != 0) { sp_count = sp_count + 1; }
-            var sp_envp = alloc((sp_count + sp_extra + 1) * 8);
-            # 6.6.17: an injected CYRIUS_DCE=1 REPLACES an inherited CYRIUS_DCE (an argument beats
-            # CYRIUS_DCE=0 in the environment, and cycc reads the first entry).
-            var sp_ej = 0;
-            var sp_ni = 0;
-            while (sp_ej < sp_count) {
-                var sp_e = load64(_envp + sp_ej * 8);
-                if (_cfg_dce_inject == 0 || _cc_pfx(sp_e, "CYRIUS_DCE=") == 0) {
-                    store64(sp_envp + sp_ni * 8, sp_e);
-                    sp_ni = sp_ni + 1;
-                }
-                sp_ej = sp_ej + 1;
-            }
-            if (_cfg_dce_inject == 1) { store64(sp_envp + sp_ni * 8, "CYRIUS_DCE=1"); sp_ni = sp_ni + 1; }
-            if (_strict_pin == 1) { store64(sp_envp + sp_ni * 8, "CYRIUS_STRICT_PIN=1"); sp_ni = sp_ni + 1; }
-            if (_agnos_target == 1) { store64(sp_envp + sp_ni * 8, "CYRIUS_TARGET_AGNOS=1"); sp_ni = sp_ni + 1; }
-            if (_win_target == 1) { store64(sp_envp + sp_ni * 8, "CYRIUS_TARGET_WIN=1"); sp_ni = sp_ni + 1; }
-            if (_poison_mode == 1) { store64(sp_envp + sp_ni * 8, "CYRIUS_POISON=1"); sp_ni = sp_ni + 1; }
-            if (_pie_target == 1) { store64(sp_envp + sp_ni * 8, "CYRIUS_PIE=1"); sp_ni = sp_ni + 1; }
-            if (_baremetal_target == 1) {
-                store64(sp_envp + sp_ni * 8, "CYRIUS_KERNEL=1"); sp_ni = sp_ni + 1;
-                store64(sp_envp + sp_ni * 8, "CYRIUS_ELF64_KERNEL=1"); sp_ni = sp_ni + 1;
-                if (_section_base_env_ptr != 0) { store64(sp_envp + sp_ni * 8, _section_base_env_ptr); sp_ni = sp_ni + 1; }   # v6.3.3 #5
-            }
-            store64(sp_envp + sp_ni * 8, 0);
-            sys_execve(cc, cc_argv, sp_envp);
+            if (strlen(_cc_target_env) > 0) { vec_push(inj, _cc_target_env); }
         } else {
-            sys_execve(cc, cc_argv, _envp);
+            strip = _cc_child_inject(inj);
         }
+        sys_execve(cc, cc_argv, _cc_child_envp(inj, strip));
         sys_exit(127);
     }
     var status_buf[1];
