@@ -26,6 +26,10 @@
 #      use 6.6.18 pins it                                                     (binary + shell)
 #   5  STATIC: `_cmd_install` / `_cmd_uninstall` in programs/cyriusly.cyr reach no `_exec_shell(`
 #      / `exec_cmd(` — the operand never rides in a shell line, even behind the validator
+#   6  `use` with no operand (the binary's second [package].cyrius reader, CBT-01): an
+#      escape-bearing traversal pin, `../../x`, `6..6` and an unquoted pin -> exit 1, named, the
+#      escape shown as \xNN and never raw; controls: `6.6.19`, `6.6.20_rc` (the CLI's pin rule
+#      allows `_`) and a literal-string `'6.6.18'` report as pinned                    (binary)
 #
 # MUTATION LEDGER (2026-10-06, 6.6.20): `_cy_version_ok` answering 1 turns axes 1-3 RED on the
 # binary (the store deleted, the injected `touch` RAN, the traversal pin written and --global
@@ -34,6 +38,10 @@
 # `.../cyrius/6.6.19;touch …/scripts/install.sh`); routing uninstall's `rm -rf` back through
 # `_exec_shell` turns axis 5 RED. The 6.6.19 tree (both peers) is RED on axes 1-3, and its
 # `uninstall 6.6.18/../6.6.19` deleted the ACTIVE 6.6.19 outright.
+# Review round 1 (same day): restoring the base no-operand `use` reader turns every axis-6 row
+# RED (the ESC / BEL bytes reached the terminal, `../../x` and `6..6` reported as pins, the
+# unquoted pin and the literal string read as the GLOBAL default); checking the pin with
+# `_cy_version_ok`'s rule (no `_`) turns the `6.6.20_rc` control RED.
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -43,7 +51,7 @@ NAME=cyriusly_version_operand_refused
 W=$(mktemp -d) && [ -d "$W" ] || { echo "FAIL: $NAME: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$W"' EXIT
 fail=0
-bad() { echo "  FAIL $1"; sed -n '1,3p' "$W/err" 2>/dev/null | sed 's/^/    /'; fail=1; }
+bad() { echo "  FAIL $1"; sed -n '1,3p' "$W/err" 2>/dev/null | LC_ALL=C tr -c '[:print:]\n' '?' | sed 's/^/    /'; fail=1; }
 
 ( cd "$ROOT" && "$CC" < programs/cyriusly.cyr > "$W/cyriusly" 2>/dev/null ) && chmod +x "$W/cyriusly" \
     || { echo "FAIL: $NAME — could not build programs/cyriusly.cyr"; exit 1; }
@@ -159,6 +167,43 @@ for f in _cmd_install _cmd_uninstall; do
     fi
 done
 [ "$a5" -eq 0 ] && echo "  ok axis 5: _cmd_install and _cmd_uninstall run no shell line"
+
+# ── axis 6: `use` with NO operand reads the [package].cyrius pin — the CLI's pin rule, never echoed
+#    raw (binary only: the shell twin's `use` requires an operand) ──────────────────────────────
+a6=0
+ESC=$(printf '\033'); BEL=$(printf '\007')
+setpin() { printf '[package]\nname = "p"\nversion = "0.1.0"\ncyrius = %s\n' "$1" > "$W/proj/cyrius.cyml"; }
+pinrefused() {   # pinrefused <label> <expected stderr text>
+    { [ "$RC" -eq 1 ] && grep -q "$2" "$W/err" && ! grep -q "pinned in cyrius.cyml" "$W/out"; } && return 0
+    bad "axis 6 [bin] use ($1): exit $RC, out: $(head -1 "$W/out" | LC_ALL=C tr -c '[:print:]' '?')"
+    return 1
+}
+store; setpin "\"6.6${ESC}]0;owned${BEL}${ESC}[2J../../x\""
+run bin use
+pinrefused "an escape-bearing traversal pin" "is not a version" || a6=1
+if grep -q "$ESC" "$W/out" "$W/err" || grep -q "$BEL" "$W/out" "$W/err"; then
+    bad "axis 6 [bin] use: a raw ESC / BEL byte from the manifest reached the terminal"; a6=1
+fi
+grep -q '6\.6\\x1b\]0;owned\\x07\\x1b\[2J\.\./\.\./x' "$W/err" \
+    || { bad "axis 6 [bin] use: the refusal did not show the pin with its non-printing bytes as \\xNN"; a6=1; }
+store; setpin '"../../x"'
+run bin use
+pinrefused "../../x" "is not a version" || a6=1
+store; setpin '"6..6"'
+run bin use
+pinrefused "6..6" "is not a version" || a6=1
+store; setpin '6.6.19'
+run bin use
+pinrefused "an unquoted pin" "must be a quoted version string" || a6=1
+# controls: a quoted pin reports as before; `_` (the CLI's pin rule allows it) and a TOML literal
+# string are pins `cyrius` accepts, so cyriusly must too
+for row in '"6.6.19"|6.6.19' '"6.6.20_rc"|6.6.20_rc' "'6.6.18'|6.6.18"; do
+    store; setpin "${row%%|*}"
+    run bin use
+    { [ "$RC" -eq 0 ] && [ "$(cat "$W/out")" = "cyrius ${row#*|} (pinned in cyrius.cyml)" ]; } \
+        || { bad "axis 6 [bin] use (control cyrius = ${row%%|*}): exit $RC, out: $(head -1 "$W/out" | LC_ALL=C tr -c '[:print:]' '?')"; a6=1; }
+done
+[ "$a6" -eq 0 ] && echo "  ok axis 6 [bin]: use with no operand refuses an escape-bearing, a traversal, a '..' and an unquoted pin (shown as \\xNN, never raw); '_' and a literal string still report"
 
 [ "$fail" -eq 0 ] || { echo "FAIL: $NAME"; exit 1; }
 echo "PASS: $NAME (cyriusly uninstall / install / use refuse a non-version operand by name, in both peers; install and uninstall pass it as argv)"

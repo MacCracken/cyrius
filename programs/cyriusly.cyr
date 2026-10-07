@@ -293,6 +293,14 @@ fn _write_cyml_cyrius_pin(ver_cstr): i64 {
 # + source (cyml-pinned / global / latest fallback). Pairs with the
 # v5.11.25 dispatcher: tells the user which version a `cyrius` in
 # this cwd would actually use.
+#
+# ⛔ 6.6.20 (CBT-01's second reader, CVE-TBD) — this reads `[package].cyrius` with its own inline
+# scan, and it printed the value raw: a manifest pinning `"6.6<ESC>]0;owned<BEL>…../../x"` set the
+# terminal title and cleared the screen, and a traversal pin was reported as a valid pin while
+# `cyrius` itself refuses that manifest. The value now gets the CLI reader's rule
+# (`_dep_read_cyml_cyrius_field`, cbt/deps.cyr — `_` INCLUDED, so cyriusly never refuses a pin
+# `cyrius` accepts), a refusal shows it with non-printing bytes as \xNN, and a present pin that is
+# not a single-line quoted string is refused rather than read as "no pin". CHANGELOG [6.6.20]
 fn _print_resolved_version(): i64 {
     if (file_exists("cyrius.cyml") == 1) {
         # Reuse _dep_read_cyml_cyrius_field's logic inline — small.
@@ -321,15 +329,7 @@ fn _print_resolved_version(): i64 {
                         if (a < n && load8(buf + a) == 61) {
                             a = a + 1;
                             while (a < n && (load8(buf + a) == 32 || load8(buf + a) == 9)) { a = a + 1; }
-                            if (a < n && load8(buf + a) == 34) {
-                                a = a + 1;
-                                var vs = a;
-                                while (a < n && load8(buf + a) != 34) { a = a + 1; }
-                                syscall(1, 1, "cyrius ", 7);
-                                syscall(1, 1, buf + vs, a - vs);
-                                syscall(1, 1, " (pinned in cyrius.cyml)\n", 25);
-                                return 0;
-                            }
+                            return _cy_report_pin(buf, n, a);
                         }
                     }
                     while (p < n && load8(buf + p) != 10) { p = p + 1; }
@@ -343,6 +343,56 @@ fn _print_resolved_version(): i64 {
     syscall(1, 1, "cyrius ", 7);
     syscall(1, 1, &cbuf, strlen(&cbuf));
     syscall(1, 1, " (~/.cyrius/current — global default)\n", 40);
+    return 0;
+}
+
+# The `[package].cyrius` value starting at buf[a] (just past `= `): print it as the resolved pin,
+# or refuse it by name (exit 1). A single-line `"…"` or `'…'` string only — a basic string
+# carrying a TOML escape holds a `\`, which no pin's shape allows. 6.6.20 (CBT-01)
+fn _cy_report_pin(buf, n, a): i64 {
+    var q = 0;
+    if (a < n) { q = load8(buf + a); }
+    var e = a + 1;
+    if (q == 34 || q == 39) {
+        while (e < n && load8(buf + e) != q && load8(buf + e) != 10) { e = e + 1; }
+    }
+    if ((q != 34 && q != 39) || e >= n || load8(buf + e) != q) {
+        var uq = "cyriusly: cyrius.cyml [package] cyrius must be a quoted version string — `cyrius` refuses this manifest too\n";
+        syscall(1, 2, uq, strlen(uq));
+        return 1;
+    }
+    var vs = a + 1;
+    if (_cy_shape_ok(buf + vs, e - vs, 1) == 0) {
+        syscall(1, 2, "cyriusly: cyrius.cyml [package] cyrius = '", 42);
+        _cy_err_shown(buf + vs, e - vs);
+        var why = "' is not a version\n  a pin names a directory under <home>/versions: a leading digit, then only [0-9A-Za-z._-], no '..' — `cyrius` refuses this manifest too\n";
+        syscall(1, 2, why, strlen(why));
+        return 1;
+    }
+    syscall(1, 1, "cyrius ", 7);
+    syscall(1, 1, buf + vs, e - vs);
+    syscall(1, 1, " (pinned in cyrius.cyml)\n", 25);
+    return 0;
+}
+
+# The `n` bytes at `p` on stderr with every non-printing byte as `\xNN`, so a refusal cannot carry
+# a terminal escape out of a hostile manifest (cbt/deps.cyr `_ew_tag_shown`, for a counted span).
+fn _cy_err_shown(p, n): i64 {
+    var hx = "0123456789abcdef";
+    var e[4];
+    var i = 0;
+    while (i < n) {
+        var c = load8(p + i);
+        if (c < 32 || c >= 127) {
+            store8(&e, 92); store8(&e + 1, 120);
+            store8(&e + 2, load8(hx + (c >> 4)));
+            store8(&e + 3, load8(hx + (c & 15)));
+            syscall(1, 2, &e, 4);
+        } else {
+            syscall(1, 2, p + i, 1);
+        }
+        i = i + 1;
+    }
     return 0;
 }
 
@@ -539,19 +589,28 @@ fn _exec_shell(cmd_line): i64 {
 # scripts/version-bump.sh's rule, so every real version passes. The shell twin
 # (scripts/cyriusly) applies the same rule. CHANGELOG [6.6.20]
 fn _cy_version_ok(v): i64 {
+    return _cy_shape_ok(v, strlen(v), 0);
+}
+
+# 1 when the `n` bytes at `v` have a version's shape: a leading digit, then only [0-9A-Za-z.-]
+# (plus `_` when `us` is 1 — the pin rule, `_dep_pin_shape_ok` in cbt/deps.cyr), no `..`. Counted,
+# not NUL-terminated, so a manifest value is checked in place; a NUL inside it is refused.
+fn _cy_shape_ok(v, n, us): i64 {
+    if (n <= 0) { return 0; }
     var c = load8(v);
-    if (c < 48 || c > 57) { return 0; }   # leading digit (also refuses "")
+    if (c < 48 || c > 57) { return 0; }   # leading digit
     var i = 0;
-    while (c != 0) {
+    while (i < n) {
+        c = load8(v + i);
         var ok = 0;
         if (c >= 48 && c <= 57) { ok = 1; }
         if (c >= 65 && c <= 90) { ok = 1; }
         if (c >= 97 && c <= 122) { ok = 1; }
         if (c == 46 || c == 45) { ok = 1; }   # . -
+        if (c == 95 && us == 1) { ok = 1; }   # _
         if (ok == 0) { return 0; }
-        if (c == 46 && load8(v + i + 1) == 46) { return 0; }   # '..'
+        if (c == 46 && i + 1 < n && load8(v + i + 1) == 46) { return 0; }   # '..'
         i = i + 1;
-        c = load8(v + i);
     }
     return 1;
 }
