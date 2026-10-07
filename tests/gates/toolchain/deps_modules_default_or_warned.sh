@@ -23,6 +23,8 @@
 # outside the cache, and a tag naming an existing dir printed `rm -rf` advice for it (D9).
 # 6.6.20 (CVE-TBD): the NAME rule caught up with the tag rule — `[deps.]` / `[deps..]` aliased
 # another dep's cache root, and `\`, control bytes and a header spanning lines passed (D8b-D8f).
+# 6.6.20 (CVE-TBD): a `modules` entry with a `..` component vendored any readable file into lib/
+# and exited 0, root or transitive; it, and a leading `/` or `\`, is refused by name (D10).
 #
 # Hermetic: a mktemp CYRIUS_HOME with the CLI built FROM SOURCE as the pin's own wrapper,
 # local file:// origins, no /etc/gitconfig or ~/.gitconfig (GIT_CONFIG_NOSYSTEM +
@@ -48,7 +50,10 @@
 #   6.6.20: print the refused name raw (no \xNN escape)     -> D8d D8e D8f red
 #   6.6.20: drop the `\` / control-byte name rule           -> D8d D8e D8f red
 #   6.6.20: dry-run skips `[deps.]` again (`i - ls > 7`)    -> D8f red
-# D5 (modules = []) and D7 (optional / target gates) are the anti-over-reach axes: every
+#   6.6.20: drop the `..`-component modules rule            -> D10a D10b red
+#   6.6.20: drop the leading `/` / `\` modules rule          -> D10a red (the absolute row)
+#   6.6.20: split modules components on `/` only            -> D10a red (the `..\\x` row)
+# D5 (modules = []), D7 (optional / target gates) and D10c are the anti-over-reach axes: every
 # mutant above leaves them green, and so must the fix. D9d (plain + slash tags) and D9e
 # (tagless path / git deps) are the tag check's anti-over-reach rows.
 set -eu
@@ -529,7 +534,68 @@ if [ "$rc" -eq 1 ] && grep -qxF "  foo" "$P.out" && grep -qxF "error: [deps.] $R
     ok "D8f deps --dry-run: lists foo, refuses [deps.] and the ESC name by the resolver's own line (escaped), rc 1, writes nothing"
 else bad "D8f (rc=$rc): out=[$(cat "$P.out" | tr '\n' '|')] err=[$(head -2 "$P.err")]"; fi
 
+# ── D10: 6.6.20 (CVE-TBD) — a `modules` entry that leaves the dep's tree ──────────────────
+# `[deps.X] modules` entries are joined onto the dep's dir and copied into lib/, so
+# `"../secret"` vendored ANY readable file (lib/X_secret) and exited 0 — from the root or from a
+# transitive manifest. A leading `/` was never read (it joins as `<dep>//abs`, "not found");
+# it is refused by the same line now, and so is a `\`-separated `..` (Windows' separator).
+SECRET='TOP SECRET 6620'
+printf '%s\n' "$SECRET" > "$W/secret"; printf '%s\n' "$SECRET" > "$W/secret.cyr"
+SIB="$W/sib"; mkdir -p "$SIB/dist" "$SIB/src"; printf 'fn sib_v(): i64 { return 8; }\n' > "$SIB/dist/sib.cyr"
+mkdir -p "$SIB/v..2"; printf 'fn sib_w(): i64 { return 9; }\n' > "$SIB/v..2/w.cyr"
+MODS_TAIL='is not a path inside the dep (absolute, or a `..` component) — section refused'
+secret_vendored() { [ -d "$1/lib" ] && grep -rqF "$SECRET" "$1/lib"; }
+# D10a: root path dep — `../secret`, a `..` mid-path, an absolute path, a `\`-separated `..`.
+d10=0; d10n=0
+for m in '../secret' 'dist/../../secret' "$W/secret.cyr" '..\\secret'; do
+    d10n=$((d10n+1)); P="$W/d10a$d10n"; mkp "$P" <<EOF
+[deps.sib]
+path = "$SIB"
+modules = ["dist/sib.cyr", "$m"]
+EOF
+    run9 "$P"
+    shown=$(printf '%s' "$m" | sed 's/\\\\/\\/g')
+    if [ "$rc" -eq 1 ] && grep -qxF "error: [deps.sib] modules entry \"$shown\" $MODS_TAIL" "$P.err" \
+       && ! secret_vendored "$P" && [ ! -e "$P/lib/sib.cyr" ] && [ ! -f "$P/cyrius.lock" ]; then
+        d10=$((d10+1))
+    else echo "    D10a entry '$m': rc=$rc lib=[$(ls "$P/lib" 2>/dev/null | tr '\n' ' ')] $(head -2 "$P.err")"; fi
+done
+if [ "$d10" -eq 4 ]; then
+    ok "D10a modules '../secret', 'dist/../../secret', an absolute path and '..\\\\secret': each refused by name, rc 1, nothing vendored, no lock"
+else bad "D10a ($d10 of 4 refused)"; fi
+
+# D10b: the same from a TRANSITIVE manifest — tmod 1.0.0 declares foo with `../../../../secret`
+# (from foo's clone dir <home>/deps/foo/2.0.0 that is $W/secret). Refused before foo's clone.
+TM="$O/tmod"; mkdir -p "$TM/dist"
+( cd "$TM" && git init -q . && printf 'fn tmod_v(): i64 { return 3; }\n' > dist/tmod.cyr \
+  && printf '[package]\nname = "tmod"\nversion = "1.0.0"\nlanguage = "cyrius"\n\n[deps.foo]\ngit = "file://%s"\ntag = "2.0.0"\nmodules = ["../../../../secret"]\n' "$F" > cyrius.cyml \
+  && git add -A && git commit -qm v1 && git tag 1.0.0 )
+freshcache
+P="$W/d10b"; mkp "$P" <<EOF
+[deps.tmod]
+git = "file://$TM"
+tag = "1.0.0"
+modules = ["dist/tmod.cyr"]
+EOF
+run9 "$P"
+if [ "$rc" -eq 1 ] && grep -qxF "error: [deps.foo] modules entry \"../../../../secret\" $MODS_TAIL" "$P.err" \
+   && [ -f "$P/lib/tmod.cyr" ] && ! secret_vendored "$P" && ! grep -qF "file://$F" "$W/git.log" && [ ! -f "$P/cyrius.lock" ]; then
+    ok "D10b a TRANSITIVE modules entry '../../../../secret': refused by name, rc 1, foo never cloned, nothing vendored from outside"
+else bad "D10b (rc=$rc lib=[$(ls "$P/lib" 2>/dev/null | tr '\n' ' ')]): $(head -2 "$P.err")"; fi
+
+# D10c: anti-over-reach — `./dist/sib.cyr` and a `..` INSIDE a component (`v..2/w.cyr`) vendor.
+P="$W/d10c"; mkp "$P" <<EOF
+[deps.sib]
+path = "$SIB"
+modules = ["./dist/sib.cyr", "v..2/w.cyr"]
+EOF
+run9 "$P"
+if [ "$rc" -eq 0 ] && cmp -s "$P/lib/sib.cyr" "$SIB/dist/sib.cyr" && cmp -s "$P/lib/sib_w.cyr" "$SIB/v..2/w.cyr" \
+   && ! grep -q 'not a path inside' "$P.err"; then
+    ok "D10c modules './dist/sib.cyr' and 'v..2/w.cyr' (a .. inside a name, not a component): vendored, rc 0"
+else bad "D10c (rc=$rc lib=[$(ls "$P/lib" 2>/dev/null | tr '\n' ' ')]): $(head -2 "$P.err")"; fi
+
 echo "$G: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1
-[ "$pass" -ge 20 ] || { echo "FAIL: $G: only $pass axes ran (floor 20)"; exit 1; }
+[ "$pass" -ge 23 ] || { echo "FAIL: $G: only $pass axes ran (floor 23)"; exit 1; }
 echo "PASS: $G — a modules-less [deps.X] is resolved from dist/X.cyr or warned and counted; unsafe names and tags refused"

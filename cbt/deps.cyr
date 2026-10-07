@@ -1556,6 +1556,45 @@ fn _dep_reject_unsafe_tag(tag): i64 {
     return 0;
 }
 
+# 1 when a `[deps.X] modules` entry could name a file outside the dep's tree: a leading `/` or
+# `\`, or a `..` component (split on `/` and on `\`, a separator on Windows). `./dist/x.cyr` and
+# `x..y.cyr` stay legal. An absolute path was never read (it is joined as `<dep>//abs`).
+fn _dep_mod_path_unsafe(m): i64 {
+    var c = load8(m);
+    if (c == 47 || c == 92) { return 1; }
+    var s = 0;
+    var i = 0;
+    while (1 == 1) {
+        c = load8(m + i);
+        if (c == 0 || c == 47 || c == 92) {
+            if (i - s == 2 && load8(m + s) == 46 && load8(m + s + 1) == 46) { return 1; }
+            if (c == 0) { return 0; }
+            s = i + 1;
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# Name every unsafe entry of a `[deps.X] modules` list (_dep_mod_path_unsafe); the count.
+fn _dep_modules_refused(dep_name, mods): i64 {
+    var bad = 0;
+    var i = 0;
+    while (i < vec_len(mods)) {
+        var m = vec_get(mods, i);
+        i = i + 1;
+        if (_dep_mod_path_unsafe(m) == 1) {
+            _ew("error: [deps.");
+            _ew_shown(dep_name);
+            _ew("] modules entry \"");
+            _ew_shown(m);
+            _ew("\" is not a path inside the dep (absolute, or a `..` component) — section refused\n");
+            bad = bad + 1;
+        }
+    }
+    return bad;
+}
+
 # 6.6.17 — the git-dep cache key: `<base>/<name>/<tag>`, and `<base>/<name>/.untagged` for an
 # untagged dep (the remote's default branch). The untagged clone used to live at
 # `<name>/main`, the very dir a `tag = "main"` dep resolves to, so whichever ran first served
@@ -1898,6 +1937,13 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                 _ew("' is not a usable tag (it would make the cache path leave <home>/deps/");
                 _ew_shown(dep_name);
                 _ew(") — section refused\n");
+                errors = errors + 1;
+                continue;
+            }
+            # 6.6.20 (CVE-TBD): a `modules` entry is joined onto the dep's tree and copied into
+            # lib/, so `"../secret"` vendored any readable file and exited 0. Refused, like the tag
+            # above, before any gate, clone or copy (transitive `path` confinement is separate).
+            if (dep_modules != 0 && _dep_modules_refused(dep_name, dep_modules) > 0) {
                 errors = errors + 1;
                 continue;
             }
