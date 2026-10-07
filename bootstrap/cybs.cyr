@@ -778,7 +778,11 @@ emit_store_param:
     je emit_sp_r8
     cmp rax, 5
     je emit_sp_r9
-    jmp emit_sp_done
+    jmp emit_sp_done     # a 7th+ parameter is not stored: unreachable (see below)
+# A definition with 7+ parameters keeps its first six. lib/fnptr.cyr's fncall6..8 (included by the
+# compiler's alloc/vec) are such definitions; nothing cybs compiles can call one with all its
+# arguments - a 7+ argument call is refused by name (arity_err), and a short call is refused by
+# cycc's own arity check on the same source - so the unstored parameters are never read.
 emit_sp_rdi:
     mov rax, 0xBD8948     # 48 89 BD = mov [rbp+d32], rdi
     jmp emit_sp_write
@@ -879,7 +883,7 @@ emit_fn_call_pops:
     je emit_fcp_5
     cmp rax, 6
     je emit_fcp_6
-    jmp parse_err
+    jmp arity_err        # 7+ arguments: cybs passes only the six register arguments
 emit_fcp_0:
     ret
 emit_fcp_1:
@@ -4443,6 +4447,13 @@ parse_err:
     mov rdx, 13
     syscall
     jmp sys_exit_err
+arity_err:
+    mov rax, 1
+    mov rdi, 2
+    mov rsi, err_arity
+    mov rdx, 85
+    syscall
+    jmp sys_exit_err
 peek_tok_type:
     push rcx
     push rsi
@@ -5390,6 +5401,8 @@ elf_template:
     dq 0x0000000000001000
 err_syntax:
     db "syntax error\n"
+err_arity:
+    db "cybs: a call or fn with more than 6 arguments (cybs passes only the 6 register args)\n"
 err_undef:
     db "undefined variable\n"
 pp_pat_include:

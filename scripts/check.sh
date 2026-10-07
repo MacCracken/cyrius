@@ -2168,6 +2168,7 @@ _chk_gate "$ROOT/tests/gates/frontend/integer_literal_overflow_refused.sh"
 _chk_gate "$ROOT/tests/gates/frontend/struct_field_type_unknown_refused.sh"
 _chk_gate "$ROOT/tests/gates/frontend/impl_self_typed.sh"
 _chk_gate "$ROOT/tests/gates/frontend/traits_checked.sh"
+_chk_gate "$ROOT/tests/gates/toolchain/cybs_call_arity_named.sh"
 _chk_gate "$ROOT/tests/gates/platform/agnos_proc_kill_tree_refused.sh"
 _chk_gate "$ROOT/tests/gates/platform/cx_compiler_reads_env.sh"
 
