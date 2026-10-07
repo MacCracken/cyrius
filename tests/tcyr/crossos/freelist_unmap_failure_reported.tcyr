@@ -33,6 +33,28 @@ fn main(): i64 {
         assert_eq(fl_free(p), 0, "fl_free(8 MiB block): 0 — the mapping was released");
     }
 
+    # The poison-mode free has its own large-block return (`_fl_free_poisoned`), which had the
+    # same `syscall(SYS_MUNMAP, ...); return 0;`. This row runs it on a real block. A refusal
+    # cannot be forged there the way the plain row below forges one. A poisoned free scans the
+    # trailing redzone out to the block's recorded length, so an impossible length reads past
+    # the mapping. Every header that would skip that scan also fails the live-list ownership
+    # check, so the block is never unmapped. A length short enough for the size field to cover
+    # (< 2^48) is not refused on a 5-level-paging host: munmap would take the rest of the
+    # address space with it.
+    test_group("6.6.20 — poison mode: fl_free of a real large block releases it: 0");
+    fl_poison_enable();
+    var prevtrap = poison_trap_set(0);
+    var q = fl_alloc(8388608);
+    assert(q != 0, "fl_alloc(8 MiB) in poison mode");
+    if (q != 0) {
+        assert(load8(q - 1) != 0, "…a poisoned block (the byte below it is a redzone fill)");
+        store8(q + 100, 42);
+        assert_eq(fl_free(q), 0, "fl_free(poisoned 8 MiB block): 0 — the mapping was released");
+    }
+    assert_eq(fl_poison_violations(), 0, "…and no redzone violation was counted");
+    poison_trap_set(prevtrap);
+    fl_poison_disable();
+
     #ifdef CYRIUS_TARGET_LINUX
     test_group("6.6.20 — a refused munmap is reported, not swallowed");
     var pg = mmap_anon(4096);                        # lib/mmap.cyr: the per-target MAP_ANONYMOUS
