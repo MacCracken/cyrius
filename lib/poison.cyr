@@ -640,16 +640,20 @@ fn _poison_fl_unlink(blk): i64 {
     return 0;
 }
 
-# 1 when `blk` decodes as a poisoned fl block that is ON the live list: an fl meta word whose
-# fill matches the leading redzone's last byte, a sane header, and list links that point back
-# at it. Anything else (a double free, a header an underwrite smashed) is 0. Caller holds
-# _poison_lock.
+# 1 when `blk` decodes as a poisoned fl block that is ON the live list: an fl meta word, a
+# sane header, and list links that point back at it. Anything else (a double free, a header
+# an underwrite smashed) is 0. Caller holds _poison_lock.
+# Ownership is decided from the HEADER only, never from a redzone byte: the leading redzone
+# is user-writable damage for _poison_fl_check to classify. Requiring its last byte to equal
+# the fill made a 1-byte underwrite (`store8(p - 1, 7)`) read as a smashed header — reported
+# `(0 bytes): 8 byte(s) changed [header]`, never unlinked or recycled, and reported AGAIN by
+# the next sweep as `[leading]`. The list links are what reject a non-listed block (a plain
+# block's `ptr - 72` is never a listed block's start). CHANGELOG [6.6.20]
 fn _poison_fl_owns(blk): i64 {
     var meta = load64(blk + 32);
     var fill = meta >> 56;
     if (fill == 0) { return 0; }
     if (((meta >> 48) & 15) != 3) { return 0; }
-    if (load8(blk + 40 + _POISON_RZ - 1) != fill) { return 0; }
     var cls = load64(blk + 8);
     if (cls > 8) {
         if ((blk & 4095) != 0) { return 0; }
