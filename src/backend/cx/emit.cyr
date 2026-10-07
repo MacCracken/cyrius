@@ -1618,14 +1618,6 @@ fn EF64FLOOR(S): i64 { CX_EMIT(S, 106, 0, 0, 0); return 0; }   # 0x6A ffloor r0,
 fn EF64CEIL(S): i64 { CX_EMIT(S, 107, 0, 0, 0); return 0; }    # 0x6B fceil  r0, r0
 fn EF64ROUND(S): i64 { CX_EMIT(S, 108, 0, 0, 0); return 0; }   # 0x6C fround r0, r0
 fn EF64TRUNC(S): i64 { CX_EMIT(S, 110, 0, 0, 0); return 0; }   # 0x6E ftrunc r0, r0 (6.6.13)
-# v5.9.40 — clean up cx-side undefined-fn warnings carried since
-# v5.9.39's Mach-O fix (EADRP/EADD_IMM12 added to aarch64/x86
-# but cx wasn't paired). Stubs for the dead cross-arch branches
-# in shared frontend files. (EMULH and _read_env were stubbed
-# here too; both are real since 6.6.10 — EMULH below, _read_env
-# in src/backend/common/env.cyr.)
-fn EADRP(S, reg): i64 { return 0; }
-fn EADD_IMM12(S, reg): i64 { return 0; }
 # v5.9.40 Phase 2c — real EFLADDR / EFLADDR_X1 for cx. Compute
 # &local-slot. Required by parse_decl.cyr's asv (assignment-
 # from-struct-value) caller-side and by PARSE_FIELD_STORE/LOAD

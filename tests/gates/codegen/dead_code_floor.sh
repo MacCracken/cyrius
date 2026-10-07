@@ -32,11 +32,11 @@ fails=0
 # ── axis 1 — per-fork ceiling on src/-defined unreachable fns ─────────────────────────────────
 _ceiling() {
     case $1 in
-        x86)  echo 6 ;;   # cycc                       (src/main.cyr)
+        x86)  echo 2 ;;   # cycc                       (src/main.cyr)
         a64)  echo 90 ;;   # cycc_aarch64 cross          (src/main_aarch64.cyr)
-        cx)   echo 92 ;;   # cyrius-x                    (src/main_cx.cyr)
-        win)  echo 44 ;;   # PE32+                       (src/main_win.cyr, CYRIUS_TARGET_WIN=1)
-        x86m) echo 74 ;;   # x86-macOS                   (src/main_x86_macho.cyr, CYRIUS_MACHO=1)
+        cx)   echo 90 ;;   # cyrius-x                    (src/main_cx.cyr)
+        win)  echo 40 ;;   # PE32+                       (src/main_win.cyr, CYRIUS_TARGET_WIN=1)
+        x86m) echo 70 ;;   # x86-macOS                   (src/main_x86_macho.cyr, CYRIUS_MACHO=1)
         a64n) echo 90 ;;   # aarch64-native              (src/main_aarch64_native.cyr)
         a64m) echo 94 ;;  # arm64-macOS                 (src/main_aarch64_macho.cyr, CYRIUS_MACHO_ARM=1)
     esac
