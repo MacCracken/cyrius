@@ -197,7 +197,7 @@ cp "$D/tools/cyrius" "$D/shim/cyrius" && cp "$CC" "$D/shim/cycc.real" && cp "$D/
 cat > "$D/shim/cycc" <<'SHIM'
 #!/bin/sh
 D=$(dirname "$0")
-T=$(mktemp) || exit 99
+T=$(mktemp) && [ -f "$T" ] || { echo "FAIL: stand-in cycc: mktemp failed (TMPDIR=${TMPDIR:-/tmp})" >&2; exit 1; }
 cat > "$T"
 selfcheck=0
 case " $* " in *" --allow-undef "*) grep -q '^#@incdir dist/.dlverify' "$T" || selfcheck=1 ;; esac
