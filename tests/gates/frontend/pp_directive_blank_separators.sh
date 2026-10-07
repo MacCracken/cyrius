@@ -66,17 +66,18 @@
 #   N3 ISIF's separator back to `!= 32` → q5
 #   N4 _pp_stray reports nothing → e1, e2, e3, e4, e7, e9
 #   N5 _pp_unclosed reports nothing → e5, e6, e8, e10
-#   N6 _pp_unclosed's marker restore skipped → e8, e10 (the error names <source>, the
+#   N6 _pp_unclosed's marker restore skipped → e8, e10, e11 (the error names <source>, the
 #      file the stream had moved on to, instead of the included file)
+#   N9 _pp_unclosed's walk-back stops at any line-start `#@f` again → e11
 #   N7 ISIF's lower-case-`d` refusal restored → s2
 #   N8 PP_EXPAND's parameter reader skips a space only again → s7
 #   P1 PP_IFDEF_PASS's PP_IFPLAT_MATCH reads S + _SRCB (the 1 MiB copy) → f3
 #   P2 PP_IFDEF_PASS's ISIFPLAT arm never taken → f1, f2, f3, e10, g
 #   P3 PP_IFDEF_PASS's ISENDPLAT arm never taken → f1, e9, g
-#   e696746d's compiler → 31 of 31 rows FAIL (f2, f3 and g on the duplicate-symbol warning
+#   e696746d's compiler → 32 of 32 rows FAIL (f2, f3 and g on the duplicate-symbol warning
 #   both compiled arms draw). 1553be2f's (the lane before the included-#ifplat arms) → f1, f2,
 #   f3, e9, e10 and g FAIL; f2 / f3 there are the false "#else without a matching #if"; 43445323's
-#   → s7 alone.
+#   → s7 and e11.
 set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT"
@@ -215,6 +216,10 @@ printf '# inc\nvar q = 1;\n#endplat\n' > "$D/i9.cyr"
 err_row e9 'include "i9.cyr"\nsyscall(60, q);\n' 'error:i9.cyr:3:1: #endplat without a matching #if'
 printf '# inc\nvar q = 1;\n#ifplat aarch64\nvar z = 2;\n' > "$D/i10.cyr"
 err_row e10 'include "i10.cyr"\nsyscall(60, q);\n' 'error:i10.cyr:3:1: this #if / #ifdef / #ifndef / #ifplat has no matching #endif'
+# e11: a comment that merely starts `#@f` sits between the file's marker and the opener; the
+# walk-back must pass it (it is not a marker) and still name i11.cyr.
+printf '# inc\n#@foo is a comment\nvar q = 1;\n#ifdef NOPE\nvar z = 2;\n' > "$D/i11.cyr"
+err_row e11 'include "i11.cyr"\ninclude "j8.cyr"\nvar w = 3;\nsyscall(60, q);\n' 'error:i11.cyr:4:1: this #if / #ifdef / #ifndef / #ifplat has no matching #endif'
 
 # Over-correction guard: balanced nesting, every directive kind, both passes (main + included).
 # g1's `#ifplat aarch64` arm redefines `a` AFTER the x86 one, so an included `#ifplat` that is
@@ -234,4 +239,4 @@ if [ "$fail" -gt 0 ]; then
     printf 'FAIL: pp-directive-blank-separators — %s of %s rows failed\n' "$fail" "$((pass+fail))"
     exit 1
 fi
-printf 'PASS: pp-directive-blank-separators — %s/%s rows green (17 separator shapes vs their single-space twins, 3 included #ifplat blocks vs their #ifdef twins, 10 stray/unclosed refusals, 1 balanced guard)\n' "$pass" "$pass"
+printf 'PASS: pp-directive-blank-separators — %s/%s rows green (17 separator shapes vs their single-space twins, 3 included #ifplat blocks vs their #ifdef twins, 11 stray/unclosed refusals, 1 balanced guard)\n' "$pass" "$pass"
