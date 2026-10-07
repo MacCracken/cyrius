@@ -821,7 +821,13 @@ fn READFILE(path, dst, maxsz): i64 {
     }
     var fd = 0;
     if (SYS_OPEN == 2) { fd = syscall(SYS_OPEN, path, 0, 0); }
+    # The openat arm (here and at the two fallbacks below) is dead in a PE compiler —
+    # main_win.cyr declares SYS_OPEN = 2 — and a 4-argument open is not a PE route, so each
+    # drew a "not routed" warning in every cycc_win build: noise that hides a real unrouted
+    # call. Compiled out there. CHANGELOG [6.6.20]
+#ifndef CYRIUS_TARGET_WIN
     else { fd = syscall(SYS_OPEN, 0 - 100, path, 0, 0); }
+#endif
     # Fallback: if open fails and path starts with "lib/", try the store slot
     # `_init_cyrius_lib` chose — CYRIUS_HOME/versions/<VERSION>/lib/, else
     # HOME/.cyrius/versions/<VERSION>/lib/ — with `lib/` replaced by it.
@@ -843,7 +849,9 @@ fn READFILE(path, dst, maxsz): i64 {
                             while (load8(path + pi) != 0) { store8(&fbuf + fi, load8(path + pi)); fi = fi + 1; pi = pi + 1; }
                             store8(&fbuf + fi, 0);
                             if (SYS_OPEN == 2) { fd = syscall(SYS_OPEN, &fbuf, 0, 0); }
+#ifndef CYRIUS_TARGET_WIN
                             else { fd = syscall(SYS_OPEN, 0 - 100, &fbuf, 0, 0); }
+#endif
                         } } } }
         }
     }
@@ -873,7 +881,9 @@ fn READFILE(path, dst, maxsz): i64 {
             while (load8(path + pj) != 0) { store8(&ibuf + ii2, load8(path + pj)); ii2 = ii2 + 1; pj = pj + 1; }
             store8(&ibuf + ii2, 0);
             if (SYS_OPEN == 2) { fd = syscall(SYS_OPEN, &ibuf, 0, 0); }
+#ifndef CYRIUS_TARGET_WIN
             else { fd = syscall(SYS_OPEN, 0 - 100, &ibuf, 0, 0); }
+#endif
         }
     }
     # CVE-31: distinguish open-fail from a legitimately-empty file. Return -1
