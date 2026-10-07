@@ -18,6 +18,8 @@
 #   R9  a `"""` description holding `stdlib = ["math"]` REPLACED the real `[deps] stdlib`
 #       (cmd_deps' section-blind byte scan); R10 the same in `cyrius lib sync`'s copy
 #   R11 `optional = tru` read as true (first byte only)
+#   R14 (review) a manifest whose only dep table was `[deps.]`: `cyrius build` skipped the auto
+#       resolve and built, rc 0, while `cyrius deps` refused it — a fourth header rule
 # R1 (the control shape), R12 ([groups] / [features] through the new reader) and R13 (distlib's
 # named-dep exclude set) are the anti-over-reach axes.
 #
@@ -32,6 +34,7 @@
 #   keys matched as a prefix (`kl` unchecked)               -> R1 red (`tagline` read as `tag`)
 #   optional back to its first byte                         -> R11 red
 #   dry run lists every header, refused or not              -> R8 red
+#   the auto resolve back on its own header test (`hl > 5`) -> R14 red (build skipped the resolve, rc 0)
 set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT"
@@ -288,7 +291,24 @@ if [ "$rc" -eq 0 ] && grep -qxF 'a = ["lib:string", "lib:fmt"]' "$P/dist/p/index
     ok "R13 distlib --modular: the indented [deps.str] is excluded, the \"\"\"-quoted [deps.fmt] is not"
 else bad "R13 (rc=$rc): index=[$(grep '^a' "$P/dist/p/index.cyml" 2>/dev/null)] $(head -2 "$P.err")"; fi
 
+# R14: the AUTO resolve before build / run / test reads dep tables by the same header rule — a
+# manifest whose only dep table is `[deps.]` used to make `cyrius build` skip the resolve and
+# build (rc 0) while `cyrius deps` refused it by name.
+[ -x "$CC" ] && cp "$CC" "$H/versions/$V/bin/cycc" 2>/dev/null || true
+P="$W/r14"; mkp "$P" <<EOF
+
+[deps.]
+path = "$PD"
+EOF
+run "$P" deps; rcd=$rc; cp "$P.err" "$W/r14.deperr"
+run "$P" build src/main.cyr build/p
+if [ "$rcd" -eq 1 ] && [ "$rc" -eq 1 ] && grep -qF 'error: [deps.] is not a usable dep name' "$W/r14.deperr" \
+   && grep -qF 'error: [deps.] is not a usable dep name' "$P.err" && [ ! -e "$P/build/p" ]; then
+    ok "R14 a manifest whose only dep table is [deps.]: cyrius build refuses it by the resolver's own line (rc 1, nothing built), as cyrius deps does"
+else bad "R14 (deps rc=$rcd build rc=$rc): $(head -2 "$P.err") build=[$(ls "$P/build" 2>/dev/null | tr '\n' ' ')]"; fi
+rm -f "$H/versions/$V/bin/cycc"
+
 echo "$G: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1
-[ "$pass" -ge 10 ] || { echo "FAIL: $G: only $pass axes ran (floor 10)"; exit 1; }
+[ "$pass" -ge 11 ] || { echo "FAIL: $G: only $pass axes ran (floor 11)"; exit 1; }
 echo "PASS: $G — [deps.NAME] tables, their keys, [deps] stdlib, [groups] and [features] are read as TOML, through one header rule"

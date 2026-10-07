@@ -2725,7 +2725,11 @@ fn _auto_deps(): i64 {
             var hs = _mf_buf + load64(&info + 8);
             var hl = load64(&info + 16);
             if (hl == 4 && memeq(hs, "deps", 4) == 1) { has_deps = 1; }
-            if (hl > 5 && memeq(hs, "deps.", 5) == 1) { has_deps = 1; }
+            # 6.6.20: a dep table is what the resolver's ONE header rule says (`_dep_hdr_name`) —
+            # this kept its own (`hl > 5`), so a manifest whose only dep table was `[deps.]` made
+            # build / run / test skip the resolve silently while `cyrius deps` refused it by name.
+            var hc = 0;
+            if (_dep_hdr_name(_mf_buf, _mf_len, &info, &hc) != 0) { has_deps = 1; }
         }
     }
     # `[build].modules` is read BEFORE the `[deps]` early return: a manifest with modules and
