@@ -7,6 +7,12 @@
 # (`alloc(32) + 10` in a TLS test, patra / bench / yantra's `buf + off`) wrote past their
 # blocks. Each probe here fills a block with 0xEE and asserts the bytes past the answer
 # (and its NUL) are untouched.
+#
+# ⛔ |val| >= 2^63 (6.6.20). Inside the bound, but the WRONG NUMBER: f64_to saturates past
+# i64 range and the fraction's carry wrapped the integer negative, so 1e300 printed
+# `-9131138316486228051.07` and -1e300 `--9131…`; only the length was asserted here, so it
+# passed. Those rows now assert the text: the exact integer below 1e20, a bounded exponent
+# form above it.
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 include "lib/string.cyr"
@@ -26,6 +32,37 @@ fn _changed(p, from, to): i64 {
     var i = from;
     while (i < to) { if (load8(p + i) != 0xEE) { bad = bad + 1; } i = i + 1; }
     return bad;
+}
+
+# fmt_float_buf(bits, d) into w; 1 when the text is `want`.
+fn _ff(bits, d, w, want): i64 {
+    var n = fmt_float_buf(bits, w, d);
+    store8(w + n, 0);
+    return streq(w, want);
+}
+
+# fmt_float(bits, d) to stdout, captured through a pipe; 1 when the text is `want`.
+fn _ffout(bits, d, want): i64 {
+    var fds[16];
+    if (sys_pipe(&fds) != 0) { return 0; }
+    var rd = load32(&fds);
+    var wr = load32(&fds + 4);
+    sys_dup2(1, 100);                # park the real stdout on a free fd
+    sys_dup2(wr, 1);
+    fmt_float(bits, d);
+    sys_dup2(100, 1);
+    sys_close(100);
+    sys_close(wr);
+    var got[128];
+    var n = 0;
+    var k = sys_read(rd, &got, 127);
+    while (k > 0) {
+        n = n + k;
+        k = sys_read(rd, &got + n, 127 - n);
+    }
+    sys_close(rd);
+    store8(&got + n, 0);
+    return streq(&got, want);
 }
 
 fn main(): i64 {
@@ -75,6 +112,8 @@ fn main(): i64 {
     n = fmt_float_buf(big, c, 2);
     assert_lte(n, 42, "-1e30 length within the bound");
     assert_eq(_changed(c, 43, 64), 0, "-1e30: bytes 43..63 untouched");
+    store8(c + n, 0);
+    assert_eq(streq(c, "-1.00e+30"), 1, "-1e30 text (was -9131138316486228051.07, wrong sign)");
 
     test_group("wide decimals: at most 18 computed, the rest '0' (6.6.18 review)");
     var w = alloc(128);
@@ -92,6 +131,36 @@ fn main(): i64 {
     n = fmt_float_buf(half, w, 18);
     store8(w + n, 0);
     assert_eq(streq(w, "3.500000000000000000"), 1, "18 decimals unchanged");
+
+    test_group("|val| >= 2^63: exact integer, or bounded exponent form (6.6.20)");
+    # f64_to saturates past i64 range and the fraction's carry then wrapped the integer
+    # negative: 1e300 printed `-9131138316486228051.07`, -1e300 `--9131…`, every huge value
+    # at 0 decimals `-2.0`, and 2^63 a plausible, off-by-one `…775807`.
+    assert_eq(_ff(0x43E0000000000000, 2, w, "9223372036854775808.00"), 1, "2^63 exact (was …775807)");
+    assert_eq(_ff(0xC3E0000000000000, 2, w, "-9223372036854775808.00"), 1, "-2^63 exact");
+    assert_eq(_ff(0x43E158E460913D00, 3, w, "10000000000000000000.000"), 1, "1e19");
+    assert_eq(_ff(0x43EFFFFFFFFFFFFF, 2, w, "18446744073709549568.00"), 1, "largest double below 2^64");
+    assert_eq(_ff(0x43EFFFFFFFFFFFFF, 20, w, "18446744073709549568.00000000000000000000"), 1,
+      "below 2^64 at 20 decimals");
+    assert_eq(_ff(0x4415AF1D78B58C40, 2, w, "1.00e+20"), 1, "1e20: first 21-digit value, exponent form");
+    assert_eq(_ff(0x7E37E43C8800759C, 0, w, "1.0e+300"), 1, "1e300 at 0 decimals (was -2.0)");
+    assert_eq(_ff(0x7E37E43C8800759C, 2, w, "1.00e+300"), 1, "1e300 at 2 decimals");
+    assert_eq(_ff(0x7E37E43C8800759C, 18, w, "1.000000000000000053e+300"), 1,
+      "1e300 at 18 decimals: the exact binary value, rounded");
+    assert_eq(_ff(0x7E37E43C8800759C, 20, w, "1.00000000000000005300e+300"), 1,
+      "1e300 at 20 decimals: 18 computed, then '0'");
+    assert_eq(_ff(0xFE37E43C8800759C, 2, w, "-1.00e+300"), 1, "-1e300: one sign (was --…)");
+    assert_eq(_ff(0x7FEFFFFFFFFFFFFF, 2, w, "1.80e+308"), 1, "DBL_MAX");
+    assert_eq(_ff(0x44B52D02C7E14AF6, 2, w, "1.00e+23"), 1, "9.99…e22 rounds up through the 9s");
+    assert_eq(_ff(0x441B1AE4D6E2EF50, 1, w, "1.2e+20"), 1, "exact tie 1.25e20 -> even");
+    assert_eq(_ff(0x442B1AE4D6E2EF50, 0, w, "2.0e+20"), 1, "exact tie 2.5e20 -> even");
+    # fmt_float pads decimals past 18 INSIDE the mantissa, before the exponent.
+    assert_eq(_ffout(0x7E37E43C8800759C, 2, "1.00e+300"), 1, "fmt_float(1e300, 2)");
+    assert_eq(_ffout(0xFE37E43C8800759C, 2, "-1.00e+300"), 1, "fmt_float(-1e300, 2)");
+    assert_eq(_ffout(0x7E37E43C8800759C, 20, "1.00000000000000005300e+300"), 1,
+      "fmt_float(1e300, 20): padding before e+300");
+    assert_eq(_ffout(0x43E0000000000000, 20, "9223372036854775808.00000000000000000000"), 1,
+      "fmt_float(2^63, 20)");
 
     # fmt_float's own stack buffer: these overran `var buf[32]` (a smashed frame).
     fmt_float(big, 2);
