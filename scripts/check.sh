@@ -177,6 +177,8 @@ _chk_finish() {
     esac
     if [ -n "$_CHK_STAGED_DIR" ]; then rm -rf "$_CHK_STAGED_DIR"; fi
     if [ -n "$_CHK_DRV_SKIPS_RM" ]; then rm -rf "$_CHK_DRV_SKIPS_RM"; fi
+    # A run interrupted while building the driver leaves its per-run side files (6.6.20).
+    if [ -n "${_CHK_BIN_NEW:-}" ]; then rm -f "$_CHK_BIN_NEW" "$_CHK_BIN_ERR"; fi
     if [ "$_CHK_STARTED" != "1" ]; then exit "$_xrc"; fi
 
     # Everything THIS run is supposed to have produced a result for (the full registered
@@ -484,15 +486,25 @@ if [ ! -x "$CHECK_BIN" ] || [ -z "$NEWEST_SRC" ] || [ "$NEWEST_SRC" -nt "$CHECK_
     # cyrius_check cost a full 13-minute run. rename(2) over a running binary is fine; the
     # running process keeps its own inode. Same shape as the `cp new && mv -f` recipe
     # CLAUDE.md prescribes for build/cycc. CHANGELOG [6.6.6]
-    if ! cat "$CHECK_SRC" | "$CC" > "$CHECK_BIN.new" 2>"$CHECK_BIN.err"; then
+    # ⛔ 6.6.20: the side files are PER RUN (`.new.<pid>`). With one fixed `.new`, two selectors
+    # started in ONE worktree both rebuilt into the same file: the second's `>` truncated the
+    # first's half-written binary, the first renamed it away, and the second's `chmod` / `mv`
+    # then failed under `set -e` — a red run for a reason that is not the tree. The final rename
+    # stays shared and atomic: each run installs a complete binary built from the same sources.
+    # Gate: tests/gates/toolchain/check_concurrent_selectors_one_tree.sh. CHANGELOG [6.6.20]
+    _CHK_BIN_NEW="$CHECK_BIN.new.$$"
+    _CHK_BIN_ERR="$CHECK_BIN.err.$$"
+    if ! cat "$CHECK_SRC" | "$CC" > "$_CHK_BIN_NEW" 2>"$_CHK_BIN_ERR"; then
         printf "error: the check suite failed to compile:\n" >&2
-        cat "$CHECK_BIN.err" >&2
-        rm -f "$CHECK_BIN.new" "$CHECK_BIN.err"
+        cat "$_CHK_BIN_ERR" >&2
+        rm -f "$_CHK_BIN_NEW" "$_CHK_BIN_ERR"
         exit 1
     fi
-    rm -f "$CHECK_BIN.err"
-    chmod +x "$CHECK_BIN.new"
-    mv -f "$CHECK_BIN.new" "$CHECK_BIN"
+    rm -f "$_CHK_BIN_ERR"
+    chmod +x "$_CHK_BIN_NEW"
+    mv -f "$_CHK_BIN_NEW" "$CHECK_BIN"
+    _CHK_BIN_NEW=""
+    _CHK_BIN_ERR=""
 fi
 
 # ── ⛔ v6.6.6 (bite 27a): A TARGETED RUN RUNS THAT SUITE — AND A TYPO IS AN ERROR ─────
@@ -1394,6 +1406,10 @@ _chk_gate "$ROOT/tests/gates/toolchain/cross_os_legs_cx_parity.sh"
 # 6.6.20 — every scripts/ file a release-tarball builder names exists. The x86-macOS builder
 # `[ -f ]`-guarded a copy of a README that never existed, so it silently shipped none.
 _chk_gate "$ROOT/tests/gates/toolchain/tarball_inputs_exist.sh"
+
+# 6.6.20 — two selectors started in ONE worktree both rebuild build/cyrius_check without
+# colliding: the driver compiles into a per-run side file (`.new.<pid>`), not one fixed name.
+_chk_gate "$ROOT/tests/gates/toolchain/check_concurrent_selectors_one_tree.sh"
 
 # 6.6.20 — the TLS gates' `serve` (tls_first_use_thread_race, tls_libssl_hostname_binding) reads
 # a fresh log per attempt. A reused log name let the readiness grep read an EARLIER server's
