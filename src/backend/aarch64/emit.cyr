@@ -2654,12 +2654,15 @@ fn EPOPARG(S, n): i64 {
     return 0;
 }
 
-# x16 = v, for an offset or stack adjustment no immediate field reaches (0 <= v < 2^32).
-# x16 (IP0) is a scratch the allocator never holds a value in (see EADDRA_IMM).
-fn _EMOV_X16(S, v): i64 {
-    EW(S, 0xD2800010 | ((v & 0xFFFF) << 5));                 # movz x16, #(v & 0xFFFF)
+# xRD = v, for an offset, displacement or stack adjustment no immediate field reaches
+# (0 <= v < 2^32; a frame is capped far below that — SFLC's 16384 slots, EPATCHFRAME's 16 MB).
+# The `movk` is emitted only when v needs it, so a value under 64 KiB is the lone `movz` the
+# displacement sites always emitted. x16 (IP0) is a scratch the allocator never holds a value
+# in (see EADDRA_IMM); x9 / x10 are the fp-address scratches. CHANGELOG [6.6.20]
+fn _EMOV_XN(S, rd, v): i64 {
+    EW(S, 0xD2800000 | ((v & 0xFFFF) << 5) | rd);            # movz xRD, #(v & 0xFFFF)
     var hi = (v >> 16) & 0xFFFF;
-    if (hi != 0) { EW(S, 0xF2A00010 | (hi << 5)); }          # movk x16, #hi, LSL #16
+    if (hi != 0) { EW(S, 0xF2A00000 | (hi << 5) | rd); }     # movk xRD, #hi, LSL #16
     return 0;
 }
 
@@ -2674,13 +2677,13 @@ fn _EMOV_X16(S, v): i64 {
 # CHANGELOG [6.6.20]
 fn ELDR_SP(S, reg, imm): i64 {
     if (imm <= 32760) { EW(S, 0xF94003E0 | ((imm / 8) << 10) | reg); return 0; }
-    _EMOV_X16(S, imm);
+    _EMOV_XN(S, 16, imm);
     EW(S, 0xF8706BE0 | reg);                                 # ldr xREG, [sp, x16]
     return 0;
 }
 fn ESTR_SP(S, reg, imm): i64 {
     if (imm <= 32760) { EW(S, 0xF90003E0 | ((imm / 8) << 10) | reg); return 0; }
-    _EMOV_X16(S, imm);
+    _EMOV_XN(S, 16, imm);
     EW(S, 0xF8306BE0 | reg);                                 # str xREG, [sp, x16]
     return 0;
 }
@@ -2738,7 +2741,7 @@ fn ECALLCLEAN(S, n): i64 {
             var lo = extra & 0xFFF;
             if (lo != 0) { EW(S, 0x910003FF | (lo << 10)); }      # add sp, sp, #lo
         } else {
-            _EMOV_X16(S, extra);
+            _EMOV_XN(S, 16, extra);
             EW(S, 0x8B3063FF);                                    # add sp, sp, x16
         }
     }
@@ -2767,19 +2770,25 @@ fn EFLADDR_X8(S, lli): i64 {
         EW(S, 0xD10003A8 | (abs << 10));   # sub x8, x29, #abs
         return 0;
     }
-    # Fallback for large frames — movz x9 + sub x8, x29, x9.
-    EW(S, 0xD2800009 | ((abs & 0xFFFF) << 5));   # movz x9, #abs
+    # Fallback for large frames — x9 = abs (movz, + movk past 64 KiB), sub x8, x29, x9.
+    _EMOV_XN(S, 9, abs);
     EW(S, 0xCB0903A8);                            # sub x8, x29, x9
     return 0;
 }
 
 # Compute x9 = x29 + disp for local access when disp is outside the
 # LDUR/STUR signed 9-bit immediate range (-256..+255). Called only with
-# disp <= -256 (locals at idx >= 32). Assumes |disp| fits in 16 bits —
-# Cyrius functions with >= 8192 locals are implausible.
+# disp <= -256 (locals at idx >= 32).
+# ⛔ 6.6.20 — this was one `movz x9, #(abs & 0xFFFF)` on the comment's word that
+# "|disp| fits in 16 bits — >= 8192 locals are implausible". It is not: one
+# `var buf[70000]` puts every later local past 64 KiB, and so does a fn of 8192+
+# params. The displacement wrapped silently — a local after the buffer aliased a
+# byte inside it (a loop over the buffer reset its own counter and never ended),
+# and param 8192 was homed over the saved fp. A movk now carries bits 16..31.
+# CHANGELOG [6.6.20]
 fn _EFP_ADDR_X9(S, disp): i64 {
     var abs = 0 - disp;
-    EW(S, 0xD2800009 | ((abs & 0xFFFF) << 5));  # movz x9, #abs
+    _EMOV_XN(S, 9, abs);                          # x9 = abs
     EW(S, 0xCB0903A9);                            # sub x9, x29, x9
     return 0;
 }
@@ -2811,7 +2820,7 @@ fn ESTORESTACKPARM(S, pidx, disp, pc): i64 {
         # opc bit 22, which `ldr` already has: the load read a slot 32 KiB too low
         # (at 2054, `ldr x9, [x29]` — the saved fp). Read the offset into x16.
         # CHANGELOG [6.6.20]
-        _EMOV_X16(S, soff);
+        _EMOV_XN(S, 16, soff);
         EW(S, 0xF8706BA9);                        # ldr x9, [x29, x16]
     }
     if (disp >= 0 - 256) {
@@ -2819,9 +2828,11 @@ fn ESTORESTACKPARM(S, pidx, disp, pc): i64 {
         EW(S, 0xF80003A9 | (off9 << 12));  # stur x9, [x29, #disp]
         return 0;
     }
-    # disp out of range — compute dest addr in x10 (x9 holds value), str x9, [x10]
+    # disp out of range — compute dest addr in x10 (x9 holds value), str x9, [x10].
+    # Past 64 KiB (param 8192 on) the movk carries bits 16..31: a lone movz homed param
+    # 8192 over the saved fp. CHANGELOG [6.6.20]
     var abs = 0 - disp;
-    EW(S, 0xD280000A | ((abs & 0xFFFF) << 5));  # movz x10, #abs
+    _EMOV_XN(S, 10, abs);                         # x10 = abs
     EW(S, 0xCB0A03AA);                            # sub x10, x29, x10
     EW(S, 0xF9000149);                            # str x9, [x10]
     return 0;
