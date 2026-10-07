@@ -18,32 +18,73 @@
 set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT"
-F=cbt/commands.cyr
 fail=0
-
-# axis 1 — the scan must be anchored to a line start.
-if grep -q 'bol == 1 && ndi + 6 <= mlen && memeq(mbuf + ndi, "\[deps\.", 6) == 1' "$F"; then
-    echo "  ok axis 1: the [deps. match is anchored to a line start (bol)"
-else
-    echo "  FAIL axis 1: the [deps. match is no longer line-anchored — comment prose can register a dep again"
-    fail=1
+#
+# 6.6.20 — axes 1-3 were GREPS FOR THE OLD SCANNER'S TEXT (`bol == 1 && ndi + 6 …`, `in_cmt = 1`,
+# `vec_push(named_deps, nd)`), so they pinned an implementation, not the rule — and the rule had
+# a hole they could not see: a `[deps.X]` at the start of a line INSIDE a `"""` value registered
+# X. `_distlib_named_deps` now reads headers through the resolver's own rule (`_dep_hdr_name` on
+# `_toml_line`, cbt/deps.cyr), and these axes test the RULE: a built CLI, a manifest, and the
+# `--modular` index it writes (a named dep's leaf is left out of the index; any other is listed).
+CC=${CYCC:-"$ROOT/build/cycc"}
+[ -x "$CC" ] || { echo "SKIP: distlib-named-deps-anchored: no compiler at $CC"; exit 77; }
+W=$(mktemp -d) && [ -d "$W" ] || { echo "FAIL: distlib-named-deps-anchored: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
+trap 'rm -rf "$W"' EXIT
+if [ -n "${CYRIUS_GATE_CLI:-}" ]; then cp "$CYRIUS_GATE_CLI" "$W/cyrius"
+else cat cbt/cyrius.cyr | "$CC" > "$W/cyrius" 2>/dev/null || { echo "FAIL: distlib-named-deps-anchored: cbt/cyrius.cyr does not build"; exit 1; }
 fi
+chmod +x "$W/cyrius"
+P="$W/q"; mkdir -p "$P/src"
+cat > "$P/cyrius.cyml" <<'EOF'
+[package]
+name = "q"
+version = "0.0.1"
+language = "cyrius"
+description = """
+To vendor us, write:
+[deps.fmt]
+"""
 
-# axis 2 — comment lines must be skipped outright.
-if grep -q 'in_cmt = 1' "$F" && grep -q 'ndc == 35' "$F"; then
-    echo "  ok axis 2: '#' opens a comment and the rest of the line is skipped"
-else
-    echo "  FAIL axis 2: no comment suppression — a comment BEGINNING with [deps.x] still matches"
-    fail=1
-fi
+# [deps.math] — layout notes: a comment that BEGINS with a header
+  # [deps.alloc] — and an indented one
 
-# axis 3 (ANTI-VACUOUS) — the function must still FIND real headers.
-# Axes 1-2 only assert the guards exist; deleting the whole scan would satisfy them.
-if grep -q 'vec_push(named_deps, nd)' "$F"; then
-    echo "  ok axis 3: real [deps.X] headers are still collected"
+[lib]
+modules = ["src/a.cyr"]
+
+  [deps.str]
+path = "../nowhere"
+modules = []
+
+[ deps.vec ]
+path = "../nowhere"
+modules = []
+EOF
+printf 'include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/math.cyr"
+include "lib/alloc.cyr"
+include "lib/str.cyr"
+include "lib/vec.cyr"
+fn q_a(): i64 { return 4; }
+' > "$P/src/a.cyr"
+rc=0; ( cd "$P" && "$W/cyrius" distlib --modular > "$W/out" 2>&1 ) || rc=$?
+IDX="$P/dist/q/index.cyml"
+row=$(grep '^a = ' "$IDX" 2>/dev/null || true)
+# axis 1 — comment prose (at column 0 and indented) does not register a dep.
+case "$row" in
+    *'"lib:math"'*'"lib:alloc"'*) echo "  ok axis 1: a commented [deps.math] / indented # [deps.alloc] register nothing (both leaves listed)" ;;
+    *) echo "  FAIL axis 1: a commented [deps.X] excluded its leaf (rc=$rc): [$row] $(head -2 "$W/out")"; fail=1 ;;
+esac
+# axis 2 — a `[deps.X]` line inside a multi-line string value is not a header.
+case "$row" in
+    *'"lib:fmt"'*) echo "  ok axis 2: a [deps.fmt] inside a \"\"\" description registers nothing (lib:fmt listed)" ;;
+    *) echo "  FAIL axis 2: a [deps.fmt] inside a multi-line string excluded its leaf: [$row]"; fail=1 ;;
+esac
+# axis 3 (ANTI-VACUOUS) — real headers, indented or spaced, ARE collected.
+if [ "$rc" -eq 0 ] && [ -n "$row" ] && ! printf '%s' "$row" | grep -q 'lib:str"\|lib:vec"'; then
+    echo "  ok axis 3: the real '  [deps.str]' and '[ deps.vec ]' headers exclude their leaves"
 else
-    echo "  FAIL axis 3 (anti-vacuous): the collector is gone — the exclude set would be empty"
-    fail=1
+    echo "  FAIL axis 3 (anti-vacuous): rc=$rc, a real [deps.X] header was not collected: [$row]"; fail=1
 fi
 
 # axis 4 (BEHAVIOURAL) — a real consumer's sidecar must still be complete.

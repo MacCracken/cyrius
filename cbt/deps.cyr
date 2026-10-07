@@ -954,97 +954,6 @@ fn _dep_name_cmp(a, b): i64 {
     return 0;
 }
 
-fn _toml_section_at(buf, n, si): i64 {
-    if (si >= n) { return 0; }
-    var ls = si;
-    while (ls > 0) {
-        if (load8(buf + ls - 1) == 10) { break; }
-        ls = ls - 1;
-    }
-    while (ls < si) {
-        var c = load8(buf + ls);
-        if (c != 32 && c != 9) { return 0; }
-        ls = ls + 1;
-    }
-    return 1;
-}
-
-fn _toml_key_at(buf, n, si, klen): i64 {
-    if (si + klen >= n) { return 0; }
-    var sep = load8(buf + si + klen);
-    if (sep != 32 && sep != 9 && sep != 61) { return 0; }
-    if (si > 0) {
-        var pc = load8(buf + si - 1);
-        if (pc >= 48 && pc <= 57)   { return 0; }   # 0-9
-        if (pc >= 65 && pc <= 90)   { return 0; }   # A-Z
-        if (pc >= 97 && pc <= 122)  { return 0; }   # a-z
-        if (pc == 95)               { return 0; }   # _
-        # 6.6.17 (m6): `-` is a bare-key byte too, so `stdlib` inside `dev-stdlib` is the TAIL of
-        # another key, not this one. Measured: `dev-stdlib = ["math"]` above the real `stdlib`
-        # made `cyrius deps` vendor math.cyr and none of the declared leaves (first match wins).
-        if (pc == 45)               { return 0; }   # -
-    }
-    # Walk back to the start of the line holding `si`.
-    var ls = si;
-    while (ls > 0) {
-        var lc = load8(buf + ls - 1);
-        if (lc == 10) { break; }
-        ls = ls - 1;
-    }
-    # Leading whitespace then `#` = comment line.
-    var ws = ls;
-    while (ws < si) {
-        var wc = load8(buf + ws);
-        if (wc == 35) { return 0; }              # '#'
-        if (wc != 32 && wc != 9) { break; }
-        ws = ws + 1;
-    }
-    # Count unescaped `"` from line start to the match. Odd = the match sits
-    # inside a string value.
-    #
-    # ⛔ v6.5.37 (A5) — AND REJECT A MATCH THAT SITS AFTER AN INLINE `#`. THIS IS THE FOURTH
-    # OCCURRENCE OF THE COMMENT-PROSE CLASS, AND IT WAS IN THE HELPER INTRODUCED TO END IT.
-    # v6.5.17 fixed it in cmd_deps (bayan) and introduced this shared helper; v6.5.30 fixed
-    # the un-swept copy in distlib's `[deps] stdlib` union (niyama; the union itself was
-    # removed at 6.6.18, P4). Both fixes assumed the
-    # guard above — leading whitespace then `#` — covers comments. It does not: it walks ONLY
-    # the leading whitespace and breaks at the first non-space, so a `#` that opens a comment
-    # MID-LINE is never seen. Reproduced at 6.5.36 with one line of ordinary prose:
-    #
-    #     modules = ["src/lib.cyr"]   # TODO: split; stdlib = ["math"] will move here
-    #     [deps]
-    #     stdlib = ["string","fmt","alloc","io","vec","str","syscalls"]
-    #
-    # -> `dist/probe.deps` contained exactly `math`, and `cyrius deps` vendored math.cyr and
-    # NOTHING ELSE, silently, exit 0. Seven declared leaves reduced to one wrong one.
-    #
-    # ⚠ It is indifferent to whether the decoy mentions `stdlib` at all — the scan locks onto
-    # any array literal after the `#`. And it fires in BOTH directions at once, because the
-    # producer sidecar and the consumer resolver share this helper.
-    #
-    # The quote counter already walks exactly the span the comment test needs, so the test is
-    # free: an unescaped `#` seen while the quote count is EVEN (i.e. outside a string value)
-    # starts a comment and everything after it on the line is prose. A `#` with an ODD count
-    # is inside a quoted value and is just a character.
-    var quotes = 0;
-    while (ls < si) {
-        var c = load8(buf + ls);
-        if (c == 92) {
-            ls = ls + 1;                          # '\' escapes the next byte
-        } else {
-            if (c == 34) { quotes = quotes + 1; } # '"'
-            elif (c == 35) {                      # '#'
-                var q_here = quotes - ((quotes / 2) * 2);
-                if (q_here == 0) { return 0; }    # outside a string => comment starts here
-            }
-        }
-        ls = ls + 1;
-    }
-    var odd = quotes - ((quotes / 2) * 2);
-    if (odd == 1) { return 0; }
-    return 1;
-}
-
 # The value of the key at (or ending at) buf[pos] — a TOML array of strings, or a single string —
 # as a vec of cstrs. 6.6.17 (m6): elements are TOML strings (`'…'` literal, `"…"` with escapes;
 # a `'…'` element used to be DROPPED), a `#` comment inside the array is skipped (a `"…"` in it was
@@ -1294,40 +1203,11 @@ fn _dep_expand_groups(names): i64 {
 # `_dep_group_members` (parallel vecs). Each `name = ["a", "b", ...]` line defines
 # a group that expands at resolve time wherever it's named in `[deps].stdlib` or a
 # `[deps.NAME] requires` list. Members are whole stdlib-leaf / dep names (the
-# `pkg:submodule` sub-unit form awaits Phase C). The section ends at the next
-# `[...]` header. Multi-line arrays are handled — continuation lines carry no `[`
-# so they're skipped; `_parse_toml_str_array` already consumed the whole array.
+# `pkg:submodule` sub-unit form awaits Phase C).
 fn _dep_parse_groups(buf, n): i64 {
     _dep_group_names = vec_new();
     _dep_group_members = vec_new();
-    var i = 0;
-    var in_groups = 0;
-    while (i < n) {
-        var ls = i;
-        while (ls < n && (load8(buf + ls) == 32 || load8(buf + ls) == 9)) { ls = ls + 1; }
-        if (ls < n && load8(buf + ls) == 91) {   # '[' section header
-            in_groups = 0;
-            if (memeq(buf + ls, "[groups]", 8) == 1) { in_groups = 1; }
-        } elif (in_groups == 1 && ls < n && load8(buf + ls) != 35 && load8(buf + ls) != 10) {
-            var ne = ls;
-            while (ne < n && load8(buf + ne) != 32 && load8(buf + ne) != 9 && load8(buf + ne) != 61 && load8(buf + ne) != 10) { ne = ne + 1; }
-            var nl = ne - ls;
-            if (nl > 0) {
-                var bi = ne;
-                while (bi < n && load8(buf + bi) != 91 && load8(buf + bi) != 10) { bi = bi + 1; }
-                if (bi < n && load8(buf + bi) == 91) {
-                    var gname = alloc(nl + 1);
-                    memcpy(gname, buf + ls, nl);
-                    store8(gname + nl, 0);
-                    var gmembers = _parse_toml_str_array(buf, n, ne);
-                    vec_push(_dep_group_names, gname);
-                    vec_push(_dep_group_members, gmembers);
-                }
-            }
-        }
-        while (i < n && load8(buf + i) != 10) { i = i + 1; }
-        if (i < n) { i = i + 1; }
-    }
+    _dep_parse_name_lists(buf, n, "groups", _dep_group_names, _dep_group_members);   # 6.6.20: the one reader
     return 0;
 }
 
@@ -1360,45 +1240,18 @@ fn _dep_register_default_std_group(): i64 {
 
 # v6.3.1 (dependency-model arc, lever 2 — required vs optional deps): parse a
 # `[features]` table into `_dep_feature_names` / `_dep_feature_deps` (parallel
-# vecs), structurally identical to `_dep_parse_groups`. Each `name = ["dep", ...]`
+# vecs), read like `_dep_parse_groups`. Each `name = ["dep", ...]`
 # line declares a feature whose members are optional-dep names and/or other
 # feature names (recursively expanded by `_dep_feature_expand` at resolve time).
 # The reserved `default = [...]` line is the set activated unless
-# `--no-default-features` is passed. Section ends at the next `[...]` header.
+# `--no-default-features` is passed.
 # Absent `[features]` → empty vecs → no optional dep is ever activated (every
 # pre-existing manifest resolves byte-identical). Parse-only here; the active-set
 # computation + the skip gate live with the resolver (`_dep_feature_active`).
 fn _dep_parse_features(buf, n): i64 {
     _dep_feature_names = vec_new();
     _dep_feature_deps = vec_new();
-    var i = 0;
-    var in_features = 0;
-    while (i < n) {
-        var ls = i;
-        while (ls < n && (load8(buf + ls) == 32 || load8(buf + ls) == 9)) { ls = ls + 1; }
-        if (ls < n && load8(buf + ls) == 91) {   # '[' section header
-            in_features = 0;
-            if (memeq(buf + ls, "[features]", 10) == 1) { in_features = 1; }
-        } elif (in_features == 1 && ls < n && load8(buf + ls) != 35 && load8(buf + ls) != 10) {
-            var ne = ls;
-            while (ne < n && load8(buf + ne) != 32 && load8(buf + ne) != 9 && load8(buf + ne) != 61 && load8(buf + ne) != 10) { ne = ne + 1; }
-            var nl = ne - ls;
-            if (nl > 0) {
-                var bi = ne;
-                while (bi < n && load8(buf + bi) != 91 && load8(buf + bi) != 10) { bi = bi + 1; }
-                if (bi < n && load8(buf + bi) == 91) {
-                    var fname = alloc(nl + 1);
-                    memcpy(fname, buf + ls, nl);
-                    store8(fname + nl, 0);
-                    var fmembers = _parse_toml_str_array(buf, n, ne);
-                    vec_push(_dep_feature_names, fname);
-                    vec_push(_dep_feature_deps, fmembers);
-                }
-            }
-        }
-        while (i < n && load8(buf + i) != 10) { i = i + 1; }
-        if (i < n) { i = i + 1; }
-    }
+    _dep_parse_name_lists(buf, n, "features", _dep_feature_names, _dep_feature_deps);   # 6.6.20: the one reader
     return 0;
 }
 
@@ -1785,6 +1638,87 @@ fn _dep_join_path(manifest_dir, rel): i64 {
     return out;
 }
 
+# The NAME of the `[deps.NAME]` table header `_toml_line` parsed into `info`, as a fresh cstr
+# (`[ deps.x ]` and `[deps.x ]` read as `x`); 0 for any other line. *closedp = 0 when the header
+# has no `]` on its line. The ONE header rule: the resolver, `deps --dry-run` and distlib's
+# named-dep set all read headers through it, so they cannot disagree about which tables exist.
+fn _dep_hdr_name(buf, n, info, closedp): i64 {
+    if (load64(info) != 1) { return 0; }
+    var hs = load64(info + 8);
+    var hl = load64(info + 16);
+    if (hl < 5 || memeq(buf + hs, "deps.", 5) == 0) { return 0; }
+    var p = hs + hl;
+    while (p < n && (load8(buf + p) == 32 || load8(buf + p) == 9)) { p = p + 1; }
+    store64(closedp, 0);
+    if (p < n && load8(buf + p) == 93) { store64(closedp, 1); }
+    var nl = hl - 5;
+    var nm = alloc(nl + 1);
+    memcpy(nm, buf + hs + 5, nl);
+    store8(nm + nl, 0);
+    return nm;
+}
+
+fn _dep_refuse_unclosed(name): i64 {
+    _ew("error: [deps.");
+    _ew_shown(name);
+    _ew(" has no closing `]` on its line — not a table header; section refused\n");
+    return 1;
+}
+
+# 1 when the key buf[ks..ks+kl) is exactly `key`.
+fn _dep_key_is(buf, ks, kl, key): i64 {
+    if (kl != strlen(key)) { return 0; }
+    return memeq(buf + ks, key, kl);
+}
+
+# The bareword at buf[p]: 1 for `true`, 0 for `false`, -1 for anything else.
+fn _dep_bareword_bool(buf, n, p): i64 {
+    if (p + 4 <= n && memeq(buf + p, "true", 4) == 1 && _toml_tok_end(buf, n, p + 4) == 1) { return 1; }
+    if (p + 5 <= n && memeq(buf + p, "false", 5) == 1 && _toml_tok_end(buf, n, p + 5) == 1) { return 0; }
+    return 0 - 1;
+}
+
+# The string list whose VALUE starts at buf[v] (a `_toml_find` / `_toml_line` value offset): an
+# array of strings, or one string as a one-element list (both as `_parse_toml_str_array` reads
+# them from a key).
+fn _dep_strs_at(buf, n, v): i64 {
+    if (v < n && (load8(buf + v) == 34 || load8(buf + v) == 39)) {
+        var one = vec_new();
+        var e = 0;
+        var s = _toml_str_at(buf, n, v, &e);
+        if (s != 0) { vec_push(one, s); }
+        return one;
+    }
+    return _parse_toml_str_array(buf, n, v);
+}
+
+# `[deps] stdlib` as a vec of leaf names, or 0 when the key is absent. Through the one reader, so
+# a `stdlib` in prose, in a quoted or multi-line value, or in another table is never the key —
+# the byte scan this replaced (cmd_deps, `lib sync`) took a `"""` description holding
+# `stdlib = ["math"]` for the real key. CHANGELOG [6.6.20].
+fn _dep_declared_stdlib(buf, n): i64 {
+    var v = _toml_find(buf, n, "deps", "stdlib");
+    if (v < 0) { return 0; }
+    return _dep_strs_at(buf, n, v);
+}
+
+# `[<section>]`'s `name = ["a", …]` entries into parallel vecs (`names`, `lists`), through the one
+# reader — `[groups]` and `[features]`. A value that is not an array is not an entry.
+fn _dep_parse_name_lists(buf, n, section, names, lists): i64 {
+    var keys = _toml_section_keys(buf, n, section);
+    var i = 0;
+    while (i < vec_len(keys)) {
+        var k = vec_get(keys, i);
+        i = i + 1;
+        var v = _toml_find(buf, n, section, k);
+        if (v >= 0 && v < n && load8(buf + v) == 91) {
+            vec_push(names, k);
+            vec_push(lists, _parse_toml_str_array(buf, n, v));
+        }
+    }
+    return 0;
+}
+
 # v5.7.14: process [deps.X] sections in `buf` (manifest content of
 # length `n`). `manifest_dir` is the absolute directory containing
 # the manifest; relative `path = "..."` entries resolve against it.
@@ -1793,17 +1727,24 @@ fn _dep_join_path(manifest_dir, rel): i64 {
 # transitive walk in cmd_deps. Returns errors count for this manifest.
 fn _process_named_deps(buf, n, manifest_dir): i64 {
     var errors = 0;
+    var info[32];
     var si = 0;
     while (si < n) {
-        if (memeq(buf + si, "[deps.", 6) == 1 && _toml_section_at(buf, n, si) == 1) {
-            var name_start = si + 6;
-            var name_end = name_start;
-            while (name_end < n && load8(buf + name_end) != 93) { name_end = name_end + 1; }
-            var dep_name_len = name_end - name_start;
-            var dep_name = alloc(dep_name_len + 1);
-            memcpy(dep_name, buf + name_start, dep_name_len);
-            store8(dep_name + dep_name_len, 0);
-            si = name_end + 1;
+        # 6.6.20: the section walk is on the one reader (`_toml_line`, cbt/manifest.cyr) — headers
+        # and keys whole, indented or not, never inside a multi-line value. This was a private
+        # column-0 scan: an indented `tag` was dropped (unpinned HEAD vendored), `[ deps.x ]`
+        # ignored, a `[deps.x]` inside a `"""` description resolved, and a later `[docs]` /
+        # `[[bin]]` key read as the dep's own.
+        si = _toml_line(buf, n, si, &info);
+        var hclosed = 0;
+        var dep_name = _dep_hdr_name(buf, n, &info, &hclosed);
+        if (dep_name != 0) {
+            # A header with no `]` on its line: the old scan ran its NAME across the newline.
+            if (hclosed == 0) {
+                _dep_refuse_unclosed(dep_name);
+                errors = errors + 1;
+                continue;
+            }
             # CVE-62 (6.6.13): the header NAME becomes a path — the clone dir
             # `<home>/deps/<name>/<tag>` (mkdir + git clone), the `lib/<name>_<base>`
             # destination, and the `dist/<name>.cyr` default. CVE-32 (v6.2.51) guarded
@@ -1818,16 +1759,8 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                 errors = errors + 1;
                 continue;
             }
-            # v5.7.14: closest-wins skip. Walk si past this section without
-            # re-resolving.
-            if (_dep_name_visited(dep_name) == 1) {
-                while (si < n) {
-                    if (load8(buf + si) == 91 && load8(buf + si + 1) != 91) { break; }
-                    while (si < n && load8(buf + si) != 10) { si = si + 1; }
-                    if (si < n) { si = si + 1; }
-                }
-                continue;
-            }
+            # v5.7.14: closest-wins skip — the outer walk steps over the section's keys.
+            if (_dep_name_visited(dep_name) == 1) { continue; }
             var dep_path = 0;
             var dep_git = 0;
             var dep_tag = 0;
@@ -1841,87 +1774,64 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
             # disagrees with the lock — gates the module copy so poisoned
             # content never lands in lib/.
             var dep_pin_ok = 1;
+            # The section's `key = value` lines, up to the next table header of either kind,
+            # dispatched on the WHOLE key. path / git / tag / target are TOML strings (6.6.17,
+            # m6: a value that is not one refuses the section by name, `dep_bad`); modules /
+            # requires / modular are string arrays; optional is the bareword `true` or `false`.
             while (si < n) {
-                if (load8(buf + si) == 91 && load8(buf + si + 1) != 91 && _toml_section_at(buf, n, si) == 1) {
-                    if (memeq(buf + si, "[deps.", 6) != 1 && memeq(buf + si, "[build", 6) != 1 && memeq(buf + si, "[package", 8) != 1) {
+                var nx = _toml_line(buf, n, si, &info);
+                var kind = load64(&info);
+                if (kind == 1 || kind == 2) { break; }
+                si = nx;
+                if (kind == 3) {
+                    var ks = load64(&info + 8);
+                    var kl = load64(&info + 16);
+                    var kv = load64(&info + 24);
+                    var ke = 0;
+                    if (_dep_key_is(buf, ks, kl, "path") == 1) {
+                        dep_path = _toml_str_at(buf, n, kv, &ke);
+                        if (dep_path == 0) { dep_bad = "path"; }
+                        # v5.7.14: resolve relative `path = "..."` against
+                        # the manifest's directory, not the consumer's cwd.
+                        else { dep_path = _dep_join_path(manifest_dir, dep_path); }
+                    } elif (_dep_key_is(buf, ks, kl, "git") == 1) {
+                        dep_git = _toml_str_at(buf, n, kv, &ke);
+                        if (dep_git == 0) { dep_bad = "git"; }
+                    } elif (_dep_key_is(buf, ks, kl, "tag") == 1) {
+                        dep_tag = _toml_str_at(buf, n, kv, &ke);
+                        if (dep_tag == 0) { dep_bad = "tag"; }
+                    } elif (_dep_key_is(buf, ks, kl, "target") == 1) {
+                        # v6.3.1 lever 2: resolve this dep only on a matching build target
+                        # (see `_dep_target_matches`).
+                        dep_target = _toml_str_at(buf, n, kv, &ke);
+                        if (dep_target == 0) { dep_bad = "target"; }
+                    } elif (_dep_key_is(buf, ks, kl, "modules") == 1) {
+                        dep_modules = _parse_toml_str_array(buf, n, ks + kl);
+                    } elif (_dep_key_is(buf, ks, kl, "requires") == 1) {
+                        # v6.2.46 (lever 1 / Phase A): the stdlib leaves a fold needs in scope,
+                        # pulled below ahead of this dep's modules.
+                        dep_requires = _parse_toml_str_array(buf, n, ks + kl);
+                        dep_requires = _dep_expand_groups(dep_requires);   # v6.2.49 Phase B: expand [groups] refs
+                    } elif (_dep_key_is(buf, ks, kl, "modular") == 1) {
+                        # v6.2.50 Phase C: individual sub-modules from the dep's `dist/<name>/`
+                        # (each + its transitive index deps + lib leaves) instead of `modules`.
+                        dep_modular = _parse_toml_str_array(buf, n, ks + kl);
+                    } elif (_dep_key_is(buf, ks, kl, "optional") == 1) {
+                        # v6.3.1 lever 2: resolve only when an active `[features]` set names
+                        # this dep (`_dep_feature_active`). The whole bareword: this read the
+                        # first byte, so `tru` (or `t-anything`) meant true.
+                        dep_optional = _dep_bareword_bool(buf, n, kv);
+                        if (dep_optional < 0) { dep_bad = "optional"; }
                     }
-                    if (load8(buf + si + 1) != 91) {
-                        if (memeq(buf + si, "[deps.", 6) == 1) { break; }
-                        if (memeq(buf + si, "[deps]", 6) == 1) { break; }
-                        if (load8(buf + si + 1) != 100) { break; }
-                    }
                 }
-                # 6.6.17 (m6): path / git / tag / target are read as TOML strings
-                # (`_toml_value_str_after_key`, cbt/manifest.cyr). They were "skip to the next `"`
-                # in the file", so `path = '../foo'` resolved the NEXT double-quoted string (the
-                # modules entry) and `tag = 'v1'` the same. A value that is not a string refuses
-                # the section by name (`dep_bad`).
-                if (memeq(buf + si, "path", 4) == 1 && load8(buf + si + 4) != 0 && (load8(buf + si + 4) == 32 || load8(buf + si + 4) == 61)) {
-                    dep_path = _toml_value_str_after_key(buf, n, si + 4);
-                    if (dep_path == 0) { dep_bad = "path"; }
-                    # v5.7.14: resolve relative `path = "..."` against
-                    # the manifest's directory, not the consumer's cwd.
-                    else { dep_path = _dep_join_path(manifest_dir, dep_path); }
-                }
-                if (memeq(buf + si, "git", 3) == 1 && (load8(buf + si + 3) == 32 || load8(buf + si + 3) == 61)) {
-                    dep_git = _toml_value_str_after_key(buf, n, si + 3);
-                    if (dep_git == 0) { dep_bad = "git"; }
-                }
-                if (memeq(buf + si, "tag", 3) == 1 && (load8(buf + si + 3) == 32 || load8(buf + si + 3) == 61)) {
-                    dep_tag = _toml_value_str_after_key(buf, n, si + 3);
-                    if (dep_tag == 0) { dep_bad = "tag"; }
-                }
-                # Key-boundary check (space/`=` after `modules`) — matches
-                # the path/git/tag siblings above. Without it `modules` was
-                # the one key here that bare-substring-matched, e.g. inside a
-                # comment or a longer token. See CHANGELOG [6.0.36].
-                if (memeq(buf + si, "modules", 7) == 1 && (load8(buf + si + 7) == 32 || load8(buf + si + 7) == 61)) {
-                    dep_modules = _parse_toml_str_array(buf, n, si);
-                }
-                # v6.2.46 (dependency-model arc, lever 1 / Phase A): a fold/dep
-                # may declare the stdlib leaves it needs in scope, e.g.
-                # `requires = ["ct", "keccak", "thread_local"]`. Parsed like
-                # `modules` (key-boundary checked: space/`=` after `requires`);
-                # pulled below, after the key loop, ahead of this dep's modules.
-                if (memeq(buf + si, "requires", 8) == 1 && (load8(buf + si + 8) == 32 || load8(buf + si + 8) == 61)) {
-                    dep_requires = _parse_toml_str_array(buf, n, si);
-                    dep_requires = _dep_expand_groups(dep_requires);   # v6.2.49 Phase B: expand [groups] refs
-                }
-                # v6.2.50 Phase C: `modular = ["ed25519", ...]` pulls individual
-                # sub-modules from the dep's `dist/<name>/` (each + its transitive
-                # index deps + lib leaves) instead of the whole-fold `modules`.
-                # Bare sub-module names (the dep IS the pkg). Key-boundary checked.
-                if (memeq(buf + si, "modular", 7) == 1 && (load8(buf + si + 7) == 32 || load8(buf + si + 7) == 61)) {
-                    dep_modular = _parse_toml_str_array(buf, n, si);
-                }
-                # v6.3.1 (dependency-model arc, lever 2 — required vs optional deps):
-                # `optional = true` marks a dep that resolves only when an active
-                # `[features]` set names it (see `_dep_feature_active`). Bareword
-                # value, so read the first non-space char after `=` (`t` of `true`).
-                # Key-boundary checked (space/`=` after `optional`) like the siblings.
-                if (memeq(buf + si, "optional", 8) == 1 && (load8(buf + si + 8) == 32 || load8(buf + si + 8) == 61)) {
-                    var oi = si + 8;
-                    while (oi < n && load8(buf + oi) != 61) { oi = oi + 1; }
-                    oi = oi + 1;
-                    while (oi < n && (load8(buf + oi) == 32 || load8(buf + oi) == 9)) { oi = oi + 1; }
-                    if (oi < n && load8(buf + oi) == 116) { dep_optional = 1; }
-                }
-                # v6.3.1 lever 2: `target = "<arch|os>"` resolves this dep only when
-                # the current build target matches (see `_dep_target_matches`).
-                # Scalar string, parsed like `tag`. Key-boundary checked.
-                if (memeq(buf + si, "target", 6) == 1 && (load8(buf + si + 6) == 32 || load8(buf + si + 6) == 61)) {
-                    dep_target = _toml_value_str_after_key(buf, n, si + 6);
-                    if (dep_target == 0) { dep_bad = "target"; }
-                }
-                while (si < n && load8(buf + si) != 10) { si = si + 1; }
-                si = si + 1;
             }
             if (dep_bad != 0) {
                 _ew("error: [deps.");
-                _ew(dep_name);
+                _ew_shown(dep_name);
                 _ew("] ");
                 _ew(dep_bad);
-                _ew(" is not a TOML string (quote it: \"…\" or '…') — section refused\n");
+                if (streq(dep_bad, "optional") == 1) { _ew(" is not true or false — section refused\n"); }
+                else { _ew(" is not a TOML string (quote it: \"…\" or '…') — section refused\n"); }
                 errors = errors + 1;
                 continue;
             }
@@ -2461,8 +2371,6 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                     vec_push(_dep_queue, _abs_path(dep_path));
                 }
             }
-        } else {
-            si = si + 1;
         }
     }
     # ⛔ v6.5.37 (A1) — CLAMP. This returned the raw error COUNT, which becomes the process
@@ -2484,21 +2392,20 @@ fn _deps_dry_list(manifest, buf, n): i64 {
     println(" into lib/ (nothing written):");
     var cnt = 0;
     var refused = 0;
-    var i = 0;
-    while (i < n) {
-        var ls = i;
-        while (i < n && load8(buf + i) != 10) { i = i + 1; }
-        # 6.6.20: `[deps.]` (7 bytes) is a header the resolver reads, so it is listed — refused,
-        # by the same rule and line as the real run (this skipped it: `i - ls > 7`).
-        if (i - ls >= 7 && memeq(buf + ls, "[deps.", 6) == 1) {
-            var e = ls + 6;
-            while (e < i && load8(buf + e) != 93) { e = e + 1; }
-            var nl = e - ls - 6;
-            var nm = alloc(nl + 1);
-            memcpy(nm, buf + ls + 6, nl);
-            store8(nm + nl, 0);
-            # No `]` on the line: the resolver's name runs on across the newline, which it refuses.
-            if (_dep_name_unsafe(nm) == 1 || e >= i) {
+    var info[32];
+    var p = 0;
+    while (p < n) {
+        # 6.6.20: the resolver's own header pass (_dep_hdr_name), so the listing is exactly what
+        # the real run resolves — this matched `[deps.` at column 0 only, missed `[deps.]`, and
+        # listed a header inside a `"""` value; a refused name is refused by the same line, rc 1.
+        p = _toml_line(buf, n, p, &info);
+        var hc = 0;
+        var nm = _dep_hdr_name(buf, n, &info, &hc);
+        if (nm != 0) {
+            if (hc == 0) {
+                _dep_refuse_unclosed(nm);
+                refused = refused + 1;
+            } elif (_dep_name_unsafe(nm) == 1) {
                 _dep_refuse_name(nm);
                 refused = refused + 1;
             } else {
@@ -2509,7 +2416,6 @@ fn _deps_dry_list(manifest, buf, n): i64 {
                 cnt = cnt + 1;
             }
         }
-        i = i + 1;
     }
     if (cnt == 0 && refused == 0) {
         println("  (no [deps.NAME] entries; stdlib = [...] modules resolve from the toolchain)");
@@ -2568,63 +2474,39 @@ fn cmd_deps(): i64 {
     _dep_parse_features(buf, n);     # v6.3.1 lever 2: [features] table (populates _dep_feature_names/_deps; gating happens in _process_named_deps)
 
     # === Phase 1: stdlib deps ===
-    # Find: stdlib = ["string", "fmt", ...]
-    # Key-boundary-aware: "stdlib" must be preceded by start-of-file,
-    # newline, or whitespace (i.e. not `a-zA-Z0-9_`), and followed
-    # by ` ` or `=`. Prevents false-positive on comment substrings
-    # like "bundles the stdlib prerequisites" which previously matched
-    # and caused `_parse_toml_str_array` to grab the next array in the
-    # file (e.g. patra's `[lib] modules = ["src/file.cyr", ...]`),
-    # surfacing in v5.5.26 when patra added a `[lib]` section above
-    # a comment that mentioned "stdlib".
-    var si = 0;
-    while (si < n) {
-        if (memeq(buf + si, "stdlib", 6) == 1) {
-            if (_toml_key_at(buf, n, si, 6) == 1) {
-                var stdlib_dir = _dep_find_stdlib_dir();
-                if (stdlib_dir == 0) {
-                    println("  error: cannot find cyrius stdlib");
-                    errors = errors + 1;
-                    break;
+    # `[deps] stdlib = ["string", "fmt", ...]`, read by the one reader (_dep_declared_stdlib):
+    # this was a raw byte scan for `stdlib` anywhere in the file, guarded piecemeal against the
+    # decoys it kept finding (a comment, a quoted value, a `dev-stdlib` key) and still taking a
+    # `"""` description holding `stdlib = ["math"]` for the key. CHANGELOG [6.6.20].
+    var mods = _dep_declared_stdlib(buf, n);
+    if (mods != 0) {
+        var stdlib_dir = _dep_find_stdlib_dir();
+        if (stdlib_dir == 0) {
+            println("  error: cannot find cyrius stdlib");
+            errors = errors + 1;
+        } else {
+            # v5.10.19: per-cmd_deps invocation visited-set
+            # for the include-chain follower below.
+            _dep_stdlib_seen_init();
+            mods = _dep_expand_groups(mods);   # v6.2.49 Phase B: expand [groups] refs → leaves
+            var mi = 0;
+            while (mi < vec_len(mods)) {
+                var mod_name = vec_get(mods, mi);
+                # v5.10.19: the recursive fetcher. For 95%+ of stdlib modules
+                # (leaf files) only the top-level file gets copied; for the arch-
+                # dispatcher modules (syscalls, alloc) it follows their
+                # `include "lib/X.cyr"` chains. is_top=1 — push onto `_dep_includes`
+                # so `compile()` prepends `include "lib/<mod>.cyr"`.
+                var rr = _dep_copy_stdlib_recursive(stdlib_dir, mod_name, 1);
+                if (rr == 1) { errors = errors + 1; }
+                if (_verbose == 1 && rr == 0) {
+                    sys_write(STDERR_FD, "  stdlib: ", 10);
+                    sys_write(STDERR_FD, mod_name, strlen(mod_name));
+                    sys_write(STDERR_FD, "\n", 1);
                 }
-                # v5.10.19: per-cmd_deps invocation visited-set
-                # for the include-chain follower below.
-                _dep_stdlib_seen_init();
-                var mods = _parse_toml_str_array(buf, n, si);
-                mods = _dep_expand_groups(mods);   # v6.2.49 Phase B: expand [groups] refs → leaves
-                # v6.5.17 defence-in-depth: a key that yields ZERO leaves is
-                # not the `stdlib` key — `_parse_toml_str_array` is purely
-                # positional and returns empty when it lands on a section
-                # header instead of an array. Keep scanning rather than
-                # committing; the old code `break`ed unconditionally, so one
-                # false positive silently disabled the whole auto-prepend.
-                if (vec_len(mods) > 0) {
-                    var mi = 0;
-                    while (mi < vec_len(mods)) {
-                        var mod_name = vec_get(mods, mi);
-                        # v5.10.19: replaces the inline copy with the
-                        # recursive fetcher. For 95%+ of stdlib modules
-                        # (leaf files) this is functionally identical
-                        # — the include scan finds zero matches, only
-                        # the top-level file gets copied. For the arch-
-                        # dispatcher modules (syscalls, alloc) it
-                        # follows their `include "lib/X.cyr"` chains.
-                        # is_top=1 — push onto `_dep_includes` so
-                        # `compile()` prepends `include "lib/<mod>.cyr"`.
-                        var rr = _dep_copy_stdlib_recursive(stdlib_dir, mod_name, 1);
-                        if (rr == 1) { errors = errors + 1; }
-                        if (_verbose == 1 && rr == 0) {
-                            sys_write(STDERR_FD, "  stdlib: ", 10);
-                            sys_write(STDERR_FD, mod_name, strlen(mod_name));
-                            sys_write(STDERR_FD, "\n", 1);
-                        }
-                        mi = mi + 1;
-                    }
-                    break;
-                }
+                mi = mi + 1;
             }
         }
-        si = si + 1;
     }
 
     # === Phase 2: named deps (consumer's manifest) ===

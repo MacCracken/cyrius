@@ -1252,35 +1252,14 @@ fn _self_step_failed(step, rc, src, cc): i64 {
     return 0;
 }
 
-# v6.2.40: parse `[deps].stdlib = [...]` from the cwd's cyrius.cyml,
-# returning a vec of declared module-name cstrings (or 0 if absent).
-# Key-boundary-aware (mirrors cmd_deps' Phase-1 search) so a comment
-# mentioning "stdlib" or a `[lib] modules = [...]` array isn't matched.
-# Reuses _parse_toml_str_array (cbt/deps.cyr).
+# v6.2.40: `[deps] stdlib = [...]` from the cwd's cyrius.cyml as a vec of declared module-name
+# cstrings, or 0 if absent / empty. 6.6.20: through `_dep_declared_stdlib` (cbt/deps.cyr), the
+# one reader `cyrius deps` uses — this was the third copy of a raw byte scan for `stdlib`.
 fn _libsync_declared_mods(): i64 {
     # 6.6.17: the WHOLE manifest through the one reader (this read 32,767 bytes).
     if (_mf_load() != 1) { return 0; }
-    var buf = _mf_buf;
-    var n = _mf_len;
-    # v6.5.30 — route through the SHARED `_toml_key_at` (cbt/deps.cyr) instead of a
-    # hand-rolled guard pair. The inline version checked the identifier boundary and the
-    # comment line but NOT whether the match sits inside a QUOTED VALUE, so a
-    # `description = "... foldable into stdlib per sandhi pattern"` matched as the key.
-    # `_toml_key_at` counts unescaped quotes from line start and rejects an odd count.
-    # ⛔ Third copy of one scan; `cmd_deps` was fixed at v6.5.17/.29 and these two were not.
-    var si = 0;
-    while (si < n) {
-        if (memeq(buf + si, "stdlib", 6) == 1) {
-            if (_toml_key_at(buf, n, si, 6) == 1) {
-                # Keep scanning when the key yields nothing: `_parse_toml_str_array` is
-                # positional and returns empty if it lands on a section header, so
-                # committing to the first match can silently disable the whole result.
-                var mods = _parse_toml_str_array(buf, n, si);
-                if (vec_len(mods) > 0) { return mods; }
-            }
-        }
-        si = si + 1;
-    }
+    var mods = _dep_declared_stdlib(_mf_buf, _mf_len);
+    if (mods != 0 && vec_len(mods) > 0) { return mods; }
     return 0;
 }
 
@@ -5172,39 +5151,18 @@ fn cmd_distlib_all(check): i64 {
 # matching a `[deps.X]` block is a fold (resolved transitively), not a stdlib
 # leaf. Shared by the sidecar emit + the `--modular` index emit (was duplicated).
 fn _distlib_named_deps(mbuf, mlen): i64 {
+    # v6.5.28 anchored this to a section header (a `[deps.X]` in comment PROSE registered X —
+    # filed from patra, where it silently dropped a real dep from the sidecar). 6.6.20: the
+    # resolver's own header pass (`_dep_hdr_name`, cbt/deps.cyr), so a `[deps.X]` inside a `"""`
+    # value is not a header either, and `[ deps.X ]` is one — the set `cyrius deps` resolves.
     var named_deps = vec_new();
-    var ndi = 0;
-    # v6.5.28 — ANCHOR THE SCAN TO A SECTION HEADER. This matched "[deps." ANYWHERE in the
-    # manifest, so a `[deps.X]` written in COMMENT PROSE registered X as a named dep. Filed
-    # from patra, where a comment explaining the layout silently deleted a real dep from the
-    # generated sidecar — the bundle stayed correct, so nothing failed; the packaging just
-    # quietly lost an entry.
-    # A real section header is at the START of a line (TOML allows leading whitespace) and is
-    # never inside a `#` comment. `bol` tracks line starts; `in_cmt` suppresses the rest of a
-    # comment line. Both are needed: anchoring alone still matches a comment that BEGINS with
-    # `[deps.x]`, which is exactly how documentation examples are usually written.
-    var bol = 1;
-    var in_cmt = 0;
-    while (ndi < mlen) {
-        var ndc = load8(mbuf + ndi);
-        if (ndc == 10) { bol = 1; in_cmt = 0; ndi = ndi + 1; }
-        elif (in_cmt == 1) { ndi = ndi + 1; }
-        elif (ndc == 35) { in_cmt = 1; ndi = ndi + 1; }        # '#' opens a comment
-        elif (bol == 1 && (ndc == 32 || ndc == 9)) { ndi = ndi + 1; }   # leading indent keeps bol
-        elif (bol == 1 && ndi + 6 <= mlen && memeq(mbuf + ndi, "[deps.", 6) == 1) {
-            var nns = ndi + 6;
-            var nne = nns;
-            while (nne < mlen && load8(mbuf + nne) != 93) { nne = nne + 1; }
-            var nnl = nne - nns;
-            if (nnl > 0) {
-                var nd = alloc(nnl + 1);
-                memcpy(nd, mbuf + nns, nnl);
-                store8(nd + nnl, 0);
-                vec_push(named_deps, nd);
-            }
-            ndi = nne;
-            bol = 0;
-        } else { bol = 0; ndi = ndi + 1; }
+    var info[32];
+    var p = 0;
+    while (p < mlen) {
+        p = _toml_line(mbuf, mlen, p, &info);
+        var hc = 0;
+        var nd = _dep_hdr_name(mbuf, mlen, &info, &hc);
+        if (nd != 0 && strlen(nd) > 0) { vec_push(named_deps, nd); }
     }
     return named_deps;
 }

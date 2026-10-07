@@ -489,24 +489,6 @@ fn _toml_strs_at(buf, n, p): i64 {
     return 0;
 }
 
-# The STRING value of the `key = value` whose key name ends at buf[p] — for the per-key line
-# scanners in cbt/deps.cyr (`[deps.X] path / git / tag / target`). 0 with _toml_bad set when the
-# value is not a single-line TOML string. Those scanners used to skip to the next `"` in the FILE,
-# so `tag = 'v1'` read whatever double-quoted string came next. CHANGELOG [6.6.17].
-fn _toml_value_str_after_key(buf, n, p): i64 {
-    _toml_bad = 0;
-    p = _toml_skip_ws(buf, n, p);
-    if (p >= n || load8(buf + p) != 61) {
-        _toml_bad = 1;
-        return 0;
-    }
-    p = _toml_skip_ws(buf, n, p + 1);
-    var e = 0;
-    var s = _toml_str_at(buf, n, p, &e);
-    if (s == 0) { _toml_bad = 1; }
-    return s;
-}
-
 # 1 when the bytes at p end a bare token (space, `#`, `,`, a closing bracket or the line end).
 fn _toml_tok_end(buf, n, p): i64 {
     if (p >= n) { return 1; }
