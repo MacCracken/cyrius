@@ -2104,6 +2104,12 @@ _chk_gate "$ROOT/tests/gates/toolchain/compile_flag_list.sh"
 # sys_waitpid result is discarded. SKIP by name where the limit is not enforced (root).
 _chk_gate "$ROOT/tests/gates/toolchain/cli_fork_failure_named.sh"
 
+# 6.7.0 — `cyrius --help` lists every verb main() dispatches exactly once (sub-forms as their own
+# lines), lists nothing main() does not dispatch, names the --version / --help / -h aliases, and
+# puts every description on one column. The verb set is derived from main()'s streq(cmd, …) sites;
+# a runtime probe of the built CLI is the second oracle. Six verbs had no line through 6.6.20.
+_chk_gate "$ROOT/tests/gates/toolchain/help_lists_every_verb.sh"
+
 # 6.6.17 (P1) — bare `cyrius test` runs [build] test (file / dir / list) first, then tests/, each
 # file once; a missing target is a named failure; absent key = unchanged; an argument wins.
 _chk_gate "$ROOT/tests/gates/toolchain/test_runs_build_test.sh"

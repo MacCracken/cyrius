@@ -1,11 +1,14 @@
 # cyrius — Cyrius Build Tool
 # Written in Cyrius. Modular — see sibling .cyr files.
 #
-# Build:     build, run, test, bench, check, self, clean
-# Project:   init, package, publish, install, update, port
-# Quality:   audit, fmt, lint, doc, vet, deny, coverage, doctest, header
-# Interactive: repl
-# Info:      version, which, help
+# Verb groups, as `cyrius --help` prints them (usage() below):
+#   Build & run:             build, run, check, clean
+#   Test:                    test, tests, bench, fuzz, coverage, doctest, smoke, soak
+#   Code quality & API:      fmt, lint, doc, vet, deny, audit, api-surface, header
+#   Project & dependencies:  init, port, deps, update, lib sync, distlib, package, publish, install
+#   Toolchain:               self, pulsar, capacity, lsp, hooks, sign-efi, which, version
+#   Interactive:             repl
+#   Help:                    help
 
 # ⛔ 6.6.17 — THE agnos BUILD OF THE CLI IS A REFUSAL, NOT A PORT. Every verb below drives cycc
 # (and git, and the tools) as a CHILD PROCESS through fork / execve / waitpid / dup2 and the Linux
@@ -89,10 +92,106 @@ include "cbt/pulsar.cyr"
 # ================================================================
 # Usage / help
 # ================================================================
+#
+# `cyrius --help` groups the verbs by what the user is doing. EVERY verb main() dispatches has
+# exactly one entry here (a sub-form — `audit --internal`, `version --project`, `help manifest`
+# — gets its own line under its verb), and every entry is a verb main() dispatches:
+# tests/gates/toolchain/help_lists_every_verb.sh derives the verb set from main()'s own
+# `streq(cmd, "…")` sites and fails on a verb with no entry, an entry with no verb, a
+# duplicate, or a description off the column. The per-verb FLAG list stays generated from
+# the parser's table (`cyrius <command> --help`, cbt/cli_args.cyr); a synopsis here is a
+# summary, not that list. CHANGELOG [6.7.0]
+
+var _HELP_COL = 42;   # the one description column: 2-space indent + a synopsis of <= 38 bytes
+var _HELP_PAD = "                                          ";   # _HELP_COL spaces
+
+# One entry: the synopsis, then the description at _HELP_COL. A synopsis too long to leave a
+# two-space gap puts its description on the next line, at the same column.
+fn _help_row(syn, desc): i64 {
+    var n = strlen(syn);
+    sys_write(STDOUT_FD, "  ", 2);
+    sys_write(STDOUT_FD, syn, n);
+    var at = 2 + n;
+    if (at + 2 > _HELP_COL) {
+        sys_write(STDOUT_FD, "\n", 1);
+        at = 0;
+    }
+    sys_write(STDOUT_FD, _HELP_PAD, _HELP_COL - at);
+    println(desc);
+    return 0;
+}
+
+fn _help_build(): i64 {
+    println("Build & run:");
+    _help_row("build [--aarch64|--win|--agnos] [--no-deps] [--strict] [--pie] [--features <list>] [-D NAME]... [<src> [<out>]]",
+      "compile (default: [build] entry/output), resolving [deps] first");
+    _help_row("run [--aarch64] <src.cyr> [args...]", "compile + run (args go to the program)");
+    _help_row("check [--with-deps] <src.cyr>...", "syntax check (default: standalone)");
+    _help_row("clean", "remove build/ contents");
+    println("");
+    println("Test:");
+    _help_row("test [--aarch64] [test.tcyr...]", "compile + run each, check exit 0 (none: the whole suite)");
+    _help_row("tests [--aarch64] [dir]", "recursively run all .tcyr under dir (default tests/)");
+    _help_row("bench [file.bcyr|dir]", "compile + run benchmarks (default: benches/ + tests/)");
+    _help_row("fuzz [--poison[=ab]] [file.fcyr|dir]", "run fuzz harnesses (default: fuzz/ + tests/)");
+    _help_row("coverage [--full] [--min <pct>]",
+      "reference coverage of project src/ (--full=vendored lib/; --min gates CI)");
+    _help_row("doctest <file.cyr>", "run doc examples");
+    _help_row("smoke", "run tests/smcyr/*.smcyr quick-validation programs");
+    _help_row("soak [N]", "N-iter self-host loop + tests/scyr/*.scyr harnesses");
+    return 0;
+}
+
+fn _help_quality(): i64 {
+    println("Code quality & API:");
+    _help_row("fmt [--check|--dry|--verbose|--write] <file.cyr>...", "format code");
+    _help_row("lint [--strict] [--strict-deferrals] [--exit-with-count] <file.cyr>...", "lint code");
+    _help_row("doc [--check] <file.cyr>...", "generate/check documentation");
+    _help_row("vet <source.cyr>", "audit include dependencies");
+    _help_row("deny <source.cyr>", "enforce project policies");
+    _help_row("audit", "project sweep: fmt/lint/docs/tests/bench");
+    _help_row("audit --internal", "cyrius-internal full gate (scripts/check.sh)");
+    _help_row("audit --internal=platform-check", "+ cross-OS self-host on REAL hw (ecb/ach/cass/pi)");
+    _help_row("api-surface [--update] [--scope=project] [--snapshot=<path>]",
+      "diff the public API against its snapshot (--update rewrites it)");
+    _help_row("header <source.cyr>", "print C prototypes for the file's public fns");
+    return 0;
+}
+
+fn _help_project(): i64 {
+    println("Project & dependencies:");
+    _help_row("init [--lib|--agent|--cmtools|--dry-run] <name | .>", "scaffold a new project");
+    _help_row("port [--dry-run] <rust-project>", "scaffold from a Rust project (→ rust-old/)");
+    _help_row("deps [--verify|--lock|--relock|--no-lock|--dry-run]", "resolve [deps] into lib/ + cyrius.lock");
+    _help_row("update", "re-resolve all deps to latest tags");
+    _help_row("lib sync [--dry-run] [--full] [--no-lock] [--relock]",
+      "vendor declared [deps].stdlib from pin (--full = whole snapshot), re-lock what it wrote");
+    _help_row("distlib [--all|--check] [--modular] [profile]",
+      "bundle src/ into dist/ (--all = base + every [lib.X]; --check = verify, don't write)");
+    _help_row("package", "create .ark distributable");
+    _help_row("publish", "distlib + lock deps + git tag v<version> (prints the push step)");
+    _help_row("install", "no package registry yet: prints the install-from-source steps");
+    return 0;
+}
+
+fn _help_toolchain(): i64 {
+    println("Toolchain:");
+    _help_row("self", "self-hosting check (cycc==cycc)");
+    _help_row("pulsar", "x86-64 Linux: rebuild cycc + cross compilers + tools, then install");
+    _help_row("capacity [--check] [--json] [src.cyr]",
+      "compiler table usage (default: this host's fork; --check gates CI)");
+    _help_row("lsp", "build + install cyrius-lsp");
+    _help_row("hooks install", "install the build-artifact pre-commit hook");
+    _help_row("sign-efi <pe> <key.der> <cert.der> <out>",
+      "Authenticode-sign a PE for UEFI Secure Boot (via cyrsign-efi)");
+    _help_row("which", "show path to cycc");
+    _help_row("version", "show cyrius toolchain version (also --version)");
+    _help_row("version --project", "show project version (from VERSION)");
+    return 0;
+}
 
 fn usage(): i64 {
     println("Cyrius Build Tool");
-    println("");
     println("");
     println("Usage: cyrius [-q|-v] <command> [options] [operands]");
     println("");
@@ -101,57 +200,20 @@ fn usage(): i64 {
     println("  operand is never dropped. `cyrius <command> --help` lists that");
     println("  command's flags (printed from the same table the parser reads).");
     println("");
-    println("Build:");
-    println("  build [--aarch64|--win|--agnos] [--no-deps] [--strict] [--pie] [--features <list>] [-D NAME]... <src> <out>");
-    println("  run [--aarch64] <source.cyr> [args...]   compile + run (args go to the program)");
-    println("  test [--aarch64] <test.tcyr>...  compile + run each, check exit 0");
-    println("  tests [--aarch64] [dir]         recursively run all .tcyr under dir (default tests/)");
-    println("  bench <bench.cyr>               compile + run benchmarks");
-    println("  check [--with-deps] <src.cyr>...  syntax check (default: standalone)");
-    println("  sign-efi <pe> <key.der> <cert.der> <out>   Authenticode-sign a PE for UEFI Secure Boot (via cyrsign-efi)");
-    println("  distlib [--all|--check] [--modular] [profile]   bundle src/ into dist/ (--all = base + every [lib.X]; --check = verify, don't write)");
-    println("  self                            self-hosting check (cycc==cycc)");
-    println("  clean                           remove build/ contents");
-    println("  lib sync [--dry-run] [--full] [--no-lock] [--relock]   vendor declared [deps].stdlib from pin (--full = whole snapshot), re-lock what it wrote");
+    _help_build();
     println("");
-    println("Project:");
-    println("  init [--lib|--agent|--cmtools|--dry-run] <name | .>   scaffold a new project");
-    println("  deps [--verify|--lock|--relock|--no-lock|--dry-run]   resolve [deps] into lib/ + cyrius.lock");
-    println("  update                          re-resolve all deps to latest tags");
-    println("  package                         create .ark distributable");
-    println("  port [--dry-run] <rust-project> scaffold from a Rust project (→ rust-old/)");
+    _help_quality();
     println("");
-    println("Quality:");
-    println("  audit                           project sweep: fmt/lint/docs/tests/bench");
-    println("  audit --internal                cyrius-internal full gate (scripts/check.sh)");
-    println("  audit --internal=platform-check   + cross-OS real-hardware self-host");
-    println("    --internal=platform-check     + cross-OS self-host on REAL hw (ecb/ach/pi/cass)");
-    println("  fuzz                            run fuzz/*.fcyr harnesses");
-    println("  fmt [--check|--dry|--verbose|--write] <file.cyr>...   format code");
-    println("  lint [--strict] [--strict-deferrals] [--exit-with-count] <file.cyr>...");
-    println("  doc [--check] <file.cyr>...     generate/check documentation");
-    println("  vet <source.cyr>                audit include dependencies");
-    println("  deny <source.cyr>               enforce project policies");
+    _help_project();
     println("");
-    println("Testing:");
-    println("  coverage [--full] [--min <pct>]  reference coverage of project src/ (--full=vendored lib/; --min gates CI)");
-    println("  doctest <file.cyr>              run doc examples");
-    println("  soak [N]                        N-iter self-host loop + tests/scyr/*.scyr harnesses");
-    println("  smoke                           run tests/smcyr/*.smcyr quick-validation programs");
+    _help_toolchain();
     println("");
     println("Interactive:");
-    println("  repl                            expression evaluator");
+    _help_row("repl", "expression evaluator");
     println("");
-    println("Tools:");
-    println("  lsp                             build + install cyrius-lsp");
-    println("");
-    println("Info:");
-    println("  version                         show cyrius toolchain version");
-    println("  version --project               show project version (from VERSION)");
-    println("  which                           show path to cycc");
-    println("  hooks install                   install the build-artifact pre-commit hook");
-    println("  help                            show this help");
-    println("  help manifest                   list the cyrius.cyml keys: what reads each, and which are held / dropped");
+    println("Help:");
+    _help_row("help", "show this help (also --help, -h)");
+    _help_row("help manifest", "list the cyrius.cyml keys: what reads each, and which are held / dropped");
     return 0;
 }
 
