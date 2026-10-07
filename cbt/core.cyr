@@ -317,9 +317,16 @@ fn _status(msg): i64 {
 # truncated and the verb still exited 0. CHANGELOG [6.6.6]
 # Handle layout (32 B): +0 fd, +8 temp path, +16 target path, +24 sticky error.
 fn _aw_open(path): i64 {
-    var tmp = _io_tmp_name(path);
-    var fd = file_open(tmp, O_WRONLY | O_CREAT | O_TRUNC, 0x1A4);
-    if (fd < 0) { return 0; }
+    # 6.6.20: created EXCLUSIVELY (lib/io.cyr `_io_tmp_open`) — the plain O_TRUNC open here
+    # followed a symlink planted at the predictable temp name. CHANGELOG [6.6.20]
+    var fd = 0;
+    var tmp = _io_tmp_open(path, &fd);
+    if (tmp == 0) {
+        if (fd == 0 - 17) {
+            _err_ctx("every temp name beside it is taken (a file or link sits there), refusing to write via one", path);
+        }
+        return 0;
+    }
     _io_keep_mode(fd, path);   # an existing file keeps its permission bits (lib/io.cyr)
     var h = alloc(32);
     store64(h, fd);

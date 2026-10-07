@@ -740,6 +740,43 @@ fn _io_tmp_name(path): i64 {
     return buf;
 }
 
+# Create the sibling temp an atomic replace of `path` writes through, EXCLUSIVELY: each
+# "<path>.cyrtmp.<pid>.<ctr>" is opened O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW (0644), so a name
+# that already exists — a file, or a symlink dangling or not — is never opened, followed or
+# truncated; the counter moves on and the next name is tried, up to 64. Returns the temp name
+# and stores its fd at `fdp`, or returns 0 and stores a negative errno there: -12 (out of
+# memory), -17 (every name tried was taken), or the open's own error. ⛔ The name is
+# predictable (pid + a counter from 1), and until 6.6.20 it was opened O_WRONLY|O_CREAT|O_TRUNC:
+# a symlink planted at the next name redirected the write — file_write_atomic overwrote the file
+# the link named, then renamed the link over `path`. CHANGELOG [6.6.20]
+fn _io_tmp_open(path, fdp): i64 {
+    var tries = 0;
+    while (tries < 64) {
+        var tmp = _io_tmp_name(path);
+        if (tmp == 0) { store64(fdp, 0 - 12); return 0; }
+        var fd = file_open(tmp, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0x1A4);
+        if (fd >= 0) { store64(fdp, fd); return tmp; }
+        if (_io_tmp_taken(tmp, fd) == 0) { store64(fdp, fd); return 0; }
+        tries = tries + 1;
+    }
+    store64(fdp, 0 - 17);
+    return 0;
+}
+
+# Did an exclusive create of `tmp` fail because the NAME exists? Linux and macOS answer -EEXIST
+# (17 on both); Windows (CREATE_NEW) and agnos (AO_EXCL) refuse with a bare -1, so there the name
+# is asked, not following a final link (_io_name_exists). Any other failure is not retried.
+fn _io_tmp_taken(tmp, rc): i64 {
+    if (rc == 0 - 17) { return 1; }
+    #ifdef CYRIUS_TARGET_WIN
+    if (rc == 0 - 1) { return _io_name_exists(tmp); }
+    #endif
+    #ifdef CYRIUS_TARGET_AGNOS
+    if (rc == 0 - 1) { return _io_name_exists(tmp); }
+    #endif
+    return 0;
+}
+
 # Give the fresh temp `fd` the permission bits `path` has NOW, so an atomic replace keeps the
 # mode the user set (a 0600 file stays 0600; 0755 stays executable). A rename puts a NEW inode
 # at `path`, and the temp was created 0644 & ~umask — without this every replace reset the mode,
@@ -813,10 +850,10 @@ fn _io_replace_target(path): i64 {
 # a file the caller owns; for a file a USER owns (their source, their manifest) use
 # file_replace_atomic, which writes the file the link names. CHANGELOG [6.6.6]
 fn file_write_atomic(path, buf, len): i64 {
-    var tmp = _io_tmp_name(path);
-    if (tmp == 0) { return 0 - 12; }   # -ENOMEM; `path` untouched. CHANGELOG [6.6.8]
-    var fd = file_open(tmp, O_WRONLY | O_CREAT | O_TRUNC, 0x1A4);
-    if (fd < 0) { return fd; }
+    var fdc = 0;
+    var tmp = _io_tmp_open(path, &fdc);   # exclusive: a planted name is skipped. CHANGELOG [6.6.20]
+    if (tmp == 0) { return fdc; }         # -ENOMEM / -EEXIST / the open's error; `path` untouched
+    var fd = fdc;
     _io_keep_mode(fd, path);   # v6.6.6: an existing file keeps its permission bits
     var wr = _io_write_full(fd, buf, len);   # loops; a short write is an error
     if (wr < 0) {

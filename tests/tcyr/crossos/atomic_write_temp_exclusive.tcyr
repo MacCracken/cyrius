@@ -1,0 +1,176 @@
+# atomic_write_temp_exclusive.tcyr — 6.6.20 (SEC-05): the sibling temp an atomic write goes
+# through is created EXCLUSIVELY, on every target.
+#
+# ⛔ THE DEFECT. file_write_atomic (lib/io.cyr) and cbt's _aw_open wrote through
+# "<path>.cyrtmp.<pid>.<ctr>" — a PREDICTABLE name (the pid, and a counter from 1) — opened
+# O_WRONLY|O_CREAT|O_TRUNC. Whoever could create a name beside `path` planted a symlink at the
+# next one: the write truncated and overwrote the file the link named, then the rename moved the
+# LINK over `path`. Measured at 2ac318b0 on x86_64 Linux: the victim held the written bytes and
+# `path` had become a symlink to it. The writers include cyrsign's .sig, cyrsign-efi, cyrfmt
+# --write, cyrius-init, sigil's trust-store writes, and the CLI's lock, vendored-copy and distlib
+# outputs.
+#
+# THE FIX. `_io_tmp_open` creates each candidate O_CREAT|O_EXCL|O_NOFOLLOW: a taken name — a file,
+# a symlink, a dangling one — is never opened, and the next name is tried; 64 taken in a row is
+# -EEXIST with `path` left as it was. Linux and macOS refuse with -EEXIST; Windows (CREATE_NEW)
+# and agnos (AO_EXCL) with a bare -1 that is classified by asking the name — a regression in that
+# classification shows here as a FAILED write, which is why this runs on every cross-OS host.
+#
+# The test predicts the next temp name with `_io_tmp_name` and steps the counter back, so the
+# fixture sits exactly where the next write will look first. Every name is per-process.
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/str.cyr"
+include "lib/vec.cyr"
+include "lib/io.cyr"
+include "lib/fs.cyr"
+include "lib/tagged.cyr"
+include "lib/process.cyr"
+include "lib/assert.cyr"
+
+var _scratch_pid = 0;
+fn _scratch(name, suffix): i64 {   # "/tmp/<name>.<pid><suffix>" ("<name>.<pid><suffix>" on PE)
+    if (_scratch_pid == 0) { _scratch_pid = sys_getpid(); }
+    var nl = strlen(name);
+    var sl = strlen(suffix);
+    var p = alloc(nl + sl + 32);
+    var o = 0;
+    #ifndef CYRIUS_TARGET_WIN
+    memcpy(p, "/tmp/", 5);
+    o = 5;
+    #endif
+    memcpy(p + o, name, nl);
+    o = o + nl;
+    store8(p + o, 46);
+    o = o + 1;
+    var d[24];
+    var n = 0;
+    var v = _scratch_pid;
+    while (n == 0 || v > 0) {
+        var q = v / 10;
+        store8(&d + n, 48 + v - q * 10);
+        n = n + 1;
+        v = q;
+    }
+    while (n > 0) {
+        n = n - 1;
+        store8(p + o, load8(&d + n));
+        o = o + 1;
+    }
+    memcpy(p + o, suffix, sl);
+    store8(p + o + sl, 0);
+    return p;
+}
+
+# The name the NEXT atomic write of `path` tries first (the counter is stepped back).
+fn _next_tmp(path): i64 {
+    var t = _io_tmp_name(path);
+    _io_atomic_ctr = _io_atomic_ctr - 1;
+    return t;
+}
+
+fn _content_is(path, want): i64 {   # 1 iff `path` holds exactly the bytes of cstring `want`
+    var b = alloc(256);
+    var n = file_read_all(path, b, 255);
+    if (n != strlen(want)) { return 0; }
+    return memeq(b, want, n);
+}
+
+fn _absent(path): i64 {   # 1 iff nothing opens at `path`
+    var fd = file_open(path, O_RDONLY, 0);
+    if (fd >= 0) { file_close(fd); return 0; }
+    return 1;
+}
+
+# Plant `n` regular files at the next `n` temp names of `path` (the counter is stepped back over
+# all of them); their names go to `out`.
+fn _plant_files(path, n, out): i64 {
+    var k = 0;
+    while (k < n) {
+        var t = _io_tmp_name(path);
+        store64(out + k * 8, t);
+        file_write_all(t, "P", 1);
+        k = k + 1;
+    }
+    _io_atomic_ctr = _io_atomic_ctr - n;
+    return 0;
+}
+
+fn _plants_intact(n, names): i64 {   # 1 iff every planted file still holds exactly "P"
+    var k = 0;
+    while (k < n) {
+        if (_content_is(load64(names + k * 8), "P") == 0) { return 0; }
+        k = k + 1;
+    }
+    return 1;
+}
+
+fn _unplant(n, names): i64 {
+    var k = 0;
+    while (k < n) { xunlink(load64(names + k * 8)); k = k + 1; }
+    return 0;
+}
+
+fn main(): i64 {
+    alloc_init();
+
+    #ifdef CYRIUS_TARGET_AGNOS
+    # The corpus cross-compile ratchet builds this for agnos; its peer keeps its own ABI (bare -1
+    # refusals classified by lstat#102) and is not in the cross-OS leg.
+    var _agnos_skip = "  SKIP (agnos): not a cross-OS host; _io_tmp_taken's agnos arm is compile-checked only\n";
+    sys_write(1, _agnos_skip, strlen(_agnos_skip));
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
+    var path = _scratch("cyr_atx", ".dat");
+    var victim = _scratch("cyr_atx", ".victim");
+    var absent = _scratch("cyr_atx", ".absent");
+    xunlink(path); xunlink(victim); xunlink(absent);
+    file_write_all(path, "old", 3);
+
+    test_group("a SYMLINK planted at the next temp name is not followed");
+    file_write_all(victim, "precious", 8);
+    var lnk = _next_tmp(path);
+    # On Windows a link needs Developer Mode or an elevated process; the release-gate host and
+    # CI's runner are both elevated, so a failure here is a real failure, not a skip.
+    assert_eq(xsymlink(victim, lnk), 0, "symlink fixture at the next temp name");
+    assert_eq(file_write_atomic(path, "first", 5), 0, "file_write_atomic still succeeds (the next name is used)");
+    assert_eq(_content_is(victim, "precious"), 1, "the file the planted link names was NOT written");
+    assert_eq(is_symlink(str_from(path)), 0, "`path` is a regular file, not the planted link renamed over it");
+    assert_eq(_content_is(path, "first"), 1, "`path` holds the new bytes");
+    assert_eq(is_symlink(str_from(lnk)), 1, "the planted link is left where it was");
+    xunlink(lnk);
+
+    test_group("a DANGLING symlink at the next temp name: its target is not created");
+    var dng = _next_tmp(path);
+    assert_eq(xsymlink(absent, dng), 0, "dangling symlink fixture at the next temp name");
+    assert_eq(file_write_atomic(path, "second", 6), 0, "file_write_atomic succeeds");
+    assert_eq(_absent(absent), 1, "the dangling link's target was NOT created");
+    assert_eq(_content_is(path, "second"), 1, "`path` holds the new bytes");
+    xunlink(dng);
+
+    test_group("a FILE planted at the next temp names is neither truncated nor renamed");
+    var names = alloc(64 * 8);
+    _plant_files(path, 63, names);
+    assert_eq(file_write_atomic(path, "third", 5), 0, "63 taken names in a row: the 64th is used");
+    assert_eq(_plants_intact(63, names), 1, "every planted file still holds its byte");
+    assert_eq(_content_is(path, "third"), 1, "`path` holds the new bytes");
+    _unplant(63, names);
+
+    test_group("64 taken names in a row: -EEXIST, nothing replaced");
+    _plant_files(path, 64, names);
+    assert_eq(file_write_atomic(path, "never", 5), 0 - 17, "file_write_atomic returns -EEXIST (17) on every target");
+    assert_eq(_content_is(path, "third"), 1, "`path` is left as it was");
+    assert_eq(_plants_intact(64, names), 1, "every planted file still holds its byte");
+    _unplant(64, names);
+    assert_eq(file_write_atomic(path, "after", 5), 0, "with the names free again, the write succeeds");
+    assert_eq(_content_is(path, "after"), 1, "`path` holds the new bytes");
+
+    xunlink(path); xunlink(victim); xunlink(absent);
+    #endif
+
+    var r = assert_summary();
+    return r;
+}
+var ec = main();
+syscall(60, ec);
