@@ -4,6 +4,8 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [6.6.20] — 2026-10-06
+
 ## [6.6.19] — 2026-10-06
 
 The fold release, P2 and real threads on x86 macOS. **Folds (R1–R3)**: the 12 folded stdlibs the post-6.6.18 wave
