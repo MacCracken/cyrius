@@ -1839,6 +1839,12 @@ _chk_gate "$ROOT/tests/gates/toolchain/macho_fill_environ_bounded.sh"
 # 6.6.11 (B09: I3) — cyrius.exe honours CYRIUS_RESOLVED=1 and runs a pinned versions/<pin>/bin/
 # cyrius.exe as a child (sys_execve is a -1 stub on PE), propagating its exit code. Wine; 77 without.
 _chk_gate "$ROOT/tests/gates/toolchain/cli_pe_pinned_redirect.sh"
+# 6.6.20 (CVE-TBD) — a `[package].cyrius` pin that is not a version's shape (a leading digit, then
+# [0-9A-Za-z._-], no `..`) is refused by name at the one reader: a traversal pin made the redirect
+# execve a repo-shipped payload/bin/cyrius on every verb, and lib sync / deps / distlib / the lock /
+# --version / --print-config used it under CYRIUS_RESOLVED=1. The PE axis runs under wine (named
+# SKIP without it; cass runs it on hardware).
+_chk_gate "$ROOT/tests/gates/toolchain/manifest_pin_shape_refused.sh"
 # 6.6.11 (B10: K7) — `cyrius soak` says what a failed self-host step DID (signal, empty output,
 # a real status) through `_raw_fail_describe`, never the raw `_self_host_step` return as an
 # "exit". Exit 77 with no compiler or CLI.

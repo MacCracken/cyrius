@@ -309,8 +309,58 @@ fn _dep_copy_file(src, dst): i64 {
 # that pin a specific toolchain version).
 #
 # See CHANGELOG [5.11.17]; 6.6.17 reads it through the one manifest reader.
+#
+# ⛔ CVE-TBD (6.6.20) — THE PIN IS A PATH COMPONENT, AND AT THE REDIRECT IT IS EXECUTED.
+# Every caller joins it into `<home>/versions/<pin>/...`, and `_try_redirect_to_pinned`
+# execve's `<home>/versions/<pin>/bin/cyrius` before any verb runs. The value was never
+# checked, so a cloned repo's `cyrius = "../../(...)/proc/self/cwd/payload"` ran the repo's
+# own `payload/bin/cyrius` on `cyrius version` / fmt / lint / build (a backslash spelling did
+# the same on Windows). The shape is checked HERE, at the one reader, so the redirect, the
+# stdlib resolver, lib sync, the freshness check, both distlib resolvers, the cyrius.lock
+# trailer and the `manifest-pin:` line all get it — including under CYRIUS_RESOLVED=1, which
+# skips the redirect. A malformed pin is REFUSED (exit 1), never read as "no pin": that would
+# silently swap in this wrapper's own toolchain. Returns 0 only when the key is absent.
 fn _dep_read_cyml_cyrius_field(): i64 {
-    return _mf_str("package", "cyrius");   # 6.6.17: the one reader (cbt/manifest.cyr)
+    var pin = _mf_str("package", "cyrius");   # 6.6.17: the one reader (cbt/manifest.cyr)
+    if (pin == 0) {
+        if (_toml_bad == 0) { return 0; }   # absent: the field is optional
+        _ew("error: cyrius.cyml [package] cyrius must be a quoted version string (e.g. cyrius = \"");
+        _ew(_VERSION_TOOLCHAIN);
+        _ew("\") — refusing to run with an unreadable toolchain pin\n");
+        _cbt_exit(1);
+    }
+    if (_dep_pin_shape_ok(pin) == 0) {
+        _ew("error: cyrius.cyml [package] cyrius = '");
+        _ew_tag_shown(pin);
+        _ew("' is not a version\n");
+        _ew("  a pin names a directory under <home>/versions: a leading digit, then only [0-9A-Za-z._-], no '..' (e.g. ");
+        _ew(_VERSION_TOOLCHAIN);
+        _ew(")\n  refusing to resolve a toolchain from it\n");
+        _cbt_exit(1);
+    }
+    return pin;
+}
+
+# 1 when `pin` has a version's shape — a leading digit, then only [0-9A-Za-z._-], no `..` — so
+# it is exactly one path component that cannot leave `<home>/versions` (`/`, `\` and `:` are
+# outside the set). Same rule as scripts/version-bump.sh plus `_`, which
+# `_released_slot_guard_current` (cbt/cyrius.cyr) already allows in a store version name.
+fn _dep_pin_shape_ok(pin): i64 {
+    var c = load8(pin);
+    if (c < 48 || c > 57) { return 0; }   # leading digit (also refuses the empty string)
+    var i = 0;
+    while (c != 0) {
+        var ok = 0;
+        if (c >= 48 && c <= 57) { ok = 1; }
+        if (c >= 65 && c <= 90) { ok = 1; }
+        if (c >= 97 && c <= 122) { ok = 1; }
+        if (c == 46 || c == 95 || c == 45) { ok = 1; }   # . _ -
+        if (ok == 0) { return 0; }
+        if (c == 46 && load8(pin + i + 1) == 46) { return 0; }   # '..'
+        i = i + 1;
+        c = load8(pin + i);
+    }
+    return 1;
 }
 
 # v6.5.21 — read `[package].version` and resolve it to a literal, for the

@@ -1358,6 +1358,9 @@ fn _cfg_resolve_build(src_arg, out_arg): i64 {
         }
     }
     if (_cfg_mf_str(_CK_PKG_CYRIUS, "package", "cyrius") != 0) { return 1; }
+    # the pin's SHAPE goes through the one pin reader, which refuses a malformed one by name — or
+    # `--print-config` under CYRIUS_RESOLVED=1 printed a traversal pin raw, exit 0. CVE-TBD (6.6.20)
+    if (_cfg_val(_CK_PKG_CYRIUS) != 0) { _dep_read_cyml_cyrius_field(); }
     if (_cfg_mf_str(_CK_SECTIONS_BASE, "sections", "base") != 0) { return 1; }
     if (_cfg_mf_embed() != 0) { return 1; }
     if (_cfg_env_bool(_CK_DCE, "CYRIUS_DCE") != 0) { return 1; }
