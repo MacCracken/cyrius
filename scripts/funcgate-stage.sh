@@ -53,6 +53,12 @@ if [ "${CYRIUS_FUNCGATE_ALLOW_LIVE:-0}" != "1" ]; then
     # raw strings $HOME / $HOME/.cyrius let a symlinked HOME (Fedora Atomic, FreeBSD: /home is a
     # link), a trailing slash on HOME, or a symlinked target straight past the guard; and an
     # equality test missed a PARENT of HOME and the repo root. CHANGELOG [6.6.20]
+    # `_fg_real` resolves only the EXISTING prefix; a `..` after a directory that does not exist
+    # yet would be compared as a plain string, then `mkdir -p` makes the directory and the
+    # restage's `rm -rf "$H/bin"` follows the `..` into whatever it names. So refuse `.` / `..`.
+    case "/$H/" in
+        */../*|*/./*) _fg_abort "$H" "a target with . or .. components cannot be checked — spell it plainly." ;;
+    esac
     _H_R="$(_fg_real "$H")"
     _HOME_R="$(_fg_real "${HOME:-/}")"
     _ST_R="$(_fg_real "${CYRIUS_HOME_REAL:-${HOME:-/}/.cyrius}")"

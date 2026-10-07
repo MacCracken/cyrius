@@ -124,4 +124,25 @@ echo precious > "$FR/precious.src"
 _refuses 10 "$WORK/h1" "$FR" "$FR/precious.src"
 [ -f "$FR/VERSION" ] || fail "axis 10: refused, but the fake repo root was wiped anyway"
 
-echo "PASS: funcgate_refuses_live_home (10 axes)"
+# ── axes 11-12: a `..` after a directory that does not exist yet ─────────────────────
+# The resolver walks up to the deepest EXISTING ancestor and copies the missing tail on
+# unchanged, so a `..` in that tail was never resolved and the guard compared a string the
+# kernel would read differently: `mkdir -p` then creates the missing directory and
+# `rm -rf "$H/bin" "$H/lib"` follows the `..` into whatever it names. Neither case deleted
+# the target itself (rm -rf of a path through a missing directory is a no-op) — the damage
+# is the restage written INTO the tree the `..` lands on. CHANGELOG [6.6.20]
+# axis 11: "$HOME/missing/../.cyrius" — a ONE-version live store (so axis 2's count does not
+# refuse first); the restage rewrote its `current`, added versions/6.6.99, replaced bin/lib.
+mkdir -p "$WORK/s11/h/.cyrius/versions/6.6.19/bin"
+echo "6.6.19" > "$WORK/s11/h/.cyrius/current"
+ln -s versions/6.6.19/bin "$WORK/s11/h/.cyrius/bin"
+_refuses 11 "$WORK/s11/h" "$WORK/s11/h/missing/../.cyrius" "$WORK/s11/h/.cyrius/current"
+[ "$(cat "$WORK/s11/h/.cyrius/current")" = "6.6.19" ] || fail "axis 11: refused, but the store's current was rewritten"
+[ -e "$WORK/s11/h/.cyrius/versions/6.6.99" ] && fail "axis 11: refused, but a version was staged into the live store"
+[ "$(readlink "$WORK/s11/h/.cyrius/bin")" = "versions/6.6.19/bin" ] || fail "axis 11: refused, but the store's bin link was replaced"
+# axis 12: "$HOME/missing/.." — that is HOME; the restage deleted $HOME/bin and $HOME/lib.
+mkdir -p "$WORK/s12/h/bin"; echo precious > "$WORK/s12/h/bin/tool"
+_refuses 12 "$WORK/s12/h" "$WORK/s12/h/missing/.." "$WORK/s12/h/bin/tool"
+[ -e "$WORK/s12/h/versions" ] && fail "axis 12: refused, but a store was staged into HOME"
+
+echo "PASS: funcgate_refuses_live_home (12 axes)"
