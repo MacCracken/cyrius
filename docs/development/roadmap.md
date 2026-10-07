@@ -378,6 +378,10 @@ CHANGELOG [6.6.17] *Downstream* (no ecosystem sweep).
   - **16 store slots carry a stale `bin/cybs`** (g-install's RS-02 found `--refresh-only` installed an untracked
     `build/cybs`; fixed for every future refresh). Restoring 6.6.3–6.6.9 and 6.6.11–6.6.19 is
     `sh scripts/verify-store.sh --restore <v>` per slot — it writes the live store, so it is the user's to run.
+  - **self_compile +6.8 % on the same input, all from CVE-86's attribute-line rule** (s-pplex `0d85cdcd`, +50 ms of
+    924 → 987 ms; a per-commit scan of the 6.6.20 merge history, every other lane within ±6 ms). The lexer half only
+    runs on `#`; the cost is likely the preprocessor half (`lex_pp.cyr`). Find it and take it back without reopening
+    the forged-`#@file` vector.
 - **Found by the 6.6.19 lanes and their review (2026-10-06; backlog — only the user promotes).**
   - **The `[embed]` link race on Windows and Apple Silicon (E-S3 residual).** Linux and x86 macOS walk the path
     with `openat(dirfd, component, O_DIRECTORY | O_NOFOLLOW)`; PE keeps the per-component reparse-point check plus a

@@ -25,15 +25,29 @@ writer leaves every x86-family compiler, `src/common/heap_regions.cyr` is the dr
 folding (DEAD-10), one alloc'd IR arena (HEAP-12) and `var f: f32` literal rounding (LEX-EXPR-04) go to the backlog.
 **CVE-79 … CVE-102** (24; CVE-97…102 are the closeout security re-scan's findings, carried at integration); the next free id is **103**.
 
-**Gate (merged tree):** GATE-LINE-TBD
+**Gate (merged tree):** `scripts/release-gate.sh` **GREEN** on `8e7b74dc` (2026-10-07, 12:37–13:23): self-host fixpoint
+(1,575,984 B), ARM binary lockstep (1,325,704 B), seed → cybs → cycc byte-identical, full check.sh — 219 of 219 shell
+gates produced a result, 0 failed, the 2 named agnos-parity SKIPs; driver 326 passed, 0 failed — and cross-OS
+self-host + the `crossos/` suite on REAL ecb, ach, cass and pi (all `SELFHOST_OK` + `LIBTEST_OK`). Two runs before it
+were RED: the first on cass, where the new `crossos/wide_call_stack_unwind.tcyr` found the PE direct-call frame
+fault below (*Backends / platforms*); the second in check.sh's `dead_code_floor`, on the helper that fix left
+uncalled. The merged check.sh before the gate had 5 red rows, all integration (see *Integration*). The gate's
+advisory `verify-store` reports 16 tagged slots (6.6.3–6.6.9, 6.6.11–6.6.19) BAD on `bin/cybs` alone — the stale
+cybs RS-02 below now detects; repairing a released slot is `verify-store.sh --restore <v>`, a write to the live store.
 
-**Size:** SIZE-LINE-TBD
+**Size:** cycc **1,575,984 B** (`.text` **1,394,504**), −10,200 B from 6.6.19's 1,586,184 (`.text` −10,960) — the
+dead-code removals outweigh the fixes; `build/cycc-native-aarch64` 1,323,400 → **1,325,704 B**. api-surface **5,827**,
+unchanged. `lib/*.cyr` **106**, unchanged. `.tcyr` 482 → **506** (crossos 197 → **215**); shell gates 372 → **411**.
+Dead-code floor 73 fns / 36,937 B → **52 / 10,597 B**.
 
-**Bench:** BENCH-TBD
+**Bench:** self_compile **984 ms** at the gate. Same-box interleaved A/B vs 6.6.19 (15 runs each): 924 → 985 ms own
+source (+6.6 %), **987 ms on 6.6.19's source (+6.8 %)** — a compiler-speed cost, not growth tax. A per-commit scan of
+the merge history puts all of it on ONE bite: s-pplex `0d85cdcd` (CVE-86, the preprocessor reads attribute lines as
+code), +50 ms on the same input; every other lane is within ±6 ms. Not optimised here — in the backlog.
 
 ### Security
 
-All eighteen entries are appended to `docs/audit/2026-09-03-security-audit.md`.
+All twenty-four entries are appended to `docs/audit/2026-09-03-security-audit.md`.
 
 - **CVE-79 (P0): a `[package] cyrius` pin was joined into a path and EXECUTED** (c-pin, CBT-01; the security re-scan's
   SEC-01). `_try_redirect_to_pinned` (`cbt/cyrius.cyr`) built `<home>/versions/<pin>/bin/cyrius` from the raw manifest
@@ -603,6 +617,13 @@ argument count (CVE-82), `#if` nesting (CVE-85), attribute lines (CVE-86) and aa
 
 ### Backends / platforms
 
+- **On Windows, a direct call with a page or more of stack arguments faulted** (found by the release gate, cass).
+  `ECALLPOPS`' Win64 branch carved the call frame below the pushed arguments with one unprobed `sub rsp`; Windows
+  commits the stack through a single guard page, so from about 2,000 arguments the first stack-argument copy hit
+  uncommitted memory — `crossos/wide_call_stack_unwind.tcyr`'s direct 2100- and 8200-argument rows died with
+  `0xC0000005` while the same calls through `callptr` (`ECALLPTR_PE`, probed since 6.6.17) passed. The frame now goes
+  through `_pe_cp_sub_rsp`, which probes a page at a time and emits the same bytes below 4096; the now-uncalled
+  `_esub_rsp_imm` is deleted. cass: 30 passed, 0 failed.
 - **`CYRIUS_DCE=1` no longer corrupts a `kernel;` image or a `CYRIUS_WX=0` binary** (s-be, REVBE-01, P1). FIXUP
   patches every absolute global and string address against the data base it computes BEFORE dead-code compaction, and
   only the default W^X layout keeps the data segment there (6.6.3's `_wx_dbase_frozen`); a `kernel;` image (ELF32
@@ -1243,6 +1264,13 @@ argument count (CVE-82), `#if` nesting (CVE-85), attribute lines (CVE-86) and aa
 ### Integration
 
 - 28 fix lanes + 5 security lanes merged onto `trial-merge-6620`; conflicts resolved by hand: the check-driver registrations (s-loop × s-ppcaps), `lex_pp.cyr` (s-ppcaps × s-pplex: PP_MACRO_SLOT / PP_DEFINE_INCLUDED read the name after PP_SEP's blank run, +3 TAB rows), `x86/emit.cyr` (ESPILL delegating, `_LOOPVAR_OK` gone), the seven forks (s-forks' `heap_regions.cyr` × s-heapmap's map pointers and comments), `parse_decl.cyr` (s-loop × s-ptr markers), s-ret onto s-ptr (escape tracking extended to every frame-address push s-ptr added; a redefined fn's copy record is its LAST definition's), sec-pe × sec-shell (`process_win.cyr`, `build.cyr`). Integration fixes: the exec-past-trap census (`compiler_arena_refused.sh`), the auto-deps call-graph analyser (`&fn` is an edge), two stale allowlist rows, agnos SKIP guards for two dup2 tests, the `_ew_shown` rename (c-pin × c-deps), E8 of `manifest_strings_shown_escaped.sh` (the pin-shape refusal).
+- The merged check.sh's 5 red rows were all integration, one commit each: `lib/io.cyr` / `lib/alloc.cyr` format +
+  lint; the trap/exec census now skips a one-line `sh -c '…'` body as it already skipped a multi-line one;
+  `tool_writes_never_truncate` drops two allowlist rows the lanes retired; `cbt_fork_sites_have_pe_arm` admits a
+  `#ifdef CYRIUS_TARGET_MACOS` region (sec-shell's argv `codesign` fork is compiled out of the PE CLI) with a
+  self-fixture; `install_signature_required` axis 5 re-anchored on SEC-07's `elseif ($cyrsign)` branch;
+  `dce_pe_macho_layout_declines_compaction` builds through `include` lines (s-names exempts `fncall0..8` only in an
+  INCLUDED `fnptr.cyr`). Main fast-forwarded to the merged branch at `73277bd2`.
 
 ### Downstream
 
@@ -1287,16 +1315,6 @@ In roadmap.md's *Potential backlog* unless marked filed:
   IR family spans five bands and the x86 per-fn compaction tables interleave with struct / defer tables, so sizing the
   IR family from one alloc'd arena is the consolidation (main.cyr's ir_nodes line points here); LEX-EXPR-04 — `var f:
   f32 = 1.5` stores the f64 bit pattern while `var a: f32[N] = { 1.5 }` rounds the same literal.
-- **Security re-scan findings no lane carried — a user decision** (the re-scan proposed ids that collide with the ones
-  assigned here; none is spent): SEC-02 (P1) `[build] output` reaches `/bin/sh` (macOS `codesign`) and `cmd.exe`
-  unquoted and places a binary outside the project (`output = 'out.exe" & echo INJECTED> pwned.txt & "y'` ran under
-  wine); SEC-03 (P1) `cyrius update` / `deps --lock` write THROUGH checkout symlinks (`cyrius.cyml ->
-  ~/.ssh/authorized_keys`); SEC-04 (P2) `[package] version = "${file:PATH}"` reads any file into the binary — the
-  `[embed]` hardening's bypass (`${file:.git/config}` lines become source); SEC-05 (P2) `file_write_atomic` /
-  `_aw_open` open a predictable temp name without `O_EXCL | O_NOFOLLOW`; SEC-07 (P2) the signed-since floor accepts a
-  stripped signature for a release below the local floor (install.ps1 has none); SEC-08 (P2, plausible, needs cass) PE
-  spawns `cmd` / `certutil` by bare name, so CreateProcessW may search the checkout first. (SEC-01 is CVE-79, SEC-06
-  CVE-94, SEC-09 CVE-87.)
 - **The dependency read side** (CVE-88's open half): a TRANSITIVE manifest's `path` still vendors any local file (a
   git dep whose tag ships `[deps.evil] path = "<abs dir>" modules = ["secret.cyr"]` gives the consumer
   `lib/evil_secret.cyr`, rc 0, a lock) — confining it to its own manifest's tree is a design item (54 legitimate root
