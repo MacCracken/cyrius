@@ -7,9 +7,9 @@
 # issues kernel32 Sleep, whose argument is a DWORD. So a computed `sleep_ms(deadline - now)` that
 # had gone negative hung for ever on Linux and macOS and slept ~49.7 days on Windows, and a value
 # above INT_MAX slept its low 32 bits (2^32 + 5 slept 5 ms; 0x80000000 hung for ever on x86_64).
-# The macOS sys_nanosleep built the same unclamped int from a timespec, so a negative tv_nsec
-# hung where Linux answers EINVAL. Each arm is its own syscall, so only running on each host
-# proves it.
+# The macOS sys_nanosleep built the same unclamped int from a timespec, so a negative tv_sec, or
+# a tv_nsec of -1 ms or less, hung where Linux answers EINVAL. Each arm is its own syscall, so
+# only running on each host proves it.
 #
 # ROWS:
 #   1. sleep_ms(-5) and sleep_ms(0) return at once (< 1 s); sleep_ms(50) really sleeps.

@@ -3,11 +3,12 @@
 #
 # ⛔ THE DEFECT. Both large-block (> 4096) frees in lib/freelist.cyr — the plain path and the
 # poison-mode one — ran `syscall(SYS_MUNMAP, blk, cls); return 0;`. On Windows munmap had no PE
-# route before 6.6.20, so EVERY large fl_free returned -38 from the kernel and 0 to its caller
-# while the whole mapping stayed committed: four rounds of fl_alloc(8 MiB) + fl_free grew by
-# 8 MiB each under wine, and sigil's argon2 leaked its m_cost arena per hash. Nothing could see
-# it, because fl_free said it had worked. (The VirtualFree route itself is a separate 6.6.20
-# change in the compiler; this file pins the REPORTING, which any refused munmap needs.)
+# route before 6.6.20, so EVERY large fl_free got the unrouted-syscall -38 (-ENOSYS) and returned
+# 0 to its caller while the whole mapping stayed committed: four rounds of fl_alloc(8 MiB) +
+# fl_free grew by 8 MiB each under wine, and sigil's argon2 leaked its m_cost arena per hash.
+# Nothing could see it, because fl_free said it had worked. (The VirtualFree route itself is a
+# separate 6.6.20 change in the compiler; this file pins the REPORTING, which any refused munmap
+# needs.)
 #
 # HOW A REFUSAL IS PRODUCED: a page of our own carries a forged large-block header whose length
 # is 2^56 - 4096. The header is page-aligned (so fl_free's smashed-header check passes it on), and
