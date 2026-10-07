@@ -5353,10 +5353,11 @@ fn _distlib_modular_emit(pkg_name, modules, mbuf, mlen): i64 {
                     if (kl > 0) {
                         var leaf = alloc(kl + 1); memcpy(leaf, fbuf + ks, kl); store8(leaf + kl, 0);
                         # 6.6.20: the index row is a consumer's `lib:<leaf>`, so it obeys the ONE
-                        # leaf rule (_dep_leaf_ok) — this wrote any text between the quotes.
+                        # leaf rule (_dep_leaf_ok) — this wrote any text between the quotes. Refused
+                        # before the index; earlier sub-module files are already committed by here.
                         if (_dep_leaf_ok(leaf) == 0) {
                             var bad_why = "distlib --modular: an include names a stdlib leaf that is not a safe name";
-                            _err_ctx(bad_why, _cat2(_shown(leaf), " (allowed: [A-Za-z0-9_/-]) — nothing written"));
+                            _err_ctx(bad_why, _cat2(_shown(leaf), " (allowed: [A-Za-z0-9_/-]) — no index written"));
                             _aw_abort(mfd);
                             return 1;
                         }

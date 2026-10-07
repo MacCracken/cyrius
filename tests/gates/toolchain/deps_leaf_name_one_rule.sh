@@ -149,7 +149,7 @@ printf '[package]\nname = "evilp"\nversion = "0.1.0"\nlanguage = "cyrius"\n\n[li
 printf 'include "lib/../evil.cyr"\nfn evilp_a(): i64 { return 1; }\n' > "$EP/src/a.cyr"
 run "$EP" distlib --modular
 if [ "$rc" -eq 1 ] && grep -qF "distlib --modular: an include names a stdlib leaf that is not a safe name" "$EP.err" \
-   && grep -qF ": ../evil" "$EP.err" && [ ! -f "$EP/dist/evilp/index.cyml" ]; then
+   && grep -qF ": ../evil (allowed: [A-Za-z0-9_/-]) — no index written" "$EP.err" && [ ! -f "$EP/dist/evilp/index.cyml" ]; then
     ok "L5 distlib --modular with include \"lib/../evil.cyr\": refused by name, rc 1, no index written"
 else bad "L5 (rc=$rc): $(head -2 "$EP.err") idx=[$(cat "$EP/dist/evilp/index.cyml" 2>/dev/null | tail -1)]"; fi
 
