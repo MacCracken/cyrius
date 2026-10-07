@@ -1722,20 +1722,38 @@ cannot use `public`, `pub`, or `private` as identifiers.
 # Conditional compilation (v5.6.1)
 #ifdef CYRIUS_TARGET_LINUX
     var fd = file_open("/proc/self/exe", 0, 0);
-#elif CYRIUS_TARGET_WIN
+#else
+#ifdef CYRIUS_TARGET_WIN
     var fd = win_get_image_handle();
 #else
     # macOS / other platforms fall here
+#endif
 #endif
 
 #ifndef CYRIUS_BAREMETAL
     println("running on hosted platform");
 #endif
+
+#define LEVEL 2
+#if LEVEL == 1
+    var mode = 1;
+#elif LEVEL == 2
+    var mode = 2;
+#else
+    var mode = 0;
+#endif
 ```
 
-The full set: `#ifdef`, `#ifndef`, `#else`, `#elif`, `#endif`. State is
+The full set: `#ifdef`, `#ifndef`, `#if`, `#else`, `#elif`, `#endif`. State is
 tracked per nesting level — `#elif` after a taken `#ifdef` is correctly
 suppressed, and nested blocks skip cleanly inside a parent's skip path.
+
+`#if` and `#elif` take a CONDITION, `NAME OP NUMBER` (`==`, `!=`, `<`, `>`, `<=`,
+`>=`), or a bare `NAME`, which reads the name's VALUE (0 when it is undefined). Neither
+asks whether a name is DEFINED. The target builtins (`CYRIUS_ARCH_*`,
+`CYRIUS_TARGET_*`, ...) are defined with the value 0, so `#elif CYRIUS_TARGET_WIN`
+is never taken, on Windows or anywhere else. To test a second name for definition,
+nest an `#ifdef` under `#else`, as the first block above does.
 
 A directive's keyword, name and value are separated by any run of spaces and TABS
 (v6.6.20). Before that only a single space separated them, silently: `#ifdef X<TAB>`
@@ -1746,7 +1764,8 @@ still open at the end of the input, are ERRORS naming the directive's file and l
 (v6.6.20) — they used to be ignored, which is how the malformed openers above went
 unnoticed.
 
-`#ifplat <plat>` (v5.4.19) is a tighter spelling for arch / OS dispatch:
+`#ifplat <plat>` (v5.4.19) is a tighter spelling for architecture dispatch,
+the same as `#ifdef CYRIUS_ARCH_<PLAT>`. It closes with `#endplat` or `#endif`:
 
 ```
 #ifplat aarch64
@@ -1754,8 +1773,11 @@ unnoticed.
 #endif
 ```
 
-Recognized plat tokens: `x86_64`, `aarch64`, `riscv64` (v5.7.0), `linux`,
-`macos`, `windows`, `baremetal`.
+Recognized plat tokens: `x86` and `aarch64`. Any other token (`x86_64`, `riscv64`,
+`linux`, `macos`, `windows`, ...) is not an error: it never matches, so the block is
+skipped and an `#else` arm is taken. For an OS, use `#ifdef CYRIUS_TARGET_*`.
+`#ifplat` works in the main source and in included files. (Before v6.6.20 it was not
+evaluated in an included file, where both arms compiled.)
 
 ## Attributes
 
