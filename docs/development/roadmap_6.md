@@ -188,6 +188,9 @@ file keeps only a pointer: one authority per active minor.
      bullet said the `> 8 B` case COPIES and that a walk overwrites nodes — measured, it does not. Choose bind,
      copy or refuse for BOTH sizes; the `≤ 8 B` pointer store is wrong whichever is chosen. Probes: the 6.6.20
      backlog audit's `d1*.cyr`.
+   - **And `o.m()` vs `T_m(o)` on a pointer-mode 8-byte struct** (moved from roadmap.md's backlog at the 6.6.20
+     re-triage, BACKLOG-13): `o.m()` passes `self = &o` while the direct call `T_m(o)` passes the value, so the
+     same method reads different values depending on the spelling — the `self` model here must make the two agree.
 5. **Methods on nested fields and chains**: `b.v.sum()`, `mk(3).v.sum()`.
    - **And the result type of a method call on an 8-byte struct** (moved from roadmap.md's backlog at the 6.6.20
      re-triage, BACKLOG-07): an UNTYPED `var u = s.clone(); u.len()` infers the method's struct return type for
@@ -203,6 +206,9 @@ file keeps only a pointer: one authority per active minor.
 ⚠ **Every new keyword is a new reserved word** (`IS_KEYWORD_TOK`), and it breaks any consumer that uses
 the word as an identifier. Survey the ecosystem ONCE at the open for all of them, not per feature:
 `trait`, `const`, `bool`, `true`, `false`, `loop`, `do`, and whatever qualified-call spelling A2 picks.
+*(The intrinsics the parser recognises by NAME — `sizeof`, `mulh64`, `fncall0..8` — are not in this survey: a
+declaration using one is refused in 6.6.20 instead (BACKLOG-03, promoted 2026-10-06), because `mulh64` bound
+silently to the intrinsic and `fncallN` crashed; that refusal took its own ecosystem survey.)*
 
 1. **`const` declarations.** `const LIMIT = 7;` is a compile-time value with no storage, folded like an
    enum constant. It lands with C1, so a `const` can be initialised by a `const fn`. Today people use
@@ -221,6 +227,10 @@ the word as an identifier. Survey the ecosystem ONCE at the open for all of them
 7. **Narrow unsigned and `f32` struct fields.** `u8` / `u16` / `u32` / `f32` fields take a full word
    today. Narrowing them changes the LAYOUT of every struct that declares one, which is an ABI change
    across the ecosystem. So it ships with a survey and a migration, never silently.
+8. **Compound assignment on a field** (moved from roadmap.md's backlog at the 6.6.20 re-triage, BACKLOG-13).
+   `h.n += 4` is `expected '=', got '+'` at 6.6.20 for a struct local and a struct field alike, while a scalar
+   `x += 4` returns 5 — every compound operator on every lvalue form (field, field chain, `p.f` through a pointer,
+   a subscript), with `*=` / `/=` on f64 fields following the 6.6.11 float compound rules.
 
 ### C — Carried from v6.6.x (its former Phase 3 and proposal P3; moved 2026-10-01)
 
@@ -245,6 +255,9 @@ the word as an identifier. Survey the ecosystem ONCE at the open for all of them
    instantiation whose `T` has no `impl Show` is an error. ⚠ Fix the **multi-type-param struct-type-arg
    residual** first: today a struct type argument works only on a one-parameter generic, and
    `g<Pt, i64>` is refused.
+   - **And a generic-struct FIELD** (moved from roadmap.md's backlog at the 6.6.20 re-triage, BACKLOG-13):
+     `struct H { a: i64; b: Box<i32>; }` is `expected identifier, got '<'` at 6.6.20, and `#derive` on a struct
+     with a `Vec<Box<i64>>` field stops its field walk at the nested `<` (later accessors undefined — loud).
 
 ### Shape and the open
 

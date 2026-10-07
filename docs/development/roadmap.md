@@ -393,15 +393,16 @@ priority surfaces.
   - ⚠ cx: a call with more than 248 arguments has nowhere to put them (250 return a wrong value, 260 trap "guest stack
     overflow"); value-form vector arguments ride r16..r31, which are integer argument registers once a call has 14
     or more integer arguments.
-  - A method call on a field (`h.name.len()`, `h.name.clone()`) is `expected ';'`; compound assignment on any field
-    (`h.n += 1`) is `expected '='` — a missing common feature, **v6.7.x** candidate.
-  - `p[i]` on a `*T` is refused (no element descriptor) — with `p + n` now `sizeof(T)` everywhere, a typed-pointer
-    subscript is the natural next step (**v6.7.x** candidate).
+  - ~~A method call on a field; compound assignment on a field~~ → **moved to [roadmap_6.md](roadmap_6.md)
+    § v6.7.x** at the 6.6.20 re-triage (BACKLOG-13): the method-on-field half was a duplicate of A5 (`b.v.sum()`);
+    compound assignment on a field (`h.n += 4` → `expected '='`; a scalar `x += 4` works) is B8.
+  - ~~`p[i]` on a `*T` is refused~~ → a duplicate of [roadmap_6.md](roadmap_6.md) § v6.7.x C2 ("Still to do: `*T`
+    pointer subscripts"); struck from here at the 6.6.20 re-triage (BACKLOG-13).
   - ~~An UNTYPED `var u = s.clone();` does not take a method's struct return type~~ → **narrowed and moved to
     [roadmap_6.md](roadmap_6.md) § v6.7.x A5** at the 6.6.20 re-triage: it is fixed for structs over 8 bytes and
     fails only for an 8-byte (one-field) struct (BACKLOG-07).
-  - A generic-struct FIELD `b: Box<i32>;` is `expected identifier, got '<'`; `#derive` on a struct with a
-    `Vec<Box<i64>>` field stops its field walk at the nested `<` (later accessors undefined — loud).
+  - ~~A generic-struct FIELD `b: Box<i32>;`~~ → **moved to [roadmap_6.md](roadmap_6.md) § v6.7.x C3** (generics)
+    at the 6.6.20 re-triage (BACKLOG-13).
   - `#pure`'s `#io` / `#alloc` check reads the callee's flags at the call, so a call to an `#io` fn defined LATER is
     silent (only `#deprecated` has a pass-1 record).
   - cybs refuses a fn with more than 6 parameters with a bare `syntax error` and no location (keep `src/` helpers at
@@ -432,8 +433,9 @@ priority surfaces.
     `path = "../sibling"` uses).
   - ⚠ Silent wrong values: a top-level `var v = pair_fn(..)` keeps the tag and drops the payload (the v6.5.67
     single-bind refusal is gated on `GINFN == 1`); `var G: f32 = 1.5` (global or local) stores the f64 bit
-    pattern with no warning; through a pointer-mode 8-byte struct, `o.m()` (self = `&o`) and `T_m(o)` read
-    different values.
+    pattern with no warning. *(Its third case — through a pointer-mode 8-byte struct, `o.m()` (self = `&o`) and
+    `T_m(o)` read different values — moved to [roadmap_6.md](roadmap_6.md) § v6.7.x A4 at the 6.6.20 re-triage,
+    BACKLOG-13: it is the `self` model's question.)*
   - `asm { in al, dx; }` is refused because `in` is keyword 76, so the `ASM_IN` emitter arm is unreachable —
     a compiler bug (the guide documents the form, ~2049).
   - In an x86 `kernel;` build, float-literal global scalars (`var G: f64 = 1.5;`) are dead stores after the
