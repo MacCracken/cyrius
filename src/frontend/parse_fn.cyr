@@ -3531,6 +3531,9 @@ fn PARSE_FNCALL(S, noff): i64 {
         if (_smask_args(fi) != 0) { _pe_no_inline = 1; }
         if (_is_simd_any(S, GFRS(S, fi)) == 1) { _pe_no_inline = 1; }
     }
+    # 6.6.20: nor a REDEFINED fn (flag 2048, pass 1) on any target — replaying the body in hand
+    # bound the call to whichever definition came first; a plain call reaches the last one.
+    if ((GFLG(S, fi) & 2048) != 0) { _pe_no_inline = 1; }
     if (GFINL(S, fi) != 0) { if (GIDEP(S) < 3) { if (GINFN(S) == 1) { if (_pe_no_inline == 0) {
                     # INLINE PATH: replay function body tokens at call site
                     var pc = L64(_fnt_params + fi * 8);
@@ -5766,6 +5769,11 @@ fn _prescan_fn_sig(S): i64 {
         # finds the entry THIS definition owns (_fn_by_defti), and it is what lets a
         # forward `f<i32>(x)` instantiate (GFDS was pass-2-only, so the instantiator
         # returned -2 and the caller printed a stale "follow-on bite" error).
+        # 6.6.20: an entry that already holds ANOTHER definition is a redefinition — fn flag
+        # 2048, read where a call would otherwise bind to the body in hand at that point (the
+        # inline replay; a generic's instance source). Left as the LAST definition's start.
+        var _pds = GFDS(S, fi);
+        if (_pds != 0) { if (_pds != start_ti + 1) { SFLG(S, fi, GFLG(S, fi) | 2048); } }
         SFDS(S, fi, start_ti + 1);
         SFFI(S, fi, _pfid + 1);
         if (_ppriv == 1) { SFLG(S, fi, GFLG(S, fi) | 64); }
@@ -6929,12 +6937,108 @@ fn PARSE_FN_DEF(S): i64 {
     return _rf;
 }
 
+# 6.6.20 — "LAST DEFINITION WINS" FOR EVERY REFERENCE, NOT ONLY THE ONES THE FIXUP PASS SEES.
+# A call to an already-defined fn is emitted against the entry it has at that moment (ECALLTO
+# bakes the offset — fifteen frontend sites, plus `main` calls, vtables and every other shape
+# that reads `_fnt_offsets` directly), while forward calls, tail calls and `&fn` go through
+# fixups that resolve to the final entry. So `fn g` / `fn h() { var x = g(); }` / `fn g` bound
+# h to the FIRST g while the warning promised the last, on x86, aarch64 and cx alike. Rather
+# than re-route every site through a fixup (which changes the fixup and per-fn jump tables, and
+# so the bytes, of programs with no redefinition), the earlier entry is made a jump to the new
+# one when the redefinition's body starts: every reference to it, of whatever shape, follows.
+# Chains (a third definition) are jumps to jumps. The jump lies outside every fn's range, so
+# the dead-code pass takes it as a root and keeps the winning body live. Runs ONLY for a
+# redefinition, so every other program is byte-identical. The calls this cannot reach — an
+# inline replay, a generic instance — read pass 1's fn flag 2048 instead. CHANGELOG [6.6.20]
+# ⚠ Every body is at least one jump long today (the defer-init placeholder opens even an empty
+# `#naked` body), so the refusal below is a backstop: writing past a shorter body would land in
+# the NEXT fn.
+fn _fn_redirect(S, fi, noff, ti): i64 {
+    var old = L64(_fnt_offsets + fi * 8);
+    if (old < 0) { return 0; }
+    if (EFNREDIRECT(S, old, GFNE(S, fi), GCP(S)) == 0) { return 0; }
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head_at(S, ti);
+    syscall(SYS_WRITE, 2, ": duplicate fn '", 16);
+    PRSTR(S + 0xEC00000 + noff);
+    syscall(SYS_WRITE, 2, "': internal: its earlier body is shorter than a jump, so the calls bound to it cannot be redirected\n", 100);
+    _had_error = 1;
+    return 0;
+}
+
 # ⛔ v6.5.37 — carry the FIRST definition's arity and origin file across the parameter
 # list, so a differing-arity duplicate can be reported as an ERROR once the new arity is
 # known. Declared here, above both uses: a global declared BELOW its use is not visible in
 # cyrius. -1 = no duplicate pending for the definition currently being parsed.
 var _dup_prev_pc = 0 - 1;
 var _dup_prev_fid = 0;
+
+# ⛔ 6.6.20 — A DUPLICATE THAT DISAGREES ABOUT HOW IT IS CALLED IS AN ERROR TOO. Once every call
+# reaches the last definition (`_fn_redirect`), a call compiled against an earlier one arrives with
+# THAT one's calling convention: a retptr the winner never reads, a scalar where it fills a struct,
+# an XMM argument it takes from a GPR, a C string where it reads a `Str`. Measured before this
+# check: a scalar first `mk()` and a struct-returning last one SIGSEGV'd (a call between them used
+# to bind the first and run). Same reasoning as the v6.5.37 arity error, for the rest of the call
+# signature: the return type (unannotated is i64), a multi-value count, variadic, and the
+# per-parameter vector / struct / Str / cstring / Result / Option / Tagged masks. Saved from the
+# earlier definition before this one overwrites them; compared once this one's signature is read.
+# An arity difference is left to the arity error.
+var _dsg_on = 0;
+var _dsg_pc = 0;
+var _dsg_rs = 0;
+var _dsg_rn = 0;
+var _dsg_va = 0;
+var _dsg_mk[8];   # the earlier definition's seven parameter masks (a bare top-level array is N*8 B)
+fn _dsg_rs_norm(v): i64 { if (v == 0) { return 0 - 8; } return v; }
+# Parameter mask `k` of fn `fi`: the ones that change what a call passes or how it is checked.
+fn _dsg_mask(fi, k): i64 {
+    var t = _fnt_simdmask;
+    if (k == 1) { t = _fnt_structmask; }
+    if (k == 2) { t = _fnt_strmask; }
+    if (k == 3) { t = _fnt_cstrmask; }
+    if (k == 4) { t = _fnt_resmask; }
+    if (k == 5) { t = _fnt_optmask; }
+    if (k == 6) { t = _fnt_tagmask; }
+    return L64(t + fi * 8);
+}
+fn _dsg_save(S, fi): i64 {
+    _dsg_on = 1;
+    _dsg_pc = L64(_fnt_params + fi * 8);
+    _dsg_rs = _dsg_rs_norm(GFRS(S, fi));
+    _dsg_rn = GFRN(S, fi);
+    _dsg_va = GFVA(S, fi);
+    var k = 0;
+    while (k < 7) { S64(&_dsg_mk + k * 8, _dsg_mask(fi, k)); k = k + 1; }
+    return 0;
+}
+fn _dsg_check(S, fi, noff, ti): i64 {
+    if (_dsg_on == 0) { return 0; }
+    _dsg_on = 0;
+    if (L64(_fnt_params + fi * 8) != _dsg_pc) { return 0; }   # the arity error covers it
+    var what = 0;
+    if (_dsg_rs_norm(GFRS(S, fi)) != _dsg_rs) { what = 1; }
+    if (GFRN(S, fi) != _dsg_rn) { what = 1; }
+    if (what == 0) { if (GFVA(S, fi) != _dsg_va) { what = 3; } }
+    var k = 0;
+    while (k < 7) {
+        if (what == 0) { if (_dsg_mask(fi, k) != L64(&_dsg_mk + k * 8)) { what = 2; } }
+        k = k + 1;
+    }
+    if (what == 0) { return 0; }
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head_at(S, ti);
+    syscall(SYS_WRITE, 2, ": duplicate fn '", 16);
+    PRSTR(S + 0xEC00000 + noff);
+    syscall(SYS_WRITE, 2, "' disagrees about its ", 22);
+    if (what == 1) { syscall(SYS_WRITE, 2, "return type", 11); }
+    if (what == 2) { syscall(SYS_WRITE, 2, "parameter types", 15); }
+    if (what == 3) { syscall(SYS_WRITE, 2, "variadic parameter list", 23); }
+    syscall(SYS_WRITE, 2, " with the one in ", 17);
+    _fm_print_fid(S, _dup_prev_fid);
+    syscall(SYS_WRITE, 2, " (last definition wins, so calls compiled against that one would reach this body through the wrong calling convention)\n", 119);
+    _had_error = 1;
+    return 0;
+}
 
 fn _PARSE_FN_DEF_IMPL(S): i64 {
     var _is_async = 0;
@@ -7008,6 +7112,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     }
 
     _dup_prev_pc = 0 - 1;
+    _dsg_on = 0;
     # 6.6.5 — PASS 1 IS THE AUTHORITY. `_fn_by_defti` finds the entry pass 1 registered for
     # THIS definition (matched on its `fn` token), which does two things:
     #   * the entry is this definition's own, so the v6.5.38 per-file split has already
@@ -7046,6 +7151,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
         # definition's own parameter list has been counted (see _fnt_params store below).
         _dup_prev_pc = L64(_fnt_params + fi * 8);
         _dup_prev_fid = GFFI(S, fi);
+        _dsg_save(S, fi);   # 6.6.20: and the rest of its call signature (see _dsg_check)
         # v6.5.19 (agnosai filing) — TWO fixes to this one warning:
         #  * `_err_head_at(S, _defstart_ti)` instead of `_err_head(S)`. The cursor
         #    has already consumed `fn` and the NAME by here, so the plain head put
@@ -7065,7 +7171,10 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
         syscall(SYS_WRITE, 2, ")\n", 2);
     }
     if (_gtp != 0) { SFTP(S, fi, _gtp); }   # v6.3.9 (F-fns): record this fn's <T> names
-    if (_gtp != 0) { SFDS(S, fi, _defstart_ti + 1); }   # v6.3.10: def-start +1 (0 = unrecorded; token 0 is valid)
+    # v6.3.10: def-start +1 (0 = unrecorded; token 0 is valid). 6.6.20: NOT over a redefinition's
+    # (flag 2048) — pass 1 left the LAST definition's start, so an instance minted between the
+    # definitions is minted from the one that wins, not from the body in hand.
+    if (_gtp != 0) { if ((GFLG(S, fi) & 2048) == 0) { SFDS(S, fi, _defstart_ti + 1); } }
     # v6.5.0 Phase 1 (public/private): stamp this fn's ORIGIN FILE, derived from the
     # line of its `fn` keyword via the file map the preprocessor already builds for
     # diagnostics (`#@file` markers -> FM_BUILD -> FM_FILEID). RECORDED ONLY — nothing
@@ -7580,6 +7689,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
         }
     }
     STI(S, _rs_save_ti);
+    _fn_redirect(S, fi, noff, _defstart_ti);   # 6.6.20: a redefinition takes over the earlier entry
     # Set fn offset to current CP
     S64(_fnt_offsets + fi * 8, GCP(S));
     # Save compiler state
@@ -8155,6 +8265,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     _cur_fn_pslots = GFLC(S);
     _stkp_flush(S, int_pc + _pl_shift);
     _sptr_params_localize(S);   # 6.6.16 (C7): a struct parameter over 8 B is copied in, here
+    _dsg_check(S, fi, noff, _defstart_ti);   # 6.6.20: a redefinition must be called the same way
     # Parse body
     if (PEEKT(S) != 13) { ERR_EXPECT(S, 13); }
     STI(S, GTI(S) + 1);

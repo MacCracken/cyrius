@@ -294,6 +294,11 @@
 #                                        bit9 (512) NULLARY stack-variant ctor: returns
 #                                                   the tag alone, a whole variant
 #                                                   value (6.6.9, parse_types.cyr)
+#                                        bit10 (1024) the body provably returns ONE
+#                                                   value (6.6.17, _prescan_ret_single)
+#                                        bit11 (2048) REDEFINED: a later definition of
+#                                                   this name exists (6.6.20, pass 1;
+#                                                   no inline replay, instances from it)
 #   0x1EC000 gvar_initval  [65536]       8192 × 8B — per-gvar static-init
 #                                        literal value (v5.11.64). Written
 #                                        by PARSE_GVAR_REG when RHS matches

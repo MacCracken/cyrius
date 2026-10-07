@@ -857,6 +857,15 @@ _chk_gate "$ROOT/tests/gates/frontend/method_call_runs_every_callee_gate.sh"
 # target that stores the value rather than baking it) and an aarch64 leg under qemu.
 _chk_gate "$ROOT/tests/gates/frontend/global_redeclaration_one_definition.sh"
 
+# 6.6.20 (BACKLOG-01): a redefined FN binds every call to its last definition, as its warning
+# says. A call to an already-defined fn baked the entry it saw (ECALLTO), so `var x = g();`
+# between two `fn g` bound the FIRST while tail calls and forward calls bound the last (212 for
+# the three shapes on x86, aarch64 and cx). The earlier entry now jumps to the winner; #inline
+# replay and generic instances read pass 1's redefinition flag; a redefinition CALLED differently
+# (return type, parameter masks, variadic) is refused like the 6.5.37 arity mismatch. x86, qemu,
+# cxvm and wine, plus a CYRIUS_DCE=1 row where elimination moves the winner under the redirect.
+_chk_gate "$ROOT/tests/gates/frontend/fn_redefinition_binds_last.sh"
+
 # 6.6.6: a block-bodied closure in a declaration-zone `var` used to end the program. Pass 1 and
 # pass 2 both found the end of the declaration by scanning to the first `;`, and the closure body
 # carries one — so both stopped at its `}` and every statement below was dropped, silently. Rows
