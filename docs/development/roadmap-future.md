@@ -74,7 +74,10 @@ still read as pending work and this list is meant to stay honest about what is d
 (`x86/fixup.cyr:35` + `aarch64/fixup.cyr:29`), `_dce_hash_lookup`/`_dce_host_fn` still single
 (`runtime.cyr:444`/`:466`) — all three bullets hold:
 
-- **`aarch64` ADD/SUB-immediate 12-bit-mask class — CLOSED.** `EADDRA_IMM` was
+- **`aarch64` ADD/SUB-immediate 12-bit-mask class — ~~CLOSED~~ RE-OPENED at the 6.6.20 re-triage:** one site was
+  missed — `ECALLCLEAN`'s `add sp, sp, #((n - 6) * 16)` after a call with 262+ arguments is unguarded, so `sp` is
+  silently corrupted (n = 262 encodes `#0x0, lsl #12`; SIGILL only from 519). Fixed in 6.6.20 (BACKLOG-02, promoted
+  2026-10-06); roadmap.md's backlog carries the detail. The history: `EADDRA_IMM` was
   fixed at v6.0.91 (three-way split); the two remaining unguarded siblings
   (`EADDIMM_X1` struct-field offsets, `EPATCHFRAME` prologue frame size) were
   swept and fixed at **v6.2.21**, and the other imm12 sites (`ESTOREB_IMM`,
