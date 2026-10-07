@@ -26,12 +26,15 @@
 #   3  CYRIUS_RESOLVED=1 (the redirect skipped): lib sync, deps, version, build --print-config
 #      -> refused; nothing copied into lib/, no cyrius.lock, the pin never printed raw
 #   4  other malformed shapes: `..`, `v6.6.20`, "", `6.6.20/../x`, an escape byte, an unquoted
-#      pin -> refused (the escape shown as \x1b), never read as "no pin"
+#      pin -> refused (the escape shown as \x1b), never read as "no pin"; and `6/x`, `6\x`, `6:x`
+#      — a leading digit and no `..`, so ONLY the charset refuses them (a payload waits where
+#      each would lead inside the store)
 #   5  controls: no pin and pin == VERSION run; a well-formed absent pin (`_` included) gets the
 #      existing "not installed" error, not the shape refusal; a well-formed INSTALLED pin still
 #      redirects
-#   6  PE (wine): cyrius.exe with a forward-slash and a backslash traversal pin -> refused, the
-#      payload .exe never runs; control: a well-formed installed pin still redirects (exit 37).
+#   6  PE (wine): cyrius.exe with a forward-slash and a backslash traversal pin, and `9\x` (the
+#      charset alone; the probe waits at versions\9\x) -> refused, the payload .exe never runs;
+#      control: a well-formed installed pin still redirects (exit 37).
 #      Announced SKIPPED without wine — the cass leg of the release gate is the hardware run.
 #
 # MUTATION LEDGER (2026-10-06, 6.6.20, wine present): reverting `_dep_read_cyml_cyrius_field` to
@@ -40,7 +43,11 @@
 # escape byte reaches the terminal); dropping only the `..` test turns the `6..6` row RED (`..`
 # alone and `6.6.20/../x` are also caught by the leading-digit and `/` rules); dropping only the
 # `_toml_bad` branch turns the unquoted-pin row RED; dropping the --print-config routing in
-# `_cfg_resolve_build` turns axis 3's --print-config row RED.
+# `_cfg_resolve_build` turns axis 3's --print-config row RED. Review round 1 (same day): before the
+# `6/x` / `6\x` / `6:x` rows existed, a charset that ALSO allowed `/` or `\` left every axis green
+# (each traversal row was refused by the `..` or leading-digit rule first); with them, allowing `/`
+# turns the `6/x` row RED (the payload at versions/6/x ran), `\` the `6\x` row AND the PE `9\x`
+# row (exit 37), `:` the `6:x` row.
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -155,6 +162,18 @@ for p in '".."' '"6..6"' '"v6.6.20"' '""' '"6.6.20/../x"' '"6.6.20 "'; do
     run 0 version
     refused "axis 4 (cyrius = $p)" || a4=1
 done
+# A separator with a leading digit and no `..`: each is refused by the CHARSET alone (every row
+# above is caught by the leading-digit or `..` rule first). A payload sits where each would lead
+# inside the store, so a charset that let one through runs it rather than merely mis-resolving.
+mkpayload "$H/versions/6/x"
+mkpayload "$H/versions/6\\x"
+mkpayload "$H/versions/6:x"
+for p in '"6/x"' '"6\\x"' '"6:x"'; do
+    pin "$p"
+    run 0 version
+    refused "axis 4 (cyrius = $p)" || a4=1
+done
+rm -rf "$H/versions/6" "$H/versions/6\\x" "$H/versions/6:x"
 pin "\"6.6$(printf '\033')[31mRED\""
 run 0 version
 refused "axis 4 (an escape byte)" || a4=1
@@ -165,7 +184,7 @@ run 0 version
 if [ "$RC" -eq 1 ] && grep -q "must be a quoted version string" "$W/stderr"; then :; else
     bad "axis 4 (unquoted cyrius = $VER): exit $RC — a pin that is present but not a string was read as 'no pin'"; a4=1
 fi
-[ "$a4" -eq 0 ] && echo "  ok axis 4: '..', '6..6', 'v6.6.20', '', a '/', a space, an escape byte and an unquoted pin are refused"
+[ "$a4" -eq 0 ] && echo "  ok axis 4: '..', '6..6', 'v6.6.20', '', '6.6.20/../x', a space, '6/x', '6\\x', '6:x', an escape byte and an unquoted pin are refused"
 
 # ── axis 5: controls — well-formed pins keep working ──────────────────────────────────────
 a5=0
@@ -223,9 +242,16 @@ else
         pe_run '"..\\..\\..\\evil\\payload"' lint
         { [ "$RC" -eq 1 ] && grep -q "is not a version" "$W/out"; } \
             || { bad "axis 6 (PE, backslash spelling): exit $RC (37 = the payload ran)"; a6=1; }
+        # a backslash with a leading digit and no `..` — refused by the charset alone; the probe
+        # sits at versions\9\x\bin, where a charset that allowed `\` would lead
+        mkdir -p "$PH/.cyrius/versions/9/x/bin"
+        cp "$W/pe/probe.exe" "$PH/.cyrius/versions/9/x/bin/cyrius.exe"
+        pe_run '"9\\x"' version
+        { [ "$RC" -eq 1 ] && grep -q "is not a version" "$W/out"; } \
+            || { bad "axis 6 (PE, 9\\x): exit $RC (37 = the probe at versions\\9\\x ran)"; a6=1; }
         pe_run '"9.9.9"' version
         [ "$RC" -eq 37 ] || { bad "axis 6 (PE control, installed 9.9.9): exit $RC, expected the probe's 37"; a6=1; }
-        [ "$a6" -eq 0 ] && echo "  ok axis 6: cyrius.exe refuses a forward-slash and a backslash traversal pin; a well-formed pin still redirects"
+        [ "$a6" -eq 0 ] && echo "  ok axis 6: cyrius.exe refuses a forward-slash and a backslash traversal pin and '9\\x'; a well-formed pin still redirects"
     fi
 fi
 
