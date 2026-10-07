@@ -74,23 +74,29 @@
 #   K17 a fork at the same tag: fx pinned from its origin at v1, the manifest moved to a fork
 #       that also tags v1 (cache cleared). K17a: the lock keeps BOTH v1 lines; K17b: moved back,
 #       the origin's v1 repointed + fresh cache → REFUSED by name, lock and lib untouched
+#   K18 two dep NAMES on one repo at one tag, one optional (libro's `sigil` + optional
+#       `sigil_tpm`, both sigil.git@3.13.7): pb required, pa behind `gpu`, different modules.
+#       K18a: a feature-less `deps` keeps pa's line (and says `2 commit-pinned (1 re-verified)`);
+#       K18b: the tag repointed and only pa's cache entry cleared → `deps --features gpu`
+#       REFUSED by name, lock and lib/pa_ra.cyr untouched
 #
 # Mutation ledger (measured with this file, one mutant of cbt/deps.cyr at a time; the tip is
-# 21/21 green):
+# 23/23 green):
 #   slot-open (6.6.20) CLI ............................ every axis but K1 red
 #   first cut, inherited line dropped by NAME (61c88ca3) K8 K12a K12b K13 K14 K15 K16 K17a K17b,
-#       and K2 K2l for its summary (no `(K re-verified)`)
-#   carry every inherited line (fresh check always 0) . K2 K3 K8 K12a K13 K14,
+#       and K2 K2l K18a for its summary (no `(K re-verified)`; it kept both of K18's lines)
+#   carry every inherited line (fresh check always 0) . K2 K3 K8 K12a K13 K14 K18a,
 #       K2l K15 K16 knock-on
 #   git field compared byte-for-byte, not normalised .. K14, K15 K16 knock-on (K14's duplicate)
 #   drop key ignores git (`return 1` for the url test)  K17a K17b
+#   drop key ignores name (git + tag only) ............ K18a K18b
 #   no sort ........................................... K13 K16 (the dep count reads adjacency)
 #   no CR strip in _lock_commit_lookup ................ K10
 #   no CR strip in cmd_deps_verify .................... K11
 #   64 KB read window in _lock_commit_lookup .......... K15
 #   summary counts lines, not deps .................... K16
-#   no `(K re-verified)` in the summary ............... K2 K2l K16
-#   K counts the merged pin set, not this run's pins .. K2 K2l K16
+#   no `(K re-verified)` in the summary ............... K2 K2l K16 K18a
+#   K counts the merged pin set, not this run's pins .. K2 K2l K16 K18a
 # "Knock-on" axes go red because an earlier axis left a duplicate line in the shared project.
 # A repoint must make a NEW commit: the second repoint of one origin used to be an empty `git
 # commit`, the tag never moved, and the CRLF axis passed nothing (caught while measuring).
@@ -422,6 +428,61 @@ else bad "K17a (rc=$rc, $(npins) pins: $(tr -d '\r' < "$P/cyrius.lock" | grep "^
 sed -i "s|^git = \"file://$W/fork/fx\"\$|git = \"file://$W/o/fx\"|" "$P/cyrius.cyml"
 grep -q "o/fx\"" "$P/cyrius.cyml" || bad "K17 setup: the url was not switched back"
 refused K17b fx
+
+# ── K18: the drop key includes the NAME — two names on one repo at one tag ─────────────────
+#    libro's shape: `[deps.sigil]` and an optional `[deps.sigil_tpm]` (feature `tpm`), both
+#    sigil.git at 3.13.7, different modules. A drop key of (git, tag) alone let the required
+#    name's fresh line replace the optional name's, so a feature-less resolve dropped pa's pin,
+#    and a repointed tag was then vendored and re-pinned at exit 0 under `--features gpu`.
+mkdir -p "$W/o/pab/dist" && printf 'fn ra_f(): i64 { return 1; }\n' > "$W/o/pab/dist/ra.cyr" \
+  && printf 'fn rb_f(): i64 { return 1; }\n' > "$W/o/pab/dist/rb.cyr" \
+  && ( cd "$W/o/pab" && git init -q . && git add -A && git commit -qm v1 && git tag v1 ) || bad "K18 setup: cannot build pab"
+pab1=$(git -C "$W/o/pab" rev-parse 'v1^{commit}')
+P="$W/p6"; mkdir -p "$P"
+cat > "$P/cyrius.cyml" <<EOF
+[package]
+name = "pinsn"
+version = "0.0.1"
+language = "cyrius"
+cyrius = "$V"
+
+[build]
+src = "main.cyr"
+output = "out"
+
+[features]
+gpu = ["pa"]
+
+[deps.pb]
+git = "file://$W/o/pab"
+tag = "v1"
+modules = ["dist/rb.cyr"]
+
+[deps.pa]
+git = "file://$W/o/pab"
+tag = "v1"
+modules = ["dist/ra.cyr"]
+optional = true
+EOF
+cp "$P0/main.cyr" "$P/main.cyr"
+rc=0; if _cy deps --features gpu > "$W/k18.out" 2>&1; then rc=0; else rc=$?; fi
+[ "$rc" -eq 0 ] && [ "$(pin_of pa)" = "$pab1" ] && [ "$(pin_of pb)" = "$pab1" ] && [ -f "$P/lib/pa_ra.cyr" ] \
+  || bad "K18 setup (rc=$rc): pa + pb not pinned at $pab1: $(tr -d '\r' < "$P/cyrius.lock" | grep "^commit" | cut -f3,5 | tr '\n' ' ') $(grep -m2 -i 'error\|refus' "$W/k18.out")"
+rc=0; if _cy deps > "$W/k18a.out" 2>&1; then rc=0; else rc=$?; fi
+if [ "$rc" -eq 0 ] && [ "$(pin_of pa)" = "$pab1" ] && [ "$(pin_of pb)" = "$pab1" ] && [ "$(npins)" -eq 2 ] \
+   && grep -q '^cyrius.lock: .*, 2 commit-pinned (1 re-verified)$' "$W/k18a.out"; then
+    ok "K18a one repo + tag under two names: a feature-less resolve re-verified pb and KEPT pa's line"
+else bad "K18a (rc=$rc, $(npins) pins: $(tr -d '\r' < "$P/cyrius.lock" | grep "^commit" | cut -f3,5 | tr '\n' ' ')): $(grep -m1 'cyrius.lock' "$W/k18a.out") $(grep -m2 -i 'error\|refus' "$W/k18a.out")"; fi
+cp "$P/cyrius.lock" "$W/k18b.lock"; cp "$P/lib/pa_ra.cyr" "$W/k18b.lib"
+( cd "$W/o/pab" && printf 'fn ra_f(): i64 { return 666; }\n' > dist/ra.cyr && git commit -qam evil && git tag -f v1 > /dev/null 2>&1 ) \
+  || bad "K18b setup: could not move pab's v1"
+rm -rf "$H/deps/pa"
+rc=0; if _cy deps --features gpu > "$W/k18b.out" 2>&1; then rc=0; else rc=$?; fi
+if [ "$rc" -ne 0 ] && grep -q "commit-pin mismatch for dep 'pa' tag 'v1'" "$W/k18b.out" \
+   && cmp -s "$P/cyrius.lock" "$W/k18b.lock" && cmp -s "$P/lib/pa_ra.cyr" "$W/k18b.lib"; then
+    ok "K18b pa: repointed tag + fresh cache refused by name (rc=$rc); lock and lib/pa_ra.cyr untouched"
+else bad "K18b pa (rc=$rc, pins: $(tr -d '\r' < "$P/cyrius.lock" | grep "^commit" | cut -f2,3 | tr '\n' ' ')): $(grep -m2 -i 'error\|refus\|resolved' "$W/k18b.out")"; fi
+git -C "$W/o/pab" tag -f v1 "$pab1" > /dev/null 2>&1; rm -rf "$H/deps/pa"
 
 echo "$G: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
