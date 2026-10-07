@@ -8,6 +8,9 @@
 #   await      _coro_rcp[] past _CORO_MAX_SUSP        -> compiler SIGSEGV (rc 139)
 #   continue   S+0x18F8A0 patch slots, 9th onward      -> swept ~16 KB of heap-map state
 #                                                         (use_count at 0x1903D0 -> rc 139)
+#              6.6.20: the array is gone (a growable vector, `_cont_vec`) and so is the cap,
+#              which counted the whole loop NEST and blamed the inner loop; that row now
+#              asserts 400 continues compile, bind and leave later diagnostics intact.
 #   REGSTRUCT  struct 1025+ written over fcount[0]    -> struct 0's size corrupted; and
 #                                                         DUMP_STRUCTS ran per refused struct
 #                                                         (80,753 stderr lines at 1100)
@@ -74,7 +77,9 @@ if [ -x "$D/cc_cx" ]; then
     grep -q "$AWAIT_STOP" "$D/err" || bad "await cx: neither the cap nor the named x86-only refusal"
 fi
 
-# ── continue: 400 in one for-loop (cap 8), then a real error in a later fn ─────────
+# ── continue: no cap since 6.6.20 (RPF-05) ─────────────────────────────────────────────
+# 400 in one for-loop, then a real error in a later fn: the ONLY error is the later one
+# (the pending jumps are a growable vector now, so there is nothing to sweep and no cap).
 {
     echo 'var gg = 3;'
     echo 'fn main(): i64 { var s = 0; for (var i = 0; i < 3; i = i + 1) {'
@@ -85,9 +90,42 @@ fi
     echo 'var e = main(); syscall(60, e);'
 } > "$D/ct.cyr"
 comp "$CC" "$D/ct.cyr"
-[ "$rc" = 1 ] || bad "continue: rc $rc, want 1 (139 = patch slots swept over use_count)"
-grep -q 'too many continue statements' "$D/err" || bad "continue: cap message missing"
+[ "$rc" = 1 ] || bad "continue: rc $rc, want 1 (the later fn's error)"
+grep -q 'too many continue statements' "$D/err" && bad "continue: the retired 8-continue cap fired"
 grep -q "cap_marker_after_continues" "$D/err" || bad "continue: the later error was not reported (state corrupted?)"
+# ... and they RUN: 400 continues skip i = 0..399 of 410 trips, so 10 reach the add.
+{
+    echo 'fn main(): i64 { var s = 0; for (var i = 0; i < 410; i = i + 1) {'
+    awk 'BEGIN { for (i = 0; i < 400; i++) printf "  if (i == %d) { continue; }\n", i }'
+    echo '  s = s + 1;'
+    echo '} return s; }'
+    echo 'var e = main(); syscall(60, e);'
+} > "$D/cr.cyr"
+comp "$CC" "$D/cr.cyr"
+if [ "$rc" = 0 ]; then
+    chmod +x "$D/out"; got=0; timeout 20 "$D/out" || got=$?
+    [ "$got" = 10 ] || bad "continue: 400 continues ran to $got, want 10"
+else
+    bad "continue: 400 continues in one loop refused (rc $rc): $(grep -m1 '^error' "$D/err")"
+fi
+# The nest is not one budget (RPF-05): 5 continues in the outer for and 4 in the inner one were
+# refused "max 8" on the INNER loop's 4th, though neither loop had more than 5.
+{
+    echo 'fn main(): i64 { var n = 0; for (var i = 0; i < 10; i = i + 1) {'
+    awk 'BEGIN { for (i = 1; i <= 5; i++) printf "  if (i == %d) { continue; }\n", i }'
+    echo '  for (var j = 0; j < 10; j = j + 1) {'
+    awk 'BEGIN { for (i = 1; i <= 4; i++) printf "    if (j == %d) { continue; }\n", i }'
+    echo '    n = n + 1;'
+    echo '  } } return n; }'
+    echo 'var e = main(); syscall(60, e);'
+} > "$D/cn.cyr"
+comp "$CC" "$D/cn.cyr"
+if [ "$rc" = 0 ]; then
+    chmod +x "$D/out"; got=0; timeout 20 "$D/out" || got=$?
+    [ "$got" = 30 ] || bad "continue nest: ran to $got, want 30 (5 outer trips x 6 inner)"
+else
+    bad "continue nest: 5 outer + 4 inner refused (rc $rc): $(grep -m1 '^error' "$D/err")"
+fi
 
 # ── REGSTRUCT: 1100 structs (cap 1024), then a union and a struct past the cap ─────
 # The two callers must skip a refused body: indexing it with sid - 1 = -1 writes the union
@@ -197,4 +235,4 @@ awk '/^fn PP_DEFINE\(/ { f = 1 } f && /_pp_flag_count >= 16/ { print; exit }' sr
     || bad "pp define: the cap in PP_DEFINE does not return after ERR_MSG"
 
 [ "$fail" = 0 ] || exit 1
-echo "PASS: every report-then-store cap stops storing (await x86 + aarch64/cx named refusal, continue, REGSTRUCT, ADDFIELD, pool, union count + union-first pool, PP_DEFINE/PREDEFINE; 6.6.10/6.6.11)"
+echo "PASS: every report-then-store cap stops storing (await x86 + aarch64/cx named refusal, continue uncapped since 6.6.20, REGSTRUCT, ADDFIELD, pool, union count + union-first pool, PP_DEFINE/PREDEFINE; 6.6.10/6.6.11)"

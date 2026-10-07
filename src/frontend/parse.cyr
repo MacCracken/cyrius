@@ -3174,11 +3174,9 @@ fn _PARSE_CONTINUE(S): i64 {
     }
     if (L64(S + 0x18F898) > 0) {
         # A `for`: a forward jump to its step, patched by `_cont_close` (see `_cont_vec`).
-        if (vec_len(_cont_vec) >= 8) {
-            # ERR_MSG returns (v6.4.62), so the cap stops the store itself. CHANGELOG [6.6.10]
-            ERR_MSG(S, "too many continue statements in loop (max 8)", 44);
-            return 0;
-        }
+        # No cap: the vector grows. The fixed 8-entry array this replaced was shared by the
+        # whole nest, so its "max 8" counted the OUTER loops' continues and named the inner
+        # one (5 outer + 4 inner was refused). CHANGELOG [6.6.20]
         vec_push(_cont_vec, EJMP0(S));
     } else {
         # A `while`: a direct jump to the loop top
