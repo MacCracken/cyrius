@@ -349,6 +349,24 @@ else
     kill -9 "$runner" 2>/dev/null
 fi
 wait 2>/dev/null || true
+# A SIGKILLed runner runs no cleanup — by design, `_cbt_tmpdir_cleanup` cannot run in a
+# process that got no chance to do anything — so its private temp dir (test_bin + test_out)
+# stays behind, one per check.sh run, for ever. This gate made that runner, so the dir is
+# its own to remove. The first row proves the dir is where the CLI puts it (a CTB that no
+# longer matches `_cbt_tmpbase` would make the removal a silent no-op); the second that it
+# is gone. CHANGELOG [6.6.20]
+kdirs=0
+for d in "$CTB/cyrius-$runner" "$CTB/cyrius-$runner"-*; do
+    [ -d "$d" ] && kdirs=$((kdirs + 1))
+done
+check "premise: the SIGKILLed runner left its temp dir under \$CTB (it ran no cleanup)" "yes" \
+    "$([ "$kdirs" -gt 0 ] && echo yes || echo no)"
+rm -rf "$CTB/cyrius-$runner" "$CTB/cyrius-$runner"-*
+kdirs=0
+for d in "$CTB/cyrius-$runner" "$CTB/cyrius-$runner"-*; do
+    [ -d "$d" ] && kdirs=$((kdirs + 1))
+done
+check "the SIGKILLed runner's temp dir is removed by this gate" 0 "$kdirs"
 
 # ── AXIS 3 — `cyrius run` is NOT deadlined. A user running a server through the CLI
 # must not be shot at 5 minutes; only the batch verbs carry a deadline. Asserted on
