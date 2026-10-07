@@ -152,8 +152,9 @@ esac
 # ── axis 7: the RETIRED-name scan reads the WHOLE capture (6.6.20, CBT-02) ──────────────
 # ⛔ The scan read the self-check's stderr capture into a fixed 256 KB buffer, so a bundle whose
 # --allow-undef compile warned past 256 KB BEFORE reaching a retired name was written at rc 0 —
-# the blast door skipped by volume. 1,400 undefined hooks with ~190-byte names come to a ~310 KB
-# capture with `payload` on its last line. The same bundle with a short capture is axis 6.
+# the blast door skipped by volume. 1,400 undefined hooks with ~190-byte names come to a ~326 KB
+# capture (measured 326,629 B; the check below prints it) with `payload` on its last line. The
+# same bundle with a short capture is axis 6.
 echo "axis 7 — a RETIRED name past 256 KB of warnings is still refused:"
 PAD=$(printf '%0190d' 0 | tr 0 x)
 {

@@ -6297,8 +6297,8 @@ fn _distlib_retired_name(n): i64 {
 
 # ⛔ 6.6.20 (CBT-02) — THE WHOLE CAPTURE, OR NO VERDICT. The self-check read its stderr capture
 # into a fixed 256 KB buffer and scanned that, so a bundle whose `--allow-undef` compile warned
-# more than ~256 KB before reaching a RETIRED name (measured: 1,400 long undefined hook names, a
-# 312 KB capture, `payload` on its last line) was written at rc 0 — the exact "self-checked GREEN,
+# more than 256 KB before reaching a RETIRED name (measured: 1,400 long undefined hook names, a
+# ~326 KB capture, `payload` on its last line) was written at rc 0 — the exact "self-checked GREEN,
 # detonated at the consumer" class the v6.6.2 blast door exists to stop. The capture is still on
 # disk when this runs, so it is read whole. Returns the RETIRED name, 0 when there is none, or -1
 # when the capture could not be read whole — never "none" for bytes nobody looked at.
