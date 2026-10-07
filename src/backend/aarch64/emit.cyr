@@ -254,27 +254,6 @@ fn EW(S, w): i64 {
     return 0;
 }
 
-# Emit 2 bytes (for compatibility with x86 E2 calls)
-fn E2(S, v): i64 {
-    EB(S, v & 0xFF);
-    EB(S, v >> 8 & 0xFF);
-    return 0;
-}
-
-# Emit 8 bytes (for mov imm64 compatibility)
-fn E8(S, v): i64 {
-    EB(S, v & 0xFF); EB(S, v >> 8 & 0xFF);
-    EB(S, v >> 16 & 0xFF); EB(S, v >> 24 & 0xFF);
-    EB(S, v >> 32 & 0xFF); EB(S, v >> 40 & 0xFF);
-    EB(S, v >> 48 & 0xFF); EB(S, v >> 56 & 0xFF);
-    return 0;
-}
-
-fn E3(S, v): i64 {
-    EB(S, v & 0xFF); EB(S, v >> 8 & 0xFF); EB(S, v >> 16 & 0xFF);
-    return 0;
-}
-
 # === Move immediate to x0 (result register) ===
 # MOVZ x0, #imm16 = 0xD2800000 | (imm16 << 5)
 # For 64-bit immediates: MOVZ + MOVK for each 16-bit chunk
@@ -466,9 +445,6 @@ fn ESHLIMM(S, n): i64 {
 # (above) that never got a call site.
 fn EXORAA(S): i64 { EW(S, 0xCA000000); return 0; }    # eor x0, x0, x0 (zero)
 
-# === mov rdi, rax (for exit: x0 already has the value) ===
-fn EMOVRDI(S): i64 { return 0; }  # no-op: x0 is already the first arg on aarch64
-
 # === Syscall ===
 # SVC #0 (Linux) or SVC #0x80 (macOS/BSD). On BSD the error convention
 # is "carry flag set → errno in x0 as a small positive"; Linux uses
@@ -531,22 +507,6 @@ fn ESYSCALL(S): i64 {
     }
     EW(S, 0xD4000001); return 0;                               # svc #0
 }
-
-# === Syscall argument pops ===
-# On aarch64, syscall args are x0-x5 (already in the right regs from Cyrius calling convention)
-# Pop from stack into x0-x5 in reverse order
-# Post-indexed `ldr xN, [sp], #16` = 0xF84107E0|N (index bits [11:10]=01).
-# Pre-v6.2.34 these encoded 0xF8410FE0 ([11:10]=11) = PRE-indexed
-# `ldr xN, [sp, #16]!`, which reads sp+16 (wrong slot) AND writes sp back —
-# contradicting the comments. Latent only (unreferenced in the aarch64 build;
-# the called twins live in backend/x86), corrected here so the family is right
-# if ever wired to aarch64 syscall-arg pops. Matches EPOPR (0xF84107E0).
-fn EPOPRDI(S): i64 { EW(S, 0xF84107E0); return 0; }  # ldr x0, [sp], #16
-fn EPOPRSI(S): i64 { EW(S, 0xF84107E1); return 0; }  # ldr x1, [sp], #16
-fn EPOPRDX(S): i64 { EW(S, 0xF84107E2); return 0; }  # ldr x2, [sp], #16
-fn EPOPR10(S): i64 { EW(S, 0xF84107E3); return 0; }  # ldr x3, [sp], #16 (arg4)
-fn EPOPR8(S): i64 { EW(S, 0xF84107E4); return 0; }   # ldr x4, [sp], #16 (arg5)
-fn EPOPR9(S): i64 { EW(S, 0xF84107E5); return 0; }   # ldr x5, [sp], #16
 
 # === PIE-safe PC-relative addressing (Mach-O ARM) ===
 # ADRP xN, #0 — placeholder, page-diff patched by FIXUP_ADRP_ADD.
@@ -2704,9 +2664,6 @@ fn ECALLCLEAN(S, n): i64 {
     return 0;
 }
 
-# Helper: not needed on aarch64 but must exist for parse.cyr
-fn EDISP32(S, disp): i64 { return 0; }
-
 # v5.9.26 Phase 2b-aarch64 — load &local into X8 (the dedicated
 # indirect-result register on aarch64 SysV / AAPCS64 §6.9). Used at
 # caller-side of a struct-returning call to set the hidden retptr
@@ -3171,9 +3128,6 @@ fn EFLADDR_X1(S, lli): i64 {
     return 0;
 }
 
-# Object mode check (shared with x86)
-fn _IS_OBJ(S): i64 { return L64(S + 0x18FCA0) == 3; }
-
 # Width-aware local load: ldurb/ldurh/ldur w0/ldur x0 from [x29, #-offset]
 fn EFLLOAD_W(S, idx, width): i64 {
     var disp = 0 - ((idx + 1) * 8);
@@ -3450,18 +3404,11 @@ fn ESETCC(S, op): i64 {
 # inputs are bit-pattern in x0 (last arg) + stack TOS (first arg);
 # output is bit-pattern in x0.
 
-# v5.7.30: x86-named no-ops kept for parser-shared codepaths. The
-# EMOVQ_*/EUCOMISD/EXORPD_X1/EX87PUSH/EX87POP helpers are
-# x86 bit-cast / x87-stack-mgmt helpers the aarch64 path doesn't
-# need — fmov d, x and fmov x, d are inlined directly into EMIT_
-# F64_BINOP / EMIT_F64_CMP / etc. The stubs preserve the parser API.
+# v5.7.30: EMOVQ_X0_A / EMOVQ_A_X0 are x86 bit-cast helpers that shared
+# parse code calls around f64 values; aarch64 inlines fmov d, x and
+# fmov x, d into EMIT_F64_BINOP / EMIT_F64_CMP / etc., so they are no-ops.
 fn EMOVQ_X0_A(S): i64 { return 0; }
-fn EMOVQ_X1_C(S): i64 { return 0; }
 fn EMOVQ_A_X0(S): i64 { return 0; }
-fn EUCOMISD(S): i64 { return 0; }
-fn EXORPD_X1(S): i64 { return 0; }
-fn EX87PUSH(S): i64 { return 0; }
-fn EX87POP(S): i64 { return 0; }
 
 # v5.7.30: int → f64. Input: x0 = int. Output: x0 = f64 bit pattern.
 # scvtf d0, x0  (signed convert to double)

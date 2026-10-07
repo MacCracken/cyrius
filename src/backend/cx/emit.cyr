@@ -244,7 +244,6 @@ fn ESETCC(S, op): i64 {
 
 # Syscall: pop args from stack into r1-r6, syscall, result in r0
 fn ESYSCALL(S): i64 { CX_EMIT(S, 112, 0, 0, 0); return 0; }
-fn EMOVRDI(S): i64 { CX_EMIT(S, 2, 2, 0, 0); return 0; }  # mov r2, r0 (for exit)
 
 # Syscall arg pop: VM convention is r1=number, r2-r7=args
 # x86 push order: number, arg1, arg2, ... (left to right)
@@ -891,26 +890,6 @@ fn ESTOREPARM(S, pidx, lidx, pc): i64 {
     return 0;
 }
 
-# v5.9.40 — Phase 2c #3: 7+-arg stack-param store.
-# cxvm has 256 registers; ECALLPOPS already pops all n args into
-# r3..r(3+n-1) regardless of how many. Native backends store
-# args 7+ from caller stack (Win64 shadow space / SysV stack);
-# cx mirrors ESTOREPARM's r-to-frame pattern but uses the disp
-# directly instead of computing it from a local-var index. The
-# shape matches ESTOREPARM byte-for-byte except for the offset
-# source — kept symmetric so callers see identical semantics.
-fn ESTORESTACKPARM(S, pidx, disp, pc): i64 {
-    _cx_fpaddr(S, 0 - disp);              # 6.6.17: r251 = fp - |disp| (see _cx_fpaddr)
-    CX_EMIT(S, 67, 251, 3 + pidx, 0);     # store64 [r251], r(3+pidx)
-    return 0;
-}
-fn EPOPARG(S, n): i64 { CX_EMIT(S, 129, 3 + n, 0, 0); return 0; }
-fn EPOPRDI(S): i64 { CX_EMIT(S, 129, 2, 0, 0); return 0; }
-fn EPOPRSI(S): i64 { CX_EMIT(S, 129, 3, 0, 0); return 0; }
-fn EPOPRDX(S): i64 { CX_EMIT(S, 129, 4, 0, 0); return 0; }
-fn EPOPR10(S): i64 { CX_EMIT(S, 129, 5, 0, 0); return 0; }
-fn EPOPR8(S): i64 { CX_EMIT(S, 129, 6, 0, 0); return 0; }
-fn EPOPR9(S): i64 { CX_EMIT(S, 129, 7, 0, 0); return 0; }
 fn EXORAA(S): i64 { CX_MOVI(S, 0, 0); return 0; }
 
 # ⛔ 6.6.5 — THE WIDTH-AWARE LOADS WERE 64-BIT STUBS, WHICH IS A WRONG VALUE, NOT A GAP.
@@ -1151,10 +1130,6 @@ var _LOOPVAR_OK = 0;
 # v5.8.56: ELVRLOAD / ELVRSTORE / ELVRINIT stubs removed in lockstep
 # with x86 + aarch64 removal — the x86 versions were never wired in,
 # and these cx stubs only existed to mirror that backend.
-fn EDISP32(S, disp): i64 { return 0; }
-fn E2(S, v): i64 { EB(S, v & 0xFF); EB(S, v >> 8 & 0xFF); return 0; }
-fn E3(S, v): i64 { EB(S, v & 0xFF); EB(S, v >> 8 & 0xFF); EB(S, v >> 16 & 0xFF); return 0; }
-fn E8(S, v): i64 { var i = 0; while (i < 8) { EB(S, (v >> (i * 8)) & 0xFF); i = i + 1; } return 0; }
 
 # cx arc B: scalar f64 is REAL via the host-backed cxvm float opcodes (0x54-0x5F
 # fadd/fsub/fmul/fdiv, i2f/f2i, flt/fle/fgt/fge/feq/fne; 0x64/0x65 fneg/fabs;
@@ -1268,32 +1243,11 @@ fn EI2F(S): i64 { CX_EMIT(S, 88, 0, 0, 0); return 0; }   # i2f r0, r0
 fn EF2I(S): i64 { CX_EMIT(S, 89, 0, 0, 0); return 0; }   # f2i r0, r0
 fn EF32_FROM(S): i64 { CX_EMIT(S, 103, 0, 0, 0); return 0; }   # v6.4.32: f32narrow r0 (f64→f32 bits)
 fn EF32_TO(S): i64 { CX_EMIT(S, 102, 0, 0, 0); return 0; }     # v6.4.32: f32widen r0 (f32 bits→f64)
-# v5.7.11: PF64BIN / PF64CMP now defined in parse_expr.cyr (the
-# shared frontend, since v5.6.x). The cx stubs that lived here
-# collided with the parse_expr versions and lost (last-include
-# wins). v5.7.9's duplicate-fn warning surfaced this; deleted
-# the dead stubs. parse_expr's versions delegate the actual
-# emits to EMIT_F64_BINOP / EUCOMISD / etc., which cx still stubs
-# to 0 below — so f64 ops on cx remain no-op-but-parse-clean,
-# same as before (just without the silent collision).
+# EMOVQ_X0_A / EMOVQ_A_X0 are x86 bit-cast helpers that shared parse code
+# calls around f64 values. cx keeps the f64 BITS in r0 (the float opcodes
+# above operate on them), so both are no-ops.
 fn EMOVQ_X0_A(S): i64 { return 0; }
-fn EMOVQ_X1_C(S): i64 { return 0; }
 fn EMOVQ_A_X0(S): i64 { return 0; }
-fn EX87PUSH(S): i64 { return 0; }
-fn EX87POP(S): i64 { return 0; }
-# v5.10.16 — arity-aligned stubs to match x86/aarch64 signatures.
-# Pre-v5.10.16 these took (S, op) / (S, op) / (S) and the parser
-# called them with (S, op, vbase) / (S, op, vbase) / (S, vbase) —
-# arity mismatch was tolerated (cyrius fn calls don't enforce
-# parameter count, extras silently dropped) but exposes the
-# "f64 ops on cx are stubs" situation more bluntly.
-#
-# These stay no-ops because cx's entire f64 pipeline is no-op
-# (EMIT_F64_BINOP / EI2F / EF2I / EUCOMISD / EF64SQRT all return
-# 0 — see the v5.7.11 comment above). When cx grows f64 support,
-# the SIMD primitives gain a scalar-loop fallback at the same
-# time. Tracked at docs/development/roadmap.md (cx f64 support
-# is a multi-minor arc; not v5.10.x scope).
 # ============================================================================
 # v6.4.32 — cx SIMD flat-array emitters (per-lane scalar bytecode loops).
 # cx is a scalar VM with no vector registers, so every packed SIMD builtin lowers
@@ -1607,8 +1561,6 @@ fn EMIT_IVEC_DP8(S, vbase): i64 {
     CX_EMIT(S, 2, 0, 3, 0);               # r0 = acc (already correctly signed i64)
     return 0;
 }
-fn EUCOMISD(S): i64 { return 0; }
-fn EXORPD_X1(S): i64 { return 0; }
 # f64 unary ops on the f64 BITS in r0 (the frontend's EMOVQ_* around these are no-ops
 # on cx), host-backed like the other float opcodes. round = nearest, ties to EVEN — the
 # x86 `roundsd imm 0` and aarch64 `frintn` contract, which cxvm inherits by calling the

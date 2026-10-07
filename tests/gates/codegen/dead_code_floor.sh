@@ -33,12 +33,12 @@ fails=0
 _ceiling() {
     case $1 in
         x86)  echo 2 ;;   # cycc                       (src/main.cyr)
-        a64)  echo 90 ;;   # cycc_aarch64 cross          (src/main_aarch64.cyr)
-        cx)   echo 90 ;;   # cyrius-x                    (src/main_cx.cyr)
+        a64)  echo 73 ;;   # cycc_aarch64 cross          (src/main_aarch64.cyr)
+        cx)   echo 72 ;;   # cyrius-x                    (src/main_cx.cyr)
         win)  echo 40 ;;   # PE32+                       (src/main_win.cyr, CYRIUS_TARGET_WIN=1)
         x86m) echo 70 ;;   # x86-macOS                   (src/main_x86_macho.cyr, CYRIUS_MACHO=1)
-        a64n) echo 90 ;;   # aarch64-native              (src/main_aarch64_native.cyr)
-        a64m) echo 94 ;;  # arm64-macOS                 (src/main_aarch64_macho.cyr, CYRIUS_MACHO_ARM=1)
+        a64n) echo 73 ;;   # aarch64-native              (src/main_aarch64_native.cyr)
+        a64m) echo 77 ;;  # arm64-macOS                 (src/main_aarch64_macho.cyr, CYRIUS_MACHO_ARM=1)
     esac
 }
 grep -rhoE '^[[:space:]]*\}?fn [A-Za-z_][A-Za-z0-9_]*\(' src --include='*.cyr' \
