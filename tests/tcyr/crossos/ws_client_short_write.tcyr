@@ -110,6 +110,20 @@ fn main(): i64 {
     var src = alloc(M);
     var j = 0;
     while (j < M) { store8(src + j, (j * 7 + 3) & 0xFF); j = j + 1; }
+
+    # A length of 4 GiB or more is refused before a byte is sent. The 64-bit length header
+    # carries the low 32 bits only (ws_recv_frame refuses anything above them, CVE-53), so a
+    # 0x100000000-byte frame went out announcing 0 and streamed its payload after it, which the
+    # peer parses as further frames. The two timeouts stay set for the rest of the group, so a
+    # regression FAILs these rows and the desynchronised ones after them (a send stops at the
+    # full buffer, a read finds stray bytes or none) instead of hanging the suite. Neither fires
+    # on a passing run: every later frame fits the socket buffer and is queued before it is read.
+    assert_eq(sock_set_send_timeout(ea, 0, 100000), 0, "SO_SNDTIMEO = 100 ms on the sender");
+    assert_eq(sock_set_recv_timeout(eb, 0, 100000), 0, "SO_RCVTIMEO = 100 ms on the peer");
+    assert_eq(ws_send_binary(ws3, src, 0x100000000), 0 - 1, "a 4 GiB length is -1");
+    assert_lt(sys_read(eb, &eg, 32), 1, "  ...and the peer reads nothing (no header was sent)");
+    assert_eq(ws_state(ws3), WS_OPEN, "  ...the connection is still OPEN");
+
     assert_eq(ws_send_binary(ws3, src, M), M, "a 5000-byte frame (two 4096-byte fills) returns its length");
     var fr = alloc(M + 8);
     var got2 = 0;
