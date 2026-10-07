@@ -148,6 +148,7 @@ fn _win_sys_exe(name): i64 {
     store8(p + 2 + sl + nl, 34);
     store8(p + 3 + sl + nl, 0);
     return p;
+}
 
 # 6.6.20 (SEC-02, CVE-TBD) — 1 when `s` CANNOT be one double-quoted operand of a `cmd /s /c`
 # line. Inside cmd's quotes `& | < > ^ ( )` are literal; three things are not: a `"` ENDS the
