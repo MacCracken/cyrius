@@ -4069,6 +4069,32 @@ fn ECALLFIX(S, fnidx): i64 {
     return 0;
 }
 
+# 6.6.20 — a REDEFINED fn: turn the earlier body's entry into `jmp new_off`, so every reference
+# already compiled against it (ECALLTO bakes the entry it saw) reaches the last definition. The
+# rel32 is recorded for whole-program compaction like any other disp32 source — ONCE: a `#naked`
+# body opens with the defer-init EJMP0, which already registered this very rel32, and compaction
+# repairs every registry entry independently, so a second entry shifted the displacement twice
+# (measured: SIGSEGV under CYRIUS_DCE=1, a wrong value under CYRIUS_IR=3, whenever code between the
+# two definitions was removed). Returns 1, writing nothing, when the earlier body is too short to
+# hold the jump (a backstop). See `_fn_redirect` (parse_fn.cyr). CHANGELOG [6.6.20]
+fn EFNREDIRECT(S, old_off, old_end, new_off): i64 {
+    if (old_end > old_off) { if (old_end - old_off < 5) { return 1; } }
+    var a = _codebuf_base + old_off;
+    var rel = new_off - old_off - 5;
+    store8(a, 0xE9);
+    store8(a + 1, rel & 0xFF);
+    store8(a + 2, (rel >> 8) & 0xFF);
+    store8(a + 3, (rel >> 16) & 0xFF);
+    store8(a + 4, (rel >> 24) & 0xFF);
+    var i = 0;
+    while (i < _wpjs_n) {
+        if (L64(S + 0x60000 + i * 8) == old_off + 1) { return 0; }
+        i = i + 1;
+    }
+    _wpjs_add(S, old_off + 1);
+    return 0;
+}
+
 # ── v6.5.17 closure ABI (BUG: capturing closure SIGSEGV across a fn boundary) ──
 #
 # A CAPTURING closure's value is its heap env object `[fn_ptr, cap0, …]` with

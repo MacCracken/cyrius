@@ -431,6 +431,21 @@ fn ECALLTO(S, target): i64 {
     return 0;
 }
 
+# 6.6.20 — a REDEFINED fn: turn the earlier body's entry into `jmp new_off` (opcode 80, 4-byte
+# instruction units like ECALLTO), so every reference already compiled against it reaches the
+# last definition. Writes the cx code buffer EB writes (S + 0x54A000). Returns 1, writing
+# nothing, when the earlier body is too short. See `_fn_redirect` (parse_fn.cyr). CHANGELOG [6.6.20]
+fn EFNREDIRECT(S, old_off, old_end, new_off): i64 {
+    if (old_end > old_off) { if (old_end - old_off < 4) { return 1; } }
+    var off = (new_off - old_off) / 4;
+    var a = S + 0x54A000 + old_off;
+    store8(a, 80);
+    store8(a + 1, off & 0xFF);
+    store8(a + 2, (off >> 8) & 0xFF);
+    store8(a + 3, (off >> 16) & 0xFF);
+    return 0;
+}
+
 fn ECALLFIX(S, fnidx): i64 {
     # A negative index is a failed lookup that reached the emitter. It must not become a
     # fixup: `(2 << 56) | -1` decodes as a different fixup type with an index near 2^56,

@@ -1,0 +1,116 @@
+# fn_redefinition_last_wins.tcyr — 6.6.20: a redefined fn is ONE fn, and every call reaches its
+# LAST definition, whatever the call's shape and wherever it was compiled. Runs on real hardware
+# via the release gate's crossos subdir, because the redirect is a different instruction per
+# target: `jmp rel32` on x86_64 ELF / Mach-O / PE, `b imm26` on aarch64 ELF / Mach-O, opcode 80
+# on cx.
+#
+# THE BUG THIS GUARDS (silent; the compiler's own warning said the opposite):
+#     fn g(): i64 { return 2; }
+#     fn h(): i64 { var x = g(); return x; }
+#     fn g(): i64 { return 1; }               -> "duplicate fn 'g' (last definition wins ...)"
+#     h() returned 2.
+# A call to an already-defined fn was emitted against the entry it had at that moment, while
+# forward calls, tail calls and `&g` went through fixups that resolve to the final entry. So h()
+# (non-tail) and `g() + 0` bound the FIRST g, `return g();` bound the last — 212 for the three
+# on x86_64, aarch64 and cx alike — and the winning body was reported unreachable.
+#
+# The redefinitions print the duplicate-fn warning when this file compiles; that is intended —
+# the point is that the warning is now true.
+
+include "lib/assert.cyr"
+include "lib/fnptr.cyr"
+
+# A FORWARD call, compiled before any definition (a fixup — it always bound the last one).
+fn rd_forward(): i64 { return rd_a() + 0; }
+
+fn rd_a(): i64 { return 2; }
+# Compiled while only the FIRST rd_a exists:
+fn rd_nontail(): i64 { var x = rd_a(); return x; }     # direct call (bound the first)
+fn rd_tail(): i64 { return rd_a(); }                     # tail call (a fixup)
+fn rd_expr(): i64 { return rd_a() + 0; }                 # call inside an expression (bound the first)
+var rd_ptr_mid = &rd_a;                                  # address taken between the definitions
+fn rd_a(): i64 { return 1; }
+var rd_ptr_after = &rd_a;
+fn rd_after(): i64 { var x = rd_a(); return x; }
+
+# Three definitions: the first entry jumps to the second, which jumps to the third.
+fn rd_c(): i64 { return 3; }
+fn rd_c_first(): i64 { return rd_c() + 0; }
+fn rd_c(): i64 { return 2; }
+fn rd_c_second(): i64 { return rd_c() + 0; }
+fn rd_c(): i64 { return 1; }
+
+# Recursion: the winning body's recursive call stays in the winning body. (The first body is never
+# entered at all — its entry is now the jump to the last one.)
+fn rd_r(n): i64 { if (n == 0) { return 50; } return rd_r(n - 1) + 0; }
+fn rd_r(n): i64 { if (n == 0) { return 1; } return n + rd_r(n - 1); }
+
+# An #inline FIRST definition: its body used to be replayed at the call site.
+#inline
+fn rd_i(): i64 { return 2; }
+fn rd_i_mid(): i64 { var x = rd_i(); return x; }
+fn rd_i(): i64 { return 1; }
+
+# A generic: the i64 base is a plain call; an instance (`<i32>`) minted between the definitions
+# was minted from the body in hand, and every later `<i32>` call reused that instance.
+fn rd_id<T>(x: T): T { return x + 1; }
+fn rd_g_inst_mid(): i64 { var a: i32 = 5; var y: i32 = rd_id<i32>(a); return y; }
+fn rd_g_base_mid(): i64 { var y = rd_id(5); return y; }
+fn rd_id<U>(x: U): U { return x + 2; }
+fn rd_g_inst_after(): i64 { var a: i32 = 5; var y: i32 = rd_id<i32>(a); return y; }
+
+# A struct-returning fn (its call site is a separate emitter).
+struct RdP { a; b; c; }
+fn rd_mk(): RdP { var p = RdP { a: 1, b: 2, c: 3 }; return p; }
+fn rd_mk_mid(): i64 { var p: RdP = rd_mk(); return p.a + p.b + p.c; }
+fn rd_mk(): RdP { var p = RdP { a: 10, b: 20, c: 30 }; return p; }
+
+# A struct passed BY ADDRESS (over 8 bytes): the same struct type in both definitions, so the
+# redefinition is accepted, and a call compiled between them hands the last body its argument.
+fn rd_sp(p: RdP): i64 { return p.a; }
+fn rd_sp_mid(): i64 { var p = RdP { a: 4, b: 5, c: 6 }; return rd_sp(p) + 0; }
+fn rd_sp(p: RdP): i64 { return p.a + p.b + p.c; }
+
+# A multi-value return.
+fn rd_two(): (i64, i64) { return (1, 2); }
+fn rd_two_mid(): i64 { var a, b = rd_two(); return a * 10 + b; }
+fn rd_two(): (i64, i64) { return (3, 4); }
+
+# A method redefined by a second impl block; the dot call and the mangled name both rebind.
+struct RdFoo { v; }
+impl RdOps for RdFoo { fn get(self): i64 { return 2; } }
+fn rd_m_dot(): i64 { var f = RdFoo { v: 0 }; return f.get(); }
+fn rd_m_named(): i64 { var f = RdFoo { v: 0 }; return RdFoo_get(&f); }
+impl RdOps for RdFoo { fn get(self): i64 { return 1; } }
+
+# The shape it was found in: a library's fn calls a helper it defines, and the program supplies
+# its own helper AFTER the library (an include is this, concatenated).
+fn rd_lib_helper(x): i64 { return x + 100; }
+fn rd_lib_entry(): i64 { var x = rd_lib_helper(1); return x; }
+fn rd_lib_helper(x): i64 { return x + 10; }
+
+assert_eq(rd_forward(), 1, "forward call (compiled before both definitions) reaches the last");
+assert_eq(rd_nontail(), 1, "direct call compiled between the definitions reaches the last (was the first)");
+assert_eq(rd_tail(), 1, "tail call compiled between the definitions reaches the last");
+assert_eq(rd_expr(), 1, "call inside an expression between the definitions reaches the last (was the first)");
+assert_eq(rd_after(), 1, "call compiled after both definitions reaches the last");
+assert_eq(rd_a(), 1, "top-level call reaches the last definition");
+assert_eq(fncall0(rd_ptr_mid), 1, "&fn taken between the definitions calls the last");
+assert_eq(fncall0(rd_ptr_after), 1, "&fn taken after both definitions calls the last");
+assert_eq(rd_c_first(), 1, "three definitions: a call bound to the first reaches the third");
+assert_eq(rd_c_second(), 1, "three definitions: a call bound to the second reaches the third");
+assert_eq(rd_c(), 1, "three definitions: a later call reaches the third");
+assert_eq(rd_r(3), 7, "recursion: the last body's recursion stays in the last body");
+assert_eq(rd_i_mid(), 1, "#inline first definition: the call is not replayed from the first body");
+assert_eq(rd_i(), 1, "#inline first definition: a later call reaches the last");
+assert_eq(rd_g_inst_mid(), 7, "generic: an instance minted between the definitions comes from the last (was 6)");
+assert_eq(rd_g_inst_after(), 7, "generic: an instance call after both definitions reaches the last (was 6)");
+assert_eq(rd_g_base_mid(), 7, "generic: the i64 base called between the definitions reaches the last (was 6)");
+assert_eq(rd_mk_mid(), 60, "struct-returning fn: a call between the definitions reaches the last (was 6)");
+assert_eq(rd_sp_mid(), 15, "struct parameter by address: a call between the definitions reaches the last (was 4)");
+assert_eq(rd_two_mid(), 34, "multi-value return: a call between the definitions reaches the last (was 12)");
+assert_eq(rd_m_dot(), 1, "method: a dot call between the impl blocks reaches the last (was 2)");
+assert_eq(rd_m_named(), 1, "method: a mangled-name call between the impl blocks reaches the last (was 2)");
+assert_eq(rd_lib_entry(), 11, "library helper replaced after the library: its own caller reaches the replacement (was 101)");
+
+var r = assert_summary();

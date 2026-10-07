@@ -2550,6 +2550,22 @@ fn ECALLTO(S, target): i64 {
     return 0;
 }
 
+# 6.6.20 — a REDEFINED fn: turn the earlier body's entry into `b new_off`, so every reference
+# already compiled against it (ECALLTO bakes the entry it saw) reaches the last definition.
+# Returns 1, writing nothing, when the earlier body is too short to hold the branch. See
+# `_fn_redirect` (parse_fn.cyr). CHANGELOG [6.6.20]
+fn EFNREDIRECT(S, old_off, old_end, new_off): i64 {
+    if (old_end > old_off) { if (old_end - old_off < 4) { return 1; } }
+    var rel = (new_off - old_off) / 4;
+    var w = 0x14000000 | (rel & 0x3FFFFFF);
+    var a = _codebuf_base + old_off;
+    store8(a, w & 0xFF);
+    store8(a + 1, (w >> 8) & 0xFF);
+    store8(a + 2, (w >> 16) & 0xFF);
+    store8(a + 3, (w >> 24) & 0xFF);
+    return 0;
+}
+
 # Emit BL placeholder, record type-2 fixup
 fn ECALLFIX(S, fnidx): i64 {
     # A negative index is a failed lookup that reached the emitter. It must not become a
