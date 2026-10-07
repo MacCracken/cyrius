@@ -18,7 +18,8 @@
 #   after top-level code), each name of a local / global destructure, `stack var`, `secret var`,
 #   a `for` binding, and a `use mod.NAME;` alias — which binds the BARE name, so a mangled
 #   `m_mulh64` re-exposed by `use m.mulh64;` ran the intrinsic (2) and `use m.fncall1;` SIGSEGV'd,
-#   the two filed defects again.
+#   the two filed defects again — and a PAYLOAD enum variant, whose constructor is a fn under the
+#   bare variant name (heap `mulh64(a, b)` ran 2; a `: stack` `fncall1(a)` with no include SIGSEGV'd).
 # AXIS 3 — THE ONE LEGITIMATE DECLARER: lib/fnptr.cyr's fncall0..8 ARE the lowering's enabler
 #   (it is gated on FINDFN) and cybs calls them in gen1, so an included file whose BASENAME is
 #   `fnptr.cyr` may declare them — from lib/, from another directory, or bare. The exemption is
@@ -29,8 +30,9 @@
 # AXIS 4 — ANTI-VACUOUS: the intrinsics still work (fncallN in an expression, as a statement
 #   and at top level; mulh64; sizeof), near-misses (`mulh64x`, `fncall9`, `sizeofx`, `fncall`)
 #   are ordinary names, a mangled definition — an impl method `sizeof`, a `mod` fn — is accepted
-#   (only its bare re-exposure by `use` is refused), and `use m.foo;` of an ordinary name still
-#   aliases. And a NUMBER where a name belongs is still the plain
+#   (only its bare re-exposure by `use` is refused), `use m.foo;` of an ordinary name still
+#   aliases, a UNIT enum variant `mulh64 = 77` read as `E.mulh64` runs 77, and an ordinary payload
+#   variant still constructs. And a NUMBER where a name belongs is still the plain
 #   `expected identifier` error, never a fault.
 #
 # MUTATION PROOF (6.6.20):
@@ -46,6 +48,10 @@
 #   * parse_fn.cyr _tl_use: the _RSV_INTRINSIC_DECL call dropped -> the four use_* rows RED, 14
 #     assertions (use_mh / use_mh_top compile and run 2, use_fc compiles and SIGSEGVs, use_sz is
 #     only the bare `expected identifier` parse error).
+#   * parse_types.cyr PARSE_ENUM_DEF: the _RSV_INTRINSIC_DECL call dropped -> the six en_* rows RED,
+#     24 assertions (each compiles rc 0 and emits a binary).
+#   Re-measured with the enum rows: refusal disabled 162 RED (= the 6.6.19 compiler); exemption
+#   never / always 17 / 52; _tl_use call dropped 14.
 #
 # Exit 77 = could not run (no compiler); never 0 for that.
 set -u
@@ -125,6 +131,19 @@ refused use_mh     'mod m;\nfn mulh64(a, b): i64 { return 77; }\nmod n;\nuse m.m
 refused use_mh_top 'mod m;\nfn mulh64(a, b): i64 { return 77; }\nuse m.mulh64;\nsyscall(60, mulh64(4611686018427387904, 8));\n' mulh64
 refused use_fc     'include "lib/fnptr.cyr"\nmod m;\nfn fncall1(a, b): i64 { return 77; }\nmod n;\nuse m.fncall1;\nfn f(): i64 { return fncall1(5, 6); }\nsyscall(60, n_f());\n' fncall1
 refused use_sz     'mod m;\nfn sizeof(): i64 { return 77; }\nmod n;\nuse m.sizeof;\nfn f(): i64 { return sizeof(); }\nsyscall(60, n_f());\n' sizeof
+# A PAYLOAD enum variant `NAME(..)` registers its constructor as a fn under the BARE variant name
+# (there is no qualified constructor: `E.mulh64(4, 8)` is a parse error), so it declares NAME. Each
+# used to compile rc 0 and run the filed defect again: the heap `mulh64(a, b)` and the `: stack`
+# `mulh64(a)` ran the intrinsic (2), the `: stack` `fncall1(a)` with NO include — the variant's
+# registration is what enabled the lowering — and the heap `fncall1(a, b)` SIGSEGV'd. Heap, `: stack`,
+# nullary `NAME()` and sizeof are all refused; a UNIT variant declares no fn and stays (axis 4).
+EA='var ABUF[64];\nfn alloc(n): i64 { return &ABUF; }\n'
+refused en_mh      "$EA"'enum E { A; mulh64(a, b); }\nfn main(): i64 { var e = mulh64(4611686018427387904, 8); return e; }\nsyscall(60, main());\n' mulh64
+refused en_stk_mh  'enum E : stack { A; mulh64(a); }\nfn main(): i64 { var t, v = mulh64(4611686018427387904, 8); return v; }\nsyscall(60, main());\n' mulh64
+refused en_stk_fc  'enum E : stack { A; fncall1(a); }\nfn main(): i64 { var t, v = fncall1(5, 6); return v; }\nsyscall(60, main());\n' fncall1
+refused en_fc      "$EA"'enum E { A; fncall1(a, b); }\nfn main(): i64 { var e = fncall1(5, 6); return 3; }\nsyscall(60, main());\n' fncall1
+refused en_sz      "$EA"'enum E { A; sizeof(a); }\nsyscall(60, 1);\n' sizeof
+refused en_null    "$EA"'enum E { A; mulh64(); }\nsyscall(60, 1);\n' mulh64
 
 echo "axis 3 — only a file named fnptr.cyr may declare fncall0..8:"
 FN2='fn add(a, b): i64 { return a + b; }\nfn main(): i64 { return fncall2(&add, 3, 4); }\nsyscall(60, main());\n'
@@ -162,6 +181,10 @@ runs near_miss  'fn mulh64x(a, b): i64 { return a + b; }\nfn fncall9(a): i64 { r
 runs impl_meth  'struct Foo { a; }\nimpl Sz for Foo { fn sizeof(self): i64 { return 9; } }\nfn main(): i64 { var f = Foo { 1 }; return f.sizeof(); }\nsyscall(60, main());\n' 9
 runs mod_fn     'mod m;\nfn sizeof(): i64 { return 6; }\nsyscall(60, m_sizeof());\n' 6
 runs use_alias  'mod m;\nfn foo(a, b): i64 { return 77; }\nmod n;\nuse m.foo;\nfn f(): i64 { return foo(1, 2); }\nsyscall(60, n_f());\n' 77
+# A UNIT variant spelled `mulh64` declares no fn and is read qualified; an ordinary payload
+# variant still constructs (tag 1 + its second payload 8).
+runs en_unit    'enum E { A; mulh64 = 77; }\nfn main(): i64 { return E.mulh64; }\nsyscall(60, main());\n' 77
+runs en_ctor    "$EA"'enum E { A; Pair(a, b); }\nfn main(): i64 { var e = Pair(4, 8); return load64(e + 16) + load64(e); }\nsyscall(60, main());\n' 9
 
 echo ""
 if [ "$fails" = 0 ]; then

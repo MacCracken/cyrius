@@ -392,8 +392,9 @@ Eleven more names are reserved although that table does not hold them: the
 ordinary identifiers and the compiler lowers every call to them BY NAME (`_is_ident_intrinsic`
 in `src/frontend/parse.cyr`, `_IS_FNCALL_NAME` in `src/frontend/parse_expr.cyr`), so since
 6.6.20 declaring one — a fn, a parameter, a closure parameter, a `var` of any kind (local,
-global, destructured, `stack`, `secret`), a `for` binding, or a `use mod.NAME;` alias (which binds
-the bare name) — is refused at the name:
+global, destructured, `stack`, `secret`), a `for` binding, a `use mod.NAME;` alias (which binds
+the bare name), or a payload enum variant (whose constructor is a bare fn) — is refused at the
+name:
 
 ```
 fn mulh64(a, b): i64 { return a + b; }
@@ -411,9 +412,13 @@ entry (`cat lib/fnptr.cyr | cycc`, `cyrius build lib/fnptr.cyr`, or the LSP's `c
 that open file report its nine definitions); it is a library — include it. A mangled definition
 is accepted, so an impl method `x.sizeof()` or a `mod` fn of that name compiles (call it
 `m_sizeof()`); re-exposing it under the bare name with `use m.sizeof;` is the refused alias.
-An enum variant spelled `sizeof` or `mulh64` is not refused but must be used qualified
-(`E.mulh64`): the bare name parses as the intrinsic, so `#derive(Serialize)` on that enum fails
-too.
+A PAYLOAD enum variant spelled with one of the eleven (`mulh64(a, b);`, `fncall1(a);`,
+`sizeof();`, heap or `: stack`) is refused: its constructor is registered as a fn under the BARE
+variant name and there is no qualified constructor (`E.mulh64(4, 8)` does not parse), so it
+declared the intrinsic's name — before 6.6.20 `mulh64(..)` ran the intrinsic instead of
+constructing, and `fncall1(5, 6)` faulted. A UNIT variant (`mulh64 = 77;`) declares no fn and
+is accepted, but must be read qualified (`E.mulh64`): the bare name parses as the intrinsic, so
+`#derive(Serialize)` on that enum fails too.
 
 ## Control Flow
 

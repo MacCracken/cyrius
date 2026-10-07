@@ -2543,9 +2543,11 @@ fn _is_ident_intrinsic(S, noff): i64 {
 #     error about a `(` that was never wanted.
 # Lexer tokens would have meant re-plumbing every by-name site and could not express the one
 # legitimate declarer below, so the refusal is made where a NAME IS DECLARED: fn, param,
-# closure param, local / `stack` / global var, `for` binding, and `use m.NAME;` (_tl_use) —
-# which binds the BARE name. A module- or impl-mangled DEFINITION (`m_sizeof`, `T_mulh64`) is
-# accepted, so a fn is judged AFTER mangling; re-exposing it bare with `use` is what is refused.
+# closure param, local / `stack` / global var, `for` binding, `use m.NAME;` (_tl_use) — which
+# binds the BARE name — and a PAYLOAD enum variant (PARSE_ENUM_DEF), whose constructor is a fn
+# under the bare variant name with no qualified form. A UNIT variant declares no fn and is
+# accepted (read it `E.mulh64`). A module- or impl-mangled DEFINITION (`m_sizeof`, `T_mulh64`)
+# is accepted, so a fn is judged AFTER mangling; re-exposing it bare with `use` is refused.
 # ⚠ THE ONE LEGITIMATE DECLARER is lib/fnptr.cyr's `fncall0`..`fncall8`: those definitions ARE
 # the lowering's enabler (it is gated on FINDFN, so a program that never included fnptr still
 # gets "undefined function"), and cybs — which has no lowering — calls them in gen1. Exempt by
