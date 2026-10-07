@@ -110,9 +110,10 @@ grep -q 'fn=prose_only' "$W/self.out" && fail "axis 0: prose / a string literal 
 x=$FAIL
 awk -f "$W/sites.awk" cbt/*.cyr programs/cyrius-lsp.cyr > "$W/sites"
 NS=$(grep -c ' pid=' "$W/sites" || true)
-# A floor, not an equality: a new site is welcome, it just has to be checked. 18 at 6.6.20
-# (build.cyr 10, deps.cyr 3, commands.cyr 2, pulsar.cyr 1, cyrius-lsp.cyr 2).
-[ "$NS" -ge 18 ] || fail "axis 4: only $NS fork sites found — the detector has stopped seeing them"
+# A floor, not an equality: a new site is welcome, it just has to be checked. 17 at 6.6.20
+# (build.cyr 9, deps.cyr 3, commands.cyr 2, pulsar.cyr 1, cyrius-lsp.cyr 2) — 18 until
+# _ensure_cc_cx and _ensure_cxvm shared one fork in _cx_jit_build (6.6.20 sec-symlink).
+[ "$NS" -ge 17 ] || fail "axis 4: only $NS fork sites found — the detector has stopped seeing them"
 grep 'UNCHECKED' "$W/sites" | sed 's/^/      /' > "$W/bad" || true
 [ -s "$W/bad" ] && { fail "axis 4: a fork whose failure nobody checks:"; cat "$W/bad"; }
 grep 'BARE-WAIT' "$W/sites" | sed 's/^/      /' > "$W/bad" || true

@@ -45,6 +45,9 @@
 #   11  cyrius.lock -> .git/config: deps --lock AND a plain build's relock refused, config unchanged
 #   12  .GIT/config (case-folded on APFS/NTFS), sub/../.git/config (normalised), `.git` itself (a
 #       worktree / submodule gitfile) and a chain whose 2nd hop lands in .git: each refused
+#   13  the cx tools JIT-built into build/ (cxvm by `cyrius run x.cyx`, cycc_cx by
+#       `cyrius build --target=cx`) REPLACE a committed build/cxvm / build/cycc_cx link — the
+#       O_TRUNC open they used planted the binary, mode 0755, where the link pointed
 #
 # MUTATION LEDGER (6.6.20; each run against a copy of the fixed tree; real tree GREEN, the
 # pre-fix tree RED on every refusal axis with axis 8 GREEN):
@@ -60,6 +63,7 @@
 #   M9 _io_ew_shown prints bytes raw                                    -> 9 RED
 #   M10 _io_replace_target_in: no .git check on a hop (_io_path_meta_why) -> 10 11 12 RED
 #   M11 _io_path_meta_why compares case-SENSITIVELY                     -> 12 (.GIT) RED (only it)
+#   M12 cbt _cx_jit_build opens `out` O_TRUNC again (the pre-fix open)    -> 13 RED (only it)
 #   (the alias families — HFS-ignorable code points, `:stream`, trailing dots/spaces, GIT~1 and
 #   other 8.3 names — are pinned row by row in tests/tcyr/crossos/replace_in_tree_link_rules.tcyr,
 #   each one's mutation RED there)
@@ -330,6 +334,30 @@ done
 grep -qF "the link locks/c2 on its way is a symlink to ../.git/config" "$D/g12c.out" \
   || { fail "axis 12 (chain): the hop into .git is not the one named:"; sed 's/^/      /' "$D/g12c.out" | head -2; a=1; }
 [ "$a" = 0 ] && echo "  ok: axis 12: .GIT/config (case-folded), sub/../.git/config (normalised), .git itself (a gitfile) and a chain whose second hop lands in .git are each refused, naming .git; nothing written"
+
+# ── axis 13: the cx tools the CLI JIT-builds into the project's build/ ──
+# With no cxvm / cycc_cx installed (this home has neither), `cyrius run x.cyx` builds
+# programs/cxvm.cyr into ./build/cxvm and `cyrius build --target=cx` builds src/main_cx.cyr into
+# ./build/cycc_cx. Both opened that name O_TRUNC, which follows a committed dangling link: the
+# compiled binary was planted, mode 0755, wherever the link pointed. They now build a fresh temp
+# and rename it over the name, REPLACING the link. (That the checkout's own cxvm.cyr is then RUN
+# is binary planting — handoff 3 — and is why this asserts only where the bytes land.)
+a=0
+P="$D/p13"; mkdir -p "$P/programs" "$P/src" "$P/build"
+printf '[package]\nname = "p13"\nversion = "0.1.0"\n' > "$P/cyrius.cyml"
+echo 'syscall(60, 7);' > "$P/programs/cxvm.cyr"; printf 'var x = 1;\n' > "$P/x.cyx"
+ln -s "$V/planted_vm" "$P/build/cxvm"
+run "$P" "$D/a13v.out" "$D/bin/cyrius" run x.cyx
+[ -e "$V/planted_vm" ] && { fail "axis 13: cyrius run x.cyx wrote the JIT-built cxvm THROUGH build/cxvm into $V/planted_vm"; a=1; }
+{ [ -f "$P/build/cxvm" ] && [ ! -L "$P/build/cxvm" ]; } || { fail "axis 13: build/cxvm is not the freshly built file (rc=$rc):"; sed 's/^/      /' "$D/a13v.out" | head -3; a=1; }
+printf 'fn main(): i64 { return 0; }\n' > "$P/src/a.cyr"
+echo 'syscall(60, 0);' > "$P/src/main_cx.cyr"
+ln -s "$V/planted_cc" "$P/build/cycc_cx"
+run "$P" "$D/a13c.out" "$D/bin/cyrius" build --target=cx src/a.cyr build/a.cyx
+[ -e "$V/planted_cc" ] && { fail "axis 13: cyrius build --target=cx wrote the JIT-built cycc_cx THROUGH build/cycc_cx into $V/planted_cc"; a=1; }
+{ [ -f "$P/build/cycc_cx" ] && [ ! -L "$P/build/cycc_cx" ]; } || { fail "axis 13: build/cycc_cx is not the freshly built file (rc=$rc):"; sed 's/^/      /' "$D/a13c.out" | head -3; a=1; }
+ls "$P/build" | grep -q '\.tmp\.' && { fail "axis 13: a JIT-build temp was left in build/: $(ls "$P/build" | tr '\n' ' ')"; a=1; }
+[ "$a" = 0 ] && echo "  ok: axis 13: the JIT-built cxvm and cycc_cx REPLACE a committed build/cxvm / build/cycc_cx link (temp + rename); nothing written where it pointed"
 
 [ "$FAIL" = 0 ] || exit 1
 echo "PASS: project_writes_stay_in_tree (cyrius update, deps --lock, build's relock, cyriusly use, cyrius fmt and cyrius port write through a link only to a file inside the project and outside its .git, refuse every other link by name and write nothing; in-tree links still written through)"
