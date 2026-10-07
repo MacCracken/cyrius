@@ -9,13 +9,14 @@
 # it, because fl_free said it had worked. (The VirtualFree route itself is a separate 6.6.20
 # change in the compiler; this file pins the REPORTING, which any refused munmap needs.)
 #
-# HOW A REFUSAL IS PRODUCED PORTABLY: a page of our own carries a forged large-block header whose
-# length is 2^56 - 4096. The header is page-aligned (so fl_free's smashed-header check passes it on),
-# and munmap refuses the range (addr + len past the address space) with EINVAL on Linux and
-# Darwin, unmapping NOTHING — the page is still readable afterwards, which is asserted. Windows
-# is skipped for that row: VirtualFree(MEM_RELEASE) takes no length, so the forged length cannot
-# make it refuse. The real-block row runs everywhere POSIX; on PE it waits on the VirtualFree
-# route (it returned -38 there until 6.6.20).
+# HOW A REFUSAL IS PRODUCED: a page of our own carries a forged large-block header whose length
+# is 2^56 - 4096. The header is page-aligned (so fl_free's smashed-header check passes it on), and
+# Linux refuses the range (addr + len past TASK_SIZE) with EINVAL, unmapping NOTHING — the page is
+# still readable afterwards, which is asserted. That row is Linux-only (x86_64 and aarch64): Darwin
+# ACCEPTS a range past the address space and returns 0 (measured on ecb and ach, 6.6.20), and
+# VirtualFree(MEM_RELEASE) takes no length at all, so neither can be made to refuse this way. The
+# reporting is the same `_fl_unmap` on every target. The real-block row runs on every POSIX host;
+# on PE it waits on the VirtualFree route (munmap returned -38 there until 6.6.20).
 include "lib/freelist.cyr"
 include "lib/mmap.cyr"
 include "lib/assert.cyr"
@@ -32,6 +33,7 @@ fn main(): i64 {
         assert_eq(fl_free(p), 0, "fl_free(8 MiB block): 0 — the mapping was released");
     }
 
+    #ifdef CYRIUS_TARGET_LINUX
     test_group("6.6.20 — a refused munmap is reported, not swallowed");
     var pg = mmap_anon(4096);                        # lib/mmap.cyr: the per-target MAP_ANONYMOUS
     assert(pg > 0, "a page of our own for the forged block");
@@ -48,6 +50,7 @@ fn main(): i64 {
         assert_eq(load64(pg + 16), 7, "…and nothing was unmapped (the page still reads)");
         assert_eq(cyr_munmap(pg, 4096), 0, "…and the page itself still unmaps");
     }
+    #endif
     #endif
     #endif
     #endif
