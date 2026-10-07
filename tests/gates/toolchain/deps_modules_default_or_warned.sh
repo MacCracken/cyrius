@@ -63,6 +63,7 @@
 #   6.6.20: drop the link check on the modular sub-module    -> D11d red
 #   6.6.20: check only the whole path, not each component    -> D11b red (the `dist ->` dir link)
 #   6.6.20: check the dep ROOT's own components too          -> D11g red
+#   6.6.20: take the lib/<base> fallback before the link check -> D11h red (the dangling default)
 # D5 (modules = []), D7 (optional / target gates), D10c and D11g are the anti-over-reach axes: every
 # mutant above leaves them green (but the last, which IS the over-reach D11g pins), and so must the fix. D9d (plain + slash tags) and D9e
 # (tagless path / git deps) are the tag check's anti-over-reach rows.
@@ -614,6 +615,7 @@ else bad "D10c (rc=$rc lib=[$(ls "$P/lib" 2>/dev/null | tr '\n' ' ')]): $(head -
 # lnk 1.0.0: dist/lnk.cyr -> $W/secret.cyr (absolute)   2.0.0: the same, relative from the cache
 # 3.0.0: dist -> $W/sdir (a DIRECTORY link)              4.0.0: modular, dist/lnk/a.cyr a link
 # 5.0.0: modular, dist/lnk/index.cyml a link             6.0.0: dist/lnk.deps (the sidecar) a link
+# 7.0.0: dist/lnk.cyr a DANGLING link, beside a regular lib/lnk.cyr (the modules loop's fallback)
 LK="$O/lnk"; mkdir -p "$LK" "$W/sdir"; printf '%s\n' "$SECRET" > "$W/sdir/lnk.cyr"
 printf 'a = []\n# %s\n' "$SECRET" > "$W/secret.cyml"; printf '%s\n' "$SECRET" > "$W/secret.deps"
 lnktag() { ( cd "$LK" && git add -A && git commit -qm "$1" && git tag "$1" ); rm -rf "$LK/dist"; mkdir -p "$LK/dist"; }
@@ -624,7 +626,9 @@ rmdir "$LK/dist"; ln -s "$W/sdir" "$LK/dist"; ( cd "$LK" && git add -A && git co
 rm -f "$LK/dist"; mkdir -p "$LK/dist/lnk"; printf 'a = []\n' > "$LK/dist/lnk/index.cyml"; ln -s "$W/secret.cyr" "$LK/dist/lnk/a.cyr"; lnktag 4.0.0
 mkdir -p "$LK/dist/lnk"; ln -s "$W/secret.cyml" "$LK/dist/lnk/index.cyml"; printf 'fn lnk_a(): i64 { return 4; }\n' > "$LK/dist/lnk/a.cyr"; lnktag 5.0.0
 printf 'fn lnk_v(): i64 { return 6; }\n' > "$LK/dist/lnk.cyr"; ln -s "$W/secret.deps" "$LK/dist/lnk.deps"; lnktag 6.0.0
+mkdir -p "$LK/lib"; printf 'fn lnk_v(): i64 { return 7; }\n' > "$LK/lib/lnk.cyr"; ln -s "$W/absent/lnk.cyr" "$LK/dist/lnk.cyr"; lnktag 7.0.0
 [ "$(git -C "$LK" cat-file -p '1.0.0:dist/lnk.cyr')" = "$W/secret.cyr" ] && [ "$(git -C "$LK" ls-tree 3.0.0 dist | cut -c1-6)" = 120000 ] \
+    && [ "$(git -C "$LK" cat-file -p '7.0.0:dist/lnk.cyr')" = "$W/absent/lnk.cyr" ] && git -C "$LK" cat-file -e '7.0.0:lib/lnk.cyr' \
     || { echo "FAIL: $G: D11 origin fixture not built (the tags must COMMIT the links)"; exit 1; }
 LINK_TAIL="— a dependency's files are read only from inside its own tree; refused"
 # $1 = project, $2 = the refused file below the dep root, $3 = the dep's root
@@ -709,6 +713,19 @@ freshcache; P="$W/d11e"; lnkp "$P" 6.0.0 m; run "$P"
 if link_refused "$P" dist/lnk.deps "$H/deps/lnk/6.0.0" && [ ! -e "$P/lib/lnk.cyr" ]; then
     ok "D11e a linked dist/lnk.deps sidecar: refused by name before it is read, rc 1, its target's text on no stream"
 else bad "D11e (rc=$rc lib=[$(ls "$P/lib" 2>/dev/null | tr '\n' ' ')]): $(head -2 "$P.err")"; fi
+# D11h: a DANGLING dist/lnk.cyr beside a regular lib/lnk.cyr. file_exists follows the link and
+# reads it as absent, and the modules loop then fell back to lib/<base> BEFORE the link check, so
+# the I10a default (strictly dist/<name>.cyr) vendored lib/lnk.cyr, rc 0 with a lock. The primary
+# path is checked first: refused by name, with and without a modules key.
+d11=0
+for mk in d m; do
+    freshcache; P="$W/d11h_$mk"; lnkp "$P" 7.0.0 "$mk"; run "$P"
+    if link_refused "$P" dist/lnk.cyr "$H/deps/lnk/7.0.0" && [ ! -e "$P/lib/lnk.cyr" ]; then d11=$((d11+1))
+    else echo "    D11h ($mk): rc=$rc lib=[$(ls "$P/lib" 2>/dev/null | tr '\n' ' ')] $(head -2 "$P.err")"; fi
+done
+if [ "$d11" -eq 2 ]; then
+    ok "D11h a tag committing dist/lnk.cyr as a DANGLING link beside a regular lib/lnk.cyr, with and without modules: refused by name, rc 1, no lib/lnk.cyr, no lock"
+else bad "D11h ($d11 of 2 refused)"; fi
 # D11f: a PATH dep is held to the same rule.
 PL="$W/plk"; mkdir -p "$PL/dist"; ln -s "$W/secret.cyr" "$PL/dist/lnk.cyr"
 P="$W/d11f"; mkp "$P" <<EOF
@@ -733,5 +750,5 @@ else bad "D11g (rc=$rc): $(head -2 "$P.err")"; fi
 
 echo "$G: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1
-[ "$pass" -ge 30 ] || { echo "FAIL: $G: only $pass axes ran (floor 30)"; exit 1; }
+[ "$pass" -ge 31 ] || { echo "FAIL: $G: only $pass axes ran (floor 31)"; exit 1; }
 echo "PASS: $G — a modules-less [deps.X] is resolved from dist/X.cyr or warned and counted; unsafe names, tags, module paths and linked dep files refused"

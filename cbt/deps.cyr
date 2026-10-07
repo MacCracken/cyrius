@@ -2279,7 +2279,13 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                     str_builder_add_cstr(sb, "/");
                     str_builder_add_cstr(sb, mod_path);
                     var src = str_data(str_builder_build(sb));
-                    if (file_exists(src) == 0) {
+                    # 6.6.20 (CVE-TBD): the file — and below, its .deps sidecar — is read only
+                    # from inside the dep's tree; a committed link is refused by name, uncopied.
+                    # The PRIMARY path is checked before the `lib/<base>` fallback: a dangling
+                    # link reads as absent to file_exists, and must not be resolved around.
+                    var _dpl = strlen(dep_path);
+                    var _slk = _dep_src_link(src, _dpl);
+                    if (_slk == 0 && file_exists(src) == 0) {
                         var fb = mod_path;
                         var fbi = 0;
                         while (load8(mod_path + fbi) != 0) {
@@ -2292,13 +2298,12 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                             str_builder_add_cstr(sb_fb, "/lib/");
                             str_builder_add_cstr(sb_fb, fb);
                             var alt = str_data(str_builder_build(sb_fb));
-                            if (file_exists(alt) == 1) { src = alt; }
+                            if (file_exists(alt) == 1) {
+                                src = alt;
+                                _slk = _dep_src_link(src, _dpl);
+                            }
                         }
                     }
-                    # 6.6.20 (CVE-TBD): the file — and below, its .deps sidecar — is read only
-                    # from inside the dep's tree; a committed link is refused by name, uncopied.
-                    var _dpl = strlen(dep_path);
-                    var _slk = _dep_src_link(src, _dpl);
                     if (_slk != 0) {
                         _dep_refuse_src_link(dep_name, src + _dpl + 1, _slk);
                         errors = errors + 1;
