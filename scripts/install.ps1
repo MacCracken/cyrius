@@ -26,11 +26,23 @@ param(
     [string]$Tarball = "",
     [string]$Stage   = "",
     [string]$Sha256  = "",
-    [switch]$NoPath
+    [switch]$NoPath,
+    [switch]$AllowUnsigned
 )
 $ErrorActionPreference = "Stop"
 
 $CyriusHome = if ($env:CYRIUS_HOME) { $env:CYRIUS_HOME } else { Join-Path $env:USERPROFILE ".cyrius" }
+
+# 6.6.20 (SEC-07): the FIRST signed release. Every release from 6.2.31 on publishes SHA256SUMS +
+# SHA256SUMS.sig (release.yml refuses to publish one without, since that tag - CVE-13). So with a
+# trusted cyrsign.exe on this machine, a tarball naming a release at or above it that arrives
+# WITHOUT the signed pair beside it is refused: the pair was stripped (or never downloaded). This
+# installer used to print "signature check skipped" and install it. Same constant as
+# scripts/install.sh and scripts/ci.sh; tests/gates/toolchain/install_signature_required.sh holds
+# the three in step. -AllowUnsigned (or CYRIUS_ALLOW_UNSIGNED=1) is the explicit override, for a
+# tarball you built yourself. CHANGELOG [6.6.20]
+$FirstSignedRelease = "6.2.31"
+$tarVer = $null
 
 # Resolve the staging dir (an extracted "cyrius-<v>-x86_64-windows" tree).
 if (-not $Stage) {
@@ -66,6 +78,14 @@ if (-not $Stage) {
     $pub = "adbde6b11ccf8d86dc760387fa7f4dfbe3942fa318e459fb6e62d1536e254008"
     $sums = Join-Path (Split-Path -Parent (Resolve-Path $Tarball)) "SHA256SUMS"
     $sumsSig = "$sums.sig"
+    # The release the tarball NAMES: cyrius-<N.N.N>-<arch>-windows.tar.gz. Only a well-formed name
+    # below the first signed release may skip the signature; an unparseable name is treated as a
+    # signed-era release. The name is held against the VERSION file after extraction, so renaming
+    # a tarball to an old version cannot buy the skip.
+    if ((Split-Path -Leaf $Tarball) -match '^cyrius-((?:0|[1-9][0-9]{0,8})\.(?:0|[1-9][0-9]{0,8})\.(?:0|[1-9][0-9]{0,8}))-') {
+        $tarVer = $Matches[1]
+    }
+    $predatesSigning = ($null -ne $tarVer) -and ([version]$tarVer -lt [version]$FirstSignedRelease)
     $cyrsign = $null
     $cmd = Get-Command cyrsign.exe -ErrorAction SilentlyContinue
     if ($cmd) { $cyrsign = $cmd.Source }
@@ -83,8 +103,16 @@ if (-not $Stage) {
         $signedHash = ($line -split '\s+')[0]
         if ($actual -ine $signedHash) { throw "tarball hash != signed manifest hash - refusing" }
         Write-Host "signature verified (Ed25519)"
+    } elseif ($cyrsign -and -not $predatesSigning) {
+        $named = if ($tarVer) { $tarVer } else { "(unversioned name)" }
+        $why = "every Cyrius release since $FirstSignedRelease is signed and a trusted cyrsign.exe is present ($cyrsign), but no SHA256SUMS + SHA256SUMS.sig sits beside $Tarball (release $named)"
+        if ($AllowUnsigned -or ($env:CYRIUS_ALLOW_UNSIGNED -eq "1")) {
+            Write-Host "WARNING: signature required but absent: $why - allowed via -AllowUnsigned / CYRIUS_ALLOW_UNSIGNED=1 (NOT recommended)"
+        } else {
+            throw "refusing UNSIGNED tarball: $why. Download SHA256SUMS and SHA256SUMS.sig from the same release page into the tarball's directory, or pass -AllowUnsigned only for a tarball you built yourself."
+        }
     } else {
-        Write-Host "signature check skipped (no prior cyrsign.exe / unsigned tarball)"
+        Write-Host "signature check skipped (no prior cyrsign.exe, or a pre-signing release by name)"
     }
 
     $tmp = Join-Path $env:TEMP ("cyrius-install-" + [System.Guid]::NewGuid().ToString("N"))
@@ -97,14 +125,41 @@ if (-not $Stage) {
 if (-not (Test-Path (Join-Path $Stage "VERSION"))) { throw "no VERSION in staging dir: $Stage" }
 
 $Ver    = (Get-Content (Join-Path $Stage "VERSION") -Raw).Trim()
+# 6.6.20 (SEC-07): the version the tarball's NAME carries decided whether its signature could be
+# skipped, so the tree it unpacked must BE that version.
+if ($tarVer -and ($Ver -ne $tarVer)) {
+    throw "tarball $(Split-Path -Leaf $Tarball) names release $tarVer but its VERSION file says $Ver - refusing"
+}
 $VerDir = Join-Path $CyriusHome "versions\$Ver"
 
 foreach ($d in @("$VerDir\bin", "$VerDir\lib", "$CyriusHome\bin", "$CyriusHome\lib")) {
     New-Item -ItemType Directory -Force -Path $d | Out-Null
 }
 
+# 6.6.20 (SEC-07): a bin copy RETRIES a sharing violation. The verified upgrade runs the installed
+# <home>\bin\cyrsign.exe and then overwrites that same file, and Windows can hold an image that
+# has just exited for a moment: measured on cass, 2 of 27 verified upgrades died at the active copy
+# with "cyrsign.exe ... is being used by another process" (old and new installer alike), leaving
+# <home>\bin half old, half new; with the retry, 0 of 25, and an upgrade run while another bin file
+# was held open retried 17 times and finished where the bare Copy-Item died. Before the SEC-07 floor
+# an upgrade with no SHA256SUMS beside it never ran the verifier; now every upgrade with one present
+# does. Bounded (40 x 250 ms): a lock that does not clear is still an error, by name.
+# CHANGELOG [6.6.20]
+function Copy-BinWithRetry([string]$From, [string]$To) {
+    for ($i = 1; ; $i++) {
+        try {
+            Copy-Item $From $To -Force -Recurse -ErrorAction Stop
+            return
+        } catch {
+            if ($i -ge 40) { throw }
+            Write-Host ("note: " + $_.Exception.Message + " - retrying (" + $i + ")")
+            Start-Sleep -Milliseconds 250
+        }
+    }
+}
+
 # Version-specific tree.
-Copy-Item "$Stage\bin\*" "$VerDir\bin\" -Force -Recurse
+Copy-BinWithRetry "$Stage\bin\*" "$VerDir\bin\"
 Copy-Item "$Stage\lib\*" "$VerDir\lib\" -Force -Recurse
 # v6.6.6: programs\ (the cyrius-init scaffolding templates). cyrius-init.exe resolves
 # <its own dir>\..\programs\cyrius-init-templates, and bin\ here is a COPY at both
@@ -117,7 +172,7 @@ if (Test-Path "$Stage\programs") {
     Copy-Item "$VerDir\programs\*" "$CyriusHome\programs\" -Force -Recurse
 }
 # Active version: copy into <home>\bin + <home>\lib (no symlinks on Windows).
-Copy-Item "$VerDir\bin\*" "$CyriusHome\bin\" -Force -Recurse
+Copy-BinWithRetry "$VerDir\bin\*" "$CyriusHome\bin\"
 Copy-Item "$VerDir\lib\*" "$CyriusHome\lib\" -Force -Recurse
 Set-Content -Path (Join-Path $CyriusHome "current") -Value $Ver -NoNewline
 

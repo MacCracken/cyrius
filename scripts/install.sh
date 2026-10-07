@@ -275,15 +275,18 @@ _verify_checksum() {
 # the tarball being installed (a malicious tarball verifying itself is circular).
 # Chains: (1) signature over SHA256SUMS valid for our pinned pubkey, then (2)
 # this tarball's checksum is present in the now-authenticated SHA256SUMS.
-# Returns 0 verified, 1 mismatch (fail-closed), 2 no trusted verifier / no sig
-# published (skip — first-install TOFU floor is the HTTPS + .sha256 above).
+# Returns 0 verified, 1 mismatch (fail-closed), 2 no trusted verifier (skip — the
+# first-install TOFU floor is the HTTPS + .sha256 above), 3 a trusted verifier IS
+# present but SHA256SUMS / SHA256SUMS.sig could not be fetched (the caller decides:
+# see _signed_required_enforce — at or above the first signed release that is a
+# stripped signature, not an unsigned release).
 _verify_signature() {
     _cs=""
     if command -v cyrsign > /dev/null 2>&1; then _cs="cyrsign"
     elif [ -x "$CYRIUS_HOME/bin/cyrsign" ]; then _cs="$CYRIUS_HOME/bin/cyrsign"
     else return 2; fi
-    curl -sSfL "${DOWNLOAD_URL}/SHA256SUMS"     -o "$TMPDIR/SHA256SUMS"     2>/dev/null || return 2
-    curl -sSfL "${DOWNLOAD_URL}/SHA256SUMS.sig" -o "$TMPDIR/SHA256SUMS.sig" 2>/dev/null || return 2
+    curl -sSfL "${DOWNLOAD_URL}/SHA256SUMS"     -o "$TMPDIR/SHA256SUMS"     2>/dev/null || return 3
+    curl -sSfL "${DOWNLOAD_URL}/SHA256SUMS.sig" -o "$TMPDIR/SHA256SUMS.sig" 2>/dev/null || return 3
     printf '%s\n' "$CYRIUS_RELEASE_PUBKEY" > "$TMPDIR/release.pub"
     "$_cs" verify "$TMPDIR/SHA256SUMS" "$TMPDIR/SHA256SUMS.sig" "$TMPDIR/release.pub" > /dev/null 2>&1 || return 1
     grep "  ${TARBALL}$" "$TMPDIR/SHA256SUMS" > "$TMPDIR/tarball_sum" 2>/dev/null || return 1
@@ -316,7 +319,57 @@ _signed_floor_pin() {
     printf '%s\n' "$VERSION" > "$_SIGNED_FLOOR_FILE"
 }
 
+# ⛔ 6.6.20 (SEC-07) — THE FIRST SIGNED RELEASE IS A CONSTANT, NOT A TOFU GUESS. Every release
+# from 6.2.31 on publishes SHA256SUMS + SHA256SUMS.sig: release.yml has refused to publish an
+# unsigned release since that tag (CVE-13), and all of them carry the pair. So once a trusted
+# verifier is on this machine, a release at or above 6.2.31 whose signature cannot be fetched is a
+# STRIPPED signature, never an unsigned release. The TOFU floor below could not say that: it only
+# guarded versions at/above the highest one verified HERE, so with signed-since = 6.6.19 a tampered
+# 6.6.15 served with its tarball + .sha256 and no SHA256SUMS installed and went active ("signature
+# check skipped"), and a machine with no signed-since file guarded nothing. The same constant sits
+# in scripts/ci.sh and scripts/install.ps1; tests/gates/toolchain/install_signature_required.sh
+# holds the three in step. CHANGELOG [6.6.20]
+_FIRST_SIGNED_RELEASE="6.2.31"
+# 1 when VERSION came from the GitHub "latest" lookup rather than the caller (set below).
+_VERSION_FROM_LATEST=0
+
+# _predates_signing V → true iff V is a WELL-FORMED release version (exactly three dot-separated
+# decimal fields, no sign, no leading zero) strictly below the first signed release. Anything
+# else — malformed, suffixed, at or above — is a signed-era release and must verify: only a shape
+# that provably names a pre-signing tag earns the skip. (Leading zeros are refused because sort -n
+# ties "06" with "6" and the tie-break is bytewise.)
+_predates_signing() {
+    case "$1" in ''|*[!0-9.]*|.*|*.|*..*|0[0-9]*|*.0[0-9]*) return 1 ;; esac
+    case "$1" in *.*.*.*) return 1 ;; *.*.*) ;; *) return 1 ;; esac
+    [ "$1" != "$_FIRST_SIGNED_RELEASE" ] || return 1
+    [ "$(printf '%s\n%s\n' "$1" "$_FIRST_SIGNED_RELEASE" | sort -t. -k1,1n -k2,2n -k3,3n | head -1)" = "$1" ]
+}
+
+# A trusted verifier is present and the release's signature could not be fetched (rc 3 above).
+# Refused, by name, unless VERSION is a pre-signing release the CALLER asked for — an
+# auto-resolved "latest" older than the first signed release is not an upgrade anyone published,
+# it is a downgrade to a build nothing can verify. CYRIUS_ALLOW_UNSIGNED=1 is the same explicit
+# operator override the TOFU floor honours.
+_signed_required_enforce() {
+    if _predates_signing "$VERSION"; then
+        [ "$_VERSION_FROM_LATEST" = "1" ] || return 0
+        _sr_why="the latest release resolved to $VERSION, which predates release signing ($_FIRST_SIGNED_RELEASE) — 'latest' is never older than a signed release, so this is a downgrade to a build nothing can verify"
+        _sr_hint="Retry, or name the version you want with CYRIUS_VERSION"
+    else
+        _sr_why="every Cyrius release since $_FIRST_SIGNED_RELEASE is signed and a trusted cyrsign is present to check it, but ${VERSION}'s SHA256SUMS / SHA256SUMS.sig could not be fetched — a stripped signature, not an unsigned release"
+        _sr_hint="Retry (a network failure looks the same)"
+    fi
+    if [ "${CYRIUS_ALLOW_UNSIGNED:-0}" = "1" ]; then
+        info "signature required but absent: $_sr_why — allowed via CYRIUS_ALLOW_UNSIGNED=1 (NOT recommended)"
+    else
+        err "refusing UNSIGNED $VERSION: $_sr_why. $_sr_hint, or set CYRIUS_ALLOW_UNSIGNED=1 only if you genuinely trust this unsigned build."
+    fi
+}
+
 # When a release is UNSIGNED (sig skipped/absent): refuse if VERSION >= the floor.
+# 6.6.20: with a verifier present _signed_required_enforce runs first and covers every
+# signed-era version; this TOFU floor still guards the no-verifier case (a machine that once
+# verified a signed release and has since lost its cyrsign).
 _signed_floor_enforce() {
     [ -f "$_SIGNED_FLOOR_FILE" ] || return 0
     _floor=$(cat "$_SIGNED_FLOOR_FILE" 2>/dev/null)
@@ -734,6 +787,7 @@ printf "\n${BOLD}Cyrius Installer${RESET}\n\n"
 # ── Resolve version ──
 
 if [ -z "$VERSION" ]; then
+    _VERSION_FROM_LATEST=1   # 6.6.20 (SEC-07): not the caller's choice — see _signed_required_enforce
     VERSION=$(curl -sSf "https://api.github.com/repos/${REPO}/releases/latest" 2>/dev/null | \
         grep '"tag_name"' | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/' || echo "")
     if [ -z "$VERSION" ]; then
@@ -841,11 +895,22 @@ else
             _vs=$?
             if [ "$_vs" -eq 1 ]; then
                 err "release signature verification FAILED for ${VERSION} — refusing (tampered SHA256SUMS or wrong key)."
-            else
-                # CVE-21 anti-downgrade: an unsigned release at/above a previously-verified
-                # signed floor is refused (fail-closed) unless CYRIUS_ALLOW_UNSIGNED=1.
+            elif [ "$_vs" -eq 3 ]; then
+                # 6.6.20 (SEC-07): a verifier is here and the signature is not — refused at or
+                # above the first signed release, whatever this machine's TOFU floor says.
+                _signed_required_enforce
                 _signed_floor_enforce
-                info "signature check skipped (no prior cyrsign / unsigned release; integrity is HTTPS + SHA256)"
+                if _predates_signing "$VERSION" && [ "$_VERSION_FROM_LATEST" != "1" ]; then
+                    info "signature check skipped (pre-signing release $VERSION, requested by name; integrity is HTTPS + SHA256)"
+                else
+                    info "signature check skipped (CYRIUS_ALLOW_UNSIGNED=1; integrity is HTTPS + SHA256 only)"
+                fi
+            else
+                # No trusted verifier on this machine (first install). CVE-21 anti-downgrade: an
+                # unsigned release at/above a previously-verified signed floor is still refused
+                # (fail-closed) unless CYRIUS_ALLOW_UNSIGNED=1.
+                _signed_floor_enforce
+                info "signature check skipped (no prior cyrsign; integrity is HTTPS + SHA256)"
             fi
         fi
         _got_tarball=1

@@ -5,6 +5,10 @@
 
 set -e
 
+# 6.6.20 (SEC-07): whether the version came from the caller or from the "latest" lookup — an
+# auto-resolved version older than the first signed release is refused below.
+_VERSION_FROM_LATEST=0
+[ -n "${1:-}" ] || _VERSION_FROM_LATEST=1
 VERSION="${1:-$(curl -sf https://api.github.com/repos/MacCracken/cyrius/releases/latest | grep '"tag_name"' | head -1 | sed 's/.*"tag_name": "//;s/".*//')}"
 
 if [ -z "$VERSION" ]; then
@@ -78,11 +82,47 @@ rm -f "$TD/${TARBALL}.sha256"
 # prior cyrsign / an unsigned release falls back to the HTTPS + .sha256 floor.
 CYRIUS_RELEASE_PUBKEY="adbde6b11ccf8d86dc760387fa7f4dfbe3942fa318e459fb6e62d1536e254008"
 BASE="https://github.com/MacCracken/cyrius/releases/download/${VERSION}"
+# ⛔ 6.6.20 (SEC-07): a trusted verifier that cannot fetch the signature is a REFUSAL at or above
+# the first signed release. This block skipped whenever SHA256SUMS or its .sig failed to download,
+# so with cyrsign on PATH a tampered 6.6.19 served with its tarball + .sha256 and no SHA256SUMS
+# installed ("signature check skipped"). Every release since 6.2.31 is signed (release.yml refuses
+# to publish one that is not), so the missing pair is a stripped signature. Same rule, same
+# constant, as scripts/install.sh — tests/gates/toolchain/install_signature_required.sh holds
+# them in step. CHANGELOG [6.6.20]
+_FIRST_SIGNED_RELEASE="6.2.31"
+# _predates_signing V → true iff V is a WELL-FORMED release version (three decimal fields, no
+# leading zero) strictly below the first signed release; anything else must verify.
+_predates_signing() {
+    case "$1" in ''|*[!0-9.]*|.*|*.|*..*|0[0-9]*|*.0[0-9]*) return 1 ;; esac
+    case "$1" in *.*.*.*) return 1 ;; *.*.*) ;; *) return 1 ;; esac
+    [ "$1" != "$_FIRST_SIGNED_RELEASE" ] || return 1
+    [ "$(printf '%s\n%s\n' "$1" "$_FIRST_SIGNED_RELEASE" | sort -t. -k1,1n -k2,2n -k3,3n | head -1)" = "$1" ]
+}
 _cs=""
 if command -v cyrsign > /dev/null 2>&1; then _cs="cyrsign"
 elif [ -x "$CYRIUS_HOME/bin/cyrsign" ]; then _cs="$CYRIUS_HOME/bin/cyrsign"; fi
+_sig_fetched=0
 if [ -n "$_cs" ] && curl -sfL "${BASE}/SHA256SUMS" -o "$TD/SHA256SUMS" 2>/dev/null \
         && curl -sfL "${BASE}/SHA256SUMS.sig" -o "$TD/SHA256SUMS.sig" 2>/dev/null; then
+    _sig_fetched=1
+fi
+if [ -n "$_cs" ] && [ "$_sig_fetched" -eq 0 ]; then
+    if _predates_signing "$VERSION" && [ "$_VERSION_FROM_LATEST" != "1" ]; then
+        echo "  signature check skipped (pre-signing release $VERSION, requested by name)"
+    else
+        if _predates_signing "$VERSION"; then
+            _sr_why="the latest release resolved to $VERSION, which predates release signing ($_FIRST_SIGNED_RELEASE) — a downgrade to a build nothing can verify"
+        else
+            _sr_why="every Cyrius release since $_FIRST_SIGNED_RELEASE is signed and a trusted cyrsign is present, but ${VERSION}'s SHA256SUMS / SHA256SUMS.sig could not be fetched — a stripped signature, not an unsigned release"
+        fi
+        if [ "${CYRIUS_ALLOW_UNSIGNED:-0}" = "1" ]; then
+            echo "  signature required but absent: $_sr_why — allowed via CYRIUS_ALLOW_UNSIGNED=1 (NOT recommended)"
+        else
+            echo "error: refusing UNSIGNED $VERSION: $_sr_why. Retry (a network failure looks the same), or set CYRIUS_ALLOW_UNSIGNED=1 only if you genuinely trust this unsigned build." >&2
+            exit 1
+        fi
+    fi
+elif [ "$_sig_fetched" -eq 1 ]; then
     printf '%s\n' "$CYRIUS_RELEASE_PUBKEY" > "$TD/cyrius-release.pub"
     grep "  ${TARBALL}$" "$TD/SHA256SUMS" > "$TD/cyrius_tsum" 2>/dev/null || true
     if "$_cs" verify "$TD/SHA256SUMS" "$TD/SHA256SUMS.sig" "$TD/cyrius-release.pub" > /dev/null 2>&1 \
@@ -95,7 +135,7 @@ if [ -n "$_cs" ] && curl -sfL "${BASE}/SHA256SUMS" -o "$TD/SHA256SUMS" 2>/dev/nu
     fi
     rm -f "$TD/SHA256SUMS" "$TD/SHA256SUMS.sig" "$TD/cyrius-release.pub" "$TD/cyrius_tsum"
 else
-    echo "  signature check skipped (no prior cyrsign / unsigned release)"
+    echo "  signature check skipped (no prior cyrsign on this machine)"
 fi
 
 tar xzf "$TD/$TARBALL" -C "$CYRIUS_HOME"
