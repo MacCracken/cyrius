@@ -447,10 +447,9 @@ fn ISIFDEF(S, pos, bl): i64 {
 }
 
 # "#ifndef " = 23 69 66 6E 64 65 66 20 (v5.6.1) — inverse of #ifdef.
-# `#ifndef X` emits body iff X is NOT defined. Standard C-family shape
-# (and what every stdlib selector in lib/*.cyr would need to drop a
-# few paired `#ifdef` blocks once `#else` also lands later in this
-# patch).
+# `#ifndef X` emits body iff X is NOT defined. Standard C-family shape;
+# with `#else` (ISELSE, also v5.6.1) a paired `#ifdef X` / `#ifndef X`
+# selector collapses to one `#ifdef X ... #else ... #endif`.
 fn ISIFNDEF(S, pos, bl): i64 {
     if (pos + 8 >= bl) { return 0; }
     if (load8(S + pos)     != 35)  { return 0; }
