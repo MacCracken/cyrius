@@ -902,16 +902,22 @@ fn regression_pipe_to_bin(bin_path, src_path, envp): i64 {
 
 # ── Process: bounded run ──────────────────
 
-# Fork + exec with wall-clock timeout. Polls
-# `waitpid(WNOHANG)` every 100 ms; on timeout ends the child and
-# its tree (`_regression_kill_tree`: TERM, grace, KILL — 6.6.8) and
-# reaps it. Replaces the bash `timeout N binary` pattern.
+# Fork + exec with wall-clock timeout, waited through `_regression_wait_deadline` (WNOHANG
+# polls in 1 / 10 / 50 ms slices); on timeout ends the child and its tree
+# (`_regression_kill_tree`: TERM, grace, KILL — 6.6.8) and reaps it. A timeout_ms <= 0 gives the
+# child no time at all: it is ended at once (-2), as it always was. Replaces the bash
+# `timeout N binary` pattern.
 #
 # Returns:
 #   0..127     normal exit code
 #   128..192   128 + WTERMSIG (signal-killed)
-#   -1         fork/exec failure
+#   -1         fork/exec failure, or the child was never observed (waitpid failed — e.g. an
+#              inherited SIGCHLD = SIG_IGN auto-reaped it)
 #   -2         timeout (child SIGKILL'd)
+# ⛔ Until 6.6.20 this verb ran its own 100 ms poll loop with no `waitpid < 0` arm — the one
+# wait 6.6.7's "a waitpid error is not the DEADLINE" fix never reached: under an inherited
+# SIG_IGN it spun the whole timeout, counted a phantom deadline kill, returned -2 for a child
+# that had succeeded, and signalled a pid already reaped (and possibly reused). CHANGELOG [6.6.20]
 fn regression_run_with_timeout(bin_path, timeout_ms, envp): i64 {
     var _rg_ppid = sys_getpid();
     var pid = _regression_fork();
@@ -931,22 +937,15 @@ fn regression_run_with_timeout(bin_path, timeout_ms, envp): i64 {
         sys_exit(127);
     }
     var stbuf[4];
-    var elapsed = 0;
-    while (elapsed < timeout_ms) {
-        var w = sys_waitpid(pid, &stbuf, 1);
-        if (w == pid) {
-            var status = load32(&stbuf);
-            if (WIFEXITED(status) == 1) { return WEXITSTATUS(status); }
-            if (WIFSIGNALED(status) == 1) { return 128 + WTERMSIG(status); }
-            return 0 - 1;
-        }
-        syscall(7, 0, 0, 100);          # poll(NULL,0,100ms) — portable 100ms sleep
-        elapsed = elapsed + 100;        # (was nanosleep 35; faults off Linux). v6.0.65
-    }
-    _regression_deadline_kills = _regression_deadline_kills + 1;
-    _regression_last_deadline = timeout_ms;
-    _regression_kill_tree(pid, &stbuf);
-    return 0 - 2;
+    var t = timeout_ms;
+    if (t <= 0) { t = 1; }      # no time at all is an immediate kill — the helper's <= 0 waits for ever
+    var reaped = _regression_wait_deadline(pid, &stbuf, t);
+    if (reaped == 0) { return 0 - 2; }
+    if (reaped < 0) { return 0 - 1; }   # never observed: no status to decode
+    var status = load32(&stbuf);
+    if (WIFEXITED(status) == 1) { return WEXITSTATUS(status); }
+    if (WIFSIGNALED(status) == 1) { return 128 + WTERMSIG(status); }
+    return 0 - 1;
 }
 
 # ── Process: exec + capture ───────────────

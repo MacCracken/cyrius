@@ -24,6 +24,11 @@
 # arguments (1) before any network, and they SKIP by name where /usr/bin/ssh or scp is absent.
 # A deadline sub-run (CYRIUS_CHECK_TIMEOUT=1) pins the other half: a child that traps TERM and
 # exits 0 when the deadline ends it must read -2, not the 0 it exited with.
+# 6.6.20 also: `regression_run_with_timeout` had its OWN poll loop with no waitpid-error arm, so
+# under SIG_IGN it spun the whole bound, counted a phantom deadline kill and returned -2 for a
+# child that succeeded. Its rows: -1 or the real code, at once, and no deadline counted — plus
+# its timeout_ms <= 0 contract (an immediate kill, -2), which routing it through the shared wait
+# must not turn into an unbounded one.
 #
 # Self-spawning: argv(1) = "say", or CY_RWU_CHILD in the environment for the no-arg verbs.
 #
@@ -44,6 +49,7 @@ include "lib/args.cyr"
 include "lib/tagged.cyr"
 include "lib/fs.cyr"
 include "lib/net.cyr"
+include "lib/chrono.cyr"
 include "lib/regression.cyr"
 
 var OUT = "3 warnings\n";
@@ -85,6 +91,15 @@ fn _rwu_have(path): i64 {
 # The 6.6.20 rows: the exec-in-dir and ssh / scp verbs under SIG_IGN, each after a zeroed stack.
 fn _sigign_rows_dir_ssh(envp): i64 {
     #ifndef CYRIUS_TARGET_WIN
+    var kills0 = regression_deadline_kills();
+    signal_ignore(SIGCHLD);
+    var rt0 = clock_now_ms();
+    var w1 = regression_run_with_timeout(argv(0), 5000, envp);
+    var rtel = clock_now_ms() - rt0;
+    signal_default(SIGCHLD);
+    assert_eq(_ok_or_unobserved(w1), 1, "run_with_timeout: -1 or the real 73, never -2");
+    assert(rtel < 3000, "…well inside its 5 s bound (it used to spin the whole bound)");
+    assert_eq(regression_deadline_kills(), kills0, "…and no phantom deadline kill is counted");
     var have_ssh = _rwu_have("/usr/bin/ssh") | _rwu_have("/bin/ssh");
     var have_scp = _rwu_have("/usr/bin/scp") | _rwu_have("/bin/scp");
     signal_ignore(SIGCHLD);
@@ -192,6 +207,14 @@ fn main(): i64 {
         assert_eq(regression_deadline_kills(), k0 + 1, "…and the deadline kill is counted");
         return assert_summary();
     }
+
+    test_group("run_with_timeout: the real code, and timeout_ms <= 0 is still an immediate kill");
+    assert_eq(regression_run_with_timeout(argv(0), 5000, envp), 73, "run_with_timeout: the child's 73");
+    var k0 = regression_deadline_kills();
+    var rt1 = clock_now_ms();
+    assert_eq(regression_run_with_timeout(argv(0), 0, envp), 0 - 2, "timeout_ms 0: -2 (ended at once)");
+    assert(clock_now_ms() - rt1 < 5000, "…promptly, not an unbounded wait");
+    assert_eq(regression_deadline_kills(), k0 + 1, "…and counted as a deadline kill");
 
     test_group("capture_both_status: one run, both streams, its own status");
     var n = regression_exec_with_arg_capture_both_status(argv(0), "say", buf, 4096, noenv, st);
