@@ -1967,6 +1967,12 @@ _chk_gate "$ROOT/tests/gates/frontend/integer_literal_overflow_refused.sh"
 _chk_gate "$ROOT/tests/gates/frontend/struct_field_type_unknown_refused.sh"
 _chk_gate "$ROOT/tests/gates/platform/agnos_proc_kill_tree_refused.sh"
 _chk_gate "$ROOT/tests/gates/platform/cx_compiler_reads_env.sh"
+
+# 6.6.20 (REVBE-03 + REFACTOR-04) — the compiler reads its WHOLE environment: `_read_env` made one
+# 8191-byte read, so a selector the CLI appends behind a large inherited environment was lost
+# (`cyrius build --win` -> ELF, rc 0) and a value straddling the cut was read short; a value over
+# 255 B is refused by name on every target instead of cut.
+_chk_gate "$ROOT/tests/gates/platform/compiler_reads_whole_environment.sh"
 _chk_gate "$ROOT/tests/gates/platform/object_mode_non_elf_refused.sh"
 
 # 6.6.17 — the Windows fork honours `--syntax-only` (cbt passes it to cycc.exe for `cyrius lint`);

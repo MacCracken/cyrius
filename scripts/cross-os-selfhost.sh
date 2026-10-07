@@ -281,6 +281,12 @@ case "$HOST" in
       && CYRIUS_MACHO_ARM=1 ./r1r --syntax-only < _so.cyr > /dev/null 2> _so.err \
       && ! CYRIUS_MACHO_ARM=1 ./r1r < _so.cyr > /dev/null 2>> _so.err' \
       || { echo "SYNTAX_FAIL: ecb — cycc --syntax-only refused a file whose only fault is an unresolved name, or plain cycc accepted it (~/$RD/_so.err)"; exit 1; }
+    # 6.6.20 — the macOS arm of _read_env REFUSES a value over 255 bytes by name (it cut it to 255
+    # and handed it back, so a long CYRIUS_SYMS path wrote the symbol dump over its prefix).
+    ssh $SSHO ecb "cd ~/$RD && "'L="$PWD/$(printf %0270d 0 | tr 0 s)" && P=$(printf %s "$L" | cut -c1-255) && echo keep > "$P" \
+      && CYRIUS_MACHO_ARM=1 CYRIUS_SYMS="$L" ./r1r < _ec.cyr > /dev/null 2> _el.err \
+      && grep -q "ignoring CYRIUS_SYMS: its value is longer than 255 bytes" _el.err && [ "$(cat "$P")" = keep ] && [ ! -e "$L" ]' \
+      || { echo "ENVLONG_FAIL: ecb — a 270-byte CYRIUS_SYMS was not refused by name, or its 255-byte prefix was written (~/$RD/_el.err)"; exit 1; }
     ;;
   ach)
     # x86 ELF cycc told to emit Mach-O builds the x86 Mach-O cycc (its driver
@@ -323,6 +329,10 @@ case "$HOST" in
       && ./r1 --syntax-only < _so.cyr > /dev/null 2> _so.err \
       && ! ./r1 < _so.cyr > /dev/null 2>> _so.err' \
       || { echo "SYNTAX_FAIL: ach — cycc --syntax-only refused a file whose only fault is an unresolved name, or plain cycc accepted it (~/$RD/_so.err)"; exit 1; }
+    ssh $SSHO ach "cd ~/$RD && "'L="$PWD/$(printf %0270d 0 | tr 0 s)" && P=$(printf %s "$L" | cut -c1-255) && echo keep > "$P" \
+      && CYRIUS_SYMS="$L" ./r1 < _ec.cyr > /dev/null 2> _el.err \
+      && grep -q "ignoring CYRIUS_SYMS: its value is longer than 255 bytes" _el.err && [ "$(cat "$P")" = keep ] && [ ! -e "$L" ]' \
+      || { echo "ENVLONG_FAIL: ach — a 270-byte CYRIUS_SYMS was not refused by name, or its 255-byte prefix was written (~/$RD/_el.err)"; exit 1; }
     ;;
   pi)
     # x86 ELF -> aarch64-emitting cross-compiler -> NATIVE aarch64 cycc.
