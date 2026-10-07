@@ -2279,8 +2279,11 @@ fn PARSE_GVAR_ARR(S, noff, sti, ew, sgn, eb): i64 {
 # (an identifier, a call, a string, a float) clears `_cf_ok` and the caller
 # falls straight back to today's runtime-store path. Division/modulo by zero
 # also bails rather than folding, so the runtime keeps whatever trap behaviour
-# it has today. `_CF_TRY` additionally requires the fold to land EXACTLY on the
-# terminating `;`, which makes a partial fold impossible.
+# it has today. The one exception is a -1 divisor: it FOLDS, as the wrapping
+# negation for `/` and 0 for `%`, so INT_MIN / -1 bakes INT_MIN where a runtime
+# idiv on the same operands would trap (CHANGELOG [6.6.20]). `_CF_TRY`
+# additionally requires the fold to land EXACTLY on the terminating `;`, which
+# makes a partial fold impossible.
 var _cf_ok = 0;
 var _cf_ti = 0;
 var _cf_enum = 0;   # 6.6.16 (C1): 1 = enum constants fold (see _CF_ENUM)
