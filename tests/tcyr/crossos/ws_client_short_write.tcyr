@@ -78,6 +78,88 @@ fn main(): i64 {
     assert_eq(ws_state(ws_connect(ka, "/chat", "h")), WS_CLOSED, "request not sent -> CLOSED (it used to be OPEN)");
     sys_close(ka);
     sys_close(kb);
+
+    # 6.6.20 — the masked payload was an alloc(len) copy taken after the header was sent, and
+    # alloc(0) is 0 on every target: every EMPTY frame went out in full and then reported -1
+    # (a keepalive written `if (ws_ping(ws) < 0) close` dropped every connection). The frame is
+    # now built in a 4096-byte stack buffer, masked a chunk at a time by ABSOLUTE payload offset —
+    # the 5000-byte row crosses that boundary and must still unmask to the bytes that were sent
+    # (5008 bytes stay under macOS's 8 KiB AF_UNIX send buffer: nobody reads until it returns).
+    test_group("6.6.20 — empty frames report 0 and are sent once; a multi-chunk frame masks right");
+    var e[16];
+    assert_eq(sys_socketpair(1, 1, 0, &e), 0, "socketpair");
+    var ea = load32(&e);
+    var eb = load32(&e + 4);
+    var ws3 = ws_new(ea);
+    store64(ws3 + 8, WS_OPEN);
+    var eg[32];
+    assert_eq(ws_ping(ws3), 0, "ws_ping returns 0 (it returned -1 after sending the frame)");
+    assert_eq(sys_read(eb, &eg, 32), 6, "  ...and the peer reads exactly one 6-byte frame");
+    assert_eq(load8(&eg) & 0xFF, 0x89, "  FIN + PING");
+    assert_eq(load8(&eg + 1) & 0xFF, 0x80, "  MASK bit, length 0");
+    assert_eq(ws_send_text(ws3, ""), 0, "ws_send_text(ws, \"\") returns 0");
+    assert_eq(sys_read(eb, &eg, 32), 6, "  ...one 6-byte frame");
+    assert_eq(load8(&eg) & 0xFF, 0x81, "  FIN + TEXT");
+    assert_eq(ws_send_binary(ws3, "", 0), 0, "ws_send_binary(ws, x, 0) returns 0");
+    assert_eq(sys_read(eb, &eg, 32), 6, "  ...one 6-byte frame");
+    assert_eq(load8(&eg) & 0xFF, 0x82, "  FIN + BINARY");
+    assert_eq(ws_send_binary(ws3, "", 0 - 1), 0 - 1, "a negative length is -1, and nothing is sent");
+    assert_eq(ws_state(ws3), WS_OPEN, "  ...the connection is still OPEN");
+
+    var M = 5000;
+    var src = alloc(M);
+    var j = 0;
+    while (j < M) { store8(src + j, (j * 7 + 3) & 0xFF); j = j + 1; }
+    assert_eq(ws_send_binary(ws3, src, M), M, "a 5000-byte frame (two 4096-byte fills) returns its length");
+    var fr = alloc(M + 8);
+    var got2 = 0;
+    var rr = 1;
+    while (got2 < M + 8 && rr > 0) {
+        rr = sys_read(eb, fr + got2, M + 8 - got2);
+        if (rr > 0) { got2 = got2 + rr; }
+    }
+    assert_eq(got2, M + 8, "  ...the peer reads 2 + 2 + 4 header bytes and the 5000-byte payload");
+    assert_eq(load8(fr + 1) & 0xFF, 0x80 | 126, "  16-bit extended length");
+    assert_eq(((load8(fr + 2) & 0xFF) << 8) | (load8(fr + 3) & 0xFF), M, "  announcing 5000");
+    var bad = 0;
+    j = 0;
+    while (j < M) {
+        var mb = load8(fr + 4 + (j % 4)) & 0xFF;
+        if (((load8(fr + 8 + j) & 0xFF) ^ mb) != (load8(src + j) & 0xFF)) { bad = bad + 1; }
+        j = j + 1;
+    }
+    assert_eq(bad, 0, "  every payload byte unmasks to the byte sent (across the chunk boundary)");
+
+    # With the 8-byte header the first fill carries 4088 payload bytes — a multiple of 4, so a
+    # mask indexed by the CHUNK offset would still unmask right. A 64-bit-length frame has a
+    # 14-byte header (4082 in the first fill, 4082 % 4 = 2), which tells the two apart. Linux
+    # only: 70014 bytes fit a Linux AF_UNIX socketpair's default buffer, not macOS's 8 KiB one.
+    #ifdef CYRIUS_TARGET_LINUX
+    var L = 70000;
+    var src2 = alloc(L);
+    j = 0;
+    while (j < L) { store8(src2 + j, (j * 13 + 5) & 0xFF); j = j + 1; }
+    assert_eq(ws_send_binary(ws3, src2, L), L, "a 70000-byte frame (64-bit length) returns its length");
+    var fr2 = alloc(L + 14);
+    got2 = 0;
+    rr = 1;
+    while (got2 < L + 14 && rr > 0) {
+        rr = sys_read(eb, fr2 + got2, L + 14 - got2);
+        if (rr > 0) { got2 = got2 + rr; }
+    }
+    assert_eq(got2, L + 14, "  ...the peer reads 2 + 8 + 4 header bytes and the payload");
+    assert_eq(load8(fr2 + 1) & 0xFF, 0x80 | 127, "  64-bit extended length");
+    bad = 0;
+    j = 0;
+    while (j < L) {
+        var mb2 = load8(fr2 + 10 + (j % 4)) & 0xFF;
+        if (((load8(fr2 + 14 + j) & 0xFF) ^ mb2) != (load8(src2 + j) & 0xFF)) { bad = bad + 1; }
+        j = j + 1;
+    }
+    assert_eq(bad, 0, "  every byte unmasks right (the mask follows the ABSOLUTE payload offset)");
+    #endif
+    sys_close(ea);
+    sys_close(eb);
     #endif
     #endif
 
