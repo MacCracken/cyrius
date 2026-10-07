@@ -558,11 +558,11 @@ fn resolve_sym_va(mi, sym_idx): i64 {
     var bind = st_info >> 4;
     var sttyp = st_info & 15;
     # Section symbols — resolve to the merged section's VA + st_value.
-    # cc3's relocations encode the in-section offset in the addend, so
+    # cycc's relocations encode the in-section offset in the addend, so
     # st_value is usually 0; we still add it for correctness.
     if (sttyp == STT_SECTION) {
         # .text section refs would need byte-level mapping (old offset →
-        # new offset) post-compaction. cc3 doesn't emit these today.
+        # new offset) post-compaction. cycc doesn't emit these today.
         if (st_shndx == load64(&MOD_DATA_SHNDX + mi * 8)) {
             return DATA_VA + load64(&MOD_DATA_BASE + mi * 8) + st_value;
         }
@@ -643,7 +643,7 @@ fn apply_relocations(): i64 {
             if (r_type == R_X86_64_PC32 || r_type == R_X86_64_PLT32) {
                 # value = S + A - P, stored as 32-bit signed at patch site.
                 # The existing pre-reloc bytes at the patch site are ignored —
-                # cc3 emits 0s into rel32 placeholders so A is typically -4 for
+                # cycc emits 0s into rel32 placeholders so A is typically -4 for
                 # `call rel32` / `jmp rel32` (so the PC points at the next
                 # instruction, and target - (patch+4) is the rel32 value).
                 var value = target_va + r_add - patch_va;
