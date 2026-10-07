@@ -44,15 +44,20 @@
 # 6.6.20 — THE FREEZE IS A W^X-ONLY FIX (rows 6-7). Two layouts have no gap to freeze into: a
 # `kernel;` image (ELF32 multiboot and CYRIUS_ELF64_KERNEL=1) and CYRIUS_WX=0 (one RWX PT_LOAD)
 # put .bss/.rodata DIRECTLY after the code, from the post-compaction cp. Under CYRIUS_DCE=1 both
-# compacted, so the data moved down under every address FIXUP had already patched in. Measured
-# at 6.6.19: a 60-dead-fn probe built CYRIUS_DCE=1 CYRIUS_WX=0 died rc 139 (each flag alone: rc
-# 42); a `kernel;` probe moved .bss 0x100418 -> 0x100100 while the code still stored to
-# 0x100418 — past the image, so a kernel scribbles memory instead of faulting. The fix declines
-# compaction for both (runtime.cyr _dce_compact_why) and names it in the unreachable-fns note.
-#   Row 6 RUNS the WX=0 binary (old compiler: rc 139, no output). Row 7 cannot run a kernel, so
-#   it DECODES one: the .bss and .rodata vaddrs readelf reports must each occur as an imm64
-#   inside .text (old compiler: neither does, on ELF32 or ELF64). Both rows also pin the
-#   decline note, and row 6's anti-vacuous half proves the probe really compacts under W^X.
+# compacted, so the data moved down under every address FIXUP had already patched in. The
+# fix declines compaction for both (runtime.cyr _dce_compact_why) and names it in the
+# unreachable-fns note. What THIS gate's probes measure on the 6.6.19 compiler:
+#   Row 6 RUNS the WX=0 binary. Its probe (60 dead fns, 7,596 B eliminated) exits rc 0 and
+#   writes 8 NUL bytes instead of "data-ok" (rc 42): .bss moved to 0x400150 while the code
+#   still uses the pre-compaction 0x401ef8 (G) and 0x401f10 (the string), which now fall in
+#   the zero-filled tail of the segment. Other shapes fault instead: the 6.6.20 audit's own
+#   60-dead-fn probe (9,930 B eliminated) died rc 139. Either way, each flag alone exits 42.
+#   Row 7 cannot run a kernel, so it DECODES one: the .bss and .rodata vaddrs readelf reports
+#   must each occur as an imm64 inside .text. Its probe moves .bss 0x1003e0 -> 0x1000f8 on
+#   ELF32 and 0x100428 -> 0x100140 on ELF64, while the code still addresses 0x1003e0 /
+#   0x100428 — past the image, so a kernel scribbles memory instead of faulting.
+#   Both rows also pin the decline note, and row 6's anti-vacuous half proves the probe really
+#   compacts under W^X.
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
