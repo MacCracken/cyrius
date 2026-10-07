@@ -992,10 +992,17 @@ fn _async_process_task(ctx): i64 {
         async_wait_fd(load64(ctx + 48), pfd);                    # park on the pidfd
         return 0;
     }
-    # wake: the child has exited — reap it (returns at once) and close the pidfd
+    # wake: the child has exited — reap it (returns at once) and close the pidfd. Only a wait
+    # that returned the child's pid wrote statusbuf: under an inherited SIGCHLD = SIG_IGN the
+    # kernel has already reaped it (the pidfd still wakes us), waitpid fails ECHILD, and the
+    # stale stack word decoded as "exit 0" for a child that failed. Not observed is -1.
+    # CHANGELOG [6.6.20]
+    var cpid = load64(ctx + 32);
     var statusbuf[8];
-    sys_waitpid(load64(ctx + 32), &statusbuf, 0);
+    var w = sys_waitpid(cpid, &statusbuf, 0);
+    while (w == 0 - 4) { w = sys_waitpid(cpid, &statusbuf, 0); }
     syscall(SYS_CLOSE, load64(ctx + 40));
+    if (w != cpid) { return 0 - 1; }
     var status = load32(&statusbuf);
     if (WIFEXITED(status) == 1) { return WEXITSTATUS(status); }
     return 0 - 1;

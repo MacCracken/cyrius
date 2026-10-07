@@ -846,9 +846,10 @@ fn _async_process_task(ctx): i64 {
             # blocking reap (returns the real exit code — better than a hang or a leak).
             syscall(61441, hProcess, 4294967295);   # WaitForSingleObject(INFINITE)
             var c0[8]; store64(&c0, 0);
-            syscall(61442, hProcess, &c0);           # GetExitCodeProcess
+            var g0 = syscall(61442, hProcess, &c0);  # GetExitCodeProcess (BOOL: eax only)
             syscall(3, load64(ctx + 80)); syscall(3, hProcess);
             _asw_job_close(ctx);
+            if ((g0 & 0xFFFFFFFF) == 0) { return 0 - 1; }   # not observed: c0 is not an exit 0
             return load32(&c0);
         }
         store64(ctx + 88, load64(&wh));
@@ -857,9 +858,12 @@ fn _async_process_task(ctx): i64 {
     }
     var hProcess = load64(ctx + 72);
     syscall(0xF030, load64(ctx + 88), 0 - 1);       # UnregisterWaitEx (drain the exit callback)
+    # A failed GetExitCodeProcess leaves `code` zeroed: decoding it read as exit 0 for a child
+    # nobody observed. Not observed is -1, as on Linux and macOS. CHANGELOG [6.6.20]
     var code[8]; store64(&code, 0);
-    syscall(61442, hProcess, &code);                # GetExitCodeProcess
+    var got = syscall(61442, hProcess, &code);      # GetExitCodeProcess (BOOL: eax only)
     var ec = load32(&code);
+    if ((got & 0xFFFFFFFF) == 0) { ec = 0 - 1; }
     syscall(3, load64(ctx + 80));                   # CloseHandle(hThread)
     syscall(3, hProcess);                           # CloseHandle(hProcess)
     _asw_job_close(ctx);

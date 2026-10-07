@@ -48,6 +48,12 @@
 #           GetExitCodeProcess and CreatePipe `== 0` / `!= 0` raw, returned TerminateProcess raw,
 #           and sys_getrandom tested ProcessPrng `!= 0` raw (a CSPRNG failure with a dirty upper
 #           half would have read as success and returned an unfilled buffer).
+#           (6.6.20, review) and GetExitCodeProcess (0xF002 / 61442) is never DISCARDED, anywhere
+#           in lib/: lib/async_win.cyr's process task threw the BOOL away twice and decoded a
+#           zeroed code buffer, so a failed query read as exit 0 for a child nobody observed
+#           (the RLM-01 class: a status nobody wrote). A failure cannot be provoked on a live
+#           process handle, so this rule is static; tests/tcyr/crossos/async_process_unobserved.tcyr
+#           runs the changed path on Windows and pins the real codes.
 #   self    the scanner is run on a CLEAN fixture (must pass) and on one mutant per rule (each
 #           must fail) before it scans lib/, so a scanner that went blind cannot read GREEN.
 #   floors  >= 7 WSAGetLastError sites, >= 25 int-reroute sites, >= 2 callptr sites, >= 3 files,
@@ -74,6 +80,8 @@
 #                                                                       axis 5 FAIL: 8 rows (CreateProcessW's
 #     `ok` tested and returned, GetExitCodeProcess x3, CreatePipe's `pr`, TerminateProcess returned
 #     raw, ProcessPrng)
+#   (6.6.20, review) the 7fc4f513 lib/async_win.cyr (both GetExitCodeProcess results discarded)
+#                                                                       axis 5 FAIL: 2 rows
 # No compiler and no wine: the gate cds to its ROOT and passes from any cwd.
 # Exit 77 = could not run (the SKIP protocol). CHANGELOG [6.6.16]
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd) || { echo "FAIL: pe_wsa_lasterr_masked: cannot resolve ROOT"; exit 1; }
@@ -189,6 +197,10 @@ scan() {
                     }
                     else bad("axis5", "kernel32 BOOL from syscall(" argtxt ", ...) tested or returned unmasked — only eax is defined")
                 }
+            }
+            if (nvv == 61442 && cp != 0) {
+                pre = substr(s, 1, st - 1); post = substr(s, cp + 1)
+                if (pre ~ /(^|[{;])[ \t]*$/ && post ~ /^[ \t]*;/) bad("axis5", "the GetExitCodeProcess (0xF002) result is discarded — a failed query leaves the code buffer unwritten, and decoding it reads as exit 0")
             }
             if (FILENAME ~ /async_win\.cyr$/ && nvv == 61477 && cp != 0) {
                 pre = substr(s, 1, st - 1); post = substr(s, cp + 1)
@@ -320,6 +332,7 @@ mutant_in() {  # $1 = fixture basename, $2 = sed expression, $3 = label
 }
 mutant_in process_win.cyr 's/if ((ok \& 0xFFFFFFFF) == 0)/if (ok == 0)/'                         "process_win CreateProcessW BOOL var unmasked"
 mutant_in process_win.cyr 's/if ((syscall(61442, h, c) \& 0xFFFFFFFF) == 0)/if (syscall(61442, h, c) == 0)/' "GetExitCodeProcess BOOL unmasked"
+mutant_in process_win.cyr 's/if ((syscall(61442, h, c) \& 0xFFFFFFFF) == 0) { return 0 - 1; }/syscall(61442, h, c);/' "GetExitCodeProcess BOOL discarded"
 mutant_in process_win.cyr 's/if ((pr \& 0xFFFFFFFF) == 0)/if (pr == 0)/'                         "CreatePipe BOOL var unmasked"
 mutant_in process_win.cyr 's/return syscall(61469, h, 137) \& 0xFFFFFFFF;/return syscall(61469, h, 137);/' "TerminateProcess BOOL returned raw"
 mutant_in syscalls_windows.cyr 's/if ((syscall(0xF01A, buf, len) \& 0xFFFFFFFF) != 0)/if (syscall(0xF01A, buf, len) != 0)/' "ProcessPrng BOOL unmasked"

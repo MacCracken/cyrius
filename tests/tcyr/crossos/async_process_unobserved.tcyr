@@ -1,0 +1,162 @@
+# async_process_unobserved.tcyr — 6.6.20: lib/async.cyr's reactor subprocess never reports a
+# wait status that waitpid did not write.
+#
+# ⛔ WHY. The Linux _async_process_task parks on a pidfd and, on wake, reaped the child with a
+# blocking waitpid whose result it threw away before decoding the status buffer. A parent that
+# inherited SIGCHLD = SIG_IGN (it survives execve) has its children reaped by the kernel: the
+# pidfd still wakes the task, waitpid fails ECHILD, the buffer is never written, and the stale
+# stack word decoded as the exit code. A child that exited 3 read as exit 0. The truthful answer
+# is -1 (not observed) or the real code. The macOS peer already checked its wait, so this file
+# runs on both POSIX hosts. Same class as tests/tcyr/platform/regression_wait_unobserved.tcyr.
+#
+# The Windows peer (lib/async_win.cyr) had the same shape over GetExitCodeProcess: it discarded
+# the BOOL and decoded a zeroed code buffer, so a failed query read as exit 0. That failure cannot
+# be provoked on a live process handle, so it is gated statically
+# (tests/gates/platform/pe_wsa_lasterr_masked.sh axis 5: GetExitCodeProcess is never discarded).
+# Here Windows runs the path the fix changed and must still report the real codes.
+#
+# ROWS:
+#   1. default disposition: `sh -c "exit 0"` reads 0 and `sh -c "exit 3"` reads 3, through
+#      async_run_process both unbounded (ms = 0) and bounded (ms > 0, async_with_timeout);
+#   2. SIGCHLD = SIG_IGN, each run right after an `exit 0` run under the default disposition. That
+#      run leaves a written 0 in the task frame's status slot, so the old decode read "exit 0"
+#      for `exit 3` deterministically: -1 or 3, never 0, unbounded and bounded.
+#   3. Windows: `cmd /c exit 0` reads 0 and `cmd /c exit 3` reads 3, unbounded and bounded.
+#   4. Linux: the epoll arm's wake step called DIRECTLY, from a frame whose stack was just zeroed,
+#      for a child the kernel already reaped under SIG_IGN. The stale slot then reads 0, so the
+#      old decode answers "exit 0" deterministically; the fix answers -1. Rows 1-2 go through the
+#      reactor, whose own calls leave other stale words in the slot (an address on x86_64, which
+#      decodes as -1 by luck; 0 on aarch64), so they alone cannot turn red on every arch.
+# agnos has no SIGCHLD and cx no fork: both SKIP by name (neither is a cross-OS leg).
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/vec.cyr"
+include "lib/str.cyr"
+include "lib/fmt.cyr"
+include "lib/io.cyr"
+include "lib/chrono.cyr"
+include "lib/assert.cyr"
+include "lib/async.cyr"
+
+var _envp: i64[1];
+var _av: i64[4];
+fn _argv_sh(cmd): i64 {
+    store64(&_av, "/bin/sh");
+    store64(&_av + 8, "-c");
+    store64(&_av + 16, cmd);
+    store64(&_av + 24, 0);
+    return &_av;
+}
+
+# -1 (not observed) or the child's real exit code `real`; anything else, 0 above all, is a
+# status nobody wrote.
+fn _real_or_unobserved(code, real): i64 {
+    if (code == 0 - 1) { return 1; }
+    if (code == real) { return 1; }
+    return 0;
+}
+
+#ifndef CYRIUS_TARGET_WIN
+#ifndef CYRIUS_TARGET_AGNOS
+#ifndef CYRIUS_TARGET_CX
+fn _ap_run(rt, cmd, ms): i64 {
+    return async_run_process(rt, "/bin/sh", _argv_sh(cmd), &_envp, ms);
+}
+
+fn _ap_rows(ms, label): i64 {
+    test_group(label);
+    var rt = async_new();
+    assert_eq(_ap_run(rt, "exit 0", ms), 0, "default disposition: exit 0 reads 0");
+    assert_eq(_ap_run(rt, "exit 3", ms), 3, "default disposition: exit 3 reads 3");
+    _ap_run(rt, "exit 0", ms);                  # leaves a written 0 in the status slot
+    signal_ignore(SIGCHLD);
+    var r = _ap_run(rt, "exit 3", ms);
+    signal_default(SIGCHLD);
+    assert_eq(_real_or_unobserved(r, 3), 1, "SIGCHLD = SIG_IGN: exit 3 reads -1 or 3, never a status nobody wrote");
+    assert_neq(r, 0, "...and never 0");
+    return 0;
+}
+#endif
+#endif
+#endif
+
+#ifdef CYRIUS_TARGET_LINUX
+#ifndef CYRIUS_TARGET_CX
+# Zero 4 KiB of stack below the caller, so a fn called next from the same frame finds 0 in an
+# uninitialised local (the wake step's status buffer).
+fn _ap_zero_stack(): i64 {
+    var z[4096];
+    memset(&z, 0, 4096);
+    return load64(&z);
+}
+
+# ctx = { step, path, argv, envp, pid, pidfd, rt } — lib/async.cyr's Linux _async_process_task.
+fn _ap_direct_row(): i64 {
+    test_group("6.6.20 — Linux: the wake step reaps through a checked waitpid (called directly)");
+    var ctx = alloc(56);
+    memset(ctx, 0, 56);
+    signal_ignore(SIGCHLD);
+    var pid = sys_fork();
+    if (pid == 0) { sys_exit(3); }
+    var pfd = sys_pidfd_open(pid, 0);
+    var sb[8];
+    sys_waitpid(pid, &sb, 0);           # SIG_IGN: blocks until the kernel has reaped it, then ECHILD
+    store64(ctx, 1);                    # step 1: forked and parked — the wake
+    store64(ctx + 32, pid);
+    store64(ctx + 40, pfd);
+    _ap_zero_stack();
+    var r = _async_process_task(ctx);
+    signal_default(SIGCHLD);
+    assert(pid > 0, "the child was forked");
+    assert_eq(r, 0 - 1, "a child the kernel reaped is -1 (not observed), never the 0 left on the stack");
+    return 0;
+}
+#endif
+#endif
+
+#ifdef CYRIUS_TARGET_WIN
+var _wav: i64[4];
+fn _ap_win_run(rt, cmd, ms): i64 {
+    store64(&_wav, "cmd");
+    store64(&_wav + 8, "/c");
+    store64(&_wav + 16, cmd);
+    store64(&_wav + 24, 0);
+    return async_run_process(rt, "cmd", &_wav, &_envp, ms);
+}
+
+fn _ap_win_rows(ms, label): i64 {
+    test_group(label);
+    var rt = async_new();
+    assert_eq(_ap_win_run(rt, "exit 0", ms), 0, "cmd /c exit 0 reads 0");
+    assert_eq(_ap_win_run(rt, "exit 3", ms), 3, "cmd /c exit 3 reads 3");
+    return 0;
+}
+#endif
+
+fn main(): i64 {
+    alloc_init();
+    store64(&_envp, 0);
+    #ifdef CYRIUS_TARGET_WIN
+    _ap_win_rows(0, "6.6.20 — async_run_process (Windows), unbounded: GetExitCodeProcess, checked, real codes");
+    _ap_win_rows(30000, "6.6.20 — async_run_process (Windows), bounded: GetExitCodeProcess, checked, real codes");
+    #endif
+    #ifdef CYRIUS_TARGET_AGNOS
+    println("  SKIP: async_process_unobserved: agnos has no SIGCHLD");
+    #endif
+    #ifndef CYRIUS_TARGET_WIN
+    #ifndef CYRIUS_TARGET_AGNOS
+    #ifndef CYRIUS_TARGET_CX
+    _ap_rows(0, "6.6.20 — async_run_process, unbounded: a status nobody wrote is never an exit code");
+    _ap_rows(30000, "6.6.20 — async_run_process, bounded: a status nobody wrote is never an exit code");
+    #ifdef CYRIUS_TARGET_LINUX
+    _ap_direct_row();
+    #endif
+    #endif
+    #endif
+    #endif
+    var r = assert_summary();
+    return r;
+}
+var ec = main();
+syscall(60, ec);
