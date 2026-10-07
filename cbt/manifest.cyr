@@ -1275,14 +1275,11 @@ fn _cfg_mf_strs(i, section, key): i64 {
 
 # The environment value of `name`, or 0 when it is unset or empty. POSIX reads the CLI's own envp
 # (`_envp` — the one every child inherits, so this is what cycc would see); Windows asks
-# GetEnvironmentVariableA.
+# GetEnvironmentVariableA into a buffer sized to the value — a fixed 512-byte one made a longer
+# CYRIUS_DEFINES no rung at all, so the manifest's value won silently. CHANGELOG [6.6.20].
 fn _cfg_env(name): i64 {
     #ifdef CYRIUS_TARGET_WIN
-    var wb = alloc(512);
-    var wv = _win_getenv_into(name, wb);
-    if (wv == 0) { return 0; }
-    if (load8(wv) == 0) { return 0; }
-    return wv;
+    return _win_getenv_alloc(name);
     #endif
     #ifndef CYRIUS_TARGET_WIN
     if (_envp == 0) { return 0; }
