@@ -45,10 +45,19 @@
 #      directly and through callptr, checks six parameter positions against an awk-derived literal
 #      and that sp — the address of a local in a fresh callee frame — is the same before and after,
 #      and only THEN loops 300 calls of each (so the broken compiler fails, it does not hang). The
-#      frame probe reads back a local, a store through &local and a received struct, each past
+#      frame probe first checks that a callee's frame starts below the whole 70000-byte caller frame
+#      (exit 14), then reads back a local, a store through &local and a received struct, each past
 #      64 KiB, after filling the 70000-byte buffer below them. The runs are under `timeout -s KILL`:
 #      qemu outlives a plain SIGTERM when the guest sp is garbage.
 #   3  the same probes natively on the host x86 compiler — the oracle that the probe itself is right.
+#   4  cx (every host: cycc_cx from this tree's src/main_cx.cyr, cxvm from programs/cxvm.cyr). cx had
+#      the same 16-bit truncation by frame SIZE: ESUBRSP reserved a lone `movi r252, size` and
+#      EPATCHFRAME patched only `size & 0xFFFF` into it, so a frame of 64 KiB or more lowered sp by
+#      size mod 64 KiB and every callee frame landed inside the caller's buffer (a fill by a callee
+#      overwrote its own counter and never ended). The frame probe's bytecode must carry
+#      `movhi r252, #1; sub sp, sp, r252` (fe fc 01 00 11 fe fe fc) and exit 42 on cxvm, and the
+#      crossos twin must pass its cx rows (the frame rows; the argument rows are past cx's separate
+#      248-argument limit) with the count derived from its source.
 #
 # MUTATION LEDGER (each mutant applied to src/backend/aarch64/emit.cyr in a copy of the tree, the
 # gate run there — it cross-builds cycc_aarch64 from that src). M1-M4 were measured against the 12
@@ -65,6 +74,9 @@
 #   M6 EFLADDR_X8's fallback back to the lone `movz x9`     -> RED (frame probe: the retptr row)
 #   M7 ESTORESTACKPARM's x10 arm back to the lone `movz x10` -> RED (8200: last-param home + SIGSEGV)
 #   M8 _EMOV_XN never emits its `movk`                       -> RED (8200 and the frame probe)
+#   M9 cx ESUBRSP without its movhi slot + EPATCHFRAME's bits 16..31 dropped (src/backend/cx/emit.cyr)
+#                                                            -> RED (axis 4: no movhi word, cxvm exit
+#                                                              14, the twin's cx run 0 passed / 1 failed)
 # The crossos twin is red under M1 (old compiler: sp -4096 at 262, SIGILL at 600), M2 + M3 (the 2100
 # rows' values), M4 (sp -16 at 263), M5 (5 rows: 8200 values + the three frame rows), M6 (the
 # retptr row), M7 and M8 (SIGSEGV in the 8200 rows).
@@ -203,14 +215,20 @@ done
 # THE FRAME PROBE — the same 16-bit displacement reached by frame size: each local after `buf` sits
 # past 64 KiB below x29. `fill` keeps its counter in its own small frame, so the broken compiler
 # reads the fill byte (exit 11 / 12 / 13) instead of hanging on a counter the fill overwrites.
+# frame_below runs first (exit 14): a fresh callee local must sit more than 70000 bytes below the
+# caller's first local. It reads no local past 64 KiB, so it fails rather than hangs on cx's
+# defect, where sp was lowered by the frame size mod 64 KiB and fill's own frame sat inside buf.
 cat > "$T/frame.cyr" <<'FRAME'
 struct T3 { a; b; c; }
 fn fill(p, n, v) { var i = 0; while (i < n) { store8(p + i, v); i = i + 1; } return 0; }
 fn mk3(): T3 { var p = T3 { 1, 2, 3 }; return p; }
+fn spp() { var x = 1; return &x; }
+fn frame_below() { var a = 0; var pa = &a; var d = 0; var buf[70000]; store8(&buf, 1); d = pa - spp(); if (d > 70000) { return 1; } return 0; }
 fn frame_local() { var buf[70000]; var y = 5; fill(&buf, 70000, 90); return y; }
 fn frame_addr() { var buf[70000]; var y = 0; var py = &y; store64(py, 77); fill(&buf, 70000, 90); return y; }
 fn frame_retptr() { var buf[70000]; var q: T3 = mk3(); fill(&buf, 70000, 90); return q.a * 100 + q.b * 10 + q.c; }
 fn main() {
+    if (frame_below() != 1) { return 14; }
     if (frame_local() != 5) { return 11; }
     if (frame_addr() != 77) { return 12; }
     if (frame_retptr() != 123) { return 13; }
@@ -235,6 +253,7 @@ if [ "$rc" = 0 ] && [ -s "$T/afr" ]; then
         rc=0; (cd "$T" && timeout -s KILL 30 "$QBIN" $QCPU ./afr > /dev/null 2>&1) || rc=$?
         case "$rc" in
             42) NFRAME=$((NFRAME + 1)) ;;
+            14) bad "frame probe: aarch64 exit 14 — a callee's frame starts inside its caller's 70000-byte frame" ;;
             11|12|13) bad "frame probe: aarch64 exit $rc — a local past 64 KiB lost its value (11 load/store, 12 &local, 13 X8 retptr)" ;;
             *) bad "frame probe: aarch64 exit $rc (139 SIGSEGV, 137 killed at 30 s — a hang)" ;;
         esac
@@ -248,6 +267,52 @@ rc=0; timeout -s KILL 30 "$T/xfr" > /dev/null 2>&1 || rc=$?
 [ "$rc" = 42 ] || bad "frame probe: the host x86 probe exited $rc (want 42) — the probe, not the aarch64 backend, is wrong"
 NFRAME_WANT=1; [ "$QEMU" = 1 ] && NFRAME_WANT=2
 
+# axis 4 — cx: the frame probe's bytecode and its cxvm run, then the crossos twin's cx rows
+NCX=0; NCX_WANT=3
+(cd "$ROOT" && "$CC" < src/main_cx.cyr > "$T/cycc_cx" 2> "$T/cx.err"); chmod +x "$T/cycc_cx" 2>/dev/null
+(cd "$ROOT" && "$CC" < programs/cxvm.cyr > "$T/cxvm" 2> "$T/vm.err"); chmod +x "$T/cxvm" 2>/dev/null
+if [ ! -s "$T/cycc_cx" ] || [ ! -s "$T/cxvm" ]; then
+    bad "cx: could not build cycc_cx from src/main_cx.cyr or cxvm from programs/cxvm.cyr: $(grep -hv '^note' "$T/cx.err" "$T/vm.err" | head -2)"
+else
+    rc=0; (cd "$ROOT" && "$T/cycc_cx" < "$T/frame.cyr" > "$T/fr.cyx" 2> "$T/fr.cxerr") || rc=$?
+    if [ "$rc" = 0 ] && [ -s "$T/fr.cyx" ]; then
+        # movhi r252, #1 (fe fc 01 00) straight before sub sp, sp, r252 (11 fe fe fc): the frame's
+        # bits 16..31 reach sp
+        if od -An -v -tx1 "$T/fr.cyx" | tr -s ' \n' '  ' | grep -q ' fe fc 01 00 11 fe fe fc '; then
+            NCX=$((NCX + 1))
+        else
+            bad "cx frame probe: no \`movhi r252, #1; sub sp, sp, r252\` — a frame of 64 KiB or more lowers sp by its size mod 64 KiB"
+        fi
+        rc=0; (cd "$T" && timeout -s KILL 30 ./cxvm < fr.cyx > fr.cxout 2>&1) || rc=$?
+        case "$rc" in
+            42) NCX=$((NCX + 1)) ;;
+            14) bad "cx frame probe: cxvm exit 14 — a callee's frame starts inside its caller's 70000-byte frame (sp lowered by the size mod 64 KiB)" ;;
+            11|12|13) bad "cx frame probe: cxvm exit $rc — a local past 64 KiB lost its value (11 load/store, 12 &local, 13 retptr)" ;;
+            *) bad "cx frame probe: cxvm exit $rc (137 killed at 30 s — a hang): $(grep -m1 '^cxvm:' "$T/fr.cxout")" ;;
+        esac
+    else
+        bad "cx frame probe: cycc_cx did not compile it (rc $rc): $(grep -v '^note' "$T/fr.cxerr" | head -2)"
+    fi
+    # the twin's cx rows: every assertion outside `#ifndef CYRIUS_TARGET_CX` ... `#endif`
+    TW="$ROOT/tests/tcyr/crossos/wide_call_stack_unwind.tcyr"
+    ncxw=$(awk '/^[[:space:]]*#ifndef CYRIUS_TARGET_CX/{s=1; next} /^[[:space:]]*#endif/{s=0; next} !s && /^[[:space:]]*assert(_[a-z]+)?\(/{n++} END{print n+0}' "$TW")
+    if [ "$ncxw" -lt 4 ]; then
+        bad "cx twin: only $ncxw assertions outside the cx guard (floor 4: frame_below + the three frame rows)"
+    else
+        rc=0; (cd "$ROOT" && "$T/cycc_cx" < "$TW" > "$T/tw.cyx" 2> "$T/tw.cxerr") || rc=$?
+        if [ "$rc" = 0 ] && [ -s "$T/tw.cyx" ]; then
+            rc=0; (cd "$T" && timeout -s KILL 60 ./cxvm < tw.cyx > tw.cxout 2>&1) || rc=$?
+            if [ "$rc" = 0 ] && tail -1 "$T/tw.cxout" | grep -q "^$ncxw passed, 0 failed"; then
+                NCX=$((NCX + 1))
+            else
+                bad "cx twin: cxvm exit $rc, want '$ncxw passed, 0 failed', got: $(tail -1 "$T/tw.cxout") $(grep -m2 'FAIL' "$T/tw.cxout" | tr '\n' ' ')"
+            fi
+        else
+            bad "cx twin: cycc_cx did not compile tests/tcyr/crossos/wide_call_stack_unwind.tcyr (rc $rc): $(grep -v '^note' "$T/tw.cxerr" | head -2)"
+        fi
+    fi
+fi
+
 echo "  axis 1: $NSTATIC of $NW aarch64 probes carry the derived \`add sp\` cleanup (+ the x16 forms past 2048 / 2053)"
 if [ "$QEMU" = 1 ]; then
     echo "  axis 2: $NRUN of $NW aarch64 probes exit 42 under $QBIN ${QCPU:-(default cpu)} (sp balanced, six positions right, 600 looped calls)"
@@ -257,11 +322,12 @@ else
 fi
 echo "  axis 3: $NHOST of $NW host probes exit 42"
 echo "  frame:  $NFRAME of $NFRAME_WANT legs (static movk, qemu run) for locals past 64 KiB"
-[ "$NSTATIC" = "$NW" ] && [ "$NHOST" = "$NW" ] && [ "$NFRAME" = "$NFRAME_WANT" ] || fail=1
+echo "  axis 4: $NCX of $NCX_WANT cx legs (movhi frame word, cxvm frame probe, the twin's cx rows)"
+[ "$NSTATIC" = "$NW" ] && [ "$NHOST" = "$NW" ] && [ "$NFRAME" = "$NFRAME_WANT" ] && [ "$NCX" = "$NCX_WANT" ] || fail=1
 if [ "$fail" != 0 ]; then echo "FAIL wide_call_stack_unwind"; exit 1; fi
 if [ "$QEMU" != 1 ]; then
     echo "SKIP: wide_call_stack_unwind — qemu-aarch64 absent: the runtime legs (axis 2 + frame run) did not run (exit 77: a SKIP, not a PASS)"
     exit 77
 fi
-echo "PASS wide_call_stack_unwind: calls of 7..8200 arguments unwind sp exactly and read every parameter, and locals past 64 KiB keep their values, on aarch64"
+echo "PASS wide_call_stack_unwind: calls of 7..8200 arguments unwind sp exactly and read every parameter, and locals past 64 KiB keep their values, on aarch64; frames past 64 KiB lower sp in full on cx"
 exit 0

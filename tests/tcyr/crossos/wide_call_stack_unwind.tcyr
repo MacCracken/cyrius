@@ -21,9 +21,14 @@
 # now split, go through x16, or carry bits 16..31 in a `movk`. The x86 targets were never affected;
 # the rows run on every host but cx so a future regression anywhere is caught.
 #
-# NOT A cx FILE: every row is inside `#ifndef CYRIUS_TARGET_CX`. cx holds at most 248 arguments in
-# its register file (its own backlog item), and on cxvm a 66000-byte frame filled byte by byte did
-# not finish in 10 s (33000 does, in 52 ms) — not investigated here. A cx sweep finds nothing to run.
+# ON cx ONLY THE FRAME ROWS RUN: the argument rows are inside `#ifndef CYRIUS_TARGET_CX` because
+# cx holds at most 248 arguments in its register file (its own backlog item). The frame rows run
+# there because cx had the same 16-bit truncation by frame size: ESUBRSP reserved a lone
+# `movi r252, size` and EPATCHFRAME patched only `size & 0xFFFF` into it, so a frame of 64 KiB or
+# more lowered sp by size mod 64 KiB and every callee frame landed inside the caller's buffer (a
+# 66000-byte frame filled byte by byte by a callee never finished: the fill overwrote the callee's
+# own counter). ESUBRSP now carries a `movhi r252` slot for bits 16..31. tests/gates/codegen/
+# wide_call_stack_unwind.sh runs this file on cxvm.
 #
 # Each row: the value the callee computes from six parameter positions (first, the last register
 # one, the first stack one, the middle, the last) against a literal, and `spp()` — the address of a
@@ -171,14 +176,32 @@ fn ptr8200() {
     return b - a;
 }
 
+#endif
+
 # FRAME ROWS — the same 16-bit displacement, reached by frame size instead of parameter count.
 # Every local after `buf` sits past 64 KiB below x29. The broken compiler addressed it through a
 # lone `movz` of the displacement (`y` at x29 - 0x11178 became x29 - 0x1178, a byte inside buf), so
 # filling buf overwrote it. `fill` keeps its counter in its own small frame, so a regression reads
 # the fill byte instead of hanging (a counter local past 64 KiB is overwritten by the fill itself).
+# These rows run on cx as well (see the header): frame_below goes first and gates the other three,
+# because on cx's defect `wfill`'s own frame sat inside `buf` and the fill never ended.
 struct WT3 { a; b; c; }
 fn wfill(p, n, v) { var i = 0; while (i < n) { store8(p + i, v); i = i + 1; } return 0; }
 fn wmk3(): WT3 { var p = WT3 { 1, 2, 3 }; return p; }
+# A callee's frame starts below its caller's whole 70000-byte frame: `pa` (the first local, just
+# under the frame pointer) minus a fresh callee local's address must exceed it. Every local it
+# reads sits ABOVE `buf`, so the row needs no displacement past 64 KiB and cannot hang.
+fn frame_below() {
+    var a = 0;
+    var pa = &a;
+    var d = 0;
+    var buf[70000];
+    store8(&buf, 1);
+    d = pa - spp();
+    assert_gt(d, 70000, "a callee's frame starts below a 70000-byte caller frame (sp lowered past 64 KiB)");
+    if (d > 70000) { return 1; }
+    return 0;
+}
 fn frame_local() {
     var buf[70000];
     var y = 5;
@@ -202,7 +225,6 @@ fn frame_retptr() {
     assert_eq(q.a * 100 + q.b * 10 + q.c, 123, "a struct result received into a local past 64 KiB (the X8 retptr)");
     return 0;
 }
-#endif
 
 fn run() {
     #ifndef CYRIUS_TARGET_CX
@@ -218,10 +240,12 @@ fn run() {
     ptr2100();
     direct8200();
     ptr8200();
-    frame_local();
-    frame_addr();
-    frame_retptr();
     #endif
+    if (frame_below() == 1) {
+        frame_local();
+        frame_addr();
+        frame_retptr();
+    }
     return 0;
 }
 
