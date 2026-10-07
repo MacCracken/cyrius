@@ -1,0 +1,153 @@
+# sleep_ms_bounds.tcyr — 6.6.20: lib/chrono.cyr's sleep_ms(ms) treats a negative `ms` as 0 and
+# clamps one above INT_MAX to INT_MAX on EVERY target, and the macOS sys_nanosleep composition
+# checks its timespec the way Linux does.
+#
+# ⛔ WHY. Until 6.6.20 only the agnos arm guarded `ms <= 0`. Linux and macOS issue
+# poll(NULL, 0, ms), whose timeout is a C int where a negative value means "no limit"; Windows
+# issues kernel32 Sleep, whose argument is a DWORD. So a computed `sleep_ms(deadline - now)` that
+# had gone negative hung for ever on Linux and macOS and slept ~49.7 days on Windows, and a value
+# above INT_MAX slept its low 32 bits (2^32 + 5 slept 5 ms; 0x80000000 hung for ever on x86_64).
+# The macOS sys_nanosleep built the same unclamped int from a timespec, so a negative tv_nsec
+# hung where Linux answers EINVAL. Each arm is its own syscall, so only running on each host
+# proves it.
+#
+# ROWS:
+#   1. sleep_ms(-5) and sleep_ms(0) return at once (< 1 s); sleep_ms(50) really sleeps.
+#   2. THREADS_CONCURRENT == 1: a helper thread's sleep_ms(2^32 + 5) is still asleep 400 ms
+#      later (clamped to INT_MAX, not truncated to 5 ms).
+#   3. POSIX hosts: sys_nanosleep refuses a negative tv_sec, a negative tv_nsec and a tv_nsec of
+#      1e9 with -22 (EINVAL) at once, and sleeps a valid 1 ms request; a helper thread's
+#      4294967.3 s request is still asleep 400 ms later (its ms has low 32 bits of 4).
+# ⚠ A WATCHDOG THREAD ends the process with 3 if the file has not finished within WD_DEADLINE_MS,
+# so a sleep that ignores the guard FAILS instead of hanging the cross-OS leg.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/chrono.cyr"
+include "lib/thread.cyr"
+include "lib/assert.cyr"
+
+var WD_DEADLINE_MS = 30000;
+var _sl_done = 0;
+var _sl_helper_woke = 0;
+var _sl_ns_woke = 0;
+
+# End every thread in the process with `code` (helpers may still be asleep).
+fn _sl_exit_all(code): i64 {
+    #ifdef CYRIUS_TARGET_MACOS
+    syscall(60, code);         # Darwin exit(2) ends the whole process
+    #endif
+    #ifndef CYRIUS_TARGET_MACOS
+    sys_exit_group(code);
+    #endif
+    return 0;
+}
+
+fn _sl_watchdog(arg): i64 {
+    var waited = 0;
+    while (waited < WD_DEADLINE_MS) {
+        if (load64(&_sl_done) != 0) { return 0; }
+        sleep_ms(50);
+        waited = waited + 50;
+    }
+    println("  FAIL: watchdog — a sleep did not return within WD_DEADLINE_MS (a negative ms slept for ever)");
+    _sl_exit_all(3);
+    return 0;
+}
+
+fn _sl_ms_since(t0): i64 { return (clock_now_ns() - t0) / 1000000; }
+
+fn _sl_wide_sleeper(arg): i64 {
+    sleep_ms(0x100000000 + 5);
+    store64(&_sl_helper_woke, 1);
+    return 0;
+}
+
+fn _sl_short_rows(): i64 {
+    test_group("6.6.20 — sleep_ms: a negative or zero ms returns at once");
+    var t0 = clock_now_ns();
+    assert_eq(sleep_ms(0 - 5), 0, "sleep_ms(-5) returns 0");
+    assert(_sl_ms_since(t0) < 1000, "…at once (< 1 s), not never");
+    t0 = clock_now_ns();
+    assert_eq(sleep_ms(0), 0, "sleep_ms(0) returns 0");
+    assert(_sl_ms_since(t0) < 1000, "…at once (< 1 s)");
+    #ifndef CYRIUS_TARGET_CX
+    t0 = clock_now_ns();
+    sleep_ms(50);
+    assert(_sl_ms_since(t0) >= 40, "sleep_ms(50) really sleeps (>= 40 ms)");
+    #endif
+    return 0;
+}
+
+fn _sl_wide_rows(): i64 {
+    test_group("6.6.20 — sleep_ms: a value above INT_MAX is clamped, not truncated to its low 32 bits");
+    var t = thread_create_detached(&_sl_wide_sleeper, 0);
+    assert_neq(t, 0, "the sleeper thread starts");
+    if (t == 0) { return 0; }
+    sleep_ms(400);
+    assert_eq(load64(&_sl_helper_woke), 0, "sleep_ms(2^32 + 5) is still asleep 400 ms later (not 5 ms)");
+    return 0;
+}
+
+#ifndef CYRIUS_TARGET_WIN
+#ifndef CYRIUS_TARGET_AGNOS
+#ifndef CYRIUS_TARGET_CX
+fn _sl_wide_nanosleeper(arg): i64 {
+    var ts[16];
+    store64(&ts, 4294967);                # 4294967.3 s = 4294967300 ms; low 32 bits = 4 ms
+    store64(&ts + 8, 300000000);
+    sys_nanosleep(&ts, 0);
+    store64(&_sl_ns_woke, 1);
+    return 0;
+}
+
+fn _sl_nanosleep_rows(): i64 {
+    test_group("6.6.20 — sys_nanosleep: an invalid timespec is -22 (EINVAL) at once, as Linux");
+    var ts[16];
+    var t0 = clock_now_ns();
+    store64(&ts, 0 - 1);
+    store64(&ts + 8, 0);
+    assert_eq(sys_nanosleep(&ts, 0), 0 - 22, "tv_sec -1: -22");
+    store64(&ts, 0);
+    store64(&ts + 8, 0 - 1);
+    assert_eq(sys_nanosleep(&ts, 0), 0 - 22, "tv_nsec -1: -22");
+    store64(&ts + 8, 1000000000);
+    assert_eq(sys_nanosleep(&ts, 0), 0 - 22, "tv_nsec 1e9: -22");
+    assert(_sl_ms_since(t0) < 1000, "…all at once (< 1 s)");
+    store64(&ts + 8, 1000000);
+    assert_eq(sys_nanosleep(&ts, 0), 0, "a valid 1 ms request: 0");
+    if (THREADS_CONCURRENT == 1) {
+        var t = thread_create_detached(&_sl_wide_nanosleeper, 0);
+        assert_neq(t, 0, "the nanosleep thread starts");
+        if (t != 0) {
+            sleep_ms(400);
+            assert_eq(load64(&_sl_ns_woke), 0, "a 4294967.3 s request is still asleep 400 ms later (not 4 ms)");
+        }
+    }
+    return 0;
+}
+#endif
+#endif
+#endif
+
+fn main(): i64 {
+    alloc_init();
+    if (THREADS_CONCURRENT == 1) {
+        assert_neq(thread_create_detached(&_sl_watchdog, 0), 0, "the watchdog thread starts");
+    }
+    _sl_short_rows();
+    if (THREADS_CONCURRENT == 1) { _sl_wide_rows(); }
+    #ifndef CYRIUS_TARGET_WIN
+    #ifndef CYRIUS_TARGET_AGNOS
+    #ifndef CYRIUS_TARGET_CX
+    _sl_nanosleep_rows();
+    #endif
+    #endif
+    #endif
+    store64(&_sl_done, 1);
+    var r = assert_summary();
+    return r;
+}
+var ec = main();
+_sl_exit_all(ec);

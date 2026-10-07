@@ -1716,14 +1716,19 @@ fn _run_timeout_ms(): i64 {
 # Portable ms sleep. Same per-target bodies as lib/chrono.cyr's `sleep_ms`, inlined
 # here because cbt/ must not pull a Linux-syscall lib include (CLAUDE.md) and chrono
 # is not in the wrapper's include set. poll(NULL, 0, ms) is the portable form: raw
-# nanosleep(35) is NOT a Darwin BSD syscall and was never routed on PE.
+# nanosleep(35) is NOT a Darwin BSD syscall and was never routed on PE. Same clamp as
+# sleep_ms (< 0 → 0, > INT_MAX → INT_MAX): poll's int timeout reads negative as "no limit".
+# CHANGELOG [6.6.20]
 fn _run_sleep_ms(ms): i64 {
+    var t = ms;
+    if (t < 0) { t = 0; }
+    if (t > 0x7FFFFFFF) { t = 0x7FFFFFFF; }
     #ifdef CYRIUS_TARGET_WIN
-    syscall(0xF00F, ms);            # kernel32 Sleep(ms)
+    syscall(0xF00F, t);             # kernel32 Sleep(ms)
     return 0;
     #endif
     #ifndef CYRIUS_TARGET_WIN
-    syscall(7, 0, 0, ms);           # poll(NULL, 0, ms) — 7→230 on Darwin
+    syscall(7, 0, 0, t);            # poll(NULL, 0, ms) — 7→230 on Darwin
     return 0;
     #endif
 }

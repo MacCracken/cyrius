@@ -1091,9 +1091,19 @@ fn sys_memfd_create(name, flags): i64 {
 # lib/chrono.cyr's portable sleep_ms uses. Sub-millisecond resolution is lost there. The
 # bare 7 is the sanctioned "x86 number + an ESYSXLAT entry" spelling: both Mach-O backends
 # route 7 → BSD poll 230, so one line serves x86-macOS and arm64-macOS.
+# The timespec is checked the way Linux checks it (tv_sec < 0, or tv_nsec outside
+# 0..999999999: -22 EINVAL, no sleep) and the ms is clamped to INT_MAX: poll's timeout is a
+# C int where a negative value means "no limit", so until 6.6.20 a negative or over-wide
+# request slept for ever or for its low 32 bits. CHANGELOG [6.6.20]
 fn sys_nanosleep(req, rem): i64 {
     #ifdef CYRIUS_TARGET_MACOS
-    var ms = load64(req) * 1000 + load64(req + 8) / 1000000;
+    var sec = load64(req);
+    var nsec = load64(req + 8);
+    if (sec < 0) { return 0 - 22; }                 # EINVAL, as Linux
+    if (nsec < 0) { return 0 - 22; }
+    if (nsec > 999999999) { return 0 - 22; }
+    var ms = 0x7FFFFFFF;
+    if (sec < 2147483) { ms = sec * 1000 + nsec / 1000000; }   # 2147483 s = INT_MAX ms
     return syscall(7, 0, 0, ms);
     #endif
     #ifndef CYRIUS_TARGET_MACOS
