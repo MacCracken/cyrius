@@ -5381,7 +5381,10 @@ fn _distlib_modular_emit(pkg_name, modules, mbuf, mlen): i64 {
             _aw_write(mfd, fbuf + ls, ll);
             _aw_write(mfd, "\n", 1);
         }
-        if (_aw_commit(mfd) != 0) { _err_ctx("distlib --modular: write failed (left as it was)", _shown(mod_out)); return 1; }
+        if (_aw_commit(mfd) != 0) {
+            _err_ctx("distlib --modular: write failed (left as it was)", _shown(mod_out));
+            return 1;
+        }
         # 6.6.19 (E3): a module that names a carried embed's accessor lists its sub-module as a
         # sibling, so resolving the module brings the bytes (a comment mention only over-pulls).
         var ej = 0;
@@ -5446,7 +5449,8 @@ fn _distlib_write_requires(out_path, deps_path, leaves, named_deps): i64 {
         i = i + 1;
         if (_distlib_vec_has(named_deps, lf) == 1) { continue; }
         if (_dep_leaf_ok(lf) == 0) {
-            _err_ctx("distlib: a sidecar leaf is not a safe include path (allowed: [A-Za-z0-9_/-]) — bundle NOT rewritten", _shown(lf));
+            var why_lf = "distlib: a sidecar leaf is not a safe include path (allowed: [A-Za-z0-9_/-]) — bundle NOT rewritten";
+            _err_ctx(why_lf, _shown(lf));
             return 1;
         }
         # 6.6.18 review: a leaf the snapshot does not have would leave the block SHORT of its
