@@ -744,6 +744,18 @@ TARBALL="cyrius-${VERSION}-${ARCH}-${OS_SUFFIX}.tar.gz"
 # every "$TMPDIR/x" below then becomes "/x" — the install writes at the filesystem ROOT (and the
 # closing `rm -rf "$TMPDIR"` becomes `rm -rf ""`). CHANGELOG [6.6.6]
 TMPDIR=$(mktemp -d) && [ -d "$TMPDIR" ] || { echo "error: mktemp -d failed — no private directory to stage the install in" >&2; exit 1; }
+# 6.6.20: the staging dir (the tarball, its extracted tree, a source clone) is removed on EVERY
+# exit — each refusal below (`err` is `exit 1`), a `set -e` failure (a corrupt tarball's tar),
+# and a signal. It was removed in one place, at the end of a SUCCESSFUL install, so every
+# refusal left <TMPDIR>/tmp.XXXXXXXXXX/ behind holding the tarball and its tree (the 9.9.9
+# gate alone left three per check.sh). The signal traps EXIT, so the EXIT trap does the rm and
+# the script stops; a trap that only removed the dir would carry on without it. Held under its
+# own name so nothing that reassigns TMPDIR can redirect the rm. CHANGELOG [6.6.20]
+_INSTALL_STAGE="$TMPDIR"
+trap 'rm -rf "$_INSTALL_STAGE"' EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 installed=0
 
 # CYRIUS_INSTALL_TARBALL=/path/to/tarball installs from a local file
@@ -1028,7 +1040,9 @@ if [ "$installed" -eq 0 ]; then
     info "bootstrapped from source"
 fi
 
-rm -rf "$TMPDIR"
+# (the staging dir goes with the EXIT trap above — not here: the steps below still run children
+# that inherit TMPDIR when the caller exported it, and clang pointed at a removed TMPDIR fails
+# "unable to make temporary file" — measured; gcc falls back to /tmp)
 
 # ── Set active version ──
 
