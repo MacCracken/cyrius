@@ -165,10 +165,21 @@ if (S < 0x100000) {
 #endif
 #ifdef CYRIUS_TARGET_WIN
 var S = syscall(9, 0, 0xF600000, 3, 0x22, 0 - 1, 0);
+if (S < 0x100000) {   # VirtualAlloc returns 0 on failure. CHANGELOG [6.6.20]
+    syscall(1, 2, "error: cannot map the 246 MiB compiler arena (VirtualAlloc refused it)\n", 71);
+    syscall(60, 1);
+}
 #endif
 #ifdef CYRIUS_TARGET_LINUX
 var S = syscall(SYS_BRK, 0);
-syscall(SYS_BRK, S + 0xF600000);
+# 6.6.20: the extension is CHECKED. An rlimit (ulimit -v / -d) that refuses it left the arena
+# unmapped and cycc died on its first heap store with SIGSEGV 139 and no message; the Mach-O
+# paths already refused by name. CHANGELOG [6.6.20]
+var _arena_top = syscall(SYS_BRK, S + 0xF600000);
+if (_arena_top < S + 0xF600000) {
+    syscall(SYS_WRITE, 2, "error: cannot map the 246 MiB compiler arena (brk refused it; check ulimit -v / ulimit -d)\n", 91);
+    syscall(SYS_EXIT, 1);
+}
 #endif
 #ifdef CYRIUS_TARGET_AGNOS
 var S = syscall(SYS_BRK, 0);

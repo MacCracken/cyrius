@@ -252,7 +252,14 @@ var S = syscall(SYS_BRK, 0);
 # v6.4.21: extended 0x5E1D000 → 0xF600000 so the relocated lexid_entries
 # @ 0xF400000 (LEXID cap 16384→65536) is mapped; 0x5E1D000..0xF400000 is
 # unused on aarch64 (no IR arena) but lazy-mapped, so no physical cost.
-syscall(SYS_BRK, S + 0xF600000);
+# 6.6.20: the extension is CHECKED. An rlimit (ulimit -v / -d) that refuses it left the arena
+# unmapped and cycc died on its first heap store with SIGSEGV 139 and no message; the Mach-O
+# paths already refused by name. CHANGELOG [6.6.20]
+var _arena_top = syscall(SYS_BRK, S + 0xF600000);
+if (_arena_top < S + 0xF600000) {
+    syscall(SYS_WRITE, 2, "error: cannot map the 246 MiB compiler arena (brk refused it; check ulimit -v / ulimit -d)\n", 91);
+    syscall(SYS_EXIT, 1);
+}
 
 # Zero scratch state (v5.8.63 extraction; see src/common/util.cyr for slot list)
 _HEAP_INIT_SCRATCH(S);
