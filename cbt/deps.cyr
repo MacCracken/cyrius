@@ -4040,9 +4040,15 @@ fn _git_cache_unjudged(dep_name, tag_or_0, clone_dir): i64 {
 # FOR THIS dep name is present but malformed/truncated (fewer than the 4
 # tab-delimited fields) — the caller fails closed instead of silently TOFU-
 # re-pinning a corrupted pin.
+# Reads the WHOLE lock, as _dep_lock_load and cmd_deps_verify do: a 64 KB window returned 0
+# ("no pin") for a line past the cut, which TOFU-re-pins a repointed tag silently. Since 6.6.20
+# the commit block keeps an old tag's line after a bump, so it is no longer bounded by the dep
+# count, and ~700 such lines sorting before a dep's name carried its live pin past 64 KB.
+# CHANGELOG [6.6.20]
 fn _lock_commit_lookup(name, git, tag): i64 {
     if (file_exists("cyrius.lock") == 0) { return 0; }
-    var cap = 65536;
+    var cap = _file_size("cyrius.lock") + 1;
+    if (cap < 65536) { cap = 65536; }
     var lbuf = alloc(cap);
     var ln = file_read_all("cyrius.lock", lbuf, cap - 1);
     if (ln <= 0) { return 0; }
@@ -4534,8 +4540,10 @@ fn cmd_deps_lock(): i64 {
     if (lock_h == 0) { _err("cannot create cyrius.lock"); return 1; }
     # CVE-21 (v6.2.30): write the resolved git-dep commit pins FIRST (one
     # "commit\t<sha>\t<name>\t<git>\t<tag>" line each), BEFORE the per-file
-    # content hashes, so they always fall inside _lock_commit_lookup's 64 KB
-    # read window even when a large project's hash section grows past it.
+    # content hashes. That placement once kept them inside _lock_commit_lookup's 64 KB read
+    # window; it is NOT what keeps them readable now. The merge below keeps an old tag's line
+    # after every bump, so the block grows without bound and can pass 64 KB on its own —
+    # _lock_commit_lookup reads the whole file since 6.6.20 (CHANGELOG [6.6.20]).
     # cmd_deps_verify skips these lines; resolution checks them.
     # ⛔ ALWAYS MERGE the inherited pins (CVE-TBD, 6.6.20). A resolve pins only the tagged deps
     # it verified THIS run, and this used to write those OR (bare `--lock`, v6.6.4) the inherited

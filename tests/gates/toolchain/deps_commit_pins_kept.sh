@@ -29,6 +29,8 @@
 # SORTED by (name, git, tag), then the whole line: fresh-then-carried order wrote one pin set in
 # an order set by which deps the run re-verified, so alternating gatings flipped the block — the
 # 6.6.3 churn class for `git diff --exit-code -- cyrius.lock` (K13).
+# Because an old tag's line stays, the block is no longer bounded by the dep count: the pin
+# lookup reads the whole lock, as `_dep_lock_load` and `cmd_deps_verify` have since 6.6.4 (K15).
 #
 # THE CRLF HALF (CBTB-05). `_dep_lock_load` and `_lock_buf_hash_lookup` have been CRLF-tolerant
 # since 6.6.4 (6.6.9 only factored the hash lookup into a buffer form for `--verify`); 6.6.4's
@@ -60,13 +62,16 @@
 #       `deps --features gpu` — leaves cyrius.lock byte-identical each time
 #   K14 a respelled url (`…/good` → `…/good.git`) replaces its line: one (good, v2) line, the
 #       respelled spelling, same sha, no duplicate
+#   K15 1000 retained `alpha` lines put good's live v2 line past 64 KB: its repointed tag on a
+#       fresh cache is still REFUSED by name (the lookup read a 64 KB window and said "no pin")
 #
 # Mutation ledger (measured in a scratch root, one mutant at a time): the slot-open (6.6.20) CLI
 # → every axis but K1 red; the first cut, which dropped an inherited line by NAME (61c88ca3) →
 # K8 K12a K12b K13 K14 red; carrying every inherited line (the fresh-line check always 0) → K2
 # K3 K8 K12a K13 K14 red (a duplicate line per re-verified dep); comparing the git field
 # byte-for-byte instead of url-normalised → K14 red; no sort → K13 red; dropping the CR strip in
-# _lock_commit_lookup → K10 red; dropping the one in cmd_deps_verify → K11 red. A repoint must
+# _lock_commit_lookup → K10 red; dropping the one in cmd_deps_verify → K11 red; restoring the
+# 64 KB read window (`var cap = 65536;`) in _lock_commit_lookup → K15 red. A repoint must
 # make a NEW commit: the second repoint of one origin used to be an empty `git commit`, the tag
 # never moved, and the CRLF axis passed nothing (caught while measuring this ledger).
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -332,6 +337,17 @@ if [ "$rc" -eq 0 ] && [ "$(printf '%s\n' "$g2" | grep -c .)" -eq 1 ] && [ "$(pin
    && printf '%s' "$g2" | grep -q "o/good.git${TAB}v2$" && [ "$(npins)" -eq 6 ]; then
     ok "K14 url respelled …/good → …/good.git: one (good, v2) line, the new spelling, same sha"
 else bad "K14 (rc=$rc, $(npins) pins): $(printf '%s' "$g2" | cut -f4,5 | tr '\n' ' ') $(grep -m2 -i 'error\|refus' "$W/k14.out")"; fi
+
+# ── K15: a pin past 64 KB is still READ ─────────────────────────────────────────────────
+#    The merge keeps an old tag's line after every bump, so the commit block grows with the
+#    project's history. 1000 retained lines of a dep `alpha` (sorting before `good`, as the
+#    sorted block puts them) carry good's live v2 line past 64 KB; a lookup that read a 64 KB
+#    window returned "no pin" and TOFU-re-pinned the repointed tag at exit 0.
+awk -v u="file://$W/o/alpha" 'BEGIN { for (i = 1; i <= 1000; i++) printf "commit\t%040d\talpha\t%s\tv%d\n", i, u, i }' > "$W/k15.pins"
+cat "$W/k15.pins" "$P/cyrius.lock" > "$W/k15.lock" && cp "$W/k15.lock" "$P/cyrius.lock"
+goff=$(grep -b "^commit${TAB}[0-9a-f]*${TAB}good${TAB}[^${TAB}]*${TAB}v2\$" "$P/cyrius.lock" | cut -d: -f1)
+[ -n "$goff" ] && [ "$goff" -gt 65536 ] || bad "K15 setup: good's v2 line is at byte ${goff:-none}, not past 64 KB"
+RTAG=v2; refused K15 good; RTAG=v1
 
 echo "$G: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
