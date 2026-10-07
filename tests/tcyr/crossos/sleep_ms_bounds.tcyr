@@ -179,4 +179,9 @@ fn main(): i64 {
     return r;
 }
 var ec = main();
-_sl_exit_all(ec);
+#ifdef CYRIUS_TARGET_MACOS
+syscall(60, ec);           # Darwin exit(2) ends the whole process (helper threads may still sleep)
+#endif
+#ifndef CYRIUS_TARGET_MACOS
+sys_exit_group(ec);
+#endif
