@@ -308,8 +308,10 @@ a5=0
 PS="$ROOT/scripts/install.ps1"
 grep -q '^\$FirstSignedRelease = "' "$PS" || { bad "axis 5: install.ps1 has no \$FirstSignedRelease"; a5=1; }
 grep -q '\[switch\]\$AllowUnsigned' "$PS" || { bad "axis 5: install.ps1 has no -AllowUnsigned switch"; a5=1; }
-# the skip branch: a present verifier and a signed-era name must reach a throw, not a Write-Host
-sed -n '/elseif (\$cyrsign -and -not \$predatesSigning)/,/^    } else {/p' "$PS" > "$W/ps_branch"
+# the skip branch: a present verifier with no signature beside the tarball must reach a throw, not a
+# Write-Host. 6.6.20 (SEC-07) dropped the name-based pre-signing carve-out — the name and the VERSION
+# inside both come from the download — so the branch is every `$cyrsign` case, pre-signing names too.
+sed -n '/} elseif (\$cyrsign) {/,/^    } else {/p' "$PS" > "$W/ps_branch"
 grep -q 'throw "refusing UNSIGNED tarball' "$W/ps_branch" || { bad "axis 5: install.ps1's skip branch no longer THROWS for a present verifier and a signed-era tarball"; a5=1; }
 grep -q 'CYRIUS_ALLOW_UNSIGNED' "$W/ps_branch" || { bad "axis 5: install.ps1's override does not read CYRIUS_ALLOW_UNSIGNED"; a5=1; }
 grep -q 'names release \$tarVer but its VERSION file says' "$PS" || { bad "axis 5: install.ps1 no longer holds the tarball name against its VERSION file"; a5=1; }
