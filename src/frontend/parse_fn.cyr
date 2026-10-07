@@ -1487,7 +1487,10 @@ fn _try_push_struct_addr_arg(S, fi, argc): i64 {
     if (nx != 31) { if (nx != 11) { return _push_struct_expr_arg(S, fi, argc); } }
     var li = 0 - 1;
     if (GINFN(S) == 1) { li = FINDLOCAL(S, PEEKV(S)); }
-    if (li < 0) { return _push_struct_addr_global(S); }
+    if (li < 0) {
+        if (_push_struct_addr_cap(S) == 1) { return 1; }
+        return _push_struct_addr_global(S);
+    }
     var lt = GLTYPE(S, li);
     if (lt >= 0) { return 0; }          # must be a struct-typed local (SLTYPE = -sid)
     # v6.4.31: on SysV/aarch64 a SIMD local is register-passed (XMM/V) — never
@@ -1508,6 +1511,20 @@ fn _try_push_struct_addr_arg(S, fi, argc): i64 {
     if (_is_simd_any(S, lt) == 1) { if (_TARGET_PE == 0) { return 0; } }
     else { _sa_ptr = _local_struct_is_ptr(S, li, lt); }
     if (_sa_ptr == 1) { EFLLOAD(S, li); } else { EFLADDR(S, li); }
+    EPUSHR(S);
+    STI(S, GTI(S) + 1);                 # consume IDENT
+    return 1;
+}
+
+# ⛔ 6.6.20 — the CLOSURE-CAPTURE arm. A captured struct of 8 B or less is one env word holding
+# the struct BY VALUE, and it was pushed as that value — harmless while only a struct over 8 B was
+# address-passed (its one word holds the struct's address), fatal once a `p: *S` parameter of any
+# size is: `|| rd1(s)` SIGSEGV'd where `|| rd3(a)` worked. `_CL_CAP_BASE_RA` is the address for
+# every shape (the env word's own address, or the address it holds). Returns 1 when handled.
+fn _push_struct_addr_cap(S): i64 {
+    var cx = _CL_CAP_FIELD_IDX(S, PEEKV(S));
+    if (cx >= 0 - 1) { return 0; }
+    _CL_CAP_BASE_RA(S, 0 - 1000000 - cx, _cap_fld_sid);
     EPUSHR(S);
     STI(S, GTI(S) + 1);                 # consume IDENT
     return 1;
@@ -5552,12 +5569,31 @@ fn _prescan_skip_fn(S): i64 {
 # address-pass it. Str/Result/Option/Tagged are 16 B structs by NAME but classify
 # non-zero → excluded (they hold a heap handle, value-passed). Used by both passes
 # to build _fnt_structmask consistently, and by PARSE_FNCALL to gate the address push.
-fn _param_wants_struct_ptr(S, tnoff): i64 {
+# ⛔ 6.6.20 — and for a `p: *S` parameter (`isptr` 1: a `*` preceded the type) at EVERY size of S:
+# 6.6.17 (a2) made such a parameter a pointer at every size in the callee, but this bit — the
+# caller's "push the address" — was set only over 8 B, so `rd1(s)` with `p: *S1` pushed s's VALUE
+# and the callee dereferenced it (SIGSEGV, or a silent read / write through whatever s held),
+# while `rd3(a)` with `p: *P3` took `&a`. One rule for both sizes. CHANGELOG [6.6.20]
+fn _param_wants_struct_ptr(S, tnoff, isptr): i64 {
     if (_classify_param_type(S, tnoff) != 0) { return 0; }
     var sid = FINDSTRUCT(S, tnoff);
     if (sid <= 0) { return 0; }
+    if (isptr == 1) { return 1; }
     if (STRUCTSZ(S, sid - 1) <= 8) { return 0; }
     return 1;
+}
+# 1 = the parameter being parsed was declared `name: *T` (`_mark_ptr_param` marked the slot it
+# takes next; `_param_record` clears the mark).
+fn _ptrp_now(S): i64 {
+    if (_cur_fn_ptrp == GFLC(S) + 1) { return 1; }
+    return 0;
+}
+# A type-parameter-typed parameter resolved to struct `sid` is address-passed over 8 B, and
+# behind a `*` at every size (`_param_wants_struct_ptr`).
+fn _tp_param_addr(S, sid): i64 {
+    if (_ptrp_now(S) == 1) { return 1; }
+    if (STRUCTSZ(S, sid - 1) > 8) { return 1; }
+    return 0;
 }
 
 # ⛔ 6.6.11 — BIT 62 OF `_fnt_structmask`: "param 0 is a declared plain struct of 8 B or less,
@@ -5636,9 +5672,9 @@ fn _psid_note(S, fi, pc, sid, mask): i64 {
 # instance (`_gtype_param_mask`), and the sid is recorded. Returns the instance sid; the updated
 # mask is the second return, `_psid_mask` (read it immediately).
 var _psid_mask = 0;
-fn _psid_scan(S, fi, pc, base, mask): i64 {
+fn _psid_scan(S, fi, pc, base, mask, isptr): i64 {
     var inst = _gtype_sid(S, fi, base);
-    _psid_mask = _gtype_param_mask(S, mask, pc, base, inst);
+    _psid_mask = _gtype_param_mask(S, mask, pc, base, inst, isptr);
     _psid_note(S, fi, pc, inst, _psid_mask);
     return inst;
 }
@@ -5679,7 +5715,8 @@ fn _prescan_params_scan(S, fi): i64 {
                 if (PEEKT(S) == 2) { STI(S, GTI(S) + 1); }   # param name
                 if (PEEKT(S) == 49) {                        # ': Type'
                     STI(S, GTI(S) + 1);                      # consume ':'
-                    if (PEEKT(S) == 8) { STI(S, GTI(S) + 1); }   # skip '*' (pointer)
+                    var _pptr = 0;
+                    if (PEEKT(S) == 8) { STI(S, GTI(S) + 1); _pptr = 1; }   # skip '*' (pointer)
                     if (PEEKT(S) == 2) {
                         var c = _classify_param_type(S, PEEKV(S));
                         if (c == 1) { str_mask = _pmw(str_mask, pc, 2); }
@@ -5697,10 +5734,10 @@ fn _prescan_params_scan(S, fi): i64 {
                         elif (c == 8) { if (_TARGET_PE == 1) { struct_mask = _pmw(struct_mask, pc, 1); } else { simd_mask = _pmw2(simd_mask, pc, 3); } }  # f32v4 (16-byte; mask=3 distinguishes from f64v2=1)
                         elif (c <= 0 - 2048) { if (_TARGET_PE == 1) { struct_mask = _pmw(struct_mask, pc, 1); } else { simd_mask = _pmw2(simd_mask, pc, 1); } }  # v6.4.7: integer 128-bit vector → 16-byte/1-XMM (mask 1)
                         # v6.3.36 (issue [5]) — plain struct >8 B param → address-passed.
-                        if (_param_wants_struct_ptr(S, PEEKV(S)) == 1) { struct_mask = _pmw(struct_mask, pc, 1); }
+                        if (_param_wants_struct_ptr(S, PEEKV(S), _pptr) == 1) { struct_mask = _pmw(struct_mask, pc, 1); }
                         # 6.6.10: `r: Box<Pt>` — the instance's size decides (see _gtype_sid).
                         var _pb = FINDSTRUCT(S, PEEKV(S));
-                        if (_pb > 0) { _pb = _psid_scan(S, fi, pc, _pb, struct_mask); struct_mask = _psid_mask; }
+                        if (_pb > 0) { _pb = _psid_scan(S, fi, pc, _pb, struct_mask, _pptr); struct_mask = _psid_mask; }
                         STI(S, GTI(S) + 1);                  # consume type name
                         SKIP_GENERICS(S);                    # `: Vec<i64>` etc.
                     }
@@ -5976,16 +6013,19 @@ fn _ret_targ_parse(S, base): i64 {
     return base;
 }
 # A parameter typed `Name<..>` resolved to an instance: its address-passed bit follows the
-# INSTANCE's size (`_param_wants_struct_ptr` sized the base by name).
-fn _gtype_param_mask(S, mask, pc, base, inst): i64 {
+# INSTANCE's size (`_param_wants_struct_ptr` sized the base by name) — or, behind a `*` (`isptr`),
+# is set at every size (6.6.20).
+fn _gtype_param_mask(S, mask, pc, base, inst, isptr): i64 {
     if (inst == base) { return mask; }
+    var want = isptr;
+    if (STRUCTSZ(S, inst - 1) > 8) { want = 1; }
     if (pc >= 62) {   # 6.6.17 (a10): the overflow row (`_pmw`)
         _pm_row_clr(_cur_fn_ix, pc, 1);
-        if (STRUCTSZ(S, inst - 1) > 8) { _pm_row_or(_cur_fn_ix, pc, 1); }
+        if (want == 1) { _pm_row_or(_cur_fn_ix, pc, 1); }
         return mask;
     }
     mask = mask & (0 - 1 - (1 << pc));
-    if (STRUCTSZ(S, inst - 1) > 8) { mask = mask | (1 << pc); }
+    if (want == 1) { mask = mask | (1 << pc); }
     return mask;
 }
 
@@ -7813,12 +7853,12 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                     elif (_ptc == 8) { pt_simd_class = 1; pt_simd_sid = 2121; }  # f32v4
                     elif (_ptc <= 0 - 2048) { pt_simd_class = 1; pt_simd_sid = 0 - _ptc; }  # v6.4.7: integer 128-bit vector (16-byte/1-XMM, SLTYPE = sentinel)
                     # v6.3.36 (issue [5]) — plain struct >8 B param → address-passed.
-                    if (_param_wants_struct_ptr(S, tnoff) == 1) { struct_mask = _pmw(struct_mask, pc, 1); }
+                    if (_param_wants_struct_ptr(S, tnoff, _ptrp_now(S)) == 1) { struct_mask = _pmw(struct_mask, pc, 1); }
                     pt_sid = FINDSTRUCT(S, tnoff);
                     # 6.6.10: `r: Box<Pt>` is the instance, sized as one (see _gtype_sid).
                     if (pt_sid > 0) {
                         var _pgi = _gtype_sid(S, fi, pt_sid);
-                        struct_mask = _gtype_param_mask(S, struct_mask, pc, pt_sid, _pgi);
+                        struct_mask = _gtype_param_mask(S, struct_mask, pc, pt_sid, _pgi, _ptrp_now(S));
                         pt_sid = _pgi;
                     }
                     # v6.3.9 (F-fns): param `: T` under an active generic binding.
@@ -7838,7 +7878,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                             # above sees only "T" (not a struct) so it can't set the bit; set
                             # it here from the resolved sid. <=8 B resolved structs stay
                             # value-passed (bit clear), matching the non-generic ABI.
-                            if (STRUCTSZ(S, _ptpc - 1) > 8) { struct_mask = _pmw(struct_mask, pc, 1); }
+                            if (_tp_param_addr(S, _ptpc) == 1) { struct_mask = _pmw(struct_mask, pc, 1); }   # 6.6.20: + `p: *T`
                         }
                     }
                     _tn_param_check(S, pnoff, fi, _ptc);   # 6.6.16 (C8): an unknown name is refused by name

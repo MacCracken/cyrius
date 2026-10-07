@@ -1,0 +1,122 @@
+# ptr_param_bare_struct.tcyr — 6.6.20 — a bare struct NAME passed to a `p: *T` parameter passes
+# the struct's ADDRESS, whatever T's size.
+#
+# ⛔ THE DEFECT, 6.6.17 through 6.6.19. 6.6.17 (a2) made a `p: *T` parameter a pointer at every
+# size of T in the CALLEE, but the caller decided "push the address" from the callee's
+# address-passed bit, which only a T over 8 B set (`_param_wants_struct_ptr`). So `rd3(a)` with
+# `p: *P3` (24 B) took `&a`, while `rd1(s)` with `p: *S1` (8 B) pushed s's VALUE and the callee
+# dereferenced it: SIGSEGV on x86_64 and aarch64, "guest address out of range" on cx — and when
+# the struct's one word happened to be an address (`struct W { buf; }`), a silent read or write
+# through it into an unrelated object. Every bare shape: a local, a declared local, a global, a
+# by-value parameter passed on, a field, a generic instance, a `*Box<i32>` instance, a method
+# argument, a forward call, a closure capture. Before 6.6.17 reads gave the value and writes were
+# silently lost. Now every size takes the address (the rule T over 8 B already had); `&s` is
+# unchanged and stays the documented spelling.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+include "lib/assert.cyr"
+
+struct S1 { v; }                     # 8 B
+struct B4 { a: i32; }                # 4 B
+struct B2 { a: i32; b: i32; }        # 8 B, two fields
+struct P3 { x; y; z; }               # 24 B (control: it always took the address)
+struct W { buf; }                    # 8 B, a word that can hold an address
+struct HI { k; inner: S1; }
+struct Box<T> { v: T; w: T; }
+
+fn rd1(p: *S1) { return p.v; }
+fn wr1(p: *S1, n) { p.v = n; return 0; }
+fn rd4(p: *B4) { return p.a; }
+fn rd2(p: *B2) { return p.b; }
+fn rd3(p: *P3) { return p.y; }
+fn bump3(p: *P3) { p.x = p.x + 1; return p.x; }
+fn setbuf(p: *W, n) { p.buf = n; return 0; }
+fn rdbox(p: *Box<i32>) { return p.w; }
+fn rdg<T>(p: *T) { return p.v; }
+fn wrg<T>(p: *T, n) { p.b = n; return 0; }
+fn pass_on(b: S1) { return rd1(b); }
+fn tail_bare(): i64 { var s = S1 { 31 }; return rd1(s); }
+fn early_caller(): i64 { var s = S1 { 17 }; return rd_late(s); }
+fn rd_late(p: *S1) { return p.v + 1; }
+fn S1_sum(self: *S1, o: *S1) { return self.v + o.v; }
+fn clo_bare(): i64 { var s = S1 { 5 }; var f = || rd1(s); return callptr(f); }
+fn clo_nested(): i64 { var s = S1 { 5 }; var f = |x| { var k = |y| rd1(s) + y; return callptr(k, x); }; return callptr(f, 2); }
+fn clo_ptr(p: *S1): i64 { var f = || rd1(p); return callptr(f); }
+fn clo_byv(b: S1): i64 { var f = || rd1(b); return callptr(f); }
+fn clo_big(): i64 { var a = P3 { 1, 22, 3 }; var g = || rd3(a); return callptr(g); }
+
+var G = S1 { 11 };
+var GB = B2 { 1, 4 };
+
+fn locals(): i64 {
+    var s = S1 { 5 };
+    assert_eq(rd1(s), 5, "bare S1 local: rd1(s)");
+    assert_eq(rd1(&s), 5, "control: rd1(&s)");
+    wr1(s, 9);
+    assert_eq(s.v, 9, "bare S1 local: wr1(s, 9) writes s");
+    var d: S1;
+    d.v = 6;
+    assert_eq(rd1(d), 6, "bare declared S1 local");
+    var c = B4 { 3 };
+    assert_eq(rd4(c), 3, "bare B4 (4 B) local");
+    var e = B2 { 3, 7 };
+    assert_eq(rd2(e), 7, "bare B2 (i32 + i32) local");
+    var heap = alloc(16);
+    store64(heap, 77);
+    var w = W { heap };
+    setbuf(w, 9);
+    assert_eq(w.buf, 9, "bare W local: setbuf(w, 9) writes w.buf");
+    assert_eq(load64(heap), 77, "bare W local: and not the object w.buf pointed at");
+    var a = P3 { 1, 22, 3 };
+    assert_eq(rd3(a), 22, "control: bare P3 (24 B) local");
+    bump3(a);
+    assert_eq(a.x, 2, "control: bare P3 local written through");
+    return 0;
+}
+
+fn other_shapes(): i64 {
+    assert_eq(rd1(G), 11, "bare S1 global");
+    wr1(G, 12);
+    assert_eq(G.v, 12, "bare S1 global written through");
+    assert_eq(rd2(GB), 4, "bare B2 global");
+    var t = S1 { 8 };
+    assert_eq(pass_on(t), 8, "a by-value S1 parameter passed on to *S1");
+    var h: HI;
+    h.k = 1; h.inner.v = 6;
+    wr1(h.inner, 8);
+    assert_eq(h.inner.v, 8, "an inline S1 field written through");
+    assert_eq(rd1(h.inner), 8, "an inline S1 field read through");
+    var s = S1 { 5 };
+    assert_eq(rdg<S1>(s), 5, "generic instance rdg<S1>(s)");
+    var u = B2 { 1, 2 };
+    wrg<B2>(u, 9);
+    assert_eq(u.b, 9, "generic instance wrg<B2>(u, 9) writes u");
+    var bx: Box<i32>;
+    bx.v = 3; bx.w = 6;
+    assert_eq(rdbox(bx), 6, "a *Box<i32> (8 B instance) parameter");
+    var o = S1 { 7 };
+    assert_eq(s.sum(o), 12, "a *S1 method argument");
+    assert_eq(early_caller(), 18, "a forward call (the callee is defined below)");
+    assert_eq(tail_bare(), 31, "return rd1(s);");
+    return 0;
+}
+
+fn closures(): i64 {
+    assert_eq(clo_bare(), 5, "a captured S1 passed to *S1");
+    assert_eq(clo_nested(), 7, "a capture of a capture");
+    var s = S1 { 5 };
+    assert_eq(clo_ptr(&s), 5, "a captured *S1 parameter passed on");
+    var t = S1 { 7 };
+    assert_eq(clo_byv(t), 7, "a captured by-value S1 parameter");
+    assert_eq(clo_big(), 22, "control: a captured P3 passed to *P3");
+    return 0;
+}
+
+alloc_init();
+locals();
+other_shapes();
+closures();
+var Gt = S1 { 40 };
+assert_eq(rd1(Gt), 40, "at top level: a bare S1 global");
+var r = assert_summary();
