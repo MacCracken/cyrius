@@ -4388,7 +4388,9 @@ fn _deps_lock_dir(dir, lock_h): i64 {
 # every consumer CI that gates the lock byte-for-byte (`git diff --exit-code -- cyrius.lock`)
 # failed for any lock committed elsewhere (agnostic 2026-09-12: "98 insertions(+), 98
 # deletions(-)" over identical hashes). See issues/archived/2026-09-12-cyrius-lock-unstable-order.md.
-# The commit-pin lines need no sort: they are appended in manifest declaration order.
+# The commit-pin lines are sorted too, in cmd_deps_lock (_lock_commit_line_cmp): a resolve
+# carries forward the pins it did not re-verify, so resolve order would make the block's
+# order depend on which deps the run re-verified. CHANGELOG [6.6.20]
 #
 # ⛔ 6.6.10 — an unlistable directory under lib/ is named and COUNTED in _deps_lock_unlisted:
 # it read as empty, so `cyrius deps --lock` wrote a lock that silently did not cover its files
@@ -4485,6 +4487,34 @@ fn _dep_commit_fresh_has(p, n): i64 {
     return 0;
 }
 
+fn _lock_cstr_cmp(a, b): i64 {
+    var i = 0;
+    while (1 == 1) {
+        var ca = load8(a + i);
+        var cb = load8(b + i);
+        if (ca != cb) { return ca - cb; }
+        if (ca == 0) { return 0; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# The commit block's canonical order: by the bytes from the NAME field on — (name, git, tag),
+# the tab sorting below every byte a field holds — then by the whole line, so the order is
+# total and the block is a function of the pin SET, not of which deps a resolve re-verified.
+# CHANGELOG [6.6.20]
+fn _lock_commit_line_cmp(a, b): i64 {
+    var na = strlen(a);
+    var nb = strlen(b);
+    var oa = _lock_commit_field_at(a, na, 2);
+    var ob = _lock_commit_field_at(b, nb, 2);
+    if (oa < 0) { oa = na; }
+    if (ob < 0) { ob = nb; }
+    var c = _lock_cstr_cmp(a + oa, b + ob);
+    if (c != 0) { return c; }
+    return _lock_cstr_cmp(a, b);
+}
+
 fn cmd_deps_lock(): i64 {
     # v6.0.2: cyrius's own repo authors its lib/ — skip (self-referential
     # + would churn the tracked cyrius.lock on every check.sh). See
@@ -4520,7 +4550,9 @@ fn cmd_deps_lock(): i64 {
     # dropped the x@v2 pin a later `--features` resolve reads. So an old tag's line stays after a
     # tag bump — fail-closed, what CVE-21 wants if the dep is moved back to that tag (delete
     # cyrius.lock to re-pin). Not filtered to the manifest's names either: a transitive dep of a
-    # gated-out dep is declared only in that dep's own, unread manifest. CHANGELOG [6.6.20]
+    # gated-out dep is declared only in that dep's own, unread manifest.
+    # SORTED (_lock_commit_line_cmp): fresh-then-carried order wrote one pin set in an order set
+    # by which deps the run re-verified — the 6.6.3 churn class. CHANGELOG [6.6.20]
     var _pins = vec_new();
     if (_dep_commit_lines != 0) {
         var _ci = 0;
@@ -4544,6 +4576,7 @@ fn cmd_deps_lock(): i64 {
             _lp = _le + 1;
         }
     }
+    vec_sort_by(_pins, &_lock_commit_line_cmp);
     var _cc = 0;
     while (_cc < vec_len(_pins)) {
         var _line = vec_get(_pins, _cc);

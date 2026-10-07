@@ -16,8 +16,8 @@
 # bytes and RE-PINNED to them — the first-resolve TOFU floor, reached on a routine workflow.
 #
 # THE FIX: cmd_deps_lock always MERGES — the fresh lines plus every inherited `commit\t` line no
-# fresh line supersedes. An inherited line is superseded only by a fresh line with its
-# (name, git, tag): the key `_lock_commit_lookup` reads a pin by, the git url
+# fresh line supersedes — and SORTS the block. An inherited line is superseded only by a fresh
+# line with its (name, git, tag): the key `_lock_commit_lookup` reads a pin by, the git url
 # normalised the same way (`…/x` = `…/x.git`), so a respelled url still replaces its line (K14).
 # NOT by the name alone. The first cut keyed on the name, and review measured the hole: in a
 # diamond, a gated root `x@v2` and a required dep's own `x@v1` share the name, the feature-less
@@ -26,6 +26,9 @@
 # what CVE-21 wants if the dep is moved back to that tag; deleting cyrius.lock re-pins. Not
 # filtered to manifest-declared names either: a transitive dep of a gated-out dep is declared
 # only in that dep's own manifest, which is never read while it is gated out (K5).
+# SORTED by (name, git, tag), then the whole line: fresh-then-carried order wrote one pin set in
+# an order set by which deps the run re-verified, so alternating gatings flipped the block — the
+# 6.6.3 churn class for `git diff --exit-code -- cyrius.lock` (K13).
 #
 # THE CRLF HALF (CBTB-05). `_dep_lock_load` and `_lock_buf_hash_lookup` were made CRLF-tolerant
 # at 6.6.4/6.6.9; their two siblings were not. `_lock_commit_lookup` kept the `\r` on the TAG
@@ -52,14 +55,16 @@
 #   K12 diamond: optional root `dx` at v2 + required `dy`, whose own manifest declares dx at v1.
 #       K12a: a feature-less `deps` pins dx@v1 and keeps the dx@v2 pin, same sha; K12b: dx's v2
 #       repointed + fresh cache → `deps --features gpu` REFUSED by name, lock and lib untouched
+#   K13 order: a project declaring its gated dep FIRST — `deps --features gpu`, `deps`,
+#       `deps --features gpu` — leaves cyrius.lock byte-identical each time
 #   K14 a respelled url (`…/good` → `…/good.git`) replaces its line: one (good, v2) line, the
 #       respelled spelling, same sha, no duplicate
 #
 # Mutation ledger (measured in a scratch root, one mutant at a time): the slot-open (6.6.20) CLI
 # → every axis but K1 red; the first cut, which dropped an inherited line by NAME (61c88ca3) →
-# K8 K12a K12b K14 red; carrying every inherited line (the fresh-line check always 0) → K2 K3
-# K8 K12a K14 red (a duplicate line per re-verified dep); comparing the git field byte-for-byte
-# instead of url-normalised → K14 red; dropping the CR strip in
+# K8 K12a K12b K13 K14 red; carrying every inherited line (the fresh-line check always 0) → K2
+# K3 K8 K12a K13 K14 red (a duplicate line per re-verified dep); comparing the git field
+# byte-for-byte instead of url-normalised → K14 red; no sort → K13 red; dropping the CR strip in
 # _lock_commit_lookup → K10 red; dropping the one in cmd_deps_verify → K11 red. A repoint must
 # make a NEW commit: the second repoint of one origin used to be an empty `git commit`, the tag
 # never moved, and the CRLF axis passed nothing (caught while measuring this ledger).
@@ -277,6 +282,43 @@ if [ "$rc" -eq 0 ] && [ "$(pin_at dx v2)" = "$dx2" ] && [ "$(pin_at dx v1)" = "$
     ok "K12a diamond: a feature-less resolve pinned dy's dx@v1 and KEPT the root's dx@v2 pin"
 else bad "K12a (rc=$rc, $(npins) pins: $(tr -d '\r' < "$P/cyrius.lock" | grep "^commit" | cut -f3,5 | tr '\n' ' ')): $(grep -m2 -i 'error\|refus' "$W/k12a.out")"; fi
 RTAG=v2; refused K12b dx --features gpu; RTAG=v1
+
+# ── K13: the commit block's order is a function of the pin SET, not of the gating ──────────
+#    The gated dep is declared FIRST: fresh-then-carried order wrote opt-first under
+#    `--features gpu` and good-first without it, so alternating gatings flipped the block.
+P="$W/p3"; mkdir -p "$P"
+cat > "$P/cyrius.cyml" <<EOF
+[package]
+name = "pinso"
+version = "0.0.1"
+language = "cyrius"
+cyrius = "$V"
+
+[build]
+src = "main.cyr"
+output = "out"
+
+[features]
+gpu = ["opt"]
+
+[deps.opt]
+git = "file://$W/o/opt"
+tag = "v1"
+modules = ["dist/opt.cyr"]
+optional = true
+
+[deps.good]
+git = "file://$W/o/good"
+tag = "v1"
+modules = ["dist/good.cyr"]
+EOF
+cp "$P0/main.cyr" "$P/main.cyr"
+r1=0; _cy deps --features gpu > "$W/k13a.out" 2>&1 || r1=$?; cp "$P/cyrius.lock" "$W/k13.l1" 2>/dev/null || :
+r2=0; _cy deps > "$W/k13b.out" 2>&1 || r2=$?; cp "$P/cyrius.lock" "$W/k13.l2" 2>/dev/null || :
+r3=0; _cy deps --features gpu > "$W/k13c.out" 2>&1 || r3=$?; cp "$P/cyrius.lock" "$W/k13.l3" 2>/dev/null || :
+if [ "$r1$r2$r3" = "000" ] && [ "$(npins)" -eq 3 ] && cmp -s "$W/k13.l1" "$W/k13.l2" && cmp -s "$W/k13.l1" "$W/k13.l3"; then
+    ok "K13 gated dep declared first: --features gpu / plain / --features gpu leave cyrius.lock byte-identical (3 pins)"
+else bad "K13 (rc=$r1/$r2/$r3, $(npins) pins): gpu $(grep "^commit" "$W/k13.l1" | cut -f3 | tr '\n' ' ')| plain $(grep "^commit" "$W/k13.l2" | cut -f3 | tr '\n' ' ')| gpu $(grep "^commit" "$W/k13.l3" | cut -f3 | tr '\n' ' ')"; fi
 
 # ── K14: a respelled url replaces its line (the drop key normalises git as the lookup does) ──
 P=$P0
