@@ -705,13 +705,19 @@ fn _poison_fl_check(blk): i64 {
 
 # arena_new with a 64-byte header: the 56-byte layout plus a+56, the head of the list of
 # blocks this arena handed out (threaded through each block's owner link, blk+16).
+# Only an ARMED alloc() block has a poison header (its meta word at a - 48): on agnos and
+# cx (and anywhere the flag is off) a - 48 is the previous block's tail — or, for the
+# first allocation, below the heap mapping (SIGSEGV) — so the read is guarded the way
+# _poison_block guards it. CHANGELOG [6.6.20]
 fn _poison_arena_new(capacity): i64 {
     var a = alloc(64);
     if (a == 0) { return 0; }
-    if (((load64(a - _POISON_RZ - _POISON_HDR + 8) >> 52) & 1) == 1) {
-        _poison_lock_acquire();
-        _poison_hidden = _poison_hidden + 8;    # the non-poison header is 56 bytes
-        _poison_lock_release();
+    if (_poison_alloc_armed() == 1) {
+        if (((load64(a - _POISON_RZ - _POISON_HDR + 8) >> 52) & 1) == 1) {
+            _poison_lock_acquire();
+            _poison_hidden = _poison_hidden + 8;    # the non-poison header is 56 bytes
+            _poison_lock_release();
+        }
     }
     var ch = alloc(capacity + 16);
     if (ch == 0) { return 0; }
