@@ -113,6 +113,8 @@ fn _mode_unsupported(S, a64): i64 {
 # cannot drift from the decision; wp_compact keeps its own guards (the CYRIUS_IR=3 seam uses
 # them) and FIXUP flags any refusal this does not classify. 0 = compaction will run.
 # `a64` = 1 from the aarch64 FIXUP. CHANGELOG [6.6.18]
+# Since 6.6.20 `kernel;` and CYRIUS_WX=0 decline too, so compaction runs ONLY on the W^X
+# static x86 ELF layout — the one that freezes the data segment. CHANGELOG [6.6.20]
 fn _dce_compact_why(S, a64): i64 {
     if (a64 == 1) { return "aarch64 has no compaction repair model yet"; }
     var fmt = _emit_fmt(S);
