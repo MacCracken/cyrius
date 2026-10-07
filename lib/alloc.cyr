@@ -776,22 +776,23 @@ fn _alloc_free_noop(state, ptr): i64 {
     return 0;
 }
 
-# Default realloc shape: alloc new + memcpy old → new. The old
-# allocation is leaked (acceptable for bump/arena since reset/exit
-# reclaims). Used by both bump_allocator and arena_allocator.
-fn _alloc_realloc_via(a, old_ptr, old_size, new_size): i64 {
-    var new_ptr = alloc_via(a, new_size);
-    if (new_ptr == 0) { return 0; }
-    if (old_ptr != 0) {
-        var copy_size = old_size;
-        if (new_size < copy_size) { copy_size = new_size; }
-        var i = 0;
-        while (i < copy_size) {
-            store8(new_ptr + i, load8(old_ptr + i));
-            i = i + 1;
-        }
+# The copy every "alloc new + copy + leak old" realloc entry shares — _bump_realloc,
+# _arena_realloc, _test_realloc and lib/poison.cyr's _poison_va_realloc: min(old_size,
+# new_size) bytes from old_ptr to new_ptr, nothing when old_ptr is 0. The old block is not
+# freed (bump and arena memory comes back only at reset / exit). It replaced
+# `_alloc_realloc_via`, which claimed to be this shared shape but had no caller — it took
+# an Allocator where a vtable entry receives the STATE, so it could not be wired — while
+# each entry re-inlined the loop. CHANGELOG [6.6.20]
+fn _alloc_copy_min(new_ptr, old_ptr, old_size, new_size): i64 {
+    if (old_ptr == 0) { return 0; }
+    var copy_size = old_size;
+    if (new_size < copy_size) { copy_size = new_size; }
+    var i = 0;
+    while (i < copy_size) {
+        store8(new_ptr + i, load8(old_ptr + i));
+        i = i + 1;
     }
-    return new_ptr;
+    return 0;
 }
 
 # ================================================================
@@ -804,9 +805,9 @@ fn _alloc_realloc_via(a, old_ptr, old_size, new_size): i64 {
 # global allocation, so use carefully when other code on the same
 # heap might still hold pointers.
 #
-# realloc + free use the shared default helpers — bump can't
-# individually free, and realloc's "alloc new + leak old" is
-# the honest semantics.
+# free is the shared no-op and realloc copies through the shared
+# _alloc_copy_min — bump can't individually free, and realloc's
+# "alloc new + leak old" is the honest semantics.
 
 fn _bump_alloc(state, size): i64 {
     return alloc(size);
@@ -815,15 +816,7 @@ fn _bump_alloc(state, size): i64 {
 fn _bump_realloc(state, old_ptr, old_size, new_size): i64 {
     var new_ptr = alloc(new_size);
     if (new_ptr == 0) { return 0; }
-    if (old_ptr != 0) {
-        var copy_size = old_size;
-        if (new_size < copy_size) { copy_size = new_size; }
-        var i = 0;
-        while (i < copy_size) {
-            store8(new_ptr + i, load8(old_ptr + i));
-            i = i + 1;
-        }
-    }
+    _alloc_copy_min(new_ptr, old_ptr, old_size, new_size);
     return new_ptr;
 }
 
@@ -854,15 +847,7 @@ fn bump_allocator(): i64 {
 fn _arena_realloc(state, old_ptr, old_size, new_size): i64 {
     var new_ptr = arena_alloc(state, new_size);
     if (new_ptr == 0) { return 0; }
-    if (old_ptr != 0) {
-        var copy_size = old_size;
-        if (new_size < copy_size) { copy_size = new_size; }
-        var i = 0;
-        while (i < copy_size) {
-            store8(new_ptr + i, load8(old_ptr + i));
-            i = i + 1;
-        }
-    }
+    _alloc_copy_min(new_ptr, old_ptr, old_size, new_size);
     return new_ptr;
 }
 
@@ -925,15 +910,7 @@ fn _test_alloc(state, size): i64 {
 fn _test_realloc(state, old_ptr, old_size, new_size): i64 {
     var new_ptr = _test_alloc(state, new_size);
     if (new_ptr == 0) { return 0; }
-    if (old_ptr != 0) {
-        var copy_size = old_size;
-        if (new_size < copy_size) { copy_size = new_size; }
-        var i = 0;
-        while (i < copy_size) {
-            store8(new_ptr + i, load8(old_ptr + i));
-            i = i + 1;
-        }
-    }
+    _alloc_copy_min(new_ptr, old_ptr, old_size, new_size);
     return new_ptr;
 }
 

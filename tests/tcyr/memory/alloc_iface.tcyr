@@ -74,6 +74,30 @@ assert(p3 != 0, "realloc_via grew the allocation");
 assert_eq(load8(p3),      100, "byte 0 of grown alloc preserved");
 assert_eq(load8(p3 + 15), 115, "byte 15 of grown alloc preserved");
 
+# 6.6.20 (DEAD-09): every realloc entry copies through the one _alloc_copy_min — min(old,
+# new) bytes, nothing from a 0 old_ptr. Pinned on each allocator that uses it.
+test_group("realloc_via copies min(old, new) on bump / arena / test allocators");
+var rr_als = vec_new();
+vec_push(rr_als, b1);
+vec_push(rr_als, arena_allocator(4096));
+vec_push(rr_als, test_allocator());
+var rr = 0;
+while (rr < 3) {
+    var ral = vec_get(rr_als, rr);
+    var rsrc = alloc_via(ral, 32);
+    var rk = 0;
+    while (rk < 32) { store8(rsrc + rk, 7 + rk); rk = rk + 1; }
+    var rgr = realloc_via(ral, rsrc, 32, 64);
+    assert_eq(load8(rgr + 31), 38, "grow: the last old byte is copied");
+    assert_eq(load8(rgr + 32), 0, "grow: nothing past old_size is copied (fresh block)");
+    var rshr = realloc_via(ral, rsrc, 32, 8);
+    assert_eq(load8(rshr), 7, "shrink: the first byte is copied");
+    assert_eq(load8(rshr + 7), 14, "shrink: the last kept byte is copied");
+    var rnul = realloc_via(ral, 0, 32, 16);     # a copy from address 0 would fault
+    assert(rnul != 0, "realloc from a 0 old_ptr allocates and copies nothing");
+    rr = rr + 1;
+}
+
 # ---- arena_allocator behavior ----
 
 test_group("arena_allocator(cap) — independent from global bump");

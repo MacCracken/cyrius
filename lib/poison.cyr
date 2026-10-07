@@ -537,12 +537,7 @@ fn _poison_va_alloc(state, n): i64 {
 fn _poison_va_realloc(state, old_ptr, old_size, new_size): i64 {
     var np = _poison_va_alloc(state, new_size);
     if (np == 0) { return 0; }
-    if (old_ptr != 0) {
-        var c = old_size;
-        if (new_size < c) { c = new_size; }
-        var i = 0;
-        while (i < c) { store8(np + i, load8(old_ptr + i)); i = i + 1; }
-    }
+    _alloc_copy_min(np, old_ptr, old_size, new_size);     # lib/alloc.cyr's shared copy
     return np;
 }
 
