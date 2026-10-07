@@ -8,6 +8,68 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 The v6.7.x language minor opens. In progress.
 
+### Language — real traits (arc A; [ADR-007](docs/adr/007-traits.md))
+
+The v6.7.x language minor opens with checked traits. Every decision below was the user's (2026-10-07);
+dispatch stays static (ADR-004) and collision-free code keeps the same `T_m` symbols and calls.
+
+- **`trait` declarations, checked impls and default methods** (A1). `trait Show { fn show(self): i64;
+  fn twice(self): i64 { return self.show() * 2; } }` declares a method set; a member ending in `;` is
+  required, one with a body is a default. `impl X for T` is checked: an undeclared trait, a method the
+  trait does not declare, a different parameter count, and a required method left out are compile errors
+  naming the trait; a trait or member declared twice and a non-`fn` member are refused too. A default the
+  impl does not define is instantiated for T from the trait's own tokens (as a generic instance is from
+  its base's). One token pre-scan at the start of pass 1 (`_tr_prepass`) records every trait and impl, so
+  a trait may sit below its impls. Before 6.7.0 there was no `trait` keyword: `PARSE_IMPL` skipped the
+  trait name unread, so `impl NoSuchTrait for P` compiled and nothing was checked. `trait` is a reserved
+  word (statement keywords 26 -> 27; no identifier use in cyrius or the ecosystem).
+- **Trait-qualified names and collisions** (A2; the user chose the mangled spelling). Every trait method
+  is reachable as `T_Trait_m`; while one trait (or an inherent impl) gives T an `m` it is also the plain
+  `T_m` / `p.m()`. Two traits giving T an `m` define `T_A_m` and `T_B_m`, and the plain name is refused —
+  at a method call with a positioned error naming a qualified spelling, on a direct `T_m(..)` call with
+  the same explanation on its undefined-function report — except inside an impl or default of one of
+  those traits, where `self.m()` means its own. An inherent `m` keeps `T_m`. Before 6.7.0 both became
+  `Point_size` and the last definition bound.
+- **Inherent `impl Type { … }`** (A3) — methods with no trait; it was `expected for`. A malformed impl
+  header names both spellings.
+- **An untyped `self` in an impl is a `*T`** (A4). `self.x` reads and writes the receiver, and `T_m(o)`,
+  `T_m(&o)` and `o.m()` agree — `T_m(o)` on an 8-byte struct passed o's VALUE and the method faulted
+  (SIGSEGV). ⛔ **Arithmetic on an untyped `self` is refused** (`self + n`, `n + self`, `self - n`, the
+  `%` / `|` / `?` forms, `self[i]`, `self += n`), naming the struct: a `*T` steps `sizeof(T)`, so the old
+  `load64(self + 8)` idiom would otherwise have changed meaning silently. Write `self.field`, or declare
+  `self: *T` to step elements. Pass 1 records the impl type per fn (`_fnt_iself`), so pass 2 and every
+  generic instance (re-parsed from its call site, outside the impl) type `self` identically.
+- **`var q: T = p;` with `p: *T` copies `*p` at both sizes** (A4, BACKLOG-06). A `*T` parameter of 8 B or
+  less stored the POINTER into q's inline word (`q.v` read an address); a `*T` local did the same at 8 B
+  and BOUND q to `*p` over 8 B. It copies through any `*T` source now (parameter, local, implicit `self`,
+  `*T` global); a pointer-mode handle local still binds. Aliasing is `var q: *T = p;`.
+- **Methods on nested inline fields and chains** (A5): `b.v.sum()`, `p.v.sum()` through a pointer,
+  `mk(3).v.sum()` on a call result, two levels down, on a global, and as a statement (`b.v.scale(3);`) —
+  `expected ';' / '=', got '.'` before. The field's address is the method's `self`, so writes land in the
+  outer struct; an inline base marks the frame address as escaping (the v6.5.14 tail-call guard). And
+  `var u = s.clone();` types `u` from an 8-byte struct result (BACKLOG-07; it was `no struct type in scope`).
+- **Migration (cyrius's own sources only).** 84 impls across 32 test / gate / fixture files used trait
+  names as labels on undeclared traits; they are inherent impls now (identical mangling). Six sites used
+  `load64(self + N)` and read fields by name now. The ecosystem has no `impl` blocks (surveyed).
+
+Tests: `tests/tcyr/crossos/traits_checked.tcyr` (13), `impl_self_typed.tcyr` (14), `impl_inherent.tcyr`
+(4), `struct_from_pointer_copies.tcyr` (8), `method_on_nested_field.tcyr` (8) — each run on x86, aarch64
+(qemu) and PE (wine) before commit, the last on cx too; gates `tests/gates/frontend/traits_checked.sh`
+(13 rows) and `impl_self_typed.sh` (11 rows), both mutation-checked.
+
+⚠ Found on the way and fixed in the same bites: cybs (the bootstrap compiler) rejects a call with seven or
+more arguments with a bare "syntax error" — seed-derive caught a 7-argument helper call; it takes six now.
+
+### Bootstrap
+
+- **cybs refuses a call with 7+ arguments by name** instead of a bare "syntax error". cybs passes only the six
+  register arguments (`emit_fn_call_pops`); a 7th sent the call to `parse_err`. Found when seed-derive rejected a
+  7-argument helper call in `src/`. A 7+ parameter definition keeps its first six (lib/fnptr.cyr's `fncall6..8`,
+  included by the compiler) and is unreachable with all its arguments (comment at `emit_store_param`). New gate
+  `tests/gates/toolchain/cybs_call_arity_named.sh` runs cybs over `src/main.cyr` in check.sh, so such a call fails
+  the normal suite rather than first the release gate's seed-derive. Real stack arguments in cybs are scheduled
+  in roadmap.md (Break 1).
+
 ### CI
 
 - **Every Linux job runs on `ubuntu-26.04`** (the native-ARM self-host on `ubuntu-26.04-arm`), and every action is at

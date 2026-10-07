@@ -147,7 +147,9 @@ Gates, fail-fast:
    cover it: **cybs** (the hand-assembly bootstrap compiler the 29 KB seed
    assembles) is far more limited than `build/cycc` and fails **SILENTLY** on
    things `build/cycc` compiles fine — too many global/call references in one
-   function, tail calls. **Mandatory for ANY `src/` change, on EVERY release — not
+   function, tail calls; and a call with **7+ arguments** (cybs passes only the six register
+   arguments — refused BY NAME since 6.7.0, and `cybs_call_arity_named.sh` runs cybs over
+   `src/main.cyr` in check.sh; stack arguments are scheduled in roadmap.md). **Mandatory for ANY `src/` change, on EVERY release — not
    only at minor/major closeouts.** (`gen1`, cybs's output, DIFFERING IN SIZE from
    `build/cycc` is NORMAL — it's the bootstrap intermediate, and the *sign* of that
    difference has flipped over the project's life. This line read "~72 KB smaller"
@@ -448,8 +450,8 @@ per-session memory files so they survive environment changes.
   became builtins; 76 at v6.6.1, when this line said 67 and a `util.cyr` comment said 51), **2**
   more builtins it enumerates BY HAND — `f64_sqrt` (token 136) and `callptr` (137), outside
   `TOKNAME_BUILTIN` since v6.6.2's renumbering, so the "derives, so it cannot drift" guarantee
-  does not cover them (this line counted 79 + 26 and missed both until 6.6.20) — and **26**
-  statement keywords, also enumerated by hand: **107** reserved tokens in all. ⚠ The hand-listed
+  does not cover them (this line counted 79 + 26 and missed both until 6.6.20) — and **27**
+  statement keywords (6.7.0 added `trait`), also enumerated by hand: **108** reserved tokens in all. ⚠ The hand-listed
   halves CAN drift from `TOKNAME`, and that function's own comment says so: "adding to one and
   not the other is exactly the drift that note claims is impossible." Corrected v6.6.1 and
   6.6.20. ⚠ `sizeof`, `mulh64` and `fncall0..8` are intrinsics recognised by NAME

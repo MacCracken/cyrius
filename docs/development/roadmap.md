@@ -74,10 +74,10 @@ in [completed-phases.md](completed-phases.md) § *v6.6.x*; the detail is the CHA
 
 | Release | Content |
 |---|---|
-| **6.7.0** | **A — real traits** (A1–A6, decisions below) · the CI refresh: every Linux job on **`ubuntu-26.04`** (the `-arm` job on `ubuntu-26.04-arm`) and every action at its latest stable release, SHA-pinned (checkout v7, upload-artifact v7, download-artifact v8, action-gh-release v3) · **`cyrius --help` reorganised** (commands grouped by what they do; nothing renamed or removed) |
+| **6.7.0** | **A — real traits** (A1–A6, decisions below; A1–A5 landed 2026-10-07 — [ADR-007](../adr/007-traits.md)) · the CI refresh: every Linux job on **`ubuntu-26.04`** (the `-arm` job on `ubuntu-26.04-arm`) and every action at its latest stable release, SHA-pinned (checkout v7, upload-artifact v7, download-artifact v8, action-gh-release v3) · **`cyrius --help` reorganised** (commands grouped by what they do; nothing renamed or removed) |
 | **6.7.1 →** | **C3 — trait-bounded generics** (needs A), with its prerequisite the multi-type-param struct-type-arg residual and the generic-struct field |
 | then, by size | **B1 `const` + C1 `const fn`** together · B2 `bool` / `true` / `false` · B3 the if-expression · B5 `loop` / `do … while` · B8 compound assignment on a field |
-| **Break 1** | catch-up: backlog + found issues (user picks) · `cyrius test` / `tests` consolidation |
+| **Break 1** | catch-up: backlog + found issues (user picks) · `cyrius test` / `tests` consolidation · **cybs stack arguments** (below) |
 | then | B4 tuples · B6 default + named arguments · B7 narrow struct fields (ABI survey + migration) · C2 bounds-checked mode (+ P5 execution coverage) · native `dyn` IF the user takes it (open question 5) |
 | **Break 2** | catch-up |
 | **closeout** | the closeout checklist ([cycle-discipline.md](cycle-discipline.md)) — the checklist, not an audit campaign (CLAUDE.md) |
@@ -178,6 +178,20 @@ generic-struct FIELD** (BACKLOG-13): `struct H { a: i64; b: Box<i32>; }` is `exp
    unchecked half for integer-element `var a: T[N]`; still to do: `*T` pointer subscripts, slice writes, and
    the checked mode itself. **With it, proposal P5's execution half** ([`proposals/2026-09-20-coverage-should-accept-run-programs-as-a-corpus.md`](proposals/2026-09-20-coverage-should-accept-run-programs-as-a-corpus.md);
    A shipped 6.6.17) — it shares C2's insertion point and build-flag plumbing.
+
+## Bootstrap item placed in Break 1 — cybs stack arguments (user, 2026-10-07)
+
+cybs (the hand-assembly bootstrap compiler the seed assembles; `bootstrap/cybs.cyr`) passes only the six
+register arguments: `emit_fn_call_pops` handles 0..6 and `emit_store_param` stores parameters 0..5. Found at
+6.7.0, when seed-derive rejected a 7-argument helper call in `src/` with a bare "syntax error". **6.7.0 shipped
+the interim** (user's option 2): a 7+ argument call is refused BY NAME, and `cybs_call_arity_named.sh` runs
+cybs over `src/main.cyr` in check.sh. A 7+ parameter DEFINITION keeps its first six — `lib/fnptr.cyr`'s
+`fncall6..8`, which the compiler includes, are such; unreachable with all their arguments (see the comment at
+`emit_store_param`). **The repair:** the caller pushes arguments 7+ and the callee reads them from its frame
+(`[rbp + 16 + (i - 6) * 8]`, the SysV layout), so `src/` may use 7+ argument helpers and cybs compiles
+fncall6..8 faithfully. Acceptance: closure (cybs reproduces `bootstrap/asm`), seed-derive, a cybs fixture with
+a 7- and a 9-argument call returning the right values, and the gate's refusal row turned into a success row.
+Keep it small and auditable — cybs is the trusted root's first rung (CLAUDE.md *Sovereignty*).
 
 ## Tooling item placed in Break 1 — `cyrius test` absorbs `cyrius tests` (user, 2026-10-07)
 

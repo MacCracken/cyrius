@@ -356,8 +356,10 @@ var r = add(20, 22);   # r = 42
   the dot form supplies a receiver the method never declared. Call it by its mangled name
   (`Type_method(args)`), which is how the constructor idiom `fn new(a, b)` inside an `impl` is
   written anyway. Forward calls are exempt from the check — the callee has no body yet.
-- **`x.m()` passes `self` exactly as `T_m(x)` would.** An untyped `self` (the `impl` form) is
-  the receiver's address. A typed `self: T` follows the parameter rule: a struct is a **value**
+- **`x.m()` passes `self` exactly as `T_m(x)` would.** An untyped `self` in an `impl` is a `*T`
+  (since **6.7.0**): `self.x` reads and writes the receiver's fields, `T_m(x)` / `T_m(&x)` / `x.m()`
+  agree, and arithmetic on it (`self + 8`, `self[i]`, `self += n`) is refused — read fields with
+  `self.field`, or declare `self: *T` to step whole elements (see *Traits and impl blocks*). A typed `self: T` follows the parameter rule: a struct is a **value**
   at every width — one of 8 bytes or less arrives in a register, a wider one by address and is
   copied on entry (v6.6.16) — so `fn Odd_sum(self: Odd)` and `fn P3_bump(self: P3)` see a copy,
   and writing `self.a` inside them does not change `x`. Before v6.6.11 the dot form pushed `&x`
@@ -1079,6 +1081,56 @@ slice vars still need the helper-fn API (`slice_ptr` / `slice_len` /
 A `Str` (heap, `lib/str.cyr`) and a `vec`'s first 16 bytes
 (`lib/vec.cyr`) are byte-identical to a slice — they pass directly to
 `slice_ptr` / `slice_len` / `slice_eq` etc. without conversion.
+
+## Traits and impl blocks (6.7.0)
+
+A **trait** declares a method set; an **impl** gives a type those methods. Dispatch is static — a
+method call is a direct call to a mangled name, as [ADR-004](../adr/004-convention-based-dispatch.md)
+set out; [ADR-007](../adr/007-traits.md) records the trait design.
+
+```cyr
+struct Point { x; y; }
+
+trait Show {
+    fn show(self): i64;                                   # required
+    fn twice(self): i64 { return self.show() * 2; }      # a default
+}
+
+impl Show for Point {
+    fn show(self): i64 { return self.x * 10 + self.y; }
+}
+
+impl Point {                                              # inherent: no trait
+    fn new(x, y): Point { var p: Point; p.x = x; p.y = y; return p; }
+    fn norm1(self): i64 { return self.x + self.y; }
+}
+
+var p = Point_new(1, 2);
+p.show();          # 12  -> Point_show(&p)
+p.twice();         # 24  -> the default, instantiated for Point
+Point_Show_show(p) # 12  -> the trait-qualified name
+```
+
+- **`impl X for T` is checked.** An undeclared trait, a method `X` does not declare, a different
+  parameter count, and a required method left out are compile errors naming the trait. A trait may
+  be declared above or below its impls. Traits and impls go in the declaration section (before the
+  first top-level statement), like `struct` and `fn`.
+- **Defaults** (a member with a body) are instantiated for every impl that does not define its own —
+  each impl type gets its own copy, so `self.show()` inside one calls that type's `show`.
+- **Names.** A method is `T_m`; every trait method is also `T_Trait_m`. If **two traits** give `T`
+  an `m`, the plain `T_m` / `p.m()` is ambiguous and refused (the error names a qualified spelling)
+  — call `T_A_m(p)` or `T_B_m(p)`. Inside an impl or default of one of those traits, `self.m()`
+  means that trait's own. An inherent `m` keeps the plain name: `p.m()` picks it, the trait's is
+  `T_Trait_m`.
+- **`self`.** Untyped, it is a `*T`: fields read and write through it (`self.x = 1` changes the
+  receiver). Arithmetic on it is refused, because a `*T` steps `sizeof(T)` and `load64(self + 8)`
+  would otherwise silently mean something new — write `self.field`, or declare `self: *T` when you
+  do want element steps. `self: T` (typed by value) is a copy, as for any struct parameter.
+- **`var q: T = p;` with `p: *T` copies `*p`** at every size; write `var q: *T = p;` to alias.
+- **Methods on nested fields and chains**: `b.v.sum()`, `p.v.sum()` through a pointer,
+  `mk(3).v.sum()` on a call result, `c.w.v.scale(2);` as a statement — the field's address is the
+  method's `self`, so a write through it lands in the outer struct.
+- **Trait objects** (runtime dispatch through a vtable) remain the `lib/trait.cyr` library pattern.
 
 ## Pointer-to-struct dot syntax (v5.8.17)
 

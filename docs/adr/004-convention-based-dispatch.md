@@ -1,6 +1,6 @@
 # ADR-004: Convention-Based Method and Trait Dispatch
 
-**Status**: Accepted
+**Status**: Accepted — **amended by [ADR-007](007-traits.md) (6.7.0)**: real `trait` declarations, checked impls, defaults, inherent impls, the `T_Trait_m` qualified names and the typed `self`. The convention below (static, by-name dispatch) stands.
 **Date**: 2026-04-05
 **Context**: Need OOP-like method calls without a type system or vtable infrastructure.
 
