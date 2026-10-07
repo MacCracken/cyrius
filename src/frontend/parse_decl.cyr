@@ -1318,8 +1318,8 @@ fn _field_load_on(S, noff, fnoff, pfl_beg, idx, sid): i64 {
             var mli = 0 - idx - 2;
             # 6.6.5: the recorded layout, same reader as field access (see _local_struct_is_ptr).
             # 6.6.20: an inline receiver's `self` is an address in this frame, as `&s` is: a method
-            # may hand it back (`_tc_sarg_divert`).
-            if (_local_struct_is_ptr(S, mli, 0 - sid) == 1) { EFLLOAD(S, mli); } else { _fn_local_addr = 1; EFLADDR(S, mli); }
+            # may hand it back — unless it copies a by-value `self: T` (`_sarg_escapes`).
+            if (_local_struct_is_ptr(S, mli, 0 - sid) == 1) { EFLLOAD(S, mli); } else { _sarg_escapes(mfi, 0, 0); EFLADDR(S, mli); }
         } else {
             if (_gv_holds_addr(S, idx) == 1) { EVLOAD(S, idx); } else { EVADDR(S, idx); }
         }

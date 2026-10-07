@@ -1036,6 +1036,25 @@ fn _pm_row_any(fi, k): i64 {
     }
     return 0;
 }
+# 6.6.20 — per fn, bit k = parameter k (k < 62) is a struct the fn COPIES into its own frame in its
+# prologue, so an address its caller passes for it is not held once the call returns. Written by
+# pass 1 (parse_fn.cyr `_bvcp_note`), read by `_pm_copies`. Lazy-alloc'd at the max fn cap like
+# _fnt_pmhi, so the brk layout does not move.
+var _fnt_bvcp = 0;
+fn GFBVCP(fi): i64 {
+    if (_fnt_bvcp == 0) { return 0; }
+    if (fi < 0) { return 0; }
+    return L64(_fnt_bvcp + fi * 8);
+}
+fn SFBVCP(fi, m): i64 {
+    if (fi < 0) { return 0; }
+    if (_fnt_bvcp == 0) {
+        if (m == 0) { return 0; }
+        _fnt_bvcp = alloc(131072 * 8);
+    }
+    S64(_fnt_bvcp + fi * 8, m);
+    return 0;
+}
 # v6.3.11 (G): per-fn async flag (lazy-alloc'd, 0 = not async / table unallocated).
 fn GFAS(S, fi): i64 { if (_fnt_is_async == 0) { return 0; } return L64(_fnt_is_async + fi * 8); }
 fn SFAS(S, fi, v): i64 { if (_fnt_is_async == 0) { _fnt_is_async = alloc(131072 * 8); } S64(_fnt_is_async + fi * 8, v); return 0; }

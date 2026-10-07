@@ -14,9 +14,11 @@
 # hands `dP` the `&s` that `idp` returned, and `x` is an ordinary pointer local. The first cut of
 # this fix vetted the argument's shape and kept that call (a silent wrong value). What keeps a
 # `jmp` sound now, each pinned by rows below:
-#   1. any address in this frame handed to anything sets the fn's escape flag, `&s` or implicit —
-#      an inline struct argument, a by-value parameter's copy, a struct call's temp, a field of an
-#      inline struct, a method's `self`, an operator's operand — and every LATER tail call diverts;
+#   1. any address in this frame handed to anything that may KEEP it sets the fn's escape flag,
+#      `&s` or implicit — an inline struct argument, a by-value parameter's copy, a struct call's
+#      temp, a field of an inline struct, a method's `self`, an operator's operand — and every LATER
+#      tail call diverts. An ordinary call whose callee COPIES that parameter in its prologue keeps
+#      nothing (a `p: T` over 8 B, a Win64 vector): it sets no flag, as on 6.6.19;
 #   2. inside a loop that flag is not yet set when a lexically earlier return runs on the next
 #      iteration, so there an address-passed callee always diverts;
 #   3. an address created while evaluating the tail call's OWN arguments (`dQ(G, s.me())`,
@@ -33,10 +35,18 @@
 #     heap pointer), a global struct into `*T` and into a by-value `T` (the global's own address is
 #     pushed), a field reached through a `*T` parameter or a `*T` local (the pointee's field), a
 #     plain call that returns a pointer, and a return that runs BEFORE the fn's frame address exists;
+#   - kept (same depth) after an EARLIER by-value call given an address in this frame — an inline
+#     struct, a struct call's temp, a field of an inline struct, a by-value parameter's copy, a vector
+#     (address-passed on Win64), a typed `self: T`, a typed operator, a callee declared below, a
+#     generic's instance, and one inside the tail call's own arguments: the callee copied it and
+#     holds nothing;
 #   - diverted (deeper): an inline struct local, a field of one, a forwarded by-value parameter (an
 #     inline copy in this frame since 6.6.16), a struct call's temp, a value-form vector local
 #     (address-passed on Win64, vector-register-passed elsewhere), `&local`, a call given an inline
-#     struct local, and every laundered shape of rules 1-3.
+#     struct local, and every laundered shape of rules 1-3;
+#   - diverted (deeper) after an earlier call that may keep the address: a `*T` parameter, a
+#     `#naked` fn (no frame, so no copy), each declared above and below. 6.6.19 kept both — a `jmp`
+#     that was right only while the callee happened not to keep the pointer.
 # The deep rows run 1,000,000 levels, past any default stack (1 MB on Windows): the real shapes.
 #
 # ⚠ CROSS-HOST because the tail-call epilogue and the address-passing ABI are per backend, and the
@@ -88,6 +98,29 @@ fn P3_me(self) { return self; }
 fn P3_add(a, b) { return a; }
 fn P3_cp(self: *P3): P3 { var r = P3 { self.a, self.b, self.c }; return r; }
 fn hp3(a, b, c): *P3 { var h = alloc(24); store64(h, a); store64(h + 8, b); store64(h + 16, c); return h; }
+# By value: copied in the callee's prologue. `*T` and `#naked`: the callee gets the address itself.
+fn sumV(p: P3) { var t = p.a + p.b; return t + p.c; }
+fn sumG<T>(p: T) { var t = p.a + p.b; return t + p.c; }   # its instance is copied in too
+fn sum3p(p: *P3) { var t = p.a + p.b; return t + p.c; }
+fn P3_sumv(self: P3) { var t = self.a + self.b; return t + self.c; }
+struct Q3 { a; b; c; }
+fn Q3_add(a: Q3, b: Q3) { var t = a.a; return t + b.c; }
+# Returns 6 and never reads `p`; the asm is per arch (x86 SysV and Win64 alike).
+#naked
+fn nk6(p: P3): i64 {
+    #ifdef CYRIUS_ARCH_X86
+    asm {
+        0xB8; 0x06; 0x00; 0x00; 0x00;   # mov eax, 6
+        0xC3;                            # ret
+    }
+    #endif
+    #ifdef CYRIUS_ARCH_AARCH64
+    asm {
+        0xC0; 0x00; 0x80; 0xD2;         # mov x0, #6
+        0xC0; 0x03; 0x5F; 0xD6;         # ret
+    }
+    #endif
+}
 fn _same(m, base): i64 { if (m == base) { return 1; } return 0; }
 fn _deeper(m, base): i64 { if (m < base) { return 1; } return 0; }
 
@@ -108,6 +141,22 @@ fn t_before(q: *P3, k, c) {
     var s = P3 { 1, 2, 3 };
     return dP(s, k);
 }
+# --- kept: an EARLIER by-value call copied the address it was given -------------------------------
+fn t_bvk(q: *P3, k) { var s = P3 { 1, 2, 3 }; var v = sumV(s); return dP(q, k + v - 6); }
+fn t_bvkc(q: *P3, k) { var v = sumV(mk(1, 2, 3)); return dP(q, k + v - 6); }
+fn t_bvkf(q: *P3, k) { var w: W; w.x = 0; w.inner.a = 1; w.inner.b = 2; w.inner.c = 3; var v = sumV(w.inner); return dP(q, k + v - 6); }
+fn t_bvkp(p: P3, q: *P3, k) { var v = sumV(p); return dP(q, k + v - 12); }
+fn t_bvkv(q: *P3, k) { var v: f64v2 = mkv(30, 12); var x = dVec(v, 0); return dP(q, k + x - 42); }
+fn t_bvkm(q: *P3, k) { var s = P3 { 1, 2, 3 }; var v = s.sumv(); return dP(q, k + v - 6); }
+fn t_bvko(q: *P3, k) { var s = Q3 { 1, 2, 3 }; var t = Q3 { 4, 5, 6 }; var v = s + t; return dP(q, k + v - 7); }
+fn t_bvkw(q: *P3, k) { var s = P3 { 1, 2, 3 }; var v = sumF(s); return dP(q, k + v - 6); }
+fn t_bvka(q: *P3, k) { var s = P3 { 1, 2, 3 }; return dP(q, k + sumV(s) - 6); }
+fn t_bvkg(q: *P3, k) { var s = P3 { 1, 2, 3 }; var v = sumG(s); return dP(q, k + v - 6); }
+# --- diverted: an earlier call may KEEP the address ----------------------------------------------
+fn t_ptrb(q: *P3, k) { var s = P3 { 1, 2, 3 }; var v = sum3p(s); return dP(q, k + v - 6); }
+fn t_nkd(q: *P3, k) { var s = P3 { 1, 2, 3 }; var v = nk6(s); return dP(q, k + v - 6); }
+fn t_ptrbf(q: *P3, k) { var s = P3 { 1, 2, 3 }; var v = sum3f(s); return dP(q, k + v - 6); }
+fn t_nkdf(q: *P3, k) { var s = P3 { 1, 2, 3 }; var v = nk6f(s); return dP(q, k + v - 6); }
 # --- diverted: the argument is an address in this frame -----------------------------------------
 fn t_loc(k) { var s = P3 { 1, 2, 3 }; return dP(s, k); }
 fn t_locv(k) { var s = P3 { 1, 2, 3 }; return dV(s, k); }
@@ -197,6 +246,78 @@ fn stepw(w: *W, n, acc) {
     return stepp(w.inner, w, n - 1, acc);
 }
 fn stepp(p: *P3, w: *W, n, acc) { return stepw(w, n, acc + p.a); }
+# An earlier by-value call before the self tail call: 6.6.19 ran each of these in constant stack.
+fn loopv(n, acc) {
+    if (n == 0) { return acc; }
+    var s = P3 { 1, 2, 3 };
+    var v = sumV(s);
+    return loopv(n - 1, acc + v);
+}
+fn loopc(n, acc) {
+    if (n == 0) { return acc; }
+    var v = sumV(mk(1, 2, 3));
+    return loopc(n - 1, acc + v);
+}
+fn loopf(n, acc) {
+    if (n == 0) { return acc; }
+    var w: W; w.x = 0; w.inner.a = 1; w.inner.b = 2; w.inner.c = 3;
+    var v = sumV(w.inner);
+    return loopf(n - 1, acc + v);
+}
+fn loopa(n, acc) {
+    if (n == 0) { return acc; }
+    var s = P3 { 1, 2, 3 };
+    return loopa(n - 1, acc + sumV(s));
+}
+fn loopm(n, acc) {
+    if (n == 0) { return acc; }
+    var s = P3 { 1, 2, 3 };
+    var v = s.sumv();
+    return loopm(n - 1, acc + v);
+}
+fn loopo(n, acc) {
+    if (n == 0) { return acc; }
+    var s = Q3 { 1, 2, 3 };
+    var t = Q3 { 4, 5, 6 };
+    var v = s + t;
+    return loopo(n - 1, acc + v);
+}
+fn loopw(n, acc) {
+    if (n == 0) { return acc; }
+    var s = P3 { 1, 2, 3 };
+    var v = sumF(s);
+    return loopw(n - 1, acc + v);
+}
+fn loopx(n, acc) {
+    if (n == 0) { return acc; }
+    var v: f64v2 = mkv(1, 2);
+    var x = dVec(v, 0);
+    return loopx(n - 1, acc + x);
+}
+fn loopg(n, acc) {
+    if (n == 0) { return acc; }
+    var s = P3 { 1, 2, 3 };
+    var v = sumG(s);
+    return loopg(n - 1, acc + v);
+}
+# Declared BELOW their callers: a forward call reads pass 1's record of the copy.
+fn sumF(p: P3) { var t = p.a + p.b; return t + p.c; }
+fn sum3f(p: *P3) { var t = p.a + p.b; return t + p.c; }
+#naked
+fn nk6f(p: P3): i64 {
+    #ifdef CYRIUS_ARCH_X86
+    asm {
+        0xB8; 0x06; 0x00; 0x00; 0x00;   # mov eax, 6
+        0xC3;                            # ret
+    }
+    #endif
+    #ifdef CYRIUS_ARCH_AARCH64
+    asm {
+        0xC0; 0x00; 0x80; 0xD2;         # mov x0, #6
+        0xC0; 0x03; 0x5F; 0xD6;         # ret
+    }
+    #endif
+}
 
 fn check_struct_ptr_tailcalls(): i64 {
     alloc_init();
@@ -254,6 +375,52 @@ fn check_struct_ptr_tailcalls(): i64 {
     r = t_before(q, 1, 0);
     assert_eq(r, 7, "the same fn's return after it: value");
     assert_eq(_deeper(_dmark, baseP), 1, "the same fn's return after it: diverted");
+
+    test_group("kept: an earlier by-value call copied the address it was given");
+    r = t_bvk(q, 1);
+    assert_eq(r, 13, "`sumV(s)` (an inline local) before the tail call: value");
+    assert_eq(_same(_dmark, baseP), 1, "`sumV(s)` (an inline local) before the tail call: kept");
+    r = t_bvkc(q, 1);
+    assert_eq(r, 13, "`sumV(mk(..))` (a struct call's temp) before the tail call: value");
+    assert_eq(_same(_dmark, baseP), 1, "`sumV(mk(..))` (a struct call's temp) before the tail call: kept");
+    r = t_bvkf(q, 1);
+    assert_eq(r, 13, "`sumV(w.inner)` (a field of an inline local) before the tail call: value");
+    assert_eq(_same(_dmark, baseP), 1, "`sumV(w.inner)` (a field of an inline local) before the tail call: kept");
+    r = t_bvkp(q, q, 1);
+    assert_eq(r, 13, "`sumV(p)` (a by-value parameter's copy) before the tail call: value");
+    assert_eq(_same(_dmark, baseP), 1, "`sumV(p)` (a by-value parameter's copy) before the tail call: kept");
+    r = t_bvkv(q, 1);
+    assert_eq(r, 13, "`dVec(v, 0)` (a value-form vector) before the tail call: value");
+    assert_eq(_same(_dmark, baseP), 1, "`dVec(v, 0)` (a value-form vector) before the tail call: kept");
+    r = t_bvkm(q, 1);
+    assert_eq(r, 13, "`s.sumv()` (a by-value `self: T`) before the tail call: value");
+    assert_eq(_same(_dmark, baseP), 1, "`s.sumv()` (a by-value `self: T`) before the tail call: kept");
+    r = t_bvko(q, 1);
+    assert_eq(r, 13, "`s + t` (an operator taking `a: T, b: T`) before the tail call: value");
+    assert_eq(_same(_dmark, baseP), 1, "`s + t` (an operator taking `a: T, b: T`) before the tail call: kept");
+    r = t_bvkw(q, 1);
+    assert_eq(r, 13, "`sumF(s)` (a by-value callee declared below) before the tail call: value");
+    assert_eq(_same(_dmark, baseP), 1, "`sumF(s)` (a by-value callee declared below) before the tail call: kept");
+    r = t_bvka(q, 1);
+    assert_eq(r, 13, "`dP(q, k + sumV(s) - 6)` (inside the tail call's arguments): value");
+    assert_eq(_same(_dmark, baseP), 1, "`dP(q, k + sumV(s) - 6)` (inside the tail call's arguments): kept");
+    r = t_bvkg(q, 1);
+    assert_eq(r, 13, "`sumG(s)` (a generic's instance) before the tail call: value");
+    assert_eq(_same(_dmark, baseP), 1, "`sumG(s)` (a generic's instance) before the tail call: kept");
+
+    test_group("diverted: an earlier call may keep the address");
+    r = t_ptrb(q, 1);
+    assert_eq(r, 13, "`sum3p(s)` (a `*T` parameter) before the tail call: value");
+    assert_eq(_deeper(_dmark, baseP), 1, "`sum3p(s)` (a `*T` parameter) before the tail call: diverted");
+    r = t_nkd(q, 1);
+    assert_eq(r, 13, "`nk6(s)` (a `#naked` fn) before the tail call: value");
+    assert_eq(_deeper(_dmark, baseP), 1, "`nk6(s)` (a `#naked` fn) before the tail call: diverted");
+    r = t_ptrbf(q, 1);
+    assert_eq(r, 13, "`sum3f(s)` (a `*T` callee declared below) before the tail call: value");
+    assert_eq(_deeper(_dmark, baseP), 1, "`sum3f(s)` (a `*T` callee declared below) before the tail call: diverted");
+    r = t_nkdf(q, 1);
+    assert_eq(r, 13, "`nk6f(s)` (a `#naked` fn declared below) before the tail call: value");
+    assert_eq(_deeper(_dmark, baseP), 1, "`nk6f(s)` (a `#naked` fn declared below) before the tail call: diverted");
 
     test_group("diverted: the argument is an address in the caller's frame");
     r = t_loc(1);
@@ -351,6 +518,15 @@ fn check_struct_ptr_tailcalls(): i64 {
     var wh = alloc(32);
     store64(wh, 0); store64(wh + 8, 2); store64(wh + 16, 0); store64(wh + 24, 0);
     assert_eq(stepw(wh, 1000000, 0), 2000000, "`w.inner` through a `*W` parameter (mutual recursion)");
+    assert_eq(loopv(1000000, 0), 6000000, "`var v = sumV(s)` before the self tail call");
+    assert_eq(loopc(1000000, 0), 6000000, "`var v = sumV(mk(..))` before the self tail call");
+    assert_eq(loopf(1000000, 0), 6000000, "`var v = sumV(w.inner)` before the self tail call");
+    assert_eq(loopa(1000000, 0), 6000000, "`return loopa(n - 1, acc + sumV(s))`");
+    assert_eq(loopm(1000000, 0), 6000000, "`var v = s.sumv()` (`self: T`) before the self tail call");
+    assert_eq(loopo(1000000, 0), 7000000, "`var v = s + t` (`a: T, b: T`) before the self tail call");
+    assert_eq(loopw(1000000, 0), 6000000, "`var v = sumF(s)` (declared below) before the self tail call");
+    assert_eq(loopx(1000000, 0), 3000000, "`var x = dVec(v, 0)` (a vector) before the self tail call");
+    assert_eq(loopg(1000000, 0), 6000000, "`var v = sumG(s)` (a generic's instance) before the self tail call");
     return 0;
 }
 check_struct_ptr_tailcalls();
