@@ -1850,6 +1850,9 @@ _chk_gate "$ROOT/tests/gates/toolchain/manifest_pin_shape_refused.sh"
 # deleted the whole store, the active version included, and `install` spliced the operand into a
 # /bin/sh -c line. A fake curl on PATH; nothing reaches the network.
 _chk_gate "$ROOT/tests/gates/toolchain/cyriusly_version_operand_refused.sh"
+# 6.6.20 (CLN-13) — no stdlib include of cbt/cyrius.cyr brings in only dead code (lib/tagged.cyr
+# did: 18 dead fns on every target). Static census over the include closure, self-tested.
+_chk_gate "$ROOT/tests/gates/toolchain/cli_includes_all_used.sh"
 # 6.6.11 (B10: K7) — `cyrius soak` says what a failed self-host step DID (signal, empty output,
 # a real status) through `_raw_fail_describe`, never the raw `_self_host_step` return as an
 # "exit". Exit 77 with no compiler or CLI.
