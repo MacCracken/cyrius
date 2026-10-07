@@ -385,10 +385,9 @@ priority surfaces.
   - ~893 stale `/tmp/cyrius-*` directories on the dev box — the 6.6.20 closeout cleanup.
 - **Found by the 6.6.17 lanes (2026-10-05; backlog, not placed — only the user promotes).** Met in passing by the
   6.6.17 implementers, reviewers and integrator, each pre-existing unless it says otherwise; not swept for.
-  - ⚠ Silent wrong value: `var q: B1 = p;` with `p: *B1` and `sizeof(B1) <= 8` stores the POINTER into q (`q.v` reads
-    an address), while `var p: Node = h;` with `h: *Node` COPIES the struct, so a walk `p = p.next` overwrites nodes
-    or loops. Decide bind vs copy (or refuse) for `Struct = *Struct` once, with the value / handle model — **v6.7.x
-    language arc** candidate.
+  - ~~⚠ `Struct = *Struct` bind vs copy~~ → **moved to [roadmap_6.md](roadmap_6.md) § v6.7.x A4** at the 6.6.20
+    re-triage, CORRECTED: `≤ 8 B` stores the pointer value (still a silent wrong value), but `> 8 B` BINDS (aliases) —
+    it does not copy, so the walk this bullet described works (BACKLOG-06).
   - ⚠ aarch64: a call with ~300 or more arguments (direct or `callptr`) dies with SIGILL under qemu (250 / 260 right;
     509+ `callptr` arguments segfault).
   - ⚠ cx: a call with more than 248 arguments has nowhere to put them (250 return a wrong value, 260 trap "guest stack

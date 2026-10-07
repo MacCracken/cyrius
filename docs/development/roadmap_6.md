@@ -180,6 +180,14 @@ file keeps only a pointer: one authority per active minor.
    way a `pp: *Pt` parameter does. ⚠ It must NOT be `self: T`. Under that spelling a struct of 8 bytes or
    less is passed BY VALUE (6.6.11), which would silently break every small-struct impl that does
    `load64(self)` (`tests/tcyr/crossos/method_self_inline_struct.tcyr`'s `P1` is one).
+   - **Decide `Struct = *Struct` here, once, with the value / handle model** (moved from roadmap.md's backlog at
+     the 6.6.20 re-triage, BACKLOG-06). Measured at 6.6.20: `var q: B1 = p;` with `p: *B1` and `sizeof(B1) <= 8`
+     stores the POINTER VALUE into `q` — `q.v` reads an address, a silent wrong value under either model; for a
+     struct over 8 bytes `var n: Node = h;` with `h: *Node` BINDS (aliases) `h` — `n.v = 5` writes `h.v`, and a
+     walk `p = p.next` rebinds correctly (a 3-node walk sums right and leaves the nodes intact). ⚠ The backlog
+     bullet said the `> 8 B` case COPIES and that a walk overwrites nodes — measured, it does not. Choose bind,
+     copy or refuse for BOTH sizes; the `≤ 8 B` pointer store is wrong whichever is chosen. Probes: the 6.6.20
+     backlog audit's `d1*.cyr`.
 5. **Methods on nested fields and chains**: `b.v.sum()`, `mk(3).v.sum()`.
 6. **Dispatch stays static (ADR-004).** Trait objects remain the `lib/trait.cyr` library pattern: a
    vtable + data fat pointer, called through `fncall`. Compiler-native `dyn` would amend ADR-004. That is
