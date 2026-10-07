@@ -400,10 +400,7 @@ fn _fl_free_poisoned(ptr): i64 {
     }
     if (_poison_fl_check(blk) > 0) { _fl_poison_viol = _fl_poison_viol + 1; }
     var cls = load64(blk + 8);
-    if (cls > 8) {
-        syscall(SYS_MUNMAP, blk, cls);
-        return 0;
-    }
+    if (cls > 8) { return _fl_unmap(blk, cls); }
     if (_fl_poison == 1) { _fl_poison_fill(blk + 16, _fl_capacity(blk)); }
     if (_threads_active != 0) { _fl_lock_acquire(); }
     store64(blk, load64(&_fl_heads + cls * 8));
@@ -499,7 +496,20 @@ fn fl_alloc(size): i64 {
     return blk + 16;
 }
 
-# Free a pointer returned by fl_alloc. Thread-safe (v6.5.19).
+# Release a large block's own mapping: 0, or the kernel's -errno when it REFUSED — the mapping
+# is then still there (leaked), and the caller is told rather than handed a silent 0.
+# ⛔ Until 6.6.20 both large-block frees ran `syscall(SYS_MUNMAP, blk, cls); return 0;`, so a
+# refused munmap — on Windows EVERY one, munmap having no PE route before 6.6.20 (-38), which
+# leaked the whole mapping of every block over 4 KiB, sigil's argon2 arenas included — read as
+# a successful free. CHANGELOG [6.6.20]
+fn _fl_unmap(blk, cls): i64 {
+    var r = syscall(SYS_MUNMAP, blk, cls);
+    if (r < 0) { return r; }
+    return 0;
+}
+
+# Free a pointer returned by fl_alloc. Thread-safe (v6.5.19). Returns 0, or a negative errno
+# when a large (> 4096) block's mapping could not be released (`_fl_unmap`).
 fn fl_free(ptr): i64 {
     if (ptr == 0) { return 0; }
     # 6.6.18 — the layout is decoded FROM THE BLOCK (see the poison-mode header above): a
@@ -519,8 +529,7 @@ fn fl_free(ptr): i64 {
             _poison_report(3, 4, ptr, 0, 8);
             return 0;
         }
-        syscall(SYS_MUNMAP, blk, cls);
-        return 0;
+        return _fl_unmap(blk, cls);
     }
     # QUARANTINE (v6.5.29) — poison the whole capacity before the block re-enters the free
     # list, so a use-after-free reads the pattern rather than its own stale contents. Only the

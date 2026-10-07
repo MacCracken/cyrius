@@ -1,0 +1,59 @@
+# freelist_unmap_failure_reported.tcyr — 6.6.20: fl_free REPORTS a large block whose mapping the
+# kernel refused to release (its -errno) instead of returning a silent 0.
+#
+# ⛔ THE DEFECT. Both large-block (> 4096) frees in lib/freelist.cyr — the plain path and the
+# poison-mode one — ran `syscall(SYS_MUNMAP, blk, cls); return 0;`. On Windows munmap had no PE
+# route before 6.6.20, so EVERY large fl_free returned -38 from the kernel and 0 to its caller
+# while the whole mapping stayed committed: four rounds of fl_alloc(8 MiB) + fl_free grew by
+# 8 MiB each under wine, and sigil's argon2 leaked its m_cost arena per hash. Nothing could see
+# it, because fl_free said it had worked. (The VirtualFree route itself is a separate 6.6.20
+# change in the compiler; this file pins the REPORTING, which any refused munmap needs.)
+#
+# HOW A REFUSAL IS PRODUCED PORTABLY: a page of our own carries a forged large-block header whose
+# length is 2^56 - 4096. The header is page-aligned (so fl_free's smashed-header check passes it on),
+# and munmap refuses the range (addr + len past the address space) with EINVAL on Linux and
+# Darwin, unmapping NOTHING — the page is still readable afterwards, which is asserted. Windows
+# is skipped for that row: VirtualFree(MEM_RELEASE) takes no length, so the forged length cannot
+# make it refuse. The real-block row runs everywhere POSIX; on PE it waits on the VirtualFree
+# route (it returned -38 there until 6.6.20).
+include "lib/freelist.cyr"
+include "lib/mmap.cyr"
+include "lib/assert.cyr"
+
+fn main(): i64 {
+    #ifndef CYRIUS_TARGET_WIN
+    #ifndef CYRIUS_TARGET_AGNOS
+    #ifndef CYRIUS_TARGET_CX
+    test_group("6.6.20 — fl_free of a real large block releases it: 0");
+    var p = fl_alloc(8388608);
+    assert(p != 0, "fl_alloc(8 MiB)");
+    if (p != 0) {
+        store8(p + 100, 42);
+        assert_eq(fl_free(p), 0, "fl_free(8 MiB block): 0 — the mapping was released");
+    }
+
+    test_group("6.6.20 — a refused munmap is reported, not swallowed");
+    var pg = mmap_anon(4096);                        # lib/mmap.cyr: the per-target MAP_ANONYMOUS
+    assert(pg > 0, "a page of our own for the forged block");
+    if (pg > 0) {
+        store64(pg, 0);
+        # Large-block header with an impossible length. Its top byte must stay 0: the byte below
+        # the user pointer (pg + 15) is how fl_free tells a poisoned block, so 1<<62 would be
+        # misread as one. 2^56 - 4096 is page-aligned and far past every address space.
+        store64(pg + 8, 0x00FFFFFFFFFFF000);
+        store64(pg + 16, 7);
+        var r = fl_free(pg + 16);
+        assert(r < 0, "fl_free: the kernel's refusal comes back as a negative errno, not 0");
+        assert_eq(r, 0 - 22, "…EINVAL");
+        assert_eq(load64(pg + 16), 7, "…and nothing was unmapped (the page still reads)");
+        assert_eq(cyr_munmap(pg, 4096), 0, "…and the page itself still unmaps");
+    }
+    #endif
+    #endif
+    #endif
+    assert_eq(1, 1, "freelist unmap-failure probe completed");
+    var rc = assert_summary();
+    return rc;
+}
+var ec = main();
+syscall(60, ec);

@@ -1018,7 +1018,7 @@ Segregated free-list allocator with individual free (v6.0.52: explicit mmap.cyr 
 |----------|-----------|-------------|
 | `fl_init` | `fl_init() → 0` | Initialize freelist allocator (idempotent) |
 | `fl_alloc` | `fl_alloc(size) → ptr` | Allocate size bytes (rounded to class or mmap'd if >4096) |
-| `fl_free` | `fl_free(ptr) → 0` | Free pointer returned by fl_alloc (chains onto class free list) |
+| `fl_free` | `fl_free(ptr) → 0/-errno` | Free pointer returned by fl_alloc (chains onto class free list). A large (>4096) block is munmap'd; a refused munmap is returned as its -errno — the mapping is still there — never a silent 0 (6.6.20) |
 | `fl_calloc` | `fl_calloc(size) → ptr` | Allocate and zero-fill size bytes |
 
 
