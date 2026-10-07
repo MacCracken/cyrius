@@ -2970,7 +2970,10 @@ fn cmd_update(): i64 {
         str_builder_add_cstr(tc_sb, "\n");
         var tc_str = str_data(str_builder_build(tc_sb));
         # v6.6.6: crash-safe and checked — was file_write_all with the result dropped.
-        if (file_replace_atomic(".cyrius-toolchain", tc_str, strlen(tc_str)) != 0) {
+        # 6.6.20 (CVE-TBD): a link here is followed only inside the project — a checkout's
+        # `.cyrius-toolchain -> ~/.profile` was overwritten with the version string.
+        if (_io_replace_atomic_in(".", ".cyrius-toolchain", tc_str, strlen(tc_str)) != 0) {
+            if (_io_contain_link != 0) { _io_contain_refusal("error"); return 1; }
             _err("write failed: .cyrius-toolchain (left as it was)");
             return 1;
         }
@@ -3001,7 +3004,15 @@ fn cmd_update(): i64 {
             var cyml_str = str_data(str_builder_build(cyml_sb));
             # v6.6.6: the toml is deleted ONLY once the cyml is fully on disk — the unchecked
             # file_write_all here could leave a truncated cyml AND delete the only good copy.
-            if (file_replace_atomic("cyrius.cyml", cyml_str, strlen(cyml_str)) != 0) {
+            # 6.6.20 (CVE-TBD): `file_exists` is 0 for a DANGLING link, so a checkout's
+            # `cyrius.cyml -> ~/.ssh/authorized_keys` reached here and CREATED that file from its
+            # own cyrius.toml. A link is followed only inside the project; the toml is kept.
+            if (_io_replace_atomic_in(".", "cyrius.cyml", cyml_str, strlen(cyml_str)) != 0) {
+                if (_io_contain_link != 0) {
+                    _io_contain_refusal("error");
+                    _err("cyrius.toml kept, not migrated");
+                    return 1;
+                }
                 _err("write failed: cyrius.cyml (cyrius.toml kept)");
                 return 1;
             }

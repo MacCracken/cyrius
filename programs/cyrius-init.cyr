@@ -1332,7 +1332,15 @@ fn _run_port(start): i64 {
             str_builder_add_cstr(ab, _sv_olddir);
             str_builder_add_cstr(ab, "/**/__pycache__/\n/build/\n");
             var add = str_data(str_builder_build(ab));
-            if (_append_whole(gi, add, strlen(add)) != 0) {
+            # 6.6.20 (CVE-TBD): an O_APPEND open follows a link, so a checkout's committed
+            # `.gitignore -> ~/.bashrc` had the port lines appended to it. A link is followed only
+            # to a file inside the project being ported (lib/io.cyr _io_replace_target_in).
+            var gw = _io_replace_target_in(target, ".gitignore");
+            if (gw < 0) {
+                _io_contain_refusal("error");
+                _rw_fails = _rw_fails + 1;
+                _eprint("error: cannot append to .gitignore (left as it was)\n");
+            } elif (_append_whole(gw, add, strlen(add)) != 0) {
                 _rw_fails = _rw_fails + 1;
                 _eprint("error: cannot append to .gitignore (left as it was)\n");
             } else {

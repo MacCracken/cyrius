@@ -837,12 +837,231 @@ fn file_write_atomic(path, buf, len): i64 {
 # symlink at `path` stays a symlink while the file it names gets the bytes (a relative target
 # resolves against the link's directory; a loop is -ELOOP). A short write is still an error
 # that leaves the file as it was. What a rename CANNOT keep: other hard links (they keep the
-# old bytes), ownership when root replaces another user's file, xattrs/ACLs. For a user's
-# source (cyrfmt --write), manifest, lock or toolchain pin. CHANGELOG [6.6.6]
+# old bytes), ownership when root replaces another user's file, xattrs/ACLs. CHANGELOG [6.6.6]
+# ⚠ It follows a link WHEREVER it leads. A file in a tree someone else supplied — a checkout's
+# manifest, lock, toolchain pin or source — goes through _io_replace_atomic_in, which follows a
+# link only to a file inside the tree. CHANGELOG [6.6.20]
 fn file_replace_atomic(path, buf, len): i64 {
     var real = _io_replace_target(path);
     if (real < 0) { return real; }
     return file_write_atomic(real, buf, len);
+}
+
+# ⛔ 6.6.20 (CVE-TBD) — a REPLACE that follows a symlink only to a file INSIDE `root`.
+# The CLI rewrote a checkout's own files through file_replace_atomic / cbt's _aw_open_replace,
+# which follow a link wherever it leads — so a COMMITTED link wrote outside the project: a
+# dangling `cyrius.cyml -> ~/.ssh/authorized_keys` made `cyrius update` CREATE that file from the
+# checkout's cyrius.toml, and `cyrius.lock -> ~/.profile` made `cyrius build` (its auto-deps
+# relock) or `cyrius deps --lock` replace it. Same shape in `cyriusly use`, `cyrius fmt` and
+# `cyrius port`'s .gitignore append.
+# The rule: `root` + "/" + `rel` (just `rel` when `root` is ".") is written as named when it is
+# not a link. A link is followed only while every hop's target is RELATIVE, never climbs above
+# `root` with `..`, and never passes through a directory that is itself a link — the kernel
+# resolves `dir/..` against a linked dir's TARGET, so a lexical walk is exact only over real
+# directories; every directory it steps through or out of is checked. Anything else is refused:
+# -EXDEV (-18), with the link, the target it names and why in _io_contain_*, which
+# _io_contain_refusal prints. A chain past 40 hops is -ELOOP (-40); a refused alloc -ENOMEM.
+# Windows has no readlink route, so there the named path is always the answer (MoveFileExW
+# replaces a link at the destination; it does not write through it). CHANGELOG [6.6.20]
+var _io_contain_link = 0;     # the link whose target was refused (NUL-terminated), or 0
+var _io_contain_target = 0;   # the target bytes it names (NUL-terminated)
+var _io_contain_why = 0;      # 1 absolute · 2 climbs out with .. · 3 passes a directory link · 4 too long
+var _io_contain_dir = 0;      # for 3: the directory link, as a path
+var _io_contain_root = 0;
+var _io_contain_req = 0;      # the name the caller asked to write (`root` + `rel`)
+
+# `root` + "/" + the `n` bytes at `rel` (just those bytes when `root` is "."), NUL-terminated.
+fn _io_under(root, rel, n): i64 {
+    var rl = strlen(root);
+    var dot = 0;
+    if (rl == 1 && load8(root) == 46) { dot = 1; }
+    var cut = 0;
+    if (dot == 0) { cut = rl + 1; }
+    var out = alloc(cut + n + 1);
+    if (out == 0) { return 0; }
+    if (dot == 0) {
+        memcpy(out, root, rl);
+        store8(out + rl, 47);
+    }
+    memcpy(out + cut, rel, n);
+    store8(out + cut + n, 0);
+    return out;
+}
+
+# 1 when `root`/<the `n` bytes at `rel`> is a symlink (dangling or not), 0 otherwise; -12 on a
+# refused alloc. readlink, not lstat: routed on every POSIX peer and agnos (lib/fs.cyr is_symlink
+# is the same test).
+fn _io_is_link_under(root, rel, n): i64 {
+    var p = _io_under(root, rel, n);
+    if (p == 0) { return 0 - 12; }
+    var lb[8];
+    if (xreadlink(p, &lb, 8) > 0) { return 1; }
+    return 0;
+}
+
+fn _io_contain_refuse(link, target, tn, why, root): i64 {
+    var t = alloc(tn + 1);
+    if (t == 0) { return 0 - 12; }
+    memcpy(t, target, tn);
+    store8(t + tn, 0);
+    _io_contain_link = link;
+    _io_contain_target = t;
+    _io_contain_why = why;
+    _io_contain_root = root;
+    return 0 - 18;
+}
+
+fn _io_replace_target_in(root, rel): i64 {
+    _io_contain_link = 0;
+    _io_contain_target = 0;
+    _io_contain_why = 0;
+    _io_contain_dir = 0;
+    _io_contain_root = 0;
+    _io_contain_req = 0;
+    if (load8(rel) == 47) { return 0 - 22; }   # `rel` is RELATIVE to `root` (-EINVAL: a misuse)
+    var lb = alloc(4097);
+    if (lb == 0) { return 0 - 12; }
+    var cur = rel;                     # the current name, relative to `root`
+    var hops = 0;
+    while (hops < 40) {
+        var full = _io_under(root, cur, strlen(cur));
+        if (full == 0) { return 0 - 12; }
+        if (hops == 0) { _io_contain_req = full; }
+        var n = xreadlink(full, lb, 4096);
+        if (n <= 0) { return full; }   # not a link (or absent: it will be created)
+        if (n >= 4096) { return _io_contain_refuse(full, lb, 4095, 4, root); }
+        if (load8(lb) == 47) { return _io_contain_refuse(full, lb, n, 1, root); }
+        # The candidate: the link's own directory (relative to root), then the target.
+        var cl = strlen(cur);
+        var dcut = 0;
+        var i = 0;
+        while (i < cl) {
+            if (load8(cur + i) == 47) { dcut = i + 1; }
+            i = i + 1;
+        }
+        var cand = alloc(dcut + n + 1);
+        if (cand == 0) { return 0 - 12; }
+        memcpy(cand, cur, dcut);
+        memcpy(cand + dcut, lb, n);
+        var cn = dcut + n;
+        store8(cand + cn, 0);
+        # Normalise it lexically into `out`, refusing a `..` above root and a `..` out of a link.
+        var out = alloc(cn + 1);
+        if (out == 0) { return 0 - 12; }
+        var ol = 0;
+        var s = 0;
+        i = 0;
+        while (i <= cn) {
+            if (i == cn || load8(cand + i) == 47) {
+                var w = i - s;
+                if (w == 2 && load8(cand + s) == 46 && load8(cand + s + 1) == 46) {
+                    if (ol == 0) { return _io_contain_refuse(full, lb, n, 2, root); }
+                    var lk = _io_is_link_under(root, out, ol);
+                    if (lk < 0) { return lk; }
+                    if (lk == 1) {
+                        _io_contain_dir = _io_under(root, out, ol);
+                        return _io_contain_refuse(full, lb, n, 3, root);
+                    }
+                    var k = ol;
+                    ol = 0;
+                    while (k > 0) {
+                        k = k - 1;
+                        if (load8(out + k) == 47) { ol = k; k = 0; }
+                    }
+                } elif (w > 0 && (w != 1 || load8(cand + s) != 46)) {
+                    if (ol > 0) { store8(out + ol, 47); ol = ol + 1; }
+                    memcpy(out + ol, cand + s, w);
+                    ol = ol + w;
+                }
+                s = i + 1;
+            }
+            i = i + 1;
+        }
+        if (ol == 0) { return 0 - 21; }   # names `root` itself: a directory (EISDIR)
+        store8(out + ol, 0);
+        # Every directory the result sits under must be a real one.
+        i = 0;
+        while (i < ol) {
+            if (load8(out + i) == 47) {
+                var dl = _io_is_link_under(root, out, i);
+                if (dl < 0) { return dl; }
+                if (dl == 1) {
+                    _io_contain_dir = _io_under(root, out, i);
+                    return _io_contain_refuse(full, lb, n, 3, root);
+                }
+            }
+            i = i + 1;
+        }
+        cur = out;
+        hops = hops + 1;
+    }
+    return 0 - 40;
+}
+
+# file_replace_atomic, following a link only inside `root` (_io_replace_target_in). 0, or a
+# negative errno; -18 is the refusal, recorded for _io_contain_refusal. CHANGELOG [6.6.20]
+fn _io_replace_atomic_in(root, rel, buf, len): i64 {
+    var real = _io_replace_target_in(root, rel);
+    if (real < 0) { return real; }
+    return file_write_atomic(real, buf, len);
+}
+
+# A NUL-terminated string on stderr with every byte below 32 or from 127 as \xNN — the link and
+# its target come from the checkout, so they must not carry a terminal escape out.
+fn _io_ew_shown(s): i64 {
+    var hx = "0123456789abcdef";
+    var e[4];
+    var i = 0;
+    var c = load8(s);
+    while (c != 0) {
+        if (c < 32 || c >= 127) {
+            store8(&e, 92);
+            store8(&e + 1, 120);
+            store8(&e + 2, load8(hx + (c >> 4)));
+            store8(&e + 3, load8(hx + (c & 15)));
+            file_write(STDERR, &e, 4);
+        } else {
+            file_write(STDERR, s + i, 1);
+        }
+        i = i + 1;
+        c = load8(s + i);
+    }
+    return 0;
+}
+
+fn _io_ew(s): i64 { file_write(STDERR, s, strlen(s)); return 0; }
+
+# Print the refusal _io_replace_target_in recorded, BY NAME: `who` is the line's prefix
+# ("error", "cyrfmt"). Nothing when no refusal is recorded. CHANGELOG [6.6.20]
+fn _io_contain_refusal(who): i64 {
+    if (_io_contain_link == 0) { return 0; }
+    var r = _io_contain_root;
+    var dot = 0;
+    if (strlen(r) == 1 && load8(r) == 46) { dot = 1; }
+    _io_ew(who);
+    _io_ew(": refusing to write ");
+    _io_ew_shown(_io_contain_req);
+    if (streq(_io_contain_req, _io_contain_link) == 1) {
+        _io_ew(": it is a symlink to ");
+    } else {
+        _io_ew(": the link ");
+        _io_ew_shown(_io_contain_link);
+        _io_ew(" on its way is a symlink to ");
+    }
+    _io_ew_shown(_io_contain_target);
+    if (_io_contain_why == 1) { _io_ew(", an ABSOLUTE path"); }
+    if (_io_contain_why == 2) { _io_ew(", which climbs out with .."); }
+    if (_io_contain_why == 3) {
+        _io_ew(", reached through the directory link ");
+        _io_ew_shown(_io_contain_dir);
+    }
+    if (_io_contain_why == 4) { _io_ew(" (cut at 4095 bytes), which is too long"); }
+    _io_ew("\n  A write follows a link only to a file inside ");
+    if (dot == 1) { _io_ew("the project (the current directory)"); } else { _io_ew_shown(r); }
+    _io_ew(", named by a relative path\n  through real directories. A checkout can commit a link to any file you can");
+    _io_ew(" write;\n  writing through it would replace that file. Nothing was written.\n");
+    _io_ew("  Fix: replace the link with the file itself, or point it inside with a relative link.\n");
+    return 0;
 }
 
 # Create `path` ONLY if it does not already exist (no-clobber), returning the new
