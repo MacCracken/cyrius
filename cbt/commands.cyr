@@ -6214,7 +6214,7 @@ fn cmd_distlib(profile): i64 {
             # and it was read only for the scan, so the user saw "does not compile" and never WHY
             # (the error line was lost since the v6.6.2 capture). A retired name is reported by name
             # below instead — its capture is the undefined-fn warnings, not an error.
-            if (check_r != 0 && dl_retired == 0) { _cbt_relay_file(dl_errf); }
+            if (check_r != 0 && dl_retired == 0) { _distlib_relay_selfcheck(dl_errf); }
             sys_unlink(dl_errf);
         }
         xunlink(dl_entry);
@@ -6308,6 +6308,22 @@ fn _distlib_scan_retired_file(path): i64 {
     if (b == 0) { return 0 - 1; }
     if (n <= 0) { return 0; }
     return _distlib_scan_retired(b, n);
+}
+
+# 6.6.20 (CBT-03): why a bundle failed its self-check, from the compiler's own capture. The
+# self-check runs under --allow-undef, so the capture leads with one `undefined function` warning
+# per hook the consumer supplies; relaying it whole buried the line that matters. Shown the way
+# the sidecar verify shows its failures — the `error` lines, at most 8 (_distlib_show_errors) —
+# and the WHOLE capture only when it holds no `error` line (a crash, a bare refusal), so the
+# compiler's last word is never dropped.
+fn _distlib_relay_selfcheck(path): i64 {
+    var n = 0;
+    var b = file_read_whole(path, &n);
+    if (b != 0 && n > 0) {
+        if (_distlib_show_errors(b, n) > 0) { return 0; }
+    }
+    _cbt_relay_file(path);
+    return 0;
 }
 
 # Scan a cycc stderr capture for `undefined function 'NAME'` and report the first RETIRED one.

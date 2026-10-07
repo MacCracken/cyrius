@@ -192,6 +192,12 @@ fi
 # stand-in compiler fails exactly the self-check compile (--allow-undef, and not one of the
 # verify's `#@incdir dist/.dlverify-*` entries) with an error line only it knows; every other
 # compile is the real cycc. The CLI finds its compiler beside itself.
+# Like a real --allow-undef compile, the stand-in leads with a flood of `undefined function`
+# warnings: what reaches the user is the `error` lines (as the sidecar verify shows them), not the
+# whole capture with the line that matters buried at its end. With `crash` in $D/shim/mode it
+# fails with NO `error` line, and then the whole capture must be relayed — never nothing. (That
+# line must not contain the word, or the CLI rightly shows it as an error line and the axis is
+# vacuous — its first draft did exactly that.)
 echo "axis 8 — a bundle that fails the self-check shows the compiler's own error:"
 mkdir -p "$D/shim" "$D/s/src"
 cp "$D/tools/cyrius" "$D/shim/cyrius" && cp "$CC" "$D/shim/cycc.real" && cp "$D/tools/cycc_aarch64" "$D/shim/cycc_aarch64"
@@ -204,7 +210,13 @@ selfcheck=0
 case " $* " in *" --allow-undef "*) grep -q '^#@incdir dist/.dlverify' "$T" || selfcheck=1 ;; esac
 if [ "$selfcheck" = 1 ]; then
     rm -f "$T"
-    echo 'error:<source>:1:1: SYNTHETIC self-check failure only the compiler can name' >&2
+    i=0
+    while [ "$i" -lt 40 ]; do echo "warning: undefined function 'zz_flood_$i'" >&2; i=$((i + 1)); done
+    if [ "$(cat "$D/mode" 2>/dev/null)" = crash ]; then
+        echo 'SYNTHETIC crash, and the compiler printed no diagnostic' >&2
+    else
+        echo 'error:<source>:1:1: SYNTHETIC self-check failure only the compiler can name' >&2
+    fi
     exit 1
 fi
 "$D/cycc.real" "$@" < "$T"; rc=$?
@@ -218,6 +230,13 @@ SOUT=$( cd "$D/s" && timeout 300 "$D/shim/cyrius" distlib 2>&1 ) || SRC=$?
 check "exit NON-zero" 1 "$([ "$SRC" -ne 0 ] && echo 1 || echo 0)"
 check "it says the bundle does not compile" 1 "$(printf '%s\n' "$SOUT" | grep -c 'the generated bundle does not compile' || true)"
 check "and relays the compiler's own error line" 1 "$(printf '%s\n' "$SOUT" | grep -c 'SYNTHETIC self-check failure only the compiler can name' || true)"
+check "without the flood of undefined-fn warnings ahead of it" 0 "$(printf '%s\n' "$SOUT" | grep -c 'zz_flood_' || true)"
+echo crash > "$D/shim/mode"
+SRC=0
+SOUT=$( cd "$D/s" && timeout 300 "$D/shim/cyrius" distlib 2>&1 ) || SRC=$?
+rm -f "$D/shim/mode"
+check "no error line: exit NON-zero" 1 "$([ "$SRC" -ne 0 ] && echo 1 || echo 0)"
+check "no error line: the whole capture is relayed (its last line)" 1 "$(printf '%s\n' "$SOUT" | grep -c 'SYNTHETIC crash, and the compiler printed no diagnostic' || true)"
 
 # ── axis 9: where the `# Version:` header comes from (6.6.20, REFACTOR-11) ─────────────────
 # `[package] version` (with `${file:PATH}` expanded — the reader `#@pkgver` uses) wins; a manifest
