@@ -1499,7 +1499,9 @@ fn _call_scale_fix(S, ti): i64 {
     if (GTI(S) != _call_close(S, o) + 1) { return 0; }
     var ps = 0;
     if (t == 2) {
-        var fi = FINDFN(S, TOKVAL(S, ti));
+        # 6.6.20: the INSTANCE the call reaches (`gr<i32>(..)`, or `gr(pt)` inferring T), whose
+        # `: *T` steps sizeof(T) — FINDFN named the template, whose T is i64. CHANGELOG [6.6.20]
+        var fi = _pair_gen_inst(S, ti);
         if (fi >= 0) { if (_fn_rps != 0) { ps = L64(_fn_rps + fi * 8); } }
     }
     SPSC(S, ps);

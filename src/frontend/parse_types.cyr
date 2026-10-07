@@ -532,7 +532,20 @@ fn _fld_ps_get(S, si, fi): i64 {
 # records it; pass 2 (PARSE_FN_DEF) refuses an unknown T and sets the fn's return scalar.
 var _fn_rps = 0;   # per fn: the step of a `*T` return, 0 for any other return
 var _fn_rpsid = 0; # per fn: T's struct for a `*T` return (6.6.17, `_call_ptr_field`), else 0
+# ⛔ 6.6.20 — a generic INSTANCE's `: *T` is read under the instance's binding, as `_gtype_sid`
+# reads `: Box<T>`: PARSE_FN_DEF binds T only around the parameter loop and the body, and the
+# return type sits between them, so every instance recorded the unbound T's i64 step (8) and
+# `gr<i32>(..) + 1` stepped 8. The binding in force is put back after. CHANGELOG [6.6.20]
 fn _ret_ptr_annot(S, fi, quiet): i64 {
+    var sv_n0 = _tp_n0; var sv_c0 = _tp_c0; var sv_n1 = _tp_n1; var sv_c1 = _tp_c1;
+    if (_MONOMORPH_OK == 1) { if (_inst_conc0 != 0) { if (GFTP(S, fi) != 0) {
+                _bind_generic_call(S, fi, _inst_conc0, _inst_conc1);
+            } } }
+    _ret_ptr_record(S, fi, quiet);
+    _tp_n0 = sv_n0; _tp_c0 = sv_c0; _tp_n1 = sv_n1; _tp_c1 = sv_c1;
+    return 0;
+}
+fn _ret_ptr_record(S, fi, quiet): i64 {
     var psid = _ptr_ann_sid(S, GTI(S));
     if (psid > 0) {
         if (_fn_rpsid == 0) { _fn_rpsid = alloc(131072 * 8); }

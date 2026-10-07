@@ -215,8 +215,38 @@ fn inline_replay(): i64 {
     return 0;
 }
 
+# ── a GENERIC fn's `: *T` result steps the instance's T (6.6.20) ─────────────────────────────
+# Every instance stepped 8, the i64 base's: the instance's return type was read with T unbound,
+# and the call's scale was taken from the template. `store32(gr<i32>(x) + i, v)` wrote at 8*i.
+# (An inferred SCALAR argument binds the i64 base, so `gr(a)` with `a: i32` steps 8 by rule.)
+fn gr<T>(x: T): *T { var z = 0; return &buf; }
+fn g0<T>(): *T { var z = 0; return &buf; }
+fn gr_nested<T>(x: T): i64 { var q = gr<T>(x) + 1; return q - &buf; }
+fn generic_returns(): i64 {
+    var b = &buf;
+    var pt: Pt;
+    pt.x = 0; pt.y = 0; pt.z = 0;
+    assert_eq(d(gr<i8>(1) + 3, b), 3, "gr<i8>(1) + 3");
+    assert_eq(d(gr<i16>(1) + 1, b), 2, "gr<i16>(1) + 1");
+    assert_eq(d(gr<i32>(1) + 1, b), 4, "gr<i32>(1) + 1");
+    assert_eq(d(gr<i64>(1) + 1, b), 8, "gr<i64>(1) + 1");
+    assert_eq(d(gr<Pt>(pt) + 1, b), 24, "gr<Pt>(pt) + 1");
+    assert_eq(d(gr(pt) + 1, b), 24, "gr(pt) + 1, T inferred as Pt");
+    assert_eq(d(g0<i32>() + 1, b), 4, "g0<i32>() + 1, no arguments");
+    assert_eq(d(g0<Pt>() + 2, b), 48, "g0<Pt>() + 2");
+    assert_eq(d(2 + gr<i32>(1), b), 8, "2 + gr<i32>(1)");
+    assert_eq(d(gr<i32>(1) - 1, b), 0 - 4, "gr<i32>(1) - 1");
+    assert_eq(d((gr<i16>(1)) + 3, b), 6, "(gr<i16>(1)) + 3");
+    assert_eq(gr_nested<i32>(1), 4, "gr<T>(x) + 1 inside a generic instance, T = i32");
+    assert_eq(gr_nested<i16>(1), 2, "gr<T>(x) + 1 inside a generic instance, T = i16");
+    var q: *i32 = gr<i32>(1);
+    assert_eq(d(q + 1, b), 4, "var q: *i32 = gr<i32>(1); q + 1 (control)");
+    return 0;
+}
+
 alloc_init();
 inline_replay();
+generic_returns();
 locals();
 call_results();
 differences(&buf);
