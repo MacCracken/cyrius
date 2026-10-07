@@ -400,10 +400,10 @@ Hash table with string keys and i64 values. FNV-1a hash, open addressing. Includ
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `map_new` | `map_new() → map` | Create empty map (cap=16) |
-| `map_set` | `map_set(m, key, val)` | Set key=value (overwrites) |
+| `map_set` | `map_set(m, key, val)` | Set key=value (overwrites). A new key rebuilds the table when live entries + tombstones reach 70%: it doubles only when the live load is past 35%, otherwise it rebuilds in place at the same capacity, allocating nothing. An overwrite never rebuilds. Aborts only when a doubling's allocation is refused; `map_set_a(a, m, key, val)`, `map_u64_set` and `map_u64_set_a` return -1 instead, map unchanged |
 | `map_get` | `map_get(m, key) → val` | Get value (0 if missing) |
 | `map_has` | `map_has(m, key) → 0/1` | Check if key exists |
-| `map_delete` | `map_delete(m, key) → 0/1` | Remove key |
+| `map_delete` | `map_delete(m, key) → 0/1` | Remove key (leaves a counted tombstone; never moves an entry, so a `map_entries`/`map_cap` walk may delete as it goes) |
 | `map_count` | `map_count(m) → n` | Number of entries |
 | `map_keys` | `map_keys(m) → vec` | All keys as vec |
 | `map_print` | `map_print(m)` | Print {key: val, ...} |
