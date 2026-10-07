@@ -2550,7 +2550,9 @@ fn _is_ident_intrinsic(S, noff): i64 {
 # the lowering's enabler (it is gated on FINDFN, so a program that never included fnptr still
 # gets "undefined function"), and cybs — which has no lowering — calls them in gen1. Exempt by
 # FILE: an included file whose basename is `fnptr.cyr` (every copy in the ecosystem, surveyed
-# 6.6.20, is one). CHANGELOG [6.6.20]
+# 6.6.20, is one). The main source carries no file name (its map entry is `<source>`), so
+# lib/fnptr.cyr fed AS the entry is refused — deliberately: exempting the main source is the
+# filed repro's own shape. CHANGELOG [6.6.20]
 fn _rsv_in_fnptr(S, ti): i64 {
     var fid = FM_FILEID(S, GTLINE(S, ti));
     if (fid == 0 - 1) { return 1; }   # file map overflowed: unknowable — keep the pre-6.6.20 answer

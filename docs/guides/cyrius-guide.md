@@ -405,10 +405,12 @@ Before 6.6.20 such a declaration was accepted and never honoured: a user `fn mul
 but every `mulh64(..)` was still the intrinsic, a user `fn fncall1(a, b)` compiled and
 `fncall1(5, 6)` called THROUGH `5`, and a `var sizeof` made every later read a parse error.
 The one legitimate declarer is `lib/fnptr.cyr`, whose `fncall0`..`fncall8` definitions are what
-make the indirect-call lowering available — an included file named `fnptr.cyr` may declare
-those. A mangled definition is accepted, so an impl method `x.sizeof()` or a `mod` fn of that
-name compiles (call it `m_sizeof()`); re-exposing it under the bare name with `use m.sizeof;` is
-the refused alias.
+make the indirect-call lowering available — an INCLUDED file named `fnptr.cyr` may declare
+those. The main source has no file name, so `lib/fnptr.cyr` itself cannot be compiled as the
+entry (`cat lib/fnptr.cyr | cycc`, `cyrius build lib/fnptr.cyr`, or the LSP's `cyrius check` on
+that open file report its nine definitions); it is a library — include it. A mangled definition
+is accepted, so an impl method `x.sizeof()` or a `mod` fn of that name compiles (call it
+`m_sizeof()`); re-exposing it under the bare name with `use m.sizeof;` is the refused alias.
 
 ## Control Flow
 

@@ -23,7 +23,9 @@
 #   (it is gated on FINDFN) and cybs calls them in gen1, so an included file whose BASENAME is
 #   `fnptr.cyr` may declare them — from lib/, from another directory, or bare. The exemption is
 #   the file, not the content: the same bytes as `myptr.cyr` or `notfnptr.cyr` are refused, and a
-#   user `fn fncall1` beside an included lib/fnptr.cyr is still refused.
+#   user `fn fncall1` beside an included lib/fnptr.cyr is still refused. And lib/fnptr.cyr fed
+#   AS THE ENTRY is refused, deliberately (the main source has no name; exempting it is the
+#   filed repro's own shape): pinned so that is a decision, not an accident.
 # AXIS 4 — ANTI-VACUOUS: the intrinsics still work (fncallN in an expression, as a statement
 #   and at top level; mulh64; sizeof), near-misses (`mulh64x`, `fncall9`, `sizeofx`, `fncall`)
 #   are ordinary names, a mangled definition — an impl method `sizeof`, a `mod` fn — is accepted
@@ -35,7 +37,8 @@
 #   * parse.cyr _RSV_INTRINSIC_DECL: `return 0;` first   -> axes 1 + 2 RED (mh_fn exits 0 and runs 2,
 #     fc_fn compiles and SIGSEGVs).
 #   * parse.cyr _rsv_in_fnptr: `return 0;` first          -> axis 3/4 RED (lib/fnptr.cyr refused).
-#   * parse.cyr _rsv_in_fnptr: `return 1;` first          -> axis 3 RED (myptr / notfnptr compile).
+#   * parse.cyr _rsv_in_fnptr: `return 1;` first          -> axis 1 + 3 RED (fc*_fn, myptr, notfnptr,
+#     user_beside_lib and fnptr_entry all compile; 52 RED).
 #   * parse_fn.cyr: the fn-name call AFTER `_mod_name_intern` moved BEFORE it -> axis 4 RED (impl
 #     method `sizeof` refused).
 #   * parse.cyr _RSV_INTRINSIC_DECL: the `TOKTYP(S, ti) != 2` guard dropped -> the three
@@ -68,11 +71,15 @@ check() {
 # refused <name> <printf-fmt> <reserved-name> [<count>]
 refused() {
     printf '%b' "$2" > "$T/$1.cyr"
+    judged_refused "$1" "$3" "${4:-1}"
+}
+# judged_refused <name> <reserved-name> <count> — compiles $T/<name>.cyr as the main source.
+judged_refused() {
     rc=0
     (cd "$T" && "$CC" < "$1.cyr" > "$1.out" 2> "$1.err") || rc=$?
     check "$1: exits 1" 1 "$rc"
-    check "$1: names '$3'" yes "$(grep -qF -- "reserved intrinsic name '$3'" "$T/$1.err" && echo yes || echo no)"
-    check "$1: diagnostics" "${4:-1}" "$(grep -c 'reserved intrinsic name' "$T/$1.err")"
+    check "$1: names '$2'" yes "$(grep -qF -- "reserved intrinsic name '$2'" "$T/$1.err" && echo yes || echo no)"
+    check "$1: diagnostics" "$3" "$(grep -c 'reserved intrinsic name' "$T/$1.err")"
     check "$1: emits no binary" 0 "$(wc -c < "$T/$1.out" | tr -d ' ')"
 }
 # runs <name> <printf-fmt> <want-exit>
@@ -129,6 +136,10 @@ refused myptr    'include "sub/myptr.cyr"\nsyscall(60, 1);\n' fncall0 9
 refused notfnptr 'include "sub/notfnptr.cyr"\nsyscall(60, 1);\n' fncall8 9
 # lib/fnptr.cyr included does not license the program's own definition.
 refused user_beside_lib 'include "lib/fnptr.cyr"\nfn fncall1(a, b): i64 { return 77; }\nsyscall(60, 1);\n' fncall1
+# lib/fnptr.cyr as the ENTRY (`cat | cycc`, `cyrius build`, the LSP's `cyrius check`): the main source
+# has no file name, so its nine definitions are refused. DELIBERATE — it is a library; include it.
+cp "$ROOT/lib/fnptr.cyr" "$T/fnptr_entry.cyr"
+judged_refused fnptr_entry fncall0 9
 
 # A NUMBER where a declared name belongs is still the plain `expected identifier` error, not a
 # fault: the check must read a name only from an IDENT token (the first cut read the number as a
