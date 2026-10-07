@@ -584,6 +584,8 @@ fn _run_regression_gates(): i64 {
     _gate("all 7 drivers print `<name> <VERSION>`: x86 direct, cx direct, PE under wine, aarch64 under qemu, Mach-O built (v6.6.6)", "tests/gates/toolchain/fork_version_parity.sh");
     # 6.6.20: the rest of the argv walker, row by row, on every fork that runs here.
     _gate("every runnable fork honours the same flags: --strict a no-op (_strict_mode gone), --syntax-only on x86 / aarch64 cross / aarch64 + native under qemu / cx / PE host / cycc.exe + cx.exe under wine, --pie + CYRIUS_PIE on all three aarch64 compilers, the native fork refuses CYRIUS_MACHO_ARM by name (6.6.20)", "tests/gates/toolchain/fork_flag_parity.sh");
+    # 6.6.20: blocks every driver needs live in ONE place, so they cannot drift per fork.
+    _gate("one copy of each shared driver block: the heap-region bases (src/common/heap_regions.cyr, included by six drivers), the `main` auto-call lookup (_find_fn_by_name in six drivers), main_cx's /proc/self/cmdline scan; aarch64 auto-call still finds exactly `main` under qemu (6.6.20)", "tests/gates/toolchain/fork_shared_blocks_single_copy.sh");
     # v6.6.6: the cx half of fork parity. cx predefined NO CYRIUS_TARGET_* macro,
     # so every per-target stdlib arm compiled to nothing there and
     # `include "lib/assert.cyr"` did not compile — no .tcyr had ever run on cxvm,

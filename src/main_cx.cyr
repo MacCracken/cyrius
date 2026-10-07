@@ -44,57 +44,44 @@ include "src/frontend/parse.cyr"
 # /proc there), GetCommandLineW on Windows (the cmdline is one UTF-16LE string,
 # not NUL-split). Handled BEFORE the arena allocation so `--version` costs
 # nothing. CHANGELOG [6.6.6]
-#ifdef CYRIUS_TARGET_LINUX
-var _vbuf[256];
-var _vfd = syscall(SYS_OPEN, "/proc/self/cmdline", 0, 0);
-var _vn = syscall(SYS_READ, _vfd, &_vbuf, 255);
-syscall(SYS_CLOSE, _vfd);
-if (_vn > 0) {
-    var _vi = 0;
-    while (_vi < _vn) { if (load8(&_vbuf + _vi) == 0) { _vi = _vi + 1; break; } _vi = _vi + 1; }
-    while (_vi < _vn) {
-        if (_vi + 4 <= _vn) {
-            if (load8(&_vbuf + _vi) == 45 && load8(&_vbuf + _vi + 1) == 45) {
-                if (load8(&_vbuf + _vi + 2) == 118 && load8(&_vbuf + _vi + 3) == 101) {
+# The /proc/self/cmdline scan, ONE copy for the Linux and agnos arms below (it was two
+# verbatim blocks). Not compiled on macOS / Windows, which have no /proc and their own arms
+# (on x86 Mach-O its three syscalls alone are ~6 KB of dead code). CHANGELOG [6.6.20]
+#ifndef CYRIUS_TARGET_MACOS
+#ifndef CYRIUS_TARGET_WIN
+fn _cx_cmdline_flags(): i64 {
+    var vbuf[256];
+    var fd = syscall(SYS_OPEN, "/proc/self/cmdline", 0, 0);
+    var n = syscall(SYS_READ, fd, &vbuf, 255);
+    syscall(SYS_CLOSE, fd);
+    if (n <= 0) { return 0; }
+    var i = 0;
+    while (i < n) { if (load8(&vbuf + i) == 0) { i = i + 1; break; } i = i + 1; }
+    while (i < n) {
+        if (i + 4 <= n) {
+            if (load8(&vbuf + i) == 45 && load8(&vbuf + i + 1) == 45) {
+                if (load8(&vbuf + i + 2) == 118 && load8(&vbuf + i + 3) == 101) {
                     _write_out_all(_VERSION_STR_CYCC, _VERSION_LEN_CYCC);
                     syscall(SYS_EXIT, 0);
                 }
                 # "--sy" (--syntax-only), as on every other fork. CHANGELOG [6.6.20]
-                if (load8(&_vbuf + _vi + 2) == 115 && load8(&_vbuf + _vi + 3) == 121) {
+                if (load8(&vbuf + i + 2) == 115 && load8(&vbuf + i + 3) == 121) {
                     _syntax_only = 1;
                 }
             }
         }
-        while (_vi < _vn && load8(&_vbuf + _vi) != 0) { _vi = _vi + 1; }
-        _vi = _vi + 1;
+        while (i < n && load8(&vbuf + i) != 0) { i = i + 1; }
+        i = i + 1;
     }
+    return 0;
 }
 #endif
+#endif
+#ifdef CYRIUS_TARGET_LINUX
+_cx_cmdline_flags();
+#endif
 #ifdef CYRIUS_TARGET_AGNOS
-var _vbuf[256];
-var _vfd = syscall(SYS_OPEN, "/proc/self/cmdline", 0, 0);
-var _vn = syscall(SYS_READ, _vfd, &_vbuf, 255);
-syscall(SYS_CLOSE, _vfd);
-if (_vn > 0) {
-    var _vi = 0;
-    while (_vi < _vn) { if (load8(&_vbuf + _vi) == 0) { _vi = _vi + 1; break; } _vi = _vi + 1; }
-    while (_vi < _vn) {
-        if (_vi + 4 <= _vn) {
-            if (load8(&_vbuf + _vi) == 45 && load8(&_vbuf + _vi + 1) == 45) {
-                if (load8(&_vbuf + _vi + 2) == 118 && load8(&_vbuf + _vi + 3) == 101) {
-                    _write_out_all(_VERSION_STR_CYCC, _VERSION_LEN_CYCC);
-                    syscall(SYS_EXIT, 0);
-                }
-                # "--sy" (--syntax-only), as on every other fork. CHANGELOG [6.6.20]
-                if (load8(&_vbuf + _vi + 2) == 115 && load8(&_vbuf + _vi + 3) == 121) {
-                    _syntax_only = 1;
-                }
-            }
-        }
-        while (_vi < _vn && load8(&_vbuf + _vi) != 0) { _vi = _vi + 1; }
-        _vi = _vi + 1;
-    }
-}
+_cx_cmdline_flags();
 #endif
 #ifdef CYRIUS_TARGET_MACOS
 var _vflags = _ARGV_FLAGS_MACHO();

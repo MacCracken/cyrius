@@ -400,53 +400,8 @@ _HEAP_INIT_SCRATCH(S);
 # v6.0.7 — init alloc and assign rp_vec (return-patch storage).
 alloc_init();
 rp_vec = vec_new();
-# Phase 0 (v6.2.0): growable fixup table — base = the existing 0x107B000 region,
-# cap = the old hard cap; GFCNT grows it 2x via alloc() once full (util.cyr).
-_fixup_base = S + 0x107B000;
-_fixup_cap = 1048576;
-# Phase 0 (v6.2.0): growable fn-tables — bases start AT the original fixed
-# offsets, mask 8191, cap 8192 (byte-identical under the old cap; REGFN grows
-# the family + rehashes when the count would exceed it). See util.cyr.
-_fnt_cstrmask = S + 0x93A000;
-_fnt_resmask = S + 0x94A000;
-_fnt_optmask = S + 0x95A000;
-_fnt_tagmask = S + 0x96A000;
-_fnt_ovstr = S + 0x97A000;
-_fnt_ovint = S + 0x98A000;
-_fnt_ovcstr = S + 0x99A000;
-_fnt_simdmask = S + 0x9AA000;
-_fnt_names = S + 0x9BA000;
-_fnt_offsets = S + 0x9CA000;
-_fnt_params = S + 0x9DA000;
-_fnt_bodystart = S + 0x9EA000;
-_fnt_bodyend = S + 0x9FA000;
-_fnt_inline = S + 0xA0A000;
-_fnt_strmask = S + 0xA1A000;
-_fnt_codeend = S + 0xA2A000;
-_fnt_structmask = S + 0xA3A000;
-_fnt_namehash = S + 0x110000;
-_fnt_starthash = S + 0x114000;
-_fnt_hash_mask = 4095;   # v6.5.40: hash slots are 4 B now, so the fixed 16 KB regions hold 4096
-_fnt_cap = 2048;        # v6.5.51: HALF the fixed 4096-slot hash regions, so load stays <=50 % before the first grow (was 4096 = 100 % full)        # v6.5.40: was 8192 at 2 B/slot; _fnt_grow doubles from here
-# Growable codebuf (Phase 0 v6.2.0; 8 MiB base + 8 MiB steps @ v6.4.49): base is
-# an off-heap 8 MiB alloc (cap 8388608); EB grows +8 MiB off-heap when cp nears
-# the cap, 64 MiB ceiling (util.cyr _codebuf_grow). Was a fixed 3 MiB in-heap
-# region @ S+0x41A000 pre-.49. cx's own 0x54A000 codebuf is separate + fixed.
-_codebuf_base = alloc(8388608);
-_output_base = alloc(1073741824);
-if (_output_base == 0) { syscall(SYS_WRITE, 2, "error: cannot allocate 1 GiB output buffer
-", 43); syscall(SYS_EXIT, 1); }
-_output_cap = 1073741824;   # v6.4.52: 1 GiB output buffer on ALL platforms (macOS/Windows large-alloc path landed; was Linux-only + 16 MiB fallback in .51)
-_varn_base = S + 0x11A000;
-_vars_base = S + 0x12A000;
-_vart_base = S + 0x13A000;
-_vgoff_base = S + 0x1B0000;
-_vecv_base = S + 0x1D8000;
-_vgsi_base = S + 0x1EC000;
-_venid_base = S + 0x204000;
-_var_cap = 8192;
-_vsgn_base = alloc(1048576 * 8);   # v6.4.23 signed-global sign-ext: max-sized (var-grow cap) so it never grows → NO cybs-fragile grow-chain change; 8MB lazy-mapped
-_codebuf_cap = 8388608;
+# The region bases + caps, shared by six drivers. CHANGELOG [6.6.20]
+include "src/common/heap_regions.cyr"
 
 # Read input. Buffer is 256KB (v3.4.19, was 128KB before). If the source ever
 # fills the whole buffer, we error out explicitly instead of silently truncating
