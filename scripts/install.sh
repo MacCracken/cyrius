@@ -381,9 +381,15 @@ if [ "$REFRESH_ONLY" -eq 1 ]; then
     #   - bins entry "cyrius"  → cbt/cyrius.cyr
     #   - bins entry <other>   → programs/<name>.cyr (cyrlint, cyrfmt, ark, …)
     #   - cross_bins "cycc_aarch64" → src/main_aarch64.cyr
-    #   - cross_bins <other>      → src/main_<arch>.cyr (future-proof)
-    # A bin whose mapped source does not exist is a REFUSAL, never a copy of whatever sits at
-    # build/<bin>: that copy is how a June build/cybs reached 17 slots (CHANGELOG [6.6.20]).
+    #   - cross_bins "cycc_cx"      → src/main_cx.cyr
+    #   - cross_bins "cycc_win"     → src/main_win.cyr under CYRIUS_TARGET_WIN=1
+    #   - cross_bins "cycc-native-aarch64" → TRACKED, copied as committed (release-gate step 1b
+    #     holds it in lockstep with the tree; `cyrius pulsar` regenerates it)
+    #   - cross_bins <other>      → REFUSED: no rebuild rule
+    # A bin or cross-bin whose mapped source does not exist, or whose rebuild fails, is a
+    # REFUSAL, never a copy of whatever sits at build/<bin>: that copy is how a June build/cybs
+    # reached 17 slots (CHANGELOG [6.6.20]). The only bins copied as they stand are the two
+    # TRACKED ones, cycc and cycc-native-aarch64, which the release gate verifies.
     #
     # Staleness rule: rebuild if binary is missing OR ANY dependency mtime is
     # newer than binary mtime. Dependencies = the direct `$source` PLUS every
@@ -541,19 +547,30 @@ if [ "$REFRESH_ONLY" -eq 1 ]; then
                 # rebuilt unconditionally (no -nt skip) so the unfreeze can't be
                 # skipped by the frozen binary's mtime. See issue
                 # 2026-06-03-windows-pe-syscall-surface-blocks-detection.md.
-                if [ -f src/main_win.cyr ] && [ -x build/cycc ]; then
-                    _cw_err=$(mktemp) && [ -f "$_cw_err" ] || { echo "error: mktemp failed (TMPDIR=${TMPDIR:-/tmp})" >&2; exit 1; }
-                    if cat src/main_win.cyr | CYRIUS_TARGET_WIN=1 ./build/cycc > build/cycc_win 2>"$_cw_err"; then
-                        chmod +x build/cycc_win
-                        info "rebuilt cycc_win from src/main_win.cyr (CYRIUS_TARGET_WIN=1 → PE32+)"
-                        [ -s "$_cw_err" ] && sed 's/^/    /' "$_cw_err" >&2
-                    else
-                        warn "rebuild of cycc_win failed:"; sed 's/^/    /' "$_cw_err" >&2; rm -f build/cycc_win
-                    fi
+                #
+                # 6.6.20: a missing source, a missing build/cycc or a failed compile REFUSES, as
+                # `_rebuild_stale` does for the bins. They used to skip silently or warn, and the
+                # copy loop then installed whatever build/cycc_win the clone held — measured: a
+                # broken src/main_win.cyr gave rc 0 and the slot kept the PE compiler built from
+                # the earlier source. CHANGELOG [6.6.20]
+                [ -f src/main_win.cyr ] || err "cyrius.cyml [release] cross_bins lists 'cycc_win' but its source src/main_win.cyr does not exist — refusing to install a build/cycc_win that nothing rebuilt"
+                [ -x build/cycc ] || err "build/cycc missing — cannot rebuild cycc_win from src/main_win.cyr; refusing to install a stale build/cycc_win"
+                _cw_err=$(mktemp) && [ -f "$_cw_err" ] || { echo "error: mktemp failed (TMPDIR=${TMPDIR:-/tmp})" >&2; exit 1; }
+                if cat src/main_win.cyr | CYRIUS_TARGET_WIN=1 ./build/cycc > build/cycc_win 2>"$_cw_err"; then
+                    chmod +x build/cycc_win
+                    info "rebuilt cycc_win from src/main_win.cyr (CYRIUS_TARGET_WIN=1 → PE32+)"
+                    [ -s "$_cw_err" ] && sed 's/^/    /' "$_cw_err" >&2
                     rm -f "$_cw_err"
+                else
+                    warn "rebuild of cycc_win from src/main_win.cyr failed:"
+                    sed 's/^/    /' "$_cw_err" >&2
+                    rm -f "$_cw_err" build/cycc_win
+                    err "refusing to refresh: cycc_win did not build from src/main_win.cyr (nothing was installed)"
                 fi
                 ;;
-            *) warn "unknown cross_bins entry '$cbin' — no rebuild rule, will copy existing build/$cbin if present" ;;
+            # 6.6.20: no rebuild rule is a REFUSAL — this arm used to warn and let the copy loop
+            # install whatever build/$cbin the clone held, built from nobody knows what.
+            *) err "cyrius.cyml [release] cross_bins lists '$cbin' but scripts/install.sh has no rebuild rule for it — refusing to install a build/$cbin that nothing rebuilt (give it a rebuild rule here)" ;;
         esac
     done
 

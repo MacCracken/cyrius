@@ -36,6 +36,19 @@
 #           (each edit axis first proves its edit changes that bin's code)
 #   axis 10 build/cycc newer than the bins → all rebuilt
 #
+# 6.6.20 (RS-02 review): the CROSS-bin arms. cycc_win skipped silently on a missing source or
+# compiler and only WARNED on a failed compile; the unknown-entry arm warned it "will copy
+# existing build/<bin>". Either way the copy loop installed a build/<bin> nothing rebuilt —
+# measured: a broken src/main_win.cyr gave refresh rc 0 and the slot kept the old cycc_win.
+#   axis 11 a tiny src/main_win.cyr: cycc_win rebuilt, installed == a fresh PE compile
+#           (anti-vacuous — the arm still builds)
+#   axis 12 that source broken: refused by name, build/cycc_win removed, the slot's cycc_win
+#           still axis 11's bytes
+#   axis 13 the source deleted, a stale build/cycc_win planted: refused, naming the source,
+#           the slot untouched
+#   axis 14 a cross_bins entry with no rebuild rule, its build/<bin> planted: refused by
+#           name, never installed
+#
 # Mutation ledger (MEASURED in a scratch ROOT at 6.6.20 — re-run, don't trust):
 #   install.sh + verify-store.sh as they were at 6.6.19              → axes 1 2 3 4 4r red
 #   the `cybs) _rebuild_cybs` arm made a no-op                       → axes 1 3 red
@@ -47,6 +60,9 @@
 #   the union cut back to "lib"                                       → axes 7 8 9 red
 #   the union cut back to "lib cbt" (the old `cyrius` arm)            → axes 8 9 red
 #   the `build/cycc -nt build/<bin>` dependency dropped               → axis 10 red
+#   the cross_bins arms as of the RS-03..CLN-01 commits (warn/skip)   → axes 12 13 14 red
+#   only the cycc_win compile failure made fatal (skip arms left)      → axes 13 14 red
+#   only the unknown-entry arm made fatal                              → axes 12 13 red
 set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT"
@@ -212,6 +228,50 @@ rc=$(_lrefresh a10)
 if [ "$rc" -eq 0 ] && grep -q 'rebuilt cyrius-lsp' "$W/a10.out" && grep -q 'rebuilt ark' "$W/a10.out" && grep -q 'rebuilt cyrius from' "$W/a10.out"; then
     ok "a build/cycc newer than the bins rebuilds them (the compiler is a dependency)"
 else bad "axis 10 (rc=$rc): $(grep -E 'rebuilt' "$W/a10.out" | tr '\n' ' ')"; fi
+
+# ── axes 11-14 (6.6.20, RS-02 review): a cross-bin nothing rebuilt is refused, never copied ─
+X="$W/cross"; mkdir -p "$X/build" "$X/scripts" "$X/src" "$X/lib"
+printf 'fn probe_lib(): i64 { return 1; }\n' > "$X/lib/probe.cyr"
+cp "$ROOT/scripts/install.sh" "$X/scripts/"
+cp "$CC" "$X/build/cycc"; chmod +x "$X/build/cycc"
+printf '9.9.9\n' > "$X/VERSION"
+printf 'var x = 1;\n' > "$X/src/main_win.cyr"
+printf '[release]\nbins = ["cycc"]\ncross_bins = ["cycc_win"]\nscripts = []\n' > "$X/cyrius.cyml"
+( cd "$X" && git init -q )
+HX="$W/homeX"; SX="$HX/versions/9.9.9/bin"
+_xrefresh() {  # _xrefresh <tag> → rc echoed
+    rc=0
+    ( cd "$X" && HOME="$W/userhome" CYRIUS_HOME="$HX" CYRIUS_REFRESH_RELEASED=1 sh scripts/install.sh --refresh-only \
+        > "$W/$1.out" 2> "$W/$1.err" ) || rc=$?
+    echo "$rc"
+}
+rc=$(_xrefresh a11)
+CYRIUS_TARGET_WIN=1 "$X/build/cycc" < "$X/src/main_win.cyr" > "$W/fresh.cycc_win" 2>/dev/null || true
+if [ "$rc" -eq 0 ] && grep -q 'rebuilt cycc_win' "$W/a11.out" && [ -s "$W/fresh.cycc_win" ] \
+   && cmp -s "$SX/cycc_win" "$W/fresh.cycc_win"; then
+    ok "cross_bins cycc_win: rebuilt from src/main_win.cyr, installed == a fresh PE compile"
+else bad "axis 11 (rc=$rc): $(head -2 "$W/a11.err" | tr '\n' ' ') / installed: $(ls "$SX" 2>/dev/null | tr '\n' ' ')"; fi
+cp "$SX/cycc_win" "$W/slot.cycc_win" 2>/dev/null || printf 'none\n' > "$W/slot.cycc_win"
+printf 'fn broken( {\n' > "$X/src/main_win.cyr"
+rc=$(_xrefresh a12)
+if [ "$rc" -ne 0 ] && grep -q 'cycc_win' "$W/a12.err" && grep -q 'refusing' "$W/a12.err" \
+   && [ ! -e "$X/build/cycc_win" ] && cmp -s "$SX/cycc_win" "$W/slot.cycc_win"; then
+    ok "a src/main_win.cyr that does not compile: refused by name (rc=$rc), build/cycc_win removed, the slot keeps its cycc_win"
+else bad "axis 12 (rc=$rc): $(grep -h -m2 -E 'cycc_win|refus' "$W/a12.out" "$W/a12.err" | tr '\n' ' ') / build/cycc_win: $([ -e "$X/build/cycc_win" ] && echo present || echo absent)"; fi
+rm -f "$X/src/main_win.cyr"
+printf '#!/bin/sh\necho stale-cycc_win\n' > "$X/build/cycc_win"; chmod +x "$X/build/cycc_win"
+rc=$(_xrefresh a13)
+if [ "$rc" -ne 0 ] && grep -q 'src/main_win.cyr' "$W/a13.err" && grep -q 'refusing' "$W/a13.err" \
+   && cmp -s "$SX/cycc_win" "$W/slot.cycc_win"; then
+    ok "no src/main_win.cyr, a stale build/cycc_win planted: refused naming the source (rc=$rc), the slot untouched"
+else bad "axis 13 (rc=$rc): $(head -2 "$W/a13.err" | tr '\n' ' ') / slot cycc_win: $(head -c 40 "$SX/cycc_win" 2>/dev/null | tr -c '[:print:]' '.')"; fi
+printf '[release]\nbins = ["cycc"]\ncross_bins = ["cycc_mystery"]\nscripts = []\n' > "$X/cyrius.cyml"
+printf '#!/bin/sh\necho stale-mystery\n' > "$X/build/cycc_mystery"; chmod +x "$X/build/cycc_mystery"
+rc=$(_xrefresh a14)
+if [ "$rc" -ne 0 ] && grep -q 'cycc_mystery' "$W/a14.err" && grep -q 'no rebuild rule' "$W/a14.err" \
+   && [ ! -e "$SX/cycc_mystery" ]; then
+    ok "a cross_bins entry with no rebuild rule: refused by name (rc=$rc), the planted build/cycc_mystery never installed"
+else bad "axis 14 (rc=$rc): $(head -2 "$W/a14.err" | tr '\n' ' ') / installed: $(ls "$SX" 2>/dev/null | tr '\n' ' ')"; fi
 
 echo "$G: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
