@@ -119,7 +119,7 @@ struct BQ { k; q: Q; }
 struct GBx<T> { v: T; n; }
 fn mkpt(a): Pt { var p: Pt; p.x = a; p.y = a + 1; return p; }
 fn mkq(a): Q { var p: Q; p.a = a; p.b = a; p.c = a; return p; }
-impl Mk for Q { fn tw(self): Q { var r: Q; r.a = 1; r.b = 2; r.c = 3; return r; } }
+impl Q { fn tw(self): Q { var r: Q; r.a = 1; r.b = 2; r.c = 3; return r; } }
 '
 
 # ── R1: the literal head against its annotation ──────────────────────────────────────────────────
@@ -164,8 +164,8 @@ syscall(60, f());
 # The top-level refusal is the ONLY error: the refused value is taken as the whole nested field, not
 # descended into (which reported the values it was then short as "unexpected '}'").
 T5="$T"'fn mkbig(a): Big { var p: Big; p.a = a; p.b = a + 1; p.c = a + 2; return p; }
-impl Mp for Pt { fn tw(self): Pt { var r: Pt; r.x = 1; r.y = 2; return r; } }
-impl Mb for Big { fn tw(self): Big { var r: Big; r.a = 1; return r; } }
+impl Pt { fn tw(self): Pt { var r: Pt; r.x = 1; r.y = 2; return r; } }
+impl Big { fn tw(self): Big { var r: Big; r.a = 1; return r; } }
 var P0 = Pt { 1, 2 };
 var B0 = Big { 1, 2, 3 };
 '

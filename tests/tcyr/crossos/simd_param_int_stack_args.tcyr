@@ -51,7 +51,7 @@ fn two(v: f64v2, a, b, c, u: f64v4, d, e, f, g): i64 { return load64(&v + 8)*100
 fn late(a, b, c, d, e, f, g, v: f64v2, h): i64 { return a*100000000 + b*10000000 + c*1000000 + d*100000 + e*10000 + f*1000 + g*100 + load64(&v + 0)*10 + h; }
 # ORDER, not just presence: subtraction makes a swapped pair of stack args visible
 fn order(a, v: f64v2, b, c, d, e, f, g, h, i): i64 { return a - b - c - d - e - f - g - h - i + load64(&v + 8); }
-impl MT for MG { fn mm(self, a, b, v: f64v2, c, d, e, f): i64 { return load64(&v + 8)*1000000 + a*100000 + b*10000 + c*1000 + d*100 + e*10 + f; } }
+impl MG { fn mm(self, a, b, v: f64v2, c, d, e, f): i64 { return load64(&v + 8)*1000000 + a*100000 + b*10000 + c*1000 + d*100 + e*10 + f; } }
 fn tail7(v: f64v2): i64 { return n7(v, 1, 2, 3, 4, 5, 6, 7); }
 fn mk6(a, b, c, d, e, f): P3 { var p: P3; p.x = a*100000 + b*10000 + c*1000 + d*100 + e*10 + f; p.y = 0; p.z = 0; return p; }
 fn mk8(a, b, c, d, e, f, g, h): P3 { var p: P3; p.x = a*10000000 + b*1000000 + c*100000 + d*10000 + e*1000 + f*100 + g*10 + h; p.y = 0; p.z = 0; return p; }

@@ -78,10 +78,10 @@ fn rd_two(): (i64, i64) { return (3, 4); }
 
 # A method redefined by a second impl block; the dot call and the mangled name both rebind.
 struct RdFoo { v; }
-impl RdOps for RdFoo { fn get(self): i64 { return 2; } }
+impl RdFoo { fn get(self): i64 { return 2; } }
 fn rd_m_dot(): i64 { var f = RdFoo { v: 0 }; return f.get(); }
 fn rd_m_named(): i64 { var f = RdFoo { v: 0 }; return RdFoo_get(&f); }
-impl RdOps for RdFoo { fn get(self): i64 { return 1; } }
+impl RdFoo { fn get(self): i64 { return 1; } }
 
 # The shape it was found in: a library's fn calls a helper it defines, and the program supplies
 # its own helper AFTER the library (an include is this, concatenated).

@@ -24,7 +24,7 @@ fn loc16(): i64 { var b = N2 { 7, 8 }; var p: *N2 = &b; var q: N2 = p; var r = q
 fn glob8(): i64 { var q: B1 = GP; var r = q.v; q.v = 3; return r * 10 + GB.v; }
 fn odd3(p: *Odd): i64 { var q: Odd = p; return q.a * 100 + q.b; }
 fn handle(): i64 { var a: N2 = alloc(16); a.v = 4; a.w = 5; var b: N2 = a; b.v = 9; return a.v; }
-impl Show for N2 { fn cp(self): i64 { var q: N2 = self; q.v = 1; return q.w * 10 + self.v; } }
+impl N2 { fn cp(self): i64 { var q: N2 = self; q.v = 1; return q.w * 10 + self.v; } }
 
 fn run(): i64 {
     var b = B1 { 7 };

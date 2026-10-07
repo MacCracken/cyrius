@@ -43,7 +43,7 @@ include "lib/assert.cyr"
 
 struct P2 { x; y; }
 
-impl Mk for P2 {
+impl P2 {
     fn mk(self, n): P2 { var p: P2; p.x = n; p.y = n + 1; return p; }
 }
 fn P2_add(l, r): P2 { var p: P2; p.x = load64(l) + load64(r); p.y = load64(l + 8) + load64(r + 8); return p; }

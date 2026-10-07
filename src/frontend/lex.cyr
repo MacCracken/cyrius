@@ -1721,6 +1721,10 @@ fn LEXID(S, p, npos): i64 {
         # default build errors loud on async/await rather than miscompiling.
         if (kw & 0xFFFFFFFFFF == 0x636E797361) { ADDTOK(S, 134, 0); return p; }
         if (kw & 0xFFFFFFFFFF == 0x7469617761) { ADDTOK(S, 135, 0); return p; }
+        # 6.7.0 (A1): "trait" = 0x7469617274 → token 167, a trait declaration. No cyrius or
+        # ecosystem source uses `trait` as an identifier (surveyed 2026-10-07), so cycc's own
+        # token stream is unchanged.
+        if (kw & 0xFFFFFFFFFF == 0x7469617274) { ADDTOK(S, 167, 0); return p; }
     }
     if (klen == 6) {
         # v6.5.0 — "public" = 0x63696C627570, lexed to token 73, the SAME token as the

@@ -71,7 +71,7 @@ syscall(60, m());
 
 row B1 'include "lib/syscalls.cyr"
 struct P { x; }
-impl Pm for P {
+impl P {
     #must_use
     fn mu(self): i64 { return 2; }
     #inline
@@ -96,7 +96,7 @@ syscall(60, m());
 
 row C1 'include "lib/syscalls.cyr"
 struct P { x; }
-impl Pm for P {
+impl P {
     #io
     fn io(self): i64 { return 3; }
     #alloc

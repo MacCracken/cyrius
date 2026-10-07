@@ -94,7 +94,7 @@ struct MB { v; w; }
 struct OV { x; y; z; }
 struct OW { x; y; }
 struct ON { v; }
-impl MkB for MB {
+impl MB {
     fn mk2(self, a, b): P3 { CNT = CNT + 1; var p: P3; p.x = load64(self) * 100 + a * 10 + b; p.y = 0; p.z = p.x; return p; }
     fn mk7(self, a, b, c, d, e, f, g): P3 { var p: P3; p.x = load64(self) * 10000000 + a * 1000000 + b * 100000 + c * 10000 + d * 1000 + e * 100 + f * 10 + g; p.y = 0; p.z = p.x; return p; }
     fn mp7(self, a, b, c, d, e, f, g): P2 { var p: P2; p.x = 0; p.y = load64(self) * 10000000 + a * 1000000 + b * 100000 + c * 10000 + d * 1000 + e * 100 + f * 10 + g; return p; }

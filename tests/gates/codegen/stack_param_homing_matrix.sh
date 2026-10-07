@@ -288,7 +288,7 @@ BEGIN {
       p("fn OW_add(a, b): OW { var q: OW; q.x = 0; q.y = load64(a + 8) * 10 + load64(b + 8); return q; }")
       p("fn how(q: OW): i64 { return q.y; }")
     }
-    mimpl = "impl MkB for MB {"
+    mimpl = "impl MB {"
     for (ni = 1; ni <= 2; ni++) {
       n = (ni == 1) ? 2 : 7
       sig = "self"; args = ""; body = "load64(self) * " pow10(n); want = "5"
@@ -486,7 +486,7 @@ struct P2 { x; y; }
 struct B { v; w; }
 struct V3 { x; y; z; }
 struct V2 { x; y; }
-impl Mk for B {
+impl B {
   fn mk(self, a): P3 { var p: P3; p.x = load64(self) + a; p.y = 0; p.z = p.x; return p; }
   fn mp(self, a): P2 { var p: P2; p.x = 1; p.y = load64(self) + a; return p; }
 }
@@ -611,7 +611,7 @@ refuse_all pair-return "$T/rp.cyr" "is returned in two registers, so .return. ta
 # above. (Their VALUES are asserted on real hardware by tests/tcyr/crossos/pair_return_shapes.tcyr.)
 cat > "$T/rpok.cyr" <<'EOF'
 struct P2 { x; y; }
-impl Mk for P2 { fn mk(self, n): P2 { var p: P2; p.x = n; p.y = n + 1; return p; } }
+impl P2 { fn mk(self, n): P2 { var p: P2; p.x = n; p.y = n + 1; return p; } }
 fn P2_add(l, r): P2 { var p: P2; p.x = load64(l) + load64(r); p.y = 0; return p; }
 fn mk2(a, b): P2 { var p: P2; p.x = a; p.y = b; return p; }
 fn r_local(a, b): P2 { var p: P2 = mk2(a, b); return p; }

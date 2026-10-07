@@ -40,7 +40,7 @@ struct Counter {
     step: i64;
 }
 
-impl Countable for Counter {
+impl Counter {
     fn new(start, step) {
         var c = alloc(16);
         store64(c, start);
@@ -63,7 +63,7 @@ struct Pair {
     b: i64;
 }
 
-impl Pairable for Pair {
+impl Pair {
     fn new(a, b) {
         var p = alloc(16);
         store64(p, a);

@@ -124,11 +124,11 @@ struct Q { a; b; c; }
 struct H { o: Odd; t: i8; u: i32; }
 struct HP { p: P8; k; }
 struct HQ { q: Q; n; }
-impl Mk for Od2 { fn same(self): Od2 { var r: Od2; r.c = 1; r.d = 2; return r; } }
-impl Mk for Q8 { fn mq(self): Q8 { var r: Q8; r.z = 5; return r; } }
-impl Mk for Odd { fn dup(self): Odd { var r: Odd; r.a = 3; r.b = 4; return r; } }
-impl Mk for P8 { fn dup(self): P8 { var r: P8; r.x = 6; r.y = 7; return r; } }
-impl Mk for Q { fn mr(self): R2 { var r: R2; r.a = 1; r.b = 2; return r; } }
+impl Od2 { fn same(self): Od2 { var r: Od2; r.c = 1; r.d = 2; return r; } }
+impl Q8 { fn mq(self): Q8 { var r: Q8; r.z = 5; return r; } }
+impl Odd { fn dup(self): Odd { var r: Odd; r.a = 3; r.b = 4; return r; } }
+impl P8 { fn dup(self): P8 { var r: P8; r.x = 6; r.y = 7; return r; } }
+impl Q { fn mr(self): R2 { var r: R2; r.a = 1; r.b = 2; return r; } }
 fn Od2_add(p: Od2, q: Od2): Od2 { var r: Od2; r.c = 1; r.d = 2; return r; }
 fn Odd_add(p: Odd, q: Odd): Odd { var r: Odd; r.a = p.a + q.a; r.b = p.b + q.b; return r; }
 fn mkod2(): Od2 { var r: Od2; r.c = 1; r.d = 2; return r; }

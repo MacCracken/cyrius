@@ -18,7 +18,7 @@
 #     only `early`, rc=0.
 #
 #  4. METHODS AND `main` — introduced by the FIRST CUT of this fix (accepting indented and
-#     bare fns) and caught in its review, never released. A fn inside `impl T for S { … }`
+#     bare fns) and caught in its review, never released. A fn inside `impl S { … }`
 #     is a method emitted as `S_m`; read by its bare name it printed conflicting prototypes
 #     (`new`, twice, for method_dispatch.tcyr). Only brace depth 0 is FFI surface. And a
 #     program's `fn main` is its entry point: its prototype would collide with the C host's
@@ -125,7 +125,7 @@ check "both examples are run (2 total)" 1 "$(grep -c '^1 passed, 1 failed (2 tot
 check "the failing example past the cut fails the run" 1 "$([ "$rc5" -ne 0 ] && echo 1 || echo 0)"
 check "and is named by its line" 1 "$(grep -c 'FAIL: dt.cyr:1306 (expected 5, got 4)' o5 || true)"
 
-# ── H6: only TOP-LEVEL fns. A fn inside `impl T for S { … }` is a method, emitted as
+# ── H6: only TOP-LEVEL fns. A fn inside `impl S { … }` is a method, emitted as
 # `S_m`; reading it by its bare name printed `cyr_val new(cyr_val start, cyr_val step);`
 # and `cyr_val new(cyr_val a, cyr_val b);` for tests/tcyr/frontend/method_dispatch.tcyr —
 # conflicting prototypes for symbols that do not exist. Depth must come back to 0 after.

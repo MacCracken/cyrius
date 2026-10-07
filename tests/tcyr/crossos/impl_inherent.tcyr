@@ -17,6 +17,7 @@ impl Pt {
     fn norm1(self): i64 { return self.x + self.y; }
     fn scale(self, k) { self.x = self.x * k; self.y = self.y * k; return 0; }
 }
+trait Show { fn show(self): i64; }
 impl Show for Pt { fn show(self): i64 { return self.x * 10 + self.y; } }
 
 fn run(): i64 {

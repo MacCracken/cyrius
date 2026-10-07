@@ -10,7 +10,7 @@
 # tests/gates/frontend/private_forward_reference.sh, which a .tcyr cannot express (a refused
 # compile has no binary to run).
 
-impl FwdTk for FwdW {
+impl FwdW {
     fn take(self, b: FwdBig) { return b.a + b.b + b.c; }
     fn scale(self, b: FwdBig, k) { return (b.a + b.b + b.c) * k; }
     # ⭐ 6.6.5 round 2 — the OTHER two callee masks. `_fnt_structmask` was the only one the

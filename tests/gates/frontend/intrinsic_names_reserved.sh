@@ -178,7 +178,7 @@ runs fc_toplvl  'include "lib/fnptr.cyr"\nfn add(a, b): i64 { return a + b; }\ns
 # 2^63 * 16 = 2^67: high word 8; + sizeof(i32) 4
 runs intrinsics 'fn main(): i64 { return mulh64(0x8000000000000000, 16) + sizeof(i32); }\nsyscall(60, main());\n' 12
 runs near_miss  'fn mulh64x(a, b): i64 { return a + b; }\nfn fncall9(a): i64 { return a; }\nfn sizeofx(a): i64 { return a; }\nvar fncall = 1;\nvar sizeof_t = 2;\nsyscall(60, mulh64x(3, 4) + fncall9(fncall) + sizeofx(sizeof_t));\n' 10
-runs impl_meth  'struct Foo { a; }\nimpl Sz for Foo { fn sizeof(self): i64 { return 9; } }\nfn main(): i64 { var f = Foo { 1 }; return f.sizeof(); }\nsyscall(60, main());\n' 9
+runs impl_meth  'struct Foo { a; }\nimpl Foo { fn sizeof(self): i64 { return 9; } }\nfn main(): i64 { var f = Foo { 1 }; return f.sizeof(); }\nsyscall(60, main());\n' 9
 runs mod_fn     'mod m;\nfn sizeof(): i64 { return 6; }\nsyscall(60, m_sizeof());\n' 6
 runs use_alias  'mod m;\nfn foo(a, b): i64 { return 77; }\nmod n;\nuse m.foo;\nfn f(): i64 { return foo(1, 2); }\nsyscall(60, n_f());\n' 77
 # A UNIT variant spelled `mulh64` declares no fn and is read qualified; an ordinary payload

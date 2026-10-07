@@ -70,7 +70,7 @@ row struct_bare    refused '_after()' 0 'public struct S1 { x; y; }'
 row struct_typed   refused '_after()' 0 'public struct S3 { x: i64; y: i64; }'
 row union_bare     refused '_after()' 0 'public union U1 { a; b; }'
 row impl_fwd       refused '_after()' 1 'struct T1 { n; }
-public impl Tr for T1 { fn get(self) { return load64(self); } }'
+public impl T1 { fn get(self) { return load64(self); } }'
 row enum_then_var  refused '_v' 0 'public enum E6 { A6 = 1 }
 var _v = 5;'
 # ── the paths that already consumed it must keep doing so ────────────────────────────
@@ -137,7 +137,7 @@ row arr_then_fn    refused '_after()' 0 'public var PARR[4];'
 #    relaxed-ordering fn after top-level code (the pass-2 `var` skip re-armed the marker) ──
 row var_then_impl  refused 'T4_m(0)' 0 'struct T4 { n; }
 public var V4 = 7;
-impl Tr for T4 { fn m(self) { return 42; } }'
+impl T4 { fn m(self) { return 42; } }'
 rowraw var_stmt_fn refused '_late()' 0 '' 'private
 
 public var V6 = 7;
@@ -225,11 +225,11 @@ var _QA, _QB, _QC = _tri();'
 # ── `public impl` marks NO method (it used to expose the first one by the leak);
 #    per-method `public fn` is the form and must keep working ──────────────────────────
 row pubimpl_first  refused 'T5_m(0)' 0 'struct T5 { n; }
-public impl Tr for T5 { fn m(self) { return 42; } fn m2(self) { return 43; } }'
+public impl T5 { fn m(self) { return 42; } fn m2(self) { return 43; } }'
 row impl_pub_method accepted 'T6_get(0)' 0 'struct T6 { n; }
-impl Tr for T6 { public fn get(self) { return 42; } fn hid(self) { return 43; } }'
+impl T6 { public fn get(self) { return 42; } fn hid(self) { return 43; } }'
 row impl_hid_method refused 'T6_hid(0)' 0 'struct T6 { n; }
-impl Tr for T6 { public fn get(self) { return 42; } fn hid(self) { return 43; } }'
+impl T6 { public fn get(self) { return 42; } fn hid(self) { return 43; } }'
 # ── derive codecs inherit the type's `public`, like the accessors already did ────────
 LIBPRE='include "lib/syscalls.cyr"
 include "lib/alloc.cyr"

@@ -36,7 +36,7 @@ fn name_of(h: *PH): *Str { return h.name; }      # the filed shape
 fn first(q: *Q): *Pt { return q.p; }
 fn bytes_of(q: *Q): *u8 { return q.b; }
 fn pair(a: *Pt): (*Pt, i64) { return (a, 9); }
-impl Pts for Pt { fn me(self): *Pt { return self; } }
+impl Pt { fn me(self): *Pt { return self; } }
 
 var buf[64];
 var arr: Pt[4];
@@ -120,7 +120,7 @@ fn linked(): i64 {
 # ── a field chain THROUGH a pointer field (6.6.17) ─────────────────────────────────────────────
 # `a.next.val` was `expected ';', got '.'`: a `*T` field was an untyped word to the chain
 # resolver. It now continues through the pointer like a `p: *Node` parameter's `p.val`.
-impl NodeOps for Node { fn twice(self): i64 { return load64(self) * 2; } }
+impl Node { fn twice(self): i64 { return load64(self) * 2; } }
 struct LHold { k; n: Node; }
 struct LWrap { w; first: *Node; }
 fn mkw(f): LWrap { var r: LWrap; r.w = 1; r.first = f; return r; }

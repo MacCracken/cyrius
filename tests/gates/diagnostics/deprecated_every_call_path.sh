@@ -294,7 +294,7 @@ fn early() {
     store64(v, 4);
     return v.old();   #W
 }
-impl Vm for V {
+impl V {
 #deprecated("use V_neu")
     fn old(self) { return load64(self); }
     fn neu(self) { return load64(self) + 1; }

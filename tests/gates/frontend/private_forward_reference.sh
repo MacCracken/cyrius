@@ -169,26 +169,26 @@ row() {
 row method   Q_seven \
 'private
 struct Q { a: i64; b: i64; }
-impl Tr for Q { fn seven(self) { return 42; } }' \
+impl Q { fn seven(self) { return 42; } }' \
 'fn main(): i64 { var q: Q; q.a = 1; q.b = 2; return q.seven(); }'
 
 row mangled  Q_seven \
 'private
 struct Q { a: i64; b: i64; }
-impl Tr for Q { fn seven(self) { return 42; } }' \
+impl Q { fn seven(self) { return 42; } }' \
 'fn main(): i64 { var q: Q; q.a = 1; q.b = 2; return Q_seven(&q); }'
 
 row addrof   Q_seven \
 'private
 struct Q { a: i64; b: i64; }
-impl Tr for Q { fn seven(self) { return 42; } }' \
+impl Q { fn seven(self) { return 42; } }' \
 'include "lib/fnptr.cyr"
 fn main(): i64 { var q: Q; var f = &Q_seven; return fncall1(f, &q); }'
 
 row tailcall Q_seven \
 'private
 struct Q { a: i64; b: i64; }
-impl Tr for Q { fn seven(self) { return 42; } }' \
+impl Q { fn seven(self) { return 42; } }' \
 'fn tc(q): i64 { return Q_seven(q); }
 fn main(): i64 { var q: Q; q.a = 1; q.b = 2; return tc(&q); }'
 
@@ -203,7 +203,7 @@ fn main(): i64 { var q: Q; q.a = 1; q.b = 2; return tc(&q); }'
 # break the TYPE and no operator dispatch would happen at all.
 row operator OpV_add \
 'private
-impl Add for OpV { fn add(a, b) { return 39 + b; } }' \
+impl OpV { fn add(a, b) { return 39 + b; } }' \
 'struct OpV { v; }
 var opv: OpV = 5;
 fn main(): i64 { var r = opv + 3; return r; }'
@@ -348,7 +348,7 @@ include "lib/syscalls.cyr"
 private
 struct SF { a: i64; b: i64; }
 fn main(): i64 { var s: SF; s.a = $A; s.b = $B; return s.sum(); }
-impl Tr for SF { fn sum(self) { return self.a + self.b; } }
+impl SF { fn sum(self) { return self.a + self.b; } }
 var rc = main();
 sys_exit_group(rc);
 EOF
@@ -358,7 +358,7 @@ ok same_file $((A + B))
 cat > "$T/w/lib/pubm.cyr" <<'EOF'
 private
 struct PM { a: i64; }
-impl Tr for PM { public fn twice(self) { return load64(self) * 2; } }
+impl PM { public fn twice(self) { return load64(self) * 2; } }
 EOF
 C=21
 cat > "$T/w/pub_method.cyr" <<EOF
@@ -492,7 +492,7 @@ cat > "$T/w/wrong_name.cyr" <<'EOF'
 include "lib/syscalls.cyr"
 struct Q7 { a: i64; }
 fn main(): i64 { var q: Q7; return q.nosuch(); }
-impl Tr for Q7 { fn seven(self) { return 42; } }
+impl Q7 { fn seven(self) { return 42; } }
 var rc = main();
 sys_exit_group(rc);
 EOF

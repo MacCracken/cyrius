@@ -53,8 +53,8 @@ struct N3 { a; b; c; }
 '
 
 # ── A ──
-printf "$H"'impl Show for B1 { fn m(self): i64 { return self.v; } fn setv(self, x) { self.v = x; return 0; } }
-impl Show for N3 { fn sum(self): i64 { return self.a + self.b + self.c; } fn first(self): i64 { return load64(self); } }
+printf "$H"'impl B1 { fn m(self): i64 { return self.v; } fn setv(self, x) { self.v = x; return 0; } }
+impl N3 { fn sum(self): i64 { return self.a + self.b + self.c; } fn first(self): i64 { return load64(self); } }
 fn main(): i64 {
     var b = B1 { 7 }; var n = N3 { 1, 2, 3 }; var r = 0;
     if (b.m() == 7) { r = r + 1; }
@@ -75,13 +75,13 @@ exits a 127 "A: fields through self; o.m() == T_m(o) == T_m(&o) at 8 B and 24 B"
 i=0
 for body in 'return load64(self + 8);' 'return load64(8 + self);' 'return load64(self - 8);' 'return load64(self +% 8);' 'return self[1];' 'self += 8; return 0;'; do
     i=$((i + 1))
-    printf "$H"'impl Show for N3 { fn f(self): i64 { %s } }\nvar n = N3 { 1, 2, 3 };\nsyscall(60, n.f());\n' "$body" > "$T/b$i.cyr"
+    printf "$H"'impl N3 { fn f(self): i64 { %s } }\nvar n = N3 { 1, 2, 3 };\nsyscall(60, n.f());\n' "$body" > "$T/b$i.cyr"
     refused_once "b$i" "B: \`$body\`"
 done
 
 # ── C ──
 printf "$H"'fn take(p): i64 { return load64(p + 8); }
-impl Show for N3 { fn f(self): i64 {
+impl N3 { fn f(self): i64 {
     var r = 0;
     if (self.a + self.b == 3) { r = r + 1; }
     if (self != 0) { r = r + 2; }
@@ -95,7 +95,7 @@ syscall(60, n.f());
 exits c 15 "C: field arithmetic, comparison, passing self on, a plain-address copy"
 
 # ── D ──
-printf "$H"'impl Show for N3 { fn nxt(self: *N3): i64 { var q = self + 1; return q - self; } }
+printf "$H"'impl N3 { fn nxt(self: *N3): i64 { var q = self + 1; return q - self; } }
 var n = N3 { 1, 2, 3 };
 syscall(60, n.nxt());
 ' > "$T/d.cyr"
@@ -104,7 +104,7 @@ if [ "$rc" -ne 0 ]; then bad "D: an explicit \`self: *N3\` with arithmetic did n
 else ok "D: an explicit \`self: *T\` keeps its arithmetic"; fi
 
 # ── E ──
-printf "$H"'impl Show for B1 { fn g<T>(self, x: T): i64 { return self.v + x; } }
+printf "$H"'impl B1 { fn g<T>(self, x: T): i64 { return self.v + x; } }
 fn main(): i64 { var b = B1 { 40 }; var a: i32 = 2; return b.g(a); }
 syscall(60, main());
 ' > "$T/e.cyr"

@@ -48,7 +48,7 @@
 #  9. A lib/ OR dist/ AT ANY DEPTH WAS PRUNED BY NAME. src/lib/ projects (nein, hoosh,
 #     kriya, kybernet) had their whole tree dropped; nein read 1/1 and passed --min 80.
 # 10. (The first cut of 6.6.8's spelling fix, caught in its review, never released:) a fn
-#     INSIDE an `impl T for S { … }` block was read as a top-level fn by its bare name — a
+#     INSIDE an `impl S { … }` block was read as a top-level fn by its bare name — a
 #     false miss for `S_m`, a false hit for a method called `get`. Only brace depth 0 is
 #     public surface, as cyrius_api_surface counts it (axis 14). 6 also gained
 #     `pub #inline fn`, `#deprecated ("x") fn` and `async fn` (axis 9).
@@ -321,7 +321,7 @@ cd "$D/samay" || exit 2
 check "no list without -v when no gate failed" 0 "$(grep -c 'Unreferenced' "$D/o16" || true)"
 check "-v lists both misses" 1 "$(grep -c -- '-- Unreferenced (2) --' "$D/o17" || true)"
 
-# ── AXIS 14: only TOP-LEVEL fns are public surface. A fn inside an `impl T for S { … }`
+# ── AXIS 14: only TOP-LEVEL fns are public surface. A fn inside an `impl S { … }`
 # block is a METHOD, emitted as `S_m` and called as `S_m(x)` — it used to be counted by its
 # bare name, so `norm` was a false miss when its test called `Pt_norm(q)`, and a method
 # named `get` was "covered" by any unrelated `get`. Depth must also come BACK to 0 after

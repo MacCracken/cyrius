@@ -76,7 +76,7 @@ fn bumpp(p: *P3): i64 { p.x = p.x + 1; return p.x; }
 fn P3_inc(self: *P3): i64 { self.x = self.x + 1; return self.x; }
 fn bump1(p: B1): i64 { p.x = p.x + 1; return p.x; }
 fn B1_bump(self: B1): i64 { self.x = self.x + 1; return self.x; }
-impl Tr for P3 { fn setx(self, v) { store64(self, v); return v; } }
+impl P3 { fn setx(self, v) { store64(self, v); return v; } }
 fn sclobber(s: Str): i64 { store64(s + 8, 1); return 0; }
 # A by-value parameter that is ASSIGNED, returned and recursed with.
 fn assign_in(q: P3): i64 { var r: P3 = mk3(7, 8, 9); q = r; return q.x; }

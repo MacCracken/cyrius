@@ -191,7 +191,7 @@ fn hid_big(): HidBig { var s: HidBig; s.a = 1; s.b = 2; s.c = 3; return s; }
 fn hid_pair(): HidPair { var s: HidPair; s.a = 1; s.b = 2; return s; }
 fn hid_v2(): f64v2 { return f64v2_make(1, 2); }
 fn hid_v4(): f64v4 { return f64v4_make(1, 2, 3, 4); }
-impl HidTr for HidPair { fn hid_m(self) { return 42; } }
+impl HidPair { fn hid_m(self) { return 42; } }
 fn hid_same_amp(): i64 { var f = &hid_fn; return fncall1(f, 42); }
 fn _gen<T>(x: T): T { return x; }
 var _hid_arr[4];

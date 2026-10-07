@@ -159,7 +159,7 @@ var g = |x| { fn inner() { return 3; } return x + inner(); };
 var r = fncall1(g, 1);
 syscall(60, r);'
 fx implm 'struct P { a: i64; }
-impl T for P {
+impl P {
     fn m(self) { fn inner() { return 3; } return inner(); }
 }
 fn main(): i64 { var p: P; p.a = 1; return p.m(); }

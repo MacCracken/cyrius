@@ -113,7 +113,7 @@ struct P8 { x: i32; y: i32; }
 struct Q8 { a: i32; b: i32; }
 fn take(p: Pt): i64 { return p.x * 10 + p.y; }
 fn gen<T>(p: T): i64 { return p.x * 10 + p.y; }
-impl Mk for Pt { fn plus(self, q: Pt): i64 { return q.x * 10 + q.y; } }
+impl Pt { fn plus(self, q: Pt): i64 { return q.x * 10 + q.y; } }
 '
 
 echo "=== a struct-typed field as a by-value argument of another struct type (V3) ==="

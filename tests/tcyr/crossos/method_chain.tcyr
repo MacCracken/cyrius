@@ -20,18 +20,18 @@ include "lib/assert.cyr"
 struct P { x; y; }          # 16 B: the rax:rdx pair class (a retptr on Win64)
 struct B { a; b; c; }       # 24 B: the retptr class
 struct W { v; }             # 8 B: in rax
-impl Pm for P {
+impl P {
     fn bump(self: P): P { var r: P; r.x = self.x + 1; r.y = self.y * 2; return r; }
     fn sum(self: P): i64 { return self.x * 10 + self.y; }
     fn big(self: P): B { var r: B; r.a = self.x; r.b = self.y; r.c = 7; return r; }
     fn w(self: P): W { var r: W; r.v = self.x + self.y; return r; }
     fn grow(self): P { var r: P; r.x = load64(self) + 100; r.y = 0; return r; }
 }
-impl Bm for B {
+impl B {
     fn tot(self: B): i64 { return self.a + self.b + self.c; }
     fn back(self: B): P { var r: P; r.x = self.c; r.y = self.a; return r; }
 }
-impl Wm for W {
+impl W {
     fn dbl(self: W): W { var r: W; r.v = self.v * 2; return r; }
     fn get(self: W): i64 { return self.v; }
 }

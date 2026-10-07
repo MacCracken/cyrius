@@ -524,6 +524,12 @@ fn FINDFN(S, noff): i64 {
         }
         i = i + 1;
     }
+    # 6.7.0 (A2): `T_Trait_m`, and an ambiguous `T_m` (reported; -1). See `_tr_fallback`.
+    if (_ti_n > 0) {
+        var _tq = _tr_fallback(S, noff);
+        if (_tq >= 0) { return _tq; }
+        if (_tq == 0 - 2) { return 0 - 1; }
+    }
     # v6.4.3: f64v2(...) / f64v4(...) constructor sugar. An f64v2/f64v4 call
     # name that is NOT a real fn resolves to the lib constructor f64v2_make /
     # f64v4_make (lib/simd.cyr) — the natural `type(...)` spelling over the
@@ -4040,6 +4046,591 @@ fn PARSE_FNCALL(S, noff): i64 {
     return 0;
 }
 
+# ⛔ 6.7.0 (A1, A2) — TRAITS, CHECKED. `trait Show { fn show(self): i64; fn twice(self): i64 { .. } }`
+# declares a method set; `impl Show for T` is checked against it (an undeclared trait, a method
+# the trait does not declare, a parameter count that differs and a required method left out are
+# each a compile error naming the trait), and a method with a body in the trait is a DEFAULT,
+# instantiated for every impl that does not supply its own — parsed from the trait's tokens with
+# the impl's type, exactly as a generic instance is parsed from its base's.
+# NAMES (the user's decision, 2026-10-07): a method keeps its plain `T_m` while only one trait (or
+# an inherent impl) gives T an `m`, and is ALSO reachable as `T_Trait_m` (FINDFN's miss path,
+# `_tr_fallback`). When two traits both give T an `m`, each is defined as `T_Trait_m` and the
+# plain `T_m` / `p.m()` is an ambiguity error naming both — except inside an impl (or a default) of
+# one of those traits, where `self.m()` means that trait's own. An inherent `impl T { fn m }` keeps
+# `T_m`, so `p.m()` picks it and the trait's is `T_Trait_m`.
+# Every trait and impl is recorded by ONE token pre-scan at the start of pass 1 (`_tr_prepass`), so
+# a trait declared below its impl, and a collision with an impl further down, are known before the
+# first method is registered. The tables are alloc'd on the first trait or impl, so a program with
+# neither pays nothing. Caps are refused by name (never a silent overflow). CHANGELOG [6.7.0]
+var _tr_tab = 0;    # per trait (4 words): name, first method, method count, `trait` token
+var _tr_n = 0;
+var _trm_tab = 0;   # per trait method (4 words): name, parameter count, default `fn` token + 1 (0 = required), trait
+var _trm_n = 0;
+var _ti_tab = 0;    # per impl (8 words): trait name (0 = inherent), type name, first method, method count, `impl` token, `T_Trait` prefix (0 = not minted), trait index (-1 = unknown)
+var _ti_n = 0;
+var _tim_tab = 0;   # per impl method (3 words): name, `fn` token, parameter count
+var _tim_n = 0;
+var _tr_pend = 0;   # `_tr_arity`'s second result: the token after the `)`
+var _tr_fb_busy = 0;
+var _cur_ii = 0 - 1;   # the impl whose body is being parsed (pass 1 / pass 2), -1 = none
+
+fn _tr_alloc(S): i64 {
+    if (_tr_tab != 0) { return 0; }
+    _tr_tab = alloc(1024 * 32);
+    _trm_tab = alloc(8192 * 32);
+    _ti_tab = alloc(4096 * 64);
+    _tim_tab = alloc(32768 * 24);
+    return 0;
+}
+fn _tr_cap(S, ti, what, n): i64 {
+    var sv = GTI(S);
+    STI(S, ti);
+    ERR_MSG(S, what, n);
+    STI(S, sv);
+    return 0 - 1;
+}
+# Cursor-free: the parameter count of the list whose `(` is token `p`, and `_tr_pend` = the token
+# after its `)`. A comma inside `<..>` (`m: Map<K, V>`) or nested parens is not a separator.
+fn _tr_arity(S, p): i64 {
+    var q = p + 1;
+    if (TOKTYP(S, q) == 11) { _tr_pend = q + 1; return 0; }
+    var n = 1;
+    var pd = 0;
+    var ad = 0;
+    while (TOKTYP(S, q) != 12) {
+        var t = TOKTYP(S, q);
+        if (t == 10) { pd = pd + 1; }
+        elif (t == 11) {
+            if (pd == 0) { _tr_pend = q + 1; return n; }
+            pd = pd - 1;
+        }
+        elif (t == 19) { ad = ad + 1; }
+        elif (t == 20) { ad = ad - 1; }
+        elif (t == 39) { ad = ad - 2; }
+        elif (t == 31) { if (pd == 0) { if (ad <= 0) { n = n + 1; } } }
+        q = q + 1;
+    }
+    _tr_pend = q;
+    return n;
+}
+# The token after the `}` that closes the block whose `{` is token `p`.
+fn _tr_brace_end(S, p): i64 {
+    var d = 0;
+    var q = p;
+    while (TOKTYP(S, q) != 12) {
+        var t = TOKTYP(S, q);
+        if (t == 13) { d = d + 1; }
+        if (t == 14) {
+            d = d - 1;
+            if (d == 0) { return q + 1; }
+        }
+        q = q + 1;
+    }
+    return q;
+}
+# `fn` at token `p` (a trait or impl member): its `(` — past the name and any `<..>`. -1 = malformed.
+fn _tr_paren(S, p): i64 {
+    var q = p + 1;
+    if (TOKTYP(S, q) != 2) { return 0 - 1; }
+    q = q + 1;
+    if (TOKTYP(S, q) == 19) {
+        var ad = 0;
+        while (TOKTYP(S, q) != 12) {
+            var t = TOKTYP(S, q);
+            if (t == 19) { ad = ad + 1; }
+            elif (t == 20) { ad = ad - 1; }
+            elif (t == 39) { ad = ad - 2; }
+            q = q + 1;
+            if (ad <= 0) { break; }
+        }
+    }
+    if (TOKTYP(S, q) != 10) { return 0 - 1; }
+    return q;
+}
+
+# ── the pre-scan ────────────────────────────────────────────────────────────────────────────
+fn _tr_prepass(S): i64 {
+    var p = 0;
+    var d = 0;
+    while (TOKTYP(S, p) != 12) {
+        var t = TOKTYP(S, p);
+        if (d == 0) {
+            if (t == 167) { _tr_alloc(S); p = _tr_scan_trait(S, p); continue; }
+            if (t == 77) { _tr_alloc(S); p = _tr_scan_impl(S, p); continue; }
+        }
+        if (t == 13) { d = d + 1; }
+        if (t == 14) { if (d > 0) { d = d - 1; } }
+        p = p + 1;
+    }
+    var i = 0;
+    while (i < _ti_n) {
+        var tn = L64(_ti_tab + i * 64);
+        if (tn != 0) { S64(_ti_tab + i * 64 + 48, _tr_find(S, tn)); }
+        i = i + 1;
+    }
+    return 0;
+}
+fn _tr_find(S, noff): i64 {
+    var i = 0;
+    while (i < _tr_n) {
+        if (STREQ(S, L64(_tr_tab + i * 32), noff) == 1) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+# `trait NAME { fn .. ; fn .. { .. } }` at token `ti`: record it; returns the token after its `}`.
+fn _tr_scan_trait(S, ti): i64 {
+    if (TOKTYP(S, ti + 1) != 2) { return ti + 1; }
+    if (TOKTYP(S, ti + 2) != 13) { return ti + 2; }
+    var end = _tr_brace_end(S, ti + 2);
+    if (_tr_n >= 1024) { _tr_cap(S, ti, "too many traits (max 1024)", 26); return end; }
+    var tx = _tr_n;
+    S64(_tr_tab + tx * 32, TOKVAL(S, ti + 1));
+    S64(_tr_tab + tx * 32 + 8, _trm_n);
+    S64(_tr_tab + tx * 32 + 24, ti);
+    _tr_n = _tr_n + 1;
+    var p = ti + 3;
+    while (p < end - 1) {
+        if (TOKTYP(S, p) == 32) { p = _tr_scan_tm(S, tx, p, end); }
+        else { p = p + 1; }
+    }
+    S64(_tr_tab + tx * 32 + 16, _trm_n - L64(_tr_tab + tx * 32 + 8));
+    return end;
+}
+# A trait member `fn` at `p`: record it; returns the token after it (its `;`, or its body's `}`).
+fn _tr_scan_tm(S, tx, p, end): i64 {
+    var op = _tr_paren(S, p);
+    if (op < 0) { return p + 1; }
+    var ar = _tr_arity(S, op);
+    var q = _tr_pend;
+    while (q < end - 1) {
+        var t = TOKTYP(S, q);
+        if (t == 5 || t == 13) { break; }
+        q = q + 1;
+    }
+    var dflt = 0;
+    var nx = q + 1;
+    if (TOKTYP(S, q) == 13) {
+        dflt = p + 1;
+        nx = _tr_brace_end(S, q);
+    }
+    if (_trm_n >= 8192) { _tr_cap(S, p, "too many trait methods (max 8192)", 33); return nx; }
+    S64(_trm_tab + _trm_n * 32, TOKVAL(S, p + 1));
+    S64(_trm_tab + _trm_n * 32 + 8, ar);
+    S64(_trm_tab + _trm_n * 32 + 16, dflt);
+    S64(_trm_tab + _trm_n * 32 + 24, tx);
+    _trm_n = _trm_n + 1;
+    return nx;
+}
+# `impl X for T {` / `impl T {` at token `ti`: record it and its methods; returns the token after `}`.
+fn _tr_scan_impl(S, ti): i64 {
+    if (TOKTYP(S, ti + 1) != 2) { return ti + 1; }
+    var trn = TOKVAL(S, ti + 1);
+    var tn = trn;
+    var ob = ti + 2;
+    if (TOKTYP(S, ob) == 55) {
+        if (TOKTYP(S, ti + 3) != 2) { return ti + 3; }
+        tn = TOKVAL(S, ti + 3);
+        ob = ti + 4;
+    } else { trn = 0; }
+    if (TOKTYP(S, ob) != 13) { return ob; }
+    var end = _tr_brace_end(S, ob);
+    if (_ti_n >= 4096) { _tr_cap(S, ti, "too many impl blocks (max 4096)", 31); return end; }
+    var ii = _ti_n;
+    S64(_ti_tab + ii * 64, trn);
+    S64(_ti_tab + ii * 64 + 8, tn);
+    S64(_ti_tab + ii * 64 + 16, _tim_n);
+    S64(_ti_tab + ii * 64 + 32, ti);
+    S64(_ti_tab + ii * 64 + 40, 0);
+    S64(_ti_tab + ii * 64 + 48, 0 - 1);
+    _ti_n = _ti_n + 1;
+    var p = ob + 1;
+    var d = 0;
+    while (p < end - 1) {
+        var t = TOKTYP(S, p);
+        if (t == 13) { d = d + 1; }
+        elif (t == 14) { d = d - 1; }
+        elif (t == 32) { if (d == 0) { _tr_scan_im(S, p); } }
+        p = p + 1;
+    }
+    S64(_ti_tab + ii * 64 + 24, _tim_n - L64(_ti_tab + ii * 64 + 16));
+    return end;
+}
+fn _tr_scan_im(S, p): i64 {
+    var op = _tr_paren(S, p);
+    if (op < 0) { return 0; }
+    if (_tim_n >= 32768) { _tr_cap(S, p, "too many impl methods (max 32768)", 33); return 0; }
+    S64(_tim_tab + _tim_n * 24, TOKVAL(S, p + 1));
+    S64(_tim_tab + _tim_n * 24 + 8, p);
+    S64(_tim_tab + _tim_n * 24 + 16, _tr_arity(S, op));
+    _tim_n = _tim_n + 1;
+    return 0;
+}
+
+# ── queries ─────────────────────────────────────────────────────────────────────────────────
+# The impl whose `impl` token is `ti`, -1 when none (no trait / impl tables, or not recorded).
+fn _ti_by_ti(S, ti): i64 {
+    var i = 0;
+    while (i < _ti_n) {
+        if (L64(_ti_tab + i * 64 + 32) == ti) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+# The trait method `m` of trait `tx`, -1 when it declares none.
+fn _trm_of(S, tx, m): i64 {
+    if (tx < 0) { return 0 - 1; }
+    var k = L64(_tr_tab + tx * 32 + 8);
+    var e = k + L64(_tr_tab + tx * 32 + 16);
+    while (k < e) {
+        if (STREQ(S, L64(_trm_tab + k * 32), m) == 1) { return k; }
+        k = k + 1;
+    }
+    return 0 - 1;
+}
+# Impl `ii`'s own method `m`, -1 when it defines none.
+fn _tim_of(S, ii, m): i64 {
+    var k = L64(_ti_tab + ii * 64 + 16);
+    var e = k + L64(_ti_tab + ii * 64 + 24);
+    while (k < e) {
+        if (STREQ(S, L64(_tim_tab + k * 24), m) == 1) { return k; }
+        k = k + 1;
+    }
+    return 0 - 1;
+}
+# 1 when impl `ii` gives its type a method `m`: its own, or its trait's default.
+fn _ti_provides(S, ii, m): i64 {
+    if (_tim_of(S, ii, m) >= 0) { return 1; }
+    var k = _trm_of(S, L64(_ti_tab + ii * 64 + 48), m);
+    if (k < 0) { return 0; }
+    if (L64(_trm_tab + k * 32 + 16) != 0) { return 1; }
+    return 0;
+}
+# For type name `tn` and method `m`: how many TRAIT impls provide it; `_tr_inh` = 1 when an inherent
+# impl does too.
+var _tr_inh = 0;
+fn _tr_providers(S, tn, m): i64 {
+    _tr_inh = 0;
+    var n = 0;
+    var i = 0;
+    while (i < _ti_n) {
+        if (STREQ(S, L64(_ti_tab + i * 64 + 8), tn) == 1) {
+            if (_ti_provides(S, i, m) == 1) {
+                if (L64(_ti_tab + i * 64) == 0) { _tr_inh = 1; }
+                else { n = n + 1; }
+            }
+        }
+        i = i + 1;
+    }
+    return n;
+}
+# The module prefix a method `m` of impl `ii` is defined under: its type name, unless it collides
+# (two traits give the type an `m`, or a trait's `m` meets an inherent one), when it is `T_Trait`.
+fn _tr_prefix(S, ii, m): i64 {
+    var tn = L64(_ti_tab + ii * 64 + 8);
+    var trn = L64(_ti_tab + ii * 64);
+    if (trn == 0) { return tn; }
+    var n = _tr_providers(S, tn, m);
+    if (n < 2) { if (_tr_inh == 0) { return tn; } }
+    var pf = L64(_ti_tab + ii * 64 + 40);
+    if (pf == 0) {
+        pf = _tr_join(S, tn, trn);
+        S64(_ti_tab + ii * 64 + 40, pf);
+    }
+    return pf;
+}
+# Intern `a_b` in the name pool (NPOS advances); returns its offset.
+fn _tr_join(S, a, b): i64 {
+    var la = 0; while (load8(S + 0xEC00000 + a + la) != 0) { la = la + 1; }
+    var lb = 0; while (load8(S + 0xEC00000 + b + lb) != 0) { lb = lb + 1; }
+    NPOS_GUARD(S, la + 1 + lb + 1);
+    var at = GNPOS(S);
+    var w = at;
+    var i = 0;
+    while (i < la) { store8(S + 0xEC00000 + w, load8(S + 0xEC00000 + a + i)); w = w + 1; i = i + 1; }
+    store8(S + 0xEC00000 + w, 95);
+    w = w + 1;
+    i = 0;
+    while (i < lb) { store8(S + 0xEC00000 + w, load8(S + 0xEC00000 + b + i)); w = w + 1; i = i + 1; }
+    store8(S + 0xEC00000 + w, 0);
+    SNPOS(S, w + 1);
+    return at;
+}
+# 1 when method `m` of impl `ii` (a trait impl) collides — `_tr_prefix` without minting.
+fn _tr_collides(S, ii, m): i64 {
+    if (L64(_ti_tab + ii * 64) == 0) { return 0; }
+    var n = _tr_providers(S, L64(_ti_tab + ii * 64 + 8), m);
+    if (n >= 2) { return 1; }
+    return _tr_inh;
+}
+# The string at `noff + at` starts with name `a` then `_`: the offset just past the `_`, else -1.
+fn _tr_pfx(S, noff, at, a): i64 {
+    var i = 0;
+    var c = load8(S + 0xEC00000 + a);
+    while (c != 0) {
+        if (load8(S + 0xEC00000 + noff + at + i) != c) { return 0 - 1; }
+        i = i + 1;
+        c = load8(S + 0xEC00000 + a + i);
+    }
+    if (load8(S + 0xEC00000 + noff + at + i) != 95) { return 0 - 1; }
+    return at + i + 1;
+}
+# FINDFN of `a_m`, built in scratch well past GNPOS (the name being looked up may itself be
+# BUILD_METHOD_NAME's scratch AT GNPOS), so nothing is interned.
+fn _tr_findfn_join(S, a, m): i64 { return FINDFN(S, _tr_scratch(S, a, m, 4096)); }
+# `a_m` written `off` bytes past GNPOS — NOT interned, and clear of a scratch name at GNPOS.
+fn _tr_scratch(S, a, m, off): i64 {
+    var la = 0; while (load8(S + 0xEC00000 + a + la) != 0) { la = la + 1; }
+    var lm = 0; while (load8(S + 0xEC00000 + m + lm) != 0) { lm = lm + 1; }
+    NPOS_GUARD(S, off + la + lm + 2);
+    var at = GNPOS(S) + off;
+    var w = at;
+    var i = 0;
+    while (i < la) { store8(S + 0xEC00000 + w, load8(S + 0xEC00000 + a + i)); w = w + 1; i = i + 1; }
+    store8(S + 0xEC00000 + w, 95);
+    w = w + 1;
+    i = 0;
+    while (i < lm) { store8(S + 0xEC00000 + w, load8(S + 0xEC00000 + m + i)); w = w + 1; i = i + 1; }
+    store8(S + 0xEC00000 + w, 0);
+    return at;
+}
+# FINDFN's miss path. Returns a fn index, -1 = not a trait name, -2 = an ambiguity, reported.
+fn _tr_fallback(S, noff): i64 {
+    if (_tr_fb_busy == 1) { return 0 - 1; }
+    _tr_fb_busy = 1;
+    var r = _tr_fb_qual(S, noff);
+    if (r == 0 - 1) { r = _tr_fb_ambig(S, noff); }
+    _tr_fb_busy = 0;
+    return r;
+}
+# `T_Trait_m` for a method that did not collide (so it is defined as `T_m`).
+fn _tr_fb_qual(S, noff): i64 {
+    var i = 0;
+    while (i < _ti_n) {
+        var trn = L64(_ti_tab + i * 64);
+        if (trn != 0) {
+            var tn = L64(_ti_tab + i * 64 + 8);
+            var k = _tr_pfx(S, noff, 0, tn);
+            if (k >= 0) { k = _tr_pfx(S, noff, k, trn); }
+            if (k >= 0) {
+                var m = noff + k;
+                if (_ti_provides(S, i, m) == 1) { if (_tr_collides(S, i, m) == 0) { return _tr_findfn_join(S, tn, m); } }
+            }
+        }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+# `T_m` where two traits give T an `m` and no inherent impl does.
+fn _tr_fb_ambig(S, noff): i64 {
+    var i = 0;
+    while (i < _ti_n) {
+        if (L64(_ti_tab + i * 64) != 0) {
+            var tn = L64(_ti_tab + i * 64 + 8);
+            var k = _tr_pfx(S, noff, 0, tn);
+            if (k >= 0) {
+                var m = noff + k;
+                if (_ti_provides(S, i, m) == 1) {
+                    if (_tr_providers(S, tn, m) >= 2) { if (_tr_inh == 0) { return _tr_ambig_hit(S, noff, i, tn, m); } }
+                }
+            }
+        }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+# Inside an impl (or a default) of one of the colliding traits for T, `m` means that trait's own;
+# anywhere else the plain name is refused, naming a qualified spelling.
+fn _tr_ambig_hit(S, noff, i, tn, m): i64 {
+    if (_cur_ii >= 0) {
+        if (L64(_ti_tab + _cur_ii * 64) != 0) { if (STREQ(S, L64(_ti_tab + _cur_ii * 64 + 8), tn) == 1) {
+                if (_ti_provides(S, _cur_ii, m) == 1) { return _tr_findfn_join(S, _tr_prefix(S, _cur_ii, m), m); }
+            } }
+    }
+    # Reported only AT a call site of the name — the token before the cursor spells it (a direct
+    # `P_size(..)`) or its method part (`p.size()`). Lookups made elsewhere (a pre-scan of the
+    # callee, the cursor parked in another file) answer "not found" and the site reports.
+    if (_tr_at_site(S, noff, m) == 0) { return 0 - 1; }
+    # The prefix was minted in pass 1 (every colliding method registered under it), so this does
+    # not intern; the suggestion is scratch past the looked-up name, which may sit AT GNPOS.
+    ERR_IDENT(S, "ambiguous method ", noff, ": more than one trait gives the type this method - call it by its trait-qualified name, e.g. ", _tr_scratch(S, _tr_prefix(S, i, m), m, 8192));
+    return 0 - 2;
+}
+
+# An "undefined function" that is an AMBIGUOUS trait method (`P_size` where two traits give P a
+# `size`): say so, and name a qualified spelling. The direct call reaches the lookup with no site to
+# point at, so the note rides the undefined-function report instead. CHANGELOG [6.7.0]
+fn _tr_undef_note(S, noff): i64 {
+    if (_ti_n == 0) { return 0; }
+    var i = 0;
+    while (i < _ti_n) {
+        if (L64(_ti_tab + i * 64) != 0) {
+            var tn = L64(_ti_tab + i * 64 + 8);
+            var k = _tr_pfx(S, noff, 0, tn);
+            if (k >= 0) {
+                var m = noff + k;
+                if (_ti_provides(S, i, m) == 1) { if (_tr_providers(S, tn, m) >= 2) { if (_tr_inh == 0) {
+                            syscall(SYS_WRITE, 2, "  note: it is ambiguous - more than one trait gives '", 53);
+                            PRSTR(S + 0xEC00000 + tn);
+                            syscall(SYS_WRITE, 2, "' this method; call it by its trait-qualified name, e.g. '", 58);
+                            PRSTR(S + 0xEC00000 + _tr_scratch(S, _tr_prefix(S, i, m), m, 8192));
+                            syscall(SYS_WRITE, 2, "'\n", 2);
+                            return 1;
+                        } } }
+            }
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+fn _tr_at_site(S, noff, m): i64 {
+    var t = GTI(S) - 1;
+    if (t < 0) { return 0; }
+    if (TOKTYP(S, t) != 2) { return 0; }
+    if (STREQ(S, TOKVAL(S, t), noff) == 1) { return 1; }
+    if (STREQ(S, TOKVAL(S, t), m) == 1) { return 1; }
+    return 0;
+}
+
+# ── pass hooks ─────────────────────────────────────────────────────────────────────────────
+# The cursor is on a method's `fn` inside impl `_cur_ii`: define it under its prefix (`_tr_prefix`).
+fn _tr_mod_for(S): i64 {
+    if (_cur_ii < 0) { return 0; }
+    if (TOKTYP(S, GTI(S) + 1) != 2) { return 0; }
+    SMOD(S, _tr_prefix(S, _cur_ii, TOKVAL(S, GTI(S) + 1)));
+    return 0;
+}
+fn _tr_mod_back(S): i64 {
+    if (_cur_ii < 0) { return 0; }
+    SMOD(S, L64(_ti_tab + _cur_ii * 64 + 8));
+    return 0;
+}
+# Every default method of impl `ii`'s trait that it does not define itself: registered (`mode` 0,
+# pass 1) or defined (1, pass 2) from the trait's own `fn` token, under the impl's type. The
+# cursor is put back; SMOD is left on the impl's type.
+fn _tr_defaults(S, ii, mode): i64 {
+    if (ii < 0) { return 0; }
+    var tx = L64(_ti_tab + ii * 64 + 48);
+    if (tx < 0) { return 0; }
+    var sv = GTI(S);
+    var k = L64(_tr_tab + tx * 32 + 8);
+    var e = k + L64(_tr_tab + tx * 32 + 16);
+    while (k < e) {
+        var dt = L64(_trm_tab + k * 32 + 16);
+        var m = L64(_trm_tab + k * 32);
+        if (dt != 0) { if (_tim_of(S, ii, m) < 0) {
+                SMOD(S, _tr_prefix(S, ii, m));
+                STI(S, dt - 1);
+                _pub_pending = 0;
+                if (mode == 0) { _prescan_fn_sig(S); } else { PARSE_FN_DEF(S); }
+            } }
+        k = k + 1;
+    }
+    SMOD(S, L64(_ti_tab + ii * 64 + 8));
+    STI(S, sv);
+    return 0;
+}
+# Pass 2: impl `ii` against its trait. Every error names the trait.
+fn _tr_check_impl(S, ii): i64 {
+    if (ii < 0) { return 0; }
+    var trn = L64(_ti_tab + ii * 64);
+    if (trn == 0) { return 0; }
+    var tx = L64(_ti_tab + ii * 64 + 48);
+    if (tx < 0) {
+        ERR_IDENT(S, "impl of undeclared trait ", trn, " for ", L64(_ti_tab + ii * 64 + 8));
+        return 0;
+    }
+    var k = L64(_ti_tab + ii * 64 + 16);
+    var e = k + L64(_ti_tab + ii * 64 + 24);
+    while (k < e) {
+        var m = L64(_tim_tab + k * 24);
+        var tk = _trm_of(S, tx, m);
+        if (tk < 0) {
+            ERR_IDENT(S, "method ", m, " is not declared in trait ", trn);
+            return 0;
+        }
+        if (L64(_tim_tab + k * 24 + 16) != L64(_trm_tab + tk * 32 + 8)) {
+            ERR_IDENT(S, "method ", m, " takes a different number of parameters than its declaration in trait ", trn);
+            return 0;
+        }
+        k = k + 1;
+    }
+    k = L64(_tr_tab + tx * 32 + 8);
+    e = k + L64(_tr_tab + tx * 32 + 16);
+    while (k < e) {
+        if (L64(_trm_tab + k * 32 + 16) == 0) { if (_tim_of(S, ii, L64(_trm_tab + k * 32)) < 0) {
+                ERR_IDENT(S, "impl is missing method ", L64(_trm_tab + k * 32), ", required by trait ", trn);
+                return 0;
+            } }
+        k = k + 1;
+    }
+    return 0;
+}
+# Pass 1: a `trait` declaration was recorded by the pre-scan — skip it.
+fn _tl_trait1(S): i64 {
+    var ti = GTI(S);
+    if (TOKTYP(S, ti + 1) == 2) { if (TOKTYP(S, ti + 2) == 13) { STI(S, _tr_brace_end(S, ti + 2)); return 0; } }
+    STI(S, ti + 1);
+    return 0;
+}
+# Pass 2: a `trait` declaration — check its shape and skip it (a default is emitted per impl).
+fn _tl_trait2(S): i64 {
+    var ti = GTI(S);
+    if (TOKTYP(S, ti + 1) != 2) { STI(S, ti + 1); ERR_EXPECT(S, 2); return 0; }
+    if (TOKTYP(S, ti + 2) != 13) { STI(S, ti + 2); ERR_EXPECT(S, 13); return 0; }
+    var nm = TOKVAL(S, ti + 1);
+    var end = _tr_brace_end(S, ti + 2);
+    var tx = _tr_find(S, nm);
+    if (tx >= 0) { if (L64(_tr_tab + tx * 32 + 24) != ti) {
+            STI(S, ti + 1);
+            ERR_IDENT(S, "duplicate trait ", nm, " (declared twice)", 0 - 1);
+            STI(S, end);
+            return 0;
+        } }
+    var p = ti + 3;
+    while (p < end - 1) {
+        if (TOKTYP(S, p) != 32) {
+            STI(S, p);
+            ERR_IDENT(S, "a trait body holds only `fn` declarations - in trait ", nm, 0, 0 - 1);
+            STI(S, end);
+            return 0;
+        }
+        var op = _tr_paren(S, p);
+        if (op < 0) { STI(S, p + 1); ERR_EXPECT(S, 2); STI(S, end); return 0; }
+        _tr_arity(S, op);
+        var q = _tr_pend;
+        while (q < end - 1) {
+            var t = TOKTYP(S, q);
+            if (t == 5 || t == 13) { break; }
+            q = q + 1;
+        }
+        if (TOKTYP(S, q) == 13) { p = _tr_brace_end(S, q); }
+        elif (TOKTYP(S, q) == 5) { p = q + 1; }
+        else { STI(S, q); ERR_MSG(S, "a trait method declaration ends with ';' (required) or a body (a default)", 73); STI(S, end); return 0; }
+        if (_tr_dup_meth(S, tx, TOKVAL(S, op - 1)) == 1) {
+            STI(S, op - 1);
+            ERR_IDENT(S, "duplicate method ", TOKVAL(S, op - 1), " in trait ", nm);
+            STI(S, end);
+            return 0;
+        }
+    }
+    STI(S, end);
+    return 0;
+}
+# 1 when trait `tx` declares `m` more than once.
+fn _tr_dup_meth(S, tx, m): i64 {
+    if (tx < 0) { return 0; }
+    var n = 0;
+    var k = L64(_tr_tab + tx * 32 + 8);
+    var e = k + L64(_tr_tab + tx * 32 + 16);
+    while (k < e) {
+        if (STREQ(S, L64(_trm_tab + k * 32), m) == 1) { n = n + 1; }
+        k = k + 1;
+    }
+    if (n > 1) { return 1; }
+    return 0;
+}
+
 # Parse: impl TraitName for TypeName { fn method(self) { } ... }
 # Methods get mangled to TypeName_method (trait name is documentation only for now)
 fn PARSE_IMPL(S): i64 {
@@ -4052,6 +4643,7 @@ fn PARSE_IMPL(S): i64 {
     # and stamps every method in pass 1, which is what makes a forward `q.m()` / `Q_m(&q)` obey
     # `private` and get the right parameter ABI. See _prescan_impl. CHANGELOG [6.6.5]
     _pub_pending = 0;
+    var impl_ti = GTI(S);
     STI(S, GTI(S) + 1);  # consume IMPL
     # `impl Trait for Type {` or (6.7.0, A3) the inherent `impl Type {` — methods with no trait.
     if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
@@ -4076,16 +4668,22 @@ fn PARSE_IMPL(S): i64 {
     _impl_tnoff = type_noff;   # 6.7.0 (A4)
     var _sitr = _impl_trait;
     _impl_trait = trait_noff;  # 6.7.0 (A3)
+    var _sii = _cur_ii;
+    _cur_ii = 0 - 1;
+    if (_ti_n > 0) { _cur_ii = _ti_by_ti(S, impl_ti); }   # 6.7.0 (A1/A2): its trait record
+    _tr_check_impl(S, _cur_ii);
     var igo = 1;
     while (igo == 1) {
         if (PEEKT(S) == 14) { igo = 0; }
         else {
             _impl_attrs(S, 1);         # 6.6.17: `#deprecated` / `#must_use` / ... on a method
             if (_TL_VIS(S) == 1) { }   # v6.5.0: `pub`/`public` on an impl method
-            if (PEEKT(S) == 32) { PARSE_FN_DEF(S); }
+            if (PEEKT(S) == 32) { _tr_mod_for(S); PARSE_FN_DEF(S); _tr_mod_back(S); }
             else { igo = 0; }
         }
     }
+    _tr_defaults(S, _cur_ii, 1);       # 6.7.0 (A1): the trait's defaults this impl does not define
+    _cur_ii = _sii;
     if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); }
     STI(S, GTI(S) + 1);  # consume }
     _impl_tnoff = _sit;
@@ -6397,6 +6995,7 @@ fn _warn_undefined_prepass(S): i64 {
             syscall(SYS_WRITE, 2, "warning: undefined function '", 29);
             PRSTR(S + 0xEC00000 + L64(_fnt_names + wfi * 8));
             syscall(SYS_WRITE, 2, "'\n", 2);
+            _tr_undef_note(S, L64(_fnt_names + wfi * 8));   # 6.7.0: an ambiguous trait method
         }
         wfi = wfi + 1;
     }
@@ -6701,7 +7300,12 @@ fn _prescan_impl(S): i64 {
                 var _sitr = _impl_trait;
                 _impl_tnoff = tn;           # 6.7.0 (A4): an untyped `self` here is a `*T`
                 _impl_trait = trn;          # 6.7.0 (A3): 0 = inherent
+                var _sii = _cur_ii;
+                _cur_ii = 0 - 1;
+                if (_ti_n > 0) { _cur_ii = _ti_by_ti(S, start_ti); }
                 _prescan_impl_body(S);
+                _tr_defaults(S, _cur_ii, 0);   # 6.7.0 (A1): register the defaults it inherits
+                _cur_ii = _sii;
                 _impl_tnoff = _sit;
                 _impl_trait = _sitr;
                 SMOD(S, sv);
@@ -6720,7 +7324,7 @@ fn _prescan_impl_body(S): i64 {
         if (t == 14) { go = 0; }
         elif (t == 73) { _TL_VIS(S); }                 # `public` on a method
         elif (t == 153) { _TL_VIS(S); }                # `private` — marked by _PRIV_PRESCAN
-        elif (t == 32) { _prescan_fn_sig(S); }
+        elif (t == 32) { _tr_mod_for(S); _prescan_fn_sig(S); _tr_mod_back(S); }   # 6.7.0: its prefix
         elif (_tl_directive(S, 0) == 1) { }            # 6.6.17: directives on a method (_impl_attrs)
         else { go = 0; }
     }
@@ -6834,6 +7438,7 @@ fn _prescan_tail_loop(S): i64 {
 # forks with an object writer (main.cyr, main_win.cyr): there `object;` selects mode 3;
 # elsewhere it is not a declaration and ends the scan ("unexpected object"). CHANGELOG [6.6.17]
 fn _tl_pass1(S, objok): i64 {
+    _tr_prepass(S);   # 6.7.0 (A1/A2): every trait and impl, before the first method is registered
     STI(S, 0);
     var go = 1;
     while (go == 1) { go = _tl_scan1(S, objok); }
@@ -6865,6 +7470,7 @@ fn _tl_scan1_mode(S, t, objok): i64 {
     if (t == 78) { _tl_kmode(S, 2); return 1; }
     if (t == 79) { if (objok == 1) { _tl_kmode(S, 3); return 1; } }
     if (t == 77) { _prescan_impl(S); return 1; }
+    if (t == 167) { _tl_trait1(S); return 1; }   # 6.7.0 (A1): recorded by `_tr_prepass`
     return 0;
 }
 
@@ -6975,6 +7581,7 @@ fn _tl_scan2_def(S, t, objok): i64 {
     }
     if (t == 3) { _skip_gvar_decl(S); return 1; }   # 6.6.6: a `;` inside a closure body is not the end
     if (t == 77) { PARSE_IMPL(S); return 1; }
+    if (t == 167) { _tl_trait2(S); return 1; }   # 6.7.0 (A1)
     if (t == 78) { _tl_skip_mode(S); return 1; }
     if (t == 79) { if (objok == 1) { _tl_skip_mode(S); return 1; } }
     return 0;

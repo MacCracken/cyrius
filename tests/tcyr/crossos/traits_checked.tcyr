@@ -1,0 +1,62 @@
+# traits_checked.tcyr — 6.7.0 (arcs A1, A2). `trait` declarations, default methods and the
+# trait-qualified names, at run time on every backend.
+#
+# A trait declares a method set; a method with a body is a DEFAULT, instantiated for each impl that
+# does not define its own (parsed from the trait's tokens with the impl's type). Every trait method
+# is reachable as `T_Trait_m`; while one trait gives T an `m` it is also the plain `T_m` / `p.m()`.
+# When two traits both give T an `m`, each is `T_Trait_m` and a default of one trait calling
+# `self.m()` means its OWN trait's `m`. An inherent `impl T { fn m }` keeps `T_m`, so `p.m()` picks
+# it. A trait declared below its impls works (one pre-scan records every trait first). The
+# compile-time refusals (undeclared trait, extra / missing method, parameter count, ambiguity,
+# duplicate trait / method, a non-`fn` member) are tests/gates/frontend/traits_checked.sh.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/assert.cyr"
+
+struct P { x; y; }
+struct Q { v; }
+struct R { n; }
+
+impl Show for P { fn show(self): i64 { return self.x * 10 + self.y; } }
+impl Show for Q {
+    fn show(self): i64 { return self.v; }
+    fn twice(self): i64 { return self.v * 100; }
+}
+trait Show {
+    fn show(self): i64;
+    fn twice(self): i64 { return self.show() * 2; }
+    fn plus(self, k): i64 { return self.show() + k; }
+}
+
+trait Big { fn size(self): i64; fn tenfold(self): i64 { return self.size() * 10; } }
+trait Wide { fn size(self): i64; fn hundred(self): i64 { return self.size() * 100; } }
+impl Big for R { fn size(self): i64 { return self.n + 1; } }
+impl Wide for R { fn size(self): i64 { return self.n + 2; } }
+
+trait Named { fn name(self): i64; }
+impl Named for Q { fn name(self): i64 { return 1; } }
+impl Q { fn name(self): i64 { return 2; } }
+
+fn run(): i64 {
+    var p = P { 1, 2 };
+    var q = Q { 3 };
+    var r = R { 4 };
+    assert_eq(p.show(), 12, "a required method through the receiver");
+    assert_eq(p.twice(), 24, "a default, instantiated for P, calls P's show through self");
+    assert_eq(q.twice(), 300, "Q's own twice overrides the default");
+    assert_eq(q.plus(4), 7, "a default with a parameter, instantiated for Q");
+    assert_eq(P_twice(p), 24, "the default's plain name P_twice");
+    assert_eq(P_Show_show(p), 12, "the trait-qualified name P_Show_show");
+    assert_eq(P_Show_plus(p, 1), 13, "the trait-qualified name of a default");
+    assert_eq(R_Big_size(r), 5, "a collision: each trait's method by its qualified name (Big)");
+    assert_eq(R_Wide_size(r), 6, "a collision: each trait's method by its qualified name (Wide)");
+    assert_eq(r.tenfold(), 50, "Big's default calls self.size() -> Big's own size");
+    assert_eq(r.hundred(), 600, "Wide's default calls self.size() -> Wide's own size");
+    assert_eq(q.name(), 2, "an inherent method wins the plain name over a trait's");
+    assert_eq(Q_Named_name(q), 1, "the trait's method stays reachable qualified");
+    return 0;
+}
+
+alloc_init();
+run();
+var r = assert_summary();

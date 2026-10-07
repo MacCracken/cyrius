@@ -217,7 +217,7 @@ struct Pt {
     x: i64;
     y: i64;
 }
-impl Ptable for Pt {
+impl Pt {
     fn new(px, py) { var p = alloc(16); store64(p, px); store64(p + 8, py); return p; }
     fn get(self) { return align_probe(); }
 }

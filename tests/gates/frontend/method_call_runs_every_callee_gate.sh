@@ -124,7 +124,7 @@ drow() {
 LIT=abcde
 WANT_LEN=$(printf %s "$LIT" | wc -c | tr -d ' ')
 vrow str_lit \
-"impl MT for MG { fn slen(self, s: Str): i64 { return str_len(s); } }
+"impl MG { fn slen(self, s: Str): i64 { return str_len(s); } }
 fn main(): i64 { alloc_init(); var g: MG; g.a = 0; print_num(g.slen(\"$LIT\")); return 0; }
 var e = main(); syscall(60, e);" \
 "fn free_slen(self, s: Str): i64 { return str_len(s); }
@@ -135,7 +135,7 @@ var e = main(); syscall(60, e);" \
 # ── row str_lit_tail — the same argument in TAIL position (`return f(\"lit\")`), which is a
 # THIRD emit path (PARSE_RETURN's own epilogue+jmp) and was wrong there too. ──────────────
 vrow str_lit_tail \
-"impl MT for MG { fn slen(self, s: Str): i64 { return str_len(s); } }
+"impl MG { fn slen(self, s: Str): i64 { return str_len(s); } }
 fn mcall(g: MG): i64 { return g.slen(\"$LIT\"); }
 fn main(): i64 { alloc_init(); var g: MG; g.a = 0; print_num(mcall(g)); return 0; }
 var e = main(); syscall(60, e);" \
@@ -151,7 +151,7 @@ var e = main(); syscall(60, e);" \
 HI=9; K=2; J=3
 WANT_MIX=$(( HI * 100 + K * 10 + J ))
 vrow simd_mix \
-"impl MT for MG { fn vmix(self, k, v: f64v2, j): i64 { return f64v2_hi(&v) * 100 + k * 10 + j; } }
+"impl MG { fn vmix(self, k, v: f64v2, j): i64 { return f64v2_hi(&v) * 100 + k * 10 + j; } }
 fn main(): i64 { alloc_init(); var g: MG; g.a = 0; var v = f64v2_make(0, $HI); print_num(g.vmix($K, v, $J)); return 0; }
 var e = main(); syscall(60, e);" \
 "fn free_vmix(self, k, v: f64v2, j): i64 { return f64v2_hi(&v) * 100 + k * 10 + j; }
@@ -165,7 +165,7 @@ SA=10; SB=20; SC=12
 WANT_SUM=$(( SA + SB + SC ))
 vrow struct_big \
 "struct MBig { a: i64; b: i64; c: i64; }
-impl MT for MG { fn take(self, b: MBig): i64 { return b.a + b.b + b.c; } }
+impl MG { fn take(self, b: MBig): i64 { return b.a + b.b + b.c; } }
 fn main(): i64 { alloc_init(); var g: MG; g.a = 0; var b: MBig; b.a = $SA; b.b = $SB; b.c = $SC; print_num(g.take(b)); return 0; }
 var e = main(); syscall(60, e);" \
 "struct MBig { a: i64; b: i64; c: i64; }
@@ -177,7 +177,7 @@ var e = main(); syscall(60, e);" \
 # ── row cstr_lit — _fnt_cstrmask. v6.5.3 made this a HARD ERROR because the alternative is a
 # runtime crash; the method path SIGSEGV'd instead. ──────────────────────────────────────
 drow cstr_lit \
-"impl MT for MG { fn pr(self, p: cstring): i64 { return strlen(p); } }
+"impl MG { fn pr(self, p: cstring): i64 { return strlen(p); } }
 fn main(): i64 { var g: MG; g.a = 0; return g.pr(42); }" \
 "fn free_pr(self, p: cstring): i64 { return strlen(p); }
 fn main(): i64 { return free_pr(0, 42); }" \
@@ -186,7 +186,7 @@ fn main(): i64 { return free_pr(0, 42); }" \
 # ── row cstr_null — the NULL exemption. `0` is the idiomatic null cstring and must still
 # BUILD on both arms; this is the anti-vacuous control for cstr_lit. ─────────────────────
 vrow cstr_null \
-"impl MT for MG { fn pn(self, p: cstring): i64 { if (p == 0) { return 7; } return strlen(p); } }
+"impl MG { fn pn(self, p: cstring): i64 { if (p == 0) { return 7; } return strlen(p); } }
 fn main(): i64 { alloc_init(); var g: MG; g.a = 0; print_num(g.pn(0)); return 0; }
 var e = main(); syscall(60, e);" \
 "fn free_pn(self, p: cstring): i64 { if (p == 0) { return 7; } return strlen(p); }
@@ -197,14 +197,14 @@ var e = main(); syscall(60, e);" \
 # ── rows arity_over / arity_under — no _CHECK_ARITY at all on the method path. Available
 # only because the fix resolves the callee BEFORE the argument loop. ─────────────────────
 drow arity_over \
-"impl MT for MG { fn one(self, x): i64 { return x + 1; } }
+"impl MG { fn one(self, x): i64 { return x + 1; } }
 fn main(): i64 { var g: MG; g.a = 0; return g.one(5, 99); }" \
 "fn free_one(self, x): i64 { return x + 1; }
 fn main(): i64 { return free_one(0, 5, 99); }" \
 "expects 2 arguments, got 3"
 
 drow arity_under \
-"impl MT for MG { fn one(self, x): i64 { return x + 1; } }
+"impl MG { fn one(self, x): i64 { return x + 1; } }
 fn main(): i64 { var g: MG; g.a = 0; return g.one(); }" \
 "fn free_one(self, x): i64 { return x + 1; }
 fn main(): i64 { return free_one(0); }" \
@@ -218,7 +218,7 @@ fn main(): i64 { return free_one(0); }" \
 # same definition (`Type_new(a, b)`, the constructor idiom all 19 in-tree self-less impl fns
 # use) is untouched — the positive control below it proves that half. ───────────────────────
 drow no_self \
-"impl MT for MG { fn zero(): i64 { return 7; } }
+"impl MG { fn zero(): i64 { return 7; } }
 fn main(): i64 { var g: MG; g.a = 0; return g.zero(); }" \
 "fn free_zero(): i64 { return 7; }
 fn main(): i64 { var g: MG; g.a = 0; return free_zero(&g); }" \
@@ -228,7 +228,7 @@ fn main(): i64 { var g: MG; g.a = 0; return free_zero(&g); }" \
 # in the mangled form must still build and return its value. Without this, "refuse every
 # self-less impl fn" would pass the row above. ──────────────────────────────────────────────
 vrow ctor_mangled \
-"impl MT for MG { fn make(x): i64 { return x + 7; } }
+"impl MG { fn make(x): i64 { return x + 7; } }
 fn main(): i64 { alloc_init(); print_num(MG_make(3)); return 0; }
 var e = main(); syscall(60, e);" \
 "fn free_make(x): i64 { return x + 7; }
@@ -239,7 +239,7 @@ var e = main(); syscall(60, e);" \
 # ── row arity_ok — the positive control: a correctly-arity'd method call must still BUILD
 # and run. Without it, "refuse everything" would pass both rows above. ───────────────────
 vrow arity_ok \
-"impl MT for MG { fn one(self, x): i64 { return x + 1; } }
+"impl MG { fn one(self, x): i64 { return x + 1; } }
 fn main(): i64 { alloc_init(); var g: MG; g.a = 0; print_num(g.one(5)); return 0; }
 var e = main(); syscall(60, e);" \
 "fn free_one(self, x): i64 { return x + 1; }

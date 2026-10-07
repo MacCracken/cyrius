@@ -14,13 +14,13 @@ include "lib/assert.cyr"
 struct One { v; }
 struct Tri { a; b; c; }
 
-impl Shape for One {
+impl One {
     fn get(self): i64 { return self.v; }
     fn raw(self): i64 { return load64(self); }
     fn set(self, x) { self.v = x; return 0; }
     fn bump(self) { self.v = self.v + 1; return self.v; }
 }
-impl Shape for Tri {
+impl Tri {
     fn sum(self): i64 { return self.a + self.b + self.c; }
     fn dbl(self): i64 { return self.sum() * 2; }
     fn put(self, x, y, z) { self.a = x; self.b = y; self.c = z; return 0; }
