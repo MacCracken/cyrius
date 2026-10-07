@@ -2630,12 +2630,39 @@ fn EPOPARG(S, n): i64 {
     return 0;
 }
 
+# xRD = v, for an offset, displacement or stack adjustment no immediate field reaches
+# (0 <= v < 2^32; a frame is capped far below that — SFLC's 16384 slots, EPATCHFRAME's 16 MB).
+# The `movk` is emitted only when v needs it, so a value under 64 KiB is the lone `movz` the
+# displacement sites always emitted. x16 (IP0) is a scratch the allocator never holds a value
+# in (see EADDRA_IMM); x9 / x10 are the fp-address scratches. CHANGELOG [6.6.20]
+fn _EMOV_XN(S, rd, v): i64 {
+    EW(S, 0xD2800000 | ((v & 0xFFFF) << 5) | rd);            # movz xRD, #(v & 0xFFFF)
+    var hi = (v >> 16) & 0xFFFF;
+    if (hi != 0) { EW(S, 0xF2A00000 | (hi << 5) | rd); }     # movk xRD, #hi, LSL #16
+    return 0;
+}
+
 # Pop args into registers for function call
 # v6.0.57: ldr/str xN, [sp, #imm] (unsigned offset, 64-bit; imm a multiple of
-# 8). For the >6-arg ECALLPOPS memory-shuffle — loads/stores WITHOUT moving sp,
-# so it handles any arg count (the 12-bit scaled imm reaches ~32 KB).
-fn ELDR_SP(S, reg, imm): i64 { EW(S, 0xF94003E0 | ((imm / 8) << 10) | reg); return 0; }
-fn ESTR_SP(S, reg, imm): i64 { EW(S, 0xF90003E0 | ((imm / 8) << 10) | reg); return 0; }
+# 8). For the >6-arg ECALLPOPS memory-shuffle — loads/stores WITHOUT moving sp.
+# The scaled imm12 reaches 32760, i.e. a call of 2048 args; past that the old
+# single form carried the offset into opc bit 22 — an `ldr` (which already has it)
+# read a slot 32 KiB too low, and the shuffle's `str` assembled as an `ldr`, so
+# the store vanished — so a wider call reads its offset into x16 and uses the
+# register-offset form.
+# CHANGELOG [6.6.20]
+fn ELDR_SP(S, reg, imm): i64 {
+    if (imm <= 32760) { EW(S, 0xF94003E0 | ((imm / 8) << 10) | reg); return 0; }
+    _EMOV_XN(S, 16, imm);
+    EW(S, 0xF8706BE0 | reg);                                 # ldr xREG, [sp, x16]
+    return 0;
+}
+fn ESTR_SP(S, reg, imm): i64 {
+    if (imm <= 32760) { EW(S, 0xF90003E0 | ((imm / 8) << 10) | reg); return 0; }
+    _EMOV_XN(S, 16, imm);
+    EW(S, 0xF8306BE0 | reg);                                 # str xREG, [sp, x16]
+    return 0;
+}
 
 fn ECALLPOPS(S, n): i64 {
     if (n <= 6) {
@@ -2670,12 +2697,29 @@ fn ECALLPOPS(S, n): i64 {
     return 0;
 }
 
-# Stack cleanup after call with >6 args
+# Stack cleanup after call with >6 args: add sp, sp, #(nextra * 16).
+# ⛔ 6.6.20 — this was ONE `add sp, sp, #imm12` with nothing guarding the
+# immediate, so from 262 args ((262-6)*16 = 4096) the carry landed in the
+# LSL #12 bit: `add sp, sp, #0, lsl #12` at 262 (sp never restored — a looped
+# call walked off the stack), +64 KiB instead of +4112 at 263. At 518 the carry
+# reached bit 23 — an `addg` on an MTE core such as qemu's default cpu (sp
+# silently leaked), SIGILL on pi and Apple Silicon — and SIGILL everywhere from
+# 519. Silent until something touched the displaced sp. Split the way EPATCHFRAME / EADDRA_IMM are. Every call shape
+# (direct, callptr, method, operator, tail-call fallback) unwinds here.
+# CHANGELOG [6.6.20]
 fn ECALLCLEAN(S, n): i64 {
     if (n > 6) {
-        # add sp, sp, #(nextra * 16)
         var extra = (n - 6) * 16;
-        EW(S, 0x910003FF | (extra << 10));  # add sp, sp, #imm12
+        if (extra < 4096) {
+            EW(S, 0x910003FF | (extra << 10));                    # add sp, sp, #extra
+        } elif (extra <= 0xFFFFFF) {
+            EW(S, 0x914003FF | (((extra >> 12) & 0xFFF) << 10));  # add sp, sp, #hi, LSL #12
+            var lo = extra & 0xFFF;
+            if (lo != 0) { EW(S, 0x910003FF | (lo << 10)); }      # add sp, sp, #lo
+        } else {
+            _EMOV_XN(S, 16, extra);
+            EW(S, 0x8B3063FF);                                    # add sp, sp, x16
+        }
     }
     return 0;
 }
@@ -2699,19 +2743,25 @@ fn EFLADDR_X8(S, lli): i64 {
         EW(S, 0xD10003A8 | (abs << 10));   # sub x8, x29, #abs
         return 0;
     }
-    # Fallback for large frames — movz x9 + sub x8, x29, x9.
-    EW(S, 0xD2800009 | ((abs & 0xFFFF) << 5));   # movz x9, #abs
+    # Fallback for large frames — x9 = abs (movz, + movk past 64 KiB), sub x8, x29, x9.
+    _EMOV_XN(S, 9, abs);
     EW(S, 0xCB0903A8);                            # sub x8, x29, x9
     return 0;
 }
 
 # Compute x9 = x29 + disp for local access when disp is outside the
 # LDUR/STUR signed 9-bit immediate range (-256..+255). Called only with
-# disp <= -256 (locals at idx >= 32). Assumes |disp| fits in 16 bits —
-# Cyrius functions with >= 8192 locals are implausible.
+# disp <= -256 (locals at idx >= 32).
+# ⛔ 6.6.20 — this was one `movz x9, #(abs & 0xFFFF)` on the comment's word that
+# "|disp| fits in 16 bits — >= 8192 locals are implausible". It is not: one
+# `var buf[70000]` puts every later local past 64 KiB, and so does a fn of 8192+
+# params. The displacement wrapped silently — a local after the buffer aliased a
+# byte inside it (a loop over the buffer reset its own counter and never ended),
+# and param 8192 was homed over the saved fp. A movk now carries bits 16..31.
+# CHANGELOG [6.6.20]
 fn _EFP_ADDR_X9(S, disp): i64 {
     var abs = 0 - disp;
-    EW(S, 0xD2800009 | ((abs & 0xFFFF) << 5));  # movz x9, #abs
+    _EMOV_XN(S, 9, abs);                          # x9 = abs
     EW(S, 0xCB0903A9);                            # sub x9, x29, x9
     return 0;
 }
@@ -2736,16 +2786,26 @@ fn ESTORESTACKPARM(S, pidx, disp, pc): i64 {
     var nstack = pc - 6;
     var si = nstack - 1 - (pidx - 6);
     var soff = 16 + si * 16;
-    # ldr x9, [x29, #soff]   (soff positive, LDR imm12*8 range — 32760 max)
-    EW(S, 0xF94003A9 | ((soff / 8) << 10));
+    if (soff <= 32760) {
+        EW(S, 0xF94003A9 | ((soff / 8) << 10));   # ldr x9, [x29, #soff] (scaled imm12)
+    } else {
+        # 6.6.20 — past 32760 (a fn of 2054+ params) the scaled imm12 carried into
+        # opc bit 22, which `ldr` already has: the load read a slot 32 KiB too low
+        # (at 2054, `ldr x9, [x29]` — the saved fp). Read the offset into x16.
+        # CHANGELOG [6.6.20]
+        _EMOV_XN(S, 16, soff);
+        EW(S, 0xF8706BA9);                        # ldr x9, [x29, x16]
+    }
     if (disp >= 0 - 256) {
         var off9 = disp & 0x1FF;
         EW(S, 0xF80003A9 | (off9 << 12));  # stur x9, [x29, #disp]
         return 0;
     }
-    # disp out of range — compute dest addr in x10 (x9 holds value), str x9, [x10]
+    # disp out of range — compute dest addr in x10 (x9 holds value), str x9, [x10].
+    # Past 64 KiB (param 8192 on) the movk carries bits 16..31: a lone movz homed param
+    # 8192 over the saved fp. CHANGELOG [6.6.20]
     var abs = 0 - disp;
-    EW(S, 0xD280000A | ((abs & 0xFFFF) << 5));  # movz x10, #abs
+    _EMOV_XN(S, 10, abs);                         # x10 = abs
     EW(S, 0xCB0A03AA);                            # sub x10, x29, x10
     EW(S, 0xF9000149);                            # str x9, [x10]
     return 0;

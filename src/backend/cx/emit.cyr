@@ -270,10 +270,14 @@ fn EFNPRO(S): i64 {
 }
 
 fn ESUBRSP(S): i64 {
-    # sub sp, imm — two instructions: movi r252, size; sub r254, r254, r252
+    # sub sp, imm — movi r252, size; movhi r252, size >> 16; sub r254, r254, r252
     # 6.6.17: r252, not r15 — this runs before the parameters are stored (see _cx_fpaddr).
+    # ⛔ The movhi slot is ALWAYS emitted, the v6.6.4 code-offset shape: EPATCHFRAME writes fixed
+    # slots once the frame size is known. Without it a frame of 64 KiB or more lowered sp by only
+    # size mod 64 KiB, and the callee frames landed inside the caller's own buffer. CHANGELOG [6.6.20]
     var patch = GCP(S);
-    CX_EMIT(S, 1, 252, 0, 0);       # movi r252, 0 (placeholder)
+    CX_EMIT(S, 1, 252, 0, 0);       # movi r252, 0 (placeholder: bits 0..15)
+    CX_EMIT(S, 254, 252, 0, 0);     # movhi r252, 0 (placeholder: bits 16..31)
     CX_EMIT(S, 17, 254, 254, 252);  # sub sp, sp, r252
     return patch;
 }
@@ -541,8 +545,8 @@ fn ECALLIND(S, idx): i64 {
 
 # 6.6.16 — the MICRO-FRAME around a TOP-LEVEL indirect call (PINDIRECT_CALL, parse_expr.cyr; the
 # x86 peer in backend/x86/emit.cyr has the full note). The ordinary prologue pair — EFNPRO
-# (`pushc fp; mov fp, sp`, fp saved on the CALL stack) and ESUBRSP's patchable `movi r15; sub sp`
-# — and the epilogue without its `ret`. Before 6.6.16 a top-level fncallN on cx was an ordinary
+# (`pushc fp; mov fp, sp`, fp saved on the CALL stack) and ESUBRSP's patchable
+# `movi r252; movhi r252; sub sp` — and the epilogue without its `ret`. Before 6.6.16 a top-level fncallN on cx was an ordinary
 # call into lib/fnptr.cyr, which has no cx arm, so it returned 0 for EVERY callee.
 fn ETLFRAME_OPEN(S): i64 {
     _IR_REC0(S, IR_RAW_EMIT);
@@ -886,11 +890,16 @@ fn EFLSTORE(S, idx): i64 {
 }
 
 fn EPATCHFRAME(S, patch, size): i64 {
-    # Patch the movi r252, size placeholder (ESUBRSP)
+    # Patch ESUBRSP's movi r252 (bits 0..15) and the movhi r252 after it (bits 16..31). A frame is
+    # far below 4 GiB (arrays past the per-fn frame budget go static), so two slots carry it whole.
     store8(S + 0x54A000 + patch, 1);        # movi opcode
     store8(S + 0x54A000 + patch + 1, 252);  # r252
     store8(S + 0x54A000 + patch + 2, size & 0xFF);
     store8(S + 0x54A000 + patch + 3, (size >> 8) & 0xFF);
+    store8(S + 0x54A000 + patch + 4, 254);  # movhi opcode
+    store8(S + 0x54A000 + patch + 5, 252);  # r252
+    store8(S + 0x54A000 + patch + 6, (size >> 16) & 0xFF);
+    store8(S + 0x54A000 + patch + 7, (size >> 24) & 0xFF);
     return 0;
 }
 
