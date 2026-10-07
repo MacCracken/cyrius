@@ -1350,6 +1350,10 @@ _chk_gate "$ROOT/tests/gates/toolchain/release_gate_check_verdict.sh"
 # trip. The ach leg ran the thread fixture only. Static: it reads cross-os-selfhost.sh.
 _chk_gate "$ROOT/tests/gates/toolchain/cross_os_legs_cx_parity.sh"
 
+# 6.6.20 — every scripts/ file a release-tarball builder names exists. The x86-macOS builder
+# `[ -f ]`-guarded a copy of a README that never existed, so it silently shipped none.
+_chk_gate "$ROOT/tests/gates/toolchain/tarball_inputs_exist.sh"
+
 # 6.6.20 — the TLS gates' `serve` (tls_first_use_thread_race, tls_libssl_hostname_binding) reads
 # a fresh log per attempt. A reused log name let the readiness grep read an EARLIER server's
 # ACCEPT before the backgrounded child's truncation — the S0 flake removed as shipped at 6.6.14
