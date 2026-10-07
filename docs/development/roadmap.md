@@ -326,12 +326,13 @@ CHANGELOG [6.6.17] *Downstream* (no ecosystem sweep).
 
 > **Re-triaged 2026-10-06 at the 6.6.20 closeout (Closeout item 12, BACKLOG-00).** All **61** bullets were
 > checked against the live tree at `e696746d` — with `build/cycc`, `cycc_aarch64` + qemu, a tree-built cx
-> compiler / VM, throwaway-HOME CLI runs or a code citation; the probes are the audit's. **54 still live** —
+> compiler / VM, throwaway-HOME CLI runs or a code citation; the probes are the audit's. **55 still live** —
 > five of them carried a materially WRONG claim, corrected in place below (the redefined-fn binding, aarch64
 > many-argument calls, the reserved intrinsic names, `Struct = *Struct`, the `cyrius deps` read side); two are
-> host-only and were not re-verified (XLAT-3 on ecb, `async_iocp_pe` on cass). **3 shipped**, **2 partly
+> host-only and were not re-verified (XLAT-3 on ecb, `async_iocp_pe` on cass). **2 shipped**, **2 partly
 > shipped**, **2 obsolete or answered** — struck in place with the evidence. **1 removed item recurred** (the
-> race-gate port flake). The v6.7.x candidates moved into [roadmap_6.md](roadmap_6.md) § v6.7.x (two were
+> race-gate port flake), and the audit scored the `/tmp/cyrius-<pid>` bullet done ("cleaned, 2 left") when its
+> class was still live — 49 by the same evening; it stays open, below. The v6.7.x candidates moved into [roadmap_6.md](roadmap_6.md) § v6.7.x (two were
 > duplicates there). Placement is clean: nothing codegen or runtime is parked at 7.x here, in roadmap_6.md or in
 > roadmap-future.md. 0 open issues; both open proposals correctly open.
 >
@@ -378,7 +379,8 @@ CHANGELOG [6.6.17] *Downstream* (no ecosystem sweep).
     (`cbt/core.cyr`, `cbt/cyrius.cyr`); the ecb smoke lacked it only because it was not staged from the tarball.
   - **Some gates leave temp dirs in `TMPDIR`** — the 9.9.9 installer staging and `cyrius-<pid>` test dirs. **Placed
     in the 6.6.20 closeout** (CLN-01 the installer's staging dir on every refusal, CLN-02 the SIGKILLed runner's
-    dir, CLN-03 check.sh reaping dead-pid `cyrius-<pid>` dirs).
+    dir, CLN-03 check.sh reaping EMPTY dead-pid `cyrius-<pid>` dirs — a non-empty one is kept; see the `/tmp` bullet
+    below).
 - **Found by the 6.6.19 R2/R3 work (2026-10-06; backlog — only the user promotes).**
   - ⚠ **A redefined fn binds a non-tail call to its FIRST definition** (a silent mis-binding) — **BEING FIXED IN
     6.6.20 (promoted by the user 2026-10-06; BACKLOG-01)**. Found as: in `stdlib_alloc_refusal_sentinels.sh`'s
@@ -431,9 +433,14 @@ priority surfaces.
     **Placed in the 6.6.20 closeout.**
   - Two `check.sh` selectors in parallel in ONE worktree collide on `build/cyrius_check` — run them in parallel only
     across worktrees (or give the check driver a per-run output name). **Placed in the 6.6.20 closeout.**
-  - ~~~893 stale `/tmp/cyrius-*` directories on the dev box~~ → cleaned (2 left at the 6.6.20 audit, both live
-    runs); struck at the 6.6.20 re-triage. The SOURCE — a CLI killed by a signal leaves its `cyrius-<pid>` dir — is
-    CLN-03, fixed in 6.6.20 by a dead-pid reap in check.sh.
+  - ⚠ **A killed `cyrius` CLI run leaves a NON-EMPTY `cyrius-<pid>` dir in `/tmp`, and nothing reaps it.** The ~893
+    dirs this bullet first counted were cleaned (2 left at the 6.6.20 audit), but the class is live: **49**
+    `/tmp/cyrius-*` dirs by 19:34 on 2026-10-06, all created during the closeout's own lane runs, every pid dead,
+    **33** holding a killed `cyrius check`'s `check_<pid>.tmp.<pid>` + `cpp_<pid>` + `cc_err` (~650 KB each).
+    **CLN-03 (6.6.20) mitigates the EMPTY case only**: check.sh rmdirs an empty dead-pid `$TMPDIR/cyrius-<pid>`
+    older than `CYRIUS_CHECK_REAP_MINS`, keeps a non-empty one by design (the CLI's post-mortem contract), and
+    reaches `/tmp` only when `TMPDIR=/tmp`. Not yet traced: which runs land in `/tmp` although every lane exports
+    `TMPDIR`. Open decision: whether a non-empty dead-pid dir past an age bound is reaped too.
 - **Found by the 6.6.17 lanes (2026-10-05; backlog, not placed — only the user promotes).** Met in passing by the
   6.6.17 implementers, reviewers and integrator, each pre-existing unless it says otherwise; not swept for.
   - ~~⚠ `Struct = *Struct` bind vs copy~~ → **moved to [roadmap_6.md](roadmap_6.md) § v6.7.x A4** at the 6.6.20

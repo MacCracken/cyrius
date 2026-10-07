@@ -244,8 +244,10 @@ floor, a re-triage that keeps re-pinning the same item).
   structural facts stamped 6.6.1 (14 stale facts), and **nine older claims that now describe false
   behaviour**, each disproved by a compiled probe. ⟨INTEGRATION: confirm the d-vidya lane's refresh landed⟩.
 - **Backlog re-triage** (BACKLOG-00…14): all **61** *Potential backlog* bullets re-verified against the tree —
-  **54 live** (5 with a materially wrong claim, corrected in place), **3 shipped**, **2 partly shipped**, **2
-  obsolete**, and **1 removed item that recurred** (the race-gate flake, root-caused). The v6.7.x candidates
+  **55 live** (5 with a materially wrong claim, corrected in place), **2 shipped**, **2 partly shipped**, **2
+  obsolete**, and **1 removed item that recurred** (the race-gate flake, root-caused). The audit scored a 3rd
+  as shipped — the `/tmp/cyrius-<pid>` dirs, "cleaned, 2 left" — and they were back to 49 the same evening; it
+  stays a live bullet (see *Met during the closeout*). The v6.7.x candidates
   moved into roadmap_6.md § v6.7.x (two were duplicates there); the DCE arc's spec moved there ahead of the
   rotation; roadmap-future's NFKC row struck as shipped and its cyrlint gates re-pinned (they pointed at a slot
   that had not existed for a month). **0 open issues · 2 open proposals** (both correctly open). Placement
@@ -256,9 +258,10 @@ floor, a re-triage that keeps re-pinning the same item).
   CLAUDE.md and the guide still prescribed `vr01_` tests (which opt OUT of the cross-OS leg); 58 + 5 comment
   pointers and 4 deleted-script references re-pointed.
 - **Met during the closeout, outside the findings**: the 37 qemu core dumps (5.6 GB) in the repo root were
-  already gone by the time their lane looked (CLN-14); `/tmp/cyrius-*` went 962 → 2 at the audit and keep
-  reappearing from killed CLI runs (the CLN-03 class — ⟨INTEGRATION: check `/tmp`, not only `$TMPDIR`,
-  after the merged check.sh⟩).
+  already gone by the time their lane looked (CLN-14); `/tmp/cyrius-*` went 962 → 2 at the audit and was
+  back to **49** by 19:34 the same day (every pid dead, **33** non-empty — a killed `cyrius check`'s
+  temporaries). CLN-03 reaps only EMPTY dead-pid dirs under `$TMPDIR`, so these stay: the class is a live
+  roadmap.md backlog bullet, not fixed ⟨INTEGRATION: re-count `/tmp/cyrius-*` after the merged check.sh⟩.
 - **Follow-ups spawned** ⟨INTEGRATION: every finding a lane skipped or could not pack, with its named reason;
   DEAD-10, HEAP-12, LEX-EXPR-04 went to the backlog by decision (DECISIONS.md); the backlog's proposed order
   (B)–(F) is the user's to promote⟩.
