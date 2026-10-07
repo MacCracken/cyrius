@@ -1,5 +1,5 @@
 # ================================================================
-# CODE EMISSION (writes to codebuf at S+0x41A000+CP (1MB since v3.5.1))
+# CODE EMISSION (writes to the code buffer at _codebuf_base + CP — off-heap since v6.4.49)
 # ================================================================
 
 # Mirror of the aarch64 backend's marker. Lets arch-neutral code
@@ -3908,7 +3908,7 @@ fn ESWITCH_DISPATCH_PRE(S, case_min, range): i64 {
 # reserve (range+1) × 4 bytes of zero-init table. Returns
 # `table_cp` (the codebuf offset of the table base) so the
 # parser can patch entry N via
-# `S + 0x41A000 + table_cp + (val - case_min) * 4`.
+# `_codebuf_base + table_cp + (val - case_min) * 4`.
 # Sequence: lea rcx, [rip+placeholder] ; movsxd rax, [rcx+rax*4] ;
 #           add rax, rcx ; jmp rax ; <(range+1) × 4 zeroes>.
 # The lea's disp32 placeholder is patched in-place to point at

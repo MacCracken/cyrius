@@ -181,8 +181,8 @@ fn SENUMC(S, v): i64 {
 }
 fn GENUMVCNT(S, eid): i64 { return L64(S + 0x214008 + eid * 8); }
 fn SENUMVCNT(S, eid, v): i64 { S64(S + 0x214008 + eid * 8, v); return 0; }
-# v5.8.22 bite #2 — per-enum name (offset into S+0x60000 ident
-# pool) for diagnostic messages at exhaustive-match check time.
+# v5.8.22 bite #2 — per-enum name (offset into the tok_names ident
+# pool, S+0xEC00000) for diagnostic messages at exhaustive-match check time.
 # Written by PARSE_ENUM_DEF in pass 1 alongside variant tagging.
 # v5.8.24 — moved 0x214808 → 0x216008 to accommodate
 # enum_variant_count[] growing from 256 to 1024 slots.
@@ -431,9 +431,9 @@ var _sa_init = 0;
 # it at entry. Only set on the reachable (real-emit) path, so an unreachable async
 # fn that gets DCE-stubbed can't leak the flag to the next fn.
 var _pending_async = 0;
-var _fnt_namehash = 0;    # 0x110000 fn_name_hash (2 B/slot, name -> fi+1)
-var _fnt_starthash = 0;   # 0x114000 fn_start_hash (2 B/slot, start -> fi+1)
-var _fnt_hash_mask = 0;   # _fnt_cap - 1 (both hashes; cap is power-of-2)
+var _fnt_namehash = 0;    # 0x110000 fn_name_hash (4 B/slot since v6.5.40, name -> fi+1)
+var _fnt_starthash = 0;   # 0x114000 fn_start_hash (4 B/slot, start -> fi+1)
+var _fnt_hash_mask = 0;   # 2 * _fnt_cap - 1 (both hashes; load <= 50 % since v6.5.51)
 var _fnt_cap = 0;
 # v6.4.75 — the SIX fn-indexed side tables the v6.2.0 growable-fn_table migration
 # left behind at FIXED 8192-slot heap bands (0x100000, 0x14A000, 0x15A000,
@@ -691,12 +691,11 @@ var _codebuf_cap = 0;
 # it couldn't grow in place; lazy overcommit means only touched pages cost RAM.
 # Every emit/fixup/write site reaches the buffer through this base. CHANGELOG [6.4.51].
 var _output_base = 0;
-# The output buffer's real capacity, set per-driver: 1 GiB when the off-heap
-# `alloc` succeeds (Linux), else 16 MiB when it falls back to the fixed
-# S+0x4D9D000 region (macOS/Windows, whose allocators can't yet produce a >256 MiB
-# single region — a dedicated large-alloc path is the v6.4.52 follow-up; see
-# issue 2026-07-11-macos-windows-large-single-allocation-path.md). `_check_output_cap`
-# keys on this so the cap always matches the actual buffer.
+# The output buffer's real capacity, set per-driver: 1 GiB on every platform since
+# v6.4.52, and the six native-code drivers refuse to start when that alloc fails (cx
+# writes its bytecode straight from 0x54A000 and never sets it). (Until then macOS and
+# Windows fell back to the fixed 16 MiB S+0x4D9D000 region, retired since.)
+# `_check_output_cap` keys on this so the cap always matches the actual buffer.
 var _output_cap = 0;
 fn _codebuf_grow(S): i64 {
     var nc = _codebuf_cap + 8388608;   # v6.4.49: +8 MiB linear steps (was *2)
@@ -2749,16 +2748,15 @@ fn _AGG_ASSIGN_TYPE_ERR(S, td, ts, dnoff, snoff): i64 {
 #   - 0x18FCB8 =  1 (cur_line: lexer line counter starts at 1)
 # All other slots zeroed.
 #
-# Universal across all 6 main_*.cyr entry points (main.cyr,
-# main_aarch64.cyr, main_aarch64_native.cyr, main_aarch64_macho.cyr,
+# Universal across all 7 drivers (main.cyr, main_aarch64.cyr,
+# main_aarch64_native.cyr, main_aarch64_macho.cyr, main_x86_macho.cyr,
 # main_cx.cyr, main_win.cyr). Pre-v5.8.63 each main inlined this
 # ~30-line block; extraction here
 # saves ~150 LOC of duplication. The aarch64 and cx mains over-zero
 # IR state (they include ir.cyr but don't actively use the IR
 # pipeline) — harmless because zero-init matches the post-brk
-# kernel-zeroed state, and brk extends through 0x4D9D000 in every
-# main (v5.11.68 reorg; was 0x56AD000 pre-.68) so the writes
-# land in mapped memory.
+# kernel-zeroed state, and every driver's arena runs to 0xF600000
+# (the heap map's brk-final line) so the writes land in mapped memory.
 fn _HEAP_INIT_SCRATCH(S): i64 {
     # Compiler-state scalars (BL, CP, VCNT, TCNT, TI, NPOS)
     S64(S + 0x18C100, 0);

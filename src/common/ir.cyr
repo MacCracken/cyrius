@@ -3,19 +3,21 @@
 # Basic-block CFG between parse (frontend) and emit (backend).
 # Parse builds IR; lowering pass walks IR and calls emit functions.
 #
-# Memory layout (all relative to S):
-#   0x5E9D000  ir_nodes    [16MB]  1048576 nodes × 16 bytes  (v6.3.28: relocated
-#              from 0xA3A000 + cap 262144→1048576. cycc's own whole-program IR
-#              demands ~280K nodes — over the old cap → "IR node buffer full"
-#              abort → 0 bytes. The node/cp arrays were boxed against ir_blocks,
-#              so both moved to the arena TOP, above the v6.3.27 liveness arrays.
-#              IR is touched ONLY under CYRIUS_IR, so the larger region is lazy
-#              VA — zero real-memory cost on default builds.)
-#   0x6E9D000  ir_cp       [4MB]   1048576 node CP offsets × 4 bytes (relocated
-#              from 0xF7B000). ir_nodes ends 0x6E9D000; ir_cp ends 0x729D000.
-#   0xB3A000  ir_blocks   [1MB]   32768 blocks × 32 bytes  (unchanged)
-#   0xF3A000 ir_state    [4KB]   counters + current state (IR_NCNT/BCNT/CURBB @ 0xF3A000..010,
-#              ENABLED @ 0xF3A020; 0xF3A018 held the edge count until 6.6.20)
+# Memory layout (all relative to S). src/main.cyr's heap map is the registry —
+# tests/gates/memory/heapmap.sh checks it, not this list; these are the bases ir.cyr
+# addresses. All of it is touched ONLY under CYRIUS_IR, so it is lazy VA (zero
+# real-memory cost) on default builds.
+#   0x5E9D000  ir_nodes    [16MB]  1048576 nodes × 16 bytes (v6.3.28: relocated from
+#              0xA3A000 to the arena top, cap 262144 → 1048576). cycc's own build
+#              records 448,518 (6.6.20); "IR node buffer full" is a hard error.
+#   0x6E9D000  ir_cp       [4MB]   1048576 node CP offsets × 4 bytes (from 0xF7B000);
+#              ends 0x729D000.
+#   0xB3A000   ir_blocks   [4MB]   131072 blocks × 32 bytes (v6.5.23: 32768 → 131072)
+#   0x207B000  ir_live_in  [1MB]   131072 BB live-in bitmaps × 8 bytes (v6.5.23)
+#   0x217B000  ir_live_out [1MB]   131072 BB live-out bitmaps × 8 bytes (v6.5.23)
+#   0xF3A000   ir_state    [4KB]   counters + current state (IR_NCNT/BCNT/CURBB @
+#              0xF3A000..010, ENABLED @ 0xF3A020; 0xF3A018 held the edge count until
+#              6.6.20, when the write-only edge list at 0xF3B000 was removed)
 #
 # IRNode (16 bytes):
 #   +0: opcode (i16) + flags (i16) packed in low 32 bits
@@ -265,7 +267,7 @@ fn IR_BB_SUCC1(S, bi): i64 { return (load64(S + 0xB3A000 + bi * 32 + 24) >> 32) 
 # ================================================================
 # Cross-BB liveness arrays (v6.3.27, analysis-only, gated under CYRIUS_IR)
 # ================================================================
-# Per-BB register-liveness bitmaps (one u64 each, indexed by BB id, ≤32768).
+# Per-BB register-liveness bitmaps (one u64 each, indexed by BB id, ≤131072).
 # Bit encoding widens the v5.6.16 2-bit DCE map: bit0=RAX, bit1=RCX, and (storage
 # reserved, no allocation meaning yet) bit2=RBX, bit3=R12, bit4=R13, bit5=R14,
 # bit6=R15. `ir_liveness_cfg` computes these as a CFG fixpoint; the register
@@ -274,10 +276,10 @@ fn IR_BB_SUCC1(S, bi): i64 { return (load64(S + 0xB3A000 + bi * 32 + 24) >> 32) 
 # `push`→`mov reg` instruction). Cross-BB liveness is the reusable substrate the
 # v6.3.28 copy-prop + v6.3.29 cross-BB DSE consume.
 #
-# Placed at the arena top (past local_types @ 0x5DDD000): live_in @ S+0x207B000,
-# live_out @ S+0x217B000, 256 KB each (32768 × 8). The S arena was bumped +512 KB
-# (0x207B000 → 0x5E9D000, main.cyr) to hold them. Zero-init by mmap/brk; only
-# touched under CYRIUS_IR, so the default emit path is unaffected.
+# live_in @ S+0x207B000, live_out @ S+0x217B000, 1 MB each (131072 × 8) — in the gap
+# after fixup_tbl since v6.5.23 (v6.3.27 put them at the arena top, 0x5E1D000, at 256 KB
+# each). Zero-init by mmap/brk; only touched under CYRIUS_IR, so the default emit path is
+# unaffected.
 fn IR_LIVEIN(S, bi): i64 { return load64(S + 0x207B000 + bi * 8); }
 fn IR_SLIVEIN(S, bi, v): i64 { store64(S + 0x207B000 + bi * 8, v); return 0; }
 fn IR_LIVEOUT(S, bi): i64 { return load64(S + 0x217B000 + bi * 8); }

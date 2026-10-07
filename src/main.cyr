@@ -363,8 +363,8 @@
 #                                        fn_start_fcnt end (0x1A6018) and
 #                                        the include_fnames / fn_names
 #                                        section start at 0x1C0000 (free
-#                                        in BOTH main.cyr and main_aarch64
-#                                        heap maps, per cross-arch propagation).
+#                                        in the one layout every driver
+#                                        shares).
 #   0x204000  var_enum_id   [65536]       8192 × 8B — per-variant parent
 #                                        enum id (1-based; 0 = not a
 #                                        variant). Written by PARSE_ENUM_
@@ -395,8 +395,8 @@
 #                                        size (v5.8.22 bite #2). v5.8.24
 #                                        grew 256→1024 with cap bump.
 #   0x216008  enum_name     [8192]        1024 × 8B — per-enum name
-#                                        offset (into S+0x60000 ident
-#                                        pool) for diagnostic messages.
+#                                        offset (into the tok_names ident
+#                                        pool, 0xEC00000) for diagnostics.
 #                                        Written by PARSE_ENUM_DEF in
 #                                        pass 1 alongside variant
 #                                        tagging. v5.8.24 moved 0x214808
@@ -409,29 +409,22 @@
 #                                        (same encoding as string-literal
 #                                        token values). Parallel to
 #                                        fn_flags bit 2.
-#   0x110000 fn_name_hash  [16384]       8192 slots × 2B — FNV-1a open- (v5.11.19 relocated 0x10C000 → 0x110000; size unchanged to preserve mask 8191 and fit available gap)
-#                                        addressing hash of fn-name strings
-#                                        at S+0x60000+noff → (fi+1). 0 =
-#                                        empty slot (zero-init heap makes
-#                                        this free). Probing: linear with
-#                                        mask 8191. Load factor 0.5 at
-#                                        4096-fn cap. Accelerates FINDFN's
-#                                        hot path from O(N) linear scan to
-#                                        O(1) expected. Use-alias fallback
-#                                        remains linear in FINDFN. v5.6.5.
-#   0x114000 fn_start_hash [16384]       8192 slots × 2B — golden-ratio (v5.11.19 relocated 0x110000 → 0x114000; size unchanged to preserve mask 8191 and fit available gap)
-#                                        Knuth-multiplicative hash of
-#                                        fn_offsets[fi] → (fi+1). 0 = empty.
-#                                        Built once at fixup() entry with
-#                                        explicit per-slot reset (the
-#                                        intervening 232 KB gap up to
-#                                        0x91A000 is not zeroed by
-#                                        _HEAP_INIT_SCRATCH). Hash:
-#                                        (start * 0x9E3779B97F4A7C15) >> 16,
-#                                        mask 8191; linear probe. Replaces
-#                                        two O(N²) DCE byte-scan linear
-#                                        scans (seed pass + propagate
-#                                        fixpoint loop). v5.10.41.
+#   0x110000 fn_name_hash  [16384]       4096 slots × 4 B (v6.5.40: 2 B → 4 B slots, so the fixed
+#                                        16 KB holds 4096; mask `_fnt_hash_mask` = 4095). FNV-1a
+#                                        open-addressing hash of fn-name strings (tok_names + noff)
+#                                        → fi+1, 0 = empty, linear probing. `_fnt_cap` = 2048 keeps
+#                                        the load <= 50 % until `_fnt_grow` moves both hash tables
+#                                        off-heap and rehashes. Makes FINDFN's hot path O(1)
+#                                        expected; the use-alias fallback stays linear. v5.6.5;
+#                                        relocated 0x10C000 → 0x110000 at v5.11.19.
+#   0x114000 fn_start_hash [16384]       4096 slots × 4 B, same mask: golden-ratio (Knuth
+#                                        multiplicative, (start * 0x9E3779B97F4A7C15) >> 16) hash
+#                                        of fn_offsets[fi] → fi+1, linear probe. Rebuilt with an
+#                                        explicit per-slot reset at every fixup() entry
+#                                        (_HEAP_INIT_SCRATCH does not zero it). Replaces two O(N²)
+#                                        DCE byte-scan linear scans (seed pass + propagate
+#                                        fixpoint loop). v5.10.41; relocated 0x110000 → 0x114000
+#                                        at v5.11.19. Ends 0x118000; var_noffs starts 0x11A000.
 #
 # --- Variable tables (v6.3.0: GROWABLE var-family; see util.cyr `_var_grow`) ---
 #   These offsets are now the INITIAL bases of 7 growable parallel tables, all
@@ -454,9 +447,9 @@
 #                                        collision) → 2MB at 0x21A000 (v5.8.61
 #                                        monotonic, fits the var_enum_id..
 #                                        preprocess_out gap; brk -2 MB).
-#                                        Post-v5.11.68 reorg: directly abuts
-#                                        codebuf at 0x41A000 — 192 KB residual
-#                                        headroom absorbed in the closeout shift.
+#                                        Ends 0x41A000, where the band the
+#                                        non-cx drivers' codebuf vacated starts
+#                                        (6.6.20 — see the 0x41A000 lines).
 #
 # --- Large buffers ---
 #   0x41A000  (FREED 6.6.20 on the x86, aarch64, PE and Mach-O drivers — was codebuf [3145728], the
@@ -531,10 +524,10 @@
 #                                        _fixup_base at the same table. It overlaps fixup_tbl and
 #                                        ir_live_in/out, which the cx driver never touches. Ends 0x250B000.
 #
-#   0x207B000 brk-fixup-end               ~33 MB at end of fixup_tbl
-#                                        (post-v5.11.68 reorg; was
-#                                        0x298B000 / ~41.5 MB pre-.68)
-#   0x8C00000 brk-with-ts-frontend        ~45.5 MB.
+#   (fixup_tbl ends 0x207B000. Two pseudo-entries stood here, "brk-fixup-end" and
+#    "brk-with-ts-frontend": arena ends of layouts long gone that read like live ones. The
+#    arena end is the brk-final line below. 6.6.20)
+#   TS frontend arena:
 #     v6.4.82 — RESOLVED. There is no TS reservation here and there is no longer a
 #     TS region in this map at all: the arena is now `alloc(TS_HEAP_SIZE)`, taken
 #     only when a TS mode is active (src/main.cyr, "TS frontend arena").
@@ -571,7 +564,7 @@
 #   0xCC00000 tok_lines     [33554432]    4194304 entries × 8 bytes (v6.5.39, see tok_types) — was 0xF4A000
 #
 # --- LEXID dedup index (v5.10.40 — lex-hot-path optimization) ---
-#   0x457C000  lexid_count   [8]            entries used so far (≤65536)
+#   0x457C000  lexid_count   [8]            entries used so far (≤262144, the lex.cyr cap since v6.5.40)
 #   0x457C100  lexid_heads   [131072]       16384 × 8B chain heads, idx+1 (0 = empty).
 #                                            v6.5.50: was [2048] — 256 buckets keyed on
 #                                            `bucket = klen` saturated at 255, so EVERY
@@ -592,17 +585,18 @@
 #                                            8 MB preprocess ceiling; thoth already has
 #                                            40,641 unique identifiers).
 #                                            Each entry packs (canonical offset
-#                                            into tok_names @ 0x60000 in low 32,
+#                                            into tok_names @ 0xEC00000 in low 32,
 #                                            next-entry idx+1 in high 32). Walked
 #                                            most-recent-first; on match returns
 #                                            the recorded canonical offset.
 #                                            RELOCATED here (above the x86 IR arena)
 #                                            because it must be a single fixed offset
-#                                            common to ALL forks; the aarch64/macho/cx
-#                                            forks extend their arena to 0xF600000 to
-#                                            map it (lazy → no physical cost below it).
-#                                            cap 65536 (stiva + multi-bundle consumers,
-#                                            CHANGELOG [6.4.21]; was 16384).
+#                                            common to ALL forks; every driver's arena
+#                                            ends at 0xF600000, the end of this table
+#                                            (lazy → no physical cost below it).
+#                                            cap 262144 since v6.5.40 (65536 at v6.4.21
+#                                            for stiva + multi-bundle consumers; 16384
+#                                            before).
 #
 #
 # --- Relocated large buffer (v5.11.33) ---
@@ -643,7 +637,7 @@
 #                                        the IR family from one alloc'd arena is on the roadmap backlog.
 #   0x6E9D000 ir_cp              [4 MB]    (not cx) relocated from 0xF7B000 to the arena top (v6.3.28); ends 0x729D000
 #
-#   0xF600000 brk-final                   246 MB — the arena END every driver requests (brk on Linux /
+#   0xF600000 brk-final                   246 MiB — the arena END every driver requests (brk on Linux /
 #                                        aarch64 / cx-Linux, mmap on macOS, VirtualAlloc on Windows):
 #                                        lexid_entries ends exactly here. heapmap.sh reads this line —
 #                                        no region may end past it, and `S + 0xF600000` is the one
@@ -701,7 +695,7 @@ include "src/backend/js/emit.cyr"
 
 # v6.0.6 — pull in lib/alloc + lib/vec for the v6.0.7 return-patch-buffer
 # → vec conversion (proposal Option C). cycc's existing fixed-heap layout
-# (0x00000..0x5D9D000, the top of preprocess_out) is unchanged; alloc.cyr's brk-based heap sits AFTER
+# (0x00000..0xF600000, the arena end on the map's brk-final line) is unchanged; alloc.cyr's brk-based heap sits AFTER
 # our extension (alloc_init() runs syscall(12, 0) which returns the
 # post-extension brk and adds another 1 MB on top). vec.cyr depends on
 # alloc; alloc.cyr transitively includes lib/fnptr.cyr for vtable dispatch.
@@ -891,10 +885,9 @@ if (_vn > 0) {
 # any output (the x86 driver previously paid this unconditionally, so the
 # x86 Mach-O cycc never compiled on-device — only the syscall ABV xlat in
 # emit.cyr was missing too; both are needed). Linux mmap number 9 →
-# BSD 197 via EMACHO_SYSXLAT at emit. Size 0xF400000 (~115 MB) matches
-# main.cyr's brk top below (output_buf 16 MB @ v6.1.27 + local tables
-# +512 KB @ v6.1.40 + IR cross-BB liveness arrays +512 KB @ v6.3.27
-# +20 MB IR node/cp arena @ v6.3.28);
+# BSD 197 via EMACHO_SYSXLAT at emit. Size 0xF600000 (246 MiB) is the
+# arena end on the heap map's brk-final line, the same as the brk below
+# (this read "0xF400000 (~115 MB)" until 6.6.20, two layouts stale);
 # flags MAP_ANON|MAP_PRIVATE = 0x1002.
 var S = syscall(9, 0, 0xF600000, 3, 0x1002, 0 - 1, 0);
 if (S < 0x100000) {
@@ -907,9 +900,9 @@ var S = syscall(SYS_BRK, 0);
 # `alloc(TS_HEAP_SIZE)` and is taken only when a TS mode is active, so a normal
 # compile pays nothing for it. (Previously this comment quoted base 0x1D0B000,
 # which was stale and lands inside fixup_tbl, while the live base 0x298B000
-# overlapped tok_types.) The brk is set by lexid_entries at 0xF400000.
-# v6.3.27: +512 KB for the IR cross-BB liveness arrays at the arena top
-# (live_in @ +0x5E1D000, live_out @ +0x5E5D000; only touched under CYRIUS_IR).
+# overlapped tok_types.) The brk is the arena end on the heap map's brk-final
+# line, 0xF600000, where lexid_entries ends. (The IR liveness arrays this
+# comment placed at the arena top moved to 0x207B000/0x217B000 at v6.5.23.)
 syscall(SYS_BRK, S + 0xF600000);   # v6.4.21: +512 KB lexid_entries @ 0xF400000 (LEXID cap 16384→65536)
 #endif
 
@@ -929,7 +922,7 @@ rp_vec = vec_new();
 _fixup_base = S + 0x107B000;
 _fixup_cap = 1048576;
 # Phase 0 (v6.2.0): growable fn-tables — bases start AT the original fixed
-# offsets, mask 8191, cap 8192 (byte-identical under the old cap; REGFN grows
+# offsets; mask + cap are set below (4095 / 2048 since v6.5.40 / v6.5.51; REGFN grows
 # the family + rehashes when the count would exceed it). See util.cyr.
 _fnt_cstrmask = S + 0x93A000;
 _fnt_resmask = S + 0x94A000;
@@ -1357,10 +1350,11 @@ PREPROCESS(S);
 if (_prof_on == 1) { _prof_pp_end = _prof_clock_ns(); }
 
 
-# Re-init ALL compiler state that the ifdef copy-back may have overwritten.
-# For expanded source >256KB, the copy-back writes past S+0x40000 into every
-# heap region up to S+bl. This mirrors the full initialization at lines 155-196
-# so every scalar starts fresh before LEX runs.
+# Re-init the compiler scalars so every one starts fresh before LEX runs (the same
+# slots _HEAP_INIT_SCRATCH zeroes, util.cyr). Written when input_buf sat at S+0 and
+# the #ifdef copy-back of a >256 KB expansion ran through every heap region up to
+# S+bl; since v6.5.39 input_buf is at S + 0x7400000 with the preprocess_out cap,
+# so the copy-back stays inside it and this is now a plain reset after PREPROCESS.
 S64(S + 0x18FCC8, 0);       # str_pos (moved from 0x70000 in 4.6.2)
 S64(S + 0x18FCD0, 0);       # data_size (moved from 0x70008 in 4.6.2)
 S64(S + 0x18C108, 0);       # CP

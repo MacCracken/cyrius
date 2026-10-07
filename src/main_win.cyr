@@ -201,22 +201,16 @@ if (_vw != 0) {
 # isn't rerouted). v5.5.8: use SYS_MMAP which works on both paths of
 # this file's build chain:
 #   - cycc (Linux) compiles main_win.cyr → cycc_win (Linux ELF):
-#     heap init runs on Linux, calls mmap(0, 32MB, PROT_RW=3,
+#     heap init runs on Linux, calls mmap(0, <arena>, PROT_RW=3,
 #     MAP_PRIVATE|MAP_ANONYMOUS=0x22, -1, 0) → valid region.
 #   - cycc_win compiles main_win.cyr → cycc_win.exe (PE):
 #     heap init runs on Windows, PE backend (v5.5.1) routes to
-#     VirtualAlloc(0, 32MB, MEM_COMMIT|MEM_RESERVE, PAGE_READWRITE).
+#     VirtualAlloc(0, <arena>, MEM_COMMIT|MEM_RESERVE, PAGE_READWRITE).
 #     The prot/flags/fd/offset are ignored by EMMAP_PE.
-# 32 MB covers the 21 MB heap with margin + page-alignment.
-# MMAP region sized at 0x5F00000 (95 MB) — covers the cyrius heap
-# layout through preprocess_out (brk-equivalent at 0x5D9D000 /
-# ~77.6 MB) plus 1.4 MB page-alignment slack. Synced with
-# main.cyr's brk extension.
-# Lineage: 0x5800000 / 88 MB through v5.11.67 ← 0x5000000 / 80 MB
-# pre-v5.11.33 (preprocess_out cap raise 2 MB → 8 MB grew it 8 MB).
-# v5.11.68 full heap-map reorg shrunk MMAP 0x5800000 → 0x4F00000 → 0x5F00000 @ v6.1.27
-# (-9.06 MB) tracking the brk reduction. PE EMMAP routes via
-# VirtualAlloc with prot/flags ignored.
+# <arena> is 0xF600000 (246 MiB): the brk-final line of src/main.cyr's heap
+# map, the arena end every driver requests. (This block quoted "32 MB" and then
+# "0x5F00000 (95 MB)" until 6.6.20; both were sizes of layouts long gone.) PE
+# EMMAP routes via VirtualAlloc with prot/flags ignored.
 var S = syscall(SYS_MMAP, 0, 0xF600000, 3, 0x22, 0 - 1, 0);   # v6.3.28: +IR arrays @ arena top (0x5E9D000..0x729D000); v6.4.21: +512 KB lexid_entries @ 0xF400000 (LEXID cap 16384→65536)
 
 # Zero scratch state (v5.8.63 extraction; see src/common/util.cyr for slot list)
@@ -230,7 +224,7 @@ rp_vec = vec_new();
 _fixup_base = S + 0x107B000;
 _fixup_cap = 1048576;
 # Phase 0 (v6.2.0): growable fn-tables — bases start AT the original fixed
-# offsets, mask 8191, cap 8192 (byte-identical under the old cap; REGFN grows
+# offsets; mask + cap are set below (4095 / 2048 since v6.5.40 / v6.5.51; REGFN grows
 # the family + rehashes when the count would exceed it). See util.cyr.
 _fnt_cstrmask = S + 0x93A000;
 _fnt_resmask = S + 0x94A000;
@@ -341,10 +335,11 @@ PP_PREDEFINE(S, "CYRIUS_HAS_VAL_SIMD_PARAMS");
 # Preprocess includes
 PREPROCESS(S);
 
-# Re-init ALL compiler state that the ifdef copy-back may have overwritten.
-# For expanded source >256KB, the copy-back writes past S+0x40000 into every
-# heap region up to S+bl. This mirrors the full initialization at lines 155-196
-# so every scalar starts fresh before LEX runs.
+# Re-init the compiler scalars so every one starts fresh before LEX runs (the same
+# slots _HEAP_INIT_SCRATCH zeroes, util.cyr). Written when input_buf sat at S+0 and
+# the #ifdef copy-back of a >256 KB expansion ran through every heap region up to
+# S+bl; since v6.5.39 input_buf is at S + 0x7400000 with the preprocess_out cap,
+# so the copy-back stays inside it and this is now a plain reset after PREPROCESS.
 S64(S + 0x18FCC8, 0);       # str_pos (moved from 0x70000 in 4.6.2)
 S64(S + 0x18FCD0, 0);       # data_size (moved from 0x70008 in 4.6.2)
 S64(S + 0x18C108, 0);       # CP

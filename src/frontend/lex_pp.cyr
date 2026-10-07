@@ -37,7 +37,7 @@ fn ISINCLUDE(S, pos, bl): i64 {
 }
 
 # Preprocess: expand include directives in-place.
-# Uses S+0 as input, S+0x459D000 as expanded output (1MB), copies back to S+0.
+# Reads the raw input at S + _SRCB, writes the expanded output to S+0x459D000 (24 MB).
 # Check if buffer at pos starts with a directive (returns length or 0)
 fn ISDEFINE(S, pos, bl): i64 {
     # Leading whitespace tolerated (see PP_SKIP_WS). Note that the
@@ -3492,9 +3492,9 @@ fn PP_EXPAND(S, mi, ip, bl, out, op): i64 {
 }
 
 # v5.6.42: src_base carries the SOURCE buffer base. PP_PASS path passes
-# `S` (raw input at S+0). PP_IFDEF_PASS path passes the `tmp` mmap
+# `S + _SRCB` (the raw input). PP_IFDEF_PASS path passes the `tmp` mmap
 # buffer that holds the full uncapped expanded source — needed because
-# PP_IFDEF_PASS's S+0 copy-back is bounded to 1048576 B and reads past
+# PP_IFDEF_PASS's S + _SRCB copy-back is bounded to 1048576 B and reads past
 # that boundary would land in stale heap bytes. Same shape as the
 # v5.6.30 PP_DERIVE_* fix; this closes the rest of the family
 # (PP_DEFINE / PP_DEFINED / PP_GETVAL / PP_EVAL_IF / PP_HASH).
@@ -4224,9 +4224,8 @@ fn PP_PASS(S): i64 {
             if (c == 10) { bol = 1; } else { bol = 0; }
         }
     }
-    # Check preprocess output size. Buffer is 8MB at 0x459D000
-    # (v5.11.33 — was 2MB at 0x44A000 pre-relocation; raised to absorb
-    # sandhi-folded stdlib growth + headroom into v6.x).
+    # Check preprocess output size. Buffer is 24 MB at 0x459D000 (v6.5.39; 8 MB
+    # from v5.11.33, 2 MB at 0x44A000 before that).
     if (op > 25165824) {
         syscall(SYS_WRITE, 2, "error: expanded source exceeds 24MB (", 37);
         PRNUM(op);
@@ -4236,10 +4235,10 @@ fn PP_PASS(S): i64 {
     # v6.5.34 — the `#@pkgver` declaration was written optimistically at the marker; only
     # HERE, with every top-level include expanded, can "does this unit reference the
     # constant?" be answered honestly. Blanks it to spaces if not. Length is unchanged, so
-    # this neither grows the buffer nor affects the 8 MB guard above.
+    # this neither grows the buffer nor affects the 24 MB guard above.
     op = PP_RESOLVE_PKGVER(out, op);
     # No copy-back — data stays at S+0x459D000.
-    # PP_IFDEF_PASS reads from 0x459D000, writes to S+0.
+    # PP_IFDEF_PASS reads from 0x459D000 (via its tmp copy) and writes back there.
     SBL(S, op);
     return had_include;
 }
@@ -4249,7 +4248,7 @@ fn PP_MACRO_PASS(S): i64 {
     if (_pp_macro_count == 0) { return 0; }
     var bl = GBL(S);
     PP_SYNC_SRCB(S, bl);   # 6.6.6: this pass's input is the PREVIOUS pass's output (see there)
-    # Copy from 0x459D000 to S+0, save/restore state if large
+    # Input: the previous pass's output, synced into S + _SRCB above; output to 0x459D000
     var out = S + 0x459D000;
     var op = 0;
     var ip = 0;
@@ -4300,21 +4299,22 @@ fn PP_MACRO_PASS(S): i64 {
 # Processes conditional blocks in already-included content.
 #
 # v3.6.5: reads source from the preprocess buffer (S+0x459D000) directly via
-# `src` pointer. Only the first 256KB is copied to S+0 for helper functions
+# `src` pointer. Only a bounded prefix is copied to S + _SRCB for helper functions
 # (ISDEFINE, PP_DEFINE, PP_SKIPLINE, etc.) which read via S+pos and also
 # access heap state at S+0x190800. Directives only appear in the first few KB
 # of source (stdlib headers), so the 256KB copy always covers them.
 #
 # Output writes go to S+0x459D000 (in-place: op <= ip always, safe because
-# ifdef filtering only removes lines). NO copy-back to S+0 at the end —
+# ifdef filtering only removes lines). NO copy-back to S + _SRCB at the end —
 # LEX reads from S+0x459D000, and PP_MACRO_PASS short-circuits for programs
 # without macros.
 #
 # This eliminates the Bug #35 family of copy-back overflows that corrupted
 # compiler state (BL/CP at 0x18C100+) for programs >256KB of expanded source.
 fn PP_IFDEF_PASS(S): i64 {
-    # Allocate a temp buffer via mmap to hold the source. This avoids copying
-    # to S+0 (which overflows into heap state for programs >256KB — Bug #35).
+    # Allocate a temp buffer via mmap to hold the source. This avoided copying it to
+    # input_buf when that sat at S+0 and overflowed into heap state for programs >256KB
+    # (Bug #35); input_buf is 24 MB at S + _SRCB since v6.5.39.
     # The temp buffer is separate memory that the helpers can safely read from.
     #
     # mmap flags differ between Linux and macOS:
@@ -4324,8 +4324,8 @@ fn PP_IFDEF_PASS(S): i64 {
     # macOS flags if the kernel rejects them (EINVAL on macOS — BSD raw
     # SVC returns -errno now that ESYSCALL emits `csneg x0, x0, x0, cc`).
     var prot = 3;     # PROT_READ | PROT_WRITE
-    # v5.11.33: tmp buffer sized to match the new 8 MB preprocess_out
-    # cap (was 2 MB at 0x44A000 before the relocation).
+    # The tmp buffer matches the 24 MB preprocess_out cap (v6.5.39; it was sized
+    # for the 8 MB cap at v5.11.33, and 2 MB at 0x44A000 before that).
     var tmp = syscall(9, 0, 25165824, prot, 34, 0 - 1, 0);
     if (tmp < 0) {
         tmp = syscall(9, 0, 25165824, prot, 0x1002, 0 - 1, 0);
@@ -4349,12 +4349,13 @@ fn PP_IFDEF_PASS(S): i64 {
         # Copy the preprocessed source to the temp buffer
         var ci = 0;
         while (ci < bl) { store8(tmp + ci, load8(S + 0x459D000 + ci)); ci = ci + 1; }
-        # Redirect S-based reads to the temp buffer by copying back to S+0
+        # Redirect S-based reads to the temp buffer by copying back to S + _SRCB
         # for helpers (PP_DEFINE, PP_DEFINED, PP_EVAL_IF, PP_DERIVE_*,
         # PP_SKIPLINE) that take `S` as a base pointer and touch other
         # regions of S too (e.g. `S+0x190800` for the #ifdef flag table).
-        # The safe upper bound is 1048576 — input_buf ends at 0x100000 and
-        # compiler state starts at 0x18C100. v4.8.4 capped at 262144 which
+        # The 1048576 bound dates from input_buf at S+0, which ended at 0x100000 below
+        # compiler state at 0x18C100; S + _SRCB holds 24 MB since v6.5.39, so the bound
+        # now only limits the copy's cost. v4.8.4 capped at 262144 which
         # made ISINCLUDE / ISDEFINE / etc. blind to directives past the
         # 256 KB mark whenever `bl > 1048576` (bote 2.5.0 tripped exactly
         # this on ~525 KB preprocessed source — `lib/assert.cyr:3`
@@ -4562,7 +4563,8 @@ fn PP_IFDEF_PASS(S): i64 {
         # bytes (2,441 over the 2 MB cap) on a stock sandhi-folded
         # [deps].stdlib — the cap was sized pre-sandhi-fold and didn't
         # grow with the canonical service-boundary consumer shape.
-        # See CHANGELOG [5.11.33].
+        # See CHANGELOG [5.11.33]. v6.5.39 raised it to 24 MB, the
+        # preprocess_out cap.
         if (op > 25165824) {
             syscall(SYS_WRITE, 2, "error: expanded source exceeds 24MB (", 37);
             PRNUM(op);
@@ -4580,7 +4582,7 @@ fn PP_IFDEF_PASS(S): i64 {
     return 0;
 }
 
-# Pre-pass: expand #ref directives in raw input (S+0) into S+0x459D000, copy back
+# Pre-pass: expand #ref directives in the raw input (S + _SRCB) into S+0x459D000, copy back
 fn PP_REF_PASS(S): i64 {
     var bl = GBL(S);
     var out = S + 0x459D000;

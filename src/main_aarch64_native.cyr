@@ -117,8 +117,8 @@ if (_vn > 0) {
 # Allocate heap
 # aarch64 syscall numbers (no translation layer — native numbers)
 var S = syscall(SYS_BRK, 0);
-# brk extends through tok_lines (~78.5 MB) — synced with main.cyr.
-# v6.4.21: 0x5E1D000 → 0xF600000 to map the relocated lexid_entries @ 0xF400000.
+# The arena runs to the brk-final line of src/main.cyr's heap map (0xF600000,
+# 246 MiB, where lexid_entries ends) — the one layout every driver shares.
 syscall(SYS_BRK, S + 0xF600000);
 
 # Zero scratch state (v5.8.63 extraction; see src/common/util.cyr for slot list)
@@ -132,7 +132,7 @@ rp_vec = vec_new();
 _fixup_base = S + 0x107B000;
 _fixup_cap = 1048576;
 # Phase 0 (v6.2.0): growable fn-tables — bases start AT the original fixed
-# offsets, mask 8191, cap 8192 (byte-identical under the old cap; REGFN grows
+# offsets; mask + cap are set below (4095 / 2048 since v6.5.40 / v6.5.51; REGFN grows
 # the family + rehashes when the count would exceed it). See util.cyr.
 _fnt_cstrmask = S + 0x93A000;
 _fnt_resmask = S + 0x94A000;

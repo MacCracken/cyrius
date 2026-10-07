@@ -100,10 +100,9 @@ if ((_vflags & 4) == 4) { _allow_undef = 1; }
 # gets translated to BSD 197 (_mmap) by ESYSXLAT at emit time; the flag
 # value 0x1002 (MAP_PRIVATE | MAP_ANON on macOS) is baked in as an
 # immediate, so it reaches the kernel unchanged at runtime.
-# Size 0x5E1D000 (~94.1 MB) matches main.cyr's brk top (output_buf 16 MB
-# @ v6.1.27 + local tables +512 KB @ v6.1.40). Was 0x4D9D000 (~86.6 MB)
-# through the v5.11.33 preprocess_out relocation; 0x459D000 (~78.6 MB)
-# pre-v5.11.33; 0x457C000 (~78.5 MB) pre-v5.10.40.
+# Size 0xF600000 (246 MiB) is the brk-final line of src/main.cyr's heap map,
+# the arena end every driver requests (this read "0x5E1D000 (~94.1 MB)" until
+# 6.6.20 — the size before v6.4.21).
 var S = syscall(9, 0, 0xF600000, 3, 0x1002, 0 - 1, 0);   # v6.4.21: 0x5E1D000 → 0xF600000 to map relocated lexid_entries @ 0xF400000 (LEXID cap 16384→65536)
 if (S < 0x100000) {
     syscall(SYS_WRITE, 2, "cycc_macho: mmap heap init failed\n", 34);
@@ -122,7 +121,7 @@ rp_vec = vec_new();
 _fixup_base = S + 0x107B000;
 _fixup_cap = 1048576;
 # Phase 0 (v6.2.0): growable fn-tables — bases start AT the original fixed
-# offsets, mask 8191, cap 8192 (byte-identical under the old cap; REGFN grows
+# offsets; mask + cap are set below (4095 / 2048 since v6.5.40 / v6.5.51; REGFN grows
 # the family + rehashes when the count would exceed it). See util.cyr.
 _fnt_cstrmask = S + 0x93A000;
 _fnt_resmask = S + 0x94A000;
