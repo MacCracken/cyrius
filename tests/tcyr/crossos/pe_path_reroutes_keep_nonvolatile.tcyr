@@ -28,44 +28,6 @@ var NV_SI = 0x5E5E00000000A5A1;
 var NV_DI = 0x5E5E00000000A5A2;
 var nv_fd: i64[80];   # a WIN32_FIND_DATAW (592 B) for FindFirstFileW
 
-#naked
-fn _nv_set(): i64 {
-    #ifdef CYRIUS_ARCH_X86
-    asm {
-        0x48; 0xBE; 0xA1; 0xA5; 0x00; 0x00; 0x00; 0x00; 0x5E; 0x5E;   # movabs rsi, NV_SI
-        0x48; 0xBF; 0xA2; 0xA5; 0x00; 0x00; 0x00; 0x00; 0x5E; 0x5E;   # movabs rdi, NV_DI
-        0xC3;                                                         # ret
-    }
-    #endif
-    #ifndef CYRIUS_ARCH_X86
-    return 0;
-    #endif
-}
-#naked
-fn _nv_si(): i64 {
-    #ifdef CYRIUS_ARCH_X86
-    asm {
-        0x48; 0x89; 0xF0;   # mov rax, rsi
-        0xC3;               # ret
-    }
-    #endif
-    #ifndef CYRIUS_ARCH_X86
-    return 0;
-    #endif
-}
-#naked
-fn _nv_di(): i64 {
-    #ifdef CYRIUS_ARCH_X86
-    asm {
-        0x48; 0x89; 0xF8;   # mov rax, rdi
-        0xC3;               # ret
-    }
-    #endif
-    #ifndef CYRIUS_ARCH_X86
-    return 0;
-    #endif
-}
-
 # 1 iff both registers still hold their markers. Called with the two reads already taken.
 fn _nv_kept(si, di): i64 {
     if (si != NV_SI) { return 0; }
@@ -77,6 +39,30 @@ test_group("PE path reroutes preserve the Win64-nonvolatile rsi / rdi");
 assert_eq(1, 1, "the file runs on every target");
 
 #ifdef CYRIUS_TARGET_WIN
+# PE only (always x86): the probes and the rows. On the other targets a #naked fn may not
+# `return`, and there is nothing to probe.
+#naked
+fn _nv_set(): i64 {
+    asm {
+        0x48; 0xBE; 0xA1; 0xA5; 0x00; 0x00; 0x00; 0x00; 0x5E; 0x5E;   # movabs rsi, NV_SI
+        0x48; 0xBF; 0xA2; 0xA5; 0x00; 0x00; 0x00; 0x00; 0x5E; 0x5E;   # movabs rdi, NV_DI
+        0xC3;                                                         # ret
+    }
+}
+#naked
+fn _nv_si(): i64 {
+    asm {
+        0x48; 0x89; 0xF0;   # mov rax, rsi
+        0xC3;               # ret
+    }
+}
+#naked
+fn _nv_di(): i64 {
+    asm {
+        0x48; 0x89; 0xF8;   # mov rax, rdi
+        0xC3;               # ret
+    }
+}
 fn _nv_control(): i64 {
     _nv_set();
     var si = _nv_si();
