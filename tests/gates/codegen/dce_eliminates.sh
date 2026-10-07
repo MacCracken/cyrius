@@ -39,13 +39,27 @@ CYRIUS_DCE=1 "$T/stage1" < "$R/src/main.cyr" > "$T/dce" 2>"$T/e2" || {
 chmod +x "$T/dce"
 grep -qa 'bytes of dead code eliminated' "$T/e2" || {
   echo "FAIL dce_eliminates axis1: no elimination line — the pass did not run."; exit 1; }
-SP=$(stat -c%s "$T/stage1"); SD=$(stat -c%s "$T/dce")
-[ "$SD" -lt "$SP" ] || {
-  echo "FAIL dce_eliminates axis1: DCE build is $SD B against $SP B — dead code was reported"
-  echo "  eliminated but the binary did not shrink. That is the pre-v6.5.72 behaviour: NOP-fill."
+# 6.6.20: the floor is DERIVED from the bytes the pass reports eliminating, and measured on the
+# text segment. The fixed `>= 16384` file-size floor that stood here was cycc's own dead code at
+# v6.5.72 (36,864 B reclaimed); the 6.6.20 dead-code pass left ~10 KB to eliminate, and the file
+# moves in 4 KB pages, so the same healthy pass read 8,192 and failed. The R E segment's p_filesz
+# (program header 0) shrinks by the eliminated bytes, to alignment. CHANGELOG [6.6.20]
+ELIM=$(grep -a 'bytes of dead code eliminated' "$T/e2" | grep -o '[0-9][0-9]*' | head -1)
+[ "${ELIM:-0}" -gt 0 ] || { echo "FAIL dce_eliminates axis1: the pass reports eliminating ${ELIM:-no} bytes"; exit 1; }
+_text_filesz() {   # $1 = ELF64; prints phdr[0].p_filesz, or nothing unless phdr[0] is the R E PT_LOAD
+  _ph=$(od -An -t u8 -j 32 -N 8 "$1" | tr -d ' ')
+  [ "$(od -An -t u4 -j "$_ph" -N 4 "$1" | tr -d ' ')" = 1 ] || return 0
+  [ "$(od -An -t u4 -j $((_ph + 4)) -N 4 "$1" | tr -d ' ')" = 5 ] || return 0
+  od -An -t u8 -j $((_ph + 32)) -N 8 "$1" | tr -d ' '
+}
+TP=$(_text_filesz "$T/stage1"); TD=$(_text_filesz "$T/dce")
+[ -n "$TP" ] && [ -n "$TD" ] || { echo "FAIL dce_eliminates axis1: program header 0 is not the R E PT_LOAD"; exit 1; }
+SAVED=$(( TP - TD ))
+[ $(( SAVED * 2 )) -ge "$ELIM" ] || {
+  echo "FAIL dce_eliminates axis1: the text segment shrank $SAVED B ($TP -> $TD) for $ELIM B reported"
+  echo "  eliminated — dead code was reported eliminated but did not leave the binary. That is the"
+  echo "  pre-v6.5.72 behaviour: NOP-fill."
   exit 1; }
-SAVED=$(( SP - SD ))
-[ "$SAVED" -ge 16384 ] || { echo "FAIL dce_eliminates axis1: only $SAVED bytes reclaimed (expected >=16384; measured 36,864)"; exit 1; }
 
 # ── axis 2 — THE REAL ASSERTION: the eliminated compiler WORKS and is byte-exact ─────────
 "$T/dce" < "$R/src/main.cyr" > "$T/dceout" 2>"$T/e3"
