@@ -4294,16 +4294,8 @@ fn _pe_call_frame(n, d): i64 {
     return framesize;
 }
 
-# sub rsp, imm — imm8 form when it fits, else imm32. A 17-arg call needs
-# 32 + 13*8 = 136 B, past the imm8 ceiling; the old hardcoded `83 EC ib` would
-# have truncated it.
-fn _esub_rsp_imm(S, imm): i64 {
-    if (imm < 128) { EB(S, 0x48); EB(S, 0x83); EB(S, 0xEC); EB(S, imm); return 0; }
-    EB(S, 0x48); EB(S, 0x81); EB(S, 0xEC); EDISP32(S, imm);
-    return 0;
-}
-
-# add rsp, imm — imm8/imm32 peer of _esub_rsp_imm.
+# add rsp, imm — imm8 form when it fits, else imm32 (a 17-arg call's frame is 136 B, past the
+# imm8 ceiling). Its `sub` peer is _pe_cp_sub_rsp, which also probes a page or more.
 fn _eadd_rsp_imm(S, imm): i64 {
     if (imm < 128) { EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, imm); return 0; }
     EB(S, 0x48); EB(S, 0x81); EB(S, 0xC4); EDISP32(S, imm);
