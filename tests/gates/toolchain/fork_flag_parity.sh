@@ -17,7 +17,8 @@
 #              clean (rc 0), and without it the same file is rc 1 naming the name
 #              (anti-vacuous). `cyrius lint`'s pre-pass passes the flag on every host; the
 #              aarch64 /proc walkers and the macOS argv scan never read it, so lint refused
-#              valid multi-file module files on pi, ecb and ach. (REFACTOR-01)
+#              valid multi-file module files on pi, ecb and ach. (REFACTOR-01) The cx driver
+#              (all four of its per-target argv blocks) reads it too, for parity. (REVBE-02)
 #   pie      — every aarch64 compiler honours `--pie` and CYRIUS_PIE=1 (ET_DYN that runs) and
 #              defaults to ET_EXEC. The native fork read neither and wrote ET_EXEC, rc 0.
 #   macho    — the native aarch64 fork, which has no Mach-O emitter, REFUSES CYRIUS_MACHO_ARM=1
@@ -29,6 +30,7 @@
 #   the `--sy` arm deleted from main_aarch64.cyr       -> RED "syntax a64_cross" + "syntax aarch64_qemu"
 #   the CYRIUS_PIE read deleted from the native fork   -> RED "pie native_qemu env: rc 0, e_type EXEC"
 #   the native CYRIUS_MACHO_ARM refusal deleted        -> RED "macho native_qemu: rc 0, 0 bytes out"
+#   the `--sy` arms deleted from main_cx.cyr           -> RED "syntax cx" + "syntax cx.exe_wine"
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || { echo "FAIL: fork_flag_parity: cannot cd to $ROOT"; exit 1; }
@@ -78,6 +80,7 @@ else
 fi
 if [ "$HAVE_WINE" = 1 ]; then
     mk cycc.exe src/main_win.cyr "$T/xwin"
+    mk cx.exe   src/main_cx.cyr  "$CC" CYRIUS_TARGET_WIN=1
     export WINEPREFIX="$WP" WINEDEBUG=-all WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d'
 else
     echo "  SKIP (named): cycc.exe row — wine is not installed"
@@ -91,7 +94,8 @@ win_host|$T/xwin"
 aarch64_qemu|qemu-aarch64 $T/a64
 native_qemu|qemu-aarch64 $T/a64n"
 [ "$HAVE_WINE" = 1 ] && FORKS="$FORKS
-cycc.exe_wine|env HOME=$T/whome XDG_CACHE_HOME=$T/whome/.cache wine $T/cycc.exe"
+cycc.exe_wine|env HOME=$T/whome XDG_CACHE_HOME=$T/whome/.cache wine $T/cycc.exe
+cx.exe_wine|env HOME=$T/whome XDG_CACHE_HOME=$T/whome/.cache wine $T/cx.exe"
 
 # ── strict: accepted, and a no-op ───────────────────────────────────────────────────────
 printf 'fn add(a, b): i64 { return a + b; }\nvar r = add(40, 2);\nsyscall(60, r);\n' > "$T/p.cyr"
@@ -108,7 +112,7 @@ done
 
 # ── syntax: --syntax-only honoured, its absence still resolves ──────────────────────────
 printf 'fn f(): i64 { return not_declared_anywhere; }\nvar r = f();\n' > "$T/u.cyr"
-printf '%s\n' "$FORKS" | grep -v '^cx|' | while IFS='|' read -r l c; do
+printf '%s\n' "$FORKS" | while IFS='|' read -r l c; do
     a=0; $c --syntax-only < "$T/u.cyr" > "$T/y1" 2> "$T/y1.err" || a=$?
     b=0; $c < "$T/u.cyr" > "$T/y2" 2> "$T/y2.err" || b=$?
     [ "$a" = 0 ] || { echo "  FAIL: fork_flag_parity syntax $l: --syntax-only rc $a: $(grep -m1 error "$T/y1.err")"; echo x >> "$T/red"; }
