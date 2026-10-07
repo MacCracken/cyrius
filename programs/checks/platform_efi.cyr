@@ -303,7 +303,7 @@ fn _elf64_kernel_entry_gate(): i64 {
 # e_entry AND the PT_LOAD p_vaddr both shift in lockstep — the exact property the
 # kernel-load-base-settable issue warned a partial edit would break (fixups vs
 # PT_LOAD disagreeing → boots to garbage). Resolves
-# issues/2026-06-19-kernel-load-base-settable.md.
+# issues/archived/2026-06-19-kernel-load-base-settable.md.
 fn _sections_base_override_gate(): i64 {
     var label = "v6.3.3 #5: CYRIUS_KERNEL_BASE override shifts kernel e_entry (0x2000A8) + PT_LOAD p_vaddr (0x200000) in lockstep";
     var src_path = _root_path("programs/kernel_hello.cyr");

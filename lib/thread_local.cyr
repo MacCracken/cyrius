@@ -454,7 +454,7 @@ fn thread_local_set(slot, val): i64 {
 # real per-thread storage — concurrent workers no longer collide.
 #
 # Supersedes the v6.0.53 serial process-global array. In lockstep with real
-# threads (lib/thread_win.cyr) per docs/development/issues/
+# threads (lib/thread_win.cyr) per docs/development/issues/archived/
 # 2026-06-03-windows-threading-stdlib-gap.md.
 #
 # Satisfies sigil's crypto-bank contract: a fresh slot reads 0, init

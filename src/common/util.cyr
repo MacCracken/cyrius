@@ -441,7 +441,7 @@ var _fnt_cap = 0;
 # let the fn count past 8192 (fi >= 8192), index fi of each wrote into slot
 # (fi-8192) of the NEXT table — silent metadata corruption with no diagnostic, and
 # the capacity warning went quiet at the same moment (it divides by the live
-# _fnt_cap). See issues/2026-07-23-fn-table-growth-past-8192-corrupts-fixed-side-
+# _fnt_cap). See issues/archived/2026-07-23-fn-table-growth-past-8192-corrupts-fixed-side-
 # tables.md.
 #
 # Fix follows the SAME lazy-alloc-at-max-cap pattern already used for the fn-indexed

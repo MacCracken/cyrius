@@ -4,8 +4,9 @@
 #
 # `\u####` and `\u{...}` are encoded as UTF-8; surrogate codepoints
 # (D800-DFFF) and codepoints > U+10FFFF are rejected at lex time —
-# those reject paths live in tests/regression-string-escapes.sh
-# (lex errors abort cc5; tcyr can only test successful compiles).
+# those reject paths live in the check driver's _string_escape_rejects_gate
+# (programs/checks/lint_fmt.cyr; lex errors abort the compile, so a tcyr can
+# only test successful compiles).
 
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"

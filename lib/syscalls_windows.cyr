@@ -439,7 +439,7 @@ fn sys_brk(addr) {
 # (uninitialised buffer / clock-ns / PID-mix) — a predictable mask/TXID/key is
 # worse than a failed op (exactly what CVE-19 closed). `flags` is ignored
 # (Linux getrandom flags have no ProcessPrng analog). See
-# issues/2026-06-11-windows-entropy-primitive.md.
+# issues/archived/2026-06-11-windows-entropy-primitive.md.
 fn sys_getrandom(buf, len, flags): i64 {
     if (syscall(0xF01A, buf, len) != 0) { return len; }
     return 0 - 1;

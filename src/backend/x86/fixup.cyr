@@ -25,7 +25,7 @@
 # EMITELF64_KERNEL — the issue's warned hazard was a partial edit leaving an
 # emitter's p_vaddr disagreeing with the fixups' base (boots to garbage). Reading
 # one accessor everywhere makes that impossible. Byte-identical when the cell is 0.
-# Resolves issues/2026-06-19-kernel-load-base-settable.md.
+# Resolves issues/archived/2026-06-19-kernel-load-base-settable.md.
 fn _kernel_load_base(S): i64 {
     var b = L64(S + 0x18FCE8);
     if (b != 0) { return b; }

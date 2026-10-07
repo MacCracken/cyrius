@@ -5,7 +5,7 @@
 # 128-slot macOS/agnos/foreign arrays) is exercised where it actually lives,
 # not just on x86-Linux %fs.
 #
-# THE ISSUE THIS CLOSES (docs/development/issues/2026-07-01-thread-local-slot-
+# THE ISSUE THIS CLOSES (docs/development/issues/archived/2026-07-01-thread-local-slot-
 # namespace-no-allocator.md): the slot namespace had no allocator, so every lib
 # hardcoded an integer index and two libs linked together could silently clobber
 # each other's per-thread state (sigil vs patra, the v6.3.25 RECORD_LAYER bug).

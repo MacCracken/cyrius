@@ -1,5 +1,5 @@
 # Test: parser cosmetic limits closed at v5.10.48 defensive sweep.
-# Closes `docs/development/issues/2026-05-03-parser-cosmetic-limits-
+# Closes `docs/development/issues/archived/2026-05-03-parser-cosmetic-limits-
 # bare-return-and-var-bracket.md` — both `bare_return_in_if_block_
 # rejected` and `var_bracket_size_must_be_literal`.
 include "lib/syscalls.cyr"

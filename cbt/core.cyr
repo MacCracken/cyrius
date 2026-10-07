@@ -167,7 +167,7 @@ var _baremetal_aa = 0;
 # pointer ("CYRIUS_KERNEL_BASE=0x..", or 0 when absent) and appends it to the cycc
 # env alongside CYRIUS_KERNEL — cycc's _parse_hex_env folds it into _kernel_load_base.
 # Absent block -> 0 -> built-in base -> byte-identical. The manifest surface of
-# issues/2026-06-19-kernel-load-base-settable.md.
+# issues/archived/2026-06-19-kernel-load-base-settable.md.
 var _section_base_env_ptr = 0;
 # v6.3.3 #5: the numeric kernel base parsed from `[sections] base` (0 = default /
 # absent). Drives the D6 build-report line so an overridden build prints its REAL

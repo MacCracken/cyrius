@@ -952,7 +952,7 @@ fn ESYSXLAT(S): i64 {
         # offsets differ from Linux's — handled in syscalls_aarch64_linux.cyr's
         # #ifdef CYRIUS_TARGET_MACOS Stat enum. utimensat (280) has NO Darwin
         # syscall → the wrapper returns -ENOSYS on macOS (not routed here). See
-        # issues/2026-06-08-macho-arm-at-family-darwin-syscall-mappings.md, CHANGELOG [6.1.20].
+        # issues/archived/2026-06-08-macho-arm-at-family-darwin-syscall-mappings.md, CHANGELOG [6.1.20].
         _esx_arm(S, 262, 470);  # newfstatat 262→fstatat64 470
         _esx_arm(S, 37, 471);  # linkat 37→471
         _esx_arm(S, 38, 465);  # renameat 38→465
@@ -1405,7 +1405,7 @@ fn ESYSXLAT(S): i64 {
     # siblings that never got the v6.0.68 treatment. Raw x86 5/6 in arch-neutral lib code
     # (lib/fdlopen.cyr, lib/dynlib.cyr) reached the aarch64 kernel as setxattr(5) /
     # lsetxattr(6) — write-class calls aimed at caller data (traced under qemu -strace;
-    # issues/2026-09-12-raw-x86-syscall-numbers-fdlopen-dynlib-aarch64.md). Both fail
+    # issues/archived/2026-09-12-raw-x86-syscall-numbers-fdlopen-dynlib-aarch64.md). Both fail
     # closed today (EFAULT/ERANGE), and routing them is ONE HALF of the fix: the other
     # half is the aarch64 declines in those two files, landed in the same patch, because
     # with the 5→80 row ALONE dynlib_open turned fail-closed into fail-OPEN — it mmap'd an
@@ -2368,7 +2368,7 @@ fn EF64_NEG(S): i64 {
 
 # f64_sin / f64_cos — polyfill-dispatch (v6.4.16, mirrors EF64_LN/EF64_EXP).
 # Route to lib/math.cyr's `_f64_sin_polyfill` / `_f64_cos_polyfill` (attn11
-# aarch64 trig unblock, issues/2026-07-07-aarch64-no-trig-polyfill.md).
+# aarch64 trig unblock, issues/archived/2026-07-07-aarch64-no-trig-polyfill.md).
 fn EF64_SIN(S): i64 {
     var pf = _FINDFN_CSTR(S, "_f64_sin_polyfill", 17);
     if (pf < 0) {
@@ -2395,7 +2395,7 @@ fn EF64_COS(S): i64 {
 
 # f64_exp2 / f64_atan — polyfill-dispatch (v6.4.25, mirrors EF64_SIN/EF64_EXP).
 # Route to lib/math.cyr's `_f64_exp2_polyfill` / `_f64_atan_polyfill` (closes the
-# last two aarch64 transcendental gaps; issues/2026-07-07-aarch64-f64-exp2-atan-
+# last two aarch64 transcendental gaps; issues/archived/2026-07-07-aarch64-f64-exp2-atan-
 # hard-error.md). x86 keeps its native x87 f2xm1/fpatan paths.
 fn EF64_EXP2(S): i64 {
     var pf = _FINDFN_CSTR(S, "_f64_exp2_polyfill", 18);

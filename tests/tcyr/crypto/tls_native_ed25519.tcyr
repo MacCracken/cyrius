@@ -4,7 +4,7 @@
 # scheme ed25519 = 0x0807, PureEdDSA over the raw transcript content; the client
 # verifies it). Mirrors tls_wrapper_native.tcyr (which uses ECDSA P-256). Filed
 # from sit v0.8.8 (`sit serve --tls` with an Ed25519 cert failed the handshake);
-# see issues/2026-06-10-tls-native-ed25519-server-cert-accept-fails.md.
+# see issues/archived/2026-06-10-tls-native-ed25519-server-cert-accept-fails.md.
 # Cert/key are openssl-generated Ed25519 (cert DER 320 B, PKCS#8 key DER 48 B).
 #define CYRIUS_TLS_NATIVE
 include "lib/fdlopen.cyr"

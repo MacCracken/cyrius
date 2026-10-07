@@ -119,7 +119,7 @@ echo "PASS: CYRIUS_TARGET_AGNOS net/entropy/clock/TLS peer (#45-#55) -> valid ag
 #     fns (Linux SYS_SETSOCKOPT=54 / SYS_SHUTDOWN=48 silently mis-dispatch to
 #     agnos #54=UDP_UNBIND / #48=SOCK_SEND) + the new IPv4 multicast helpers
 #     (unsupported→-1 on agnos). If async loses its peer this fails to compile
-#     (SYS_EPOLL_CREATE1 undefined). Compile-only. See issues
+#     (SYS_EPOLL_CREATE1 undefined). Compile-only. See issues/archived/
 #     2026-06-15-cyrius-thread-agnos-clone-dispatch.md + -mdns-multicast-primitives.md.
 cat > "$W/_agnos_async_gate.cyr" <<'CYR'
 include "lib/syscalls.cyr"

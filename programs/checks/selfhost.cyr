@@ -347,7 +347,7 @@ fn _var_grow_gate(): i64 {
 # silent corruption, no diagnostic, and the capacity warning went quiet at exactly
 # that point (it divided by the live _fnt_cap). cycc self-host never caught it
 # because cycc has ~1135 fns; only a >8192-fn consumer (stiva, 7443) approached it.
-# See issues/2026-07-23-fn-table-growth-past-8192-corrupts-fixed-side-tables.md.
+# See issues/archived/2026-07-23-fn-table-growth-past-8192-corrupts-fixed-side-tables.md.
 #
 # THE DISCRIMINATOR: put `#must_use` on a LOW fn (g58) and make a HIGH fn (g8250)
 # reachable. Pre-fix, g8250's per-fn reset clobbered fn_flags[58] (8250-8192=58),

@@ -2680,8 +2680,8 @@ fn _agnos_dl_over(dl): i64 {
 # hands back a zeroed buffer). Un-fail-closes random_bytes() and its
 # ws/sandhi/sigil/tls_native consumers on AGNOS. Returns `len` on success,
 # 0 for len<=0, -1 on a bad user range — the Linux getrandom shape, so
-# consumers checking >0 are portable. (issues/2026-06-11-windows-entropy-
-# primitive.md remains open for the Windows CSPRNG; this is the AGNOS half.)
+# consumers checking >0 are portable. (issues/archived/2026-06-11-windows-entropy-
+# primitive.md; its Windows CSPRNG half shipped in 6.2.12. This is the AGNOS half.)
 fn sys_getrandom(buf, len, flags): i64 {
     return syscall(SYS_GETRANDOM, buf, len, flags);
 }

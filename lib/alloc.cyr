@@ -82,7 +82,7 @@ var _alloc_lock = 0;
 # (Linux/agnos/Windows) BEFORE the child runs — a monotonic 0→1 set that happens-before
 # any concurrency (clone/CreateThread is a full barrier), so both parent and child then
 # take the locked path. While it is 0, acquire/release are no-ops → the ~10 ns bump path
-# is restored. See issues/2026-06-10-runtime-bench-suite-blind.md (PF-02).
+# is restored. See issues/archived/2026-06-10-runtime-bench-suite-blind.md (PF-02).
 #
 # v6.5.19: the DECLARATION moved to lib/atomic.cyr (included just above). It is now
 # read by two independent allocator locks — this one and lib/freelist.cyr's — and

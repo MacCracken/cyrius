@@ -22,7 +22,7 @@ fn TOKVAL(S, i): i64 { return L64(S + 0xAC00000 + i * 8); }
 # `GTI < GTCNT`, exactly the condition that is false there). Truncated input — a
 # clipped file, an unclosed `fn`, EOF mid-expression — therefore spewed **166,670**
 # stderr lines before the watchdog aborted. Not a hang, but unusable output that
-# buries the real error. (issues/2026-07-24-truncated-input-166k-line-error-cascade.md)
+# buries the real error. (issues/archived/2026-07-24-truncated-input-166k-line-error-cascade.md)
 #
 # ⛔ v6.5.19 — THE `_had_error` GATE ON THE CLAMP WAS WRONG, AND IT HID 40 CRASHES.
 # v6.4.78 placed the clamp INSIDE the watchdog's `_had_error == 1` guard and justified

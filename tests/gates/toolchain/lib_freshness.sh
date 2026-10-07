@@ -28,7 +28,7 @@
 # _check_shadow_lib) which contains the same phrase — a loose grep here reports
 # cycc's note as ours and fails the fresh-lib case. The two mechanisms are
 # redundant by design for now; see
-# issues/2026-07-14-converge-cycc-shadow-lib-sentinel.md.
+# issues/archived/2026-07-14-converge-cycc-shadow-lib-sentinel.md.
 set -e
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CY="$ROOT/build/cyrius"
