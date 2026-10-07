@@ -5257,7 +5257,7 @@ fn _distlib_modular_emit(pkg_name, modules, mbuf, mlen): i64 {
         if (file_exists(mod_path) == 0) {
             # v6.2.52 (user: make it fail-loud): a missing module is a HARD ERROR,
             # not a warning — a partial dist silently drops a sub-unit + its index entry.
-            _err_ctx("distlib --modular: module not found", mod_path);
+            _err_ctx("distlib --modular: module not found", _shown(mod_path));   # 6.6.20: shown escaped
             return 1;
         }
         # basename (last path component, strip `.cyr`)
@@ -5277,7 +5277,7 @@ fn _distlib_modular_emit(pkg_name, modules, mbuf, mlen): i64 {
         # emit duplicate index keys (resolver is first-match-wins → silently lost
         # transitive deps). Fail loud instead.
         if (_dep_list_has(seen_bases, base) == 1) {
-            _err_ctx("distlib --modular: duplicate module basename collides in dist/", base);
+            _err_ctx("distlib --modular: duplicate module basename collides in dist/", _shown(base));
             return 1;
         }
         vec_push(seen_bases, base);
@@ -5291,7 +5291,7 @@ fn _distlib_modular_emit(pkg_name, modules, mbuf, mlen): i64 {
         # to be skipped silently, and a short write truncated it, both with exit 0.
         var mod_out = str_data(str_builder_build(of_sb));
         var mfd = _aw_open(mod_out);
-        if (mfd == 0) { _err_ctx("distlib --modular: cannot write", mod_out); return 1; }
+        if (mfd == 0) { _err_ctx("distlib --modular: cannot write", _shown(mod_out)); return 1; }
         _aw_write(mfd, "# ", 2);
         _aw_write(mfd, base, strlen(base));
         _aw_write(mfd, " (cyrius distlib --modular)\n\n", 29);
@@ -5305,7 +5305,7 @@ fn _distlib_modular_emit(pkg_name, modules, mbuf, mlen): i64 {
         # v6.2.51 (closeout): fail loud on a >1MB module — a silent truncation
         # would drop trailing `include`s from the index leaf list → missing-dep SIGILL.
         if (flen >= 1048575 && _file_size(mod_path) > 1048575) {
-            _err_ctx("distlib --modular: module exceeds 1024KB read cap (truncated)", mod_path);
+            _err_ctx("distlib --modular: module exceeds 1024KB read cap (truncated)", _shown(mod_path));
             _aw_abort(mfd);
             return 1;
         }
@@ -5380,7 +5380,7 @@ fn _distlib_modular_emit(pkg_name, modules, mbuf, mlen): i64 {
             _aw_write(mfd, fbuf + ls, ll);
             _aw_write(mfd, "\n", 1);
         }
-        if (_aw_commit(mfd) != 0) { _err_ctx("distlib --modular: write failed (left as it was)", mod_out); return 1; }
+        if (_aw_commit(mfd) != 0) { _err_ctx("distlib --modular: write failed (left as it was)", _shown(mod_out)); return 1; }
         # 6.6.19 (E3): a module that names a carried embed's accessor lists its sub-module as a
         # sibling, so resolving the module brings the bytes (a comment mention only over-pulls).
         var ej = 0;
@@ -5445,7 +5445,7 @@ fn _distlib_write_requires(out_path, deps_path, leaves, named_deps): i64 {
         i = i + 1;
         if (_distlib_vec_has(named_deps, lf) == 1) { continue; }
         if (_dep_leaf_ok(lf) == 0) {
-            _err_ctx("distlib: a sidecar leaf is not a safe include path (allowed: [A-Za-z0-9_/-]) — bundle NOT rewritten", lf);
+            _err_ctx("distlib: a sidecar leaf is not a safe include path (allowed: [A-Za-z0-9_/-]) — bundle NOT rewritten", _shown(lf));
             return 1;
         }
         # 6.6.18 review: a leaf the snapshot does not have would leave the block SHORT of its
@@ -5762,7 +5762,7 @@ fn cmd_distlib(profile): i64 {
         if (file_exists(mod_path) == 0) {
             # v6.2.52 (user: make it fail-loud): a missing module is a HARD ERROR,
             # not a warning — a partial bundle silently drops a module.
-            _err_ctx("distlib: module not found", mod_path);
+            _err_ctx("distlib: module not found", _shown(mod_path));   # 6.6.20: shown escaped
             _aw_abort(ofd);
             return 1;
         }
@@ -5801,7 +5801,7 @@ fn cmd_distlib(profile): i64 {
         # v6.2.51 (closeout): fail loud on a >1MB module rather than silently
         # truncating the bundle + dropping its trailing include/leaf lines.
         if (flen >= 1048575 && _file_size(mod_path) > 1048575) {
-            _err_ctx("distlib: module exceeds 1024KB read cap (truncated)", mod_path);
+            _err_ctx("distlib: module exceeds 1024KB read cap (truncated)", _shown(mod_path));
             _aw_abort(ofd);
             return 1;
         }

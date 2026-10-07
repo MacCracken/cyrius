@@ -17,16 +17,30 @@
 #       header (the name took the dep-name rule, which allowed a newline); E4b `name = "my lib"`
 #       wrote `dist/my lib.cyr` — the bundle name is now the profile rule, an identifier
 # E5 is the anti-over-reach row: an ordinary bundle name still bundles.
+# 6.6.20 review, MEASURED on a9d9d523:
+#   E6  a git dep cached from one URL and re-declared with an OSC sequence in its URL: the CVE-43
+#       origin refusal printed `declared: file://…^[]0;pwned^G` raw (the clone path's unsafe-
+#       character check never runs on a reused cache; reachable from a TRANSITIVE manifest)
+#   E7  `cyrius distlib` / `--modular`: "module not found: <[lib] modules entry>" raw
+#   E8  `cyrius = "9.9.9\u001b]0;pwned\u0007"`: the wrapper's and the resolver's "pins version …
+#       not installed" lines, and `--version`'s manifest-pin line, raw
 #
 # Hermetic: a mktemp CYRIUS_HOME with the CLI built FROM SOURCE as the pin's own wrapper; path
-# deps only (no network, no git). CYRIUS_GATE_CLI=<built cyrius> runs it where build/cycc is
-# foreign; else a non-Linux host SKIPs by name.
+# deps, and for E6 one local file:// git origin (no network; /etc/gitconfig and ~/.gitconfig
+# ignored; E6 skips by name where git is absent). CYRIUS_GATE_CLI=<built cyrius> runs it where
+# build/cycc is foreign; else a non-Linux host SKIPs by name.
 #
 # Mutation ledger (MEASURED via CYRIUS_GATE_CLI, each mutant built from cbt/):
 #   the e696746d CLI                                   -> E1 E2 E3 E4 E4b red
 #   _ew_shown writes its argument raw                   -> E1 E2 E3 red
 #   the sub-module refusal back on the printing validator -> E3 red
 #   the bundle name back on the dep-name rule            -> E4b red
+#   the declared git URL printed raw (_git_cache_refuse)  -> E6 red
+#   distlib's module-not-found ctx raw                    -> E7 (distlib) red
+#   distlib --modular's module-not-found ctx raw          -> E7 (--modular) red
+#   the wrapper's not-installed path raw                  -> E8 red
+#   the resolver's not-installed path raw                 -> E8 red
+#   --version's manifest-pin raw                          -> E8 red
 set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT"
@@ -161,7 +175,73 @@ if [ "$rc" -eq 0 ] && [ -f "$P/dist/my-lib_2.cyr" ] && grep -q 'fn e5_a' "$P/dis
     ok "E5 [package] name = \"my-lib_2\": bundles to dist/my-lib_2.cyr, rc 0"
 else bad "E5 (rc=$rc): $(head -3 "$P.err")"; fi
 
+# E6: a git dep whose cache was cloned from one URL, then declared with an ESC/BEL in its URL
+# (the shape a TRANSITIVE manifest can take). The clone path's unsafe-character check never runs
+# — the cache is reused — so the CVE-43 origin refusal is the line that echoes the URL.
+floor=10
+if command -v git >/dev/null 2>&1; then
+    export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL="$W/gitconfig" GIT_ALLOW_PROTOCOL=file
+    printf '[user]\n\tname = gate\n\temail = gate@example.invalid\n[init]\n\tdefaultBranch = main\n[advice]\n\tdetachedHead = false\n' > "$W/gitconfig"
+    GO="$W/gorigin"; mkdir -p "$GO/dist"
+    ( cd "$GO" && git init -q . && printf 'fn g_v(): i64 { return 1; }\n' > dist/g.cyr && git add -A && git commit -qm v1 && git tag 1.0.0 )
+    P="$W/e6a"; mkp "$P" <<EOF6
+name = "e6a"
+
+[deps.g]
+git = "file://$GO"
+tag = "1.0.0"
+modules = ["dist/g.cyr"]
+EOF6
+    run "$P" deps; rc6a=$rc
+    P="$W/e6"; mkp "$P" <<EOF6
+name = "e6"
+
+[deps.g]
+git = "file://$GO\\u001b]0;pwned\\u0007"
+tag = "1.0.0"
+modules = ["dist/g.cyr"]
+EOF6
+    run "$P" deps
+    if [ "$rc6a" -eq 0 ] && [ "$rc" -eq 1 ] && noraw "$P" && ! grep -q "$(printf '\007')" "$P.err" \
+       && grep -qxF "  declared:     file://$GO\\x1b]0;pwned\\x07" "$P.err" && grep -qxF "  cache origin: file://$GO" "$P.err"; then
+        ok "E6 a cached git dep re-declared with an OSC sequence in its URL: the origin refusal shows it as \\x1b ... \\x07, rc 1, nothing raw"
+    else bad "E6 (first rc=$rc6a, rc=$rc): $(grep -A1 'cache origin' "$P.err" | od -c | head -4)"; fi
+else
+    echo "  skip: E6 (git not found)"; floor=9
+fi
+
+# E7: `cyrius distlib` (and --modular) naming a `[lib] modules` entry that holds an OSC sequence.
+for fl in "" --modular; do
+    P="$W/e7$fl"; mkp "$P" <<'EOF7'
+name = "e7"
+
+[lib]
+modules = ["src/a\u001b]0;pwned\u0007.cyr"]
+EOF7
+    if [ -n "$fl" ]; then run "$P" distlib "$fl"; pre="distlib --modular"; else run "$P" distlib; pre="distlib"; fi
+    if [ "$rc" -eq 1 ] && noraw "$P" && ! grep -q "$(printf '\007')" "$P.err" \
+       && grep -qxF "error: $pre: module not found: src/a\\x1b]0;pwned\\x07.cyr" "$P.err"; then
+        ok "E7 $pre with an OSC sequence in a [lib] modules entry: module not found, shown as \\x1b ... \\x07, rc 1, nothing raw"
+    else bad "E7 $pre (rc=$rc): $(head -2 "$P.err" | od -c | head -3)"; fi
+done
+
+# E8: the `cyrius` PIN — the wrapper's not-installed line, the resolver's stdlib-dir line
+# (CYRIUS_RESOLVED=1 skips the wrapper) and `--version`'s manifest-pin line.
+P="$W/e8"; mkdir -p "$P/src"
+printf '[package]\nname = "e8"\nversion = "0.0.1"\nlanguage = "cyrius"\ncyrius = "9.9.9\\u001b]0;pwned\\u0007"\n\n[deps]\nstdlib = ["string"]\n' > "$P/cyrius.cyml"
+PIN_SHOWN='9.9.9\x1b]0;pwned\x07'
+run "$P" deps; rc8a=$rc; cp "$P.err" "$P.err.a"; cp "$P.out" "$P.out.a"
+rc8b=0; ( cd "$P" && CYRIUS_RESOLVED=1 "$CY" deps > "$P.out.b" 2> "$P.err.b" ) || rc8b=$?
+rc8c=0; ( cd "$P" && CYRIUS_RESOLVED=1 "$CY" --version > "$P.out.c" 2> "$P.err.c" ) || rc8c=$?
+cat "$P.err.a" "$P.err.b" "$P.err.c" > "$P.err"; cat "$P.out.a" "$P.out.b" "$P.out.c" > "$P.out"
+if [ "$rc8a" -eq 1 ] && [ "$rc8b" -eq 1 ] && [ "$rc8c" -eq 0 ] && noraw "$P" && ! grep -q "$(printf '\007')" "$P.err" "$P.out" \
+   && grep -qF "error: cyrius.cyml pins version $PIN_SHOWN but cyrius binary is not installed at $H/versions/$PIN_SHOWN/bin/cyrius" "$P.err.a" \
+   && grep -qF "error: cyrius.cyml pins version $PIN_SHOWN but it is not installed at $H/versions/$PIN_SHOWN/lib" "$P.err.b" \
+   && grep -qxF "  run: cyrius install $PIN_SHOWN" "$P.err.b" && grep -qF "manifest-pin: $PIN_SHOWN (drift" "$P.out.c"; then
+    ok "E8 a cyrius pin holding an OSC sequence: the wrapper's and the resolver's not-installed lines and --version's manifest-pin line show it as \\x1b ... \\x07, nothing raw"
+else bad "E8 (rc=$rc8a/$rc8b/$rc8c): $(cat "$P.err" "$P.out" | head -4 | od -c | head -4)"; fi
+
 echo "$G: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1
-[ "$pass" -ge 6 ] || { echo "FAIL: $G: only $pass axes ran (floor 6)"; exit 1; }
-echo "PASS: $G — manifest strings in errors are shown escaped, once, by the caller that refused them"
+[ "$pass" -ge "$floor" ] || { echo "FAIL: $G: only $pass axes ran (floor $floor)"; exit 1; }
+echo "PASS: $G — manifest strings in deps / distlib errors and the pin lines are shown escaped, once, by the caller that refused them"

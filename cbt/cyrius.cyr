@@ -350,12 +350,13 @@ fn _try_redirect_to_pinned(): i64 {
     var pinned_bin = str_data(str_builder_build(sb));
 
     if (file_exists(pinned_bin) == 0) {
+        # 6.6.20: the pin is a manifest string (and the path carries it), so both shown escaped.
         sys_write(STDERR_FD, "error: cyrius.cyml pins version ", 32);
-        sys_write(STDERR_FD, pin, strlen(pin));
+        _ew_shown(pin);
         sys_write(STDERR_FD, " but cyrius binary is not installed at ", 39);
-        sys_write(STDERR_FD, pinned_bin, strlen(pinned_bin));
+        _ew_shown(pinned_bin);
         sys_write(STDERR_FD, "\n  run: cyrius install ", 23);
-        sys_write(STDERR_FD, pin, strlen(pin));
+        _ew_shown(pin);
         sys_write(STDERR_FD, "\n", 1);
         _cbt_exit(1);   # sweeps the private temp dir — CHANGELOG [6.6.6]
     }
@@ -1200,7 +1201,8 @@ fn main(): i64 {
         var _ver_pin = _dep_read_cyml_cyrius_field();
         if (_ver_pin != 0) {
             sys_write(STDOUT_FD, "manifest-pin: ", 14);
-            sys_write(STDOUT_FD, _ver_pin, strlen(_ver_pin));
+            var _vps = _shown(_ver_pin);   # 6.6.20: a manifest string, shown escaped
+            sys_write(STDOUT_FD, _vps, strlen(_vps));
             if (streq(_ver_pin, _VERSION_TOOLCHAIN) != 1) {
                 sys_write(STDOUT_FD, " (drift — wrapper is ", 23);
                 sys_write(STDOUT_FD, _VERSION_TOOLCHAIN, strlen(_VERSION_TOOLCHAIN));

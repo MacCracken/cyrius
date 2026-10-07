@@ -439,12 +439,13 @@ fn _dep_find_stdlib_dir(): i64 {
         var pinned_lib = str_data(str_builder_build(sb));
         if (_dep_dir_has_stdlib(pinned_lib) == 1) { return pinned_lib; }
         # Pinned version not installed → hard error per acceptance bar
+        # 6.6.20: the pin is a manifest string (and the path carries it), so both shown escaped.
         sys_write(STDERR_FD, "error: cyrius.cyml pins version ", 32);
-        sys_write(STDERR_FD, pin, strlen(pin));
+        _ew_shown(pin);
         sys_write(STDERR_FD, " but it is not installed at ", 28);
-        sys_write(STDERR_FD, pinned_lib, strlen(pinned_lib));
+        _ew_shown(pinned_lib);
         sys_write(STDERR_FD, "\n  run: cyrius install ", 23);
-        sys_write(STDERR_FD, pin, strlen(pin));
+        _ew_shown(pin);
         sys_write(STDERR_FD, "\n", 1);
         _cbt_exit(1);   # sweeps the private temp dir — CHANGELOG [6.6.6]
     }
@@ -2215,7 +2216,7 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                         sys_write(STDERR_FD, "error: commit-pin mismatch for dep '", 36);
                         _ew_shown(dep_name);
                         sys_write(STDERR_FD, "' tag '", 7);
-                        sys_write(STDERR_FD, dep_tag, strlen(dep_tag));
+                        _ew_shown(dep_tag);
                         sys_write(STDERR_FD, "': cyrius.lock pins ", 20);
                         sys_write(STDERR_FD, _exp, strlen(_exp));
                         sys_write(STDERR_FD, " but the tag now resolves to ", 29);
@@ -4065,16 +4066,16 @@ fn _git_cache_refuse(dep_name, tag_or_0, clone_dir, r): i64 {
     if (r == 9) {
         if (_git_bad_path != 0) {
             _ew("\n  file: ");
-            _ew(_git_bad_path);
+            _ew_shown(_git_bad_path);   # 6.6.20: a path from the dep's tree, shown escaped
             _ew("  (its bytes hash to something the tag does not carry; only the");
             _ew("\n        conversion declared by .gitattributes / core.autocrlf made it compare equal)");
         }
     }
     if (r == 6) {
-        if (_git_bad_gitlink != 0) { _ew("\n  populated submodule: "); _ew(_git_bad_gitlink); }
+        if (_git_bad_gitlink != 0) { _ew("\n  populated submodule: "); _ew_shown(_git_bad_gitlink); }
         _ew("\n  fix: remove that directory's contents, then re-resolve.");
     } elif (r == 7) {
-        if (_git_bad_cfg != 0) { _ew("\n  offending setting: "); _ew(_git_bad_cfg); }
+        if (_git_bad_cfg != 0) { _ew("\n  offending setting: "); _ew_shown(_git_bad_cfg); }
         _ew("\n  a clone never writes this, and it decides what the comparison sees — so the");
         _ew("\n  cache is not one to trust. The offline repair is to REMOVE THAT SETTING —");
         _ew("\n  `git -C ");
@@ -4083,8 +4084,10 @@ fn _git_cache_refuse(dep_name, tag_or_0, clone_dir, r): i64 {
         _ew("\n  .git/info/attributes named above — and re-resolve; a reset/clean does not");
         _ew("\n  touch it.");
     } elif (r == 8) {
-        if (_git_bad_cfg != 0) { _ew("\n  cache origin: "); _ew(_git_bad_cfg); }
-        if (_git_want_url != 0) { _ew("\n  declared:     "); _ew(_git_want_url); }
+        # 6.6.20: both URLs are manifest strings (the declared one may be a TRANSITIVE dep's, and
+        # the clone path's unsafe-character check never ran — the cache was reused), so escaped.
+        if (_git_bad_cfg != 0) { _ew("\n  cache origin: "); _ew_shown(_git_bad_cfg); }
+        if (_git_want_url != 0) { _ew("\n  declared:     "); _ew_shown(_git_want_url); }
         _ew("\n  this cache is a checkout of a different repository; remove it and re-resolve.");
     } elif (r == 1 || r == 3) {
         # No offline recipe here, honestly: with no readable .git (1) or a damaged
@@ -4326,7 +4329,7 @@ fn _dep_lock_guard_stdlib_leaf(src, dst): i64 {
     # summary (_libsync_guard) says which advice fits which case.
     if (streq(_dep_lock_guard_verb, "deps") == 0) { m1 = ": cyrius.lock and the pinned stdlib snapshot DISAGREE under the pin the lock records, "; }
     sys_write(STDERR_FD, m1, strlen(m1));
-    sys_write(STDERR_FD, pin, strlen(pin));
+    _ew_shown(pin);   # 6.6.20: the lock's recorded pin, shown escaped
     var m2 = "\n  cyrius.lock records  ";
     sys_write(STDERR_FD, m2, strlen(m2));
     sys_write(STDERR_FD, locked, 64);
