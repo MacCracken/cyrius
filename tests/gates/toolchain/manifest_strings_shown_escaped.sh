@@ -24,6 +24,9 @@
 #   E7  `cyrius distlib` / `--modular`: "module not found: <[lib] modules entry>" raw
 #   E8  `cyrius = "9.9.9\u001b]0;pwned\u0007"`: the wrapper's and the resolver's "pins version …
 #       not installed" lines, and `--version`'s manifest-pin line, raw
+# 6.6.20 review round 2, MEASURED on 4360c717:
+#   E9  `cyrius distlib` with `[lib] embed = ["x\u001b]0;pwned\u0007"]`: "[lib] embed names <entry>,
+#       which [embed] does not declare" raw — a live OSC window-title sequence on stderr
 #
 # Hermetic: a mktemp CYRIUS_HOME with the CLI built FROM SOURCE as the pin's own wrapper; path
 # deps, and for E6 one local file:// git origin (no network; /etc/gitconfig and ~/.gitconfig
@@ -41,6 +44,7 @@
 #   the wrapper's not-installed path raw                  -> E8 red
 #   the resolver's not-installed path raw                 -> E8 red
 #   --version's manifest-pin raw                          -> E8 red
+#   distlib's undeclared [lib] embed entry raw              -> E9 red
 set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT"
@@ -178,7 +182,7 @@ else bad "E5 (rc=$rc): $(head -3 "$P.err")"; fi
 # E6: a git dep whose cache was cloned from one URL, then declared with an ESC/BEL in its URL
 # (the shape a TRANSITIVE manifest can take). The clone path's unsafe-character check never runs
 # — the cache is reused — so the CVE-43 origin refusal is the line that echoes the URL.
-floor=10
+floor=11
 if command -v git >/dev/null 2>&1; then
     export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL="$W/gitconfig" GIT_ALLOW_PROTOCOL=file
     printf '[user]\n\tname = gate\n\temail = gate@example.invalid\n[init]\n\tdefaultBranch = main\n[advice]\n\tdetachedHead = false\n' > "$W/gitconfig"
@@ -207,7 +211,7 @@ EOF6
         ok "E6 a cached git dep re-declared with an OSC sequence in its URL: the origin refusal shows it as \\x1b ... \\x07, rc 1, nothing raw"
     else bad "E6 (first rc=$rc6a, rc=$rc): $(grep -A1 'cache origin' "$P.err" | od -c | head -4)"; fi
 else
-    echo "  skip: E6 (git not found)"; floor=9
+    echo "  skip: E6 (git not found)"; floor=10
 fi
 
 # E7: `cyrius distlib` (and --modular) naming a `[lib] modules` entry that holds an OSC sequence.
@@ -224,6 +228,22 @@ EOF7
         ok "E7 $pre with an OSC sequence in a [lib] modules entry: module not found, shown as \\x1b ... \\x07, rc 1, nothing raw"
     else bad "E7 $pre (rc=$rc): $(head -2 "$P.err" | od -c | head -3)"; fi
 done
+
+# E9: `cyrius distlib` naming a `[lib] embed` entry that holds an OSC sequence (the key beside the
+# `[lib] modules` of E7) — refused as undeclared in [embed], the entry shown escaped.
+P="$W/e9"; mkp "$P" <<'EOF9'
+name = "e9"
+
+[lib]
+modules = ["src/a.cyr"]
+embed = ["x\u001b]0;pwned\u0007"]
+EOF9
+printf 'fn e9_a(): i64 { return 1; }\n' > "$P/src/a.cyr"
+run "$P" distlib
+if [ "$rc" -eq 1 ] && noraw "$P" && ! grep -q "$(printf '\007')" "$P.err" "$P.out" \
+   && grep -qF "cyrius.cyml [lib] embed names x\\x1b]0;pwned\\x07, which [embed] does not declare" "$P.err"; then
+    ok "E9 distlib with an OSC sequence in a [lib] embed entry: refused as undeclared, shown as \\x1b ... \\x07, rc 1, nothing raw"
+else bad "E9 (rc=$rc): $(head -2 "$P.err" | od -c | head -3)"; fi
 
 # E8: the `cyrius` PIN — the wrapper's not-installed line, the resolver's stdlib-dir line
 # (CYRIUS_RESOLVED=1 skips the wrapper) and `--version`'s manifest-pin line.

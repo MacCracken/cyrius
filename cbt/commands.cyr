@@ -5537,7 +5537,7 @@ fn _distlib_embed_select(lsec): i64 {
             str_builder_add_cstr(sb, "cyrius.cyml ");
             str_builder_add_cstr(sb, _dl_embed_key);
             str_builder_add_cstr(sb, " names ");
-            str_builder_add_cstr(sb, nm);
+            str_builder_add_cstr(sb, _shown(nm));   # 6.6.20: shown escaped
             str_builder_add_cstr(sb, ", which [embed] does not declare (a bundle carries [embed] entries by NAME)");
             _err(str_data(str_builder_build(sb)));
             bad = bad + 1;
