@@ -376,7 +376,7 @@ fn _cy_report_pin(buf, n, a): i64 {
 }
 
 # The `n` bytes at `p` on stderr with every non-printing byte as `\xNN`, so a refusal cannot carry
-# a terminal escape out of a hostile manifest (cbt/deps.cyr `_ew_tag_shown`, for a counted span).
+# a terminal escape out of a hostile manifest (cbt/deps.cyr `_ew_shown`, for a counted span).
 fn _cy_err_shown(p, n): i64 {
     var hx = "0123456789abcdef";
     var e[4];

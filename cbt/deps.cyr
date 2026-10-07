@@ -331,7 +331,7 @@ fn _dep_read_cyml_cyrius_field(): i64 {
     }
     if (_dep_pin_shape_ok(pin) == 0) {
         _ew("error: cyrius.cyml [package] cyrius = '");
-        _ew_tag_shown(pin);
+        _ew_shown(pin);
         _ew("' is not a version\n");
         _ew("  a pin names a directory under <home>/versions: a leading digit, then only [0-9A-Za-z._-], no '..' (e.g. ");
         _ew(_VERSION_TOOLCHAIN);
