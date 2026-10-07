@@ -4,6 +4,8 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [6.7.0] — 2026-10-07
+
 ## [6.6.20] — 2026-10-07
 
 The v6.6.x closeout — the last row of roadmap.md § *The 6.6.x tail* before v6.7.0. The closeout passes (heap-map

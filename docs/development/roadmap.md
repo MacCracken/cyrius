@@ -39,7 +39,7 @@ closeout), and the unscheduled 6.x backlog. Whole-cycle framing, the v6.7.x lang
 
 ## Where we are
 
-**Current head: v6.6.20** (2026-10-07) — **the v6.6.x closeout, merged; release gate pending** (6.6.19 shipped: tag `6.6.19` @ `f5a5175a`)
+**Current head: v6.7.0** (2026-10-07) — **the v6.6.x closeout, merged; release gate pending** (6.6.19 shipped: tag `6.6.19` @ `f5a5175a`)
 · cycc **1,575,984 B** (`.text` **1,394,776**) · `cycc-native-aarch64` **1,325,704 B** · self-host fixpoint + seed-derive
 **GREEN** on the merged tree · cross-OS: the release gate's · self_compile: the release gate's · **506** `.tcyr` (**215** in
 `crossos/`) · **106** `lib/*.cyr` · **411** shell gates under `tests/gates/<bucket>/` · api-surface **5,827** · **4 open
