@@ -26,6 +26,11 @@
 #           refuses ("no stdlib snapshot"), and with a snapshot the 6.6.11 per-target refusal
 #           applies; the self-check is unreachable on PE. `--allow-undef` on the PE arm is
 #           still pinned by axis 3 (lint's pre-pass).
+#   axis 5  (6.6.20, CBTB-08) an environment rung longer than 512 bytes is READ on cyrius.exe: a
+#           719-byte CYRIUS_DEFINES beats `[build] defines = ["A"]` in `--print-config`, as on
+#           POSIX. _cfg_env's PE arm read through a fixed 512-byte buffer, and a longer value was
+#           no rung at all — the manifest's defines won silently. A short value is the control
+#           (it proves the environment reaches cyrius.exe at all).
 # wine is not hardware: the release gate's cass leg is the verification on real Windows.
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -127,5 +132,20 @@ grep -q 'NOT written' "$W/out" || fail "axis 4: cyrius.exe distlib did not refus
 [ -f "$W/p/dist/p.deps" ] && fail "axis 4: cyrius.exe distlib wrote an unverified sidecar"
 [ "$FAIL" = "$x" ] && echo "  ok axis 4: cyrius.exe distlib refuses by name (rc $d4rc) and writes no unverified sidecar"
 
+x=$FAIL
+printf '[package]\nname = "p"\n\n[build]\nentry = "src/main.cyr"\noutput = "build/p.exe"\ndefines = ["A"]\n' > "$W/p/cyrius.cyml"
+LONG=$(i=0; while [ $i -lt 60 ]; do [ $i -gt 0 ] && printf ','; printf 'D%03d_xxxxxx' $i; i=$((i + 1)); done)
+[ "${#LONG}" -gt 512 ] || fail "axis 5 fixture: CYRIUS_DEFINES is ${#LONG} bytes (must be past 512)"
+pc() {   # pc <CYRIUS_DEFINES value>: cyrius.exe build --print-config, its build.defines line in $W/pc
+    ( cd "$W/p" && env -u CYRIUS_DCE CYRIUS_DEFINES="$1" CYRIUS_HOME="$W/home" CYRIUS_RESOLVED=1 timeout 300 wine "$W/home/bin/cyrius.exe" build --print-config ) > "$W/out" 2>&1 || true
+    grep 'build.defines' "$W/out" | tr -d '\r' > "$W/pc"
+}
+pc Z
+grep -qF '["Z"]  (environment: CYRIUS_DEFINES)' "$W/pc" || fail "axis 5 control: a short CYRIUS_DEFINES did not reach cyrius.exe's --print-config: $(head -c 200 "$W/pc"; head -2 "$W/out" | tr '\n' ' ')"
+pc "$LONG"
+grep -qF '"D059_xxxxxx"]  (environment: CYRIUS_DEFINES)' "$W/pc" \
+    || fail "axis 5: a ${#LONG}-byte CYRIUS_DEFINES was not read on cyrius.exe (the manifest's value won): $(head -c 200 "$W/pc")"
+[ "$FAIL" = "$x" ] && echo "  ok axis 5: a ${#LONG}-byte CYRIUS_DEFINES beats [build] defines on cyrius.exe (a short one is the control)"
+
 [ "$FAIL" = 0 ] || exit 1
-echo "PASS: build_config_windows_arm (dce, --strict, --allow-undef, --syntax-only reach the compiler on the PE arm, under wine)"
+echo "PASS: build_config_windows_arm (dce, --strict, --allow-undef, --syntax-only reach the compiler on the PE arm; an environment rung past 512 bytes is read; under wine)"
