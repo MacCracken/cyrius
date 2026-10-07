@@ -202,7 +202,6 @@ programs/checks/deps_init.cyr|_deps_lock_gate|lock_path|a cyrius.lock the gate i
 programs/checks/platform_efi.cyr|_efi_ovmf_fn_exit_gate|efi_bin|the gate reads the 64-byte header of an EFI image it just built
 cbt/commands.cyr|_lint_syntax_prepass|errf|a child compiler'"'"'s stderr capture in the private temp dir
 cbt/commands.cyr|cmd_capacity|tmperr|a child compiler'"'"'s stderr capture in the private temp dir
-cbt/commands.cyr|cmd_distlib|dl_errf|a child compiler'"'"'s stderr capture in the private temp dir
 cbt/deps.cyr|_sha_finish|tmpf|a capture of the hasher'"'"'s stdout (one 64-char line; 6.6.9 moved the read out of _sha256sum_file)
 cbt/deps.cyr|_git_rev|tmpf|a capture of git rev-parse'"'"'s stdout (one 40-char line)'
 x=0
