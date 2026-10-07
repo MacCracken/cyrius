@@ -240,7 +240,7 @@ or design driver materializes.
   or whatever shape post-monomorphization generic work needs once
   consumers start hitting the next ceiling. **Trait-bounded generics
   are PINNED to v6.7.x (moved 2026-10-01, user)**: they are item C3 of the
-  v6.7.x language arc in [roadmap_6.md](roadmap_6.md), and no longer
+  v6.7.x language arc in [roadmap.md](roadmap.md) (the active minor since 2026-10-07), and no longer
   demand-gated, because that arc's real traits are their prerequisite.
   The multi-tparam struct-type-arg residual still lands first
   (single-tparam shipped v6.3.38/.39). They had sat demand-gated at the

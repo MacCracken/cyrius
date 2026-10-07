@@ -1,171 +1,212 @@
-# Cyrius Development Roadmap — v6.6.x (active minor)
+# Cyrius Development Roadmap — v6.7.x (active minor)
 
-**Scope** — the **current active minor only** (v6.6.x). This is the slot-pinning working
-artifact: the rest of the 6.6.x tail (the tooling proposals that round out the minor, then the
-closeout), and the unscheduled 6.x backlog. Whole-cycle framing, the v6.7.x language arc and v6.8.x/v6.9.x RISC-V live in
-[roadmap_6.md](roadmap_6.md); the unpinned watching list is
-[roadmap-future.md](roadmap-future.md); per-release history is
+**Scope** — the **current active minor only** (v6.7.x, the LANGUAGE minor). This is the slot-pinning
+working artifact: the release sequence, the spec of each arc, the stdlib impact of each feature, and the
+unscheduled 6.x backlog (frozen until the first catch-up break — see the operating rule). The DCE compaction
+arc, the net migration, v6.8.x/v6.9.x RISC-V and whole-cycle framing live in [roadmap_6.md](roadmap_6.md);
+the unpinned watching list is [roadmap-future.md](roadmap-future.md); per-release history is
 [CHANGELOG.md](../../CHANGELOG.md) and [completed-phases.md](completed-phases.md).
 
 > **Reading order**: this file (active-minor slots) → [roadmap_6.md](roadmap_6.md)
-> (v6.7.x+ and cycle framing) → [roadmap-future.md](roadmap-future.md) (unpinned / speculative).
+> (after v6.7.x, and cycle framing) → [roadmap-future.md](roadmap-future.md) (unpinned / speculative).
 
-> ⚠ **This file was rewritten 2026-09-08 at v6.6.1.** It had been 1,043 lines still titled
-> *"v6.5.x (active minor)"* — a closed minor — of which **~480 lines were a slot list where every
-> entry read ✅ SHIPPED**. CLAUDE.md's rule is that closed-minor detail lives in the CHANGELOG and
-> [completed-phases.md](completed-phases.md) and that this file carries **only what is still
-> ahead**; that rule had been violated for a whole minor, which is the same drift the 2026-07-29
-> re-scope removed from `roadmap_6.md`. The v6.5.x narrative was not deleted — it is in the
-> CHANGELOG per-patch and summarised in `completed-phases.md`'s v6.5.x band. **Do not re-add
-> shipped slots here.**
+> ⚠ **Rotated 2026-10-07 at the v6.7.0 open.** The v6.6.x slots are shipped and gone from this file
+> (CHANGELOG per release; [completed-phases.md](completed-phases.md) § *v6.6.x*). The v6.7.x spec MOVED here
+> from roadmap_6.md, which keeps a pointer — one authority per active minor. **Do not re-add shipped slots
+> here.**
 
 ## See also
 
-- [roadmap_6.md](roadmap_6.md) — the **v6.x cycle** beyond this minor: the v6.7.x language arc
-  (real traits, the missing common features, and the language list this minor used to carry),
-  v6.8.x/v6.9.x RISC-V rv64, cycle budgeting, and the shape of what follows v6.x.
-- [roadmap-future.md](roadmap-future.md) — unpinned / speculative watching list with explicit
-  unpin conditions (128-bit div-mod, Phase 3-full varargs, effect tracking, HKTs/GATs).
-- [cycle-discipline.md](cycle-discipline.md) — durable operating principles **and the runnable
-  closeout checklist + per-closeout ledger**.
-- [state.md](state.md) — volatile current state. Refreshed **by hand** every release —
-  `version-bump.sh` never touches it (its closing summary names the rows to update).
+- [roadmap_6.md](roadmap_6.md) — the **v6.x cycle** beyond this minor: the DCE compaction arc and the net
+  migration (between v6.7.x and RISC-V), v6.8.x/v6.9.x RISC-V rv64, cycle budgeting, and what follows v6.x.
+- [roadmap-future.md](roadmap-future.md) — unpinned / speculative watching list with explicit unpin conditions.
+- [cycle-discipline.md](cycle-discipline.md) — durable operating principles **and the runnable closeout
+  checklist + per-closeout ledger**.
+- [state.md](state.md) — volatile current state, refreshed by hand every release.
 - [completed-phases.md](completed-phases.md) — historical per-release / per-minor narrative.
-  **Closed-minor narrative belongs there, not here.**
-- [`CHANGELOG.md`](../../CHANGELOG.md) — per-patch source of truth. When this file and the
-  CHANGELOG disagree, the CHANGELOG wins and this file is the bug.
+- [`CHANGELOG.md`](../../CHANGELOG.md) — per-patch source of truth. When this file and the CHANGELOG
+  disagree, the CHANGELOG wins and this file is the bug.
 
 ---
 
 ## Where we are
 
-**Current head: v6.7.0** (2026-10-07) — **the v6.6.x closeout, merged; release gate pending** (6.6.19 shipped: tag `6.6.19` @ `f5a5175a`)
-· cycc **1,575,984 B** (`.text` **1,394,776**) · `cycc-native-aarch64` **1,325,704 B** · self-host fixpoint + seed-derive
-**GREEN** on the merged tree · cross-OS: the release gate's · self_compile: the release gate's · **506** `.tcyr` (**215** in
+**Current head: v6.7.0** (2026-10-07) — **slot open: the v6.7.x language minor begins with real traits** (6.6.20 shipped: tag `6.6.20` @ `ae682e23`)
+· cycc **1,575,976 B** (`.text` **1,394,504**) · `cycc-native-aarch64` **1,325,696 B** · **506** `.tcyr` (**215** in
 `crossos/`) · **106** `lib/*.cyr` · **411** shell gates under `tests/gates/<bucket>/` · api-surface **5,827** · **4 open
 issues** · **2 open proposals** · the next free CVE id is **103**.
 
-> ⚠ **Every figure above was DERIVED on the day, not carried** (re-derived 2026-10-06 at the 6.6.20 slot open; integration re-derives them on the merged tree).
+> ⚠ **Every figure above was DERIVED on the day, not carried** (2026-10-07 at the 6.7.0 open).
 > `version-bump.sh` rewrites the version token, replaces the `(…)` after it with the bump date, and
 > nothing else — **the numbers beside it are yours to re-derive.** Keep the stamp at the start of its
 > line and its parenthetical free of nested `(`/`)`, or the bump refuses to rewrite it (and
 > `tests/gates/toolchain/version_bump_doc_anchors.sh` goes red the day it is written). Re-derive gates with `find tests/gates -name '*.sh' | wc -l`; never increment.
 
-**v6.6.0–v6.6.19 are shipped** — the value-form `Result` flip, the repair window (.1–.6), the repair batch (.7–.12),
-the memory / TLS / curves / repair releases (.13–.16), the manifest release (.17), distlib + poison (.18, then the
-post-tag wave of 12 fold regenerations) and the fold re-vendor + `[embed]` + macOS threads (.19, tag `f5a5175a`). One
-line per release is in [completed-phases.md](completed-phases.md) § *v6.6.x*; the detail is the CHANGELOG. **Do not
-re-add shipped releases here.** What is left of the minor: **6.6.20**, the closeout (in progress 2026-10-06), then
-**v6.7.0** (*The 6.6.x tail* below). ⚠ **At the v6.7.0 rotation** this file becomes the v6.7.x roadmap: the
-*Potential backlog* below moves with it (it is 6.x work, never 7.x), and the DCE arc's spec already lives in
-[roadmap_6.md](roadmap_6.md) § *Between v6.7.x and RISC-V* (moved 2026-10-06).
+**v6.6.x is closed** (6.6.0–6.6.20; the closeout shipped 2026-10-07, CVE-79 … CVE-102). One line per release is
+in [completed-phases.md](completed-phases.md) § *v6.6.x*; the detail is the CHANGELOG.
 
 ---
 
-## The shape of v6.6.x
+## The v6.7.x operating rule (user, 2026-10-07)
 
-| Phase | Slots | What goes here |
-|---|---|---|
-| **1 — repair** | `.1` – `.16` | ✅ **SHIPPED** — the repair window (.1–.6), the repair batch (.7–.12), memory + reported issues (.13), the TLS follow-ups (.14), curves + the compiler leaks (.15), repair (.16). See [completed-phases.md](completed-phases.md) § *v6.6.x*. |
-| **2 — the 6.6.x tail** | `.17` – `.19` | ✅ **SHIPPED** — the release sequence ACCEPTED 2026-10-02 (see *The 6.6.x tail*): `.17` manifest (tag `c2e7eef9`), `.18` distlib + poison (tag `010538b5`), `.19` the fold re-vendor + embed + macOS threads (tag `f5a5175a`), all 2026-10-06. |
-| **3 — closeout** | `.20` | **IN PROGRESS 2026-10-06** — the full closeout pass, like every minor (user, 2026-10-02: done before any v6.7.x work). Then **v6.7.0**. |
-| ~~**Committed ergonomics**~~ | — | **Moved to v6.7.x** with P3 `const fn` (user, 2026-10-01) — see [roadmap_6.md](roadmap_6.md). |
+1. **Language only until the majority of the minor's features have landed.** The releases between the open
+   and the first catch-up break carry language features (arcs A, B, C below) and nothing else — no backlog
+   work, no found-issue repair, no tooling arcs. *The `cyrius --help` cleanup and the CI refresh in 6.7.0
+   were asked for with the open; they are the only non-language items before the first break.*
+2. **What a feature release finds is FILED, not fixed** — to *Potential backlog* below, with a repro, in the
+   same turn. The only in-release fix is a genuine prerequisite of the feature in hand (a bug the feature
+   cannot ship around — CLAUDE.md's prereq-bug case). A P0 security finding is reported to the user the turn
+   it is found; whether it interrupts the arc is the user's call.
+3. **Catch-up breaks** clear the backlog and found issues. **Proposed placement (the user adjusts):**
+   - **Break 1 — after arcs A and C3 and the majority of B** (roughly: traits, trait-bounded generics, and
+     `const` / `bool` / if-expression / `loop` + `do` / field compound assignment). One or two releases. The
+     user picks which backlog items it takes; the `cyrius test` / `tests` consolidation (below) lands here.
+   - **Break 2 — before the closeout**, after the remaining features. One or two releases, then the closeout.
+4. **Every language decision is the user's** (CLAUDE.md *Execution integrity*). Each arc below lists its
+   decisions: the taken ones with the date, the open ones as questions asked at that arc's start — never a
+   lane's "default".
+5. **Every new syntax ships with** a `tests/tcyr/crossos/` file (it runs on ecb / ach / cass / pi), a guide
+   section and a vidya entry.
 
 ---
 
-## The 6.6.x tail — release sequence (ACCEPTED by the user 2026-10-02)
+## Release sequence (planned at the open, 2026-10-07)
 
-**Question (user, 2026-10-02):** which proposals can be accomplished, how to coordinate the remaining
-6.6.x items, and whether to do the proposals before v6.7.x or after. **Answer, accepted:** the tooling
-proposals come BEFORE v6.7.x (except P3 `const fn` and P5's execution half, which belong to the
-language arc); the DCE compaction arc moves AFTER v6.7.x, before the RISC-V minors (still 6.x). The
-proposals and the language arc share no dependency — the only coupling is P1 into v6.7.x (C2's
-bounds-checked mode wants a `[build]` key, so P1's precedence order should exist first) — and sibling
-regeneration waves cost less run one after the other than overlapping. Evidence: eight premise-checked
-reviews and a synthesis, archived at
-[`archive/2026-10-02-6.6.x-tail-sequencing-memo.md`](archive/2026-10-02-6.6.x-tail-sequencing-memo.md).
-
-| Release | Contents |
+| Release | Content |
 |---|---|
-| **6.6.18** distlib + poison — ✅ **SHIPPED 2026-10-06** (tag `6.6.18` @ `010538b5`; the 12-fold wave tagged after it) | ✅ **P4** option 2 (the compile-verify fixpoint is the only sidecar authority, with its prerequisites D1–D3; every bundle raw-includable through a requires block; a failed build names the leaf to declare); ✅ **P6** widened (`poison_allocator()`, leading redzone, live-block sweep, settable fill byte, `alloc()` / arena redzones, exit 86, `--poison=ab`; guard pages → backlog); ✅ the ESYSXLAT compile-time fold (`cycc-native-aarch64` −718,792 B, −35.2 %; the pre-commit ARM band back to 700K–2M); ✅ DCE's honest "compaction declined: <why>" note; ✅ the missing `sxtw`; **CVE-78**. The log / ws / ws_server fold bundles moved to 6.6.19 (user decision 2026-10-06: siblings can pin only a RELEASED cyrius, so all 12 folds regenerate in ONE wave after the tag). |
-| **6.6.19** — ✅ **SHIPPED 2026-10-06** (tag `6.6.19` @ `f5a5175a`; the gate ran on `19ceb8c6`; CHANGELOG [6.6.19]) | ✅ R1 the 12 folds re-vendored byte-identical from their tags, ✅ R2 `lib/log.cyr` / `lib/ws.cyr` / `lib/ws_server.cyr` include their folds (the PENDING tier retired), ✅ R3 the native TLS stack drops its mirror of sigil's leaves; ✅ B0b (interning by index: byte-identical, self_compile −6.7 %, the 1.9 MB-embed case 11.4 s → ~0.9 s), ✅ P2 `[embed]` + distlib `embed` + the review's E-S1…E-S4 (no CVE: unreleased), ✅ T1 x86-macOS real threads, ✅ A1 / A2 `async_await_readable_ms` on macOS, Windows and agnos. |
-| **6.6.20** closeout — **IN PROGRESS 2026-10-06** | The full closeout pass (CLAUDE.md § Closeout, [cycle-discipline.md](cycle-discipline.md)): the release gate, heap / dead-code / refactor / code-review / cleanup passes, a security re-scan, the downstream check, vidya (`types.cyml` still stamped 6.6.1), the backlog re-triage, `verify-store`. Run as one audit (141 findings) fixed in parallel worktree lanes, plus three backlog items the user promoted on 2026-10-06 (the redefined-fn binding, aarch64 calls with 262+ arguments, the `sizeof` / `mulh64` / `fncallN` names). The ledger is in [cycle-discipline.md](cycle-discipline.md) § *Closeout checklist + ledger*. |
-| **6.7.0** | The language arc ([roadmap_6.md](roadmap_6.md)): traits first, with the ADR and the one reserved-word survey at the open; P3 `const fn` after `const` and the if-expression; P5's execution half designed with C2. |
-| **after v6.7.x, before RISC-V** | The DCE compaction arc (aarch64 first, then PE / Mach-O — spec in [roadmap_6.md](roadmap_6.md) § *Between v6.7.x and RISC-V*), `lib/net.cyr` §4 per-arch socket peers, the remaining syscall families, AF_UNIX (default yes). |
+| **6.7.0** | **A — real traits** (A1–A6, decisions below) · the CI refresh: every Linux job on **`ubuntu-26.04`** (the `-arm` job on `ubuntu-26.04-arm`) and every action at its latest stable release, SHA-pinned (checkout v7, upload-artifact v7, download-artifact v8, action-gh-release v3) · **`cyrius --help` reorganised** (commands grouped by what they do; nothing renamed or removed) |
+| **6.7.1 →** | **C3 — trait-bounded generics** (needs A), with its prerequisite the multi-type-param struct-type-arg residual and the generic-struct field |
+| then, by size | **B1 `const` + C1 `const fn`** together · B2 `bool` / `true` / `false` · B3 the if-expression · B5 `loop` / `do … while` · B8 compound assignment on a field |
+| **Break 1** | catch-up: backlog + found issues (user picks) · `cyrius test` / `tests` consolidation |
+| then | B4 tuples · B6 default + named arguments · B7 narrow struct fields (ABI survey + migration) · C2 bounds-checked mode (+ P5 execution coverage) · native `dyn` IF the user takes it (open question 5) |
+| **Break 2** | catch-up |
+| **closeout** | the closeout checklist ([cycle-discipline.md](cycle-discipline.md)) — the checklist, not an audit campaign (CLAUDE.md) |
 
-Defaults taken with the plan (the memo's): P4 option 2 (reverses the v6.5.10 "union" stance); P6 widened to
-`alloc()` redzones; `output` stays a default and `init --bin` writes `build/{PROJ}`; DCE stays opt-in (so the
-`dce` key earns its place); shabdakosh's phf is its own generator, no `#phf` builtin. Sibling follow-ups
-once these tag: rekha drops its prelude and CI pin (after P4) and adopts the poison pack (after P6); kriya's and
-puka's `--poison` runs check something real (after P6); agnosai, agnostic, rekha and sankoch retire their embed
-generators (after P2); sankoch retires its interning proof (after B0a, in 6.6.15).
+Each arc is one or two releases with its phases as bites (CLAUDE.md *Release & Slot Discipline* rule 2). Expect a
+large minor.
 
 ---
 
-## ~~Open arc — DCE cannot compact on PE, x86 Mach-O or aarch64~~ → after v6.7.x (spec moved 2026-10-06)
+## Spec — A: real traits (6.7.0)
 
-Placed **after v6.7.x, before the RISC-V minors — still 6.x** (the tail plan, accepted 2026-10-02). Its spec — the
-rip-relative repair in `wp_compact`, the post-compaction re-layout, the aarch64 `bl <ESYSXLAT stub>` sites 6.6.18 added,
-and the inverted-gate acceptance — **moved to [roadmap_6.md](roadmap_6.md) § *Between v6.7.x and RISC-V*** at the
-6.6.20 closeout, so it survives this file's rotation to v6.7.x (BACKLOG-14). Every target is correct today; the
-declining ones only skip the shrink, and say so (6.6.18).
+The identity rule carries over: **no GC, no hidden control flow you cannot disassemble.** Still not imported
+(decided 2026-07-07): borrow-checker lifetimes, a general const-eval VM, exceptions of any kind.
+
+**Premise re-measured 2026-10-07 at the open** (`build/cycc` 6.7.0):
+
+| Shape | cycc 6.7.0 |
+|---|---|
+| `trait Show { … }` | No such keyword: a parse error. |
+| `impl Show for Point { fn sum(self) … }`, then `p.sum()` | Works; the method is `Point_sum` (ADR-004 naming). |
+| `impl NoSuchTrait for Point { … }` | Compiles — `PARSE_IMPL` skips the trait name unread. |
+| Two traits each give `Point` a `size` method | Both become `Point_size`; duplicate-fn warning; since 6.6.20 the LAST definition binds. |
+| `impl Point { … }` (no trait) | `expected for` |
+| `b.m()` on an 8-byte struct `B1 { v }` with `fn m(self) { return load64(self); }` | 7 — `self = &b`. |
+| `B1_m(b)` — the same method called directly | **SIGSEGV**: the value 7 is passed as `self` (`o.m()` and `T_m(o)` disagree). |
+| `var q: B1 = p;` with `p: *B1` (8 B) | `q.v` reads garbage — the pointer VALUE is stored. |
+| `var n: N2 = h;` with `h: *N2` (16 B) | COPIES (`n.v = 5` leaves `h.v`). ⚠ The 6.6.20 backlog note said it binds — re-measured, it copies. |
+
+1. **`trait` declarations, checked.** `trait Show { fn show(self): i64; }` declares a method set, and
+   `impl Show for T` is checked against it: a missing method, an extra one, a wrong arity or an undeclared
+   trait is a compile error naming the trait. A method with a body in the trait is a **default**,
+   instantiated into every impl that does not supply its own.
+2. **Trait-qualified names — DECIDED 2026-10-07 (user): the mangled `T_Trait_m`.** Every trait method is
+   also defined as `Point_Show_size` (ADR-004's planned naming); calling it directly is how a collision is
+   chosen. No new call syntax. `Point_size` keeps resolving whenever only one trait (or an inherent impl)
+   provides `size`; only a real collision changes — `p.size()` becomes an ambiguity error naming both traits
+   and both qualified names.
+3. **Inherent `impl T { … }`**: methods with no trait.
+4. **`self` typed by its impl.** An untyped `self` inside `impl … for T` becomes `self: *T` — still the
+   receiver's ADDRESS, so every `load64(self)` body keeps working, and `self.x` reads through it like a
+   `pp: *Pt` parameter. ⚠ NOT `self: T` (an 8-byte-or-less struct is passed BY VALUE since 6.6.11 and every
+   small-struct `load64(self)` would break — `tests/tcyr/crossos/method_self_inline_struct.tcyr`'s `P1`).
+   With `self: *T`, 6.6.20's rule that a bare struct passed to a `*T` parameter passes its address makes
+   `T_m(o)` agree with `o.m()` (the SIGSEGV row above, BACKLOG-13).
+   - **`Struct = *Struct` — DECIDED 2026-10-07 (user): COPY, at both sizes.** `var q: T = p;` with `p: *T`
+     gives `q` its own copy of `*p` whatever `sizeof(T)`; this fixes the ≤ 8 B garbage read and keeps the
+     > 8 B behaviour measured above. Aliasing stays explicit: `var q: *T = p;` (BACKLOG-06).
+5. **Methods on nested fields and chains**: `b.v.sum()`, `mk(3).v.sum()` — and the result type of a method
+   call on an 8-byte struct (`var u = s.clone(); u.len()` fails for a one-field struct while 16/24-byte
+   ones infer; BACKLOG-07).
+6. **Dispatch stays static (ADR-004)** in 6.7.0. Whether 6.7.x adds compiler-checked trait objects is open
+   question 5 below — A is built the same either way (it is the prerequisite of both).
+
+**At the open, before code:** an ADR for traits (ADR-007, amending ADR-004's naming section) and the vidya
+entries; the keyword survey is done (below).
+
+## Spec — C3: trait-bounded generics (after A)
+
+`<T: Show>` parses as a bound (today it mints a second type parameter named `Show`), and an instantiation
+whose `T` has no `impl Show` is an error. ⚠ First fix the **multi-type-param struct-type-arg residual**: a
+struct type argument works only on a one-parameter generic, and `g<Pt, i64>` is refused. **And a
+generic-struct FIELD** (BACKLOG-13): `struct H { a: i64; b: Box<i32>; }` is `expected identifier, got '<'`, and
+`#derive` on a struct with a `Vec<Box<i64>>` field stops its field walk at the nested `<`.
+
+## Spec — B: the missing common features
+
+⚠ Every new keyword is a new reserved word (`IS_KEYWORD_TOK`). The ONE survey is done (2026-10-07, below).
+
+1. **`const` declarations.** `const LIMIT = 7;` is a compile-time value with no storage, folded like an enum
+   constant; lands with C1 so a `const` can be initialised by a `const fn`.
+2. **`true`, `false`** (and `bool` as a real type for intent, typechecks and `#derive` — ⚠ `bool` ALREADY
+   parses as an 8-byte type name: `sizeof(bool) == 8`, `var a: bool[3]` in three tcyr files). 0 and 1
+   underneath (ADR-002 keeps i64 the core).
+3. **A conditional expression.** ⚠ C's `c ? a : b` collides with the postfix `?` that propagates a `Result`
+   (v5.8.29). Proposed: an if-expression (`var v = if (c) { a } else { b };`) — **asked at B3's start.**
+4. **Tuples as values.** `var t = (1, 2); t.0` — proposed as sugar over an anonymous struct (layout and ABI
+   unchanged; multi-return keeps its register pair) — asked at B4's start.
+5. **`loop { … }` and `do { … } while (c);`.** A `continue` in a `do … while` goes to the condition. ⚠ `loop`
+   is the ONE keyword with real collisions (survey below) — whether it is a full reserved word (rename 224
+   sites in 10 repos) or contextual (a keyword only when `{` follows) is **asked at B5's start.**
+6. **Default and named arguments.** `fn f(a, b = 2)` and `f(a: 1, b: 2)`; the v6.5.1 arity check becomes
+   min..max. Overloading by arity stays out (v6.5.1's rule that a count mismatch is never intentional).
+7. **Narrow unsigned and `f32` struct fields.** Today `u8` / `u16` / `u32` / `f32` fields take a full word;
+   narrowing changes the LAYOUT of every struct that declares one — an ABI change. Ships with the migration,
+   never silently.
+8. **Compound assignment on a field** (BACKLOG-13). `h.n += 4` is `expected '=', got '+'` for a struct local
+   and a field alike; every compound operator on every lvalue form (field, chain, `p.f` through a pointer, a
+   subscript), with `*=` / `/=` on f64 fields following the 6.6.11 float rules.
+
+## Spec — C1 / C2
+
+1. **`const fn`** ([`proposals/2026-07-05-const-eval-comptime.md`](proposals/2026-07-05-const-eval-comptime.md)).
+   Option 1 `const fn` primary, option 3 `#phf` fallback, option 4 (a general const-eval VM) declined
+   (2026-07-07). Its base is the parse-time folder `_CF_TRY`, NOT `ir_const_fold` (an x86-ELF peephole under
+   opt-in `CYRIUS_IR=3`); "a computed initializer is folded" is false today (a deferred runtime store). Size
+   ~800–1,500 src lines, 1–2 releases, after B1 and B3.
+2. **Opt-in bounds-checked memory mode** (`CYRIUS_BOUNDS` / `#bounds`), OFF by default. 6.6.12 shipped the
+   unchecked half for integer-element `var a: T[N]`; still to do: `*T` pointer subscripts, slice writes, and
+   the checked mode itself. **With it, proposal P5's execution half** ([`proposals/2026-09-20-coverage-should-accept-run-programs-as-a-corpus.md`](proposals/2026-09-20-coverage-should-accept-run-programs-as-a-corpus.md);
+   A shipped 6.6.17) — it shares C2's insertion point and build-flag plumbing.
+
+## Tooling item placed in Break 1 — `cyrius test` absorbs `cyrius tests` (user, 2026-10-07)
+
+Today `cyrius test` takes a FILE (bare: the whole corpus, recursive since 6.5.11) and `cyrius tests` takes a
+DIRECTORY — two verbs for one job, and CLAUDE.md has to warn about the difference. Consolidate into
+`cyrius test` with a recursive directory option: `cyrius test <file>`, `cyrius test <dir>` (recursive),
+bare `cyrius test` unchanged. `cyrius tests` stays as a deprecated alias for a release with a one-line notice
+naming the new spelling, then goes. CI (`ci.yml`), `scripts/`, CLAUDE.md, the guide and vidya are updated in
+the same release.
 
 ---
 
-## Phase 2 — the tooling round-out (to the minor's close)
+## Stdlib and ecosystem impact of the 6.7.x features (survey 2026-10-07)
 
-**Set 2026-10-01 (user): v6.6.x finishes on tooling. Placed 2026-10-02 (accepted):** P1 + P5-A → 6.6.17,
-P4 + P6 → 6.6.18, P2 → 6.6.19, P3 and P5's execution half → v6.7.x — see *The 6.6.x tail*. Each proposal
-below carries its placement; the detail of each premise check is in the archived memo.
+Measured by a source scan of every repo under `~/Repos` — strings and comments masked, vendored `lib/`
+copies in consumers skipped, `cyrius/lib/` counted as the stdlib. **A fix lands in the SOURCE repo of a folded
+stdlib, then re-vendors** (CLAUDE.md *Ecosystem & stdlib*); a non-stdlib repo gets a filed note, never a lane.
 
-### ~~P1 — `cyrius.cyml` as the build tool's actual configuration~~ → ✅ SHIPPED 6.6.17 (archived)
-[`proposals/archived/2026-09-04-build-tool-manifest-integration.md`](proposals/archived/2026-09-04-build-tool-manifest-integration.md) —
-detail in CHANGELOG [6.6.17]. Named profiles are in *Potential backlog*. Its lesson stands for every manifest key
-P2 / P4 / P6 add: gate against fixtures written the way CONSUMERS write the key, never in the implementation's own
-spelling (the v6.5.49 slice read `src` while 120 of 125 manifests declare `entry`, and its gate passed throughout).
-
-### ~~P2 — Embed data files as source strings (`[embed]`)~~ → ✅ SHIPPED 6.6.19 (archived)
-[`proposals/archived/2026-08-10-embed-data-files-as-source-strings.md`](proposals/archived/2026-08-10-embed-data-files-as-source-strings.md)
-— its resolution header and CHANGELOG [6.6.19] *Embed — P2* carry the detail; the guide's *Embedding data files:
-[embed]* is the reference. The E-S3 residual (Windows, Apple Silicon) is in *Potential backlog*.
-
-### ~~P3 — Compile-time evaluation (`const fn`)~~ → moved to v6.7.x (2026-10-01)
-[`proposals/2026-07-05-const-eval-comptime.md`](proposals/2026-07-05-const-eval-comptime.md)
-
-It is language, not tooling, so it moved with the rest of the language list. Its spec — the rung
-chosen 2026-07-07 and its corrected base (the parse-time folder `_CF_TRY`, not the x86-ELF
-peephole that runs only under opt-in `CYRIUS_IR=3`) — is now [roadmap_6.md](roadmap_6.md)
-§ v6.7.x, item C1. *(Corrected 2026-10-04, 6.6.16: this stub used to point at "the
-`ir_const_fold` ordering constraint", a base roadmap_6.md had already retracted on 2026-10-02.)*
-
-### ~~P4 — test-only stdlib leaves, instead of hiding them from the umbrella scan~~ → ✅ SHIPPED 6.6.18 (archived)
-[`proposals/archived/2026-09-16-declare-test-only-stdlib-leaves-instead-of-hiding-them-from-the-umbrella-scan.md`](proposals/archived/2026-09-16-declare-test-only-stdlib-leaves-instead-of-hiding-them-from-the-umbrella-scan.md) —
-option 2 plus the D1–D3 prerequisites the planning simulation missed; detail in CHANGELOG [6.6.18], consumer notes in
-[ecosystem-migration-6.6.18.md](ecosystem-migration-6.6.18.md). Its measured note stands: over-reporting a REAL but
-unnecessary leaf is silent, so it is quieter, not safer.
-
-### P5 — `cyrius coverage` over RUN programs, not only `.tcyr` suites
-[`proposals/2026-09-20-coverage-should-accept-run-programs-as-a-corpus.md`](proposals/2026-09-20-coverage-should-accept-run-programs-as-a-corpus.md)
-
-**🟡 OPEN — A SHIPPED in 6.6.17** (text corpus + per-entry view: `[coverage] programs`, `--programs <glob>`, `--per-entry`); **B (execution coverage) is v6.7.x with C2** — it shares C2's insertion point and build-flag plumbing. P5 stays OPEN until B: archiving it after A would narrow the filing silently. The scope question (text references vs execution) was answered by the placement: A is text, B is execution.
-
-
-### ~~P6 — `cyrius fuzz --poison` through a custom allocator seam~~ → ✅ SHIPPED 6.6.18 (archived)
-[`proposals/archived/2026-09-20-fuzz-poison-should-follow-a-custom-allocator-seam.md`](proposals/archived/2026-09-20-fuzz-poison-should-follow-a-custom-allocator-seam.md) —
-widened as planned (S1–S6 + `poison_allocator()`; `alloc()` and arena redzones, exit 86, `--poison=ab`); detail in
-CHANGELOG [6.6.18] and the guide's *Fuzzing with `--poison`*. S7 guard pages are in *Potential backlog*; S8 (the
-manifest / interposition shape) was dropped.
-
----
-
-## ~~Phase 3 — the committed ergonomics list~~ → v6.7.x (moved 2026-10-01)
-
-The user moved the language list out of this minor on 2026-10-01: `const fn`, the opt-in
-bounds-checked mode and trait-bounded generics now open v6.7.x, together with a real-traits arc and the
-missing common features. The spec lives in [roadmap_6.md](roadmap_6.md) § v6.7.x — one authority per
-minor, so it is not repeated here. Of this list, item 1 (the value-form `Result` / `Option` / `Either`)
-shipped at v6.6.0, and `defer` and per-block scoping had long since shipped when they were struck on
-2026-07-29.
+| Feature | Stdlib (`lib/` + folded) | Ecosystem | What it needs |
+|---|---|---|---|
+| A traits / typed `self` | **0** `impl` blocks; `lib/trait.cyr` is the runtime-dispatch library | 0 `impl` blocks outside cyrius's own 22 test impls; 1,182 `fn x(self, …)` FREE fns in 16 repos (dhvani 339, naad 252, …) — untouched (A4 types `self` only inside `impl … for T`) | nothing to repair; stdlib types MAY gain `impl` blocks later (opportunity, not a fix) |
+| A `Struct = *Struct` copy | — | sites that relied on the 8-byte pointer store were already reading garbage | none expected; the arc's tcyr pins both sizes |
+| B1 `const` | 0 identifier uses | 0 | — |
+| B2 `true` / `false` | 0 | 0; `bool` already a type name (3 cyrius tcyr files) | — |
+| B5 `loop` / `do` | **`loop`: 3 sites in `lib/sankoch.cyr`** (folded — fix in sankoch's source repo) · `do`: 0 | `loop`: **224 sites in 10 repos** — kriya 143, rekha 25, vidya 22, chakshu 12, bhumi 6, argonaut 5, … (mostly `var loop = 1; while (loop == 1)`) | if `loop` is a full reserved word: sankoch fixed + re-vendored BEFORE B5 ships, and a note filed in each of the 10 repos; if contextual: nothing |
+| B7 narrow fields | **0** narrow fields in `lib/` | 76 in 4 repos — kavach 21, secureyeoman 21, agnostik 11, cyrius tests 23 | layout change: notes to kavach / secureyeoman / agnostik with the migration; cyrius's tcyr updated in the release |
+| C2 bounds mode | every `lib/` raw store becomes checkable when a consumer opts in | — | stdlib must run clean under `#bounds`; anything it trips is a stdlib repair queued to the next break |
+| C3 trait generics | **0** generic fns / structs in `lib/` | 1 repo (vidya, an example) | — |
+| B3 / B4 / B6 / B8 / C1 | additive syntax | additive | none (stdlib MAY adopt `const` / defaults later) |
 
 ---
 
@@ -324,6 +365,9 @@ CHANGELOG [6.6.17] *Downstream* (no ecosystem sweep).
 
 ## Potential backlog — 6.x-cycle, unscheduled (NOT parked to 7.x)
 
+> ⛔ **Frozen until Break 1** (the v6.7.x operating rule): items are ADDED here during the feature releases —
+> found issues with a repro — and none is worked until a catch-up break, where the user picks.
+
 > **Re-triaged 2026-10-06 at the 6.6.20 closeout (Closeout item 12, BACKLOG-00).** All **61** bullets were
 > checked against the live tree at `e696746d` — with `build/cycc`, `cycc_aarch64` + qemu, a tree-built cx
 > compiler / VM, throwaway-HOME CLI runs or a code citation; the probes are the audit's. **55 still live** —
@@ -467,9 +511,9 @@ priority surfaces.
     `TMPDIR`. Open decision: whether a non-empty dead-pid dir past an age bound is reaped too.
 - **Found by the 6.6.17 lanes (2026-10-05; backlog, not placed — only the user promotes).** Met in passing by the
   6.6.17 implementers, reviewers and integrator, each pre-existing unless it says otherwise; not swept for.
-  - ~~⚠ `Struct = *Struct` bind vs copy~~ → **moved to [roadmap_6.md](roadmap_6.md) § v6.7.x A4** at the 6.6.20
+  - ~~⚠ `Struct = *Struct` bind vs copy~~ → **DECIDED 2026-10-07: copy at both sizes — roadmap.md § Spec A4** (moved at the 6.6.20
     re-triage, CORRECTED: `≤ 8 B` stores the pointer value (still a silent wrong value), but `> 8 B` BINDS (aliases) —
-    it does not copy, so the walk this bullet described works (BACKLOG-06).
+    it does not copy, so the walk this bullet described works (BACKLOG-06). ⚠ Re-measured at the 6.7.0 open: `> 8 B` now COPIES.
   - ⚠ **aarch64: a call with 262 or more arguments silently corrupts `sp`** — **✅ FIXED IN 6.6.20 (promoted by
     the user 2026-10-06; BACKLOG-02)**. CORRECTED at the re-triage: this bullet said "~300 or more … dies with
     SIGILL"; the real threshold is **262** and the failure there is SILENT. `ECALLCLEAN`
@@ -724,6 +768,16 @@ whereupon it became 43 derived rows and shipped at `.51`. Assume the same of any
    struct — `bump(p)` twice gave 4 then 5). The callee copies on entry, so it holds for every argument
    form, at top level and through fn pointers; a typed `self: T` follows it; an `async fn` refuses such
    a parameter by name; `p: *T` + `f(&x)` is the mutating spelling.
+
+5. **Compiler-native trait objects (`dyn`) — the user's call, asked 2026-10-07; default STATIC (ADR-004) until
+   answered.** Arc A is built the same either way (it is the prerequisite of both). The facts: 7 repos use
+   `lib/trait.cyr`'s fat pointer and ~15 more hand-roll vtables (szal, majra, agnosai, ganita, agnostik, …) — all
+   unchecked: a wrong slot or a missing method is a runtime crash. Against a native `dyn`: a direct call is
+   what you see in the disassembly and inlines; a two-word value cuts against ADR-002's one-word i64 model.
+   **Recommendation on the record:** keep 6.7.0 static, and later in 6.7.x add CHECKED trait objects — the
+   compiler builds and verifies the vtable from `impl Show for T`; the object is an ordinary 16-byte struct
+   (no new value type); the indirect call is visible in the declared type (`o: dyn Show`). Decide before C3
+   ships.
 
 *(Former item 3 — per-item `private` — was never a question. It is a live defect and is now
 slot `.3` above. Former item 2, the bare-metal forbidden-module check, SHIPPED at v6.5.24 after

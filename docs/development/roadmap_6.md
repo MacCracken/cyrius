@@ -74,7 +74,7 @@ so read the budget as a planning aid, not a cap.
 ---
 ---
 
-## Closed minors — v6.0.x through v6.5.x
+## Closed minors — v6.0.x through v6.6.x
 
 Per-minor narrative used to live here in full. It does not any more: it duplicated
 `CHANGELOG.md` (the source of truth) and `completed-phases.md` (the retrospective), and being
@@ -89,7 +89,8 @@ minor actually closed at **v6.4.86**, which is exactly the failure a second copy
 | v6.3.x | Language refinements | **v6.3.45** |
 | v6.4.x | Staging minor → long reactive minor | **v6.4.86** (closeout cut at .85; .86 was the post-closeout sandhi fold) |
 | v6.5.x | Perf / quality: IR substrate, regalloc, SIMD register residency, `: stack` enums | **v6.5.73** (there is no `.74` — that number was cut in error and re-cut as v6.6.0) |
-| v6.6.x | **ACTIVE** — value-form `Result`, then repair; its tail is tooling (its language list moved to v6.7.x on 2026-10-01); see [roadmap.md](roadmap.md) | — (head **v6.6.12**, 2026-09-30) |
+| v6.6.x | Value-form `Result`, then repair; the tooling tail (manifest, distlib, `[embed]`); its language list moved to v6.7.x | **v6.6.20** (the closeout, 2026-10-07; CVE-79 … CVE-102) |
+| v6.7.x | **ACTIVE** — the language minor: real traits, the missing common features, `const fn`, bounds mode, trait-bounded generics; see [roadmap.md](roadmap.md) | — (opened **v6.7.0**, 2026-10-07) |
 
 Every close number above was verified against `CHANGELOG.md` on 2026-07-29 (the per-minor max
 `## [6.Y.N]` heading), not carried over from the previous text, re-verified 2026-08-07, and the
@@ -104,176 +105,17 @@ v6.5.x row added 2026-09-08 from the same source.
 
 ---
 
-## v6.6.x — ACTIVE MINOR — specified in [roadmap.md](roadmap.md)
+## v6.7.x — ACTIVE MINOR — specified in [roadmap.md](roadmap.md)
 
-**This file intentionally holds no v6.6.x specification.** It held the full ergonomics list
-until 2026-09-08; that list moved to [roadmap.md](roadmap.md) when v6.6.x became the active
-minor, along with the one row in it that was a defect rather than a feature (`cyrius build <src>`
-overwriting the running compiler — now slot `.2`).
+**This file intentionally holds no v6.7.x specification.** The language arc set 2026-10-01 (*"6.7.0 become the
+real trait arc and missing common features arc …"*) was specified here until the v6.7.0 open on 2026-10-07,
+when it MOVED to [roadmap.md](roadmap.md) with the decisions taken at the open, the re-measured premise table
+and the ecosystem keyword survey — the same move made for v6.5.x (2026-07-29) and v6.6.x (2026-09-08). One
+authority per active minor. v6.6.x closed at **v6.6.20** (row above).
 
-⚠ **This is the same move that was made for v6.5.x on 2026-07-29, for the same reason.** A minor
-specified in two files drifts: the v6.5.x copies had diverged on scope, and the acceptance
-anchor's second clause existed *only* here, so the budget it named was never actually stated
-anywhere. One authority per active minor.
-
-**When v6.6.x closes:** add one row to the table above, and do not copy its detail back here.
-
-**Re-planned 2026-10-01 (user):** the ergonomics list that moved into roadmap.md on 2026-09-08 (its
-"Phase 3"), together with proposal P3 `const fn`, moved on again — to **v6.7.x, below**. v6.6.x finishes
-with 6.6.13 (memory fixes and the reported issues) and then the tooling proposals.
-
-**Sequenced 2026-10-02 (user accepted the tail plan, roadmap.md § *The 6.6.x tail*):** 6.6.15 – 6.6.19 carry
-the curves work, a repair release and the tooling proposals; **6.6.20 is the closeout pass**, done like every
-minor's before any v6.7.x work (user, 2026-10-02); **v6.7.0 opens after it.** *(2026-10-06: 6.6.0–6.6.19 are
-tagged; 6.6.20 is in progress.)*
+**When v6.7.x closes:** add one row to the table above, and do not copy its detail back here.
 
 ---
-
-## v6.7.x — Language: real traits, the missing common features, and the carried 6.6.x list
-
-**Set 2026-10-01 (user):** *"6.7.0 become the real trait arc and missing common features arc and
-improvements and updates to language features previous planned for 6.6.x get merged into 6.7.x; push
-anything in 6.7.0 back a minor or two."* So v6.7.x opens as the language minor, and RISC-V moves back to
-v6.8.x/v6.9.x (below). Nothing here starts before v6.6.x closes. The identity rule carries over from the
-v6.6.x list: **no GC, no hidden control flow you cannot disassemble.** Still not imported (decided
-2026-07-07): borrow-checker lifetimes, a general const-eval VM, exceptions of any kind.
-
-This is a spec for a minor that is not active yet. When v6.7.x opens it MOVES to roadmap.md, and this
-file keeps only a pointer: one authority per active minor.
-
-### Premise — what cycc 6.6.12 does today (measured 2026-10-01 with `build/cycc`; re-run at the open)
-
-| Shape | cycc 6.6.12 |
-|---|---|
-| `class Foo { … }` / `trait Show { … }` | No such keyword: a parse error. |
-| `impl Show for Point { fn sum(self: Point) … }`, then `p.sum()` | Works. The method is `Point_sum` (ADR-004 naming). |
-| `impl NoSuchTrait for Point { … }` | Compiles. `PARSE_IMPL` (`src/frontend/parse_fn.cyr:3279`) skips the trait name unread. |
-| Two traits each give `Point` a `size` method | Both become `Point_size`. A duplicate-fn warning, and the last one wins: `p.size()` returned 7 where the first trait's method meant 12. |
-| `impl Point { … }` (no trait) | `expected for` |
-| An untyped `self`, then `self.x` | `no struct type in scope for 'self'`. An untyped `self` is a bare address, so every ecosystem impl reads `load64(self)`. |
-| `b.v.sum()` (a method on a nested field) | Syntax error (documented in the guide). |
-| `fn f<T: Show>(x: T)` | `Show` is captured as a SECOND type parameter (`_capture_tparams`). `f(21)` compiles with the bound ignored; `f(p)` on a struct fails with "a STRUCT type-argument alongside a second type argument". |
-| `V2_add` declared, then `a + b` on two `V2`s | Works (operator overloading by name). |
-| `const LIMIT = 7;` | No keyword. |
-| `bool` / `true` / `false` | None: `undefined variable 'true'`. |
-| `c ? a : b` | Parse error. |
-| `var t = (1, 2);` | Parse error. Only multi-return exists: `var a, b = f();`, arity 2–3. |
-| `loop { … }` / `do { … } while (c);` | Parse errors. |
-| `fn f(a, b = 2)` | Parse error. |
-| `u8` / `u16` / `u32` / `f32` struct fields | A full 8-byte word each (the guide's field table). |
-
-### A — Real traits (opens the minor)
-
-1. **`trait` declarations, checked.** `trait Show { fn show(self): i64; }` declares a method set, and
-   `impl Show for T` is checked against it. A missing method, an extra one, a wrong arity or an
-   undeclared trait is a compile error naming the trait. A method with a body in the trait is a
-   **default**: it is instantiated into every impl that does not supply its own.
-2. **Trait-qualified names.** This is the collision fix ADR-004 planned (`Point_Display_format`) and never
-   shipped. ⚠ Compatibility: code calls impl methods by their mangled name. The guide's constructor idiom
-   is `Type_new(..)`, and the tests and the ecosystem do the same. So `T_m` must keep resolving whenever
-   only one trait (or an inherent impl) provides `m`. Only a real collision changes: `p.m()` becomes an
-   ambiguity error naming both traits, with a qualified spelling to choose one (spelling chosen at the
-   open).
-3. **Inherent `impl T { … }`**: methods with no trait.
-4. **`self` typed by its impl.** An untyped `self` inside `impl … for T` becomes `self: *T`. That is still
-   the receiver's ADDRESS, so every `load64(self)` body keeps working, and `self.x` reads through it the
-   way a `pp: *Pt` parameter does. ⚠ It must NOT be `self: T`. Under that spelling a struct of 8 bytes or
-   less is passed BY VALUE (6.6.11), which would silently break every small-struct impl that does
-   `load64(self)` (`tests/tcyr/crossos/method_self_inline_struct.tcyr`'s `P1` is one).
-   - **Decide `Struct = *Struct` here, once, with the value / handle model** (moved from roadmap.md's backlog at
-     the 6.6.20 re-triage, BACKLOG-06). Measured at 6.6.20: `var q: B1 = p;` with `p: *B1` and `sizeof(B1) <= 8`
-     stores the POINTER VALUE into `q` — `q.v` reads an address, a silent wrong value under either model; for a
-     struct over 8 bytes `var n: Node = h;` with `h: *Node` BINDS (aliases) `h` — `n.v = 5` writes `h.v`, and a
-     walk `p = p.next` rebinds correctly (a 3-node walk sums right and leaves the nodes intact). ⚠ The backlog
-     bullet said the `> 8 B` case COPIES and that a walk overwrites nodes — measured, it does not. Choose bind,
-     copy or refuse for BOTH sizes; the `≤ 8 B` pointer store is wrong whichever is chosen. Probes: the 6.6.20
-     backlog audit's `d1*.cyr`.
-   - **And `o.m()` vs `T_m(o)` on a pointer-mode 8-byte struct** (moved from roadmap.md's backlog at the 6.6.20
-     re-triage, BACKLOG-13): `o.m()` passes `self = &o` while the direct call `T_m(o)` passes the value, so the
-     same method reads different values depending on the spelling — the `self` model here must make the two agree.
-5. **Methods on nested fields and chains**: `b.v.sum()`, `mk(3).v.sum()`.
-   - **And the result type of a method call on an 8-byte struct** (moved from roadmap.md's backlog at the 6.6.20
-     re-triage, BACKLOG-07): an UNTYPED `var u = s.clone(); u.len()` infers the method's struct return type for
-     16- and 24-byte structs (rc 2, measured at 6.6.20) but not for a one-field 8-byte struct (`no struct type in
-     scope for 'u'`); a free call's 8-byte struct result (`var u = mk(); u.len()`) IS inferred. Fix it with the
-     other method-resolution work here, or sooner in a repair release with the other inference gaps.
-6. **Dispatch stays static (ADR-004).** Trait objects remain the `lib/trait.cyr` library pattern: a
-   vtable + data fat pointer, called through `fncall`. Compiler-native `dyn` would amend ADR-004. That is
-   the one design question to settle at the open, and the default is no.
-
-### B — The missing common features
-
-⚠ **Every new keyword is a new reserved word** (`IS_KEYWORD_TOK`), and it breaks any consumer that uses
-the word as an identifier. Survey the ecosystem ONCE at the open for all of them, not per feature:
-`trait`, `const`, `bool`, `true`, `false`, `loop`, `do`, and whatever qualified-call spelling A2 picks.
-*(The intrinsics the parser recognises by NAME — `sizeof`, `mulh64`, `fncall0..8` — are not in this survey: a
-declaration using one is refused by name since 6.6.20 (BACKLOG-03, promoted 2026-10-06; `mulh64` had bound
-silently to the intrinsic and `fncallN` crashed); that fix carried its own ecosystem survey.)*
-
-1. **`const` declarations.** `const LIMIT = 7;` is a compile-time value with no storage, folded like an
-   enum constant. It lands with C1, so a `const` can be initialised by a `const fn`. Today people use
-   `enum`, `#define` or a `var`.
-2. **`bool`, `true`, `false`.** 0 and 1 underneath (ADR-002 keeps i64 the core). This is a type for
-   intent, typechecks and `#derive`, not a new representation.
-3. **A conditional expression.** ⚠ C's `c ? a : b` collides with the postfix `?` that propagates a
-   `Result` (v5.8.29): `x ? -1 : 2` parses two ways. Default: an if-expression
-   (`var v = if (c) { a } else { b };`). The C spelling only if the grammar is shown to be unambiguous.
-4. **Tuples as values.** `var t = (1, 2); t.0`. Default: sugar over an anonymous struct, so the struct
-   layout and ABI rules apply unchanged, and multi-return keeps its register pair.
-5. **`loop { … }` and `do { … } while (c);`.** A `continue` in a `do … while` goes to the condition.
-6. **Default and named arguments.** `fn f(a, b = 2)` and `f(a: 1, b: 2)`; the v6.5.1 arity check becomes
-   a min..max check. Overloading by arity stays out: it would reverse v6.5.1's rule that a count mismatch
-   is never intentional.
-7. **Narrow unsigned and `f32` struct fields.** `u8` / `u16` / `u32` / `f32` fields take a full word
-   today. Narrowing them changes the LAYOUT of every struct that declares one, which is an ABI change
-   across the ecosystem. So it ships with a survey and a migration, never silently.
-8. **Compound assignment on a field** (moved from roadmap.md's backlog at the 6.6.20 re-triage, BACKLOG-13).
-   `h.n += 4` is `expected '=', got '+'` at 6.6.20 for a struct local and a struct field alike, while a scalar
-   `x += 4` returns 5 — every compound operator on every lvalue form (field, field chain, `p.f` through a pointer,
-   a subscript), with `*=` / `/=` on f64 fields following the 6.6.11 float compound rules.
-
-### C — Carried from v6.6.x (its former Phase 3 and proposal P3; moved 2026-10-01)
-
-1. **`const fn`** ([`proposals/2026-07-05-const-eval-comptime.md`](proposals/2026-07-05-const-eval-comptime.md)).
-   The rung was chosen 2026-07-07: option 1 `const fn` is primary, option 3 `#phf` is the fallback, and
-   option 4 (a general const-eval VM) is declined. ⚠ **Corrected 2026-10-02 (premise check, archived memo):**
-   its base is the parse-time folder `_CF_TRY`, NOT `ir_const_fold` — that is an x86-ELF peephole that runs
-   only under opt-in `CYRIUS_IR=3`; and the proposal's "a computed initializer is folded" is false (an image
-   scan shows a deferred runtime store). Size ~800–1,500 src lines, 1–2 releases, after B1 `const` and B3
-   the if-expression. Rung 1 does not meet shabdakosh's phf need; a hash-and-displace table from its own
-   generator does, today — so no `#phf` builtin.
-2. **Opt-in bounds-checked memory mode** (`CYRIUS_BOUNDS` / `#bounds`). It was designed in the v6.3.x
-   plan and never shipped: `CYRIUS_BOUNDS`, `#bounds` and `_bounds_check` had **0** hits in `src/` at
-   6.6.12 (re-check at the open). **OFF by default**: raw stores stay raw in release builds. 6.6.12
-   shipped the unchecked half for integer-element `var a: T[N]` (R4). Still to do: `*T` pointer
-   subscripts, slice writes, and the checked mode itself.
-   **Placed with it (2026-10-02):** proposal P5's execution half (coverage over RUN programs) shares C2's
-   insertion point and build-flag plumbing, so it is designed together with C2; P1 (6.6.17) gives both a
-   `[build]` key with a defined precedence first.
-3. **Trait-bounded generics.** No longer demand-gated: A is its prerequisite, and it is the minor's
-   theme. `<T: Show>` parses as a bound (today it mints a second type parameter named `Show`), and an
-   instantiation whose `T` has no `impl Show` is an error. ⚠ Fix the **multi-type-param struct-type-arg
-   residual** first: today a struct type argument works only on a one-parameter generic, and
-   `g<Pt, i64>` is refused.
-   - **And a generic-struct FIELD** (moved from roadmap.md's backlog at the 6.6.20 re-triage, BACKLOG-13):
-     `struct H { a: i64; b: Box<i32>; }` is `expected identifier, got '<'` at 6.6.20, and `#derive` on a struct
-     with a `Vec<Box<i64>>` field stops its field walk at the nested `<` (later accessors undefined — loud).
-
-### Shape and the open
-
-- **Order (default):**
-  1. A opens 6.7.0.
-  2. C3 follows directly, because it needs A.
-  3. B and C1/C2 interleave by size, with B1 `const` landing beside C1 `const fn`.
-
-  Each arc is one or two releases with its phases as bites (CLAUDE.md Release & Slot Discipline, rule 2). Expect a large minor.
-- **At the open, before code:**
-  - an ADR for traits (amend ADR-004, or write ADR-007), and the vidya entries;
-  - the one ecosystem survey: new reserved words, `impl` blocks and direct `T_m` calls, narrow struct fields, and any name that becomes a builtin;
-  - re-run the premise table above.
-- **Every new syntax ships with** a `tests/tcyr/crossos/` file (it runs on ecb / ach / cass / pi), a guide
-  section and a vidya entry.
-
 
 ## Between v6.7.x and RISC-V — the DCE compaction arc and the net migration (placed 2026-10-02)
 
