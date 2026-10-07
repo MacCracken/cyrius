@@ -485,7 +485,9 @@ priority surfaces.
   (M1–M3) on 2026-10-01.
   - Windows `sys_symlink` (CreateSymbolicLinkW) widens with `_win_widen` at 519 units, no `\\?\` — a link
     at a path over 260 units fails -1 (honest).
-  - cyrius-lsp `lsp_read_file` reads the open document through a fixed 1 MB buffer, silently.
+  - ~~cyrius-lsp `lsp_read_file` reads the open document through a fixed 1 MB buffer, silently.~~ → ✅ **SHIPPED
+    6.6.17 (t4)**: it reads the document whole, sized by `fstat`, and refuses past `_LSP_DOC_MAX` (64 MiB) by name
+    (CHANGELOG [6.6.17]; `tests/gates/toolchain/lsp_reads_whole_document.sh`). Struck at the 6.6.20 re-triage.
   - `cyrius lib sync --full` does not re-lock `cyrius.lock`, so rows for files a repo does not vendor keep
     stale hashes until a lock is regenerated from empty (kriya and yantra both hit it).
   - Inside an aarch64 region (6.6.12 B05's `#@a+` markers) a raw literal that HAS an ESYSXLAT x86-compat
