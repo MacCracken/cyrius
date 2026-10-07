@@ -1,0 +1,252 @@
+#!/bin/sh
+# Gate: cyriusly's version operand must be a version — `uninstall`, `use` and `install` refuse
+# anything else by name, and install / uninstall pass the operand as ARGV, never inside a
+# `/bin/sh -c` line (6.6.20, RS-04). Both peers: the compiled programs/cyriusly.cyr (the Linux
+# x86_64 tarball) and the shell twin scripts/cyriusly (the aarch64 and macOS tarballs, and
+# install.sh's fallback).
+#
+# THE BUG. `uninstall` built `rm -rf <home>/versions/<ver>` and ran it through /bin/sh -c with no
+# check on <ver>; the active-version guard is a string compare. Measured on 6.6.19:
+#     CYRIUS_HOME=H cyriusly uninstall ../versions   ->  "Uninstalled Cyrius ../versions", rc 0
+# and H held only `current` afterwards — every version gone, the ACTIVE one included. The shell
+# twin did the same (`rm -rf "$CYRIUS_HOME/versions/$2"`). `install` spliced the operand into
+# `curl … | CYRIUS_VERSION=<ver> sh`, so `install '6.6.19;cmd'` ran `cmd`; `use ../x` wrote that
+# pin into cyrius.cyml (or re-pointed ~/.cyrius/bin outside the store with --global).
+#
+# AXES (a throwaway CYRIUS_HOME holding 6.6.18 + the ACTIVE 6.6.19; a fake `curl` first on PATH,
+# so nothing reaches the network: it logs its argv and emits a script recording CYRIUS_VERSION)
+#   1  uninstall `../versions`, `..`, `6.6.19/`, `6.6.18/../6.6.19`, `./6.6.18`, `6..6` -> exit 1,
+#      named, both versions and `current` intact (`6..6` is the ONLY row the `..` ban alone
+#      refuses: the others also fail the leading digit or the `/`)          (binary + shell)
+#   2  install `6.6.19;touch M`, `$(touch M)`, `6.6.19 | touch M` -> exit 1, named, curl never
+#      run, no marker                                                         (binary + shell)
+#   3  use `../versions` and `6..6` (the binary's local pin and --global, the shell's switch) ->
+#      exit 1, cyrius.cyml and the bin/lib links untouched                   (binary + shell)
+#   4  controls: uninstall 6.6.18 removes it and keeps 6.6.19; uninstall of the active 6.6.19 is
+#      still refused; install 6.6.20 runs curl once, on the TAG's installer
+#      (`/cyrius/6.6.20/scripts/install.sh` — never the mutable `main`, CVE-21), and install.sh sees
+#      CYRIUS_VERSION=6.6.20; use 6.6.18 pins it                              (binary + shell)
+#   5  STATIC: `_cmd_install` / `_cmd_uninstall` / `_cmd_cmdtools` in programs/cyriusly.cyr reach
+#      no `_exec_shell(` / `exec_cmd(` — the operand never rides in a shell line, even behind the
+#      validator
+#   6  `use` with no operand (the binary's second [package].cyrius reader, CBT-01): an
+#      escape-bearing traversal pin, `../../x`, `6..6` and an unquoted pin -> exit 1, named, the
+#      escape shown as \xNN and never raw; controls: `6.6.19`, `6.6.20_rc` (the CLI's pin rule
+#      allows `_`) and a literal-string `'6.6.18'` report as pinned                    (binary)
+#   7  `cmdtools 'list;touch M'` and `cmdtools '$(touch M)' starship` -> no marker (the
+#      operands are argv to the shell twin, never a shell line); control: `cmdtools list` from
+#      this checkout lists (binary). ⚠ The twin is still resolved from the CWD — filed, see
+#      programs/cyriusly.cyr `_cmd_cmdtools`; this axis does not bless that.
+#   8  STATIC: `CYRIUS_TARGET_WIN=1` still builds programs/cyriusly.cyr (MZ, no undefined fn)
+#
+# MUTATION LEDGER (2026-10-06, 6.6.20): `_cy_version_ok` answering 1 turns axes 1-3 RED on the
+# binary (the store deleted, the injected `touch` RAN, the traversal pin written and --global
+# re-pointing bin at versions/../versions/bin); `need_version` answering 0 does the same on the
+# shell twin (it quoted the operand, so its axis-2 rows are caught by "curl ran" — it fetched
+# `.../cyrius/6.6.19;touch …/scripts/install.sh`); routing uninstall's `rm -rf` back through
+# `_exec_shell` turns axis 5 RED. The 6.6.19 tree (both peers) is RED on axes 1-3, and its
+# `uninstall 6.6.18/../6.6.19` deleted the ACTIVE 6.6.19 outright.
+# Review round 1 (same day): the binary fetching `.../cyrius/main/scripts/install.sh` (the base
+# URL, a CVE-21 residual) turns axis 4 [bin] RED. Restoring the base no-operand `use` reader
+# turns every axis-6 row RED (the ESC / BEL bytes reached the terminal, `../../x` and `6..6`
+# reported as pins, the unquoted pin and the literal string read as the GLOBAL default); checking
+# the pin with `_cy_version_ok`'s rule (no `_`) turns the `6.6.20_rc` control RED. The base
+# `_cmd_cmdtools` (a `sh scripts/cyriusly cmdtools <a> <t>` line through `_exec_shell`) turns axis
+# 5 and both axis-7 injection rows RED. Before the `6..6` rows, deleting the `..` ban from either
+# peer left the gate green (every other row also fails the leading digit or the `/`); with them,
+# dropping it from `_cy_shape_ok` turns axes 1 and 3 [bin] (and axis 6's `6..6` pin) RED, and
+# dropping `|*..*` from `need_version` turns axes 1 and 3 [sh] RED. Dropping `_cy_run_argv`'s
+# CYRIUS_TARGET_WIN arm turns axis 8 RED (rc 1, three undefined functions).
+set -u
+ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
+CC=${CYCC:-"$ROOT/build/cycc"}
+NAME=cyriusly_version_operand_refused
+
+[ -x "$CC" ] || { echo "SKIP: $NAME — $CC missing"; exit 77; }
+W=$(mktemp -d) && [ -d "$W" ] || { echo "FAIL: $NAME: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
+trap 'rm -rf "$W"' EXIT
+fail=0
+bad() { echo "  FAIL $1"; sed -n '1,3p' "$W/err" 2>/dev/null | LC_ALL=C tr -c '[:print:]\n' '?' | sed 's/^/    /'; fail=1; }
+
+( cd "$ROOT" && "$CC" < programs/cyriusly.cyr > "$W/cyriusly" 2>/dev/null ) && chmod +x "$W/cyriusly" \
+    || { echo "FAIL: $NAME — could not build programs/cyriusly.cyr"; exit 1; }
+
+mkdir -p "$W/fakebin"
+cat > "$W/fakebin/curl" <<EOF
+#!/bin/sh
+printf '%s\n' "\$*" >> "$W/curl.log"
+printf 'printf "%%s\\\\n" "\$CYRIUS_VERSION" > "%s/installed"\n' "$W"
+EOF
+chmod +x "$W/fakebin/curl"
+
+H="$W/home/.cyrius"
+store() {   # a fresh store: 6.6.18 + the active 6.6.19, both linked the way install.sh links them
+    rm -rf "$W/home" "$W/proj" "$W/curl.log" "$W/installed" "$W/pwned"
+    for _sv in 6.6.18 6.6.19; do   # not `v`: sh variables are global, and the callers loop on v
+        mkdir -p "$H/versions/$_sv/bin" "$H/versions/$_sv/lib"
+        echo "$_sv" > "$H/versions/$_sv/bin/STAMP"
+    done
+    echo 6.6.19 > "$H/current"
+    ln -s "$H/versions/6.6.19/bin" "$H/bin"
+    ln -s "$H/versions/6.6.19/lib" "$H/lib"
+    mkdir -p "$W/proj"
+    printf '[package]\nname = "p"\nversion = "0.1.0"\ncyrius = "6.6.19"\n' > "$W/proj/cyrius.cyml"
+}
+snap() { printf '%s|%s|%s|%s|%s' "$(ls "$H/versions" | tr '\n' ' ')" "$(cat "$H/current" 2>/dev/null)" \
+    "$(readlink "$H/bin")" "$(readlink "$H/lib")" "$(cat "$W/proj/cyrius.cyml")"; }
+run() {   # run <peer: bin|sh> <args...> -> RC, $W/out, $W/err
+    _p=$1; shift
+    RC=0
+    if [ "$_p" = bin ]; then
+        ( cd "$W/proj" && env HOME="$W/home" CYRIUS_HOME="$H" PATH="$W/fakebin:$PATH" "$W/cyriusly" "$@" ) > "$W/out" 2> "$W/err" || RC=$?
+    else
+        ( cd "$W/proj" && env HOME="$W/home" CYRIUS_HOME="$H" PATH="$W/fakebin:$PATH" sh "$ROOT/scripts/cyriusly" "$@" ) > "$W/out" 2> "$W/err" || RC=$?
+    fi
+}
+refused() {   # refused <label> <snapshot before> — exit 1, named, nothing touched, curl never ran
+    _ok=1
+    [ "$RC" -eq 1 ] && grep -q "not a version" "$W/err" || _ok=0
+    [ "$(snap)" = "$2" ] || { echo "  (state changed: $(snap))"; _ok=0; }
+    [ -e "$W/curl.log" ] && { echo "  (curl ran: $(head -1 "$W/curl.log"))"; _ok=0; }
+    [ -e "$W/pwned" ] && { echo "  (the injected command RAN)"; _ok=0; }
+    [ "$_ok" -eq 1 ] && return 0
+    bad "$1: exit $RC"
+    return 1
+}
+
+for P in bin sh; do
+    # ── axis 1: uninstall ───────────────────────────────────────────────────────────────
+    a1=0
+    for v in ../versions .. 6.6.19/ 6.6.18/../6.6.19 ./6.6.18 6..6; do
+        store; B=$(snap)
+        run "$P" uninstall "$v"
+        refused "axis 1 [$P] uninstall '$v'" "$B" || a1=1
+    done
+    [ "$a1" -eq 0 ] && echo "  ok axis 1 [$P]: uninstall refuses five path-shaped operands and '6..6'; the store is intact"
+
+    # ── axis 2: install ─────────────────────────────────────────────────────────────────
+    a2=0
+    for v in "6.6.19;touch $W/pwned" "\$(touch $W/pwned)" "6.6.19 | touch $W/pwned"; do
+        store; B=$(snap)
+        run "$P" install "$v"
+        refused "axis 2 [$P] install '$v'" "$B" || a2=1
+    done
+    [ "$a2" -eq 0 ] && echo "  ok axis 2 [$P]: install refuses shell-shaped operands; curl never ran, nothing injected"
+
+    # ── axis 3: use ─────────────────────────────────────────────────────────────────────
+    a3=0
+    for v in ../versions 6..6; do
+        store; B=$(snap)
+        run "$P" use "$v"
+        refused "axis 3 [$P] use $v" "$B" || a3=1
+    done
+    if [ "$P" = bin ]; then
+        store; B=$(snap)
+        run bin use ../versions --global
+        refused "axis 3 [bin] use ../versions --global" "$B" || a3=1
+    fi
+    [ "$a3" -eq 0 ] && echo "  ok axis 3 [$P]: use refuses a path-shaped version and '6..6'; no pin written, no link moved"
+
+    # ── axis 4: controls ────────────────────────────────────────────────────────────────
+    a4=0
+    store
+    run "$P" uninstall 6.6.18
+    { [ "$RC" -eq 0 ] && [ ! -e "$H/versions/6.6.18" ] && [ -f "$H/versions/6.6.19/bin/STAMP" ]; } \
+        || { bad "axis 4 [$P] uninstall 6.6.18: exit $RC, versions: $(ls "$H/versions" | tr '\n' ' ')"; a4=1; }
+    store
+    run "$P" uninstall 6.6.19
+    { [ "$RC" -eq 1 ] && [ -d "$H/versions/6.6.19" ] && grep -q "Cannot uninstall active" "$W/out" "$W/err"; } \
+        || { bad "axis 4 [$P] uninstall of the ACTIVE 6.6.19: exit $RC"; a4=1; }
+    store
+    run "$P" install 6.6.20
+    { [ "$RC" -eq 0 ] && [ "$(wc -l < "$W/curl.log" 2>/dev/null | tr -d ' ')" = 1 ] \
+        && grep -q "https://raw.githubusercontent.com/MacCracken/cyrius/6\.6\.20/scripts/install\.sh" "$W/curl.log" \
+        && [ "$(cat "$W/installed" 2>/dev/null)" = 6.6.20 ]; } \
+        || { bad "axis 4 [$P] install 6.6.20: exit $RC, curl: $(cat "$W/curl.log" 2>/dev/null), install.sh saw '$(cat "$W/installed" 2>/dev/null)'"; a4=1; }
+    store
+    run "$P" use 6.6.18
+    if [ "$P" = bin ]; then
+        { [ "$RC" -eq 0 ] && grep -q '^cyrius = "6.6.18"$' "$W/proj/cyrius.cyml"; } \
+            || { bad "axis 4 [bin] use 6.6.18: exit $RC, manifest: $(grep cyrius "$W/proj/cyrius.cyml")"; a4=1; }
+    else
+        { [ "$RC" -eq 0 ] && [ "$(cat "$H/current")" = 6.6.18 ] && [ "$(readlink "$H/bin")" = "$H/versions/6.6.18/bin" ]; } \
+            || { bad "axis 4 [sh] use 6.6.18: exit $RC, current $(cat "$H/current")"; a4=1; }
+    fi
+    [ "$a4" -eq 0 ] && echo "  ok axis 4 [$P]: a real version still uninstalls, installs (curl once, on the tag's installer, CYRIUS_VERSION passed) and switches; the active one is still guarded"
+done
+
+# ── axis 5: static — no shell line in install / uninstall ───────────────────────────────
+a5=0
+for f in _cmd_install _cmd_uninstall _cmd_cmdtools; do
+    body=$(awk -v f="$f" '$0 ~ "^fn " f "\\(" {on=1} on {print} on && /^}/ {exit}' "$ROOT/programs/cyriusly.cyr")
+    [ -n "$body" ] || { echo "  FAIL axis 5: could not find fn $f in programs/cyriusly.cyr"; fail=1; a5=1; continue; }
+    if printf '%s\n' "$body" | grep -v '^ *#' | grep -qE '_exec_shell\(|exec_cmd\('; then
+        echo "  FAIL axis 5: $f runs a shell LINE (_exec_shell / exec_cmd) — its operand must ride as argv"; fail=1; a5=1
+    fi
+done
+[ "$a5" -eq 0 ] && echo "  ok axis 5: _cmd_install, _cmd_uninstall and _cmd_cmdtools run no shell line"
+
+# ── axis 6: `use` with NO operand reads the [package].cyrius pin — the CLI's pin rule, never echoed
+#    raw (binary only: the shell twin's `use` requires an operand) ──────────────────────────────
+a6=0
+ESC=$(printf '\033'); BEL=$(printf '\007')
+setpin() { printf '[package]\nname = "p"\nversion = "0.1.0"\ncyrius = %s\n' "$1" > "$W/proj/cyrius.cyml"; }
+pinrefused() {   # pinrefused <label> <expected stderr text>
+    { [ "$RC" -eq 1 ] && grep -q "$2" "$W/err" && ! grep -q "pinned in cyrius.cyml" "$W/out"; } && return 0
+    bad "axis 6 [bin] use ($1): exit $RC, out: $(head -1 "$W/out" | LC_ALL=C tr -c '[:print:]' '?')"
+    return 1
+}
+store; setpin "\"6.6${ESC}]0;owned${BEL}${ESC}[2J../../x\""
+run bin use
+pinrefused "an escape-bearing traversal pin" "is not a version" || a6=1
+if grep -q "$ESC" "$W/out" "$W/err" || grep -q "$BEL" "$W/out" "$W/err"; then
+    bad "axis 6 [bin] use: a raw ESC / BEL byte from the manifest reached the terminal"; a6=1
+fi
+grep -q '6\.6\\x1b\]0;owned\\x07\\x1b\[2J\.\./\.\./x' "$W/err" \
+    || { bad "axis 6 [bin] use: the refusal did not show the pin with its non-printing bytes as \\xNN"; a6=1; }
+store; setpin '"../../x"'
+run bin use
+pinrefused "../../x" "is not a version" || a6=1
+store; setpin '"6..6"'
+run bin use
+pinrefused "6..6" "is not a version" || a6=1
+store; setpin '6.6.19'
+run bin use
+pinrefused "an unquoted pin" "must be a quoted version string" || a6=1
+# controls: a quoted pin reports as before; `_` (the CLI's pin rule allows it) and a TOML literal
+# string are pins `cyrius` accepts, so cyriusly must too
+for row in '"6.6.19"|6.6.19' '"6.6.20_rc"|6.6.20_rc' "'6.6.18'|6.6.18"; do
+    store; setpin "${row%%|*}"
+    run bin use
+    { [ "$RC" -eq 0 ] && [ "$(cat "$W/out")" = "cyrius ${row#*|} (pinned in cyrius.cyml)" ]; } \
+        || { bad "axis 6 [bin] use (control cyrius = ${row%%|*}): exit $RC, out: $(head -1 "$W/out" | LC_ALL=C tr -c '[:print:]' '?')"; a6=1; }
+done
+[ "$a6" -eq 0 ] && echo "  ok axis 6 [bin]: use with no operand refuses an escape-bearing, a traversal, a '..' and an unquoted pin (shown as \\xNN, never raw); '_' and a literal string still report"
+
+# ── axis 7: cmdtools passes its operands as argv ───────────────────────────────────────────
+a7=0
+for row in "list;touch $W/pwned|" "\$(touch $W/pwned)|starship"; do
+    store
+    run bin cmdtools "${row%%|*}" ${row#*|}
+    if [ -e "$W/pwned" ]; then bad "axis 7 [bin] cmdtools '${row%%|*}': the injected command RAN"; a7=1; fi
+done
+RC=0
+( cd "$ROOT" && env HOME="$W/home" CYRIUS_HOME="$H" PATH="$W/fakebin:$PATH" "$W/cyriusly" cmdtools list ) > "$W/out" 2> "$W/err" || RC=$?
+{ [ "$RC" -eq 0 ] && grep -q "^cmdtools integrations:" "$W/out"; } \
+    || { bad "axis 7 [bin] cmdtools list (control, from the checkout): exit $RC"; a7=1; }
+[ "$a7" -eq 0 ] && echo "  ok axis 7 [bin]: cmdtools hands its operands to the twin as argv; nothing injected, list still lists"
+
+# ── axis 8: the argv runner keeps the file compiling for PE ──────────────────────────────────
+# `_cy_run_argv` uses lib/process.cyr's POSIX fork/execve internals; without its CYRIUS_TARGET_WIN
+# arm the PE build failed (undefined `_read_environ_envp` / `_proc_child_guard` /
+# `_proc_wait_deadline`), where 6.6.19's exec_cmd-based file built.
+RC=0
+( cd "$ROOT" && env CYRIUS_TARGET_WIN=1 "$CC" < programs/cyriusly.cyr > "$W/cyriusly.exe" 2> "$W/err" ) || RC=$?
+if [ "$RC" -eq 0 ] && [ "$(head -c 2 "$W/cyriusly.exe")" = MZ ] && ! grep -q "undefined function" "$W/err"; then
+    echo "  ok axis 8: programs/cyriusly.cyr still builds for PE (MZ, no undefined function)"
+else
+    bad "axis 8: CYRIUS_TARGET_WIN=1 build of programs/cyriusly.cyr: exit $RC"
+fi
+
+[ "$fail" -eq 0 ] || { echo "FAIL: $NAME"; exit 1; }
+echo "PASS: $NAME (cyriusly uninstall / install / use refuse a non-version operand by name, in both peers; install, uninstall and cmdtools pass their operands as argv)"
