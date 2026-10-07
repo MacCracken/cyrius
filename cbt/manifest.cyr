@@ -519,6 +519,16 @@ fn _toml_tok_end(buf, n, p): i64 {
 }
 
 # ── the manifest ──────────────────────────────────────────────────────────────────────────
+# The length of a leading UTF-8 byte-order mark (EF BB BF — what Notepad and some Windows editors
+# write first), 0 when there is none. It is not TOML: left in, the first line read as neither a
+# header nor a key, so a `[package]` there — name, version and the toolchain pin with it — read as
+# absent without a word. Every manifest read steps over it. CHANGELOG [6.6.20].
+fn _mf_bom_len(b, n): i64 {
+    if (n < 3) { return 0; }
+    if (load8(b) != 239 || load8(b + 1) != 187 || load8(b + 2) != 191) { return 0; }
+    return 3;
+}
+
 # The CYML header ends at a line that starts `---`; everything after it is prose.
 fn _mf_header_len(b, n): i64 {
     var i = 0;
@@ -607,6 +617,9 @@ fn _mf_load(): i64 {
         else { _err_ctx("cannot read the manifest", path); }
         return 0 - 1;
     }
+    var bom = _mf_bom_len(b, n);
+    b = b + bom;
+    n = n - bom;
     _mf_len = _mf_header_len(b, n);
     store8(b + _mf_len, 0);
     _mf_buf = b;

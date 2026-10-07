@@ -2565,6 +2565,9 @@ fn cmd_deps(): i64 {
             errors = errors + 1;
             continue;
         }
+        var _tbom = _mf_bom_len(_tbuf, _tn);   # 6.6.20: a leading BOM hid a first-line [deps.X]
+        _tbuf = _tbuf + _tbom;
+        _tn = _tn - _tbom;
         _tn = _mf_header_len(_tbuf, _tn);   # only the header is TOML
         store8(_tbuf + _tn, 0);
         errors = errors + _process_named_deps(_tbuf, _tn, _trans_dir);

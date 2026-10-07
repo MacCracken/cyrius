@@ -27,6 +27,10 @@
 #      exited 0, while `cyrius deps` (a byte scanner) still vendored the [deps] the build could not
 #      see. Anti-over-reach: a header whose last byte is a closing `]` right before `---`, and a
 #      manifest with no trailing newline (9 live ecosystem manifests end that way), still build.
+#  10. (6.6.20, CBTB-09) a leading UTF-8 byte-order mark (EF BB BF) is stepped over: `[package]` on
+#      the first line is read (name / version / the toolchain pin in --print-config, and version
+#      reaches the program as CYRIUS_PKG_VERSION), and a TRANSITIVE dep manifest whose first line
+#      is `[deps.X]` behind a BOM still resolves X. Before, both read as absent without a word.
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -145,5 +149,30 @@ rm -rf "$W/a9/build"; cli "$W/a9" build > "$W/a9.out" 2>&1
 [ "$(runs "$W/a9/build/c2")" = 7 ] || fail9 "axis 9 no trailing newline: a manifest ending in a closed array with no newline was refused or misread: $(head -2 "$W/a9.out" | tr '\n' ' ')"
 [ "$A9" = 0 ] && echo "  ok axis 9: an unclosed array / inline table / \"\"\" string / missing quote is refused by name, key and line (build and deps); a header ending in ] and a file with no newline build"
 
+# ── axis 10: a leading UTF-8 BOM is not part of the TOML ────────────────────────────────
+A10=0
+fail10() { fail "$@"; A10=1; }
+mkdir -p "$W/a10/src"
+printf 'syscall(1, 1, CYRIUS_PKG_VERSION, 5);\nsyscall(60, 0);\n' > "$W/a10/src/main.cyr"
+V=$(tr -d '[:space:]' < VERSION)
+printf '\357\273\277[package]\nname = "bom"\nversion = "7.8.9"\ncyrius = "%s"\n\n[build]\nentry = "src/main.cyr"\noutput = "build/bom"\n' "$V" > "$W/a10/cyrius.cyml"
+[ "$(head -c 3 "$W/a10/cyrius.cyml" | od -An -tx1 | tr -d ' \n')" = efbbbf ] || fail10 "axis 10 fixture: the manifest does not start with EF BB BF"
+cli "$W/a10" build --print-config > "$W/a10.out" 2>&1
+grep -qF 'package.name = "bom"  (manifest: [package] name)' "$W/a10.out" || fail10 "axis 10: [package] name behind a BOM is not read: $(grep package.name "$W/a10.out")"
+grep -qF "package.cyrius = \"$V\"  (manifest: [package] cyrius)" "$W/a10.out" || fail10 "axis 10: the toolchain pin behind a BOM is not read: $(grep package.cyrius "$W/a10.out")"
+cli "$W/a10" build > "$W/a10.out" 2>&1
+got=$( [ -x "$W/a10/build/bom" ] && "$W/a10/build/bom" 2>/dev/null )
+[ "$got" = "7.8.9" ] || fail10 "axis 10: [package] version behind a BOM did not reach the program (got '$got'): $(tail -2 "$W/a10.out" | tr '\n' ' ')"
+# a transitive dep manifest: BOM + `[deps.bar]` on its first line
+mkdir -p "$W/a10t/src" "$W/a10foo/dist" "$W/a10bar/dist"
+printf 'fn foo_v(): i64 { return 1; }\n' > "$W/a10foo/dist/foo.cyr"
+printf 'fn bar_v(): i64 { return 2; }\n' > "$W/a10bar/dist/bar.cyr"
+printf '\357\273\277[deps.bar]\npath = "%s"\nmodules = ["dist/bar.cyr"]\n' "$W/a10bar" > "$W/a10foo/cyrius.cyml"
+printf '[package]\nname = "t"\n\n[deps.foo]\npath = "%s"\nmodules = ["dist/foo.cyr"]\n' "$W/a10foo" > "$W/a10t/cyrius.cyml"
+( cd "$W/a10t" && HOME="$W/home" CYRIUS_HOME="$W/home" CYRIUS_RESOLVED=1 "$W/cyrius" deps ) > "$W/a10.out" 2>&1 || true
+[ -f "$W/a10t/lib/foo.cyr" ] || fail10 "axis 10 transitive: the direct dep was not vendored (the fixture is broken): $(tail -2 "$W/a10.out" | tr '\n' ' ')"
+cmp -s "$W/a10bar/dist/bar.cyr" "$W/a10t/lib/bar.cyr" || fail10 "axis 10 transitive: a [deps.bar] behind a BOM in a dep's manifest was not resolved: $(tail -2 "$W/a10.out" | tr '\n' ' ')"
+[ "$A10" = 0 ] && echo "  ok axis 10: a leading UTF-8 BOM is stepped over: [package] name / version / pin are read, and a transitive [deps.X] on a BOM'd first line resolves"
+
 [ "$FAIL" = 0 ] || exit 1
-echo "PASS: manifest_one_reader (whole manifest, TOML values, CYML body, package, 16 MiB refusal, unclosed values)"
+echo "PASS: manifest_one_reader (whole manifest, TOML values, CYML body, package, 16 MiB refusal, unclosed values, BOM)"
