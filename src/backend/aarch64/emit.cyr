@@ -3531,7 +3531,6 @@ fn ESPILL(S): i64 { EPUSHR(S); return 0; }
 fn EUNSPILL(S): i64 { EPOPR(S); return 0; }
 # Inline disabled on aarch64
 var _INLINE_OK = 0;
-var _LOOPVAR_OK = 0;
 
 # v5.10.16 — NEON SIMD packed-double primitives.
 # Replaces the v1.9.0-era stubs that returned 0 (silent no-op).

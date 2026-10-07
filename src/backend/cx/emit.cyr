@@ -7,7 +7,7 @@
 # A register operand is a full byte, so the bytecode has r0-r255. The emitter maps:
 #   rax → r0 (accumulator, expression results)
 #   rcx → r1 (secondary, right-hand operand)
-#   stack push/pop → r16-r31 (spill registers, managed via _cx_spill_idx)
+#   stack push/pop → the VM's data stack (push/pop opcodes 0x80/0x81)
 #   fp → r253, sp → r254
 # ⚠ cxvm's register file must therefore hold all 256 (2048 bytes). It held 32 until 6.6.8,
 # which put fp/sp inside guest memory. CHANGELOG [6.6.8]
@@ -47,12 +47,8 @@ var _flags_reflect_rax = 0;
 var _last_push_cp = 0 - 1;
 var _last_emovca_cp = 0 - 1;
 var _last_movca_popr_cp = 0 - 1;
-# x86 inline-fn / loop-var-reg toggles. cx does not inline or
-# loop-var-cache; both 0.
+# x86 inline-fn toggle. cx does not inline; 0.
 var _INLINE_OK = 0;
-var _LOOPVAR_OK = 0;
-
-var _cx_spill_idx = 16;
 
 # Emit byte to codebuf (same as x86/emit.cyr but for bytecode)
 fn EB(S, b): i64 {
@@ -1124,9 +1120,6 @@ fn ASM_MNEMONIC(S): i64 {
     return 0;
 }
 
-# Stubs for features not yet in bytecode
-var _INLINE_OK = 0;
-var _LOOPVAR_OK = 0;
 # v5.8.56: ELVRLOAD / ELVRSTORE / ELVRINIT stubs removed in lockstep
 # with x86 + aarch64 removal — the x86 versions were never wired in,
 # and these cx stubs only existed to mirror that backend.

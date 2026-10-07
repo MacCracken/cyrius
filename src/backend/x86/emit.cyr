@@ -153,7 +153,6 @@ fn EPOPR(S): i64 {
 
 # Expression spill: identical to push/pop
 var _INLINE_OK = 0;
-var _LOOPVAR_OK = 0;  # loop var r12 caching disabled (caused 2x regression + stack corruption)
 fn ESPILL(S): i64 { _xdepth = _xdepth + 1; if (_IR_REC0(S, IR_PUSH) == 1) { return 0; } EB(S, 0x50); _last_push_cp = GCP(S); return 0; }
 fn EUNSPILL(S): i64 {
     _xdepth = _xdepth - 1;

@@ -21,6 +21,13 @@
 #           dead, and when it trips it can only print the whole floor.
 #           ⚠ The parse is cross-checked against the compiler's own `note: N unreachable fns`,
 #           so a change to the `dead:` line format cannot turn this gate into a silent pass.
+#   axis 2  no top-level `var` in src/ is never read (comment-stripped occurrences that are
+#           neither its declaration nor an assignment to it). The 6.6.20 pass found
+#           `_LOOPVAR_OK` declared four times (twice in cx/emit.cyr), `_cx_spill_idx` named by
+#           cx's header as managing spill registers the backend keeps on the VM stack,
+#           `_stmt_topcall_fi` described as #must_use's tracker while _must_use_warn works
+#           without it, and `_pe_rdata_gvar_off` "always 0". ALLOW holds the named constants
+#           that document an enum / offset band and are intentionally unread.
 #
 # `--write` regenerates the floor from the tree (review the diff — it is the whole point).
 # The fork commands mirror scripts/version-bump.sh; the two aarch64-hosted forks are built by
@@ -103,6 +110,59 @@ if [ -s "$T/gone" ]; then
     sed 's/^/    /' "$T/gone"
 fi
 
+# ── axis 2 — no never-read top-level globals in src/ ──────────────────────────────────────────
+# Named constants that document a band (TS lexer/AST enum members and offsets, the future type
+# id) — read nowhere by design. `_strict_mode` is removed by DEAD-07 in the same release.
+ALLOW="FUTURE_TYID TS_AST_DECL_TYPE_PARAM TS_AST_DECORATOR TS_AST_ERROR TS_AST_EXPORT_NAMED
+TS_AST_JSX_CLOSING TS_AST_JSX_NAME TS_AST_JSX_OPENING TS_AST_PATTERN_DEFAULT TS_AST_STMT_LABELED
+TS_LS_NAME_BUF_USED TS_LS_STR_POOL_USED TS_NAMES_OFF TS_NAME_IDX_OFF TS_STR_POOL_OFF
+TS_TOK_BACKTICK TS_TOK_NEWLINE _strict_mode"
+find src -name '*.cyr' | sort > "$T/files"
+grep -hoE '^var [A-Za-z_][A-Za-z0-9_]*' $(cat "$T/files") | awk '{print $2}' | sort -u > "$T/gnames"
+[ -s "$T/gnames" ] || { echo "FAIL dead_code_floor axis2: found no top-level var under src/"; exit 1; }
+awk -v allow="$ALLOW" '
+BEGIN { n = split(allow, a, /[ \t\n]+/); for (i = 1; i <= n; i++) if (a[i] != "") ok[a[i]] = 1 }
+FNR == NR { G[$1] = 1; next }
+{
+    s = $0
+    if (index(s, "#") > 0) {                 # drop a # comment that is not inside a string
+        o = ""; q = 0
+        for (i = 1; i <= length(s); i++) {
+            c = substr(s, i, 1)
+            if (c == "\"" && (i == 1 || substr(s, i - 1, 1) != "\\")) q = !q
+            if (c == "#" && !q) break
+            o = o c
+        }
+        s = o
+    }
+    d = ""
+    if (match(s, /^[ \t]*var[ \t]+[A-Za-z_][A-Za-z0-9_]*/)) {
+        d = substr(s, RSTART, RLENGTH); sub(/^[ \t]*var[ \t]+/, "", d)
+    }
+    prev = ""
+    while (match(s, /[A-Za-z_][A-Za-z0-9_]*/)) {
+        t = substr(s, RSTART, RLENGTH)
+        b = (RSTART > 1) ? substr(s, RSTART - 1, 1) : prev
+        rest = substr(s, RSTART + RLENGTH)
+        if ((t in G) && b !~ /[0-9]/) {
+            if (t == d) { if (!(t in where)) where[t] = FILENAME ":" FNR }
+            else if (b != "&" && b != "." && rest ~ /^[ \t]*(\[[^]]*\])?[ \t]*=([^=]|$)/) wr[t]++
+            else rd[t]++
+        }
+        prev = substr(t, length(t), 1)
+        s = rest
+    }
+}
+END {
+    for (t in G) if (!(t in rd) && !(t in ok))
+        printf "%s %s writes=%d\n", t, (t in where) ? where[t] : "?", wr[t] + 0
+}' "$T/gnames" $(cat "$T/files") | sort > "$T/noread"
+if [ -s "$T/noread" ]; then
+    echo "FAIL dead_code_floor axis2: top-level globals in src/ that nothing reads (delete them, or add a band constant to ALLOW with a reason):"
+    sed 's/^/    /' "$T/noread"
+    fails=$((fails + 1))
+fi
+
 if [ "$fails" -ne 0 ]; then exit 1; fi
-echo "PASS dead_code_floor: $(wc -l < "$T/actual" | tr -d ' ') src/ dead-fn entries across 7 forks, all on the floor"
+echo "PASS dead_code_floor: $(wc -l < "$T/actual" | tr -d ' ') src/ dead-fn entries across 7 forks, all on the floor; no never-read src/ globals"
 exit 0
