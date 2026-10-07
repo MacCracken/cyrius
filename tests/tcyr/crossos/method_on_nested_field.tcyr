@@ -1,0 +1,58 @@
+# method_on_nested_field.tcyr — 6.7.0 (arc A5). A method on a nested INLINE struct field, and the
+# struct type of an 8-byte method result.
+#
+# `b.v.sum()` was `expected ';', got '.'` — the leaf walk stopped before a `.method(` on a
+# struct-typed field and nothing continued from there — in an expression and as a statement
+# (`b.v.scale(3);` was `expected '=', got '.'`), through a pointer (`p.v.sum()`), on a call result
+# (`mk(3).v.sum()`), at every depth and on a global. The field's address is now the method's `self`,
+# so a write through it lands in the outer struct. And `var u = s.clone();` for a method returning a
+# struct of 8 B or less types `u` (it was `no struct type in scope for 'u'`; a free call's 8-byte
+# result and a method's 16 / 24-byte one already were) — only when the call is the whole initialiser.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/assert.cyr"
+
+struct V { a; b; }
+struct B { n; v: V; }
+struct C { k; w: B; }
+struct One { x; }
+
+impl V {
+    fn sum(self): i64 { return self.a + self.b; }
+    fn scale(self, k) { self.a = self.a * k; self.b = self.b * k; return 0; }
+}
+impl One {
+    fn clone(self): One { var r: One; r.x = self.x; return r; }
+    fn get(self): i64 { return self.x; }
+}
+
+var G = B { 0, 0, 0 };
+
+fn mk(k): B { var b: B; b.n = 0; b.v.a = k; b.v.b = k; return b; }
+fn via_ptr(p: *B): i64 { return p.v.sum(); }
+
+fn run(): i64 {
+    var b: B;
+    b.n = 0; b.v.a = 1; b.v.b = 2;
+    assert_eq(b.v.sum(), 3, "a method on a nested field, in an expression");
+    b.v.scale(3);
+    assert_eq(b.v.a, 3, "a method statement on a nested field writes the outer struct");
+    assert_eq(via_ptr(&b), 9, "through a *T parameter: p.v.sum()");
+    assert_eq(mk(3).v.sum(), 6, "on a call result: mk(3).v.sum()");
+    var c: C;
+    c.k = 0; c.w.n = 0; c.w.v.a = 4; c.w.v.b = 5;
+    assert_eq(c.w.v.sum(), 9, "two levels down: c.w.v.sum()");
+    G.v.a = 6; G.v.b = 7;
+    G.v.scale(2);
+    assert_eq(G.v.sum(), 26, "on a global: G.v.scale(2) then G.v.sum()");
+    var s = One { 9 };
+    var u = s.clone();
+    assert_eq(u.get(), 9, "var u = s.clone() types u by the 8-byte result");
+    var t = s.clone().x + 1;
+    assert_eq(t, 10, "a chain on the result is a plain value, not a typed struct");
+    return 0;
+}
+
+alloc_init();
+run();
+var r = assert_summary();

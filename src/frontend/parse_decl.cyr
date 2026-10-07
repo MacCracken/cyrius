@@ -620,6 +620,23 @@ fn _resolve_leaf_field(S, si, fi, off): i64 {
     return ft;
 }
 
+# 6.7.0 (A5, BACKLOG-07) — `var u = s.clone();` where the method returns a struct of 8 B or less:
+# the struct it returns, so `u.len()` resolves (it was `no struct type in scope for 'u'`, while a
+# free call's 8-byte result and a method's 16 / 24-byte one were typed). The whole initialiser must
+# be the call (`... );`), as `_var_rhs_call` requires of a free call. Larger results keep their
+# temp-receive path (`_sc_var_receive`). 0 = not such a call.
+fn _var_rhs_msid(S, ti): i64 {
+    if (_tok_method_open(S, ti) == 0) { return 0; }
+    if (TOKTYP(S, _call_close(S, ti + 3) + 1) != 5) { return 0; }
+    var mf = _pair_callee_at(S, ti);
+    if (mf < 0) { return 0; }
+    var rs = GFRS(S, mf);
+    if (rs <= 0) { return 0; }
+    if (rs > 2047) { return 0; }
+    if (STRUCTSZ(S, rs - 1) > 8) { return 0; }
+    return rs;
+}
+
 # ⛔ 6.6.10 — A STRUCT VALUE ASSIGNED INTO A STRUCT-TYPED FIELD COPIED ONE WORD. `b.v = p;` with
 # `struct Box { v: Pt; n; }` parsed `p` as an ordinary value (a struct's value is its FIRST word)
 # and stored it with the field's width capped at 8, so `b.v.y` kept whatever was there — and for
@@ -1200,6 +1217,41 @@ fn _ptr_park(S, psid): i64 {
     EVSTORE(S, vi);
     return vi;
 }
+# ⛔ 6.7.0 (A5) — A METHOD ON A NESTED INLINE FIELD: `b.v.sum()`, `p.v.sum()`, `mk(3).v.sum()`. The
+# leaf walk (`_resolve_leaf_field`) stops before a `.method(` on a struct-typed field, and nothing
+# took it from there: `expected ';', got '.'`. The field's ADDRESS (the base's, as a method's `self`
+# is computed, plus the field's offset) is parked as a pointer receiver of the field's struct and the
+# call continues from it, as `_ptr_hop` continues from a `*T` field's value. An address inside this
+# frame is handed to the callee, so the fn is marked as escaping one (`_fn_local_addr`, the v6.5.14
+# tail-call guard) whenever the base is an inline local. CHANGELOG [6.7.0]
+fn _fld_meth_inline(S, ft): i64 {
+    if (ft <= 0) { return 0; }
+    if (IS_STR_FIELD(S, ft) == 1) { return 0; }
+    if (PEEKT(S) != 41) { return 0; }
+    if (TOKTYP(S, GTI(S) + 1) != 2) { return 0; }
+    if (TOKTYP(S, GTI(S) + 2) != 10) { return 0; }
+    return 1;
+}
+# ⚠ Six parameters at most: the leaf's type is read back from `_resolve_leaf_field` (`_rlf_si` /
+# `_rlf_fi`), because cybs — the bootstrap compiler seed-derive runs — rejects a 7-argument call
+# with a bare "syntax error" (found by seed-derive, 6.7.0).
+fn _load_inline_hop(S, noff, beg, idx, sid, off): i64 {
+    var ft = GETFTYPE(S, _rlf_si, _rlf_fi);
+    if (idx <= 0 - 1000000) { _CL_CAP_BASE_RA(S, 0 - 1000000 - idx, sid); }
+    elif (idx < 0 - 1) {
+        var li = 0 - idx - 2;
+        if (_local_struct_is_ptr(S, li, 0 - sid) == 1) { EFLLOAD(S, li); }
+        else { _fn_local_addr = 1; EFLADDR(S, li); }
+    } else {
+        if (_gv_holds_addr(S, idx) == 1) { EVLOAD(S, idx); } else { EVADDR(S, idx); }
+    }
+    if (off > 0) { EADDRA_IMM(S, off); }
+    var h = _ptr_park(S, ft);
+    STI(S, GTI(S) + 1);                 # `.`
+    var mnoff = PEEKV(S);
+    STI(S, GTI(S) + 1);                 # the method name
+    return _field_load_on(S, noff, mnoff, beg, h, ft);
+}
 fn _load_hop(S, noff, beg, idx, sid, off): i64 {
     var ps = _fld_hop_sid(S);
     var h = _ptr_hop(S, idx, sid, off, ps);
@@ -1428,6 +1480,7 @@ fn _field_load_on(S, noff, fnoff, pfl_beg, idx, sid): i64 {
     off = _rlf_off;
     var hop = _rlf_hop;
     if (_fld_hop_sid(S) > 0) { return _load_hop(S, noff, pfl_beg, idx, sid, off); }   # 6.6.17
+    if (hop < 0) { if (_fld_meth_inline(S, ft) == 1) { return _load_inline_hop(S, noff, pfl_beg, idx, sid, off); } }   # 6.7.0 (A5)
     if (hop < 0) { if (_fla_want == pfl_beg) { if (_fla_take(S, idx, sid, off, ft) == 1) { return 0; } } }   # 6.6.10
     # Load variable address + field offset, then load value (width-correct).
     # Pointer-vs-inline struct-base resolution: v5.5.36 local-encoded idx
@@ -5418,7 +5471,7 @@ fn PARSE_VAR(S): i64 {
                     if (_ti_fi >= 0) {
                         _ti_inferred_sid = GFRS(S, _ti_fi);
                     }
-                }
+                } else { _ti_inferred_sid = _var_rhs_msid(S, GTI(S)); }   # 6.7.0 (A5): `var u = s.m(..);`
             }
         } }
     # v6.5.17 — the v6.3.8/v6.3.36 CLOSURE_TYID SLTYPE stamp is GONE. A capturing

@@ -2888,6 +2888,17 @@ fn _asg_compound_tok(S): i64 {
     }
     return 0;
 }
+# 6.7.0 (A5) — cursor on the `.` after a statement's first IDENT: 1 when a chain of `.name`s ends in
+# a call (`.m(`, `.v.m(`, `.next.v.m(`), so the statement is a method call; 0 for a field store. The
+# cursor is left wherever the walk stopped (the caller rewinds).
+fn _stmt_dot_chain_call(S): i64 {
+    while (PEEKT(S) == 41) {
+        if (TOKTYP(S, GTI(S) + 1) != 2) { return 0; }
+        STI(S, GTI(S) + 2);
+        if (PEEKT(S) == 10) { return 1; }
+    }
+    return 0;
+}
 # Loads the left side (a local, else a global) into rax; returns its slot type.
 # ⛔ 6.6.12 — AT THE SLOT'S WIDTH, as a read of it in an expression loads it. This loaded 8
 # bytes, so `a >>= 1` on a u8 global followed by `var b: u8 = 1;` shifted b's byte down into a:
@@ -4053,17 +4064,14 @@ fn _PARSE_STMT_IMPL(S): i64 {
             # Peek ahead: is this a method call or field store?
             # Save position, consume DOT, check if ident followed by (
             var save_ti = GTI(S);
-            STI(S, GTI(S) + 1);  # consume DOT
-            if (PEEKT(S) == 2) {
-                var peek_noff = PEEKV(S);
-                STI(S, GTI(S) + 1);  # consume method name
-                if (PEEKT(S) == 10) {
-                    # Method call: rewind and use PARSE_FIELD_LOAD (which handles methods),
-                    # a postfix `?` included (6.6.16, _stmt_method_call)
-                    STI(S, save_ti);
-                    _stmt_method_call(S, noff);
-                    return 0;
-                }
+            # 6.7.0 (A5): the whole `.a.b.m(` chain, not one `.m(` — `b.v.scale(3);` on a nested
+            # field was `expected '=', got '.'` (it went to the field store).
+            if (_stmt_dot_chain_call(S) == 1) {
+                # Method call: rewind and use PARSE_FIELD_LOAD (which handles methods),
+                # a postfix `?` included (6.6.16, _stmt_method_call)
+                STI(S, save_ti);
+                _stmt_method_call(S, noff);
+                return 0;
             }
             # Not a method call — rewind and do field store
             STI(S, save_ti);
