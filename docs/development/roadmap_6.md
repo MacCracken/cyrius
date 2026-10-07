@@ -207,8 +207,10 @@ file keeps only a pointer: one authority per active minor.
 the word as an identifier. Survey the ecosystem ONCE at the open for all of them, not per feature:
 `trait`, `const`, `bool`, `true`, `false`, `loop`, `do`, and whatever qualified-call spelling A2 picks.
 *(The intrinsics the parser recognises by NAME — `sizeof`, `mulh64`, `fncall0..8` — are not in this survey: a
-declaration using one is refused in 6.6.20 instead (BACKLOG-03, promoted 2026-10-06), because `mulh64` bound
-silently to the intrinsic and `fncallN` crashed; that refusal took its own ecosystem survey.)*
+declaration using one is being fixed in 6.6.20 (BACKLOG-03, promoted 2026-10-06), because `mulh64` binds
+silently to the intrinsic and `fncallN` crashes, and that fix carries its own ecosystem survey. ⟨INTEGRATION:
+confirm against what lane s-names merged — a refusal: "is refused since 6.6.20"; the names made reserved
+tokens instead: they join this survey's list as keywords; not merged: say so and keep it in the backlog⟩)*
 
 1. **`const` declarations.** `const LIMIT = 7;` is a compile-time value with no storage, folded like an
    enum constant. It lands with C1, so a `const` can be initialised by a `const fn`. Today people use

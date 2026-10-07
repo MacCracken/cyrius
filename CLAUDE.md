@@ -442,8 +442,11 @@ per-session memory files so they survive environment changes.
   6.6.20. ⚠ `sizeof`, `mulh64` and `fncall0..8` are intrinsics recognised by NAME
   (`_is_ident_intrinsic` / `_IS_FNCALL_NAME`), in neither table — a tool that derives the
   reserved set from util.cyr alone misses them (`[embed]`'s list reads all four sources); a
-  declaration using one was accepted until 6.6.20 (`mulh64` then bound silently to the
-  intrinsic, `fncallN` crashed). It covers `syscall`,
+  declaration using one is accepted at the 6.6.20 slot open (`mulh64` then binds silently to the
+  intrinsic, `fncallN` crashes) and is being fixed in 6.6.20 (BACKLOG-03) ⟨INTEGRATION: rewrite
+  against what lane s-names merged — a refusal: "was accepted until 6.6.20"; the names added to
+  `TOKNAME_BUILTIN` instead: fold them into the counts above and drop this sentence; not merged:
+  drop "being fixed in 6.6.20"⟩. It covers `syscall`,
   `load8/16/32/64`, `store8/16/32/64`, every `f64_*` / `f64v_*` / `f32_*` / `f32v_*` / `f32v8_*` /
   `iv_*` intrinsic, plus `union`, `defer`, `secret`, `async`, `await`, `u128`,
   `bitget/bitset/bitclr`, `ret2/rethi` — and `pub`/`public`/`private`/`shared`/`match`/`in`/
