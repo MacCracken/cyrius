@@ -411,6 +411,9 @@ entry (`cat lib/fnptr.cyr | cycc`, `cyrius build lib/fnptr.cyr`, or the LSP's `c
 that open file report its nine definitions); it is a library — include it. A mangled definition
 is accepted, so an impl method `x.sizeof()` or a `mod` fn of that name compiles (call it
 `m_sizeof()`); re-exposing it under the bare name with `use m.sizeof;` is the refused alias.
+An enum variant spelled `sizeof` or `mulh64` is not refused but must be used qualified
+(`E.mulh64`): the bare name parses as the intrinsic, so `#derive(Serialize)` on that enum fails
+too.
 
 ## Control Flow
 

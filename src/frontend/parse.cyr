@@ -2555,7 +2555,9 @@ fn _is_ident_intrinsic(S, noff): i64 {
 # filed repro's own shape. CHANGELOG [6.6.20]
 fn _rsv_in_fnptr(S, ti): i64 {
     var fid = FM_FILEID(S, GTLINE(S, ti));
-    if (fid == 0 - 1) { return 1; }   # file map overflowed: unknowable — keep the pre-6.6.20 answer
+    # ⚠ -1 (the file map overflowed) fails OPEN, against FM_FILEID's fail-closed contract: closed
+    # would refuse a real lib/fnptr.cyr included past the cap; open only restores pre-6.6.20.
+    if (fid == 0 - 1) { return 1; }
     if (fid <= 0) { return 0; }
     var p = S + 0x721000 + fid - 1;
     var n = 0;
