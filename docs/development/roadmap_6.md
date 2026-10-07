@@ -124,7 +124,8 @@ with 6.6.13 (memory fixes and the reported issues) and then the tooling proposal
 
 **Sequenced 2026-10-02 (user accepted the tail plan, roadmap.md § *The 6.6.x tail*):** 6.6.15 – 6.6.19 carry
 the curves work, a repair release and the tooling proposals; **6.6.20 is the closeout pass**, done like every
-minor's before any v6.7.x work (user, 2026-10-02); **v6.7.0 opens after it.**
+minor's before any v6.7.x work (user, 2026-10-02); **v6.7.0 opens after it.** *(2026-10-06: 6.6.0–6.6.19 are
+tagged; 6.6.20 is in progress.)*
 
 ---
 
@@ -252,10 +253,62 @@ the word as an identifier. Survey the ecosystem ONCE at the open for all of them
 
 Still 6.x, never 7.x. Moved out of the 6.6.x tail with the accepted plan: **the DCE compaction arc**
 (aarch64 first — its own repair model, which rv64 reuses, cheaper after 6.6.18's ESYSXLAT fold — then PE /
-x86 Mach-O, which have no consumer today; spec in roadmap.md § *Open arc — DCE*), **`lib/net.cyr` §4
+x86 Mach-O, which have no consumer today; spec below), **`lib/net.cyr` §4
 per-arch socket peers**, the remaining syscall families, and **AF_UNIX** (default yes; 19 repos hand-roll
 it). About 3–5 releases. Whether they form the tail of v6.7.x or the head of the RISC-V minor is decided at
 the v6.7.x close.
+
+### The DCE compaction arc — spec (moved from roadmap.md at the 6.6.20 closeout)
+
+> **Re-placed 2026-10-02 (user accepted the tail plan): AFTER v6.7.x, before the RISC-V minors — still 6.x.**
+> The PE / x86 Mach-O half has no consumer today (the 18 repos that use DCE build aarch64); aarch64 needs its
+> own repair model, which rv64 will reuse, and it is cheaper after the ESYSXLAT fold (6.6.18). Every target is
+> correct today (the unsupported ones only skip the shrink); ✅ the honest "compaction declined: <why>" note
+> SHIPPED in 6.6.18 — every declining target (PE, x86 Mach-O, `--pie`, `shared;`, aarch64 ELF, arm64 Mach-O) names
+> itself and its reason inside the existing note line, and static x86 ELF past the 4,096-run repair-registry cap
+> says so. Order: aarch64 first, then PE / Mach-O.
+>
+> ⚠ **aarch64 compaction must repair the resolved `bl <ESYSXLAT stub>` sites** (6.6.18 XLAT-2): a variable
+> syscall number calls a shared per-class stub through a `bl` that carries no fixup-table entry and no position
+> registry; `ESYSX_STUBS`'s site list is drained before FIXUP, so a code-moving pass must find them itself.
+
+**Arrived from v6.6.1.** `CYRIUS_DCE=1` now declines the whole-program compaction on PE and x86
+Mach-O, exactly as it already declines under `_pie_mode`, because both reach a live import/stub
+table through a **rip-relative disp32 that the compaction pass does not repair**, and both
+compute file geometry *before* elimination runs. Declining was the correct release fix — those
+targets emitted a binary that faulted `0xC0000005` before `main` (PE) or SIGSEGV'd on real
+Intel-Mac hardware (Mach-O) — but it leaves them on NOP-fill: **correct, and not shrinking.**
+ELF still eliminates for real (measured 123,048 → 16,552 B, −86.5%).
+
+**The repair is two things that must land together**, which is why it is scoped at two slots:
+
+1. **Repair the rip-relative shape in `wp_compact`** — when a body is removed, every `disp32`
+   whose target is *not* code that moved by the same delta needs re-patching. This is the same
+   repair `_pie_mode` needs, so doing it unblocks PIE compaction too; do not build a PE-only
+   version of it.
+2. **Re-run `_pe_layout(S)` after compaction** (and the Mach-O equivalent) so section geometry,
+   RVAs and `PointerToRawData` describe the code that was actually emitted — with the ftype=4
+   IAT-reference fixups patched **after** that re-layout, since their displacement is computed
+   from `_pe_idata_rva`.
+
+⚠ **Order matters and the current code proves it**: the IAT displacement in the broken build
+resolved to RVA `0x39DD` for an IAT the header put at `0x23000` — it had been patched against the
+old geometry and then the instruction moved. Fixing geometry without fixing displacements, or the
+reverse, produces a binary that looks fine and faults later. That is exactly the shape that cost
+three attempts at the v6.5.72 compaction work.
+
+**Acceptance**: `tests/gates/codegen/dce_pe_macho_layout_declines_compaction.sh` is **inverted** —
+its axes 1-2 currently assert the payload does *not* move, and on success they must assert PE and
+Mach-O shrink *and still run*. Verify by RUNNING on `cass` and `ach`, not by size alone; the
+whole defect class is "smaller and broken". Keep axis 3 (ELF still eliminates) unchanged.
+
+**Premise (re-checked at the 6.6.7 open; re-grep at the arc's open — the lines move).** The decline was live at
+`src/backend/x86/fixup.cyr:875-876`; `_pe_layout(S)` ran at `fixup.cyr:146` (the comment at `:859` and the gate header
+still said "line 123"); the ftype=4 IAT disp32 is baked at `:295-300`, before compaction runs at `:877-878`. ⚠ **Wider
+than its first slot said**: `wp_compact` also returns 0 for EVERY aarch64 target (`src/common/ir.cyr:1634`), so arm64
+Mach-O and aarch64 ELF never compact either — the same arc, taken together. *(Two placement paragraphs that stood here —
+"the anchor `src` lane of the release after 6.6.9" and "stays in v6.6.x and runs in the tail" — contradicted the
+2026-10-02 placement above and were dropped at the 6.6.20 closeout, BACKLOG-14.)*
 
 ## v6.8.x or v6.9.x — Platform: RISC-V rv64
 

@@ -39,11 +39,11 @@ closeout), and the unscheduled 6.x backlog. Whole-cycle framing, the v6.7.x lang
 
 ## Where we are
 
-**Current head: v6.6.20** (2026-10-06) — **merged, release gate GREEN 2026-10-06** (6.6.18 shipped: tag `6.6.18` @ `010538b5`)
-· cycc **1,586,184 B** (`.text` **1,405,464**) · `cycc-native-aarch64` **1,323,400 B** · seed-derive **GREEN** (lanes) ·
-cross-OS **GREEN** on ecb/ach/cass/pi per lane, the merged-tree run is the gate's · self_compile **933 ms** (intern
-lane; the gate re-measures) · **482** `.tcyr` (**197** in `crossos/`) · **106** `lib/*.cyr` · **372** shell gates under
-`tests/gates/<bucket>/` · api-surface **5,827** · **0 open issues** · **2 open proposals** · the next free CVE id is **79**.
+**Current head: v6.6.20** (2026-10-06) — **the v6.6.x closeout, in progress** (6.6.19 shipped: tag `6.6.19` @ `f5a5175a`)
+· cycc **1,586,184 B** (`.text` **1,405,464**) at the slot open, unchanged from 6.6.19 · `cycc-native-aarch64` **1,323,400 B** ·
+seed-derive **GREEN** (6.6.19 gate) · cross-OS **GREEN** on ecb/ach/cass/pi (6.6.19 gate) · self_compile **923 ms** (6.6.19
+gate) · **482** `.tcyr` (**197** in `crossos/`) · **106** `lib/*.cyr` · **372** shell gates under `tests/gates/<bucket>/` ·
+api-surface **5,827** · **0 open issues** · **2 open proposals** · the next free CVE id is **79**.
 
 > ⚠ **Every figure above was DERIVED on the day, not carried** (re-derived 2026-09-27 at the 6.6.7 open).
 > `version-bump.sh` rewrites the version token, replaces the `(…)` after it with the bump date, and
@@ -51,12 +51,14 @@ lane; the gate re-measures) · **482** `.tcyr` (**197** in `crossos/`) · **106*
 > line and its parenthetical free of nested `(`/`)`, or the bump refuses to rewrite it (and
 > `tests/gates/toolchain/version_bump_doc_anchors.sh` goes red the day it is written). Re-derive gates with `find tests/gates -name '*.sh' | wc -l`; never increment.
 
-**v6.6.0–v6.6.18 are shipped** — the value-form `Result` flip, the repair window (.1–.6), the repair batch (.7–.12),
-the memory / TLS / curves / repair releases (.13–.16), the manifest release (.17) and distlib + poison (.18, then the
-post-tag wave of 12 fold regenerations). One line per release is in [completed-phases.md](completed-phases.md)
-§ *v6.6.x*; the detail is the CHANGELOG. **Do not re-add shipped releases here.** What is left of the minor:
-**6.6.19** the fold re-vendor + `[embed]` + macOS threads (merged, release gate GREEN 2026-10-06), **6.6.20** closeout, then
-**v6.7.0** (*The 6.6.x tail* below).
+**v6.6.0–v6.6.19 are shipped** — the value-form `Result` flip, the repair window (.1–.6), the repair batch (.7–.12),
+the memory / TLS / curves / repair releases (.13–.16), the manifest release (.17), distlib + poison (.18, then the
+post-tag wave of 12 fold regenerations) and the fold re-vendor + `[embed]` + macOS threads (.19, tag `f5a5175a`). One
+line per release is in [completed-phases.md](completed-phases.md) § *v6.6.x*; the detail is the CHANGELOG. **Do not
+re-add shipped releases here.** What is left of the minor: **6.6.20**, the closeout (in progress 2026-10-06), then
+**v6.7.0** (*The 6.6.x tail* below). ⚠ **At the v6.7.0 rotation** this file becomes the v6.7.x roadmap: the
+*Potential backlog* below moves with it (it is 6.x work, never 7.x), and the DCE arc's spec already lives in
+[roadmap_6.md](roadmap_6.md) § *Between v6.7.x and RISC-V* (moved 2026-10-06).
 
 ---
 
@@ -65,8 +67,8 @@ post-tag wave of 12 fold regenerations). One line per release is in [completed-p
 | Phase | Slots | What goes here |
 |---|---|---|
 | **1 — repair** | `.1` – `.16` | ✅ **SHIPPED** — the repair window (.1–.6), the repair batch (.7–.12), memory + reported issues (.13), the TLS follow-ups (.14), curves + the compiler leaks (.15), repair (.16). See [completed-phases.md](completed-phases.md) § *v6.6.x*. |
-| **2 — the 6.6.x tail** | `.17` – `.19` | The release sequence ACCEPTED 2026-10-02 (see *The 6.6.x tail*): `.17` manifest (✅ SHIPPED 2026-10-06), **`.18` distlib + poison (OPEN 2026-10-06)**, `.19` embed + macOS threads. |
-| **3 — closeout** | `.20` | The full closeout pass, like every minor (user, 2026-10-02: done before any v6.7.x work). Then **v6.7.0**. |
+| **2 — the 6.6.x tail** | `.17` – `.19` | ✅ **SHIPPED** — the release sequence ACCEPTED 2026-10-02 (see *The 6.6.x tail*): `.17` manifest (tag `c2e7eef9`), `.18` distlib + poison (tag `010538b5`), `.19` the fold re-vendor + embed + macOS threads (tag `f5a5175a`), all 2026-10-06. |
+| **3 — closeout** | `.20` | **IN PROGRESS 2026-10-06** — the full closeout pass, like every minor (user, 2026-10-02: done before any v6.7.x work). Then **v6.7.0**. |
 | ~~**Committed ergonomics**~~ | — | **Moved to v6.7.x** with P3 `const fn` (user, 2026-10-01) — see [roadmap_6.md](roadmap_6.md). |
 
 ---
@@ -86,10 +88,10 @@ reviews and a synthesis, archived at
 | Release | Contents |
 |---|---|
 | **6.6.18** distlib + poison — ✅ **SHIPPED 2026-10-06** (tag `6.6.18` @ `010538b5`; the 12-fold wave tagged after it) | ✅ **P4** option 2 (the compile-verify fixpoint is the only sidecar authority, with its prerequisites D1–D3; every bundle raw-includable through a requires block; a failed build names the leaf to declare); ✅ **P6** widened (`poison_allocator()`, leading redzone, live-block sweep, settable fill byte, `alloc()` / arena redzones, exit 86, `--poison=ab`; guard pages → backlog); ✅ the ESYSXLAT compile-time fold (`cycc-native-aarch64` −718,792 B, −35.2 %; the pre-commit ARM band back to 700K–2M); ✅ DCE's honest "compaction declined: <why>" note; ✅ the missing `sxtw`; **CVE-78**. The log / ws / ws_server fold bundles moved to 6.6.19 (user decision 2026-10-06: siblings can pin only a RELEASED cyrius, so all 12 folds regenerate in ONE wave after the tag). |
-| **6.6.19** — **MERGED 2026-10-06, release gate GREEN 2026-10-06** (main `e804cc44`; CHANGELOG [6.6.19]) | ✅ R1–R3, ✅ B0b (interning by index: byte-identical, self_compile −6.7 %, the 1.9 MB-embed case 11.4 s → ~0.9 s), ✅ P2 `[embed]` + distlib `embed` + the review's E-S1…E-S4 (no CVE: unreleased), ✅ T1 x86-macOS real threads, ✅ A1 / A2 `async_await_readable_ms` on macOS, Windows and agnos. The plan as placed: **After the post-tag fold wave** (*Sibling follow-ups* § 6.6.18): **R1** re-vendor all 12 folds byte-identical from their tags, then `docs/ecosystem.md` (`fold_table_matches_vendored`) and state.md — needs every wave tag; **R2** `lib/log.cyr`, `lib/ws.cyr` and `lib/ws_server.cyr` include their folds and `stdlib_modules_self_sufficient.sh`'s PENDING tier is retired — needs sakshi, bayan, sandhi; **R3** the native TLS stack drops its mirror of sigil's leaves and `folds_agnos_parity` includes each fold alone — needs sigil. Then **P2** `[embed]` (generated in cbt before `#@srcline` — never an in-band marker that reads files, the CVE-45 class; `[lib.PROFILE]` scoping; the interning perf fix B0b); x86-macOS real threads + `async_await_readable_ms` on macOS / agnos / Windows (*Open questions* 3). The release to trim if 6.7.0 should come sooner. |
-| **6.6.20** closeout | The full closeout pass (CLAUDE.md § Closeout, [cycle-discipline.md](cycle-discipline.md)): the release gate, heap / dead-code / refactor / code-review / cleanup passes, a security re-scan, the downstream check, vidya (`types.cyml` still stamps 6.6.1), the backlog re-triage, `verify-store`. |
+| **6.6.19** — ✅ **SHIPPED 2026-10-06** (tag `6.6.19` @ `f5a5175a`; the gate ran on `19ceb8c6`; CHANGELOG [6.6.19]) | ✅ R1 the 12 folds re-vendored byte-identical from their tags, ✅ R2 `lib/log.cyr` / `lib/ws.cyr` / `lib/ws_server.cyr` include their folds (the PENDING tier retired), ✅ R3 the native TLS stack drops its mirror of sigil's leaves; ✅ B0b (interning by index: byte-identical, self_compile −6.7 %, the 1.9 MB-embed case 11.4 s → ~0.9 s), ✅ P2 `[embed]` + distlib `embed` + the review's E-S1…E-S4 (no CVE: unreleased), ✅ T1 x86-macOS real threads, ✅ A1 / A2 `async_await_readable_ms` on macOS, Windows and agnos. |
+| **6.6.20** closeout — **IN PROGRESS 2026-10-06** | The full closeout pass (CLAUDE.md § Closeout, [cycle-discipline.md](cycle-discipline.md)): the release gate, heap / dead-code / refactor / code-review / cleanup passes, a security re-scan, the downstream check, vidya (`types.cyml` still stamped 6.6.1), the backlog re-triage, `verify-store`. Run as one audit (141 findings) fixed in parallel worktree lanes, plus three backlog items the user promoted on 2026-10-06 (the redefined-fn binding, aarch64 calls with 262+ arguments, the `sizeof` / `mulh64` / `fncallN` names). The ledger is in [cycle-discipline.md](cycle-discipline.md) § *Closeout checklist + ledger*. |
 | **6.7.0** | The language arc ([roadmap_6.md](roadmap_6.md)): traits first, with the ADR and the one reserved-word survey at the open; P3 `const fn` after `const` and the if-expression; P5's execution half designed with C2. |
-| **after v6.7.x, before RISC-V** | The DCE compaction arc (aarch64 first, then PE / Mach-O — see its section), `lib/net.cyr` §4 per-arch socket peers, the remaining syscall families, AF_UNIX (default yes). |
+| **after v6.7.x, before RISC-V** | The DCE compaction arc (aarch64 first, then PE / Mach-O — spec in [roadmap_6.md](roadmap_6.md) § *Between v6.7.x and RISC-V*), `lib/net.cyr` §4 per-arch socket peers, the remaining syscall families, AF_UNIX (default yes). |
 
 Defaults taken with the plan (the memo's): P4 option 2 (reverses the v6.5.10 "union" stance); P6 widened to
 `alloc()` redzones; `output` stays a default and `init --bin` writes `build/{PROJ}`; DCE stays opt-in (so the
@@ -100,61 +102,13 @@ generators (after P2); sankoch retires its interning proof (after B0a, in 6.6.15
 
 ---
 
-## Open arc — DCE cannot compact on PE, x86 Mach-O or aarch64 (the rip-relative repair)
+## ~~Open arc — DCE cannot compact on PE, x86 Mach-O or aarch64~~ → after v6.7.x (spec moved 2026-10-06)
 
-> **Re-placed 2026-10-02 (user accepted the tail plan): AFTER v6.7.x, before the RISC-V minors — still 6.x.**
-> The PE / x86 Mach-O half has no consumer today (the 18 repos that use DCE build aarch64); aarch64 needs its
-> own repair model, which rv64 will reuse, and it is cheaper after the ESYSXLAT fold (6.6.18). Every target is
-> correct today (the unsupported ones only skip the shrink); ✅ the honest "compaction declined: <why>" note
-> SHIPPED in 6.6.18 — every declining target (PE, x86 Mach-O, `--pie`, `shared;`, aarch64 ELF, arm64 Mach-O) names
-> itself and its reason inside the existing note line, and static x86 ELF past the 4,096-run repair-registry cap
-> says so. Order: aarch64 first, then PE / Mach-O.
->
-> ⚠ **aarch64 compaction must repair the resolved `bl <ESYSXLAT stub>` sites** (6.6.18 XLAT-2): a variable
-> syscall number calls a shared per-class stub through a `bl` that carries no fixup-table entry and no position
-> registry; `ESYSX_STUBS`'s site list is drained before FIXUP, so a code-moving pass must find them itself.
-
-**Arrived from v6.6.1.** `CYRIUS_DCE=1` now declines the whole-program compaction on PE and x86
-Mach-O, exactly as it already declines under `_pie_mode`, because both reach a live import/stub
-table through a **rip-relative disp32 that the compaction pass does not repair**, and both
-compute file geometry *before* elimination runs. Declining was the correct release fix — those
-targets emitted a binary that faulted `0xC0000005` before `main` (PE) or SIGSEGV'd on real
-Intel-Mac hardware (Mach-O) — but it leaves them on NOP-fill: **correct, and not shrinking.**
-ELF still eliminates for real (measured 123,048 → 16,552 B, −86.5%).
-
-**The repair is two things that must land together**, which is why it is scoped at two slots:
-
-1. **Repair the rip-relative shape in `wp_compact`** — when a body is removed, every `disp32`
-   whose target is *not* code that moved by the same delta needs re-patching. This is the same
-   repair `_pie_mode` needs, so doing it unblocks PIE compaction too; do not build a PE-only
-   version of it.
-2. **Re-run `_pe_layout(S)` after compaction** (and the Mach-O equivalent) so section geometry,
-   RVAs and `PointerToRawData` describe the code that was actually emitted — with the ftype=4
-   IAT-reference fixups patched **after** that re-layout, since their displacement is computed
-   from `_pe_idata_rva`.
-
-⚠ **Order matters and the current code proves it**: the IAT displacement in the broken build
-resolved to RVA `0x39DD` for an IAT the header put at `0x23000` — it had been patched against the
-old geometry and then the instruction moved. Fixing geometry without fixing displacements, or the
-reverse, produces a binary that looks fine and faults later. That is exactly the shape that cost
-three attempts at the v6.5.72 compaction work.
-
-**Acceptance**: `tests/gates/codegen/dce_pe_macho_layout_declines_compaction.sh` is **inverted** —
-its axes 1-2 currently assert the payload does *not* move, and on success they must assert PE and
-Mach-O shrink *and still run*. Verify by RUNNING on `cass` and `ach`, not by size alone; the
-whole defect class is "smaller and broken". Keep axis 3 (ELF still eliminates) unchanged.
-
-
-**Placement (default taken 2026-09-27): the anchor `src` lane of the release after 6.6.9** — it does not fit
-6.6.7–6.6.9 without a third compiler lane. Premise re-checked at the 6.6.7 open: the decline is live at
-`src/backend/x86/fixup.cyr:875-876`; `_pe_layout(S)` runs at `fixup.cyr:146` (the comment at `:859` and the
-gate header still say "line 123"); the ftype=4 IAT disp32 is baked at `:295-300`, before compaction runs at
-`:877-878`. ⚠ **Wider than the slot said**: `wp_compact` also returns 0 for EVERY aarch64 target
-(`src/common/ir.cyr:1634`), so arm64 Mach-O and aarch64 ELF never compact either — the same arc, taken
-together. Until it lands, the declined-path note should say it declined and why (✅ 6.6.18).
-
-**Re-placed 2026-10-01**: 6.6.10–6.6.12 did not take it. It stays in v6.6.x and runs in the tail beside the
-tooling proposals (Phase 2). It is backend work, not language work, so it did not move to v6.7.x.
+Placed **after v6.7.x, before the RISC-V minors — still 6.x** (the tail plan, accepted 2026-10-02). Its spec — the
+rip-relative repair in `wp_compact`, the post-compaction re-layout, the aarch64 `bl <ESYSXLAT stub>` sites 6.6.18 added,
+and the inverted-gate acceptance — **moved to [roadmap_6.md](roadmap_6.md) § *Between v6.7.x and RISC-V*** at the
+6.6.20 closeout, so it survives this file's rotation to v6.7.x (BACKLOG-14). Every target is correct today; the
+declining ones only skip the shrink, and say so (6.6.18).
 
 ---
 
@@ -331,18 +285,12 @@ CHANGELOG [6.6.17] *Downstream* (no ecosystem sweep).
 - **ai-hwaccel** — the same ⚠ `lib sync` note as agnosai. ai-hwaccel `85d7985`.
 
 
-**6.6.18 — the post-tag fold wave (OUR work, not a filing) and the filings (2026-10-06).** ⛔ Nothing here starts
-until cyrius 6.6.18 is TAGGED, its release tarball (which ships `cycc_aarch64`) is published, and
-`sh scripts/install.sh --refresh-only` has run at the tagged commit. Nothing in it gates the 6.6.18 tag.
-- **W — the 12 folded stdlibs regenerate in ONE wave**, each a patch release the agent commits and the user tags,
-  each opening "⛔ DO NOT push/tag until cyrius 6.6.18 is out": pin `cyrius = "6.6.18"`, `cyrius deps`,
-  `cyrius distlib --all`, the suite plus a new raw-include tcyr (`include "dist/<pkg>.cyr"` alone, 0 undefined),
-  `distlib --check` current, full CI isolated (sibci.sh). No correctness order — every fold verifies against the
-  same 6.6.18 snapshot. Order: **W1 sakshi** (`scripts/bundle.sh` → `[lib] modules` + distlib; its first sidecar,
-  expect `fnptr` + `atomic`), **W2** bayan, sandhi, sigil (unblock 6.6.19 R2 / R3), **W3** ganita, niyama (must name
-  `unicode`; raw-include on agnos too), mabda (must name `io`), vani, yantra, yukti, patra, sankoch (resolve its
-  uncommitted working-tree file first). Expected sidecar deltas: [ecosystem-migration-6.6.18.md](ecosystem-migration-6.6.18.md).
-  Then **6.6.19 R1–R3**.
+**6.6.18 — the post-tag fold wave (OUR work, not a filing) and the filings (2026-10-06).**
+- ~~**W — the 12 folded stdlibs regenerate in ONE wave**~~ → ✅ **SHIPPED** — all twelve tagged after 6.6.18
+  (sakshi 2.5.7, bayan 1.5.12, sandhi 1.10.8, sigil 3.13.10, ganita 1.2.14, niyama 1.0.13, mabda 4.1.7, vani 1.2.9,
+  yantra 1.0.8, yukti 2.3.15, patra 1.15.2, sankoch 2.8.1) and re-vendored byte-identical in **6.6.19 R1–R3**
+  (CHANGELOG [6.6.19] *Folds*); the 6.6.20 downstream check found all twelve pinned to 6.6.18 with their latest tags
+  equal to `docs/ecosystem.md`'s rows. The filings below stay until each is done.
 - **takumi** — declare `sakshi` in `[deps] stdlib` before the 6.6.18 pin bump (sandhi's fold calls it; it reached
   `lib/` only through sigil's old sidecar). takumi `b4b8e9a`.
 - **samvada** — has no Windows `sys_recvmsg` wrapper (`lib/syscalls_linux_common` + agnos only); mabda's 6.6.18
