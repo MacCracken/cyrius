@@ -786,19 +786,6 @@ fn _pp_curfile_ptr(): i64 {
     return &_pp_curfile;
 }
 
-# Record `name` (a NUL-terminated cstr) as the file currently being copied.
-fn _pp_curfile_note(name): i64 {
-    var i = 0;
-    while (load8(name + i) != 0) {
-        if (i >= 4090) { i = 4090; }
-        store8(&_pp_curfile + i, load8(name + i));
-        i = i + 1;
-    }
-    store8(&_pp_curfile + i, 0);
-    _pp_curfile_set = 1;
-    return 0;
-}
-
 # v6.5.3 — newlines in [from, upto) of `buf`.
 fn _pp_count_nl(buf, from, upto): i64 {
     var n = 0;

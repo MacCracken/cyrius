@@ -869,7 +869,7 @@ fn IS_STR_FIELD(S, ft): i64 {
 # a far-negative sentinel: MKVEC(elem) = -0x50000 - elem, where `elem` is the
 # element type in the normal field-type encoding (>0 struct sid, 0 = i64/f64,
 # <0 = -width scalar). IS_VEC_FIELD tests the sentinel window BEFORE any ft>0 /
-# ft<0 decode (the -2121-class OOB guard); VEC_ELEM recovers the element type.
+# ft<0 decode (the -2121-class OOB guard); the element type is `(0 - 0x50000) - ft`.
 # The window (-0x80000, -0x40000] is disjoint from every real field ftype
 # (0, sids 1..1024, -1/-2/-4 widths).
 fn MKVEC(S, elem): i64 {
@@ -880,9 +880,6 @@ fn IS_VEC_FIELD(S, ft): i64 {
         if (ft > (0 - 0x80000)) { return 1; }
     }
     return 0;
-}
-fn VEC_ELEM(S, ft): i64 {
-    return (0 - 0x50000) - ft;
 }
 
 # Get byte size of a single field from its type encoding
