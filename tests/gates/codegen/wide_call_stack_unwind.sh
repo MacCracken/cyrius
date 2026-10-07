@@ -53,7 +53,9 @@
 # gate run there — it cross-builds cycc_aarch64 from that src). M1-M4 were measured against the 12
 # widths 7..2100 (rows red, axis 1 / axis 2); M5-M8 against this 13-width + frame-probe gate:
 #   M1 ECALLCLEAN back to the single `add sp, sp, #imm12`   -> RED 10 / 10 (262..2100: exit 3 to 518,
-#                                                              SIGILL from 519)
+#                                                              SIGILL from 519 — measured on qemu's
+#                                                              default MTE cpu; under cortex-a72,
+#                                                              518 is SIGILL too)
 #   M2 ELDR_SP/ESTR_SP back to the single [sp, #imm] form    -> RED 4 / 4 (2049, 2053, 2054, 2100: exit 4)
 #   M3 ESTORESTACKPARM back to the single [x29, #imm] form   -> RED 2 / 2 (2054, 2100: exit 4)
 #   M4 the split's `add sp, sp, #lo` dropped (LSL #12 only)  -> RED 7 / 7 (263, 519, 600, 2048, 2049,
