@@ -6157,21 +6157,6 @@ fn _warn_large_static(totvar, dvb, dcn): i64 {
     return 0;
 }
 
-# Byte size of the global var named exactly `lit` (a C string), or 0 when there is none.
-# main_cx.cyr uses it to leave lib/alloc_cx.cyr's own heap out of the static-data advisory.
-fn _gvar_bytes_named(S, lit): i64 {
-    var vi = 0;
-    var n = GVCNT(S);
-    while (vi < n) {
-        var p = S + 0xEC00000 + L64(_varn_base + vi * 8);
-        var k = 0;
-        while (load8(p + k) != 0 && load8(p + k) == load8(lit + k)) { k = k + 1; }
-        if (load8(p + k) == 0 && load8(lit + k) == 0) { return L64(_vars_base + vi * 8); }
-        vi = vi + 1;
-    }
-    return 0;
-}
-
 # 6.6.5 — intern `mod_name` ONCE. Writes the candidate at GNPOS WITHOUT committing; if an
 # fn of exactly that name is already registered (pass 1 minted it), reuse THAT entry's
 # string and leave the pool untouched, otherwise commit. mmod == 0 → noff unchanged, so
