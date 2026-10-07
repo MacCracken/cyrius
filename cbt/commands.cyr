@@ -924,10 +924,12 @@ fn cmd_fuzz(source): i64 {
     # and no fuzz/ dir is created), so every scaffolded project reported
     # "No fuzz harnesses found" against a harness the scaffolder had just written.
     # Exactly the gap v6.4.72 closed for the TEST corpus and v6.4.78 for BENCH —
-    # fuzz was the third sibling that never got the same treatment. No double-count:
-    # the walk is RECURSIVE (v6.5.7), but "fuzz" and "tests" are sibling roots and a
-    # symlinked subdirectory is never descended (v6.5.12), so a harness is reached from
-    # one root only — `tests/fz -> ../fuzz` does not run fuzz/ twice.
+    # fuzz was the third sibling that never got the same treatment. The walk is
+    # RECURSIVE (v6.5.7), but "fuzz" and "tests" are sibling roots and a symlinked
+    # SUBDIRECTORY is never descended (v6.5.12), so a linked subtree is not walked
+    # twice — `tests/fz -> ../fuzz` does not run fuzz/ again. A symlinked FILE under
+    # tests/ is a harness of its own and does run, so `tests/a.fcyr -> ../fuzz/a.fcyr`
+    # runs fuzz/a.fcyr a second time and is counted twice.
     _fuzz_walk_dir("tests", &pass_store, &fail_store, &found_store);
     var fuzz_pass = load64(&pass_store);
     var fuzz_fail = load64(&fail_store);
@@ -1054,7 +1056,9 @@ fn cmd_bench(source): i64 {
     # `tests/bcyr` walk is DROPPED here. Keeping it would double-count every
     # bench under it, which the v6.4.78 comment's "no double-count: the walk is
     # non-recursive" reasoning explicitly depended on and which is now false.
-    # `benches/` and `tests/` remain disjoint roots.
+    # `benches/` and `tests/` are sibling roots and a symlinked SUBDIRECTORY is never
+    # descended, so a linked subtree (`tests/b -> ../benches`) is not walked twice; a
+    # symlinked FILE under tests/ is a bench of its own and does run.
     _bench_walk_dir("benches", &pass_store, &fail_store, &found_store);
     _bench_walk_dir("tests", &pass_store, &fail_store, &found_store);
     if (load64(&found_store) == 0) {
