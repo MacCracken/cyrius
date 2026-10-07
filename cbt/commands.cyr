@@ -906,7 +906,9 @@ fn cmd_fuzz(source): i64 {
     # "No fuzz harnesses found" against a harness the scaffolder had just written.
     # Exactly the gap v6.4.72 closed for the TEST corpus and v6.4.78 for BENCH —
     # fuzz was the third sibling that never got the same treatment. No double-count:
-    # dir_list is non-recursive, so "fuzz" and "tests" are disjoint.
+    # the walk is RECURSIVE (v6.5.7), but "fuzz" and "tests" are sibling roots and a
+    # symlinked subdirectory is never descended (v6.5.12), so a harness is reached from
+    # one root only — `tests/fz -> ../fuzz` does not run fuzz/ twice.
     _fuzz_walk_dir("tests", &pass_store, &fail_store, &found_store);
     var fuzz_pass = load64(&pass_store);
     var fuzz_fail = load64(&fail_store);
