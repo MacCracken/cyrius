@@ -1623,6 +1623,11 @@ _chk_gate "$ROOT/tests/gates/platform/agnos_tls_deadline.sh"
 # arena refill under `ulimit -v`, which the crossos .tcyr cannot reach portably.
 _chk_gate "$ROOT/tests/gates/memory/alloc_failure_returns_zero.sh"
 
+# 6.6.20 (HEAP-09) — a compiler that cannot map its 246 MiB arena refuses by name instead of
+# dying with SIGSEGV 139 and no message: x86, the aarch64 cross, cx and the PE host stage under
+# `ulimit -v`, x86 under `ulimit -d`, the native aarch64 fork under qemu across a limit sweep.
+_chk_gate "$ROOT/tests/gates/memory/compiler_arena_refused.sh"
+
 # 6.6.7 (bite 9) — the lint and doc walkers FAIL CLOSED. A cyrlint/cyrdoc that crashed, hung,
 # refused the file or did not exist scored "0 findings" in `cyrius audit`, the driver's lint
 # suite and CI (live in rekha: a 1.65 MB file cyrlint refuses read "ok: lint clean"). Drives
@@ -2114,6 +2119,12 @@ _chk_gate "$ROOT/tests/gates/frontend/integer_literal_overflow_refused.sh"
 _chk_gate "$ROOT/tests/gates/frontend/struct_field_type_unknown_refused.sh"
 _chk_gate "$ROOT/tests/gates/platform/agnos_proc_kill_tree_refused.sh"
 _chk_gate "$ROOT/tests/gates/platform/cx_compiler_reads_env.sh"
+
+# 6.6.20 (REVBE-03 + REFACTOR-04) — the compiler reads its WHOLE environment: `_read_env` made one
+# 8191-byte read, so a selector the CLI appends behind a large inherited environment was lost
+# (`cyrius build --win` -> ELF, rc 0) and a value straddling the cut was read short; a value over
+# 255 B is refused by name on every target instead of cut.
+_chk_gate "$ROOT/tests/gates/platform/compiler_reads_whole_environment.sh"
 _chk_gate "$ROOT/tests/gates/platform/object_mode_non_elf_refused.sh"
 
 # 6.6.17 — the Windows fork honours `--syntax-only` (cbt passes it to cycc.exe for `cyrius lint`);

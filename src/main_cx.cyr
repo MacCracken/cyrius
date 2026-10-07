@@ -44,49 +44,44 @@ include "src/frontend/parse.cyr"
 # /proc there), GetCommandLineW on Windows (the cmdline is one UTF-16LE string,
 # not NUL-split). Handled BEFORE the arena allocation so `--version` costs
 # nothing. CHANGELOG [6.6.6]
-#ifdef CYRIUS_TARGET_LINUX
-var _vbuf[256];
-var _vfd = syscall(SYS_OPEN, "/proc/self/cmdline", 0, 0);
-var _vn = syscall(SYS_READ, _vfd, &_vbuf, 255);
-syscall(SYS_CLOSE, _vfd);
-if (_vn > 0) {
-    var _vi = 0;
-    while (_vi < _vn) { if (load8(&_vbuf + _vi) == 0) { _vi = _vi + 1; break; } _vi = _vi + 1; }
-    while (_vi < _vn) {
-        if (_vi + 4 <= _vn) {
-            if (load8(&_vbuf + _vi) == 45 && load8(&_vbuf + _vi + 1) == 45) {
-                if (load8(&_vbuf + _vi + 2) == 118 && load8(&_vbuf + _vi + 3) == 101) {
+# The /proc/self/cmdline scan, ONE copy for the Linux and agnos arms below (it was two
+# verbatim blocks). Not compiled on macOS / Windows, which have no /proc and their own arms
+# (on x86 Mach-O its three syscalls alone are ~6 KB of dead code). CHANGELOG [6.6.20]
+#ifndef CYRIUS_TARGET_MACOS
+#ifndef CYRIUS_TARGET_WIN
+fn _cx_cmdline_flags(): i64 {
+    var vbuf[256];
+    var fd = syscall(SYS_OPEN, "/proc/self/cmdline", 0, 0);
+    var n = syscall(SYS_READ, fd, &vbuf, 255);
+    syscall(SYS_CLOSE, fd);
+    if (n <= 0) { return 0; }
+    var i = 0;
+    while (i < n) { if (load8(&vbuf + i) == 0) { i = i + 1; break; } i = i + 1; }
+    while (i < n) {
+        if (i + 4 <= n) {
+            if (load8(&vbuf + i) == 45 && load8(&vbuf + i + 1) == 45) {
+                if (load8(&vbuf + i + 2) == 118 && load8(&vbuf + i + 3) == 101) {
                     _write_out_all(_VERSION_STR_CYCC, _VERSION_LEN_CYCC);
                     syscall(SYS_EXIT, 0);
                 }
+                # "--sy" (--syntax-only), as on every other fork. CHANGELOG [6.6.20]
+                if (load8(&vbuf + i + 2) == 115 && load8(&vbuf + i + 3) == 121) {
+                    _syntax_only = 1;
+                }
             }
         }
-        while (_vi < _vn && load8(&_vbuf + _vi) != 0) { _vi = _vi + 1; }
-        _vi = _vi + 1;
+        while (i < n && load8(&vbuf + i) != 0) { i = i + 1; }
+        i = i + 1;
     }
+    return 0;
 }
 #endif
+#endif
+#ifdef CYRIUS_TARGET_LINUX
+_cx_cmdline_flags();
+#endif
 #ifdef CYRIUS_TARGET_AGNOS
-var _vbuf[256];
-var _vfd = syscall(SYS_OPEN, "/proc/self/cmdline", 0, 0);
-var _vn = syscall(SYS_READ, _vfd, &_vbuf, 255);
-syscall(SYS_CLOSE, _vfd);
-if (_vn > 0) {
-    var _vi = 0;
-    while (_vi < _vn) { if (load8(&_vbuf + _vi) == 0) { _vi = _vi + 1; break; } _vi = _vi + 1; }
-    while (_vi < _vn) {
-        if (_vi + 4 <= _vn) {
-            if (load8(&_vbuf + _vi) == 45 && load8(&_vbuf + _vi + 1) == 45) {
-                if (load8(&_vbuf + _vi + 2) == 118 && load8(&_vbuf + _vi + 3) == 101) {
-                    _write_out_all(_VERSION_STR_CYCC, _VERSION_LEN_CYCC);
-                    syscall(SYS_EXIT, 0);
-                }
-            }
-        }
-        while (_vi < _vn && load8(&_vbuf + _vi) != 0) { _vi = _vi + 1; }
-        _vi = _vi + 1;
-    }
-}
+_cx_cmdline_flags();
 #endif
 #ifdef CYRIUS_TARGET_MACOS
 var _vflags = _ARGV_FLAGS_MACHO();
@@ -94,11 +89,12 @@ if ((_vflags & 1) == 1) {
     _write_out_all(_VERSION_STR_CYCC, _VERSION_LEN_CYCC);
     syscall(SYS_EXIT, 0);
 }
+if ((_vflags & 8) == 8) { _syntax_only = 1; }   # --syntax-only. CHANGELOG [6.6.20]
 #endif
 #ifdef CYRIUS_TARGET_WIN
 # GetCommandLineW → ONE UTF-16LE string (program path + args, space-separated).
 # Walk it 2 bytes at a time and test the first four chars of each token start
-# for "--ve". Mirrors main_win.cyr's block; reading +6 stays inside the
+# for "--ve" and "--sy". Mirrors main_win.cyr's block; reading +6 stays inside the
 # kernel-owned double-NUL-terminated buffer.
 var _vw = syscall(61446);
 if (_vw != 0) {
@@ -122,6 +118,12 @@ if (_vw != 0) {
                                     syscall(SYS_EXIT, 0);
                                 }
                             }
+                            # "--sy" (--syntax-only): UTF-16 s(115) y(121). CHANGELOG [6.6.20]
+                            if (load8(_vw + _wi + 4) == 115) {
+                                if (load8(_vw + _wi + 6) == 121) {
+                                    _syntax_only = 1;
+                                }
+                            }
                         }
                     }
                     _wtok = 0;
@@ -137,7 +139,7 @@ if (_vw != 0) {
 # so cross-compiling cycc_cx to Mach-O/PE with the old raw `syscall(SYS_BRK,...)`
 # emitted 2 unrouted syscalls that FAULTED on macOS (signal 12) and would on PE.
 # Mirror main.cyr / main_win.cyr: mmap on macho (flags 0x1002 = MAP_ANON|PRIVATE)
-# + on PE (flags 0x22, the syscall(9) → VirtualAlloc reroute), brk on Linux/agnos.
+# + on PE (flags 0x22, the syscall(9) → VirtualAlloc reroute), brk on Linux, mmap(27) on agnos.
 # Flat per-target #ifdef blocks (exactly one of MACOS/WIN/LINUX/AGNOS is predefined
 # by the compiling driver) — the alloc.cyr idiom, avoids nested #ifdef. Arena top
 # 0xF600000 maps the relocated lexid_entries @ 0xF400000 (v6.4.21 LEXID cap).
@@ -150,14 +152,32 @@ if (S < 0x100000) {
 #endif
 #ifdef CYRIUS_TARGET_WIN
 var S = syscall(9, 0, 0xF600000, 3, 0x22, 0 - 1, 0);
+if (S < 0x100000) {   # VirtualAlloc returns 0 on failure. CHANGELOG [6.6.20]
+    syscall(1, 2, "error: cannot map the 246 MiB compiler arena (VirtualAlloc refused it)\n", 71);
+    syscall(60, 1);
+}
 #endif
 #ifdef CYRIUS_TARGET_LINUX
 var S = syscall(SYS_BRK, 0);
-syscall(SYS_BRK, S + 0xF600000);
+# 6.6.20: the extension is CHECKED. An rlimit (ulimit -v / -d) that refuses it left the arena
+# unmapped and cycc died on its first heap store with SIGSEGV 139 and no message; the Mach-O
+# paths already refused by name. CHANGELOG [6.6.20]
+var _arena_top = syscall(SYS_BRK, S + 0xF600000);
+if (_arena_top < S + 0xF600000) {
+    syscall(SYS_WRITE, 2, "error: cannot map the 246 MiB compiler arena (brk refused it; check ulimit -v / ulimit -d)\n", 91);
+    syscall(SYS_EXIT, 1);
+}
 #endif
 #ifdef CYRIUS_TARGET_AGNOS
-var S = syscall(SYS_BRK, 0);
-syscall(SYS_BRK, S + 0xF600000);
+# agnos has no brk: its syscall 12 is sync() and returns 0, so the old brk(0) / brk(S + ...)
+# pair left S = 0 and no arena. Userspace memory comes from mmap(27) (length only; the kernel
+# picks the base; zero-filled; 0 = failure), as lib/alloc_agnos.cyr does. The numbers are
+# agnos's own, spelled literally (27 = mmap, 1 = write, 0 = exit). CHANGELOG [6.6.20]
+var S = syscall(27, 0xF600000);
+if (S < 0x100000) {
+    syscall(1, 2, "error: cannot map the 246 MiB compiler arena (agnos mmap refused it)\n", 69);
+    syscall(0, 1);
+}
 #endif
 
 # Zero scratch state (v5.8.63 extraction; see src/common/util.cyr for slot list)

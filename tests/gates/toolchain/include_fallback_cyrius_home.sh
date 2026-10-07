@@ -228,6 +228,13 @@ while read -r LBL BIN RUN NATIVE; do
     drift 0 mc drift_nowarn_split PAD="$(pad 4080)" CYRIUS_NO_WARN_PIN_DRIFT=1 CYRIUS_HOME="$B"
     drift 1 mc drift_nowarn_not_one CYRIUS_HOME="$B" PAD="$P5000" CYRIUS_NO_WARN_PIN_DRIFT=11
     strict drift_strict_pad5000 CYRIUS_HOME="$B" PAD="$P5000" CYRIUS_STRICT_PIN=1
+    # 6.6.20 — `_env_var_is_1` is `_read_env(name) == "1"` now (one environ walker), so these hold
+    # `_read_env` itself: past 8 KB (it was ONE 8191-B read), the knob NAME straddling its second
+    # 4 KB chunk (PAD= + 8176 B + NUL puts it at byte 8181), and a value over 255 B refused, not
+    # cut to a leading `1`. With the fold over the 6.6.19 `_read_env`, the pad9000 rows go RED.
+    strict drift_strict_pad9000 PAD="$P9000" CYRIUS_HOME="$B" CYRIUS_STRICT_PIN=1
+    drift 0 mc drift_nowarn_split8k PAD="$(pad 8176)" CYRIUS_NO_WARN_PIN_DRIFT=1 CYRIUS_HOME="$B"
+    drift 1 mc drift_nowarn_overlong CYRIUS_HOME="$B" CYRIUS_NO_WARN_PIN_DRIFT="1$(pad 299)"
 done < "$T/compilers"
 
 [ "$NCOMP" -ge 1 ] || _bad "no compiler ran (floor 1)"

@@ -215,8 +215,8 @@ fn FIXUP(S): i64 {
     # the false-positive surface entirely for dead-host refs. See
     # the post-DCE block below + CHANGELOG [5.11.59].
     #
-    # `undef_count` declared at fn scope here so the moved
-    # `_strict_mode` exit (still after the patch loop) can read it.
+    # `undef_count` declared at fn scope here so the reachable-undef
+    # refusal after the patch loop (`_allow_undef`, v6.3.2) can read it.
     var undef_count = 0;
     var fcnt_pre = GFCNT(S);
     # Symbol dump — opt-in via CYRIUS_SYMS env var (value = output path). Used for
@@ -789,8 +789,8 @@ fn FIXUP(S): i64 {
     # the warning when the host is unreachable (live[host] == 0).
     # The `vec_get`-from-dead-`vec_find` class from iron-boot
     # papercut Item 3 now stays silent; genuinely-reachable undef
-    # refs still surface the warning (and the `--strict-pin` /
-    # `_strict_mode` hard-fail paths still fire on real bugs).
+    # refs still surface the warning (and the default hard-fail
+    # below, v6.3.2, still fires on real bugs).
     #
     # Top-level / entry-block code (host < 0 — coff outside every
     # fn body) is always live; the warning fires unconditionally

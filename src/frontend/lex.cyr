@@ -461,9 +461,10 @@ fn _env_step(st, c): i64 {
 }
 
 # ONE pass over /proc/self/environ, read in chunks TO EOF (it was a single 4096-B read, so
-# a HOME past the first 4 KB of the environment was silently missed). No heap and no
-# _read_env, which reads 8 KB and truncates a value to 255 B. 0, or -1 (unreadable: no
-# fallback). The open matches READFILE's: aarch64 has only openat. CHANGELOG [5.11.27]
+# a HOME past the first 4 KB of the environment was silently missed). No heap, and not
+# _read_env: this captures BOTH paths in one pass, each up to 1984 B, where _read_env holds
+# one value of at most 255 B. 0, or -1 (unreadable: no fallback). The open matches
+# READFILE's: aarch64 has only openat. CHANGELOG [5.11.27]
 fn _env_scan_homes(st): i64 {
     var fd = 0;
     if (SYS_OPEN == 2) { fd = syscall(SYS_OPEN, "/proc/self/environ", 0, 0); }
@@ -541,76 +542,19 @@ fn _init_cyrius_lib(): i64 {
 # liability). `CYRIUS_NO_WARN_SHADOW_LIB` is still honored by the wrapper check.
 # See docs/development/issues/2026-07-14-converge-cycc-shadow-lib-sentinel.md.
 
-# v5.11.57: shared opt-out env probe. Returns 1 if
-# /proc/self/environ contains "<name>=1\0", 0 otherwise. Used
-# by _check_cyml_pin_drift (CYRIUS_NO_WARN_PIN_DRIFT,
-# CYRIUS_STRICT_PIN). The old _check_shadow_lib had its own
-# inline copy of this probe (CYRIUS_NO_WARN_SHADOW_LIB); that
-# function was retired at v6.4.66 (see above), so this helper is
-# now the single opt-out probe.
-fn _env_var_is_1(name, name_len): i64 {
+# v5.11.57: the shared opt-out env probe — 1 when the FIRST entry named `name` has the value
+# exactly "1", else 0. Used by _check_cyml_pin_drift (CYRIUS_NO_WARN_PIN_DRIFT,
+# CYRIUS_STRICT_PIN). 6.6.17 gave it its own chunked /proc/self/environ scan because
+# `_read_env` then read only the first 8 KB; 6.6.20 made `_read_env` read to EOF, so this is
+# that one walker again (a value over 255 B is refused there, and is not "1" anyway).
+# CHANGELOG [6.6.20]
+fn _env_var_is_1(name): i64 {
     #ifdef CYRIUS_TARGET_LINUX
-    # 6.6.17 — read TO EOF in chunks, the way `_env_scan_homes` does: it was ONE 4096-B read,
-    # so CYRIUS_NO_WARN_PIN_DRIFT=1 / CYRIUS_STRICT_PIN=1 past the first 4 KB of the
-    # environment were ignored (the warning printed; strict mode did not refuse). The FIRST
-    # entry named `name` decides, as getenv and _read_env do. CHANGELOG [6.6.17]
-    var fd = 0;
-    if (SYS_OPEN == 2) { fd = syscall(SYS_OPEN, "/proc/self/environ", 0, 0); }
-    else { fd = syscall(SYS_OPEN, 0 - 100, "/proc/self/environ", 0, 0); }
-    if (fd < 0) { return 0; }
-    var st[32];
-    store64(&st, 0);
-    store64(&st + 8, 1);
-    store64(&st + 16, 0);
-    store64(&st + 24, 0 - 1);
-    var buf[4096];
-    var n = syscall(SYS_READ, fd, &buf, 4096);
-    while (n > 0) {
-        var i = 0;
-        while (i < n) {
-            _ev1_step(&st, name, name_len, load8(&buf + i));
-            i = i + 1;
-        }
-        n = syscall(SYS_READ, fd, &buf, 4096);
+    var v = _read_env(name);
+    if (v != 0) {
+        if (load8(v) == 49) { if (load8(v + 1) == 0) { return 1; } }
     }
-    syscall(SYS_CLOSE, fd);
-    _ev1_step(&st, name, name_len, 0);   # end an unterminated last entry
-    if (load64(&st + 24) == 1) { return 1; }
     #endif
-    return 0;
-}
-
-# One environ byte for `_env_var_is_1`. State `st` (i64 slots): +0 bytes into the entry, +8 1
-# while the entry still spells `name=`, +16 the value so far (0 empty, 1 exactly "1", 2 else),
-# +24 the verdict (-1 until the first `name=` entry ends, then 1 for "1", 0 otherwise).
-fn _ev1_step(st, name, nl, c): i64 {
-    var ep = load64(st);
-    if (c == 0) {
-        if (load64(st + 8) == 1) { if (ep > nl) { if (load64(st + 24) == 0 - 1) {
-                    var v = 0;
-                    if (load64(st + 16) == 1) { v = 1; }
-                    store64(st + 24, v);
-                } } }
-        store64(st, 0);
-        store64(st + 8, 1);
-        store64(st + 16, 0);
-        return 0;
-    }
-    store64(st, ep + 1);
-    if (load64(st + 8) == 0) { return 0; }
-    if (ep < nl) {
-        if (load8(name + ep) != c) { store64(st + 8, 0); }
-        return 0;
-    }
-    if (ep == nl) {
-        if (c != 61) { store64(st + 8, 0); }
-        return 0;
-    }
-    if (ep == nl + 1) {
-        if (c == 49) { store64(st + 16, 1); } else { store64(st + 16, 2); }
-        return 0;
-    }
-    store64(st + 16, 2);
     return 0;
 }
 
@@ -629,7 +573,7 @@ fn _ev1_step(st, name, nl, c): i64 {
 fn _check_cyml_pin_drift(): i64 {
     #ifdef CYRIUS_TARGET_LINUX
     var _pd_no = "CYRIUS_NO_WARN_PIN_DRIFT";
-    if (_env_var_is_1(_pd_no, 24) == 1) { return 0; }
+    if (_env_var_is_1(_pd_no) == 1) { return 0; }
     var _pd_fd = 0;
     if (SYS_OPEN == 2) { _pd_fd = syscall(SYS_OPEN, "cyrius.cyml", 0, 0); }
     else { _pd_fd = syscall(SYS_OPEN, 0 - 100, "cyrius.cyml", 0, 0); }
@@ -727,7 +671,7 @@ fn _check_cyml_pin_drift(): i64 {
         if (_pd_match == 1) { return 0; }
     }
     var _pd_strict_name = "CYRIUS_STRICT_PIN";
-    var _pd_strict = _env_var_is_1(_pd_strict_name, 17);
+    var _pd_strict = _env_var_is_1(_pd_strict_name);
     if (_pd_strict == 1) {
         syscall(1, 2, "error: cyrius.cyml pins ", 24);
         syscall(1, 2, &_pd_buf + _pd_pin_start, _pd_pin_len);

@@ -157,7 +157,8 @@ include "src/backend/aarch64/fixup.cyr"
 # here (emit_fmt is never 2 on native-Linux). The cross + macho forks
 # define the real fn via their macho include; this native-only stub
 # resolves the symbol (silences the cross-build "undefined function"
-# warning; FATAL under --strict) without pulling in the Mach-O emitter.
+# warning; a reachable one is FATAL by default since v6.3.2) without pulling
+# in the Mach-O emitter.
 # Same dead-branch justification as aarch64/emit.cyr's _PE stub cohort.
 # See CHANGELOG [6.2.44].
 fn EMITMACHO_ARM64(S): i64 { return 0; }
@@ -166,12 +167,10 @@ fn EMITMACHO_ARM64(S): i64 { return 0; }
 # MAIN
 # ================================================================
 
-# v5.11.63: --strict parity with main.cyr. Same block as the Linux
-# aarch64 cross-compiler (main_aarch64.cyr); native path resolves
-# SYS_OPEN to openat(56) so the AT_FDCWD = -100 branch fires. Shared
-# backend/aarch64/fixup.cyr reads `_strict_mode` after the patch loop.
-# See CHANGELOG [5.11.63].
-var _strict_mode = 0;
+# Command-line flags from /proc/self/cmdline — the same block as the Linux
+# aarch64 cross-compiler (main_aarch64.cyr); the native path resolves SYS_OPEN
+# to openat(56) so the AT_FDCWD = -100 branch fires. `--strict` is ACCEPTED and
+# does nothing (see src/main.cyr). CHANGELOG [6.6.20]
 var _allow_undef = 0;   # v6.3.2: --allow-undef downgrades the now-default reachable-undef hard error (aarch64/fixup.cyr gates on `_allow_undef == 0`)
 var _vbuf[256];
 var _vfd = 0;
@@ -196,10 +195,14 @@ if (_vn > 0) {
                 }
             }
         }
+        # "--sy" (--syntax-only) — the same flag as main.cyr's (see _syntax_only, util.cyr):
+        # `cyrius lint`'s pre-pass passes it, and without this arm a file whose only fault
+        # was a name defined in another file was refused as unparseable on this host.
+        # chars s(115) y(121). CHANGELOG [6.6.20]
         if (_vi + 4 <= _vn) {
             if (load8(&_vbuf + _vi) == 45 && load8(&_vbuf + _vi + 1) == 45) {
-                if (load8(&_vbuf + _vi + 2) == 115 && load8(&_vbuf + _vi + 3) == 116) {
-                    _strict_mode = 1;
+                if (load8(&_vbuf + _vi + 2) == 115 && load8(&_vbuf + _vi + 3) == 121) {
+                    _syntax_only = 1;
                 }
             }
         }
@@ -208,6 +211,16 @@ if (_vn > 0) {
             if (load8(&_vbuf + _vi) == 45 && load8(&_vbuf + _vi + 1) == 45) {
                 if (load8(&_vbuf + _vi + 2) == 97 && load8(&_vbuf + _vi + 3) == 108) {
                     _allow_undef = 1;
+                }
+            }
+        }
+        # "--pie" — position-independent codegen, as in main_aarch64.cyr (also CYRIUS_PIE=1,
+        # read below). This fork had neither, so `cyrius build --pie` on an ARM host wrote a
+        # fixed-address ET_EXEC and exited 0. chars p(112) i(105) e(101). CHANGELOG [6.6.20]
+        if (_vi + 5 <= _vn) {
+            if (load8(&_vbuf + _vi) == 45 && load8(&_vbuf + _vi + 1) == 45) {
+                if (load8(&_vbuf + _vi + 2) == 112 && load8(&_vbuf + _vi + 3) == 105 && load8(&_vbuf + _vi + 4) == 101) {
+                    _pie_mode = 1;
                 }
             }
         }
@@ -221,7 +234,14 @@ if (_vn > 0) {
 var S = syscall(SYS_BRK, 0);
 # brk extends through tok_lines (~78.5 MB) — synced with main.cyr.
 # v6.4.21: 0x5E1D000 → 0xF600000 to map the relocated lexid_entries @ 0xF400000.
-syscall(SYS_BRK, S + 0xF600000);
+# 6.6.20: the extension is CHECKED. An rlimit (ulimit -v / -d) that refuses it left the arena
+# unmapped and cycc died on its first heap store with SIGSEGV 139 and no message; the Mach-O
+# paths already refused by name. CHANGELOG [6.6.20]
+var _arena_top = syscall(SYS_BRK, S + 0xF600000);
+if (_arena_top < S + 0xF600000) {
+    syscall(SYS_WRITE, 2, "error: cannot map the 246 MiB compiler arena (brk refused it; check ulimit -v / ulimit -d)\n", 91);
+    syscall(SYS_EXIT, 1);
+}
 
 # Zero scratch state (v5.8.63 extraction; see src/common/util.cyr for slot list)
 _HEAP_INIT_SCRATCH(S);
@@ -229,53 +249,8 @@ _HEAP_INIT_SCRATCH(S);
 # v6.0.7 — init alloc and assign rp_vec (return-patch storage).
 alloc_init();
 rp_vec = vec_new();
-# Phase 0 (v6.2.0): growable fixup table — base = the existing 0x107B000 region,
-# cap = the old hard cap; GFCNT grows it 2x via alloc() once full (util.cyr).
-_fixup_base = S + 0x107B000;
-_fixup_cap = 1048576;
-# Phase 0 (v6.2.0): growable fn-tables — bases start AT the original fixed
-# offsets, mask 8191, cap 8192 (byte-identical under the old cap; REGFN grows
-# the family + rehashes when the count would exceed it). See util.cyr.
-_fnt_cstrmask = S + 0x93A000;
-_fnt_resmask = S + 0x94A000;
-_fnt_optmask = S + 0x95A000;
-_fnt_tagmask = S + 0x96A000;
-_fnt_ovstr = S + 0x97A000;
-_fnt_ovint = S + 0x98A000;
-_fnt_ovcstr = S + 0x99A000;
-_fnt_simdmask = S + 0x9AA000;
-_fnt_names = S + 0x9BA000;
-_fnt_offsets = S + 0x9CA000;
-_fnt_params = S + 0x9DA000;
-_fnt_bodystart = S + 0x9EA000;
-_fnt_bodyend = S + 0x9FA000;
-_fnt_inline = S + 0xA0A000;
-_fnt_strmask = S + 0xA1A000;
-_fnt_codeend = S + 0xA2A000;
-_fnt_structmask = S + 0xA3A000;
-_fnt_namehash = S + 0x110000;
-_fnt_starthash = S + 0x114000;
-_fnt_hash_mask = 4095;   # v6.5.40: hash slots are 4 B now, so the fixed 16 KB regions hold 4096
-_fnt_cap = 2048;        # v6.5.51: HALF the fixed 4096-slot hash regions, so load stays <=50 % before the first grow (was 4096 = 100 % full)        # v6.5.40: was 8192 at 2 B/slot; _fnt_grow doubles from here
-# Growable codebuf (Phase 0 v6.2.0; 8 MiB base + 8 MiB steps @ v6.4.49): base is
-# an off-heap 8 MiB alloc (cap 8388608); EB grows +8 MiB off-heap when cp nears
-# the cap, 64 MiB ceiling (util.cyr _codebuf_grow). Was a fixed 3 MiB in-heap
-# region @ S+0x41A000 pre-.49. cx's own 0x54A000 codebuf is separate + fixed.
-_codebuf_base = alloc(8388608);
-_output_base = alloc(1073741824);
-if (_output_base == 0) { syscall(SYS_WRITE, 2, "error: cannot allocate 1 GiB output buffer
-", 43); syscall(SYS_EXIT, 1); }
-_output_cap = 1073741824;   # v6.4.52: 1 GiB output buffer on ALL platforms (macOS/Windows large-alloc path landed; was Linux-only + 16 MiB fallback in .51)
-_varn_base = S + 0x11A000;
-_vars_base = S + 0x12A000;
-_vart_base = S + 0x13A000;
-_vgoff_base = S + 0x1B0000;
-_vecv_base = S + 0x1D8000;
-_vgsi_base = S + 0x1EC000;
-_venid_base = S + 0x204000;
-_var_cap = 8192;
-_vsgn_base = alloc(1048576 * 8);   # v6.4.23 signed-global sign-ext: max-sized (var-grow cap) so it never grows → NO cybs-fragile grow-chain change; 8MB lazy-mapped
-_codebuf_cap = 8388608;
+# The region bases + caps, shared by six drivers. CHANGELOG [6.6.20]
+include "src/common/heap_regions.cyr"
 
 # Read input (256KB, v3.4.19 — see src/main.cyr for rationale)
 var bl = 0;
@@ -312,23 +287,41 @@ var _poison_env_early = _read_env("CYRIUS_POISON");
 # Costs nothing when off. Set on all SEVEN forks, because a fuzz mode that exists only on
 # x86-Linux tells three other platforms' consumers nothing.
 if (_poison_env_early != 0) { PP_PREDEFINE(S, "CYRIUS_POISON"); }
-# v5.11.27 — port the env-driven CYRIUS_MACHO_ARM dispatch block that
-# main_aarch64.cyr:148-159 has carried since v5.5.16. Without it
-# lib/alloc.cyr's `#ifdef CYRIUS_TARGET_LINUX` branch is dead → alloc
-# undefined → every aarch64-native binary SIGILLs at first alloc().
-# See CHANGELOG [5.11.27].
+# CYRIUS_MACHO_ARM=1 is REFUSED by name here. This fork has no Mach-O emitter (it omits
+# backend/macho/emit.cyr; EMITMACHO_ARM64 above is a stub), so it used to predefine
+# CYRIUS_TARGET_MACOS, compile the whole program, and write ZERO bytes with exit 0. Mach-O
+# arm64 comes from the cross (cycc_aarch64) or from cycc on macOS. CHANGELOG [6.6.20]
 var _macho_arm_env_early = _read_env("CYRIUS_MACHO_ARM");
-var _is_macho_arm_build = 0;
 if (_macho_arm_env_early != 0) {
     if (load8(_macho_arm_env_early) == 49 && load8(_macho_arm_env_early + 1) == 0) {
-        _is_macho_arm_build = 1;
+        syscall(SYS_WRITE, 2, "error: CYRIUS_MACHO_ARM=1: this native aarch64-Linux cycc has no Mach-O emitter (use cycc_aarch64, or cycc on macOS)\n", 117);
+        syscall(SYS_EXIT, 1);
     }
 }
-if (_is_macho_arm_build == 1) {
-    PP_PREDEFINE(S, "CYRIUS_TARGET_MACOS");
-} else {
-    PP_PREDEFINE(S, "CYRIUS_TARGET_LINUX");
+# CYRIUS_PIE=1 mirrors the --pie flag above, as in main_aarch64.cyr. Read before any
+# codegen: the aarch64 emitter picks adrp/add over absolute addresses on _pie_mode.
+var _pie_env_early = _read_env("CYRIUS_PIE");
+if (_pie_env_early != 0) {
+    if (load8(_pie_env_early) == 49 && load8(_pie_env_early + 1) == 0) {
+        _pie_mode = 1;
+    }
 }
+# CYRIUS_KERNEL=1 (what `cyrius build --target=aarch64-bare-metal-elf` injects) forces
+# kernel_mode and CYRIUS_KERNEL_BASE=0x<hex> sets its load base, as in main_aarch64.cyr.
+# This fork read neither, so asked for a kernel image it wrote a USERLAND ELF, rc 0.
+# CHANGELOG [6.6.20]
+var _kern_env_n = _read_env("CYRIUS_KERNEL");
+if (_kern_env_n != 0) {
+    if (load8(_kern_env_n) == 49 && load8(_kern_env_n + 1) == 0) {
+        S64(S + 0x18FCA0, 1);
+    }
+}
+var _kbase_env_n = _read_env("CYRIUS_KERNEL_BASE");
+if (_kbase_env_n != 0) {
+    var _kb_n = _parse_hex_env(_kbase_env_n);
+    if (_kb_n != 0) { S64(S + 0x18FCE8, _kb_n); }
+}
+PP_PREDEFINE(S, "CYRIUS_TARGET_LINUX");
 # v5.10.39 — non-PE targets support f64v2/f64v4 value-form param ABI.
 PP_PREDEFINE(S, "CYRIUS_HAS_VAL_SIMD_PARAMS");
 PREPROCESS(S);
@@ -399,25 +392,9 @@ if (lv >= 0) { EVLOAD(S, lv); }
 # and emits ECALLTO if found.
 var _epi_km_pre = L64(S + 0x18FCA0);
 if (_epi_km_pre == 0) {
-    var _main_fc = GFNC(S);
-    var _main_fi = 0;
-    var _main_found = 0 - 1;
-    while (_main_fi < _main_fc) {
-        var _main_noff = L64(_fnt_names + _main_fi * 8);
-        if (load8(S + 0xEC00000 + _main_noff)     == 109) {
-            if (load8(S + 0xEC00000 + _main_noff + 1) == 97) {
-                if (load8(S + 0xEC00000 + _main_noff + 2) == 105) {
-                    if (load8(S + 0xEC00000 + _main_noff + 3) == 110) {
-                        if (load8(S + 0xEC00000 + _main_noff + 4) == 0) {
-                            _main_found = _main_fi;
-                            _main_fi = _main_fc;
-                        }
-                    }
-                }
-            }
-        }
-        _main_fi = _main_fi + 1;
-    }
+    # The first fn named exactly "main" (src/common/util.cyr), as main.cyr and main_win.cyr
+    # look it up. CHANGELOG [6.6.20]
+    var _main_found = _find_fn_by_name(S, "main", 4);
     if (_main_found >= 0) {
         var _main_off = L64(_fnt_offsets + _main_found * 8);
         if (_main_off >= 0) {
