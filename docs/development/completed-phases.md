@@ -74,10 +74,12 @@ per-minor max heading, not carried over from the deleted text.
 
 ---
 
-## v6.6.x — releases so far (the minor is still open)
+## v6.6.x — releases so far (the minor closes at 6.6.20)
 
-Added 2026-10-06, when roadmap.md was cleaned of the shipped 6.6.13–6.6.17 sections. One line per release;
-the CHANGELOG is the detail. The minor closes at the 6.6.20 closeout (roadmap.md § *The 6.6.x tail*).
+Added 2026-10-06, when roadmap.md was cleaned of the shipped 6.6.13–6.6.17 sections. One line per release,
+except the repair window (6.6.1–6.6.6) and the repair batch (6.6.7–6.6.12), which ran as one plan each and are
+one line each; the CHANGELOG is the detail. The minor closes at the 6.6.20 closeout (roadmap.md § *The 6.6.x
+tail*).
 
 | Release | Shipped | What it was |
 |---|---|---|
@@ -89,6 +91,9 @@ the CHANGELOG is the detail. The minor closes at the 6.6.20 closeout (roadmap.md
 | **6.6.15** | 2026-10-03 | sigil 3.13.8/3.13.9 (constant-time ECDH + signing), ECDHE on P-256 / P-384 across native TLS, the `secret var` epilogue leak, B0a interning; CVE-68 … CVE-73. |
 | **6.6.16** | 2026-10-05 | Repair: silent miscompiles, the named struct argument as a COPY, one type-name resolver, plain-socket SIGPIPE, CA EKU, deps tag traversal, the hisab and sandhi filings; CVE-74 … CVE-76. Tagged without the cross-OS leg. |
 | **6.6.17** | 2026-10-06 | The manifest release: P1 (`cyrius.cyml` as configuration, `--print-config`), P5-A (coverage over run programs), one top-level scan for all seven forks, pointer fields + linked lists, `p + n` by sizeof(T), the 6.6.16 lane-review finds, cybs's leading-`_` lexer (the seed broke past 2048 fns); CVE-77. Cross-OS GREEN again. |
+| **6.6.18** | 2026-10-06 | distlib + poison: P4 option 2 (the compile-verify fixpoint is the only sidecar authority; every bundle raw-includable), P6 `--poison` through an allocator seam (`alloc()` / arena redzones, exit 86, `--poison=ab`), the aarch64 ESYSXLAT compile-time fold (`cycc-native-aarch64` −35.2 %), DCE's "compaction declined: <why>" note, arm64-macOS `sxtw`; CVE-78. Tag `010538b5`; the 12 folded stdlibs regenerated in one wave after it. |
+| **6.6.19** | 2026-10-06 | The fold release: the 12 folds re-vendored byte-identical from the wave's tags (R1), `log` / `ws` / `ws_server` include their folds (R2), tls_native's mirror of sigil's leaves retired (R3); B0b string interning by index (self_compile −6.7 %); P2 `[embed]` + distlib `embed`, hardened before release (no CVE); x86-macOS real threads (T1) and `async_await_readable_ms` on macOS, Windows and agnos (A1 / A2). Tag `f5a5175a`. |
+| **6.6.20** | *in progress* | The closeout: the Closeout checklist as one audit (141 findings, the 44 P0–P2 bugs each confirmed by a second reviewer), fixed in parallel worktree lanes; plus three backlog items the user promoted (the redefined-fn binding, aarch64 calls with 262+ arguments, the `sizeof` / `mulh64` / `fncallN` names). The ledger is in [cycle-discipline.md](cycle-discipline.md). *(Integration: replace "in progress" with the tag date, and summarise what shipped.)* |
 
 ---
 
