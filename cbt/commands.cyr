@@ -2327,33 +2327,48 @@ fn cmd_deny(file): i64 {
 #   pi   Linux aarch64 (real ARM)      — native self-host (NOT cross-compiler)
 #   cass Windows x86_64 (PE32+)        — PE self-host
 # Each per-host sequence lives in scripts/cross-os-selfhost.sh and runs via
-# _co_run_sh (real environment so ssh/scp have HOME + agent). The ecb arm
-# below + the ecb install-path arm stay inline (proven, packaging gate).
+# _co_run_sh (real environment so ssh/scp have HOME + agent). The install-path
+# pillars (ecb, ach, cass) stay inline here — they are not part of the release gate.
+#
+# ⛔ 6.6.20 (CLN-05) — EVERY HOST'S LEG IS RELEASE-GATE STEP 4, VERBATIM. Only ach was given the
+# `crossos` selector, so the platform libtest (tests/tcyr/crossos/ on the native compiler) ran on
+# ach alone: pi and cass got a bare self-host, and ecb an inline self-host + exit-42 sequence that
+# predated the script's (no cx guards, no CLI-env check, no libtest) — while the ach comment said
+# the libtest ran "matching ecb/cass/pi". scripts/release-gate.sh runs
+# `cross-os-selfhost.sh "$H" crossos` for ecb ach cass pi; _co_selfhost_leg is that call, once per
+# host, so this verb can no longer be weaker than the gate it mirrors.
+# Gate: tests/gates/toolchain/audit_platform_check_matches_release_gate.sh. CHANGELOG [6.6.20]
+fn _co_selfhost_leg(host, label): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "sh scripts/cross-os-selfhost.sh ");
+    str_builder_add_cstr(sb, host);
+    str_builder_add_cstr(sb, " crossos");
+    var rc = _co_run_sh(str_data(str_builder_build(sb)));
+    if (rc == 0) {
+        sys_write(STDOUT_FD, "  PASS: ", 8);
+        sys_write(STDOUT_FD, label, strlen(label));
+        println(" cycc self-host byte-identical + crossos libtest");
+        return 0;
+    }
+    sys_write(STDOUT_FD, "  FAIL: ", 8);
+    sys_write(STDOUT_FD, label, strlen(label));
+    if (rc == 3) {
+        println(" UNREACHABLE — host down/unresolvable, cannot verify (publish blocked)");
+    } else {
+        println(" self-host or crossos libtest FAILED");
+    }
+    return 1;
+}
+
 fn _cross_os_selfhost(): i64 {
     var fails = 0;
     println("");
     println("── Cross-OS self-host (REAL hardware — fail-loud, no skip) ──");
 
-    # ecb (macOS, Apple Silicon)
-    # ⛔ v6.6.6 — PER-RUN STAGING. These three inline sequences (and
-    # scripts/cross-os-selfhost.sh, fixed in the same bite) staged at FIXED names —
-    # /tmp/_co_* locally, ~/_cyaud and ~/_coih* on the Macs — so two audits, or an audit
-    # beside a cross-os-selfhost.sh run, overwrote each other's cross-compilers, bundles
-    # and sandboxed installs, and the pre-run `rm -rf ~/_cyaud` could delete a LIVE run's
-    # tree. `$_T` is a private mktemp dir, `$_D` a per-pid remote dir, and both are removed
-    # at the end. CHANGELOG [6.6.6]
-    var ecb_seq = "set -e; _T=$(mktemp -d) && [ -d $_T ] || exit 1; _D=_cyaud_$$; cat src/main.cyr | build/cycc > $_T/l && chmod +x $_T/l; cat src/main_aarch64.cyr | $_T/l > $_T/x && chmod +x $_T/x; cat src/main_aarch64_macho.cyr | CYRIUS_MACHO_ARM=1 $_T/x > $_T/m; tar czf $_T/b.tgz src lib VERSION; ssh -o ConnectTimeout=15 -o BatchMode=yes ecb 'rm -rf ~/'$_D' && mkdir ~/'$_D; scp -q $_T/b.tgz $_T/m ecb:~/$_D/; _rc=0; ssh ecb 'cd ~/'$_D' && tar xzf b.tgz && chmod +x m && codesign -s - -f m && cat src/main_aarch64_macho.cyr | CYRIUS_MACHO_ARM=1 ./m > r1 && cp r1 r1r && chmod +x r1r && codesign -s - -f r1r && cat src/main_aarch64_macho.cyr | CYRIUS_MACHO_ARM=1 ./r1r > r2 && cmp r1 r2 && printf '\\''fn main() { return 42; }'\\'' > _ec.cyr && cat _ec.cyr | CYRIUS_MACHO_ARM=1 ./r1r > _ec && chmod +x _ec && codesign -s - -f _ec && (_x=0; ./_ec || _x=$?; [ $_x -eq 42 ])' || _rc=$?; rm -rf $_T; ssh ecb 'rm -rf ~/'$_D >/dev/null 2>&1 || true; exit $_rc";
-    # The trailing exit-code assertion (v6.0.37) guards the rot-class
-    # where `main()` is never called and the program exits with argc:
-    # a `var x = 42;`-only smoke would pass it. `fn main(){return 42;}`
-    # must exit 42. See issue 2026-06-02-macho-main-return-exit-propagation.
-    var ecb_rc = _co_run_sh(ecb_seq);
-    if (ecb_rc == 0) {
-        println("  PASS: ecb (macOS arm64) cycc self-host byte-identical + exit-code propagation");
-    } else {
-        println("  FAIL: ecb (macOS arm64) cross-OS self-host — unreachable or NOT byte-identical");
-        fails = fails + 1;
-    }
+    # ecb (macOS, Apple Silicon). The script's ecb arm carries the v6.0.37 exit-code
+    # propagation guard (`fn main(){return 42;}` must exit 42 — the rot-class where main() is
+    # never called) that this verb used to run inline, plus the cx and CLI-environment legs.
+    fails = fails + _co_selfhost_leg("ecb", "ecb (macOS arm64)");
 
     # Install-path verification (v6.0.38). The self-host check above proves
     # the COMPILER works — but the rot that shipped EMPTY macOS installs for
@@ -2376,7 +2391,11 @@ fn _cross_os_selfhost(): i64 {
     # `sha256sum "$STAGE.tar.gz" > "$STAGE.tar.gz.sha256"`); nothing shipped it. The remote
     # `[ -f …sha256 ]` is load-bearing: without it a sidecar that fails to copy silently
     # returns the arm to the unverified path it is being moved off. CHANGELOG [6.6.6].
-    var ecb_install = "set -e; _T=$(mktemp -d) && [ -d $_T ] || exit 1; _D=_coins_$$; sh scripts/build-macos-arm64-tarball.sh $_T/dist >/dev/null 2>&1; V=$(tr -d '[:space:]' < VERSION); printf 'fn main() { return 42; }' > $_T/t.cyr; ssh -o ConnectTimeout=15 -o BatchMode=yes ecb 'rm -rf ~/'$_D' && mkdir ~/'$_D; scp -q scripts/install.sh $_T/t.cyr $_T/dist/cyrius-$V-aarch64-macos.tar.gz $_T/dist/cyrius-$V-aarch64-macos.tar.gz.sha256 ecb:~/$_D/; _rc=0; ssh ecb 'CYRIUS_VERSION='$V' D=$HOME/'$_D'; [ -f $D/cyrius-'$V'-aarch64-macos.tar.gz.sha256 ] && CYRIUS_HOME=$D/ih CYRIUS_INSTALL_TARBALL=$D/cyrius-'$V'-aarch64-macos.tar.gz sh $D/install.sh >/dev/null 2>&1 && CYRIUS_HOME=$D/ih $D/ih/bin/cyrius build $D/t.cyr $D/t.out >/dev/null 2>&1 && (r=0; $D/t.out || r=$?; [ $r -eq 42 ])' || _rc=$?; rm -rf $_T; ssh ecb 'rm -rf ~/'$_D >/dev/null 2>&1 || true; exit $_rc";
+    # ⛔ v6.6.6 — PER-RUN STAGING (here and in the ach arm): `$_T` is a private mktemp dir and
+    # `$_D` a per-pid remote dir, both removed at the end. Fixed names (/tmp/_co_*, ~/_coih*) let
+    # two audits, or an audit beside a cross-os-selfhost.sh run, overwrite each other's tarballs
+    # and sandboxed installs. CHANGELOG [6.6.6]
+    var ecb_install ="set -e; _T=$(mktemp -d) && [ -d $_T ] || exit 1; _D=_coins_$$; sh scripts/build-macos-arm64-tarball.sh $_T/dist >/dev/null 2>&1; V=$(tr -d '[:space:]' < VERSION); printf 'fn main() { return 42; }' > $_T/t.cyr; ssh -o ConnectTimeout=15 -o BatchMode=yes ecb 'rm -rf ~/'$_D' && mkdir ~/'$_D; scp -q scripts/install.sh $_T/t.cyr $_T/dist/cyrius-$V-aarch64-macos.tar.gz $_T/dist/cyrius-$V-aarch64-macos.tar.gz.sha256 ecb:~/$_D/; _rc=0; ssh ecb 'CYRIUS_VERSION='$V' D=$HOME/'$_D'; [ -f $D/cyrius-'$V'-aarch64-macos.tar.gz.sha256 ] && CYRIUS_HOME=$D/ih CYRIUS_INSTALL_TARBALL=$D/cyrius-'$V'-aarch64-macos.tar.gz sh $D/install.sh >/dev/null 2>&1 && CYRIUS_HOME=$D/ih $D/ih/bin/cyrius build $D/t.cyr $D/t.out >/dev/null 2>&1 && (r=0; $D/t.out || r=$?; [ $r -eq 42 ])' || _rc=$?; rm -rf $_T; ssh ecb 'rm -rf ~/'$_D >/dev/null 2>&1 || true; exit $_rc";
     var ecb_inst_rc = _co_run_sh(ecb_install);
     if (ecb_inst_rc == 0) {
         println("  PASS: ecb (macOS arm64) REAL install -> cyrius build -> exit 42");
@@ -2389,23 +2408,10 @@ fn _cross_os_selfhost(): i64 {
     # self-hosts byte-identical; the v6.0.44 "x86-macOS doesn't self-host"
     # retraction was a codesign-comparison artifact (codesign mutates the
     # binary with LC_CODE_SIGNATURE). The gate runs UNSIGNED — see
-    # scripts/cross-os-selfhost.sh.
-    # v6.4.59: pass the cross-host selector so ach also runs the platform libtest
-    # (the fs/thread/sync/alloc/args/process/syscalls tcyr on native x86-macho),
-    # matching ecb/cass/pi — the x86-macho stdlib is now gated on real Intel, not
-    # just the bare compiler self-host. The ach recipe also carries the exit-42
-    # rot-guard (scripts/cross-os-selfhost.sh).
-    # v6.5.11: the selector is the SUBDIR tests/tcyr/crossos, not the "vr01_" prefix.
-    var ach_rc = _co_run_sh("sh scripts/cross-os-selfhost.sh ach crossos");
-    if (ach_rc == 0) {
-        println("  PASS: ach (macOS x86_64) cycc self-host byte-identical + crossos libtest");
-    } elif (ach_rc == 3) {
-        println("  FAIL: ach (macOS x86_64) UNREACHABLE — host down/unresolvable, cannot verify (publish blocked)");
-        fails = fails + 1;
-    } else {
-        println("  FAIL: ach (macOS x86_64) self-host / VR-01 libtest FAILED");
-        fails = fails + 1;
-    }
+    # scripts/cross-os-selfhost.sh. v6.4.59 gave ach the platform libtest; since
+    # 6.6.20 every host runs it (see _co_selfhost_leg). The ach recipe also carries
+    # the exit-42 rot-guard (scripts/cross-os-selfhost.sh).
+    fails = fails + _co_selfhost_leg("ach", "ach (macOS x86_64)");
 
     # ach install pillar (v6.4.59) — the Intel-Mac analog of the ecb install gate.
     # Self-host proves the COMPILER; this proves the USABLE TOOLCHAIN + PACKAGING:
@@ -2431,30 +2437,12 @@ fn _cross_os_selfhost(): i64 {
     # not the cross-compiler. release.yml's "subtle QEMU codegen difference"
     # excuse hid a real bug on real silicon (the native aarch64 cycc drops the
     # _TARGET_MACHO global during its own compile). Gated for real now.
-    var pi_rc = _co_run_sh("sh scripts/cross-os-selfhost.sh pi");
-    if (pi_rc == 0) {
-        println("  PASS: pi (Linux aarch64) native cycc self-host byte-identical");
-    } elif (pi_rc == 3) {
-        println("  FAIL: pi (Linux aarch64) UNREACHABLE — host down/unresolvable, cannot verify (publish blocked)");
-        fails = fails + 1;
-    } else {
-        println("  FAIL: pi (Linux aarch64) native self-host NOT byte-identical");
-        fails = fails + 1;
-    }
+    fails = fails + _co_selfhost_leg("pi", "pi (Linux aarch64)");
 
     # cass (Windows x86_64, PE32+) — added v6.0.45, replacing the v6.0.34
     # TODO no-op print (a silent skip is exactly the rot vector). Self-host
     # via cmd.exe (the default ssh shell is PowerShell, which lacks `<`).
-    var cass_rc = _co_run_sh("sh scripts/cross-os-selfhost.sh cass");
-    if (cass_rc == 0) {
-        println("  PASS: cass (Windows x86_64) cycc self-host byte-identical");
-    } elif (cass_rc == 3) {
-        println("  FAIL: cass (Windows x86_64) UNREACHABLE — host down/unresolvable, cannot verify (publish blocked)");
-        fails = fails + 1;
-    } else {
-        println("  FAIL: cass (Windows x86_64) PE self-host NOT byte-identical");
-        fails = fails + 1;
-    }
+    fails = fails + _co_selfhost_leg("cass", "cass (Windows x86_64)");
 
     # cass install pillar (v6.0.85) — the Windows analog of the ecb install gate
     # above. Self-host proves the COMPILER; this proves PACKAGING: the real
