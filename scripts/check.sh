@@ -1436,7 +1436,7 @@ _chk_gate "$ROOT/tests/gates/codegen/stack_param_homing_matrix.sh"
 # marshalling past 2048 arguments read slots 32 KiB low (its `str` became an `ldr`), the callee's
 # [x29,#imm] past 2053 parameters likewise, and every fp displacement past 64 KiB (param 8192+,
 # any local after a 64 KiB buffer) went through a 16-bit-truncated `movz`. Static words derived
-# in the shell + qemu-aarch64 runs at the measured thresholds and a frame probe (named SKIP
+# in the shell + qemu-aarch64 runs at the measured thresholds and a frame probe (exit 77
 # without qemu) + the host oracle. Hardware: tests/tcyr/crossos/wide_call_stack_unwind.tcyr.
 _chk_gate "$ROOT/tests/gates/codegen/wide_call_stack_unwind.sh"
 

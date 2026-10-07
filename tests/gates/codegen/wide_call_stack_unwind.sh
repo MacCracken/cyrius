@@ -38,8 +38,9 @@
 #      sub x10, x29, x10; str x9, [x10]` and `movz x9 [; movk x9]; sub x9, x29, x9; ldr x0, [x9]`.
 #      The frame probe carries `movk x9, #1, lsl #16` before both `sub x9, x29, x9` (a local) and
 #      `sub x8, x29, x9` (the struct-result X8 retptr).
-#   2  runtime, qemu-aarch64 with `-cpu cortex-a72` when it has it — a non-MTE core like pi's, so
-#      the 518 word is SIGILL here as on the hardware (named SKIP when qemu is absent; real hardware
+#   2  runtime, qemu-aarch64 (or qemu-aarch64-static) with `-cpu cortex-a72` when it has it — a
+#      non-MTE core like pi's, so the 518 word is SIGILL here as on the hardware (when qemu is absent
+#      every other leg still runs and the gate then exits 77, a SKIP and never a PASS; real hardware
 #      is tests/tcyr/crossos/wide_call_stack_unwind.tcyr on pi + ecb): each probe calls its width-n fn
 #      directly and through callptr, checks six parameter positions against an awk-derived literal
 #      and that sp — the address of a local in a fresh callee frame — is the same before and after,
@@ -123,9 +124,12 @@ movx() {
 # has_seq N "w1 w2 ..." — the words occur consecutively in the width-N binary
 has_seq() { tr '\n' ' ' < "$T/w$1" | grep -q " $2 "; }
 
-QEMU=0; command -v qemu-aarch64 >/dev/null 2>&1 && QEMU=1
+QEMU=0; QBIN=""
+for _q in qemu-aarch64 qemu-aarch64-static; do
+    if command -v "$_q" >/dev/null 2>&1; then QBIN=$_q; QEMU=1; break; fi
+done
 QCPU=""
-if [ "$QEMU" = 1 ] && qemu-aarch64 -cpu help 2>/dev/null | grep -q 'cortex-a72'; then QCPU="-cpu cortex-a72"; fi
+if [ "$QEMU" = 1 ] && "$QBIN" -cpu help 2>/dev/null | grep -q 'cortex-a72'; then QCPU="-cpu cortex-a72"; fi
 NRUN=0; NHOST=0; NSTATIC=0
 for n in $WIDTHS; do
     gen "$n" "$T/p$n.cyr"
@@ -178,7 +182,7 @@ for n in $WIDTHS; do
 
     # axis 2 — run it
     if [ "$QEMU" = 1 ]; then
-        rc=0; (cd "$T" && timeout -s KILL 30 qemu-aarch64 $QCPU "./a$n" > /dev/null 2>&1) || rc=$?
+        rc=0; (cd "$T" && timeout -s KILL 30 "$QBIN" $QCPU "./a$n" > /dev/null 2>&1) || rc=$?
         case "$rc" in
             42) NRUN=$((NRUN + 1)) ;;
             3|5) bad "n=$n: aarch64 exit $rc — sp moved across a $n-argument call (3 direct, 5 callptr)" ;;
@@ -228,7 +232,7 @@ if [ "$rc" = 0 ] && [ -s "$T/afr" ]; then
         bad "frame probe: no \`movk x9, #1, lsl #16\` before \`sub x9, x29, x9\` and \`sub x8, x29, x9\` — a local past 64 KiB is addressed through a truncated displacement"
     fi
     if [ "$QEMU" = 1 ]; then
-        rc=0; (cd "$T" && timeout -s KILL 30 qemu-aarch64 $QCPU ./afr > /dev/null 2>&1) || rc=$?
+        rc=0; (cd "$T" && timeout -s KILL 30 "$QBIN" $QCPU ./afr > /dev/null 2>&1) || rc=$?
         case "$rc" in
             42) NFRAME=$((NFRAME + 1)) ;;
             11|12|13) bad "frame probe: aarch64 exit $rc — a local past 64 KiB lost its value (11 load/store, 12 &local, 13 X8 retptr)" ;;
@@ -246,14 +250,18 @@ NFRAME_WANT=1; [ "$QEMU" = 1 ] && NFRAME_WANT=2
 
 echo "  axis 1: $NSTATIC of $NW aarch64 probes carry the derived \`add sp\` cleanup (+ the x16 forms past 2048 / 2053)"
 if [ "$QEMU" = 1 ]; then
-    echo "  axis 2: $NRUN of $NW aarch64 probes exit 42 under qemu-aarch64 ${QCPU:-(default cpu)} (sp balanced, six positions right, 600 looped calls)"
+    echo "  axis 2: $NRUN of $NW aarch64 probes exit 42 under $QBIN ${QCPU:-(default cpu)} (sp balanced, six positions right, 600 looped calls)"
     [ "$NRUN" = "$NW" ] || fail=1
 else
-    echo "  axis 2: SKIP (qemu-aarch64 absent) — the runtime leg did not run; pi + ecb run tests/tcyr/crossos/wide_call_stack_unwind.tcyr"
+    echo "  axis 2: NOT RUN (no qemu-aarch64 / qemu-aarch64-static) — pi + ecb run tests/tcyr/crossos/wide_call_stack_unwind.tcyr"
 fi
 echo "  axis 3: $NHOST of $NW host probes exit 42"
 echo "  frame:  $NFRAME of $NFRAME_WANT legs (static movk, qemu run) for locals past 64 KiB"
 [ "$NSTATIC" = "$NW" ] && [ "$NHOST" = "$NW" ] && [ "$NFRAME" = "$NFRAME_WANT" ] || fail=1
 if [ "$fail" != 0 ]; then echo "FAIL wide_call_stack_unwind"; exit 1; fi
+if [ "$QEMU" != 1 ]; then
+    echo "SKIP: wide_call_stack_unwind — qemu-aarch64 absent: the runtime legs (axis 2 + frame run) did not run (exit 77: a SKIP, not a PASS)"
+    exit 77
+fi
 echo "PASS wide_call_stack_unwind: calls of 7..8200 arguments unwind sp exactly and read every parameter, and locals past 64 KiB keep their values, on aarch64"
 exit 0
