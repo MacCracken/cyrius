@@ -59,6 +59,10 @@ check "bundle written" 1 "$([ -f dist/bp.cyr ] && echo 1 || echo 0)"
 check "no 'unresolved symbols' note on a clean bundle" 0 "$(grep -c 'unresolved symbols' "$D/o1" || true)"
 check "no 'cannot write output' (the /dev/null tell)" 0 "$(grep -c 'cannot write output' "$D/o1" || true)"
 check "no '1MB buffer' (the stdin-cap tell)" 0 "$(grep -c '1MB buffer' "$D/o1" || true)"
+# 6.6.20 (REFACTOR-11): the header's version is the manifest's [package] version — this project
+# has no VERSION file, and the header read `# Version: unknown`.
+check "the header stamps [package] version" 1 "$(grep -cx '# Version: 0.1.0' dist/bp.cyr || true)"
+check "and the report says v0.1.0" 1 "$(grep -c 'dist/bp.cyr: [0-9]* lines (v0.1.0)' "$D/o1" || true)"
 
 echo "axis 2 — ⭐ THE REGRESSION: a bundle that does not compile must FAIL, not reassure:"
 printf 'fn a_one(): i64 { return 1; }\nfn broken( {\n' > src/a.cyr
@@ -115,8 +119,11 @@ check "a broken >1 MB bundle still FAILS" 1 "$([ "$rc6" -ne 0 ] && echo 1 || ech
 
 cd "$ROOT" || exit 2
 echo ""
-if [ "$fails" = "0" ]; then
-    # ── axis: a RETIRED stdlib name must not walk through --allow-undef (v6.6.2) ────────
+# ⚠ 6.6.20: the RETIRED-name axes below used to sit INSIDE the `if [ "$fails" = "0" ]` that
+# prints PASS and exits 0, so their own `fails=$((fails + 1))` could never reach the verdict — a
+# bundle calling `payload` that self-checked clean printed "FAIL: …" and the gate still PASSED.
+# They now run unconditionally and count like every other axis.
+# ── axis 6: a RETIRED stdlib name must not walk through --allow-undef (v6.6.2) ────────
 # ⛔ The self-check downgrades undefined fns because a bundle omits the stdlib and the consumer
 # supplies it — correct. But the downgrade was BLANKET, so a bundle calling a name the stdlib no
 # longer HAS also passed and shipped. At the v6.6.0 cut `payload()` was deleted while 18 publisher
@@ -142,7 +149,149 @@ case "$LOUT" in
   *) echo "  ok: a bundle of live names still passes the self-check (1)" ;;
 esac
 
-echo "PASS: distlib-bundle-selfcheck — the bundle is really compiled; broken bundles are fatal"
+# ── axis 7: the RETIRED-name scan reads the WHOLE capture (6.6.20, CBT-02) ──────────────
+# ⛔ The scan read the self-check's stderr capture into a fixed 256 KB buffer, so a bundle whose
+# --allow-undef compile warned past 256 KB BEFORE reaching a retired name was written at rc 0 —
+# the blast door skipped by volume. 1,400 undefined hooks with ~190-byte names come to a ~326 KB
+# capture (measured 326,629 B; the check below prints it) with `payload` on its last line. The
+# same bundle with a short capture is axis 6.
+echo "axis 7 — a RETIRED name past 256 KB of warnings is still refused:"
+PAD=$(printf '%0190d' 0 | tr 0 x)
+{
+    echo 'fn rc_big(b): i64 {'
+    i=0
+    while [ "$i" -lt 1400 ]; do echo "    zz_hook_${PAD}_$i();"; i=$((i + 1)); done
+    echo '    payload(b);'
+    echo '    return 0;'
+    echo '}'
+} > "$D/r/src/m.cyr"
+rm -rf "$D/r/dist"
+BRC=0
+BOUT=$( cd "$D/r" && "$CY" distlib 2>&1 ) || BRC=$?
+check "exit NON-zero" 1 "$([ "$BRC" -ne 0 ] && echo 1 || echo 0)"
+check "refused as a RETIRED stdlib name" 1 "$(printf '%s\n' "$BOUT" | grep -c 'RETIRED stdlib name' || true)"
+check "naming payload" 1 "$(printf '%s\n' "$BOUT" | grep -c 'symbol: payload' || true)"
+# ANTI-VACUOUS: the capture really is past the old buffer, with the retired name beyond it. The
+# bundle the run left behind is compiled here the way the self-check compiles it (--allow-undef),
+# and the byte offset of the `payload` warning is read from the compiler's own stderr.
+if [ -f "$D/r/dist/rc.cyr" ]; then
+    ( cd "$D/r" && printf 'include "dist/rc.cyr"\n' | "$CC" --allow-undef > /dev/null 2> "$D/cap7" ) || true
+    capsz=$(wc -c < "$D/cap7" | tr -d ' ')
+    payoff=$(grep -b "undefined function 'payload'" "$D/cap7" | head -1 | cut -d: -f1)
+    check "the capture is over 256 KB (${capsz} B)" 1 "$([ "$capsz" -gt 262144 ] && echo 1 || echo 0)"
+    check "the payload warning starts past byte 262143 (at ${payoff:-none})" 1 "$([ -n "$payoff" ] && [ "$payoff" -gt 262143 ] && echo 1 || echo 0)"
+else
+    check "the bundle was written for the anti-vacuous measurement" 1 0
+fi
+
+# ── axis 8: a self-check failure shows the COMPILER's diagnostic (6.6.20, CBT-03) ──────────
+# The self-check captures the compiler's stderr for the RETIRED-name scan, which also silences
+# compile()'s own relay — and the capture was read only for the scan, so a bundle that failed the
+# self-check for any other reason printed "does not compile" and never WHY. A real bundle that
+# passes the sidecar verify and fails only the self-check is hard to build on purpose, so a
+# stand-in compiler fails exactly the self-check compile (--allow-undef, and not one of the
+# verify's `#@incdir dist/.dlverify-*` entries) with an error line only it knows; every other
+# compile is the real cycc. The CLI finds its compiler beside itself.
+# Like a real --allow-undef compile, the stand-in leads with a flood of `undefined function`
+# warnings: what reaches the user is the `error` lines (as the sidecar verify shows them), not the
+# whole capture with the line that matters buried at its end. With `crash` in $D/shim/mode it
+# fails with NO `error` line, and then the whole capture must be relayed — never nothing. (That
+# line must not contain the word, or the CLI rightly shows it as an error line and the axis is
+# vacuous — its first draft did exactly that.)
+echo "axis 8 — a bundle that fails the self-check shows the compiler's own error:"
+mkdir -p "$D/shim" "$D/s/src"
+cp "$D/tools/cyrius" "$D/shim/cyrius" && cp "$CC" "$D/shim/cycc.real" && cp "$D/tools/cycc_aarch64" "$D/shim/cycc_aarch64"
+cat > "$D/shim/cycc" <<'SHIM'
+#!/bin/sh
+D=$(dirname "$0")
+T=$(mktemp) && [ -f "$T" ] || { echo "FAIL: stand-in cycc: mktemp failed (TMPDIR=${TMPDIR:-/tmp})" >&2; exit 1; }
+cat > "$T"
+selfcheck=0
+case " $* " in *" --allow-undef "*) grep -q '^#@incdir dist/.dlverify' "$T" || selfcheck=1 ;; esac
+if [ "$selfcheck" = 1 ]; then
+    rm -f "$T"
+    i=0
+    while [ "$i" -lt 40 ]; do echo "warning: undefined function 'zz_flood_$i'" >&2; i=$((i + 1)); done
+    if [ "$(cat "$D/mode" 2>/dev/null)" = crash ]; then
+        echo 'SYNTHETIC crash, and the compiler printed no diagnostic' >&2
+    else
+        echo 'error:<source>:1:1: SYNTHETIC self-check failure only the compiler can name' >&2
+    fi
+    exit 1
+fi
+"$D/cycc.real" "$@" < "$T"; rc=$?
+rm -f "$T"; exit $rc
+SHIM
+chmod +x "$D/shim/cyrius" "$D/shim/cycc" "$D/shim/cycc.real" "$D/shim/cycc_aarch64"
+printf '[package]\nname = "sc"\nversion = "0.1.0"\n\n[lib]\nmodules = ["src/a.cyr"]\n' > "$D/s/cyrius.cyml"
+printf 'fn sc_one(): i64 { return 1; }\n' > "$D/s/src/a.cyr"
+SRC=0
+SOUT=$( cd "$D/s" && timeout 300 "$D/shim/cyrius" distlib 2>&1 ) || SRC=$?
+check "exit NON-zero" 1 "$([ "$SRC" -ne 0 ] && echo 1 || echo 0)"
+check "it says the bundle does not compile" 1 "$(printf '%s\n' "$SOUT" | grep -c 'the generated bundle does not compile' || true)"
+check "and relays the compiler's own error line" 1 "$(printf '%s\n' "$SOUT" | grep -c 'SYNTHETIC self-check failure only the compiler can name' || true)"
+check "without the flood of undefined-fn warnings ahead of it" 0 "$(printf '%s\n' "$SOUT" | grep -c 'zz_flood_' || true)"
+echo crash > "$D/shim/mode"
+SRC=0
+SOUT=$( cd "$D/s" && timeout 300 "$D/shim/cyrius" distlib 2>&1 ) || SRC=$?
+rm -f "$D/shim/mode"
+check "no error line: exit NON-zero" 1 "$([ "$SRC" -ne 0 ] && echo 1 || echo 0)"
+check "no error line: the whole capture is relayed (its last line)" 1 "$(printf '%s\n' "$SOUT" | grep -c 'SYNTHETIC crash, and the compiler printed no diagnostic' || true)"
+
+# ── axis 9: where the `# Version:` header comes from (6.6.20, REFACTOR-11) ─────────────────
+# `[package] version` (with `${file:PATH}` expanded — the reader `#@pkgver` uses) wins; a manifest
+# with no version falls back to ./VERSION. distlib read ./VERSION alone, so axis 1's project (a
+# literal version, no VERSION file) shipped `# Version: unknown`.
+echo "axis 9 — the bundle's # Version: is the manifest's [package] version:"
+mkdir -p "$D/v/src"
+printf 'fn vv_one(): i64 { return 1; }\n' > "$D/v/src/a.cyr"
+vhdr() { ( cd "$D/v" && rm -rf dist && timeout 300 "$CY" distlib > "$D/ov" 2>&1 ); sed -n 's/^# Version: //p' "$D/v/dist/vv.cyr" 2>/dev/null | head -1; }
+printf '[package]\nname = "vv"\nversion = "${file:VERSION}"\n\n[lib]\nmodules = ["src/a.cyr"]\n' > "$D/v/cyrius.cyml"
+printf '2.3.4\n' > "$D/v/VERSION"
+check "version = \"\${file:VERSION}\" stamps VERSION's contents" "2.3.4" "$(vhdr)"
+printf '[package]\nname = "vv"\nversion = "7.0.1"\n\n[lib]\nmodules = ["src/a.cyr"]\n' > "$D/v/cyrius.cyml"
+check "a literal [package] version wins over a VERSION file that disagrees" "7.0.1" "$(vhdr)"
+printf '[package]\nname = "vv"\n\n[lib]\nmodules = ["src/a.cyr"]\n' > "$D/v/cyrius.cyml"
+check "no [package] version: ./VERSION, as before" "2.3.4" "$(vhdr)"
+
+# ── axis 10: `cyrius publish` tags the version the bundle stamps (6.6.20, REFACTOR-11) ──────
+# Publish read ./VERSION alone, so once distlib stamped the manifest's version a project whose two
+# disagreed tagged vVERSION over a bundle saying `# Version: <manifest>`. It now tags
+# `_project_version()` — the source distlib stamps — and refuses two that disagree before anything
+# is generated. The version is joined into a `git tag` shell line, so one that is not a tag name
+# is refused, never run. `git` is a recorder first on PATH: nothing is tagged for real.
+echo "axis 10 — publish tags the version the bundle stamps; two that disagree are refused:"
+mkdir -p "$D/pb/src" "$D/pbin"
+printf '#!/bin/sh\necho "git $*" >> "%s/git.log"\n' "$D" > "$D/pbin/git" && chmod +x "$D/pbin/git"
+printf 'fn pb_one(): i64 { return 1; }\n' > "$D/pb/src/a.cyr"
+pub() { rm -f "$D/git.log"; PRC=0; ( cd "$D/pb" && PATH="$D/pbin:$PATH" timeout 300 "$CY" publish > "$D/op" 2>&1 ) || PRC=$?; }
+tagged() { sed -n 's/^git tag -a v\([^ ]*\) .*/\1/p' "$D/git.log" 2>/dev/null | head -1; }
+printf '[package]\nname = "pb"\nversion = "4.5.6"\n\n[lib]\nmodules = ["src/a.cyr"]\n' > "$D/pb/cyrius.cyml"
+pub
+check "no VERSION file: rc 0 (it was refused as 'no VERSION file')" 0 "$PRC"
+check "  it tags the [package] version" "4.5.6" "$(tagged)"
+check "  and the bundle it ships stamps the same" 1 "$(grep -cx '# Version: 4.5.6' "$D/pb/dist/pb.cyr" 2>/dev/null || true)"
+rm -rf "$D/pb/dist"
+printf '4.5.5\n' > "$D/pb/VERSION"
+pub
+check "VERSION disagrees with [package] version: exit NON-zero" 1 "$([ "$PRC" -ne 0 ] && echo 1 || echo 0)"
+check "  refused by name" 1 "$(grep -c 'two versions disagree' "$D/op" || true)"
+check "  nothing tagged" "" "$(tagged)"
+check "  nothing generated" 0 "$([ -e "$D/pb/dist" ] && echo 1 || echo 0)"
+printf '[package]\nname = "pb"\nversion = "${file:VERSION}"\n\n[lib]\nmodules = ["src/a.cyr"]\n' > "$D/pb/cyrius.cyml"
+pub
+check 'version = "${file:VERSION}": rc 0' 0 "$PRC"
+check "  it tags VERSION's contents" "4.5.5" "$(tagged)"
+check "  and the bundle stamps the same" 1 "$(grep -cx '# Version: 4.5.5' "$D/pb/dist/pb.cyr" 2>/dev/null || true)"
+rm -rf "$D/pb/dist"
+printf '4.5.5;touch PWNED\n' > "$D/pb/VERSION"
+pub
+check "a version that is not a tag name: exit NON-zero" 1 "$([ "$PRC" -ne 0 ] && echo 1 || echo 0)"
+check "  the shell never ran it" 0 "$([ -e "$D/pb/PWNED" ] && echo 1 || echo 0)"
+check "  nothing tagged" "" "$(tagged)"
+
+if [ "$fails" = "0" ]; then
+    echo "PASS: distlib-bundle-selfcheck — the bundle is really compiled; broken bundles are fatal"
     exit 0
 fi
 echo "FAIL: distlib-bundle-selfcheck — $fails assertion(s) failed"
