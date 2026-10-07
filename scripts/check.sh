@@ -1990,6 +1990,16 @@ _chk_gate "$ROOT/tests/gates/toolchain/cli_pe_pinned_redirect.sh"
 # --version / --print-config used it under CYRIUS_RESOLVED=1. The PE axis runs under wine (named
 # SKIP without it; cass runs it on hardware).
 _chk_gate "$ROOT/tests/gates/toolchain/manifest_pin_shape_refused.sh"
+# 6.6.20 (SEC-04, CVE-TBD) — `[package] version = "${file:PATH}"` is read by the [embed] rules
+# (_proj_path_bad + the link-free _proj_read): `../x`, an absolute path, a committed `VERSION ->
+# ../x` link, `.git/config`, a hard link, a FIFO (it HUNG the build) and a file past 511 bytes are
+# refused by name, and a value holding a control byte (a two-line file, a literal `\n`) is refused
+# — it is written after `#@pkgver`, where a line break started a new SOURCE line. The ./VERSION
+# fallback (`_project_version`: distlib's stamp, `cyrius package`) reads through the same checks.
+_chk_gate "$ROOT/tests/gates/toolchain/pkgver_file_interp_confined.sh"
+# 6.6.20 (SEC-02, CVE-TBD) — a manifest [build] output is confined to the project (it reached
+# /bin/sh unquoted on macOS and was cmd.exe's redirect target on Windows); codesign runs by argv.
+_chk_gate "$ROOT/tests/gates/toolchain/build_output_confined.sh"
 # 6.6.20 (RS-04) — cyriusly's version operand is a version (a leading digit, [0-9A-Za-z.-], no
 # `..`) in BOTH peers (programs/cyriusly.cyr and scripts/cyriusly): `uninstall ../versions`
 # deleted the whole store, the active version included, and `install` spliced the operand into a

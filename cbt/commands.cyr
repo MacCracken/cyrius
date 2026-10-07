@@ -5650,6 +5650,7 @@ fn cmd_distlib(profile): i64 {
     # (_project_version, cbt/core.cyr). 6.6.20 (REFACTOR-11): this read ./VERSION alone, under a
     # comment that claimed cyml_expand_value. CHANGELOG [6.6.20]
     var pkg_ver = _project_version();
+    if (pkg_ver == 0) { return 1; }   # 6.6.20 (SEC-04): refused, and named
 
     # Find modules list. With a profile, [lib.PROFILE] only; otherwise [build], then [lib].
     # 6.6.17: through the one reader (cbt/manifest.cyr), which steps over multi-line values, so a
@@ -6376,10 +6377,12 @@ fn _mem_starts(p, lit, n): i64 {
 # the refusal.
 fn _publish_version(): i64 {
     var mver = _dep_read_cyml_package_version();
+    if (mver < 0) { return 0; }   # 6.6.20 (SEC-04): refused, and named
     if (mver != 0) {
         if (load8(mver) == 0) { mver = 0; }
     }
-    var fver = _dep_expand_file_interp("${file:VERSION}", 15);
+    var fver = _dep_read_version_file();
+    if (fver < 0) { return 0; }
     if (mver == 0 && fver == 0) {
         _err("publish: no version — cyrius.cyml has no [package] version and there is no ./VERSION");
         return 0;
@@ -6397,6 +6400,7 @@ fn _publish_version(): i64 {
         }
     }
     var ver = _project_version();
+    if (ver == 0) { return 0; }
     var ok = 1;
     if (load8(ver) == 0) { ok = 0; }
     var i = 0;

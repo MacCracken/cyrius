@@ -386,23 +386,73 @@ fn _dep_read_cyml_package_version(): i64 {
     return _dep_expand_file_interp(raw, strlen(raw));
 }
 
-# `${file:PATH}` → the trimmed contents of PATH. Anything else passes through
-# unchanged, so a plain `version = "1.2.3"` works with no special case.
+# `${file:PATH}` → the trimmed contents of PATH. Anything else passes through unchanged, so a
+# plain `version = "1.2.3"` works with no special case. 0 when it resolves to nothing — the file
+# does not exist, or holds only whitespace — so the build carries no CYRIUS_PKG_VERSION (absent
+# beats wrong). -1 after NAMING a refusal.
+# ⛔ 6.6.20 (SEC-04) — the refusals. This was `file_exists` + `file_read_all(path, fb, 511)`, so
+# `${file:../x}`, `${file:/abs/x}`, `${file:.git/config}` and the ordinary `${file:VERSION}` over a
+# committed `VERSION -> ../x` link each put an out-of-project file into the binary (`#@pkgver`) and
+# onto `--print-config` — the very shapes 6.6.19 refuses for [embed]. Now PATH is checked by the
+# [embed] rules (`_proj_path_bad`) and read through the same link-free open (`_proj_read`: a
+# regular file with one link, at most 511 bytes). And the VALUE — read or literal — holds no
+# control byte: cbt writes it after `#@pkgver` on a line of its own, so a line break started a new
+# SOURCE line (a multi-line file's lines compiled, and the compiler echoed them — `.git/config`'s
+# `extraheader` included; `version = "1.0\nsyscall(...)"` ran). `label` names the value in the
+# refusal. CHANGELOG [6.6.20] (CVE-TBD)
 fn _dep_expand_file_interp(raw, rlen): i64 {
-    if (rlen < 8) { return raw; }
-    if (memeq(raw, "${file:", 7) == 0) { return raw; }
-    if (load8(raw + rlen - 1) != 125) { return raw; }      # '}'
+    return _dep_expand_file_interp_at(raw, rlen, "cyrius.cyml [package] version");
+}
+
+# The project's ./VERSION as a version, by the same rules (`_project_version`'s fallback, and
+# `cyrius publish`'s cross-check) — 0 when there is none, -1 after naming a refusal.
+fn _dep_read_version_file(): i64 {
+    return _dep_expand_file_interp_at("${file:VERSION}", 15, "the project's ./VERSION");
+}
+
+# "<label> = "<raw, shown escaped>": <why>" — named; answers -1.
+fn _dep_pkgver_refuse(label, raw, why): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, label);
+    str_builder_add_cstr(sb, " = \"");
+    str_builder_add_cstr(sb, _shown(raw));
+    str_builder_add_cstr(sb, "\": ");
+    str_builder_add_cstr(sb, why);
+    _err(str_data(str_builder_build(sb)));
+    return 0 - 1;
+}
+
+fn _dep_pkgver_e_ctl(): i64 {
+    return "holds a line break or another control character; a version is one line (it is written after #@pkgver, where a line break starts a new source line)";
+}
+
+fn _dep_expand_file_interp_at(raw, rlen, label): i64 {
+    var isf = 1;
+    if (rlen < 8) { isf = 0; }
+    elif (memeq(raw, "${file:", 7) == 0) { isf = 0; }
+    elif (load8(raw + rlen - 1) != 125) { isf = 0; }      # '}'
+    if (isf == 0) {
+        var j = 0;
+        while (j < rlen) {
+            var lc = load8(raw + j);
+            if (lc < 32 || lc == 127) { return _dep_pkgver_refuse(label, raw, _dep_pkgver_e_ctl()); }
+            j = j + 1;
+        }
+        return raw;
+    }
     var plen = rlen - 8;
     if (plen <= 0) { return 0; }
     var path = alloc(plen + 1);
-    var i = 0;
-    while (i < plen) { store8(path + i, load8(raw + 7 + i)); i = i + 1; }
+    memcpy(path, raw + 7, plen);
     store8(path + plen, 0);
-    if (file_exists(path) == 0) { return 0; }
-    var fb = alloc(512);
-    var fn_read = file_read_all(path, fb, 511);
-    if (fn_read <= 0) { return 0; }
-    store8(fb + fn_read, 0);
+    var why = _proj_path_bad(path, _PP_FILE);
+    if (why != 0) { return _dep_pkgver_refuse(label, raw, why); }
+    var fn_read = 0;
+    var fb = _proj_read(path, &fn_read, &why, _PP_FILE);
+    if (fb == 0) {
+        if (why == _proj_e_missing()) { return 0; }       # no such file: absent, as before
+        return _dep_pkgver_refuse(label, raw, why);
+    }
     var s = 0;
     while (s < fn_read && (load8(fb + s) == 32 || load8(fb + s) == 10 || load8(fb + s) == 13 || load8(fb + s) == 9)) { s = s + 1; }
     var e = fn_read;
@@ -411,7 +461,18 @@ fn _dep_expand_file_interp(raw, rlen): i64 {
     if (olen <= 0) { return 0; }
     var out = alloc(olen + 1);
     var k = 0;
-    while (k < olen) { store8(out + k, load8(fb + s + k)); k = k + 1; }
+    while (k < olen) {
+        var c = load8(fb + s + k);
+        # by LENGTH, not strlen: a NUL inside the file is a control byte too
+        if (c < 32 || c == 127) {
+            var sb = str_builder_new();
+            str_builder_add_cstr(sb, "the file ");
+            str_builder_add_cstr(sb, _dep_pkgver_e_ctl());
+            return _dep_pkgver_refuse(label, raw, str_data(str_builder_build(sb)));
+        }
+        store8(out + k, c);
+        k = k + 1;
+    }
     store8(out + olen, 0);
     return out;
 }
@@ -1502,7 +1563,7 @@ fn _dep_modules_refused(dep_name, mods): i64 {
 # copy opens with sys_open, which follows links, so a tag COMMITTING `dist/x.cyr -> /abs/secret`
 # (or `dist -> /dir`) vendored the target into lib/ with a verified commit pin and exit 0. The
 # CVE-43 cache verify cannot see it — the link IS the tag's content. Every component is checked,
-# as [embed] does (_embed_path_bad); the root itself is the operator's. CHANGELOG [6.6.20] (CVE-TBD)
+# as [embed] does (_proj_path_bad); the root itself is the operator's. CHANGELOG [6.6.20] (CVE-TBD)
 fn _dep_src_link(full, rootlen): i64 {
     var n = strlen(full);
     var j = rootlen;
@@ -2808,6 +2869,10 @@ fn _auto_deps(): i64 {
     var ee = _embed_load();
     _embed_coll_later = 0;
     if (ee < 0) { return 1; }
+    # 6.6.20 (SEC-04): `[package] version` beside it — a `${file:PATH}` checked by the [embed]
+    # rules, a value holding a control byte refused — so a verb that compiles fails by name here,
+    # before a compile writes it after `#@pkgver`. CHANGELOG [6.6.20] (CVE-TBD)
+    if (_dep_read_cyml_package_version() < 0) { return 1; }
     _embeds = 0;
     if (vec_len(ee) > 0) { _embeds = ee; }
     if (has_deps == 0) { return 0; }
@@ -2819,7 +2884,6 @@ fn _auto_deps(): i64 {
 fn cmd_package(): i64 {
     # Read manifest if present
     var name = "unknown";
-    var ver = _version;
     var entry = "src/main.cyr";
     var output_name = "main";
 
@@ -2830,10 +2894,12 @@ fn cmd_package(): i64 {
     var mentry = _mf_key_str("build", "entry");
     if (mentry != 0) { entry = mentry; }
     var mout = _mf_str("build", "output");
-    if (file_exists("VERSION") == 1) {
-        ver = read_file_str("VERSION");
-        # Use directory name as package name
-    }
+    if (_cfg_output_refused(mout) != 0) { return 1; }   # 6.6.20 (SEC-02): confined, as for build
+    # 6.6.20: the version every other stamp uses (`_project_version`: the manifest's `[package]
+    # version`, else ./VERSION, both through the checked reader) — this printed ./VERSION read raw,
+    # so a project declaring `version = "0.1.0"` packaged as "unknown". 0 = refused, named.
+    var ver = _project_version();
+    if (ver == 0) { return 1; }
 
     _status("=== cyrius package ===");
     sys_write(STDOUT_FD, "  version: ", 11);

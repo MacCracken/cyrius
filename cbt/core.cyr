@@ -1056,15 +1056,22 @@ fn find_tools(): i64 {
 
 # The project's PACKAGE version, for anything that stamps one into an artifact: the manifest's
 # `[package] version` (`${file:PATH}` expanded — the reader CYRIUS_PKG_VERSION / `#@pkgver` uses),
-# else the cwd VERSION file `_version` holds, else "unknown". 6.6.20 (REFACTOR-11): `cyrius
+# else the cwd VERSION file, else "unknown"; 0 after NAMING a refusal. 6.6.20 (REFACTOR-11): `cyrius
 # distlib` stamped `_version` alone, so a project declaring `version = "0.1.0"` with no VERSION
-# file shipped `# Version: unknown` while its own build's `#@pkgver` said 0.1.0. CHANGELOG [6.6.20]
+# file shipped `# Version: unknown` while its own build's `#@pkgver` said 0.1.0. 6.6.20 (SEC-04):
+# the ./VERSION fallback goes through the same checked reader (`_dep_read_version_file`) — read raw
+# (`_version`), a `VERSION -> ~/.ssh/x` link stamped the file into the bundle header, and a second
+# line of it landed BELOW the `# Version:` comment, as bundle source. CHANGELOG [6.6.20]
 fn _project_version(): i64 {
     var v = _dep_read_cyml_package_version();
+    if (v < 0) { return 0; }
     if (v != 0) {
         if (load8(v) != 0) { return v; }
     }
-    return _version;
+    var f = _dep_read_version_file();
+    if (f < 0) { return 0; }
+    if (f != 0) { return f; }
+    return "unknown";
 }
 
 fn set_arch(arch): i64 {
