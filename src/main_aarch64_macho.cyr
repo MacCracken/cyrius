@@ -161,6 +161,7 @@ var rp_vec = 0;
 
 include "src/frontend/parse.cyr"
 include "src/backend/macho/emit.cyr"
+include "src/backend/macho/emit_arm64.cyr"
 include "src/backend/aarch64/fixup.cyr"
 
 # ================================================================

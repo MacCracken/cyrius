@@ -1164,6 +1164,13 @@ _chk_gate "$ROOT/tests/gates/frontend/derive_accessors_inlined.sh"
 # count proves the pass ran; only compiling WITH the result proves it was repaired.
 _chk_gate "$ROOT/tests/gates/codegen/dce_eliminates.sh"
 
+# 6.6.20: the compiler's own dead code is a RATCHET. Per fork (all 7), the unreachable fns
+# defined under src/ stay at or under a recorded ceiling — the closeout dead-code pass found the
+# arm64 Mach-O writer (15.8 KB) compiled into every x86-family compiler, a superseded TS JSX
+# walker, and backend stubs "kept for parse.cyr" that no shared file referenced; a floor
+# recorded only in prose had let them sit.
+_chk_gate "$ROOT/tests/gates/codegen/dead_code_floor.sh"
+
 
 # v6.5.2: every folded stdlib that builds for Linux must also build for agnos.
 # `lib/yukti.cyr` shipped SIX agnos ABI errors for months — including `sys_mount` called

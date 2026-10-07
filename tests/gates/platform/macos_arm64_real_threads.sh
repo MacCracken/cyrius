@@ -7,7 +7,7 @@
 # ⛔ WHY NOT bsdthread_create, WHICH IS WHAT THE ROADMAP PINNED FOR THIS SLOT. Measured on real
 # ecb, from a real cyrius-compiled binary: `bsdthread_register` returns EINVAL (exit 22).
 # Registration is ONE-SHOT PER PROCESS, and cyrius's arm64 Mach-O output is a dyld/LC_MAIN PIE
-# that links /usr/lib/libSystem.B.dylib (src/backend/macho/emit.cyr), so libpthread's
+# that links /usr/lib/libSystem.B.dylib (src/backend/macho/emit_arm64.cyr), so libpthread's
 # initializer spends it before any cyrius code runs. Going raw anyway would mean hand-building a
 # pthread_t against libpthread INTERNALS — sig@0x00 (guarded by a per-process ptr_munge cookie),
 # fun@0x90, arg@0x98, tsd@0xE0, a PAC modifier — none of which is stable ABI. The v6.5.43
@@ -22,7 +22,7 @@ set -e
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 PE="$ROOT/src/frontend/parse_expr.cyr"
 AE="$ROOT/src/backend/aarch64/emit.cyr"
-ME="$ROOT/src/backend/macho/emit.cyr"
+ME="$ROOT/src/backend/macho/emit_arm64.cyr"
 fail() { echo "FAIL macos_arm64_real_threads: $1" >&2; exit 1; }
 
 # ── axis 1: the reroute exists, is arm64-Mach-O-guarded, and matches the right arity ──
