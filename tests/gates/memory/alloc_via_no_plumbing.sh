@@ -74,6 +74,19 @@ check "the pass-through trampolines are gone" 0 \
 check "_bump_alloc stays (adapts arity, not a pass-through)" 1 "$(grep -c '^fn _bump_alloc(' lib/alloc.cyr || true)"
 check "_bump_reset stays (adapts arity)" 1 "$(grep -c '^fn _bump_reset(' lib/alloc.cyr || true)"
 check "_arena_realloc stays (real body, not a pass-through)" 1 "$(grep -c '^fn _arena_realloc(' lib/alloc.cyr || true)"
+# 6.6.20 (DEAD-09) — the realloc byte copy lives ONCE. `_alloc_realloc_via` claimed to be the
+# shared "alloc new + copy" shape both allocators used, but nothing called it (it took an
+# Allocator where a vtable entry gets the STATE) while each realloc entry re-inlined the loop:
+# four copies. Every entry now copies through `_alloc_copy_min`.
+check "the uncallable _alloc_realloc_via is gone" 0 "$(grep -c '^fn _alloc_realloc_via(' lib/alloc.cyr || true)"
+check "the realloc byte copy exists once (lib/alloc.cyr + lib/poison.cyr)" 1 \
+    "$(cat lib/alloc.cyr lib/poison.cyr | grep -cF 'load8(old_ptr + i)' || true)"
+for fn in _bump_realloc _arena_realloc _test_realloc; do
+    body=$(awk "/^fn $fn\(/,/^}/" lib/alloc.cyr)
+    check "$fn copies through _alloc_copy_min" 1 "$(printf '%s\n' "$body" | grep -c '_alloc_copy_min(' || true)"
+done
+body=$(awk '/^fn _poison_va_realloc\(/,/^}/' lib/poison.cyr)
+check "_poison_va_realloc copies through _alloc_copy_min" 1 "$(printf '%s\n' "$body" | grep -c '_alloc_copy_min(' || true)"
 
 echo "axis 4 — runtime: correctness first, then the tripwire:"
 # ⛔ 6.6.6 — THE TRIPWIRE WAS AN ABSOLUTE `NS -lt 14`, AND IT WENT BLIND ON THE BOX IT WAS SET

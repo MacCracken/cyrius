@@ -48,8 +48,10 @@
 #         `dl_longjmp` to return to the caller's setjmp frame.
 #
 #   3. Post-`fdlopen_init`, `state_buf` holds real fn pointers into
-#      a fully-initialised glibc. `fdlopen_sym(state, "getaddrinfo")`
-#      returns the pointer; caller invokes via `fncallN`.
+#      a fully-initialised glibc. `fdlopen_getaddrinfo(state)` returns
+#      the pointer (each slot has such an accessor, over
+#      `fdlopen_slot(state, off)`; `fdlopen_dlsym(state)` is glibc's own
+#      dlsym, for any other symbol); caller invokes via `fncallN`.
 #
 # RISKS & MITIGATIONS
 # ===================
@@ -444,7 +446,7 @@ fn fdlopen_helper_available(): i64 {
 }
 
 # ================================================================
-# fdlopen_init / fdlopen_sym / helpers
+# fdlopen_init / fdlopen_slot + the slot accessors / helpers
 # ================================================================
 
 # Returns the size in bytes that caller must allocate for the

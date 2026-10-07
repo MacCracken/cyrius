@@ -1,0 +1,161 @@
+# fl_poison_underwrite_classified.tcyr — 6.6.20: a 1-byte underwrite of a poisoned fl block is
+# reported once, as `[leading]` damage of the real block, and the block is still freed.
+#
+# ⛔ THE DEFECT. _poison_fl_owns decided ownership partly from the last leading-redzone byte
+# (`== fill`), so `store8(q - 1, 7); fl_free(q)` made the block "not owned": it was reported
+# as a smashed header — `fl block … (0 bytes): 8 byte(s) changed [header]`, wrong size, wrong
+# count, wrong side — never unlinked or recycled, and the next sweep reported the same write a
+# SECOND time as `(100 bytes): 1 byte(s) changed [leading]`. Ownership is decoded from the
+# header and the list links now; the redzone is damage for _poison_fl_check to classify.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/freelist.cyr"
+include "lib/assert.cyr"
+
+var _cap_rd = 0;
+var _cap_wr = 0;
+
+# Route stderr (the poison reports) into a pipe until _cap_end.
+fn _cap_begin(): i64 {
+    var fds[16];
+    if (sys_pipe(&fds) != 0) { return 0 - 1; }
+    _cap_rd = load32(&fds);
+    _cap_wr = load32(&fds + 4);
+    sys_dup2(2, 97);                 # park the real stderr on a free fd
+    sys_dup2(_cap_wr, 2);
+    return 0;
+}
+
+# Restore stderr; read what was captured into `buf` (NUL-terminated). Returns its length.
+fn _cap_end(buf, cap): i64 {
+    sys_dup2(97, 2);
+    sys_close(97);
+    sys_close(_cap_wr);
+    var got = 0;
+    var k = sys_read(_cap_rd, buf, cap - 1);
+    while (k > 0) {
+        got = got + k;
+        k = sys_read(_cap_rd, buf + got, cap - 1 - got);
+    }
+    sys_close(_cap_rd);
+    store8(buf + got, 0);
+    return got;
+}
+
+fn _has(buf, needle): i64 {
+    var n = strlen(needle);
+    var h = strlen(buf);
+    var i = 0;
+    while (i + n <= h) {
+        if (memeq(buf + i, needle, n) == 1) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn main(): i64 {
+    alloc_init();
+    poison_trap_set(0);
+    fl_poison_enable();
+    fl_poison_reset();
+    poison_reset();
+    var out = alloc(1024);
+    if (out == 0) { return 1; }
+
+    test_group("a 1-byte underwrite is [leading] damage of the real block (6.6.20)");
+    var q = fl_alloc(100);
+    store8(q - 1, 7);
+    assert_eq(_cap_begin(), 0, "pipe for the stderr capture");
+    fl_free(q);
+    var got = _cap_end(out, 1024);
+    assert_gt(got, 0, "ANTI-VACUOUS: the free reported something");
+    assert_eq(_has(out, "(100 bytes): 1 byte(s) changed [leading]"), 1,
+      "reported with its real size, count and side");
+    assert_eq(_has(out, "[header]"), 0, "not as a smashed header (was `(0 bytes): 8 byte(s) changed [header]`)");
+    assert_eq(fl_poison_violations(), 1, "one violation");
+    # The old code re-reported the write from the next fl_alloc (its head check) or sweep.
+    assert_eq(_cap_begin(), 0, "pipe for the realloc + sweep capture");
+    var r = fl_alloc(100);
+    var sw = poison_sweep();
+    got = _cap_end(out, 1024);
+    assert_eq(r, q, "the block was freed: the next same-class fl_alloc recycles it");
+    assert_eq(sw, 0, "the next sweep is clean");
+    assert_eq(got, 0, "and nothing reports the same write a second time");
+    fl_free(r);
+
+    # A ZERO written at p[-1] (the off-by-one NUL) makes the byte fl_free decodes the layout
+    # from read as plain: the "cls" it then sees is seven fill bytes and a 0, which took the
+    # smashed-header report — the same wrong `[header]`, then the `[leading]` re-report, and
+    # the block leaked. fl_free now asks whether `p - 72` is a listed poisoned block first.
+    test_group("a ZERO written at p[-1] is the same [leading] damage, freed (6.6.20)");
+    fl_poison_reset();
+    var z = fl_alloc(100);
+    store8(z - 1, 0);
+    assert_eq(_cap_begin(), 0, "pipe for the zero-underwrite capture");
+    fl_free(z);
+    got = _cap_end(out, 1024);
+    assert_eq(_has(out, "(100 bytes): 1 byte(s) changed [leading]"), 1,
+      "reported with its real size, count and side");
+    assert_eq(_has(out, "[header]"), 0, "not as a smashed header");
+    assert_eq(fl_poison_violations(), 1, "one violation");
+    assert_eq(_cap_begin(), 0, "pipe for the zero-underwrite realloc + sweep capture");
+    var zr = fl_alloc(100);
+    sw = poison_sweep();
+    got = _cap_end(out, 1024);
+    assert_eq(zr, z, "the block was freed: the next same-class fl_alloc recycles it");
+    assert_eq(sw, 0, "the next sweep is clean");
+    assert_eq(got, 0, "and nothing reports the same write a second time");
+    fl_free(zr);
+    # The large (munmap) path: a poisoned block over 4 KiB decodes the same way.
+    fl_poison_reset();
+    var zl = fl_alloc(6000);
+    store8(zl - 1, 0);
+    assert_eq(_cap_begin(), 0, "pipe for the large zero-underwrite capture");
+    fl_free(zl);
+    sw = poison_sweep();
+    got = _cap_end(out, 1024);
+    assert_eq(_has(out, "(6000 bytes): 1 byte(s) changed [leading]"), 1,
+      "a large block: reported with its real size, count and side");
+    assert_eq(_has(out, "[header]"), 0, "a large block: not as a smashed header");
+    assert_eq(sw, 0, "a large block: unlisted at free, so the sweep does not see it again");
+    # Control: a PLAIN block's genuinely smashed header, with poisoned blocks listed, is still
+    # refused as `[header]` (the walk finds no listed block at its `p - 72`).
+    var keep = fl_alloc(100);
+    fl_poison_disable();
+    var pl = fl_alloc(100);
+    store64(pl - 8, 0x0001020304050607);
+    fl_poison_reset();
+    assert_eq(_cap_begin(), 0, "pipe for the plain smashed-header capture");
+    fl_free(pl);
+    got = _cap_end(out, 1024);
+    assert_eq(_has(out, "[header]"), 1, "control: a plain block's smashed header is still `[header]`");
+    assert_eq(fl_poison_violations(), 1, "control: one violation");
+    fl_poison_enable();
+    fl_free(keep);
+
+    test_group("controls: trailing damage, and a double free is still refused");
+    var t = fl_alloc(100);
+    store8(t + 100, 9);
+    assert_eq(_cap_begin(), 0, "pipe for the trailing capture");
+    fl_free(t);
+    got = _cap_end(out, 1024);
+    assert_eq(_has(out, "(100 bytes): 1 byte(s) changed [trailing]"), 1, "an overwrite is [trailing]");
+    var d = fl_alloc(40);
+    fl_free(d);
+    var v0 = fl_poison_violations();
+    assert_eq(_cap_begin(), 0, "pipe for the double-free capture");
+    fl_free(d);
+    got = _cap_end(out, 1024);
+    assert_eq(fl_poison_violations(), v0 + 1, "a double free of a poisoned block is a violation");
+    var e1 = fl_alloc(40);
+    var e2 = fl_alloc(40);
+    assert_neq(e1, e2, "and the block was not pushed twice");
+    fl_free(e1);
+    fl_free(e2);
+
+    fl_poison_disable();
+    var rc = assert_summary();
+    return rc;
+}
+var ec = main();
+syscall(60, ec);

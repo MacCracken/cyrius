@@ -1,0 +1,51 @@
+# poison_arena_unarmed_alloc.tcyr — 6.6.20: the poison arenas over an alloc() that does NOT
+# arm its blocks. Plain `cyrius test`, no compile flag — so _poison_alloc_armed() is 0 here on
+# every target, which is the path agnos and cx take UNDER CYRIUS_POISON (their alloc() bodies
+# are not instrumented, and lib/alloc.cyr sends arena_new to _poison_arena_new on every target).
+#
+# ⛔ THE DEFECT. _poison_arena_new read the poison meta word at `a - 48` of its own alloc(64)
+# unconditionally. Unarmed, there is no header there: for the first allocation `a - 48` is
+# below the heap mapping (SIGSEGV), and otherwise it is the previous block's tail — any bit 52
+# there was taken as "counted" and _poison_hidden grew, which on an instrumented target would
+# skew alloc_used(). _poison_block already guarded the same read with _poison_alloc_armed().
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/poison.cyr"
+include "lib/assert.cyr"
+
+fn main(): i64 {
+    # The very first allocation of the run: `a - 48` is below the heap mapping.
+    var a0 = _poison_arena_new(64);
+
+    test_group("_poison_arena_new over an unarmed alloc() (6.6.20)");
+    assert_eq(_poison_alloc_armed(), 0, "ANTI-VACUOUS: this build's alloc() does not arm blocks");
+    assert_nonnull(a0, "the first allocation of the run: no read below the heap");
+    assert_eq(arena_used(a0), 0, "a fresh arena: used 0");
+    assert_eq(arena_remaining(a0), 64, "a fresh arena: 64 remaining");
+    assert_eq(load64(a0 + 56), 0, "the owner list starts empty");
+
+    # A neighbour whose tail has every bit set: the old read took its bytes as a header.
+    var f = alloc(64);
+    var i = 0;
+    while (i < 64) { store8(f + i, 0xFF); i = i + 1; }
+    var a1 = _poison_arena_new(32);
+    assert_eq(a1, f + 64, "ANTI-VACUOUS: the arena header sits right after the 0xFF block");
+    assert_eq(_poison_hidden, 0, "the neighbour's bit 52 is not read as 'counted' (was 8)");
+
+    test_group("an arena request arms its own block");
+    var u = _poison_arena_take(a1, 16);
+    assert_nonnull(u, "the arena serves the request");
+    assert_eq(load8(u + 16), poison_fill(), "a read past it yields the fill (self-armed)");
+    assert_eq(load8(u - 1), poison_fill(), "a read before it yields the fill");
+    assert_eq(load64(a1 + 56), u - _POISON_RZ - _POISON_HDR, "the block is on the arena's owner list");
+    assert_eq(_poison_hidden, 0, "a self-armed block was never counted, so nothing is hidden");
+    assert_eq(poison_sweep(), 0, "clean: sweep == 0");
+    _poison_arena_quarantine(a1);
+    assert_eq(load64(a1 + 56), 0, "quarantine drops the owner list");
+    assert_eq(load8(u), poison_fill(), "and fills the block");
+
+    var r = assert_summary();
+    return r;
+}
+var r = main();
+syscall(60, r);
