@@ -4430,38 +4430,57 @@ fn _deps_lock_files_into(dir, out): i64 {
     return 0;
 }
 
-# The NAME field of a `commit\t<sha>\t<name>\t<git>\t<tag>` line of `n` bytes at `p` (no
-# newline): its offset from `p`, or -1 when the line has no name field. Its length runs to
-# the next tab or the end of the line (_lock_commit_name_len).
-fn _lock_commit_name_at(p, n): i64 {
+# Field `k` (1 sha, 2 name, 3 git, 4 tag) of a `commit\t<sha>\t<name>\t<git>\t<tag>` line of
+# `n` bytes at `p` (no newline): its offset from `p`, or -1 when the line stops short of it. A
+# field runs to the next tab (_lock_commit_field_len); the TAG runs to the end of the line, the
+# way _lock_commit_lookup reads it.
+fn _lock_commit_field_at(p, n, k): i64 {
     var i = 7;
-    while (i < n && load8(p + i) != 9) { i = i + 1; }
-    if (i >= n) { return -1; }
-    return i + 1;
+    var f = 1;
+    while (f < k) {
+        while (i < n && load8(p + i) != 9) { i = i + 1; }
+        if (i >= n) { return -1; }
+        i = i + 1;
+        f = f + 1;
+    }
+    return i;
 }
 
-fn _lock_commit_name_len(p, n, off): i64 {
+fn _lock_commit_field_len(p, n, off): i64 {
     var i = off;
     while (i < n && load8(p + i) != 9) { i = i + 1; }
     return i - off;
 }
 
-# 1 when THIS resolve pushed a fresh pin for the dep the inherited commit line (`n` bytes at
-# `p`) names — cmd_deps_lock then writes the fresh line instead. A line with no name field
-# matches nothing, so it is carried as it stood. CHANGELOG [6.6.20]
+# 1 when commit lines `a` (`na` bytes) and `b` (`nb` bytes) pin the same (name, git, tag) — the
+# key _lock_commit_lookup reads a pin by: exact name, url-normalised git (`…/x` = `…/x.git`,
+# _git_url_same), exact tag. A line short of its tag field matches nothing. CHANGELOG [6.6.20]
+fn _lock_commit_same_key(a, na, b, nb): i64 {
+    var at = _lock_commit_field_at(a, na, 4);
+    var bt = _lock_commit_field_at(b, nb, 4);
+    if (at < 0 || bt < 0) { return 0; }
+    if (na - at != nb - bt) { return 0; }
+    if (memeq(a + at, b + bt, na - at) == 0) { return 0; }
+    var an = _lock_commit_field_at(a, na, 2);
+    var bn = _lock_commit_field_at(b, nb, 2);
+    var al = _lock_commit_field_len(a, na, an);
+    if (al != _lock_commit_field_len(b, nb, bn)) { return 0; }
+    if (memeq(a + an, b + bn, al) == 0) { return 0; }
+    var ag = _lock_commit_field_at(a, na, 3);
+    var bg = _lock_commit_field_at(b, nb, 3);
+    var bgc = _git_cstr_copy(b + bg, _lock_commit_field_len(b, nb, bg));
+    return _git_url_same_n(a + ag, _lock_commit_field_len(a, na, ag), bgc);
+}
+
+# 1 when THIS resolve pushed a fresh pin with the same (name, git, tag) as the inherited commit
+# line (`n` bytes at `p`) — cmd_deps_lock then writes the fresh line instead. CHANGELOG [6.6.20]
 fn _dep_commit_fresh_has(p, n): i64 {
     if (_dep_commit_lines == 0) { return 0; }
-    var off = _lock_commit_name_at(p, n);
-    if (off < 0) { return 0; }
-    var nl = _lock_commit_name_len(p, n, off);
     var i = 0;
     while (i < vec_len(_dep_commit_lines)) {
         var fl = vec_get(_dep_commit_lines, i);
         i = i + 1;
-        var flen = strlen(fl);
-        var fo = _lock_commit_name_at(fl, flen);
-        if (fo < 0) { continue; }
-        if (_lock_commit_name_len(fl, flen, fo) == nl && memeq(fl + fo, p + off, nl) == 1) { return 1; }
+        if (_lock_commit_same_key(p, n, fl, strlen(fl)) == 1) { return 1; }
     }
     return 0;
 }
@@ -4488,27 +4507,28 @@ fn cmd_deps_lock(): i64 {
     # content hashes, so they always fall inside _lock_commit_lookup's 64 KB
     # read window even when a large project's hash section grows past it.
     # cmd_deps_verify skips these lines; resolution checks them.
-    var _cc = 0;
-    if (_dep_commit_lines != 0) {
-        var _ci = 0;
-        while (_ci < vec_len(_dep_commit_lines)) {
-            var _line = vec_get(_dep_commit_lines, _ci);
-            _aw_write(lock_h, _line, strlen(_line));
-            _aw_write(lock_h, "\n", 1);
-            _ci = _ci + 1;
-            _cc = _cc + 1;
-        }
-    }
-    # ⛔ ALWAYS MERGE the inherited pins (CVE-TBD, 6.6.20): every inherited `commit\t` line whose
-    # dep NAME got no fresh line above is carried forward. A resolve pins only the tagged deps it
-    # verified THIS run, and this used to write those OR (bare `--lock`, v6.6.4) the inherited
+    # ⛔ ALWAYS MERGE the inherited pins (CVE-TBD, 6.6.20). A resolve pins only the tagged deps
+    # it verified THIS run, and this used to write those OR (bare `--lock`, v6.6.4) the inherited
     # ones — so a resolve that skipped a dep dropped its pin and kept its lib/ hash row: an
     # optional dep without its feature, a `target =` miss, every transitive dep of a gated-out
     # dep, an existing `path =` override, any pin on a no-git (PE) host — through every auto-deps
-    # verb. The next resolve with a fresh cache then TOFU-re-pinned a repointed tag. Keyed on the
-    # NAME: (name, git, tag) would duplicate a line under a respelled url and pile up stale pins
-    # across tag bumps; and NOT filtered to the manifest's names — a transitive dep of a
+    # verb. The next resolve with a fresh cache then TOFU-re-pinned a repointed tag.
+    # An inherited line is dropped ONLY for a fresh line with its (name, git, tag) — the key
+    # _lock_commit_lookup reads a pin by, git url-normalised the same way, so a respelled
+    # `…/x.git` still replaces its line. Not by NAME: in a diamond, a gated root `x@v2` and a
+    # required dep's own `x@v1` share the name, and the feature-less resolve that pinned x@v1
+    # dropped the x@v2 pin a later `--features` resolve reads. So an old tag's line stays after a
+    # tag bump — fail-closed, what CVE-21 wants if the dep is moved back to that tag (delete
+    # cyrius.lock to re-pin). Not filtered to the manifest's names either: a transitive dep of a
     # gated-out dep is declared only in that dep's own, unread manifest. CHANGELOG [6.6.20]
+    var _pins = vec_new();
+    if (_dep_commit_lines != 0) {
+        var _ci = 0;
+        while (_ci < vec_len(_dep_commit_lines)) {
+            vec_push(_pins, vec_get(_dep_commit_lines, _ci));
+            _ci = _ci + 1;
+        }
+    }
     if (_dep_lock_buf != 0) {
         var _lp = 0;
         while (_lp < _dep_lock_len) {
@@ -4518,13 +4538,18 @@ fn cmd_deps_lock(): i64 {
                 var _lw = _le;
                 if (_lw > _lp && load8(_dep_lock_buf + _lw - 1) == 13) { _lw = _lw - 1; }
                 if (_dep_commit_fresh_has(_dep_lock_buf + _lp, _lw - _lp) == 0) {
-                    _aw_write(lock_h, _dep_lock_buf + _lp, _lw - _lp);
-                    _aw_write(lock_h, "\n", 1);
-                    _cc = _cc + 1;
+                    vec_push(_pins, _git_cstr_copy(_dep_lock_buf + _lp, _lw - _lp));
                 }
             }
             _lp = _le + 1;
         }
+    }
+    var _cc = 0;
+    while (_cc < vec_len(_pins)) {
+        var _line = vec_get(_pins, _cc);
+        _aw_write(lock_h, _line, strlen(_line));
+        _aw_write(lock_h, "\n", 1);
+        _cc = _cc + 1;
     }
     var count = _deps_lock_dir("lib", lock_h);
     if (_deps_lock_unlisted != 0) {

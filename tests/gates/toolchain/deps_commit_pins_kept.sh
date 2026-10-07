@@ -15,12 +15,17 @@
 # tag repointed and its cache cleared, `deps --features gpu` then exited 0, vendored the new
 # bytes and RE-PINNED to them — the first-resolve TOFU floor, reached on a routine workflow.
 #
-# THE FIX: cmd_deps_lock always MERGES — the fresh lines, then every inherited `commit\t` line
-# whose dep NAME has no fresh line. Keyed on the name only, deliberately: not on (name, git,
-# tag), or a url respelled `…/x` ↔ `…/x.git` would duplicate the line and a tag bump would
-# accumulate stale pins; and not filtered to manifest-declared names, because a transitive
-# dep of a gated-out dep is declared only in that dep's own manifest, which is never read
-# while it is gated out.
+# THE FIX: cmd_deps_lock always MERGES — the fresh lines plus every inherited `commit\t` line no
+# fresh line supersedes. An inherited line is superseded only by a fresh line with its
+# (name, git, tag): the key `_lock_commit_lookup` reads a pin by, the git url
+# normalised the same way (`…/x` = `…/x.git`), so a respelled url still replaces its line (K14).
+# NOT by the name alone. The first cut keyed on the name, and review measured the hole: in a
+# diamond, a gated root `x@v2` and a required dep's own `x@v1` share the name, the feature-less
+# resolve pinned x@v1 and dropped x@v2's pin, and a repointed v2 on a fresh cache was then
+# vendored at exit 0 (K12). So an old tag's line now stays after a tag bump (K8) — fail-closed,
+# what CVE-21 wants if the dep is moved back to that tag; deleting cyrius.lock re-pins. Not
+# filtered to manifest-declared names either: a transitive dep of a gated-out dep is declared
+# only in that dep's own manifest, which is never read while it is gated out (K5).
 #
 # THE CRLF HALF (CBTB-05). `_dep_lock_load` and `_lock_buf_hash_lookup` were made CRLF-tolerant
 # at 6.6.4/6.6.9; their two siblings were not. `_lock_commit_lookup` kept the `\r` on the TAG
@@ -37,20 +42,27 @@
 #   K5  transitive dep of the optional dep: same, refused by name
 #   K6  target-gated dep: same under `--aarch64`, refused by name
 #   K7  path-override dep: override dir removed, tag repointed → refused by name
-#   K8  a tag bump re-pins the dep and leaves exactly ONE line for it (no stale-pin pile-up)
+#   K8  a tag bump v1 → v2 pins the dep at v2 and KEEPS its v1 line (no pin a lookup could
+#       read is dropped); K8r: v2 repointed + fresh cache → refused by name
 #   K9  the merged lock verifies (`deps --verify`: N verified, 0 failed)
 #   K10 the lock converted to CRLF: a repointed tag is still refused by name (CBTB-05 — the
 #       pin lookup kept the `\r` on the TAG field, matched nothing and returned "no pin")
 #   K11 `deps --verify` on that CRLF lock: N verified, 0 failed (it read `lib/x.cyr\r` and
 #       failed every file "cannot hash")
+#   K12 diamond: optional root `dx` at v2 + required `dy`, whose own manifest declares dx at v1.
+#       K12a: a feature-less `deps` pins dx@v1 and keeps the dx@v2 pin, same sha; K12b: dx's v2
+#       repointed + fresh cache → `deps --features gpu` REFUSED by name, lock and lib untouched
+#   K14 a respelled url (`…/good` → `…/good.git`) replaces its line: one (good, v2) line, the
+#       respelled spelling, same sha, no duplicate
 #
-# Mutation ledger (measured in a scratch root): the slot-open (6.6.20) CLI → every axis but
-# K1 red; restoring cmd_deps_lock's `if (fresh) … else (inherited)` → K2–K11 red; carrying
-# every inherited line without the name match (the fresh-line check always 0) → K2 K3 K8 red
-# (a duplicate line per re-verified dep); dropping the CR strip in _lock_commit_lookup → K10
-# red; dropping the one in cmd_deps_verify → K11 red. A repoint must make a NEW commit: the
-# second repoint of one origin used to be an empty `git commit`, the tag never moved, and the
-# CRLF axis passed nothing (caught while measuring this ledger).
+# Mutation ledger (measured in a scratch root, one mutant at a time): the slot-open (6.6.20) CLI
+# → every axis but K1 red; the first cut, which dropped an inherited line by NAME (61c88ca3) →
+# K8 K12a K12b K14 red; carrying every inherited line (the fresh-line check always 0) → K2 K3
+# K8 K12a K14 red (a duplicate line per re-verified dep); comparing the git field byte-for-byte
+# instead of url-normalised → K14 red; dropping the CR strip in
+# _lock_commit_lookup → K10 red; dropping the one in cmd_deps_verify → K11 red. A repoint must
+# make a NEW commit: the second repoint of one origin used to be an empty `git commit`, the tag
+# never moved, and the CRLF axis passed nothing (caught while measuring this ledger).
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
 G=deps_commit_pins_kept
@@ -133,25 +145,27 @@ printf 'fn main(): i64 { return 0; }\nvar r = main();\nsyscall(60, r);\n' > "$P/
 _cy() { ( cd "$P" && HOME="$W/nohome" CYRIUS_HOME="$H" CYRIUS_RESOLVED=1 CYRIUS_NO_WARN_PIN_DRIFT=1 exec "$CY" "$@" ); }
 pin_of() { tr -d '\r' < "$P/cyrius.lock" | awk -F"$TAB" -v n="$1" '$1 == "commit" && $3 == n { print $2 }'; }
 npins()  { tr -d '\r' < "$P/cyrius.lock" | grep -c "^commit$TAB" || true; }
+pin_at() { tr -d '\r' < "$P/cyrius.lock" | awk -F"$TAB" -v n="$1" -v t="$2" '$1 == "commit" && $3 == n && $5 == t { print $2 }'; }
 pinset() { for _n in good opt optdep tgt ovr; do printf '%s=%s ' "$_n" "$(pin_of "$_n" | tr '\n' ',')"; done; }
 NREP=0
-repoint() {   # $1 = origin name: move its v1 to a NEW commit vendoring different bytes (unique
+RTAG=v1       # the tag repoint / restore / refused move (K8r and K12b move v2)
+repoint() {   # $1 = origin name: move its $RTAG to a NEW commit vendoring different bytes (unique
               # per call — a second repoint of one origin must not be an empty commit)
     NREP=$((NREP + 1))
-    ( cd "$W/o/$1" && printf 'fn %s_f(): i64 { return %s; }\n' "$1" "$((665 + NREP))" > "dist/$1.cyr" && git commit -qam "evil $NREP" && git tag -f v1 > /dev/null 2>&1 ) \
-      || bad "repoint $1: could not move v1"
+    ( cd "$W/o/$1" && printf 'fn %s_f(): i64 { return %s; }\n' "$1" "$((665 + NREP))" > "dist/$1.cyr" && git commit -qam "evil $NREP" && git tag -f "$RTAG" > /dev/null 2>&1 ) \
+      || bad "repoint $1: could not move $RTAG"
 }
-restore() {   # $1 = origin name, $2 = the original sha: put v1 back, drop the (evil) cache entry
-    git -C "$W/o/$1" tag -f v1 "$2" > /dev/null 2>&1; rm -rf "$H/deps/$1"
+restore() {   # $1 = origin name, $2 = the original sha: put $RTAG back, drop the (evil) cache entry
+    git -C "$W/o/$1" tag -f "$RTAG" "$2" > /dev/null 2>&1; rm -rf "$H/deps/$1"
 }
 # refused <axis> <origin> <args…>: repoint, clear the cache, resolve, expect a by-name refusal
 refused() {
     _ax=$1; _nm=$2; shift 2
-    _sha=$(git -C "$W/o/$_nm" rev-parse 'v1^{commit}')
+    _sha=$(git -C "$W/o/$_nm" rev-parse "$RTAG^{commit}")
     cp "$P/cyrius.lock" "$W/$_ax.lock"; cp "$P/lib/$_nm.cyr" "$W/$_ax.lib"
     repoint "$_nm"; rm -rf "$H/deps/$_nm"
     _rc=0; if _cy deps "$@" > "$W/$_ax.out" 2>&1; then _rc=0; else _rc=$?; fi
-    if [ "$_rc" -ne 0 ] && grep -q "commit-pin mismatch for dep '$_nm'" "$W/$_ax.out" \
+    if [ "$_rc" -ne 0 ] && grep -q "commit-pin mismatch for dep '$_nm' tag '$RTAG'" "$W/$_ax.out" \
        && cmp -s "$P/cyrius.lock" "$W/$_ax.lock" && cmp -s "$P/lib/$_nm.cyr" "$W/$_ax.lib"; then
         ok "$_ax $_nm: repointed tag + fresh cache refused by name (rc=$_rc); lock and lib/$_nm.cyr untouched"
     else bad "$_ax $_nm (rc=$_rc, pins: $(pinset)): $(grep -m2 -i 'error\|refus\|resolved' "$W/$_ax.out")"; fi
@@ -184,16 +198,20 @@ refused K6 tgt --aarch64
 rm -rf "$P/ovr-local"
 refused K7 ovr
 
-# ── K8: a deliberate tag bump re-pins, and leaves exactly one line for the dep ───────────
+# ── K8: a deliberate tag bump pins the new tag and KEEPS the old tag's line ─────────────
+#    The merge drops an inherited line only for a fresh one with its (name, git, tag), so the
+#    v1 pin stays: fail-closed if the dep is ever moved back to a repointed v1.
+good1=$(pin_of good)
 ( cd "$W/o/good" && printf 'fn good_f(): i64 { return 2; }\n' > dist/good.cyr && git commit -qam v2 && git tag v2 ) || bad "K8 setup: cannot tag v2"
 sed -i '/^\[deps.good\]/,/^modules/ s/^tag = "v1"$/tag = "v2"/' "$P/cyrius.cyml"
 good2=$(git -C "$W/o/good" rev-parse 'v2^{commit}')
 rc=0; if _cy deps > "$W/k8.out" 2>&1; then rc=0; else rc=$?; fi
 gl=$(tr -d '\r' < "$P/cyrius.lock" | awk -F"$TAB" '$1 == "commit" && $3 == "good"' | wc -l | tr -d ' ')
-if [ "$rc" -eq 0 ] && [ "$gl" -eq 1 ] && [ "$(pin_of good)" = "$good2" ] \
-   && tr -d '\r' < "$P/cyrius.lock" | grep -q "^commit$TAB$good2${TAB}good$TAB.*${TAB}v2$" && [ "$(npins)" -eq 5 ]; then
-    ok "K8 tag bump v1 → v2: good re-pinned to v2's commit, one line for it, the other 4 pins kept"
+if [ "$rc" -eq 0 ] && [ "$gl" -eq 2 ] && [ "$(pin_at good v2)" = "$good2" ] && [ -n "$good1" ] \
+   && [ "$(pin_at good v1)" = "$good1" ] && [ "$(npins)" -eq 6 ]; then
+    ok "K8 tag bump v1 → v2: good pinned at v2's commit, its v1 line kept, the other 4 pins kept"
 else bad "K8 (rc=$rc, $gl line(s) for good, pins: $(pinset)): $(grep -m2 -i 'error\|refus' "$W/k8.out")"; fi
+RTAG=v2; refused K8r good; RTAG=v1
 
 # ── K9: the merged lock is a valid lock ─────────────────────────────────────────────────
 rc=0; if _cy deps --verify > "$W/k9.out" 2>&1; then rc=0; else rc=$?; fi
@@ -215,6 +233,62 @@ ncr2=$(tr -cd '\r' < "$P/cyrius.lock" | wc -c | tr -d ' ')
 if [ "$rc" -eq 0 ] && grep -qE '[1-9][0-9]* verified, 0 failed' "$W/k11.out" && [ "$ncr2" = "$ncr" ]; then
     ok "K11 CRLF lock: --verify reads it ($(tail -1 "$W/k11.out")), lock left CRLF"
 else bad "K11 (rc=$rc): $(head -2 "$W/k11.out" | tr '\r' '~') … $(tail -1 "$W/k11.out")"; fi
+
+# ── K12: a diamond — the gated root declaration and a required dep's own share the NAME ───
+#    dx is an optional root dep at v2; dy (required) declares dx at v1 in its own manifest. A
+#    skipped optional dep is not marked visited, so the feature-less resolve pins dx@v1 in its
+#    place — and a name-keyed merge dropped the dx@v2 pin `deps --features gpu` reads.
+mkorigin dx ""
+( cd "$W/o/dx" && printf 'fn dx_f(): i64 { return 2; }\n' > dist/dx.cyr && git commit -qam v2 && git tag v2 ) || bad "K12 setup: cannot tag dx v2"
+mkorigin dy "[package]\nname = \"dy\"\nversion = \"1.0.0\"\nlanguage = \"cyrius\"\n\n[deps.dx]\ngit = \"file://$W/o/dx\"\ntag = \"v1\"\nmodules = [\"dist/dx.cyr\"]\n"
+dx1=$(git -C "$W/o/dx" rev-parse 'v1^{commit}'); dx2=$(git -C "$W/o/dx" rev-parse 'v2^{commit}')
+P0=$P; P="$W/p2"; mkdir -p "$P"
+cat > "$P/cyrius.cyml" <<EOF
+[package]
+name = "pinsd"
+version = "0.0.1"
+language = "cyrius"
+cyrius = "$V"
+
+[build]
+src = "main.cyr"
+output = "out"
+
+[features]
+gpu = ["dx"]
+
+[deps.dx]
+git = "file://$W/o/dx"
+tag = "v2"
+modules = ["dist/dx.cyr"]
+optional = true
+
+[deps.dy]
+git = "file://$W/o/dy"
+tag = "v1"
+modules = ["dist/dy.cyr"]
+EOF
+cp "$P0/main.cyr" "$P/main.cyr"
+rc=0; if _cy deps --features gpu > "$W/k12.out" 2>&1; then rc=0; else rc=$?; fi
+[ "$rc" -eq 0 ] && [ "$(pin_at dx v2)" = "$dx2" ] && [ -n "$(pin_of dy)" ] \
+  || bad "K12 setup (rc=$rc): dx@v2 + dy not pinned: $(tr -d '\r' < "$P/cyrius.lock" | grep "^commit" | cut -f3,5 | tr '\n' ' ') $(grep -m2 -i 'error\|refus' "$W/k12.out")"
+rc=0; if _cy deps > "$W/k12a.out" 2>&1; then rc=0; else rc=$?; fi
+if [ "$rc" -eq 0 ] && [ "$(pin_at dx v2)" = "$dx2" ] && [ "$(pin_at dx v1)" = "$dx1" ] && [ "$(npins)" -eq 3 ]; then
+    ok "K12a diamond: a feature-less resolve pinned dy's dx@v1 and KEPT the root's dx@v2 pin"
+else bad "K12a (rc=$rc, $(npins) pins: $(tr -d '\r' < "$P/cyrius.lock" | grep "^commit" | cut -f3,5 | tr '\n' ' ')): $(grep -m2 -i 'error\|refus' "$W/k12a.out")"; fi
+RTAG=v2; refused K12b dx --features gpu; RTAG=v1
+
+# ── K14: a respelled url replaces its line (the drop key normalises git as the lookup does) ──
+P=$P0
+ln -s good "$W/o/good.git" || bad "K14 setup: cannot link good.git"
+sed -i "s|^git = \"file://$W/o/good\"\$|git = \"file://$W/o/good.git\"|" "$P/cyrius.cyml"
+grep -q "o/good.git\"" "$P/cyrius.cyml" || bad "K14 setup: the url was not respelled"
+rc=0; if _cy deps > "$W/k14.out" 2>&1; then rc=0; else rc=$?; fi
+g2=$(tr -d '\r' < "$P/cyrius.lock" | awk -F"$TAB" '$1 == "commit" && $3 == "good" && $5 == "v2"')
+if [ "$rc" -eq 0 ] && [ "$(printf '%s\n' "$g2" | grep -c .)" -eq 1 ] && [ "$(pin_at good v2)" = "$good2" ] \
+   && printf '%s' "$g2" | grep -q "o/good.git${TAB}v2$" && [ "$(npins)" -eq 6 ]; then
+    ok "K14 url respelled …/good → …/good.git: one (good, v2) line, the new spelling, same sha"
+else bad "K14 (rc=$rc, $(npins) pins): $(printf '%s' "$g2" | cut -f4,5 | tr '\n' ' ') $(grep -m2 -i 'error\|refus' "$W/k14.out")"; fi
 
 echo "$G: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
