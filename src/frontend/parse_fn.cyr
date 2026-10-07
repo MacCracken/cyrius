@@ -666,8 +666,7 @@ fn _tc_callee_divert(S, cfi): i64 {
     # 6.6.6 — a >16 B struct-returning callee writes through a retptr the tail path never passes.
     if (_ret_agg_class(S, cfi) == 2) { return 1; }
     if (cfi < 0) { return 0; }
-    # v6.3.36 — plain-struct params are ADDRESS-passed: pointers into the frame the jmp frees.
-    if (_smask_args(cfi) != 0) { return 1; }
+    # (v6.3.36's "any address-passed param diverts" is per ARGUMENT since 6.6.20: `_tc_sarg_divert`.)
     # v6.4.53 — value-form SIMD params travel in vector registers; the tail path loads only the
     # integer ones (`return f32v4_add(v, v)` returned v).
     if (L64(_fnt_simdmask + cfi * 8) != 0) { return 1; }
@@ -701,6 +700,67 @@ fn _tc_args_divert(S, cfi, ti_after): i64 {
     # FIRST token AND that argument's mask bit is set): looser forms were measured to cost a
     # self-recursive tail call its TCO.
     if (_tc_str_literal_arg(S, ti_after, cfi) == 1) { return 1; }
+    if (_tc_sarg_divert(S, cfi, ti_after) == 1) { return 1; }   # 6.6.20
+    return 0;
+}
+# ⛔ 6.6.20 — AN ADDRESS-PASSED PARAMETER IS A PER-ARGUMENT QUESTION. Any address-passed parameter
+# (a struct over 8 B as `p: T` or `p: *T`, a Win64 value-form vector) used to divert EVERY tail call
+# to its fn, so a `p: *Node` list walk, `return walk(p.next, acc + p.v);`, recursed with `call` and
+# a 2,000,000-node list overflowed the stack — a pointer argument carries no frame address. The
+# tail arm now pushes such an argument exactly as PARSE_FNCALL does (`_try_push_struct_addr_arg`:
+# a global struct's address, a field's address through a pointer), so the only hazard left is the
+# one a `jmp` adds — a pushed address INTO THIS FRAME: an inline struct local, a by-value
+# parameter's localized copy (6.6.16 C7), a Win64 vector local, a struct call's or an operator's
+# temp, a field of any of those. `ti_open` = the call's `(`. CHANGELOG [6.6.20]
+fn _tc_sarg_divert(S, cfi, ti_open): i64 {
+    if (_smask_args(cfi) == 0) { return 0; }
+    var i = ti_open + 1;
+    var depth = 0;
+    var pos = 0;
+    var st = i;
+    var n = GTCNT(S);
+    while (i < n) {
+        var t = TOKTYP(S, i);
+        if (t == 12) { return 1; }                                   # EOF: the normal path reports it
+        var endarg = 0;
+        if (depth == 0) { if (t == 31) { endarg = 1; } if (t == 11) { endarg = 2; } }
+        if (endarg > 0) {
+            if (_pm_struct(cfi, pos) == 1) { if (_tc_sarg_ok(S, st, i - st) == 0) { return 1; } }
+            if (endarg == 2) { return 0; }
+            pos = pos + 1;
+            st = i + 1;
+        } else {
+            if (t == 10) { depth = depth + 1; }
+            if (t == 28) { depth = depth + 1; }
+            if (t == 13) { depth = depth + 1; }
+            if (t == 11) { depth = depth - 1; }
+            if (t == 29) { depth = depth - 1; }
+            if (t == 14) { depth = depth - 1; }
+        }
+        i = i + 1;
+    }
+    return 1;
+}
+# 1 = the argument tokens [st, st + n) into an address-passed parameter cannot push an address in
+# this frame: a bare local that is not struct-typed (its value), a bare `*T` parameter (the pointer
+# it holds), a bare global (`_push_struct_addr_global`: its value, the pointer its slot holds or
+# its own address — never a frame's), or `ptr.field` through a `*T` parameter (the pointee's
+# field). Everything else answers 0, including a pointer-MODE struct local, whose pointer the
+# tokens cannot vouch for. Read-only: FINDLOCAL / `_findvar_core`, never FINDVAR, whose
+# visibility report belongs to the argument's own parse.
+fn _tc_sarg_ok(S, st, n): i64 {
+    if (TOKTYP(S, st) != 2) { return 0; }
+    var li = FINDLOCAL(S, TOKVAL(S, st));
+    if (n == 1) {
+        if (li < 0) { if (_findvar_core(S, TOKVAL(S, st)) >= 0) { return 1; } return 0; }
+        if (GLTYPE(S, li) >= 0) { return 1; }
+        if (_is_ptr_param(S, li) == 1) { return 1; }
+        return 0;
+    }
+    if (n != 3) { return 0; }
+    if (TOKTYP(S, st + 1) != 41) { return 0; }
+    if (TOKTYP(S, st + 2) != 2) { return 0; }
+    if (_is_ptr_param(S, li) == 1) { return 1; }
     return 0;
 }
 
@@ -791,8 +851,12 @@ fn PARSE_RETURN(S): i64 {
                                         }
                                     }
                                     _check_str_cstring_arg(S, _tc_prefi, tcargc, tcnoff);   # 6.6.13 I11
-                                    PCMPE(S);
-                                    EPUSHR(S);
+                                    # 6.6.20: an address-passed argument is pushed as PARSE_FNCALL
+                                    # pushes it; `_tc_sarg_divert` ruled out a frame address.
+                                    if (_try_push_struct_addr_arg(S, _tc_prefi, tcargc) == 0) {
+                                        PCMPE(S);
+                                        EPUSHR(S);
+                                    }
                                     tcargc = tcargc + 1;
                                     if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
                                     else { tcgo = 0; }

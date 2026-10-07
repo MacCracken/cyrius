@@ -1,0 +1,177 @@
+# tailcall_struct_ptr_params.tcyr — a tail call into a fn with an ADDRESS-PASSED parameter (a
+# struct over 8 B as `p: T` or `p: *T`, a Win64 value-form vector) keeps its `jmp` unless the
+# argument it pushes is an address in the caller's own frame.
+#
+# THE BUG (fixed 6.6.20). Any address-passed parameter diverted EVERY tail call to its fn onto
+# the normal call path, whatever the argument was. So the shape the 6.6.16 by-value migration
+# recommends for a mutating callee, a `p: *Node` list walk —
+#     fn walk(p: *Node, acc) { if (p == 0) { return acc; } return walk(p.next, acc + p.v); }
+# — recursed with `call`, and a long list overflowed the stack (rc 139; the untyped twin ran in
+# constant stack). The tail arm now pushes such an argument exactly as an ordinary call does, and
+# diverts only when that push would be an address in the frame the `jmp` frees.
+#
+# HOW A ROW TELLS A KEPT TAIL CALL FROM A DIVERTED ONE. Each probe callee stores the address of
+# one of its own locals in `_dmark`. Called directly from the checker it lands at some depth; a
+# wrapper that tail-calls it with a `jmp` puts it at the SAME depth (the wrapper's frame is gone),
+# and a wrapper that calls it normally puts it DEEPER. So every row asserts both the value and
+# the depth — exactly, with no reliance on a freed frame happening to be overwritten.
+#   - kept (same depth): a forwarded `*T` parameter, an untyped pointer local, a global struct into
+#     `*T` and into a by-value `T` (the global's own address is pushed), and a field reached
+#     through a `*T` parameter (the pointee's field address is pushed);
+#   - diverted (deeper): an inline struct local, a field of one, a forwarded by-value parameter (an
+#     inline copy in this frame since 6.6.16), a struct call's temp, a pointer-mode struct local,
+#     and a value-form vector local (address-passed on Win64, vector-register-passed elsewhere).
+# The deep rows run 1,000,000 levels, past any default stack (1 MB on Windows): the real shapes.
+#
+# ⚠ CROSS-HOST because the tail-call epilogue and the address-passing ABI are per backend, and the
+# vector row diverts through this rule only on Win64.
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+
+struct P3 { a; b; c; }
+struct W { x; inner: P3; }
+var G = P3 { 10, 20, 30 };
+var _dmark = 0;
+
+# Probe callees: each records its own depth. The j* locals overwrite a freed caller frame, so a
+# wrongly kept tail call also reads the wrong value.
+fn dP(p: *P3, k) {
+    var j1 = 901; var j2 = 902; var j3 = 903; var j4 = 904; var j5 = 905; var j6 = 906;
+    _dmark = &j1;
+    return p.a + p.b + p.c + k + (j1 + j2 + j3 + j4 + j5 + j6) - 5421;
+}
+fn dV(p: P3, k) {
+    var j1 = 901; var j2 = 902; var j3 = 903; var j4 = 904; var j5 = 905; var j6 = 906;
+    _dmark = &j1;
+    return p.a + p.b + p.c + k + (j1 + j2 + j3 + j4 + j5 + j6) - 5421;
+}
+fn dVec(v: f64v2, k) {
+    var j1 = 901; var j2 = 902; var j3 = 903; var j4 = 904; var j5 = 905; var j6 = 906;
+    _dmark = &j1;
+    return load64(&v + 0) + load64(&v + 8) + k + (j1 + j2 + j3 + j4 + j5 + j6) - 5421;
+}
+fn mk(a, b, c): P3 { var r = P3 { a, b, c }; return r; }
+fn mkv(a, b): f64v2 { var r: f64v2; store64(&r + 0, a); store64(&r + 8, b); return r; }
+fn _same(m, base): i64 { if (m == base) { return 1; } return 0; }
+fn _deeper(m, base): i64 { if (m < base) { return 1; } return 0; }
+
+# --- kept: pushed exactly as an ordinary call pushes it -----------------------------------------
+fn t_ptp(q: *P3, k) { return dP(q, k); }
+fn t_raw(k) { var h = alloc(24); store64(h, 7); store64(h + 8, 8); store64(h + 16, 9); return dP(h, k); }
+fn t_glob(k) { return dP(G, k); }
+fn t_globv(k) { return dV(G, k); }
+fn t_fld(w: *W, k) { return dP(w.inner, k); }
+# --- diverted: the argument is an address in this frame -----------------------------------------
+fn t_loc(k) { var s = P3 { 1, 2, 3 }; return dP(s, k); }
+fn t_locv(k) { var s = P3 { 1, 2, 3 }; return dV(s, k); }
+fn t_ifld(k) { var w: W; w.x = 0; w.inner.a = 4; w.inner.b = 5; w.inner.c = 6; return dP(w.inner, k); }
+fn t_bvp(p: P3, k) { return dP(p, k); }
+fn t_bvv(p: P3, k) { return dV(p, k); }
+fn t_call(k) { return dP(mk(4, 5, 6), k); }
+fn t_pmode(k) { var b: P3 = alloc(24); b.a = 7; b.b = 8; b.c = 9; return dP(b, k); }
+fn t_vec(k) { var v: f64v2 = mkv(30, 12); return dVec(v, k); }
+
+# --- deep: the real shapes, 1,000,000 levels --------------------------------------------------
+struct Node { v; next; }
+fn walk(p: *Node, acc) {
+    if (p == 0) { return acc; }
+    return walk(p.next, acc + p.v);
+}
+fn cntq(q: *P3, n, acc) {
+    if (n == 0) { return acc; }
+    return cntq(q, n - 1, acc + q.a);
+}
+fn cntg(p: *P3, n, acc) {
+    if (n == 0) { return acc; }
+    return cntg(G, n - 1, acc + p.b);
+}
+fn cntv(p: P3, n, acc) {
+    if (n == 0) { return acc; }
+    return cntv(G, n - 1, acc + p.c);
+}
+# Mutual, through a fn declared below: `w.inner` is a field of the pointee, not of this frame.
+fn stepw(w: *W, n, acc) {
+    if (n == 0) { return acc; }
+    return stepp(w.inner, w, n - 1, acc);
+}
+fn stepp(p: *P3, w: *W, n, acc) { return stepw(w, n, acc + p.a); }
+
+fn check_struct_ptr_tailcalls(): i64 {
+    alloc_init();
+    var q = P3 { 3, 4, 5 };
+    var vv: f64v2 = mkv(1, 2);
+    var w2 = alloc(32);
+    store64(w2, 0); store64(w2 + 8, 11); store64(w2 + 16, 22); store64(w2 + 24, 33);
+    # Each probe's depth when the checker calls it directly.
+    dP(q, 0);
+    var baseP = _dmark;
+    dV(q, 0);
+    var baseV = _dmark;
+    dVec(vv, 0);
+    var baseVec = _dmark;
+    var r = 0;
+
+    test_group("kept: the tail call reaches the callee at the caller's depth");
+    r = t_ptp(q, 1);
+    assert_eq(r, 13, "a forwarded `q: *T` parameter: value");
+    assert_eq(_same(_dmark, baseP), 1, "a forwarded `q: *T` parameter: kept");
+    r = t_raw(1);
+    assert_eq(r, 25, "an untyped pointer local into `*T`: value");
+    assert_eq(_same(_dmark, baseP), 1, "an untyped pointer local into `*T`: kept");
+    r = t_glob(1);
+    assert_eq(r, 61, "a global struct into `*T`: value");
+    assert_eq(_same(_dmark, baseP), 1, "a global struct into `*T`: kept");
+    r = t_globv(1);
+    assert_eq(r, 61, "a global struct into a by-value `T`: value");
+    assert_eq(_same(_dmark, baseV), 1, "a global struct into a by-value `T`: kept");
+    r = t_fld(w2, 1);
+    assert_eq(r, 67, "`w.inner` through a `*W` parameter: value");
+    assert_eq(_same(_dmark, baseP), 1, "`w.inner` through a `*W` parameter: kept");
+
+    test_group("diverted: the argument is an address in the caller's frame");
+    r = t_loc(1);
+    assert_eq(r, 7, "an inline struct local into `*T`: value");
+    assert_eq(_deeper(_dmark, baseP), 1, "an inline struct local into `*T`: diverted");
+    r = t_locv(1);
+    assert_eq(r, 7, "an inline struct local into a by-value `T`: value");
+    assert_eq(_deeper(_dmark, baseV), 1, "an inline struct local into a by-value `T`: diverted");
+    r = t_ifld(1);
+    assert_eq(r, 16, "a field of an inline struct local into `*T`: value");
+    assert_eq(_deeper(_dmark, baseP), 1, "a field of an inline struct local into `*T`: diverted");
+    r = t_bvp(q, 1);
+    assert_eq(r, 13, "a forwarded by-value parameter into `*T`: value");
+    assert_eq(_deeper(_dmark, baseP), 1, "a forwarded by-value parameter into `*T`: diverted");
+    r = t_bvv(q, 1);
+    assert_eq(r, 13, "a forwarded by-value parameter into a by-value `T`: value");
+    assert_eq(_deeper(_dmark, baseV), 1, "a forwarded by-value parameter into a by-value `T`: diverted");
+    r = t_call(1);
+    assert_eq(r, 16, "a struct call's temp into `*T`: value");
+    assert_eq(_deeper(_dmark, baseP), 1, "a struct call's temp into `*T`: diverted");
+    r = t_pmode(1);
+    assert_eq(r, 25, "a pointer-mode struct local into `*T`: value");
+    assert_eq(_deeper(_dmark, baseP), 1, "a pointer-mode struct local into `*T`: diverted");
+    r = t_vec(1);
+    assert_eq(r, 43, "a value-form vector local: value");
+    assert_eq(_deeper(_dmark, baseVec), 1, "a value-form vector local: diverted");
+
+    test_group("deep: 1,000,000 levels in constant stack");
+    var head = 0;
+    var i = 0;
+    while (i < 1000000) {
+        var nd = alloc(16);
+        store64(nd, 1);
+        store64(nd + 8, head);
+        head = nd;
+        i = i + 1;
+    }
+    assert_eq(walk(head, 0), 1000000, "walk(p.next, ..) over a 1,000,000-node list (p: *Node)");
+    assert_eq(cntq(q, 1000000, 0), 3000000, "a forwarded `q: *T` parameter");
+    assert_eq(cntg(G, 1000000, 0), 20000000, "a global struct into `*T`");
+    assert_eq(cntv(G, 1000000, 0), 30000000, "a global struct into a by-value `T`");
+    var wh = alloc(32);
+    store64(wh, 0); store64(wh + 8, 2); store64(wh + 16, 0); store64(wh + 24, 0);
+    assert_eq(stepw(wh, 1000000, 0), 2000000, "`w.inner` through a `*W` parameter (mutual recursion)");
+    return 0;
+}
+check_struct_ptr_tailcalls();
+var r = assert_summary();
