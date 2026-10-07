@@ -43,15 +43,18 @@
 #                                        literal and must not move. (v5.11.18 128→256KB,
 #                                        v6.4.76 256→512KB)
 #   0x60000   wpjs          [393216]      v6.5.68 whole-program compaction registry: the FIRST 49152
-#                                        × 8 B disp32 SOURCE cps (_wpjs_add, util.cyr), filled only
-#                                        under CYRIUS_IR / CYRIUS_DCE=1. cycc's own build records
+#                                        × 8 B disp32 SOURCE cps (_wpjs_add, util.cyr), filled
+#                                        under CYRIUS_IR / CYRIUS_DCE=1 (every x86 build records one:
+#                                        the entry trampoline's, _wpjs_add_raw). cycc's own build records
 #                                        43,028 (6.6.20). Since 6.6.20 the 49,153rd moves the registry
 #                                        to alloc'd storage, doubling (_wpjs_grow) — it used to set
 #                                        _wpjs_ovf and decline the whole pass. Readers go through
 #                                        _wpjs_base.
 #   0xC0000   wpnr          [196608]      4096 × 24 B (cp, len, cum) NOP runs + 4096 records of
 #                                        merge scratch (_wpnr_add; overflow → _wpnr_ovf, declines;
-#                                        cycc: 2,605 runs)
+#                                        cycc: 2,605 runs; under CYRIUS_IR=3 it saturates on 48 of
+#                                        the 482 tcyr files — the TLS, sandhi and ws programs and
+#                                        the large-source tests, 6.6.20)
 #   0xF0000   wpsw          [65536]       4096 × 16 B (table_cp, nent) switch jump tables
 #                                        (_wpsw_add; overflow → _wpsw_ovf, declines). Ends 0x100000.
 #                                        A decline is NAMED on both paths (_wp_registry_why): the

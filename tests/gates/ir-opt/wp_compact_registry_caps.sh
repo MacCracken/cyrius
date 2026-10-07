@@ -27,9 +27,10 @@
 #      first pass's layout (wp_compact's re-entrancy loop) — the binary still exits 180.
 #   5  CYRIUS_IR=3 on 4,200 LASE sites: the NOP-run registry (4,096) saturates and the seam
 #      names it as NOP runs, not "dead-code runs" (at the seam they are the IR passes' runs;
-#      FIXUP's dead-code pass comes later). This is the case 48 of the 482 tcyr files hit under
-#      CYRIUS_IR=3 (every TLS/sandhi-class program). It pins a CLIFF: when the 4,096-run merge
-#      on the roadmap backlog lands, axis 5 compacts instead — re-measure it then.
+#      FIXUP's dead-code pass comes later). This is the case 48 of the 482 tcyr files hit
+#      under CYRIUS_IR=3 (the TLS, sandhi and ws programs and the large-source tests). It pins
+#      a CLIFF: when the 4,096-run merge on the roadmap backlog lands, axis 5 compacts
+#      instead — re-measure it then.
 #
 # THE THREE READERS. Growing the registry moved it off S+0x60000, so every loop that walks it
 # must go through _wpjs_base: wp_compact's stage 1 (axes 1, 2), its re-entrancy rebase (axis 4)

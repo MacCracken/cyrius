@@ -602,7 +602,9 @@ var _codebuf_base = 0;
 #   WPNR  0xC0000   4096 x 24B  (cp, len, cum) NOP runs + 4096 records of merge scratch
 #   WPSW  0xF0000   4096 x 16B  (table_cp, nent) switch jump tables
 # Measured on a cycc self-compile at 6.6.20 (CYRIUS_IR=3 and CYRIUS_DCE=1 alike): 43,028
-# sources, 2,605 runs, 0 switch tables (v6.5.68: 32,438 sources, 2,079 runs). A saturated
+# sources, 2,605 runs, 0 switch tables (v6.5.68: 32,438 sources, 2,079 runs). WPNR is the one
+# that saturates: under CYRIUS_IR=3, 48 of the 482 tcyr files (the TLS, sandhi and ws programs
+# and the large-source tests) leave more than 4,096 IR NOP runs and the seam declines (6.6.20). A saturated
 # registry sets a flag and the whole pass declines — never a partial repair. CHANGELOG [6.5.68]
 #
 # 6.6.20 — WPJS GROWS. Its fixed 49,152 slots were 88 % used by cycc's own build, and one more
@@ -621,9 +623,8 @@ var _wp_fn_js0 = 0;   # WPJS watermark at the current fn's start
 var _wp_fn_sw0 = 0;   # WPSW watermark at the current fn's start
 var _wp_deleted = 0;
 
-# ⚠ The entry-trampoline form, which must record UNCONDITIONALLY. `IR_SENABLE` runs after the
-# trampoline is emitted (main.cyr), so at that moment `IR_ENABLED` is 0 even under CYRIUS_IR=3 —
-# gating this one would drop the single site nothing else repairs.
+# Grow WPJS: the first call claims the fixed 49,152-slot region at S+0x60000, each later one
+# doubles into alloc'd storage and copies the live entries. Returns 0 only when the alloc fails.
 fn _wpjs_grow(S): i64 {
     if (_wpjs_base == 0) { _wpjs_base = S + 0x60000; _wpjs_cap = 49152; return 1; }
     var nc = _wpjs_cap * 2;
@@ -635,6 +636,9 @@ fn _wpjs_grow(S): i64 {
     _wpjs_cap = nc;
     return 1;
 }
+# ⚠ The entry-trampoline form, which must record UNCONDITIONALLY. `IR_SENABLE` runs after the
+# trampoline is emitted (main.cyr), so at that moment `IR_ENABLED` is 0 even under CYRIUS_IR=3 —
+# gating this one would drop the single site nothing else repairs.
 fn _wpjs_add_raw(S, cp): i64 {
     if (_wpjs_n >= _wpjs_cap) {
         if (_wpjs_grow(S) == 0) { _wpjs_ovf = 1; return 0; }

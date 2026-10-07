@@ -440,7 +440,7 @@ fn FIXUP(S): i64 {
     # seed (line ~412) and propagate (line ~465) — each previously walked
     # fnc per E8/E9 match. Layout: `_fnt_hash_mask + 1` slots × 4 B (fi+1, 0 = empty),
     # two slots per fn since v6.5.51 so the load stays <= 0.5 — both DYNAMIC: the fixed
-    # 16 KB at 0x114000 (4096 slots, ending where var_noffs' band begins) holds the first
+    # 16 KB at 0x114000 (4096 slots, ending at 0x118000, below var_noffs at 0x11A000) holds the first
     # 2048 fns, then _fnt_grow re-allocs it off-heap. (This comment said 2 B slots and a
     # "232 KB free gap" until 6.6.20.)
     # Hash: golden-ratio multiply, shift down, mask. Knuth multiplicative
