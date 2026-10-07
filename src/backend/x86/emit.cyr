@@ -4194,11 +4194,9 @@ fn ETLFRAME_CLOSE(S, patch, nslots): i64 {
 
 # Emit pop into arg register for arg N.
 # SysV x86_64: n=0..5 → rdi/rsi/rdx/rcx/r8/r9.
-# Win64   (v5.5.3): n=0..3 → rcx/rdx/r8/r9. n>=4 falls through to
-# the SysV encoding (incorrect on Win64 — proper stack-arg handling
-# queued for v5.5.4). Cyrius-to-cyrius call sites with >=5 args are
-# out of scope for v5.5.3 and will mis-compile under CYRIUS_TARGET_WIN
-# until v5.5.4 lands the shadow-space + stack-arg shuttle.
+# Win64   (v5.5.3): n=0..3 → rcx/rdx/r8/r9. Every PE caller (ECALLPOPS,
+# ECALLPTR_PE) pops here only when n <= 4 and loads a wider call's args by
+# stack offset instead, so n >= 4 never reaches this under _TARGET_PE.
 fn EPOPARG(S, n): i64 {
     _xdepth = _xdepth - 1;   # 6.6.5: one pending push consumed, whichever register it lands in
     if (_TARGET_PE == 1) {

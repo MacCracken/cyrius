@@ -3393,7 +3393,7 @@ fn ESETCC(S, op): i64 {
 }
 
 # ================================================================
-# F64 STUBS (aarch64 float not yet implemented — stubs for compilation)
+# F64 — scalar double emitters (real since v5.7.30)
 # ================================================================
 # v5.7.30: aarch64 f64 basic-op implementation. Pre-v5.7.30 every
 # fn below was `return 0;` — silent miscompile on every f64 op

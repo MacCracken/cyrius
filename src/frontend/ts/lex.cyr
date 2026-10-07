@@ -231,9 +231,9 @@ var TS_TOK_KW_WITH          = 251;
 var TS_TOK_KW_PACKAGE       = 252;
 
 # JSX tokens (P4.3a — v5.7.5). Block 300-312 reserved for the JSX
-# frontend. Emitted by TS_LEX_JSX (parallel structured-emit walker).
-# Once P4.3b flips TS_LEX dispatch from TS_LEX_JSX_SKIP to TS_LEX_JSX,
-# the parser sees these instead of the v5.7.3 opaque TOK_INT placeholder.
+# frontend. Emitted by TS_LEX_JSX and the mode-driven TS_LEX_JSX_TAG /
+# TS_LEX_JSX_TEXT (TS_LEX dispatches an expression-position `<` to
+# TS_LEX_JSX); they replaced the v5.7.3 opaque TOK_INT placeholder.
 var TS_TOK_JSX_OPEN_START         = 300;     # `<` starting an open tag
 var TS_TOK_JSX_TAG_NAME           = 301;     # IDENT (or `Foo.Bar`/`foo:bar`); val = span
 var TS_TOK_JSX_ATTR_NAME          = 302;     # attribute name; val = span
@@ -1247,25 +1247,17 @@ fn TS_LEX_OP_DOT(ts_base, src, src_len, p): i64 {
 #   - Float literals (3.14, 1e10)
 
 # ================================================================
-# TS_LEX_JSX (P4.3a — v5.7.5) — structured JSX tokenizer.
+# JSX tokenizer (P4.3 — v5.7.5 / v5.7.6) — structured JSX tokens.
 #
-# Parallel to TS_LEX_JSX_SKIP (above) — same disambig + same balance
-# logic, but emits structured tokens (JSX_OPEN_START / JSX_TAG_NAME /
-# JSX_ATTR_NAME / JSX_ATTR_VALUE_STRING / JSX_OPEN_END / JSX_CLOSE_START
-# / JSX_CLOSE_END / JSX_SELF_CLOSE / JSX_TEXT / JSX_EXPR_OPEN /
-# JSX_EXPR_CLOSE / JSX_FRAGMENT_OPEN / JSX_FRAGMENT_CLOSE) instead of
-# one opaque INT placeholder.
-#
-# In P4.3a TS_LEX_JSX is NOT yet wired from TS_LEX — exercised only
-# from tests/tcyr/ts_lex_p43.tcyr. P4.3b flips the dispatch and adds
-# the parser-side TS_PARSE_JSX_ELEMENT consumer.
-#
-# Inside-`{...}` regions are still byte-balanced in P4.3a (one
-# JSX_EXPR_OPEN, body skipped, one JSX_EXPR_CLOSE). Tokenizing the
-# body proper is P4.3b — needs the TS_LEX dispatch flip first.
-#
-# Returns end byte offset past the JSX expression, or `start` if
-# the construct isn't actually JSX (so caller falls through to LT).
+# Emits JSX_OPEN_START / JSX_TAG_NAME / JSX_ATTR_NAME /
+# JSX_ATTR_VALUE_STRING / JSX_OPEN_END / JSX_CLOSE_START / JSX_CLOSE_END /
+# JSX_SELF_CLOSE / JSX_TEXT / JSX_EXPR_OPEN / JSX_EXPR_CLOSE /
+# JSX_FRAGMENT_OPEN / JSX_FRAGMENT_CLOSE, consumed by ts/parse.cyr's
+# TS_PARSE_JSX_* fns. TS_LEX sends an expression-position `<` to
+# TS_LEX_JSX (the mode-driven entry below), which returns `start` when
+# the construct isn't actually JSX so the caller falls through to LT.
+# The body of a `{...}` child is tokenized by the main TS_LEX loop
+# (lex-mode 8, see the mode-driven helpers below).
 
 # Pack span: (offset << 24) | length. Same packing as elsewhere in TS lex.
 fn TS_PACK_SPAN(off, ln): i64 {
