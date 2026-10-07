@@ -21,6 +21,8 @@
 # v6.2.51 traversal guard covered sub-module / index / package names, never this one).
 # CVE-76 (6.6.16): the same class on the TAG — `tag = "../../../esc/sub"` made git mkdir
 # outside the cache, and a tag naming an existing dir printed `rm -rf` advice for it (D9).
+# 6.6.20 (CVE-TBD): the NAME rule caught up with the tag rule — `[deps.]` / `[deps..]` aliased
+# another dep's cache root, and `\`, control bytes and a header spanning lines passed (D8b-D8f).
 #
 # Hermetic: a mktemp CYRIUS_HOME with the CLI built FROM SOURCE as the pin's own wrapper,
 # local file:// origins, no /etc/gitconfig or ~/.gitconfig (GIT_CONFIG_NOSYSTEM +
@@ -42,6 +44,10 @@
 #   also refuse `/` inside a tag                           -> D9d red
 #   drop the empty-tag refusal                             -> D9f red
 #   print the refused tag raw (no \xNN escape)            -> D9f red
+#   6.6.20: drop the empty / `.`-led name rule              -> D8b D8c D8f red
+#   6.6.20: print the refused name raw (no \xNN escape)     -> D8d D8e D8f red
+#   6.6.20: drop the `\` / control-byte name rule           -> D8d D8e D8f red
+#   6.6.20: dry-run skips `[deps.]` again (`i - ls > 7`)    -> D8f red
 # D5 (modules = []) and D7 (optional / target gates) are the anti-over-reach axes: every
 # mutant above leaves them green, and so must the fix. D9d (plain + slash tags) and D9e
 # (tagless path / git deps) are the tag check's anti-over-reach rows.
@@ -415,7 +421,115 @@ if [ "$d9f" -eq 7 ] && grep -qxF "error: [deps.foo] tag '' $REFUSAL_TAIL" "$W/d9
     ok "D9f tag = \"\", '-x', '/abs', '.hidden', 'a/.b', a backslash and a control byte: each refused (rc 1, git never invoked, no lock), the ESC shown as \\x1b"
 else bad "D9f ($d9f of 7 refused): $(head -1 "$W/d9f7.err")"; fi
 
+# ── D8b-D8f: 6.6.20 (CVE-TBD) — the rest of the unusable header NAMES ───────────────────
+# `_dep_reject_unsafe_name` refused only `/` and `..`, so `[deps.]` and `[deps..]` passed and
+# their clone dir `<home>/deps/<name>/<tag>` became `<home>/deps//<tag>` / `<home>/deps/./<tag>`
+# — ANOTHER dep's NAME directory (a foreign checkout cloned AS `<home>/deps/<tag>`, and the
+# tamper refusal printed `rm -rf <home>/deps/./victim`, every cached tag of victim). `\` and
+# control bytes passed too, and the name was echoed raw (a terminal escape out of a transitive
+# manifest; the scan ran across newlines, so a header could span lines).
+REFUSE_NAME_TAIL="is not a usable dep name (empty, \`.\`-led, or holding \`/\`, \`\\\`, \`..\` or a control byte, it would make a path) — section refused"
+# D8b: the root's `[deps.]`, `[deps..]` (aimed at a planted victim's whole cache root) and `[deps..x]`.
+freshcache; mkdir -p "$H/deps/victim/v1"; printf 'kept\n' > "$H/deps/victim/v1/marker"
+d8b=0
+for nm in '' '.' '.x'; do
+    P="$W/d8b$d8b"; mkp "$P" <<EOF
+[deps.$nm]
+git = "file://$F"
+tag = "victim"
+modules = ["dist/foo.cyr"]
+EOF
+    run9 "$P"
+    if [ "$rc" -eq 1 ] && grep -qxF "error: [deps.$nm] $REFUSE_NAME_TAIL" "$P.err" && [ ! -s "$W/git.log" ] \
+       && [ ! -f "$P/cyrius.lock" ] && ! grep -q 'rm -rf' "$P.err" "$P.out" && [ ! -e "$P/lib/foo.cyr" ]; then
+        d8b=$((d8b+1))
+    else echo "    D8b name '$nm': rc=$rc git=[$(head -1 "$W/git.log")] $(head -3 "$P.err")"; d8b=$((d8b+10)); fi
+done
+if [ "$d8b" -eq 3 ] && [ "$(ls -A "$H/deps")" = victim ] && [ "$(cat "$H/deps/victim/v1/marker")" = kept ] \
+   && [ "$(ls -A "$H/deps/victim")" = v1 ]; then
+    ok "D8b [deps.], [deps..] and [deps..x]: each refused by name (rc 1, git never invoked, no lock, no rm -rf advice); the planted victim cache is untouched"
+else bad "D8b ($d8b): deps=[$(ls -A "$H/deps" | tr '\n' ' ')] victim=[$(ls -A "$H/deps/victim" 2>/dev/null | tr '\n' ' ')]"; fi
+
+# D8c: a TRANSITIVE `[deps.]` (tdot 1.0.0 declares one at foo 2.0.0) — refused, never cloned.
+TD="$O/tdot"; mkdir -p "$TD/dist"
+( cd "$TD" && git init -q . && printf 'fn tdot_v(): i64 { return 6; }\n' > dist/tdot.cyr \
+  && printf '[package]\nname = "tdot"\nversion = "1.0.0"\nlanguage = "cyrius"\n\n[deps.]\ngit = "file://%s"\ntag = "2.0.0"\nmodules = ["dist/foo.cyr"]\n' "$F" > cyrius.cyml \
+  && git add -A && git commit -qm v1 && git tag 1.0.0 )
+freshcache
+P="$W/d8c"; mkp "$P" <<EOF
+[deps.tdot]
+git = "file://$TD"
+tag = "1.0.0"
+modules = ["dist/tdot.cyr"]
+EOF
+run9 "$P"
+if [ "$rc" -eq 1 ] && grep -qxF "error: [deps.] $REFUSE_NAME_TAIL" "$P.err" && [ -f "$P/lib/tdot.cyr" ] \
+   && [ "$(ls -A "$H/deps")" = tdot ] && [ ! -e "$H/deps/2.0.0" ] && ! grep -qF "file://$F" "$W/git.log" \
+   && [ ! -f "$P/cyrius.lock" ] && [ ! -e "$P/lib/foo.cyr" ]; then
+    ok "D8c a TRANSITIVE [deps.]: refused by name, rc 1, foo's origin never fetched, nothing cloned AS \$CYRIUS_HOME/deps/2.0.0"
+else bad "D8c (rc=$rc deps=[$(ls -A "$H/deps" | tr '\n' ' ')]): $(head -3 "$P.err")"; fi
+
+# D8d: a control byte (ESC) and a backslash in the name — refused, and SHOWN escaped, never raw.
+freshcache
+P="$W/d8d1"; mkp "$P" <<EOF
+[deps.ev${ESC}[2Jil]
+git = "file://$F"
+tag = "2.0.0"
+modules = ["dist/foo.cyr"]
+EOF
+run9 "$P"; rc1=$rc
+P="$W/d8d2"; mkp "$P" <<EOF
+[deps.a\\b]
+git = "file://$F"
+tag = "2.0.0"
+modules = ["dist/foo.cyr"]
+EOF
+run9 "$P"; rc2=$rc
+if [ "$rc1" -eq 1 ] && grep -qxF "error: [deps.ev\\x1b[2Jil] $REFUSE_NAME_TAIL" "$W/d8d1.err" && ! grep -qF "$ESC" "$W/d8d1.err" "$W/d8d1.out" \
+   && [ "$rc2" -eq 1 ] && grep -qxF "error: [deps.a\\b] $REFUSE_NAME_TAIL" "$W/d8d2.err" \
+   && [ -z "$(ls -A "$H/deps")" ] && [ ! -f "$W/d8d1/cyrius.lock" ] && [ ! -f "$W/d8d2/cyrius.lock" ]; then
+    ok "D8d a name holding ESC (shown as \\x1b, no raw ESC on either stream) and one holding a backslash: refused, rc 1, nothing cloned"
+else bad "D8d (rc1=$rc1 rc2=$rc2): $(head -2 "$W/d8d1.err" | od -c | head -3) $(head -1 "$W/d8d2.err")"; fi
+
+# D8e: a header that runs across lines — `[deps.a` / `forged line` / `]` — is refused, and no
+# line of the manifest is replayed onto the terminal as a line of its own.
+freshcache
+P="$W/d8e"; mkp "$P" <<EOF
+[deps.a
+forged line
+]
+git = "file://$F"
+tag = "2.0.0"
+modules = ["dist/foo.cyr"]
+EOF
+run9 "$P"
+if [ "$rc" -eq 1 ] && [ ! -s "$W/git.log" ] && [ -z "$(ls -A "$H/deps")" ] && [ ! -f "$P/cyrius.lock" ] \
+   && ! grep -q '^forged line' "$P.err" "$P.out" && [ ! -e "$P/lib/foo.cyr" ]; then
+    ok "D8e a [deps.a header spanning lines: refused, rc 1, git never invoked, no forged line on the terminal"
+else bad "D8e (rc=$rc git=[$(head -1 "$W/git.log")]): $(head -3 "$P.err")"; fi
+
+# D8f: `deps --dry-run` agrees with the real run: it lists `[deps.]` (it skipped it) as refused,
+# exits 1, shows a control byte escaped — and still lists a usable name (anti-over-reach).
+P="$W/d8f"; mkp "$P" <<EOF
+[deps.foo]
+git = "file://$F"
+tag = "2.0.0"
+
+[deps.]
+git = "file://$F"
+tag = "2.0.0"
+
+[deps.e${ESC}x]
+git = "file://$F"
+EOF
+rc=0; ( cd "$P" && "$CY" deps --dry-run > "$P.out" 2> "$P.err" ) || rc=$?
+if [ "$rc" -eq 1 ] && grep -qxF "  foo" "$P.out" && grep -qxF "error: [deps.] $REFUSE_NAME_TAIL" "$P.err" \
+   && grep -qxF "error: [deps.e\\x1bx] $REFUSE_NAME_TAIL" "$P.err" && ! grep -qF "$ESC" "$P.err" "$P.out" \
+   && [ ! -d "$P/lib" ] && [ ! -f "$P/cyrius.lock" ]; then
+    ok "D8f deps --dry-run: lists foo, refuses [deps.] and the ESC name by the resolver's own line (escaped), rc 1, writes nothing"
+else bad "D8f (rc=$rc): out=[$(cat "$P.out" | tr '\n' '|')] err=[$(head -2 "$P.err")]"; fi
+
 echo "$G: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1
-[ "$pass" -ge 15 ] || { echo "FAIL: $G: only $pass axes ran (floor 15)"; exit 1; }
+[ "$pass" -ge 20 ] || { echo "FAIL: $G: only $pass axes ran (floor 20)"; exit 1; }
 echo "PASS: $G — a modules-less [deps.X] is resolved from dist/X.cyr or warned and counted; unsafe names and tags refused"

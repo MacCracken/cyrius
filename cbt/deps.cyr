@@ -1496,19 +1496,39 @@ fn _dep_target_matches(t): i64 {
 # so a malicious `dist/<pkg>/index.cyml` sibling like `../../../x` could delete an
 # arbitrary `.cyr` during automatic `cyrius deps`. Returns 1 = unsafe (reject).
 fn _dep_reject_unsafe_name(name): i64 {
+    if (_dep_name_unsafe(name) == 0) { return 0; }
+    _ew("  error: unsafe dep name (path traversal rejected): ");
+    _ew_shown(name);
+    _ew("\n");
+    return 1;
+}
+
+# The name rule, silent: 1 when `name` cannot be one path component — empty, `.`-led (`.` and
+# `..` alias the parent: `[deps..]` cloned into `<home>/deps/./<tag>`, i.e. ANOTHER dep's cache
+# root), or holding `/`, `\` (a Windows separator), `..` or a control byte (a header name is
+# echoed in errors, and the old scan ran across newlines). The same set the tag rule refuses
+# (_dep_reject_unsafe_tag), less the `/` a tag may hold. CHANGELOG [6.6.20] (CVE-TBD).
+fn _dep_name_unsafe(name): i64 {
+    if (load8(name) == 0 || load8(name) == 46) { return 1; }   # empty, '.'-led
     var i = 0;
     var c = load8(name);
     while (c != 0) {
-        if (c == 47 || (c == 46 && load8(name + i + 1) == 46)) {   # '/' or '..'
-            sys_write(STDERR_FD, "  error: unsafe dep name (path traversal rejected): ", 52);
-            sys_write(STDERR_FD, name, strlen(name));
-            sys_write(STDERR_FD, "\n", 1);
-            return 1;
-        }
+        if (c == 47 || c == 92 || c < 32 || c == 127) { return 1; }   # '/', '\', control
+        if (c == 46 && load8(name + i + 1) == 46) { return 1; }      # '..'
         i = i + 1;
         c = load8(name + i);
     }
     return 0;
+}
+
+# The refusal of a `[deps.NAME]` header whose NAME fails _dep_name_unsafe, shown escaped —
+# one line, shared by the resolver and `deps --dry-run`.
+fn _dep_refuse_name(name): i64 {
+    _ew("error: [deps.");
+    _ew_shown(name);
+    _ew("] is not a usable dep name (empty, `.`-led, or holding `/`, `\\`, `..` or a control byte,");
+    _ew(" it would make a path) — section refused\n");
+    return 1;
 }
 
 # CVE-76 (6.6.16): a `[deps.X] tag` is joined into the clone dir
@@ -1555,25 +1575,40 @@ fn _dep_clone_dir(name, tag): i64 {
     return _cat2(_cat2(nd, "/"), key);
 }
 
-# Print a refused tag with its non-printing bytes as `\xNN`, so the error line
-# cannot carry a terminal escape sequence out of a hostile manifest.
-fn _ew_tag_shown(tag): i64 {
-    var hx = "0123456789abcdef";
-    var e[4];
+# A manifest string as it may be shown: `s` itself when every byte prints, else a fresh copy
+# with each non-printing byte (below 32, 127 and up) as `\xNN`, so an error line cannot carry a
+# terminal escape sequence (or a forged line) out of a hostile manifest. The ONE escaping rule
+# for manifest strings echoed in errors (CVE-76's tag printer, generalised at 6.6.20).
+fn _shown(s): i64 {
     var i = 0;
-    var c = load8(tag);
+    var c = load8(s);
+    while (c != 0) {
+        if (c < 32 || c >= 127) { break; }
+        i = i + 1;
+        c = load8(s + i);
+    }
+    if (c == 0) { return s; }
+    var hx = "0123456789abcdef";
+    var sb = str_builder_new();
+    i = 0;
+    c = load8(s);
     while (c != 0) {
         if (c < 32 || c >= 127) {
-            store8(&e, 92); store8(&e + 1, 120);
-            store8(&e + 2, load8(hx + (c >> 4)));
-            store8(&e + 3, load8(hx + (c & 15)));
-            sys_write(STDERR_FD, &e, 4);
+            str_builder_add_cstr(sb, "\\x");
+            str_builder_add_byte(sb, load8(hx + (c >> 4)));
+            str_builder_add_byte(sb, load8(hx + (c & 15)));
         } else {
-            sys_write(STDERR_FD, tag + i, 1);
+            str_builder_add_byte(sb, c);
         }
         i = i + 1;
-        c = load8(tag + i);
+        c = load8(s + i);
     }
+    return str_data(str_builder_build(sb));
+}
+
+# _shown, written to stderr.
+fn _ew_shown(s): i64 {
+    _ew(_shown(s));
     return 0;
 }
 
@@ -1737,10 +1772,10 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
             # — the consumer's or any TRANSITIVE dep's — naming `[deps.../../x]` made
             # `cyrius deps` mkdir and clone OUTSIDE `<home>/deps`. Refused before any
             # path is derived; the rest of the section is skipped by the outer scan.
-            if (_dep_reject_unsafe_name(dep_name) == 1) {
-                _ew("error: [deps.");
-                _ew(dep_name);
-                _ew("] is not a usable dep name (a `/` or `..` would make it a path) — section refused\n");
+            # 6.6.20 (CVE-TBD): `[deps.]` / `[deps..]` / `[deps..x]`, `\` and control bytes too
+            # (_dep_name_unsafe) — the empty and dot names aliased ANOTHER dep's cache root.
+            if (_dep_name_unsafe(dep_name) == 1) {
+                _dep_refuse_name(dep_name);
                 errors = errors + 1;
                 continue;
             }
@@ -1857,11 +1892,11 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
             # (dep_tag == 0) is the common shape and stays untouched.
             if (dep_tag != 0 && _dep_reject_unsafe_tag(dep_tag) == 1) {
                 _ew("error: [deps.");
-                _ew(dep_name);
+                _ew_shown(dep_name);
                 _ew("] tag '");
-                _ew_tag_shown(dep_tag);
+                _ew_shown(dep_tag);
                 _ew("' is not a usable tag (it would make the cache path leave <home>/deps/");
-                _ew(dep_name);
+                _ew_shown(dep_name);
                 _ew(") — section refused\n");
                 errors = errors + 1;
                 continue;
@@ -2402,21 +2437,38 @@ fn _deps_dry_list(manifest, buf, n): i64 {
     sys_write(STDOUT_FD, manifest, strlen(manifest));
     println(" into lib/ (nothing written):");
     var cnt = 0;
+    var refused = 0;
     var i = 0;
     while (i < n) {
         var ls = i;
         while (i < n && load8(buf + i) != 10) { i = i + 1; }
-        if (i - ls > 7 && memeq(buf + ls, "[deps.", 6) == 1) {
+        # 6.6.20: `[deps.]` (7 bytes) is a header the resolver reads, so it is listed — refused,
+        # by the same rule and line as the real run (this skipped it: `i - ls > 7`).
+        if (i - ls >= 7 && memeq(buf + ls, "[deps.", 6) == 1) {
             var e = ls + 6;
             while (e < i && load8(buf + e) != 93) { e = e + 1; }
-            sys_write(STDOUT_FD, "  ", 2);
-            sys_write(STDOUT_FD, buf + ls + 6, e - ls - 6);
-            sys_write(STDOUT_FD, "\n", 1);
-            cnt = cnt + 1;
+            var nl = e - ls - 6;
+            var nm = alloc(nl + 1);
+            memcpy(nm, buf + ls + 6, nl);
+            store8(nm + nl, 0);
+            # No `]` on the line: the resolver's name runs on across the newline, which it refuses.
+            if (_dep_name_unsafe(nm) == 1 || e >= i) {
+                _dep_refuse_name(nm);
+                refused = refused + 1;
+            } else {
+                var sn = _shown(nm);
+                sys_write(STDOUT_FD, "  ", 2);
+                sys_write(STDOUT_FD, sn, strlen(sn));
+                sys_write(STDOUT_FD, "\n", 1);
+                cnt = cnt + 1;
+            }
         }
         i = i + 1;
     }
-    if (cnt == 0) { println("  (no [deps.NAME] entries; stdlib = [...] modules resolve from the toolchain)"); }
+    if (cnt == 0 && refused == 0) {
+        println("  (no [deps.NAME] entries; stdlib = [...] modules resolve from the toolchain)");
+    }
+    if (refused > 0) { return 1; }
     return 0;
 }
 
