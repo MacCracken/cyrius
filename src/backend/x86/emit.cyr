@@ -4384,7 +4384,11 @@ fn ECALLPOPS(S, n): i64 {
         _emov_rsp_disp(S, 0x4C, 0x8B, 1, (n - 4) * 8);   # r9  = a4
         # 2. Carve the frame below the args. framesize already carries the parity
         #    pad that keeps rsp 16-aligned at the CALL (see _pe_call_frame).
-        _esub_rsp_imm(S, framesize);
+        #    ⛔ PROBED from a page up (r10 is free until step 3): Windows commits the stack
+        #    through one guard page, and one `sub rsp` past it faulted the first copy — a direct
+        #    call with 2100 arguments died with 0xC0000005 on cass while the same call through
+        #    callptr (ECALLPTR_PE, probed since 6.6.17) passed. Same bytes below 4096. CHANGELOG [6.6.20]
+        _pe_cp_sub_rsp(S, framesize);
         # 3. Reverse-copy the extras into the stack-arg slots above the shadow:
         #    a_(4+j) : [rsp + framesize + (n-4-j)*8]  ->  [rsp + 32 + (j-1)*8]
         #    r10 is caller-saved (the v5.6.24 lesson: r12-r15 are callee-saved and
