@@ -39,9 +39,12 @@ fix gets cross-tested in the same slot. All four are step 4 of
 sequential) — a gate on **every** `.NN`, not just at closeout. At
 **v6.6.19** (the 2026-10-06 release gate) all four report `SELFHOST_OK` + `LIBTEST_OK` (the
 crossos subset is **197** files, on real hardware — 68 at v6.6.1, 54 at `.34`; DERIVE it with
-`find tests/tcyr/crossos -name '*.tcyr' | wc -l`). ⚠ **That is the `crossos/` subset, not the full corpus** — the
-282-of-282 numbers in the table above are the 2026-08-20 full-corpus measurement and were
-NOT re-derived at `.34`. Quote them as a v6.5.33 figure, not a current one.
+`find tests/tcyr/crossos -name '*.tcyr' | wc -l`). ⚠ **That is the `crossos/` subset, not the full corpus.** The
+full-corpus figures in the table above are older single measurements, none re-derived at 6.6.20: **378 / 378** on
+both Macs (`ecb`, `ach`) on the 6.6.10 tree (2026-09-28), **282 / 282** on `pi` at v6.5.33 (2026-08-20), and
+**229 pass / 31 fail of 260** on `cass` at v6.5.10 (2026-08-07, its first full-corpus run). Quote each with its
+version, not as a current figure. *(This caveat named only the 282-of-282 figure until 6.6.20, after the Mac rows
+had moved on to 378.)*
 
 | Host | Arch / OS | Role |
 |------|-----------|------|
