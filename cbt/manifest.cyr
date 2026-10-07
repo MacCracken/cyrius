@@ -660,6 +660,7 @@ fn _mf_key_str(section, key): i64 {
 var _EMBED_POOL = 2097151;
 var _embed_state = 0;      # 0 = not read, 1 = read (_embed_all), 2 = refused (already named)
 var _embed_all = 0;        # vec of 32-byte entries { name, path, bytes, len }, in file order
+var _embed_coll_later = 0; # 1 while _auto_deps loads [embed] ahead of a [deps] resolve (CBTB-04)
 
 fn _embed_e_name(e): i64 { return load64(e); }
 fn _embed_e_path(e): i64 { return load64(e + 8); }
@@ -1063,8 +1064,9 @@ fn _embed_load(): i64 {
         }
     }
     # A NAME / NAME_len another declaration in scope owns (the stdlib snapshot, the project's own
-    # sources) is refused, never left to "last definition wins" (cbt/commands.cyr).
-    if (bad == 0 && vec_len(out) > 0) { bad = _embed_collisions(out); }
+    # sources) is refused, never left to "last definition wins" (cbt/commands.cyr). Ahead of a
+    # [deps] resolve that check waits for lib/ to be vendored (_embed_collide_vendored).
+    if (bad == 0 && vec_len(out) > 0 && _embed_coll_later == 0) { bad = _embed_collisions(out); }
     if (bad > 0) {
         _embed_state = 2;
         return 0 - 1;
@@ -1072,6 +1074,21 @@ fn _embed_load(): i64 {
     _embed_all = out;
     _embed_state = 1;
     return out;
+}
+
+# The collision half of _embed_load for a verb that resolves [deps], run once cmd_deps has vendored
+# lib/. Run before it, the check saw lib/ as it stood: on a fresh checkout (or after a dep bump that
+# adds the name) a dep module declaring NAME or NAME_len was not there yet, the build exited 0 with
+# a `duplicate fn` warning and the dep's definition won; the NEXT build refused. 0, or 1 after naming
+# every collision; a refusal is the memoized verdict distlib / publish reuse. CHANGELOG [6.6.20].
+fn _embed_collide_vendored(): i64 {
+    if (_embed_state != 1 || _embed_all == 0) { return 0; }
+    if (vec_len(_embed_all) == 0) { return 0; }
+    if (_embed_collisions(_embed_all) == 0) { return 0; }
+    _embed_state = 2;
+    _embed_all = 0;
+    _embeds = 0;
+    return 1;
 }
 
 # ================================================================

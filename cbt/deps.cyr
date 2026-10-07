@@ -2682,13 +2682,18 @@ fn _auto_deps(): i64 {
     }
     # 6.6.19: `[embed]` beside it, for the same reason (before the `[deps]` early return): every
     # entry validated and each file read once, here, so a refused one fails the verb by name.
+    # 6.6.20: with [deps] to resolve, its collision check runs AFTER cmd_deps has vendored lib/
+    # (the validation stays here, ahead of any clone). CHANGELOG [6.6.20].
+    _embed_coll_later = has_deps;
     var ee = _embed_load();
+    _embed_coll_later = 0;
     if (ee < 0) { return 1; }
     _embeds = 0;
     if (vec_len(ee) > 0) { _embeds = ee; }
     if (has_deps == 0) { return 0; }
     var dr = cmd_deps();
-    return dr;
+    if (dr != 0) { return dr; }
+    return _embed_collide_vendored();
 }
 
 fn cmd_package(): i64 {

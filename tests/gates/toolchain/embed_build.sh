@@ -25,6 +25,12 @@
 #      definition silently won over the embed; in a CONSUMER of a bundle the embed silently replaced
 #      the stdlib fn.) A SEPARATE included file calling NAME() gets the bytes (the prelude shares
 #      <source>'s file id, and visibility is keyed on file id since 6.5.38).
+#   9. (6.6.20, CBTB-04) the collision check sees what `[deps]` VENDORS: a path dep whose module
+#      declares NAME — or only NAME_len — is refused on a FRESH checkout's first build (no lib/;
+#      the check ran before cmd_deps, so the build exited 0 with the dep's NAME() winning and only
+#      the next build refused), and after a dep change that ADDS NAME to an already-vendored lib/.
+#      Anti-over-reach: a stale lib/ module declaring NAME, from a dep version that has since
+#      dropped it, does not refuse — the check reads lib/ as the resolve leaves it.
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -147,6 +153,37 @@ mf main.cyr 'GREET = "data/s.txt"'
 br
 [ "$brc" = 0 ] && [ "$run" = 99 ] || fail "axis 8 other file: an included file calling GREET() did not get the bytes (build $brc, run $run, want 99)"
 [ "$FAIL" = "$x" ] && echo "  ok axis 8: a NAME / NAME_len the stdlib, src/ or a [build] module declares is refused by name; another file calls NAME()"
+
+# ── axis 9: a dep module vendored by THIS build is an owner too ──────────────────────────
+x=$FAIL
+Q="$W/q"; D="$W/dep"
+mkdir -p "$Q/data" "$D/dist"
+printf 'hello-embed\n' > "$Q/data/h.txt"
+printf 'syscall(1, 1, BLOB(), BLOB_len());\nsyscall(60, 0);\n' > "$Q/main.cyr"
+printf '[build]\nentry = "main.cyr"\noutput = "build/main"\n[embed]\nBLOB = "data/h.txt"\n[deps.foo]\npath = "%s"\nmodules = ["dist/foo.cyr"]\n' "$D" > "$Q/cyrius.cyml"
+# qb: build Q, then run build/main into $W/got (rc of the run in $run, x when nothing was built)
+qb() { rm -rf "$Q/build" "$W/got"; brc=0; ( cd "$Q" && env -u CYRIUS_DCE -u CYRIUS_DEFINES HOME="$W/home" CYRIUS_HOME="$W/home" CYRIUS_RESOLVED=1 "$W/cyrius" build ) > "$W/b.out" 2>&1 || brc=$?; run=x; [ -x "$Q/build/main" ] && { run=0; "$Q/build/main" > "$W/got" || run=$?; }; }
+gotp() { tr -d '\000' < "$W/got" 2>/dev/null | head -c 80; }   # what the probe printed (NAME_len can over-read)
+# fresh <label> <dep module text> <expected text>: no lib/ — the FIRST build refuses by name
+fresh() {
+    rm -rf "$Q/lib" "$Q/cyrius.lock"; printf '%s\n' "$2" > "$D/dist/foo.cyr"; qb
+    [ "$brc" != 0 ] || fail "axis 9 $1: the first build of a fresh checkout exited 0 (run $run, printed '$(gotp)') — the collision check ran before the dep was vendored"
+    [ "$run" = x ] || fail "axis 9 $1: a refused build left build/main behind"
+    grep -qF "$3" "$W/b.out" || fail "axis 9 $1: no '$3' refusal: $(grep -E 'error|warn' "$W/b.out" | head -1)"
+}
+fresh "fresh NAME"     'fn BLOB(): i64 { return "from-dep"; }' 'error: cyrius.cyml [embed] BLOB: BLOB is already declared by lib/foo.cyr'
+fresh "fresh NAME_len" 'fn BLOB_len(): i64 { return 64; }'     'error: cyrius.cyml [embed] BLOB: BLOB_len is already declared by lib/foo.cyr'
+# a vendored lib/ without the name builds; the dep then ADDS it, and the next build refuses
+rm -rf "$Q/lib" "$Q/cyrius.lock"; printf 'fn foo_other(): i64 { return 1; }\n' > "$D/dist/foo.cyr"; qb
+[ "$brc" = 0 ] && [ "$run" = 0 ] && cmp -s "$Q/data/h.txt" "$W/got" || fail "axis 9 dep bump: the build before the bump did not build and carry the embed (build $brc, run $run): $(grep -E 'error' "$W/b.out" | head -1)"
+printf 'fn foo_other(): i64 { return 1; }\nfn BLOB(): i64 { return "from-dep-v2"; }\n' > "$D/dist/foo.cyr"; qb
+[ "$brc" != 0 ] && grep -qF 'error: cyrius.cyml [embed] BLOB: BLOB is already declared by lib/foo.cyr' "$W/b.out" \
+    || fail "axis 9 dep bump: a dep change that adds BLOB was not refused on the build that vendored it (build $brc, run $run, printed '$(gotp)')"
+# anti-over-reach: lib/foo.cyr still declares BLOB, the dep has dropped it -> the resolve rewrites it
+printf 'fn foo_other(): i64 { return 2; }\n' > "$D/dist/foo.cyr"; qb
+[ "$brc" = 0 ] && [ "$run" = 0 ] && cmp -s "$Q/data/h.txt" "$W/got" \
+    || fail "axis 9 stale lib/: a name a dep has DROPPED was refused from the stale lib/ (build $brc, run $run): $(grep -E 'error' "$W/b.out" | head -1)"
+[ "$FAIL" = "$x" ] && echo "  ok axis 9: a NAME / NAME_len a [deps] module declares is refused on the build that vendors it (fresh checkout, dep bump); a name the dep dropped is not"
 
 [ "$FAIL" = 0 ] || { echo "FAIL: embed_build ($FAIL)"; exit 1; }
 echo "PASS: embed_build"
