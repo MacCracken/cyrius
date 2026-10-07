@@ -44,6 +44,14 @@
 #           installer still installs a SIGNED 6.6.15; an upgrade past the floor runs the target's
 #           own installer; an unfetchable installer is a failure (`curl | sh` was rc 0); one floor
 #           value in both peers, never below 6.6.20.
+#   axis 8  install.sh's source-bootstrap fallback (no tarball) refuses BEFORE `git clone` for a
+#           signed-era release with a verifier present (no floor file, and below the floor), an
+#           auto-resolved pre-signing 'latest', and a version at the TOFU floor; an explicit
+#           pre-signing version, the override and a first install still bootstrap (Linux; on
+#           macOS the fallback is refused outright and the axis checks only that nothing cloned).
+#   Both verifier-discovery paths are exercised in each shell installer: install.sh with the
+#   verifier on PATH only (axis 1) and in $CYRIUS_HOME/bin (axes 1-2, 8); ci.sh with it on PATH
+#   (axis 3) and in $CYRIUS_HOME/bin only — a CI box with a cached ~/.cyrius (axis 3).
 #
 # cass (Windows Server, real hardware, 6.6.20 lane run): new install.ps1 — first install (no
 # verifier) OK; upgrade with the real SHA256SUMS + .sig -> "signature verified (Ed25519)", OK;
@@ -67,7 +75,10 @@
 # Review round 1 (same day), each RED: the compiled cyriusly's installer tag back to the TARGET
 # (`|| ref=$1`) and the shell twin's (`|| ref=$2`) — axis 7, "ran 6.6.15's OWN installer"; the
 # compiled floor set to 6.6.19 (axis 7, two values); the shell twin piped again (`curl | sh`) —
-# axis 7, the unfetchable tag exits 0.
+# axis 7, the unfetchable tag exits 0; install.sh's source-bootstrap rule disabled (`if false`) —
+# axis 8, three rows clone; its `_signed_floor_enforce` dropped — axis 8, the floor row clones;
+# ci.sh's `$CYRIUS_HOME/bin/cyrsign` discovery arm deleted (axis 3, the home-only row installs);
+# install.sh ignoring `command -v cyrsign` (axis 1, the PATH-only row installs).
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 NAME=install_signature_required
@@ -107,7 +118,7 @@ PUBKEY=$(sed -n 's/^CYRIUS_RELEASE_PUBKEY="\([0-9a-f]*\)".*/\1/p' "$ROOT/scripts
 # when a case puts them there, SHA256SUMS + .sig), the "latest" lookup from $W/latest, an
 # installer for each tag $W/raw/<tag>.sh names (axis 7: what cyriusly fetches), and 22 for
 # everything else — so a missing SHA256SUMS is exactly a stripped signature.
-mkdir -p "$W/fakebin" "$W/nobin" "$W/cwd" "$W/raw"
+mkdir -p "$W/fakebin" "$W/nobin" "$W/pathbin" "$W/cwd" "$W/raw"
 cat > "$W/fakebin/curl" <<EOF
 #!/bin/sh
 out=""; url=""
@@ -183,7 +194,7 @@ run_sh() {
     _v=$1; shift
     RC=0
     if [ -n "$_v" ]; then set -- "CYRIUS_VERSION=$_v" "$@"; fi
-    ( cd "$W/cwd" && env -i HOME="$W/home" CYRIUS_HOME="$H" PATH="$W/fakebin:/usr/bin:/bin" \
+    ( cd "$W/cwd" && env -i HOME="$W/home" CYRIUS_HOME="$H" PATH="$W/fakebin:${XPATH:+$XPATH:}/usr/bin:/bin" \
         TMPDIR="$W" "$@" sh "$ROOT/scripts/install.sh" ) > "$W/out" 2>&1 || RC=$?
 }
 active() { "$H/bin/cycc" 2>/dev/null; }
@@ -219,7 +230,11 @@ for v in 06.2.30 6.2.30.1; do
     mkrel "$v" sh; store yes -; run_sh "$v"
     refused_sh "axis 1 malformed explicit '$v'" "$v" "refusing UNSIGNED $v" || a1=1
 done
-[ "$a1" -eq 0 ] && echo "  ok axis 1: install.sh refuses a stripped signature at/above 6.2.31 (below the TOFU floor, with no floor, via 'latest'), an auto-resolved pre-signing 'latest', and two malformed versions — named, nothing installed or activated, the verifier never asked"
+# The OTHER discovery path: the rows above find the verifier in $CYRIUS_HOME/bin; here it is on
+# PATH only (no cyrsign under the store), which `command -v cyrsign` must still find.
+mkrel 6.6.19 sh; store no -; cp "$W/cyrsign" "$W/pathbin/cyrsign"; XPATH="$W/pathbin" run_sh 6.6.19; rm -f "$W/pathbin/cyrsign"
+refused_sh "axis 1 6.6.19, the verifier on PATH only" 6.6.19 "refusing UNSIGNED 6.6.19" || a1=1
+[ "$a1" -eq 0 ] && echo "  ok axis 1: install.sh refuses a stripped signature at/above 6.2.31 (below the TOFU floor, with no floor, via 'latest', with the verifier on PATH only), an auto-resolved pre-signing 'latest', and two malformed versions — named, nothing installed or activated, the verifier never asked"
 
 # ── axis 2: install.sh controls ─────────────────────────────────────────────────────────────
 a2=0
@@ -237,12 +252,13 @@ if [ "$RC" -ne 0 ] && grep -q "signature verification FAILED" "$W/out" && [ "$(a
 [ "$a2" -eq 0 ] && echo "  ok axis 2: an explicit pre-signing version, the override, a verifier-less first install and a verified signature still install; a rejected signature is still refused"
 
 # ── axis 3: ci.sh ───────────────────────────────────────────────────────────────────────────
-run_ci() {   # run_ci <verifier: yes|no> <arg or ""> [ENV=VAL]
+run_ci() {   # run_ci <verifier: yes (on PATH) | home (in $CYRIUS_HOME/bin only) | no> <arg or ""> [ENV=VAL]
     _vf=$1; _a=$2; shift 2
     rm -rf "$W/home" "$W/curl.log" "$W/cyrsign.log" "$W/out" "$W/cyrsign.mode"
     mkdir -p "$H/bin"
     _p="$W/nobin:/usr/bin:/bin"
     if [ "$_vf" = yes ]; then cp "$W/cyrsign" "$W/nobin/cyrsign"; else rm -f "$W/nobin/cyrsign"; fi
+    [ "$_vf" = home ] && cp "$W/cyrsign" "$H/bin/cyrsign"
     RC=0
     ( cd "$W/cwd" && env -i HOME="$W/home" CYRIUS_HOME="$H" PATH="$W/fakebin:$_p" TMPDIR="$W" "$@" \
         sh "$ROOT/scripts/ci.sh" $_a ) > "$W/out" 2>&1 || RC=$?
@@ -254,6 +270,10 @@ if [ "$RC" -ne 0 ] && grep -q "refusing UNSIGNED 6.6.19" "$W/out" && [ ! -e "$H/
 mkrel 6.2.30 ci; echo 6.2.30 > "$W/latest"; run_ci yes ""
 if [ "$RC" -ne 0 ] && grep -q "latest release resolved to 6.2.30" "$W/out" && [ ! -e "$H/versions/6.2.30" ]; then :; else
     bad "axis 3 ci.sh latest -> 6.2.30: rc $RC"; a3=1; fi
+# the other discovery path: a CI box with a cached ~/.cyrius whose bin/ is not on PATH yet
+mkrel 6.6.19 ci; rm -f "$W/latest"; run_ci home 6.6.19
+if [ "$RC" -ne 0 ] && grep -q "refusing UNSIGNED 6.6.19" "$W/out" && [ ! -e "$H/versions/6.6.19" ] && [ ! -s "$W/cyrsign.log" ]; then :; else
+    bad "axis 3 ci.sh stripped 6.6.19, the verifier in \$CYRIUS_HOME/bin only: rc $RC"; a3=1; fi
 mkrel 6.2.30 ci; rm -f "$W/latest"; run_ci yes 6.2.30
 if [ "$RC" -eq 0 ] && grep -q "pre-signing release 6.2.30" "$W/out" && [ "$("$H/bin/cycc")" = TAMPERED-6.2.30 ]; then :; else
     bad "axis 3 ci.sh explicit 6.2.30 (control): rc $RC"; a3=1; fi
@@ -263,7 +283,7 @@ if [ "$RC" -eq 0 ] && grep -q "allowed via CYRIUS_ALLOW_UNSIGNED=1" "$W/out"; th
 mkrel 6.6.19 ci; run_ci no 6.6.19
 if [ "$RC" -eq 0 ] && grep -q "no prior cyrsign" "$W/out"; then :; else
     bad "axis 3 ci.sh no verifier (control): rc $RC"; a3=1; fi
-[ "$a3" -eq 0 ] && echo "  ok axis 3: ci.sh refuses a stripped 6.6.19 and an auto-resolved pre-signing 'latest' before extracting; an explicit 6.2.30, the override and a verifier-less box proceed"
+[ "$a3" -eq 0 ] && echo "  ok axis 3: ci.sh refuses a stripped 6.6.19 (verifier on PATH, and in \$CYRIUS_HOME/bin only) and an auto-resolved pre-signing 'latest' before extracting; an explicit 6.2.30, the override and a verifier-less box proceed"
 
 # ── axis 4: the predicate, one function in both shell installers ───────────────────────────
 a4=0
@@ -366,6 +386,54 @@ for P in bin sh; do
         || { bad "axis 7 [$P] install 6.6.98 (no installer at that tag): rc $RC"; a7=1; }
 done
 [ "$a7" -eq 0 ] && echo "  ok axis 7: cyriusly (both peers) runs the $FL installer for an older release — a stripped 6.6.15 refused by name, the verifier never asked — the target's own for a newer one, and fails when the installer cannot be fetched"
+
+# ── axis 8: install.sh's source-bootstrap fallback obeys the same rule ───────────────────────
+# A tarball that cannot be fetched sent install.sh to `git clone --branch <v>` + the clone's
+# bootstrap.sh with no signature or floor check. A stub git creates a bootstrap.sh that records it
+# ran; no row may reach it unless the rule allows the install.
+a8=0
+cat > "$W/fakebin/git" <<EOF
+#!/bin/sh
+printf '%s\n' "\$*" >> "$W/git.log"
+mkdir -p cyrius/bootstrap
+printf 'echo RAN > "%s/bootstrapped"; exit 1\n' "$W" > cyrius/bootstrap/bootstrap.sh
+exit 0
+EOF
+chmod +x "$W/fakebin/git"
+norel() { rm -rf "$W/rel" "$W/git.log" "$W/bootstrapped"; mkdir -p "$W/rel"; }
+cloned() { [ -s "$W/git.log" ] && [ -e "$W/bootstrapped" ]; }
+if [ "$OSS" = linux ]; then
+    # the verifier rows carry no floor that could refuse them instead: no signed-since file, and
+    # one below it (the report's signed-since 6.6.19 with 6.6.15)
+    for row in "-|6.6.19" "6.6.19|6.6.15"; do
+        _fl=${row%|*}; _v=${row#*|}
+        norel; store yes "$_fl"; run_sh "$_v"
+        { [ "$RC" -ne 0 ] && grep -q "refusing UNSIGNED $_v: every Cyrius release since" "$W/out" \
+            && grep -q "cyrius-$_v-$ARCH-linux.tar.gz could not be fetched" "$W/out" \
+            && [ ! -s "$W/git.log" ] && [ ! -e "$W/bootstrapped" ] && [ ! -s "$W/cyrsign.log" ]; } \
+            || { bad "axis 8 no tarball, verifier present, signed-since '$_fl', $_v: rc $RC, git: $(head -1 "$W/git.log" 2>/dev/null)"; a8=1; }
+    done
+    norel; store yes 6.6.19; echo 6.2.30 > "$W/latest"; run_sh ""
+    { [ "$RC" -ne 0 ] && grep -q "latest release resolved to 6.2.30" "$W/out" && [ ! -s "$W/git.log" ]; } \
+        || { bad "axis 8 no tarball, latest -> 6.2.30: rc $RC, git: $(head -1 "$W/git.log" 2>/dev/null)"; a8=1; }
+    norel; store no 6.6.19; run_sh 6.6.19
+    { [ "$RC" -ne 0 ] && grep -q "anti-downgrade (CVE-21): refusing UNSIGNED 6.6.19" "$W/out" && [ ! -s "$W/git.log" ]; } \
+        || { bad "axis 8 no tarball, no verifier, signed-since 6.6.19: rc $RC, git: $(head -1 "$W/git.log" 2>/dev/null)"; a8=1; }
+    # controls — ANTI-VACUOUS: the fallback is still reachable where the rule allows it
+    norel; store yes 6.6.19; run_sh 6.2.30
+    cloned || { bad "axis 8 explicit pre-signing 6.2.30 (control): the source bootstrap never ran (rc $RC)"; a8=1; }
+    norel; store yes 6.6.19; run_sh 6.6.19 CYRIUS_ALLOW_UNSIGNED=1
+    cloned || { bad "axis 8 CYRIUS_ALLOW_UNSIGNED=1 (control): the source bootstrap never ran (rc $RC)"; a8=1; }
+    norel; store no -; run_sh 6.6.19
+    cloned || { bad "axis 8 first install, no verifier (control): the source bootstrap never ran (rc $RC)"; a8=1; }
+    [ "$a8" -eq 0 ] && echo "  ok axis 8: with no tarball, install.sh refuses to clone and bootstrap a signed-era release (verifier present), an auto-resolved pre-signing 'latest' and a version at the TOFU floor; an explicit pre-signing version, the override and a first install still bootstrap"
+else
+    norel; store yes 6.6.19; run_sh 6.6.19
+    { [ "$RC" -ne 0 ] && [ ! -s "$W/git.log" ]; } \
+        || { bad "axis 8 [$OSS] no tarball: rc $RC, git: $(head -1 "$W/git.log" 2>/dev/null)"; a8=1; }
+    [ "$a8" -eq 0 ] && echo "  ok axis 8 [$OSS]: with no tarball install.sh refuses before any clone (source bootstrap is Linux-only)"
+fi
+rm -f "$W/fakebin/git"
 
 if [ "$fail" -ne 0 ]; then echo "FAIL: $NAME"; exit 1; fi
 echo "PASS: $NAME — a stripped signature at or above 6.2.31 is refused by name in install.sh, ci.sh and install.ps1 whenever a trusted verifier is present, and cyriusly runs an installer that refuses it"

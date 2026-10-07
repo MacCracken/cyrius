@@ -282,11 +282,17 @@ _verify_checksum() {
 # present but SHA256SUMS / SHA256SUMS.sig could not be fetched (the caller decides:
 # see _signed_required_enforce — at or above the first signed release that is a
 # stripped signature, not an unsigned release).
-_verify_signature() {
+# _find_verifier → sets _cs to a TRUSTED, pre-existing cyrsign (on PATH, else $CYRIUS_HOME/bin);
+# returns 1 when there is none. One discovery for the tarball path and the source-bootstrap path.
+_find_verifier() {
     _cs=""
     if command -v cyrsign > /dev/null 2>&1; then _cs="cyrsign"
     elif [ -x "$CYRIUS_HOME/bin/cyrsign" ]; then _cs="$CYRIUS_HOME/bin/cyrsign"
-    else return 2; fi
+    else return 1; fi
+    return 0
+}
+_verify_signature() {
+    _find_verifier || return 2
     curl -sSfL "${DOWNLOAD_URL}/SHA256SUMS"     -o "$TMPDIR/SHA256SUMS"     2>/dev/null || return 3
     curl -sSfL "${DOWNLOAD_URL}/SHA256SUMS.sig" -o "$TMPDIR/SHA256SUMS.sig" 2>/dev/null || return 3
     printf '%s\n' "$CYRIUS_RELEASE_PUBKEY" > "$TMPDIR/release.pub"
@@ -352,13 +358,17 @@ _predates_signing() {
 # auto-resolved "latest" older than the first signed release is not an upgrade anyone published,
 # it is a downgrade to a build nothing can verify. CYRIUS_ALLOW_UNSIGNED=1 is the same explicit
 # operator override the TOFU floor honours.
+# $1 (optional) says what is missing, for the signed-era message; the default is the signature
+# pair (the tarball path). The source-bootstrap path passes the tarball.
 _signed_required_enforce() {
     if _predates_signing "$VERSION"; then
         [ "$_VERSION_FROM_LATEST" = "1" ] || return 0
         _sr_why="the latest release resolved to $VERSION, which predates release signing ($_FIRST_SIGNED_RELEASE) — 'latest' is never older than a signed release, so this is a downgrade to a build nothing can verify"
         _sr_hint="Retry, or name the version you want with CYRIUS_VERSION"
     else
-        _sr_why="every Cyrius release since $_FIRST_SIGNED_RELEASE is signed and a trusted cyrsign is present to check it, but ${VERSION}'s SHA256SUMS / SHA256SUMS.sig could not be fetched — a stripped signature, not an unsigned release"
+        _sr_missing="${VERSION}'s SHA256SUMS / SHA256SUMS.sig could not be fetched — a stripped signature, not an unsigned release"
+        [ -z "${1:-}" ] || _sr_missing=$1
+        _sr_why="every Cyrius release since $_FIRST_SIGNED_RELEASE is signed and a trusted cyrsign is present to check it, but $_sr_missing"
         _sr_hint="Retry (a network failure looks the same)"
     fi
     if [ "${CYRIUS_ALLOW_UNSIGNED:-0}" = "1" ]; then
@@ -999,7 +1009,20 @@ if [ "$installed" -eq 0 ] && [ "$OS_SUFFIX" != "linux" ]; then
 fi
 
 if [ "$installed" -eq 0 ]; then
-    # No tarball — bootstrap from source
+    # No tarball — bootstrap from source.
+    # ⛔ 6.6.20 (SEC-07): the SAME rule as a stripped signature, BEFORE anything is cloned. Every
+    # signed-era release publishes its x86_64- and aarch64-linux tarballs (release.yml's publish
+    # job needs both builds), so with a trusted verifier present a tarball that cannot be fetched
+    # for a release at or above 6.2.31 was stripped — and this branch cloned the tag and ran its
+    # bootstrap/bootstrap.sh with no signature or floor check at all. Measured: cyrsign in
+    # $CYRIUS_HOME/bin, signed-since 6.6.19, CYRIUS_VERSION=6.6.19, every download 404 -> "no
+    # prebuilt release found", `git clone --branch 6.6.19`, the clone's bootstrap.sh RAN, the
+    # verifier never called. The TOFU floor guards the no-verifier case, as on the tarball path.
+    # CHANGELOG [6.6.20]
+    if _find_verifier; then
+        _signed_required_enforce "the release tarball ${TARBALL} could not be fetched, and a source clone is code nothing can verify — a stripped release, not a missing build"
+    fi
+    _signed_floor_enforce
     warn "no prebuilt release found, bootstrapping from source..."
     cd "$TMPDIR"
     # CVE-21 (v6.2.30): clone the immutable tag ONLY. Pre-fix, a failed tag
