@@ -45,7 +45,7 @@ seed-derive **GREEN** (6.6.19 gate) · cross-OS **GREEN** on ecb/ach/cass/pi (6.
 gate) · **482** `.tcyr` (**197** in `crossos/`) · **106** `lib/*.cyr` · **372** shell gates under `tests/gates/<bucket>/` ·
 api-surface **5,827** · **0 open issues** · **2 open proposals** · the next free CVE id is **79**.
 
-> ⚠ **Every figure above was DERIVED on the day, not carried** (re-derived 2026-09-27 at the 6.6.7 open).
+> ⚠ **Every figure above was DERIVED on the day, not carried** (re-derived 2026-10-06 at the 6.6.20 slot open; integration re-derives them on the merged tree).
 > `version-bump.sh` rewrites the version token, replaces the `(…)` after it with the bump date, and
 > nothing else — **the numbers beside it are yours to re-derive.** Keep the stamp at the start of its
 > line and its parenthetical free of nested `(`/`)`, or the bump refuses to rewrite it (and
