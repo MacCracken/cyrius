@@ -774,7 +774,7 @@ fn _embed_path_bad(path): i64 {
                 if (is_symlink(str_from(pre)) == 1) {
                     var sb = str_builder_new();
                     str_builder_add_cstr(sb, "the path passes through a symlink (");
-                    str_builder_add_cstr(sb, pre);
+                    str_builder_add_cstr(sb, _shown(pre));
                     str_builder_add_cstr(sb, "); [embed] refuses links: an untrusted checkout must not ship bytes from outside the project inside a binary");
                     return str_data(str_builder_build(sb));
                 }
@@ -895,14 +895,19 @@ fn _embed_read(path, lenp, whyp): i64 {
     return buf;
 }
 
-# "cyrius.cyml [embed] NAME = "path": why" (the path part only when there is one).
+# "cyrius.cyml [embed] NAME = "path": why" (the path part only when there is one). The NAME and
+# the path are the manifest's own bytes, so they are shown through `_shown` (cbt/deps.cyr): a
+# refused path is often refused BECAUSE it holds a control byte (`_embed_path_bad`), and since
+# 6.6.17 `\u001b` in a TOML string is one — echoed raw it was a terminal escape (an OSC title
+# set) out of the manifest. Shown escaped, an invisible HFS+-ignorable code point is visible too.
+# CHANGELOG [6.6.20] (CVE-TBD).
 fn _embed_refuse(disp, path, why): i64 {
     var sb = str_builder_new();
     str_builder_add_cstr(sb, "cyrius.cyml [embed] ");
-    str_builder_add_cstr(sb, disp);
+    str_builder_add_cstr(sb, _shown(disp));
     if (path != 0) {
         str_builder_add_cstr(sb, " = \"");
-        str_builder_add_cstr(sb, path);
+        str_builder_add_cstr(sb, _shown(path));
         str_builder_add_cstr(sb, "\"");
     }
     str_builder_add_cstr(sb, ": ");
@@ -1034,7 +1039,7 @@ fn _embed_load(): i64 {
                 str_builder_add_cstr(sb, "\n    [embed] ");
                 str_builder_add_cstr(sb, _embed_e_name(en));
                 str_builder_add_cstr(sb, " = \"");
-                str_builder_add_cstr(sb, _embed_e_path(en));
+                str_builder_add_cstr(sb, _shown(_embed_e_path(en)));
                 str_builder_add_cstr(sb, "\": ");
                 str_builder_add_int(sb, _embed_e_len(en));
                 str_builder_add_cstr(sb, " bytes");

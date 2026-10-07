@@ -33,6 +33,12 @@
 #      `fncall9`) are accepted, so the check is not a prefix test.
 #   6. positive: `--print-config` shows `embed = ["PRESET=data/x.json"]  (manifest: [embed])`,
 #      and a valid [embed] warns nothing and builds.
+#   7. (6.6.20, CBTB-07) what a refusal echoes — the NAME and the path, the manifest's own bytes —
+#      is shown through `_shown` (`\xNN` below 32 and from 127): a path holding ESC/BEL (an OSC
+#      title set, decoded from `\u001b` / `\u0007`) and a quoted NAME holding a raw ESC reach
+#      the output escaped, never raw. Red on e696746d (raw ESC/BEL in the refusal line). Mutants:
+#      the path echoed raw -> the two HFS rows and axis 7's path rows red; the NAME echoed raw ->
+#      axis 7's name rows red.
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -96,8 +102,9 @@ refused "axis 1 ntfs I30"        'I30 = ".git:$I30:$INDEX_ALLOCATION/config"' "I
 refused "axis 1 file:stream"     'STR = "data/x.json:secret"' "STR = 'data/x.json:secret'" "holds a ':'"
 refused "axis 1 8.3 name"        'TIL = "data/x~1.json"'   'TIL = "data/x~1.json"' "8.3 short-name"
 refused "axis 1 8.3 dir"         'TID = "pr~2/x.json"'     'TID = "pr~2/x.json"' "8.3 short-name"
-refused "axis 1 HFS ignorable"   "ZW = \"data/z$ZWNJ.json\"" "ZW = 'data/z$ZWNJ.json'" "HFS+ ignores"
-refused "axis 1 HFS BOM"         "BOM = \"data/b$BOM.json\"" "BOM = 'data/b$BOM.json'" "HFS+ ignores"
+# (shown escaped since 6.6.20 — axis 7 — so the invisible code point is visible in the refusal)
+refused "axis 1 HFS ignorable"   'ZW = "data/z\xe2\x80\x8c.json"' "ZW = 'data/z$ZWNJ.json'" "HFS+ ignores"
+refused "axis 1 HFS BOM"         'BOM = "data/b\xef\xbb\xbf.json"' "BOM = 'data/b$BOM.json'" "HFS+ ignores"
 refused "axis 1 hard link"       'HARD = "data/hard.json"' 'HARD = "data/hard.json"' "more than one hard link"
 refused "axis 1 backslash"       'BS = "\x"'               "BS = '\\x'"
 refused "axis 1 committed link"  'LINK = "data/k"'         'LINK = "data/k"'
@@ -194,6 +201,19 @@ printf '%s' "$HDR" > "$P/cyrius.cyml"
 cli build --print-config > "$W/out" 2>&1 || true
 grep -qF '  embed = []  (default)' "$W/out" || fail "axis 6: with no [embed] the row is not '[]  (default)'"
 [ "$FAIL" = "$x" ] && echo "  ok axis 6: --print-config shows the [embed] row from the manifest; a valid entry builds and warns nothing"
+
+# ── axis 7: what a refusal ECHOES is shown escaped (6.6.20, CBTB-07) ──────────────────────
+# The NAME and path are the manifest's bytes. A path refused for holding a control character
+# was echoed RAW — `\u001b` decodes to ESC since 6.6.17 — so the refusal itself carried the
+# escape sequence (here an OSC window-title set) to the terminal. Shown as \xNN, nothing raw.
+x=$FAIL
+ESC=$(printf '\033'); BEL=$(printf '\007')
+refused "axis 7 control path"  'CTL = "a\x1b]0;pwned\x07b"' 'CTL = "a\u001b]0;pwned\u0007b"' "holds a control character"
+grep -qF "$ESC" "$W/out" && fail "axis 7: the refused path's ESC reached the output raw"
+grep -qF "$BEL" "$W/out" && fail "axis 7: the refused path's BEL reached the output raw"
+refused "axis 7 control name"  '"k\x1b[2J":' "\"k${ESC}[2J\" = \"data/x.json\"" "is not a valid name"
+grep -qF "$ESC" "$W/out" && fail "axis 7: the refused NAME's ESC reached the output raw"
+[ "$FAIL" = "$x" ] && echo "  ok axis 7: a path holding ESC/BEL and a quoted NAME holding ESC are refused and SHOWN escaped (\\x1b, \\x07), never raw"
 
 [ "$FAIL" = 0 ] || { echo "FAIL: embed_manifest_refusals ($FAIL)"; exit 1; }
 echo "PASS: embed_manifest_refusals"
