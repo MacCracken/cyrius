@@ -172,6 +172,18 @@ with the gate RED. Losing the seed costs days of repair.**
 
 Run a closeout pass before tagging x.Y.0 or x.0.0. Ship as the last patch of the current minor (e.g. 4.2.5 before 4.3.0). **Mechanical checks first, then the judgment-call passes (refactor / code review / cleanup), then the doc sync.**
 
+> ⛔ **Closeout scope & repair discipline (user, 2026-10-07 — 6.6.20 took ~38 hours and half a
+> weekly budget for what is an hours-long job).** A closeout is THIS CHECKLIST, not an audit
+> campaign: one light pass per item, fix only what packs trivially into the closeout patch, and
+> put the rest in the backlog for the USER to place. Never fan out dozens of finders and turn
+> their output into a many-lane repair release. **At most ONE review round per change** — no
+> review → fix → re-review loops; a fix that needs three reviews was not ready to commit, so read
+> the sibling paths and run the gates (check.sh's included) BEFORE committing. No
+> approval-gated Workflow/Agent launches mid-release, and ultracode is not licence to widen
+> scope: when the scope question is real ("the audit found N things — fix all, some, or file
+> them?"), ask it ONCE, up front. A "handoff" means updating `state.md`, only when asked — no
+> handoff file of any kind.
+
 ### Mechanical (automated, fast-fail) — this IS `scripts/release-gate.sh` (run it)
 1. **Self-host verify** — cycc compiles itself byte-identical
 2. **Bootstrap closure (seed-derive)** — `seed → cybs → cycc` byte-identical (`seed-derive-cycc.sh`). NOT covered by the cycc self-host fixpoint — see the Release Gate above; this is item 2 of the gate and is mandatory EVERY release, not just at closeout.
@@ -354,6 +366,7 @@ Durable rules from user feedback across v5.x–v6.4.x, consolidated here from
 per-session memory files so they survive environment changes.
 
 ### Execution integrity
+- **What valid cyrius MEANS is the user's decision — never an agent "default", never "other languages do X"** (user, 2026-10-07). A fix that changes what a program that compiled yesterday DOES, or makes it stop compiling (binding rules, implicit address-of, reserved names, call/tail-call semantics, preprocessor limits), is a language change: ask in ONE line before implementing it, and justify it from cyrius's own guide / vidya / ADRs, not from C or Rust. A compiler failing VALID cyrius is different — that is a codegen bug; fix it (see the arity note under *Language & test conventions*).
 - **A filed repro is the spec** — the user-reported verbatim test case must pass. Never edit a consumer repro to fit the fix; never substitute an easier task for the hard one ("a bug before a feature" is only legit as a genuine prerequisite).
 - **A consumer filing enumerates the FULL surface they need** — shipping a subset labeled "hardening"/"tightening" is a silent deferral.
 - **Never misrepresent build/trust state** ("works from the seed", "chain intact") — state plainly how it actually works.
