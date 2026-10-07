@@ -1350,6 +1350,12 @@ _chk_gate "$ROOT/tests/gates/toolchain/release_gate_check_verdict.sh"
 # trip. The ach leg ran the thread fixture only. Static: it reads cross-os-selfhost.sh.
 _chk_gate "$ROOT/tests/gates/toolchain/cross_os_legs_cx_parity.sh"
 
+# 6.6.20 — the TLS gates' `serve` (tls_first_use_thread_race, tls_libssl_hostname_binding) reads
+# a fresh log per attempt. A reused log name let the readiness grep read an EARLIER server's
+# ACCEPT before the backgrounded child's truncation — the S0 flake removed as shipped at 6.6.14
+# that recurred at 6.6.19. Runs each gate's own serve against a fake openssl; no network.
+_chk_gate "$ROOT/tests/gates/concurrency/tls_serve_fresh_log.sh"
+
 # v6.6.4: a RELEASED version's install slot is written from its TAG, never from a drifted
 # tree. `install.sh --refresh-only` (and through it `cyrius pulsar`), `cyrius lsp` and the
 # retired CLAUDE.md hand-copy recipe all keyed a store write on the working-tree VERSION —

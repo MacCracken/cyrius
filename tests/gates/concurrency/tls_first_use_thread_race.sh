@@ -61,19 +61,31 @@ genkey() {  # <kind> <out>
 # ⛔ 6.6.14 — WHY. serve used to wait for ANY TCP connect to succeed on the port: a foreign listener
 # already holding it answered while s_server died on its bind, and the repro's thread then talked to
 # a stranger — a flake that read as a TLS failure. SERVE_FIRST_PORT forces the first port (S0).
+# ⛔ 6.6.20 — EVERY ATTEMPT READS ITS OWN, FRESH LOG. The log was `sv.$PORT.log`, and S0 forces
+# the second serve onto P1 — the FIRST server's log name. The `>` truncation runs in the
+# backgrounded child, so the parent's grep could run before it and read the first server's stale
+# ACCEPT: serve returned PORT=P1 and S0 failed (30 of 300 under 16-core load, 0 idle; the 6.6.19
+# flake). Each attempt now gets a name no earlier attempt used (SERVE_N) and the parent creates
+# it empty before launching. SV_LOG is the log of the server serve settled on.
+# Pinned by tests/gates/concurrency/tls_serve_fresh_log.sh. CHANGELOG [6.6.20]
 PORT=0
 SERVE_FIRST_PORT=
+SERVE_N=0
+SV_LOG=
 serve() {
     tries=0
     while [ $tries -lt 5 ]; do
         if [ -n "$SERVE_FIRST_PORT" ]; then PORT=$SERVE_FIRST_PORT; SERVE_FIRST_PORT=
         else PORT=$((20000 + $(od -An -N2 -tu2 /dev/urandom | tr -d ' ') % 20000)); fi
+        SERVE_N=$((SERVE_N + 1))
+        SV_LOG="$1/sv.$SERVE_N.$PORT.log"
+        : > "$SV_LOG"
         openssl s_server -accept "127.0.0.1:$PORT" -cert "$1/srv.crt" -key "$1/srv.key" -www \
-            > "$1/sv.$PORT.log" 2>&1 < /dev/null &
+            > "$SV_LOG" 2>&1 < /dev/null &
         sp=$!
         i=0
         while [ $i -lt 200 ]; do
-            if grep -q '^ACCEPT' "$1/sv.$PORT.log" 2>/dev/null; then SP="$SP $sp"; return 0; fi
+            if grep -q '^ACCEPT' "$SV_LOG" 2>/dev/null; then SP="$SP $sp"; return 0; fi
             kill -0 "$sp" 2>/dev/null || break
             sleep 0.05
             i=$((i + 1))
@@ -105,7 +117,7 @@ for KIND in p256 rsa ed25519; do
     fi
     serve "$D"; P2=$PORT
     if [ "$KIND" = p256 ]; then
-        if [ "$P2" != "$P1" ] && grep -q '^ACCEPT' "$D/sv.$P2.log"; then
+        if [ "$P2" != "$P1" ] && grep -q '^ACCEPT' "$SV_LOG"; then
             echo "  ok: S0 — the held port $P1 was refused by the bind; the second server is up on $P2"
         else
             echo "  FAIL: S0 — the second server settled on $P2 (the held port was $P1): it would be a stranger"
