@@ -22,8 +22,9 @@
 #   3  use `../versions` (the binary's local pin and --global, the shell's switch) -> exit 1,
 #      cyrius.cyml and the bin/lib links untouched                           (binary + shell)
 #   4  controls: uninstall 6.6.18 removes it and keeps 6.6.19; uninstall of the active 6.6.19 is
-#      still refused; install 6.6.20 runs curl once and install.sh sees CYRIUS_VERSION=6.6.20;
-#      use 6.6.18 pins it                                                     (binary + shell)
+#      still refused; install 6.6.20 runs curl once, on the TAG's installer
+#      (`/cyrius/6.6.20/scripts/install.sh` — never the mutable `main`, CVE-21), and install.sh sees
+#      CYRIUS_VERSION=6.6.20; use 6.6.18 pins it                              (binary + shell)
 #   5  STATIC: `_cmd_install` / `_cmd_uninstall` in programs/cyriusly.cyr reach no `_exec_shell(`
 #      / `exec_cmd(` — the operand never rides in a shell line, even behind the validator
 #   6  `use` with no operand (the binary's second [package].cyrius reader, CBT-01): an
@@ -38,10 +39,11 @@
 # `.../cyrius/6.6.19;touch …/scripts/install.sh`); routing uninstall's `rm -rf` back through
 # `_exec_shell` turns axis 5 RED. The 6.6.19 tree (both peers) is RED on axes 1-3, and its
 # `uninstall 6.6.18/../6.6.19` deleted the ACTIVE 6.6.19 outright.
-# Review round 1 (same day): restoring the base no-operand `use` reader turns every axis-6 row
-# RED (the ESC / BEL bytes reached the terminal, `../../x` and `6..6` reported as pins, the
-# unquoted pin and the literal string read as the GLOBAL default); checking the pin with
-# `_cy_version_ok`'s rule (no `_`) turns the `6.6.20_rc` control RED.
+# Review round 1 (same day): the binary fetching `.../cyrius/main/scripts/install.sh` (the base
+# URL, a CVE-21 residual) turns axis 4 [bin] RED. Restoring the base no-operand `use` reader
+# turns every axis-6 row RED (the ESC / BEL bytes reached the terminal, `../../x` and `6..6`
+# reported as pins, the unquoted pin and the literal string read as the GLOBAL default); checking
+# the pin with `_cy_version_ok`'s rule (no `_`) turns the `6.6.20_rc` control RED.
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -142,7 +144,8 @@ for P in bin sh; do
         || { bad "axis 4 [$P] uninstall of the ACTIVE 6.6.19: exit $RC"; a4=1; }
     store
     run "$P" install 6.6.20
-    { [ "$RC" -eq 0 ] && [ "$(wc -l < "$W/curl.log" 2>/dev/null | tr -d ' ')" = 1 ] && grep -q "scripts/install.sh" "$W/curl.log" \
+    { [ "$RC" -eq 0 ] && [ "$(wc -l < "$W/curl.log" 2>/dev/null | tr -d ' ')" = 1 ] \
+        && grep -q "https://raw.githubusercontent.com/MacCracken/cyrius/6\.6\.20/scripts/install\.sh" "$W/curl.log" \
         && [ "$(cat "$W/installed" 2>/dev/null)" = 6.6.20 ]; } \
         || { bad "axis 4 [$P] install 6.6.20: exit $RC, curl: $(cat "$W/curl.log" 2>/dev/null), install.sh saw '$(cat "$W/installed" 2>/dev/null)'"; a4=1; }
     store
@@ -154,7 +157,7 @@ for P in bin sh; do
         { [ "$RC" -eq 0 ] && [ "$(cat "$H/current")" = 6.6.18 ] && [ "$(readlink "$H/bin")" = "$H/versions/6.6.18/bin" ]; } \
             || { bad "axis 4 [sh] use 6.6.18: exit $RC, current $(cat "$H/current")"; a4=1; }
     fi
-    [ "$a4" -eq 0 ] && echo "  ok axis 4 [$P]: a real version still uninstalls, installs (curl once, CYRIUS_VERSION passed) and switches; the active one is still guarded"
+    [ "$a4" -eq 0 ] && echo "  ok axis 4 [$P]: a real version still uninstalls, installs (curl once, on the tag's installer, CYRIUS_VERSION passed) and switches; the active one is still guarded"
 done
 
 # ── axis 5: static — no shell line in install / uninstall ───────────────────────────────

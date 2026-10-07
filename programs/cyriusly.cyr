@@ -735,14 +735,15 @@ fn _cmd_install(ver_cstr): i64 {
     syscall(1, 1, "Installing Cyrius ", 18);
     syscall(1, 1, ver_cstr, vlen);
     syscall(1, 1, "...\n", 4);
-    # curl -sSf URL | CYRIUS_VERSION=<ver> sh — 6.6.20 (RS-04): the pipeline is a CONSTANT script
-    # and the URL and version are its `$1` / `$2`; the operand was spliced into this line before.
+    # curl -sSf <tag's install.sh> | CYRIUS_VERSION=<ver> sh — 6.6.20 (RS-04): the pipeline is a
+    # CONSTANT script and the version is its `$1`; the operand was spliced into this line before.
+    # The installer comes from the immutable TAG being installed, never the mutable `main` (CVE-21,
+    # v6.2.30, moved the shell twin; this port had kept fetching main). CHANGELOG [6.6.20]
     var in_args = vec_new();
     vec_push(in_args, "/bin/sh");
     vec_push(in_args, "-c");
-    vec_push(in_args, "curl -sSf \"$1\" | CYRIUS_VERSION=\"$2\" sh");
+    vec_push(in_args, "curl -sSf \"https://raw.githubusercontent.com/MacCracken/cyrius/$1/scripts/install.sh\" | CYRIUS_VERSION=\"$1\" sh");
     vec_push(in_args, "cyriusly-install");
-    vec_push(in_args, "https://raw.githubusercontent.com/MacCracken/cyrius/main/scripts/install.sh");
     vec_push(in_args, ver_cstr);
     return _cy_run_argv(in_args);
 }
