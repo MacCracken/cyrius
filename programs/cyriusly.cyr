@@ -728,6 +728,27 @@ fn _cmd_uninstall(ver_cstr): i64 {
     return 0;
 }
 
+# ⛔ 6.6.20 (SEC-07) — THE INSTALLER `install` RUNS IS NEVER OLDER THAN _CY_INSTALLER_FLOOR, the
+# first scripts/install.sh that refuses a stripped signature on any release since 6.2.31 (the
+# first signed one). This verb fetched the installer from the tag it was INSTALLING (CVE-21's tag
+# rule), so `install 6.6.15` ran 6.6.15's own installer, which skipped the signature whenever
+# SHA256SUMS was missing: measured with a trusted cyrsign in the active bin/, signed-since 6.6.19
+# and a stub curl serving the real 6.6.15 installer plus a fabricated 6.6.15 tarball and .sha256
+# and no SHA256SUMS -> rc 0, the tampered cycc ACTIVE, the verifier never called. Every release
+# from 6.2.31 to 6.6.19 is installed by a pre-SEC-07 installer that way. Now the installer comes
+# from the IMMUTABLE tag max(<ver>, floor) (never `main`, CVE-21) and CYRIUS_VERSION is still
+# <ver>, so a downgrade runs the floor's installer and an upgrade the target's own.
+# ⚠ The floor names the release that ships SEC-07's install.sh; raise it (here AND in
+# scripts/cyriusly) whenever an installer fix must reach every `cyriusly install`. The floor's
+# installer verifies older releases with ITS pinned key — one key today; a rotation must carry
+# the old key in install.sh. The installer is downloaded to a private file first: `curl | sh`
+# exited 0 when the fetch failed (sh read an empty script), so a missing tag "installed" nothing
+# and reported success. tests/gates/toolchain/install_signature_required.sh axis 7.
+# CHANGELOG [6.6.20]
+var _CY_INSTALLER_FLOOR = "6.6.20";
+# $1 = the version to install, $2 = the floor. A CONSTANT script — the operand is argv (RS-04).
+var _CY_INSTALL_SH = "ref=$1\n[ \"$(printf '%s\\n%s\\n' \"$1\" \"$2\" | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)\" = \"$1\" ] || ref=$2\n[ \"$ref\" = \"$1\" ] || echo \"  installer: scripts/install.sh from tag $ref (cyriusly never runs an installer older than $2)\"\nd=$(mktemp -d) && [ -d \"$d\" ] || { echo \"cyriusly: mktemp -d failed - no private directory to stage the installer in\" >&2; exit 1; }\ntrap 'rm -rf \"$d\"' EXIT\ncurl -sSf \"https://raw.githubusercontent.com/MacCracken/cyrius/$ref/scripts/install.sh\" -o \"$d/install.sh\" || { echo \"cyriusly: could not fetch scripts/install.sh from tag $ref - nothing was installed\" >&2; exit 1; }\nCYRIUS_VERSION=\"$1\" sh \"$d/install.sh\"\n";
+
 # `cyriusly install <ver>` — shell out to curl + install.sh.
 # Native curl + cyml resolve is future work; for now this is a
 # thin transparent wrapper around the existing shell flow.
@@ -745,16 +766,17 @@ fn _cmd_install(ver_cstr): i64 {
     syscall(1, 1, "Installing Cyrius ", 18);
     syscall(1, 1, ver_cstr, vlen);
     syscall(1, 1, "...\n", 4);
-    # curl -sSf <tag's install.sh> | CYRIUS_VERSION=<ver> sh — 6.6.20 (RS-04): the pipeline is a
-    # CONSTANT script and the version is its `$1`; the operand was spliced into this line before.
-    # The installer comes from the immutable TAG being installed, never the mutable `main` (CVE-21,
-    # v6.2.30, moved the shell twin; this port had kept fetching main). CHANGELOG [6.6.20]
+    # 6.6.20 (RS-04): a CONSTANT script and the version is its `$1`; the operand was spliced into
+    # the line before. The installer comes from an immutable TAG, never the mutable `main` (CVE-21,
+    # v6.2.30, moved the shell twin; this port had kept fetching main) — and since SEC-07 never
+    # from a tag older than the floor (see _CY_INSTALL_SH above). CHANGELOG [6.6.20]
     var in_args = vec_new();
     vec_push(in_args, "/bin/sh");
     vec_push(in_args, "-c");
-    vec_push(in_args, "curl -sSf \"https://raw.githubusercontent.com/MacCracken/cyrius/$1/scripts/install.sh\" | CYRIUS_VERSION=\"$1\" sh");
+    vec_push(in_args, _CY_INSTALL_SH);
     vec_push(in_args, "cyriusly-install");
     vec_push(in_args, ver_cstr);
+    vec_push(in_args, _CY_INSTALLER_FLOOR);
     return _cy_run_argv(in_args);
 }
 

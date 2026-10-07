@@ -1999,8 +1999,9 @@ _chk_gate "$ROOT/tests/gates/toolchain/cyriusly_version_operand_refused.sh"
 # signed release (6.2.31) whose SHA256SUMS / .sig cannot be fetched is REFUSED by name in
 # install.sh, ci.sh and install.ps1: the TOFU signed-since floor only guarded versions at/above the
 # highest one verified locally, so a tampered 6.6.15 (or anything, with no floor file, or an
-# attacker-chosen pre-signing "latest") installed and went active. A stub curl and verifier; no
-# network. install.ps1's functional half ran on cass; here it is static.
+# attacker-chosen pre-signing "latest") installed and went active; `cyriusly install <v>` ran <v>'s
+# own pre-SEC-07 installer, so it still did. A stub curl and verifier; no network. install.ps1's
+# functional half runs on cass; here it is static.
 _chk_gate "$ROOT/tests/gates/toolchain/install_signature_required.sh"
 # 6.6.20 (CLN-13) — no stdlib include of cbt/cyrius.cyr brings in only dead code (lib/tagged.cyr
 # did: 18 dead fns on every target). Static census over the include closure, self-tested.

@@ -24,8 +24,10 @@ CYRIUS_HOME="${CYRIUS_HOME:-$HOME/.cyrius}"
 REPO="MacCracken/cyrius"
 VERSION="${CYRIUS_VERSION:-}"
 # CVE-13 (v6.2.31): the release Ed25519 public key — the signature trust anchor.
-# Canonical copy: keys/cyrius-release.ed25519.pub. install.sh ships from the
-# immutable tag, so it carries the pubkey for the version it installs.
+# Canonical copy: keys/cyrius-release.ed25519.pub. install.sh ships from an
+# immutable tag — but since 6.6.20 (SEC-07) `cyriusly install <v>` runs the
+# installer of max(<v>, its installer floor), so THIS copy verifies OLDER releases
+# too: at a key rotation it must keep every key that signed a release it may install.
 CYRIUS_RELEASE_PUBKEY="adbde6b11ccf8d86dc760387fa7f4dfbe3942fa318e459fb6e62d1536e254008"
 ARCH=$(uname -m)
 

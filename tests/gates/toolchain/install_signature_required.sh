@@ -37,6 +37,13 @@
 #           the skip branch keyed on a present verifier, the -AllowUnsigned override, and the
 #           name-vs-VERSION refusal. The functional half ran on cass (ledger below).
 #   axis 6  the three installers carry ONE first-signed-release value.
+#   axis 7  cyriusly (the compiled programs/cyriusly.cyr AND the shell twin): `install 6.6.15` with
+#           a stripped signature, signed-since 6.6.19 and a verifier present is refused by name —
+#           it runs the installer from tag max(<v>, _CY_INSTALLER_FLOOR), never <v>'s own pre-SEC-07
+#           one (a stand-in serves every other tag and must never run for 6.6.15); the floor's
+#           installer still installs a SIGNED 6.6.15; an upgrade past the floor runs the target's
+#           own installer; an unfetchable installer is a failure (`curl | sh` was rc 0); one floor
+#           value in both peers, never below 6.6.20.
 #
 # cass (Windows Server, real hardware, 6.6.20 lane run): new install.ps1 — first install (no
 # verifier) OK; upgrade with the real SHA256SUMS + .sig -> "signature verified (Ed25519)", OK;
@@ -57,6 +64,10 @@
 # a Write-Host (axis 5); install.ps1's constant set to 6.2.30 (axis 6); install.sh refusing every
 # unsigned install, pre-signing included (axis 2); install.ps1's active bin copy back to a bare
 # Copy-Item (axis 5); the latest guard dropped in BOTH shell installers (axes 1 + 3).
+# Review round 1 (same day), each RED: the compiled cyriusly's installer tag back to the TARGET
+# (`|| ref=$1`) and the shell twin's (`|| ref=$2`) — axis 7, "ran 6.6.15's OWN installer"; the
+# compiled floor set to 6.6.19 (axis 7, two values); the shell twin piped again (`curl | sh`) —
+# axis 7, the unfetchable tag exits 0.
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 NAME=install_signature_required
@@ -92,10 +103,11 @@ PUBKEY=$(sed -n 's/^CYRIUS_RELEASE_PUBKEY="\([0-9a-f]*\)".*/\1/p' "$ROOT/scripts
 [ -n "$PUBKEY" ] || { echo "FAIL: $NAME — could not read CYRIUS_RELEASE_PUBKEY from install.sh"; exit 1; }
 
 # ── the fake release host ───────────────────────────────────────────────────────────────────
-# One stub curl for both installers. It serves whatever $W/rel holds (a tarball, its .sha256 and,
-# when a case puts them there, SHA256SUMS + .sig), the "latest" lookup from $W/latest, and 22 for
+# One stub curl for every installer. It serves whatever $W/rel holds (a tarball, its .sha256 and,
+# when a case puts them there, SHA256SUMS + .sig), the "latest" lookup from $W/latest, an
+# installer for each tag $W/raw/<tag>.sh names (axis 7: what cyriusly fetches), and 22 for
 # everything else — so a missing SHA256SUMS is exactly a stripped signature.
-mkdir -p "$W/fakebin" "$W/nobin" "$W/cwd"
+mkdir -p "$W/fakebin" "$W/nobin" "$W/cwd" "$W/raw"
 cat > "$W/fakebin/curl" <<EOF
 #!/bin/sh
 out=""; url=""
@@ -103,6 +115,12 @@ while [ \$# -gt 0 ]; do case "\$1" in -o) out=\$2; shift 2 ;; -*) shift ;; *) ur
 printf '%s\n' "\$url" >> "$W/curl.log"
 case "\$url" in
     */releases/latest) [ -f "$W/latest" ] || exit 22; printf '{"tag_name": "%s"}\n' "\$(cat "$W/latest")"; exit 0 ;;
+    https://raw.githubusercontent.com/MacCracken/cyrius/*/scripts/install.sh)
+        t=\${url#https://raw.githubusercontent.com/MacCracken/cyrius/}; t=\${t%%/*}
+        f="$W/raw/\$t.sh"
+        [ -f "\$f" ] || exit 22
+        if [ -n "\$out" ]; then cp "\$f" "\$out"; else cat "\$f"; fi
+        exit 0 ;;
     */releases/download/*)
         f="$W/rel/\${url##*/}"
         [ -f "\$f" ] || exit 22
@@ -294,6 +312,61 @@ else
     bad "axis 6: first signed release — install.sh '$v_sh', ci.sh '$v_ci', install.ps1 '$v_ps' (want 6.2.31 in all three)"
 fi
 
+# ── axis 7: cyriusly runs an installer that carries the rule, whatever it installs ───────────
+# `cyriusly install <v>` fetched the installer from <v>'s own tag, so every release from 6.2.31 to
+# 6.6.19 was installed by its pre-SEC-07 installer. It now runs the tag max(<v>, floor). The fake
+# host serves the TREE's install.sh for the floor's tag (what that tag carries) and a STAND-IN for
+# any other tag that records it ran and exits 0 — the old installers' "signature check skipped".
+a7=0
+CC=${CYCC:-"$ROOT/build/cycc"}
+FL_BIN=$(sed -n 's/^var _CY_INSTALLER_FLOOR = "\([^"]*\)";$/\1/p' "$ROOT/programs/cyriusly.cyr")
+FL_SH=$(sed -n 's/^_CY_INSTALLER_FLOOR="\([^"]*\)"$/\1/p' "$ROOT/scripts/cyriusly")
+if [ -z "$FL_BIN" ] || [ "$FL_BIN" != "$FL_SH" ]; then
+    bad "axis 7: the installer floor — programs/cyriusly.cyr '$FL_BIN', scripts/cyriusly '$FL_SH' (one value, in both)"; a7=1
+elif [ "$(printf '%s\n%s\n' "$FL_BIN" 6.6.20 | sort -t. -k1,1n -k2,2n -k3,3n | head -1)" != 6.6.20 ]; then
+    bad "axis 7: the installer floor $FL_BIN is below 6.6.20, the first install.sh that refuses a stripped signature"; a7=1
+fi
+if ! { [ -x "$CC" ] && ( cd "$ROOT" && "$CC" < programs/cyriusly.cyr > "$W/cyriusly" 2> /dev/null ) && chmod +x "$W/cyriusly"; }; then
+    bad "axis 7: could not build programs/cyriusly.cyr with $CC"; a7=1
+fi
+FL=${FL_BIN:-6.6.20}
+rm -rf "$W/raw"; mkdir -p "$W/raw"
+cp "$ROOT/scripts/install.sh" "$W/raw/$FL.sh"
+for t in 6.6.15 6.6.99; do
+    printf 'printf "STAND-IN %s %%s\\n" "$CYRIUS_VERSION" > "%s/standin"\nexit 0\n' "$t" "$W" > "$W/raw/$t.sh"
+done
+run_cy() {   # run_cy <peer: bin|sh> <version>
+    RC=0
+    rm -f "$W/standin"
+    if [ "$1" = bin ]; then set -- "$W/cyriusly" install "$2"; else set -- sh "$ROOT/scripts/cyriusly" install "$2"; fi
+    ( cd "$W/cwd" && env -i HOME="$W/home" CYRIUS_HOME="$H" PATH="$W/fakebin:/usr/bin:/bin" TMPDIR="$W" "$@" ) \
+        > "$W/out" 2>&1 || RC=$?
+}
+for P in bin sh; do
+    [ "$P" = bin ] && [ ! -x "$W/cyriusly" ] && continue
+    # the report's parameters: a stripped 6.6.15, signed-since 6.6.19, a trusted verifier present
+    mkrel 6.6.15 sh; store yes 6.6.19; run_cy "$P" 6.6.15
+    if [ -e "$W/standin" ]; then bad "axis 7 [$P] install 6.6.15: ran 6.6.15's OWN installer ($(cat "$W/standin"))"; a7=1
+    elif refused_sh "axis 7 [$P] install 6.6.15 (stripped, signed-since 6.6.19)" 6.6.15 "refusing UNSIGNED 6.6.15"; then
+        { grep -qx "https://raw.githubusercontent.com/MacCracken/cyrius/$FL/scripts/install.sh" "$W/curl.log" \
+            && ! grep -q '/cyrius/6\.6\.15/scripts/install\.sh' "$W/curl.log"; } \
+            || { bad "axis 7 [$P] install 6.6.15: fetched $(grep raw.githubusercontent "$W/curl.log" | head -1), want the $FL tag's installer"; a7=1; }
+    else a7=1; fi
+    # control: the floor's installer still installs an OLDER signed release (CYRIUS_VERSION reached it)
+    mkrel 6.6.15 sh signed; store yes 6.6.19; echo accept > "$W/cyrsign.mode"; run_cy "$P" 6.6.15
+    installed_sh "axis 7 [$P] install a signed 6.6.15 through the $FL installer" 6.6.15 "signature verified" || a7=1
+    # control: an upgrade past the floor runs the target's own installer (its tag — never main)
+    store yes 6.6.19; run_cy "$P" 6.6.99
+    { [ "$RC" -eq 0 ] && [ "$(cat "$W/standin" 2>/dev/null)" = "STAND-IN 6.6.99 6.6.99" ] \
+        && ! grep -q '/cyrius/main/' "$W/curl.log"; } \
+        || { bad "axis 7 [$P] install 6.6.99 (control): rc $RC, the installer that ran said '$(cat "$W/standin" 2>/dev/null)'"; a7=1; }
+    # a tag whose installer cannot be fetched is a failure, not a silent success (`curl | sh` was rc 0)
+    store yes 6.6.19; run_cy "$P" 6.6.98
+    { [ "$RC" -ne 0 ] && grep -q "could not fetch scripts/install.sh from tag 6.6.98" "$W/out"; } \
+        || { bad "axis 7 [$P] install 6.6.98 (no installer at that tag): rc $RC"; a7=1; }
+done
+[ "$a7" -eq 0 ] && echo "  ok axis 7: cyriusly (both peers) runs the $FL installer for an older release — a stripped 6.6.15 refused by name, the verifier never asked — the target's own for a newer one, and fails when the installer cannot be fetched"
+
 if [ "$fail" -ne 0 ]; then echo "FAIL: $NAME"; exit 1; fi
-echo "PASS: $NAME — a stripped signature at or above 6.2.31 is refused by name in install.sh, ci.sh and install.ps1 whenever a trusted verifier is present"
+echo "PASS: $NAME — a stripped signature at or above 6.2.31 is refused by name in install.sh, ci.sh and install.ps1 whenever a trusted verifier is present, and cyriusly runs an installer that refuses it"
 exit 0
