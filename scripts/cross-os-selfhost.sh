@@ -113,17 +113,15 @@ _co_reap_stale() {
   esac
 }
 
-# Cross-OS LIB-TEST fallback (v6.0.75) — INTERIM mechanism, the trigger is
-# opt-in so normal self-host runs stay lean. Arg 2 (or $CYRIUS_CROSS_OS_LIBTEST)
-# is a glob; when set, AFTER the cycc self-host passes on this host, the
-# slot's matching `tests/tcyr/<glob>*.tcyr` are compiled by the freshly-built
-# NATIVE host cycc and run on real hardware — catching stdlib breakage (a
-# syscall the target doesn't translate, an ABI/byte-order bug) BEFORE CI/ports.
-# It bundles from THIS repo + scp's, so it does NOT depend on the host having a
-# current checkout. FALLBACK, not the gate: CI still runs the full matrix; this
-# is "catch before CI if possible" (user 2026-06-06). A better mechanism (per-
-# platform test manifests, a PE-safe subset for cass since fork/socketpair are
-# POSIX-only) is TODO. Fail-loud: a lib-test failure exits 1.
+# Cross-OS LIB-TEST (v6.0.75; a STANDING release gate since v6.3.43 — release-gate.sh step 4
+# passes "crossos"). Arg 2 (or $CYRIUS_CROSS_OS_LIBTEST) is a SUBDIRECTORY of tests/tcyr
+# (v6.5.11; it was a filename prefix, `vr01_`): AFTER the cycc self-host passes on this host,
+# every `tests/tcyr/<subdir>/**.tcyr` is compiled by the freshly-built NATIVE host cycc and run
+# on the real hardware — catching stdlib breakage (a syscall the target does not translate, an
+# ABI/byte-order bug) that no Linux run can see. tests/tcyr/crossos/ is the curated cross-host
+# subset (cass's PE leg included); CYRIUS_CROSS_OS_FULL=1 runs the whole corpus. It bundles from
+# THIS repo + scp's, so it does NOT depend on the host having a current checkout. Fail-loud: a
+# lib-test failure, a missing subdir, or a remote that ran a different count exits 1.
 LIBTEST="${2:-${CYRIUS_CROSS_OS_LIBTEST:-}}"
 
 # The ssh-config alias for this job (ecb-install reuses the ecb host).
@@ -548,11 +546,12 @@ esac
 
 echo "SELFHOST_OK: $HOST"
 
-# ---- LIB-TEST fallback phase (v6.0.75; opt-in) -------------------------------
-# After self-host, compile + run the slot's matching tests/tcyr/<glob>*.tcyr
-# with the NATIVE host cycc just built (ecb=r1r codesigned / ach,pi=r1 /
-# cass=c2.exe), on real hardware. Glob is expanded LOCALLY (avoids host-side
-# globbing, esp. cmd.exe). Fail-loud. ecb-install has no native cycc → skipped.
+# ---- LIB-TEST phase (v6.0.75; release-gate step 4 since v6.3.43) ---------------
+# After self-host, compile + run every tests/tcyr/<subdir>/**.tcyr with the NATIVE
+# host cycc just built (ecb=r1r codesigned / ach,pi=r1 / cass=c2.exe), on real
+# hardware. The selection is made LOCALLY (no host-side globbing, esp. cmd.exe) and
+# the remote's ran-count is checked against it. Fail-loud. ecb-install has no native
+# cycc → skipped.
 if [ -n "$LIBTEST" ]; then
   case "$HOST" in
     ecb|ach|pi|cass) ;;

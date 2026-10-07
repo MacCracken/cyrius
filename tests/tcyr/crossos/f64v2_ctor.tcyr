@@ -3,11 +3,10 @@
 # sugar to the lib f64v2_make/f64v4_make constructors; f64v2_splat/f64v4_splat
 # broadcast; value/pointer lane-extract round-trips.
 #
-# Runs on Linux + ecb (macOS) + pi (aarch64) — all define CYRIUS_HAS_VAL_SIMD_PARAMS.
-# RUNS on cass: value-form f64v2/f64v4 SIMD reached Win64 PE at v6.4.31 (Win64's
-# vector-return ABI differs — lib/simd.cyr gates the value-form fns on
-# CYRIUS_HAS_VAL_SIMD_PARAMS, undefined on main_win.cyr). PE value-form SIMD is a
-# pre-existing, separately-tracked limitation, out of scope for this constructor slot.
+# Runs on every cross-OS host (Linux, ecb, ach, cass, pi): lib/simd.cyr gates the value-form
+# fns on CYRIUS_HAS_VAL_SIMD_PARAMS, and every driver fork predefines it — main_win.cyr
+# included, since value-form f64v2/f64v4 SIMD reached Win64 PE at v6.4.31 (by-pointer params
+# + a retptr return, because Win64's vector-return ABI differs).
 include "lib/assert.cyr"
 include "lib/simd.cyr"
 include "lib/syscalls.cyr"
