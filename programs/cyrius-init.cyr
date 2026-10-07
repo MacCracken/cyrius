@@ -553,8 +553,13 @@ fn _copy_file(src, dst): i64 {
 # back to its length before the append, so a full disk cannot leave a torn TOML table or a
 # half .gitignore line. Returns 0 / -5. v6.6.6: both sites called file_append_locked and
 # dropped its result — one write, a short count accepted, and "added" printed. CHANGELOG [6.6.6]
-fn _append_whole(path, buf, len): i64 {
-    var fd = file_open(path, O_WRONLY | O_CREAT | O_APPEND, 0x1A4);
+fn _append_whole(path, buf, len): i64 { return _append_whole_fl(path, buf, len, 0); }
+
+# _append_whole with `extra` open flags. O_NOFOLLOW makes a final link a refusal, -40 (-ELOOP
+# as sys_open reports it on Linux x86/aarch64 and Windows), instead of the file it names.
+fn _append_whole_fl(path, buf, len, extra): i64 {
+    var fd = file_open(path, O_WRONLY | O_CREAT | O_APPEND | extra, 0x1A4);
+    if (fd == 0 - 40) { return 0 - 40; }
     if (fd < 0) { return 0 - 5; }
     file_lock(fd);
     var orig = xlseek(fd, 0, 2);
@@ -1334,13 +1339,26 @@ fn _run_port(start): i64 {
             var add = str_data(str_builder_build(ab));
             # 6.6.20 (CVE-TBD): an O_APPEND open follows a link, so a checkout's committed
             # `.gitignore -> ~/.bashrc` had the port lines appended to it. A link is followed only
-            # to a file inside the project being ported (lib/io.cyr _io_replace_target_in).
+            # to a file inside the project being ported (lib/io.cyr _io_replace_target_in), and the
+            # file it resolves to is opened O_NOFOLLOW. That is what holds on WINDOWS, which has no
+            # readlink route (the resolver answers the named path): a `.gitignore` symlink or
+            # junction there (git for Windows, core.symlinks=true) is refused by name, never
+            # followed — CreateFileW resolves a final reparse point for every disposition.
             var gw = _io_replace_target_in(target, ".gitignore");
+            var gr = 0;
+            if (gw >= 0) { gr = _append_whole_fl(gw, add, strlen(add), O_NOFOLLOW); }
             if (gw < 0) {
                 _io_contain_refusal("error");
                 _rw_fails = _rw_fails + 1;
                 _eprint("error: cannot append to .gitignore (left as it was)\n");
-            } elif (_append_whole(gw, add, strlen(add)) != 0) {
+            } elif (gr == 0 - 40) {
+                _rw_fails = _rw_fails + 1;
+                _eprint("error: refusing to append to "); _io_ew_shown(gw);
+                _eprint(": it is a symbolic link or junction, and it is not followed here (no readlink");
+                _eprint(" route on this target)\n  A checkout can commit a link to any file you can write;");
+                _eprint(" appending through it would change that file. Nothing was written.\n");
+                _eprint("  Fix: replace the link with the file itself.\n");
+            } elif (gr != 0) {
                 _rw_fails = _rw_fails + 1;
                 _eprint("error: cannot append to .gitignore (left as it was)\n");
             } else {

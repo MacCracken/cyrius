@@ -8,7 +8,8 @@
 # target and why recorded, and nothing is written.
 # Cross-OS because readlink's answer is per peer (x86/aarch64 Linux, both macOS); the CLI end to
 # end is tests/gates/toolchain/project_writes_stay_in_tree.sh. Windows has no readlink route (the
-# named path is always the answer there) and agnos keeps its own ABI: both a named SKIP.
+# named path is always the answer there): it runs only the rows for what holds there instead —
+# the O_NOFOLLOW append `cyrius port` makes refuses a link. agnos keeps its own ABI: a named SKIP.
 include "lib/alloc.cyr"
 include "lib/string.cyr"
 include "lib/fmt.cyr"
@@ -38,6 +39,29 @@ fn main(): i64 {
     #ifdef CYRIUS_TARGET_WIN
     var _win_skip = "  SKIP (Windows): no readlink route; the named path is always the replace target\n";
     sys_write(1, _win_skip, strlen(_win_skip));
+    # What DOES hold on Windows: the resolver answers the named path, so `cyrius port`'s
+    # .gitignore append is opened O_NOFOLLOW and a link there is refused (-ELOOP), never
+    # followed — CreateFileW resolves a final reparse point for EVERY disposition, OPEN_ALWAYS
+    # (O_CREAT|O_APPEND) included. The replace writers rename, which replaces a link.
+    test_group("Windows: the named path is the answer; the O_NOFOLLOW append `cyrius port` makes refuses a link");
+    var W = test_scratch("rti_win");
+    assert_eq(sys_mkdir(W, 448), 0, "scratch dir created");
+    file_write_all(_cat(W, "victim"), "victim", 6);
+    # On Windows a link needs Developer Mode or an elevated process; the release-gate host and
+    # CI's runner are both elevated (as tests/tcyr/crossos/open_flags_per_target.tcyr notes).
+    assert_eq(xsymlink("victim", _cat(W, "gi")), 0, "xsymlink makes the fixture (CreateSymbolicLinkW)");
+    assert_streq(_io_replace_target_in(W, "gi"), _cat(W, "gi"), "the resolver answers the named path");
+    var waf = file_open(_cat(W, "gi"), O_WRONLY | O_CREAT | O_APPEND | O_NOFOLLOW, 420);
+    assert_eq(waf, 0 - 40, "O_WRONLY|O_CREAT|O_APPEND|O_NOFOLLOW on the link is -ELOOP");
+    if (waf >= 0) { file_close(waf); }
+    assert_eq(_has(_cat(W, "victim"), "victim"), 1, "the file it names is unchanged");
+    assert_eq(xsymlink("absent", _cat(W, "gd")), 0, "a DANGLING link fixture");
+    var wad = file_open(_cat(W, "gd"), O_WRONLY | O_CREAT | O_APPEND | O_NOFOLLOW, 420);
+    assert_eq(wad, 0 - 40, "…the same open on a dangling link is -ELOOP");
+    if (wad >= 0) { file_close(wad); }
+    assert_eq(file_exists(_cat(W, "absent")), 0, "…and its target is NOT created");
+    xunlink(_cat(W, "gi")); xunlink(_cat(W, "gd")); xunlink(_cat(W, "victim"));
+    assert_eq(xrmdir(W), 0, "scratch dir empty and removed");
     #endif
     #ifdef CYRIUS_TARGET_AGNOS
     var _agnos_skip = "  SKIP (agnos): 2-arg mkdir / symlink (agnos's are length-carrying)\n";
