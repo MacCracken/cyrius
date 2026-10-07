@@ -46,9 +46,10 @@
 #     syscall(60, r + t);          → exit 0, empty stderr. 43 is correct.
 #
 # Fixed by bounding — not excluding — in `PP_MACRO_CALLABLE` / `PP_ARGS_ON_LINE`: an
-# invocation that STARTS in a `#` comment must CLOSE on the same line. Excluding
-# comments outright would regress attribute lines, which PP_LEXST also reads as
-# comments and whose macros legitimately expand (axis 10).
+# invocation that STARTS in a `#` comment must CLOSE on the same line. (Until 6.6.20
+# PP_LEXST also read ATTRIBUTE lines — `#inline fn ...` — as comments, so that bound
+# reached them too and a wrapped invocation there stopped expanding; 6.6.20's
+# PP_LEXST_AT reads them as the CODE the lexer reads, axes 10 and 11.)
 #
 # Axes:
 #   1  the filed shape: `myID(5)` calls myID, and the binary is byte-identical to
@@ -68,13 +69,15 @@
 #      follows it (exit 43, byte-identical to the renamed-macro twin)
 #   9  the same from a TRAILING comment on a real line of code — the shape that
 #      needs no contrived file at all
-#  10  over-correction guard: a macro on an ATTRIBUTE line still expands. PP_LEXST
-#      reads `#inline fn f(): i64 { return N(5); }` as a comment, so a blanket
-#      "never expand in a comment" passes axes 8 and 9 and breaks this. Its oracle
-#      is a HAND-EXPANDED twin, not a number
-#  11  the one accepted behaviour change, pinned so it cannot decay into silence: an
-#      invocation whose args WRAP on an attribute line no longer expands, and fails
-#      LOUDLY (`undefined function`, compiler exit 1) rather than mis-compiling
+#  10  over-correction guard: a macro on an ATTRIBUTE line still expands
+#      (`#inline fn f(): i64 { return N(5); }`). Its oracle is a HAND-EXPANDED twin,
+#      not a number
+#  11  6.6.20 — an invocation whose args WRAP on an attribute line expands too, like
+#      on any line of code. From 6.6.6 to 6.6.19 it did NOT (the PP read the line as
+#      a comment, so the same-line bound applied, and it failed LOUDLY with
+#      `undefined function 'ADD'` — this axis pinned that as the one accepted loss).
+#      PP_LEXST_AT reads attribute lines as code, so the loss is gone. Hand-expanded
+#      twin, byte-identical
 #  12  a stray `)` in a LATER comment — legal prose — closed the comment's `(` at
 #      depth 0 and the expansion ate two whole statements. The axis that makes the
 #      newline stop itself load-bearing: 8 and 9 survive its removal by luck of
@@ -113,6 +116,13 @@
 #   N6 the comment bound made a blanket EXCLUSION (`lst == 3` → not an invocation)
 #      → axis 10: the attribute line stops expanding. This is why 8/9/12 alone are
 #      not enough coverage, and why the fix bounds instead of excluding.
+#      ⚠ 6.6.20: N6 no longer reaches axis 10 — an attribute line is not a comment to
+#      the PP any more (PP_LEXST_AT), and an expansion INSIDE a real comment is not
+#      observable. Its replacement:
+#   N8 (6.6.20) PP_LEXST_AT's attribute arm deleted (the pre-6.6.20 machine)
+#      → axis 11: the wrapped attribute-line invocation is left unexpanded and the
+#      program fails `undefined function 'ADD'`. Axis 10 stays green (a single-line
+#      invocation passes the comment bound), which is why 11 is the one that pins it.
 #   N7 only the `c == 10` arm of PP_ARGS_ON_LINE deleted → axes 11, 12. 8 and 9
 #      survive it because the code after them is paren-BALANCED, so the runaway
 #      scan runs off the end of the file anyway; axis 12 is the one that needs the
@@ -361,20 +371,26 @@ if [ -s "$D/a10.bin" ] && [ -s "$D/a10t.bin" ]; then
     fi
 fi
 
-# ── axis 11 — the accepted loss, pinned. A WRAPPED invocation on an attribute line is
-#    indistinguishable from the axis-8 shape without a list of attribute names to keep
-#    in sync (the drift CLAUDE.md warns about), so it is no longer expanded. It must
-#    fail LOUDLY. If this ever starts passing quietly, the bound was widened wrongly.
+# ── axis 11 — 6.6.20: a WRAPPED invocation on an attribute line expands, as on any line
+#    of code. 6.6.6 had to give this up — the PP read an attribute line as a comment and
+#    the same-line bound refused it — and pinned the loss here as a loud failure. The PP
+#    now reads attribute lines with the lexer's own attribute list (PP_LEXST_AT), so the
+#    invocation expands. Oracle: the HAND-EXPANDED twin (a blank line keeps the line
+#    count), byte-identical — a different derivation from any number here.
 printf '#define ADD(a,b) (a + b)\n#inline fn f(): i64 { return ADD(1,\n2); }\nvar r = f();\nsyscall(60, r);\n' > "$D/a11.cyr"
-rc11=0
-( "$CC" < "$D/a11.cyr" > "$D/a11.bin" 2> "$D/a11.err" ) || rc11=$?
-if [ "$rc11" -ne 0 ] && grep -q "undefined function 'ADD'" "$D/a11.err"; then
-    printf '  ok: axis 11 — a WRAPPED invocation on an attribute line fails loudly (exit %s, names ADD)\n' "$rc11"
-    pass=$((pass+1))
-else
-    printf '  FAIL: axis 11 — wrapped attribute-line invocation: compiler exit %s, stderr %s\n' "$rc11" \
-        "$(head -c 90 "$D/a11.err")"
-    fail=$((fail+1))
+printf '#define ADD(a,b) (a + b)\n#inline fn f(): i64 { return (1 + 2); }\n\nvar r = f();\nsyscall(60, r);\n' > "$D/a11t.cyr"
+compile a11; compile a11t
+if [ -s "$D/a11.bin" ] && [ -s "$D/a11t.bin" ]; then
+    run_exit a11; gotW=$got
+    run_exit a11t; gotT=$got
+    if [ "$gotW" = "$gotT" ] && cmp -s "$D/a11.bin" "$D/a11t.bin"; then
+        printf '  ok: axis 11 — a WRAPPED invocation on an attribute line expands (exit %s, the hand-expanded answer)\n' "$gotW"
+        pass=$((pass+1))
+    else
+        printf '  FAIL: axis 11 — wrapped attribute-line invocation: exit %s, hand-expanded %s, bytes %s\n' "$gotW" "$gotT" \
+            "$(cmp -s "$D/a11.bin" "$D/a11t.bin" && echo same || echo differ)"
+        fail=$((fail+1))
+    fi
 fi
 
 # ── axis 12 — the axis that makes the NEWLINE STOP load-bearing rather than a

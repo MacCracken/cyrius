@@ -39,10 +39,10 @@
 #
 # Group B is the over-correction guard: every attribute must still ARM. Its
 # attribute list is DERIVED from src/frontend/lex.cyr itself (the
-# `token NNN = HASH_*` comments in the `#` branch), and the gate fails if that
-# census does not match the probe table below or the count of LEXATTRBOUND call
-# sites — so a new attribute added without a boundary, or without a row here,
-# turns this gate RED instead of being silently uncovered.
+# `token NNN = HASH_*` table above LEXATTRWORD), and the gate fails if that
+# census does not match the probe table below or the rows of LEXATTRWORD (6.6.20;
+# before that, the LEXATTRBOUND call sites) — so a new attribute added without a
+# row here turns this gate RED instead of being silently uncovered.
 #
 # Axes:
 #   A0      the spaced twin itself still compiles (anti-vacuous)
@@ -106,6 +106,12 @@
 #       → 2 FAIL: A8, A9 (`#io(fd) reads a byte`, `#naked(truth) hurts`)
 #   M4  one LEXATTRBOUND call site neutered (`#io` → `if (1 == 1)`)
 #       → 4 FAIL: B0 on the call-site census (9 != 10), plus A1, A7 and A8
+#       6.6.20: the ten inline byte chains became ONE list, LEXATTRWORD (shared with
+#       the preprocessor's PP_LEXST_AT), whose every `_lex_attr_is` row checks its own
+#       boundary — so a word can no longer exist without one. The surviving form of
+#       M4 is a deleted ROW (`io`): → 2 FAIL, B0 (`9 LEXATTRWORD rows`, set
+#       difference `io`) and B5 (`#io` no longer arms). M1 re-measured on the new
+#       shape: A1..A9 RED with the filing's messages, as above.
 #   M5  `_lx_attr_bound` in programs/cyrlint.cyr forced to 1 → 1 FAIL: C1
 #   M6  `_cf_attr_bound` in programs/cyrfmt.cyr  forced to 1 → 1 FAIL: C2
 #   M7  PP_NAMEBOUND body replaced by `return 1;` (the preprocessor's prefix match)
@@ -208,23 +214,28 @@ for row in 'ioctl numbers' 'allocator notes' 'inlined by hand' 'assertion holds'
 done
 
 # ── Axis B0 — census. Three independent counts of "how many attributes are there".
-#    (a) the token comments in the `#` branch of lex.cyr
-#    (b) the LEXATTRBOUND call sites in the same file
+#    (a) the token table above LEXATTRWORD in lex.cyr (`token NNN = HASH_*`)
+#    (b) the `_lex_attr_is` rows in LEXATTRWORD — each one a word AND its boundary
+#        check, so a row is a word the lexer arms (6.6.20: one list, shared by LEX and
+#        the preprocessor's PP_LEXST_AT; it was ten inline byte chains, one
+#        LEXATTRBOUND call site each)
 #    (c) the probe table below
 grep -oE 'token [0-9]+ = HASH_[A-Z_]+' src/frontend/lex.cyr \
     | sed 's/.*HASH_//' | tr 'A-Z' 'a-z' | sort -u > "$D/census.txt"
 ncensus=$(grep -c . "$D/census.txt" || true)
-nbound=$(grep -c 'LEXATTRBOUND(S, p + ' src/frontend/lex.cyr || true)
+grep -oE '_lex_attr_is\(base, q, n, "[a-z_]+"' src/frontend/lex.cyr \
+    | sed 's/.*"\([a-z_]*\)"/\1/' | sort > "$D/rows.txt"
+nbound=$(grep -c . "$D/rows.txt" || true)
 PROBED='alloc assert deprecated inline io must_use naked pe_import pure regalloc'
 for a in $PROBED; do printf '%s\n' "$a"; done | sort > "$D/probed.txt"
 nprobed=$(grep -c . "$D/probed.txt" || true)
-missing=$(comm -3 "$D/probed.txt" "$D/census.txt" | tr -d '\t' | tr '\n' ' ')
+missing="$(comm -3 "$D/probed.txt" "$D/census.txt" | tr -d '\t' | tr '\n' ' ')$(comm -3 "$D/probed.txt" "$D/rows.txt" | tr -d '\t' | tr '\n' ' ')"
 if [ "$ncensus" = "$nbound" ] && [ "$ncensus" = "$nprobed" ] && [ -z "$(printf '%s' "$missing" | tr -d ' ')" ]; then
-    printf '  ok: axis B0 — %s attributes in lex.cyr, %s boundary call sites, %s probed\n' \
+    printf '  ok: axis B0 — %s attributes in lex.cyr, %s LEXATTRWORD rows, %s probed\n' \
         "$ncensus" "$nbound" "$nprobed"
     pass=$((pass+1))
 else
-    printf '  FAIL: axis B0 — census mismatch: lex.cyr lists %s, %s boundary call sites, %s probed; set difference: %s\n' \
+    printf '  FAIL: axis B0 — census mismatch: lex.cyr lists %s, %s LEXATTRWORD rows, %s probed; set difference: %s\n' \
         "$ncensus" "$nbound" "$nprobed" "$missing"
     fail=$((fail+1))
 fi

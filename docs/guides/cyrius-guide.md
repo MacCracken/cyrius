@@ -2469,18 +2469,22 @@ syscall(60, r + t);
 expanded `M(` against the `)` of the `syscall` and swallowed everything between them — the program
 body was gone, and it exited 0 with nothing on stderr. Since v6.6.6 an invocation that *starts*
 inside a comment must also *close* on that line; if it does not, it is not an invocation and the
-bytes stay comment. A single-line `# see M(1)` is still expanded, and still changes nothing. One
-consequence to know: on an ATTRIBUTE line (`#inline fn f(): i64 { return N(5); }`, which the
-preprocessor's state machine reads as a comment) a macro call still expands, but one whose
-arguments **wrap onto the next line** no longer does — it fails loudly with `undefined function`
-rather than compiling something you did not write.
+bytes stay comment. A single-line `# see M(1)` is still expanded, and still changes nothing. An
+ATTRIBUTE line (`#inline fn f(): i64 { return N(5); }`) is not a comment, to the preprocessor
+any more than to the lexer (v6.6.20), so a macro call there expands like anywhere else in code —
+including one whose arguments wrap onto the next line, which from v6.6.6 to v6.6.19 failed with
+`undefined function` because the preprocessor read the line as a comment.
 
 ⚠ **A `#` is not always a comment.** `#naked`, `#inline`, `#pure`, `#io`, `#alloc`,
 `#must_use`, `#regalloc`, `#deprecated`, `#assert` and `#pe_import` are attribute TOKENS, and
 the lexer keeps reading the line after them — so `#naked fn isr() {` opens a real brace.
 `cyrlint`, `cyrfmt` and `cyrdoc` read them as the lexer does (v6.6.5; before that
 `#naked fn f() {` drew false `unmatched closing brace` warnings and `cyrius fmt` rewrote the fn
-body flush left).
+body flush left), and since v6.6.20 so does the preprocessor, from the lexer's own list. Before
+that it read the rest of an attribute line as a comment, so a string literal there that ran onto
+the next line (`#assert ok, "first` / `second"`) put it one quote out of step for the whole of
+that next line: a real `#ifdef` there was skipped, a `#define` inside the string was executed,
+and a forged `#@file` marker got past the guard that keeps `private` honest.
 
 An attribute name ENDS at a word boundary: the next byte must be whitespace or end of input.
 Anything else and the `#` opens an ordinary comment, so `#ioctl numbers`, `#allocator notes`,

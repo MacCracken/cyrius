@@ -131,6 +131,24 @@ fn PP_LEXST_INSTR(st): i64 {
     return 0;
 }
 
+# ⛔ 6.6.20 (CVE-TBD) — PP_LEXST for the byte at `base + i` (`n` = the buffer's length),
+# with the one rule a byte-at-a-time machine cannot see: in code, a `#` that spells one of
+# the lexer's ten ATTRIBUTE words does not open a comment, because LEX keeps lexing that
+# line as code. EVERY pass walks its buffer through this, never through PP_LEXST directly.
+# Reading `#assert 1 == 1, "x<LF>"` as a comment put the PP one quote out of step with the
+# lexer for the whole next line — a forged `#@file` there defeated `private`, and a real
+# `#ifdef` there was skipped. The list is LEXATTRWORD, the lexer's own (src/frontend/lex.cyr),
+# so the two cannot drift. CHANGELOG [6.6.20]
+fn PP_LEXST_AT(base, i, n, st): i64 {
+    var c = load8(base + i);
+    if (st == 0) {
+        if (c == 35) {
+            if (LEXATTRWORD(base, i, n) != 0) { return 0; }
+        }
+    }
+    return PP_LEXST(st, c);
+}
+
 # ⛔ v6.6.6 (CVE-45) — NEUTRALISE a forged `#@file` marker in a region of bytes.
 #
 # FM_BUILD scans the FINAL buffer for `#@file` at ANY offset — no byte-0 rule and no
@@ -151,8 +169,9 @@ fn PP_LEXST_INSTR(st): i64 {
 # The `@` is OVERWRITTEN with a space rather than a byte being inserted, so the region
 # keeps its length and nothing shifts: `# file "x" 1` is an ordinary comment and is inert
 # to FM_BUILD's scan. Real markers are unaffected — PP_FMARK writes them straight to
-# `out`, never through a region this sees. String literals are skipped via PP_LEXST, so a
-# program whose DATA contains `#@file` keeps its bytes.
+# `out`, never through a region this sees. String literals are skipped via PP_LEXST_AT, so a
+# program whose DATA contains `#@file` keeps its bytes — except at a line start, see
+# PP_NEUT_BOLMARK.
 #
 # Not a sandbox escape — a forger already controls the source being compiled — but
 # `private` is meant to be a checkable guarantee rather than a convention.
@@ -172,12 +191,45 @@ fn PP_NEUT_FMARK(base, n): i64 {
                 # 6.6.12: and a forged native-aarch64 region marker (`#@a+` / `#@a-`, see
                 # _pp_a64_open), which would only have silenced a warning.
                 if (PP_A64_MARK(base, i, n) != 0) { store8(base + i + 1, 32); }
+            } else {
+                # 6.6.20 — belt and braces for the string skip above. See PP_NEUT_BOLMARK.
+                if (PP_NEUT_BOLMARK(base, i, n) == 1) { store8(base + i + 1, 32); }
             }
         }
-        st = PP_LEXST(st, c);
+        st = PP_LEXST_AT(base, i, n, st);
         i = i + 1;
     }
     return 0;
+}
+
+# ⛔ 6.6.20 (CVE-TBD) — 1 iff `base + i` STARTS A LINE and holds FM_BUILD's exact 8-byte
+# key `#@file "`, whatever the string state. FM_BUILD mints a marker at any line start
+# (FM_ATBOL) and has no idea of strings, so this is the one place a string skip can hide a
+# forgery from the neutraliser and not from the consumer.
+#
+# PP_NEUT_FMARK skips string literals so program DATA keeps its bytes, which makes it
+# exactly as safe as its idea of where a string is. Twice that idea has been wrong where the
+# lexer's was right (6.6.6: the per-line reset; 6.6.20: attribute lines, PP_LEXST_AT) and both
+# times a forged marker sat in the gap. The price is one byte of DATA in one shape that was
+# already mis-compiled: a literal whose next line opens `#@file "` ends on that quote, so its
+# data ended `#@file ` — and FM_BUILD minted a junk-named file span from it (the CVE-45
+# residual: every later diagnostic in the file named `; }` or similar as its file). Now the
+# data reads `# file ` and the span is gone. Keyed on the 8-byte key, not the 6-byte `#@file`
+# the in-code path uses, so `"a<LF>#@filex"` keeps every byte.
+# NOT applied to `#@a+` / `#@a-`: their one consumer, PP_A64_NATIVE_AT, walks strings with
+# the same PP_LEXST_AT as this pass, so whatever this skips as a string it skips too.
+# CHANGELOG [6.6.20]
+fn PP_NEUT_BOLMARK(base, i, n): i64 {
+    if (i > 0) { if (load8(base + i - 1) != 10) { return 0; } }
+    if (i + 7 >= n) { return 0; }
+    if (load8(base + i + 1) != 64) { return 0; }    # '@'
+    if (load8(base + i + 2) != 102) { return 0; }   # 'f'
+    if (load8(base + i + 3) != 105) { return 0; }   # 'i'
+    if (load8(base + i + 4) != 108) { return 0; }   # 'l'
+    if (load8(base + i + 5) != 101) { return 0; }   # 'e'
+    if (load8(base + i + 6) != 32) { return 0; }    # ' '
+    if (load8(base + i + 7) != 34) { return 0; }    # '"'
+    return 1;
 }
 
 # Neutralise forged markers across the WHOLE raw source, once, before any pass copies
@@ -312,7 +364,7 @@ fn PP_A64_NATIVE_AT(S, off): i64 {
             if (m == 1) { dep = dep + 1; }
             if (m == 2) { if (dep > 0) { dep = dep - 1; } }
         }
-        st = PP_LEXST(st, c);
+        st = PP_LEXST_AT(base, i, n, st);
         if (c == 10) { bol = 1; } else { bol = 0; }
         i = i + 1;
     }
@@ -727,7 +779,7 @@ fn PP_IS_HOST_ONLY(buf, n): i64 {
             }
         }
         var hc = load8(buf + i);
-        lst = PP_LEXST(lst, hc);
+        lst = PP_LEXST_AT(buf, i, n, lst);
         in_string = PP_LEXST_INSTR(lst);
         if (hc == 10) { bol = 1; } else { bol = 0; }
         i = i + 1;
@@ -1844,7 +1896,7 @@ fn PP_PARSE_STRUCT_DEF(S, src_base, ip, bl, out, op): i64 {
             if (ch == 123) { depth = depth + 1; if (body_open < 0) { body_open = cp; } }
             if (ch == 125) { depth = depth - 1; if (depth == 0) { body_close = cp; cp = cp + 1; break; } }
         }
-        lst = PP_LEXST(lst, ch);
+        lst = PP_LEXST_AT(src_base, cp, bl, lst);
         cp = cp + 1;
     }
     # The field table is built by a separate walk over the body, token by token — see
@@ -3239,10 +3291,9 @@ fn PP_IDBYTE(b): i64 {
 # them: the whole program body vanished, exit 0 with an empty stderr where 43 is
 # correct. Reachable from a trailing comment on a real line too (`var r = 42;  # see M(`).
 # The claim is true only of a SINGLE-LINE invocation, which is why the bound — not the
-# exclusion — is the fix: see PP_ARGS_ON_LINE. A blanket "no expansion in a comment"
-# would ALSO regress attribute lines, since PP_LEXST reads `#inline fn f(): i64 {
-# return N(5); }` as a comment and that line's macro legitimately expands.
-# CHANGELOG [6.6.6]
+# exclusion — is the fix: see PP_ARGS_ON_LINE. (An ATTRIBUTE line such as `#inline fn f():
+# i64 { return N(5); }` is CODE to the PP since 6.6.20 — PP_LEXST_AT — so its macros expand,
+# wrapped invocations included, exactly as on any other line of code.) CHANGELOG [6.6.6]
 fn PP_MACRO_START(S, ip, lst): i64 {
     if (PP_LEXST_INSTR(lst) == 1) { return 0; }
     var c = load8(S + _SRCB + ip);
@@ -4218,7 +4269,7 @@ fn PP_PASS(S): i64 {
             # reset-at-every-newline, are gone; PP_LEXST is the one copy and its
             # string state CROSSES lines. See PP_LEXST for the full rationale.
             # CHANGELOG [6.6.6]
-            lst = PP_LEXST(lst, c);
+            lst = PP_LEXST_AT(S + _SRCB, ip, bl, lst);
             in_string = PP_LEXST_INSTR(lst);
             ip = ip + 1;
             if (c == 10) { bol = 1; } else { bol = 0; }
@@ -4287,8 +4338,8 @@ fn PP_MACRO_PASS(S): i64 {
         if (expanded == 0) {
             store8(out + op, c);
             op = op + 1;
+            lst = PP_LEXST_AT(S + _SRCB, ip, bl, lst);
             ip = ip + 1;
-            lst = PP_LEXST(lst, c);
         }
     }
     # No copy-back — output stays at S+0x459D000. LEX reads from there.
@@ -4548,7 +4599,7 @@ fn PP_IFDEF_PASS(S): i64 {
                 # v5.8.40 — string-literal state machine; mirrors PP_PASS.
                 # v6.6.6 — both copies are now PP_LEXST, and the string state is
                 # no longer reset at every newline. CHANGELOG [6.6.6]
-                lst = PP_LEXST(lst, c);
+                lst = PP_LEXST_AT(tmp, ip, bl, lst);
                 in_string = PP_LEXST_INSTR(lst);
                 ip = ip + 1;
                 if (c == 10) { bol = 1; } else { bol = 0; }
@@ -4660,8 +4711,9 @@ fn PP_REF_PASS(S): i64 {
         }
         if (_rhandled == 0) {
             store8(out + op, _refc);
-            op = op + 1; ip = ip + 1;
-            lst = PP_LEXST(lst, _refc);
+            op = op + 1;
+            lst = PP_LEXST_AT(S + _SRCB, ip, bl, lst);
+            ip = ip + 1;
             in_string = PP_LEXST_INSTR(lst);
             if (_refc == 10) { bol = 1; } else { bol = 0; }
         }
