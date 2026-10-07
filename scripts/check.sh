@@ -2032,6 +2032,11 @@ _chk_gate "$ROOT/tests/gates/toolchain/lib_sync_relocks.sh"
 # gone), names a failed step, refuses a 0-byte compiler (the script scored it PASS), and leaves
 # nothing behind; `_copy_binary` leaves no dst when it fails (the macOS stage leak).
 _chk_gate "$ROOT/tests/gates/toolchain/cbt_no_shared_tmp_paths.sh"
+# 6.6.20 (SEC-05, CVE-TBD) — a crash-safe replace's sibling temp ("<path>.cyrtmp.<pid>.<ctr>",
+# predictable) is created O_EXCL|O_NOFOLLOW: a link planted there redirected file_write_atomic /
+# _aw_open's write into the file it named and was renamed over the path. cyrfmt --write and
+# deps --lock skip planted names, refuse by name when 64 are taken; only _io_tmp_open builds it.
+_chk_gate "$ROOT/tests/gates/toolchain/atomic_temp_exclusive.sh"
 
 # 6.6.9 (bite 11) — a check-driver row that did not run its check (missing tool, host or
 # fixture) prints SKIP and is tallied as a SKIP, never as a PASS; CYRIUS_CHECK_NO_SKIP=1 (what

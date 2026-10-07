@@ -168,6 +168,8 @@ cmp -s "$D/mid/_categories_data.cyr" "lib/unicode/_categories_data.cyr" || { fai
 # keyed "<file>|<P>". A key must be in the allowlist below, each entry with its reason; an
 # entry that no longer matches a live site FAILS, so the list cannot rot into a blanket pass.
 # programs/checks/ (the check driver's own scratch files) is out of scope here.
+# 6.6.20 (SEC-05): the `cbt/core.cyr|tmp` entry is gone — _aw_open no longer opens its temp
+# O_TRUNC; lib/io.cyr `_io_tmp_open` creates it O_EXCL|O_NOFOLLOW (gate: atomic_temp_exclusive.sh).
 ALLOW='programs/cyrld.cyr|out_path|the linker output: every write is checked and fails rc 1 (a build artifact, the class of cycc'"'"'s own output)
 cbt/build.cyr|tmp_out|the compiler child'"'"'s stdout (cycc'"'"'s own output write)
 cbt/build.cyr|out|the compiler child'"'"'s stdout (cycc'"'"'s own output write)
@@ -178,7 +180,6 @@ cbt/commands.cyr|tmperr|a child'"'"'s stderr capture in the private temp dir
 cbt/commands.cyr|entry|a _cbt_tmpfile probe source (short write checked: it then fails to compile)
 cbt/commands.cyr|dl_entry|a _cbt_tmpfile probe source
 cbt/commands.cyr|dst|distlib'"'"'s verify mirror (dist/.dlverify-<pid>, 6.6.9): a scratch copy of the pinned snapshot, removed after the verify — not a user or tree file; a short write fails the verify
-cbt/core.cyr|tmp|_aw_open'"'"'s own sibling temp — the crash-safe writer itself
 cbt/build.cyr|p|_cbt_tmp_probe'"'"'s 4 KB probe in the CLI'"'"'s OWN private temp dir, unlinked at once (6.6.9: is the temp dir writable?)
 cbt/commands.cyr|errf|the lint pre-pass'"'"'s stderr capture, pre-created in the private temp dir by the parent (6.6.9)
 cbt/commands.cyr|dl_errf|distlib'"'"'s self-check stderr capture (_cbt_tmpfile, 0600), pre-created in the private temp dir by the parent so a compile() that bails early still leaves a file to read (6.6.20 CBT-02)
