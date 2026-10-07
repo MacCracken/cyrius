@@ -30,13 +30,13 @@
 #   per probe, which is the point of the u64 surface)
 #
 # Map header: { entries_ptr, capacity, count, key_type } = 32 bytes
+#   key_type: 0 = cstr (hash via hash_str, compare via streq)
+#             1 = Str  (hash via hash_str_v, compare via str_eq)
+#             2 = u64  (hash via hash_u64, equality via ==, v5.5.20)
 #
 # Entries array: `capacity` slots, then ONE trailing word — the tombstone count (6.6.20).
 #   It lives after the slots, not in the header, so the 32-byte header and every slot offset
 #   stay exactly what consumers already read (map_entries/map_cap walks never reach it).
-#   key_type: 0 = cstr (hash via hash_str, compare via streq)
-#             1 = Str  (hash via hash_str_v, compare via str_eq)
-#             2 = u64  (hash via hash_u64, equality via ==, v5.5.20)
 #
 # The cstr/Str helpers (map_keys / map_values / map_iter / map_print)
 # assume the 24-byte slot layout and do NOT work on u64 maps. The
