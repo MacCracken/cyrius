@@ -377,10 +377,13 @@ if [ "$REFRESH_ONLY" -eq 1 ]; then
     #
     # Source-mapping rules:
     #   - bins entry "cycc"     → seed-bootstrapped, NOT rebuilt here.
+    #   - bins entry "cybs"     → ASSEMBLED by the seed from bootstrap/cybs.cyr, every refresh
     #   - bins entry "cyrius"  → cbt/cyrius.cyr
     #   - bins entry <other>   → programs/<name>.cyr (cyrlint, cyrfmt, ark, …)
     #   - cross_bins "cycc_aarch64" → src/main_aarch64.cyr
     #   - cross_bins <other>      → src/main_<arch>.cyr (future-proof)
+    # A bin whose mapped source does not exist is a REFUSAL, never a copy of whatever sits at
+    # build/<bin>: that copy is how a June build/cybs reached 17 slots (CHANGELOG [6.6.20]).
     #
     # Staleness rule: rebuild if binary is missing OR ANY dependency mtime is
     # newer than binary mtime. Dependencies = the direct `$source` PLUS every
@@ -398,7 +401,11 @@ if [ "$REFRESH_ONLY" -eq 1 ]; then
         local target="$1"
         local source="$2"
         local deproots="${3:-lib}"
-        [ -f "$source" ] || return 0
+        # 6.6.20: a mapped source that does not exist REFUSES. This was `return 0`, and the
+        # copy loop below then installed build/$target as it stood — for `cybs` (which has no
+        # programs/cybs.cyr) a 12,344 B June binary that cannot compile src/main.cyr, in 17
+        # slots, each stamped tree-matches-tag: yes. CHANGELOG [6.6.20]
+        [ -f "$source" ] || err "cyrius.cyml [release] lists '$target' but its source $source does not exist — refusing to install a build/$target that nothing rebuilt (give it a rebuild rule in scripts/install.sh)"
         if [ -x "build/$target" ] && [ "build/$target" -nt "$source" ]; then
             # Direct source is older than the binary; check include-root deps.
             local newer_dep
@@ -407,10 +414,10 @@ if [ "$REFRESH_ONLY" -eq 1 ]; then
                 return 0
             fi
         fi
-        if [ ! -x "build/cycc" ]; then
-            warn "build/cycc missing — cannot rebuild $target from $source; falling back to existing binary"
-            return 1
-        fi
+        # A failed rebuild ABORTS the refresh (it always did: this script is `set -e`, and the
+        # old `return 1` here sat under a warning that promised a fallback to the existing
+        # binary that never happened). Said plainly now, before anything is copied.
+        [ -x "build/cycc" ] || err "build/cycc missing — cannot rebuild $target from $source; refusing to install a stale build/$target"
         local err_log
         err_log=$(mktemp) && [ -f "$err_log" ] || { echo "error: mktemp failed (TMPDIR=${TMPDIR:-/tmp})" >&2; exit 1; }
         if cat "$source" | ./build/cycc > "build/$target" 2>"$err_log"; then
@@ -430,13 +437,39 @@ if [ "$REFRESH_ONLY" -eq 1 ]; then
             sed 's/^/    /' "$err_log" >&2
             rm -f "$err_log"
             rm -f "build/$target"
-            return 1
+            err "refusing to refresh: $target did not build from $source (nothing was installed)"
         fi
+    }
+
+    # 6.6.20: cybs is the bootstrap compiler, ASSEMBLED by the seed — the one bin with no
+    # programs/ source, so `_rebuild_stale` never rebuilt it and every refresh shipped whatever
+    # gitignored build/cybs the clone happened to hold. Rebuilt EVERY refresh (milliseconds),
+    # with bootstrap/bootstrap.sh's recipe, and installed only once it passes the closure that
+    # proves it is the compiler the seed chain needs: it compiles bootstrap/asm.cyr to the
+    # seed byte for byte. CHANGELOG [6.6.20]
+    _rebuild_cybs() {
+        [ -f bootstrap/cybs.cyr ] && [ -x bootstrap/asm ] && [ -f bootstrap/asm.cyr ] \
+            || err "cyrius.cyml [release] lists cybs but bootstrap/cybs.cyr, bootstrap/asm or bootstrap/asm.cyr is missing — refusing to install a build/cybs that nothing rebuilt"
+        _cb_d=$(mktemp -d) && [ -d "$_cb_d" ] || { echo "error: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})" >&2; exit 1; }
+        if bootstrap/asm < bootstrap/cybs.cyr > "$_cb_d/cybs" 2> "$_cb_d/err" \
+           && chmod +x "$_cb_d/cybs" \
+           && "$_cb_d/cybs" < bootstrap/asm.cyr > "$_cb_d/asm" 2>> "$_cb_d/err" \
+           && cmp -s "$_cb_d/asm" bootstrap/asm \
+           && mv -f "$_cb_d/cybs" build/cybs; then
+            info "rebuilt cybs from bootstrap/cybs.cyr (seed-assembled; it compiles bootstrap/asm.cyr to the seed)"
+            rm -rf "$_cb_d"
+            return 0
+        fi
+        [ -s "$_cb_d/err" ] && sed 's/^/    /' "$_cb_d/err" >&2
+        rm -rf "$_cb_d"
+        rm -f build/cybs
+        err "refusing to refresh: cybs did not assemble from bootstrap/cybs.cyr, or the result does not compile bootstrap/asm.cyr to the seed (nothing was installed)"
     }
 
     for bin in $_R_BINS; do
         case "$bin" in
             cycc)    : ;;  # seed-bootstrapped, never rebuilt by --refresh-only
+            cybs)    _rebuild_cybs ;;
             # v6.5.19: deproots MUST include `cbt` — this is the v6.2.34 bug one
             # directory over, and it silently withheld every CLI fix. `cbt/cyrius.cyr`
             # is a 45 KB shim that `include`s six siblings (core/build/commands/
