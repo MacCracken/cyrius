@@ -1,0 +1,228 @@
+# replace_in_tree_link_rules.tcyr — 6.6.20 (CVE-TBD): lib/io.cyr's `_io_replace_target_in`, the
+# one helper every CLI writer of a PROJECT file goes through (cyrius update, deps --lock and the
+# auto-deps relock, cyriusly use, cyrius fmt, cyrius port). A symlink is followed only to a file
+# inside `root`: every hop RELATIVE, never climbing above `root` with `..`, never passing a
+# directory link (the kernel resolves `dirlink/..` against the link's TARGET), never landing in or
+# on `.git` under any spelling a filesystem folds onto it (case, HFS+-ignored code points, an NTFS
+# `:stream`, trailing dots/spaces, 8.3 names). Anything else is -EXDEV (-18) with the link, its
+# target and why recorded, and nothing is written.
+# Cross-OS because readlink's answer is per peer (x86/aarch64 Linux, both macOS); the CLI end to
+# end is tests/gates/toolchain/project_writes_stay_in_tree.sh. Windows has no readlink route (the
+# named path is always the answer there): it runs only the rows for what holds there instead —
+# the O_NOFOLLOW append `cyrius port` makes refuses a link. agnos keeps its own ABI: a named SKIP.
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/io.cyr"
+include "lib/assert.cyr"
+
+fn _cat(a, b): i64 {   # a + "/" + b, fresh
+    var al = strlen(a);
+    var bl = strlen(b);
+    var p = alloc(al + bl + 2);
+    memcpy(p, a, al);
+    store8(p + al, 47);
+    memcpy(p + al + 1, b, bl);
+    store8(p + al + 1 + bl, 0);
+    return p;
+}
+
+fn _has(path, want): i64 {   # 1 iff `path` holds exactly the bytes of cstring `want`
+    var b = alloc(64);
+    var n = file_read_all(path, b, 63);
+    if (n != strlen(want)) { return 0; }
+    return memeq(b, want, n);
+}
+
+fn main(): i64 {
+    alloc_init();
+    #ifdef CYRIUS_TARGET_WIN
+    var _win_skip = "  SKIP (Windows): no readlink route; the named path is always the replace target\n";
+    sys_write(1, _win_skip, strlen(_win_skip));
+    # What DOES hold on Windows: the resolver answers the named path, so `cyrius port`'s
+    # .gitignore append is opened O_NOFOLLOW and a link there is refused (-ELOOP), never
+    # followed — CreateFileW resolves a final reparse point for EVERY disposition, OPEN_ALWAYS
+    # (O_CREAT|O_APPEND) included. The replace writers rename, which replaces a link.
+    test_group("Windows: the named path is the answer; the O_NOFOLLOW append `cyrius port` makes refuses a link");
+    var W = test_scratch("rti_win");
+    assert_eq(sys_mkdir(W, 448), 0, "scratch dir created");
+    file_write_all(_cat(W, "victim"), "victim", 6);
+    # On Windows a link needs Developer Mode or an elevated process; the release-gate host and
+    # CI's runner are both elevated (as tests/tcyr/crossos/open_flags_per_target.tcyr notes).
+    assert_eq(xsymlink("victim", _cat(W, "gi")), 0, "xsymlink makes the fixture (CreateSymbolicLinkW)");
+    assert_streq(_io_replace_target_in(W, "gi"), _cat(W, "gi"), "the resolver answers the named path");
+    var waf = file_open(_cat(W, "gi"), O_WRONLY | O_CREAT | O_APPEND | O_NOFOLLOW, 420);
+    assert_eq(waf, 0 - 40, "O_WRONLY|O_CREAT|O_APPEND|O_NOFOLLOW on the link is -ELOOP");
+    if (waf >= 0) { file_close(waf); }
+    assert_eq(_has(_cat(W, "victim"), "victim"), 1, "the file it names is unchanged");
+    assert_eq(xsymlink("absent", _cat(W, "gd")), 0, "a DANGLING link fixture");
+    var wad = file_open(_cat(W, "gd"), O_WRONLY | O_CREAT | O_APPEND | O_NOFOLLOW, 420);
+    assert_eq(wad, 0 - 40, "…the same open on a dangling link is -ELOOP");
+    if (wad >= 0) { file_close(wad); }
+    assert_eq(file_exists(_cat(W, "absent")), 0, "…and its target is NOT created");
+    xunlink(_cat(W, "gi")); xunlink(_cat(W, "gd")); xunlink(_cat(W, "victim"));
+    assert_eq(xrmdir(W), 0, "scratch dir empty and removed");
+    #endif
+    #ifdef CYRIUS_TARGET_AGNOS
+    var _agnos_skip = "  SKIP (agnos): 2-arg mkdir / symlink (agnos's are length-carrying)\n";
+    sys_write(1, _agnos_skip, strlen(_agnos_skip));
+    #endif
+    #ifndef CYRIUS_TARGET_WIN
+    #ifndef CYRIUS_TARGET_AGNOS
+    var R = test_scratch("rti_root");          # the "project", cwd-relative, per process
+    var O = test_scratch("rti_outside");       # a sibling outside it
+    assert_eq(sys_mkdir(R, 448), 0, "scratch root created");
+    assert_eq(sys_mkdir(O, 448), 0, "scratch outside dir created");
+    assert_eq(sys_mkdir(_cat(R, "sub"), 448), 0, "root/sub created");
+    file_write_all(_cat(R, "plain"), "p", 1);
+    file_write_all(_cat(R, "sub/t"), "old", 3);
+    file_write_all(_cat(O, "victim"), "victim", 6);
+    # an outside target, spelled from inside root: ../<O>/victim
+    var up = _cat("..", _cat(O, "victim"));
+
+    test_group("a path that is not a link is the answer, as named");
+    assert_streq(_io_replace_target_in(R, "plain"), _cat(R, "plain"), "root/plain");
+    assert_streq(_io_replace_target_in(R, "absent"), _cat(R, "absent"), "root/absent (will be created)");
+    assert_eq(_io_contain_link, 0, "no refusal recorded");
+
+    test_group("an in-tree relative link is followed (and written through)");
+    xsymlink("sub/t", _cat(R, "l_in"));
+    assert_streq(_io_replace_target_in(R, "l_in"), _cat(R, "sub/t"), "l_in -> sub/t");
+    xsymlink("sub/../sub/t", _cat(R, "l_dots"));
+    assert_streq(_io_replace_target_in(R, "l_dots"), _cat(R, "sub/t"), "l_dots -> sub/../sub/t");
+    xsymlink("../t", _cat(R, "sub/l_back"));
+    assert_streq(_io_replace_target_in(R, "sub/l_back"), _cat(R, "t"), "sub/l_back -> ../t resolves against sub/");
+    assert_eq(_io_replace_atomic_in(R, "l_in", "new", 3), 0, "replace through l_in");
+    assert_eq(_has(_cat(R, "sub/t"), "new"), 1, "sub/t got the bytes");
+    var lb[8];
+    assert_gt(xreadlink(_cat(R, "l_in"), &lb, 8), 0, "l_in is still a link");
+
+    test_group("an ABSOLUTE target is refused (-18, why 1)");
+    xsymlink("/nonexistent-rti/x", _cat(R, "l_abs"));
+    assert_eq(_io_replace_target_in(R, "l_abs"), 0 - 18, "-EXDEV");
+    assert_eq(_io_contain_why, 1, "why = absolute");
+    assert_streq(_io_contain_link, _cat(R, "l_abs"), "the link is recorded");
+    assert_streq(_io_contain_target, "/nonexistent-rti/x", "its target is recorded");
+
+    test_group("a target that climbs above root is refused (-18, why 2), nothing written");
+    xsymlink(up, _cat(R, "l_up"));
+    assert_eq(_io_replace_atomic_in(R, "l_up", "pwned", 5), 0 - 18, "-EXDEV, not written");
+    assert_eq(_io_contain_why, 2, "why = climbs out");
+    assert_eq(_has(_cat(O, "victim"), "victim"), 1, "the outside file is unchanged");
+    xsymlink("sub/../../x", _cat(R, "l_up2"));
+    assert_eq(_io_replace_target_in(R, "l_up2"), 0 - 18, "sub/../../x climbs out too");
+
+    test_group("a target through a DIRECTORY link is refused (-18, why 3), even one inside");
+    xsymlink("sub", _cat(R, "dl"));
+    xsymlink("dl/t", _cat(R, "l_dl"));
+    assert_eq(_io_replace_target_in(R, "l_dl"), 0 - 18, "dl/t refused");
+    assert_eq(_io_contain_why, 3, "why = directory link");
+    assert_streq(_io_contain_dir, _cat(R, "dl"), "the directory link is named");
+    # the lexical trap: dl2 -> ../<O>; dl2/../<name> READS as root/<name> and LANDS beside <O>
+    xsymlink(_cat("..", O), _cat(R, "dl2"));
+    var pt = test_scratch("rti_popped");
+    xsymlink(_cat("dl2/..", pt), _cat(R, "l_pop"));
+    assert_eq(_io_replace_atomic_in(R, "l_pop", "pwned", 5), 0 - 18, "dl2/../<name> refused");
+    assert_eq(_io_contain_why, 3, "why = directory link (the .. out of it)");
+    assert_eq(file_exists(_cat(R, pt)), 0, "root/<name> not created");
+    assert_eq(file_exists(pt), 0, "nothing created beside the root either");
+
+    test_group("a chain is checked at every hop; the hop that leaves is the one named");
+    xsymlink("c2", _cat(R, "c1"));
+    xsymlink(up, _cat(R, "c2"));
+    assert_eq(_io_replace_target_in(R, "c1"), 0 - 18, "c1 -> c2 -> outside refused");
+    assert_streq(_io_contain_req, _cat(R, "c1"), "the requested name is recorded");
+    assert_streq(_io_contain_link, _cat(R, "c2"), "the hop that leaves is recorded");
+
+    test_group("a link into .git — or onto a .git gitfile — is refused (-18, why 5), any spelling");
+    # .git is INSIDE the project, so containment alone let `cyrius.cyml -> .git/commondir` aim the
+    # repo's common dir at a checkout directory (code execution on the next `git status`).
+    assert_eq(sys_mkdir(_cat(R, ".git"), 448), 0, "root/.git created");
+    file_write_all(_cat(R, ".git/config"), "cfg", 3);
+    xsymlink(".git/config", _cat(R, "g_cfg"));
+    assert_eq(_io_replace_atomic_in(R, "g_cfg", "lock", 4), 0 - 18, ".git/config refused, not written");
+    assert_eq(_io_contain_why, 5, "why = reaches into .git");
+    assert_eq(_has(_cat(R, ".git/config"), "cfg"), 1, ".git/config unchanged");
+    xsymlink(".git/commondir", _cat(R, "g_cd"));
+    assert_eq(_io_replace_atomic_in(R, "g_cd", "../evil", 7), 0 - 18, "dangling .git/commondir refused");
+    assert_eq(file_exists(_cat(R, ".git/commondir")), 0, ".git/commondir not created");
+    xsymlink(".git", _cat(R, "g_file"));
+    assert_eq(_io_replace_target_in(R, "g_file"), 0 - 18, ".git itself (a worktree's gitfile) refused");
+    assert_eq(_io_contain_why, 5, "why = .git, the final component");
+    xsymlink("sub/../.git/config", _cat(R, "g_pop"));
+    assert_eq(_io_replace_target_in(R, "g_pop"), 0 - 18, "sub/../.git/config refused (normalised)");
+    assert_eq(_io_contain_why, 5, "why = .git after the pop");
+    xsymlink("sub/.git/x", _cat(R, "g_sub"));
+    assert_eq(_io_replace_target_in(R, "g_sub"), 0 - 18, "sub/.git/x (a submodule's) refused");
+    xsymlink(".GIT/config", _cat(R, "g_up"));
+    assert_eq(_io_replace_target_in(R, "g_up"), 0 - 18, ".GIT/config refused (APFS/NTFS fold case)");
+    assert_eq(_io_contain_why, 5, "why = .git, case-folded");
+    xsymlink(".G\xE2\x80\x8CiT/config", _cat(R, "g_hfs"));
+    assert_eq(_io_replace_target_in(R, "g_hfs"), 0 - 18, ".G<U+200C>iT/config refused (HFS+ ignores U+200C)");
+    xsymlink(".g\xEF\xBB\xBFit/config", _cat(R, "g_bom"));
+    assert_eq(_io_replace_target_in(R, "g_bom"), 0 - 18, ".g<U+FEFF>it/config refused");
+    xsymlink(".git. ./config", _cat(R, "g_dot"));
+    assert_eq(_io_replace_target_in(R, "g_dot"), 0 - 18, "`.git. ` refused (Win32 strips trailing dots/spaces)");
+    xsymlink(".git::$INDEX_ALLOCATION/config", _cat(R, "g_ads"));
+    assert_eq(_io_replace_target_in(R, "g_ads"), 0 - 18, ".git::$INDEX_ALLOCATION refused (NTFS stream)");
+    xsymlink("GIT~1/config", _cat(R, "g_83"));
+    assert_eq(_io_replace_target_in(R, "g_83"), 0 - 18, "GIT~1/config refused (the 8.3 alias)");
+    assert_eq(_io_contain_why, 5, "why = .git, its short name");
+    xsymlink("PROGRA~2/x", _cat(R, "g_832"));
+    assert_eq(_io_replace_target_in(R, "g_832"), 0 - 18, "another 8.3 short name refused");
+    assert_eq(_io_contain_why, 6, "why = an 8.3 short name");
+    xsymlink("c_g", _cat(R, "c_g0"));
+    xsymlink(".git/config", _cat(R, "c_g"));
+    assert_eq(_io_replace_target_in(R, "c_g0"), 0 - 18, "a chain whose second hop lands in .git refused");
+    assert_streq(_io_contain_link, _cat(R, "c_g"), "the hop into .git is named");
+    # ANTI-OVER-CORRECTION: names that only LOOK like .git are written through
+    file_write_all(_cat(R, ".gitignore"), "gi", 2);
+    xsymlink(".gitignore", _cat(R, "n_gi"));
+    assert_streq(_io_replace_target_in(R, "n_gi"), _cat(R, ".gitignore"), ".gitignore is not .git");
+    xsymlink(".github/w.yml", _cat(R, "n_gh"));
+    assert_streq(_io_replace_target_in(R, "n_gh"), _cat(R, ".github/w.yml"), ".github/ is not .git");
+    xsymlink("sub/a.git", _cat(R, "n_ag"));
+    assert_streq(_io_replace_target_in(R, "n_ag"), _cat(R, "sub/a.git"), "a.git is not .git");
+    xsymlink("git/x", _cat(R, "n_g"));
+    assert_streq(_io_replace_target_in(R, "n_g"), _cat(R, "git/x"), "git/ is not .git");
+    xsymlink(".git/../sub/t", _cat(R, "n_thru"));
+    assert_streq(_io_replace_target_in(R, "n_thru"), _cat(R, "sub/t"), ".git/../sub/t lands in sub/t, not .git");
+
+    test_group("a loop is -ELOOP; a link naming the root itself is -EISDIR");
+    xsymlink("lp2", _cat(R, "lp1"));
+    xsymlink("lp1", _cat(R, "lp2"));
+    assert_eq(_io_replace_target_in(R, "lp1"), 0 - 40, "-ELOOP");
+    xsymlink("sub/..", _cat(R, "l_root"));
+    assert_eq(_io_replace_target_in(R, "l_root"), 0 - 21, "-EISDIR");
+
+    test_group("an absolute `rel` is a misuse: -EINVAL, never re-read relative to root");
+    assert_eq(_io_replace_target_in(".", "/etc/passwd"), 0 - 22, "-EINVAL");
+
+    test_group("root \".\" spells cwd-relative names bare");
+    assert_streq(_io_replace_target_in(".", _cat(R, "l_in")), _cat(R, "sub/t"), "./<R>/l_in -> <R>/sub/t");
+
+    xunlink(_cat(R, "plain")); xunlink(_cat(R, "l_in")); xunlink(_cat(R, "l_dots"));
+    xunlink(_cat(R, "sub/l_back")); xunlink(_cat(R, "l_abs")); xunlink(_cat(R, "l_up"));
+    xunlink(_cat(R, "l_up2")); xunlink(_cat(R, "dl")); xunlink(_cat(R, "l_dl"));
+    xunlink(_cat(R, "dl2")); xunlink(_cat(R, "l_pop")); xunlink(_cat(R, "c1"));
+    xunlink(_cat(R, "c2")); xunlink(_cat(R, "lp1")); xunlink(_cat(R, "lp2"));
+    xunlink(_cat(R, "l_root")); xunlink(_cat(R, "sub/t"));
+    xunlink(_cat(R, "g_cfg")); xunlink(_cat(R, "g_cd")); xunlink(_cat(R, "g_file"));
+    xunlink(_cat(R, "g_pop")); xunlink(_cat(R, "g_sub")); xunlink(_cat(R, "g_up"));
+    xunlink(_cat(R, "g_hfs")); xunlink(_cat(R, "g_bom")); xunlink(_cat(R, "g_dot"));
+    xunlink(_cat(R, "g_ads")); xunlink(_cat(R, "g_83")); xunlink(_cat(R, "g_832"));
+    xunlink(_cat(R, "c_g0")); xunlink(_cat(R, "c_g")); xunlink(_cat(R, "n_gi"));
+    xunlink(_cat(R, "n_gh")); xunlink(_cat(R, "n_ag")); xunlink(_cat(R, "n_g"));
+    xunlink(_cat(R, "n_thru")); xunlink(_cat(R, ".gitignore"));
+    xunlink(_cat(R, ".git/config")); xrmdir(_cat(R, ".git"));
+    xrmdir(_cat(R, "sub"));
+    assert_eq(xrmdir(R), 0, "scratch root empty and removed (no temp left behind)");
+    xunlink(_cat(O, "victim"));
+    assert_eq(xrmdir(O), 0, "scratch outside dir empty and removed");
+    #endif
+    #endif
+    var r = assert_summary();
+    return r;
+}
+var ec = main();
+syscall(60, ec);

@@ -6,12 +6,15 @@
 #        cyrfmt --write <file.cyr>         (format in-place — v5.5.22)
 #        cyrfmt -w <file.cyr>              (short form of --write)
 #
-# --write replaces the file crash-safe (`file_replace_atomic`: temp + fsync + rename, keeping
+# --write replaces the file crash-safe (lib/io.cyr's replace: temp + fsync + rename, keeping
 # the file's permission bits and writing THROUGH a symlink, as the old O_TRUNC write did), and a
 # short write is an error that leaves the source exactly as it was. ⛔ v6.6.6: it used `file_write_all`
 # (O_TRUNC, then one write) — it did detect the short count, but only after the USER'S SOURCE had
 # already been truncated. The old note here said "cyrius doesn't expose sys_rename yet";
 # `file_write_atomic` has existed since v6.4.57. CHANGELOG [6.6.6]
+# ⛔ 6.6.20 (CVE-TBD): a symlinked source is written through only to a file inside the tree it
+# was named from (`_cf_replace`) — `cyrius fmt src/*.cyr` in a checkout holding a committed
+# `src/x.cyr -> ~/.bashrc` reformatted the file it named. CHANGELOG [6.6.20]
 
 include "lib/string.cyr"
 include "lib/fmt.cyr"
@@ -340,6 +343,37 @@ fn _fmt_overflow(path): i64 {
     return 1;
 }
 
+# --write's replace (lib/io.cyr _io_replace_atomic_in). The tree a symlinked source may be
+# written through to is the current directory — `cyrius fmt` runs from the project root — unless
+# the path is absolute or climbs out with `..`, when it is the file's own directory. A refusal is
+# printed by name and is -18. CHANGELOG [6.6.20]
+fn _cf_replace(path, buf, len): i64 {
+    var n = strlen(path);
+    var climbs = 0;
+    var cut = 0 - 1;
+    var s = 0;
+    var i = 0;
+    while (i <= n) {
+        if (i == n || load8(path + i) == 47) {
+            if (i - s == 2 && load8(path + s) == 46 && load8(path + s + 1) == 46) { climbs = 1; }
+            if (i < n) { cut = i; }
+            s = i + 1;
+        }
+        i = i + 1;
+    }
+    var rc = 0;
+    if (load8(path) != 47 && climbs == 0) {
+        rc = _io_replace_atomic_in(".", path, buf, len);
+    } else {
+        var root = alloc(cut + 2);
+        if (cut <= 0) { store8(root, 47); store8(root + 1, 0); }   # `/x`: the tree is `/`
+        else { memcpy(root, path, cut); store8(root + cut, 0); }
+        rc = _io_replace_atomic_in(root, path + cut + 1, buf, len);
+    }
+    if (rc != 0 && _io_contain_link != 0) { _io_contain_refusal("cyrfmt"); }
+    return rc;
+}
+
 fn _fmt_one(path): i64 {
     # One input and one output buffer for the whole run: an alloc per file grew RSS by
     # the buffer size per file (nothing is freed); n bounds every reader of the input.
@@ -422,7 +456,9 @@ fn _fmt_one(path): i64 {
         if (_out_pos == n) {
             if (memeq(buf, _out_buf, n) == 1) { return 0; }
         }
-        if (file_replace_atomic(path, _out_buf, _out_pos) != 0) {
+        var wr = _cf_replace(path, _out_buf, _out_pos);
+        if (wr != 0 && _io_contain_link != 0) { return 1; }   # refused, by name, above
+        if (wr != 0) {
             syscall(1, 2, "cyrfmt: cannot write (left as it was): ", 39);
             syscall(1, 2, path, strlen(path));
             syscall(1, 2, "\n", 1);

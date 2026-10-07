@@ -184,6 +184,12 @@ function flush(  p, i) {
         p = s; sub(/^[a-z_]+\(/, "", p); sub(/,.*/, "", p); gsub(/[ \t]/, "", p)
         wrote[p] = 1
     }
+    # 6.6.20: the CLI's project-file replace takes (root, path, ...) — the path is argument 2.
+    if (match(line, /_io_replace_atomic_in\([^,]+,[^,]+,/)) {
+        s = substr(line, RSTART, RLENGTH)
+        p = s; sub(/^[a-z_]+\([^,]+,/, "", p); sub(/,.*/, "", p); gsub(/[ \t]/, "", p)
+        wrote[p] = 1
+    }
     if (match(line, /(sys_unlink|xunlink)\([^)]+\)/)) {
         s = substr(line, RSTART, RLENGTH)
         p = s; sub(/^[a-z_]+\(/, "", p); sub(/\).*/, "", p); gsub(/[ \t]/, "", p)
@@ -246,12 +252,19 @@ fn _reads_only(path): i64 {
     var n = file_read_all(path, buf, 4095);
     return n;
 }
+fn _write_pin_in_tree(ver_cstr): i64 {
+    var buf = alloc(65536);
+    var n = file_read_all("cyrius.cyml", buf, 65535);
+    if (_io_replace_atomic_in(".", "cyrius.cyml", out, out_n) != 0) { return 1; }
+    return 0;
+}
 CYR
 want='x.cyr|_write_cyml_cyrius_pin|"cyrius.cyml"|65535
+x.cyr|_write_pin_in_tree|"cyrius.cyml"|65535
 x.cyr|cmd_update|"cyrius.toml"|32767'
 got=$(_rmw "$D/prefix.cyr" x.cyr | LC_ALL=C sort)
-[ "$got" = "$(printf '%s' "$want" | LC_ALL=C sort)" ] || { fail "axis 4 self-test: the pre-fix bodies judged:"; printf '%s\n' "$got" | sed 's/^/      /'; fail "axis 4 self-test: expected exactly the two read-modify-write sites (and NOT the read-only one)"; x=1; }
-[ "$x" = 0 ] && echo "  ok: axis 4: no read-modify-write site in programs/ or cbt/ reads through a fixed cap outside the $(printf '%s\\n' "$ALLOW" | grep -c .) allowlisted tool-own temps (detector self-tested on the two pre-fix bodies)"
+[ "$got" = "$(printf '%s' "$want" | LC_ALL=C sort)" ] || { fail "axis 4 self-test: the pre-fix bodies judged:"; printf '%s\n' "$got" | sed 's/^/      /'; fail "axis 4 self-test: expected exactly the three read-modify-write sites (and NOT the read-only one)"; x=1; }
+[ "$x" = 0 ] && echo "  ok: axis 4: no read-modify-write site in programs/ or cbt/ reads through a fixed cap outside the $(printf '%s\\n' "$ALLOW" | grep -c .) allowlisted tool-own temps (detector self-tested on the two pre-fix bodies and the 6.6.20 in-tree replace)"
 
 # ── axis 5: a read that FAILS is never handed back as content ──
 # The read side of the same defect: `file_read_whole` (and `file_read_all`) exited the loop on

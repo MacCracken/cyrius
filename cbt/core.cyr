@@ -352,9 +352,15 @@ fn _aw_write(h, buf, len): i64 {
 # vendored lib/<dep>.cyr copy must NOT use this: a symlinked vendored file is the v6.5.37
 # corruption (a write through it lands in the shared stdlib), so it keeps plain `_aw_open`,
 # which replaces the link. CHANGELOG [6.6.6]
+# ⛔ 6.6.20 (CVE-TBD): `path` is a file of the PROJECT (the cwd), so its link is followed only to
+# a file inside it (lib/io.cyr _io_replace_target_in) — a committed `cyrius.lock -> ~/.profile`
+# made every auto-deps verb replace ~/.profile. A refusal is printed here, by name, and is 0.
 fn _aw_open_replace(path): i64 {
-    var real = _io_replace_target(path);
-    if (real < 0) { return 0; }
+    var real = _io_replace_target_in(".", path);
+    if (real < 0) {
+        _io_contain_refusal("error");
+        return 0;
+    }
     return _aw_open(real);
 }
 
