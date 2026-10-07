@@ -1,7 +1,9 @@
 # freelist.cyr — allocator with individual free
 # Usage: include "lib/freelist.cyr"
 # Includes its own definers: syscalls.cyr (SYS_MMAP, SYS_MUNMAP), mmap.cyr (PROT_*),
-# atomic.cyr (the lock). `include "lib/freelist.cyr"` alone compiles (6.6.7).
+# atomic.cyr (the lock), and since 6.6.18 poison.cyr (the poison core: fill, redzones, the
+# fl live list), which itself includes alloc.cyr. `include "lib/freelist.cyr"` alone
+# compiles (6.6.7).
 #
 # ⛔ FAILURE IS 0, NEVER A FAULT (6.6.7). `fl_alloc` / `fl_calloc` return 0 when the
 # request is <= 0 or the kernel refuses the mapping, like `alloc()`. Before 6.6.7 the
@@ -553,9 +555,10 @@ fn fl_calloc(size): i64 {
     # read the same answer, but computing it up front documents that the decision is about
     # WHICH PATH fl_alloc will take, not about the pointer it returned.
     # ⚠ No `memset` here on purpose. It lives in `lib/string.cyr`, which this module does not
-    # include — freelist depends on `syscalls` + `mmap` + `atomic` only, and an allocator
-    # reaching into the string library to zero memory is a dependency edge worth not adding.
-    # The 8-byte loop gets the same order-of-magnitude win self-contained.
+    # include — freelist depends on `syscalls` + `mmap` + `atomic` + `poison` (and through
+    # poison, `alloc`), never on the string library, and an allocator reaching into it to zero
+    # memory is a dependency edge worth not adding. The 8-byte loop gets the same
+    # order-of-magnitude win self-contained. CHANGELOG [6.6.18]
     var cls = _fl_class(size);
     var ptr = fl_alloc(size);
     if (ptr == 0) { return 0; }
