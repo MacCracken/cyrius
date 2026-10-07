@@ -1343,7 +1343,7 @@ fn _fnst_get_xp(S, b): i64 {
 # loop, the return-patch and defer ranges starting where the enclosing fn's end. The caller then
 # sets what is specific to it (`_cur_fn_ix`, captures, locals snapshot). Returns the snapshot.
 fn _fnst_save(S): i64 {
-    var b = alloc(312);
+    var b = alloc(320);
     store64(b, GLVAR(S));
     store64(b + 8, GINFN(S));
     store64(b + 16, GFLC(S));
@@ -1356,6 +1356,7 @@ fn _fnst_save(S): i64 {
     store64(b + 72, L64(S + 0x18F840));
     store64(b + 80, _in_defer);
     store64(b + 304, _cur_fn_has_defer);
+    store64(b + 312, _cur_iself_sid);   # 6.7.0 (A4): kept, not cleared — a closure inherits it
     _fnst_put_cg(b);
     _fnst_put_coro(b);
     _fnst_put_xp(S, b);
@@ -1388,6 +1389,7 @@ fn _fnst_restore(S, b): i64 {
     S64(S + 0x18F840, load64(b + 72));
     _in_defer = load64(b + 80);
     _cur_fn_has_defer = load64(b + 304);
+    _cur_iself_sid = load64(b + 312);
     _fnst_get_cg(b);
     _fnst_get_coro(b);
     _fnst_get_xp(S, b);
@@ -2896,6 +2898,9 @@ fn _asg_compound_tok(S): i64 {
 var _asg_cstep = 0;
 fn _asg_compound_load(S, noff): i64 {
     _asg_cstep = 0;
+    if (_cur_iself_sid > 0) { if (_noff_is(S, noff, "self", 4) == 1) {   # 6.7.0 (A4): `self += n`
+            ERR_IDENT(S, "compound assignment to an untyped `self` is refused - in an impl it points at ", L64(S + 0x1A6018 + (_cur_iself_sid - 1) * 8), ": declare `self: *T` to step whole elements", 0 - 1);
+        } }
     var li = FINDLOCAL(S, noff);
     if (li >= 0) {
         var lt = _load_lt(S, li);

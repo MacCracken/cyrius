@@ -1,0 +1,59 @@
+# impl_self_typed.tcyr — 6.7.0 (arc A4). An untyped `self` in an `impl … for T` is a `*T`.
+#
+# It reads and writes fields (`self.x`), and the three spellings of a method call agree on every
+# backend: `o.m()`, the direct call `T_m(o)` (a bare struct passed to a `*T` parameter passes its
+# address — before 6.7.0 it passed o's VALUE, and on an 8-byte struct the method loaded through
+# it: SIGSEGV), and `T_m(&o)`. Covers an 8-byte struct (the by-value-sized case), a 24-byte one, a
+# heap (pointer-mode) receiver, a method calling a sibling through `self`, writes through `self`,
+# and a generic method's instance (re-parsed from its call site, outside the impl). Arithmetic on
+# an untyped `self` is refused at compile time — tests/gates/frontend/impl_self_typed.sh.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/assert.cyr"
+
+struct One { v; }
+struct Tri { a; b; c; }
+
+impl Shape for One {
+    fn get(self): i64 { return self.v; }
+    fn raw(self): i64 { return load64(self); }
+    fn set(self, x) { self.v = x; return 0; }
+    fn bump(self) { self.v = self.v + 1; return self.v; }
+}
+impl Shape for Tri {
+    fn sum(self): i64 { return self.a + self.b + self.c; }
+    fn dbl(self): i64 { return self.sum() * 2; }
+    fn put(self, x, y, z) { self.a = x; self.b = y; self.c = z; return 0; }
+    fn plus<T>(self, x: T): i64 { return self.c + x; }
+}
+
+fn heap_tri(): i64 { var q: Tri = alloc(24); q.a = 4; q.b = 5; q.c = 6; return q.sum(); }
+
+fn run(): i64 {
+    var o = One { 7 };
+    assert_eq(o.get(), 7, "o.get() on an 8-byte struct");
+    assert_eq(One_get(o), 7, "One_get(o) passes &o (was o's value: SIGSEGV)");
+    assert_eq(One_get(&o), 7, "One_get(&o)");
+    assert_eq(o.raw(), 7, "load64(self) still reads field 0");
+    o.set(9);
+    assert_eq(o.v, 9, "a write through self lands in the caller's struct");
+    One_set(o, 11);
+    assert_eq(o.v, 11, "One_set(o, ..) writes the caller's struct too");
+    assert_eq(o.bump(), 12, "read-modify-write through self");
+
+    var t = Tri { 1, 2, 3 };
+    assert_eq(t.sum(), 6, "t.sum() on a 24-byte struct");
+    assert_eq(Tri_sum(t), 6, "Tri_sum(t)");
+    assert_eq(Tri_sum(&t), 6, "Tri_sum(&t)");
+    assert_eq(t.dbl(), 12, "a method calls its sibling through self");
+    t.put(10, 20, 30);
+    assert_eq(t.b, 20, "three writes through self");
+    var w: i32 = 5;
+    assert_eq(t.plus(w), 35, "a generic method's instance types self");
+    assert_eq(heap_tri(), 15, "a heap (pointer-mode) receiver");
+    return 0;
+}
+
+alloc_init();
+run();
+var r = assert_summary();

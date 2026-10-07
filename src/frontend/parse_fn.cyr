@@ -4069,6 +4069,8 @@ fn PARSE_IMPL(S): i64 {
     # Temporarily set module to the type name so methods get mangled
     var saved_mod = GMOD(S);
     SMOD(S, type_noff);
+    var _sit = _impl_tnoff;
+    _impl_tnoff = type_noff;   # 6.7.0 (A4)
     var igo = 1;
     while (igo == 1) {
         if (PEEKT(S) == 14) { igo = 0; }
@@ -4081,6 +4083,8 @@ fn PARSE_IMPL(S): i64 {
     }
     if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); }
     STI(S, GTI(S) + 1);  # consume }
+    _impl_tnoff = _sit;
+    _cur_iself_sid = 0;        # top-level code after the impl is no method body
     SMOD(S, saved_mod);
     return 0;
 }
@@ -4205,6 +4209,80 @@ fn _mark_ptr_param(S): i64 {
     var ps = 8;
     if (PEEKT(S) != 8) { ps = _ptr_step_peek(S, 0 - 1, 1); }
     SSLICE_W(S, GFLC(S), 0 - 0x7E00 - ps);
+    return 0;
+}
+# ⛔ 6.7.0 (A4) — AN UNTYPED `self` IN AN `impl … for T` IS A `*T`. It was a bare address: `self.x`
+# was "no struct type in scope for 'self'" (every body read `load64(self)`), and the direct call
+# `T_m(o)` passed o's VALUE where `o.m()` passed `&o` — on an 8-byte struct the method then loaded
+# through the value (SIGSEGV). Typed `*T` it reads fields like a `p: *T` parameter, and 6.6.20's
+# rule that a bare struct passed to a `*T` parameter passes its address makes `T_m(o)` agree with
+# `o.m()`. ⚠ A `*T` steps sizeof(T) under `+` / `-`, so `load64(self + 8)` would have changed
+# meaning silently: arithmetic on an untyped `self` is REFUSED instead (the user's decision,
+# 2026-10-07; `_iself_arith_check`). An explicit `self: *T` or `self: T` is untouched, and only a
+# plain struct T qualifies (an impl for Str / Result / a vector keeps `self` untyped).
+# Pass 1 records the impl's type on the fn (SFISELF) and marks the ABI exactly as `self: *T` does —
+# `_param_wants_struct_ptr` is 1 for any `*Struct`, and `_bvcp_note` never copies a pointer in.
+# Pass 2 reads the record by fn (a generic instance by its BASE), so it does not depend on being
+# inside the impl when it parses. CHANGELOG [6.7.0]
+fn _iself_sid_for(S, pnoff): i64 {
+    if (_impl_tnoff == 0) { return 0; }
+    if (_noff_is(S, pnoff, "self", 4) == 0) { return 0; }
+    if (_classify_param_type(S, _impl_tnoff) != 0) { return 0; }
+    var sid = FINDSTRUCT(S, _impl_tnoff);
+    if (sid <= 0) { return 0; }
+    return sid;
+}
+# Pass 1, parameter 0 of fn `fi` named `pnoff` with no annotation: the struct mask after it.
+fn _iself_prescan(S, fi, pnoff, smask): i64 {
+    var sid = _iself_sid_for(S, pnoff);
+    if (sid <= 0) { return smask; }
+    SFISELF(S, fi, _impl_tnoff + 1);
+    _psid_scan(S, fi, 0, sid, _pmw(smask, 0, 1), 1);
+    return _psid_mask;
+}
+# Pass 2, the same parameter: its struct (0 = not an untyped impl `self`). Marks the slot it takes
+# next as a `*T` (`_mark_ptr_param`'s two writes) and sets `_cur_iself_sid`; `_iself_pt` is the
+# parameter's sid after `_gtype_sid`, and the return value's caller reads it.
+var _iself_pt = 0;
+fn _iself_def_sid(S, fi, pnoff): i64 {
+    # Only an IDENT's value is a name offset: the loop has reported a non-IDENT parameter
+    # (`fn f(140737488355327)`) and carries on, and reading its NUMBER as an offset faulted.
+    if (TOKTYP(S, GTI(S) - 1) != 2) { return 0; }
+    if (_noff_is(S, pnoff, "self", 4) == 0) { return 0; }
+    var t = GFISELF(S, fi);
+    if (_inst_name != 0) { t = GFISELF(S, _inst_base_fi); }
+    if (t == 0) { return 0; }
+    var sid = FINDSTRUCT(S, t - 1);
+    if (sid <= 0) { return 0; }
+    _cur_iself_sid = sid;
+    _cur_fn_ptrp = GFLC(S) + 1;
+    var ps = STRUCTSZ(S, sid - 1);
+    if (ps < 1) { ps = 8; }
+    SSLICE_W(S, GFLC(S), 0 - 0x7E00 - ps);
+    _iself_pt = _gtype_sid(S, fi, sid);
+    return sid;
+}
+fn _iself_def_mask(S, fi, smask, sid): i64 {
+    return _gtype_param_mask(S, _pmw(smask, 0, 1), 0, sid, _iself_pt, 1);
+}
+# The arithmetic refusal: `self` was just consumed as an identifier (cursor past it) in a method
+# whose `self` is untyped. Refused when an arithmetic operator follows it (`self + 8`, `self - n`,
+# the `%` / `|` / `?` forms) or precedes it (`8 + self`), or a subscript follows (`self[i]` steps
+# elements too). A field read, a method call, a comparison and `load64(self)` are untouched.
+fn _iself_arith_check(S, noff): i64 {
+    if (_cur_iself_sid <= 0) { return 0; }
+    if (_noff_is(S, noff, "self", 4) == 0) { return 0; }
+    if (PEEKT(S) == 41) { return 0; }   # `self.field` / `self.m()` — a field, not the pointer
+    var bad = _iself_arith_tok(PEEKT(S));
+    if (PEEKT(S) == 28) { bad = 1; }
+    if (GTI(S) >= 2) { if (_iself_arith_tok(TOKTYP(S, GTI(S) - 2)) == 1) { bad = 1; } }
+    if (bad == 0) { return 0; }
+    ERR_IDENT(S, "arithmetic on an untyped `self` is refused - in an impl it points at ", L64(S + 0x1A6018 + (_cur_iself_sid - 1) * 8), ": read fields with `self.field`, or declare `self: *T` to step whole elements of ", L64(S + 0x1A6018 + (_cur_iself_sid - 1) * 8));
+    return 1;
+}
+fn _iself_arith_tok(t): i64 {
+    if (t == 6 || t == 7) { return 1; }
+    if (t >= 113) { if (t <= 118) { return 1; } }
     return 0;
 }
 # 6.6.16 (C7) — an int-class parameter's slot facts, once its SLTYPE is set: an `async fn` refuses
@@ -5959,7 +6037,11 @@ fn _prescan_params_scan(S, fi): i64 {
                 SFVA(S, fi, 1);
                 pgo = 0;
             } else {
-                if (PEEKT(S) == 2) { STI(S, GTI(S) + 1); }   # param name
+                if (PEEKT(S) == 2) {                         # param name
+                    var _pnm = PEEKV(S);
+                    STI(S, GTI(S) + 1);
+                    if (pc == 0) { if (PEEKT(S) != 49) { struct_mask = _iself_prescan(S, fi, _pnm, struct_mask); } }   # 6.7.0 (A4)
+                }
                 if (PEEKT(S) == 49) {                        # ': Type'
                     STI(S, GTI(S) + 1);                      # consume ':'
                     var _pptr = 0;
@@ -6602,7 +6684,10 @@ fn _prescan_impl(S): i64 {
                     STI(S, GTI(S) + 1);
                     var sv = GMOD(S);
                     SMOD(S, tn);
+                    var _sit = _impl_tnoff;
+                    _impl_tnoff = tn;           # 6.7.0 (A4): an untyped `self` here is a `*T`
                     _prescan_impl_body(S);
+                    _impl_tnoff = _sit;
                     SMOD(S, sv);
                 }
             }
@@ -7845,6 +7930,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     _cur_fn_ret_pair = 0;
     _cur_fn_pslots = 0;   # 6.6.6 — recorded at the end of the parameter loop
     _cur_fn_ptrp = 0;     # 6.6.10 — `p: *T` parameters, set in the parameter loop
+    _cur_iself_sid = 0;   # 6.7.0 (A4) — an impl method's untyped `self`, set in the parameter loop
     var _rs_save_ti = GTI(S);
     if (PEEKT(S) == 10) {
         STI(S, GTI(S) + 1);
@@ -8290,6 +8376,9 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
             # 2 = f64v4.
             var pt_simd_class = 0;
             var pt_simd_sid = 0;     # SLTYPE sentinel: 2093 f64v2 / 2125 f64v4 / 2121 f32v4 (all descriptor-band)
+            if (pc == 0) { if (PEEKT(S) != 49) {   # 6.7.0 (A4): an untyped impl `self` is a `*T`
+                    if (_iself_def_sid(S, fi, pnoff) > 0) { struct_mask = _iself_def_mask(S, fi, struct_mask, _cur_iself_sid); pt_sid = _iself_pt; }
+                } }
             if (PEEKT(S) == 49) {
                 STI(S, GTI(S) + 1);  # consume :
                 if (PEEKT(S) == 8) { STI(S, GTI(S) + 1); _mark_ptr_param(S); }  # skip * for pointer types

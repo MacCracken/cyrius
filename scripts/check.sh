@@ -2166,6 +2166,7 @@ _chk_gate "$ROOT/tests/gates/codegen/cx_float_unary_ops_run.sh"
 _chk_gate "$ROOT/tests/gates/diagnostics/dead_static_hint_every_backend.sh"
 _chk_gate "$ROOT/tests/gates/frontend/integer_literal_overflow_refused.sh"
 _chk_gate "$ROOT/tests/gates/frontend/struct_field_type_unknown_refused.sh"
+_chk_gate "$ROOT/tests/gates/frontend/impl_self_typed.sh"
 _chk_gate "$ROOT/tests/gates/platform/agnos_proc_kill_tree_refused.sh"
 _chk_gate "$ROOT/tests/gates/platform/cx_compiler_reads_env.sh"
 

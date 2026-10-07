@@ -990,6 +990,12 @@ fn GFPSID(S, fi, pc): i64 {
 # brk layout does not move. Read by an inline replay of the instance (`_bind_inl_generic`).
 var _fnt_instconc = 0;
 fn GFIC(S, fi, k): i64 { if (_fnt_instconc == 0) { return 0; } if (fi < 0) { return 0; } return L64(_fnt_instconc + fi * 16 + k * 8); }
+# 6.7.0 (A4) — an impl method's untyped `self`: the impl's type name + 1 (0 = none), recorded by
+# pass 1 so pass 2 and every generic INSTANCE (re-parsed from its call site, outside the impl) type
+# `self` as `*T` exactly as pass 1 did. Lazy at the max fn cap like _fnt_tparams. CHANGELOG [6.7.0]
+var _fnt_iself = 0;
+fn GFISELF(S, fi): i64 { if (_fnt_iself == 0) { return 0; } if (fi < 0) { return 0; } return L64(_fnt_iself + fi * 8); }
+fn SFISELF(S, fi, v): i64 { if (_fnt_iself == 0) { _fnt_iself = alloc(131072 * 8); } S64(_fnt_iself + fi * 8, v); return 0; }
 fn SFIC(S, fi, c0, c1): i64 {
     if (_fnt_instconc == 0) { _fnt_instconc = alloc(131072 * 16); }
     S64(_fnt_instconc + fi * 16, c0);
@@ -1230,6 +1236,13 @@ var _grc_fi = 0 - 1;
 # registration, where `_param_record` (parse_fn.cyr) moves it to the slot's own bit (SLPTRP), so
 # no slot index is out of range. Saved with the per-fn snapshot, zeroed with `_cur_fn_pslots`.
 var _cur_fn_ptrp = 0;
+# 6.7.0 (A4) — the struct an impl method's UNTYPED `self` points at (its sid; 0 = this fn has
+# none). Set by the parameter loop, read by the arithmetic refusal (`_iself_arith_check`). Saved in
+# the per-fn snapshot and NOT cleared by it, so a closure in the method inherits it; every
+# PARSE_FN_DEF sets its own. `_impl_tnoff` is the impl's type name while its body is parsed (both
+# passes; 0 outside an impl). CHANGELOG [6.7.0]
+var _cur_iself_sid = 0;
+var _impl_tnoff = 0;
 fn _tp_clear(S): i64 { _tp_n0 = 0; _tp_c0 = 0; _tp_n1 = 0; _tp_c1 = 0; return 0; }
 fn _tp_bind(S, slot, noff, conc): i64 {
     if (slot == 0) { _tp_n0 = noff; _tp_c0 = conc; }

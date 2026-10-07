@@ -348,7 +348,7 @@ include "lib/syscalls.cyr"
 private
 struct SF { a: i64; b: i64; }
 fn main(): i64 { var s: SF; s.a = $A; s.b = $B; return s.sum(); }
-impl Tr for SF { fn sum(self) { return load64(self) + load64(self + 8); } }
+impl Tr for SF { fn sum(self) { return self.a + self.b; } }
 var rc = main();
 sys_exit_group(rc);
 EOF
