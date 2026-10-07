@@ -2894,6 +2894,7 @@ fn cmd_package(): i64 {
     var mentry = _mf_key_str("build", "entry");
     if (mentry != 0) { entry = mentry; }
     var mout = _mf_str("build", "output");
+    if (_cfg_output_refused(mout) != 0) { return 1; }   # 6.6.20 (SEC-02): confined, as for build
     # 6.6.20: the version every other stamp uses (`_project_version`: the manifest's `[package]
     # version`, else ./VERSION, both through the checked reader) — this printed ./VERSION read raw,
     # so a project declaring `version = "0.1.0"` packaged as "unknown". 0 = refused, named.

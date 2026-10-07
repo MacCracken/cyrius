@@ -82,6 +82,26 @@ fn _w_cmdbuf(nchars): i64 {
     return alloc(need);
 }
 
+# 6.6.20 (SEC-02, CVE-TBD) — 1 when `s` CANNOT be one double-quoted operand of a `cmd /s /c`
+# line. Inside cmd's quotes `& | < > ^ ( )` are literal; three things are not: a `"` ENDS the
+# operand, so the rest of the line runs as cmd's own commands (`out.exe" & echo X> pwned.txt &
+# "y` as cyrius build's output ran its echo under wine); `%NAME%` expands even quoted (`q%OS%z`
+# wrote qWindows_NTz, `%USERPROFILE%\x` wrote into the profile, and `%NAME:~n,1%` lifts any one
+# byte of a variable); and a control byte (a line break) ends the command. `!` expands only under
+# delayed expansion, which `cmd /c` leaves off unless the user's own registry turns it on. Every
+# builder that quotes a path into a cmd line asks this of each one — `_win_compile_spawn` below,
+# and cbt's, which name the refusal (`_w_cmd_operand_ok`).
+fn _w_cmd_operand_bad(s): i64 {
+    var i = 0;
+    var c = load8(s);
+    while (c != 0) {
+        if (c == 34 || c == 37 || c < 32 || c == 127) { return 1; }
+        i = i + 1;
+        c = load8(s + i);
+    }
+    return 0;
+}
+
 # Build a writable UTF-16LE command line "cmd [arg1 [arg2]]" on the heap.
 # (CreateProcessW may modify lpCommandLine in place, so it must be writable
 # heap, never a read-only literal.) Returns the buffer pointer, 0 when the heap is exhausted
@@ -510,8 +530,10 @@ fn _win_wait_tree(pi, ms, killed_out): i64 {
 #   cmd /s /c ""C:\...\cycc.exe" < "src.cyr" > "out.exe""
 # Writes directly to `output` (SYS_RENAME is not a PE reroute, so the POSIX
 # atomic tmp+rename can't be used here). Returns the child exit code; 1 if the
-# spawn itself fails.
+# spawn itself fails, or (6.6.20) if a path holds a byte cmd.exe reads inside its quotes
+# (`_w_cmd_operand_bad`) — refused rather than spawned.
 fn _win_compile_spawn(cc, source, output): i64 {
+    if (_w_cmd_operand_bad(cc) + _w_cmd_operand_bad(source) + _w_cmd_operand_bad(output) != 0) { return 1; }
     var wbuf = _w_cmdbuf(strlen(cc) + strlen(source) + strlen(output));
     if (wbuf == 0) { return 1; }
     var o = 0;

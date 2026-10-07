@@ -1997,6 +1997,9 @@ _chk_gate "$ROOT/tests/gates/toolchain/manifest_pin_shape_refused.sh"
 # — it is written after `#@pkgver`, where a line break started a new SOURCE line. The ./VERSION
 # fallback (`_project_version`: distlib's stamp, `cyrius package`) reads through the same checks.
 _chk_gate "$ROOT/tests/gates/toolchain/pkgver_file_interp_confined.sh"
+# 6.6.20 (SEC-02, CVE-TBD) — a manifest [build] output is confined to the project (it reached
+# /bin/sh unquoted on macOS and was cmd.exe's redirect target on Windows); codesign runs by argv.
+_chk_gate "$ROOT/tests/gates/toolchain/build_output_confined.sh"
 # 6.6.20 (RS-04) — cyriusly's version operand is a version (a leading digit, [0-9A-Za-z.-], no
 # `..`) in BOTH peers (programs/cyriusly.cyr and scripts/cyriusly): `uninstall ../versions`
 # deleted the whole store, the active version included, and `install` spliced the operand into a

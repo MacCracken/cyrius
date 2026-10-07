@@ -1449,6 +1449,28 @@ fn _cfg_mf_embed(): i64 {
     return 0;
 }
 
+# 6.6.20 (SEC-02, CVE-TBD) — `[build] output` AS THE MANIFEST GIVES IT is the binary `cyrius build`
+# and `cyrius package` write (0755), so it is a path in the project: `_proj_path_bad(_PP_OUT)` — no
+# absolute path, `..`, `\`, `:`, `.git` component, link anywhere on it, control byte, `"`, `%` or
+# `!`. Measured on 2ac318b0: `../escaped_out bin;touch PWNED`, an absolute path and `lnk/x` through
+# a committed directory link each wrote the binary OUTSIDE the checkout (`../../.local/bin/git` is
+# one PATH entry from running), and on Windows the value is cmd.exe's quoted redirect target, where
+# `out.exe" & echo X> pwned.txt & "y` ran its `echo` under wine. Refused even when an argument
+# overrides it — the manifest is malformed either way. An output given as an ARGUMENT is the
+# operator's and is not confined. Answers 1 after naming. CHANGELOG [6.6.20]
+fn _cfg_output_refused(v): i64 {
+    if (v == 0) { return 0; }
+    var why = _proj_path_bad(v, _PP_OUT);
+    if (why == 0) { return 0; }
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "cyrius.cyml [build] output = \"");
+    str_builder_add_cstr(sb, _shown(v));
+    str_builder_add_cstr(sb, "\": ");
+    str_builder_add_cstr(sb, why);
+    _err(str_data(str_builder_build(sb)));
+    return 1;
+}
+
 # Resolve the configuration `cyrius build` acts on. `src_arg` / `out_arg` are its operands (0 when
 # not given). Returns 0, or 1 after naming what is wrong.
 fn _cfg_resolve_build(src_arg, out_arg): i64 {
@@ -1460,6 +1482,7 @@ fn _cfg_resolve_build(src_arg, out_arg): i64 {
     }
     if (_cfg_mf_str(_CK_ENTRY, "build", "entry") != 0) { return 1; }
     if (_cfg_mf_str(_CK_OUTPUT, "build", "output") != 0) { return 1; }
+    if (_cfg_output_refused(_cfg_val(_CK_OUTPUT)) != 0) { return 1; }
     if (_cfg_mf_bool(_CK_DCE, "build", "dce") != 0) { return 1; }
     if (_cfg_mf_strs(_CK_DEFINES, "build", "defines") != 0) { return 1; }
     if (_cfg_defines_ok(_cfg_val(_CK_DEFINES), "cyrius.cyml [build] defines") != 0) { return 1; }

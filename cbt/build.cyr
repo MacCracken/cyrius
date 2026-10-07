@@ -226,6 +226,10 @@ fn _emit_cx(source, output): i64 {
     # on PE as MoveFileExW/0xF034, so a failed cx emit cannot leave a truncated .cyx over
     # a previously-good one on Windows either. CHANGELOG [6.6.6].
     #ifdef CYRIUS_TARGET_WIN
+    # 6.6.20 (SEC-02): the paths are cmd.exe operands — named here, before lib's unnamed refusal.
+    if (_w_cmd_operand_ok(cc, "the cx compiler path") == 0) { return 1; }
+    if (_w_cmd_operand_ok(source, "the source") == 0) { return 1; }
+    if (_w_cmd_operand_ok(tmp_out, "the output") == 0) { return 1; }
     if (_win_compile_spawn(cc, source, tmp_out) == 0) {
         if (file_rename(tmp_out, output) == 0) { return 0; }
         _err_ctx("cx emit: could not rename the temp output onto", output);
@@ -1333,6 +1337,23 @@ fn _cc_flags_cmdline(): i64 {
     return str_data(str_builder_build(fsb));
 }
 
+# 6.6.20 (SEC-02, CVE-TBD) — 1 when `s` can be a quoted `cmd /s /c` operand, else 0 after NAMING
+# why not (`role` says which: "the output", "the source"). The rule is lib/process_win.cyr's
+# `_w_cmd_operand_bad` — a `"`, a `%` or a control byte — and every cmd-line builder in cbt asks it
+# of each path before building: this compile spawn, `_win_run_cx`, `_win_cmdline_cap`,
+# `_win_capacity_spawn` and `_emit_cx`'s PE arm. A manifest's `[build] output` is refused earlier
+# and for more (`_cfg_output_refused`); this is the line for every other path that gets here — an
+# argument, an entry, a test file's name. CHANGELOG [6.6.20]
+fn _w_cmd_operand_ok(s, role): i64 {
+    if (_w_cmd_operand_bad(s) == 0) { return 1; }
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "refusing to hand ");
+    str_builder_add_cstr(sb, role);
+    str_builder_add_cstr(sb, " to cmd.exe: it holds a '\"', a '%' or a control character, which cmd reads inside a quoted operand (a '\"' ends it and the rest of the line runs as a command; '%' expands a variable)");
+    _err_ctx(str_data(str_builder_build(sb)), _shown(s));
+    return 0;
+}
+
 # The Windows twin of the child-side dup2 below. lib/process_win.cyr's
 # `_win_compile_spawn` builds `cmd /s /c ""cc" < "src" > "out""` and leaves stderr on
 # the console; this adds the `2> "err"` leg. Kept HERE rather than in lib/ so the
@@ -1345,6 +1366,12 @@ fn _win_compile_spawn_err(cc, source, output, errfile): i64 {
     # cycc_win reads its flags from GetCommandLineW (src/main_win.cyr). Before this NONE of them
     # crossed this arm, so on cyrius.exe lint's pre-pass and distlib's self-check compiled as
     # ordinary builds. This is the one Windows compile spawn in compile().
+    if (_w_cmd_operand_ok(cc, "the compiler path") == 0) { return 1; }
+    if (_w_cmd_operand_ok(source, "the source") == 0) { return 1; }
+    if (_w_cmd_operand_ok(output, "the output") == 0) { return 1; }
+    if (errfile != 0) {
+        if (_w_cmd_operand_ok(errfile, "the diagnostics file") == 0) { return 1; }
+    }
     var fl = _cc_flags_cmdline();
     var elen = 0;
     if (errfile != 0) { elen = strlen(errfile); }
@@ -1721,16 +1748,35 @@ fn sys_system(cmd): i64 {
 
 # Ad-hoc codesign a freshly-compiled Mach-O binary so Apple-Silicon AMFI doesn't
 # SIGKILL it (exit 137). No-op off macOS (the #ifdef strips it); harmless on
-# x86-macOS (codesign -s - rejects but 2>/dev/null swallows it, and the unsigned
+# x86-macOS (codesign -s - may reject there; its stderr goes to /dev/null, and the unsigned
 # binary runs there anyway). Hoisted from cmd_build's inline v6.0.38 codesign so
 # every run path signs. See CHANGELOG [6.0.66].
+# ⛔ 6.6.20 (SEC-02, CVE-TBD) — ARGV, NO SHELL. This was `sys_system("codesign -s - -f " + path +
+# " 2>/dev/null")`: /bin/sh -c with the path UNQUOTED, and `path` is `cyrius build`'s output, the
+# manifest's `[build] output` included — on ecb `output = "out;touch PWNED"` created PWNED. Now
+# /usr/bin/codesign (by its path: no PATH lookup either) gets the path as ONE argv element, a
+# leading '-' prefixed with "./" so it is never read as an option, and the child's stderr is
+# /dev/null. The result is still not a verdict (see _self_host_step_macos). CHANGELOG [6.6.20]
 fn _macho_codesign(path): i64 {
     #ifdef CYRIUS_TARGET_MACOS
-    var cs = str_builder_new();
-    str_builder_add_cstr(cs, "codesign -s - -f ");
-    str_builder_add_cstr(cs, path);
-    str_builder_add_cstr(cs, " 2>/dev/null");
-    sys_system(str_data(str_builder_build(cs)));
+    var p = path;
+    if (load8(path) == 45) { p = _cat2("./", path); }
+    var argv[48];   # N BYTES per CLAUDE.md buffer contract: 6 ptrs need 48 B
+    store64(&argv, "/usr/bin/codesign");
+    store64(&argv + 8, "-s");
+    store64(&argv + 16, "-");
+    store64(&argv + 24, "-f");
+    store64(&argv + 32, p);
+    store64(&argv + 40, 0);
+    var pid = sys_fork();
+    if (pid < 0) { _cbt_fork_failed("codesign", pid); return 1; }
+    if (pid == 0) {
+        var nfd = sys_open("/dev/null", O_WRONLY, 0);
+        if (nfd >= 0) { sys_dup2(nfd, 2); sys_close(nfd); }
+        sys_execve("/usr/bin/codesign", &argv, _envp);
+        sys_exit(127);
+    }
+    _cbt_wait_status(pid, "codesign");
     #endif
     return 0;
 }
@@ -2330,6 +2376,8 @@ fn _win_spawn_vec(tool, args): i64 {
 # program from STDIN, and Win32 has no dup2, so the redirect goes through cmd.exe exactly
 # as _win_compile_spawn does it (`/s` strips only the outer quote pair).
 fn _win_run_cx(vm, cyx): i64 {
+    if (_w_cmd_operand_ok(vm, "the cx VM path") == 0) { return 127; }
+    if (_w_cmd_operand_ok(cyx, "the .cyx program") == 0) { return 127; }
     var wbuf = alloc((strlen(vm) + strlen(cyx) + 32) * 2);
     var o = 0;
     o = _w_append_cstr(wbuf, o, "cmd /s /c \"\"");
@@ -2351,6 +2399,8 @@ fn _win_run_cx(vm, cyx): i64 {
 # quote pair, and cmd's exit status is the program's. Only `cyrius test` asks for it, with no
 # program arguments. The job and the deadline apply to cmd.exe and the program under it alike.
 fn _win_cmdline_cap(path, cap): i64 {
+    if (_w_cmd_operand_ok(path, "the program") == 0) { return 0; }
+    if (_w_cmd_operand_ok(cap, "the output capture") == 0) { return 0; }
     var wbuf = alloc((strlen(path) + strlen(cap) + 32) * 2);
     var o = 0;
     o = _w_append_cstr(wbuf, o, "cmd /s /c \"\"");
@@ -2543,6 +2593,9 @@ fn _win_cmd_self(): i64 {
 # ⚠ NO SPACE before the `&`: `set X=1 & prog` sets X to "1 " (trailing space included),
 # which would be passed to cycc as the stats flag and silently not match.
 fn _win_capacity_spawn(cc, source, errfile): i64 {
+    if (_w_cmd_operand_ok(cc, "the compiler path") == 0) { return 0 - 1; }
+    if (_w_cmd_operand_ok(source, "the source") == 0) { return 0 - 1; }
+    if (_w_cmd_operand_ok(errfile, "the diagnostics file") == 0) { return 0 - 1; }
     # v6.6.6 — sized from the three paths, not a fixed 16 KiB; `_w_cmdbuf` refuses by
     # name past Windows' 32,767-character command line. See lib/process_win.cyr.
     var wbuf = _w_cmdbuf(strlen(cc) + strlen(source) + strlen(errfile));
