@@ -700,7 +700,9 @@ fn _self_host_pipe_elf64k_base(src_path, compiler_path, out_path, base_env): i64
     regression_pipe_write_all(write_fd, src_buf, src_n, _regression_timeout_ms());
     sys_close(write_fd);
     var status_buf[1];
-    _regression_wait_deadline(pid, &status_buf, _regression_timeout_ms());
+    var reaped = _regression_wait_deadline(pid, &status_buf, _regression_timeout_ms());
+    if (reaped == 0) { return 0 - 2; }   # the DEADLINE (6.6.20: was returned as a status)
+    if (reaped < 0) { return 0 - 6; }    # never observed: there is no status to return
     return load32(&status_buf);
 }
 
@@ -752,7 +754,9 @@ fn _self_host_pipe_efi(src_path, compiler_path, out_path): i64 {
     regression_pipe_write_all(write_fd, src_buf, src_n, _regression_timeout_ms());
     sys_close(write_fd);
     var status_buf[1];
-    _regression_wait_deadline(pid, &status_buf, _regression_timeout_ms());
+    var reaped = _regression_wait_deadline(pid, &status_buf, _regression_timeout_ms());
+    if (reaped == 0) { return 0 - 2; }   # the DEADLINE (6.6.20: was returned as a status)
+    if (reaped < 0) { return 0 - 6; }    # never observed: there is no status to return
     return load32(&status_buf);
 }
 
@@ -814,7 +818,9 @@ fn _self_host_pipe_agnos(src_path, compiler_path, out_path): i64 {
     regression_pipe_write_all(write_fd, src_buf, src_n, _regression_timeout_ms());
     sys_close(write_fd);
     var status_buf[1];
-    _regression_wait_deadline(pid, &status_buf, _regression_timeout_ms());
+    var reaped = _regression_wait_deadline(pid, &status_buf, _regression_timeout_ms());
+    if (reaped == 0) { return 0 - 2; }   # the DEADLINE (6.6.20: was returned as a status)
+    if (reaped < 0) { return 0 - 6; }    # never observed: there is no status to return
     return load32(&status_buf);
 }
 
@@ -875,7 +881,9 @@ fn _self_host_pipe_win(src_path, compiler_path, out_path): i64 {
     regression_pipe_write_all(write_fd, src_buf, src_n, _regression_timeout_ms());
     sys_close(write_fd);
     var status_buf[1];
-    _regression_wait_deadline(pid, &status_buf, _regression_timeout_ms());
+    var reaped = _regression_wait_deadline(pid, &status_buf, _regression_timeout_ms());
+    if (reaped == 0) { return 0 - 2; }   # the DEADLINE (6.6.20: was returned as a status)
+    if (reaped < 0) { return 0 - 6; }    # never observed: there is no status to return
     return load32(&status_buf);
 }
 
@@ -948,7 +956,9 @@ fn _self_host_pipe_env(src_path, compiler_path, out_path, env_kv): i64 {
     regression_pipe_write_all(write_fd, src_buf, src_n, _regression_timeout_ms());
     sys_close(write_fd);
     var status_buf[1];
-    _regression_wait_deadline(pid, &status_buf, _regression_timeout_ms());
+    var reaped = _regression_wait_deadline(pid, &status_buf, _regression_timeout_ms());
+    if (reaped == 0) { return 0 - 2; }   # the DEADLINE (6.6.20: was returned as a status)
+    if (reaped < 0) { return 0 - 6; }    # never observed: there is no status to return
     return load32(&status_buf);
 }
 
@@ -1006,7 +1016,9 @@ fn _self_host_pipe_env2(src_path, compiler_path, out_path, env_kv1, env_kv2): i6
     regression_pipe_write_all(write_fd, src_buf, src_n, _regression_timeout_ms());
     sys_close(write_fd);
     var status_buf2[1];
-    _regression_wait_deadline(pid, &status_buf2, _regression_timeout_ms());
+    var reaped = _regression_wait_deadline(pid, &status_buf2, _regression_timeout_ms());
+    if (reaped == 0) { return 0 - 2; }   # the DEADLINE (6.6.20: was returned as a status)
+    if (reaped < 0) { return 0 - 6; }    # never observed: there is no status to return
     return load32(&status_buf2);
 }
 

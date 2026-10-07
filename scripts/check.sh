@@ -1939,6 +1939,12 @@ _chk_gate "$ROOT/tests/gates/toolchain/gates_run_from_foreign_cwd.sh"
 # $HOME/Repos/sit; a miss names every path tried. Every release lane's sit-fsck row SKIPped.
 _chk_gate "$ROOT/tests/gates/toolchain/check_sit_lookup_worktree.sh"
 
+# 6.6.20 (RLM-01) — every `_regression_wait_deadline` in lib/regression.cyr and the check driver
+# consumes its result before the status buffer is decoded: a deadline (0) or an unobserved child
+# (-1, waitpid never wrote it) is never read as an exit code. Static, with a clean-fixture + per-rule
+# mutant self-test; the runtime rows are tests/tcyr/platform/regression_wait_unobserved.tcyr.
+_chk_gate "$ROOT/tests/gates/toolchain/regression_wait_status_checked.sh"
+
 # 6.6.10 (bite 12) — the harness never stores through a refused allocation: test_scratch
 # panics by name on x86, qemu-aarch64, wine and cxvm; bench_new returns 0; the regression verbs
 # return -1 before any fork. Mutation ledger in the header.

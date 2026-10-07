@@ -325,7 +325,9 @@ fn _exec_in_dir(work_dir, bin_path, arg, out_path): i64 {
         sys_exit(127);
     }
     var stbuf[1];
-    _regression_wait_deadline(pid, &stbuf, _regression_timeout_ms());
+    var reaped = _regression_wait_deadline(pid, &stbuf, _regression_timeout_ms());
+    if (reaped == 0) { return 0 - 2; }   # the DEADLINE (6.6.20: was decoded as a status)
+    if (reaped < 0) { return 0 - 1; }    # never observed: waitpid wrote no status
     var status = load32(&stbuf);
     if (WIFEXITED(status) == 1) { return WEXITSTATUS(status); }
     return 0 - 1;
@@ -379,7 +381,9 @@ fn _exec_in_dir3_env(work_dir, bin_path, arg1, arg2, arg3, env_extras_vec, out_p
         sys_exit(127);
     }
     var stbuf[1];
-    _regression_wait_deadline(pid, &stbuf, _regression_timeout_ms());
+    var reaped = _regression_wait_deadline(pid, &stbuf, _regression_timeout_ms());
+    if (reaped == 0) { return 0 - 2; }   # the DEADLINE (6.6.20: was decoded as a status)
+    if (reaped < 0) { return 0 - 1; }    # never observed: waitpid wrote no status
     var status = load32(&stbuf);
     if (WIFEXITED(status) == 1) { return WEXITSTATUS(status); }
     return 0 - 1;
@@ -417,7 +421,9 @@ fn _exec_in_dir3(work_dir, bin_path, arg1, arg2, arg3, out_path): i64 {
         sys_exit(127);
     }
     var stbuf[1];
-    _regression_wait_deadline(pid, &stbuf, _regression_timeout_ms());
+    var reaped = _regression_wait_deadline(pid, &stbuf, _regression_timeout_ms());
+    if (reaped == 0) { return 0 - 2; }   # the DEADLINE (6.6.20: was decoded as a status)
+    if (reaped < 0) { return 0 - 1; }    # never observed: waitpid wrote no status
     var status = load32(&stbuf);
     if (WIFEXITED(status) == 1) { return WEXITSTATUS(status); }
     return 0 - 1;

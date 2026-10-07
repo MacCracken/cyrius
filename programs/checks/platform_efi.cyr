@@ -1968,11 +1968,12 @@ fn _efi_stdlib_fallback_gate(): i64 {
     sys_close(write_fd);
 
     var status_buf[1];
-    _regression_wait_deadline(pid, &status_buf, _regression_timeout_ms());
+    var reaped = _regression_wait_deadline(pid, &status_buf, _regression_timeout_ms());
     sys_unlink(src_path);
 
     var status = load32(&status_buf);
-    if (WIFEXITED(status) == 0 || WEXITSTATUS(status) != 0) {
+    # 6.6.20: a deadline or an unobserved child wrote no status — it is a FAIL, never decoded.
+    if (reaped != 1 || WIFEXITED(status) == 0 || WEXITSTATUS(status) != 0) {
         sys_unlink(bin_path);
         _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
         _p(": cycc exited non-zero (status="); print_num(status);
