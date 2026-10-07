@@ -824,28 +824,18 @@ fn _cmd_setup(): i64 {
 # shell-side state (heredoc'd starship/p10k config blocks). Native port
 # is a v5.11.x or v6.x slot in its own right; for this closeout we
 # delegate transparently so users get a unified entry point.
+# 6.6.20 (RS-04): the operands ride as ARGV — this concatenated them into a `/bin/sh -c` line, so
+# `cyriusly cmdtools 'list;cmd'` ran `cmd`. ⚠ The twin is still found relative to the CWD
+# (`scripts/cyriusly`); that half is filed (docs/development/issues/
+# 2026-10-06-cyriusly-cmdtools-runs-the-cwd-script.md). CHANGELOG [6.6.20]
 fn _cmd_cmdtools(action_cstr, tool_cstr): i64 {
-    var cmd_pre = "sh scripts/cyriusly cmdtools";
-    var pre_len = strlen(cmd_pre);
-    var alen = 0;
-    var tlen = 0;
-    if (action_cstr != 0) { alen = strlen(action_cstr); }
-    if (tool_cstr != 0)   { tlen = strlen(tool_cstr); }
-    var cmd = alloc(pre_len + alen + tlen + 4);
-    memcpy(cmd, cmd_pre, pre_len);
-    var off = pre_len;
-    if (alen > 0) {
-        store8(cmd + off, 32);
-        memcpy(cmd + off + 1, action_cstr, alen);
-        off = off + 1 + alen;
-    }
-    if (tlen > 0) {
-        store8(cmd + off, 32);
-        memcpy(cmd + off + 1, tool_cstr, tlen);
-        off = off + 1 + tlen;
-    }
-    store8(cmd + off, 0);
-    return _exec_shell(cmd);
+    var ct_args = vec_new();
+    vec_push(ct_args, "/bin/sh");
+    vec_push(ct_args, "scripts/cyriusly");
+    vec_push(ct_args, "cmdtools");
+    if (action_cstr != 0) { vec_push(ct_args, action_cstr); }
+    if (tool_cstr != 0) { vec_push(ct_args, tool_cstr); }
+    return _cy_run_argv(ct_args);
 }
 
 # ----------------------------------------------------------------

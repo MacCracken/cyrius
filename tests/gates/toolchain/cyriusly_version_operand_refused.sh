@@ -25,12 +25,17 @@
 #      still refused; install 6.6.20 runs curl once, on the TAG's installer
 #      (`/cyrius/6.6.20/scripts/install.sh` — never the mutable `main`, CVE-21), and install.sh sees
 #      CYRIUS_VERSION=6.6.20; use 6.6.18 pins it                              (binary + shell)
-#   5  STATIC: `_cmd_install` / `_cmd_uninstall` in programs/cyriusly.cyr reach no `_exec_shell(`
-#      / `exec_cmd(` — the operand never rides in a shell line, even behind the validator
+#   5  STATIC: `_cmd_install` / `_cmd_uninstall` / `_cmd_cmdtools` in programs/cyriusly.cyr reach
+#      no `_exec_shell(` / `exec_cmd(` — the operand never rides in a shell line, even behind the
+#      validator
 #   6  `use` with no operand (the binary's second [package].cyrius reader, CBT-01): an
 #      escape-bearing traversal pin, `../../x`, `6..6` and an unquoted pin -> exit 1, named, the
 #      escape shown as \xNN and never raw; controls: `6.6.19`, `6.6.20_rc` (the CLI's pin rule
 #      allows `_`) and a literal-string `'6.6.18'` report as pinned                    (binary)
+#   7  `cmdtools 'list;touch M'` and `cmdtools '$(touch M)' starship` -> no marker (the
+#      operands are argv to the shell twin, never a shell line); control: `cmdtools list` from
+#      this checkout lists (binary). ⚠ The twin is still resolved from the CWD — filed, see
+#      programs/cyriusly.cyr `_cmd_cmdtools`; this axis does not bless that.
 #
 # MUTATION LEDGER (2026-10-06, 6.6.20): `_cy_version_ok` answering 1 turns axes 1-3 RED on the
 # binary (the store deleted, the injected `touch` RAN, the traversal pin written and --global
@@ -43,7 +48,9 @@
 # URL, a CVE-21 residual) turns axis 4 [bin] RED. Restoring the base no-operand `use` reader
 # turns every axis-6 row RED (the ESC / BEL bytes reached the terminal, `../../x` and `6..6`
 # reported as pins, the unquoted pin and the literal string read as the GLOBAL default); checking
-# the pin with `_cy_version_ok`'s rule (no `_`) turns the `6.6.20_rc` control RED.
+# the pin with `_cy_version_ok`'s rule (no `_`) turns the `6.6.20_rc` control RED. The base
+# `_cmd_cmdtools` (a `sh scripts/cyriusly cmdtools <a> <t>` line through `_exec_shell`) turns axis
+# 5 and both axis-7 injection rows RED.
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -162,14 +169,14 @@ done
 
 # ── axis 5: static — no shell line in install / uninstall ───────────────────────────────
 a5=0
-for f in _cmd_install _cmd_uninstall; do
+for f in _cmd_install _cmd_uninstall _cmd_cmdtools; do
     body=$(awk -v f="$f" '$0 ~ "^fn " f "\\(" {on=1} on {print} on && /^}/ {exit}' "$ROOT/programs/cyriusly.cyr")
     [ -n "$body" ] || { echo "  FAIL axis 5: could not find fn $f in programs/cyriusly.cyr"; fail=1; a5=1; continue; }
     if printf '%s\n' "$body" | grep -v '^ *#' | grep -qE '_exec_shell\(|exec_cmd\('; then
         echo "  FAIL axis 5: $f runs a shell LINE (_exec_shell / exec_cmd) — its operand must ride as argv"; fail=1; a5=1
     fi
 done
-[ "$a5" -eq 0 ] && echo "  ok axis 5: _cmd_install and _cmd_uninstall run no shell line"
+[ "$a5" -eq 0 ] && echo "  ok axis 5: _cmd_install, _cmd_uninstall and _cmd_cmdtools run no shell line"
 
 # ── axis 6: `use` with NO operand reads the [package].cyrius pin — the CLI's pin rule, never echoed
 #    raw (binary only: the shell twin's `use` requires an operand) ──────────────────────────────
@@ -208,5 +215,18 @@ for row in '"6.6.19"|6.6.19' '"6.6.20_rc"|6.6.20_rc' "'6.6.18'|6.6.18"; do
 done
 [ "$a6" -eq 0 ] && echo "  ok axis 6 [bin]: use with no operand refuses an escape-bearing, a traversal, a '..' and an unquoted pin (shown as \\xNN, never raw); '_' and a literal string still report"
 
+# ── axis 7: cmdtools passes its operands as argv ───────────────────────────────────────────
+a7=0
+for row in "list;touch $W/pwned|" "\$(touch $W/pwned)|starship"; do
+    store
+    run bin cmdtools "${row%%|*}" ${row#*|}
+    if [ -e "$W/pwned" ]; then bad "axis 7 [bin] cmdtools '${row%%|*}': the injected command RAN"; a7=1; fi
+done
+RC=0
+( cd "$ROOT" && env HOME="$W/home" CYRIUS_HOME="$H" PATH="$W/fakebin:$PATH" "$W/cyriusly" cmdtools list ) > "$W/out" 2> "$W/err" || RC=$?
+{ [ "$RC" -eq 0 ] && grep -q "^cmdtools integrations:" "$W/out"; } \
+    || { bad "axis 7 [bin] cmdtools list (control, from the checkout): exit $RC"; a7=1; }
+[ "$a7" -eq 0 ] && echo "  ok axis 7 [bin]: cmdtools hands its operands to the twin as argv; nothing injected, list still lists"
+
 [ "$fail" -eq 0 ] || { echo "FAIL: $NAME"; exit 1; }
-echo "PASS: $NAME (cyriusly uninstall / install / use refuse a non-version operand by name, in both peers; install and uninstall pass it as argv)"
+echo "PASS: $NAME (cyriusly uninstall / install / use refuse a non-version operand by name, in both peers; install, uninstall and cmdtools pass their operands as argv)"
