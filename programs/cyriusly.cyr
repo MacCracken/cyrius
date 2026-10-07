@@ -586,7 +586,7 @@ fn _exec_shell(cmd_line): i64 {
 # exit 0, and deleted the WHOLE store, the active version included (the active-version guard is
 # a string compare, so `../versions` never equals `6.6.19`); `install` spliced it into a
 # `/bin/sh -c` line. Accepted: a leading digit, then only [0-9A-Za-z.-], no `..` —
-# scripts/version-bump.sh's rule, so every real version passes. The shell twin
+# scripts/version-bump.sh's charset plus a `..` ban, so every real version passes. The shell twin
 # (scripts/cyriusly) applies the same rule. CHANGELOG [6.6.20]
 fn _cy_version_ok(v): i64 {
     return _cy_shape_ok(v, strlen(v), 0);
@@ -618,7 +618,7 @@ fn _cy_shape_ok(v, n, us): i64 {
 # Refuse `v` by name on stderr. Returns 1 (the verb's exit code).
 fn _cy_refuse_version(v): i64 {
     _cy_err_tok("cyriusly: not a version: ", v);
-    var why = "  a version names a directory under <home>/versions: a leading digit, then only [0-9A-Za-z.-], no '..' (e.g. 6.6.20)\n";
+    var why = "  a version names a directory under <home>/versions: a leading digit, then only [0-9A-Za-z.-], no '..'\n";
     syscall(1, 2, why, strlen(why));
     return 1;
 }

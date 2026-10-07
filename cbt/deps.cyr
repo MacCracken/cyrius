@@ -343,8 +343,9 @@ fn _dep_read_cyml_cyrius_field(): i64 {
 
 # 1 when `pin` has a version's shape — a leading digit, then only [0-9A-Za-z._-], no `..` — so
 # it is exactly one path component that cannot leave `<home>/versions` (`/`, `\` and `:` are
-# outside the set). Same rule as scripts/version-bump.sh plus `_`, which
-# `_released_slot_guard_current` (cbt/cyrius.cyr) already allows in a store version name.
+# outside the set). scripts/version-bump.sh's charset plus `_` — which
+# `_released_slot_guard_current` (cbt/cyrius.cyr) already allows in a store version name — and a
+# `..` ban (version-bump.sh has none).
 fn _dep_pin_shape_ok(pin): i64 {
     var c = load8(pin);
     if (c < 48 || c > 57) { return 0; }   # leading digit (also refuses the empty string)
