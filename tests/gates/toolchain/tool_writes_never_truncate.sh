@@ -181,6 +181,7 @@ cbt/commands.cyr|dst|distlib'"'"'s verify mirror (dist/.dlverify-<pid>, 6.6.9): 
 cbt/core.cyr|tmp|_aw_open'"'"'s own sibling temp — the crash-safe writer itself
 cbt/build.cyr|p|_cbt_tmp_probe'"'"'s 4 KB probe in the CLI'"'"'s OWN private temp dir, unlinked at once (6.6.9: is the temp dir writable?)
 cbt/commands.cyr|errf|the lint pre-pass'"'"'s stderr capture, pre-created in the private temp dir by the parent (6.6.9)
+cbt/commands.cyr|dl_errf|distlib'"'"'s self-check stderr capture (_cbt_tmpfile, 0600), pre-created in the private temp dir by the parent so a compile() that bails early still leaves a file to read (6.6.20 CBT-02)
 cbt/quality.cyr|tmpf|a _cbt_tmpfile doctest source
 cbt/deps.cyr|tmpf|a _cbt_tmpfile capture of sha256sum'"'"'s stdout
 cbt/deps.cyr|outf|a _cbt_tmpfile capture of git'"'"'s stdout
