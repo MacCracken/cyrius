@@ -171,6 +171,9 @@ function reset() { armed = 0; nd = 0; hand = ""; inwin = 0; winret = 0; winbody 
 }
 code ~ /^[ \t]*#ifdef[ \t]+CYRIUS_TARGET_WIN/  { inwin = 1; winret = 0; winbody = ""; next }
 code ~ /^[ \t]*#ifndef[ \t]+CYRIUS_TARGET_WIN/ { nd = 1; next }
+# A macOS-only region is compiled out of the PE CLI just as surely (6.6.20: _macho_codesign
+# forks /usr/bin/codesign there); its arm is the target itself.
+code ~ /^[ \t]*#ifdef[ \t]+CYRIUS_TARGET_MACOS/ { nd = 1; hand = hand " target_macos_only("; next }
 code ~ /^[ \t]*#endif/ {
     if (inwin == 1) {
         # `armed` needs the arm to RETURN (otherwise control falls into the fork), but the
@@ -231,6 +234,12 @@ fn ifdef_no_return(): i64 {
     var pid = sys_fork();
     return pid;
 }
+fn macos_only(): i64 {
+    #ifdef CYRIUS_TARGET_MACOS
+    var pid = sys_fork();
+    #endif
+    return 0;
+}
 fn only_prose(): i64 {
     # this comment mentions sys_fork() and must not count
     var s = "sys_fork()";
@@ -238,11 +247,12 @@ fn only_prose(): i64 {
 }
 EOF
 scan "$T/self/a.cyr" > "$T/self/out"
-check "the detector finds exactly the 4 real call sites" 4 "$(grep -c 'fn=' "$T/self/out" || true)"
+check "the detector finds exactly the 5 real call sites" 5 "$(grep -c 'fn=' "$T/self/out" || true)"
 check "  …and flags the unguarded one" 1 "$(grep -c 'fn=unarmed pe=UNARMED' "$T/self/out" || true)"
 check "  …and the #ifdef that does not return" 1 "$(grep -c 'fn=ifdef_no_return pe=UNARMED' "$T/self/out" || true)"
 check "  …clears the #ifndef-wrapped fork" 1 "$(grep -c 'fn=in_ifndef pe=ok' "$T/self/out" || true)"
 check "  …clears the returning #ifdef arm" 1 "$(grep -c 'fn=ifdef_returns pe=ok' "$T/self/out" || true)"
+check "  …clears the macOS-only fork" 1 "$(grep -c 'fn=macos_only pe=ok' "$T/self/out" || true)"
 check "  …and counts nothing in the prose-only fn" 0 "$(grep -c 'fn=only_prose' "$T/self/out" || true)"
 
 # ── AXIS 1 — every real site in cbt/ is PE-unreachable, with a derived floor.
@@ -290,7 +300,7 @@ while IFS= read -r ln; do
     # ⚠ Matched as a CALL (`name` immediately followed by `(`), never as a substring: the
     # first cut used shell globs and a local named `cap_win_rc` contained `_win_`, so
     # cmd_capacity's arm was admitted with its spawn removed (mutation M3 read GREEN).
-    if echo "$arm" | grep -Eq '(_win_[A-Za-z0-9_]*|exec_(capture|cmd|vec|env)[A-Za-z0-9_]*|_err[A-Za-z0-9_]*|_ew|_git_exec_available) *\(|return 0 - 1'; then :
+    if echo "$arm" | grep -Eq '(_win_[A-Za-z0-9_]*|exec_(capture|cmd|vec|env)[A-Za-z0-9_]*|_err[A-Za-z0-9_]*|_ew|_git_exec_available|target_macos_only) *\(|return 0 - 1'; then :
     else echo "$ln" >> "$T/silent"; fi
     for w in $arm; do
         case "$w" in _win_*) echo "$w" | sed 's/[^A-Za-z0-9_].*//' >> "$T/handlers" ;; esac
