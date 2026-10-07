@@ -14,6 +14,28 @@ if [ ! -f "$MAIN" ]; then
     echo "error: $MAIN not found (cwd: $(pwd))" >&2
     exit 1
 fi
+FAILS=0
+
+# 6.6.20 (HEAP-05): src/main.cyr is the ONE heap map. This gate used to read it and
+# nothing else, while four of the six fork drivers carried their own map copies — and
+# those had drifted: run through the parser below, the three aarch64 forks each reported
+# an overlap (lexid_entries still mapped at its pre-v6.4.21 0x457C900) and main_win
+# three (ir_nodes at 0xA3A000, ir_cp at 0xF7B000, lexid), under a header that still
+# read "Authoritative offset registry (v3.6.10)". All seven drivers share one layout,
+# so the copies were documentation that nothing checked. A fork now carries a pointer
+# to main.cyr, and any map-shaped line in one fails here. The floor keeps an empty glob
+# from passing vacuously.
+NFORK=$(ls src/main_*.cyr 2>/dev/null | wc -l)
+if [ "$NFORK" -lt 6 ]; then
+    echo "FAIL: heapmap: expected at least 6 fork drivers src/main_*.cyr, found $NFORK"
+    exit 1
+fi
+FORK_MAP=$(grep -nE '^#[[:space:]]{3,}0x[0-9A-Fa-f]+[[:space:]]+[a-zA-Z_(]' src/main_*.cyr || true)
+if [ -n "$FORK_MAP" ]; then
+    echo "FAIL: heapmap: a fork driver carries heap-map lines — src/main.cyr is the only map"
+    echo "$FORK_MAP" | head -20 | sed 's/^/    /'
+    FAILS=$((FAILS + 1))
+fi
 
 # Extract heap map entries from main.cyr.
 # Format:  #   0xOFFSET  name  [BYTES]  description
@@ -126,4 +148,9 @@ END {
         printf "PASS: no overlaps (%d regions, %d warnings)\n", n, warnings
     }
 }
-' "$MAIN"
+' "$MAIN" || FAILS=$((FAILS + 1))
+
+if [ "$FAILS" -gt 0 ]; then
+    echo "FAIL: heapmap: $FAILS check(s) failed"
+    exit 1
+fi
