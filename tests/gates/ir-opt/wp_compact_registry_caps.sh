@@ -25,6 +25,11 @@
 #   4  the source-heavy program under CYRIUS_IR=3 CYRIUS_DCE=1: the IR seam compacts, then
 #      FIXUP's dead-code pass compacts AGAIN, so the registry must have been rebased to the
 #      first pass's layout (wp_compact's re-entrancy loop) — the binary still exits 180.
+#   5  CYRIUS_IR=3 on 4,200 LASE sites: the NOP-run registry (4,096) saturates and the seam
+#      names it as NOP runs, not "dead-code runs" (at the seam they are the IR passes' runs;
+#      FIXUP's dead-code pass comes later). This is the case 48 of the 482 tcyr files hit under
+#      CYRIUS_IR=3 (every TLS/sandhi-class program). It pins a CLIFF: when the 4,096-run merge
+#      on the roadmap backlog lands, axis 5 compacts instead — re-measure it then.
 #
 # THE THREE READERS. Growing the registry moved it off S+0x60000, so every loop that walks it
 # must go through _wpjs_base: wp_compact's stage 1 (axes 1, 2), its re-entrancy rebase (axis 4)
@@ -151,6 +156,35 @@ if CYRIUS_IR=3 CYRIUS_DCE=1 "$CC" < "$D/many_sources.cyr" > "$D/a4" 2> "$D/a4.er
     [ "$rc" = 180 ] && ok "axis 4: the twice-compacted binary exits 180" || bad "axis 4: the twice-compacted binary exits $rc, expected 180 — the registry was not rebased to the first pass's layout"
 else
     bad "axis 4: compile failed: $(head -3 "$D/a4.err")"
+fi
+
+# ── axis 5: 4,200 NOP runs under CYRIUS_IR=3 — the run registry saturates, named ─────────
+# `r = r + 3 * 4;` is one LASE site, so one NOP run, each; 512 per fn keeps every fn small.
+awk 'BEGIN {
+    n = 4200; per = 512; nf = int((n + per - 1) / per); left = n
+    for (f = 0; f < nf; f++) {
+        printf "fn h%d(r): i64 {\n", f
+        c = (left > per) ? per : left; left -= c
+        for (k = 0; k < c; k++) { print "    r = r + 3 * 4;" }
+        print "    return r;"
+        print "}"
+    }
+    print "var r = 0;"
+    for (f = 0; f < nf; f++) { printf "r = h%d(r);\n", f }
+    print "syscall(60, r & 255);"
+}' > "$D/many_runs.cyr"
+# 4,200 × 12 = 50,400; & 255 = 224
+if CYRIUS_IR=3 "$CC" < "$D/many_runs.cyr" > "$D/a5" 2> "$D/a5.err"; then
+    chmod +x "$D/a5"
+    if grep -q 'wp-compact declined: more than 4096 NOP runs' "$D/a5.err"; then
+        ok "axis 5: the IR=3 seam names the saturated NOP-run registry"
+    else
+        bad "axis 5: 4,200 IR NOP runs under CYRIUS_IR=3 and no NOP-run decline note: $(grep -v '^note\|^warning' "$D/a5.err" | head -3)"
+    fi
+    rc=$(run_exit "$D/a5")
+    [ "$rc" = 224 ] && ok "axis 5: the binary exits 224" || bad "axis 5: the binary exits $rc, expected 224"
+else
+    bad "axis 5: compile failed: $(head -3 "$D/a5.err")"
 fi
 
 if [ "$fails" -gt 0 ]; then

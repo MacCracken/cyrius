@@ -2022,6 +2022,9 @@ if (IR_ENABLED(S) == 1) {
     # 6.6.20: a saturated registry declined the whole pass here with no word — the IR passes'
     # NOPs simply stayed in the binary. Name it, as the CYRIUS_DCE=1 note does. CHANGELOG [6.6.20]
     var _wpwhy = _wp_registry_why();
+    # Here the run registry holds the IR passes' NOP runs (LASE, const-fold), not dead code —
+    # FIXUP's dead-code pass comes later — so the shared reason's "dead-code runs" is wrong.
+    if (_wpnr_ovf == 1) { _wpwhy = "more than 4096 NOP runs, the repair registry cap"; }
     if (_wpwhy != 0) {
         PRSTR("wp-compact declined: ");
         PRSTR(_wpwhy);
