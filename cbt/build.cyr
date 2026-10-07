@@ -1449,10 +1449,11 @@ fn compile(source, output): i64 {
         }
 
         # v5.11.63: pass --strict in argv when the wrapper flag was
-        # set. cycc/cycc_aarch64 read /proc/self/cmdline at startup
-        # (since v5.4.19 / v5.11.63 respectively) — a single
-        # `--strict` token anywhere past argv[0] sets _strict_mode,
-        # which fixup.cyr's strict-exit reads after the patch loop.
+        # set. It is accepted and has NO EFFECT since 6.3.2: a reachable
+        # undefined fn is an error by default (`--allow-undef` downgrades
+        # it), and nothing in the compiler reads the flag any more — the
+        # fixup pass's strict-exit this comment used to cite is gone.
+        # Passed through for back-compat only (the help text says so).
         # argv[32] = 4 × 8 B (cc + optional "--strict" + optional
         # "--allow-undef" + NUL). v6.5.14 widened this from 24 for the
         # distlib self-check; keep it in step with the flags below.
