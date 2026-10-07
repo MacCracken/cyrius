@@ -35,12 +35,16 @@ $CyriusHome = if ($env:CYRIUS_HOME) { $env:CYRIUS_HOME } else { Join-Path $env:U
 
 # 6.6.20 (SEC-07): the FIRST signed release. Every release from 6.2.31 on publishes SHA256SUMS +
 # SHA256SUMS.sig (release.yml refuses to publish one without, since that tag - CVE-13). So with a
-# trusted cyrsign.exe on this machine, a tarball naming a release at or above it that arrives
-# WITHOUT the signed pair beside it is refused: the pair was stripped (or never downloaded). This
-# installer used to print "signature check skipped" and install it. Same constant as
+# trusted cyrsign.exe on this machine, a tarball that arrives WITHOUT the signed pair beside it is
+# refused: the pair was stripped (or never downloaded). This installer used to print "signature
+# check skipped" and install it. Unlike install.sh / ci.sh there is NO pre-signing carve-out here:
+# theirs keys on a version the OPERATOR typed (CYRIUS_VERSION / argv), and the only version this
+# installer sees is the tarball's file name and the VERSION file inside it, both of which come from
+# the download (a server can suggest the name). Windows pre-signing releases are 6.0.85-6.2.30, so
+# a downgrade to one with a verifier present passes -AllowUnsigned. Same constant as
 # scripts/install.sh and scripts/ci.sh; tests/gates/toolchain/install_signature_required.sh holds
-# the three in step. -AllowUnsigned (or CYRIUS_ALLOW_UNSIGNED=1) is the explicit override, for a
-# tarball you built yourself. CHANGELOG [6.6.20]
+# the three in step, and scripts/cass-install-gate.ps1 runs the refusals on real Windows.
+# -AllowUnsigned (or CYRIUS_ALLOW_UNSIGNED=1) is the explicit override. CHANGELOG [6.6.20]
 $FirstSignedRelease = "6.2.31"
 $tarVer = $null
 
@@ -78,14 +82,12 @@ if (-not $Stage) {
     $pub = "adbde6b11ccf8d86dc760387fa7f4dfbe3942fa318e459fb6e62d1536e254008"
     $sums = Join-Path (Split-Path -Parent (Resolve-Path $Tarball)) "SHA256SUMS"
     $sumsSig = "$sums.sig"
-    # The release the tarball NAMES: cyrius-<N.N.N>-<arch>-windows.tar.gz. Only a well-formed name
-    # below the first signed release may skip the signature; an unparseable name is treated as a
-    # signed-era release. The name is held against the VERSION file after extraction, so renaming
-    # a tarball to an old version cannot buy the skip.
+    # The release the tarball NAMES: cyrius-<N.N.N>-<arch>-windows.tar.gz. It buys nothing (see
+    # $FirstSignedRelease above), but it is held against the VERSION file after extraction, so the
+    # name the signed SHA256SUMS line was matched on and the version installed are one release.
     if ((Split-Path -Leaf $Tarball) -match '^cyrius-((?:0|[1-9][0-9]{0,8})\.(?:0|[1-9][0-9]{0,8})\.(?:0|[1-9][0-9]{0,8}))-') {
         $tarVer = $Matches[1]
     }
-    $predatesSigning = ($null -ne $tarVer) -and ([version]$tarVer -lt [version]$FirstSignedRelease)
     $cyrsign = $null
     $cmd = Get-Command cyrsign.exe -ErrorAction SilentlyContinue
     if ($cmd) { $cyrsign = $cmd.Source }
@@ -103,16 +105,20 @@ if (-not $Stage) {
         $signedHash = ($line -split '\s+')[0]
         if ($actual -ine $signedHash) { throw "tarball hash != signed manifest hash - refusing" }
         Write-Host "signature verified (Ed25519)"
-    } elseif ($cyrsign -and -not $predatesSigning) {
-        $named = if ($tarVer) { $tarVer } else { "(unversioned name)" }
-        $why = "every Cyrius release since $FirstSignedRelease is signed and a trusted cyrsign.exe is present ($cyrsign), but no SHA256SUMS + SHA256SUMS.sig sits beside $Tarball (release $named)"
+    } elseif ($cyrsign) {
+        if ($tarVer -and ([version]$tarVer -lt [version]$FirstSignedRelease)) {
+            $why = "a trusted cyrsign.exe is present ($cyrsign) and no SHA256SUMS + SHA256SUMS.sig sits beside $Tarball, whose name says $tarVer - a release before signing began ($FirstSignedRelease), but that name and the VERSION file inside both come from the download, so install.ps1 cannot tell it from a renamed signed-era tarball"
+        } else {
+            $named = if ($tarVer) { $tarVer } else { "(no version in the name)" }
+            $why = "every Cyrius release since $FirstSignedRelease is signed and a trusted cyrsign.exe is present ($cyrsign), but no SHA256SUMS + SHA256SUMS.sig sits beside $Tarball (release $named)"
+        }
         if ($AllowUnsigned -or ($env:CYRIUS_ALLOW_UNSIGNED -eq "1")) {
             Write-Host "WARNING: signature required but absent: $why - allowed via -AllowUnsigned / CYRIUS_ALLOW_UNSIGNED=1 (NOT recommended)"
         } else {
-            throw "refusing UNSIGNED tarball: $why. Download SHA256SUMS and SHA256SUMS.sig from the same release page into the tarball's directory, or pass -AllowUnsigned only for a tarball you built yourself."
+            throw "refusing UNSIGNED tarball: $why. Download SHA256SUMS and SHA256SUMS.sig from the same release page into the tarball's directory, or pass -AllowUnsigned only for a tarball you built yourself or a pre-signing release you chose."
         }
     } else {
-        Write-Host "signature check skipped (no prior cyrsign.exe, or a pre-signing release by name)"
+        Write-Host "signature check skipped (no prior cyrsign.exe; integrity is the SHA256 above)"
     }
 
     $tmp = Join-Path $env:TEMP ("cyrius-install-" + [System.Guid]::NewGuid().ToString("N"))
@@ -143,14 +149,18 @@ foreach ($d in @("$VerDir\bin", "$VerDir\lib", "$CyriusHome\bin", "$CyriusHome\l
 # <home>\bin half old, half new; with the retry, 0 of 25, and an upgrade run while another bin file
 # was held open retried 17 times and finished where the bare Copy-Item died. Before the SEC-07 floor
 # an upgrade with no SHA256SUMS beside it never ran the verifier; now every upgrade with one present
-# does. Bounded (40 x 250 ms): a lock that does not clear is still an error, by name.
-# CHANGELOG [6.6.20]
+# does. Bounded (40 x 250 ms): a lock that does not clear is still an error, by name. ONLY a sharing
+# or lock violation is retried (an IOException with HResult 0x80070020 / 0x80070021, measured on
+# cass for a file held with FileShare.None); access denied (UnauthorizedAccessException 0x80070005),
+# a missing source, a full disk fail on the first attempt. CHANGELOG [6.6.20]
 function Copy-BinWithRetry([string]$From, [string]$To) {
     for ($i = 1; ; $i++) {
         try {
             Copy-Item $From $To -Force -Recurse -ErrorAction Stop
             return
         } catch {
+            $hr = '{0:X8}' -f $_.Exception.HResult
+            if (($hr -ne '80070020') -and ($hr -ne '80070021')) { throw }
             if ($i -ge 40) { throw }
             Write-Host ("note: " + $_.Exception.Message + " - retrying (" + $i + ")")
             Start-Sleep -Milliseconds 250
