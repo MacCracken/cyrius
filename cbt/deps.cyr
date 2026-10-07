@@ -30,10 +30,10 @@ fn _dep_refuse_symlinked_dest(path): i64 {
     _dep_linkdest_reported = 1;
     var m1 = "error: refusing to vendor into a SYMLINKED directory: ";
     sys_write(STDERR_FD, m1, strlen(m1));
-    sys_write(STDERR_FD, path, strlen(path));
+    _ew_shown(path);
     var m2 = "\n  Writing through it overwrites whatever it points at. If that is the shared\n  stdlib under ~/.cyrius, it corrupts every project on this machine: a stale lib/\n  replaces the installed one, and the next `cyrius deps` in any OTHER repo reads\n  the corruption back out.\n  A project's lib/ must be a REAL directory populated by `cyrius deps`.\n  Fix:  rm ";
     sys_write(STDERR_FD, m2, strlen(m2));
-    sys_write(STDERR_FD, path, strlen(path));
+    _ew_shown(path);
     var m3 = "     # the LINK only - never `rm -rf`, that follows it\n        cyrius deps\n";
     sys_write(STDERR_FD, m3, strlen(m3));
     return 1;
@@ -210,7 +210,7 @@ fn _dep_copy_file(src, dst): i64 {
     while (load8(dst + di) != 0) {
         if (load8(dst + di) == 46 && load8(dst + di + 1) == 46) {
             sys_write(STDERR_FD, "  error: path traversal in dep destination: ", 44);
-            sys_write(STDERR_FD, dst, strlen(dst));
+            _ew_shown(dst);
             sys_write(STDERR_FD, "\n", 1);
             return 1;
         }
@@ -268,7 +268,7 @@ fn _dep_copy_file(src, dst): i64 {
     var sfd = sys_open(src, O_RDONLY, 0);
     if (sfd < 0) {
         sys_write(STDERR_FD, "  error: cannot read ", 21);
-        sys_write(STDERR_FD, src, strlen(src));
+        _ew_shown(src);
         sys_write(STDERR_FD, "\n", 1);
         return 1;
     }
@@ -277,7 +277,7 @@ fn _dep_copy_file(src, dst): i64 {
     if (dh == 0) {
         sys_close(sfd);
         sys_write(STDERR_FD, "  error: cannot write ", 22);
-        sys_write(STDERR_FD, dst, strlen(dst));
+        _ew_shown(dst);
         sys_write(STDERR_FD, "\n", 1);
         return 1;
     }
@@ -296,7 +296,7 @@ fn _dep_copy_file(src, dst): i64 {
     if (total == 0 || rerr != 0) { _aw_abort(dh); return 1; }
     if (_aw_commit(dh) != 0) {
         sys_write(STDERR_FD, "  error: write failed: ", 23);
-        sys_write(STDERR_FD, dst, strlen(dst));
+        _ew_shown(dst);
         sys_write(STDERR_FD, "\n", 1);
         return 1;
     }
@@ -617,7 +617,7 @@ fn _dep_refuse_stdlib_clobber(stem, src, dst): i64 {
     sys_write(STDERR_FD, "  kept (stdlib snapshot): ", 26);
     sys_write(STDERR_FD, dst, strlen(dst));
     sys_write(STDERR_FD, "\n  skipped (dep artifact): ", 27);
-    sys_write(STDERR_FD, src, strlen(src));
+    _ew_shown(src);   # 6.6.20: it carries the manifest's `modules` entry
     sys_write(STDERR_FD, "\n  declare it in [deps] stdlib OR depend on the package, not both.\n", 67);
     return 0;
 }
@@ -660,13 +660,13 @@ fn _dep_keep_fold_over_profile(dep, dst, mod_path): i64 {
         sys_unlink(dst);
     }
     _ew("note: [deps.");
-    _ew(dep);
+    _ew_shown(dep);
     _ew("] ");
-    _ew(mod_path);
+    _ew_shown(mod_path);
     _ew(" not vendored — '");
-    _ew(dep);
+    _ew_shown(dep);
     _ew("' is a stdlib leaf here, and its fold lib/");
-    _ew(dep);
+    _ew_shown(dep);
     _ew(".cyr is the package\n");
     return 1;
 }
@@ -1073,7 +1073,7 @@ fn _dep_pull_leaves(stdlib_dir, dep_name, leaves): i64 {
             str_builder_add_cstr(_lp_sb, ".cyr");
             var _lp_src = str_data(str_builder_build(_lp_sb));
             sys_write(STDERR_FD, "error: dep ", 11);
-            sys_write(STDERR_FD, dep_name, strlen(dep_name));
+            _ew_shown(dep_name);
             sys_write(STDERR_FD, " requires '", 11);
             sys_write(STDERR_FD, leaf, strlen(leaf));
             # ⚠ BOTH declared lengths here were off by one and BOTH truncated visibly —
@@ -1357,14 +1357,6 @@ fn _dep_target_matches(t): i64 {
 # `sys_unlink` on `lib/<pkg>_<submod>.cyr` BEFORE `_dep_copy_file`'s CVE-04 guard,
 # so a malicious `dist/<pkg>/index.cyml` sibling like `../../../x` could delete an
 # arbitrary `.cyr` during automatic `cyrius deps`. Returns 1 = unsafe (reject).
-fn _dep_reject_unsafe_name(name): i64 {
-    if (_dep_name_unsafe(name) == 0) { return 0; }
-    _ew("  error: unsafe dep name (path traversal rejected): ");
-    _ew_shown(name);
-    _ew("\n");
-    return 1;
-}
-
 # The name rule, silent: 1 when `name` cannot be one path component — empty, `.`-led (`.` and
 # `..` alias the parent: `[deps..]` cloned into `<home>/deps/./<tag>`, i.e. ANOTHER dep's cache
 # root), or holding `/`, `\` (a Windows separator), `..` or a control byte (a header name is
@@ -1585,7 +1577,16 @@ fn _dep_read_index_deps(index_path, submod): i64 {
 # sibling sub-modules (recursed). `seen` dedups + breaks cycles. Deps are pulled
 # BEFORE the module so its `include` lands after theirs in `_dep_includes`.
 fn _dep_pull_submodule(dep_src, pkg, submod, stdlib_dir, seen): i64 {
-    if (_dep_reject_unsafe_name(submod) == 1) { return 1; }   # CVE-32: traversal guard, BEFORE any fs op
+    # CVE-32: traversal guard, BEFORE any fs op — a sub-module name becomes `dist/<pkg>/<mod>.cyr`
+    # and `lib/<pkg>_<mod>.cyr`, so it takes the dep-NAME rule (no `/` at all), named here.
+    if (_dep_name_unsafe(submod) == 1) {
+        _ew("error: [deps.");
+        _ew_shown(pkg);
+        _ew("] modular sub-module '");
+        _ew_shown(submod);
+        _ew("' is not a usable name (empty, `.`-led, or holding `/`, `\\`, `..` or a control byte) — refused\n");
+        return 1;
+    }
     if (_dep_list_has(seen, submod) == 1) { return 0; }
     vec_push(seen, submod);
     var errs = 0;
@@ -1651,9 +1652,9 @@ fn _dep_pull_submodule(dep_src, pkg, submod, stdlib_dir, seen): i64 {
         vec_push(_dep_nd_modules, dst_full);   # 6.6.9: a named dep's module (distlib verify)
     } elif (cr == 1) {
         sys_write(STDERR_FD, "error: modular sub-module ", 26);
-        sys_write(STDERR_FD, pkg, strlen(pkg));
+        _ew_shown(pkg);
         sys_write(STDERR_FD, ":", 1);
-        sys_write(STDERR_FD, submod, strlen(submod));
+        _ew_shown(submod);
         sys_write(STDERR_FD, " not found in dist/\n", 20);
         errs = errs + 1;
     }
@@ -1922,7 +1923,7 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
             if (dep_optional == 1 && _dep_feature_active(dep_name) == 0) {
                 if (_verbose == 1) {
                     sys_write(STDERR_FD, "  skip optional dep (no active feature): ", 41);
-                    sys_write(STDERR_FD, dep_name, strlen(dep_name));
+                    _ew_shown(dep_name);
                     sys_write(STDERR_FD, "\n", 1);
                 }
                 continue;
@@ -1930,7 +1931,7 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
             if (dep_target != 0 && _dep_target_matches(dep_target) == 0) {
                 if (_verbose == 1) {
                     sys_write(STDERR_FD, "  skip dep (target mismatch): ", 30);
-                    sys_write(STDERR_FD, dep_name, strlen(dep_name));
+                    _ew_shown(dep_name);
                     sys_write(STDERR_FD, "\n", 1);
                 }
                 continue;
@@ -1953,7 +1954,7 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                 var rq_dir = _dep_find_stdlib_dir();
                 if (rq_dir == 0) {
                     sys_write(STDERR_FD, "error: dep ", 11);
-                    sys_write(STDERR_FD, dep_name, strlen(dep_name));
+                    _ew_shown(dep_name);
                     sys_write(STDERR_FD, " declares requires but the cyrius stdlib was not found\n", 55);
                     errors += 1;
                 } else {
@@ -2012,7 +2013,7 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                     }
                     if (git_ok == 0) {
                         sys_write(STDERR_FD, "error: unsafe characters in git URL or tag — skipping ", 56);
-                        sys_write(STDERR_FD, dep_name, strlen(dep_name));
+                        _ew_shown(dep_name);
                         sys_write(STDERR_FD, "\n", 1);
                         errors += 1;
                     }
@@ -2025,7 +2026,7 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                     # failure (6.6.5); the clone half did not. CHANGELOG [6.6.6].
                     if (git_ok == 1 && _git_exec_available() == 0) {
                         _ew("error: dep '");
-                        _ew(dep_name);
+                        _ew_shown(dep_name);
                         _ew("' needs a git clone, which cyrius cannot run on this platform\n");
                         _ew("       (no fork). Pre-populate the dep cache from a POSIX host, or\n");
                         _ew("       vendor the dep with a [deps.NAME] path/version entry.\n");
@@ -2066,7 +2067,7 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                         store64(&gargv + gai * 8, 0);
                         if (_verbose == 1) {
                             sys_write(STDERR_FD, "  git clone: ", 13);
-                            sys_write(STDERR_FD, dep_git, strlen(dep_git));
+                            _ew_shown(dep_git);
                             sys_write(STDERR_FD, "\n", 1);
                         }
                         var gpid = sys_fork();
@@ -2088,9 +2089,9 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                         }
                         if (gok == 0) {
                             _ew("error: git clone failed for dep '");
-                            _ew(dep_name);
+                            _ew_shown(dep_name);
                             _ew("' from ");
-                            _ew(dep_git);
+                            _ew_shown(dep_git);
                             # git's own stderr is INHERITED here (not captured), so
                             # its diagnostic is already on the terminal above this.
                             _ew("\n");
@@ -2138,7 +2139,7 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                     # modules-less git dep, which reaches here since I10a.
                     if (dep_pin_ok == 1 && is_dir(str_from(clone_dir)) == 1) {
                         _ew("warning: dep '");
-                        _ew(dep_name);
+                        _ew_shown(dep_name);
                         _ew("': its cached checkout was NOT verified — git cannot be run on this\n");
                         _ew("         platform (no fork), so the cached bytes are vendored as they are.\n");
                     }
@@ -2162,7 +2163,7 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                     var _exp = _lock_commit_lookup(dep_name, dep_git, dep_tag);
                     if (_exp == -1) {
                         sys_write(STDERR_FD, "error: corrupt commit-pin line for dep '", 40);
-                        sys_write(STDERR_FD, dep_name, strlen(dep_name));
+                        _ew_shown(dep_name);
                         sys_write(STDERR_FD, "' in cyrius.lock — refusing (delete cyrius.lock to re-pin intentionally).\n", 76);
                         # These two branches refuse without going through `_git_cache_refuse`,
                         # so they clear the stderr capture themselves — `_git_head_sha` above
@@ -2172,7 +2173,7 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                         errors = errors + 1;
                     } elif (_exp != 0 && _cstr_eq(_exp, _head) == 0) {
                         sys_write(STDERR_FD, "error: commit-pin mismatch for dep '", 36);
-                        sys_write(STDERR_FD, dep_name, strlen(dep_name));
+                        _ew_shown(dep_name);
                         sys_write(STDERR_FD, "' tag '", 7);
                         sys_write(STDERR_FD, dep_tag, strlen(dep_tag));
                         sys_write(STDERR_FD, "': cyrius.lock pins ", 20);
@@ -2225,21 +2226,21 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                     # what the warning tells the reader — and the clone's verified commit
                     # pin is kept, as for `modules = []`. A warning, not an error: exit 0.
                     _ew("warning: [deps.");
-                    _ew(dep_name);
+                    _ew_shown(dep_name);
                     _ew("] declares no modules and ");
                     if (need_clone == 1 && dep_tag != 0) {
                         _ew("tag '");
-                        _ew(dep_tag);
+                        _ew_shown(dep_tag);
                         _ew("'");
                     } elif (need_clone == 1) {
-                        _ew(dep_git);
+                        _ew_shown(dep_git);
                     } else {
-                        _ew(dep_path);
+                        _ew_shown(dep_path);
                     }
                     _ew(" ships no ");
-                    _ew(dm_rel);
+                    _ew_shown(dm_rel);
                     _ew(" — nothing vendored; a transitive [deps.");
-                    _ew(dep_name);
+                    _ew_shown(dep_name);
                     _ew("] will resolve instead (list modules, or modules = []");
                     _ew(" for a dep that is declared but not linked)\n");
                     _dep_inert = _dep_inert + 1;
@@ -2295,11 +2296,11 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                     }
                     if (file_exists(src) == 0) {
                         sys_write(STDERR_FD, "error: [deps.", 13);
-                        sys_write(STDERR_FD, dep_name, strlen(dep_name));
+                        _ew_shown(dep_name);
                         sys_write(STDERR_FD, "] modules entry \"", 17);
-                        sys_write(STDERR_FD, mod_path, strlen(mod_path));
+                        _ew_shown(mod_path);
                         sys_write(STDERR_FD, "\" not found at tag in ", 22);
-                        sys_write(STDERR_FD, dep_path, strlen(dep_path));
+                        _ew_shown(dep_path);
                         sys_write(STDERR_FD, "\n", 1);
                         errors = errors + 1;
                         mi = mi + 1;
@@ -2405,9 +2406,9 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                         if (cr2 == 0) {
                             if (_verbose == 1) {
                                 sys_write(STDERR_FD, "  ", 2);
-                                sys_write(STDERR_FD, dep_name, strlen(dep_name));
+                                _ew_shown(dep_name);
                                 sys_write(STDERR_FD, ": ", 2);
-                                sys_write(STDERR_FD, base, strlen(base));
+                                _ew_shown(base);
                                 sys_write(STDERR_FD, "\n", 1);
                             }
                         }
@@ -3986,9 +3987,9 @@ fn _git_cache_refuse(dep_name, tag_or_0, clone_dir, r): i64 {
     var rev = "HEAD";
     if (tag_or_0 != 0) { rev = _cat2("refs/tags/", tag_or_0); }
     _ew("error: cached checkout for dep '");
-    _ew(dep_name);
+    _ew_shown(dep_name);
     _ew("' tag '");
-    if (tag_or_0 != 0) { _ew(tag_or_0); } else { _ew("(untagged)"); }
+    if (tag_or_0 != 0) { _ew_shown(tag_or_0); } else { _ew("(untagged)"); }
     _ew("' does not match its source — refusing tampered cache: ");
     _ew(_git_cache_reason(r));
     _ew(".\n  cache: ");
@@ -4053,9 +4054,9 @@ fn _git_cache_refuse(dep_name, tag_or_0, clone_dir, r): i64 {
 # cache is most likely healthy and deleting it forces a network re-clone. CHANGELOG [6.6.9]
 fn _git_cache_unjudged(dep_name, tag_or_0, clone_dir): i64 {
     _ew("error: cached checkout for dep '");
-    _ew(dep_name);
+    _ew_shown(dep_name);
     _ew("' tag '");
-    if (tag_or_0 != 0) { _ew(tag_or_0); } else { _ew("(untagged)"); }
+    if (tag_or_0 != 0) { _ew_shown(tag_or_0); } else { _ew("(untagged)"); }
     _ew("' could NOT be verified — refusing to vendor it unchecked: ");
     _ew(_git_cache_reason(10));
     _ew(".\n  temp dir: ");
