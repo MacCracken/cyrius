@@ -1689,6 +1689,11 @@ _chk_gate "$ROOT/tests/gates/frontend/string_intern_scale_linear.sh"
 # both caps.
 _chk_gate "$ROOT/tests/gates/frontend/toplevel_destructure_var_cap.sh"
 
+# 6.6.20 (HEAP-02, CVE-TBD) — the `use mod.fn;` alias table refuses its 65th entry by name before
+# any store: use_from / use_to abut, so the 65th alias re-bound alias #1 (a silent wrong call) and
+# later ones walked the heap to gvar_cnt (SIGSEGV past ~5062). 5 rows: 64 resolves, 65/200/5100 refused.
+_chk_gate "$ROOT/tests/gates/frontend/use_alias_table_cap.sh"
+
 # 6.6.9 (bite 2) — a REACHABLE undefined call is refused on every backend whatever its shape:
 # an aarch64 TAIL call (fixup type 4) used to build rc 0 and die SIGILL, and a reference from an
 # unreachable fn that came first hid every later live call of the same fn (x86/aarch64/PE). The
