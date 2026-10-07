@@ -1714,10 +1714,15 @@ fn _sptr_param_temp(S, li, sid): i64 {
 # 6.6.20: and record which parameters are copied in, exactly, for every call parsed after this
 # definition (`_pm_copies`; pass 1 predicted it for the calls before, and a generic INSTANCE, which
 # pass 1 never saw, gets it here).
+# ⚠ NOT for a REDEFINED fn (flag 2048, pass 1): every call to it reaches its LAST definition
+# (`_fn_redirect`), whose copies pass 1 recorded, so the definition in hand is not the callee of a
+# call parsed after it. Writing its record here raised a bit for `f(q: P3)` above `f(q: *P3)` (the
+# signature check lets the pair through: both address-pass the same struct), and a later tail call
+# kept its `jmp` while the `*P3` body held `&s` — a silent wrong value. CHANGELOG [6.6.20]
 fn _sptr_params_localize(S): i64 {
     var m = 0;
     if (_cur_fn_naked == 0) { if (_pending_coro == 0) { m = _sptr_params_copy(S); } }
-    SFBVCP(_cur_fn_ix, m);
+    if ((GFLG(S, _cur_fn_ix) & 2048) == 0) { SFBVCP(_cur_fn_ix, m); }
     return 0;
 }
 # Each parameter owns exactly ONE named slot (a vector's filler slots are -1), so a parameter's
@@ -5836,7 +5841,8 @@ fn _fn_self_byval(fi): i64 {
 # (ESTOREPARM_SIMD_WIN64). An address the caller pushes for such an argument is read by that copy
 # and held by nothing once the call returns. Recorded by pass 1 (`_bvcp_note`), so a call parsed
 # before the definition knows it, and again, exactly, where the definition emits the copy
-# (`_sptr_params_localize` — a generic's instance, which pass 1 never sees, included). 0 for a `*T`
+# (`_sptr_params_localize` — a generic's instance, which pass 1 never sees, included; never for a
+# redefined fn, whose calls all reach the LAST definition pass 1 recorded). 0 for a `*T`
 # or untyped parameter, an ordinal past 61, a `#naked` or `async` fn (pass 1: `_prescan_fn_sig`)
 # and a fn neither pass has recorded. ⚠ Pass 1 must never record a copy the definition does not
 # make — a call parsed before the definition would keep a `jmp` that the callee's pointer outlives

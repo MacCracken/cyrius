@@ -89,6 +89,36 @@ fn rd_lib_helper(x): i64 { return x + 100; }
 fn rd_lib_entry(): i64 { var x = rd_lib_helper(1); return x; }
 fn rd_lib_helper(x): i64 { return x + 10; }
 
+# A by-value struct parameter redefined as `*T` (the signature check lets the pair through: both
+# address-pass the same struct). Whether a callee COPIES its parameter decides whether a later tail
+# call in the caller may keep its `jmp` (6.6.20, `_pm_copies`), and every call reaches the LAST
+# body — so the answer must be the last body's. The by-value definition's record leaked through:
+# `rd_kv_tail` kept its `jmp` while the `*T` body held `&s`, and `rd_probe` read the freed frame
+# (501 where 32 is right, on x86, aarch64, PE and cx). The other order keeps its `jmp`: the last
+# body copies (it diverted, 72, before the fix: the `*T` definition's record leaked the other way).
+# `rd_probe` fills its own frame and records its depth: value * 10 + 1 (same depth as a direct
+# call: the tail call was kept) or 2 (deeper: it was an ordinary call).
+struct RdT3 { a; b; c; }
+var rd_keep = 0;
+var rd_gg = RdT3 { 7, 8, 9 };
+var rd_dmark = 0;
+fn rd_probe(k): i64 {
+    var buf: i64[40];
+    var i = 0;
+    while (i < 40) { buf[i] = 50; i = i + 1; }
+    rd_dmark = &buf;
+    return load64(rd_keep) + k;
+}
+fn rd_depth_code(bp): i64 { if (rd_dmark == bp) { return 1; } if (rd_dmark < bp) { return 2; } return 0; }
+fn rd_kv(q: RdT3): i64 { rd_keep = &rd_gg; return 0; }
+fn rd_kv_tail(k): i64 { var s = RdT3 { 3, 4, 5 }; var x = rd_kv(s); return rd_probe(k + x); }
+fn rd_kv(q: *RdT3): i64 { rd_keep = q; return 0; }
+fn rd_kv_check(): i64 { rd_keep = &rd_gg; rd_probe(0); var bp = rd_dmark; var r = rd_kv_tail(0); return r * 10 + rd_depth_code(bp); }
+fn rd_kp(q: *RdT3): i64 { rd_keep = q; return 0; }
+fn rd_kp_tail(k): i64 { var s = RdT3 { 3, 4, 5 }; var x = rd_kp(s); return rd_probe(k + x); }
+fn rd_kp(q: RdT3): i64 { rd_keep = &rd_gg; return 0; }
+fn rd_kp_check(): i64 { rd_keep = &rd_gg; rd_probe(0); var bp = rd_dmark; var r = rd_kp_tail(0); return r * 10 + rd_depth_code(bp); }
+
 assert_eq(rd_forward(), 1, "forward call (compiled before both definitions) reaches the last");
 assert_eq(rd_nontail(), 1, "direct call compiled between the definitions reaches the last (was the first)");
 assert_eq(rd_tail(), 1, "tail call compiled between the definitions reaches the last");
@@ -112,5 +142,7 @@ assert_eq(rd_two_mid(), 34, "multi-value return: a call between the definitions 
 assert_eq(rd_m_dot(), 1, "method: a dot call between the impl blocks reaches the last (was 2)");
 assert_eq(rd_m_named(), 1, "method: a mangled-name call between the impl blocks reaches the last (was 2)");
 assert_eq(rd_lib_entry(), 11, "library helper replaced after the library: its own caller reaches the replacement (was 101)");
+assert_eq(rd_kv_check(), 32, "by-value then `*T`: the call reaches the `*T` body, so the later tail call diverts (was 501: kept, read the freed frame)");
+assert_eq(rd_kp_check(), 71, "`*T` then by-value: the call reaches the copying body, so the later tail call keeps its jmp");
 
 var r = assert_summary();

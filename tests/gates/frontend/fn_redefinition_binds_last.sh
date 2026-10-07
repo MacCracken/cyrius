@@ -39,9 +39,12 @@
 # ROWS (compilers are BUILT FROM THIS TREE into a private dir; build/cycc_* is never read)
 #   1. x86_64: the filed repro exits 1 (was 2) and reports no unreachable fn (the winner was);
 #      the three-shape repro exits 111 (was 212); tests/tcyr/crossos/fn_redefinition_last_wins.tcyr
-#      exits 0 (23 shapes: forward, direct, tail, expression, &fn, top level, three definitions,
+#      exits 0 (25 shapes: forward, direct, tail, expression, &fn, top level, three definitions,
 #      recursion, #inline, generic instance + base, struct return, a struct parameter passed by
-#      address, multi-value return, methods, a library helper replaced after the library); under
+#      address, multi-value return, methods, a library helper replaced after the library, and a
+#      by-value struct parameter redefined as `*T` and the reverse — the per-fn record of which
+#      parameters a callee copies, which decides whether a later tail call keeps its `jmp`, is the
+#      LAST definition's); under
 #      CYRIUS_DCE=1 a dead fn between the earlier entry and the winner is ELIMINATED and the
 #      redirect still lands (exits 1); the same for `#naked` definitions under CYRIUS_DCE=1 (was
 #      139) and, with live store-heavy fns between them, under CYRIUS_IR=3 (was 60).
@@ -93,6 +96,10 @@
 #        (pass 1 left the struct's id under the vector's definition; both sides read the same)
 #   j. the `_dsg_async_check(...)` call removed                      -> 2 red: the async pair
 #   k. `_async_ctor_entry` without its `_fn_redirect`                -> 1 red: async_ctor (139)
+#   l. `_sptr_params_localize` writing the copy record for a redefined fn (the s-ret x s-redef
+#        integration, measured on the merged tree)                 -> 4 red: the .tcyr on every
+#        backend (rd_kv_check 501, want 32: the tail call kept its `jmp` while the `*T` body held
+#        the caller's `&s`; rd_kp_check 72, want 71: an over-divert)
 #   pre-fix tree (src/ of the 6.6.20 slot open, e696746d)            -> 31 red, 1 green (the green
 #        is sig_same_vec_pe, a compile-only anti-vacuous row)
 set -u
