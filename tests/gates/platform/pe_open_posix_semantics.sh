@@ -66,7 +66,7 @@
 # ledger rows.
 #
 # 6.6.11 — THE PATH IS OPENED UNDER ITS OWN NAME (items I1/I2). EOPEN_PE and the other six
-# narrow-path reroutes (ECREATEDIR_PE, EDELETEF_PE, EDELETEFILEW_PE, EREMOVEDIRW_PE, and
+# narrow-path reroutes (ECREATEDIR_PE, EDELETEF_PE x2 — 0xF035 shares it since 6.6.20 —, EREMOVEDIRW_PE, and
 # EMOVEFILEEX_PE's two paths) widened UTF-8 one BYTE per UTF-16 unit and stopped at 260 units with
 # a forced NUL: `café.txt` failed to open, and a 288-byte relative O_CREAT open returned a VALID
 # handle for the name cut to 260 units (wine, measured at 6.6.10) — a silent write to the wrong

@@ -539,7 +539,7 @@ fn _pe_deletef_get(): i64 { return _pe_deletef_idx; }
 # `xrmdir` degraded to -1 on PE with no reroute wired, so Windows leaked one empty
 # directory per invocation while POSIX stopped at 6.6.6. kernel32!RemoveDirectoryW
 # (LPCWSTR->rcx) has DeleteFileW's exact signature and BOOL return, so EREMOVEDIRW_PE
-# is EDELETEFILEW_PE with a different import. CHANGELOG [6.6.6].
+# is EDELETEF_PE with a different import. CHANGELOG [6.6.6].
 var _pe_removedir_ready   = 0;
 var _pe_removedir_idx     = 0;
 fn _pe_ensure_removedir(S): i64 {

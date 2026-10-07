@@ -2,7 +2,7 @@
 # found them.
 #
 # ⛔ THE DEFECT. Win64 makes rsi and rdi NONVOLATILE: a callee must return them unchanged. The
-# path reroutes (EOPEN_PE, ECREATEDIR_PE, EDELETEF_PE, EDELETEFILEW_PE, EREMOVEDIRW_PE,
+# path reroutes (EOPEN_PE, ECREATEDIR_PE, EDELETEF_PE for unlink 87 and 0xF035, EREMOVEDIRW_PE,
 # EMOVEFILEEX_PE, and FindFirstFileW / GetFileAttributesW through `_pe_path_call1`) widen the path
 # in `_pe_widen_path`, which works in rsi (the UTF-8 source) and rdi (the wide result) — and
 # `_pe_path_frame` / `_pe_path_unframe` saved and restored rsp and rbx only, while the PE fn

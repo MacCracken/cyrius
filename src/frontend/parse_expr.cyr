@@ -2805,9 +2805,10 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
             }
             # v6.4.58: 0xF035 DeleteFileW(path) (1-arg → argc 2) — the Windows temp
             # cleanup for lib/io.cyr's xunlink / file_write_atomic on-failure unlink.
+            # 6.6.20: the same emitter as unlink (87); EDELETEFILEW_PE was its byte-for-byte copy.
             if (sc_num == 61493) {
                 if (argc == 2) {
-                    EDELETEFILEW_PE(S);
+                    EDELETEF_PE(S);
                     _cfo = 0;
                     return 0;
                 }
