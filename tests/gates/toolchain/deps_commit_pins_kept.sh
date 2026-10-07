@@ -19,6 +19,8 @@
 # fresh line supersedes — and SORTS the block. An inherited line is superseded only by a fresh
 # line with its (name, git, tag): the key `_lock_commit_lookup` reads a pin by, the git url
 # normalised the same way (`…/x` = `…/x.git`), so a respelled url still replaces its line (K14).
+# A different repository at the same tag does NOT: a fork's v1 line leaves the origin's v1 line
+# in place, so moving back to the origin and finding its v1 repointed is refused (K17).
 # NOT by the name alone. The first cut keyed on the name, and review measured the hole: in a
 # diamond, a gated root `x@v2` and a required dep's own `x@v1` share the name, the feature-less
 # resolve pinned x@v1 and dropped x@v2's pin, and a repointed v2 on a fresh cache was then
@@ -66,17 +68,25 @@
 #       fresh cache is still REFUSED by name (the lookup read a 64 KB window and said "no pin")
 #   K16 the same lock re-resolved keeps all 1006 lines, and the summary's `N commit-pinned`
 #       counts the 6 deps by name, not the lines (it printed 1006 for 6 deps)
+#   K17 a fork at the same tag: fx pinned from its origin at v1, the manifest moved to a fork
+#       that also tags v1 (cache cleared). K17a: the lock keeps BOTH v1 lines; K17b: moved back,
+#       the origin's v1 repointed + fresh cache → REFUSED by name, lock and lib untouched
 #
-# Mutation ledger (measured in a scratch root, one mutant at a time): the slot-open (6.6.20) CLI
-# → every axis but K1 red; the first cut, which dropped an inherited line by NAME (61c88ca3) →
-# K8 K12a K12b K13 K14 red; carrying every inherited line (the fresh-line check always 0) → K2
-# K3 K8 K12a K13 K14 red (a duplicate line per re-verified dep); comparing the git field
-# byte-for-byte instead of url-normalised → K14 red; no sort → K13 red; dropping the CR strip in
-# _lock_commit_lookup → K10 red; dropping the one in cmd_deps_verify → K11 red; restoring the
-# 64 KB read window (`var cap = 65536;`) in _lock_commit_lookup → K15 red; counting lines in
-# the summary → K16 red. A repoint must
-# make a NEW commit: the second repoint of one origin used to be an empty `git commit`, the tag
-# never moved, and the CRLF axis passed nothing (caught while measuring this ledger).
+# Mutation ledger (measured with this file, one mutant of cbt/deps.cyr at a time; the tip is
+# 20/20 green):
+#   slot-open (6.6.20) CLI ............................ every axis but K1 red
+#   first cut, inherited line dropped by NAME (61c88ca3) K8 K12a K12b K13 K14 K15 K16 K17a K17b
+#   carry every inherited line (fresh check always 0) . K2 K3 K8 K12a K13 K14, K15 K16 knock-on
+#   git field compared byte-for-byte, not normalised .. K14, K15 K16 knock-on (K14's duplicate)
+#   drop key ignores git (`return 1` for the url test)  K17a K17b
+#   no sort ........................................... K13 K16 (the dep count reads adjacency)
+#   no CR strip in _lock_commit_lookup ................ K10
+#   no CR strip in cmd_deps_verify .................... K11
+#   64 KB read window in _lock_commit_lookup .......... K15
+#   summary counts lines, not deps .................... K16
+# "Knock-on" axes go red because an earlier axis left a duplicate line in the shared project.
+# A repoint must make a NEW commit: the second repoint of one origin used to be an empty `git
+# commit`, the tag never moved, and the CRLF axis passed nothing (caught while measuring).
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
 G=deps_commit_pins_kept
@@ -360,6 +370,44 @@ na=$(tr -d '\r' < "$P/cyrius.lock" | awk -F"$TAB" '$1 == "commit" && $3 == "alph
 if [ "$rc" -eq 0 ] && [ "$na" -eq 1000 ] && [ "$(npins)" -eq 1006 ] && grep -q '^cyrius.lock: .*, 6 commit-pinned$' "$W/k16.out"; then
     ok "K16 1006 pin lines kept, the summary says 6 commit-pinned (deps, not lines)"
 else bad "K16 (rc=$rc, $na alpha lines, $(npins) pins): $(grep -m1 'cyrius.lock' "$W/k16.out")"; fi
+
+# ── K17: the drop key includes GIT — a fork at the same tag keeps the origin's line ─────────
+#    fx is pinned from its origin at v1, then the manifest moves to a fork that also tags v1
+#    (cache cleared) and back. A drop key of (name, tag) alone let the fork's fresh line
+#    replace the origin's, and a repointed origin v1 was then vendored and re-pinned at exit 0.
+mkorigin fx ""
+mkdir -p "$W/fork/fx/dist" && printf 'fn fx_f(): i64 { return 7; }\n' > "$W/fork/fx/dist/fx.cyr" \
+  && ( cd "$W/fork/fx" && git init -q . && git add -A && git commit -qm fork && git tag v1 ) || bad "K17 setup: cannot build the fork"
+fxa=$(git -C "$W/o/fx" rev-parse 'v1^{commit}'); fxb=$(git -C "$W/fork/fx" rev-parse 'v1^{commit}')
+P="$W/p5"; mkdir -p "$P"
+cat > "$P/cyrius.cyml" <<EOF
+[package]
+name = "pinsf"
+version = "0.0.1"
+language = "cyrius"
+cyrius = "$V"
+
+[build]
+src = "main.cyr"
+output = "out"
+
+[deps.fx]
+git = "file://$W/o/fx"
+tag = "v1"
+modules = ["dist/fx.cyr"]
+EOF
+cp "$P0/main.cyr" "$P/main.cyr"
+pin_git() { tr -d '\r' < "$P/cyrius.lock" | awk -F"$TAB" -v n="$1" -v g="$2" -v t="$3" '$1 == "commit" && $3 == n && $4 == g && $5 == t { print $2 }'; }
+rc=0; if _cy deps > "$W/k17.out" 2>&1; then rc=0; else rc=$?; fi
+[ "$rc" -eq 0 ] && [ "$(pin_git fx "file://$W/o/fx" v1)" = "$fxa" ] || bad "K17 setup (rc=$rc): fx not pinned from its origin: $(grep -m2 -i 'error\|refus' "$W/k17.out")"
+sed -i "s|^git = \"file://$W/o/fx\"\$|git = \"file://$W/fork/fx\"|" "$P/cyrius.cyml"; rm -rf "$H/deps/fx"
+rc=0; if _cy deps > "$W/k17a.out" 2>&1; then rc=0; else rc=$?; fi
+if [ "$rc" -eq 0 ] && [ "$(pin_git fx "file://$W/o/fx" v1)" = "$fxa" ] && [ "$(pin_git fx "file://$W/fork/fx" v1)" = "$fxb" ] && [ "$(npins)" -eq 2 ]; then
+    ok "K17a fork at the same tag: pinned the fork's v1 and KEPT the origin's v1 line"
+else bad "K17a (rc=$rc, $(npins) pins: $(tr -d '\r' < "$P/cyrius.lock" | grep "^commit" | cut -f3,4,5 | tr '\n' ' ')): $(grep -m2 -i 'error\|refus' "$W/k17a.out")"; fi
+sed -i "s|^git = \"file://$W/fork/fx\"\$|git = \"file://$W/o/fx\"|" "$P/cyrius.cyml"
+grep -q "o/fx\"" "$P/cyrius.cyml" || bad "K17 setup: the url was not switched back"
+refused K17b fx
 
 echo "$G: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
