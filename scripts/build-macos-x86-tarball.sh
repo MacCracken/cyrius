@@ -80,7 +80,9 @@ cp VERSION LICENSE "$WORK/$STAGE/"
 # <install-root>/programs/cyrius-init-templates by the cyrius-init binary.
 mkdir -p "$WORK/$STAGE/programs"
 cp -r programs/cyrius-init-templates "$WORK/$STAGE/programs/"
-[ -f scripts/macos-x86-README.md ] && cp scripts/macos-x86-README.md "$WORK/$STAGE/README.md"
+# No README: this line used to copy scripts/macos-x86-README.md, a file that never existed, so
+# it silently copied nothing (scripts/macos-arm64-README.md is Apple-Silicon-specific).
+# tests/gates/toolchain/tarball_inputs_exist.sh refuses such a line. CHANGELOG [6.6.20]
 
 mkdir -p "$OUT_DIR"
 ( cd "$WORK" && tar czf "$STAGE.tar.gz" "$STAGE" && sha256sum "$STAGE.tar.gz" > "$STAGE.tar.gz.sha256" )

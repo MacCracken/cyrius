@@ -235,22 +235,33 @@ fi
 # already holding it answered the probe while s_server died on its bind, and the rows then ran
 # against a stranger (a flake that read as a TLS verdict). SERVE_FIRST_PORT forces the first port
 # tried (the S0 self-check below occupies one on purpose).
+# ⛔ 6.6.20 — EVERY ATTEMPT READS ITS OWN, FRESH LOG. Every serve wrote ONE `$T/sv.log`, and the
+# `>` truncation runs in the backgrounded child, so the parent's readiness grep could run before it
+# and read the PREVIOUS server's ACCEPT: serve returned on a port nothing listened on yet (or, in
+# S0, the held one). Each attempt now gets a name no earlier attempt used (SERVE_N) and the parent
+# creates it empty before launching. Pinned by tests/gates/concurrency/tls_serve_fresh_log.sh.
+# CHANGELOG [6.6.20]
 PORT=0
 SERVE_FIRST_PORT=
+SERVE_N=0
+SV_LOG=
 serve() {
     c=$1; shift
     tries=0
     while [ $tries -lt 5 ]; do
         if [ -n "$SERVE_FIRST_PORT" ]; then PORT=$SERVE_FIRST_PORT; SERVE_FIRST_PORT=
         else PORT=$((20000 + $(od -An -N2 -tu2 /dev/urandom | tr -d ' ') % 20000)); fi
+        SERVE_N=$((SERVE_N + 1))
+        SV_LOG="$T/sv.$SERVE_N.$PORT.log"
+        : > "$SV_LOG"
         openssl s_server -accept "127.0.0.1:$PORT" -cert "$T/$c.crt" -key "$T/$c.key" -www "$@" \
-            > "$T/sv.log" 2>&1 < /dev/null &
+            > "$SV_LOG" 2>&1 < /dev/null &
         SP=$!
-        if _serve_ready "$SP" "$T/sv.log"; then return 0; fi
+        if _serve_ready "$SP" "$SV_LOG"; then return 0; fi
         kill "$SP" 2>/dev/null || true; wait "$SP" 2>/dev/null || true; SP=0
         tries=$((tries + 1))
     done
-    echo "FAIL: $G: s_server for leaf '$c' never reached ACCEPT (5 ports tried)"; tail -3 "$T/sv.log"; exit 1
+    echo "FAIL: $G: s_server for leaf '$c' never reached ACCEPT (5 ports tried)"; tail -3 "$SV_LOG"; exit 1
 }
 # _serve_ready <pid> <log>: 0 once <log> holds s_server's ACCEPT line; 1 when the process ends
 # first (its bind failed) or 10 s pass.

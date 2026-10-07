@@ -1,3 +1,9 @@
+# ARCHIVED 6.6.20 (was tests/repro_parser_overflow.cyr). Wired to no gate since it was
+# written, and not a regression test at this size: 58 lines standing in for a ~12K-line
+# expanded source (shravan + an AAC-LC decoder) that tripped cc3 3.3.12. It compiles clean
+# and checks nothing the corpus does not; large-source coverage lives in
+# tests/tcyr/compiler/large_source.tcyr and large_input.tcyr. Kept as history only.
+#
 # Reproducer: cc3 3.3.12 parser overflow with large codebase
 # Bug: adding ~300 lines of new code to a ~12K-line expanded source
 # causes "expected ')', got identifier 'F'" on an unrelated line.

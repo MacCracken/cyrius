@@ -48,8 +48,11 @@ SAVED=$(( SP - SD ))
 [ "$SAVED" -ge 16384 ] || { echo "FAIL dce_eliminates axis1: only $SAVED bytes reclaimed (expected >=16384; measured 36,864)"; exit 1; }
 
 # ── axis 2 — THE REAL ASSERTION: the eliminated compiler WORKS and is byte-exact ─────────
-"$T/dce" < "$R/src/main.cyr" > "$T/dceout" 2>"$T/e3"
-rc=$?
+# Exit statuses are captured with `|| rc=$?`, never `cmd; rc=$?`: under `bash -eo pipefail`
+# (how CLAUDE.md says gates must also pass) a non-zero `cmd` ends the gate right there — the
+# axis-3 probe exits 7 BY DESIGN, so this gate exited 7 silently under bash. CHANGELOG [6.6.20]
+rc=0
+"$T/dce" < "$R/src/main.cyr" > "$T/dceout" 2>"$T/e3" || rc=$?
 [ $rc -eq 0 ] || {
   echo "FAIL dce_eliminates axis2: the eliminated cycc cannot compile (rc=$rc)."
   echo "  rc=139 -> a position table was moved without being repaired."
@@ -84,13 +87,13 @@ fn main(): i64 {
 var e = main();
 EOF
 "$T/stage1" < "$T/a3.cyr" > "$T/a3p" 2>/dev/null || { echo "SKIP dce_eliminates axis3: float probe needs fmt_float"; exit 77; }
-chmod +x "$T/a3p"; "$T/a3p" >/dev/null 2>&1; want=$?
+chmod +x "$T/a3p"; want=0; "$T/a3p" >/dev/null 2>&1 || want=$?
 CYRIUS_DCE=1 "$T/stage1" < "$T/a3.cyr" > "$T/a3d" 2>"$T/a3.err" || {
   echo "FAIL dce_eliminates axis3: a float-formatting program stopped compiling under DCE."
   echo "  If the message names a corrupted body, the audit is firing on a DECODER gap rather"
   echo "  than on real corruption — it must be baseline-relative."
   grep -m2 -a 'error' "$T/a3.err" | sed 's/^/    /'; exit 1; }
-chmod +x "$T/a3d"; "$T/a3d" >/dev/null 2>&1; got=$?
+chmod +x "$T/a3d"; got=0; "$T/a3d" >/dev/null 2>&1 || got=$?
 [ "$got" -eq "$want" ] || { echo "FAIL dce_eliminates axis3: float probe gave $got under DCE, $want without"; exit 1; }
 
 # ── axis 4 — ANTI-VACUOUS: the DEFAULT path is untouched ─────────────────────────────────

@@ -113,17 +113,15 @@ _co_reap_stale() {
   esac
 }
 
-# Cross-OS LIB-TEST fallback (v6.0.75) — INTERIM mechanism, the trigger is
-# opt-in so normal self-host runs stay lean. Arg 2 (or $CYRIUS_CROSS_OS_LIBTEST)
-# is a glob; when set, AFTER the cycc self-host passes on this host, the
-# slot's matching `tests/tcyr/<glob>*.tcyr` are compiled by the freshly-built
-# NATIVE host cycc and run on real hardware — catching stdlib breakage (a
-# syscall the target doesn't translate, an ABI/byte-order bug) BEFORE CI/ports.
-# It bundles from THIS repo + scp's, so it does NOT depend on the host having a
-# current checkout. FALLBACK, not the gate: CI still runs the full matrix; this
-# is "catch before CI if possible" (user 2026-06-06). A better mechanism (per-
-# platform test manifests, a PE-safe subset for cass since fork/socketpair are
-# POSIX-only) is TODO. Fail-loud: a lib-test failure exits 1.
+# Cross-OS LIB-TEST (v6.0.75; a STANDING release gate since v6.3.43 — release-gate.sh step 4
+# passes "crossos"). Arg 2 (or $CYRIUS_CROSS_OS_LIBTEST) is a SUBDIRECTORY of tests/tcyr
+# (v6.5.11; it was a filename prefix, `vr01_`): AFTER the cycc self-host passes on this host,
+# every `tests/tcyr/<subdir>/**.tcyr` is compiled by the freshly-built NATIVE host cycc and run
+# on the real hardware — catching stdlib breakage (a syscall the target does not translate, an
+# ABI/byte-order bug) that no Linux run can see. tests/tcyr/crossos/ is the curated cross-host
+# subset (cass's PE leg included); CYRIUS_CROSS_OS_FULL=1 runs the whole corpus. It bundles from
+# THIS repo + scp's, so it does NOT depend on the host having a current checkout. Fail-loud: a
+# lib-test failure, a missing subdir, or a remote that ran a different count exits 1.
 LIBTEST="${2:-${CYRIUS_CROSS_OS_LIBTEST:-}}"
 
 # The ssh-config alias for this job (ecb-install reuses the ecb host).
@@ -281,12 +279,17 @@ case "$HOST" in
     cat src/main_x86_macho.cyr | CYRIUS_MACHO=1 "$CO_TMP"/_co_l > "$CO_TMP"/_co_mx
     _co_reap_stale ach
     ssh $SSHO ach "rm -rf ~/$RD && mkdir ~/$RD"
-    scp -q $SSHO "$CO_TMP"/_co.tgz "$CO_TMP"/_co_mx "$CO_TMP"/_co_cxt.cyx "ach:~/$RD/"
+    scp -q $SSHO "$CO_TMP"/_co.tgz "$CO_TMP"/_co_mx "$CO_TMP"/_co_cx.cyx "$CO_TMP"/_co_cx.cyr "$CO_TMP"/_co_cxt.cyx "ach:~/$RD/"
     # NO codesign (see header — unsigned x86_64 Mach-O runs on Intel 13.7.8).
     # Self-host twice + cmp, then the v6.0.37 exit-code-propagation guard
     # (fn main(){return 42;} must exit 42 — catches the rot-class where main()
     # is never called and the program exits with argc), mirroring the ecb leg.
     # Without the guard a byte-identical-but-broken cycc could self-host green.
+    # Then the same cx legs as ecb / pi / cass: a NATIVE x86 Mach-O cxvm runs the portable
+    # .cyx I/O fixture (exit 42 — the guest's write() went through EMACHO_SYSXLAT's x86 rows)
+    # and the thread fixture (255), and the native cycc_cx (src/main_cx.cyr — the x86-macOS
+    # tarball ships it) compiles _co_cx.cyr to a .cyx the same cxvm runs to 42. Until 6.6.20
+    # this leg ran the thread fixture only — the one-host-missed shape. CHANGELOG [6.6.20]
     ssh $SSHO ach "cd ~/$RD && "'tar xzf _co.tgz && chmod +x _co_mx \
       && cat src/main_x86_macho.cyr | ./_co_mx > r1 && chmod +x r1 \
       && cat src/main_x86_macho.cyr | ./r1 > r2 \
@@ -295,7 +298,11 @@ case "$HOST" in
       && cat _ec.cyr | ./r1 > _ec && chmod +x _ec \
       && (_rc=0; ./_ec || _rc=$?; [ $_rc -eq 42 ]) \
       && cat programs/cxvm.cyr | ./r1 > cxvm && chmod +x cxvm \
-      && (_ctrc=0; ./cxvm < _co_cxt.cyx > /dev/null || _ctrc=$?; [ $_ctrc -eq 255 ])'
+      && (_cxrc=0; ./cxvm < _co_cx.cyx > /dev/null || _cxrc=$?; [ $_cxrc -eq 42 ]) \
+      && (_ctrc=0; ./cxvm < _co_cxt.cyx > /dev/null || _ctrc=$?; [ $_ctrc -eq 255 ]) \
+      && cat src/main_cx.cyr | ./r1 > cycc_cx && chmod +x cycc_cx \
+      && cat _co_cx.cyr | ./cycc_cx > _nat.cyx \
+      && (_nrc=0; ./cxvm < _nat.cyx > /dev/null || _nrc=$?; [ $_nrc -eq 42 ])'
     # 6.6.11 B08: the cx thread fixture (see its build above) — this leg had no cxvm at all.
     # Here, as on ecb, a futex lib/thread.cyr lets through on cx kills cxvm with SIGSYS (140).
     # 6.6.11 (J6), as on ecb — a CLI child sees the user's environment. `load_environ` opened
@@ -539,11 +546,12 @@ esac
 
 echo "SELFHOST_OK: $HOST"
 
-# ---- LIB-TEST fallback phase (v6.0.75; opt-in) -------------------------------
-# After self-host, compile + run the slot's matching tests/tcyr/<glob>*.tcyr
-# with the NATIVE host cycc just built (ecb=r1r codesigned / ach,pi=r1 /
-# cass=c2.exe), on real hardware. Glob is expanded LOCALLY (avoids host-side
-# globbing, esp. cmd.exe). Fail-loud. ecb-install has no native cycc → skipped.
+# ---- LIB-TEST phase (v6.0.75; release-gate step 4 since v6.3.43) ---------------
+# After self-host, compile + run every tests/tcyr/<subdir>/**.tcyr with the NATIVE
+# host cycc just built (ecb=r1r codesigned / ach,pi=r1 / cass=c2.exe), on real
+# hardware. The selection is made LOCALLY (no host-side globbing, esp. cmd.exe) and
+# the remote's ran-count is checked against it. Fail-loud. ecb-install has no native
+# cycc → skipped.
 if [ -n "$LIBTEST" ]; then
   case "$HOST" in
     ecb|ach|pi|cass) ;;

@@ -197,7 +197,8 @@ for fn in xmkdir xsymlink xreadlink xlink; do
 done
 
 # ── AXIS 4c: the DARWIN divergences, every one of which was found by RUNNING
-# vr01_syscall_wrappers.tcyr on ecb/ach and none of which the host suite can see. A
+# tests/tcyr/crossos/syscall_wrappers.tcyr (then vr01_syscall_wrappers.tcyr) on ecb/ach and
+# none of which the host suite can see. A
 # missing Mach-O route does not fail — it SIGSYSes the process (128+12), and a Linux-valued
 # AT_* flag does not fail either, it just returns EINVAL forever.
 echo "axis 4c — Darwin routes + AT_* flags (found-by-ports class; host-invisible):"
