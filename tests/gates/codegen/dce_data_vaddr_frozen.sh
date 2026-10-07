@@ -40,6 +40,19 @@
 # the sankhya segfault.
 #
 # See docs/development/issues/sankhya-dce-bench-segfault.md
+#
+# 6.6.20 — THE FREEZE IS A W^X-ONLY FIX (rows 6-7). Two layouts have no gap to freeze into: a
+# `kernel;` image (ELF32 multiboot and CYRIUS_ELF64_KERNEL=1) and CYRIUS_WX=0 (one RWX PT_LOAD)
+# put .bss/.rodata DIRECTLY after the code, from the post-compaction cp. Under CYRIUS_DCE=1 both
+# compacted, so the data moved down under every address FIXUP had already patched in. Measured
+# at 6.6.19: a 60-dead-fn probe built CYRIUS_DCE=1 CYRIUS_WX=0 died rc 139 (each flag alone: rc
+# 42); a `kernel;` probe moved .bss 0x100418 -> 0x100100 while the code still stored to
+# 0x100418 — past the image, so a kernel scribbles memory instead of faulting. The fix declines
+# compaction for both (runtime.cyr _dce_compact_why) and names it in the unreachable-fns note.
+#   Row 6 RUNS the WX=0 binary (old compiler: rc 139, no output). Row 7 cannot run a kernel, so
+#   it DECODES one: the .bss and .rodata vaddrs readelf reports must each occur as an imm64
+#   inside .text (old compiler: neither does, on ELF32 or ELF64). Both rows also pin the
+#   decline note, and row 6's anti-vacuous half proves the probe really compacts under W^X.
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -87,4 +100,54 @@ VN=$(readelf -lW "$WORK/n.bin" 2>/dev/null | awk '/LOAD/ && /RW/ {print $3}')
 [ -n "$VD" ] || fail "could not read the DCE build's RW segment vaddr"
 [ "$VD" = "$VN" ] || fail "RW vaddr moved under DCE: $VN -> $VD"
 
-echo "PASS: dce_data_vaddr_frozen (both backends record+consume in order; DCE build runs, RW vaddr $VD stable)"
+# 6. CYRIUS_WX=0: one RWX segment, data right after the code — compaction must decline, and
+#    the binary must RUN. 60 dead fns, two globals and a string, so the data has somewhere to go.
+awk 'BEGIN { for (i = 0; i < 60; i++) printf "fn dead%d(x): i64 { var a = x * %d; var b = a + 7; var c = b * b; return c - a + %d; }\n", i, i + 3, i * 1000 + 7;
+             print "var G = 40;"; print "var H = 2;";
+             print "fn main(): i64 { syscall(1, 1, \"data-ok\\n\", 8); G = G + H; return G; }";
+             print "var rc = main();"; print "syscall(60, rc);" }' > "$WORK/w.cyr"
+CYRIUS_DCE=1 "$CC" < "$WORK/w.cyr" > "$WORK/w_wx.bin" 2> "$WORK/w_wx.err" || fail "row 6: W^X DCE build failed"
+grep -q 'dead code eliminated' "$WORK/w_wx.err" \
+    || fail "row 6: the probe no longer compacts under W^X, so its WX=0 half proves nothing: $(cat "$WORK/w_wx.err")"
+CYRIUS_DCE=1 CYRIUS_WX=0 "$CC" < "$WORK/w.cyr" > "$WORK/w0.bin" 2> "$WORK/w0.err" || fail "row 6: CYRIUS_WX=0 DCE build failed"
+chmod +x "$WORK/w0.bin"
+WRC=0
+"$WORK/w0.bin" > "$WORK/w0.out" || WRC=$?
+WOUT=$(tr -d '\000' < "$WORK/w0.out")
+[ "$WRC" = 42 ] && [ "$WOUT" = "data-ok" ] \
+    || fail "row 6: a CYRIUS_DCE=1 CYRIUS_WX=0 binary exits $WRC with output '$WOUT' (want 42, 'data-ok') — compaction moved the data under the patched addresses"
+grep -q 'compaction declined on x86_64 ELF (CYRIUS_WX=0): the single RWX segment' "$WORK/w0.err" \
+    || fail "row 6: the CYRIUS_WX=0 decline is not named in the unreachable-fns note: $(cat "$WORK/w0.err")"
+if grep -q 'dead code eliminated' "$WORK/w0.err"; then fail "row 6: CYRIUS_WX=0 still compacts: $(cat "$WORK/w0.err")"; fi
+
+# 7. `kernel;` (ELF32 multiboot, and CYRIUS_ELF64_KERNEL=1): data right after the code, no way to
+#    run it here — so decode it. Every section vaddr the image claims for its data must be an
+#    imm64 the code actually uses.
+sect() {  # sect <bin> <name> -> "addr off size" (hex, no 0x)
+    readelf -SW "$1" 2>/dev/null | awk -v n="$2" '{ for (i = 1; i <= NF; i++) if ($i == n) { print $(i + 2), $(i + 3), $(i + 4); exit } }'
+}
+imm_in_text() {  # imm_in_text <bin> <hex vaddr> — the 8-byte little-endian imm64 occurs in .text
+    set -- "$1" "$2" $(sect "$1" .text)
+    [ -n "${5:-}" ] || return 1
+    want=$(printf '%016x' $((0x$2)) | sed 's/../& /g' | awk '{ for (i = NF; i >= 1; i--) printf " %s", $i; printf " " }')
+    od -An -tx1 -v -j $((0x$4)) -N $((0x$5)) "$1" | tr '\n' ' ' | tr -s ' ' | grep -qF "$want"
+}
+{ echo 'kernel;'
+  awk 'BEGIN { for (i = 0; i < 6; i++) printf "fn dead%d(x): i64 { var a = x * %d; var b = a + 7; var c = b * b; return c - a + %d; }\n", i, i + 3, i * 1000 + 7 }'
+  printf 'var G = 40;\nfn main(): i64 { var s = "kdata"; G = G + load8(s); return G; }\nmain();\n'
+} > "$WORK/k.cyr"
+for KE in KERNEL32=1 CYRIUS_ELF64_KERNEL=1; do
+    for D in 0 1; do
+        env "$KE" CYRIUS_DCE=$D "$CC" < "$WORK/k.cyr" > "$WORK/k.bin" 2> "$WORK/k.err" || fail "row 7 ($KE DCE=$D): kernel build failed: $(tail -1 "$WORK/k.err")"
+        for SN in .bss .rodata; do
+            SA=$(sect "$WORK/k.bin" "$SN" | cut -d' ' -f1)
+            [ -n "$SA" ] || fail "row 7 ($KE DCE=$D): no $SN section in the kernel image"
+            imm_in_text "$WORK/k.bin" "$SA" \
+                || fail "row 7 ($KE DCE=$D): $SN is at 0x$SA but no code addresses it — the data moved after the addresses were patched in (CYRIUS_DCE=1 compacted a kernel image)"
+        done
+    done
+    grep -q 'compaction declined on x86_64 ELF (kernel;): a kernel image' "$WORK/k.err" \
+        || fail "row 7 ($KE): the kernel decline is not named in the unreachable-fns note: $(cat "$WORK/k.err")"
+done
+
+echo "PASS: dce_data_vaddr_frozen (both backends record+consume in order; DCE build runs, RW vaddr $VD stable; CYRIUS_WX=0 and kernel; decline compaction and keep data where the code addresses it)"

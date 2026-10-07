@@ -107,6 +107,9 @@ fn _wx_data_vaddr(S, entry, cp): i64 {
 # lands on the pre-DCE 2 MB boundary and the gap is unmapped, exactly as the W^X note
 # above already describes. p_vaddr = p_offset (mod 0x1000) still holds: dbase is
 # 2 MB-aligned and data_foff is 4 KB-aligned, so both are 0 mod 0x1000.
+# ⚠ The freeze covers the W^X layout only. A kernel image and CYRIUS_WX=0 place data right after
+# the code, with no gap to freeze into, so `_dce_compact_why` (runtime.cyr) declines compaction
+# for both. CHANGELOG [6.6.20]
 var _wx_dbase_frozen = 0;
 
 fn FIXUP(S): i64 {
