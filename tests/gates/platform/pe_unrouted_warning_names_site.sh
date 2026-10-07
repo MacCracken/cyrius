@@ -32,5 +32,38 @@ w=$(grep -o 'warning:sub.cyr' "$D/m.err" | wc -l)
 l=$(grep -c '^warning:sub.cyr' "$D/m.err")
 [ "$w" = 2 ] && [ "$l" = 2 ] || bad "$w site warnings, $l at a line start — want 2 and 2"
 
+# 6.6.20: munmap (11) at argc 3 is ROUTED (kernel32!VirtualFree, EMUNMAP_PE) — the note lists it
+# and a literal call draws NO warning. Before 6.6.20 it was unrouted: every PE build of
+# lib/freelist.cyr warned at both munmap sites and the call returned -38, leaking the mapping.
+# The negative row is what catches a lost LITERAL arm (`_PE_ROUTE_FLUSH`): the unrouted-literal
+# fallback runs the runtime switch, which routes 11 too, so behaviour alone cannot see it.
+grep '^  note: CYRIUS_TARGET_WIN=1 routes' "$D/m.err" | grep -q 'n=0,1,2,3,8,9,11,35,' \
+    || bad "the routed-number note does not list 11 (munmap)"
+printf 'fn u(p): i64 { return syscall(11, p, 4096); }\nvar r = u(0);\nsyscall(60, 0);\n' > "$D/mu.cyr"
+( cd "$D" && CYRIUS_TARGET_WIN=1 "$CC" < mu.cyr > mu.exe 2> mu.err ) || bad "PE compile of the munmap probe failed:"
+[ -s "$D/mu.exe" ] || bad "PE compile of the munmap probe produced no binary"
+if grep -q 'syscall 11 with' "$D/mu.err"; then
+    bad "a literal syscall(11, p, len) still warns as unrouted on PE:"; head -c 300 "$D/mu.err"; echo
+fi
+
+# 6.6.20: the PE COMPILER's own build warns only where a call is really unrouted. Built with
+# install.sh's cycc_win recipe (src/main_win.cyr through `CYRIUS_TARGET_WIN=1 build/cycc`); the
+# warnings are the source's, so the tarball's two-step build prints the same ones. runtime.cyr's
+# CYRIUS_SYMS openat shim is the `SYS_OPEN != 2` arm, dead in a PE compiler (main_win.cyr:
+# SYS_OPEN = 2), and is compiled out under CYRIUS_TARGET_WIN; lex_pp.cyr's munmap of its 24 MB
+# preprocessor buffer is routed (VirtualFree) and now frees it. Before 6.6.20 both warned in
+# every PE compiler build. Built once per run: a row that already made "$D/cycc_win" and its
+# stderr "$D/cw.err" is reused.
+if [ ! -s "$D/cycc_win" ]; then
+    ( cd "$ROOT" && CYRIUS_TARGET_WIN=1 "$CC" < src/main_win.cyr > "$D/cycc_win" 2> "$D/cw.err" ) \
+        || bad "the PE compiler (CYRIUS_TARGET_WIN=1, src/main_win.cyr) did not build:"
+fi
+[ -s "$D/cycc_win" ] || bad "the PE compiler build produced no binary"
+for f in runtime.cyr lex_pp.cyr; do
+    if grep -q "^warning:src/[a-z/]*/$f:[0-9]*:[0-9]*: syscall [0-9]* with [0-9]* argument(s) is not routed" "$D/cw.err"; then
+        bad "the PE compiler build still warns an unrouted syscall in $f:"; grep "/$f:" "$D/cw.err" | head -c 300; echo
+    fi
+done
+
 [ "$fail" = 0 ] || exit 1
-echo "PASS: PE unrouted-syscall warning names n, its arity and <file>:<line>:<col>; the routed list is one note (6.6.10)"
+echo "PASS: PE unrouted-syscall warning names n, its arity and <file>:<line>:<col>; the routed list is one note (6.6.10); a literal munmap is routed, unwarned, and the PE compiler build warns at neither runtime.cyr nor lex_pp.cyr (6.6.20)"

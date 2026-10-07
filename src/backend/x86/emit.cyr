@@ -164,27 +164,14 @@ fn EPOPR(S): i64 {
     return 0;
 }
 
-# Expression spill: identical to push/pop
+# Expression spill: identical to push/pop. 6.6.20 — DELEGATES, as the aarch64 and cx backends
+# already did: x86 carried ESPILL / EUNSPILL as verbatim copies of EPUSHR / EPOPR, and 6.6.5 had to
+# add `_xdepth` to each copy by hand. Every frontend spill site (parse_expr.cyr) is unchanged.
+# CHANGELOG [6.6.20]
 var _INLINE_OK = 0;
 var _LOOPVAR_OK = 0;  # loop var r12 caching disabled (caused 2x regression + stack corruption)
-fn ESPILL(S): i64 { _xdepth = _xdepth + 1; if (_IR_REC0(S, IR_PUSH) == 1) { return 0; } EB(S, 0x50); _last_push_cp = GCP(S); return 0; }
-fn EUNSPILL(S): i64 {
-    _xdepth = _xdepth - 1;
-    if (_IR_REC0(S, IR_POP_RAX) == 1) { return 0; }
-    if (GCP(S) == _last_push_cp) {
-        # v5.6.9: adjacent push+pop = no-op. Rewind past the push.
-        SCP(S, GCP(S) - 1);
-        _last_push_cp = 0 - 1;
-        return 0;
-    }
-    # v5.6.10: same EMOVCA-follow detection as EPOPR.
-    var after_movca = 0;
-    if (GCP(S) == _last_emovca_cp) { after_movca = 1; }
-    EB(S, 0x58);
-    if (after_movca == 1) { _last_movca_popr_cp = GCP(S); }
-    _flags_reflect_rax = 0;
-    return 0;
-}
+fn ESPILL(S): i64 { EPUSHR(S); return 0; }
+fn EUNSPILL(S): i64 { EPOPR(S); return 0; }
 fn EMOVCA(S): i64 { if (_IR_REC0(S, IR_MOV_CA) == 1) { return 0; } E3(S, 0xC18948); _last_emovca_cp = GCP(S); return 0; }
 # v5.7.9: deleted the imm8-form `EADDIMM_X1(S, imm)` that lived
 # here. It was a silent name collision with the imm32-form at
@@ -758,6 +745,27 @@ fn ESCPOPS(S, n, lit): i64 {   # lit: the aarch64 fold's literal number; unused 
 # they're declared once for both x86 + aarch64 (cx keeps its own copy).
 # Set from CYRIUS_* env vars in the main_*.cyr entry points after includes.
 
+# 6.6.20 — the rbx-anchored 16-byte align every fixed-shape kernel32 reroute opens its call with:
+# push rbx; mov rbx,rsp; and rsp,-16; sub rsp,ib (ib = shadow + stack args, a multiple of 16, < 128).
+# It was open-coded at 16 sites. Touches only rbx, rsp and the flags, so rax/rcx/rdx/r8-r11 survive
+# into the call. Undone by `_pe_align_unframe`. (ECALLPTR_PE's n>4 arm PROBES its variable `sub`
+# and stays open-coded; the path reroutes use `_pe_path_frame`, which also saves rsi/rdi.)
+# CHANGELOG [6.6.20]
+fn _pe_align_frame(S, ib): i64 {
+    EB(S, 0x53);                                        # push rbx
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xE3);              # mov rbx, rsp
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xE4); EB(S, 0xF0); # and rsp, -16
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xEC); EB(S, ib);   # sub rsp, ib
+    return 0;
+}
+
+# mov rsp, rbx; pop rbx — undoes `_pe_align_frame` (rax, the result, is untouched).
+fn _pe_align_unframe(S): i64 {
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xDC);              # mov rsp, rbx
+    EB(S, 0x5B);                                        # pop rbx
+    return 0;
+}
+
 # v6.0.71 — force-16-aligned `callptr` call for PE/Win64 (issue 2026-06-05-
 # windows-com-vtable-real-callee-frame-corruption.md). REPLACES the generic
 # ECALLPOPS+ECALLIND+ECALLCLEAN trio at a callptr site under _TARGET_PE.
@@ -804,13 +812,9 @@ fn ECALLPTR_PE(S, n): i64 {
         var i = n - 1;
         while (i >= 0) { EPOPARG(S, i); i = i - 1; }       # a1→rcx, a2→rdx, a3→r8, a4→r9 (args were on top)
         EB(S, 0x58);                                        # pop rax (callee — now top, pushed first/below args)
-        EB(S, 0x53);                                        # push rbx
-        EB(S, 0x48); EB(S, 0x89); EB(S, 0xE3);              # mov rbx, rsp (anchor)
-        EB(S, 0x48); EB(S, 0x83); EB(S, 0xE4); EB(S, 0xF0); # and rsp, -16
-        EB(S, 0x48); EB(S, 0x83); EB(S, 0xEC); EB(S, 0x20); # sub rsp, 0x20 (shadow)
+        _pe_align_frame(S, 0x20);                           # push rbx; mov rbx,rsp; and rsp,-16; sub rsp, 0x20 (shadow)
         EB(S, 0xFF); EB(S, 0xD0);                           # call rax
-        EB(S, 0x48); EB(S, 0x89); EB(S, 0xDC);              # mov rsp, rbx (restore)
-        EB(S, 0x5B);                                        # pop rbx
+        _pe_align_unframe(S);                               # mov rsp, rbx; pop rbx (restore)
         _flags_reflect_rax = 0;
         _xdepth = _xd_after;
         return 0;
@@ -1675,10 +1679,7 @@ fn ECREATEPROC_PE(S): i64 {
     # the live rsp in callee-saved rbx (preserved across the Win64 call), align
     # down, then carve the 0x50 frame (32 B shadow + 6 stack args). rax (&args)
     # is an absolute pointer, unaffected by the rsp shuffle.
-    EB(S, 0x53);                                        # push rbx
-    EB(S, 0x48); EB(S, 0x89); EB(S, 0xE3);              # mov rbx, rsp
-    EB(S, 0x48); EB(S, 0x83); EB(S, 0xE4); EB(S, 0xF0); # and rsp, -16
-    EB(S, 0x48); EB(S, 0x83); EB(S, 0xEC); EB(S, 0x50); # sub rsp, 0x50
+    _pe_align_frame(S, 0x50);                           # push rbx; mov rbx,rsp; and rsp,-16; sub rsp, 0x50
     # a1-a4 → registers.
     EB(S, 0x48); EB(S, 0x8B); EB(S, 0x48); EB(S, 0x00); # mov rcx, [rax+0]
     EB(S, 0x48); EB(S, 0x8B); EB(S, 0x50); EB(S, 0x08); # mov rdx, [rax+8]
@@ -1700,8 +1701,7 @@ fn ECREATEPROC_PE(S): i64 {
     EB(S, 0xFF); EB(S, 0x15);                           # call [rip+IAT]
     _pe_iat_fixup_add(S, GCP(S), idx);
     EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
-    EB(S, 0x48); EB(S, 0x89); EB(S, 0xDC);              # mov rsp, rbx (undo align + frame)
-    EB(S, 0x5B);                                        # pop rbx
+    _pe_align_unframe(S);                               # mov rsp, rbx; pop rbx (undo align + frame)
     return 0;
 }
 
@@ -1811,10 +1811,7 @@ fn ECREATETHREAD_PE(S): i64 {
     var idx = _pe_createthread_get();
     EB(S, 0x58);                                        # pop rax (&args base)
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x08); # add rsp, 8 (drop sc_nr)
-    EB(S, 0x53);                                        # push rbx
-    EB(S, 0x48); EB(S, 0x89); EB(S, 0xE3);              # mov rbx, rsp
-    EB(S, 0x48); EB(S, 0x83); EB(S, 0xE4); EB(S, 0xF0); # and rsp, -16
-    EB(S, 0x48); EB(S, 0x83); EB(S, 0xEC); EB(S, 0x40); # sub rsp, 0x40
+    _pe_align_frame(S, 0x40);                           # push rbx; mov rbx,rsp; and rsp,-16; sub rsp, 0x40
     EB(S, 0x48); EB(S, 0x8B); EB(S, 0x48); EB(S, 0x00); # mov rcx, [rax+0]  (attrs)
     EB(S, 0x48); EB(S, 0x8B); EB(S, 0x50); EB(S, 0x08); # mov rdx, [rax+8]  (stacksize)
     EB(S, 0x4C); EB(S, 0x8B); EB(S, 0x40); EB(S, 0x10); # mov r8,  [rax+16] (startaddr)
@@ -1826,8 +1823,7 @@ fn ECREATETHREAD_PE(S): i64 {
     EB(S, 0xFF); EB(S, 0x15);                           # call [rip+IAT]
     _pe_iat_fixup_add(S, GCP(S), idx);
     EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
-    EB(S, 0x48); EB(S, 0x89); EB(S, 0xDC);              # mov rsp, rbx
-    EB(S, 0x5B);                                        # pop rbx
+    _pe_align_unframe(S);                               # mov rsp, rbx; pop rbx
     return 0;
 }
 
@@ -1843,16 +1839,12 @@ fn ECREATETHREAD_PE(S): i64 {
 fn _pe_srw_call_1arg(S, idx): i64 {
     EB(S, 0x58);                                        # pop rax (&lock)
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x08); # add rsp, 8 (drop sc_nr)
-    EB(S, 0x53);                                        # push rbx
-    EB(S, 0x48); EB(S, 0x89); EB(S, 0xE3);              # mov rbx, rsp
-    EB(S, 0x48); EB(S, 0x83); EB(S, 0xE4); EB(S, 0xF0); # and rsp, -16
-    EB(S, 0x48); EB(S, 0x83); EB(S, 0xEC); EB(S, 0x20); # sub rsp, 0x20 (shadow)
+    _pe_align_frame(S, 0x20);                           # push rbx; mov rbx,rsp; and rsp,-16; sub rsp, 0x20 (shadow)
     EB(S, 0x48); EB(S, 0x89); EB(S, 0xC1);              # mov rcx, rax (a1 = &lock)
     EB(S, 0xFF); EB(S, 0x15);                           # call [rip+IAT]
     _pe_iat_fixup_add(S, GCP(S), idx);
     EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
-    EB(S, 0x48); EB(S, 0x89); EB(S, 0xDC);              # mov rsp, rbx
-    EB(S, 0x5B);                                        # pop rbx
+    _pe_align_unframe(S);                               # mov rsp, rbx; pop rbx
     return 0;
 }
 
@@ -1920,15 +1912,11 @@ fn ENANOSLEEP_PE(S): i64 {
     EB(S, 0x48); EB(S, 0x89); EB(S, 0xC1);              # mov rcx, rax (dwMilliseconds)
 
     # Aligned 1-arg call to Sleep (rcx already set).
-    EB(S, 0x53);                                        # push rbx
-    EB(S, 0x48); EB(S, 0x89); EB(S, 0xE3);              # mov rbx, rsp
-    EB(S, 0x48); EB(S, 0x83); EB(S, 0xE4); EB(S, 0xF0); # and rsp, -16
-    EB(S, 0x48); EB(S, 0x83); EB(S, 0xEC); EB(S, 0x20); # sub rsp, 0x20 (shadow)
+    _pe_align_frame(S, 0x20);                           # push rbx; mov rbx,rsp; and rsp,-16; sub rsp, 0x20 (shadow)
     EB(S, 0xFF); EB(S, 0x15);                           # call [rip+Sleep]
     _pe_iat_fixup_add(S, GCP(S), idx);
     EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
-    EB(S, 0x48); EB(S, 0x89); EB(S, 0xDC);              # mov rsp, rbx
-    EB(S, 0x5B);                                        # pop rbx
+    _pe_align_unframe(S);                               # mov rsp, rbx; pop rbx
 
     EB(S, 0x48); EB(S, 0x31); EB(S, 0xC0);              # xor rax, rax (nanosleep → 0)
     return 0;
@@ -2032,15 +2020,11 @@ fn _pe_call_3arg_aligned(S, idx): i64 {
     EB(S, 0x58);                                        # pop rax (a1)
     EB(S, 0x48); EB(S, 0x89); EB(S, 0xC1);              # mov rcx, rax (a1)
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x08); # add rsp, 8 (drop sc_nr)
-    EB(S, 0x53);                                        # push rbx
-    EB(S, 0x48); EB(S, 0x89); EB(S, 0xE3);              # mov rbx, rsp
-    EB(S, 0x48); EB(S, 0x83); EB(S, 0xE4); EB(S, 0xF0); # and rsp, -16
-    EB(S, 0x48); EB(S, 0x83); EB(S, 0xEC); EB(S, 0x20); # sub rsp, 0x20 (shadow)
+    _pe_align_frame(S, 0x20);                           # push rbx; mov rbx,rsp; and rsp,-16; sub rsp, 0x20 (shadow)
     EB(S, 0xFF); EB(S, 0x15);                           # call [rip+IAT]
     _pe_iat_fixup_add(S, GCP(S), idx);
     EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
-    EB(S, 0x48); EB(S, 0x89); EB(S, 0xDC);              # mov rsp, rbx
-    EB(S, 0x5B);                                        # pop rbx
+    _pe_align_unframe(S);                               # mov rsp, rbx; pop rbx
     return 0;
 }
 
@@ -2057,15 +2041,11 @@ fn _pe_call_4arg_aligned(S, idx): i64 {
     EB(S, 0x58);                                        # pop rax (a1)
     EB(S, 0x48); EB(S, 0x89); EB(S, 0xC1);              # mov rcx, rax (a1)
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x08); # add rsp, 8 (drop sc_nr)
-    EB(S, 0x53);                                        # push rbx
-    EB(S, 0x48); EB(S, 0x89); EB(S, 0xE3);              # mov rbx, rsp
-    EB(S, 0x48); EB(S, 0x83); EB(S, 0xE4); EB(S, 0xF0); # and rsp, -16
-    EB(S, 0x48); EB(S, 0x83); EB(S, 0xEC); EB(S, 0x20); # sub rsp, 0x20 (shadow)
+    _pe_align_frame(S, 0x20);                           # push rbx; mov rbx,rsp; and rsp,-16; sub rsp, 0x20 (shadow)
     EB(S, 0xFF); EB(S, 0x15);                           # call [rip+IAT]
     _pe_iat_fixup_add(S, GCP(S), idx);
     EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
-    EB(S, 0x48); EB(S, 0x89); EB(S, 0xDC);              # mov rsp, rbx
-    EB(S, 0x5B);                                        # pop rbx
+    _pe_align_unframe(S);                               # mov rsp, rbx; pop rbx
     return 0;
 }
 
@@ -2086,16 +2066,12 @@ fn _pe_call_5arg_aligned(S, idx): i64 {
     EB(S, 0x58);                                        # pop rax (a1)
     EB(S, 0x48); EB(S, 0x89); EB(S, 0xC1);              # mov rcx, rax (a1)
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x08); # add rsp, 8 (drop sc_nr)
-    EB(S, 0x53);                                        # push rbx
-    EB(S, 0x48); EB(S, 0x89); EB(S, 0xE3);              # mov rbx, rsp
-    EB(S, 0x48); EB(S, 0x83); EB(S, 0xE4); EB(S, 0xF0); # and rsp, -16
-    EB(S, 0x48); EB(S, 0x83); EB(S, 0xEC); EB(S, 0x30); # sub rsp, 0x30 (32 shadow + a5 + pad)
+    _pe_align_frame(S, 0x30);                           # push rbx; mov rbx,rsp; and rsp,-16; sub rsp, 0x30 (32 shadow + a5 + pad)
     EB(S, 0x4C); EB(S, 0x89); EB(S, 0x54); EB(S, 0x24); EB(S, 0x20);  # mov [rsp+0x20], r10 (a5)
     EB(S, 0xFF); EB(S, 0x15);                           # call [rip+IAT]
     _pe_iat_fixup_add(S, GCP(S), idx);
     EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
-    EB(S, 0x48); EB(S, 0x89); EB(S, 0xDC);              # mov rsp, rbx
-    EB(S, 0x5B);                                        # pop rbx
+    _pe_align_unframe(S);                               # mov rsp, rbx; pop rbx
     return 0;
 }
 
@@ -2118,17 +2094,13 @@ fn _pe_call_6arg_aligned(S, idx): i64 {
     EB(S, 0x58);                                        # pop rax (a1)
     EB(S, 0x48); EB(S, 0x89); EB(S, 0xC1);              # mov rcx, rax (a1)
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x08); # add rsp, 8 (drop sc_nr)
-    EB(S, 0x53);                                        # push rbx
-    EB(S, 0x48); EB(S, 0x89); EB(S, 0xE3);              # mov rbx, rsp
-    EB(S, 0x48); EB(S, 0x83); EB(S, 0xE4); EB(S, 0xF0); # and rsp, -16
-    EB(S, 0x48); EB(S, 0x83); EB(S, 0xEC); EB(S, 0x30); # sub rsp, 0x30 (32 shadow + a5 + a6)
+    _pe_align_frame(S, 0x30);                           # push rbx; mov rbx,rsp; and rsp,-16; sub rsp, 0x30 (32 shadow + a5 + a6)
     EB(S, 0x4C); EB(S, 0x89); EB(S, 0x5C); EB(S, 0x24); EB(S, 0x20);  # mov [rsp+0x20], r11 (a5)
     EB(S, 0x4C); EB(S, 0x89); EB(S, 0x54); EB(S, 0x24); EB(S, 0x28);  # mov [rsp+0x28], r10 (a6)
     EB(S, 0xFF); EB(S, 0x15);                           # call [rip+IAT]
     _pe_iat_fixup_add(S, GCP(S), idx);
     EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
-    EB(S, 0x48); EB(S, 0x89); EB(S, 0xDC);              # mov rsp, rbx
-    EB(S, 0x5B);                                        # pop rbx
+    _pe_align_unframe(S);                               # mov rsp, rbx; pop rbx
     return 0;
 }
 
@@ -2152,12 +2124,9 @@ fn _pe_call_nargs_aligned(S, idx, n): i64 {
     EB(S, 0x48); EB(S, 0x8B); EB(S, 0x50); EB(S, (nextra + 2) * 8);   # mov rdx, [rax+..] (a2)
     EB(S, 0x4C); EB(S, 0x8B); EB(S, 0x40); EB(S, (nextra + 1) * 8);   # mov r8,  [rax+..] (a3)
     EB(S, 0x4C); EB(S, 0x8B); EB(S, 0x48); EB(S, nextra * 8);         # mov r9,  [rax+..] (a4)
-    EB(S, 0x53);                                                      # push rbx
-    EB(S, 0x48); EB(S, 0x89); EB(S, 0xE3);                            # mov rbx, rsp
-    EB(S, 0x48); EB(S, 0x83); EB(S, 0xE4); EB(S, 0xF0);               # and rsp, -16
     var framesize = 32 + nextra * 8;
     if ((framesize & 15) != 0) { framesize = framesize + 8; }
-    EB(S, 0x48); EB(S, 0x83); EB(S, 0xEC); EB(S, framesize);          # sub rsp, framesize
+    _pe_align_frame(S, framesize);                                    # push rbx; mov rbx,rsp; and rsp,-16; sub rsp, framesize
     var j = 0;
     while (j < nextra) {
         # a[4+j] (0-indexed from a5) → [rsp+0x20 + j*8]; source [rax + (nextra-1-j)*8].
@@ -2168,8 +2137,7 @@ fn _pe_call_nargs_aligned(S, idx, n): i64 {
     EB(S, 0xFF); EB(S, 0x15);                                         # call [rip+IAT]
     _pe_iat_fixup_add(S, GCP(S), idx);
     EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
-    EB(S, 0x48); EB(S, 0x89); EB(S, 0xDC);                            # mov rsp, rbx
-    EB(S, 0x5B);                                                      # pop rbx
+    _pe_align_unframe(S);                                             # mov rsp, rbx; pop rbx
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, (n + 1) * 8);        # add rsp, (n+1)*8 (drop args + sc_nr)
     return 0;
 }
@@ -2409,16 +2377,12 @@ fn EFLUSHFB_PE(S): i64 {
     var fb_idx = _pe_flushfb_get();
     EB(S, 0x58);                                        # pop rax (fd)
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x08); # add rsp, 8 (drop sc_nr)
-    EB(S, 0x53);                                        # push rbx
-    EB(S, 0x48); EB(S, 0x89); EB(S, 0xE3);              # mov rbx, rsp
-    EB(S, 0x48); EB(S, 0x83); EB(S, 0xE4); EB(S, 0xF0); # and rsp, -16
-    EB(S, 0x48); EB(S, 0x83); EB(S, 0xEC); EB(S, 0x20); # sub rsp, 0x20 (shadow)
+    _pe_align_frame(S, 0x20);                           # push rbx; mov rbx,rsp; and rsp,-16; sub rsp, 0x20 (shadow)
     _pe_fd_to_handle_rcx(S, gsh_idx);                   # rcx = HANDLE (std or direct)
     EB(S, 0xFF); EB(S, 0x15);                           # call [rip+FlushFileBuffers]
     _pe_iat_fixup_add(S, GCP(S), fb_idx);
     EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
-    EB(S, 0x48); EB(S, 0x89); EB(S, 0xDC);              # mov rsp, rbx
-    EB(S, 0x5B);                                        # pop rbx
+    _pe_align_unframe(S);                               # mov rsp, rbx; pop rbx
     EB(S, 0x83); EB(S, 0xF8); EB(S, 0x01);              # cmp eax, 1 (CF iff FALSE)
     EB(S, 0x48); EB(S, 0x19); EB(S, 0xC0);              # sbb rax, rax (FALSE → -1, TRUE → 0)
     return 0;
@@ -2518,15 +2482,11 @@ fn EGETMODFILENAME_PE(S): i64 {
     EB(S, 0x48); EB(S, 0x89); EB(S, 0xC2);              # mov rdx, rax (lpFilename)
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x08); # add rsp, 8 (drop sc_nr)
     EB(S, 0x31); EB(S, 0xC9);                           # xor ecx, ecx (hModule = NULL)
-    EB(S, 0x53);                                        # push rbx
-    EB(S, 0x48); EB(S, 0x89); EB(S, 0xE3);              # mov rbx, rsp
-    EB(S, 0x48); EB(S, 0x83); EB(S, 0xE4); EB(S, 0xF0); # and rsp, -16
-    EB(S, 0x48); EB(S, 0x83); EB(S, 0xEC); EB(S, 0x20); # sub rsp, 0x20 (shadow)
+    _pe_align_frame(S, 0x20);                           # push rbx; mov rbx,rsp; and rsp,-16; sub rsp, 0x20 (shadow)
     EB(S, 0xFF); EB(S, 0x15);                           # call [rip+GetModuleFileNameW]
     _pe_iat_fixup_add(S, GCP(S), mf_idx);
     EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
-    EB(S, 0x48); EB(S, 0x89); EB(S, 0xDC);              # mov rsp, rbx
-    EB(S, 0x5B);                                        # pop rbx
+    _pe_align_unframe(S);                               # mov rsp, rbx; pop rbx
     EB(S, 0x89); EB(S, 0xC0);                           # mov eax, eax (DWORD → zero-ext)
     return 0;
 }
@@ -2548,15 +2508,11 @@ fn _SYSX_ACTUALLY(n): i64 { return 0; }
 # _pe_srw_call_1arg). Result in rax. Stack on entry (top→bottom): [sc_nr].
 fn _pe_call_0arg_aligned(S, idx): i64 {
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x08); # add rsp, 8 (drop sc_nr)
-    EB(S, 0x53);                                        # push rbx
-    EB(S, 0x48); EB(S, 0x89); EB(S, 0xE3);              # mov rbx, rsp
-    EB(S, 0x48); EB(S, 0x83); EB(S, 0xE4); EB(S, 0xF0); # and rsp, -16
-    EB(S, 0x48); EB(S, 0x83); EB(S, 0xEC); EB(S, 0x20); # sub rsp, 0x20 (shadow)
+    _pe_align_frame(S, 0x20);                           # push rbx; mov rbx,rsp; and rsp,-16; sub rsp, 0x20 (shadow)
     EB(S, 0xFF); EB(S, 0x15);                           # call [rip+IAT]
     _pe_iat_fixup_add(S, GCP(S), idx);
     EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
-    EB(S, 0x48); EB(S, 0x89); EB(S, 0xDC);              # mov rsp, rbx
-    EB(S, 0x5B);                                        # pop rbx
+    _pe_align_unframe(S);                               # mov rsp, rbx; pop rbx
     return 0;
 }
 
@@ -2569,15 +2525,11 @@ fn _pe_call_2arg_aligned(S, idx): i64 {
     EB(S, 0x58);                                        # pop rax (a1)
     EB(S, 0x48); EB(S, 0x89); EB(S, 0xC1);              # mov rcx, rax (a1)
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x08); # add rsp, 8 (drop sc_nr)
-    EB(S, 0x53);                                        # push rbx
-    EB(S, 0x48); EB(S, 0x89); EB(S, 0xE3);              # mov rbx, rsp
-    EB(S, 0x48); EB(S, 0x83); EB(S, 0xE4); EB(S, 0xF0); # and rsp, -16
-    EB(S, 0x48); EB(S, 0x83); EB(S, 0xEC); EB(S, 0x20); # sub rsp, 0x20 (shadow)
+    _pe_align_frame(S, 0x20);                           # push rbx; mov rbx,rsp; and rsp,-16; sub rsp, 0x20 (shadow)
     EB(S, 0xFF); EB(S, 0x15);                           # call [rip+IAT]
     _pe_iat_fixup_add(S, GCP(S), idx);
     EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
-    EB(S, 0x48); EB(S, 0x89); EB(S, 0xDC);              # mov rsp, rbx
-    EB(S, 0x5B);                                        # pop rbx
+    _pe_align_unframe(S);                               # mov rsp, rbx; pop rbx
     return 0;
 }
 
@@ -2716,15 +2668,49 @@ fn EMMAP_PE(S): i64 {
 
     # v6.4.44: rbx-anchored dynamic 16-align (was a fixed `sub rsp,0x28` that only aligned
     # on the right parity). The align touches only rax/rbx/rsp, so rcx/rdx/r8/r9 survive.
-    EB(S, 0x53);                                        # push rbx
-    EB(S, 0x48); EB(S, 0x89); EB(S, 0xE3);              # mov rbx, rsp
-    EB(S, 0x48); EB(S, 0x83); EB(S, 0xE4); EB(S, 0xF0); # and rsp, -16
-    EB(S, 0x48); EB(S, 0x83); EB(S, 0xEC); EB(S, 0x20); # sub rsp, 0x20 (shadow)
+    _pe_align_frame(S, 0x20);                           # push rbx; mov rbx,rsp; and rsp,-16; sub rsp, 0x20 (shadow)
     EB(S, 0xFF); EB(S, 0x15);                           # call [rip+VirtualAlloc]
     _pe_iat_fixup_add(S, GCP(S), va_idx);
     EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
-    EB(S, 0x48); EB(S, 0x89); EB(S, 0xDC);              # mov rsp, rbx
-    EB(S, 0x5B);                                        # pop rbx
+    _pe_align_unframe(S);                               # mov rsp, rbx; pop rbx
+    return 0;
+}
+
+# 6.6.20 — Win64 munmap: `syscall(11, addr, length)` → VirtualFree(lpAddress, 0, MEM_RELEASE).
+# Stack on entry (top→bottom): [length] [addr] [sc_nr=11].
+#
+# THE BUG IT CLOSES. Syscall 11 had no PE reroute, so every munmap on Windows returned -38 and
+# released nothing: fl_free's large-block path (lib/freelist.cyr), cyr_munmap and sys_munmap
+# leaked the WHOLE mapping each call — four fl_alloc(8 MiB)/fl_free rounds under wine left four
+# live mappings at growing addresses where Linux reused one, and sigil's argon2* leaked its
+# m_cost arena per hash.
+#
+# `length` is DROPPED: MEM_RELEASE requires dwSize == 0 and frees the whole reservation that
+# VirtualAlloc returned at `addr`. So a partial or offset munmap is NOT expressible on PE — a
+# non-base `addr` fails (harmless, -EINVAL), and the base with a SHORTER length releases the
+# whole region, which would leave the caller's tail a use-after-free. No PE-reachable caller
+# does that: fl_free unmaps the block it mapped, cyr_munmap/sys_munmap pass their own mapping,
+# and the thread-stack / dynlib / fdlopen unmappers are not PE paths.
+#
+# The BOOL (eax only — the upper half of rax is not defined) becomes munmap's contract:
+# 0 on success, -22 (-EINVAL) on failure. Same rbx-anchored 16-byte align as EMMAP_PE.
+# CHANGELOG [6.6.20]
+fn EMUNMAP_PE(S): i64 {
+    _pe_ensure_vfree(S);
+    var vf_idx = _pe_vfree_get();
+    EB(S, 0x58);                                        # pop rax (length — dropped)
+    EB(S, 0x59);                                        # pop rcx (lpAddress)
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x08); # add rsp, 8 (drop sc_nr)
+    EB(S, 0x31); EB(S, 0xD2);                           # xor edx, edx (dwSize = 0)
+    EB(S, 0x41); EB(S, 0xB8); EDISP32(S, 0x8000);       # mov r8d, MEM_RELEASE
+    _pe_align_frame(S, 0x20);                           # push rbx; mov rbx,rsp; and rsp,-16; sub rsp, 0x20 (shadow)
+    EB(S, 0xFF); EB(S, 0x15);                           # call [rip+VirtualFree]
+    _pe_iat_fixup_add(S, GCP(S), vf_idx);
+    EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
+    _pe_align_unframe(S);                               # mov rsp, rbx; pop rbx
+    EB(S, 0x83); EB(S, 0xF8); EB(S, 0x01);              # cmp eax, 1 (CF iff FALSE)
+    EB(S, 0x48); EB(S, 0x19); EB(S, 0xC0);              # sbb rax, rax (0 / -1)
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xE0); EB(S, 0xEA); # and rax, -22 (0 / -EINVAL)
     return 0;
 }
 
@@ -2817,6 +2803,22 @@ fn _pe_dyn_arity2(S, disp): i64 {
     return 0;
 }
 
+# The arity-3 arm of `EPE_SYSCALL_DYNAMIC`, in its own function for the same cybs reason as
+# `_pe_dyn_arity2`. Routes mkdir(83), clock(228), nanosleep(35) and — since 6.6.20 — munmap(11),
+# the same Linux numbers the LITERAL path routes at argc 3 (11 through `_PE_ROUTE_FLUSH`). Before
+# 6.6.20 a `var n = 11; syscall(n, p, len)` returned -38 here with no compile-time warning (this
+# arity has members, so an unmatched number is only an honest -38 at run time). CHANGELOG [6.6.20]
+fn _pe_dyn_arity3(S, disp): i64 {
+    _pe_dyn_load(S, disp);
+    var q0 = _pe_dyn_cmp(S, 83);  ECREATEDIR_PE(S); var e0 = EJMP0(S); EPATCH(S, q0);
+    var q1 = _pe_dyn_cmp(S, 228); EGETTICKS_PE(S);  var e1 = EJMP0(S); EPATCH(S, q1);
+    var q2 = _pe_dyn_cmp(S, 35);  ENANOSLEEP_PE(S); var e2 = EJMP0(S); EPATCH(S, q2);
+    var q3 = _pe_dyn_cmp(S, 11);  EMUNMAP_PE(S);    var e3 = EJMP0(S); EPATCH(S, q3);
+    _pe_dyn_nomatch(S, 3);
+    EPATCH(S, e0); EPATCH(S, e1); EPATCH(S, e2); EPATCH(S, e3);
+    return 0;
+}
+
 # Emit the runtime switch. Returns 1 if argc is routable on PE (cmp/jne over the
 # routable syscalls of this arity; unknown number → -38). Returns 2 if NO
 # routable syscall has this arity — emits an honest -38/-ENOSYS no-op
@@ -2836,12 +2838,7 @@ fn EPE_SYSCALL_DYNAMIC(S, argc): i64 {
         return 1;
     }
     if (argc == 3) {
-        _pe_dyn_load(S, disp);
-        var q0 = _pe_dyn_cmp(S, 83);  ECREATEDIR_PE(S); var e0 = EJMP0(S); EPATCH(S, q0);
-        var q1 = _pe_dyn_cmp(S, 228); EGETTICKS_PE(S);  var e1 = EJMP0(S); EPATCH(S, q1);
-        var q2 = _pe_dyn_cmp(S, 35);  ENANOSLEEP_PE(S); var e2 = EJMP0(S); EPATCH(S, q2);
-        _pe_dyn_nomatch(S, argc);
-        EPATCH(S, e0); EPATCH(S, e1); EPATCH(S, e2);
+        _pe_dyn_arity3(S, disp);
         return 1;
     }
     if (argc == 2) {
@@ -2868,7 +2865,8 @@ fn EPE_SYSCALL_DYNAMIC(S, argc): i64 {
 
 # ================================================================
 # 6.6.11 — THE ONE UTF-8 → UTF-16 PATH SEQUENCE of the narrow-path PE reroutes
-# (EOPEN_PE, ECREATEDIR_PE, EDELETEF_PE, EDELETEFILEW_PE, EREMOVEDIRW_PE, EMOVEFILEEX_PE x2).
+# (EOPEN_PE, ECREATEDIR_PE, EDELETEF_PE — unlink 87 and 0xF035 —, EREMOVEDIRW_PE,
+# EMOVEFILEEX_PE x2).
 #
 # ⛔ WHAT IT REPLACES. Each of those seven sites carried its own inline 24-byte loop that
 # copied one UTF-8 BYTE into one WCHAR and, at 260 units, STOPPED AND NUL-TERMINATED. So a
@@ -2911,10 +2909,16 @@ fn _pe_j_land(S, after): i64 {
     return 0;
 }
 
-# push rbx; mov rbx,rsp; and rsp,-16; then carve `size` bytes (a multiple of 16) one page at a
-# time, touching each page, so the guard page is always the next one hit.
+# push rbx; push rsi; push rdi; mov rbx,rsp; and rsp,-16; then carve `size` bytes (a multiple
+# of 16) one page at a time, touching each page, so the guard page is always the next one hit.
+# rsi and rdi are saved because `_pe_widen_path` works in them and Win64 makes both NONVOLATILE:
+# until 6.6.20 only rbx was, so every path reroute returned with rsi = the UTF-8 path and rdi =
+# a stack address — a corrupted register for any Windows caller of a cyrius callback.
+# CHANGELOG [6.6.20]
 fn _pe_path_frame(S, size): i64 {
     EB(S, 0x53);                                        # push rbx
+    EB(S, 0x56);                                        # push rsi (Win64 nonvolatile)
+    EB(S, 0x57);                                        # push rdi (Win64 nonvolatile)
     EB(S, 0x48); EB(S, 0x89); EB(S, 0xE3);              # mov rbx, rsp
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xE4); EB(S, 0xF0); # and rsp, -16
     EB(S, 0xB8); EDISP32(S, size >> 12);                # mov eax, pages
@@ -2926,9 +2930,11 @@ fn _pe_path_frame(S, size): i64 {
     return 0;
 }
 
-# mov rsp, rbx; pop rbx — undoes `_pe_path_frame`.
+# mov rsp, rbx; pop rdi; pop rsi; pop rbx — undoes `_pe_path_frame` (rax, the result, is untouched).
 fn _pe_path_unframe(S): i64 {
     EB(S, 0x48); EB(S, 0x89); EB(S, 0xDC);              # mov rsp, rbx
+    EB(S, 0x5F);                                        # pop rdi
+    EB(S, 0x5E);                                        # pop rsi
     EB(S, 0x5B);                                        # pop rbx
     return 0;
 }
@@ -3179,23 +3185,14 @@ fn EMOVEFILEEX_PE(S): i64 {
     return 0;
 }
 
-# v6.4.58: DeleteFileW(lpFileName) — the Windows temp-cleanup half of lib/io.cyr's
-# xunlink / file_write_atomic on-failure unlink. syscall(0xF035, path): stack on
-# entry (top->bottom): [path] [sc_nr=0xF035]. Since 6.6.11 the same code as EDELETEF_PE
-# (`_pe_path_bool1`: the shared widen, then DeleteFileW, BOOL -> 0/-1); both numbers stay
-# routed. Issue 2026-07-12-windows-atomic-write-residuals.md, B.
-fn EDELETEFILEW_PE(S): i64 {
-    _pe_ensure_deletef(S);
-    var df_idx = _pe_deletef_get();
-    EB(S, 0x58);                                        # pop rax (path ptr)
-    EB(S, 0x49); EB(S, 0x89); EB(S, 0xC3);              # mov r11, rax (stash path)
-    EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x08); # add rsp, 8 (drop sc_nr)
-    _pe_path_bool1(S, df_idx, 0);                       # DeleteFileW(wide) (6.6.11)
-    return 0;
-}
+# v6.4.58: 0xF035 DeleteFileW(lpFileName) — the Windows temp-cleanup half of lib/io.cyr's
+# xunlink / file_write_atomic on-failure unlink — is emitted by EDELETEF_PE above: same
+# [path] [sc_nr] stack, same `_pe_path_bool1`. Its own EDELETEFILEW_PE was a byte-for-byte copy
+# from 6.6.11 and is gone (6.6.20); both numbers stay routed. Issue
+# 2026-07-12-windows-atomic-write-residuals.md, B.
 
 # v6.6.6: RemoveDirectoryW(lpPathName) — `syscall(0xF03B, path)`, the reroute behind
-# lib/io.cyr's `xrmdir` on PE. EDELETEFILEW_PE above with a different kernel32 import:
+# lib/io.cyr's `xrmdir` on PE. EDELETEF_PE above with a different kernel32 import:
 # same 1-argument shape ([path] [sc_nr] on entry), same `_pe_path_bool1` (the shared widen,
 # BOOL -> 0/-1, the probed rbx-anchored frame; 6.6.11).
 #

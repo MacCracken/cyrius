@@ -89,6 +89,7 @@ fn EOPEN_PE(S)   { return 0; }
 fn ECLOSE_PE(S)  { return 0; }
 fn ELSEEK_PE(S)  { return 0; }
 fn EMMAP_PE(S)   { return 0; }
+fn EMUNMAP_PE(S): i64 { return 0; }   # 6.6.20 VirtualFree munmap reroute (x86-only real impl)
 fn EWAIT_PE(S)       { return 0; }   # v6.0.51 Win32 process-creation reroutes
 fn EGETEXIT_PE(S)    { return 0; }   # (x86-only real impl; aarch64 stubs for
 fn ESETHANDLE_PE(S)  { return 0; }   #  parse_expr.cyr symbol resolution — these
@@ -114,7 +115,6 @@ fn EGETPEERNAME_PE(S) { return 0; }  # v6.4.66 ws2_32!getpeername (x86-only)
 fn EGETSOCKNAME_PE(S) { return 0; }  # v6.4.66 ws2_32!getsockname (x86-only)
 fn ELISTEN_PE(S) { return 0; }       # v6.4.44 ws2_32!listen (x86-only)
 fn EMOVEFILEEX_PE(S) { return 0; }   # v6.4.57 kernel32!MoveFileExW (x86-only)
-fn EDELETEFILEW_PE(S) { return 0; }  # v6.4.58 kernel32!DeleteFileW (x86-only)
 fn EREMOVEDIRW_PE(S) { return 0; }   # v6.6.6 kernel32!RemoveDirectoryW (x86-only)
 fn EGETSOCKOPT_PE(S) { return 0; }   # v6.4.43 ws2_32!getsockopt (x86-only)
 fn EWSAIOCTL_PE(S) { return 0; }     # v6.4.43 ws2_32!WSAIoctl / ConnectEx fetch (x86-only)
