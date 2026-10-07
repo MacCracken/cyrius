@@ -24,6 +24,11 @@
 #   3. an address created while evaluating the tail call's OWN arguments (`dQ(G, s.me())`,
 #      `dP(idu(idp(s)), k)`) turns that call into an ordinary call.
 # Rules 1 and 3 cover a callee with no address-passed parameter too (`dU`).
+# A `*S` of 8 B or less is address-passed too since 6.6.20 (lane s-ptr), so every path that lane
+# added to pass one an address — a bare name, a <= 8 B call / method / operator result's temp, a
+# field, an overloaded operator's operand (bare, a temp, a parenthesised call, a field) — counts
+# exactly as its over-8-byte twin does (group "a `*S` of 8 B or less"; each row's only frame
+# address is the one under test).
 #
 # HOW A ROW TELLS A KEPT TAIL CALL FROM A DIVERTED ONE. Each probe callee stores the address of
 # one of its own locals in `_dmark`. Called directly from the checker it lands at some depth; a
@@ -319,6 +324,79 @@ fn nk6f(p: P3): i64 {
     #endif
 }
 
+# --- a `*S` of 8 B OR LESS: address-passed since 6.6.20 (lane s-ptr), at every site above -------
+# A bare struct name, a <= 8 B struct call / method / operator result, a field and an overloaded
+# operator's `*S` operand each hand the callee an address in this frame, through paths lane s-ptr
+# added in the same release; each must count as an escape exactly as its over-8-byte twin does.
+struct S1 { v; }
+struct HS { k; inner: S1; }
+var G1 = S1 { 5 };
+fn dP1(p: *S1, k) {
+    var j1 = 901; var j2 = 902; var j3 = 903; var j4 = 904; var j5 = 905; var j6 = 906;
+    _dmark = &j1;
+    return p.v + k + (j1 + j2 + j3 + j4 + j5 + j6) - 5421;
+}
+fn dU1(q, k) {
+    var j1 = 901; var j2 = 902; var j3 = 903; var j4 = 904; var j5 = 905; var j6 = 906;
+    _dmark = &j1;
+    return load64(q) + k + (j1 + j2 + j3 + j4 + j5 + j6) - 5421;
+}
+fn idp1(p: *S1) { return p; }
+fn byv1(b: S1) { return b.v; }
+fn mk1(n): S1 { var s = S1 { n }; return s; }
+fn S1_dup(self: *S1): S1 { var d = S1 { self.v + 1 }; return d; }
+fn S1_add(a: S1, b: S1): S1 { var r = S1 { a.v + b.v }; return r; }
+fn S1_sub(a: *S1, b: *S1) { return a; }   # hands its LEFT operand back
+fn S1_mul(a: *S1, b: *S1) { return b; }   # hands its RIGHT operand back
+fn t1_ptp(q: *S1, k) { return dP1(q, k); }
+fn t1_glob(k) { return dP1(G1, k); }
+fn t1_bv(q: *S1, k) { var s = S1 { 5 }; var v = byv1(s); return dP1(q, k + v - 5); }
+fn t1_idl(k) { var s = S1 { 5 }; var x = idp1(s); return dU1(x, k); }
+fn t1_idc(k) { var x = idp1(mk1(5)); return dU1(x, k); }
+fn t1_idm(q: *S1, k) { var x = idp1(q.dup()); return dU1(x, k); }
+fn t1_ido(k) { var s = S1 { 2 }; var t = S1 { 3 }; var x = idp1(s + t); return dU1(x, k); }
+fn t1_idf(k) { var h: HS; h.k = 0; h.inner.v = 5; var x = idp1(h.inner); return dU1(x, k); }
+# The other operand is the global G1 (its own address), so each row's only frame address is the one
+# under test.
+fn t1_opn(k) { var s = S1 { 5 }; var x = G1 * s; return dU1(x, k); }
+fn t1_opl(k) { var s = S1 { 5 }; var x = s - G1; return dU1(x, k); }
+fn t1_opt(k) { var x = G1 * mk1(5); return dU1(x, k); }
+fn t1_optp(k) { var x = G1 * (mk1(5)); return dU1(x, k); }
+fn t1_opf(k) { var h: HS; h.k = 0; h.inner.v = 5; var x = G1 * h.inner; return dU1(x, k); }
+fn t1_loc(k) { var s = S1 { 5 }; return dP1(s, k); }
+fn t1_call(k) { return dP1(mk1(5), k); }
+fn t1_aid(k) { var s = S1 { 5 }; return dU1(idp1(s), k); }
+fn t1_aop(k) { var s = S1 { 5 }; var t = S1 { 9 }; return dU1(s - t, k); }
+# Inside a loop an address-passed callee always diverts (rule 2) — now a `*S1` one too, which
+# 6.6.19 kept (no address-passed bit at 8 B): the price of `t1_lpa`, which 6.6.19 got wrong.
+fn t1_lp(q: *S1, k) {
+    var i = 0;
+    while (i < 2) {
+        if (i == 1) { return dP1(q, k); }
+        i = i + 1;
+    }
+    return 0;
+}
+fn t1_lpa(k) {
+    var s = S1 { 5 };
+    var x = 0;
+    var i = 0;
+    while (i < 2) {
+        if (i == 1) { return dP1(x, k); }
+        x = &s;
+        i = i + 1;
+    }
+    return 0;
+}
+fn walk1(p: *S1, n, acc) {
+    if (n == 0) { return acc; }
+    return walk1(p, n - 1, acc + p.v);
+}
+fn cnt1g(p: *S1, n, acc) {
+    if (n == 0) { return acc; }
+    return cnt1g(G1, n - 1, acc + p.v);
+}
+
 fn check_struct_ptr_tailcalls(): i64 {
     alloc_init();
     var q = P3 { 3, 4, 5 };
@@ -336,6 +414,11 @@ fn check_struct_ptr_tailcalls(): i64 {
     var baseQ = _dmark;
     dU(w2, 0);
     var baseU = _dmark;
+    var q1 = S1 { 5 };
+    dP1(q1, 0);
+    var baseP1 = _dmark;
+    dU1(w2, 0);
+    var baseU1 = _dmark;
     var r = 0;
 
     test_group("kept: the tail call reaches the callee at the caller's depth");
@@ -498,6 +581,65 @@ fn check_struct_ptr_tailcalls(): i64 {
     assert_eq(r, 7, "`dU(s.me(), k)` into an untyped callee: value");
     assert_eq(_deeper(_dmark, baseU), 1, "`dU(s.me(), k)` into an untyped callee: diverted");
 
+    test_group("a `*S` of 8 B or less: every frame-address site counts");
+    r = t1_ptp(q1, 1);
+    assert_eq(r, 6, "a forwarded `q: *S1` parameter: value");
+    assert_eq(_same(_dmark, baseP1), 1, "a forwarded `q: *S1` parameter: kept");
+    r = t1_glob(1);
+    assert_eq(r, 6, "a global S1 into `*S1`: value");
+    assert_eq(_same(_dmark, baseP1), 1, "a global S1 into `*S1`: kept");
+    r = t1_bv(q1, 1);
+    assert_eq(r, 6, "`byv1(s)` (an S1 by value, no address) before the tail call: value");
+    assert_eq(_same(_dmark, baseP1), 1, "`byv1(s)` (an S1 by value, no address) before the tail call: kept");
+    r = t1_idl(1);
+    assert_eq(r, 6, "`var x = idp1(s)` (an inline S1): value");
+    assert_eq(_deeper(_dmark, baseU1), 1, "`var x = idp1(s)` (an inline S1): diverted");
+    r = t1_idc(1);
+    assert_eq(r, 6, "`var x = idp1(mk1(5))` (an S1 call's temp): value");
+    assert_eq(_deeper(_dmark, baseU1), 1, "`var x = idp1(mk1(5))` (an S1 call's temp): diverted");
+    r = t1_idm(q1, 0);
+    assert_eq(r, 6, "`var x = idp1(q.dup())` (an S1 method result's temp): value");
+    assert_eq(_deeper(_dmark, baseU1), 1, "`var x = idp1(q.dup())` (an S1 method result's temp): diverted");
+    r = t1_ido(1);
+    assert_eq(r, 6, "`var x = idp1(s + t)` (an S1 operator result's temp): value");
+    assert_eq(_deeper(_dmark, baseU1), 1, "`var x = idp1(s + t)` (an S1 operator result's temp): diverted");
+    r = t1_idf(1);
+    assert_eq(r, 6, "`var x = idp1(h.inner)` (an S1 field of an inline local): value");
+    assert_eq(_deeper(_dmark, baseU1), 1, "`var x = idp1(h.inner)` (an S1 field of an inline local): diverted");
+    r = t1_opn(1);
+    assert_eq(r, 6, "`var x = G1 * s` (a `*S1` right operand, a bare name): value");
+    assert_eq(_deeper(_dmark, baseU1), 1, "`var x = G1 * s` (a `*S1` right operand, a bare name): diverted");
+    r = t1_opl(1);
+    assert_eq(r, 6, "`var x = s - G1` (a `*S1` left operand, a bare name): value");
+    assert_eq(_deeper(_dmark, baseU1), 1, "`var x = s - G1` (a `*S1` left operand, a bare name): diverted");
+    r = t1_opt(1);
+    assert_eq(r, 6, "`var x = G1 * mk1(5)` (a `*S1` operand's temp): value");
+    assert_eq(_deeper(_dmark, baseU1), 1, "`var x = G1 * mk1(5)` (a `*S1` operand's temp): diverted");
+    r = t1_optp(1);
+    assert_eq(r, 6, "`var x = G1 * (mk1(5))` (a parenthesised call operand's temp): value");
+    assert_eq(_deeper(_dmark, baseU1), 1, "`var x = G1 * (mk1(5))` (a parenthesised call operand's temp): diverted");
+    r = t1_opf(1);
+    assert_eq(r, 6, "`var x = G1 * h.inner` (a field operand of an inline local): value");
+    assert_eq(_deeper(_dmark, baseU1), 1, "`var x = G1 * h.inner` (a field operand of an inline local): diverted");
+    r = t1_loc(1);
+    assert_eq(r, 6, "an inline S1 into `*S1` (the tail call's argument): value");
+    assert_eq(_deeper(_dmark, baseP1), 1, "an inline S1 into `*S1` (the tail call's argument): diverted");
+    r = t1_call(1);
+    assert_eq(r, 6, "an S1 call's temp into `*S1` (the tail call's argument): value");
+    assert_eq(_deeper(_dmark, baseP1), 1, "an S1 call's temp into `*S1` (the tail call's argument): diverted");
+    r = t1_aid(1);
+    assert_eq(r, 6, "`dU1(idp1(s), k)`: value");
+    assert_eq(_deeper(_dmark, baseU1), 1, "`dU1(idp1(s), k)`: diverted");
+    r = t1_aop(1);
+    assert_eq(r, 6, "`dU1(s - t, k)` (a `*S1` operand in the tail call's arguments): value");
+    assert_eq(_deeper(_dmark, baseU1), 1, "`dU1(s - t, k)` (a `*S1` operand in the tail call's arguments): diverted");
+    r = t1_lp(q1, 1);
+    assert_eq(r, 6, "a `*S1` tail call inside a loop: value");
+    assert_eq(_deeper(_dmark, baseP1), 1, "a `*S1` tail call inside a loop: diverted (rule 2)");
+    r = t1_lpa(1);
+    assert_eq(r, 6, "`x = &s` (an S1) after the return, inside a loop: value");
+    assert_eq(_deeper(_dmark, baseP1), 1, "`x = &s` (an S1) after the return, inside a loop: diverted");
+
     test_group("deep: 1,000,000 levels in constant stack");
     var head = 0;
     var i = 0;
@@ -527,6 +669,8 @@ fn check_struct_ptr_tailcalls(): i64 {
     assert_eq(loopw(1000000, 0), 6000000, "`var v = sumF(s)` (declared below) before the self tail call");
     assert_eq(loopx(1000000, 0), 3000000, "`var x = dVec(v, 0)` (a vector) before the self tail call");
     assert_eq(loopg(1000000, 0), 6000000, "`var v = sumG(s)` (a generic's instance) before the self tail call");
+    assert_eq(walk1(q1, 1000000, 0), 5000000, "a forwarded `p: *S1` parameter (lane s-ptr alone diverted it)");
+    assert_eq(cnt1g(G1, 1000000, 0), 5000000, "a global S1 into `*S1`");
     return 0;
 }
 check_struct_ptr_tailcalls();
