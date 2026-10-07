@@ -1816,8 +1816,25 @@ fn _libsync_relock(written): i64 {
     return 0;
 }
 
+# 1 when `cyrius clean` must leave build/<name> alone: the toolchain binaries it runs from, and
+# every binary the repo TRACKS (.gitignore's `!/build/...` whitelist: cycc, cc5,
+# cycc-native-aarch64). 6.6.20: cc5 and cycc-native-aarch64 were missing, so `cyrius clean` in
+# the repo unlinked both — and cycc-native-aarch64 cannot be rebuilt without ARM hardware
+# (release-gate step 1b keeps it in lockstep). CHANGELOG [6.6.20]
+fn _clean_keeps(name): i64 {
+    if (str_eq(name, str_from("cc")) == 1) { return 1; }
+    if (str_eq(name, str_from("cycc")) == 1) { return 1; }
+    if (str_eq(name, str_from("cybs")) == 1) { return 1; }
+    if (str_eq(name, str_from("asm")) == 1) { return 1; }
+    if (str_eq(name, str_from("cycc_aarch64")) == 1) { return 1; }
+    if (str_eq(name, str_from("cyrius")) == 1) { return 1; }
+    if (str_eq(name, str_from("cc5")) == 1) { return 1; }
+    if (str_eq(name, str_from("cycc-native-aarch64")) == 1) { return 1; }
+    return 0;
+}
+
 fn cmd_clean(): i64 {
-    # Remove build/ contents except cycc, cybs, asm
+    # Remove build/ contents except the binaries _clean_keeps names
     if (is_dir(str_from("build")) == 0) {
         println("nothing to clean");
         return 0;
@@ -1828,14 +1845,7 @@ fn cmd_clean(): i64 {
     var cleaned = 0;
     while (ci < vec_len(entries)) {
         var name = vec_get(entries, ci);
-        var skip = 0;
-        if (str_eq(name, str_from("cc")) == 1) { skip = 1; }
-        if (str_eq(name, str_from("cycc")) == 1) { skip = 1; }
-        if (str_eq(name, str_from("cybs")) == 1) { skip = 1; }
-        if (str_eq(name, str_from("asm")) == 1) { skip = 1; }
-        if (str_eq(name, str_from("cycc_aarch64")) == 1) { skip = 1; }
-        if (str_eq(name, str_from("cyrius")) == 1) { skip = 1; }
-        if (skip == 0) {
+        if (_clean_keeps(name) == 0) {
             var full = make_path("build", str_data(name));
             if (_dry_run == 1) {
                 sys_write(STDOUT_FD, "  would remove: ", 16);
@@ -1850,7 +1860,8 @@ fn cmd_clean(): i64 {
     if (_dry_run == 1) {
         sys_write(STDOUT_FD, "dry-run: would remove ", 22);
     } else {
-        sys_write(STDOUT_FD, "cleaned build/ (preserved cycc, cybs, asm, cyrius) — removed ", 63);
+        var cmsg = "cleaned build/ (preserved the toolchain and the tracked cycc, cc5, cycc-native-aarch64) — removed ";
+        sys_write(STDOUT_FD, cmsg, strlen(cmsg));
     }
     fmt_int(cleaned);
     println(" files");
