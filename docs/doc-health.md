@@ -26,10 +26,9 @@ type: state
 > with nothing re-checking it is a claim, not a status; every row below now carries the date the
 > file was last touched (`git log -1`) and what this sweep did or did not re-verify.
 >
-> **`handoff.md` went stale again — sixteen releases (6.6.4 → 6.6.19)** — and is now ARCHIVED
-> (`development/archive/handoff-v6.6.4.md`) rather than refreshed a sixth time: there is no gate for
-> it, and the volatile state it duplicated lives in `state.md` (refreshed every release) and
-> `roadmap.md`. **CLAUDE.md** still told contributors to add a `vr01_` test for every new syscall
+> **`handoff.md` went stale again — sixteen releases (6.6.4 → 6.6.19)** — and is DELETED, with its
+> archived copies (6.6.20): a handoff is a `state.md` update made when the user asks for one; no
+> handoff file exists. **CLAUDE.md** still told contributors to add a `vr01_` test for every new syscall
 > wrapper (retired at v6.5.11 — a file so named opts OUT of the cross-OS leg), as did the guide and
 > four other docs; its reserved-word class missed the two builtins `IS_KEYWORD_TOK` lists by hand.
 > **102 source / test / workflow comments** pointed at issue files that had moved to `archived/` (44 of

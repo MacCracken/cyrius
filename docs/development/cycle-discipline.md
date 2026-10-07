@@ -254,7 +254,7 @@ floor, a re-triage that keeps re-pinning the same item).
   rule clean: nothing codegen or runtime parked at 7.x.
 - **Docs** (CLN-04/06/07/08/09/12): the public figures had **frozen at v6.6.1 for nineteen releases** (README,
   faq, platform-status, size-comparisons, stdlib-modules — re-derived); doc-health marked a v6.3.0 README
-  Fresh (re-derived row by row); `handoff.md` was stale again and is **archived** (state.md is the handoff);
+  Fresh (re-derived row by row); `handoff.md` was stale again and is **deleted**, archived copies included (a handoff is a `state.md` update, at the user's request);
   CLAUDE.md and the guide still prescribed `vr01_` tests (which opt OUT of the cross-OS leg), and nine code
   comments still named `vr01_` fixtures; 102 comment pointers into `issues/archived/` (44 of them missed by the
   first scan — the short `issues/<f>.md` form and wrapped paths), 9 sibling-repo pointers and 5 deleted-script

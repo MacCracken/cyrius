@@ -1183,12 +1183,12 @@ argument count (CVE-82), `#if` nesting (CVE-85), attribute lines (CVE-86) and aa
   missed); nine named sibling-repo filings by a stale path; five named deleted `regression-*.sh` scripts (now the
   driver rows that replaced them); the agnos `sys_getrandom` comment called the Windows CSPRNG issue open (shipped
   6.2.12). Comment-only in `src/` (byte-identical, seed-derive OK).
-- **doc-health.md re-derived row by row; `handoff.md` archived** (d-docs, CLN-08). The ledger, last refreshed at
+- **doc-health.md re-derived row by row; every handoff file removed** (d-docs, CLN-08). The ledger, last refreshed at
   v6.6.1, marked a v6.3.0 README and a "Version 6.2.0" CLAUDE.md row Fresh and said "0 active" audits; every row now
   carries its last-touched date and what was re-verified. `handoff.md` still described v6.6.4, sixteen releases stale
-  under its own "refresh or delete" instruction, and is archived to `docs/development/archive/handoff-v6.6.4.md` —
-  `state.md` is the handoff. ⚠ The pure rename rode in `886662e3` and its banner and link fixes in `44faf171`: revert
-  them together or not at all.
+  under its own "refresh or delete" instruction. It and the two archived copies
+  (`archive/handoff-v6.6.4.md`, `archive/handoff-v5.3.13-mac-selfhost.md`) are deleted: a handoff is a `state.md`
+  update, made when the user asks for one, and no handoff file exists.
 - **ADR-003's heap-layout summary re-derived** (d-docs, HEAP-11, the ADR half). It still placed input_buf at 0x00000,
   a 256 KB tok_names at 0x60000, tok_types at 0x2D7C000, output_buf at 0x4D9D000 and the heap top at 0x5E1D000 with a
   32,768-fn ceiling — all retired between v6.3.41 and v6.5.40. It follows main.cyr's HEAP MAP now (the `S + 0xF600000`
