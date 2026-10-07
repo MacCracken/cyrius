@@ -32,6 +32,9 @@
 #     no-EMPTY fallback) survives deletes — the tombstone count lives in that array's own
 #     trailing word, never in the next allocation;
 #   * a table with no EMPTY slot at all (tombstones written outside the API) still rebuilds;
+#   * FIXED LAYOUTS for the in-place walk, where churn rarely displaces anything: a chain that
+#     wraps past the last slot, a chain that crosses a tombstone below the anchor slot, and a
+#     new key whose first probe returned a tombstone the walk then refills;
 #   * a tombstone written DIRECTLY (majra relay.cyr's shape: state 2 + live-1, no map_delete) and
 #     then reused cannot drive the counter negative (an unclamped -1 undercounts the trigger and
 #     lets the live load reach the whole table);
@@ -520,6 +523,104 @@ fn _wrap_rows(kind): i64 {
     return 0;
 }
 
+# The anchor must be a slot that was EMPTY BEFORE the rebuild, not the first EMPTY slot once the
+# tombstones are converted. Z and Y both hash to slot 15, so Y wraps into slot 0; W (home 1) takes
+# slot 1; X (home 0) lands in slot 2, its chain crossing slot 1. Eight fillers fill slots 4-11, so
+# slot 3 is the first slot EMPTY before the rebuild. Z, W and seven fillers are deleted and a key
+# with home 12 brings the table to an in-place rebuild. Anchored at W's old tombstone (slot 1),
+# the walk moves X into slot 1 and only then reaches slot 0, moving Y out to slot 15 — leaving
+# slot 0 EMPTY between X's home and X.
+fn _anchor_rows(kind): i64 {
+    var nx = alloc(8);
+    store64(nx, 0);
+    var m = _m_new(kind);
+    var kz = _key_at_home(kind, 15, nx);
+    var ky = _key_at_home(kind, 15, nx);
+    var kw = _key_at_home(kind, 1, nx);
+    var kx = _key_at_home(kind, 0, nx);
+    _m_set(kind, m, kz, 1);
+    _m_set(kind, m, ky, 2);
+    _m_set(kind, m, kw, 3);
+    _m_set(kind, m, kx, 4);
+    var fill = alloc(8 * 8);
+    var h = 0;
+    while (h < 8) {
+        var kf = _key_at_home(kind, h + 4, nx);
+        store64(fill + h * 8, kf);
+        _m_set(kind, m, kf, 100 + h);
+        h = h + 1;
+    }
+    var e = map_entries(m);
+    var sb = _slot_bytes(kind);
+    assert_eq(map_cap(m), 16, "12 keys sit in 16 slots");
+    assert_eq(load64(e + 0 * sb), ky, "Y wrapped into slot 0 (anti-vacuous)");
+    assert_eq(load64(e + 2 * sb), kx, "X sits in slot 2, its chain crossing W's slot (anti-vacuous)");
+    assert_eq(_slot_empty(e, kind, 3), 1, "slot 3 is the first slot EMPTY before the rebuild");
+    _m_del(kind, m, kz);
+    _m_del(kind, m, kw);
+    h = 0;
+    while (h < 7) { _m_del(kind, m, load64(fill + h * 8)); h = h + 1; }
+    var kn = _key_at_home(kind, 12, nx);
+    var reb0 = _map_rebuilds;
+    _m_set(kind, m, kn, 7);
+    assert_eq(_map_rebuilds - reb0, 1, "the insert at the trigger rebuilt the table");
+    assert_eq(map_entries(m), e, "in place");
+    assert_eq(_m_get_or(kind, m, kx, 0 - 7), 4, "X, whose chain crossed a low tombstone, survives");
+    assert_eq(_m_get_or(kind, m, ky, 0 - 7), 2, "the wrapped entry survives");
+    assert_eq(_m_get_or(kind, m, load64(fill + 7 * 8), 0 - 7), 107, "the live filler reads back");
+    assert_eq(_m_get_or(kind, m, kn, 0 - 7), 7, "the new key reads back");
+    assert_eq(_m_get_or(kind, m, kw, 0 - 7), 0 - 7, "the deleted key stays deleted");
+    assert_eq(_unreachable(m, kind), 0, "every live entry is reachable from its home bucket");
+    _census(m, kind);
+    assert_eq(map_size(m), g_live, "map_size equals the live slots");
+    return 0;
+}
+
+# The new key's slot must be found AGAIN after an in-place rebuild. T and E both hash to slot 3,
+# so E sits in slot 4; ten fillers fill slots 6-15. T and eight fillers are deleted, then a new
+# key with home 3 arrives: its first probe returns T's tombstone (slot 3). The in-place rebuild
+# turns that tombstone EMPTY and moves E into it. Written to the slot found before the rebuild,
+# the new key overwrites E.
+fn _stale_slot_rows(kind): i64 {
+    var nx = alloc(8);
+    store64(nx, 0);
+    var m = _m_new(kind);
+    var kt = _key_at_home(kind, 3, nx);
+    var ke = _key_at_home(kind, 3, nx);
+    _m_set(kind, m, kt, 1);
+    _m_set(kind, m, ke, 2);
+    var fill = alloc(10 * 8);
+    var h = 0;
+    while (h < 10) {
+        var kf = _key_at_home(kind, h + 6, nx);
+        store64(fill + h * 8, kf);
+        _m_set(kind, m, kf, 100 + h);
+        h = h + 1;
+    }
+    var e = map_entries(m);
+    var sb = _slot_bytes(kind);
+    assert_eq(map_cap(m), 16, "12 keys sit in 16 slots");
+    assert_eq(load64(e + 4 * sb), ke, "E sits in slot 4, behind T (anti-vacuous)");
+    _m_del(kind, m, kt);
+    h = 0;
+    while (h < 8) { _m_del(kind, m, load64(fill + h * 8)); h = h + 1; }
+    var kn = _key_at_home(kind, 3, nx);
+    var reb0 = _map_rebuilds;
+    _m_set(kind, m, kn, 7);
+    assert_eq(_map_rebuilds - reb0, 1, "the insert at the trigger rebuilt the table");
+    assert_eq(map_entries(m), e, "in place");
+    assert_eq(load64(e + 3 * sb), ke, "the walk moved E into T's old slot (anti-vacuous)");
+    assert_eq(_m_get_or(kind, m, ke, 0 - 7), 2, "E, moved into the new key's stale slot, survives");
+    assert_eq(_m_get_or(kind, m, kn, 0 - 7), 7, "the new key reads back");
+    assert_eq(_m_get_or(kind, m, load64(fill + 8 * 8), 0 - 7), 108, "a live filler reads back");
+    assert_eq(_m_get_or(kind, m, load64(fill + 9 * 8), 0 - 7), 109, "the other live filler reads back");
+    assert_eq(_unreachable(m, kind), 0, "every live entry is reachable from its home bucket");
+    _census(m, kind);
+    assert_eq(map_size(m), g_live, "map_size equals the live slots");
+    assert_eq(map_size(m), 4, "E, two fillers and the new key are live");
+    return 0;
+}
+
 # Fill `m` to the same-capacity trigger with live < 35%: 716 keys in 1024 slots, all but 300
 # deleted, then new keys until live + tombstones reach 70%. Returns the next unused key index,
 # or -1 when the pool ran out first (deletes that went uncounted never reach the trigger).
@@ -613,6 +714,16 @@ fn _run(): i64 {
     _wrap_rows(0);
     _wrap_rows(1);
     _wrap_rows(2);
+
+    test_group("an in-place rebuild anchors at a slot EMPTY before it, not at a converted tombstone");
+    _anchor_rows(0);
+    _anchor_rows(1);
+    _anchor_rows(2);
+
+    test_group("after an in-place rebuild the new key's slot is found again");
+    _stale_slot_rows(0);
+    _stale_slot_rows(1);
+    _stale_slot_rows(2);
 
     test_group("a directly-written tombstone cannot drive the counter negative (cstr)");
     # majra relay.cyr _relay_dedup_drop_slot: state 2 + live-1, never through map_delete.
