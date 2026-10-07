@@ -15,13 +15,11 @@ EMOV_RCX_R14 win x86m
 EMOV_RDX_R15 win x86m
 EPARK_EFI_RSP x86m
 ESUB_RSP_IMM8 x86m
-GFNE cx
 IR_BB_COUNT a64 a64m a64n cx x86m
 IR_BB_FIRST a64 a64m a64n cx x86m
 IR_BB_SUCC0 a64 a64m a64n cx win x86m
 IR_BB_SUCC1 a64 a64m a64n cx win x86m
 IR_BCNT a64 a64m a64n cx x86m
-IR_ECNT a64 a64m a64n cx x86m
 IR_LIVEIN a64 a64m a64n cx win x86m
 IR_LIVEOUT a64 a64m a64n cx win x86m
 IR_NODE_A1 a64 a64m a64n cx x86m
@@ -30,7 +28,6 @@ IR_NODE_FL a64 a64m a64n cx x86m
 IR_NODE_OP a64 a64m a64n cx x86m
 IR_SBCNT a64 a64m a64n cx x86m
 IR_SCURBB a64 a64m a64n cx x86m
-IR_SECNT a64 a64m a64n cx x86m
 IR_SENABLE a64 a64m a64n cx x86m
 IR_SLIVEIN a64 a64m a64n cx win x86m
 IR_SLIVEOUT a64 a64m a64n cx win x86m
@@ -42,8 +39,7 @@ _check_cyml_pin_drift a64m win x86m
 _codebuf_grow cx
 _dce_drift_check a64 a64m a64n
 _env_var_is_1 a64m win x86m
-_ev1_step a64m win x86m
-_find_fn_by_name a64 a64m a64n cx x86m
+_find_fn_by_name cx
 _fnhash_health a64 a64m a64n cx x86m
 _gvk_arm a64 a64m a64n cx win x86m
 _ir_bb_transfer a64 a64m a64n cx win x86m
@@ -66,7 +62,7 @@ _ir_succ_union a64 a64m a64n cx win x86m
 _ir_uses_rax a64 a64m a64n cx win x86m
 _ir_uses_rcx a64 a64m a64n cx win x86m
 _ir_write_emovi_at a64 a64m a64n cx win x86m
-_parse_hex_env a64m a64n win x86m
+_parse_hex_env a64m win x86m
 _prof_clock_ns a64 a64m a64n win x86m
 _prov_kill a64 a64m a64n cx
 _prov_read a64 a64m a64n cx
@@ -75,8 +71,8 @@ _wp_shift a64 a64m a64n cx
 _wp_sort_prefix a64 a64m a64n cx
 _wpjs_add a64 a64m a64n cx
 _wpjs_add_raw a64 a64m a64n cx
+_wpjs_grow a64 a64m a64n cx
 _wpnr_add a64 a64m a64n cx
-ir_add_edge a64 a64m a64n cx x86m
 ir_apply_lase a64 a64m a64n cx win x86m
 ir_bb_new a64 a64m a64n cx x86m
 ir_bb_set_cond a64 a64m a64n cx x86m

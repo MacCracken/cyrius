@@ -1,4 +1,4 @@
-407
+503
 # ⬆ LINE 1 IS THE NUMBER, AND IT IS THE ONLY COPY OF IT. The .tcyr corpus floor: every runner of
 # the whole tests/tcyr corpus FAILS when it sees fewer files than this, because a reader that
 # went blind (a flat glob over a subfoldered tree, a broken find) otherwise reports a small
