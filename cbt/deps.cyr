@@ -3049,9 +3049,14 @@ fn _sha256sum_file(path): i64 {
     # lowercase hex digest, then a "completed" line. Capture via CreateProcessW
     # (process_win exec_capture) and parse line 2. Makes `cyrius deps --lock`
     # round-trip on native Windows (no WSL/git-bash).
+    # 6.6.20 (CVE-TBD): certutil.exe by its absolute System32 path. A bare `certutil` was
+    # searched for in the project directory first, so a checkout's own certutil.exe ran and
+    # chose every hash `--lock` wrote and `--verify` compared (measured on cass).
     #ifdef CYRIUS_TARGET_WIN
+    var cu = _win_sys_exe("certutil.exe");
+    if (cu == 0) { _sha_fail = 4; return 0; }
     var cargs = vec_new();
-    vec_push(cargs, "certutil");
+    vec_push(cargs, cu);
     vec_push(cargs, "-hashfile");
     vec_push(cargs, path);
     vec_push(cargs, "SHA256");

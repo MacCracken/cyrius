@@ -1344,10 +1344,15 @@ fn _win_compile_spawn_err(cc, source, output, errfile): i64 {
     if (errfile != 0) { elen = strlen(errfile); }
     # v6.6.6 — sized from the paths, not a fixed 16 KiB; `_w_cmdbuf` refuses by
     # name past Windows' 32,767-character command line. See lib/process_win.cyr.
-    var wbuf = _w_cmdbuf(strlen(cc) + strlen(source) + strlen(output) + elen + strlen(fl));
+    # 6.6.20 (CVE-TBD): cmd.exe by its absolute path — a bare `cmd` was searched for in the
+    # project directory first (lib/process_win.cyr `_win_sys_exe`).
+    var ce = _win_sys_exe("cmd.exe");
+    if (ce == 0) { _err_ctx("compiler spawn", cc); return 1; }
+    var wbuf = _w_cmdbuf(strlen(ce) + strlen(cc) + strlen(source) + strlen(output) + elen + strlen(fl));
     if (wbuf == 0) { _err_ctx("compiler spawn", cc); return 1; }
     var o = 0;
-    o = _w_append_cstr(wbuf, o, "cmd /s /c \"\"");
+    o = _w_append_cstr(wbuf, o, ce);
+    o = _w_append_cstr(wbuf, o, " /s /c \"\"");
     o = _w_append_cstr(wbuf, o, cc);
     o = _w_append_cstr(wbuf, o, "\"");
     o = _w_append_cstr(wbuf, o, fl);
@@ -2324,9 +2329,13 @@ fn _win_spawn_vec(tool, args): i64 {
 # program from STDIN, and Win32 has no dup2, so the redirect goes through cmd.exe exactly
 # as _win_compile_spawn does it (`/s` strips only the outer quote pair).
 fn _win_run_cx(vm, cyx): i64 {
-    var wbuf = alloc((strlen(vm) + strlen(cyx) + 32) * 2);
+    var ce = _win_sys_exe("cmd.exe");                # 6.6.20: never a bare `cmd`
+    if (ce == 0) { _err_ctx("failed to start", vm); return 127; }
+    var wbuf = _w_cmdbuf(strlen(ce) + strlen(vm) + strlen(cyx));
+    if (wbuf == 0) { _err_ctx("failed to start", vm); return 127; }
     var o = 0;
-    o = _w_append_cstr(wbuf, o, "cmd /s /c \"\"");
+    o = _w_append_cstr(wbuf, o, ce);
+    o = _w_append_cstr(wbuf, o, " /s /c \"\"");
     o = _w_append_cstr(wbuf, o, vm);
     o = _w_append_cstr(wbuf, o, "\" < \"");
     o = _w_append_cstr(wbuf, o, cyx);
@@ -2345,9 +2354,13 @@ fn _win_run_cx(vm, cyx): i64 {
 # quote pair, and cmd's exit status is the program's. Only `cyrius test` asks for it, with no
 # program arguments. The job and the deadline apply to cmd.exe and the program under it alike.
 fn _win_cmdline_cap(path, cap): i64 {
-    var wbuf = alloc((strlen(path) + strlen(cap) + 32) * 2);
+    var ce = _win_sys_exe("cmd.exe");                # 6.6.20: never a bare `cmd`
+    if (ce == 0) { return 0; }
+    var wbuf = _w_cmdbuf(strlen(ce) + strlen(path) + strlen(cap));
+    if (wbuf == 0) { return 0; }
     var o = 0;
-    o = _w_append_cstr(wbuf, o, "cmd /s /c \"\"");
+    o = _w_append_cstr(wbuf, o, ce);
+    o = _w_append_cstr(wbuf, o, " /s /c \"\"");
     o = _w_append_cstr(wbuf, o, path);
     o = _w_append_cstr(wbuf, o, "\" > \"");
     o = _w_append_cstr(wbuf, o, cap);
@@ -2539,10 +2552,17 @@ fn _win_cmd_self(): i64 {
 fn _win_capacity_spawn(cc, source, errfile): i64 {
     # v6.6.6 — sized from the three paths, not a fixed 16 KiB; `_w_cmdbuf` refuses by
     # name past Windows' 32,767-character command line. See lib/process_win.cyr.
-    var wbuf = _w_cmdbuf(strlen(cc) + strlen(source) + strlen(errfile));
+    # 6.6.20: cmd.exe by its absolute path (`_win_sys_exe`), and the prefix's own length is
+    # COUNTED — `_w_cmdbuf`'s margin is 32 characters and this command line's literals are 51,
+    # so it wrote 32 bytes past its buffer on every `cyrius capacity`.
+    var ce = _win_sys_exe("cmd.exe");
+    if (ce == 0) { _err_ctx("capacity spawn", cc); return 0 - 1; }
+    var pre = " /s /c \"set CYRIUS_STATS=1& \"";
+    var wbuf = _w_cmdbuf(strlen(ce) + strlen(pre) + strlen(cc) + strlen(source) + strlen(errfile));
     if (wbuf == 0) { _err_ctx("capacity spawn", cc); return 0 - 1; }
     var o = 0;
-    o = _w_append_cstr(wbuf, o, "cmd /s /c \"set CYRIUS_STATS=1& \"");
+    o = _w_append_cstr(wbuf, o, ce);
+    o = _w_append_cstr(wbuf, o, pre);
     o = _w_append_cstr(wbuf, o, cc);
     o = _w_append_cstr(wbuf, o, "\" < \"");
     o = _w_append_cstr(wbuf, o, source);
