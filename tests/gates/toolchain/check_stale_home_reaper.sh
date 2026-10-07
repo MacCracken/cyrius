@@ -28,6 +28,14 @@
 #   5  anti-vacuous for axis 4: the same old home with `.owner` REMOVED is reaped under the
 #      same settings. Without this, axis 4 would also pass if the age gate had quietly
 #      stayed on and nothing was ever eligible.
+#   7-11 (6.6.20) the CLI's own `cyrius-<pid>[-t<nonce>][-<n>]` temp dirs: empty + old + dead
+#      pid is reaped in every name shape (7); a NON-empty one is kept — the CLI's post-mortem
+#      contract (8); a LIVE pid's survives with the age gate off (9, and its anti-vacuous
+#      twin: the fresh dead one is then reaped); a fresh one survives the default (10); and
+#      no other `cyrius-*` name is touched (11). Mutations (measured): the
+#      `_chk_reap_dead_cli_tmpdirs` call removed -> axes 7 and 9b RED; `rmdir` -> `rm -rf`
+#      -> axis 8 RED; the liveness check removed -> axis 9 RED; the name-shape filter
+#      removed -> axis 11 RED.
 #   6  a NON-NUMERIC $CYRIUS_CHECK_REAP_MINS does not silently turn the age gate OFF. As
 #      first written the threshold went straight into `[ "$n" -gt 0 ]`, so `=4h` made that
 #      test error (`[: 4h: integer expected`, rc 2 -> false), the `-mmin` filter was skipped
@@ -198,9 +206,49 @@ _run 4h alpha
 grep -q "CYRIUS_CHECK_REAP_MINS" "$W/out" || _fail "a non-numeric CYRIUS_CHECK_REAP_MINS was ignored SILENTLY — nothing in the output mentions it"
 grep -qE "integer expected|not a valid identifier" "$W/out" && _fail "the raw shell error from an unvalidated threshold is still reaching the output"
 
+echo "axis 7-11 (6.6.20): the CLI's own cyrius-<pid> temp dirs of DEAD processes, rmdir-only"
+# A signal death skips the CLI's cleanup (SIGPIPE from `cyrius … | head` leaves an EMPTY
+# dir; SIGKILL leaves test_bin), and 6.6.0–6.6.5 CLIs never cleaned up at all. check.sh
+# reaps them by age and by the pid in the NAME, and only with rmdir.
+_mkcli() {  # $1 = name under the harness TMPDIR, $2 = age in minutes, $3 = a file to put inside (or "")
+    _c="$W/tmp/$1"
+    mkdir -p "$_c"
+    [ -n "$3" ] && echo x > "$_c/$3"
+    [ "$2" != "0" ] && touch -d "$2 minutes ago" "$_c"
+    echo "$_c"
+}
+C_DEAD=$(_mkcli "cyrius-$DEAD_PID" 300 "")
+C_DEAD_T=$(_mkcli "cyrius-$DEAD_PID-t12345" 300 "")
+C_DEAD_N=$(_mkcli "cyrius-$DEAD_PID-t12345-3" 300 "")
+C_DEAD_FULL=$(_mkcli "cyrius-$DEAD_PID-7" 300 "test_bin")
+C_LIVE=$(_mkcli "cyrius-$LIVE_PID" 300 "")
+C_FRESH=$(_mkcli "cyrius-$DEAD_PID-9" 0 "")
+C_OTHER1=$(_mkcli "cyrius-check-skips.abc123" 300 "")
+C_OTHER2=$(_mkcli "cyrius-${DEAD_PID}x" 300 "")
+C_OTHER3=$(_mkcli "cyrius-$DEAD_PID-lsp" 300 "")
+_run 240 alpha
+# axis 7: empty + old + dead pid, in each name shape the CLI makes -> reaped
+[ -d "$C_DEAD" ]   && _fail "axis 7: an empty, 5-hour-old cyrius-<dead pid> dir was NOT reaped"
+[ -d "$C_DEAD_T" ] && _fail "axis 7: an empty cyrius-<dead pid>-t<nonce> dir was NOT reaped"
+[ -d "$C_DEAD_N" ] && _fail "axis 7: an empty cyrius-<dead pid>-t<nonce>-<n> dir was NOT reaped"
+grep -q 'reaped 3 empty cyrius-<pid> temp dir' "$W/out" || _fail "axis 7: check.sh did not report the 3 reaped temp dirs: $(grep reaped "$W/out" || true)"
+# axis 8: NON-empty is the CLI's post-mortem contract -> kept, contents intact
+[ -f "$C_DEAD_FULL/test_bin" ] || _fail "axis 8: a dead pid's NON-empty temp dir was deleted — rmdir-only is the contract"
+# axis 10: the age gate — a fresh empty dead-pid dir survives the default threshold
+[ -d "$C_FRESH" ] || _fail "axis 10: a cyrius-<pid> dir created seconds ago was reaped at the default threshold"
+# axis 11: names of any other shape are never touched
+[ -d "$C_OTHER1" ] || _fail "axis 11: cyrius-check-skips.* was reaped by the CLI-temp reaper"
+[ -d "$C_OTHER2" ] || _fail "axis 11: cyrius-<digits>x was reaped — not a CLI temp-dir name"
+[ -d "$C_OTHER3" ] || _fail "axis 11: cyrius-<pid>-lsp was reaped — not a CLI temp-dir name"
+# axis 9: with the age gate OFF, a LIVE pid's empty dir survives — the pid alone protects it
+_run 0 alpha
+[ -d "$C_LIVE" ] || _fail "axis 9: an empty cyrius-<LIVE pid> dir was reaped — a running CLI would lose its temp dir"
+[ -d "$C_FRESH" ] && _fail "axis 9 (anti-vacuous): with the age gate off the fresh dead-pid dir survived — nothing was eligible"
+rm -rf "$C_DEAD_FULL" "$C_LIVE" "$C_OTHER1" "$C_OTHER2" "$C_OTHER3"
+
 echo ""
 if [ "$FAILS" = "0" ]; then
-    echo "PASS: stale staged CYRIUS_HOMEs are reaped, live ones are not"
+    echo "PASS: stale staged CYRIUS_HOMEs and dead CLIs' empty temp dirs are reaped; live ones are not"
     exit 0
 fi
 echo "FAILED: $FAILS assertion(s)"

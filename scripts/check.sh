@@ -344,6 +344,47 @@ _chk_reap_stale_homes() {
 }
 _chk_reap_stale_homes
 
+# ── 6.6.20: the CLI's own temp dirs, left by a process that died without cleaning up ──
+# `cyrius` makes `$TMPDIR/cyrius-<pid>[-t<nonce>][-<n>]` and removes it on a NORMAL exit only
+# (`_cbt_tmpdir_cleanup`, cbt/build.cyr). A signal death skips that — SIGPIPE from
+# `cyrius … | head` leaves an EMPTY dir, SIGKILL leaves `test_bin` / `cc_err` — and the
+# installed 6.6.0–6.6.5 CLIs never cleaned up at all, so the dirs pile up by the hundred.
+# The same rule as the homes above: by AGE ($CYRIUS_CHECK_REAP_MINS) and by OWNERSHIP (the
+# pid in the NAME is dead to both `kill -0` and `ps -p` — a pid we cannot signal is not
+# dead), never by count; only names of exactly that shape, only dirs this user owns. And
+# `rmdir` ONLY: a NON-empty leftover is the CLI's post-mortem contract (a SIGKILLed test's
+# binary; the `cyrius lsp` build it tells the user to copy out), so it is never deleted
+# here. Best-effort: a reap that fails never fails the run. CHANGELOG [6.6.20]
+_chk_pid_alive() {
+    kill -0 "$1" 2>/dev/null && return 0
+    ps -p "$1" > /dev/null 2>&1
+}
+_chk_reap_dead_cli_tmpdirs() {
+    _rtmp="${TMPDIR:-/tmp}"
+    [ -d "$_rtmp" ] || return 0
+    _reaped=0
+    for _d in "$_rtmp"/cyrius-[0-9]*; do
+        [ -d "$_d" ] && [ ! -L "$_d" ] && [ -O "$_d" ] || continue
+        _r=${_d##*/}
+        _r=${_r#cyrius-}
+        case "$_r" in *[!0-9t-]*) continue ;; esac
+        _pid=${_r%%-*}
+        case "$_pid" in ''|*[!0-9]*) continue ;; esac
+        case "${_r#"$_pid"}" in ''|-t[0-9]*|-[0-9]*) ;; *) continue ;; esac
+        if [ "$_CHK_REAP_MINS" -gt 0 ]; then
+            [ -n "$(find "$_d" -maxdepth 0 -type d -mmin +"$_CHK_REAP_MINS" 2>/dev/null)" ] || continue
+        fi
+        _chk_pid_alive "$_pid" && continue
+        rmdir "$_d" 2>/dev/null && _reaped=$((_reaped + 1))
+    done
+    if [ "$_reaped" -gt 0 ]; then
+        printf "check: reaped %s empty cyrius-<pid> temp dir(s) in %s (their process is gone, older than %s min)\n" \
+            "$_reaped" "$_rtmp" "$_CHK_REAP_MINS"
+    fi
+    return 0
+}
+_chk_reap_dead_cli_tmpdirs
+
 # ── v6.6.4: the suite runs against a THROWAWAY CYRIUS_HOME staged from the working tree ──
 #
 # Gates that stage a consumer pinned at `cyrius = "$(cat VERSION)"` resolve their stdlib

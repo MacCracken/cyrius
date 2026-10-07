@@ -91,7 +91,10 @@ fi
 # `#@srcline` separates cbt's prepends from the user's file, so attribution is now exact.
 # Axes 2-3 above prove the USER-include case still errors, so this is not a silent disarm.
 if [ -f programs/boot_serial.cyr ] && [ -x build/cyrius ]; then
-    if build/cyrius build programs/boot_serial.cyr "$O" 2>&1 | grep -q "host-only module"; then
+    # Captured, then grepped: `cyrius … | grep -q` lets grep exit at the first match and the
+    # CLI die of SIGPIPE before its temp-dir cleanup, leaking a cyrius-<pid> dir. CHANGELOG [6.6.20]
+    build/cyrius build programs/boot_serial.cyr "$O" > "$E" 2>&1 || true
+    if grep -q "host-only module" "$E"; then
         echo "  FAIL axis 6: a manifest-supplied host-only module failed a kernel build — cbt's prepends are being blamed on the kernel author"
         fail=1
     else
