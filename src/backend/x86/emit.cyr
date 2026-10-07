@@ -2964,10 +2964,16 @@ fn _pe_j_land(S, after): i64 {
     return 0;
 }
 
-# push rbx; mov rbx,rsp; and rsp,-16; then carve `size` bytes (a multiple of 16) one page at a
-# time, touching each page, so the guard page is always the next one hit.
+# push rbx; push rsi; push rdi; mov rbx,rsp; and rsp,-16; then carve `size` bytes (a multiple
+# of 16) one page at a time, touching each page, so the guard page is always the next one hit.
+# rsi and rdi are saved because `_pe_widen_path` works in them and Win64 makes both NONVOLATILE:
+# until 6.6.20 only rbx was, so every path reroute returned with rsi = the UTF-8 path and rdi =
+# a stack address — a corrupted register for any Windows caller of a cyrius callback.
+# CHANGELOG [6.6.20]
 fn _pe_path_frame(S, size): i64 {
     EB(S, 0x53);                                        # push rbx
+    EB(S, 0x56);                                        # push rsi (Win64 nonvolatile)
+    EB(S, 0x57);                                        # push rdi (Win64 nonvolatile)
     EB(S, 0x48); EB(S, 0x89); EB(S, 0xE3);              # mov rbx, rsp
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xE4); EB(S, 0xF0); # and rsp, -16
     EB(S, 0xB8); EDISP32(S, size >> 12);                # mov eax, pages
@@ -2979,9 +2985,11 @@ fn _pe_path_frame(S, size): i64 {
     return 0;
 }
 
-# mov rsp, rbx; pop rbx — undoes `_pe_path_frame`.
+# mov rsp, rbx; pop rdi; pop rsi; pop rbx — undoes `_pe_path_frame` (rax, the result, is untouched).
 fn _pe_path_unframe(S): i64 {
     EB(S, 0x48); EB(S, 0x89); EB(S, 0xDC);              # mov rsp, rbx
+    EB(S, 0x5F);                                        # pop rdi
+    EB(S, 0x5E);                                        # pop rsi
     EB(S, 0x5B);                                        # pop rbx
     return 0;
 }

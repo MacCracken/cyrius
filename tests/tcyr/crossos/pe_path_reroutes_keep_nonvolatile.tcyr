@@ -1,0 +1,157 @@
+# pe_path_reroutes_keep_nonvolatile.tcyr — 6.6.20: a PE path reroute leaves rsi and rdi as it
+# found them.
+#
+# ⛔ THE DEFECT. Win64 makes rsi and rdi NONVOLATILE: a callee must return them unchanged. The
+# path reroutes (EOPEN_PE, ECREATEDIR_PE, EDELETEF_PE, EDELETEFILEW_PE, EREMOVEDIRW_PE,
+# EMOVEFILEEX_PE, and FindFirstFileW / GetFileAttributesW through `_pe_path_call1`) widen the path
+# in `_pe_widen_path`, which works in rsi (the UTF-8 source) and rdi (the wide result) — and
+# `_pe_path_frame` / `_pe_path_unframe` saved and restored rsp and rbx only, while the PE fn
+# prologue saves neither register. So any cyrius fn that opened, created, deleted, renamed or
+# stat'ed a path returned to its caller with rsi = the UTF-8 path and rdi = a stack address (or 0)
+# — invisible to cyrius callers, which never keep a value in rsi/rdi across a statement, and a
+# corrupted register for any Windows caller of a cyrius callback (a CreateThread proc today, any
+# callback tomorrow). Until 6.6.12 FindFirstFileW / GetFileAttributesW did not go through the
+# widen; 6.6.11 and 6.6.12 extended the class to every narrow path.
+#
+# HOW. `_nv_set` (naked) loads a marker into each register; the reroute runs as the very next
+# statement; `_nv_si` / `_nv_di` (naked) return the registers. The CONTROL row runs the same
+# sequence with no reroute between, so a harness that clobbered them itself would be RED there,
+# not blamed on a reroute. Every row is PE-only — on the other targets syscall() hands its
+# arguments to the kernel in rdi/rsi (SysV: caller-saved) and there is nothing to observe.
+#
+# MUTATION (6.6.20, wine 11.19): the pre-fix compiler -> all 8 reroute rows RED, the control
+# green. CHANGELOG [6.6.20]
+include "lib/string.cyr"
+include "lib/assert.cyr"
+
+var NV_SI = 0x5E5E00000000A5A1;
+var NV_DI = 0x5E5E00000000A5A2;
+var nv_fd: i64[80];   # a WIN32_FIND_DATAW (592 B) for FindFirstFileW
+
+#naked
+fn _nv_set(): i64 {
+    #ifdef CYRIUS_ARCH_X86
+    asm {
+        0x48; 0xBE; 0xA1; 0xA5; 0x00; 0x00; 0x00; 0x00; 0x5E; 0x5E;   # movabs rsi, NV_SI
+        0x48; 0xBF; 0xA2; 0xA5; 0x00; 0x00; 0x00; 0x00; 0x5E; 0x5E;   # movabs rdi, NV_DI
+        0xC3;                                                         # ret
+    }
+    #endif
+    #ifndef CYRIUS_ARCH_X86
+    return 0;
+    #endif
+}
+#naked
+fn _nv_si(): i64 {
+    #ifdef CYRIUS_ARCH_X86
+    asm {
+        0x48; 0x89; 0xF0;   # mov rax, rsi
+        0xC3;               # ret
+    }
+    #endif
+    #ifndef CYRIUS_ARCH_X86
+    return 0;
+    #endif
+}
+#naked
+fn _nv_di(): i64 {
+    #ifdef CYRIUS_ARCH_X86
+    asm {
+        0x48; 0x89; 0xF8;   # mov rax, rdi
+        0xC3;               # ret
+    }
+    #endif
+    #ifndef CYRIUS_ARCH_X86
+    return 0;
+    #endif
+}
+
+# 1 iff both registers still hold their markers. Called with the two reads already taken.
+fn _nv_kept(si, di): i64 {
+    if (si != NV_SI) { return 0; }
+    if (di != NV_DI) { return 0; }
+    return 1;
+}
+
+test_group("PE path reroutes preserve the Win64-nonvolatile rsi / rdi");
+assert_eq(1, 1, "the file runs on every target");
+
+#ifdef CYRIUS_TARGET_WIN
+fn _nv_control(): i64 {
+    _nv_set();
+    var si = _nv_si();
+    var di = _nv_di();
+    return _nv_kept(si, di);
+}
+fn _nv_open(): i64 {
+    _nv_set();
+    syscall(2, "_pe_nv_missing.txt", 0, 0);
+    var si = _nv_si();
+    var di = _nv_di();
+    return _nv_kept(si, di);
+}
+fn _nv_mkdir(): i64 {
+    _nv_set();
+    syscall(83, "_pe_nv_dir", 0);
+    var si = _nv_si();
+    var di = _nv_di();
+    return _nv_kept(si, di);
+}
+fn _nv_getattr(): i64 {
+    _nv_set();
+    syscall(61465, "_pe_nv_dir");
+    var si = _nv_si();
+    var di = _nv_di();
+    return _nv_kept(si, di);
+}
+var nv_h = 0 - 1;
+fn _nv_findfirst(): i64 {
+    _nv_set();
+    nv_h = syscall(61462, "_pe_nv_dir", &nv_fd);
+    var si = _nv_si();
+    var di = _nv_di();
+    return _nv_kept(si, di);
+}
+fn _nv_rmdir(): i64 {
+    _nv_set();
+    syscall(0xF03B, "_pe_nv_dir");
+    var si = _nv_si();
+    var di = _nv_di();
+    return _nv_kept(si, di);
+}
+fn _nv_rename(): i64 {
+    _nv_set();
+    syscall(0xF034, "_pe_nv_missing_a.txt", "_pe_nv_missing_b.txt");
+    var si = _nv_si();
+    var di = _nv_di();
+    return _nv_kept(si, di);
+}
+fn _nv_unlink(): i64 {
+    _nv_set();
+    syscall(87, "_pe_nv_missing.txt");
+    var si = _nv_si();
+    var di = _nv_di();
+    return _nv_kept(si, di);
+}
+fn _nv_deletefilew(): i64 {
+    _nv_set();
+    syscall(0xF035, "_pe_nv_missing.txt");
+    var si = _nv_si();
+    var di = _nv_di();
+    return _nv_kept(si, di);
+}
+
+assert_eq(_nv_control(), 1, "control: the markers survive the harness itself");
+assert_eq(_nv_open(), 1, "open (2, CreateFileW) keeps rsi/rdi");
+assert_eq(_nv_mkdir(), 1, "mkdir (83, CreateDirectoryW) keeps rsi/rdi");
+assert_eq(_nv_getattr(), 1, "GetFileAttributesW (0xF019) keeps rsi/rdi");
+assert_eq(_nv_findfirst(), 1, "FindFirstFileW (0xF016) keeps rsi/rdi");
+assert_neq(nv_h, 0 - 1, "FindFirstFileW found the directory mkdir made (the row ran the API)");
+if (nv_h != 0 - 1) { syscall(0xF018, nv_h); }   # FindClose
+assert_eq(_nv_rmdir(), 1, "rmdir (0xF03B, RemoveDirectoryW) keeps rsi/rdi");
+assert_eq(_nv_rename(), 1, "rename (0xF034, MoveFileExW) keeps rsi/rdi");
+assert_eq(_nv_unlink(), 1, "unlink (87, DeleteFileW) keeps rsi/rdi");
+assert_eq(_nv_deletefilew(), 1, "DeleteFileW (0xF035) keeps rsi/rdi");
+#endif
+
+var r = assert_summary();
