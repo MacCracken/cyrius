@@ -626,9 +626,18 @@ fn _cy_refuse_version(v): i64 {
 # Run `args` (a vec of cstrs; args[0] an absolute path) with THIS process's environment — HOME,
 # PATH and CYRIUS_HOME reach install.sh and rm exactly as they did through exec_cmd — and its
 # stdio. The argv is passed as-is: no shell parses an operand. 0..255 = the exit code, -2 = the
-# deadline killed it, -1 = nothing ran. 6.6.20 (RS-04): what install / uninstall run instead of
-# a `/bin/sh -c` line built from the operand.
+# deadline killed it, -1 = nothing ran. 6.6.20 (RS-04): what install / uninstall / cmdtools run
+# instead of a `/bin/sh -c` line built from the operand.
+# The POSIX body uses lib/process.cyr's fork/execve internals, which have no Windows peer; on PE
+# this is exec_vec (CreateProcess with the inherited environment, argv as given). Nothing ships a
+# Windows cyriusly — the verbs it runs are /bin/sh, curl and rm — but the file keeps compiling for
+# every target it compiled for before.
 fn _cy_run_argv(args): i64 {
+    #ifdef CYRIUS_TARGET_WIN
+    var wr = exec_vec(args);
+    return wr;
+    #endif
+    #ifndef CYRIUS_TARGET_WIN
     var n = vec_len(args);
     var av = alloc((n + 1) * 8);
     if (av == 0) { return 0 - 1; }
@@ -659,6 +668,7 @@ fn _cy_run_argv(args): i64 {
     var st = load32(&stbuf);
     if (WIFEXITED(st) == 1) { return WEXITSTATUS(st); }
     return 0 - 1;
+    #endif
 }
 
 # `cyriusly uninstall <ver>` — remove a version directory.

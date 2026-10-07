@@ -37,6 +37,7 @@
 #      operands are argv to the shell twin, never a shell line); control: `cmdtools list` from
 #      this checkout lists (binary). ⚠ The twin is still resolved from the CWD — filed, see
 #      programs/cyriusly.cyr `_cmd_cmdtools`; this axis does not bless that.
+#   8  STATIC: `CYRIUS_TARGET_WIN=1` still builds programs/cyriusly.cyr (MZ, no undefined fn)
 #
 # MUTATION LEDGER (2026-10-06, 6.6.20): `_cy_version_ok` answering 1 turns axes 1-3 RED on the
 # binary (the store deleted, the injected `touch` RAN, the traversal pin written and --global
@@ -54,7 +55,8 @@
 # 5 and both axis-7 injection rows RED. Before the `6..6` rows, deleting the `..` ban from either
 # peer left the gate green (every other row also fails the leading digit or the `/`); with them,
 # dropping it from `_cy_shape_ok` turns axes 1 and 3 [bin] (and axis 6's `6..6` pin) RED, and
-# dropping `|*..*` from `need_version` turns axes 1 and 3 [sh] RED.
+# dropping `|*..*` from `need_version` turns axes 1 and 3 [sh] RED. Dropping `_cy_run_argv`'s
+# CYRIUS_TARGET_WIN arm turns axis 8 RED (rc 1, three undefined functions).
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -233,6 +235,18 @@ RC=0
 { [ "$RC" -eq 0 ] && grep -q "^cmdtools integrations:" "$W/out"; } \
     || { bad "axis 7 [bin] cmdtools list (control, from the checkout): exit $RC"; a7=1; }
 [ "$a7" -eq 0 ] && echo "  ok axis 7 [bin]: cmdtools hands its operands to the twin as argv; nothing injected, list still lists"
+
+# ── axis 8: the argv runner keeps the file compiling for PE ──────────────────────────────────
+# `_cy_run_argv` uses lib/process.cyr's POSIX fork/execve internals; without its CYRIUS_TARGET_WIN
+# arm the PE build failed (undefined `_read_environ_envp` / `_proc_child_guard` /
+# `_proc_wait_deadline`), where 6.6.19's exec_cmd-based file built.
+RC=0
+( cd "$ROOT" && env CYRIUS_TARGET_WIN=1 "$CC" < programs/cyriusly.cyr > "$W/cyriusly.exe" 2> "$W/err" ) || RC=$?
+if [ "$RC" -eq 0 ] && [ "$(head -c 2 "$W/cyriusly.exe")" = MZ ] && ! grep -q "undefined function" "$W/err"; then
+    echo "  ok axis 8: programs/cyriusly.cyr still builds for PE (MZ, no undefined function)"
+else
+    bad "axis 8: CYRIUS_TARGET_WIN=1 build of programs/cyriusly.cyr: exit $RC"
+fi
 
 [ "$fail" -eq 0 ] || { echo "FAIL: $NAME"; exit 1; }
 echo "PASS: $NAME (cyriusly uninstall / install / use refuse a non-version operand by name, in both peers; install, uninstall and cmdtools pass their operands as argv)"
