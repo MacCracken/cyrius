@@ -306,6 +306,21 @@ if (_pie_env_early != 0) {
         _pie_mode = 1;
     }
 }
+# CYRIUS_KERNEL=1 (what `cyrius build --target=aarch64-bare-metal-elf` injects) forces
+# kernel_mode and CYRIUS_KERNEL_BASE=0x<hex> sets its load base, as in main_aarch64.cyr.
+# This fork read neither, so asked for a kernel image it wrote a USERLAND ELF, rc 0.
+# CHANGELOG [6.6.20]
+var _kern_env_n = _read_env("CYRIUS_KERNEL");
+if (_kern_env_n != 0) {
+    if (load8(_kern_env_n) == 49 && load8(_kern_env_n + 1) == 0) {
+        S64(S + 0x18FCA0, 1);
+    }
+}
+var _kbase_env_n = _read_env("CYRIUS_KERNEL_BASE");
+if (_kbase_env_n != 0) {
+    var _kb_n = _parse_hex_env(_kbase_env_n);
+    if (_kb_n != 0) { S64(S + 0x18FCE8, _kb_n); }
+}
 PP_PREDEFINE(S, "CYRIUS_TARGET_LINUX");
 # v5.10.39 — non-PE targets support f64v2/f64v4 value-form param ABI.
 PP_PREDEFINE(S, "CYRIUS_HAS_VAL_SIMD_PARAMS");

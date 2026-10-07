@@ -23,6 +23,10 @@
 #              defaults to ET_EXEC. The native fork read neither and wrote ET_EXEC, rc 0.
 #   macho    — the native aarch64 fork, which has no Mach-O emitter, REFUSES CYRIUS_MACHO_ARM=1
 #              by name (rc 1, no output). It compiled the program and wrote 0 bytes, rc 0.
+#   kernel   — every aarch64 compiler honours CYRIUS_KERNEL=1 (what `cyrius build
+#              --target=aarch64-bare-metal-elf` injects) and CYRIUS_KERNEL_BASE: the image's
+#              entry is base + 0x78 and it is byte-identical to the cross's. The native fork read
+#              neither: asked for a kernel image it wrote a 65 KB userland ELF, rc 0, without a word.
 #
 # MUTATION LEDGER (6.6.20, scratch copies of src/, never the repo):
 #   real tree                                          -> GREEN
@@ -31,6 +35,8 @@
 #   the CYRIUS_PIE read deleted from the native fork   -> RED "pie native_qemu env: rc 0, e_type EXEC"
 #   the native CYRIUS_MACHO_ARM refusal deleted        -> RED "macho native_qemu: rc 0, 0 bytes out"
 #   the `--sy` arms deleted from main_cx.cyr           -> RED "syntax cx" + "syntax cx.exe_wine"
+#   the CYRIUS_KERNEL / _BASE reads deleted from the native fork
+#                                                      -> RED "kernel native_qemu default" + "kernel native_qemu 0x40200000"
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || { echo "FAIL: fork_flag_parity: cannot cd to $ROOT"; exit 1; }
@@ -157,9 +163,35 @@ if [ "$HAVE_QEMU" = 1 ]; then
     fi
 fi
 
+# ── kernel: CYRIUS_KERNEL / CYRIUS_KERNEL_BASE on the aarch64 compilers ─────────────────
+entry() { od -An -j24 -N8 -tx8 "$1" | tr -d ' \n'; }
+printf 'var x = 1;\n' > "$T/k.cyr"
+printf '%s\n' "$AFORKS" | while IFS='|' read -r l c; do
+    for base in default 0x40200000; do
+        rc=0
+        if [ "$base" = default ]; then
+            want=0000000040000078
+            env CYRIUS_KERNEL=1 $c < "$T/k.cyr" > "$T/kimg" 2> "$T/kimg.err" || rc=$?
+        else
+            want=0000000040200078
+            env CYRIUS_KERNEL=1 CYRIUS_KERNEL_BASE=$base $c < "$T/k.cyr" > "$T/kimg" 2> "$T/kimg.err" || rc=$?
+        fi
+        echo x >> "$T/nrows"
+        got=$(entry "$T/kimg")
+        if [ "$rc" != 0 ] || [ "$got" != "$want" ]; then
+            echo "  FAIL: fork_flag_parity kernel $l $base: rc $rc, entry ${got:-none}, $(wc -c < "$T/kimg" | tr -d ' ') bytes (want rc 0, a kernel image at entry $want)"
+            echo x >> "$T/red"; continue
+        fi
+        if [ "$l" = a64_cross ]; then cp "$T/kimg" "$T/kref_$base"
+        elif ! cmp -s "$T/kimg" "$T/kref_$base"; then
+            echo "  FAIL: fork_flag_parity kernel $l $base: the image differs from the cross's"; echo x >> "$T/red"
+        fi
+    done
+done
+
 [ -f "$T/nrows" ] && rows=$((rows + $(wc -l < "$T/nrows")))
 [ -f "$T/red" ] && fail=$((fail + $(wc -l < "$T/red")))
 
 if [ "$fail" -ne 0 ]; then echo "FAIL fork_flag_parity: $fail of $rows row(s) red"; exit 1; fi
-echo "PASS fork_flag_parity: $rows rows — --strict a no-op and --syntax-only honoured on every runnable fork; aarch64 --pie / CYRIUS_PIE; native refuses CYRIUS_MACHO_ARM"
+echo "PASS fork_flag_parity: $rows rows — --strict a no-op and --syntax-only honoured on every runnable fork; aarch64 --pie / CYRIUS_PIE / CYRIUS_KERNEL(_BASE); native refuses CYRIUS_MACHO_ARM"
 exit 0
