@@ -905,7 +905,7 @@ fn file_replace_atomic(path, buf, len): i64 {
 var _io_contain_link = 0;     # the link whose target was refused (NUL-terminated), or 0
 var _io_contain_target = 0;   # the target bytes it names (NUL-terminated)
 var _io_contain_why = 0;      # 1 absolute · 2 climbs out with .. · 3 passes a directory link · 4 too long
-                              # · 5 reaches into .git · 6 an 8.3 short name that can alias .git
+# · 5 reaches into .git · 6 an 8.3 short name that can alias .git
 var _io_contain_dir = 0;      # for 3: the directory link, as a path
 var _io_contain_root = 0;
 var _io_contain_req = 0;      # the name the caller asked to write (`root` + `rel`)
