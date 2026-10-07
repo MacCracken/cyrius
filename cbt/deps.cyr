@@ -4493,6 +4493,20 @@ fn _dep_commit_fresh_has(p, n): i64 {
     return 0;
 }
 
+# 1 when commit lines `a` and `b` (NUL-terminated) pin the same dep NAME — the summary counts
+# deps, and an old tag's line stays after a bump, so the line count is not one. CHANGELOG [6.6.20]
+fn _lock_commit_name_same(a, b): i64 {
+    var na = strlen(a);
+    var nb = strlen(b);
+    var an = _lock_commit_field_at(a, na, 2);
+    var bn = _lock_commit_field_at(b, nb, 2);
+    if (an < 0 || bn < 0) { return 0; }
+    var al = _lock_commit_field_len(a, na, an);
+    if (al != _lock_commit_field_len(b, nb, bn)) { return 0; }
+    if (memeq(a + an, b + bn, al) == 1) { return 1; }
+    return 0;
+}
+
 fn _lock_cstr_cmp(a, b): i64 {
     var i = 0;
     while (1 == 1) {
@@ -4586,10 +4600,14 @@ fn cmd_deps_lock(): i64 {
     }
     vec_sort_by(_pins, &_lock_commit_line_cmp);
     var _cc = 0;
+    var _npinned = 0;   # distinct dep NAMES — a name's lines are adjacent in the sorted block
+    var _prev = 0;
     while (_cc < vec_len(_pins)) {
         var _line = vec_get(_pins, _cc);
         _aw_write(lock_h, _line, strlen(_line));
         _aw_write(lock_h, "\n", 1);
+        if (_prev == 0 || _lock_commit_name_same(_prev, _line) == 0) { _npinned = _npinned + 1; }
+        _prev = _line;
         _cc = _cc + 1;
     }
     var count = _deps_lock_dir("lib", lock_h);
@@ -4620,9 +4638,9 @@ fn cmd_deps_lock(): i64 {
     sys_write(STDOUT_FD, "cyrius.lock: ", 13);
     fmt_int(count);
     sys_write(STDOUT_FD, " deps locked", 12);
-    if (_cc > 0) {
+    if (_npinned > 0) {
         sys_write(STDOUT_FD, ", ", 2);
-        fmt_int(_cc);
+        fmt_int(_npinned);
         sys_write(STDOUT_FD, " commit-pinned", 14);
     }
     println("");

@@ -64,6 +64,8 @@
 #       respelled spelling, same sha, no duplicate
 #   K15 1000 retained `alpha` lines put good's live v2 line past 64 KB: its repointed tag on a
 #       fresh cache is still REFUSED by name (the lookup read a 64 KB window and said "no pin")
+#   K16 the same lock re-resolved keeps all 1006 lines, and the summary's `N commit-pinned`
+#       counts the 6 deps by name, not the lines (it printed 1006 for 6 deps)
 #
 # Mutation ledger (measured in a scratch root, one mutant at a time): the slot-open (6.6.20) CLI
 # → every axis but K1 red; the first cut, which dropped an inherited line by NAME (61c88ca3) →
@@ -71,7 +73,8 @@
 # K3 K8 K12a K13 K14 red (a duplicate line per re-verified dep); comparing the git field
 # byte-for-byte instead of url-normalised → K14 red; no sort → K13 red; dropping the CR strip in
 # _lock_commit_lookup → K10 red; dropping the one in cmd_deps_verify → K11 red; restoring the
-# 64 KB read window (`var cap = 65536;`) in _lock_commit_lookup → K15 red. A repoint must
+# 64 KB read window (`var cap = 65536;`) in _lock_commit_lookup → K15 red; counting lines in
+# the summary → K16 red. A repoint must
 # make a NEW commit: the second repoint of one origin used to be an empty `git commit`, the tag
 # never moved, and the CRLF axis passed nothing (caught while measuring this ledger).
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -348,6 +351,15 @@ cat "$W/k15.pins" "$P/cyrius.lock" > "$W/k15.lock" && cp "$W/k15.lock" "$P/cyriu
 goff=$(grep -b "^commit${TAB}[0-9a-f]*${TAB}good${TAB}[^${TAB}]*${TAB}v2\$" "$P/cyrius.lock" | cut -d: -f1)
 [ -n "$goff" ] && [ "$goff" -gt 65536 ] || bad "K15 setup: good's v2 line is at byte ${goff:-none}, not past 64 KB"
 RTAG=v2; refused K15 good; RTAG=v1
+
+# ── K16: the summary counts pinned DEPS, not lines ──────────────────────────────────────
+#    The same lock re-resolved: every retained line is kept, and `N commit-pinned` names the
+#    six deps (alpha good opt optdep ovr tgt), not the 1006 lines it printed before.
+rc=0; if _cy deps > "$W/k16.out" 2>&1; then rc=0; else rc=$?; fi
+na=$(tr -d '\r' < "$P/cyrius.lock" | awk -F"$TAB" '$1 == "commit" && $3 == "alpha"' | wc -l | tr -d ' ')
+if [ "$rc" -eq 0 ] && [ "$na" -eq 1000 ] && [ "$(npins)" -eq 1006 ] && grep -q '^cyrius.lock: .*, 6 commit-pinned$' "$W/k16.out"; then
+    ok "K16 1006 pin lines kept, the summary says 6 commit-pinned (deps, not lines)"
+else bad "K16 (rc=$rc, $na alpha lines, $(npins) pins): $(grep -m1 'cyrius.lock' "$W/k16.out")"; fi
 
 echo "$G: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
