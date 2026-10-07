@@ -114,8 +114,9 @@ grep 'BARE-WAIT' "$W/sites" | sed 's/^/      /' > "$W/bad" || true
 
 # ── axis 1 — does a fork fail under the limit here? ─────────────────────────────────────
 # RLIMIT_NPROC is `ulimit -u` in bash and `ulimit -p` in dash; it counts every process the user
-# already has, so a limit of 1 fails any fork. `exec` then runs the program without forking.
-LIM='ulimit -u 1 2>/dev/null || ulimit -p 1 2>/dev/null || exit 3; exec "$0" "$@"'
+# already has, so a limit of 1 fails any fork. The subshell takes the limit and then `exec`s the
+# program without forking again; the limit dies with it, never reaching this script.
+lim() { ( ulimit -u 1 2>/dev/null || ulimit -p 1 2>/dev/null || exit 3; exec "$@" ); }
 cat > "$W/probe.cyr" <<'EOF'
 include "lib/syscalls.cyr"
 var pid = sys_fork();
@@ -127,7 +128,7 @@ sys_exit(1);
 EOF
 "$CC" < "$W/probe.cyr" > "$W/probe" 2> "$W/probe.err" && chmod +x "$W/probe" \
     || { echo "FAIL: $G: the fork probe does not build"; tail -3 "$W/probe.err"; exit 1; }
-if ! sh -c "$LIM" "$W/probe"; then
+if ! lim "$W/probe"; then
     [ "$FAIL" = 0 ] || exit 1
     echo "SKIP: $G: a fork still succeeds under 'ulimit -u 1' here (root, or CAP_SYS_RESOURCE) — the verb rows cannot run (exit 77: a SKIP, not a PASS)"
     exit 77
@@ -153,8 +154,8 @@ cy() {
     rm -rf "$W/t"; mkdir -p "$W/t"
     RC=0
     if [ "$mode" = lim ]; then
-        ( cd "$WD" && env -i HOME="$H" PATH=/usr/bin:/bin TMPDIR="$W/t" CYRIUS_HOME="$H" CYRIUS_RESOLVED=1 \
-            sh -c "$LIM" "$W/cyrius" "$@" ) > "$W/out" 2>&1 || RC=$?
+        ( cd "$WD" && lim env -i HOME="$H" PATH=/usr/bin:/bin TMPDIR="$W/t" CYRIUS_HOME="$H" CYRIUS_RESOLVED=1 \
+            "$W/cyrius" "$@" ) > "$W/out" 2>&1 || RC=$?
     else
         ( cd "$WD" && env -i HOME="$H" PATH=/usr/bin:/bin TMPDIR="$W/t" CYRIUS_HOME="$H" CYRIUS_RESOLVED=1 \
             "$W/cyrius" "$@" ) > "$W/out" 2>&1 || RC=$?
@@ -221,7 +222,7 @@ msg() { printf 'Content-Length: %d\r\n\r\n%s' "$(printf '%s' "$1" | wc -c)" "$1"
   msg '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file://'"$W/lone/a.cyr"'","languageId":"cyrius","version":1,"text":""}}}'
   msg '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file://'"$W/proj/b.cyr"'","languageId":"cyrius","version":1,"text":""}}}'
   msg '{"jsonrpc":"2.0","id":2,"method":"shutdown"}'; } > "$W/lsp.in"
-( cd "$W/lone" && env -i HOME="$LH" PATH=/usr/bin:/bin sh -c "$LIM" "$W/cyrius-lsp" ) \
+( cd "$W/lone" && lim env -i HOME="$LH" PATH=/usr/bin:/bin "$W/cyrius-lsp" ) \
     < "$W/lsp.in" > "$W/lsp.out" 2> "$W/lsp.err" || true
 grep -q "could not start $LH/.cyrius/bin/cycc: fork failed" "$W/lsp.err" \
     || fail "axis 3: the raw-cycc diagnostics spawn did not log its fork failure: $(grep -v '^\[cyrius-lsp\] /' "$W/lsp.err" | tail -3 | tr '\n' ' ')"
