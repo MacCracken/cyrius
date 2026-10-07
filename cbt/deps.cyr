@@ -4507,6 +4507,28 @@ fn _lock_commit_name_same(a, b): i64 {
     return 0;
 }
 
+# Distinct dep names among THIS resolve's fresh pins: the summary's `(K re-verified)`. The
+# `N commit-pinned` count is the merged lock's pin set, carried names included, so it no longer
+# tells a resolve that verified nothing (a pure `path =` override) from one that verified
+# everything; K does — 0 there, and 0 for the bare `--lock` verb. CHANGELOG [6.6.20]
+fn _dep_commit_fresh_count(): i64 {
+    if (_dep_commit_lines == 0) { return 0; }
+    var k = 0;
+    var i = 0;
+    while (i < vec_len(_dep_commit_lines)) {
+        var a = vec_get(_dep_commit_lines, i);
+        var seen = 0;
+        var j = 0;
+        while (j < i) {
+            if (_lock_commit_name_same(vec_get(_dep_commit_lines, j), a) == 1) { seen = 1; }
+            j = j + 1;
+        }
+        if (seen == 0) { k = k + 1; }
+        i = i + 1;
+    }
+    return k;
+}
+
 fn _lock_cstr_cmp(a, b): i64 {
     var i = 0;
     while (1 == 1) {
@@ -4641,7 +4663,9 @@ fn cmd_deps_lock(): i64 {
     if (_npinned > 0) {
         sys_write(STDOUT_FD, ", ", 2);
         fmt_int(_npinned);
-        sys_write(STDOUT_FD, " commit-pinned", 14);
+        sys_write(STDOUT_FD, " commit-pinned (", 16);
+        fmt_int(_dep_commit_fresh_count());
+        sys_write(STDOUT_FD, " re-verified)", 13);
     }
     println("");
     return 0;

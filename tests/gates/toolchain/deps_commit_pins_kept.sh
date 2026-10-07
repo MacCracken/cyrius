@@ -44,7 +44,9 @@
 #
 # AXES (every origin is a local file:// repo — no network):
 #   K1  setup: `deps --features gpu --aarch64` pins all five tagged deps (anti-vacuous floor)
-#   K2  a feature-less, x86 `deps` with the override dir present keeps all five pins, same shas
+#   K2  a feature-less, x86 `deps` with the override dir present keeps all five pins, same shas,
+#       and its summary says so: `5 commit-pinned (1 re-verified)` — only `good` was checked
+#   K2l the bare `deps --lock` verb (no resolve) keeps them and says `(0 re-verified)`
 #   K3  a feature-less `cyrius build` (the auto-deps path) keeps them too
 #   K4  optional dep: tag repointed + fresh cache → `deps --features gpu` REFUSED, lib untouched
 #   K5  transitive dep of the optional dep: same, refused by name
@@ -67,16 +69,19 @@
 #   K15 1000 retained `alpha` lines put good's live v2 line past 64 KB: its repointed tag on a
 #       fresh cache is still REFUSED by name (the lookup read a 64 KB window and said "no pin")
 #   K16 the same lock re-resolved keeps all 1006 lines, and the summary's `N commit-pinned`
-#       counts the 6 deps by name, not the lines (it printed 1006 for 6 deps)
+#       counts the 6 deps by name, not the lines (it printed 1006 for 6 deps): `6 commit-pinned
+#       (2 re-verified)`
 #   K17 a fork at the same tag: fx pinned from its origin at v1, the manifest moved to a fork
 #       that also tags v1 (cache cleared). K17a: the lock keeps BOTH v1 lines; K17b: moved back,
 #       the origin's v1 repointed + fresh cache → REFUSED by name, lock and lib untouched
 #
 # Mutation ledger (measured with this file, one mutant of cbt/deps.cyr at a time; the tip is
-# 20/20 green):
+# 21/21 green):
 #   slot-open (6.6.20) CLI ............................ every axis but K1 red
-#   first cut, inherited line dropped by NAME (61c88ca3) K8 K12a K12b K13 K14 K15 K16 K17a K17b
-#   carry every inherited line (fresh check always 0) . K2 K3 K8 K12a K13 K14, K15 K16 knock-on
+#   first cut, inherited line dropped by NAME (61c88ca3) K8 K12a K12b K13 K14 K15 K16 K17a K17b,
+#       and K2 K2l for its summary (no `(K re-verified)`)
+#   carry every inherited line (fresh check always 0) . K2 K3 K8 K12a K13 K14,
+#       K2l K15 K16 knock-on
 #   git field compared byte-for-byte, not normalised .. K14, K15 K16 knock-on (K14's duplicate)
 #   drop key ignores git (`return 1` for the url test)  K17a K17b
 #   no sort ........................................... K13 K16 (the dep count reads adjacency)
@@ -84,6 +89,8 @@
 #   no CR strip in cmd_deps_verify .................... K11
 #   64 KB read window in _lock_commit_lookup .......... K15
 #   summary counts lines, not deps .................... K16
+#   no `(K re-verified)` in the summary ............... K2 K2l K16
+#   K counts the merged pin set, not this run's pins .. K2 K2l K16
 # "Knock-on" axes go red because an earlier axis left a duplicate line in the shared project.
 # A repoint must make a NEW commit: the second repoint of one origin used to be an empty `git
 # commit`, the tag never moved, and the CRLF axis passed nothing (caught while measuring).
@@ -205,9 +212,16 @@ want=$(pinset)
 # ── K2: the override dir appears; a feature-less x86 resolve re-verifies only `good` ───────
 mkdir -p "$P/ovr-local/dist" && printf 'fn ovr_f(): i64 { return 1; }\n' > "$P/ovr-local/dist/ovr.cyr"
 rc=0; if _cy deps > "$W/k2.out" 2>&1; then rc=0; else rc=$?; fi
-if [ "$rc" -eq 0 ] && grep -q 'cyrius.lock:' "$W/k2.out" && [ "$(npins)" -eq 5 ] && [ "$(pinset)" = "$want" ]; then
-    ok "K2 feature-less, x86, override present: the lock was rewritten and kept all 5 pins unchanged"
+if [ "$rc" -eq 0 ] && grep -q '^cyrius.lock: .*, 5 commit-pinned (1 re-verified)$' "$W/k2.out" && [ "$(npins)" -eq 5 ] && [ "$(pinset)" = "$want" ]; then
+    ok "K2 feature-less, x86, override present: the lock kept all 5 pins unchanged, 1 re-verified"
 else bad "K2 (rc=$rc, $(npins) pins: $(pinset), want $want): $(grep -m1 'cyrius.lock' "$W/k2.out")"; fi
+#    K2l: the bare `--lock` verb resolves nothing. `N commit-pinned` is the merged pin set, so
+#    `(0 re-verified)` is what still tells a resolve that verified nothing (a pure `path =`
+#    override, the tell ecosystem-migration-6.6.2.md documents) from one that verified them all.
+rc=0; if _cy deps --lock > "$W/k2l.out" 2>&1; then rc=0; else rc=$?; fi
+if [ "$rc" -eq 0 ] && grep -q '^cyrius.lock: .*, 5 commit-pinned (0 re-verified)$' "$W/k2l.out" && [ "$(pinset)" = "$want" ]; then
+    ok "K2l bare \`deps --lock\`: all 5 pins kept, the summary says 0 re-verified"
+else bad "K2l (rc=$rc, $(npins) pins: $(pinset)): $(grep -m1 'cyrius.lock\|error' "$W/k2l.out")"; fi
 
 # ── K3: the same through the auto-deps verb ──────────────────────────────────────────────
 rc=0; if _cy build main.cyr ./out > "$W/k3.out" 2>&1; then rc=0; else rc=$?; fi
@@ -367,8 +381,8 @@ RTAG=v2; refused K15 good; RTAG=v1
 #    six deps (alpha good opt optdep ovr tgt), not the 1006 lines it printed before.
 rc=0; if _cy deps > "$W/k16.out" 2>&1; then rc=0; else rc=$?; fi
 na=$(tr -d '\r' < "$P/cyrius.lock" | awk -F"$TAB" '$1 == "commit" && $3 == "alpha"' | wc -l | tr -d ' ')
-if [ "$rc" -eq 0 ] && [ "$na" -eq 1000 ] && [ "$(npins)" -eq 1006 ] && grep -q '^cyrius.lock: .*, 6 commit-pinned$' "$W/k16.out"; then
-    ok "K16 1006 pin lines kept, the summary says 6 commit-pinned (deps, not lines)"
+if [ "$rc" -eq 0 ] && [ "$na" -eq 1000 ] && [ "$(npins)" -eq 1006 ] && grep -q '^cyrius.lock: .*, 6 commit-pinned (2 re-verified)$' "$W/k16.out"; then
+    ok "K16 1006 pin lines kept, the summary says 6 commit-pinned (deps, not lines), 2 re-verified (good ovr)"
 else bad "K16 (rc=$rc, $na alpha lines, $(npins) pins): $(grep -m1 'cyrius.lock' "$W/k16.out")"; fi
 
 # ── K17: the drop key includes GIT — a fork at the same tag keeps the origin's line ─────────
