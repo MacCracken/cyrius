@@ -4425,6 +4425,42 @@ fn _deps_lock_files_into(dir, out): i64 {
     return 0;
 }
 
+# The NAME field of a `commit\t<sha>\t<name>\t<git>\t<tag>` line of `n` bytes at `p` (no
+# newline): its offset from `p`, or -1 when the line has no name field. Its length runs to
+# the next tab or the end of the line (_lock_commit_name_len).
+fn _lock_commit_name_at(p, n): i64 {
+    var i = 7;
+    while (i < n && load8(p + i) != 9) { i = i + 1; }
+    if (i >= n) { return -1; }
+    return i + 1;
+}
+
+fn _lock_commit_name_len(p, n, off): i64 {
+    var i = off;
+    while (i < n && load8(p + i) != 9) { i = i + 1; }
+    return i - off;
+}
+
+# 1 when THIS resolve pushed a fresh pin for the dep the inherited commit line (`n` bytes at
+# `p`) names — cmd_deps_lock then writes the fresh line instead. A line with no name field
+# matches nothing, so it is carried as it stood. CHANGELOG [6.6.20]
+fn _dep_commit_fresh_has(p, n): i64 {
+    if (_dep_commit_lines == 0) { return 0; }
+    var off = _lock_commit_name_at(p, n);
+    if (off < 0) { return 0; }
+    var nl = _lock_commit_name_len(p, n, off);
+    var i = 0;
+    while (i < vec_len(_dep_commit_lines)) {
+        var fl = vec_get(_dep_commit_lines, i);
+        i = i + 1;
+        var flen = strlen(fl);
+        var fo = _lock_commit_name_at(fl, flen);
+        if (fo < 0) { continue; }
+        if (_lock_commit_name_len(fl, flen, fo) == nl && memeq(fl + fo, p + off, nl) == 1) { return 1; }
+    }
+    return 0;
+}
+
 fn cmd_deps_lock(): i64 {
     # v6.0.2: cyrius's own repo authors its lib/ — skip (self-referential
     # + would churn the tracked cyrius.lock on every check.sh). See
@@ -4457,26 +4493,32 @@ fn cmd_deps_lock(): i64 {
             _ci = _ci + 1;
             _cc = _cc + 1;
         }
-    } else {
-        # ⛔ v6.6.4: the bare `cyrius deps --lock` verb reaches here with NO resolve behind it,
-        # so `_dep_commit_lines` is 0 and every CVE-21 `commit\t` pin the old lock carried was
-        # silently DROPPED (measured: "1 commit-pinned" → "0"; the next `cyrius deps` then
-        # TOFU-re-pinned a repointed tag it would otherwise have refused). Carry the inherited
-        # lock's commit lines forward — a re-hash of lib/ must never lose the pins.
-        if (_dep_lock_buf != 0) {
-            var _lp = 0;
-            while (_lp < _dep_lock_len) {
-                var _le = _lp;
-                while (_le < _dep_lock_len && load8(_dep_lock_buf + _le) != 10) { _le = _le + 1; }
-                if (_le - _lp > 7 && memeq(_dep_lock_buf + _lp, "commit", 6) == 1 && load8(_dep_lock_buf + _lp + 6) == 9) {
-                    var _lw = _le;
-                    if (_lw > _lp && load8(_dep_lock_buf + _lw - 1) == 13) { _lw = _lw - 1; }
+    }
+    # ⛔ ALWAYS MERGE the inherited pins (CVE-TBD, 6.6.20): every inherited `commit\t` line whose
+    # dep NAME got no fresh line above is carried forward. A resolve pins only the tagged deps it
+    # verified THIS run, and this used to write those OR (bare `--lock`, v6.6.4) the inherited
+    # ones — so a resolve that skipped a dep dropped its pin and kept its lib/ hash row: an
+    # optional dep without its feature, a `target =` miss, every transitive dep of a gated-out
+    # dep, an existing `path =` override, any pin on a no-git (PE) host — through every auto-deps
+    # verb. The next resolve with a fresh cache then TOFU-re-pinned a repointed tag. Keyed on the
+    # NAME: (name, git, tag) would duplicate a line under a respelled url and pile up stale pins
+    # across tag bumps; and NOT filtered to the manifest's names — a transitive dep of a
+    # gated-out dep is declared only in that dep's own, unread manifest. CHANGELOG [6.6.20]
+    if (_dep_lock_buf != 0) {
+        var _lp = 0;
+        while (_lp < _dep_lock_len) {
+            var _le = _lp;
+            while (_le < _dep_lock_len && load8(_dep_lock_buf + _le) != 10) { _le = _le + 1; }
+            if (_le - _lp > 7 && memeq(_dep_lock_buf + _lp, "commit", 6) == 1 && load8(_dep_lock_buf + _lp + 6) == 9) {
+                var _lw = _le;
+                if (_lw > _lp && load8(_dep_lock_buf + _lw - 1) == 13) { _lw = _lw - 1; }
+                if (_dep_commit_fresh_has(_dep_lock_buf + _lp, _lw - _lp) == 0) {
                     _aw_write(lock_h, _dep_lock_buf + _lp, _lw - _lp);
                     _aw_write(lock_h, "\n", 1);
                     _cc = _cc + 1;
                 }
-                _lp = _le + 1;
             }
+            _lp = _le + 1;
         }
     }
     var count = _deps_lock_dir("lib", lock_h);
