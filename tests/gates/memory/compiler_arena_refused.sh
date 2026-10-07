@@ -14,7 +14,10 @@
 # the named arena refusal or a clean compile, never a guest SIGSEGV, and at least one must reach
 # the named refusal (anti-vacuous). Positive control: with no limit every fork compiles the probe.
 # The PE VirtualAlloc arms (cycc.exe, cx.exe) cannot be starved under wine; they are checked by
-# reading only.
+# reading only. cycc_cx's agnos arm cannot run here either (no agnos userland on this host): it
+# grew its arena with brk, and agnos syscall 12 is sync(), which returns 0, so S was 0 and no
+# arena existed. Its rows build the agnos cycc_cx, require the named agnos refusal in that binary
+# (and not in the Linux one), and read the arm: mmap(27), never brk / syscall 12.
 #
 # MUTATION LEDGER (6.6.20, scratch copies of src/, never the repo):
 #   real tree                                       -> GREEN
@@ -22,6 +25,9 @@
 #                                                   -> RED "x86 ulimit -v 200000: rc 139" + "x86 ulimit -d"
 #   the native fork's check deleted the same way    -> RED "native_qemu: 5 limit(s) ended in a signal"
 #                                                      + "no limit in the sweep reached the named refusal"
+#   main_cx.cyr's agnos arm put back to `var S = syscall(SYS_BRK, 0); syscall(SYS_BRK, S + 0xF600000);`
+#                                                   -> RED "agnos_cx: the agnos build lacks the named refusal"
+#                                                      + "agnos_cx: the arm calls brk / syscall 12"
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || { echo "FAIL: compiler_arena_refused: cannot cd to $ROOT"; exit 1; }
@@ -78,6 +84,27 @@ else
     echo "  SKIP (named): native aarch64 row — qemu-aarch64 is not installed"
 fi
 
+# cycc_cx's agnos arm (read-only rows; see the header).
+AGMSG='cannot map the 246 MiB compiler arena (agnos mmap refused it)'
+rows=$((rows + 1))
+if ! CYRIUS_TARGET_AGNOS=1 sh -c "cat src/main_cx.cyr | $CC > $T/cx_ag 2> $T/cx_ag.err" \
+   || [ "$(wc -c < "$T/cx_ag" | tr -d ' ')" -lt 1024 ]; then
+    bad "agnos_cx: CYRIUS_TARGET_AGNOS=1 build of src/main_cx.cyr failed: $(grep -m1 -i error "$T/cx_ag.err")"
+elif ! grep -aqF "$AGMSG" "$T/cx_ag"; then
+    bad "agnos_cx: the agnos build lacks the named refusal '$AGMSG'"
+fi
+rows=$((rows + 1))
+grep -aqF "$AGMSG" "$T/cx" && bad "agnos_cx: the LINUX cycc_cx carries the agnos refusal (the arm is not #ifdef'd)"
+awk '/^#ifdef CYRIUS_TARGET_AGNOS/{b=1; t=""; next} b&&/^#endif/{if (t ~ /var S =/) printf "%s", t; b=0; next} b{t=t $0 "\n"}' \
+    src/main_cx.cyr > "$T/agarm"
+rows=$((rows + 1))
+if [ ! -s "$T/agarm" ]; then
+    bad "agnos_cx: no '#ifdef CYRIUS_TARGET_AGNOS' arm assigning the arena base S in src/main_cx.cyr"
+else
+    grep -v '^ *#' "$T/agarm" | grep -Eq 'SYS_BRK|syscall\(12[,)]' && bad "agnos_cx: the arm calls brk / syscall 12 (sync() on agnos: S = 0, no arena)"
+    grep -v '^ *#' "$T/agarm" | grep -q 'syscall(27, 0xF600000)' || bad "agnos_cx: the arm does not map the arena with agnos mmap(27)"
+fi
+
 if [ "$fail" -ne 0 ]; then echo "FAIL compiler_arena_refused: $fail of $rows row(s) red"; exit 1; fi
-echo "PASS compiler_arena_refused: $rows rows — x86, the aarch64 cross, cx, the PE host stage and native aarch64 (qemu) refuse an unmappable arena by name"
+echo "PASS compiler_arena_refused: $rows rows — x86, the aarch64 cross, cx, the PE host stage and native aarch64 (qemu) refuse an unmappable arena by name; cycc_cx's agnos arm maps with mmap(27) and refuses by name"
 exit 0

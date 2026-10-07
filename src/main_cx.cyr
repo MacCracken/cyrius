@@ -139,7 +139,7 @@ if (_vw != 0) {
 # so cross-compiling cycc_cx to Mach-O/PE with the old raw `syscall(SYS_BRK,...)`
 # emitted 2 unrouted syscalls that FAULTED on macOS (signal 12) and would on PE.
 # Mirror main.cyr / main_win.cyr: mmap on macho (flags 0x1002 = MAP_ANON|PRIVATE)
-# + on PE (flags 0x22, the syscall(9) → VirtualAlloc reroute), brk on Linux/agnos.
+# + on PE (flags 0x22, the syscall(9) → VirtualAlloc reroute), brk on Linux, mmap(27) on agnos.
 # Flat per-target #ifdef blocks (exactly one of MACOS/WIN/LINUX/AGNOS is predefined
 # by the compiling driver) — the alloc.cyr idiom, avoids nested #ifdef. Arena top
 # 0xF600000 maps the relocated lexid_entries @ 0xF400000 (v6.4.21 LEXID cap).
@@ -169,8 +169,15 @@ if (_arena_top < S + 0xF600000) {
 }
 #endif
 #ifdef CYRIUS_TARGET_AGNOS
-var S = syscall(SYS_BRK, 0);
-syscall(SYS_BRK, S + 0xF600000);
+# agnos has no brk: its syscall 12 is sync() and returns 0, so the old brk(0) / brk(S + ...)
+# pair left S = 0 and no arena. Userspace memory comes from mmap(27) (length only; the kernel
+# picks the base; zero-filled; 0 = failure), as lib/alloc_agnos.cyr does. The numbers are
+# agnos's own, spelled literally (27 = mmap, 1 = write, 0 = exit). CHANGELOG [6.6.20]
+var S = syscall(27, 0xF600000);
+if (S < 0x100000) {
+    syscall(1, 2, "error: cannot map the 246 MiB compiler arena (agnos mmap refused it)\n", 69);
+    syscall(0, 1);
+}
 #endif
 
 # Zero scratch state (v5.8.63 extraction; see src/common/util.cyr for slot list)
