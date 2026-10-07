@@ -6,6 +6,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [6.7.0] — 2026-10-07
 
+The v6.7.x language minor opens. In progress.
+
+### CI
+
+- **Every Linux job runs on `ubuntu-26.04`** (the native-ARM self-host on `ubuntu-26.04-arm`), and every action is at
+  its latest stable release, SHA-pinned: `actions/checkout` v7.0.1, `actions/upload-artifact` v7.0.2,
+  `actions/download-artifact` v8.0.2, `softprops/action-gh-release` v3.0.3 (all Node 24; the self-hosted Intel-Mac
+  runner is 2.337.0, past the 2.327.1 minimum). Ubuntu 26.04 has no `qemu-user-static` package — `qemu-user` now
+  ships the static binaries, named `qemu-aarch64` — so the aarch64 legs install `qemu-user` and call `qemu-aarch64`.
+  Verified in an `ubuntu:26.04` container: both installs, the cross-compiled aarch64 test (rc 42 under
+  `qemu-aarch64`), the native aarch64 compiler build, and `scripts/qemu-boot-gate.sh`.
+
 ## [6.6.20] — 2026-10-07
 
 The v6.6.x closeout — the last row of roadmap.md § *The 6.6.x tail* before v6.7.0. The closeout passes (heap-map

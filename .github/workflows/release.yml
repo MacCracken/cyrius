@@ -17,9 +17,9 @@ jobs:
   build-x86:
     name: Build x86_64
     needs: [ci]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4 (pinned 2026-06-19, latest-in-major)
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 (pinned 2026-10-07, latest stable)
 
       - name: Verify version consistency
         run: |
@@ -152,7 +152,7 @@ jobs:
           mkdir -p dist
           mv "${STAGE}.tar.gz" "${STAGE}.tar.gz.sha256" dist/
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4 (pinned 2026-06-19, latest-in-major)
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2 (pinned 2026-10-07, latest stable)
         with:
           name: release-x86_64
           path: dist/
@@ -161,14 +161,14 @@ jobs:
   build-aarch64:
     name: Build aarch64
     needs: [ci]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4 (pinned 2026-06-19, latest-in-major)
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 (pinned 2026-10-07, latest stable)
       - name: Install qemu-user
         timeout-minutes: 8   # a dead mirror is a red step, never the 6h default
         # HTTPS mirrors only, bounded — the old sed to http://archive.ubuntu.com timed out on
         # every index file (~10 min at 6.6.20). See scripts/ci-apt-install.sh.
-        run: sh scripts/ci-apt-install.sh qemu-user-static
+        run: sh scripts/ci-apt-install.sh qemu-user
 
       - name: Build native aarch64 compiler
         run: |
@@ -182,7 +182,7 @@ jobs:
           file ./build/cycc_aarch64 | grep -q "ARM aarch64" || { echo "ERROR: not aarch64"; file ./build/cycc_aarch64; exit 1; }
           # Smoke test: cross-compiler produces working binaries
           echo "var x = 42;" | /tmp/cc5_cross > /tmp/a64_test && chmod +x /tmp/a64_test
-          result=$(timeout 5 qemu-aarch64-static /tmp/a64_test; echo $?)
+          result=$(timeout 5 qemu-aarch64 /tmp/a64_test; echo $?)
           test "$result" = "42" && echo "PASS: cross-compiler output works under qemu"
           # NOTE: native compiler smoke test skipped — self-hosted aarch64 binary
           # generates code with a subtle codegen difference under QEMU.
@@ -225,7 +225,7 @@ jobs:
           mkdir -p dist
           mv "${STAGE}.tar.gz" "${STAGE}.tar.gz.sha256" dist/
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4 (pinned 2026-06-19, latest-in-major)
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2 (pinned 2026-10-07, latest stable)
         with:
           name: release-aarch64
           path: dist/
@@ -234,9 +234,9 @@ jobs:
   build-macos:
     name: Build macOS x86_64
     needs: [ci]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4 (pinned 2026-06-19, latest-in-major)
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 (pinned 2026-10-07, latest stable)
 
       - name: Build macOS x86_64 tarball
         run: |
@@ -253,7 +253,7 @@ jobs:
           chmod +x build/cycc
           sh scripts/build-macos-x86-tarball.sh dist
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4 (pinned 2026-06-19, latest-in-major)
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2 (pinned 2026-10-07, latest stable)
         with:
           name: release-macos
           path: dist/
@@ -270,9 +270,9 @@ jobs:
   build-macos-arm64:
     name: Build macOS arm64
     needs: [ci]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4 (pinned 2026-06-19, latest-in-major)
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 (pinned 2026-10-07, latest stable)
 
       - name: Build macOS arm64 tarball
         run: |
@@ -285,7 +285,7 @@ jobs:
           chmod +x build/cycc
           sh scripts/build-macos-arm64-tarball.sh dist
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4 (pinned 2026-06-19, latest-in-major)
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2 (pinned 2026-10-07, latest stable)
         with:
           name: release-macos-arm64
           path: dist/
@@ -298,9 +298,9 @@ jobs:
   build-windows:
     name: Build Windows x86_64
     needs: [ci]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4 (pinned 2026-06-19, latest-in-major)
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 (pinned 2026-10-07, latest stable)
 
       # v6.0.85: single source of truth — build-windows-tarball.sh is what both
       # this release job AND the `cyrius audit` cass install gate run, so the
@@ -312,7 +312,7 @@ jobs:
           chmod +x build/cycc
           sh scripts/build-windows-tarball.sh dist
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4 (pinned 2026-06-19, latest-in-major)
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2 (pinned 2026-10-07, latest stable)
         with:
           name: release-windows
           path: dist/
@@ -321,31 +321,31 @@ jobs:
   release:
     name: Create GitHub Release
     needs: [build-x86, build-aarch64, build-macos, build-macos-arm64, build-windows]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4 (pinned 2026-06-19, latest-in-major)
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 (pinned 2026-10-07, latest stable)
 
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4 (pinned 2026-06-19, latest-in-major)
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2 (pinned 2026-10-07, latest stable)
         with:
           name: release-x86_64
           path: dist/
 
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4 (pinned 2026-06-19, latest-in-major)
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2 (pinned 2026-10-07, latest stable)
         with:
           name: release-aarch64
           path: dist/
 
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4 (pinned 2026-06-19, latest-in-major)
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2 (pinned 2026-10-07, latest stable)
         with:
           name: release-macos
           path: dist/
 
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4 (pinned 2026-06-19, latest-in-major)
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2 (pinned 2026-10-07, latest stable)
         with:
           name: release-macos-arm64
           path: dist/
 
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4 (pinned 2026-06-19, latest-in-major)
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2 (pinned 2026-10-07, latest stable)
         with:
           name: release-windows
           path: dist/
@@ -377,7 +377,7 @@ jobs:
           echo "signed + self-verified SHA256SUMS (Ed25519)"
 
       - name: Create release
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2 (pinned 2026-06-19, latest-in-major)
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3 (pinned 2026-10-07, latest stable)
         with:
           name: "Cyrius ${{ github.ref_name }}"
           generate_release_notes: true
