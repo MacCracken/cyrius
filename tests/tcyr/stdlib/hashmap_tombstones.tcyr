@@ -1,0 +1,828 @@
+# hashmap_tombstones.tcyr — 6.6.20. DELETE/INSERT CHURN NEVER TURNS A MISS INTO A FULL-TABLE SCAN,
+# AND KEEPING IT THAT WAY COSTS NO MEMORY.
+#
+# ⛔ THE DEFECT (6.6.20 closeout audit RLM-03, lib/hashmap.cyr): map_delete / map_u64_delete leave
+# a tombstone in every slot they free and decrement the LIVE count; the rehash trigger counted
+# only live entries (`live*10 >= cap*7`), and nothing ever turned a tombstone back into EMPTY. A
+# map held at a steady size by delete+insert churn therefore ran out of EMPTY slots after about
+# 3x turnover of its live size — and _map_find / _map_u64_find stop only at EMPTY, so every miss
+# and every new-key insert walked the whole table. Answers stayed correct; the cost was O(cap)
+# per operation, under the caller's lock in server code (sandhi's TLS session cache, majra's
+# rate limiter — which shipped its own `_majra_map_compact` to work around exactly this).
+# Measured at 6.6.19 with 5000 live keys: EMPTY 3192 -> 0, and 2000 misses 76 us -> 58,544 us.
+# This is the defect 6.6.8 fixed in lib/hashmap_fast.cyr only.
+#
+# ⛔ AND THE FIRST CUT OF THE FIX LEAKED: its same-capacity rebuild went into a fresh array and
+# never released the old one. Under the bump allocator (free is a no-op) a map churned at a
+# steady size, which at 6.6.19 allocated nothing, grew ~27 B per churned key without bound, and a
+# steady-size insert could now fail. The same-capacity rebuild is now IN PLACE.
+#
+# Rows, for the cstr, Str and u64 surfaces:
+#   * after 8x live-size churn at least a quarter of the slots are still EMPTY (the rebuild
+#     trigger keeps ~30%; 0 before the fix), and every live entry is reachable from its home;
+#   * the PERF BOUND, made structural so it cannot flake: the probe walk a miss takes (home
+#     bucket to first EMPTY, recomputed from the public hash) averages <= 16 slots and never
+#     reaches a quarter of the table — a full-table scan is `cap + 1`;
+#   * the REBUILD-WORK BOUND: rebuilds x capacity stays within a small multiple of the churned
+#     inserts, including at a 63% live load (doubling only at 70% live would rebuild every few
+#     dozen inserts — rehash thrash, the same defect class in a different shape);
+#   * the MEMORY BOUND: once the table has doubled to its steady size, churn moves alloc_used()
+#     by zero bytes, and map_set_a / map_u64_set_a succeed with every later allocation refused;
+#   * a canary allocated right after each entries array (every constructor, doubling, and the
+#     no-EMPTY fallback) survives deletes — the tombstone count lives in that array's own
+#     trailing word, never in the next allocation;
+#   * a table with no EMPTY slot at all (tombstones written outside the API) still rebuilds;
+#   * FIXED LAYOUTS for the in-place walk, where churn rarely displaces anything: a chain that
+#     wraps past the last slot, a chain that crosses a tombstone below the anchor slot, and a
+#     new key whose first probe returned a tombstone the walk then refills;
+#   * a tombstone written DIRECTLY (majra relay.cyr's shape: state 2 + live-1, no map_delete) and
+#     then reused cannot drive the counter negative (an unclamped -1 undercounts the trigger and
+#     lets the live load reach the whole table);
+#   * map_delete never moves an entry (majra walks map_entries/map_cap and deletes mid-walk), and
+#     an OVERWRITE never rebuilds, even with the table sitting at the trigger, on both layouts;
+#   * map_clear / map_u64_clear zero the counter.
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/str.cyr"
+include "lib/vec.cyr"
+include "lib/fnptr.cyr"
+include "lib/fmt.cyr"
+include "lib/hashmap.cyr"
+include "lib/assert.cyr"
+
+# kind: 0 = cstr keys (map_new), 1 = Str keys (map_new_str), 2 = u64 keys (map_u64_new)
+
+var CANARY = 0x5A17C0DE5A17C0DE;
+
+# A distinct NUL-terminated key "k<digits>" per integer.
+fn _ckey(i): i64 {
+    var k = alloc(24);
+    store8(k, 107);
+    var n = i;
+    var d = 0;
+    var tmp = alloc(24);
+    if (n == 0) { store8(tmp, 48); d = 1; }
+    while (n > 0) { store8(tmp + d, 48 + (n % 10)); n = n / 10; d = d + 1; }
+    var j = 0;
+    while (j < d) { store8(k + 1 + j, load8(tmp + d - 1 - j)); j = j + 1; }
+    store8(k + 1 + d, 0);
+    return k;
+}
+
+fn _mk_key(kind, i): i64 {
+    if (kind == 2) { return i * 7919 + 1; }
+    var c = _ckey(i);
+    if (kind == 1) {
+        var s = str_from(c);
+        return s;
+    }
+    return c;
+}
+
+# `n` distinct keys, made up front so a measured window allocates nothing of its own. Churn
+# always inserts a key never used before: re-inserting a deleted key mostly lands back on its
+# own tombstone, which hides how tombstones accumulate.
+fn _key_pool(kind, base, n): i64 {
+    var pool = alloc(n * 8);
+    var i = 0;
+    while (i < n) { store64(pool + i * 8, _mk_key(kind, base + i)); i = i + 1; }
+    return pool;
+}
+
+fn _m_new(kind): i64 {
+    if (kind == 0) { return map_new(); }
+    if (kind == 1) { return map_new_str(); }
+    return map_u64_new();
+}
+
+fn _m_new_a(kind, a): i64 {
+    if (kind == 0) { return map_new_a(a); }
+    if (kind == 1) { return map_new_str_a(a); }
+    return map_u64_new_a(a);
+}
+
+fn _m_set(kind, m, k, v): i64 {
+    if (kind == 2) { return map_u64_set(m, k, v); }
+    return map_set(m, k, v);
+}
+
+fn _m_set_a(kind, a, m, k, v): i64 {
+    if (kind == 2) { return map_u64_set_a(a, m, k, v); }
+    return map_set_a(a, m, k, v);
+}
+
+fn _m_get_or(kind, m, k, d): i64 {
+    if (kind == 2) { return map_u64_get_or(m, k, d); }
+    return map_get_or(m, k, d);
+}
+
+fn _m_del(kind, m, k): i64 {
+    if (kind == 2) { return map_u64_delete(m, k); }
+    return map_delete(m, k);
+}
+
+fn _slot_bytes(kind): i64 {
+    if (kind == 2) { return 16; }
+    return 24;
+}
+
+# 1 when slot `idx` is EMPTY.
+fn _slot_empty(entries, kind, idx): i64 {
+    if (kind == 2) {
+        if (load64(entries + idx * 16) == 0) { return 1; }
+        return 0;
+    }
+    if (load64(entries + idx * 24 + 16) == 0) { return 1; }
+    return 0;
+}
+
+# 1 when slot `idx` holds a live entry.
+fn _slot_live(entries, kind, idx): i64 {
+    if (kind == 2) {
+        var k = load64(entries + idx * 16);
+        if (k == 0) { return 0; }
+        if (k == 0 - 1) { return 0; }
+        return 1;
+    }
+    if (load64(entries + idx * 24 + 16) == 1) { return 1; }
+    return 0;
+}
+
+fn _key_hash(kind, key): i64 {
+    if (kind == 0) { return hash_str(key); }
+    if (kind == 1) { return hash_str_v(key); }
+    return hash_u64(key);
+}
+
+var g_empty = 0;
+var g_live = 0;
+var g_tomb = 0;
+
+# Count EMPTY / live / tombstone slots into g_empty / g_live / g_tomb.
+fn _census(m, kind): i64 {
+    var entries = map_entries(m);
+    var cap = map_cap(m);
+    g_empty = 0;
+    g_live = 0;
+    g_tomb = 0;
+    var i = 0;
+    while (i < cap) {
+        if (kind == 2) {
+            var k = load64(entries + i * 16);
+            if (k == 0) { g_empty = g_empty + 1; }
+            elif (k == 0 - 1) { g_tomb = g_tomb + 1; }
+            else { g_live = g_live + 1; }
+        } else {
+            var st = load64(entries + i * 24 + 16);
+            if (st == 0) { g_empty = g_empty + 1; }
+            elif (st == 2) { g_tomb = g_tomb + 1; }
+            else { g_live = g_live + 1; }
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# Live entries a lookup could NOT reach: an EMPTY slot lies between the entry's home bucket and
+# its slot, so _map_find / _map_u64_find stop before it. 0 for a sound table.
+fn _unreachable(m, kind): i64 {
+    var entries = map_entries(m);
+    var cap = map_cap(m);
+    var bad = 0;
+    var j = 0;
+    while (j < cap) {
+        if (_slot_live(entries, kind, j) == 1) {
+            var t = _key_hash(kind, load64(entries + j * _slot_bytes(kind))) & (cap - 1);
+            while (t != j) {
+                if (_slot_empty(entries, kind, t) == 1) {
+                    bad = bad + 1;
+                    t = j;
+                } else {
+                    t = (t + 1) & (cap - 1);
+                }
+            }
+        }
+        j = j + 1;
+    }
+    return bad;
+}
+
+# The number of slots a miss for `key` examines: its home bucket through the first EMPTY slot,
+# exactly the walk _map_find / _map_u64_find make. `cap + 1` means no EMPTY slot anywhere — a
+# full-table scan.
+fn _miss_probes(m, kind, key): i64 {
+    var entries = map_entries(m);
+    var cap = map_cap(m);
+    var idx = _key_hash(kind, key) & (cap - 1);
+    var n = 1;
+    while (n <= cap) {
+        if (_slot_empty(entries, kind, idx) == 1) { return n; }
+        idx = (idx + 1) & (cap - 1);
+        n = n + 1;
+    }
+    return n;
+}
+
+# Hold `live` keys and replace the oldest 8*live times, then check the table's shape.
+fn _churn_rows(kind, live): i64 {
+    var m = _m_new(kind);
+    var win = alloc(live * 8);
+    var vals = alloc(live * 8);
+    var i = 0;
+    while (i < live) {
+        var k0 = _mk_key(kind, i);
+        store64(win + i * 8, k0);
+        store64(vals + i * 8, i);
+        _m_set(kind, m, k0, i);
+        i = i + 1;
+    }
+    var cap0 = map_cap(m);
+    var lost = 0;
+    var baddel = 0;
+    var books = 1;
+    var maxtomb = 0;
+    var rounds = live * 8;
+    var reb0 = _map_rebuilds;
+    var step = 0;
+    while (step < rounds) {
+        var slot = step % live;
+        if (_m_del(kind, m, load64(win + slot * 8)) != 1) { baddel = baddel + 1; }
+        if (_map_tomb_count(m) > maxtomb) { maxtomb = _map_tomb_count(m); }
+        var nk = _mk_key(kind, live + step);
+        var nv = live + step;
+        if (_m_set(kind, m, nk, nv) != 0) { lost = lost + 1; }
+        if (_m_get_or(kind, m, nk, 0 - 7) != nv) { lost = lost + 1; }
+        store64(win + slot * 8, nk);
+        store64(vals + slot * 8, nv);
+        if ((step % 97) == 0) {
+            _census(m, kind);
+            if (g_tomb != _map_tomb_count(m)) { books = 0; }
+            if (g_live != map_size(m)) { books = 0; }
+        }
+        step = step + 1;
+    }
+    var nreb = _map_rebuilds - reb0;
+    assert_eq(lost, 0, "every churned insert succeeded and reads back at once");
+    assert_eq(baddel, 0, "every delete found the key it was given");
+    assert_eq(books, 1, "the tombstone counter and live count match the slots throughout");
+    assert(maxtomb > 0, "the churn produced real tombstones (anti-vacuous)");
+    assert_eq(map_size(m), live, "the live count is exact after the churn");
+    var held = 0;
+    i = 0;
+    while (i < live) {
+        if (_m_get_or(kind, m, load64(win + i * 8), 0 - 7) == load64(vals + i * 8)) {
+            held = held + 1;
+        }
+        i = i + 1;
+    }
+    assert_eq(held, live, "every key in the window maps to its latest value");
+    assert_eq(_unreachable(m, kind), 0, "every live entry is reachable from its home bucket");
+    var gone = 0;
+    i = 0;
+    while (i < 200) {
+        if (_m_get_or(kind, m, _mk_key(kind, i), 0 - 7) == 0 - 7) { gone = gone + 1; }
+        i = i + 1;
+    }
+    assert_eq(gone, 200, "deleted keys stay deleted");
+    _census(m, kind);
+    var cap = map_cap(m);
+    assert(g_empty * 4 >= cap, "at least a quarter of the slots are still EMPTY after 8x churn");
+    assert_eq(g_tomb, _map_tomb_count(m), "the tombstone counter matches the slots at the end");
+    assert(cap <= cap0 * 2, "steady-size churn grows the table at most once (no unbounded growth)");
+    assert(nreb > 1, "the churn rebuilt the table more than once (anti-vacuous)");
+    assert(nreb * cap <= rounds * 4, "rebuild work stays <= 4 slots per churned insert");
+    # the perf bound
+    var total = 0;
+    var worst = 0;
+    var q = 0;
+    while (q < 2000) {
+        var p = _miss_probes(m, kind, _mk_key(kind, 1000000 + q));
+        total = total + p;
+        if (p > worst) { worst = p; }
+        q = q + 1;
+    }
+    assert(total <= 2000 * 16, "a miss walks <= 16 slots on average (a full scan is cap + 1)");
+    assert(worst * 4 < cap, "no miss walks a quarter of the table");
+    return 0;
+}
+
+# Churn at a 63% live load (650 keys in 1024 slots). Doubling only at 70% live would keep the
+# table at 1024 and rebuild it every ~67 inserts; the 35% rule doubles once and then rebuilds
+# about every 780.
+fn _load_rows(kind): i64 {
+    var live = 650;
+    var m = _m_new(kind);
+    var rounds = live * 8;
+    var pool = _key_pool(kind, 0, live + rounds);
+    var i = 0;
+    while (i < live) { _m_set(kind, m, load64(pool + i * 8), i); i = i + 1; }
+    assert_eq(map_cap(m), 1024, "650 keys sit in 1024 slots (63% live)");
+    var reb0 = _map_rebuilds;
+    var lost = 0;
+    var step = 0;
+    while (step < rounds) {
+        _m_del(kind, m, load64(pool + step * 8));
+        if (_m_set(kind, m, load64(pool + (step + live) * 8), step) != 0) { lost = lost + 1; }
+        step = step + 1;
+    }
+    var nreb = _map_rebuilds - reb0;
+    assert_eq(lost, 0, "every insert at 63% live load succeeded");
+    assert_eq(map_size(m), live, "the live count is exact");
+    assert_eq(map_cap(m), 2048, "a churn past 35% live load doubles once");
+    assert(nreb * map_cap(m) <= rounds * 4, "rebuild work at 63% live stays <= 4 slots per insert");
+    assert(nreb <= rounds / 256, "no rehash thrash: at most one rebuild per 256 churned inserts");
+    assert_eq(_unreachable(m, kind), 0, "every live entry is reachable after the churn");
+    return 0;
+}
+
+# Grow to the steady size, then churn: no byte allocated, the table never replaced, and with the
+# allocator refusing everything from that point, every map_set_a still succeeds.
+fn _steady_alloc_rows(kind): i64 {
+    var live = 1000;
+    var ta = test_allocator();
+    var m = _m_new_a(kind, ta);
+    var pool = _key_pool(kind, 0, live * 25);
+    var i = 0;
+    while (i < live) { _m_set_a(kind, ta, m, load64(pool + i * 8), i); i = i + 1; }
+    var step = 0;
+    # warm up until the one doubling has happened
+    while (map_cap(m) < 4096) {
+        _m_del(kind, m, load64(pool + step * 8));
+        _m_set_a(kind, ta, m, load64(pool + (step + live) * 8), step);
+        step = step + 1;
+        if (step >= live * 4) { return assert(0, "the churn doubled the table within 4x live"); }
+    }
+    test_allocator_fail_after(ta, test_allocator_alloc_count(ta));
+    var e0 = map_entries(m);
+    var used0 = alloc_used();
+    var reb0 = _map_rebuilds;
+    var refused = 0;
+    var end = step + live * 20;
+    while (step < end) {
+        _m_del(kind, m, load64(pool + step * 8));
+        if (_m_set_a(kind, ta, m, load64(pool + (step + live) * 8), step) != 0) {
+            refused = refused + 1;
+        }
+        step = step + 1;
+    }
+    assert(_map_rebuilds - reb0 > 1, "the measured churn rebuilt the table (anti-vacuous)");
+    assert_eq(alloc_used() - used0, 0, "20x live-size churn at the steady size allocates 0 bytes");
+    assert_eq(map_entries(m), e0, "the same-capacity rebuild kept the table in place");
+    assert_eq(map_cap(m), 4096, "the table holds its steady size");
+    assert_eq(refused, 0, "with every allocation refused, map_set_a still succeeds at steady size");
+    assert_eq(map_size(m), live, "the live count is exact");
+    var held = 0;
+    i = 0;
+    while (i < live) {
+        var s = step - live + i;
+        if (_m_get_or(kind, m, load64(pool + (s + live) * 8), 0 - 7) == s) {
+            held = held + 1;
+        }
+        i = i + 1;
+    }
+    assert_eq(held, live, "every key in the window maps to its latest value");
+    _census(m, kind);
+    assert(g_empty * 4 >= map_cap(m), "a quarter of the slots are still EMPTY");
+    return 0;
+}
+
+# Allocate a canary immediately after `m`'s entries array, run deletes, and check the canary.
+# Run right after the array was allocated, so the bump allocator places the canary next to it;
+# an array allocated without its trailing count word puts that word INSIDE the canary.
+fn _canary_rows(kind, m, keys, n, what): i64 {
+    var cv = alloc(8);
+    store64(cv, CANARY);
+    var tail = map_entries(m) + map_cap(m) * _slot_bytes(kind);
+    assert(cv >= tail + 8, what);
+    assert(cv - tail <= 64, "the canary sits right after the array (anti-vacuous)");
+    var i = 0;
+    while (i < n) { _m_del(kind, m, load64(keys + i * 8)); i = i + 1; }
+    assert(_map_tomb_count(m) > 0, "the deletes counted tombstones (anti-vacuous)");
+    assert_eq(load64(cv), CANARY, "deletes never wrote past the entries array");
+    return 0;
+}
+
+# A fresh map's entries array, then the canary.
+fn _ctor_canary(kind): i64 {
+    var keys = _key_pool(kind, 0, 3);
+    var m = _m_new(kind);
+    var i = 0;
+    while (i < 3) { _m_set(kind, m, load64(keys + i * 8), i); i = i + 1; }
+    return _canary_rows(kind, m, keys, 3, "the constructor's array ends past its count word");
+}
+
+# The 13th key doubles a 16-slot table; the canary follows the new array.
+fn _grow_canary(kind): i64 {
+    var keys = _key_pool(kind, 0, 13);
+    var m = _m_new(kind);
+    var i = 0;
+    while (i < 13) { _m_set(kind, m, load64(keys + i * 8), i); i = i + 1; }
+    assert_eq(map_cap(m), 32, "the 13th key doubled the table");
+    return _canary_rows(kind, m, keys, 6, "the doubled array ends past its count word");
+}
+
+# Fill every EMPTY slot with a tombstone written by hand (uncounted, as majra relay.cyr does).
+fn _plug_empties(m, kind): i64 {
+    var entries = map_entries(m);
+    var cap = map_cap(m);
+    var i = 0;
+    while (i < cap) {
+        if (_slot_empty(entries, kind, i) == 1) {
+            if (kind == 2) { store64(entries + i * 16, 0 - 1); }
+            else { store64(entries + i * 24 + 16, 2); }
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# A table with NO EMPTY slot at the trigger (12 live in 16, 8 deleted, the other 4 slots
+# tombstoned by hand) cannot anchor the in-place walk; it rebuilds into a fresh array instead.
+fn _no_empty_rows(kind): i64 {
+    var keys = _key_pool(kind, 0, 20);
+    var m = _m_new(kind);
+    var i = 0;
+    while (i < 12) { _m_set(kind, m, load64(keys + i * 8), i); i = i + 1; }
+    i = 0;
+    while (i < 8) { _m_del(kind, m, load64(keys + i * 8)); i = i + 1; }
+    _plug_empties(m, kind);
+    _census(m, kind);
+    assert_eq(g_empty, 0, "the table has no EMPTY slot (anti-vacuous)");
+    var e0 = map_entries(m);
+    var reb0 = _map_rebuilds;
+    assert_eq(_m_set(kind, m, load64(keys + 12 * 8), 12), 0, "the insert at the trigger succeeds");
+    assert_eq(_map_rebuilds - reb0, 1, "it rebuilt the table once");
+    assert(map_entries(m) != e0, "with no EMPTY slot the rebuild went to a fresh array");
+    assert_eq(map_cap(m), 16, "at the same capacity");
+    assert_eq(_map_tomb_count(m), 0, "the rebuild dropped every tombstone");
+    _census(m, kind);
+    assert_eq(g_tomb, 0, "including the hand-written ones");
+    assert_eq(map_size(m), 5, "the live count is exact");
+    var held = 0;
+    i = 8;
+    while (i < 13) {
+        if (_m_get_or(kind, m, load64(keys + i * 8), 0 - 7) == i) { held = held + 1; }
+        i = i + 1;
+    }
+    assert_eq(held, 5, "every live key reads back after the fallback rebuild");
+    return _canary_rows(kind, m, keys + 8 * 8, 2, "the fallback's array ends past its count word");
+}
+
+# The first key from index `*next` on whose home bucket in a 16-slot table is `home`.
+fn _key_at_home(kind, home, next): i64 {
+    var i = load64(next);
+    while (1 == 1) {
+        var k = _mk_key(kind, i);
+        i = i + 1;
+        if ((_key_hash(kind, k) & 15) == home) {
+            store64(next, i);
+            return k;
+        }
+    }
+    return 0;
+}
+
+# A probe chain that WRAPS past the last slot: A and B both hash to slot 15, so B sits in slot
+# 0. A is deleted and the table brought to an in-place rebuild. The walk must start after a slot
+# that was EMPTY before the rebuild; started anywhere else (slot 0 here) it never visits B, and
+# A's tombstone turning EMPTY cuts B off from its home.
+fn _wrap_rows(kind): i64 {
+    var nx = alloc(8);
+    store64(nx, 0);
+    var m = _m_new(kind);
+    var ka = _key_at_home(kind, 15, nx);
+    var kb = _key_at_home(kind, 15, nx);
+    _m_set(kind, m, ka, 1);
+    _m_set(kind, m, kb, 2);
+    var others = alloc(10 * 8);
+    var h = 0;
+    while (h < 10) {
+        var ko = _key_at_home(kind, h + 2, nx);
+        store64(others + h * 8, ko);
+        _m_set(kind, m, ko, 100 + h);
+        h = h + 1;
+    }
+    var e = map_entries(m);
+    var sb = _slot_bytes(kind);
+    assert_eq(map_cap(m), 16, "12 keys sit in 16 slots");
+    assert_eq(load64(e + 0 * sb), kb, "B wrapped into slot 0 (anti-vacuous)");
+    assert_eq(_slot_empty(e, kind, 1), 1, "slot 1 is EMPTY");
+    _m_del(kind, m, ka);
+    h = 0;
+    while (h < 9) { _m_del(kind, m, load64(others + h * 8)); h = h + 1; }
+    var kn = _key_at_home(kind, 3, nx);
+    var reb0 = _map_rebuilds;
+    _m_set(kind, m, kn, 7);
+    assert_eq(_map_rebuilds - reb0, 1, "the insert at the trigger rebuilt the table");
+    assert_eq(map_entries(m), e, "in place");
+    assert_eq(_m_get_or(kind, m, kb, 0 - 7), 2, "the wrapped entry survives the in-place rebuild");
+    assert_eq(_m_get_or(kind, m, load64(others + 9 * 8), 0 - 7), 109, "the other live key reads back");
+    assert_eq(_m_get_or(kind, m, kn, 0 - 7), 7, "the new key reads back");
+    assert_eq(_m_get_or(kind, m, ka, 0 - 7), 0 - 7, "the deleted key stays deleted");
+    assert_eq(_unreachable(m, kind), 0, "every live entry is reachable from its home bucket");
+    return 0;
+}
+
+# The anchor must be a slot that was EMPTY BEFORE the rebuild, not the first EMPTY slot once the
+# tombstones are converted. Z and Y both hash to slot 15, so Y wraps into slot 0; W (home 1) takes
+# slot 1; X (home 0) lands in slot 2, its chain crossing slot 1. Eight fillers fill slots 4-11, so
+# slot 3 is the first slot EMPTY before the rebuild. Z, W and seven fillers are deleted and a key
+# with home 12 brings the table to an in-place rebuild. Anchored at W's old tombstone (slot 1),
+# the walk moves X into slot 1 and only then reaches slot 0, moving Y out to slot 15 — leaving
+# slot 0 EMPTY between X's home and X.
+fn _anchor_rows(kind): i64 {
+    var nx = alloc(8);
+    store64(nx, 0);
+    var m = _m_new(kind);
+    var kz = _key_at_home(kind, 15, nx);
+    var ky = _key_at_home(kind, 15, nx);
+    var kw = _key_at_home(kind, 1, nx);
+    var kx = _key_at_home(kind, 0, nx);
+    _m_set(kind, m, kz, 1);
+    _m_set(kind, m, ky, 2);
+    _m_set(kind, m, kw, 3);
+    _m_set(kind, m, kx, 4);
+    var fill = alloc(8 * 8);
+    var h = 0;
+    while (h < 8) {
+        var kf = _key_at_home(kind, h + 4, nx);
+        store64(fill + h * 8, kf);
+        _m_set(kind, m, kf, 100 + h);
+        h = h + 1;
+    }
+    var e = map_entries(m);
+    var sb = _slot_bytes(kind);
+    assert_eq(map_cap(m), 16, "12 keys sit in 16 slots");
+    assert_eq(load64(e + 0 * sb), ky, "Y wrapped into slot 0 (anti-vacuous)");
+    assert_eq(load64(e + 2 * sb), kx, "X sits in slot 2, its chain crossing W's slot (anti-vacuous)");
+    assert_eq(_slot_empty(e, kind, 3), 1, "slot 3 is the first slot EMPTY before the rebuild");
+    _m_del(kind, m, kz);
+    _m_del(kind, m, kw);
+    h = 0;
+    while (h < 7) { _m_del(kind, m, load64(fill + h * 8)); h = h + 1; }
+    var kn = _key_at_home(kind, 12, nx);
+    var reb0 = _map_rebuilds;
+    _m_set(kind, m, kn, 7);
+    assert_eq(_map_rebuilds - reb0, 1, "the insert at the trigger rebuilt the table");
+    assert_eq(map_entries(m), e, "in place");
+    assert_eq(_m_get_or(kind, m, kx, 0 - 7), 4, "X, whose chain crossed a low tombstone, survives");
+    assert_eq(_m_get_or(kind, m, ky, 0 - 7), 2, "the wrapped entry survives");
+    assert_eq(_m_get_or(kind, m, load64(fill + 7 * 8), 0 - 7), 107, "the live filler reads back");
+    assert_eq(_m_get_or(kind, m, kn, 0 - 7), 7, "the new key reads back");
+    assert_eq(_m_get_or(kind, m, kw, 0 - 7), 0 - 7, "the deleted key stays deleted");
+    assert_eq(_unreachable(m, kind), 0, "every live entry is reachable from its home bucket");
+    _census(m, kind);
+    assert_eq(map_size(m), g_live, "map_size equals the live slots");
+    return 0;
+}
+
+# The new key's slot must be found AGAIN after an in-place rebuild. T and E both hash to slot 3,
+# so E sits in slot 4; ten fillers fill slots 6-15. T and eight fillers are deleted, then a new
+# key with home 3 arrives: its first probe returns T's tombstone (slot 3). The in-place rebuild
+# turns that tombstone EMPTY and moves E into it. Written to the slot found before the rebuild,
+# the new key overwrites E.
+fn _stale_slot_rows(kind): i64 {
+    var nx = alloc(8);
+    store64(nx, 0);
+    var m = _m_new(kind);
+    var kt = _key_at_home(kind, 3, nx);
+    var ke = _key_at_home(kind, 3, nx);
+    _m_set(kind, m, kt, 1);
+    _m_set(kind, m, ke, 2);
+    var fill = alloc(10 * 8);
+    var h = 0;
+    while (h < 10) {
+        var kf = _key_at_home(kind, h + 6, nx);
+        store64(fill + h * 8, kf);
+        _m_set(kind, m, kf, 100 + h);
+        h = h + 1;
+    }
+    var e = map_entries(m);
+    var sb = _slot_bytes(kind);
+    assert_eq(map_cap(m), 16, "12 keys sit in 16 slots");
+    assert_eq(load64(e + 4 * sb), ke, "E sits in slot 4, behind T (anti-vacuous)");
+    _m_del(kind, m, kt);
+    h = 0;
+    while (h < 8) { _m_del(kind, m, load64(fill + h * 8)); h = h + 1; }
+    var kn = _key_at_home(kind, 3, nx);
+    var reb0 = _map_rebuilds;
+    _m_set(kind, m, kn, 7);
+    assert_eq(_map_rebuilds - reb0, 1, "the insert at the trigger rebuilt the table");
+    assert_eq(map_entries(m), e, "in place");
+    assert_eq(load64(e + 3 * sb), ke, "the walk moved E into T's old slot (anti-vacuous)");
+    assert_eq(_m_get_or(kind, m, ke, 0 - 7), 2, "E, moved into the new key's stale slot, survives");
+    assert_eq(_m_get_or(kind, m, kn, 0 - 7), 7, "the new key reads back");
+    assert_eq(_m_get_or(kind, m, load64(fill + 8 * 8), 0 - 7), 108, "a live filler reads back");
+    assert_eq(_m_get_or(kind, m, load64(fill + 9 * 8), 0 - 7), 109, "the other live filler reads back");
+    assert_eq(_unreachable(m, kind), 0, "every live entry is reachable from its home bucket");
+    _census(m, kind);
+    assert_eq(map_size(m), g_live, "map_size equals the live slots");
+    assert_eq(map_size(m), 4, "E, two fillers and the new key are live");
+    return 0;
+}
+
+# Fill `m` to the same-capacity trigger with live < 35%: 716 keys in 1024 slots, all but 300
+# deleted, then new keys until live + tombstones reach 70%. Returns the next unused key index,
+# or -1 when the pool ran out first (deletes that went uncounted never reach the trigger).
+fn _to_trigger(kind, m, pool): i64 {
+    var j = 0;
+    while (j < 716) { _m_set(kind, m, load64(pool + j * 8), j); j = j + 1; }
+    j = 300;
+    while (j < 716) { _m_del(kind, m, load64(pool + j * 8)); j = j + 1; }
+    var nx = 716;
+    while ((map_size(m) + _map_tomb_count(m)) * 10 < map_cap(m) * 7) {
+        if (nx >= 799) { return 0 - 1; }
+        _m_set(kind, m, load64(pool + nx * 8), nx);
+        nx = nx + 1;
+    }
+    return nx;
+}
+
+# An overwrite of every live key, walking the slots, with the table at the trigger.
+fn _overwrite_rows(kind): i64 {
+    var pool = _key_pool(kind, 0, 800);
+    var m = _m_new(kind);
+    var nx = _to_trigger(kind, m, pool);
+    if (nx < 0) { return assert(0, "the table reached the same-capacity trigger"); }
+    assert_eq(map_cap(m), 1024, "the table sits at 1024 slots");
+    assert(map_size(m) * 20 < map_cap(m) * 7, "live is under 35%, so the next rebuild is in place");
+    var e = map_entries(m);
+    var c = map_cap(m);
+    var sb = _slot_bytes(kind);
+    var reb0 = _map_rebuilds;
+    var visit = 0;
+    var w = 0;
+    while (w < c) {
+        if (_slot_live(e, kind, w) == 1) {
+            visit = visit + 1;
+            _m_set(kind, m, load64(e + w * sb), 0 - 3);
+        }
+        w = w + 1;
+    }
+    assert_eq(visit, map_size(m), "a walk that overwrites as it goes visits every entry once");
+    assert_eq(_map_rebuilds - reb0, 0, "overwrites at the trigger never rebuilt the table");
+    assert_eq(_m_get_or(kind, m, load64(pool + 1 * 8), 0), 0 - 3, "the overwrites landed");
+    _m_set(kind, m, load64(pool + nx * 8), nx);
+    assert_eq(_map_rebuilds - reb0, 1, "the next NEW key does rebuild (the trigger was live)");
+    assert_eq(map_entries(m), e, "in place: the same array");
+    assert_eq(map_cap(m), 1024, "at the same capacity");
+    assert_eq(_map_tomb_count(m), 0, "the rebuild dropped every tombstone");
+    assert_eq(_m_get_or(kind, m, load64(pool + 1 * 8), 0), 0 - 3, "entries survive the rebuild");
+    assert_eq(_unreachable(m, kind), 0, "every live entry is reachable after the rebuild");
+    return 0;
+}
+
+fn _run(): i64 {
+    alloc_init();
+    # A FIXED seed, so the bucket layout is the same on every run. lib/hashseed.cyr returns a
+    # non-zero `_hm_seed` as already drawn.
+    _hm_seed = 0x5DEECE66D;
+
+    test_group("cstr map: 8x churn at a steady size keeps EMPTY slots");
+    _churn_rows(0, 1000);
+    test_group("Str map: 8x churn at a steady size keeps EMPTY slots");
+    _churn_rows(1, 1000);
+    test_group("u64 map: 8x churn at a steady size keeps EMPTY slots");
+    _churn_rows(2, 1000);
+
+    test_group("cstr map: churn at 63% live load doubles once, no rehash thrash");
+    _load_rows(0);
+    test_group("u64 map: churn at 63% live load doubles once, no rehash thrash");
+    _load_rows(2);
+
+    test_group("cstr map: steady-size churn allocates nothing, survives a refusing allocator");
+    _steady_alloc_rows(0);
+    test_group("Str map: steady-size churn allocates nothing, survives a refusing allocator");
+    _steady_alloc_rows(1);
+    test_group("u64 map: steady-size churn allocates nothing, survives a refusing allocator");
+    _steady_alloc_rows(2);
+
+    test_group("a canary after each entries array survives deletes");
+    _ctor_canary(0);
+    _ctor_canary(1);
+    _ctor_canary(2);
+    _grow_canary(0);
+    _grow_canary(1);
+    _grow_canary(2);
+
+    test_group("a table with no EMPTY slot still rebuilds (cstr)");
+    _no_empty_rows(0);
+    test_group("a table with no EMPTY slot still rebuilds (u64)");
+    _no_empty_rows(2);
+
+    test_group("an in-place rebuild keeps a chain that wraps past the last slot");
+    _wrap_rows(0);
+    _wrap_rows(1);
+    _wrap_rows(2);
+
+    test_group("an in-place rebuild anchors at a slot EMPTY before it, not at a converted tombstone");
+    _anchor_rows(0);
+    _anchor_rows(1);
+    _anchor_rows(2);
+
+    test_group("after an in-place rebuild the new key's slot is found again");
+    _stale_slot_rows(0);
+    _stale_slot_rows(1);
+    _stale_slot_rows(2);
+
+    test_group("a directly-written tombstone cannot drive the counter negative (cstr)");
+    # majra relay.cyr _relay_dedup_drop_slot: state 2 + live-1, never through map_delete.
+    var dm = map_new();
+    map_set(dm, "a", 1);
+    map_set(dm, "b", 2);
+    map_set(dm, "c", 3);
+    var de = map_entries(dm);
+    var di = 0;
+    while (di < map_cap(dm)) {
+        var dep = de + di * 24;
+        if (load64(dep + 16) == 1) {
+            if (streq(load64(dep), "b") == 1) {
+                store64(dep + 16, 2);
+                store64(dm + 16, map_size(dm) - 1);
+            }
+        }
+        di = di + 1;
+    }
+    assert_eq(map_has(dm, "b"), 0, "the hand-tombstoned key is gone");
+    map_set(dm, "b", 9);
+    assert_eq(_map_tomb_count(dm), 0, "reusing an uncounted tombstone leaves the counter at 0, not -1");
+    assert_eq(map_get(dm, "b"), 9, "the re-set key reads back");
+    var dn = 0;
+    var dbad = 0;
+    while (dn < 400) {
+        var dk = _ckey(dn);
+        map_set(dm, dk, dn);
+        if (map_get_or(dm, dk, 0 - 7) != dn) { dbad = dbad + 1; }
+        dn = dn + 1;
+    }
+    assert_eq(dbad, 0, "400 more inserts all read back");
+    assert_eq(map_size(dm), 403, "the live count is exact");
+    _census(dm, 0);
+    assert(g_empty > 0, "an EMPTY slot remains");
+
+    test_group("a directly-written tombstone cannot drive the counter negative (u64)");
+    var um = map_u64_new();
+    map_u64_set(um, 11, 1);
+    map_u64_set(um, 22, 2);
+    map_u64_set(um, 33, 3);
+    var ue = map_entries(um);
+    var ui = 0;
+    while (ui < map_cap(um)) {
+        if (load64(ue + ui * 16) == 22) {
+            store64(ue + ui * 16, 0 - 1);
+            store64(um + 16, map_u64_size(um) - 1);
+        }
+        ui = ui + 1;
+    }
+    map_u64_set(um, 22, 9);
+    assert_eq(_map_tomb_count(um), 0, "reusing an uncounted u64 tombstone leaves the counter at 0");
+    assert_eq(map_u64_get(um, 22), 9, "the re-set u64 key reads back");
+
+    test_group("map_delete never moves an entry (delete during a slot walk)");
+    var wm = map_new();
+    var wi = 0;
+    while (wi < 300) { map_set(wm, _ckey(wi), wi); wi = wi + 1; }
+    var we = map_entries(wm);
+    var wc = map_cap(wm);
+    var seen = 0;
+    var wj = 0;
+    while (wj < wc) {
+        var wep = we + wj * 24;
+        if (load64(wep + 16) == 1) {
+            seen = seen + 1;
+            if ((load64(wep + 8) % 2) == 0) { map_delete(wm, load64(wep)); }
+        }
+        wj = wj + 1;
+    }
+    assert_eq(seen, 300, "a walk that deletes as it goes visits every entry exactly once");
+    assert_eq(map_entries(wm), we, "deletes never replaced the table");
+    assert_eq(map_size(wm), 150, "half the keys deleted");
+
+    test_group("an overwrite never rebuilds, even with the table at the trigger (cstr)");
+    _overwrite_rows(0);
+    test_group("an overwrite never rebuilds, even with the table at the trigger (u64)");
+    _overwrite_rows(2);
+
+    test_group("map_clear / map_u64_clear zero the tombstone counter");
+    var cm = map_new();
+    var ci = 0;
+    while (ci < 20) { map_set(cm, _ckey(ci), ci); ci = ci + 1; }
+    ci = 0;
+    while (ci < 10) { map_delete(cm, _ckey(ci)); ci = ci + 1; }
+    assert(_map_tomb_count(cm) > 0, "deletes counted tombstones");
+    map_clear(cm);
+    assert_eq(_map_tomb_count(cm), 0, "map_clear zeroes the tombstone counter");
+    assert_eq(map_size(cm), 0, "map_clear empties the map");
+    var cu = map_u64_new();
+    ci = 1;
+    while (ci <= 20) { map_u64_set(cu, ci, ci); ci = ci + 1; }
+    ci = 1;
+    while (ci <= 10) { map_u64_delete(cu, ci); ci = ci + 1; }
+    assert(_map_tomb_count(cu) > 0, "u64 deletes counted tombstones");
+    map_u64_clear(cu);
+    assert_eq(_map_tomb_count(cu), 0, "map_u64_clear zeroes the tombstone counter");
+
+    return 0;
+}
+_run();
+var r = assert_summary();
