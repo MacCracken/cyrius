@@ -729,8 +729,11 @@ fn _materialize_source(source): i64 {
             # every other prepend below it does not shift `<source>` line numbers.
             # Emitted only when the manifest actually resolves a version — no
             # marker beats a wrong one.
+            # 6.6.20 (SEC-04): -1 = refused (a `${file:}` path the [embed] rules refuse, or a
+            # value holding a control byte), already NAMED — the unit is not compiled.
             var _pkgver = _dep_read_cyml_package_version();
-            if (_pkgver != 0) {
+            if (_pkgver < 0) { _mat_err = _MAT_ERR_NAMED; }
+            elif (_pkgver != 0) {
                 _mat_write(tfd, "#@pkgver ", 9);
                 _mat_write_cstr(tfd, _pkgver);
                 _mat_write(tfd, "\n", 1);

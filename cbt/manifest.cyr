@@ -813,11 +813,43 @@ fn _embed_has_short83(buf, s, e): i64 {
     return 0;
 }
 
-# 0 when `path` is a relative, in-project, link-free path, else why not.
-fn _embed_path_bad(path): i64 {
+# 6.6.20 — the manifest keys that name a file IN THE PROJECT, and how `_proj_path_bad` /
+# `_proj_read` word a refusal for each. [embed] reads a file into the binary (6.6.19); a
+# `[package] version = "${file:PATH}"` reads one into CYRIUS_PKG_VERSION, which `#@pkgver` puts in
+# the binary and `--print-config` prints (SEC-04 — it read ANY file: `../x`, `/abs`, `.git/config`,
+# a committed `VERSION -> ../x` link, the [embed] rules' own bypass); `[build] output` is the
+# binary written (SEC-02 — `../../.local/bin/git` placed a 0755 binary outside the checkout). ONE
+# checker for the three, so a path rule added for one key reaches the others. CHANGELOG [6.6.20]
+# (CVE-TBD)
+var _PP_EMBED = 0;
+var _PP_FILE = 1;
+var _PP_OUT = 2;
+
+fn _pp_noun(kind): i64 {
+    if (kind == _PP_FILE) { return "a ${file:} path"; }
+    if (kind == _PP_OUT) { return "a manifest [build] output"; }
+    return "an [embed] path";
+}
+
+fn _pp_join(a, b): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, a);
+    str_builder_add_cstr(sb, b);
+    return str_data(str_builder_build(sb));
+}
+
+# 0 when `path` is a relative, in-project, link-free path for the manifest key `kind` (_PP_*),
+# else why not. For an OUTPUT also no `"`, `%` or `!`: on Windows the output reaches cmd.exe as a
+# quoted redirect target (`_win_compile_spawn_err`), where a `"` ends the operand and the rest of
+# the line RUNS (`out.exe" & echo X> pwned.txt & "y` did, under wine), and `%VAR%` / `!VAR!`
+# expand — `%USERPROFILE%\x` alone leaves the project, and `%VAR:~n,1%` lifts any byte of a
+# variable. `!` expands only under delayed expansion (off for cmd /c unless the registry turns it
+# on), and a hostile manifest gets no say in that.
+fn _proj_path_bad(path, kind): i64 {
+    var noun = _pp_noun(kind);
     var n = strlen(path);
     if (n == 0) { return "the path is empty"; }
-    if (load8(path) == 47) { return "the path is absolute; an [embed] path is relative to the project"; }
+    if (load8(path) == 47) { return _pp_join(_pp_join("the path is absolute; ", noun), " is relative to the project"); }
     var i = 0;
     while (i < n) {
         var c = load8(path + i);
@@ -825,9 +857,12 @@ fn _embed_path_bad(path): i64 {
         # `.git::$INDEX_ALLOCATION/config` (or `.git:$I30:$INDEX_ALLOCATION/config`) names the
         # .git DIRECTORY itself while its component text is not `.git` (git's CVE-2019-1352 class;
         # read through CreateFile on cass). A drive (`C:x`) is the same byte.
-        if (c == 58) { return "the path holds a ':' (a drive, or an NTFS stream like .git::$INDEX_ALLOCATION); an [embed] path is a plain relative path"; }
-        if (c == 92) { return "the path holds a backslash; write [embed] paths with / (a \\ is a separator on Windows and would step past these checks)"; }
+        if (c == 58) { return _pp_join(_pp_join("the path holds a ':' (a drive, or an NTFS stream like .git::$INDEX_ALLOCATION); ", noun), " is a plain relative path"); }
+        if (c == 92) { return _pp_join(_pp_join("the path holds a backslash; write ", noun), " with / (a \\ is a separator on Windows and would step past these checks)"); }
         if (c < 32 || c == 127) { return "the path holds a control character"; }
+        if (kind == _PP_OUT && (c == 34 || c == 37 || c == 33)) {
+            return "the path holds a '\"', '%' or '!' (on Windows the output is a quoted cmd.exe redirect target: a '\"' ends it and the rest of the line runs as a command, '%' and '!' expand variables)";
+        }
         if (_embed_hfs_ignorable(path, i, n) == 1) { return "the path holds a code point HFS+ ignores (U+200C-U+200F, U+202A-U+202E, U+206A-U+206F, U+FEFF: git's protectHFS list), so it can name .git"; }
         i = i + 1;
     }
@@ -836,13 +871,14 @@ fn _embed_path_bad(path): i64 {
     while (i <= n) {
         if (i == n || load8(path + i) == 47) {
             if (i - s == 2 && load8(path + s) == 46 && load8(path + s + 1) == 46) {
-                return "the path climbs out with ..; an [embed] path stays inside the project";
+                return _pp_join(_pp_join("the path climbs out with ..; ", noun), " stays inside the project");
             }
             if (_embed_has_short83(path, s, i) == 1) {
                 return "the path has an 8.3 short-name component (~ and a digit, like GIT~1); on Windows it can alias another name, .git included";
             }
             if (_embed_is_dotgit(path, s, i) == 1) {
-                return "the path reaches into .git; an [embed] never reads the repository's own metadata (actions/checkout keeps the job token in .git/config)";
+                if (kind == _PP_OUT) { return _pp_join(_pp_join("the path reaches into .git; ", noun), " never writes the repository's own metadata (a binary under .git/hooks runs at the next git command)"); }
+                return _pp_join(_pp_join("the path reaches into .git; ", noun), " never reads the repository's own metadata (actions/checkout keeps the job token in .git/config)");
             }
             if (i > s) {
                 var pre = alloc(i + 1);
@@ -852,7 +888,9 @@ fn _embed_path_bad(path): i64 {
                     var sb = str_builder_new();
                     str_builder_add_cstr(sb, "the path passes through a symlink (");
                     str_builder_add_cstr(sb, _shown(pre));
-                    str_builder_add_cstr(sb, "); [embed] refuses links: an untrusted checkout must not ship bytes from outside the project inside a binary");
+                    if (kind == _PP_OUT) { str_builder_add_cstr(sb, "); a manifest [build] output refuses links: an untrusted checkout must not place a binary outside the project"); }
+                    elif (kind == _PP_FILE) { str_builder_add_cstr(sb, "); ${file:} refuses links: an untrusted checkout must not ship bytes from outside the project inside a binary"); }
+                    else { str_builder_add_cstr(sb, "); [embed] refuses links: an untrusted checkout must not ship bytes from outside the project inside a binary"); }
                     return str_data(str_builder_build(sb));
                 }
             }
@@ -863,17 +901,20 @@ fn _embed_path_bad(path): i64 {
     return 0;
 }
 
-# The file at `path` read through ONE fd: the bytes (NUL-terminated) with their count at *lenp,
-# or 0 with the reason at *whyp.
-fn _embed_e_dir(): i64 { return "is a directory; an [embed] names one regular file"; }
-# Open `path` (already checked by _embed_path_bad) for reading. POSIX targets with a real dirfd
+# The ONE "does not exist" reason: a `${file:}` caller tells it from a refusal by pointer.
+fn _proj_e_missing(): i64 { return "the file does not exist"; }
+fn _proj_e_dir(kind): i64 {
+    if (kind == _PP_FILE) { return "is a directory; a ${file:} names one regular file"; }
+    return "is a directory; an [embed] names one regular file";
+}
+# Open `path` (already checked by _proj_path_bad) for reading. POSIX targets with a real dirfd
 # openat WALK it: a handle on the project root, then openat(dirfd, component, O_DIRECTORY |
 # O_NOFOLLOW) per directory and O_NOFOLLOW on the leaf, so a component swapped for a link after
 # the per-prefix check fails the open. The fd, or a negative errno.
 fn _embed_open(path): i64 {
     var fl = O_RDONLY | O_NOFOLLOW;
     #ifndef CYRIUS_TARGET_WIN
-    fl = fl | O_NONBLOCK;   # a FIFO must not hang the build; its lseek in _embed_read refuses it
+    fl = fl | O_NONBLOCK;   # a FIFO must not hang the build; its lseek in _proj_read refuses it
     var walk = 1;
     #ifdef CYRIUS_TARGET_MACOS
     #ifdef CYRIUS_ARCH_AARCH64
@@ -913,11 +954,15 @@ fn _embed_open(path): i64 {
     return file_open(path, fl, 0);
 }
 
-fn _embed_read(path, lenp, whyp): i64 {
-    if (is_dir(str_from(path)) == 1) { store64(whyp, _embed_e_dir()); return 0; }
+# The file at `path` (already checked by _proj_path_bad, for the key `kind`) read through ONE fd:
+# the bytes (NUL-terminated) with their count at *lenp, or 0 with the reason at *whyp. An [embed]
+# holds what cycc's string pool can (below); a `${file:}` version file holds one short line, so it
+# is refused past 511 bytes — the cap its old reader TRUNCATED at, silently, mid-file.
+fn _proj_read(path, lenp, whyp, kind): i64 {
+    if (is_dir(str_from(path)) == 1) { store64(whyp, _proj_e_dir(kind)); return 0; }
     var fd = _embed_open(path);
     if (fd < 0) {
-        if (file_exists(path) == 0) { store64(whyp, "the file does not exist"); }
+        if (file_exists(path) == 0) { store64(whyp, _proj_e_missing()); }
         else { store64(whyp, "the file cannot be opened through a link-free path (a component is a link, or it changed while it was checked)"); }
         return 0;
     }
@@ -940,14 +985,17 @@ fn _embed_read(path, lenp, whyp): i64 {
         }
     }
     #endif
-    if (size > _EMBED_POOL - 1) {
+    var cap = _EMBED_POOL - 1;
+    if (kind == _PP_FILE) { cap = 511; }
+    if (size > cap) {
         var dr = file_read(fd, &probe, 1);
         file_close(fd);
-        if (dr < 0) { store64(whyp, _embed_e_dir()); return 0; }
+        if (dr < 0) { store64(whyp, _proj_e_dir(kind)); return 0; }
         var sb = str_builder_new();
         str_builder_add_cstr(sb, "is ");
         str_builder_add_int(sb, size);
-        str_builder_add_cstr(sb, " bytes; one embed holds at most 2097150 (cycc's 2 MiB string pool, less the literal's NUL, and the pool is shared with the program's own strings)");
+        if (kind == _PP_FILE) { str_builder_add_cstr(sb, " bytes; a ${file:} version file is one line of at most 511 bytes"); }
+        else { str_builder_add_cstr(sb, " bytes; one embed holds at most 2097150 (cycc's 2 MiB string pool, less the literal's NUL, and the pool is shared with the program's own strings)"); }
         store64(whyp, str_data(str_builder_build(sb)));
         return 0;
     }
@@ -962,7 +1010,7 @@ fn _embed_read(path, lenp, whyp): i64 {
     if (r >= 0) { more = file_read(fd, &probe, 1); }
     file_close(fd);
     if (r < 0 || more < 0) {
-        if (r == 0 - 21 || more == 0 - 21) { store64(whyp, _embed_e_dir()); }
+        if (r == 0 - 21 || more == 0 - 21) { store64(whyp, _proj_e_dir(kind)); }
         else { store64(whyp, "the file cannot be read"); }
         return 0;
     }
@@ -974,7 +1022,7 @@ fn _embed_read(path, lenp, whyp): i64 {
 
 # "cyrius.cyml [embed] NAME = "path": why" (the path part only when there is one). The NAME and
 # the path are the manifest's own bytes, so they are shown through `_shown` (cbt/deps.cyr): a
-# refused path is often refused BECAUSE it holds a control byte (`_embed_path_bad`), and since
+# refused path is often refused BECAUSE it holds a control byte (`_proj_path_bad`), and since
 # 6.6.17 `\u001b` in a TOML string is one — echoed raw it was a terminal escape (an OSC title
 # set) out of the manifest. Shown escaped, an invisible HFS+-ignorable code point is visible too.
 # CHANGELOG [6.6.20] (CVE-TBD).
@@ -1036,10 +1084,10 @@ fn _embed_entry(out, seen, name, disp, vp): i64 {
     var path = _toml_str_at(_mf_buf, _mf_len, vp, &e);
     if (path == 0) { return _embed_refuse(disp, 0, "is not a single-line TOML string (a multi-line string, or an invalid escape: write a literal 'path')"); }
     _toml_bad = 0;
-    why = _embed_path_bad(path);
+    why = _proj_path_bad(path, _PP_EMBED);
     if (why != 0) { return _embed_refuse(disp, path, why); }
     var len = 0;
-    var bytes = _embed_read(path, &len, &why);
+    var bytes = _proj_read(path, &len, &why, _PP_EMBED);
     if (bytes == 0) { return _embed_refuse(disp, path, why); }
     var ent = alloc(32);
     store64(ent, name);
@@ -1425,6 +1473,7 @@ fn _cfg_resolve_build(src_arg, out_arg): i64 {
     var pv = _cfg_val(_CK_PKG_VERSION);
     if (pv != 0) {
         var pe = _dep_expand_file_interp(pv, strlen(pv));
+        if (pe < 0) { return 1; }   # 6.6.20 (SEC-04): refused, and named — never printed
         store64(&_cfg_v + _CK_PKG_VERSION * 8, pe);
         if (pe == 0) {
             var vsb = str_builder_new();
