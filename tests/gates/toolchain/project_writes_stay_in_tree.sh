@@ -38,6 +38,13 @@
 #       real/../real/m.cyml, cyrius fmt via ../shared/a.cyr from src/, cyrfmt --write on an
 #       ABSOLUTE path from another cwd, cyriusly use via in/m.cyml, port via sub/gi
 #   9   a hostile target is printed ESCAPED (\x1b), never as a raw ESC byte
+#   10  cyrius update, dangling cyrius.cyml -> .git/commondir (a real repo): refused, no commondir,
+#       toml kept. `.git` is INSIDE the project, so containment alone let it through — measured:
+#       toml `../evil` + a checkout dir `evil\n---/` with core.fsmonitor = a command, and the next
+#       `git status` RAN it (the migration writes the toml plus `---\n`; git strips the newline)
+#   11  cyrius.lock -> .git/config: deps --lock AND a plain build's relock refused, config unchanged
+#   12  .GIT/config (case-folded on APFS/NTFS), sub/../.git/config (normalised), `.git` itself (a
+#       worktree / submodule gitfile) and a chain whose 2nd hop lands in .git: each refused
 #
 # MUTATION LEDGER (6.6.20; each run against a copy of the fixed tree; real tree GREEN, the
 # pre-fix tree RED on every refusal axis with axis 8 GREEN):
@@ -51,6 +58,11 @@
 #   M8 over-correction: every link refused                              -> 8 RED (and the reason
 #      text of 1 3 4a-c)
 #   M9 _io_ew_shown prints bytes raw                                    -> 9 RED
+#   M10 _io_replace_target_in: no .git check on a hop (_io_path_meta_why) -> 10 11 12 RED
+#   M11 _io_path_meta_why compares case-SENSITIVELY                     -> 12 (.GIT) RED (only it)
+#   (the alias families — HFS-ignorable code points, `:stream`, trailing dots/spaces, GIT~1 and
+#   other 8.3 names — are pinned row by row in tests/tcyr/crossos/replace_in_tree_link_rules.tcyr,
+#   each one's mutation RED there)
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
 D=$(mktemp -d) && [ -d "$D" ] || { echo "FAIL: project_writes_stay_in_tree: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
@@ -247,5 +259,77 @@ grep -qF 'it is a symlink to ../\x1b]0;owned\x07x, which climbs out' "$D/a9.out"
 if LC_ALL=C grep -q "$(printf '\033')" "$D/a9.out"; then fail "axis 9: a raw ESC byte reached the terminal"; a=1; fi
 [ "$a" = 0 ] && echo "  ok: axis 9: a link target holding ESC/BEL is shown as \\x1b / \\x07, never raw"
 
+# ── axes 10-12: .git is INSIDE the project, and a write there is code execution ──
+# Each fixture is a real `git init` repo, so .git/ is the metadata git itself reads.
+command -v git >/dev/null 2>&1 || { echo "FAIL: project_writes_stay_in_tree: git not found (axes 10-12 need a real repository)"; exit 1; }
+# grepo <dir> — a git repo at <dir> (no commit needed: .git/config is what git reads)
+grepo() { mkdir -p "$1" && git -c init.defaultBranch=main init -q "$1" && git -C "$1" config user.name gate; }
+
+# axis 10: update's migration through a dangling cyrius.cyml -> .git/commondir. Before the fix
+# the toml was written verbatim to .git/commondir, so with toml = `../evil` and a checkout
+# directory `evil\n---/` holding a config with core.fsmonitor, the next `git status` ran it.
+P="$D/g10"; grepo "$P"
+printf '../evil' > "$P/cyrius.toml"; ln -s .git/commondir "$P/cyrius.cyml"
+run "$P" "$D/g10.out" "$D/bin/cyrius" update
+a=0
+[ "$rc" -ne 0 ] || { fail "axis 10: cyrius update exited 0 over cyrius.cyml -> .git/commondir"; a=1; }
+[ -e "$P/.git/commondir" ] && { fail "axis 10: cyrius update CREATED .git/commondir (the repo's common dir is now: $(od -c "$P/.git/commondir" | head -1))"; a=1; }
+grep -qF "refusing to write cyrius.cyml: it is a symlink to .git/commondir, which reaches into .git, the repository's own metadata" "$D/g10.out" \
+  || { fail "axis 10: the refusal does not name the link and .git:"; sed 's/^/      /' "$D/g10.out" | head -4; a=1; }
+[ -f "$P/cyrius.toml" ] || { fail "axis 10: cyrius.toml was deleted although the migration was refused"; a=1; }
+git -C "$P" status --porcelain > /dev/null 2>&1 || { fail "axis 10: the repository no longer reads after cyrius update"; a=1; }
+[ "$a" = 0 ] && echo "  ok: axis 10: cyrius update refuses to migrate through a dangling cyrius.cyml -> .git/commondir, by name; no commondir created, the toml kept, the repo intact"
+
+# axis 11: cyrius.lock -> .git/config — deps --lock AND a plain build's relock. Before the fix
+# both replaced the config with the lock (`git remote -v`: "fatal: bad config line 1").
+P="$D/g11"; grepo "$P"; mklock "$P"; git -C "$P" remote add origin https://example.invalid/r.git
+cp "$P/.git/config" "$D/g11.cfg"; ln -s .git/config "$P/cyrius.lock"
+run "$P" "$D/g11.out" "$D/bin/cyrius" deps --lock
+a=0
+[ "$rc" -ne 0 ] || { fail "axis 11: cyrius deps --lock exited 0 over cyrius.lock -> .git/config"; a=1; }
+same "$P/.git/config" "$D/g11.cfg" || { fail "axis 11: cyrius deps --lock replaced .git/config: $(head -1 "$P/.git/config")"; a=1; }
+grep -qF "refusing to write cyrius.lock: it is a symlink to .git/config, which reaches into .git" "$D/g11.out" \
+  || { fail "axis 11: deps --lock's refusal does not name the link and .git:"; sed 's/^/      /' "$D/g11.out" | head -4; a=1; }
+P="$D/g11b"; grepo "$P"; mkdir -p "$P/src"; git -C "$P" remote add origin https://example.invalid/r.git
+printf '[package]\nname = "g11b"\nversion = "0.1.0"\ncyrius = "%s"\n\n[deps]\nstdlib = ["string"]\n' "$VER" > "$P/cyrius.cyml"
+printf 'fn main(): i64 { return 0; }\nvar r = main();\nsyscall(60, r);\n' > "$P/src/main.cyr"
+cp "$P/.git/config" "$D/g11b.cfg"; ln -s .git/config "$P/cyrius.lock"
+run "$P" "$D/g11b.out" "$D/bin/cyrius" build src/main.cyr build/g11b
+[ "$rc" -ne 0 ] || { fail "axis 11: a plain cyrius build exited 0 over cyrius.lock -> .git/config"; a=1; }
+same "$P/.git/config" "$D/g11b.cfg" || { fail "axis 11: a plain cyrius build (auto-deps relock) replaced .git/config: $(head -1 "$P/.git/config")"; a=1; }
+grep -qF "refusing to write cyrius.lock: it is a symlink to .git/config, which reaches into .git" "$D/g11b.out" \
+  || { fail "axis 11: the build's refusal does not name the link and .git:"; sed 's/^/      /' "$D/g11b.out" | head -4; a=1; }
+[ -d "$P/lib" ] || { fail "axis 11: the auto-deps resolve did not run (no lib/) — the build did not reach the relock"; a=1; }
+git -C "$P" remote -v 2>/dev/null | grep -q example.invalid || { fail "axis 11: git no longer reads the repository's remotes"; a=1; }
+[ "$a" = 0 ] && echo "  ok: axis 11: cyrius.lock -> .git/config is refused by deps --lock and by a plain build's relock, by name; .git/config byte-identical"
+
+# axis 12: other spellings that reach .git — case-folded (APFS / NTFS fold `.GIT` onto `.git`; on
+# this case-sensitive fixture it is a separate directory, so only the refusal can make it RED),
+# normalised through `..`, a worktree/submodule gitfile (`.git` itself), a chain hiding the hop.
+a=0
+for spec in "u:.GIT/config:.GIT" "p:sub/../.git/config:" "f:.git:" "c:locks/c2:"; do
+    k=${spec%%:*}; rest=${spec#*:}; tgt=${rest%%:*}; mk=${rest#*:}
+    P="$D/g12$k"; grepo "$P"; mklock "$P"; mkdir -p "$P/sub" "$P/locks"
+    [ -n "$mk" ] && mkdir -p "$P/$mk"
+    cp "$P/.git/config" "$D/g12$k.cfg"
+    case $k in
+        f) rm -rf "$P/.git" && printf 'gitdir: %s\n' "$D/g12f.real" > "$P/.git" && cp "$P/.git" "$D/g12f.gitfile" ;;
+        c) ln -s ../.git/config "$P/locks/c2" ;;
+    esac
+    ln -s "$tgt" "$P/cyrius.lock"
+    run "$P" "$D/g12$k.out" "$D/bin/cyrius" deps --lock
+    [ "$rc" -ne 0 ] || { fail "axis 12 ($tgt): deps --lock exited 0"; a=1; }
+    grep -qF "which reaches into .git" "$D/g12$k.out" \
+      || { fail "axis 12 ($tgt): the refusal does not name .git:"; sed 's/^/      /' "$D/g12$k.out" | head -3; a=1; }
+    case $k in
+        u) [ -e "$P/.GIT/config" ] && { fail "axis 12 (.GIT/config): written — on APFS/NTFS that is .git/config"; a=1; } ;;
+        f) same "$P/.git" "$D/g12f.gitfile" || { fail "axis 12 (.git gitfile): the gitfile was replaced: $(head -1 "$P/.git")"; a=1; } ;;
+        *) same "$P/.git/config" "$D/g12$k.cfg" || { fail "axis 12 ($tgt): .git/config was replaced"; a=1; } ;;
+    esac
+done
+grep -qF "the link locks/c2 on its way is a symlink to ../.git/config" "$D/g12c.out" \
+  || { fail "axis 12 (chain): the hop into .git is not the one named:"; sed 's/^/      /' "$D/g12c.out" | head -2; a=1; }
+[ "$a" = 0 ] && echo "  ok: axis 12: .GIT/config (case-folded), sub/../.git/config (normalised), .git itself (a gitfile) and a chain whose second hop lands in .git are each refused, naming .git; nothing written"
+
 [ "$FAIL" = 0 ] || exit 1
-echo "PASS: project_writes_stay_in_tree (cyrius update, deps --lock, build's relock, cyriusly use, cyrius fmt and cyrius port write through a link only to a file inside the project, refuse every other link by name and write nothing; in-tree links still written through)"
+echo "PASS: project_writes_stay_in_tree (cyrius update, deps --lock, build's relock, cyriusly use, cyrius fmt and cyrius port write through a link only to a file inside the project and outside its .git, refuse every other link by name and write nothing; in-tree links still written through)"

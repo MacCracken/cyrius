@@ -2,8 +2,10 @@
 # one helper every CLI writer of a PROJECT file goes through (cyrius update, deps --lock and the
 # auto-deps relock, cyriusly use, cyrius fmt, cyrius port). A symlink is followed only to a file
 # inside `root`: every hop RELATIVE, never climbing above `root` with `..`, never passing a
-# directory link (the kernel resolves `dirlink/..` against the link's TARGET). Anything else is
-# -EXDEV (-18) with the link, its target and why recorded, and nothing is written.
+# directory link (the kernel resolves `dirlink/..` against the link's TARGET), never landing in or
+# on `.git` under any spelling a filesystem folds onto it (case, HFS+-ignored code points, an NTFS
+# `:stream`, trailing dots/spaces, 8.3 names). Anything else is -EXDEV (-18) with the link, its
+# target and why recorded, and nothing is written.
 # Cross-OS because readlink's answer is per peer (x86/aarch64 Linux, both macOS); the CLI end to
 # end is tests/gates/toolchain/project_writes_stay_in_tree.sh. Windows has no readlink route (the
 # named path is always the answer there) and agnos keeps its own ABI: both a named SKIP.
@@ -108,6 +110,60 @@ fn main(): i64 {
     assert_streq(_io_contain_req, _cat(R, "c1"), "the requested name is recorded");
     assert_streq(_io_contain_link, _cat(R, "c2"), "the hop that leaves is recorded");
 
+    test_group("a link into .git — or onto a .git gitfile — is refused (-18, why 5), any spelling");
+    # .git is INSIDE the project, so containment alone let `cyrius.cyml -> .git/commondir` aim the
+    # repo's common dir at a checkout directory (code execution on the next `git status`).
+    assert_eq(sys_mkdir(_cat(R, ".git"), 448), 0, "root/.git created");
+    file_write_all(_cat(R, ".git/config"), "cfg", 3);
+    xsymlink(".git/config", _cat(R, "g_cfg"));
+    assert_eq(_io_replace_atomic_in(R, "g_cfg", "lock", 4), 0 - 18, ".git/config refused, not written");
+    assert_eq(_io_contain_why, 5, "why = reaches into .git");
+    assert_eq(_has(_cat(R, ".git/config"), "cfg"), 1, ".git/config unchanged");
+    xsymlink(".git/commondir", _cat(R, "g_cd"));
+    assert_eq(_io_replace_atomic_in(R, "g_cd", "../evil", 7), 0 - 18, "dangling .git/commondir refused");
+    assert_eq(file_exists(_cat(R, ".git/commondir")), 0, ".git/commondir not created");
+    xsymlink(".git", _cat(R, "g_file"));
+    assert_eq(_io_replace_target_in(R, "g_file"), 0 - 18, ".git itself (a worktree's gitfile) refused");
+    assert_eq(_io_contain_why, 5, "why = .git, the final component");
+    xsymlink("sub/../.git/config", _cat(R, "g_pop"));
+    assert_eq(_io_replace_target_in(R, "g_pop"), 0 - 18, "sub/../.git/config refused (normalised)");
+    assert_eq(_io_contain_why, 5, "why = .git after the pop");
+    xsymlink("sub/.git/x", _cat(R, "g_sub"));
+    assert_eq(_io_replace_target_in(R, "g_sub"), 0 - 18, "sub/.git/x (a submodule's) refused");
+    xsymlink(".GIT/config", _cat(R, "g_up"));
+    assert_eq(_io_replace_target_in(R, "g_up"), 0 - 18, ".GIT/config refused (APFS/NTFS fold case)");
+    assert_eq(_io_contain_why, 5, "why = .git, case-folded");
+    xsymlink(".G\xE2\x80\x8CiT/config", _cat(R, "g_hfs"));
+    assert_eq(_io_replace_target_in(R, "g_hfs"), 0 - 18, ".G<U+200C>iT/config refused (HFS+ ignores U+200C)");
+    xsymlink(".g\xEF\xBB\xBFit/config", _cat(R, "g_bom"));
+    assert_eq(_io_replace_target_in(R, "g_bom"), 0 - 18, ".g<U+FEFF>it/config refused");
+    xsymlink(".git. ./config", _cat(R, "g_dot"));
+    assert_eq(_io_replace_target_in(R, "g_dot"), 0 - 18, "`.git. ` refused (Win32 strips trailing dots/spaces)");
+    xsymlink(".git::$INDEX_ALLOCATION/config", _cat(R, "g_ads"));
+    assert_eq(_io_replace_target_in(R, "g_ads"), 0 - 18, ".git::$INDEX_ALLOCATION refused (NTFS stream)");
+    xsymlink("GIT~1/config", _cat(R, "g_83"));
+    assert_eq(_io_replace_target_in(R, "g_83"), 0 - 18, "GIT~1/config refused (the 8.3 alias)");
+    assert_eq(_io_contain_why, 5, "why = .git, its short name");
+    xsymlink("PROGRA~2/x", _cat(R, "g_832"));
+    assert_eq(_io_replace_target_in(R, "g_832"), 0 - 18, "another 8.3 short name refused");
+    assert_eq(_io_contain_why, 6, "why = an 8.3 short name");
+    xsymlink("c_g", _cat(R, "c_g0"));
+    xsymlink(".git/config", _cat(R, "c_g"));
+    assert_eq(_io_replace_target_in(R, "c_g0"), 0 - 18, "a chain whose second hop lands in .git refused");
+    assert_streq(_io_contain_link, _cat(R, "c_g"), "the hop into .git is named");
+    # ANTI-OVER-CORRECTION: names that only LOOK like .git are written through
+    file_write_all(_cat(R, ".gitignore"), "gi", 2);
+    xsymlink(".gitignore", _cat(R, "n_gi"));
+    assert_streq(_io_replace_target_in(R, "n_gi"), _cat(R, ".gitignore"), ".gitignore is not .git");
+    xsymlink(".github/w.yml", _cat(R, "n_gh"));
+    assert_streq(_io_replace_target_in(R, "n_gh"), _cat(R, ".github/w.yml"), ".github/ is not .git");
+    xsymlink("sub/a.git", _cat(R, "n_ag"));
+    assert_streq(_io_replace_target_in(R, "n_ag"), _cat(R, "sub/a.git"), "a.git is not .git");
+    xsymlink("git/x", _cat(R, "n_g"));
+    assert_streq(_io_replace_target_in(R, "n_g"), _cat(R, "git/x"), "git/ is not .git");
+    xsymlink(".git/../sub/t", _cat(R, "n_thru"));
+    assert_streq(_io_replace_target_in(R, "n_thru"), _cat(R, "sub/t"), ".git/../sub/t lands in sub/t, not .git");
+
     test_group("a loop is -ELOOP; a link naming the root itself is -EISDIR");
     xsymlink("lp2", _cat(R, "lp1"));
     xsymlink("lp1", _cat(R, "lp2"));
@@ -127,6 +183,14 @@ fn main(): i64 {
     xunlink(_cat(R, "dl2")); xunlink(_cat(R, "l_pop")); xunlink(_cat(R, "c1"));
     xunlink(_cat(R, "c2")); xunlink(_cat(R, "lp1")); xunlink(_cat(R, "lp2"));
     xunlink(_cat(R, "l_root")); xunlink(_cat(R, "sub/t"));
+    xunlink(_cat(R, "g_cfg")); xunlink(_cat(R, "g_cd")); xunlink(_cat(R, "g_file"));
+    xunlink(_cat(R, "g_pop")); xunlink(_cat(R, "g_sub")); xunlink(_cat(R, "g_up"));
+    xunlink(_cat(R, "g_hfs")); xunlink(_cat(R, "g_bom")); xunlink(_cat(R, "g_dot"));
+    xunlink(_cat(R, "g_ads")); xunlink(_cat(R, "g_83")); xunlink(_cat(R, "g_832"));
+    xunlink(_cat(R, "c_g0")); xunlink(_cat(R, "c_g")); xunlink(_cat(R, "n_gi"));
+    xunlink(_cat(R, "n_gh")); xunlink(_cat(R, "n_ag")); xunlink(_cat(R, "n_g"));
+    xunlink(_cat(R, "n_thru")); xunlink(_cat(R, ".gitignore"));
+    xunlink(_cat(R, ".git/config")); xrmdir(_cat(R, ".git"));
     xrmdir(_cat(R, "sub"));
     assert_eq(xrmdir(R), 0, "scratch root empty and removed (no temp left behind)");
     xunlink(_cat(O, "victim"));
