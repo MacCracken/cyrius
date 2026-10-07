@@ -17,6 +17,12 @@
 #      connects: 1, and sock_accept then succeeds (the sandhi case);
 #   5. THREADS_CONCURRENT == 1: the legacy async_await_readable(listener) BLOCKS until a helper
 #      thread connects 300 ms later (>= 250 ms), then returns 0 and the accept succeeds.
+#   6. (6.6.20) fds an epoll set refuses, so the Linux body (then a one-fd epoll set whose failed
+#      EPOLL_CTL_ADD was ignored) waited on an EMPTY set: a regular file (POSIX hosts — WSAPoll
+#      knows no file HANDLE) is 1 at once, not a timeout after the bound; a closed socket and a
+#      negative fd are 0 at once, bounded or not (unbounded, the old body never returned).
+#   7. (6.6.20) THREADS_CONCURRENT == 1: a bound above INT_MAX is clamped, not truncated — 2^32 +
+#      100 ms still waits for a connection made 300 ms later (the old body: 0 after 100 ms).
 # ⚠ A WATCHDOG THREAD ends the process if the file has not finished within WD_DEADLINE_MS, so a
 # wait that ignores its bound (or a legacy wait that is never woken) FAILS instead of hanging the
 # cross-OS leg. Where there is no second thread there is no unbounded wait either (row 5 is
@@ -201,6 +207,60 @@ fn _aw_legacy_rows(): i64 {
     sock_close(lfd);
     return 0;
 }
+
+fn _aw_badfd_rows(): i64 {
+    #ifndef CYRIUS_TARGET_WIN
+    test_group("6.6.20 — async_await_readable_ms: a regular file is readable at once");
+    var ffd = sys_open("/etc/hosts", 0, 0);
+    assert(ffd >= 0, "open /etc/hosts");
+    if (ffd >= 0) {
+        var t0 = clock_now_ns();
+        assert_eq(async_await_readable_ms(ffd, 2000), 1, "a regular file, 2 s bound: 1");
+        assert(_aw_ms_since(t0) < 1000, "…at once (< 1 s), not a timeout after the bound");
+        sys_close(ffd);
+    }
+    #endif
+
+    test_group("6.6.20 — async_await_readable_ms: a closed or negative fd is 0 at once, even unbounded");
+    var ct, cfd = tcp_socket();
+    assert_eq(is_err_result(ct), 0, "tcp_socket");
+    if (is_err_result(ct) == 1) { return 0; }
+    sock_close(cfd);             # nothing opens an fd between here and the waits below
+    var t1 = clock_now_ns();
+    assert_eq(async_await_readable_ms(cfd, 2000), 0, "a closed socket, 2 s bound: 0");
+    assert(_aw_ms_since(t1) < 1000, "…at once (< 1 s)");
+    t1 = clock_now_ns();
+    assert_eq(async_await_readable_ms(0 - 1, 2000), 0, "a negative fd, 2 s bound: 0");
+    assert(_aw_ms_since(t1) < 1000, "…at once (< 1 s)");
+    if (THREADS_CONCURRENT == 1) {
+        # Unbounded: a hang here is caught by the watchdog (exit 3) instead of hanging the leg.
+        assert_eq(async_await_readable_ms(cfd, 0 - 1), 0, "a closed socket, no bound: 0, it returns");
+        assert_eq(async_await_readable_ms(0 - 1, 0 - 1), 0, "a negative fd, no bound: 0, it returns");
+    }
+    return 0;
+}
+
+fn _aw_clamp_rows(): i64 {
+    test_group("6.6.20 — async_await_readable_ms: a bound above INT_MAX is clamped, not truncated");
+    var lfd = _aw_listener();
+    if (lfd < 0) { return 0; }
+    sock_set_nonblocking(lfd);
+    _aw_port_late = _aw_port(lfd);
+    _aw_late_fd = 0 - 1;
+    var t0 = clock_now_ns();
+    var t = thread_create(&_aw_late_connector, 0);
+    assert_neq(t, 0, "the connector thread starts");
+    if (t == 0) { sock_close(lfd); return 0; }
+    assert_eq(async_await_readable_ms(lfd, 0x100000000 + 100), 1, "2^32 + 100 ms: 1 once the connection is pending");
+    assert(_aw_ms_since(t0) >= 250, "…after the connection (>= 250 ms), not 100 ms in (truncated to 32 bits)");
+    thread_join(t);
+    var at, afd = sock_accept(lfd);
+    assert_eq(is_err_result(at), 0, "…and sock_accept then succeeds");
+    if (is_err_result(at) == 0) { sock_close(afd); }
+    if (_aw_late_fd >= 0) { sock_close(_aw_late_fd); }
+    sock_close(lfd);
+    return 0;
+}
 #endif
 
 fn main(): i64 {
@@ -212,6 +272,8 @@ fn main(): i64 {
     _aw_socket_rows();
     _aw_listen_rows();
     if (THREADS_CONCURRENT == 1) { _aw_legacy_rows(); }
+    if (THREADS_CONCURRENT == 1) { _aw_clamp_rows(); }
+    _aw_badfd_rows();
     store64(&_aw_done, 1);
     #endif
     assert_eq(1, 1, "async_await_readable_ms probe completed");

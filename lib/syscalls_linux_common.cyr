@@ -1211,8 +1211,8 @@ fn fd_restore_flags(fd, saved): i64 {
 # and Darwin. Literals, not names: a program-wide enum can redefine a public constant.
 # The stdlib's other waits do not fit a caller-owned fd: process.cyr's _proc_poll_in is
 # read-only and private, net.cyr's WSAPoll is the Windows connect wait, and
-# async_await_readable_ms is read-only (it is built on this one on macOS and Windows since
-# 6.6.19). CHANGELOG [6.6.13]
+# async_await_readable_ms is read-only (it is built on this one on every host target: macOS
+# and Windows since 6.6.19, Linux since 6.6.20). CHANGELOG [6.6.13]
 fn fd_wait_ready(fd, want_write, timeout_ms): i64 {
     if (fd < 0) { return 0 - 9; }                   # EBADF — poll would skip it silently
     if (fd > 0x7FFFFFFF) { return 0 - 9; }          # not an int fd

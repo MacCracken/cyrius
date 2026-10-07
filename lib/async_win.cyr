@@ -911,7 +911,7 @@ fn async_read(fd, buf, len): i64 {
 
 # Wait for SOCKET `fd` to be readable, or until `ms` milliseconds elapse (`ms` < 0: no limit).
 # Returns 1 if it became readable — data, a hang-up, or a pending connection on a listening
-# socket — and 0 if the wait ended without it (the timeout, or an error). The epoll backend's
+# socket — and 0 if the wait ended without it (the timeout, or an error). The Linux backend's
 # contract, over ws2_32!WSAPoll (fd_wait_ready, 0xF04A, verified on cass).
 # ⚠ SOCKETS ONLY: WSAPoll knows nothing of other HANDLEs (a pipe, a file, a console), so for
 # those this answers 0 at once rather than waiting — the Windows reactor is socket-only too.

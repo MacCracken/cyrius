@@ -21,8 +21,12 @@
 # only when a stop flag is configured; this primitive is what lets that go back to
 # parking in epoll. The old name is kept as a wrapper returning 0, so no call site moves.
 #
-# SCOPE. Axes 1-6 run the Linux epoll body (`lib/async.cyr` is gated NOT-agnos AND NOT-win;
-# cx never reaches it). ⛔ Until 6.6.19 that was the ONLY definition: on macOS and Windows
+# SCOPE. Axes 1-6 and 8 run the Linux body (`lib/async.cyr` is gated NOT-agnos AND NOT-win;
+# cx never reaches it) — one poll(2) through fd_wait_ready since 6.6.20, the primitive the peers
+# use. ⛔ Until 6.6.20 it was a one-fd epoll set whose EPOLL_CTL_ADD result was discarded: epoll
+# refuses a regular file (EPERM) and a closed fd (EBADF), so the wait ran on an EMPTY set — a
+# readable file reported a timeout after the full bound, and a closed fd with no bound never
+# returned. Axis 8 pins both. ⛔ Until 6.6.19 that was the ONLY definition: on macOS and Windows
 # async_await_readable was a no-op returning 0 at once, so sandhi's cooperative accept loop spun
 # at 100 % CPU there and async_await_readable_ms did not exist. Axis 7 pins the peers: macOS
 # (lib/async_macos.cyr, BSD poll) and Windows (lib/async_win.cyr, WSAPoll) define it over
@@ -150,14 +154,17 @@ var r = main();
 sys_exit_group(r);' > "$D/a5"
 check "legacy wrapper returns 0" 42 "$(cat "$D/a5")"
 
-# ── AXIS 6: structural. The `_ms` body must pass its parameter through, not a literal.
-# Guards against someone "simplifying" the wrapper back into a hardcoded wait.
-echo "axis 6 — the _ms body passes ms through to sys_epoll_wait:"
+# ── AXIS 6: structural. The `_ms` body must pass its parameter through, not a literal, and
+# wait with fd_wait_ready like its peers — not an epoll set (6.6.20, axis 8). Guards against
+# someone "simplifying" the wrapper back into a hardcoded wait.
+echo "axis 6 — the _ms body passes ms through to fd_wait_ready, not an epoll set:"
 body=$(awk '/^fn async_await_readable_ms\(/,/^}/' lib/async.cyr)
-n_par=$(printf '%s\n' "$body" | grep -cE 'sys_epoll_wait\(epfd, &revents, 1, ms\)' || true)
-check "sys_epoll_wait(..., ms)" 1 "$n_par"
-n_lit=$(printf '%s\n' "$body" | grep -cE 'sys_epoll_wait\(.*0 - 1\)' || true)
+n_par=$(printf '%s\n' "$body" | grep -cE 'fd_wait_ready\(fd, 0, ms\)' || true)
+check "fd_wait_ready(fd, 0, ms)" 1 "$n_par"
+n_lit=$(printf '%s\n' "$body" | grep -cE '0 - 1' || true)
 check "no hardcoded -1 left in _ms" 0 "$n_lit"
+n_ep=$(printf '%s\n' "$body" | grep -cE 'epoll|EPOLL' || true)
+check "no epoll set in _ms" 0 "$n_ep"
 
 # ── AXIS 7 (6.6.19): the macOS and Windows peers define the bounded wait and delegate to it.
 # Structural (each body read fn-line to closing brace) plus a build: a probe that calls it must
@@ -188,6 +195,41 @@ for tgt in CYRIUS_MACHO CYRIUS_TARGET_WIN CYRIUS_TARGET_AGNOS; do
     nu=$(grep -c "undefined function 'async_await_readable_ms'" "$D/x.err" || true)
     check "$tgt=1: a probe calling async_await_readable_ms builds (rc, undefined)" "0 0" "$rc $nu"
 done
+
+# ── AXIS 8 (6.6.20): fds an epoll set refuses. A regular file is always readable — 1 at once,
+# not a timeout after the bound (the old body: 0 after 300 ms). A closed fd and a negative fd are
+# not open — 0 at once, and with NO bound they must still return (the old body never did: 124).
+echo "axis 8 — a regular file reads 1 at once; a closed or negative fd reads 0 at once, even unbounded:"
+runprobe 'fn main(): i64 {
+    alloc_init();
+    var fd = sys_open("lib/async.cyr", 0, 0);
+    if (fd < 0) { return 5; }
+    var t0 = clock_now_ms();
+    if (async_await_readable_ms(fd, 3000) != 1) { return 6; }
+    if (clock_now_ms() - t0 >= 1000) { return 7; }
+    return 42;
+}
+var r = main();
+sys_exit_group(r);' > "$D/a8a"
+check "regular file, 3 s bound: 1 at once" 42 "$(cat "$D/a8a")"
+runprobe 'fn main(): i64 {
+    alloc_init();
+    var pfd[16];
+    sys_pipe(&pfd);
+    var rfd = load32(&pfd);
+    sys_close(rfd);
+    sys_close(load32(&pfd + 4));
+    var t0 = clock_now_ms();
+    if (async_await_readable_ms(rfd, 3000) != 0) { return 6; }
+    if (clock_now_ms() - t0 >= 1000) { return 7; }
+    if (async_await_readable_ms(rfd, 0 - 1) != 0) { return 8; }
+    if (async_await_readable_ms(0 - 1, 0 - 1) != 0) { return 9; }
+    async_await_readable(rfd);
+    return 42;
+}
+var r = main();
+sys_exit_group(r);' > "$D/a8b"
+check "closed / negative fd: 0 at once, bounded or not (124 = hung)" 42 "$(cat "$D/a8b")"
 
 echo ""
 if [ "$fails" = "0" ]; then

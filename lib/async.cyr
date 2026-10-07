@@ -1152,38 +1152,30 @@ fn async_read(fd, buf, len): i64 {
 }
 
 # Wait for fd to be readable, or until `ms` milliseconds elapse. Returns 1 if fd
-# became readable, 0 if the wait ended without it. A negative `ms` blocks forever.
+# became readable — data, a hang-up, a pending connection, or a regular file (always
+# readable) — and 0 if the wait ended without it: the timeout, EINTR, or an fd that is
+# not open (at once, never a hang). A negative `ms` blocks forever; one above INT_MAX
+# is clamped to it.
 #
 # Prefer this over async_await_readable whenever the wait must be interruptible: a
 # cooperative server parked on an infinite wait cannot observe a stop flag set by
-# another thread, because control never leaves the epoll call. Bounding the wait is
-# what lets the caller re-check between waits.
+# another thread, because control never leaves the wait. Bounding the wait is what
+# lets the caller re-check between waits.
 #
 # A signal-interrupted wait (EINTR) reports 0, the same as a timeout — the caller's
 # loop re-checks its own condition and waits again, which is the correct response to
 # both. CHANGELOG [6.5.6]
+# One poll(2) through fd_wait_ready (lib/syscalls_linux_common.cyr), the same primitive as
+# the macOS and Windows peers. ⛔ Until 6.6.20 this built a one-fd epoll set and ignored a
+# failed EPOLL_CTL_ADD: epoll refuses a regular file (EPERM) and a closed fd (EBADF), so the
+# wait ran on an EMPTY set — a file read as a timeout and a closed fd hung for ever with
+# `ms` < 0 — and the kernel truncated `ms` to an int. CHANGELOG [6.6.20]
 fn async_await_readable_ms(fd, ms): i64 {
-    var epfd = syscall(SYS_EPOLL_CREATE1, 0);
-    # epoll_event: { events: u32, data: u64 } = 12 bytes (padded to 16)
-    var ev[16];
-    store32(&ev, 1);
-    # data @4 (x86 packed) / @8 (aarch64 unpacked) — see _async_wait_events. This helper
-    # never reads data back, but keep the offset consistent with the reactor. (v6.4.42)
-    #ifdef CYRIUS_ARCH_AARCH64
-    store64(&ev + 8, fd);
-    #endif
-    #ifndef CYRIUS_ARCH_AARCH64
-    store64(&ev + 4, fd);
-    #endif
-    syscall(SYS_EPOLL_CTL, epfd, 1, fd, &ev);
-    var revents[16];
-    var n = sys_epoll_wait(epfd, &revents, 1, ms);
-    syscall(SYS_CLOSE, epfd);
-    if (n > 0) { return 1; }
+    if (fd_wait_ready(fd, 0, ms) == 1) { return 1; }
     return 0;
 }
 
-# Wait for fd to be readable using epoll (blocks efficiently, without limit).
+# Wait for fd to be readable (blocks without limit).
 # Always returns 0, discarding whether the fd is actually ready — that contract is
 # preserved for existing callers. Use async_await_readable_ms for a bounded wait
 # that reports which of the two happened.
