@@ -1722,20 +1722,47 @@ cannot use `public`, `pub`, or `private` as identifiers.
 # Conditional compilation (v5.6.1)
 #ifdef CYRIUS_TARGET_LINUX
     var fd = file_open("/proc/self/exe", 0, 0);
-#elif CYRIUS_TARGET_WIN
+#else
+#ifdef CYRIUS_TARGET_WIN
     var fd = win_get_image_handle();
 #else
     # macOS / other platforms fall here
+#endif
 #endif
 
 #ifndef CYRIUS_BAREMETAL
     println("running on hosted platform");
 #endif
+
+#define LEVEL 2
+#if LEVEL == 1
+    var mode = 1;
+#elif LEVEL == 2
+    var mode = 2;
+#else
+    var mode = 0;
+#endif
 ```
 
-The full set: `#ifdef`, `#ifndef`, `#else`, `#elif`, `#endif`. State is
+The full set: `#ifdef`, `#ifndef`, `#if`, `#else`, `#elif`, `#endif`. State is
 tracked per nesting level — `#elif` after a taken `#ifdef` is correctly
 suppressed, and nested blocks skip cleanly inside a parent's skip path.
+
+`#if` and `#elif` take a CONDITION, `NAME OP NUMBER` (`==`, `!=`, `<`, `>`, `<=`,
+`>=`), or a bare `NAME`, which reads the name's VALUE (0 when it is undefined). Neither
+asks whether a name is DEFINED. The target builtins (`CYRIUS_ARCH_*`,
+`CYRIUS_TARGET_*`, ...) are defined with the value 0, so `#elif CYRIUS_TARGET_WIN`
+is never taken, on Windows or anywhere else. To test a second name for definition,
+nest an `#ifdef` under `#else`, as the first block above does.
+
+A directive's keyword, name and value are separated by any run of spaces and TABS
+(v6.6.20). Before that only a single space separated them, silently: `#ifdef X<TAB>`
+looked up a name ending in a tab and took the other arm, `#ifdef<TAB>X` was a comment
+(so its body compiled unconditionally), and `#define FOO  1` with two spaces defined
+FOO as 0. An `#else` / `#elif` / `#endif` / `#endplat` with no open block, and a block
+still open at the end of the input, are ERRORS naming the directive's file and line
+(v6.6.20) — they used to be ignored, which is how the malformed openers above went
+unnoticed.
 
 **Preprocessor limits.** Each table below is fixed-size, and past its limit the
 compile is refused with an error that names the limit (and the entry, where there
@@ -1770,7 +1797,8 @@ is one). Until 6.6.20 several of these were silent.
   naming the macro. (Before 6.6.20 a 516-byte argument silently expanded to
   nothing, and longer ones crashed the compiler.)
 
-`#ifplat <plat>` (v5.4.19) is a tighter spelling for arch / OS dispatch:
+`#ifplat <plat>` (v5.4.19) is a tighter spelling for architecture dispatch,
+the same as `#ifdef CYRIUS_ARCH_<PLAT>`. It closes with `#endplat` or `#endif`:
 
 ```
 #ifplat aarch64
@@ -1778,8 +1806,11 @@ is one). Until 6.6.20 several of these were silent.
 #endif
 ```
 
-Recognized plat tokens: `x86_64`, `aarch64`, `riscv64` (v5.7.0), `linux`,
-`macos`, `windows`, `baremetal`.
+Recognized plat tokens: `x86` and `aarch64`. Any other token (`x86_64`, `riscv64`,
+`linux`, `macos`, `windows`, ...) is not an error: it never matches, so the block is
+skipped and an `#else` arm is taken. For an OS, use `#ifdef CYRIUS_TARGET_*`.
+`#ifplat` works in the main source and in included files. (Before v6.6.20 it was not
+evaluated in an included file, where both arms compiled.)
 
 ## Attributes
 
@@ -2502,18 +2533,22 @@ syscall(60, r + t);
 expanded `M(` against the `)` of the `syscall` and swallowed everything between them — the program
 body was gone, and it exited 0 with nothing on stderr. Since v6.6.6 an invocation that *starts*
 inside a comment must also *close* on that line; if it does not, it is not an invocation and the
-bytes stay comment. A single-line `# see M(1)` is still expanded, and still changes nothing. One
-consequence to know: on an ATTRIBUTE line (`#inline fn f(): i64 { return N(5); }`, which the
-preprocessor's state machine reads as a comment) a macro call still expands, but one whose
-arguments **wrap onto the next line** no longer does — it fails loudly with `undefined function`
-rather than compiling something you did not write.
+bytes stay comment. A single-line `# see M(1)` is still expanded, and still changes nothing. An
+ATTRIBUTE line (`#inline fn f(): i64 { return N(5); }`) is not a comment, to the preprocessor
+any more than to the lexer (v6.6.20), so a macro call there expands like anywhere else in code —
+including one whose arguments wrap onto the next line, which from v6.6.6 to v6.6.19 failed with
+`undefined function` because the preprocessor read the line as a comment.
 
 ⚠ **A `#` is not always a comment.** `#naked`, `#inline`, `#pure`, `#io`, `#alloc`,
 `#must_use`, `#regalloc`, `#deprecated`, `#assert` and `#pe_import` are attribute TOKENS, and
 the lexer keeps reading the line after them — so `#naked fn isr() {` opens a real brace.
 `cyrlint`, `cyrfmt` and `cyrdoc` read them as the lexer does (v6.6.5; before that
 `#naked fn f() {` drew false `unmatched closing brace` warnings and `cyrius fmt` rewrote the fn
-body flush left).
+body flush left), and since v6.6.20 so does the preprocessor, from the lexer's own list. Before
+that it read the rest of an attribute line as a comment, so a string literal there that ran onto
+the next line (`#assert ok, "first` / `second"`) put it one quote out of step for the whole of
+that next line: a real `#ifdef` there was skipped, a `#define` inside the string was executed,
+and a forged `#@file` marker got past the guard that keeps `private` honest.
 
 An attribute name ENDS at a word boundary: the next byte must be whitespace or end of input.
 Anything else and the `#` opens an ordinary comment, so `#ioctl numbers`, `#allocator notes`,

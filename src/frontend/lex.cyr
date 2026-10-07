@@ -821,7 +821,13 @@ fn READFILE(path, dst, maxsz): i64 {
     }
     var fd = 0;
     if (SYS_OPEN == 2) { fd = syscall(SYS_OPEN, path, 0, 0); }
+    # The openat arm (here and at the two fallbacks below) is dead in a PE compiler —
+    # main_win.cyr declares SYS_OPEN = 2 — and a 4-argument open is not a PE route, so each
+    # drew a "not routed" warning in every cycc_win build: noise that hides a real unrouted
+    # call. Compiled out there. CHANGELOG [6.6.20]
+    #ifndef CYRIUS_TARGET_WIN
     else { fd = syscall(SYS_OPEN, 0 - 100, path, 0, 0); }
+    #endif
     # Fallback: if open fails and path starts with "lib/", try the store slot
     # `_init_cyrius_lib` chose — CYRIUS_HOME/versions/<VERSION>/lib/, else
     # HOME/.cyrius/versions/<VERSION>/lib/ — with `lib/` replaced by it.
@@ -843,7 +849,9 @@ fn READFILE(path, dst, maxsz): i64 {
                             while (load8(path + pi) != 0) { store8(&fbuf + fi, load8(path + pi)); fi = fi + 1; pi = pi + 1; }
                             store8(&fbuf + fi, 0);
                             if (SYS_OPEN == 2) { fd = syscall(SYS_OPEN, &fbuf, 0, 0); }
+                            #ifndef CYRIUS_TARGET_WIN
                             else { fd = syscall(SYS_OPEN, 0 - 100, &fbuf, 0, 0); }
+                            #endif
                         } } } }
         }
     }
@@ -873,7 +881,9 @@ fn READFILE(path, dst, maxsz): i64 {
             while (load8(path + pj) != 0) { store8(&ibuf + ii2, load8(path + pj)); ii2 = ii2 + 1; pj = pj + 1; }
             store8(&ibuf + ii2, 0);
             if (SYS_OPEN == 2) { fd = syscall(SYS_OPEN, &ibuf, 0, 0); }
+            #ifndef CYRIUS_TARGET_WIN
             else { fd = syscall(SYS_OPEN, 0 - 100, &ibuf, 0, 0); }
+            #endif
         }
     }
     # CVE-31: distinguish open-fail from a legitimately-empty file. Return -1
@@ -928,14 +938,91 @@ include "src/frontend/lex_pp.cyr"
 # (`#assert: expected constant expression`), and turning that into a comment
 # would silently DROP a compile-time assertion the author wrote. A loud error on
 # a rare prose comment beats a silent hole in an assertion. CHANGELOG [6.6.6]
-fn LEXATTRBOUND(S, q, bl, ap): i64 {
-    if (q >= bl) { return 1; }
-    var b = load8(S + 0x459D000 + q);
+#
+# 6.6.20 — reads `base + q` (bounded by `n`) rather than the lexer's own buffer, so the
+# preprocessor can ask the same question of whichever buffer it is walking (LEXATTRWORD).
+fn LEXATTRBOUND(base, q, n, ap): i64 {
+    if (q >= n) { return 1; }
+    var b = load8(base + q);
     if (b == 32) { return 1; }
     if (b == 9) { return 1; }
     if (b == 10) { return 1; }
     if (b == 13) { return 1; }
     if (b == 40) { if (ap == 1) { return 1; } }
+    return 0;
+}
+
+# The length of attribute word `w` (a NUL-terminated name, no `#`) when it follows the `#`
+# at `base + q` and ends on an attribute boundary (LEXATTRBOUND, `ap` as there); else 0.
+fn _lex_attr_is(base, q, n, w, ap): i64 {
+    var k = 0;
+    while (load8(w + k) != 0) {
+        if (q + 1 + k >= n) { return 0; }
+        if (load8(base + q + 1 + k) != load8(w + k)) { return 0; }
+        k = k + 1;
+    }
+    if (LEXATTRBOUND(base, q + 1 + k, n, ap) == 0) { return 0; }
+    return k;
+}
+
+# ⛔ 6.6.20 (CVE-TBD) — THE ONE LIST of `#` attributes: the `#` at `base + q` (bounded by
+# `n`) spells one of them, packed `token * 16 + name length`, else 0 (the `#` opens a
+# comment). LEX emits the token and keeps lexing the SAME LINE as code.
+#
+# WHY ONE LIST, SHARED. The preprocessor decides "is this line a directive / is this byte in
+# a string" with its own lexical state machine (PP_LEXST). Until 6.6.20 that machine read
+# EVERY `#` in code as a comment opener, while this lexer lexes an attribute's line as code
+# — string literals included, and a literal may hold a raw LF. So after
+# `#assert 1 == 1, "x<LF>"` the two disagreed for as long as the next line ran: the PP
+# read the literal's CLOSING quote as an opening one and stayed "in a string" while the
+# lexer was in code. A `#@file "secret.cyr" 1` line there was skipped by the neutraliser
+# (PP_NEUT_FMARK leaves string bytes alone) and minted by FM_BUILD, and a `private` fn of
+# secret.cyr was CALLED (built, exit 42; the same call without the forged line is refused).
+# The same desync made the PP skip a real `#ifdef CYRIUS_TARGET_WIN` line (the lexer then
+# read it as a comment and compiled the Windows-only arm on Linux), and execute a
+# `#define` it should have kept as string data. 6.6.6 declined to teach the PP the list
+# for fear the two copies would drift; with ONE list there is nothing to drift, and the PP
+# asks this function (PP_LEXST_AT). No line-start rule: LEX has none either.
+#
+#   #assert      token 107 = HASH_ASSERT       ap   (v4.x)
+#   #regalloc    token 109 = HASH_REGALLOC          (4.8.4) opt-in register allocation
+#   #deprecated  token 124 = HASH_DEPRECATED   ap   (v5.6.4) warns at every call site
+#   #must_use    token 122 = HASH_MUST_USE          (v5.6.3) a dropped result warns
+#   #pure        token 125 = HASH_PURE              (v5.8.20)
+#   #io          token 126 = HASH_IO                (v5.8.20)
+#   #alloc       token 127 = HASH_ALLOC             (v5.8.20)
+#   #naked       token 133 = HASH_NAKED             (v6.2.27) no prologue/epilogue (an ISR)
+#   #inline      token 163 = HASH_INLINE            (v6.5.63) admits the fn to inline replay
+#   #pe_import   token 110 = HASH_PE_IMPORT    ap   (v5.4.6) PE32+ import registration
+# (`ap` = `(` may follow: the three whose parenthesised form is syntax — see LEXATTRBOUND.)
+# tests/gates/frontend/lexer_attribute_word_boundary.sh derives its census from this table
+# and from the `_lex_attr_is` rows below, and fails if they and its probe table disagree.
+# CHANGELOG [6.6.20]
+fn LEXATTRWORD(base, q, n): i64 {
+    if (q + 2 >= n) { return 0; }
+    var c1 = load8(base + q + 1);
+    if (c1 < 97) { return 0; }
+    if (c1 > 122) { return 0; }
+    var k = _lex_attr_is(base, q, n, "assert", 1);
+    if (k > 0) { return 107 * 16 + k; }
+    k = _lex_attr_is(base, q, n, "regalloc", 0);
+    if (k > 0) { return 109 * 16 + k; }
+    k = _lex_attr_is(base, q, n, "deprecated", 1);
+    if (k > 0) { return 124 * 16 + k; }
+    k = _lex_attr_is(base, q, n, "must_use", 0);
+    if (k > 0) { return 122 * 16 + k; }
+    k = _lex_attr_is(base, q, n, "pure", 0);
+    if (k > 0) { return 125 * 16 + k; }
+    k = _lex_attr_is(base, q, n, "io", 0);
+    if (k > 0) { return 126 * 16 + k; }
+    k = _lex_attr_is(base, q, n, "alloc", 0);
+    if (k > 0) { return 127 * 16 + k; }
+    k = _lex_attr_is(base, q, n, "naked", 0);
+    if (k > 0) { return 133 * 16 + k; }
+    k = _lex_attr_is(base, q, n, "inline", 0);
+    if (k > 0) { return 163 * 16 + k; }
+    k = _lex_attr_is(base, q, n, "pe_import", 1);
+    if (k > 0) { return 110 * 16 + k; }
     return 0;
 }
 
@@ -2254,263 +2341,18 @@ fn LEX(S): i64 {
             if (c == 10) { SCLINE(S, GCLINE(S) + 1); }
             p = p + 1;
         }
-        # Comment or #assert / #regalloc directive
+        # Comment, or one of the ten `#` attributes (#assert, #regalloc, #deprecated, ...)
         else { if (c == 35) {
-                # Check for #assert (35 97 115 115 101 114 116 = #assert)
-                if (p + 6 < bl) {
-                    if (load8(S + 0x459D000 + p + 1) == 97) {
-                        if (load8(S + 0x459D000 + p + 2) == 115) {
-                            if (load8(S + 0x459D000 + p + 3) == 115) {
-                                if (load8(S + 0x459D000 + p + 4) == 101) {
-                                    if (load8(S + 0x459D000 + p + 5) == 114) {
-                                        if (load8(S + 0x459D000 + p + 6) == 116) {
-                                            if (LEXATTRBOUND(S, p + 7, bl, 1) == 1) {
-                                                # Emit token 107 = HASH_ASSERT, skip "assert"
-                                                ADDTOK(S, 107, 0);
-                                                p = p + 7;
-                                                # Skip whitespace after #assert
-                                                while (p < bl) {
-                                                    var wc = load8(S + 0x459D000 + p);
-                                                    if (wc == 32 || wc == 9) { p = p + 1; }
-                                                    else { break; }
-                                                }
-                                                continue;
-                                            }
-                                        } } } } } } }
-                # Check for #regalloc (4.8.4-alpha1) — opt-in attribute
-                # on the next fn def. Codegen change lands in later alphas;
-                # alpha1 just emits the token so the parser can attach
-                # the flag to the fn.
-                # bytes: 23 72 65 67 61 6C 6C 6F 63 = "#regalloc" (9 chars)
-                if (p + 8 < bl) {
-                    if (load8(S + 0x459D000 + p + 1) == 114) {
-                        if (load8(S + 0x459D000 + p + 2) == 101) {
-                            if (load8(S + 0x459D000 + p + 3) == 103) {
-                                if (load8(S + 0x459D000 + p + 4) == 97) {
-                                    if (load8(S + 0x459D000 + p + 5) == 108) {
-                                        if (load8(S + 0x459D000 + p + 6) == 108) {
-                                            if (load8(S + 0x459D000 + p + 7) == 111) {
-                                                if (load8(S + 0x459D000 + p + 8) == 99) {
-                                                    if (LEXATTRBOUND(S, p + 9, bl, 0) == 1) {
-                                                        ADDTOK(S, 109, 0);   # token 109 = HASH_REGALLOC
-                                                        p = p + 9;
-                                                        while (p < bl) {
-                                                            var wc2 = load8(S + 0x459D000 + p);
-                                                            if (wc2 == 32 || wc2 == 9 || wc2 == 10 || wc2 == 13) {
-                                                                if (wc2 == 10) { SCLINE(S, GCLINE(S) + 1); }
-                                                                p = p + 1;
-                                                            }
-                                                            else { break; }
-                                                        }
-                                                        continue;
-                                                    }
-                                                } } } } } } } }
-                }
-                # v5.6.4: #deprecated("msg") — attribute on the next fn
-                # def that warns at every call site. Checked BEFORE
-                # #must_use so "#deprecated" doesn't trigger the lexer
-                # prefix check for "#must_use" (different first char anyway
-                # — `d` vs `m` — so ordering is only for readability).
-                # bytes: 23 64 65 70 72 65 63 61 74 65 64 = "#deprecated" (11 chars)
-                if (p + 10 < bl) {
-                    if (load8(S + 0x459D000 + p + 1) == 100) {
-                        if (load8(S + 0x459D000 + p + 2) == 101) {
-                            if (load8(S + 0x459D000 + p + 3) == 112) {
-                                if (load8(S + 0x459D000 + p + 4) == 114) {
-                                    if (load8(S + 0x459D000 + p + 5) == 101) {
-                                        if (load8(S + 0x459D000 + p + 6) == 99) {
-                                            if (load8(S + 0x459D000 + p + 7) == 97) {
-                                                if (load8(S + 0x459D000 + p + 8) == 116) {
-                                                    if (load8(S + 0x459D000 + p + 9) == 101) {
-                                                        if (load8(S + 0x459D000 + p + 10) == 100) {
-                                                            if (LEXATTRBOUND(S, p + 11, bl, 1) == 1) {
-                                                                ADDTOK(S, 124, 0);   # token 124 = HASH_DEPRECATED
-                                                                p = p + 11;
-                                                                continue;
-                                                            }
-                                                        } } } } } } } } } }
-                }
-                # v5.6.3: #must_use — attribute on the next fn def marking
-                # its return as required-to-use. PARSE_STMT's expr-stmt
-                # discard path warns if a must_use fn's result is dropped.
-                # bytes: 23 6D 75 73 74 5F 75 73 65 = "#must_use" (9 chars)
-                if (p + 8 < bl) {
-                    if (load8(S + 0x459D000 + p + 1) == 109) {
-                        if (load8(S + 0x459D000 + p + 2) == 117) {
-                            if (load8(S + 0x459D000 + p + 3) == 115) {
-                                if (load8(S + 0x459D000 + p + 4) == 116) {
-                                    if (load8(S + 0x459D000 + p + 5) == 95) {
-                                        if (load8(S + 0x459D000 + p + 6) == 117) {
-                                            if (load8(S + 0x459D000 + p + 7) == 115) {
-                                                if (load8(S + 0x459D000 + p + 8) == 101) {
-                                                    if (LEXATTRBOUND(S, p + 9, bl, 0) == 1) {
-                                                        ADDTOK(S, 122, 0);   # token 122 = HASH_MUST_USE
-                                                        p = p + 9;
-                                                        while (p < bl) {
-                                                            var wcm = load8(S + 0x459D000 + p);
-                                                            if (wcm == 32 || wcm == 9 || wcm == 10 || wcm == 13) {
-                                                                if (wcm == 10) { SCLINE(S, GCLINE(S) + 1); }
-                                                                p = p + 1;
-                                                            }
-                                                            else { break; }
-                                                        }
-                                                        continue;
-                                                    }
-                                                } } } } } } } }
-                }
-                # v5.8.20: #pure — fn-attribute marking the next fn def as
-                # pure. PARSE_FNCALL inside a #pure body warns when the
-                # callee is #io or #alloc. bytes: 23 70 75 72 65 = "#pure" (5 chars)
-                if (p + 4 < bl) {
-                    if (load8(S + 0x459D000 + p + 1) == 112) {
-                        if (load8(S + 0x459D000 + p + 2) == 117) {
-                            if (load8(S + 0x459D000 + p + 3) == 114) {
-                                if (load8(S + 0x459D000 + p + 4) == 101) {
-                                    if (LEXATTRBOUND(S, p + 5, bl, 0) == 1) {
-                                        ADDTOK(S, 125, 0);   # token 125 = HASH_PURE
-                                        p = p + 5;
-                                        while (p < bl) {
-                                            var wcp = load8(S + 0x459D000 + p);
-                                            if (wcp == 32 || wcp == 9 || wcp == 10 || wcp == 13) {
-                                                if (wcp == 10) { SCLINE(S, GCLINE(S) + 1); }
-                                                p = p + 1;
-                                            }
-                                            else { break; }
-                                        }
-                                        continue;
-                                    }
-                                } } } } }
-                # v5.8.20: #io — fn-attribute marking a fn as performing I/O.
-                # bytes: 23 69 6F = "#io" (3 chars)
-                if (p + 2 < bl) {
-                    if (load8(S + 0x459D000 + p + 1) == 105) {
-                        if (load8(S + 0x459D000 + p + 2) == 111) {
-                            if (LEXATTRBOUND(S, p + 3, bl, 0) == 1) {
-                                ADDTOK(S, 126, 0);   # token 126 = HASH_IO
-                                p = p + 3;
-                                while (p < bl) {
-                                    var wcio = load8(S + 0x459D000 + p);
-                                    if (wcio == 32 || wcio == 9 || wcio == 10 || wcio == 13) {
-                                        if (wcio == 10) { SCLINE(S, GCLINE(S) + 1); }
-                                        p = p + 1;
-                                    }
-                                    else { break; }
-                                }
-                                continue;
-                            }
-                        } } }
-                # v5.8.20: #alloc — fn-attribute marking a fn as allocating.
-                # bytes: 23 61 6C 6C 6F 63 = "#alloc" (6 chars)
-                if (p + 5 < bl) {
-                    if (load8(S + 0x459D000 + p + 1) == 97) {
-                        if (load8(S + 0x459D000 + p + 2) == 108) {
-                            if (load8(S + 0x459D000 + p + 3) == 108) {
-                                if (load8(S + 0x459D000 + p + 4) == 111) {
-                                    if (load8(S + 0x459D000 + p + 5) == 99) {
-                                        if (LEXATTRBOUND(S, p + 6, bl, 0) == 1) {
-                                            ADDTOK(S, 127, 0);   # token 127 = HASH_ALLOC
-                                            p = p + 6;
-                                            while (p < bl) {
-                                                var wca = load8(S + 0x459D000 + p);
-                                                if (wca == 32 || wca == 9 || wca == 10 || wca == 13) {
-                                                    if (wca == 10) { SCLINE(S, GCLINE(S) + 1); }
-                                                    p = p + 1;
-                                                }
-                                                else { break; }
-                                            }
-                                            continue;
-                                        }
-                                    } } } } } }
-                # v6.2.27: #naked — fn-attribute marking an interrupt-handler /
-                # naked fn: the backend emits NO prologue/epilogue/frame, so the
-                # body is the raw ISR (x86 ends with iretq, aarch64 eret).
-                # bytes: 23 6E 61 6B 65 64 = "#naked" (6 chars)
-                if (p + 5 < bl) {
-                    if (load8(S + 0x459D000 + p + 1) == 110) {
-                        if (load8(S + 0x459D000 + p + 2) == 97) {
-                            if (load8(S + 0x459D000 + p + 3) == 107) {
-                                if (load8(S + 0x459D000 + p + 4) == 101) {
-                                    if (load8(S + 0x459D000 + p + 5) == 100) {
-                                        if (LEXATTRBOUND(S, p + 6, bl, 0) == 1) {
-                                            ADDTOK(S, 133, 0);   # token 133 = HASH_NAKED (128 is f64v_dot — collision fix, review P1)
-                                            p = p + 6;
-                                            while (p < bl) {
-                                                var wcn = load8(S + 0x459D000 + p);
-                                                if (wcn == 32 || wcn == 9 || wcn == 10 || wcn == 13) {
-                                                    if (wcn == 10) { SCLINE(S, GCLINE(S) + 1); }
-                                                    p = p + 1;
-                                                }
-                                                else { break; }
-                                            }
-                                            continue;
-                                        }
-                                    } } } } } }
-                # v6.5.63: #inline — fn attribute requesting the next fn be admitted to the
-                # inline-replay path WITHOUT flipping general inlining on globally.
-                #
-                # ⛔ THIS DIRECTIVE DID NOT EXIST UNTIL NOW, AND CONSUMERS WERE ALREADY WRITING
-                # IT. svara carries four `#inline` markers in `src/formant.cyr` alone; every one
-                # of them lexed as a COMMENT and did nothing. That is the retired-"≤6 args"
-                # shape — a user annotating for an optimisation that is not there, with no
-                # diagnostic to tell them. Adding the directive is the fix; the WARNING in
-                # PARSE_FN_DEF when the request cannot be honoured is the other half, because a
-                # silently-ignored `#inline` would just be the same defect wearing a token.
-                #
-                # bytes: 23 69 6E 6C 69 6E 65 = "#inline" (7 chars, 6 after '#').
-                # ⚠ `#include`, `#ifdef` and `#ifndef` share the leading `#i`. They diverge at
-                # p+2 (`f` for #ifdef/#ifndef vs `n`) and p+3 (`c` for #include vs `l`), and
-                # includes are expanded by the preprocessor before this lexer runs — but the
-                # per-byte chain below is what actually keeps them apart, so do not shorten it.
-                if (p + 6 < bl) {
-                    if (load8(S + 0x459D000 + p + 1) == 105) {
-                        if (load8(S + 0x459D000 + p + 2) == 110) {
-                            if (load8(S + 0x459D000 + p + 3) == 108) {
-                                if (load8(S + 0x459D000 + p + 4) == 105) {
-                                    if (load8(S + 0x459D000 + p + 5) == 110) {
-                                        if (load8(S + 0x459D000 + p + 6) == 101) {
-                                            if (LEXATTRBOUND(S, p + 7, bl, 0) == 1) {
-                                                ADDTOK(S, 163, 0);   # token 163 = HASH_INLINE (150-162 are taken)
-                                                p = p + 7;
-                                                while (p < bl) {
-                                                    var wci = load8(S + 0x459D000 + p);
-                                                    if (wci == 32 || wci == 9 || wci == 10 || wci == 13) {
-                                                        if (wci == 10) { SCLINE(S, GCLINE(S) + 1); }
-                                                        p = p + 1;
-                                                    }
-                                                    else { break; }
-                                                }
-                                                continue;
-                                            }
-                                        } } } } } } }
-                # Check for #pe_import (v5.4.6) — PE32+ kernel32 symbol
-                # registration directive. Parser consumes (dll, symbol)
-                # string-literal args and forwards to the pe emitter's
-                # pending-imports buffer.
-                # bytes: 23 70 65 5F 69 6D 70 6F 72 74 = "#pe_import" (10 chars)
-                if (p + 9 < bl) {
-                    if (load8(S + 0x459D000 + p + 1) == 112) {
-                        if (load8(S + 0x459D000 + p + 2) == 101) {
-                            if (load8(S + 0x459D000 + p + 3) == 95) {
-                                if (load8(S + 0x459D000 + p + 4) == 105) {
-                                    if (load8(S + 0x459D000 + p + 5) == 109) {
-                                        if (load8(S + 0x459D000 + p + 6) == 112) {
-                                            if (load8(S + 0x459D000 + p + 7) == 111) {
-                                                if (load8(S + 0x459D000 + p + 8) == 114) {
-                                                    if (load8(S + 0x459D000 + p + 9) == 116) {
-                                                        if (LEXATTRBOUND(S, p + 10, bl, 1) == 1) {
-                                                            ADDTOK(S, 110, 0);   # token 110 = HASH_PE_IMPORT
-                                                            p = p + 10;
-                                                            while (p < bl) {
-                                                                var wc3 = load8(S + 0x459D000 + p);
-                                                                if (wc3 == 32 || wc3 == 9 || wc3 == 10 || wc3 == 13) {
-                                                                    if (wc3 == 10) { SCLINE(S, GCLINE(S) + 1); }
-                                                                    p = p + 1;
-                                                                }
-                                                                else { break; }
-                                                            }
-                                                            continue;
-                                                        }
-                                                    } } } } } } } } }
+                # An attribute emits its token and the REST OF THE LINE IS LEXED AS CODE —
+                # the whitespace after it is skipped by the loop's own whitespace arm.
+                # ⛔ 6.6.20 — the word list is LEXATTRWORD, and the preprocessor reads the
+                # SAME list (PP_LEXST_AT) so its lexical state cannot drift from this one.
+                # CHANGELOG [6.6.20]
+                var atk = LEXATTRWORD(S + 0x459D000, p, bl);
+                if (atk != 0) {
+                    ADDTOK(S, atk >> 4, 0);
+                    p = p + 1 + (atk & 15);
+                    continue;
                 }
                 # Regular comment — skip to newline
                 p = p + 1;

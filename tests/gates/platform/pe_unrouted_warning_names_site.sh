@@ -16,6 +16,19 @@ trap 'rm -rf "$D"' EXIT
 fail=0
 bad() { echo "FAIL: pe_unrouted_warning_names_site: $*"; fail=1; }
 
+# 6.6.20: the PE compiler's own build (install.sh's cycc_win recipe) does not warn at READFILE's
+# three openat shims in src/frontend/lex.cyr. Each is the `else` arm of `if (SYS_OPEN == 2)`,
+# dead in a PE compiler (main_win.cyr: SYS_OPEN = 2), and its 4-argument open is not a PE
+# route, so every cycc_win build printed three "not routed" warnings for calls that cannot run
+# — noise that buries a real one. They are compiled out under CYRIUS_TARGET_WIN.
+( cd "$ROOT" && CYRIUS_TARGET_WIN=1 "$CC" < src/main_win.cyr > "$D/cycc_win" 2> "$D/cw.err" ) \
+    || bad "the PE compiler (CYRIUS_TARGET_WIN=1, src/main_win.cyr) did not build:"
+[ -s "$D/cycc_win" ] || bad "the PE compiler build produced no binary"
+nlex=$(grep -c '^warning:src/frontend/lex\.cyr:[0-9]*:[0-9]*: syscall [0-9]* with [0-9]* argument(s) is not routed' "$D/cw.err" || true)
+[ "$nlex" = 0 ] || { bad "the cycc_win build warns $nlex unrouted syscall(s) in src/frontend/lex.cyr:"; grep 'lex\.cyr:' "$D/cw.err" | head -c 400; echo; }
+# Anti-vacuous: the sub.cyr rows below run the SAME compiler and require it to warn at two real
+# unrouted sites, so a compiler that stopped warning altogether cannot pass this row with them.
+
 # Two unrouted sites in an INCLUDED file (so the file name is not <source>): an unknown
 # number (12, brk), and a routed number at the wrong arity (2, open, with 4 arguments).
 printf '# line 1\nfn z(p): i64 {\n    var a = syscall(12, 0);\n    if (p == 1) { a = a + syscall(2, 1, 2, 3, 4); }\n    return a;\n}\n' > "$D/sub.cyr"
