@@ -5352,6 +5352,14 @@ fn _distlib_modular_emit(pkg_name, modules, mbuf, mlen): i64 {
                     if (kl > 4 && memeq(fbuf + ke - 4, ".cyr", 4) == 1) { kl = kl - 4; }
                     if (kl > 0) {
                         var leaf = alloc(kl + 1); memcpy(leaf, fbuf + ks, kl); store8(leaf + kl, 0);
+                        # 6.6.20: the index row is a consumer's `lib:<leaf>`, so it obeys the ONE
+                        # leaf rule (_dep_leaf_ok) — this wrote any text between the quotes.
+                        if (_dep_leaf_ok(leaf) == 0) {
+                            var bad_why = "distlib --modular: an include names a stdlib leaf that is not a safe name";
+                            _err_ctx(bad_why, _cat2(_shown(leaf), " (allowed: [A-Za-z0-9_/-]) — nothing written"));
+                            _aw_abort(mfd);
+                            return 1;
+                        }
                         var is_nd = 0;
                         var ci = 0;
                         while (ci < vec_len(named_deps)) {
@@ -5424,27 +5432,6 @@ fn _distlib_modular_emit(pkg_name, modules, mbuf, mlen): i64 {
 var _DL_HDR_END = "# Do not edit -- rebuild with: cyrius distlib\n";
 var _DL_REQ_MARK = "# Requires (compile-verified; the leaves of ";
 
-# 1 when a leaf name may become an include path: non-empty, [A-Za-z0-9_/-] only (so no `..`,
-# no quote, no newline), no leading, trailing or doubled '/'. A `/` stays legal: a module that
-# keeps `include "lib/unicode/categories.cyr"` records the leaf `unicode/categories`.
-fn _distlib_leaf_name_ok(lf): i64 {
-    var n = strlen(lf);
-    if (n == 0 || load8(lf) == 47 || load8(lf + n - 1) == 47) { return 0; }
-    var i = 0;
-    while (i < n) {
-        var c = load8(lf + i);
-        var ok = 0;
-        if (c >= 97 && c <= 122) { ok = 1; }
-        elif (c >= 65 && c <= 90) { ok = 1; }
-        elif (c >= 48 && c <= 57) { ok = 1; }
-        elif (c == 95 || c == 45) { ok = 1; }
-        elif (c == 47 && load8(lf + i + 1) != 47) { ok = 1; }
-        if (ok == 0) { return 0; }
-        i = i + 1;
-    }
-    return 1;
-}
-
 # Rewrite bundle `out_path` with the requires block for `leaves` (named deps skipped). The
 # block names `deps_path` (the committed sidecar's path, also under --check). 0, or 1 named.
 fn _distlib_write_requires(out_path, deps_path, leaves, named_deps): i64 {
@@ -5457,7 +5444,7 @@ fn _distlib_write_requires(out_path, deps_path, leaves, named_deps): i64 {
         var lf = vec_get(leaves, i);
         i = i + 1;
         if (_distlib_vec_has(named_deps, lf) == 1) { continue; }
-        if (_distlib_leaf_name_ok(lf) == 0) {
+        if (_dep_leaf_ok(lf) == 0) {
             _err_ctx("distlib: a sidecar leaf is not a safe include path (allowed: [A-Za-z0-9_/-]) — bundle NOT rewritten", lf);
             return 1;
         }

@@ -1044,6 +1044,15 @@ fn _dep_pull_leaves(stdlib_dir, dep_name, leaves): i64 {
     var i = 0;
     while (i < vec_len(leaves)) {
         var leaf = vec_get(leaves, i);
+        # 6.6.20: a `requires` entry or a sidecar line is a LEAF name, checked by the one leaf rule
+        # before it becomes a path — a sidecar's `../../x` used to reach `_dep_copy_file`'s
+        # destination guard and then this fn's "it IS in the stdlib (<a path outside it>)".
+        if (_dep_leaf_ok(leaf) == 0) {
+            _dep_refuse_leaf("dep ", dep_name, leaf);
+            errs = errs + 1;
+            i = i + 1;
+            continue;
+        }
         _dep_note_nd_leaf(leaf);
         var r = _dep_copy_stdlib_recursive(stdlib_dir, leaf, 1);
         if (r == 1) {
@@ -1374,6 +1383,44 @@ fn _dep_name_unsafe(name): i64 {
     return 0;
 }
 
+# 1 when a stdlib LEAF name may become a path under lib/ and an include line: non-empty,
+# [A-Za-z0-9_/-] only (so no `..`, no quote, no newline), no leading, trailing or doubled `/`.
+# A `/` stays legal: `unicode/categories` is a leaf. The ONE leaf rule (6.6.20): distlib's
+# requires block and `--modular` index (the producers), a `lib:` index entry, a `requires` key,
+# a `dist/<pkg>.deps` sidecar line and `[deps] stdlib` (the consumers). It was three rules — the
+# producer allowed `/`, the index emit checked nothing, and the consumer's `lib:` check was the
+# dep-NAME rule, which refused `/`, so `distlib --modular` wrote `lib:unicode/categories` and
+# every consumer refused it as path traversal; sidecar leaves had no check at all.
+fn _dep_leaf_ok(lf): i64 {
+    var n = strlen(lf);
+    if (n == 0 || load8(lf) == 47 || load8(lf + n - 1) == 47) { return 0; }
+    var i = 0;
+    while (i < n) {
+        var c = load8(lf + i);
+        var ok = 0;
+        if (c >= 97 && c <= 122) { ok = 1; }
+        elif (c >= 65 && c <= 90) { ok = 1; }
+        elif (c >= 48 && c <= 57) { ok = 1; }
+        elif (c == 95 || c == 45) { ok = 1; }
+        elif (c == 47 && load8(lf + i + 1) != 47) { ok = 1; }
+        if (ok == 0) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+
+# "error: <who> names '<leaf>', which is not a stdlib leaf name …" — `who` is a fixed phrase,
+# `ctx` (0 or a manifest string) is shown escaped after it.
+fn _dep_refuse_leaf(who, ctx, leaf): i64 {
+    _ew("error: ");
+    _ew(who);
+    if (ctx != 0) { _ew_shown(ctx); }
+    _ew(" names '");
+    _ew_shown(leaf);
+    _ew("', which is not a stdlib leaf name ([A-Za-z0-9_/-], no leading, trailing or doubled /) — refused\n");
+    return 1;
+}
+
 # The refusal of a `[deps.NAME]` header whose NAME fails _dep_name_unsafe, shown escaped —
 # one line, shared by the resolver and `deps --dry-run`.
 fn _dep_refuse_name(name): i64 {
@@ -1553,7 +1600,11 @@ fn _dep_pull_submodule(dep_src, pkg, submod, stdlib_dir, seen): i64 {
         while (di < vec_len(deps)) {
             var d = vec_get(deps, di);
             if (strlen(d) > 4 && memeq(d, "lib:", 4) == 1) {
-                if (_dep_reject_unsafe_name(d + 4) == 1) {   # CVE-32: index-controlled leaf name
+                # CVE-32: an index-controlled leaf name. 6.6.20: by the LEAF rule — this used the
+                # dep-name rule, which refuses `/`, so `lib:unicode/categories` (what distlib
+                # --modular writes) was refused as path traversal.
+                if (_dep_leaf_ok(d + 4) == 0) {
+                    _dep_refuse_leaf("the modular index of ", pkg, d + 4);
                     errs = errs + 1;
                 } elif (stdlib_dir != 0) {
                     _dep_note_nd_leaf(d + 4);
@@ -2492,6 +2543,12 @@ fn cmd_deps(): i64 {
             var mi = 0;
             while (mi < vec_len(mods)) {
                 var mod_name = vec_get(mods, mi);
+                if (_dep_leaf_ok(mod_name) == 0) {   # 6.6.20: the one leaf rule
+                    _dep_refuse_leaf("[deps] stdlib", 0, mod_name);
+                    errors = errors + 1;
+                    mi = mi + 1;
+                    continue;
+                }
                 # v5.10.19: the recursive fetcher. For 95%+ of stdlib modules
                 # (leaf files) only the top-level file gets copied; for the arch-
                 # dispatcher modules (syscalls, alloc) it follows their
