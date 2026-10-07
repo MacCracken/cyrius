@@ -1,0 +1,164 @@
+# for_step_struct_assign.tcyr — 6.6.20 — the STEP of a classic `for` assigns a whole struct or
+# vector exactly as the same assignment written as a statement does.
+#
+# THE DEFECT. 6.6.12 moved the step (`for (init; cond; a = b)`) onto the statement arm's store
+# (`_asg_store_slot`), but not onto the dispatch the statement runs in FRONT of that store for an
+# aggregate right-hand side (_PARSE_STMT_IMPL: `_try_aggregate_copy_assign`,
+# `_try_struct_call_assign`, `_try_vector_call_assign`, `_refuse_lossy_pair`,
+# `_pcmpe_struct_assign`). Four of those five (all but `_refuse_lossy_pair`) — and `_fla_assign`,
+# which the last one ends in — also ended at a hard-coded `;`, and a step ends at `)`. So a
+# struct or vector step stored ONE word, silently: `a = b` on a 24-byte struct left
+# a.y / a.z stale ({4,2,3} where {4,5,6} is right), and the same for a global, a call returning
+# the struct (retptr and rax:rdx), a method, a struct-typed field and a vector copy. The
+# vector-call step `v = mkv(11, 22)` differed by target: on x86 and aarch64 lane 0 took the return
+# register's leftover (2 where 1122 is right); on Win64 the step pushed no hidden retptr, so the
+# callee wrote its 16 bytes through the call's FIRST ARGUMENT — memory corruption, a page fault at
+# 0xB (that 11) before the rows after it ran. The two refusals the statement makes (a different
+# struct type, a `: stack` pair) compiled clean as a step; those are pinned by
+# tests/gates/frontend/struct_copy_source_type_refused.sh and stack_enum_lossy_context.sh.
+#
+# CROSS-HOST: the copy, the retptr / pair receive and the vector receive are emitted per backend
+# (x86, PE retptr, Mach-O, aarch64). cx refuses the 16 B pair-return rows by name
+# (`int-class 16B struct pair-return ABI not supported`), so this file does not compile there.
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+include "lib/assert.cyr"
+
+struct P2 { x; y; }
+struct P3 { x; y; z; }
+struct B { v: P3; k; }
+
+var G: P3 = P3 { 1, 2, 3 };
+var H: P3 = P3 { 4, 5, 6 };
+var K: P3 = P3 { 70, 80, 90 };
+
+fn mk(k): P3 { var r: P3 = P3 { k, k + 1, k + 2 }; return r; }
+fn p2(a, b): P2 { var r: P2 = P2 { a, b }; return r; }
+fn P3_mk(self, k): P3 { var r: P3 = P3 { k, k + 1, k + 2 }; return r; }
+fn P3_mp(self, k): P2 { var r: P2 = P2 { k, k + 1 }; return r; }
+fn mkv(a, b): f64v2 { var r: f64v2; store64(&r + 0, a); store64(&r + 8, b); return r; }
+
+# ── struct copies: local, global, mixed ─────────────────────────────────────────────────────────
+fn local_copy(): i64 {
+    var a: P3 = P3 { 1, 2, 3 };
+    var b: P3 = P3 { 4, 5, 6 };
+    var i = 0;
+    for (i = 0; i < 1; a = b) { i = i + 1; }
+    return a.x * 100 + a.y * 10 + a.z;
+}
+fn global_from_global(): i64 {
+    G.x = 1; G.y = 2; G.z = 3;
+    var i = 0;
+    for (i = 0; i < 1; G = H) { i = i + 1; }
+    return G.x * 100 + G.y * 10 + G.z;
+}
+fn global_from_local(): i64 {
+    G.x = 1; G.y = 2; G.z = 3;
+    var l: P3 = P3 { 7, 8, 9 };
+    var i = 0;
+    for (i = 0; i < 1; G = l) { i = i + 1; }
+    return G.x * 100 + G.y * 10 + G.z;
+}
+fn local_from_global(): i64 {
+    var m: P3 = P3 { 0, 0, 0 };
+    var i = 0;
+    for (i = 0; i < 1; m = H) { i = i + 1; }
+    return m.x * 100 + m.y * 10 + m.z;
+}
+
+# ── calls returning the struct: retptr (24 B), rax:rdx (16 B), methods ──────────────────────────
+fn retptr_call(): i64 {
+    var a: P3 = P3 { 1, 2, 3 };
+    var i = 0;
+    for (i = 0; i < 1; a = mk(10)) { i = i + 1; }
+    return a.x * 10000 + a.y * 100 + a.z;
+}
+fn pair_call(): i64 {
+    var q: P2 = P2 { 1, 2 };
+    var i = 0;
+    for (i = 0; i < 1; q = p2(30, 40)) { i = i + 1; }
+    return q.x * 100 + q.y;
+}
+fn method_retptr(): i64 {
+    var b: P3 = P3 { 0, 0, 0 };
+    var a: P3 = P3 { 1, 2, 3 };
+    var i = 0;
+    for (i = 0; i < 1; a = b.mk(5)) { i = i + 1; }
+    return a.x * 100 + a.y * 10 + a.z;
+}
+fn method_pair(): i64 {
+    var b: P3 = P3 { 0, 0, 0 };
+    var w: P2 = P2 { 1, 2 };
+    var i = 0;
+    for (i = 0; i < 1; w = b.mp(50)) { i = i + 1; }
+    return w.x * 100 + w.y;
+}
+
+# ── a struct-typed field ────────────────────────────────────────────────────────────────────────
+fn field_source(): i64 {
+    var bb: B;
+    bb.v.x = 7; bb.v.y = 8; bb.v.z = 9; bb.k = 1;
+    var c: P3 = P3 { 1, 2, 3 };
+    var i = 0;
+    for (i = 0; i < 1; c = bb.v) { i = i + 1; }
+    return c.x * 100 + c.y * 10 + c.z;
+}
+
+# ── vectors: a call and a copy ──────────────────────────────────────────────────────────────────
+fn vector_call(): i64 {
+    var v: f64v2;
+    store64(&v + 0, 1); store64(&v + 8, 2);
+    var i = 0;
+    for (i = 0; i < 1; v = mkv(11, 22)) { i = i + 1; }
+    return load64(&v + 0) * 100 + load64(&v + 8);
+}
+fn vector_copy(): i64 {
+    var v: f64v2;
+    var w: f64v2;
+    store64(&v + 0, 1); store64(&v + 8, 2);
+    store64(&w + 0, 11); store64(&w + 8, 22);
+    var i = 0;
+    for (i = 0; i < 1; v = w) { i = i + 1; }
+    return load64(&v + 0) * 100 + load64(&v + 8);
+}
+
+# ── the step's terminator does not leak into a statement nested in its right-hand side ─────────
+# A closure body inside the step's call argument holds its own whole-struct copies, which end at
+# `;` as statements; they must still copy every word.
+fn nested_statements(): i64 {
+    G.x = 0; G.y = 0; G.z = 0;
+    var a: P3 = P3 { 1, 2, 3 };
+    var i = 0;
+    for (i = 0; i < 1; a = mk(fncall1(|x| { var q: P3 = P3 { 7, 8, 9 }; var r: P3 = P3 { 0, 0, 0 }; r = q; var bb: B; bb.v.x = 4; bb.v.y = 5; bb.v.z = 6; var c: P3 = P3 { 0, 0, 0 }; c = bb.v; G = c; return r.z + c.z + x; }, 0))) { i = i + 1; }
+    return a.z * 100 + G.z * 10 + G.y;
+}
+
+# ── a scalar step is unchanged ──────────────────────────────────────────────────────────────────
+fn scalar_step(): i64 {
+    var s = 0;
+    var j = 0;
+    for (j = 0; j < 9; j = j + 2) { s = s + j; }
+    return s;
+}
+
+alloc_init();
+assert_eq(local_copy(), 456, "step a = b (24 B locals): every word (was 423)");
+assert_eq(global_from_global(), 456, "step G = H (globals, in a fn)");
+assert_eq(global_from_local(), 789, "step G = l (global <- local)");
+assert_eq(local_from_global(), 456, "step m = H (local <- global)");
+assert_eq(retptr_call(), 101112, "step a = mk(10) (24 B retptr call)");
+assert_eq(pair_call(), 3040, "step q = p2(30, 40) (16 B rax:rdx call)");
+assert_eq(method_retptr(), 567, "step a = b.mk(5) (method, retptr)");
+assert_eq(method_pair(), 5051, "step w = b.mp(50) (method, rax:rdx)");
+assert_eq(field_source(), 789, "step c = bb.v (struct-typed field)");
+assert_eq(vector_call(), 1122, "step v = mkv(11, 22) (f64v2 call)");
+assert_eq(vector_copy(), 1122, "step v = w (f64v2 copy)");
+assert_eq(nested_statements(), 1765, "statements in a closure in the step's argument still copy whole");
+assert_eq(scalar_step(), 20, "a scalar step");
+var n = 0;
+G.x = 1; G.y = 2; G.z = 3;
+for (n = 0; n < 1; G = K) { n = n + 1; }
+assert_eq(G.x * 10000 + G.y * 100 + G.z, 708090, "top-level step G = K");
+var r = assert_summary();

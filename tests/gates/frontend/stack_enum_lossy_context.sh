@@ -226,6 +226,12 @@ refuse "store64(&slot, mk(3))" axis8b <<EOF
 ${PRE}fn main(): i64 { var slot[16]; store64(&slot, mk(3)); syscall(60, 0, 0,0,0,0); return 0; }
 var e = main();
 EOF
+# 6.6.20 (RPD-04): the same assignment as the STEP of a classic `for` compiled clean — the step
+# skipped the statement's dispatch, `_refuse_lossy_pair` included.
+refuse "for-step x = mk(3)" axis8c <<EOF
+${PRE}fn main(): i64 { var x = 0; var i = 0; for (i = 0; i < 1; x = mk(3)) { i = i + 1; } syscall(60, x & 0xFF, 0,0,0,0); return 0; }
+var e = main();
+EOF
 
 # ── axis 9 — v6.6.0: `?` in STATEMENT position, on the value form ───────────────────────────
 # ⛔ PARSE_STMT dispatches IDENT+LPAREN straight to PARSE_FNCALL and never reaches the term

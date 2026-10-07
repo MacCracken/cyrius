@@ -1,0 +1,237 @@
+# continue_binds_across_while.tcyr — 6.6.20 — a `continue` in a `for` binds to THAT `for` when a
+# `while` sits between it and an enclosing `for`, at any depth, through a closure body and
+# through a generic instance emitted inside the loop.
+#
+# THE DEFECT. The pending `continue` jumps of a `for` lived in one flat 8-entry array whose
+# next-free index (S+0x18F898) was also the while-mode flag, so `while` set it to 0. A `for`
+# nested in that `while` therefore started over at entry 0 and OVERWROTE the enclosing `for`'s
+# pending jump — the 6.6.3 defect (nested_continue_binds.tcyr) one level deeper. The inner
+# `continue` was then patched to the OUTER `for`'s step, and the outer one was never patched:
+# a no-op on x86/PE (`jmp` rel32 0), a branch to itself on aarch64 and cx (a hang). Through a
+# closure body or a generic instance the inner jump left its own fn's frame: SIGSEGV. Every
+# release 6.6.0..6.6.19 compiled `for { continue; while { for { continue; } } }` that way.
+#
+# ⚠ TIMEOUT-SAFE BY CONSTRUCTION. Every outer `continue` here is compiled but NEVER TAKEN (its
+# condition compares the counter with `never`, a run-time 99), because an unpatched one is a
+# hang on aarch64 and cx. The defect still shows: the TAKEN inner `continue` was the jump
+# re-pointed at the outer step, so the inner count reads 0 (or the run faults). The taken-outer
+# shapes, which hang there, live in tests/tcyr/lang/nested_continue_binds.tcyr (x86 only).
+# The closure / generic cases run their outer loop ONCE: a jump re-pointed into another fn
+# lands on the outer step in the callee's frame, and with one iteration that leaves the loop
+# at once (measured pre-fix: a wrong value or a fault on x86, aarch64, cx and PE — with three
+# iterations x86 looped there until killed).
+#
+# CROSS-HOST: the forward jump and its patch are emitted by every backend (x86, PE, Mach-O,
+# aarch64, cx); closures here take one parameter.
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/vec.cyr"
+include "lib/fnptr.cyr"
+include "lib/assert.cyr"
+
+# ── C-style for / while / C-style for (the filed shape) ────────────────────────────────────────
+fn cfor_while_cfor(never): i64 {
+    var a = 0;
+    var b = 0;
+    for (var i = 0; i < 3; i = i + 1) {
+        if (i == never) { continue; }
+        a = a + 1;
+        var w = 0;
+        while (w < 1) {
+            w = w + 1;
+            for (var j = 0; j < 4; j = j + 1) {
+                if (j == 0) { continue; }
+                b = b + 1;
+            }
+        }
+    }
+    return a * 10 + b;
+}
+
+# ── range for / while / range for ───────────────────────────────────────────────────────────────
+fn range_while_range(never): i64 {
+    var a = 0;
+    var b = 0;
+    for i in 0..3 {
+        if (i == never) { continue; }
+        a = a + 1;
+        var w = 0;
+        while (w < 1) {
+            w = w + 1;
+            for j in 0..4 {
+                if (j == 0) { continue; }
+                b = b + 1;
+            }
+        }
+    }
+    return a * 10 + b;
+}
+
+# ── C-style for / while / range for (the two forms share the one pending-jump store) ───────────
+fn cfor_while_range(never): i64 {
+    var a = 0;
+    var b = 0;
+    for (var i = 0; i < 3; i = i + 1) {
+        if (i == never) { continue; }
+        a = a + 1;
+        var w = 0;
+        while (w < 1) {
+            w = w + 1;
+            for j in 0..4 {
+                if (j == 0) { continue; }
+                b = b + 1;
+            }
+        }
+    }
+    return a * 10 + b;
+}
+
+# ── collection for-in / while / collection for-in ───────────────────────────────────────────────
+fn forin_while_forin(never): i64 {
+    var v = vec_new();
+    vec_push(v, 0); vec_push(v, 1); vec_push(v, 2);
+    var u = vec_new();
+    vec_push(u, 0); vec_push(u, 1); vec_push(u, 2); vec_push(u, 3);
+    var a = 0;
+    var b = 0;
+    for i in v {
+        if (i == never) { continue; }
+        a = a + 1;
+        var w = 0;
+        while (w < 1) {
+            w = w + 1;
+            for j in u {
+                if (j == 0) { continue; }
+                b = b + 1;
+            }
+        }
+    }
+    return a * 10 + b;
+}
+
+# ── two levels of `while` between the fors, and a third for under a second while ──────────────
+fn deep_nest(never): i64 {
+    var b = 0;
+    var c = 0;
+    for (var i = 0; i < 2; i = i + 1) {
+        if (i == never) { continue; }
+        var w = 0;
+        while (w < 1) {
+            w = w + 1;
+            var x = 0;
+            while (x < 1) {
+                x = x + 1;
+                for (var j = 0; j < 3; j = j + 1) {
+                    if (j == never) { continue; }
+                    var y = 0;
+                    while (y < 1) {
+                        y = y + 1;
+                        for (var k = 0; k < 4; k = k + 1) {
+                            if (k == 0) { continue; }
+                            c = c + 1;
+                        }
+                    }
+                    if (j == 0) { continue; }
+                    b = b + 1;
+                }
+            }
+        }
+    }
+    return b * 100 + c;
+}
+
+# ── a closure literal in the loop whose body is while { for { continue } } ──────────────────────
+fn in_closure(never): i64 {
+    var a = 0;
+    var b = 0;
+    for (var i = 0; i < 1; i = i + 1) {
+        if (i == never) { continue; }
+        a = a + 1;
+        var f = |x| { var n = 0; var w = 0; while (w < 1) { w = w + 1; for (var j = 0; j < 4; j = j + 1) { if (j == 0) { continue; } n = n + 1; } } return n + x; };
+        b = b + fncall1(f, 0);
+    }
+    return a * 10 + b;
+}
+
+# ── a generic instance whose body is while { for { continue } }, emitted inside the loop ───────
+fn g_while_for<T>(x: T): i64 {
+    var n = 0;
+    var w = 0;
+    while (w < 1) {
+        w = w + 1;
+        for (var j = 0; j < 4; j = j + 1) {
+            if (j == 0) { continue; }
+            n = n + 1;
+        }
+    }
+    return n;
+}
+fn in_generic(never): i64 {
+    var a = 0;
+    var b = 0;
+    for (var i = 0; i < 1; i = i + 1) {
+        if (i == never) { continue; }
+        a = a + 1;
+        var v: i32 = 5;
+        b = b + g_while_for<i32>(v);
+    }
+    return a * 10 + b;
+}
+
+# ── a generic whose body is a plain for { continue }, instantiated inside the while ─────────────
+fn g_for<T>(x: T): i64 {
+    var n = 0;
+    for (var j = 0; j < 4; j = j + 1) {
+        if (j == 0) { continue; }
+        n = n + 1;
+    }
+    return n;
+}
+fn generic_in_while(never): i64 {
+    var a = 0;
+    var b = 0;
+    for (var i = 0; i < 1; i = i + 1) {
+        if (i == never) { continue; }
+        a = a + 1;
+        var w = 0;
+        while (w < 1) {
+            w = w + 1;
+            var v: i32 = 7;
+            b = b + g_for<i32>(v);
+        }
+    }
+    return a * 10 + b;
+}
+
+# ── control: the outer `continue` AFTER the nest (it never had an entry to lose) ───────────────
+fn continue_after_nest(): i64 {
+    var a = 0;
+    var b = 0;
+    for (var i = 0; i < 3; i = i + 1) {
+        var w = 0;
+        while (w < 1) {
+            w = w + 1;
+            for (var j = 0; j < 4; j = j + 1) {
+                if (j == 0) { continue; }
+                b = b + 1;
+            }
+        }
+        if (i == 1) { continue; }
+        a = a + 1;
+    }
+    return a * 10 + b;
+}
+
+alloc_init();
+var never = 99;
+assert_eq(cfor_while_cfor(never), 39, "for / while / for: the inner continue reaches its own step (was 30)");
+assert_eq(range_while_range(never), 39, "range for / while / range for (was 30)");
+assert_eq(cfor_while_range(never), 39, "C-style for / while / range for (was 30)");
+assert_eq(forin_while_forin(never), 39, "for-in / while / for-in (was 30)");
+assert_eq(deep_nest(never), 418, "for / while / while / for / while / for: each continue binds to its own for");
+assert_eq(in_closure(never), 13, "a closure body's while / for inside a for (was a wrong value or a fault)");
+assert_eq(in_generic(never), 13, "a generic instance's while / for emitted inside a for (was a wrong value or a fault)");
+assert_eq(generic_in_while(never), 13, "a generic for instantiated in a while inside a for (was a wrong value or a fault)");
+assert_eq(continue_after_nest(), 29, "control: an outer continue after the nest");
+var r = assert_summary();

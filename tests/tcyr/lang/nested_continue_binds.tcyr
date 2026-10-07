@@ -22,11 +22,47 @@
 # outer BODY AFTER the nested loop that is skipped. Counts here are measured, not inferred.
 #
 # Closes issues/2026-09-11-nested-continue-binds-to-wrong-loop.md.
+#
+# 6.6.20 — THE SAME DEFECT ONE LEVEL DEEPER: a `while` BETWEEN the two `for`s. `while` zeroed the
+# next-free index (it was also the while-mode flag), so the inner `for` started over at entry 0
+# and stole the outer one's pending jump — 30 where 26 is right on x86, a `b .` hang on aarch64
+# and cx, a fault through a closure or a generic instance. Sections 8-12 TAKE the outer
+# `continue`, which is the hang off x86, so they live here and not in crossos/: check.sh runs
+# this file on x86, and CI's native-arm64 job runs the whole tests/tcyr corpus with no per-test
+# timeout, so there a regression of these shapes (or of sections 1-7) shows as a HANG until the
+# job's timeout, not a fast failure. tests/tcyr/crossos/continue_binds_across_while.tcyr carries
+# the timeout-safe shapes the release gate runs on the real hosts.
 
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 include "lib/string.cyr"
+include "lib/vec.cyr"
+include "lib/fnptr.cyr"
 include "lib/assert.cyr"
+
+# 6.6.20 helpers — a generic whose body is while { for { continue } }, and one whose body is a
+# plain for { continue } (instantiated inside a `while` below). i32 so the instance is emitted
+# at the call, inside the loop.
+fn cnt_while_for<T>(x: T): i64 {
+    var n = 0;
+    var w = 0;
+    while (w < 1) {
+        w = w + 1;
+        for (var j = 0; j < 4; j = j + 1) {
+            if (j == 0) { continue; }
+            n = n + 1;
+        }
+    }
+    return n;
+}
+fn cnt_for<T>(x: T): i64 {
+    var n = 0;
+    for (var j = 0; j < 4; j = j + 1) {
+        if (j == 0) { continue; }
+        n = n + 1;
+    }
+    return n;
+}
 
 fn main(): i64 {
     alloc_init();
@@ -120,6 +156,97 @@ fn main(): i64 {
         b = b + 100;
     }
     assert_eq(b, 306, "break exits only the inner loop (2 per trip + 100) * 3");
+
+    # ---- 8. (6.6.20) a `while` between the fors, the outer `continue` taken first ----
+    # i == 1 skips one outer trip (a = 2); the inner continue skips j == 0 (b = 2 * 3).
+    var a8 = 0;
+    var b8 = 0;
+    for (var i8 = 0; i8 < 3; i8 = i8 + 1) {
+        if (i8 == 1) { continue; }
+        a8 = a8 + 1;
+        var w8 = 0;
+        while (w8 < 1) {
+            w8 = w8 + 1;
+            for (var j8 = 0; j8 < 4; j8 = j8 + 1) {
+                if (j8 == 0) { continue; }
+                b8 = b8 + 1;
+            }
+        }
+    }
+    assert_eq(a8 * 10 + b8, 26, "for / while / for: both continues bind (was 30)");
+
+    # ---- 9. the same through range fors ----
+    var a9 = 0;
+    var b9 = 0;
+    for i9 in 0..3 {
+        if (i9 == 1) { continue; }
+        a9 = a9 + 1;
+        var w9 = 0;
+        while (w9 < 1) {
+            w9 = w9 + 1;
+            for j9 in 0..4 {
+                if (j9 == 0) { continue; }
+                b9 = b9 + 1;
+            }
+        }
+    }
+    assert_eq(a9 * 10 + b9, 26, "range for / while / range for (was 30)");
+
+    # ---- 10. the same through collection for-ins ----
+    var v10 = vec_new();
+    vec_push(v10, 0); vec_push(v10, 1); vec_push(v10, 2);
+    var u10 = vec_new();
+    vec_push(u10, 0); vec_push(u10, 1); vec_push(u10, 2); vec_push(u10, 3);
+    var a10 = 0;
+    var b10 = 0;
+    for i10 in v10 {
+        if (i10 == 1) { continue; }
+        a10 = a10 + 1;
+        var w10 = 0;
+        while (w10 < 1) {
+            w10 = w10 + 1;
+            for j10 in u10 {
+                if (j10 == 0) { continue; }
+                b10 = b10 + 1;
+            }
+        }
+    }
+    assert_eq(a10 * 10 + b10, 26, "for-in / while / for-in (was 30)");
+
+    # ---- 11. a closure body's while / for, inside a for with a taken continue ----
+    var a11 = 0;
+    var b11 = 0;
+    for (var i11 = 0; i11 < 3; i11 = i11 + 1) {
+        if (i11 == 1) { continue; }
+        a11 = a11 + 1;
+        var f11 = |x| { var n = 0; var w = 0; while (w < 1) { w = w + 1; for (var j = 0; j < 4; j = j + 1) { if (j == 0) { continue; } n = n + 1; } } return n + x; };
+        b11 = b11 + fncall1(f11, 0);
+    }
+    assert_eq(a11 * 10 + b11, 26, "closure: while / for in its body (was SIGSEGV)");
+
+    # ---- 12. generic instances: while / for in the body, and a for instantiated in a while ----
+    var a12 = 0;
+    var b12 = 0;
+    for (var i12 = 0; i12 < 3; i12 = i12 + 1) {
+        if (i12 == 1) { continue; }
+        a12 = a12 + 1;
+        var v12: i32 = 5;
+        b12 = b12 + cnt_while_for<i32>(v12);
+    }
+    assert_eq(a12 * 10 + b12, 26, "generic instance: while / for in its body (was SIGSEGV)");
+    var a13 = 0;
+    var b13 = 0;
+    for (var i13 = 0; i13 < 3; i13 = i13 + 1) {
+        if (i13 == 1) { continue; }
+        a13 = a13 + 1;
+        var w13 = 0;
+        while (w13 < 1) {
+            w13 = w13 + 1;
+            var v13: i32 = 5;
+            b13 = b13 + cnt_for<i32>(v13);
+        }
+    }
+    assert_eq(a13 * 10 + b13, 26, "generic for instantiated in a while (was SIGSEGV)");
 
     var res = assert_summary();
     return res;
