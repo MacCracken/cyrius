@@ -1243,6 +1243,7 @@ var _cur_fn_ptrp = 0;
 # passes; 0 outside an impl). CHANGELOG [6.7.0]
 var _cur_iself_sid = 0;
 var _impl_tnoff = 0;
+var _impl_trait = 0;   # 6.7.0 (A3): the impl's trait name, 0 for an inherent `impl T { … }`
 fn _tp_clear(S): i64 { _tp_n0 = 0; _tp_c0 = 0; _tp_n1 = 0; _tp_c1 = 0; return 0; }
 fn _tp_bind(S, slot, noff, conc): i64 {
     if (slot == 0) { _tp_n0 = noff; _tp_c0 = conc; }

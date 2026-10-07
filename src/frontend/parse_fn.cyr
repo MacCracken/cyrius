@@ -4053,16 +4053,19 @@ fn PARSE_IMPL(S): i64 {
     # `private` and get the right parameter ABI. See _prescan_impl. CHANGELOG [6.6.5]
     _pub_pending = 0;
     STI(S, GTI(S) + 1);  # consume IMPL
-    # Parse trait name (skip for now — just used for documentation)
+    # `impl Trait for Type {` or (6.7.0, A3) the inherent `impl Type {` — methods with no trait.
     if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
-    STI(S, GTI(S) + 1);  # consume trait name
-    # Expect "for"
-    if (PEEKT(S) != 55) { ERR_EXPECT(S, 55); }
-    STI(S, GTI(S) + 1);  # consume FOR
-    # Parse type name
-    if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
-    var type_noff = PEEKV(S);
-    STI(S, GTI(S) + 1);  # consume type name
+    var trait_noff = PEEKV(S);
+    STI(S, GTI(S) + 1);  # consume the trait (or, inherent, the type) name
+    var type_noff = trait_noff;
+    if (PEEKT(S) == 13) { trait_noff = 0; }
+    else {
+        if (PEEKT(S) != 55) { ERR_MSG(S, "expected '{' (an inherent `impl Type {`) or 'for' (`impl Trait for Type {`)", 75); }
+        STI(S, GTI(S) + 1);  # consume FOR
+        if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
+        type_noff = PEEKV(S);
+        STI(S, GTI(S) + 1);  # consume type name
+    }
     if (PEEKT(S) != 13) { ERR_EXPECT(S, 13); }
     STI(S, GTI(S) + 1);  # consume {
     # Parse methods inside the impl block
@@ -4071,6 +4074,8 @@ fn PARSE_IMPL(S): i64 {
     SMOD(S, type_noff);
     var _sit = _impl_tnoff;
     _impl_tnoff = type_noff;   # 6.7.0 (A4)
+    var _sitr = _impl_trait;
+    _impl_trait = trait_noff;  # 6.7.0 (A3)
     var igo = 1;
     while (igo == 1) {
         if (PEEKT(S) == 14) { igo = 0; }
@@ -4084,6 +4089,7 @@ fn PARSE_IMPL(S): i64 {
     if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); }
     STI(S, GTI(S) + 1);  # consume }
     _impl_tnoff = _sit;
+    _impl_trait = _sitr;
     _cur_iself_sid = 0;        # top-level code after the impl is no method body
     SMOD(S, saved_mod);
     return 0;
@@ -6645,9 +6651,11 @@ fn _fn_by_defti(S, noff, ti): i64 {
 # byte-identical to before.
 fn _prescan_skip_impl(S): i64 {
     STI(S, GTI(S) + 1);  # consume IMPL
-    STI(S, GTI(S) + 1);  # consume trait name
-    STI(S, GTI(S) + 1);  # consume FOR
-    STI(S, GTI(S) + 1);  # consume type name
+    STI(S, GTI(S) + 1);  # consume the trait (or, inherent, the type) name
+    if (PEEKT(S) == 55) {   # 6.7.0 (A3): absent in an inherent `impl Type {`
+        STI(S, GTI(S) + 1);  # consume FOR
+        STI(S, GTI(S) + 1);  # consume type name
+    }
     if (PEEKT(S) == 13) {
         STI(S, GTI(S) + 1);
         var idep = 0;
@@ -6674,24 +6682,30 @@ fn _prescan_impl(S): i64 {
     _pub_pending = 0;                    # mirror PARSE_IMPL's entry clear
     STI(S, GTI(S) + 1);                  # IMPL
     if (PEEKT(S) == 2) {
-        STI(S, GTI(S) + 1);              # trait
-        if (PEEKT(S) == 55) {
+        var trn = PEEKV(S);
+        STI(S, GTI(S) + 1);              # trait (or, inherent — 6.7.0 A3 — the type)
+        var tn = 0;
+        if (PEEKT(S) == 13) { tn = trn; trn = 0; }
+        elif (PEEKT(S) == 55) {
             STI(S, GTI(S) + 1);          # for
             if (PEEKT(S) == 2) {
-                var tn = PEEKV(S);
+                tn = PEEKV(S);
                 STI(S, GTI(S) + 1);
-                if (PEEKT(S) == 13) {
-                    STI(S, GTI(S) + 1);
-                    var sv = GMOD(S);
-                    SMOD(S, tn);
-                    var _sit = _impl_tnoff;
-                    _impl_tnoff = tn;           # 6.7.0 (A4): an untyped `self` here is a `*T`
-                    _prescan_impl_body(S);
-                    _impl_tnoff = _sit;
-                    SMOD(S, sv);
-                }
             }
         }
+        if (tn != 0) { if (PEEKT(S) == 13) {
+                STI(S, GTI(S) + 1);
+                var sv = GMOD(S);
+                SMOD(S, tn);
+                var _sit = _impl_tnoff;
+                var _sitr = _impl_trait;
+                _impl_tnoff = tn;           # 6.7.0 (A4): an untyped `self` here is a `*T`
+                _impl_trait = trn;          # 6.7.0 (A3): 0 = inherent
+                _prescan_impl_body(S);
+                _impl_tnoff = _sit;
+                _impl_trait = _sitr;
+                SMOD(S, sv);
+            } }
     }
     _pub_pending = 0;
     STI(S, start_ti);

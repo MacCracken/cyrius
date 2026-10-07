@@ -1,0 +1,34 @@
+# impl_inherent.tcyr — 6.7.0 (arc A3). An inherent `impl Type { … }`: methods with no trait.
+#
+# Before 6.7.0 `impl Pt {` was "expected for" — every method block had to name a trait, used or
+# not. An inherent impl mangles exactly as a trait impl does (`Pt_norm1`), so the constructor idiom
+# `Pt_new(..)`, `p.m()` and the direct call keep working, a call parsed before the impl resolves
+# (pass 1 registers it), and an inherent block and a trait block on one type coexist.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/assert.cyr"
+
+struct Pt { x; y; }
+
+fn early(): i64 { var p = Pt { 3, 4 }; return p.norm1(); }
+
+impl Pt {
+    fn new(x, y): Pt { var p: Pt; p.x = x; p.y = y; return p; }
+    fn norm1(self): i64 { return self.x + self.y; }
+    fn scale(self, k) { self.x = self.x * k; self.y = self.y * k; return 0; }
+}
+impl Show for Pt { fn show(self): i64 { return self.x * 10 + self.y; } }
+
+fn run(): i64 {
+    var p = Pt_new(1, 2);
+    assert_eq(p.norm1(), 3, "an inherent method through the receiver");
+    p.scale(2);
+    assert_eq(Pt_norm1(p), 6, "an inherent method called directly, after a write through self");
+    assert_eq(p.show(), 24, "a trait method on the same type");
+    assert_eq(early(), 7, "a call parsed before the inherent impl");
+    return 0;
+}
+
+alloc_init();
+run();
+var r = assert_summary();
