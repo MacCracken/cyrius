@@ -179,6 +179,41 @@ else
     check "the bundle was written for the anti-vacuous measurement" 1 0
 fi
 
+# ── axis 8: a self-check failure shows the COMPILER's diagnostic (6.6.20, CBT-03) ──────────
+# The self-check captures the compiler's stderr for the RETIRED-name scan, which also silences
+# compile()'s own relay — and the capture was read only for the scan, so a bundle that failed the
+# self-check for any other reason printed "does not compile" and never WHY. A real bundle that
+# passes the sidecar verify and fails only the self-check is hard to build on purpose, so a
+# stand-in compiler fails exactly the self-check compile (--allow-undef, and not one of the
+# verify's `#@incdir dist/.dlverify-*` entries) with an error line only it knows; every other
+# compile is the real cycc. The CLI finds its compiler beside itself.
+echo "axis 8 — a bundle that fails the self-check shows the compiler's own error:"
+mkdir -p "$D/shim" "$D/s/src"
+cp "$D/tools/cyrius" "$D/shim/cyrius" && cp "$CC" "$D/shim/cycc.real" && cp "$D/tools/cycc_aarch64" "$D/shim/cycc_aarch64"
+cat > "$D/shim/cycc" <<'SHIM'
+#!/bin/sh
+D=$(dirname "$0")
+T=$(mktemp) || exit 99
+cat > "$T"
+selfcheck=0
+case " $* " in *" --allow-undef "*) grep -q '^#@incdir dist/.dlverify' "$T" || selfcheck=1 ;; esac
+if [ "$selfcheck" = 1 ]; then
+    rm -f "$T"
+    echo 'error:<source>:1:1: SYNTHETIC self-check failure only the compiler can name' >&2
+    exit 1
+fi
+"$D/cycc.real" "$@" < "$T"; rc=$?
+rm -f "$T"; exit $rc
+SHIM
+chmod +x "$D/shim/cyrius" "$D/shim/cycc" "$D/shim/cycc.real" "$D/shim/cycc_aarch64"
+printf '[package]\nname = "sc"\nversion = "0.1.0"\n\n[lib]\nmodules = ["src/a.cyr"]\n' > "$D/s/cyrius.cyml"
+printf 'fn sc_one(): i64 { return 1; }\n' > "$D/s/src/a.cyr"
+SRC=0
+SOUT=$( cd "$D/s" && timeout 300 "$D/shim/cyrius" distlib 2>&1 ) || SRC=$?
+check "exit NON-zero" 1 "$([ "$SRC" -ne 0 ] && echo 1 || echo 0)"
+check "it says the bundle does not compile" 1 "$(printf '%s\n' "$SOUT" | grep -c 'the generated bundle does not compile' || true)"
+check "and relays the compiler's own error line" 1 "$(printf '%s\n' "$SOUT" | grep -c 'SYNTHETIC self-check failure only the compiler can name' || true)"
+
 if [ "$fails" = "0" ]; then
     echo "PASS: distlib-bundle-selfcheck — the bundle is really compiled; broken bundles are fatal"
     exit 0

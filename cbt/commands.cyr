@@ -6215,6 +6215,12 @@ fn cmd_distlib(profile): i64 {
             # v6.6.2 — the blast-door check. Undefined fns are downgraded above; a RETIRED name is
             # not a consumer's to supply and must still fail. See _distlib_retired_name.
             dl_retired = _distlib_scan_retired_file(dl_errf);
+            # 6.6.20 (CBT-03): a bundle that does not compile for any OTHER reason gets the
+            # compiler's own diagnostics. The capture above is what silences compile()'s own relay,
+            # and it was read only for the scan, so the user saw "does not compile" and never WHY
+            # (the error line was lost since the v6.6.2 capture). A retired name is reported by name
+            # below instead — its capture is the undefined-fn warnings, not an error.
+            if (check_r != 0 && dl_retired == 0) { _cbt_relay_file(dl_errf); }
             sys_unlink(dl_errf);
         }
         xunlink(dl_entry);
