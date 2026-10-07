@@ -6,6 +6,9 @@ target**: every closeout pass (CLAUDE.md step 11).
 [`roadmap.md`](development/roadmap.md) holds the pinned future targets;
 this file is the "what works now" snapshot.
 
+> ⚠ **Partly re-derived 2026-10-06 (the 6.6.20 closeout): the x86 cycc size and the cross-host line below.
+> The rest is as verified 2026-09-08** — a full row-by-row re-check is due at the next doc sweep.
+>
 > **Last verified against live code: 2026-09-08, at v6.6.1.** Every ✅
 > below was re-checked that day — sizes re-measured, open platform gaps
 > re-read from the issue queue, not from this file's prior claims.
@@ -34,8 +37,8 @@ Per the cross-arch propagation rule (CLAUDE.md, memory pin
 fix gets cross-tested in the same slot. All four are step 4 of
 `scripts/release-gate.sh` (`for H in ecb ach cass pi`, real hardware,
 sequential) — a gate on **every** `.NN`, not just at closeout. At
-**v6.6.1** all four report `SELFHOST_OK` + `LIBTEST_OK` (crossos **68/68** each, on real
-hardware — the subset grew 54 → 68 since `.34`; DERIVE it with
+**v6.6.19** (the 2026-10-06 release gate) all four report `SELFHOST_OK` + `LIBTEST_OK` (the
+crossos subset is **197** files, on real hardware — 68 at v6.6.1, 54 at `.34`; DERIVE it with
 `find tests/tcyr/crossos -name '*.tcyr' | wc -l`). ⚠ **That is the `crossos/` subset, not the full corpus** — the
 282-of-282 numbers in the table above are the 2026-08-20 full-corpus measurement and were
 NOT re-derived at `.34`. Quote them as a v6.5.33 figure, not a current one.
