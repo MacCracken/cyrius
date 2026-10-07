@@ -364,8 +364,7 @@ S64(S + 0x18F898, 0);       # continue_count
 S64(S + 0x18FEC8, 0);       # current_module
 S64(S + 0x1903D0, 0);       # use_count
 S64(S + 0x19A000, 0);       # gvar_cnt
-S64(S + 0x197000, 0);       # macro state
-S64(S + 0x197F00, 0);       # macro state 2
+S64(S + 0x197F00, 0);       # include_count
 
 # Build file map from #@file markers (for file:line error messages)
 FM_BUILD(S);

@@ -2785,7 +2785,6 @@ fn _HEAP_INIT_SCRATCH(S): i64 {
     S64(S + 0x18F898, 0);
     # Global-var-init bookkeeping (gvar_cnt + scratch slots)
     S64(S + 0x19A000, 0);
-    S64(S + 0x197000, 0);
     S64(S + 0x197F00, 0);
     # Kernel mode
     S64(S + 0x18FCA0, 0);

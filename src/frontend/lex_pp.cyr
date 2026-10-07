@@ -1118,7 +1118,7 @@ fn ISDERIVE_DE(S, pos, bl): i64 {
 # state stays in the low half (0x197008..0x1974E0); 0x197F00 (include count) and
 # 0x197F10 (the #ifdef per-depth state byte stack) stay where they were.
 #
-# S+0x197000: derive struct count (8 bytes)
+# S+0x197000: (freed 6.6.20 — the derive struct count is the gvar _pp_derive_count)
 # S+0x197008: output position (op)
 # S+0x197010: field_count
 # S+0x197018: cumul_off (total struct byte size)

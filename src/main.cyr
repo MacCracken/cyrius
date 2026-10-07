@@ -102,7 +102,9 @@
 #   0x1903F8  init_offset / elf_out_len [8]  (dual-use: init_offset pre-FIXUP, elf_out_len post-FIXUP)
 #   --- PP #derive / include / #if band 0x197000-0x198000 (lex_pp.cyr; ADR-003). The per-struct
 #       field tables live at 0x1FC000 (below); 0x197060-0x197F00 is free. ---
-#   0x197000  derive_count  [8]           #derive struct count
+#   0x197000  (FREED 6.6.20)             was derive_count [8] — only ever zeroed at init (three
+#                                         stores, removed); the #derive struct count is the gvar
+#                                         _pp_derive_count (lex_pp.cyr)
 #   0x197008  derive_op     [8]           #derive output position
 #   0x197010  derive_fc     [8]           field_count of the struct being derived
 #   0x197018  derive_cumul  [8]           cumul_off (the struct's byte size so far)
@@ -1399,8 +1401,7 @@ S64(S + 0x18F898, 0);       # continue_count
 S64(S + 0x18FEC8, 0);       # current_module
 S64(S + 0x1903D0, 0);       # use_count
 S64(S + 0x19A000, 0);       # gvar_cnt
-S64(S + 0x197000, 0);       # macro state
-S64(S + 0x197F00, 0);       # macro state 2
+S64(S + 0x197F00, 0);       # include_count
 
 # Build file map from #@file markers (for file:line error messages)
 FM_BUILD(S);

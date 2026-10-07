@@ -68,6 +68,10 @@ fi
 # codebuf at 0x41A000, which since v6.4.49 only the cx driver touched. A phantom map entry
 # is not harmless: the map is machine-read, so it reserves bytes and hides real overlaps
 # (the v6.5.26 "DCE bitmap" phantom manufactured one).
+# A store of zero (`S64(S + 0xOFF, 0)`) does not count as naming a region: the derive_count
+# slot at 0x197000 passed the check above on three init-time zero stores alone, while the
+# count it was mapped as lived in the gvar `_pp_derive_count`. Such a slot is reported
+# ZERO-ONLY. (Freed in the 6.6.20 review round, with its three stores.)
 #
 # 6.6.20 (HEAP-06) — and the converse: every `S + 0x…` literal in code must land inside a
 # region of its layout, or be the arena end the `brk-final` line records (no region may end
@@ -203,6 +207,18 @@ FILENAME == mainf && /^#   0x[0-9A-Fa-f]+ +[a-zA-Z_]/ {
     sub(/#.*/, "", code)
     cxf = is_cx_file(FILENAME)
     scan = code
+    # A store of ZERO to a region offset is not a use: it is only an init, and a slot whose
+    # every reference is one is dead state (see the zero-only check in END). Record those
+    # stores and blank them out of the reference scan below, so they do not count as uses (the
+    # `S + 0x…` coverage scan still sees them, through `scan`).
+    while (match(code, /(S64|store64|store32|store16|store8)[ \t]*\([ \t]*S[ \t]*\+[ \t]*0x[0-9A-Fa-f]+[ \t]*,[ \t]*0[ \t]*\)/)) {
+        zs = substr(code, RSTART, RLENGTH)
+        match(zs, /0x[0-9A-Fa-f]+/)
+        zv = strtonum(substr(zs, RSTART, RLENGTH))
+        if (cxf) { zerocx[zv] = 1 } else { zeroshared[zv] = 1 }
+        match(code, /(S64|store64|store32|store16|store8)[ \t]*\([ \t]*S[ \t]*\+[ \t]*0x[0-9A-Fa-f]+[ \t]*,[ \t]*0[ \t]*\)/)
+        code = substr(code, 1, RSTART - 1) "ZEROSTORE" substr(code, RSTART + RLENGTH)
+    }
     while (match(scan, /(^|[^A-Za-z0-9_])S[ \t]*\+[ \t]*0x[0-9A-Fa-f]+/)) {
         ms = RSTART; ml = RLENGTH
         lit = substr(scan, ms, ml)
@@ -228,11 +244,17 @@ END {
     for (i = 0; i < n; i++) {
         if (cxo[i]) {
             if (!(offsets[i] in refcx)) {
-                printf "  ** UNREFERENCED: %s at 0x%X is (cx only), but no cx code (src/main_cx.cyr, src/backend/cx/) names that offset **\n", names[i], offsets[i]
+                if (offsets[i] in zerocx) {
+                    printf "  ** ZERO-ONLY: %s at 0x%X — cx code only ever stores 0 there (dead state: free it) **\n", names[i], offsets[i]
+                } else {
+                    printf "  ** UNREFERENCED: %s at 0x%X is (cx only), but no cx code (src/main_cx.cyr, src/backend/cx/) names that offset **\n", names[i], offsets[i]
+                }
                 unref++
             }
         } else if (!(offsets[i] in refshared)) {
-            if (offsets[i] in refcx) {
+            if (offsets[i] in zeroshared) {
+                printf "  ** ZERO-ONLY: %s at 0x%X — code only ever stores 0 there, nothing reads it (dead state: free it) **\n", names[i], offsets[i]
+            } else if (offsets[i] in refcx) {
                 printf "  ** UNREFERENCED: %s at 0x%X is named only by cx code — tag it (cx only), or free it **\n", names[i], offsets[i]
             } else {
                 printf "  ** UNREFERENCED: %s at 0x%X — no code names that offset (a phantom region: free it) **\n", names[i], offsets[i]
