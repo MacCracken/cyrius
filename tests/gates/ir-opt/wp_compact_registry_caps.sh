@@ -22,8 +22,19 @@
 #      declined in silence before), and the binary still computes the right answer.
 #   3  CYRIUS_IR=3 on 4,097 switch jump tables (the WPSW cap is 4,096): stderr names the cap
 #      ("wp-compact declined: more than 4096 switch tables") and the binary is still correct.
+#   4  the source-heavy program under CYRIUS_IR=3 CYRIUS_DCE=1: the IR seam compacts, then
+#      FIXUP's dead-code pass compacts AGAIN, so the registry must have been rebased to the
+#      first pass's layout (wp_compact's re-entrancy loop) — the binary still exits 180.
+#
+# THE THREE READERS. Growing the registry moved it off S+0x60000, so every loop that walks it
+# must go through _wpjs_base: wp_compact's stage 1 (axes 1, 2), its re-entrancy rebase (axis 4)
+# and the per-fn NOP-compaction adjust in parse_fn.cyr (axes 1, 2). That last one only runs
+# for a fn that leaves NOP runs, so every g fn carries a hot loop local: the fn then leaves
+# NOP runs, and the per-fn pass shifts that fn's registry entries — the last fns' entries
+# sit above index 49,152, in the storage the registry grew into.
 # Mutation-proven: on the pre-fix compiler axes 1 and 2 report "more than 49152 rel32/disp32
-# sources" / no reclaim, and axis 3 finds no decline note.
+# sources" / no reclaim, and axis 3 finds no decline note; with any one of the three readers
+# put back to the fixed S+0x60000 base, a compacted binary exits 0 or crashes instead of 180.
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -45,8 +56,11 @@ awk 'BEGIN {
     print "fn dead_b(x): i64 { var y = x * 5; y = y - 9; return y + x; }"
     for (f = 0; f < 100; f++) {
         printf "fn g%d(r): i64 {\n", f
+        print "    var a = r; var i = 0;"
+        print "    while (i < 2) { a = a + i; i = i + 1; }"
+        print "    a = a - 1;"
         for (k = 0; k < 501; k++) { print "    r = inc(r);" }
-        print "    return r;"
+        print "    return r + a - a;"
         print "}"
     }
     print "var r = 0;"
@@ -121,6 +135,22 @@ if CYRIUS_IR=3 "$CC" < "$D/many_switches.cyr" > "$D/a3" 2> "$D/a3.err"; then
     [ "$rc" = 5 ] && ok "axis 3: the binary exits 5" || bad "axis 3: the binary exits $rc, expected 5"
 else
     bad "axis 3: compile failed: $(head -3 "$D/a3.err")"
+fi
+
+# ── axis 4: CYRIUS_IR=3 CYRIUS_DCE=1 — two compactions, the second over a rebased registry ─
+if CYRIUS_IR=3 CYRIUS_DCE=1 "$CC" < "$D/many_sources.cyr" > "$D/a4" 2> "$D/a4.err"; then
+    chmod +x "$D/a4"
+    if grep -q 'declined' "$D/a4.err"; then
+        bad "axis 4: CYRIUS_IR=3 CYRIUS_DCE=1 declined: $(grep 'declined' "$D/a4.err")"
+    elif grep -q 'bytes of dead code eliminated' "$D/a4.err"; then
+        ok "axis 4: CYRIUS_IR=3 CYRIUS_DCE=1 compacted twice past 49,152 sources"
+    else
+        bad "axis 4: no elimination note: $(grep -v '^warning' "$D/a4.err" | head -3)"
+    fi
+    rc=$(run_exit "$D/a4")
+    [ "$rc" = 180 ] && ok "axis 4: the twice-compacted binary exits 180" || bad "axis 4: the twice-compacted binary exits $rc, expected 180 — the registry was not rebased to the first pass's layout"
+else
+    bad "axis 4: compile failed: $(head -3 "$D/a4.err")"
 fi
 
 if [ "$fails" -gt 0 ]; then
