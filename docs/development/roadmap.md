@@ -75,7 +75,8 @@ in [completed-phases.md](completed-phases.md) § *v6.6.x*; the detail is the CHA
 | Release | Content |
 |---|---|
 | **6.7.0** | **A — real traits** (A1–A6, decisions below; A1–A5 landed 2026-10-07 — [ADR-007](../adr/007-traits.md)) · the CI refresh: every Linux job on **`ubuntu-26.04`** (the `-arm` job on `ubuntu-26.04-arm`) and every action at its latest stable release, SHA-pinned (checkout v7, upload-artifact v7, download-artifact v8, action-gh-release v3) · **`cyrius --help` reorganised** (commands grouped by what they do; nothing renamed or removed) |
-| **6.7.1 →** | **C3 — trait-bounded generics** (needs A), with its prerequisite the multi-type-param struct-type-arg residual and the generic-struct field — decisions taken at the open (spec below) |
+| **6.7.1** | **C3 — trait-bounded generics** (needs A), with its prerequisite the multi-type-param struct-type-arg residual and the generic-struct field — decisions taken at the open (spec below); ✅ landed 2026-10-07 |
+| **6.7.2 →** | the next of "then, by size" below — the user picks |
 | then, by size | **B1 `const` + C1 `const fn`** together · B2 `bool` / `true` / `false` · B3 the if-expression · B5 `loop` / `do … while` · B8 compound assignment on a field |
 | **Break 1** | catch-up: backlog + found issues (user picks) · `cyrius test` / `tests` consolidation · **cybs stack arguments** (below) |
 | then | B4 tuples · B6 default + named arguments · B7 narrow struct fields (ABI survey + migration) · C2 bounds-checked mode (+ P5 execution coverage) · **checked `dyn`** (decided 2026-10-07, open question 5) |
@@ -134,7 +135,7 @@ The identity rule carries over: **no GC, no hidden control flow you cannot disas
 **At the open, before code:** an ADR for traits (ADR-007, amending ADR-004's naming section) and the vidya
 entries; the keyword survey is done (below).
 
-## Spec — C3: trait-bounded generics (6.7.1)
+## Spec — C3: trait-bounded generics (6.7.1) — ✅ LANDED 2026-10-07 (CHANGELOG [6.7.1]; ADR-007 decision 8)
 
 `<T: Show>` parses as a bound (before 6.7.1 it minted a second type parameter named `Show`, so `f(p)` with a struct
 was refused as "a struct beside a second type argument"), and an instantiation whose `T` has no `impl Show` is an
