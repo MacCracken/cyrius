@@ -254,12 +254,16 @@ var wide: u128[1] = {0xFF};                        # the low 8 bytes; the high 8
 var utf16[1] = {0x67, 0x00, 0x6E, 0x00};           # the bare form: a BYTE list
 ```
 
-- An element is an integer literal, an enum constant (`A` or `E.A`, the enum
-  declared on either side), or a constant expression of them (`1 << 4`,
-  `E.A * 2`, `-5`). An `f64` / `f32` element also takes a float literal,
-  optionally negated; an `f32` element is the literal rounded to the nearest
-  `f32`, ties to even — what `f32_from` gives. An integer in a float element
-  keeps its bits, with the warning `var g: f64 = 2;` gives.
+- An element is any **constant expression** — since 6.7.4 each one is a const context
+  run by the compile-time evaluator, as an array size or a `const` is: literals, enum
+  constants (`A` or `E.A`, the enum declared on either side), consts, `sizeof`, const
+  fn calls, arithmetic, comparisons, `&&` / `||`, `!` and the if-expression (`1 << 4`,
+  `E.A * 2`, `-5`, `if (K == 2) { 5 } else { 7 }`). An `f64` / `f32` element takes an
+  f64 value (a literal or f64 const arithmetic); an `f32` element is the value rounded
+  to the nearest `f32`, ties to even — what `f32_from` gives. An integer in a float
+  element keeps its bits, with the warning `var g: f64 = 2;` gives; an f64 value in an
+  integer element is refused. A `bool[N]` element must be a bool (`true`, a comparison,
+  `!x`, a bool const).
 - A value must fit its element: an `N`-byte integer element takes
   `-2^(8N-1) .. 2^(8N)-1`, so `0xFF` in an `i8` and `-1` in a `u8` are the same
   bits, while `256` in an `i8` is refused (`array initializer value 256 does not
@@ -270,8 +274,8 @@ var utf16[1] = {0x67, 0x00, 0x6E, 0x00};           # the bare form: a BYTE list
 - Elements past the list are 0. More elements than `N` is refused, naming `N`.
 - A struct, union, vector, slice, `cstring`, `Str` (a struct), `Result`,
   `Option`, `Tagged` or `Vec` element type is refused by name — store the
-  elements explicitly. A call, a variable or a string is not a constant and is
-  refused.
+  elements explicitly. A call to an ordinary fn, a variable or a string is not a
+  constant and is refused, in the const context's words.
 - The values are **in the image**: no code stores them at startup, so they hold
   from the first instruction — in a `kernel;` build too, and on cx (in the
   `.cyx`'s var data). An initializer that runs earlier, even one that reads the
@@ -480,6 +484,9 @@ while (1 == 1) {
 
 # Logical (short-circuit, chainable); `!` is logical not (6.7.3)
 &&  ||  !
+
+# Conditional (6.7.4): an if-expression — see "The if-expression"
+if (c) { a } else { b }
 
 # Explicit overflow operators (v5.6.2)
 +%  -%  *%      # wrapping (alias for bare + - * — 2's complement wrap)
@@ -3474,13 +3481,57 @@ so `!x + 1` is `(!x) + 1` — and an `f64` operand is tested by its raw bits, as
 returns `false`; a tail call `return h(..);` must call a bool fn. **Consts**: a const is a bool
 when its value is (`const DEBUG = true;`, `const ON = !OFF;`, a `: bool` const fn's result), and
 every const context takes it as 0 / 1 (`#assert`, case labels, enum values, array sizes). A
-`bool[N]` initializer list takes `true`, `false` and bool consts. **`#derive`**: Serialize writes
+`bool[N]` initializer list takes boolean elements — `true`, `false`, bool consts and, since 6.7.4
+(a list element is a const context), comparisons and `!`. **`#derive`**: Serialize writes
 JSON `true` / `false`; both decoders store 1 for `true` and 0 for any other value;
 `#derive(accessors)` gives a typed getter `: bool` and a setter `v: bool`.
 
 The checks are skipped under `cyrius lint`'s `--syntax-only` (a sibling file's names are unknown
 there) and are not switched off by `CYRIUS_TYPE_CHECK=0`. The refusals are pinned by
 `tests/gates/frontend/bool_checked.sh`; the runtime half by `tests/tcyr/crossos/bool_values.tcyr`.
+
+## The if-expression (6.7.4)
+
+```
+var v = if (n > 0) { 1 } elif (n < 0) { 0 - 1 } else { 0 };
+var s = f(if (debug) { 2 } else { 1 }, x);
+return if (ok) { a } else { b };
+const MODE = if (DEBUG) { 3 } else { 1 };      # const contexts too
+var lim: i64[if (BIG) { 4096 } else { 64 }];
+```
+
+An `if` that appears where an EXPRESSION is parsed is an if-expression: each branch holds **one
+expression** in braces — no statements, no `;` — and **`else` is required** (without it there is no
+value). Only the taken branch runs. At the **start of a statement** `if` is still the if statement,
+and a closure's `{ block }` body is statements as before.
+
+**Every branch is the same kind** — an integer (pointers and bools included), an `f64`, an `f32`, or
+one struct type of 8 bytes or less, whose type the result keeps (so `var z: S = if ..`, struct
+arguments and operator overloads see it). Mixing kinds is refused by name (`if expression branches
+differ in type: an integer here, an f64 before it`), and so is a struct value over 8 bytes, a vector,
+a `u128` or a `: stack` pair — branch on a pointer (`&x`) instead. The result is a `bool` when every
+branch is boolean (6.7.3): `var b: bool = if (c) { x > 0 } else { false };`. ⚠ An untyped variable
+holding a float is an integer (ADR-002), so `if (c) { u } else { 2.5 }` with `var u = 1.5;` is a
+mix — declare it `: f64`. And an untyped `var t = if (c) { 1.5 } else { 2.5 };` stays untyped (as
+`var t = 1.5;` does); write `var t: f64 = ..`.
+
+It is a **factor**: `if (c) {a} else {b} + 1` is `(if ..) + 1`, and `-if ..` negates it. A call
+inside a branch is never a tail call, so deep recursion written as `return if (n == 0) {acc} else
+{loop(..)};` grows the stack where `if (n == 0) { return acc; } return loop(..);` does not. An
+explicit `#inline` fn whose body holds one keeps the "control flow" warning.
+
+**In const contexts** (a const's value, a local const, an array size, `#assert`, a `case` label, an
+enum value, a `const fn` body, and — since 6.7.4 — every element of a global array initializer list)
+the compile-time evaluator runs the taken branch and only walks the others, so `if (N > 0) { 100 / N }
+else { 0 }` never divides by zero. There a string is its own kind: `const B = if (DEBUG) {"dbg"} else
+{"rel"};` is a string const, and a string mixed with an integer is refused. At run time a string
+literal is a pointer word, so `if (c) {"a"} else {0}` compiles. Every array-list element now goes
+through that evaluator: comparisons, `&&` / `||`, `!`, const fn calls and f64 const arithmetic are
+legal elements (a `bool[N]` list takes `{1 < 2, !false}`), and a non-constant one is refused in the
+const context's words. A kernel build bakes a constant-condition if-expression global.
+
+The refusals are pinned by `tests/gates/frontend/if_expr_checked.sh`; the runtime half by
+`tests/tcyr/crossos/if_expr_values.tcyr`.
 
 ## Generic Functions
 

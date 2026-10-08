@@ -67,7 +67,7 @@ refused r06 "an if expression branch needs a value" "R6: an empty branch" "fn f(
 refused r07 "holds a value, not an assignment" "R7: an assignment in a branch" "fn f(c): i64 { var y = 0; var x = if (c) { y = 1 } else { 2 }; return x; }$E"
 refused r08 "$MIX: an integer here, an f64 before it" "R8: f64 then an integer" "fn f(c): i64 { var x = if (c) { 1.5 } else { 2 }; return 0; }$E"
 refused r09 "$MIX: an f64 here, an integer before it" "R9: an integer then f64_sqrt(..)" "fn f(c): i64 { var x = if (c) { 2 } else { f64_sqrt(4.0) }; return 0; }$E"
-refused r10 "$MIX: an f32 here, an f64 before it" "R10: f64 then f32_from(..)" "fn f(c): i64 { var x = if (c) { 1.5 } else { f32_from(2) }; return 0; }$E"
+refused r10 "$MIX: an f32 here, an f64 before it" "R10: f64 then f32_from(..)" "fn f(c): i64 { var x = if (c) { 1.5 } else { f32_from(2.0) }; return 0; }$E"
 refused r11 "declare it \`: f64\`" "R11: an untyped float variable is an integer (the note)" "fn f(c): i64 { var u = 1.5; var x = if (c) { u } else { 2.5 }; return 0; }$E"
 refused r12 "$BIG: struct 'Big'" "R12: a 24-byte struct local" 'struct Big { a; b; c; }\nfn f(c): i64 { var p: Big; var x = if (c) { p } else { 0 }; return 0; }\nsyscall(60, f(1));\n'
 refused r13 "$BIG: struct 'Big'" "R13: a 24-byte struct call" 'struct Big { a; b; c; }\nfn mk(): Big { var p: Big; p.a = 1; p.b = 2; p.c = 3; return p; }\nfn f(c): i64 { var x = if (c) { 0 } else { mk() }; return 0; }\nsyscall(60, f(1));\n'

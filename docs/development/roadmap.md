@@ -491,6 +491,12 @@ CHANGELOG [6.6.17] *Downstream* (no ecosystem sweep).
 
 - **Found by the 6.7.x feature releases (backlog — only the user promotes; v6.7.x operating rule 2).**
   - (The struct-argument and enum-constant filings of 6.7.1 / 6.7.2 shipped in 6.7.3's repair lane.)
+  - **A name intrinsic's result inherits its last argument's struct type** (found by the 6.7.4 B3 planning
+    survey): `mulh64(3, n) + 1` with `n: Num` (16 B) and `fn Num_add` dispatches `Num_add` and returns 100.
+    GESTYPE and SESVAR survive from the intrinsic's last argument in the name-intrinsic arm of
+    `_PARSE_FACTOR_IMPL` (parse_expr.cyr, the `_is_ident_intrinsic` lowering); PARSE_FNCALL resets SESTYPE but
+    never SESVAR. B3 classifies a branch by SHAPE so it does not depend on it. A fix is a per-intrinsic audit
+    inside the giant factor fn (cybs's per-fn reference ceiling). Repro: the four lines above, `build/cycc` 6.7.4.
   - **Generic inference does not see through a generic STRUCT parameter** (6.7.3 lane struct-arg): `gx(b)` for
     `fn gx<T>(b: Box<T>)` with `b: Box<Pt>` resolves the BASE gx (T = i64) — before 6.7.3 it ran it and read `b.n`
     at the base's offset (4 where 8 is right); since 6.7.3 it is refused as a struct mismatch. `gx<Pt>(b)` works.
