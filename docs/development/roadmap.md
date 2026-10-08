@@ -182,6 +182,18 @@ field walk at the nested `<` (re-measured 6.7.1: `#derive(accessors)` never defi
    and a field alike; every compound operator on every lvalue form (field, chain, `p.f` through a pointer, a
    subscript), with `*=` / `/=` on f64 fields following the 6.6.11 float rules.
 
+**B5 decisions (user, 2026-10-08, at the 6.7.5 open):**
+- **`loop` is a FULL reserved word**, like every other cyrius keyword (the reserved set stays one class). Its one
+  stdlib collision — sankoch's `var loop = 1; while (loop == 1)` (one declaration, three references) — is renamed in
+  sankoch's SOURCE and released as **sankoch 2.8.2** (rename only, pin unchanged) before 6.7.5 ships, then refolded
+  byte-identical in 6.7.5. The consumer repos with `loop` identifiers get a filed note each (filings only; they
+  rename when they bump their pin). `do` is reserved too (no collisions).
+- **`loop` is a statement only** — `loop { … }` is `while (1) { … }` written plainly; `break` takes no value.
+- **`loop` and `do … while` join the `const fn` pure subset**, as `while` and `for` are; the evaluator runs them
+  under the existing step budget.
+- From the spec: a `continue` in a `do … while` goes to the condition. B8 (compound assignment on every lvalue form)
+  computes the lvalue's address once, as `NAME[idx] OP= v` already does (`_arr_sub_assign`).
+
 **B3 decisions (user, 2026-10-08, at the 6.7.4 open) — ✅ LANDED in 6.7.4 (CHANGELOG [6.7.4]):**
 - **Syntax: `if (c) { a } elif (d) { b } else { e }` as an expression, ONE expression per branch** (no statements,
   no `;` inside the braces); `else` is required (an if-expression without it has no value); only the taken branch
@@ -270,7 +282,59 @@ field walk at the nested `<` (re-measured 6.7.1: `#derive(accessors)` never defi
   repo for later.
 - **6.7.6 re-vendors** every W2 tag byte-identical (`cmp` against the tag's `dist/`) and updates
   `docs/ecosystem.md`'s fold rows.
-- **The per-repo scope** is surveyed at the 6.7.5 open and recorded below.
+- **The per-repo scope** was surveyed at the 6.7.5 open (2026-10-08; every high item re-checked against live code,
+  each repo built and tested at the 6.7.5 pin in a scratch copy). **The pin move itself surfaced no new error or
+  warning in any of the 12**; there are **0 lone `!`** in them or in cyrius's own `lib/` (CVE-104 changed no stdlib
+  behaviour); sankoch's `var loop` is the only new-keyword collision, and B8 has no site to adopt. Each repo re-runs
+  its CI on the TAGGED 6.7.5 (the survey slot had no B5).
+
+**Order** (yukti pulls sakshi and patra as git tags — the one hard edge; every other fold dep resolves to 6.7.5's
+vendored copy, so the first test of all twelve together is 6.7.6's refold):
+
+| # | Release | Scope (high items in bold) | Size |
+|---|---|---|---|
+| 0 | **sankoch 2.8.2** — before 6.7.5 tags | the `loop` → `more` rename only, pin unchanged; refolded in 6.7.5 | XS |
+| 1 | sakshi 2.5.8 | pin; its 16 private `_SK_SYS_*` become `const`; CI: `CYRIUS_DCE=1` on the Windows lane, drop the redundant `-D` | S |
+| 2 | bayan 1.5.13 | **B-1** `bayan_toml_escape_a` answers a refused buffer with `str_from("")`; **B-2** `_inline_parse_a` / `_toml_join_parts_a` unchecked allocs (a refused vec segfaults); B-3 `bayan_toml_parse`'s contract; the 11 stack buffers sized by `const`s | M |
+| 3 | sigil 3.13.11 | **F1** `pem_decode_privkey` never wipes the decoded private-key DER (`privkey.cyr:435`); **F2** unchecked `alloc(pem_len)` there and in `pem.cyr:359`; F3 nonblocking errors checked; F7 `sha256()` / `sha384()` wipe their ctx as `sha512()` does; relock + dist (CI's profile-drift step) | M |
+| 4 | patra **1.16.0** | **WAL recovery happens only at open** — `patra_begin` truncates a crashed WAL (`lib.cyr:212`, `wal.cyr:254`); `_pc_alloc` checked; the five deliberately-unfixed wrong answers (LIMIT 0, SUM/MIN/MAX on TEXT, identifiers over 31 B, ORDER BY an unknown / a chain column) — a minor | L |
+| 5 | sandhi 1.10.9 | the pooled handler keys on `CHAN_BLOCKING`; `run_async`'s idle wait uses `async_await_readable_ms`; the 2026-10-05 adopt-6616 cleanups; re-run the request-budget row on macOS / Windows | S-M |
+| 6 | yukti 2.3.16 | **SMB mount-option injection** (`network.cyr:115` appends `username=` / `password=` unchecked; mounts run as root); `network_mount` gets `storage_mount`'s symlink guard; `[deps.sakshi]` / `[deps.patra]` → their W2 tags | S-M |
+| 7 | yantra 1.0.9 | **`_yantra_sleep_ms`** — a negative backoff waits forever (raw `syscall(7)`; unrouted on PE) → stdlib `sleep_ms`; `cdp_close`'s double close; the six deprecated `json_v_obj_get` calls | S |
+| 8 | vani 1.2.10 | `vani_format_is_supported` returns −1 (documented 1 / 0); aarch64 FIFO tests; `O_CLOEXEC` on the PCM opens; a clean lock | S |
+| 9 | sankoch 2.8.3 | pin 6.7.5; `[embed]` retires `brotli_dict2cyr.py` + `nul-literal-gate.py` (the 6.6.19 filing; no Python in CI); the renamed flag loop becomes `loop { … }`; 11 private knobs → `const` | M |
+| 10 | mabda **4.2.0** | the 11 `F64_*` are set by a `color_init()` nothing calls (a latent wrong value) → f64 `const` (the kind of 11 public names changes: a minor); duplicate `WGPU_COMPARE_LESS`; `_sk_info_cstr` renamed | S-M |
+| 11 | ganita 1.2.15 | pin + dist only | XS |
+| 12 | niyama **1.1.0** | **a pcre search past the 256-frame depth bound returns a WRONG match start** (`.*z` on 300 chars → 46; re2 → 0) and **`last_error` never sees it** — the complete fix is an explicit heap backtrack stack (the repo's own v1.1.0 item); fail closed in `search_at`; a checksum-verified toolchain install in CI | L |
+
+Minors: patra, mabda and niyama ("if that causes a minor bump so be it"). Not in W2, roadmapped in each repo:
+public `const` / `bool` sweeps (each repo's own minor — adopting 6.7.x syntax raises its toolchain floor),
+traits for hand-rolled dispatch (after checked `dyn`), sigil 3.14.0 (cbank retirement), bayan B-4 (needs a public
+length-bounded `f64_parse` here). **Constraints:** W2 must not change the fold API cyrius's own `lib/` calls (73
+sigil fns incl. 8 private, 6 sakshi, bayan `base64_encode`, sandhi `sandhi_server_find_header`); and a `const`
+beside a same-name `var` is a hard error (sandhi's `HTTP_OK` vs `lib/http.cyr` is why its public consts wait).
+
+## Break 1 — 6.7.6 (proposed 2026-10-08; the user picks at its open)
+
+Surveyed with W2: the frozen *Potential backlog* below was premise-checked item by item against live code and
+probes. The proposal takes the **still-real critical / high** items, the two pre-placed items, and the W2 refold.
+
+| Lane | Content | Size |
+|---|---|---|
+| A. Refold | the 12 W2 tags re-vendored byte-identical (`cmp` against each tag's `dist/`; yantra rebuilt from its tag) + `docs/ecosystem.md`'s rows + the fold gates; strike the sibling bullets W2 shipped | M |
+| B. Bootstrap | **cybs stack arguments** (pre-placed, below) · **cybs drops a lone `!`** (`bootstrap/cybs.cyr:1185-1199` jumps to `lexer_skip`; seed-built cybs gives `f(0) = 0` for `return !x;`, cycc gives 1) — the CVE-104 class in the trusted root, latent (0 sites in `src/` today) but `!` has been legal cyrius since 6.7.3 | M |
+| C. Security | a TRANSITIVE manifest's `path` (absolute or `..`) or local `git = "<path>"` vendors any readable local file into the consumer's `lib/`, exit 0 (`cbt/deps.cyr:1791`; the CVE-88 class) — **the rule is the user's call** (confine to the manifest's own tree + remote-only transitive git, or refuse both) | M |
+| D. Silent wrong values | a top-level `var v = Ok(42);` keeps the tag and drops the payload, silently (refused inside a fn since v6.5.67) · `var x: f32 = 1.5` stores the f64 bits · `println(n)` on a typed i64 local segfaults · `CYRIUS_PKG_VERSION` not visible two include levels deep (the open issue) — **two of these change what a program does: the user's call** (f32: round or refuse; pair bind: refuse) | 4 × S |
+| E. Struct-value codegen | three crashes on valid code — `rd3((a))`, `s - mk3(4)`, `p + p.dup()` · a Str field as a struct source · a name intrinsic inheriting a struct type (`fncall1(&f, n) + 1` → 100; filed at 6.7.4) | M-L |
+| F. cx | `~x` is `x` (XOR with a non-all-ones register) · `lib/fnptr.cyr` has no cx arm (`fncall2(&fncall1, …)` → 0) · calls over 248 arguments · probe the 14+ integer-argument / vector-register band | S-M |
+| G. Tooling | `cyrius test` absorbs `cyrius tests` (pre-placed, below) | S-M |
+| H. cyrius `lib/` | size each stack buffer by the constant that bounds it (11 constants, ~17 sites — among them the CVE-56 site, `_LOG_LINE_MAX` vs `var buf[512]` in `lib/log.cyr`); private names become `const`, public ones keep their `var` (no API change) · `lib/trait.cyr`'s header promises `impl` sugar that ADR-007 made static | S-M |
+
+Also after the tag (the user's call — it writes the live store): `verify-store.sh --restore` for the 16 slots whose
+`bin/cybs` is a stale 12,344 B (6.6.3–6.6.9, 6.6.11–6.6.19). **Break 2** takes the still-real medium items (TLS
+conformance as one bite, generic inference through a generic struct parameter, `asm { in al, dx; }`, kernel-build
+float globals, tooling rough edges, the Windows / macOS `[embed]` link race); **~25 backlog bullets are shipped or not
+defects** and are struck at the 6.7.6 open.
 
 ## Bootstrap item placed in Break 1 — cybs stack arguments (user, 2026-10-07)
 
