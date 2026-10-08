@@ -2309,6 +2309,7 @@ _chk_gate "$ROOT/tests/gates/frontend/enum_const_not_lvalue.sh"   # 6.7.3 (repai
 _chk_gate "$ROOT/tests/gates/frontend/if_expr_checked.sh"   # 6.7.4 (B3)
 _chk_gate "$ROOT/tests/gates/frontend/loop_do_checked.sh"   # 6.7.5 (B5)
 _chk_gate "$ROOT/tests/gates/frontend/field_compound_checked.sh"   # 6.7.5 (B8)
+_chk_gate "$ROOT/tests/gates/toolchain/cybs_lexer_drops_nothing.sh"   # 6.7.6 (Break 1 lane B)
 _chk_gate "$ROOT/tests/gates/toolchain/cybs_call_arity_named.sh"
 _chk_gate "$ROOT/tests/gates/platform/agnos_proc_kill_tree_refused.sh"
 _chk_gate "$ROOT/tests/gates/platform/cx_compiler_reads_env.sh"

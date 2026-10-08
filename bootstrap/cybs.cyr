@@ -1258,17 +1258,26 @@ lexer_bang:
     mov rcx, r8
     inc rcx
     cmp rcx, r12
-    jge lexer_skip       # lone '!' — skip
+    jge lexer_bang_err   # lone '!' at the end of the input
     mov rsi, r15
     add rsi, rcx
     mov rax, [rsi]
     and rax, 0xFF
     cmp rax, 61
-    jne lexer_skip       # '!' without '=' — skip
+    jne lexer_bang_err   # '!' without '='
     mov rax, 18          # NEQ
     call lexer_emit_simple
     inc r8
     jmp lexer_skip
+# A lone '!' (logical not, cyrius since 6.7.3) is refused by name. 6.7.6 - it was skipped,
+# so `return !x;` compiled as `return x;` in the trusted root (the dropped-'!' bug class).
+lexer_bang_err:
+    mov rax, 1
+    mov rdi, 2
+    mov rsi, err_bang
+    mov rdx, 90
+    syscall
+    jmp sys_exit_err
 lexer_lt_or_lte:
     mov rcx, r8
     inc rcx
@@ -5473,6 +5482,8 @@ err_syntax:
     db "syntax error\n"
 err_undef:
     db "undefined variable\n"
+err_bang:
+    db "cybs: a lone `!` (logical not) is not supported by the bootstrap compiler; write `x == 0`\n"
 pp_pat_include:
     db "include "
 pp_pat_ifdef:
