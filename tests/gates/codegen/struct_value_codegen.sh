@@ -28,6 +28,15 @@
 #      into a struct of another type — an argument at either width, a declaration in a fn or at
 #      top level, an assignment, a field, an operator operand, wrapped or not — refused by name;
 #      into a Str, an untyped slot or a handle (6.6.16's rebind) unchanged
+#   L  (6.7.6 follow-up, lane E2) a struct-returning call, method or operator result as the LEFT
+#      operand never dispatched: only a name typed the left operand, so `p.dup() + p` integer-added
+#      first words (2 where 6), `a + b + a` with a struct-returning `+` SIGSEGV'd and `mk3(4) - s +
+#      10` dispatched an undefined `P3_add` from `s`'s leftover type. The result is stamped where it
+#      ends (`_lsc_note`; a free call in `_call_scale_fix` via `_lsc_free`) and a left operand that is
+#      it — wrapped or not, nothing emitted since — dispatches from its own struct (`_op_lst`) and
+#      passes its value or its temp's address (`_op_lhs_call_sv`); a missing operator fn, a
+#      parameter of another struct and a top-level operand that needs a frame are refused by name.
+#      As an argument (`lvsz(mklv(1) + a)`) it takes the operator path's temp. A `Str` stays a handle
 #
 # MUTATION LEDGER (scratch copies of the tree, each rebuilt with the one change and the gate run
 # from that copy as CYCC=<mutant>; 2026-10-08):
@@ -73,6 +82,20 @@
 #   M-S7 `_sarg_byval_small` without its `_fls` arm           -> RED S6 (BUILT)
 #   M-S8 `_sc_global_mismatch` without its `_fls` check       -> RED S7 (BUILT)
 #   M-S9 `_pcmpe_struct_assign` without `_fls_asg_check`      -> RED S3 (BUILT)
+#   (lane E2, 2026-10-08, the same procedure)
+#   M-L1 `_op_lst` never matching the stamp                  -> RED L1-L4 (2 / undefined P3_add / 251 /
+#       139), L5-L9 (BUILT), A1-A6 (native SIGSEGV; cx tcyr L1 L6 L7)
+#   M-L2 `_sc_post` without `_lsc_note` (method / operator)  -> RED L1 L4 L6, A1-A6 (tcyr L6 L7; L9 L20 a64)
+#   M-L3 `_sc_post_small` without `_lsc_note` (<= 8 B)        -> RED A1-A6 (tcyr L11 L13)
+#   M-L4 `_call_scale_fix` without `_lsc_free` (free calls)  -> RED L2 L3, L5 L7-L9 (BUILT), A1-A6
+#   M-L5 `_lsc_span` without the wrap (`_lsc_beg != beg`)    -> RED A1-A6 (tcyr L9 L22; native SIGSEGV)
+#   M-L6 `_op_lhs_call_sv` without the rax:rdx store          -> RED L1 L3 (139), A1-A5 (cx: no pairs)
+#   M-L7 `_op_lhs_call_sv` without the top-level refusal      -> RED L6 L7 (BUILT)
+#   M-L8 `_try_push_struct_addr_arg` value-pushing a call that is only the left operand -> RED A1-A6
+#       (tcyr L8: native SIGSEGV)
+#   M-L9 `_fnc_agg` not recording its temp (`_fnc_lo`)        -> RED L2, L9 (BUILT), A1-A6 (tcyr L1)
+#   M-L10 `_lsc_note` stamping a `Str`                        -> RED L11 (an undefined Str_add)
+#   M-L11 `_op_lhs_sv` ignoring `_lsc_hit`                    -> RED L1-L4, L6-L8 (BUILT), A1-A6
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -166,6 +189,21 @@ exits s09 0 "S9: a handle Q rebinds to h.name (6.6.16 C2), untouched" "${HSQ}fn 
 exits s10 12 "S10: u = h.name; o.s = h.name; into Str destinations" "${HSQ}struct OS { n; s: Str; }\nfn main(): i64 { $HMK var u: Str = str_from(\"x\"); u = h.name; var o: OS; o.n = 0; o.s = h.name; var w: Str = (h.name); return str_len(u) * 4 + str_len(o.s) - str_len(w); }$E"
 exits p06 21 "P6: sz(((a)) + (b)): a double wrap that is only the left operand" "${P3S}fn P3_add(a: *P3, b: *P3): P3 { var t: P3 = P3 { a.x + b.x, a.y + b.y, a.z + b.z }; return t; }\nfn sz(p: P3) { return p.x + p.y + p.z; }\nfn main() { var a: P3 = P3 { 1, 2, 3 }; var b: P3 = P3 { 4, 5, 6 }; return sz(((a)) + (b)) + rd3(((b))) - 6; }$E"
 
+# L (6.7.6 E2) — a struct-returning call / method / operator result as the LEFT operand dispatches.
+LPT='struct Pt { x; y; }\nfn Pt_add(a: Pt, b: Pt) { return a.x + b.x + a.y + b.y; }\nimpl Pt { fn dup(self): Pt { var t: Pt = Pt { self.x, self.y }; return t; } }\nfn mk2(v): Pt { var t: Pt = Pt { v, v }; return t; }\n'
+LW='struct LW { v; }\nfn LW_sub(a: *LW, b: *LW): i64 { return a.v * 10 - b.v; }\nfn mklw(v): LW { var t: LW; t.v = v; return t; }\n'
+exits l01 6 "L1: p.dup() + p (the filed repro: 2, first words integer-added)" "${LPT}fn main() { var p: Pt = Pt { 1, 2 }; return p.dup() + p; }$E"
+exits l02 5 "L2: mk3(4) - s + 10 (the filed repro: an undefined P3_add from s's leftover type)" "${P3S}fn P3_sub(a: *P3, b: *P3) { return a.z - b.z; }\nfn main() { var s: P3 = P3 { 9, 9, 9 }; return mk3(4) - s + 10; }$E"
+exits l03 10 "L3: mk2(4) - s, a by-value rax:rdx operand (-5: first words)" "struct Pt { x; y; }\nfn Pt_sub(a: Pt, b: Pt) { return a.x - b.x + a.y - b.y + 20; }\nfn mk2(v): Pt { var t: Pt = Pt { v, v }; return t; }\nfn main() { var s: Pt = Pt { 9, 9 }; return mk2(4) - s; }$E"
+exits l04 72 "L4: a + b + a, a struct-returning + (SIGSEGV)" "struct V3 { x; y; z; }\nfn V3_add(a: V3, b: V3): V3 { var t: V3 = V3 { a.x + b.x, a.y + b.y, a.z + b.z }; return t; }\nfn main() { var a: V3 = V3 { 1, 2, 3 }; var b: V3 = V3 { 10, 20, 30 }; var c: V3 = a + b + a; return c.x + c.y + c.z; }$E"
+refused l05 "undefined function 'LW_add'" "L5: mklw(3) + 4 with no LW_add (an integer add of the struct's bytes)" "${LW}fn main() { return mklw(3) + 4; }$E"
+refused l06 "the left operand of 'Pt_add' is passed by address" "L6: G.dup() + G at top level (no frame)" "${LPT}var G: Pt = Pt { 1, 2 };\nvar r = G.dup() + G;\nsyscall(60, r);\n"
+refused l07 "the left operand of 'Pt_add' is passed by address" "L7: mk2(3) + G at top level (no frame)" "${LPT}var G: Pt = Pt { 1, 2 };\nvar r = mk2(3) + G;\nsyscall(60, r);\n"
+refused l08 "the left operand of 'LW_sub' is passed by address" "L8: mklw(5) - G into *LW at top level" "${LW}var G: LW = LW { 3 };\nvar r = mklw(5) - G;\nsyscall(60, r);\n"
+refused l09 "cannot pass 'mkq' to a parameter of a different struct type in a call to 'Q3_sub'" "L9: mkq(4) - s, fn Q3_sub(a: P3, b: Q3)" "${P3S}struct Q3 { x; y; z; }\nfn Q3_sub(a: P3, b: Q3) { return 1; }\nfn mkq(v): Q3 { var t: Q3 = Q3 { v, v, v }; return t; }\nfn main() { var s: Q3 = Q3 { 9, 9, 9 }; return mkq(4) - s; }$E"
+refused l10 "'mk3' returns a struct by value, and a struct result needs storage" "L10: mk3(4) - G at top level, refused once (by the call)" "${P3S}fn P3_sub(a: *P3, b: *P3) { return a.z - b.z; }\nvar G: P3 = P3 { 9, 9, 9 };\nvar r = mk3(4) - G;\nsyscall(60, r);\n"
+exits l11 8 "L11: a Str-returning call stays a handle: gs() + 8 - gs() is pointer arithmetic" "include \"lib/str.cyr\"\nvar GS: Str = 0;\nfn gs(): Str { return GS; }\nfn main() { alloc_init(); GS = str_from(\"abc\"); return gs() + 8 - gs(); }$E"
+
 tcyr "A1: the values file (x86_64)" "$CC" ""
 tcyr "A2: ... under CYRIUS_IR=1" "$CC" "" CYRIUS_IR=1
 tcyr "A3: ... under CYRIUS_IR=3" "$CC" "" CYRIUS_IR=3
@@ -185,4 +223,4 @@ else bad "A6: src/main_cx.cyr or programs/cxvm.cyr did not build"; fi
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — struct values and narrow fields as operands: values on x86_64 / IR / DCE / aarch64 / cx (A)"
+echo "PASS: $G — struct values and narrow fields as operands, struct results as left operands (L): values on x86_64 / IR / DCE / aarch64 / cx (A)"

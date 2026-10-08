@@ -1198,6 +1198,21 @@ fn demo(): i64 {
 }
 ```
 
+**A struct result is a LEFT operand too, and dispatches from its own type** (6.7.6): the result
+of a call, a method or an operator that returns a struct by value — `mk3(4) - s`, `p.dup() + p`,
+`a + b + c` with a struct-returning `+`, `(mk3(4)) - s`, `mk3(4) * s` — calls `T_op` for the struct
+it returns, exactly as a struct variable in that place does: an operand of 8 bytes or less is
+passed by value (or, to a `*T` parameter, through a temporary), a larger one by its temporary's
+address. A missing `T_op` is refused by name (*refusing to emit binary with 1 reachable undefined
+function(s)*, naming `T_op`) — `mkw(3) + 4` for an 8-byte `W` with no `W_add` too — and so is an
+operator fn whose first parameter is another struct. At top level, a left operand that needs a
+frame (an address-passed one) is refused by name, as the right operand is. Before 6.7.6 only a
+NAME typed the left operand: a call's result was an untyped word, so `p.dup() + p` added the two
+first words (2 where 6 is right), `a + b + c` added an address to a first word and crashed, and
+`mk3(4) - s + 10` dispatched `P3_add` — from the struct type `s` left behind. A `Str` result is a
+heap handle and never dispatches (`gs() + 8` is pointer arithmetic). The same expression works as
+an argument (`sz(mk3(1) + a)`).
+
 **A `: Str` field is a `Str` handle as a source.** `h.name` into a `Str` parameter, variable or
 field, or an untyped one, is the handle as ever (a pointer-mode struct variable rebinds to it,
 the 6.6.16 handle rule). Into a struct VALUE of another type it is refused by name, as a `Str`

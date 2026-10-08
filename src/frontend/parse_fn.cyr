@@ -1708,7 +1708,9 @@ fn _try_push_struct_addr_arg(S, fi, argc, tail): i64 {
         # 6.6.12: `take(mk(p).v)` — the argument is a FIELD of the result, taken like `take(b.v)`.
         if (_call_dotted(S, GTI(S)) == 1) { return _push_struct_expr_arg(S, fi, argc, tail); }
         if (_arg_call_class(S) == 0) { return 0; }   # 6.6.10: the instance's class
-        if (_call_is_whole_arg(S, o - 1) == 0) { return 0; }
+        # 6.7.6: a struct call that is only the LEFT operand (`sz(mk(1) + a)`) dispatches its
+        # operator fn, whose struct result takes the operator path's temp, as `sz(a + mk(1))`.
+        if (_call_is_whole_arg(S, o - 1) == 0) { return _push_struct_expr_arg(S, fi, argc, tail); }
         _sarg_escapes(fi, argc, tail);   # 6.6.20: a temp in this frame
         EFLADDR(S, _struct_call_into_temp(S));
         EPUSHR(S);
@@ -2937,6 +2939,7 @@ fn _sc_post(S, fi, noff, beg, t): i64 {
     _sc_tmp = t;
     _sc_sid = GFRS(S, fi);
     _sc_fn = noff;
+    _lsc_note(S, fi, beg, t);   # 6.7.6: for a left operand
     return 0;
 }
 
@@ -2957,6 +2960,7 @@ fn _sc_post_small(S, fi, noff, beg): i64 {
     _sc_tmp = 0 - 3;
     _sc_sid = sid;
     _sc_fn = noff;
+    _lsc_note(S, fi, beg, 0 - 1);   # 6.7.6: for a left operand
     return 0;
 }
 
@@ -4029,6 +4033,7 @@ fn _fnc_agg(S, fi, noff): i64 {
         if (cls == 2) { _refuse_toplevel_struct_call(S, noff); }
         return 0;
     }
+    var o = GTI(S) - 1;
     var t = _agg_temp(S, GFRS(S, fi));
     _struct_call_emit(S, fi, noff, t);
     EFLLOAD(S, t);
@@ -4040,6 +4045,9 @@ fn _fnc_agg(S, fi, noff): i64 {
         _sc_sid = GFRS(S, fi);
         _sc_fn = noff;
     }
+    _fnc_lo = o;   # 6.7.6: the temp, for a left operand (`_lsc_free`)
+    _fnc_lt = t;
+    _fnc_lcp = GCP(S);
     return 1;
 }
 

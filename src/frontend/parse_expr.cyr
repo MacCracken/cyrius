@@ -1836,6 +1836,7 @@ fn _call_scale_fix(S, ti): i64 {
         # `: *T` steps sizeof(T) — FINDFN named the template, whose T is i64. CHANGELOG [6.6.20]
         var fi = _pair_gen_inst(S, ti);
         if (fi >= 0) { if (_fn_rps != 0) { ps = L64(_fn_rps + fi * 8); } }
+        _lsc_free(S, ti, o, fi);   # 6.7.6: a struct result, for a left operand
     }
     SPSC(S, ps);
     return 0;
@@ -4932,7 +4933,7 @@ fn _PARSE_TERM_IMPL(S): i64 {
         # 2's-complement). Collapse the token ID.
         if (typ == 119) { typ = 8; }
         if (typ == 8) {
-            var mulst = _FBR_ST(S);   # 6.6.10: a float builtin's result is a float left operand
+            var mulst = _op_lst(S, _tbeg);   # 6.6.10 a float builtin's result; 6.7.6 a struct call's
             STI(S, GTI(S) + 1);
             if (mulst == F64_TYID) { ESPILL(S); PARSE_FACTOR(S); if (_FBR_ST(S) != F64_TYID) { _FLT_TYPE_WARN(S, 1); } EMIT_F64_BINOP(S, 2); SESTYPE(S, F64_TYID); _cfo = 0; }
             elif (mulst == F32_TYID) { ESPILL(S); PARSE_FACTOR(S); if (_FBR_ST(S) != F32_TYID) { _FLT_TYPE_WARN(S, 5); } EMIT_F32_BINOP(S, 2); SESTYPE(S, F32_TYID); _cfo = 0; }
@@ -4993,7 +4994,7 @@ fn _PARSE_TERM_IMPL(S): i64 {
             if (mulst <= 0) { _INT_F64_MIX(S); }
         }
         else { if (typ == 9) {
-                var divst = _FBR_ST(S);   # 6.6.10: a float builtin's result is a float left operand
+                var divst = _op_lst(S, _tbeg);   # 6.6.10 a float builtin's result; 6.7.6 a struct call's
                 STI(S, GTI(S) + 1);
                 if (divst == F64_TYID) { ESPILL(S); PARSE_FACTOR(S); if (_FBR_ST(S) != F64_TYID) { _FLT_TYPE_WARN(S, 1); } EMIT_F64_BINOP(S, 3); SESTYPE(S, F64_TYID); _cfo = 0; }
                 elif (divst == F32_TYID) { ESPILL(S); PARSE_FACTOR(S); if (_FBR_ST(S) != F32_TYID) { _FLT_TYPE_WARN(S, 5); } EMIT_F32_BINOP(S, 3); SESTYPE(S, F32_TYID); _cfo = 0; }
@@ -5269,8 +5270,86 @@ fn _op_operand_sv(S, fi, k, svar, bare, sval): i64 {
 # The LEFT operand, tokens [beg, opti), already parsed and in rax: its encoding for operand 0.
 # It dispatched, so its recorded type is the struct: a name, or a value such as `-s`.
 fn _op_lhs_sv(S, fi, beg, opti): i64 {
+    if (_lsc_hit == 1) { _lsc_hit = 0; return _op_lhs_call_sv(S, fi); }   # 6.7.6
     var bare = _op_bare(S, beg, opti);
     return _op_operand_sv(S, fi, 0, GESVAR(S), bare, _op_is_sval(S, beg, opti));
+}
+
+# ⛔ 6.7.6 — A STRUCT-RETURNING CALL, METHOD OR OPERATOR RESULT AS THE LEFT OPERAND DISPATCHES ITS
+# OPERATOR FN (the user's decision, 2026-10-08), as 6.7.6 made the right operand pass its temp. Only
+# a NAME typed the left operand (`_FBR_ST`: a local's or global's struct), and a call's result was an
+# untyped word, so `p.dup() + p` with `fn Pt_add(a: Pt, b: Pt)` integer-added the first words (2
+# where 6 is right), `a + b + c` with `fn V3_add(..): V3` added an address to a first word
+# (SIGSEGV), and `mk3(4) - s + 10` dispatched an undefined `P3_add` from the type `s` left behind.
+# The result is stamped where it ends (`_lsc_note`); a left operand that IS it — `[beg, cursor)` is
+# the call, inside any parentheses that wrap it, and nothing was emitted since — takes the call's
+# own struct, so a missing operator fn is refused by name as for a struct variable. Returns the
+# operand's struct for the `+ - * /` arms, else `_FBR_ST` as before. CHANGELOG [6.7.6]
+fn _op_lst(S, beg): i64 {
+    _lsc_hit = 0;
+    if (_lsc_cp == GCP(S)) {
+        if (_lsc_span(S, beg) == 1) {
+            _lsc_hit = 1;
+            return _lsc_sid;
+        }
+    }
+    return _FBR_ST(S);
+}
+# 1 = the stamped result spans `[beg, cursor)`, inside `k` parentheses that wrap the whole of it.
+fn _lsc_span(S, beg): i64 {
+    if (_lsc_beg < beg) { return 0; }
+    var k = _lsc_beg - beg;
+    if (_lsc_end + k != GTI(S)) { return 0; }
+    var i = 0;
+    while (i < k) {
+        if (TOKTYP(S, beg + i) != 10) { return 0; }
+        if (TOKTYP(S, _lsc_end + i) != 11) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+# Stamp the struct result of fn `fi` that just ended (first token `beg`, frame temp `t` or < 0).
+# A `Str` is a heap handle, a pointer word: never an operand that dispatches.
+fn _lsc_note(S, fi, beg, t): i64 {
+    if (fi < 0) { return 0; }
+    var sid = GFRS(S, fi);
+    if (sid <= 0) { return 0; }
+    if (sid >= 2048) { return 0; }
+    if (sid == _STR_SID(S)) { return 0; }
+    _lsc_beg = beg;
+    _lsc_end = GTI(S);
+    _lsc_cp = GCP(S);
+    _lsc_sid = sid;
+    _lsc_tmp = t;
+    return 0;
+}
+# A whole free call `name(..)` / `name<..>(..)` at token `ti` (its `(` at `o`) to fn `fi`: a >16 B
+# result is in the temp `_fnc_agg` gave it (none at top level, where the call refused itself); a
+# 9-16 B one in rax:rdx, unless the callee may have been replayed inline (no such pair then).
+fn _lsc_free(S, ti, o, fi): i64 {
+    if (fi < 0) { return 0; }
+    var cls = _ret_agg_class(S, fi);
+    var t = 0 - 1;
+    if (_fnc_lo == o) { if (_fnc_lcp == GCP(S)) { t = _fnc_lt; } }
+    if (cls == 2) { if (t < 0) { return 0; } }
+    if (cls == 1) { if (t < 0) { if (GFINL(S, fi) != 0) { return 0; } } }
+    return _lsc_note(S, fi, ti, t);
+}
+# The stamped result as operand 0 of operator fn `fi`: its encoding for `_OP_OPERAND_ADDR`. Of 8 B or
+# less it is the value in rax (a `*S` parameter's temp: `_op_operand_sv`); over 8 B the operator fn
+# takes its address — its temp, or (9-16 B, rax:rdx) a temp it is stored into now. At top level there
+# is no frame: refused by name (a >16 B call already refused itself).
+fn _op_lhs_call_sv(S, fi): i64 {
+    var sz = STRUCTSZ(S, _lsc_sid - 1);
+    if (sz <= 8) { return _op_operand_sv(S, fi, 0, 0 - 1, 0, 1); }
+    if (_lsc_tmp >= 0) { return 0 - 2 - _lsc_tmp; }
+    if (GINFN(S) != 1) {
+        if (sz > 16) { return 0 - 1; }
+        return _refuse_toplevel_op_operand(S, fi, 0);
+    }
+    var t = _agg_temp(S, _lsc_sid);
+    EFLSTORE_STRUCT_INT_PAIR(S, t);
+    return 0 - 2 - t;
 }
 # 6.7.3 — the LEFT operand is ARGUMENT 0 of the operator fn its struct `stype` picked: refused by
 # name when that fn declares parameter 0 as another struct (`fn Pt_add(a: Q, b: Pt)` read a Pt as a
@@ -5488,7 +5567,7 @@ fn _PEXPR_IMPL(S): i64 {
         # corresponding `lib/overflow.cyr` helper. Handled in their own
         # branches below so the constant-fold paths don't fire on them.
         if (typ == 6) {
-            var addst = _FBR_ST(S);   # 6.6.10: a float builtin's result is a float left operand
+            var addst = _op_lst(S, _xbeg);   # 6.6.10 a float builtin's result; 6.7.6 a struct call's
             STI(S, GTI(S) + 1);
             if (addst == F64_TYID) { ESPILL(S); PARSE_TERM(S); if (_FBR_ST(S) != F64_TYID) { _FLT_TYPE_WARN(S, 1); } EMIT_F64_BINOP(S, 0); SESTYPE(S, F64_TYID); _cfo = 0; }
             elif (addst == F32_TYID) { ESPILL(S); PARSE_TERM(S); if (_FBR_ST(S) != F32_TYID) { _FLT_TYPE_WARN(S, 5); } EMIT_F32_BINOP(S, 0); SESTYPE(S, F32_TYID); _cfo = 0; }
@@ -5517,7 +5596,7 @@ fn _PEXPR_IMPL(S): i64 {
             if (addst <= 0) { _INT_F64_MIX(S); }
         }
         else { if (typ == 7) {
-                var subst = _FBR_ST(S);   # 6.6.10: a float builtin's result is a float left operand
+                var subst = _op_lst(S, _xbeg);   # 6.6.10 a float builtin's result; 6.7.6 a struct call's
                 STI(S, GTI(S) + 1);
                 if (subst == F64_TYID) { ESPILL(S); PARSE_TERM(S); if (_FBR_ST(S) != F64_TYID) { _FLT_TYPE_WARN(S, 1); } EMIT_F64_BINOP(S, 1); SESTYPE(S, F64_TYID); _cfo = 0; }
                 elif (subst == F32_TYID) { ESPILL(S); PARSE_TERM(S); if (_FBR_ST(S) != F32_TYID) { _FLT_TYPE_WARN(S, 5); } EMIT_F32_BINOP(S, 1); SESTYPE(S, F32_TYID); _cfo = 0; }
