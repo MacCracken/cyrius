@@ -5,7 +5,10 @@
 #   F  `var x: f32 = <an f64 value>` ROUNDS to f32 (a local, a global in either zone, a for-init),
 #      as a 6.7.4 `f32[N]` list element does; it stored the f64 bits, which read as 0.0. The
 #      runtime half is tests/tcyr/crossos/f32_scalar_init_rounds.tcyr (A rows).
-#   A  ANTI-VACUOUS: each crossos tcyr on x86_64 (default, CYRIUS_DCE=1) and with
+#   I  CYRIUS_IR=3 keeps the x86 f32 conversions (`f32_from`, `f32_to`, and the initializer's): their
+#      raw bytes were not IR-recorded, so the opt-in pass forwarded rax across them (a prerequisite
+#      of F under IR=3; pre-existing since the builtins landed).
+#   A  ANTI-VACUOUS: each crossos tcyr on x86_64 (default, CYRIUS_IR=3, CYRIUS_DCE=1) and with
 #      compilers built from this tree on aarch64 (qemu), cx (cxvm) and PE (wine, a private prefix),
 #      with its full assertion count.
 #
@@ -35,9 +38,22 @@ fails=0
 skips=0
 ok()  { echo "  ok   $1"; }
 bad() { echo "  FAIL $1"; fails=$((fails + 1)); }
+build() { rc=0; timeout 60 env ${2:-} "$CC" < "$T/$1.cyr" > "$T/$1.bin" 2> "$T/$1.err" || rc=$?; }
+exits() {   # <name> <want> <what> <source> [ENV=V]: builds (under ENV), runs, exits <want>
+    printf '%b' "$4" > "$T/$1.cyr"
+    build "$1" "${5:-}"
+    if [ "$rc" -ne 0 ]; then bad "$3: rc $rc: $(grep '^error' "$T/$1.err" | head -1)"; return; fi
+    chmod +x "$T/$1.bin"; got=0; timeout 10 "$T/$1.bin" || got=$?
+    if [ "$got" -eq "$2" ]; then ok "$3: exit $got"; else bad "$3: exit $got, want $2"; fi
+}
+
+# ── I: CYRIUS_IR=3 and the x86 f32 conversions ──────────────────────────────────────────────────
+I1='fn lo32(p): i64 { return load32(p) & 0xFFFFFFFF; }\nfn main(): i64 {\n    var y: f64 = 1.5;\n    var fy: f32 = f32_from(y);\n    var ok = 0;\n    if (lo32(&fy) == 0x3FC00000) { ok = ok + 1; }\n    var m: f32 = f32_from(1.5);\n    var m2: f32 = m * f32_from(2.0);\n    if (f32_to(m2) == 0x4008000000000000) { ok = ok + 2; }\n    var g: f32 = y;\n    if (lo32(&g) == 0x3FC00000) { ok = ok + 4; }\n    return ok;\n}\nsyscall(60, main());\n'
+exits i1 7 "I1: f32_from / f32_to / an f32 initializer under CYRIUS_IR=3" "$I1" CYRIUS_IR=3
+exits i2 7 "I2: ... the same program, default pipeline" "$I1"
 
 # ── A: each crossos tcyr, every leg, with its full assertion count ─────────────────────────────
-X86_LEGS="plain DCE"
+X86_LEGS="plain IR3 DCE"
 if command -v qemu-aarch64 > /dev/null 2>&1; then
     if "$CC" < src/main_aarch64.cyr > "$T/cc_a64" 2>/dev/null && [ -s "$T/cc_a64" ]; then chmod +x "$T/cc_a64"
     else bad "A0: could not build src/main_aarch64.cyr"; fi
@@ -89,4 +105,4 @@ tcyr_all AF tests/tcyr/crossos/f32_scalar_init_rounds.tcyr 30
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — f32 initializers round (F); every tcyr on x86_64 / IR / DCE / aarch64 / cx / PE (A)"
+echo "PASS: $G — f32 initializers round (F); IR=3 keeps the f32 conversions (I); every tcyr on x86_64 / IR / DCE / aarch64 / cx / PE (A)"
