@@ -13,8 +13,14 @@
 #   A  ANTI-VACUOUS: every boolean producer builds and runs, and a bool reads as 0 / 1
 #   R  `true` / `false` are reserved words
 #
-# Mutations (scratch trees, each RED here — run 2026-10-07): `_BX_IS` answering 1 -> every W row
-# BUILDS; the _PLOGIC_ATOM mark dropped -> A1 refused; `_bx_asg` a no-op -> W11 W14 BUILD.
+#   X  `--syntax-only` (cyrius lint's pre-pass) checks nothing
+#
+# Mutations (scratch trees, each RED here — run 2026-10-08): `_BX_IS` answering 1 -> 44 W rows
+# BUILD; the comparison's mark (_PLOGIC_ATOM) dropped -> A1 A4-A8 A10 A11 A15 refused (and W52's
+# message changes); `_bx_asg` a no-op -> W15 W16 W17 W27 BUILD; `_bx_pcmpe_arg`'s check removed ->
+# W37-W43 W52 BUILD; `_bx_live` ignoring --syntax-only -> X1; the lexer dropping `!` again -> A1 A4
+# A6 A7 A10; `_bx_falloff_fi` a no-op -> A13 A14 (exit 77 / 66); the undefined-name guard in
+# `_bx_refuse` removed -> W58 two errors.
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -107,6 +113,14 @@ refused w50 "$DI" "W50: an integer const into a bool"  'const N = 1;\nfn main():
 refused w51 "cannot return a value that is not a bool from bool fn 'f'" "W51: a bool const fn returning an integer" 'const fn f(x): bool { return x; }\nsyscall(60, 0);\n'
 refused w52 "to bool parameter 'v' of 'sw_set_up'" "W52: a #derive(accessors) bool setter given 1" '#derive(accessors)\nstruct sw { id; up: bool; }\nfn main(): i64 { var s = sw { 5, false }; sw_set_up(&s, 1); return 0; }\nsyscall(60, main());\n'
 refused w53 "a bool array's element takes a boolean value" "W53: a bool[N] list element 2" 'var A: bool[2] = {true, 2};\nsyscall(60, A);\n'
+# Fixed in this feature's one review round (2026-10-08):
+SL="a struct literal cannot initialize a bool"
+refused w54 "$SL" "W54: var b: bool = P { 7, true }"      'struct P { a; on: bool; }\nfn main(): i64 { var b: bool = P { 7, true }; return b; }\nsyscall(60, main());\n'
+refused w55 "$SL" "W55: a global var G: bool = P { 7, true }" 'struct P { a; on: bool; }\nvar G: bool = P { 7, true };\nsyscall(60, G);\n'
+refused w56 "to bool parameter 'b' of 'P_add'" "W56: an operator's operand into its fn's bool parameter (p + 5)" 'struct P { a; }\nimpl P { fn add(self, b: bool): i64 { return b; } }\nfn main(): i64 { var p: P; p.a = 1; return p + 5; }\nsyscall(60, main());\n'
+refused w57 "$RT" "W57: a tuple return (5, 1) from a single-value bool fn" 'fn g(): bool { return (5, 1); }\nfn main(): i64 { return g(); }\nsyscall(60, main());\n'
+refused w58 "undefined variable 'zz'" "W58: an undefined name in the value is reported once (no bool cascade)" "$M var b: bool = false; b = zz; return b; }$E"
+refused w59 "array initializer elements must be constants" "W59: a bool[N] element 1 < 2 is refused once, as not a constant" 'var A: bool[2] = {1 < 2, true};\nsyscall(60, A);\n'
 
 exits a1 255 "A1: every boolean producer into a local (true, false, <, !, &&, ||, parens, another bool, !!, f64_lt, a for step)" "$M var a = 3; var t: bool = true; var f: bool = false; var c: bool = a < 4; var d: bool = !a; var e: bool = (a > 1) && (a < 9); var g: bool = c || d; var h: bool = (c); var i: bool = ((a == 3)); var j: bool = c; var k: bool = !!a; var l: bool = f64_lt(1.0, 2.0); t = c; t = !t; t = a != 3; t = d && c; for (var q = 0; q < 2; t = q > 0) { q = q + 1; } return t + c * 2 + e * 4 + g * 8 + h * 16 + i * 32 + j * 64 + k * 128 + l * 256 + f; }\nsyscall(60, main() % 256);\n"
 exits a2 10 "A2: a bool reads as 0 / 1 (n + ok, ok * 4)" "$M var ok: bool = true; var n = 5 + ok; var m = ok * 4; return n + m; }$E"
@@ -119,7 +133,15 @@ exits a9 11 "A9: a captured bool is a bool" 'include "lib/alloc.cyr"\nfn main():
 exits a10 119 "A10: bool consts (top level, local, from !, a comparison, a bool const fn), in #assert, a case label, an enum value, a global" 'const T = true;\nconst F = !T;\nconst C = 3 < 4;\nconst fn neg(b: bool): bool { return !b; }\nconst fn pos(x): bool { return x > 0; }\nconst N = neg(C);\nconst P = pos(5) && T;\nenum E { EA = T; EB = P + 1; }\n#assert T\n#assert !F\nvar GB: bool = T;\nfn main(): i64 { const L = 2 > 1; var b: bool = T; var c: bool = L; var d: bool = F || C; var e: bool = N; var g: bool = P; var s = 0; switch (1) { case T: s = 1; default: s = 2; } return b + c * 2 + d * 4 + e * 8 + g * 16 + GB * 32 + s * 64 + EB * 128; }\nsyscall(60, main() % 256);\n'
 exits a11 5 "A11: a bool local in a const fn drives its loop" 'const fn cnt(n): i64 { var ok: bool = n > 0; var k = 0; while (ok) { k = k + 1; ok = k < n; } return k; }\nconst K = cnt(5);\nsyscall(60, K);\n'
 exits a12 13 "A12: a bool[N] list of true / false / (true) / a bool const" 'const T = true;\nvar A: bool[4] = {true, false, (true), T};\nfn main(): i64 { return load64(&A) + load64(&A + 8) * 2 + load64(&A + 16) * 4 + load64(&A + 24) * 8; }\nsyscall(60, main());\n'
+exits a13 0 "A13: an #inline bool fn run off its end is false" 'var A = 0;\n#inline\nfn g(p): bool { A = 77; }\nfn main(): i64 { var b: bool = g(&A); return b; }\nsyscall(60, main());\n'
+exits a14 0 "A14: an auto-inlined generic bool fn run off its end is false" 'var A = 0;\nfn g<T>(x: T): bool { A = 66; }\nfn main(): i64 { var d: bool = g(5); return d; }\nsyscall(60, main());\n'
+exits a15 1 "A15: an operator's bool parameter takes a parenthesised comparison" 'struct P { a; }\nimpl P { fn add(self, b: bool): i64 { return b; } }\nfn main(): i64 { var p: P; p.a = 1; return p + (2 > 1); }\nsyscall(60, main());\n'
 exits a5 0 "A5: a global after the first statement takes a comparison" 'var x = 1;\nsyscall(60, 0);\nvar G: bool = x > 0;\n'
+
+# X — `--syntax-only` (cyrius lint's pre-pass) checks nothing: a sibling file's names are unknown there.
+printf 'fn main(): i64 { var b: bool = sibling_fn(); var c: bool = SIB; return 0; }\nsyscall(60, main());\n' > "$T/x1.cyr"
+"$CC" --syntax-only < "$T/x1.cyr" > /dev/null 2> "$T/x1.err" || true
+if grep -q 'bool' "$T/x1.err"; then bad "X1: --syntax-only reported a bool write: $(grep -m1 bool "$T/x1.err")"; else ok "X1: --syntax-only reports no bool write"; fi
 
 refused r1 "reserved keyword 'true'"  "R1: var true"  'var true = 1;\nsyscall(60, 1);\n'
 refused r2 "reserved keyword 'false'" "R2: fn false" 'fn false(): i64 { return 0; }\nsyscall(60, 1);\n'

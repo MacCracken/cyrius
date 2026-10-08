@@ -2677,6 +2677,22 @@ fn _gai_decl(S, ann_ti, n, sz): i64 {
     return 0;
 }
 
+# An element (from `ti` to its `,` / `}` outside parentheses) holding a comparison, `!`, `&&` or
+# `||`: a boolean expression the folder cannot bake, which the list's constness check refuses.
+fn _bx_gai_boolop(S, ti): i64 {
+    var d = 0;
+    var n = GTCNT(S);
+    while (ti < n) {
+        var t = TOKTYP(S, ti);
+        if (d == 0) { if (t == 31 || t == 14 || t == 5) { return 0; } }
+        if (t == 10) { d = d + 1; }
+        if (t == 11) { d = d - 1; }
+        if (t >= 17 && t <= 22) { return 1; }
+        if (t == 171 || t == 53 || t == 54) { return 1; }
+        ti = ti + 1;
+    }
+    return 0;
+}
 # 6.7.3 (B2) — an element of a `bool[N]` list (cursor on it): `true` / `false`, optionally
 # parenthesised, or a bool const — the list is baked by the constant folder, so that is the whole
 # boolean subset a list can hold (the user's decision: a write into a bool takes a boolean value).
@@ -2699,6 +2715,7 @@ fn _bx_gai_elem(S): i64 {
         if (e != 31 && e != 14) { ok = 0; }
         if (ok == 1) { return 0; }
     }
+    if (_bx_gai_boolop(S, GTI(S)) == 1) { return 0; }   # `1 < 2`, `!x`: not a constant — refused as that
     if (_bx_live(S) == 0) { return 0; }
     if (_tn_once(S, GTI(S)) == 0) { return 0; }
     _gai_err(S, GTI(S), "a bool array's element takes a boolean value: true, false or a bool const");
@@ -3517,7 +3534,11 @@ fn _lit_head(S): i64 {
 }
 # An annotated `var p: T = U { .. }` must agree (`pscale` = `0 - sid` for a struct annotation).
 # 6.6.5 in PARSE_VAR; 6.6.12 the declaration-zone global too, which ignored the annotation.
-fn _lit_ann_check(S, pscale, sid): i64 {
+fn _lit_ann_check(S, pscale, sid, isbool): i64 {
+    if (isbool == 1) {   # 6.7.3: `var b: bool = P { .. };` — a struct is not a boolean value
+        ERR_MSG(S, "a struct literal cannot initialize a bool (a bool takes true / false, a comparison, !x, && / || or another bool)", 112);
+        return 0;
+    }
     if (pscale >= 0) { return 0; }
     if (pscale <= 0 - 2048) { return 0; }
     if ((0 - pscale) == sid) { return 0; }
@@ -3706,7 +3727,7 @@ fn PARSE_GVAR_REG(S): i64 {
         STI(S, lh_ti);
         if (ssid > 0) {
             is_struct = 1;
-            _lit_ann_check(S, 0 - ann_sid, ssid);
+            _lit_ann_check(S, 0 - ann_sid, ssid, ann_bool);
         } elif (_gci_inline(S, ann_sid) == 1) {   # 6.6.12: `var G: T = A;` / `= X.f;` — inline
             is_struct = 1;
             ssid = ann_sid;
@@ -5545,7 +5566,7 @@ fn PARSE_VAR(S): i64 {
                 # pass 2), where nothing calls `_sync_skip` — so an early return trades one
                 # accurate error for a cascade of invented ones. `_had_error` already
                 # guarantees no binary is written, so parsing on with U's sid emits nothing.
-                _lit_ann_check(S, pscale, sid);
+                _lit_ann_check(S, pscale, sid, lbool);
                 if (GINFN(S) == 1) { _STRUCT_LIT_LOCAL(S, noff, sid); }
                 else { PARSE_STRUCT_INIT(S, noff, sid); }
                 return 0;

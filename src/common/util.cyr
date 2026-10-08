@@ -1643,6 +1643,7 @@ fn GLBOOL(S, li): i64 {
 # last boolean value. 0 = none.
 var _bxr_cp = 0;
 var _bxr_ti = 0;
+var _bx_undef_ti = 0 - 1;   # the token of the last undefined-name error (_gv_note_blockscoped)
 fn GLAGG(S, li): i64 {
     if (GLSPAN(S, li) == 0) { return 0; }
     return 1;

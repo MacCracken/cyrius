@@ -1889,6 +1889,7 @@ fn _gv_blockscoped(S, noff): i64 {
     return 0;
 }
 fn _gv_note_blockscoped(S, noff): i64 {
+    _bx_undef_ti = GTI(S);   # 6.7.3: every undefined-name report passes here; a bool check skips a value holding it
     var k = _gv_blockscoped(S, noff);
     if (k == 0) { return 0; }
     syscall(SYS_WRITE, 2, "note: '", 7);

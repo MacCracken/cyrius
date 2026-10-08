@@ -1324,6 +1324,7 @@ fn _bx_live(S): i64 {
 fn _bx_refuse(S, ti, msg, noff, tail, noff2): i64 {
     if (_bx_live(S) == 0) { return 0; }
     if (_panic == 1) { return 0; }
+    if (_bx_undef_ti >= ti) { if (_bx_undef_ti <= GTI(S)) { return 0; } }   # an undefined name inside: reported
     if (_tn_once(S, ti) == 0) { return 0; }
     _bnd_err_at(S, ti, msg, noff, tail, noff2);
     PRSTR("  note: a bool takes true / false, a comparison, !x, && / || or another bool - write `x != 0` for an integer\n");
@@ -1455,13 +1456,18 @@ fn _bx_pcmpe_ret(S): i64 {
     if (_BX_IS(S) == 1) { return 0; }
     return _bx_refuse(S, t, "cannot return a value that is not a bool from bool fn ", _bx_fname(S, _cur_fn_ix), 0, 0 - 1);
 }
-# `return (a, b[, c]);` — element `k`.
+# `return (a, b[, c]);` — element `k`. In a single-value bool fn the tuple form (the ret2 register
+# convention) hands element 0 back in the return register: it is the bool return.
 fn _bx_pcmpe_mret(S, k): i64 {
     var t = GTI(S);
     PCMPE(S);
     if (_cur_fn_ix < 0) { return 0; }
-    if ((GFLG(S, _cur_fn_ix) & (8192 << k)) == 0) { return 0; }
+    var fl = GFLG(S, _cur_fn_ix);
+    var el = 0;
+    if ((fl & (8192 << k)) != 0) { el = 1; }
+    if (el == 0) { if (k != 0) { return 0; } if ((fl & 4096) == 0) { return 0; } }
     if (_BX_IS(S) == 1) { return 0; }
+    if (el == 0) { return _bx_refuse(S, t, "cannot return a value that is not a bool from bool fn ", _bx_fname(S, _cur_fn_ix), 0, 0 - 1); }
     return _bx_refuse(S, t, "cannot return a value that is not a bool as a bool element of ", _bx_fname(S, _cur_fn_ix), 0, 0 - 1);
 }
 # A bare `return;` returns 0 — refused in a bool fn (the user's decision, 2026-10-07).
@@ -1476,10 +1482,24 @@ fn _bx_tc_ret(S, tcfi, ti, tcnoff): i64 {
     return _bx_refuse(S, ti, "cannot return ", tcnoff, " (not a bool fn) from bool fn ", _bx_fname(S, _cur_fn_ix));
 }
 # Running off the end of a bool fn returns `false` (the user's decision, 2026-10-07): a `mov 0`
-# on the fall-through path only — every `return` jumps past it to the landing.
+# on the fall-through path only — every `return` jumps past it to the landing. The #inline replay
+# of a bool callee lands the same way (_bx_falloff_fi, the CALLEE's fi).
 fn _bx_falloff(S): i64 {
     if (_bx_fn_is_bool(S, _cur_fn_ix) == 1) { EMOVI(S, 0); }
     return 0;
+}
+fn _bx_falloff_fi(S, fi): i64 {
+    if (_bx_fn_is_bool(S, fi) == 1) { EMOVI(S, 0); }
+    return 0;
+}
+# An operator overload's right operand is the operator fn's parameter 1 (`p + 5` into
+# `fn P_add(self, b: bool)`), as `p.add(5)` passes it — checked the same way.
+fn _bx_op_rhs(S, fi, rb): i64 {
+    if (_pbool_get(fi, 1) == 0) { return 0; }
+    if (_BX_IS(S) == 1) { return 0; }
+    var pn = _bx_pname(S, fi, 1);
+    if (pn < 0) { return _bx_refuse(S, rb, "cannot pass a value that is not a bool to a bool parameter of ", _bx_fname(S, fi), 0, 0 - 1); }
+    return _bx_refuse(S, rb, "cannot pass a value that is not a bool to bool parameter ", pn, " of ", _bx_fname(S, fi));
 }
 # A capture read (`env[k]`): the snapshot carries the enclosing slot's whole depth word, bit 58 too.
 fn _cl_cap_load(S, esl): i64 {
