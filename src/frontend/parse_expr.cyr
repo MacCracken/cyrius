@@ -1469,10 +1469,7 @@ fn _explicit_generic_call(S, noff, fi): i64 {
     if (_spec == 0 - 2) {
         ERR_MSG(S, "non-i64 generic fns with parameters: instantiate-once param re-emission is a follow-on bite", 91);
     }
-    if (_spec == 0 - 3) {
-        ERR_MSG(S, "generic fns with STRUCT type-arguments are a follow-on (monomorphized struct-ABI); use a generic struct or scalar type-args", 123);
-    }
-    # ⛔ 6.6.5 — `_spec` is -2 / -3 on the two error paths above,
+    # ⛔ 6.6.5 — `_spec` is -2 on the error path above (and was -3 too until 6.7.1),
     # and `_fnt_names + _spec * 8` read 16/24 bytes BEFORE the
     # table: an out-of-bounds load whose garbage was then parsed
     # as a name, which is where the nonsense

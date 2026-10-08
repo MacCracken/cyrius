@@ -427,6 +427,15 @@ CHANGELOG [6.6.17] *Downstream* (no ecosystem sweep).
 > aarch64-region translated-row warning, mirshi's old-kernel mode, `async_iocp_pe` (cass), `gates_never_write_tree`
 > axis 9, agnos #48's deadline (agnos), the sandhi comment (a filing).
 
+- **Found by the 6.7.x feature releases (backlog — only the user promotes; v6.7.x operating rule 2).**
+  - ⚠ **A struct ARGUMENT is never type-checked against its parameter** (found at the 6.7.1 open, C3): a `Pt`
+    passed to `fn bq(b: Q)` compiles and reads past it (`bq(p)` returned garbage for `b.c`), and a generic
+    INSTANCE passed where its base is declared reads the base's layout — `fn bs(b: Box)` with `bs(mk1(p))`
+    (`mk1<T>(x: T): Box<T>`, `Box<Pt>` is 24 B) returned `b.v.y`'s 4 where `n` was 8. A silent wrong value. The
+    RECEIVE path already refuses the same mismatch (`var r: Box; r = mk1(p);` → "cannot copy 'mk1' into a
+    variable of a different struct/vector type"), so the argument path is the gap; refusing it changes what
+    compiles (a language decision — the user's). Repro: the two programs above, `build/cycc` 6.7.1.
+
 - **Found by the 6.6.20 closeout and not fixed in it (2026-10-07; backlog — only the user promotes).**
   - **A parenthesised struct argument to an address-passed parameter pushes the struct's VALUE**: `rd3((a))`
     (`p: *P3`), `rd1((s))` (`p: *S1`), `rd1((mk1(4)))` — SIGSEGV on x86 / aarch64, an access violation on PE, a guest

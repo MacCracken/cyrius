@@ -1,0 +1,118 @@
+# generic_two_param_struct.tcyr — 6.7.1 (C3 prerequisite): a STRUCT type argument on a generic with
+# TWO type parameters, on every call path.
+#
+# ⛔ Until 6.7.1 a struct beside a second type argument was refused — `g<Pt, i64>(p, 2)`,
+# `g(p, 2)`, `g(5, p)`, `g(p, q)` — by a guard in `_instantiate_generic_fn` that called the
+# combination "unproven" (6.6.10 had at least made the inferred form an error instead of the i64
+# base's silent 0). Nothing in the instance path depends on which slot holds the struct: lifting
+# the guard made every row below pass, on x86, aarch64 and PE, with no other change. These rows are
+# that proof, and they mirror generic_struct_inference.tcyr's one-parameter paths:
+#   E   explicit / inferred / `var r = ..` / `r = ..;`            H  a struct in the SECOND slot
+#   S   two structs                                               L  non-inlinable bodies
+#   R   `: A` / `: B` returns of 16 B and 24 B structs            T  a `var q: B` local
+#   N   forwarding `gsl<A, B>(a, b)`                              W  `<Pt, i32>`, sizeof(B) == 4
+#   O   an 8 B struct beside a scalar                             B  `Box<Pt>` as a type argument
+#   K   a struct global                                           TC tail calls through an instance
+#   D   one instance reused                                       BR `: Box<A>` returns
+# The compile-time rows (a mismatched receive is refused) are in
+# tests/gates/frontend/generic_type_arg_unknown_refused.sh (K). Mutation: put the `-3` refusal
+# back in `_instantiate_generic_fn` -> this file does not build.
+# ⚠ Not run on cx: cx has no 16-byte struct pair return at all (`first(p, 9)`), generic or not.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/assert.cyr"
+
+struct Pt { x; y; }
+struct Qt { a; b; c; }
+struct One { v; }
+struct Box<T> { v: T; n; }
+
+# inlinable bodies (one statement)
+fn gs<A, B>(a: A, b: B): i64 { return a.x + b; }
+fn gr<A, B>(a: A, b: B): i64 { return a + b.y; }
+fn g2<A, B>(a: A, b: B): i64 { return a.x * 100 + b.c; }
+# non-inlinable bodies
+fn gsl<A, B>(a: A, b: B): i64 {
+    var t = 0;
+    var i = 0;
+    while (i < 2) { t = t + a.x + b; i = i + 1; }
+    return t;
+}
+fn grl<A, B>(a: A, b: B): i64 {
+    var t = a;
+    if (t > 0) { t = t + b.y; }
+    return t;
+}
+# `: A` return of a struct
+fn first<A, B>(a: A, b: B): A { return a; }
+fn second<A, B>(a: A, b: B): B { return b; }
+# a `var q: B` local used as a struct
+fn locb<A, B>(a: A, b: B): i64 {
+    var q: B = b;
+    return q.y + a;
+}
+# forwarding both type params
+fn fwd<A, B>(a: A, b: B): i64 { return gsl<A, B>(a, b); }
+# narrow scalar beside a struct
+fn gn<A, B>(a: A, b: B): i64 { return a.x + b + sizeof(B); }
+# 8-byte struct
+fn g1<A, B>(a: A, b: B): i64 { return a.v * 10 + b; }
+# generic struct as a type argument
+fn gb<A, B>(a: A, b: B): i64 { return a.v.x + a.n + b; }
+# tail call with struct type args
+fn tl<A, B>(a: A, b: B): i64 { return gsl(a, b); }
+
+fn mkb<A, B>(a: A, b: B): Box<A> {
+    var r: Box<A>;
+    r.v = a;
+    r.n = b;
+    return r;
+}
+
+var GP: Pt = alloc(16);
+
+fn run(): i64 {
+    var p: Pt; p.x = 40; p.y = 2;
+    var q: Qt; q.a = 1; q.b = 2; q.c = 3;
+    var o: One; o.v = 4;
+    var bx: Box<Pt>; bx.v.x = 5; bx.v.y = 6; bx.n = 7;
+    GP.x = 11; GP.y = 12;
+
+    assert_eq(gs<Pt, i64>(p, 2), 42, "E1: explicit gs<Pt, i64>");
+    assert_eq(gs(p, 2), 42, "E2: inferred gs(p, 2)");
+    var r1 = gs(p, 3);
+    assert_eq(r1, 43, "E3: var r = gs(p, 3)");
+    r1 = gs(p, 4);
+    assert_eq(r1, 44, "E4: r = gs(p, 4);");
+    assert_eq(gr(5, p), 7, "H1: struct on param 1, gr(5, p)");
+    assert_eq(gr<i64, Pt>(6, p), 8, "H2: explicit gr<i64, Pt>");
+    assert_eq(g2(p, q), 4003, "S2: two structs g2(p, q)");
+    assert_eq(g2<Pt, Qt>(p, q), 4003, "S3: two structs explicit");
+    assert_eq(gsl(p, 1), 82, "L1: non-inlinable gsl(p, 1)");
+    assert_eq(grl(1, p), 3, "L2: non-inlinable grl(1, p)");
+    var f: Pt = first(p, 9);
+    assert_eq(f.x + f.y, 42, "R1: var f: Pt = first(p, 9)");
+    var s: Pt = second(9, p);
+    assert_eq(s.x * s.y, 80, "R2: var s: Pt = second(9, p)");
+    var s2: Qt = second(p, q);
+    assert_eq(s2.c, 3, "R3: a 24 B struct through `: B`");
+    assert_eq(locb(1, p), 3, "T1: var q: B local");
+    assert_eq(fwd(p, 1), 82, "N1: forwarding gsl<A, B>");
+    assert_eq(fwd<Pt, i64>(p, 2), 84, "N2: explicit forwarding");
+    assert_eq(gn<Pt, i32>(p, 2), 46, "W1: gn<Pt, i32>, sizeof(B) == 4");
+    assert_eq(g1(o, 2), 42, "O1: an 8 B struct beside a scalar");
+    assert_eq(gb(bx, 1), 13, "B1: Box<Pt> as A");
+    assert_eq(gs(GP, 1), 12, "K1: a struct global");
+    assert_eq(tl(p, 1), 82, "TC1: tail through a struct-instance call");
+    assert_eq(gs<Pt, i64>(p, 2) + gs(p, 2), 84, "D1: dedup, same instance twice");
+    var rb: Box<Pt> = mkb(p, 3);
+    assert_eq(rb.v.x + rb.v.y + rb.n, 45, "BR1: var rb: Box<Pt> = mkb(p, 3)");
+    var rq: Box<Qt> = mkb<Qt, i64>(q, 4);
+    assert_eq(rq.v.c + rq.n, 7, "BR2: explicit mkb<Qt, i64>");
+    return 0;
+}
+fn tailr(p: Pt): i64 { return gsl(p, 2); }
+var r0 = run();
+assert_eq(tailr(GP), 26, "TC2: return gsl(p, 2) from a fn");
+var rr = assert_summary();
+syscall(60, rr);

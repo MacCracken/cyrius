@@ -5397,11 +5397,7 @@ fn _gen_call_struct(S, fi, noff, c0, c1): i64 {
     return fi;
 }
 fn _refuse_gen_inst(S, noff, spec): i64 {
-    if (spec == 0 - 3) {
-        ERR_IDENT(S, "generic ", noff, ": a STRUCT type-argument (inferred or explicit) alongside a second type argument is unsupported — only a generic with ONE type parameter takes a struct", 0 - 1);
-    } else {
-        ERR_IDENT(S, "generic ", noff, ": no definition to instantiate for a struct type argument", 0 - 1);
-    }
+    ERR_IDENT(S, "generic ", noff, ": no definition to instantiate for a struct type argument", 0 - 1);
     return 0;
 }
 # 6.6.10 — THE FN A CALL AT TOKEN ti (`name(` / `name<..>(`) ACTUALLY REACHES: a generic's
@@ -5666,17 +5662,13 @@ fn _fnst_tab_restore(S, b): i64 {
 # restore. Returns the specialized fi, or -2 for the not-yet-handled pc>0 case (the
 # caller errors). pc=0 only this bite (param re-emission is the follow-on).
 fn _instantiate_generic_fn(S, base_fi, conc0, conc1): i64 {
-    # v6.3.33/v6.3.39: a STRUCT-typed type-arg on a generic FN needs a monomorphized
-    # struct-ABI (by-value struct params + struct-return rebound per instance). v6.3.39
-    # (B3) enables the SINGLE-tparam case — `wrap<Point>` re-emits the body with T bound
-    # to the struct sid, so `p` becomes a by-value struct param and `p.x` resolves; the
-    # ABI is now sound (the v6.3.36 structmask address-passes >8B struct params and the
-    # v6.3.39 le8 fix keeps <=8B struct locals coherent — a plain `fn wrap_point(p:
-    # Point): i64` already works, and the instance emits equivalent code). The MULTI-
-    # tparam struct combos (`Two<Point,i64>`, a struct as the 2nd type-arg) remain
-    # unproven — still -3 so the caller HARD-ERRORS rather than silently miscompiling.
-    if (conc0 > 0 && conc1 != 0) { return 0 - 3; }   # struct 1st + a 2nd type-arg
-    if (conc1 > 0) { return 0 - 3; }                 # struct as the 2nd type-arg
+    # A STRUCT type argument re-emits the body with T bound to the struct sid, so a `T`
+    # parameter is a by-value struct parameter and `p.x` resolves (v6.3.39, one parameter).
+    # 6.7.1 (C3): on a two-parameter generic too — a struct as either argument, or both
+    # (`g<Pt, i64>`, `g(5, p)`, `g(p, q)`). The refusal that stood here (-3) called the
+    # combination "unproven"; nothing in the instance path depends on which slot holds the
+    # struct, and tests/tcyr/crossos/generic_two_param_struct.tcyr now proves every call path
+    # on every backend. CHANGELOG [6.7.1]
     var base_noff = L64(_fnt_names + base_fi * 8);
     var mangled = _mint_generic_name(S, base_noff, conc0, conc1);
     var spec = FINDFN(S, mangled);

@@ -6,6 +6,24 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [6.7.1] — 2026-10-07
 
+C3, trait-bounded generics (roadmap.md § Spec — C3; the user's decisions of 2026-10-07: a bound is a contract,
+`T: A + B`), with its two prerequisites.
+
+### Language — generics
+
+- **A struct type argument in either slot of a two-parameter generic** (C3 prerequisite). `g<Pt, i64>(p, 2)`,
+  `g<i64, Pt>`, `g(p, 2)`, `g(5, p)` and `g(p, q)` with two structs were refused ("a STRUCT type-argument …
+  alongside a second type argument is unsupported", since 6.6.10; before that the inferred form ran the i64 base
+  and returned 0). The refusal in `_instantiate_generic_fn` called the combination "unproven"; nothing in the
+  instance path depends on which slot holds the struct, and lifting it made every call path work unchanged —
+  receives, assignments, `: A` / `: B` struct returns of 16 and 24 B, `: Box<A>` returns, a `var q: B` local,
+  forwarding `gsl<A, B>(a, b)`, `<Pt, i32>`, an 8-byte struct, `Box<Pt>` as a type argument, a struct global,
+  tail calls. Receiving the `Box<Pt>` result into a plain `Box` is refused as a type mismatch, as the
+  one-parameter form's is. Tests: `tests/tcyr/crossos/generic_two_param_struct.tcyr` (25 rows; x86, aarch64 under
+  qemu, PE under wine — cx has no 16-byte struct pair return, generic or not); gate rows
+  `generic_type_arg_unknown_refused.sh` K (now: runs, with the value) and `private_forward_reference.sh`
+  axis 3 `struct_targ` (now: builds and exits 1).
+
 ## [6.7.0] — 2026-10-07
 
 The v6.7.x language minor opens: arc A, real traits (ADR-007), with the CI moved to Ubuntu 26.04 and current

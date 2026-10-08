@@ -31,15 +31,18 @@
 #   I  TRANSITIVE: outer<T> forwarding `g<T>(p)` / `g(p)`, called outer<i64>(5) / outer(5) —
 #      and with the three fns defined in REVERSE order (the facts are recorded in pass 1)
 #   J  `&g` (the address is the stub's)
-#   K  inferring two struct type args, or a struct beside a scalar — refused like the explicit
-#      form (was 0 silently)
+#   K  two struct type args inferred, or a struct beside a scalar: refused by name 6.6.10 → 6.7.0
+#      (it was 0 silently before). ⭐ 6.7.1 (C3) LIFTED the refusal — these build and RUN now,
+#      with the right value; the full matrix is tests/tcyr/crossos/generic_two_param_struct.tcyr
 #   L  a stub generic returning a struct, received as `var r: Box<i64> = mkb(5)` (its own call path)
 #   N  a bad type argument in a `var x = f<..>(..)` receive is reported ONCE (the receive now
 #      resolves the instance ahead of the call's own parse, and must not report it a second time)
 #   K  (review) the same on every path that emits its OWN call — `var r = mk3(p, q)`,
-#      `var r = mk2(p, 1)`, `bs(mk2(p, 4))`, `r = mk2(p, 6)`, and the explicit `mk2<Pt, i64>(p, ..)`
+#      `var r = mk2(p, 1)`, a struct argument, `r = mk2(p, 6)`, and the explicit `mk2<Pt, i64>(p, ..)`
 #      receive and assignment: `_gen_resolve_call` swallowed the failed instantiation and the BASE
-#      ran with T = i64, silently. Refused ONCE each, by name.
+#      ran with T = i64, silently (6.6.10 refused them once each). Since 6.7.1 each RUNS with the
+#      right value; receiving the `Box<Pt>` result into a plain `Box` is refused as a type mismatch,
+#      once, as the one-parameter `mk1(p)` is.
 #   O  (review) a `pp: *Pt` parameter binds T to i64 (it is a pointer), not to the pointee:
 #      `g(pp)` is refused like `g(5)`, `f(pp) - pp` runs the base (exit 1)
 #   P  (review) at top level, `w1s(mkw(gp))` — a register-pair INSTANCE result as a struct
@@ -61,12 +64,12 @@
 #   _tc_generic_divert returns 1 for EVERY generic      -> M's tail recursion RED (rc 139)
 #   `_gen_close` returns at once (no transitive half)   -> I RED (rc 0)
 #   drop the `_gen_addr_check` call (parse_expr.cyr)    -> J RED (rc 0)
-#   `_gen_call_struct` instantiates without refusing -3 -> K RED
+#   6.7.1: `_instantiate_generic_fn` refusing a struct beside a second type argument again (the
+#   pre-6.7.1 `-3`) -> K RED (refused, rc 1)
 #   drop the `_gen_own_call_check` in the asv_pair receive (parse_decl.cyr) -> L RED (rc 0)
 #   drop the vector guard in _infer_conc_at_cursor      -> M's vector row RED
 #   drop the `_targs_resolvable` early-out in _gen_resolve_call -> N RED (reported twice)
-#   (review) `_gen_resolve_call` records no failure, or `_gen_own_call_check` ignores it -> K RED
-#   (the six own-call rows BUILD); `_is_ptr_param` / `_mark_ptr_param` inert -> O RED;
+#   (review) `_is_ptr_param` / `_mark_ptr_param` inert -> O RED;
 #   `_refuse_toplevel_pair_arg` on FINDFN -> P RED (BUILT)
 # The runtime halves (inference on every path, signature types) are mutation-proven by
 # tests/tcyr/crossos/generic_struct_inference.tcyr — its header lists them.
@@ -171,32 +174,39 @@ build_refused_by() {   # <name> <grep> <what>
     elif ! grep -q "$2" "$T/$1.err"; then bad "$3: refused, but not as expected: $(grep '^error' "$T/$1.err" | head -1)"
     else ok "$3: refused"; fi
 }
+# K (6.7.1, C3) — a struct beside a second type argument RUNS (refused 6.6.10 → 6.7.0).
 printf '%s\nstruct Q { a; b; c; }\nfn g2<T, U>(p: T, q: U): i64 { var s = 0; var i = 0; while (i < 1) { s = s + p.y + q.c; i = i + 1; } return s; }\nfn main(): i64 { %s var q: Q; q.a = 1; q.b = 1; q.c = 9; return g2(p, q); }\nsyscall(60, main());\n' "$PT" "$MKP" > "$T/k1.cyr"
-build_refused_by k1 "generic 'g2': a STRUCT type-argument (inferred or explicit) alongside" "K: g2(p, q), two struct type args inferred (was 0)"
+exits k1 14 "K: g2(p, q), two struct type args inferred"
 printf '%s\nfn g2<T, U>(p: T, n: U): i64 { var s = 0; var i = 0; while (i < n) { s = s + p.y; i = i + 1; } return s; }\nfn main(): i64 { %s return g2(p, 2); }\nsyscall(60, main());\n' "$PT" "$MKP" > "$T/k2.cyr"
-build_refused_by k2 "generic 'g2': a STRUCT type-argument (inferred or explicit) alongside" "K: g2(p, 2), a struct beside a scalar"
+exits k2 10 "K: g2(p, 2), a struct beside a scalar"
 
-# ...and on every path that emits its OWN call (review): `_gen_resolve_call` swallowed the failed
-# instantiation and returned the base, which then ran with T = i64 — silently. Refused ONCE each.
-refused_once() {   # <name> <what>
+# ...and on every path that emits its OWN call. Receiving the `Box<Pt>` result into a plain `Box`
+# (the base, a different layout) is a type mismatch, refused ONCE as `mk1(p)`'s is.
+mismatch_once() {   # <name> <what>
     build "$1"
-    k=$(grep -c "generic 'mk[23]': a STRUCT type-argument (inferred or explicit) alongside" "$T/$1.err" || true)
+    k=$(grep -c "cannot copy 'mk[123]' into a variable of a different struct" "$T/$1.err" || true)
     if [ "$rc" -eq 0 ]; then bad "$2: BUILT (rc 0)"
-    elif [ "$k" -ne 1 ]; then bad "$2: refused $k times by name, want 1: $(grep '^error' "$T/$1.err" | head -1)"
-    else ok "$2: refused once, by name"; fi
+    elif [ "$k" -ne 1 ]; then bad "$2: refused $k times as a mismatch, want 1: $(grep '^error' "$T/$1.err" | head -1)"
+    else ok "$2: refused once, as a type mismatch"; fi
 }
 BX='struct Box<T> { v: T; n; }
 struct Q { a; b; c; }
+fn mk1<T>(x: T): Box<T> { var b: Box<T>; b.v = x; b.n = 8; return b; }
 fn mk2<T, U>(x: T, n: U): Box<T> { var b: Box<T>; b.v = x; b.n = n; return b; }
 fn mk3<T, U>(x: T, y: U): Box<T> { var b: Box<T>; b.v = x; b.n = 7; return b; }
-fn bs(b: Box): i64 { return b.n; }'
+fn bsp(b: Box<Pt>): i64 { return b.n + b.v.y; }'
 n=0
-for body in 'var q: Q; q.c = 1; var r = mk3(p, q); return r.n;' 'var r = mk2(p, 1); return r.n;' \
-        'return bs(mk2(p, 4));' 'var r: Box; r = mk2(p, 6); return r.n;' \
-        'var r: Box<Pt> = mk2<Pt, i64>(p, 1); return r.n;' 'var r: Box; r = mk2<Pt, i64>(p, 6); return r.n;'; do
+for row in '7|var q: Q; q.c = 1; var r = mk3(p, q); return r.n;' '1|var r = mk2(p, 1); return r.n;' \
+        '9|return bsp(mk2(p, 4));' '8|var r: Box<Pt>; r = mk2(p, 6); return r.n + r.v.x;' \
+        '1|var r: Box<Pt> = mk2<Pt, i64>(p, 1); return r.n;' '8|var r: Box<Pt>; r = mk2<Pt, i64>(p, 6); return r.n + r.v.x;' \
+        'X|var r: Box; r = mk2(p, 6); return r.n;' 'X|var r: Box; r = mk2<Pt, i64>(p, 6); return r.n;' \
+        'X|var r: Box; r = mk1(p); return r.n;'; do
     n=$((n + 1))
+    want=${row%%|*}
+    body=${row#*|}
     printf '%s\n%s\nfn main(): i64 { %s %s }\nsyscall(60, main());\n' "$PT" "$BX" "$MKP" "$body" > "$T/ko$n.cyr"
-    refused_once "ko$n" "K: $body"
+    if [ "$want" = X ]; then mismatch_once "ko$n" "K: $body"
+    else exits "ko$n" "$want" "K: $body"; fi
 done
 
 printf '%s\nstruct Box<T> { v: T; n; }\nfn mkb<T>(p: T): Box<T> { var b: Box<T>; b.n = p.x; return b; }\nfn main(): i64 { var r: Box<i64> = mkb(5); return r.n; }\nsyscall(60, main());\n' "$PT" > "$T/l.cyr"
@@ -272,4 +282,4 @@ elif [ "$nerr" -ne 1 ]; then bad "N: var a = idv<f64v2>(v): the refusal printed 
 else ok "N: var a = idv<f64v2>(v): refused once"; fi
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: generic_type_arg_unknown_refused — $fails axis(es) red"; exit 1; fi
-echo "PASS: generic_type_arg_unknown_refused — a type-arg naming no type is refused by name (A-B); a forwarded type parameter resolves to its binding (C-D); scalar and struct type-args unchanged (E); an enum or an unlisted scalar name is refused by name (F-G); a generic using T as a struct is refused at every scalar call, tail call, forwarding generic and &g (H-J, L), two inferred struct type args are refused on every path (K), a \`*Pt\` parameter binds i64 (O), a top-level pair instance argument is refused (P), a global typed with a generic instance is the instance and a top-level pair initialiser is refused in either zone (Q), scalar tail recursion and the struct calls still run (M), and a bad type argument in a receive is reported once (N)"
+echo "PASS: generic_type_arg_unknown_refused — a type-arg naming no type is refused by name (A-B); a forwarded type parameter resolves to its binding (C-D); scalar and struct type-args unchanged (E); an enum or an unlisted scalar name is refused by name (F-G); a generic using T as a struct is refused at every scalar call, tail call, forwarding generic and &g (H-J, L), a struct beside a second type argument runs on every path and a mismatched receive is refused once (K, 6.7.1), a \`*Pt\` parameter binds i64 (O), a top-level pair instance argument is refused (P), a global typed with a generic instance is the instance and a top-level pair initialiser is refused in either zone (Q), scalar tail recursion and the struct calls still run (M), and a bad type argument in a receive is reported once (N)"

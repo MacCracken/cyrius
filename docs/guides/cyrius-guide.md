@@ -3454,14 +3454,14 @@ annotation declares — what `var b: Box<i32>` occupies (4 for the `Box` above, 
 (`expected '=', got end of file`), `Box<Vec<i64>>` and a `Vec<Box<..>>` field were refused,
 and `sizeof(Box<i64>)` and `(Box<i64>, i64)` were `expected ')', got '<'`.
 
-**Status & limits (6.6.10).** Generic functions and structs are supported over
+**Status & limits (6.7.1).** Generic functions and structs are supported over
 i64, narrow scalars (`i32`/`i16`/`i8`), and struct type arguments, inferred or
 explicit, with any body (a small straight-line body is inlined at its call sites;
 anything else is an ordinary call). At most two type parameters are recorded. A
-struct type argument is supported on a generic with ONE type parameter: a struct
-beside a second type argument — explicit (`g<Pt, i64>`) or inferred (`g(p, q)`
-with two structs, or a struct and a scalar) — is a compile error on every call
-path, struct receives and assignments included (6.6.10 for the inferred form; it
+struct type argument works in either slot of a two-parameter generic — explicit
+(`g<Pt, i64>`, `g<i64, Pt>`) or inferred (`g(p, 2)`, `g(5, p)`, `g(p, q)` with two
+structs) — on every call path, struct receives and assignments included (6.7.1;
+from 6.6.10 to 6.7.0 it was a compile error, and before 6.6.10 the inferred form
 ran the i64 base). Enum generic params (`<T, E>`) remain syntactically accepted
 but type-erased.
 

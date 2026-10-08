@@ -71,8 +71,9 @@
 #         a method that EXISTS, for a call to q.nosuch())
 #   M8  remove SFDS in pass 1                             -> axis 3 fwd_generic red, the crossos
 #         tcyr fails to COMPILE, and var_then_fn/arr_then_fn red (the authority keys on SFDS)
-#   M9  remove the _spec < 0 guard in parse_expr.cyr      -> axis 3 struct_targ red ("undefined
-#         function 'enum'" — an out-of-bounds read of _fnt_names at index -3)
+#   M9  remove the _spec < 0 guard in parse_expr.cyr      -> was axis 3 struct_targ red ("undefined
+#         function 'enum'", a read of _fnt_names at index -3); since 6.7.1 no struct type
+#         argument reaches it (the -3 refusal is gone), so this mutation is no longer observable
 #   M11 method args pushed without the callee mask        -> the crossos tcyr SIGSEGVs (139)
 #   M12 `_try_push_struct_addr_arg` back to an unconditional `&slot` -> the crossos tcyr's three
 #         pointer-mode rows fail with the ADDRESS in place of field 0 (a SILENT wrong value)
@@ -500,8 +501,9 @@ EOF
 grep -q "Q7_nosuch" "$T/w/wrong_name.err" || { echo "  FAIL: private_forward_reference axis3 [wrong_name] — the diagnostic does not name Q7_nosuch"; head -3 "$T/w/wrong_name.err" | sed 's/^/      /' || true; fail=1; }
 if grep -q "Q7_seven" "$T/w/wrong_name.err"; then echo "  FAIL: private_forward_reference axis3 [wrong_name] — the diagnostic names Q7_seven, a method that EXISTS"; fail=1; fi
 
-# a generic with STRUCT type-args is still refused — but it must not read out of bounds
-# and invent a name. `_fnt_names[_spec]` with _spec == -3 printed "undefined function 'enum'".
+# a generic with STRUCT type-args beside a second one: refused until 6.7.1, where it must not
+# have read out of bounds and invented a name (`_fnt_names[_spec]` with _spec == -3 printed
+# "undefined function 'enum'"). Since 6.7.1 (C3) it COMPILES and returns 1.
 cat > "$T/w/struct_targ.cyr" <<'EOF'
 include "lib/syscalls.cyr"
 struct Pt { x: i64; y: i64; }
@@ -512,7 +514,10 @@ sys_exit_group(rc);
 EOF
 ( cd "$T/w" && "$CC" < struct_targ.cyr > struct_targ.bin 2> struct_targ.err ) || true
 if grep -q "undefined function 'enum'" "$T/w/struct_targ.err"; then echo "  FAIL: private_forward_reference axis3 [struct_targ] — out-of-bounds _fnt_names read: \"undefined function 'enum'\""; fail=1; fi
-grep -q "STRUCT type-arguments" "$T/w/struct_targ.err" || { echo "  FAIL: private_forward_reference axis3 [struct_targ] — the real diagnostic is gone"; head -3 "$T/w/struct_targ.err" | sed 's/^/      /' || true; fail=1; }
+if [ -s "$T/w/struct_targ.bin" ]; then
+    chmod +x "$T/w/struct_targ.bin"; _st=0; "$T/w/struct_targ.bin" || _st=$?
+    [ "$_st" -eq 1 ] || { echo "  FAIL: private_forward_reference axis3 [struct_targ] — two<Pt, i64>(p, 2) exited $_st, want 1"; fail=1; }
+else echo "  FAIL: private_forward_reference axis3 [struct_targ] — two<Pt, i64>(p, 2) did not build: $(head -1 "$T/w/struct_targ.err")"; fail=1; fi
 
 # compiling cycc's OWN source must not warn about its relaxed-ordering fns. The pre-pass
 # "undefined function" loop runs BEFORE PARSE_PROG, which is where those are defined.
