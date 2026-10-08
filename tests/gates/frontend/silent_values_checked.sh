@@ -86,6 +86,22 @@
 #   M33 `_arr_named_marks` without SLBARR                       -> RED B11 B16
 #   M34 `_arr_gsgn` returning 0 for a bare array again          -> RED B12 B13 B15
 #   M35 `_stk_named_marks` without SLBARR                       -> RED B14
+# D3 (the third round, 2026-10-08; the same method — a scratch tree per mutation, its compiler built
+# by build/cycc, this gate run FROM it with CYCC=<mutant>):
+#   M36 `_w128_cmp` never takes a u128 on the left              -> RED C1 C2 C3, AU2 (U22), AC and AS
+#       (S12) on every leg
+#   M37 `_w128_cmp_r` never takes a u128 on the right           -> RED AC on every leg (C23; C36 C37,
+#       the chain's hook is the same fn)
+#   M38 ECONDCMP's chain without its u128 hook                  -> RED AC on every leg (C36 C37)
+#   M39 x86 EW128_CMP: `>` / `<=` without the operand swap      -> RED C1 C2 C3, AC on x86 and PE only
+#       (C5 C7 C10 C11 C16 C22 C30 C32 C35 C41 C44)
+#   M40 aarch64 EW128_CMP: `sbcs` (the high words) as `subs`    -> RED AC on aarch64 only (C27 C39)
+#   M41 cx EW128_CMP without the 2^63 bias (a signed compare)   -> RED AC on cx only (C11 C12 C13 ...)
+#   M42 `_w128_cmp` reads a u128 LOCAL on the left in place     -> RED AC on every leg (C41: the right
+#       side ran first)
+#   M43 `_w128_store` takes only a `+` / `-` result (D2's)      -> RED U35, S1 S2 S3, AS on every leg
+#   (M44 x86 EW128_CMP without its IR_RAW_EMIT mark stayed GREEN, the IR=3 legs included: the `lea`
+#   before it is already marked opaque. The mark is kept, as EW128_ACCM's.)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}

@@ -104,12 +104,12 @@ fn tmain(): i64 {
     set2(&b, 0, 2);
     set2(&c, 5, 1);
     k = 0;
-    while (b < c) { b = b + 1; k = k + 1; }
+    while (b < c && k < 9) { b = b + 1; k = k + 1; }
     assert_eq(k, 0, "C38: a `while` condition: 2^65 < 2^64 + 5 is false (the low words said 0 < 5)");
     set2(&b, M - 1, 0);
     set2(&c, 1, 1);
     k = 0;
-    while (b < c) { b = b + 1; k = k + 1; }
+    while (b < c && k < 9) { b = b + 1; k = k + 1; }
     assert_eq(k, 3, "C39: a `while` condition across 2^64");
     set2(&b, 7, 1);
     set2(&c, 2, 2);
