@@ -18,6 +18,12 @@
 # THE RULE, from the compiler: an include is a directive only in COLUMN 0 (ISINCLUDE in
 # src/frontend/lex_pp.cyr — an indented `include` is an expression) and only outside a string
 # literal (PP_PASS gates on the PP_LEXST string state), and the directive consumes its line.
+# 6.7.3 (axis 7): that state machine is PP_LEXST_AT since 6.6.20 — a `#` that spells one of the
+# lexer's ten attribute words keeps its line in CODE, strings included. cyaudit's copy read it
+# as a comment, so after `#assert 1 == 1, "x<LF>y"` vet said `no dependencies` and deny
+# `0 violations` (rc 0) for an include the compiler opens, and vet reported a false MISSING
+# (rc 1) on a valid program. Axis 7 derives the word list and its `(` rule from LEXATTRWORD
+# (src/frontend/lex.cyr) and holds cyaudit's own copy (_au_attr_len) to it — the drift guard.
 # ⭐ AXIS 1 ASKS THE COMPILER, NOT cyaudit, what an include is: a file whose only mentions of a
 # MISSING include are a comment and a raw line inside a string must COMPILE (so the compiler
 # does not see them), and the same file with the include in column 0 must NOT.
@@ -26,7 +32,8 @@
 # (CYAUDIT_SRC=<file> builds a different source instead — how the mutants below were run).
 #
 # MUTATION PROOF (each a scratch copy of programs/cyaudit.cyr via CYAUDIT_SRC; checks failed
-# of 26). The 6.6.7 cyaudit itself fails 12.
+# of 26 for M1..M8, measured at 6.6.8; of 44 for M9..M12, at 6.7.3). The 6.6.7 cyaudit itself
+# fails 12 of the 26.
 #   M1  no column-0 anchor (`bol == 1` dropped)                                   1
 #   M2  no string state (`st == 0` dropped)                                       1
 #   M3  the fixed 262,144-byte read restored                                      2
@@ -35,6 +42,14 @@
 #   M6  is_trusted ignores `..` components                                        1
 #   M7  an unreadable file reads as "no dependencies" again                       2
 #   M8  the directive's line not consumed (a later `"` on it opens a string)      1
+#   M9  the 6.7.2 cyaudit (every `#` in code opened a comment)                   14
+#       (the census, all ten attribute rows, deny, at_str, the #deprecated( row)
+#   M10 the wrong fix: every `#` in code stays code                               2
+#       (the `#ioctl "notes` and `#io("notes` guards)
+#   M11 #deprecated's `(` rule dropped from _au_attr_len                          2
+#       (the census, the #deprecated( row)
+#   M12 the `io` row deleted from _au_attr_len                                    2
+#       (the census, the #io row)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -139,6 +154,59 @@ for f in programs/ark.cyr cbt/cyrius.cyr programs/cyaudit.cyr; do
     check "vet $f: clean, with dependencies" "0 yes" "$ARC $([ "${n:-0}" -gt 0 ] && echo yes || echo no)"
     ARC=0; ( cd "$ROOT" && timeout 10 "$AU" deny "$f" ) > "$T/ao" 2>&1 || ARC=$?
     check "deny $f: 0 violations" 0 "$ARC"
+done
+
+echo "axis 7 — an ATTRIBUTE line is CODE, its strings included (PP_LEXST_AT; 6.7.3)"
+# A `#` that spells one of the lexer's attribute words does not open a comment: LEX keeps lexing
+# the line as code, and since 6.6.20 so does the preprocessor (PP_LEXST_AT asks LEXATTRWORD). A
+# string literal opened there may span lines, and cyaudit, reading the line as a comment, fell
+# one quote out of step with the compiler for the rest of the file. cyaudit carries its own
+# copy of the list (_au_attr_len), so the drift guard is here: the words AND their `(` rule
+# are DERIVED from LEXATTRWORD's rows in src/frontend/lex.cyr, the copy must list exactly the
+# same pairs, and every derived word is probed — an attribute added to the lexer alone turns
+# this RED. The compiler is the oracle on every row.
+CYS="${CYAUDIT_SRC:-$ROOT/programs/cyaudit.cyr}"
+LEXROWS=$(grep -oE '_lex_attr_is\(base, q, n, "[a-z_]+", [01]\)' "$ROOT/src/frontend/lex.cyr" \
+    | sed 's/.*"\([a-z_]*\)", \([01]\))/\1 \2/' | sort | paste -sd',' -)
+AUROWS=$(grep -oE '_au_attr_is\(b, p, n, "[a-z_]+", [01]\)' "$CYS" \
+    | sed 's/.*"\([a-z_]*\)", \([01]\))/\1 \2/' | sort | paste -sd',' -)
+ATTRS=$(printf '%s' "$LEXROWS" | tr ',' '\n' | sed 's/ .*//')
+check "  (premise: LEXATTRWORD in src/frontend/lex.cyr lists at least the ten attribute words)" yes \
+    "$([ "$(printf '%s\n' $ATTRS | grep -c .)" -ge 10 ] && echo yes || echo no)"
+check "cyaudit's _au_attr_len lists LEXATTRWORD's words with the same \`(\` rule (word ap)" "$LEXROWS" "$AUROWS"
+for w in $ATTRS; do
+    printf 'fn f(): i64 { return 1; }\n#%s 1 == 1, "x\ny"\ninclude "lib/missing_mod.cyr"\nsyscall(60, f());\n' "$w" > "$W/at_$w.cyr"
+    crc=0; ( cd "$W" && "$ROOT/build/cycc" < "at_$w.cyr" > "$T/pa" 2> "$T/pa.err" ) || crc=$?
+    au vet "at_$w.cyr"
+    check "#$w line: the compiler opens the include after it, and vet reports it MISSING (it said 'no dependencies', rc 0)" \
+        "1 1|1|MISSING lib/missing_mod.cyr" "$crc $(grep -c 'cannot open include file: lib/missing_mod.cyr' "$T/pa.err")|$ARC|$(rows)"
+done
+printf 'fn f(): i64 { return 1; }\n#assert 1 == 1, "x\ny"\ninclude "../escape.cyr"\nsyscall(60, f());\n' > "$W/at_deny.cyr"
+crc=0; ( cd "$W" && "$ROOT/build/cycc" < at_deny.cyr > "$T/pd" 2> "$T/pd.err" ) || crc=$?
+au deny at_deny.cyr
+check "deny sees a traversal after an attribute line, as the compiler does (it said '0 violations', rc 0)" \
+    "1 1|1|DENY: parent traversal: ../escape.cyr" "$crc $(grep -c 'path traversal rejected: ../escape.cyr' "$T/pd.err")|$ARC|$(rows)"
+# The other direction, on a program that COMPILES: the attribute's string holds a raw line that
+# begins `include "` — string data to the compiler, a false MISSING (rc 1) to the old copy.
+printf '#assert 1 == 1, "x\ninclude "; var t2 = 0; var u2 = "\ny";\nsyscall(60, 7);\n' > "$W/at_str.cyr"
+prc=0; ( cd "$W" && "$ROOT/build/cycc" < at_str.cyr > "$T/as" 2> /dev/null && chmod +x "$T/as" && timeout 10 "$T/as" ) || prc=$?
+check "  (oracle: at_str.cyr compiles and runs — that line is string data; exit 7)" 7 "$prc"
+au vet at_str.cyr
+check "vet at_str.cyr: no dependencies, rc 0 (it reported MISSING '; var t2 = 0; var u2 = ', rc 1)" "0 1" "$ARC $(grep -c 'no dependencies' "$T/ao")"
+# Over-correction guards, the compiler's verdict on each: a comment that only STARTS like an
+# attribute, and `#io(` (`(` ends only #assert, #deprecated and #pe_import), are comments, so
+# their quote opens nothing and the next line's include IS one; `#deprecated(` is code, so its
+# string closes on the next line and the include after THAT is one.
+printf 'fn f(): i64 { return 1; }\n#ioctl "notes\ninclude "lib/missing_mod.cyr"\nsyscall(60, f());\n' > "$W/at_cmt.cyr"
+printf 'fn f(): i64 { return 1; }\n#io("notes\ninclude "lib/missing_mod.cyr"\nsyscall(60, f());\n' > "$W/at_iop.cyr"
+printf '#deprecated("x\ny") fn f(): i64 { return 1; }\ninclude "lib/missing_mod.cyr"\nsyscall(60, f());\n' > "$W/at_depp.cyr"
+for row in 'at_cmt:`#ioctl "notes` is a comment' 'at_iop:`#io("notes` is a comment' \
+           'at_depp:`#deprecated("x<LF>y")` is code'; do
+    f=${row%%:*}
+    crc=0; ( cd "$W" && "$ROOT/build/cycc" < "$f.cyr" > "$T/pc" 2> "$T/pc.err" ) || crc=$?
+    au vet "$f.cyr"
+    check "ANTI-VACUOUS: ${row#*:} to both — the compiler opens the include, vet reports it MISSING" \
+        "1 1|1|MISSING lib/missing_mod.cyr" "$crc $(grep -c 'cannot open include file: lib/missing_mod.cyr' "$T/pc.err")|$ARC|$(rows)"
 done
 
 echo ""
