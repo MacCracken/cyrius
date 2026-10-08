@@ -9,7 +9,11 @@
 #
 #   R  refused once, by name: a bool field (B2's rule), a struct-typed field, a field of a call's
 #      result (`mk(3).n += 1`, `b.mk(4).n += 5` — and `= 5`, which was "expected ';', got '='"),
-#      `E.A += 1`, an unknown field, an untyped base
+#      `E.A += 1`, an unknown field, an untyped base; and (R10-R16, the user's decision) OP= on a
+#      STRUCT VALUE — an inline local of any size, an address-passed by-value parameter, an inline
+#      global, a for step, a top-level statement: it integer-operated on the first word and never
+#      called `T_add` (13 where `a = a + b` gives 33). H: a handle keeps its 6.6.17 pointer step.
+#      (u128 and SIMD-vector OP= are filed, not refused here.)
 #   W  the float rules of 6.6.11 on a field: an f64 field with an integer right operand warns
 #      (kind 1), an f32 one with an f64 right operand (kind 5); an i8 field `+= 1` does not
 #   X  `--syntax-only` (what `cyrius lint` runs): a struct the file cannot see, or a field it does
@@ -45,6 +49,7 @@
 #   M10b `_for_step_replay` without the field arm         -> RED F1-F4 and A (the values file does not build)
 #   M10c `_for_step_replay` without the `*p` arm          -> RED A (the values file does not build: T8 T9)
 #   M10d `_fsc_expr` not arming `_fla_stp` for a step     -> RED A (tcyr T6: one word of `z.k`, 76)
+#   M11 `_asg_struct_refused` never refusing              -> RED R10-R16 (each BUILDS; R10 exits 13, measured)
 # (The IR_RAW_EMIT record at the address and the flags-tracker clear after the load are defensive:
 # no row kills them — measured.)
 set -u
@@ -124,6 +129,18 @@ refused r05 "cannot assign to a field of a call result: the result is a temporar
 refused r06 "cannot assign to enum constant 'A'" "R6: E.A += 1" "enum E { A; B; }\nfn main(): i64 { E.A += 1; return 0; }$E"
 refused r07 "unknown field 'zz' on struct 'H'" "R7: an unknown field" "${SH}fn main(): i64 { var h = H { 1, 2 }; h.zz += 1; return 0; }$E"
 refused r08 "no struct type in scope for 'e'; a '.field' assignment needs its struct declaration" "R8: an untyped base" "fn main(): i64 { var e = 0; e.size += 1; return 0; }$E"
+PADD='struct P { x; y; }\nfn P_add(a: P, b: P): P { var r: P; r.x = a.x + b.x; r.y = a.y + b.y; return r; }\n'
+SV="compound assignment to struct"
+SVT="is refused - a struct value is not an integer or a float (write \`a = a + b\`)"
+refused r10 "$SV 'a' $SVT" "R10: a struct local, a += b (13 where a = a + b gives 33)" "${PADD}fn main(): i64 { var a = P { 1, 2 }; var b = P { 10, 20 }; a += b; return a.x + a.y; }$E"
+refused r11 "$SV 'G' $SVT" "R11: an inline struct global" "${PADD}var G = P { 1, 2 };\nfn main(): i64 { var b = P { 10, 20 }; G += b; return G.x; }$E"
+refused r12 "$SV 'a' $SVT" "R12: an address-passed by-value parameter" "${PADD}fn f(a: P): i64 { a -= 1; return a.x; }\nfn main(): i64 { var b = P { 10, 20 }; return f(b); }$E"
+refused r13 "$SV 'a' $SVT" "R13: an 8-byte struct local" "struct S8 { v; }\nfn main(): i64 { var a: S8; a.v = 1; a *= 4; return a.v; }$E"
+refused r14 "$SV 'a' $SVT" "R14: a for step" "${PADD}fn main(): i64 { var a = P { 1, 2 }; for (var i = 0; i < 1; a += 1) { i = 1; } return a.x; }$E"
+refused r15 "$SV 'G' $SVT" "R15: a top-level statement" "${PADD}var G = P { 1, 2 };\nG <<= 1;\nsyscall(60, G.x);\n"
+refused r16 "$SV 'a' $SVT" "R16: an 8-byte by-value parameter" "struct S8 { v; }\nfn f(a: S8): i64 { a += 4; return a.v; }\nfn main(): i64 { var b: S8; b.v = 3; return f(b); }$E"
+exits h01 48 "H1: handles keep the pointer step: a \`*T\` param and global step sizeof(P), a pointer-mode local adds bytes" "${PADD}var GP: *P = 0;\nfn bits(v) { return v; }\nfn f(p: *P): i64 { p += 1; return p; }\nfn main(): i64 { var a: P[3]; var b0 = bits(&a); var q: P = b0; q += 16; GP = b0; GP += 1; return bits(f(b0)) - b0 + bits(GP) - b0 + bits(q) - b0; }$E"
+
 # Two refusals in a row are both reported: each leaves the parse in sync.
 printf '%b' "${ST}struct B1 { ok: bool; n; }\nfn main(): i64 { var o = O { 1, 2, 3 }; o.i += 1; var b = B1 { true, 1 }; b.ok |= 1; return 0; }$E" > "$T/r09.cyr"
 build r09

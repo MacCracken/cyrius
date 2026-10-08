@@ -2873,6 +2873,7 @@ fn _asg_compound_load(S, noff): i64 {
             ERR_IDENT(S, "compound assignment to an untyped `self` is refused - in an impl it points at ", L64(S + 0x1A6018 + (_cur_iself_sid - 1) * 8), ": declare `self: *T` to step whole elements", 0 - 1);
         } }
     var li = FINDLOCAL(S, noff);
+    _asg_struct_refused(S, noff, li);   # 6.7.5 (B8): `a += b` on a struct value
     if (li >= 0) {
         var lt = _load_lt(S, li);
         _asg_cstep = _slot_ptr_step(S, li);
@@ -2900,6 +2901,31 @@ fn _asg_compound_load(S, noff): i64 {
         return GVTYPE(S, gi);
     }
     return 0;
+}
+
+# ⛔ 6.7.5 (B8) — `a OP= b` ON A STRUCT VALUE IS REFUSED BY NAME (user, 2026-10-08), as B2 refused
+# `b += 1` on a bool: it compiled and integer-operated on the struct's FIRST word, never calling an
+# overloaded `T_add` — 13 where `a = a + b` gives 33 — silently, as a statement and as a for step.
+# A struct value is an inline aggregate local (GLAGG: `var a = P { .. }`, `var a: P`, a <= 8 B one
+# too), an address-passed by-value parameter (`_local_is_sptr_param`) and an inline struct global
+# (GVPM 2). A HANDLE keeps its 6.6.17 pointer step: a `*T` slot, a pointer-mode local or global
+# (it holds the address), a `Str`. (u128 and SIMD-vector OP= are filed, not decided here.) The
+# statement still parses on, so the parse stays in sync. `li` = FINDLOCAL's answer. CHANGELOG [6.7.5]
+fn _asg_struct_refused(S, noff, li): i64 {
+    var sv = 0;
+    if (li >= 0) {
+        var lt = GLTYPE(S, li);
+        if (lt < 0) { if (lt > 0 - 2048) { if (GLPTRP(S, li) == 0) {
+                    if (GLAGG(S, li) == 1) { sv = 1; }
+                    elif (_local_is_sptr_param(S, li) == 1) { sv = 1; }
+                } } }
+    } else {
+        var gi = _findvar_core(S, noff);
+        if (gi >= 0) { if (GVTYPE(S, gi) > 0) { if (GVPM(S, gi) == 2) { sv = 1; } } }
+    }
+    if (sv == 0) { return 0; }
+    _err_in_sync(S, "compound assignment to struct ", noff, " is refused - a struct value is not an integer or a float (write `a = a + b`)");
+    return 1;
 }
 
 # ⛔ 6.6.12 — THE STORE OF AN ASSIGNMENT, at the slot's width: a local (g == 0) or a global
