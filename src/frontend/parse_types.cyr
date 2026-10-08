@@ -859,8 +859,11 @@ fn ADDFIELDFK(S, si, fnoff, k): i64 {
     var ent = L64(S + 0x1AA018 + si * 8) + (L64(S + 0x1A8018 + si * 8) & 0x7FFFFFFFFFFFFFFF);
     var top = L64(S + 0x1AC018);
     ADDFIELD(S, si, fnoff);
-    if (k == 0) { return 0; }
+    if (k == 0) { if (_fld_bool == 0) { return 0; } }
     if (L64(S + 0x1AC018) == top) { return 0; }
+    if (k == 3) { SFBOOL(S, ent, 1); return 0; }   # 6.7.3: a bool field (not a float kind)
+    SFBOOL(S, ent, 0);
+    if (k == 0) { return 0; }
     SFFK(S, ent, k);
     return 0;
 }
@@ -1435,7 +1438,8 @@ fn _field_name_kind(S, tnoff): i64 {
         return 2;                            # f32
     }
     if (k == 5) { return 0 - 1; }            # a vector: _refuse_field_type names it
-    return 0;   # u8..u64 (8 bytes), bool, cstring, Result, Option, Tagged, an enum (either side)
+    if (_tn_bool(c) == 1) { return 3; }      # 6.7.3: bool (an 8-byte word, writes checked)
+    return 0;   # u8..u64 (8 bytes), cstring, Result, Option, Tagged, an enum (either side)
 }
 
 # Is `noff` one of the type parameters of the struct being declared (`struct Box<T> { v: T; }`)?

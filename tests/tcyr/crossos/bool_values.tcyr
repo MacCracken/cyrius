@@ -21,6 +21,10 @@ var GT: bool = true;
 var GF: bool = false;
 var GC: bool = (3 < 4);
 fn one(): i64 { return 1; }
+struct Sw { n; on: bool; }
+struct Box2 { k; s: Sw; }
+impl Sw { fn flip(self): i64 { self.on = !self.on; return 0; } }
+var GS = Sw { 9, true };
 var GD: bool = one() == 1;
 
 fn not_of(x) { return !x; }
@@ -94,10 +98,29 @@ fn globals(): i64 {
     return 0;
 }
 
+fn fields(): i64 {
+    var a: Sw;
+    a.n = 4;
+    a.on = a.n > 3;
+    assert_eq(a.on, 1, "F1: a field stored a comparison");
+    a.flip();
+    assert_eq(a.on, 0, "F2: self.on = !self.on");
+    var b = Sw { 1, true };
+    var c = Sw { n: 2, on: (a.n == 4) };
+    assert_eq(b.on + c.on * 2, 3, "F3: positional and named literals");
+    var x: Box2;
+    x.s.on = b.on && c.on;
+    assert_eq(x.s.on, 1, "F4: a chain");
+    var l: bool = x.s.on;
+    assert_eq(l + GS.on, 2, "F5: a local from a field, a global literal's field");
+    return 0;
+}
+
 fn run(): i64 {
     values();
     locals();
     globals();
+    fields();
     return 0;
 }
 var r0 = run();

@@ -1536,7 +1536,18 @@ fn _field_load_type(S, si, fi): i64 {
     if (k == 2) { SESTYPE(S, F32_TYID); }
     var ps = _fld_ps_get(S, si, fi);   # 6.6.17: a `name: *T` field is a pointer (_add_ptr_field)
     if (ps > 0) { SPSC(S, ps); }
+    if (GFBOOL(S, si, fi) == 1) { _BX_MARK(S); }   # 6.7.3: a bool field's load is a boolean value
     return 0;
+}
+
+# 6.7.3 (B2) — a field's kind for the store checks: the float kind (low bits, _IFS_CHECK's) + 16 for
+# a bool. `_ifs_bx` runs both checks on the value just parsed, `fnoff` the field named in a refusal.
+fn _fk_bx(S, si, fi): i64 { return GFFK(S, si, fi) + 16 * GFBOOL(S, si, fi); }
+fn _ifs_bx(S, k, ti, fnoff): i64 {
+    _IFS_CHECK(S, k & 15, ti);
+    if (k < 16) { return 0; }
+    if (_BX_IS(S) == 1) { return 0; }
+    return _bx_refuse(S, ti, "cannot store a value that is not a bool into bool field ", fnoff, 0, 0 - 1);
 }
 
 # Store to a struct field: ident.field = expr; or ident.inner.field = expr;
@@ -1668,7 +1679,7 @@ fn PARSE_FIELD_STORE(S, noff): i64 {
     }
     var hop = _rlf_hop;   # 6.6.17: saved before the RHS can re-resolve a field
     var lfn = GETFNAME(S, _rlf_si, _rlf_fi);
-    var lfk = GFFK(S, _rlf_si, _rlf_fi);   # 6.6.10: read before the RHS can re-resolve a field
+    var lfk = _fk_bx(S, _rlf_si, _rlf_fi);   # 6.6.10: read before the RHS can re-resolve a field (6.7.3: + bool)
     if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); }
     STI(S, GTI(S) + 1);
     # 6.6.10: a struct VALUE into a struct-typed field copies the whole struct. See `_fsc_src`.
@@ -1682,7 +1693,7 @@ fn PARSE_FIELD_STORE(S, noff): i64 {
     if (fsc == 0) {
         var fst_ti = GTI(S);
         PCMPE(S);
-        _IFS_CHECK(S, lfk, fst_ti);   # 6.6.10: `p.x = 1` into an f64 / f32 field
+        _ifs_bx(S, lfk, fst_ti, lfn);   # 6.6.10: `p.x = 1` into an f64 / f32 field; 6.7.3 into a bool
     }
     var fst_sz = FIELDSZ(S, ft);
     if (_fst_odd_sz(fst_sz) == 1) {
@@ -1729,6 +1740,12 @@ var _sl_base_li = 0 - 1;
 # 6.6.10: the float kind of the field EMIT_STRUCT_FIELD_W is about to initialise (1 = f64,
 # 2 = f32), set by its callers and consumed on entry, so `P { 1, 2 }` into f64 fields warns.
 var _sfw_fk = 0;
+var _sfw_fn = 0;   # 6.7.3: that field's name (a bool field's refusal names it); _sfw_fk + 16 = a bool
+fn _sfw_set(S, si, fi): i64 {
+    _sfw_fk = _fk_bx(S, si, fi);
+    _sfw_fn = GETFNAME(S, si, fi);
+    return 0;
+}
 # 6.6.12: 1 = the value is already in rax (a nested-literal walk parsed it), consumed on entry.
 var _sfw_have = 0;
 fn EMIT_STRUCT_FIELD_W(S, vcnt, boff, width): i64 {
@@ -1739,7 +1756,7 @@ fn EMIT_STRUCT_FIELD_W(S, vcnt, boff, width): i64 {
     else {
         var t0 = GTI(S);
         PCMPE(S);
-        _IFS_CHECK(S, fk, t0);
+        _ifs_bx(S, fk, t0, _sfw_fn);
     }
     EPUSHR(S);
     # Load variable address into x1/rcx via fixup
@@ -1818,7 +1835,7 @@ fn _spi_is_nested(S, ft): i64 {
 fn _spi_leaf(S, tidx, si, fi, off): i64 {
     if (_spi_pk == 2) { _sfw_have = 1; }
     _spi_pk = 0;
-    _sfw_fk = GFFK(S, si, fi);
+    _sfw_set(S, si, fi);
     EMIT_STRUCT_FIELD_W(S, tidx, off, FIELDSZ(S, GETFTYPE(S, si, fi)));
     return 0;
 }
@@ -1863,12 +1880,13 @@ fn _spi_chain_has(S, ft, want): i64 {
 }
 
 # The float kind of the leaf a scalar carried into nested struct `ft` lands on (its first leaf).
+var _spi_first_fn = 0;   # 6.7.3: that leaf's field name
 fn _spi_first_fk(S, ft): i64 {
     var t = ft;
     while (_spi_is_nested(S, t) == 1) {
         if (GETFCOUNT(S, t - 1) == 0) { return 0; }
         var t2 = GETFTYPE(S, t - 1, 0);
-        if (_spi_is_nested(S, t2) == 0) { return GFFK(S, t - 1, 0); }
+        if (_spi_is_nested(S, t2) == 0) { _spi_first_fn = GETFNAME(S, t - 1, 0); return _fk_bx(S, t - 1, 0); }
         t = t2;
     }
     return 0;
@@ -1944,6 +1962,7 @@ fn _spi_expr(S, ft): i64 {
     _sc_rbeg = 0 - 1;
     var w = _sc_arm(S);
     PCMPE(S);
+    var bx = _BX_IS(S);   # 6.7.3: the stamp, before anything below can move the cursor
     _sc_want = w;
     _fla_want = sv;
     _fla_lit = svl;
@@ -1964,8 +1983,16 @@ fn _spi_expr(S, ft): i64 {
         _spi_pn = _fla_name;
         return 1;
     }
-    _IFS_CHECK(S, _spi_first_fk(S, ft), st);
+    _spi_leaf_check(S, _spi_first_fk(S, ft), st, bx);
     return 2;
+}
+# A scalar carried into a nested struct lands on its first leaf: the float warning, and (6.7.3) a
+# bool leaf's check — `bx` the stamp taken right after the value was parsed.
+fn _spi_leaf_check(S, k, st, bx): i64 {
+    _IFS_CHECK(S, k & 15, st);
+    if (k < 16) { return 0; }
+    if (bx == 1) { return 0; }
+    return _bx_refuse(S, st, "cannot store a value that is not a bool into bool field ", _spi_first_fn, 0, 0 - 1);
 }
 
 # The whole value (up to its `,` / `}`) was a > 16 B method / operator call `_sc_pre` refused
@@ -2080,7 +2107,7 @@ fn _STRUCT_INIT_BODY(S, target_idx, sid): i64 {
             # broke for the LAST narrow field at end-of-struct
             # (which would overflow the struct's allocation).
             var nf_w = FIELDSZ(S, ft);
-            if (found >= 0) { _sfw_fk = GFFK(S, si, found); }
+            if (found >= 0) { _sfw_set(S, si, found); }
             EMIT_STRUCT_FIELD_W(S, target_idx, boff, nf_w);
         }
         # Require every field to be set — no implicit zero defaults (yet).

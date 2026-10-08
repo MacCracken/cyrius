@@ -234,9 +234,11 @@ fn bool_field(): i64 {
     store64(&buf, 0);
     store64(&buf + 8, 0);
     var b: BF = &buf;
-    b.a = 0x0102030405060708;
+    # 6.7.3: a bool field takes only a boolean value, so the 8-byte pattern goes in raw and the
+    # field reads it back whole — the width is what this row measures.
+    store64(&buf, 0x0102030405060708);
     b.b = 5;
-    assert_eq(load64(&buf), 0x0102030405060708, "BF.a: an 8-byte field");
+    assert_eq(b.a, 0x0102030405060708, "BF.a: an 8-byte field");
     assert_eq(load8(&buf + 8), 5, "BF.b at offset 8");
     return 0;
 }
