@@ -33,44 +33,45 @@ fn _mf_vocab_a(i): i64 {
     if (i == 6) { return "package|repository|info|-|-|-|people and package recipes"; }
     if (i == 7) { return "build|entry|read|src|-|<source>|cyrius build, cyrius package: the source"; }
     if (i == 8) { return "build|output|read|-|-|<output>|cyrius build, cyrius package: the output (a default)"; }
-    if (i == 9) { return "build|test|read|-|-|<file>...|bare cyrius test: these (file / dir / list), then tests/"; }
-    if (i == 10) { return "build|modules|read|-|-|-|every compile: these files prepended before the entry"; }
-    if (i == 11) { return "build|dce|read|-|CYRIUS_DCE|--dce|cyrius build: dead-code elimination (bool)"; }
-    if (i == 12) { return "build|strict|held|-|-|--strict|has had no effect since 6.3.2: a reachable undefined function is an error by default; --allow-undef downgrades it"; }
-    if (i == 13) { return "build|defines|read|-|CYRIUS_DEFINES|-D|cyrius build: one #define per name"; }
-    if (i == 14) { return "build|target|held|-|-|-|pass --target / --aarch64 / --win / --agnos on the command line"; }
-    if (i == 15) { return "build|features|dropped|-|-|-|features are [features] + --features"; }
-    if (i == 16) { return "coverage|programs|read|-|-|--programs|cyrius coverage: RUN programs in the corpus (globs)"; }
-    if (i == 17) { return "sections|base|read|-|-|-|bare-metal builds: the image load base"; }
+    if (i == 9) { return "build|test|read|-|-|<path>...|bare cyrius test: these (file / dir / list), then tests/"; }
+    if (i == 10) { return "build|test_standalone|read|-|-|-|cyrius test: each test compiles standalone, its own includes only (no [deps] stdlib prepend; bool)"; }
+    if (i == 11) { return "build|modules|read|-|-|-|every compile: these files prepended before the entry"; }
+    if (i == 12) { return "build|dce|read|-|CYRIUS_DCE|--dce|cyrius build: dead-code elimination (bool)"; }
+    if (i == 13) { return "build|strict|held|-|-|--strict|has had no effect since 6.3.2: a reachable undefined function is an error by default; --allow-undef downgrades it"; }
+    if (i == 14) { return "build|defines|read|-|CYRIUS_DEFINES|-D|cyrius build: one #define per name"; }
+    if (i == 15) { return "build|target|held|-|-|-|pass --target / --aarch64 / --win / --agnos on the command line"; }
+    if (i == 16) { return "build|features|dropped|-|-|-|features are [features] + --features"; }
+    if (i == 17) { return "coverage|programs|read|-|-|--programs|cyrius coverage: RUN programs in the corpus (globs)"; }
+    if (i == 18) { return "sections|base|read|-|-|-|bare-metal builds: the image load base"; }
     return 0;
 }
 
 fn _mf_vocab_b(i): i64 {
-    if (i == 18) { return "deps|stdlib|read|-|-|-|cyrius deps: stdlib leaves vendored into lib/ and auto-prepended"; }
-    if (i == 19) { return "deps.*|git|read|-|-|-|cyrius deps: the repository to clone"; }
-    if (i == 20) { return "deps.*|tag|read|-|-|-|cyrius deps: the tag to check out"; }
-    if (i == 21) { return "deps.*|path|read|-|-|-|cyrius deps: a local checkout instead of git"; }
-    if (i == 22) { return "deps.*|modules|read|-|-|-|cyrius deps: the files to vendor"; }
-    if (i == 23) { return "deps.*|modular|read|-|-|-|cyrius deps: sub-modules from dist/<name>/"; }
-    if (i == 24) { return "deps.*|requires|read|-|-|-|cyrius deps: stdlib leaves the dep needs in scope"; }
-    if (i == 25) { return "deps.*|optional|read|-|-|--features|cyrius deps: resolve only when a feature names it"; }
-    if (i == 26) { return "deps.*|target|read|-|-|--target|cyrius deps: resolve only for a matching target"; }
-    if (i == 27) { return "lib|modules|read|-|-|-|cyrius distlib: the base bundle"; }
-    if (i == 28) { return "lib.*|modules|read|-|-|<profile>|cyrius distlib <profile>"; }
-    if (i == 29) { return "lib|embed|read|-|-|-|cyrius distlib: the [embed] entries the base bundle carries"; }
-    if (i == 30) { return "lib.*|embed|read|-|-|<profile>|cyrius distlib <profile>: the [embed] entries this bundle carries"; }
-    if (i == 31) { return "features|default|read|-|-|--no-default-features|cyrius deps: features on by default"; }
-    if (i == 32) { return "features|*|read|-|-|--features|cyrius deps: a feature and the optional deps it turns on"; }
-    if (i == 33) { return "groups|*|read|-|-|-|cyrius deps: a named group of stdlib leaves"; }
-    if (i == 34) { return "release|bins|read|-|-|-|release.yml, install.sh, cyrius pulsar"; }
-    if (i == 35) { return "release|cross_bins|read|-|-|-|release.yml, install.sh, cyrius pulsar"; }
-    if (i == 36) { return "release|scripts|read|-|-|-|release.yml, install.sh"; }
-    if (i == 37) { return "embed|*|read|-|-|-|every compile: the file's bytes as NAME() / NAME_len(), prepended before the entry"; }
+    if (i == 19) { return "deps|stdlib|read|-|-|-|cyrius deps: stdlib leaves vendored into lib/ and auto-prepended"; }
+    if (i == 20) { return "deps.*|git|read|-|-|-|cyrius deps: the repository to clone"; }
+    if (i == 21) { return "deps.*|tag|read|-|-|-|cyrius deps: the tag to check out"; }
+    if (i == 22) { return "deps.*|path|read|-|-|-|cyrius deps: a local checkout instead of git"; }
+    if (i == 23) { return "deps.*|modules|read|-|-|-|cyrius deps: the files to vendor"; }
+    if (i == 24) { return "deps.*|modular|read|-|-|-|cyrius deps: sub-modules from dist/<name>/"; }
+    if (i == 25) { return "deps.*|requires|read|-|-|-|cyrius deps: stdlib leaves the dep needs in scope"; }
+    if (i == 26) { return "deps.*|optional|read|-|-|--features|cyrius deps: resolve only when a feature names it"; }
+    if (i == 27) { return "deps.*|target|read|-|-|--target|cyrius deps: resolve only for a matching target"; }
+    if (i == 28) { return "lib|modules|read|-|-|-|cyrius distlib: the base bundle"; }
+    if (i == 29) { return "lib.*|modules|read|-|-|<profile>|cyrius distlib <profile>"; }
+    if (i == 30) { return "lib|embed|read|-|-|-|cyrius distlib: the [embed] entries the base bundle carries"; }
+    if (i == 31) { return "lib.*|embed|read|-|-|<profile>|cyrius distlib <profile>: the [embed] entries this bundle carries"; }
+    if (i == 32) { return "features|default|read|-|-|--no-default-features|cyrius deps: features on by default"; }
+    if (i == 33) { return "features|*|read|-|-|--features|cyrius deps: a feature and the optional deps it turns on"; }
+    if (i == 34) { return "groups|*|read|-|-|-|cyrius deps: a named group of stdlib leaves"; }
+    if (i == 35) { return "release|bins|read|-|-|-|release.yml, install.sh, cyrius pulsar"; }
+    if (i == 36) { return "release|cross_bins|read|-|-|-|release.yml, install.sh, cyrius pulsar"; }
+    if (i == 37) { return "release|scripts|read|-|-|-|release.yml, install.sh"; }
+    if (i == 38) { return "embed|*|read|-|-|-|every compile: the file's bytes as NAME() / NAME_len(), prepended before the entry"; }
     return 0;
 }
 
 fn _mf_vocab(i): i64 {
-    if (i < 18) { return _mf_vocab_a(i); }
+    if (i < 19) { return _mf_vocab_a(i); }
     return _mf_vocab_b(i);
 }
 
@@ -1213,20 +1214,21 @@ var _CFG_DEFAULT = 0;
 var _CFG_MANIFEST = 1;
 var _CFG_ENV = 2;
 var _CFG_ARG = 3;
-var _CFG_N = 13;
+var _CFG_N = 14;
 var _CK_ENTRY = 0;
 var _CK_OUTPUT = 1;
 var _CK_DCE = 2;
 var _CK_STRICT = 3;
 var _CK_DEFINES = 4;
 var _CK_TEST = 5;
-var _CK_MODULES = 6;
-var _CK_PROGRAMS = 7;
-var _CK_PKG_NAME = 8;
-var _CK_PKG_VERSION = 9;
-var _CK_PKG_CYRIUS = 10;
-var _CK_SECTIONS_BASE = 11;
-var _CK_EMBED = 12;        # 6.6.19: the [embed] entries, as "NAME=path" (manifest > default only)
+var _CK_TEST_STANDALONE = 6;   # 6.7.6: `cyrius test` compiles each test with no [deps] prepend
+var _CK_MODULES = 7;
+var _CK_PROGRAMS = 8;
+var _CK_PKG_NAME = 9;
+var _CK_PKG_VERSION = 10;
+var _CK_PKG_CYRIUS = 11;
+var _CK_SECTIONS_BASE = 12;
+var _CK_EMBED = 13;        # 6.6.19: the [embed] entries, as "NAME=path" (manifest > default only)
 # 1 when the resolved `dce` is on and did NOT come from the environment: compile() then hands cycc
 # CYRIUS_DCE=1, replacing any inherited value (an argument beats CYRIUS_DCE=0).
 var _cfg_dce_inject = 0;
@@ -1242,6 +1244,7 @@ fn _cfg_name(i): i64 {
     if (i == _CK_STRICT) { return "build.strict"; }
     if (i == _CK_DEFINES) { return "build.defines"; }
     if (i == _CK_TEST) { return "build.test"; }
+    if (i == _CK_TEST_STANDALONE) { return "build.test_standalone"; }
     if (i == _CK_MODULES) { return "build.modules"; }
     if (i == _CK_PROGRAMS) { return "coverage.programs"; }
     if (i == _CK_PKG_NAME) { return "package.name"; }
@@ -1253,7 +1256,7 @@ fn _cfg_name(i): i64 {
 
 # 0 = string, 1 = bool, 2 = list
 fn _cfg_kind(i): i64 {
-    if (i == _CK_DCE || i == _CK_STRICT) { return 1; }
+    if (i == _CK_DCE || i == _CK_STRICT || i == _CK_TEST_STANDALONE) { return 1; }
     if (i == _CK_DEFINES || i == _CK_TEST || i == _CK_MODULES || i == _CK_PROGRAMS || i == _CK_EMBED) { return 2; }
     return 0;
 }
@@ -1487,6 +1490,7 @@ fn _cfg_resolve_build(src_arg, out_arg): i64 {
     if (_cfg_mf_strs(_CK_DEFINES, "build", "defines") != 0) { return 1; }
     if (_cfg_defines_ok(_cfg_val(_CK_DEFINES), "cyrius.cyml [build] defines") != 0) { return 1; }
     if (_cfg_mf_strs(_CK_TEST, "build", "test") != 0) { return 1; }
+    if (_cfg_mf_bool(_CK_TEST_STANDALONE, "build", "test_standalone") != 0) { return 1; }
     if (_cfg_mf_strs(_CK_MODULES, "build", "modules") != 0) { return 1; }
     if (_cfg_mf_strs(_CK_PROGRAMS, "coverage", "programs") != 0) { return 1; }
     if (_cfg_mf_str(_CK_PKG_NAME, "package", "name") != 0) { return 1; }
@@ -1540,6 +1544,32 @@ fn _cfg_resolve_test(): i64 {
         return 0 - 1;
     }
     return v;
+}
+
+# 6.7.6 — `[build] test_standalone` for `cyrius test`, in every form that compiles a test (a file, a
+# directory, the bare suite, `cyrius audit`'s sweep — all reach cmd_test). True compiles each test
+# as the file itself wrote it, with no `[deps] stdlib` prepend — how check.sh, ci.yml and the
+# cross-OS runner have always fed this repo's corpus to cycc. Without it a test that defines a fn
+# a prepended module also defines cannot compile under `cyrius test` at all (22 of this repo's
+# .tcyr define `fn run()`; lib/process.cyr defines `fn run(cmd, arg1, arg2)`). Opt-in: absent or
+# false changes nothing. Read once. 1 / 0, or -1 after naming a manifest that cannot be read or a
+# value that is not a bool (every test is then a failure, not compiled). CHANGELOG [6.7.6]
+var _cfg_test_sa = 0 - 2;   # -2 = not read yet
+
+fn _cfg_test_standalone(): i64 {
+    if (_cfg_test_sa != 0 - 2) { return _cfg_test_sa; }
+    _cfg_test_sa = 0;
+    if (_mf_load() < 0) {
+        _cfg_test_sa = 0 - 1;
+        return _cfg_test_sa;
+    }
+    var b = _mf_bool("build", "test_standalone");
+    if (b == 1) { _cfg_test_sa = 1; }
+    if (b == 0 - 2) {
+        _cfg_bad("build", "test_standalone", "true or false");
+        _cfg_test_sa = 0 - 1;
+    }
+    return _cfg_test_sa;
 }
 
 # 6.6.18 — `[build] defines` for a verb that is not `cyrius build` (P1: defines apply to every

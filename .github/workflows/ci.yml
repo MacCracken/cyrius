@@ -260,6 +260,26 @@ jobs:
           ran=$((pass+fail))
           test "$ran" -ge "$floor" || { echo "corpus floor: ran $ran .tcyr, expected >= $floor — a reader went blind"; exit 1; }
           test $fail -eq 0
+      - name: cyrius test over the corpus (the wrapper, 6.7.6)
+        run: |
+          # The SAME corpus through the user-facing verb, which nothing ran before 6.7.6: the loop
+          # above and the check driver feed build/cycc directly, so `cyrius test` could not even
+          # build the 22 tests that define `fn run()` here (the manifest's [deps] prepend brings
+          # lib/process.cyr's `fn run(cmd, arg1, arg2)`) and no gate saw it. cyrius.cyml's
+          # `[build] test_standalone = true` compiles each test as written; the wrapper grades the
+          # assert summary and bounds each test itself. The floor is the loop's.
+          floor=$(sed -n 1p tests/tcyr/CORPUS_FLOOR)
+          case "$floor" in ''|*[!0-9]*) echo "FAIL: tests/tcyr/CORPUS_FLOOR line 1 is '$floor', not a number"; exit 1 ;; esac
+          out="$RUNNER_TEMP/cyrius_test.out"
+          rc=0; ./build/cyrius test > "$out" 2>&1 || rc=$?
+          grep -E '^  FAIL: ' "$out" || true
+          # The wrapper's own summary is the LAST bare `N passed, M failed` line (a test's own
+          # assert summary carries a `(N total)` tail).
+          sl=$(grep -E '^[0-9]+ passed, [0-9]+ failed$' "$out" | tail -1) || sl=""
+          echo "cyrius test: ${sl:-no summary line} (exit $rc)"
+          np=$(printf '%s\n' "$sl" | sed -n 's/^\([0-9][0-9]*\) passed,.*/\1/p')
+          test "$rc" -eq 0 || { tail -20 "$out"; exit 1; }
+          test "${np:-0}" -ge "$floor" || { echo "corpus floor: cyrius test passed ${np:-0} .tcyr, expected >= $floor — a reader went blind"; exit 1; }
       - name: Fuzz harnesses (VR-02, v6.2.29)
         run: |
           # cyrius fuzz runs the fuzz/*.fcyr harnesses — was in no gate (vestigial,

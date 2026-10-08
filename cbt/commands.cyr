@@ -398,9 +398,24 @@ fn cmd_test(source): i64 {
         return 0;
     }
     _total = _total + 1;
+    # 6.7.6: `[build] test_standalone = true` compiles the test with no [deps] stdlib prepend (see
+    # _cfg_test_standalone, cbt/manifest.cyr). A value that is not a bool was named once; every
+    # test then fails, not compiled — never silently compiled the other way. CHANGELOG [6.7.6]
+    var tsa = _cfg_test_standalone();
+    if (tsa < 0) {
+        sys_write(STDERR_FD, "  FAIL: ", 8);
+        sys_write(STDERR_FD, source, strlen(source));
+        var tsm = " (not compiled; see the error above)\n";
+        sys_write(STDERR_FD, tsm, strlen(tsm));
+        _fail = _fail + 1;
+        return 1;
+    }
+    var tsa_skip = _skip_deps;
+    if (tsa == 1) { _skip_deps = 1; }
     var tmpbin = _cbt_tmpexe("test_bin");
     var pre_err = _err_count;
     var r = compile(source, tmpbin);
+    _skip_deps = tsa_skip;
     if (r != 0) {
         # 6.6.9 bite 10 — the row stays (it is the suite's tally line and names the file),
         # but it no longer calls a failure cbt NAMED — a missing file, an unwritable temp —
@@ -521,7 +536,8 @@ fn cmd_test(source): i64 {
 
 # v6.0.62: `cyrius tests [dir]` — the plural verb, a RECURSIVE folder/suite
 # runner (vs `cyrius test <file>` single-file + bare `cyrius test` shallow
-# auto-discover, both unchanged). Walks `dir` (default "tests") for *.tcyr at
+# auto-discover, both unchanged). 6.7.6: `cyrius test <dir>` is that runner and
+# `tests` its deprecated alias (CHANGELOG [6.7.6]). Walks `dir` (default "tests") for *.tcyr at
 # any depth, runs each via cmd_test, aggregates _pass/_fail. Mirrors the
 # proven shallow-discover pattern (dir_list + make_path → NUL-terminated cstr
 # for cmd_test's strlen; dir_list already skips . / ..) rather than find_files,
@@ -532,7 +548,8 @@ fn cmd_test(source): i64 {
 # possible failure for a test runner.
 # 6.6.17 (P1): the files a bare `cyrius test` has already run, so a file that `[build] test` names
 # AND the tests/ walk finds runs ONCE (crab declares `test = "tests"`; chakshu, klug and sit name
-# their tests/<name>.tcyr). 0 = not tracking (`cyrius tests`, which never reads the key).
+# their tests/<name>.tcyr). 0 = not tracking (`cyrius test <dir>` / `tests`, which never read the key).
+# 6.7.6: a multi-operand `cyrius test a b ...` tracks too — see _test_path.
 var _tests_seen = 0;
 
 # `p` with leading "./" and doubled / trailing slashes removed — the one spelling `_tests_seen`
@@ -689,6 +706,43 @@ fn _tests_walk(dir): i64 {
     return _corpus_walk(dir, cd, &_pass, &_fail, 0);
 }
 
+# 6.7.6: ONE operand of a multi-operand `cyrius test <path> <path>...`. A DIRECTORY runs every .tcyr
+# under it (the walk above); anything else runs as one file through cmd_test (a missing path is its
+# named failure there). The caller turns on `_tests_seen`, so a file two operands reach — `cyrius test
+# tests tests/a.tcyr` — runs ONCE: the pass count is distinct files, as the bare suite's is. A
+# directory holding no .tcyr is a failure, counted and named, as `cyrius test <dir>` alone is one —
+# unless the walk already named one (an unlistable directory). CHANGELOG [6.7.6]
+fn _test_path(p): i64 {
+    if (is_dir(str_from(p)) == 0) {
+        if (_tests_first_run(p) == 1) { cmd_test(p); }
+        return 0;
+    }
+    var pre_fail = _fail;
+    _tests_found = 0;
+    _tests_walk(p);
+    if (_tests_found == 0 && _fail == pre_fail) {
+        sys_write(STDOUT_FD, "No .tcyr files found under ", 27);
+        sys_write(STDOUT_FD, p, strlen(p));
+        sys_write(STDOUT_FD, "\n", 1);
+        _fail = _fail + 1;
+    }
+    return 0;
+}
+
+# 6.7.6: `cyrius tests [dir]` is the deprecated spelling of `cyrius test <dir>` — one release, then it
+# goes (roadmap, Break 1). The notice names the exact replacement: bare `cyrius tests` walked tests/
+# and never read `[build] test`, so its equivalent is `cyrius test tests`, not bare `cyrius test`.
+fn _tests_verb_deprecated(dir): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "`cyrius tests` is deprecated and goes in the next release; use `cyrius test ");
+    str_builder_add_cstr(sb, _shown(dir));
+    str_builder_add_cstr(sb, "`");
+    _warn(str_data(str_builder_build(sb)));
+    return 0;
+}
+
+# A directory's suite: `cyrius test <dir>` (and the deprecated `cyrius tests [dir]`, and `cyrius
+# audit`'s sweep).
 fn cmd_tests(dir): i64 {
     _pass = 0; _fail = 0; _tests_found = 0;
     if (is_dir(str_from(dir)) == 0) {

@@ -2190,6 +2190,14 @@ now refused rather than silently building a do-nothing program, and every form p
 `=== N passed, M failed ===` summary — the single-file form used not to, which made it
 unscriptable.
 
+**One test verb (6.7.6).** `cyrius test <file>` runs that file, `cyrius test <dir>` runs every
+`.tcyr` under the directory (recursive — `cyrius test tests/tcyr/crossos`), several operands
+may mix files and directories and each file runs once, and a bare `cyrius test` is unchanged.
+A directory holding no `.tcyr` is a failure, by name. Until 6.7.6 `cyrius test <dir>` was
+`error: not a file` and the directory walk was a second verb, `cyrius tests [dir]`; that
+spelling still works for one release and prints a one-line notice naming the replacement
+(`cyrius test <dir>`; a bare `cyrius tests` was `cyrius test tests`).
+
 ## Manifest keys (`cyrius.cyml`)
 
 Every key the docs, the `cyrius init` templates or the ecosystem use is declared once in the
@@ -2229,7 +2237,14 @@ itself reads every value but `1` as off, so it used to be a silent no.
 `[build] test` (a file, a directory, or a list of either — `src/test.cyr` is what `cyrius init`
 writes) is what a bare `cyrius test` runs FIRST, before every `.tcyr` under `tests/`; a file both
 name runs once, and a declared path that does not exist is a named failure. Before 6.6.17
-nothing read the key, so a declared `src/test.cyr` never ran — 41 manifests declared one. A
+nothing read the key, so a declared `src/test.cyr` never ran — 41 manifests declared one.
+`[build] test_standalone = true` (6.7.6) makes `cyrius test` — every form, and `cyrius audit`'s
+test sweep — compile each test with only the includes the file itself writes: no `[deps] stdlib`
+prepend. It is for a project whose tests are self-contained, the way cycc compiles a file fed to
+it directly: there, a test that defines a fn some prepended stdlib module also defines (this
+repo's 22 tests with `fn run()`, against `lib/process.cyr`'s `fn run(cmd, arg1, arg2)`) is a
+duplicate-fn error under the prepend and compiles fine without it. Absent or `false` changes
+nothing; `[embed]`, `[build] modules` and defines still apply. A
 mistyped value (`dce = "yes"`) is refused by name, and so is a define holding a control
 character (it would start a new source line in the compiled unit). `[build] target` is **held**
 (pass `--target` / `--aarch64` / `--win` / `--agnos`), `[build] features` is **dropped** (features
@@ -2266,7 +2281,8 @@ cyrius build configuration (argument > environment > manifest > default)
 | `[package]` | `repository` | info | — | — | — | people and package recipes |
 | `[build]` | `entry` | read | `src` | — | `<source>` | cyrius build, cyrius package: the source |
 | `[build]` | `output` | read | — | — | `<output>` | cyrius build, cyrius package: the output (a default) |
-| `[build]` | `test` | read | — | — | `<file>...` | bare cyrius test: these (file / dir / list), then tests/ |
+| `[build]` | `test` | read | — | — | `<path>...` | bare cyrius test: these (file / dir / list), then tests/ |
+| `[build]` | `test_standalone` | read | — | — | — | cyrius test: each test compiles standalone, its own includes only (no [deps] stdlib prepend; bool) |
 | `[build]` | `modules` | read | — | — | — | every compile: these files prepended before the entry |
 | `[build]` | `dce` | read | — | `CYRIUS_DCE` | `--dce` | cyrius build: dead-code elimination (bool) |
 | `[build]` | `strict` | held | — | — | `--strict` | has had no effect since 6.3.2: a reachable undefined function is an error by default; --allow-undef downgrades it |
@@ -2378,10 +2394,11 @@ cyrius build -v src/main.cyr build/myapp # verbose (shows compiler, binary size)
 cyrius test tests/test.tcyr             # resolve deps + compile + run
 cyrius test                              # [build] test first (6.6.17), then every .tcyr under tests/, each once
 cyrius test a.tcyr b.tcyr -D FEATURE     # 1..N files; -D/-DNAME reaches test/run/bench/fuzz/check too (v6.6.5)
+cyrius test tests/tcyr/crossos           # a directory: every .tcyr under it, recursive (6.7.6)
 cyrius run src/main.cyr host 443         # compile + run; everything AFTER the source is the program's argv (v6.6.5)
 cyrius run prog.cyx                      # run cx bytecode via cxvm — arguments are REFUSED (cx has no guest argv yet)
 cyrius lint|fmt|doc a.cyr b.cyr          # 1..N files, every one processed (v6.6.5)
-cyrius tests [dir]                       # recursively run every .tcyr under dir (default tests/)
+cyrius tests [dir]                       # DEPRECATED (6.7.6): `cyrius test <dir>`; goes in the next release
 cyrius bench [path|dir]                  # discover + run *.bcyr (recursive; v6.5.7)
 cyrius fuzz [path|dir]                   # discover + run *.fcyr harnesses (recursive; v6.5.7)
 cyrius fuzz --poison [path|dir]          # poisoning allocators + redzones; an overwrite exits 86 (6.6.18)

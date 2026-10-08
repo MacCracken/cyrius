@@ -259,7 +259,7 @@ echo "axis 1b — ⭐ the deadline KILLS the child, it does not merely abandon i
 mkdir -p "$T/suite"
 for n in hang1 hang2; do cp "$T/hang.tcyr" "$T/suite/$n.tcyr"; done
 orphan_pids > "$T/suite.pre"
-( cd "$T/suite" && CYRIUS_TEST_TIMEOUT=5 timeout 300 "$CY" tests "$T/suite" > "$T/s.out" 2> "$T/s.err" ) &
+( cd "$T/suite" && CYRIUS_TEST_TIMEOUT=5 timeout 300 "$CY" test "$T/suite" > "$T/s.out" 2> "$T/s.err" ) &
 suite_pid=$!
 # ⚠ SUSTAINED overlap, not a single sample. v6.5.42 saw this row go red once at
 # `max 2` under load and it did not reproduce in four subsequent runs. The filing's
@@ -623,19 +623,19 @@ for n in die_early main_twice zero; do
     check "cyrius test $n.tcyr: the fixture RAN (its own output is in the runner's)" "yes" \
         "$(cat "$T/sum_$n.out" "$T/sum_$n.err" | grep -q "$(sum_marker "$n")" && echo yes || echo no)"
 done
-# The directory verb: its positive control (fine alone passes) ...
+# The directory form (`cyrius tests <dir>` until 6.7.6): its positive control (fine alone passes) ...
 rc=0
-( cd "$T" && CYRIUS_TEST_TIMEOUT=60 timeout 300 "$CY" tests "$T/sumok" > "$T/sumok_dir.out" 2> "$T/sumok_dir.err" ) || rc=$?
-check "control: cyrius tests <dir> with only fine.tcyr passes (exit)" 0 "$rc"
+( cd "$T" && CYRIUS_TEST_TIMEOUT=60 timeout 300 "$CY" test "$T/sumok" > "$T/sumok_dir.out" 2> "$T/sumok_dir.err" ) || rc=$?
+check "control: cyrius test <dir> with only fine.tcyr passes (exit)" 0 "$rc"
 # ... and the same verb over the three beside that pass: nonzero, not by timeout, every file ran.
 rc=0
-( cd "$T" && CYRIUS_TEST_TIMEOUT=60 timeout 300 "$CY" tests "$T/sum" > "$T/sum_dir.out" 2> "$T/sum_dir.err" ) || rc=$?
-check "cyrius tests <dir> with those three is a FAILURE" "yes" "$([ "$rc" != 0 ] && [ "$rc" != 124 ] && echo yes || echo no)"
+( cd "$T" && CYRIUS_TEST_TIMEOUT=60 timeout 300 "$CY" test "$T/sum" > "$T/sum_dir.out" 2> "$T/sum_dir.err" ) || rc=$?
+check "cyrius test <dir> with those three is a FAILURE" "yes" "$([ "$rc" != 0 ] && [ "$rc" != 124 ] && echo yes || echo no)"
 for n in die_early main_twice zero; do
-    check "cyrius tests <dir>: $n.tcyr RAN" "yes" \
+    check "cyrius test <dir>: $n.tcyr RAN" "yes" \
         "$(cat "$T/sum_dir.out" "$T/sum_dir.err" | grep -q "$(sum_marker "$n")" && echo yes || echo no)"
 done
-check "cyrius tests <dir>: fine.tcyr RAN and passed" "yes" \
+check "cyrius test <dir>: fine.tcyr RAN and passed" "yes" \
     "$(cat "$T/sum_dir.out" "$T/sum_dir.err" | grep -q '^1 passed, 0 failed' && echo yes || echo no)"
 
 echo ""

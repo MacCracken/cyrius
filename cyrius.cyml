@@ -15,6 +15,9 @@ repository = "https://github.com/MacCracken/cyrius"
 [build]
 src = "src/main.cyr"
 output = "build/cycc"
+# Every .tcyr here carries its own includes (check.sh feeds them to cycc as written), so
+# `cyrius test` compiles them without the [deps] stdlib prepend below.
+test_standalone = true
 
 # Single source of truth for the binary + script lists release.yml, install.sh and
 # cbt/pulsar.cyr all consume. Add a binary here and every consumer picks it up.

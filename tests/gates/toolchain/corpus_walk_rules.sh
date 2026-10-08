@@ -2,14 +2,14 @@
 # Gate: the ONE corpus walker's rules hold for every verb that walks a corpus (6.6.20,
 # REFACTOR-09).
 #
-# `cyrius test` / `cyrius tests` (.tcyr), `cyrius fuzz` (.fcyr) and `cyrius bench` (.bcyr) each
+# `cyrius test` (.tcyr; `cyrius tests <dir>` until 6.7.6), `cyrius fuzz` (.fcyr) and `cyrius bench` (.bcyr) each
 # had their own copy of the directory walk, and every walker fix had to be made three times:
 # v6.5.12's depth cap, `elif` and never-descend-a-symlink, then 6.6.10's unlistable-directory
 # failure (that one is walkers_fail_closed_unreadable_dir.sh). 6.6.20 folded the three into
 # `_corpus_walk_d` (cbt/commands.cyr). This gate pins the rules ONCE PER VERB, so a fourth corpus
 # or a re-forked walker that drops one goes red here — nothing gated the v6.5.12 rules before.
 #
-# One fixture, the same shape under tests/ (for test/tests), fuzz/ and benches/:
+# One fixture, the same shape under tests/ (for test), fuzz/ and benches/:
 #   <root>/sub/deeper/a.X     a nested file                       → runs
 #   <root>/d.X/in.X           a DIRECTORY named like a corpus file → walked into, never run as a file
 #   <root>/linked.X           a SYMLINKED file                    → runs
@@ -74,8 +74,8 @@ for pair in tests:tcyr fuzz:fcyr benches:bcyr; do
     printf "$OK" > "$deep/z.$x"
 done
 
-echo "axis 1 — cyrius tests tests: 3 run (nested, inside d.tcyr/, the symlinked file); loop, dotfile, past-the-cap skipped:"
-cy "$P" tests tests
+echo "axis 1 — cyrius test tests (the directory form; cyrius tests until 6.7.6): 3 run (nested, inside d.tcyr/, the symlinked file); loop, dotfile, past-the-cap skipped:"
+cy "$P" test tests
 check "rc 0" 0 "$RC"
 check "exactly '3 passed, 0 failed'" "yes" "$(has '3 passed, 0 failed')"
 check "the depth cap is hit and names the directory" "yes" "$(has 'test walk depth cap (64) hit — symlink loop? subtree skipped: tests/deep/d')"
@@ -113,7 +113,7 @@ check "bench rc 0, '=== 1 passed, 0 failed ==='" "0 yes" "$RC $(has '=== 1 passe
 check "bench never says 'cannot list directory'" "no" "$(has 'cannot list directory')"
 
 if [ "$fails" = "0" ]; then
-    echo "PASS: $NAME — test/tests, fuzz and bench walk one corpus the same way"
+    echo "PASS: $NAME — test, fuzz and bench walk one corpus the same way"
     exit 0
 fi
 echo "FAIL: $NAME — $fails assertion(s) failed"
