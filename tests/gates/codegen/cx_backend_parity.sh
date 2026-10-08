@@ -16,9 +16,14 @@
 #      a 256-register file: argument 248 landed in r251 (the call-boundary scratch), 250 in fp, 251
 #      in sp, and from 253 the operand byte wrapped to r0. 249..251 arguments returned a wrong value
 #      (`f(1..250)` returning p250 - p246 exited 2, want 4) and 252+ trapped "cxvm: guest stack
-#      overflow". Arguments 248+ now ride the guest stack: the caller lowers sp by 8 per argument
-#      and stores them there, the callee (fp = that sp) copies them into its slots, ECALLCLEAN
-#      raises sp again.
+#      overflow". Integer arguments past the register window (232 since D) now ride the guest
+#      stack: the caller lowers sp by 8 per argument and stores them there, the callee (fp = that
+#      sp) copies them into its slots, ECALLCLEAN raises sp again.
+#   D  value-form vector arguments rode a register band at r16..r31 — integer argument registers
+#      from the 14th on. The caller loaded the vector after popping the integers, over a13..; the
+#      callee stored the pair from the same registers: `g14(v, a0..a13)` read a13 as the vector's
+#      low lane (the probe exited 1 on cx, 7 natively). The band is now r235..r250
+#      (_CX_VEC_BASE), and the integer window r3..r234 (_CX_ARG_REGS = 232).
 #
 # ROWS
 #   T  tests/tcyr/codegen/cx_backend_parity.tcyr: native x86 and cxvm must each print
@@ -32,22 +37,29 @@
 #   C1 the filed repro's shape, generated: `f(p1..p250)` returning p250 - p246 exits 4 (cx gave 2);
 #      C2 the same at 260 arguments (cx trapped); C3 260 arguments through callptr, 2000 times in a
 #      loop, and the caller's sp the same afterwards (exit 8 when a call does not take its block back).
+#   D1 the probe, inline: g13 / g14 / g16 (a vector beside 13, 14 and 16 ints) — bits 1|2|4, exit 7
+#      natively and on cxvm (cx gave 1: g13 was right, g14 and g16 were not).
 #
 # COMPILERS. CC=${CYCC:-build/cycc} builds the native legs and the cx compiler from THIS tree's
 # src/main_cx.cyr, and cxvm from programs/cxvm.cyr. A cx-backend mutation is therefore picked up
 # by running the gate from a mutated COPY of the tree, with the real build/cycc.
 #
 # MUTATION LEDGER (6.7.6, each in a scratch copy of the tree, the gate run from that copy with the
-# real build/cycc; the real tree is green):
-#   ENOTR back to `CX_EMIT(S, 34, 0, 0, 31)`        -> T cx RED (0 passed, 8 failed) + A1 RED (cx 16)
-#   lib/fnptr.cyr's nine CYRIUS_TARGET_CX arms gone   -> T cx RED (8 passed, 11 failed: every B row)
+# real build/cycc; measured on the final tree — 58 cx rows, 57 native — which is green, 10 / 10):
+#   M1 ENOTR back to `CX_EMIT(S, 34, 0, 0, 31)`      -> T cx RED (50 passed, 8 failed: every A row)
+#                                                       + A1 RED (cx 16)
+#   M2 lib/fnptr.cyr's nine CYRIUS_TARGET_CX arms gone -> T cx RED (47 passed, 11 failed: every B row)
 #                                                       + B1 RED (cx 0)
-#   `_CX_ARG_REGS` = 1000000 (every argument a register again, the pre-6.7.6 ABI)
+#   M3 `_CX_ARG_REGS` = 1000000 (every argument a register again, the pre-6.7.6 ABI)
 #                                                    -> T cx RED (the 249 row wrong, then a trap) +
 #                                                       C1 (cx 2) + C2 (trap) + C3 RED; and
 #                                                       wide_call_stack_unwind.sh axis 4 RED
-#   ECALLCLEAN never takes the block back            -> T cx RED (the 8 sp rows: -8 at 249) + C3 (8)
-#   ESTOREPARM's guest-stack branch dropped          -> T cx RED (11 rows) + C1 RED (cx 2)
+#   M4 ECALLCLEAN never takes the block back          -> T cx RED (46 passed, 12 failed: every sp row
+#                                                       past the window, -8 at 233) + C3 RED (exit 8)
+#   M5 ESTOREPARM's guest-stack branch dropped        -> T cx RED (42 passed, 16 failed) + C1 (cx 248)
+#   M6 `_CX_VEC_BASE` = 16 (the vector band back at r16..r31)
+#                                                    -> T cx RED (50 passed, 8 failed: every D row;
+#                                                       d14 1882, want 2022) + D1 RED (cx 1)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -103,7 +115,7 @@ TC=tests/tcyr/codegen/cx_backend_parity.tcyr
 # NCX: every assertion; N: those outside `#ifdef CYRIUS_TARGET_CX` ... `#endif` (cx-only rows).
 NCX=$(grep -c '^[[:space:]]*assert_[a-z]*(' "$TC")
 N=$(awk '/^[[:space:]]*#ifdef CYRIUS_TARGET_CX/{s=1; next} /^[[:space:]]*#endif/{s=0; next} !s && /^[[:space:]]*assert_[a-z]*\(/{n++} END{print n+0}' "$TC")
-FLOOR=41
+FLOOR=57
 if [ "$N" -lt "$FLOOR" ]; then bad "T: only $N assertions outside the cx-only blocks of $TC (floor $FLOOR) — rows were lost"
 else
     nat_file "$TC"
@@ -147,7 +159,7 @@ var r = main();
 syscall(60, r);
 ' 42
 
-echo "C. calls of more than 248 arguments"
+echo "C. calls past the register window (the filed 250 / 260)"
 # wide N MODE: f(p1..pN) returns pN - p(N-4); MODE direct | loop (2000 callptr calls: exit 4 only
 # when every one returned 4 AND the caller's sp — the address of a local in a fresh frame — is the
 # same after the loop as before it; 9 = a wrong value, 8 = sp moved).
@@ -167,7 +179,31 @@ both "C1 f(1..250) returns p250 - p246 (the filed repro's shape; cx gave 2)" "$(
 both "C2 f(1..260) (the filed repro; cx trapped 'guest stack overflow')" "$(wide 260 direct)" 4
 both "C3 260 arguments through callptr, 2000 calls in a loop, sp the same after it" "$(wide 260 loop)" 4 120
 
+echo "D. a value-form vector beside 14+ integer arguments"
+both "D1 g13 / g14 / g16: a vector beside 13, 14, 16 ints (cx gave 1)" 'include "lib/alloc.cyr"
+include "lib/simd.cyr"
+fn g13(v: f64v2, a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12): i64 {
+    return a12 * 1000 + a11 * 100 + load64(&v) * 10 + load64(&v + 8);
+}
+fn g14(v: f64v2, a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13): i64 {
+    return a13 * 10000 + a12 * 1000 + a11 * 100 + load64(&v) * 10 + load64(&v + 8);
+}
+fn g16(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, v: f64v2): i64 {
+    return a15 * 100000 + a14 * 10000 + a13 * 1000 + a12 * 100 + load64(&v) * 10 + load64(&v + 8);
+}
+fn main(): i64 {
+    alloc_init();
+    var v = f64v2_make(7, 8);
+    var r = 0;
+    if (g13(v, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 6) == 6578) { r = r + 1; }
+    if (g14(v, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 5, 6) == 65478) { r = r + 2; }
+    if (g16(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 3, 4, 5, v) == 543278) { r = r + 4; }
+    return r;
+}
+syscall(60, main());
+' 7
+
 echo
 echo "cx_backend_parity: $pass passed, $fail failed"
 [ "$fail" = 0 ] || exit 1
-echo "PASS cx_backend_parity: ~x is the complement on cx (bitset / bitclr with it), an address-taken &fncallN runs its callee there, and a call of more than 248 arguments passes every one, as on every native backend"
+echo "PASS cx_backend_parity: ~x is the complement on cx (bitset / bitclr with it), an address-taken &fncallN runs its callee there, a call of more than 232 arguments passes every one, and a vector argument beside 14+ ints arrives intact, as on every native backend"
