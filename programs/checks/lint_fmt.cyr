@@ -519,6 +519,14 @@ fn _reserved_kw_diag_gate(): i64 {
     fail = fail + _stderr_match_subcase("var false",
         "include \"lib/syscalls.cyr\"\nvar false = 1;\nsyscall(60, 0);\n",
         "reserved keyword 'false'", 1);
+    # 6.7.5 (B5) — `do` is a reserved word; `loop` is CONTEXTUAL (a keyword only as `loop {` at the
+    # start of a statement, the `kernel` precedent), so `var loop` and its reads stay identifiers.
+    fail = fail + _stderr_match_subcase("fn do",
+        "include \"lib/syscalls.cyr\"\nfn do() { return 0; }\nsyscall(60, 0);\n",
+        "reserved keyword 'do'", 1);
+    fail = fail + _stderr_match_subcase("var loop stays an identifier (contextual)",
+        "include \"lib/syscalls.cyr\"\nfn foo() { var loop = 1; var n = 0; while (loop == 1) { n = n + 1; if (n == 3) { loop = 0; } } return n; }\nfoo();\nsyscall(60, 0);\n",
+        "error", 0);
     fail = fail + _stderr_match_subcase("legit-ident-no-falsepositive",
         "include \"lib/syscalls.cyr\"\nfn foo() { var my_var = 1; return my_var; }\nfoo();\nsyscall(60, 0);\n",
         "reserved keyword", 0);

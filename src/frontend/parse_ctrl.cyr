@@ -258,7 +258,7 @@ fn _ie_no_else(S): i64 {
 }
 # Tokens that open a statement, never an expression: refused first in a branch.
 fn _ie_stmt_tok(t): i64 {
-    if (t == 3 || t == 168 || t == 33 || t == 16 || t == 55) { return 1; }
+    if (t == 3 || t == 168 || t == 33 || t == 16 || t == 55 || t == 172) { return 1; }
     if (t == 51 || t == 52 || t == 57 || t == 75 || t == 32) { return 1; }
     if (t == 106 || t == 108 || t == 111 || t == 123 || t == 107) { return 1; }
     if (t == 40 || t == 60 || t == 48 || t == 13) { return 1; }

@@ -1684,6 +1684,10 @@ fn LEXID(S, p, npos): i64 {
         if (kw & 0xFFFF == 0x6669) { ADDTOK(S, 15, 0); return p; }
         if (kw & 0xFFFF == 0x6E66) { ADDTOK(S, 32, 0); return p; }
         if (kw & 0xFFFF == 0x6E69) { ADDTOK(S, 76, 0); return p; }
+        # 6.7.5 (B5): "do" = 0x6F64 → token 172, `do { .. } while (c);`. A full reserved word: no
+        # cyrius or ecosystem source uses `do` as an identifier (surveyed 2026-10-08). Its sibling
+        # `loop` is CONTEXTUAL and gets no token (`_TOK_IS_LOOP`, util.cyr). CHANGELOG [6.7.5]
+        if (kw & 0xFFFF == 0x6F64) { ADDTOK(S, 172, 0); return p; }
     }
     if (klen == 3) {
         if (kw & 0xFFFFFFFF == 0x00726176) { ADDTOK(S, 3, 0); return p; }

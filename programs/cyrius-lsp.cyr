@@ -1818,11 +1818,12 @@ fn _lsp_kind_to_semantic_type(k): i64 {
 }
 
 # Is `<buf+off, len>` a cyrius keyword?
-fn _lsp_is_keyword(buf, off, len): i64 {
+fn _lsp_is_keyword(buf, off, len, total): i64 {
     if (len == 2) {
         if (load8(buf + off) == 105 && load8(buf + off + 1) == 102) { return 1; }   # "if"
         if (load8(buf + off) == 105 && load8(buf + off + 1) == 110) { return 1; }   # "in"
         if (load8(buf + off) == 102 && load8(buf + off + 1) == 110) { return 1; }   # "fn"
+        if (load8(buf + off) == 100 && load8(buf + off + 1) == 111) { return 1; }   # "do" (6.7.5)
     }
     if (len == 3) {
         if (memeq(buf + off, "var", 3) == 1) { return 1; }
@@ -1834,6 +1835,9 @@ fn _lsp_is_keyword(buf, off, len): i64 {
         if (memeq(buf + off, "enum", 4) == 1) { return 1; }
         if (memeq(buf + off, "impl", 4) == 1) { return 1; }
         if (memeq(buf + off, "true", 4) == 1) { return 1; }    # 6.7.3 (B2)
+        # 6.7.5 (B5): `loop` is CONTEXTUAL — a keyword only when `{` follows (`loop { .. }`);
+        # `var loop = 1;` and its reads stay identifiers, as the compiler treats them.
+        if (memeq(buf + off, "loop", 4) == 1) { return _lsp_brace_next(buf, off + 4, total); }
     }
     if (len == 5) {
         if (memeq(buf + off, "while", 5) == 1) { return 1; }
@@ -1863,6 +1867,17 @@ fn _lsp_is_keyword(buf, off, len): i64 {
     }
     if (len == 8) {
         if (memeq(buf + off, "continue", 8) == 1) { return 1; }
+    }
+    return 0;
+}
+
+# 1 when the first byte at or after `p` (below `total`) that is not a space, tab, CR or LF is `{`.
+fn _lsp_brace_next(buf, p, total): i64 {
+    while (p < total) {
+        var c = load8(buf + p);
+        if (c == 123) { return 1; }
+        if (c != 32 && c != 9 && c != 10 && c != 13) { return 0; }
+        p = p + 1;
     }
     return 0;
 }
@@ -2067,7 +2082,7 @@ fn handle_semantic_tokens(body): i64 {
                                 var id_end = _lsp_scan_id_end(fb, p, ftotal);
                                 var id_len = id_end - id_start;
                                 var ttype = 0 - 1;
-                                if (_lsp_is_keyword(fb, id_start, id_len) == 1) {
+                                if (_lsp_is_keyword(fb, id_start, id_len, ftotal) == 1) {
                                     ttype = 5;
                                 } else {
                                     # v5.11.42: local-table lookup

@@ -41,7 +41,7 @@
       ]
     },
     "keywords": {
-      "match": "\\b(fn|var|if|elif|else|while|for|return|break|continue|include|struct|union|enum|defer|switch|case|default|asm|sizeof|secret|match|in|shared|impl|trait|const)\\b",
+      "match": "\\b(fn|var|if|elif|else|while|do|for|return|break|continue|include|struct|union|enum|defer|switch|case|default|asm|sizeof|secret|match|in|shared|impl|trait|const)\\b|\\bloop(?=\\s*\\{)",
       "name": "keyword.control.cyrius"
     },
     "constants": {
