@@ -19,6 +19,9 @@
 #      or static) or a slice is REFUSED by name, as 6.7.5 refused it on a struct: each integer-operated
 #      on the first word (`a += 8` added to a[0], `s += 1` to `.ptr`), as a statement and a for step.
 #      The element forms, the slice fields and a bare `var b[N]` (not decided) keep working.
+#   U  `OP=` on a u128 computes exactly as `a = a OP x` does (not refused) — all 16 bytes, every
+#      operator: tests/tcyr/crossos/u128_compound_matches_long_form.tcyr (A rows). Neither spelling
+#      carries into the high word (see the lane report: the decision's "carry included" premise).
 #   A  ANTI-VACUOUS: each crossos tcyr on x86_64 (default, CYRIUS_IR=3, CYRIUS_DCE=1) and with
 #      compilers built from this tree on aarch64 (qemu), cx (cxvm) and PE (wine, a private prefix),
 #      with its full assertion count.
@@ -157,7 +160,8 @@ tcyr_all() {   # <tag> <tcyr path> <assertion floor>
 }
 tcyr_all AF tests/tcyr/crossos/f32_scalar_init_rounds.tcyr 30
 tcyr_all AR tests/tcyr/crossos/int_name_routes_int_overload.tcyr 20
+tcyr_all AU tests/tcyr/crossos/u128_compound_matches_long_form.tcyr 15
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — f32 initializers round (F); a top-level pair bind refused (P); an integer name routes to _int (R); vector / typed-array / slice OP= refused (O); IR=3 keeps the f32 conversions (I); every tcyr on x86_64 / IR / DCE / aarch64 / cx / PE (A)"
+echo "PASS: $G — f32 initializers round (F); a top-level pair bind refused (P); an integer name routes to _int (R); vector / typed-array / slice OP= refused (O); u128 OP= is the long form (U); IR=3 keeps the f32 conversions (I); every tcyr on x86_64 / IR / DCE / aarch64 / cx / PE (A)"

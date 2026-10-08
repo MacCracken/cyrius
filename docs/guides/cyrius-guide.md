@@ -636,6 +636,8 @@ which operated on its first word: a **SIMD vector** (`v += w` on an `i64v2` / `f
 parameter added to lane 0 only — use the packed-op builtins), a **typed array** (`var a: i64[4];
 a += 8` added to `a[0]`, an `f64[N]` added bit patterns — write `a[i] += b`) and a **slice**
 (`s += 1` moved `.ptr` — write `s.ptr += 1` / `s.len -= 1`). A bare `var b[N]` keeps its `OP=`.
+On a `u128` `x OP= e` is NOT refused: it computes exactly as `x = x OP e` does, on the low word —
+neither spelling carries into the high word.
 
 ## Memory
 
