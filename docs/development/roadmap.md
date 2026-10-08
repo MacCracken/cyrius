@@ -192,6 +192,12 @@ field walk at the nested `<` (re-measured 6.7.1: `#derive(accessors)` never defi
 - **Placement: anywhere an expression goes** — initializers, assignments, arguments, returns, inside other
   expressions (`n + if (c) { 1 } else { 2 }`) — **and const contexts** (`const X = if (DEBUG) { 1 } else { 0 };`,
   array sizes, case labels, enum values, `#assert`), where the compile-time evaluator runs it.
+- (2026-10-08, the plan's three forks) **A struct value of 8 B or less**: every branch the same struct type, and the
+  result keeps it (so `var z: S = ..`, the struct-argument check and operator dispatch see it). **Global array
+  initializer lists**: every element goes through the compile-time evaluator, as 6.7.2 did for every other const
+  context (additive: comparisons, `&&` / `||`, `!`, const fn calls and f64 const arithmetic become legal elements).
+  **Strings**: a const-context if-expression of string branches is a string const and a string / integer mix is
+  refused there; at run time a string literal is a pointer word, so `if (c) {"a"} else {0}` compiles.
 
 **B2 decisions (user, 2026-10-07, at the 6.7.3 open) — ✅ LANDED in 6.7.3 (CHANGELOG [6.7.3]):**
 - **A write into a `bool` is checked: refused by name unless the value is boolean.** A bool variable, field,
