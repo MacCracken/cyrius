@@ -33,7 +33,7 @@ fn _mf_vocab_a(i): i64 {
     if (i == 6) { return "package|repository|info|-|-|-|people and package recipes"; }
     if (i == 7) { return "build|entry|read|src|-|<source>|cyrius build, cyrius package: the source"; }
     if (i == 8) { return "build|output|read|-|-|<output>|cyrius build, cyrius package: the output (a default)"; }
-    if (i == 9) { return "build|test|read|-|-|<path>...|bare cyrius test: these (file / dir / list), then tests/"; }
+    if (i == 9) { return "build|test|read|-|-|<path>...|bare cyrius test: these (file / dir / list), then tests/ (read when [test] files is absent)"; }
     if (i == 10) { return "build|test_standalone|read|-|-|-|cyrius test: each test compiles standalone, its own includes only (no [deps] stdlib prepend; bool)"; }
     if (i == 11) { return "build|modules|read|-|-|-|every compile: these files prepended before the entry"; }
     if (i == 12) { return "build|dce|read|-|CYRIUS_DCE|--dce|cyrius build: dead-code elimination (bool)"; }
@@ -67,6 +67,8 @@ fn _mf_vocab_b(i): i64 {
     if (i == 36) { return "release|cross_bins|read|-|-|-|release.yml, install.sh, cyrius pulsar"; }
     if (i == 37) { return "release|scripts|read|-|-|-|release.yml, install.sh"; }
     if (i == 38) { return "embed|*|read|-|-|-|every compile: the file's bytes as NAME() / NAME_len(), prepended before the entry"; }
+    # 6.7.6 (Break 1 lane C, part T): [test] — what test / bench / fuzz compiles get and nothing else
+    if (i == 39) { return "test|files|read|-|-|<path>...|bare cyrius test: these (file / dir / list) first, then tests/ ([build] test is the older spelling)"; }
     return 0;
 }
 
@@ -1214,7 +1216,7 @@ var _CFG_DEFAULT = 0;
 var _CFG_MANIFEST = 1;
 var _CFG_ENV = 2;
 var _CFG_ARG = 3;
-var _CFG_N = 14;
+var _CFG_N = 15;
 var _CK_ENTRY = 0;
 var _CK_OUTPUT = 1;
 var _CK_DCE = 2;
@@ -1229,13 +1231,16 @@ var _CK_PKG_VERSION = 10;
 var _CK_PKG_CYRIUS = 11;
 var _CK_SECTIONS_BASE = 12;
 var _CK_EMBED = 13;        # 6.6.19: the [embed] entries, as "NAME=path" (manifest > default only)
+# 6.7.6 (part T) — the [test] rows. `--print-config` resolves them AFTER the [build] rows
+# (_cfg_resolve_test_rows), so a malformed [test] value never fails a `cyrius build`.
+var _CK_TEST_FILES = 14;   # [test] files, else [build] test
 # 1 when the resolved `dce` is on and did NOT come from the environment: compile() then hands cycc
 # CYRIUS_DCE=1, replacing any inherited value (an argument beats CYRIUS_DCE=0).
 var _cfg_dce_inject = 0;
 var _cfg_warned = 0;
-var _cfg_v[16];   # the value: a cstr (0 = unset), a bool, or a vec of cstrs (0 = empty)
-var _cfg_o[16];   # the origin rung
-var _cfg_w[16];   # where on that rung: "[build] src", "CYRIUS_DCE", "--dce", "<source>"
+var _cfg_v[24];   # the value: a cstr (0 = unset), a bool, an int, or a vec of cstrs (0 = empty)
+var _cfg_o[24];   # the origin rung
+var _cfg_w[24];   # where on that rung: "[build] src", "CYRIUS_DCE", "--dce", "<source>"
 
 fn _cfg_name(i): i64 {
     if (i == _CK_ENTRY) { return "build.entry"; }
@@ -1251,6 +1256,7 @@ fn _cfg_name(i): i64 {
     if (i == _CK_PKG_VERSION) { return "package.version"; }
     if (i == _CK_PKG_CYRIUS) { return "package.cyrius"; }
     if (i == _CK_SECTIONS_BASE) { return "sections.base"; }
+    if (i == _CK_TEST_FILES) { return "test.files"; }
     return "embed";
 }
 
@@ -1258,6 +1264,7 @@ fn _cfg_name(i): i64 {
 fn _cfg_kind(i): i64 {
     if (i == _CK_DCE || i == _CK_STRICT || i == _CK_TEST_STANDALONE) { return 1; }
     if (i == _CK_DEFINES || i == _CK_TEST || i == _CK_MODULES || i == _CK_PROGRAMS || i == _CK_EMBED) { return 2; }
+    if (i == _CK_TEST_FILES) { return 2; }
     return 0;
 }
 
@@ -1533,17 +1540,54 @@ fn _cfg_resolve_build(src_arg, out_arg): i64 {
     return 0;
 }
 
-# `[build] test` for a bare `cyrius test` (its argument rung is the operand list, which takes the
-# other path entirely). Returns the declared targets (a vec) or 0, and -1 after naming a value of
-# the wrong type.
-fn _cfg_resolve_test(): i64 {
+# What a bare `cyrius test` runs first: `[test] files`, or — the older spelling, 41 manifests —
+# `[build] test` (its argument rung is the operand list, which takes the other path entirely).
+# ONE reader for the pair: `[test] files` wins, and a `[build] test` beside it is warned by name
+# (two spellings of one key cannot both be read). Returns the declared targets (a vec) or 0, and
+# -1 after naming a value of the wrong type. `*wherep` (when non-zero) gets "[test] files" /
+# "[build] test" for the key that was read. CHANGELOG [6.7.6]
+var _tc_files_warned = 0;
+var _tc_files_where = "[build] test";   # the key bare `cyrius test` read its targets from
+var _tc_warned = 0;   # [test]'s unknown keys were named (once per run: print-config or a resolve)
+
+fn _cfg_test_files(wherep): i64 {
     if (_mf_load() < 0) { return 0 - 1; }
-    var v = _mf_strs("build", "test");
+    var tf = _mf_strs("test", "files");
+    if (_toml_bad == 1) {
+        _cfg_bad("test", "files", "a path or an array of paths");
+        return 0 - 1;
+    }
+    var bt = _mf_strs("build", "test");
     if (_toml_bad == 1) {
         _cfg_bad("build", "test", "a path or an array of paths");
         return 0 - 1;
     }
-    return v;
+    if (tf != 0) {
+        if (bt != 0 && _tc_files_warned == 0) {
+            _tc_files_warned = 1;
+            _warn("cyrius.cyml [build] test is not read: [test] files is declared too, and it is the same key (keep one)");
+        }
+        if (wherep != 0) { store64(wherep, "[test] files"); }
+        return tf;
+    }
+    if (bt != 0 && wherep != 0) { store64(wherep, "[build] test"); }
+    return bt;
+}
+
+fn _cfg_resolve_test(): i64 { return _cfg_test_files(&_tc_files_where); }
+
+# The [test] rows `--print-config` shows (after the [build] rows; see _CK_TEST_FILES). 0, or 1
+# after naming a value of the wrong type.
+fn _cfg_resolve_test_rows(): i64 {
+    if (_mf_state == 1 && _tc_warned == 0) {
+        _tc_warned = 1;
+        _cfg_warn_section("test");
+    }
+    var tw = 0;
+    var tf = _cfg_test_files(&tw);
+    if (tf < 0) { return 1; }
+    if (tf != 0) { _cfg_put(_CK_TEST_FILES, tf, _CFG_MANIFEST, tw); }
+    return 0;
 }
 
 # 6.7.6 — `[build] test_standalone` for `cyrius test`, in every form that compiles a test (a file, a
@@ -1661,6 +1705,7 @@ fn _cfg_print_row(i): i64 {
 # exit 0 WITHOUT building (and without resolving deps: it runs ahead of the dep resolver).
 fn _cfg_print_config(src_arg, out_arg): i64 {
     if (_cfg_resolve_build(src_arg, out_arg) != 0) { return 1; }
+    if (_cfg_resolve_test_rows() != 0) { return 1; }
     _cfg_out("cyrius build configuration (argument > environment > manifest > default)\n");
     _cfg_out("  manifest: ");
     if (_mf_state == 1) { _cfg_out(_mf_path); } else { _cfg_out("(none)"); }

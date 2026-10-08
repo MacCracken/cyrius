@@ -318,8 +318,9 @@ fn _cli_help_extra(verb): i64 {
     if (streq(verb, "test") == 1) {
         println("");
         println("  A <dir> runs every .tcyr under it (recursive); several operands run each file once.");
-        println("  With no operand: what ./cyrius.cyml [build] test declares (a file, a directory");
-        println("  or a list) runs first, then every .tcyr under tests/ (recursive); each file once.");
+        println("  With no operand: what ./cyrius.cyml [test] files declares (a file, a directory or");
+        println("  a list; [build] test is the older spelling) runs first, then every .tcyr under");
+        println("  tests/ (recursive); each file once.");
         println("  [build] test_standalone = true compiles each test with only its own includes");
         println("  (no [deps] stdlib prepend).");
     }

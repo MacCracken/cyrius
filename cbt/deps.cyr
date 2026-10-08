@@ -3643,6 +3643,10 @@ fn _dep_warn_manifest(): i64 {
     if (_dep_mf_warned == 1 || _mf_state != 1) { return 0; }
     _dep_mf_warned = 1;
     _cfg_warn_section("deps");
+    if (_tc_warned == 0) {          # 6.7.6 (part T): [test]'s keys, as [deps]' (R11)
+        _tc_warned = 1;
+        _cfg_warn_section("test");
+    }
     var info[32];
     var p = 0;
     while (p < _mf_len) {

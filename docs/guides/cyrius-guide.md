@@ -2341,7 +2341,7 @@ cyrius build configuration (argument > environment > manifest > default)
 | `[package]` | `repository` | info | — | — | — | people and package recipes |
 | `[build]` | `entry` | read | `src` | — | `<source>` | cyrius build, cyrius package: the source |
 | `[build]` | `output` | read | — | — | `<output>` | cyrius build, cyrius package: the output (a default) |
-| `[build]` | `test` | read | — | — | `<path>...` | bare cyrius test: these (file / dir / list), then tests/ |
+| `[build]` | `test` | read | — | — | `<path>...` | bare cyrius test: these (file / dir / list), then tests/ (read when [test] files is absent) |
 | `[build]` | `test_standalone` | read | — | — | — | cyrius test: each test compiles standalone, its own includes only (no [deps] stdlib prepend; bool) |
 | `[build]` | `modules` | read | — | — | — | every compile: these files prepended before the entry |
 | `[build]` | `dce` | read | — | `CYRIUS_DCE` | `--dce` | cyrius build: dead-code elimination (bool) |
@@ -2352,6 +2352,7 @@ cyrius build configuration (argument > environment > manifest > default)
 | `[coverage]` | `programs` | read | — | — | `--programs` | cyrius coverage: RUN programs in the corpus (globs) |
 | `[sections]` | `base` | read | — | — | — | bare-metal builds: the image load base |
 | `[embed]` | `*` | read | — | — | — | every compile: the file's bytes as NAME() / NAME_len(), prepended before the entry |
+| `[test]` | `files` | read | — | — | `<path>...` | bare cyrius test: these (file / dir / list) first, then tests/ ([build] test is the older spelling) |
 | `[deps]` | `stdlib` | read | — | — | — | cyrius deps: stdlib leaves vendored into lib/ and auto-prepended |
 | `[deps.*]` | `git` | read | — | — | — | cyrius deps: the repository to clone |
 | `[deps.*]` | `tag` | read | — | — | — | cyrius deps: the tag to check out |

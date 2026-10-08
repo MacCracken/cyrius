@@ -2328,6 +2328,8 @@ _chk_gate "$ROOT/tests/gates/toolchain/deps_sources_reported.sh"
 _chk_gate "$ROOT/tests/gates/toolchain/manifest_unknown_keys_warned.sh"
 _chk_gate "$ROOT/tests/gates/toolchain/deps_update_refetches_untagged.sh"
 _chk_gate "$ROOT/tests/gates/toolchain/operands_checked_before_resolve.sh"
+# 6.7.6 (Break 1, lane C, the test half) — the [test] section, `scope = "test"`, test.cyml
+_chk_gate "$ROOT/tests/gates/toolchain/test_section.sh"
 _chk_gate "$ROOT/tests/gates/toolchain/cybs_call_arity_named.sh"
 _chk_gate "$ROOT/tests/gates/platform/agnos_proc_kill_tree_refused.sh"
 _chk_gate "$ROOT/tests/gates/platform/cx_compiler_reads_env.sh"

@@ -593,7 +593,8 @@ fn _tests_first_run(p): i64 {
     return 1;
 }
 
-# 6.6.17 (P1): run what `[build] test` declares — a file as-is whatever its extension (the init
+# 6.6.17 (P1): run what `[build] test` declares — 6.7.6: `[test] files`, of which `[build] test` is
+# the older spelling (_cfg_test_files) — a file as-is whatever its extension (the init
 # template's is src/test.cyr), a directory's .tcyr files recursively. 41 manifests declared the key
 # and nothing read it (kashi's 393 assertions never ran in CI). A target that does not exist is a
 # FAILED run, by name — a typo must not read as "nothing to test".
@@ -608,7 +609,8 @@ fn _tests_run_declared(targets): i64 {
             _tests_found = 1;
             if (_tests_first_run(t) == 1) { cmd_test(t); }
         } else {
-            _err_ctx("cyrius.cyml [build] test names a path that does not exist", t);
+            # 6.7.6: names the key it was read under — `[test] files` or the older `[build] test`
+            _err_ctx(_cat2(_cat2("cyrius.cyml ", _tc_files_where), " names a path that does not exist"), t);
             _fail = _fail + 1;
         }
     }
