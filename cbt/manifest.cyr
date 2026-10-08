@@ -1971,6 +1971,15 @@ var _tc_cyml_found = 0;    # the test.cyml files the resolver reads (vec), 0 = n
 # inside the project.
 fn _tc_unit_dir(p): i64 {
     var np = _test_norm(p);
+    #ifdef CYRIUS_TARGET_WIN
+    # A drive (`C:`) or a `\` path is not read as a project path: its directory chain would reach
+    # a drive root's test.cyml (the drive-relative plant class). Its unit gets cyrius.cyml's [test].
+    var wi = 0;
+    while (load8(np + wi) != 0) {
+        if (load8(np + wi) == 58 || load8(np + wi) == 92) { return 0 - 1; }
+        wi = wi + 1;
+    }
+    #endif
     if (load8(np) == 47) {
         var cwd = _abs_path(".");
         var cl = strlen(cwd);
