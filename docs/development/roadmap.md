@@ -182,17 +182,28 @@ field walk at the nested `<` (re-measured 6.7.1: `#derive(accessors)` never defi
    and a field alike; every compound operator on every lvalue form (field, chain, `p.f` through a pointer, a
    subscript), with `*=` / `/=` on f64 fields following the 6.6.11 float rules.
 
-**B5 decisions (user, 2026-10-08, at the 6.7.5 open):**
-- **`loop` is a FULL reserved word**, like every other cyrius keyword (the reserved set stays one class). Its one
-  stdlib collision — sankoch's `var loop = 1; while (loop == 1)` (one declaration, three references) — is renamed in
-  sankoch's SOURCE and released as **sankoch 2.8.2** (rename only, pin unchanged) before 6.7.5 ships, then refolded
-  byte-identical in 6.7.5. The consumer repos with `loop` identifiers get a filed note each (filings only; they
-  rename when they bump their pin). `do` is reserved too (no collisions).
+**B5 + B8 decisions (user, 2026-10-08, at the 6.7.5 open):**
+- **`loop` is CONTEXTUAL** — `loop {` at the start of a statement is the loop statement, and `loop` anywhere else
+  stays an identifier (the `kernel` precedent, v5.8.45, demoted from reserved for the same reason; `self` is
+  recognised by name too). The user first chose a full reserved word on a question that wrongly called contextual
+  "the first contextual keyword"; corrected the same day with the census (**215 `loop` sites in 6 repos**, every one
+  a `var loop` flag — kriya 143, rekha 30, vidya 22, chakshu 12, argonaut 5, sankoch 3 — plus 58 repos vendoring
+  sankoch and 3 vendoring rekha), the user switched to contextual. Nothing outside cyrius changes. **`do` is a full
+  reserved word** (0 collisions). sankoch 2.8.2 (the `loop` → `more` rename, made under the first decision) stays:
+  harmless, already refolded.
 - **`loop` is a statement only** — `loop { … }` is `while (1) { … }` written plainly; `break` takes no value.
 - **`loop` and `do … while` join the `const fn` pure subset**, as `while` and `for` are; the evaluator runs them
   under the existing step budget.
-- From the spec: a `continue` in a `do … while` goes to the condition. B8 (compound assignment on every lvalue form)
-  computes the lvalue's address once, as `NAME[idx] OP= v` already does (`_arr_sub_assign`).
+- **A `do` body is its own scope** — the `while (c)` condition does not see locals declared in the body (every
+  braced body has been a scope since 6.6.17). From the spec: a `continue` in a `do … while` goes to the condition.
+- **B8: compound assignment on every lvalue form** computes the lvalue's address once, BEFORE the right-hand side,
+  as `NAME[idx] OP= v` already does (`_arr_sub_assign`) — a plain `x.f = e` evaluates `e` first, and stays so.
+- **B8: `OP=` on a struct value (variable or field) is refused by name** ("write `a = a + b`"): today `a += b` on a
+  struct compiles and integer-operates on its first word, never calling an overloaded `T_add` (13 vs `a = a + b`'s
+  33). The same reasoning as B2's refusal of `b += 1` on a bool.
+- **B8 additions:** `>>>=` (every lvalue form and const fn); `*p OP= v` at word width, like `*p = v` and `*p`;
+  field and `*p` destinations in a classic-`for` step, `=` and `OP=` alike (a struct-valued field step copies the
+  whole struct).
 
 **B3 decisions (user, 2026-10-08, at the 6.7.4 open) — ✅ LANDED in 6.7.4 (CHANGELOG [6.7.4]):**
 - **Syntax: `if (c) { a } elif (d) { b } else { e }` as an expression, ONE expression per branch** (no statements,
@@ -293,7 +304,7 @@ vendored copy, so the first test of all twelve together is 6.7.6's refold):
 
 | # | Release | Scope (high items in bold) | Size |
 |---|---|---|---|
-| 0 | **sankoch 2.8.2** — before 6.7.5 tags | the `loop` → `more` rename only, pin unchanged; refolded in 6.7.5 | XS |
+| 0 | **sankoch 2.8.2** — refolded in 6.7.5 (`dc548f9`; the user tags it) | the `loop` → `more` rename only, pin unchanged (made under the first, reserved-`loop` decision; harmless under contextual) | XS |
 | 1 | sakshi 2.5.8 | pin; its 16 private `_SK_SYS_*` become `const`; CI: `CYRIUS_DCE=1` on the Windows lane, drop the redundant `-D` | S |
 | 2 | bayan 1.5.13 | **B-1** `bayan_toml_escape_a` answers a refused buffer with `str_from("")`; **B-2** `_inline_parse_a` / `_toml_join_parts_a` unchecked allocs (a refused vec segfaults); B-3 `bayan_toml_parse`'s contract; the 11 stack buffers sized by `const`s | M |
 | 3 | sigil 3.13.11 | **F1** `pem_decode_privkey` never wipes the decoded private-key DER (`privkey.cyr:435`); **F2** unchecked `alloc(pem_len)` there and in `pem.cyr:359`; F3 nonblocking errors checked; F7 `sha256()` / `sha384()` wipe their ctx as `sha512()` does; relock + dist (CI's profile-drift step) | M |
@@ -373,7 +384,7 @@ stdlib, then re-vendors** (CLAUDE.md *Ecosystem & stdlib*); a non-stdlib repo ge
 | A `Struct = *Struct` copy | — | sites that relied on the 8-byte pointer store were already reading garbage | none expected; the arc's tcyr pins both sizes |
 | B1 `const` | 0 identifier uses | 0 | — |
 | B2 `true` / `false` | 0 | 0; `bool` already a type name (3 cyrius tcyr files) | — |
-| B5 `loop` / `do` | **`loop`: 3 sites in `lib/sankoch.cyr`** (folded — fix in sankoch's source repo) · `do`: 0 | `loop`: **224 sites in 10 repos** — kriya 143, rekha 25, vidya 22, chakshu 12, bhumi 6, argonaut 5, … (mostly `var loop = 1; while (loop == 1)`) | if `loop` is a full reserved word: sankoch fixed + re-vendored BEFORE B5 ships, and a note filed in each of the 10 repos; if contextual: nothing |
+| B5 `loop` / `do` | `loop`: 3 sites in `lib/sankoch.cyr` — renamed at source anyway (sankoch 2.8.2) · `do`: 0 | `loop`: **215 sites in 6 repos** (re-derived 2026-10-08; the 224 / 10 figure counted agent-worktree copies) — kriya 143, rekha 30, vidya 22, chakshu 12, argonaut 5, sankoch 3, all `var loop` flags | **none — `loop` is contextual** (user, 2026-10-08); `do`: none |
 | B7 narrow fields | **0** narrow fields in `lib/` | 76 in 4 repos — kavach 21, secureyeoman 21, agnostik 11, cyrius tests 23 | layout change: notes to kavach / secureyeoman / agnostik with the migration; cyrius's tcyr updated in the release |
 | C2 bounds mode | every `lib/` raw store becomes checkable when a consumer opts in | — | stdlib must run clean under `#bounds`; anything it trips is a stdlib repair queued to the next break |
 | C3 trait generics | **0** generic fns / structs in `lib/` | 1 repo (vidya, an example) | — |
@@ -617,6 +628,24 @@ CHANGELOG [6.6.17] *Downstream* (no ecosystem sweep).
     api-surface, cyaudit): only cyaudit's is held to LEXATTRWORD by a derived census; an eleventh attribute added to
     the lexer alone would be a comment to the other five. Options: move LEXATTRWORD into an includable pure file
     (measured byte-identical on all seven forks in the 6.7.3 plan) or give each tool cyaudit's census.
+  - **`OP=` on a u128 or a SIMD-vector variable is silently wrong** (6.7.5 B5/B8 planning probe): `a += 1` on a
+    u128 holding 2^64−1 gives low 0, high 0xFFFF… (no carry; `b = b + 1` gives low 0, high 1); a vector local
+    integer-operates on its first word. The user's 6.7.5 decision refuses `OP=` on a STRUCT value; u128 and vectors
+    are the same class (no field of either kind exists, so B8 does not extend it). Refusing them changes what
+    compiles — the user's call (Break 1 lane D candidate).
+  - **`x += 1.5` on an integer slot is silent, while `x = x + 1.5` warns** "integer arithmetic with an f64 right
+    operand" (6.7.5 planning probe `iw`): `_asg_compound_op`'s integer arm has no kind-2 check. B8's field form
+    goes through the same helper, so `h.n += 1.5` is silent too. One warn in the shared helper.
+  - **"the result is a temporary" is false for a pointer return**: `gp().n = 5` with `fn gp(): *H` is refused as
+    "cannot assign to a field of a call result: the result is a temporary" (`_stmt_call_field`,
+    parse_expr.cyr). Whether a field of a returned pointer is an lvalue is a language question.
+  - **Diagnostics name tokens "unknown"** — TOKNAME has no names for `<=`, `>=`, `%`, `&`, `|`, `^`, `<<`, `>>`
+    (6.7.5 gives `>>>` its name), so "expected '=', got unknown". Diagnostic-only.
+  - **A field store in a const fn body is reported as "expected ';', got '.'"** and `C.x = ..` on a const as "no
+    struct type in scope for 'C'" — neither names the real refusal (6.7.5 planning probes `cf1`, `cst`).
+  - **A fn whose body ends in `loop { … }` or `do … while` is not "provably returning"** to pass 1
+    (`_body_ends_in_return` reads a final `do` as a `while` statement): GFLG bit 1024 stays clear, so a
+    `var a, b = f()` refusal is missed for such an `f` — conservative (a missed refusal, never a false one).
 
 - **Found by the 6.6.20 closeout and not fixed in it (2026-10-07; backlog — only the user promotes).**
   - **A parenthesised struct argument to an address-passed parameter pushes the struct's VALUE**: `rd3((a))`
