@@ -1,0 +1,94 @@
+# tls_native_scratch_bounds.tcyr — 6.7.6: the native TLS stack's fixed STACK scratches hold the
+# largest input their public entry points accept.
+#
+# ⛔ THE RECORD SEAL. tls_native_record_seal (lib/tls_native_hs13.cyr) copies the content into a
+# stack scratch of 2^14 + 1 bytes but checked only the CIPHERTEXT cap (content + 1 + tag <=
+# 2^14 + 256), which admits 16623 content bytes: 16385..16623 bytes ran up to 239 of the caller's
+# bytes past the scratch, over the frame's saved registers and return address (SIGSEGV), and a
+# negative length wrote the inner type byte below it. More than 2^14 is now
+# TLS_ERR_RECORD_OVERFLOW (RFC 8446 §5.2), a negative length TLS_ERR_INVALID_PARAM, and neither
+# writes `out` or moves the sequence number.
+#
+# Pure functions — no socket, no peer — so it runs on every cross-OS host, where the frame
+# layout (and so where an overrun lands) differs per target.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/str.cyr"
+include "lib/io.cyr"
+include "lib/tls_native.cyr"
+include "lib/assert.cyr"
+
+var _sb_key = 0;
+var _sb_iv = 0;
+
+# Seal `n` content bytes of 0x41 under a fresh sequence number into a buffer with room to spare.
+# Returns the seal's result; `seq_out` gets the sequence word afterwards, `out_out` the record.
+fn _sb_seal(n, seq_out, out_out): i64 {
+    var seq = alloc(8);
+    store64(seq, 0);
+    var cap = 16384 + 1024;
+    if (n > 0) { cap = n + 1024; }
+    var inner = alloc(cap);
+    memset(inner, 0x41, cap);
+    var out = alloc(cap + 512);
+    memset(out, 0x5A, cap + 512);
+    var r = tls_native_record_seal(TLS_AES_128_GCM_SHA256, _sb_key, _sb_iv, seq, TLS_CT_APPLICATION_DATA,
+      inner, n, out, cap + 512);
+    store64(seq_out, load64(seq));
+    store64(out_out, out);
+    return r;
+}
+
+fn test_seal_bound(): i64 {
+    test_group("tls_native_record_seal: content over 2^14 is refused, before anything is written");
+    var sq = 0;
+    var o = 0;
+    var r = _sb_seal(16385, &sq, &o);
+    assert_eq(r, TLS_ERR_RECORD_OVERFLOW, "2^14 + 1 content bytes: TLS_ERR_RECORD_OVERFLOW (it sealed an over-length record)");
+    assert_eq(sq, 0, "2^14 + 1: the sequence number did not move");
+    assert_eq(load8(o), 0x5A, "2^14 + 1: out untouched");
+    r = _sb_seal(16500, &sq, &o);
+    assert_eq(r, TLS_ERR_RECORD_OVERFLOW, "16500 content bytes: TLS_ERR_RECORD_OVERFLOW (it ran past the stack scratch)");
+    r = _sb_seal(16623, &sq, &o);
+    assert_eq(r, TLS_ERR_RECORD_OVERFLOW, "16623 content bytes, the most the ciphertext cap admits: TLS_ERR_RECORD_OVERFLOW");
+    assert_eq(sq, 0, "16623: the sequence number did not move");
+    r = _sb_seal(0 - 1, &sq, &o);
+    assert_eq(r, TLS_ERR_INVALID_PARAM, "a negative length: TLS_ERR_INVALID_PARAM (it wrote below the scratch)");
+    assert_eq(sq, 0, "a negative length: the sequence number did not move");
+    assert_eq(load8(o), 0x5A, "a negative length: out untouched");
+    return 0;
+}
+
+fn test_seal_at_the_bound(): i64 {
+    test_group("tls_native_record_seal: exactly 2^14 content bytes seals and opens back");
+    var sq = 0;
+    var o = 0;
+    var n = TLS_RECORD_MAX_PLAINTEXT;
+    var r = _sb_seal(n, &sq, &o);
+    assert_eq(r, TLS_RECORD_HEADER_LEN + n + 1 + 16, "2^14: header + content + type + tag");
+    assert_eq(sq, 0x0100000000000000, "2^14: the (big-endian) sequence number moved once");
+    var seq = alloc(8);
+    store64(seq, 0);
+    var back = alloc(n + 64);
+    var ct = alloc(8);
+    var got = tls_native_record_open(TLS_AES_128_GCM_SHA256, _sb_key, _sb_iv, seq, o, r, back, n + 64, ct);
+    assert_eq(got, n, "2^14: opens to 2^14 bytes");
+    assert_eq(load64(ct), TLS_CT_APPLICATION_DATA, "2^14: the inner type survives");
+    var same = 1;
+    var i = 0;
+    while (i < n) { if (load8(back + i) != 0x41) { same = 0; } i = i + 1; }
+    assert_eq(same, 1, "2^14: every content byte survives");
+    r = _sb_seal(0, &sq, &o);
+    assert_eq(r, TLS_RECORD_HEADER_LEN + 1 + 16, "0 content bytes: header + type + tag");
+    return 0;
+}
+
+alloc_init();
+_sb_key = alloc(32);
+memset(_sb_key, 7, 32);
+_sb_iv = alloc(12);
+memset(_sb_iv, 3, 12);
+test_seal_bound();
+test_seal_at_the_bound();
+var r = assert_summary();

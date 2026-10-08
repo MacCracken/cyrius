@@ -2808,9 +2808,22 @@ fn tls_native_psk_binder(psk, psk_len, hash_algo, transcript_hash, th_len, out):
 
 # Seal `inner` (with TLS-1.3 inner content type `inner_ct`) into a
 # protected record at `out`. Increments seq. Returns the record length.
+# More than 2^14 content bytes is TLS_ERR_RECORD_OVERFLOW (RFC 8446 §5.2 — the caller
+# fragments) and a negative length TLS_ERR_INVALID_PARAM, both before anything is written.
+#
+# ⛔ 6.7.6: this guarded only the CIPHERTEXT cap (inner_len + 1 + tag <= 2^14 + 256), which
+# admits up to 16623 content bytes, while the plaintext scratch below holds 2^14 + 1 — so a
+# caller of this public primitive (or of tls_native_seal_app / *_seal_handshake, which reach
+# it) passing 16385..16623 bytes copied up to 239 of its own bytes past the scratch, over this
+# frame's saved registers and return address (SIGSEGV), and a negative length wrote the inner
+# type byte BELOW the scratch. The library's own callers never exceed 2^14 (tls_native_write
+# refuses more), so it was latent. TLS 1.2's seal_12 has carried this plaintext cap since
+# 6.0.72. Pinned by tests/tcyr/crossos/tls_native_scratch_bounds.tcyr.
 fn tls_native_record_seal(cipher, key, static_iv, seq8, inner_ct, inner, inner_len, out, out_max): i64 {
     var tag_len = tls_native_cipher_tag_len(cipher);
     if (tag_len < 0) { return TLS_ERR_CIPHER_NOT_SUPPORTED; }
+    if (inner_len < 0) { return TLS_ERR_INVALID_PARAM; }
+    if (inner_len > _TLS_RECORD_MAX_PLAINTEXT) { return TLS_ERR_RECORD_OVERFLOW; }
     var rec_len = inner_len + 1 + tag_len;
     if (rec_len > TLS_RECORD_MAX_CIPHERTEXT) { return TLS_ERR_RECORD_OVERFLOW; }
     var total = TLS_RECORD_HEADER_LEN + rec_len;
@@ -2819,8 +2832,8 @@ fn tls_native_record_seal(cipher, key, static_iv, seq8, inner_ct, inner, inner_l
     if (wh < 0) { return wh; }
     # v6.2.25: per-record plaintext scratch on the STACK (was a global-bump
     # alloc per sealed record — the highest-rate leak on a long-running server,
-    # one per app-data record up to ~16 KB). inner_len <= TLS_RECORD_MAX_PLAINTEXT
-    # (guarded above via rec_len <= TLS_RECORD_MAX_CIPHERTEXT), and pt is consumed
+    # one per app-data record up to ~16 KB). 0 <= inner_len <= _TLS_RECORD_MAX_PLAINTEXT
+    # (refused above — the same const sizes the scratch), and pt is consumed
     # by aead_encrypt before return, so the fixed frame is sound. This is
     # a ctx-less generic primitive (no arena to thread) → stack-local is the fit.
     var ptbuf[_TLS_RECORD_MAX_PLAINTEXT + 1];   # the content + the inner content-type byte
