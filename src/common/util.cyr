@@ -2193,6 +2193,23 @@ fn _TOK_IS_LOOP(S, ti): i64 {
     return 1;
 }
 
+# `loop {` where a STATEMENT starts, for the scanners that walk tokens unparsed and so meet the
+# identifier `loop` in any position (the closure capture prescan, the #inline scan, error
+# recovery): the previous token ends a statement, opens or closes a block, or is a case label's
+# `:`. `for e in loop {`, `0..loop {` and `match loop {` READ the identifier — the position-blind
+# test missed the capture and a closure read a global `loop` instead (6.7.5 review). The dispatch,
+# the evaluator and the if-expression branch ask `_TOK_IS_LOOP` at a start they already know.
+fn _TOK_IS_LOOP_AT(S, ti): i64 {
+    if (_TOK_IS_LOOP(S, ti) == 0) { return 0; }
+    if (ti == 0) { return 1; }
+    var pt = TOKTYP(S, ti - 1);
+    if (pt == 5) { return 1; }    # ;
+    if (pt == 13) { return 1; }   # {
+    if (pt == 14) { return 1; }   # }
+    if (pt == 49) { return 1; }   # :  (case / default label)
+    return 0;
+}
+
 # Is this token type a reserved keyword (that a user might mistakenly
 # try to use as an identifier)? Used by ERR_EXPECT to print a clearer
 # diagnostic when a user writes e.g. `var match = 1;`.
@@ -2634,7 +2651,7 @@ fn _sync_skip(S): i64 {
             elif (t == 15) { go = 0; }                     # if
             elif (t == 16) { go = 0; }                     # while
             elif (t == 172) { go = 0; }                    # do (6.7.5)
-            elif (_TOK_IS_LOOP(S, GTI(S)) == 1) { go = 0; }   # `loop {` (6.7.5, contextual)
+            elif (_TOK_IS_LOOP_AT(S, GTI(S)) == 1) { go = 0; }   # `loop {` (6.7.5, contextual)
             elif (t == 55) { go = 0; }                     # for
             elif (t == 33) { go = 0; }                     # return
             elif (t == 57) { go = 0; }                     # switch

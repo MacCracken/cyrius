@@ -50,6 +50,7 @@
 #   M10c `_for_step_replay` without the `*p` arm          -> RED A (the values file does not build: T8 T9)
 #   M10d `_fsc_expr` not arming `_fla_stp` for a step     -> RED A (tcyr T6: one word of `z.k`, 76)
 #   M11 `_asg_struct_refused` never refusing              -> RED R10-R16 (each BUILDS; R10 exits 13, measured)
+#   M12 `_err_in_sync` without its `_tn_once` latch       -> RED R17 R18 (2 error lines, one per instance)
 # (The IR_RAW_EMIT record at the address and the flags-tracker clear after the load are defensive:
 # no row kills them — measured.)
 set -u
@@ -139,6 +140,10 @@ refused r13 "$SV 'a' $SVT" "R13: an 8-byte struct local" "struct S8 { v; }\nfn m
 refused r14 "$SV 'a' $SVT" "R14: a for step" "${PADD}fn main(): i64 { var a = P { 1, 2 }; for (var i = 0; i < 1; a += 1) { i = 1; } return a.x; }$E"
 refused r15 "$SV 'G' $SVT" "R15: a top-level statement" "${PADD}var G = P { 1, 2 };\nG <<= 1;\nsyscall(60, G.x);\n"
 refused r16 "$SV 'a' $SVT" "R16: an 8-byte by-value parameter" "struct S8 { v; }\nfn f(a: S8): i64 { a += 4; return a.v; }\nfn main(): i64 { var b: S8; b.v = 3; return f(b); }$E"
+# 6.7.5 review: a generic base and its instances parse the same tokens, so a refusal inside a generic
+# body was reported once per instantiation; `_err_in_sync` reports a token once (as B2's bool does).
+refused r17 "$SV 'a' $SVT" "R17: a struct OP= in a generic fn instantiated twice is reported once" "struct I { a; b; }\n${PADD}fn g<T>(v: T): i64 { var a = P { 1, 2 }; a += 1; return a.x; }\nfn main(): i64 { var i = I { 1, 2 }; return g(1) + g(i); }$E"
+refused r18 "compound assignment to struct field 'i' is refused" "R18: a struct-field OP= in a generic fn instantiated twice is reported once" "${ST}fn g<T>(v: T): i64 { var o = O { 0, 1, 2 }; o.i += 1; return o.x; }\nfn main(): i64 { var i = I { 1, 2 }; return g(1) + g(i); }$E"
 exits h01 48 "H1: handles keep the pointer step: a \`*T\` param and global step sizeof(P), a pointer-mode local adds bytes" "${PADD}var GP: *P = 0;\nfn bits(v) { return v; }\nfn f(p: *P): i64 { p += 1; return p; }\nfn main(): i64 { var a: P[3]; var b0 = bits(&a); var q: P = b0; q += 16; GP = b0; GP += 1; return bits(f(b0)) - b0 + bits(GP) - b0 + bits(q) - b0; }$E"
 
 # Two refusals in a row are both reported: each leaves the parse in sync.

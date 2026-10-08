@@ -41,6 +41,8 @@
 #   L10 `_ie_stmt_tok` without 172                        -> R6 ("unexpected do")
 #   L11 `_ie_stmt_at` without the `loop {` test           -> R5 ("undefined variable 'loop'")
 #   L12 `_cl_prescan_ident` without the `loop {` skip     -> K4 (113: the closure captured `loop`)
+#   L15 `_cl_prescan_ident` on the position-blind test     -> K5 (100: the global), K6 (refused)
+#   L16 the inline scan on the position-blind test        -> W3 (#inline ignored)
 #   L13 the dispatch's `loop {` arm dropped               -> R7 R9 K4 W1 A1-A7 (every `loop` is an
 #                                                          identifier statement again)
 #   L8  `_ce_stmt`'s `_ce_loopx` arm dropped              -> R13 R14 C1 A1-A6 ("unknown name 'loop'
@@ -126,6 +128,11 @@ exits k03 56 "K3: a field and a struct named loop" 'struct loop { a; b; }\nstruc
 # A capturing closure's value carries the env tag in bit 63; a closure that captures nothing is a
 # plain fn pointer (tag 0). `loop {` in the body is the statement, not a read of the local `loop`.
 exits k04 13 "K4: a closure's \`loop {\` does not capture an enclosing \`loop\` local (no env tag)" 'include "lib/syscalls.cyr"\ninclude "lib/alloc.cyr"\ninclude "lib/fnptr.cyr"\nfn f(c): i64 { alloc_init(); var loop = 7; var g = |x| { var i = 0; loop { i = i + x; if (i > 5) { break; } } return i; }; return fncall1(g, 2) + loop + (g >> 63) * 100; }\nsyscall(60, f(1));\n'
+# The other direction (6.7.5 review): the identifier `loop` READ just before a `{` that does not start a
+# statement — `0..loop {`, `match loop {` — is a capture. The prescan tests the POSITION
+# (`_TOK_IS_LOOP_AT`); position-blind, it skipped the read and the closure read the GLOBAL (exit 100).
+exits k05 5 "K5: a closure's \`for i in 0..loop {\` captures the local \`loop\`, not the global" 'include "lib/syscalls.cyr"\ninclude "lib/alloc.cyr"\ninclude "lib/fnptr.cyr"\nvar loop = 100;\nfn f(c): i64 { alloc_init(); var loop = 5; var g = |x| { var s = 0; for i in 0..loop { s = s + 1; } return s + x; }; return fncall1(g, 0); }\nsyscall(60, f(1));\n'
+exits k06 42 "K6: a closure's \`match loop {\` captures the local \`loop\`" 'include "lib/syscalls.cyr"\ninclude "lib/alloc.cyr"\ninclude "lib/fnptr.cyr"\nfn f(c): i64 { alloc_init(); var loop = 2; var g = |x| { match loop { 2 => { return 40 + x; } _ => { return 1; } } return 0; }; return fncall1(g, 2); }\nsyscall(60, f(1));\n'
 
 printf 'var cran = 0;\n#inline\nfn g(a): i64 { loop { return a + 1; } }\nfn h(): i64 { var x = g(5); cran = 7; return x; }\nvar r = h();\nsyscall(60, cran * 10 + r);\n' > "$T/w01.cyr"
 build w01
@@ -142,6 +149,18 @@ else
     grep -q "#inline ignored: body has control flow" "$T/w02.err" && ok "W2: #inline on a body holding a do is ignored by name" || bad "W2: no warning for the do body"
     chmod +x "$T/w02.bin"; got=0; timeout 10 "$T/w02.bin" || got=$?
     [ "$got" -eq 80 ] && ok "W2: ... exit 80" || bad "W2: exit $got, want 80"
+fi
+
+# 6.7.5 review: \`match loop {\` in an #inline body reads the PARAMETER \`loop\` — not a loop statement, so
+# no "#inline ignored" (the inline scan tests the position too). The 6.7.4 compiler inlined it silently.
+printf '#inline\nfn g(loop): i64 { match loop { 1 => { return 5; } _ => { return 7; } } return 0; }\nfn h(): i64 { return g(1) * 10 + g(2); }\nsyscall(60, h());\n' > "$T/w03.cyr"
+build w03
+if [ "$rc" -ne 0 ]; then bad "W3: the #inline match-loop probe did not build: $(grep '^error' "$T/w03.err" | head -1)"
+else
+    if grep -q "#inline ignored" "$T/w03.err"; then bad "W3: \`match loop {\` read as a loop statement: #inline ignored"
+    else ok "W3: #inline with \`match loop {\` (a parameter read) is not refused as control flow"; fi
+    chmod +x "$T/w03.bin"; got=0; timeout 10 "$T/w03.bin" || got=$?
+    [ "$got" -eq 57 ] && ok "W3: ... exit 57" || bad "W3: exit $got, want 57"
 fi
 
 # ── A: the crossos tcyr, every leg, with its full assertion count ────────────────────────────
