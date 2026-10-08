@@ -1907,7 +1907,9 @@ _chk_gate "$ROOT/tests/gates/toolchain/header_spellings_and_size.sh"
 # 6.6.8 (bite 10) — `cyrius vet` / `deny` (cyaudit) see exactly the compiler's includes: column 0,
 # outside a string, the WHOLE file (a fixed 256 KB read hid a later include from both, rc 0), and
 # a path judged by COMPONENT (`lib/../../x` was trusted by vet and passed deny). The compiler is
-# the oracle for what an include is; mutation-proven in the header.
+# the oracle for what an include is; mutation-proven in the header. 6.7.3 axis 7: an ATTRIBUTE
+# line is code (PP_LEXST_AT), so its multi-line string no longer hides the next include from
+# vet / deny; cyaudit's word list is held to LEXATTRWORD's.
 _chk_gate "$ROOT/tests/gates/toolchain/cyaudit_include_directives.sh"
 
 # 6.6.8 (bite 10) — `cyrius api-surface` lists exactly what the COMPILER emits: the `#derive`

@@ -80,6 +80,9 @@
 #           against the fns the COMPILER emits for the same source; F5 is anti-vacuous
 #           (`#ioctl notes {` is still a comment); F6/F7 an unreadable source and one at
 #           the 2 MiB read cap are errors by name, not a silently short snapshot.
+#   F8/F8b  (6.7.3) the tool's `#derive` body walk reads an ATTRIBUTE line as code
+#           (PP_LEXST_AT), so a string opened there hides the `}` and the fn below
+#           it, as it does for the compiler; F8b is anti-vacuous.
 #   D1..D6  the SAME root cause in the preprocessor (review round): PP_IS_HOST_ONLY
 #           and the three ISDERIVE* probes in src/frontend/lex_pp.cyr, plus the
 #           fourth reader of `#derive` (programs/cyrius_api_surface.cyr). These
@@ -145,6 +148,9 @@
 #   (the gate exits 77 unless an axis failed), no longer a pass.
 #   M18 the EJMP0/EPATCH pair restored in _async_emit_constructor (parse_fn.cyr)
 #       → 2 FAIL: F4, F4b (the compiler's list loses f_after)
+#   6.7.3 (F8/F8b; real tree → 51/51):
+#   M19 the 6.7.2 tool (_asf_body_close walks with _asf_lexst: every `#` a comment)
+#       → 1 FAIL: F8 (it lists `ghost`)
 set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT"
@@ -709,6 +715,16 @@ if [ -x "$D/cyrius_api_surface" ] || build_tool cyrius_api_surface; then
     # attribute skip must not turn `#ioctl notes {` into code (depth 1 would drop f_after).
     F5='fn f_before() { return 0; }\n#ioctl notes {\n#io(fd) reads {\nfn f_after() { return 2; }\n'
     faxis F5 'ANTI-VACUOUS: `#ioctl notes {` / `#io(fd) reads {` stay comments' "$(femit F5 "$F5")" "$(fsnap F5 "$F5")"
+    # F8 (6.7.3) — the `#derive` body walk (_asf_body_close) reads an attribute line as CODE, as
+    # the compiler's copy loop does (PP_PARSE_STRUCT_DEF walks with PP_LEXST_AT): the string it
+    # opens hides the `}` and the `fn ghost` line below it. The parser then refuses the build —
+    # an attribute is not a field — but the PP has already emitted the derive fns, and the DCE
+    # list names exactly which. No VALID program tells the two walks apart (an attribute in a
+    # derive body never compiles), so this keeps the tool in step on the input it can meet.
+    F8='#derive(accessors)\nstruct gh {\n    a;\n    #assert 1 == 1, "x\n}\nfn ghost(q) { return q; }\n"\n}\nfn after_two(x) { return x; }\n'
+    F8E=$(femit F8 "$F8")
+    faxis F8 'an attribute line in a #derive body is code: the body closes where the compiler closes it' "$F8E" "$(fsnap F8 "$F8")"
+    faxis F8b 'ANTI-VACUOUS: the compiler emits the accessors and after_two, and no ghost' "after_two gh_a gh_set_a" "$F8E"
     # F6/F7 — a source the scan cannot see WHOLE is an error by name, never a short snapshot.
     rm -rf "$D/apir"; mkdir -p "$D/apir/src" "$D/apir/lib"
     printf 'fn f_x() { return 0; }\n' > "$D/apir/src/x.cyr"

@@ -413,8 +413,24 @@ fn _asf_lexst(st, c): i64 {
     return 0;
 }
 
-# The `}` closing the body whose `{` is at `open` — braces in comments and char literals do
-# not count (PP_PARSE_STRUCT_DEF's copy loop). -1 when unterminated.
+# _asf_lexst for the byte at b[p] (`n` = the buffer's length) — PP_LEXST_AT: in code, a `#`
+# that spells one of the lexer's attribute words (_asf_attr_len) does not open a comment, as
+# LEX, and since 6.6.20 the preprocessor, keep lexing that line as code, strings included.
+# Reading every `#` as a comment, the body walk missed a string opened on an attribute line
+# inside a `#derive` body and closed the body where the compiler does not. CHANGELOG [6.7.3]
+fn _asf_lexst_at(b, p, n, st): i64 {
+    var c = load8(b + p);
+    if (st == 0) {
+        if (c == 35) {
+            if (_asf_attr_len(b, p, n) != 0) { return 0; }
+        }
+    }
+    return _asf_lexst(st, c);
+}
+
+# The `}` closing the body whose `{` is at `open` — braces in strings, comments and char
+# literals do not count, and an attribute line is code (PP_PARSE_STRUCT_DEF's copy loop walks
+# with PP_LEXST_AT; this with _asf_lexst_at). -1 when unterminated.
 fn _asf_body_close(b, open, n): i64 {
     var depth = 0;
     var st = 0;
@@ -425,7 +441,7 @@ fn _asf_body_close(b, open, n): i64 {
             if (c == 123) { depth = depth + 1; }
             if (c == 125) { depth = depth - 1; if (depth == 0) { return p; } }
         }
-        st = _asf_lexst(st, c);
+        st = _asf_lexst_at(b, p, n, st);
         p = p + 1;
     }
     return 0 - 1;
