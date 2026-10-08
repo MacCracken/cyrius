@@ -2293,6 +2293,7 @@ _chk_gate "$ROOT/tests/gates/frontend/generic_struct_field.sh"   # 6.7.1 (C3)
 _chk_gate "$ROOT/tests/gates/frontend/trait_bounds_checked.sh"   # 6.7.1 (C3)
 _chk_gate "$ROOT/tests/gates/frontend/const_checked.sh"   # 6.7.2 (B1, C1)
 _chk_gate "$ROOT/tests/gates/frontend/bool_checked.sh"    # 6.7.3 (B2)
+_chk_gate "$ROOT/tests/gates/frontend/enum_const_not_lvalue.sh"   # 6.7.3 (repair lane)
 _chk_gate "$ROOT/tests/gates/toolchain/cybs_call_arity_named.sh"
 _chk_gate "$ROOT/tests/gates/platform/agnos_proc_kill_tree_refused.sh"
 _chk_gate "$ROOT/tests/gates/platform/cx_compiler_reads_env.sh"

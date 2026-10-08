@@ -1,0 +1,59 @@
+# enum_const_namesakes.tcyr — 6.7.3 (repair lane): an enum constant is not an lvalue, and its
+# namesakes stay variables, at run time on every backend.
+#
+# Since 6.7.3 `A = ..`, `A OP= ..`, `&A` and `E.A = ..` on an enum constant are refused by name, as
+# on a `const` (tests/gates/frontend/enum_const_not_lvalue.sh holds the refusals). The refusal keys
+# on the slot the name RESOLVES to, so what this file pins is the other half: a local of the same
+# name (N1), a closure's capture of one (N2) and a later top-level `var` (N3, last definition wins)
+# are still assignable and addressable, and every read of the constant is its declared value (R).
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/assert.cyr"
+
+enum EcnColor { ECN_RED = 5; ECN_GREEN = 9; }
+enum EcnLate { ECN_LATE = 3; }
+var ECN_LATE = 3;   # a later top-level var of the constant's name is a variable
+
+var ecn_arr[ECN_GREEN];
+
+fn ecn_local(): i64 {
+    var ECN_RED = 1;
+    ECN_RED = 7;
+    ECN_RED += 1;
+    var p = &ECN_RED;
+    return load64(p);
+}
+
+fn ecn_capture(): i64 {
+    var ECN_GREEN = 1;
+    var c = |x| { var p = &ECN_GREEN; return load64(p) + x; };
+    return fncall1(c, 9);
+}
+
+fn ecn_late(): i64 {
+    ECN_LATE = 7;
+    ECN_LATE += 1;
+    var p = &ECN_LATE;
+    return load64(p) * 10 + ECN_LATE;
+}
+
+fn ecn_reads(): i64 {
+    var s = 0;
+    for (var i = 0; i < EcnColor.ECN_GREEN; i += 1) { s = s + 1; }
+    return s + ECN_RED + EcnColor.ECN_RED;
+}
+
+fn run(): i64 {
+    assert_eq(ecn_local(), 8, "N1: a local named like an enum constant is a variable");
+    assert_eq(ecn_capture(), 10, "N2: &name in a closure is the capture");
+    assert_eq(ecn_late(), 88, "N3: a later top-level var is a variable (last definition wins)");
+    assert_eq(ecn_reads(), 19, "R1: reads of the bare and qualified constant, a for bound");
+    assert_eq(ECN_RED, 5, "R2: the constant is unchanged by its namesakes");
+    store8(&ecn_arr + ECN_GREEN - 1, 42);
+    assert_eq(load8(&ecn_arr + ECN_GREEN - 1), 42, "R3: an enum constant sizes an array");
+    return 0;
+}
+
+var r0 = run();
+var rr = assert_summary();
+syscall(60, rr);
