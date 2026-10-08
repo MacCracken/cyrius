@@ -2802,6 +2802,18 @@ fn _call_dotted(S, ti): i64 {
     return 1;
 }
 
+# ⛔ 6.7.6 — 1 = the call `name(..)` / `name<..>(..)` at token `ti` is followed by token type `term`
+# (`;`): it is the whole initialiser or return value. A receive that sized itself from the callee's
+# return took the call alone when it was only an operator's LEFT operand, so `var r = mk3(4) - s;`
+# and `return mk(1) + a;` were `expected ';', got '-'` on valid code. A call this cannot open (an
+# unresolvable `<..>`) answers 1, as before. CHANGELOG [6.7.6]
+fn _call_ends_at(S, ti, term): i64 {
+    var o = _gcall_open(S, ti);
+    if (o < 0) { return 1; }
+    if (TOKTYP(S, _call_close(S, o) + 1) == term) { return 1; }
+    return 0;
+}
+
 # Is the call at `ti` the WHOLE argument (followed by `,` or `)`)? A call inside a larger
 # expression (`f(a) + 1`) is left to the ordinary value path.
 fn _call_is_whole_arg(S, ti): i64 {
@@ -2816,6 +2828,7 @@ fn _call_is_whole_arg(S, ti): i64 {
 fn _return_struct_call(S): i64 {
     if (_gcall_open(S, GTI(S)) < 0) { return 0 - 1; }   # 6.6.10: `name(` or `name<..>(`
     if (_call_dotted(S, GTI(S)) == 1) { return 0 - 1; }   # 6.6.12: a field of the result
+    if (_call_ends_at(S, GTI(S), 5) == 0) { return 0 - 1; }   # 6.7.6: a left operand (`_ret_expr_head`)
     var fi = _gen_resolve_call(S, GTI(S));   # 6.6.10: a generic's instance, not its base
     if (fi < 0) { return 0 - 1; }
     if (GFRS(S, fi) != _cur_fn_ret_sid) { return 0 - 1; }
@@ -2835,6 +2848,7 @@ fn _refuse_toplevel_pair_init(S, pscale, ti): i64 {
     if (pscale >= 0) { return 0; }
     if (_gcall_open(S, ti) < 0) { return 0; }
     if (_call_dotted(S, ti) == 1) { return 0; }   # 6.6.12: `_call_field` refuses a field of it
+    if (_call_ends_at(S, ti, 5) == 0) { return 0; }   # 6.7.6: a left operand refuses itself
     var fi = _gen_resolve_call(S, ti);
     if (fi < 0) { return 0; }
     if (_grc_err < 0) { return 0; }   # a failed instantiation: the call refuses itself, once
@@ -3380,11 +3394,7 @@ fn _op_term_cont(t): i64 {
 # one but not that shape: the struct-return diagnostic, and a junk slot 0 (cursor at `;`, the
 # binary is never written). CHANGELOG [6.6.6]
 fn _return_struct_expr(S): i64 {
-    if (PEEKT(S) != 2) { return 0 - 1; }
-    var nx = TOKTYP(S, GTI(S) + 1);
-    if (nx == 41) {
-        if (TOKTYP(S, GTI(S) + 3) != 10) { return 0 - 1; }
-    } elif (_is_op_dispatch_tok(nx) == 0) { return 0 - 1; }
+    if (_ret_expr_head(S) == 0) { return 0 - 1; }
     var st = GTI(S);
     var w = _sc_arm(S);
     PCMPE(S);
@@ -3418,13 +3428,21 @@ fn _pair_ret_call_ok(S): i64 {
     return 1;
 }
 fn _pair_ret_expr_shape(S): i64 {
+    return _ret_expr_head(S);
+}
+# The method / overloaded-operator shape at the cursor: `x.m(`, `x OP`, and (6.7.6) a call that is
+# an operator's LEFT operand, `f(..) OP` — whose result now dispatches (`_op_lst`).
+fn _ret_expr_head(S): i64 {
     if (PEEKT(S) != 2) { return 0; }
     var nx = TOKTYP(S, GTI(S) + 1);
     if (nx == 41) {
         if (TOKTYP(S, GTI(S) + 3) == 10) { return 1; }
         return 0;
     }
-    return _is_op_dispatch_tok(nx);
+    if (_is_op_dispatch_tok(nx) == 1) { return 1; }
+    var o = _gcall_open(S, GTI(S));
+    if (o < 0) { return 0; }
+    return _is_op_dispatch_tok(TOKTYP(S, _call_close(S, o) + 1));
 }
 # Name what is actually there, so the diagnostic points at the construct and not just the fn.
 fn _pair_ret_offender(S): i64 {

@@ -25,6 +25,8 @@
 #      6), `a + b + a` with a struct-returning `+` SIGSEGV'd, `mk3(4) - s + 10` dispatched an
 #      undefined `P3_add` from `s`'s leftover type. Bare, wrapped, of every size and class, as an
 #      argument; the refusals (top level, a missing or mismatched operator fn) are the gate's L rows.
+#      L30+: such an expression as a declaration's initialiser or a struct fn's return value — the
+#      receive took the call alone (`var r = mk3(4) - s;`: expected ';', got '-').
 include "lib/syscalls.cyr"
 include "lib/string.cyr"
 include "lib/alloc.cyr"
@@ -337,6 +339,26 @@ fn lefts(): i64 {
     assert_eq(mklu(4) * 2, 1004, "L14: mklu(4) * 2, by value, an untyped right operand");
     return 0;
 }
+fn lv_ret(a: LV): LV { return mklv(1) + a; }
+fn lw_ret(a: LW): LW { return mklw(1) + a; }
+fn left_decls(): i64 {
+    var s: P3 = P3 { 9, 9, 9 };
+    var r = mk3(4) - s;
+    assert_eq(r, 0 - 5, "L30: var r = mk3(4) - s; (the filed repro: expected ';', got '-')");
+    var a: LV = LV { 1, 2, 3 };
+    var q: LV = mklv(1) + a;
+    assert_eq(lvsum(&q), 246, "L31: var q: LV = mklv(1) + a;");
+    var q2 = mklv(2) + a;
+    assert_eq(q2.x * 100 + q2.y * 10 + q2.z, 357, "L32: var q2 = mklv(2) + a; (untyped: the struct)");
+    var q3 = lv_ret(a);
+    assert_eq(lvsum(&q3), 246, "L33: return mklv(1) + a; from a `: LV` fn");
+    var w: LW = mklw(3);
+    var w4 = lw_ret(w);
+    assert_eq(w4.v, 7, "L34: return mklw(1) + a; from a `: LW` fn");
+    var w5: LW = mklw(2) + w;
+    assert_eq(w5.v, 8, "L35: var w5: LW = mklw(2) + w;");
+    return 0;
+}
 #ifndef CYRIUS_TARGET_CX
 struct LP { x; y; }
 struct LQ { x; y; }
@@ -361,6 +383,18 @@ fn left_pairs(): i64 {
     var u: LQ = LQ { 2, 3 };
     assert_eq(lq(mklq(1) + u + u), 518, "L25: lq(mklq(1) + u + u), `*LQ` operands, a rax:rdx operator result");
     assert_eq(lq((u + u) + mklq(2)), 627, "L26: lq((u + u) + mklq(2))");
+    return 0;
+}
+fn lq_ret(a: LQ): LQ { return mklq(1) + a; }
+fn left_pair_decls(): i64 {
+    var s: LP = LP { 9, 9 };
+    var r = mklp(4) - s;
+    assert_eq(r, 10, "L36: var r = mklp(4) - s; (a rax:rdx head)");
+    var u: LQ = LQ { 2, 3 };
+    var q: LQ = mklq(1) + u;
+    assert_eq(lq(&q), 306, "L37: var q: LQ = mklq(1) + u;");
+    var q2 = lq_ret(u);
+    assert_eq(lq(&q2), 306, "L38: return mklq(1) + a; from a `: LQ` (rax:rdx) fn");
     return 0;
 }
 #endif
@@ -412,8 +446,10 @@ fn rows(): i64 {
 #endif
     operands();
     lefts();
+    left_decls();
 #ifndef CYRIUS_TARGET_CX
     left_pairs();
+    left_pair_decls();
 #endif
     assert_eq(GLR, 11, "L15: mklw(5) + GLW at top level, an 8 B value");
     assert_eq(s3(&GQD) * 100 + s3(&GQF) * 10 + GQS.z, 1107, "Q27: top level: var G: P3 = (GP3), = ((GP3)), G = (GP3)");

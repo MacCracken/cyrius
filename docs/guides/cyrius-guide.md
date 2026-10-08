@@ -1211,7 +1211,9 @@ NAME typed the left operand: a call's result was an untyped word, so `p.dup() + 
 first words (2 where 6 is right), `a + b + c` added an address to a first word and crashed, and
 `mk3(4) - s + 10` dispatched `P3_add` — from the struct type `s` left behind. A `Str` result is a
 heap handle and never dispatches (`gs() + 8` is pointer arithmetic). The same expression works as
-an argument (`sz(mk3(1) + a)`).
+an argument (`sz(mk3(1) + a)`), a declaration's initialiser (`var r = mk3(4) - s;`, `var q: P3 =
+mk3(1) + a;`) and a struct fn's return value (`return mk3(1) + a;`) — those two were `expected
+';', got '-'` before 6.7.6, the receive having taken the call alone.
 
 **A `: Str` field is a `Str` handle as a source.** `h.name` into a `Str` parameter, variable or
 field, or an untyped one, is the handle as ever (a pointer-mode struct variable rebinds to it,

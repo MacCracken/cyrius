@@ -36,7 +36,11 @@
 #      it — wrapped or not, nothing emitted since — dispatches from its own struct (`_op_lst`) and
 #      passes its value or its temp's address (`_op_lhs_call_sv`); a missing operator fn, a
 #      parameter of another struct and a top-level operand that needs a frame are refused by name.
-#      As an argument (`lvsz(mklv(1) + a)`) it takes the operator path's temp. A `Str` stays a handle
+#      As an argument (`lvsz(mklv(1) + a)`) it takes the operator path's temp. A `Str` stays a handle.
+#      As a declaration's initialiser or a struct fn's return value the receive took the call ALONE
+#      (`var r = mk3(4) - s;`, `return mk(1) + a;`: expected ';', got '-'): it now takes only a call
+#      that ends the statement (`_call_ends_at`), and `_ret_expr_head` sends `f(..) OP` to the
+#      operator receive (rows L12-L15)
 #
 # MUTATION LEDGER (scratch copies of the tree, each rebuilt with the one change and the gate run
 # from that copy as CYCC=<mutant>; 2026-10-08):
@@ -96,6 +100,11 @@
 #   M-L9 `_fnc_agg` not recording its temp (`_fnc_lo`)        -> RED L2, L9 (BUILT), A1-A6 (tcyr L1)
 #   M-L10 `_lsc_note` stamping a `Str`                        -> RED L11 (an undefined Str_add)
 #   M-L11 `_op_lhs_sv` ignoring `_lsc_hit`                    -> RED L1-L4, L6-L8 (BUILT), A1-A6
+#   M-D1 PARSE_VAR's receive without `_call_ends_at`          -> RED L12 (expected ';'), A1-A6 (no build)
+#   M-D2 `_return_struct_call` without `_call_ends_at`        -> RED L14 (expected ';'), A1-A6 (no build)
+#   M-D3 `_ret_expr_head` without its call-head arm           -> RED A1-A6 (tcyr L33 refused); L13
+#       green — a rax:rdx `+` result passes through the call-return path
+#   M-D4 `_refuse_toplevel_pair_init` without `_call_ends_at` -> RED L15 (2 error lines)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -203,6 +212,10 @@ refused l08 "the left operand of 'LW_sub' is passed by address" "L8: mklw(5) - G
 refused l09 "cannot pass 'mkq' to a parameter of a different struct type in a call to 'Q3_sub'" "L9: mkq(4) - s, fn Q3_sub(a: P3, b: Q3)" "${P3S}struct Q3 { x; y; z; }\nfn Q3_sub(a: P3, b: Q3) { return 1; }\nfn mkq(v): Q3 { var t: Q3 = Q3 { v, v, v }; return t; }\nfn main() { var s: Q3 = Q3 { 9, 9, 9 }; return mkq(4) - s; }$E"
 refused l10 "'mk3' returns a struct by value, and a struct result needs storage" "L10: mk3(4) - G at top level, refused once (by the call)" "${P3S}fn P3_sub(a: *P3, b: *P3) { return a.z - b.z; }\nvar G: P3 = P3 { 9, 9, 9 };\nvar r = mk3(4) - G;\nsyscall(60, r);\n"
 exits l11 8 "L11: a Str-returning call stays a handle: gs() + 8 - gs() is pointer arithmetic" "include \"lib/str.cyr\"\nvar GS: Str = 0;\nfn gs(): Str { return GS; }\nfn main() { alloc_init(); GS = str_from(\"abc\"); return gs() + 8 - gs(); }$E"
+exits l12 5 "L12: var r = mk3(4) - s; in a fn (the filed repro: expected ';', got '-')" "${P3S}fn P3_sub(a: *P3, b: *P3) { return a.z - b.z; }\nfn main() { var s: P3 = P3 { 9, 9, 9 }; var r = mk3(4) - s; return r + 10; }$E"
+exits l13 5 "L13: return mk2(1) + a; from a fn returning Pt (expected ';')" "struct Pt { x; y; }\nfn Pt_add(a: Pt, b: Pt): Pt { var t: Pt = Pt { a.x + b.x, a.y + b.y }; return t; }\nfn mk2(v): Pt { var t: Pt = Pt { v, v }; return t; }\nfn rp(a: Pt): Pt { return mk2(1) + a; }\nfn main(): i64 { var p: Pt = Pt { 1, 2 }; var q: Pt = rp(p); return q.x + q.y; }$E"
+refused l14 "struct-return fn: return must be a bare local identifier" "L14: return mk3(1) + a; whose + returns an integer" "${P3S}fn P3_add(a: P3, b: P3): i64 { return a.x + b.x; }\nfn rp(a: P3): P3 { return mk3(1) + a; }\nfn main(): i64 { var p: P3 = P3 { 1, 2, 3 }; var q: P3 = rp(p); return q.x; }$E"
+refused l15 "the left operand of 'Pt_add' is passed by address" "L15: var G: Pt = mk2(3) + H; at top level, refused once" "struct Pt { x; y; }\nfn Pt_add(a: Pt, b: Pt): Pt { var t: Pt = Pt { a.x + b.x, a.y + b.y }; return t; }\nfn mk2(v): Pt { var t: Pt = Pt { v, v }; return t; }\nvar H: Pt = Pt { 1, 2 };\nvar G: Pt = mk2(3) + H;\nsyscall(60, G.x);\n"
 
 tcyr "A1: the values file (x86_64)" "$CC" ""
 tcyr "A2: ... under CYRIUS_IR=1" "$CC" "" CYRIUS_IR=1
