@@ -10,6 +10,8 @@
 #   R  refused once, by name, at the right token
 #   A  ANTI-VACUOUS: built and run — values, only the taken branch, the join's flag / fold resets
 #   C  const contexts: the compile-time evaluator runs the taken arm, walks the rest
+#   S  the token / byte scanners that walk an expression unparsed: pass 1's #assert extent, the
+#      #derive enum-member value, a `return` statement's end
 #
 # Mutations (scratch trees, each RED here — run 2026-10-08): the join's `_flags_reflect_rax = 0`
 # removed -> A4; every `_cfo` clear at the join removed (the helper's and both PARSE_INTRIN callers')
@@ -17,7 +19,9 @@
 # accepting every kind -> R8-R11 R17 R18 BUILD; the struct classifier answering "a word" -> R12-R18;
 # `else` optional -> R1 R2; the `;` check dropped -> R3; the evaluator running every arm -> C1 C2
 # (`1 / 0` faults, a false cycle); `_cst_kind_peek` answering 0 for an unevaluated const -> R24 C3;
-# the deferred re-check removed -> R24 BUILDS. (The three peephole-tracker resets and the
+# the deferred re-check removed -> R24 BUILDS; pass 1's line-break #assert walk restored -> S1 S2;
+# the #derive member-value walk stopping after one operand -> S3; `_body_ends_in_return` ending a
+# `return` at an if-expression's `}` -> S9 BUILDS. (The three peephole-tracker resets and the
 # SESVAR / `_esv_name` reset are defensive: no row kills them.)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -95,6 +99,12 @@ exits a14 7   "A14: a global initializer"          'var A = 3;\nvar G = if (A > 
 exits c01 249 "C1: every const context — consts, an elif const, an array size, #assert, an enum value, a recursive const fn, an untaken 1 / 0, a bool const, a string const, a local const, a case label" 'const D = 1;\nconst X = if (D) { 10 } else { 20 };\nconst Y = if (D == 0) { 1 } elif (D == 1) { 2 } else { 3 };\nvar arr: i64[if (D) { 4 } else { 8 }];\n#assert X == 10\nenum E { EA = if (D) { 5 } else { 6 }; }\nconst fn fact(n) { return if (n <= 1) { 1 } else { n * fact(n - 1) }; }\nconst F = fact(5);\nconst Z = if (D) { 7 } else { 1 / 0 };\nconst B = if (D) { true } else { false };\nconst S = if (D) { "dbg" } else { "rel" };\nfn main(): i64 { const L = if (X > 5) { 3 } else { 4 }; var b: bool = B; var s = 0; switch (2) { case if (D) { 2 } else { 3 }: s = 1; default: s = 0; } return X + Y + EA + F + Z + L + b + s + load8(S); }\nsyscall(60, main() % 256);\n'
 exits c02 2 "C2: an untaken arm naming a forward const is no cycle" 'const A = if (true) { 1 } else { B };\nconst B = A;\nsyscall(60, A + B);\n'
 exits c03 3 "C3: an untaken arm's forward const of the same kind" 'const A = if (true) { 1.5 } else { B };\nconst B = 2.5;\nfn main(): i64 { return f64_to(A * 2.0); }\nsyscall(60, main());\n'
+INC='include "lib/syscalls.cyr"\ninclude "lib/string.cyr"\ninclude "lib/alloc.cyr"\ninclude "lib/vec.cyr"\ninclude "lib/str.cyr"\ninclude "lib/result.cyr"\ninclude "lib/fmt.cyr"\ninclude "lib/io.cyr"\ninclude "lib/bayan.cyr"\n'
+exits s01 4 "S1: a multi-line top-level #assert holding an if-expression, then a struct (pass 1's extent)" 'const D = 1;\n#assert if (D) {\n    1\n} else {\n    0\n} == 1, "multi-line"\nstruct P { a; }\nfn main(): i64 { var p: P; p.a = 4; return p.a; }\nsyscall(60, main());\n'
+exits s02 5 "S2: #assert 1<LF> == 1 then a struct (the 6.7.2 continuation)" '#assert 1\n    == 1, "m";\nstruct P { a; }\nfn main(): i64 { var p: P; p.a = 5; return p.a; }\nsyscall(60, main());\n'
+exits s03 7 "S3: #derive(Deserialize) on enum { A = 1 + 1; B = 5; C = 7; } decodes the LAST member" "${INC}#derive(Deserialize)\nenum EX { A = 1 + 1; B = 5; C = 7; }\nfn main(): i64 { alloc_init(); var t, v = EX_from_json_str(\"\\\"C\\\"\"); return t * 100 + v; }\nsyscall(60, main());\n"
+exits s04 27 "S4: ... with an if-expression member value" "${INC}const D = 1;\n#derive(Deserialize)\nenum EX { A = if (D) { 2 } else { 3 }; B = 5; C = 7; }\nfn main(): i64 { alloc_init(); var t, v = EX_from_json_str(\"\\\"C\\\"\"); return t * 100 + v + A * 10; }\nsyscall(60, main());\n"
+refused s09 "multi-value destructure binds 2 names, but 'f' returns 1 value" "S9: a fn returning an if-expression is provably single" 'fn f(c): i64 { return if (c) { 1 } else { 2 }; }\nfn main(): i64 { var a, b = f(1); return a + b; }\nsyscall(60, main());\n'
 exits a15 3   "A15: a statement-start if is still the if statement" "fn f(c): i64 { var r = 0; if (c) { r = 3; } else { r = 4; } return r; }$E"
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: if_expr_checked — $fails row(s) red"; exit 1; fi

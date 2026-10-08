@@ -2656,8 +2656,8 @@ fn _gai_skip(S, quiet): i64 {
     var d = 0;
     while (t != 5 && t != 12) {
         if (d == 0) { if (t == 31 || t == 14) { return 0; } }
-        if (t == 10) { d = d + 1; }
-        if (t == 11) { d = d - 1; }
+        if (t == 10 || t == 13) { d = d + 1; }   # 6.7.4: an if-expression element's braces
+        if (t == 11 || t == 14) { d = d - 1; }
         STI(S, GTI(S) + 1);
         t = PEEKT(S);
     }

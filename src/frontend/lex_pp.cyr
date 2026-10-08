@@ -1739,11 +1739,39 @@ fn PP_DPTR(base, p, end): i64 {
 
 # An enum member's value, after its `=`: an optional `-`, then a number or a char literal
 # (`'x'` / `'\n'`) — what PARSE_ENUM_DEF accepts. `end` (stop) on anything else.
+# ⛔ 6.7.4 — an enum member's value is any const expression (6.7.2 made enum values a const
+# context; 6.7.4 adds the if-expression), so the walk skips it WHOLE, by the evaluator's grammar at
+# byte level: operand (operator-run operand)*. The single-atom walk it replaces stopped at `1 + 1`'s
+# `+`, so every LATER member lost its derived code (`enum E { A = 1 + 1; B = 5; C = 7; }` decoded
+# "C" as an error). Newlines separate nothing inside a value, as in the evaluator; a member that
+# follows with no separator starts with an identifier, which no operator run precedes.
 fn PP_DVALUE(base, p, end): i64 {
+    p = PP_DVOPND(base, p, end);
+    while (p < end) {
+        var q = PP_DTRIV(base, p, end);
+        if (q >= end) { return p; }
+        if (PP_DVOPC(load8(base + q)) == 0) { return p; }
+        while (q < end) { if (PP_DVOPC(load8(base + q)) == 0) { break; } q = q + 1; }
+        p = PP_DVOPND(base, q, end);
+    }
+    return p;
+}
+fn PP_DVOPC(c): i64 {
+    if (c == 43 || c == 45 || c == 42 || c == 47 || c == 37 || c == 38) { return 1; }
+    if (c == 124 || c == 94 || c == 60 || c == 62 || c == 61 || c == 33) { return 1; }
+    return 0;
+}
+# One operand: unary `-` `~` `!`, then a char or string literal, a balanced `(..)`, an if-expression
+# chain, or a word (an identifier, a number, `E.A`, `1.5`) with an optional call `(..)`.
+fn PP_DVOPND(base, p, end): i64 {
     p = PP_DTRIV(base, p, end);
-    if (p < end) { if (load8(base + p) == 45) { p = PP_DTRIV(base, p + 1, end); } }
+    while (p < end) {
+        var u = load8(base + p);
+        if (u == 45 || u == 126 || u == 33) { p = PP_DTRIV(base, p + 1, end); } else { break; }
+    }
     if (p >= end) { _pp_dstop = 1; return end; }
-    if (load8(base + p) == 39) {
+    var c = load8(base + p);
+    if (c == 39) {
         p = p + 1;
         if (p < end) { if (load8(base + p) == 92) { p = p + 1; } }
         p = p + 1;
@@ -1751,9 +1779,58 @@ fn PP_DVALUE(base, p, end): i64 {
         if (load8(base + p) != 39) { _pp_dstop = 1; return end; }
         return p + 1;
     }
+    if (c == 34 || c == 40) { return PP_DVGRP(base, p, end); }
     var q = p;
-    while (p < end) { if (PP_IDC(load8(base + p)) == 0) { break; } p = p + 1; }
+    while (p < end) {
+        var w = load8(base + p);
+        if (PP_IDC(w) == 0) { if (w != 46) { break; } }
+        p = p + 1;
+    }
     if (p == q) { _pp_dstop = 1; return end; }
+    if (p - q == 2) { if (load8(base + q) == 105) { if (load8(base + q + 1) == 102) { return PP_DVIF(base, p, end); } } }
+    var r = PP_DTRIV(base, p, end);
+    if (r < end) { if (load8(base + r) == 40) { return PP_DVGRP(base, r, end); } }
+    return p;
+}
+# A balanced `(..)` / `{..}` group (both kinds counted; string and char literals skipped), or one
+# string literal, from its first byte: the byte after it.
+fn PP_DVGRP(base, p, end): i64 {
+    var d = 0;
+    while (p < end) {
+        var c = load8(base + p);
+        if (c == 34 || c == 39) {
+            p = p + 1;
+            while (p < end) {
+                var e = load8(base + p);
+                if (e == 92) { p = p + 1; }
+                elif (e == c) { break; }
+                p = p + 1;
+            }
+            if (d == 0) { return p + 1; }
+        } elif (c == 40 || c == 123) { d = d + 1; }
+        elif (c == 41 || c == 125) { d = d - 1; if (d == 0) { return p + 1; } }
+        p = p + 1;
+    }
+    _pp_dstop = 1;
+    return end;
+}
+# `if (..) {..} [elif (..) {..}]* [else {..}]`, from just after the `if`: the byte after it.
+fn PP_DVIF(base, p, end): i64 {
+    p = PP_DVGRP(base, PP_DTRIV(base, p, end), end);
+    p = PP_DVGRP(base, PP_DTRIV(base, p, end), end);
+    var go = 1;
+    while (go == 1) {
+        var q = PP_DTRIV(base, p, end);
+        if (q + 4 > end) { return p; }
+        if (load8(base + q) != 101) { return p; }
+        if (PP_IDC(load8(base + q + 4)) == 1) { return p; }
+        if (load8(base + q + 1) == 108 && load8(base + q + 2) == 105 && load8(base + q + 3) == 102) {
+            p = PP_DVGRP(base, PP_DTRIV(base, q + 4, end), end);
+            p = PP_DVGRP(base, PP_DTRIV(base, p, end), end);
+        } elif (load8(base + q + 1) == 108 && load8(base + q + 2) == 115 && load8(base + q + 3) == 101) {
+            return PP_DVGRP(base, PP_DTRIV(base, q + 4, end), end);
+        } else { return p; }
+    }
     return p;
 }
 
