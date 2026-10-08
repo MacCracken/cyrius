@@ -75,10 +75,10 @@ in [completed-phases.md](completed-phases.md) § *v6.6.x*; the detail is the CHA
 | Release | Content |
 |---|---|
 | **6.7.0** | **A — real traits** (A1–A6, decisions below; A1–A5 landed 2026-10-07 — [ADR-007](../adr/007-traits.md)) · the CI refresh: every Linux job on **`ubuntu-26.04`** (the `-arm` job on `ubuntu-26.04-arm`) and every action at its latest stable release, SHA-pinned (checkout v7, upload-artifact v7, download-artifact v8, action-gh-release v3) · **`cyrius --help` reorganised** (commands grouped by what they do; nothing renamed or removed) |
-| **6.7.1 →** | **C3 — trait-bounded generics** (needs A), with its prerequisite the multi-type-param struct-type-arg residual and the generic-struct field |
+| **6.7.1 →** | **C3 — trait-bounded generics** (needs A), with its prerequisite the multi-type-param struct-type-arg residual and the generic-struct field — decisions taken at the open (spec below) |
 | then, by size | **B1 `const` + C1 `const fn`** together · B2 `bool` / `true` / `false` · B3 the if-expression · B5 `loop` / `do … while` · B8 compound assignment on a field |
 | **Break 1** | catch-up: backlog + found issues (user picks) · `cyrius test` / `tests` consolidation · **cybs stack arguments** (below) |
-| then | B4 tuples · B6 default + named arguments · B7 narrow struct fields (ABI survey + migration) · C2 bounds-checked mode (+ P5 execution coverage) · native `dyn` IF the user takes it (open question 5) |
+| then | B4 tuples · B6 default + named arguments · B7 narrow struct fields (ABI survey + migration) · C2 bounds-checked mode (+ P5 execution coverage) · **checked `dyn`** (decided 2026-10-07, open question 5) |
 | **Break 2** | catch-up |
 | **closeout** | the closeout checklist ([cycle-discipline.md](cycle-discipline.md)) — the checklist, not an audit campaign (CLAUDE.md) |
 
@@ -134,13 +134,24 @@ The identity rule carries over: **no GC, no hidden control flow you cannot disas
 **At the open, before code:** an ADR for traits (ADR-007, amending ADR-004's naming section) and the vidya
 entries; the keyword survey is done (below).
 
-## Spec — C3: trait-bounded generics (after A)
+## Spec — C3: trait-bounded generics (6.7.1)
 
-`<T: Show>` parses as a bound (today it mints a second type parameter named `Show`), and an instantiation
-whose `T` has no `impl Show` is an error. ⚠ First fix the **multi-type-param struct-type-arg residual**: a
-struct type argument works only on a one-parameter generic, and `g<Pt, i64>` is refused. **And a
-generic-struct FIELD** (BACKLOG-13): `struct H { a: i64; b: Box<i32>; }` is `expected identifier, got '<'`, and
-`#derive` on a struct with a `Vec<Box<i64>>` field stops its field walk at the nested `<`.
+`<T: Show>` parses as a bound (before 6.7.1 it minted a second type parameter named `Show`, so `f(p)` with a struct
+was refused as "a struct beside a second type argument"), and an instantiation whose `T` has no `impl Show` is an
+error. ⚠ First fix the **multi-type-param struct-type-arg residual**: a struct type argument works only on a
+one-parameter generic, and `g<Pt, i64>` is refused. **And a generic-struct FIELD** (BACKLOG-13): `struct H { a: i64;
+b: Box<i32>; }` is `expected identifier, got '<'`, and `#derive` on a struct with a `Vec<Box<i64>>` field stops its
+field walk at the nested `<` (re-measured 6.7.1: `#derive(accessors)` never defines the fields after it).
+
+**Decisions (user, 2026-10-07, at the 6.7.1 open):**
+- **A bound is a CONTRACT.** On a bounded `T`, `v.m()` must be a method of the bound's trait(s) — an error at the
+  generic's DEFINITION otherwise — and the bound picks that trait's `m` when `T` has a colliding one (as `self.m()`
+  does inside an impl, ADR-007). Fields are not part of a trait and still resolve per instance. An UNBOUNDED `T`
+  keeps per-instance resolution (`fn f<T>(v: T) { return v.show(); }` compiles today and keeps compiling).
+- **Several bounds: `<T: Show + Eq>`** requires every impl; the same syntax bounds a generic struct's parameter
+  (`struct Box<T: Show>`).
+- A bound is satisfied by `impl Trait for X` whatever X is — a struct or a scalar (`impl Show for i64` defines
+  `i64_show` today).
 
 ## Spec — B: the missing common features
 
@@ -783,15 +794,14 @@ whereupon it became 43 derived rows and shipped at `.51`. Assume the same of any
    form, at top level and through fn pointers; a typed `self: T` follows it; an `async fn` refuses such
    a parameter by name; `p: *T` + `f(&x)` is the mutating spelling.
 
-5. **Compiler-native trait objects (`dyn`) — the user's call, asked 2026-10-07; default STATIC (ADR-004) until
-   answered.** Arc A is built the same either way (it is the prerequisite of both). The facts: 7 repos use
-   `lib/trait.cyr`'s fat pointer and ~15 more hand-roll vtables (szal, majra, agnosai, ganita, agnostik, …) — all
-   unchecked: a wrong slot or a missing method is a runtime crash. Against a native `dyn`: a direct call is
-   what you see in the disassembly and inlines; a two-word value cuts against ADR-002's one-word i64 model.
-   **Recommendation on the record:** keep 6.7.0 static, and later in 6.7.x add CHECKED trait objects — the
-   compiler builds and verifies the vtable from `impl Show for T`; the object is an ordinary 16-byte struct
-   (no new value type); the indirect call is visible in the declared type (`o: dyn Show`). Decide before C3
-   ships.
+5. **Compiler-native trait objects (`dyn`) — ANSWERED (user, 2026-10-07, at the 6.7.1 open): CHECKED `dyn`, later in
+   6.7.x** (the release-sequence row after Break 1). Static dispatch stays the default (ADR-004). `o: dyn Show` is an
+   ordinary 16-byte `{data, vtable}` struct — no new value type (ADR-002's one-word model holds: it is a struct like any
+   other) — the compiler builds and VERIFIES the vtable from `impl Show for T`, and `o.show()` is an indirect call
+   visible in the declared type. Why, on the record: 7 repos use `lib/trait.cyr`'s fat pointer and ~15 more hand-roll
+   vtables (szal, majra, agnosai, ganita, agnostik, …), all unchecked — a wrong slot or a missing method is a runtime
+   crash, and static-only would leave them so for good. "Static first" was sequencing (arc A is the prerequisite of
+   both), not ease. Migrating those repos is each repo's own job once it ships (filings).
 
 *(Former item 3 — per-item `private` — was never a question. It is a live defect and is now
 slot `.3` above. Former item 2, the bare-metal forbidden-module check, SHIPPED at v6.5.24 after

@@ -42,8 +42,10 @@ keep ADR-004's zero-overhead static dispatch.
 6. **`var q: T = p;` with `p: *T` copies `*p`** at every size (user decision, 2026-10-07). Aliasing
    is spelled `var q: *T = p;`.
 7. **Dispatch stays static (ADR-004).** No vtables are generated. Trait objects remain the
-   `lib/trait.cyr` library pattern. Whether 6.7.x adds compiler-*checked* trait objects is open
-   (roadmap.md, open question 5); this ADR is the prerequisite either way.
+   `lib/trait.cyr` library pattern for now. **Decided 2026-10-07 (user, at 6.7.1): 6.7.x adds
+   compiler-CHECKED trait objects** later in the minor — `o: dyn Show` an ordinary 16-byte
+   `{data, vtable}` struct whose vtable the compiler builds and verifies from `impl Show for T`; static
+   dispatch stays the default (roadmap.md, open question 5). This ADR is its prerequisite.
 
 ## Implementation notes
 
