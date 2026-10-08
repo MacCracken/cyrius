@@ -10,6 +10,20 @@ B1 `const` and C1 `const fn` (roadmap.md § Spec — B / C1; the user's decision
 integer, an f64 or a string; top level and inside fns; a const fn runs at compile time in const contexts only;
 its body is the pure subset, checked at the definition).
 
+**Release gate GREEN** (`release-gate.sh` on `1723bcce`, 21:03 → 21:12, **8 min 58 s**): fixpoint 1,691,352 B, ARM
+lockstep 1,461,560 B, seed-derive OK, check.sh — **422 of 422** shell gates produced a result, 0 failed, the 2 named
+agnos-parity SKIPs — and cross-OS self-host + the `crossos/` suite on REAL ecb, ach, cass and pi (all `SELFHOST_OK` +
+`LIBTEST_OK`).
+
+**Size:** cycc **1,691,352 B** (`.text` **1,504,816**), +59,912 B over 6.7.1's 1,631,440 — the evaluator (`_ce_*`),
+the integer-only f64 module (`_sf_*`, 27 fns) and the const tables; dead-code floor unchanged (52 fns / 10,597 B;
+`_EVAL_CONST_ATOM`, `_enum_atom_idx`, `_assert_skip_atom` and `_assert_step` removed). `build/cycc-native-aarch64`
+**1,461,560 B** (+68,112). `.tcyr` 514 → **517**; shell gates 417 → **418**.
+
+**Bench:** self_compile **1,068 ms** (bench-history). Same-box interleaved A/B vs 6.7.1 (15 runs each): **1,023 →
+1,033 ms on 6.7.1's source (+1.0 %)** — the new lookups on every identifier read and every global's const check;
+1,057 → 1,066 ms on 6.7.2's own source.
+
 ### Language — `const` and `const fn`
 
 - **`const` declarations** (B1). `const LIMIT = 7;`, `const PI = 3.14159;`, `const NAME = "cyrius";` — no storage:
