@@ -471,7 +471,8 @@ check "⭐ and the build's own temp directory is gone afterwards" 0 "$survivors"
 # `cyrius test f | cat` did not return until an outer `timeout` shot it (axis 7). The kill
 # paths were `sys_kill(pid, 9)` on the pid alone and the runner was not a subreaper.
 # Each fixture spawns a `/bin/sleep <N>` with an N unique to this run, so a stranger's sleep
-# on a shared box cannot be counted. MUTATION (6.6.10, run): `proc_kill_tree(pid, …)` ->
+# on a shared box cannot be counted (`spawn` returns a `: stack` Result, so each binds both halves:
+# a one-value top-level bind is refused since 6.7.6). MUTATION (6.6.10, run): `proc_kill_tree(pid, …)` ->
 # `sys_kill(pid, 9)` + waitpid on both kill paths of `_run_wait_timed` AND `_run_end_leftovers`
 # made a no-op -> axes 5, 6 and 7 RED (the sleep survives at PPID=1; the pipe hangs to the
 # 30 s backstop); axis 8 stays GREEN. `_proc_sr_had` returning 0 -> axis 8 exit 3; dropping the
@@ -481,8 +482,8 @@ N6=$(( N5 + 9000 ))
 survivor() {   # pids of `/bin/sleep $1` still running (a zombie is not "running")
     ps -eo pid=,stat=,args= 2>/dev/null | awk -v n="$1" '$3 == "/bin/sleep" && $4 == n && $2 !~ /^Z/ {print $1}'
 }
-printf 'include "lib/process.cyr"\nvar r = spawn("/bin/sleep", "%s", 0);\nvar i = 0;\nwhile (1 == 1) { i = i + 1; }\n' "$N5" > "$T/fork_hang.tcyr"
-printf 'include "lib/process.cyr"\ninclude "lib/assert.cyr"\nvar r = spawn("/bin/sleep", "%s", 0);\nvar a = assert_eq(1, 1, "passes");\nvar s = assert_summary();\nsyscall(SYS_EXIT, s);\n' "$N6" > "$T/fork_pass.tcyr"
+printf 'include "lib/process.cyr"\nvar rt, r = spawn("/bin/sleep", "%s", 0);\nvar i = 0;\nwhile (1 == 1) { i = i + 1; }\n' "$N5" > "$T/fork_hang.tcyr"
+printf 'include "lib/process.cyr"\ninclude "lib/assert.cyr"\nvar rt, r = spawn("/bin/sleep", "%s", 0);\nvar a = assert_eq(1, 1, "passes");\nvar s = assert_summary();\nsyscall(SYS_EXIT, s);\n' "$N6" > "$T/fork_pass.tcyr"
 
 echo "axis 5 — ⭐ the deadline ends the test's own children, not only the test:"
 ( cd "$T" && CYRIUS_TEST_TIMEOUT=2 timeout 120 "$CY" test "$T/fork_hang.tcyr" > "$T/x5.out" 2> "$T/x5.err" ) || true
