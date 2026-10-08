@@ -561,6 +561,13 @@ Right shift comes in two forms (v6.4.46): `>>` is a **logical** shift
 this is the **reverse** of JS/Java, where `>>` is arithmetic and `>>>` is
 the zero-fill logical shift.
 
+`~x` is the bitwise complement (all 64 bits flipped) on every target. ⚠ **Before
+6.7.6, on the cx bytecode target `~x` was `x`** — the emitter XORed with a register
+nothing ever set — so `var x = 6; return ~x + 10;` gave 16 there (3 everywhere else),
+and `bitset` / `bitclr`, which complement their mask, kept the bits they were asked to
+clear. Pinned by `tests/tcyr/codegen/cx_backend_parity.tcyr`, run natively and on
+cxvm by `tests/gates/codegen/cx_backend_parity.sh`.
+
 Wrapping ops (`+%` etc.) document intent at the call site that a wrap is
 expected — bytes are identical to the bare operator. Saturating and
 checked variants compile to calls into `lib/overflow.cyr` helpers

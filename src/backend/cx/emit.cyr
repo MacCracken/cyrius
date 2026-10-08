@@ -170,7 +170,15 @@ fn EMOVDR(S): i64 { CX_EMIT(S, 20, 0, 13, 1); return 0; }                       
 fn EANDR(S): i64 { CX_EMIT(S, 32, 0, 0, 1); return 0; }
 fn EORR(S): i64 { CX_EMIT(S, 33, 0, 0, 1); return 0; }
 fn EXORR(S): i64 { CX_EMIT(S, 34, 0, 0, 1); return 0; }
-fn ENOTR(S): i64 { CX_EMIT(S, 34, 0, 0, 31); return 0; }   # xor r0, r0, r31(all-ones) — approx NOT
+# `~x` = x XOR all-ones, the all-ones built in r1 (dead here: every caller has just parsed the
+# operand into r0, or ends a shift whose count r1 held). It XORed with r31, which nothing ever set:
+# cxvm zeroes its registers, so `~x` was `x` and `bitset` / `bitclr`'s `~mask` was `mask`, while
+# r31 is also an argument register from 29 arguments on. CHANGELOG [6.7.6]
+fn ENOTR(S): i64 {
+    CX_MOVI(S, 1, 0 - 1);                 # r1 = all-ones (movi + movhi + movhh + movhk)
+    CX_EMIT(S, 34, 0, 0, 1);              # xor r0, r0, r1
+    return 0;
+}
 fn ESHLCL(S): i64 { CX_EMIT(S, 35, 0, 0, 1); return 0; }   # shl r0, r0, r1
 fn ESHRCL(S): i64 { CX_EMIT(S, 36, 0, 0, 1); return 0; }   # shr r0, r0, r1
 fn EASHRCL(S): i64 { CX_EMIT(S, 37, 0, 0, 1); return 0; }  # asr r0, r0, r1 (`>>>`)
@@ -791,7 +799,7 @@ fn _cx_fpaddr(S, off): i64 {
 # file, so 16B/32B value-form vectors ride a GP register-PAIR transport: SIMD ordinal
 # k occupies r(16+2k)=lo / r(16+2k+1)=hi (a 32B f64v4 spans two ordinals → the 4
 # consecutive regs r(16+2k)..r(16+2k+3)). r16.. is clear of int-args up to 13 of them, returns
-# (r0..r3), the call-boundary scratch (r251/r252) and the ENOTR sentinel (r31); nothing between the caller's
+# (r0..r3) and the call-boundary scratch (r251/r252); nothing between the caller's
 # ELOAD (call site) and the callee's ESTOREPARM (fn entry) touches r16.., so the pair
 # survives the call. Frame lane layout reuses _cx_ldisp and mirrors EFL{STORE,LOAD}_*_PAIR.
 # 16B covers f64v2 / f32v4 / i32v4 (2-slot pair); f64v4 is the 4-slot quad. CHANGELOG [6.4.54].

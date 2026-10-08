@@ -1,0 +1,31 @@
+# cx_backend_parity.tcyr — 6.7.6 (Break 1, lane F). Values the cx bytecode backend got wrong while
+# every native backend got them right. Each row is a literal expectation, so the file is the same
+# test on every target: the suite runs it natively, and tests/gates/codegen/cx_backend_parity.sh
+# runs it natively AND on cxvm and requires "<N> passed, 0 failed" from both, N derived from here.
+#
+#   A  `~x`, and bitset / bitclr (which complement a mask). The cx emitter XORed with r31, a
+#      register nothing ever set — cxvm zeroes its register file — so `~x` was `x`: `~6 + 10` gave
+#      16 where x86, aarch64 and PE give 3, and bitclr / bitset kept the bits they were asked to
+#      clear. The emitter now builds all-ones in r1 and XORs with it.
+include "lib/alloc.cyr"
+include "lib/assert.cyr"
+
+fn tilde10(x) { return ~x + 10; }
+fn tilde(x) { return ~x; }
+fn tilde_local() { var x = 6; return ~x + 10; }
+fn clr(v, o, w) { return bitclr(v, o, w); }
+fn set(v, o, w, n) { return bitset(v, o, w, n); }
+
+alloc_init();
+
+test_group("A — `~` is the bitwise complement on every backend");
+assert_eq(tilde_local(), 3, "var x = 6; return ~x + 10; (the filed repro: cx gave 16)");
+assert_eq(tilde10(6), 3, "~6 + 10 through a parameter");
+assert_eq(tilde(0), 0 - 1, "~0 is all-ones");
+assert_eq(tilde(0 - 1), 0, "~-1 is 0");
+assert_eq(tilde(0x0F0F), 0 - 0x0F10, "~0x0F0F");
+assert_eq(tilde(0x7FFFFFFFFFFFFFFF), 0x8000000000000000, "~INT64_MAX is the sign bit alone");
+assert_eq(clr(0xFF, 4, 4), 0x0F, "bitclr(0xFF, 4, 4) clears bits 4..7 (cx kept them: 0xF0)");
+assert_eq(set(0xFF, 4, 4, 0xA), 0xAF, "bitset(0xFF, 4, 4, 0xA) (cx gave 0xF0)");
+
+var r = assert_summary();
