@@ -21,6 +21,9 @@ include "lib/assert.cyr"
 var M = 0xFFFFFFFFFFFFFFFF;   # 2^64 - 1, the all-ones word
 
 fn set2(p, lo, hi): i64 { store64(p, lo); store64(p + 8, hi); return 0; }
+# A destination is filled with a sentinel before each `a = <expr>` row, so a high word the
+# expression failed to write cannot pass as the expected one by coincidence.
+fn junk(p): i64 { return set2(p, 0x5555, 0x5555); }
 fn is2(p, lo, hi): i64 {
     if (load64(p) != lo) { return 0; }
     if (load64(p + 8) != hi) { return 0; }
@@ -59,21 +62,29 @@ fn tmain(): i64 {
     assert_eq(is2(&a, 6, 5), 1, "U7: `a += c` with a u128 c");
     a -= c;
     assert_eq(is2(&a, 7, 3), 1, "U8: `a -= c` with a u128 c");
+    junk(&a);
     a = 1 - c;
     assert_eq(is2(&a, 2, M - 1), 1, "U9: an integer on the LEFT of `-` (1 - (2^65 - 1))");
+    junk(&a);
     a = 5 + c;
     assert_eq(is2(&a, 4, 2), 1, "U10: an integer on the left of `+`");
+    junk(&a);
     a = c + c + c;
     assert_eq(is2(&a, M - 2, 5), 1, "U11: a chain carries at each step");
+    junk(&a);
     a = (c + 1) + (c + 1);
     assert_eq(is2(&a, 0, 4), 1, "U12: parenthesised sums on both sides");
+    junk(&a);
     a = 10 - (c + 1);
     assert_eq(is2(&a, 10, M - 1), 1, "U13: an integer minus a parenthesised u128 sum");
+    junk(&a);
     a = 0 - c;
     assert_eq(is2(&a, 1, M - 1), 1, "U14: `0 - c` is the u128 negation");
+    junk(&a);
     a = -c;
     assert_eq(is2(&a, 1, M - 1), 1, "U15: unary minus on a u128 is `0 - c`");
     set2(&b, 5, 9);
+    junk(&a);
     a = b + 0;
     assert_eq(is2(&a, 5, 9), 1, "U16: `b + 0` copies all 16 bytes");
     var n = 0;
@@ -86,6 +97,7 @@ fn tmain(): i64 {
     set2(&GA, M, 2);
     GA += 1;
     assert_eq(is2(&GA, 0, 3), 1, "U19: `+=` on a u128 global");
+    junk(&GB);
     GB = GA - c - 2;
     assert_eq(is2(&GB, M, 0), 1, "U20: a u128 global assigned a chain");
     # The low word is what an integer context reads, unchanged.

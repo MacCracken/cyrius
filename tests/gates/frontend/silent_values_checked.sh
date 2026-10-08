@@ -54,6 +54,30 @@
 #   M16 `_bx_pcmpe_arg` reading `== 0` again (2 is a bool) -> RED every A leg (print_num's `n: i64`
 #      refused as "not a bool"; cx's compiler does not build)
 #   (M12 / M13 — the pkgver scan — are in pkgver_visible_in_includes.sh's ledger.)
+# D2 (the follow-up lane, 2026-10-08; each a scratch tree with the one change, its compiler built by
+# build/cycc, this gate run FROM the scratch tree so the aarch64 / cx / PE compilers carry the mutant;
+# "on every leg" = x86 default / IR=3 / DCE, aarch64, cx, PE):
+#   M17 `_w128_pexpr` never takes a u128 `+` / `-`              -> RED U12 U31 U32, AU and AU2 on every leg
+#   M18 `_ptr_add` / `_ptr_sub` without the u128 hook           -> RED AU2 on every leg (U9 U10 U13 U14:
+#       an integer on the left)
+#   M19 `_w128_store` never stores                              -> RED U31 U32, AU and AU2 on every leg
+#   M20 `_w16_local_init` stores the value into both halves     -> RED U33, AU2 on every leg (U23-U26)
+#   M21 `_gvi_store` without its u128 arm                       -> RED AU2 on every leg (U29 U30 U33)
+#   M22 `_w128_lchk` never refuses                              -> RED U1 U3-U10 U12-U16 (each BUILDS; U10
+#       is then reported at its right operand)
+#   M23 `_w128_rchk` never refuses                              -> RED U2 U11 U17
+#   M24 `_w128_cop` refuses nothing                             -> RED U20-U28
+#   M25 x86 EW128_ACCI `adc` emitted as `add`                   -> RED U31, AU and AU2 on x86 and PE only
+#   M26 `_neg_int` without its u128 arm                         -> RED AU2 on every leg (U15)
+#   M27 `_w128_addr` without the IR_RAW_EMIT mark               -> RED AU2 under CYRIUS_IR=3 (U26)
+#   M28 `_asg_plain_chk` without the f32 rounding               -> RED W1 W2, AW on every leg (W1-W6 W9 W10)
+#   M29 `_ifs_bx` / `_spi_leaf_check` without it                -> RED W1 W2, AW on every leg (W11-W14 W16)
+#   M30 `_bx_pcmpe_arg` without the f32 arm                     -> RED W1 W2, AW on every leg (W17-W20)
+#   M31 `_bx_pscan` without the f32 mark (pass 1)               -> RED AW on every leg (W19, a forward call)
+#   M32 `_asg_plain_chk` without the array refusal              -> RED B1-B7 (each BUILDS)
+#   M33 `_arr_named_marks` without SLBARR                       -> RED B11 B16
+#   M34 `_arr_gsgn` returning 0 for a bare array again          -> RED B12 B13 B15
+#   M35 `_stk_named_marks` without SLBARR                       -> RED B14
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
