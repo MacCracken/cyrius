@@ -36,6 +36,11 @@ var _dep_ctx_kind = 0;
 var _dep_ctx_owner = 0;     # its dep name (0 for the root)
 var _dep_queue_kind = 0;    # parallel to _dep_queue: each queued directory's kind
 var _dep_queue_owner = 0;   # parallel to _dep_queue: each queued directory's dep name
+var _dep_vis_tag = 0;       # parallel to _dep_visited: the tag it resolved at (0 = none)
+var _dep_vis_git = 0;       # ... the git it resolved from (0 = none)
+var _dep_vis_path = 0;      # ... the working tree it resolved from (0 = a clone)
+var _dep_vis_by = 0;        # ... the dep whose manifest named it (0 = the root)
+var _dep_vis_desc = 0;      # ... where it came from, as `deps -v` prints it
 var _dep_locked_diff = 0;   # --locked: differences found during the resolve (named as found)
 var _dep_wt_err = 0;        # the last _dep_wt_run's stderr capture (quoted by `cyrius update`)
 # A [deps.NAME] section's keys as `_dep_sec_read` returns them (byte offsets into the record).
@@ -2613,6 +2618,114 @@ fn _dep_say_unused_selection(): i64 {
     return 0;
 }
 
+# Record a resolved dep for closest-wins, the diamond notice and `deps -v`.
+fn _dep_vis_push(name, tag, git, path, by, desc): i64 {
+    vec_push(_dep_visited, name);
+    vec_push(_dep_vis_tag, tag);
+    vec_push(_dep_vis_git, git);
+    vec_push(_dep_vis_path, path);
+    vec_push(_dep_vis_by, by);
+    vec_push(_dep_vis_desc, desc);
+    return 0;
+}
+
+fn _dep_vis_index(name): i64 {
+    var i = 0;
+    while (i < vec_len(_dep_visited)) {
+        if (streq(vec_get(_dep_visited, i), name) == 1) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+# "2.0", "the default branch of <url>", or a path — one side of a diamond, as it was asked for.
+fn _dep_want_str(tag, git, path): i64 {
+    if (path != 0) { return _shown(path); }
+    if (tag != 0) { return _shown(tag); }
+    if (git != 0) { return _cat2("the default branch of ", _shown(git)); }
+    return "(no source)";
+}
+
+# R7 — a diamond: `name` is already resolved, and the manifest being walked asks for it at another
+# tag (or from another repository, or from a path). Closest-wins still decides; this says so.
+#     note: leaf 2.0 (wanted by p2) not used; 1.0 (p1) resolved first
+fn _dep_diamond(name, rec): i64 {
+    var vi = _dep_vis_index(name);
+    if (vi < 0) { return 0; }
+    var vt = vec_get(_dep_vis_tag, vi);
+    var vg = vec_get(_dep_vis_git, vi);
+    var vp = vec_get(_dep_vis_path, vi);
+    var wt = load64(rec + _DS_TAG);
+    var wg = load64(rec + _DS_GIT);
+    var wp = 0;
+    if (wg == 0) { wp = load64(rec + _DS_RAW); }   # a path-only want
+    var same = 1;
+    if (vp != 0) {
+        if (wg != 0) { same = 0; }                  # resolved from a working tree, wanted at a tag
+        elif (wp != 0) { if (streq(_abs_path(load64(rec + _DS_PATH)), vp) == 0) { same = 0; } }
+    } else {
+        if (wp != 0) { same = 0; }
+        elif (wg != 0) {
+            if (vg == 0 || _git_url_same(vg, wg) == 0) { same = 0; }
+            if (vt == 0 && wt != 0) { same = 0; }
+            if (vt != 0 && wt == 0) { same = 0; }
+            if (vt != 0 && wt != 0) { if (streq(vt, wt) == 0) { same = 0; } }
+        }
+    }
+    if (same == 1 || _quiet == 1) { return 0; }
+    var vb = vec_get(_dep_vis_by, vi);
+    var wsame_repo = 1;
+    if (vg != 0 && wg != 0) { if (_git_url_same(vg, wg) == 0) { wsame_repo = 0; } }
+    _ew("note: ");
+    _ew_shown(name);
+    _ew(" ");
+    _ew(_dep_want_str(wt, wg, wp));
+    if (wsame_repo == 0) { _ew(" from "); _ew_shown(wg); }
+    _ew(" (wanted by ");
+    if (_dep_ctx_owner == 0) { _ew("the root"); } else { _ew_shown(_dep_ctx_owner); }
+    _ew(") not used; ");
+    _ew(_dep_want_str(vt, vg, vp));
+    if (wsame_repo == 0) { _ew(" from "); _ew_shown(vg); }
+    _ew(" (");
+    if (vb == 0) { _ew("the root"); } else { _ew_shown(vb); }
+    _ew(") resolved first\n");
+    return 0;
+}
+
+# `deps -v`: where each resolved dependency came from.
+#     sigil   tag 3.9.9 @1a2b3c4 (cache)
+#     leaf    tag 1.0 @9f8e7d6 (fetched) via mid
+fn _dep_say_sources(): i64 {
+    if (_dep_visited == 0 || vec_len(_dep_visited) == 0) { return 0; }
+    println("dependency sources:");
+    var w = 0;
+    var i = 0;
+    while (i < vec_len(_dep_visited)) {
+        var l = strlen(_shown(vec_get(_dep_visited, i)));
+        if (l > w) { w = l; }
+        i = i + 1;
+    }
+    i = 0;
+    while (i < vec_len(_dep_visited)) {
+        var nm = _shown(vec_get(_dep_visited, i));
+        sys_write(STDOUT_FD, "  ", 2);
+        sys_write(STDOUT_FD, nm, strlen(nm));
+        var p = strlen(nm);
+        while (p < w + 2) { sys_write(STDOUT_FD, " ", 1); p = p + 1; }
+        var d = vec_get(_dep_vis_desc, i);
+        sys_write(STDOUT_FD, d, strlen(d));
+        var by = vec_get(_dep_vis_by, i);
+        if (by != 0) {
+            var bs = _shown(by);
+            sys_write(STDOUT_FD, " via ", 5);
+            sys_write(STDOUT_FD, bs, strlen(bs));
+        }
+        sys_write(STDOUT_FD, "\n", 1);
+        i = i + 1;
+    }
+    return 0;
+}
+
 # v5.7.14: process [deps.X] sections in `buf` (manifest content of
 # length `n`). `manifest_dir` is the absolute directory containing
 # the manifest; relative `path = "..."` entries resolve against it.
@@ -2658,8 +2771,12 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
             # with the local-mode prescan and the dry run so the three cannot disagree).
             var rec = alloc(_DS_SIZE);
             si = _dep_sec_read(buf, n, si, manifest_dir, rec);
-            # v5.7.14: closest-wins skip.
-            if (_dep_name_visited(dep_name) == 1) { continue; }
+            # v5.7.14: closest-wins skip. 6.7.6 (R7): after the keys are read, so a diamond — the
+            # same name wanted at another tag — is SAID rather than dropped in silence.
+            if (_dep_name_visited(dep_name) == 1) {
+                _dep_diamond(dep_name, rec);
+                continue;
+            }
             var dep_path = load64(rec + _DS_PATH);
             var dep_git = load64(rec + _DS_GIT);
             var dep_tag = load64(rec + _DS_TAG);
@@ -2775,10 +2892,12 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                 continue;
             }
             var dep_local = 0;      # 1: resolved from a working tree (its kind for the walk below)
+            var dep_desc = 0;       # where it came from, for `deps -v`
             if (pick == 1) {
                 dep_local = 1;
-                if (dep_git != 0) { _dep_say_local(dep_name, rec, _dep_ctx_owner); }
+                if (dep_git != 0) { dep_desc = _dep_say_local(dep_name, rec, _dep_ctx_owner); }
                 else {
+                    dep_desc = _cat2("local-only ", _shown(load64(rec + _DS_RAW)));
                     if (_dep_local_active == 1 || _verbose == 1) {
                         _ew("local-only: ");
                         _ew_shown(dep_name);
@@ -2805,8 +2924,10 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
             # need_clone branch, so a dep resolved from a working tree has no pin checked — and
             # since 6.7.6 that happens only in local mode, which never writes cyrius.lock. A
             # default resolve always builds (and pins) the tag.
+            var dep_fetched = 0;
             if (need_clone == 1) {
                 var clone_dir = _dep_clone_dir(dep_name, dep_tag);
+                if (is_dir(str_from(clone_dir)) == 0) { dep_fetched = 1; }
                 if (is_dir(str_from(clone_dir)) == 0) {
                     var git_ok = 1;
                     var gi2 = 0;
@@ -3034,6 +3155,22 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                         }
                     }
                 }
+                # 6.7.6 (part L): `deps -v` says where it came from
+                var _dsb = str_builder_new();
+                if (dep_tag != 0) {
+                    str_builder_add_cstr(_dsb, "tag ");
+                    str_builder_add_cstr(_dsb, _shown(dep_tag));
+                } else {
+                    str_builder_add_cstr(_dsb, "untagged ");
+                    str_builder_add_cstr(_dsb, _shown(dep_git));
+                }
+                if (_head != 0) {
+                    str_builder_add_cstr(_dsb, " @");
+                    str_builder_add(_dsb, str_new(_head, 7));
+                }
+                if (dep_fetched == 1) { str_builder_add_cstr(_dsb, " (fetched)"); }
+                else { str_builder_add_cstr(_dsb, " (cache)"); }
+                dep_desc = str_data(str_builder_build(_dsb));
             }
             # 6.6.13 (I10a): the default probe — strictly `dist/<name>.cyr`, no `lib/`
             # fallback. On a hit the block resolves exactly as if it had listed it: the
@@ -3283,11 +3420,14 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                     mi = mi + 1;
                 }
             }
-            # v5.7.14: on success, mark visited + queue for transitive walk. 6.7.6: with, for the
-            # walk, what KIND of tree it is — a clone's own overrides are never followed, a local
-            # checkout's are for selected names.
+            # v5.7.14: on success, mark visited + queue for transitive walk. 6.7.6: with where it
+            # came from (the diamond notice, `deps -v`) and, for the walk, what KIND of tree it is —
+            # a clone's own overrides are never followed, a local checkout's are for selected names.
             if (dep_had_success == 1) {
-                vec_push(_dep_visited, dep_name);
+                var vpath = 0;
+                if (dep_local == 1) { vpath = _abs_path(dep_path); }
+                if (dep_desc == 0) { dep_desc = "(no source)"; }
+                _dep_vis_push(dep_name, dep_tag, dep_git, vpath, _dep_ctx_owner, dep_desc);
                 if (dep_path != 0) {
                     vec_push(_dep_queue, _abs_path(dep_path));
                     var qk = 1;
@@ -3312,43 +3452,149 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
     return 0;
 }
 
-# `deps --dry-run`: name every `[deps.NAME]` table the manifest header declares, and
-# write nothing. A listing, not a resolution — no clone, no cache read, no lib/ write.
-fn _deps_dry_list(manifest, buf, n): i64 {
-    sys_write(STDOUT_FD, "dry-run: would resolve deps from ", 33);
-    sys_write(STDOUT_FD, manifest, strlen(manifest));
-    println(" into lib/ (nothing written):");
-    var cnt = 0;
-    var refused = 0;
+# The cache directory a clone of `name` at `tag` would use, WITHOUT creating anything
+# (`_dep_clone_dir` mkdirs both levels); 0 when there is no persistent cache.
+fn _dep_clone_dir_peek(name, tag): i64 {
+    if (_home == 0) { return 0; }
+    var key = tag;
+    if (key == 0) { key = ".untagged"; }
+    return _cat2(_cat2(_cat2(_cat2(_home, "/deps/"), name), "/"), key);
+}
+
+# One `deps --dry-run` line: `  <name>  <where it would come from>[ via <owner>]`.
+fn _deps_dry_say(name, what, owner): i64 {
+    var sn = _shown(name);
+    sys_write(STDOUT_FD, "  ", 2);
+    sys_write(STDOUT_FD, sn, strlen(sn));
+    sys_write(STDOUT_FD, "  ", 2);
+    sys_write(STDOUT_FD, what, strlen(what));
+    if (owner != 0) {
+        var so = _shown(owner);
+        sys_write(STDOUT_FD, " via ", 5);
+        sys_write(STDOUT_FD, so, strlen(so));
+    }
+    sys_write(STDOUT_FD, "\n", 1);
+    return 0;
+}
+
+# The dry run's walk of ONE manifest (`buf`/`n`, in `dir`, of `kind` / `owner`): one line per
+# [deps.NAME], decided by the resolver's own rule (`_dep_pick`, the same refusals by the same
+# lines), and every tree it can read WITHOUT a fetch queued for the next level — a local checkout,
+# or a clone already in the cache. `st`: [0] listed, [1] refused; `seen`, `q*` the BFS.
+fn _deps_dry_walk(buf, n, dir, kind, owner, st, seen, qd, qk, qo): i64 {
     var info[32];
+    var rec = alloc(_DS_SIZE);
     var p = 0;
     while (p < n) {
         # 6.6.20: the resolver's own header pass (_dep_hdr_name), so the listing is exactly what
-        # the real run resolves — this matched `[deps.` at column 0 only, missed `[deps.]`, and
-        # listed a header inside a `"""` value; a refused name is refused by the same line, rc 1.
+        # the real run resolves; a refused name is refused by the same line, rc 1.
         p = _toml_line(buf, n, p, &info);
         var hc = 0;
         var nm = _dep_hdr_name(buf, n, &info, &hc);
-        if (nm != 0) {
-            if (hc == 0) {
-                _dep_refuse_unclosed(nm);
-                refused = refused + 1;
-            } elif (_dep_name_unsafe(nm) == 1) {
-                _dep_refuse_name(nm);
-                refused = refused + 1;
+        if (nm == 0) { continue; }
+        if (hc == 0) { _dep_refuse_unclosed(nm); store64(st + 8, load64(st + 8) + 1); continue; }
+        if (_dep_name_unsafe(nm) == 1) { _dep_refuse_name(nm); store64(st + 8, load64(st + 8) + 1); continue; }
+        p = _dep_sec_read(buf, n, p, dir, rec);
+        if (_dep_list_has(seen, nm) == 1) { continue; }   # closest wins, as in the resolve
+        store64(st, load64(st) + 1);
+        if (load64(rec + _DS_OPTIONAL) == 1 && _dep_feature_active(nm) == 0) {
+            _deps_dry_say(nm, "(skipped: optional, no active feature)", owner);
+            continue;
+        }
+        var tg = load64(rec + _DS_TARGET);
+        if (tg != 0 && _dep_target_matches(tg) == 0) {
+            _deps_dry_say(nm, _cat2(_cat2("(skipped: target ", _shown(tg)), ")"), owner);
+            continue;
+        }
+        var pk = _dep_pick(nm, rec, kind, owner, 2);
+        if (pk < 0) { store64(st + 8, load64(st + 8) + 1); continue; }
+        vec_push(seen, nm);
+        var git = load64(rec + _DS_GIT);
+        var tag = load64(rec + _DS_TAG);
+        var sb = str_builder_new();
+        var next = 0;
+        var nk = 1;
+        if (pk == 1) {
+            next = load64(rec + _DS_PATH);
+            if (git != 0) {
+                nk = 2;
+                str_builder_add_cstr(sb, "local ");
+                str_builder_add_cstr(sb, _shown(load64(rec + _DS_RAW)));
+                str_builder_add_cstr(sb, _dep_local_state(next, tag));
+                str_builder_add_cstr(sb, " — CI builds ");
+                str_builder_add_cstr(sb, _dep_ci_builds(git, tag));
             } else {
-                var sn = _shown(nm);
-                sys_write(STDOUT_FD, "  ", 2);
-                sys_write(STDOUT_FD, sn, strlen(sn));
-                sys_write(STDOUT_FD, "\n", 1);
-                cnt = cnt + 1;
+                nk = 3;
+                str_builder_add_cstr(sb, "local-only ");
+                str_builder_add_cstr(sb, _shown(load64(rec + _DS_RAW)));
             }
+        } elif (git != 0) {
+            if (tag != 0) { str_builder_add_cstr(sb, "tag "); str_builder_add_cstr(sb, _shown(tag)); str_builder_add_cstr(sb, " from "); }
+            else { str_builder_add_cstr(sb, "untagged "); }
+            str_builder_add_cstr(sb, _shown(git));
+            var cd = _dep_clone_dir_peek(nm, tag);
+            if (cd != 0 && is_dir(str_from(cd)) == 1) {
+                next = cd;
+                var sha = _dep_wt_out(cd, "rev-parse", "--short=7", "HEAD", 0);
+                if (sha != 0) { str_builder_add_cstr(sb, " (cached @"); str_builder_add_cstr(sb, sha); str_builder_add_cstr(sb, ")"); }
+                else { str_builder_add_cstr(sb, " (cached)"); }
+            } else {
+                str_builder_add_cstr(sb, " (not fetched: its own dependencies are listed once it is)");
+            }
+        } else {
+            str_builder_add_cstr(sb, "(no git and no path: nothing to resolve)");
+        }
+        _deps_dry_say(nm, str_data(str_builder_build(sb)), owner);
+        if (next != 0) {
+            vec_push(qd, _abs_path(next));
+            vec_push(qk, nk);
+            vec_push(qo, nm);
         }
     }
-    if (cnt == 0 && refused == 0) {
+    return 0;
+}
+
+# `deps --dry-run`: what WOULD resolve, and from where, writing nothing — no clone, no fetch, no
+# lib/ or lock write. 6.7.6 (part L): each dependency's source by the resolver's own rule
+# (`local ../sigil @…`, `tag 3.9.9 from … (cached @…)`, `… via mid`), the transitive ones too as
+# far as a local checkout or the cache can show them; it fails where the real run fails.
+fn _deps_dry_list(manifest, buf, n): i64 {
+    sys_write(STDOUT_FD, "dry-run: would resolve deps from ", 33);
+    sys_write(STDOUT_FD, manifest, strlen(manifest));
+    if (_dep_locked == 1) { println(" and compare them with lib/ and cyrius.lock (nothing written):"); }
+    elif (_dep_local_on == 1 && _dep_local_prescan(buf, n, _abs_path("."), 0, 0, vec_new()) == 1) {
+        println(" into build/local-deps/lib/ (local mode: lib/ and cyrius.lock untouched; nothing written):");
+    } else { println(" into lib/ (nothing written):"); }
+    var st = alloc(16);
+    store64(st, 0);
+    store64(st + 8, 0);
+    var seen = vec_new();
+    var qd = vec_new();
+    var qk = vec_new();
+    var qo = vec_new();
+    _deps_dry_walk(buf, n, _abs_path("."), 0, 0, st, seen, qd, qk, qo);
+    var qi = 0;
+    while (qi < vec_len(qd) && qi < 512) {
+        var d = vec_get(qd, qi);
+        var k = vec_get(qk, qi);
+        var o = vec_get(qo, qi);
+        qi = qi + 1;
+        var tm = _cat2(d, "/cyrius.cyml");
+        if (file_exists(tm) == 0) { tm = _cat2(d, "/cyrius.toml"); }
+        if (file_exists(tm) == 0) { continue; }
+        var tn = 0;
+        var tb = file_read_whole_max(tm, _MF_MAX, &tn);
+        if (tb == 0) { continue; }
+        var bom = _mf_bom_len(tb, tn);
+        tb = tb + bom;
+        tn = _mf_header_len(tb, tn - bom);
+        store8(tb + tn, 0);
+        _deps_dry_walk(tb, tn, d, k, o, st, seen, qd, qk, qo);
+    }
+    if (load64(st) == 0 && load64(st + 8) == 0) {
         println("  (no [deps.NAME] entries; stdlib = [...] modules resolve from the toolchain)");
     }
-    if (refused > 0) { return 1; }
+    if (load64(st + 8) > 0) { return 1; }
     return 0;
 }
 
@@ -3477,11 +3723,15 @@ fn cmd_deps(): i64 {
     if (_mf_load() != 1) { _err("cannot read manifest"); return 1; }
     var buf = _mf_buf;
     var n = _mf_len;
+    _dep_parse_groups(buf, n);       # v6.2.49 Phase B: [groups] (buf is the TOML header, CYML body already stripped)
+    _dep_register_default_std_group();  # v6.3.32 Phase D: built-in `std` default group (after parse so a manifest's own `std` wins)
+    _dep_parse_features(buf, n);     # v6.3.1 lever 2: [features] table (populates _dep_feature_names/_deps; gating happens in _process_named_deps)
     # v6.6.5 — reachable for the first time (no CLI path used to set _dry_run for
     # `deps`). It returned BEFORE the manifest check, so `cyrius deps --dry-run` in an
     # empty directory said "would resolve deps from cyrius.cyml" and exited 0 while
     # plain `cyrius deps` exited 1 (round-3 review). Now it fails exactly where the real
-    # run fails, and reports what it read instead of a canned line.
+    # run fails, and reports what it read instead of a canned line. (6.7.6: after the
+    # [groups] / [features] parse, so it reports the gates the real run applies.)
     if (_dry_run == 1) { return _deps_dry_list(_manifest, buf, n); }
     var copied = 0;
     var errors = 0;
@@ -3492,7 +3742,12 @@ fn cmd_deps(): i64 {
     # queue = abs dirs of resolved deps whose own cyrius.cyml needs walking.
     _dep_visited = vec_new();
     _dep_queue = vec_new();
-    # 6.7.6: the queue's kinds (see "LOCAL MODE")
+    # 6.7.6: the visited set's parallel records and the queue's kinds (see "LOCAL MODE")
+    _dep_vis_tag = vec_new();
+    _dep_vis_git = vec_new();
+    _dep_vis_path = vec_new();
+    _dep_vis_by = vec_new();
+    _dep_vis_desc = vec_new();
     _dep_queue_kind = vec_new();
     _dep_queue_owner = vec_new();
     _dep_hint = 0;
@@ -3501,9 +3756,6 @@ fn cmd_deps(): i64 {
     _dep_inert = 0;                  # 6.6.13 (I10b): modules-less deps that vendored nothing
     _dep_commit_lines = vec_new();   # the release-integrity hardening item (v6.2.30): git-dep commit pins
     _dep_lock_load();                # v6.6.4: the inherited lock, read BEFORE any copy (stdlib-leaf guard)
-    _dep_parse_groups(buf, n);       # v6.2.49 Phase B: [groups] (buf is the TOML header, CYML body already stripped)
-    _dep_register_default_std_group();  # v6.3.32 Phase D: built-in `std` default group (after parse so a manifest's own `std` wins)
-    _dep_parse_features(buf, n);     # v6.3.1 lever 2: [features] table (populates _dep_feature_names/_deps; gating happens in _process_named_deps)
     var _consumer_dir = _abs_path(".");
     # 6.7.6 (lane C) — where this resolve WRITES. Default: lib/ + cyrius.lock (the tag resolution).
     # Local mode with an override in use: build/local-deps/lib, no lock. --locked: a private
@@ -3636,6 +3888,7 @@ fn cmd_deps(): i64 {
     errors = errors + _dep_lock_refused;
     _dep_say_hint();                 # 6.7.6: the checkouts a default run did not use, one line
     _dep_say_unused_selection();     # 6.7.6: a selected name nothing declares
+    if (_verbose == 1) { _dep_say_sources(); }   # 6.7.6 (part L): `deps -v`
 
     # Summary (only print if something was copied, errored, or — 6.6.13 I10b — a
     # modules-less dep vendored nothing: that count is printed even at 0 resolved).

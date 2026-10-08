@@ -941,7 +941,8 @@ mkdir -p "$T/nomani"
 run_in "$T/nomani" "$CY" deps --dry-run
 ne_check "deps --dry-run with NO manifest fails like deps does (it exited 0)" "$RC"
 run_in "$FT" "$CY" deps --dry-run
-check "deps --dry-run lists the manifest's [deps.NAME] entries" 2 "$(grep -c '^  f[ab]$' "$T/out" || true)"
+# 6.7.6: one line per dep with where it would come from — `  fa  (skipped: optional, no active feature)`
+check "deps --dry-run lists the manifest's [deps.NAME] entries, each with its source" 2 "$(grep -c '^  f[ab]  (skipped: optional, no active feature)$' "$T/out" || true)"
 
 echo "axis 19 — the WINDOWS CLI under wine (SKIP when wine is absent — NOT hardware):"
 # Until 6.6.5 every spawn the CLI makes — tools (lint/fmt/doc/vet/deny/api-surface) AND

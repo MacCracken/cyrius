@@ -208,7 +208,8 @@ path = "$PD"
 EOF
 run "$P" deps --dry-run; rcd=$rc; cp "$P.out" "$W/r8.dry"; cp "$P.err" "$W/r8.dryerr"
 run "$P" deps; rcr=$rc
-if [ "$rcd" -eq 1 ] && [ "$rcr" -eq 1 ] && grep -qxF "  foo" "$W/r8.dry" && ! grep -q 'bad' "$W/r8.dry" \
+# 6.7.6: a dry-run line names the dep AND where it would come from (`  foo  tag 1.0.0 from …`)
+if [ "$rcd" -eq 1 ] && [ "$rcr" -eq 1 ] && grep -q "^  foo  tag 1\.0\.0 from file://" "$W/r8.dry" && ! grep -q 'bad' "$W/r8.dry" \
    && grep -qF '[deps.bad..name] is not a usable dep name' "$W/r8.dryerr" && grep -qF '[deps.bad..name] is not a usable dep name' "$P.err" \
    && cmp -s "$P/lib/foo.cyr" "$W/foo1"; then
     ok "R8 an indented [deps.foo]: --dry-run lists it and the real run vendors it; a refused name is refused by both (rc 1 each)"

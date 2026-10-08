@@ -271,7 +271,8 @@ fn _cli_help_extra(verb): i64 {
         println("              pinned snapshot changed under an UNCHANGED [package].cyrius pin");
         println("              (otherwise refused, v6.6.4), and locks any file --verify");
         println("              reports as not in cyrius.lock.");
-        println("  --dry-run   list the [deps.NAME] entries that WOULD resolve; write nothing.");
+        println("  --dry-run   list each [deps.NAME] and where it WOULD come from; write nothing.");
+        println("  -v          after the resolve, list where each dependency came from.");
         println("Git first: a [deps.NAME] with git + tag resolves the TAG, its commit pin checked,");
         println("on every machine. A `path` beside git/tag is a dev override read only in LOCAL mode:");
         println("  --local[=a,b]  build the sibling checkouts (every override, or the named ones);");
