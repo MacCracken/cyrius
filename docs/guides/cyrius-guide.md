@@ -2266,7 +2266,7 @@ cyrius build configuration (argument > environment > manifest > default)
 | `[deps]` | `stdlib` | read | — | — | — | cyrius deps: stdlib leaves vendored into lib/ and auto-prepended |
 | `[deps.*]` | `git` | read | — | — | — | cyrius deps: the repository to clone |
 | `[deps.*]` | `tag` | read | — | — | — | cyrius deps: the tag to check out |
-| `[deps.*]` | `path` | read | — | — | — | cyrius deps: a local checkout instead of git |
+| `[deps.*]` | `path` | read | — | `CYRIUS_LOCAL` | `--local` | cyrius deps: beside git/tag a dev override, read only in local mode; alone, the dep's source |
 | `[deps.*]` | `modules` | read | — | — | — | cyrius deps: the files to vendor |
 | `[deps.*]` | `modular` | read | — | — | — | cyrius deps: sub-modules from `dist/<name>/` |
 | `[deps.*]` | `requires` | read | — | — | — | cyrius deps: stdlib leaves the dep needs in scope |
@@ -2361,6 +2361,11 @@ its own `embed_<NAME>` sub-module.
 # cyrius.cyml declares deps — build auto-resolves them
 cyrius build src/main.cyr build/myapp   # resolves deps + compiles
 cyrius deps                              # manually resolve deps
+cyrius deps -v                           # ...and list where each dependency came from (6.7.6)
+cyrius deps --dry-run                    # each dependency and where it WOULD come from; writes nothing
+cyrius deps --locked                     # CI: resolve the tags, compare with lib/ + cyrius.lock, write nothing
+CYRIUS_LOCAL=1 cyrius build              # build each [deps.X] `path` override (sibling checkouts); lib/ + lock untouched
+cyrius update                            # re-fetch untagged deps, list newer tags, re-resolve (never edits cyrius.cyml)
 cyrius build -v src/main.cyr build/myapp # verbose (shows compiler, binary size)
 cyrius test tests/test.tcyr             # resolve deps + compile + run
 cyrius test                              # [build] test first (6.6.17), then every .tcyr under tests/, each once
@@ -2508,6 +2513,77 @@ modules = ["src/types.cyr", "src/error.cyr"]
 Named deps are namespaced: `lib/{depname}_{basename}`. Stdlib is unprefixed.
 Includes are auto-prepended by the build tool — source files only need project includes.
 
+**Git first; local development is a switch (6.7.6).** The committed manifest means the TAGS. A
+`[deps.X]` with `git` + `tag` resolves that tag — its commit pin checked — on every machine, a
+developer's included, and `lib/` + `cyrius.lock` record that resolution. A `path` beside `git` /
+`tag` is a **dev override**, read only in **local mode**:
+
+```toml
+[deps.sigil]
+git  = "https://github.com/MacCracken/sigil"
+tag  = "3.9.9"
+path = "../sigil"          # dev override: read ONLY in local mode
+modules = ["dist/sigil.cyr"]
+```
+
+```sh
+export CYRIUS_LOCAL=1                   # every declared override (put it in your shell profile once)
+CYRIUS_LOCAL=sigil,libro cyrius build   # only these names
+cyrius build --local                    # the flag form (any resolving verb); --local=sigil,libro
+cyrius build --no-local                 # the tags for this run, whatever CYRIUS_LOCAL says
+```
+
+Precedence: `--local[=…]` / `--no-local` > `CYRIUS_LOCAL` (`1`, `0`, or a comma list of names) >
+off. The manifest can never switch it on, so no commit flips what CI builds.
+
+- **No switch** — CI and a dev box alike — builds the tag. When a declared checkout exists but was
+  not used, ONE line says so:
+  `hint: 1 dep has a local checkout not in use (sigil); CYRIUS_LOCAL=1 builds it (this run built the tag)`.
+- **Local mode**, per selected override whose `path` is a directory: the working tree is used, no
+  clone, and one line names it:
+  `local: sigil <- ../sigil @1a2b3c4, 118 commits past 3.9.9, dirty — CI builds 3.9.9`.
+  A selected `path` that is not a directory is named and the tag builds instead.
+- **Local mode writes no tracked file.** The whole resolution goes to `build/local-deps/lib/` and
+  `cyrius.lock` is not written, so `lib/` and the lock stay what the tag resolution wrote and
+  switching modes churns nothing (keep `build/` in `.gitignore` — local mode warns when it is not).
+  Every include string stays `lib/<file>`: the compiler reads `lib/` through the local resolve first
+  (`CYRIUS_LIB_OVERLAY=build/local-deps/lib`, set by `cyrius` for its compiles — never set it by
+  hand; an inherited value is removed), so a source's own `include "lib/sigil.cyr"` reads the
+  override too. Local mode with no override actually in use resolves exactly as the default.
+- **A path-only dep** (no `git`) has no tag to prefer: it resolves from its path in every mode, as
+  before. `--locked` refuses it by name — a release cannot resolve a path.
+- **A dependency's own manifest.** A dependency resolved from its tag has its own `path` entries
+  IGNORED (its developers' override, never its published meaning), and a path-only, local-`git`
+  (`git = "../x"`) or absolute entry is REFUSED by name: `error: mid's manifest names [deps.leaf]
+  path = "../leaf" with no git / tag — a published dependency must name git + tag; refused`.
+  Before 6.7.6 such an entry resolved on its author's box and failed in CI. A dependency that is
+  itself a local checkout has its overrides followed for the SELECTED names (`CYRIUS_LOCAL=1`
+  selects all; `local: leaf <- ../leaf (via mid) …`), so a sibling stack builds from working trees.
+  A selected name no manifest declares a `path` for is warned (a typo must not read as "no override").
+- `--locked`, `cyrius publish`, `package`, `distlib` and `update` resolve what a release ships: the
+  switch is off there, `--local` is refused by name, and a set `CYRIUS_LOCAL` gets one `note:` line.
+- Adoption rides the pin: a repo pinned below 6.7.6 keeps the old resolution (a present `path`
+  wins) until it bumps `[package].cyrius`. The `# path =` lines kept commented out, the "never
+  commit `path`" policies and the CI guards against a committed path are no longer needed.
+- `cyrius build --print-config` shows the switch as `deps.local` and `deps.locked`.
+
+**Where each dependency came from.** `cyrius deps -v` (and any resolving verb with `-v`) ends with
+one line per dependency, and `cyrius deps --dry-run` prints the same without resolving — no clone,
+no `lib/`, no lock; a transitive dep is listed as far as a local checkout or the cache shows it,
+and the dry run fails where the real run fails:
+
+```
+dependency sources:
+  sigil  tag 3.9.9 @1a2b3c4 (cache)
+  libro  local ../libro @9f8e7d6, 3 commits past 2.1.0
+  leaf   tag 1.0 @5e6f7a8 (fetched) via mid
+```
+
+A **diamond** — a dependency already resolved, wanted again at another tag — still resolves
+closest-first, and now says so: `note: leaf 2.0 (wanted by p2) not used; 1.0 (p1) resolved first`.
+A key nothing reads in your own `[deps]` / `[deps.NAME]`, and a table nothing reads
+(`[dev-dependencies]`, `[[bin]]`), is warned by name, as `[build]`'s unknown keys are.
+
 **A `[deps.X]` with no `modules` (6.6.13).** A block that lists neither `modules` nor
 `modular` means `modules = ["dist/X.cyr"]` when the tag (or `path`) ships that file — which
 every `cyrius distlib` bundle does — so it is cloned, vendored as `lib/X.cyr` and
@@ -2549,6 +2625,31 @@ mutated file silently and `deps --verify` then passed on it. A lock written befo
 no trailer: it fails open for one resolve and comes back stamped. `cyrius deps --lock`
 re-hashes `lib/` **keeping** the commit pins (it used to drop them).
 
+**`--locked`: the CI check (6.7.6).** `cyrius deps --locked` — and `cyrius build --locked`, every
+resolving verb, or `CYRIUS_LOCKED=1` — resolves the TAGS into a private scratch, verifies every
+commit pin against its clone, compares the would-be `lib/` and `cyrius.lock` with the committed
+ones, **writes nothing**, and fails naming each difference:
+
+```
+  differs: lib/sigil.cyr: lib/ holds other bytes than the tags resolve (stale)
+  differs: cyrius.lock has no commit pin for sigil tag 3.9.9 (the tag resolves to 1a2b3c4…)
+error: --locked: 2 difference(s) between what the tags resolve and the committed lib/ + cyrius.lock (named above); nothing was written — run `cyrius deps` and commit the result
+```
+
+It also names a lock hash the tag disagrees with, a `lib/` file the lock does not cover, a lock
+line for a file that exists nowhere, a file the tags resolve that `lib/` lacks, and a lock that
+records another stdlib pin; with no `cyrius.lock` at all it refuses by name. A clean tree says
+`--locked: lib/ and cyrius.lock are exactly what the tags resolve`. It replaces the hand-rolled CI
+guards (`git diff --exit-code -- cyrius.lock`, `lock-check.sh`, `verify-lock.sh`) and the
+`cyrius deps && cyrius deps --verify` sequence, whose first step rewrote the lock the second then
+checked. `--locked` does not combine with `--local`, `--relock`, `--verify` or `--lock`.
+
+**`cyrius update` (6.7.6).** After refreshing `lib/` from the toolchain (as before), `update`
+re-fetches each UNTAGGED dependency — it floats by design, and the cache froze it at its first
+fetch — re-resolves the manifest (`lib/` + `cyrius.lock`), and lists each root dependency's newer
+version tags, newest first: `sigil: 3.9.9 pinned; newer tags: 3.10.0, 3.9.10 (cyrius.cyml is not
+edited)`. It never edits `cyrius.cyml`: moving a tag is a decision made in the file.
+
 **The git-dep CACHE is verified too (v6.6.5, the dep-cache tamper-check hardening item).** A git dep is cloned once into
 `$CYRIUS_HOME/deps/<name>/<tag>` (an untagged dep into `<name>/.untagged`, so it never shares
 a clone with a `tag = "main"` dep — 6.6.17) and reused by every project on the machine, so on every
@@ -2579,7 +2680,8 @@ does not carry (even one `.gitignore` hides), a cache with `.git` removed, a pop
 submodule directory, a checkout of a different repository parked at that name and tag, and an
 edit laundered by the cache's own git config. Hand-staging a cache directory is refused rather
 than silently trusted unless you make it a faithful clone of the declared url at that tag —
-for local resolution use `path = "../sibling"`, which is the supported route.
+for local development declare `path = "../sibling"` beside `git` / `tag` and switch local mode
+on (`CYRIUS_LOCAL=1` or `--local`), which is the supported route (6.7.6, above).
 
 The refusal names the cache and an **offline** recovery:
 

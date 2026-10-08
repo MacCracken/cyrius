@@ -49,7 +49,7 @@ fn _mf_vocab_b(i): i64 {
     if (i == 18) { return "deps|stdlib|read|-|-|-|cyrius deps: stdlib leaves vendored into lib/ and auto-prepended"; }
     if (i == 19) { return "deps.*|git|read|-|-|-|cyrius deps: the repository to clone"; }
     if (i == 20) { return "deps.*|tag|read|-|-|-|cyrius deps: the tag to check out"; }
-    if (i == 21) { return "deps.*|path|read|-|-|-|cyrius deps: a local checkout instead of git"; }
+    if (i == 21) { return "deps.*|path|read|-|CYRIUS_LOCAL|--local|cyrius deps: beside git/tag a dev override, read only in local mode; alone, the dep's source"; }
     if (i == 22) { return "deps.*|modules|read|-|-|-|cyrius deps: the files to vendor"; }
     if (i == 23) { return "deps.*|modular|read|-|-|-|cyrius deps: sub-modules from dist/<name>/"; }
     if (i == 24) { return "deps.*|requires|read|-|-|-|cyrius deps: stdlib leaves the dep needs in scope"; }
