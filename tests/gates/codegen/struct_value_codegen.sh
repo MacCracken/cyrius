@@ -124,6 +124,8 @@
 #   M-R5 `_ret_expr_head` without its `(` arm                 -> RED A1-A6 (tcyr R5 refused)
 #   M-R6 `_op_star_param` never 1                             -> RED R7
 #   M-R7 `_op_star_param` always 1 (the old wording)          -> RED R6
+#   M-N1a lib/fnptr.cyr's Linux x86 fncall8 arm back to the C order -> RED N1 (87); the same mutant
+#       turns cx_backend_parity.sh RED (M-N1b: T native 57 passed, 1 failed)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
