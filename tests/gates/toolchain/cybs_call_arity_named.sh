@@ -6,11 +6,15 @@
 # call with 7+ arguments fell to `parse_err` with a bare "syntax error" (found at 6.7.0, when a
 # 7-argument helper call in src/frontend/parse_decl.cyr broke seed-derive), so 6.7.0 refused it
 # BY NAME and a definition with 7+ parameters kept only its first six (lib/fnptr.cyr's
-# fncall6..8, which the compiler includes, were such). 6.7.6 passes them: the caller leaves
-# arguments 7+ on the stack in the SysV layout and the callee copies parameter i >= 6 from
-# [rbp + 16 + (i - 6) * 8] — so src/ may call a 7+ argument helper and cybs compiles fncall6..8
-# faithfully. This gate runs cybs over src/main.cyr in check.sh as well, so a construct cybs
-# cannot compile in the bootstrap path is caught by the normal suite, not first by seed-derive.
+# fncall6..8, which the compiler includes, were such). 6.7.6 passes them, in cycc's order (the
+# user's decision, 2026-10-08, third round — lane B first passed them in the SysV order, argument 7
+# at [rsp]): the caller leaves arguments 7+ on the stack with the LAST at [rsp], and the callee
+# copies parameter i >= 6 of n from [rbp + 16 + (n - 1 - i) * 8] (cybs counts the parameters
+# first) — so one convention holds for cybs and cycc, and lib/fnptr.cyr's hand-written fncall8
+# (cycc's order since lane E2) hands a cybs-compiled callee arguments 7 and 8 in place. src/ may
+# call a 7+ argument helper. This gate runs cybs over src/main.cyr in check.sh as well, so a
+# construct cybs cannot compile in the bootstrap path is caught by the normal suite, not first by
+# seed-derive.
 #
 #   A  closure: the seed assembles cybs, and cybs reproduces the seed
 #   S  bootstrap/cybs.cyr fits the seed's caps (input < 131072 B — past it the seed drops the rest
@@ -18,23 +22,24 @@
 #   B  a 7- and a 9-argument call return the right values — as statements, inside an expression
 #      with a value pending (`k + f9(..)`), with a 7-argument call as an argument, and through
 #      lib/fnptr.cyr's fncall7 / fncall8 (their 7+ parameters stored, their stack arguments read by
-#      a cybs-compiled callee); the same program under build/cycc agrees.
-#      ⚠ fncall8's f8 weighs its 7th and 8th arguments symmetrically (6.7.6 lane E2): cybs passes
-#      stack arguments in the SysV order (arg 7 at [rsp]) and cycc LAST-first (arg 8 at [rsp]), and
-#      fncall8's hand-written x86 body can follow only one — since E2 it is cycc's, so that an
-#      address-taken `&fncall8` in a cycc program hands a cycc callee 7 and 8 in place. Under cybs
-#      the body therefore delivers 7 and 8 swapped to a cybs-compiled callee; nothing cybs compiles
-#      (src/) calls fncall7 / fncall8. fncall7 (one stack argument) is order-exact and bit 32 keeps
-#      every position. Whether cybs should adopt cycc's order is reported, not decided here.
+#      a cybs-compiled callee); the same program under build/cycc agrees. Every callee weighs its
+#      arguments by POSITION (f8 is `.. + h * 10 + i`), so a swapped pair of stack arguments is red
+#      under either compiler — lane E2 had made f8 symmetric while cybs and cycc disagreed (D3).
 #   C  ANTI-VACUOUS: a 6-argument call still compiles and runs (exit 42)
 #   D  cybs compiles src/main.cyr
 #
 # Mutations (6.7.6, each verified RED on B in a scratch copy of the tree):
 #   emit_store_param's i >= 6 arm back to `jmp emit_sp_done`  (parameters 7+ never stored)
-#   emit_fn_call_pops copies from [rsp + 8k] instead of [rsp + 16k]  (stack args out of order)
-#   emit_fn_call_clean emits nothing                         (`k + f9(..)` pops a stale word)
+#   emit_fn_call_pops copies from [rsp + 8k] instead of [rsp + 16k]  (lane B's copy loop; gone in D3)
+#   emit_fn_call_clean emits nothing                        (`k + f9(..)` pops a stale word)
 #   rdi and rsi register loads swapped                       (register arguments misrouted)
 #   cybs.cyr padded with comments past 131072 B / given 20 more labels    -> S RED
+# D3 (cycc's order; each a scratch copy of the tree with the one change, 2026-10-08):
+#   lane B's cybs.cyr (the SysV order) under the restored f8      -> B exits 47 (fncall8, bit 16)
+#   emit_store_param reads [rbp + 16 + (i-6)*8] again (SysV slot) -> B exits 1
+#   parse_fn_def does not call count_params (n stays 0)            -> B exits 0
+#   emit_fn_call_clean drops lane B's 2n-6 words                   -> B exits 59 (`k + f9(..)`)
+#   emit_fn_call_pops loads a[0] from [rsp + 8(n-2)]               -> B exits 139
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || { echo "FAIL: cybs_call_arity_named: cannot cd to $ROOT"; exit 1; }
@@ -66,7 +71,7 @@ cat > "$D/sa.cyr" <<'EOF'
 include "lib/fnptr.cyr"
 var gr = 0;
 fn f7(a, b, c, d, e, g, h) { return a * 1000000 + b * 100000 + c * 10000 + d * 1000 + e * 100 + g * 10 + h; }
-fn f8(a, b, c, d, e, g, h, i) { return a + b + c + d + e + g - 21 + (h + i) * 10 + h * i; }
+fn f8(a, b, c, d, e, g, h, i) { return a + b + c + d + e + g - 21 + h * 10 + i; }
 fn f9(a, b, c, d, e, g, h, i, j) {
     var t = h * 100 + i * 10 + j;
     return t + a + b + c + d + e + g - 21;
@@ -87,7 +92,7 @@ if (t1() == 1234567) { ok = ok + 1; }
 if (t2() == 789) { ok = ok + 2; }
 if (t3() == 5 + 789 * 2) { ok = ok + 4; }
 if (t4() == 987) { ok = ok + 8; }
-if (t5() == 206) { ok = ok + 16; }
+if (t5() == 78) { ok = ok + 16; }
 if (t6() == 7654321) { ok = ok + 32; }
 syscall(60, ok);
 EOF
