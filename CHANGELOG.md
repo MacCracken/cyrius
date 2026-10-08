@@ -6,6 +6,98 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [6.7.5] — 2026-10-08
 
+B5 `loop { … }` and `do { … } while (c);` + B8 compound assignment on every lvalue (roadmap.md § Spec — B; the
+user's decisions of 2026-10-08: `loop` is CONTEXTUAL — a keyword only as `loop {` at the start of a statement, the
+`kernel` precedent — and `do` a reserved word; both are statements, `break` takes no value, both join the `const fn`
+subset; a `do` body is its own scope and its `continue` goes to the condition. `OP=` takes `>>>=` and reaches every
+lvalue — fields, slices, `*p`, classic-`for` steps — with the address taken once, before the right-hand side; `OP=`
+on a struct value is refused by name). Built in two worktree lanes and merged here.
+
+**Size:** cycc **1,759,824 B** (`.text` **1,571,240**), +8,392 B over 6.7.4's 1,751,432 — B5 (~+4.1 KB: the two
+statements, the contextual test in every scanner, the evaluator arms) and B8 (~+4.3 KB: the field / slice / deref
+compound paths, the for-step destinations, the struct-value refusal); dead-code floor unchanged (52 fns /
+10,597 B). `build/cycc-native-aarch64` **1,530,056 B**. `.tcyr` 524 → **526** (233 in `crossos/`); shell gates
+422 → **424**; api-surface **5,827** (unchanged).
+
+**Bench:** Same-box interleaved A/B vs 6.7.4 (15 runs each): **1,121 → 1,120 ms on 6.7.4's source (−0.1 %)**,
+1,128 → 1,128 ms on 6.7.5's own (+0.0 %).
+
+### Language — `loop` and `do … while` (B5)
+
+- **`loop { … }`** is `while (1) { … }` written plainly: no condition is emitted or tested at its top (a `while (1)`
+  tests its constant every pass — the gate's disassembly row counts one `test` fewer); `break` and `return` are its
+  only exits. **`do { … } while (c);`** runs its body once, then tests `c` after every pass; the `;` is required.
+  Both are statements — no value, and `break 5;` is a syntax error.
+- **`continue` in a `do` goes to the condition** (a forward jump, the C-style `for`'s mechanism), never straight
+  back to the top: `do { i += 1; if (i < 5) { continue; } } while (i < 3);` stops at 3.
+- **A `do` body is its own scope** (every braced body is, since 6.6.17): the condition cannot see a `var` declared
+  inside it — `undefined variable 't'`; declare it before the `do`.
+- **`do` is a reserved word** (token 172; `fn do()`, `var do`, a field `do` refused by name — 0 such uses existed).
+  **`loop` is contextual**, like `kernel` (v5.8.45): `loop {` at the start of a statement is the loop; `var loop =
+  1;`, `while (loop == 1) { … loop = 0; }`, a fn / field / struct named `loop`, `loop { 3, 4 }` as a struct literal
+  all compile as before (215 `var loop` sites in 6 repos needed nothing). `_TOK_IS_LOOP` (name + `{`) is asked at
+  every known statement start — the dispatch (before the identifier path), the if-expression branch and the
+  evaluator's statement — and the scanners that walk tokens unparsed ask the POSITIONAL `_TOK_IS_LOOP_AT` (after
+  `;`, `{`, `}` or a case `:`): the closure capture prescan, the `#inline` scan, error recovery.
+- **Anywhere a `while` goes** — fns, closures, generic instances, top level, kernel builds; a switch / match inside
+  is left by its own `break`. Each loop form declares its continue mode, resets the x86 store-elimination tracker
+  at its back-edge target and emits the IR landing pad (`_loop_open`); a tail call inside keeps its `jmp` unless the
+  loop takes a frame address — a `do`'s condition included (the verdict is taken after it).
+- **In a `const fn`** both are part of the pure subset (`_ce_loop` / `_ce_do`), run under the 10,000,000-step
+  budget — an endless `loop` in a const context is refused by name.
+- Tools: cyrius-lsp highlights `do`, and `loop` when `{` follows; the VS Code grammar likewise; `[embed]` refuses
+  `do` as a name and accepts `loop`; lint rows pin both.
+
+### Language — compound assignment on every lvalue (B8)
+
+- **`x OP= e` on every lvalue** — a field at any depth (`p.x`, `o.i.b`, `a.next.v` through a `*T` field,
+  `h.name.len` through a Str, a slice's `s.len` / `s.ptr`), through a `*T` local / parameter / global, `self: *T`, a
+  closure capture, a union, a generic instance, a pointer-mode local, and **`*p`** (at WORD width, as `*p` reads and
+  writes) — each of which was `expected '=', got '+'`. It operates at the place's width and kind: an `i8` / `i16` /
+  `i32` field loads sign-extended and stores at its width; `+= -= *= /=` on an `f64` / `f32` field are float
+  operations with `x = x + e`'s warnings; `p += n` on a `*T` place steps `sizeof(T)`.
+- **`>>>=`** (the arithmetic shift) is the eleventh compound operator, on every lvalue and in a `const fn` — one
+  shared operator predicate (`_is_cop_tok`) for the runtime and the evaluator, so the two sets cannot drift.
+- **Classic-`for` steps** take field and `*p` destinations, `=` and `OP=` alike (`for (h.n = 0; h.n < 5; h.n += 1)`
+  was `expected '=', got '.'` even with `=`); the statement terminator is threaded to the struct-copy sources, so a
+  struct-valued field step copies the whole struct.
+- **The address is taken first:** `x.f OP= e` computes the lvalue's address ONCE, BEFORE `e`, as `a[i] OP= v` always
+  has; a plain `x.f = e` evaluates `e` first. They differ only when `e` moves the lvalue (`GP.n += repoint();`
+  updates the old object) — documented; the plain store is unchanged.
+- **Refused by name:** `OP=` on a **struct value** — a struct variable of any size, a by-value parameter, a global,
+  a struct-typed field ("compound assignment to struct 'a' is refused - a struct value is not an integer or a float
+  (write `a = a + b`)"): it compiled and integer-operated on the first word, never calling an overloaded `T_add`
+  (13 where `a = a + b` gives 33). Also a bool field, and a field of a call's or a method's result (`mk(3).n += 1`,
+  `b.mk(4).n = 5`, which was `expected ';'`). Handles keep pointer arithmetic (`*T`, pointer-mode structs, Str).
+- `--syntax-only` (`cyrius lint` / `check`) accepts `e.size += 1` on a struct declared in another file (it falsely
+  accused it, the v6.5.19 class). TOKNAME names `>>>`.
+
+Fixed in the one review round, before release: the closure prescan and the `#inline` scan tested `loop {`
+position-blind, so `for i in 0..loop {` / `match loop {` in a closure skipped the capture and read a GLOBAL `loop`
+(100 where 5 is right, x86 / aarch64 / cx) or was refused; a struct `OP=` refusal printed once per generic instance.
+
+### Folds
+
+- **sankoch 2.8.2** (`dc548f9`, tagged) re-vendored byte-identical: its one `loop` identifier (the zstd encoder's
+  sequence-reversal flag) is `more` — made under the first, reserved-`loop` decision; harmless under contextual.
+
+Tests: `tests/gates/frontend/loop_do_checked.sh` (refusal, contextual-identifier, value, const and cross-target
+rows; sixteen mutations each RED) and `tests/gates/frontend/field_compound_checked.sh` (refusal, warning,
+`--syntax-only`, const and value rows; twenty mutations each RED); `tests/tcyr/crossos/loop_do_values.tcyr` (43
+rows) and `tests/tcyr/crossos/field_compound_values.tcyr` (81 rows) on x86, aarch64 (qemu), PE (wine) and cx;
+`tailcall_loop_frame_address.tcyr` gains loop / do rows (73).
+
+**Planned at the open (roadmap.md):** **W2**, the 12 folded stdlibs to the 6.7.5 pin after this tag (each a patch,
+patra / mabda / niyama minors; the nine high items from the survey), and **6.7.6 — Break 1** (the W2 refold, the
+high / critical backlog, `cyrius test` absorbing `tests`, cybs stack arguments).
+
+**Filed, not fixed** (roadmap.md *Potential backlog*; the highs placed in Break 1): an x86 stale-flags branch on an
+`i8` / `i16` / `i32` field of an inline struct (`if (h.m)` after `x = x + 1;` — pre-existing miscompile); a
+parenthesised struct source into a struct field copies one word; `OP=` on a u128 / vector / typed-array / slice
+local operates on the first word (the user's call); `x += 1.5` on an integer is silent; a variable for-step never
+checks its `)`; `cyrius test <file>` cannot build this repo's 22 `.tcyr` that define `fn run()`; IR=3 signed narrow
+field reads; and six diagnostics.
+
 ## [6.7.4] — 2026-10-08
 
 B3 — the if-expression (roadmap.md § Spec — B; the user's decisions of 2026-10-08: `if (c) { a } elif (d) { b }
