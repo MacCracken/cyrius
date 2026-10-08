@@ -31,9 +31,9 @@ the unpinned watching list is [roadmap-future.md](roadmap-future.md); per-releas
 
 ## Where we are
 
-**Current head: v6.7.2** (2026-10-07) — **slot open: B1 `const` + C1 `const fn`** (6.7.1 shipped: tag `6.7.1` @ `33481747`)
-· cycc **1,631,440 B** (`.text` **1,449,624**) · `cycc-native-aarch64` **1,393,448 B** · **514** `.tcyr` (**223** in
-`crossos/`) · **106** `lib/*.cyr` · **417** shell gates under `tests/gates/<bucket>/` · api-surface **5,827** · **4 open
+**Current head: v6.7.2** (2026-10-07) — **B1 `const` + C1 `const fn` landed** (6.7.1 shipped: tag `6.7.1` @ `33481747`)
+· cycc **1,691,352 B** (`.text` **1,503,848**) · `cycc-native-aarch64` **1,461,560 B** · **517** `.tcyr` (**226** in
+`crossos/`) · **106** `lib/*.cyr` · **418** shell gates under `tests/gates/<bucket>/` · api-surface **5,827** · **4 open
 issues** · **2 open proposals** · the next free CVE id is **103**.
 
 > ⚠ **Every figure above was DERIVED on the day, not carried** (2026-10-07 at the 6.7.0 open).
@@ -76,8 +76,9 @@ in [completed-phases.md](completed-phases.md) § *v6.6.x*; the detail is the CHA
 |---|---|
 | **6.7.0** | **A — real traits** (A1–A6, decisions below; A1–A5 landed 2026-10-07 — [ADR-007](../adr/007-traits.md)) · the CI refresh: every Linux job on **`ubuntu-26.04`** (the `-arm` job on `ubuntu-26.04-arm`) and every action at its latest stable release, SHA-pinned (checkout v7, upload-artifact v7, download-artifact v8, action-gh-release v3) · **`cyrius --help` reorganised** (commands grouped by what they do; nothing renamed or removed) |
 | **6.7.1** | **C3 — trait-bounded generics** (needs A), with its prerequisite the multi-type-param struct-type-arg residual and the generic-struct field — decisions taken at the open (spec below); ✅ landed 2026-10-07 |
-| **6.7.2 →** | the next of "then, by size" below — the user picks |
-| then, by size | **B1 `const` + C1 `const fn`** together · B2 `bool` / `true` / `false` · B3 the if-expression · B5 `loop` / `do … while` · B8 compound assignment on a field |
+| **6.7.2** | **B1 `const` + C1 `const fn`** together — decisions taken at the open (spec below); ✅ landed 2026-10-07 |
+| **6.7.3 →** | the next of "then, by size" below |
+| then, by size | B2 `bool` / `true` / `false` · B3 the if-expression · B5 `loop` / `do … while` · B8 compound assignment on a field |
 | **Break 1** | catch-up: backlog + found issues (user picks) · `cyrius test` / `tests` consolidation · **cybs stack arguments** (below) |
 | then | B4 tuples · B6 default + named arguments · B7 narrow struct fields (ABI survey + migration) · C2 bounds-checked mode (+ P5 execution coverage) · **checked `dyn`** (decided 2026-10-07, open question 5) |
 | **Break 2** | catch-up |
@@ -179,7 +180,7 @@ field walk at the nested `<` (re-measured 6.7.1: `#derive(accessors)` never defi
    and a field alike; every compound operator on every lvalue form (field, chain, `p.f` through a pointer, a
    subscript), with `*=` / `/=` on f64 fields following the 6.6.11 float rules.
 
-**B1 + C1 decisions (user, 2026-10-07, at the 6.7.2 open):**
+**B1 + C1 decisions (user, 2026-10-07, at the 6.7.2 open) — ✅ LANDED in 6.7.2 (CHANGELOG [6.7.2]):**
 - **A `const` holds an integer, an `f64` or a string.** `const LIMIT = 7;`, `const PI = 3.14159;`,
   `const NAME = "cyrius";` — no storage; every use is the value (a string const is its literal at every use).
   Folded wherever it appears, and usable where a compile-time value is required (array sizes, `#assert`, case
