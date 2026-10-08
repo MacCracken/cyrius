@@ -201,8 +201,11 @@ sed -n '/^fn _tc_must_divert/,/^}/p' src/frontend/parse_fn.cyr | grep -q '_tc_ar
 sed -n '/^fn _tc_args_divert/,/^}/p' src/frontend/parse_fn.cyr | grep -q '_tc_str_literal_arg(S, ti_after, cfi)' \
   || { echo "  FAIL: tail_call_literal_divert [source_criterion]: the tail path no longer routes its \`: Str\` divert through _tc_str_literal_arg"; fail=1; }
 TCB=$(sed -n '/^fn _tc_str_literal_arg/,/^}/p' src/frontend/parse_fn.cyr)
-echo "$TCB" | grep -q 'if (t == 30)' \
+echo "$TCB" | grep -q 'if (t == 30' \
   || { echo "  FAIL: tail_call_literal_divert [source_criterion]: _tc_str_literal_arg no longer tests for a string-literal token"; fail=1; }
+# 6.7.2: a STRING CONST is its literal, so both sides also take one — through the same predicate.
+echo "$TCB" | grep -q '_cst_str_tok(S, i)' \
+  || { echo "  FAIL: tail_call_literal_divert [source_criterion]: _tc_str_literal_arg no longer treats a string const as its literal — the two sides would disagree on one"; fail=1; }
 # 6.6.17 (a10): both sides ask ONE per-argument reader, `_pm_str` (the overflow row past ordinal 61),
 # so the criterion is that each calls it with its own position and that it reads _fnt_strmask.
 sed -n '/^fn _pm_str(/,/}/p' src/frontend/parse_fn.cyr | grep -q '_fnt_strmask + fi \* 8' \
@@ -212,7 +215,7 @@ echo "$TCB" | grep -q '_pm_str(fi, pos)' \
 echo "$TCB" | grep -q 'first = 1' \
   || { echo "  FAIL: tail_call_literal_divert [source_criterion]: _tc_str_literal_arg no longer tracks the FIRST token of each argument"; fail=1; }
 FPB=$(sed -n '/^fn _try_push_str_literal_arg/,/^}/p' src/frontend/parse_fn.cyr)
-echo "$FPB" | grep -q 'if (PEEKT(S) != 30) { return 0; }' \
+echo "$FPB" | grep -q 'if (PEEKT(S) != 30) { if (_cst_str_tok(S, GTI(S)) == 0) { return 0; } }' \
   || { echo "  FAIL: tail_call_literal_divert [source_criterion]: _try_push_str_literal_arg no longer wraps only a literal at an argument's FIRST token — the tail path's predicate is now mis-matched"; fail=1; }
 echo "$FPB" | grep -q '_pm_str(fi, argc)' \
   || { echo "  FAIL: tail_call_literal_divert [source_criterion]: _try_push_str_literal_arg no longer gates on the per-argument strmask bit — the tail path's predicate is now mis-matched"; fail=1; }

@@ -302,11 +302,12 @@ arm B9 'expected string, got number 3' '#pe_import( still arms (the `(` boundary
 arm B10 "expected '('" '#pe_import arms at end of line too (the whitespace boundary)' \
 '#pe_import\nvar A = 42;\nsyscall(60, A);\n'
 # B11 is the DELIBERATE EXCEPTION, and it is an axis so that a later "no paren
-# anywhere" tidy-up cannot make it silent. `#assert(8 == 9)` is not syntax — the
-# compiler rejects it — but it is plainly an assertion the author wrote, and
-# reading it as a comment would DROP a compile-time check without a word. So
-# `#assert` passes ap=1 like `#deprecated` and `#pe_import`, and stays loud.
-arm B11 '#assert: expected constant expression' \
+# anywhere" tidy-up cannot make it silent. `#assert(8 == 9)` is plainly an assertion
+# the author wrote, and reading it as a comment would DROP a compile-time check without
+# a word. So `#assert` passes ap=1 like `#deprecated` and `#pe_import`, and stays loud.
+# (6.7.2: #assert takes any const expression, so `(8 == 9)` is a parenthesised one now
+# and the assertion FAILS by name; until 6.7.2 the `(` itself was refused.)
+arm B11 '#assert failed' \
 '#assert( stays a LOUD error rather than becoming a silent comment' \
 '#assert(8 == 9)\nvar A = 42;\nsyscall(60, A);\n'
 

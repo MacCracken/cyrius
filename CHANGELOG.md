@@ -6,6 +6,57 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [6.7.2] — 2026-10-07
 
+B1 `const` and C1 `const fn` (roadmap.md § Spec — B / C1; the user's decisions of 2026-10-07: a const holds an
+integer, an f64 or a string; top level and inside fns; a const fn runs at compile time in const contexts only;
+its body is the pure subset, checked at the definition).
+
+### Language — `const` and `const fn`
+
+- **`const` declarations** (B1). `const LIMIT = 7;`, `const PI = 3.14159;`, `const NAME = "cyrius";` — no storage:
+  every use is the value; an integer folds like an enum constant, an f64 is its float literal, a string is its
+  literal (passed where a `Str` is expected it is wrapped like the literal). `N = ..`, `N += ..` and `&N` are refused
+  by name; a const takes no type annotation (its type is its value's). Top-level consts are found by one pre-scan
+  at the start of pass 1, so they may be used above their declaration and in any order (a cycle is refused); each
+  gets a global name slot of SIZE 0, PENDING until its first reader evaluates it (`GVECP` forces it), so every
+  enum-constant reader takes an integer const unchanged; the end of pass 1 evaluates every const, used or not.
+  `pub` / `private` apply; one top-level name is a const or a global, never both. Local consts live in a scoped
+  table (no frame slot): a block's const shadows and leaves with the block, a var and a const of one name in one
+  scope are refused, a closure reads one by name, an inline replay sees only its own, a generic instance none of
+  its encloser's. `const` is a reserved word (statement keywords 27 -> 28; no identifier use anywhere, surveyed
+  2026-10-07). Before 6.7.2 `const LIMIT = 7;` was `expected '=', got identifier 'LIMIT'`.
+- **`const fn`** (C1). An ordinary fn that a CONST CONTEXT runs at compile time; everywhere else a plain runtime
+  call (the disassembly shows the call you wrote). Its body is the pure subset, CHECKED AT THE DEFINITION, called
+  or not: integer and f64 arithmetic, comparisons, `&&` / `||`, shifts with the runtime's semantics, locals (typed
+  i64 / i32 / i16 / i8 / f64, a narrow one narrowing as at run time), local consts, assignment and `OP=`, if / elif /
+  else, while, `for (..; ..; ..)`, `for i in a..b`, return / break / continue, const fn calls (recursion included)
+  and the exact f64 builtins. Memory, syscalls, globals, an ordinary fn's call, a transcendental builtin and a
+  generic const fn are refused by name. The evaluator (`_ce_*`, parse_fn.cyr) interprets tokens, mirroring the
+  parser's grammar and its STATIC typing (an operator takes its f64 form when its LEFT operand is f64; an integer
+  right operand contributes its bits); the definition check is the same interpreter in skip mode over the whole
+  body. Refused by name too: division by zero, more than 10,000,000 steps, calls nested deeper than 2,000, a NaN
+  (its bits differ by target), an f64 out of the i64 range in `f64_to`, a string in arithmetic.
+- **f64 at compile time, bit-exact with run time.** cybs (the seed's compiler) has no float, so the compiler cannot
+  use its host's FPU: a new integer-only IEEE-754 binary64 module (`_sf_*` — add / sub / mul / div, conversions,
+  compare, floor / ceil / trunc / abs / neg; round to nearest even, gradual underflow, overflow to infinity, signed
+  zeros) was proven against the hardware over ~2,000,000 operand pairs per operation plus an edge-case matrix, on
+  x86-64 and on aarch64 (qemu), with 0 mismatches, and builds identically under cybs.
+- **Const contexts take any integer const expression** — literals, consts, enum constants, `sizeof`, const fn calls,
+  arithmetic: a const's value, an ARRAY SIZE (top level and in a fn; a literal or an enum constant before), `#assert`
+  (any expression, `&&` / `||` included — it was one atom or two compared, and arithmetic was refused), a `case`
+  label (a number before; evaluated once by the switch's pre-scan and replayed), an ENUM VALUE (`[-]N` before).
+  `_EVAL_CONST_ATOM`, `_enum_atom_idx` and `_assert_skip_atom` are gone: one evaluator serves every site. ⚠ An enum
+  value and a top-level array size are read in pass 1 in source order, so a `const fn` they call must be declared
+  above them (a top-level const need not be).
+  Tests: `tests/tcyr/crossos/const_values.tcyr` (24 rows), `const_contexts.tcyr` (13), `const_fn_f64.tcyr` (13 —
+  each const fn run at compile time AND at run time, the bits compared) on x86, aarch64 under qemu, PE under wine
+  and cx; the gate `tests/gates/frontend/const_checked.sh` (26 rows, four mutations each RED).
+  `assert_enum_constants.sh`'s arithmetic rows now evaluate (a false one fails as an assertion, a true one passes),
+  and `lexer_attribute_word_boundary.sh` B11's `#assert(8 == 9)` fails as an assertion (it was refused).
+  Followed on the way: `cyrius lint`'s context-dependent set takes the evaluator's `unknown name 'X' in a const
+  context` (an array sized by another file's constant still lints, as `array size identifier must be an enum
+  constant` did); `hidden_temp_census.sh` attributes the new top-level registration (`_cst_record`, brace depth 0
+  only); `tail_call_literal_divert_depth.sh` requires both `: Str` literal sides to treat a string const alike.
+
 ## [6.7.1] — 2026-10-07
 
 C3, trait-bounded generics (roadmap.md § Spec — C3; the user's decisions of 2026-10-07: a bound is a contract,

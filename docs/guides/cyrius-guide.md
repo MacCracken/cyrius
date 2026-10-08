@@ -229,11 +229,12 @@ is best reserved for byte buffers:
 > backing — the array only holds 1 slot, not 4. Declare slot arrays as
 > `var a: i64[4]` (32 bytes) instead. See CHANGELOG [6.2.1].
 
-`N` is an integer literal or an **enum constant**, bare or qualified —
-`enum Sz { BUF = 16; }` then `var b[BUF]`, `var b[Sz.BUF]` or
-`var a: i64[Sz.BUF]`, in a function or at top level (the qualified form
-since 6.6.10). A plain `var` is not a constant and is refused as a size, as is
-a negative enum value. The qualifier must be the constant's OWN enum (since
+`N` is any integer **const expression** (6.7.2 — [Constants and `const fn`](#constants-and-const-fn-672)):
+a literal, a `const`, an enum constant bare or qualified, `sizeof(T)`, a `const fn` call,
+arithmetic — `const BUF = 16;` or `enum Sz { BUF = 16; }` then `var b[BUF]`, `var b[Sz.BUF * 2]`
+or `var a: i64[f(4)]`, in a function or at top level. (Until 6.7.2: a literal or an enum
+constant only, the qualified form since 6.6.10.) A plain `var` is not a constant and is
+refused as a size, as is a negative value. The qualifier must be the constant's OWN enum (since
 6.6.11, here and in every expression): `Foo.BUF` with no enum `Foo` is refused
 with `'Foo' is not an enum`, and `Other.BUF` with `'BUF' is not a variant of
 'Other'` — before 6.6.11 the qualifier was ignored. When two enums share a
@@ -1953,19 +1954,17 @@ impl Ops for Acct {
 }
 ```
 
-`#assert A OP B, "message";` checks a compile-time fact and stops the build
-with `#assert failed: message` when it does not hold. Each operand is ONE
-atom — an integer literal, `sizeof(T)`, or an enum constant (`EB` or
-`E.EB`, since 6.6.10) — and `OP` is one of `== != < > <= >=` (a lone atom
-asserts non-zero). There is no arithmetic inside an `#assert`: write
-`#assert sizeof(Hdr) == 16;`, not `== E.N * 8`. Only `,`, the message
-string, `;` or the end of the line may follow the operands; anything else (`E.N * 8`, a stray word) is
-refused with ``expected `,` or `;` after the operands`` — before 6.6.10 it was
-skipped unchecked, so a false `#assert E.EB * 2 == 9;` compiled clean. An
-operand that is none of
-these is reported once, by name (`expected a number, sizeof(T) or an enum
-constant`), and `sizeof` must be the whole word — `sizeofzz(P)` is refused,
-not read as `sizeof`. So must its TYPE (since 6.6.11, in `#assert` and in
+`#assert EXPR, "message";` checks a compile-time fact and stops the build
+with `#assert failed: message` when it does not hold. EXPR is any const expression
+(6.7.2 — [Constants and `const fn`](#constants-and-const-fn-672)): literals, consts, enum
+constants (`EB` / `E.EB`), `sizeof(T)`, `const fn` calls, arithmetic, one comparison,
+`&&` / `||` — `#assert sizeof(Hdr) == E.N * 8;`. (From 6.6.10 to 6.7.1 an operand was ONE
+atom and arithmetic was refused.) Only `,`, the message string, `;` or the end of the line
+may follow the expression; anything else (a stray word) is refused with ``expected `,` or
+`;` after the expression`` — before 6.6.10 it was skipped unchecked, so a false
+`#assert E.EB * 2 == 9;` compiled clean. A name that is not a constant is reported once,
+by name (`unknown name 'foo'`, `'p' is a variable`), and `sizeof` must be the whole word —
+`sizeofzz(P)` is refused (`unknown fn 'sizeofzz'`), not read as `sizeof`. So must its TYPE (since 6.6.11, in `#assert` and in
 expressions alike): `sizeof(i8zz)` is refused, not 1. Since 6.6.16 both read
 the one type-name vocabulary ([Type names](#type-names-6616)): `sizeof(u8)`,
 `sizeof(f64)`, `sizeof(bool)`, `sizeof(u128)` (in `#assert` too), an enum and a
@@ -3062,7 +3061,7 @@ fn classify(n) {
 }
 ```
 
-Note: case values must be integer literals. No fallthrough — each case is independent.
+Note: a case value is any integer const expression — a literal, a `const`, an enum constant, `sizeof`, a `const fn` call, arithmetic (6.7.2; before it, an integer literal only). No fallthrough — each case is independent.
 
 ### Leaving a case (v6.5.20)
 
@@ -3340,6 +3339,65 @@ function's variable was refused `undefined variable`, and an outer capturing clo
 contained a nested closure lost its own captures after it (refused the same way). This section
 used to call it "captured closures are flat", which was a compiler limit, not a rule. Pinned by
 `tests/tcyr/crossos/closure_nested_capture.tcyr`.
+
+## Constants and `const fn` (6.7.2)
+
+```
+const LIMIT = 7;                  # an integer
+const PI = 3.14159;               # an f64
+const NAME = "cyrius";            # a string
+const BUF = LIMIT * 64;           # from other consts (in any order)
+
+const fn fib(n) {                 # runs at compile time in a const context
+    var a = 0;
+    var b = 1;
+    for (var i = 0; i < n; i = i + 1) { var t = a + b; a = b; b = t; }
+    return a;
+}
+const F20 = fib(20);              # 6765, computed by the compiler
+var table[fib(10)];               # an array size is a const context
+enum Op { ADD = 1; MUL = fib(7); }
+#assert fib(10) == 55, "fib";
+
+fn f(v): i64 {
+    const SCALE = 3;              # a local const: visible to the rest of its block
+    switch (v) { case fib(5): return 1; default: return 0; }
+    return v * SCALE + fib(3);    # fib(3) here is an ordinary RUNTIME call
+}
+```
+
+- **A `const` has no storage.** Every use is its value — an integer folds like an enum
+  constant, an f64 is its float literal, a string is its literal (passed where a `Str` is
+  expected it is wrapped like the literal). `N = ..`, `N += ..` and `&N` are refused by name.
+  It takes no type annotation: its type is its value's (`const H = 1.5;` is an f64).
+- **Top level and inside fns.** Top-level consts are found by one pre-scan, so they may be used
+  above their declaration and in any order (a const defined in terms of itself is refused);
+  `pub` / `private` apply as to any declaration, and one top-level name is a const or a global,
+  never both. A local const is visible to the rest of its block like a `var`; a var and a const
+  of one name in one scope are refused, and a closure reads a local const by name.
+- **Const contexts** take any integer const expression — literals, consts, enum constants,
+  `sizeof`, `const fn` calls, arithmetic: a const's value, an array size (top level and in a fn,
+  bare or element-typed), `#assert` (any expression since 6.7.2, `&&` / `||` included), a
+  `case` label, an enum value. Anything else — a variable, an ordinary fn's call — is refused
+  by name. ⚠ An enum value and a top-level array size are read in pass 1, in source order: a
+  `const fn` they call must be declared above them (a top-level const need not be).
+- **A `const fn` runs at compile time only in a const context**; everywhere else it is an
+  ordinary runtime call, so the disassembly shows the call you wrote (user decision,
+  2026-10-07). Its body is the pure subset, **checked at the definition, called or not**:
+  integer and f64 arithmetic, comparisons, `&&` / `||`, shifts with the runtime's semantics
+  (`>>` logical, `>>>` arithmetic), locals (`var x = ..;`, typed `i64` / `i32` / `i16` / `i8` /
+  `f64`, a narrow one narrowing as at run time), local consts, assignment and `OP=`, if / elif
+  / else, while, `for (..; ..; ..)`, `for i in a..b`, return, break, continue, calls of const
+  fns (recursion included), the exact f64 builtins (`f64_add`..`f64_div`, `f64_from`,
+  `f64_to`, `f64_eq` / `lt` / `gt` / `le` / `ge`, `f64_neg`, `f64_abs`, `f64_floor`,
+  `f64_ceil`, `f64_trunc`). Not: memory (`load64`, arrays, `&x`, fields), syscalls, globals, an
+  ordinary fn's call, a transcendental builtin, a generic const fn.
+- **The same answer as run time.** Typing is the runtime's: an operator takes its f64 form when
+  its LEFT operand is f64, and an integer right operand contributes its bits. f64 is computed
+  by an integer-only IEEE-754 implementation (the bootstrap compiler has no float), bit-exact
+  with x86-64 and AArch64 — round to nearest even, subnormals, infinities, signed zeros. A NaN
+  is refused (its bits differ between targets), as are division by zero, an f64 out of the
+  i64 range in `f64_to`, more than 10,000,000 steps, and calls nested deeper than 2,000.
 
 ## Generic Functions
 

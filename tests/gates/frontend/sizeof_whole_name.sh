@@ -21,7 +21,8 @@
 # MUTATION PROOF (6.6.11):
 #   * parse_expr.cyr sizeof: `_field_scalar_width` back to `_scalar_name_width`
 #     -> the expression rows of axis 1 RED (rc 0, value 2/1/4).
-#   * parse.cyr _EVAL_CONST_ATOM: the same swap -> the #assert rows of axis 1 RED.
+#   * parse.cyr _EVAL_CONST_ATOM: the same swap -> the #assert rows of axis 1 RED. (6.7.2: that
+#     fn is gone — #assert is a const context evaluated by `_ce_*`, whose sizeof is `_sizeof_type`.)
 #   * parse_expr.cyr: the mulh64 arm back to the 6-byte prefix test -> axis 3 RED (0, want 7).
 #
 # Exit 77 = could not run (no compiler); never 0 for that.

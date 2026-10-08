@@ -209,29 +209,14 @@ fn PARSE_ARRAY(S, noff, ew, sgn, eb, ann_ti): i64 {
     # cyrius has no named-constant infrastructure outside enums;
     # the idiomatic pattern is `enum Sz { BUF = 16; } var buf[BUF];`.
     var asz = 0;
-    if (PEEKT(S) == 1) {
+    if (PEEKT(S) == 1 && TOKTYP(S, GTI(S) + 1) == 29) {
         asz = PEEKV(S);
         STI(S, GTI(S) + 1);
     } else {
-        if (PEEKT(S) == 2) {
-            # 6.6.10: `N` or `Enum.N` through the shared recogniser (parse.cyr); it advances
-            # past the atom on success, so no STI below. CHANGELOG [6.6.10]
-            var as_idx = _enum_atom_idx(S);
-            # Presence is asked for HERE too, at the reader (enum_negative_value.sh axis 5c).
-            if (GVECP(S, as_idx) == 1) {   # 6.6.8: no 1024 cap (util.cyr GVECP)
-                asz = L64(_vecv_base + as_idx * 8);
-                # v6.5.32 — a NEGATIVE enum constant is now spellable, so reject it as a
-                # size rather than letting it through. Before negative values existed this
-                # could not arise; the old mask turned such a slot into a colossal positive
-                # instead. Silent acceptance of a nonsensical size is the failure mode this
-                # release line keeps removing.
-                if (asz < 0) { ERR_MSG(S, "array size must not be negative; an enum constant used as a size has to be >= 0", 79); }
-            } else {
-                ERR_MSG(S, "array size identifier must be an enum constant (compile-time literal); use `enum Sz { N = 16; } var buf[N];`", 108);
-            }
-        } else {
-            ERR_EXPECT(S, 1);
-        }
+        # 6.7.2 (B1, C1): a CONST CONTEXT — any integer const expression (a const, an enum
+        # constant, sizeof, a const fn call, arithmetic). It took one literal or enum constant.
+        asz = _ce_eval_int(S, "an array size must be an integer");
+        if (_ce_err == 0) { if (asz < 0) { ERR_MSG(S, "array size must not be negative", 31); } }
     }
     var _pa_em = eb;   # 6.6.13 (M2): the bytes per element the size below multiplies by
     if (_pa_em < 1) { if (GINFN(S) != 1) { _pa_em = 8; } }
@@ -2260,29 +2245,13 @@ fn PARSE_GVAR_ARR(S, noff, sti, ew, sgn, eb): i64 {
     # fix, `enum Sz { N = 16; } var buf[N];` at top level still
     # errored even after the in-fn fix landed.
     var sz_raw = 0;
-    if (PEEKT(S) == 1) {
+    if (PEEKT(S) == 1 && TOKTYP(S, GTI(S) + 1) == 29) {
         sz_raw = PEEKV(S);
         STI(S, GTI(S) + 1);
     } else {
-        if (PEEKT(S) == 2) {
-            # 6.6.10: `N` or `Enum.N` through the shared recogniser (parse.cyr); it advances
-            # past the atom on success, so no STI below. CHANGELOG [6.6.10]
-            var gas_idx = _enum_atom_idx(S);
-            # Presence is asked for HERE too, at the reader (enum_negative_value.sh axis 5c).
-            if (GVECP(S, gas_idx) == 1) {   # 6.6.8: no 1024 cap (util.cyr GVECP)
-                sz_raw = L64(_vecv_base + gas_idx * 8);
-                # v6.5.32 — a NEGATIVE enum constant is now spellable, so reject it as a
-                # size rather than letting it through. Before negative values existed this
-                # could not arise; the old mask turned such a slot into a colossal positive
-                # instead. Silent acceptance of a nonsensical size is the failure mode this
-                # release line keeps removing.
-                if (sz_raw < 0) { ERR_MSG(S, "array size must not be negative; an enum constant used as a size has to be >= 0", 79); }
-            } else {
-                ERR_MSG(S, "array size identifier must be an enum constant (compile-time literal); use `enum Sz { N = 16; } var buf[N];`", 108);
-            }
-        } else {
-            ERR_EXPECT(S, 1);
-        }
+        # 6.7.2 (B1, C1): a CONST CONTEXT — any integer const expression (as the in-fn site).
+        sz_raw = _ce_eval_int(S, "an array size must be an integer");
+        if (_ce_err == 0) { if (sz_raw < 0) { ERR_MSG(S, "array size must not be negative", 31); } }
     }
     # v6.2.1: element-typed top-level array `var g: T[N]` reserves
     # N * sizeof(T) bytes. `ew` is the element width from the `: T`
@@ -2990,6 +2959,7 @@ fn _gv_prior(S, noff, below, owner): i64 {
         var vi = e - 1;
         if (vi < below) { if (GVDEAD(S, vi) == 0) {
                 if (GVENUMID(S, vi) != 0) { return 0 - 1; }
+                if (_vcst_ix(S, vi) >= 0) { return 0 - 1; }   # 6.7.2: a const is not a global to share (refused by name)
                 if (GVFI(S, vi) != owner) { return 0 - 1; }
                 return vi;
             } }
@@ -3529,6 +3499,8 @@ fn PARSE_GVAR_REG(S): i64 {
     if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
     var noff = PEEKV(S);
     _RSV_INTRINSIC_DECL(S, noff, GTI(S), 0);   # 6.6.20: a global `var sizeof` / `mulh64` / `fncallN`
+    # 6.7.2 (B1): one top-level name is a const OR a global, never both.
+    if (_cst_n > 0) { if (_cst_find(S, noff) >= 0) { ERR_IDENT(S, "", noff, " is already declared as a top-level const", 0 - 1); } }
     STI(S, GTI(S) + 1);
     # v6.6.0 — TOP-LEVEL DESTRUCTURE, pass 1. `var t, v = f();` is the only correct way to
     # receive a `: stack` enum, so once Result went to the value form a top-level Result bind
@@ -4698,6 +4670,7 @@ fn PARSE_VAR(S): i64 {
     if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
     var noff = PEEKV(S);
     _RSV_INTRINSIC_DECL(S, noff, GTI(S), 0);   # 6.6.20: `var sizeof` / `var mulh64` / `var fncallN`
+    _lc_var_dup(S, noff);                       # 6.7.2: a local const of this name in this scope
     STI(S, GTI(S) + 1);
     # Multi-var destructure: var x, y[, z] = fn()
     if (PEEKT(S) == 31) {

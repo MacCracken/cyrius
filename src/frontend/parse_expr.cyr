@@ -1954,6 +1954,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         if (_arr_sub_read(S, noff) == 1) { return 0; }   # 6.6.12: `a[i]` (see _arr_sub_addr)
         # Variable load — check local first if in function
         SPSC(S, 0);
+        if (_cst_read_local(S, noff) == 1) { return 0; }   # 6.7.2 (B1): a local const is its value
         if (GINFN(S) == 1) {
             var li = FINDLOCAL(S, noff);
             if (li >= 0) {
@@ -2066,6 +2067,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
             }
         }
         var idx = FINDVAR(S, noff);
+        if (idx >= 0) { if (_cst_read_global(S, idx) == 1) { return 0; } }   # 6.7.2: an f64 / string const
         if (idx < 0) {
             # v6.5.19: under --syntax-only an unresolved read becomes the constant 0
             # and we return exactly as the sibling success paths above do, so the
@@ -2146,6 +2148,9 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
         var anoff = PEEKV(S);
         STI(S, GTI(S) + 1);
+        if (_cst_n > 0 || _lc_n > 0) {   # 6.7.2 (B1): a const has no address
+            if (_cst_lvalue_check(S, anoff, "cannot take the address of const ") == 1) { EMOVI(S, 0); return 0; }
+        }
         # Resolution order is local → global → function: a VALUE of a
         # given name shadows a function of the same name (correct lexical
         # scoping). Pre-v6.0.35 this checked FINDFN *first*, so a local

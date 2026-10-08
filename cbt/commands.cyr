@@ -1971,7 +1971,7 @@ fn cmd_hooks(action): i64 {
 # src/common/util.cyr `_syntax_only`) now suppresses undefined variables and fns, and the
 # census under lint's own flags is 2 refusals in 199 in-repo files, both context-dependent:
 # lib/ganita.cyr (`f64_sin requires include "lib/math.cyr"`) and lib/yukti.cyr (`array size
-# identifier must be an enum constant`, the enum lives in another file). So the exception is
+# identifier must be an enum constant` until 6.7.2, the enum lives in another file). So the exception is
 # now small and NAMED — `_lint_msg_is_context` — and everything else the compiler refuses
 # fails lint and is forwarded. A read-only sweep over the sibling repos' sources, with the
 # CLI's own flags, is recorded in CHANGELOG [6.6.11].
@@ -2006,8 +2006,11 @@ fn _lint_has(p, n, s): i64 {
 fn _lint_msg_is_context(p, n): i64 {
     # f64_sin / f64_cos / … and the slice subscript: `<what> requires include "lib/<x>.cyr"`
     if (_lint_has(p, n, " requires include \"") == 1) { return 1; }
-    # an array sized by an enum constant another file declares (lib/yukti.cyr)
-    if (_lint_pfx(p, n, "array size identifier must be an enum constant") == 1) { return 1; }
+    # an array sized by an enum constant (or a const) another file declares (lib/yukti.cyr) — since
+    # 6.7.2 every const context names it `unknown name 'X' in a const context` (a const fn another
+    # file declares: `unknown fn 'f' in a const context`)
+    if (_lint_pfx(p, n, "unknown name '") == 1 && _lint_has(p, n, "' in a const context") == 1) { return 1; }
+    if (_lint_pfx(p, n, "unknown fn '") == 1 && _lint_has(p, n, "' in a const context") == 1) { return 1; }
     # a struct declared in a sibling module (the 6.5.19 cross-file shape, gate axis 6)
     if (_lint_pfx(p, n, "no struct type in scope for ") == 1) { return 1; }
     # …and the same struct named as a field's type (the 6.6.11 sweep:

@@ -1725,6 +1725,10 @@ fn LEXID(S, p, npos): i64 {
         # ecosystem source uses `trait` as an identifier (surveyed 2026-10-07), so cycc's own
         # token stream is unchanged.
         if (kw & 0xFFFFFFFFFF == 0x7469617274) { ADDTOK(S, 167, 0); return p; }
+        # 6.7.2 (B1): "const" = 0x74736E6F63 → token 168, a compile-time constant (`const N = 7;`)
+        # or a compile-time-evaluable fn (`const fn`). No cyrius or ecosystem source uses `const` as
+        # an identifier (surveyed 2026-10-07), so cycc's own token stream is unchanged.
+        if (kw & 0xFFFFFFFFFF == 0x74736E6F63) { ADDTOK(S, 168, 0); return p; }
     }
     if (klen == 6) {
         # v6.5.0 — "public" = 0x63696C627570, lexed to token 73, the SAME token as the

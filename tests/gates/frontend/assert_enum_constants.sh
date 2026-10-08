@@ -20,6 +20,12 @@
 # One shared recogniser (_enum_atom_idx, parse.cyr) now serves #assert and both
 # array-size parsers; pass 1 (_assert_skip_atom) steps over the 1- and 3-token forms.
 # CHANGELOG [6.6.10]
+# ⭐ 6.7.2 (B1, C1): #assert and array sizes are CONST CONTEXTS (the user's decision, 2026-10-07):
+# any const expression — arithmetic, `&&` / `||`, consts, sizeof, const fn calls — evaluated by
+# the one evaluator (`_ce_*`, parse_fn.cyr), which replaced _EVAL_CONST_ATOM / _enum_atom_idx /
+# _assert_skip_atom. So `#assert E.EB * 2 == 8` PASSES and `== 9` FAILS as an assertion (both
+# were "no arithmetic inside #assert"); what may follow the expression is unchanged (junk is
+# refused), and the refusals name the name (`unknown name 'foo'`, `'p' is a variable`).
 #
 # 6.6.11 (N4): the qualified form never checked its BASE. `Foo.EB` (no enum Foo) and
 # `F.EB` (EB belongs to E) compiled in expressions, #assert and array sizes, `Nope.gz`
@@ -81,31 +87,31 @@ fn g(): i64 { return 9; }
 syscall(60, g());'
 no "failing qualified #assert"  '#assert failed: nope' '#assert E.EB == 5, "nope";
 syscall(60, 7);'
-no "sizeof is a whole word"     'expected a number, sizeof(T) or an enum constant' '#assert sizeofzz(P) == 16;
+no "sizeof is a whole word"     "unknown fn 'sizeofzz'" '#assert sizeofzz(P) == 16;
 syscall(60, 7);'
-no "bad atom reports once (no #assert-failed cascade)" 'expected a number, sizeof(T) or an enum constant' '#assert foo == 1;
+no "bad atom reports once (no #assert-failed cascade)" "unknown name 'foo'" '#assert foo == 1;
 syscall(60, 7);'
-no "a VARIABLE base is a field access, not an enum" 'expected a number, sizeof(T) or an enum constant' 'var p = 0;
+no "a VARIABLE base is a field access, not an enum" "'p' is a variable" 'var p = 0;
 #assert p.x == 0;
 syscall(60, 7);'
-AR='no arithmetic inside #assert'
+AR='#assert: expected `,` or `;` after the expression'
 # The comma-less message form is still accepted (tests/gates/diagnostics/
 # resolution_excerpt_and_assert_skip.sh axis 3 relies on it) and still printed on failure.
 ok "comma-less message after the operands" 7 '#assert E.EB == 4 "fine";
 syscall(60, 7);'
 no "comma-less message on a failing assert" '#assert failed: nocomma' '#assert E.EB == 5 "nocomma";
 syscall(60, 7);'
-no "arithmetic after an enum atom (false assert, in a fn)" "$AR" 'fn f(): i64 { #assert E.EB * 2 == 9; return 5; }
+no "arithmetic after an enum atom (false assert, in a fn) — evaluated (6.7.2)" '#assert failed' 'fn f(): i64 { #assert E.EB * 2 == 9; return 5; }
 syscall(60, f());'
-no "arithmetic after an enum atom (true if evaluated)" "$AR" '#assert E.EB * 2 == 8;
+ok "arithmetic after an enum atom (true) — evaluated (6.7.2)" 7 '#assert E.EB * 2 == 8;
 syscall(60, 7);'
-no "arithmetic between literals" "$AR" '#assert 4 * 2 == 9;
+no "arithmetic between literals — evaluated (6.7.2)" '#assert failed' '#assert 4 * 2 == 9;
 syscall(60, 7);'
 no "junk after the comparison" "$AR" '#assert 4 == 4 junk junk;
 syscall(60, 7);'
 no "junk after a lone atom" "$AR" '#assert 5 junk;
 syscall(60, 7);'
-no "a bad atom followed by arithmetic still reports once" 'expected a number, sizeof(T) or an enum constant' '#assert foo * 2 == 1;
+no "a bad atom followed by arithmetic still reports once" "unknown name 'foo'" '#assert foo * 2 == 1;
 syscall(60, 7);'
 
 # N4 (6.6.11): the base of `Base.NAME` must be NAME's own enum, at every site.

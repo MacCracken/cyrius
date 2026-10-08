@@ -1,0 +1,85 @@
+# const_fn_f64.tcyr — 6.7.2 (C1): a `const fn` computing f64 at COMPILE time gives the same BITS the same
+# call gives at RUN time, on every backend.
+#
+# The compiler evaluates f64 with an integer-only IEEE-754 binary64 module (`_sf_*`, parse_fn.cyr):
+# cybs (the seed's compiler) has no float, so the host FPU is not available to it. Round to nearest
+# even, gradual underflow, overflow to infinity, signed zeros; a NaN is REFUSED (its bits differ by
+# target). Each row runs one const fn twice — into a const at compile time, and as a call at run time
+# — and compares the two results' bits: inexact quotients (F2), a subnormal result (F3), overflow to
+# +inf (F4), signed zero (F5), ties to even at 2^53 (F6), f64_from / f64_to (F7, F8), floor / ceil /
+# trunc (F9), a 12-step multiply-add loop (F10), -0 == +0 (F11), abs / neg (F12), and the runtime's
+# typing rule that an f64 left operand adds an integer right operand's BITS (F13). The module itself
+# was proven against the hardware over ~2,000,000 operand pairs per operation plus an edge-case
+# matrix, on x86-64 and on aarch64 (qemu), with 0 mismatches (CHANGELOG [6.7.2]).
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/assert.cyr"
+
+# Each const fn runs twice: at compile time (into a const) and at run time (a plain call); the
+# two results must have the same BITS.
+const fn fma1(a: f64, b: f64): f64 { return a * b + a; }
+const fn quo(a: f64, b: f64): f64 { return (a + b) / (b - 0.75); }
+const fn tiny(): f64 {
+    var x: f64 = 1.0;
+    var i = 0;
+    while (i < 1060) { x = x / 2.0; i = i + 1; }
+    return x * 0.75;
+}
+const fn huge(): f64 {
+    var x: f64 = 1.5;
+    var i = 0;
+    while (i < 1030) { x = x * 2.0; i = i + 1; }
+    return x;
+}
+const fn negz(): f64 { return 0.0 - 0.0 * -1.0; }
+const fn tie(): f64 { return 9007199254740992.0 + 1.0; }
+const fn conv(n): f64 { return f64_from(n) / 3.0; }
+const fn back(x: f64) { return f64_to(x * 1000.0); }
+const fn rnd(x: f64): f64 { return f64_floor(x) + f64_ceil(x) * 2.0 + f64_trunc(0.0 - x) * 4.0; }
+const fn poly(x: f64): f64 {
+    var acc: f64 = 0.0;
+    var i = 0;
+    while (i < 12) { acc = acc * x + f64_from(i); i = i + 1; }
+    return acc;
+}
+const fn cmp3(a: f64, b: f64) { if (a < b) { return 1; } elif (a > b) { return 2; } return 3; }
+const fn absneg(x: f64): f64 { return f64_abs(f64_neg(x)) - x; }
+const fn rawbits(x: f64): f64 { return x + 3; }
+
+const A1 = fma1(1.5, 2.25);
+const A2 = quo(0.1, 0.2);
+const A3 = tiny();
+const A4 = huge();
+const A5 = negz();
+const A6 = tie();
+const A7 = conv(1000000007);
+const A8 = back(3.14159);
+const A9 = rnd(2.5);
+const A10 = poly(1.0001);
+const A11 = cmp3(0.0, 0.0 - 0.0);
+const A12 = absneg(0.0 - 7.25);
+const A13 = rawbits(1.5);
+
+fn same(ct, rt, what): i64 {
+    assert_eq(ct, rt, what);
+    return 0;
+}
+fn run(): i64 {
+    var c = A1; var r = fma1(1.5, 2.25); same(c, r, "F1: a * b + a");
+    c = A2; r = quo(0.1, 0.2); same(c, r, "F2: (a + b) / (b - 0.75), inexact");
+    c = A3; r = tiny(); same(c, r, "F3: a subnormal result");
+    c = A4; r = huge(); same(c, r, "F4: overflow to +inf");
+    c = A5; r = negz(); same(c, r, "F5: signed zero");
+    c = A6; r = tie(); same(c, r, "F6: ties to even at 2^53");
+    c = A7; r = conv(1000000007); same(c, r, "F7: f64_from + divide");
+    assert_eq(A8, back(3.14159), "F8: f64_to truncates");
+    c = A9; r = rnd(2.5); same(c, r, "F9: floor / ceil / trunc");
+    c = A10; r = poly(1.0001); same(c, r, "F10: a loop of 12 multiply-adds");
+    assert_eq(A11, cmp3(0.0, 0.0 - 0.0), "F11: -0 == +0 compares equal");
+    c = A12; r = absneg(0.0 - 7.25); same(c, r, "F12: abs / neg");
+    c = A13; r = rawbits(1.5); same(c, r, "F13: f64 + an integer adds its BITS, as at run time");
+    return 0;
+}
+var r0 = run();
+var rr = assert_summary();
+syscall(60, rr);

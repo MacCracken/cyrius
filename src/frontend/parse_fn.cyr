@@ -1780,7 +1780,7 @@ fn _sptr_param_localize1(S, li): i64 {
 fn _try_push_str_literal_arg(S, fi, argc): i64 {
     if (fi < 0) { return 0; }
     if (_pm_str(fi, argc) == 0) { return 0; }   # 6.6.17 (a10)
-    if (PEEKT(S) != 30) { return 0; }
+    if (PEEKT(S) != 30) { if (_cst_str_tok(S, GTI(S)) == 0) { return 0; } }   # 6.7.2: or a string const
     var sf_fi = FINDFN(S, _STR_FROM_NOFF(S));
     PCMPE(S);
     EPUSHR(S);
@@ -1832,7 +1832,7 @@ fn _tc_str_literal_arg(S, ti_open, fi): i64 {
         if (depth == 0) {
             if (t == 31) { pos = pos + 1; first = 1; }
             else {
-                if (first == 1) { if (t == 30) { if (_pm_str(fi, pos) != 0) { return 1; } } }
+                if (first == 1) { if (t == 30 || _cst_str_tok(S, i) == 1) { if (_pm_str(fi, pos) != 0) { return 1; } } }
                 first = 0;
             }
         }
@@ -5203,6 +5203,1672 @@ fn _bs_scalar_self(S, idx, bsi, noff): i64 {
     return 0;
 }
 
+# ⛔ 6.7.2 (B1, C1) — COMPILE-TIME CONSTANTS AND `const fn`.
+# `const LIMIT = 7;`, `const PI = 3.14159;`, `const NAME = "cyrius";` — no storage; every use is the
+# value, a string const its literal. `const fn f(..) { .. }` is an ordinary fn that a CONST CONTEXT
+# (a const initializer, an array size, `#assert`, a `case` label, an enum value) runs at compile
+# time; anywhere else it is a plain runtime call. User decisions, 2026-10-07 (roadmap.md § B / C1):
+# int + f64 + string consts, top level and inside fns, const fn in const contexts only, its body
+# the pure subset, checked at the definition.
+#
+# TOP-LEVEL consts are found by ONE pre-scan at the start of pass 1 (`_cst_prepass`) wherever they
+# sit, so order does not matter, and each gets a global name slot of SIZE 0 (no storage) flagged
+# PENDING (GVECP 2). Its first reader evaluates it: `GVECP` forces it (`_cst_force`), so every
+# enum-constant reader — array sizes, `#assert`, the folder, the factor — takes an integer const
+# unchanged (GVECP 1, the value in `_vecv_base`); an f64 or string const keeps GVECP 0 and is read
+# through `_cst_vkind` by the factor, which emits it as its literal. The end of pass 1 evaluates
+# every const (`_cst_sweep`), used or not, so each error is reported.
+# LOCAL consts live in their own scoped table (`_lc_tab`: name, scope depth, inline depth, kind,
+# value) — a const has no frame slot, so a closure sees it by NAME and never captures it; a var
+# and a const of one name resolve to the more deeply declared; an inline replay sees only the
+# consts it declares itself; a generic instance or another fn sees none of its encloser's.
+# THE EVALUATOR (`_ce_*`) interprets tokens, mirroring the parser — `||` over `&&` over ONE
+# comparison over `+ - & | ^` over `* / % << >> >>>` over unary `- ~` — and its STATIC typing: an
+# operator takes its float form when its LEFT operand is f64 (the right one's bits used as they
+# are, as at run time), an untyped `var` is an integer whatever it holds. f64 arithmetic is the
+# integer-only `_sf_*` (cybs has no float), and a NaN is refused (its bits differ by target).
+# The definition check of a const fn is the same interpreter in SKIP mode over its whole body.
+# CHANGELOG [6.7.2]
+
+# ── small helpers ───────────────────────────────────────────────────────────────────────────────
+fn _ce_bad(S, msg, len): i64 {
+    if (_ce_err == 1) { return 0; }
+    _ce_err = 1;
+    var sv = GTI(S);
+    STI(S, _ce_ti);
+    ERR_MSG(S, msg, len);
+    STI(S, sv);
+    return 0;
+}
+fn _ce_badn(S, msg, noff, tail): i64 {
+    if (_ce_err == 1) { return 0; }
+    _ce_err = 1;
+    var sv = GTI(S);
+    STI(S, _ce_ti);
+    ERR_IDENT(S, msg, noff, tail, 0 - 1);
+    STI(S, sv);
+    return 0;
+}
+# A runtime fault (division by zero, NaN, overflow of a conversion) — only when executing.
+fn _ce_fault(S, msg, len): i64 {
+    if (_ce_skip > 0) { return 0; }
+    return _ce_bad(S, msg, len);
+}
+fn _ce_expect(S, t): i64 {
+    if (_ce_err == 1) { return 0; }
+    if (TOKTYP(S, _ce_ti) == t) { _ce_ti = _ce_ti + 1; return 1; }
+    if (_ce_err == 0) {
+        _ce_err = 1;
+        var sv = GTI(S);
+        STI(S, _ce_ti);
+        ERR_EXPECT(S, t);
+        STI(S, sv);
+    }
+    return 0;
+}
+fn _ce_step(S): i64 {
+    if (_ce_skip > 0) { return 0; }
+    _ce_steps = _ce_steps + 1;
+    if (_ce_steps > 10000000) { _ce_bad(S, "compile-time evaluation exceeded 10,000,000 steps (an endless loop in a const fn?)", 82); }
+    return 0;
+}
+
+# ── frames: the const fn being run (5 words): name, value, kind (0 i64, 1 f64, 2 a string),
+# width (8, or 4 / 2 / 1 for a narrow integer), const (1 = a `const` inside the body) ──────────
+fn _ce_fr_push(S, name, v, k, w): i64 {
+    if (_ce_st == 0) { _ce_st = alloc(65536 * 40); }
+    if (_ce_sp >= 65536) { _ce_bad(S, "compile-time evaluation: too many locals (max 65536)", 52); return 0 - 1; }
+    var e = _ce_st + _ce_sp * 40;
+    store64(e, name); store64(e + 8, v); store64(e + 16, k); store64(e + 24, w); store64(e + 32, 0);
+    _ce_sp = _ce_sp + 1;
+    return _ce_sp - 1;
+}
+fn _ce_fr_find(S, name): i64 {
+    var i = _ce_sp - 1;
+    while (i >= _ce_fb) {
+        if (STREQ(S, load64(_ce_st + i * 40), name) == 1) { return i; }
+        i = i - 1;
+    }
+    return 0 - 1;
+}
+# Narrow a value to a local's width, sign-extending as the runtime's narrow load does.
+fn _ce_narrow(v, w): i64 {
+    if (w == 4) { v = v & 0xFFFFFFFF; if ((v & 0x80000000) != 0) { v = v | (0 - 0x100000000); } return v; }
+    if (w == 2) { v = v & 0xFFFF; if ((v & 0x8000) != 0) { v = v | (0 - 0x10000); } return v; }
+    if (w == 1) { v = v & 0xFF; if ((v & 0x80) != 0) { v = v | (0 - 0x100); } return v; }
+    return v;
+}
+
+# ── expressions ─────────────────────────────────────────────────────────────────────────────────
+fn _ce_expr(S): i64 {
+    var v = _ce_land(S);
+    while (TOKTYP(S, _ce_ti) == 54) {
+        if (_ce_err == 1) { return 0; }
+        _ce_ti = _ce_ti + 1;
+        var lt = 0;
+        if (v != 0) { lt = 1; }
+        if (lt == 1) { _ce_skip = _ce_skip + 1; }
+        var r = _ce_land(S);
+        if (lt == 1) { _ce_skip = _ce_skip - 1; v = 1; }
+        else { v = 0; if (r != 0) { v = 1; } }
+        _ce_k = 0;
+    }
+    return v;
+}
+fn _ce_land(S): i64 {
+    var v = _ce_atom(S);
+    while (TOKTYP(S, _ce_ti) == 53) {
+        if (_ce_err == 1) { return 0; }
+        _ce_ti = _ce_ti + 1;
+        var lf = 0;
+        if (v == 0) { lf = 1; }
+        if (lf == 1) { _ce_skip = _ce_skip + 1; }
+        var r = _ce_atom(S);
+        if (lf == 1) { _ce_skip = _ce_skip - 1; v = 0; }
+        else { v = 0; if (r != 0) { v = 1; } }
+        _ce_k = 0;
+    }
+    return v;
+}
+fn _ce_atom(S): i64 {
+    var a = _ce_add(S);
+    var op = TOKTYP(S, _ce_ti);
+    if (op < 17) { return a; }
+    if (op > 22) { return a; }
+    var ak = _ce_k;
+    _ce_ti = _ce_ti + 1;
+    var b = _ce_add(S);
+    var bk = _ce_k;
+    _ce_k = 0;
+    if (_ce_err == 1) { return 0; }
+    if (_ce_skip > 0) { return 0; }
+    if (ak == 2 || bk == 2) { _ce_bad(S, "a string in a comparison: a const string is a value to pass, not to compare", 75); return 0; }
+    var c = 0;
+    if (ak == 1) {
+        _sf_err = 0;
+        c = _sf_cmp(a, b);
+        if (_sf_err == 1) { _ce_fault(S, "a NaN in a compile-time comparison (its result depends on the target)", 69); return 0; }
+    } else {
+        if (a < b) { c = 0 - 1; }
+        elif (a > b) { c = 1; }
+    }
+    return _ce_cmp_res(op, c);
+}
+fn _ce_cmp_res(op, c): i64 {
+    if (op == 17) { if (c == 0) { return 1; } return 0; }
+    if (op == 18) { if (c != 0) { return 1; } return 0; }
+    if (op == 19) { if (c < 0) { return 1; } return 0; }
+    if (op == 20) { if (c > 0) { return 1; } return 0; }
+    if (op == 21) { if (c <= 0) { return 1; } return 0; }
+    if (c >= 0) { return 1; }
+    return 0;
+}
+fn _ce_add(S): i64 {
+    var v = _ce_term(S);
+    var go = 1;
+    while (go == 1) {
+        if (_ce_err == 1) { return 0; }
+        var t = TOKTYP(S, _ce_ti);
+        if (t == 113) { t = 6; }
+        if (t == 116) { t = 7; }
+        if (t == 114 || t == 115 || t == 117 || t == 118) {
+            _ce_bad(S, "a saturating or checked operator (+| +? -| -?) calls lib/overflow.cyr - it is not compile-time", 94);
+            return 0;
+        }
+        if (t == 6 || t == 7 || t == 27 || t == 35 || t == 36) {
+            var vk = _ce_k;
+            _ce_ti = _ce_ti + 1;
+            var r = _ce_term(S);
+            var rk = _ce_k;
+            v = _ce_binop(S, t, v, vk, r, rk);
+        } else { go = 0; }
+    }
+    return v;
+}
+fn _ce_term(S): i64 {
+    var v = _ce_unary(S);
+    var go = 1;
+    while (go == 1) {
+        if (_ce_err == 1) { return 0; }
+        var t = TOKTYP(S, _ce_ti);
+        if (t == 119) { t = 8; }
+        if (t == 120 || t == 121) {
+            _ce_bad(S, "a saturating or checked operator (*| *?) calls lib/overflow.cyr - it is not compile-time", 88);
+            return 0;
+        }
+        if (t == 8 || t == 9 || t == 34 || t == 38 || t == 39 || t == 152) {
+            var vk = _ce_k;
+            _ce_ti = _ce_ti + 1;
+            var r = _ce_unary(S);
+            var rk = _ce_k;
+            v = _ce_binop(S, t, v, vk, r, rk);
+        } else { go = 0; }
+    }
+    return v;
+}
+# One binary operator, the left operand's static kind choosing int or float (as PEXPR / PARSE_TERM).
+fn _ce_binop(S, t, a, ak, b, bk): i64 {
+    _ce_k = 0;
+    if (_ce_err == 1) { return 0; }
+    if (_ce_skip > 0) {
+        if (ak == 1) { if (t == 6 || t == 7 || t == 8 || t == 9) { _ce_k = 1; } }
+        return 0;
+    }
+    if (ak == 2 || bk == 2) { _ce_bad(S, "a string in arithmetic: a const string is a value to pass, not to compute with", 78); return 0; }
+    if (ak == 1) { if (t == 6 || t == 7 || t == 8 || t == 9) { return _ce_fbin(S, t, a, b); } }
+    return _ce_ibin(S, t, a, b);
+}
+fn _ce_fbin(S, t, a, b): i64 {
+    _sf_err = 0;
+    var r = 0;
+    if (t == 6) { r = _sf_add(a, b); }
+    elif (t == 7) { r = _sf_sub(a, b); }
+    elif (t == 8) { r = _sf_mul(a, b); }
+    else { r = _sf_div(a, b); }
+    if (_sf_err == 1) { _ce_fault(S, "a NaN in compile-time f64 arithmetic (an operand, or 0/0, inf-inf, 0*inf): its bits depend on the target", 104); return 0; }
+    _ce_k = 1;
+    return r;
+}
+fn _ce_ibin(S, t, a, b): i64 {
+    if (t == 6) { return a + b; }
+    if (t == 7) { return a - b; }
+    if (t == 27) { return a & b; }
+    if (t == 35) { return a | b; }
+    if (t == 36) { return a ^ b; }
+    if (t == 8) { return a * b; }
+    if (t == 38) { return a << (b & 63); }
+    if (t == 39) { return a >> (b & 63); }
+    if (t == 152) { return _CF_ASR(a, b); }
+    if (b == 0) { _ce_fault(S, "division by zero in a compile-time evaluation", 45); return 0; }
+    if (t == 9) {
+        if (b == 0 - 1) { return 0 - a; }   # INT_MIN / -1 wraps, as the literal folder does (_CF_TERM)
+        return a / b;
+    }
+    if (b == 0 - 1) { return 0; }
+    return a % b;
+}
+fn _ce_unary(S): i64 {
+    var t = TOKTYP(S, _ce_ti);
+    if (t == 7) {
+        _ce_ti = _ce_ti + 1;
+        var v = _ce_unary(S);
+        if (_ce_k == 2) { _ce_bad(S, "a string in arithmetic: a const string is a value to pass, not to compute with", 78); return 0; }
+        if (_ce_k == 1) { return _sf_neg(v); }
+        return 0 - v;
+    }
+    if (t == 37) {
+        _ce_ti = _ce_ti + 1;
+        var w = _ce_unary(S);
+        if (_ce_k == 2) { _ce_bad(S, "a string in arithmetic: a const string is a value to pass, not to compute with", 78); return 0; }
+        _ce_k = 0;
+        return w ^ (0 - 1);
+    }
+    return _ce_factor(S);
+}
+fn _ce_factor(S): i64 {
+    _ce_k = 0;
+    if (_ce_err == 1) { return 0; }
+    var t = TOKTYP(S, _ce_ti);
+    if (t == 1) { var v = TOKVAL(S, _ce_ti); _ce_ti = _ce_ti + 1; return v; }
+    if (t == 61) { var fv = FLIT_NUM(TOKVAL(S, _ce_ti)); _ce_ti = _ce_ti + 1; _ce_k = 1; return fv; }
+    if (t == 30) { var sv = TOKVAL(S, _ce_ti); _ce_ti = _ce_ti + 1; _ce_k = 2; return sv; }
+    if (t == 10) {
+        _ce_ti = _ce_ti + 1;
+        var pv = _ce_expr(S);
+        var pk = _ce_k;
+        _ce_expect(S, 11);
+        _ce_k = pk;
+        return pv;
+    }
+    if (_ce_fbuiltin(t) == 1) { return _ce_fcall(S, t); }
+    if (t == 2) { return _ce_name(S); }
+    _ce_bad(S, "not a compile-time expression: a const context takes literals, consts, enum constants, sizeof, const fn calls and arithmetic", 124);
+    return 0;
+}
+
+# The f64 builtins a const evaluation takes — exact operations only (no transcendental: its
+# runtime result is the target's library's, not something to reproduce bit for bit).
+fn _ce_fbuiltin(t): i64 {
+    if (t >= 62) { if (t <= 71) { return 1; } }
+    if (t >= 80) { if (t <= 82) { return 1; } }
+    if (t >= 164) { if (t <= 166) { return 1; } }
+    return 0;
+}
+fn _ce_fcall(S, t): i64 {
+    _ce_ti = _ce_ti + 1;
+    if (_ce_expect(S, 10) == 0) { return 0; }
+    var a = _ce_expr(S);
+    var ak = _ce_k;
+    var b = 0;
+    var two = 0;
+    if (t >= 62) { if (t <= 65) { two = 1; } }
+    if (t >= 68) { if (t <= 70) { two = 1; } }
+    if (t == 164 || t == 165) { two = 1; }
+    if (two == 1) {
+        _ce_expect(S, 31);
+        b = _ce_expr(S);
+    }
+    _ce_expect(S, 11);
+    _ce_k = 0;
+    if (_ce_err == 1) { return 0; }
+    if (_ce_skip > 0) { if (_ce_fres(t) == 1) { _ce_k = 1; } return 0; }
+    if (ak == 2) { _ce_bad(S, "a string passed to an f64 builtin", 33); return 0; }
+    return _ce_fop(S, t, a, b);
+}
+# 1 iff builtin t returns an f64 (the rest return an i64: f64_to and the comparisons).
+fn _ce_fres(t): i64 {
+    if (t == 67) { return 0; }
+    if (t >= 68) { if (t <= 70) { return 0; } }
+    if (t == 164 || t == 165) { return 0; }
+    return 1;
+}
+fn _ce_fop(S, t, a, b): i64 {
+    _sf_err = 0;
+    var r = 0;
+    if (t == 62) { r = _sf_add(a, b); }
+    elif (t == 63) { r = _sf_sub(a, b); }
+    elif (t == 64) { r = _sf_mul(a, b); }
+    elif (t == 65) { r = _sf_div(a, b); }
+    elif (t == 66) { r = _sf_from_i64(a); }
+    elif (t == 67) { r = _sf_to_i64(a); }
+    elif (t == 71) { r = _sf_neg(a); }
+    elif (t == 80) { r = _sf_abs(a); }
+    elif (t == 81) { r = _sf_floor(a); }
+    elif (t == 82) { r = _sf_ceil(a); }
+    elif (t == 166) { r = _sf_trunc(a); }
+    else { r = _ce_fcmpb(S, t, a, b); }
+    if (_sf_err == 1) { _ce_fault(S, "a NaN, or an f64 out of the i64 range, in a compile-time f64 builtin (its result depends on the target)", 103); return 0; }
+    if (_ce_fres(t) == 1) { _ce_k = 1; }
+    return r;
+}
+fn _ce_fcmpb(S, t, a, b): i64 {
+    var c = _sf_cmp(a, b);
+    if (t == 68) { if (c == 0) { return 1; } return 0; }
+    if (t == 69) { if (c < 0) { return 1; } return 0; }
+    if (t == 70) { if (c > 0) { return 1; } return 0; }
+    if (t == 164) { if (c <= 0) { return 1; } return 0; }
+    if (c >= 0) { return 1; }
+    return 0;
+}
+
+# An identifier: a frame local, a local const, a top-level const, an enum constant, sizeof, or a
+# const fn call — anything else is not a constant.
+fn _ce_name(S): i64 {
+    var noff = TOKVAL(S, _ce_ti);
+    if (_is_sizeof_word(S, noff) == 1) { return _ce_sizeof(S); }
+    var nt = TOKTYP(S, _ce_ti + 1);
+    if (nt == 10) { return _ce_call(S, noff); }
+    if (_ce_fb >= 0) { if (_ce_infn == 1) {
+            var fi = _ce_fr_find(S, noff);
+            if (fi >= 0) {
+                _ce_ti = _ce_ti + 1;
+                var fe = _ce_st + fi * 40;
+                _ce_k = load64(fe + 16);
+                return load64(fe + 8);
+            }
+        } }
+    if (_ce_infn == 0) { if (_ce_top == 0) {
+            var lc = _lc_find(S, noff);
+            if (lc >= 0) {
+                _ce_ti = _ce_ti + 1;
+                _ce_k = L64(_lc_tab + lc * 48 + 24);
+                return L64(_lc_tab + lc * 48 + 32);
+            }
+            if (GINFN(S) == 1) { if (FINDLOCAL(S, noff) >= 0) {
+                    _ce_badn(S, "", noff, " is a variable - a const context takes only constants");
+                    return 0;
+                } }
+        } }
+    var ci = _cst_find(S, noff);
+    if (ci >= 0) {
+        _ce_ti = _ce_ti + 1;
+        if (_ce_skip > 0) { _ce_k = _cst_kind_peek(S, ci); return 0; }
+        var cv = _cst_value(S, ci);
+        _ce_k = _cst_kk;
+        return cv;
+    }
+    return _ce_enum(S, noff);
+}
+fn _ce_enum(S, noff): i64 {
+    var ti = _ce_ti;
+    var vi = 0 - 1;
+    if (TOKTYP(S, ti + 1) == 41) {
+        # `Enum.NAME`, through the one qualified resolver (it names a wrong base or variant); a
+        # VARIABLE base is a field access, not a constant.
+        if (TOKTYP(S, ti + 2) != 2) { _ce_bad(S, "expected a name after '.'", 25); return 0; }
+        if (_ce_is_var(S, noff) == 1) {
+            _ce_badn(S, "", noff, " is a variable - a const context takes only constants (literals, consts, enum constants, sizeof, const fn calls)");
+            return 0;
+        }
+        var p0 = _panic;
+        var sv = GTI(S);
+        vi = _enum_qual_resolve(S, ti);
+        STI(S, sv);
+        if (_panic != p0) { _ce_err = 1; return 0; }
+        if (vi >= 0) { if (GVECP(S, vi) == 1) { _ce_ti = ti + 3; _ce_k = 0; return L64(_vecv_base + vi * 8); } }
+        _ce_badn(S, "unknown name ", noff, " in a const context");
+        return 0;
+    } else {
+        vi = _findvar_core(S, noff);
+        if (vi >= 0) { if (GVECP(S, vi) == 1) { _ce_ti = ti + 1; _ce_k = 0; return L64(_vecv_base + vi * 8); } }
+    }
+    if (vi >= 0) {
+        _ce_badn(S, "", noff, " is a variable - a const context takes only constants (literals, consts, enum constants, sizeof, const fn calls)");
+        return 0;
+    }
+    _ce_badn(S, "unknown name ", noff, " in a const context");
+    return 0;
+}
+# 1 iff `noff` names a variable here (a local, or a global that is not a constant).
+fn _ce_is_var(S, noff): i64 {
+    if (GINFN(S) == 1) { if (FINDLOCAL(S, noff) >= 0) { return 1; } }
+    var vi = _findvar_core(S, noff);
+    if (vi < 0) { return 0; }
+    if (GVECP(S, vi) == 1) { return 0; }
+    if (_vcst_ix(S, vi) >= 0) { return 0; }
+    return 1;
+}
+fn _ce_sizeof(S): i64 {
+    _ce_ti = _ce_ti + 1;
+    if (_ce_expect(S, 10) == 0) { return 0; }
+    var sv = GTI(S);
+    STI(S, _ce_ti);
+    var sz = 0;
+    var p0 = _panic;
+    if (PEEKT(S) == 2 || PEEKT(S) == 105) { sz = _sizeof_type(S, _ce_asrt); }   # its own refusal, by name
+    if (_panic != p0) { _ce_err = 1; }
+    _ce_ti = GTI(S);
+    STI(S, sv);
+    _ce_expect(S, 11);
+    _ce_k = 0;
+    return sz;
+}
+
+# ── calls ────────────────────────────────────────────────────────────────────────────────────────
+# `NAME(args)` at the cursor: NAME must be a const fn. Arguments are evaluated in the caller's
+# frame, bound by the callee's parameter names (and declared types) in a new frame, and the body
+# runs; the result carries the callee's declared return type (`: f64` -> f64).
+fn _ce_call(S, noff): i64 {
+    var fi = FINDFN(S, noff);
+    if (fi < 0) { _ce_badn(S, "unknown fn ", noff, " in a const context"); return 0; }
+    if (GFCFN(S, fi) != 1) { _ce_badn(S, "", noff, " is not a `const fn` - a const context calls only const fns"); return 0; }
+    _ce_ti = _ce_ti + 2;   # the name, `(`
+    var args = alloc(32 * 16);
+    var n = 0;
+    if (TOKTYP(S, _ce_ti) != 11) {
+        var go = 1;
+        while (go == 1) {
+            if (n >= 32) { _ce_bad(S, "a const fn call with more than 32 arguments", 43); return 0; }
+            var av = _ce_expr(S);
+            store64(args + n * 16, av);
+            store64(args + n * 16 + 8, _ce_k);
+            n = n + 1;
+            if (TOKTYP(S, _ce_ti) == 31) { _ce_ti = _ce_ti + 1; } else { go = 0; }
+        }
+    }
+    _ce_expect(S, 11);
+    if (_ce_err == 1) { return 0; }
+    if (_ce_skip > 0) { _ce_k = _ce_retkind(S, fi); return 0; }
+    return _ce_invoke(S, fi, args, n);
+}
+fn _ce_invoke(S, fi, args, n): i64 {
+    if (_ce_depth >= 2000) { _ce_bad(S, "compile-time evaluation nested deeper than 2000 const fn calls", 62); return 0; }
+    var op = _gen_def_open(S, fi);
+    if (op < 0) { _ce_bad(S, "a const fn with no definition to run", 36); return 0; }
+    var sv_ti = _ce_ti; var sv_fb = _ce_fb; var sv_sp = _ce_sp; var sv_in = _ce_infn;
+    _ce_depth = _ce_depth + 1;
+    _ce_fb = _ce_sp;
+    _ce_infn = 1;
+    var body = _ce_bind_params(S, op, args, n, fi);
+    var rv = 0;
+    var rk = 0;
+    if (body > 0) {
+        _ce_ti = body;
+        _ce_ret = 0;
+        _ce_block(S);
+        rv = _ce_rv;
+        rk = _ce_rk;
+        if (_ce_ret != 1) { rv = 0; rk = 0; }
+    }
+    var dk = _ce_retkind(S, fi);
+    if (rk != 2) { rk = dk; }
+    _ce_ret = 0;
+    _ce_depth = _ce_depth - 1;
+    _ce_ti = sv_ti; _ce_fb = sv_fb; _ce_sp = sv_sp; _ce_infn = sv_in;
+    _ce_k = rk;
+    return rv;
+}
+# The declared return kind of const fn fi: 1 for `: f64`, else 0.
+fn _ce_retkind(S, fi): i64 {
+    if (GFRS(S, fi) == 0 - 9) { return 1; }
+    return 0;
+}
+# Bind fi's parameters (`(` at op) to the arguments; returns the body's `{` token, or -1.
+fn _ce_bind_params(S, op, args, n, fi): i64 {
+    var i = op + 1;
+    var k = 0;
+    while (TOKTYP(S, i) != 11) {
+        if (TOKTYP(S, i) == 12) { return 0 - 1; }
+        if (TOKTYP(S, i) == 2) {
+            var pn = TOKVAL(S, i);
+            var w = 8;
+            var pk = 0;
+            if (TOKTYP(S, i + 1) == 49) { w = _ce_type_w(S, i + 2); if (w == 9) { pk = 1; w = 8; } }
+            var av = 0;
+            var ak = 0;
+            if (args != 0) { if (k < n) { av = load64(args + k * 16); ak = load64(args + k * 16 + 8); } }
+            if (ak == 2) { pk = 2; }
+            if (pk == 0) { av = _ce_narrow(av, w); }
+            _ce_fr_push(S, pn, av, pk, w);
+            k = k + 1;
+            while (TOKTYP(S, i) != 31 && TOKTYP(S, i) != 11) { i = i + 1; }
+            if (TOKTYP(S, i) == 31) { i = i + 1; }
+        } else { i = i + 1; }
+    }
+    if (k != n) { _ce_bad(S, "a const fn called with the wrong number of arguments", 52); return 0 - 1; }
+    i = i + 1;
+    while (TOKTYP(S, i) != 13) {
+        if (TOKTYP(S, i) == 12 || TOKTYP(S, i) == 5) { return 0 - 1; }
+        i = i + 1;
+    }
+    return i;
+}
+# A type at token ti, for a const fn's locals and parameters: 9 = f64, 8 = i64 (or untyped), 4 /
+# 2 / 1 = i32 / i16 / i8; 0 = a type a const evaluation does not take.
+fn _ce_type_w(S, ti): i64 {
+    if (TOKTYP(S, ti) != 2) { return 0; }
+    var p = S + 0xEC00000 + TOKVAL(S, ti);
+    if (load8(p) == 102) { if (load8(p + 1) == 54) { if (load8(p + 2) == 52) { if (load8(p + 3) == 0) { return 9; } } } }
+    if (load8(p) != 105) { return 0; }
+    var c1 = load8(p + 1);
+    var c2 = load8(p + 2);
+    if (c1 == 56) { if (c2 == 0) { return 1; } }
+    if (c1 == 49) { if (c2 == 54) { if (load8(p + 3) == 0) { return 2; } } }
+    if (c1 == 51) { if (c2 == 50) { if (load8(p + 3) == 0) { return 4; } } }
+    if (c1 == 54) { if (c2 == 52) { if (load8(p + 3) == 0) { return 8; } } }
+    return 0;
+}
+
+# ── statements (a const fn body) ─────────────────────────────────────────────────────────────────
+# `_ce_ret`: 0 = normal, 1 = returned (`_ce_rv` / `_ce_rk`), 2 = break, 3 = continue.
+fn _ce_block(S): i64 {
+    if (_ce_expect(S, 13) == 0) { return 0; }
+    var sv_sp = _ce_sp;
+    while (TOKTYP(S, _ce_ti) != 14) {
+        if (_ce_err == 1) { return 0; }
+        if (TOKTYP(S, _ce_ti) == 12) { _ce_expect(S, 14); return 0; }
+        _ce_stmt(S);
+        if (_ce_ret != 0) {
+            if (_ce_skip == 0) { _ce_skip_to_close(S); _ce_sp = sv_sp; return 0; }
+        }
+    }
+    _ce_ti = _ce_ti + 1;
+    _ce_sp = sv_sp;
+    return 0;
+}
+# Leave a block early (a return / break / continue ran): to the token after its `}`.
+fn _ce_skip_to_close(S): i64 {
+    var d = 1;
+    while (d > 0) {
+        var t = TOKTYP(S, _ce_ti);
+        if (t == 12) { return 0; }
+        if (t == 13) { d = d + 1; }
+        if (t == 14) { d = d - 1; }
+        _ce_ti = _ce_ti + 1;
+    }
+    return 0;
+}
+fn _ce_stmt(S): i64 {
+    _ce_step(S);
+    var t = TOKTYP(S, _ce_ti);
+    if (t == 3) { return _ce_var(S, 0); }
+    if (t == 168) { return _ce_var(S, 1); }
+    if (t == 15) { return _ce_if(S); }
+    if (t == 16) { return _ce_while(S); }
+    if (t == 55) { return _ce_for(S); }
+    if (t == 33) { return _ce_return(S); }
+    if (t == 51) { _ce_ti = _ce_ti + 1; _ce_expect(S, 5); if (_ce_skip == 0) { _ce_ret = 2; } return 0; }
+    if (t == 52) { _ce_ti = _ce_ti + 1; _ce_expect(S, 5); if (_ce_skip == 0) { _ce_ret = 3; } return 0; }
+    if (t == 13) { return _ce_block(S); }
+    if (t == 2) {
+        var nt = TOKTYP(S, _ce_ti + 1);
+        if (nt == 4) { return _ce_assign(S, 0); }
+        var co = _ce_cop(S);
+        if (co != 0) { return _ce_assign(S, co); }
+        _ce_expr(S);
+        _ce_expect(S, 5);
+        return 0;
+    }
+    _ce_bad(S, "not in a const fn: its body takes var / const / assignment / if / elif / else / while / for / return / break / continue and calls of const fns", 142);
+    return 0;
+}
+# `x OP= e` at the cursor (an IDENT): the operator, or 0.
+fn _ce_cop(S): i64 {
+    var ct = TOKTYP(S, _ce_ti + 1);
+    if (ct == 6 || ct == 7 || ct == 8 || ct == 9 || ct == 34 || ct == 27 || ct == 35 || ct == 36 || ct == 38 || ct == 39) {
+        if (TOKTYP(S, _ce_ti + 2) == 4) { return ct; }
+    }
+    return 0;
+}
+# `var NAME [: T] = e;` (isc 0) or `const NAME = e;` (isc 1) inside a const fn body.
+fn _ce_var(S, isc): i64 {
+    _ce_ti = _ce_ti + 1;
+    if (TOKTYP(S, _ce_ti) != 2) { _ce_expect(S, 2); return 0; }
+    var name = TOKVAL(S, _ce_ti);
+    _ce_ti = _ce_ti + 1;
+    var w = 8;
+    var dk = 0;
+    if (TOKTYP(S, _ce_ti) == 49) {
+        if (isc == 1) { _ce_bad(S, "a const takes no type annotation: its type is its value's", 57); return 0; }
+        w = _ce_type_w(S, _ce_ti + 1);
+        if (w == 0) { _ce_badn(S, "type ", TOKVAL(S, _ce_ti + 1), " in a const fn: its locals are i64, i32, i16, i8 or f64"); return 0; }
+        if (w == 9) { dk = 1; w = 8; }
+        _ce_ti = _ce_ti + 2;
+    }
+    if (TOKTYP(S, _ce_ti) != 4) { _ce_bad(S, "a local in a const fn needs an initial value", 44); return 0; }
+    _ce_ti = _ce_ti + 1;
+    var v = _ce_expr(S);
+    var k = _ce_k;
+    _ce_expect(S, 5);
+    if (_ce_err == 1) { return 0; }
+    if (isc == 0) {
+        if (k != 2) { k = dk; }
+        if (k == 0) { v = _ce_narrow(v, w); }
+    }
+    var e = _ce_fr_push(S, name, v, k, w);
+    if (e >= 0) { if (isc == 1) { store64(_ce_st + e * 40 + 32, 1); } }
+    return 0;
+}
+fn _ce_assign(S, cop): i64 {
+    var name = TOKVAL(S, _ce_ti);
+    var fi = _ce_fr_find(S, name);
+    if (fi < 0) {
+        _ce_badn(S, "", name, " is not a local of this const fn - a const fn assigns only its own locals");
+        return 0;
+    }
+    var fe = _ce_st + fi * 40;
+    if (load64(fe + 32) == 1) { _ce_badn(S, "cannot assign to const ", name, ""); return 0; }
+    if (cop == 0) { _ce_ti = _ce_ti + 2; } else { _ce_ti = _ce_ti + 3; }
+    var r = _ce_expr(S);
+    var rk = _ce_k;
+    _ce_expect(S, 5);
+    if (_ce_err == 1) { return 0; }
+    if (_ce_skip > 0) { return 0; }
+    var lk = load64(fe + 16);
+    var nv = r;
+    var nk = rk;
+    if (cop != 0) {
+        nv = _ce_binop(S, cop, load64(fe + 8), lk, r, rk);
+        nk = _ce_k;
+    }
+    if (nk != 2) { nk = lk; if (lk == 2) { nk = 0; } }
+    if (nk == 0) { nv = _ce_narrow(nv, load64(fe + 24)); }
+    store64(fe + 8, nv);
+    store64(fe + 16, nk);
+    return 0;
+}
+fn _ce_cond(S): i64 {
+    if (_ce_expect(S, 10) == 0) { return 0; }
+    var c = _ce_expr(S);
+    if (_ce_k == 2) { _ce_bad(S, "a string as a condition", 23); }
+    _ce_expect(S, 11);
+    if (c != 0) { return 1; }
+    return 0;
+}
+# Run (or, in skip mode / an untaken arm, walk) one block.
+fn _ce_arm(S, run): i64 {
+    if (run == 1) { _ce_block(S); return 0; }
+    _ce_skip = _ce_skip + 1;
+    _ce_block(S);
+    _ce_skip = _ce_skip - 1;
+    return 0;
+}
+fn _ce_if(S): i64 {
+    _ce_ti = _ce_ti + 1;
+    var c = _ce_cond(S);
+    var done = 0;
+    var run = 0;
+    if (_ce_skip == 0) { if (c == 1) { run = 1; done = 1; } }
+    _ce_arm(S, run);
+    var go = 1;
+    while (go == 1) {
+        if (_ce_err == 1) { return 0; }
+        var t = TOKTYP(S, _ce_ti);
+        if (t == 50) {
+            _ce_ti = _ce_ti + 1;
+            if (done == 1 || _ce_ret != 0) { _ce_skip = _ce_skip + 1; }
+            var c2 = _ce_cond(S);
+            if (done == 1 || _ce_ret != 0) { _ce_skip = _ce_skip - 1; c2 = 0; }
+            run = 0;
+            if (_ce_skip == 0) { if (c2 == 1) { run = 1; done = 1; } }
+            _ce_arm(S, run);
+        } elif (t == 23) {
+            _ce_ti = _ce_ti + 1;
+            run = 0;
+            if (_ce_skip == 0) { if (done == 0) { if (_ce_ret == 0) { run = 1; } } }
+            _ce_arm(S, run);
+            go = 0;
+        } else { go = 0; }
+    }
+    return 0;
+}
+fn _ce_while(S): i64 {
+    _ce_ti = _ce_ti + 1;
+    var top = _ce_ti;
+    var go = 1;
+    while (go == 1) {
+        if (_ce_err == 1) { return 0; }
+        _ce_ti = top;
+        var c = _ce_cond(S);
+        var run = 0;
+        if (_ce_skip == 0) { if (c == 1) { run = 1; } }
+        _ce_arm(S, run);
+        if (run == 0) { go = 0; }
+        if (_ce_ret == 1) { go = 0; }
+        if (_ce_ret == 2) { _ce_ret = 0; go = 0; }
+        if (_ce_ret == 3) { _ce_ret = 0; }
+        _ce_step(S);
+    }
+    return 0;
+}
+# `for (init; cond; step) { }` and `for i in a..b { }`.
+fn _ce_for(S): i64 {
+    _ce_ti = _ce_ti + 1;
+    var sv_sp = _ce_sp;
+    if (TOKTYP(S, _ce_ti) == 2) { if (TOKTYP(S, _ce_ti + 1) == 76) { _ce_for_in(S); _ce_sp = sv_sp; return 0; } }
+    if (_ce_expect(S, 10) == 0) { return 0; }
+    _ce_stmt(S);
+    var ct = _ce_ti;
+    var go = 1;
+    while (go == 1) {
+        if (_ce_err == 1) { _ce_sp = sv_sp; return 0; }
+        _ce_ti = ct;
+        var c = _ce_expr(S);
+        _ce_expect(S, 5);
+        var st = _ce_ti;
+        _ce_skip = _ce_skip + 1;
+        _ce_assign_noterm(S);
+        _ce_skip = _ce_skip - 1;
+        _ce_expect(S, 11);
+        var run = 0;
+        if (_ce_skip == 0) { if (c != 0) { run = 1; } }
+        _ce_arm(S, run);
+        if (run == 0) { go = 0; }
+        if (_ce_ret == 1) { go = 0; }
+        if (_ce_ret == 2) { _ce_ret = 0; go = 0; }
+        if (_ce_ret == 3) { _ce_ret = 0; }
+        if (go == 1) {
+            var after = _ce_ti;
+            _ce_ti = st;
+            _ce_assign_noterm(S);
+            _ce_ti = after;
+        }
+        _ce_step(S);
+    }
+    _ce_sp = sv_sp;
+    return 0;
+}
+# A for-step: `x = e` / `x OP= e` with no `;` (the `)` ends it).
+fn _ce_assign_noterm(S): i64 {
+    if (TOKTYP(S, _ce_ti) != 2) { _ce_bad(S, "a const fn's for-step is an assignment to one of its locals", 59); return 0; }
+    var name = TOKVAL(S, _ce_ti);
+    var fi = _ce_fr_find(S, name);
+    if (fi < 0) { _ce_badn(S, "", name, " is not a local of this const fn"); return 0; }
+    var fe = _ce_st + fi * 40;
+    var cop = _ce_cop(S);
+    if (cop == 0) {
+        if (TOKTYP(S, _ce_ti + 1) != 4) { _ce_bad(S, "a const fn's for-step is an assignment to one of its locals", 59); return 0; }
+        _ce_ti = _ce_ti + 2;
+    } else { _ce_ti = _ce_ti + 3; }
+    var r = _ce_expr(S);
+    var rk = _ce_k;
+    if (_ce_err == 1) { return 0; }
+    if (_ce_skip > 0) { return 0; }
+    var lk = load64(fe + 16);
+    var nv = r;
+    if (cop != 0) { nv = _ce_binop(S, cop, load64(fe + 8), lk, r, rk); }
+    if (lk == 0) { nv = _ce_narrow(nv, load64(fe + 24)); }
+    store64(fe + 8, nv);
+    return 0;
+}
+fn _ce_for_in(S): i64 {
+    var name = TOKVAL(S, _ce_ti);
+    _ce_ti = _ce_ti + 2;
+    var lo = _ce_add(S);
+    if (TOKTYP(S, _ce_ti) != 41 || TOKTYP(S, _ce_ti + 1) != 41) { _ce_bad(S, "a const fn's for-in takes a range `a..b` (a vec is memory)", 58); return 0; }
+    _ce_ti = _ce_ti + 2;
+    var hi = _ce_add(S);
+    if (_ce_err == 1) { return 0; }
+    var e = _ce_fr_push(S, name, lo, 0, 8);
+    var body = _ce_ti;
+    if (_ce_skip > 0) { _ce_arm(S, 0); return 0; }
+    var i = lo;
+    var go = 1;
+    if (i >= hi) { go = 0; _ce_arm(S, 0); }
+    while (go == 1) {
+        if (_ce_err == 1) { return 0; }
+        store64(_ce_st + e * 40 + 8, i);
+        _ce_ti = body;
+        _ce_arm(S, 1);
+        if (_ce_ret == 1) { go = 0; }
+        if (_ce_ret == 2) { _ce_ret = 0; go = 0; }
+        if (_ce_ret == 3) { _ce_ret = 0; }
+        i = i + 1;
+        if (i >= hi) { go = 0; }
+        _ce_step(S);
+    }
+    return 0;
+}
+fn _ce_return(S): i64 {
+    _ce_ti = _ce_ti + 1;
+    var v = 0;
+    var k = 0;
+    if (TOKTYP(S, _ce_ti) != 5) { v = _ce_expr(S); k = _ce_k; }
+    _ce_expect(S, 5);
+    if (_ce_skip > 0) { return 0; }
+    _ce_rv = v;
+    _ce_rk = k;
+    _ce_ret = 1;
+    return 0;
+}
+
+# ── const fn: the definition check ──────────────────────────────────────────────────────────────
+# Pass 2, at the definition: the body run in SKIP mode, every arm walked and nothing executed —
+# so anything the evaluator does not take is refused here, called or not. Parameters bind to 0.
+fn _ce_check_fn(S, fi): i64 {
+    var op = _gen_def_open(S, fi);
+    if (op < 0) { return 0; }
+    if (GFTP(S, fi) != 0) {
+        var sv = GTI(S);
+        STI(S, op);
+        ERR_IDENT(S, "a const fn cannot be generic: ", L64(_fnt_names + fi * 8), " (its type parameters have no compile-time binding)", 0 - 1);
+        STI(S, sv);
+        return 0;
+    }
+    var sv_ti = _ce_ti; var sv_fb = _ce_fb; var sv_sp = _ce_sp; var sv_in = _ce_infn; var sv_err = _ce_err;
+    _ce_err = 0;
+    _ce_fb = _ce_sp;
+    _ce_infn = 1;
+    _ce_skip = _ce_skip + 1;
+    var body = _ce_bind_params(S, op, 0, _ce_nparams(S, op), fi);
+    if (body > 0) {
+        _ce_ti = body;
+        _ce_ret = 0;
+        _ce_block(S);
+    }
+    _ce_skip = _ce_skip - 1;
+    _ce_ret = 0;
+    _ce_ti = sv_ti; _ce_fb = sv_fb; _ce_sp = sv_sp; _ce_infn = sv_in; _ce_err = sv_err;
+    return 0;
+}
+fn _ce_nparams(S, op): i64 {
+    var i = op + 1;
+    if (TOKTYP(S, i) == 11) { return 0; }
+    var n = 1;
+    var d = 0;
+    while (TOKTYP(S, i) != 12) {
+        var t = TOKTYP(S, i);
+        if (t == 10) { d = d + 1; }
+        if (t == 11) { if (d == 0) { return n; } d = d - 1; }
+        if (t == 31) { if (d == 0) { n = n + 1; } }
+        i = i + 1;
+    }
+    return n;
+}
+
+# ── top-level consts ──────────────────────────────────────────────────────────────────────────────
+# `_cst_tab` (8 words): name, initializer token, declaration token, var slot, state (0 new, 1
+# being evaluated, 2 done, 3 refused), kind, value, float-literal index (an f64 const's, else -1).
+fn _cst_prepass(S): i64 {
+    var p = 0;
+    var d = 0;
+    while (TOKTYP(S, p) != 12) {
+        var t = TOKTYP(S, p);
+        if (d == 0) { if (t == 168) { if (TOKTYP(S, p + 1) == 2) { if (TOKTYP(S, p + 2) == 4) { _cst_record(S, p); } } } }
+        if (t == 13) { d = d + 1; }
+        if (t == 14) { if (d > 0) { d = d - 1; } }
+        p = p + 1;
+    }
+    return 0;
+}
+fn _cst_record(S, p): i64 {
+    if (_cst_tab == 0) { _cst_tab = alloc(16384 * 64); }
+    if (_cst_n >= 16384) { _tr_cap(S, p, "too many top-level consts (max 16384)", 37); return 0; }
+    var name = TOKVAL(S, p + 1);
+    _RSV_INTRINSIC_DECL(S, name, p + 1, 0);
+    var prior = _cst_find(S, name);
+    if (prior >= 0) {
+        _bnd_err_at(S, p + 1, "const ", name, " is declared twice", 0 - 1);
+        return 0;
+    }
+    var e = _cst_tab + _cst_n * 64;
+    S64(e, name);
+    S64(e + 8, p + 3);
+    S64(e + 16, p);
+    var vcnt = GVCNT(S);
+    S64(_varn_base + vcnt * 8, name);
+    S64(_vars_base + vcnt * 8, 0);
+    SVECP(S, vcnt, 2);
+    _vcst_set(S, vcnt, _cst_n + 1);
+    SVCNT(S, vcnt + 1);
+    var ispub = 0;
+    if (p > 0) { if (TOKTYP(S, p - 1) == 73) { ispub = 1; } }
+    if (ispub == 0) {
+        var fid = FM_FILEID(S, GTLINE(S, p));
+        if (_PRIV_FILE(fid) == 1) { SVFI(S, vcnt, fid + 1); }
+    }
+    S64(e + 24, vcnt);
+    S64(e + 32, 0);
+    S64(e + 40, 0);
+    S64(e + 48, 0);
+    S64(e + 56, 0 - 1);
+    _cst_n = _cst_n + 1;
+    return 0;
+}
+fn _vcst_set(S, vi, v): i64 {
+    if (_vcst == 0) { _vcst = alloc(1048576 * 4); }
+    store32(_vcst + vi * 4, v);
+    return 0;
+}
+# The `_cst_tab` index of var slot vi (a top-level const), or -1.
+fn _vcst_ix(S, vi): i64 {
+    if (_vcst == 0) { return 0 - 1; }
+    if (vi < 0) { return 0 - 1; }
+    return load32(_vcst + vi * 4) - 1;
+}
+fn _cst_find(S, name): i64 {
+    var i = 0;
+    while (i < _cst_n) {
+        if (STREQ(S, L64(_cst_tab + i * 64), name) == 1) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+# Evaluate const ci (once): its value; its kind in `_cst_kk`.
+fn _cst_value(S, ci): i64 {
+    var e = _cst_tab + ci * 64;
+    var st = L64(e + 32);
+    if (st == 1) {
+        _ce_badn(S, "const ", L64(e), " is defined in terms of itself");
+        S64(e + 32, 3);
+        _cst_kk = 0;
+        return 0;
+    }
+    if (st == 0) { _cst_eval(S, ci); }
+    _cst_kk = L64(e + 40);
+    return L64(e + 48);
+}
+fn _cst_kind_peek(S, ci): i64 {
+    var e = _cst_tab + ci * 64;
+    if (L64(e + 32) == 2) { return L64(e + 40); }
+    return 0;
+}
+# Run const ci's initializer at the TOP context (no locals of whatever fn forced it).
+fn _cst_eval(S, ci): i64 {
+    var e = _cst_tab + ci * 64;
+    S64(e + 32, 1);
+    var sv_ti = _ce_ti; var sv_top = _ce_top; var sv_in = _ce_infn; var sv_err = _ce_err;
+    var sv_skip = _ce_skip; var sv_fb = _ce_fb;
+    _ce_ti = L64(e + 8);
+    _ce_top = 1;
+    _ce_infn = 0;
+    _ce_err = 0;
+    _ce_skip = 0;
+    var v = _ce_expr(S);
+    var k = _ce_k;
+    if (_ce_err == 0) { if (TOKTYP(S, _ce_ti) != 5) { _ce_bad(S, "expected ';' after a const's value", 34); } }
+    var bad = _ce_err;
+    _ce_ti = sv_ti; _ce_top = sv_top; _ce_infn = sv_in; _ce_err = sv_err; _ce_skip = sv_skip; _ce_fb = sv_fb;
+    var vi = L64(e + 24);
+    if (bad == 1) {
+        S64(e + 32, 3); S64(e + 40, 0); S64(e + 48, 0);
+        SVECP(S, vi, 1); S64(_vecv_base + vi * 8, 0);
+        return 0;
+    }
+    S64(e + 32, 2);
+    S64(e + 40, k);
+    S64(e + 48, v);
+    if (k == 0) { S64(_vecv_base + vi * 8, v); SVECP(S, vi, 1); }
+    else {
+        SVECP(S, vi, 0);
+        if (k == 1) { S64(e + 56, FLIT_ADD(v)); }
+    }
+    return 0;
+}
+# GVECP's pending arm: var slot vi is a top-level const not yet evaluated.
+fn _cst_force(S, vi): i64 {
+    var ci = _vcst_ix(S, vi);
+    if (ci < 0) { SVECP(S, vi, 0); return 0; }
+    _cst_value(S, ci);
+    return 0;
+}
+# Every top-level const, evaluated at the end of pass 1 — an unused one is checked too.
+fn _cst_sweep(S): i64 {
+    var i = 0;
+    while (i < _cst_n) {
+        if (L64(_cst_tab + i * 64 + 32) == 0) { _cst_value(S, i); }
+        i = i + 1;
+    }
+    return 0;
+}
+# The const kind of global var slot vi: 0 = not a const, 1 = int, 2 = f64, 3 = string.
+fn _cst_vkind(S, vi): i64 {
+    var ci = _vcst_ix(S, vi);
+    if (ci < 0) { return 0; }
+    _cst_value(S, ci);
+    return L64(_cst_tab + ci * 64 + 40) + 1;
+}
+
+# ── local consts ──────────────────────────────────────────────────────────────────────────────────
+# `_lc_tab` (6 words): name, scope depth, inline depth, kind, value, float-literal index.
+fn _lc_find(S, name): i64 {
+    var i = _lc_n - 1;
+    while (i >= _lc_floor) {
+        var e = _lc_tab + i * 48;
+        if (L64(e + 16) == GIDEP(S)) { if (STREQ(S, L64(e), name) == 1) {
+                # a var of the same name declared at least as deeply hides it
+                if (GINFN(S) == 1) {
+                    var li = FINDLOCAL(S, name);
+                    if (li >= 0) { if (GLDEP(S, li) >= L64(e + 8)) { return 0 - 1; } }
+                }
+                return i;
+            } }
+        i = i - 1;
+    }
+    return 0 - 1;
+}
+fn _lc_pop(S, dep): i64 {
+    while (_lc_n > _lc_floor) {
+        if (L64(_lc_tab + (_lc_n - 1) * 48 + 8) < dep) { return 0; }
+        _lc_n = _lc_n - 1;
+    }
+    return 0;
+}
+# ── the parser's side ─────────────────────────────────────────────────────────────────────────────
+fn GFCFN(S, fi): i64 { if (_fnt_cfn == 0) { return 0; } if (fi < 0) { return 0; } return load8(_fnt_cfn + fi); }
+fn SFCFN(S, fi, v): i64 { if (_fnt_cfn == 0) { _fnt_cfn = alloc(131072); } store8(_fnt_cfn + fi, v); return 0; }
+# Cursor on an expression in a const context (an array size, `#assert`, a case label, an enum
+# value, a local const): its value, its kind in `_ce_k`, `_ce_err` = 1 when it was refused
+# (reported). The cursor is left after it.
+fn _ce_eval_here(S): i64 {
+    var sv_ti = _ce_ti; var sv_top = _ce_top; var sv_in = _ce_infn; var sv_skip = _ce_skip; var sv_fb = _ce_fb;
+    _ce_ti = GTI(S);
+    _ce_top = 0;
+    _ce_infn = 0;
+    _ce_err = 0;
+    _ce_skip = 0;
+    _ce_steps = 0;
+    var v = _ce_expr(S);
+    var k = _ce_k;
+    STI(S, _ce_ti);
+    _ce_ti = sv_ti; _ce_top = sv_top; _ce_infn = sv_in; _ce_skip = sv_skip; _ce_fb = sv_fb;
+    _ce_k = k;
+    return v;
+}
+# The same, for a place that takes an INTEGER (`what` names it in the refusal).
+fn _ce_eval_int(S, what): i64 {
+    var ti = GTI(S);
+    var v = _ce_eval_here(S);
+    if (_ce_err == 0) { if (_ce_k != 0) {
+            _ce_err = 1;
+            var sv = GTI(S);
+            STI(S, ti);
+            ERR_MSG(S, what, _cstr_len(what));
+            STI(S, sv);
+            return 0;
+        } }
+    return v;
+}
+fn _cstr_len(p): i64 {
+    var n = 0;
+    while (load8(p + n) != 0) { n = n + 1; }
+    return n;
+}
+# Emit const value (kind k, value v, float-literal index fx) exactly as its literal would be.
+fn _cst_emit_val(S, k, v, fx): i64 {
+    _cfo = 0;
+    if (k == 1) { EMIT_FLOAT_LIT(S, fx); SESTYPE(S, F64_TYID); return 0; }
+    if (k == 2) { ESADDR(S, v >> 32); return 0; }
+    _cfp = GCP(S);
+    EMOVI(S, v);
+    if (v >= 0) { if (v < 0x10000) { _cfv = v; _cfo = 1; } }
+    return 0;
+}
+# The factor's reads. A local const (1 = emitted), then a top-level f64 / string const (an integer
+# one is an enum-constant fold, GVECP 1, on the global path).
+fn _cst_read_local(S, noff): i64 {
+    if (_lc_n == 0) { return 0; }
+    var lc = _lc_find(S, noff);
+    if (lc < 0) { return 0; }
+    var e = _lc_tab + lc * 48;
+    _cst_emit_val(S, L64(e + 24), L64(e + 32), L64(e + 40));
+    return 1;
+}
+fn _cst_read_global(S, vi): i64 {
+    if (_cst_n == 0) { return 0; }
+    var k = _cst_vkind(S, vi);
+    if (k < 2) { return 0; }
+    var ci = _vcst_ix(S, vi);
+    var e = _cst_tab + ci * 64;
+    _cst_emit_val(S, L64(e + 40), L64(e + 48), L64(e + 56));
+    return 1;
+}
+# 1 iff `noff` here names a const (a local one, or a top-level one no local var hides).
+fn _cst_named(S, noff): i64 {
+    if (_lc_n > 0) { if (_lc_find(S, noff) >= 0) { return 1; } }
+    if (_cst_n == 0) { return 0; }
+    if (GINFN(S) == 1) { if (FINDLOCAL(S, noff) >= 0) { return 0; } }
+    if (_vcst_ix(S, _findvar_core(S, noff)) >= 0) { return 1; }
+    return 0;
+}
+# A const on the left of `=` / `OP=`, or under `&`: refused by name (it has no storage).
+fn _cst_lvalue_check(S, noff, what): i64 {
+    if (_cst_named(S, noff) == 0) { return 0; }
+    ERR_IDENT(S, what, noff, " - a const has no storage (declare it `var` to change it)", 0 - 1);
+    return 1;
+}
+# Cursor on a top-level `const NAME = ...;` the pre-scan recorded: step over it (no code).
+fn _cst_skip_decl(S): i64 {
+    _pub_pending = 0;
+    var d = 0;
+    while (PEEKT(S) != 12) {
+        var t = PEEKT(S);
+        if (t == 10 || t == 13 || t == 28) { d = d + 1; }
+        if (t == 11 || t == 14 || t == 29) { d = d - 1; }
+        if (t == 5) { if (d <= 0) { STI(S, GTI(S) + 1); return 0; } }
+        STI(S, GTI(S) + 1);
+    }
+    return 0;
+}
+fn _cst_is_top(S, ti): i64 {
+    var i = 0;
+    while (i < _cst_n) {
+        if (L64(_cst_tab + i * 64 + 16) == ti) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+# PARSE_STMT on `const`: a recorded top-level declaration is stepped over; anything else is a
+# LOCAL const — evaluated here, entered in the scoped table, no code and no frame slot.
+fn _cst_stmt(S): i64 {
+    var ti = GTI(S);
+    if (_cst_is_top(S, ti) == 1) { _cst_skip_decl(S); return 0; }
+    STI(S, ti + 1);
+    if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); return 0; }
+    var name = PEEKV(S);
+    _RSV_INTRINSIC_DECL(S, name, GTI(S), 0);
+    STI(S, GTI(S) + 1);
+    if (PEEKT(S) == 49) { ERR_MSG(S, "a const takes no type annotation: its type is its value's", 57); return 0; }
+    if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); return 0; }
+    STI(S, GTI(S) + 1);
+    _lc_dup_check(S, name, ti + 1);
+    var v = _ce_eval_here(S);
+    var k = _ce_k;
+    if (_ce_err == 1) { v = 0; k = 0; }
+    if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
+    else { STI(S, GTI(S) + 1); }
+    _lc_push(S, name, k, v);
+    return 0;
+}
+fn _lc_push(S, name, k, v): i64 {
+    if (_lc_tab == 0) { _lc_tab = alloc(65536 * 48); }
+    if (_lc_n >= 65536) { ERR_MSG(S, "too many local consts (max 65536)", 33); return 0; }
+    var e = _lc_tab + _lc_n * 48;
+    S64(e, name);
+    S64(e + 8, GSDEP(S));
+    S64(e + 16, GIDEP(S));
+    S64(e + 24, k);
+    S64(e + 32, v);
+    var fx = 0 - 1;
+    if (k == 1) { fx = FLIT_ADD(v); }
+    S64(e + 40, fx);
+    _lc_n = _lc_n + 1;
+    return 0;
+}
+# A local const named like a var or const already declared in THIS scope.
+fn _lc_dup_check(S, name, ti): i64 {
+    var dup = 0;
+    if (GINFN(S) == 1) {
+        var li = FINDLOCAL(S, name);
+        if (li >= 0) { if (GLDEP(S, li) == GSDEP(S)) { dup = 1; } }
+    }
+    var i = _lc_n - 1;
+    while (i >= _lc_floor) {
+        var e = _lc_tab + i * 48;
+        if (L64(e + 8) == GSDEP(S)) { if (L64(e + 16) == GIDEP(S)) { if (STREQ(S, L64(e), name) == 1) { dup = 1; } } }
+        i = i - 1;
+    }
+    if (dup == 1) { _bnd_err_at(S, ti, "", name, " is already declared in this scope", 0 - 1); }
+    return 0;
+}
+# PARSE_VAR's side: a `var` named like a local const of the same scope.
+fn _lc_var_dup(S, name): i64 {
+    if (_lc_n == 0) { return 0; }
+    var i = _lc_n - 1;
+    while (i >= _lc_floor) {
+        var e = _lc_tab + i * 48;
+        if (L64(e + 8) == GSDEP(S)) { if (L64(e + 16) == GIDEP(S)) { if (STREQ(S, L64(e), name) == 1) {
+                    ERR_IDENT(S, "", name, " is already declared in this scope (a const)", 0 - 1);
+                    return 1;
+                } } }
+        i = i - 1;
+    }
+    return 0;
+}
+
+# ── const contexts the parser reads twice: a `case` label (the switch's pre-scan, then its body
+# paths) and an enum value (pass 1, then pass 2) — evaluated ONCE, replayed by token index, so a
+# refusal is reported once. `_clm` (3 words): label token, value, the token after it (its `:` /
+# terminator). A switch trims what it added when it ends (nested switches stack).
+fn _clm_find(ti): i64 {
+    var i = _clm_n - 1;
+    while (i >= 0) {
+        if (load64(_clm + i * 24) == ti) { return i; }
+        i = i - 1;
+    }
+    return 0 - 1;
+}
+fn _clm_add(ti, v, end): i64 {
+    if (_clm == 0) { _clm = alloc(65536 * 24); }
+    if (_clm_n >= 65536) { return 0; }
+    var e = _clm + _clm_n * 24;
+    store64(e, ti); store64(e + 8, v); store64(e + 16, end);
+    _clm_n = _clm_n + 1;
+    return 0;
+}
+# A label / value at the cursor: a plain number (followed by `stop`) as before, else an integer
+# const expression. The cursor is left after it. `_case_ok` = 0 when it was refused.
+fn _cst_ctx_val(S, stop, what): i64 {
+    var ti = GTI(S);
+    _case_ok = 1;
+    if (PEEKT(S) == 1) { if (TOKTYP(S, ti + 1) == stop) { STI(S, ti + 1); return TOKVAL(S, ti); } }
+    var m = _clm_find(ti);
+    if (m >= 0) {
+        var e = _clm + m * 24;
+        STI(S, load64(e + 16));
+        if (load64(e + 16) < 0) { _case_ok = 0; }
+        return load64(e + 8);
+    }
+    var v = _ce_eval_int(S, what);
+    var end = GTI(S);
+    if (_ce_err == 1) { _case_ok = 0; }
+    _clm_add(ti, v, end);
+    return v;
+}
+fn _case_val(S): i64 { return _cst_ctx_val(S, 49, "a case label must be an integer"); }
+fn _enum_val(S): i64 {
+    var ti = GTI(S);
+    if (PEEKT(S) == 7) { if (TOKTYP(S, ti + 1) == 1) {   # `-N`, as before
+            var nt = TOKTYP(S, ti + 2);
+            if (nt == 5 || nt == 31 || nt == 14) { STI(S, ti + 2); return 0 - TOKVAL(S, ti + 1); }
+        } }
+    if (PEEKT(S) == 1) {
+        var nt2 = TOKTYP(S, ti + 1);
+        if (nt2 == 5 || nt2 == 31 || nt2 == 14) { STI(S, ti + 1); return TOKVAL(S, ti); }
+    }
+    return _cst_ctx_val(S, 0 - 1, "an enum value must be an integer");
+}
+# An argument scan's question (`_try_push_str_literal_arg` and its pre-scan): is token ti a
+# STRING const — a whole argument, named here? It is then that string's literal.
+fn _cst_str_tok(S, ti): i64 {
+    if (_cst_n == 0) { if (_lc_n == 0) { return 0; } }
+    if (TOKTYP(S, ti) != 2) { return 0; }
+    var nt = TOKTYP(S, ti + 1);
+    if (nt != 31) { if (nt != 11) { return 0; } }
+    var noff = TOKVAL(S, ti);
+    if (_lc_n > 0) {
+        var lc = _lc_find(S, noff);
+        if (lc >= 0) { if (L64(_lc_tab + lc * 48 + 24) == 2) { return 1; } return 0; }
+    }
+    if (GINFN(S) == 1) { if (FINDLOCAL(S, noff) >= 0) { return 0; } }
+    if (_cst_vkind(S, _findvar_core(S, noff)) == 3) { return 1; }
+    return 0;
+}
+# Pass 1's walk over an `#assert` expression (pass 2 evaluates it): to the `,`, the message
+# string, the `;`, EOF, or — at depth 0 — a token on a later line when the one before it could
+# END an operand (after `==` / `+` / `(` the expression continues on the next line, as the
+# evaluator reads it: `#assert sizeof(P) ==<LF> 2, "..";`).
+fn _assert_skip_expr(S): i64 {
+    var d = 0;
+    var go = 1;
+    while (go == 1) {
+        var t = PEEKT(S);
+        if (t == 12) { return 0; }
+        if (d == 0) {
+            if (t == 31 || t == 30 || t == 5) { return 0; }
+            if (GTI(S) > 0) { if (GTLINE(S, GTI(S)) != GTLINE(S, GTI(S) - 1)) {
+                    var pt = TOKTYP(S, GTI(S) - 1);
+                    if (pt == 1 || pt == 2 || pt == 61 || pt == 11) { return 0; }
+                } }
+        }
+        if (t == 10) { d = d + 1; }
+        if (t == 11) { d = d - 1; }
+        STI(S, GTI(S) + 1);
+    }
+    return 0;
+}
+
+# ── SOFTWARE BINARY64 ARITHMETIC — f64 constants computed at compile time (6.7.2) ───────────────
+# WHY. A `const fn` evaluated by the compiler must give the bits the same operation gives at
+# run time, on x86-64 (SSE2) and on AArch64 alike. The compiler cannot borrow the host's FPU
+# for that: cybs (the seed's hand-assembly compiler, bootstrap/cybs.cyr) compiles no f64
+# builtin and no float literal, so everything here is integers, and plain enough for cybs —
+# no `>>>`, no unary minus, at most six parameters and six arguments, small fns (cybs fails
+# SILENTLY past its per-fn limits).
+#
+# Values are i64 holding binary64 bits. Round to nearest, ties to even; gradual underflow
+# (subnormal inputs and outputs, never flushed); overflow to infinity; IEEE signed zeros.
+# NaN REFUSAL: a NaN's bit pattern is not the same on x86 and ARM (x86 makes the negative
+# default NaN, ARM the positive one, and they propagate payloads differently), so no NaN is
+# ever produced. A NaN operand, or an operation whose result would be one (inf - inf,
+# 0 * inf, 0 / 0, inf / inf, a NaN or out-of-range conversion, a NaN compare), sets
+# `_sf_err` to 1 and returns 0, for the caller to refuse the constant. `_sf_err` is never
+# cleared here. `_sf_neg` / `_sf_abs` are pure sign-bit operations and never refuse.
+#
+# Internal form: (-1)^s * m * 2^(e - 1084), m in [2^62, 2^63) once normalized — the 53 kept
+# bits are 62..10, bits 9..0 are the rounding bits, bit 0 also carries the sticky bit.
+# High 64 bits of the last _sf_mul128 product.
+var _sf_hi = 0;
+# Exponent that goes with the last _sf_unpack significand.
+var _sf_ue = 0;
+
+# Set the refusal flag; 0 is returned in place of the value.
+fn _sf_fail(): i64 {
+    _sf_err = 1;
+    return 0;
+}
+
+# 1 when x is a NaN (exponent all ones, fraction nonzero), either sign.
+fn _sf_isnan(x): i64 {
+    if ((x & 0x7FFFFFFFFFFFFFFF) > 0x7FF0000000000000) { return 1; }
+    return 0;
+}
+
+# The exponent field of finite x, 1 for a subnormal: value = _sf_sg(x) * 2^(_sf_ex(x) - 1075).
+fn _sf_ex(x): i64 {
+    var e = (x >> 52) & 0x7FF;
+    if (e == 0) { return 1; }
+    return e;
+}
+
+# The 53-bit significand of finite x: the fraction, plus the implicit bit when x is normal.
+fn _sf_sg(x): i64 {
+    var m = x & 0xFFFFFFFFFFFFF;
+    if (((x >> 52) & 0x7FF) != 0) { m = m | 0x10000000000000; }
+    return m;
+}
+
+# The significand of finite nonzero x scaled up into [2^52, 2^53); _sf_ue gets the exponent
+# that goes with it (below 1 for a subnormal): value = result * 2^(_sf_ue - 1075).
+fn _sf_unpack(x): i64 {
+    var m = _sf_sg(x);
+    var e = _sf_ex(x);
+    while (m < 0x10000000000000) {
+        m = m << 1;
+        e = e - 1;
+    }
+    _sf_ue = e;
+    return m;
+}
+
+# m >> d, every bit shifted out ORed into bit 0 (the sticky bit); m >= 0, d >= 0. A count past
+# 62 is decided here: the hardware masks shift counts to 6 bits.
+fn _sf_jam(m, d): i64 {
+    if (d == 0) { return m; }
+    if (d > 62) {
+        if (m != 0) { return 1; }
+        return 0;
+    }
+    var r = m >> d;
+    if ((m & ((1 << d) - 1)) != 0) { r = r | 1; }
+    return r;
+}
+
+# Bits of (-1)^s * m * 2^(e - 1084), m in [2^62, 2^63): nearest, ties to even, on bits 9..0.
+# e is the biased exponent MINUS ONE, so the leading bit adds the last 1 to the exponent
+# field; the same addition carries a significand that rounds up to 2^53 into the next
+# exponent, a subnormal that rounds up to 2^52 into the least normal, and the largest finite
+# into infinity. e < 0 is below the normal range: shifted (sticky) to e = 0, a subnormal.
+fn _sf_round(s, e, m): i64 {
+    var sb = s << 63;
+    if (e > 0x7FD) { return sb | 0x7FF0000000000000; }
+    var x = m;
+    var ee = e;
+    if (ee < 0) {
+        x = _sf_jam(x, 0 - ee);
+        ee = 0;
+    }
+    # m + 0x200 may pass 2^63; `>>` is logical, so the carry is kept.
+    var r = (x + 0x200) >> 10;
+    if ((x & 0x3FF) == 0x200) { r = r - (r & 1); }
+    var bits = (ee << 52) + r;
+    if (bits >= 0x7FF0000000000000) { bits = 0x7FF0000000000000; }
+    return sb | bits;
+}
+
+# _sf_round of a positive m below 2^63, its leading bit first shifted up to bit 62 (exact).
+fn _sf_norm(s, e, m): i64 {
+    if (m <= 0) { return s << 63; }
+    var x = m;
+    var ee = e;
+    while (x < 0x40000000) {
+        x = x << 32;
+        ee = ee - 32;
+    }
+    while (x < 0x4000000000000000) {
+        x = x << 1;
+        ee = ee - 1;
+    }
+    return _sf_round(s, ee, x);
+}
+
+# a + b for finite nonzero a, b with |a| >= |b|. Both significands get 9 spare bits; the
+# smaller is aligned with a sticky shift. One rounding of that is exact for a sum (the sticky
+# bit sits below every rounding bit) and for a difference: a gap of 0 or 1 shifts nothing
+# out, and a gap of 2 or more loses at most one leading bit, while an inexact sticky makes
+# the difference odd — strictly between the same two even neighbours as the true one.
+# Exact cancellation is +0 (round to nearest).
+fn _sf_addf(a, b): i64 {
+    var ea = _sf_ex(a);
+    var eb = _sf_ex(b);
+    var ma = _sf_sg(a) << 9;
+    var mb = _sf_sg(b) << 9;
+    mb = _sf_jam(mb, ea - eb);
+    var s = a >> 63;
+    if ((a ^ b) < 0) {
+        var d = ma - mb;
+        if (d == 0) { return 0; }
+        return _sf_norm(s, ea, d);
+    }
+    return _sf_norm(s, ea, ma + mb);
+}
+
+# a + b. +0 + -0 is +0, -0 + -0 is -0; inf + -inf refuses.
+fn _sf_add(a, b): i64 {
+    if (_sf_isnan(a) == 1) { return _sf_fail(); }
+    if (_sf_isnan(b) == 1) { return _sf_fail(); }
+    var ma = a & 0x7FFFFFFFFFFFFFFF;
+    var mb = b & 0x7FFFFFFFFFFFFFFF;
+    if (ma == 0x7FF0000000000000) {
+        if (mb == 0x7FF0000000000000) {
+            if ((a ^ b) < 0) { return _sf_fail(); }
+        }
+        return a;
+    }
+    if (mb == 0x7FF0000000000000) { return b; }
+    if (mb == 0) {
+        if (ma == 0) { return a & b; }
+        return a;
+    }
+    if (ma == 0) { return b; }
+    if (mb > ma) { return _sf_addf(b, a); }
+    return _sf_addf(a, b);
+}
+
+# a - b, which IEEE 754 defines as a + (-b) (signed zeros included).
+fn _sf_sub(a, b): i64 {
+    var nb = b ^ (1 << 63);
+    return _sf_add(a, nb);
+}
+
+# Unsigned 64 x 64 -> 128-bit product built from 32-bit halves: returns the low 64 bits and
+# leaves the high 64 in _sf_hi. Each partial product is below 2^64 and its bits are right
+# read as unsigned (the multiply keeps the low 64 bits; `>>` is logical).
+fn _sf_mul128(x, y): i64 {
+    var x0 = x & 0xFFFFFFFF;
+    var x1 = x >> 32;
+    var y0 = y & 0xFFFFFFFF;
+    var y1 = y >> 32;
+    var p00 = x0 * y0;
+    var p01 = x0 * y1;
+    var p10 = x1 * y0;
+    var mid = (p00 >> 32) + (p01 & 0xFFFFFFFF) + (p10 & 0xFFFFFFFF);
+    _sf_hi = x1 * y1 + (p01 >> 32) + (p10 >> 32) + (mid >> 32);
+    return (mid << 32) | (p00 & 0xFFFFFFFF);
+}
+
+# a * b for finite nonzero a, b. The product of two [2^52, 2^53) significands is in
+# [2^104, 2^106); its top bits >> 43 land in [2^61, 2^63) and the 43 below become sticky.
+fn _sf_mulf(a, b): i64 {
+    var ma = _sf_unpack(a);
+    var ea = _sf_ue;
+    var mb = _sf_unpack(b);
+    var e = ea + _sf_ue - 1023;
+    var lo = _sf_mul128(ma, mb);
+    var m = (_sf_hi << 21) | (lo >> 43);
+    if ((lo & 0x7FFFFFFFFFF) != 0) { m = m | 1; }
+    var s = (a ^ b) >> 63;
+    return _sf_norm(s, e, m);
+}
+
+# a * b. 0 * inf refuses; a zero product keeps the sign of the operands' signs XORed.
+fn _sf_mul(a, b): i64 {
+    if (_sf_isnan(a) == 1) { return _sf_fail(); }
+    if (_sf_isnan(b) == 1) { return _sf_fail(); }
+    var sb = ((a ^ b) >> 63) << 63;
+    var ma = a & 0x7FFFFFFFFFFFFFFF;
+    var mb = b & 0x7FFFFFFFFFFFFFFF;
+    if (ma == 0x7FF0000000000000) {
+        if (mb == 0) { return _sf_fail(); }
+        return sb | 0x7FF0000000000000;
+    }
+    if (mb == 0x7FF0000000000000) {
+        if (ma == 0) { return _sf_fail(); }
+        return sb | 0x7FF0000000000000;
+    }
+    if (ma == 0) { return sb; }
+    if (mb == 0) { return sb; }
+    return _sf_mulf(a, b);
+}
+
+# floor(x * 2^62 / y), bit 0 set when the remainder is nonzero; x, y in [2^52, 2^53), so the
+# quotient is in (2^61, 2^63). Restoring long division, one bit per step; r stays below 2^54.
+fn _sf_divsig(x, y): i64 {
+    var r = x;
+    var q = 0;
+    var i = 0;
+    while (i < 63) {
+        q = q << 1;
+        if (r >= y) {
+            r = r - y;
+            q = q | 1;
+        }
+        r = r << 1;
+        i = i + 1;
+    }
+    if (r != 0) { q = q | 1; }
+    return q;
+}
+
+# a / b for finite nonzero a, b.
+fn _sf_divf(a, b): i64 {
+    var ma = _sf_unpack(a);
+    var ea = _sf_ue;
+    var mb = _sf_unpack(b);
+    var e = ea - _sf_ue + 1022;
+    var q = _sf_divsig(ma, mb);
+    var s = (a ^ b) >> 63;
+    return _sf_norm(s, e, q);
+}
+
+# a / b. 0 / 0 and inf / inf refuse; nonzero / 0 is a signed infinity, finite / inf a
+# signed zero.
+fn _sf_div(a, b): i64 {
+    if (_sf_isnan(a) == 1) { return _sf_fail(); }
+    if (_sf_isnan(b) == 1) { return _sf_fail(); }
+    var sb = ((a ^ b) >> 63) << 63;
+    var ma = a & 0x7FFFFFFFFFFFFFFF;
+    var mb = b & 0x7FFFFFFFFFFFFFFF;
+    if (ma == 0x7FF0000000000000) {
+        if (mb == 0x7FF0000000000000) { return _sf_fail(); }
+        return sb | 0x7FF0000000000000;
+    }
+    if (mb == 0x7FF0000000000000) { return sb; }
+    if (mb == 0) {
+        if (ma == 0) { return _sf_fail(); }
+        return sb | 0x7FF0000000000000;
+    }
+    if (ma == 0) { return sb; }
+    return _sf_divf(a, b);
+}
+
+# The nearest binary64 to i (ties to even). -2^63 has no positive i64 magnitude and is
+# exact: its bits are written out.
+fn _sf_from_i64(i): i64 {
+    if (i == 0) { return 0; }
+    var lo = 1 << 63;
+    if (i == lo) { return lo | 0x43E0000000000000; }
+    if (i < 0) { return _sf_norm(1, 1084, 0 - i); }
+    return _sf_norm(0, 1084, i);
+}
+
+# x truncated toward zero. A NaN, an infinity, or |x| >= 2^63 (exactly -2^63 excepted)
+# refuses.
+fn _sf_to_i64(x): i64 {
+    if (_sf_isnan(x) == 1) { return _sf_fail(); }
+    var k = ((x >> 52) & 0x7FF) - 1023;
+    if (k < 0) { return 0; }
+    var lo = 1 << 63;
+    if (k > 62) {
+        if (x == (lo | 0x43E0000000000000)) { return lo; }
+        return _sf_fail();
+    }
+    var m = _sf_sg(x);
+    if (k >= 52) { m = m << (k - 52); }
+    else { m = m >> (52 - k); }
+    if (x < 0) { return 0 - m; }
+    return m;
+}
+
+# An integer that orders x like the reals: the magnitude bits, negated for a negative x
+# (-0 and +0 are both 0, the infinities the extremes).
+fn _sf_key(x): i64 {
+    var m = x & 0x7FFFFFFFFFFFFFFF;
+    if (x < 0) { return 0 - m; }
+    return m;
+}
+
+# -1 / 0 / 1 as a < / == / > b; -0 == +0. A NaN refuses.
+fn _sf_cmp(a, b): i64 {
+    if (_sf_isnan(a) == 1) { return _sf_fail(); }
+    if (_sf_isnan(b) == 1) { return _sf_fail(); }
+    var ka = _sf_key(a);
+    var kb = _sf_key(b);
+    if (ka < kb) { return 0 - 1; }
+    if (ka > kb) { return 1; }
+    return 0;
+}
+
+# Sign-bit flip (a NaN keeps its payload; never refuses).
+fn _sf_neg(x): i64 {
+    return x ^ (1 << 63);
+}
+
+# Sign bit cleared (never refuses).
+fn _sf_abs(x): i64 {
+    return x & 0x7FFFFFFFFFFFFFFF;
+}
+
+# x rounded to an integer: toward zero, then one unit away from zero when `up` is 1 and x
+# had a fraction. Exact: below 2^52 the unit is 2^(52 - k) in the bits, and its carry into
+# the exponent field makes the next power of two. A zero result keeps x's sign.
+fn _sf_rint(x, up): i64 {
+    if (_sf_isnan(x) == 1) { return _sf_fail(); }
+    var e = (x >> 52) & 0x7FF;
+    # Already integral: |x| >= 2^52, and the infinities.
+    if (e >= 1075) { return x; }
+    var sb = (x >> 63) << 63;
+    if (e < 1023) {
+        if ((x & 0x7FFFFFFFFFFFFFFF) == 0) { return x; }
+        if (up == 1) { return sb | 0x3FF0000000000000; }
+        return sb;
+    }
+    var fm = (1 << (1075 - e)) - 1;
+    if ((x & fm) == 0) { return x; }
+    var t = x - (x & fm);
+    if (up == 1) { t = t + fm + 1; }
+    return t;
+}
+
+# Round toward zero: trunc(-0.5) is -0.
+fn _sf_trunc(x): i64 {
+    return _sf_rint(x, 0);
+}
+
+# Round toward -inf: floor(-0.5) is -1, floor(-0) is -0.
+fn _sf_floor(x): i64 {
+    var up = 0;
+    if (x < 0) { up = 1; }
+    return _sf_rint(x, up);
+}
+
+# Round toward +inf: ceil(-0.5) is -0, ceil(0.5) is 1.
+fn _sf_ceil(x): i64 {
+    var up = 0;
+    if (x > 0) { up = 1; }
+    return _sf_rint(x, up);
+}
+
 # Parse: impl TraitName for TypeName { fn method(self) { } ... }
 # Methods get mangled to TypeName_method (trait name is documentation only for now)
 fn PARSE_IMPL(S): i64 {
@@ -7305,6 +8971,8 @@ fn _prescan_params_scan(S, fi): i64 {
 # the guard is gone and EVERY definition kind is stamped here. CHANGELOG [6.6.5]
 fn _prescan_fn_sig(S): i64 {
     var _pasync = 0;
+    var _pcfn = 0;
+    if (PEEKT(S) == 168) { STI(S, GTI(S) + 1); _pcfn = 1; }    # 6.7.2 (C1): `const fn`
     if (PEEKT(S) == 134) { STI(S, GTI(S) + 1); _pasync = 1; }   # v6.3.11: consume optional `async` prefix
     var start_ti = GTI(S);
     STI(S, GTI(S) + 1);                 # consume FN
@@ -7339,6 +9007,7 @@ fn _prescan_fn_sig(S): i64 {
         var fi = _fn_def_slot(S, noff, _pfid, _ppriv);
         _prescan_dep_take(S, fi);               # 6.6.16: a pending `#deprecated`, for forward calls
         if (_ptp != 0) { SFTP(S, fi, _ptp); }   # v6.3.9: forward-ref generic sig
+        if (_pcfn == 1) { SFCFN(S, fi, 1); }    # 6.7.2 (C1): a const context may call it
         if (_ptp != 0) { _bnd_fn_record(S, fi, _ptp, GTI(S)); }   # 6.7.1 (C3): bounds + bounded sites, BEFORE the stub scan reads them
         if (_ptp != 0) { _gen_record(S, fi, GTI(S)); }   # 6.6.10: stub + carrier facts, by name
         # 6.6.10 — mark `async fn` HERE, so a coroutine's `await f(..)` classifies a callee
@@ -7701,41 +9370,9 @@ fn _tl_deprecated(S, arm): i64 {
 fn _tl_assert(S, arm): i64 {
     if (arm == 1) { PARSE_STMT(S); return 0; }
     STI(S, GTI(S) + 1);
-    _assert_skip_atom(S);
-    var op = PEEKT(S);
-    if (op >= 17 && op <= 22) {
-        STI(S, GTI(S) + 1);
-        _assert_skip_atom(S);
-    }
+    _assert_skip_expr(S);   # 6.7.2: a const expression (pass 2 evaluates it)
     if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
     _assert_tail(S);
-    return 0;
-}
-
-# Pass 1's twin of _EVAL_CONST_ATOM: advance over the same tokens, evaluate nothing. A
-# number is one token; `sizeof ( [T] )` is its four; an enum constant is `NAME` (one) or
-# `Enum.NAME` (three, 6.6.10); anything else is an error pass 2 reports. `sizeof` is the
-# whole word (_is_sizeof_word, 7 bytes), not a 6-byte prefix. CHANGELOG [6.6.10]
-fn _assert_skip_atom(S): i64 {
-    var t = PEEKT(S);
-    if (t == 1) { STI(S, GTI(S) + 1); return 0; }
-    if (t != 2) { return 0; }
-    if (_is_sizeof_word(S, PEEKV(S)) != 1) {
-        var ti = GTI(S);
-        if (TOKTYP(S, ti + 1) == 41) { if (TOKTYP(S, ti + 2) == 2) { STI(S, ti + 3); return 0; } }
-        STI(S, ti + 1);
-        return 0;
-    }
-    _assert_step(S);
-    _assert_step(S);
-    if (PEEKT(S) == 2 || PEEKT(S) == 105) { _assert_step(S); }   # 6.6.16: `sizeof(u128)` too
-    _assert_step(S);
-    return 0;
-}
-
-# One token forward, never past EOF.
-fn _assert_step(S): i64 {
-    if (PEEKT(S) != 12) { STI(S, GTI(S) + 1); }
     return 0;
 }
 
@@ -8035,12 +9672,14 @@ fn _prescan_tail_loop(S): i64 {
 # elsewhere it is not a declaration and ends the scan ("unexpected object"). CHANGELOG [6.6.17]
 fn _tl_pass1(S, objok): i64 {
     _tr_prepass(S);   # 6.7.0 (A1/A2): every trait and impl, before the first method is registered
+    _cst_prepass(S);  # 6.7.2 (B1): every top-level const, wherever it sits (a size-0 pending slot)
     STI(S, 0);
     var go = 1;
     while (go == 1) { go = _tl_scan1(S, objok); }
     # pass 1 stops at the first top-level statement, but PARSE_PROG keeps defining fns after it
     _prescan_tail(S);
     SMOD(S, 0);
+    _cst_sweep(S);    # 6.7.2: every top-level const evaluated (and checked), used or not
     return 0;
 }
 
@@ -8056,6 +9695,7 @@ fn _tl_scan1(S, objok): i64 {
     if (t == 3) { PARSE_GVAR_REG(S); return 1; }
     if (_tl_directive(S, 0) == 1) { return 1; }
     if (_IS_FN_KW(S) == 1) { _prescan_fn_sig(S); return 1; }   # v6.3.5 CO-01: register + ABI masks
+    if (t == 168) { _cst_skip_decl(S); return 1; }   # 6.7.2 (B1): recorded by `_cst_prepass`
     if (t == 60) { PARSE_ENUM_DEF(S, 0); return 1; }
     var r = _tl_scan1_mode(S, t, objok);
     return r;
@@ -8172,9 +9812,11 @@ fn _tl_scan2_def(S, t, objok): i64 {
         # (tests/gates/frontend/dead_fn_body_syntax_checked.sh).
         # v6.3.11 (G): consume a leading `async` and arm the lowering PARSE_FN_DEF consumes.
         if (PEEKT(S) == 134) { _pending_async = 1; STI(S, GTI(S) + 1); }
+        if (PEEKT(S) == 168) { _pending_cfn = 1; STI(S, GTI(S) + 1); }   # 6.7.2 (C1): `const fn`
         PARSE_FN_DEF(S);
         return 1;
     }
+    if (t == 168) { _cst_skip_decl(S); return 1; }   # 6.7.2 (B1): a top-level const (no code)
     if (t == 3) { _skip_gvar_decl(S); return 1; }   # 6.6.6: a `;` inside a closure body is not the end
     if (t == 77) { PARSE_IMPL(S); return 1; }
     if (t == 167) { _tl_trait2(S); return 1; }   # 6.7.0 (A1)
@@ -8546,6 +10188,11 @@ fn PARSE_FN_DEF(S): i64 {
     # body inline. Save, zero, check against 0 on the way out, restore.
     var _xd_outer = _xdepth;
     _xdepth = 0;
+    # 6.7.2 (B1): an enclosing fn's local consts are not this body's (a generic instance or a
+    # relaxed-order fn is parsed inside another).
+    var _lc_sv_n = _lc_n;
+    var _lc_sv_f = _lc_floor;
+    _lc_floor = _lc_n;
     # ⚠ 6.6.5 — there is deliberately NO UEFI firmware-return flag saved/zeroed here. One
     # was, for a round: the reasoning was "a `ret` inside a body returns to the cyrius
     # caller, not to firmware", which is true of a RETURN but not of an EXIT —
@@ -8554,6 +10201,8 @@ fn PARSE_FN_DEF(S): i64 {
     # entry rsp instead, which is depth-independent, so there is nothing per-body to track.
     # See src/common/util.cyr for the whole post-mortem. CHANGELOG [6.6.5]
     var _rf = _PARSE_FN_DEF_IMPL(S);
+    _lc_n = _lc_sv_n;
+    _lc_floor = _lc_sv_f;
     _rd_exit();
     _xd_check(S, 0, "fn body");
     _xdepth = _xd_outer;
@@ -8765,6 +10414,8 @@ fn _dsg_async_check(S, fi, noff, ti, was, now): i64 {
 fn _PARSE_FN_DEF_IMPL(S): i64 {
     var _is_async = 0;
     var _async_noff_f = 0;
+    var _cfn_here = _pending_cfn;   # 6.7.2 (C1): the dispatch consumed a `const` prefix
+    _pending_cfn = 0;
     # v6.3.11 (G): the pass-2 dispatch already consumed the leading `async` (token
     # 134) and set _pending_async, so the cursor is at `fn` here. (The async token is
     # consumed in the dispatch, not here, so the DCE pre-check reads the real fn name.)
@@ -8894,6 +10545,10 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
         syscall(SYS_WRITE, 2, ")\n", 2);
     }
     if (_gtp != 0) { SFTP(S, fi, _gtp); }   # v6.3.9 (F-fns): record this fn's <T> names
+    if (_cfn_here == 1) {   # 6.7.2 (C1): `const fn` — marked (pass 1 did too) and checked ONCE, here
+        SFCFN(S, fi, 1);
+        if (_inst_name == 0) { _ce_check_fn(S, fi); }
+    }
     # v6.3.10: def-start +1 (0 = unrecorded; token 0 is valid). 6.6.20: NOT over a redefinition's
     # (flag 2048) — pass 1 left the LAST definition's start, so an instance minted between the
     # definitions is minted from the one that wins, not from the body in hand.

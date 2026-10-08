@@ -1,0 +1,100 @@
+# const_values.tcyr — 6.7.2 (B1, C1): `const` declarations and `const fn`, at run time on every backend.
+#
+# `const LIMIT = 7;`, `const PI = 3.5;`, `const NAME = "cyrius";` — no storage: every use is the value
+# (a string const is its literal). Top-level consts may be used above their declaration (one pre-scan
+# records them all). A `const fn` is an ordinary fn that a const initializer runs at compile time:
+# locals, while, for, for-in, if / elif / else, break / continue, compound assignment, recursion, an
+# i8 local narrowing as at run time, f64 arithmetic; called in code it is a plain runtime call (R1).
+# Local consts (L): a block's const shadows and leaves with the block, and a closure reads one by
+# NAME (a const has no frame slot to capture). Before 6.7.2 `const` was not a word at all
+# (`const LIMIT = 7;` was `expected '=', got identifier 'LIMIT'`). The refusals are
+# tests/gates/frontend/const_checked.sh; the const contexts are const_contexts.tcyr; the f64
+# evaluator's bit-exactness is const_fn_f64.tcyr.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/assert.cyr"
+
+const LIMIT = 7;
+const BIG = LIMIT * 6;
+const NEG = 0 - 5;
+const AHEAD = LATER + 1;
+const LATER = 40;
+const PI = 3.5;
+const HALF = PI / 2.0;
+const NAME = "cyrius";
+const SQ = sq(9);
+const FACT = fact(10);
+const FIB = fib(20);
+const LOOPY = loopy(100);
+const NARROW = narrow(300);
+const FX = fsum(4);
+const PICK = pick(2);
+const SHIFTY = (0 - 16) >> 60;
+const ASR = (0 - 16) >>> 2;
+
+const fn sq(x) { return x * x; }
+const fn fact(n) { if (n <= 1) { return 1; } return n * fact(n - 1); }
+const fn fib(n) {
+    var a = 0;
+    var b = 1;
+    var i = 0;
+    while (i < n) { var t = a + b; a = b; b = t; i = i + 1; }
+    return a;
+}
+const fn loopy(n) {
+    var s = 0;
+    for (var i = 0; i < n; i = i + 1) { if (i % 2 == 0) { continue; } s += i; }
+    for j in 0..10 { if (j == 5) { break; } s = s + 1000; }
+    return s;
+}
+const fn narrow(v) { var b: i8 = v; return b; }
+const fn fsum(n): f64 {
+    var acc: f64 = 0.0;
+    var i = 0;
+    while (i < n) { acc = acc + 0.25; i = i + 1; }
+    return acc;
+}
+const fn pick(k) {
+    if (k == 1) { return 10; } elif (k == 2) { return 20; } else { return 30; }
+}
+fn runtime_sq(): i64 { return sq(6); }
+
+fn run(): i64 {
+    assert_eq(LIMIT, 7, "K1: an int const");
+    assert_eq(BIG, 42, "K2: a const from a const");
+    assert_eq(NEG, 0 - 5, "K3: a negative const");
+    assert_eq(AHEAD, 41, "K4: a forward reference");
+    assert_eq(f64_to(PI * 2.0), 7, "K5: an f64 const is an f64 value");
+    assert_eq(f64_to(HALF * 4.0), 7, "K6: f64 arithmetic in a const (1.75)");
+    assert_eq(load8(NAME), 99, "K7: a string const is its literal ('c')");
+    assert_eq(load8(NAME + 5), 115, "K8: ... its last byte ('s')");
+    assert_eq(SQ, 81, "C1: const fn");
+    assert_eq(FACT, 3628800, "C2: recursion");
+    assert_eq(FIB, 6765, "C3: while + locals");
+    assert_eq(LOOPY, 2500 + 5000, "C4: for, continue, compound, for-in, break");
+    assert_eq(NARROW, 44, "C5: an i8 local narrows (300 -> 44)");
+    assert_eq(f64_to(FX * 4.0), 4, "C6: an f64 const fn (1.0)");
+    assert_eq(PICK, 20, "C7: if / elif / else");
+    assert_eq(SHIFTY, 15, "C8: >> is logical");
+    assert_eq(ASR, 0 - 4, "C9: >>> is arithmetic");
+    assert_eq(runtime_sq(), 36, "R1: a const fn is an ordinary runtime fn too");
+    const LOC = LIMIT + 1;
+    assert_eq(LOC, 8, "L1: a local const");
+    var total = 0;
+    if (LOC == 8) {
+        const LOC = 100;
+        total = LOC;
+    }
+    assert_eq(total, 100, "L2: a block's const shadows");
+    assert_eq(LOC, 8, "L3: ... and leaves with the block");
+    const LF = 1.5;
+    assert_eq(f64_to(LF * 2.0), 3, "L4: a local f64 const");
+    const LS = "ok";
+    assert_eq(load8(LS), 111, "L5: a local string const");
+    var g = |x| x + LOC;
+    assert_eq(callptr(g, 2), 10, "L6: a closure reads a local const by name");
+    return 0;
+}
+var r0 = run();
+var rr = assert_summary();
+syscall(60, rr);

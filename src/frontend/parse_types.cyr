@@ -1101,12 +1101,9 @@ fn PARSE_ENUM_DEF(S, emit_code): i64 {
             }
             if (PEEKT(S) == 4) {
                 STI(S, GTI(S) + 1);
-                var eneg = 0;
-                if (PEEKT(S) == 7) { eneg = 1; STI(S, GTI(S) + 1); }
-                if (PEEKT(S) != 1) { ERR_EXPECT(S, 1); }
-                val = PEEKV(S);
-                if (eneg == 1) { val = 0 - val; }
-                STI(S, GTI(S) + 1);
+                # 6.7.2 (B1): `[-]N` as before, or an integer const expression (a const, an earlier
+                # enum constant, sizeof, a const fn call) — evaluated once, replayed by token.
+                val = _enum_val(S);
             }
             if (emit_code == 2) {
                 # Pass 2 function section: emit constructor bodies only

@@ -1683,6 +1683,7 @@ fn _PUB_CAN_ARM(t): i64 {
     if (t == 3) { return 1; }      # var (`secret var` is fn-local only — never at top level)
     if (t == 32) { return 1; }     # fn
     if (t == 134) { return 1; }    # async (fn)
+    if (t == 168) { return 1; }    # const (6.7.2): `pub const X` / `pub const fn`
     if (t == 109) { return 1; }    # #regalloc
     if (t == 122) { return 1; }    # #must_use
     if (t == 124) { return 1; }    # #deprecated
@@ -1740,6 +1741,7 @@ fn _IS_FN_KW(S): i64 {
     var t = PEEKT(S);
     if (t == 32) { return 1; }
     if (t == 134) { return 1; }
+    if (t == 168) { if (TOKTYP(S, GTI(S) + 1) == 32) { return 1; } }   # 6.7.2 (C1): `const fn`
     return 0;
 }
 
@@ -2002,6 +2004,7 @@ fn PARSE_SWITCH(S): i64 {
     STI(S, GTI(S) + 1);
     # Pre-scan: collect case values to decide chain vs jump table
     var save_ti = GTI(S);
+    var _sw_m0 = _clm_n;   # 6.7.2: this switch's label memo, trimmed at its end
     var case_count = 0;
     var case_min = 0x7FFFFFFFFFFFFFFF;
     var case_max = 0;
@@ -2010,8 +2013,8 @@ fn PARSE_SWITCH(S): i64 {
     while (pgo == 1) {
         if (PEEKT(S) == 58) {
             STI(S, GTI(S) + 1);
-            if (PEEKT(S) == 1) {
-                var cv = PEEKV(S);
+            var cv = _case_val(S);   # 6.7.2 (B1): a const expression; evaluated here once, replayed below
+            if (_case_ok == 1) {
                 if (case_count == 0) { case_min = cv; case_max = cv; }
                 else {
                     if (cv < case_min) { case_min = cv; }
@@ -2105,9 +2108,7 @@ fn PARSE_SWITCH(S): i64 {
         while (sgo == 1) {
             if (PEEKT(S) == 58) {
                 STI(S, GTI(S) + 1);
-                if (PEEKT(S) != 1) { ERR_EXPECT(S, 1); }
-                var val = PEEKV(S);
-                STI(S, GTI(S) + 1);
+                var val = _case_val(S);   # 6.7.2: the pre-scan's value
                 if (PEEKT(S) != 49) { ERR_EXPECT(S, 49); }
                 STI(S, GTI(S) + 1);
                 # Patch table entry: table[val - min] = body_cp - table_cp
@@ -2177,9 +2178,7 @@ fn PARSE_SWITCH(S): i64 {
         while (sgo == 1) {
             if (PEEKT(S) == 58) {
                 STI(S, GTI(S) + 1);
-                if (PEEKT(S) != 1) { ERR_EXPECT(S, 1); }
-                var val = PEEKV(S);
-                STI(S, GTI(S) + 1);
+                var val = _case_val(S);   # 6.7.2: the pre-scan's value
                 if (PEEKT(S) != 49) { ERR_EXPECT(S, 49); }
                 STI(S, GTI(S) + 1);
                 _HTLOAD(S, swidx);
@@ -2226,6 +2225,7 @@ fn PARSE_SWITCH(S): i64 {
         for (var ei = 0; ei < ec; ei = ei + 1) { EPATCH(S, load64(&ends + ei * 8)); }
     }
     _brk_chain_end(S, saved_brk);
+    _clm_n = _sw_m0;   # 6.7.2: this switch's label memo
     return 0;
 }
 
@@ -2460,34 +2460,8 @@ fn _assert_operands_end(S): i64 {
     if (t == 5) { return 0; }
     if (t == 12) { return 0; }
     if (GTLINE(S, GTI(S)) != GTLINE(S, GTI(S) - 1)) { return 0; }
-    ERR_MSG(S, "#assert: expected `,` or `;` after the operands (no arithmetic inside #assert)", 78);
+    ERR_MSG(S, "#assert: expected `,` or `;` after the expression", 49);
     return 1;
-}
-
-# 6.6.10 — ONE recogniser for an enum-constant atom: `NAME` or `Enum.NAME`, where NAME is a
-# folded enum constant (the GVECP flag). Shared by #assert (_EVAL_CONST_ATOM) and both
-# array-size parsers (PARSE_ARRAY, and the top-level one in parse_decl.cyr), which each
-# hand-rolled the bare form only — so `#assert EB == 4` and `var buf[E.EB]` were refused
-# while `syscall(60, E.EB)` compiled. As in expressions, a base that is a VARIABLE makes
-# `.NAME` a field access, not a variant. Returns the var index and advances past the atom,
-# or -1 without moving (spelled `0 - 1`: cybs has no unary minus). CHANGELOG [6.6.10]
-fn _enum_atom_idx(S): i64 {
-    if (PEEKT(S) != 2) { return 0 - 1; }
-    var ti = GTI(S);
-    var vn = PEEKV(S);
-    if (TOKTYP(S, ti + 1) == 41) {
-        if (TOKTYP(S, ti + 2) != 2) { return 0 - 1; }
-        if (GINFN(S) == 1) { if (FINDLOCAL(S, vn) >= 0) { return 0 - 1; } }
-        if (FINDVAR(S, vn) >= 0) { return 0 - 1; }
-        var qvi = _enum_qual_resolve(S, ti);
-        if (qvi < 0) { return 0 - 1; }
-        STI(S, ti + 3);
-        return qvi;
-    }
-    var vi = FINDVAR(S, vn);
-    if (GVECP(S, vi) != 1) { return 0 - 1; }
-    STI(S, ti + 1);
-    return vi;
 }
 
 # ⛔ 6.6.11 — `Base.NAME` resolved NAME alone and never looked at Base: `Foo.EB` (no such
@@ -2620,41 +2594,6 @@ fn _RSV_INTRINSIC_DECL(S, noff, ti, isfn): i64 {
     STI(S, sv);
     _had_error = 1;
     return 1;
-}
-
-# Evaluate a single constant atom for #assert: number literal, sizeof(T), or an enum
-# constant (`NAME` / `Enum.NAME`, 6.6.10). Returns the constant value. Advances TI past the
-# consumed tokens.
-fn _EVAL_CONST_ATOM(S): i64 {
-    var t = PEEKT(S);
-    if (t == 1) {
-        var v = PEEKV(S);
-        STI(S, GTI(S) + 1);
-        return v;
-    }
-    if (t == 2) {
-        var noff = PEEKV(S);
-        var ei = _enum_atom_idx(S);
-        if (ei >= 0) { return L64(_vecv_base + ei * 8); }
-        # sizeof(Type)
-        if (_is_sizeof_word(S, noff) == 1) {
-            STI(S, GTI(S) + 1);
-            if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); }
-            STI(S, GTI(S) + 1);
-            var szval = 0;
-            # 6.6.16 (C8): the one resolver, as the expression's sizeof — and u128 (a keyword token,
-            # it was `expected ')'` here). An unknown name is refused naming it. CHANGELOG [6.6.16]
-            if (PEEKT(S) == 2 || PEEKT(S) == 105) {
-                szval = _sizeof_type(S, 1);   # 6.6.17: + `<..>` (_sizeof_type)
-            }
-            if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
-            STI(S, GTI(S) + 1);
-            return szval;
-        }
-        ERR_MSG(S, "#assert: expected a number, sizeof(T) or an enum constant", 57);
-    }
-    ERR_MSG(S, "#assert: expected constant expression", 37);
-    return 0;
 }
 
 # v6.4.62 (DX multi-error): the recovery chokepoint. Every statement parse goes
@@ -3655,21 +3594,12 @@ fn _PARSE_STMT_IMPL(S): i64 {
     if (typ == 107) {
         var as_p0 = _panic;
         STI(S, GTI(S) + 1);
-        var lhs = _EVAL_CONST_ATOM(S);
-        # Check for comparison operator
-        var op = PEEKT(S);
-        if (op >= 17 && op <= 22) {
-            STI(S, GTI(S) + 1);
-            var rhs = _EVAL_CONST_ATOM(S);
-            var result = 0;
-            if (op == 17) { if (lhs == rhs) { result = 1; } }
-            if (op == 18) { if (lhs != rhs) { result = 1; } }
-            if (op == 19) { if (lhs < rhs) { result = 1; } }
-            if (op == 20) { if (lhs > rhs) { result = 1; } }
-            if (op == 21) { if (lhs <= rhs) { result = 1; } }
-            if (op == 22) { if (lhs >= rhs) { result = 1; } }
-            lhs = result;
-        }
+        # 6.7.2 (C1): a CONST CONTEXT — any const expression (consts, enum constants, sizeof,
+        # const fn calls, arithmetic, `&&` / `||`); it used to be one atom, or two compared.
+        _ce_asrt = 1;
+        var lhs = _ce_eval_here(S);
+        _ce_asrt = 0;
+        if (_ce_err == 0) { if (_ce_k == 2) { ERR_MSG(S, "#assert of a string: an assertion is an integer or f64 condition", 64); } }
         # lhs is now the assertion value (0 = fail, non-zero = pass)
         _assert_operands_end(S);
         if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
@@ -3727,6 +3657,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
         return 0;
     }
     if (typ == 3) { PARSE_VAR(S); return 0; }
+    if (typ == 168) { _cst_stmt(S); return 0; }   # 6.7.2 (B1): `const NAME = ..;` (no code)
     # secret var buf[N]; — declares an array that is memset(0) at every
     # function-return path. Implemented as a synthetic defer body: the
     # var is registered normally, then a zeroise loop is emitted into a
@@ -4080,6 +4011,11 @@ fn _PARSE_STMT_IMPL(S): i64 {
         }
         if (_arr_sub_stmt(S, noff) == 1) { return 0; }   # 6.6.12: `a[i] = v;` (parse_expr.cyr)
         # assignment or compound assignment: already consumed IDENT
+        # 6.7.2 (B1): a const is not an lvalue — refused by name (the statement still parses on).
+        if (_cst_n > 0 || _lc_n > 0) { if (_cst_lvalue_check(S, noff, "cannot assign to const ") == 1) {
+                _cst_skip_decl(S);   # the rest of the statement, to its `;`
+                return 0;
+            } }
         # Check for +=, -=, *=, /=, %=, &=, |=, ^=, <<=, >>=
         var compound_op = _asg_compound_tok(S);
         _asg_ti = 0 - 1;
@@ -4216,7 +4152,9 @@ fn PARSE_PROG(S): i64 {
                     # (This was a 15th copy; bare `#deprecated` errored here and was a silent no-op
                     # there.) `#assert` also lands here and is evaluated via PARSE_STMT. See _tl_directive.
                 }
-                else { if (typ == 32) {
+                else { if (typ == 32 || _IS_FN_KW(S) == 1) {
+                        # 6.7.2 (C1): `const fn` too — its prefix consumed, PARSE_FN_DEF told.
+                        if (PEEKT(S) == 168) { STI(S, GTI(S) + 1); _pending_cfn = 1; }
                         # 6.6.16: THIS loop is also the fn-body and block parser, so a `fn` here
                         # inside a fn body is a nested fn — refused (`_refuse_nested_fn`). The
                         # relaxed-ordering arm below is for top-level code only (GINFN == 0).
