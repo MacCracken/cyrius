@@ -62,15 +62,17 @@ fn _cli_global_spec(): i64 {
 
 # The dep/target block. Every flag here changes WHICH deps resolve or WHAT target
 # they resolve for, so it is applied before _auto_deps (rule 5).
+# 6.7.6 (lane C): `--local[=a,b]` / `--no-local` (the local-development switch; cbt/deps.cyr
+# "LOCAL MODE") change which deps resolve too, so they sit in this block.
 fn _cli_target_spec(): i64 {
-    return "--aarch64|--win|--agnos|--target=|--features=|--no-default-features|--check-lib-sync|-D=";
+    return "--aarch64|--win|--agnos|--target=|--features=|--no-default-features|--check-lib-sync|-D=|--local?|--no-local";
 }
 
 # `deps` takes the resolution-affecting subset: -D and --check-lib-sync mean nothing
 # to it, and accepting a flag a verb cannot act on is the silent drop this file exists
 # to remove.
 fn _cli_deps_spec(): i64 {
-    return "--aarch64|--win|--agnos|--target=|--features=|--no-default-features";
+    return "--aarch64|--win|--agnos|--target=|--features=|--no-default-features|--local?|--no-local";
 }
 
 fn _cli_extra_spec(verb): i64 {
@@ -269,6 +271,12 @@ fn _cli_help_extra(verb): i64 {
         println("              (otherwise refused, v6.6.4), and locks any file --verify");
         println("              reports as not in cyrius.lock.");
         println("  --dry-run   list the [deps.NAME] entries that WOULD resolve; write nothing.");
+        println("Git first: a [deps.NAME] with git + tag resolves the TAG, its commit pin checked,");
+        println("on every machine. A `path` beside git/tag is a dev override read only in LOCAL mode:");
+        println("  --local[=a,b]  build the sibling checkouts (every override, or the named ones);");
+        println("                 also CYRIUS_LOCAL=1 / CYRIUS_LOCAL=a,b. One `local:` line each;");
+        println("                 vendored into build/local-deps/lib/ — lib/ and cyrius.lock untouched.");
+        println("  --no-local     resolve the tags for this run whatever CYRIUS_LOCAL says.");
         println("Related: cyrius update    re-resolve to latest tags.");
     }
     if (streq(verb, "check") == 1) {

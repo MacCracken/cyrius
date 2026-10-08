@@ -167,7 +167,9 @@ got=$( [ -x "$W/a10/build/bom" ] && "$W/a10/build/bom" 2>/dev/null )
 mkdir -p "$W/a10t/src" "$W/a10foo/dist" "$W/a10bar/dist"
 printf 'fn foo_v(): i64 { return 1; }\n' > "$W/a10foo/dist/foo.cyr"
 printf 'fn bar_v(): i64 { return 2; }\n' > "$W/a10bar/dist/bar.cyr"
-printf '\357\273\277[deps.bar]\npath = "%s"\nmodules = ["dist/bar.cyr"]\n' "$W/a10bar" > "$W/a10foo/cyrius.cyml"
+# 6.7.6: a RELATIVE path — a dependency's manifest naming an absolute one is refused (not
+# portable); this axis is about the BOM, and a path-only dep's own path-only entry still resolves.
+printf '\357\273\277[deps.bar]\npath = "../a10bar"\nmodules = ["dist/bar.cyr"]\n' > "$W/a10foo/cyrius.cyml"
 printf '[package]\nname = "t"\n\n[deps.foo]\npath = "%s"\nmodules = ["dist/foo.cyr"]\n' "$W/a10foo" > "$W/a10t/cyrius.cyml"
 ( cd "$W/a10t" && HOME="$W/home" CYRIUS_HOME="$W/home" CYRIUS_RESOLVED=1 "$W/cyrius" deps ) > "$W/a10.out" 2>&1 || true
 [ -f "$W/a10t/lib/foo.cyr" ] || fail10 "axis 10 transitive: the direct dep was not vendored (the fixture is broken): $(tail -2 "$W/a10.out" | tr '\n' ' ')"

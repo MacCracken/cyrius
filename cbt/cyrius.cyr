@@ -162,7 +162,8 @@ fn _help_project(): i64 {
     println("Project & dependencies:");
     _help_row("init [--lib|--agent|--cmtools|--dry-run] <name | .>", "scaffold a new project");
     _help_row("port [--dry-run] <rust-project>", "scaffold from a Rust project (→ rust-old/)");
-    _help_row("deps [--verify|--lock|--relock|--no-lock|--dry-run]", "resolve [deps] into lib/ + cyrius.lock");
+    _help_row("deps [--verify|--lock|--relock|--no-lock|--dry-run|--local[=a,b]]",
+      "resolve [deps] into lib/ + cyrius.lock (git first; --local builds sibling checkouts)");
     _help_row("update", "re-resolve all deps to latest tags");
     _help_row("lib sync [--dry-run] [--full] [--no-lock] [--relock]",
       "vendor declared [deps].stdlib from pin (--full = whole snapshot), re-lock what it wrote");
@@ -560,6 +561,9 @@ fn main(): i64 {
     load_environ();
     _cbt_children_waitable();   # 6.6.20 — an inherited SIGCHLD ignore made no child waitable
     find_tools();
+    # 6.7.6: the compiler's lib/ overlay is this CLI's to set (local mode, cbt/deps.cyr) — one
+    # inherited from a shell never reaches a compile.
+    _dep_overlay_env(0);
     set_arch(ARCH_X86);
     # v6.0.34: an arm64 (Apple Silicon) Mach-O wrapper defaults to aarch64 so
     # current_cc() picks the native macho cycc_aarch64. v6.4.59: gate this on the
@@ -702,11 +706,14 @@ fn main(): i64 {
     # WITHOUT building — so it runs here, ahead of the dep resolver below, which writes lib/.
     if (streq(cmd, "build") == 1 && _cli_has("--print-config") == 1) {
         if (_cli_operands_ok("build", 0, 2) == 0) { return 1; }
+        if (_dep_switch_setup("build") != 0) { return 1; }   # 6.7.6: printed as deps.local
         return _cfg_print_config(_cli_pos_at(0), _cli_pos_at(1));
     }
     # AUTO_DEPS_VERBS BEGIN
     if (streq(cmd, "build") == 1 || streq(cmd, "run") == 1 || streq(cmd, "test") == 1 || streq(cmd, "tests") == 1 || streq(cmd, "bench") == 1 || streq(cmd, "fuzz") == 1 || streq(cmd, "soak") == 1 || streq(cmd, "smoke") == 1 || streq(cmd, "check") == 1 || streq(cmd, "audit") == 1 || streq(cmd, "capacity") == 1 || streq(cmd, "distlib") == 1 || streq(cmd, "doctest") == 1 || streq(cmd, "publish") == 1 || streq(cmd, "package") == 1) {
         # AUTO_DEPS_VERBS END
+        # 6.7.6 (lane C): the local-development switch, for this verb
+        if (_dep_switch_setup(cmd) != 0) { return 1; }
         var dr = _auto_deps();
         # v6.5.37 (A1) — clamp here too: _auto_deps propagates the same raw count, so a
         # 256-error resolve made `cyrius build` exit 0 as well.
@@ -988,6 +995,14 @@ fn main(): i64 {
             _err("deps: --verify and --lock are mutually exclusive");
             return 1;
         }
+        # 6.7.6: --verify / --lock resolve nothing, so a resolve switch beside them would be
+        # dropped in silence.
+        var dterm = _cli_has("--verify") + _cli_has("--lock");
+        if (dterm > 0 && (_cli_has("--local") == 1 || _cli_has("--no-local") == 1)) {
+            _err("deps: --local / --no-local choose what a resolve builds; --verify and --lock resolve nothing");
+            return 1;
+        }
+        if (_dep_switch_setup("deps") != 0) { return 1; }
         if (_cli_has("--verify") == 1) { return cmd_deps_verify(); }
         if (_cli_has("--lock") == 1) { return cmd_deps_lock(); }
         return cmd_deps();

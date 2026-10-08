@@ -79,11 +79,13 @@ output = "build/consumer"
 stdlib = ["syscalls", "string", "alloc", "vec", "str", "io", "fmt"]
 
 [deps.fakedep]
-git = "https://example.invalid/fakedep"
 path = "../fakedep"
-tag = "1.0.0"
 modules = ["dist/fakedep.cyr"]
 EOF
+# 6.7.6: path-ONLY. This block was `git = "https://example.invalid/…"` + `tag` + `path`, which
+# leaned on the path silently beating the tag; since lane C a path beside git/tag is a dev override
+# read only in local mode, and the default run would clone example.invalid. A path-only dep
+# resolves from its path in every mode, which is all this gate needs (its sidecar).
 
 OUT="$W/deps.out"
 ( cd "$W/consumer" && cyrius deps ) > "$OUT" 2>&1 || true

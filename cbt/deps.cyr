@@ -22,6 +22,34 @@ var _dep_linkdest_reported = 0;
 # top of the vendoring commands only.
 var _dep_vendor_mode = 0;
 
+# 6.7.6 (lane C) — the walk's state for the local-mode rule (see "LOCAL MODE" below). Declared up
+# here, above every use (a global declared below its use is not visible).
+var _dep_local_from = 0;    # what switched local mode on: "--local" or "CYRIUS_LOCAL"
+var _dep_local_ign = 0;     # CYRIUS_LOCAL was set but this run resolves the tags: why (said once)
+# _dep_local_seen: every dep name a walked manifest gave a `path` — a selected name that none
+# declares is warned, so a typo does not read as "no override".
+var _dep_local_seen = 0;
+var _dep_hint = 0;          # vec: root deps whose checkout exists but the default run builds the tag
+# _dep_ctx_kind: the manifest being walked — 0 the root, 1 a cloned dep, 2 a local override,
+# 3 a local-only dep (a `path` with no remote source).
+var _dep_ctx_kind = 0;
+var _dep_ctx_owner = 0;     # its dep name (0 for the root)
+var _dep_queue_kind = 0;    # parallel to _dep_queue: each queued directory's kind
+var _dep_queue_owner = 0;   # parallel to _dep_queue: each queued directory's dep name
+var _dep_wt_err = 0;        # the last _dep_wt_run's stderr capture (quoted by `cyrius update`)
+# A [deps.NAME] section's keys as `_dep_sec_read` returns them (byte offsets into the record).
+var _DS_PATH = 0;           # `path` joined onto the manifest's directory
+var _DS_RAW = 8;            # `path` as written
+var _DS_GIT = 16;
+var _DS_TAG = 24;
+var _DS_MODULES = 32;
+var _DS_REQUIRES = 40;
+var _DS_MODULAR = 48;
+var _DS_OPTIONAL = 56;      # 1, 0, or -1 (the key is present and is not true / false)
+var _DS_TARGET = 64;
+var _DS_BAD = 72;           # the key whose value has the wrong type, or 0
+var _DS_SIZE = 80;
+
 # Print the refusal ONCE (the copy loop calls this ~100x per resolve) and return 1,
 # the same error code the dep modules path-escape bug traversal guard uses. Full incident writeup lives at
 # the call site in _dep_copy_file.
@@ -759,18 +787,19 @@ fn _dep_is_leaf_profile(stem, leaf): i64 {
 
 # 1 when `dst` (lib/<stem>.cyr) is a thin profile module of the named dep `dep`, and `dep` is a
 # stdlib leaf already copied — the caller then skips it (see above). Removes a stale vendored
-# copy, through the symlink guard; -1 when that guard refuses.
-fn _dep_keep_fold_over_profile(dep, dst, mod_path): i64 {
+# copy at `wdst` (where this run writes `dst`: `_dep_wpath`), through the symlink guard; -1 when
+# that guard refuses.
+fn _dep_keep_fold_over_profile(dep, dst, wdst, mod_path): i64 {
     var stem = _dep_lib_dst_stem(dst);
     if (stem == 0) { return 0; }
     if (_dep_stdlib_seen_has(dep) == 0) { return 0; }
     if (_dep_is_leaf_profile(stem, dep) == 0) { return 0; }
-    if (file_exists(dst) == 1) {
+    if (file_exists(wdst) == 1) {
         if (_dep_vendor_mode == 1) {
-            var lk = _dep_dest_is_linked(dst);
+            var lk = _dep_dest_is_linked(wdst);
             if (lk != 0) { _dep_refuse_symlinked_dest(lk); return 0 - 1; }
         }
-        sys_unlink(dst);
+        sys_unlink(wdst);
     }
     _ew("note: [deps.");
     _ew_shown(dep);
@@ -896,19 +925,20 @@ fn _dep_copy_stdlib_recursive(stdlib_dir, mod_name, is_top): i64 {
         }
     }
 
-    var dst = make_path("lib", mod_name);
-    var sb2 = str_builder_new();
-    str_builder_add_cstr(sb2, dst);
-    str_builder_add_cstr(sb2, ".cyr");
-    var dst_full = str_data(str_builder_build(sb2));
+    var rel = _cat2(mod_name, ".cyr");
+    var dst_full = _dep_ipath(rel);   # lib/<mod>.cyr — the include string, and the lock's key
+    var wdst = _dep_wpath(rel);       # where this run writes it (6.7.6: local mode)
 
     # v6.6.4 — lock guard BEFORE the write: a snapshot leaf whose bytes moved under an
     # unchanged pin is refused here (named on stderr, counted into `errors`), so neither
     # lib/<leaf> nor cyrius.lock changes. The include push + transitive scan still run so
     # every moved leaf is reported in one pass; the resolve fails as a whole afterwards.
+    # 6.7.6: only when this run writes lib/ — local mode writes neither lib/ nor the lock.
     var cr = 0;
-    if (_dep_lock_guard_stdlib_leaf(src, dst_full) == 0) {
-        cr = _dep_copy_file(src, dst_full);
+    var gr = 0;
+    if (_dep_writes_lib() == 1) { gr = _dep_lock_guard_stdlib_leaf(src, dst_full); }
+    if (gr == 0) {
+        cr = _dep_copy_file(src, wdst);
         # 6.6.9: a vendored leaf the lock has no line for — a new leaf, or no lock at all —
         # makes cmd_deps write the lock. A new leaf has no locked hash to disagree with, so
         # the 6.6.4 moved-snapshot refusal above is not in play. CHANGELOG [6.6.9]
@@ -1741,14 +1771,15 @@ fn _dep_pull_submodule(dep_src, pkg, submod, stdlib_dir, seen): i64 {
     str_builder_add_cstr(src_sb, ".cyr");
     var src = str_data(str_builder_build(src_sb));
     var df_sb = str_builder_new();
-    str_builder_add_cstr(df_sb, "lib/");
     str_builder_add_cstr(df_sb, pkg);
     str_builder_add_cstr(df_sb, "_");
     str_builder_add_cstr(df_sb, submod);
     str_builder_add_cstr(df_sb, ".cyr");
-    var dst_full = str_data(str_builder_build(df_sb));
+    var df_rel = str_data(str_builder_build(df_sb));
+    var dst_full = _dep_ipath(df_rel);
+    var wdst = _dep_wpath(df_rel);    # 6.7.6: where this run writes it
     # 6.6.11 (S2): a modular sub-module of a package that is a stdlib leaf here.
-    var _kf = _dep_keep_fold_over_profile(pkg, dst_full, submod);
+    var _kf = _dep_keep_fold_over_profile(pkg, dst_full, wdst, submod);
     if (_kf < 0) { return errs + 1; }
     if (_kf == 1) { return errs; }
     # v6.5.37 (A0) — refuse BEFORE the unlink. A symlinked destination must not be
@@ -1756,14 +1787,14 @@ fn _dep_pull_submodule(dep_src, pkg, submod, stdlib_dir, seen): i64 {
     # vendoring run cannot touch a shared target at all, and a delete-then-refuse
     # leaves the tree worse than either outcome alone.
     if (_dep_vendor_mode == 1) {
-        var _l1 = _dep_dest_is_linked(dst_full);
+        var _l1 = _dep_dest_is_linked(wdst);
         if (_l1 != 0) { return _dep_refuse_symlinked_dest(_l1); }
     }
     # 6.6.20 (the modules dot-dot / symlink vendoring bug): checked before the unlink
     var slk = _dep_src_link(src, dsl);
     if (slk != 0) { return errs + _dep_refuse_src_link(pkg, src + dsl + 1, slk); }
-    sys_unlink(dst_full);
-    var cr = _dep_copy_file(src, dst_full);
+    sys_unlink(wdst);
+    var cr = _dep_copy_file(src, wdst);
     if (cr == 0 || cr == 2) {
         vec_push(_dep_includes, dst_full);
         vec_push(_dep_nd_modules, dst_full);   # 6.6.9: a named dep's module (distlib verify)
@@ -1888,6 +1919,659 @@ fn _dep_parse_name_lists(buf, n, section, names, lists): i64 {
     return 0;
 }
 
+# ================================================================
+# LOCAL MODE — git first, local development by an explicit switch (6.7.6, lane C)
+# ================================================================
+# THE RULE (user, 2026-10-08). The committed manifest means the TAGS: every `[deps.X]` with a git
+# source resolves its tag, its commit pin checked — on a dev box exactly as in CI. A `path` beside
+# `git` / `tag` is a DEV OVERRIDE, read only in local mode, and only the CLI switches that on:
+#     --local / --local=a,b   > --no-local >   CYRIUS_LOCAL=1 / CYRIUS_LOCAL=a,b   > off
+# (`publish`, `package` and `distlib` resolve what a release ships: the switch
+# is off there, and `--local` is refused by name). Until 6.7.6 a path beside git/tag won whenever
+# the directory existed — silently, with no clone and no commit pin — so a dev box and CI built
+# different code from one manifest, and the ecosystem toggled path lines in and out by hand (166
+# commits in 47 repos; 9 repos ran their own CI guards against a committed path).
+#
+# Per root `[deps.X]` (`_dep_pick`):
+#   path + git, selected, a directory  -> the working tree, no clone; one `local:` line
+#   path + git, otherwise              -> the tag; a checkout that exists is named in ONE hint line
+#   path only (no git)                 -> local-only: the path, in both modes (no tag to prefer)
+# A dependency's OWN manifest (`_dep_ctx_kind` != 0):
+#   resolved from a clone   -> its `path` beside a remote git is dropped (its developers' business,
+#                              never its published meaning); a path-only or local-git entry is
+#                              REFUSED by name (it resolves on its author's box and nowhere else)
+#   a local checkout        -> its overrides are followed for the selected names; its path-only
+#                              entries need the name selected unless it is itself local-only
+#   either                  -> an absolute path / absolute local git is refused (not portable)
+# LOCAL MODE WRITES NO TRACKED FILE. When an override is actually in use (`_dep_local_prescan`) the
+# whole resolution is vendored into build/local-deps/lib/ and cyrius.lock is not written, so lib/
+# and the lock stay what the tag resolution wrote and switching modes churns nothing. Every include
+# string stays `lib/<file>`; the compiler reads lib/ through CYRIUS_LIB_OVERLAY=build/local-deps/lib
+# (src/frontend/lex.cyr `_rf_ov_open`), which is what makes a source's own `include "lib/sigil.cyr"`
+# read the override instead of compiling the tag copy beside it. CHANGELOG [6.7.6]
+
+# A [deps.NAME] section's keys, from the line at buf[si] up to the next table header of either
+# kind, into the `_DS_*` slots of `rec` (`_DS_SIZE` bytes). Returns where that header starts.
+# path / git / tag / target are TOML strings (6.6.17, m6: another type sets `_DS_BAD`); modules /
+# requires / modular are string arrays; optional is the bareword `true` or `false`.
+fn _dep_sec_read(buf, n, si, manifest_dir, rec): i64 {
+    var z = 0;
+    while (z < _DS_SIZE) { store64(rec + z, 0); z = z + 8; }
+    var info[32];
+    while (si < n) {
+        var nx = _toml_line(buf, n, si, &info);
+        var kind = load64(&info);
+        if (kind == 1 || kind == 2) { break; }
+        si = nx;
+        if (kind == 3) {
+            var ks = load64(&info + 8);
+            var kl = load64(&info + 16);
+            var kv = load64(&info + 24);
+            var ke = 0;
+            if (_dep_key_is(buf, ks, kl, "path") == 1) {
+                var p = _toml_str_at(buf, n, kv, &ke);
+                if (p == 0) { store64(rec + _DS_BAD, "path"); }
+                else {
+                    store64(rec + _DS_RAW, p);
+                    # v5.7.14: relative to the manifest's directory, not the consumer's cwd
+                    store64(rec + _DS_PATH, _dep_join_path(manifest_dir, p));
+                }
+            } elif (_dep_key_is(buf, ks, kl, "git") == 1) {
+                var g = _toml_str_at(buf, n, kv, &ke);
+                if (g == 0) { store64(rec + _DS_BAD, "git"); } else { store64(rec + _DS_GIT, g); }
+            } elif (_dep_key_is(buf, ks, kl, "tag") == 1) {
+                var t = _toml_str_at(buf, n, kv, &ke);
+                if (t == 0) { store64(rec + _DS_BAD, "tag"); } else { store64(rec + _DS_TAG, t); }
+            } elif (_dep_key_is(buf, ks, kl, "target") == 1) {
+                # v6.3.1 lever 2: resolve this dep only on a matching build target
+                var tg = _toml_str_at(buf, n, kv, &ke);
+                if (tg == 0) { store64(rec + _DS_BAD, "target"); } else { store64(rec + _DS_TARGET, tg); }
+            } elif (_dep_key_is(buf, ks, kl, "modules") == 1) {
+                store64(rec + _DS_MODULES, _parse_toml_str_array(buf, n, ks + kl));
+            } elif (_dep_key_is(buf, ks, kl, "requires") == 1) {
+                # v6.2.46 (lever 1 / Phase A): the stdlib leaves a fold needs in scope; v6.2.49
+                # Phase B expands [groups] references
+                store64(rec + _DS_REQUIRES, _dep_expand_groups(_parse_toml_str_array(buf, n, ks + kl)));
+            } elif (_dep_key_is(buf, ks, kl, "modular") == 1) {
+                # v6.2.50 Phase C: individual sub-modules from the dep's `dist/<name>/`
+                store64(rec + _DS_MODULAR, _parse_toml_str_array(buf, n, ks + kl));
+            } elif (_dep_key_is(buf, ks, kl, "optional") == 1) {
+                # v6.3.1 lever 2. The whole bareword: this read the first byte, so `tru` meant true.
+                var ob = _dep_bareword_bool(buf, n, kv);
+                store64(rec + _DS_OPTIONAL, ob);
+                if (ob < 0) { store64(rec + _DS_BAD, "optional"); }
+            }
+        }
+    }
+    return si;
+}
+
+# 1 when the git value names a REMOTE repository: `scheme://…` (file:// included) or scp-like
+# `[user@]host:path`. Anything else — `../repo`, `/abs/repo`, `C:\repo`, a bare name — is a LOCAL
+# repository, which resolves on its author's box and nowhere else.
+fn _dep_git_remote(g): i64 {
+    var i = 0;
+    while (load8(g + i) != 0) {
+        var c = load8(g + i);
+        if (c == 47 || c == 92) { return 0; }            # a '/' or '\' before any ':' — a path
+        if (c == 58) {                                   # ':'
+            if (load8(g + i + 1) == 47 && load8(g + i + 2) == 47) { return 1; }   # scheme://
+            if (i >= 2) { return 1; }                    # host:path (a one-letter "host" is a drive)
+            return 0;
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# 1 for an absolute path: `/…`, `\…` or a drive `X:`.
+fn _dep_path_abs(p): i64 {
+    var c = load8(p);
+    if (c == 47 || c == 92) { return 1; }
+    if (c != 0 && load8(p + 1) == 58) { return 1; }
+    return 0;
+}
+
+# 1 when local mode selects `name` (every override, or one named in the switch).
+fn _dep_selected(name): i64 {
+    if (_dep_local_on == 0) { return 0; }
+    if (_dep_local_names == 0) { return 1; }
+    return _dep_list_has(_dep_local_names, name);
+}
+
+# 1 when this run writes lib/ and cyrius.lock (no override in use).
+fn _dep_writes_lib(): i64 {
+    if (_dep_local_active == 1) { return 0; }
+    return 1;
+}
+
+# Where vendored file `rel` (e.g. "sigil.cyr", "unicode/x.cyr") is WRITTEN this run, and the
+# include string every compile names it by. The second is always lib/<rel>: local mode's compiles
+# read lib/ through CYRIUS_LIB_OVERLAY.
+fn _dep_wpath(rel): i64 { return _cat2(_cat2(_dep_vroot, "/"), rel); }
+fn _dep_ipath(rel): i64 { return _cat2("lib/", rel); }
+
+# 6.7.6 — the switch for this run, from the arguments and the environment (see the rule above).
+# `verb` decides whether this verb resolves what a release ships. 0, or 1 after naming a refusal.
+fn _dep_switch_setup(verb): i64 {
+    _dep_local_on = 0;
+    _dep_local_names = 0;
+    _dep_local_from = 0;
+    _dep_local_ign = 0;
+    var rel = 0;
+    if (streq(verb, "publish") == 1 || streq(verb, "package") == 1) { rel = 1; }
+    if (streq(verb, "distlib") == 1) { rel = 1; }
+    var argl = _cli_has("--local");
+    var argn = _cli_has("--no-local");
+    if (argl == 1 && argn == 1) { _err("--local and --no-local contradict each other"); return 1; }
+    if (argl == 1) {
+        if (rel == 1) {
+            _ew("error: cyrius ");
+            _ew(verb);
+            _ew(" resolves what a release ships, the tags — --local is refused\n");
+            return 1;
+        }
+        _dep_local_on = 1;
+        _dep_local_from = "--local";
+        var v = _cli_val("--local");
+        if (v != 0) {
+            _dep_local_names = _split_csv(v);
+            if (vec_len(_dep_local_names) == 0) {
+                _err("--local= names no dependency (--local alone selects every override)");
+                return 1;
+            }
+        }
+        return _dep_names_ok("--local");
+    }
+    if (argn == 1) { return 0; }
+    var e = _cfg_env("CYRIUS_LOCAL");
+    if (e == 0) { return 0; }
+    if (streq(e, "0") == 1) { return 0; }
+    if (rel == 1) { _dep_local_ign = _cat2(_cat2("cyrius ", verb), " resolves the tags"); return 0; }
+    _dep_local_on = 1;
+    _dep_local_from = "CYRIUS_LOCAL";
+    if (streq(e, "1") == 0) {
+        _dep_local_names = _split_csv(e);
+        if (vec_len(_dep_local_names) == 0) { _dep_local_on = 0; return 0; }
+    }
+    return _dep_names_ok("CYRIUS_LOCAL");
+}
+
+# Each selected name must be one a [deps.NAME] header could carry (the header rule).
+fn _dep_names_ok(from): i64 {
+    if (_dep_local_names == 0) { return 0; }
+    var i = 0;
+    while (i < vec_len(_dep_local_names)) {
+        var nm = vec_get(_dep_local_names, i);
+        if (_dep_name_unsafe(nm) == 1) {
+            _ew("error: ");
+            _ew(from);
+            _ew(" names '");
+            _ew_shown(nm);
+            _ew("', which is not a dependency name\n");
+            return 1;
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# `cyrius build --print-config`: the dependency switch, as the resolve would read it.
+fn _dep_print_switch(): i64 {
+    _cfg_out("  deps.local = ");
+    if (_dep_local_on == 0) {
+        _cfg_out("off  (");
+        if (_dep_local_ign != 0) { _cfg_out("CYRIUS_LOCAL ignored: "); _cfg_out(_dep_local_ign); }
+        else { _cfg_out("default: every [deps.X] path beside git/tag is ignored; the tags resolve"); }
+        _cfg_out(")\n");
+    } else {
+        if (_dep_local_names == 0) { _cfg_out("on, every override"); }
+        else {
+            _cfg_out("on: ");
+            var i = 0;
+            while (i < vec_len(_dep_local_names)) {
+                if (i > 0) { _cfg_out(", "); }
+                _cfg_out(_shown(vec_get(_dep_local_names, i)));
+                i = i + 1;
+            }
+        }
+        _cfg_out("  (");
+        _cfg_out(_dep_local_from);
+        _cfg_out(")\n");
+    }
+    return 0;
+}
+
+# Remove `p` and everything under it, never following a link (a link is unlinked, not entered).
+# For directories this CLI owns: build/local-deps/lib.
+fn _dep_rm_tree(p): i64 {
+    var ps = str_from(p);
+    if (is_symlink(ps) == 1) { return sys_unlink(p); }
+    if (is_dir(ps) == 0) {
+        if (file_exists(p) == 1) { return sys_unlink(p); }
+        return 0;
+    }
+    var ents = dir_list(ps);
+    var i = 0;
+    while (i < vec_len(ents)) {
+        var en = vec_get(ents, i);
+        i = i + 1;
+        var ed = str_data(en);
+        var el = str_len(en);
+        if (el == 1 && load8(ed) == 46) { continue; }
+        if (el == 2 && load8(ed) == 46 && load8(ed + 1) == 46) { continue; }
+        var nm = alloc(el + 1);
+        memcpy(nm, ed, el);
+        store8(nm + el, 0);
+        _dep_rm_tree(make_path(p, nm));
+    }
+    return xrmdir(p);
+}
+
+# Run `git [-C dir] -c … a1 a2 a3 a4` for a READ-ONLY question about a working tree, a cache or a
+# remote (`rev-parse`, `rev-list`, `status`, `check-ignore`, `ls-remote`). stdout goes to `outf`
+# (0 = discarded), stderr to the per-process capture (`_dep_wt_err`). With `dir`, discovery stops
+# at its parent (GIT_CEILING_DIRECTORIES), so a directory that is not a checkout never answers for
+# an enclosing repository; `--no-optional-locks` keeps `status` from rewriting the sibling's index.
+# Returns git's exit status, or -1 when git could not be run (no fork on this platform included).
+fn _dep_wt_run(dir, a1, a2, a3, a4, outf): i64 {
+    if (_git_exec_available() == 0) { return 0 - 1; }
+    var ceil = 0;
+    if (dir != 0) {
+        var ad = _abs_path(dir);
+        var pe = strlen(ad);
+        while (pe > 0 && load8(ad + pe - 1) == 47) { pe = pe - 1; }
+        while (pe > 0 && load8(ad + pe - 1) != 47) { pe = pe - 1; }
+        if (pe > 1) { pe = pe - 1; }
+        var par = alloc(pe + 1);
+        memcpy(par, ad, pe);
+        store8(par + pe, 0);
+        ceil = _cat2("GIT_CEILING_DIRECTORIES=", par);
+    }
+    if (_dep_wt_err == 0) { _dep_wt_err = _cbt_tmpfile("wt_err"); }
+    var cfd = 0 - 1;
+    if (outf != 0) {
+        cfd = sys_open(outf, O_WRONLY | O_CREAT | O_TRUNC, 0x180);
+        if (cfd < 0) { return 0 - 1; }
+    }
+    var errf = _dep_wt_err;
+    var pid = sys_fork();
+    if (pid < 0) { if (cfd >= 0) { sys_close(cfd); } return 0 - 1; }
+    if (pid == 0) {
+        var nfd = sys_open("/dev/null", O_RDONLY, 0);
+        if (nfd >= 0) { sys_dup2(nfd, 0); sys_close(nfd); }
+        var ofd = cfd;
+        if (outf == 0) { ofd = sys_open("/dev/null", O_WRONLY, 0); }
+        if (ofd >= 0) { sys_dup2(ofd, 1); sys_close(ofd); }
+        var efd = sys_open(errf, O_WRONLY | O_CREAT | O_TRUNC, 0x180);
+        if (efd < 0) { efd = sys_open("/dev/null", O_WRONLY, 0); }
+        if (efd >= 0) { sys_dup2(efd, 2); sys_close(efd); }
+        var argv[512];   # N BYTES: <= 64 ptrs
+        var i = _git_env_argv(&argv, 0);
+        if (ceil != 0) { i = _ga(&argv, i, ceil); }
+        i = _ga(&argv, i, "git");
+        i = _ga(&argv, i, "--no-optional-locks");
+        if (dir != 0) { i = _ga(&argv, i, "-C"); i = _ga(&argv, i, dir); }
+        i = _ga(&argv, i, "-c"); i = _ga(&argv, i, "core.fsmonitor=false");
+        i = _ga(&argv, i, "-c"); i = _ga(&argv, i, "core.hooksPath=/dev/null");
+        if (a1 != 0) { i = _ga(&argv, i, a1); }
+        if (a2 != 0) { i = _ga(&argv, i, a2); }
+        if (a3 != 0) { i = _ga(&argv, i, a3); }
+        if (a4 != 0) { i = _ga(&argv, i, a4); }
+        store64(&argv + i * 8, 0);
+        sys_execve("/usr/bin/env", &argv, _envp);
+        sys_exit(127);
+    }
+    if (cfd >= 0) { sys_close(cfd); }
+    var wst[8];
+    store64(&wst, 0);
+    if (sys_waitpid(pid, &wst, 0) < 0) { return 0 - 1; }
+    var st = load64(&wst);
+    if ((st & 127) != 0) { return 0 - 1; }
+    return (st >> 8) & 255;
+}
+
+# The first line of `git … a1 a2 a3 a4`'s output (trimmed), or 0 when git failed. "" when it
+# succeeded and printed nothing.
+fn _dep_wt_out(dir, a1, a2, a3, a4): i64 {
+    var tf = _cbt_tmpfile("wt_out");
+    var rc = _dep_wt_run(dir, a1, a2, a3, a4, tf);
+    if (rc != 0) { sys_unlink(tf); return 0; }
+    var nn = 0;
+    var buf = file_read_whole(tf, &nn);
+    sys_unlink(tf);
+    if (buf == 0 || nn < 0) { return ""; }
+    var i = 0;
+    while (i < nn && load8(buf + i) != 10 && load8(buf + i) != 13) { i = i + 1; }
+    store8(buf + i, 0);
+    return buf;
+}
+
+# Where a local checkout stands against `tag`: " @1a2b3c4, 3 commits past 3.9.9, dirty" — or
+# " (not a git checkout)". `tag` 0 for an untagged dep.
+fn _dep_local_state(path, tag): i64 {
+    if (_git_exec_available() == 0) { return " (git cannot be run on this platform: no checkout state)"; }
+    var sha = _dep_wt_out(path, "rev-parse", "--short=7", "HEAD", 0);
+    if (sha == 0) { return " (not a git checkout)"; }
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, " @");
+    str_builder_add_cstr(sb, sha);
+    if (tag != 0) {
+        var ahead = _dep_wt_out(path, "rev-list", "--count", _cat2(tag, "..HEAD"), 0);
+        if (ahead == 0) {
+            str_builder_add_cstr(sb, ", tag ");
+            str_builder_add_cstr(sb, _shown(tag));
+            str_builder_add_cstr(sb, " is not in this checkout");
+        } else {
+            var behind = _dep_wt_out(path, "rev-list", "--count", _cat2("HEAD..", tag), 0);
+            if (streq(ahead, "0") == 1 && behind != 0 && streq(behind, "0") == 1) {
+                str_builder_add_cstr(sb, ", at ");
+                str_builder_add_cstr(sb, _shown(tag));
+            } else {
+                str_builder_add_cstr(sb, ", ");
+                str_builder_add_cstr(sb, ahead);
+                if (streq(ahead, "1") == 1) { str_builder_add_cstr(sb, " commit past "); }
+                else { str_builder_add_cstr(sb, " commits past "); }
+                str_builder_add_cstr(sb, _shown(tag));
+                if (behind != 0 && streq(behind, "0") == 0) {
+                    str_builder_add_cstr(sb, ", ");
+                    str_builder_add_cstr(sb, behind);
+                    str_builder_add_cstr(sb, " behind it");
+                }
+            }
+        }
+    }
+    var dirty = _dep_wt_out(path, "status", "--porcelain", 0, 0);
+    if (dirty != 0 && strlen(dirty) > 0) { str_builder_add_cstr(sb, ", dirty"); }
+    return str_data(str_builder_build(sb));
+}
+
+# What CI builds for a dep, for the `local:` line: "3.9.9", or "the default branch of <url>".
+fn _dep_ci_builds(git, tag): i64 {
+    if (tag != 0) { return _shown(tag); }
+    if (git != 0) { return _cat2("the default branch of ", _shown(git)); }
+    return "nothing (no git)";
+}
+
+# The `local:` line for an override in use, and its `deps -v` description.
+#     local: sigil <- ../sigil @1a2b3c4, 118 commits past 3.9.9, dirty — CI builds 3.9.9
+fn _dep_say_local(name, rec, owner): i64 {
+    var raw = load64(rec + _DS_RAW);
+    var st = _dep_local_state(load64(rec + _DS_PATH), load64(rec + _DS_TAG));
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "local ");
+    str_builder_add_cstr(sb, _shown(raw));
+    str_builder_add_cstr(sb, st);
+    var desc = str_data(str_builder_build(sb));
+    _ew("local: ");
+    _ew_shown(name);
+    _ew(" <- ");
+    _ew_shown(raw);
+    if (owner != 0) { _ew(" (via "); _ew_shown(owner); _ew(")"); }
+    _ew(st);
+    _ew(" — CI builds ");
+    _ew(_dep_ci_builds(load64(rec + _DS_GIT), load64(rec + _DS_TAG)));
+    _ew("\n");
+    return desc;
+}
+
+# Named refusal of an entry in a dependency's own manifest. `what` finishes the sentence.
+fn _dep_refuse_entry(owner, name, key, val, what): i64 {
+    _ew("error: ");
+    if (owner != 0) { _ew_shown(owner); _ew("'s manifest names [deps."); }
+    else { _ew("cyrius.cyml [deps."); }
+    _ew_shown(name);
+    _ew("] ");
+    _ew(key);
+    _ew(" = \"");
+    _ew_shown(val);
+    _ew("\"");
+    _ew(what);
+    _ew("\n");
+    return 0 - 1;
+}
+
+# Remember that a walked manifest gave `name` a `path` (for the unused-selection warning).
+fn _dep_note_seen(name): i64 {
+    if (_dep_local_seen == 0) { _dep_local_seen = vec_new(); }
+    if (_dep_list_has(_dep_local_seen, name) == 0) { vec_push(_dep_local_seen, name); }
+    return 0;
+}
+
+# THE SOURCE DECISION for one [deps.NAME] entry of the manifest being walked (`kind`, `owner`):
+# 1 = its `path` (a working tree), 0 = its git (a clone; nothing when it has no git), -1 = refused
+# by name. `mode` 0 = the local-mode prescan (silent), 1 = the resolve, 2 = the dry run.
+fn _dep_pick(name, rec, kind, owner, mode): i64 {
+    var raw = load64(rec + _DS_RAW);
+    var path = load64(rec + _DS_PATH);
+    var git = load64(rec + _DS_GIT);
+    var remote = 0;
+    if (git != 0) { remote = _dep_git_remote(git); }
+    var sel = _dep_selected(name);
+    if (raw != 0) { _dep_note_seen(name); }
+    var pdir = 0;
+    if (path != 0) { pdir = is_dir(str_from(path)); }
+    if (kind == 0) {
+        if (raw != 0 && git != 0) {
+            if (sel == 1 && pdir == 1) { return 1; }
+            if (sel == 1 && mode != 0) {
+                _ew("local: ");
+                _ew_shown(name);
+                _ew(": ");
+                _ew_shown(raw);
+                _ew(" is not a directory — building ");
+                _ew(_dep_ci_builds(git, load64(rec + _DS_TAG)));
+                _ew(" from git\n");
+            }
+            if (sel == 0 && pdir == 1 && mode == 1 && _dep_local_on == 0) {
+                if (_dep_hint == 0) { _dep_hint = vec_new(); }
+                if (_dep_list_has(_dep_hint, name) == 0) { vec_push(_dep_hint, name); }
+            }
+            return 0;
+        }
+        if (raw != 0) { return 1; }
+        return 0;
+    }
+    # a dependency's own manifest
+    if (raw != 0 && _dep_path_abs(raw) == 1) {
+        if (mode == 0) { return 0 - 1; }
+        return _dep_refuse_entry(owner, name, "path", raw, ", an absolute path — a dependency's manifest must be portable; refused");
+    }
+    if (git != 0 && remote == 0 && _dep_path_abs(git) == 1) {
+        if (mode == 0) { return 0 - 1; }
+        return _dep_refuse_entry(owner, name, "git", git, ", an absolute local repository — a dependency's manifest must be portable; refused");
+    }
+    if (kind == 1) {
+        # resolved from a clone: a `path` beside a remote git is dropped — its developers' override
+        if (git != 0 && remote == 1) {
+            if (raw != 0 && mode == 1 && _verbose == 1) {
+                _ew("  ");
+                _ew_shown(owner);
+                _ew(": its [deps.");
+                _ew_shown(name);
+                _ew("] path is its own dev override — ignored, the tag resolves\n");
+            }
+            return 0;
+        }
+        if (mode == 0) { return 0 - 1; }
+        if (git != 0) {
+            return _dep_refuse_entry(owner, name, "git", git, ", a local repository — a published dependency must name a remote git + tag; refused (it resolves on its author's box and nowhere else)");
+        }
+        if (raw != 0) {
+            return _dep_refuse_entry(owner, name, "path", raw, " with no git / tag — a published dependency must name git + tag; refused (it resolves on its author's box and nowhere else)");
+        }
+        return 0;
+    }
+    # kind 2 (a local override) or 3 (a local-only dep): its own overrides, for selected names
+    if (raw != 0 && git != 0) {
+        if (sel == 1 && pdir == 1) { return 1; }
+        if (remote == 1) { return 0; }
+        if (kind == 3 || sel == 1) { return 0; }
+    } elif (raw != 0) {
+        if (kind == 3 || sel == 1) { return 1; }
+    } elif (git != 0 && remote == 0) {
+        if (kind == 3 || sel == 1) { return 0; }
+    } else {
+        return 0;
+    }
+    if (mode == 0) { return 0 - 1; }
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, " has no remote source, and ");
+    str_builder_add_cstr(sb, _shown(name));
+    str_builder_add_cstr(sb, " is not selected — CYRIUS_LOCAL=1 (or --local=");
+    str_builder_add_cstr(sb, _shown(owner));
+    str_builder_add_cstr(sb, ",");
+    str_builder_add_cstr(sb, _shown(name));
+    str_builder_add_cstr(sb, ") builds it from that checkout; refused");
+    var what = str_data(str_builder_build(sb));
+    if (raw != 0) { return _dep_refuse_entry(owner, name, "path", raw, what); }
+    return _dep_refuse_entry(owner, name, "git", git, what);
+}
+
+# 1 when the [deps.NAME] entry in `rec` is gated out of this run (optional without an active
+# feature, or another target) — the same two gates the resolve applies.
+fn _dep_gated(name, rec): i64 {
+    if (load64(rec + _DS_OPTIONAL) == 1 && _dep_feature_active(name) == 0) { return 1; }
+    var t = load64(rec + _DS_TARGET);
+    if (t != 0 && _dep_target_matches(t) == 0) { return 1; }
+    return 0;
+}
+
+# Is an override actually IN USE? Walks the root manifest and, below it, only manifests of local
+# checkouts (a clone's own overrides are never followed), with the resolve's own decision
+# (`_dep_pick`, silent). 1 when some entry with a git resolves from its path. `seen` holds the
+# directories already walked (cycles, and a depth bound for a pathological tree).
+fn _dep_local_prescan(buf, n, dir, kind, owner, seen): i64 {
+    if (vec_len(seen) > 64) { return 0; }
+    vec_push(seen, dir);
+    var rec = alloc(_DS_SIZE);
+    var info[32];
+    var si = 0;
+    while (si < n) {
+        si = _toml_line(buf, n, si, &info);
+        var hc = 0;
+        var nm = _dep_hdr_name(buf, n, &info, &hc);
+        if (nm == 0) { continue; }
+        if (hc == 0 || _dep_name_unsafe(nm) == 1) { continue; }
+        si = _dep_sec_read(buf, n, si, dir, rec);
+        if (load64(rec + _DS_BAD) != 0) { continue; }
+        if (_dep_gated(nm, rec) == 1) { continue; }
+        var pk = _dep_pick(nm, rec, kind, owner, 0);
+        if (pk != 1) { continue; }
+        if (load64(rec + _DS_GIT) != 0) { return 1; }
+        # a local-only dep: its own manifest may select an override further down
+        var sub = _abs_path(load64(rec + _DS_PATH));
+        if (_dep_list_has(seen, sub) == 1) { continue; }
+        var tm = _cat2(sub, "/cyrius.cyml");
+        if (file_exists(tm) == 0) { tm = _cat2(sub, "/cyrius.toml"); }
+        if (file_exists(tm) == 0) { continue; }
+        var tn = 0;
+        var tb = file_read_whole_max(tm, _MF_MAX, &tn);
+        if (tb == 0) { continue; }
+        var bom = _mf_bom_len(tb, tn);
+        tb = tb + bom;
+        tn = _mf_header_len(tb, tn - bom);
+        store8(tb + tn, 0);
+        var ck = 3;
+        if (load64(rec + _DS_GIT) != 0) { ck = 2; }
+        if (_dep_local_prescan(tb, tn, sub, ck, nm, seen) == 1) { return 1; }
+    }
+    return 0;
+}
+
+# Local mode is on and an override is in use: vendor into build/local-deps/lib, fresh each run
+# (a dependency dropped from the manifest must not linger there and shadow lib/), and point the
+# compiler's lib/ overlay at it. 0, or 1 after naming a refusal.
+fn _dep_local_begin(): i64 {
+    var root = "build/local-deps/lib";
+    var lk = _dep_dest_is_linked(_cat2(root, "/x"));
+    if (lk != 0) { return _dep_refuse_symlinked_dest(lk); }
+    _dep_rm_tree(root);
+    if (is_dir(str_from(root)) == 1 || file_exists(root) == 1) {
+        _err_ctx("local mode: cannot clear the previous local resolve", root);
+        return 1;
+    }
+    _dep_vroot = root;
+    _dep_overlay_env(1);
+    # build/ is where every project's binaries go and 115 of 126 manifested repos ignore it; a
+    # project that does not would see this resolve in `git status`, so say so.
+    if (_dep_wt_run(0, "check-ignore", "-q", root, 0, 0) == 1) {
+        _warn("build/local-deps/ is not ignored by git — add `build/` to .gitignore (local mode vendors there)");
+    }
+    return 0;
+}
+
+# The compiler's lib/ overlay (src/frontend/lex.cyr `_rf_ov_open`): set to build/local-deps/lib for
+# a local-mode resolve (`on` 1), otherwise REMOVED from what every child inherits — an overlay is
+# this CLI's to set, never one left in a shell. POSIX rebuilds `_envp`; Windows sets this process's
+# own environment, which its children inherit.
+fn _dep_overlay_env(on): i64 {
+    #ifdef CYRIUS_TARGET_WIN
+    if (on == 1) { _win_setenv("CYRIUS_LIB_OVERLAY", "build/local-deps/lib"); }
+    else { _win_setenv("CYRIUS_LIB_OVERLAY", 0); }
+    return 0;
+    #endif
+    #ifndef CYRIUS_TARGET_WIN
+    if (_envp == 0) { return 0; }
+    var n = 0;
+    while (load64(_envp + n * 8) != 0) { n = n + 1; }
+    var out = alloc((n + 2) * 8);
+    var o = 0;
+    if (on == 1) { store64(out, "CYRIUS_LIB_OVERLAY=build/local-deps/lib"); o = 1; }
+    var i = 0;
+    while (i < n) {
+        var e = load64(_envp + i * 8);
+        i = i + 1;
+        if (memeq(e, "CYRIUS_LIB_OVERLAY=", 19) == 1) { continue; }
+        store64(out + o * 8, e);
+        o = o + 1;
+    }
+    store64(out + o * 8, 0);
+    _envp = out;
+    return 0;
+    #endif
+}
+
+# The one hint line of a default-mode resolve that left local checkouts unused.
+#     hint: 2 deps have local checkouts not in use (sigil, libro); CYRIUS_LOCAL=1 builds them
+fn _dep_say_hint(): i64 {
+    if (_dep_hint == 0) { return 0; }
+    var k = vec_len(_dep_hint);
+    if (k == 0 || _quiet == 1) { return 0; }
+    _ew("hint: ");
+    fmt_int_fd(STDERR_FD, k);
+    if (k == 1) { _ew(" dep has a local checkout not in use ("); }
+    else { _ew(" deps have local checkouts not in use ("); }
+    var i = 0;
+    while (i < k) {
+        if (i > 0) { _ew(", "); }
+        _ew_shown(vec_get(_dep_hint, i));
+        i = i + 1;
+    }
+    if (k == 1) { _ew("); CYRIUS_LOCAL=1 builds it (this run built the tag)\n"); }
+    else { _ew("); CYRIUS_LOCAL=1 builds them (this run built the tags)\n"); }
+    return 0;
+}
+
+# A selected name no walked manifest gave a `path`: a typo must not read as "no override".
+fn _dep_say_unused_selection(): i64 {
+    if (_dep_local_on == 0 || _dep_local_names == 0) { return 0; }
+    var i = 0;
+    while (i < vec_len(_dep_local_names)) {
+        var nm = vec_get(_dep_local_names, i);
+        i = i + 1;
+        if (_dep_local_seen != 0) { if (_dep_list_has(_dep_local_seen, nm) == 1) { continue; } }
+        _ew("warning: ");
+        _ew(_dep_local_from);
+        _ew(" selects '");
+        _ew_shown(nm);
+        _ew("', but no [deps.");
+        _ew_shown(nm);
+        _ew("] in this resolve declares a path\n");
+    }
+    return 0;
+}
+
 # v5.7.14: process [deps.X] sections in `buf` (manifest content of
 # length `n`). `manifest_dir` is the absolute directory containing
 # the manifest; relative `path = "..."` entries resolve against it.
@@ -1929,72 +2613,25 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                 errors = errors + 1;
                 continue;
             }
-            # v5.7.14: closest-wins skip — the outer walk steps over the section's keys.
+            # The section's keys (`_dep_sec_read`: the one reader of a [deps.NAME] table, shared
+            # with the local-mode prescan and the dry run so the three cannot disagree).
+            var rec = alloc(_DS_SIZE);
+            si = _dep_sec_read(buf, n, si, manifest_dir, rec);
+            # v5.7.14: closest-wins skip.
             if (_dep_name_visited(dep_name) == 1) { continue; }
-            var dep_path = 0;
-            var dep_git = 0;
-            var dep_tag = 0;
-            var dep_modules = 0;
-            var dep_requires = 0;
-            var dep_modular = 0;   # v6.2.50 Phase C: sub-modules from dist/<name>/
-            var dep_optional = 0;  # v6.3.1 lever 2: resolve only when an active feature names this dep
-            var dep_target = 0;    # v6.3.1 lever 2: resolve only on a matching build target
-            var dep_bad = 0;       # 6.6.17 (m6): the key whose value is not a TOML string
+            var dep_path = load64(rec + _DS_PATH);
+            var dep_git = load64(rec + _DS_GIT);
+            var dep_tag = load64(rec + _DS_TAG);
+            var dep_modules = load64(rec + _DS_MODULES);
+            var dep_requires = load64(rec + _DS_REQUIRES);
+            var dep_modular = load64(rec + _DS_MODULAR);   # v6.2.50 Phase C: sub-modules from dist/<name>/
+            var dep_optional = load64(rec + _DS_OPTIONAL); # v6.3.1 lever 2: only when a feature names it
+            var dep_target = load64(rec + _DS_TARGET);     # v6.3.1 lever 2: only on a matching target
+            var dep_bad = load64(rec + _DS_BAD);           # 6.6.17 (m6): the key that is not a string
             # the release-integrity hardening item (v6.2.30): cleared if a tagged dep's resolved commit
             # disagrees with the lock — gates the module copy so poisoned
             # content never lands in lib/.
             var dep_pin_ok = 1;
-            # The section's `key = value` lines, up to the next table header of either kind,
-            # dispatched on the WHOLE key. path / git / tag / target are TOML strings (6.6.17,
-            # m6: a value that is not one refuses the section by name, `dep_bad`); modules /
-            # requires / modular are string arrays; optional is the bareword `true` or `false`.
-            while (si < n) {
-                var nx = _toml_line(buf, n, si, &info);
-                var kind = load64(&info);
-                if (kind == 1 || kind == 2) { break; }
-                si = nx;
-                if (kind == 3) {
-                    var ks = load64(&info + 8);
-                    var kl = load64(&info + 16);
-                    var kv = load64(&info + 24);
-                    var ke = 0;
-                    if (_dep_key_is(buf, ks, kl, "path") == 1) {
-                        dep_path = _toml_str_at(buf, n, kv, &ke);
-                        if (dep_path == 0) { dep_bad = "path"; }
-                        # v5.7.14: resolve relative `path = "..."` against
-                        # the manifest's directory, not the consumer's cwd.
-                        else { dep_path = _dep_join_path(manifest_dir, dep_path); }
-                    } elif (_dep_key_is(buf, ks, kl, "git") == 1) {
-                        dep_git = _toml_str_at(buf, n, kv, &ke);
-                        if (dep_git == 0) { dep_bad = "git"; }
-                    } elif (_dep_key_is(buf, ks, kl, "tag") == 1) {
-                        dep_tag = _toml_str_at(buf, n, kv, &ke);
-                        if (dep_tag == 0) { dep_bad = "tag"; }
-                    } elif (_dep_key_is(buf, ks, kl, "target") == 1) {
-                        # v6.3.1 lever 2: resolve this dep only on a matching build target
-                        # (see `_dep_target_matches`).
-                        dep_target = _toml_str_at(buf, n, kv, &ke);
-                        if (dep_target == 0) { dep_bad = "target"; }
-                    } elif (_dep_key_is(buf, ks, kl, "modules") == 1) {
-                        dep_modules = _parse_toml_str_array(buf, n, ks + kl);
-                    } elif (_dep_key_is(buf, ks, kl, "requires") == 1) {
-                        # v6.2.46 (lever 1 / Phase A): the stdlib leaves a fold needs in scope,
-                        # pulled below ahead of this dep's modules.
-                        dep_requires = _parse_toml_str_array(buf, n, ks + kl);
-                        dep_requires = _dep_expand_groups(dep_requires);   # v6.2.49 Phase B: expand [groups] refs
-                    } elif (_dep_key_is(buf, ks, kl, "modular") == 1) {
-                        # v6.2.50 Phase C: individual sub-modules from the dep's `dist/<name>/`
-                        # (each + its transitive index deps + lib leaves) instead of `modules`.
-                        dep_modular = _parse_toml_str_array(buf, n, ks + kl);
-                    } elif (_dep_key_is(buf, ks, kl, "optional") == 1) {
-                        # v6.3.1 lever 2: resolve only when an active `[features]` set names
-                        # this dep (`_dep_feature_active`). The whole bareword: this read the
-                        # first byte, so `tru` (or `t-anything`) meant true.
-                        dep_optional = _dep_bareword_bool(buf, n, kv);
-                        if (dep_optional < 0) { dep_bad = "optional"; }
-                    }
-                }
-            }
             if (dep_bad != 0) {
                 _ew("error: [deps.");
                 _ew_shown(dep_name);
@@ -2088,6 +2725,31 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
             # `modules = []` parses to a non-zero empty vec, so it is NOT defaulted —
             # it stays the "declared, not linked" spelling. The name is already
             # validated (the deps-header dot-dot path bug above), so it is safe to build a path from.
+            # 6.7.6 (lane C) — WHERE THIS DEP COMES FROM: its working tree or its git (`_dep_pick`, the
+            # rule at "LOCAL MODE" above). Until 6.7.6 a `path` beside git/tag won whenever the
+            # directory existed, silently, with no clone and no commit pin.
+            var pick = _dep_pick(dep_name, rec, _dep_ctx_kind, _dep_ctx_owner, 1);
+            if (pick < 0) {
+                errors = errors + 1;
+                continue;
+            }
+            var dep_local = 0;      # 1: resolved from a working tree (its kind for the walk below)
+            if (pick == 1) {
+                dep_local = 1;
+                if (dep_git != 0) { _dep_say_local(dep_name, rec, _dep_ctx_owner); }
+                else {
+                    if (_dep_local_active == 1 || _verbose == 1) {
+                        _ew("local-only: ");
+                        _ew_shown(dep_name);
+                        _ew(" <- ");
+                        _ew_shown(load64(rec + _DS_RAW));
+                        if (_dep_ctx_owner != 0) { _ew(" (via "); _ew_shown(_dep_ctx_owner); _ew(")"); }
+                        _ew(" (no git / tag: a release cannot resolve it)\n");
+                    }
+                }
+            } else {
+                dep_path = 0;       # its git decides; a path beside it is a dev override not in use
+            }
             var dep_mod_default = 0;
             if (dep_modules == 0 && dep_modular == 0 && (dep_git != 0 || dep_path != 0)) {
                 dep_mod_default = 1;
@@ -2095,19 +2757,13 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
             var need_clone = 0;
             # I10a/I10c: a defaulted block and a `modular`-only block are cloned too —
             # the guard used to be `dep_modules != 0` alone, so both were dropped here.
-            if (dep_git != 0 && (dep_modules != 0 || dep_modular != 0 || dep_mod_default == 1)) {
-                if (dep_path == 0) {
-                    need_clone = 1;
-                } elif (is_dir(str_from(dep_path)) == 0) {
-                    need_clone = 1;
-                }
+            if (dep_git != 0 && dep_path == 0 && (dep_modules != 0 || dep_modular != 0 || dep_mod_default == 1)) {
+                need_clone = 1;
             }
-            # the release-integrity hardening item (v6.2.30) NOTE: a dep that supplies BOTH git/tag AND an
-            # existing `path =` override resolves from the local path with no
-            # clone, so the commit-pin verify below (which lives in the
-            # need_clone branch) is intentionally bypassed — a local path
-            # override is operator-controlled and has no remote tag to pin.
-            # The git/tag fields are inert in that case.
+            # the release-integrity hardening item (v6.2.30): the commit-pin verify below lives in the
+            # need_clone branch, so a dep resolved from a working tree has no pin checked — and
+            # since 6.7.6 that happens only in local mode, which never writes cyrius.lock. A
+            # default resolve always builds (and pins) the tag.
             if (need_clone == 1) {
                 var clone_dir = _dep_clone_dir(dep_name, dep_tag);
                 if (is_dir(str_from(clone_dir)) == 0) {
@@ -2437,7 +3093,18 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                         _ew_shown(dep_name);
                         sys_write(STDERR_FD, "] modules entry \"", 17);
                         _ew_shown(mod_path);
-                        sys_write(STDERR_FD, "\" not found at tag in ", 22);
+                        # 6.7.6 (R12): a dep resolved from a working tree has no tag to name
+                        if (need_clone == 1 && dep_tag != 0) {
+                            _ew("\" not found at tag ");
+                            _ew_shown(dep_tag);
+                            _ew(" in ");
+                        } elif (need_clone == 1) {
+                            _ew("\" not found in the clone of ");
+                            _ew_shown(dep_git);
+                            _ew(" at ");
+                        } else {
+                            _ew("\" not found in the local path ");
+                        }
                         _ew_shown(dep_path);
                         sys_write(STDERR_FD, "\n", 1);
                         errors = errors + 1;
@@ -2486,7 +3153,6 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                         bi = bi + 1;
                     }
                     var sb3 = str_builder_new();
-                    str_builder_add_cstr(sb3, "lib/");
                     var _dnl = strlen(dep_name);
                     var _bsd = 1;
                     var _ck = 0;
@@ -2501,7 +3167,9 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                         str_builder_add_cstr(sb3, "_");
                         str_builder_add_cstr(sb3, base);
                     }
-                    var dst = str_data(str_builder_build(sb3));
+                    var dst_rel = str_data(str_builder_build(sb3));
+                    var dst = _dep_ipath(dst_rel);     # lib/<file>: the include string, the lock key
+                    var wdst = _dep_wpath(dst_rel);    # 6.7.6: where this run writes it
                     # v5.11.8: file-copy instead of symlink (was
                     # syscall(88, sym_src, dst) symlink-then-fallback-
                     # to-copy). Symlinks fired install.sh's `cp -L`
@@ -2510,7 +3178,7 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                     # copy → distinct inodes at every layer. See
                     # CHANGELOG [5.11.8], roadmap v5.10.37/v5.11.8 pin.
                     if (_dep_vendor_mode == 1) {
-                        var _l2 = _dep_dest_is_linked(dst);
+                        var _l2 = _dep_dest_is_linked(wdst);
                         if (_l2 != 0) { return _dep_refuse_symlinked_dest(_l2); }
                     }
                     # v6.5.39 — refuse BEFORE the unlink, same discipline as the v6.5.37
@@ -2518,7 +3186,7 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                     # than either outcome, and here the file being deleted IS the snapshot
                     # copy we are defending.
                     # 6.6.11 (S2): a thin profile of a package that is a stdlib leaf here.
-                    var _kf = _dep_keep_fold_over_profile(dep_name, dst, mod_path);
+                    var _kf = _dep_keep_fold_over_profile(dep_name, dst, wdst, mod_path);
                     if (_kf < 0) { return 1; }
                     if (_kf == 1) {
                         dep_had_success = 1;
@@ -2543,8 +3211,8 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                             continue;
                         }
                     }
-                    sys_unlink(dst);
-                    var cr2 = _dep_copy_file(src, dst);
+                    sys_unlink(wdst);
+                    var cr2 = _dep_copy_file(src, wdst);
                     if (cr2 == 0 || cr2 == 2) {
                         vec_push(_dep_includes, dst);
                         vec_push(_dep_nd_modules, dst);   # 6.6.9: a named dep's module (distlib verify)
@@ -2562,11 +3230,20 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                     mi = mi + 1;
                 }
             }
-            # v5.7.14: on success, mark visited + queue for transitive walk.
+            # v5.7.14: on success, mark visited + queue for transitive walk. 6.7.6: with, for the
+            # walk, what KIND of tree it is — a clone's own overrides are never followed, a local
+            # checkout's are for selected names.
             if (dep_had_success == 1) {
                 vec_push(_dep_visited, dep_name);
                 if (dep_path != 0) {
                     vec_push(_dep_queue, _abs_path(dep_path));
+                    var qk = 1;
+                    if (dep_local == 1) {
+                        qk = 3;
+                        if (dep_git != 0) { qk = 2; }
+                    }
+                    vec_push(_dep_queue_kind, qk);
+                    vec_push(_dep_queue_owner, dep_name);
                 }
             }
         }
@@ -2664,12 +3341,35 @@ fn cmd_deps(): i64 {
     # queue = abs dirs of resolved deps whose own cyrius.cyml needs walking.
     _dep_visited = vec_new();
     _dep_queue = vec_new();
+    # 6.7.6: the queue's kinds (see "LOCAL MODE")
+    _dep_queue_kind = vec_new();
+    _dep_queue_owner = vec_new();
+    _dep_hint = 0;
+    _dep_local_seen = 0;
     _dep_inert = 0;                  # 6.6.13 (I10b): modules-less deps that vendored nothing
     _dep_commit_lines = vec_new();   # the release-integrity hardening item (v6.2.30): git-dep commit pins
     _dep_lock_load();                # v6.6.4: the inherited lock, read BEFORE any copy (stdlib-leaf guard)
     _dep_parse_groups(buf, n);       # v6.2.49 Phase B: [groups] (buf is the TOML header, CYML body already stripped)
     _dep_register_default_std_group();  # v6.3.32 Phase D: built-in `std` default group (after parse so a manifest's own `std` wins)
     _dep_parse_features(buf, n);     # v6.3.1 lever 2: [features] table (populates _dep_feature_names/_deps; gating happens in _process_named_deps)
+    var _consumer_dir = _abs_path(".");
+    # 6.7.6 (lane C) — where this resolve WRITES. Default: lib/ + cyrius.lock (the tag resolution).
+    # Local mode with an override in use: build/local-deps/lib, no lock.
+    _dep_vroot = "lib";
+    _dep_local_active = 0;
+    if (_dep_local_ign != 0 && _quiet == 0) {
+        _ew("note: CYRIUS_LOCAL is ignored here — ");
+        _ew(_dep_local_ign);
+        _ew("\n");
+    }
+    if (_dep_local_on == 1) {
+        _dep_local_active = _dep_local_prescan(buf, n, _consumer_dir, 0, 0, vec_new());
+        if (_dep_local_active == 1) {
+            if (_dep_local_begin() != 0) { return 1; }
+        }
+    }
+    _dep_ctx_kind = 0;               # the root manifest
+    _dep_ctx_owner = 0;
 
     # === Phase 1: stdlib deps ===
     # `[deps] stdlib = ["string", "fmt", ...]`, read by the one reader (_dep_declared_stdlib):
@@ -2717,7 +3417,6 @@ fn cmd_deps(): i64 {
     # v5.7.14: extracted to _process_named_deps. Consumer's manifest_dir
     # is abs(cwd). After this returns, _dep_queue holds the resolved
     # dirs of every direct dep — Phase 3 drains them.
-    var _consumer_dir = _abs_path(".");
     errors = errors + _process_named_deps(buf, n, _consumer_dir);
 
     # === Phase 3: transitive deps (BFS drain of _dep_queue) ===
@@ -2754,8 +3453,13 @@ fn cmd_deps(): i64 {
         _tn = _tn - _tbom;
         _tn = _mf_header_len(_tbuf, _tn);   # only the header is TOML
         store8(_tbuf + _tn, 0);
+        # 6.7.6: the walked manifest's kind — a clone's own overrides are never followed
+        _dep_ctx_kind = vec_get(_dep_queue_kind, _qi - 1);
+        _dep_ctx_owner = vec_get(_dep_queue_owner, _qi - 1);
         errors = errors + _process_named_deps(_tbuf, _tn, _trans_dir);
     }
+    _dep_ctx_kind = 0;
+    _dep_ctx_owner = 0;
 
     # v5.7.14: `copied` is the count of distinct deps resolved (direct +
     # transitive). _dep_visited grows once per resolved dep across both
@@ -2763,6 +3467,8 @@ fn cmd_deps(): i64 {
     copied = vec_len(_dep_visited);
     # v6.6.4: leaves the lock guard refused are errors — no lock write, non-zero exit.
     errors = errors + _dep_lock_refused;
+    _dep_say_hint();                 # 6.7.6: the checkouts a default run did not use, one line
+    _dep_say_unused_selection();     # 6.7.6: a selected name nothing declares
 
     # Summary (only print if something was copied, errored, or — 6.6.13 I10b — a
     # modules-less dep vendored nothing: that count is printed even at 0 resolved).
@@ -2784,6 +3490,15 @@ fn cmd_deps(): i64 {
             sys_write(STDOUT_FD, " errors", 7);
         }
         sys_write(STDOUT_FD, "\n", 1);
+    }
+    # 6.7.6: local mode with an override in use writes NO tracked file — the tag resolution's
+    # lib/ and cyrius.lock stay as they are, so switching modes churns nothing.
+    if (_dep_local_active == 1) {
+        if (_quiet == 0) {
+            _ew("local mode: this resolve is in build/local-deps/lib/; lib/ and cyrius.lock untouched (--no-local resolves the tags)\n");
+        }
+        if (errors > 0) { return 1; }
+        return 0;
     }
     # v5.7.8 P5: write cyrius.lock by default after every successful
     # resolve (was opt-in via `cyrius deps --lock` pre-v5.7.8). The
