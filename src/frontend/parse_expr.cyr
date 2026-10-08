@@ -2064,8 +2064,8 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
     #
     # Why here and not in lib/fnptr.cyr: the closure needs its env as a TRAILING
     # argument, so `fncallN` would have to re-enter at `fncall(N+1)` — and cybs, the
-    # bootstrap compiler that must parse lib/fnptr.cyr on the seed chain, cannot
-    # parse a call with more than 6 arguments. That caps the ladder at fncall4 and
+    # bootstrap compiler that must parse lib/fnptr.cyr on the seed chain, could not
+    # parse a call with more than 6 arguments (until 6.7.6). That capped the ladder at fncall4 and
     # would have left fncall5-7 silently broken, which is exactly the half-fix shape
     # this bug already went through once. Lowering here fixes every arity at once,
     # gives the stdlib's own higher-order fns (vec_sort_by, vec_each, hashmap
