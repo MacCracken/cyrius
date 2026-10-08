@@ -31,7 +31,7 @@ the unpinned watching list is [roadmap-future.md](roadmap-future.md); per-releas
 
 ## Where we are
 
-**Current head: v6.7.4** (2026-10-08) — **B3 the if-expression landed** (6.7.3 shipped: tag `6.7.3` @ `9a8eee4c`)
+**Current head: v6.7.5** (2026-10-08) — **slot open: B5 `loop` / `do … while` + B8 compound assignment on a field** (6.7.4 shipped: tag `6.7.4` @ `d71cf4bc`)
 · cycc **1,751,432 B** (`.text` **1,561,832**) · `cycc-native-aarch64` **1,529,848 B** · **524** `.tcyr` (**231** in
 `crossos/`) · **106** `lib/*.cyr` · **422** shell gates under `tests/gates/<bucket>/` · api-surface **5,827** · **1 open
 issue** · **2 open proposals** · the next free CVE id is **105**.
@@ -79,9 +79,9 @@ in [completed-phases.md](completed-phases.md) § *v6.6.x*; the detail is the CHA
 | **6.7.2** | **B1 `const` + C1 `const fn`** together — decisions taken at the open (spec below); ✅ landed 2026-10-07 |
 | **6.7.3** | **B2 `bool` / `true` / `false`** — decisions taken at the open (spec below) · **+ a repair lane for the filed issues** (user, 2026-10-07 — an exception to operating rule 1, the user's call): the two 6.7.x filings (struct-argument type check, enum-constant assignment) and the four open issue files (tail call in a loop, `cyriusly cmdtools`, the hashmap_fast leak, the tools' attribute-line rule); ✅ landed 2026-10-08 (CHANGELOG [6.7.3]) |
 | **6.7.4** | **B3 — the if-expression** — decisions taken at the open (spec below); ✅ landed 2026-10-08 (CHANGELOG [6.7.4]) |
-| **6.7.5 →** | the next of "then, by size" below |
-| then, by size | ~~B2~~ (6.7.3) · ~~B3~~ (6.7.4) · B5 `loop` / `do … while` · B8 compound assignment on a field |
-| **Break 1** | catch-up: backlog + found issues (user picks) · `cyrius test` / `tests` consolidation · **cybs stack arguments** (below) |
+| **6.7.5** | **B5 `loop` / `do … while` + B8 compound assignment on a field** — the last two of "by size" (~~B2~~ 6.7.3 · ~~B3~~ 6.7.4), so Break 1 follows (user, 2026-10-08: "continue with 6.7.5"; decisions asked at the open) |
+| **W2 — stdlib wave** | after 6.7.5 is tagged: the 12 folded stdlibs move their pin to **6.7.5**, each with a patch release (a minor where an API changes — "so be it", user 2026-10-08), carrying their high / critical filed issues, the migration concerns, and the simplifications the 6.7.x features allow; everything else is roadmapped in that repo. Plan: § *W2* below |
+| **6.7.6 — Break 1** | the W2 tags re-vendored byte-identical · catch-up: the high / critical backlog + found issues (user picks) · `cyrius test` / `tests` consolidation · **cybs stack arguments** (below) |
 | then | B4 tuples · B6 default + named arguments · B7 narrow struct fields (ABI survey + migration) · C2 bounds-checked mode (+ P5 execution coverage) · **checked `dyn`** (decided 2026-10-07, open question 5) |
 | **Break 2** | catch-up |
 | **closeout** | the closeout checklist ([cycle-discipline.md](cycle-discipline.md)) — the checklist, not an audit campaign (CLAUDE.md) |
@@ -251,6 +251,26 @@ field walk at the nested `<` (re-measured 6.7.1: `#derive(accessors)` never defi
    unchecked half for integer-element `var a: T[N]`; still to do: `*T` pointer subscripts, slice writes, and
    the checked mode itself. **With it, proposal P5's execution half** ([`proposals/2026-09-20-coverage-should-accept-run-programs-as-a-corpus.md`](proposals/2026-09-20-coverage-should-accept-run-programs-as-a-corpus.md);
    A shipped 6.6.17) — it shares C2's insertion point and build-flag plumbing.
+
+## W2 — the stdlib wave to 6.7.5, folded back in 6.7.6 (user, 2026-10-08)
+
+> "schedule update stdlibs to 6.7.5 with patch and version release for fold back in 6.7.6 with the break 1 and
+> issue repairs … address any concerns of migrating work or previously roadmapped concerns, if that causes a minor
+> bump so be it. Not a full blown audit, but focused on repairing previously found issues that need addressing
+> cause of their high to critical nature, or work that can be simplified because of new features … roadmap any
+> other items that should be addressed or migrated later." (user, 2026-10-08)
+
+- **When:** after 6.7.5 is tagged (a stdlib may not pin an untagged cyrius). One wave, in dependency order, as
+  6.6.18's W was; each repo's release is a docs-and-code commit series in THAT repo, pushed and tagged by the user.
+- **Which:** the 12 folds — sakshi, sigil, bayan, sandhi, ganita, niyama, mabda, vani, yantra, yukti, patra, sankoch.
+- **Each release carries:** the pin move to 6.7.5 and whatever it surfaces (new reserved words, the 6.7.3 checks);
+  the high / critical items already filed against that repo (this file's *Sibling follow-ups*, the repo's own
+  issues), verified against live code first; and the simplifications the 6.7.x features allow, where they make the
+  code clearer — not a refactor. A public API change makes it a minor. Everything else found is roadmapped in that
+  repo for later.
+- **6.7.6 re-vendors** every W2 tag byte-identical (`cmp` against the tag's `dist/`) and updates
+  `docs/ecosystem.md`'s fold rows.
+- **The per-repo scope** is surveyed at the 6.7.5 open and recorded below.
 
 ## Bootstrap item placed in Break 1 — cybs stack arguments (user, 2026-10-07)
 
