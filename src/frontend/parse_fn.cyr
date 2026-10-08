@@ -5581,6 +5581,13 @@ fn _ce_name(S): i64 {
         } }
     var ci = _cst_find(S, noff);
     if (ci >= 0) {
+        # a `private` const of another file is refused here as a read of it is anywhere
+        var vsv = GTI(S);
+        STI(S, _ce_ti);
+        var p0 = _panic;
+        _vis_check_var(S, L64(_cst_tab + ci * 64 + 24), noff);
+        STI(S, vsv);
+        if (_panic != p0) { _ce_err = 1; return 0; }
         _ce_ti = _ce_ti + 1;
         if (_ce_skip > 0) { _ce_k = _cst_kind_peek(S, ci); return 0; }
         var cv = _cst_value(S, ci);
@@ -5653,33 +5660,35 @@ fn _ce_call(S, noff): i64 {
     if (fi < 0) { _ce_badn(S, "unknown fn ", noff, " in a const context"); return 0; }
     if (GFCFN(S, fi) != 1) { _ce_badn(S, "", noff, " is not a `const fn` - a const context calls only const fns"); return 0; }
     _ce_ti = _ce_ti + 2;   # the name, `(`
-    var args = alloc(32 * 16);
+    # The arguments are pushed on the frame stack, unnamed, and become the callee's parameters in
+    # place (`_ce_bind_params` names them) — a call allocates nothing, however deep the recursion.
+    var base = _ce_sp;
     var n = 0;
     if (TOKTYP(S, _ce_ti) != 11) {
         var go = 1;
         while (go == 1) {
-            if (n >= 32) { _ce_bad(S, "a const fn call with more than 32 arguments", 43); return 0; }
             var av = _ce_expr(S);
-            store64(args + n * 16, av);
-            store64(args + n * 16 + 8, _ce_k);
+            var ak = _ce_k;
+            if (_ce_err == 1) { _ce_sp = base; return 0; }
+            _ce_fr_push(S, 0 - 1, av, ak, 8);
             n = n + 1;
             if (TOKTYP(S, _ce_ti) == 31) { _ce_ti = _ce_ti + 1; } else { go = 0; }
         }
     }
     _ce_expect(S, 11);
-    if (_ce_err == 1) { return 0; }
-    if (_ce_skip > 0) { _ce_k = _ce_retkind(S, fi); return 0; }
-    return _ce_invoke(S, fi, args, n);
+    if (_ce_err == 1) { _ce_sp = base; return 0; }
+    if (_ce_skip > 0) { _ce_sp = base; _ce_k = _ce_retkind(S, fi); return 0; }
+    return _ce_invoke(S, fi, base, n);
 }
-fn _ce_invoke(S, fi, args, n): i64 {
-    if (_ce_depth >= 2000) { _ce_bad(S, "compile-time evaluation nested deeper than 2000 const fn calls", 62); return 0; }
+fn _ce_invoke(S, fi, base, n): i64 {
+    if (_ce_depth >= 2000) { _ce_sp = base; _ce_bad(S, "compile-time evaluation nested deeper than 2000 const fn calls", 62); return 0; }
     var op = _gen_def_open(S, fi);
-    if (op < 0) { _ce_bad(S, "a const fn with no definition to run", 36); return 0; }
-    var sv_ti = _ce_ti; var sv_fb = _ce_fb; var sv_sp = _ce_sp; var sv_in = _ce_infn;
+    if (op < 0) { _ce_sp = base; _ce_bad(S, "a const fn with no definition to run", 36); return 0; }
+    var sv_ti = _ce_ti; var sv_fb = _ce_fb; var sv_in = _ce_infn;
     _ce_depth = _ce_depth + 1;
-    _ce_fb = _ce_sp;
+    _ce_fb = base;
     _ce_infn = 1;
-    var body = _ce_bind_params(S, op, args, n, fi);
+    var body = _ce_bind_params(S, op, base, n, fi);
     var rv = 0;
     var rk = 0;
     if (body > 0) {
@@ -5694,7 +5703,7 @@ fn _ce_invoke(S, fi, args, n): i64 {
     if (rk != 2) { rk = dk; }
     _ce_ret = 0;
     _ce_depth = _ce_depth - 1;
-    _ce_ti = sv_ti; _ce_fb = sv_fb; _ce_sp = sv_sp; _ce_infn = sv_in;
+    _ce_ti = sv_ti; _ce_fb = sv_fb; _ce_sp = base; _ce_infn = sv_in;
     _ce_k = rk;
     return rv;
 }
@@ -5703,8 +5712,9 @@ fn _ce_retkind(S, fi): i64 {
     if (GFRS(S, fi) == 0 - 9) { return 1; }
     return 0;
 }
-# Bind fi's parameters (`(` at op) to the arguments; returns the body's `{` token, or -1.
-fn _ce_bind_params(S, op, args, n, fi): i64 {
+# Name the n argument entries at `base` after fi's parameters (`(` at op), typing and narrowing
+# each by its declaration; returns the body's `{` token, or -1.
+fn _ce_bind_params(S, op, base, n, fi): i64 {
     var i = op + 1;
     var k = 0;
     while (TOKTYP(S, i) != 11) {
@@ -5714,12 +5724,13 @@ fn _ce_bind_params(S, op, args, n, fi): i64 {
             var w = 8;
             var pk = 0;
             if (TOKTYP(S, i + 1) == 49) { w = _ce_type_w(S, i + 2); if (w == 9) { pk = 1; w = 8; } }
-            var av = 0;
-            var ak = 0;
-            if (args != 0) { if (k < n) { av = load64(args + k * 16); ak = load64(args + k * 16 + 8); } }
-            if (ak == 2) { pk = 2; }
-            if (pk == 0) { av = _ce_narrow(av, w); }
-            _ce_fr_push(S, pn, av, pk, w);
+            if (k < n) {
+                var e = _ce_st + (base + k) * 40;
+                var av = load64(e + 8);
+                if (load64(e + 16) == 2) { pk = 2; }
+                if (pk == 0) { av = _ce_narrow(av, w); }
+                store64(e, pn); store64(e + 8, av); store64(e + 16, pk); store64(e + 24, w);
+            }
             k = k + 1;
             while (TOKTYP(S, i) != 31 && TOKTYP(S, i) != 11) { i = i + 1; }
             if (TOKTYP(S, i) == 31) { i = i + 1; }
@@ -6050,7 +6061,10 @@ fn _ce_check_fn(S, fi): i64 {
     _ce_fb = _ce_sp;
     _ce_infn = 1;
     _ce_skip = _ce_skip + 1;
-    var body = _ce_bind_params(S, op, 0, _ce_nparams(S, op), fi);
+    var np = _ce_nparams(S, op);
+    var pi = 0;
+    while (pi < np) { _ce_fr_push(S, 0 - 1, 0, 0, 8); pi = pi + 1; }
+    var body = _ce_bind_params(S, op, _ce_fb, np, fi);
     if (body > 0) {
         _ce_ti = body;
         _ce_ret = 0;
@@ -6168,7 +6182,9 @@ fn _cst_eval(S, ci): i64 {
     var e = _cst_tab + ci * 64;
     S64(e + 32, 1);
     var sv_ti = _ce_ti; var sv_top = _ce_top; var sv_in = _ce_infn; var sv_err = _ce_err;
-    var sv_skip = _ce_skip; var sv_fb = _ce_fb;
+    var sv_skip = _ce_skip; var sv_fb = _ce_fb; var sv_steps = _ce_steps; var sv_as = _ce_asrt;
+    _ce_steps = 0;   # each const its own budget (the sweep runs them all back to back)
+    _ce_asrt = 0;
     _ce_ti = L64(e + 8);
     _ce_top = 1;
     _ce_infn = 0;
@@ -6179,6 +6195,7 @@ fn _cst_eval(S, ci): i64 {
     if (_ce_err == 0) { if (TOKTYP(S, _ce_ti) != 5) { _ce_bad(S, "expected ';' after a const's value", 34); } }
     var bad = _ce_err;
     _ce_ti = sv_ti; _ce_top = sv_top; _ce_infn = sv_in; _ce_err = sv_err; _ce_skip = sv_skip; _ce_fb = sv_fb;
+    _ce_steps = sv_steps; _ce_asrt = sv_as;
     var vi = L64(e + 24);
     if (bad == 1) {
         S64(e + 32, 3); S64(e + 40, 0); S64(e + 48, 0);
@@ -9816,7 +9833,11 @@ fn _tl_scan2_def(S, t, objok): i64 {
         PARSE_FN_DEF(S);
         return 1;
     }
-    if (t == 168) { _cst_skip_decl(S); return 1; }   # 6.7.2 (B1): a top-level const (no code)
+    if (t == 168) {   # 6.7.2 (B1): a top-level const (no code); one the pre-scan did not take is malformed
+        if (_cst_is_top(S, GTI(S)) == 0) { _cst_stmt(S); return 1; }
+        _cst_skip_decl(S);
+        return 1;
+    }
     if (t == 3) { _skip_gvar_decl(S); return 1; }   # 6.6.6: a `;` inside a closure body is not the end
     if (t == 77) { PARSE_IMPL(S); return 1; }
     if (t == 167) { _tl_trait2(S); return 1; }   # 6.7.0 (A1)

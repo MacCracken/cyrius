@@ -47,11 +47,17 @@ its body is the pure subset, checked at the definition).
   `_EVAL_CONST_ATOM`, `_enum_atom_idx` and `_assert_skip_atom` are gone: one evaluator serves every site. ⚠ An enum
   value and a top-level array size are read in pass 1 in source order, so a `const fn` they call must be declared
   above them (a top-level const need not be).
-  Tests: `tests/tcyr/crossos/const_values.tcyr` (24 rows), `const_contexts.tcyr` (13), `const_fn_f64.tcyr` (13 —
+  Tests: `tests/tcyr/crossos/const_values.tcyr` (25 rows), `const_contexts.tcyr` (13), `const_fn_f64.tcyr` (13 —
   each const fn run at compile time AND at run time, the bits compared) on x86, aarch64 under qemu, PE under wine
-  and cx; the gate `tests/gates/frontend/const_checked.sh` (26 rows, four mutations each RED).
+  and cx; the gate `tests/gates/frontend/const_checked.sh` (29 rows, five mutations each RED).
   `assert_enum_constants.sh`'s arithmetic rows now evaluate (a false one fails as an assertion, a true one passes),
   and `lexer_attribute_word_boundary.sh` B11's `#assert(8 == 9)` fails as an assertion (it was refused).
+  Fixed in this bite's one review round, before release: a const fn call's arguments live on the evaluator's frame
+  stack (each call allocated an argument array, never freed — a naive recursive `fib(24)` is ~75,000 calls); each
+  top-level const has its own step budget (the end-of-pass-1 sweep summed them, so several heavy consts could be
+  refused as an endless loop); a `private` const of another file read in a const context is refused as any read of
+  it is; a malformed top-level const (`const X;`) is reported instead of stepped over. Gate rows M1, V1, C2 and a
+  `fibr(24)` row in const_values.tcyr; the budget mutation turns C2 red.
   Followed on the way: `cyrius lint`'s context-dependent set takes the evaluator's `unknown name 'X' in a const
   context` (an array sized by another file's constant still lints, as `array size identifier must be an enum
   constant` did); `hidden_temp_census.sh` attributes the new top-level registration (`_cst_record`, brace depth 0

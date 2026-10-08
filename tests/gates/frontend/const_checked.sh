@@ -16,11 +16,15 @@
 #      string arithmetic, a NaN (0.0 / 0.0)
 #   U  one name, one declaration: a const twice, a const and a var at top level, a local const
 #      and a var in one scope (either order); `const` is reserved
-#   C  ANTI-VACUOUS: consts, a const fn, a local const and every const context build and run
+#   M  a malformed top-level const is reported, not stepped over
+#   V  a `private` const read in another file's const context is refused (as a read of it is)
+#   C  ANTI-VACUOUS: consts, a const fn, a local const and every const context build and run; three
+#      heavy consts each within its OWN step budget
 #
 # Mutations (scratch trees, each RED here — run 2026-10-07): `_cst_lvalue_check` answering 0 ->
 # L1-L3 BUILD; `_ce_check_fn` a no-op -> D1-D4 BUILD; `_ce_step` not counting -> E3 hangs (killed
-# by the 60 s timeout, RED); `_ce_name`'s local-variable refusal removed -> I4 refused only as an
+# by the 60 s timeout, RED); `_cst_eval` neither zeroing nor restoring `_ce_steps` (the pre-review
+# shared budget) -> C2 refused as an endless loop; `_ce_name`'s local-variable refusal removed -> I4 refused only as an
 # unknown name.
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -80,6 +84,17 @@ refused u3 "'L' is already declared in this scope (a const)" "U3: a local const,
 refused u4 "'L' is already declared in this scope" "U4: a var, then a local const" 'fn main(): i64 { var L = 1; const L = 2; return L; }\nsyscall(60, main());\n'
 refused u5 "reserved keyword 'const'" "U5: const is reserved" 'var const = 3;\nsyscall(60, 1);\n'
 
+refused m1 "expected '=', got ';'" "M1: a malformed top-level const is reported (not skipped)" 'const X;\nsyscall(60, 1);\n'
+# V — a `private` const of another file, read in a const context, is refused as any read of it is
+mkdir -p "$T/v"
+printf 'private\nconst SECRET = 3;\nfn sec_ok(): i64 { return SECRET; }\n' > "$T/v/priv.cyr"
+printf 'include "priv.cyr"\nvar a[SECRET];\nsyscall(60, 1);\n' > "$T/v/usep.cyr"
+vrc=0; ( cd "$T/v" && "$CC" < usep.cyr > /dev/null 2> e ) || vrc=$?
+if [ "$vrc" -eq 0 ]; then bad "V1: another file's private const as an array size BUILT"
+elif [ "$(grep -c "'SECRET' is private to its file" "$T/v/e")" -ne 1 ]; then bad "V1: refused, but not once as private: $(grep '^error' "$T/v/e" | head -1)"
+else ok "V1: another file's private const in a const context: refused once"; fi
+# C2 — each top-level const has its OWN step budget: three of ~3.6 M steps each (10.8 M together, past the 10 M budget)
+exits c2 192 "C2: three heavy consts, each within its own budget" 'const fn burn(n) { var s = 0; var i = 0; while (i < n) { s = s + i; i = i + 1; } return s; }\nconst B1 = burn(1200000);\nconst B2 = burn(1200000);\nconst B3 = burn(1200000);\nsyscall(60, (B1 + B2 + B3) & 255);\n'
 exits c1 42 "C1: consts, a const fn, a local const, an array size, #assert, a case label, an enum value" 'const N = 4;\nconst fn twice(x) { return x * 2; }\nenum E { EA = twice(N); }\nvar g[N];\n#assert twice(N) == 8, "twice";\nfn f(v): i64 { const L = 2; switch (v) { case twice(N): return 40 + L; default: return 0; } return 1; }\nsyscall(60, f(EA));\n'
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: const_checked — $fails row(s) red"; exit 1; fi

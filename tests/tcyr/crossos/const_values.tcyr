@@ -32,6 +32,8 @@ const PICK = pick(2);
 const SHIFTY = (0 - 16) >> 60;
 const ASR = (0 - 16) >>> 2;
 
+const FIBR = fibr(24);
+const fn fibr(n) { if (n < 2) { return n; } return fibr(n - 1) + fibr(n - 2); }
 const fn sq(x) { return x * x; }
 const fn fact(n) { if (n <= 1) { return 1; } return n * fact(n - 1); }
 const fn fib(n) {
@@ -71,6 +73,7 @@ fn run(): i64 {
     assert_eq(SQ, 81, "C1: const fn");
     assert_eq(FACT, 3628800, "C2: recursion");
     assert_eq(FIB, 6765, "C3: while + locals");
+    assert_eq(FIBR, 46368, "C3b: naive recursion, ~75,000 calls (arguments live on the frame stack)");
     assert_eq(LOOPY, 2500 + 5000, "C4: for, continue, compound, for-in, break");
     assert_eq(NARROW, 44, "C5: an i8 local narrows (300 -> 44)");
     assert_eq(f64_to(FX * 4.0), 4, "C6: an f64 const fn (1.0)");
