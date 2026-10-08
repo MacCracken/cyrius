@@ -2978,6 +2978,31 @@ fn _asg_compound_op(S, cop, lt): i64 {
     return 0;
 }
 
+# `*expr = v` / `*expr OP= v` (cursor on the `*`), ending at `term` — `;` for a statement, `)` for
+# a classic-for step: the address once, before the value, then a WORD store, as `*p` reads a word
+# whatever p's type (the guide's Pointers). 6.7.5 (B8): the compound form — it was "expected '=',
+# got '+'" — loads the word, `_asg_compound_op`s it (integer arithmetic) and stores it back. Out of
+# _PARSE_STMT_IMPL, whose body sits at cybs's silent per-fn reference ceiling. CHANGELOG [6.7.5]
+fn _deref_store(S, term): i64 {
+    STI(S, GTI(S) + 1);   # `*`
+    PARSE_FACTOR(S);
+    EPUSHR(S);            # the address
+    var cop = _asg_compound_tok(S);
+    if (cop == 0) {
+        if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); }
+        STI(S, GTI(S) + 1);
+        PCMPE(S);
+    } else {
+        ELOAD64(S);       # rax = the word at the address
+        _asg_compound_op(S, cop, 0);
+    }
+    EPOPC(S);             # rcx = the address, rax = the value
+    ESTORE64(S);
+    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
+    STI(S, GTI(S) + 1);
+    return 0;
+}
+
 # ⛔ 6.6.11 — RE-JUDGE AN UNTYPED VARIABLE AT EVERY PLAIN ASSIGNMENT. The kind-3 flag (unary
 # minus on an untyped float, _UFV_L / _UFV_G) was written only at the declaration, so
 # `var g = 0; g = 1.5; -g` was a silent integer negation of 1.5's bits and `var h = 1.5; h = 7;
@@ -3913,22 +3938,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
         }
         return 0;
     }
-    # *expr = val; (pointer store)
-    if (typ == 8) {
-        STI(S, GTI(S) + 1);
-        PARSE_FACTOR(S);
-        # rax now holds the address
-        EPUSHR(S);
-        if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); }
-        STI(S, GTI(S) + 1);
-        PCMPE(S);
-        # rax = value, stack = address
-        EPOPC(S);
-        ESTORE64(S);
-        if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
-        STI(S, GTI(S) + 1);
-        return 0;
-    }
+    if (typ == 8) { _deref_store(S, 5); return 0; }   # `*expr = v;` / `*expr OP= v;`
     # Expression statements: syscall(...); store8(...); load8(...);
     if (typ == 24) { PCMPE(S); if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); } STI(S, GTI(S) + 1); return 0; }
     if (typ == 26) { PCMPE(S); if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); } STI(S, GTI(S) + 1); return 0; }
