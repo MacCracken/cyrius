@@ -1807,7 +1807,8 @@ fn PP_DVGRP(base, p, end): i64 {
                 p = p + 1;
             }
             if (d == 0) { return p + 1; }
-        } elif (c == 40 || c == 123) { d = d + 1; }
+        } elif (c == 35) { p = PP_SKIPLINE(base, p, end); continue; }   # a `#` comment: its quotes and brackets are not code
+        elif (c == 40 || c == 123) { d = d + 1; }
         elif (c == 41 || c == 125) { d = d - 1; if (d == 0) { return p + 1; } }
         p = p + 1;
     }

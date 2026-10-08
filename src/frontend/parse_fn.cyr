@@ -6264,6 +6264,9 @@ fn _ce_ifx(S): i64 {
     }
     if (_ce_err == 1) { return 0; }
     if (els == 0) { _ce_bad(S, "an if expression needs an else - its value must come from every path", 68); return 0; }
+    # Every arm unknown: the enclosing expression records this whole if-expression as ITS arm and
+    # re-walks it, so this one's own entries go (each mistake is reported once).
+    if ((st & 255) == 0) { _ce_pend_n = p0; }
     _ce_xpend_class(p0, st & 255);
     _ce_k = _ce_xresk(st);
     return res;
@@ -6298,7 +6301,7 @@ fn _ce_xcls(k): i64 {
 # bool, 512 = an arm of unknown kind was recorded.
 fn _ce_xmerge(S, st, k, bt): i64 {
     if (_ce_err == 1) { return st; }
-    if (k != 3) { if (k != 4) { st = st | 256; } }
+    if (k != 3) { st = st | 256; }   # an unknown arm (4) is not known to be a bool: not one
     var cl = _ce_xcls(k);
     if (cl == 0) {
         if (_ce_infn == 0) { _ce_xpend_push(bt); }
@@ -6306,7 +6309,11 @@ fn _ce_xmerge(S, st, k, bt): i64 {
     }
     var c0 = st & 255;
     if (c0 == 0) { return st | cl; }
-    if (c0 != cl) { if (_ce_infn == 0) { _ce_xmix_err(S, bt, c0, cl); } }
+    if (c0 != cl) {
+        # Outside a const fn always; inside one only a string mix — the parser reports the f64 /
+        # integer mixes of the fn's body, but at run time a string literal is a pointer word.
+        if (_ce_infn == 0 || c0 == 3 || cl == 3) { _ce_xmix_err(S, bt, c0, cl); }
+    }
     return st;
 }
 fn _ce_xresk(st): i64 {
@@ -6327,6 +6334,7 @@ fn _ce_xmix_err(S, ti, c0, cl): i64 {
     if (_ce_err == 1) { return 0; }
     _ce_err = 1;
     if (_panic == 1) { return 0; }
+    if (_tn_once(S, ti) == 0) { return 0; }   # a const fn's body: its definition check and every call
     var sv = GTI(S);
     STI(S, ti);
     syscall(SYS_WRITE, 2, "error:", 6);
@@ -6338,6 +6346,7 @@ fn _ce_xmix_err(S, ti, c0, cl): i64 {
     PRSTR(" before it\n");
     _err_excerpt(S);
     _had_error = 1;
+    _panic = 1;   # as ERR_MSG latches: the rest of the context's expression is not reported again
     STI(S, sv);
     return 0;
 }
@@ -6353,7 +6362,7 @@ fn _ce_xpend_push(bt): i64 {
 fn _ce_xpend_class(p0, cl): i64 {
     var i = p0;
     while (i < _ce_pend_n) {
-        S64(_ce_pend + i * 16 + 8, cl);
+        if (L64(_ce_pend + i * 16 + 8) == 0) { S64(_ce_pend + i * 16 + 8, cl); }   # a nested one keeps its own
         i = i + 1;
     }
     return 0;

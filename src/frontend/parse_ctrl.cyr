@@ -277,6 +277,20 @@ fn _ie_skip_block(S): i64 {
     }
     return 0;
 }
+# 1 when the branch from `bti` holds `=` outside any bracket — `{ y = 1 }`, `{ y += 1 }` (`+` `=`).
+fn _ie_has_assign(S, ti): i64 {
+    var d = 0;
+    var n = GTCNT(S);
+    while (ti < n) {
+        var t = TOKTYP(S, ti);
+        if (t == 10 || t == 13 || t == 28) { d = d + 1; }
+        if (t == 11 || t == 14 || t == 29) { if (d == 0) { return 0; } d = d - 1; }
+        if (t == 4) { if (d == 0) { return 1; } }
+        if (t == 12) { return 0; }
+        ti = ti + 1;
+    }
+    return 0;
+}
 # `{ expr }` — the one expression, classified before anything moves the result flags.
 fn _ie_branch(S, st): i64 {
     if (PEEKT(S) != 13) { ERR_EXPECT(S, 13); return 0; }
@@ -295,6 +309,13 @@ fn _ie_branch(S, st): i64 {
         STI(S, GTI(S) + 1);
         return 0;
     }
+    if (_ie_has_assign(S, bti) == 1) {
+        ERR_MSG(S, "an if expression branch holds a value, not an assignment", 56);
+        _ie_skip_block(S);
+        EMOVI(S, 0);
+        STI(S, GTI(S) + 1);
+        return 0;
+    }
     _refuse_lossy_pair(S);
     var fk = _fpk_want;
     _fpk_want = bti;
@@ -306,8 +327,8 @@ fn _ie_branch(S, st): i64 {
     if (PEEKT(S) == 5) {
         ERR_MSG(S, "an if expression branch holds one expression, without ';' - an if statement runs statements", 91);
         _ie_skip_block(S);
-    } elif (PEEKT(S) == 4) {
-        ERR_MSG(S, "an if expression branch holds a value, not an assignment", 56);
+    } elif (PEEKT(S) != 14) {
+        ERR_MSG(S, "an if expression branch holds one expression - this one goes on past it", 71);
         _ie_skip_block(S);
     }
     if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); return 0; }
@@ -367,7 +388,7 @@ fn _ie_wide_name(S, noff): i64 {
         if (li >= 0) {
             var lt = GLTYPE(S, li);
             if (_is_simd_any(S, lt) == 1) { return 1; }
-            if (lt == 16) { return 1; }
+            if (lt == 0) { if (GLSPAN(S, li) >= 2) { return 1; } }   # a u128 or a slice: a 2-slot pair
             return 0;
         }
     }
@@ -412,6 +433,7 @@ fn _ie_kind(S, st, bti): i64 {
     if (isb == 0) {
         sid = _ie_struct_sid(S, bti);
         if (sid < 0) { _ie_big_err(S, bti, 0); return 0; }
+        if (sid > 0) { if (sid == _STR_SID(S)) { sid = 0; } }   # a Str is a handle (a pointer word) by design
         if (sid > 0) {
             if (STRUCTSZ(S, sid - 1) > 8) { _ie_big_err(S, bti, sid); return 0; }
             cl = 4;
@@ -502,9 +524,9 @@ fn _ie_big_err(S, ti, sid): i64 {
     if (sid > 0) {
         PRSTR(": an if expression branch cannot be a struct value over 8 bytes: ");
         _ie_kname(S, 4, sid);
-        PRSTR(" - branch on a pointer (&x)\n");
+        PRSTR(" - branch on a pointer (`&x`, or a `*T` value)\n");
     } else {
-        PRSTR(": an if expression branch cannot be a vector or u128 value - branch on a pointer (&x)\n");
+        PRSTR(": an if expression branch cannot be a vector, u128 or slice value - branch on a pointer (&x)\n");
     }
     _err_excerpt(S);
     _had_error = 1;

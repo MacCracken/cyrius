@@ -491,6 +491,9 @@ CHANGELOG [6.6.17] *Downstream* (no ecosystem sweep).
 
 - **Found by the 6.7.x feature releases (backlog — only the user promotes; v6.7.x operating rule 2).**
   - (The struct-argument and enum-constant filings of 6.7.1 / 6.7.2 shipped in 6.7.3's repair lane.)
+  - **On cx, `~x` is `x`** (found by the 6.7.4 B3 review): `var x = 6; return ~x + 10;` exits 3 on x86, aarch64
+    and PE and 16 on cx — the cx backend's ENOTR emits nothing. Pre-existing (6.7.3 too). Every const context
+    is unaffected (the evaluator computes `~`); only cx run-time code is wrong.
   - **A name intrinsic's result inherits its last argument's struct type** (found by the 6.7.4 B3 planning
     survey): `mulh64(3, n) + 1` with `n: Num` (16 B) and `fn Num_add` dispatches `Num_add` and returns 100.
     GESTYPE and SESVAR survive from the intrinsic's last argument in the name-intrinsic arm of

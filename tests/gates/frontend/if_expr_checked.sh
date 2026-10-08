@@ -73,7 +73,7 @@ refused r12 "$BIG: struct 'Big'" "R12: a 24-byte struct local" 'struct Big { a; 
 refused r13 "$BIG: struct 'Big'" "R13: a 24-byte struct call" 'struct Big { a; b; c; }\nfn mk(): Big { var p: Big; p.a = 1; p.b = 2; p.c = 3; return p; }\nfn f(c): i64 { var x = if (c) { 0 } else { mk() }; return 0; }\nsyscall(60, f(1));\n'
 refused r14 "$BIG: struct 'Big'" "R14: a parenthesised 24-byte struct (p)" 'struct Big { a; b; c; }\nfn f(c): i64 { var p: Big; var x = if (c) { (p) } else { 0 }; return 0; }\nsyscall(60, f(1));\n'
 refused r15 "$BIG: struct 'P16'" "R15: a 16-byte struct field" 'struct P16 { a; b; }\nstruct H { k; p: P16; }\nfn f(c): i64 { var h: H; var x = if (c) { h.p } else { 0 }; return 0; }\nsyscall(60, f(1));\n'
-refused r16 "cannot be a vector or u128 value" "R16: an f64v2 local" "fn f(c): i64 { var v: f64v2; var x = if (c) { v } else { 0 }; return 0; }$E"
+refused r16 "cannot be a vector, u128 or slice value" "R16: an f64v2 local" "fn f(c): i64 { var v: f64v2; var x = if (c) { v } else { 0 }; return 0; }$E"
 refused r17 "$MIX: struct 'T1' here, struct 'S1' before it" "R17: two small struct types" 'struct S1 { v; }\nstruct T1 { w; }\nfn f(c): i64 { var a: S1; a.v = 1; var t: T1; t.w = 2; var z = if (c) { a } else { t }; return 0; }\nsyscall(60, f(1));\n'
 refused r18 "$MIX: an integer here, struct 'S1' before it" "R18: a small struct and an integer" 'struct S1 { v; }\nfn f(c): i64 { var a: S1; a.v = 1; var z = if (c) { a } else { 0 }; return 0; }\nsyscall(60, f(1));\n'
 refused r19 "cannot initialize bool 'b'" "R19: an integer branch into a bool (B2)" "fn f(c): i64 { var b: bool = if (c) { 1 } else { false }; return b; }$E"
@@ -84,6 +84,14 @@ refused r23 "$MIX: an integer here, a string before it" "R23: a const mixing a s
 refused r24 "$MIX: an f64 here, an integer before it" "R24: an untaken arm's forward f64 const (re-checked when every const is known)" 'const A = if (true) { 1 } else { B };\nconst B = 2.5;\nsyscall(60, A);\n'
 refused r25 "$MIX: an integer here, an f64 before it" "R25: a const fn body's mix is reported once (by the parser)" 'const fn g(x) { return if (x) { 1.5 } else { 2 }; }\nsyscall(60, 0);\n'
 refused r26 "holds one expression, without ';'" "R26: a ';' in a const's branch" 'const X = if (1) { 1; } else { 2 };\nsyscall(60, 0);\n'
+# Fixed in this feature's one review round (2026-10-08):
+refused v01 "$MIX: an integer here, a string before it" "V1: a const fn body's string / integer mix (the parser never reports it)" 'const fn g(x) { return if (x) { "abc" } else { 7 }; }\nconst Q = g(0);\nsyscall(60, Q);\n'
+refused v02 "cannot be a vector, u128 or slice value" "V2: a u128 local" "fn f(c): i64 { var u: u128 = 0; var x = if (c) { u } else { 0 }; return x; }$E"
+refused v03 "cannot initialize bool 'b'" "V3: an untaken arm naming a later const is not known to be a bool" 'const A = if (true) { true } else { B };\nconst B = 2;\nfn f(): i64 { var b: bool = A; return b; }\nsyscall(60, f());\n'
+refused v04 "$MIX: an f64 here, an integer before it" "V4: a const-context mix inside #assert is reported once (no cascade)" '#assert if (true) { 1 } else { 2.5 } == 1, "m";\nsyscall(60, 0);\n'
+refused v05 "$MIX: an f64 here, an integer before it" "V5: a nested if-expression of later f64 consts is reported once" 'const A = if (true) { 1 } else { if (true) { B } else { C } };\nconst B = 1.5;\nconst C = 2.5;\nsyscall(60, A);\n'
+refused v06 "holds a value, not an assignment" "V6: { y += 1 }" "fn f(c): i64 { var y = 0; var x = if (c) { y += 1 } else { 2 }; return x; }$E"
+refused v07 "this one goes on past it" "V7: { 1 2 }" "fn f(c): i64 { var x = if (c) { 1 2 } else { 2 }; return x; }$E"
 
 exits a01 35  "A1: if / else, both ways"          "fn f(c): i64 { return if (c) { 3 } else { 5 }; }\nsyscall(60, f(1) * 10 + f(0));\n"
 exits a02 100 "A2: an elif chain"                  "fn g(n): i64 { return if (n == 0) { 10 } elif (n == 1) { 20 } elif (n == 2) { 30 } else { 40 }; }\nsyscall(60, g(0) + g(1) + g(2) + g(7));\n"
@@ -119,6 +127,8 @@ printf 'kernel;\nfn f(): i64 { return 1; }\nvar G = if (f()) { 11 } else { 22 };
 build s08b
 if grep -q 'runs after the top-level program' "$T/s08b.err"; then ok "S8b: ... and a call condition is still named as late"; else bad "S8b: a call-condition if-expression global was not named as late"; fi
 refused s09 "multi-value destructure binds 2 names, but 'f' returns 1 value" "S9: a fn returning an if-expression is provably single" 'fn f(c): i64 { return if (c) { 1 } else { 2 }; }\nfn main(): i64 { var a, b = f(1); return a + b; }\nsyscall(60, main());\n'
+exits a16 132 "A16: Str handles are pointer words (not a struct value)" 'include "lib/syscalls.cyr"\ninclude "lib/string.cyr"\ninclude "lib/alloc.cyr"\ninclude "lib/str.cyr"\nfn pick(c, a: Str, b: Str): Str { return if (c) { a } else { b }; }\nfn main(): i64 { alloc_init(); var x = str_from("abc"); var y = str_from("de"); var u = if (1) { str_from("a") } else { str_from("b") }; return str_len(pick(1, x, y)) * 10 + str_len(pick(0, x, y)) + str_len(u) * 100; }\nsyscall(60, main());\n'
+exits a17 66 "A17: a #derive member value with a comment holding a quote keeps the members after it" "${INC}const K = 3;\n#derive(Serialize)\nenum E8 {\n    A8 = if (K > 2) {   # it's big\n        1\n    } else { 2 };\n    B8 = 5;\n}\nfn main(): i64 { alloc_init(); var sb = str_builder_new(); E8_to_json(5, sb); var s = str_builder_build(sb); return load8(str_data(s) + 1); }\nsyscall(60, main());\n"
 exits a15 3   "A15: a statement-start if is still the if statement" "fn f(c): i64 { var r = 0; if (c) { r = 3; } else { r = 4; } return r; }$E"
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: if_expr_checked — $fails row(s) red"; exit 1; fi
