@@ -1,0 +1,69 @@
+# derive_serialize_bool.tcyr — 6.7.3 (B2): `#derive` on `bool` fields.
+#
+# Before 6.7.3 a bool field fell into the codec's nested-struct arm and emitted calls to
+# `bool_to_json` / `bool_from_json`, which do not exist (an undefined-function refusal). Now
+# Serialize writes JSON `true` / `false`; both decoders store 1 for `true` and 0 for any other
+# value (a missing key leaves the field as allocated); `#derive(accessors)` gives a typed getter
+# `: bool` and a setter `v: bool`. Fields first, middle and last, whitespace and an unknown key.
+
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/str.cyr"
+include "lib/alloc.cyr"
+include "lib/fmt.cyr"
+include "lib/vec.cyr"
+include "lib/hashmap.cyr"
+include "lib/result.cyr"
+include "lib/fnptr.cyr"
+include "lib/io.cyr"
+include "lib/math.cyr"
+include "lib/bayan.cyr"
+include "lib/assert.cyr"
+
+#derive(Serialize)
+struct flags {
+    on: bool;
+    n: i64;
+    mid: bool;
+    k: i64;
+    last: bool;
+}
+
+#derive(accessors)
+struct sw {
+    id: i64;
+    up: bool;
+}
+
+fn run(): i64 {
+    alloc_init();
+    var f = flags { true, 7, false, 9, true };
+    var sb = str_builder_new();
+    flags_to_json(&f, sb);
+    var j = str_data(str_builder_build(sb));
+    assert_eq(memeq(j, "{\"on\":true,\"n\":7,\"mid\":false,\"k\":9,\"last\":true}", 46), 1, "S1: bool fields serialize as JSON true / false");
+
+    var g = flags_from_json_str(j);
+    assert_eq(load64(g) + load64(g + 16) * 2 + load64(g + 32) * 4, 5, "D1: from_json_str round-trips first / middle / last");
+    assert_eq(load64(g + 8) * 10 + load64(g + 24), 79, "D2: ... and the integer fields between them");
+
+    var h = flags_from_json(bayan_json_parse(str_builder_build(sb)));
+    assert_eq(load64(h) + load64(h + 16) * 2 + load64(h + 32) * 4, 5, "D3: the pairs decoder round-trips the same");
+
+    var w = flags_from_json_str("{ \"zz\": 3, \"on\" :  false , \"mid\":true, \"n\": 1, \"k\": 2, \"last\": false }");
+    assert_eq(load64(w) + load64(w + 16) * 2 + load64(w + 32) * 4, 2, "D4: whitespace and an unknown key");
+
+    var v = flags_from_json_str("{\"on\":1,\"n\":0,\"mid\":\"x\",\"k\":0,\"last\":true}");
+    assert_eq(load64(v) + load64(v + 16) * 2 + load64(v + 32) * 4, 4, "D5: a value other than true / false decodes as false");
+
+    var s = sw { 5, false };
+    sw_set_up(&s, s.id > 3);
+    var u: bool = sw_up(&s);
+    assert_eq(u, 1, "A1: typed accessors — the setter takes a bool, the getter is one");
+    store64(&s + 8, 9);
+    assert_eq(sw_up(&s), 1, "A2: the getter reads a raw nonzero pattern as 1");
+    return 0;
+}
+var r0 = run();
+var r = assert_summary();
+syscall(60, r);

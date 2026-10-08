@@ -105,6 +105,7 @@ refused w48 "as a bool element of 'g'" "W48: a multi-value return's bool element
 refused w49 "to bool parameter 'b' of a const fn" "W49: a const fn's bool parameter in a const context" 'const fn neg(b: bool): bool { return !b; }\nconst X = neg(7);\nsyscall(60, X);\n'
 refused w50 "$DI" "W50: an integer const into a bool"  'const N = 1;\nfn main(): i64 { var b: bool = N; return b; }\nsyscall(60, main());\n'
 refused w51 "cannot return a value that is not a bool from bool fn 'f'" "W51: a bool const fn returning an integer" 'const fn f(x): bool { return x; }\nsyscall(60, 0);\n'
+refused w52 "to bool parameter 'v' of 'sw_set_up'" "W52: a #derive(accessors) bool setter given 1" '#derive(accessors)\nstruct sw { id; up: bool; }\nfn main(): i64 { var s = sw { 5, false }; sw_set_up(&s, 1); return 0; }\nsyscall(60, main());\n'
 
 exits a1 255 "A1: every boolean producer into a local (true, false, <, !, &&, ||, parens, another bool, !!, f64_lt, a for step)" "$M var a = 3; var t: bool = true; var f: bool = false; var c: bool = a < 4; var d: bool = !a; var e: bool = (a > 1) && (a < 9); var g: bool = c || d; var h: bool = (c); var i: bool = ((a == 3)); var j: bool = c; var k: bool = !!a; var l: bool = f64_lt(1.0, 2.0); t = c; t = !t; t = a != 3; t = d && c; for (var q = 0; q < 2; t = q > 0) { q = q + 1; } return t + c * 2 + e * 4 + g * 8 + h * 16 + i * 32 + j * 64 + k * 128 + l * 256 + f; }\nsyscall(60, main() % 256);\n"
 exits a2 10 "A2: a bool reads as 0 / 1 (n + ok, ok * 4)" "$M var ok: bool = true; var n = 5 + ok; var m = ok * 4; return n + m; }$E"

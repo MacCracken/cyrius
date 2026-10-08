@@ -2653,6 +2653,8 @@ fn PP_DERIVE_SERIALIZE_BODY(S, out, op): i64 {
                             op = op + PP_EMIT_STR(out, op, "str_builder_add_int(sb, ");
                             op = PP_DLOAD_EXPR(out, op, "ptr", prim_load, load64(S + 0x200000 + fi * 8));
                             op = op + PP_EMIT_STR(out, op, ");\n");
+                        } elif (_pp_is_bool_ty(S + 0x1FE000 + fi * 32) == 1) {
+                            op = PP_DBOOL_SER(out, op, load64(S + 0x200000 + fi * 8));   # 6.7.3
                         } else {
                             # Nested struct: use composable 2-arg form.
                             # v5.9.31: matched the renamed top-level fn
@@ -2790,6 +2792,8 @@ fn PP_DERIVE_SERIALIZE_BODY(S, out, op): i64 {
                             op = op + PP_EMIT_STR(out, op, "(ptr + ");
                             op = op + PP_EMIT_INT(out, op, load64(S + 0x200000 + fi * 8));
                             op = op + PP_EMIT_STR(out, op, ", str_to_int(v)); }\n");
+                        } elif (_pp_is_bool_ty(S + 0x1FE000 + fi * 32) == 1) {
+                            op = PP_DBOOL_PAIRS(out, op, load64(S + 0x200000 + fi * 8));   # 6.7.3
                         } else {
                             op = op + PP_EMIT_STR(out, op, "if (v != 0) {\nvar np = ");
                             op = op + PP_EMIT_STR(out, op, S + 0x1FE000 + fi * 32);
@@ -3054,6 +3058,8 @@ fn PP_DERIVE_SERIALIZE_BODY(S, out, op): i64 {
                             op = op + PP_EMIT_STR(out, op, "(ptr + ");
                             op = op + PP_EMIT_INT(out, op, load64(S + 0x200000 + fi * 8));
                             op = op + PP_EMIT_STR(out, op, ", _iv);\n");
+                        } elif (_pp_is_bool_ty(S + 0x1FE000 + fi * 32) == 1) {
+                            op = PP_DBOOL_SCAN(out, op, load64(S + 0x200000 + fi * 8));   # 6.7.3
                         } else {
                             # Nested struct: skip value (fall through to json_get path)
                             # v6.5.20 — an emitted `# nested struct` COMMENT LINE used to sit here and
@@ -3203,6 +3209,39 @@ fn PP_DFIELD_BITS(S, fi): i64 {
 # language reads an i8/i16/i32 field signed (`p.x` is movsx), and loadW zero-extends: without
 # the shift pair a stored -1 in an i8 reads back as 255 through `P_x(p)` while `p.x` says -1.
 # CHANGELOG [6.6.7]
+# 6.7.3 (B2) — a `bool` field (its type-name slot holds "bool\0"). Serialize writes JSON `true` /
+# `false`; Deserialize stores 1 for `true` and 0 for any other value (the codecs' lenient
+# precedent: an integer field takes str_to_int of whatever is there), a missing key leaving the
+# field as allocated; the accessors are typed — the getter `: bool` (`!= 0`, so a raw store64 of
+# another pattern still reads 0 / 1) and the setter's `v: bool`, checked like any bool parameter.
+fn _pp_is_bool_ty(t): i64 {
+    if (load8(t) != 98) { return 0; }
+    if (load8(t + 1) != 111) { return 0; }
+    if (load8(t + 2) != 111) { return 0; }
+    if (load8(t + 3) != 108) { return 0; }
+    if (load8(t + 4) != 0) { return 0; }
+    return 1;
+}
+fn PP_DBOOL_SER(out, op, off): i64 {
+    op = op + PP_EMIT_STR(out, op, "if (load64(ptr + ");
+    op = op + PP_EMIT_INT(out, op, off);
+    op = op + PP_EMIT_STR(out, op, ") != 0) { str_builder_add_cstr(sb, \"true\"); } else { str_builder_add_cstr(sb, \"false\"); }\n");
+    return op;
+}
+fn PP_DBOOL_PAIRS(out, op, off): i64 {
+    op = op + PP_EMIT_STR(out, op, "if (v != 0) { store64(ptr + ");
+    op = op + PP_EMIT_INT(out, op, off);
+    op = op + PP_EMIT_STR(out, op, ", str_eq_cstr(v, \"true\")); }\n");
+    return op;
+}
+fn PP_DBOOL_SCAN(out, op, off): i64 {
+    op = op + PP_EMIT_STR(out, op, "if (memeq(json + _p, \"true\", 4) == 1) { store64(ptr + ");
+    op = op + PP_EMIT_INT(out, op, off);
+    op = op + PP_EMIT_STR(out, op, ", 1); _p = _p + 4; } else { store64(ptr + ");
+    op = op + PP_EMIT_INT(out, op, off);
+    op = op + PP_EMIT_STR(out, op, ", 0); while (load8(json + _p) != 44 && load8(json + _p) != 125 && load8(json + _p) != 0) { _p = _p + 1; } }\n");
+    return op;
+}
 fn PP_DGETTER_EXPR(out, op, fbits, off): i64 {
     op = op + PP_EMIT_STR(out, op, "return ");
     op = PP_DLOAD_EXPR(out, op, "p", fbits, off);
@@ -3287,9 +3326,12 @@ fn PP_DERIVE_ACCESSORS_BODY(S, out, op): i64 {
         store8(out + op, 95); op = op + 1;
         op = op + PP_EMIT_STR(out, op, S + 0x1FC000 + fi * 32);
         var fbits = PP_DFIELD_BITS(S, fi);
-        op = op + PP_EMIT_STR(out, op, "(p) { ");
+        var fbool = _pp_is_bool_ty(S + 0x1FE000 + fi * 32);   # 6.7.3: typed bool accessors
+        if (fbool == 1) { op = op + PP_EMIT_STR(out, op, "(p): bool { "); }
+        else { op = op + PP_EMIT_STR(out, op, "(p) { "); }
         op = PP_DERIVE_EMIT_CHK(S, out, op);
         op = PP_DGETTER_EXPR(out, op, fbits, off);
+        if (fbool == 1) { op = op + PP_EMIT_STR(out, op, " != 0"); }
         op = op + PP_EMIT_STR(out, op, "; }\n");
         # v6.5.71: record the GETTER for auto-inlining. The name is emitted in pieces and
         # never exists as one string, so it is hashed the same way — see `_pp_inl_hash3`.
@@ -3299,7 +3341,8 @@ fn PP_DERIVE_ACCESSORS_BODY(S, out, op): i64 {
         op = op + PP_EMIT_STR(out, op, S + 0x197020);
         op = op + PP_EMIT_STR(out, op, "_set_");
         op = op + PP_EMIT_STR(out, op, S + 0x1FC000 + fi * 32);
-        op = op + PP_EMIT_STR(out, op, "(p, v) { store");
+        if (fbool == 1) { op = op + PP_EMIT_STR(out, op, "(p, v: bool) { store"); }
+        else { op = op + PP_EMIT_STR(out, op, "(p, v) { store"); }
         op = op + PP_EMIT_INT(out, op, fbits);
         op = op + PP_EMIT_STR(out, op, "(p + ");
         op = op + PP_EMIT_INT(out, op, off);
