@@ -1,4 +1,5 @@
 #!/bin/sh
+# check: serial — a timing measurement (value form vs a 128-bit reference); under the parallel pool's load it read 190% once (6.7.6), alone 100%
 # simd_valueform_no_avx_transition.sh — v6.5.60, REWRITTEN v6.5.62.
 #
 # The fixed-lane SIMD wrappers must not pay a per-call AVX2 dispatch, and the ymm kernel must
