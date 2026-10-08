@@ -1,0 +1,169 @@
+# struct_arg_type_accepted.tcyr — 6.7.3 (the repair lane) — a struct ARGUMENT of its parameter's
+# OWN type is accepted, and passes the right value, in every argument form the 6.7.3 type check
+# reads. The refusal half (an argument of ANOTHER struct type, refused by name) is
+# tests/gates/frontend/struct_arg_type_refused.sh; this file is its anti-false-refusal half, so it
+# runs on every fork: a false refusal here fails the COMPILE, and a value row catches a check that
+# moved what the argument pushes (the by-value-8-B path now consumes the argument itself, with the
+# caller's own PCMPE + EPUSHR).
+#
+# THE CHECK (6.7.3): before it, only a struct-typed FIELD into an address-passed parameter was
+# compared with the parameter's struct (6.6.12); `bq(p)` with p: Pt into `fn bq(b: Q)` compiled clean
+# and read past p. Now every form below is compared — a named local (inline, pointer-mode, `*T`), a
+# global, a capture, a field, a free call, a generic instance, a method or operator result, a
+# method's argument and `self`, an operator's two operands, a tail call's argument, a by-value
+# struct of 8 B or less and a `Str` handle — and these, of the declared type, must compile and run.
+# STAYS ACCEPTED with no struct recorded: `&q`, an untyped name, a fn pointer (rows below).
+#
+# Every row asserts a LITERAL expected value computed by hand from the field stores.
+#
+# CROSS-HOST: the arguments take the existing per-backend paths (an address for an address-passed
+# struct, the word for a by-value one, the Win64 by-pointer ABI); the check emits nothing. Gate-run
+# on ecb, ach, cass and pi.
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+include "lib/str.cyr"
+include "lib/assert.cyr"
+
+struct Pt { x; y; }                  # 16 B — address-passed by value, rax:rdx returns
+struct Q { a; b; c; }                # 24 B — address-passed by value, retptr returns
+struct S1 { u; }                     # 8 B — BY VALUE, one word
+struct V2 { a; b; }                  # 16 B
+struct Box<T> { v: T; n; }
+struct H { p: Pt; q: Q; s: S1; }
+
+fn mk1<T>(x: T): Box<T> { var b: Box<T>; b.v = x; b.n = 8; return b; }
+fn mkp(): Pt { var p: Pt; p.x = 3; p.y = 4; return p; }
+fn mkq(): Q { var q: Q; q.a = 1; q.b = 2; q.c = 7; return q; }
+fn mks1(): S1 { var s: S1; s.u = 5; return s; }
+
+fn bq(b: Q): i64 { return b.a * 100 + b.b * 10 + b.c; }
+fn bqp(b: *Q): i64 { return b.a * 100 + b.b * 10 + b.c; }
+fn wq(b: *Q): i64 { b.c = 9; return 0; }
+fn bp(b: Pt): i64 { return b.x * 10 + b.y; }
+fn bv2(b: V2): i64 { return b.a * 10 + b.b; }
+fn bs(b: Box): i64 { return b.v * 10 + b.n; }
+fn bi(b: Box<Pt>): i64 { return b.v.x * 100 + b.v.y * 10 + b.n; }
+fn bs1(b: S1): i64 { return b.u; }
+fn bs1p(b: *S1): i64 { return b.u; }
+fn sl(s: Str): i64 { return str_len(s); }
+fn tt<T>(x: T, y: T): i64 { return x.x * 10 + y.y; }
+fn gx<T>(b: Box<T>): i64 { return b.n; }
+
+impl Pt { fn dup(self): Pt { var r: Pt; r.x = self.x; r.y = self.y; return r; } }
+impl Pt { fn mq(self): Q { var r: Q; r.a = self.x; r.b = self.y; r.c = 6; return r; } }
+impl Pt { fn v2(self): V2 { var r: V2; r.a = self.y; r.b = self.x; return r; } }
+impl Pt { fn s1(self): S1 { var r: S1; r.u = self.x + self.y; return r; } }
+impl Pt { fn takeq(self, b: Q): i64 { return self.x * 1000 + b.c; } }
+impl Q { fn cc(self): i64 { return self.c; } }
+impl Q { fn cc2(self: Q): i64 { return self.c * 2; } }
+impl S1 { fn twice(self: S1): i64 { return self.u * 2; } }
+fn Q_add(a: Q, b: Q): i64 { return a.a * 10 + b.c; }
+fn Pt_add(a: Pt, b: Pt): i64 { return a.x * 10 + b.y; }
+fn S1_add(a: S1, b: S1): i64 { return a.u * 10 + b.u; }
+
+var GQ = Q { 4, 5, 6 };
+var GS = S1 { 3 };
+
+# Address-passed (a by-value struct over 8 B, a `*T`): every name form.
+fn a_inline() { var q: Q; q.a = 1; q.b = 2; q.c = 3; return bq(q); }
+fn a_ptrmode() { var q: Q = alloc(24); q.a = 2; q.b = 3; q.c = 4; return bq(q); }
+fn a_tptr_local() { var q: Q; q.a = 3; q.b = 4; q.c = 5; var u: *Q = &q; return bqp(u) * 1000 + bq(u); }
+fn a_named_to_tptr() { var q: Q; q.a = 1; q.b = 1; q.c = 1; wq(q); return bqp(q); }
+fn a_global() { return bq(GQ); }
+fn a_capture() { var q: Q; q.a = 7; q.b = 8; q.c = 9; var g = || bq(q); return fncall0(g); }
+fn a_field() { var h: H; h.q.a = 1; h.q.b = 0; h.q.c = 2; return bq(h.q); }
+fn a_call() { return bq(mkq()); }
+fn a_param_fwd_i(q: Q) { return bq(q); }
+fn a_param_fwd() { var q: Q; q.a = 5; q.b = 0; q.c = 1; return a_param_fwd_i(q); }
+fn a_tail_i(u: *Q): i64 { return bqp(u); }
+fn a_tail() { var q: Q; q.a = 6; q.b = 6; q.c = 6; return a_tail_i(&q); }
+fn a_later() { var q: Q; q.a = 1; q.b = 2; q.c = 3; return later(q); }
+fn later(b: Q): i64 { return b.c * 3; }
+
+# Generics: an instance into an instance parameter; the base into the base.
+fn g_inst_call() { var p: Pt; p.x = 1; p.y = 2; return bi(mk1(p)); }
+fn g_inst_local() { var p: Pt; p.x = 3; p.y = 1; var b: Box<Pt> = mk1(p); return bi(b); }
+fn g_base() { var b: Box; b.v = 4; b.n = 2; return bs(b); }
+fn g_tt() { var p: Pt; p.x = 3; p.y = 4; var r: Pt; r.x = 5; r.y = 6; return tt(p, r); }
+fn g_explicit() { var p: Pt; p.x = 3; p.y = 4; var b: Box<Pt> = mk1(p); return gx<Pt>(b); }
+
+# Method and operator results, a method's argument and its `self`.
+fn m_result_24() { var p: Pt; p.x = 2; p.y = 3; return bq(p.mq()); }
+fn m_result_16() { var p: Pt; p.x = 2; p.y = 3; return bp(p.dup()) * 100 + bv2(p.v2()); }
+fn m_arg() { var p: Pt; p.x = 4; p.y = 0; var q: Q; q.a = 0; q.b = 0; q.c = 8; return p.takeq(q); }
+fn m_self() { var q: Q; q.a = 0; q.b = 0; q.c = 7; return Q_cc(q) * 1000 + Q_cc2(q) * 10 + q.cc() + q.cc2(); }
+# (A struct-valued CALL or METHOD result over 8 B as an address-passed operand — `q + mkq()`,
+# `q + p.mq()` — SIGSEGVs whatever its type; that is a separate, pre-existing codegen defect in the
+# roadmap backlog, so it has no row here.)
+fn o_ops() { var q: Q; q.a = 2; q.b = 0; q.c = 3; var r: Q; r.a = 0; r.b = 0; r.c = 5; return q + r; }
+fn o_lhs() { var p: Pt; p.x = 2; p.y = 3; var r: Pt; r.x = 4; r.y = 5; return p + r; }
+
+# By value, 8 B or less (no struct-mask bit: the argument is parsed and pushed in place).
+fn s_local() { var s: S1; s.u = 6; return bs1(s); }
+fn s_call() { return bs1(mks1()); }
+fn s_method() { var p: Pt; p.x = 2; p.y = 5; return bs1(p.s1()); }
+fn s_field() { var h: H; h.s.u = 9; return bs1(h.s); }
+fn s_global() { return bs1(GS); }
+fn s_ptr() { var s: S1; s.u = 4; return bs1p(s) * 10 + bs1p(&s); }
+fn s_tail_i(s: S1): i64 { return bs1(s); }
+fn s_tail() { var s: S1; s.u = 7; return s_tail_i(s); }
+fn s_ops() { var s: S1; s.u = 1; var t: S1; t.u = 2; return (s + t) * 100 + (s + mks1()); }
+fn s_self() { var s: S1; s.u = 21; return s.twice(); }
+fn s_chain() { var p: Pt; p.x = 1; p.y = 2; return bs1(p.dup().s1()); }
+
+# The untyped boundary: no struct recorded, accepted as ever.
+fn u_addr() { var q: Q; q.a = 1; q.b = 2; q.c = 3; return bqp(&q); }
+fn u_untyped() { var q: Q; q.a = 3; q.b = 2; q.c = 1; var u = &q; return bq(u); }
+fn u_fnptr() { var q: Q; q.a = 0; q.b = 0; q.c = 4; return fncall1(&bq, &q); }
+
+# A `Str` handle parameter: a Str local and a Str-returning call.
+fn h_str() { var s = str_from("abcde"); return sl(s) * 10 + sl(str_from("ab")); }
+
+alloc_init();
+
+var TQ = bq(GQ);          # top level: a global into an address-passed parameter
+var TS = bs1(GS);         # top level: a global into a by-value 8 B parameter
+
+assert_eq(a_inline(), 123, "inline local into b: Q");
+assert_eq(a_ptrmode(), 234, "pointer-mode local into b: Q");
+assert_eq(a_tptr_local(), 345345, "`u: *Q` into b: *Q and into b: Q");
+assert_eq(a_named_to_tptr(), 119, "named Q into b: *Q — the write reaches the caller");
+assert_eq(a_global(), 456, "global into b: Q, in a fn");
+assert_eq(TQ, 456, "global into b: Q, at top level");
+assert_eq(a_capture(), 789, "closure capture into b: Q");
+assert_eq(a_field(), 102, "field h.q into b: Q");
+assert_eq(a_call(), 127, "free call mkq() into b: Q");
+assert_eq(a_param_fwd(), 501, "forwarded by-value parameter");
+assert_eq(a_tail(), 666, "tail call, `*Q` into b: *Q");
+assert_eq(a_later(), 9, "callee defined after the call");
+assert_eq(g_inst_call(), 128, "mk1(p), a Box<Pt>, into b: Box<Pt>");
+assert_eq(g_inst_local(), 318, "a Box<Pt> local into b: Box<Pt>");
+assert_eq(g_base(), 42, "a Box local into b: Box");
+assert_eq(g_tt(), 36, "tt(p, r), both Pt");
+assert_eq(g_explicit(), 8, "gx<Pt>(a Box<Pt>)");
+assert_eq(m_result_24(), 236, "a 24 B method result into b: Q");
+assert_eq(m_result_16(), 2332, "16 B method results into b: Pt and b: V2");
+assert_eq(m_arg(), 4008, "a method's argument p.takeq(q)");
+assert_eq(m_self(), 7161, "Q_cc(q), Q_cc2(q), q.cc(), q.cc2()");
+assert_eq(o_ops(), 25, "q + r with Q_add(a: Q, b: Q)");
+assert_eq(o_lhs(), 25, "p + r with Pt_add(a: Pt, b: Pt), 16 B operands");
+assert_eq(s_local(), 6, "8 B local into b: S1");
+assert_eq(s_call(), 5, "8 B call into b: S1");
+assert_eq(s_method(), 7, "8 B method result into b: S1");
+assert_eq(s_field(), 9, "8 B field into b: S1");
+assert_eq(s_global(), 3, "8 B global into b: S1, in a fn");
+assert_eq(TS, 3, "8 B global into b: S1, at top level");
+assert_eq(s_ptr(), 44, "8 B local into b: *S1, named and &s");
+assert_eq(s_tail(), 7, "8 B tail call argument");
+assert_eq(s_ops(), 1215, "s + t and s + mks1() with S1_add");
+assert_eq(s_self(), 42, "self: S1 by value");
+assert_eq(s_chain(), 3, "p.dup().s1() into b: S1");
+assert_eq(u_addr(), 123, "&q into b: *Q");
+assert_eq(u_untyped(), 321, "an untyped pointer into b: Q");
+assert_eq(u_fnptr(), 4, "fncall1(&bq, &q)");
+assert_eq(h_str(), 52, "a Str local and a Str call into s: Str");
+
+var r = assert_summary();
+syscall(60, r);

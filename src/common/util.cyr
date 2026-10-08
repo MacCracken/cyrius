@@ -968,6 +968,9 @@ fn SFDS(S, fi, v): i64 { if (_fnt_defstart == 0) { _fnt_defstart = alloc(131072 
 # _fnt_tparams, so the brk layout does not move. Written by pass 1 (`_prescan_params`) and by the
 # definition (PARSE_FN_DEF), which is the only writer for a generic INSTANCE — its `p: T` is
 # known only once T is bound. 0 = not recorded (the check is skipped). CHANGELOG [6.6.12]
+# 6.7.3: also a by-value struct parameter of 8 B or less and a `Str` handle — NO struct-mask bit,
+# so "recorded" no longer means "address-passed": every ABI reader tests `_pm_struct` first. They
+# are recorded for the argument type check (`_sarg_type_err`). CHANGELOG [6.7.3]
 var _fnt_psid = 0;
 # 6.6.17 (a10 review): the row is [capacity][one word per ordinal] and GROWS — it stopped at
 # ordinal 62 (the struct mask's width), so from parameter 62 a field of another struct type was
@@ -2936,6 +2939,13 @@ fn _AGG_ASSIGN_TYPE_ERR(S, td, ts, dnoff, snoff): i64 {
     ERR_IDENT(S, "cannot copy ", snoff, " into a variable of a different struct/vector type: ", dnoff);
     return 1;
 }
+# 6.7.3 — the passive whole-field record for the argument type check of a parameter that is not
+# address-passed (`_fpk_note`, parse_decl.cyr; read by `_sarg_byval_small`, parse_fn.cyr): the
+# token the argument begins at, and the field's struct, end token and name. Emits nothing.
+var _fpk_want = 0 - 1;
+var _fpk_ft = 0;
+var _fpk_end = 0 - 1;
+var _fpk_name = 0;
 
 # ── Compiler-state heap zero-init (v5.8.63) ──────────────────────────
 # Writes the post-brk scratch-state region (S+0x18C100..S+0x1903F8 +

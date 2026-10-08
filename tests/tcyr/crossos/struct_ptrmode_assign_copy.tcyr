@@ -470,10 +470,16 @@ fn handle_from_untyped_ptr() {
     return a.x * 10 + a.y;
 }
 # A call returning a struct HANDLE (`Str`, the address in rax) into a handle: a rebind.
+# 6.7.3: read back through an UNTYPED name — `str_len(a)` passed the P3 itself to a `: Str`
+# parameter, which the argument type check now refuses (CHANGELOG [6.7.3]). A copy would have
+# left `a` on its own block, so the rebind is also pinned by address.
 fn handle_from_str_call() {
     var a: P3 = alloc(24);
+    var blk = a;
     a = str_from("abcd");
-    return str_len(a);
+    var u = a;
+    if (u == blk) { return 0 - 1; }
+    return str_len(u);
 }
 # The DECLARATION is the documented alias: `var q: Pt = a;` binds q to a's struct.
 fn decl_alias() {

@@ -921,6 +921,18 @@ fn _fla_lit_end(S): i64 {
     if (PEEKT(S) == 14) { return 1; }
     return 0;
 }
+# 6.7.3 — a whole struct-typed field as the argument of a parameter that is not address-passed
+# (`_sarg_byval_small`, parse_fn.cyr): its struct, end token and name, recorded WITHOUT changing the
+# load — the by-value word is pushed exactly as before. The reader compares the end with the cursor.
+fn _fpk_note(S, ft): i64 {
+    if (ft <= 0) { return 0; }
+    if (ft >= 2048) { return 0; }
+    if (IS_STR_FIELD(S, ft) == 1) { return 0; }
+    _fpk_ft = ft;
+    _fpk_end = GTI(S);
+    _fpk_name = GETFNAME(S, _rlf_si, _rlf_fi);
+    return 0;
+}
 fn _fla_take(S, idx, sid, off, ft): i64 {
     if (ft <= 0) { return 0; }
     if (IS_STR_FIELD(S, ft) == 1) { return 0; }
@@ -1395,6 +1407,9 @@ fn _field_load_on(S, noff, fnoff, pfl_beg, idx, sid): i64 {
         } else {
             if (_gv_holds_addr(S, idx) == 1) { EVLOAD(S, idx); } else { EVADDR(S, idx); }
         }
+        # 6.7.3: `self` is ARGUMENT 0 — `impl Pt { fn weird(self: Q) }` with `p.weird()` read a Pt as
+        # a Q (see `_sarg_type_err`). An untyped `self` records the impl's own struct.
+        if (sid > 0) { _sarg_type_err(S, mfi, 0, sid, noff); }
         EPUSHR(S);
         # Parse remaining args.
         #
@@ -1490,6 +1505,7 @@ fn _field_load_on(S, noff, fnoff, pfl_beg, idx, sid): i64 {
     var hop = _rlf_hop;
     if (_fld_hop_sid(S) > 0) { return _load_hop(S, noff, pfl_beg, idx, sid, off); }   # 6.6.17
     if (hop < 0) { if (_fld_meth_inline(S, ft) == 1) { return _load_inline_hop(S, noff, pfl_beg, idx, sid, off); } }   # 6.7.0 (A5)
+    if (hop < 0) { if (_fpk_want == pfl_beg) { _fpk_note(S, ft); } }   # 6.7.3: passive, emits nothing
     if (hop < 0) { if (_fla_want == pfl_beg) { if (_fla_take(S, idx, sid, off, ft) == 1) { return 0; } } }   # 6.6.10
     # Load variable address + field offset, then load value (width-correct).
     # Pointer-vs-inline struct-base resolution: v5.5.36 local-encoded idx
