@@ -45,6 +45,9 @@
 #   R1-R2  `cyrius test` / `bench` export CYRIUS_TEST_FILE and CYRIUS_TEST_DIR (absolute) to the
 #          unit, replacing an inherited value
 #   R3     `cyrius run` exports neither
+#   N1-N3  run / test / bench / fuzz take --no-deps (the [deps] prepend dropped) and --no-lock (no
+#          cyrius.lock written), as build does
+#   N4     `cyrius test --help` lists --no-deps, --no-lock, --timeout and --locked
 #
 # MUTATION LEDGER (6.7.6) — each mutant built in a SCRATCH copy of the tree (cbt/ + lib/ + src/ +
 # build/cycc + VERSION + this gate), the gate run against it; the unmutated copy PASSES, and each
@@ -74,6 +77,8 @@
 #   M22 manifest.cyr: _embed_load scans [test.embed] too (every compile carries it)    E2 E5
 #   M23 build.cyr: run_binary_timed hands the child the inherited environment          R1 R2
 #   M24 manifest.cyr: _tc_for never sets the unit's CYRIUS_TEST_FILE / _DIR            R1 R2
+#   M25 cli_args.cyr: test does not declare --no-deps / --no-lock                      N1 N2 N4
+#   M26 cli_args.cyr: run does not declare --no-deps                                   N3
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
 G=test_section
@@ -447,5 +452,33 @@ else fail "R2: rc $RC"; show; fi
 cy v run src/e.cyr
 if [ "$RC" = 0 ] && ! grep -q '^FILE=\|^DIR=' "$W/out"; then echo "  ok R3: cyrius run exports neither (not the test scope)"
 else fail "R3: rc $RC"; show; fi
+
+# ── run / test / bench / fuzz take --no-deps and --no-lock ─────────────────────────────────
+proj n <<'EOF'
+[deps]
+stdlib = ["syscalls", "string"]
+EOF
+mkdir -p "$W/n/tests" "$W/n/src" "$W/n/benches"
+printf 'var n = strlen("abcd");\nsyscall(60, n - 4);\n' > "$W/n/tests/lean.tcyr"
+printf 'include "lib/string.cyr"\nvar n = strlen("abcd");\nsyscall(60, n - 4);\n' > "$W/n/tests/own.tcyr"
+cp "$W/n/tests/lean.tcyr" "$W/n/src/lean.cyr"; cp "$W/n/tests/lean.tcyr" "$W/n/benches/lean.bcyr"
+cy n test --no-lock tests/lean.tcyr
+if [ "$RC" = 0 ] && [ ! -f "$W/n/cyrius.lock" ] && [ -f "$W/n/lib/string.cyr" ]; then echo "  ok N1: cyrius test --no-lock resolves (lib/ written) and writes no cyrius.lock"
+else fail "N1: rc $RC, lock $([ -f "$W/n/cyrius.lock" ] && echo written || echo absent)"; show; fi
+cy n test --no-deps tests/lean.tcyr; r1=$RC
+cy n test --no-deps tests/own.tcyr
+if [ "$r1" != 0 ] && [ "$RC" = 0 ]; then echo "  ok N2: cyrius test --no-deps drops the [deps] prepend (a test leaning on it no longer compiles; one with its own include passes)"
+else fail "N2: lean rc $r1 (want non-zero), own rc $RC"; show; fi
+# each must FAIL TO COMPILE (strlen undefined without the prepend), not be refused as a flag
+cy n run --no-deps src/lean.cyr; r1=$RC; cp "$W/out" "$W/n1.out"; cat "$W/err" >> "$W/n1.out"
+cy n bench --no-deps benches/lean.bcyr; r2=$RC; cp "$W/out" "$W/n2.out"; cat "$W/err" >> "$W/n2.out"
+cy n fuzz --no-lock; r3=$RC; cp "$W/out" "$W/n3.out"; cat "$W/err" >> "$W/n3.out"
+if [ "$r1" != 0 ] && grep -q "strlen" "$W/n1.out" && [ "$r2" != 0 ] && grep -q "strlen" "$W/n2.out" && [ "$r3" = 0 ] \
+    && ! grep -qi 'unknown\|not declared\|does not take' "$W/n1.out" "$W/n2.out" "$W/n3.out"; then echo "  ok N3: run / bench take --no-deps (strlen undefined without the prepend), fuzz takes --no-lock"
+else fail "N3: run rc $r1, bench rc $r2, fuzz rc $r3"; cat "$W/n1.out" "$W/n2.out" "$W/n3.out" | sed 's/^/      /' | head -8; fi
+cy n test --help
+if grep -q -- '--no-deps' "$W/out" && grep -q -- '--no-lock' "$W/out" && grep -q -- '--timeout' "$W/out" && grep -q -- '--locked' "$W/out"; then
+    echo "  ok N4: cyrius test --help lists --no-deps, --no-lock, --timeout and --locked"
+else fail "N4"; show; fi
 [ "$FAIL" = 0 ] || { echo "FAIL: $G ($FAIL row(s))"; exit 1; }
 echo "PASS: $G"

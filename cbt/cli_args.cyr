@@ -107,11 +107,14 @@ fn _cli_verb_compiles(verb): i64 {
 
 fn _cli_spec_a(verb): i64 {
     if (streq(verb, "build") == 1) { return "--no-deps|--strict|--strict-pin|--pie|--dry-run|--print-config|--dce"; }
-    if (streq(verb, "run") == 1) { return "--dry-run"; }
-    if (streq(verb, "test") == 1) { return "--dry-run|--timeout="; }
-    if (streq(verb, "tests") == 1) { return "--dry-run|--timeout="; }
-    if (streq(verb, "bench") == 1) { return "--timeout="; }
-    if (streq(verb, "fuzz") == 1) { return "--poison?|--timeout="; }
+    # 6.7.6 (part T): run / test / bench / fuzz take --no-deps (no [deps] prepend — the test scope's
+    # too) and --no-lock (the resolve writes no cyrius.lock), as build has; --local / --no-local /
+    # --locked come with the target block.
+    if (streq(verb, "run") == 1) { return "--dry-run|--no-deps|--no-lock"; }
+    if (streq(verb, "test") == 1) { return "--dry-run|--timeout=|--no-deps|--no-lock"; }
+    if (streq(verb, "tests") == 1) { return "--dry-run|--timeout=|--no-deps|--no-lock"; }
+    if (streq(verb, "bench") == 1) { return "--timeout=|--no-deps|--no-lock"; }
+    if (streq(verb, "fuzz") == 1) { return "--poison?|--timeout=|--no-deps|--no-lock"; }
     if (streq(verb, "check") == 1) { return "--with-deps"; }
     if (streq(verb, "capacity") == 1) { return "--check|--json"; }
     if (streq(verb, "soak") == 1) { return ""; }
