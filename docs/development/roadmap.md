@@ -334,7 +334,7 @@ probes. The proposal takes the **still-real critical / high** items, the two pre
 |---|---|---|
 | A. Refold | the 12 W2 tags re-vendored byte-identical (`cmp` against each tag's `dist/`; yantra rebuilt from its tag) + `docs/ecosystem.md`'s rows + the fold gates; strike the sibling bullets W2 shipped | M |
 | B. Bootstrap | **cybs stack arguments** (pre-placed, below) · **cybs drops a lone `!`** (`bootstrap/cybs.cyr:1185-1199` jumps to `lexer_skip`; seed-built cybs gives `f(0) = 0` for `return !x;`, cycc gives 1) — the CVE-104 class in the trusted root, latent (0 sites in `src/` today) but `!` has been legal cyrius since 6.7.3 | M |
-| C. Security | a TRANSITIVE manifest's `path` (absolute or `..`) or local `git = "<path>"` vendors any readable local file into the consumer's `lib/`, exit 0 (`cbt/deps.cyr:1791`; the CVE-88 class) — **the rule is the user's call** (confine to the manifest's own tree + remote-only transitive git, or refuse both) | M |
+| C. `cyrius.cyml` — dev- and test-friendly | **Not a security issue (user, 2026-10-08) — no CVE.** The manifest needs to serve development and testing well: today a `path` beside `git` / `tag` silently wins at every level (so a local build and CI compile different code), and a dependency's own manifest's `path` / local `git` is followed as written. Making the manifest dev- and test-friendly resolves the transitive `path` / `git` question with it. The design is the user's, asked at the 6.7.6 open | M |
 | D. Silent wrong values | `OP=` on a u128 / SIMD vector / typed-array local / slice local operates on the first word (the struct case was refused at 6.7.5 — **refusing these is the user's call**) · a top-level `var v = Ok(42);` keeps the tag and drops the payload, silently (refused inside a fn since v6.5.67) · `var x: f32 = 1.5` stores the f64 bits · `println(n)` on a typed i64 local segfaults · `CYRIUS_PKG_VERSION` not visible two include levels deep (the open issue) — **two of these change what a program does: the user's call** (f32: round or refuse; pair bind: refuse) | 4 × S |
 | E. Struct-value codegen | three crashes on valid code — `rd3((a))`, `s - mk3(4)`, `p + p.dup()` · a parenthesised struct source into a struct field copies one word (`o.i = (z.k)`, 6.7.5 review) · a Str field as a struct source · a name intrinsic inheriting a struct type (`fncall1(&f, n) + 1` → 100; filed at 6.7.4) · **the x86 stale-flags branch on an `i8`/`i16`/`i32` field** (`if (h.m)` after `x = x + 1;`, 6.7.5 review) | M-L |
 | F. cx | `~x` is `x` (XOR with a non-all-ones register) · `lib/fnptr.cyr` has no cx arm (`fncall2(&fncall1, …)` → 0) · calls over 248 arguments · probe the 14+ integer-argument / vector-register band | S-M |
@@ -847,9 +847,9 @@ priority surfaces.
     re-triage: `modules = ["src/x.cyr", "../secret"]` → `lib/sib_secret` holds the secret). CORRECTED: an absolute
     `modules` path is NOT a vector (it is joined as `<dep>//etc/hostname` and reported "not found"). **The `modules`
     `..` half is placed in the 6.6.20 closeout** (BACKLOG-04 — refused by name, as `[embed]` and CVE-76's tag check
-    already do; it needs no design call). Still open: confining a TRANSITIVE manifest's `path` to its own tree is
-    the design call (54 legitimate root `path = "../sibling"` uses). Security-relevant; 6.6.16's CVE-76 covers the
-    `tag` field only.
+    already do; it needs no design call). The TRANSITIVE `path` half is **not a security issue** (user, 2026-10-08):
+    it is manifest ergonomics — `cyrius.cyml` must become more dev- and test-friendly, which resolves it — placed in
+    Break 1 as lane C (54 legitimate root `path = "../sibling"` uses stay).
   - ⚠ Silent wrong values: a top-level `var v = pair_fn(..)` keeps the tag and drops the payload (the v6.5.67
     single-bind refusal is gated on `GINFN == 1`); `var G: f32 = 1.5` (global or local) stores the f64 bit
     pattern with no warning. *(Its third case — through a pointer-mode 8-byte struct, `o.m()` (self = `&o`) and
