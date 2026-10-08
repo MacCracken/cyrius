@@ -349,8 +349,21 @@ probes. The proposal takes the **still-real critical / high** items, the two pre
 - **`OP=` on a u128 computes** exactly as `b = b OP x` does (the carry included); **`OP=` on a SIMD vector, a
   typed-array variable or a slice variable is refused by name** (write the long form or index an element), as 6.7.5
   refused it for structs.
-- **Lane C (`cyrius.cyml` dev- and test-friendly)** — the design is surveyed and put to the user before it is built
-  (git the priority, local `path` dev first-class, NOT a security item).
+- **Lane C — `cyrius.cyml` dev- and test-friendly (user, 2026-10-08; NOT a security item):** **git is the priority, local
+  dev is an explicit switch.** The manifest syntax stays: a `path` beside `git` / `tag` is a DEV OVERRIDE, used only in
+  local mode — `CYRIUS_LOCAL=1`, `CYRIUS_LOCAL=sigil,libro` or `--local`, never by the manifest itself. **With no switch
+  every machine builds the tag** (the commit pin checked) and prints one hint line naming the local checkouts it is not
+  using; in local mode each override prints one line (`local: sigil <- ../sigil @sha, N commits past 3.9.9, dirty — CI
+  builds 3.9.9`) and builds from `build/local-deps/`, never writing `lib/` or `cyrius.lock`. A dependency resolved from
+  its tag has its own `path` entries ignored, and an entry with only a local `path` / local `git` / an absolute path is
+  refused by name; a dependency that is itself a local checkout has its overrides followed for the selected names
+  (sibling chains keep working, announced). The lock always records the tag resolution; `--locked` resolves, writes
+  nothing and fails naming each difference (replacing the hand-rolled CI lock guards and sibci's `sed`); `deps -v` /
+  `--dry-run` show where each dependency came from. Test half: a `[test]` section (`files` — `[build] test` stays a
+  synonym — `stdlib`, `modules`, `defines`, `timeout`, `[test.embed]`) and `[deps.X] scope = "test"`, applied to test /
+  bench / fuzz compiles only and kept out of `dist/*.deps`; a per-directory `test.cyml`. Plus: a notice for a silent
+  diamond (two tags of one dependency), `cyrius update` doing what its help says, unknown keys warned. Design:
+  ~/.cache/c6/cyml_design.md (option A, default (a)).
 
 Also after the tag (the user's call — it writes the live store): `verify-store.sh --restore` for the 16 slots whose
 `bin/cybs` is a stale 12,344 B (6.6.3–6.6.9, 6.6.11–6.6.19). **Break 2** takes the still-real medium items (TLS
