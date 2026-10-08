@@ -61,10 +61,11 @@ var _dep_commit_lines = 0;
 # `git` / `tag` is a DEV OVERRIDE, read only in LOCAL MODE: `--local[=a,b]` > `--no-local` >
 # CYRIUS_LOCAL (1, 0 or a name list) > off — the manifest never switches it on. With no switch every
 # machine builds the tag. cbt/deps.cyr "local mode" has the whole rule; these are the run's state.
-var _dep_local_on = 0;       # the switch is on (and not forced off by a release verb)
+var _dep_local_on = 0;       # the switch is on (and not forced off by --locked or a release verb)
 var _dep_local_names = 0;    # 0 = every declared override; else a vec of the selected names
 var _dep_local_active = 0;   # an override IS in use: this resolve vendors into build/local-deps/lib
 var _dep_vroot = "lib";      # where this resolve WRITES vendored files (include strings stay lib/…)
+var _dep_locked = 0;         # --locked / CYRIUS_LOCKED=1: resolve, compare, write nothing
 var _build_modules = 0;
 # 6.6.19: the [embed] entries every compile carries (cbt/manifest.cyr _embed_load; 0 = none).
 # _materialize_source renders them before `#@srcline`. A bundle verify clears it so the bundle

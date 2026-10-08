@@ -1640,7 +1640,7 @@ fn _cfg_print_config(src_arg, out_arg): i64 {
         _cfg_print_row(i);
         i = i + 1;
     }
-    _dep_print_switch();   # 6.7.6: the dependency switch (local mode), as a resolve reads it
+    _dep_print_switch();   # 6.7.6: the dependency switch (local mode, --locked), as a resolve reads it
     return 0;
 }
 
