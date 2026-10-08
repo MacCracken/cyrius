@@ -18,10 +18,20 @@
 #   O  `OP=` on a SIMD vector (a local or parameter), a TYPED array (`var a: T[N]`, any T, local, global
 #      or static) or a slice is REFUSED by name, as 6.7.5 refused it on a struct: each integer-operated
 #      on the first word (`a += 8` added to a[0], `s += 1` to `.ptr`), as a statement and a for step.
-#      The element forms, the slice fields and a bare `var b[N]` (not decided) keep working.
-#   U  `OP=` on a u128 computes exactly as `a = a OP x` does (not refused) — all 16 bytes, every
-#      operator: tests/tcyr/crossos/u128_compound_matches_long_form.tcyr (A rows). Neither spelling
-#      carries into the high word (see the lane report: the decision's "carry included" premise).
+#      The element forms and the slice fields keep working (a bare `var b[N]`: B, below).
+#   U  (D2, the second round) u128 `+` and `-` CARRY and BORROW across all 128 bits in both spellings
+#      (`b = b + x`, `b += x`), a u128 or an integer on either side, unary minus `0 - x`; a u128
+#      declaration takes its whole value (a local stored it into BOTH halves); every OTHER operator
+#      with a u128 operand — `* / % << >> >>> & | ^ ~`, `*% *| *? +| +? -| -?`, and their OP= — is
+#      REFUSED by name (each computed on the low word). `b = c` / `b = 5` keep their 8-byte store and a
+#      compare reads the low word (not decided). Runtime: u128_add_sub_carry.tcyr and
+#      u128_compound_matches_long_form.tcyr (A rows; lane D's D-7 pin, now carrying).
+#   W  (D2) EVERY write of an f64 value into an `f32` rounds, as F's initializer does: an assignment
+#      (statement and for step, local and global), a field store, a struct-literal field and an
+#      argument to an `f32` parameter. Runtime: f32_writes_round.tcyr (A rows).
+#   B  (D2) a whole-array assignment `a = v` to a TYPED array (local, global, static; any element) and
+#      `OP=` on a BARE `var b[N]` (local, global, static, `stack var`) are REFUSED by name: each stored
+#      into the first word. A bare `b = v` and every element form keep working (not decided).
 #   A  ANTI-VACUOUS: each crossos tcyr on x86_64 (default, CYRIUS_IR=3, CYRIUS_DCE=1) and with
 #      compilers built from this tree on aarch64 (qemu), cx (cxvm) and PE (wine, a private prefix),
 #      with its full assertion count.
@@ -44,6 +54,30 @@
 #   M16 `_bx_pcmpe_arg` reading `== 0` again (2 is a bool) -> RED every A leg (print_num's `n: i64`
 #      refused as "not a bool"; cx's compiler does not build)
 #   (M12 / M13 — the pkgver scan — are in pkgver_visible_in_includes.sh's ledger.)
+# D2 (the follow-up lane, 2026-10-08; each a scratch tree with the one change, its compiler built by
+# build/cycc, this gate run FROM the scratch tree so the aarch64 / cx / PE compilers carry the mutant;
+# "on every leg" = x86 default / IR=3 / DCE, aarch64, cx, PE):
+#   M17 `_w128_pexpr` never takes a u128 `+` / `-`              -> RED U12 U31 U32, AU and AU2 on every leg
+#   M18 `_ptr_add` / `_ptr_sub` without the u128 hook           -> RED AU2 on every leg (U9 U10 U13 U14:
+#       an integer on the left)
+#   M19 `_w128_store` never stores                              -> RED U31 U32, AU and AU2 on every leg
+#   M20 `_w16_local_init` stores the value into both halves     -> RED U33, AU2 on every leg (U23-U26)
+#   M21 `_gvi_store` without its u128 arm                       -> RED AU2 on every leg (U29 U30 U33)
+#   M22 `_w128_lchk` never refuses                              -> RED U1 U3-U10 U12-U16 (each BUILDS; U10
+#       is then reported at its right operand)
+#   M23 `_w128_rchk` never refuses                              -> RED U2 U11 U17
+#   M24 `_w128_cop` refuses nothing                             -> RED U20-U28
+#   M25 x86 EW128_ACCI `adc` emitted as `add`                   -> RED U31, AU and AU2 on x86 and PE only
+#   M26 `_neg_int` without its u128 arm                         -> RED AU2 on every leg (U15)
+#   M27 `_w128_addr` without the IR_RAW_EMIT mark               -> RED AU2 under CYRIUS_IR=3 (U26)
+#   M28 `_asg_plain_chk` without the f32 rounding               -> RED W1 W2, AW on every leg (W1-W6 W9 W10)
+#   M29 `_ifs_bx` / `_spi_leaf_check` without it                -> RED W1 W2, AW on every leg (W11-W14 W16)
+#   M30 `_bx_pcmpe_arg` without the f32 arm                     -> RED W1 W2, AW on every leg (W17-W20)
+#   M31 `_bx_pscan` without the f32 mark (pass 1)               -> RED AW on every leg (W19, a forward call)
+#   M32 `_asg_plain_chk` without the array refusal              -> RED B1-B7 (each BUILDS)
+#   M33 `_arr_named_marks` without SLBARR                       -> RED B11 B16
+#   M34 `_arr_gsgn` returning 0 for a bare array again          -> RED B12 B13 B15
+#   M35 `_stk_named_marks` without SLBARR                       -> RED B14
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -118,7 +152,70 @@ build o10
 if [ "$(grep -c '^error' "$T/o10.err")" -eq 2 ]; then ok "O10: an array then a slice: both reported (the parse stays in sync)"
 else bad "O10: want 2 error lines: $(grep '^error' "$T/o10.err" | tr '\n' '|')"; fi
 exits o11 21 "O11: the element forms and the slice fields still work" "${OS}fn main(): i64 { var a: i64[4]; a[0] = 1; a[0] += 8; var d: u8[4]; var s: [u8] = 0; store64(&s, &d); store64(&s + 8, 4); s.ptr += 1; s.len -= 2; return a[0] + (s.ptr - &d) * 10 + s.len; }\nsyscall(60, main());\n"
-exits o12 9 "O12: a bare \`var b[16]\` keeps its OP= (not a typed array; not decided)" "fn main(): i64 { var b[16]; store64(&b, 1); b += 8; return load64(&b); }\nsyscall(60, main());\n"
+# (O12 asserted that a bare `var b[16]` kept its OP=; D2 refuses it — the B rows below.)
+
+# ── U (D2): u128 + / - carry; every other u128 operator is refused by name ─────────────────────
+UR='var G: u128 = 0;\nfn main(): i64 {\n    var b: u128 = 0;\n    var c: u128 = 0;\n    var x = 0;\n'
+UE='    return 0;\n}\nsyscall(60, main());\n'
+UB="is refused - it is not implemented for u128 yet (only \`+\` and \`-\` are; lib/bayan.cyr's bayan_u128_* helpers cover the rest)"
+UC="is refused - it is not implemented for u128 yet (only \`+=\` and \`-=\` are"
+refused u01 "\`*\` on u128 'b' $UB" "U1: \`b * 2\`" "${UR}    x = b * 2;\n${UE}"
+refused u02 "\`*\` on u128 'b' $UB" "U2: \`2 * b\` (the right operand)" "${UR}    x = 2 * b;\n${UE}"
+refused u03 "\`/\` on u128 'b'" "U3: \`b / 3\`" "${UR}    x = b / 3;\n${UE}"
+refused u04 "\`%\` on u128 'b'" "U4: \`b % 3\`" "${UR}    x = b % 3;\n${UE}"
+refused u05 "\`<<\` on u128 'b'" "U5: \`b << 1\`" "${UR}    x = b << 1;\n${UE}"
+refused u06 "\`>>\` on u128 'b'" "U6: \`b >> 1\`" "${UR}    x = b >> 1;\n${UE}"
+refused u07 "\`>>>\` on u128 'b'" "U7: \`b >>> 1\`" "${UR}    x = b >>> 1;\n${UE}"
+refused u08 "\`&\` on u128 'b'" "U8: \`b & 1\`" "${UR}    x = b & 1;\n${UE}"
+refused u09 "\`|\` on u128 'b'" "U9: \`b | 1\`" "${UR}    x = b | 1;\n${UE}"
+refused u10 "\`^\` on u128 'b'" "U10: \`b ^ c\` (reported at its left operand)" "${UR}    x = b ^ c;\n${UE}"
+refused u11 "\`~\` on u128 'b'" "U11: \`~b\`" "${UR}    x = ~b;\n${UE}"
+refused u12 "\`*\` on a u128 value $UB" "U12: \`(b + 1) * 2\` (a computed u128)" "${UR}    x = (b + 1) * 2;\n${UE}"
+refused u13 "\`*%\` on u128 'b'" "U13: \`b *% 2\`" "${UR}    x = b *% 2;\n${UE}"
+refused u14 "\`+|\` on u128 'b'" "U14: \`b +| 1\` (saturating)" "include \"lib/overflow.cyr\"\n${UR}    x = b +| 1;\n${UE}"
+refused u15 "\`-?\` on u128 'b'" "U15: \`b -? 1\` (checked)" "include \"lib/overflow.cyr\"\n${UR}    x = b -? 1;\n${UE}"
+refused u16 "\`*\` on u128 'G'" "U16: a u128 global, at top level" "var G: u128 = 0;\nvar x = G * 2;\nsyscall(60, x);\n"
+refused u17 "\`&\` on u128 'c'" "U17: \`x & c\` (the right operand of \`&\`)" "${UR}    x = x & c;\n${UE}"
+refused u20 "compound assignment \`*=\` to u128 'b' $UC" "U20: \`b *= 2\`" "${UR}    b *= 2;\n${UE}"
+refused u21 "compound assignment \`/=\` to u128 'b'" "U21: \`b /= 2\`" "${UR}    b /= 2;\n${UE}"
+refused u22 "compound assignment \`%=\` to u128 'b'" "U22: \`b %= 2\`" "${UR}    b %= 2;\n${UE}"
+refused u23 "compound assignment \`<<=\` to u128 'b'" "U23: \`b <<= 1\`" "${UR}    b <<= 1;\n${UE}"
+refused u24 "compound assignment \`>>=\` to u128 'b'" "U24: \`b >>= 1\`" "${UR}    b >>= 1;\n${UE}"
+refused u25 "compound assignment \`>>>=\` to u128 'b'" "U25: \`b >>>= 1\`" "${UR}    b >>>= 1;\n${UE}"
+refused u26 "compound assignment \`&=\` to u128 'b'" "U26: \`b &= 1\`" "${UR}    b &= 1;\n${UE}"
+refused u27 "compound assignment \`^=\` to u128 'G'" "U27: on a u128 global, at top level" "var G: u128 = 0;\nG ^= 1;\nsyscall(60, 0);\n"
+refused u28 "compound assignment \`|=\` to u128 'b'" "U28: a for step \`b |= 1\`" "${UR}    var i = 0;\n    for (i = 0; i < 1; b |= 1) { i = i + 1; }\n${UE}"
+# The filed repros (lane D's /home/macro/.cache/c6/b1_D/u/u5-u7.cyr): exit lo * 10 + hi.
+exits u31 1 "U31: \`b = b + 1\` on 2^64 - 1 carries (u5.cyr: exited 0)" "fn main(): i64 {\n    var b: u128 = 0;\n    store64(&b, 0xFFFFFFFFFFFFFFFF); store64(&b + 8, 0);\n    b = b + 1;\n    return load64(&b) * 10 + load64(&b + 8);\n}\nsyscall(60, main());\n"
+exits u32 65 "U32: \`b = b + c\`, both u128 (u6.cyr: exited 63)" "fn main(): i64 {\n    var b: u128 = 0;\n    store64(&b, 7); store64(&b + 8, 3);\n    var c: u128 = 0;\n    store64(&c, 0xFFFFFFFFFFFFFFFF); store64(&c + 8, 1);\n    b = b + c;\n    return load64(&b) * 10 + load64(&b + 8);\n}\nsyscall(60, main());\n"
+exits u33 0 "U33: \`var a: u128 = 5\` has a high word of 0, as the global (u7.cyr: exited 50)" "var G: u128 = 5;\nfn main(): i64 {\n    var a: u128 = 5;\n    return load64(&a + 8) * 10 + load64(&G + 8);\n}\nsyscall(60, main());\n"
+exits u34 7 "U34: not refused — an address, a deref through a \`*u128\`, a compare, an argument (the low word)" "fn f(n): i64 { return n; }\nfn main(): i64 {\n    var b: u128 = 0;\n    store64(&b, 7);\n    var p = &b;\n    var x = *p;\n    if (b == 7) { x = x * 1; }\n    return f(b) + x - 7;\n}\nsyscall(60, main());\n"
+exits u35 13 "U35: \`b = c\` and \`b = 5\` keep their 8-byte store (not decided)" "fn main(): i64 {\n    var b: u128 = 0;\n    store64(&b + 8, 3);\n    var c: u128 = 1;\n    b = c;\n    var r = load64(&b) * 10 + load64(&b + 8);\n    return r;\n}\nsyscall(60, main());\n"
+
+# ── W (D2): every write of an f64 into an f32 rounds ────────────────────────────────────────────
+# The filed repro (lane D's f4.cyr, exit 16 — only the initializer row): all five rows, exit 31.
+W4='struct P { x: f32; }\nfn tk(a: f32): i64 { return load32(&a) & 0xFFFFFFFF; }\nfn rt(): f64 { return 1.5; }\nfn main(): i64 {\n    var h: f32 = 0;\n    h = 1.5;\n    var p = P { 1.5 };\n    var q = P { 0 };\n    q.x = 1.5;\n    var r: f32 = rt();\n    var ok = 0;\n    if ((load32(&h) & 0xFFFFFFFF) == 0x3FC00000) { ok = ok + 1; }\n    if ((load32(&p) & 0xFFFFFFFF) == 0x3FC00000) { ok = ok + 2; }\n    if ((load32(&q) & 0xFFFFFFFF) == 0x3FC00000) { ok = ok + 4; }\n    if (tk(1.5) == 0x3FC00000) { ok = ok + 8; }\n    if ((load32(&r) & 0xFFFFFFFF) == 0x3FC00000) { ok = ok + 16; }\n    return ok;\n}\nsyscall(60, main());\n'
+exits w01 31 "W1: an assignment, a struct literal, a field store and an argument round (f4.cyr: exited 16)" "$W4"
+exits w02 31 "W2: ... the same program under CYRIUS_IR=3" "$W4" CYRIUS_IR=3
+
+# ── B (D2): a whole typed array and a bare array's OP= are refused by name ──────────────────────
+BS='struct P { x; y; }\nvar GA: i64[4];\nvar GB[32];\n'
+BA="is refused - an array is not an integer or a float (assign an element: \`a[i] = v\`)"
+BB2="is refused - an array is not an integer or a float (a bare array has no element type"
+refused b01 "assignment to array 'a' $BA" "B1: \`a = 8\` on a \`var a: i64[4]\` local" "${BS}fn main(): i64 { var a: i64[4]; a = 8; return 0; }\nsyscall(60, main());\n"
+refused b02 "assignment to array 'a'" "B2: \`a = c\` (another array: it stored c's first word)" "${BS}fn main(): i64 { var a: i64[4]; var c: i64[4]; a = c; return 0; }\nsyscall(60, main());\n"
+refused b03 "assignment to array 'GA'" "B3: a typed-array global, at top level" "${BS}GA = 8;\nsyscall(60, 0);\n"
+refused b04 "assignment to array 'fa'" "B4: an f64[2] local" "${BS}fn main(): i64 { var fa: f64[2]; fa = 1.5; return 0; }\nsyscall(60, main());\n"
+refused b05 "assignment to array 'pa'" "B5: a struct-element array" "${BS}fn main(): i64 { var pa: P[2]; var pb: P[2]; pa = pb; return 0; }\nsyscall(60, main());\n"
+refused b06 "assignment to array 'big'" "B6: a typed local in static storage" "${BS}fn main(): i64 { var big: u8[130000]; big = 1; return 0; }\nsyscall(60, main());\n"
+refused b07 "assignment to array 'a'" "B7: a for step \`a = 3\`" "${BS}fn main(): i64 { var a: i64[4]; var i = 0; for (i = 0; i < 1; a = 3) { i = i + 1; } return 0; }\nsyscall(60, main());\n"
+refused b11 "compound assignment to array 'b' $BB2" "B11: \`b += 8\` on a bare local \`var b[16]\`" "${BS}fn main(): i64 { var b[16]; b += 8; return 0; }\nsyscall(60, main());\n"
+refused b12 "compound assignment to array 'GB'" "B12: a bare global (the declaration zone)" "${BS}fn main(): i64 { GB -= 1; return 0; }\nsyscall(60, main());\n"
+refused b13 "compound assignment to array 'LB'" "B13: a bare global declared after the first statement" "${BS}syscall(1, 1, \"\", 0);\nvar LB[8];\nLB |= 1;\nsyscall(60, 0);\n"
+refused b14 "compound assignment to array 'sb'" "B14: a \`stack var sb[16]\`" "${BS}fn main(): i64 { stack var sb[16]; sb ^= 1; return 0; }\nsyscall(60, main());\n"
+refused b15 "compound assignment to array 'big'" "B15: a bare local in static storage" "${BS}fn main(): i64 { var big[130000]; big >>>= 1; return 0; }\nsyscall(60, main());\n"
+refused b16 "compound assignment to array 'b'" "B16: a for step \`b += 1\`" "${BS}fn main(): i64 { var b[16]; var i = 0; for (i = 0; i < 1; b += 1) { i = i + 1; } return 0; }\nsyscall(60, main());\n"
+exits b20 43 "B20: kept — a bare \`b = v\` (its first word, not decided), the element forms, a typed array's address" "${BS}fn main(): i64 { var b[16]; b = 3; var a: i64[4]; a[1] = 4; a[1] += 36; var p = &a; return load64(&b) + a[1] + (p - &a); }\nsyscall(60, main());\n"
 
 # ── I: CYRIUS_IR=3 and the x86 f32 conversions ──────────────────────────────────────────────────
 I1='fn lo32(p): i64 { return load32(p) & 0xFFFFFFFF; }\nfn main(): i64 {\n    var y: f64 = 1.5;\n    var fy: f32 = f32_from(y);\n    var ok = 0;\n    if (lo32(&fy) == 0x3FC00000) { ok = ok + 1; }\n    var m: f32 = f32_from(1.5);\n    var m2: f32 = m * f32_from(2.0);\n    if (f32_to(m2) == 0x4008000000000000) { ok = ok + 2; }\n    var g: f32 = y;\n    if (lo32(&g) == 0x3FC00000) { ok = ok + 4; }\n    return ok;\n}\nsyscall(60, main());\n'
@@ -176,8 +273,10 @@ tcyr_all() {   # <tag> <tcyr path> <assertion floor>
 }
 tcyr_all AF tests/tcyr/crossos/f32_scalar_init_rounds.tcyr 30
 tcyr_all AR tests/tcyr/crossos/int_name_routes_int_overload.tcyr 20
-tcyr_all AU tests/tcyr/crossos/u128_compound_matches_long_form.tcyr 15
+tcyr_all AU tests/tcyr/crossos/u128_compound_matches_long_form.tcyr 14
+tcyr_all AU2 tests/tcyr/crossos/u128_add_sub_carry.tcyr 33
+tcyr_all AW tests/tcyr/crossos/f32_writes_round.tcyr 21
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — f32 initializers round (F); a top-level pair bind refused (P); an integer name routes to _int (R); vector / typed-array / slice OP= refused (O); u128 OP= is the long form (U); IR=3 keeps the f32 conversions (I); every tcyr on x86_64 / IR / DCE / aarch64 / cx / PE (A)"
+echo "PASS: $G — f32 initializers round (F); a top-level pair bind refused (P); an integer name routes to _int (R); vector / typed-array / slice OP= refused (O); u128 + / - carry and every other u128 operator refused (U); every f32 write rounds (W); a whole typed array and a bare array OP= refused (B); IR=3 keeps the f32 conversions (I); every tcyr on x86_64 / IR / DCE / aarch64 / cx / PE (A)"

@@ -2948,6 +2948,7 @@ fn _asg_compound_load(S, noff): i64 {
                 return lt;
             } }
         EFLLOAD(S, li);
+        if (GLW128(S, li) == 1) { _W128_MARK(S, 1, li); }   # 6.7.6 (D2): _asg_compound_op's u128 arm
         return lt;
     }
     var gi = FINDVAR(S, noff);
@@ -2962,6 +2963,7 @@ fn _asg_compound_load(S, noff): i64 {
         }
         if (GVTYPE(S, gi) < 0) { _asg_cstep = 0 - GVTYPE(S, gi); }   # a typed-pointer global
         EVLOAD(S, gi);
+        if (GVW128(S, gi) == 1) { _W128_MARK(S, 2, gi); }   # 6.7.6 (D2)
         return GVTYPE(S, gi);
     }
     return 0;
@@ -2998,22 +3000,62 @@ fn _asg_struct_refused(S, noff, li): i64 {
 # `var a: i64[4]` to a[0] (an f64[N] added bit patterns), `s += 1` on a slice to `.ptr` — silently,
 # as a statement and as a for step. A vector is a local or parameter of a vector type (a vector
 # GLOBAL is refused already, _vecg_refuse); a typed array is any `var a: T[N]` (the descriptor's 0x80
-# mark, local or global; a bare `var a[N]` is not one); a slice is a local `[T]` / `slice<T>`. u128
-# is not refused: its `OP=` computes as `b = b OP x` does. The statement parses on. CHANGELOG [6.7.6]
+# mark, local or global); a slice is a local `[T]` / `slice<T>`. D2 (the second round of decisions,
+# same day) added a BARE array — `var b[N]` (local, static, global) and `stack var b[N]`: its `OP=`
+# worked on the first word too. A u128's `+=` / `-=` carry and its other `OP=` are refused
+# (_w128_cop, parse_expr.cyr). The statement parses on. CHANGELOG [6.7.6]
 fn _asg_wide_refused(S, noff, li): i64 {
     var k = 0;
     if (li >= 0) {
         if (_is_simd_any(S, GLTYPE(S, li)) == 1) { k = 1; }
         elif (GLAEW(S, li) != 0) { k = 2; }
         elif (GSLICE_W(S, li) > 0) { k = 3; }
+        elif (GLBARR(S, li) == 1) { k = 4; }   # 6.7.6 (D2): a bare `var b[N]` / `stack var b[N]`
     } else {
         var gi = _findvar_core(S, noff);
-        if (gi >= 0) { if (_arr_gdesc(S, gi) != 0) { k = 2; } }
+        if (gi >= 0) { if (_arr_gdesc(S, gi) != 0) { k = 2; } elif (_arr_gbare(S, gi) == 1) { k = 4; } }
     }
     if (k == 0) { return 0; }
     if (k == 1) { _err_in_sync(S, "compound assignment to vector ", noff, " is refused - a vector value is not an integer or a float (write the long form with the packed-op builtins)"); }
     elif (k == 2) { _err_in_sync(S, "compound assignment to array ", noff, " is refused - an array is not an integer or a float (index an element: `a[i] += b`)"); }
+    elif (k == 4) { _err_in_sync(S, "compound assignment to array ", noff, " is refused - an array is not an integer or a float (a bare array has no element type: write the word, `store64(&b, load64(&b) + v)`)"); }
     else { _err_in_sync(S, "compound assignment to slice ", noff, " is refused - a slice is not an integer or a float (step a field: `s.ptr += n`, `s.len -= n`)"); }
+    return 1;
+}
+
+# A PLAIN assignment's checks once its value is parsed (`ti` = the value's first token; -1 for a
+# compound one, which has its own arms): the integer-constant-into-float warning (_IFS_CHECK, 6.6.10)
+# and the two 6.7.6 (Break 1, D2) rules below. `g` 1 = slot `idx` is a global. Out of
+# _PARSE_STMT_IMPL, whose body sits at cybs's silent per-fn reference ceiling.
+fn _asg_plain_in(S, idx, g, ti): i64 {
+    var t = 0;
+    if (g == 1) { t = GVTYPE(S, idx); } else { t = GLTYPE(S, idx); }
+    _IFS_CHECK(S, _IFS_K(t), ti);
+    return _asg_plain_chk(S, idx, g, ti);
+}
+# ⛔ 6.7.6 (Break 1, D2) — the user's decisions, 2026-10-08: an f64 value assigned to an `f32` ROUNDS
+# to f32 (_f32_init_round — D-1's initializer rule, for every write: it stored the f64 bits, which
+# read as 0.0 or garbage), and an assignment to a whole TYPED array (`var a: T[N]`, local, global or
+# static) is REFUSED by name — `a = 8` (or `a = b`) stored into a[0], silently. A bare `var b[N]`
+# keeps its first-word store (not decided). Shared by the statement and the classic-for step.
+fn _asg_plain_chk(S, idx, g, ti): i64 {
+    if (ti < 0) { return 0; }
+    var nm = 0;
+    var arr = 0;
+    if (g == 1) {
+        _f32_init_round(S, GVTYPE(S, idx));
+        nm = L64(_varn_base + idx * 8);
+        if (_arr_gdesc(S, idx) != 0) { arr = 1; }
+    } else {
+        _f32_init_round(S, _load_lt(S, idx));   # a `p: *f32` parameter's slot is typed f32; its value is an address
+        nm = L64(S + 0x5D9D000 + idx * 8);
+        if (GLAEW(S, idx) != 0) { arr = 1; }
+    }
+    if (arr == 0) { return 0; }
+    var sv = GTI(S);
+    STI(S, ti);
+    _err_in_sync(S, "assignment to array ", nm, " is refused - an array is not an integer or a float (assign an element: `a[i] = v`)");
+    STI(S, sv);
     return 1;
 }
 
@@ -3023,6 +3065,7 @@ fn _asg_wide_refused(S, noff, li): i64 {
 # a != 252; a = a + 1)` on a u8 global zeroed the seven packed globals after it, and `a += 1`
 # carried 255 -> 0 into the next one. Warns on a narrowing store, as the statement always did.
 fn _asg_store_slot(S, idx, g): i64 {
+    if (_w128_store(S, idx, g) == 1) { if (g == 1) { SLVAR(S, idx); } return 0; }   # 6.7.6 (D2): all 16 bytes
     var ew = GEXW(S);
     if (g == 0) {
         var lt = GLTYPE(S, idx);
@@ -3071,6 +3114,7 @@ fn _asg_compound_float(S, fop, lt): i64 {
 fn _asg_compound_op(S, cop, lt): i64 {
     var st = _asg_cstep;
     _asg_cstep = 0;
+    if (_W128_IS(S) == 1) { if (_w128_cop(S, cop) == 1) { return 0; } }   # 6.7.6 (D2): a u128 place
     EPUSHR(S);
     PCMPE(S);
     if (st > 1) { if (cop == 6 || cop == 7) { EPTR_SCALE(S, st); } }   # 6.6.17: `p += n` steps T
@@ -4032,7 +4076,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
         var stk_named = GFLC(S);
         S64(S + 0x5D9D000 + stk_named * 8, stk_noff);
         SLDEP(S, stk_named, GSDEP(S));
-        SLAGG(S, stk_named, stk_nslots);   # 6.6.5: the slots ARE the buffer
+        _stk_named_marks(S, stk_named, stk_nslots);   # 6.6.5: the slots ARE the buffer; 6.7.6: a bare array
         SLTYPE(S, stk_named, 0);
         SFLC(S, stk_named + 1);
         return 0;
@@ -4292,7 +4336,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
         }
         if (idx >= 0) {
             var lt = GLTYPE(S, idx);
-            _IFS_CHECK(S, _IFS_K(lt), _asg_ti);   # 6.6.10: `t = 1` into an f64 / f32 local
+            _asg_plain_in(S, idx, 0, _asg_ti);      # 6.6.10: `t = 1` into an f64 / f32 local; 6.7.6: f32 rounds, a whole array refused
             _asg_rejudge(S, idx, lt, 0);            # 6.6.11
             _asg_store_slot(S, idx, 0);             # 6.6.12: shared with the for step
         }
@@ -4324,7 +4368,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
             if (vt < 0) {
                 if (aps == 0) { WARN(S, "assigning non-pointer to typed pointer", 38); }
             }
-            _IFS_CHECK(S, _IFS_K(vt), _asg_ti);   # 6.6.10: `G = 1` into an f64 / f32 global
+            _asg_plain_in(S, idx, 1, _asg_ti);      # 6.6.10: `G = 1` into an f64 / f32 global; 6.7.6: as the local
             _asg_rejudge(S, idx, vt, 1);            # 6.6.11
             _asg_store_slot(S, idx, 1);             # 6.6.12: shared with the for step
         }

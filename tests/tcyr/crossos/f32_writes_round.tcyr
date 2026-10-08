@@ -1,0 +1,78 @@
+# f32_writes_round.tcyr — 6.7.6 (Break 1, D2): EVERY write of an f64 value into an `f32` ROUNDS to
+# f32 (the user's decision, 2026-10-08, second round), as lane D made the initializer round: an
+# assignment (`h = 1.5`, a local or a global, a statement or a classic-for step), a field store
+# (`q.x = 1.5`, through a `*T` too), a struct-literal field (`P { 1.5 }`, a local and a global in the
+# declaration zone) and an argument to an `a: f32` parameter (a call, a forward call, a method).
+#
+# Each stored the f64 bits silently: the f32 read takes the low 32 of 1.5's 0x3FF8000000000000, so
+# the value read as 0.0 (f4.cyr: only the initializer row was right). Every expected value is the
+# f32 bit pattern written out by hand, and each row is also checked against the same value written
+# as an `f32[N]` list element (6.7.4, baked by `_gai_f32`) — not against the compiler's own store.
+# An f32 value and an integer (kept bits, warned) are untouched.
+#
+# ⚠ CROSS-HOST: the narrowing is emitted per backend (x86 cvtsd2ss — PE and Mach-O share it —,
+# aarch64 fcvt, cx f32narrow).
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/assert.cyr"
+
+struct P { x: f32; }
+struct Q { n; y: f32; }
+var GL: f32[3] = {1.5, 0.1, -2.75};
+var GH: f32 = 0;
+var GP = P { 0.1 };                  # a declaration-zone struct literal (the replay / the bake)
+
+fn lo32(p): i64 { return load32(p) & 0xFFFFFFFF; }
+fn f64ret(): f64 { return 1.5; }
+fn take(a: f32): i64 { return load32(&a) & 0xFFFFFFFF; }
+fn take2(n, a: f32): i64 { return (load32(&a) & 0xFFFFFFFF) + n * 0; }
+fn P_put(self: *P, v: f32): i64 { self.x = v; return 0; }
+
+fn tmain(): i64 {
+    var h: f32 = 0;
+    h = 1.5;
+    assert_eq(lo32(&h), 0x3FC00000, "W1: `h = 1.5` into an f32 local");
+    assert_eq(lo32(&h), lo32(&GL), "W2: ... the list element agrees");
+    h = 0.1;
+    assert_eq(lo32(&h), 0x3DCCCCCD, "W3: `h = 0.1` rounds to nearest");
+    var d: f64 = -2.75;
+    h = d;
+    assert_eq(lo32(&h), 0xC0300000, "W4: an f64 variable assigned rounds");
+    assert_eq(lo32(&h), lo32(&GL + 8), "W5: ... the list element agrees");
+    h = f64ret();
+    assert_eq(lo32(&h), 0x3FC00000, "W6: a `: f64` call's result assigned rounds");
+    var g: f32 = 0.5;
+    h = g;
+    assert_eq(lo32(&h), 0x3F000000, "W7: an f32 value assigned is untouched");
+    h = h + h;
+    assert_eq(lo32(&h), 0x3F800000, "W8: an f32 sum assigned is untouched");
+    var i = 0;
+    for (i = 0; i < 1; h = 4.0) { i = i + 1; }
+    assert_eq(lo32(&h), 0x40800000, "W9: a classic-for step `h = 4.0` rounds");
+    GH = 2.5;
+    assert_eq(lo32(&GH), 0x40200000, "W10: `GH = 2.5` into an f32 global");
+    var q = P { 0 };
+    q.x = 1.5;
+    assert_eq(lo32(&q), 0x3FC00000, "W11: a field store `q.x = 1.5`");
+    var pq: *P = &q;
+    pq.x = 0.1;
+    assert_eq(lo32(&q), 0x3DCCCCCD, "W12: a field store through a `*P`");
+    var p = P { 1.5 };
+    assert_eq(lo32(&p), 0x3FC00000, "W13: a struct-literal field `P { 1.5 }`");
+    var qq = Q { 7, 0.1 };
+    assert_eq(lo32(&qq + 8), 0x3DCCCCCD, "W14: a struct-literal field after an integer one");
+    assert_eq(qq.n, 7, "W15: ... the integer field untouched");
+    assert_eq(lo32(&GP), 0x3DCCCCCD, "W16: a declaration-zone struct literal `P { 0.1 }`");
+    assert_eq(take(1.5), 0x3FC00000, "W17: an argument to an `a: f32` parameter");
+    assert_eq(take2(3, f64ret()), 0x3FC00000, "W18: ... a `: f64` call as the argument, second position");
+    assert_eq(take_later(0.1), 0x3DCCCCCD, "W19: ... a fn defined BELOW the call");
+    q.put(-2.75);
+    assert_eq(lo32(&q), 0xC0300000, "W20: ... a method argument");
+    assert_eq(take(g), 0x3F000000, "W21: an f32 argument is untouched");
+    return 0;
+}
+fn take_later(a: f32): i64 { return load32(&a) & 0xFFFFFFFF; }
+
+var tr = tmain();
+var rr = assert_summary();
+syscall(60, rr);

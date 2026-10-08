@@ -58,9 +58,11 @@ fn _arr_desc_t(ew, sgn, typed): i64 {
     if (typed != 0) { d = d | 0x80; }
     return d;
 }
+# ⛔ 6.7.6 (D2): a BARE array (descriptor 0) is `0x100` alone, so its `b OP= v` can be refused by name
+# (_asg_wide_refused, _arr_gbare) — a plain scalar global keeps 0. `_gv_same_shape` compares the two
+# as before (_gsgn_shape).
 fn _arr_gsgn(ew, sgn, typed): i64 {
     var d = _arr_desc_t(ew, sgn, typed);
-    if (d == 0) { return 0; }
     return 0x100 | d;
 }
 # A global's element descriptor, 0 when it is not an element-typed array.
@@ -68,6 +70,30 @@ fn _arr_gdesc(S, vi): i64 {
     var g = GVSGN(S, vi);
     if (g < 0x100) { return 0; }
     return g & 0xFF;
+}
+# 1 when global `vi` (a top-level array or a fn-local one in static storage) is a bare array.
+fn _arr_gbare(S, vi): i64 {
+    if (GVSGN(S, vi) == 0x100) { return 1; }
+    return 0;
+}
+fn _gsgn_shape(g): i64 {
+    if (g == 0x100) { return 0; }
+    return g;
+}
+# The named slot of an array local (PARSE_ARRAY's stack path): its element descriptor (6.6.12), a
+# stale slice width at the index cleared, and (6.7.6, D2) the bare mark when it has no element type.
+fn _arr_named_marks(S, li, d): i64 {
+    SLAEW(S, li, d);
+    SSLICE_W(S, li, 0);
+    if (d == 0) { SLBARR(S, li); }
+    return 0;
+}
+# `stack var b[N]` (parse.cyr): the span, and the bare mark — it states no element type either.
+fn _stk_named_marks(S, li, n): i64 {
+    SLAGG(S, li, n);
+    SSLICE_W(S, li, 0);
+    SLBARR(S, li);
+    return 0;
 }
 
 # ⛔ 6.6.13 (M2) — THE BYTES OF ONE ELEMENT, the SIZE of `var a: T[N]`. The descriptor above
@@ -336,7 +362,7 @@ fn PARSE_ARRAY(S, noff, ew, sgn, eb, ann_ti): i64 {
         S64(S + 0x5D9D000 + sa_named * 8, noff);
         SLDEP(S, sa_named, GSDEP(S));
         SLAGG(S, sa_named, sa_nslots);   # 6.6.5: the slots ARE the array
-        SLAEW(S, sa_named, _arr_desc_t(ew, sgn, ann_ti));   # 6.6.12: after SLAGG (see util.cyr SLAEW); 6.7.6: + the typed mark
+        _arr_named_marks(S, sa_named, _arr_desc_t(ew, sgn, ann_ti));   # 6.6.12: after SLAGG (see util.cyr SLAEW); 6.7.6: + the typed / bare marks
         SLTYPE(S, sa_named, 0);
         SFLC(S, sa_named + 1);
         return 0;
@@ -1715,6 +1741,7 @@ fn _field_load_type(S, si, fi): i64 {
 fn _fk_bx(S, si, fi): i64 { return GFFK(S, si, fi) + 16 * GFBOOL(S, si, fi); }
 fn _ifs_bx(S, k, ti, fnoff): i64 {
     _IFS_CHECK(S, k & 15, ti);
+    if ((k & 15) == 2) { _f32_init_round(S, F32_TYID); }   # 6.7.6 (D2): an f64 into an f32 field rounds
     if (k < 16) { return 0; }
     if (_BX_IS(S) == 1) { return 0; }
     return _bx_refuse(S, ti, "cannot store a value that is not a bool into bool field ", fnoff, 0, 0 - 1);
@@ -2174,6 +2201,7 @@ fn _spi_expr(S, ft): i64 {
 # bool leaf's check — `bx` the stamp taken right after the value was parsed.
 fn _spi_leaf_check(S, k, st, bx): i64 {
     _IFS_CHECK(S, k & 15, st);
+    if ((k & 15) == 2) { _f32_init_round(S, F32_TYID); }   # 6.7.6 (D2): as _ifs_bx
     if (k < 16) { return 0; }
     if (bx == 1) { return 0; }
     return _bx_refuse(S, st, "cannot store a value that is not a bool into bool field ", _spi_first_fn, 0, 0 - 1);
@@ -3271,7 +3299,7 @@ fn _gv_same_shape(S, a, b): i64 {
     if (L64(_vars_base + a * 8) != L64(_vars_base + b * 8)) { return 0; }
     if (GVTYPE(S, a) != GVTYPE(S, b)) { return 0; }
     if (GVPM(S, a) != GVPM(S, b)) { return 0; }
-    if (GVSGN(S, a) != GVSGN(S, b)) { return 0; }
+    if (_gsgn_shape(GVSGN(S, a)) != _gsgn_shape(GVSGN(S, b))) { return 0; }   # 6.7.6: a bare array's 0x100 is no new shape
     if (_gv_ptr_sid(S, a) != _gv_ptr_sid(S, b)) { return 0; }
     if (GVVEC(S, a) != GVVEC(S, b)) { return 0; }
     return 1;
@@ -3294,6 +3322,7 @@ fn _gv_clear(S, vi): i64 {
     if (_gv_ptr_sid(S, vi) != 0) { S64(_gv_psid + vi * 8, 0); }
     if (GVBOOL(S, vi) != 0) { SVBOOL(S, vi, 0); }   # 6.7.3
     if (GVINTD(S, vi) != 0) { SVINTD(S, vi, 0); }   # 6.7.6
+    if (GVW128(S, vi) != 0) { SVW128(S, vi, 0); }   # 6.7.6 (D2)
     return 0;
 }
 
@@ -3486,9 +3515,46 @@ fn _gv_store(S, vi): i64 {
 # into an `f32` global rounds first (_f32_init_round, parse_expr.cyr). Not in `_gv_store`, whose cx
 # constant prestore runs with no expression parsed. CHANGELOG [6.7.6]
 fn _gvi_store(S, vi): i64 {
+    if (GVW128(S, vi) == 1) { _w128_init_place(S, 2, vi); _gv_slvar(S, vi); return 0; }   # 6.7.6 (D2)
     _f32_init_round(S, GVTYPE(S, vi));
     _gv_store(S, vi);
     _gv_slvar(S, vi);
+    return 0;
+}
+
+# The initial value of a 16-byte LOCAL (PARSE_VAR; canonical slot `lc`, the high half in the slot
+# above it; `ann` = the annotation's type token). ⛔ 6.7.6 (Break 1, D2) — a `u128` takes the whole
+# value (_w128_init_place): a u128 source (a u128 variable, a `+` / `-` result) all 16 bytes, an
+# integer zero-extended. It stored the value into BOTH halves — `var a: u128 = 5;` had a high word
+# of 5, `var a: u128 = c;` c's low word twice — while a global got 0 (the high half). The slot is
+# marked (SLW128) last, after the registration's SLAGG. A slice keeps its store: the value into
+# both words (`var s: [u8] = 0;`).
+# Both halves are written through the ADDRESS (`&canonical + 8` is the high half): the regalloc
+# picker counts `mov [rbp+disp32], rax` per slot to decide what to pin to a callee-saved register,
+# and the nameless high half has no other reference — an EFLSTORE to it would be patched into a
+# register move and leave the stack slot unwritten. A `lea` keeps a slot in memory.
+fn _w16_local_init(S, lc, ann): i64 {
+    if (TOKTYP(S, ann) == 105) {
+        _w128_init_place(S, 1, lc);
+        SLW128(S, lc);
+        return 0;
+    }
+    EPUSHR(S);                 # the value
+    EFLADDR_X1(S, lc);         # rcx = &slice
+    EADDIMM_X1(S, 8);          # rcx = &slice + 8 (the high half)
+    EPOPR(S);
+    ESTOC(S);
+    EFLSTORE(S, lc);           # the canonical slot (.ptr) — address-taken by slice_set / slice_ptr
+    return 0;
+}
+# The same for a 16-byte GLOBAL after the first top-level statement (PARSE_VAR): a u128 whole, a
+# slice's first word (its high half is zero in the image). 6.7.6 (D2)
+fn _w16_global_init(S, vi, st, ann): i64 {
+    if (st == 16) { if (TOKTYP(S, ann) == 105) {
+            _w128_init_place(S, 2, vi);
+            return 0;
+        } }
+    EVSTORE(S, vi);
     return 0;
 }
 
@@ -4062,7 +4128,7 @@ fn PARSE_GVAR_REG(S): i64 {
     # destructure form stamps per name — each carries its own _GVAR_VIS (v6.6.4).
     var gvi = _gv_fold(S, vcnt, sti);   # 6.6.6: a redeclaration reuses the global's slot
     _GVAR_VIS(S, gvi, sti);
-    _gv_last_marks(S, gvi, ann_bool, ann_scalar);   # 6.7.3 (B2): like the float flag, the last declaration's; 6.7.6: + the integer mark
+    _gv_last_marks(S, gvi, ann_bool, ann_scalar, ann_ti);   # 6.7.3 (B2): like the float flag, the last declaration's; 6.7.6: + the integer and u128 marks
     SGFI(S, gvi, _gv_ufv(S, sti, psc + ann_sid + ann_scalar + ann_float));   # 6.6.10
     _gv_float_copy(S, gvi, sti, psc + ann_sid + ann_scalar + ann_float);     # 6.6.11
     _gv_diag_sid(S, gvi, sti, psc + ann_sid + ann_scalar + ann_float + is_struct);   # 6.6.13 I11
@@ -5949,31 +6015,7 @@ fn PARSE_VAR(S): i64 {
             SLAGG(S, li_canon, 2);   # 6.6.5: a slice / u128 is a 2-slot INLINE pair
             SLTYPE(S, li_canon, 0);
             SSLICE_W(S, li_canon, slice_elt_w);
-            # Init the high half (slice .len / u128 high u64) via
-            # ADDRESS-based memory store rather than EFLSTORE(li).
-            # Reason: the regalloc post-body peephole counts
-            # `mov [rbp+disp32], rax` patterns per slot to decide
-            # which locals to pin to callee-saved regs. The high
-            # half has no user-visible name, so nothing else takes
-            # its address via `&<ident>` — without addressing it
-            # via &canonical+8 here, the only reference would be
-            # an EFLSTORE the picker would patch to `mov rbx, rax`,
-            # leaving the actual stack slot uninitialized. Address-
-            # based init writes through [rcx], which the picker
-            # doesn't count, so the high slot stays in memory and
-            # subsequent &s+8 reads (slice_len, .len dot-syntax)
-            # see the right value.
-            #
-            # rax holds the RHS expr value at this point (0 for the
-            # canonical `var s: [u8] = 0;` form). PCMPE already
-            # parsed it; EPUSHR / EPOPR around the addr setup keeps
-            # the value while rcx is loaded.
-            EPUSHR(S);                 # save RHS value (rax)
-            EFLADDR_X1(S, li_canon);   # rcx = &slice (canonical slot address)
-            EADDIMM_X1(S, 8);          # rcx = &slice + 8 (high half)
-            EPOPR(S);                  # restore RHS value to rax
-            ESTOC(S);                  # store rax to [rcx] = high half
-            EFLSTORE(S, li_canon);     # init canonical slot (slice .ptr / u128 low u64) — safe from regalloc patching because slice_set / slice_ptr take &s via EFLADDR, marking the canonical slot address-taken
+            _w16_local_init(S, li_canon, ann_ti);   # the initial value: a slice's, or (6.7.6) a u128's whole
             SFLC(S, li_canon + 1);
         } else {
             S64(S + 0x5D9D000 + li * 8, noff);
@@ -6072,7 +6114,7 @@ fn PARSE_VAR(S): i64 {
                 # expression statement like `alloc_init();` that stops
                 # pass 1 — see _tl_scan1's termination, parse_fn.cyr).
                 S64(_vars_base + vcnt * 8, scalar_type);
-                EVSTORE(S, vcnt);
+                _w16_global_init(S, vcnt, scalar_type, ann_ti);   # 6.7.6 (D2): a u128 whole
             }
         } else {
             _vecg_size(S, vcnt, pscale);   # 6.6.17 (a3): 8, or a vector's 16/32 bytes
@@ -6091,7 +6133,7 @@ fn PARSE_VAR(S): i64 {
         }
         SLVAR(S, vcnt);
         SGFI(S, vcnt, ufv);   # 6.6.10: see _UFV_G
-        _gv_last_marks(S, vcnt, lbool, scalar_type);   # 6.7.3 (B2); 6.7.6: + the integer mark
+        _gv_last_marks(S, vcnt, lbool, scalar_type, ann_ti);   # 6.7.3 (B2); 6.7.6: + the integer and u128 marks
         # 6.6.13 I11: an untyped `var g = f(..);` here records f for the Str -> cstring diagnostic,
         # as PARSE_GVAR_REG does for a global above the first statement (_gv_diag_sid).
         var gdc = 0;

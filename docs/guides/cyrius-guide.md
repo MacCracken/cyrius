@@ -110,8 +110,12 @@ The value is an f64 when the compiler sees one: a float literal, f64 const arith
 variable, field or `: f64` fn, or a float builtin's result. An `f32` value is stored as it is, an
 integer constant keeps its bits (with the warning above) and an untyped word (`load32(p)`) is the
 boxed idiom, not converted. Until 6.7.6 the initializer stored the f64 bits, so `x` read as 0.0,
-silently. Only the initializer converts: an assignment `x = 1.5`, a field store, a struct literal
-and an argument to an `f32` parameter still take the f64 bits — write `f32_from(1.5)` there.
+silently. **Every other write into an `f32` rounds the same way (6.7.6)**: an assignment `x = 1.5`
+(a local or a global, a statement or a classic-`for` step), a field store `p.x = 1.5` (through a
+`*T` too), a struct-literal field `P { 1.5 }` and an argument to an `f32` parameter (`f(1.5)`, a
+method, a fn defined below the call). Each stored the f64 bits as well. An `f32` operator still
+reads its right operand as f32 bits (the next paragraph): `x = x + 1.5` adds 1.5's low 32 bits, then
+stores an `f32` — write `x + f32_from(1.5)`.
 
 ⚠ Binary operators are typed by their LEFT operand. `0 - 1.5` is an INTEGER subtraction
 of 1.5's bit pattern (it is -3.0), and `2 * x` with `x: f64` multiplies x's bits. Write
@@ -584,6 +588,21 @@ and `bitset` / `bitclr`, which complement their mask, kept the bits they were as
 clear. Pinned by `tests/tcyr/codegen/cx_backend_parity.tcyr`, run natively and on
 cxvm by `tests/gates/codegen/cx_backend_parity.sh`.
 
+**`u128` arithmetic (6.7.6).** `+` and `-` on a `u128` carry and borrow across all 128 bits, in
+both spellings — `b = b + x` and `b += x`, `b = b - x` and `b -= x` — with a `u128` or an integer
+on either side, chains and parentheses included; unary `-b` is `0 - b`. An integer operand is its
+64-bit pattern **zero-extended**, the rule a `u128` initializer and a `u128[N]` list element follow:
+`b + (0 - 1)` adds 2^64 - 1 — write `b - 1`. A `u128` declaration takes its whole value
+(`var a: u128 = c;` copies all 16 bytes, `var a: u128 = 5;` has a high word of 0). Every **other**
+operator with a `u128` operand — `* / % << >> >>> & | ^ ~`, `*% *| *? +| +? -| -?` and their `OP=`
+— is refused by name until it is implemented (`` `*` on u128 'b' is refused - it is not implemented
+for u128 yet ``); `lib/bayan.cyr`'s `bayan_u128_*` helpers cover them. A `u128` read where an
+integer is expected — an argument, a compare, `var n = b`, `return b` — is its low word, as it always
+was, and so is a plain `b = c` / `b = 5`: they store the low word and keep the high word. A
+`u128` parameter is an 8-byte slot (the low word). Before 6.7.6 neither spelling carried (both
+worked on the low word and left the high word alone), the other operators did the same silently,
+and a `u128` local initializer stored its value into BOTH halves.
+
 Wrapping ops (`+%` etc.) document intent at the call site that a wrap is
 expected — bytes are identical to the bare operator. Saturating and
 checked variants compile to calls into `lib/overflow.cyr` helpers
@@ -648,9 +667,15 @@ Since 6.7.6 the same refusal covers the other values that are not one integer or
 which operated on its first word: a **SIMD vector** (`v += w` on an `i64v2` / `f64v2` … local or
 parameter added to lane 0 only — use the packed-op builtins), a **typed array** (`var a: i64[4];
 a += 8` added to `a[0]`, an `f64[N]` added bit patterns — write `a[i] += b`) and a **slice**
-(`s += 1` moved `.ptr` — write `s.ptr += 1` / `s.len -= 1`). A bare `var b[N]` keeps its `OP=`.
-On a `u128` `x OP= e` is NOT refused: it computes exactly as `x = x OP e` does, on the low word —
-neither spelling carries into the high word.
+(`s += 1` moved `.ptr` — write `s.ptr += 1` / `s.len -= 1`) — and, also since 6.7.6, a **bare
+array** (`var b[N]` — local, global or in static storage — and `stack var b[N]`: `b += 8` added to
+its first word; it has no element type, so write the word, `store64(&b, load64(&b) + 8)`). On a
+`u128`, `b += x` and `b -= x` are `b = b + x` / `b = b - x`, carrying across all 128 bits; every
+other `OP=` on a `u128` is refused (see [`u128` arithmetic](#operators)).
+
+A plain assignment to a whole **typed array** is refused by name too (6.7.6): `var a: i64[4];
+a = 8;` (or `a = b`) stored into `a[0]`, silently — assign an element, `a[i] = v`. A bare array's
+`b = v` still writes its first word.
 
 ## Memory
 

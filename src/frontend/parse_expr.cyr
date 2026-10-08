@@ -1229,6 +1229,7 @@ fn PARSE_FACTOR(S): i64 {
     var _ti0 = GTI(S);
     var _rc = _PARSE_FACTOR_IMPL(S);
     _call_scale_fix(S, _ti0);   # 6.6.17: a call's result scales by its declared return only
+    _w128_rchk(S, _ti0);        # 6.7.6 (D2): a u128 as the right operand of a refused operator
     _rd_exit();
     # 6.6.5 — `syscall(…)` (token 24) is stack-NEUTRAL by construction: it pushes its
     # arguments and every backend's emitter consumes exactly those, leaving the result in
@@ -1251,6 +1252,17 @@ fn _NEG_F32(S): i64 {
     EMOVCA(S);
     EPOPR(S);
     EXORR(S);
+    return 0;
+}
+
+# Unary minus on an integer operand (the pushed 0 below it): `0 - x`. 6.7.6 (D2): on a u128 it is the
+# u128 `0 - x`, all 128 bits (_w128_ilhs). Out of _PARSE_FACTOR_IMPL (cybs's per-fn reference limit).
+fn _neg_int(S): i64 {
+    if (_W128_IS(S) == 1) { return _w128_ilhs(S, 1); }
+    if (_FBR_KIND(S) == 3) { _FLT_TYPE_WARN(S, 3); }
+    EMOVCA(S);
+    EPOPR(S);
+    ESUBR(S);
     return 0;
 }
 
@@ -1438,13 +1450,21 @@ fn _bx_mret_note(S, fi, n, ti): i64 {
 # Pass 1: the parameter at ordinal `pc` (cursor on its type name, not behind a `*`).
 fn _bx_pscan(S, fi, pc): i64 {
     if (_bx_is_bool_name(S, PEEKV(S)) == 1) { _pbool_set(fi, pc, 1); }
+    elif (_is_f32_name(S, PEEKV(S)) == 1) { _pbool_set(fi, pc, 3); }   # 6.7.6 (D2): a forward call rounds too
+    return 0;
+}
+# The type name `f32`, whole (not `f32v4`).
+fn _is_f32_name(S, noff): i64 {
+    if ((L64(S + 0xEC00000 + noff) & 0xFFFFFFFF) == 0x00323366) { return 1; }
     return 0;
 }
 # Pass 2: is the parameter whose type name is `tnoff` a bool (not a `*bool`)? 1 a bool; 6.7.6: 2 an
-# integer i8..i64 / u8..u64 (the slot's bit 59, SLINTD — a number for the `_int` overload route).
+# integer i8..i64 / u8..u64 (the slot's bit 59, SLINTD — a number for the `_int` overload route); 3
+# an `f32` (D2: an f64 argument rounds, _bx_pcmpe_arg).
 fn _bx_ptype(S, tnoff): i64 {
     if (_ptrp_now(S) != 0) { return 0; }
     if (_bx_is_bool_name(S, tnoff) == 1) { return 1; }
+    if (_is_f32_name(S, tnoff) == 1) { return 3; }
     if (FINDSTRUCT(S, tnoff) > 0) { return 0; }
     if (_tn_iw(_tn_scalar(L64(S + 0xEC00000 + tnoff))) > 0) { return 2; }
     return 0;
@@ -1493,11 +1513,15 @@ fn _bx_pname(S, fi, ord): i64 {
     }
     return 0 - 1;
 }
-# An argument for parameter `ord` of fn `fi` (`noff` its name): PCMPE, then the check.
+# An argument for parameter `ord` of fn `fi` (`noff` its name): PCMPE, then the check. ⛔ 6.7.6 (Break
+# 1, D2): an f64 value passed to an `f32` parameter ROUNDS to f32 (_f32_init_round, the user's
+# decision: every write into an f32) — the callee read the low 32 bits of its f64 pattern.
 fn _bx_pcmpe_arg(S, fi, ord, noff): i64 {
     var t = GTI(S);
     PCMPE(S);
-    if (_pbool_get(fi, ord) != 1) { return 0; }   # 6.7.6: 2 is an integer parameter (_bx_param)
+    var pk = _pbool_get(fi, ord);
+    if (pk == 3) { _f32_init_round(S, F32_TYID); return 0; }
+    if (pk != 1) { return 0; }   # 6.7.6: 2 is an integer parameter (_bx_param)
     if (_BX_IS(S) == 1) { return 0; }
     var pn = _bx_pname(S, fi, ord);
     if (pn < 0) { return _bx_refuse(S, t, "cannot pass a value that is not a bool to a bool parameter of ", noff, 0, 0 - 1); }
@@ -1563,17 +1587,276 @@ fn _cl_cap_load(S, esl): i64 {
     if (((L64(_cl_snap + _cl_snap_n * 8 + esl * 8) >> 58) & 1) == 1) { _BX_MARK(S); }
     return 0;
 }
-# A parenthesised factor carries both result flags across its `)`: the float-builtin kind (low
-# bits) and the boolean stamp (16).
+# 6.7.6 (D2): the u128 stamp (see _W128_MARK below), declared above its first reader.
+var _w128_k = 0;
+var _w128_v = 0;
+var _w128_cp = 0;
+var _w128_ti = 0;
+# A parenthesised factor carries its result flags across its `)`: the float-builtin kind (low
+# bits), the boolean stamp (16) and (6.7.6) the u128 stamp (32).
 fn _paren_pre(S): i64 {
     var k = _FBR_KIND(S);
     if (_BX_IS(S) == 1) { k = k + 16; }
+    if (_W128_IS(S) == 1) { k = k + 32; }
     return k;
 }
 fn _paren_post(S, k): i64 {
     if ((k & 15) != 0) { _fbr_ti = GTI(S); }
-    if (k >= 16) { _bxr_ti = GTI(S); }
+    if ((k & 16) != 0) { _bxr_ti = GTI(S); }
+    if ((k & 32) != 0) { _w128_ti = GTI(S); }
     return 0;
+}
+
+# ⛔ 6.7.6 (Break 1, D2) — u128 `+` AND `-` CARRY AND BORROW ACROSS ALL 128 BITS (the user's decision,
+# 2026-10-08): in both spellings (`b = b + x`, `b += x`), with a u128 or an integer on either side,
+# on every backend. Neither carried: both worked on the low word and left the high word alone.
+# A u128 read is still its LOW word in rax, so every integer context (an argument, a compare, a
+# return, `var n = b`) is unchanged. What it lacked is the high word, and the u128 STAMP says where
+# the whole value lives — the _BX / _FBR pattern, valid only while nothing has been emitted or
+# consumed since: a u128 local or global (k 1 / 2, the place itself; _sl_load_marks / _UFV_G) or a
+# 16-byte hidden temporary (k 3, _w128_tmp) holding a `+` / `-` result. A `+` / `-` with a u128 on
+# either side computes into a temporary with the backend's add / subtract with carry (EW128_ACCM,
+# EW128_ACCI) and leaves its low word in rax; a store into a u128 place takes all 16 bytes of a
+# k-3 result (_w128_store), and `b += x` / `b -= x` are that long form (_w128_cop). An integer
+# operand is its 64-bit pattern, ZERO-extended — the rule a u128 initializer, a `u128[N]` list
+# element and a constant u128 global already follow (`var z: u128 = 0 - 1;` is 2^64 - 1); unary
+# minus is `0 - x`. Every OTHER operator with a u128 operand — `* / % << >> >>> & | ^ ~`, the `*|
+# *? +| +? -| -?` forms and their `OP=` — is refused by name (_w128_refuse_at): each computed on
+# the low word. CHANGELOG [6.7.6]
+fn _W128_MARK(S, k, v): i64 {
+    _w128_k = k;
+    _w128_v = v;
+    _w128_cp = GCP(S);
+    _w128_ti = GTI(S);
+    return 0;
+}
+fn _W128_IS(S): i64 {
+    if (_w128_k == 0) { return 0; }
+    if (GCP(S) != _w128_cp) { return 0; }
+    if (GTI(S) != _w128_ti) { return 0; }
+    return 1;
+}
+# rax (rcx 0) or rcx (rcx 1) = the address of the u128 `(k, v)`: a local's canonical slot (k 1), a
+# global (k 2), a temporary (k 3: a frame slot, or `-2 - vi` for a dead global at top level). A
+# frame slot is reached by `lea`, which keeps it out of the register picker (parse_fn.cyr).
+fn _w128_addr(S, k, v, rcx): i64 {
+    var fr = 0;
+    if (k == 1) { fr = 1; }
+    if (k == 3) { if (v >= 0) { fr = 1; } else { v = 0 - 2 - v; } }
+    if (fr == 1) {
+        # The frame `lea` is raw bytes on x86 with no IR node of its own: marked, or a CYRIUS_IR pass
+        # that rewrites the node before it (a folded `0 - 1`) takes the `lea` with it (_arr_sub_addr's rule).
+        _IR_REC0(S, IR_RAW_EMIT);
+        if (rcx == 1) { EFLADDR_X1(S, v); } else { EFLADDR(S, v); }
+        return 0;
+    }
+    if (rcx == 1) { EVADDR_X1(S, v); } else { EVADDR(S, v); }
+    return 0;
+}
+# A 16-byte temporary, laid out as a u128 local is (the high half in the slot above the canonical
+# one, the pair an inline aggregate so a coroutine frame keeps it whole); at top level, which has no
+# frame, _HTEMP's dead unnamed global resized to 16 bytes (as _gv_target resizes its sink). Returns
+# its handle.
+fn _w128_tmp(S): i64 {
+    if (GINFN(S) == 1) {
+        var li = GFLC(S);
+        _w128_slot(S, li, 0);
+        _w128_slot(S, li + 1, 2);
+        SFLC(S, li + 2);
+        return li + 1;
+    }
+    var h = _HTEMP(S);
+    S64(_vars_base + (0 - 2 - h) * 8, 16);
+    return h;
+}
+fn _w128_slot(S, li, span): i64 {
+    S64(S + 0x5D9D000 + li * 8, 0 - 1);
+    SLDEP(S, li, 0);
+    if (span > 0) { SLAGG(S, li, span); }
+    SLTYPE(S, li, 0);
+    SSLICE_W(S, li, 0);
+    return 0;
+}
+# The temporary `h` (op)= the u128 `(k, v)` (op 2 copies it) / rax zero-extended (op 2 sets it).
+fn _w128_accm(S, h, op, k, v): i64 {
+    _w128_addr(S, k, v, 0);
+    _w128_addr(S, 3, h, 1);
+    EW128_ACCM(S, op);
+    return 0;
+}
+fn _w128_acci(S, h, op): i64 {
+    _w128_addr(S, 3, h, 1);
+    EW128_ACCI(S, op);
+    return 0;
+}
+# The result: rax = the temporary's low word (the value every integer context reads), stamped.
+fn _w128_res(S, h): i64 {
+    _w128_addr(S, 3, h, 0);
+    ELOAD64(S);
+    SPSC(S, 0);
+    SESTYPE(S, 0);
+    _cfo = 0;
+    _W128_MARK(S, 3, h);
+    return 0;
+}
+# The right operand just parsed, into the temporary `h`: a u128 (the stamp) by address, else rax.
+fn _w128_rhs(S, h, op): i64 {
+    if (_W128_IS(S) == 1) { _w128_accm(S, h, op, _w128_k, _w128_v); }
+    else { _w128_acci(S, h, op); }
+    _w128_res(S, h);
+    return 0;
+}
+# `x + y` / `x - y` (op 0 / 1) with the u128 `x` the stamp names, the cursor on the operator (`e` 0),
+# or `x += e` / `x -= e` with the cursor past it (`e` 1, the right side a whole expression): x into
+# a temporary first — a k-3 x is its own — then the right side added or subtracted in.
+fn _w128_binop(S, op, e): i64 {
+    var lk = _w128_k;
+    var h = _w128_v;
+    if (e == 0) { STI(S, GTI(S) + 1); }
+    if (lk != 3) {
+        var lv = h;
+        h = _w128_tmp(S);
+        _w128_accm(S, h, 2, lk, lv);
+    }
+    if (e == 0) { PARSE_TERM(S); } else { PCMPE(S); }
+    _w128_rhs(S, h, op);
+    return 0;
+}
+# `n + x` / `n - x` with an integer `n` the arm pushed and the u128 `x` the stamp names (the
+# pointer-add hooks, _ptr_add / _ptr_sub): n zero-extended into a temporary, x added or subtracted
+# in. Unary minus (_neg_int) is `0 - x` this way.
+fn _w128_ilhs(S, op): i64 {
+    var rk = _w128_k;
+    var rv = _w128_v;
+    EPOPR(S);
+    var h = _w128_tmp(S);
+    _w128_acci(S, h, 2);
+    _w128_accm(S, h, op, rk, rv);
+    _w128_res(S, h);
+    return 0;
+}
+# PEXPR's loop, at operator `typ` (nothing consumed): a u128 `+` / `-` (1, handled), else a refused
+# additive-level operator with a u128 on its left (reported; the parse goes on).
+fn _w128_pexpr(S, typ): i64 {
+    if (_W128_IS(S) == 0) { return 0; }
+    if (typ == 6 || typ == 113) { _w128_binop(S, 0, 0); return 1; }
+    if (typ == 7 || typ == 116) { _w128_binop(S, 1, 0); return 1; }
+    _w128_lchk(S, typ);
+    return 0;
+}
+# The operators refused with a u128 operand (`*%` included; `+%` / `-%` are `+` / `-`).
+fn _w128_refused_op(t): i64 {
+    if (t == 8 || t == 9 || t == 34 || t == 38 || t == 39 || t == 152) { return 1; }
+    if (t == 27 || t == 35 || t == 36 || t == 37) { return 1; }
+    if (t == 119 || t == 120 || t == 121 || t == 114 || t == 115 || t == 117 || t == 118) { return 1; }
+    return 0;
+}
+fn _w128_opstr(t): i64 {
+    if (t == 8) { return "*"; }
+    if (t == 9) { return "/"; }
+    if (t == 34) { return "%"; }
+    if (t == 38) { return "<<"; }
+    if (t == 39) { return ">>"; }
+    if (t == 152) { return ">>>"; }
+    if (t == 27) { return "&"; }
+    if (t == 35) { return "|"; }
+    if (t == 36) { return "^"; }
+    if (t == 37) { return "~"; }
+    if (t == 119) { return "*%"; }
+    if (t == 120) { return "*|"; }
+    if (t == 121) { return "*?"; }
+    if (t == 114) { return "+|"; }
+    if (t == 115) { return "+?"; }
+    if (t == 117) { return "-|"; }
+    return "-?";
+}
+# A refused operator `typ` at the cursor with the u128 the stamp names on its LEFT (PEXPR's and
+# PARSE_TERM's loops).
+fn _w128_lchk(S, typ): i64 {
+    if (_W128_IS(S) == 0) { return 0; }
+    if (_w128_refused_op(typ) == 0) { return 0; }
+    return _w128_refuse_at(S, GTI(S), typ, 0);
+}
+# The factor that began at token `ti0` (PARSE_FACTOR, after it) is the u128 the stamp names: the
+# RIGHT operand of a refused operator just before it — `~x` too. A `*` / `&` with no operand before
+# it is a dereference / an address (`*p`, `&x`), not this.
+fn _w128_rchk(S, ti0): i64 {
+    if (_W128_IS(S) == 0) { return 0; }
+    if (ti0 < 1) { return 0; }
+    var t = TOKTYP(S, ti0 - 1);
+    if (_w128_refused_op(t) == 0) { return 0; }
+    if (t == 8 || t == 27) { if (_tok_ends_operand(S, ti0 - 2) == 0) { return 0; } }
+    return _w128_refuse_at(S, ti0 - 1, t, 0);
+}
+fn _tok_ends_operand(S, ti): i64 {
+    if (ti < 0) { return 0; }
+    var t = TOKTYP(S, ti);
+    if (t == 1 || t == 2 || t == 11 || t == 29 || t == 30 || t == 61) { return 1; }
+    if (t == 124 || t == 169 || t == 170) { return 1; }
+    return 0;
+}
+# The refusal, reported at operator token `ti` (`cop` 1: a compound assignment `typ=`), naming the
+# u128 the stamp names — "a u128 value" for a computed one (`(a + b) * 2`). Reported once per token;
+# the parse goes on in sync and the panic latch is left as it was (_err_in_sync's rule).
+fn _w128_refuse_at(S, ti, typ, cop): i64 {
+    if (_panic == 1) { return 0; }
+    if (_tn_once(S, ti) == 0) { return 0; }
+    var nm = 0 - 1;
+    if (_w128_k == 1) { nm = L64(S + 0x5D9D000 + _w128_v * 8); }
+    if (_w128_k == 2) { nm = L64(_varn_base + _w128_v * 8); }
+    var sv = GTI(S);
+    STI(S, ti);
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    syscall(SYS_WRITE, 2, ": ", 2);
+    if (cop == 1) { PRSTR("compound assignment `"); } else { PRSTR("`"); }
+    PRSTR(_w128_opstr(typ));
+    if (cop == 1) { PRSTR("=` to "); } else { PRSTR("` on "); }
+    if (nm >= 0) { PRSTR("u128 '"); PRSTR(S + 0xEC00000 + nm); PRSTR("'"); } else { PRSTR("a u128 value"); }
+    if (cop == 1) { PRSTR(" is refused - it is not implemented for u128 yet (only `+=` and `-=` are; lib/bayan.cyr's bayan_u128_* helpers cover the rest)\n"); }
+    else { PRSTR(" is refused - it is not implemented for u128 yet (only `+` and `-` are; lib/bayan.cyr's bayan_u128_* helpers cover the rest)\n"); }
+    _err_excerpt(S);
+    _had_error = 1;
+    STI(S, sv);
+    return 1;
+}
+# `b OP= e` on the u128 place the stamp names (_asg_compound_load marked it; the cursor is past the
+# `=`): `+=` / `-=` are `b = b + e` / `b = b - e` (1), all 128 bits — the store takes the
+# temporary; any other operator is refused by name and parsed on as before (0).
+fn _w128_cop(S, cop): i64 {
+    if (cop == 6) { _w128_binop(S, 0, 1); return 1; }
+    if (cop == 7) { _w128_binop(S, 1, 1); return 1; }
+    _w128_refuse_at(S, GTI(S) - 2, cop, 1);
+    return 0;
+}
+# The u128 place `(pk, pv)` = the value just parsed, all 16 bytes: a u128 (the stamp) copied, an
+# integer zero-extended. A declaration's store (_w16_local_init, _w16_global_init, _gvi_store).
+fn _w128_init_place(S, pk, pv): i64 {
+    if (_W128_IS(S) == 1) {
+        _w128_addr(S, _w128_k, _w128_v, 0);
+        _w128_k = 0;
+        _w128_addr(S, pk, pv, 1);
+        EW128_ACCM(S, 2);
+        return 0;
+    }
+    _w128_addr(S, pk, pv, 1);
+    EW128_ACCI(S, 2);
+    return 0;
+}
+# An ASSIGNMENT's store into slot `idx` (g 1 a global): when the slot is a u128 and the value a
+# `+` / `-` result (a k-3 temporary), all 16 bytes (1). `b = c` and `b = 5` keep the 8-byte store:
+# they write the low word and leave the high word, as they always have (not decided).
+fn _w128_store(S, idx, g): i64 {
+    if (_W128_IS(S) == 0) { return 0; }
+    if (_w128_k != 3) { return 0; }
+    var pk = 1;
+    if (g == 1) { pk = 2; if (GVW128(S, idx) == 0) { return 0; } }
+    elif (GLW128(S, idx) == 0) { return 0; }
+    _w128_addr(S, 3, _w128_v, 0);
+    _w128_k = 0;
+    _w128_addr(S, pk, idx, 1);
+    EW128_ACCM(S, 2);
+    return 1;
 }
 
 # ⛔ 6.6.10 — UNARY MINUS ON AN UNTYPED FLOAT VARIABLE. `var c = 1.5; -c` is an INTEGER
@@ -1596,6 +1879,7 @@ fn _UFV_L(S, li): i64 {
 fn _UFV_G(S, vi): i64 {
     _vecg_refuse(S, vi);   # 6.6.17 (a3): the untyped-global read rung — a vector global's too
     if (GVBOOL(S, vi) == 1) { _BX_MARK(S); }   # 6.7.3: a bool global's read is a boolean value
+    if (GVW128(S, vi) == 1) { _W128_MARK(S, 2, vi); }   # 6.7.6 (D2): a u128 global's read is the u128
     if (_gfi_base == 0) { return 0; }
     if (vi < 0) { return 0; }
     if (load8(_gfi_base + vi) == 1) { _FBR_MARK(S, 3); }
@@ -2082,11 +2366,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         var _ngt = _FBR_ST(S);
         if (_ngt == F64_TYID) { EPOPC(S); EF64_NEG(S); _FBR_MARK(S, 1); _cfo = 0; return 0; }
         if (_ngt == F32_TYID) { _NEG_F32(S); _FBR_MARK(S, 2); _cfo = 0; return 0; }
-        if (_FBR_KIND(S) == 3) { _FLT_TYPE_WARN(S, 3); }
-        EMOVCA(S);
-        EPOPR(S);
-        ESUBR(S);
-        return 0;
+        return _neg_int(S);
     }
     # Unary bitwise NOT: ~expr
     if (typ == 37) {
@@ -4928,6 +5208,7 @@ fn _PARSE_TERM_IMPL(S): i64 {
     var go = 1;
     while (go == 1) {
         var typ = PEEKT(S);
+        _w128_lchk(S, typ);   # 6.7.6 (D2): `* / % << >> >>>` on a u128 left operand is refused
         # v5.6.2: `*%` is identical to bare `*` (wrapping default on
         # 2's-complement). Collapse the token ID.
         if (typ == 119) { typ = 8; }
@@ -5111,6 +5392,7 @@ fn _PARSE_TERM_IMPL(S): i64 {
 #                     a byte difference, as they always were.
 # CHANGELOG [6.6.17]
 fn _ptr_add(S, ps): i64 {
+    if (_W128_IS(S) == 1) { return _w128_ilhs(S, 0); }   # 6.7.6 (D2): `n + x` with a u128 x
     var rs = GPSC(S);
     if (ps == 0) { if (rs > 1) { return _int_plus_ptr(S, rs); } }
     EPTR_SCALE(S, ps);
@@ -5137,6 +5419,7 @@ fn _int_plus_ptr(S, rs): i64 {
     return 0;
 }
 fn _ptr_sub(S, ps): i64 {
+    if (_W128_IS(S) == 1) { return _w128_ilhs(S, 1); }   # 6.7.6 (D2): `n - x` with a u128 x
     var rs = GPSC(S);
     if (ps > 0) { if (rs > 0) { return _ptr_diff(S, ps, rs); } }
     EPTR_SCALE(S, ps);
@@ -5479,6 +5762,7 @@ fn _PEXPR_IMPL(S): i64 {
     var go = 1;
     while (go == 1) {
         var typ = PEEKT(S);
+        if (_w128_pexpr(S, typ) == 1) { continue; }   # 6.7.6 (D2): a u128 `+` / `-` carries
         # v5.6.2: `+%` / `-%` are semantically identical to bare `+` /
         # `-` (wrapping is the default on 2's-complement); collapse
         # token IDs so the existing dispatch below handles them.
