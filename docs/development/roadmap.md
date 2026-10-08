@@ -77,7 +77,7 @@ in [completed-phases.md](completed-phases.md) § *v6.6.x*; the detail is the CHA
 | **6.7.0** | **A — real traits** (A1–A6, decisions below; A1–A5 landed 2026-10-07 — [ADR-007](../adr/007-traits.md)) · the CI refresh: every Linux job on **`ubuntu-26.04`** (the `-arm` job on `ubuntu-26.04-arm`) and every action at its latest stable release, SHA-pinned (checkout v7, upload-artifact v7, download-artifact v8, action-gh-release v3) · **`cyrius --help` reorganised** (commands grouped by what they do; nothing renamed or removed) |
 | **6.7.1** | **C3 — trait-bounded generics** (needs A), with its prerequisite the multi-type-param struct-type-arg residual and the generic-struct field — decisions taken at the open (spec below); ✅ landed 2026-10-07 |
 | **6.7.2** | **B1 `const` + C1 `const fn`** together — decisions taken at the open (spec below); ✅ landed 2026-10-07 |
-| **6.7.3** | **B2 `bool` / `true` / `false`** — decisions taken at the open (spec below) · **+ a repair lane for the filed issues** (user, 2026-10-07 — an exception to operating rule 1, the user's call): the two 6.7.x filings (struct-argument type check, enum-constant assignment) and the four open issue files (tail call in a loop, `cyriusly cmdtools`, the hashmap_fast leak, the tools' attribute-line rule) |
+| **6.7.3** | **B2 `bool` / `true` / `false`** — decisions taken at the open (spec below) · **+ a repair lane for the filed issues** (user, 2026-10-07 — an exception to operating rule 1, the user's call): the two 6.7.x filings (struct-argument type check, enum-constant assignment) and the four open issue files (tail call in a loop, `cyriusly cmdtools`, the hashmap_fast leak, the tools' attribute-line rule); ✅ landed 2026-10-08 (CHANGELOG [6.7.3]) |
 | **6.7.4 →** | the next of "then, by size" below |
 | then, by size | B2 `bool` / `true` / `false` · B3 the if-expression · B5 `loop` / `do … while` · B8 compound assignment on a field |
 | **Break 1** | catch-up: backlog + found issues (user picks) · `cyrius test` / `tests` consolidation · **cybs stack arguments** (below) |
@@ -162,7 +162,7 @@ field walk at the nested `<` (re-measured 6.7.1: `#derive(accessors)` never defi
 
 1. **`const` declarations.** `const LIMIT = 7;` is a compile-time value with no storage, folded like an enum
    constant; lands with C1 so a `const` can be initialised by a `const fn`.
-2. **`true`, `false`** (and `bool` as a real type for intent, typechecks and `#derive` — ⚠ `bool` ALREADY
+2. ✅ **LANDED 6.7.3.** **`true`, `false`** (and `bool` as a real type for intent, typechecks and `#derive` — ⚠ `bool` ALREADY
    parses as an 8-byte type name: `sizeof(bool) == 8`, `var a: bool[3]` in three tcyr files). 0 and 1
    underneath (ADR-002 keeps i64 the core).
 3. **A conditional expression.** ⚠ C's `c ? a : b` collides with the postfix `?` that propagates a `Result`
@@ -181,7 +181,7 @@ field walk at the nested `<` (re-measured 6.7.1: `#derive(accessors)` never defi
    and a field alike; every compound operator on every lvalue form (field, chain, `p.f` through a pointer, a
    subscript), with `*=` / `/=` on f64 fields following the 6.6.11 float rules.
 
-**B2 decisions (user, 2026-10-07, at the 6.7.3 open):**
+**B2 decisions (user, 2026-10-07, at the 6.7.3 open) — ✅ LANDED in 6.7.3 (CHANGELOG [6.7.3]):**
 - **A write into a `bool` is checked: refused by name unless the value is boolean.** A bool variable, field,
   parameter, fn return or const accepts only `true` / `false`, a comparison, `!`, `&&` / `||`, or another bool —
   the literals `0` and `1` included in the refusal (`var b: bool = 7;`, `f(1)` for `b: bool`, `return 1;` from
@@ -189,11 +189,17 @@ field walk at the nested `<` (re-measured 6.7.1: `#derive(accessors)` never defi
 - **A bool reads as the integer 0 or 1 everywhere an integer is expected** (ADR-002 keeps i64 the core): `n + ok`,
   `ok * 4`, a bool passed to an `i64` parameter all compile. Only writes INTO a bool are checked.
 - Unchanged by B2: `sizeof(bool) == 8`; a condition (`if`, `while`, `&&`) still takes any integer.
+- **A bool fn: a bare `return;` is refused, and running off its end returns `false`** (user, 2026-10-08).
+- Applied from those decisions, no new fork (2026-10-08): a multi-value return's bool element is checked; a
+  `bool[N]` list takes `true` / `false` / bool consts; a const is bool iff its value is; `#derive` writes JSON
+  `true` / `false`, decodes `true` as 1 and anything else as 0, and types its accessors (`: bool` getter,
+  `v: bool` setter); raw memory (`store64`, `*p = v`, `ret2`) stays unchecked; an untyped var is never inferred
+  bool. `!` is a real operator — the lexer used to DROP it (CVE-104).
 
-**The 6.7.3 repair lane (user, 2026-10-07)** — the fixes the user chose with the scope:
+**The 6.7.3 repair lane (user, 2026-10-07)** — the fixes the user chose with the scope — ✅ ALL LANDED in 6.7.3:
 - A struct ARGUMENT whose static struct type differs from its parameter's (a generic instance passed where the base
   is declared included) is refused by name, as the receive path already refuses it; an untyped i64 pointer argument
-  stays accepted.
+  stays accepted. **A typed pointer (`u: *Pt`) converts freely too, like `&p`** (user, 2026-10-08).
 - `A = 6;`, `A += 1;` and `&A` on an enum constant are refused by name, as for a `const`.
 - Tail call in a loop before a frame address: fix (c), the exact two-pass check (no tail call loses its `jmp` that
   does not have to).
@@ -466,19 +472,40 @@ CHANGELOG [6.6.17] *Downstream* (no ecosystem sweep).
 > axis 9, agnos #48's deadline (agnos), the sandhi comment (a filing).
 
 - **Found by the 6.7.x feature releases (backlog — only the user promotes; v6.7.x operating rule 2).**
-  - ⚠ **A struct ARGUMENT is never type-checked against its parameter** (found at the 6.7.1 open, C3): a `Pt`
-    passed to `fn bq(b: Q)` compiles and reads past it (`bq(p)` returned garbage for `b.c`), and a generic
-    INSTANCE passed where its base is declared reads the base's layout — `fn bs(b: Box)` with `bs(mk1(p))`
-    (`mk1<T>(x: T): Box<T>`, `Box<Pt>` is 24 B) returned `b.v.y`'s 4 where `n` was 8. A silent wrong value. The
-    RECEIVE path already refuses the same mismatch (`var r: Box; r = mk1(p);` → "cannot copy 'mk1' into a
-    variable of a different struct/vector type"), so the argument path is the gap; refusing it changes what
-    compiles (a language decision — the user's). Repro: the two programs above, `build/cycc` 6.7.1.
-
-  - ⚠ **An enum constant is silently assignable** (found at the 6.7.2 open, B1): `enum E { A = 5; }` then `A = 6;`
-    and `A += 1;` compile and change nothing — every read folds to 5 — and `&A` returns real storage holding 5 (the
-    variant's slot has 8 bytes). A silent no-op. 6.7.2's `const` refuses all three by name ("cannot assign to const",
-    "cannot take the address of const"); doing the same for enum constants changes what compiles (the user's call).
-    Repro: the three lines above, `build/cycc` 6.7.2.
+  - (The struct-argument and enum-constant filings of 6.7.1 / 6.7.2 shipped in 6.7.3's repair lane.)
+  - **Generic inference does not see through a generic STRUCT parameter** (6.7.3 lane struct-arg): `gx(b)` for
+    `fn gx<T>(b: Box<T>)` with `b: Box<Pt>` resolves the BASE gx (T = i64) — before 6.7.3 it ran it and read `b.n`
+    at the base's offset (4 where 8 is right); since 6.7.3 it is refused as a struct mismatch. `gx<Pt>(b)` works.
+    Valid cyrius the compiler cannot resolve — a compiler bug (gate row R18b pins the refusal). Likely site:
+    `_gen_infer_tp` binding T from an argument whose struct is an instance of the parameter's generic base.
+  - **A Str-typed FIELD is never typed as a struct source** (6.7.3 lane struct-arg): `bq(h.name)` with
+    `struct H { name: Str; k; }` and `fn bq(b: Q)` compiles and reads past the handle, and so does
+    `var q: Q = h.name;`. `_fla_take` and 6.7.3's `_fpk_note` both skip IS_STR_FIELD.
+  - **A bare const or enum-constant name as a statement is reported as an assignment** (6.7.3 lane enum-assign;
+    6.7.2 for const): `N;` gives "cannot assign to const 'N'". `_PARSE_STMT_IMPL` runs the lvalue check before it
+    has seen `=` / `OP=`. Cosmetic (the program is malformed either way); changing it changes a 6.7.2 diagnostic.
+  - **A redeclared global read inside its own bool redeclaration reads as boolean** (6.7.3 B2 review):
+    `var G = 5; var G: bool = G;` exits 5. The bool flag is the slot's (the last declaration's, as the float flag
+    is), so the replay marks the read of the first declaration's integer. A fix is a redeclaration rule (refuse a
+    redeclaration that changes bool-ness) — the user's call.
+  - **`lib/hashmap_fast.cyr`: an OVERWRITE of a present key can rebuild (and double) the table** (6.7.3 lane
+    hashmap-fast): `fhm_set` checks its trigger before `_fhm_insert` knows whether the key is new, so an overwrite
+    allocates (544 B at 14 live, 16 → 32 slots), moves every entry and can return -1. `lib/hashmap.cyr` runs its
+    trigger only for a NEW key since 6.6.20. No `fhm_*` caller exists in ~/Repos. Changing when a rebuild happens
+    is the user's to place.
+  - **`scripts/ci.sh` cannot install a real release tarball** (6.7.3 lane cyriusly): release.yml packs a top
+    directory (`cyrius-<v>-x86_64-linux/`), ci.sh untars into `$CYRIUS_HOME` and globs `versions/<v>/bin/*` — 0
+    files, "error: cycc not found". The only gate that runs ci.sh feeds it a fabricated layout.
+  - **install.sh's source-bootstrap path ships no `cyrius-init-templates`** (6.7.3 lane cyriusly): only the
+    refresh-only and tarball paths copy `programs/cyrius-init-templates`, so `cyrius init` / `port` from a
+    source-bootstrapped install lose their templates. A two-line copy plus a gate row.
+  - **api-surface's line scanner resets string state at every newline** (6.7.3 lane tool-lexst): a `{` on a raw
+    line of a multi-line string literal empties the snapshot for the rest of the file (rc 0), and a `fn` line there
+    is listed as public surface. `_asf_lexst_at` (6.7.3) already models strings across lines.
+  - **Six hand-kept copies of the lexer's attribute-word list** (cyrlint, cyrfmt, cyrdoc, cbt/srcscan,
+    api-surface, cyaudit): only cyaudit's is held to LEXATTRWORD by a derived census; an eleventh attribute added to
+    the lexer alone would be a comment to the other five. Options: move LEXATTRWORD into an includable pure file
+    (measured byte-identical on all seven forks in the 6.7.3 plan) or give each tool cyaudit's census.
 
 - **Found by the 6.6.20 closeout and not fixed in it (2026-10-07; backlog — only the user promotes).**
   - **A parenthesised struct argument to an address-passed parameter pushes the struct's VALUE**: `rd3((a))`
@@ -487,7 +514,10 @@ CHANGELOG [6.6.17] *Downstream* (no ecosystem sweep).
     operator path takes the parenthesised forms since 6.6.20.) Pre-existing at 6.6.19.
   - **A struct-returning call over 8 B as an operator's address-passed operand** — `s - mk3(4)`, `s - (mk3(4))` with
     `fn P3_sub(a: *P3, b: *P3)`, and the by-value `a - bump(b)`: SIGSEGV on x86 and aarch64, a wrong value on cx.
-    `_op_rhs` gives only the <= 8 B class a temp. Pre-existing at 6.6.19.
+    `_op_rhs` gives only the <= 8 B class a temp. Pre-existing at 6.6.19. ⚠ And a METHOD result, even of the matching
+    type (6.7.3 lane struct-arg): `p + p.dup()` with `fn Pt_add(a: Pt, b: Pt)` and `q + p.mq()` with
+    `fn Q_add(a: Q, b: Q)` SIGSEGV — `_op_operand_sv` pushes GESVAR (the result's first word) where the callee wants
+    an address.
   - **`cyrius deps --verify` on a CRLF checkout of a committed `lib/`** (`core.autocrlf=true`, the Git for Windows
     default) reports a hash mismatch for every file: the lock hashes the LF bytes. 6.6.20 made `cyrius.lock` itself
     CRLF-tolerant, not the files it hashes. Remedy today: `.gitattributes` `lib/** -text`. Decision: normalise or
