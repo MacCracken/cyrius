@@ -1610,14 +1610,15 @@ fn _paren_post(S, k): i64 {
 # ⛔ 6.7.6 (Break 1, D2) — u128 `+` AND `-` CARRY AND BORROW ACROSS ALL 128 BITS (the user's decision,
 # 2026-10-08): in both spellings (`b = b + x`, `b += x`), with a u128 or an integer on either side,
 # on every backend. Neither carried: both worked on the low word and left the high word alone.
-# A u128 read is still its LOW word in rax, so every integer context (an argument, a compare, a
-# return, `var n = b`) is unchanged. What it lacked is the high word, and the u128 STAMP says where
+# A u128 read is still its LOW word in rax, so every integer context (an argument, a return,
+# `var n = b`) is unchanged; a comparison reads both words (D3, _w128_cmp below) and so does a plain
+# assignment (D3, _w128_store). What it lacked is the high word, and the u128 STAMP says where
 # the whole value lives — the _BX / _FBR pattern, valid only while nothing has been emitted or
 # consumed since: a u128 local or global (k 1 / 2, the place itself; _sl_load_marks / _UFV_G) or a
 # 16-byte hidden temporary (k 3, _w128_tmp) holding a `+` / `-` result. A `+` / `-` with a u128 on
 # either side computes into a temporary with the backend's add / subtract with carry (EW128_ACCM,
-# EW128_ACCI) and leaves its low word in rax; a store into a u128 place takes all 16 bytes of a
-# k-3 result (_w128_store), and `b += x` / `b -= x` are that long form (_w128_cop). An integer
+# EW128_ACCI) and leaves its low word in rax; a store into a u128 place takes all 16 bytes of the
+# value (_w128_store), and `b += x` / `b -= x` are that long form (_w128_cop). An integer
 # operand is its 64-bit pattern, ZERO-extended — the rule a u128 initializer, a `u128[N]` list
 # element and a constant u128 global already follow (`var z: u128 = 0 - 1;` is 2^64 - 1); unary
 # minus is `0 - x`. Every OTHER operator with a u128 operand — `* / % << >> >>> & | ^ ~`, the `*|
@@ -1843,19 +1844,16 @@ fn _w128_init_place(S, pk, pv): i64 {
     EW128_ACCI(S, 2);
     return 0;
 }
-# An ASSIGNMENT's store into slot `idx` (g 1 a global): when the slot is a u128 and the value a
-# `+` / `-` result (a k-3 temporary), all 16 bytes (1). `b = c` and `b = 5` keep the 8-byte store:
-# they write the low word and leave the high word, as they always have (not decided).
+# An ASSIGNMENT's store into slot `idx` (g 1 a global): when the slot is a u128, all 16 bytes (1),
+# as its declaration's store takes them (_w128_init_place): a u128 source — a variable, a `+` / `-`
+# result — copied, an integer zero-extended. ⛔ 6.7.6 (D3, the user's decision, 2026-10-08, third
+# round): only a `+` / `-` result took the whole value; `b = c` and `b = 5` stored the low word and
+# kept the old high word (`b = c` of 1 over a high word of 3 read 3 * 2^64 + 1).
 fn _w128_store(S, idx, g): i64 {
-    if (_W128_IS(S) == 0) { return 0; }
-    if (_w128_k != 3) { return 0; }
     var pk = 1;
     if (g == 1) { pk = 2; if (GVW128(S, idx) == 0) { return 0; } }
     elif (GLW128(S, idx) == 0) { return 0; }
-    _w128_addr(S, 3, _w128_v, 0);
-    _w128_k = 0;
-    _w128_addr(S, pk, idx, 1);
-    EW128_ACCM(S, 2);
+    _w128_init_place(S, pk, idx);
     return 1;
 }
 

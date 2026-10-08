@@ -592,8 +592,9 @@ cxvm by `tests/gates/codegen/cx_backend_parity.sh`.
 both spellings — `b = b + x` and `b += x`, `b = b - x` and `b -= x` — with a `u128` or an integer
 on either side, chains and parentheses included; unary `-b` is `0 - b`. An integer operand is its
 64-bit pattern **zero-extended**, the rule a `u128` initializer and a `u128[N]` list element follow:
-`b + (0 - 1)` adds 2^64 - 1 — write `b - 1`. A `u128` declaration takes its whole value
-(`var a: u128 = c;` copies all 16 bytes, `var a: u128 = 5;` has a high word of 0). Every **other**
+`b + (0 - 1)` adds 2^64 - 1 — write `b - 1`. A `u128` declaration and a plain assignment take the
+whole value (`var a: u128 = c;` and `a = c;` copy all 16 bytes, `var a: u128 = 5;` and `a = 5;` leave
+a high word of 0). Every **other**
 operator with a `u128` operand — `* / % << >> >>> & | ^ ~`, `*% *| *? +| +? -| -?` and their `OP=`
 — is refused by name until it is implemented (`` `*` on u128 'b' is refused - it is not implemented
 for u128 yet ``); `lib/bayan.cyr`'s `bayan_u128_*` helpers cover them. A **comparison** — `==`,
@@ -601,11 +602,11 @@ for u128 yet ``); `lib/bayan.cyr`'s `bayan_u128_*` helpers cover them. A **compa
 a `u128` or a zero-extended integer, wherever a comparison is written (a condition, an `&&` / `||`
 operand, a value, an if-expression condition): `b < c` is true for `b` 2^64 - 1 and `c` 2^64. A
 `u128` read where an integer is expected — an argument, `var n = b`, `return b`, a bare `if (b)`,
-`!b`, a `match` / `switch` subject — is its low word, as it always was, and so is a plain
-`b = c` / `b = 5`: they store the low word and keep the high word. A `u128` parameter is an 8-byte
-slot (the low word). Before 6.7.6 neither spelling carried (both worked on the low word and left
-the high word alone), the other operators did the same silently, a comparison read the low words
-as SIGNED integers, and a `u128` local initializer stored its value into BOTH halves.
+`!b`, a `match` / `switch` subject — is its low word, as it always was. A `u128` parameter is an
+8-byte slot (the low word). Before 6.7.6 neither spelling carried (both worked on the low word and
+left the high word alone), the other operators did the same silently, a comparison read the low
+words as SIGNED integers, a plain `b = c` / `b = 5` stored the low word and kept the old high word,
+and a `u128` local initializer stored its value into BOTH halves.
 
 Wrapping ops (`+%` etc.) document intent at the call site that a wrap is
 expected — bytes are identical to the bare operator. Saturating and

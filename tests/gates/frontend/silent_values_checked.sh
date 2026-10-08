@@ -23,14 +23,17 @@
 #      (`b = b + x`, `b += x`), a u128 or an integer on either side, unary minus `0 - x`; a u128
 #      declaration takes its whole value (a local stored it into BOTH halves); every OTHER operator
 #      with a u128 operand — `* / % << >> >>> & | ^ ~`, `*% *| *? +| +? -| -?`, and their OP= — is
-#      REFUSED by name (each computed on the low word). `b = c` / `b = 5` keep their 8-byte store
-#      (not decided). Runtime: u128_add_sub_carry.tcyr and u128_compound_matches_long_form.tcyr (A
-#      rows; lane D's D-7 pin, now carrying).
+#      REFUSED by name (each computed on the low word). Runtime: u128_add_sub_carry.tcyr and
+#      u128_compound_matches_long_form.tcyr (A rows; lane D's D-7 pin, now carrying).
 #   C  (D3, the third round) a u128 COMPARISON — `== != < <= > >=` — compares all 128 bits, UNSIGNED,
 #      against a u128 or a zero-extended integer on either side, wherever a comparison is parsed (a
 #      condition, an `&&` / `||` operand, a value, an if-expression condition, a chained `a < b < c`),
 #      at fn and top level: it compared the low words, signed. Runtime: u128_compare_all_bits.tcyr
 #      (A rows).
+#   S  (D3) a PLAIN u128 assignment takes the whole value, as the declaration does: `b = c` (a u128
+#      variable or a `+` / `-` result) copies all 16 bytes and `b = 5` zero-extends — local and global,
+#      statement, for step and top level. Only a `+` / `-` result did; `b = c` / `b = 5` stored the low
+#      word and kept the old high word. Runtime: u128_assign_whole_value.tcyr (A rows).
 #   W  (D2) EVERY write of an f64 value into an `f32` rounds, as F's initializer does: an assignment
 #      (statement and for step, local and global), a field store, a struct-literal field and an
 #      argument to an `f32` parameter. Runtime: f32_writes_round.tcyr (A rows).
@@ -195,7 +198,7 @@ exits u31 1 "U31: \`b = b + 1\` on 2^64 - 1 carries (u5.cyr: exited 0)" "fn main
 exits u32 65 "U32: \`b = b + c\`, both u128 (u6.cyr: exited 63)" "fn main(): i64 {\n    var b: u128 = 0;\n    store64(&b, 7); store64(&b + 8, 3);\n    var c: u128 = 0;\n    store64(&c, 0xFFFFFFFFFFFFFFFF); store64(&c + 8, 1);\n    b = b + c;\n    return load64(&b) * 10 + load64(&b + 8);\n}\nsyscall(60, main());\n"
 exits u33 0 "U33: \`var a: u128 = 5\` has a high word of 0, as the global (u7.cyr: exited 50)" "var G: u128 = 5;\nfn main(): i64 {\n    var a: u128 = 5;\n    return load64(&a + 8) * 10 + load64(&G + 8);\n}\nsyscall(60, main());\n"
 exits u34 7 "U34: not refused — an address, a deref through a \`*u128\` and an argument (the low word), a compare (all 128 bits)" "fn f(n): i64 { return n; }\nfn main(): i64 {\n    var b: u128 = 0;\n    store64(&b, 7);\n    var p = &b;\n    var x = *p;\n    if (b == 7) { x = x * 1; }\n    return f(b) + x - 7;\n}\nsyscall(60, main());\n"
-exits u35 13 "U35: \`b = c\` and \`b = 5\` keep their 8-byte store (not decided)" "fn main(): i64 {\n    var b: u128 = 0;\n    store64(&b + 8, 3);\n    var c: u128 = 1;\n    b = c;\n    var r = load64(&b) * 10 + load64(&b + 8);\n    return r;\n}\nsyscall(60, main());\n"
+exits u35 10 "U35: \`b = c\` takes c's whole value (D3, S below; it kept b's high word: exited 13)" "fn main(): i64 {\n    var b: u128 = 0;\n    store64(&b + 8, 3);\n    var c: u128 = 1;\n    b = c;\n    var r = load64(&b) * 10 + load64(&b + 8);\n    return r;\n}\nsyscall(60, main());\n"
 
 # ── C (D3): a u128 comparison compares all 128 bits ─────────────────────────────────────────────
 # The planning repro (c1.cyr, exit 170): b = 2^64 + 5, c = 2^65 + 5 — `==` was true, `<` false.
@@ -203,6 +206,13 @@ C1='fn main(): i64 {\n    var b: u128 = 0;\n    var c: u128 = 0;\n    store64(&b
 exits c01 61 "C1: \`==\` / \`!=\` / \`<\` / \`>\` and a value read the high words (c1.cyr: exited 170)" "$C1"
 exits c02 61 "C2: ... the same program under CYRIUS_IR=3" "$C1" CYRIUS_IR=3
 exits c03 3 "C3: unsigned — a low word of 2^63 is above 1, and an integer is zero-extended" "var G: u128 = 0;\nstore64(&G, 0x8000000000000000);\nvar r = 0;\nif (G > 1) { r = r + 1; }\nif (G == 0x8000000000000000) { r = r + 2; }\nif (G < 0) { r = r + 4; }\nsyscall(60, r);\n"
+
+# ── S (D3): a plain u128 assignment takes the whole value ───────────────────────────────────────
+# The D2 finding's repro (a1.cyr, exit 73 = 1353 % 256): `b = c` and `b = 5` over a high word of 3.
+S1='fn main(): i64 {\n    var b: u128 = 0;\n    store64(&b + 8, 3);\n    var c: u128 = 1;\n    b = c;\n    var r = load64(&b) * 10 + load64(&b + 8);\n    store64(&b + 8, 3);\n    b = 5;\n    r = r * 100 + load64(&b) * 10 + load64(&b + 8);\n    return r;\n}\nsyscall(60, main());\n'
+exits s01 26 "S1: \`b = c\` copies, \`b = 5\` zero-extends (1050 % 256; a1.cyr: exited 73)" "$S1"
+exits s02 26 "S2: ... the same program under CYRIUS_IR=3" "$S1" CYRIUS_IR=3
+exits s03 70 "S3: globals and top level: \`G = H\` copies, \`G = 7\` zero-extends" "var G: u128 = 0;\nvar H: u128 = 0;\nstore64(&G + 8, 9);\nstore64(&H, 2);\nG = H;\nvar r = load64(&G) * 10 + load64(&G + 8);\nstore64(&G + 8, 9);\nG = 5;\nr = r + load64(&G) * 10 + load64(&G + 8);\nsyscall(60, r);\n"
 
 # ── W (D2): every write of an f64 into an f32 rounds ────────────────────────────────────────────
 # The filed repro (lane D's f4.cyr, exit 16 — only the initializer row): all five rows, exit 31.
@@ -288,8 +298,9 @@ tcyr_all AR tests/tcyr/crossos/int_name_routes_int_overload.tcyr 20
 tcyr_all AU tests/tcyr/crossos/u128_compound_matches_long_form.tcyr 14
 tcyr_all AU2 tests/tcyr/crossos/u128_add_sub_carry.tcyr 33
 tcyr_all AC tests/tcyr/crossos/u128_compare_all_bits.tcyr 47
+tcyr_all AS tests/tcyr/crossos/u128_assign_whole_value.tcyr 21
 tcyr_all AW tests/tcyr/crossos/f32_writes_round.tcyr 21
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — f32 initializers round (F); a top-level pair bind refused (P); an integer name routes to _int (R); vector / typed-array / slice OP= refused (O); u128 + / - carry and every other u128 operator refused (U); u128 comparisons compare all 128 bits (C); every f32 write rounds (W); a whole typed array and a bare array OP= refused (B); IR=3 keeps the f32 conversions (I); every tcyr on x86_64 / IR / DCE / aarch64 / cx / PE (A)"
+echo "PASS: $G — f32 initializers round (F); a top-level pair bind refused (P); an integer name routes to _int (R); vector / typed-array / slice OP= refused (O); u128 + / - carry and every other u128 operator refused (U); u128 comparisons compare all 128 bits (C); a plain u128 assignment takes the whole value (S); every f32 write rounds (W); a whole typed array and a bare array OP= refused (B); IR=3 keeps the f32 conversions (I); every tcyr on x86_64 / IR / DCE / aarch64 / cx / PE (A)"
