@@ -341,6 +341,17 @@ probes. The proposal takes the **still-real critical / high** items, the two pre
 | G. Tooling | `cyrius test` absorbs `cyrius tests` (pre-placed, below) — and runs this repo's own corpus (22 `.tcyr` defining `fn run()` collide with `lib/process.cyr`'s `run` today) | S-M |
 | H. cyrius `lib/` | size each stack buffer by the constant that bounds it (11 constants, ~17 sites — among them the CYRIUS-2026-0013 site, `_LOG_LINE_MAX` vs `var buf[512]` in `lib/log.cyr`); private names become `const`, public ones keep their `var` (no API change) · `lib/trait.cyr`'s header promises `impl` sugar that ADR-007 made static | S-M |
 
+**Break 1 decisions (user, 2026-10-08, at the 6.7.6 open):**
+- **`var x: f32 = 1.5` rounds to f32** (global and local), as a 6.7.4 `f32[N]` list element does — it stored the f64 bit
+  pattern silently.
+- **A top-level `var v = pair_fn();` is refused by name**, with the fn-body rule's wording (v6.5.67) — it kept the tag
+  and dropped the payload silently.
+- **`OP=` on a u128 computes** exactly as `b = b OP x` does (the carry included); **`OP=` on a SIMD vector, a
+  typed-array variable or a slice variable is refused by name** (write the long form or index an element), as 6.7.5
+  refused it for structs.
+- **Lane C (`cyrius.cyml` dev- and test-friendly)** — the design is surveyed and put to the user before it is built
+  (git the priority, local `path` dev first-class, NOT a security item).
+
 Also after the tag (the user's call — it writes the live store): `verify-store.sh --restore` for the 16 slots whose
 `bin/cybs` is a stale 12,344 B (6.6.3–6.6.9, 6.6.11–6.6.19). **Break 2** takes the still-real medium items (TLS
 conformance as one bite, generic inference through a generic struct parameter, `asm { in al, dx; }`, kernel-build
