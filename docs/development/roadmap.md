@@ -31,7 +31,7 @@ the unpinned watching list is [roadmap-future.md](roadmap-future.md); per-releas
 
 ## Where we are
 
-**Current head: v6.7.5** (2026-10-08) — **B5 `loop` / `do … while` + B8 compound assignment on every lvalue landed** (6.7.4 shipped: tag `6.7.4` @ `d71cf4bc`)
+**Current head: v6.7.6** (2026-10-08) — **slot open: Break 1 (W2 refold + the high / critical backlog)** (6.7.5 shipped: tag `6.7.5` @ `efa15103`)
 · cycc **1,759,824 B** (`.text` **1,571,240**) · `cycc-native-aarch64` **1,530,056 B** · **526** `.tcyr` (**233** in
 `crossos/`) · **106** `lib/*.cyr` · **424** shell gates under `tests/gates/<bucket>/` · api-surface **5,827** · **1 open
 issue** · **2 open proposals** · the next free ledger id is **CYRIUS-2026-0036**.

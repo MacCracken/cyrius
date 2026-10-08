@@ -4,6 +4,8 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [6.7.6] — 2026-10-08
+
 ## [6.7.5] — 2026-10-08
 
 B5 `loop { … }` and `do { … } while (c);` + B8 compound assignment on every lvalue (roadmap.md § Spec — B; the
