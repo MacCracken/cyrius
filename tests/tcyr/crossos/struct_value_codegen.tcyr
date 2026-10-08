@@ -8,6 +8,9 @@
 #   I  a name intrinsic's result (`mulh64`, `fncall0`..`fncall8`, `callptr`) is an untyped word: it
 #      inherited its LAST argument's struct type, so `fncall1(&f, n) + 1` with `n: Num` dispatched
 #      `Num_add` (100 where 8 is right).
+#   P  a PARENTHESISED argument to an address-passed parameter (`rd3((a))`, `rd1((s))`,
+#      `rd1((mk1(4)))`) was pushed as its value and dereferenced: SIGSEGV. Parentheses around the
+#      whole argument are transparent at any depth, for every argument shape.
 include "lib/syscalls.cyr"
 include "lib/string.cyr"
 include "lib/alloc.cyr"
@@ -80,11 +83,55 @@ fn intrinsics(): i64 {
 var GI1 = fncall1(&id1, GN) + 1;
 var GI2 = mulh64(3, GN) + 1;
 
+# P — parenthesised arguments. P3 is 24 B (a retptr return), S1 8 B (in rax).
+struct P3 { x; y; z; }
+struct S1 { v; }
+struct HP { n; p: P3; }
+fn rd3(p: *P3): i64 { return p.z; }
+fn rd1(p: *S1): i64 { return p.v; }
+fn wr1(p: *S1): i64 { p.v = 9; return 0; }
+fn sz3(p: P3): i64 { return p.x + p.y + p.z; }
+fn mk3(v): P3 { var t: P3 = P3 { v, v, v }; return t; }
+fn mk1(v): S1 { var t: S1; t.v = v; return t; }
+fn P3_add(a: *P3, b: *P3): P3 { var t: P3 = P3 { a.x + b.x, a.y + b.y, a.z + b.z }; return t; }
+impl P3 { fn dbl(self): P3 { var t: P3 = P3 { self.x * 2, self.y * 2, self.z * 2 }; return t; } }
+var GP3 = P3 { 1, 2, 7 };
+fn p_tail(a: P3): i64 { return sz3((a)); }
+var GPR = rd3((GP3)) + rd3(((GP3)));
+fn parens(): i64 {
+    var a: P3 = P3 { 1, 2, 3 };
+    var b: P3 = P3 { 10, 20, 30 };
+    var s: S1;
+    s.v = 5;
+    var h: HP;
+    h.n = 0; h.p.x = 10; h.p.y = 20; h.p.z = 30;
+    assert_eq(rd3((a)), 3, "P1: rd3((a)), a *P3 parameter");
+    assert_eq(rd3(((a))), 3, "P2: rd3(((a))), two levels");
+    assert_eq(rd1((s)), 5, "P3: rd1((s)), an 8-byte struct");
+    assert_eq(rd1((mk1(4))), 4, "P4: rd1((mk1(4))), an 8-byte call result");
+    assert_eq(sz3((a)), 6, "P5: sz3((a)), a by-value 24-byte parameter");
+    assert_eq(sz3((mk3(4))), 12, "P6: sz3((mk3(4))), a retptr call result");
+    assert_eq(sz3((h.p)), 60, "P7: sz3((h.p)), a struct-typed field");
+    assert_eq(sz3((a.dbl())), 12, "P8: sz3((a.dbl())), a method result");
+    assert_eq(sz3((a + b)), 66, "P9: sz3((a + b)), an operator result");
+    assert_eq(sz3((a) + (b)), 66, "P10: sz3((a) + (b)) is an expression, not a wrap");
+    assert_eq(sz3(((a) + (b))), 66, "P16: sz3(((a) + (b))): one wrap around that expression");
+    assert_eq(rd3((GP3)), 7, "P11: rd3((GP3)), a global");
+    wr1((s));
+    assert_eq(s.v, 9, "P12: wr1((s)) writes through to s");
+    assert_eq(p_tail(a), 6, "P13: return sz3((a)); (a tail call)");
+    var q = &a;
+    assert_eq(rd3((q)) + rd3((&a)), 6, "P14: (q) and (&a) are still pointers");
+    return 0;
+}
+
 fn rows(): i64 {
     alloc_init();
     flags();
     intrinsics();
     assert_eq(GI1 * 10 + GI2, 81, "I7: at top level (fncall1 + 1, mulh64 + 1)");
+    parens();
+    assert_eq(GPR, 14, "P15: rd3((GP3)) + rd3(((GP3))) at top level");
     return 0;
 }
 var r0 = rows();

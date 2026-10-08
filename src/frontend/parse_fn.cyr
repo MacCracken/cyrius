@@ -1684,6 +1684,7 @@ fn _sarg_gv_sid(S, gvi): i64 {
 fn _try_push_struct_addr_arg(S, fi, argc, tail): i64 {
     if (fi < 0) { return 0; }
     if (_pm_struct(fi, argc) == 0) { return _sarg_byval_small(S, fi, argc); }   # 6.6.17 (a10); 6.7.3
+    if (PEEKT(S) == 10) { return _sarg_paren(S, fi, argc, tail); }   # 6.7.6
     if (PEEKT(S) != 2) { return 0; }
     var nx = TOKTYP(S, GTI(S) + 1);
     # 6.7.3: a whole free call's struct, checked here — where `_arg_call_class` resolves it anyway.
@@ -1749,6 +1750,27 @@ fn _try_push_struct_addr_arg(S, fi, argc, tail): i64 {
     if (_sa_ptr == 1) { EFLLOAD(S, li); } else { _sarg_escapes(fi, argc, tail); EFLADDR(S, li); }
     EPUSHR(S);
     STI(S, GTI(S) + 1);                 # consume IDENT
+    return 1;
+}
+
+# ⛔ 6.7.6 — A PARENTHESISED ARGUMENT TO AN ADDRESS-PASSED PARAMETER WAS PUSHED AS ITS VALUE:
+# `rd3((a))` (`p: *P3`), `rd1((s))`, `rd1((mk1(4)))` SIGSEGV'd on x86 and aarch64 (an access
+# violation on PE, a guest error on cx), because every arm above keys on the argument's first token
+# being the name. Parentheses that wrap the WHOLE argument (`_pwrap_k`, any depth) are transparent:
+# the arms run on what they wrap — a name, a call, a field, a method or operator result — and the
+# `)`s are consumed after. Any other argument that opens with `(` (`(a) + b`) is an expression, as
+# one that does not is (`_push_struct_expr_arg`). Returns as the caller's arms do. CHANGELOG [6.7.6]
+fn _sarg_paren(S, fi, argc, tail): i64 {
+    var st = GTI(S);
+    var k = _pwrap_k(S, st);
+    var e = TOKTYP(S, _pw_end);
+    if (e != 31) { if (e != 11) { return _push_struct_expr_arg(S, fi, argc, tail); } }
+    STI(S, st + k);
+    if (_try_push_struct_addr_arg(S, fi, argc, tail) == 0) {
+        STI(S, st);   # not a struct source: the caller pushes the whole argument's value
+        return 0;
+    }
+    _pw_close(S, k);
     return 1;
 }
 
