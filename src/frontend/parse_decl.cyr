@@ -4247,11 +4247,21 @@ fn _gvi_ann(S, slot): i64 {
     return 0 - sid;
 }
 
+# The replay's cursor is on the initializer's first token: the refusal reads (and reports at) the
+# `=` before it, as PARSE_VAR's does. CHANGELOG [6.7.6]
+fn _gvi_pair_bind(S): i64 {
+    var sv = GTI(S);
+    STI(S, sv - 1);
+    _refuse_single_pair_bind(S);
+    STI(S, sv);
+    return 0;
+}
 # ⛔ 6.6.11 — a leading-block initialiser, replayed here rather than parsed by PARSE_VAR, so a
 # struct-typed global's whole call / method result was never type-checked (`var G: Odd = mk2();`
 # compiled silently where the same line after a statement was refused). The same arming and
 # check PARSE_VAR's top-level arm makes. CHANGELOG [6.6.11]
 fn _gvi_expr(S, gps): i64 {
+    _gvi_pair_bind(S);   # 6.7.6: a `: stack` pair into one global is refused, as in a fn
     if (gps == 0) { PCMPE(S); return 0; }
     var st = GTI(S);
     _refuse_toplevel_pair_init(S, gps, st);   # 6.6.11: a rax:rdx result has no storage here
@@ -5168,24 +5178,9 @@ fn PARSE_VAR(S): i64 {
     # mismatch is diagnosed at the receive paths below rather than silently truncated).
     # v6.5.67 — a `: stack` enum call bound to ONE variable keeps the tag and silently drops the
     # payload. Refuse it. The two-variable destructure is handled earlier in this fn, so reaching
-    # here with a pair-returning callee means the payload is about to be lost.
-    if (GINFN(S) == 1) {
-        if (PEEKT(S) == 4) {
-            if (_callee_returns_pair_at(S, GTI(S) + 1) == 1) {
-                # v6.6.0: unless `?` consumes it. `var v = f()?;` binds ONE value by design —
-                # the operator propagates the Err half out of the enclosing function and yields
-                # the payload alone. ⚠ The check goes HERE and not inside the helper: the helper
-                # also feeds `_tpair`, which is what tells `?` it is holding a pair at all, and
-                # suppressing it there sends `?` down the boxed lowering that dereferences the
-                # tag as a pointer (measured: immediate SIGSEGV).
-                # 6.6.16: scanned from the callee's first token, the right start for `f(`,
-                # `g<..>(` and `x.m(` alike (it walks to the first `(`). CHANGELOG [6.6.16]
-                if (_call_is_propagated(S, GTI(S) + 1) == 0) {
-                    ERR_MSG(S, "a `: stack` enum returns two values — bind both: `var tag, val = f();`", 72);
-                }
-            }
-        }
-    }
+    # here with a pair-returning callee means the payload is about to be lost. 6.7.6: at top level
+    # too (a global after the first statement; the declaration zone's replay is `_gvi_expr`).
+    _refuse_single_pair_bind(S);
     if (GINFN(S) == 1) {
         if (PEEKT(S) == 4) {
             var _vin_ti = GTI(S) + 1;

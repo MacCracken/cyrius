@@ -46,6 +46,28 @@ exits() {   # <name> <want> <what> <source> [ENV=V]: builds (under ENV), runs, e
     chmod +x "$T/$1.bin"; got=0; timeout 10 "$T/$1.bin" || got=$?
     if [ "$got" -eq "$2" ]; then ok "$3: exit $got"; else bad "$3: exit $got, want $2"; fi
 }
+refused() {   # <name> <message fragment> <what> <source>: refused once, with the fragment
+    printf '%b' "$4" > "$T/$1.cyr"
+    build "$1"
+    n=$(grep -c '^error' "$T/$1.err")
+    if [ "$rc" -eq 0 ]; then bad "$3: BUILT (rc 0)"
+    elif [ "$rc" -eq 124 ]; then bad "$3: the compiler did not finish (timeout)"
+    elif ! grep -qF "$2" "$T/$1.err"; then bad "$3: refused, but not as expected: $(grep '^error' "$T/$1.err" | head -1)"
+    elif [ "$n" -ne 1 ]; then bad "$3: $n error lines (want 1): $(grep '^error' "$T/$1.err" | head -2 | tr '\n' '|')"
+    else ok "$3: refused once"; fi
+}
+
+# ── P: a `: stack` pair bound to ONE global is refused, as in a fn body ─────────────────────────
+PR='include "lib/syscalls.cyr"\nenum R: stack { ROk(v); RErr(e); }\nfn mk(n) { if (n == 0) { return RErr(99); } return ROk(n); }\nfn mkg<T>(n: T) { return ROk(n); }\nstruct Pt { x; }\nfn Pt_mk(self: Pt, n) { return ROk(n); }\nfn one(): i64 { return 7; }\n'
+BB="a \`: stack\` enum returns two values — bind both: \`var tag, val = f();\`"
+refused p01 "$BB" "P1: \`var v = mk(42);\` in the declaration zone" "${PR}var v = mk(42);\nsyscall(60, v);\n"
+refused p02 "$BB" "P2: ... after the first top-level statement" "${PR}syscall(1, 1, \"\", 0);\nvar v = mk(42);\nsyscall(60, v);\n"
+refused p03 "$BB" "P3: ... annotated \`var v: i64 = mk(42);\`" "${PR}var v: i64 = mk(42);\nsyscall(60, v);\n"
+refused p04 "$BB" "P4: ... the generic spelling \`mkg<i64>(..)\`" "${PR}var v = mkg<i64>(42);\nsyscall(60, v);\n"
+refused p05 "$BB" "P5: ... the method spelling \`p.mk(..)\`" "${PR}var p = Pt { 1 };\nsyscall(1, 1, \"\", 0);\nvar v = p.mk(42);\nsyscall(60, v);\n"
+refused p06 "$BB" "P6: inside a fn (the v6.5.67 rule, unchanged)" "${PR}fn main(): i64 { var v = mk(42); return v; }\nsyscall(60, main());\n"
+exits p07 42 "P7: the top-level destructure binds both (both zones)" "${PR}var t, v = mk(42);\nsyscall(1, 1, \"\", 0);\nvar t2, v2 = mk(0);\nvar o = one();\nsyscall(60, v + t + (t2 - 1) * 100 + (v2 - 99) + o - 7);\n"
+exits p08 7 "P8: a one-value global from a plain fn is untouched" "${PR}var o = one();\nsyscall(1, 1, \"\", 0);\nvar o2 = one();\nsyscall(60, o * o2 / 7);\n"
 
 # ── I: CYRIUS_IR=3 and the x86 f32 conversions ──────────────────────────────────────────────────
 I1='fn lo32(p): i64 { return load32(p) & 0xFFFFFFFF; }\nfn main(): i64 {\n    var y: f64 = 1.5;\n    var fy: f32 = f32_from(y);\n    var ok = 0;\n    if (lo32(&fy) == 0x3FC00000) { ok = ok + 1; }\n    var m: f32 = f32_from(1.5);\n    var m2: f32 = m * f32_from(2.0);\n    if (f32_to(m2) == 0x4008000000000000) { ok = ok + 2; }\n    var g: f32 = y;\n    if (lo32(&g) == 0x3FC00000) { ok = ok + 4; }\n    return ok;\n}\nsyscall(60, main());\n'
@@ -105,4 +127,4 @@ tcyr_all AF tests/tcyr/crossos/f32_scalar_init_rounds.tcyr 30
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — f32 initializers round (F); IR=3 keeps the f32 conversions (I); every tcyr on x86_64 / IR / DCE / aarch64 / cx / PE (A)"
+echo "PASS: $G — f32 initializers round (F); a top-level pair bind refused (P); IR=3 keeps the f32 conversions (I); every tcyr on x86_64 / IR / DCE / aarch64 / cx / PE (A)"

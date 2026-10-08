@@ -412,8 +412,8 @@ UNDEF=$(grep -c "undefined function" "$T/w.err")
 # refusal row below COMPILED and kept the tag with the payload dropped, silently — measured
 # `0 0 / 0 1` for Ok(3) / Err(99) — where the identical plain call `f(..)` was refused. The forward
 # wrappers (defined AFTER the bind) reach the flag only through the pair prescan's own resolver.
-# Not here, and unchanged: a top-level single bind of ANY pair callee (the v6.5.67 refusal is a
-# fn-body one), and a receiver that is not one name (`a.b.m()`, `f().m()`).
+# Not here: a top-level single bind of a pair callee (refused since 6.7.6 — its rows are P in
+# silent_values_checked.sh), and, unchanged, a receiver that is not one name (`a.b.m()`, `f().m()`).
 # refuse_both <label> <axis> — must fail to compile WITH the "bind both" message.
 refuse_both() {
   cat > "$T/p.cyr"

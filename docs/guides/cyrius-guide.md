@@ -2984,6 +2984,10 @@ binding it one-wide there is caught too.
 destructured and propagated with `?` exactly like `f(..)` (v6.6.16 — before that, `?` on them
 crashed and a single bind dropped the payload silently).
 
+The single-variable bind is refused for a **global** too (6.7.6): `var r = f();` at top level —
+before the first top-level statement or after it — kept the tag and dropped the payload, silently
+(`Ok(42)` read as 0). Bind both with `var t, v = f();`, which works at top level.
+
 **Every path of a pair-returning fn returns a variant.** In a fn that returns `Ok(x)` /
 `Some(v)` on one path, a `return rv;`, `return 0;` or `return wrapper();` on another hands the
 caller that value AS ITS TAG and a stale payload, so it is warned (*"returns a `: stack` pair on

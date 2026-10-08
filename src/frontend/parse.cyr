@@ -851,6 +851,25 @@ fn _refuse_lossy_pair(S): i64 {
     return 1;
 }
 
+# v6.5.67 — `var v = f();` with `f` returning a `: stack` pair (cursor on the `=`): one variable
+# keeps the tag and drops the payload, so it is refused. v6.6.0: unless `?` consumes it — `var v =
+# f()?;` binds ONE value by design (the operator propagates the Err half and yields the payload).
+# ⚠ The `?` check goes HERE and not inside `_callee_returns_pair_at`: that also feeds `_tpair`, which
+# tells `?` it holds a pair at all, and suppressing it there sends `?` down the boxed lowering that
+# dereferences the tag as a pointer (measured: immediate SIGSEGV). 6.6.16: scanned from the callee's
+# first token, the right start for `f(`, `g<..>(` and `x.m(` alike.
+# ⛔ 6.7.6 (Break 1, lane D) — AT TOP LEVEL TOO (the user's decision, 2026-10-08). The check was gated
+# on `GINFN == 1`, so a global `var v = mk();` kept the tag and lost the payload silently (`Ok(42)`
+# exited 0), in the declaration zone (EMIT_GVAR_INITS' `_gvi_expr`) and after the first statement
+# (PARSE_VAR) alike. The fn-body rule and wording, everywhere. CHANGELOG [6.7.6]
+fn _refuse_single_pair_bind(S): i64 {
+    if (PEEKT(S) != 4) { return 0; }
+    if (_callee_returns_pair_at(S, GTI(S) + 1) == 0) { return 0; }
+    if (_call_is_propagated(S, GTI(S) + 1) == 1) { return 0; }
+    ERR_MSG(S, "a `: stack` enum returns two values — bind both: `var tag, val = f();`", 72);
+    return 1;
+}
+
 fn _callee_returns_pair(S): i64 {
     var _crp = _callee_returns_pair_at(S, GTI(S));
     if (_crp == 0) { return 0; }
