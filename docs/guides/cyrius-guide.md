@@ -2291,11 +2291,13 @@ dce = true                   # dead-code elimination; --dce / CYRIUS_DCE=1 (CYRI
 
 They configure every `cyrius build` in the project — a bare one AND `cyrius build <other source>
 <out>` (sigil's fuzz loop builds each harness with `-D SIGIL_SMOKE` from its manifest); `-D` on
-`test` / `run` / `bench` stays a command-line choice. `CYRIUS_DCE` takes `1` or `0`; unset or
+`run` stays a command-line choice, and the test scope has its own `[test] defines` (6.7.6, *Tests*
+below). `CYRIUS_DCE` takes `1` or `0`; unset or
 empty is no rung at all, and any other value (`CYRIUS_DCE=true`) is refused by name — cycc
 itself reads every value but `1` as off, so it used to be a silent no.
-`[build] test` (a file, a directory, or a list of either — `src/test.cyr` is what `cyrius init`
-writes) is what a bare `cyrius test` runs FIRST, before every `.tcyr` under `tests/`; a file both
+`[build] test` (a file, a directory, or a list of either; since 6.7.6 the older spelling of
+`[test] files`, which is what `cyrius init` writes) is what a bare `cyrius test` runs FIRST,
+before every `.tcyr` under `tests/`; a file both
 name runs once, and a declared path that does not exist is a named failure. Before 6.6.17
 nothing read the key, so a declared `src/test.cyr` never ran — 41 manifests declared one.
 `[build] test_standalone = true` (6.7.6) makes `cyrius test` — every form, and `cyrius audit`'s
@@ -2451,6 +2453,104 @@ its own `embed_<NAME>` sub-module.
 
 `cyrius-lsp` does not read the manifest, so it shows `NAME()` as undefined.
 
+## Tests: `[test]`, `scope = "test"`, `test.cyml` (6.7.6)
+
+Test-only configuration has its own section, and it reaches the **test scope** — the compiles of
+`cyrius test`, `cyrius bench` and `cyrius fuzz` (and `cyrius audit`'s test / bench sweep) — and
+nothing else: `cyrius build`, `run`, `distlib` and `package` never see it. A manifest without it
+behaves exactly as before.
+
+```toml
+[test]
+files   = ["src/test.cyr"]                 # what a bare `cyrius test` runs first, then tests/
+stdlib  = ["assert", "bench"]              # stdlib leaves for the test scope only
+modules = ["tests/support/fixtures.cyr"]   # prepended after [build] modules, test scope only
+defines = ["TESTING"]                      # one `#define NAME` each, test scope only
+timeout = 300                              # seconds per unit; 0 = no deadline
+
+[test.embed]
+GOLDEN = "tests/data/golden.bin"           # the [embed] rules, test scope only
+
+[deps.mockpeer]
+git     = "https://github.com/MacCracken/mockpeer"
+tag     = "0.3.1"
+modules = ["dist/mockpeer.cyr"]
+scope   = "test"                           # resolved and pinned like any dep; test scope only
+```
+
+- **`files`** is what a bare `cyrius test` runs before every `.tcyr` under `tests/` (a file, a
+  directory, or a list of either). `[build] test` is its older spelling (41 manifests) and is read
+  when `[test] files` is absent; with both, `[test] files` is read and `[build] test` is warned
+  by name.
+- **`stdlib`** leaves are vendored into `lib/` and locked by EVERY resolve, whichever verb ran it,
+  so `lib/` and `cyrius.lock` are one function of the manifest — a build and a test never take
+  turns rewriting the lock. Only the test scope prepends them (after the `[deps]` prepend). So a
+  production binary no longer carries `assert` / `bench` (a hello world: 111,456 B with them in
+  `[deps] stdlib`, 98,280 B with them here), and a published `dist/<pkg>.deps` sidecar never
+  names them (the sidecar is compile-verified from the bundle alone since 6.6.18; measured on the
+  12 fold repos' bundles, their sidecars are byte-identical either way). `cyrius init` writes
+  `assert` / `bench` here. A manifest whose only dependency is a test leaf still resolves.
+- **`modules`** are prepended after `[build] modules`; one that cannot be read is named and the
+  unit fails, not compiled.
+- **`defines`**: `-D` beats `CYRIUS_DEFINES`, which beats `[test] defines` — each REPLACES the
+  list, as on `cyrius build`. `cyrius fuzz` harnesses still get `[build] defines` too (since
+  6.6.18), ahead of `[test] defines`; `[build] defines` do not reach `test` or `bench`.
+- **`timeout`**: `--timeout N` > `CYRIUS_TEST_TIMEOUT` > `[test] timeout` > 300 s; `0` turns the
+  deadline off. A unit past it is killed with its whole process tree and named.
+- **`[test.embed]`** follows every `[embed]` rule (below). Its NAMEs must differ from
+  `[embed]`'s, and the check against the stdlib and the project's sources runs after the
+  dependency resolve, as `[embed]`'s does.
+- **`scope = "test"`** on a `[deps.NAME]` is the one scope there is (any other value is refused
+  by name). The dep is cloned, vendored and commit-pinned by every resolve, but resolved AFTER every
+  production dependency — so a name both sides reach is the production one (a production dep's
+  `leaf@v1` beats the root's test-scope `leaf@v2`, and the diamond notice names the v2 not used)
+  — and its modules and their own dependencies are prepended to the test scope only. A
+  dependency's own `scope = "test"` entries are its own test business: a consumer never walks
+  them. `deps -v` and `deps --dry-run` mark the project's `[test scope]`; `--locked` covers them.
+- `--no-deps` and `[build] test_standalone = true` drop the test scope's `stdlib` and
+  `scope = "test"` prepends along with `[deps]`'s; `modules`, `defines` and the embeds still apply.
+
+**`test.cyml` — a directory's own `[test]`.** A `test.cyml` beside a project's tests holds `[test]`
+keys (`stdlib`, `modules`, `defines`, `timeout`) and `[test.embed]`, and applies to every
+test-scope unit under its directory:
+
+```toml
+# tests/net/test.cyml
+[test]
+stdlib  = ["net"]
+defines = ["NET_TESTS"]
+timeout = 60
+
+[test.embed]
+CAPTURE = "capture.bin"        # tests/net/capture.bin — paths are relative to this directory
+```
+
+- Each level APPENDS to the lists above it — `cyrius.cyml`'s `[test]`, then `./test.cyml`,
+  `tests/test.cyml`, `tests/net/test.cyml` — and an inner `timeout` REPLACES the outer one.
+- It carries **no pin and no dependencies**: `[package]`, `[deps]`, `[build]` or any other table
+  is refused by name, and so is `[test] files` (what a bare `cyrius test` runs is the project's).
+  So there is nothing in it to drift from the project — the job per-test sub-manifests with their
+  own pins (kept equal to the root's by a script) used to do. A `[test]` key nothing reads is
+  warned by name.
+- `cyrius deps` (every resolve) vendors the `stdlib` leaves of the `test.cyml` beside
+  `cyrius.cyml`, of every one under `tests/`, `benches/` and `fuzz/`, and of those on the way to
+  `[test] files`. A `test.cyml` elsewhere still applies when its unit runs; a leaf it names that
+  the resolve did not vendor is named. A directory the resolve cannot list is warned by name.
+- A unit outside the project (an absolute path elsewhere, a `..`) gets `cyrius.cyml`'s `[test]`
+  only.
+
+**At run time** each unit gets `CYRIUS_TEST_FILE` (the unit) and `CYRIUS_TEST_DIR` (its
+directory) in its environment — absolute where the host can say so — so a test finds data beside
+itself whatever the cwd. Compile-time fixtures are `[test] modules` and `[test.embed]`.
+
+**The exit code is the contract.** `cyrius test` — a file, a directory, several operands, or bare
+— exits non-zero on any failing test (an assertion, a signal, a timeout, an assert summary that
+reports a failure), any compile failure (of a test, of a refused `[test]` value, of the dependency
+resolve), and when it finds no tests at all; 0 exactly when every test it found passed. A CI step
+is one line, `cyrius test` or `cyrius test tests/net`, under `set -e`: no loop over files, no grep
+of the summary. `test`, `run`, `bench` and `fuzz` take `--no-deps`, `--no-lock`, `--locked` and
+`--local` as `cyrius build` does; `test`, `bench` and `fuzz` take `--timeout N`.
+
 ## Build Tool & Dependencies
 
 ```sh
@@ -2464,7 +2564,8 @@ CYRIUS_LOCAL=1 cyrius build              # build each [deps.X] `path` override (
 cyrius update                            # re-fetch untagged deps, list newer tags, re-resolve (never edits cyrius.cyml)
 cyrius build -v src/main.cyr build/myapp # verbose (shows compiler, binary size)
 cyrius test tests/test.tcyr             # resolve deps + compile + run
-cyrius test                              # [build] test first (6.6.17), then every .tcyr under tests/, each once
+cyrius test                              # [test] files first (6.6.17; [build] test is the older spelling), then every .tcyr under tests/, each once
+cyrius test --timeout 60 --no-deps       # 6.7.6: a deadline per test; no [deps] / test-scope prepend
 cyrius test a.tcyr b.tcyr -D FEATURE     # 1..N files; -D/-DNAME reaches test/run/bench/fuzz/check too (v6.6.5)
 cyrius test tests/tcyr/crossos           # a directory: every .tcyr under it, recursive (6.7.6)
 cyrius run src/main.cyr host 443         # compile + run; everything AFTER the source is the program's argv (v6.6.5)
@@ -2579,7 +2680,8 @@ Each bundle also emits a `dist/<lib>.deps` sidecar naming the stdlib leaves the 
 scope. **Since 6.6.18 the compile-verify is the only authority for it** (P4 option 2): the sidecar
 starts from the `lib/` includes the bundled modules keep, and the verify fixpoint adds exactly the
 leaves the bundle needs to compile on every target. The producer's `[deps] stdlib` declaration, its
-umbrella includes and its test-only leaves (`assert`, `bench`) do not reach it — from v6.5.10 to
+umbrella includes and its test-only leaves (`assert`, `bench` — since 6.7.6 declared in `[test]
+stdlib`, out of the production prepend too) do not reach it — from v6.5.10 to
 6.6.17 the whole declaration was merged in, which published every producer's test leaves to every
 consumer and hid real gaps behind a declaration. `[deps] stdlib` still drives auto-prepend and
 `cyrius deps` for the package's OWN builds. A family directory (`lib/unicode/`) is one leaf, named

@@ -29,12 +29,15 @@ cyrius = "6.4.62"           # toolchain pin (cycc — the top compiler binary)
 
 [build]
 entry = "src/main.cyr"
-test = "src/test.cyr"
 output = "build/kybernet"  # a default for a bare `cyrius build`, not an assertion
 
 [deps]
-stdlib = ["string", "fmt", "alloc", "io", "vec", "str", "syscalls", "assert"]
+stdlib = ["string", "fmt", "alloc", "io", "vec", "str", "syscalls"]
 # Per-stdlib-dep entries (e.g. [deps.sigil], [deps.sandhi]) follow.
+
+[test]                      # test / bench / fuzz compiles only (6.7.6)
+files = ["src/test.cyr"]    # what a bare `cyrius test` runs first ([build] test: older spelling)
+stdlib = ["assert"]         # vendored + locked by every resolve; prepended to the test scope only
 
 [deps.libro]
 git  = "https://github.com/MacCracken/libro"
@@ -48,6 +51,12 @@ Since 6.7.6 a `path` beside `git` / `tag` is read only when the developer switch
 the tag, and local mode vendors into `build/local-deps/lib/`, never writing `lib/` or
 `cyrius.lock`. A path-only entry (no `git`) is the dep's source in every mode. `cyrius deps
 --locked` is the CI check. The guide's *Build Tool & Dependencies* section has the whole rule.
+
+Test-only configuration (6.7.6) is `[test]` — `files`, `stdlib`, `modules`, `defines`, `timeout`
+— and `[test.embed]`, plus `scope = "test"` on a `[deps.NAME]`; all of it reaches the compiles of
+`cyrius test` / `bench` / `fuzz` and nothing else, and a directory's own `test.cyml` (those keys,
+no pin, no deps) appends to it for the tests under that directory. The guide's *Tests* section has
+the rules.
 
 ## .ark Package Format
 
