@@ -1208,10 +1208,10 @@ fn _pwrap_k(S, st): i64 {
     while (TOKTYP(S, st + k) == 10) {
         var ck = _call_close(S, st + k);
         if (k > 0) { if (ck != c - 1) { break; } }
+        if (k == 0) { _pw_end = ck + 1; }   # after the OUTERMOST `)`
         c = ck;
         k = k + 1;
     }
-    if (k > 0) { _pw_end = c + 1; }
     return k;
 }
 # Consume the `k` closing parentheses of a wrap whose inside was just parsed.

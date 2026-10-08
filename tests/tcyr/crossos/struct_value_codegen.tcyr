@@ -116,6 +116,7 @@ fn parens(): i64 {
     assert_eq(sz3((a + b)), 66, "P9: sz3((a + b)), an operator result");
     assert_eq(sz3((a) + (b)), 66, "P10: sz3((a) + (b)) is an expression, not a wrap");
     assert_eq(sz3(((a) + (b))), 66, "P16: sz3(((a) + (b))): one wrap around that expression");
+    assert_eq(sz3(((a)) + (b)), 66, "P17: sz3(((a)) + (b)): a double wrap that is only the left operand");
     assert_eq(rd3((GP3)), 7, "P11: rd3((GP3)), a global");
     wr1((s));
     assert_eq(s.v, 9, "P12: wr1((s)) writes through to s");
