@@ -179,6 +179,21 @@ field walk at the nested `<` (re-measured 6.7.1: `#derive(accessors)` never defi
    and a field alike; every compound operator on every lvalue form (field, chain, `p.f` through a pointer, a
    subscript), with `*=` / `/=` on f64 fields following the 6.6.11 float rules.
 
+**B1 + C1 decisions (user, 2026-10-07, at the 6.7.2 open):**
+- **A `const` holds an integer, an `f64` or a string.** `const LIMIT = 7;`, `const PI = 3.14159;`,
+  `const NAME = "cyrius";` — no storage; every use is the value (a string const is its literal at every use).
+  Folded wherever it appears, and usable where a compile-time value is required (array sizes, `#assert`, case
+  labels, enum values, another const's initializer).
+- **Declared at top level and inside fns.** A local const is visible to the rest of its block like a `var`, with
+  no storage; top-level consts follow `pub` / `private` like any declaration.
+- **`const fn` runs at compile time in CONST CONTEXTS ONLY** (a const initializer, an array size, `#assert`, a
+  case label); everywhere else it is an ordinary runtime call — the disassembly shows the call you wrote.
+- **A `const fn` body is the pure subset, checked at the definition:** integer and f64 arithmetic, comparisons,
+  logic and shifts with RUNTIME semantics (`>>` logical), locals, if / elif / else, while, for, return, calls to
+  other const fns (recursion included), consts and enum constants. Anything else — load / store, syscall,
+  globals, alloc, pointers, a call to an ordinary fn — is refused at the definition, called or not. A step
+  budget refuses a runaway evaluation by name.
+
 ## Spec — C1 / C2
 
 1. **`const fn`** ([`proposals/2026-07-05-const-eval-comptime.md`](proposals/2026-07-05-const-eval-comptime.md)).
