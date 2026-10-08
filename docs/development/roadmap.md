@@ -540,6 +540,13 @@ CHANGELOG [6.6.17] *Downstream* (no ecosystem sweep).
 - **ai-hwaccel** — the same ⚠ `lib sync` note as agnosai. ai-hwaccel `85d7985`.
 
 
+**6.7.6 — W2 follow-ups (2026-10-08).**
+- **yantra** (stdlib, its next release): its e2e `.tcyr` files call `yantra_tls_pin_verify_ed25519` /
+  `_hybrid` (in `src/security.cyr`) without including it — an undefined-function warning in the Android / iOS test
+  builds; results unaffected (both 4/4).
+- **puka** (filings only): `src/platform/gpu/gpu.cyr:35-37` (the `color_init()` call and its warning comment) can go
+  once puka resolves mabda ≥ 4.2.0 (the 11 `F64_*` are f64 consts).
+
 **6.6.18 — the post-tag fold wave (OUR work, not a filing) and the filings (2026-10-06).**
 - ~~**W — the 12 folded stdlibs regenerate in ONE wave**~~ → ✅ **SHIPPED** — all twelve tagged after 6.6.18
   (sakshi 2.5.7, bayan 1.5.12, sandhi 1.10.8, sigil 3.13.10, ganita 1.2.14, niyama 1.0.13, mabda 4.1.7, vani 1.2.9,
@@ -713,6 +720,25 @@ CHANGELOG [6.6.17] *Downstream* (no ecosystem sweep).
     call argument list followed by a loop cascades three errors; a method-call for-step (`for (..; ..; h.m())`)
     cascades "undefined function"; a missing `}` at EOF with two blocks open prints its second error at `0:1` with no
     file (6.7.5 lanes and review).
+
+- **Found by 6.7.6 (Break 1) and not fixed in it (2026-10-08; backlog — only the user promotes).**
+  - **The seed (`bootstrap/asm`) silently truncates its input at 131,072 bytes and has a 512-entry label table with no
+    bounds check** (lane B): a 131,075-byte `cybs.cyr` assembled a cybs one byte short, exit 0; 520 labels overwrite
+    the first entries. `cybs.cyr` is 111,489 B / 499 labels today (~19.5 KB and 13 labels of headroom); gate row S of
+    `cybs_call_arity_named.sh` guards both. A real fix is a new seed binary — a new trusted root — so it is the
+    user's call.
+  - **cybs reports a bare "syntax error" with no file or line** for syntax it does not support (`const`, `loop`, `do`,
+    if-expressions, unary minus, `>>>`, `>>=`) — every one now fails loudly; the location is missing (lane B).
+  - **CYRIUS_IR=3 miscompile:** `struct HS { name; k; } … h.name = 40; var u = 0; u = h.name; return u + 1;` gives 8,
+    not 41 (crashes when the field holds a Str); present at the 6.7.6 base; opt-in IR only (lane E, gate row S10).
+  - Literal bounds left in `lib/` (lane H): the agnos env blob `1024` in `_agp_env_vec` / `_rga_env` /
+    `_async_agnos_run`; `lib/regex.cyr`'s `splits: i64[64]` beside a literal `sn >= 64`; `_fl_heads[72]`
+    (`lib/freelist.cyr`) and `_dynlib_registry[256]` (`lib/dynlib.cyr`) take 576 / 2,048 bytes (top-level arrays count
+    8-byte slots) where their comments say 72 / 256; the async ctx layouts in `lib/async.cyr` / `lib/async_macos.cyr`
+    hard-code the 40-byte kill state instead of `_PROC_KILL_STATE`; internal loops bounded by the writable public
+    `TLOCAL_MAX_SLOTS` / `TLS_REG_MAX`.
+  - Codegen (lane H): a top-level `var X = CONST;` stores statically AND emits a redundant run-time store at the
+    declaration; `2 * CONST` in a run-time expression is not folded (it is in an array size or a named const).
 
 - **Found by the 6.6.20 closeout and not fixed in it (2026-10-07; backlog — only the user promotes).**
   - **A parenthesised struct argument to an address-passed parameter pushes the struct's VALUE**: `rd3((a))`
