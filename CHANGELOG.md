@@ -6,7 +6,23 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [6.7.0] — 2026-10-07
 
-The v6.7.x language minor opens. In progress.
+The v6.7.x language minor opens: arc A, real traits (ADR-007), with the CI moved to Ubuntu 26.04 and current
+actions, `cyrius --help` reorganised, and cybs's 7-argument limit refused by name.
+
+**Gate:** `scripts/release-gate.sh` **GREEN** on `a3ba2b2f` (2026-10-07, 16:58–17:44): self-host fixpoint
+(1,601,768 B), ARM binary lockstep (1,392,456 B), seed → cybs → cycc byte-identical, full check.sh — 223 of 223
+shell gates produced a result, 0 failed, the 2 named agnos-parity SKIPs — and cross-OS self-host + the `crossos/`
+suite on REAL ecb, ach, cass and pi (all `SELFHOST_OK` + `LIBTEST_OK`). The first run was RED in one driver row:
+`auto_deps_verb_gate` read `compile (` inside the new help text as a call (fixed in the gate: call edges come from
+string-masked lines, `a3ba2b2f`).
+
+**Size:** cycc **1,601,768 B** (`.text` **1,420,992**), +25,784 B over 6.6.20's 1,575,984 — the trait tables,
+pre-scan and checks, the typed-`self` path and the nested-field hop. `build/cycc-native-aarch64` 1,325,704 →
+**1,392,456 B** (the trait code's address arithmetic is less dense on aarch64; native self-host under qemu
+byte-identical). `.tcyr` 506 → **511**; shell gates 411 → **415**.
+
+**Bench:** self_compile **1,008 ms** at the gate. Same-box interleaved A/B vs 6.6.20 (15 runs each): 985 → 1,006 ms
+own source (+2.1 %, growth tax — the source grew), **987 ms on 6.6.20's source (+0.2 %, parity)**.
 
 ### Language — real traits (arc A; [ADR-007](docs/adr/007-traits.md))
 
