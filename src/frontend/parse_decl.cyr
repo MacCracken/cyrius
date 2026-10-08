@@ -3400,6 +3400,15 @@ fn _gv_store(S, vi): i64 {
     EVSTORE(S, vi);
     return 0;
 }
+# The declaration-zone replay's store of an initializer just parsed (EMIT_GVAR_INITS): an f64 value
+# into an `f32` global rounds first (_f32_init_round, parse_expr.cyr). Not in `_gv_store`, whose cx
+# constant prestore runs with no expression parsed. CHANGELOG [6.7.6]
+fn _gvi_store(S, vi): i64 {
+    _f32_init_round(S, GVTYPE(S, vi));
+    _gv_store(S, vi);
+    _gv_slvar(S, vi);
+    return 0;
+}
 
 # cx does not bake a scalar constant into its var data (it opts out of the static-init path,
 # below), so a CONSTANT global is stored FIRST, ahead of every deferred initializer — the same
@@ -4390,7 +4399,7 @@ fn EMIT_GVAR_INITS(S): i64 {
         if (did_struct == 0) {
             if (_gci_init(S, idx, gps, noff) == 0) {   # 6.6.12: a whole struct source is copied
                 _bx_gvi_expr(S, gps, gi, noff);   # 6.7.3: _gvi_expr, and a bool global's value judged
-                if (idx >= 0) { _gv_store(S, idx); _gv_slvar(S, idx); }   # 6.6.13: at its width
+                if (idx >= 0) { _gvi_store(S, idx); }   # 6.6.13: at its width; 6.7.6: f32 rounds
             }
             _gvk_left(S, gi, sti, idx);   # 6.6.16 (C6): a kernel build names what stays late
             if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
@@ -5756,7 +5765,8 @@ fn PARSE_VAR(S): i64 {
     _bx_decl(S, lbool, noff, scv_start);   # 6.7.3 (B2): a bool takes a boolean value
     # 6.6.10: an integer constant into an `f64` / `f32` declaration warns (_IFS_CHECK), and an
     # UNTYPED declaration records whether its initialiser was a float (_UFV_*).
-    _IFS_CHECK(S, _IFS_K(lfloat), scv_start);
+    # 6.7.6: and an f64 value into an `f32` declaration rounds to f32 (_f32_init_round).
+    _decl_float_init(S, lfloat, scv_start);
     var ufv = 0;
     if (pscale == 0) { if (scalar_type == 0) { if (lfloat == 0) { if (slice_elt_w == 0) { if (_ti_inferred_sid == 0) {
                         ufv = _UFV_IS_FLOAT(S);

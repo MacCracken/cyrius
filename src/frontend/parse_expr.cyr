@@ -1556,6 +1556,28 @@ fn _UFV_IS_FLOAT(S): i64 {
     return 0;
 }
 
+# ⛔ 6.7.6 (Break 1, lane D) — AN f64 VALUE INITIALIZING AN `f32` ROUNDS TO f32 (the user's decision,
+# 2026-10-08), as a 6.7.4 `f32[N]` list element does: `var x: f32 = 1.5;` (a local, a global in either
+# zone, a for-init) stored 1.5's binary64 bits, which every f32 read takes the low 32 of (0.0),
+# silently. The value just parsed is an f64 when it is typed so (a literal, f64 const arithmetic, an
+# f64 variable, field or `: f64` fn) or a float builtin marked kind 1 (`f64_sqrt(..)`); it is narrowed
+# where it stands, round-to-nearest-even — what `f32_from` (and `_gai_f32` for a list) gives. An f32
+# value, an integer constant (kept bits, with its warning) and an untyped word (the i64-boxed idiom)
+# are untouched. `t` = the slot's float type; 1 = narrowed. CHANGELOG [6.7.6]
+fn _f32_init_round(S, t): i64 {
+    if (t != F32_TYID) { return 0; }
+    if (GESTYPE(S) != F64_TYID) { if (_FBR_KIND(S) != 1) { return 0; } }
+    EF32_FROM(S);
+    return 1;
+}
+# A local or late-global declaration's float initializer, after PCMPE: the integer-constant warning
+# (_IFS_CHECK) and the f32 rounding above, in one call from PARSE_VAR.
+fn _decl_float_init(S, t, ti): i64 {
+    _IFS_CHECK(S, _IFS_K(t), ti);
+    _f32_init_round(S, t);
+    return 0;
+}
+
 # ⛔ 6.6.10 — AN INTEGER STORED INTO AN f64 / f32 SLOT keeps its integer BITS: `var t: f64 = 1;`,
 # `t = 1;`, `p.x = 1;` and `P { 1, 2 }` store 0x1, a subnormal, silently. WARN (ADR-002: a
 # conversion would change existing code). Only a compile-time integer CONSTANT is judged — a

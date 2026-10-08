@@ -103,6 +103,16 @@ Write `1.0`, or `f64_from(n)` for a runtime integer. `0` is exempt (its bits are
 so is a hex bit pattern at or above 2^52 (`0x3FF0000000000000` is 1.0 on purpose); a runtime
 untyped value (`var x: f64 = load64(p);`) is the legal boxed-float idiom and is not judged.
 
+**An f64 value initializing an `f32` rounds to f32 (6.7.6).** `var x: f32 = 1.5;` — a local, a
+global (before or after the first top-level statement) or a `for` init — stores 1.5 rounded to the
+nearest `f32`, ties to even: what `f32_from(1.5)` gives, and what an `f32[N]` list element takes.
+The value is an f64 when the compiler sees one: a float literal, f64 const arithmetic, an `f64`
+variable, field or `: f64` fn, or a float builtin's result. An `f32` value is stored as it is, an
+integer constant keeps its bits (with the warning above) and an untyped word (`load32(p)`) is the
+boxed idiom, not converted. Until 6.7.6 the initializer stored the f64 bits, so `x` read as 0.0,
+silently. Only the initializer converts: an assignment `x = 1.5`, a field store, a struct literal
+and an argument to an `f32` parameter still take the f64 bits — write `f32_from(1.5)` there.
+
 ⚠ Binary operators are typed by their LEFT operand. `0 - 1.5` is an INTEGER subtraction
 of 1.5's bit pattern (it is -3.0), and `2 * x` with `x: f64` multiplies x's bits. Write
 the left operand as a float — `0.0 - x`, `2.0 * x`, or just `-x`. Both directions warn:
