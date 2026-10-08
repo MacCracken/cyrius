@@ -104,7 +104,7 @@ fn tmain(): i64 {
     set2(&a, M, 4);
     var lo = a + 1;
     assert_eq(lo, 0, "U21: `var n = a + 1` (an integer) is the low word");
-    assert_eq(a + 2 == 1, 1, "U22: a compare of a u128 sum reads its low word");
+    assert_eq(a + 2 == 1, 0, "U22: a compare of a u128 sum reads all 128 bits (D3; it read the low word)");
     # A u128 declaration takes its whole initial value (it stored the value into BOTH halves).
     var d: u128 = 5;
     assert_eq(is2(&d, 5, 0), 1, "U23: `var d: u128 = 5` zero-extends (the high word read 5)");

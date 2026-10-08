@@ -51,6 +51,8 @@ fn ECONDCMP(S): i64 {
     EPUSHR(S);
     STI(S, GTI(S) + 1);
     PCMPE(S);
+    # 6.7.6 (D3): a u128 on the right of a chained `a < b < c` compares all 128 bits (_w128_cmp_r)
+    if (_w128_cmp_r(S, op) == 1) { ETESTAZ(S); return 18; }
     EMOVCA(S);
     EPOPR(S);
     ECMPR(S);

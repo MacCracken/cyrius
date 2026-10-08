@@ -364,6 +364,39 @@ fn EW128_ACCI(S, op): i64 {
     EB(S, 0);                                # imm8 0
     return 0;
 }
+# ⛔ 6.7.6 (Break 1, D3) — a u128 comparison (parse_expr.cyr _w128_cmp*): rcx = the ADDRESS of the
+# left u128, rax = the right's; rax = (left op right), 0 / 1, UNSIGNED across all 128 bits (op =
+# the comparison token, 17-22). Branchless: `==` / `!=` OR the two words' XORs; `<` / `>=` borrow
+# through the low and then the high word (cmp / sbb: CF = left < right), `>` / `<=` the same with
+# the operands swapped. rdx and rcx are scratch. IR-opaque, as EW128_ACCM is. CHANGELOG [6.7.6]
+fn EW128_CMP(S, op): i64 {
+    _IR_REC0(S, IR_RAW_EMIT);
+    var cc = 0x92;                                    # setb: `<`, and `>` (operands swapped)
+    if (op == 17 || op == 18) {
+        E3(S, 0x518B48); EB(S, 8);                    # mov rdx, [rcx+8]
+        E3(S, 0x503348); EB(S, 8);                    # xor rdx, [rax+8]
+        E3(S, 0x098B48);                              # mov rcx, [rcx]
+        E3(S, 0x083348);                              # xor rcx, [rax]
+        E3(S, 0xD10948);                              # or rcx, rdx      ZF = equal
+        cc = 0x94 + op - 17;                          # sete / setne
+    } elif (op == 19 || op == 22) {
+        E3(S, 0x118B48);                              # mov rdx, [rcx]
+        E3(S, 0x103B48);                              # cmp rdx, [rax]
+        E3(S, 0x518B48); EB(S, 8);                    # mov rdx, [rcx+8]
+        E3(S, 0x501B48); EB(S, 8);                    # sbb rdx, [rax+8] CF = left < right
+        if (op == 22) { cc = 0x93; }                  # setae
+    } else {
+        E3(S, 0x108B48);                              # mov rdx, [rax]
+        E3(S, 0x113B48);                              # cmp rdx, [rcx]
+        E3(S, 0x508B48); EB(S, 8);                    # mov rdx, [rax+8]
+        E3(S, 0x511B48); EB(S, 8);                    # sbb rdx, [rcx+8] CF = right < left
+        if (op == 21) { cc = 0x93; }                  # setae
+    }
+    EB(S, 0x0F); EB(S, cc); EB(S, 0xC0);              # setCC al
+    EB(S, 0x48); EB(S, 0x0F); EB(S, 0xB6); EB(S, 0xC0);   # movzx rax, al
+    _flags_reflect_rax = 0;
+    return 0;
+}
 # v6.5.21 — THIRD multi-value return slot = r8. Volatile on BOTH SysV and Win64,
 # and an argument register on both, so it is already understood by the call
 # machinery — unlike r10/r11, which cyrius uses as cross-sequence scratch (the

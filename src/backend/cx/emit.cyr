@@ -255,6 +255,44 @@ fn _cx_w128_op(S, op, lo, hi): i64 {
     CX_EMIT(S, 67, 11, 9, 0);             # store64 [r11], r9
     return 0;
 }
+# ⛔ 6.7.6 (Break 1, D3) — a u128 comparison (parse_expr.cyr _w128_cmp*): r1 = the ADDRESS of the left
+# u128, r0 = the right's; r0 = (left op right), 0 / 1, UNSIGNED across all 128 bits (op = the
+# comparison token, 17-22). cxvm has no carry flag: `a <u b` is the signed compare of `a ^ (1 << 63)`
+# and `b ^ (1 << 63)`, and A < B is (A.hi < B.hi) | (A.hi == B.hi & A.lo < B.lo) — `>` / `<=` swap the
+# operands, `>=` / `<=` invert. r8-r12 are scratch, and r1 once both are read. CHANGELOG [6.7.6]
+fn EW128_CMP(S, op): i64 {
+    CX_MOVI(S, 12, 8);
+    CX_EMIT(S, 16, 10, 1, 12);            # add r10, r1, r12
+    CX_EMIT(S, 65, 10, 10, 0);            # load64 r10, [r10]        the left's high word
+    CX_EMIT(S, 16, 11, 0, 12);            # add r11, r0, r12
+    CX_EMIT(S, 65, 11, 11, 0);            # load64 r11, [r11]        the right's high word
+    CX_EMIT(S, 65, 8, 1, 0);              # load64 r8, [r1]          the left's low word
+    CX_EMIT(S, 65, 9, 0, 0);              # load64 r9, [r0]          the right's low word
+    if (op == 17 || op == 18) {
+        CX_EMIT(S, 48 + op - 17, 0, 8, 9);     # eq / ne r0, the low words
+        CX_EMIT(S, 48 + op - 17, 12, 10, 11);  # eq / ne r12, the high words
+        CX_EMIT(S, 32 + op - 17, 0, 0, 12);    # and (==) / or (!=) r0, r0, r12
+        return 0;
+    }
+    CX_MOVI(S, 12, 1 << 63);
+    CX_EMIT(S, 34, 8, 8, 12);             # xor: each word biased, so the signed lt is unsigned
+    CX_EMIT(S, 34, 9, 9, 12);
+    CX_EMIT(S, 34, 10, 10, 12);
+    CX_EMIT(S, 34, 11, 11, 12);
+    var a = 8;                            # A = the left (`<`, `>=`) ...
+    var b = 9;
+    if (op == 20 || op == 21) { a = 9; b = 8; }   # ... or the right (`>`, `<=`)
+    CX_EMIT(S, 50, 0, a + 2, b + 2);      # lt r0, A.hi, B.hi
+    CX_EMIT(S, 48, 12, a + 2, b + 2);     # eq r12, A.hi, B.hi
+    CX_EMIT(S, 50, 1, a, b);              # lt r1, A.lo, B.lo
+    CX_EMIT(S, 32, 12, 12, 1);            # and r12, r12, r1
+    CX_EMIT(S, 33, 0, 0, 12);             # or r0, r0, r12           A < B
+    if (op == 21 || op == 22) {
+        CX_MOVI(S, 12, 1);
+        CX_EMIT(S, 34, 0, 0, 12);         # xor r0, r0, 1            not
+    }
+    return 0;
+}
 
 # Comparison: setCC pattern → compare and set r0 to 0/1
 fn ECMPR(S): i64 { return 0; }  # no-op, comparison done inline

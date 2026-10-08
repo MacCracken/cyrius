@@ -436,6 +436,29 @@ fn EW128_ACCI(S, op): i64 {
     EW(S, 0xA9002829);                           # stp x9, x10, [x1]
     return 0;
 }
+# ⛔ 6.7.6 (Break 1, D3) — a u128 comparison (parse_expr.cyr _w128_cmp*): x1 = the ADDRESS of the left
+# u128, x0 = the right's; x0 = (left op right), 0 / 1, UNSIGNED across all 128 bits (op = the
+# comparison token, 17-22). `==` / `!=` OR the two words' XORs; `<` / `>=` subtract the low words and
+# then the high words with the borrow (subs / sbcs: C = left >= right), `>` / `<=` the same with the
+# operands swapped. x9-x12 are scratch. CHANGELOG [6.7.6]
+fn EW128_CMP(S, op): i64 {
+    EW(S, 0xA9402829);                           # ldp x9, x10, [x1]     the left
+    EW(S, 0xA940300B);                           # ldp x11, x12, [x0]    the right
+    if (op == 17 || op == 18) {
+        EW(S, 0xCA0B0129);                       # eor x9, x9, x11
+        EW(S, 0xCA0C014A);                       # eor x10, x10, x12
+        EW(S, 0xAA0A0129);                       # orr x9, x9, x10
+        EW(S, 0xF100013F);                       # cmp x9, #0
+        if (op == 17) { EW(S, 0x9A9F17E0); }     # cset x0, eq
+        else { EW(S, 0x9A9F07E0); }              # cset x0, ne
+        return 0;
+    }
+    if (op == 19 || op == 22) { EW(S, 0xEB0B013F); EW(S, 0xFA0C015F); }   # cmp x9, x11; sbcs xzr, x10, x12
+    else { EW(S, 0xEB09017F); EW(S, 0xFA0A019F); }                         # cmp x11, x9; sbcs xzr, x12, x10
+    if (op == 19 || op == 20) { EW(S, 0x9A9F27E0); }                       # cset x0, lo (a borrow)
+    else { EW(S, 0x9A9F37E0); }                                            # cset x0, hs
+    return 0;
+}
 
 # === Load through x0 (dereference) ===
 fn ELOAD8(S): i64 { EW(S, 0x39400000); return 0; }    # ldrb w0, [x0]

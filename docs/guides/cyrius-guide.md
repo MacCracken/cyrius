@@ -596,12 +596,16 @@ on either side, chains and parentheses included; unary `-b` is `0 - b`. An integ
 (`var a: u128 = c;` copies all 16 bytes, `var a: u128 = 5;` has a high word of 0). Every **other**
 operator with a `u128` operand — `* / % << >> >>> & | ^ ~`, `*% *| *? +| +? -| -?` and their `OP=`
 — is refused by name until it is implemented (`` `*` on u128 'b' is refused - it is not implemented
-for u128 yet ``); `lib/bayan.cyr`'s `bayan_u128_*` helpers cover them. A `u128` read where an
-integer is expected — an argument, a compare, `var n = b`, `return b` — is its low word, as it always
-was, and so is a plain `b = c` / `b = 5`: they store the low word and keep the high word. A
-`u128` parameter is an 8-byte slot (the low word). Before 6.7.6 neither spelling carried (both
-worked on the low word and left the high word alone), the other operators did the same silently,
-and a `u128` local initializer stored its value into BOTH halves.
+for u128 yet ``); `lib/bayan.cyr`'s `bayan_u128_*` helpers cover them. A **comparison** — `==`,
+`!=`, `<`, `<=`, `>`, `>=` — with a `u128` on either side compares all 128 bits, **unsigned**, against
+a `u128` or a zero-extended integer, wherever a comparison is written (a condition, an `&&` / `||`
+operand, a value, an if-expression condition): `b < c` is true for `b` 2^64 - 1 and `c` 2^64. A
+`u128` read where an integer is expected — an argument, `var n = b`, `return b`, a bare `if (b)`,
+`!b`, a `match` / `switch` subject — is its low word, as it always was, and so is a plain
+`b = c` / `b = 5`: they store the low word and keep the high word. A `u128` parameter is an 8-byte
+slot (the low word). Before 6.7.6 neither spelling carried (both worked on the low word and left
+the high word alone), the other operators did the same silently, a comparison read the low words
+as SIGNED integers, and a `u128` local initializer stored its value into BOTH halves.
 
 Wrapping ops (`+%` etc.) document intent at the call site that a wrap is
 expected — bytes are identical to the bare operator. Saturating and
