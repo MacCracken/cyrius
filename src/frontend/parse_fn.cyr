@@ -1645,6 +1645,10 @@ fn _sarg_name_sid(S, ti): i64 {
     if (GINFN(S) == 1) {
         var li = FINDLOCAL(S, nm);
         if (li >= 0) {
+            # A typed POINTER (`u: *Pt`, a local or a `p: *T` parameter — bit 56) converts freely, as
+            # `&p`, an untyped pointer and the receive path's `var q: *Q = u;` do (the user's
+            # decision, 2026-10-08): only a struct VALUE of another type is refused.
+            if (GLPTRP(S, li) == 1) { return 0; }
             var lt = GLTYPE(S, li);
             if (lt >= 0) { return 0; }
             if (lt <= 0 - 2048) { return 0; }
@@ -1736,7 +1740,7 @@ fn _try_push_struct_addr_arg(S, fi, argc, tail): i64 {
     var _sa_ptr = 0;
     if (_is_simd_any(S, lt) == 1) { if (_TARGET_PE == 0) { return 0; } }
     else {
-        _sarg_type_err(S, fi, argc, 0 - lt, PEEKV(S));   # 6.7.3
+        if (GLPTRP(S, li) == 0) { _sarg_type_err(S, fi, argc, 0 - lt, PEEKV(S)); }   # 6.7.3 (a `*T` converts: _sarg_name_sid)
         _sa_ptr = _local_struct_is_ptr(S, li, lt);
     }
     # 6.6.20: an inline aggregate (a by-value parameter's copy too, 6.6.16 C7) is pushed as an

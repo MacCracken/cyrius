@@ -36,9 +36,9 @@
 # The runtime half (every accepted form, every fork) is tests/tcyr/crossos/struct_arg_type_accepted.tcyr.
 #
 # MUTATION LEDGER (6.7.3, each mutant built from the fixed tree with the one change; measured):
-#   base 6.7.3 build/cycc                              -> RED, all 44 refusal rows (compiled clean)
-#   `_sarg_type_err` always returns 0                  -> RED, all 44 refusal rows
-#   the local arm's `_sarg_type_err` dropped           -> RED R1 R3 R4a R4b R4c R10 R11 R12 R13b R14
+#   base 6.7.3 build/cycc                              -> RED, all 41 refusal rows (compiled clean)
+#   `_sarg_type_err` always returns 0                  -> RED, all 41 refusal rows
+#   the local arm's `_sarg_type_err` dropped           -> RED R1 R3 R4c R10 R11 R12 R14 R15 R16 R17 R18 R18b R19 R20 R26 R33a R34a (re-measured 2026-10-08)
 #                                                         R15 R16 R17 R18 R18b R19 R20 R26 R33a R34a
 #   the whole-call check in `_try_push_struct_addr_arg` dropped
 #                                                      -> RED R2 R8
@@ -53,7 +53,7 @@
 #   `_op_lhs_check` returns 0                          -> RED R31
 #   the method-receiver check dropped                  -> RED R32
 #   `_psid_def_note` writes a redefined fn's record    -> RED A9 (a false refusal)
-#   real tree                                          -> GREEN (44 refusal rows, 9 acceptance rows)
+#   real tree                                          -> GREEN (41 refusal rows, 12 acceptance rows — R4a R4b R13b accept a typed pointer since the user's decision of 2026-10-08)
 #
 # Exit 77 = could not run (the SKIP protocol): no compiler, or no scratch directory.
 set -eu
@@ -207,9 +207,10 @@ echo "=== names: locals, globals, captures, calls, method results (address-passe
 refuse "R3 a pointer-mode local" "cannot pass 'p' $MA 'bq'" \
     "include \"lib/alloc.cyr\"
 ${T}fn go(): i64 { var p: Pt = alloc(16); p.x = 3; p.y = 4; return bq(p); } syscall(60, go());"
-refuse "R4a a \`u: *Pt\` local into b: *Q" "cannot pass 'u' $MA 'bqp'" \
+# A typed POINTER converts freely, as `&p` and the receive path do (the user's decision, 2026-10-08).
+compiles "R4a a \`u: *Pt\` local into b: *Q (a typed pointer: accepted)" \
     "${T}fn go(): i64 { ${PQ} var u: *Pt = &p; return bqp(u); } syscall(60, go());"
-refuse "R4b a \`u: *Pt\` local into b: Q" "cannot pass 'u' $MA 'bq'" \
+compiles "R4b a \`u: *Pt\` local into b: Q (a typed pointer: accepted)" \
     "${T}fn go(): i64 { ${PQ} var u: *Pt = &p; return bq(u); } syscall(60, go());"
 refuse "R4c a named Pt into b: *Q (implicit &)" "cannot pass 'p' $MA 'bqp'" \
     "${T}fn go(): i64 { ${PQ} return bqp(p); } syscall(60, go());"
@@ -232,7 +233,7 @@ refuse "R12 Q_cc2(p), self: Q" "cannot pass 'p' $MA 'Q_cc2'" \
     "${T}fn go(): i64 { ${PQ} return Q_cc2(p); } syscall(60, go());"
 refuse "R13a a tail call, by value (8 B)" "cannot pass 't' $MA 'bs1'" \
     "${T}fn f(t: T1): i64 { return bs1(t); } fn go(): i64 { var t: T1; t.w = 9; return f(t); } syscall(60, go());"
-refuse "R13b a tail call, \`*Pt\` into b: *Q" "cannot pass 'u' $MA 'bqp'" \
+compiles "R13b a tail call, \`*Pt\` into b: *Q (a typed pointer: accepted)" \
     "${T}fn f(u: *Pt): i64 { return bqp(u); } fn go(): i64 { ${PQ} return f(&p); } syscall(60, go());"
 refuse "R14 a forwarded by-value parameter" "cannot pass 'p' $MA 'bq'" \
     "${T}fn f(p: Pt): i64 { var r = bq(p); return r; } fn go(): i64 { ${PQ} return f(p); } syscall(60, go());"
