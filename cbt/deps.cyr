@@ -55,7 +55,12 @@ var _DS_OPTIONAL = 56;      # 1, 0, or -1 (the key is present and is not true / 
 var _DS_TARGET = 64;
 var _DS_BAD = 72;           # the key whose value has the wrong type, or 0
 var _DS_UNKNOWN = 80;       # vec of keys nothing reads (the root manifest's are warned)
-var _DS_SIZE = 88;
+var _DS_SCOPE = 88;         # 6.7.6 (part T): 1 for `scope = "test"`, -1 for another string, 0 absent
+var _DS_SCOPEV = 96;        # ...the value as written (named when refused)
+var _DS_SIZE = 104;
+# 6.7.6 (part T): 1 while cmd_deps resolves the TEST SCOPE (phase 4): the root's `scope = "test"`
+# deps and everything they bring, after every production dependency.
+var _dep_test_pass = 0;
 
 # Print the refusal ONCE (the copy loop calls this ~100x per resolve) and return 1,
 # the same error code the dep modules path-escape bug traversal guard uses. Full incident writeup lives at
@@ -2005,6 +2010,16 @@ fn _dep_sec_read(buf, n, si, manifest_dir, rec): i64 {
             } elif (_dep_key_is(buf, ks, kl, "modular") == 1) {
                 # v6.2.50 Phase C: individual sub-modules from the dep's `dist/<name>/`
                 store64(rec + _DS_MODULAR, _parse_toml_str_array(buf, n, ks + kl));
+            } elif (_dep_key_is(buf, ks, kl, "scope") == 1) {
+                # 6.7.6 (part T): `scope = "test"` — resolved by every resolve, prepended to test /
+                # bench / fuzz compiles only; the one scope there is
+                var sc = _toml_str_at(buf, n, kv, &ke);
+                if (sc == 0) { store64(rec + _DS_BAD, "scope"); }
+                else {
+                    store64(rec + _DS_SCOPEV, sc);
+                    if (streq(sc, "test") == 1) { store64(rec + _DS_SCOPE, 1); }
+                    else { store64(rec + _DS_SCOPE, 0 - 1); }
+                }
             } elif (_dep_key_is(buf, ks, kl, "optional") == 1) {
                 # v6.3.1 lever 2. The whole bareword: this read the first byte, so `tru` meant true.
                 var ob = _dep_bareword_bool(buf, n, kv);
@@ -2509,6 +2524,7 @@ fn _dep_local_prescan(buf, n, dir, kind, owner, seen): i64 {
         if (hc == 0 || _dep_name_unsafe(nm) == 1) { continue; }
         si = _dep_sec_read(buf, n, si, dir, rec);
         if (load64(rec + _DS_BAD) != 0) { continue; }
+        if (kind != 0 && load64(rec + _DS_SCOPE) == 1) { continue; }   # 6.7.6: never walked
         if (_dep_gated(nm, rec) == 1) { continue; }
         var pk = _dep_pick(nm, rec, kind, owner, 0);
         if (pk != 1) { continue; }
@@ -2779,6 +2795,25 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
             # with the local-mode prescan and the dry run so the three cannot disagree).
             var rec = alloc(_DS_SIZE);
             si = _dep_sec_read(buf, n, si, manifest_dir, rec);
+            # 6.7.6 (part T) — SCOPE. A dependency's own `scope = "test"` deps are its own test
+            # business: never walked by a consumer. The project's are resolved in phase 4, after
+            # every production dependency (`_dep_test_pass`), so a name both sides reach is the
+            # production one and a production build never depends on a test-only declaration.
+            var dep_scope = load64(rec + _DS_SCOPE);
+            if (_dep_ctx_kind != 0) {
+                if (dep_scope == 1) { continue; }
+            } elif (_dep_test_pass == 0) {
+                if (dep_scope == 0 - 1) {
+                    _ew("error: [deps.");
+                    _ew_shown(dep_name);
+                    _ew("] scope = \"");
+                    _ew_shown(load64(rec + _DS_SCOPEV));
+                    _ew("\" is not a scope — the one scope is \"test\" (resolved always, prepended to test / bench / fuzz compiles only) — section refused\n");
+                    errors = errors + 1;
+                    continue;
+                }
+                if (dep_scope == 1) { continue; }
+            } elif (dep_scope != 1) { continue; }
             # v5.7.14: closest-wins skip. 6.7.6 (R7): after the keys are read, so a diamond — the
             # same name wanted at another tag — is SAID rather than dropped in silence.
             if (_dep_name_visited(dep_name) == 1) {
@@ -3444,6 +3479,7 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                 var vpath = 0;
                 if (dep_local == 1) { vpath = _abs_path(dep_path); }
                 if (dep_desc == 0) { dep_desc = "(no source)"; }
+                if (_dep_test_pass == 1) { dep_desc = _cat2(dep_desc, " [test scope]"); }
                 _dep_vis_push(dep_name, dep_tag, dep_git, vpath, _dep_ctx_owner, dep_desc);
                 if (dep_path != 0) {
                     vec_push(_dep_queue, _abs_path(dep_path));
@@ -3512,6 +3548,7 @@ fn _deps_dry_walk(buf, n, dir, kind, owner, st, seen, qd, qk, qo): i64 {
         if (hc == 0) { _dep_refuse_unclosed(nm); store64(st + 8, load64(st + 8) + 1); continue; }
         if (_dep_name_unsafe(nm) == 1) { _dep_refuse_name(nm); store64(st + 8, load64(st + 8) + 1); continue; }
         p = _dep_sec_read(buf, n, p, dir, rec);
+        if (kind != 0 && load64(rec + _DS_SCOPE) == 1) { continue; }   # 6.7.6: its own test deps
         if (_dep_list_has(seen, nm) == 1) { continue; }   # closest wins, as in the resolve
         store64(st, load64(st) + 1);
         if (load64(rec + _DS_OPTIONAL) == 1 && _dep_feature_active(nm) == 0) {
@@ -3561,6 +3598,7 @@ fn _deps_dry_walk(buf, n, dir, kind, owner, st, seen, qd, qk, qo): i64 {
         } else {
             str_builder_add_cstr(sb, "(no git and no path: nothing to resolve)");
         }
+        if (kind == 0 && load64(rec + _DS_SCOPE) == 1) { str_builder_add_cstr(sb, " [test scope]"); }
         _deps_dry_say(nm, str_data(str_builder_build(sb)), owner);
         if (next != 0) {
             vec_push(qd, _abs_path(next));
@@ -3932,10 +3970,36 @@ fn cmd_deps(): i64 {
     # process its [deps.X] sections. New deps push more dirs into
     # _dep_queue; closest-wins skip prevents re-resolution. Cycles
     # terminate naturally because re-encountered names are skipped.
-    var _qi = 0;
+    _dep_qi = 0;
+    errors = errors + _deps_drain();
+
+    # === Phase 4 (6.7.6, part T): the TEST SCOPE ===
+    # After every production dependency, so a leaf or a dep both sides name is the production one.
+    errors = errors + _deps_test_scope(buf, n, _consumer_dir);
+
+    # v5.7.14: `copied` is the count of distinct deps resolved (direct +
+    # transitive). _dep_visited grows once per resolved dep across both
+    # phases.
+    copied = vec_len(_dep_visited);
+    # v6.6.4: leaves the lock guard refused are errors — no lock write, non-zero exit.
+    errors = errors + _dep_lock_refused;
+    _dep_say_hint();                 # 6.7.6: the checkouts a default run did not use, one line
+    _dep_say_unused_selection();     # 6.7.6: a selected name nothing declares
+    if (_verbose == 1) { _dep_say_sources(); }   # 6.7.6 (part L): `deps -v`
+    return _deps_finish(errors, copied, locked_root);
+}
+
+# The BFS drain of `_dep_queue` from `_dep_qi` (phase 3, and phase 4's for the test scope's own
+# dependencies). Returns the error count. CHANGELOG [6.7.6]
+var _dep_qi = 0;
+
+fn _deps_drain(): i64 {
+    var errors = 0;
+    var _qi = _dep_qi;
     while (_qi < vec_len(_dep_queue)) {
         var _trans_dir = vec_get(_dep_queue, _qi);
         _qi = _qi + 1;
+        _dep_qi = _qi;
         var _tm_sb = str_builder_new();
         str_builder_add_cstr(_tm_sb, _trans_dir);
         str_builder_add_cstr(_tm_sb, "/cyrius.cyml");
@@ -3965,24 +4029,15 @@ fn cmd_deps(): i64 {
         _dep_ctx_kind = vec_get(_dep_queue_kind, _qi - 1);
         _dep_ctx_owner = vec_get(_dep_queue_owner, _qi - 1);
         errors = errors + _process_named_deps(_tbuf, _tn, _trans_dir);
+        _qi = _dep_qi;
     }
     _dep_ctx_kind = 0;
     _dep_ctx_owner = 0;
+    return errors;
+}
 
-    # === Phase 4 (6.7.6, part T): the TEST SCOPE ===
-    # After every production dependency, so a leaf both sides name is the production one first.
-    errors = errors + _deps_test_scope();
-
-    # v5.7.14: `copied` is the count of distinct deps resolved (direct +
-    # transitive). _dep_visited grows once per resolved dep across both
-    # phases.
-    copied = vec_len(_dep_visited);
-    # v6.6.4: leaves the lock guard refused are errors — no lock write, non-zero exit.
-    errors = errors + _dep_lock_refused;
-    _dep_say_hint();                 # 6.7.6: the checkouts a default run did not use, one line
-    _dep_say_unused_selection();     # 6.7.6: a selected name nothing declares
-    if (_verbose == 1) { _dep_say_sources(); }   # 6.7.6 (part L): `deps -v`
-
+# cmd_deps after the resolve: the summary, --locked's comparison, local mode's note, the lock.
+fn _deps_finish(errors, copied, locked_root): i64 {
     # Summary (only print if something was copied, errored, or — 6.6.13 I10b — a
     # modules-less dep vendored nothing: that count is printed even at 0 resolved).
     if (copied > 0 || errors > 0 || _dep_inert > 0) {
@@ -4088,7 +4143,7 @@ fn cmd_deps(): i64 {
 # prepends them, cbt/manifest.cyr `_tc_incs_for`). lib/ and cyrius.lock are then one function of
 # the manifest whichever verb resolved — a build and a test never take turns rewriting the lock.
 # Returns the error count.
-fn _deps_test_scope(): i64 {
+fn _deps_test_scope(buf, n, dir0): i64 {
     var errs = 0;
     var leaves = _tc_resolve_leaves();
     if (leaves < 0) { return 1; }
@@ -4107,6 +4162,25 @@ fn _deps_test_scope(): i64 {
             i = i + 1;
         }
     }
+    # The project's `scope = "test"` deps and their own dependencies: their includes go to
+    # `_dep_test_includes` (the test scope prepends them, `_tc_incs_for`), and none of them is a
+    # named dep of a published bundle (`_dep_nd_*`, distlib's verify unit).
+    var sv_inc = _dep_includes;
+    var sv_ndm = _dep_nd_modules;
+    var sv_ndl = _dep_nd_leaves;
+    _dep_test_includes = vec_new();
+    _dep_includes = _dep_test_includes;
+    _dep_nd_modules = vec_new();
+    _dep_nd_leaves = vec_new();
+    _dep_test_pass = 1;
+    _dep_ctx_kind = 0;
+    _dep_ctx_owner = 0;
+    errs = errs + _process_named_deps(buf, n, dir0);
+    errs = errs + _deps_drain();
+    _dep_test_pass = 0;
+    _dep_includes = sv_inc;
+    _dep_nd_modules = sv_ndm;
+    _dep_nd_leaves = sv_ndl;
     return errs;
 }
 

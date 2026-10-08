@@ -2366,6 +2366,7 @@ cyrius build configuration (argument > environment > manifest > default)
 | `[deps.*]` | `requires` | read | — | — | — | cyrius deps: stdlib leaves the dep needs in scope |
 | `[deps.*]` | `optional` | read | — | — | `--features` | cyrius deps: resolve only when a feature names it |
 | `[deps.*]` | `target` | read | — | — | `--target` | cyrius deps: resolve only for a matching target |
+| `[deps.*]` | `scope` | read | — | — | — | "test": resolved by every resolve, prepended to test / bench / fuzz compiles only; a dependency's own are never walked |
 | `[lib]` | `modules` | read | — | — | — | cyrius distlib: the base bundle |
 | `[lib.*]` | `modules` | read | — | — | `<profile>` | `cyrius distlib <profile>` |
 | `[lib]` | `embed` | read | — | — | — | cyrius distlib: the [embed] entries the base bundle carries |

@@ -12,6 +12,7 @@
 #   U2  an unknown [deps] key: one warning
 #   U3  `[dev-dependencies]` and `[[bin]]`: one warning each, naming the table
 #   U4  anti-over-reach: a manifest that uses every declared section and every [deps.*] key: no warning
+#       (6.7.6: [test] with every key, and `scope = "test"`)
 #   U5  an unknown key in a DEPENDENCY's own manifest: not warned
 #   U6  the warnings do not fail the verb (rc 0, the dep vendored)
 #   U7  `cyrius build` (resolve + compile) prints each warning once
@@ -102,6 +103,18 @@ modules = ["dist/dep.cyr"]
 optional = true
 target = "aarch64"
 modular = []
+
+[deps.tdep]
+path = "../dep"
+modules = ["dist/dep.cyr"]
+scope = "test"
+
+[test]
+files = ["src/main.cyr"]
+stdlib = ["syscalls"]
+modules = ["src/main.cyr"]
+defines = ["TESTING"]
+timeout = 60
 
 [features]
 default = []

@@ -32,6 +32,7 @@ var _dry_run = 0;
 var _lib_sync_full = 0;   # v6.2.40: `cyrius lib sync --full` opt-in (whole snapshot)
 var _check_lib_sync = 0;  # v6.4.63: `--check-lib-sync` — stale ./lib/ is an ERROR (CI gate)
 var _dep_includes = 0;
+var _dep_test_includes = 0;   # 6.7.6 (part T): the includes of the `scope = "test"` deps (test scope only)
 # 6.6.9: vec<cstr> of the NAMED-DEP module files `cyrius deps` placed in lib/ (a subset of
 # _dep_includes — the stdlib-leaf pushes are not in it). `cyrius distlib`'s verify splices them,
 # so a symbol the bundle takes from a named dep is defined, as it is in a consumer's build.

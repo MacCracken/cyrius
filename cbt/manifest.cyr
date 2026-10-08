@@ -73,6 +73,7 @@ fn _mf_vocab_b(i): i64 {
     if (i == 41) { return "test|defines|read|-|CYRIUS_DEFINES|-D|test / bench / fuzz compiles only: one #define per name"; }
     if (i == 42) { return "test|timeout|read|-|CYRIUS_TEST_TIMEOUT|--timeout|test / bench / fuzz: seconds each may run (0 = no deadline; default 300)"; }
     if (i == 43) { return "test|stdlib|read|-|-|-|cyrius deps vendors them into lib/; prepended to test / bench / fuzz compiles only (never a build, never a dist sidecar)"; }
+    if (i == 44) { return "deps.*|scope|read|-|-|-|\"test\": resolved by every resolve, prepended to test / bench / fuzz compiles only; a dependency's own are never walked"; }
     return 0;
 }
 
@@ -1849,10 +1850,11 @@ fn _tc_vendored(rel): i64 {
 
 # `_tc_cur_incs` for the leaves `ls` (a vec, or 0): one `lib/<leaf>.cyr` per flat leaf, every
 # member of a family directory (`lib/unicode/…`, sorted — the resolver's own order) — the include
-# strings the resolver would push for them. A leaf the resolve did not vendor is named; 0, or 1.
+# strings the resolver would push for them — then the `scope = "test"` deps' includes the resolve
+# recorded (`_dep_test_includes`). A leaf the resolve did not vendor is named; 0, or 1.
 fn _tc_incs_for(ls): i64 {
-    if (ls == 0) { return 0; }
     var out = vec_new();
+    if (ls == 0) { ls = vec_new(); }
     var i = 0;
     while (i < vec_len(ls)) {
         var lf = vec_get(ls, i);
@@ -1883,6 +1885,13 @@ fn _tc_incs_for(ls): i64 {
             if (el > 4 && memeq(en + el - 4, ".cyr", 4) == 1) {
                 _tc_push_inc(out, _dep_ipath(_cat2(_cat2(lf, "/"), en)));
             }
+        }
+    }
+    if (_dep_test_includes != 0) {
+        var di = 0;
+        while (di < vec_len(_dep_test_includes)) {
+            _tc_push_inc(out, vec_get(_dep_test_includes, di));
+            di = di + 1;
         }
     }
     if (vec_len(out) > 0) { _tc_cur_incs = out; }
