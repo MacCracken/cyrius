@@ -7,7 +7,25 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [6.7.1] — 2026-10-07
 
 C3, trait-bounded generics (roadmap.md § Spec — C3; the user's decisions of 2026-10-07: a bound is a contract,
-`T: A + B`), with its two prerequisites.
+`T: A + B`), with its two prerequisites. Open question 5 answered at the open: compiler-CHECKED `dyn` comes later in
+6.7.x (ADR-007 decision 7).
+
+**Release gate GREEN** (`release-gate.sh` on `8751d120`, 19:26 → 19:35, **8 min 46 s**): fixpoint 1,631,440 B, ARM
+lockstep 1,393,448 B, seed-derive OK, check.sh — driver 131/131, **421 of 421** shell gates produced a result, 0
+failed, the 2 named agnos-parity SKIPs — and cross-OS self-host + the `crossos/` suite on REAL ecb, ach, cass and pi
+(all `SELFHOST_OK` + `LIBTEST_OK`). The first run was RED in one timing row: `embed_build.sh` axis 6 (two builds
+timed against each other, a 2x limit, ~1.77 on a quiet box) read 2,350 vs 919 ms in the 8-wide pool beside the
+cross-OS legs — 6.7.0's cycc measures the same as 6.7.1's alone, so no regression; the gate is `# check: serial` now
+(6.7.0's parallel conversion marked eight timing gates and missed it; `8751d120`).
+
+**Size:** cycc **1,631,440 B** (`.text` **1,449,624**), +29,672 B over 6.7.0's 1,601,768 — the bounds module (bound
+capture and checks, the pass-1 site walk, the i64-base rules), the generic-field pre-scan and the recursive `#derive`
+type walk; dead-code floor unchanged (52 fns / 10,597 B). `build/cycc-native-aarch64` **1,393,448 B** (+992).
+`.tcyr` 511 → **514**; shell gates 415 → **417**.
+
+**Bench:** self_compile **1,026 ms** (bench-history). Same-box interleaved A/B vs 6.7.0 (15 runs each): **1,006 →
+1,006 ms on 6.7.0's source (parity)**; 1,025 → 1,023 ms on 6.7.1's own source (it takes ~2 % longer to compile than
+6.7.0's — the source grew; the two compilers run it at the same speed).
 
 ### Language — generics
 
