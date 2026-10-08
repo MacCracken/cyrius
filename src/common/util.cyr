@@ -1690,12 +1690,18 @@ fn GLINTD(S, li): i64 {
 }
 # 6.7.6 (Break 1, D2) — bit 60: the slot is a `u128` local's CANONICAL slot (its low word; the high
 # half is the slot above it), so a read of it stamps the u128 (_W128_MARK, parse_expr.cyr) and a `+` /
-# `-` on it carries into the high word. A slice shares the 2-slot layout and stays unmarked. Written
-# last at registration (_w16_local_init, parse_decl.cyr).
+# `-` on it carries into the high word. A slice shares the 2-slot layout and stays unmarked. Bit 61:
+# the slot names a BARE array (`var b[N]` / `stack var b[N]` in a fn — no element type), whose
+# `b OP= v` is refused by name (_asg_wide_refused, parse.cyr). Both written last at registration.
 fn SLW128(S, li): i64 { S64(S + 0x5DBD000 + li * 8, L64(S + 0x5DBD000 + li * 8) | (1 << 60)); return 0; }
 fn GLW128(S, li): i64 {
     if (li < 0) { return 0; }
     return (L64(S + 0x5DBD000 + li * 8) >> 60) & 1;
+}
+fn SLBARR(S, li): i64 { S64(S + 0x5DBD000 + li * 8, L64(S + 0x5DBD000 + li * 8) | (1 << 61)); return 0; }
+fn GLBARR(S, li): i64 {
+    if (li < 0) { return 0; }
+    return (L64(S + 0x5DBD000 + li * 8) >> 61) & 1;
 }
 # The boolean stamp (parse_expr.cyr _BX_MARK): the code pointer and token index at the end of the
 # last boolean value. 0 = none.

@@ -667,9 +667,15 @@ Since 6.7.6 the same refusal covers the other values that are not one integer or
 which operated on its first word: a **SIMD vector** (`v += w` on an `i64v2` / `f64v2` … local or
 parameter added to lane 0 only — use the packed-op builtins), a **typed array** (`var a: i64[4];
 a += 8` added to `a[0]`, an `f64[N]` added bit patterns — write `a[i] += b`) and a **slice**
-(`s += 1` moved `.ptr` — write `s.ptr += 1` / `s.len -= 1`). A bare `var b[N]` keeps its `OP=`.
-On a `u128`, `b += x` and `b -= x` are `b = b + x` / `b = b - x`, carrying across all 128 bits;
-every other `OP=` on a `u128` is refused (see [`u128` arithmetic](#operators)).
+(`s += 1` moved `.ptr` — write `s.ptr += 1` / `s.len -= 1`) — and, also since 6.7.6, a **bare
+array** (`var b[N]` — local, global or in static storage — and `stack var b[N]`: `b += 8` added to
+its first word; it has no element type, so write the word, `store64(&b, load64(&b) + 8)`). On a
+`u128`, `b += x` and `b -= x` are `b = b + x` / `b = b - x`, carrying across all 128 bits; every
+other `OP=` on a `u128` is refused (see [`u128` arithmetic](#operators)).
+
+A plain assignment to a whole **typed array** is refused by name too (6.7.6): `var a: i64[4];
+a = 8;` (or `a = b`) stored into `a[0]`, silently — assign an element, `a[i] = v`. A bare array's
+`b = v` still writes its first word.
 
 ## Memory
 

@@ -58,9 +58,11 @@ fn _arr_desc_t(ew, sgn, typed): i64 {
     if (typed != 0) { d = d | 0x80; }
     return d;
 }
+# ⛔ 6.7.6 (D2): a BARE array (descriptor 0) is `0x100` alone, so its `b OP= v` can be refused by name
+# (_asg_wide_refused, _arr_gbare) — a plain scalar global keeps 0. `_gv_same_shape` compares the two
+# as before (_gsgn_shape).
 fn _arr_gsgn(ew, sgn, typed): i64 {
     var d = _arr_desc_t(ew, sgn, typed);
-    if (d == 0) { return 0; }
     return 0x100 | d;
 }
 # A global's element descriptor, 0 when it is not an element-typed array.
@@ -68,6 +70,30 @@ fn _arr_gdesc(S, vi): i64 {
     var g = GVSGN(S, vi);
     if (g < 0x100) { return 0; }
     return g & 0xFF;
+}
+# 1 when global `vi` (a top-level array or a fn-local one in static storage) is a bare array.
+fn _arr_gbare(S, vi): i64 {
+    if (GVSGN(S, vi) == 0x100) { return 1; }
+    return 0;
+}
+fn _gsgn_shape(g): i64 {
+    if (g == 0x100) { return 0; }
+    return g;
+}
+# The named slot of an array local (PARSE_ARRAY's stack path): its element descriptor (6.6.12), a
+# stale slice width at the index cleared, and (6.7.6, D2) the bare mark when it has no element type.
+fn _arr_named_marks(S, li, d): i64 {
+    SLAEW(S, li, d);
+    SSLICE_W(S, li, 0);
+    if (d == 0) { SLBARR(S, li); }
+    return 0;
+}
+# `stack var b[N]` (parse.cyr): the span, and the bare mark — it states no element type either.
+fn _stk_named_marks(S, li, n): i64 {
+    SLAGG(S, li, n);
+    SSLICE_W(S, li, 0);
+    SLBARR(S, li);
+    return 0;
 }
 
 # ⛔ 6.6.13 (M2) — THE BYTES OF ONE ELEMENT, the SIZE of `var a: T[N]`. The descriptor above
@@ -336,7 +362,7 @@ fn PARSE_ARRAY(S, noff, ew, sgn, eb, ann_ti): i64 {
         S64(S + 0x5D9D000 + sa_named * 8, noff);
         SLDEP(S, sa_named, GSDEP(S));
         SLAGG(S, sa_named, sa_nslots);   # 6.6.5: the slots ARE the array
-        SLAEW(S, sa_named, _arr_desc_t(ew, sgn, ann_ti));   # 6.6.12: after SLAGG (see util.cyr SLAEW); 6.7.6: + the typed mark
+        _arr_named_marks(S, sa_named, _arr_desc_t(ew, sgn, ann_ti));   # 6.6.12: after SLAGG (see util.cyr SLAEW); 6.7.6: + the typed / bare marks
         SLTYPE(S, sa_named, 0);
         SFLC(S, sa_named + 1);
         return 0;
@@ -3273,7 +3299,7 @@ fn _gv_same_shape(S, a, b): i64 {
     if (L64(_vars_base + a * 8) != L64(_vars_base + b * 8)) { return 0; }
     if (GVTYPE(S, a) != GVTYPE(S, b)) { return 0; }
     if (GVPM(S, a) != GVPM(S, b)) { return 0; }
-    if (GVSGN(S, a) != GVSGN(S, b)) { return 0; }
+    if (_gsgn_shape(GVSGN(S, a)) != _gsgn_shape(GVSGN(S, b))) { return 0; }   # 6.7.6: a bare array's 0x100 is no new shape
     if (_gv_ptr_sid(S, a) != _gv_ptr_sid(S, b)) { return 0; }
     if (GVVEC(S, a) != GVVEC(S, b)) { return 0; }
     return 1;
