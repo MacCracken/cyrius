@@ -1,5 +1,5 @@
 #!/bin/sh
-# Gate: `CYRIUS_PKG_VERSION` must resolve from an INCLUDED file, not only the entry file.
+# Gate: `CYRIUS_PKG_VERSION` must resolve from an INCLUDED file at any depth, not only the entry file.
 #
 # THE BUG (filed by agnostic 2026-08-20 against 6.5.32, fixed v6.5.34). cbt writes
 # `#@pkgver <version>` at byte 0 and cycc replaces it with a real declaration. v6.5.21 made
@@ -18,7 +18,8 @@
 # first; it is the reason two attempts went down a path that could not work.
 #
 # THE FIX. Emit the declaration at the top OPTIMISTICALLY, remember its span, and at the
-# tail of PP_PASS — where the includes ARE expanded — scan the finished unit. If nothing
+# end of PREPROCESS (6.7.6; v6.5.34 had it at the tail of PP_PASS, which sees only the entry's own
+# includes — axis 5) — where every include IS expanded — scan the finished unit. If nothing
 # names the constant, blank the declaration to SPACES: identical byte count, so no line and
 # no column moves, and whitespace emits no code.
 #
@@ -32,7 +33,7 @@
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
-CC="$ROOT/build/cycc"
+CC=${CYCC:-"$ROOT/build/cycc"}
 D=$(mktemp -d) && [ -d "$D" ] || { echo "FAIL: pkgver_visible_in_includes: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$D"' EXIT
 fails=0
@@ -99,9 +100,53 @@ b=$("$CC" < "$D/em.cyr" 2>&1 >/dev/null | head -1 | sed 's/.*<source>:\([0-9]*\)
 check "error line without marker" 3 "$a"
 check "error line with marker"    3 "$b"
 
+# ── AXIS 5: TWO AND THREE LEVELS DOWN (6.7.6 — the agnostic filing of 2026-10-07, archived as
+# docs/development/issues/archived/2026-10-07-pkgver-not-visible-in-nested-includes.md). The
+# entry includes mid.cyr, which includes the file that names the constant. The v6.5.34 scan ran at
+# the tail of PP_PASS, which expands only the ENTRY's includes (an included file's own `include`
+# lines are expanded later, by PP_IFDEF_PASS), so the declaration was blanked under the reference:
+#     error:src/inc.cyr:1:..: undefined variable 'CYRIUS_PKG_VERSION'
+# Mutation (verified 2026-10-08, a scratch tree run as CYCC=<mutant>): PP_RESOLVE_PKGVER back at the
+# tail of PP_PASS (PREPROCESS's call removed) -> both axis-5 `compiles` rows red, axes 1-4 and 6 green.
+# Mutation (verified): PP_PKGVER_AT's re-check inverted (a found declaration is never blanked) ->
+# axis 3 and axis 6 red (`marked == unmarked`), axes 1, 2, 4, 5 green.
+mkdir -p "$D/nest/src"
+printf 'fn pkg_v(): i64 { return CYRIUS_PKG_VERSION; }\n' > "$D/nest/src/inc.cyr"
+printf 'include "src/inc.cyr"\n' > "$D/nest/src/mid.cyr"
+printf 'include "src/mid.cyr"\n' > "$D/nest/src/top.cyr"
+NB='fn main(): i64 { syscall(1, 1, pkg_v(), 5); return 0; }\nvar _r = main();\nsyscall(60, _r);\n'
+printf '#@pkgver 0.2.0\ninclude "src/mid.cyr"\n'"$NB" > "$D/nest/two.cyr"
+printf '#@pkgver 0.3.0\ninclude "src/top.cyr"\n'"$NB" > "$D/nest/three.cyr"
+echo "axis 5 — referenced only from a file two / three include levels down:"
+for lv in two three; do
+    want=0.2.0; [ "$lv" = three ] && want=0.3.0
+    ( cd "$D/nest" && "$CC" < "$lv.cyr" > "$lv.bin" 2> "$lv.err" ); rc=$?
+    check "$lv levels: compiles" 0 "$rc"
+    if [ "$rc" = "0" ]; then
+        chmod +x "$D/nest/$lv.bin"
+        check "$lv levels: prints the version" "$want" "$("$D/nest/$lv.bin" 2>/dev/null)"
+    else
+        echo "    compiler said: $(grep '^error' "$D/nest/$lv.err" | head -1 | head -c 160)"
+    fi
+done
+
+# ── AXIS 6: the unreferenced marker stays byte-neutral when the unit nests includes (the scan now
+# covers the files two levels down; none of these names the constant).
+mkdir -p "$D/neu/src"
+printf 'fn neu_a(): i64 { return 3; }\n' > "$D/neu/src/a.cyr"
+printf 'include "src/a.cyr"\nfn neu_b(): i64 { return neu_a() + 1; }\n' > "$D/neu/src/b.cyr"
+printf 'include "src/b.cyr"\nfn main(): i64 { return neu_b() - 4; }\nvar _r = main();\nsyscall(60, _r);\n' > "$D/neu/plain.cyr"
+printf '#@pkgver 9.9.9\n' > "$D/neu/marked.cyr"; cat "$D/neu/plain.cyr" >> "$D/neu/marked.cyr"
+echo "axis 6 — an unreferenced marker over nested includes does not perturb the binary:"
+( cd "$D/neu" && "$CC" < plain.cyr > p.bin 2>/dev/null && "$CC" < marked.cyr > m.bin 2>/dev/null )
+if [ -s "$D/neu/p.bin" ]; then check "the nested no-marker build is non-trivial" "yes" "yes"
+else check "the nested no-marker build is non-trivial" "yes" "no"; fi
+if cmp -s "$D/neu/p.bin" "$D/neu/m.bin"; then check "nested: marked == unmarked" "yes" "yes"
+else check "nested: marked == unmarked" "yes" "no"; fi
+
 echo ""
 if [ "$fails" = "0" ]; then
-    echo "PASS: pkgver-visible-in-includes — resolves from includes, byte- and line-neutral when unused"
+    echo "PASS: pkgver-visible-in-includes — resolves from includes at any depth, byte- and line-neutral when unused"
     exit 0
 fi
 echo "FAIL: pkgver-visible-in-includes — $fails assertion(s) failed"

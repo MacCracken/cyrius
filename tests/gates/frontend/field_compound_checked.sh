@@ -13,7 +13,7 @@
 #      STRUCT VALUE — an inline local of any size, an address-passed by-value parameter, an inline
 #      global, a for step, a top-level statement: it integer-operated on the first word and never
 #      called `T_add` (13 where `a = a + b` gives 33). H: a handle keeps its 6.6.17 pointer step.
-#      (u128 and SIMD-vector OP= are filed, not refused here.)
+#      (A vector, typed array and slice: silent_values_checked.sh O rows, 6.7.6.)
 #   W  the float rules of 6.6.11 on a field: an f64 field with an integer right operand warns
 #      (kind 1), an f32 one with an f64 right operand (kind 5); an i8 field `+= 1` does not
 #   X  `--syntax-only` (what `cyrius lint` runs): a struct the file cannot see, or a field it does

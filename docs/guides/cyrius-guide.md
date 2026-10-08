@@ -103,6 +103,16 @@ Write `1.0`, or `f64_from(n)` for a runtime integer. `0` is exempt (its bits are
 so is a hex bit pattern at or above 2^52 (`0x3FF0000000000000` is 1.0 on purpose); a runtime
 untyped value (`var x: f64 = load64(p);`) is the legal boxed-float idiom and is not judged.
 
+**An f64 value initializing an `f32` rounds to f32 (6.7.6).** `var x: f32 = 1.5;` — a local, a
+global (before or after the first top-level statement) or a `for` init — stores 1.5 rounded to the
+nearest `f32`, ties to even: what `f32_from(1.5)` gives, and what an `f32[N]` list element takes.
+The value is an f64 when the compiler sees one: a float literal, f64 const arithmetic, an `f64`
+variable, field or `: f64` fn, or a float builtin's result. An `f32` value is stored as it is, an
+integer constant keeps its bits (with the warning above) and an untyped word (`load32(p)`) is the
+boxed idiom, not converted. Until 6.7.6 the initializer stored the f64 bits, so `x` read as 0.0,
+silently. Only the initializer converts: an assignment `x = 1.5`, a field store, a struct literal
+and an argument to an `f32` parameter still take the f64 bits — write `f32_from(1.5)` there.
+
 ⚠ Binary operators are typed by their LEFT operand. `0 - 1.5` is an INTEGER subtraction
 of 1.5's bit pattern (it is -3.0), and `2 * x` with `x: f64` multiplies x's bits. Write
 the left operand as a float — `0.0 - x`, `2.0 * x`, or just `-x`. Both directions warn:
@@ -633,6 +643,14 @@ used to operate on the struct's first word and never call an overloaded `P_add` 
 bool — write `b = b && c`), a const or an enum constant, and a field of a call's result
 (`mk(3).n += 1`: the result is a temporary). A handle keeps its pointer arithmetic: `p += 1` on a
 `*T` steps `sizeof(T)`, and a pointer-mode struct variable or a `Str` is an address.
+
+Since 6.7.6 the same refusal covers the other values that are not one integer or float, each of
+which operated on its first word: a **SIMD vector** (`v += w` on an `i64v2` / `f64v2` … local or
+parameter added to lane 0 only — use the packed-op builtins), a **typed array** (`var a: i64[4];
+a += 8` added to `a[0]`, an `f64[N]` added bit patterns — write `a[i] += b`) and a **slice**
+(`s += 1` moved `.ptr` — write `s.ptr += 1` / `s.len -= 1`). A bare `var b[N]` keeps its `OP=`.
+On a `u128` `x OP= e` is NOT refused: it computes exactly as `x = x OP e` does, on the low word —
+neither spelling carries into the high word.
 
 ## Memory
 
@@ -3004,6 +3022,10 @@ binding it one-wide there is caught too.
 destructured and propagated with `?` exactly like `f(..)` (v6.6.16 — before that, `?` on them
 crashed and a single bind dropped the payload silently).
 
+The single-variable bind is refused for a **global** too (6.7.6): `var r = f();` at top level —
+before the first top-level statement or after it — kept the tag and dropped the payload, silently
+(`Ok(42)` read as 0). Bind both with `var t, v = f();`, which works at top level.
+
 **Every path of a pair-returning fn returns a variant.** In a fn that returns `Ok(x)` /
 `Some(v)` on one path, a `return rv;`, `return 0;` or `return wrapper();` on another hands the
 caller that value AS ITS TAG and a stale payload, so it is warned (*"returns a `: stack` pair on
@@ -3216,9 +3238,9 @@ enum-variant namespace.
 Result-returning fns use the `_r` suffix:
 
 ```
-var fd_r = file_open_r("/etc/hostname", 0, 0);
-if (is_err_result(fd_r) == 1) {
-    if (load64(fd_r + 8) == IoNotFound) { ... }
+var t, fd = file_open_r("/etc/hostname", 0, 0);   # bind both: the tag, then the fd or the error
+if (is_err_result(t) == 1) {
+    if (fd == IoNotFound) { ... }
 }
 
 # With ? propagation:
@@ -4210,6 +4232,13 @@ strchr(s, c)           # Find byte in string (-1 if not found)
 print_num(n)           # Print decimal to stdout
 println(s)             # Print string + newline
 ```
+
+`println(x)` routes by its argument: a `Str` to `println_str`, a NUMBER to `println_int`. A number
+is a call declared to return `: i64`, or (6.7.6) a NAME declared an integer — a local, parameter,
+closure capture or global annotated `i8`..`i64` / `u8`..`u64` — as the whole argument
+(`var n: i64 = 42; println(n);` prints 42; until 6.7.6 it ran the cstring body over 42 and crashed).
+An untyped name is passed as a cstring (it may hold one); write `println_int(x)` or annotate it.
+Any base with a `: cstring` parameter 0, an `: i64` return and a `<base>_int` sibling routes the same way.
 
 ## Standard Libraries
 

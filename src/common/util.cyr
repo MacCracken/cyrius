@@ -869,6 +869,22 @@ fn GVBOOL(S, vi): i64 {
     if (vi >= 1048576) { return 0; }
     return load8(_gvb_base + vi);
 }
+# 6.7.6 (Break 1, lane D) — one byte per GLOBAL: declared an integer (i8..i64 / u8..u64), the
+# global twin of SLINTD. Lazily allocated like `_gvb_base`; _gv_clear zeroes it.
+var _gvn_base = 0;
+fn SVINTD(S, vi, b): i64 {
+    if (vi < 0) { return 0; }
+    if (vi >= 1048576) { return 0; }
+    if (_gvn_base == 0) { if (b == 0) { return 0; } _gvn_base = alloc(1048576); }
+    store8(_gvn_base + vi, b);
+    return 0;
+}
+fn GVINTD(S, vi): i64 {
+    if (_gvn_base == 0) { return 0; }
+    if (vi < 0) { return 0; }
+    if (vi >= 1048576) { return 0; }
+    return load8(_gvn_base + vi);
+}
 # the locals-cap bug (v6.1.40): cap the per-fn stack-slot count. SFLC counts FRAME SLOTS
 # (a `stack var buf[N]` registers N/8 fillers), and the four slot-indexed local
 # tables — fn_local_names/local_depths/local_types/local_slice_widths, relocated
@@ -1646,6 +1662,15 @@ fn SLBOOL(S, li, b): i64 {
 fn GLBOOL(S, li): i64 {
     if (li < 0) { return 0; }
     return (L64(S + 0x5DBD000 + li * 8) >> 58) & 1;
+}
+# 6.7.6 (Break 1, lane D) — bit 59 of the same word: the slot is DECLARED an integer (a local or a
+# parameter annotated i8..i64 / u8..u64, not behind `*`), so it is a number, never a pointer — what
+# the `_int` overload route reads (`println(n)`, _od_arg_kind, parse_fn.cyr). An untyped slot stays
+# unmarked (ADR-002: it may hold either). Written last at registration, like bit 58.
+fn SLINTD(S, li): i64 { S64(S + 0x5DBD000 + li * 8, L64(S + 0x5DBD000 + li * 8) | (1 << 59)); return 0; }
+fn GLINTD(S, li): i64 {
+    if (li < 0) { return 0; }
+    return (L64(S + 0x5DBD000 + li * 8) >> 59) & 1;
 }
 # The boolean stamp (parse_expr.cyr _BX_MARK): the code pointer and token index at the end of the
 # last boolean value. 0 = none.

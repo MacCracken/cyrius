@@ -1,0 +1,110 @@
+# f32_scalar_init_rounds.tcyr — 6.7.6 (Break 1, lane D): an f64 value initializing an `f32` scalar
+# ROUNDS to f32 (the user's decision, 2026-10-08), as a 6.7.4 `f32[N]` list element does.
+#
+# `var x: f32 = 1.5;` stored 1.5's binary64 bits (0x3FF8000000000000); every f32 read takes the low
+# 32 bits of the slot, so x read as 0.0 — silently, for a local, a global in the declaration zone, a
+# global declared after the first top-level statement and a for-init. The value is narrowed
+# round-to-nearest-even — what `f32_from` gives, and what `_gai_f32` bakes for a list element — so
+# each scalar row is checked against both the literal bit pattern and the same value as a list
+# element. An f32 value, an integer constant (kept bits, with the 6.6.10 warning) and an untyped
+# word (the i64-boxed idiom) are not converted. The refusals and the per-backend legs are
+# tests/gates/frontend/silent_values_checked.sh.
+#
+# ⚠ CROSS-HOST: the narrowing is emitted per backend (x86 cvtsd2ss — PE and Mach-O share it —,
+# aarch64 fcvt, cx f32narrow).
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/assert.cyr"
+
+# ── the declaration zone (before the first top-level statement) ─────────────────────────────────
+var G15: f32 = 1.5;
+var G01: f32 = 0.1;
+var GNEG: f32 = -2.75;
+var GL: f32[4] = {1.5, 0.1, -2.75, 1.0 / 3.0};
+var GTHIRD: f32 = 1.0 / 3.0;
+
+fn f64ret(): f64 { return 2.5; }
+fn lo32(p): i64 { return load32(p) & 0xFFFFFFFF; }
+
+fn tmain(): i64 {
+    # ── globals, declaration zone ────────────────────────────────────────────────────────────
+    assert_eq(lo32(&G15), 0x3FC00000, "F1: a global `f32 = 1.5` is 1.5's f32 bits");
+    assert_eq(lo32(&G01), 0x3DCCCCCD, "F2: a global `f32 = 0.1` rounds to nearest");
+    assert_eq(lo32(&GNEG), 0xC0300000, "F3: a global `f32 = -2.75`");
+    assert_eq(lo32(&GTHIRD), 0x3EAAAAAB, "F4: f64 const arithmetic rounds once, at the store");
+    assert_eq(lo32(&G15), lo32(&GL), "F5: the scalar and the list element agree (1.5)");
+    assert_eq(lo32(&G01), lo32(&GL + 4), "F6: ... (0.1)");
+    assert_eq(lo32(&GNEG), lo32(&GL + 8), "F7: ... (-2.75)");
+    assert_eq(lo32(&GTHIRD), lo32(&GL + 12), "F8: ... (1.0 / 3.0)");
+    assert_eq(load64(&G15) >> 32, 0, "F9: the slot's high half is zero (f32 bits in the low 32)");
+
+    # ── locals ───────────────────────────────────────────────────────────────────────────────
+    var a: f32 = 1.5;
+    var b: f32 = 0.1;
+    var c: f32 = -1.5;
+    var nz: f32 = -0.0;
+    assert_eq(lo32(&a), 0x3FC00000, "L1: a local `f32 = 1.5`");
+    assert_eq(lo32(&b), 0x3DCCCCCD, "L2: a local `f32 = 0.1`");
+    assert_eq(lo32(&c), 0xBFC00000, "L3: a local `f32 = -1.5`");
+    assert_eq(lo32(&nz), 0x80000000, "L4: -0.0 keeps its sign");
+    var tie: f32 = 1.000000059604644775390625;
+    var up: f32 = 1.000000178813934326171875;
+    assert_eq(lo32(&tie), 0x3F800000, "L5: a tie rounds to even (1 + 2^-24 -> 1.0)");
+    assert_eq(lo32(&up), 0x3F800002, "L6: ... (1 + 3 * 2^-24 -> 1 + 2^-22)");
+    # f64 values written as their bit patterns (an f64 variable, so the store narrows them)
+    var d129: f64 = 0x4800000000000000;   # 2^129
+    var d149: f64 = 0x36A0000000000000;   # 2^-149, f32's least subnormal
+    var d150: f64 = 0x3690000000000000;   # 2^-150, half of it: a tie
+    var d151: f64 = 0x3680000000000000;   # 2^-151
+    var big: f32 = d129;
+    var tiny: f32 = d149;
+    var half: f32 = d150;
+    var under: f32 = d151;
+    assert_eq(lo32(&big), 0x7F800000, "L7: past f32's range is infinity");
+    assert_eq(lo32(&tiny), 1, "L8: the least subnormal");
+    assert_eq(lo32(&half), 0, "L9: half the least subnormal ties to even (zero)");
+    assert_eq(lo32(&under), 0, "L10: below it is zero");
+
+    # ── f64 values that are not literals ─────────────────────────────────────────────────────
+    var y: f64 = 1.5;
+    var fy: f32 = y;
+    var fr: f32 = f64ret();
+    var fs: f32 = f64_sqrt(4.0);
+    var fe: f32 = y * 2.0;
+    assert_eq(lo32(&fy), 0x3FC00000, "V1: an f64 local");
+    assert_eq(lo32(&fr), 0x40200000, "V2: a `: f64` fn's result");
+    assert_eq(lo32(&fs), 0x40000000, "V3: a float builtin's result (kind 1)");
+    assert_eq(lo32(&fe), 0x40400000, "V4: f64 arithmetic on a variable");
+
+    # ── not converted ────────────────────────────────────────────────────────────────────────
+    var h: f32 = f32_from(2.5);
+    var hc: f32 = h;
+    var w = 0x3FC00000;
+    var boxed: f32 = load32(&w);
+    var zero: f32 = 0;
+    assert_eq(lo32(&h), 0x40200000, "N1: an f32 value (f32_from) is stored as it is");
+    assert_eq(lo32(&hc), 0x40200000, "N2: an f32 variable is copied, not narrowed again");
+    assert_eq(lo32(&boxed), 0x3FC00000, "N3: an untyped word keeps its bits (the boxed idiom)");
+    assert_eq(load64(&zero), 0, "N4: 0 is 0.0");
+
+    # ── f32 arithmetic on the rounded value ──────────────────────────────────────────────────
+    var m: f32 = 1.5;
+    var m2: f32 = m * f32_from(2.0);
+    assert_eq(f32_to(m2), 0x4008000000000000, "A1: 1.5 * 2.0 in f32 is 3.0");
+
+    # ── a for-init ───────────────────────────────────────────────────────────────────────────
+    var seen = 0;
+    var n = 0;
+    for (var fx: f32 = 0.5; n < 1; n = n + 1) { seen = lo32(&fx); }
+    assert_eq(seen, 0x3F000000, "R1: a for-init `f32 = 0.5`");
+    return 0;
+}
+
+var tr = tmain();
+# ── a global declared AFTER the first top-level statement (the PARSE_VAR path) ──────────────────
+var LATE: f32 = 0.25;
+var LATEN: f32 = 0.0 - 3.0;
+assert_eq(lo32(&LATE), 0x3E800000, "T1: a late global `f32 = 0.25`");
+assert_eq(lo32(&LATEN), 0xC0400000, "T2: a late global from f64 arithmetic");
+var rr = assert_summary();
+syscall(60, rr);

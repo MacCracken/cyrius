@@ -1,0 +1,72 @@
+# u128_compound_matches_long_form.tcyr — 6.7.6 (Break 1, lane D): `a OP= x` on a u128 variable
+# computes exactly as `a = a OP x` does (the user's decision, 2026-10-08: u128 OP= is not refused).
+#
+# Both forms operate on the value's LOW word and leave the high word as it was — neither carries
+# into it (measured: `0xFFFF_FFFF_FFFF_FFFF + 1` gives low 0, high unchanged, in BOTH spellings).
+# This file pins the equivalence, all sixteen bytes, for every compound operator, on a local and a
+# global, so the two spellings cannot drift apart; u128 arithmetic itself is not changed here. The
+# halves are set with store64 (a scalar u128 initializer is not used: see the lane's report).
+#
+# ⚠ CROSS-HOST: the u128 local's two-slot layout and its stores are per backend.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/assert.cyr"
+
+var GA: u128 = 0;
+var GB: u128 = 0;
+
+fn set2(p, lo, hi): i64 { store64(p, lo); store64(p + 8, hi); return 0; }
+fn same(p, q): i64 {
+    if (load64(p) != load64(q)) { return 0; }
+    if (load64(p + 8) != load64(q + 8)) { return 0; }
+    return 1;
+}
+
+fn tmain(): i64 {
+    var a: u128 = 0;
+    var b: u128 = 0;
+    set2(&a, 0xFFFFFFFFFFFFFFFF, 7); set2(&b, 0xFFFFFFFFFFFFFFFF, 7);
+    a += 1; b = b + 1;
+    assert_eq(same(&a, &b), 1, "U1: += on a u128 local is `a = a + x` (all 16 bytes)");
+    assert_eq(load64(&a), 0, "U2: ... the low word wraps");
+    assert_eq(load64(&a + 8), 7, "U3: ... the high word is untouched (no carry, either spelling)");
+    set2(&a, 5, 9); set2(&b, 5, 9);
+    a -= 6; b = b - 6;
+    assert_eq(same(&a, &b), 1, "U4: -=");
+    set2(&a, 6, 9); set2(&b, 6, 9);
+    a *= 7; b = b * 7;
+    assert_eq(same(&a, &b), 1, "U5: *=");
+    set2(&a, 100, 9); set2(&b, 100, 9);
+    a /= 7; b = b / 7;
+    assert_eq(same(&a, &b), 1, "U6: /=");
+    set2(&a, 100, 9); set2(&b, 100, 9);
+    a %= 7; b = b % 7;
+    assert_eq(same(&a, &b), 1, "U7: %=");
+    set2(&a, 0xF0F0, 9); set2(&b, 0xF0F0, 9);
+    a &= 0xFF; b = b & 0xFF;
+    assert_eq(same(&a, &b), 1, "U8: &=");
+    a |= 0x300; b = b | 0x300;
+    assert_eq(same(&a, &b), 1, "U9: |=");
+    a ^= 0x111; b = b ^ 0x111;
+    assert_eq(same(&a, &b), 1, "U10: ^=");
+    a <<= 60; b = b << 60;
+    assert_eq(same(&a, &b), 1, "U11: <<=");
+    a >>= 3; b = b >> 3;
+    assert_eq(same(&a, &b), 1, "U12: >>=");
+    a >>>= 2; b = b >>> 2;
+    assert_eq(same(&a, &b), 1, "U13: >>>=");
+    set2(&GA, 0xFFFFFFFFFFFFFFFF, 3); set2(&GB, 0xFFFFFFFFFFFFFFFF, 3);
+    GA += 1; GB = GB + 1;
+    assert_eq(same(&GA, &GB), 1, "U14: += on a u128 global");
+    GA -= 2; GB = GB - 2;
+    assert_eq(same(&GA, &GB), 1, "U15: -= on a u128 global");
+    var n = 0;
+    set2(&a, 1, 4); set2(&b, 1, 4);
+    for (n = 0; n < 3; a += 2) { b = b + 2; n = n + 1; }
+    assert_eq(same(&a, &b), 1, "U16: a for step `a += 2` is the long form too");
+    return 0;
+}
+
+var tr = tmain();
+var rr = assert_summary();
+syscall(60, rr);

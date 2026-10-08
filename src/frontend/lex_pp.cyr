@@ -4102,7 +4102,7 @@ fn PP_SKIPLINE(S, ip, bl): i64 {
 # instead, so the constant is simply ABSENT and the use site fails honestly with
 # `undefined variable 'CYRIUS_PKG_VERSION'` rather than compiling something forged.
 fn PP_EMIT_PKGVER(S, out, op, ip, bl): i64 {
-    # v6.5.34 — the reference scan MOVED to the end of PP_PASS; this function now only
+    # v6.5.34 — the reference scan MOVED out (to the finished unit since 6.7.6); this function only
     # VALIDATES the version and stashes it in `_pp_pkgver`, emitting nothing.
     #
     # It used to scan for the literal `CYRIUS_PKG_` right here, in the marker's own buffer
@@ -4118,7 +4118,7 @@ fn PP_EMIT_PKGVER(S, out, op, ip, bl): i64 {
     # through `cyrius build`, changing the bytes of programs that never asked for the
     # feature. `tests/gates/toolchain/auto_deps_verb_gate.sh` axis 5 catches exactly that
     # and is right to. The fix widens what "referenced" is scanned OVER; it does not drop
-    # the test. See PP_RESOLVE_PKGVER at the tail of PP_PASS.
+    # the test. See PP_RESOLVE_PKGVER (run by PREPROCESS, 6.7.6).
     var p = ip + 9;
     var n = 0;
     var ok = 1;
@@ -4147,7 +4147,7 @@ fn PP_EMIT_PKGVER(S, out, op, ip, bl): i64 {
     }
     store8(&_pp_pkgver + n, 0);
     _pp_pkgver_len = n;
-    # Emit OPTIMISTICALLY, and record the span so PP_PASS's tail can blank it if the
+    # Emit OPTIMISTICALLY, and record the span so PREPROCESS can blank it if the
     # finished unit turns out never to name the constant. The declaration has to be here,
     # at the top — a global is not visible above its declaration — but whether it is wanted
     # is not knowable until the includes are expanded.
@@ -4174,10 +4174,9 @@ fn PP_EMIT_PKGVER(S, out, op, ip, bl): i64 {
 }
 
 # v6.5.34 — decide whether the `CYRIUS_PKG_VERSION` declaration PP_EMIT_PKGVER wrote
-# optimistically should stay, now that the unit is fully expanded. Called at the tail of
-# PP_PASS, where `out[0..op]` holds the entry file with every top-level `include` expanded
-# in place — so an included file naming the constant is finally visible to the test, which
-# is the whole bug.
+# optimistically should stay, now that the unit is fully expanded. v6.5.34 called it at the tail
+# of PP_PASS, where `out[0..op]` held the entry file with its top-level `include`s expanded — so a
+# file the entry includes became visible to the test (one level only: see 6.7.6 below).
 #
 # ⚠ THE DECLARATION CANNOT MOVE. A global is NOT visible above its declaration in cyrius:
 #     fn f(): i64 { return XYZ; }  var _r = f();  var XYZ = 7;
@@ -4190,9 +4189,19 @@ fn PP_EMIT_PKGVER(S, out, op, ip, bl): i64 {
 # ⚠ Scanning for the 11-byte prefix `CYRIUS_PKG_` rather than the full name is deliberate
 # and unchanged from v6.5.21: a false positive costs one unused global, a false negative is
 # impossible, and the prefix is distinctive enough that neither happens in practice.
+#
+# ⛔ 6.7.6 — RUN ON THE FINISHED UNIT (PREPROCESS, after the macro pass). It ran at the tail of
+# PP_PASS, which expands only the ENTRY's includes — an included file's own `include` lines are
+# expanded later by PP_IFDEF_PASS — so a file two levels down that named the constant was not in
+# the buffer yet, the declaration was blanked, and the build failed with `undefined variable
+# 'CYRIUS_PKG_VERSION'` (filed by agnostic, 2026-10-07). The declaration's offset survives the
+# later passes (only the `#@file` marker line precedes it, copied through verbatim); it is
+# re-checked before blanking, and a declaration not found where it was written is kept — an unused
+# global, the safe direction.
 fn PP_RESOLVE_PKGVER(out, op): i64 {
     if (_pp_pkgver_len == 0) { return op; }
     if (_pp_pkgver_declen == 0) { return op; }
+    if (PP_PKGVER_AT(out, op, _pp_pkgver_at) == 0) { return op; }
     # Scan the FULLY EXPANDED unit — this is the whole fix. The v6.5.21 scan ran inside
     # PP_EMIT_PKGVER, whose buffer at that moment is the ENTRY FILE's raw text, includes
     # not yet expanded. So the constant resolved when the entry file named it and failed
@@ -4229,6 +4238,18 @@ fn PP_RESOLVE_PKGVER(out, op): i64 {
     }
     _pp_pkgver_len = 0;
     return op;
+}
+
+# 1 when `out[at..]` still begins with the declaration PP_EMIT_PKGVER wrote there (6.7.6).
+fn PP_PKGVER_AT(out, op, at): i64 {
+    var w = "var CYRIUS_PKG_VERSION = ";
+    var i = 0;
+    while (load8(w + i) != 0) {
+        if (at + i >= op) { return 0; }
+        if (load8(out + at + i) != load8(w + i)) { return 0; }
+        i = i + 1;
+    }
+    return 1;
 }
 
 fn PP_PASS(S): i64 {
@@ -4673,11 +4694,10 @@ fn PP_PASS(S): i64 {
         syscall(SYS_WRITE, 2, " bytes)\n", 8);
         syscall(SYS_EXIT, 1);
     }
-    # v6.5.34 — the `#@pkgver` declaration was written optimistically at the marker; only
-    # HERE, with every top-level include expanded, can "does this unit reference the
-    # constant?" be answered honestly. Blanks it to spaces if not. Length is unchanged, so
-    # this neither grows the buffer nor affects the 24 MB guard above.
-    op = PP_RESOLVE_PKGVER(out, op);
+    # v6.5.34 — the `#@pkgver` declaration was written optimistically at the marker. ⛔ 6.7.6:
+    # it is NOT resolved here — this pass expands only the TOP-LEVEL includes, so a file two
+    # levels down was invisible to the scan and the declaration was blanked under it. See
+    # PP_RESOLVE_PKGVER, now run by PREPROCESS once every pass is done.
     # No copy-back — data stays at S+0x459D000.
     # PP_IFDEF_PASS reads from 0x459D000 (via its tmp copy) and writes back there.
     SBL(S, op);
@@ -5236,5 +5256,7 @@ fn PREPROCESS(S): i64 {
     PP_IFDEF_PASS(S);
     # Final pass: expand macros with args
     PP_MACRO_PASS(S);
+    # 6.7.6: the `#@pkgver` declaration is judged on the FINISHED unit (see PP_RESOLVE_PKGVER).
+    SBL(S, PP_RESOLVE_PKGVER(S + 0x459D000, GBL(S)));
     return 0;
 }

@@ -1,0 +1,74 @@
+# int_name_routes_int_overload.tcyr — 6.7.6 (Break 1, lane D): a name DECLARED an integer, as the
+# whole first argument of a base with an `_int` overload (`println`), routes to that overload.
+#
+# `var n: i64 = 42; println(n);` handed n to println's `: cstring` overload, which dereferenced 42:
+# SIGSEGV (rc 139). The route (v5.10.25 / v6.0.3: an i64-returning base whose parameter 0 is
+# `: cstring`, with a `<base>_int` sibling) took only a CALL returning `: i64`, although
+# lib/string.cyr's println_int has always said it is reached for an annotated local or global. A name
+# declared i8..i64 / u8..u64 — a local, a parameter (an #inline one too), a closure's capture of one,
+# a global in either zone — is a number, never a pointer, and routes; an untyped name, a `*T`
+# parameter and an expression (`n + 0`) do not (ADR-002: an untyped word may hold a pointer). The
+# per-backend legs are tests/gates/frontend/silent_values_checked.sh.
+#
+# ⚠ CROSS-HOST: the route is front-end only, but println_int's output path (print_num + the write)
+# runs per target.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fnptr.cyr"
+include "lib/assert.cyr"
+
+# A base and its `_int` sibling that report which one ran.
+fn which(s: cstring): i64 { return 1; }
+fn which_int(n: i64): i64 { return 2; }
+
+var GD: i64 = 5;
+var GU = 6;
+var GN: u16 = 7;
+
+fn via_i64(n: i64): i64 { return which(n); }
+fn via_u8(n: u8): i64 { return which(n); }
+fn via_ptr(p: *i64): i64 { return which(p); }
+fn via_untyped(n): i64 { return which(n); }
+#inline
+fn via_inline(n: i64): i64 { return which(n); }
+fn shadow(): i64 { var GD = "x"; return which(GD); }
+
+fn tmain(): i64 {
+    var n: i64 = 42;
+    var b: u8 = 3;
+    var h: i32 = 0 - 4;
+    var q: u64 = 9;
+    var u = "text";
+    assert_eq(which(n), 2, "R1: an i64 local routes to _int");
+    assert_eq(which(b), 2, "R2: a u8 local");
+    assert_eq(which(h), 2, "R3: an i32 local");
+    assert_eq(which(q), 2, "R4: a u64 local");
+    assert_eq(which(u), 1, "R5: an untyped local does not route");
+    assert_eq(which(n + 0), 1, "R6: an expression does not route (the whole argument is a name)");
+    assert_eq(via_i64(1), 2, "R7: an i64 parameter");
+    assert_eq(via_u8(1), 2, "R8: a u8 parameter");
+    assert_eq(via_ptr(&n), 1, "R9: a *i64 parameter does not route");
+    assert_eq(via_untyped(1), 1, "R10: an untyped parameter does not route");
+    assert_eq(via_inline(1), 2, "R11: an #inline fn's i64 parameter (the replay keeps the mark)");
+    assert_eq(which(GD), 2, "R12: an i64 global (declaration zone)");
+    assert_eq(which(GN), 2, "R13: a u16 global");
+    assert_eq(which(GU), 1, "R14: an untyped global does not route");
+    assert_eq(shadow(), 1, "R15: an untyped local shadowing an i64 global decides");
+    var f = || { return which(n); };
+    var g = || { var m: i32 = 1; return which(m); };
+    assert_eq(fncall0(f), 2, "R16: a closure's capture of an i64 local");
+    assert_eq(fncall0(g), 2, "R17: a closure's own i32 local");
+    # println itself: the filed shape ran println's cstring body over 42 (SIGSEGV)
+    assert_eq(println(n), 0, "P1: println(n) on an i64 local prints 42");
+    assert_eq(println(h), 0, "P2: println(h) on an i32 local prints -4");
+    assert_eq(println(GD), 0, "P3: println(GD) on an i64 global prints 5");
+    return 0;
+}
+
+var tr = tmain();
+var LATE: i32 = 8;
+assert_eq(which(LATE), 2, "T1: an i32 global declared after the first statement");
+assert_eq(println(LATE), 0, "T2: println(LATE) prints 8");
+var rr = assert_summary();
+syscall(60, rr);

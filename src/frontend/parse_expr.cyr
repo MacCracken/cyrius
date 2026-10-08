@@ -177,6 +177,12 @@ fn _cl_snap_type(esl): i64 {
     if (_cl_snap == 0) { return 0; }
     return L64(_cl_snap + _cl_snap_n * 16 + esl * 8);
 }
+# The enclosing slot's declared-integer mark (util.cyr GLINTD, bit 59 of the same word). 6.7.6
+fn _cl_snap_intd(esl): i64 {
+    if (_cl_snap == 0) { return 0; }
+    if (esl < 0) { return 0; }
+    return (L64(_cl_snap + _cl_snap_n * 8 + esl * 8) >> 59) & 1;
+}
 # 6.6.13 — 1 when enclosing slot `esl` is an ADDRESS-PASSED by-value struct parameter of the
 # enclosing fn: its one captured word is the caller's struct's address, which a copy-init must
 # copy THROUGH, where a pointer-mode local's word (`var a: Pt = mk();`, a Str handle) is rebound.
@@ -1404,14 +1410,32 @@ fn _bx_pscan(S, fi, pc): i64 {
     if (_bx_is_bool_name(S, PEEKV(S)) == 1) { _pbool_set(fi, pc, 1); }
     return 0;
 }
-# Pass 2: is the parameter whose type name is `tnoff` a bool (not a `*bool`)?
+# Pass 2: is the parameter whose type name is `tnoff` a bool (not a `*bool`)? 1 a bool; 6.7.6: 2 an
+# integer i8..i64 / u8..u64 (the slot's bit 59, SLINTD — a number for the `_int` overload route).
 fn _bx_ptype(S, tnoff): i64 {
     if (_ptrp_now(S) != 0) { return 0; }
-    return _bx_is_bool_name(S, tnoff);
+    if (_bx_is_bool_name(S, tnoff) == 1) { return 1; }
+    if (FINDSTRUCT(S, tnoff) > 0) { return 0; }
+    if (_tn_iw(_tn_scalar(L64(S + 0xEC00000 + tnoff))) > 0) { return 2; }
+    return 0;
 }
+# The parameter table keeps 2 for an integer parameter (its readers test `== 1` for a bool), so the
+# #inline replay, which re-registers parameters by name, can re-mark the slot (_inl_param_marks).
 fn _bx_param(S, fi, pc, li, b): i64 {
     _pbool_set(fi, pc, b);
+    if (b == 2) {
+        SLINTD(S, li);
+        b = 0;
+    }
     SLBOOL(S, li, b);
+    return 0;
+}
+# 6.7.6 — the #inline replay's parameters (_inl_bind_param, parse_fn.cyr) at slots `s0` / `s1`: the
+# declared-integer mark of callee `fi`'s parameters 0 / 1, which re-registration by name dropped
+# (an inlined `println(n)` with `n: i64` took the cstring overload the out-of-line body did not).
+fn _inl_param_marks(S, fi, s0, s1, pc): i64 {
+    if (pc >= 1) { if (_pbool_get(fi, 0) == 2) { SLINTD(S, s0); } }
+    if (pc >= 2) { if (_pbool_get(fi, 1) == 2) { SLINTD(S, s1); } }
     return 0;
 }
 # The name of parameter `ord` of fn `fi`, read from its definition's tokens (the `<..>` of a type
@@ -1443,7 +1467,7 @@ fn _bx_pname(S, fi, ord): i64 {
 fn _bx_pcmpe_arg(S, fi, ord, noff): i64 {
     var t = GTI(S);
     PCMPE(S);
-    if (_pbool_get(fi, ord) == 0) { return 0; }
+    if (_pbool_get(fi, ord) != 1) { return 0; }   # 6.7.6: 2 is an integer parameter (_bx_param)
     if (_BX_IS(S) == 1) { return 0; }
     var pn = _bx_pname(S, fi, ord);
     if (pn < 0) { return _bx_refuse(S, t, "cannot pass a value that is not a bool to a bool parameter of ", noff, 0, 0 - 1); }
@@ -1496,7 +1520,7 @@ fn _bx_falloff_fi(S, fi): i64 {
 # An operator overload's right operand is the operator fn's parameter 1 (`p + 5` into
 # `fn P_add(self, b: bool)`), as `p.add(5)` passes it — checked the same way.
 fn _bx_op_rhs(S, fi, rb): i64 {
-    if (_pbool_get(fi, 1) == 0) { return 0; }
+    if (_pbool_get(fi, 1) != 1) { return 0; }
     if (_BX_IS(S) == 1) { return 0; }
     var pn = _bx_pname(S, fi, 1);
     if (pn < 0) { return _bx_refuse(S, rb, "cannot pass a value that is not a bool to a bool parameter of ", _bx_fname(S, fi), 0, 0 - 1); }
@@ -1553,6 +1577,28 @@ fn _UFV_IS_FLOAT(S): i64 {
     if (t == F64_TYID) { return 1; }
     if (t == F32_TYID) { return 1; }
     if (_FBR_KIND(S) != 0) { return 1; }
+    return 0;
+}
+
+# ⛔ 6.7.6 (Break 1, lane D) — AN f64 VALUE INITIALIZING AN `f32` ROUNDS TO f32 (the user's decision,
+# 2026-10-08), as a 6.7.4 `f32[N]` list element does: `var x: f32 = 1.5;` (a local, a global in either
+# zone, a for-init) stored 1.5's binary64 bits, which every f32 read takes the low 32 of (0.0),
+# silently. The value just parsed is an f64 when it is typed so (a literal, f64 const arithmetic, an
+# f64 variable, field or `: f64` fn) or a float builtin marked kind 1 (`f64_sqrt(..)`); it is narrowed
+# where it stands, round-to-nearest-even — what `f32_from` (and `_gai_f32` for a list) gives. An f32
+# value, an integer constant (kept bits, with its warning) and an untyped word (the i64-boxed idiom)
+# are untouched. `t` = the slot's float type; 1 = narrowed. CHANGELOG [6.7.6]
+fn _f32_init_round(S, t): i64 {
+    if (t != F32_TYID) { return 0; }
+    if (GESTYPE(S) != F64_TYID) { if (_FBR_KIND(S) != 1) { return 0; } }
+    EF32_FROM(S);
+    return 1;
+}
+# A local or late-global declaration's float initializer, after PCMPE: the integer-constant warning
+# (_IFS_CHECK) and the f32 rounding above, in one call from PARSE_VAR.
+fn _decl_float_init(S, t, ti): i64 {
+    _IFS_CHECK(S, _IFS_K(t), ti);
+    _f32_init_round(S, t);
     return 0;
 }
 

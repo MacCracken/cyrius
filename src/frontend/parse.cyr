@@ -851,6 +851,25 @@ fn _refuse_lossy_pair(S): i64 {
     return 1;
 }
 
+# v6.5.67 — `var v = f();` with `f` returning a `: stack` pair (cursor on the `=`): one variable
+# keeps the tag and drops the payload, so it is refused. v6.6.0: unless `?` consumes it — `var v =
+# f()?;` binds ONE value by design (the operator propagates the Err half and yields the payload).
+# ⚠ The `?` check goes HERE and not inside `_callee_returns_pair_at`: that also feeds `_tpair`, which
+# tells `?` it holds a pair at all, and suppressing it there sends `?` down the boxed lowering that
+# dereferences the tag as a pointer (measured: immediate SIGSEGV). 6.6.16: scanned from the callee's
+# first token, the right start for `f(`, `g<..>(` and `x.m(` alike.
+# ⛔ 6.7.6 (Break 1, lane D) — AT TOP LEVEL TOO (the user's decision, 2026-10-08). The check was gated
+# on `GINFN == 1`, so a global `var v = mk();` kept the tag and lost the payload silently (`Ok(42)`
+# exited 0), in the declaration zone (EMIT_GVAR_INITS' `_gvi_expr`) and after the first statement
+# (PARSE_VAR) alike. The fn-body rule and wording, everywhere. CHANGELOG [6.7.6]
+fn _refuse_single_pair_bind(S): i64 {
+    if (PEEKT(S) != 4) { return 0; }
+    if (_callee_returns_pair_at(S, GTI(S) + 1) == 0) { return 0; }
+    if (_call_is_propagated(S, GTI(S) + 1) == 1) { return 0; }
+    ERR_MSG(S, "a `: stack` enum returns two values — bind both: `var tag, val = f();`", 72);
+    return 1;
+}
+
 fn _callee_returns_pair(S): i64 {
     var _crp = _callee_returns_pair_at(S, GTI(S));
     if (_crp == 0) { return 0; }
@@ -2874,6 +2893,7 @@ fn _asg_compound_load(S, noff): i64 {
         } }
     var li = FINDLOCAL(S, noff);
     _asg_struct_refused(S, noff, li);   # 6.7.5 (B8): `a += b` on a struct value
+    _asg_wide_refused(S, noff, li);     # 6.7.6: on a vector, a typed array, a slice
     if (li >= 0) {
         var lt = _load_lt(S, li);
         _asg_cstep = _slot_ptr_step(S, li);
@@ -2909,7 +2929,7 @@ fn _asg_compound_load(S, noff): i64 {
 # A struct value is an inline aggregate local (GLAGG: `var a = P { .. }`, `var a: P`, a <= 8 B one
 # too), an address-passed by-value parameter (`_local_is_sptr_param`) and an inline struct global
 # (GVPM 2). A HANDLE keeps its 6.6.17 pointer step: a `*T` slot, a pointer-mode local or global
-# (it holds the address), a `Str`. (u128 and SIMD-vector OP= are filed, not decided here.) The
+# (it holds the address), a `Str`. (A vector, typed array and slice: _asg_wide_refused, 6.7.6.) The
 # statement still parses on, so the parse stays in sync. `li` = FINDLOCAL's answer. CHANGELOG [6.7.5]
 fn _asg_struct_refused(S, noff, li): i64 {
     var sv = 0;
@@ -2925,6 +2945,31 @@ fn _asg_struct_refused(S, noff, li): i64 {
     }
     if (sv == 0) { return 0; }
     _err_in_sync(S, "compound assignment to struct ", noff, " is refused - a struct value is not an integer or a float (write `a = a + b`)");
+    return 1;
+}
+
+# ⛔ 6.7.6 (Break 1, lane D) — `a OP= b` ON A SIMD VECTOR, A TYPED ARRAY OR A SLICE IS REFUSED BY
+# NAME (the user's decision, 2026-10-08), as 6.7.5 refused it on a struct: each compiled and
+# integer-operated on the FIRST word — `v += 1` on an i64v2 added to lane 0 only, `a += 8` on a
+# `var a: i64[4]` to a[0] (an f64[N] added bit patterns), `s += 1` on a slice to `.ptr` — silently,
+# as a statement and as a for step. A vector is a local or parameter of a vector type (a vector
+# GLOBAL is refused already, _vecg_refuse); a typed array is any `var a: T[N]` (the descriptor's 0x80
+# mark, local or global; a bare `var a[N]` is not one); a slice is a local `[T]` / `slice<T>`. u128
+# is not refused: its `OP=` computes as `b = b OP x` does. The statement parses on. CHANGELOG [6.7.6]
+fn _asg_wide_refused(S, noff, li): i64 {
+    var k = 0;
+    if (li >= 0) {
+        if (_is_simd_any(S, GLTYPE(S, li)) == 1) { k = 1; }
+        elif (GLAEW(S, li) != 0) { k = 2; }
+        elif (GSLICE_W(S, li) > 0) { k = 3; }
+    } else {
+        var gi = _findvar_core(S, noff);
+        if (gi >= 0) { if (_arr_gdesc(S, gi) != 0) { k = 2; } }
+    }
+    if (k == 0) { return 0; }
+    if (k == 1) { _err_in_sync(S, "compound assignment to vector ", noff, " is refused - a vector value is not an integer or a float (write the long form with the packed-op builtins)"); }
+    elif (k == 2) { _err_in_sync(S, "compound assignment to array ", noff, " is refused - an array is not an integer or a float (index an element: `a[i] += b`)"); }
+    else { _err_in_sync(S, "compound assignment to slice ", noff, " is refused - a slice is not an integer or a float (step a field: `s.ptr += n`, `s.len -= n`)"); }
     return 1;
 }
 

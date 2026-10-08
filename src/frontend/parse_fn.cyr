@@ -3845,6 +3845,34 @@ fn _pure_effect_warn(S, fi, noff): i64 {
     return 0;
 }
 
+# The first argument's scalar width for the `_int` overload route (cursor on its first token, an
+# IDENT): a call `f(..)` declared to return a scalar (its GFRS, negated — 8 for `: i64`), else 0.
+# ⛔ 6.7.6 (Break 1, lane D) — or 8 when the WHOLE argument is a name DECLARED an integer: a local or
+# parameter (bit 59, SLINTD) or a global (GVINTD) annotated i8..i64 / u8..u64. `var n: i64 = 42;
+# println(n);` handed n to println's `: cstring` overload, which dereferenced 42 — rc 139. An
+# untyped name is never routed (ADR-002: it may hold a pointer). CHANGELOG [6.7.6]
+fn _od_arg_kind(S): i64 {
+    var nt = TOKTYP(S, GTI(S) + 1);
+    if (nt == 10) {
+        var fi = FINDFN(S, PEEKV(S));
+        if (fi < 0) { return 0; }
+        var r = GFRS(S, fi);
+        if (r < 0) { return 0 - r; }
+        return 0;
+    }
+    if (nt != 11) { if (nt != 31) { return 0; } }
+    if (GINFN(S) == 1) {
+        var li = FINDLOCAL(S, PEEKV(S));
+        if (li >= 0) { return GLINTD(S, li) * 8; }
+        if (_cl_capturing == 1) { if (_cl_env_lidx >= 0) {   # a closure's capture of one
+                var esl = _cl_snap_find(S, PEEKV(S));
+                if (esl >= 0) { return _cl_snap_intd(esl) * 8; }
+            } }
+    }
+    var vi = _findvar_core(S, PEEKV(S));
+    if (vi < 0) { return 0; }
+    return GVINTD(S, vi) * 8;
+}
 fn PARSE_FNCALL(S, noff): i64 {
     STI(S, GTI(S) + 1);  # consume (
     # Check for inline candidate
@@ -3873,14 +3901,7 @@ fn PARSE_FNCALL(S, noff): i64 {
     # / `show(s.len)` on a Str local reached `show_str`, which read the VALUE as a header.
     # CHANGELOG [6.6.16]
     if (PEEKT(S) == 2) {
-        var _od_arg_scalar = 0;
-        if (TOKTYP(S, GTI(S) + 1) == 10) {
-            var _od_arg_fi = FINDFN(S, PEEKV(S));
-            if (_od_arg_fi >= 0) {
-                var _od_ret = GFRS(S, _od_arg_fi);
-                if (_od_ret < 0) { _od_arg_scalar = 0 - _od_ret; }
-            }
-        }
+        var _od_arg_scalar = _od_arg_kind(S);   # 6.7.6: + a name declared an integer
         # The sibling first: the classifier scans a call argument's parens, and most bases
         # have no `_str` sibling to route to.
         var _od_str_target = L64(_fnt_ovstr + fi * 8);
@@ -4098,6 +4119,7 @@ fn PARSE_FNCALL(S, noff): i64 {
                     var pn1 = (inl_packed >> 32) & 0xFFFFFFFF;
                     if (pc >= 1) { _inl_bind_param(S, saved_flc, _w0, p0_slot, pn0, _t0); }
                     if (pc >= 2) { _inl_bind_param(S, saved_flc + _w0, _w1, p1_slot, pn1, _t1); }
+                    _inl_param_marks(S, fi, p0_slot, p1_slot, pc);   # 6.7.6: + an integer's bit 59
                     # Save state and replay body tokens
                     var saved_ti = GTI(S);
                     var saved_rpc = vec_len(rp_vec);

@@ -48,9 +48,19 @@ fn _arr_desc(ew, sgn): i64 {
     if (sgn == 1) { return ew | 0x40; }
     return ew;
 }
-fn _arr_gsgn(ew, sgn): i64 {
-    if (ew <= 0) { return 0; }
+# ⛔ 6.7.6 (Break 1, lane D) — 0x80 in the descriptor: the array was declared with an element TYPE
+# (`var a: T[N]`, any T — f64, a struct and a vector included, which carry no integer width), so
+# `a OP= v` on its name is refused by name (_asg_wide_refused, parse.cyr) — it operated on element 0.
+# A bare `var a[N]` stays 0. The subscript reads only `& 0x3F` (width) and `& 0x40` (sign), so the
+# mark changes no load; a global keeps it under 0x100 like any descriptor. CHANGELOG [6.7.6]
+fn _arr_desc_t(ew, sgn, typed): i64 {
     var d = _arr_desc(ew, sgn);
+    if (typed != 0) { d = d | 0x80; }
+    return d;
+}
+fn _arr_gsgn(ew, sgn, typed): i64 {
+    var d = _arr_desc_t(ew, sgn, typed);
+    if (d == 0) { return 0; }
     return 0x100 | d;
 }
 # A global's element descriptor, 0 when it is not an element-typed array.
@@ -326,7 +336,7 @@ fn PARSE_ARRAY(S, noff, ew, sgn, eb, ann_ti): i64 {
         S64(S + 0x5D9D000 + sa_named * 8, noff);
         SLDEP(S, sa_named, GSDEP(S));
         SLAGG(S, sa_named, sa_nslots);   # 6.6.5: the slots ARE the array
-        SLAEW(S, sa_named, _arr_desc(ew, sgn));   # 6.6.12: after SLAGG (see util.cyr SLAEW)
+        SLAEW(S, sa_named, _arr_desc_t(ew, sgn, ann_ti));   # 6.6.12: after SLAGG (see util.cyr SLAEW); 6.7.6: + the typed mark
         SLTYPE(S, sa_named, 0);
         SFLC(S, sa_named + 1);
         return 0;
@@ -334,7 +344,7 @@ fn PARSE_ARRAY(S, noff, ew, sgn, eb, ann_ti): i64 {
     var vcnt = GVCNT(S);
     S64(_varn_base + vcnt * 8, noff);
     S64(_vars_base + vcnt * 8, aligned);
-    SVSGN(S, vcnt, _arr_gsgn(ew, sgn));   # 6.6.12: the element descriptor (see _arr_gsgn)
+    SVSGN(S, vcnt, _arr_gsgn(ew, sgn, ann_ti));   # 6.6.12: the element descriptor (see _arr_gsgn); 6.7.6: + the typed mark
     # 6.6.5 — a fn-local STATIC array is scoped to its block, not stamped as a file global.
     # The v6.6.4 stamp is what turned this shape's cross-file collision into an error naming
     # the CONSUMER's variable; scoping the name removes the collision instead of renaming it.
@@ -2404,7 +2414,7 @@ fn PARSE_GVAR_ARR(S, noff, sti, ew, sgn, eb): i64 {
     var vc0 = GVCNT(S);
     S64(_varn_base + vc0 * 8, noff);
     S64(_vars_base + vc0 * 8, sz);
-    SVSGN(S, vc0, _arr_gsgn(ew, sgn));   # 6.6.12: before the fold, so a redeclaration compares it
+    SVSGN(S, vc0, _arr_gsgn(ew, sgn, eb));   # 6.6.12: before the fold, so a redeclaration compares it; 6.7.6: + the typed mark
     var vc = _gv_fold(S, vc0, sti);   # 6.6.6: a redeclaration reuses the global's slot
     SLVAR(S, vc);
     # v6.6.4: stamp visibility here too. PARSE_GVAR_REG returns into this fn BEFORE its
@@ -3212,6 +3222,7 @@ fn _gv_clear(S, vi): i64 {
     if (GVVEC(S, vi) != 0) { SVVEC(S, vi, 0); }
     if (_gv_ptr_sid(S, vi) != 0) { S64(_gv_psid + vi * 8, 0); }
     if (GVBOOL(S, vi) != 0) { SVBOOL(S, vi, 0); }   # 6.7.3
+    if (GVINTD(S, vi) != 0) { SVINTD(S, vi, 0); }   # 6.7.6
     return 0;
 }
 
@@ -3398,6 +3409,15 @@ fn _gv_store(S, vi): i64 {
     var w = L64(_vars_base + vi * 8);
     if (w == 1 || w == 2 || w == 4) { EVSTORE_W(S, vi, w); return 0; }
     EVSTORE(S, vi);
+    return 0;
+}
+# The declaration-zone replay's store of an initializer just parsed (EMIT_GVAR_INITS): an f64 value
+# into an `f32` global rounds first (_f32_init_round, parse_expr.cyr). Not in `_gv_store`, whose cx
+# constant prestore runs with no expression parsed. CHANGELOG [6.7.6]
+fn _gvi_store(S, vi): i64 {
+    _f32_init_round(S, GVTYPE(S, vi));
+    _gv_store(S, vi);
+    _gv_slvar(S, vi);
     return 0;
 }
 
@@ -3971,7 +3991,7 @@ fn PARSE_GVAR_REG(S): i64 {
     # destructure form stamps per name — each carries its own _GVAR_VIS (v6.6.4).
     var gvi = _gv_fold(S, vcnt, sti);   # 6.6.6: a redeclaration reuses the global's slot
     _GVAR_VIS(S, gvi, sti);
-    SVBOOL(S, gvi, ann_bool);   # 6.7.3 (B2): like the float flag, the last declaration's
+    _gv_last_marks(S, gvi, ann_bool, ann_scalar);   # 6.7.3 (B2): like the float flag, the last declaration's; 6.7.6: + the integer mark
     SGFI(S, gvi, _gv_ufv(S, sti, psc + ann_sid + ann_scalar + ann_float));   # 6.6.10
     _gv_float_copy(S, gvi, sti, psc + ann_sid + ann_scalar + ann_float);     # 6.6.11
     _gv_diag_sid(S, gvi, sti, psc + ann_sid + ann_scalar + ann_float + is_struct);   # 6.6.13 I11
@@ -4238,11 +4258,21 @@ fn _gvi_ann(S, slot): i64 {
     return 0 - sid;
 }
 
+# The replay's cursor is on the initializer's first token: the refusal reads (and reports at) the
+# `=` before it, as PARSE_VAR's does. CHANGELOG [6.7.6]
+fn _gvi_pair_bind(S): i64 {
+    var sv = GTI(S);
+    STI(S, sv - 1);
+    _refuse_single_pair_bind(S);
+    STI(S, sv);
+    return 0;
+}
 # ⛔ 6.6.11 — a leading-block initialiser, replayed here rather than parsed by PARSE_VAR, so a
 # struct-typed global's whole call / method result was never type-checked (`var G: Odd = mk2();`
 # compiled silently where the same line after a statement was refused). The same arming and
 # check PARSE_VAR's top-level arm makes. CHANGELOG [6.6.11]
 fn _gvi_expr(S, gps): i64 {
+    _gvi_pair_bind(S);   # 6.7.6: a `: stack` pair into one global is refused, as in a fn
     if (gps == 0) { PCMPE(S); return 0; }
     var st = GTI(S);
     _refuse_toplevel_pair_init(S, gps, st);   # 6.6.11: a rax:rdx result has no storage here
@@ -4390,7 +4420,7 @@ fn EMIT_GVAR_INITS(S): i64 {
         if (did_struct == 0) {
             if (_gci_init(S, idx, gps, noff) == 0) {   # 6.6.12: a whole struct source is copied
                 _bx_gvi_expr(S, gps, gi, noff);   # 6.7.3: _gvi_expr, and a bool global's value judged
-                if (idx >= 0) { _gv_store(S, idx); _gv_slvar(S, idx); }   # 6.6.13: at its width
+                if (idx >= 0) { _gvi_store(S, idx); }   # 6.6.13: at its width; 6.7.6: f32 rounds
             }
             _gvk_left(S, gi, sti, idx);   # 6.6.16 (C6): a kernel build names what stays late
             if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
@@ -5159,24 +5189,9 @@ fn PARSE_VAR(S): i64 {
     # mismatch is diagnosed at the receive paths below rather than silently truncated).
     # v6.5.67 — a `: stack` enum call bound to ONE variable keeps the tag and silently drops the
     # payload. Refuse it. The two-variable destructure is handled earlier in this fn, so reaching
-    # here with a pair-returning callee means the payload is about to be lost.
-    if (GINFN(S) == 1) {
-        if (PEEKT(S) == 4) {
-            if (_callee_returns_pair_at(S, GTI(S) + 1) == 1) {
-                # v6.6.0: unless `?` consumes it. `var v = f()?;` binds ONE value by design —
-                # the operator propagates the Err half out of the enclosing function and yields
-                # the payload alone. ⚠ The check goes HERE and not inside the helper: the helper
-                # also feeds `_tpair`, which is what tells `?` it is holding a pair at all, and
-                # suppressing it there sends `?` down the boxed lowering that dereferences the
-                # tag as a pointer (measured: immediate SIGSEGV).
-                # 6.6.16: scanned from the callee's first token, the right start for `f(`,
-                # `g<..>(` and `x.m(` alike (it walks to the first `(`). CHANGELOG [6.6.16]
-                if (_call_is_propagated(S, GTI(S) + 1) == 0) {
-                    ERR_MSG(S, "a `: stack` enum returns two values — bind both: `var tag, val = f();`", 72);
-                }
-            }
-        }
-    }
+    # here with a pair-returning callee means the payload is about to be lost. 6.7.6: at top level
+    # too (a global after the first statement; the declaration zone's replay is `_gvi_expr`).
+    _refuse_single_pair_bind(S);
     if (GINFN(S) == 1) {
         if (PEEKT(S) == 4) {
             var _vin_ti = GTI(S) + 1;
@@ -5756,7 +5771,8 @@ fn PARSE_VAR(S): i64 {
     _bx_decl(S, lbool, noff, scv_start);   # 6.7.3 (B2): a bool takes a boolean value
     # 6.6.10: an integer constant into an `f64` / `f32` declaration warns (_IFS_CHECK), and an
     # UNTYPED declaration records whether its initialiser was a float (_UFV_*).
-    _IFS_CHECK(S, _IFS_K(lfloat), scv_start);
+    # 6.7.6: and an f64 value into an `f32` declaration rounds to f32 (_f32_init_round).
+    _decl_float_init(S, lfloat, scv_start);
     var ufv = 0;
     if (pscale == 0) { if (scalar_type == 0) { if (lfloat == 0) { if (slice_elt_w == 0) { if (_ti_inferred_sid == 0) {
                         ufv = _UFV_IS_FLOAT(S);
@@ -5925,7 +5941,7 @@ fn PARSE_VAR(S): i64 {
             _sl_marks(S, li, scalar_signed, scalar_type, slice_elt_w, pscale);
             SFLC(S, li + 1);
             SLFI(S, li, ufv);   # 6.6.10: set on EVERY declaration, after SFLC cleared it (see _UFV_L)
-            SLBOOL(S, li, lbool);   # 6.7.3: last — the high half is rewritten above
+            _sl_last_marks(S, li, lbool, scalar_type);   # 6.7.3: last — the high half is rewritten above; 6.7.6: + bit 59
         }
     } else {
         _sc_global_receive(S, pscale, scv_start);   # 6.6.6: no frame at top level — refused by name
@@ -5968,7 +5984,7 @@ fn PARSE_VAR(S): i64 {
         }
         SLVAR(S, vcnt);
         SGFI(S, vcnt, ufv);   # 6.6.10: see _UFV_G
-        SVBOOL(S, vcnt, lbool);   # 6.7.3 (B2)
+        _gv_last_marks(S, vcnt, lbool, scalar_type);   # 6.7.3 (B2); 6.7.6: + the integer mark
         # 6.6.13 I11: an untyped `var g = f(..);` here records f for the Str -> cstring diagnostic,
         # as PARSE_GVAR_REG does for a global above the first statement (_gv_diag_sid).
         var gdc = 0;

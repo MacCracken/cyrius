@@ -322,6 +322,22 @@ fn _sl_ptr_type(S, li, ps, ann): i64 {
     SLTYPE(S, li, ps);
     return 0;
 }
+# 6.7.6 (Break 1, lane D) — the LAST marks of a scalar local's / global's registration: `bool`
+# (6.7.3) and declared INTEGER (`st` = the annotation's integer width, 1..8; 16 is u128 / a slice),
+# which routes `println(n)` to its `_int` overload (_od_arg_kind, parse_fn.cyr). A global's marks are
+# the last declaration's (0 clears a redeclaration's). CHANGELOG [6.7.6]
+fn _sl_last_marks(S, li, lbool, st): i64 {
+    SLBOOL(S, li, lbool);
+    if (st >= 1) { if (st <= 8) { SLINTD(S, li); } }
+    return 0;
+}
+fn _gv_last_marks(S, vi, b, st): i64 {
+    SVBOOL(S, vi, b);
+    var n = 0;
+    if (st >= 1) { if (st <= 8) { n = 1; } }
+    SVINTD(S, vi, n);
+    return 0;
+}
 fn _sl_marks(S, li, sgn, st, sw, ps): i64 {
     if (sgn == 1) { if (sw == 0) { SSLICE_W(S, li, 0 - st); } }
     if (ps > 0) {
