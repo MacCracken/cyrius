@@ -15,31 +15,36 @@
 # backing arrays were `[128]`. Three comments agreeing with each other and disagreeing with
 # the code.
 #
-# ⛔ WHY THIS GATE EXISTS RATHER THAN AN ASSERTION IN THE SOURCE. The save buffer's size must
-# be a LITERAL — `#assert` accepts only numbers and `sizeof()`, not a global (verified: it
-# reports "expected number or sizeof()" on a global constant) — so `var save: i64[128]`
-# necessarily duplicates `TLOCAL_MAX_SLOTS`. A hand-maintained copy of a derivable fact is the
-# exact shape this cycle keeps finding wrong (heap-map sizes vs regions, gate counts vs files,
-# declared string lengths vs strings). This gate is the mechanical check that makes the
-# duplicate safe: raise the constant past the literal and the build goes red here.
+# ⛔ WHY THIS GATE EXISTS. Until 6.7.2 an array size had to be a LITERAL (`#assert` took only
+# numbers and `sizeof()`, not a global), so `var save: i64[128]` and the `[128]` backing arrays
+# necessarily duplicated `TLOCAL_MAX_SLOTS` — a hand-maintained copy of a derivable fact, the
+# shape this cycle keeps finding wrong (heap-map sizes vs regions, gate counts vs files,
+# declared string lengths vs strings), and this gate compared the copies. 6.7.2 made an array
+# size a const context, so since 6.7.6 there is ONE fact: `const _TLOCAL_MAX_SLOTS` sizes the
+# save buffer, every backing array, the Windows per-thread block and the x86-macOS TLS header,
+# and the public `var TLOCAL_MAX_SLOTS` (kept for the API) is initialised from it. The gate now
+# pins that shape: a literal size anywhere, or a public var that stops deriving from the const,
+# is RED. Mutation ledger (6.7.6, each RED in a scratch copy): the save buffer back to
+# `i64[128]`; `_tlocal_fallback[128]`; `var TLOCAL_MAX_SLOTS = 128;`; the Windows block back to
+# `alloc(1024)`; `_THR_HDR = 1040`.
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 fail() { echo "FAIL: tls_window_matches_max_slots: $1"; exit 1; }
 
-MAX=$(grep -E '^var TLOCAL_MAX_SLOTS = [0-9]+;' "$ROOT/lib/thread_local.cyr" | grep -oE '[0-9]+' | head -1)
-[ -n "$MAX" ] || fail "could not read TLOCAL_MAX_SLOTS from lib/thread_local.cyr — the gate is blind, not the code clean"
-[ "$MAX" -gt 0 ] || fail "TLOCAL_MAX_SLOTS parsed as '$MAX'"
+MAX=$(grep -E '^const _TLOCAL_MAX_SLOTS = [0-9]+;' "$ROOT/lib/thread_local.cyr" | grep -oE '[0-9]+' | head -1)
+[ -n "$MAX" ] || fail "could not read 'const _TLOCAL_MAX_SLOTS = N;' from lib/thread_local.cyr — the gate is blind, not the code clean"
+[ "$MAX" -gt 0 ] || fail "_TLOCAL_MAX_SLOTS parsed as '$MAX'"
+# ── axis 0 (6.7.6): the public var IS the const, not a second copy of the number ─────────
+grep -qE '^var TLOCAL_MAX_SLOTS = _TLOCAL_MAX_SLOTS;' "$ROOT/lib/thread_local.cyr" \
+    || fail "lib/thread_local.cyr: 'var TLOCAL_MAX_SLOTS = _TLOCAL_MAX_SLOTS;' is gone — a literal there is a second copy of the slot count, and the loops bounded by the var would drift from the buffers sized by the const"
 
 for f in lib/thread_agnos.cyr; do
-    # ── axis 1: the save buffer is at least as large as the slot range ─────────────
-    # ⚠ Extract the BRACKETED number, not "the first number on the line": a naive
-    # `grep -oE '[0-9]+'` yields 64 first — out of the TYPE NAME `i64` — and silently
-    # compares the wrong value. Caught by this gate failing loudly on its own first run.
-    SZ=$(grep -oE 'var save: i64\[[0-9]+\];' "$ROOT/$f" | sed -E 's/.*\[([0-9]+)\].*/\1/' | head -1)
-    [ -n "$SZ" ] || fail "$f: no 'var save: i64[N];' found — the serial TLS snapshot buffer moved or was renamed"
-    [ "$SZ" -ge "$MAX" ] \
-        || fail "$f: the TLS snapshot buffer is i64[$SZ] but TLOCAL_MAX_SLOTS is $MAX — the save loop would write $((MAX - SZ)) slots PAST the end of the buffer"
+    # ── axis 1: the save buffer is sized by the const (6.7.6; it was a literal 128) ──
+    grep -qE 'var save: i64\[_TLOCAL_MAX_SLOTS\];' "$ROOT/$f" \
+        || fail "$f: no 'var save: i64[_TLOCAL_MAX_SLOTS];' — the serial TLS snapshot buffer is sized by something other than the const (a literal is a hand-kept copy of the slot count), or it moved"
+    grep -qE 'var save: i64\[[0-9]+\];' "$ROOT/$f" \
+        && fail "$f: a literal-sized 'var save: i64[N];' is back — size it by _TLOCAL_MAX_SLOTS"
 
     # ── axis 2: the loops are bounded by the CONSTANT, never a literal ─────────────
     # This is the half that actually broke. A literal bound silently under-copies instead of
@@ -59,16 +64,21 @@ for f in lib/thread_agnos.cyr; do
         || fail "$f: found $LIT TLS loop(s) bounded by a numeric LITERAL — that is the v6.5.39 defect exactly (the window was 16 while TLOCAL_MAX_SLOTS was 128), and it under-copies silently rather than overflowing"
 done
 
-# ── axis 3: the backing arrays cover the range too ─────────────────────────────────
+# ── axis 3: the backing storage is sized by the const too ─────────────────────────
 # If the storage were smaller than the constant, the (now correct) loops would run off the
-# end of the process-global array instead.
-for pair in "_tlocal_macos:lib/thread_local.cyr" "_tlocal_agnos:lib/thread_local.cyr"; do
-    NAME=${pair%%:*}; FILE=${pair#*:}
-    N=$(grep -oE "var ${NAME}\[[0-9]+\];" "$ROOT/$FILE" | sed -E 's/.*\[([0-9]+)\].*/\1/' | head -1)
-    [ -n "$N" ] || fail "$FILE: could not find the '$NAME[N]' backing array"
-    [ "$N" -ge "$MAX" ] \
-        || fail "$FILE: $NAME is [$N] but TLOCAL_MAX_SLOTS is $MAX — slot stores past $((N - 1)) run off the end of the process-global array"
+# end of the process-global array instead. 6.7.6: every one is sized BY the const — the three
+# process-global arrays, the Windows per-thread block, the x86-macOS per-thread TLS header.
+for NAME in _tlocal_macos _tlocal_agnos _tlocal_fallback; do
+    grep -qE "^var ${NAME}\[_TLOCAL_MAX_SLOTS\];" "$ROOT/lib/thread_local.cyr" \
+        || fail "lib/thread_local.cyr: '$NAME' is not 'var $NAME[_TLOCAL_MAX_SLOTS];' — a literal size is a second copy of the slot count, and a smaller one lets slot stores run off the end"
 done
+grep -qE 'const NB = _TLOCAL_MAX_SLOTS \* 8;' "$ROOT/lib/thread_local.cyr" \
+    && grep -qE 'blk = alloc\(NB\);' "$ROOT/lib/thread_local.cyr" \
+    || fail "lib/thread_local.cyr: the Windows per-thread block is not alloc(NB) with NB = _TLOCAL_MAX_SLOTS * 8"
+grep -qE 'alloc\(1024\)' "$ROOT/lib/thread_local.cyr" \
+    && fail "lib/thread_local.cyr: a literal alloc(1024) is back — the Windows slot block is _TLOCAL_MAX_SLOTS * 8 bytes"
+grep -qE '^const _THR_HDR = \(\(_TLOCAL_MAX_SLOTS \+ 1\) \* 8 \+ 15\) / 16 \* 16;' "$ROOT/lib/thread_macos.cyr" \
+    || fail "lib/thread_macos.cyr: _THR_HDR is not derived from _TLOCAL_MAX_SLOTS — the x86-macOS TLS header (word 0 + the slots) would not grow with the slot count"
 
 # ── axis 4 (v6.5.44): the arm64-macOS REAL-thread path must NOT snapshot ──────────
 # Snapshot/zero/restore emulates isolation around an INLINE call. Once thread_create actually
@@ -101,4 +111,4 @@ XB=$(awk '/^#ifndef CYRIUS_ARCH_AARCH64$/{a=1} a&&/^#endif$/{a=0} a' "$ROOT/lib/
 printf '%s' "$XB" | grep -q '_tls_gs_word0()' \
     || fail "lib/thread_local.cyr: the x86-macOS _tlocal_base() does not read the per-thread gs header — every real thread would share one slot array"
 
-echo "PASS: tls_window_matches_max_slots (TLOCAL_MAX_SLOTS=$MAX; the serial peer saves the full range bounded by the constant; macOS snapshots nothing and x86-macOS reads per-thread gs slots)"
+echo "PASS: tls_window_matches_max_slots (_TLOCAL_MAX_SLOTS=$MAX sizes every slot buffer and TLOCAL_MAX_SLOTS derives from it; the serial peer saves the full range; macOS snapshots nothing and x86-macOS reads per-thread gs slots)"

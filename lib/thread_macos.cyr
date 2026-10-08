@@ -138,7 +138,7 @@ fn gettid(): i64 { return _thr_self(); }
 var _THR_CTL = 48;
 var _THR_STACK = 2097152;            # lib/thread.cyr THREAD_STACK_SIZE parity (2 MiB)
 var _THR_GUARD = 4096;               # one PROT_NONE page below the stack (the thread guard-page hardening item parity)
-var _THR_HDR = 1040;                 # TLS header: word 0 + TLOCAL_MAX_SLOTS (128) slots, 16-rounded
+const _THR_HDR = ((_TLOCAL_MAX_SLOTS + 1) * 8 + 15) / 16 * 16;   # TLS header: word 0 + the slots, 16-rounded
 var _thr_registered = 0;
 
 # The registered trampoline. Runs on the new thread, on our stack, with no return address

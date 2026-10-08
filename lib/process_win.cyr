@@ -264,8 +264,8 @@ fn _win_wenvblock_vec(env, is_str): i64 {
 # child is meant to outlive us, and only `wait_pid`'s deadline may end its tree.
 # ⚠ Not thread-safe (the table, like the bump allocator): spawn from one thread.
 # CHANGELOG [6.6.10]
-var _win_job_tab[128];          # 64 × {hProcess, hJob}; hProcess 0 = a free slot
-var _WIN_JOB_SLOTS = 64;
+const _WIN_JOB_SLOTS = 64;
+var _win_job_tab[_WIN_JOB_SLOTS * 2];   # _WIN_JOB_SLOTS × {hProcess, hJob}; hProcess 0 = a free slot
 
 # Remember `job` for process handle `hp`. Returns 1, or 0 when the table is full — then the
 # job's KILL_ON_JOB_CLOSE is cleared and its handle closed, so the child runs untracked.

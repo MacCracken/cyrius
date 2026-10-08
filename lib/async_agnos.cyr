@@ -199,7 +199,7 @@ fn async_interval(rt, fp, arg, ms, tok): i64 {
 # caller's argv[0] is dropped; argv[1..] follow. No PATH search. An empty envp is the kernel's
 # default environment. The child inherits our stdio (fds 0/1/2) and nothing else (CLEANFD).
 fn _async_agnos_run(path, argv, envp, ms): i64 {
-    var b[1024];
+    var b[_SPAWN_ARGV_MAX];
     var e[1024];
     var blen = _agnos_blob_put(&b, 0, SPAWN_ARGV_MAX, path);
     if (blen < 2) { blen = 0 - 1; }

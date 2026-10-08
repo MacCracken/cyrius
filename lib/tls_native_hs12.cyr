@@ -66,7 +66,7 @@ fn tls_native_record_seal_12(cipher, key, iv, seq8, ct, plain, plain_len, out, o
     if (total > out_max) { return TLS_ERR_BUFFER_FULL; }
     var aad[13];
     tls_native_record_aad_12(seq8, ct, 0x0303, plain_len, &aad);
-    var nonce[12];
+    var nonce[_TLS_AEAD_NONCE_LEN];
     if (is_gcm != 0) {
         tls_native_aead_nonce_12_gcm(iv, seq8, &nonce);
     } else {
@@ -111,7 +111,7 @@ fn tls_native_record_open_12(cipher, key, iv, seq8, record, record_len, out, out
     if (pt_len > TLS_RECORD_MAX_PLAINTEXT) { return TLS_ERR_RECORD_OVERFLOW; }
     if (pt_len > out_max) { return TLS_ERR_BUFFER_FULL; }
     var body = record + TLS_RECORD_HEADER_LEN;
-    var nonce[12];
+    var nonce[_TLS_AEAD_NONCE_LEN];
     if (is_gcm != 0) {
         tls_native_aead_nonce_12_gcm(iv, body, &nonce);
         body = body + 8;
@@ -141,8 +141,11 @@ fn tls_native_record_open_12(cipher, key, iv, seq8, record, record_len, out, out
 # See CHANGELOG [6.0.72]/[6.0.73].
 
 var TLS12_MASTER_SECRET_LEN = 48;       # RFC 5246 §8.1 (fixed 48 bytes)
-var TLS12_VERIFY_DATA_LEN   = 12;       # RFC 5246 §7.4.9 (default 12)
-var TLS12_RANDOM_LEN        = 32;       # client/server Random (RFC 5246 §7.4.1.2)
+const _TLS12_VERIFY_DATA_LEN = 12;      # RFC 5246 §7.4.9 (default 12)
+var TLS12_VERIFY_DATA_LEN   = _TLS12_VERIFY_DATA_LEN;
+const _TLS12_RANDOM_LEN     = 32;       # client/server Random (RFC 5246 §7.4.1.2)
+var TLS12_RANDOM_LEN        = _TLS12_RANDOM_LEN;
+const _TLS12_SEED_LEN       = 2 * _TLS12_RANDOM_LEN;   # the PRF seed: one Random after the other
 
 # TLS 1.2 "fixed_iv_length" per ciphersuite — distinct from the 1.3
 # 12-byte IV: AES-GCM uses a 4-byte implicit salt (the 8-byte explicit
@@ -183,11 +186,11 @@ fn tls_native_12_prf(cipher, sec, secret_len, label, label_len, seed, seed_len, 
 #                     client_random ‖ server_random)[0..48]  (RFC 5246 §8.1).
 # `client_random` / `server_random` are 32 bytes each; `out48` gets 48 bytes.
 fn tls_native_12_master_secret(cipher, pre_master, pm_len, client_random, server_random, out48): i64 {
-    var seed[64];
+    var seed[_TLS12_SEED_LEN];
     memcpy(&seed,                     client_random, TLS12_RANDOM_LEN);
     memcpy(&seed + TLS12_RANDOM_LEN,  server_random, TLS12_RANDOM_LEN);
     return tls_native_12_prf(cipher, pre_master, pm_len, "master secret", 13,
-      &seed, 64, out48, TLS12_MASTER_SECRET_LEN);
+      &seed, _TLS12_SEED_LEN, out48, TLS12_MASTER_SECRET_LEN);
 }
 
 # Extended Master Secret variant (RFC 7627 §4): when EMS is negotiated,
@@ -207,11 +210,11 @@ fn tls_native_12_master_secret_ems(cipher, pre_master, pm_len, session_hash, sh_
 # NOTE the random order is REVERSED vs master_secret (server first here).
 # Caller sizes `out` via tls_native_12_key_block_len.
 fn tls_native_12_key_block(cipher, master48, client_random, server_random, out, out_len): i64 {
-    var seed[64];
+    var seed[_TLS12_SEED_LEN];
     memcpy(&seed,                     server_random, TLS12_RANDOM_LEN);
     memcpy(&seed + TLS12_RANDOM_LEN,  client_random, TLS12_RANDOM_LEN);
     return tls_native_12_prf(cipher, master48, TLS12_MASTER_SECRET_LEN, "key expansion", 13,
-      &seed, 64, out, out_len);
+      &seed, _TLS12_SEED_LEN, out, out_len);
 }
 
 # Bytes of key_block an AEAD suite needs: 2*key_len + 2*iv_len (no MAC
@@ -1106,7 +1109,7 @@ fn tls_native_12_derive_keys(ctx, premaster, pm_len): i64 {
         # verify_data needs stays intact.
         var ts = load64(ctx + TLS_CTX_OFF_TRANSCRIPT);
         if (ts == 0) { return TLS_ERR_PROTOCOL; }
-        var shbuf[48];
+        var shbuf[_TLS_MAX_DIGEST_LEN];
         var sh_len = tls_native_transcript_digest(ts, &shbuf);
         if (sh_len < 0) { return TLS_ERR_INTERNAL; }
         if (tls_native_12_master_secret_ems(identity, premaster, pm_len, &shbuf, sh_len, master) != TLS_OK) {
@@ -1208,7 +1211,7 @@ fn tls_native_12_verify_finished(ctx, msg, msg_len, label): i64 {
     if (hh == 0) { return TLS_ERR_OOM; }
     var hh_len = tls_native_transcript_digest(ts, hh);
     if (hh_len < 0) { return TLS_ERR_INTERNAL; }
-    var expected[12];
+    var expected[_TLS12_VERIFY_DATA_LEN];
     if (tls_native_12_verify_data(identity, master, label, 15, hh, hh_len, &expected) != TLS_OK) {
         return TLS_ERR_INTERNAL;
     }

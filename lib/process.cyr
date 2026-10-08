@@ -368,7 +368,7 @@ fn _proc_kill_group(pid, stbuf): i64 {
 #   got   0 until `pid` is reaped; 1 reaped into the caller's status buffer; 2 waitpid failed.
 #   n, snap   the /proc descendant snapshot (Linux, `grp` 0): `n` entries at `snap` — which is
 #         `_proc_tree`; a caller whose kill outlives the next snapshot copies it and repoints.
-var _PROC_KILL_STATE = 40;
+const _PROC_KILL_STATE = 40;
 
 # Begin ending `pid`: with `grp` 1 target its process group when it leads one, else snapshot its
 # descendants; then TERM the target. Fills the kill state `ks`. Returns 0.
@@ -439,7 +439,7 @@ fn _proc_kill_wait(ks, stbuf, waited): i64 {
 # The blocking kill: begin, then `_proc_kill_wait`. `grp` 1 ends `pid`'s process group (macOS's
 # `proc_kill_tree`, and `_proc_end_cut_group`), 0 its /proc tree.
 fn _proc_kill_run(pid, stbuf, grp): i64 {
-    var ks[40];
+    var ks[_PROC_KILL_STATE];
     _proc_kill_begin(&ks, pid, grp);
     _proc_kill_wait(&ks, stbuf, 0);
     return 0;

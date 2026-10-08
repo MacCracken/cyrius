@@ -129,9 +129,9 @@ fn _tn_client_hello_write(ctx, out, out_max, cookie, cookie_len): i64 {
 fn _tn_sh_is_hrr(msg, len): i64 {
     if (len < TLS_HANDSHAKE_HEADER_LEN + 2 + 32) { return 0; }
     if ((load8(msg) & 0xFF) != TLS_HS_SERVER_HELLO) { return 0; }
-    var hrr[32];
+    var hrr[_TLS_RANDOM_LEN];
     _tn_hrr_random(&hrr);
-    return _tn_ct_eq(msg + TLS_HANDSHAKE_HEADER_LEN + 2, &hrr, 32);
+    return _tn_ct_eq(msg + TLS_HANDSHAKE_HEADER_LEN + 2, &hrr, _TLS_RANDOM_LEN);
 }
 
 # Client: process a HelloRetryRequest (`hrr`, `hrr_len` bytes, header included; RFC 8446 §4.1.4)
@@ -1427,7 +1427,8 @@ var TLS_EXT_EXTENDED_MASTER_SECRET = 23;   # 0x0017, RFC 7627 §5.1 — empty ex
 # value coincides with TLS_GROUP_SECP256R1
 # (0x0017); disjoint namespaces, benign.
 var TLS_X25519_KEY_LEN = 32;
-var TLS_RANDOM_LEN     = 32;
+const _TLS_RANDOM_LEN  = 32;
+var TLS_RANDOM_LEN     = _TLS_RANDOM_LEN;
 
 # Find extension `want_type` in an extensions block (entries:
 # uint16 type + uint16 length + data). Stores the data ptr+len via
@@ -1893,7 +1894,7 @@ fn _tn_transcript_after_hrr(ctx, hash_algo, ch1, ch1_len): i64 {
     var t1 = tls_native_transcript_init_in(a, hash_algo);
     if (t1 == 0) { return 0; }
     tls_native_transcript_update(t1, ch1, ch1_len);
-    var mh[56];
+    var mh[_TLS_HANDSHAKE_HEADER_LEN + _TLS_MAX_DIGEST_LEN];
     var hl = tls_native_transcript_digest(t1, &mh + 4);
     if (hl < 0) { return 0; }
     store8(&mh, TLS_HS_MESSAGE_HASH);
@@ -2433,7 +2434,7 @@ fn _tn_ecdsa_p384_verify_digest_der(pk, digest, digest_len, sig_der, sig_der_len
 fn _tn_ecdsa_verify_12(scheme, leaf, content, content_len, sig, sig_len): i64 {
     var curve = x509_cert_curve(leaf);
     var pk = x509_cert_pubkey(leaf);
-    var dg[48];
+    var dg[_TLS_MAX_DIGEST_LEN];
     var dl = 32;
     if (scheme == TLS_SIG_ECDSA_SECP384R1_SHA384) {
         sha384(content, content_len, &dg);
@@ -2820,13 +2821,13 @@ fn tls_native_record_seal(cipher, key, static_iv, seq8, inner_ct, inner, inner_l
     # alloc per sealed record — the highest-rate leak on a long-running server,
     # one per app-data record up to ~16 KB). inner_len <= TLS_RECORD_MAX_PLAINTEXT
     # (guarded above via rec_len <= TLS_RECORD_MAX_CIPHERTEXT), and pt is consumed
-    # by aead_encrypt before return, so the fixed 16385-B frame is sound. This is
+    # by aead_encrypt before return, so the fixed frame is sound. This is
     # a ctx-less generic primitive (no arena to thread) → stack-local is the fit.
-    var ptbuf[16385];   # TLS_RECORD_MAX_PLAINTEXT + 1 (array size must be a literal)
+    var ptbuf[_TLS_RECORD_MAX_PLAINTEXT + 1];   # the content + the inner content-type byte
     var pt = &ptbuf;
     memcpy(pt, inner, inner_len);
     store8(pt + inner_len, inner_ct);
-    var nonce[12];
+    var nonce[_TLS_AEAD_NONCE_LEN];
     tls_native_aead_nonce(static_iv, seq8, &nonce);
     var ct_out = out + TLS_RECORD_HEADER_LEN;
     var tag_out = ct_out + inner_len + 1;
@@ -2855,7 +2856,7 @@ fn tls_native_record_open(cipher, key, static_iv, seq8, record, record_len, out,
     var inner_ct_len = len - tag_len;
     if (inner_ct_len < 1) { return TLS_ERR_BAD_RECORD; }
     if (inner_ct_len > out_max) { return TLS_ERR_BUFFER_FULL; }
-    var nonce[12];
+    var nonce[_TLS_AEAD_NONCE_LEN];
     tls_native_aead_nonce(static_iv, seq8, &nonce);
     var cipher_in = record + TLS_RECORD_HEADER_LEN;
     var tag_in = cipher_in + inner_ct_len;

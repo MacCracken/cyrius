@@ -282,13 +282,16 @@ enum TlsSignatureScheme {
 # fragmented (§5.1). AEAD overhead = 16-byte tag + 1-byte inner-type
 # trailer (TLSInnerPlaintext, §5.2) ≤ 256 bytes of headroom.
 var TLS_RECORD_HEADER_LEN = 5;
-var TLS_RECORD_MAX_PLAINTEXT = 16384;             # 2^14, §5.1
+# 6.7.6: a const that sizes a buffer elsewhere in the stack keeps its public var for the API.
+const _TLS_RECORD_MAX_PLAINTEXT = 16384;          # 2^14, §5.1
+var TLS_RECORD_MAX_PLAINTEXT = _TLS_RECORD_MAX_PLAINTEXT;
 var TLS_RECORD_MAX_CIPHERTEXT = 16640;            # 16384 + 256, §5.2
 # the TLS post-handshake false-EOF bug (v6.1.36): max post-handshake records (NewSessionTicket / KeyUpdate)
 # tls_native_read drains before yielding to the caller — bounds a peer that
 # floods post-handshake messages instead of sending application data.
 var TLS_POST_HANDSHAKE_DRAIN_MAX = 32;
-var TLS_AEAD_NONCE_LEN = 12;                      # 96-bit per §5.3
+const _TLS_AEAD_NONCE_LEN = 12;                   # 96-bit per §5.3
+var TLS_AEAD_NONCE_LEN = _TLS_AEAD_NONCE_LEN;
 var TLS_AEAD_TAG_LEN = 16;                        # Poly1305 + GCM both 128-bit
 var TLS_SEQ_NUM_LEN = 8;                          # 64-bit counter
 
