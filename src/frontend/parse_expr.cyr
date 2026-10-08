@@ -1655,7 +1655,8 @@ fn _w128_addr(S, k, v, rcx): i64 {
 }
 # A 16-byte temporary, laid out as a u128 local is (the high half in the slot above the canonical
 # one, the pair an inline aggregate so a coroutine frame keeps it whole); at top level, which has no
-# frame, a dead unnamed global (_HTEMP's rule). Returns its handle.
+# frame, _HTEMP's dead unnamed global resized to 16 bytes (as _gv_target resizes its sink). Returns
+# its handle.
 fn _w128_tmp(S): i64 {
     if (GINFN(S) == 1) {
         var li = GFLC(S);
@@ -1664,12 +1665,9 @@ fn _w128_tmp(S): i64 {
         SFLC(S, li + 2);
         return li + 1;
     }
-    var vi = GVCNT(S);
-    S64(_varn_base + vi * 8, 0);
-    S64(_vars_base + vi * 8, 16);
-    SVDEAD(S, vi, 1);
-    SVCNT(S, vi + 1);
-    return 0 - 2 - vi;
+    var h = _HTEMP(S);
+    S64(_vars_base + (0 - 2 - h) * 8, 16);
+    return h;
 }
 fn _w128_slot(S, li, span): i64 {
     S64(S + 0x5D9D000 + li * 8, 0 - 1);
