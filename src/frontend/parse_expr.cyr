@@ -4476,6 +4476,7 @@ fn _PARSE_F64V4_UNARY(S, op): i64 {
 # ONE place for both tiers that dispatch intrinsics. See _FBR_MARK. CHANGELOG [6.6.10]
 fn PARSE_INTRIN(S, ptyp): i64 {
     _fbr_k = 0;
+    if (ptyp == 15) { return PARSE_IF_EXPR(S); }   # 6.7.4 (B3): `if (c) { a } else { b }` as a value
     var r = _PARSE_INTRIN_IMPL(S, ptyp);
     if (r != 1) { return r; }
     var k = _NEG_INTRIN_KIND(ptyp);

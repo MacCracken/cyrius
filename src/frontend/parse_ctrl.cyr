@@ -202,6 +202,361 @@ fn PARSE_IF(S): i64 {
     return 0;
 }
 
+# ⛔ 6.7.4 (B3) — THE IF-EXPRESSION. The user's decisions (2026-10-08): `if (c) { a } elif (d) { b }
+# else { e }` where an expression is parsed; ONE expression per branch (no statements, no `;`), `else`
+# required, only the taken branch runs; every branch the same kind — integer (pointers and bools
+# included), f64, f32, or one struct type of 8 bytes or less (the result keeps it) — and a struct
+# value over 8 bytes refused. At the start of a statement `if` stays the if statement (PARSE_STMT
+# never reaches an expression parse there). Dispatched from PARSE_INTRIN, so both factor tiers take it
+# and it binds as a factor (`if (c) {a} else {b} + 1` is `(if ..) + 1`).
+# Emission is the if statement's: ECONDOP(ECONDCMP) — ECOND without its XP list, which PCMPE leaves
+# empty (it consumes every && / ||) — then the branch, a jmp to the join, the next arm. The value is
+# in rax / x0 / r0 on every backend. Each branch is classified right after its PCMPE, before any
+# emit or token moves the result flags (the B2 stamp, the float-builtin flag), and by SHAPE for a
+# struct (GESTYPE leaks from an intrinsic's last argument). At the join, flags and peephole trackers
+# that describe only the LAST branch are reset (_ie_finish). CHANGELOG [6.7.4]
+# Per-expression state (nesting-safe), 8 words: [0] class (0 none yet, 1 integer, 2 f64, 3 f32,
+# 4 a small struct), [8] its sid, [16] every branch boolean, [24] any f64 / f32 TYPED (not only
+# flagged), [32] the common float-builtin flag (-1 unset), [40] the common pointer scale (-1 unset),
+# [48] the widest SEXW, [56] the expression's first token.
+fn PARSE_IF_EXPR(S): i64 {
+    var st = alloc(64);
+    S64(st, 0);
+    S64(st + 8, 0);
+    S64(st + 16, 1);
+    S64(st + 24, 0);
+    S64(st + 32, 0 - 1);
+    S64(st + 40, 0 - 1);
+    S64(st + 48, 0);
+    S64(st + 56, GTI(S));
+    _ie_arm(S, st);
+    _ie_finish(S, st);
+    return 1;
+}
+# One `if` / `elif` arm (cursor on the keyword); recurses for `elif` the way PARSE_ELIF does.
+fn _ie_arm(S, st): i64 {
+    var kw = GTI(S);
+    STI(S, GTI(S) + 1);
+    if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); }
+    STI(S, GTI(S) + 1);
+    var patch = ECONDOP(S, ECONDCMP(S));
+    if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
+    STI(S, GTI(S) + 1);
+    _ie_branch(S, st);
+    var skip = EJMP0(S);
+    EPATCH(S, patch);
+    if (PEEKT(S) == 50) { _ie_arm(S, st); }
+    elif (PEEKT(S) == 23) { STI(S, GTI(S) + 1); _ie_branch(S, st); }
+    else { _ie_no_else(S); EMOVI(S, 0); }
+    EPATCH(S, skip);
+    return 0;
+}
+fn _ie_no_else(S): i64 {
+    ERR_MSG(S, "an if expression needs an else - its value must come from every path", 68);
+    PRSTR("  note: at the start of a statement, `if` is the if statement\n");
+    return 0;
+}
+# Tokens that open a statement, never an expression: refused first in a branch.
+fn _ie_stmt_tok(t): i64 {
+    if (t == 3 || t == 168 || t == 33 || t == 16 || t == 55) { return 1; }
+    if (t == 51 || t == 52 || t == 57 || t == 75 || t == 32) { return 1; }
+    if (t == 106 || t == 108 || t == 111 || t == 123 || t == 107) { return 1; }
+    if (t == 40 || t == 60 || t == 48 || t == 13) { return 1; }
+    return 0;
+}
+# From inside a branch, to its closing `}` (the cursor left ON it) — the parse stays in step after a
+# refused branch.
+fn _ie_skip_block(S): i64 {
+    var d = 0;
+    var t = PEEKT(S);
+    while (t != 12) {
+        if (t == 14) { if (d == 0) { return 0; } d = d - 1; }
+        if (t == 13) { d = d + 1; }
+        STI(S, GTI(S) + 1);
+        t = PEEKT(S);
+    }
+    return 0;
+}
+# `{ expr }` — the one expression, classified before anything moves the result flags.
+fn _ie_branch(S, st): i64 {
+    if (PEEKT(S) != 13) { ERR_EXPECT(S, 13); return 0; }
+    STI(S, GTI(S) + 1);
+    var bti = GTI(S);
+    if (PEEKT(S) == 14) {
+        ERR_MSG(S, "an if expression branch needs a value", 37);
+        EMOVI(S, 0);
+        STI(S, GTI(S) + 1);
+        return 0;
+    }
+    if (_ie_stmt_tok(PEEKT(S)) == 1) {
+        ERR_MSG(S, "an if expression branch takes one expression, not a statement - an if statement runs statements", 95);
+        _ie_skip_block(S);
+        EMOVI(S, 0);
+        STI(S, GTI(S) + 1);
+        return 0;
+    }
+    _refuse_lossy_pair(S);
+    var fk = _fpk_want;
+    _fpk_want = bti;
+    _fpk_ft = 0;
+    _sc_beg = 0 - 1;   # only this branch's own struct-call record may match
+    PCMPE(S);
+    _fpk_want = fk;
+    _ie_kind(S, st, bti);
+    if (PEEKT(S) == 5) {
+        ERR_MSG(S, "an if expression branch holds one expression, without ';' - an if statement runs statements", 91);
+        _ie_skip_block(S);
+    } elif (PEEKT(S) == 4) {
+        ERR_MSG(S, "an if expression branch holds a value, not an assignment", 56);
+        _ie_skip_block(S);
+    }
+    if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); return 0; }
+    STI(S, GTI(S) + 1);
+    return 0;
+}
+# [a, b) with balanced outer parentheses peeled: `(p)` is `p`. Returns a; `_ie_pe` gets b.
+var _ie_pe = 0;
+fn _ie_unparen(S, a, b): i64 {
+    while (b - a > 2) {
+        if (TOKTYP(S, a) != 10) { _ie_pe = b; return a; }
+        if (TOKTYP(S, b - 1) != 11) { _ie_pe = b; return a; }
+        var d = 0;
+        var i = a;
+        var shut = 0 - 1;
+        while (i < b) {
+            var t = TOKTYP(S, i);
+            if (t == 10) { d = d + 1; }
+            if (t == 11) { d = d - 1; if (d == 0) { shut = i; i = b; } }
+            i = i + 1;
+        }
+        if (shut != b - 1) { _ie_pe = b; return a; }
+        a = a + 1;
+        b = b - 1;
+    }
+    _ie_pe = b;
+    return a;
+}
+# The struct type of a branch value [a, b) by SHAPE: a bare (parenthesised) name, a whole free call, a
+# whole method / operator call (`_sc_whole`), a whole struct field (`_fpk_*`). 0 = not a struct value;
+# -1 = a vector or u128 value (over 8 bytes, never a struct).
+fn _ie_struct_sid(S, bti): i64 {
+    var a = _ie_unparen(S, bti, GTI(S));
+    var b = _ie_pe;
+    if (b == a + 1) {
+        if (TOKTYP(S, a) == 2) {
+            if (_ie_wide_name(S, TOKVAL(S, a)) == 1) { return 0 - 1; }
+            return _sarg_name_sid(S, a);
+        }
+    }
+    var o = _gcall_open(S, a);
+    if (o >= 0) {
+        if (_call_dotted(S, a) == 0) { if (_call_close(S, o) + 1 == b) {
+                var cfi = _pair_gen_inst(S, a);
+                if (cfi >= 0) { if (_is_simd_any(S, GFRS(S, cfi)) == 1) { return 0 - 1; } }
+                return _sarg_call_rs(S, a);
+            } }
+    }
+    if (_sc_whole(S, bti) != 0 - 2) { return _sc_sid; }
+    if (_fpk_ft > 0) { if (_fpk_end == GTI(S)) { return _fpk_ft; } }
+    return 0;
+}
+# A vector or u128 local / global named `noff` (a value over 8 bytes that is no struct).
+fn _ie_wide_name(S, noff): i64 {
+    if (GINFN(S) == 1) {
+        var li = FINDLOCAL(S, noff);
+        if (li >= 0) {
+            var lt = GLTYPE(S, li);
+            if (_is_simd_any(S, lt) == 1) { return 1; }
+            if (lt == 16) { return 1; }
+            return 0;
+        }
+    }
+    var vi = _findvar_core(S, noff);
+    if (vi < 0) { return 0; }
+    if (GVVEC(S, vi) != 0) { return 1; }
+    if (L64(_vars_base + vi * 8) == 16) { return 1; }
+    return 0;
+}
+# The float kind a WHOLE call branch [a, b) returns: 1 a `: f64` fn (typed), 5 / 6 a float builtin
+# (f64 / f32 flag only), 0 any other call (an integer — a name intrinsic too: GESTYPE may have leaked
+# from its last argument), -1 not a whole call.
+fn _ie_call_fk(S, bti): i64 {
+    var a = _ie_unparen(S, bti, GTI(S));
+    var b = _ie_pe;
+    var t = TOKTYP(S, a);
+    if (t == 2) {
+        var o = _gcall_open(S, a);
+        if (o < 0) { return 0 - 1; }
+        if (_call_dotted(S, a) == 1) { return 0 - 1; }
+        if (_call_close(S, o) + 1 != b) { return 0 - 1; }
+        var cfi = _pair_gen_inst(S, a);
+        if (cfi >= 0) { if (GFRS(S, cfi) == 0 - 9) { return 1; } }
+        return 0;
+    }
+    var k = _NEG_INTRIN_KIND(t);
+    if (k == 0) { return 0 - 1; }
+    if (TOKTYP(S, a + 1) != 10) { return 0 - 1; }
+    if (_call_close(S, a + 1) + 1 != b) { return 0 - 1; }
+    return k + 4;
+}
+# Classify the branch just parsed (from token `bti`) and merge it into `st`.
+fn _ie_kind(S, st, bti): i64 {
+    var isb = _BX_IS(S);
+    var fbk = _FBR_KIND(S);
+    var et = GESTYPE(S);
+    var ps = GPSC(S);
+    var xw = GEXW(S);
+    var cl = 1;
+    var sid = 0;
+    var typed = 0;
+    if (isb == 0) {
+        sid = _ie_struct_sid(S, bti);
+        if (sid < 0) { _ie_big_err(S, bti, 0); return 0; }
+        if (sid > 0) {
+            if (STRUCTSZ(S, sid - 1) > 8) { _ie_big_err(S, bti, sid); return 0; }
+            cl = 4;
+        } else {
+            var ck = _ie_call_fk(S, bti);
+            if (ck >= 0) {
+                fbk = 0;
+                if (ck == 1) { cl = 2; typed = 1; }
+                if (ck == 5) { cl = 2; fbk = 1; }
+                if (ck == 6) { cl = 3; fbk = 2; }
+            } else {
+                if (et == F64_TYID) { cl = 2; typed = 1; }
+                elif (et == F32_TYID) { cl = 3; typed = 1; }
+                elif (fbk == 1) { cl = 2; }
+                elif (fbk == 2) { cl = 3; }
+            }
+        }
+    }
+    _ie_merge(S, st, bti, cl, sid, typed + isb * 2 + fbk * 4);
+    if (L64(st + 40) == 0 - 1) { S64(st + 40, ps); } elif (L64(st + 40) != ps) { S64(st + 40, 0); }
+    if (xw > L64(st + 48)) { S64(st + 48, xw); }
+    return 0;
+}
+# Merge one branch (class `cl`, struct `sid`; `fl` packs typed | bool << 1 | float-builtin flag << 2).
+fn _ie_merge(S, st, bti, cl, sid, fl): i64 {
+    var typed = fl & 1;
+    var isb = (fl >> 1) & 1;
+    var fbk = fl >> 2;
+    var ufv = 0;   # an untyped float variable on either side (the note below)
+    if (fbk == 3 || L64(st + 32) == 3) { ufv = 1; }
+    if (isb == 0) { S64(st + 16, 0); }
+    if (typed == 1) { S64(st + 24, 1); }
+    if (L64(st + 32) == 0 - 1) { S64(st + 32, fbk); } elif (L64(st + 32) != fbk) { S64(st + 32, 0); }
+    var c0 = L64(st);
+    if (c0 == 0) {
+        S64(st, cl);
+        S64(st + 8, sid);
+        return 0;
+    }
+    if (c0 == cl) { if (cl != 4 || L64(st + 8) == sid) { return 0; } }
+    if (_ie_mix_err(S, bti, c0, L64(st + 8), cl, sid) == 1) { if (ufv == 1) { _ie_ufv_note(); } }
+    return 0;
+}
+fn _ie_ufv_note(): i64 {
+    PRSTR("  note: an untyped variable that holds a float is an integer (ADR-002) - declare it `: f64`\n");
+    return 0;
+}
+# A refusal pointed at token `ti`, reported once per token (a generic base and its instances parse the
+# same tokens), skipped under --syntax-only and in an #inline replay (the definition checked itself).
+fn _ie_once(S, ti): i64 {
+    if (_bx_live(S) == 0) { return 0; }
+    if (_panic == 1) { return 0; }
+    if (_tn_once(S, ti) == 0) { return 0; }
+    return 1;
+}
+fn _ie_kname(S, cl, sid): i64 {
+    if (cl == 1) { PRSTR("an integer"); return 0; }
+    if (cl == 2) { PRSTR("an f64"); return 0; }
+    if (cl == 3) { PRSTR("an f32"); return 0; }
+    PRSTR("struct '");
+    PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (sid - 1) * 8));
+    PRSTR("'");
+    return 0;
+}
+fn _ie_mix_err(S, ti, c0, s0, cl, sid): i64 {
+    if (_ie_once(S, ti) == 0) { return 0; }
+    var sv = GTI(S);
+    STI(S, ti);
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    PRSTR(": if expression branches differ in type: ");
+    _ie_kname(S, cl, sid);
+    PRSTR(" here, ");
+    _ie_kname(S, c0, s0);
+    PRSTR(" before it\n");
+    _err_excerpt(S);
+    _had_error = 1;
+    STI(S, sv);
+    if (c0 + cl == 3) { PRSTR("  note: every branch is one kind - write a float literal (2.0) or f64_from(n) for an integer\n"); }
+    return 1;
+}
+fn _ie_big_err(S, ti, sid): i64 {
+    if (_ie_once(S, ti) == 0) { return 0; }
+    var sv = GTI(S);
+    STI(S, ti);
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    if (sid > 0) {
+        PRSTR(": an if expression branch cannot be a struct value over 8 bytes: ");
+        _ie_kname(S, 4, sid);
+        PRSTR(" - branch on a pointer (&x)\n");
+    } else {
+        PRSTR(": an if expression branch cannot be a vector or u128 value - branch on a pointer (&x)\n");
+    }
+    _err_excerpt(S);
+    _had_error = 1;
+    STI(S, sv);
+    return 0;
+}
+# The join: every flag that describes only the LAST branch is reset, and the result's type set from
+# the merge. `_flags_reflect_rax` MUST go (the then-path arrives with the condition's flags, so an
+# if-expression used as a condition would skip its `test`); the peephole trackers rewind the code
+# pointer, which must never cross a patched jump; `_cfo` would fold a following `+ 3` into the last
+# branch. The B2 stamp goes on LAST, and only when every branch was boolean.
+fn _ie_finish(S, st): i64 {
+    _flags_reflect_rax = 0;
+    _last_push_cp = 0 - 1;
+    _last_emovca_cp = 0 - 1;
+    _last_movca_popr_cp = 0 - 1;
+    _cfo = 0;
+    SESVAR(S, 0 - 1);
+    _esv_name = 0 - 1;
+    var ps = L64(st + 40);
+    if (ps < 0) { ps = 0; }
+    SPSC(S, ps);
+    SEXW(S, L64(st + 48));
+    SESTYPE(S, 0);
+    _fbr_k = 0;
+    var cl = L64(st);
+    var fbk = L64(st + 32);
+    if (cl == 2) {
+        if (L64(st + 24) == 1) { SESTYPE(S, F64_TYID); } elif (fbk == 1) { _FBR_MARK(S, 1); }
+    }
+    if (cl == 3) {
+        if (L64(st + 24) == 1) { SESTYPE(S, F32_TYID); } elif (fbk == 2) { _FBR_MARK(S, 2); }
+    }
+    if (cl == 1) { if (fbk == 3) { _FBR_MARK(S, 3); } }
+    if (cl == 4) { _ie_struct_result(S, st); }
+    if (cl == 1) { if (L64(st + 16) == 1) { _BX_MARK(S); } }
+    return 0;
+}
+# A small-struct result keeps its type: the estype operator dispatch reads, and a `-3` struct-call
+# record spanning the whole if-expression, which the receive (`var z: S = ..`) and argument checks
+# read through `_sc_whole`.
+fn _ie_struct_result(S, st): i64 {
+    var sid = L64(st + 8);
+    SESTYPE(S, sid);
+    _sc_beg = L64(st + 56);
+    _sc_end = GTI(S);
+    _sc_tmp = 0 - 3;
+    _sc_sid = sid;
+    _sc_fn = L64(S + 0x1A6018 + (sid - 1) * 8);
+    return 0;
+}
+
 # Parse: while (cond) { stmts }
 fn PARSE_WHILE(S): i64 {
     STI(S, GTI(S) + 1);  # consume WHILE

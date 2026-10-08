@@ -1,0 +1,101 @@
+# if_expr_values.tcyr — 6.7.4 (B3): the if-expression, at run time on every backend.
+#
+# `var v = if (c) { a } elif (d) { b } else { e };` — one expression per branch, `else` required, only
+# the taken branch runs; every branch the same kind (integer — pointers and bools included — f64,
+# f32, or one struct type of 8 bytes or less, which the result keeps). It is a factor:
+# `if (c) {a} else {b} + 1` is `(if ..) + 1`. At the start of a statement `if` is still the if
+# statement. The refusals and the join's codegen resets are tests/gates/frontend/if_expr_checked.sh.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/assert.cyr"
+
+var calls = 0;
+fn bump(v): i64 { calls = calls + 1; return v; }
+fn pick(c): i64 { return if (c) { 3 } else { 5 }; }
+fn grade(n): i64 { return if (n == 0) { 10 } elif (n == 1) { 20 } elif (n == 2) { 30 } else { 40 }; }
+fn cond_of(c, x, y, z): i64 { if (if (c) { x } else { y + z }) { return 7; } return 3; }
+fn plus3(c): i64 { return if (c) { 1 } else { 0 } + 3; }
+fn f7(a, b, c, d, e, g, h): i64 { return a * 100 + h; }
+fn twice(x: f64): f64 { return x * 2.0; }
+struct S1 { v; }
+fn mk1(n): S1 { var s: S1; s.v = n; return s; }
+fn S1_add(a: S1, b: S1): S1 { var r: S1; r.v = a.v + b.v; return r; }
+fn take1(s: S1): i64 { return s.v; }
+struct P { a; b; }
+var GA = 3;
+var GI = if (GA > 2) { 70 } else { 90 };
+
+fn values(): i64 {
+    assert_eq(pick(1) * 10 + pick(0), 35, "V1: if / else, both ways");
+    assert_eq(grade(0) + grade(1) + grade(2) + grade(9), 100, "V2: an elif chain");
+    calls = 0;
+    var t = if (calls == 0) { bump(4) } else { bump(5) };
+    assert_eq(calls * 10 + t, 14, "V3: only the taken branch runs");
+    assert_eq(cond_of(1, 0, 5, 6) * 10 + cond_of(0, 1, 0, 0), 33, "V4: an if-expression as a condition");
+    assert_eq(plus3(1) * 10 + plus3(0), 43, "V5: a factor: (if ..) + 3");
+    var c = 2;
+    assert_eq(if (c) { if (c > 1) { 100 } else { 10 } } else { 1 }, 100, "V6: nested");
+    assert_eq(0 - if (c) { 4 } else { 6 }, 0 - 4, "V7: under unary minus");
+    return 0;
+}
+
+fn places(): i64 {
+    var k = 1;
+    assert_eq(f7(1, 2, 3, 4, 5, 6, if (k) { 40 } else { 50 }), 140, "L1: as the 7th argument");
+    assert_eq(f7(if (k) { 2 } else { 3 }, 0, 0, 0, 0, 0, 9), 209, "L2: as the 1st argument");
+    var p = P { if (k) { 3 } else { 4 }, 5 };
+    assert_eq(p.a * 10 + p.b, 35, "L3: a struct literal field");
+    var n = 0;
+    n += if (k) { 5 } else { 6 };
+    assert_eq(n, 5, "L4: compound assignment");
+    var i = 0;
+    var s = 0;
+    while (if (i < 5) { 1 } else { 0 }) { s = s + i; i = i + 1; }
+    assert_eq(s, 10, "L5: a while condition");
+    var r = 0;
+    switch (if (k) { 2 } else { 3 }) { case 2: r = 20; case 3: r = 30; default: r = 0; }
+    assert_eq(r, 20, "L6: a switch scrutinee");
+    var lim = 5;
+    var cl = |q| if (q > lim) { 1 } else { 2 };
+    assert_eq(callptr(cl, 9) * 10 + callptr(cl, 1), 12, "L7: a closure's expression body");
+    assert_eq(GI, 70, "L8: a global initializer");
+    return 0;
+}
+
+fn kinds(): i64 {
+    var k = 0;
+    var a = 16.0;
+    var b = 9.0;
+    assert_eq(f64_to(if (k) { f64_sqrt(a) } else { f64_sqrt(b) } * 2.0), 6, "K1: float-builtin branches stay float");
+    var x: f64 = if (k) { 1.5 } else { 2.5 };
+    assert_eq(f64_to(x * 2.0), 5, "K2: typed f64 branches");
+    var y: f64 = if (k) { twice(1.0) } else { twice(3.0) };
+    assert_eq(f64_to(y), 6, "K3: f64 calls");
+    var ok: bool = if (k) { a > b } else { false };
+    assert_eq(ok, 0, "K4: a bool result");
+    var u = 11;
+    var w = 22;
+    var ptr = if (k) { &u } else { &w };
+    assert_eq(load64(ptr), 22, "K5: pointer branches");
+    var s1 = mk1(4);
+    var s2 = mk1(9);
+    var z: S1 = if (k) { s1 } else { s2 };
+    assert_eq(z.v, 9, "K6: a small struct keeps its type");
+    assert_eq(take1(if (k) { s1 } else { s2 }), 9, "K7: ... as a struct argument");
+    var zz: S1 = if (k) { s1 } else { s2 } + mk1(100);
+    assert_eq(zz.v, 109, "K8: ... and dispatches its operator");
+    var str = if (k) { "ab" } else { "cd" };
+    assert_eq(load8(str), 99, "K9: string literals are pointer words");
+    return 0;
+}
+
+fn run(): i64 {
+    alloc_init();
+    values();
+    places();
+    kinds();
+    return 0;
+}
+var r0 = run();
+var rr = assert_summary();
+syscall(60, rr);
