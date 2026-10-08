@@ -200,6 +200,62 @@ fn ESTORE32(S): i64 { CX_EMIT(S, 71, 1, 0, 0); return 0; }
 fn ESTORE64(S): i64 { CX_EMIT(S, 67, 1, 0, 0); return 0; }
 fn ESTOC(S): i64 { CX_EMIT(S, 67, 1, 0, 0); return 0; }    # store64 [r1], r0
 
+# ⛔ 6.7.6 (Break 1, D2) — u128 `+` / `-` (parse_expr.cyr _w128_*): r1 = a 16-byte accumulator;
+# EW128_ACCM takes r0 = the ADDRESS of a u128, EW128_ACCI r0 = an integer, zero-extended. op 0 adds,
+# 1 subtracts, 2 copies / sets. cxvm has no carry flag, so the carry is computed: an unsigned
+# `a < b` is the signed compare of `a ^ (1 << 63)` and `b ^ (1 << 63)`. r8-r12 are scratch (self-
+# contained, as the SIMD loops use them); r0 is free once the source is read. CHANGELOG [6.7.6]
+fn EW128_ACCM(S, op): i64 {
+    CX_EMIT(S, 65, 8, 0, 0);              # load64 r8, [r0]          the source's low word
+    CX_MOVI(S, 11, 8);
+    CX_EMIT(S, 16, 10, 0, 11);            # add r10, r0, r11
+    CX_EMIT(S, 65, 10, 10, 0);            # load64 r10, [r10]        its high word
+    if (op == 2) {
+        CX_EMIT(S, 67, 1, 8, 0);          # store64 [r1], r8
+        CX_EMIT(S, 16, 11, 1, 11);        # add r11, r1, r11
+        CX_EMIT(S, 67, 11, 10, 0);        # store64 [r11], r10
+        return 0;
+    }
+    return _cx_w128_op(S, op, 8, 10);
+}
+fn EW128_ACCI(S, op): i64 {
+    if (op == 2) {
+        CX_EMIT(S, 67, 1, 0, 0);          # store64 [r1], r0
+        CX_MOVI(S, 10, 0);
+        CX_MOVI(S, 11, 8);
+        CX_EMIT(S, 16, 11, 1, 11);        # add r11, r1, r11
+        CX_EMIT(S, 67, 11, 10, 0);        # store64 [r11], r10       the high word: 0
+        return 0;
+    }
+    CX_EMIT(S, 2, 8, 0, 0);               # mov r8, r0               the integer
+    CX_MOVI(S, 10, 0);                    # its high word
+    return _cx_w128_op(S, op, 8, 10);
+}
+# [r1] (op)= the pair (lo, hi): the low words, the carry (add: sum <u lo) or borrow (sub: acc <u lo,
+# taken before the subtraction), then the high words with it.
+fn _cx_w128_op(S, op, lo, hi): i64 {
+    CX_EMIT(S, 65, 9, 1, 0);              # load64 r9, [r1]          the accumulator's low word
+    CX_MOVI(S, 0, 1 << 63);               # r0 = the sign bit
+    CX_EMIT(S, 34, 12, lo, 0);            # xor r12, lo, r0
+    if (op == 0) {
+        CX_EMIT(S, 16, 9, 9, lo);         # add r9, r9, lo
+        CX_EMIT(S, 34, 11, 9, 0);         # xor r11, r9, r0
+        CX_EMIT(S, 50, 12, 11, 12);       # lt r12, r11, r12         carry = sum <u lo
+    } else {
+        CX_EMIT(S, 34, 11, 9, 0);         # xor r11, r9, r0
+        CX_EMIT(S, 50, 12, 11, 12);       # lt r12, r11, r12         borrow = acc <u lo
+        CX_EMIT(S, 17, 9, 9, lo);         # sub r9, r9, lo
+    }
+    CX_EMIT(S, 67, 1, 9, 0);              # store64 [r1], r9
+    CX_MOVI(S, 11, 8);
+    CX_EMIT(S, 16, 11, 1, 11);            # add r11, r1, r11         &the high word
+    CX_EMIT(S, 65, 9, 11, 0);             # load64 r9, [r11]
+    if (op == 0) { CX_EMIT(S, 16, 9, 9, hi); CX_EMIT(S, 16, 9, 9, 12); }   # + hi + carry
+    else { CX_EMIT(S, 17, 9, 9, hi); CX_EMIT(S, 17, 9, 9, 12); }           # - hi - borrow
+    CX_EMIT(S, 67, 11, 9, 0);             # store64 [r11], r9
+    return 0;
+}
+
 # Comparison: setCC pattern → compare and set r0 to 0/1
 fn ECMPR(S): i64 { return 0; }  # no-op, comparison done inline
 # cx arc B follow-up: cx has no flags, and EJCC re-synthesizes a TWO-operand

@@ -331,11 +331,14 @@ fn _sl_last_marks(S, li, lbool, st): i64 {
     if (st >= 1) { if (st <= 8) { SLINTD(S, li); } }
     return 0;
 }
-fn _gv_last_marks(S, vi, b, st): i64 {
+fn _gv_last_marks(S, vi, b, st, ann): i64 {
     SVBOOL(S, vi, b);
     var n = 0;
     if (st >= 1) { if (st <= 8) { n = 1; } }
     SVINTD(S, vi, n);
+    var w = 0;   # 6.7.6 (D2): a `u128` (a slice shares the width; `ann` is the annotation's type token)
+    if (st == 16) { if (TOKTYP(S, ann) == 105) { w = 1; } }
+    SVW128(S, vi, w);
     return 0;
 }
 fn _sl_marks(S, li, sgn, st, sw, ps): i64 {
@@ -419,6 +422,7 @@ fn _sl_load_marks(S, li): i64 {
     var ps = _slot_ptr_step(S, li);
     if (ps > 0) { SPSC(S, ps); }
     if (GLBOOL(S, li) == 1) { _BX_MARK(S); }   # 6.7.3: a bool local's read is a boolean value
+    if (GLW128(S, li) == 1) { _W128_MARK(S, 1, li); }   # 6.7.6 (D2): a u128 local's read is the u128
     return 0;
 }
 

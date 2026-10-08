@@ -2948,6 +2948,7 @@ fn _asg_compound_load(S, noff): i64 {
                 return lt;
             } }
         EFLLOAD(S, li);
+        if (GLW128(S, li) == 1) { _W128_MARK(S, 1, li); }   # 6.7.6 (D2): _asg_compound_op's u128 arm
         return lt;
     }
     var gi = FINDVAR(S, noff);
@@ -2962,6 +2963,7 @@ fn _asg_compound_load(S, noff): i64 {
         }
         if (GVTYPE(S, gi) < 0) { _asg_cstep = 0 - GVTYPE(S, gi); }   # a typed-pointer global
         EVLOAD(S, gi);
+        if (GVW128(S, gi) == 1) { _W128_MARK(S, 2, gi); }   # 6.7.6 (D2)
         return GVTYPE(S, gi);
     }
     return 0;
@@ -2998,8 +3000,9 @@ fn _asg_struct_refused(S, noff, li): i64 {
 # `var a: i64[4]` to a[0] (an f64[N] added bit patterns), `s += 1` on a slice to `.ptr` — silently,
 # as a statement and as a for step. A vector is a local or parameter of a vector type (a vector
 # GLOBAL is refused already, _vecg_refuse); a typed array is any `var a: T[N]` (the descriptor's 0x80
-# mark, local or global; a bare `var a[N]` is not one); a slice is a local `[T]` / `slice<T>`. u128
-# is not refused: its `OP=` computes as `b = b OP x` does. The statement parses on. CHANGELOG [6.7.6]
+# mark, local or global; a bare `var a[N]` is not one); a slice is a local `[T]` / `slice<T>`. A
+# u128's `+=` / `-=` carry and its other `OP=` are refused (D2, the second round: _w128_cop,
+# parse_expr.cyr). The statement parses on. CHANGELOG [6.7.6]
 fn _asg_wide_refused(S, noff, li): i64 {
     var k = 0;
     if (li >= 0) {
@@ -3023,6 +3026,7 @@ fn _asg_wide_refused(S, noff, li): i64 {
 # a != 252; a = a + 1)` on a u8 global zeroed the seven packed globals after it, and `a += 1`
 # carried 255 -> 0 into the next one. Warns on a narrowing store, as the statement always did.
 fn _asg_store_slot(S, idx, g): i64 {
+    if (_w128_store(S, idx, g) == 1) { if (g == 1) { SLVAR(S, idx); } return 0; }   # 6.7.6 (D2): all 16 bytes
     var ew = GEXW(S);
     if (g == 0) {
         var lt = GLTYPE(S, idx);
@@ -3071,6 +3075,7 @@ fn _asg_compound_float(S, fop, lt): i64 {
 fn _asg_compound_op(S, cop, lt): i64 {
     var st = _asg_cstep;
     _asg_cstep = 0;
+    if (_W128_IS(S) == 1) { if (_w128_cop(S, cop) == 1) { return 0; } }   # 6.7.6 (D2): a u128 place
     EPUSHR(S);
     PCMPE(S);
     if (st > 1) { if (cop == 6 || cop == 7) { EPTR_SCALE(S, st); } }   # 6.6.17: `p += n` steps T

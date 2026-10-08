@@ -584,6 +584,21 @@ and `bitset` / `bitclr`, which complement their mask, kept the bits they were as
 clear. Pinned by `tests/tcyr/codegen/cx_backend_parity.tcyr`, run natively and on
 cxvm by `tests/gates/codegen/cx_backend_parity.sh`.
 
+**`u128` arithmetic (6.7.6).** `+` and `-` on a `u128` carry and borrow across all 128 bits, in
+both spellings — `b = b + x` and `b += x`, `b = b - x` and `b -= x` — with a `u128` or an integer
+on either side, chains and parentheses included; unary `-b` is `0 - b`. An integer operand is its
+64-bit pattern **zero-extended**, the rule a `u128` initializer and a `u128[N]` list element follow:
+`b + (0 - 1)` adds 2^64 - 1 — write `b - 1`. A `u128` declaration takes its whole value
+(`var a: u128 = c;` copies all 16 bytes, `var a: u128 = 5;` has a high word of 0). Every **other**
+operator with a `u128` operand — `* / % << >> >>> & | ^ ~`, `*% *| *? +| +? -| -?` and their `OP=`
+— is refused by name until it is implemented (`` `*` on u128 'b' is refused - it is not implemented
+for u128 yet ``); `lib/bayan.cyr`'s `bayan_u128_*` helpers cover them. A `u128` read where an
+integer is expected — an argument, a compare, `var n = b`, `return b` — is its low word, as it always
+was, and so is a plain `b = c` / `b = 5`: they store the low word and keep the high word. A
+`u128` parameter is an 8-byte slot (the low word). Before 6.7.6 neither spelling carried (both
+worked on the low word and left the high word alone), the other operators did the same silently,
+and a `u128` local initializer stored its value into BOTH halves.
+
 Wrapping ops (`+%` etc.) document intent at the call site that a wrap is
 expected — bytes are identical to the bare operator. Saturating and
 checked variants compile to calls into `lib/overflow.cyr` helpers
@@ -649,8 +664,8 @@ which operated on its first word: a **SIMD vector** (`v += w` on an `i64v2` / `f
 parameter added to lane 0 only — use the packed-op builtins), a **typed array** (`var a: i64[4];
 a += 8` added to `a[0]`, an `f64[N]` added bit patterns — write `a[i] += b`) and a **slice**
 (`s += 1` moved `.ptr` — write `s.ptr += 1` / `s.len -= 1`). A bare `var b[N]` keeps its `OP=`.
-On a `u128` `x OP= e` is NOT refused: it computes exactly as `x = x OP e` does, on the low word —
-neither spelling carries into the high word.
+On a `u128`, `b += x` and `b -= x` are `b = b + x` / `b = b - x`, carrying across all 128 bits;
+every other `OP=` on a `u128` is refused (see [`u128` arithmetic](#operators)).
 
 ## Memory
 

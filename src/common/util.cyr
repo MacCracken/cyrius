@@ -885,6 +885,22 @@ fn GVINTD(S, vi): i64 {
     if (vi >= 1048576) { return 0; }
     return load8(_gvn_base + vi);
 }
+# 6.7.6 (Break 1, D2) — one byte per GLOBAL: declared `u128` (a global slice shares its 16-byte width
+# and GVTYPE 0), the global twin of SLW128. Lazily allocated like `_gvb_base`; _gv_clear zeroes it.
+var _gvw_base = 0;
+fn SVW128(S, vi, b): i64 {
+    if (vi < 0) { return 0; }
+    if (vi >= 1048576) { return 0; }
+    if (_gvw_base == 0) { if (b == 0) { return 0; } _gvw_base = alloc(1048576); }
+    store8(_gvw_base + vi, b);
+    return 0;
+}
+fn GVW128(S, vi): i64 {
+    if (_gvw_base == 0) { return 0; }
+    if (vi < 0) { return 0; }
+    if (vi >= 1048576) { return 0; }
+    return load8(_gvw_base + vi);
+}
 # the locals-cap bug (v6.1.40): cap the per-fn stack-slot count. SFLC counts FRAME SLOTS
 # (a `stack var buf[N]` registers N/8 fillers), and the four slot-indexed local
 # tables — fn_local_names/local_depths/local_types/local_slice_widths, relocated
@@ -1671,6 +1687,15 @@ fn SLINTD(S, li): i64 { S64(S + 0x5DBD000 + li * 8, L64(S + 0x5DBD000 + li * 8) 
 fn GLINTD(S, li): i64 {
     if (li < 0) { return 0; }
     return (L64(S + 0x5DBD000 + li * 8) >> 59) & 1;
+}
+# 6.7.6 (Break 1, D2) — bit 60: the slot is a `u128` local's CANONICAL slot (its low word; the high
+# half is the slot above it), so a read of it stamps the u128 (_W128_MARK, parse_expr.cyr) and a `+` /
+# `-` on it carries into the high word. A slice shares the 2-slot layout and stays unmarked. Written
+# last at registration (_w16_local_init, parse_decl.cyr).
+fn SLW128(S, li): i64 { S64(S + 0x5DBD000 + li * 8, L64(S + 0x5DBD000 + li * 8) | (1 << 60)); return 0; }
+fn GLW128(S, li): i64 {
+    if (li < 0) { return 0; }
+    return (L64(S + 0x5DBD000 + li * 8) >> 60) & 1;
 }
 # The boolean stamp (parse_expr.cyr _BX_MARK): the code pointer and token index at the end of the
 # last boolean value. 0 = none.

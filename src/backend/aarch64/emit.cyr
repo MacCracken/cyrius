@@ -411,6 +411,32 @@ fn ELODC(S): i64 { EW(S, 0xF9400020); return 0; }     # ldr x0, [x1]
 # str x0, [x1]
 fn ESTOC(S): i64 { EW(S, 0xF9000020); return 0; }     # str x0, [x1]
 
+# ⛔ 6.7.6 (Break 1, D2) — u128 `+` / `-` (parse_expr.cyr _w128_*): x1 = a 16-byte accumulator;
+# EW128_ACCM takes x0 = the ADDRESS of a u128, EW128_ACCI x0 = an integer, zero-extended. op 0 adds
+# (adds / adc), 1 subtracts (subs / sbc: C is NOT-borrow, which sbc consumes), 2 copies / sets.
+# x9-x12 are scratch (the temporaries). CHANGELOG [6.7.6]
+fn EW128_ACCM(S, op): i64 {
+    if (op == 2) {
+        EW(S, 0xA9402809);                       # ldp x9, x10, [x0]
+        EW(S, 0xA9002829);                       # stp x9, x10, [x1]
+        return 0;
+    }
+    EW(S, 0xA9402829);                           # ldp x9, x10, [x1]
+    EW(S, 0xA940300B);                           # ldp x11, x12, [x0]
+    if (op == 0) { EW(S, 0xAB0B0129); EW(S, 0x9A0C014A); }   # adds x9, x9, x11; adc x10, x10, x12
+    else { EW(S, 0xEB0B0129); EW(S, 0xDA0C014A); }           # subs x9, x9, x11; sbc x10, x10, x12
+    EW(S, 0xA9002829);                           # stp x9, x10, [x1]
+    return 0;
+}
+fn EW128_ACCI(S, op): i64 {
+    if (op == 2) { EW(S, 0xA9007C20); return 0; }   # stp x0, xzr, [x1]
+    EW(S, 0xA9402829);                           # ldp x9, x10, [x1]
+    if (op == 0) { EW(S, 0xAB000129); EW(S, 0x9A1F014A); }   # adds x9, x9, x0; adc x10, x10, xzr
+    else { EW(S, 0xEB000129); EW(S, 0xDA1F014A); }           # subs x9, x9, x0; sbc x10, x10, xzr
+    EW(S, 0xA9002829);                           # stp x9, x10, [x1]
+    return 0;
+}
+
 # === Load through x0 (dereference) ===
 fn ELOAD8(S): i64 { EW(S, 0x39400000); return 0; }    # ldrb w0, [x0]
 fn ELOAD16(S): i64 { EW(S, 0x79400000); return 0; }   # ldrh w0, [x0]

@@ -1,0 +1,122 @@
+# u128_add_sub_carry.tcyr — 6.7.6 (Break 1, D2): u128 `+` and `-` CARRY and BORROW across all 128
+# bits (the user's decision, 2026-10-08), in both spellings, with a u128 or an integer on either side,
+# and a u128 declaration takes its whole initial value.
+#
+# ⛔ THE DEFECTS. Neither spelling carried: `b = b + 1` and `b += 1` on 0xFFFF_FFFF_FFFF_FFFF gave a low
+# word of 0 and an unchanged high word, `b = b + c` dropped c's high word, and `b - 1` from a low word of
+# 0 never borrowed. A u128 LOCAL initializer stored its value into BOTH halves (`var a: u128 = 5;` read
+# a high word of 5; `var a: u128 = c;` c's low word twice) while a global got 0. Every result below is a
+# constant written out by hand (lo, hi) — never the compiler's own arithmetic — and each row reads both
+# words through load64.
+#
+# An integer operand is its 64-bit pattern ZERO-extended — the rule a u128 initializer, a `u128[N]` list
+# element and a constant u128 global already follow (`var z: u128 = 0 - 1;` is 2^64 - 1); see U26.
+#
+# ⚠ CROSS-HOST: the carry is the backend's (x86 add/adc and sub/sbb, aarch64 adds/adc and subs/sbc, cx a
+# computed unsigned compare) and the temporaries are frame slots or, at top level, dead globals.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/assert.cyr"
+
+var M = 0xFFFFFFFFFFFFFFFF;   # 2^64 - 1, the all-ones word
+
+fn set2(p, lo, hi): i64 { store64(p, lo); store64(p + 8, hi); return 0; }
+fn is2(p, lo, hi): i64 {
+    if (load64(p) != lo) { return 0; }
+    if (load64(p + 8) != hi) { return 0; }
+    return 1;
+}
+
+var GA: u128 = 0;
+var GB: u128 = 0;
+var GI: u128 = 7;                # a constant initializer (baked)
+var GJ: u128 = GI;               # a u128 source, replayed: all 16 bytes
+var GK: u128 = GI - 8;           # a `-` result, replayed: the borrow reaches the high word
+
+fn tmain(): i64 {
+    var a: u128 = 0;
+    var b: u128 = 0;
+    var c: u128 = 0;
+    set2(&a, M, 0);
+    a = a + 1;
+    assert_eq(is2(&a, 0, 1), 1, "U1: `a = a + 1` carries out of the low word");
+    set2(&a, M, 7);
+    a += 1;
+    assert_eq(is2(&a, 0, 8), 1, "U2: `a += 1` carries");
+    a -= 1;
+    assert_eq(is2(&a, M, 7), 1, "U3: `a -= 1` borrows from the high word");
+    set2(&a, 0, 0);
+    a = a - 1;
+    assert_eq(is2(&a, M, M), 1, "U4: 0 - 1 wraps to 2^128 - 1");
+    set2(&a, 7, 3);
+    set2(&c, M, 1);
+    a = a + c;
+    assert_eq(is2(&a, 6, 5), 1, "U5: u128 + u128: the low words carry and the high words add");
+    a = a - c;
+    assert_eq(is2(&a, 7, 3), 1, "U6: u128 - u128 undoes it");
+    set2(&a, 7, 3);
+    a += c;
+    assert_eq(is2(&a, 6, 5), 1, "U7: `a += c` with a u128 c");
+    a -= c;
+    assert_eq(is2(&a, 7, 3), 1, "U8: `a -= c` with a u128 c");
+    a = 1 - c;
+    assert_eq(is2(&a, 2, M - 1), 1, "U9: an integer on the LEFT of `-` (1 - (2^65 - 1))");
+    a = 5 + c;
+    assert_eq(is2(&a, 4, 2), 1, "U10: an integer on the left of `+`");
+    a = c + c + c;
+    assert_eq(is2(&a, M - 2, 5), 1, "U11: a chain carries at each step");
+    a = (c + 1) + (c + 1);
+    assert_eq(is2(&a, 0, 4), 1, "U12: parenthesised sums on both sides");
+    a = 10 - (c + 1);
+    assert_eq(is2(&a, 10, M - 1), 1, "U13: an integer minus a parenthesised u128 sum");
+    a = 0 - c;
+    assert_eq(is2(&a, 1, M - 1), 1, "U14: `0 - c` is the u128 negation");
+    a = -c;
+    assert_eq(is2(&a, 1, M - 1), 1, "U15: unary minus on a u128 is `0 - c`");
+    set2(&b, 5, 9);
+    a = b + 0;
+    assert_eq(is2(&a, 5, 9), 1, "U16: `b + 0` copies all 16 bytes");
+    var n = 0;
+    set2(&a, M - 1, 0);
+    for (n = 0; n < 3; a += 1) { n = n + 1; }
+    assert_eq(is2(&a, 1, 1), 1, "U17: a classic-for step `a += 1` carries");
+    set2(&a, 1, 1);
+    for (n = 0; n < 2; a = a - 1) { n = n + 1; }
+    assert_eq(is2(&a, M, 0), 1, "U18: a for step `a = a - 1` borrows");
+    set2(&GA, M, 2);
+    GA += 1;
+    assert_eq(is2(&GA, 0, 3), 1, "U19: `+=` on a u128 global");
+    GB = GA - c - 2;
+    assert_eq(is2(&GB, M, 0), 1, "U20: a u128 global assigned a chain");
+    # The low word is what an integer context reads, unchanged.
+    set2(&a, M, 4);
+    var lo = a + 1;
+    assert_eq(lo, 0, "U21: `var n = a + 1` (an integer) is the low word");
+    assert_eq(a + 2 == 1, 1, "U22: a compare of a u128 sum reads its low word");
+    # A u128 declaration takes its whole initial value (it stored the value into BOTH halves).
+    var d: u128 = 5;
+    assert_eq(is2(&d, 5, 0), 1, "U23: `var d: u128 = 5` zero-extends (the high word read 5)");
+    var e: u128 = c;
+    assert_eq(is2(&e, M, 1), 1, "U24: `var e: u128 = c` copies all 16 bytes");
+    var f: u128 = c + 1;
+    assert_eq(is2(&f, 0, 2), 1, "U25: `var f: u128 = c + 1` takes the carried sum");
+    var z: u128 = 0 - 1;
+    assert_eq(is2(&z, M, 0), 1, "U26: an integer initializer is zero-extended (`0 - 1` is 2^64 - 1)");
+    return 0;
+}
+
+var tr = tmain();
+assert_eq(is2(&GI, 7, 0), 1, "U27: a constant global `var GI: u128 = 7`");
+assert_eq(is2(&GJ, 7, 0), 1, "U28: `var GJ: u128 = GI` in the declaration block copies all 16 bytes");
+assert_eq(is2(&GK, M, M), 1, "U29: `var GK: u128 = GI - 8` in the declaration block borrows");
+# After the first top-level statement: the global arm, and a top-level temporary (no frame).
+var GL: u128 = GK + 2;
+assert_eq(is2(&GL, 1, 0), 1, "U30: a late global from a `+` result (a top-level temporary)");
+var GM: u128 = 9;
+assert_eq(is2(&GM, 9, 0), 1, "U31: a late global from an integer");
+GM -= 10;
+assert_eq(is2(&GM, M, M), 1, "U32: a top-level `-=` statement borrows");
+GM = GM + GL + GL;
+assert_eq(is2(&GM, 1, 0), 1, "U33: a top-level chain carries out of 2^128");
+var rr = assert_summary();
+syscall(60, rr);
