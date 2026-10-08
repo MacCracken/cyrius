@@ -11,6 +11,33 @@ C3, trait-bounded generics (roadmap.md § Spec — C3; the user's decisions of 2
 
 ### Language — generics
 
+- **Trait bounds on type parameters — C3** (`fn f<T: Show + Eq>`, `struct Box<T: Show>`; guide § *Trait bounds
+  (6.7.1)*, ADR-007 decision 8). Before 6.7.1 `<T: Show>` minted a SECOND type parameter named `Show`, so
+  `f(p)` with a struct was refused as "a struct beside a second type argument" and nothing was checked. The
+  user's decisions (2026-10-07):
+  - **A bound is a contract.** On a bounded `T`-typed parameter or local (`v: T`, `p: *T`, `var q: T`), `v.m()`
+    must be a method of a bound's trait — a method no bound declares, or two bounds both declare, is refused at
+    the generic's DEFINITION (pass 1), called or not. The call is that trait's method for `T`'s impl: when `T`
+    has a colliding `size` from two traits, `<T: Size>` calls `Size`'s (as an impl's own `self.m()` does). Fields
+    still resolve per instance; an UNBOUNDED `T` keeps per-instance resolution.
+  - **`T: A + B`** requires every impl. A bound naming an undeclared trait, a bound with type arguments, a bound on
+    a third type parameter (only two are recorded) and `<T: >` are each refused once, by name.
+  - **Every instantiation is checked**, the i64 base included, naming the trait and the `impl` it needs: inferred
+    and explicit type arguments, a scalar call (`f(5)` needs `impl Show for i64`; without it the base is the dead
+    stub and every scalar path — call, tail call, `&f`, an unbounded generic forwarding its `T` — is refused), and
+    a bounded generic struct's instances (`Box<R>`, a written `Box<i64>`, a bare `Box`). A generic that
+    instantiates a bounded struct with its own `T` (`fn mk<T>(x: T): Box<T>`, `struct W<T> { b: Box<T>; }`) is
+    refused only where its i64 base is used (`mk(5)`, a bare `W`), not at its definition.
+  - **Any type satisfies a bound through its impl**, a scalar included: a bounded call on an i64 `T` calls
+    `i64_show` with the value. Prerequisite fixed on the way: `self.m()` inside an impl for a SCALAR type — a
+    trait default instantiated for it included — was "no struct type in scope for 'self'", so no trait with a
+    self-calling default could be implemented for `i64` at all (6.7.0 shipped scalar impls without it).
+  - How: bounds are captured with the type-parameter names and resolved once per definition; pass 1 walks a
+    bounded generic's parameters and body and records each bounded `v.m(` by its method-name TOKEN, which the
+    base, every instance and every inline replay re-parse — so the site calls the impl's own method (`_tr_prefix`)
+    in all of them. Dispatch stays static: a bounded call is a direct call.
+  Tests: `tests/tcyr/crossos/trait_bounds.tcyr` (25 rows; x86, aarch64 under qemu, PE under wine, cx) and the
+  gate `tests/gates/frontend/trait_bounds_checked.sh` (26 rows, six mutations each RED).
 - **A struct type argument in either slot of a two-parameter generic** (C3 prerequisite). `g<Pt, i64>(p, 2)`,
   `g<i64, Pt>`, `g(p, 2)`, `g(5, p)` and `g(p, q)` with two structs were refused ("a STRUCT type-argument …
   alongside a second type argument is unsupported", since 6.6.10; before that the inferred form ran the i64 base

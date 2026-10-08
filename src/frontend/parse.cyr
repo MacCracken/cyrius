@@ -380,7 +380,7 @@ fn _tok_ret_callee(S, a, t): i64 {
     if (t > 0) { if (TOKTYP(S, t - 1) == 41) { return 0 - 1; } }   # `a.x.m(`: not a single name
     var sid = _tok_name_sid(S, a, t, TOKVAL(S, t));
     var mf = 0 - 1;
-    if (sid > 0) { mf = FINDFN(S, BUILD_METHOD_NAME(S, sid - 1, TOKVAL(S, t + 2))); }
+    if (sid > 0) { mf = _meth_fn_at(S, sid, TOKVAL(S, t + 2), t + 2); }
     else { mf = _tok_method_any(S, TOKVAL(S, t + 2)); }
     return mf;
 }
@@ -765,7 +765,7 @@ fn _pair_callee_at(S, ti): i64 {
     if (_tok_method_open(S, ti) == 0) { return 0 - 1; }
     var sid = _recv_sid(S, TOKVAL(S, ti));
     if (sid <= 0) { return 0 - 1; }
-    var mf = FINDFN(S, BUILD_METHOD_NAME(S, sid - 1, TOKVAL(S, ti + 2)));
+    var mf = _meth_fn_at(S, sid, TOKVAL(S, ti + 2), ti + 2);
     return mf;
 }
 # The fn the call at token ti reaches (`_gen_resolve_call`: a generic's instance, instantiating it if
@@ -3089,7 +3089,7 @@ fn _asg_rhs_steps(S, di, rsid): i64 {
             var e = _tok_close_paren(S, di + 2);
             if (e < 0) { return 0; }
             if (TOKTYP(S, e + 1) != 5) { return 0; }
-            var mf = FINDFN(S, BUILD_METHOD_NAME(S, rsid - 1, TOKVAL(S, di + 1)));
+            var mf = _meth_fn_at(S, rsid, TOKVAL(S, di + 1), di + 1);
             if (mf < 0) { return 0; }
             var ms = GFRS(S, mf);
             if (ms < 0) { ms = 0; }

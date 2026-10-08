@@ -3477,6 +3477,53 @@ from 6.6.10 to 6.7.0 it was a compile error, and before 6.6.10 the inferred form
 ran the i64 base). Enum generic params (`<T, E>`) remain syntactically accepted
 but type-erased.
 
+### Trait bounds (6.7.1)
+
+A type parameter may be **bounded** by one or more traits ([Traits and impl blocks](#traits-and-impl-blocks-670)):
+
+```
+trait Show { fn show(self): i64; fn twice(self): i64 { return self.show() * 2; } }
+trait Eq   { fn eq(self, o: Pt): i64; }
+impl Show for Pt  { fn show(self): i64 { return self.x * 10 + self.y; } }
+impl Show for i64 { fn show(self): i64 { return self + 1000; } }
+
+fn describe<T: Show>(v: T): i64 { return v.show(); }
+fn same<T: Show + Eq>(a: T, b: T): i64 { if (a.eq(b) == 1) { return a.show(); } return 0; }
+struct Shown<T: Show> { v: T; n; }
+
+describe(p);        # Pt's show
+describe(5);        # the i64 base: impl Show for i64
+describe<i32>(7);   # needs impl Show for i32
+```
+
+- **A bound is a contract.** On a bounded `T`-typed parameter or local (`v: T`, `p: *T`,
+  `var q: T`), `v.m()` must be a method of one of the bound's traits — a method no bound declares,
+  or one two bounds both declare, is a compile error at the generic's **definition**, whether or not
+  it is ever called. The call is that trait's method for `T`'s impl: when `T` has two traits giving it
+  an `m` (`Pt_Size_size`, `Pt_Other_size`), `<T: Size>` calls `Size`'s. Fields are not part of a
+  trait — `v.x` on a bounded `T` resolves per instance, as on an unbounded one. An **unbounded** `T`
+  keeps per-instance resolution: `fn f<T>(v: T) { return v.show(); }` compiles and works for any `T`
+  that has a `show`.
+- **`T: A + B`** requires every impl. A bound names a declared trait (an undeclared one is refused),
+  takes no type arguments, and goes on one of the first two type parameters (at most two are
+  recorded); up to 8 per parameter.
+- **Every instantiation is checked**, and is refused when its type has no impl — naming the trait
+  and the `impl` it needs: an inferred or explicit type argument, the **i64 base** a scalar call
+  reaches (`describe(5)` needs `impl Show for i64`; without one, `describe`'s base is the dead stub and
+  every scalar path — a call, a tail call, `&describe` — is refused), and a generic struct's instance,
+  its i64 base included (a bare `Shown`, a written `Shown<i64>`).
+- **Any type satisfies a bound through its impl**, a scalar too: `impl Show for i64` defines
+  `i64_show`, a bounded call on an i64 `T` calls it with the value, and a trait default instantiated
+  for a scalar calls `self.show()` (6.7.1; before it, `self.m()` in a scalar impl was "no struct type
+  in scope for 'self'").
+- **A generic that instantiates a bounded struct with its own `T`** (`fn mk<T>(x: T): Shown<T>`, or
+  `struct W<T> { s: Shown<T>; }`) is fine for every `T` that satisfies the struct's bound; its i64
+  base is refused where it is used (`mk(5)`, a bare `W`) when i64 does not — not at its definition.
+
+Before 6.7.1 `<T: Show>` minted a SECOND type parameter named `Show`, so `describe(p)` with a struct
+was refused as "a struct beside a second type argument", and no bound was checked. Dispatch is
+static throughout: a bounded call is a direct call to the impl's method, as `p.show()` is.
+
 ## Async / Await
 
 `async fn` and `await` are sugar over the cooperative epoll runtime

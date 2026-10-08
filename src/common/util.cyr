@@ -1244,6 +1244,26 @@ var _cur_fn_ptrp = 0;
 var _cur_iself_sid = 0;
 var _impl_tnoff = 0;
 var _impl_trait = 0;   # 6.7.0 (A3): the impl's trait name, 0 for an inherent `impl T { … }`
+# 6.7.1 (C3) — trait bounds on type parameters: the tables (src/frontend/parse_fn.cyr, the bounds module).
+var _ctp_buf = 0;      # `_capture_tparams`' bounds: per slot (0|1), 8 x (name, token)
+var _ctp_n0 = 0;       # bounds captured on type parameter 0 / 1
+var _ctp_n1 = 0;
+var _ctp_bad = 0;      # a refused bound shape: its token + 1 (0 = none)
+var _ctp_badk = 0;     # 1 = no trait name after `:` / `+`, 2 = more than 8 bounds, 3 = a third type parameter
+var _fnt_bnd = 0;      # per fn: its bound block (0 = no bound)
+var _st_bnd = 0;       # per struct: its bound block
+var _bs_tab = 0;       # bounded call sites (4 words): method-name token, trait, type-parameter name, `*T`
+var _bs_n = 0;
+var _bnr_tab = 0;      # `_bnd_sites`' receivers (3 words): name, type-parameter slot, `*T`
+var _bnr_n = 0;
+var _bnd_memo = 0;     # refusals reported (3 words): generic (fn, or -1 - struct), conc0, conc1
+var _bnd_memo_n = 0;
+var _bbs_why = 0;   # the bounded struct `_bnd_base_bad` found (sid), 0 = the fn's own bound
+var _bnd_quiet = 0;    # 1 while a generic struct's BASE definition reads `Box<T>` (record, never report)
+var _bnd_quiet_hit = 0; # the bounded struct a quiet check failed (sid)
+var _st_bb = 0;        # per struct: a bounded struct its base definition instantiates with its T and i64 fails (sid)
+var _sdef_bb = 0;      # PARSE_STRUCT_DEF's: that struct, for the definition being parsed
+var _ctp_closed = 0;   # `_ctp_bounds` met a `>>` that closed the parameter list too
 fn _tp_clear(S): i64 { _tp_n0 = 0; _tp_c0 = 0; _tp_n1 = 0; _tp_c1 = 0; return 0; }
 fn _tp_bind(S, slot, noff, conc): i64 {
     if (slot == 0) { _tp_n0 = noff; _tp_c0 = conc; }

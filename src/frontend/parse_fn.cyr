@@ -2076,7 +2076,7 @@ fn _str_step_kind(S, di, rsid, ssid): i64 {
         if (e < 0) { return 0; }
         if (_tok_ends_arg(S, e + 1) == 0) { return 0; }
         if (_str_data_call(S, di, e, rsid, ssid) == 1) { return 2; }   # 6.6.17: `x.data()`
-        var mf = FINDFN(S, BUILD_METHOD_NAME(S, rsid - 1, TOKVAL(S, di + 1)));
+        var mf = _meth_fn_at(S, rsid, TOKVAL(S, di + 1), di + 1);
         if (mf < 0) { return 0; }
         if (GFRS(S, mf) == ssid) { return 1; }
         return 0;
@@ -4631,6 +4631,578 @@ fn _tr_dup_meth(S, tx, m): i64 {
     return 0;
 }
 
+# ⛔ 6.7.1 (C3) — TRAIT BOUNDS ON TYPE PARAMETERS. `fn f<T: Show + Eq>(v: T)` and `struct Box<T: Show>`.
+# Before 6.7.1 `<T: Show>` minted a SECOND type parameter named `Show` (`_capture_tparams` took every
+# identifier in the list), so `f(p)` with a struct was refused as "a struct beside a second type
+# argument". Decisions (user, 2026-10-07):
+#   * a bound is a CONTRACT — on a bounded T-typed parameter or local, `v.m()` must be a method of a
+#     bound's trait, checked at the generic's DEFINITION (pass 1), and the bound picks that trait's
+#     `m` when T has a colliding one (as `self.m()` does inside an impl, ADR-007). Fields are not part
+#     of a trait and still resolve per instance; an UNBOUNDED T keeps per-instance resolution.
+#   * `T: A + B` requires every impl; the same syntax bounds a generic struct's parameter.
+#   * a bound is satisfied by `impl Trait for X` whatever X is — a struct or a scalar.
+# Every instantiation is checked — an instance (`_instantiate_generic_fn` / `_struct`) and the i64
+# BASE a scalar call reaches (whose body is the dead stub when i64 does not satisfy a bound, so every
+# scalar path meets the refusal). A bounded call site is recorded by its method-name TOKEN in pass 1:
+# the base, every instance and every inline replay re-parse those same tokens, so the site resolves to
+# the impl's own method (`_tr_prefix`) in each of them, for a scalar T too (`i64_show(v)`).
+# CHANGELOG [6.7.1]
+
+# A fn's bound block; 1 = recorded with no valid bound (pass 1 reported it — pass 2 must not again).
+fn GFBND(S, fi): i64 {
+    if (_fnt_bnd == 0) { return 0; }
+    var b = L64(_fnt_bnd + fi * 8);
+    if (b == 1) { return 0; }
+    return b;
+}
+fn SFBND(S, fi, v): i64 { if (_fnt_bnd == 0) { _fnt_bnd = alloc(131072 * 8); } S64(_fnt_bnd + fi * 8, v); return 0; }
+fn GSBND(S, si): i64 { if (_st_bnd == 0) { return 0; } return L64(_st_bnd + si * 8); }
+fn SSBND(S, si, v): i64 { if (_st_bnd == 0) { _st_bnd = alloc(1024 * 8); } S64(_st_bnd + si * 8, v); return 0; }
+
+# Cursor on the `:` after type parameter `slot` (`n` = how many came before it, so a third is `n` 2):
+# consume `: A + B ..` and record each name; a malformed shape is recorded, never reported here — this
+# runs in both passes and for every instance, and the definition's ONE report is `_bnd_make`'s.
+fn _ctp_bounds(S, slot): i64 {
+    if (_ctp_buf == 0) { _ctp_buf = alloc(2 * 8 * 16); }
+    STI(S, GTI(S) + 1);                 # consume `:`
+    var go = 1;
+    while (go == 1) {
+        if (PEEKT(S) != 2) {
+            if (_ctp_bad == 0) { _ctp_bad = GTI(S) + 1; _ctp_badk = 1; }
+            return 0;
+        }
+        if (slot > 1) {
+            if (_ctp_bad == 0) { _ctp_bad = GTI(S) + 1; _ctp_badk = 3; }
+        } else {
+            var k = _ctp_n0;
+            if (slot == 1) { k = _ctp_n1; }
+            if (k >= 8) {
+                if (_ctp_bad == 0) { _ctp_bad = GTI(S) + 1; _ctp_badk = 2; }
+            } else {
+                S64(_ctp_buf + (slot * 8 + k) * 16, PEEKV(S));
+                S64(_ctp_buf + (slot * 8 + k) * 16 + 8, GTI(S));
+                if (slot == 0) { _ctp_n0 = k + 1; } else { _ctp_n1 = k + 1; }
+            }
+        }
+        STI(S, GTI(S) + 1);             # consume the trait name
+        if (PEEKT(S) == 19) {           # a trait takes no type arguments
+            if (_ctp_bad == 0) { _ctp_bad = GTI(S); _ctp_badk = 4; }
+            # its `>>` may close the parameter list too (`<T: Show<i64>>`)
+            if (_skip_targ_list(S) > 0) { _ctp_closed = 1; return 0; }
+        }
+        if (PEEKT(S) == 6) { STI(S, GTI(S) + 1); }   # `+`
+        else { go = 0; }
+    }
+    return 0;
+}
+
+# A refusal AT token `ti` (the cursor is put back): pass 1 reports from a pre-scan.
+fn _bnd_err_at(S, ti, msg, noff, tail, noff2): i64 {
+    var sv = GTI(S);
+    STI(S, ti);
+    ERR_IDENT(S, msg, noff, tail, noff2);
+    STI(S, sv);
+    return 0;
+}
+fn _bnd_errm_at(S, ti, msg, len): i64 {
+    var sv = GTI(S);
+    STI(S, ti);
+    ERR_MSG(S, msg, len);
+    STI(S, sv);
+    return 0;
+}
+
+# The bound block for the list `_capture_tparams` just read (`tp` its packed names), or 0 when it has
+# no bound. Each trait name is resolved here, once per definition: an undeclared one is refused.
+# Block: [0] count0, [1..8] trait indices; [9] count1, [10..17].
+fn _bnd_make(S, tp): i64 {
+    if (_ctp_bad != 0) {
+        var bt = _ctp_bad - 1;
+        _ctp_bad = 0;
+        if (_ctp_badk == 1) { _bnd_errm_at(S, bt, "expected a trait name in a type parameter's bound (`T: Show + Eq`)", 66); }
+        if (_ctp_badk == 2) { _bnd_err_at(S, bt, "too many bounds on one type parameter (max 8): ", TOKVAL(S, bt), 0, 0 - 1); }
+        if (_ctp_badk == 4) { _bnd_err_at(S, bt, "a trait in a bound takes no type arguments: ", TOKVAL(S, bt), 0, 0 - 1); }
+        if (_ctp_badk == 3) { _bnd_err_at(S, bt, "a bound on a third type parameter: at most two type parameters are recorded, so ", TOKVAL(S, bt), " would never be checked", 0 - 1); }
+    }
+    if (_ctp_n0 + _ctp_n1 == 0) { return 0; }
+    var blk = alloc(18 * 8);
+    var slot = 0;
+    while (slot < 2) {
+        var n = _ctp_n0;
+        if (slot == 1) { n = _ctp_n1; }
+        var tpn = ((tp >> (slot * 32)) & 0xFFFFFFFF) - 1;
+        var c = 0;
+        var k = 0;
+        while (k < n) {
+            var bn = L64(_ctp_buf + (slot * 8 + k) * 16);
+            var tx = 0 - 1;
+            if (_tr_tab != 0) { tx = _tr_find(S, bn); }
+            if (tx < 0) {
+                _bnd_err_at(S, L64(_ctp_buf + (slot * 8 + k) * 16 + 8), "unknown trait ", bn, " in the bound on type parameter ", tpn);
+            } else {
+                S64(blk + (slot * 9 + 1 + c) * 8, tx);
+                c = c + 1;
+            }
+            k = k + 1;
+        }
+        S64(blk + slot * 9 * 8, c);
+        slot = slot + 1;
+    }
+    _ctp_n0 = 0;
+    _ctp_n1 = 0;
+    return blk;
+}
+
+# Scalar `conc` (-8 / -4 / -2 / -1, f64 -9) or struct sid: 1 iff `tn` names that type.
+fn _bnd_type_is(S, tn, conc): i64 {
+    if (conc > 0) { return STREQ(S, tn, L64(S + 0x1A6018 + (conc - 1) * 8)); }
+    var p = S + 0xEC00000 + tn;
+    var c0 = 105;
+    var c1 = 54;
+    var c2 = 52;
+    if (conc == 0 - 4) { c1 = 51; c2 = 50; }
+    elif (conc == 0 - 2) { c1 = 49; c2 = 54; }
+    elif (conc == 0 - 1) { c1 = 56; c2 = 0; }
+    elif (conc == 0 - 9) { c0 = 102; }
+    elif (conc != 0 - 8) { return 0; }
+    if (load8(p) != c0) { return 0; }
+    if (load8(p + 1) != c1) { return 0; }
+    if (c2 == 0) {
+        if (load8(p + 2) != 0) { return 0; }
+        return 1;
+    }
+    if (load8(p + 2) != c2) { return 0; }
+    if (load8(p + 3) != 0) { return 0; }
+    return 1;
+}
+# The impl of trait `tx` for type `conc`, -1 when there is none.
+fn _bnd_impl(S, tx, conc): i64 {
+    var i = 0;
+    while (i < _ti_n) {
+        if (L64(_ti_tab + i * 64 + 48) == tx) { if (_bnd_type_is(S, L64(_ti_tab + i * 64 + 8), conc) == 1) { return i; } }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+# The first bound of `blk`'s slot `slot` that `conc` does not satisfy, -1 when all are.
+fn _bnd_fail(S, blk, slot, conc): i64 {
+    if (blk == 0) { return 0 - 1; }
+    var n = L64(blk + slot * 9 * 8);
+    var k = 0;
+    while (k < n) {
+        var tx = L64(blk + (slot * 9 + 1 + k) * 8);
+        if (_bnd_impl(S, tx, conc) < 0) { return tx; }
+        k = k + 1;
+    }
+    return 0 - 1;
+}
+# 1 iff this (generic, conc0, conc1) refusal was already reported — once per pair of types, not
+# once per call site (a lookahead resolves a call before its own parse does).
+fn _bnd_memo_seen(g, c0, c1): i64 {
+    if (_bnd_memo == 0) { _bnd_memo = alloc(256 * 24); }
+    var i = 0;
+    while (i < _bnd_memo_n) {
+        var e = _bnd_memo + i * 24;
+        if (load64(e) == g) { if (load64(e + 8) == c0) { if (load64(e + 16) == c1) { return 1; } } }
+        i = i + 1;
+    }
+    if (_bnd_memo_n < 256) {
+        var e2 = _bnd_memo + _bnd_memo_n * 24;
+        store64(e2, g); store64(e2 + 8, c0); store64(e2 + 16, c1);
+        _bnd_memo_n = _bnd_memo_n + 1;
+    }
+    return 0;
+}
+# Print the concrete type's name, for a refusal.
+fn _bnd_pr_conc(S, conc): i64 {
+    if (conc > 0) { PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (conc - 1) * 8)); return 0; }
+    if (conc == 0 - 4) { PRSTR("i32"); }
+    elif (conc == 0 - 2) { PRSTR("i16"); }
+    elif (conc == 0 - 1) { PRSTR("i8"); }
+    elif (conc == 0 - 9) { PRSTR("f64"); }
+    else { PRSTR("i64"); }
+    return 0;
+}
+# Check generic `g` (a fn index, or -1 - a struct index) against the concretes: 0 = satisfied, 1 =
+# refused (reported once per pair of types). ⚠ Four parameters, not seven: cybs passes six.
+fn _bnd_check(S, g, c0, c1): i64 {
+    var blk = 0;
+    var tp = 0;
+    var gnoff = 0;
+    if (g >= 0) {
+        blk = GFBND(S, g);
+        tp = GFTP(S, g);
+        gnoff = L64(_fnt_names + g * 8);
+    } else {
+        blk = GSBND(S, 0 - 1 - g);
+        tp = GSTP(S, 0 - 1 - g);
+        gnoff = L64(S + 0x1A6018 + (0 - 1 - g) * 8);
+    }
+    if (blk == 0) { return 0; }
+    if (c0 == 0) { c0 = 0 - 8; }
+    if (c1 == 0) { c1 = 0 - 8; }
+    var slot = 0;
+    while (slot < 2) {
+        var conc = c0;
+        if (slot == 1) { conc = c1; }
+        var tx = _bnd_fail(S, blk, slot, conc);
+        if (tx >= 0) {
+            if (_bnd_quiet == 1) { if (g < 0) { if (_bnd_quiet_hit == 0) { _bnd_quiet_hit = 0 - g; } } return 1; }
+            if (_bnd_memo_seen(g, c0, c1) == 1) { return 1; }
+            ERR_IDENT(S, "generic ", gnoff, ": its type argument does not implement trait ", L64(_tr_tab + tx * 32));
+            syscall(SYS_WRITE, 2, "  note: the bound on type parameter '", 37);
+            PRSTR(S + 0xEC00000 + (((tp >> (slot * 32)) & 0xFFFFFFFF) - 1));
+            syscall(SYS_WRITE, 2, "' needs `impl ", 14);
+            PRSTR(S + 0xEC00000 + L64(_tr_tab + tx * 32));
+            syscall(SYS_WRITE, 2, " for ", 5);
+            _bnd_pr_conc(S, conc);
+            syscall(SYS_WRITE, 2, "`, and there is none\n", 21);
+            return 1;
+        }
+        slot = slot + 1;
+    }
+    return 0;
+}
+fn _bnd_check_fn(S, fi, c0, c1): i64 {
+    if (GFBND(S, fi) == 0) { return 0; }
+    return _bnd_check(S, fi, c0, c1);
+}
+fn _bnd_check_struct(S, si, c0, c1): i64 {
+    if (GSBND(S, si) == 0) { return 0; }
+    return _bnd_check(S, 0 - 1 - si, c0, c1);
+}
+
+# ── the contract, at the definition (pass 1) ────────────────────────────────────────────────
+fn _bnr_add(S, name, slot, isptr): i64 {
+    if (_bnr_tab == 0) { _bnr_tab = alloc(64 * 24); }
+    var i = 0;
+    while (i < _bnr_n) {
+        if (STREQ(S, L64(_bnr_tab + i * 24), name) == 1) {
+            S64(_bnr_tab + i * 24 + 8, slot);
+            S64(_bnr_tab + i * 24 + 16, isptr);
+            return 0;
+        }
+        i = i + 1;
+    }
+    if (_bnr_n >= 64) { return 0; }
+    S64(_bnr_tab + _bnr_n * 24, name);
+    S64(_bnr_tab + _bnr_n * 24 + 8, slot);
+    S64(_bnr_tab + _bnr_n * 24 + 16, isptr);
+    _bnr_n = _bnr_n + 1;
+    return 0;
+}
+fn _bnr_find(S, name): i64 {
+    var i = 0;
+    while (i < _bnr_n) {
+        if (L64(_bnr_tab + i * 24 + 8) >= 0) { if (STREQ(S, L64(_bnr_tab + i * 24), name) == 1) { return i; } }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+# `name: [*]TN` at token i (a parameter, or the name of a `var`): its bounded slot, recorded; a name
+# re-declared with another type stops being a receiver (slot -1).
+fn _bnr_decl(S, tp, blk, i): i64 {
+    if (TOKTYP(S, i + 1) != 49) {
+        var r0 = _bnr_find(S, TOKVAL(S, i));
+        if (r0 >= 0) { S64(_bnr_tab + r0 * 24 + 8, 0 - 1); }
+        return 0;
+    }
+    var ti = i + 2;
+    var isptr = 0;
+    if (TOKTYP(S, ti) == 8) { ti = ti + 1; isptr = 1; }
+    var slot = 0 - 1;
+    if (TOKTYP(S, ti) == 2) {
+        var tn = TOKVAL(S, ti);
+        if (tn == (tp & 0xFFFFFFFF) - 1) { if (L64(blk) > 0) { slot = 0; } }
+        if (tn == ((tp >> 32) & 0xFFFFFFFF) - 1) { if (L64(blk + 72) > 0) { slot = 1; } }
+    }
+    if (slot >= 0) { _bnr_add(S, TOKVAL(S, i), slot, isptr); return 0; }
+    var r = _bnr_find(S, TOKVAL(S, i));
+    if (r >= 0) { S64(_bnr_tab + r * 24 + 8, 0 - 1); }
+    return 0;
+}
+fn _bs_add(S, ti, tx, tpn, isptr): i64 {
+    if (_bs_tab == 0) { _bs_tab = alloc(4096 * 32); }
+    if (_bs_n >= 4096) { _tr_cap(S, ti, "too many bounded method calls (max 4096)", 40); return 0; }
+    S64(_bs_tab + _bs_n * 32, ti);
+    S64(_bs_tab + _bs_n * 32 + 8, tx);
+    S64(_bs_tab + _bs_n * 32 + 16, tpn);
+    S64(_bs_tab + _bs_n * 32 + 24, isptr);
+    _bs_n = _bs_n + 1;
+    return 0;
+}
+# The bounded site whose method-name token is `ti`, -1 when none.
+fn _bs_find(S, ti): i64 {
+    var i = 0;
+    while (i < _bs_n) {
+        if (L64(_bs_tab + i * 32) == ti) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+# `recv.m(` at token i, `recv` a bounded receiver r: `m` must be a method of exactly one of its
+# slot's traits — recorded as a site; otherwise refused at the method name.
+fn _bnd_site(S, tp, blk, i, r): i64 {
+    var slot = L64(_bnr_tab + r * 24 + 8);
+    var m = TOKVAL(S, i + 2);
+    var n = L64(blk + slot * 9 * 8);
+    var hit = 0 - 1;
+    var hits = 0;
+    var k = 0;
+    while (k < n) {
+        var tx = L64(blk + (slot * 9 + 1 + k) * 8);
+        if (_trm_of(S, tx, m) >= 0) {
+            if (hits == 1) {
+                _bnd_err_at(S, i + 2, "ambiguous method ", m, ": more than one trait in this type parameter's bound declares it, e.g. ", L64(_tr_tab + tx * 32));
+                _bs_add(S, i + 2, 0 - 1, 0, 0);   # refused: its call is consumed quietly
+                return 0;
+            }
+            hit = tx;
+            hits = 1;
+        }
+        k = k + 1;
+    }
+    var tpn = ((tp >> (slot * 32)) & 0xFFFFFFFF) - 1;
+    if (hit < 0) {
+        _bnd_err_at(S, i + 2, "method ", m, " is not in the bound on type parameter ", tpn);
+        syscall(SYS_WRITE, 2, "  note: a bound is the contract for a bounded type parameter - call only its traits' methods on '", 97);
+        PRSTR(S + 0xEC00000 + TOKVAL(S, i));
+        syscall(SYS_WRITE, 2, "', or add a trait that declares this one to the bound\n", 54);
+        _bs_add(S, i + 2, 0 - 1, 0, 0);   # refused: its call is consumed quietly
+        return 0;
+    }
+    _bs_add(S, i + 2, hit, tpn, L64(_bnr_tab + r * 24 + 16));
+    return 0;
+}
+# Generic fi's parameter list (its `(` at `open`) and body: every bounded receiver, and every call of
+# a method on one — checked against the bound and recorded. Pass 1, once per definition.
+fn _bnd_sites(S, fi, open): i64 {
+    var blk = GFBND(S, fi);
+    if (blk == 0) { return 0; }
+    if (open < 0) { return 0; }
+    var tp = GFTP(S, fi);
+    _bnr_n = 0;
+    var i = open + 1;
+    var n = GTCNT(S);
+    var d = 0;
+    while (i < n) {
+        var t = TOKTYP(S, i);
+        if (t == 12) { return 0; }
+        if (d == 0) {
+            if (t == 11) { break; }
+            if (t == 2) { if (TOKTYP(S, i - 1) == 10 || TOKTYP(S, i - 1) == 31) { _bnr_decl(S, tp, blk, i); } }
+        }
+        if (t == 10 || t == 19 || t == 28) { d = d + 1; }
+        if (t == 11 || t == 20 || t == 29) { d = d - 1; }
+        if (t == 39) { d = d - 2; }
+        if (d < 0) { d = 0; }
+        i = i + 1;
+    }
+    var b = _gs_body_open(S, i + 1);
+    if (b < 0) { return 0; }
+    i = b;
+    d = 1;
+    while (i < n) {
+        var t2 = TOKTYP(S, i);
+        if (t2 == 12) { return 0; }
+        if (t2 == 13) { d = d + 1; }
+        if (t2 == 14) { d = d - 1; if (d == 0) { return 0; } }
+        if (t2 == 3) { if (TOKTYP(S, i + 1) == 2) { _bnr_decl(S, tp, blk, i + 1); } }
+        if (t2 == 2) {
+            if (TOKTYP(S, i + 1) == 41) { if (TOKTYP(S, i + 2) == 2) { if (TOKTYP(S, i + 3) == 10) {
+                        if (TOKTYP(S, i - 1) != 41) {
+                            var r = _bnr_find(S, TOKVAL(S, i));
+                            if (r >= 0) { _bnd_site(S, tp, blk, i, r); }
+                        }
+                    } } }
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+# Record fi's bounds (the list `_capture_tparams` just read, packed names `tp`) and its sites — once.
+fn _bnd_fn_record(S, fi, tp, open): i64 {
+    var seen = 0;
+    if (_fnt_bnd != 0) { seen = L64(_fnt_bnd + fi * 8); }
+    if (seen != 0) { _ctp_n0 = 0; _ctp_n1 = 0; _ctp_bad = 0; return 0; }
+    var blk = _bnd_make(S, tp);
+    if (blk == 0) { SFBND(S, fi, 1); return 0; }
+    SFBND(S, fi, blk);
+    _bnd_sites(S, fi, open);
+    return 0;
+}
+
+# ── the call: a bounded site's callee ───────────────────────────────────────────────────────────
+# Site `bsi`, receiver struct `sid` (0 = a scalar T): the impl's own method, by its defined name
+# (`T_m`, or `T_Trait_m` on a collision). -1 when the type has no such impl (the instantiation was
+# refused) — the caller then takes the ordinary path, whose error stands.
+fn _bs_callee(S, bsi, sid): i64 {
+    var tx = L64(_bs_tab + bsi * 32 + 8);
+    if (tx < 0) { return 0 - 1; }
+    var conc = sid;
+    if (sid <= 0) {
+        conc = 0;
+        if (_tp_c0 != 0) { conc = _tp_resolve(S, L64(_bs_tab + bsi * 32 + 16)); }
+        if (conc == 0) { conc = 0 - 8; }
+    }
+    var ii = _bnd_impl(S, tx, conc);
+    if (ii < 0) { return 0 - 1; }
+    var m = TOKVAL(S, L64(_bs_tab + bsi * 32));
+    return _tr_findfn_join(S, _tr_prefix(S, ii, m), m);
+}
+# The lookahead sites' method lookup (`x.m(` with `x`'s struct `sid`, the method name at token `mti`):
+# a bounded site's own callee, else `Type_m`. One compare when the program has no bound.
+fn _meth_fn_at(S, sid, mnoff, mti): i64 {
+    if (_bs_n > 0) {
+        var b = _bs_find(S, mti);
+        if (b >= 0) {
+            var f = _bs_callee(S, b, sid);
+            if (f >= 0) { return f; }
+        }
+    }
+    return FINDFN(S, BUILD_METHOD_NAME(S, sid - 1, mnoff));
+}
+# 1 iff bounded site `bsi` is a valid call in the i64 base: a by-value receiver whose trait i64 implements.
+fn _bs_i64ok(S, bsi): i64 {
+    if (L64(_bs_tab + bsi * 32 + 8) < 0) { return 0; }
+    if (L64(_bs_tab + bsi * 32 + 24) != 0) { return 0; }
+    if (_bnd_impl(S, L64(_bs_tab + bsi * 32 + 8), 0 - 8) < 0) { return 0; }
+    return 1;
+}
+
+# ── the i64 base ────────────────────────────────────────────────────────────────────────────────
+# A generic's base is its i64 instance, emitted eagerly. It is not a valid one — and is the dead
+# stub, like a struct-using generic's — when i64 fails one of the generic's OWN bounds, or when it
+# instantiates a BOUNDED generic struct with its own type parameter (`Box<T>` with `Box<T: Show>`)
+# and i64 fails that struct's bound. Without the second half, `fn mk<T>(x: T): Box<T>` was refused
+# at its definition although only `mk(5)` is wrong. Not cached: struct bounds are known only once
+# pass 1 has registered every struct; and a program with no bound never gets past the first test.
+fn _bnd_base_bad(S, fi): i64 {
+    _bbs_why = 0;
+    if (fi < 0) { return 0; }
+    if (_fnt_bnd == 0) { if (_st_bnd == 0) { return 0; } }
+    var tp = GFTP(S, fi);
+    if (tp == 0) { return 0; }
+    if (_gen_is_inst(S, fi) == 1) { return 0; }
+    var blk = GFBND(S, fi);
+    if (blk != 0) {
+        if (_bnd_fail(S, blk, 0, 0 - 8) >= 0) { return 1; }
+        if (_bnd_fail(S, blk, 1, 0 - 8) >= 0) { return 1; }
+    }
+    if (_st_bnd == 0) { return 0; }
+    var i = _gen_def_open(S, fi);
+    if (i < 0) { return 0; }
+    var n = GTCNT(S);
+    var d = 0;
+    var inb = 0;
+    while (i < n) {
+        var t = TOKTYP(S, i);
+        if (t == 12) { return 0; }
+        if (t == 13) { d = d + 1; inb = 1; }
+        if (t == 14) { d = d - 1; if (inb == 1) { if (d == 0) { return 0; } } }
+        if (t == 5) { if (inb == 0) { return 0; } }
+        if (t == 2) { if (TOKTYP(S, i + 1) == 19) {
+                var fs = FINDSTRUCT(S, TOKVAL(S, i));
+                if (fs > 0) { if (GSBND(S, fs - 1) != 0 || GSBB(S, fs - 1) != 0) {
+                        if (_bbs_targs(S, fi, tp, fs, i + 2) == 1) { _bbs_why = fs; return 1; }
+                    } }
+            } }
+        i = i + 1;
+    }
+    return 0;
+}
+# `Box<..>` (bounded struct fs) whose list starts at token j: 1 iff an argument that is just one of
+# fi's type parameters takes a slot whose bound i64 fails.
+fn _bbs_targs(S, fi, tp, fs, j): i64 {
+    var sblk = GSBND(S, fs - 1);
+    var slot = 0;
+    var n = GTCNT(S);
+    while (j < n) {
+        if (TOKTYP(S, j) != 2) { return 0; }
+        var nt = TOKTYP(S, j + 1);
+        if (nt == 31 || nt == 20 || nt == 39 || nt == 152) {
+            var a = TOKVAL(S, j);
+            if (a == (tp & 0xFFFFFFFF) - 1 || a == ((tp >> 32) & 0xFFFFFFFF) - 1) {
+                if (GSBB(S, fs - 1) != 0) { return 1; }
+                if (slot < 2) { if (_bnd_fail(S, sblk, slot, 0 - 8) >= 0) { return 1; } }
+            }
+        }
+        # to the next argument at this level, or the end of the list
+        var d = 0;
+        while (j < n) {
+            var t = TOKTYP(S, j);
+            if (t == 12 || t == 5 || t == 13) { return 0; }
+            if (t == 19) { d = d + 1; }
+            if (t == 20) { if (d == 0) { return 0; } d = d - 1; }
+            if (t == 39 || t == 152) { return 0; }
+            if (t == 31) { if (d == 0) { j = j + 1; break; } }
+            j = j + 1;
+        }
+        slot = slot + 1;
+    }
+    return 0;
+}
+# The refusal for a scalar call (or `&g`) of generic fi whose base is not a valid i64 instance:
+# its own bound (reported by `_bnd_check_fn`), or a bounded struct it instantiates with its T.
+fn _refuse_bnd_base(S, fi, noff): i64 {
+    if (_bnd_check_fn(S, fi, 0 - 8, 0 - 8) == 1) { return 0; }
+    if (_bbs_why <= 0) { return 0; }
+    if (_bnd_memo_seen(fi, 0 - 8, 0 - 8) == 1) { return 0; }
+    ERR_IDENT(S, "generic ", noff, " has no i64 instance: it instantiates a bounded generic struct with its type parameter, and i64 does not satisfy the bound of ", L64(S + 0x1A6018 + (_bbs_why - 1) * 8));
+    return 0;
+}
+
+# ── generic structs ─────────────────────────────────────────────────────────────────────────────
+# A struct's i64 BASE (a bare `Box`, a written `Box<i64>`) is an instance like any other: refused
+# when i64 fails the struct's own bound, or when the struct's base definition instantiates a
+# bounded struct with its own type parameter and i64 fails THAT bound (`struct W<T> { b: Box<T>; }`
+# — recorded quietly while W's base is parsed, `_bnd_quiet`, since `W<Pt>` may be fine).
+fn GSBB(S, si): i64 { if (_st_bb == 0) { return 0; } return L64(_st_bb + si * 8); }
+fn SSBB(S, si, v): i64 { if (_st_bb == 0) { _st_bb = alloc(1024 * 8); } S64(_st_bb + si * 8, v); return 0; }
+fn _bnd_sbase(S, sid): i64 {
+    if (sid <= 0) { return 0; }
+    var si = sid - 1;
+    if (GSBND(S, si) != 0) { if (_bnd_check_struct(S, si, 0 - 8, 0 - 8) == 1) { return 1; } }
+    var bb = GSBB(S, si);
+    if (bb <= 0) { return 0; }
+    if (_bnd_quiet == 1) { if (_bnd_quiet_hit == 0) { _bnd_quiet_hit = sid; } return 1; }
+    if (_bnd_memo_seen(0 - 1 - si, 0 - 8, 0 - 8) == 1) { return 1; }
+    ERR_IDENT(S, "generic struct ", L64(S + 0x1A6018 + si * 8), " has no i64 instance: a field instantiates a bounded generic struct with its type parameter, and i64 does not satisfy the bound of ", L64(S + 0x1A6018 + (bb - 1) * 8));
+    return 1;
+}
+# 1 iff the type-argument list at token j (just past `<`) is written with no type parameter that is
+# bound right now — so an all-i64 list there names the base explicitly (`Box<i64>`), not through a
+# generic's T, whose i64 base is judged where IT is used.
+fn _targs_literal(S, j): i64 {
+    var n = GTCNT(S);
+    var d = 1;
+    while (j < n) {
+        var t = TOKTYP(S, j);
+        if (t == 12 || t == 5 || t == 13 || t == 10) { return 1; }
+        if (t == 2) { if (_tp_c0 != 0) { if (_tp_resolve(S, TOKVAL(S, j)) != 0) { return 0; } } }
+        if (t == 19) { d = d + 1; }
+        if (t == 20) { d = d - 1; }
+        if (t == 39) { d = d - 2; }
+        if (t == 152) { d = d - 3; }
+        if (d <= 0) { return 1; }
+        j = j + 1;
+    }
+    return 1;
+}
+
+# A scalar receiver as `self` (a bounded site's, or `self` in a scalar impl; `bsi` -1): its VALUE (an untyped `self` in `impl Show for i64` is
+# the i64 itself). A `*T` receiver with T bound to a scalar is refused — its pointee's width is T's.
+fn _bs_scalar_self(S, idx, bsi, noff): i64 {
+    if (bsi >= 0) { if (L64(_bs_tab + bsi * 32 + 24) != 0) {
+            ERR_IDENT(S, "method call on ", noff, ", a pointer to a type parameter bound to a scalar - call it on the value", 0 - 1);
+            return 0;
+        } }
+    if (idx <= 0 - 1000000) { _CL_CAP_BASE_RA(S, 0 - 1000000 - idx, 0); ELOAD64(S); }
+    elif (idx < 0 - 1) { EFLLOAD(S, 0 - idx - 2); }
+    else { EVLOAD(S, idx); }
+    return 0;
+}
+
 # Parse: impl TraitName for TypeName { fn method(self) { } ... }
 # Methods get mangled to TypeName_method (trait name is documentation only for now)
 fn PARSE_IMPL(S): i64 {
@@ -4744,6 +5316,7 @@ fn _skip_targ_list(S): i64 {
 fn _capture_tparams(S): i64 {
     if (_MONOMORPH_OK == 0) { SKIP_GENERICS(S); return 0; }
     if (PEEKT(S) != 19) { return 0; }
+    _ctp_n0 = 0; _ctp_n1 = 0; _ctp_bad = 0;   # 6.7.1 (C3): this list's bounds
     STI(S, GTI(S) + 1);  # consume <
     var off0 = 0;
     var off1 = 0;
@@ -4760,8 +5333,16 @@ fn _capture_tparams(S): i64 {
                 if (n == 0) { off0 = PEEKV(S) + 1; }
                 if (n == 1) { off1 = PEEKV(S) + 1; }
                 n = n + 1;
+                STI(S, GTI(S) + 1);
+                # 6.7.1 (C3): `T: Show + Eq` — a BOUND, not two more type parameters (it minted
+                # `Show` as the second one). Consumed here; `_bnd_make` resolves and reports.
+                if (PEEKT(S) == 49) {
+                    _ctp_bounds(S, n - 1);
+                    if (_ctp_closed == 1) { _ctp_closed = 0; return off0 | (off1 << 32); }   # `>>` closed it
+                }
+            } else {
+                STI(S, GTI(S) + 1);
             }
-            STI(S, GTI(S) + 1);
         }
     }
     STI(S, GTI(S) + 1);  # consume >
@@ -5186,13 +5767,18 @@ fn _gs_use(S, fi, i, mode): i64 {
     if (mode == 0) {
         if (nx != 41) { return 0; }
         if (TOKTYP(S, i + 2) == 41) { return 0; }
+        # 6.7.1 (C3): a bounded method call is a TRAIT use, valid in the i64 base when i64 implements it.
+        if (_bs_n > 0) { if (TOKTYP(S, i + 3) == 10) {
+                var bsi = _bs_find(S, i + 2);
+                if (bsi >= 0) { if (_bs_i64ok(S, bsi) == 1) { return 0; } }
+            } }
         return _gsn_has(TOKVAL(S, i));
     }
     if (nx != 19 && nx != 10) { return 0; }
     var cfi = FINDFN(S, TOKVAL(S, i));
     if (cfi < 0 || cfi == fi) { return 0; }
     if (GFTP(S, cfi) == 0) { return 0; }
-    if ((GFGM(S, cfi) & 3) == 0) { return 0; }
+    if ((GFGM(S, cfi) & 3) == 0) { if (_bnd_base_bad(S, cfi) == 0) { return 0; } }   # 6.7.1: a bounded one too
     if (nx == 19) { return _gs_targs_fwd(S, fi, i + 2); }
     var m = GFGM(S, cfi);
     if (_gs_arg_named(S, i + 1, (m >> 8) & 255) == 1) { return 1; }
@@ -5331,6 +5917,7 @@ fn _refuse_gen_stub(S, noff): i64 {
 # `&g`: the address is the base's, so a stub base is refused like a scalar call.
 fn _gen_addr_check(S, fi, noff): i64 {
     if (_MONOMORPH_OK == 0) { return 0; }
+    if (_bnd_base_bad(S, fi) == 1) { _refuse_bnd_base(S, fi, noff); return 0; }   # 6.7.1 (C3)
     if (_gen_stub(S, fi) != 0) { _refuse_gen_stub(S, noff); }
     return 0;
 }
@@ -5386,6 +5973,7 @@ fn _gen_call_head(S, fi, noff): i64 {
         _gh_inf0 = c0;
         _gh_inf1 = c1;
     }
+    if (_bnd_base_bad(S, fi) == 1) { _refuse_bnd_base(S, fi, noff); return fi; }   # 6.7.1 (C3)
     if (_gen_stub(S, fi) != 0) { _refuse_gen_stub(S, noff); }
     return fi;
 }
@@ -5397,6 +5985,7 @@ fn _gen_call_struct(S, fi, noff, c0, c1): i64 {
     return fi;
 }
 fn _refuse_gen_inst(S, noff, spec): i64 {
+    if (spec == 0 - 4) { return 0; }   # 6.7.1: a bound refusal, already reported
     ERR_IDENT(S, "generic ", noff, ": no definition to instantiate for a struct type argument", 0 - 1);
     return 0;
 }
@@ -5517,6 +6106,7 @@ fn _gen_own_call_check(S, fi, noff): i64 {
             _refuse_gen_inst(S, noff, e);
             return 0;
         } }
+    if (_bnd_base_bad(S, fi) == 1) { _refuse_bnd_base(S, fi, noff); return 0; }   # 6.7.1 (C3)
     if (_gen_stub(S, fi) != 0) { _refuse_gen_stub(S, noff); }
     return 0;
 }
@@ -5528,6 +6118,7 @@ fn _tc_generic_divert(S, cfi, ti_after): i64 {
     if (cfi < 0) { return 0; }
     if (GFTP(S, cfi) == 0) { return 0; }
     if (_gen_stub(S, cfi) != 0) { return 1; }
+    if (_bnd_base_bad(S, cfi) == 1) { return 1; }   # 6.7.1 (C3): the head refuses its scalar call
     if (_gen_infer_tp(S, cfi, ti_after, 0) > 0) { return 1; }
     if (_gen_infer_tp(S, cfi, ti_after, 1) > 0) { return 1; }
     return 0;
@@ -5669,6 +6260,9 @@ fn _instantiate_generic_fn(S, base_fi, conc0, conc1): i64 {
     # combination "unproven"; nothing in the instance path depends on which slot holds the
     # struct, and tests/tcyr/crossos/generic_two_param_struct.tcyr now proves every call path
     # on every backend. CHANGELOG [6.7.1]
+    # 6.7.1 (C3): every instance satisfies the generic's bounds — refused (once per pair of types)
+    # before anything is minted; -4 = refused and reported.
+    if (GFBND(S, base_fi) != 0) { if (_bnd_check_fn(S, base_fi, conc0, conc1) == 1) { return 0 - 4; } }
     var base_noff = L64(_fnt_names + base_fi * 8);
     var mangled = _mint_generic_name(S, base_noff, conc0, conc1);
     var spec = FINDFN(S, mangled);
@@ -5770,6 +6364,8 @@ fn _instantiate_generic_struct(S, base_si, conc0, conc1): i64 {
     var mangled = _mint_generic_name(S, base_noff, conc0, conc1);
     var existing = FINDSTRUCT(S, mangled);
     if (existing > 0) { return existing; }           # dedup hit (1-based)
+    # 6.7.1 (C3): every instance satisfies the struct's bounds — 0 (the caller keeps the base).
+    if (GSBND(S, base_si) != 0) { if (_bnd_check_struct(S, base_si, conc0, conc1) == 1) { return 0; } }
     var ds = GSDS(S, base_si);
     if (ds == 0) { return 0; }                       # not a generic struct
     ds = ds - 1;
@@ -6743,6 +7339,7 @@ fn _prescan_fn_sig(S): i64 {
         var fi = _fn_def_slot(S, noff, _pfid, _ppriv);
         _prescan_dep_take(S, fi);               # 6.6.16: a pending `#deprecated`, for forward calls
         if (_ptp != 0) { SFTP(S, fi, _ptp); }   # v6.3.9: forward-ref generic sig
+        if (_ptp != 0) { _bnd_fn_record(S, fi, _ptp, GTI(S)); }   # 6.7.1 (C3): bounds + bounded sites, BEFORE the stub scan reads them
         if (_ptp != 0) { _gen_record(S, fi, GTI(S)); }   # 6.6.10: stub + carrier facts, by name
         # 6.6.10 — mark `async fn` HERE, so a coroutine's `await f(..)` classifies a callee
         # defined further down (`_await_operand_is_future`). CHANGELOG [6.6.10]
@@ -6901,7 +7498,10 @@ fn _prescan_dep_take(S, fi): i64 {
 fn _gtype_sid(S, fi, base): i64 {
     if (_MONOMORPH_OK == 0) { return base; }
     if (base <= 0) { return base; }
-    if (TOKTYP(S, GTI(S) + 1) != 19) { return base; }
+    if (TOKTYP(S, GTI(S) + 1) != 19) {
+        if (GSTP(S, base - 1) != 0) { _bnd_sbase(S, base); }   # 6.7.1 (C3): a bare `Box` is its i64 base
+        return base;
+    }
     if (GSTP(S, base - 1) == 0) { return base; }
     if (GFTP(S, fi) != 0) { if (_inst_conc0 == 0) { return base; } }
     var sv_n0 = _tp_n0; var sv_c0 = _tp_c0; var sv_n1 = _tp_n1; var sv_c1 = _tp_c1;
@@ -6939,6 +7539,7 @@ fn _gtype_tp_ret(S, fi, noff): i64 {
 fn _ret_targ_parse(S, base): i64 {
     var sv_gt = _ta_pending_gt;
     _ta_pending_gt = 0;
+    var lit = _targs_literal(S, GTI(S) + 2);   # 6.7.1 (C3): `Box<i64>` written out
     STI(S, GTI(S) + 2);                  # the name, `<`
     var c0 = _parse_one_type_arg(S);
     var c1 = 0;
@@ -6948,7 +7549,10 @@ fn _ret_targ_parse(S, base): i64 {
     var inst = 0;
     if (c0 != 0 - 8 && c0 != 0) { inst = 1; }
     if (c1 != 0 && c1 != 0 - 8) { inst = 1; }
-    if (inst == 0) { return base; }
+    if (inst == 0) {
+        if (lit == 1) { _bnd_sbase(S, base); }   # 6.7.1 (C3)
+        return base;
+    }
     var g = _instantiate_generic_struct(S, base - 1, c0, c1);
     if (g > 0) { return g; }
     return base;
@@ -8294,6 +8898,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     # (flag 2048) — pass 1 left the LAST definition's start, so an instance minted between the
     # definitions is minted from the one that wins, not from the body in hand.
     if (_gtp != 0) { if ((GFLG(S, fi) & 2048) == 0) { SFDS(S, fi, _defstart_ti + 1); } }
+    if (_gtp != 0) { if (_inst_name == 0) { _bnd_fn_record(S, fi, _gtp, _gen_def_open(S, fi)); } }   # 6.7.1 (C3): once (pass 1 did)
     # v6.5.0 Phase 1 (public/private): stamp this fn's ORIGIN FILE, derived from the
     # line of its `fn` keyword via the file map the preprocessor already builds for
     # diagnostics (`#@file` markers -> FM_BUILD -> FM_FILEID). RECORDED ONLY — nothing
@@ -9459,7 +10064,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     # site now gets. CHANGELOG [6.6.10]
     var _b3_skip = 0;
     if (_gen_base == 1 && _inst_conc0 == 0) {
-        if (_gen_stub(S, fi) != 0) { _b3_skip = 1; }
+        if (_gen_stub(S, fi) != 0 || _bnd_base_bad(S, fi) == 1) { _b3_skip = 1; }   # 6.7.1: or not a valid i64 instance of its bounds
     }
     # v6.5.69 — COROUTINE SETUP. An `async fn` body becomes a state machine: its locals live
     # in the heap object the runtime hands back on every resume, and the fn top dispatches to

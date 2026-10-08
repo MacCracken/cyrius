@@ -1318,11 +1318,31 @@ fn _field_load_on(S, noff, fnoff, pfl_beg, idx, sid): i64 {
 
     # Method call: ident.method(args)
     if (PEEKT(S) == 10) {
+        # ⛔ 6.7.1 (C3) — a call on a BOUNDED receiver (recorded in pass 1 by its method-name token,
+        # `_bnd_sites`) calls the bound's trait's method for T's impl, by its defined name — so a
+        # colliding `m` is the bound's, and a SCALAR T (`impl Show for i64`) has a callee at all.
+        var m_bs = 0 - 1;
+        if (_bs_n > 0) { m_bs = _bs_find(S, GTI(S) - 1); }
+        var m_bfi = 0 - 1;
+        if (m_bs >= 0) {
+            if (L64(_bs_tab + m_bs * 32 + 8) < 0) {   # refused at the definition: skip the call, no cascade
+                var m_e = _tok_close_paren(S, GTI(S));
+                if (m_e > 0) { STI(S, m_e + 1); }
+                return 0;
+            }
+            m_bfi = _bs_callee(S, m_bs, sid);
+        }
+        # ...and `self.m()` in an impl for a SCALAR type (`impl Show for i64`, a trait default
+        # instantiated for it) calls that type's own `m`; it was "no struct type in scope for
+        # 'self'", so any trait with a self-calling default could not be implemented for a scalar.
+        if (sid == 0) { if (m_bfi < 0) { if (_impl_tnoff != 0) { if (_noff_is(S, noff, "self", 4) == 1) {
+                        m_bfi = _tr_findfn_join(S, _impl_tnoff, fnoff);
+                    } } } }
         # v6.5.19: see ERR_IDENT (src/common/util.cyr). `e.render()` where `e`'s
         # struct is declared in a sibling file is a resolution failure; reporting it
         # as `unexpected '('` blamed the grammar for a missing include. Bail out
         # rather than fall through with si = -1 into an out-of-bounds FINDFIELD.
-        if (sid == 0) {
+        if (sid == 0 && m_bfi < 0) {
             # v6.5.19 --syntax-only: stay SILENT and do not set _panic (which would
             # swallow the next genuine syntax error), but still CONSUME the argument
             # list through PCMPE so a grammar error inside it is caught.
@@ -1343,7 +1363,8 @@ fn _field_load_on(S, noff, fnoff, pfl_beg, idx, sid): i64 {
             ERR_IDENT(S, "no struct type in scope for ", noff, "; a method call needs its struct declaration (missing include?)", 0 - 1);
             return 0;
         }
-        var mname = BUILD_METHOD_NAME(S, si, fnoff);
+        var mname = 0;
+        if (m_bfi < 0) { mname = BUILD_METHOD_NAME(S, si, fnoff); }
         # ⛔ 6.6.5 — RESOLVE THE CALLEE BEFORE THE ARGUMENTS (6.6.6: and before `self`, whose
         # push must follow a struct result's retptr — see `_sc_pre` below). This path used to run the
         # whole argument loop as bare PCMPE + EPUSHR and only then FINDFN the method, so it
@@ -1351,7 +1372,8 @@ fn _field_load_on(S, noff, fnoff, pfl_beg, idx, sid): i64 {
         # VALUE into a method that derefs the parameter as a pointer — `s.m(big)` SIGSEGV'd
         # even in ordinary (backward) include order, while the identical `Type_m(&s, big)`
         # worked. Resolving first also lets the name be committed before any nested mint.
-        var mfi = FINDFN(S, mname);
+        var mfi = m_bfi;
+        if (mfi < 0) { mfi = FINDFN(S, mname); }
         if (mfi < 0) {
             # BUILD_METHOD_NAME writes at GNPOS without committing (it is a lookup helper).
             # Registering that scratch offset left the entry pointing at bytes the NEXT
@@ -1373,7 +1395,9 @@ fn _field_load_on(S, noff, fnoff, pfl_beg, idx, sid): i64 {
         # or <=8 B on non-cx: the slot IS the struct — pass its address). This path
         # loaded the slot unconditionally, so `p.m()` on an inline stack struct handed
         # the method p's FIRST FIELD as `self` and `load64(self)` SIGSEGV'd (rc=139).
-        if (_fn_self_byval(mfi) == 1) {
+        if (sid == 0) {
+            _bs_scalar_self(S, idx, m_bs, noff);           # 6.7.1 (C3): a bounded scalar T's value
+        } elif (_fn_self_byval(mfi) == 1) {
             _self_value_ra(S, idx, sid);                   # 6.6.11: a <= 8 B `self: T` is by value
         } elif (idx <= 0 - 1000000) {
             _CL_CAP_BASE_RA(S, 0 - 1000000 - idx, sid);   # 6.6.5: `self` from a closure capture
@@ -3405,8 +3429,13 @@ fn _gv_ifs(S, sti, ann_float): i64 {
 fn _gen_ann_sid(S, sid): i64 {
     if (_MONOMORPH_OK != 1) { SKIP_GENERICS(S); return sid; }
     if (sid <= 0) { SKIP_GENERICS(S); return sid; }
-    if (PEEKT(S) != 19) { return sid; }
+    if (PEEKT(S) != 19) {
+        if (GSTP(S, sid - 1) != 0) { _bnd_sbase(S, sid); }   # 6.7.1 (C3): a bare `Box` is its i64 base
+        return sid;
+    }
     if (GSTP(S, sid - 1) == 0) { SKIP_GENERICS(S); return sid; }
+    var lit = 1;
+    if (_bnd_quiet == 0) { lit = _targs_literal(S, GTI(S) + 1); }   # 6.7.1 (C3): `Box<i64>` written out
     STI(S, GTI(S) + 1);                 # consume `<`
     _ta_pending_gt = 0;
     # v6.3.33: conc0 [, conc1] via _parse_one_type_arg (a NESTED generic type-arg is
@@ -3421,7 +3450,10 @@ fn _gen_ann_sid(S, sid): i64 {
     var inst = 0;
     if (c0 != 0 - 8) { if (c0 != 0) { inst = 1; } }
     if (c1 != 0) { if (c1 != 0 - 8) { inst = 1; } }
-    if (inst == 0) { return sid; }
+    if (inst == 0) {
+        if (lit == 1) { _bnd_sbase(S, sid); }   # 6.7.1 (C3)
+        return sid;
+    }
     var g = _instantiate_generic_struct(S, sid - 1, c0, c1);
     if (g > 0) { return g; }
     return sid;

@@ -1447,7 +1447,8 @@ fn _is_own_tparam(S, noff): i64 {
         var t = TOKTYP(S, k);
         if (t == 20) { return 0; }
         if (t == 13) { return 0; }
-        if (t == 2) { if (STREQ(S, TOKVAL(S, k), noff) == 1) { return 1; } }
+        if (t == 2) { if (TOKTYP(S, k - 1) != 49 && TOKTYP(S, k - 1) != 6) {   # 6.7.1: not a bound's trait
+                if (STREQ(S, TOKVAL(S, k), noff) == 1) { return 1; } } }
         k = k + 1;
     }
     return 0;
@@ -1557,13 +1558,22 @@ fn _vec_field_elem(S, si, fnoff): i64 {
 # struct would contain itself. CHANGELOG [6.7.1]
 fn _sfield_gen(S, fs, stp): i64 {
     var sv_n0 = _tp_n0; var sv_c0 = _tp_c0; var sv_n1 = _tp_n1; var sv_c1 = _tp_c1;
+    var sv_q = _bnd_quiet;
+    var sv_qh = _bnd_quiet_hit;
     if (stp != 0) { if (_tp_c0 == 0) {
             var t0 = stp & 0xFFFFFFFF;
             if (t0 != 0) { _tp_bind(S, 0, t0 - 1, 0 - 8); }
             var t1 = (stp >> 32) & 0xFFFFFFFF;
             if (t1 != 0) { _tp_bind(S, 1, t1 - 1, 0 - 8); }
+            # 6.7.1 (C3): `Box<T>` in the BASE definition — its T is the base's i64, which `W<Pt>`
+            # does not share. A failing bound there is recorded on W (`_sdef_bb`), judged where W's
+            # base is used; a field not naming T (`Box<Pt>`) is checked for real.
+            if (_targs_literal(S, GTI(S) + 1) == 0) { _bnd_quiet = 1; _bnd_quiet_hit = 0; }
         } }
     var g = _gen_ann_sid(S, fs);
+    if (_bnd_quiet == 1) { if (_bnd_quiet_hit > 0) { if (_sdef_bb == 0) { _sdef_bb = _bnd_quiet_hit; } } }
+    _bnd_quiet = sv_q;
+    _bnd_quiet_hit = sv_qh;
     _tp_n0 = sv_n0; _tp_c0 = sv_c0; _tp_n1 = sv_n1; _tp_c1 = sv_c1;
     return g;
 }
@@ -1660,17 +1670,22 @@ fn PARSE_STRUCT_DEF(S): i64 {
     # Skip generic parameters if present: struct Foo<T, U>
     # v6.3.10 (generic structs): capture <T> (flag-off / non-generic = old SKIP_GENERICS).
     var _stp = _capture_tparams(S);
+    var _sbnd = 0;   # 6.7.1 (C3): `struct Box<T: Show>` — read now, before the pre-scan re-captures
+    if (_stp != 0) { if (_inst_name == 0) { _sbnd = _bnd_make(S, _stp); } }
+    var _sv_sbb = _sdef_bb;
+    _sdef_bb = 0;
     # v6.3.10: re-emitting a `Box$ty` instance uses the mangled name verbatim.
     if (_inst_name != 0) { noff = _inst_name; }
     var _sown = TOKVAL(S, _sname_ti);
     _sdef_gen_prescan(S, _stp, _sown);   # 6.7.1 (C3): `b: Box<i32>` fields, before REGSTRUCT
     var _sprev = FINDSTRUCT(S, noff);
     var sid = REGSTRUCT(S, noff);
-    if (sid == 0) { return _skip_refused_body(S); }   # 6.6.10: table full — never index -1
+    if (sid == 0) { _sdef_bb = _sv_sbb; return _skip_refused_body(S); }   # 6.6.10: table full — never index -1
     var si = sid - 1;
     var _sv_tp_ti = _sdef_tp_ti;
     _sdef_tp_ti = _sname_ti + 1;   # 6.6.10: its `<T>`, for _is_own_tparam
     if (_stp != 0) { SSTP(S, si, _stp); SSDS(S, si, _sdefstart + 1); }   # record for instantiation
+    if (_sbnd != 0) { SSBND(S, si, _sbnd); }
     if (PEEKT(S) != 13) { ERR_EXPECT(S, 13); }
     STI(S, GTI(S) + 1);  # consume {
     var go = 1;
@@ -1742,6 +1757,8 @@ fn PARSE_STRUCT_DEF(S): i64 {
     if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); }
     STI(S, GTI(S) + 1);  # consume }
     _sdef_tp_ti = _sv_tp_ti;
+    if (_sdef_bb > 0) { SSBB(S, si, _sdef_bb); }   # 6.7.1 (C3)
+    _sdef_bb = _sv_sbb;
     _chk_struct_redef(S, _sprev, sid, _sname_ti);
     return 0;
 }

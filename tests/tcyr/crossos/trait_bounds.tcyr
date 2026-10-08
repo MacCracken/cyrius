@@ -1,0 +1,104 @@
+# trait_bounds.tcyr — 6.7.1 (C3): trait-bounded generics at run time, on every backend.
+#
+# `fn f<T: Show>(v: T)` bounds T by trait Show (before 6.7.1 `<T: Show>` minted a second type
+# parameter named `Show`). The user's decisions (2026-10-07): a bound is a CONTRACT — on a bounded
+# T-typed parameter or local, `v.m()` must be a method of a bound's trait (checked at the
+# definition) and calls THAT trait's `m` for T's impl, so a colliding method is the bound's (C1/C2);
+# `T: A + B` (M); a bound is satisfied by an impl for any type, a scalar too — `f(5)` is the i64
+# base calling `impl Show for i64`, `f<i32>(7)` an i32 instance (B4/B5), and a trait default
+# instantiated for a scalar calls `self.show()` (B9/B10; it was "no struct type in scope for
+# 'self'" before 6.7.1, so no trait with a self-calling default could be implemented for a scalar).
+# Rows also cover a non-inlinable body, a `*T` and a `var q: T` receiver, two bounded parameters,
+# forwarding (bounded, explicit, from an unbounded generic), a tail call, a statement-form call and
+# a bounded generic struct. The refusals are tests/gates/frontend/trait_bounds_checked.sh.
+# Mutation: `_bs_callee` answering -1 (the ordinary `T_m` lookup) -> C1/C2 refused as ambiguous,
+# B4/B5 "no struct type in scope".
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/assert.cyr"
+
+struct Pt { x; y; }
+struct Q { v; }
+
+trait Show {
+    fn show(self): i64;
+    fn twice(self): i64 { return self.show() * 2; }
+}
+trait Eq { fn eq(self, o: Pt): i64; }
+trait Size { fn size(self): i64; }
+trait Other { fn size(self): i64; }
+
+impl Show for Pt { fn show(self): i64 { return self.x * 10 + self.y; } }
+impl Eq for Pt { fn eq(self, o: Pt): i64 { if (self.x == o.x) { return 1; } return 0; } }
+impl Size for Pt { fn size(self): i64 { return 2; } }
+impl Other for Pt { fn size(self): i64 { return 99; } }
+impl Show for Q { fn show(self): i64 { return self.v; } }
+impl Show for i64 { fn show(self): i64 { return self + 1000; } }
+impl Show for i32 { fn show(self): i64 { return self + 2000; } }
+
+fn s1<T: Show>(v: T): i64 { return v.show(); }
+fn s2<T: Show>(v: T): i64 {
+    var t = 0;
+    var i = 0;
+    while (i < 2) { t = t + v.show(); i = i + 1; }
+    return t;
+}
+fn s3<T: Show>(v: T): i64 { return v.twice(); }
+fn sz<T: Size>(v: T): i64 { return v.size(); }
+fn so<T: Other>(v: T): i64 { return v.size(); }
+fn se<T: Show + Eq>(a: T, b: T): i64 {
+    if (a.eq(b) == 1) { return a.show(); }
+    return 0;
+}
+fn sp<T: Show>(p: *T): i64 { return p.show(); }
+fn sl<T: Show>(v: T): i64 {
+    var q: T = v;
+    return q.show();
+}
+fn f2<A: Show, B: Size>(a: A, b: B): i64 { return a.show() + b.size(); }
+fn fwd<T: Show>(v: T): i64 { return s1(v); }
+fn fwdx<T: Show>(v: T): i64 { return s2<T>(v); }
+fn uf<T>(v: T): i64 { return s2(v); }
+fn tl<T: Show>(v: T): i64 { return s2(v); }
+fn st<T: Show>(v: T): i64 {
+    v.show();
+    return 7;
+}
+struct Box<T: Show> { v: T; n; }
+
+fn run(): i64 {
+    var p: Pt; p.x = 40; p.y = 2;
+    var p2: Pt; p2.x = 40; p2.y = 9;
+    var p3: Pt; p3.x = 1; p3.y = 1;
+    var q: Q; q.v = 77;
+    assert_eq(s1(p), 402, "B1: s1(p), T inferred Pt");
+    assert_eq(s1<Pt>(p), 402, "B2: s1<Pt>(p)");
+    assert_eq(s1(q), 77, "B3: s1(q), another impl");
+    assert_eq(s1(5), 1005, "B4: s1(5), the i64 base through impl Show for i64");
+    assert_eq(s1<i32>(7), 2007, "B5: s1<i32>(7), an i32 instance");
+    assert_eq(s2(p), 804, "B6: a non-inlinable body");
+    assert_eq(s2(5), 2010, "B7: the same, i64");
+    assert_eq(s3(p), 804, "B8: a trait default through the bound");
+    assert_eq(s3(5), 2010, "B9: a default instantiated for i64 calls self.show() (impl Show for i64)");
+    assert_eq(s3<i32>(7), 4014, "B10: the same for i32");
+    assert_eq(sz(p), 2, "C1: Pt has Size.size and Other.size — T: Size picks Size's");
+    assert_eq(so(p), 99, "C2: T: Other picks Other's");
+    assert_eq(se(p, p2), 402, "M1: T: Show + Eq");
+    assert_eq(se(p, p3), 0, "M2: T: Show + Eq, unequal");
+    assert_eq(sp<Pt>(&p), 402, "P1: a *T receiver");
+    assert_eq(sl(p), 402, "L1: a var q: T receiver");
+    assert_eq(f2(p, p), 404, "D1: two bounded parameters");
+    assert_eq(fwd(p), 402, "F1: forwarding to a bounded generic");
+    assert_eq(fwd(5), 1005, "F2: the same, i64");
+    assert_eq(fwdx(p), 804, "F3: explicit forwarding s2<T>");
+    assert_eq(uf(p), 804, "F4: an unbounded generic forwarding to a bounded one");
+    assert_eq(uf(6), 2012, "F5: the same, i64");
+    assert_eq(tl(p), 804, "T1: return s2(v);");
+    assert_eq(st(p), 7, "S1: a statement-form call");
+    var b: Box<Pt>; b.v = p; b.n = 1;
+    assert_eq(b.v.show() + b.n, 403, "X1: a bounded struct's instance");
+    return 0;
+}
+var r0 = run();
+var rr = assert_summary();
+syscall(60, rr);

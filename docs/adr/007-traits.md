@@ -47,6 +47,14 @@ keep ADR-004's zero-overhead static dispatch.
    `{data, vtable}` struct whose vtable the compiler builds and verifies from `impl Show for T`; static
    dispatch stays the default (roadmap.md, open question 5). This ADR is its prerequisite.
 
+8. **Trait bounds (6.7.1, roadmap.md § C3).** `fn f<T: Show + Eq>` and `struct Box<T: Show>`.
+   User decisions (2026-10-07): a bound is a **contract** — on a bounded `T`-typed parameter or
+   local, `v.m()` must be a method of a bound's trait (checked at the generic's definition) and
+   calls that trait's `m` for `T`'s impl, so the bound chooses on a collision exactly as an impl's
+   own `self.m()` does (decision 4); `T: A + B` requires every impl; any type satisfies a bound
+   through its impl, a scalar included. Every instantiation is checked, the i64 base included.
+   Dispatch stays static. An unbounded `T` keeps per-instance resolution.
+
 ## Implementation notes
 
 - One token pre-scan at the start of pass 1 (`_tr_prepass`) records every trait (members, parameter
@@ -59,6 +67,12 @@ keep ADR-004's zero-overhead static dispatch.
   direct `T_m(..)` call.
 - Pass 1 records an impl method's untyped `self` per function (`_fnt_iself`), so pass 2 and every
   generic instance (re-parsed from its call site, outside the impl) type it identically.
+- (6.7.1) Bounds are captured with the type-parameter names (`_capture_tparams`) and resolved once
+  per definition. Pass 1 walks a bounded generic's parameters and body (`_bnd_sites`): every
+  `v.m(` on a bounded receiver is checked against the bound and recorded by its method-name TOKEN —
+  the base, each instance and each inline replay re-parse those same tokens, so the call resolves to
+  the impl's own method (`_tr_prefix`) in all of them. A base whose bounds i64 fails is the dead stub,
+  as a struct-using generic's is.
 
 ## Consequences
 
@@ -73,3 +87,4 @@ keep ADR-004's zero-overhead static dispatch.
 `tests/tcyr/crossos/traits_checked.tcyr`, `impl_self_typed.tcyr`, `impl_inherent.tcyr`,
 `struct_from_pointer_copies.tcyr`, `method_on_nested_field.tcyr` (every cross-OS host);
 `tests/gates/frontend/traits_checked.sh`, `impl_self_typed.sh` (the refusals, mutation-checked).
+Bounds (6.7.1): `tests/tcyr/crossos/trait_bounds.tcyr`, `tests/gates/frontend/trait_bounds_checked.sh`.
