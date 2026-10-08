@@ -42,6 +42,9 @@
 #   E3     --print-config shows test.embed
 #   E4-E7  the [embed] rules, by name: a NAME [embed] has, a NAME a stdlib leaf declares (after the
 #          resolve), a path climbing out, a [test.embed.X] table — nothing runs
+#   R1-R2  `cyrius test` / `bench` export CYRIUS_TEST_FILE and CYRIUS_TEST_DIR (absolute) to the
+#          unit, replacing an inherited value
+#   R3     `cyrius run` exports neither
 #
 # MUTATION LEDGER (6.7.6) — each mutant built in a SCRATCH copy of the tree (cbt/ + lib/ + src/ +
 # build/cycc + VERSION + this gate), the gate run against it; the unmutated copy PASSES, and each
@@ -69,6 +72,8 @@
 #   M20 manifest.cyr: [test.embed] NAMEs not checked against [embed]'s                 E4
 #   M21 manifest.cyr: [test.embed]'s collision check skipped                           E5
 #   M22 manifest.cyr: _embed_load scans [test.embed] too (every compile carries it)    E2 E5
+#   M23 build.cyr: run_binary_timed hands the child the inherited environment          R1 R2
+#   M24 manifest.cyr: _tc_for never sets the unit's CYRIUS_TEST_FILE / _DIR            R1 R2
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
 G=test_section
@@ -420,5 +425,27 @@ cy e7 test
 if [ "$RC" = 1 ] && grep -qF 'error: cyrius.cyml: [test.embed] is one table of NAME = "path" entries; a [test.embed.X] / [[test.embed]] section is not read' "$W/err"; then
     echo "  ok E7: a [test.embed.X] table is refused by name"
 else fail "E7: rc $RC"; show; fi
+
+# ── CYRIUS_TEST_FILE / CYRIUS_TEST_DIR: a unit finds its data beside itself, whatever the cwd ───
+proj v <<'EOF'
+[deps]
+stdlib = ["syscalls", "string", "alloc", "io", "fmt", "vec"]
+EOF
+mkdir -p "$W/v/tests/sub" "$W/v/benches" "$W/v/src"
+ENVP='alloc_init();\nvar f = getenv("CYRIUS_TEST_FILE");\nvar d = getenv("CYRIUS_TEST_DIR");\nif (f != 0) { syscall(1, 1, "FILE=", 5); syscall(1, 1, f, strlen(f)); syscall(1, 1, "\\n", 1); }\nif (d != 0) { syscall(1, 1, "DIR=", 4); syscall(1, 1, d, strlen(d)); syscall(1, 1, "\\n", 1); }\nsyscall(60, 0);\n'
+printf "$ENVP" > "$W/v/tests/sub/e.tcyr"
+printf "$ENVP" > "$W/v/benches/e.bcyr"
+printf "$ENVP" > "$W/v/src/e.cyr"
+VD=$(cd "$W/v" && pwd -P)
+RC=0; ( cd "$W/v" && HOME="$W/h" CYRIUS_HOME="$W/home" CYRIUS_RESOLVED=1 CYRIUS_NO_WARN_PIN_DRIFT=1 CYRIUS_TEST_DIR=/inherited "$W/cyrius" test ./tests/sub/e.tcyr ) > "$W/out" 2> "$W/err" < /dev/null || RC=$?
+if [ "$RC" = 0 ] && grep -qx "FILE=$VD/tests/sub/e.tcyr" "$W/out" && grep -qx "DIR=$VD/tests/sub" "$W/out"; then
+    echo "  ok R1: cyrius test exports CYRIUS_TEST_FILE / CYRIUS_TEST_DIR (absolute; an inherited value replaced)"
+else fail "R1: rc $RC (want FILE=$VD/tests/sub/e.tcyr)"; show; fi
+cy v bench benches/e.bcyr
+if [ "$RC" = 0 ] && grep -qx "DIR=$VD/benches" "$W/out"; then echo "  ok R2: cyrius bench exports them too"
+else fail "R2: rc $RC"; show; fi
+cy v run src/e.cyr
+if [ "$RC" = 0 ] && ! grep -q '^FILE=\|^DIR=' "$W/out"; then echo "  ok R3: cyrius run exports neither (not the test scope)"
+else fail "R3: rc $RC"; show; fi
 [ "$FAIL" = 0 ] || { echo "FAIL: $G ($FAIL row(s))"; exit 1; }
 echo "PASS: $G"

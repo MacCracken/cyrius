@@ -1931,6 +1931,9 @@ fn run_binary_timed(path, timeout_ms, args): i64 {
     return _win_run_timed(path, timeout_ms, args);
     #endif
     #ifndef CYRIUS_TARGET_WIN
+    # 6.7.6 (part T): a test-scope unit gets CYRIUS_TEST_FILE / CYRIUS_TEST_DIR (`_tc_run_env`)
+    var renv = _envp;
+    if (_test_scope == 1 && _tc_run_inj != 0) { renv = _cc_child_envp(_tc_run_inj, 0); }
     # Bug 2 (v6.0.66): cmd_test/run/bench/fuzz/doctest compile to /tmp and run via
     # run_binary without signing — only cmd_build signed (6.0.38). On arm64 macOS an
     # unsigned binary is AMFI-SIGKILL'd (128+9=137). Sign here so EVERY run path works.
@@ -1979,7 +1982,7 @@ fn run_binary_timed(path, timeout_ms, args): i64 {
                 sys_close(qfd);
             }
             var qav = _run_argv(path, args, "/usr/bin/qemu-aarch64");
-            sys_execve("/usr/bin/qemu-aarch64", qav, _envp);
+            sys_execve("/usr/bin/qemu-aarch64", qav, renv);
             sys_exit(127);
         }
         #endif
@@ -1991,7 +1994,7 @@ fn run_binary_timed(path, timeout_ms, args): i64 {
             sys_close(cfd);
         }
         var nav = _run_argv(path, args, 0);
-        sys_execve(path, nav, _envp);
+        sys_execve(path, nav, renv);
         sys_exit(127);
     }
     # A failed fork has no child to wait for — and `pid` is then -errno, which the waits and
@@ -2476,6 +2479,12 @@ fn _win_cmdline_cap(path, cap): i64 {
 # outlives it" (see run_binary_timed). It used TerminateProcess on the child alone.
 # `cyrius run` (0) keeps `_win_wait_close`: the program owns what it starts.
 fn _win_run_timed(path, timeout_ms, args): i64 {
+    # 6.7.6 (part T): the child inherits this process's environment (no envp to hand
+    # CreateProcessW here), so a test-scope unit's CYRIUS_TEST_FILE / CYRIUS_TEST_DIR are set on it
+    if (_test_scope == 1 && _tc_run_file != 0) {
+        _win_setenv("CYRIUS_TEST_FILE", _tc_run_file);
+        _win_setenv("CYRIUS_TEST_DIR", _tc_run_dir);
+    }
     var wbuf = 0;
     if (_run_stdout_to != 0) { wbuf = _win_cmdline_cap(path, _run_stdout_to); }
     else { wbuf = _win_cmdline(path, args); }

@@ -1726,6 +1726,11 @@ var _tc_cur_mods = 0;      # the unit being compiled: [test] modules (vec), 0 = 
 var _tc_cur_incs = 0;      # ...its test-scope includes ("lib/<leaf>.cyr", vec), 0 = none
 var _tc_cur_embeds = 0;    # ...[embed] + its [test.embed] entries (vec), 0 = only [embed]'s
 var _tc_coll = 0;          # [test.embed]'s collision check: 0 = not run, 1 = clear, 2 = refused
+# 6.7.6 (part T): what the runner exports to the unit it runs, so a test finds data beside itself
+# whatever the cwd — CYRIUS_TEST_FILE (the unit, absolute) and CYRIUS_TEST_DIR (its directory).
+var _tc_run_file = 0;
+var _tc_run_dir = 0;
+var _tc_run_inj = 0;       # the two as "NAME=value" (the POSIX child's environment, first)
 # One [test] table, as read: a record of the lists it declares (0 = absent) and its timeout
 # (-1 = absent).
 var _TA_STDLIB = 0;
@@ -2266,6 +2271,26 @@ fn _tc_incs_for(ls): i64 {
     return 0;
 }
 
+# CYRIUS_TEST_FILE / CYRIUS_TEST_DIR for the unit at `path` (absolute where the host can say so).
+fn _tc_run_env(path): i64 {
+    var f = _abs_path(_test_norm(path));
+    var n = strlen(f);
+    var i = n;
+    while (i > 0 && load8(f + i - 1) != 47) { i = i - 1; }
+    var d = ".";
+    if (i > 1) {
+        d = alloc(i);
+        memcpy(d, f, i - 1);
+        store8(d + i - 1, 0);
+    } elif (i == 1) { d = "/"; }
+    _tc_run_file = f;
+    _tc_run_dir = d;
+    _tc_run_inj = vec_new();
+    vec_push(_tc_run_inj, _cat2("CYRIUS_TEST_FILE=", f));
+    vec_push(_tc_run_inj, _cat2("CYRIUS_TEST_DIR=", d));
+    return 0;
+}
+
 # The configuration of ONE test-scope unit at `path`: `_defines`, `_tc_cur_mods` and
 # `_tc_cur_timeout`, from the project's [test]. Called before each compile (cmd_test,
 # _bench_run_one, _fuzz_run_one). 0, or 1 after naming what is wrong (the unit is then a failure,
@@ -2274,6 +2299,7 @@ fn _tc_incs_for(ls): i64 {
 fn _tc_for(path): i64 {
     if (_test_scope == 0) { return 0; }
     if (_tc_load() != 0) { return 1; }
+    _tc_run_env(path);
     var rec = _tc_root;
     # 6.7.6: the unit's directory chain of test.cyml files (_tc_eff), when it is in the project
     var ud = _tc_unit_dir(path);
