@@ -6,7 +6,9 @@
 # top. The do body is its own scope: the condition does not see a `var` declared in it. `loop` is
 # CONTEXTUAL — the statement only as `loop {` at the start of a statement; everywhere else it is an
 # identifier (a `var loop` flag, a fn, a field, a struct named `loop` all keep compiling). `do` is
-# reserved. The refusals, the codegen shapes and the per-backend legs are
+# reserved. Both are in a const fn's pure subset: run at compile time in a const context (a const,
+# an array size, `#assert`, a case label) and as ordinary code everywhere else. The refusals, the
+# codegen shapes and the per-backend legs are
 # tests/gates/frontend/loop_do_checked.sh; the in-loop tail-call verdicts are
 # tests/tcyr/crossos/tailcall_loop_frame_address.tcyr.
 #
@@ -25,6 +27,23 @@ struct loop { a; b; }
 struct HasLoop { loop; n; }
 fn loopfn(x): i64 { return x + 1; }
 fn loop(x): i64 { return x * 3; }
+
+# ── const fn: `loop` and `do` in the pure subset, run at compile time in every const context ───
+const fn ctri(n) { var s = 0; var i = 0; loop { i = i + 1; if (i > n) { break; } s = s + i; } return s; }
+const fn ccnt(n) { var i = 0; do { i += 1; if (i < 5) { continue; } } while (i < n); return i; }
+const fn conce(n) { var k = 0; do { k = k + 10; } while (0 == 1); return k + n; }
+const fn cbrk(n) { var i = 0; do { i = i + 1; if (i == 2) { break; } } while (i < n); return i * 100 + n; }
+const fn cretl(n) { var i = 0; loop { i = i + 1; if (i * i > n) { return i; } } }
+const fn cretd(n) { var i = 0; do { i = i + 1; if (i == n) { return i * 7; } } while (i < 100); return 0; }
+const CA = ctri(4);
+const CB = ccnt(3);
+const CC = conce(5);
+const CD = cbrk(9);
+const CE = cretl(50);
+const CF = cretd(3);
+var CARR: i64[ctri(3)];
+#assert ctri(5) == 15, "a const fn with a loop in #assert"
+#assert ccnt(3) == 3, "a const fn with a do in #assert"
 
 var calls = 0;
 fn bump(): i64 { calls = calls + 1; return 1; }
@@ -217,6 +236,24 @@ fn places(): i64 {
     return 0;
 }
 
+fn consts(): i64 {
+    test_group("const fn");
+    assert_eq(CA, 10, "C1: a loop with break (1..4)");
+    assert_eq(CB, 3, "C2: a do's continue goes to the condition (5 if it skipped it)");
+    assert_eq(CC, 15, "C3: a false do condition runs the body once");
+    assert_eq(CD, 209, "C4: a do's break skips its condition");
+    assert_eq(CE, 8, "C5: return from inside a loop");
+    assert_eq(CF, 21, "C6: return from inside a do");
+    CARR[2] = 4;
+    assert_eq(CARR[2], 4, "C7: an array size (3 elements)");
+    var s = 0;
+    switch (6) { case ctri(3): s = 1; default: s = 2; }
+    assert_eq(s, 1, "C8: a case label");
+    assert_eq(ctri(4) * 1000 + cbrk(9), 10209, "C9: the same fns at run time");
+    assert_eq(ccnt(3) * 100 + cretl(50) * 10 + cretd(1), 387, "C10: ... and the rest");
+    return 0;
+}
+
 fn contextual(): i64 {
     test_group("contextual loop");
     var p = loop { 3, 4 };
@@ -251,6 +288,7 @@ fn run(): i64 {
     nesting();
     reload();
     places();
+    consts();
     contextual();
     contextual_fn();
     return 0;

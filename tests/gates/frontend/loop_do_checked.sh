@@ -14,6 +14,8 @@
 #   K  CONTEXTUAL: `loop` as an identifier still compiles and runs (a var, a fn, a field, a struct,
 #      a closure's enclosing local)
 #   W  `#inline` on a body holding a `loop` / `do` is ignored by name, and the call is a call
+#   C  const fn: loop / do run by the compile-time evaluator in every const context (R10-R14 are
+#      its refusals: the step budget, the evaluator's if-expression arm, the definition check)
 #   A  ANTI-VACUOUS: the crossos tcyr built and run — x86 under CYRIUS_IR=3 and CYRIUS_DCE=1, then
 #      aarch64 (qemu), cx (cxvm) and PE (wine), each with the full assertion count; an x86
 #      disassembly row (a `loop` emits no condition test at its top)
@@ -41,6 +43,11 @@
 #   L12 `_cl_prescan_ident` without the `loop {` skip     -> K4 (113: the closure captured `loop`)
 #   L13 the dispatch's `loop {` arm dropped               -> R7 R9 K4 W1 A1-A7 (every `loop` is an
 #                                                          identifier statement again)
+#   L8  `_ce_stmt`'s `_ce_loopx` arm dropped              -> R13 R14 C1 A1-A6 ("unknown name 'loop'
+#                                                          in a const context" / "not in a const fn")
+#   L9  `_ce_do` not walking the condition after a break  -> C1 A1-A6 (the cursor stops at `(`:
+#                                                          "expected ';', got '('")
+#   L14 `_ce_xarm` back on `_ie_stmt_tok` (no `loop {`)   -> R12 ("unknown name 'loop'")
 # Defensive, no killing row (named): the `_flags_reflect_rax` resets at a loop / do top and after
 # the do's `_cont_close` (every condition and statement emits a defining instruction first), and
 # `_sync_skip`'s stops at `do` / `loop {` (an error inside a call's argument list before a loop is a
@@ -98,6 +105,20 @@ refused r06 "$STMT" "R6: a do as an if-expression branch" "fn f(c): i64 { var x 
 refused r07 "expected ';', got number 5" "R7: break takes no value" "fn f(c): i64 { var i = 0; loop { i = i + 1; if (i > 3) { break 5; } } return i; }$E"
 refused r08 "undefined variable 't'" "R8: the do condition does not see the body's var" "fn f(c): i64 { var i = 0; do { var t = 1; i = i + t; } while (t < 3); return i; }$E"
 refused r09 "continue outside a loop" "R9: a closure's continue does not reach the enclosing loop" "fn f(c): i64 { var i = 0; loop { var g = |x| { continue; }; i = i + 1; if (i > 2) { break; } } return i; }$E"
+
+BUDGET="compile-time evaluation exceeded 10,000,000 steps"
+refused r10 "$BUDGET" "R10: an endless loop in a const fn, run in a const context" 'const fn spin(n) { loop { n = n + 1; } return n; }\nconst X = spin(1);\nsyscall(60, X);\n'
+refused r11 "$BUDGET" "R11: an endless do in a const fn, run in a const context" 'const fn spin2(n) { do { n = n + 1; } while (n > 0); return n; }\nconst X = spin2(1);\nsyscall(60, X);\n'
+refused r12 "$STMT" "R12: a loop as a const-context if-expression branch (the evaluator's arm)" 'const X = if (1) { loop { break; } } else { 1 };\nsyscall(60, X);\n'
+refused r13 "not in a const fn: its body takes var / const / assignment / if / elif / else / while / for / loop / do-while" "R13: a loop body is checked at the definition (store64 in it)" 'const fn bad(n) { loop { store64(n, 1); break; } return n; }\nsyscall(60, 0);\n'
+# The const fn variant of R8. ⚠ Reported TWICE (the definition check, then the parser), exactly as an
+# `if` body's `var` read after its `}` is today — a pre-existing double report, filed, not this row's
+# subject; the row pins the evaluator's half by name.
+printf 'const fn g(n) { var i = 0; do { var t = 1; i = i + t; } while (t < 3); return i + n; }\nconst X = g(1);\nsyscall(60, X);\n' > "$T/r14.cyr"
+build r14
+if [ "$rc" -ne 0 ] && grep -qF "unknown name 't' in a const context" "$T/r14.err"; then ok "R14: a const fn's do condition does not see the body's var (refused by the evaluator)"
+else bad "R14: rc $rc: $(grep '^error' "$T/r14.err" | head -1)"; fi
+exits c01 0 "C1: loop / do const fns in every const context — consts, an array size, #assert, a case label — equal to the same fns at run time" 'const fn tri(n) { var s = 0; var i = 0; loop { i = i + 1; if (i > n) { break; } s = s + i; } return s; }\nconst fn cnt(n) { var i = 0; do { i += 1; if (i < 5) { continue; } } while (i < n); return i; }\nconst fn once(n) { var k = 0; do { k = k + 10; } while (0 == 1); return k + n; }\nconst fn brk(n) { var i = 0; do { i = i + 1; if (i == 2) { break; } } while (i < n); return i * 100 + n; }\nconst fn retl(n) { var i = 0; loop { i = i + 1; if (i * i > n) { return i; } } }\nconst fn retd(n) { var i = 0; do { i = i + 1; if (i == n) { return i * 7; } } while (i < 100); return 0; }\nconst A = tri(4);\nconst B = cnt(3);\nconst C = once(5);\nconst D = brk(9);\nconst E = retl(50);\nconst F = retd(3);\nvar arr: i64[tri(3)];\n#assert tri(5) == 15, "tri"\nfn main(): i64 {\n    var s = 0;\n    switch (6) { case tri(3): s = 1; default: s = 2; }\n    if (A != 10) { return 1; }\n    if (B != 3) { return 2; }\n    if (C != 15) { return 3; }\n    if (D != 209) { return 4; }\n    if (E != 8) { return 5; }\n    if (F != 21) { return 6; }\n    if (s != 1) { return 7; }\n    arr[2] = 4; if (arr[2] != 4) { return 8; }\n    if (tri(4) != A || cnt(3) != B || once(5) != C) { return 9; }\n    if (brk(9) != D || retl(50) != E || retd(3) != F) { return 10; }\n    return 0;\n}\nsyscall(60, main());\n'
 
 exits k01 30 "K1: kriya's \`var loop\` flag driving a while" "fn f(c): i64 { var loop = 1; var n = 0; while (loop == 1) { n = n + 1; if (n == 3) { loop = 0; } } return n * 10 + loop; }$E"
 exits k02 47 "K2: \`loop\` without \`{\` is the identifier (assignments, reads, a call)" "fn loop(x): i64 { return x + 40; }\nfn f(c): i64 { var n = loop(3); var loop = 3; loop = loop + 1; loop += 0; return n + loop; }$E"
@@ -186,4 +207,4 @@ else echo "  SKIP A7: no objdump"; skips=$((skips + 1)); fi
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: loop_do_checked — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: loop_do_checked — $skips leg(s) above could not run; every one that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: loop_do_checked — loop / do … while: refusals (R), the contextual identifier (K), #inline (W), every backend (A)"
+echo "PASS: loop_do_checked — loop / do … while: refusals (R), the contextual identifier (K), #inline (W), const fn (C), every backend (A)"

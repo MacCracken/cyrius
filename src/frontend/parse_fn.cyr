@@ -6092,6 +6092,7 @@ fn _ce_stmt(S): i64 {
     if (t == 51) { _ce_ti = _ce_ti + 1; _ce_expect(S, 5); if (_ce_skip == 0) { _ce_ret = 2; } return 0; }
     if (t == 52) { _ce_ti = _ce_ti + 1; _ce_expect(S, 5); if (_ce_skip == 0) { _ce_ret = 3; } return 0; }
     if (t == 13) { return _ce_block(S); }
+    if (_ce_loopx(S, t) == 1) { return 0; }   # 6.7.5 (B5): `do`, and `loop {` before the ident arm
     if (t == 2) {
         var nt = TOKTYP(S, _ce_ti + 1);
         if (nt == 4) { return _ce_assign(S, 0); }
@@ -6101,7 +6102,7 @@ fn _ce_stmt(S): i64 {
         _ce_expect(S, 5);
         return 0;
     }
-    _ce_bad(S, "not in a const fn: its body takes var / const / assignment / if / elif / else / while / for / return / break / continue and calls of const fns", 142);
+    _ce_bad(S, "not in a const fn: its body takes var / const / assignment / if / elif / else / while / for / loop / do-while / return / break / continue and calls of const fns", 160);
     return 0;
 }
 # `x OP= e` at the cursor (an IDENT): the operator, or 0.
@@ -6408,6 +6409,63 @@ fn _ce_while(S): i64 {
         if (_ce_ret == 1) { go = 0; }
         if (_ce_ret == 2) { _ce_ret = 0; go = 0; }
         if (_ce_ret == 3) { _ce_ret = 0; }
+        _ce_step(S);
+    }
+    return 0;
+}
+# 6.7.5 (B5): `loop { }` and `do { } while (c);` join the pure subset, under the step budget. 1 when
+# the statement at the cursor was one (`t` its token; `loop` is contextual — `_TOK_IS_LOOP`).
+# CHANGELOG [6.7.5]
+fn _ce_loopx(S, t): i64 {
+    if (t == 172) { _ce_do(S); return 1; }
+    if (_TOK_IS_LOOP(S, _ce_ti) == 1) { _ce_loop(S); return 1; }
+    return 0;
+}
+# `_ce_while` with no condition: the body reruns until a return (1) or a break (2); skip mode
+# walks it once. An endless one ends at the step budget's refusal.
+fn _ce_loop(S): i64 {
+    _ce_ti = _ce_ti + 1;
+    var top = _ce_ti;
+    var go = 1;
+    while (go == 1) {
+        if (_ce_err == 1) { return 0; }
+        _ce_ti = top;
+        var run = 0;
+        if (_ce_skip == 0) { run = 1; }
+        _ce_arm(S, run);
+        if (run == 0) { go = 0; }
+        if (_ce_ret == 1) { go = 0; }
+        if (_ce_ret == 2) { _ce_ret = 0; go = 0; }
+        if (_ce_ret == 3) { _ce_ret = 0; }
+        _ce_step(S);
+    }
+    return 0;
+}
+# The body first, then `while (c);` — a `continue` (3) falls through to the condition, as at run
+# time. On a return / break (or in skip mode) the condition is WALKED in skip mode, so the cursor
+# ends past the `;` with nothing evaluated. The body's `var`s are gone by the condition (`_ce_block`
+# pops them at `}`), as the parser's scope has them.
+fn _ce_do(S): i64 {
+    _ce_ti = _ce_ti + 1;
+    var top = _ce_ti;
+    var go = 1;
+    while (go == 1) {
+        if (_ce_err == 1) { return 0; }
+        _ce_ti = top;
+        var run = 0;
+        if (_ce_skip == 0) { run = 1; }
+        _ce_arm(S, run);
+        var stop = 0;
+        if (run == 0) { stop = 1; }
+        if (_ce_ret == 1) { stop = 1; }
+        if (_ce_ret == 2) { _ce_ret = 0; stop = 1; }
+        if (_ce_ret == 3) { _ce_ret = 0; }
+        _ce_expect(S, 16);
+        var c = 0;
+        if (stop == 1) { _ce_skip = _ce_skip + 1; _ce_cond(S); _ce_skip = _ce_skip - 1; }
+        else { c = _ce_cond(S); }
+        _ce_expect(S, 5);
+        if (stop == 1 || c != 1) { go = 0; }
         _ce_step(S);
     }
     return 0;
