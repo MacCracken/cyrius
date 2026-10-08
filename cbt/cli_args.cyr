@@ -323,6 +323,9 @@ fn _cli_help_extra(verb): i64 {
         println("  tests/ (recursive); each file once.");
         println("  [build] test_standalone = true compiles each test with only its own includes");
         println("  (no [deps] stdlib prepend).");
+        println("  [test] stdlib / modules / defines / timeout / [test.embed] (and a test.cyml per");
+        println("  directory) configure test, bench and fuzz compiles only; `cyrius help manifest`.");
+        println("  Exit status: non-zero on any failing test, any compile failure, or no tests found.");
     }
     if (streq(verb, "tests") == 1) {
         println("");
