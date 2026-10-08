@@ -2974,22 +2974,47 @@ fn _sc_decl_mismatch(S, pscale, sid): i64 {
 # call returning a struct of 8 B or less (`var z: Odd = mkod2()`), which comes back in rax and so
 # never reached the retptr / rax:rdx receives, the only ones that compared the sid. Returns the
 # previous `_sc_want`, for `_scv_disarm`. CHANGELOG [6.6.11]
+var _scv_pk = 0;     # 6.7.6: the parentheses `_scv_peel` stepped into, closed by `_scv_disarm`
+var _scv_term = 5;   # ... and the token that ends the initialiser inside them (`)`), else `;`
 fn _scv_arm(S, pscale): i64 {
+    _scv_pk = 0;
+    _scv_term = 5;
     if (pscale < 0) { if (pscale > 0 - 2048) {
+            if (GINFN(S) == 1) { _scv_peel(S); }   # 6.7.6
             _scv_call_check(S, pscale);
             if (GINFN(S) == 1) { _fla_arm(GTI(S), pscale); }
         } }
     return _sc_arm(S);
 }
-fn _scv_disarm(w): i64 {
+fn _scv_disarm(S, w): i64 {
     _sc_want = w;
     _fla_want = 0 - 1;
+    _sc_fcw = 0 - 1;
+    if (_scv_pk > 0) { _pw_close(S, _scv_pk); }   # 6.7.6: the wrap `_scv_peel` stepped into
+    _scv_pk = 0;
+    return 0;
+}
+# ⛔ 6.7.6 — `var q: K = (z.k);`, `= (j.dup())`, `= (a + b)`, `= (mk(4))` in a fn: the initialiser
+# wrapped in parentheses (`_pwrap_k`) was an expression whose value is the struct's first word, so q
+# was a POINTER-mode K holding it and `q.a` dereferenced a value: SIGSEGV. The declaration steps
+# inside the wrap before it arms, so the field source, the method / operator temp and (through
+# `_sc_fcw`, read by PARSE_FNCALL's `_fnc_agg`) a free call's temp are taken exactly as for the
+# unwrapped initialiser; `_scv_disarm` closes the wrap, and `_sc_whole` sees through it. A name
+# (`= (j)`) is `_try_struct_copy_init`'s. CHANGELOG [6.7.6]
+fn _scv_peel(S): i64 {
+    if (PEEKT(S) != 10) { return 0; }
+    var k = _pwrap_k(S, GTI(S));
+    if (TOKTYP(S, _pw_end) != 5) { return 0; }
+    STI(S, GTI(S) + k);
+    _scv_pk = k;
+    _scv_term = 11;
+    _sc_fcw = GTI(S);
     return 0;
 }
 fn _scv_call_check(S, pscale): i64 {
     var o = _gcall_open(S, GTI(S));
     if (o < 0) { return 0; }
-    if (_call_follow(S, o - 1) != 5) { return 0; }
+    if (_call_follow(S, o - 1) != _scv_term) { return 0; }
     var fi = _gen_resolve_call(S, GTI(S));
     if (fi < 0) { return 0; }
     if (_grc_err < 0) { return 0; }   # a failed instantiation: the call refuses itself, once
@@ -3018,9 +3043,28 @@ fn _sc_arm(S): i64 {
 # whole expression is such a call at top level (no temp); -2 when it is not one — a struct call
 # inside a larger expression (`b.mk(1).x`, `k + a * b`) does not span it, so it never matches.
 fn _sc_whole(S, start): i64 {
-    if (_sc_beg != start) { return 0 - 2; }
+    if (_sc_beg != start) {
+        if (_sc_pwrap(S, start) == 1) { return _sc_tmp; }   # 6.7.6
+        return 0 - 2;
+    }
     if (_sc_end != GTI(S)) { return 0 - 2; }
     return _sc_tmp;
+}
+# 6.7.6 — the record spans the expression inside parentheses that wrap the whole of it: `start`
+# opens `k` `(` that end where the record begins, and `k` `)` follow the record up to the cursor
+# (`x = (p.dup())`, `var q: P = (a + b)`). The parser consumed them as nested parenthesised
+# factors, so they are balanced. CHANGELOG [6.7.6]
+fn _sc_pwrap(S, start): i64 {
+    if (_sc_beg <= start) { return 0; }
+    var k = _sc_beg - start;
+    if (_sc_end + k != GTI(S)) { return 0; }
+    var i = 0;
+    while (i < k) {
+        if (TOKTYP(S, start + i) != 10) { return 0; }
+        if (TOKTYP(S, _sc_end + i) != 11) { return 0; }
+        i = i + 1;
+    }
+    return 1;
 }
 
 # `var p: S = <expr>` / `var p = <expr>` in a fn, <expr> one whole method/operator call returning
@@ -3867,6 +3911,35 @@ fn _pure_effect_warn(S, fi, noff): i64 {
     return 0;
 }
 
+# PARSE_FNCALL's struct-result arm (cursor just past the call's `(`): a >16 B result into an
+# anonymous frame temp, whose first word is the expression's value (see the 6.6.6 note in
+# PARSE_FNCALL); at top level refused by name, and 0 (the call is emitted as ever). 1 = emitted.
+# 6.7.6: the call `_sc_fcw` names (a parenthesised declaration initialiser, `_scv_peel`) — and a
+# 9-16 B result there too — is recorded as a method call's temp is, for `_sc_var_receive`.
+fn _fnc_agg(S, fi, noff): i64 {
+    var cls = _ret_agg_class(S, fi);
+    if (cls == 0) { return 0; }
+    var want = 0;
+    if (_sc_fcw >= 0) { if (_gcall_open(S, _sc_fcw) == GTI(S) - 1) { want = 1; } }
+    if (cls == 1) { if (want == 0) { return 0; } }
+    if (GINFN(S) == 0) {
+        if (cls == 2) { _refuse_toplevel_struct_call(S, noff); }
+        return 0;
+    }
+    var t = _agg_temp(S, GFRS(S, fi));
+    _struct_call_emit(S, fi, noff, t);
+    EFLLOAD(S, t);
+    SESTYPE(S, 0);
+    if (want == 1) {
+        _sc_beg = _sc_fcw;
+        _sc_end = GTI(S);
+        _sc_tmp = t;
+        _sc_sid = GFRS(S, fi);
+        _sc_fn = noff;
+    }
+    return 1;
+}
+
 fn PARSE_FNCALL(S, noff): i64 {
     STI(S, GTI(S) + 1);  # consume (
     # Check for inline candidate
@@ -4005,16 +4078,7 @@ fn PARSE_FNCALL(S, noff): i64 {
     # anonymous frame temp, and the expression's VALUE is its first word — exactly what a struct
     # local yields as an rvalue (`var k = r;`, `h(r)` into an untyped param), so the two agree.
     # At top level there is no frame to hold it: refused by name. CHANGELOG [6.6.6]
-    if (_ret_agg_class(S, fi) == 2) {
-        if (GINFN(S) == 0) { _refuse_toplevel_struct_call(S, noff); }
-        else {
-            var _sct = _agg_temp(S, GFRS(S, fi));
-            _struct_call_emit(S, fi, noff, _sct);
-            EFLLOAD(S, _sct);
-            SESTYPE(S, 0);
-            return 0;
-        }
-    }
+    if (_fnc_agg(S, fi, noff) == 1) { return 0; }   # 6.7.6: out of this body (cybs ceiling)
     # v6.4.31: on Win64 PE a value-form SIMD param (address-passed, struct_mask
     # set) or a SIMD return (retptr-style) can't survive the inline replay, which
     # homes args with an 8-byte EFLSTORE and returns scalar-in-rax — it would
