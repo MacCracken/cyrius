@@ -853,6 +853,22 @@ fn SGFI(S, vi, f): i64 {
     store8(_gfi_base + vi, f);
     return 0;
 }
+# 6.7.3 (B2) — one byte per GLOBAL: declared `: bool` (a write into it is checked, a read is a
+# boolean value). Lazily allocated at the var table's hard cap, like `_gfi_base`; _gv_clear zeroes it.
+var _gvb_base = 0;
+fn SVBOOL(S, vi, b): i64 {
+    if (vi < 0) { return 0; }
+    if (vi >= 1048576) { return 0; }
+    if (_gvb_base == 0) { if (b == 0) { return 0; } _gvb_base = alloc(1048576); }
+    store8(_gvb_base + vi, b);
+    return 0;
+}
+fn GVBOOL(S, vi): i64 {
+    if (_gvb_base == 0) { return 0; }
+    if (vi < 0) { return 0; }
+    if (vi >= 1048576) { return 0; }
+    return load8(_gvb_base + vi);
+}
 # CVE-24 (v6.1.40): cap the per-fn stack-slot count. SFLC counts FRAME SLOTS
 # (a `stack var buf[N]` registers N/8 fillers), and the four slot-indexed local
 # tables — fn_local_names/local_depths/local_types/local_slice_widths, relocated
@@ -1550,6 +1566,21 @@ fn GLPTRP(S, li): i64 {
     if (li < 0) { return 0; }
     return (L64(S + 0x5DBD000 + li * 8) >> 56) & 1;
 }
+# 6.7.3 (B2) — bit 58 of the same word: the slot is a `bool` (a local or a parameter declared
+# `: bool`), so a write into it is checked (_bx_*) and a read of it is a boolean value. Written
+# LAST at registration, like bit 56; bit 57 is the closure snapshot's struct-pointer mark.
+fn SLBOOL(S, li, b): i64 {
+    if (b == 1) { S64(S + 0x5DBD000 + li * 8, L64(S + 0x5DBD000 + li * 8) | (1 << 58)); }
+    return 0;
+}
+fn GLBOOL(S, li): i64 {
+    if (li < 0) { return 0; }
+    return (L64(S + 0x5DBD000 + li * 8) >> 58) & 1;
+}
+# The boolean stamp (parse_expr.cyr _BX_MARK): the code pointer and token index at the end of the
+# last boolean value. 0 = none.
+var _bxr_cp = 0;
+var _bxr_ti = 0;
 fn GLAGG(S, li): i64 {
     if (GLSPAN(S, li) == 0) { return 0; }
     return 1;

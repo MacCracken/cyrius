@@ -2998,6 +2998,7 @@ fn _gv_clear(S, vi): i64 {
     # vector mark (a struct global then read through its first word). CHANGELOG [6.6.20]
     if (GVVEC(S, vi) != 0) { SVVEC(S, vi, 0); }
     if (_gv_ptr_sid(S, vi) != 0) { S64(_gv_psid + vi * 8, 0); }
+    if (GVBOOL(S, vi) != 0) { SVBOOL(S, vi, 0); }   # 6.7.3
     return 0;
 }
 
@@ -4803,6 +4804,7 @@ fn PARSE_VAR(S): i64 {
     var scalar_type = 0;
     var scalar_signed = 0;   # v6.3.35: 1 for a SIGNED sub-i64 (iN) local, 0 for uN/other
     var lfloat = 0;   # v6.2.19 math arc: F64_TYID / F32_TYID for local `var x: f64`/`f32`
+    var lbool = 0;    # 6.7.3 (B2): `var b: bool` — its initializer and every write are checked
     var slice_elt_w = 0;  # v5.8.14 §6: element width for slice<T>/[T] (0 = not a slice)
     var ann_ti = 0;       # 6.6.13 (M2): the annotation's type token (an array's element size)
     if (PEEKT(S) == 49) {
@@ -4874,6 +4876,7 @@ fn PARSE_VAR(S): i64 {
                 scalar_type = _tn_iw(_lc);
                 scalar_signed = _tn_sgn(_lc);
                 lfloat = _tn_flt(_lc);
+                lbool = _tn_bool(_lc);
                 _gs_sid = _tn_sid(_lc);
                 pscale = _tn_vec(_lc) - _gs_sid;
             }
@@ -5216,7 +5219,7 @@ fn PARSE_VAR(S): i64 {
                     # got a scalar slot and the callee wrote its aggregate to a garbage
                     # retptr → SIGSEGV.
                     # Closes issues/archived/2026-06-28-inferred-struct-local-from-call-segfaults.md.
-                    if ((pscale == 0) && (_look_sid > 0)) {
+                    if ((pscale + lbool == 0) && (_look_sid > 0)) {   # 6.7.3: never for a bool
                         var _inf_sz = STRUCTSZ(S, _look_sid - 1);
                         if (_inf_sz > 16) { pscale = 0 - _look_sid; }
                         elif ((_inf_sz > 8) && (_look_sid != _STR_SID(S))) { pscale = 0 - _look_sid; }
@@ -5240,7 +5243,7 @@ fn PARSE_VAR(S): i64 {
                     # composite return ABI). Str (its own 16B
                     # struct, special-cased by sid) stays on the
                     # scalar-rax single-slot pointer-mode path.
-                    if (_look_sid > 0) {
+                    if (_look_sid > 0 && lbool == 0) {   # 6.7.3: a bool never receives a struct
                         var _look_sz = STRUCTSZ(S, _look_sid - 1);
                         if (_look_sz > 16) {
                             asv_try = 1;
@@ -5466,7 +5469,7 @@ fn PARSE_VAR(S): i64 {
     # annotation is present (pscale == 0 && scalar_type == 0 —
     # both are SET when `: Type` is parsed earlier in this fn).
     var _ti_inferred_sid = 0;
-    if (pscale == 0) { if (scalar_type == 0) {
+    if (pscale == 0) { if (scalar_type + lbool == 0) {   # 6.7.3: a bool is never a struct
             if (PEEKT(S) == 2) {
                 # v6.3.37 (B2): infer the local's struct type from BOTH a plain `IDENT (`
                 # and a monomorph generic `IDENT < ... > (` call — so `var b = mk<i32>(...)`
@@ -5497,6 +5500,7 @@ fn PARSE_VAR(S): i64 {
     var scv_prev = _scv_arm(S, pscale);   # 6.6.11: + the field source and the <= 8 B call check
     PCMPE(S);
     _scv_disarm(scv_prev);
+    _bx_decl(S, lbool, noff, scv_start);   # 6.7.3 (B2): a bool takes a boolean value
     # 6.6.10: an integer constant into an `f64` / `f32` declaration warns (_IFS_CHECK), and an
     # UNTYPED declaration records whether its initialiser was a float (_UFV_*).
     _IFS_CHECK(S, _IFS_K(lfloat), scv_start);
@@ -5520,7 +5524,7 @@ fn PARSE_VAR(S): i64 {
             if (GLDEP(S, existing) == GSDEP(S)) { ERRDUPVAR(S); }
         }
         # 6.6.6: `var p: S = b.mk(..)` / `var c: V3 = a + b` — the call's temp becomes `p`.
-        if (_sc_var_receive(S, noff, pscale, scalar_type + lfloat + slice_elt_w, scv_start) == 1) {
+        if (_sc_var_receive(S, noff, pscale, scalar_type + lfloat + slice_elt_w + lbool, scv_start) == 1) {
             if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
             STI(S, GTI(S) + 1);
             return 0;
@@ -5668,6 +5672,7 @@ fn PARSE_VAR(S): i64 {
             _sl_marks(S, li, scalar_signed, scalar_type, slice_elt_w, pscale);
             SFLC(S, li + 1);
             SLFI(S, li, ufv);   # 6.6.10: set on EVERY declaration, after SFLC cleared it (see _UFV_L)
+            SLBOOL(S, li, lbool);   # 6.7.3: last — the high half is rewritten above
         }
     } else {
         _sc_global_receive(S, pscale, scv_start);   # 6.6.6: no frame at top level — refused by name

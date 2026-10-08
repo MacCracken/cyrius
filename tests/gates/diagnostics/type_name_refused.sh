@@ -156,9 +156,11 @@ loc="" glb="" pp="" ptr="" gptr="" sl="" slg="" par="" szs="" fld="" mret=""
 n=0
 for t in $SCALARS; do
     n=$((n + 1))
-    case $t in Pt|u8pair) loc="$loc    var l$n: $t;\n" ;; *) loc="$loc    var l$n: $t = 0;\n" ;; esac
-    glb="${glb}var g$n: $t = 0;\n"
-    pp="${pp}var q$n: $t = 0;\n"
+    # 6.7.3 (B2): a bool takes a boolean value — `= false`, never `= 0`.
+    z=0; [ "$t" = bool ] && z=false
+    case $t in Pt|u8pair) loc="$loc    var l$n: $t;\n" ;; *) loc="$loc    var l$n: $t = $z;\n" ;; esac
+    glb="${glb}var g$n: $t = $z;\n"
+    pp="${pp}var q$n: $t = $z;\n"
     ptr="$ptr    var p$n: *$t = 0;\n"
     gptr="${gptr}var gp$n: *$t = 0;\n"
     sl="$sl    var s$n: [$t] = 0;\n"
@@ -166,7 +168,7 @@ for t in $SCALARS; do
     par="${par}fn pf$n(a: $t): i64 { return 0; }\n"
     szs="$szs    k = k + sizeof($t);\n"
     fld="$fld    f$n: $t;\n"
-    case $t in Pt|u8pair|f64|f32) ;; *) mret="${mret}fn mr$n(): (i64, $t) { return (1, 2); }\n" ;; esac
+    case $t in Pt|u8pair|f64|f32) ;; bool) mret="${mret}fn mr$n(): (i64, $t) { return (1, false); }\n" ;; *) mret="${mret}fn mr$n(): (i64, $t) { return (1, 2); }\n" ;; esac
 done
 for t in $VECS; do
     n=$((n + 1))

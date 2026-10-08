@@ -181,6 +181,10 @@ fn _tn_sid(c): i64 {                        # a struct's sid, else 0
     if (_tn_class(c) == 6) { return _tn_val(c); }
     return 0;
 }
+fn _tn_bool(c): i64 {                       # 1 for `bool` (6.7.3), else 0
+    if (_tn_class(c) == 4) { if (_tn_val(c) == 1) { return 1; } }
+    return 0;
+}
 fn _tn_vec(c): i64 {                        # a vector's descriptor sentinel (<= -2048), else 0
     if (_tn_class(c) == 5) { return 0 - _tn_val(c); }
     return 0;
@@ -398,6 +402,7 @@ fn _sl_load_marks(S, li): i64 {
     _UFV_L(S, li);
     var ps = _slot_ptr_step(S, li);
     if (ps > 0) { SPSC(S, ps); }
+    if (GLBOOL(S, li) == 1) { _BX_MARK(S); }   # 6.7.3: a bool local's read is a boolean value
     return 0;
 }
 

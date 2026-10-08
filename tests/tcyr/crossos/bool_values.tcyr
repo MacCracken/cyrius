@@ -54,8 +54,33 @@ fn values(): i64 {
     return 0;
 }
 
+fn locals(): i64 {
+    var a = 3;
+    var t: bool = true;
+    var f: bool = false;
+    var c: bool = a < 4;
+    var d: bool = !a;
+    var e: bool = (a > 1) && (a < 9);
+    var g: bool = c || d;
+    var h: bool = (c);
+    var k: bool = !!a;
+    var l: bool = f64_lt(1.0, 2.0);
+    assert_eq(t + f * 2 + c * 4 + d * 8 + e * 16 + g * 32 + h * 64 + k * 128 + l * 256, 1 + 4 + 16 + 32 + 64 + 128 + 256, "L1: locals from every producer");
+    t = a != 3;
+    assert_eq(t, 0, "L2: assigned a comparison");
+    t = !t;
+    assert_eq(t, 1, "L3: assigned its own negation");
+    for (var q = 0; q < 3; t = q > 1) { q = q + 1; }
+    assert_eq(t, 1, "L4: a for step assigns a comparison");
+    var n = 10 + c;
+    assert_eq(n, 11, "L5: a bool reads as 1 in arithmetic");
+    assert_eq(c * 4 + f, 4, "L6: ... and 0");
+    return 0;
+}
+
 fn run(): i64 {
     values();
+    locals();
     return 0;
 }
 var r0 = run();

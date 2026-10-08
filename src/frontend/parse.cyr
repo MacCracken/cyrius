@@ -2848,6 +2848,7 @@ fn _stmt_dot_chain_call(S): i64 {
 var _asg_cstep = 0;
 fn _asg_compound_load(S, noff): i64 {
     _asg_cstep = 0;
+    _bx_compound(S, noff);   # 6.7.3 (B2): refused into a bool
     if (_cur_iself_sid > 0) { if (_noff_is(S, noff, "self", 4) == 1) {   # 6.7.0 (A4): `self += n`
             ERR_IDENT(S, "compound assignment to an untyped `self` is refused - in an impl it points at ", L64(S + 0x1A6018 + (_cur_iself_sid - 1) * 8), ": declare `self: *T` to step whole elements", 0 - 1);
         } }
@@ -3057,6 +3058,7 @@ fn _pcmpe_struct_assign(S, noff, term): i64 {
     if (term == 11) { _fla_stp = st; }   # 6.6.20: a for step's field source ends at `)`
     var w = _sc_arm(S);
     PCMPE(S);
+    _bx_asg(S, noff, st);          # 6.7.3 (B2): a write into a bool takes a boolean value
     _asg_ufv = _UFV_IS_FLOAT(S);   # 6.6.11: here, while _FBR_KIND is still valid (see _asg_rejudge)
     _sc_want = w;
     _fla_want = 0 - 1;
