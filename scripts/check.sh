@@ -2314,6 +2314,7 @@ _chk_gate "$ROOT/tests/gates/codegen/cx_backend_parity.sh"   # 6.7.6 (Break 1 la
 _chk_gate "$ROOT/tests/gates/memory/lib_buffers_sized_by_const.sh"   # 6.7.6 (Break 1 lane H)
 _chk_gate "$ROOT/tests/gates/toolchain/test_absorbs_tests.sh"   # 6.7.6 (Break 1 lane G)
 _chk_gate "$ROOT/tests/gates/frontend/silent_values_checked.sh"   # 6.7.6 (Break 1, lane D)
+_chk_gate "$ROOT/tests/gates/codegen/struct_value_codegen.sh"   # 6.7.6 (Break 1, lane E)
 _chk_gate "$ROOT/tests/gates/toolchain/cybs_call_arity_named.sh"
 _chk_gate "$ROOT/tests/gates/platform/agnos_proc_kill_tree_refused.sh"
 _chk_gate "$ROOT/tests/gates/platform/cx_compiler_reads_env.sh"

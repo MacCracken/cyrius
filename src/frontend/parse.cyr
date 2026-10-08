@@ -1210,6 +1210,49 @@ var _sc_n0 = 0;         # 1 when `_sc_pre` pushed a retptr as int arg 0
 var _sc_rbeg = 0 - 1;
 var _sc_rend = 0 - 1;
 
+# ⭐ 6.7.6 — REDUNDANT PARENTHESES AROUND A WHOLE STRUCT SOURCE ARE TRANSPARENT. Every struct
+# destination (an address-passed argument, a struct-typed field, a struct variable) picks its copy
+# from the source's FIRST token — a name, a call, a field — so `rd3((a))`, `o.i = (z.k)` and
+# `u = (j)` were an expression whose value is the struct's first word: pushed and dereferenced
+# (SIGSEGV), or stored as one word (silent). `_pwrap_k` counts the parentheses at token `st` that
+# wrap one expression — each `(` closing right before its enclosing `)` — and leaves the token after
+# the outermost `)` in `_pw_end`; a destination whose terminator is that token runs its arms on the
+# inside (`st + k`) and closes the `k` parentheses after (`_pw_close`). `(a) + (b)` is not a wrap.
+# CHANGELOG [6.7.6]
+var _pw_end = 0 - 1;
+# The first token of a parenthesised declaration initialiser's inside (`_scv_peel`): a whole free
+# call starting there records its struct temp (`_fnc_agg`), as a method call's does. -1 = none.
+var _sc_fcw = 0 - 1;
+# 6.7.6 — the last WHOLE `Str` field read (`h.name`): its first token, the token after it, the Str
+# struct id and the field's name (`_fls_note`, parse_decl.cyr). Passive — the load is unchanged.
+var _fls_beg = 0 - 1;
+var _fls_end = 0 - 1;
+var _fls_sid = 0;
+var _fls_name = 0;
+fn _pwrap_k(S, st): i64 {
+    var k = 0;
+    var c = 0;
+    _pw_end = 0 - 1;
+    while (TOKTYP(S, st + k) == 10) {
+        var ck = _call_close(S, st + k);
+        if (k > 0) { if (ck != c - 1) { break; } }
+        if (k == 0) { _pw_end = ck + 1; }   # after the OUTERMOST `)`
+        c = ck;
+        k = k + 1;
+    }
+    return k;
+}
+# Consume the `k` closing parentheses of a wrap whose inside was just parsed.
+fn _pw_close(S, k): i64 {
+    var i = 0;
+    while (i < k) {
+        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); return 0; }
+        STI(S, GTI(S) + 1);
+        i = i + 1;
+    }
+    return 0;
+}
+
 # v5.10.28 — current fn's return-type scalar tag (negative encodings
 # from `_rt_scalar`: -1=i8, -2=i16, -4=i32, -8=i64, -16=Result,
 # -17=Option, -18=Tagged, -19=cstring, -2093=f64v2). PARSE_RETURN
@@ -2763,6 +2806,7 @@ fn _try_struct_call_assign(S, noff, term): i64 {
     # `Box<Pt>` local compared the base's `Box` return, missed, and fell to the scalar store —
     # fields stale, silently; the explicit `r = mk<Pt>(p);` did the same once its return type
     # named the instance.
+    if (PEEKT(S) == 10) { if (_asg_paren(S, noff, term, 1) == 1) { return 1; } return 0; }   # 6.7.6
     var o = _gcall_open(S, GTI(S));
     if (o < 0) { return 0; }
     var fi = _gen_resolve_call(S, GTI(S));
@@ -3168,6 +3212,10 @@ fn _asg_rhs_steps(S, di, rsid): i64 {
 }
 
 fn _pcmpe_struct_assign(S, noff, term): i64 {
+    if (PEEKT(S) == 10) { if (_asg_struct_dst(S, noff) == 1) {   # 6.7.6: a wrapped source
+            var pr = _asg_paren(S, noff, term, 2);
+            if (pr >= 0) { return pr; }
+        } }
     var st = GTI(S);
     _agc_operand(S, noff);
     _fla_arm(st, _agc_t);
@@ -3182,7 +3230,7 @@ fn _pcmpe_struct_assign(S, noff, term): i64 {
     _fla_stp = fs;
     if (_fla_hit == 1) { return _fla_assign(S, noff, term); }
     var t = _sc_whole(S, st);
-    if (t == 0 - 2) { return 0; }
+    if (t == 0 - 2) { _fls_asg_check(S, noff, st); return 0; }   # 6.7.6: a `Str` field
     var n = _agc_operand(S, noff);
     if (t == 0 - 3) { _asg_ret_sid = _sc_sid; }   # a <= 8 B struct VALUE: not a pointer mismatch
     if (_AGG_ASSIGN_TYPE_ERR(S, _agc_t, 0 - _sc_sid, noff, _sc_fn) == 1) { return 0; }
@@ -3198,7 +3246,52 @@ fn _pcmpe_struct_assign(S, noff, term): i64 {
     return 1;
 }
 
+# ⛔ 6.7.6 — `u = (j);`, `w = (z.k);`, `w = (mk(5));`, `w = (j.dup());` into a struct variable (and
+# in a classic-for step): the parenthesised source was an expression whose value is the struct's
+# first word, stored as one word — silently (`u = (j)` left u.b and u.c stale). Parentheses that
+# wrap the whole source (`_pwrap_k`) are transparent: the assignment helper `which` — 0
+# `_try_aggregate_copy_assign`, 1 `_try_struct_call_assign`, 2 `_pcmpe_struct_assign` — runs on what
+# they wrap, ending at its `)`, and the wrap is closed after. 1 = done (`term` consumed); 0 = not
+# that helper's source (cursor back on the `(`; for 2, the value is in rax and the cursor on `term`,
+# as after a plain PCMPE); -1 = not a wrap. CHANGELOG [6.7.6]
+fn _asg_paren(S, noff, term, which): i64 {
+    var st = GTI(S);
+    var k = _pwrap_k(S, st);
+    if (TOKTYP(S, _pw_end) != term) { return 0 - 1; }
+    STI(S, st + k);
+    var r = 0;
+    if (which == 0) { r = _try_aggregate_copy_assign(S, noff, 11); }
+    elif (which == 1) { r = _try_struct_call_assign(S, noff, 11); }
+    else { r = _pcmpe_struct_assign(S, noff, 11); }
+    if (r == 1) {   # the inside consumed its own `)`
+        _pw_close(S, k - 1);
+        if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
+        STI(S, GTI(S) + 1);
+        return 1;
+    }
+    if (which == 2) { _pw_close(S, k); return 0; }
+    STI(S, st);
+    return 0;
+}
+# 6.7.6 — `q = h.name;` with a `: Str` field into a struct VALUE of another type is refused by name;
+# a handle destination rebinds at any type (6.6.16 C2), and a `Str` one is a handle. See `_fls_note`.
+fn _fls_asg_check(S, noff, st): i64 {
+    if (_fls_whole(S, st) == 0) { return 0; }
+    _agc_operand(S, noff);
+    if (_agc_hdl() == 1) { return 0; }
+    return _fls_type_err(S, _agc_t, noff);
+}
+# 1 = `noff` names a struct operand (`_agc_operand`'s type in the struct band): the destination a
+# parenthesised source is unwrapped for. Any other `x = (e);` keeps its plain parse.
+fn _asg_struct_dst(S, noff): i64 {
+    _agc_operand(S, noff);
+    if (_agc_t >= 0) { return 0; }
+    if (_agc_t <= 0 - 2048) { return 0; }
+    return 1;
+}
+
 fn _try_aggregate_copy_assign(S, noff, term): i64 {
+    if (PEEKT(S) == 10) { if (_asg_paren(S, noff, term, 0) == 1) { return 1; } return 0; }   # 6.7.6
     if (PEEKT(S) != 2) { return 0; }
     if (TOKTYP(S, GTI(S) + 1) != term) { return 0; }
     # ⛔ 6.6.5 — THIS USED TO OPEN `if (GINFN(S) != 1) return 0;` AND THEN `FINDLOCAL` BOTH

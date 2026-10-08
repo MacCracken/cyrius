@@ -1,0 +1,342 @@
+# struct_value_codegen.tcyr — 6.7.6 (Break 1, lane E): struct values and struct fields as operands,
+# at run time on every backend. Each group is one repaired defect; the refusals, the shapes a target
+# lacks and the mutation ledger are tests/gates/codegen/struct_value_codegen.sh.
+#
+#   F  `if (h.m)` / `while (h.m)` on an i8 / i16 / i32 field after an arithmetic statement: x86
+#      skipped the `test` and branched on the statement's flags (the narrow field load never cleared
+#      the flags tracker). Each row's field disagrees with the flags the statement before it left.
+#   I  a name intrinsic's result (`mulh64`, `fncall0`..`fncall8`, `callptr`) is an untyped word: it
+#      inherited its LAST argument's struct type, so `fncall1(&f, n) + 1` with `n: Num` dispatched
+#      `Num_add` (100 where 8 is right).
+#   P  a PARENTHESISED argument to an address-passed parameter (`rd3((a))`, `rd1((s))`,
+#      `rd1((mk1(4)))`) was pushed as its value and dereferenced: SIGSEGV. Parentheses around the
+#      whole argument are transparent at any depth, for every argument shape.
+#   Q  a PARENTHESISED struct source into a struct-typed field (`o.i = (z.k)`: 72 where 78 is
+#      right), a struct variable (`w = (j)`: one word) or a declaration (`var q: K = (z.k)`:
+#      SIGSEGV), in a fn, at top level and in a for step — every source shape.
+#   O  a struct result over 8 B (a free call, a method, an operator; retptr or rax:rdx) as the
+#      right operand of an operator that takes it by address: `s - mk3(4)` and `p + p.dup()`
+#      pushed its first word and SIGSEGV'd.
+#   S  a `: Str` field as a source is a Str HANDLE: into a Str parameter, variable, declaration and
+#      field (bare or wrapped) it is the handle as ever. Into a struct of ANOTHER type it is now
+#      refused by name (the gate's S rows) — it compiled and read past the Str's header.
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/str.cyr"
+include "lib/fnptr.cyr"
+include "lib/assert.cyr"
+
+struct H { n; m: i8; k: i32; }
+struct H2 { n; m: i16; }
+
+var GH = H { 1, 0, 0 };
+
+fn bits(v) { return v; }
+
+struct Num { a; b; }
+fn Num_add(x: Num, y) { return 100; }
+fn Num_sub(x: Num, y) { return 100; }
+fn id1(x) { return 7; }
+fn id2(x, y) { return 7; }
+var GN = Num { 1, 2 };
+
+# F — each row in its own fn, so the flags state it tests is the one its own statement left.
+fn f_i8(): i64 { var h = H { 1, 0, 3 }; var x = 5; x = x + 1; if (h.m) { return 1; } return 0; }
+fn f_i16(): i64 { var h = H2 { 1, 0 }; var a: i64[2]; a[0] = 3; a[0] -= 1; if (h.m) { return 1; } return 0; }
+fn f_compound(): i64 { var h = H { 1, 2, 3 }; h.m -= 2; if (h.m) { return 1; } return 0; }
+fn f_while(): i64 {
+    var h = H { 1, 0, 0 };
+    var x = 4;
+    var c = 0;
+    x = x + 3;
+    while (h.k) { c = c + 1; if (c > 3) { break; } }
+    return c;
+}
+fn f_ptr(p: *H): i64 { var x = 1; x = x + 1; if (p.m) { return 1; } return 0; }
+fn f_global(): i64 { var x = 2; x = x * 3 + 1; if (GH.k) { return 1; } return 0; }
+fn f_zero_flags(): i64 { var h = H { 1, 0 - 1, 0 }; var y = bits(3); y = y - 3; if (h.m) { return 1; } return 0; }
+fn f_zero_i32(): i64 {
+    var h = H { 1, 0, 7 };
+    var y = bits(3);
+    var c = 0;
+    y = y - 3;
+    while (h.k) { c = c + 1; h.k = h.k - 1; if (c > 20) { break; } }
+    return c;
+}
+
+fn flags(): i64 {
+    assert_eq(f_i8(), 0, "F1: if (h.m) on a zero i8 field after x = x + 1");
+    assert_eq(f_i16(), 0, "F2: if (h.m) on a zero i16 field after a[0] -= 1");
+    assert_eq(f_compound(), 0, "F3: h.m -= 2 then if (h.m)");
+    assert_eq(f_while(), 0, "F4: while (h.k) on a zero i32 field runs no iteration");
+    var h = H { 1, 0, 0 };
+    assert_eq(f_ptr(&h), 0, "F5: if (p.m) through a *H parameter");
+    assert_eq(f_global(), 0, "F6: if (GH.k) on a global's i32 field");
+    assert_eq(f_zero_flags(), 1, "F7: if (h.m) on a NONZERO i8 field after y = y - 3 left ZF set");
+    assert_eq(f_zero_i32(), 7, "F8: while (h.k) on a nonzero i32 field after y = y - 3 counts it down");
+    return 0;
+}
+
+# I — the intrinsic's result is a plain word, whatever its last argument was.
+fn intrinsics(): i64 {
+    var n: Num = Num { 1, 2 };
+    assert_eq(mulh64(3, n) + 1, 1, "I1: mulh64(3, n) + 1 (not Num_add)");
+    assert_eq(fncall1(&id1, n) + 1, 8, "I2: fncall1(&id1, n) + 1");
+    assert_eq(callptr(&id1, n) + 1, 8, "I3: callptr(&id1, n) + 1");
+    assert_eq(fncall2(&id2, 1, n) - 1, 6, "I4: fncall2(&id2, 1, n) - 1 (not Num_sub)");
+    assert_eq(fncall1(&id1, GN) + 1, 8, "I5: a global struct as the last argument");
+    var a = fncall1(&id1, n) + mulh64(5, n);
+    assert_eq(a, 7, "I6: two intrinsic results added");
+    return 0;
+}
+var GI1 = fncall1(&id1, GN) + 1;
+var GI2 = mulh64(3, GN) + 1;
+
+# P — parenthesised arguments. P3 is 24 B (a retptr return), S1 8 B (in rax).
+struct P3 { x; y; z; }
+struct S1 { v; }
+struct HP { n; p: P3; }
+fn rd3(p: *P3): i64 { return p.z; }
+fn rd1(p: *S1): i64 { return p.v; }
+fn wr1(p: *S1): i64 { p.v = 9; return 0; }
+fn sz3(p: P3): i64 { return p.x + p.y + p.z; }
+fn mk3(v): P3 { var t: P3 = P3 { v, v, v }; return t; }
+fn mk1(v): S1 { var t: S1; t.v = v; return t; }
+fn P3_add(a: *P3, b: *P3): P3 { var t: P3 = P3 { a.x + b.x, a.y + b.y, a.z + b.z }; return t; }
+impl P3 { fn dbl(self): P3 { var t: P3 = P3 { self.x * 2, self.y * 2, self.z * 2 }; return t; } }
+var GP3 = P3 { 1, 2, 7 };
+fn p_tail(a: P3): i64 { return sz3((a)); }
+var GPR = rd3((GP3)) + rd3(((GP3)));
+fn parens(): i64 {
+    var a: P3 = P3 { 1, 2, 3 };
+    var b: P3 = P3 { 10, 20, 30 };
+    var s: S1;
+    s.v = 5;
+    var h: HP;
+    h.n = 0; h.p.x = 10; h.p.y = 20; h.p.z = 30;
+    assert_eq(rd3((a)), 3, "P1: rd3((a)), a *P3 parameter");
+    assert_eq(rd3(((a))), 3, "P2: rd3(((a))), two levels");
+    assert_eq(rd1((s)), 5, "P3: rd1((s)), an 8-byte struct");
+    assert_eq(rd1((mk1(4))), 4, "P4: rd1((mk1(4))), an 8-byte call result");
+    assert_eq(sz3((a)), 6, "P5: sz3((a)), a by-value 24-byte parameter");
+    assert_eq(sz3((mk3(4))), 12, "P6: sz3((mk3(4))), a retptr call result");
+    assert_eq(sz3((h.p)), 60, "P7: sz3((h.p)), a struct-typed field");
+    assert_eq(sz3((a.dbl())), 12, "P8: sz3((a.dbl())), a method result");
+    assert_eq(sz3((a + b)), 66, "P9: sz3((a + b)), an operator result");
+    assert_eq(sz3((a) + (b)), 66, "P10: sz3((a) + (b)) is an expression, not a wrap");
+    assert_eq(sz3(((a) + (b))), 66, "P16: sz3(((a) + (b))): one wrap around that expression");
+    assert_eq(sz3(((a)) + (b)), 66, "P17: sz3(((a)) + (b)): a double wrap that is only the left operand");
+    assert_eq(rd3((GP3)), 7, "P11: rd3((GP3)), a global");
+    wr1((s));
+    assert_eq(s.v, 9, "P12: wr1((s)) writes through to s");
+    assert_eq(p_tail(a), 6, "P13: return sz3((a)); (a tail call)");
+    var q = &a;
+    assert_eq(rd3((q)) + rd3((&a)), 6, "P14: (q) and (&a) are still pointers");
+    return 0;
+}
+
+# Q — a parenthesised struct SOURCE into a struct destination (a field, a variable, a declaration;
+# a for step's too): the wrap is transparent, so the whole struct is copied. Every row's source
+# differs from its destination in every word, so a one-word copy reads a wrong sum.
+struct ZK { m; k: P3; }
+struct OQ { n; i: P3; }
+fn s3(p: *P3): i64 { return p.x + p.y + p.z; }
+fn oi3(o: *OQ): i64 { return o.i.x + o.i.y + o.i.z; }
+var GQS = P3 { 0, 0, 0 };
+var GQD: P3 = (GP3);
+var GQF: P3 = ((GP3));
+fn q_fields(): i64 {
+    var a: P3 = P3 { 1, 2, 3 };
+    var b: P3 = P3 { 10, 20, 30 };
+    var z = ZK { 1, 20, 25, 30 };
+    var j = P3 { 21, 26, 31 };
+    var z0 = P3 { 0, 0, 0 };
+    var o = OQ { 0, 0, 0, 0 };
+    o.i = (z.k);
+    assert_eq(oi3(&o), 75, "Q1: o.i = (z.k)");
+    o.i = (j);
+    assert_eq(oi3(&o), 78, "Q2: o.i = (j) (the filed repro: 72)");
+    o.i = z0;
+    o.i = ((z.k));
+    assert_eq(oi3(&o), 75, "Q3: o.i = ((z.k))");
+    o.i = z0;
+    var i = 0;
+    for (i = 0; i < 1; o.i = (z.k)) { i = i + 1; }
+    assert_eq(oi3(&o), 75, "Q4: a for step o.i = (z.k)");
+    o.i = (mk3(4));
+    assert_eq(oi3(&o), 12, "Q5: o.i = (mk3(4))");
+    o.i = (a.dbl());
+    assert_eq(oi3(&o), 12, "Q6: o.i = (a.dbl())");
+    o.i = (a + b);
+    assert_eq(oi3(&o), 66, "Q7: o.i = (a + b)");
+    return 0;
+}
+fn q_vars(): i64 {
+    var a: P3 = P3 { 1, 2, 3 };
+    var b: P3 = P3 { 10, 20, 30 };
+    var z = ZK { 1, 20, 25, 30 };
+    var j = P3 { 21, 26, 31 };
+    var z0 = P3 { 0, 0, 0 };
+    var w = P3 { 0, 0, 0 };
+    w = (z.k);
+    assert_eq(s3(&w), 75, "Q8: w = (z.k)");
+    w = (j);
+    assert_eq(s3(&w), 78, "Q9: w = (j)");
+    w = z0;
+    w = ((j));
+    assert_eq(s3(&w), 78, "Q10: w = ((j))");
+    w = (mk3(5));
+    assert_eq(s3(&w), 15, "Q11: w = (mk3(5))");
+    w = (a.dbl());
+    assert_eq(s3(&w), 12, "Q12: w = (a.dbl())");
+    w = (a + b);
+    assert_eq(s3(&w), 66, "Q13: w = (a + b)");
+    w = z0;
+    var i = 0;
+    for (i = 0; i < 1; w = (j)) { i = i + 1; }
+    assert_eq(s3(&w), 78, "Q14: a for step w = (j)");
+    w.x = 99;
+    assert_eq(j.x, 21, "Q15: w = (j) copied: a write to w leaves j");
+    return 0;
+}
+fn q_decls(): i64 {
+    var a: P3 = P3 { 1, 2, 3 };
+    var b: P3 = P3 { 10, 20, 30 };
+    var z = ZK { 1, 20, 25, 30 };
+    var j = P3 { 21, 26, 31 };
+    var z0 = P3 { 0, 0, 0 };
+    var d1: P3 = (j);
+    assert_eq(s3(&d1), 78, "Q16: var d1: P3 = (j)");
+    var d2: P3 = (z.k);
+    assert_eq(s3(&d2), 75, "Q17: var d2: P3 = (z.k)");
+    var d3: P3 = (mk3(4));
+    assert_eq(s3(&d3), 12, "Q18: var d3: P3 = (mk3(4))");
+    var d4: P3 = (a.dbl());
+    assert_eq(s3(&d4), 12, "Q19: var d4: P3 = (a.dbl())");
+    var d5: P3 = (a + b);
+    assert_eq(s3(&d5), 66, "Q20: var d5: P3 = (a + b)");
+    var d6: P3 = ((j));
+    assert_eq(s3(&d6), 78, "Q21: var d6: P3 = ((j))");
+    d1.x = 99;
+    assert_eq(j.x, 21, "Q22: var d1: P3 = (j) copied: a write to d1 leaves j");
+    return 0;
+}
+#ifndef CYRIUS_TARGET_CX
+# A 16-byte struct comes back in rax:rdx — not on cx (its pair-return ABI is refused there).
+struct P2 { x; y; }
+fn mk2(v): P2 { var t: P2 = P2 { v, v + 1 }; return t; }
+impl P2 { fn dup2(self): P2 { var t: P2 = P2 { self.x, self.y }; return t; } }
+fn q_pairs(): i64 {
+    var p: P2 = (mk2(4));
+    assert_eq(p.x * 10 + p.y, 45, "Q23: var p: P2 = (mk2(4)) keeps rdx");
+    var w = P2 { 0, 0 };
+    w = (mk2(6));
+    assert_eq(w.x * 10 + w.y, 67, "Q24: w = (mk2(6))");
+    var u: P2 = (p.dup2());
+    assert_eq(u.x * 10 + u.y, 45, "Q25: var u: P2 = (p.dup2())");
+    w = (p.dup2());
+    assert_eq(w.x * 10 + w.y, 45, "Q26: w = (p.dup2())");
+    return 0;
+}
+#endif
+
+# O — a struct result over 8 B as the RIGHT operand of an operator whose parameter takes it by
+# address (`*S`, or a by-value struct over 8 B): its temp's address, not its first word (SIGSEGV).
+struct V3 { x; y; z; }
+struct W3 { x; y; z; }
+fn V3_sub(a: *V3, b: *V3): i64 { return a.z - b.z; }
+fn W3_sub(a: W3, b: W3): i64 { return a.z - b.z; }
+fn mkv(v): V3 { var t: V3 = V3 { v, v, v }; return t; }
+fn mkw(v): W3 { var t: W3 = W3 { v, v, v }; return t; }
+fn gpv(p: *V3): *V3 { return p; }
+impl V3 { fn less5(self): V3 { var t: V3 = V3 { self.x, self.y, self.z - 5 }; return t; } }
+fn operands(): i64 {
+    var s: V3 = V3 { 9, 9, 9 };
+    var t: V3 = V3 { 1, 1, 4 };
+    var w: W3 = W3 { 9, 9, 9 };
+    assert_eq(s - mkv(4), 5, "O1: s - mkv(4), a retptr call into a *V3 operand (the filed repro)");
+    assert_eq(s - (mkv(4)), 5, "O2: s - (mkv(4))");
+    assert_eq(s - s.less5(), 5, "O3: s - s.less5(), a retptr method result");
+    assert_eq(w - mkw(4), 5, "O4: w - mkw(4), a by-value 24-byte operand");
+    assert_eq(s - gpv(&t), 5, "O5: s - gpv(&t): a call returning a pointer stays a pointer");
+    var a: P3 = P3 { 1, 2, 3 };
+    var b: P3 = P3 { 10, 20, 30 };
+    var c: P3 = a + (b + mk3(1));
+    assert_eq(s3(&c), 69, "O6: a + (b + mk3(1)), nested operator and call results");
+    var d: P3 = a + mk3(2);
+    assert_eq(s3(&d), 12, "O7: var d: P3 = a + mk3(2)");
+    return 0;
+}
+#ifndef CYRIUS_TARGET_CX
+struct T2 { x; y; }
+struct U2 { x; y; }
+fn T2_add(a: T2, b: T2): i64 { return a.x + b.x + a.y + b.y; }
+fn U2_add(a: *U2, b: *U2): i64 { return a.x + b.x + a.y + b.y; }
+fn mkt2(v): T2 { var t: T2 = T2 { v, v + 1 }; return t; }
+impl T2 { fn dup(self): T2 { var t: T2 = T2 { self.x, self.y }; return t; } }
+impl U2 { fn dup(self): U2 { var t: U2 = U2 { self.x, self.y }; return t; } }
+fn operand_pairs(): i64 {
+    var p: T2 = T2 { 1, 2 };
+    var u: U2 = U2 { 1, 2 };
+    assert_eq(p + p.dup(), 6, "O8: p + p.dup(), a rax:rdx method result (the filed repro)");
+    assert_eq(p + (p.dup()), 6, "O9: p + (p.dup())");
+    assert_eq(u + u.dup(), 6, "O10: u + u.dup() into a *U2 operand");
+    assert_eq(p + mkt2(4), 12, "O11: p + mkt2(4), a rax:rdx free call");
+    return 0;
+}
+#endif
+
+# S — a `: Str` field into Str destinations: the handle, unchanged.
+struct HS { name: Str; k; }
+struct OS { n; s: Str; }
+fn slen(b: Str): i64 { return str_len(b); }
+var GHS: HS = HS { 0, 7 };
+fn strs(): i64 {
+    var h: HS;
+    h.name = str_from("abcd");
+    h.k = 7;
+    assert_eq(slen(h.name), 4, "S1: slen(h.name), a Str parameter");
+    assert_eq(slen((h.name)), 4, "S2: slen((h.name))");
+    var s: Str = h.name;
+    assert_eq(str_len(s), 4, "S3: var s: Str = h.name");
+    var w: Str = (h.name);
+    assert_eq(str_len(w), 4, "S4: var w: Str = (h.name)");
+    # (S5, `u = h.name;` into a Str variable, is the gate's S10 row: under CYRIUS_IR=3 a plain
+    # `local = field` statement loads the wrong word, pre-existing and not this file's subject.)
+    var o: OS;
+    o.n = 0;
+    o.s = h.name;
+    assert_eq(str_len(o.s), 4, "S6: o.s = h.name, a Str field");
+    var t = h.name;
+    assert_eq(str_len(t), 4, "S7: var t = h.name (untyped)");
+    assert_eq(h.name.len, 4, "S8: h.name.len is a hop through the handle");
+    GHS.name = str_from("xyz");
+    var g: Str = GHS.name;
+    assert_eq(str_len(g), 3, "S9: a global's Str field");
+    return 0;
+}
+
+fn rows(): i64 {
+    alloc_init();
+    strs();
+    flags();
+    intrinsics();
+    assert_eq(GI1 * 10 + GI2, 81, "I7: at top level (fncall1 + 1, mulh64 + 1)");
+    parens();
+    assert_eq(GPR, 14, "P15: rd3((GP3)) + rd3(((GP3))) at top level");
+    q_fields();
+    q_vars();
+    q_decls();
+#ifndef CYRIUS_TARGET_CX
+    q_pairs();
+    operand_pairs();
+#endif
+    operands();
+    assert_eq(s3(&GQD) * 100 + s3(&GQF) * 10 + GQS.z, 1107, "Q27: top level: var G: P3 = (GP3), = ((GP3)), G = (GP3)");
+    return 0;
+}
+GQS = (GP3);
+var r0 = rows();
+var rr = assert_summary();
+syscall(60, rr);

@@ -501,9 +501,8 @@ fn EVLOAD(S, idx): i64 {
 # Width-aware narrow load from [rcx] → rax. Shared byte ladder for EVLOAD_W /
 # EFIELD_LOAD_W (R4, v6.4.15): emits the sign/zero-extending mov for width
 # -4/-2/-1/1/2/4 (ModRM rm=001) and returns 1 (narrow); width-8 falls to ELODC
-# and returns 0. The _flags_reflect_rax bookkeeping stays in the CALLERS —
-# EVLOAD_W clears it, EFIELD_LOAD_W deliberately leaves it (load-bearing:
-# parse_ctrl reads _flags_reflect_rax before conditional branches).
+# and returns 0. The _flags_reflect_rax bookkeeping stays in the CALLERS, and
+# both clear it after a narrow load (EFIELD_LOAD_W since 6.7.6, see there).
 fn _EMIT_NLOAD_RCX(S, width): i64 {
     if (width < 0 - 2) { EB(S, 0x48); EB(S, 0x63); EB(S, 0x01); return 1; }              # -4: movsxd rax, dword [rcx]
     if (width == 0 - 2) { EB(S, 0x48); EB(S, 0x0F); EB(S, 0xBF); EB(S, 0x01); return 1; } # movsx rax, word [rcx]
@@ -620,9 +619,13 @@ fn EFLSTORE_W(S, idx, width): i64 {
 # so the aarch64 + cx backends can sit alongside as peers.
 fn EFIELD_LOAD_W(S, width): i64 {
     if (width == 1 || width == 2 || width == 4) { _IR_REC0(S, IR_RAW_EMIT); }
-    # Same [rcx] narrow ladder as EVLOAD_W (R4, v6.4.15) — but does NOT touch
-    # _flags_reflect_rax (the field-load path must leave it as the caller set it).
-    _EMIT_NLOAD_RCX(S, width);
+    # Same [rcx] narrow ladder as EVLOAD_W (R4, v6.4.15).
+    # ⛔ 6.7.6 — and it CLEARS _flags_reflect_rax, as EVLOAD_W does: a load writes no flags (and
+    # the field address's `add rcx, off` writes them for rcx), so a tracker left set by the last
+    # arithmetic statement made `if (h.m)` / `while (h.m)` on an i8 / i16 / i32 field skip its
+    # `test rax, rax` and branch on stale flags — `x = x + 1; if (h.m)` took the branch with
+    # h.m == 0. The width-8 arm (ELODC) always cleared it. CHANGELOG [6.7.6]
+    if (_EMIT_NLOAD_RCX(S, width) == 1) { _flags_reflect_rax = 0; }
     return 0;
 }
 

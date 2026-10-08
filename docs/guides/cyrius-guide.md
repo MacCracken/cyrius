@@ -1168,6 +1168,48 @@ position with no arity check, so `fn V2_add(a, b, c)` built clean and bound `c` 
 in the third argument register — `a + b` returned a number computed partly from garbage. A
 struct-returning operator is still two parameters: the hidden return pointer is not one of them.
 
+### Parentheses, struct operands and `Str` fields (6.7.6)
+
+**Parentheses around a whole struct source are transparent**, at every depth and for every source
+shape — a name, a field, a call, a method or an operator result — into every struct destination:
+an argument (`rd3((a))`), a struct-typed field (`o.i = (z.k)`), a struct variable (`w = (j)`), a
+declaration in a fn or at top level (`var q: P3 = (z.k);`, `var G: P3 = (A);`), and a for step.
+Parentheses that are only PART of the source keep their meaning (`sz((a) + (b))` adds first).
+Before 6.7.6 every one of these took the struct's FIRST WORD: an address-passed argument and a
+declaration SIGSEGV'd, and a field or variable kept one word of the copy, silently.
+
+**A struct result over 8 bytes is a valid RIGHT operand** of an operator whose parameter takes it
+by address (a `*T` parameter, or a by-value struct over 8 bytes): `s - mk3(4)`, `s - s.dbl()`,
+`p + p.dup()` for a 16-byte `p` — the result lands in a frame temporary whose address is passed.
+At top level there is no frame, so `G + G.dup()` and `G + mk2(3)` are refused by name, as a
+`*T` operand of 8 bytes or less already was. Before 6.7.6 the operand's first word was passed as
+the struct's address: SIGSEGV.
+
+```cyrius
+struct P3 { x; y; z; }
+fn P3_sub(a: *P3, b: *P3): i64 { return a.z - b.z; }
+fn mk3(v): P3 { var t: P3 = P3 { v, v, v }; return t; }
+fn rd3(p: *P3): i64 { return p.z; }
+fn demo(): i64 {
+    var s: P3 = P3 { 9, 9, 9 };
+    var q: P3 = (s);            # a copy, as `var q: P3 = s;`
+    q.z = 4;
+    return (s - mk3(4)) + rd3((q)) + s.z;   # 5 + 4 + 9
+}
+```
+
+**A `: Str` field is a `Str` handle as a source.** `h.name` into a `Str` parameter, variable or
+field, or an untyped one, is the handle as ever (a pointer-mode struct variable rebinds to it,
+the 6.6.16 handle rule). Into a struct VALUE of another type it is refused by name, as a `Str`
+variable is: `bq(h.name)` for `fn bq(b: Q)` reports `cannot pass 'name' to a parameter of a
+different struct type in a call to 'bq'`, and `var q: Q = h.name;`, `q = h.name`, `o.q = h.name`
+and `q + h.name` are refused alike. Before 6.7.6 they compiled and read `Q`'s fields out of the
+Str's 16-byte header and past it.
+
+The result of a name intrinsic — `mulh64(..)`, `fncall0`..`fncall8(..)`, `callptr(..)` — is an
+untyped word whatever its last argument was: `fncall1(&f, n) + 1` with `n` a struct adds 1. Before
+6.7.6 it kept the last argument's struct type and dispatched that struct's `_add`.
+
 ## Strings
 
 ```

@@ -916,6 +916,7 @@ fn _fsc_expr(S, ft, fnoff, term): i64 {
         if (_fla_ft != ft) { _fsc_type_err(S, _fla_name, fnoff); return 2; }
         return 1;
     }
+    if (_fls_whole(S, st) == 1) { if (_fls_sid != ft) { _fsc_type_err(S, _fls_name, fnoff); } }   # 6.7.6
     return 2;
 }
 fn _fsc_from_call(S, t, ft, fnoff): i64 {
@@ -937,6 +938,7 @@ fn _fsc_from_call(S, t, ft, fnoff): i64 {
 fn _fsc_src(S, ft, fnoff, term): i64 {
     if (ft <= 0) { return 0; }
     if (IS_STR_FIELD(S, ft) == 1) { return 0; }
+    if (PEEKT(S) == 10) { return _fsc_paren(S, ft, fnoff, term); }   # 6.7.6
     if (PEEKT(S) == 2) {
         if (TOKTYP(S, GTI(S) + 1) == term) { return _fsc_name(S, ft, fnoff); }
     }
@@ -945,6 +947,25 @@ fn _fsc_src(S, ft, fnoff, term): i64 {
         if (r != 0) { return r; }
     }
     return _fsc_expr(S, ft, fnoff, term);
+}
+
+# ⛔ 6.7.6 — A PARENTHESISED SOURCE INTO A STRUCT-TYPED FIELD COPIED ONE WORD: `o.i = (z.k);` and
+# `o.i = (j);` gave 72 where 78 is right (a for step's field destination too), because every arm
+# above keys on the source's first token. Parentheses that wrap the whole source (`_pwrap_k`) are
+# transparent: the arms run on what they wrap, which ends at its `)`, and the wrap is closed after.
+# Any other `(`-led source is an expression, as before. Returns as `_fsc_src`. CHANGELOG [6.7.6]
+fn _fsc_paren(S, ft, fnoff, term): i64 {
+    var st = GTI(S);
+    var k = _pwrap_k(S, st);
+    if (TOKTYP(S, _pw_end) != term) { return _fsc_expr(S, ft, fnoff, term); }
+    STI(S, st + k);
+    var r = _fsc_src(S, ft, fnoff, 11);
+    if (r == 0) {
+        STI(S, st);   # not a struct source: the caller parses the whole value
+        return 0;
+    }
+    _pw_close(S, k);
+    return r;
 }
 
 # ⛔ 6.6.10 (bite 5 review) — A VALUE IN rax STORED INTO A 3/5/6/7-BYTE FIELD (an odd-sized
@@ -1004,6 +1025,45 @@ fn _fla_lit_end(S): i64 {
     if (PEEKT(S) == 14) { return 1; }
     return 0;
 }
+# ⛔ 6.7.6 — A `Str` FIELD WAS NEVER TYPED AS A STRUCT SOURCE: `bq(h.name)` with `fn bq(b: Q)` and
+# `var q: Q = h.name;` compiled and read Q's fields out of the Str's 16-byte header and past it
+# (silent), as did `q = h.name`, `o.q = h.name` and `q + h.name`. A `: Str` field is one slot
+# holding a Str HANDLE, so the copy arms (`_fla_take`, `_fpk_note`) rightly never take it — its
+# load stays the handle. It is recorded here instead, for the destinations' type checks: into a
+# `Str` it is a handle as ever; into a struct VALUE of another type it is refused by name, as a
+# `Str` variable is (`var q: Q = s;` has been since 6.6.6); a handle destination rebinds at any
+# type (6.6.16 C2). `h.name.len` is a hop, not this. CHANGELOG [6.7.6]
+fn _fls_note(S, beg, ft): i64 {
+    if (ft <= 0) { return 0; }
+    if (ft >= 2048) { return 0; }
+    if (IS_STR_FIELD(S, ft) == 0) { return 0; }
+    _fls_beg = beg;
+    _fls_end = GTI(S);
+    _fls_sid = ft;
+    _fls_name = GETFNAME(S, _rlf_si, _rlf_fi);
+    return 0;
+}
+# 1 = the expression [st, cursor) is one whole `Str` field read, inside any parentheses wrapping it.
+fn _fls_whole(S, st): i64 {
+    if (_fls_beg < st) { return 0; }
+    var k = _fls_beg - st;
+    if (_fls_end + k != GTI(S)) { return 0; }
+    var i = 0;
+    while (i < k) {
+        if (TOKTYP(S, st + i) != 10) { return 0; }
+        if (TOKTYP(S, _fls_end + i) != 11) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+# A `Str` field into a struct VALUE destination of type `dt` (`0 - sid`): refused by name when `dt`
+# is another struct. 1 = refused.
+fn _fls_type_err(S, dt, dnoff): i64 {
+    if (dt >= 0) { return 0; }
+    if (dt <= 0 - 2048) { return 0; }
+    return _AGG_ASSIGN_TYPE_ERR(S, dt, 0 - _fls_sid, dnoff, _fls_name);
+}
+
 # 6.7.3 — a whole struct-typed field as the argument of a parameter that is not address-passed
 # (`_sarg_byval_small`, parse_fn.cyr): its struct, end token and name, recorded WITHOUT changing the
 # load — the by-value word is pushed exactly as before. The reader compares the end with the cursor.
@@ -1016,10 +1076,20 @@ fn _fpk_note(S, ft): i64 {
     _fpk_name = GETFNAME(S, _rlf_si, _rlf_fi);
     return 0;
 }
+# 6.7.6 — the field is the whole inside of the parentheses the destination stepped into
+# (`var q: K = (z.k);`, `_scv_peel`): `_fla_want` follows a `(` whose `)` is the cursor.
+fn _fla_inparen(S): i64 {
+    var w = _fla_want;
+    if (w < 1) { return 0; }
+    if (PEEKT(S) != 11) { return 0; }
+    if (TOKTYP(S, w - 1) != 10) { return 0; }
+    if (_call_close(S, w - 1) != GTI(S)) { return 0; }
+    return 1;
+}
 fn _fla_take(S, idx, sid, off, ft): i64 {
     if (ft <= 0) { return 0; }
     if (IS_STR_FIELD(S, ft) == 1) { return 0; }
-    if (PEEKT(S) != 5) { if (_fla_lit_end(S) == 0) { return 0; } }
+    if (PEEKT(S) != 5) { if (_fla_lit_end(S) == 0) { if (_fla_inparen(S) == 0) { return 0; } } }
     _fla_want = 0 - 1;
     _fla_hit = 1;
     _fla_ft = ft;
@@ -1589,6 +1659,7 @@ fn _field_load_on(S, noff, fnoff, pfl_beg, idx, sid): i64 {
     if (_fld_hop_sid(S) > 0) { return _load_hop(S, noff, pfl_beg, idx, sid, off); }   # 6.6.17
     if (hop < 0) { if (_fld_meth_inline(S, ft) == 1) { return _load_inline_hop(S, noff, pfl_beg, idx, sid, off); } }   # 6.7.0 (A5)
     if (hop < 0) { if (_fpk_want == pfl_beg) { _fpk_note(S, ft); } }   # 6.7.3: passive, emits nothing
+    if (hop < 0) { _fls_note(S, pfl_beg, ft); }   # 6.7.6: passive, emits nothing
     if (hop < 0) { if (_fla_want == pfl_beg) { if (_fla_take(S, idx, sid, off, ft) == 1) { return 0; } } }   # 6.6.10
     # Load variable address + field offset, then load value (width-correct).
     # Pointer-vs-inline struct-base resolution: v5.5.36 local-encoded idx
@@ -4278,7 +4349,7 @@ fn _gvi_expr(S, gps): i64 {
     _refuse_toplevel_pair_init(S, gps, st);   # 6.6.11: a rax:rdx result has no storage here
     var w = _scv_arm(S, gps);
     PCMPE(S);
-    _scv_disarm(w);
+    _scv_disarm(S, w);
     _sc_global_mismatch(S, gps, st);
     return 0;
 }
@@ -4536,7 +4607,18 @@ var _gci_nm = 0;   # the source's last name (the global, or the leaf field), for
 # The RHS at token `ti`: the struct id of a whole-struct source — `IDENT ;` naming an INLINE struct
 # global, or `IDENT . f [. g ..] ;` whose leaf field is a (non-Str) struct — else 0. Tokens only;
 # the cursor does not move.
+# ⛔ 6.7.6 — and inside parentheses that wrap the whole RHS (`var G: K = (A);`, `= ((A.k));`), as
+# every other struct destination takes them (`_pwrap_k`): the global was a pointer-mode slot
+# holding A's first word and `G.a` SIGSEGV'd. `_gci_take` steps into the same wrap. CHANGELOG [6.7.6]
+var _gci_tt = 5;   # the token that ends the source: `;`, or the wrap's `)`
 fn _gci_src(S, ti): i64 {
+    _gci_tt = 5;
+    if (TOKTYP(S, ti) == 10) {
+        var k = _pwrap_k(S, ti);
+        if (TOKTYP(S, _pw_end) != 5) { return 0; }
+        ti = ti + k;
+        _gci_tt = 11;
+    }
     if (TOKTYP(S, ti) != 2) { return 0; }
     var gv = _findvar_core(S, TOKVAL(S, ti));
     if (gv < 0) { return 0; }
@@ -4545,7 +4627,7 @@ fn _gci_src(S, ti): i64 {
     var pm = GVPM(S, gv);
     if (pm == 0) { return 0; }   # GVTYPE's positive range is shared with scalar widths
     _gci_nm = TOKVAL(S, ti);
-    if (TOKTYP(S, ti + 1) == 5) {
+    if (TOKTYP(S, ti + 1) == _gci_tt) {
         if (pm != 2) { return 0; }
         return gt;
     }
@@ -4563,7 +4645,7 @@ fn _gci_chain(S, ti, sid): i64 {
         ft = GETFTYPE(S, ft - 1, fi);
         ti = ti + 2;
     }
-    if (TOKTYP(S, ti) != 5) { return 0; }
+    if (TOKTYP(S, ti) != _gci_tt) { return 0; }
     if (ft <= 0) { return 0; }
     if (IS_STR_FIELD(S, ft) == 1) { return 0; }
     return ft;
@@ -4583,7 +4665,16 @@ fn _gci_inline(S, sid): i64 {
 # left on the `;`. 1 = recorded. Nothing is registered or emitted, so a caller can register the
 # destination AFTER the source is resolved (`var A: Pt = A;` copies the earlier A).
 fn _gci_take(S, sid): i64 {
-    if (TOKTYP(S, GTI(S) + 1) == 5) {
+    var k = 0;
+    if (PEEKT(S) == 10) { k = _pwrap_k(S, GTI(S)); STI(S, GTI(S) + k); }   # 6.7.6: `_gci_src` vetted it
+    var r = _gci_take_in(S, sid, k);
+    _pw_close(S, k);
+    return r;
+}
+fn _gci_take_in(S, sid, k): i64 {
+    var tt = 5;
+    if (k > 0) { tt = 11; }
+    if (TOKTYP(S, GTI(S) + 1) == tt) {
         var sgv = FINDVAR(S, PEEKV(S));
         STI(S, GTI(S) + 1);
         _fsc_reset();
@@ -4659,9 +4750,9 @@ fn _try_struct_copy_init(S, noff, pscale): i64 {
     if (pscale >= 0) { return 0; }
     if (PEEKT(S) != 4) { return 0; }
     if (GINFN(S) != 1) { return _gci_toplevel(S, noff, pscale); }   # 6.6.12
-    var ci_ti = GTI(S) + 1;
-    if (TOKTYP(S, ci_ti) != 2) { return 0; }
-    if (TOKTYP(S, ci_ti + 1) != 5) { return 0; }
+    var ci_pk = _sci_pname(S, GTI(S) + 1);   # 6.7.6: `var v: K = (j);` — the name inside a wrap
+    if (ci_pk < 0) { return 0; }
+    var ci_ti = GTI(S) + 1 + ci_pk;
     var src_li = FINDLOCAL(S, TOKVAL(S, ci_ti));
     # ⛔ 6.6.5 — A GLOBAL SOURCE WAS NOT A COPY, IT WAS A CRASH. `var b: P = A;` for a
     # top-level `var A = P { 1, 2 };` fell out of this path (FINDLOCAL fails) into the scalar
@@ -4781,7 +4872,23 @@ fn _try_struct_copy_init(S, noff, pscale): i64 {
     STI(S, GTI(S) + 1);   # consume '='
     STI(S, GTI(S) + 1);   # consume IDENT
     STI(S, GTI(S) + 1);   # consume ';'
+    STI(S, GTI(S) + 2 * ci_pk);   # 6.7.6: and the wrap's `(` / `)`
     return 1;
+}
+# ⛔ 6.7.6 — the name source of `var v: K = <src>;` at token `ti`: 0 for `IDENT ;`, `k` for the
+# name inside `k` parentheses that wrap it up to the `;` (`_pwrap_k`), -1 for anything else.
+# `var v: K = (j);` was the value of j's first word in a pointer-mode K: `v.a` SIGSEGV'd.
+fn _sci_pname(S, ti): i64 {
+    if (TOKTYP(S, ti) == 2) {
+        if (TOKTYP(S, ti + 1) == 5) { return 0; }
+        return 0 - 1;
+    }
+    if (TOKTYP(S, ti) != 10) { return 0 - 1; }
+    var k = _pwrap_k(S, ti);
+    if (TOKTYP(S, _pw_end) != 5) { return 0 - 1; }
+    if (TOKTYP(S, ti + k) != 2) { return 0 - 1; }
+    if (TOKTYP(S, ti + k + 1) != 11) { return 0 - 1; }
+    return k;
 }
 
 # v6.5.61 — `r = f(...);` where `r` is a VECTOR local and `f` returns that vector.
@@ -5767,7 +5874,7 @@ fn PARSE_VAR(S): i64 {
     var scv_start = GTI(S);
     var scv_prev = _scv_arm(S, pscale);   # 6.6.11: + the field source and the <= 8 B call check
     PCMPE(S);
-    _scv_disarm(scv_prev);
+    _scv_disarm(S, scv_prev);
     _bx_decl(S, lbool, noff, scv_start);   # 6.7.3 (B2): a bool takes a boolean value
     # 6.6.10: an integer constant into an `f64` / `f32` declaration warns (_IFS_CHECK), and an
     # UNTYPED declaration records whether its initialiser was a float (_UFV_*).
