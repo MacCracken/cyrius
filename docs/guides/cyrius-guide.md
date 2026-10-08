@@ -110,8 +110,12 @@ The value is an f64 when the compiler sees one: a float literal, f64 const arith
 variable, field or `: f64` fn, or a float builtin's result. An `f32` value is stored as it is, an
 integer constant keeps its bits (with the warning above) and an untyped word (`load32(p)`) is the
 boxed idiom, not converted. Until 6.7.6 the initializer stored the f64 bits, so `x` read as 0.0,
-silently. Only the initializer converts: an assignment `x = 1.5`, a field store, a struct literal
-and an argument to an `f32` parameter still take the f64 bits — write `f32_from(1.5)` there.
+silently. **Every other write into an `f32` rounds the same way (6.7.6)**: an assignment `x = 1.5`
+(a local or a global, a statement or a classic-`for` step), a field store `p.x = 1.5` (through a
+`*T` too), a struct-literal field `P { 1.5 }` and an argument to an `f32` parameter (`f(1.5)`, a
+method, a fn defined below the call). Each stored the f64 bits as well. An `f32` operator still
+reads its right operand as f32 bits (the next paragraph): `x = x + 1.5` adds 1.5's low 32 bits, then
+stores an `f32` — write `x + f32_from(1.5)`.
 
 ⚠ Binary operators are typed by their LEFT operand. `0 - 1.5` is an INTEGER subtraction
 of 1.5's bit pattern (it is -3.0), and `2 * x` with `x: f64` multiplies x's bits. Write

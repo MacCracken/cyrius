@@ -1715,6 +1715,7 @@ fn _field_load_type(S, si, fi): i64 {
 fn _fk_bx(S, si, fi): i64 { return GFFK(S, si, fi) + 16 * GFBOOL(S, si, fi); }
 fn _ifs_bx(S, k, ti, fnoff): i64 {
     _IFS_CHECK(S, k & 15, ti);
+    if ((k & 15) == 2) { _f32_init_round(S, F32_TYID); }   # 6.7.6 (D2): an f64 into an f32 field rounds
     if (k < 16) { return 0; }
     if (_BX_IS(S) == 1) { return 0; }
     return _bx_refuse(S, ti, "cannot store a value that is not a bool into bool field ", fnoff, 0, 0 - 1);
@@ -2174,6 +2175,7 @@ fn _spi_expr(S, ft): i64 {
 # bool leaf's check — `bx` the stamp taken right after the value was parsed.
 fn _spi_leaf_check(S, k, st, bx): i64 {
     _IFS_CHECK(S, k & 15, st);
+    if ((k & 15) == 2) { _f32_init_round(S, F32_TYID); }   # 6.7.6 (D2): as _ifs_bx
     if (k < 16) { return 0; }
     if (bx == 1) { return 0; }
     return _bx_refuse(S, st, "cannot store a value that is not a bool into bool field ", _spi_first_fn, 0, 0 - 1);

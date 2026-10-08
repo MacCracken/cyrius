@@ -26,6 +26,9 @@
 #      REFUSED by name (each computed on the low word). `b = c` / `b = 5` keep their 8-byte store and a
 #      compare reads the low word (not decided). Runtime: u128_add_sub_carry.tcyr and
 #      u128_compound_matches_long_form.tcyr (A rows; lane D's D-7 pin, now carrying).
+#   W  (D2) EVERY write of an f64 value into an `f32` rounds, as F's initializer does: an assignment
+#      (statement and for step, local and global), a field store, a struct-literal field and an
+#      argument to an `f32` parameter. Runtime: f32_writes_round.tcyr (A rows).
 #   A  ANTI-VACUOUS: each crossos tcyr on x86_64 (default, CYRIUS_IR=3, CYRIUS_DCE=1) and with
 #      compilers built from this tree on aarch64 (qemu), cx (cxvm) and PE (wine, a private prefix),
 #      with its full assertion count.
@@ -162,6 +165,12 @@ exits u33 0 "U33: \`var a: u128 = 5\` has a high word of 0, as the global (u7.cy
 exits u34 7 "U34: not refused — an address, a deref through a \`*u128\`, a compare, an argument (the low word)" "fn f(n): i64 { return n; }\nfn main(): i64 {\n    var b: u128 = 0;\n    store64(&b, 7);\n    var p = &b;\n    var x = *p;\n    if (b == 7) { x = x * 1; }\n    return f(b) + x - 7;\n}\nsyscall(60, main());\n"
 exits u35 13 "U35: \`b = c\` and \`b = 5\` keep their 8-byte store (not decided)" "fn main(): i64 {\n    var b: u128 = 0;\n    store64(&b + 8, 3);\n    var c: u128 = 1;\n    b = c;\n    var r = load64(&b) * 10 + load64(&b + 8);\n    return r;\n}\nsyscall(60, main());\n"
 
+# ── W (D2): every write of an f64 into an f32 rounds ────────────────────────────────────────────
+# The filed repro (lane D's f4.cyr, exit 16 — only the initializer row): all five rows, exit 31.
+W4='struct P { x: f32; }\nfn tk(a: f32): i64 { return load32(&a) & 0xFFFFFFFF; }\nfn rt(): f64 { return 1.5; }\nfn main(): i64 {\n    var h: f32 = 0;\n    h = 1.5;\n    var p = P { 1.5 };\n    var q = P { 0 };\n    q.x = 1.5;\n    var r: f32 = rt();\n    var ok = 0;\n    if ((load32(&h) & 0xFFFFFFFF) == 0x3FC00000) { ok = ok + 1; }\n    if ((load32(&p) & 0xFFFFFFFF) == 0x3FC00000) { ok = ok + 2; }\n    if ((load32(&q) & 0xFFFFFFFF) == 0x3FC00000) { ok = ok + 4; }\n    if (tk(1.5) == 0x3FC00000) { ok = ok + 8; }\n    if ((load32(&r) & 0xFFFFFFFF) == 0x3FC00000) { ok = ok + 16; }\n    return ok;\n}\nsyscall(60, main());\n'
+exits w01 31 "W1: an assignment, a struct literal, a field store and an argument round (f4.cyr: exited 16)" "$W4"
+exits w02 31 "W2: ... the same program under CYRIUS_IR=3" "$W4" CYRIUS_IR=3
+
 # ── I: CYRIUS_IR=3 and the x86 f32 conversions ──────────────────────────────────────────────────
 I1='fn lo32(p): i64 { return load32(p) & 0xFFFFFFFF; }\nfn main(): i64 {\n    var y: f64 = 1.5;\n    var fy: f32 = f32_from(y);\n    var ok = 0;\n    if (lo32(&fy) == 0x3FC00000) { ok = ok + 1; }\n    var m: f32 = f32_from(1.5);\n    var m2: f32 = m * f32_from(2.0);\n    if (f32_to(m2) == 0x4008000000000000) { ok = ok + 2; }\n    var g: f32 = y;\n    if (lo32(&g) == 0x3FC00000) { ok = ok + 4; }\n    return ok;\n}\nsyscall(60, main());\n'
 exits i1 7 "I1: f32_from / f32_to / an f32 initializer under CYRIUS_IR=3" "$I1" CYRIUS_IR=3
@@ -220,7 +229,8 @@ tcyr_all AF tests/tcyr/crossos/f32_scalar_init_rounds.tcyr 30
 tcyr_all AR tests/tcyr/crossos/int_name_routes_int_overload.tcyr 20
 tcyr_all AU tests/tcyr/crossos/u128_compound_matches_long_form.tcyr 14
 tcyr_all AU2 tests/tcyr/crossos/u128_add_sub_carry.tcyr 33
+tcyr_all AW tests/tcyr/crossos/f32_writes_round.tcyr 21
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — f32 initializers round (F); a top-level pair bind refused (P); an integer name routes to _int (R); vector / typed-array / slice OP= refused (O); u128 + / - carry and every other u128 operator refused (U); IR=3 keeps the f32 conversions (I); every tcyr on x86_64 / IR / DCE / aarch64 / cx / PE (A)"
+echo "PASS: $G — f32 initializers round (F); a top-level pair bind refused (P); an integer name routes to _int (R); vector / typed-array / slice OP= refused (O); u128 + / - carry and every other u128 operator refused (U); every f32 write rounds (W); IR=3 keeps the f32 conversions (I); every tcyr on x86_64 / IR / DCE / aarch64 / cx / PE (A)"

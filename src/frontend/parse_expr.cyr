@@ -1450,13 +1450,21 @@ fn _bx_mret_note(S, fi, n, ti): i64 {
 # Pass 1: the parameter at ordinal `pc` (cursor on its type name, not behind a `*`).
 fn _bx_pscan(S, fi, pc): i64 {
     if (_bx_is_bool_name(S, PEEKV(S)) == 1) { _pbool_set(fi, pc, 1); }
+    elif (_is_f32_name(S, PEEKV(S)) == 1) { _pbool_set(fi, pc, 3); }   # 6.7.6 (D2): a forward call rounds too
+    return 0;
+}
+# The type name `f32`, whole (not `f32v4`).
+fn _is_f32_name(S, noff): i64 {
+    if ((L64(S + 0xEC00000 + noff) & 0xFFFFFFFF) == 0x00323366) { return 1; }
     return 0;
 }
 # Pass 2: is the parameter whose type name is `tnoff` a bool (not a `*bool`)? 1 a bool; 6.7.6: 2 an
-# integer i8..i64 / u8..u64 (the slot's bit 59, SLINTD — a number for the `_int` overload route).
+# integer i8..i64 / u8..u64 (the slot's bit 59, SLINTD — a number for the `_int` overload route); 3
+# an `f32` (D2: an f64 argument rounds, _bx_pcmpe_arg).
 fn _bx_ptype(S, tnoff): i64 {
     if (_ptrp_now(S) != 0) { return 0; }
     if (_bx_is_bool_name(S, tnoff) == 1) { return 1; }
+    if (_is_f32_name(S, tnoff) == 1) { return 3; }
     if (FINDSTRUCT(S, tnoff) > 0) { return 0; }
     if (_tn_iw(_tn_scalar(L64(S + 0xEC00000 + tnoff))) > 0) { return 2; }
     return 0;
@@ -1505,11 +1513,15 @@ fn _bx_pname(S, fi, ord): i64 {
     }
     return 0 - 1;
 }
-# An argument for parameter `ord` of fn `fi` (`noff` its name): PCMPE, then the check.
+# An argument for parameter `ord` of fn `fi` (`noff` its name): PCMPE, then the check. ⛔ 6.7.6 (Break
+# 1, D2): an f64 value passed to an `f32` parameter ROUNDS to f32 (_f32_init_round, the user's
+# decision: every write into an f32) — the callee read the low 32 bits of its f64 pattern.
 fn _bx_pcmpe_arg(S, fi, ord, noff): i64 {
     var t = GTI(S);
     PCMPE(S);
-    if (_pbool_get(fi, ord) != 1) { return 0; }   # 6.7.6: 2 is an integer parameter (_bx_param)
+    var pk = _pbool_get(fi, ord);
+    if (pk == 3) { _f32_init_round(S, F32_TYID); return 0; }
+    if (pk != 1) { return 0; }   # 6.7.6: 2 is an integer parameter (_bx_param)
     if (_BX_IS(S) == 1) { return 0; }
     var pn = _bx_pname(S, fi, ord);
     if (pn < 0) { return _bx_refuse(S, t, "cannot pass a value that is not a bool to a bool parameter of ", noff, 0, 0 - 1); }
