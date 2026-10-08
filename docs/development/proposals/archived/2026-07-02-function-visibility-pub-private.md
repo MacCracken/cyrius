@@ -4,7 +4,7 @@
 `privatefns` branch. Two corrections this doc made that the implementation disproved: (a) `fn_flags`
 is no longer at `0x17A000` — that band was FREED at v6.4.75 and the table is now `_fnflg_base`,
 lazy-alloc'd; (b) the "linchpin gap" was smaller than described — the preprocessor's `#@file` markers
-and `FM_BUILD` already existed for CVE-31 diagnostics, so the arc needed an index-returning sibling of
+and `FM_BUILD` already existed for the silent broken-input bug diagnostics, so the arc needed an index-returning sibling of
 `FM_LOOKUP`, not new preprocessor infrastructure. What the doc did NOT anticipate: that map was
 silently wrong (no resume marker on leaving an include), and enforcement needed 13 resolution paths,
 not 2. Original status: **DESIGN COMMITTED (user, 2026-07-22). Scheduled as the v6.5.0 OPENER** — no longer

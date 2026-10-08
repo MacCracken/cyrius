@@ -209,7 +209,7 @@ while read -r LBL BIN RUN NATIVE; do
     row ok mc "$T/cwd" chome_1984 CYRIUS_HOME="$B1984" HOME="$A"
     row nofile mc "$T/cwd" chome_1985_no_fallback CYRIUS_HOME="$B1985" HOME="$A"
     row nofile mh "$T/cwd" chome_1985_not_home HOME="$A" CYRIUS_HOME="$B1985"
-    # an over-long HOME: no fallback (CVE-34), and it does not disable CYRIUS_HOME
+    # an over-long HOME: no fallback (the long-HOME overflow bug), and it does not disable CYRIUS_HOME
     row nofile mh "$T/cwd" home_2100_no_fallback HOME="$A2100"
     row ok mc "$T/cwd" home_2100_chome_ok HOME="$A2100" CYRIUS_HOME="$B"
     # a relative CYRIUS_HOME resolves against the compiler's CWD, as the CLI's does

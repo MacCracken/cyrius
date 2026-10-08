@@ -1,7 +1,7 @@
 # `cyrius deps` refuses an untouched dep cache as "tampered" after a metadata-only change — FIXED
 
 **Status:** ✅ **FIXED in 6.6.5 (bite 7).** The filed repro passes verbatim, and the same check's
-FAIL-OPEN half — which this filing rated as absent — is recorded as **CVE-43**.
+FAIL-OPEN half — which this filing rated as absent — is recorded as **the dep-cache tamper-check hardening item**.
 **Placement:** archived 2026-09-18.
 **Discovered:** 2026-09-16, mabda 4.1.3 hardware-verification sweep (example-consumer build)
 **Severity:** filed Low ("nothing insecure is accepted" — refuted below; it is High). The cost is a hard
@@ -12,7 +12,7 @@ that resolves the same dep + tag.
 ## Summary
 
 For a tagged git dep, `cyrius deps` checks the cached checkout in
-`$CYRIUS_HOME/deps/<name>/<tag>/` against HEAD (the CVE-21 pin, cyrius v6.2.30). One of its
+`$CYRIUS_HOME/deps/<name>/<tag>/` against HEAD (the release-integrity hardening item pin, cyrius v6.2.30). One of its
 three checks is `_git_worktree_clean` (`cbt/deps.cyr:2828`, called at `:2017`). It runs:
 
 ```
@@ -170,7 +170,7 @@ Three things in the filing are not, and they are recorded here rather than edite
    cache made discovery climb into the **enclosing** repo and `cyrius.lock` pinned that repo's
    HEAD. And under a pre-commit hook the cold-cache clone rewrote the user's commit index, so
    their `git commit` failed. The false refusal was the small half. Severity is **High**; see
-   `docs/audit/2026-09-03-security-audit.md` CVE-43.
+   `docs/audit/2026-09-03-security-audit.md` the dep-cache tamper-check hardening item.
 
 2. **Both proposed remedies are unusable as written, for the same reason.** `git update-index -q
    --refresh` and `git diff --quiet HEAD` both **write the shared cache's index** (measured: the

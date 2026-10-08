@@ -193,7 +193,7 @@ fn PP_LEXST_INSTR(st): i64 {
     return 0;
 }
 
-# ⛔ 6.6.20 (CVE-86) — PP_LEXST for the byte at `base + i` (`n` = the buffer's length),
+# ⛔ 6.6.20 (the attribute-line desync bug) — PP_LEXST for the byte at `base + i` (`n` = the buffer's length),
 # with the one rule a byte-at-a-time machine cannot see: in code, a `#` that spells one of
 # the lexer's ten ATTRIBUTE words does not open a comment, because LEX keeps lexing that
 # line as code. EVERY pass walks its buffer through this, never through PP_LEXST directly.
@@ -211,7 +211,7 @@ fn PP_LEXST_AT(base, i, n, st): i64 {
     return PP_LEXST(st, c);
 }
 
-# ⛔ v6.6.6 (CVE-45) — NEUTRALISE a forged `#@file` marker in a region of bytes.
+# ⛔ v6.6.6 (the file-marker forge (private visibility) bug) — NEUTRALISE a forged `#@file` marker in a region of bytes.
 #
 # FM_BUILD scans the FINAL buffer for `#@file` at ANY offset — no byte-0 rule and no
 # beginning-of-line rule, unlike `#@incdir`. So ANY source bytes that reach the
@@ -264,7 +264,7 @@ fn PP_NEUT_FMARK(base, n): i64 {
     return 0;
 }
 
-# ⛔ 6.6.20 (CVE-86) — 1 iff `base + i` STARTS A LINE and holds FM_BUILD's exact 8-byte
+# ⛔ 6.6.20 (the attribute-line desync bug) — 1 iff `base + i` STARTS A LINE and holds FM_BUILD's exact 8-byte
 # key `#@file "`, whatever the string state. FM_BUILD mints a marker at any line start
 # (FM_ATBOL) and has no idea of strings, so this is the one place a string skip can hide a
 # forgery from the neutraliser and not from the consumer.
@@ -274,7 +274,8 @@ fn PP_NEUT_FMARK(base, n): i64 {
 # lexer's was right (6.6.6: the per-line reset; 6.6.20: attribute lines, PP_LEXST_AT) and both
 # times a forged marker sat in the gap. The price is one byte of DATA in one shape that was
 # already mis-compiled: a literal whose next line opens `#@file "` ends on that quote, so its
-# data ended `#@file ` — and FM_BUILD minted a junk-named file span from it (the CVE-45
+# data ended `#@file ` — and FM_BUILD minted a junk-named file span from it (the file-marker forge (private visibility)
+# bug
 # residual: every later diagnostic in the file named `; }` or similar as its file). Now the
 # data reads `# file ` and the span is gone. Keyed on the 8-byte key, not the 6-byte `#@file`
 # the in-code path uses, so `"a<LF>#@filex"` keeps every byte.
@@ -675,7 +676,7 @@ fn PP_ALREADY_INCLUDED(S, fname): i64 {
     return 0;
 }
 
-# v6.4.81 (CVE-32) — bound for the include / `#ref` filename scratch at
+# v6.4.81 (the include filename-capture overflow bug) — bound for the include / `#ref` filename scratch at
 # S+0x190400. The scratch runs to the `#ref` read buffer at S+0x191800, so 4096 B
 # (0x190400..0x191400) fits with slack and is well past any real path.
 #
@@ -1111,7 +1112,7 @@ fn PP_REANCHOR_CUR(S, out, op, tmp, ip): i64 {
     return PP_REANCHOR(S, out, op, _pp_curfile_ptr(), _pp_curfile_base + _pp_count_nl(tmp, _pp_curfile_anchor, ip));
 }
 
-# ⛔ v6.5.45 (CVE-39) — THE BOUND IS 768, NOT 4096, AND THE DIFFERENCE WAS A SILENT
+# ⛔ v6.5.45 (the include-length ifdef bug) — THE BOUND IS 768, NOT 4096, AND THE DIFFERENCE WAS A SILENT
 # MISCOMPILE. The heap map declared `0x190400 include_fname [4096]` and all three capture loops
 # guarded at 4095 from that number, but TWO live things sit inside that declared span:
 #   S+0x190700  PP_EXPAND's output-write-cursor return slot (PP_EXPAND stores, PP_MACRO_PASS loads) — 768 B in
@@ -1148,7 +1149,7 @@ fn PP_FNAME_TOO_LONG(): i64 {
     syscall(SYS_EXIT, 1);
     return 0;
 }
-# Refuse a #define whose body would run past the macro text pool (CVE-40). Mirrors
+# Refuse a #define whose body would run past the macro text pool (the define-body copy overflow bug). Mirrors
 # PP_FNAME_TOO_LONG: an honest hard error beats a silent wrong compile.
 fn PP_MACRO_TEXT_FULL(): i64 {
     syscall(SYS_WRITE, 2, "error: #define bodies exceed the 16 KB macro text pool\n", 55);
@@ -1156,7 +1157,7 @@ fn PP_MACRO_TEXT_FULL(): i64 {
     return 0;
 }
 
-# ⛔ 6.6.20 (CVE-85) — push one #ifdef / #ifndef / #ifplat / #if level onto the per-level
+# ⛔ 6.6.20 (the if-nesting overflow bug) — push one #ifdef / #ifndef / #ifplat / #if level onto the per-level
 # state stack at S+0x197F10 and return the new depth. The stack is 64 bytes, one per level,
 # and none of the seven push sites (PP_PASS 4, PP_IFDEF_PASS 3) checked it: each deeper level
 # wrote its state byte upward through live compiler state, and at ~344K levels into
@@ -1628,7 +1629,7 @@ fn PP_DERIVE_HEADER(S, base, p, bl, is_enum): i64 {
     return 0;
 }
 
-# Append `c` to the 32-byte slot `dst` at `_pp_dlen`, bounded at 31 bytes (CVE-41): past
+# Append `c` to the 32-byte slot `dst` at `_pp_dlen`, bounded at 31 bytes (the derive name-capture overflow bug): past
 # that, print `msg` and stop, rather than run into the next slot.
 fn PP_DPUT(dst, c, msg, mlen): i64 {
     if (_pp_dlen >= 31) {
@@ -1876,7 +1877,7 @@ fn PP_DFIELD_TAIL(S, base, p, end, fc): i64 {
 # struct fields too), so anything that stops it is also a parse error — and the
 # parser reports that at its real file and line (`struct D { x; y = ; }` -> `:2:`), which a
 # preprocessor message could not. The struct text is copied through untouched either way.
-# Only the capture BOUNDS (CVE-41) stay hard errors here: they protect this table, not the
+# Only the capture BOUNDS (the derive name-capture overflow bug) stay hard errors here: they protect this table, not the
 # program. CHANGELOG [6.6.7]
 fn PP_DERIVE_FIELDS(S, base, p, end): i64 {
     var fc = 0;
@@ -1893,7 +1894,7 @@ fn PP_DERIVE_FIELDS(S, base, p, end): i64 {
             syscall(SYS_WRITE, 2, cm, 95);
             syscall(SYS_EXIT, 1);
         }
-        # ⛔ v6.5.47 (CVE-41) — bounded at 31 bytes, into a 32-byte stride (PP_DPUT).
+        # ⛔ v6.5.47 (the derive name-capture overflow bug) — bounded at 31 bytes, into a 32-byte stride (PP_DPUT).
         _pp_dlen = 0;
         var nm = "error: #derive field name too long (max 31 bytes)\n";
         p = PP_DAPPEND_ID(base, p, end, S + 0x1FC000 + fc * 32, nm, 50);
@@ -2059,7 +2060,8 @@ fn PP_PARSE_STRUCT_DEF(S, src_base, ip, bl, out, op): i64 {
         syscall(SYS_EXIT, 1);
     }
     ip = PP_DTRIV(src_base, ip + kwlen, bl);
-    # ⛔ v6.5.47 (CVE-41) — THIS CAPTURE WAS UNBOUNDED. `sname` is 64 bytes at S+0x197020, and
+    # ⛔ v6.5.47 (the derive name-capture overflow bug) — THIS CAPTURE WAS UNBOUNDED. `sname` is 64 bytes at S+0x197020,
+    # and
     # the name is then copied into `_pp_derive_names` at a 32-BYTE STRIDE (see the copy below),
     # so 31 is the real ceiling — the smaller of the two, not the 64 the scratch declares.
     # 6.6.7 — the name is an IDENTIFIER, read as one: it stops at the first byte that cannot
@@ -3658,7 +3660,7 @@ fn PP_MACRO_SLOT(S, dip, nm): i64 {
     return _pp_macro_count;
 }
 
-# ⛔ 6.6.20 (CVE-82) — refuse, naming the macro, an expansion PP_EXPAND cannot do inside its
+# ⛔ 6.6.20 (the PP_EXPAND buffer overflow bug) — refuse, naming the macro, an expansion PP_EXPAND cannot do inside its
 # fixed buffers. A hard error like PP_MACRO_TEXT_FULL: the expansion is mid-copy and has no
 # honest partial result. `def` is the stored definition, `NAME(params) body`. CHANGELOG [6.6.20]
 fn PP_MACRO_REFUSE(def, why): i64 {
@@ -3728,7 +3730,7 @@ fn PP_EXPAND(S, mi, ip, bl, out, op): i64 {
     while (load8(def + dp) != 40) { dp = dp + 1; }
     dp = dp + 1;  # skip (
     # Read param names from definition.
-    # ⛔ 6.6.20 (CVE-82) — pnames and args below are fn-local `var x[512]`, i.e. 512 BYTES
+    # ⛔ 6.6.20 (the PP_EXPAND buffer overflow bug) — pnames and args below are fn-local `var x[512]`, i.e. 512 BYTES
     # each, packed NUL-separated (there is no per-param stride — this line used to say "up to 8
     # params, 64 bytes each", which described a layout that never existed). Neither copy was
     # bounded: a 516-byte argument came out as an EMPTY expansion and compiled clean (a
@@ -4331,7 +4333,7 @@ fn PP_PASS(S): i64 {
                             var mdst = S + 0x193000 + _pp_macro_text_pos;
                             var mlen = 0;
                             var mcp = mip;
-                            # ⛔ v6.5.45 (CVE-40) — THIS COPY WAS UNBOUNDED. The loop ran to
+                            # ⛔ v6.5.45 (the define-body copy overflow bug) — THIS COPY WAS UNBOUNDED. The loop ran to
                             # end-of-line with no check on `mlen` or on the ACCUMULATING
                             # `_pp_macro_text_pos`, writing straight out of the macro text pool
                             # at S+0x193000. The pool's free headroom runs to S+0x197000
@@ -4339,7 +4341,7 @@ fn PP_PASS(S): i64 {
                             # 0x197000), i.e. 16 KB shared across all 16 macros — so a single
                             # long `#define` body, or several ordinary ones in sequence, walked
                             # into live compiler state. Silent: no diagnostic, no crash, a
-                            # wrong compile. Same class as CVE-32.
+                            # wrong compile. Same class as the include filename-capture overflow bug.
                             # ⚠ The guard is on the DESTINATION OFFSET, not on this macro's
                             # length, because the position accumulates across macros — bounding
                             # `mlen` alone would still overrun on the sixteenth #define.
@@ -4580,7 +4582,8 @@ fn PP_PASS(S): i64 {
                                 # still 0 during preprocessing (see the reporting site at
                                 # the end of PARSE_PROG in parse.cyr for why).
                                 if (PP_IS_HOST_ONLY(out + op, nr) == 1) { PP_NOTE_HOST_ONLY(fname); }
-                                # v6.6.6 (CVE-45) — an include is READFILE'd STRAIGHT into
+                                # v6.6.6 (the file-marker forge (private visibility) bug) — an include is READFILE'd
+                                # STRAIGHT into
                                 # `out`, so these bytes never pass the copy loop below and
                                 # could forge a `#@file` marker. See PP_NEUT_FMARK.
                                 PP_NEUT_FMARK(out + op, nr);
@@ -4982,7 +4985,8 @@ fn PP_IFDEF_PASS(S): i64 {
                                         syscall(SYS_WRITE, 2, "\n", 1);
                                         syscall(SYS_EXIT, 1);
                                     }
-                                    # v6.6.6 (CVE-45) — same READFILE-into-`out` route as
+                                    # v6.6.6 (the file-marker forge (private visibility) bug) — same READFILE-into-`out`
+                                    # route as
                                     # PP_PASS's include site. See PP_NEUT_FMARK.
                                     PP_NEUT_FMARK(out + op, nr);
                                     op = op + nr;
@@ -5195,7 +5199,8 @@ fn PP_SCAN_INCDIR(S): i64 {
         n = n - 1;
     }
     if (n == 0) { return 0; }
-    # ⛔ THE GUARD (see common/util.cyr). Absolute → CVE-16 bypass; `..` → CVE-02
+    # ⛔ THE GUARD (see common/util.cyr). Absolute → the absolute-include path bug bypass; `..` → the include dot-dot
+    # path bug
     # bypass. Either one makes the marker a read-anything primitive, so both are
     # refused outright rather than sanitised.
     if (load8(&_pp_incdir) == 47) { return 0; }    # '/' — POSIX absolute
@@ -5222,7 +5227,8 @@ fn PREPROCESS(S): i64 {
     PP_SCAN_INCDIR(S);
     # Pre-pass: expand #ref directives (TOML → var declarations)
     PP_REF_PASS(S);
-    # v6.6.6 (CVE-45) — after PP_REF_PASS (whose TOML expansion lands in the raw source
+    # v6.6.6 (the file-marker forge (private visibility) bug) — after PP_REF_PASS (whose TOML expansion lands in the raw
+    # source
     # buffer too) and before anything reads it. See PP_NEUT_FMARK.
     PP_NEUT_PASS(S);
     PP_PASS(S);

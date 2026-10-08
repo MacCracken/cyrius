@@ -20,7 +20,7 @@
 # PROPERTY: no syscall(228, _, 0) may be reachable on a macOS build. A literal 0 third
 # argument is allowed ONLY inside a CYRIUS_TARGET_WIN guard, where the route ignores it.
 #
-# SECOND PROPERTY (6.6.10, CVE-51): EMACHO_CLOCK_X86 zeroes rdx before its gettimeofday. Darwin's
+# SECOND PROPERTY (6.6.10, the Intel-Mac clock stale-register bug): EMACHO_CLOCK_X86 zeroes rdx before its gettimeofday. Darwin's
 # gettimeofday takes a THIRD argument, `uint64_t *mach_absolute_time`, an OUT-pointer xnu writes
 # 8 bytes through; the emitter never wrote rdx, so every Intel-Mac clock read stored mach time at
 # whatever address the previous call left in rdx (measured on ach, in an rwx image). The runtime
@@ -47,7 +47,7 @@ grep -A20 'fn EMACHO_CLOCK_X86' "$ROOT/src/backend/x86/emit.cyr" | grep -q '0x8B
 CLOCK_BODY=$(awk '/^fn EMACHO_CLOCK_X86\(S\)/{s=1} s{print} s&&/^\}/{exit}' "$ROOT/src/backend/x86/emit.cyr")
 [ -n "$CLOCK_BODY" ] || fail "fn EMACHO_CLOCK_X86 not found in src/backend/x86/emit.cyr"
 echo "$CLOCK_BODY" | grep -q 'EB(S, 0x48); EB(S, 0x89); EB(S, 0xE2);' \
-  || fail "EMACHO_CLOCK_X86 no longer points rdx at its own stack slot (mov rdx, rsp) before gettimeofday — xnu writes mach_absolute_time through the third argument register, so a stale rdx is an 8-byte write to an arbitrary address (CVE-51)"
+  || fail "EMACHO_CLOCK_X86 no longer points rdx at its own stack slot (mov rdx, rsp) before gettimeofday — xnu writes mach_absolute_time through the third argument register, so a stale rdx is an 8-byte write to an arbitrary address (the Intel-Mac clock stale-register bug)"
 # ...the slot is pushed (as 0) first, and both precede the syscall, not follow it.
 echo "$CLOCK_BODY" | awk '/EB\(S, 0x6A\); EB\(S, 0x00\);/{if(!p)p=NR} /EB\(S, 0x48\); EB\(S, 0x89\); EB\(S, 0xE2\);/{if(!x)x=NR} /EB\(S, 0x0F\); EB\(S, 0x05\);/{if(!sc)sc=NR} END{exit !(p && x && sc && p < x && x < sc)}' \
   || fail "EMACHO_CLOCK_X86's push 0 / mov rdx, rsp are not both before its syscall"

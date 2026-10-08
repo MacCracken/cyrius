@@ -110,22 +110,22 @@ filing asked for. The filed repro and the agnos case are both entry-relative.
 **No guard is bypassed, weakened, or duplicated.** The fallback path is fed to the same
 `READFILE`, so both existing guards apply to it verbatim:
 
-- **CVE-02** (`src/frontend/lex.cyr:642-660`) — rejects any path with a `..` component
+- **the include dot-dot path bug** (`src/frontend/lex.cyr:642-660`) — rejects any path with a `..` component
   unless `CYRIUS_ALLOW_PARENT_INCLUDES=1`, and returns `-1` so the PP's `nr < 0` guard
   fails the build rather than treating it as an empty include.
-- **CVE-16** (`src/frontend/lex.cyr:663+`) — rejects absolute include paths unless
+- **the absolute-include path bug** (`src/frontend/lex.cyr:663+`) — rejects absolute include paths unless
   `CYRIUS_ALLOW_ABSOLUTE_INCLUDES=1`.
 
 Consequences, stated explicitly so nothing is assumed:
 
 - **A `..` include behaves exactly as it does today.** Joining `incdir` to a name
-  containing `..` yields a path that still contains `..`, so CVE-02 still rejects it.
+  containing `..` yields a path that still contains `..`, so the include dot-dot path bug still rejects it.
   Consumers relying on `..` includes (`~/Repos/chakshu/ai/main.cyr:16-21` has six
   `../src/*.cyr`; `~/Repos/agnos/tests/gpu/moderaster.cyr:35-36` has `../../kernel/…`)
   keep needing `CYRIUS_ALLOW_PARENT_INCLUDES=1` — **no regression, and no new permission.**
 - **Do NOT implement the retry as a bare `open`/`close` probe** *outside* the guards. The
   shipped retry lives INSIDE `READFILE`, after every existing resolution step, so the
-  include name has already cleared CVE-02 and CVE-16 before the prefix is joined to it.
+  include name has already cleared the include dot-dot path bug and the absolute-include path bug before the prefix is joined to it.
   (Re-entering `READFILE` recursively was considered and rejected: it would re-run guards
   both halves have already passed, and recurse.)
 
@@ -135,16 +135,16 @@ Consequences, stated explicitly so nothing is assumed:
 > file content, so it is not itself an untrusted-input channel.~~
 
 **It is exactly an untrusted-input channel, and reasoning otherwise would have reopened
-CVE-16 through the front door.** The marker is *in-band* — that is the whole reason it was
+the absolute-include path bug through the front door.** The marker is *in-band* — that is the whole reason it was
 chosen over env/chdir — so the thing that writes it is whatever text arrives on stdin, and a
 hostile `.cyr` can write its own. `#@incdir /home/u/.ssh` + `include "id_rsa"` reconstructs
-precisely the read-anything primitive CVE-16 was filed to remove. The claim above confused
+precisely the read-anything primitive the absolute-include path bug was filed to remove. The claim above confused
 "the CLI is the *intended* writer" with "the CLI is the *only possible* writer".
 
 Two rules restore the property the filing assumed it already had:
 
 1. **Relative and `..`-free, or refused.** Composed with an include name that has itself
-   passed CVE-02/CVE-16, a relative `..`-free prefix yields a path confined to the CWD
+   passed the include dot-dot path bug/the absolute-include path bug, a relative `..`-free prefix yields a path confined to the CWD
    subtree — provably not one file more than a plain relative include could already reach.
 2. **Byte 0 only.** `cyrius build` writes the marker as the first bytes of the materialised
    temp, ahead of the dep prepend, so the CLI's value is the one cycc reads; a marker

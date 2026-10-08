@@ -5,7 +5,7 @@
 #
 # THE INCIDENT. `scripts/cass-install-gate.sh` is the Windows install pillar: it builds the
 # real tarball, ships it to cass and runs the REAL `install.ps1`. install.ps1 has been
-# FAIL-CLOSED on the tarball hash since CVE-21 (v6.2.30) — no `-Sha256`, no
+# FAIL-CLOSED on the tarball hash since the release-integrity hardening item (v6.2.30) — no `-Sha256`, no
 # "<tarball>.sha256" beside it, and it throws "refusing to install unverified tarball"
 # before extracting a single byte. The gate `scp`'d the tarball ALONE. So it was RED on its
 # own terms, on every run, independently of anything in the tree: 3 MB of scp, then

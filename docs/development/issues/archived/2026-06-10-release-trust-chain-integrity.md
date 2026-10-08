@@ -1,9 +1,9 @@
-# Release / trust-chain integrity — CVE-20/21 (extends CVE-12/13) — RESOLVED
+# Release / trust-chain integrity — the seed-chain cycc hardening item/the release-integrity hardening item (extends the seed trust-root hardening item/the release-signing hardening item) — RESOLVED
 
 > **RESOLVED** (archived at the v6.2.41 slot close; housekeeping — the fixes
-> shipped earlier). CVE-21 closed by v6.2.30/.31 (fail-closed installers, dep
+> shipped earlier). the release-integrity hardening item closed by v6.2.30/.31 (fail-closed installers, dep
 > commit-pins in `cyrius.lock`, SHA-pinned Actions, sovereign Ed25519 signing
-> via `cyrsign` / sigil; CVE-13 closed). CVE-20 closed 2026-06-20 by the
+> via `cyrsign` / sigil; the release-signing hardening item closed). the seed-chain cycc hardening item closed 2026-06-20 by the
 > seed→cybs→cycc byte-identical derivation (`scripts/seed-derive-cycc.sh` +
 > `trust-root-attest` CI). No outstanding gaps.
 
@@ -17,7 +17,7 @@ the "own the trust chain, no external governance" stance and the ~v7 public-rele
 The shipped trust root is not what the docs say it is, and the release path has
 several advisory-only or mutable links a sovereignty stance is meant to remove.
 
-## CVE-20 — shipped `cycc` is the de-facto trust root, disjoint from the seed (P2)
+## the seed-chain cycc hardening item — shipped `cycc` is the de-facto trust root, disjoint from the seed (P2)
 
 > **RESOLVED 2026-06-20.** `build/cycc` is now machine-derivable from the 29 KB
 > seed — with NO bridge rung. Instead of restoring `src/bridge.cyr`, `cybs`
@@ -26,7 +26,7 @@ several advisory-only or mutable links a sovereignty stance is meant to remove.
 > missing string-NUL-terminator in cybs's lexer. Enforced by
 > `scripts/seed-derive-cycc.sh` + the `trust-root-attest` CI job. seed
 > 29,016→29,024 B, cybs 12,344→21,066 B, Rust-seed-verified, SHA256SUMS updated.
-> CVE-21/12/13 also resolved (.30/.31). This issue is fully closed — archive at
+> the release-integrity hardening item/the seed trust-root hardening item/the release-signing hardening item also resolved (.30/.31). This issue is fully closed — archive at
 > next slot close.
 
 `SECURITY.md:14` + `README.md:96/128/216` assert the 29 KB seed (`bootstrap/asm`)
@@ -41,9 +41,9 @@ committed cycc is the heuristic pre-commit hook (foreign-string greps + a
 **Fix:** document that the shipped trust root is `build/cycc`, not the seed; add a
 periodic CI job that runs `verify.sh` (Rust-seed rebuild) **plus** a cybs→cycc
 reconstruction (restore a bridge step or commit the lineage) so the committed
-cycc is machine-derivable from the seed. Reframe CVE-12 accordingly.
+cycc is machine-derivable from the seed. Reframe the seed trust-root hardening item accordingly.
 
-## CVE-21 — release/dep integrity is advisory or mutable (P2)
+## the release-integrity hardening item — release/dep integrity is advisory or mutable (P2)
 
 - **Tarball checksum non-blocking** — `install.sh:370-373` runs `sha256sum -c`
   and on mismatch prints "checksum mismatch — continuing anyway" and proceeds;
@@ -60,7 +60,7 @@ cycc is machine-derivable from the seed. Reframe CVE-12 accordingly.
   force-pushed tag in any `MacCracken/*` dep silently changes resolved content.
   `cyrius.lock` stores only file hashes (no resolved SHA) and is opt-in-verified.
 - **Unsigned releases** — all 5 tarballs get only a `.sha256` sidecar hosted next
-  to the artifact (CVE-13, ~13 minors aged).
+  to the artifact (the release-signing hardening item, ~13 minors aged).
 - **Unpinned GitHub Actions with `contents:write`** — `release.yml:7-8` grants
   `contents: write` and consumes `softprops/action-gh-release@v2` (`:380`),
   `actions/checkout@v4` (`:22`), upload/download-artifact@v4 by **floating major
@@ -77,7 +77,7 @@ full commit SHAs (comment naming the version).
 
 ## Status
 
-Filed 2026-06-10. Folds the aging CVE-12/13 from the archived audit. Run the
+Filed 2026-06-10. Folds the aging the seed trust-root hardening item/the release-signing hardening item from the archived audit. Run the
 overdue full audit before v6.2.0 (see
 [overdue-security-audit-cve-tail](2026-06-10-overdue-security-audit-cve-tail.md)).
 
@@ -87,20 +87,20 @@ overdue full audit before v6.2.0 (see
   `install.ps1`; fetch the installer from `/refs/tags/<v>/` and make tag-clone
   failure fatal; record the resolved **commit SHA** per dep in `cyrius.lock` +
   verify on re-resolve (`cbt/deps.cyr`); pin all GitHub Actions to full commit
-  SHAs; **+** CVE-20 doc reframe (trust root = `build/cycc`, reframe CVE-12);
+  SHAs; **+** the seed-chain cycc hardening item doc reframe (trust root = `build/cycc`, reframe the seed trust-root hardening item);
   **+** RM-02 threat-model.md fix + mabda 3.3.0→3.4.2 fold.
 - **v6.2.31 — sovereign signing + reproducibility attestation:** `cyrsign` (a
   standalone tool over sigil's in-tree **ed25519**, NOT external minisign —
   sovereignty) signs `SHA256SUMS`; pubkey committed + in SECURITY.md; the 3
-  installers verify on the upgrade/CI path. Closes **CVE-13**. **(b)** a
+  installers verify on the upgrade/CI path. Closes **the release-signing hardening item**. **(b)** a
   self-host-**fixpoint** attestation CI job (`trust-root-attest`: the committed
   `cycc` compiles its own source → that output recompiles to itself → equals the
-  committed binary) — the **INTERIM** CVE-20 mitigation: catches accidental
+  committed binary) — the **INTERIM** the seed-chain cycc hardening item mitigation: catches accidental
   artifact **drift** + non-self-reproducing tampers. It does **NOT** defeat a
   self-reproducing (Thompson "trusting-trust") tamper, nor make `cycc` *derivable
   from the seed* — both require the bridge arc below.
 - **🔴 Post-.31 (MAJOR; user-prioritized BEFORE the deps-modules item) — the
-  REAL CVE-20 fix: seed→cycc bridge restoration.** `seed → cybs → asm` is real
+  REAL the seed-chain cycc hardening item fix: seed→cycc bridge restoration.** `seed → cybs → asm` is real
   (assembly-level) but **`cybs → cycc` does not exist** — `cybs` is an assembler
   and can't parse `src/main.cyr`; the committed `build/cycc` blob is the de-facto
   trust root nobody re-derives. Restore the retired ladder rung
@@ -109,4 +109,4 @@ overdue full audit before v6.2.0 (see
   making the literal **`seed → cybs → bridge → cycc`** chain executable +
   machine-checkable ("the way we did it before"). Supersedes the .31 attestation.
   Multi-slot; gate = a clean machine derives `cycc` byte-identical from the 29 KB
-  seed + source. *This is the only thing that fully closes CVE-20.*
+  seed + source. *This is the only thing that fully closes the seed-chain cycc hardening item.*

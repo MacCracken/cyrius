@@ -51,7 +51,7 @@ var _dep_queue = 0;
 # tag or path ships no `dist/<X>.cyr` — each is warned by name and counted in the
 # `deps resolved` summary (`, N vendored nothing`). Reset per cmd_deps.
 var _dep_inert = 0;
-# CVE-21 (v6.2.30): vec<cstr> of resolved git-dep commit pins accumulated
+# the release-integrity hardening item (v6.2.30): vec<cstr> of resolved git-dep commit pins accumulated
 # during cmd_deps. Each entry: "commit\t<40hex>\t<name>\t<git>\t<tag>".
 # cmd_deps_lock appends them to cyrius.lock (after the per-file hash lines);
 # resolution verifies a TAGGED dep's freshly-resolved HEAD against the prior
@@ -352,7 +352,7 @@ fn _aw_write(h, buf, len): i64 {
 # vendored lib/<dep>.cyr copy must NOT use this: a symlinked vendored file is the v6.5.37
 # corruption (a write through it lands in the shared stdlib), so it keeps plain `_aw_open`,
 # which replaces the link. CHANGELOG [6.6.6]
-# ⛔ 6.6.20 (CVE-98): `path` is a file of the PROJECT (the cwd), so its link is followed only to
+# ⛔ 6.6.20 (the committed-symlink write bug): `path` is a file of the PROJECT (the cwd), so its link is followed only to
 # a file inside it (lib/io.cyr _io_replace_target_in) — a committed `cyrius.lock -> ~/.profile`
 # made every auto-deps verb replace ~/.profile. A refusal is printed here, by name, and is 0.
 fn _aw_open_replace(path): i64 {
@@ -834,7 +834,7 @@ fn _cbt_env_str(name): i64 {
 # reader with fixed 2 KB buffers kept small for the seed's bootstrap compiler; this one also
 # covers the macOS entry-stack envp and Windows. Two differences stay, both where cycc has NO
 # fallback and the CLI still needs a home, so neither makes the two read different stdlibs:
-# a home over 1,984 B (cycc's buffer, CVE-34's bound) the CLI uses as given, and with no
+# a home over 1,984 B (cycc's buffer, the long-HOME overflow bug's bound) the CLI uses as given, and with no
 # usable CYRIUS_HOME or HOME at all the CLI uses /root/.cyrius. Neither tool ever falls through
 # from a set CYRIUS_HOME to HOME. CHANGELOG [6.6.17]
 

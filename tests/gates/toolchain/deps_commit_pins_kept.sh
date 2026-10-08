@@ -1,5 +1,5 @@
 #!/bin/sh
-# deps_commit_pins_kept.sh — 6.6.20. A CVE-21 `commit\t` pin in cyrius.lock survives every
+# deps_commit_pins_kept.sh — 6.6.20. A release-integrity hardening item `commit\t` pin in cyrius.lock survives every
 # resolve that does not re-verify its dep, so a repointed tag is still REFUSED afterwards —
 # and it is still read when the lock is checked out CRLF.
 #
@@ -25,7 +25,7 @@
 # diamond, a gated root `x@v2` and a required dep's own `x@v1` share the name, the feature-less
 # resolve pinned x@v1 and dropped x@v2's pin, and a repointed v2 on a fresh cache was then
 # vendored at exit 0 (K12). So an old tag's line now stays after a tag bump (K8) — fail-closed,
-# what CVE-21 wants if the dep is moved back to that tag; deleting cyrius.lock re-pins. Not
+# what the release-integrity hardening item wants if the dep is moved back to that tag; deleting cyrius.lock re-pins. Not
 # filtered to manifest-declared names either: a transitive dep of a gated-out dep is declared
 # only in that dep's own manifest, which is never read while it is gated out (K5).
 # SORTED by (name, git, tag), then the whole line: fresh-then-carried order wrote one pin set in
@@ -39,7 +39,7 @@
 # review fixed those readers and missed their two siblings. `_lock_commit_lookup` kept the `\r`
 # on the TAG field, matched no line and returned 0 — "no pin" — so on a CRLF checkout (a plain
 # `git -c core.autocrlf=true clone` makes one) a repointed tag was vendored and re-pinned at
-# exit 0, exactly where CVE-21 matters (fresh clone, fresh cache). `deps --verify` read each path
+# exit 0, exactly where the release-integrity hardening item matters (fresh clone, fresh cache). `deps --verify` read each path
 # up to the `\n` and failed every file "cannot hash" (fail-closed, but false).
 #
 # AXES (every origin is a local file:// repo — no network):

@@ -2150,7 +2150,7 @@ fn _agnos_sa_in(sa, len, ip_out, port_out): i64 {
 
 # Bind a socket fd to the sockaddr_in `sockaddr`. agnos merges bind into listen, so this records
 # the port and the address class for sys_listen — 127/8 a LOOPBACK listener, 0.0.0.0 or this
-# host's address ANY (CVE-48's rule, _agnos_listen_class). 0, or -88 (ENOTSOCK), the sockaddr's
+# host's address ANY (CYRIUS-2026-0008's rule, _agnos_listen_class). 0, or -88 (ENOTSOCK), the sockaddr's
 # -14 / -22 / -97, -99 (EADDRNOTAVAIL: an address this host does not have — refused, never
 # widened), -22 (EINVAL: port 0 or above 65535; agnos has no ephemeral bind).
 fn sys_bind(fd, sockaddr, addrlen): i64 {
@@ -2457,7 +2457,7 @@ fn _agnos_listen_stash_port(fd, port): i64 {
 # The #56 listen class for a bind to `ip` (the kernel ip4() form), or -1 when agnos cannot bind
 # that address: 127/8 → SOCK_LISTEN_LOOPBACK; 0.0.0.0 or this host's net_ip → 0 (ANY);
 # anything else → -1 (an address this host does not have — refused, never widened).
-# ⛔ CVE-48 (v6.6.7): the adapter used to IGNORE the bind address and always listen class 0, so
+# ⛔ CYRIUS-2026-0008 (v6.6.7): the adapter used to IGNORE the bind address and always listen class 0, so
 # `sock_bind(fd, INADDR_LOOPBACK(), p)` — a server meaning "local clients only", daimon's
 # unauthenticated control API among them — was reachable from the NETWORK, with no diagnostic.
 fn _agnos_listen_class(ip): i64 {

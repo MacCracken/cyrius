@@ -1,5 +1,10 @@
 # Cyrius Deep-Dive Review — 2026-06-10
 
+> ⚠ **2026-10-08 — withdrawn and renumbered.** The `CVE-NN` ids this file used were re-read against the rule that
+> an id is ONLY for an actual security vulnerability (CLAUDE.md § *Security Audit Process*). The real ones are now
+> `CYRIUS-2026-NNNN` (headings read `CYRIUS-… (was CVE-NN)`); the rest were withdrawn as bugs and are named by a short
+> label. Mapping, next id and why: [`2026-10-08-security-ledger.md`](2026-10-08-security-ledger.md).
+
 > **Project-wide review** (not a routine security scan): state, all three
 > roadmap tiers, and hardening / security / optimization opportunities
 > against the language's goals (sovereignty, AGNOS-kernel authorship,
@@ -36,7 +41,7 @@ stack, the cross-target stdlib, and the measurement harnesses. The three
 highest-leverage items:
 
 1. **`cyrius deps --verify`/`--lock` is a shell-injection sink** of the same
-   class as CVE-01 — and `--lock` auto-runs on every build (**CVE-14**,
+   class as the dep-resolver shell-quoting bug — and `--lock` auto-runs on every build (**the deps-verify shell-line bug**,
    arguably P0).
 2. **`roadmap_6.md` still plans the already-shipped native-TLS arc as v6.2.x
    future work** (~12–15 phantom slots; the "TLS > RISC-V" priority call is on
@@ -49,33 +54,33 @@ None of the 40 are tracked anywhere today; all three above are cheap.
 
 ---
 
-## Security findings (CVE-14 …)
+## Security findings (the deps-verify shell-line bug …)
 
 | CVE | Sev | Title | Files | Issue |
 |---|---|---|---|---|
-| **CVE-14** | **P0/P1** | `deps --verify`/`--lock` lockfile path → `/bin/sh -c` (shell injection; `--lock` auto-runs on every build) | `cbt/deps.cyr:1313,1474,1032` | [deps-resolver-injection-class](../development/issues/archived/2026-06-10-deps-resolver-injection-class.md) |
-| **CVE-15** | P1 | CVE-01 residual: git/tag denylist misses space + leading `-` → `git -c …ext::sh` arg-injection RCE | `cbt/deps.cyr:692,703,716` | [deps-resolver-injection-class](../development/issues/archived/2026-06-10-deps-resolver-injection-class.md) |
-| **CVE-16** | P2 | CVE-02 half-fixed: rejects `..` but not absolute `/` includes → read `~/.ssh/id_rsa` | `src/frontend/lex.cyr:622` | [deps-resolver-injection-class](../development/issues/archived/2026-06-10-deps-resolver-injection-class.md) |
-| **CVE-17** | P1 | TLS chain verify ignores pathLenConstraint, EKU(serverAuth), keyUsage; no revocation | `lib/tls_native.cyr:4829`, `lib/sigil.cyr:9942,9948` | [tls-chain-verification-gaps](../development/issues/archived/2026-06-10-tls-chain-verification-gaps.md) |
-| **CVE-18** | P1 | `tls_native_connect` returns OK unverified; wrapper skips hostname when `host==0` | `lib/tls_native.cyr:5058`, `lib/tls.cyr:308` | [tls-chain-verification-gaps](../development/issues/archived/2026-06-10-tls-chain-verification-gaps.md) |
-| **CVE-19** | P1 | Entropy fail-weak: ws uninit mask on RNG fail; raw `/dev/urandom` bypass of getrandom; AGNOS has no getrandom syscall at all | `lib/ws.cyr:55,70`, `lib/sandhi.cyr:3444`, `lib/syscalls_x86_64_agnos.cyr`, `lib/random.cyr:34` | [entropy-failweak-paths](../development/issues/archived/2026-06-10-entropy-failweak-paths.md) |
-| **CVE-20** | P2 | Shipped `cycc` is the de-facto trust root, disjoint from the seed chain `bootstrap.sh` verifies (extends CVE-12) | `bootstrap/bootstrap.sh:29`, `.github/workflows/release.yml:38` | [release-trust-chain-integrity](../development/issues/archived/2026-06-10-release-trust-chain-integrity.md) |
-| **CVE-21** | P2 | Release integrity: unsigned tarballs, mutable git-tag deps (no SHA pin), checksum non-blocking ("continuing anyway"), installer pulled from `main`, unpinned GH Actions w/ `contents:write` (extends CVE-13) | `scripts/install.sh:373`, `cbt/deps.cyr:717`, `scripts/cyriusly:57`, `.github/workflows/release.yml:7,380` | [release-trust-chain-integrity](../development/issues/archived/2026-06-10-release-trust-chain-integrity.md) |
-| **CVE-22** | P1 | `_vec_die`/`_hm_die` infinitely self-recurse → OOB/OOM SIGSEGVs instead of `exit(1)` on all non-AGNOS targets (regression v6.0.56) | `lib/vec.cyr:69`, `lib/hashmap.cyr:224` | [live-silent-failure-regressions](../development/issues/archived/2026-06-10-live-silent-failure-regressions.md) |
-| **CVE-23** | P2 | 16 MB `output_buf` cap unenforced in aarch64-ELF, PE, x86-kernel emitters → silent heap-top overrun (kernel images are the unguarded path) | `aarch64/fixup.cyr:597,758`, `pe/emit.cyr:1069`, `x86/fixup.cyr:703,900` | [live-silent-failure-regressions](../development/issues/archived/2026-06-10-live-silent-failure-regressions.md) |
-| **CVE-24** | P2 | Locals registration has no cap; 257th local overruns `fn_local_names` (256) into `local_depths` | `parse_decl.cyr:967`, `util.cyr:127` | [memory-safety-parity-gaps](../development/issues/archived/2026-06-10-memory-safety-parity-gaps.md) |
-| **CVE-25** | P2 | `_sb_grow` discards grow-OOM rc → builders memcpy past old buffer (silent heap corruption) | `lib/str.cyr:469,486` | [memory-safety-parity-gaps](../development/issues/archived/2026-06-10-memory-safety-parity-gaps.md) |
-| **CVE-26** | P2 | `alloc_agnos` alloc() lacks `size<=0`/`>ALLOC_MAX` guard → negative size rewinds bump pointer | `lib/alloc_agnos.cyr:61` | [memory-safety-parity-gaps](../development/issues/archived/2026-06-10-memory-safety-parity-gaps.md) |
-| **CVE-27** | P2 | PE import registries fixed 32-slot/512-B, no bounds check; 34 auto-import helpers already saturate them | `src/backend/pe/emit.cyr:127,231,735` | [memory-safety-parity-gaps](../development/issues/archived/2026-06-10-memory-safety-parity-gaps.md) |
-| **CVE-28** | P2 | aarch64 `atomic_cas`/`fetch_add` are bare `ldxr/stxr` — NOT barriers despite the documented contract; `default_alloc()` CAS-publishes an unfenced vtable (Pi races) | `lib/atomic.cyr:19`, `lib/alloc.cyr:622` | [unreviewed-dimensions](../development/issues/archived/2026-06-10-unreviewed-dimensions.md) |
-| **CVE-29** | P3 | Thread stacks mapped RW with no PROT_NONE guard page; overflow silently writes adjacent mappings; stack probe PE-only | `lib/thread.cyr:50`, `x86/emit.cyr:2037` | [unreviewed-dimensions](../development/issues/archived/2026-06-10-unreviewed-dimensions.md) |
-| **CVE-30** | P1 | TLS post-handshake records (NewSessionTicket/KeyUpdate) collapse to `read()==0` = false EOF / truncation; KeyUpdate silently dropped → later records fail. Default backend. | `lib/tls_native.cyr:2091,5266`, `lib/tls.cyr:76` | [tls-post-handshake-false-eof](../development/issues/archived/2026-06-10-tls-post-handshake-false-eof.md) |
-| **CVE-31** | P1 | Compiler silently accepts broken input: missing include = 0 bytes, unknown ASCII dropped, `file_map>128` misattributes file:line | `lex.cyr:657,1647,28`, `lex_pp.cyr:1612` | [live-silent-failure-regressions](../development/issues/archived/2026-06-10-live-silent-failure-regressions.md) |
+| withdrawn (was CVE-14; a bug) | **P0/P1** | `deps --verify`/`--lock` lockfile path → `/bin/sh -c` (shell injection; `--lock` auto-runs on every build) | `cbt/deps.cyr:1313,1474,1032` | [deps-resolver-injection-class](../development/issues/archived/2026-06-10-deps-resolver-injection-class.md) |
+| withdrawn (was CVE-15; a bug) | P1 | the dep-resolver shell-quoting bug residual: git/tag denylist misses space + leading `-` → `git -c …ext::sh` arg-injection RCE | `cbt/deps.cyr:692,703,716` | [deps-resolver-injection-class](../development/issues/archived/2026-06-10-deps-resolver-injection-class.md) |
+| withdrawn (was CVE-16; a bug) | P2 | the include dot-dot path bug half-fixed: rejects `..` but not absolute `/` includes → read `~/.ssh/id_rsa` | `src/frontend/lex.cyr:622` | [deps-resolver-injection-class](../development/issues/archived/2026-06-10-deps-resolver-injection-class.md) |
+| **CYRIUS-2026-0002** (was CVE-17) | P1 | TLS chain verify ignores pathLenConstraint, EKU(serverAuth), keyUsage; no revocation | `lib/tls_native.cyr:4829`, `lib/sigil.cyr:9942,9948` | [tls-chain-verification-gaps](../development/issues/archived/2026-06-10-tls-chain-verification-gaps.md) |
+| **CYRIUS-2026-0003** (was CVE-18) | P1 | `tls_native_connect` returns OK unverified; wrapper skips hostname when `host==0` | `lib/tls_native.cyr:5058`, `lib/tls.cyr:308` | [tls-chain-verification-gaps](../development/issues/archived/2026-06-10-tls-chain-verification-gaps.md) |
+| withdrawn (was CVE-19; a bug) | P1 | Entropy fail-weak: ws uninit mask on RNG fail; raw `/dev/urandom` bypass of getrandom; AGNOS has no getrandom syscall at all | `lib/ws.cyr:55,70`, `lib/sandhi.cyr:3444`, `lib/syscalls_x86_64_agnos.cyr`, `lib/random.cyr:34` | [entropy-failweak-paths](../development/issues/archived/2026-06-10-entropy-failweak-paths.md) |
+| withdrawn (was CVE-20; a bug) | P2 | Shipped `cycc` is the de-facto trust root, disjoint from the seed chain `bootstrap.sh` verifies (extends the seed trust-root hardening item) | `bootstrap/bootstrap.sh:29`, `.github/workflows/release.yml:38` | [release-trust-chain-integrity](../development/issues/archived/2026-06-10-release-trust-chain-integrity.md) |
+| withdrawn (was CVE-21; a bug) | P2 | Release integrity: unsigned tarballs, mutable git-tag deps (no SHA pin), checksum non-blocking ("continuing anyway"), installer pulled from `main`, unpinned GH Actions w/ `contents:write` (extends the release-signing hardening item) | `scripts/install.sh:373`, `cbt/deps.cyr:717`, `scripts/cyriusly:57`, `.github/workflows/release.yml:7,380` | [release-trust-chain-integrity](../development/issues/archived/2026-06-10-release-trust-chain-integrity.md) |
+| withdrawn (was CVE-22; a bug) | P1 | `_vec_die`/`_hm_die` infinitely self-recurse → OOB/OOM SIGSEGVs instead of `exit(1)` on all non-AGNOS targets (regression v6.0.56) | `lib/vec.cyr:69`, `lib/hashmap.cyr:224` | [live-silent-failure-regressions](../development/issues/archived/2026-06-10-live-silent-failure-regressions.md) |
+| withdrawn (was CVE-23; a bug) | P2 | 16 MB `output_buf` cap unenforced in aarch64-ELF, PE, x86-kernel emitters → silent heap-top overrun (kernel images are the unguarded path) | `aarch64/fixup.cyr:597,758`, `pe/emit.cyr:1069`, `x86/fixup.cyr:703,900` | [live-silent-failure-regressions](../development/issues/archived/2026-06-10-live-silent-failure-regressions.md) |
+| withdrawn (was CVE-24; a bug) | P2 | Locals registration has no cap; 257th local overruns `fn_local_names` (256) into `local_depths` | `parse_decl.cyr:967`, `util.cyr:127` | [memory-safety-parity-gaps](../development/issues/archived/2026-06-10-memory-safety-parity-gaps.md) |
+| **CYRIUS-2026-0004** (was CVE-25) | P2 | `_sb_grow` discards grow-OOM rc → builders memcpy past old buffer (silent heap corruption) | `lib/str.cyr:469,486` | [memory-safety-parity-gaps](../development/issues/archived/2026-06-10-memory-safety-parity-gaps.md) |
+| withdrawn (was CVE-26; a bug) | P2 | `alloc_agnos` alloc() lacks `size<=0`/`>ALLOC_MAX` guard → negative size rewinds bump pointer | `lib/alloc_agnos.cyr:61` | [memory-safety-parity-gaps](../development/issues/archived/2026-06-10-memory-safety-parity-gaps.md) |
+| withdrawn (was CVE-27; a bug) | P2 | PE import registries fixed 32-slot/512-B, no bounds check; 34 auto-import helpers already saturate them | `src/backend/pe/emit.cyr:127,231,735` | [memory-safety-parity-gaps](../development/issues/archived/2026-06-10-memory-safety-parity-gaps.md) |
+| withdrawn (was CVE-28; a bug) | P2 | aarch64 `atomic_cas`/`fetch_add` are bare `ldxr/stxr` — NOT barriers despite the documented contract; `default_alloc()` CAS-publishes an unfenced vtable (Pi races) | `lib/atomic.cyr:19`, `lib/alloc.cyr:622` | [unreviewed-dimensions](../development/issues/archived/2026-06-10-unreviewed-dimensions.md) |
+| withdrawn (was CVE-29; a bug) | P3 | Thread stacks mapped RW with no PROT_NONE guard page; overflow silently writes adjacent mappings; stack probe PE-only | `lib/thread.cyr:50`, `x86/emit.cyr:2037` | [unreviewed-dimensions](../development/issues/archived/2026-06-10-unreviewed-dimensions.md) |
+| withdrawn (was CVE-30; a bug) | P1 | TLS post-handshake records (NewSessionTicket/KeyUpdate) collapse to `read()==0` = false EOF / truncation; KeyUpdate silently dropped → later records fail. Default backend. | `lib/tls_native.cyr:2091,5266`, `lib/tls.cyr:76` | [tls-post-handshake-false-eof](../development/issues/archived/2026-06-10-tls-post-handshake-false-eof.md) |
+| withdrawn (was CVE-31; a bug) | P1 | Compiler silently accepts broken input: missing include = 0 bytes, unknown ASCII dropped, `file_map>128` misattributes file:line | `lex.cyr:657,1647,28`, `lex_pp.cyr:1612` | [live-silent-failure-regressions](../development/issues/archived/2026-06-10-live-silent-failure-regressions.md) |
 
-**Status of the prior audit's open tail** (verified): CVE-09 (jump-table
-overflow) still silent; CVE-10 (tmp-file race) vector fixed v4.10.0 but never
-ticked; CVE-11 (canaries) open; **CVE-12** (bootstrap attestation) + **CVE-13**
-(release signing) open and now sharpened by CVE-20/21. The archived audit's
+**Status of the prior audit's open tail** (verified): the jump-target table overflow bug (jump-table
+overflow) still silent; CYRIUS-2026-0001 (tmp-file race) vector fixed v4.10.0 but never
+ticked; the no-stack-canary hardening item (canaries) open; **the seed trust-root hardening item** (bootstrap attestation) + **the release-signing hardening item**
+(release signing) open and now sharpened by the seed-chain cycc hardening item/the release-integrity hardening item. The archived audit's
 banner claims this tail "is tracked as roadmap items" — it appears on **zero**
 roadmap tiers. See [overdue-security-audit-cve-tail](../development/issues/archived/2026-06-10-overdue-security-audit-cve-tail.md).
 
@@ -108,7 +113,7 @@ roadmap tiers. See [overdue-security-audit-cve-tail](../development/issues/archi
 | **RM-03** | P2 | The AGNOS-kernel flagship goal + in-kernel-TLS acceptance have no tracking home on any active tier (live only inside the stale TLS section slated for deletion). | [roadmap-drift-and-stale-docs](../development/issues/archived/2026-06-10-roadmap-drift-and-stale-docs.md) |
 | **RM-04** | P2 | RISC-V acceptance gate #4 needs real rv64 hardware absent from the fleet (pi/ecb/ach/cass); procurement unbudgeted, has lead time. | [roadmap-drift-and-stale-docs](../development/issues/archived/2026-06-10-roadmap-drift-and-stale-docs.md) |
 | **RM-05** | P2 | cc3 contradiction across tiers (tier-2/3 "stays through v6.x, drops at v7.0.0" vs CLAUDE.md "dropped at v6.1.0"); state.md stale ("Next: Phase E bayan .19" after both shipped). | [roadmap-drift-and-stale-docs](../development/issues/archived/2026-06-10-roadmap-drift-and-stale-docs.md) |
-| **RM-06** | P1 | Full security audit ~13 minors overdue; CVE-09…13 tail on no tier despite the banner. This doc closes the audit; the tail needs re-filing. | [overdue-security-audit-cve-tail](../development/issues/archived/2026-06-10-overdue-security-audit-cve-tail.md) |
+| **RM-06** | P1 | Full security audit ~13 minors overdue; CYRIUS-2026-0001 tail on no tier despite the banner. This doc closes the audit; the tail needs re-filing. | [overdue-security-audit-cve-tail](../development/issues/archived/2026-06-10-overdue-security-audit-cve-tail.md) |
 
 ---
 
@@ -152,8 +157,8 @@ the residual emitter cost is byte-at-a-time copy loops.
 Whole areas no analyst owned; several are v7-public blockers. Tracked in
 [unreviewed-dimensions](../development/issues/archived/2026-06-10-unreviewed-dimensions.md):
 licensing (LEGAL-01), the debugging story (no DWARF on any target;
-crash-localization x86-ELF-only), atomics memory model (CVE-28), thread-stack
-safety (CVE-29), the AGNOS-target security model (no entropy/W^X/ASLR
+crash-localization x86-ELF-only), atomics memory model (the aarch64 atomics-barrier bug), thread-stack
+safety (the thread guard-page hardening item), the AGNOS-target security model (no entropy/W^X/ASLR
 assessment), and the LSP/editor tooling tier (the v7 onboarding surface,
 unreviewed).
 
@@ -163,12 +168,12 @@ unreviewed).
 
 1. **One packed "stop-the-silent-failures" release** —
    [live-silent-failure-regressions](../development/issues/archived/2026-06-10-live-silent-failure-regressions.md)
-   (CVE-22/23/31, CO-02/03) + [deps-resolver-injection-class](../development/issues/archived/2026-06-10-deps-resolver-injection-class.md)
-   (CVE-14/15/16). All small, byte-identical for valid inputs, against your own shipped guards.
+   (the vec_die recursion bug/the output_buf cap bug/the silent broken-input bug, CO-02/03) + [deps-resolver-injection-class](../development/issues/archived/2026-06-10-deps-resolver-injection-class.md)
+   (the deps-verify shell-line bug/the git argument-quoting bug/the absolute-include path bug). All small, byte-identical for valid inputs, against your own shipped guards.
 2. **At v6.1.x closeout doc-sync** — the
    [roadmap-drift](../development/issues/archived/2026-06-10-roadmap-drift-and-stale-docs.md)
    cleanup (RM-01…05). De-risks v6.2.x planning before it opens.
-3. **Before v6.2.0 opens** — re-file CVE-09…13 as real rows, settle rv64
+3. **Before v6.2.0 opens** — re-file CYRIUS-2026-0001 as real rows, settle rv64
    hardware, give hardening an absorber band using the budget freed by the
    phantom TLS arc. The TLS/entropy CVEs (17/18/19/30) are sovereignty +
    v7-public prerequisites.

@@ -128,7 +128,7 @@ fn EMITMACHO_ARM64(S): i64 {
         data_pages = (totvar + PAGE - 1) / PAGE;
         if (data_pages < 1) { data_pages = 1; }
     }
-    # CVE-23 parity (v6.1.41): the code-only cap moved to the real FILE_END check
+    # the output_buf cap bug parity (v6.1.41): the code-only cap moved to the real FILE_END check
     # below (after the full segment layout is known) — `var buf[N]` globals (totvar,
     # materialized on disk) + strings + __LINKEDIT were unbounded, so a large-globals
     # program overran output_buf into the v6.1.40 local tables at 0x5D9D000.
@@ -226,7 +226,7 @@ fn EMITMACHO_ARM64(S): i64 {
     var LINKEDIT_CONTENT_SIZE = INDIRECT_OFF + INDIRECT_SIZE - LINKEDIT_FILEOFF;
     var FILE_END = LINKEDIT_FILEOFF + LINKEDIT_CONTENT_SIZE;
 
-    # CVE-23 parity (v6.1.41): cap on the TRUE max on-disk offset (code + totvar
+    # the output_buf cap bug parity (v6.1.41): cap on the TRUE max on-disk offset (code + totvar
     # globals + strings + __LINKEDIT), before the first output_buf store below.
     _check_output_cap(S, FILE_END);
 

@@ -1,6 +1,6 @@
 # `lib/tls.cyr` libssl backend never verifies the server hostname: any chain-valid cert for any name is accepted
 
-**Status:** ✅ **RESOLVED v6.6.13** (bite I1, CVE-59) — the libssl backend binds the leaf to the host (`SSL_set1_host` / `X509_VERIFY_PARAM_set1_ip_asc` required, host 0 refused, no SNI for an IP literal). See CHANGELOG [6.6.13].
+**Status:** ✅ **RESOLVED v6.6.13** (bite I1, CYRIUS-2026-0015) — the libssl backend binds the leaf to the host (`SSL_set1_host` / `X509_VERIFY_PARAM_set1_ip_asc` required, host 0 refused, no SNI for an IP literal). See CHANGELOG [6.6.13].
 **Placement:** **6.6.13**, bite I1 — the next 6.6.x patch, as the filing asked (set by the user
 2026-10-01; see `roadmap.md` § 6.6.13). CVE-class: it takes the next CVE id, spent in the commit that
 records it.
@@ -21,7 +21,7 @@ certificate must match. `SSL_VERIFY_PEER` alone only checks the chain; OpenSSL d
 hostname check unless `SSL_set1_host` (or `X509_VERIFY_PARAM_set1_host` / `_set1_ip_asc`) is
 called. So a server cert whose SAN is only `localhost` is accepted when the client connects
 as `www.example.com`. The native backend refuses the same handshake (it binds dNSName /
-iPAddress SANs, CVE-18, v6.1.36), so the two backends disagree on the security property that
+iPAddress SANs, CYRIUS-2026-0003, v6.1.36), so the two backends disagree on the security property that
 matters most.
 
 Measured with a throwaway P-256 CA and an `openssl s_server` whose cert has

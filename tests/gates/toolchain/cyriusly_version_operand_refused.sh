@@ -3,7 +3,7 @@
 # anything else by name, and install / uninstall pass the operand as ARGV, never inside a
 # `/bin/sh -c` line (6.6.20, RS-04). Both peers: the compiled programs/cyriusly.cyr (the Linux
 # x86_64 tarball) and the shell twin scripts/cyriusly (the aarch64 and macOS tarballs, and
-# install.sh's fallback). Since 6.7.3 (CVE-103) it also holds the binary's `cmdtools` to the
+# install.sh's fallback). Since 6.7.3 (the cyriusly cmdtools CWD-script bug) it also holds the binary's `cmdtools` to the
 # ACTIVE install's twin, <home>/versions/<current>/scripts/cyriusly — never the current
 # directory's `scripts/cyriusly` — and every store writer to shipping that twin (axes 7 and 9).
 #
@@ -26,7 +26,7 @@
 #      exit 1, cyrius.cyml and the bin/lib links untouched                   (binary + shell)
 #   4  controls: uninstall 6.6.18 removes it and keeps 6.6.19; uninstall of the active 6.6.19 is
 #      still refused; install 6.6.20 runs curl once, on the TAG's installer
-#      (`/cyrius/6.6.20/scripts/install.sh` — never the mutable `main`, CVE-21), and install.sh sees
+#      (`/cyrius/6.6.20/scripts/install.sh` — never the mutable `main`, the release-integrity hardening item), and install.sh sees
 #      CYRIUS_VERSION=6.6.20; use 6.6.18 pins it                              (binary + shell)
 #   5  STATIC: `_cmd_install` / `_cmd_uninstall` / `_cmd_cmdtools` in programs/cyriusly.cyr reach
 #      no `_exec_shell(` / `exec_cmd(` — the operand never rides in a shell line, even behind the
@@ -37,7 +37,7 @@
 #      allows `_`) and a literal-string `'6.6.18'` report as pinned                    (binary)
 #   7  cmdtools (binary; the store's ACTIVE slot holds the shell twin at scripts/cyriusly):
 #      `cmdtools 'list;touch M'` and `cmdtools '$(touch M)' starship` -> the twin ran (its usage
-#      line), no marker — the operands are argv, never a shell line. 6.7.3 (CVE-103): the twin is
+#      line), no marker — the operands are argv, never a shell line. 6.7.3 (the cyriusly cmdtools CWD-script bug): the twin is
 #      <home>/versions/<current>/scripts/cyriusly, NEVER the CWD's `scripts/cyriusly` —
 #        7a  a hostile checkout (its scripts/cyriusly writes a marker): `cmdtools list` lists
 #            through the STORE twin and `cmdtools install starship` runs it too; no marker
@@ -47,7 +47,7 @@
 #            version"; nothing run
 #        7e  a RELATIVE CYRIUS_HOME (a plant under the CWD) -> exit 1, "not an absolute path"
 #   8  STATIC: `CYRIUS_TARGET_WIN=1` still builds programs/cyriusly.cyr (MZ, no undefined fn)
-#   9  every store writer ships the twin to versions/<v>/scripts/cyriusly (6.7.3, CVE-103) — a
+#   9  every store writer ships the twin to versions/<v>/scripts/cyriusly (6.7.3, the cyriusly cmdtools CWD-script bug) — a
 #      throwaway HOME / CYRIUS_HOME each, never the live store:
 #        9a  install.sh's TARBALL path (a fabricated 9.9.9 tarball, its bin/cyriusly the binary
 #            built here): the twin lands byte-identical, and the installed `bin/cyriusly cmdtools
@@ -66,7 +66,7 @@
 # `_exec_shell` turns axis 5 RED. The 6.6.19 tree (both peers) is RED on axes 1-3, and its
 # `uninstall 6.6.18/../6.6.19` deleted the ACTIVE 6.6.19 outright.
 # Review round 1 (same day): the binary fetching `.../cyrius/main/scripts/install.sh` (the base
-# URL, a CVE-21 residual) turns axis 4 [bin] RED. Restoring the base no-operand `use` reader
+# URL, a release-integrity hardening item residual) turns axis 4 [bin] RED. Restoring the base no-operand `use` reader
 # turns every axis-6 row RED (the ESC / BEL bytes reached the terminal, `../../x` and `6..6`
 # reported as pins, the unquoted pin and the literal string read as the GLOBAL default); checking
 # the pin with `_cy_version_ok`'s rule (no `_`) turns the `6.6.20_rc` control RED. The base
@@ -76,7 +76,7 @@
 # dropping it from `_cy_shape_ok` turns axes 1 and 3 [bin] (and axis 6's `6..6` pin) RED, and
 # dropping `|*..*` from `need_version` turns axes 1 and 3 [sh] RED. Dropping `_cy_run_argv`'s
 # CYRIUS_TARGET_WIN arm turns axis 8 RED (rc 1, three undefined functions).
-# 6.7.3 (CVE-103), measured in scratch copies of the tree: the 6.7.2 `_cmd_cmdtools` (the literal
+# 6.7.3 (the cyriusly cmdtools CWD-script bug), measured in scratch copies of the tree: the 6.7.2 `_cmd_cmdtools` (the literal
 # "scripts/cyriusly") turns both axis-7 injection rows (the twin never ran: they had passed
 # vacuously, rc 127), 7a, 7b, 7c, 7d, 7e and 9a RED (the hostile checkout's script RAN); dropping
 # the absolute-home check turns 7e alone RED, dropping the `current` shape check 7d alone, dropping
@@ -119,7 +119,7 @@ store() {   # a fresh store: 6.6.18 + the active 6.6.19, both linked the way ins
         mkdir -p "$H/versions/$_sv/bin" "$H/versions/$_sv/lib"
         echo "$_sv" > "$H/versions/$_sv/bin/STAMP"
     done
-    # the shell twin where every writer puts it since 6.7.3 (CVE-103) — `cmdtools` runs this one
+    # the shell twin where every writer puts it since 6.7.3 (the cyriusly cmdtools CWD-script bug) — `cmdtools` runs this one
     mkdir -p "$H/versions/6.6.19/scripts"
     cp "$ROOT/scripts/cyriusly" "$H/versions/6.6.19/scripts/cyriusly"
     echo 6.6.19 > "$H/current"
@@ -260,7 +260,7 @@ done
 [ "$a6" -eq 0 ] && echo "  ok axis 6 [bin]: use with no operand refuses an escape-bearing, a traversal, a '..' and an unquoted pin (shown as \\xNN, never raw); '_' and a literal string still report"
 
 # ── axis 7: cmdtools runs the INSTALL's shell twin, its operands as argv — never a
-#    scripts/cyriusly from the current directory (6.7.3, CVE-103) ──────────────────────────────
+#    scripts/cyriusly from the current directory (6.7.3, the cyriusly cmdtools CWD-script bug) ──────────────────────────────
 a7=0
 hostile() {   # the hostile checkout: $W/proj/scripts/cyriusly records that it ran
     mkdir -p "$W/proj/scripts"
@@ -323,7 +323,7 @@ else
     bad "axis 8: CYRIUS_TARGET_WIN=1 build of programs/cyriusly.cyr: exit $RC"
 fi
 
-# ── axis 9: every store writer ships the twin to versions/<v>/scripts/cyriusly (6.7.3, CVE-103) ──
+# ── axis 9: every store writer ships the twin to versions/<v>/scripts/cyriusly (6.7.3, the cyriusly cmdtools CWD-script bug) ──
 # install.sh runs under `env -i` with a throwaway HOME, CYRIUS_HOME, TMPDIR and XDG_CONFIG_HOME
 # (its starship block writes there), from a directory with no programs/dlopen-helper.c.
 a9=0

@@ -1,5 +1,5 @@
 #!/bin/sh
-# agnos_tls_deadline.sh — 6.6.13 (CVE-61). On agnos, native TLS's per-connection deadline
+# agnos_tls_deadline.sh — 6.6.13 (CYRIUS-2026-0017). On agnos, native TLS's per-connection deadline
 # (tls_native_set_deadline) bounds a record read and a record write on a tagged socket fd by the
 # CALLER's deadline — not by the socket's own 30 s receive timeout, and not by a send stall bound
 # that every byte of progress re-arms — and with no deadline set both paths are unchanged.

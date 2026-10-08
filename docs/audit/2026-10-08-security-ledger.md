@@ -1,0 +1,141 @@
+# cyrius security ledger — `CYRIUS-YYYY-NNNN`
+
+Kept since 2026-10-08. **An id is reserved for an ACTUAL SECURITY VULNERABILITY**: an attacker who does not already
+control the victim's own code, build or chosen dependencies can cross a boundary — a network peer or on-path
+attacker, another local unprivileged user, the release / download channel, a privilege check — and cause code
+execution, memory corruption, an authentication / authorization bypass, disclosure of a secret, tampering with a
+trusted artifact, or a denial of service from a remote or unprivileged position. Everything else is a bug, filed in
+`docs/development/issues/` with no id (CLAUDE.md § *Security Audit Process*; the user, 2026-10-08).
+
+The ids are the project's own — the shape of a CVE id (`CVE-YYYY-NNNNN`) without the CVE Program's namespace, whose
+ids only CVE Numbering Authorities assign. cyrius is not one and requests none. This is an **internal record of our
+own finds and repairs**, kept in good form; nothing here was reported through a public forum, so nothing needs a
+public write-up. The detail of each entry lives in the audit file named below (`docs/audit/`), under its new id.
+
+**Next id: `CYRIUS-2026-0036`.**
+
+## The 2026-10-08 withdrawal and renumbering
+
+The project had spent `CVE-01` … `CVE-104` on findings, many of them not security vulnerabilities (the user:
+"CVES ARE RESERVED FOR ACTUAL SECURITY VULNERABILITIES — OTHERWISE ITS A BUG AND BELONGS IN ISSUES"). Every entry was
+re-read in full against the rule above (four classifiers and an adversarial judge, 2026-10-08). **35 were actual
+vulnerabilities and were renumbered `CYRIUS-2026-0001` … `0035` in their old order; the other 69 were withdrawn** —
+47 bugs, 17 hardening items (real value, no standalone exploit), 2 that ran a binary from a checkout or directory the
+developer chose to work in (the user's ruling: not a boundary), and the 3 the record had already withdrawn. Every
+reference in the tree was rewritten from one mapping: a kept id became its new id, a withdrawn id the short bug label
+in the second table. The folded stdlibs (`lib/sigil.cyr`, `lib/sandhi.cyr`) stay byte-identical to their tags; their
+sources take the same mapping in the W2 wave.
+
+## Kept — actual security vulnerabilities
+
+| id | was | finding | attacker | why it is a vulnerability |
+|---|---|---|---|---|
+| `CYRIUS-2026-0001` | CVE-10 | `cyrius build` wrote a fixed `/tmp/cyrius_cpp` | another local user (shared /tmp) | The fixed name was opened O_CREAT+O_TRUNC with no O_EXCL or O_NOFOLLOW, then re-read and compiled. A planted symlink overwrites the victim's files; a pre-created file lets the planter swap the source being compiled. Linux protected_* defaults blunt it; macOS has none. Fully fixed at 4.10.0 (the 4.2.2 pid suffix was still predictable). |
+| `CYRIUS-2026-0002` | CVE-17 | Native TLS chain verification ignored pathLen / keyUsage / EKU (and revocation) | on-path attacker holding a certificate and key from a purpose-limited or pathLen-constrained CA | The default backend accepted a non-serverAuth leaf as a server identity and let a pathLen=0 intermediate issue sub-CAs: an RFC 5280 validation bypass. The missing revocation check alone is policy. |
+| `CYRIUS-2026-0003` | CVE-18 | `tls_native_connect` returned an unverified channel; hostname check skipped when host==0 | on-path attacker with any CA-valid certificate | Server authentication failed open: direct `tls_native_connect` users got no verification, and the wrapper bound no hostname when host==0. A MITM succeeds. |
+| `CYRIUS-2026-0004` | CVE-25 | `_sb_grow` dropped its grow failure, so str_builder wrote past its buffer | remote peer, wherever a program appends peer data through the back-compat builders | `alloc` refuses anything over ALLOC_MAX deterministically, so appending ~128 MiB or more memcpys attacker bytes past the heap buffer with no memory pressure needed. A library-level heap overflow; no in-tree network caller was found (P2). |
+| `CYRIUS-2026-0005` | CVE-35 | `deps --verify` digests and the moved-tag check were read from fixed /tmp names | another local user (shared /tmp, shared CI runner) | The fixed names were opened without O_EXCL or O_NOFOLLOW, so whoever pre-creates them writes the integrity verdict, or redirects the write through a symlink. Linux protected_* defaults blunt it; macOS has none. |
+| `CYRIUS-2026-0006` | CVE-36 | `cyrius run/test/fuzz/bench/soak` compiled to a fixed /tmp name, then executed it | another local user (shared /tmp) | Verified at 6.4.80: `compile()` ignored the rename's result, and `run` executed `/tmp/cyrius_run` (`test` executed `/tmp/cyrius_test_bin`). The victim cannot replace an attacker-owned file pre-created there in sticky /tmp, so the victim runs the attacker's binary. Deterministic local code execution, not the race the entry describes. |
+| `CYRIUS-2026-0007` | CVE-44 | The release installer staged the tarball and signature inputs at fixed /tmp names | another local user (shared /tmp, CI runner) | A symlink clobber with the downloaded tarball was measured. Swapping the key or tarball between verify and extract installs a forged release as "verified". The shipped REPL shim compiled and ran `/tmp/cyrius_repl_$$`: local code execution. |
+| `CYRIUS-2026-0008` | CVE-48 | On agnos, a server bound to 127.0.0.1 listened on the network | network peer | Loopback-only services (daimon's unauthenticated control API) were reachable from the NIC; reproduced on a real agnos kernel. |
+| `CYRIUS-2026-0009` | CVE-49 | `cyrius self` staged and executed compilers at /tmp/cyr_*_$$ | another local user (notably on macOS) | Non-exclusive writes to predictable names, then exec. An attacker-owned file pre-created at the name can be rewritten between the cp and the exec, so the victim runs the attacker's code; a planted symlink clobbers files. A shipped CLI verb, not a dev script. |
+| `CYRIUS-2026-0010` | CVE-50 | lib/http.cyr wrote a long URL past its 2048-byte request buffer | whoever supplies a URL the program fetches | A heap overflow with attacker-chosen bytes and length (measured: the next alloc was filled with path bytes). It is REAL for programs that fetch untrusted URLs, which is normal use of an HTTP client library, not for the cited consumers that pass a CLI argument. |
+| `CYRIUS-2026-0011` | CVE-53 | ws_recv_frame let the peer choose the allocation size and read frames it had not received | network peer (the WebSocket server) | The peer's length went unbounded to alloc, and on failure the NUL was stored at address `plen`: a remote crash of any cyrius WS client. Short reads returned stale stack bytes as payload. |
+| `CYRIUS-2026-0012` | CVE-54 | On Windows, net_resolve_ipv4 read a drive-relative C:\etc\hosts | another local user (planted drive-relative path) | Any authenticated user can create C:\etc\hosts and redirect every other user's lookups; confirmed on cass. |
+| `CYRIUS-2026-0013` | CVE-56 | lib/log.cyr log_info_kv / log_info_int overflowed a 512-byte stack buffer | remote client whose strings a program logs | An unbounded copy over the return address; a 4 KB value gives SIGSEGV. Remote DoS and potentially control-flow hijack. |
+| `CYRIUS-2026-0014` | CVE-57 | On Windows, the folded sandhi resolver read a drive-relative C:\etc\resolv.conf | another local user | A planted nameserver answers every other user's sandhi lookups; confirmed on cass. The CVE-54 class. |
+| `CYRIUS-2026-0015` | CVE-59 | libssl backend never bound the server certificate to the host | on-path attacker with any public-CA certificate | Any chain-valid certificate verified any host: a silent MITM. |
+| `CYRIUS-2026-0016` | CVE-60 | libssl tls_read/tls_write returned a zero-extended int; alerts and truncation read as EOF | on-path attacker with no key | A flipped bit made tls_read report a ~4 GiB read, which callers doing `total += n` index past. A forged FIN or alert read as a clean EOF: a truncation attack. |
+| `CYRIUS-2026-0017` | CVE-61 | Native TLS skipped plaintext CCS records without limit and had no deadline | on-path attacker with no key | Injected CCS records defeat the caller's read timeout and hold a thread for ever, exhausting worker pools. P2. |
+| `CYRIUS-2026-0018` | CVE-63 | Native TLS matched IP hosts against dNSName SANs (wildcards included); lax IPv6 parse | on-path MITM with a certificate from a trusted (private) CA | A hostname-verification flaw (RFC 9525 §6.3). It needs a certificate public CAs are forbidden to issue, so P3. Same class as curl CVE-2014-0139. |
+| `CYRIUS-2026-0019` | CVE-64 | Native mTLS server authenticated nobody | any network client | A client-authentication bypass (TLS 1.2 downgrade, any self-signed 1.3 leaf, the FAIL flag dropped), measured. |
+| `CYRIUS-2026-0020` | CVE-65 | On Windows, native TLS read its trust roots from a drive-relative C:\etc\ssl\cert.pem | another local user (plus a network position) | The planted CA became the only root; measured on cass. Reach was narrow in 6.6.13. |
+| `CYRIUS-2026-0021` | CVE-66 | A TLS write to a reset peer raised SIGPIPE | any network peer | Any client hanging up kills the whole server process; measured on four hosts. SIGPIPE is a default an app can ignore, but no stdlib path ignored it. |
+| `CYRIUS-2026-0022` | CVE-67 | Native TLS took any `*.` dNSName as a wildcard (`*.com`) | on-path MITM with a malformed-wildcard certificate from a trusted CA | Hostname-verification laxity. It needs issuance the Baseline Requirements forbid, so P3. The Ruby CVE-2015-1855 class. |
+| `CYRIUS-2026-0023` | CVE-68 | sigil ECDSA P-256/P-384 signing leaked the nonce and key through timing (and left nonce residue) | network client timing a native TLS server's signatures, or a co-located process | A measured data-dependent timing leak on k and d: the Minerva class, where lattice reduction recovers the key. Part B (the residue in memory) alone would be HARDENING. |
+| `CYRIUS-2026-0024` | CVE-73 | On Windows, sigil's TPM / Secure Boot / IMA / dm-verity / LUKS helpers probed drive-relative paths | another local user | Planted files chose the answers, and the LUKS key was staged into an attacker-owned C:\tmp (measured). It only reaches programs that call these Linux-mechanism helpers on Windows; the API is public but exposure is low. |
+| `CYRIUS-2026-0025` | CVE-74 | Plain-socket write to a reset peer raised SIGPIPE (net, http, ws, ws_server, yantra, async) | any network peer | CVE-66 on the plain-socket stack: any client can kill ws_server and http servers. |
+| `CYRIUS-2026-0026` | CVE-75 | Native TLS chain verifier ignored a CA's EKU | holder of an EKU-constrained CA under a trusted root | All 16 wrongly purposed chains were accepted where OpenSSL refuses them, and the mTLS case was measured end to end. P2. |
+| `CYRIUS-2026-0027` | CVE-77 | Windows mTLS server anchored client chains at serverAuth-only system roots | holder of a client certificate under a root the Windows store trusts for server authentication only | The trust-store half of CVE-75: the same purpose-verification flaw. It needs a non-default store and an mTLS server trusting the whole store (0 such roots on cass), so P3 with near-zero exposure. That is a configuration precondition, not a second bug. Changed from HARDENING. |
+| `CYRIUS-2026-0028` | CVE-78 | fmt_int_buf always wrote 24 bytes, overrunning fmt_float's stack buffer | whoever supplies a number a program formats | The input's magnitude drives a stack overrun with digit bytes: fmt_float(1e15, 2) wrote to buf+40 of a 32-byte buffer. A crash is more likely than control. |
+| `CYRIUS-2026-0029` | CVE-80 | lib/pam.cyr authenticated a wrong password under an inherited SIGCHLD=SIG_IGN | local unprivileged user invoking a setuid consumer (shakti) | waitpid failed with ECHILD and the unwritten status read as PAM_AUTH_OK: a local authentication bypass against a setuid-root authenticator. |
+| `CYRIUS-2026-0030` | CVE-83 | A resolve that skipped a tagged dep dropped its commit pin, so a repointed tag was accepted | whoever can repoint a dependency's upstream tag (a compromised dep repo or account, or the git host) | A bypass of the lock's commit pin, an advertised integrity control on the maintainer's release-channel map, on a routine resolve; measured. |
+| `CYRIUS-2026-0031` | CVE-84 | Windows had no munmap route, so every large free leaked (argon2 leaked its arena per call) | remote peer sending requests (e.g. login attempts) to a Windows server | A leak, kept only under the rule that remote-driven unbounded growth is DoS: argon2 login hashing leaked 19-64 MiB per attempt. Windows-only, and no deployed PE server is named: the weakest REAL. |
+| `CYRIUS-2026-0032` | CVE-89 | A CRLF cyrius.lock made the moved-tag check fail open | whoever can repoint a dependency's upstream tag, against a victim with a CRLF lock | The commit pin failed open on a plain autocrlf clone. The `--verify` half failed closed (robustness). |
+| `CYRIUS-2026-0033` | CVE-90 | aarch64 frame displacements past 64 KiB were truncated, so a local aliased a buffer | anyone supplying input to an affected aarch64 program (e.g. programs/tail.cyr reading stdin) | A miscompile of VALID source into a memory-unsafe binary driven by attacker input: 65,528+ input bytes overwrite `total`, which steers the next read's destination. Narrow (aarch64 only, frames over 64 KiB). |
+| `CYRIUS-2026-0034` | CVE-100 | file_write_atomic / `_aw_open` predictable temp followed a planted symlink | another local user who can create files in the destination's shared (sticky) directory | The textbook predictable-temp symlink redirect (CWE-59) in a stdlib primitive. In a sticky directory, planting the temp does NOT give write access to the destination, which is why CVE-37's withdrawal was wrong. Conditional: no shipped caller writes into a shared directory, and Linux protected_symlinks blocks it in /tmp. |
+| `CYRIUS-2026-0035` | CVE-101 | A stripped signature installed while a trusted verifier was present | the release / download channel | Signature verification failed open, and install.ps1 trusted the version named by the download itself. |
+
+## Withdrawn — bugs and hardening items (no id)
+
+| was | label used in the tree | class | why it is not a vulnerability |
+|---|---|---|---|
+| CVE-01 | dep-resolver shell-quoting bug | bug: manifests / repos / directories the developer chose | `git = "...; rm -rf /"` runs on `cyrius deps`/`build`. That is a shell sink, but the manifest belongs to a repo or dependency the developer chose to build and will run. Build tier: becomes REAL if building an untrusted checkout is ruled a boundary. |
+| CVE-02 | include dot-dot path bug | bug: compiler / preprocessor / lexer on the developer's own source | The source's author can read the same file when the program runs. The compiler is not a sandbox for untrusted source. |
+| CVE-03 | include-once table overflow bug | bug: compiler / preprocessor / lexer on the developer's own source | Duplicate symbols or a corrupt build from the developer's own include graph. |
+| CVE-04 | dep modules path-escape bug | bug: manifests / repos / directories the developer chose | A write to an arbitrary path on `cyrius deps`, driven by a manifest the developer chose. Same class and tier as CVE-01. |
+| CVE-05 | compiler heap guard-page gap | bug: compiler / preprocessor / lexer on the developer's own source | An over-long identifier in the developer's own source overflows a compiler table. |
+| CVE-06 | string-data region overflow bug | bug: compiler / preprocessor / lexer on the developer's own source | A compiler table overflow on the developer's own source. |
+| CVE-07 | no-PIE hardening item | hardening (no standalone exploit) | An exploit mitigation. It needs a memory-corruption bug in the compiled program to matter. |
+| CVE-08 | missing-cld bug | bug: robustness, no attacker | DF=1 can only come from the developer's own inline asm: the ABI guarantees DF=0 at calls and the kernel clears it on signal entry. |
+| CVE-09 | jump-target table overflow bug | bug: compiler / preprocessor / lexer on the developer's own source | A miscompile of a pathological function in the developer's own source. |
+| CVE-11 | no-stack-canary hardening item | hardening (no standalone exploit) | A mitigation, accepted with rationale at 6.3.21. |
+| CVE-12 | seed trust-root hardening item | hardening (no standalone exploit) | An attestation and reproducibility gap (trusting-trust), not an exploitable flaw. |
+| CVE-13 | release-signing hardening item | hardening (no standalone exploit) | A missing supply-chain control; downloads came over HTTPS from GitHub. The later bypasses of signing are CVE-44 and CVE-101, both REAL. |
+| CVE-14 | deps-verify shell-line bug | bug: manifests / repos / directories the developer chose | A shell sink fed by the project's own lock or a chosen dependency's filenames on deps/build. Same class and tier as CVE-01. |
+| CVE-15 | git argument-quoting bug | bug: manifests / repos / directories the developer chose | CVE-01 again, through git's argv. Build tier. |
+| CVE-16 | absolute-include path bug | bug: compiler / preprocessor / lexer on the developer's own source | As CVE-02: the source can read the file at runtime anyway. |
+| CVE-19 | entropy-fallback hardening item | hardening (no standalone exploit) | The weak values appear only after a separate failure. The always-weak Windows/AGNOS paths had no sockets at 6.1.31, and TLS keygen failed closed. |
+| CVE-20 | seed-chain cycc hardening item | hardening (no standalone exploit) | A reproducibility and attestation gap, closed by seed-derive at 6.2.32. |
+| CVE-21 | release-integrity hardening item | hardening (no standalone exploit) | Missing pinning and signing controls; none is exploitable on its own. Bypasses of the controls added for it are CVE-83/89/101, all REAL. |
+| CVE-22 | vec_die recursion bug | bug: robustness, no attacker | Fail-stop either way; the out-of-bounds access never happens. |
+| CVE-23 | output_buf cap bug | bug: compiler / preprocessor / lexer on the developer's own source | The compiler overruns its buffer only on a >16 MB program from the developer's own source. |
+| CVE-24 | locals-cap bug | bug: compiler / preprocessor / lexer on the developer's own source | A compiler table overflow on the developer's own source. |
+| CVE-26 | alloc_agnos size-guard hardening item | hardening (no standalone exploit) | Only a caller passing a negative size (a caller bug) rewinds the bump pointer. AGNOS had no sockets then. Allocator guard parity. |
+| CVE-27 | PE import-registry bounds bug | bug: compiler / preprocessor / lexer on the developer's own source | A compiler table overflow (>256 imports) on the developer's own source. |
+| CVE-28 | aarch64 atomics-barrier bug | bug: other: no attacker gains anything | A concurrency-correctness bug between the program's own threads. |
+| CVE-29 | thread guard-page hardening item | hardening (no standalone exploit) | A missing mitigation; it needs a stack-overflow bug to matter. |
+| CVE-30 | TLS post-handshake false-EOF bug | bug: other: no attacker gains anything | These are AEAD-protected records from a stock server, which an on-path attacker cannot forge: an interop / availability bug. Contrast CVE-60, where an on-path attacker forces the false EOF. |
+| CVE-31 | silent broken-input bug | bug: compiler / preprocessor / lexer on the developer's own source | Diagnostics on the developer's own source. |
+| CVE-32 | include filename-capture overflow bug | bug: compiler / preprocessor / lexer on the developer's own source | A compiler heap overrun from the developer's own source; no compile-only service of untrusted source is cited. |
+| CVE-33 | READFILE path-composition overflow bug | bug: compiler / preprocessor / lexer on the developer's own source | As CVE-32; cycc is not setuid. |
+| CVE-34 | long-HOME overflow bug | bug: robustness, no attacker | No other principal sets cycc's environment. |
+| CVE-37 | file_write_atomic temp item (withdrawn) | withdrawn before 2026-10-08 | Withdrawn in the record on the sibling-of-destination argument. That argument misses sticky shared directories; the finding was raised again and fixed as CVE-100. |
+| CVE-38 | codesign shell-concatenation item (withdrawn) | withdrawn before 2026-10-08 | Withdrawn: there is no `-o` flag, and the invoker types the output path. The manifest-supplied output came later as CVE-97. |
+| CVE-39 | include-length ifdef bug | bug: compiler / preprocessor / lexer on the developer's own source | A silent miscompile from the developer's own source. |
+| CVE-40 | define-body copy overflow bug | bug: compiler / preprocessor / lexer on the developer's own source | A compiler memory-safety bug on the developer's own source. |
+| CVE-41 | derive name-capture overflow bug | bug: compiler / preprocessor / lexer on the developer's own source | Silently renames the neighbouring field in the developer's own source. |
+| CVE-42 | unused id 42 | withdrawn before 2026-10-08 | Retired after a counter disagreement between the audit file and CLAUDE.md. |
+| CVE-43 | dep-cache tamper-check hardening item | hardening (no standalone exploit) | Tamper evidence against a same-user writer who could replace ~/.cyrius/bin anyway. It is REAL only on a shared or group-writable CYRIUS_HOME. The reused same-tag cache case comes from a chosen manifest (d). |
+| CVE-45 | file-marker forge (private visibility) bug | bug: `private` visibility (encapsulation, not a boundary) | An encapsulation bypass; the entry itself says `private` is not a sandbox. |
+| CVE-46 | closure secret-var wipe gap | hardening (no standalone exploit) | Key material outlived its scope; reading it needs a separate memory-disclosure bug. The zeroed parameter `c` is a miscompile. |
+| CVE-47 | tail-call secret-var wipe gap | hardening (no standalone exploit) | Same guarantee broken as CVE-46. |
+| CVE-51 | Intel-Mac clock stale-register bug | bug: compiler / preprocessor / lexer on the developer's own source | A codegen ABI bug in compiled programs, but neither the written value nor the address is attacker-chosen. Contrast CVE-90. |
+| CVE-52 | dropped-at-sign lexer bug | bug: compiler / preprocessor / lexer on the developer's own source | Invalid syntax silently accepted in the developer's own source; 0 instances ecosystem-wide. |
+| CVE-55 | multi-line string attribution bug | bug: `private` visibility (encapsulation, not a boundary) | A visibility bypass plus wrong diagnostic line numbers. |
+| CVE-58 | cxvm host-memory bug | bug: robustness, no attacker | cxvm is documented as "an interpreter for TRUSTED bytecode. It is not a sandbox" and passes syscalls to the host raw. It claims no isolation boundary, so nothing is crossed. |
+| CVE-62 | deps-header dot-dot path bug | bug: manifests / repos / directories the developer chose | Exactly the class the maintainer ruled out: a manifest in the chosen dep graph reaching local paths. The root-manifest variant is build tier. |
+| CVE-69 | secret-var epilogue spill gap | hardening (no standalone exploit) | Reading them needs a second read primitive. |
+| CVE-70 | ECDHE key zeroisation gap | hardening (no standalone exploit) | Forward secrecy is lost only to a later memory read. |
+| CVE-71 | all-zero x25519 check item | hardening (no standalone exploit) | A missed RFC 8446 MUST; the handshake's authentication covers the substituted share. |
+| CVE-72 | naked-fn secret-var gap | hardening (no standalone exploit) | Same class as CVE-46/47/69 (the wipe silently not run), so the same verdict. There are 0 instances anywhere. Changed from NOT-SECURITY (a). |
+| CVE-76 | deps-tag dot-dot path bug | bug: manifests / repos / directories the developer chose | Only empty directories (git refuses the ref) plus printed advice, from the chosen dep graph. |
+| CVE-79 | package-pin path bug | bug: ran a binary from a checkout / directory the developer chose (user ruling) | Deciding fact: the repo's own executable ran on `cyrius version` / `fmt` / `lint` / a bare `cyrius`, BEFORE any build. It leans REAL (git CVE-2022-24765 / Git LFS CVE-2020-27955 precedent); the call is the maintainer's. |
+| CVE-81 | use-alias table overflow bug | bug: compiler / preprocessor / lexer on the developer's own source | A compiler table overflow and miscompile from the developer's own source. |
+| CVE-82 | PP_EXPAND buffer overflow bug | bug: compiler / preprocessor / lexer on the developer's own source | A preprocessor overflow and miscompile from the developer's own source. |
+| CVE-85 | if-nesting overflow bug | bug: compiler / preprocessor / lexer on the developer's own source | A compiler table overflow; the silent miscompile needs ~344K nesting levels. |
+| CVE-86 | attribute-line desync bug | bug: `private` visibility (encapsulation, not a boundary) | A visibility bypass plus a preprocessor miscompile on the developer's own source. |
+| CVE-87 | deps-name guard bug | bug: manifests / repos / directories the developer chose | Cache-name squatting, printed advice and terminal escapes; no content poisoning. |
+| CVE-88 | modules dot-dot / symlink vendoring bug | bug: manifests / repos / directories the developer chose | Exactly the ruled-out shape; the record's own "Not covered" names the transitive path/git half as the same class. |
+| CVE-91 | funcgate-stage symlinked-HOME bug | bug: the project's own dev scripts | The project's own dev script, and the operand is the operator's. |
+| CVE-92 | cyrius-publish VERSION quoting bug | bug: manifests / repos / directories the developer chose | It needs the maintainer to publish without reading VERSION, and that contributor could land code just as well. |
+| CVE-93 | distlib 256 KB scan bug | bug: robustness, no attacker | An API-compatibility check on the producer's own bundle. |
+| CVE-94 | cyriusly operand bugs | bug: robustness, no attacker | A wrong command line only hurts the person who typed it. The `main` fetch is a hardening sliver (see CVE-101), and the current-directory half became CVE-103. |
+| CVE-95 | manifest terminal-escape bug | bug: manifests / repos / directories the developer chose | Terminal escapes from chosen manifests, and bundle injection from the producer's own manifest. |
+| CVE-96 | Ed25519 seed-copy gap | hardening (no standalone exploit) | Reading them needs a second memory-read primitive. |
+| CVE-97 | build-output quoting bug | bug: manifests / repos / directories the developer chose | Code execution or an out-of-tree write on `cyrius build` of a repo the developer chose to build: the same attacker and verb as CVE-01/15. Build tier: REAL if building an untrusted checkout is ruled a boundary. Changed from BORDERLINE. |
+| CVE-98 | committed-symlink write bug | bug: manifests / repos / directories the developer chose | An arbitrary write (measured: authorized_keys via `cyrius update`) from project-maintenance verbs on a checkout the developer adopted. Build tier. Changed from BORDERLINE. |
+| CVE-99 | file-include manifest read bug | bug: manifests / repos / directories the developer chose | The read lands in the victim's own artifact and terminal (compare CVE-02/16), and a manifest injecting source into its own project gains nothing. |
+| CVE-102 | Windows bare-name process-start bug | bug: manifests / repos / directories the developer chose | A planted cmd.exe runs on `cyrius build` of that checkout, and the certutil half forges hashes the same author could write into cyrius.lock directly. Same tier as CVE-97. Its class is on the 2026-10-08 attack-surface map, so it is the first to flip if the build tier is ruled a boundary. Changed from BORDERLINE. |
+| CVE-103 | cyriusly cmdtools CWD-script bug | bug: ran a binary from a checkout / directory the developer chose (user ruling) | Deciding fact: repository code ran on a toolchain-management verb (`cmdtools list`) with no build at all, the map's "from the current directory" class. It leans REAL; same decision as CVE-79. |
+| CVE-104 | dropped-bang lexer bug | bug: compiler / preprocessor / lexer on the developer's own source | `!` was not cyrius syntax, so this is invalid source silently accepted; no live use was found. |

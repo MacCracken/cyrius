@@ -6,7 +6,7 @@
 # ⛔ WHY. `return IDENT(args);` was lowered to epilogue + jmp (x86/aarch64) or call + inline
 # epilogue (cx), which never reached the defer walker: every tail-shaped return — `return
 # Ok(fd);` included, Ok/Err being ctor fns — skipped the fn's defers and left its `secret var`
-# un-zeroised (CVE-47). And the walker saved rax/x0/r0 alone, so a call in a defer body
+# un-zeroised (the tail-call secret-var wipe gap). And the walker saved rax/x0/r0 alone, so a call in a defer body
 # destroyed the rest of the return convention (pair / Ok-Err payload, arity-3 slot, f64 and
 # vector registers). The fix diverts every tail call in a fn with a defer (a whole-body
 # prescan) and saves the whole convention (EDEFER_SAVE/RESTORE, per backend).

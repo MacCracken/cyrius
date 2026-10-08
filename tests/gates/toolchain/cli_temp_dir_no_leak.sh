@@ -4,7 +4,7 @@
 # The `cyrius` CLI must not leave its PRIVATE TEMP DIRECTORY behind on any exit path.
 #
 # THE DEFECT. `_cbt_tmpdir()` (cbt/build.cyr) creates `<base>/cyrius-<pid>` on first
-# use — added at v6.4.81 to close CVE-35/CVE-36, which were about the SHARED `/tmp`
+# use — added at v6.4.81 to close CYRIUS-2026-0005/CYRIUS-2026-0006, which were about the SHARED `/tmp`
 # namespace, not about lifetime — and from that release to 6.6.5 NOTHING ever removed
 # it. Every `cyrius run` / `lint` / `test` / `lsp` / `deps` left one empty directory in
 # `/tmp` for good. Measured on the maintainer's box at 6.6.5: 5,005 `/tmp/cyrius-<pid>`
@@ -174,7 +174,7 @@ done
 # only runs on success is not a cleanup.
 echo "axis 3 — error paths leave no temp directory:"
 # ⚠ 6.6.10: this row used to check only that the output was non-empty — and `@@@` was
-# silently dropped by the lexer (CVE-52), so `build src/bad.cyr` printed `OK (4448 bytes)`
+# silently dropped by the lexer (the dropped-at-sign lexer bug), so `build src/bad.cyr` printed `OK (4448 bytes)`
 # at rc 0 and this "COMPILE ERROR" row passed on a SUCCESSFUL build. It now requires the
 # build to FAIL, with the compiler's own diagnostic. CHANGELOG [6.6.10]
 rc3a=0

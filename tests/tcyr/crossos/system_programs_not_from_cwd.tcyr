@@ -2,7 +2,8 @@
 # the current directory planted. Runs on cass (Windows PE) through the release gate's cross-OS leg,
 # which selects this DIRECTORY; on ecb / ach / pi it pins only exec_cmd's exit status.
 #
-# ⛔ WHY (6.6.20, CVE-102). On Windows `exec_cmd` and every compile spawn started `cmd /s /c …` by
+# ⛔ WHY (6.6.20, the Windows bare-name process-start bug). On Windows `exec_cmd` and every compile spawn started `cmd /s
+# /c …` by
 # its BARE name, and CreateProcessW resolves a bare name by searching the parent's CURRENT
 # DIRECTORY before System32 — so a `cmd.exe` committed to a checkout ran on its first
 # `cyrius build`, and a committed `certutil.exe` chose `cyrius deps --lock`'s hashes. Measured on

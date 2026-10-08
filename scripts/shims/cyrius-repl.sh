@@ -11,7 +11,7 @@ CC="${1:-./build/cycc}"
 # "/tmp/cyrius_repl_$$", chmod'd it +x and RAN it — a predictable path in a world-writable
 # directory, so another local user could pre-create the name (the redirect follows a symlink) or
 # swap the binary between the chmod and the exec, and the REPL would execute their code as you.
-# The same shape as CVE-44 (scripts/ci.sh) and install.sh's /tmp/cc5_verify, in a script the
+# The same shape as CYRIUS-2026-0007 (scripts/ci.sh) and install.sh's /tmp/cc5_verify, in a script the
 # installer ships into ~/.cyrius/versions/<v>/bin. An unguessable 0700 dir leaves nothing to
 # pre-create; a mktemp that cannot produce one aborts rather than falling back to a shared name.
 # CHANGELOG [6.6.6]

@@ -436,14 +436,14 @@ fn sys_brk(addr) {
     return syscall(SYS_BRK, addr);
 }
 
-# v6.2.12 (CVE-19 follow-on): real Windows CSPRNG via bcryptprimitives.dll!
+# v6.2.12 (the entropy-fallback hardening item follow-on): real Windows CSPRNG via bcryptprimitives.dll!
 # ProcessPrng, reached through the 0xF01A PE reroute (src/backend/pe/emit.cyr +
 # x86/emit.cyr). `BOOL ProcessPrng(PBYTE pbData, SIZE_T cbData)` fills `buf` with
 # `len` cryptographically-secure bytes and returns nonzero on success; on the
 # (practically-never) failure we return -1 so random_bytes() and its
 # ws/sandhi/sigil/tls_native consumers fail loudly. NEVER add a weak fallback
 # (uninitialised buffer / clock-ns / PID-mix) — a predictable mask/TXID/key is
-# worse than a failed op (exactly what CVE-19 closed). `flags` is ignored
+# worse than a failed op (exactly what the entropy-fallback hardening item closed). `flags` is ignored
 # (Linux getrandom flags have no ProcessPrng analog). See
 # issues/archived/2026-06-11-windows-entropy-primitive.md.
 # The BOOL is masked to 32 bits: EPROCPRNG_PE defines only eax, so a failure whose upper half

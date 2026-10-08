@@ -948,7 +948,7 @@ fn _CX_NARROW(S, width): i64 {
 # (x86 EVSTORE_W's ESTORE8/16/32), so the same source gave b = 7 natively and 0 on cx (V1's cx
 # half). The loads read 8 bytes and masked, which gave the right value but reached 7 bytes past
 # the slot — past the end of the data segment for a slot in its last 7 bytes, which cxvm now
-# refuses (CVE-58). So both directions use the sized cxvm opcodes (load8/16/32 0x40/0x44/0x45,
+# refuses (the cxvm host-memory bug). So both directions use the sized cxvm opcodes (load8/16/32 0x40/0x44/0x45,
 # store8/16/32 0x42/0x46/0x47), and a signed load sign-extends after the zero-extending load.
 # `width` is the shared convention: the byte count, negative = signed. CHANGELOG [6.6.12]
 fn _cx_width_abs(width): i64 {
@@ -1112,7 +1112,7 @@ fn EADDIMM_X1(S, val): i64 {
 # needs no special handling. Until 6.6.12 this emitted a normal call + epilogue under a comment
 # claiming exactly that interleave broke a jmp; the cost was that every tail recursion grew both
 # VM stacks, a 20M-deep one that runs on x86 died on cxvm, and past depth 512 it overwrote cxvm's
-# loaded code (the call stack had no bound — see programs/cxvm.cyr, CVE-58). CHANGELOG [6.6.12]
+# loaded code (the call stack had no bound — see programs/cxvm.cyr, the cxvm host-memory bug). CHANGELOG [6.6.12]
 #
 # The jmp (0x50) takes its target from the same ftype-2 fixup ECALLFIX records: main_cx.cyr
 # patches bytes 1-3 with `(target - coff) / 4` and keeps byte 0, which is the jmp encoding too.

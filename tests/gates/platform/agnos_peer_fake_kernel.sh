@@ -195,8 +195,8 @@ check "sys_getsockname on a client conn is -38 (agnos reports no local port)" "-
 check "sys_getpeername on a non-socket fd is -1" "-1" "$(mark 66)"
 check "SIGXCPU = 24, FLOCK_E_TABLE_FULL = 2, PROCLIST_ZOMBIE = 7" "24207" "$(mark 67)"
 
-# ── axis 4 — CVE-48: the bind ADDRESS picks the #56 listen class ─────────────────────────────
-echo "axis 4 — sock_bind's address becomes the #56 listen class (CVE-48, agnos 1.57.7):"
+# ── axis 4 — CYRIUS-2026-0008: the bind ADDRESS picks the #56 listen class ─────────────────────────────
+echo "axis 4 — sock_bind's address becomes the #56 listen class (CYRIUS-2026-0008, agnos 1.57.7):"
 cat > "$T/a4.cyr" <<'EOF'
 include "lib/alloc.cyr"
 include "lib/tagged.cyr"
@@ -304,7 +304,7 @@ check "sys_listen on an unbound socket is -22 (EINVAL)" "-22" "$(mark 83)"
 check "sys_bind on a non-socket fd is -88 (ENOTSOCK)" "-88" "$(mark 84)"
 check "a short sockaddr and port 0 are -22 each" "-22022" "$(mark 85)"
 check "a non-AF_INET sockaddr is -97 (EAFNOSUPPORT)" "-97" "$(mark 86)"
-check "an address this host lacks (10.0.2.99) is -99, never widened (CVE-48)" "-99" "$(mark 87)"
+check "an address this host lacks (10.0.2.99) is -99, never widened (CYRIUS-2026-0008)" "-99" "$(mark 87)"
 check "sys_bind(127.0.0.1:8080) then sys_listen: #56(8080 | SOCK_LISTEN_LOOPBACK)" "0 0 4294975376" "$(mark 88) $(mark 89) $(after 88 56 | awk '{ print $1 }')"
 check "sys_bind(0.0.0.0:8081) then sys_listen: #56(8081), class ANY" "8081" "$(after 90 56 | awk '{ print $1 }')"
 check "sys_connect(127.0.0.1:8080) is #47(0x7F000001, 8080, 0) and answers 0" "0 2130706433 8080 0" "$(mark 91) $(after 90 47 | cut -d' ' -f1-3)"

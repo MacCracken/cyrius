@@ -213,19 +213,19 @@ floor, a re-triage that keeps re-pinning the same item).
 - **Refactor + code review**: the dominant shape was **a fix that reached one sibling and not the others**
   — `--syntax-only` in 2 of 7 forks (so `cyrius lint` refuses valid files on pi / ecb / ach, REFACTOR-01),
   `cyrius deps`' own `[deps.NAME]` walker outside 6.6.17's one manifest reader, three environment readers of
-  which one still reads 8 KB, three leaf-name rules for one token; and in the code review, CVE-40's bound
+  which one still reads 8 KB, three leaf-name rules for one token; and in the code review, the define-body copy overflow bug's bound
   applied to the macro body but not its arguments (LEX-EXPR-01), 6.6.3's continue fix one nesting level
-  short (RPF-01), CVE-78's fix on one of `fmt`'s two paths (RLM-04/05), the 6.6.10 alloc census missing
+  short (RPF-01), CYRIUS-2026-0028's fix on one of `fmt`'s two paths (RLM-04/05), the 6.6.10 alloc census missing
   `_tn_alloc_a(` (NET-02). Silent miscompiles found: RPF-01 (continue through a `while`), RPF-02 (a `: f64`
   fn's tail call, bare `return;` or fall-off hands back a stale xmm0), RPD-01 (inline replay drops a `*T` pointer step),
   HEAP-01 / HEAP-02, REVBE-01 (DCE compaction on `kernel;` and `CYRIUS_WX=0`). P0 outside the compiler:
   **CBT-01** — a cloned repo's `[package] cyrius` pin was path-traversed into an `execve` (code execution
   on ANY verb).
 - **Security re-scan**: `~/.cache/cyrius-6620/audit/security.md` — SEC-01…SEC-09, ids proposed from
-  CVE-79. SEC-01 = CBT-01 and SEC-09 = CBTB-02 are in lanes. ⚠ **SEC-02…SEC-08 (two P1: `[build] output`
+  the package-pin path bug. SEC-01 = CBT-01 and SEC-09 = CBTB-02 are in lanes. ⚠ **SEC-02…SEC-08 (two P1: `[build] output`
   reaching a shell / cmd.exe unquoted; `update` / `deps --lock` writing through checkout symlinks) never
   reached `findings.json`** — the security pass's structured result was cut off — so no lane carries them.
-  Caught at integration and fixed in five security lanes (SEC-02…SEC-08 → **CVE-97…CVE-102**); the September audit file and CLAUDE.md counters moved together (next free: **103**).
+  Caught at integration and fixed in five security lanes (SEC-02…SEC-08 → **CYRIUS-2026-0034 … CYRIUS-2026-0035**); the September audit file and CLAUDE.md counters moved together (next free: **103**).
 - **Downstream pins** (DOWNSTREAM-01): **clean** — 126 manifests read from git HEAD: 6.6.2 ×56, 6.6.3 ×10,
   6.6.6 ×29, 6.6.9 ×2, 6.6.10 ×3, 6.6.11 ×3, 6.6.12 ×1, 6.6.14 ×8, 6.6.18 ×12 (the folds), 6.6.20 ×1 (cyrius);
   gpumm is not a git repo (working copy 6.6.2). **None below 6.6.2; no working copy differs from its HEAD.**
@@ -277,8 +277,8 @@ floor, a re-triage that keeps re-pinning the same item).
 - **Judgment / compliance**: code-review pass clean — no raw x86 encodings in shared frontend
   files, and all three whole-program-registry overflow flags are consulted (the pass declines
   rather than half-repairing). Security: the re-scan cadence had **silently slipped inside
-  CLAUDE.md** — it pointed at the 2026-07-27 audit (CVE-32…36, cycc 6.4.82) for the whole minor
-  while `docs/audit/2026-09-03-security-audit.md` (CVE-38…42, cycc 6.5.45) existed. Corrected,
+  CLAUDE.md** — it pointed at the 2026-07-27 audit (CYRIUS-2026-0005 … CYRIUS-2026-0006, cycc 6.4.82) for the whole minor
+  while `docs/audit/2026-09-03-security-audit.md` (no ledger id: all withdrawn as bugs, cycc 6.5.45) existed. Corrected,
   **and the "next CVE is 39" note with it: it is 43.**
 - **Downstream pins**: 125 repos declare a `cyrius` pin; **0 are at ≥ 6.5.60**, 110 sit in
   6.5.0–6.5.59 and 15 below 6.5.0. Recorded as a finding — re-pinning 125 repos is cross-repo
@@ -306,13 +306,13 @@ floor, a re-triage that keeps re-pinning the same item).
   **1,112,464 B**; see the five-release bullet below.)
 - **Judgment findings** (all FIXED, not filed — see the feedback rule below):
   fourth `_cfo` rewind occurrence in `EMIT_OP_DISPATCH` (`p * 3 + 1` == 4; `add`/`sub` cleared the
-  flag, `mul`/`div` never did) · CVE-32/33/34 three unbounded copies reachable from untrusted source
+  flag, `mul`/`div` never did) · the include filename-capture overflow bug/the READFILE path-composition overflow bug/the long-HOME overflow bug three unbounded copies reachable from untrusted source
   · the heap map documenting `include_fname` at an address **no code has ever written** (0x190500
   vs the live unbounded 0x190400) so `heapmap.sh` validated a fiction for three minors ·
   `heapmap.sh` blind to **20.02 MB** of live heap (`ir_nodes` 16 MB, `ir_cp` 4 MB) because its size
   regex took a bare integer only, and mis-sizing `fn_param_struct_mask` as **5 bytes** off a trailing
   `issue [5]` · the Windows PE gates validating a **cycc 5.11.69** binary for the entire v6.x line ·
-  value-form SIMD silently dropped on the PE/Mach-O **cross** paths since v6.4.31 · CVE-35/36 (23
+  value-form SIMD silently dropped on the PE/Mach-O **cross** paths since v6.4.31 · CYRIUS-2026-0005/CYRIUS-2026-0006 (23
   fixed `/tmp` literals in `cbt/`) · the TS arena overlapping `tok_types` + 1.6 MB of `tok_values`
   (10,027,008 B), safe only by a temporal invariant, now `alloc()`-backed.
 - **Backlog re-triage**: verified all 11 open issues against LIVE code (not their own status text) —
@@ -320,7 +320,7 @@ floor, a re-triage that keeps re-pinning the same item).
   as resolved. Open queue **11** + README, 3 proposals, 273 archived. Enforced the placement rule:
   DWARF debug-info and incremental compilation were parked at "v7-PARKED" in roadmap.md, contradicting
   the file's own rule ~200 lines above — moved back into the 6.x line.
-- **Compliance**: new `docs/audit/2026-07-27-security-audit.md` (CVE-32…CVE-36, plus CVE-37/38
+- **Compliance**: new `docs/audit/2026-07-27-security-audit.md` (CYRIUS-2026-0005 … CYRIUS-2026-0006, plus the file_write_atomic temp item (withdrawn)/the codesign shell-concatenation item (withdrawn)
   recorded as REFUTED so a future pass does not re-file them). `CLAUDE.md:164` had claimed the last
   full audit was "v5.0.1" — three minors stale; corrected.
 - **Process fixes this cycle** (the durable output): `_doc_stamp_currency_gate` — a checklist entry is
@@ -330,7 +330,7 @@ floor, a re-triage that keeps re-pinning the same item).
   filed four findings it could have fixed, growing the queue 11 → 15, and the user was right to
   reject that.
 - **The closeout took FIVE releases, .80 through .85**, because each pass kept finding live
-  bugs: .80 `1 - 2 + 3` == 5 · .81 the fourth `_cfo` occurrence + CVE-32/33/34 · .82 the
+  bugs: .80 `1 - 2 + 3` == 5 · .81 the fourth `_cfo` occurrence + the include filename-capture overflow bug/the READFILE path-composition overflow bug/the long-HOME overflow bug · .82 the
   closeout proper + the TS arena + agnos #94/#95 · **.83** intrinsics could not flank a
   TERM-tier operator (found by the .82 vidya sweep, by running the compiler against a
   documented claim) · **.84** `chan_try_send` + the non-blocking channel surface SIGSYS-ing on

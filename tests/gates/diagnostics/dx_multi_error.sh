@@ -27,7 +27,7 @@ grep -q ':7:5: ' "$E" || { echo "FAIL: second error not at :7:5::"; cat "$E"; ex
 
 # 2) garbage tokens past EOF → must terminate (not SIGSEGV, not hang), no output.
 #    ⚠ 6.6.10: the fixture was `var x = @@@ ][ }} return`, and it only exercised the
-#    PARSER because the lexer silently dropped a stray `@` (CVE-52). With `@` refused at
+#    PARSER because the lexer silently dropped a stray `@` (the dropped-at-sign lexer bug). With `@` refused at
 #    the lexer, `@@@` exits before one token reaches the parser and the case would pass
 #    without testing recovery at all — so the `@@@` is gone, and the last row proves the
 #    diagnostic comes from the parser, not the lexer. CHANGELOG [6.6.10]

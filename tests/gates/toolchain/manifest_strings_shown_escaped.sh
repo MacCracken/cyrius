@@ -18,7 +18,7 @@
 #       wrote `dist/my lib.cyr` — the bundle name is now the profile rule, an identifier
 # E5 is the anti-over-reach row: an ordinary bundle name still bundles.
 # 6.6.20 review, MEASURED on a9d9d523:
-#   E6  a git dep cached from one URL and re-declared with an OSC sequence in its URL: the CVE-43
+#   E6  a git dep cached from one URL and re-declared with an OSC sequence in its URL: the dep-cache tamper-check hardening item
 #       origin refusal printed `declared: file://…^[]0;pwned^G` raw (the clone path's unsafe-
 #       character check never runs on a reused cache; reachable from a TRANSITIVE manifest)
 #   E7  `cyrius distlib` / `--modular`: "module not found: <[lib] modules entry>" raw
@@ -183,7 +183,7 @@ else bad "E5 (rc=$rc): $(head -3 "$P.err")"; fi
 
 # E6: a git dep whose cache was cloned from one URL, then declared with an ESC/BEL in its URL
 # (the shape a TRANSITIVE manifest can take). The clone path's unsafe-character check never runs
-# — the cache is reused — so the CVE-43 origin refusal is the line that echoes the URL.
+# — the cache is reused — so the dep-cache tamper-check hardening item origin refusal is the line that echoes the URL.
 floor=11
 if command -v git >/dev/null 2>&1; then
     export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL="$W/gitconfig" GIT_ALLOW_PROTOCOL=file

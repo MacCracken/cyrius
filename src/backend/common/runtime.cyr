@@ -338,7 +338,7 @@ fn RECFIX(S, idx): i64 {
     return 0;
 }
 
-# v6.1.35 (CVE-23): shared output-buffer cap guard. The cap is `_output_cap` — the off-heap
+# v6.1.35 (the output_buf cap bug): shared output-buffer cap guard. The cap is `_output_cap` — the off-heap
 # `_output_base` alloc, 1 GiB since v6.4.51/.52. At v6.1.35 the buffer was the fixed 16 MB
 # region at S+0x4D9D000 (output_buf end 0x5D9D000; brk-final 0x5E1D000), cap-checked inline only in
 # the x86 EMITELF_USER/SHARED/OBJ + Mach-O writers; the aarch64 ELF emitter,

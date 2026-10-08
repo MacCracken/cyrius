@@ -76,7 +76,7 @@ still read as pending work and this list is meant to stay honest about what is d
 
 - **`aarch64` ADD/SUB-immediate 12-bit-mask class — CLOSED (re-opened at the 6.6.20 re-triage, fixed in 6.6.20):** one site was
   missed — `ECALLCLEAN`'s `add sp, sp, #((n - 6) * 16)` after a call with 262+ arguments is unguarded, so `sp` is
-  silently corrupted (n = 262 encodes `#0x0, lsl #12`; SIGILL only from 519). Fixed in 6.6.20 (BACKLOG-02, promoted 2026-10-06; also the 16-bit frame displacement past 64 KiB, CVE-90, on aarch64 and cx) — the class is CLOSED again; roadmap.md's backlog carries the detail. The history: `EADDRA_IMM` was
+  silently corrupted (n = 262 encodes `#0x0, lsl #12`; SIGILL only from 519). Fixed in 6.6.20 (BACKLOG-02, promoted 2026-10-06; also the 16-bit frame displacement past 64 KiB, CYRIUS-2026-0033, on aarch64 and cx) — the class is CLOSED again; roadmap.md's backlog carries the detail. The history: `EADDRA_IMM` was
   fixed at v6.0.91 (three-way split); the two remaining unguarded siblings
   (`EADDIMM_X1` struct-field offsets, `EPATCHFRAME` prologue frame size) were
   swept and fixed at **v6.2.21**, and the other imm12 sites (`ESTOREB_IMM`,
@@ -287,7 +287,7 @@ dual-BSD/GPLv2 leg) is *source-included* into every consumer at build time, so c
 inherit GPL-3.0 obligations. Before any full-public release this needs a deliberate licensing
 decision — a linking/library exception, or an explicit statement that consumers accept GPL-3.0 —
 with legal sign-off. Deliberately deferred to near public release (was tracked in the now-archived
-`issues/archived/2026-06-10-unreviewed-dimensions.md`; the rest of that issue — CVE-28/29,
+`issues/archived/2026-06-10-unreviewed-dimensions.md`; the rest of that issue — the aarch64 atomics-barrier bug/the thread guard-page hardening item,
 DX-01/02, SEC-AGNOS-01 — all shipped by v6.3.23).
 
 ---

@@ -1,5 +1,5 @@
 #!/bin/sh
-# tests/gates/diagnostics/recursion_depth_bounded.sh — v6.5.19 (CVE-40)
+# tests/gates/diagnostics/recursion_depth_bounded.sh — v6.5.19 (the define-body copy overflow bug)
 #
 # cycc must not SIGSEGV on deeply nested source. Recursive descent had NO depth bound,
 # so hostile-but-tiny stdin exhausted the native stack.
@@ -7,7 +7,7 @@
 # THE DEFECT. `fn f() { ` repeated 514 times SIGSEGV'd cycc. Five more shapes did the
 # same at their own depths: nested blocks, nested `if`, nested `while`, parenthesised
 # expressions, unary-minus chains and call chains. Reachable from ordinary untrusted
-# input (`cat hostile.cyr | cycc`) — the CVE-32/33 threat model exactly.
+# input (`cat hostile.cyr | cycc`) — the include filename-capture overflow bug/the READFILE path-composition overflow bug threat model exactly.
 #
 # ⭐ PROVEN STACK EXHAUSTION, NOT A TABLE OVERFLOW. The crash depth scales LINEARLY with
 # RLIMIT_STACK: last-OK 512 at `ulimit -s 8192`, 1026 at 16384, 2053 at 32768. That is

@@ -1,13 +1,13 @@
-# CVE-24 re-scoped — the per-fn local tables are slot-indexed and overflow on large stack frames
+# the locals-cap bug re-scoped — the per-fn local tables are slot-indexed and overflow on large stack frames
 
 **Filed:** 2026-06-12 (split out of the F3 pack at the v6.1.38 cut)
 **Severity:** P2 (latent OOB write; benign in practice today)
-**Supersedes:** the CVE-24 entry in `2026-06-10-memory-safety-parity-gaps.md`,
+**Supersedes:** the locals-cap bug entry in `2026-06-10-memory-safety-parity-gaps.md`,
 whose premise was wrong.
 
 ## What the audit got wrong
 
-CVE-24 was filed as "locals registration has no cap → add a count guard in
+the locals-cap bug was filed as "locals registration has no cap → add a count guard in
 `SFLC` (mirror `SVCNT`)." The naive fix (`if (v >= 256) error`) was implemented
 in v6.1.38 and **reverted before the cut** because it breaks legitimate code.
 

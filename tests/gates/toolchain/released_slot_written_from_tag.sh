@@ -30,7 +30,7 @@
 #   revert pulsar's step 4 to its own copy loop (verbatim)     → axis 6 red
 #   make verify-store never set `bad`                          → axis 7 red
 #   make --restore skip the lib loop                           → axis 8 red
-#   6.7.3 (CVE-103): verify-store never judging scripts/cyriusly → axes 7 7b red;
+#   6.7.3 (the cyriusly cmdtools CWD-script bug): verify-store never judging scripts/cyriusly → axes 7 7b red;
 #           --restore never writing it                            → axis 8 red
 #   6.6.17: the guard's home resolution back to `$(cd … && pwd -P)` → axes 4g 4h 4i 4j red
 #           (rc 1, no message); resolving a missing home as empty     → axis 4h red;
@@ -50,7 +50,7 @@ bad() { echo "  FAIL: $1"; fail=$((fail+1)); }
 R="$W/repo"; mkdir -p "$R/lib" "$R/build" "$R/scripts" "$R/programs" "$R/src"
 cp "$ROOT/scripts/install.sh" "$R/scripts/install.sh"
 cp "$ROOT/scripts/verify-store.sh" "$R/scripts/verify-store.sh"
-# the shell twin, tracked at the tag (6.7.3, CVE-103): every writer ships it to
+# the shell twin, tracked at the tag (6.7.3, the cyriusly cmdtools CWD-script bug): every writer ships it to
 # versions/<v>/scripts/cyriusly, and verify-store judges it for a tag at or above 6.7.3
 cp "$ROOT/scripts/cyriusly" "$R/scripts/cyriusly"
 printf '9.9.9\n' > "$R/VERSION"

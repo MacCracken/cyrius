@@ -554,7 +554,7 @@ fi
 #       shell gates, and as a string literal "/tmp/<name>" in the check driver
 #       (programs/checks/*.cyr — remote names come from _remote_name, local ones from _run_tmp).
 #       Exempt, read-only observations of OTHER tools' fixed namespaces: /tmp/cyrius-* (the CLI's
-#       own temp, /tmp/cyrius-<pid> by design, CVE-35/36) and /tmp/.wine-* (wineserver's socket).
+#       own temp, /tmp/cyrius-<pid> by design, CYRIUS-2026-0005/CYRIUS-2026-0006) and /tmp/.wine-* (wineserver's socket).
 # Self-tested on each shape and on clean look-alikes first.
 _mktemp_bad() {  # prints "<line>: <text>" for every non-canonical mktemp / hand-built temp dir
     # A script that assigns its OWN `TMPDIR` from a CHECKED `mktemp -d` (scripts/install.sh,
@@ -788,7 +788,7 @@ fi
 # v6.6.6 bite 17f. Axis 5 covers tests/gates/**, scripts/check.sh and the `*-gate.sh` scripts
 # check.sh calls. The REST of scripts/ had exactly the same defect and nothing looking at it:
 # the CI installer staged a release tarball AND the three inputs to its signature check at six
-# fixed /tmp names (CVE-44, bite 17e); install.sh compiled a COMPILER to /tmp/cc5_verify, made
+# fixed /tmp names (CYRIUS-2026-0007, bite 17e); install.sh compiled a COMPILER to /tmp/cc5_verify, made
 # it executable and RAN it; bench-history.sh built and ran every benchmark under a hand-made
 # "/tmp/cyr_bench_$$"; cass-install-gate.sh staged a Windows tarball at /tmp/_co_windist;
 # version-bump.sh read the seed-derive verdict that decides whether a release is tagged out of
@@ -802,7 +802,7 @@ fi
 # copy — CHANGELOG [6.6.7]; cyrius-repl.sh remains):
 #   * scripts/shims/cyrius-repl.sh COMPILED each entered expression to "/tmp/cyrius_repl_$$",
 #     chmod'd it +x and RAN it. That is install.sh's /tmp/cc5_verify shape exactly, and the
-#     CVE-44 neighbour class: pre-create the name (the redirect follows a symlink) or swap the
+#     CYRIUS-2026-0007 neighbour class: pre-create the name (the redirect follows a symlink) or swap the
 #     binary between the chmod and the exec and the REPL runs your code as the user.
 #   * scripts/lib/audit-walk.sh staged the formatter's output at "/tmp/aw_fmt_$$" (it needs no
 #     temp at all — cyrfmt writes to stdout and diff reads "-").

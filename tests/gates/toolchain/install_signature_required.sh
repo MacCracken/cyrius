@@ -419,7 +419,7 @@ if [ "$OSS" = linux ]; then
     { [ "$RC" -ne 0 ] && grep -q "latest release resolved to 6.2.30" "$W/out" && [ ! -s "$W/git.log" ]; } \
         || { bad "axis 8 no tarball, latest -> 6.2.30: rc $RC, git: $(head -1 "$W/git.log" 2>/dev/null)"; a8=1; }
     norel; store no 6.6.19; run_sh 6.6.19
-    { [ "$RC" -ne 0 ] && grep -q "anti-downgrade (CVE-21): refusing UNSIGNED 6.6.19" "$W/out" && [ ! -s "$W/git.log" ]; } \
+    { [ "$RC" -ne 0 ] && grep -q "anti-downgrade (the release-integrity hardening item): refusing UNSIGNED 6.6.19" "$W/out" && [ ! -s "$W/git.log" ]; } \
         || { bad "axis 8 no tarball, no verifier, signed-since 6.6.19: rc $RC, git: $(head -1 "$W/git.log" 2>/dev/null)"; a8=1; }
     # controls — ANTI-VACUOUS: the fallback is still reachable where the rule allows it
     norel; store yes 6.6.19; run_sh 6.2.30

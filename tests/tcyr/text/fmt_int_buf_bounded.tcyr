@@ -1,4 +1,4 @@
-# fmt_int_buf_bounded.tcyr — CVE-78: fmt_int_buf writes only its answer.
+# fmt_int_buf_bounded.tcyr — CYRIUS-2026-0028: fmt_int_buf writes only its answer.
 #
 # ⛔ THE DEFECT. fmt_int_buf(n, buf) built its digits in place from buf+23 downward and then
 # shifted them to buf+0, so EVERY call wrote 24 bytes at buf whatever the number's length.
@@ -70,7 +70,7 @@ fn _ffout(bits, d, want): i64 {
 
 fn main(): i64 {
     alloc_init();
-    test_group("fmt_int_buf writes len + NUL only (CVE-78)");
+    test_group("fmt_int_buf writes len + NUL only (CYRIUS-2026-0028)");
     var b = alloc(64);
     if (b == 0) { return 1; }
     _fill(b, 64, 0xEE);
@@ -100,7 +100,7 @@ fn main(): i64 {
     assert_eq(_changed(c, 0, 10), 0, "buf+pos: bytes before untouched");
     assert_eq(_changed(c, 16, 64), 0, "buf+pos: bytes 16..63 untouched");
 
-    test_group("fmt_float_buf stays inside its bound (CVE-78)");
+    test_group("fmt_float_buf stays inside its bound (CYRIUS-2026-0028)");
     _fill(c, 64, 0xEE);
     n = fmt_float_buf(f64_from(1000000000000000), c, 2);
     store8(c + n, 0);

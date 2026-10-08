@@ -1,5 +1,5 @@
 #!/bin/sh
-# pkgver_file_interp_confined.sh — 6.6.20 (SEC-04, CVE-99). `[package] version = "${file:PATH}"`
+# pkgver_file_interp_confined.sh — 6.6.20 (SEC-04, the file-include manifest read bug). `[package] version = "${file:PATH}"`
 # puts PATH's contents into the binary (`#@pkgver` -> CYRIUS_PKG_VERSION) and onto
 # `cyrius build --print-config`, so PATH is checked by the [embed] rules (`_proj_path_bad`) and
 # read through the same link-free open (`_proj_read`), and the VALUE holds no control byte.

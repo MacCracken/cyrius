@@ -1,4 +1,4 @@
-# tls_native_ccs_deadline.tcyr — 6.6.13 (CVE-61): ChangeCipherSpec records are bounded by
+# tls_native_ccs_deadline.tcyr — 6.6.13 (CYRIUS-2026-0017): ChangeCipherSpec records are bounded by
 # the RFC window, and a per-connection deadline bounds every TLS read and write, end to end.
 #
 # ⛔ THE DEFECT (issue 2026-10-01-tls-native-no-deadline). Every native record read skipped ANY
@@ -100,7 +100,7 @@ fn _cd_split_flight(fd): i64 {
 # ⚠ The injected CCS records and the record go out in ONE write. The end under test reads the CCS
 # that breaks its limit, refuses, sends its alert and closes; written separately, a hooked peer
 # descheduled between its writes met that closed socket on the next one — a SIGPIPE kill on 6.6.13
-# (or EPIPE under an inherited ignore, as on GitHub's runners), TLS_ERR_IO since CVE-66 — and the
+# (or EPIPE under an inherited ignore, as on GitHub's runners), TLS_ERR_IO since CYRIUS-2026-0021 — and the
 # row read the peer's exit code wrong (measured on a loaded pi: 3 of 3 runs). CHANGELOG [6.6.14]
 fn _cd_hook(fd, buf, n): i64 {
     _cd_writes = _cd_writes + 1;
@@ -531,7 +531,7 @@ fn _cd_server_hooked(at, mode, cert, use12, out): i64 {
     var srv = _cd_server_ctx();
     if (cert == 1) {
         tls_native_set_verify(srv, TLS_VERIFY_PEER);
-        # 6.6.14 (CVE-64): the client's certificate must chain to the server's roots — the
+        # 6.6.14 (CYRIUS-2026-0019): the client's certificate must chain to the server's roots — the
         # self-signed test cert is its own — at a pinned clock inside its window (2026..2036).
         tls_native_set_ca_bundle(srv, _cd_cert, _cd_cert_len, 1);
         tls_native_set_transport(0, 0, &_cd_now);

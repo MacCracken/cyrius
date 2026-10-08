@@ -1,5 +1,5 @@
 #!/bin/sh
-# tests/gates/diagnostics/truncated_input_terminates.sh — v6.5.19 (CVE-39)
+# tests/gates/diagnostics/truncated_input_terminates.sh — v6.5.19 (the include-length ifdef bug)
 #
 # cycc reads UNTRUSTED source from stdin (`cat foo.cyr | cycc`). On ANY input — a
 # clipped file, an unclosed construct, a hostile 4 bytes — it must terminate with a

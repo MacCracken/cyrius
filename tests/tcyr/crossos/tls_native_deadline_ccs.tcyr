@@ -1,7 +1,7 @@
 # tls_native_deadline_ccs.tcyr — 6.6.13: the native TLS client's ChangeCipherSpec rule, its
 # per-connection deadline and its record-read error codes, on every host target.
 #
-# Issue 2026-10-01-tls-native-no-deadline (CVE-61):
+# Issue 2026-10-01-tls-native-no-deadline (CYRIUS-2026-0017):
 #   (a) every record read skipped ANY number of plaintext CCS records, in the handshake and after
 #       it, so anyone on the path could hold a client for ever with one CCS per read timeout. Now
 #       a TLS 1.3 peer may send ONE, before its Finished; anything else is TLS_ERR_PROTOCOL after

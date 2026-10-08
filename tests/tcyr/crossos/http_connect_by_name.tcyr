@@ -1,5 +1,5 @@
 # http_connect_by_name.tcyr — v6.6.9 (bite 12): lib/http.cyr reaches a host BY NAME, and its
-# request builder refuses a request it cannot hold (CVE-50) instead of writing past its buffer.
+# request builder refuses a request it cannot hold (CYRIUS-2026-0010) instead of writing past its buffer.
 #
 # ⛔ WHY. (1) http_get / http_get_r / http_get_a passed the URL's host STRING pointer to
 # sock_connect, which wants a packed IPv4 address, so every call dialled the low 32 bits of a heap
@@ -399,7 +399,7 @@ fn main(): i64 {
     assert_eq(_net_dns_answer(r, rl - 2, q, ql), 0 - 1, "A rdata cut short: bounded, no address");
     assert_eq(_net_dns_answer(r, ql - 1, q, ql), 0 - 2, "shorter than the question");
 
-    test_group("v6.6.9 — CVE-50: a request longer than the buffer is refused, not written past");
+    test_group("v6.6.9 — CYRIUS-2026-0010: a request longer than the buffer is refused, not written past");
     var fits = alloc(2048);
     memset(fits, 65, 1900);
     store8(fits, 47);

@@ -145,7 +145,8 @@ fn fall_off_end(): i64 {
 #
 # ⛔ `return IDENT(args);` was lowered to epilogue + jmp (a call + inline epilogue on cx), which
 # never reached the walker: every tail-shaped return skipped the fn's defers and left its
-# `secret var` un-zeroised (CVE-47) — `return Ok(fd);` included, since Ok/Err are ctor fns. And
+# `secret var` un-zeroised (the tail-call secret-var wipe gap) — `return Ok(fd);` included, since Ok/Err are ctor fns.
+# And
 # the walker saved rax alone, so any call in a defer body destroyed the rest of the return
 # convention: the pair / Ok-Err payload (rdx / x2 / r4; x1 for an aarch64 16-byte struct), the
 # arity-3 slot, the f64 and vector registers. `clobber_all` below is written to hit ALL of them:

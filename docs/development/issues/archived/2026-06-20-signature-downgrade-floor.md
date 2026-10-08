@@ -1,19 +1,19 @@
 # Client-side signature anti-downgrade floor (rollback protection)
 
-> **STATUS: ✅ RESOLVED (v6.3.21) — shipped as CVE-21's anti-downgrade floor.**
+> **STATUS: ✅ RESOLVED (v6.3.21) — shipped as the release-integrity hardening item's anti-downgrade floor.**
 > `scripts/install.sh` now TOFU-pins the highest signed version to
 > `~/.cyrius/signed-since` on a successful signed verify and requires a valid
 > signature for any version ≥ that floor (`CYRIUS_ALLOW_UNSIGNED` escape,
 > sort-based `_version_ge`). Closes the strip-`SHA256SUMS.sig` silent downgrade.
-> See CHANGELOG [6.3.21] and `2026-06-10-overdue-security-audit-cve-tail.md` (CVE-21).
+> See CHANGELOG [6.3.21] and `2026-06-10-overdue-security-audit-cve-tail.md` (the release-integrity hardening item).
 
-**Filed:** 2026-06-20 (surfaced by the v6.2.31 CVE-13 adversarial review)
+**Filed:** 2026-06-20 (surfaced by the v6.2.31 the release-signing hardening item adversarial review)
 **Severity:** P3 (hardening; the v6.2.31 signing is complete for its stated threat)
 **Affects:** `scripts/install.sh`, `scripts/ci.sh`, `scripts/install.ps1`
 
 ## Summary
 
-v6.2.31 closed CVE-13 (releases are now Ed25519-signed by `cyrsign`; the
+v6.2.31 closed the release-signing hardening item (releases are now Ed25519-signed by `cyrsign`; the
 installers verify on the upgrade/CI path; the release CI is fail-closed on a
 missing key). But the verify is **opportunistic**: it fires only when a
 `SHA256SUMS.sig` is present. There is no client-side memory that a release line
@@ -42,7 +42,7 @@ explicit override. Options (each needs persistent client state — not a one-lin
 
 ## Why not now
 
-Rollback protection is a distinct threat from CVE-13 (unsigned releases) and
+Rollback protection is a distinct threat from the release-signing hardening item (unsigned releases) and
 requires persistent per-host state + a UX for first-install vs upgrade vs
 intentional-unsigned. Scope it deliberately rather than bolt on a half-mechanism.
 Pairs naturally with the dependency-model / `cyrius.lock` work or a future

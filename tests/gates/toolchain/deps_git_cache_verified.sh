@@ -1,11 +1,11 @@
 #!/bin/sh
-# deps_git_cache_verified.sh — the CVE-21 cached-checkout check (cbt/deps.cyr) refuses a
+# deps_git_cache_verified.sh — the release-integrity hardening item cached-checkout check (cbt/deps.cyr) refuses a
 # tampered dep cache in every shape we can build, accepts an untouched one whatever its
 # metadata says, and NEVER writes inside a cached checkout. (The exec-bit probe writes ONE
 # file BESIDE one, in `<home>/deps/<name>/`, and unlinks it — it has to be on the cache's own
 # filesystem to answer its question. Axes B13/B13b drive that path.)
 #
-# v6.6.5 (CVE-43). Filed as a FALSE REFUSAL (mabda 4.1.3): `git diff-index --quiet HEAD`
+# v6.6.5 (the dep-cache tamper-check hardening item). Filed as a FALSE REFUSAL (mabda 4.1.3): `git diff-index --quiet HEAD`
 # judges the working tree from the cache's own index stat data and never refreshes it, so
 # a `touch` / `cp -a` / a uid-mapped-namespace `git status` made an UNTOUCHED checkout
 # read as "tampered" — for every project on the box, until someone refreshed the index or

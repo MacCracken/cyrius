@@ -6,7 +6,7 @@
 # `lock cmpxchg` / `lock xadd` / `mfence`; aarch64 LL-SC loops)
 # and makes mutex CAS-based for correctness-by-construction.
 #
-# CVE-28 (v6.1.38): the aarch64 LL-SC loops used bare `ldxr`/`stxr`
+# the aarch64 atomics-barrier bug (v6.1.38): the aarch64 LL-SC loops used bare `ldxr`/`stxr`
 # with NO barrier (the `dmb ish` the docs once claimed was never
 # emitted), so a peer thread could see a CAS-published pointer before
 # the pointee's writes. Now `ldaxr`/`stlxr` (acquire/release exclusive)

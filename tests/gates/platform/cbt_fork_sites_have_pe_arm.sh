@@ -11,7 +11,7 @@
 # Whenever that garbage happens to read as WIFEXITED with status 0, the caller reports
 # success for a child that never existed. Of the 17 sites in cbt/, five were armed before 6.6.6
 # (the compile spawn, the tool spawn, the program run and the cx run at 6.6.5/6.0.85, plus
-# `_sha256sum_file`'s `exec_capture` from CVE-14) and TWELVE were not. Measured on REAL cass at
+# `_sha256sum_file`'s `exec_capture` from the deps-verify shell-line bug) and TWELVE were not. Measured on REAL cass at
 # 6.6.5, before this gate's fix:
 #
 #   cyrius self                -> exit 0, prints "=== Self-Hosting Check ===" and NOTHING
@@ -268,7 +268,7 @@ NFILE=$(cut -d: -f1 "$T/sites" | sort -u | wc -l)
 # self-host step moved into `_self_host_step` -> `_pulsar_raw_compile`, which already has
 # an armed site of its own. The PE behaviour this gate pins is unchanged — axis 4's wine
 # rows still exercise soak's refusal and its step-2 exit code, now through that helper.
-# ⚠ LOWERED AGAIN 16 -> 15 at 6.6.9 bite 10 (CVE-49): `cmd_self`'s POSIX fork of `/bin/sh`
+# ⚠ LOWERED AGAIN 16 -> 15 at 6.6.9 bite 10 (CYRIUS-2026-0009): `cmd_self`'s POSIX fork of `/bin/sh`
 # (the script that staged compilers at `/tmp/cyr_*_$$`) was DELETED; its steps now go through
 # `_self_host_step` -> `_pulsar_raw_compile`, the armed site soak already uses. commands.cyr
 # keeps 1. Its PE arm (`_win_cmd_self`) is unchanged and axis 4's wine rows still run it.

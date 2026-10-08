@@ -18,7 +18,7 @@
 #       heads): exit 0 AND `cx-rows B02 ok` — native, then cxvm.
 #   R3  B03 inline rows (V3 + V4: field arguments in a fn and at top level, through a generic,
 #       copy semantics; top-level copy-init in the leading block and after a statement): exit 128
-#       AND `cx-rows B03 ok` — native, then cxvm. ⚠ 128, not 0, is success here: before CVE-58 a
+#       AND `cx-rows B03 ok` — native, then cxvm. ⚠ 128, not 0, is success here: before the cxvm host-memory bug a
 #       faulting cx guest could exit 0, and "0" must never read as a pass for these rows.
 #   R4  tests/tcyr/crossos/narrow_slot_width.tcyr — native and cxvm each print
 #       `<N> passed, 0 failed` with N derived from the source (58 today, floor 58) and exit 0.
@@ -60,7 +60,7 @@
 #      SIGSEGV; cxvm traps "guest address out of range: 3"), R5 RED on both legs, R6 native RED
 #   d. B03 V4: `_gci_src` returns 0 first (parse_decl.cyr) -> R3 RED (native SIGSEGV; cxvm traps
 #      "guest address out of range: 3"), R6 native RED
-#   (Before CVE-58's cxvm bounds checks the c/d cx legs exited 63 / 64 — B03's hand-off numbers;
+#   (Before the cxvm host-memory bug's cxvm bounds checks the c/d cx legs exited 63 / 64 — B03's hand-off numbers;
 #   cxvm now traps the stray access, exit 1, which the row reads as RED just the same.)
 # Exit 77 = could not run (no compiler at $CC, no timeout(1)); never a SKIP line with exit 0.
 set -u

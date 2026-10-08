@@ -1,20 +1,20 @@
-# Unreviewed dimensions (completeness critic) — LEGAL-01, CVE-28/29, DX/AGNOS/LSP
+# Unreviewed dimensions (completeness critic) — LEGAL-01, the aarch64 atomics-barrier bug/the thread guard-page hardening item, DX/AGNOS/LSP
 
 > **✅ ARCHIVED at the v6.4.32 handoff sweep (2026-07-09).** All actionable items shipped by
-> v6.3.23 (CVE-28 v6.1.38, CVE-29 v6.2.44, DX-01/02 + SEC-AGNOS-01 v6.3.23). The one remaining
+> v6.3.23 (the aarch64 atomics-barrier bug v6.1.38, the thread guard-page hardening item v6.2.44, DX-01/02 + SEC-AGNOS-01 v6.3.23). The one remaining
 > item — **LEGAL-01** (GPL-3.0-only stdlib source-included into consumers; a v7-release blocker
 > needing legal sign-off) — is now tracked in [`roadmap-future.md`](../../roadmap-future.md) under
 > "~v7.0 — Public release", so this issue no longer needs to sit in the open working queue.
 
-> **STATUS (v6.3.23): closed for this cycle except LEGAL-01 (v7).** CVE-28 RESOLVED
-> v6.1.38; CVE-29 (thread-stack guard page) SHIPPED v6.2.44 (`PROT_NONE` guard below
+> **STATUS (v6.3.23): closed for this cycle except LEGAL-01 (v7).** the aarch64 atomics-barrier bug RESOLVED
+> v6.1.38; the thread guard-page hardening item (thread-stack guard page) SHIPPED v6.2.44 (`PROT_NONE` guard below
 > each thread stack, `lib/thread.cyr:67-92`); **DX-01, DX-02, SEC-AGNOS-01 all
 > addressed v6.3.23** — see "## Resolution (v6.3.23)" below. **STILL OPEN:** LEGAL-01
 > (GPL-3.0-only vs sigil's dual-BSD/GPLv2 GPL-leg — a v7-release blocker needing
 > legal sign-off, deliberately deferred to near public release).
 
 **Discovered:** 2026-06-10 during the deep-dive review ([`docs/audit/2026-06-10-deep-dive-review.md`](../../../audit/2026-06-10-deep-dive-review.md))
-**Severity:** Mixed (LEGAL-01 is a v7 blocker; CVE-28 is a real concurrency bug)
+**Severity:** Mixed (LEGAL-01 is a v7 blocker; the aarch64 atomics-barrier bug is a real concurrency bug)
 **Affects:** licensing, debug-info, atomics, thread stacks, the AGNOS security
 model, and the LSP/editor tier — areas no dimension analyst owned, flagged by
 the completeness critic.
@@ -33,7 +33,7 @@ linking exception to the stdlib license (so consumers can ship non-GPL binaries)
 and resolve the sigil GPLv2 leg (switch to the BSD leg, or relicense the file).
 This is a v7 ("Cyrius ONE") gate, not a code fix.
 
-## CVE-28 — aarch64 atomics are not barriers; unfenced vtable publish (P2)
+## the aarch64 atomics-barrier bug — aarch64 atomics are not barriers; unfenced vtable publish (P2)
 
 `lib/atomic.cyr:19-26` documents `atomic_cas`/`fetch_add` as "full barriers on
 both arches", but the aarch64 bodies are bare `ldxr/stxr` — **no `dmb`/acquire/
@@ -56,7 +56,7 @@ claim over-promised a `dmb ish` that was never emitted). **Verified on real pi**
 (atomics.tcyr 4-thread contention) + `ldaxr`/`stlxr` disasm-confirmed. See
 CHANGELOG [6.1.38].
 
-## CVE-29 — thread stacks have no guard page; stack probe PE-only (P3)
+## the thread guard-page hardening item — thread stacks have no guard page; stack probe PE-only (P3)
 
 `mmap_stack` maps the whole stack `PROT_READ|PROT_WRITE` with no `PROT_NONE`
 guard page or `MAP_STACK` (`lib/thread.cyr:50-55`) — a thread stack overflow
@@ -80,7 +80,7 @@ all 5 backends; DWARF `.debug_line` is the larger v7 ask). Not pinned — surfac
 
 ## SEC-AGNOS-01 — the AGNOS userspace target has no security-model assessment
 
-Beyond CVE-19's no-entropy finding, the frozen AGNOS syscall ABI + userspace
+Beyond the entropy-fallback hardening item's no-entropy finding, the frozen AGNOS syscall ABI + userspace
 target got no W^X / ASLR / stack-hardening review. The flagship target runs the
 default native-TLS stack with no RNG and unreviewed memory protections.
 
@@ -137,7 +137,7 @@ function bodies (not comments):
   (`lib/tls_native_conn.cyr:446`) → `sys_getrandom` → AGNOS syscall #45
   (`lib/syscalls_x86_64_agnos.cyr:744`), real kernel CSPRNG, `flags=0`; every
   caller fail-closes on a short read. No fixed-seed / counter / uninitialized
-  fallback. CVE-19 lineage closed for AGNOS.
+  fallback. the entropy-fallback hardening item lineage closed for AGNOS.
 - **W^X** — SAFE (cyrius side). AGNOS userspace is ELF (`_emit_fmt==0`) kmode 0, so
   `_wx_active` returns 1 by default → the 2-PT_LOAD text-`R E`/data-`RW ` split is
   emitted. Loader enforcement (mapping PF_X exec, non-PF_X NX) is an AGNOS-kernel
@@ -147,7 +147,7 @@ function bodies (not comments):
   flag). The userland PIE path is wired (ET_DYN via `EMITELF_USER(S,3)`); whether it
   yields real ASLR depends on the AGNOS kernel randomizing the ET_DYN load base
   (cross-repo, filed upstream: `2026-06-10-cyrius-pie-boot-harness-ask.md`).
-- **alloc_agnos** — SAFE. `lib/alloc_agnos.cyr:67-74` shares the CVE-24/25/26
+- **alloc_agnos** — SAFE. `lib/alloc_agnos.cyr:67-74` shares the locals-cap bug/CYRIUS-2026-0004/the alloc_agnos size-guard hardening item
   guards (`size <= 0` reject, `size > ALLOC_MAX` reject) at full parity with the
   Linux/macOS/Windows allocators; it is the sole allocator under
   `#ifdef CYRIUS_TARGET_AGNOS`, no bypass.
@@ -158,8 +158,8 @@ Two stale comments corrected in passing (comments rot; the bodies were right):
 
 ## Status
 
-Filed 2026-06-10. DX-01 / DX-02 / SEC-AGNOS-01 resolved v6.3.23 (above); CVE-28
-resolved v6.1.38; CVE-29 shipped v6.2.44. **LEGAL-01 alone remains** — a v7-readiness
+Filed 2026-06-10. DX-01 / DX-02 / SEC-AGNOS-01 resolved v6.3.23 (above); the aarch64 atomics-barrier bug
+resolved v6.1.38; the thread guard-page hardening item shipped v6.2.44. **LEGAL-01 alone remains** — a v7-readiness
 legal review (GPL RLE-style linking exception + the sigil GPLv2-leg conflict), not a
 code fix. Cross-repo (AGNOS kernel) components stay filed upstream — don't edit AGNOS
 here.

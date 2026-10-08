@@ -4,8 +4,8 @@
 # The LEXER refuses every byte that begins no token, and every lexer error names
 # `<file>:<line>:<col>` — the same head the parser's diagnostics carry.
 #
-# AXIS 1 — ⛔ CVE-52. The `@` arm (v5.6.3) skipped any `@` that did not spell `@unsafe`,
-# and CVE-31's stray-byte sweep (v6.1.35) never touched it: `return @@@;` compiled and
+# AXIS 1 — ⛔ the dropped-at-sign lexer bug. The `@` arm (v5.6.3) skipped any `@` that did not spell `@unsafe`,
+# and the silent broken-input bug's stray-byte sweep (v6.1.35) never touched it: `return @@@;` compiled and
 # returned 0, `5 @- 3` was 2, `@y` was y, `a @* 2` was a*2, and `cyrius lint` passed all
 # of it. Every shape below must now exit 1 with `unexpected character (0x40)`.
 # AXIS 2 — ANTI-VACUOUS: `@unsafe` is still a block, and still runs.
@@ -56,7 +56,7 @@ refused() {
     check "$1: emits no binary" 0 "$(wc -c < "$T/$1.out" | tr -d ' ')"
 }
 
-echo "axis 1 — ⛔ CVE-52: a stray '@' is refused, not dropped:"
+echo "axis 1 — ⛔ the dropped-at-sign lexer bug: a stray '@' is refused, not dropped:"
 refused at_triple  'fn f(): i64 { return @@@; }\nvar r = f();\nsyscall(60, r);\n'   'error:<source>:1:22: unexpected character (0x40)'
 refused at_single  'fn f(): i64 { return @; }\nvar r = f();\n'                        'error:<source>:1:22: unexpected character (0x40)'
 refused at_minus   'var y = 5 @- 3;\nsyscall(60, y);\n'                               'error:<source>:1:11: unexpected character (0x40)'
@@ -192,7 +192,7 @@ check "…named by the included file's own line" yes \
 
 echo ""
 if [ "$fails" = 0 ]; then
-    echo "PASS: lexer_errors_name_file_line — stray bytes refused (CVE-52), lexer errors name file:line:col"
+    echo "PASS: lexer_errors_name_file_line — stray bytes refused (the dropped-at-sign lexer bug), lexer errors name file:line:col"
     exit 0
 fi
 echo "FAIL: lexer_errors_name_file_line — $fails assertion(s) failed"

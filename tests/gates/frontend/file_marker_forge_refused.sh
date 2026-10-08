@@ -1,5 +1,5 @@
 #!/bin/sh
-# file_marker_forge_refused.sh — v6.6.6 bite 5b (CVE-45).
+# file_marker_forge_refused.sh — v6.6.6 bite 5b (the file-marker forge (private visibility) bug).
 #
 # `private` IS SUPPOSED TO BE A CHECKABLE GUARANTEE. It is enforced through the
 # file map: the preprocessor mints `#@file "NAME" BASE` markers, FM_BUILD turns
@@ -52,7 +52,7 @@
 #      `"` — it appeared as the file name in a diagnostic. FM_BUILD now requires
 #      the marker at a LINE START, the way `#@incdir` requires byte 0.
 #   10 census: FM_BUILD's scan is gated on FM_ATBOL
-#   11-21 (6.6.20, CVE-86) an ATTRIBUTE line holding a multi-line string cannot
+#   11-21 (6.6.20, the attribute-line desync bug) an ATTRIBUTE line holding a multi-line string cannot
 #      forge the marker. The lexer lexes an attribute's line (`#assert`, `#inline`,
 #      ...) as CODE, strings included; PP_LEXST read every `#` in code as a comment,
 #      so after `#assert 1 == 1, "x<LF>"` the PP took the literal's closing quote for an
@@ -63,7 +63,7 @@
 #      compiled on Linux, exit 99) — scored against the twin without the attribute
 #   23 and executed a `#define` line that was string DATA (strlen 4, not 15) — twin
 #   24 THE BELT AND BRACES (PP_NEUT_BOLMARK): `#@file "` at a line start is neutralised
-#      whatever the PP's string state. Exercised on the CVE-45 data-side residual —
+#      whatever the PP's string state. Exercised on the file-marker forge (private visibility) bug data-side residual —
 #      `"a<LF>#@file "` minted a junk-named span, so the next diagnostic named a "file"
 #      called `;` + LF + ...; it must name <source>
 #   25 over-correction guard for 24: the key is FM_BUILD's 8-byte `#@file "`, so data
@@ -332,7 +332,7 @@ else
     fail=$((fail+1))
 fi
 
-# ── axes 11-21 — 6.6.20 (CVE-86): an ATTRIBUTE line holding a multi-line string. The
+# ── axes 11-21 — 6.6.20 (the attribute-line desync bug): an ATTRIBUTE line holding a multi-line string. The
 #    lexer lexes the rest of an attribute line (`#assert`, `#inline`, ...) as CODE, string
 #    literals included; the preprocessor read every `#` in code as a comment opener. So
 #    after `#assert 1 == 1, "x<LF>"` the PP took the literal's CLOSING quote for an opening
@@ -442,7 +442,7 @@ twin_axis 23 'a #define line inside an attribute line'"'"'s string stays DATA (e
 
 # ── axis 24 — the BELT AND BRACES (PP_NEUT_BOLMARK): FM_BUILD's 8-byte key `#@file "` at a
 #    line start is neutralised whatever the PP's string state. Exercised on the one shape
-#    where the PP and the lexer AGREE it is inside a string — the CVE-45 data-side residual:
+#    where the PP and the lexer AGREE it is inside a string — the file-marker forge (private visibility) bug data-side residual:
 #    `"a<LF>#@file "` ends on the key's own quote, and FM_BUILD minted a junk-named span from
 #    it, so the next diagnostic named a "file" called `;` + LF + .... The diagnostic must name
 #    <source> and the line grep -n finds.

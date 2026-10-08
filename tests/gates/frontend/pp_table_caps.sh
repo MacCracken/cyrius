@@ -12,7 +12,7 @@
 #    clean compile that exited 49 where 0 is right). Fix: PP_PUSH_LEVEL refuses depth 65 with
 #    a located error, in BOTH passes. Rows: 64 levels compile and run for every arm in the
 #    main source (PP_PASS) and in an included file (PP_IFDEF_PASS); 65 levels are refused at
-#    the 65th directive; 9000 levels are refused by the same message. CVE-85.
+#    the 65th directive; 9000 levels are refused by the same message. the if-nesting overflow bug.
 #
 # B. The function-like macro table (S+0x192000.., 16 macros). The 17th function-like #define
 #    was silently DISCARDED (stored only inside `if (msi < 16)`, no else): a same-name fn was
@@ -39,7 +39,7 @@
 #    file.
 #
 # D. PP_EXPAND copies a macro's parameter names and an invocation's arguments into fn-local
-#    `var pnames[512]` / `var args[512]` — 512 BYTES each — and neither copy was bounded (CVE-40
+#    `var pnames[512]` / `var args[512]` — 512 BYTES each — and neither copy was bounded (the define-body copy overflow bug
 #    bounded only the #define BODY copy). A 516-byte argument came out as an EMPTY expansion
 #    and compiled clean (`f()` returned 0 where 7 is right — a silent miscompile); 518+ smashed
 #    PP_EXPAND's frame and cycc died of SIGSEGV; a ~600-byte parameter list did the same from
@@ -55,7 +55,7 @@
 #    Fix: PP_MACRO_ARGCHECK refuses a count mismatch and an invocation with no `)` by name;
 #    a zero-parameter macro is still invoked as `Z()` / `Z( )`. Rows: too few, too many, an
 #    argument to a zero-parameter macro and an unclosed invocation are refused; `Z()`, `Z( )`,
-#    an empty single argument, a nested call and a wrapped call still expand. CVE-82.
+#    an empty single argument, a nested call and a wrapped call still expand. the PP_EXPAND buffer overflow bug.
 #
 # MUTATION LEDGER (6.6.20, mutant = this tree with the named change, built by build/cycc and
 # run as CYCC=<mutant>):

@@ -1,5 +1,5 @@
 #!/bin/sh
-# tls_libssl_hostname_binding.sh — 6.6.13 (I1, CVE-59). The libssl TLS backend binds the
+# tls_libssl_hostname_binding.sh — 6.6.13 (I1, CYRIUS-2026-0015). The libssl TLS backend binds the
 # server's leaf certificate to `host`, and answers EXACTLY as the native backend does, against an
 # independent peer (OpenSSL's s_server — a peer that shared our code could share the defect).
 #
@@ -8,7 +8,7 @@
 # OpenSSL accepted ANY chain-valid leaf for ANY host: a cert for DNS:localhost verified
 # www.example.com, 127.0.0.1 and host == 0, and a CN-only leaf and a partial wildcard
 # (f*.example.com) verified too. Reached by every -D CYRIUS_TLS_LIBSSL build and by a default
-# build after tls_set_backend(TLS_BACKEND_LIBSSL). Native refused all of it (CVE-18).
+# build after tls_set_backend(TLS_BACKEND_LIBSSL). Native refused all of it (CYRIUS-2026-0003).
 # Filed repro: docs/development/issues/repros/2026-09-30-tls-libssl-no-hostname-verification.sh.
 #
 # THE FIX (lib/tls.cyr `_tls_libssl_bind_host`, run in tls_connect_alloc after the hook): the
@@ -51,7 +51,7 @@
 #   MI6 the native ClientHello builders before _tn_sni_len (SNI for every host) -> the three
 #       native S rows for 127.0.0.1 / ::1 (the fatal-on-mismatch server refuses the literal)
 #   MI7 the native matcher before _tn_wildcard_ok (any "*." a wildcard, any byte under the star)
-#       -> the N rows a_b.example.com, a.com and example.com vs *.com (CVE-67)
+#       -> the N rows a_b.example.com, a.com and example.com vs *.com (CYRIUS-2026-0022)
 #   MI8 serve's 6.6.13 readiness probe (any TCP connect on the port) with the first port held ->
 #       S0: serve settles on the held port, and the 127.0.0.1 rows meet the foreign DNS leaf
 set -u
@@ -378,7 +378,7 @@ row example.com     peer "$CA"            R  R  "example.com: the wildcard needs
 row a.b.example.com peer "$CA"            R  R  "a.b.example.com: the wildcard covers ONE label"
 row a_b.example.com peer "$CA"            R  R  "a_b.example.com: the star stands for LDH bytes only (6.6.14)"
 stop
-echo "leaf DNS:*.com (6.6.14, CVE-67)"
+echo "leaf DNS:*.com (6.6.14, CYRIUS-2026-0022)"
 serve tld
 row a.com           peer "$CA"            R  R  "a.com vs *.com: one label after the star is no wildcard"
 row example.com     peer "$CA"            R  R  "example.com vs *.com"

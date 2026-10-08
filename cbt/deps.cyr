@@ -23,7 +23,7 @@ var _dep_linkdest_reported = 0;
 var _dep_vendor_mode = 0;
 
 # Print the refusal ONCE (the copy loop calls this ~100x per resolve) and return 1,
-# the same error code the CVE-04 traversal guard uses. Full incident writeup lives at
+# the same error code the dep modules path-escape bug traversal guard uses. Full incident writeup lives at
 # the call site in _dep_copy_file.
 fn _dep_refuse_symlinked_dest(path): i64 {
     if (_dep_linkdest_reported == 1) { return 1; }
@@ -205,7 +205,7 @@ fn _dep_copy_file(src, dst): i64 {
     if (src_sz > 0 && src_sz == dst_sz) {
         if (_files_identical(src, dst) == 1) { return 2; }
     }
-    # CVE-04: reject dep writes outside lib/ (path traversal)
+    # the dep modules path-escape bug: reject dep writes outside lib/ (path traversal)
     var di = 0;
     while (load8(dst + di) != 0) {
         if (load8(dst + di) == 46 && load8(dst + di + 1) == 46) {
@@ -244,7 +244,7 @@ fn _dep_copy_file(src, dst): i64 {
     #
     # Checked per destination-directory PREFIX in the same walk the mkdir-p below already does,
     # so `lib` and `lib/unicode` are both covered, and checked BEFORE any mkdir so a refusal
-    # creates nothing. Sibling of the CVE-04 traversal guard above: same choke point, same
+    # creates nothing. Sibling of the dep modules path-escape bug traversal guard above: same choke point, same
     # `return 1`, so every write path (stdlib leaves, `requires`, `.deps` sidecar, modules,
     # submodules) inherits it without a per-caller edit.
     #
@@ -310,7 +310,7 @@ fn _dep_copy_file(src, dst): i64 {
 #
 # See CHANGELOG [5.11.17]; 6.6.17 reads it through the one manifest reader.
 #
-# ⛔ CVE-79 (6.6.20) — THE PIN IS A PATH COMPONENT, AND AT THE REDIRECT IT IS EXECUTED.
+# ⛔ the package-pin path bug (6.6.20) — THE PIN IS A PATH COMPONENT, AND AT THE REDIRECT IT IS EXECUTED.
 # Every caller joins it into `<home>/versions/<pin>/...`, and `_try_redirect_to_pinned`
 # execve's `<home>/versions/<pin>/bin/cyrius` before any verb runs. The value was never
 # checked, so a cloned repo's `cyrius = "../../(...)/proc/self/cwd/payload"` ran the repo's
@@ -399,7 +399,7 @@ fn _dep_read_cyml_package_version(): i64 {
 # control byte: cbt writes it after `#@pkgver` on a line of its own, so a line break started a new
 # SOURCE line (a multi-line file's lines compiled, and the compiler echoed them — `.git/config`'s
 # `extraheader` included; `version = "1.0\nsyscall(...)"` ran). `label` names the value in the
-# refusal. CHANGELOG [6.6.20] (CVE-99)
+# refusal. CHANGELOG [6.6.20] (the file-include manifest read bug)
 fn _dep_expand_file_interp(raw, rlen): i64 {
     return _dep_expand_file_interp_at(raw, rlen, "cyrius.cyml [package] version");
 }
@@ -1426,12 +1426,13 @@ fn _dep_target_matches(t): i64 {
     return 0;
 }
 
-# The NAME rule — a `[deps.NAME]` header (CVE-62) and a modular sub-module (CVE-32), silent:
+# The NAME rule — a `[deps.NAME]` header (the deps-header dot-dot path bug) and a modular sub-module (the include
+# filename-capture overflow bug), silent:
 # 1 when `name` cannot be one path component — empty, `.`-led (`.` and `..` alias the parent:
 # `[deps..]` cloned into `<home>/deps/./<tag>`, i.e. ANOTHER dep's cache root), or holding `/`,
 # `\` (a Windows separator), `..` or a control byte (a header name is echoed in errors, and the
 # old scan ran across newlines). The same set the tag rule refuses (_dep_reject_unsafe_tag),
-# less the `/` a tag may hold. CHANGELOG [6.6.20] (CVE-87).
+# less the `/` a tag may hold. CHANGELOG [6.6.20] (the deps-name guard bug).
 fn _dep_name_unsafe(name): i64 {
     if (load8(name) == 0 || load8(name) == 46) { return 1; }   # empty, '.'-led
     var i = 0;
@@ -1493,9 +1494,9 @@ fn _dep_refuse_name(name): i64 {
     return 1;
 }
 
-# CVE-76 (6.6.16): a `[deps.X] tag` is joined into the clone dir
-# `<home>/deps/<name>/<tag>`, so it must name a place INSIDE that dir — CVE-62's class
-# on the TAG field (CVE-62 guarded the header name only). `../../../esc/sub` made git
+# the deps-tag dot-dot path bug (6.6.16): a `[deps.X] tag` is joined into the clone dir
+# `<home>/deps/<name>/<tag>`, so it must name a place INSIDE that dir — the deps-header dot-dot path bug's class
+# on the TAG field (the deps-header dot-dot path bug guarded the header name only). `../../../esc/sub` made git
 # mkdir the leading components OUTSIDE the cache before it rejected the ref, and a tag
 # naming an existing dir (`../../..`) skipped the clone and printed `rm -rf <that dir>`
 # advice. Refused: empty, `..` anywhere, a leading `/` or `-`, any component starting
@@ -1562,8 +1563,10 @@ fn _dep_modules_refused(dep_name, mods): i64 {
 # sub-module, its index.cyml, a .deps sidecar — are read only from inside the dep's own tree: the
 # copy opens with sys_open, which follows links, so a tag COMMITTING `dist/x.cyr -> /abs/secret`
 # (or `dist -> /dir`) vendored the target into lib/ with a verified commit pin and exit 0. The
-# CVE-43 cache verify cannot see it — the link IS the tag's content. Every component is checked,
-# as [embed] does (_proj_path_bad); the root itself is the operator's. CHANGELOG [6.6.20] (CVE-88)
+# the dep-cache tamper-check hardening item cache verify cannot see it — the link IS the tag's content. Every component
+# is checked,
+# as [embed] does (_proj_path_bad); the root itself is the operator's. CHANGELOG [6.6.20] (the modules dot-dot / symlink
+# vendoring bug)
 fn _dep_src_link(full, rootlen): i64 {
     var n = strlen(full);
     var j = rootlen;
@@ -1613,7 +1616,7 @@ fn _dep_clone_dir(name, tag): i64 {
 # A manifest string as it may be shown: `s` itself when every byte prints, else a fresh copy
 # with each non-printing byte (below 32, 127 and up) as `\xNN`, so an error line cannot carry a
 # terminal escape sequence (or a forged line) out of a hostile manifest. The ONE escaping rule
-# for manifest strings echoed in errors (CVE-76's tag printer, generalised at 6.6.20).
+# for manifest strings echoed in errors (the deps-tag dot-dot path bug's tag printer, generalised at 6.6.20).
 fn _shown(s): i64 {
     var i = 0;
     var c = load8(s);
@@ -1681,7 +1684,8 @@ fn _dep_read_index_deps(index_path, submod): i64 {
 # sibling sub-modules (recursed). `seen` dedups + breaks cycles. Deps are pulled
 # BEFORE the module so its `include` lands after theirs in `_dep_includes`.
 fn _dep_pull_submodule(dep_src, pkg, submod, stdlib_dir, seen): i64 {
-    # CVE-32: traversal guard, BEFORE any fs op — a sub-module name becomes `dist/<pkg>/<mod>.cyr`
+    # the include filename-capture overflow bug: traversal guard, BEFORE any fs op — a sub-module name becomes
+    # `dist/<pkg>/<mod>.cyr`
     # and `lib/<pkg>_<mod>.cyr`, so it takes the dep-NAME rule (no `/` at all), named here.
     if (_dep_name_unsafe(submod) == 1) {
         _ew("error: [deps.");
@@ -1701,7 +1705,8 @@ fn _dep_pull_submodule(dep_src, pkg, submod, stdlib_dir, seen): i64 {
     str_builder_add_cstr(ip_sb, "/index.cyml");
     var ip = str_data(str_builder_build(ip_sb));
     var dsl = strlen(dep_src);
-    var ilk = _dep_src_link(ip, dsl);   # 6.6.20 (CVE-88): read only from inside the dep's tree
+    # 6.6.20 (the modules dot-dot / symlink vendoring bug): read only from inside the dep's tree
+    var ilk = _dep_src_link(ip, dsl);
     if (ilk != 0) { return _dep_refuse_src_link(pkg, ip + dsl + 1, ilk); }
     var deps = _dep_read_index_deps(ip, submod);
     if (deps != 0) {
@@ -1709,7 +1714,8 @@ fn _dep_pull_submodule(dep_src, pkg, submod, stdlib_dir, seen): i64 {
         while (di < vec_len(deps)) {
             var d = vec_get(deps, di);
             if (strlen(d) > 4 && memeq(d, "lib:", 4) == 1) {
-                # CVE-32: an index-controlled leaf name. 6.6.20: by the LEAF rule — this used the
+                # the include filename-capture overflow bug: an index-controlled leaf name. 6.6.20: by the LEAF rule —
+                # this used the
                 # dep-name rule, which refuses `/`, so `lib:unicode/categories` (what distlib
                 # --modular writes) was refused as path traversal.
                 if (_dep_leaf_ok(d + 4) == 0) {
@@ -1753,7 +1759,8 @@ fn _dep_pull_submodule(dep_src, pkg, submod, stdlib_dir, seen): i64 {
         var _l1 = _dep_dest_is_linked(dst_full);
         if (_l1 != 0) { return _dep_refuse_symlinked_dest(_l1); }
     }
-    var slk = _dep_src_link(src, dsl);   # 6.6.20 (CVE-88): checked before the unlink
+    # 6.6.20 (the modules dot-dot / symlink vendoring bug): checked before the unlink
+    var slk = _dep_src_link(src, dsl);
     if (slk != 0) { return errs + _dep_refuse_src_link(pkg, src + dsl + 1, slk); }
     sys_unlink(dst_full);
     var cr = _dep_copy_file(src, dst_full);
@@ -1907,14 +1914,15 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                 errors = errors + 1;
                 continue;
             }
-            # CVE-62 (6.6.13): the header NAME becomes a path — the clone dir
+            # the deps-header dot-dot path bug (6.6.13): the header NAME becomes a path — the clone dir
             # `<home>/deps/<name>/<tag>` (mkdir + git clone), the `lib/<name>_<base>`
-            # destination, and the `dist/<name>.cyr` default. CVE-32 (v6.2.51) guarded
+            # destination, and the `dist/<name>.cyr` default. the include filename-capture overflow bug (v6.2.51)
+            # guarded
             # the sub-module / index / package names and never this one, so a manifest
             # — the consumer's or any TRANSITIVE dep's — naming `[deps.../../x]` made
             # `cyrius deps` mkdir and clone OUTSIDE `<home>/deps`. Refused before any
             # path is derived; the rest of the section is skipped by the outer scan.
-            # 6.6.20 (CVE-87): `[deps.]` / `[deps..]` / `[deps..x]`, `\` and control bytes too
+            # 6.6.20 (the deps-name guard bug): `[deps.]` / `[deps..]` / `[deps..x]`, `\` and control bytes too
             # (_dep_name_unsafe) — the empty and dot names aliased ANOTHER dep's cache root.
             if (_dep_name_unsafe(dep_name) == 1) {
                 _dep_refuse_name(dep_name);
@@ -1932,7 +1940,7 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
             var dep_optional = 0;  # v6.3.1 lever 2: resolve only when an active feature names this dep
             var dep_target = 0;    # v6.3.1 lever 2: resolve only on a matching build target
             var dep_bad = 0;       # 6.6.17 (m6): the key whose value is not a TOML string
-            # CVE-21 (v6.2.30): cleared if a tagged dep's resolved commit
+            # the release-integrity hardening item (v6.2.30): cleared if a tagged dep's resolved commit
             # disagrees with the lock — gates the module copy so poisoned
             # content never lands in lib/.
             var dep_pin_ok = 1;
@@ -1997,7 +2005,7 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                 errors = errors + 1;
                 continue;
             }
-            # CVE-76 (6.6.16): the tag becomes a path component of the clone dir —
+            # the deps-tag dot-dot path bug (6.6.16): the tag becomes a path component of the clone dir —
             # refuse one that would leave `<home>/deps/<name>` BEFORE any gate, mkdir,
             # clone or is_dir. Only when a `tag` key is present: a tagless path / git dep
             # (dep_tag == 0) is the common shape and stays untouched.
@@ -2012,7 +2020,8 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                 errors = errors + 1;
                 continue;
             }
-            # 6.6.20 (CVE-88): a `modules` entry is joined onto the dep's tree and copied into
+            # 6.6.20 (the modules dot-dot / symlink vendoring bug): a `modules` entry is joined onto the dep's tree and
+            # copied into
             # lib/, so `"../secret"` vendored any readable file and exited 0. Refused, like the tag
             # above, before any gate, clone or copy (transitive `path` confinement is separate).
             if (dep_modules != 0 && _dep_modules_refused(dep_name, dep_modules) > 0) {
@@ -2073,12 +2082,12 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
             }
             # 6.6.13 (I10a): a block with NO `modules` and NO `modular` key means
             # `modules = ["dist/<name>.cyr"]` when the tag (or path) ships that file —
-            # probed below, after the clone and its CVE-21 pin. It used to be silently
+            # probed below, after the clone and its release-integrity hardening item pin. It used to be silently
             # inert: never cloned, vendored, pinned or marked visited, so a TRANSITIVE
             # `[deps.<name>]` resolved in its place (agnostic 0.1.7). An explicit
             # `modules = []` parses to a non-zero empty vec, so it is NOT defaulted —
             # it stays the "declared, not linked" spelling. The name is already
-            # validated (CVE-62 above), so it is safe to build a path from.
+            # validated (the deps-header dot-dot path bug above), so it is safe to build a path from.
             var dep_mod_default = 0;
             if (dep_modules == 0 && dep_modular == 0 && (dep_git != 0 || dep_path != 0)) {
                 dep_mod_default = 1;
@@ -2093,7 +2102,7 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                     need_clone = 1;
                 }
             }
-            # CVE-21 (v6.2.30) NOTE: a dep that supplies BOTH git/tag AND an
+            # the release-integrity hardening item (v6.2.30) NOTE: a dep that supplies BOTH git/tag AND an
             # existing `path =` override resolves from the local path with no
             # clone, so the commit-pin verify below (which lives in the
             # need_clone branch) is intentionally bypassed — a local path
@@ -2129,7 +2138,7 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                     }
                     # v6.6.6 — REFUSE BY NAME ON PE. `sys_fork` is `return 0 - 1` on
                     # Windows (lib/syscalls_windows.cyr), so the clone below never ran
-                    # and the CVE-43 status check reported `git clone failed for dep
+                    # and the dep-cache tamper-check hardening item status check reported `git clone failed for dep
                     # '<name>' from <url>` — a statement about git that git never made,
                     # sending the reader to look at a remote that is fine. The verify
                     # half already asks `_git_exec_available()` before believing a fork
@@ -2145,14 +2154,14 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                         dep_pin_ok = 0;
                     }
                     if (git_ok == 1) {
-                        # CVE-15 (v6.1.33): clone via ARGV — no /bin/sh string, no
+                        # the git argument-quoting bug (v6.1.33): clone via ARGV — no /bin/sh string, no
                         # sys_system. Each field is a distinct argv element AND a
                         # `--` separates options from the url/dir positionals, so a
                         # url/tag beginning with `-` can't be read as a git flag
                         # (the `-c …ext::sh` / `--upload-pack=…` arg-injection class
                         # the metachar denylist above misses — space + leading `-`
                         # aren't blocked). `/usr/bin/env` resolves git via PATH.
-                        # CVE-43 (v6.6.5): the same `-u` scrub the verify uses. Git
+                        # the dep-cache tamper-check hardening item (v6.6.5): the same `-u` scrub the verify uses. Git
                         # exports GIT_INDEX_FILE into every hook, so a `cyrius deps`
                         # run from a pre-commit hook made THIS clone write the user's
                         # in-progress commit index — their commit then failed with
@@ -2185,7 +2194,7 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                             sys_execve("/usr/bin/env", &gargv, _envp);
                             sys_exit(127);
                         }
-                        # CVE-43 (v6.6.5): the clone's exit status used to be
+                        # the dep-cache tamper-check hardening item (v6.6.5): the clone's exit status used to be
                         # DISCARDED, so a failed clone surfaced downstream as the
                         # misleading `modules entry "…" not found at tag`. A fork
                         # failure left `gsb` uninitialised too. CHANGELOG [6.6.5].
@@ -2214,16 +2223,16 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                     }
                 }
                 dep_path = clone_dir;
-                # CVE-21 (v6.2.30): pin the resolved commit for a TAGGED dep.
+                # the release-integrity hardening item (v6.2.30): pin the resolved commit for a TAGGED dep.
                 # The tag is meant to be immutable, so on every resolve (fresh
                 # clone OR reused cache) we enforce, against the lock and the
                 # checkout, gating the module copy via dep_pin_ok:
                 #   1. a corrupt/truncated pin line for this dep → fail closed
                 #      (don't silently TOFU-re-pin over corruption);
                 #   2. HEAD must equal the locked commit → catches a force-pushed
-                #      / repointed tag (the core CVE-21 threat);
+                #      / repointed tag (the core the release-integrity hardening item threat);
                 #   3. the checkout must BE the tag — `_git_cache_verify`.
-                # CVE-43 (v6.6.5) rewrote 3 and closed the two holes AROUND it:
+                # the dep-cache tamper-check hardening item (v6.6.5) rewrote 3 and closed the two holes AROUND it:
                 #   * an unreadable checkout (no .git, dubious ownership, fork
                 #     failure) used to SKIP every check — `if (_head != 0)` had no
                 #     else — so tampered bytes were vendored and the pin dropped.
@@ -2391,7 +2400,8 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                     str_builder_add_cstr(sb, "/");
                     str_builder_add_cstr(sb, mod_path);
                     var src = str_data(str_builder_build(sb));
-                    # 6.6.20 (CVE-88): the file — and below, its .deps sidecar — is read only
+                    # 6.6.20 (the modules dot-dot / symlink vendoring bug): the file — and below, its .deps sidecar — is
+                    # read only
                     # from inside the dep's tree; a committed link is refused by name, uncopied.
                     # The PRIMARY path is checked before the `lib/<base>` fallback: a dangling
                     # link reads as absent to file_exists, and must not be resolved around.
@@ -2655,7 +2665,7 @@ fn cmd_deps(): i64 {
     _dep_visited = vec_new();
     _dep_queue = vec_new();
     _dep_inert = 0;                  # 6.6.13 (I10b): modules-less deps that vendored nothing
-    _dep_commit_lines = vec_new();   # CVE-21 (v6.2.30): git-dep commit pins
+    _dep_commit_lines = vec_new();   # the release-integrity hardening item (v6.2.30): git-dep commit pins
     _dep_lock_load();                # v6.6.4: the inherited lock, read BEFORE any copy (stdlib-leaf guard)
     _dep_parse_groups(buf, n);       # v6.2.49 Phase B: [groups] (buf is the TOML header, CYML body already stripped)
     _dep_register_default_std_group();  # v6.3.32 Phase D: built-in `std` default group (after parse so a manifest's own `std` wins)
@@ -2871,7 +2881,7 @@ fn _auto_deps(): i64 {
     if (ee < 0) { return 1; }
     # 6.6.20 (SEC-04): `[package] version` beside it — a `${file:PATH}` checked by the [embed]
     # rules, a value holding a control byte refused — so a verb that compiles fails by name here,
-    # before a compile writes it after `#@pkgver`. CHANGELOG [6.6.20] (CVE-99)
+    # before a compile writes it after `#@pkgver`. CHANGELOG [6.6.20] (the file-include manifest read bug)
     if (_dep_read_cyml_package_version() < 0) { return 1; }
     _embeds = 0;
     if (vec_len(ee) > 0) { _embeds = ee; }
@@ -3036,7 +3046,7 @@ fn cmd_update(): i64 {
         str_builder_add_cstr(tc_sb, "\n");
         var tc_str = str_data(str_builder_build(tc_sb));
         # v6.6.6: crash-safe and checked — was file_write_all with the result dropped.
-        # 6.6.20 (CVE-98): a link here is followed only inside the project — a checkout's
+        # 6.6.20 (the committed-symlink write bug): a link here is followed only inside the project — a checkout's
         # `.cyrius-toolchain -> ~/.profile` was overwritten with the version string.
         if (_io_replace_atomic_in(".", ".cyrius-toolchain", tc_str, strlen(tc_str)) != 0) {
             if (_io_contain_link != 0) { _io_contain_refusal("error"); return 1; }
@@ -3070,7 +3080,7 @@ fn cmd_update(): i64 {
             var cyml_str = str_data(str_builder_build(cyml_sb));
             # v6.6.6: the toml is deleted ONLY once the cyml is fully on disk — the unchecked
             # file_write_all here could leave a truncated cyml AND delete the only good copy.
-            # 6.6.20 (CVE-98): `file_exists` is 0 for a DANGLING link, so a checkout's
+            # 6.6.20 (the committed-symlink write bug): `file_exists` is 0 for a DANGLING link, so a checkout's
             # `cyrius.cyml -> ~/.ssh/authorized_keys` reached here and CREATED that file from its
             # own cyrius.toml. A link is followed only inside the project; the toml is kept.
             if (_io_replace_atomic_in(".", "cyrius.cyml", cyml_str, strlen(cyml_str)) != 0) {
@@ -3115,7 +3125,8 @@ fn _sha256sum_file(path): i64 {
     # lowercase hex digest, then a "completed" line. Capture via CreateProcessW
     # (process_win exec_capture) and parse line 2. Makes `cyrius deps --lock`
     # round-trip on native Windows (no WSL/git-bash).
-    # 6.6.20 (CVE-102): certutil.exe by its absolute System32 path. A bare `certutil` was
+    # 6.6.20 (the Windows bare-name process-start bug): certutil.exe by its absolute System32 path. A bare `certutil`
+    # was
     # searched for in the project directory first, so a checkout's own certutil.exe ran and
     # chose every hash `--lock` wrote and `--verify` compared (measured on cass).
     #ifdef CYRIUS_TARGET_WIN
@@ -3148,7 +3159,7 @@ fn _sha256sum_file(path): i64 {
     store8(whash + 64, 0);
     return whash;
     #endif
-    # CVE-14 (v6.1.33): exec the hasher via ARGV — `path` is a DISTINCT argv element, never
+    # the deps-verify shell-line bug (v6.1.33): exec the hasher via ARGV — `path` is a DISTINCT argv element, never
     # concatenated into a `/bin/sh -c` string, so a lockfile path or a resolved-dep filename
     # containing shell metacharacters can't run commands. `/usr/bin/env` does the PATH lookup.
     var tmpf = _cbt_tmpfile("sha_out");
@@ -3264,14 +3275,15 @@ fn _sha_fail_why(): i64 {
     return 0;
 }
 
-# CVE-21 (v6.2.30) — cstr equality (length-checked memeq).
+# the release-integrity hardening item (v6.2.30) — cstr equality (length-checked memeq).
 fn _cstr_eq(a, b): i64 {
     var la = strlen(a);
     if (la != strlen(b)) { return 0; }
     return memeq(a, b, la);
 }
 
-# ── dep-cache git plumbing — CVE-21 (v6.2.30), rebuilt for CVE-43 (v6.6.5) ────────────
+# ── dep-cache git plumbing — the release-integrity hardening item (v6.2.30), rebuilt for the dep-cache tamper-check
+# hardening item (v6.6.5) ────────────
 #
 # WHY this is not a plain `git diff-index --quiet HEAD` any more (CHANGELOG [6.6.5]):
 # that command judges the working tree from the SHARED cache's own .git/index and config,
@@ -3636,7 +3648,7 @@ fn _git_rev(clone_dir, rev): i64 {
     return buf;
 }
 
-# CVE-21 (v6.2.30) — the commit HEAD resolves to in the cached checkout, or 0.
+# the release-integrity hardening item (v6.2.30) — the commit HEAD resolves to in the cached checkout, or 0.
 # `HEAD^{commit}` rather than bare HEAD so a tag object or a symref cannot be pinned.
 fn _git_head_sha(clone_dir): i64 {
     return _git_rev(clone_dir, "HEAD^{commit}");
@@ -4242,7 +4254,7 @@ fn _git_cache_unjudged(dep_name, tag_or_0, clone_dir): i64 {
     return 0;
 }
 
-# CVE-21 (v6.2.30) — look up the previously-locked commit SHA for a dep,
+# the release-integrity hardening item (v6.2.30) — look up the previously-locked commit SHA for a dep,
 # keyed on (name, git, tag) so a deliberate tag bump in cyrius.cyml does not
 # false-trip (different tag → no match → re-pin). Returns a NUL-terminated SHA
 # pointer, 0 if the lock has no matching commit line, or -1 if a commit line
@@ -4300,7 +4312,7 @@ fn _lock_commit_lookup(name, git, tag): i64 {
             # manifest's are two spellings of ONE repository as often as the cache's origin is
             # (`…/x` vs `…/x.git`). An exact compare here does not REFUSE, it silently
             # TOFU-RE-PINS — the moved-tag check this pin exists for is skipped for that
-            # resolve, which is the CVE-21 hole one spelling away. CHANGELOG [6.6.5].
+            # resolve, which is the release-integrity hardening item hole one spelling away. CHANGELOG [6.6.5].
             if (_git_url_same_n(lbuf + git_s, git_e - git_s, git) == 1) { gt_ok = 1; }
             var tg_ok = 0;
             if (tag_e - tag_s == strlen(tag) && memeq(lbuf + tag_s, tag, tag_e - tag_s) == 1) { tg_ok = 1; }
@@ -4403,7 +4415,8 @@ fn _lock_buf_hash_lookup(lbuf, ln, path): i64 {
 # noticed. The resolver copied Phase 1 from `versions/<pin>/lib` unconditionally and
 # cmd_deps_lock then re-hashed whatever was on disk with O_TRUNC — the lock was UPDATED TO
 # AGREE with the mutation, so `deps --verify` passed on it. The one situation a lock is for
-# was the one it could not see. The git-dep half has had this check since CVE-21 (v6.2.30):
+# was the one it could not see. The git-dep half has had this check since the release-integrity hardening item
+# (v6.2.30):
 # a tagged dep's resolved HEAD is compared against the lock's `commit\t` line and a mismatch
 # refuses. This is the stdlib half of the same rule, keyed on the pin instead of the tag.
 #
@@ -4783,14 +4796,14 @@ fn cmd_deps_lock(): i64 {
     # every line landed — a short write used to leave a truncated lock and exit 0 (CHANGELOG [6.6.6]).
     var lock_h = _aw_open_replace("cyrius.lock");
     if (lock_h == 0) { _err("cannot create cyrius.lock"); return 1; }
-    # CVE-21 (v6.2.30): write the resolved git-dep commit pins FIRST (one
+    # the release-integrity hardening item (v6.2.30): write the resolved git-dep commit pins FIRST (one
     # "commit\t<sha>\t<name>\t<git>\t<tag>" line each), BEFORE the per-file
     # content hashes. That placement once kept them inside _lock_commit_lookup's 64 KB read
     # window; it is NOT what keeps them readable now. The merge below keeps an old tag's line
     # after every bump, so the block grows without bound and can pass 64 KB on its own —
     # _lock_commit_lookup reads the whole file since 6.6.20 (CHANGELOG [6.6.20]).
     # cmd_deps_verify skips these lines; resolution checks them.
-    # ⛔ ALWAYS MERGE the inherited pins (CVE-83, 6.6.20). A resolve pins only the tagged deps
+    # ⛔ ALWAYS MERGE the inherited pins (CYRIUS-2026-0030, 6.6.20). A resolve pins only the tagged deps
     # it verified THIS run, and this used to write those OR (bare `--lock`, v6.6.4) the inherited
     # ones — so a resolve that skipped a dep dropped its pin and kept its lib/ hash row: an
     # optional dep without its feature, a `target =` miss, every transitive dep of a gated-out
@@ -4801,7 +4814,8 @@ fn cmd_deps_lock(): i64 {
     # `…/x.git` still replaces its line. Not by NAME: in a diamond, a gated root `x@v2` and a
     # required dep's own `x@v1` share the name, and the feature-less resolve that pinned x@v1
     # dropped the x@v2 pin a later `--features` resolve reads. So an old tag's line stays after a
-    # tag bump — fail-closed, what CVE-21 wants if the dep is moved back to that tag (delete
+    # tag bump — fail-closed, what the release-integrity hardening item wants if the dep is moved back to that tag
+    # (delete
     # cyrius.lock to re-pin). Not filtered to the manifest's names either: a transitive dep of a
     # gated-out dep is declared only in that dep's own, unread manifest.
     # SORTED (_lock_commit_line_cmp): fresh-then-carried order wrote one pin set in an order set
@@ -4881,7 +4895,7 @@ fn cmd_deps_lock(): i64 {
 }
 
 fn cmd_deps_verify(): i64 {
-    # CVE-21 (v6.2.30): 64 KB read window (was 8 KB). The old 8 KB cap silently
+    # the release-integrity hardening item (v6.2.30): 64 KB read window (was 8 KB). The old 8 KB cap silently
     # stopped verifying file-hash lines past the cutoff for any lock >8 KB
     # (real downstream locks already exceed it) — and the commit-pin lines now
     # prepended by cmd_deps_lock ate into that budget. Match _lock_commit_lookup.
@@ -4912,7 +4926,7 @@ fn cmd_deps_verify(): i64 {
     var fail = 0;
     var pos = 0;
     while (pos < n) {
-        # CVE-21 (v6.2.30): skip commit-pin lines ("commit\t<sha>\t...") — those
+        # the release-integrity hardening item (v6.2.30): skip commit-pin lines ("commit\t<sha>\t...") — those
         # are verified during resolution, not by this file-content-hash check.
         if (pos + 7 <= n && memeq(buf + pos, "commit", 6) == 1 && load8(buf + pos + 6) == 9) {
             while (pos < n && load8(buf + pos) != 10) { pos = pos + 1; }

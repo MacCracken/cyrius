@@ -34,7 +34,7 @@ the unpinned watching list is [roadmap-future.md](roadmap-future.md); per-releas
 **Current head: v6.7.5** (2026-10-08) — **B5 `loop` / `do … while` + B8 compound assignment on every lvalue landed** (6.7.4 shipped: tag `6.7.4` @ `d71cf4bc`)
 · cycc **1,759,824 B** (`.text` **1,571,240**) · `cycc-native-aarch64` **1,530,056 B** · **526** `.tcyr` (**233** in
 `crossos/`) · **106** `lib/*.cyr` · **424** shell gates under `tests/gates/<bucket>/` · api-surface **5,827** · **1 open
-issue** · **2 open proposals** · the next free CVE id is **105**.
+issue** · **2 open proposals** · the next free ledger id is **CYRIUS-2026-0036**.
 
 > ⚠ **Every figure above was DERIVED on the day, not carried** (2026-10-07 at the 6.7.0 open).
 > `version-bump.sh` rewrites the version token, replaces the `(…)` after it with the bump date, and
@@ -42,7 +42,7 @@ issue** · **2 open proposals** · the next free CVE id is **105**.
 > line and its parenthetical free of nested `(`/`)`, or the bump refuses to rewrite it (and
 > `tests/gates/toolchain/version_bump_doc_anchors.sh` goes red the day it is written). Re-derive gates with `find tests/gates -name '*.sh' | wc -l`; never increment.
 
-**v6.6.x is closed** (6.6.0–6.6.20; the closeout shipped 2026-10-07, CVE-79 … CVE-102). One line per release is
+**v6.6.x is closed** (6.6.0–6.6.20; the closeout shipped 2026-10-07, CYRIUS-2026-0029 … CYRIUS-2026-0035). One line per release is
 in [completed-phases.md](completed-phases.md) § *v6.6.x*; the detail is the CHANGELOG.
 
 ---
@@ -235,7 +235,7 @@ field walk at the nested `<` (re-measured 6.7.1: `#derive(accessors)` never defi
   `bool[N]` list takes `true` / `false` / bool consts; a const is bool iff its value is; `#derive` writes JSON
   `true` / `false`, decodes `true` as 1 and anything else as 0, and types its accessors (`: bool` getter,
   `v: bool` setter); raw memory (`store64`, `*p = v`, `ret2`) stays unchecked; an untyped var is never inferred
-  bool. `!` is a real operator — the lexer used to DROP it (CVE-104).
+  bool. `!` is a real operator — the lexer used to DROP it (the dropped-bang lexer bug).
 
 **The 6.7.3 repair lane (user, 2026-10-07)** — the fixes the user chose with the scope — ✅ ALL LANDED in 6.7.3:
 - A struct ARGUMENT whose static struct type differs from its parameter's (a generic instance passed where the base
@@ -244,7 +244,7 @@ field walk at the nested `<` (re-measured 6.7.1: `#derive(accessors)` never defi
 - `A = 6;`, `A += 1;` and `&A` on an enum constant are refused by name, as for a `const`.
 - Tail call in a loop before a frame address: fix (c), the exact two-pass check (no tail call loses its `jmp` that
   does not have to).
-- `cyriusly cmdtools`: option 1, the shell twin ships into the store and the verb runs that copy (CVE-103).
+- `cyriusly cmdtools`: option 1, the shell twin ships into the store and the verb runs that copy (the cyriusly cmdtools CWD-script bug).
 - `lib/hashmap_fast.cyr`: the same-capacity rebuild happens in place, as `lib/hashmap.cyr`'s does.
 - `cyaudit` / `cyrius_api_surface`: their lexical-state copies take the attribute-line rule.
 
@@ -295,7 +295,7 @@ field walk at the nested `<` (re-measured 6.7.1: `#derive(accessors)` never defi
   `docs/ecosystem.md`'s fold rows.
 - **The per-repo scope** was surveyed at the 6.7.5 open (2026-10-08; every high item re-checked against live code,
   each repo built and tested at the 6.7.5 pin in a scratch copy). **The pin move itself surfaced no new error or
-  warning in any of the 12**; there are **0 lone `!`** in them or in cyrius's own `lib/` (CVE-104 changed no stdlib
+  warning in any of the 12**; there are **0 lone `!`** in them or in cyrius's own `lib/` (the dropped-bang lexer bug changed no stdlib
   behaviour); sankoch's `var loop` is the only new-keyword collision, and B8 has no site to adopt. Each repo re-runs
   its CI on the TAGGED 6.7.5 (the survey slot had no B5).
 
@@ -323,7 +323,7 @@ public `const` / `bool` sweeps (each repo's own minor — adopting 6.7.x syntax 
 traits for hand-rolled dispatch (after checked `dyn`), sigil 3.14.0 (cbank retirement), bayan B-4 (needs a public
 length-bounded `f64_parse` here). **Constraints:** W2 must not change the fold API cyrius's own `lib/` calls (73
 sigil fns incl. 8 private, 6 sakshi, bayan `base64_encode`, sandhi `sandhi_server_find_header`); and a `const`
-beside a same-name `var` is a hard error (sandhi's `HTTP_OK` vs `lib/http.cyr` is why its public consts wait).
+beside a same-name `var` is a hard error (sandhi's `HTTP_OK` vs `lib/http.cyr` is why its public consts wait). **Ledger renumbering (2026-10-08):** sigil's and sandhi's sources cite cyrius `CVE-NN` ids in comments; each W2 release rewrites them with the same mapping (`docs/audit/2026-10-08-security-ledger.md` — a kept id to its `CYRIUS-2026-NNNN`, a withdrawn one to its bug label), so the 6.7.6 refold carries the new names; until then `lib/sigil.cyr` / `lib/sandhi.cyr` keep the old ids byte-identical to their tags.
 
 ## Break 1 — 6.7.6 (proposed 2026-10-08; the user picks at its open)
 
@@ -333,13 +333,13 @@ probes. The proposal takes the **still-real critical / high** items, the two pre
 | Lane | Content | Size |
 |---|---|---|
 | A. Refold | the 12 W2 tags re-vendored byte-identical (`cmp` against each tag's `dist/`; yantra rebuilt from its tag) + `docs/ecosystem.md`'s rows + the fold gates; strike the sibling bullets W2 shipped | M |
-| B. Bootstrap | **cybs stack arguments** (pre-placed, below) · **cybs drops a lone `!`** (`bootstrap/cybs.cyr:1185-1199` jumps to `lexer_skip`; seed-built cybs gives `f(0) = 0` for `return !x;`, cycc gives 1) — the CVE-104 class in the trusted root, latent (0 sites in `src/` today) but `!` has been legal cyrius since 6.7.3 | M |
-| C. `cyrius.cyml` — dev- and test-friendly | **Not a security issue (user, 2026-10-08) — no CVE.** The manifest needs to serve development and testing well: today a `path` beside `git` / `tag` silently wins at every level (so a local build and CI compile different code), and a dependency's own manifest's `path` / local `git` is followed as written. Making the manifest dev- and test-friendly resolves the transitive `path` / `git` question with it. The design is the user's, asked at the 6.7.6 open | M |
+| B. Bootstrap | **cybs stack arguments** (pre-placed, below) · **cybs drops a lone `!`** (`bootstrap/cybs.cyr:1185-1199` jumps to `lexer_skip`; seed-built cybs gives `f(0) = 0` for `return !x;`, cycc gives 1) — the dropped-bang lexer bug class in the trusted root, latent (0 sites in `src/` today) but `!` has been legal cyrius since 6.7.3 | M |
+| C. `cyrius.cyml` — dev- and test-friendly | **Not a security issue (user, 2026-10-08) — no ledger id.** The manifest needs to serve development and testing well: today a `path` beside `git` / `tag` silently wins at every level (so a local build and CI compile different code), and a dependency's own manifest's `path` / local `git` is followed as written. Making the manifest dev- and test-friendly resolves the transitive `path` / `git` question with it. The design is the user's, asked at the 6.7.6 open | M |
 | D. Silent wrong values | `OP=` on a u128 / SIMD vector / typed-array local / slice local operates on the first word (the struct case was refused at 6.7.5 — **refusing these is the user's call**) · a top-level `var v = Ok(42);` keeps the tag and drops the payload, silently (refused inside a fn since v6.5.67) · `var x: f32 = 1.5` stores the f64 bits · `println(n)` on a typed i64 local segfaults · `CYRIUS_PKG_VERSION` not visible two include levels deep (the open issue) — **two of these change what a program does: the user's call** (f32: round or refuse; pair bind: refuse) | 4 × S |
 | E. Struct-value codegen | three crashes on valid code — `rd3((a))`, `s - mk3(4)`, `p + p.dup()` · a parenthesised struct source into a struct field copies one word (`o.i = (z.k)`, 6.7.5 review) · a Str field as a struct source · a name intrinsic inheriting a struct type (`fncall1(&f, n) + 1` → 100; filed at 6.7.4) · **the x86 stale-flags branch on an `i8`/`i16`/`i32` field** (`if (h.m)` after `x = x + 1;`, 6.7.5 review) | M-L |
 | F. cx | `~x` is `x` (XOR with a non-all-ones register) · `lib/fnptr.cyr` has no cx arm (`fncall2(&fncall1, …)` → 0) · calls over 248 arguments · probe the 14+ integer-argument / vector-register band | S-M |
 | G. Tooling | `cyrius test` absorbs `cyrius tests` (pre-placed, below) — and runs this repo's own corpus (22 `.tcyr` defining `fn run()` collide with `lib/process.cyr`'s `run` today) | S-M |
-| H. cyrius `lib/` | size each stack buffer by the constant that bounds it (11 constants, ~17 sites — among them the CVE-56 site, `_LOG_LINE_MAX` vs `var buf[512]` in `lib/log.cyr`); private names become `const`, public ones keep their `var` (no API change) · `lib/trait.cyr`'s header promises `impl` sugar that ADR-007 made static | S-M |
+| H. cyrius `lib/` | size each stack buffer by the constant that bounds it (11 constants, ~17 sites — among them the CYRIUS-2026-0013 site, `_LOG_LINE_MAX` vs `var buf[512]` in `lib/log.cyr`); private names become `const`, public ones keep their `var` (no API change) · `lib/trait.cyr`'s header promises `impl` sugar that ADR-007 made static | S-M |
 
 Also after the tag (the user's call — it writes the live store): `verify-store.sh --restore` for the 16 slots whose
 `bin/cybs` is a stale 12,344 B (6.6.3–6.6.9, 6.6.11–6.6.19). **Break 2** takes the still-real medium items (TLS
@@ -430,10 +430,10 @@ information only), the retired agnosys copies.
   note and return `ad_grad_into(..)` from the closure again, returning a pair on every path; then it archives
   both records. The ganita 1.2.13 fold also addresses its two ganita SVD filings, but SVD non-convergence is now
   −3 (was −1), so `svd_compute`'s fallback needs a re-check. Roadmap + records: hisab `1faa48f`, `8895f32`.
-- **kavach** (a CONSUMER, not a stdlib — it gates nothing in cyrius; user, 2026-10-04) — from 6.6.16 (CVE-74)
+- **kavach** (a CONSUMER, not a stdlib — it gates nothing in cyrius; user, 2026-10-04) — from 6.6.16 (CYRIUS-2026-0025)
   plain-socket writers issue `sendto(..., MSG_NOSIGNAL)`, so `security_create_basic_seccomp_filter` kills a
   process that loads it on itself on its first `sock_send_all`. This was measured, not only for native TLS
-  (whose writers have done the same since 6.6.14, CVE-66). Its sandboxed spawn paths load the exec filter and are
+  (whose writers have done the same since 6.6.14, CYRIUS-2026-0021). Its sandboxed spawn paths load the exec filter and are
   not affected. A measured argument-pinned `sendto`/`fcntl` + `poll`/`ppoll` allowlist (40/37 instructions) was
   added to its open issue as a suggestion, with the probe under `repros/`; kavach decides. Filed in kavach (user,
   2026-10-02): `kavach/docs/development/issues/2026-10-02-basic-seccomp-kills-native-tls-writes.md`; updated
@@ -697,7 +697,7 @@ CHANGELOG [6.6.17] *Downstream* (no ecosystem sweep).
     default) reports a hash mismatch for every file: the lock hashes the LF bytes. 6.6.20 made `cyrius.lock` itself
     CRLF-tolerant, not the files it hashes. Remedy today: `.gitattributes` `lib/** -text`. Decision: normalise or
     document.
-  - **The TRANSITIVE `[deps]` `path` confinement** (CVE-88 closed the `modules` `..` / committed-symlink vectors only):
+  - **The TRANSITIVE `[deps]` `path` confinement** (the modules dot-dot / symlink vendoring bug closed the `modules` `..` / committed-symlink vectors only):
     a tagged dep's own `cyrius.cyml` declaring `[deps.evil] path = "<abs dir>"` still vendors from that directory.
   - **Held back by decision (DECISIONS.md)**: folding constant `if (SYS_OPEN == 2)` arms at parse time (DEAD-10; the PE
     warnings are gone via `#ifndef`), consolidating the IR heap bands into one `alloc()` arena (HEAP-12), `var f: f32 =
@@ -705,7 +705,7 @@ CHANGELOG [6.6.17] *Downstream* (no ecosystem sweep).
   - **16 store slots carry a stale `bin/cybs`** (g-install's RS-02 found `--refresh-only` installed an untracked
     `build/cybs`; fixed for every future refresh). Restoring 6.6.3–6.6.9 and 6.6.11–6.6.19 is
     `sh scripts/verify-store.sh --restore <v>` per slot — it writes the live store, so it is the user's to run.
-  - **self_compile +6.8 % on the same input, all from CVE-86's attribute-line rule** (s-pplex `0d85cdcd`, +50 ms of
+  - **self_compile +6.8 % on the same input, all from the attribute-line desync bug's attribute-line rule** (s-pplex `0d85cdcd`, +50 ms of
     924 → 987 ms; a per-commit scan of the 6.6.20 merge history, every other lane within ±6 ms). The lexer half only
     runs on `#`; the cost is likely the preprocessor half (`lex_pp.cyr`). Find it and take it back without reopening
     the forged-`#@file` vector.
@@ -846,7 +846,7 @@ priority surfaces.
     any readable local file into the consumer's `lib/` — and `deps` exits **0** ("1 deps resolved"; measured at the
     re-triage: `modules = ["src/x.cyr", "../secret"]` → `lib/sib_secret` holds the secret). CORRECTED: an absolute
     `modules` path is NOT a vector (it is joined as `<dep>//etc/hostname` and reported "not found"). **The `modules`
-    `..` half is placed in the 6.6.20 closeout** (BACKLOG-04 — refused by name, as `[embed]` and CVE-76's tag check
+    `..` half is placed in the 6.6.20 closeout** (BACKLOG-04 — refused by name, as `[embed]` and the deps-tag dot-dot path bug's tag check
     already do; it needs no design call). The TRANSITIVE `path` half is **not a security issue** (user, 2026-10-08):
     it is manifest ergonomics — `cyrius.cyml` must become more dev- and test-friendly, which resolves it — placed in
     Break 1 as lane C (54 legitimate root `path = "../sibling"` uses stay).
@@ -886,15 +886,15 @@ priority surfaces.
     longer than 32 bytes (never stored or echoed — conformance only); four 1.2-client ServerKeyExchange length
     / key-type checks (`lib/tls_native_hs12.cyr` ~679 / 688 / 691 / 711) have no test that fails without them.
     Not in scope of 6.6.15: a libssl-backend `tls_set_groups`; X448 / secp521r1 (sigil has neither ECDH).
-  - TLS — capability limits listed in CVE-64's *Not covered*: no RSA client certificates natively; the native
+  - TLS — capability limits listed in CYRIUS-2026-0019's *Not covered*: no RSA client certificates natively; the native
     client and the native server send their leaf only (no intermediates); an empty certificate_authorities;
     the 1.3 server reads each client message from one record (a client Certificate of at most 8 KiB).
   - TLS, Windows — the store: CurrentUser `ROOT` under the ProtectedRoots policy is unverified; the
     auto-updated disallowed CTL is not read; a root with a dated distrust is refused whole (SecureTrust's
-    pre-2026-09-15 leaves fail here); roots Windows has not fetched yet are invisible (CVE-65's *Not covered*).
+    pre-2026-09-15 leaves fail here); roots Windows has not fetched yet are invisible (CYRIUS-2026-0020's *Not covered*).
   - TLS, agnos — a native write can overshoot the caller's deadline by one `sock_send#48` stall (~8 s):
     agnos's #48 hard-codes `TCP_PROGRESS_US`. It needs #48 to honour a time bound (`tcp_send_ex` already
-    takes one) — an agnos ABI change, then the stdlib passes the time left (CVE-61's *Not covered*).
+    takes one) — an agnos ABI change, then the stdlib passes the time left (CYRIUS-2026-0017's *Not covered*).
     **Filed in agnos** (user, 2026-10-02): `agnos/docs/development/issues/2026-10-02-sock-send-ignores-the-caller-deadline.md`.
   - `tls_native_set_client_cert` sizes its decode at `TLS_CA_MAX_ROOTS` (300) entries; sigil 3.13.7's
     `pem_count_cert_blocks` could size it exactly.
@@ -902,7 +902,7 @@ priority surfaces.
     check.sh builds at predictable `/tmp/sigil_{t,b,f}_$$` paths~~ → ✅ **SHIPPED upstream and folded**: sigil
     3.13.8's `scripts/check.sh` works in a private `mktemp -d` under `$TMPDIR`, and sigil 3.13.9's
     `agnosys_rooted_paths_untrusted` makes every rooted TPM / tool / sysfs probe fail closed on Windows (cyrius
-    CVE-73, folded at 6.6.15). Struck at the 6.6.20 re-triage (BACKLOG-11).
+    CYRIUS-2026-0024, folded at 6.6.15). Struck at the 6.6.20 re-triage (BACKLOG-11).
   - sandhi (its repo, a FILING only): its `src/http/conn.cyr` comment (`lib/sandhi.cyr` ~1604 in the fold) still
     calls the stdlib `tls_connect` ctx "a 24-byte struct"; `lib/tls.cyr` allocates `_TLS_LIBSSL_SHIM_LEN` (40) for
     the libssl shim since 6.6.13. Not yet recorded in sandhi's roadmap / issues — file it there at its next release.
@@ -1081,8 +1081,10 @@ this section had carried it as "never built" for thirty releases.)*
   reviewing THE BITE; an out-of-scope find goes to the *Potential backlog*, never automatically into a
   later release — only the user promotes. A severe find met in passing (security, silent corruption) is
   reported in one line, not swept for.
-- **A CVE id is spent in the commit that records it**, and that commit moves BOTH counters (the
-  September audit file's header and `CLAUDE.md`). 6.6.5's did not, and three reviewers had to report it.
+- **A ledger id (`CYRIUS-YYYY-NNNN`) is spent in the commit that records it — and ONLY for an actual security
+  vulnerability** (user, 2026-10-08; everything else is a bug in `docs/development/issues/`). That commit moves the
+  ledger (`docs/audit/2026-10-08-security-ledger.md`) and `CLAUDE.md`'s next-id line. 6.6.5's did not, and three
+  reviewers had to report it.
 - **Text handed into a cyrius string literal obeys the 6.6.11 lexer.** A driver `_gate("…")`
   description carrying a bare `"` or an unknown escape (`\<LF>`, `\q`) stops `programs/checks` compiling —
   it happened at the 6.6.11 merge. Hand-off text for descriptions must avoid both.
@@ -1099,7 +1101,7 @@ this section had carried it as "never built" for thirty releases.)*
   — grep the SHAPE, not the operator.
   **FIFTH occurrence (6.6.7 bite 2): `defer`.** The tail path skipped the EPILOGUE's obligation,
   not PARSE_FNCALL's — every `return f(..);` in a fn with a `defer`/`secret var` jumped past the
-  defer walker (CVE-47). By then the arm carried fifteen bolted-on diverts, not four; they are one
+  defer walker (the tail-call secret-var wipe gap). By then the arm carried fifteen bolted-on diverts, not four; they are one
   predicate now (`_tc_must_divert`, parse_fn.cyr), so a new obligation is a new line THERE. And
   the walker the divert lands on must keep the whole return convention:
   **`EDEFER_SAVE`/`EDEFER_RESTORE` must preserve every return register of every return

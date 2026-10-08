@@ -1,4 +1,5 @@
-# darwin_clock_no_stray_write.tcyr — 6.6.10 (CVE-51): reading the clock writes NOTHING but its
+# darwin_clock_no_stray_write.tcyr — 6.6.10 (the Intel-Mac clock stale-register bug): reading the clock writes NOTHING
+# but its
 # own buffer, whatever the previous call left in the argument registers.
 #
 # THE DEFECT (x86-macOS). Darwin has no clock_gettime, so EMACHO_CLOCK_X86 composes

@@ -60,7 +60,7 @@ cat src/main_cx.cyr | CYRIUS_MACHO=1 ./build/cycc > "$WORK/$STAGE/bin/cycc_cx"
 cp scripts/cyriusly scripts/cyrius-prompt-info "$WORK/$STAGE/bin/"
 cp scripts/shims/cyrius-repl.sh "$WORK/$STAGE/bin/"
 chmod +x "$WORK/$STAGE/bin"/*
-# 6.7.3 (CVE-103): the twin at scripts/ too — install.sh lands it at versions/<v>/scripts/cyriusly,
+# 6.7.3 (the cyriusly cmdtools CWD-script bug): the twin at scripts/ too — install.sh lands it at versions/<v>/scripts/cyriusly,
 # the one layout every POSIX slot has and scripts/verify-store.sh judges
 mkdir -p "$WORK/$STAGE/scripts"
 cp scripts/cyriusly "$WORK/$STAGE/scripts/"

@@ -19,7 +19,7 @@
 # through a shell wrapper. The first run after the fix found 2 SIGSEGVs at the gate's
 # own default ITERS=15, i.e. it would have been RED from the day it was written.
 #
-# Every crash it found is fixed in v6.5.19 (CVE-39): the unconditional EOF clamp in
+# Every crash it found is fixed in v6.5.19 (the include-length ifdef bug): the unconditional EOF clamp in
 # PEEKT, `_wd_eof_tick`, the enum/struct/union/generics/match EOF guards, and
 # `_ends_guard`. Companion gate: tests/gates/diagnostics/truncated_input_terminates.sh
 # covers the truncation axis deterministically rather than by chance.

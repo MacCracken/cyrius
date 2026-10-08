@@ -1,4 +1,4 @@
-# log_kv_bounded.tcyr — 6.6.12 (CVE-56). log_info_kv / log_info_int build their line in a
+# log_kv_bounded.tcyr — 6.6.12 (CYRIUS-2026-0013). log_info_kv / log_info_int build their line in a
 # 512-byte STACK scratch; every copy into it is bounded at 511 and a cut line ends "...".
 #
 # ⛔ THE DEFECT: the msg / key / val copies had no bound, so a logged caller-controlled

@@ -77,7 +77,7 @@ CYRIUS_HOME="$T/home"
 export CYRIUS_HOME
 
 # The temp lives in `/tmp/cyrius-<pid>` (cbt/build.cyr::_cbt_tmpdir — no TMPDIR
-# support, deliberately fail-closed per CVE-35/36). A box that has ever built
+# support, deliberately fail-closed per CYRIUS-2026-0005/CYRIUS-2026-0006). A box that has ever built
 # anything holds thousands of historical leftovers, so counting all of /tmp would
 # drown the signal. Count `cpp_*` ONLY inside directories that did not exist before
 # the invocation, which is exactly the temp this invocation made.

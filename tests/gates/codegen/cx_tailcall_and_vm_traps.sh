@@ -2,7 +2,7 @@
 # cx_tailcall_and_vm_traps.sh — cx emits real tail calls, cxvm traps every guest fault instead of
 # performing it, and cx narrow stores are width-correct.
 #
-# 6.6.12 (B06; items Q6, V1-cx; CVE-58). Before it:
+# 6.6.12 (B06; items Q6, V1-cx; the cxvm host-memory bug). Before it:
 #   * the cx ETAILJMP emitted a normal call + epilogue, so every tail recursion grew BOTH VM stacks:
 #     `tr(n-1, acc+1)` gave rc 0 at depth 512 and rc 1 at 513 / 1000 / 20,000,000 — the same source
 #     exits 0 on x86;
@@ -51,7 +51,7 @@
 #   _cx_sysbuf translating without checking        -> D8 + D9 RED (156 and 0: the HOST was asked)
 #   cx_call_push's bound removed                   -> B3 RED: the call stack overwrote cxvm's
 #                                                       loaded code ("unknown opcode 0x04 at pc 0")
-#                                                       — CVE-58 in one row
+#                                                       — the cxvm host-memory bug in one row
 #   cx_push's bound removed                        -> B4 RED (exit 0, the overflow went unseen)
 #   cx_call_pop / cx_pop underflow checks removed  -> B5 / B6 RED (exit 0)
 #   the guest-stack check on `sub sp` removed      -> B2 RED (the runaway recursion is caught only

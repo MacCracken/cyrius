@@ -652,11 +652,11 @@ fn ESTRUCT_BYVAL_COPY(S, src_disp, stash_disp, aligned): i64 {
     EB(S, (aligned >> 8) & 0xFF);
     EB(S, (aligned >> 16) & 0xFF);
     EB(S, (aligned >> 24) & 0xFF);
-    # v5.11.41 CVE-08 hardening: cld clears DF=0 before rep movsb.
+    # v5.11.41 the missing-cld bug hardening: cld clears DF=0 before rep movsb.
     # SysV ABI requires DF=0 at fn entry, but a signal handler or
     # foreign inline asm could set DF=1; rep movsb with DF=1 copies
     # backward and corrupts memory. Single-byte fix per
-    # docs/audit/2026-04-13-security-audit.md § CVE-08.
+    # docs/audit/2026-04-13-security-audit.md § the missing-cld bug.
     EB(S, 0xFC);                # cld
     EB(S, 0xF3); EB(S, 0xA4);   # rep movsb
     EB(S, 0x5F);                                    # pop rdi
@@ -1356,7 +1356,7 @@ fn EMACHO_CLOCK_ARM(S): i64 {
 # an image whose single __TEXT segment is rwx (the "garbled assert message on ach"). 6.6.10
 # zeroed it; 6.6.12 points it at the slot, which is equally safe and is what makes the
 # monotonic read possible. The slot is pushed as 0, so a failed copyout returns 0, not garbage.
-# CVE-51; both halves gated by tests/tcyr/crossos/darwin_clock_no_stray_write.tcyr.
+# the Intel-Mac clock stale-register bug; both halves gated by tests/tcyr/crossos/darwin_clock_no_stray_write.tcyr.
 # CHANGELOG [6.6.10] [6.6.12]
 #
 # Stack top-down on entry (argc==3): [arg2=&tv][arg1=clock_id][sc_num=228].

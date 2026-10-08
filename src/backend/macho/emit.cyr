@@ -54,10 +54,10 @@ fn EMITMACHO_EXEC(S): i64 {
     var seg_filesz = code_off + content_sz;
     var seg_vmsz = (seg_filesz + PAGE - 1) & (0 - PAGE);
 
-    # Size check — CVE-23 parity (v6.1.41): the true max on-disk write offset is
+    # Size check — the output_buf cap bug parity (v6.1.41): the true max on-disk write offset is
     # seg_filesz (code_off=4096 header prefix + content_sz), not content_sz alone —
     # the old check left a ~4 KB slack window past the 16 MB output_buf (the same
-    # filesz-slack class CVE-23 closed for EMITELF_USER). Use the shared cap, which
+    # filesz-slack class the output_buf cap bug closed for EMITELF_USER). Use the shared cap, which
     # also reports the top-3 offending vars.
     _check_output_cap(S, seg_filesz);
 

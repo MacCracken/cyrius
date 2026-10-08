@@ -1,11 +1,11 @@
 # Native TLS client: an IP-literal host matches dNSName SAN entries, wildcards included
 
-**Status:** ✅ **RESOLVED v6.6.13** (bite I7, CVE-63) — an IP-literal host is compared with iPAddress SANs only, and `_tn_parse_ipv4` refuses leading zeros. See CHANGELOG [6.6.13].
+**Status:** ✅ **RESOLVED v6.6.13** (bite I7, CYRIUS-2026-0018) — an IP-literal host is compared with iPAddress SANs only, and `_tn_parse_ipv4` refuses leading zeros. See CHANGELOG [6.6.13].
 **Placement:** **6.6.13**, bite I7 (placed by the user 2026-10-01) — see `roadmap.md` § 6.6.13.
 **Discovered:** 2026-10-01, abaco 2.4.12 review (a certificate whose only SAN was
 `DNS:127.0.0.1`, or `DNS:*.0.0.1`, was accepted for `https://127.0.0.1`).
 **Severity:** Low — exploiting it needs a CA the client trusts to issue such a dNSName, which the
-CA/Browser Forum Baseline Requirements forbid public CAs to do; but the documented rule (CVE-18,
+CA/Browser Forum Baseline Requirements forbid public CAs to do; but the documented rule (CYRIUS-2026-0003,
 "dNSName or iPAddress SAN") is RFC 9525's, and this is not it.
 **Affects:** cyrius 6.6.12 `lib/tls_native_conn.cyr` `_tn_cert_san_match` (:214), and the
 inconsistency below between `_tn_parse_ipv4` (:89) and `lib/net.cyr`'s `net_parse_ipv4` (:1114).

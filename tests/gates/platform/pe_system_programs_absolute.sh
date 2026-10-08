@@ -1,5 +1,5 @@
 #!/bin/sh
-# 6.6.20 (CVE-102) — on Windows a SYSTEM program is started by its absolute System32 path, never
+# 6.6.20 (the Windows bare-name process-start bug) — on Windows a SYSTEM program is started by its absolute System32 path, never
 # by a bare name.
 #
 # THE BUG. Every Windows spawn of a system program named it bare: `cmd /s /c …` for every compile

@@ -54,7 +54,7 @@ Two syscalls use `a4` (`r10`):
 `lib/syscalls_x86_64_agnos.cyr` already carries:
 
 ```cyrius
-# CVE-19 (v6.1.36): fail-CLOSED entropy on AGNOS userspace ... return -1 so
+# the entropy-fallback hardening item (v6.1.36): fail-CLOSED entropy on AGNOS userspace ... return -1 so
 # random_bytes() (and its ws/sandhi/sigil consumers) fail loudly ...
 fn sys_getrandom(buf, len, flags): i64 {
     return 0 - 1;

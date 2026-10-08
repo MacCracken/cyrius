@@ -6,7 +6,7 @@
 # server_name extension whenever one was set — "127.0.0.1", "::1", even "[::1]". RFC 6066 §3:
 # "Literal IPv4 and IPv6 addresses are not permitted in HostName." A server that answers an
 # unknown name fatally (OpenSSL's -servername_fatal) refused the connection, and the libssl backend
-# had stopped sending it at 6.6.13 (CVE-59's binder), so the two backends sent different
+# had stopped sending it at 6.6.13 (CYRIUS-2026-0015's binder), so the two backends sent different
 # ClientHellos for one host. Both builders now ask the shared classifier (lib/tls_hostid.cyr,
 # _tn_sni_len): SNI for a DNS name, none for an IP literal or a host with no identity. The host
 # still binds the certificate (iPAddress SANs for a literal).

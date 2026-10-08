@@ -34,7 +34,7 @@ $ErrorActionPreference = "Stop"
 $CyriusHome = if ($env:CYRIUS_HOME) { $env:CYRIUS_HOME } else { Join-Path $env:USERPROFILE ".cyrius" }
 
 # 6.6.20 (SEC-07): the FIRST signed release. Every release from 6.2.31 on publishes SHA256SUMS +
-# SHA256SUMS.sig (release.yml refuses to publish one without, since that tag - CVE-13). So with a
+# SHA256SUMS.sig (release.yml refuses to publish one without, since that tag - the release-signing hardening item). So with a
 # trusted cyrsign.exe on this machine, a tarball that arrives WITHOUT the signed pair beside it is
 # refused: the pair was stripped (or never downloaded). This installer used to print "signature
 # check skipped" and install it. Unlike install.sh / ci.sh there is NO pre-signing carve-out here:
@@ -53,7 +53,7 @@ if (-not $Stage) {
     if (-not $Tarball) { throw "provide -Tarball <path.tar.gz> or -Stage <dir>" }
     if (-not (Test-Path $Tarball)) { throw "tarball not found: $Tarball" }
 
-    # CVE-21 (v6.2.30): verify the tarball checksum fail-closed before extract.
+    # the release-integrity hardening item (v6.2.30): verify the tarball checksum fail-closed before extract.
     # Pre-fix install.ps1 had NO hash check. Accept an explicit -Sha256 <hex>,
     # else a "<tarball>.sha256" sidecar (the release publishes one next to every
     # artifact; sha256sum format is "<hex>  <name>" so take the first token).
@@ -74,7 +74,7 @@ if (-not $Stage) {
     }
     Write-Host "checksum verified"
 
-    # CVE-13 (v6.2.31): if a trusted cyrsign.exe is available (a prior install on
+    # the release-signing hardening item (v6.2.31): if a trusted cyrsign.exe is available (a prior install on
     # PATH or in <home>\bin) AND a signed SHA256SUMS(.sig) sits next to the
     # tarball, verify the sovereign Ed25519 signature and that this tarball
     # matches the SIGNED manifest hash. Fail-closed; skip if absent (the SHA256

@@ -216,7 +216,7 @@ type: state
 > although its paren form is not syntax. A second paragraph was added for the PREPROCESSOR
 > directive names (`#endif`, `#endplat`, `#host_only`, `#derive(…)`, `#@srcline`), where the
 > same missing boundary was SILENT: `#endifoo note` closed a conditional and the skipped code
-> was compiled in. `docs/audit/2026-09-03-security-audit.md`'s CVE-45 entry gained the residual
+> was compiled in. `docs/audit/2026-09-03-security-audit.md`'s the file-marker forge (private visibility) bug entry gained the residual
 > it had not recorded (a string literal could still mint a file-map span) plus the consumer-side
 > fix and, explicitly, what remains as an argument from the grammar rather than a check.
 > `docs/development/issues/archived/2026-09-19-lexer-attribute-prefix-swallows-comments.md`'s
@@ -331,7 +331,7 @@ type: state
 | Bucket | Count | What it means |
 |---|---|---|
 | ✅ **Fresh — re-verified at 6.6.20** | 22 | Tier 1: `README.md`, `CHANGELOG.md`, `CLAUDE.md`, `VERSION`, `BENCHMARKS.md`, `cyrius-guide.md`, `faq.md`, `stdlib-modules.md`, `ecosystem.md`, `size-comparisons.md`, `api-surface.snapshot` · Tier 2: `package-format.md` · Tier 3: `state.md`, `roadmap.md`, `roadmap_6.md`, `roadmap-future.md`, `completed-phases.md`, `cycle-discipline.md`, `ecosystem-migration-6.6.18.md`, `dev-tools-linux.md`, `lib-tls-contract.md` · Tier 4: ADR-003. |
-| 🟡 **Stale in part — refresh in place** | 4 | `platform-status.md` (only the x86 size and the cross-host line re-derived), `architecture/cyrius.md` (per-platform table "as of v6.4.62"), `threat-model.md` (no CVE past CVE-29), `module-manifest-design.md` (the 6.6.17 manifest keys are documented elsewhere). |
+| 🟡 **Stale in part — refresh in place** | 4 | `platform-status.md` (only the x86 size and the cross-host line re-derived), `architecture/cyrius.md` (per-platform table "as of v6.4.62"), `threat-model.md` (no CVE past the thread guard-page hardening item), `module-manifest-design.md` (the 6.6.17 manifest keys are documented elsewhere). |
 | 🟠 **Read-through outstanding** | 1 | `stdlib-reference.md` — coverage of the 106 modules last counted at v6.5.10. |
 | 🔵 **Evergreen / not re-verified at 6.6.20** | 12 | `tutorial.md`, `docs/benchmarks.md`, `editor-integration.md`, `benchmark-regimes.md`, `crash-localization.md`, ADR-001/-002/-004/-005/-006, `fncall-abi.md`, `struct-packing.md`. |
 | 🗄 **Historical, kept in place** | 5 | `ecosystem-migration-6.6.2.md`, `ecosystem-migration-6.6.13.md`, and the banner-bounded `migration-strategy.md`, `development/benchmarks.md`, `process-notes.md`. |
@@ -416,7 +416,7 @@ Also closed: 1 issue filing (commandress papercut → archived) from the .60-.63
 | `dev-tools-linux.md` | 2026-10-06 | ✅ Fresh | Per-environment toolchain; 6.6.20 fixed its cross-OS paragraph (the `vr01_` pointer, "one host at a time" — safe concurrently since v6.6.6). |
 | `benchmark-regimes.md` | 2026-10-01 | 🔵 Evergreen ledger | Which bench rows are comparable; extend it when a measurement regime changes. |
 | `lib-tls-contract.md` | 2026-10-05 | ✅ Fresh | Stdlib TLS contract, re-pinned to the 6.6.13 surface 2026-10-01 and touched for 6.6.16. Verify at the next minor closeout. |
-| `threat-model.md` | 2026-07-12 | 🟡 Not re-verified since 2026-07-12 | It names no CVE past CVE-29; the classes found since (CVE-30 … CVE-78) are not reflected. Re-read at the next full security audit. |
+| `threat-model.md` | 2026-07-12 | 🟡 Not re-verified since 2026-07-12 | It names no CVE past the thread guard-page hardening item; the classes found since (CYRIUS-2026-0005 … CYRIUS-2026-0028) are not reflected. Re-read at the next full security audit. |
 | `migration-strategy.md` | 2026-09-06 | 📦 Historical | Banner-marked frozen v5.7.39 snapshot. |
 | `crash-localization.md` | 2026-07-12 | 🔵 Not re-verified at 6.6.20 | The `CYRIUS_SYMS` mechanism. |
 | `module-manifest-design.md` | 2026-05-18 | 🟡 Stale in part | The `[deps]` design is canonical; the 6.6.17 manifest work (`[build]` keys, `--print-config`, `[coverage]`, `[embed]`) is documented in the guide, not here. |
@@ -448,9 +448,9 @@ Periodic audit reports; per-audit timestamped (don't refresh in place — supers
 
 | File | Status |
 |---|---|
-| `2026-09-03-security-audit.md` | The last full audit (cycc 6.5.45, CVE-38 … CVE-42); every CVE spent since is appended to it — through **CVE-78** (6.6.18). The next free id is **79**. |
-| `2026-07-27-security-audit.md` | Full audit at cycc 6.4.82 (CVE-32 … CVE-36; CVE-37 / CVE-38 withdrawn). |
-| `2026-06-10-deep-dive-review.md` | Deep-dive review at cycc 6.1.31 (… CVE-31). |
+| `2026-09-03-security-audit.md` | The last full audit (cycc 6.5.45, no ledger id: all withdrawn as bugs); every CVE spent since is appended to it — through **CYRIUS-2026-0028** (6.6.18). The next free id is **CYRIUS-2026-0029**. |
+| `2026-07-27-security-audit.md` | Full audit at cycc 6.4.82 (CYRIUS-2026-0005 … CYRIUS-2026-0006; the file_write_atomic temp item (withdrawn) / the codesign shell-concatenation item (withdrawn) withdrawn). |
+| `2026-06-10-deep-dive-review.md` | Deep-dive review at cycc 6.1.31 (… the silent broken-input bug). |
 | `archived/` (5) | 2026-04-13 security audit, 2026-05-01 pre-5.8.0, 2026-04-26 stdlib fn collisions, 2026-04-27 cx direct-emit inventory, 2026-05-11 zero-call stdlib — all with completion banners. |
 
 ---
@@ -523,7 +523,7 @@ Items that are *scheduled* doc decisions, not stale state. Surfaced here so they
 | # | Commitment | Trigger | Source | Notes |
 |---|---|---|---|---|
 | 1 | **Vidya sync per minor closeout** — `vidya/content/cyrius/*.cyml` (language, field_notes/{compiler,language}, implementation, types, dependencies, ecosystem) refreshed at every minor closeout per CLAUDE.md "Closeout Pass" step 11. Vidya entries reference cc-binary-name + version + non-obvious gotchas surfaced in the minor. | Every minor closeout | [`CLAUDE.md`](../CLAUDE.md) "Closeout Pass" §11 | Manual — `version-bump.sh` doesn't touch vidya. Cross-check version refs every closeout: vidya files saying `cycc 5.4.x` / `cycc 5.8.x` should match current VERSION (the historical `cc3 4.8.5`-style refs hold pre-v5.0.0 anchor context). |
-| 2 | **Periodic security audit** — full source scan for vulnerable patterns (sys_system / READFILE / bounds-check gaps / etc.) before major releases or after significant surface change. | Before each major release; cycle audit every 2-3 minors | [`CLAUDE.md`](../CLAUDE.md) "Security Audit Process" | **Current (re-derived 2026-10-06):** the last full audit is `docs/audit/2026-09-03-security-audit.md` (cycc 6.5.45), with every CVE spent since appended to it through CVE-78; the next free id is 79; 6.6.20's closeout ran the §9 re-scan as one of its audit passes. *History, as this cell read before:* Last full audit: 2026-04-13 + 2026-05-01 (pre-5.8.0). v5.11.41 shipped CVE-08 hardening + v5.11.65 CVE-05 mangle-path guard piecemeal. **TRIGGER PASSED**: the pinned "before the v6.0.0 cut" full audit did NOT run as a standalone artifact — v6.0.0→.3 shipped (rename + two codegen P1s + deps-lock fix) without it. **RESOLVED (leader, ~late May 2026):** the full audit WAS run ~2 weeks before the 2026-06-07 closeout — the prior "overdue / never ran" note here was stale (the artifact is not under cyrius's own `docs/audit/`, so it was filed at the ecosystem level, not this repo). The v6.0.91 closeout ran only the §9 *quick* re-scan (clean: no new vulnerability class in .88–.90; byte-array peephole bounds-checked — pass-1 cap + per-arch disp caps), which is all the closeout calls for. NOT overdue. **Separate, still open:** vidya `dependencies.cyml` dep catalog is stale beyond this cycle (sigil listed 2.9.3 vs current 3.7.7) — a fuller vidya refresh than the per-closeout gotchas add is its own task. |
+| 2 | **Periodic security audit** — full source scan for vulnerable patterns (sys_system / READFILE / bounds-check gaps / etc.) before major releases or after significant surface change. | Before each major release; cycle audit every 2-3 minors | [`CLAUDE.md`](../CLAUDE.md) "Security Audit Process" | **Current (re-derived 2026-10-06):** the last full audit is `docs/audit/2026-09-03-security-audit.md` (cycc 6.5.45), with every CVE spent since appended to it through CYRIUS-2026-0028; the next free id is 79; 6.6.20's closeout ran the §9 re-scan as one of its audit passes. *History, as this cell read before:* Last full audit: 2026-04-13 + 2026-05-01 (pre-5.8.0). v5.11.41 shipped the missing-cld bug hardening + v5.11.65 the compiler heap guard-page gap mangle-path guard piecemeal. **TRIGGER PASSED**: the pinned "before the v6.0.0 cut" full audit did NOT run as a standalone artifact — v6.0.0→.3 shipped (rename + two codegen P1s + deps-lock fix) without it. **RESOLVED (leader, ~late May 2026):** the full audit WAS run ~2 weeks before the 2026-06-07 closeout — the prior "overdue / never ran" note here was stale (the artifact is not under cyrius's own `docs/audit/`, so it was filed at the ecosystem level, not this repo). The v6.0.91 closeout ran only the §9 *quick* re-scan (clean: no new vulnerability class in .88–.90; byte-array peephole bounds-checked — pass-1 cap + per-arch disp caps), which is all the closeout calls for. NOT overdue. **Separate, still open:** vidya `dependencies.cyml` dep catalog is stale beyond this cycle (sigil listed 2.9.3 vs current 3.7.7) — a fuller vidya refresh than the per-closeout gotchas add is its own task. |
 | 3 | **API surface snapshot regeneration** — `docs/api-surface.snapshot` regenerated as part of `check.sh`; gate fails if drift. | Every release | `cyrius_api_surface` binary; gate in [`scripts/check.sh`](../scripts/check.sh) | Already automated; included here for visibility. |
 
 ---

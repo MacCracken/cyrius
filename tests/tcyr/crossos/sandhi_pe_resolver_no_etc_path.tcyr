@@ -1,4 +1,4 @@
-# sandhi_pe_resolver_no_etc_path.tcyr — 6.6.12 (CVE-57): the folded sandhi resolver never
+# sandhi_pe_resolver_no_etc_path.tcyr — 6.6.12 (CYRIUS-2026-0014): the folded sandhi resolver never
 # reads the POSIX configuration path on Windows; it asks the SYSTEM resolver.
 #
 # ⛔ WHY. sandhi's own DNS resolver (src/net/resolve.cyr, folded as lib/sandhi.cyr) read
@@ -7,7 +7,7 @@
 # create folders at the root of the system drive, so an unprivileged local user could plant a
 # nameserver that every other user's sandhi lookups (sandhi_http_get included) were sent to.
 # 6.6.11 gave PE working Winsock UDP, so a PE program reached that path end to end. The class
-# is CVE-54's, which 6.6.11 closed in the stdlib's own net_resolve_ipv4. sandhi 1.10.4: on
+# is CYRIUS-2026-0012's, which 6.6.11 closed in the stdlib's own net_resolve_ipv4. sandhi 1.10.4: on
 # Windows the A lookup IS net_resolve_ipv4 (getaddrinfo), the AAAA lookup answers 0 (the PE
 # socket surface is AF_INET only), and the resolv.conf reader returns -1 without opening
 # anything.

@@ -1778,7 +1778,7 @@ You do not write this yourself — the CLI emits it. What matters for using the 
   for it — older cycc, cybs, and the cx/JS forks all skip the line.
 - ⛔ **The marker is in-band, so a hostile `.cyr` can write one.** Two rules close that: the
   directory must be **relative and `..`-free** (an absolute one would rebuild the
-  read-anything primitive CVE-16 removed), and it is read **only at byte 0** — a second
+  read-anything primitive the absolute-include path bug removed), and it is read **only at byte 0** — a second
   marker further down the file stays an ordinary comment. A rejected marker is simply unset,
   so the include fails exactly where it fails today.
 - `cyrius build /abs/dir/x.cyr` gets no marker when the CLI cannot relativise the path
@@ -1879,7 +1879,7 @@ error:main.cyr:12:9: 'helper' is private to lib/thing.cyr
   `nm` output or in `cyrius api-surface`. That is the point — the API surface a
   consumer sees becomes the API surface you declared.
 - `pub` is accepted as a synonym for `public` (it is the same lexer token).
-- **A source file cannot forge its own identity (v6.6.6, CVE-45).** Visibility is decided from
+- **A source file cannot forge its own identity (v6.6.6, the file-marker forge (private visibility) bug).** Visibility is decided from
   the preprocessor's `#@file` markers, and `FM_BUILD` accepts one at any offset, so a line
   spelling `#@file "other.cyr" 1` used to make the code after it belong to `other.cyr` — which
   is exactly a way to reach that file's private items. v6.5.21 closed that for the main source;
@@ -2549,7 +2549,7 @@ mutated file silently and `deps --verify` then passed on it. A lock written befo
 no trailer: it fails open for one resolve and comes back stamped. `cyrius deps --lock`
 re-hashes `lib/` **keeping** the commit pins (it used to drop them).
 
-**The git-dep CACHE is verified too (v6.6.5, CVE-43).** A git dep is cloned once into
+**The git-dep CACHE is verified too (v6.6.5, the dep-cache tamper-check hardening item).** A git dep is cloned once into
 `$CYRIUS_HOME/deps/<name>/<tag>` (an untagged dep into `<name>/.untagged`, so it never shares
 a clone with a `tag = "main"` dep — 6.6.17) and reused by every project on the machine, so on every
 resolve the resolver checks that the checkout is still consistent with the tag it claims:
@@ -3602,7 +3602,7 @@ through a `*bool`, and `ret2`, write what they are given; a `*p` read is an inte
 **`!e`** is 1 when `e`'s word is 0, else 0. It binds like unary minus — its operand is a factor,
 so `!x + 1` is `(!x) + 1` — and an `f64` operand is tested by its raw bits, as `if (x)` tests it
 (`!(-0.0)` is 0). ⚠ Until 6.7.3 the lexer silently DROPPED a lone `!`, so `!x` compiled as `x`
-(CVE-104).
+(the dropped-bang lexer bug).
 
 **`fn g(): bool`**: a bare `return;` in it is refused (it returns 0); running off the end
 returns `false`; a tail call `return h(..);` must call a bool fn. **Consts**: a const is a bool
@@ -5167,7 +5167,7 @@ everywhere else. cycc warns on a conflicting `SYS_*` redefinition.
   undefined; `sys_read_nb` / `sys_write_nb` are the non-blocking forms
 - Blocking waits and a real wait status (v6.6.7, agnos 1.57.7): `sys_waitpid_block`, W* per ABI §4.9
 - Socket reads bounded by a real clock: a timeout is -11 (EAGAIN), per-socket via
-  `sock_set_recv_timeout`; a server bound to 127.0.0.1 listens on loopback only (CVE-48 —
+  `sock_set_recv_timeout`; a server bound to 127.0.0.1 listens on loopback only (CYRIUS-2026-0008 —
   it refuses to start on agnos < 1.57.7 rather than listen on the network)
 - Signals (sigprocmask, kill, pause)
 - Filesystem (mkdir, rmdir, unlink, rename, link on ext2)

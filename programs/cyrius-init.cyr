@@ -32,7 +32,7 @@
 # ci.yml / release.yml use {CI_SRC}/{CI_OUT} so --lib swaps the build
 # target without a post-render edit (the bash sed pass is gone). Both the
 # init and port CI templates already carry `workflow_call:` + the
-# scripts/install.sh-based toolchain install + pinned actions (CVE-21).
+# scripts/install.sh-based toolchain install + pinned actions (the release-integrity hardening item).
 
 include "lib/string.cyr"
 include "lib/fmt.cyr"
@@ -1337,7 +1337,7 @@ fn _run_port(start): i64 {
             str_builder_add_cstr(ab, _sv_olddir);
             str_builder_add_cstr(ab, "/**/__pycache__/\n/build/\n");
             var add = str_data(str_builder_build(ab));
-            # 6.6.20 (CVE-98): an O_APPEND open follows a link, so a checkout's committed
+            # 6.6.20 (the committed-symlink write bug): an O_APPEND open follows a link, so a checkout's committed
             # `.gitignore -> ~/.bashrc` had the port lines appended to it. A link is followed only
             # to a file inside the project being ported (lib/io.cyr _io_replace_target_in), and the
             # file it resolves to is opened O_NOFOLLOW. That is what holds on WINDOWS, which has no

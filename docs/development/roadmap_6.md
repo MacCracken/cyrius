@@ -89,7 +89,7 @@ minor actually closed at **v6.4.86**, which is exactly the failure a second copy
 | v6.3.x | Language refinements | **v6.3.45** |
 | v6.4.x | Staging minor → long reactive minor | **v6.4.86** (closeout cut at .85; .86 was the post-closeout sandhi fold) |
 | v6.5.x | Perf / quality: IR substrate, regalloc, SIMD register residency, `: stack` enums | **v6.5.73** (there is no `.74` — that number was cut in error and re-cut as v6.6.0) |
-| v6.6.x | Value-form `Result`, then repair; the tooling tail (manifest, distlib, `[embed]`); its language list moved to v6.7.x | **v6.6.20** (the closeout, 2026-10-07; CVE-79 … CVE-102) |
+| v6.6.x | Value-form `Result`, then repair; the tooling tail (manifest, distlib, `[embed]`); its language list moved to v6.7.x | **v6.6.20** (the closeout, 2026-10-07; CYRIUS-2026-0029 … CYRIUS-2026-0035) |
 | v6.7.x | **ACTIVE** — the language minor: real traits, the missing common features, `const fn`, bounds mode, trait-bounded generics; see [roadmap.md](roadmap.md) | — (opened **v6.7.0**, 2026-10-07) |
 
 Every close number above was verified against `CHANGELOG.md` on 2026-07-29 (the per-minor max
@@ -287,7 +287,7 @@ any committed public-launch date. The deep-dive surfaced it
   downstream binaries; and `sigil.cyr:533` elects the GPLv2-only leg of dual
   BSD/GPLv2 code (GPLv2-only is GPL-3-incompatible). Needs legal review + an
   RLE-style linking-exception decision.
-- **Trust-story prerequisites (CVE-12/13/20/21) — RESOLVED.** Sovereign
+- **Trust-story prerequisites (the seed trust-root hardening item/the release-signing hardening item/the seed-chain cycc hardening item/the release-integrity hardening item) — RESOLVED.** Sovereign
   release signing (`cyrsign` Ed25519, .31) + integrity/pinning (.30) +
   **seed→cycc derivation** (`build/cycc` is machine-derivable from the 29 KB
   seed, byte-identical, 2026-06-20). The shipped `cycc` is now seed-derived

@@ -89,7 +89,7 @@
 >
 > *Archive this file at slot close.*
 
-**Filed** 2026-08-11 (during v6.5.19, CVE-39 truncated-input work)
+**Filed** 2026-08-11 (during v6.5.19, the include-length ifdef bug truncated-input work)
 **Severity** P1 — silent miscompile. One shape gives the WRONG ANSWER with no
 diagnostic; two shapes SIGSEGV the produced binary at runtime.
 **Status:** ✅ RESOLVED in v6.5.20 (bite 1). Was: 🔴 OPEN — pinned, first bite of the
@@ -315,7 +315,7 @@ entries for cases 1..N being overwritten by `gap_rel`.
 ## Related
 
 - Found while building `tests/gates/diagnostics/truncated_input_terminates.sh` (v6.5.19,
-  CVE-39). That gate's axis 4 deliberately uses `{ return N; }` bodies and carries a
+  the include-length ifdef bug). That gate's axis 4 deliberately uses `{ return N; }` bodies and carries a
   comment pointing here, so nobody "simplifies" it into the broken shape.
 - The `ends` array in both `PARSE_SWITCH` and `PARSE_MATCH` gained a bound
   (`_ends_guard`) in v6.5.19 — that fixed an unbounded 256-slot stack write, a

@@ -699,29 +699,30 @@ fn _string_escape_rejects_gate(): i64 {
     return fail;
 }
 
-# CVE-31 (v6.1.35): the compiler must LOUDLY reject broken input it used to
+# the silent broken-input bug (v6.1.35): the compiler must LOUDLY reject broken input it used to
 # silently accept — an unrecognized ASCII byte that matched no token (was
 # skipped) and a missing include file (was a 0-byte expansion surfacing only as
 # downstream undefined-fn warnings). Mirrors _string_escape_rejects_gate.
 fn _input_validation_rejects_gate(): i64 {
     var fail = 0;
-    # CVE-31b — stray ASCII byte (`$`) outside strings/comments is an error.
+    # the silent broken-input bugb — stray ASCII byte (`$`) outside strings/comments is an error.
     # _input_rejects_subcase asserts BOTH the message AND a nonzero exit, so a
     # future print-then-exit-0 regression can't slip the reject past the gate.
     fail = fail + _input_rejects_subcase("stray-ascii-dollar",
         "fn main(): i64 { var x = 5 $ 3; return x; }",
         "unexpected character");
-    # CVE-31a — a missing include is a hard error, not a silent empty expansion.
+    # the silent broken-input buga — a missing include is a hard error, not a silent empty expansion.
     fail = fail + _input_rejects_subcase("missing-include",
         "include \"zzqq_no_such_include_file.cyr\";\nfn main(): i64 { return 0; }",
         "cannot open include file");
-    # CVE-24 (v6.1.40) — a function whose stack frame exceeds the 16384-slot local
+    # the locals-cap bug (v6.1.40) — a function whose stack frame exceeds the 16384-slot local
     # tables (a >128 KB `stack var`) is loudly capped in SFLC, not silently
     # overflowed into the neighbouring slot-indexed tables.
     fail = fail + _input_rejects_subcase("stack-frame-overflow",
         "fn big() { stack var buf[200000]; store8(&buf + 0, 1); return load8(&buf + 0); }\nfn main(): i64 { return big(); }",
         "too many stack slots");
-    # CVE-16/CVE-02 (v6.1.41) — a rejected hostile include (absolute / parent-traversal)
+    # the absolute-include path bug/the include dot-dot path bug (v6.1.41) — a rejected hostile include (absolute /
+    # parent-traversal)
     # must FAIL the build (nonzero exit), not print 'error:' then exit 0 as a silent
     # empty include. The reject returns -1 so the PP's `nr < 0` guards fire SYS_EXIT.
     fail = fail + _input_rejects_subcase("absolute-include-reject",
@@ -734,11 +735,11 @@ fn _input_validation_rejects_gate(): i64 {
         _p(ANSI_RESET);
         println(": input-validation reject cases (4/4)");
     }
-    _check("lex/PP reject stray ASCII + missing/absolute include + oversized frame (CVE-31/24/16)", fail);
+    _check("lex/PP reject stray ASCII + missing/absolute include + oversized frame (the silent broken-input bug/the locals-cap bug/the absolute-include path bug)", fail);
     return fail;
 }
 
-# CVE-17 / distlib net (v6.1.36): a vendored dist bundle (a folded dep in
+# CYRIUS-2026-0002 / distlib net (v6.1.36): a vendored dist bundle (a folded dep in
 # lib/*.cyr) MUST be self-contained — no `include "src/*.cyr"` referencing a
 # src/ tree that is absent at the consumer. sigil 3.7.11's `regen-dist.sh`
 # dumb-`cat` shipped un-inlined includes (the `#ifndef` guards papered over it);

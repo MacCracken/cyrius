@@ -1838,7 +1838,7 @@ include "src/frontend/parse_fn.cyr"
 # ASM_MNEMONIC and helpers are in arch-specific emit files:
 # src/backend/x86/emit.cyr and src/backend/aarch64/emit.cyr
 
-# v6.5.19 (CVE-39) — bound the jump-end arrays of PARSE_SWITCH and PARSE_MATCH.
+# v6.5.19 (the include-length ifdef bug) — bound the jump-end arrays of PARSE_SWITCH and PARSE_MATCH.
 #
 # Both fns collect one "jump to end of construct" patch site per case/arm into a LOCAL
 # `ends: i64[256]`, then walk it once the construct closes. The counter `ec` was never
@@ -2278,7 +2278,7 @@ fn PARSE_MATCH(S): i64 {
     var mgo = 1;
     while (mgo == 1) {
         if (PEEKT(S) == 14) { mgo = 0; }
-        # v6.5.19: EOF guard (CVE-39). `fn f() { match` and `fn f() { match (` SIGSEGV'd
+        # v6.5.19: EOF guard (the include-length ifdef bug). `fn f() { match` and `fn f() { match (` SIGSEGV'd
         # at 6.5.18 — and this one bit FASTEST of the whole class, because the arm loop
         # writes `ends`/`seen_vcnt`, which are 256-slot LOCAL (stack) arrays: a runaway
         # arm count smashes the frame long before any heap table overflows.
@@ -3611,7 +3611,7 @@ fn _refuse_nested_fn(S): i64 {
 
 fn PARSE_STMT(S): i64 {
     var before = GTI(S);
-    # v6.5.19 (CVE-40): this wrapper is already the one place every statement descent
+    # v6.5.19 (the define-body copy overflow bug): this wrapper is already the one place every statement descent
     # passes through, which makes it the natural home for the depth bound too. See
     # _rd_enter (src/common/util.cyr). Covers nested fn / blocks / if / while.
     _rd_enter(S);

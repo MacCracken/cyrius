@@ -134,7 +134,7 @@ jobs:
           done
           cp scripts/ci.sh "$STAGE/bin/" 2>/dev/null || true
           chmod +x "$STAGE/bin"/*
-          # 6.7.3 (CVE-103): the shell twin — bin/cyriusly here is the COMPILED binary, whose
+          # 6.7.3 (the cyriusly cmdtools CWD-script bug): the shell twin — bin/cyriusly here is the COMPILED binary, whose
           # `cmdtools` runs <home>/versions/<v>/scripts/cyriusly (install.sh `_install_twin`)
           mkdir -p "$STAGE/scripts"
           cp scripts/cyriusly "$STAGE/scripts/"
@@ -202,7 +202,7 @@ jobs:
 
           cp build/cycc_aarch64 "$STAGE/bin/cycc"
           # cyrsign (Ed25519 release verifier) built for aarch64 via the cross-
-          # compiler so install/upgrade can verify signatures here too (CVE-13,
+          # compiler so install/upgrade can verify signatures here too (the release-signing hardening item,
           # v6.2.31). Fail loud if it isn't a real aarch64 ELF.
           cat programs/cyrsign.cyr | ./build/cycc_aarch64 > "$STAGE/bin/cyrsign"
           file "$STAGE/bin/cyrsign" | grep -q "ARM aarch64" || { echo "ERROR: cyrsign not aarch64"; file "$STAGE/bin/cyrsign"; exit 1; }
@@ -215,7 +215,7 @@ jobs:
           file "$STAGE/bin/cyrius-init" | grep -q "ARM aarch64" || { echo "ERROR: cyrius-init not aarch64"; file "$STAGE/bin/cyrius-init"; exit 1; }
           cp scripts/cyriusly "$STAGE/bin/"
           chmod +x "$STAGE/bin"/*
-          # 6.7.3 (CVE-103): the twin at scripts/ too, so every POSIX slot has the one layout
+          # 6.7.3 (the cyriusly cmdtools CWD-script bug): the twin at scripts/ too, so every POSIX slot has the one layout
           # scripts/verify-store.sh judges (see the x86_64 job)
           mkdir -p "$STAGE/scripts"
           cp scripts/cyriusly "$STAGE/scripts/"
@@ -363,7 +363,7 @@ jobs:
       - name: Add standalone installer
         run: cp scripts/install.sh dist/
 
-      - name: Sign release checksums (sovereign Ed25519 — CVE-13, v6.2.31)
+      - name: Sign release checksums (sovereign Ed25519 — the release-signing hardening item, v6.2.31)
         env:
           CYRIUS_RELEASE_SK: ${{ secrets.CYRIUS_RELEASE_SK }}
         run: |
@@ -372,7 +372,7 @@ jobs:
           ( cd dist && : > SHA256SUMS && for f in *.tar.gz.sha256; do [ -e "$f" ] && cat "$f" >> SHA256SUMS; done )
           [ -s dist/SHA256SUMS ] || { echo "error: no per-tarball .sha256 to aggregate"; exit 1; }
           if [ -z "${CYRIUS_RELEASE_SK}" ]; then
-            echo "error: CYRIUS_RELEASE_SK not set — refusing to publish an UNSIGNED release (CVE-13). Set the signing secret (or, for an intentionally-unsigned line, remove this gate deliberately)."
+            echo "error: CYRIUS_RELEASE_SK not set — refusing to publish an UNSIGNED release (the release-signing hardening item). Set the signing secret (or, for an intentionally-unsigned line, remove this gate deliberately)."
             exit 1
           fi
           # Sign with the just-built cyrsign from the linux artifact (dogfood; no bootstrap).

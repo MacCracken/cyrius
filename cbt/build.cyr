@@ -151,7 +151,7 @@ fn _emit_js(source, output): i64 {
 }
 
 # cx arc: build `src` with `cc` into `out` — a tool the CLI then RUNS (cycc_cx, cxvm). 0, or 1
-# with nothing left behind. ⛔ 6.6.20 (CVE-98): through `<out>.tmp.<pid>` (unlinked first, then
+# with nothing left behind. ⛔ 6.6.20 (the committed-symlink write bug): through `<out>.tmp.<pid>` (unlinked first, then
 # O_CREAT|O_EXCL, so a name that exists — a committed dangling link included — is refused, never
 # followed) renamed over `out`, so a link AT `out` is replaced, never written through. Both
 # callers opened `./build/cxvm` / `./build/cycc_cx` with O_TRUNC, which follows a final link: a
@@ -435,12 +435,12 @@ fn _sections_base_env(): i64 {
 #   - no directory component (already CWD-relative; the marker would be a no-op)
 #   - an ABSOLUTE path. ⛔ Deliberate, and the one real limit of this feature.
 #     The marker is in-band, so a hostile .cyr can write one; honouring an absolute
-#     directory would rebuild the read-anything primitive CVE-16 removed, and cycc
+#     directory would rebuild the read-anything primitive the absolute-include path bug removed, and cycc
 #     rejects it for that reason. Relativising against CWD instead would need a
 #     `getcwd` wrapper that does not exist on the PE/Mach-O targets cbt/cyrius.cyr
 #     cross-compiles to. So `cyrius build /abs/dir/x.cyr` keeps resolving includes
 #     against CWD, as it does today — no regression, and no hole bought with reach.
-#   - a `..` component, for the CVE-02 half of the same argument.
+#   - a `..` component, for the include dot-dot path bug half of the same argument.
 fn _source_incdir(source): i64 {
     var n = strlen(source);
     if (n == 0) { return 0; }
@@ -567,7 +567,8 @@ fn _mat_copy_fd(tfd, sfd): i64 {
 # only constant integers, so a string is a deferred RUNTIME store, and an x86 `kernel;` build runs
 # those after its top-level program (rekha and sankoch hand-wrote fns for exactly this reason).
 # ⛔ GENERATED TEXT, NEVER A COMPILER MARKER THAT READS A FILE: a directive cycc expands from a
-# path is the CVE-45 class (an included file or macro forging it). cbt writes plain source.
+# path is the file-marker forge (private visibility) bug class (an included file or macro forging it). cbt writes plain
+# source.
 # Escaping: 0x20-0x7E raw except `"` and `\`; every other byte (LF, CR, NUL, >= 0x80) is `\xHH`,
 # so each literal is ONE physical, pure-ASCII line and no byte of the file can start a source
 # line — no line-based preprocessor rule applies to it. `#skip-lint`: sankoch's precedent for a
@@ -853,12 +854,12 @@ fn _materialize_source(source): i64 {
 # Compile source.cyr to output using current compiler.
 # If _defines vec is set, prepend #define lines to a temp file first.
 # ---------------------------------------------------------------------------
-# Private per-invocation temp directory (v6.4.81 — CVE-35 / CVE-36)
+# Private per-invocation temp directory (v6.4.81 — CYRIUS-2026-0005 / CYRIUS-2026-0006)
 # ---------------------------------------------------------------------------
 # The CLI used 23 FIXED /tmp literals. Two classes of problem, both needing a
 # shared or multi-user box (or shared CI) to matter:
 #
-#   CVE-35 — the DEPENDENCY-INTEGRITY controls read their result out of one:
+#   CYRIUS-2026-0005 — the DEPENDENCY-INTEGRITY controls read their result out of one:
 #     `_sha256sum_file` (the digests that go into cyrius.lock) captured through
 #     "/tmp/cyrius_sha_out" and `_git_head_sha` (the force-pushed-tag refusal)
 #     through "/tmp/cyrius_githead_out", both O_CREAT|O_TRUNC with no O_EXCL and
@@ -866,7 +867,7 @@ fn _materialize_source(source): i64 {
 #     `cyrius deps --verify` passes on a tampered dependency. The security
 #     control itself is what gets subverted.
 #
-#   CVE-36 — `cyrius run/test/fuzz/bench/soak` compiled to a fixed name and then
+#   CYRIUS-2026-0006 — `cyrius run/test/fuzz/bench/soak` compiled to a fixed name and then
 #     EXECUTED it. (Narrowly: `compile()` writes <out>.tmp.<pid> and renames, and
 #     rename(2) REPLACES a planted symlink rather than following it, so the naive
 #     pre-plant does not work — but the final name is still predictable and the
@@ -914,7 +915,7 @@ fn _cbt_tmpbase(): i64 {
     # a usrquota tmpfs) had no way to route the CLI around it. A relative value is ignored
     # (it would resolve against whatever directory a command runs in); trailing slashes are
     # dropped (macOS sets `/var/folders/…/T/`). The private 0700 exclusive-mkdir directory
-    # below is unchanged (CVE-35/CVE-36). CHANGELOG [6.6.9]
+    # below is unchanged (CYRIUS-2026-0005/CYRIUS-2026-0006). CHANGELOG [6.6.9]
     var t = _cbt_env_str("TMPDIR");
     if (t != 0) {
         if (load8(t) == 47) {
@@ -982,7 +983,7 @@ fn _cbt_tmpdir(): i64 {
     # directory somebody else created. The suffix loop exists only so our OWN
     # leftovers (PID reuse on a long-lived box) self-heal instead of bricking the
     # CLI. Deliberately no rmdir-and-retry: reusing a name we did not just create is
-    # the CVE-35/CVE-36 shape, and `xrmdir` (lib/io.cyr, the portable wrapper — never
+    # the CYRIUS-2026-0005/CYRIUS-2026-0006 shape, and `xrmdir` (lib/io.cyr, the portable wrapper — never
     # the raw `sys_rmdir`, which does not exist on the Windows peer and whose agnos
     # arity differs) is for OUR directory at exit, not for clearing somebody's.
     var base = _cbt_tmpbase();
@@ -1039,7 +1040,7 @@ fn _cbt_tmpdir(): i64 {
     sys_write(STDOUT_FD, base, strlen(base));
     println(" (fail-closed)");
     println("  16 candidates were taken; remove stale cyrius-* dirs there and retry.");
-    println("  cyrius will NOT fall back to a shared temp name (CVE-35/CVE-36).");
+    println("  cyrius will NOT fall back to a shared temp name (CYRIUS-2026-0005/CYRIUS-2026-0006).");
     sys_exit(1);
     return 0;
 }
@@ -1061,7 +1062,7 @@ fn _cbt_tmpbase_fail(base, e): i64 {
     } else {
         println("  the temp base does not exist or is not writable; set TMPDIR to an absolute, writable path.");
     }
-    println("  cyrius will NOT fall back to a shared temp name (CVE-35/CVE-36).");
+    println("  cyrius will NOT fall back to a shared temp name (CYRIUS-2026-0005/CYRIUS-2026-0006).");
     return 0;
 }
 
@@ -1136,7 +1137,7 @@ fn _cbt_tmpexe(name): i64 {
 # v6.6.6 — remove the private temp directory on the way out.
 #
 # THE DEFECT. `_cbt_tmpdir()` creates `<base>/cyrius-<pid>` on first use (v6.4.81,
-# CVE-35/CVE-36) and NOTHING has ever removed it, so every `cyrius run` / `lint` /
+# CYRIUS-2026-0005/CYRIUS-2026-0006) and NOTHING has ever removed it, so every `cyrius run` / `lint` /
 # `test` / `deps` / `lsp` left one EMPTY directory behind for good. Measured on the
 # maintainer's box at 6.6.5: 5,005 `/tmp/cyrius-<pid>` directories, 398 of the 400
 # newest of them empty.
@@ -1334,7 +1335,7 @@ fn _cc_flags_cmdline(): i64 {
     return str_data(str_builder_build(fsb));
 }
 
-# 6.6.20 (SEC-02, CVE-97) — 1 when `s` can be a quoted `cmd /s /c` operand, else 0 after NAMING
+# 6.6.20 (SEC-02, the build-output quoting bug) — 1 when `s` can be a quoted `cmd /s /c` operand, else 0 after NAMING
 # why not (`role` says which: "the output", "the source"). The rule is lib/process_win.cyr's
 # `_w_cmd_operand_bad` — a `"`, a `%` or a control byte — and every cmd-line builder in cbt asks it
 # of each path before building: this compile spawn, `_win_run_cx`, `_win_cmdline_cap`,
@@ -1374,7 +1375,8 @@ fn _win_compile_spawn_err(cc, source, output, errfile): i64 {
     if (errfile != 0) { elen = strlen(errfile); }
     # v6.6.6 — sized from the paths, not a fixed 16 KiB; `_w_cmdbuf` refuses by
     # name past Windows' 32,767-character command line. See lib/process_win.cyr.
-    # 6.6.20 (CVE-102): cmd.exe by its absolute path — a bare `cmd` was searched for in the
+    # 6.6.20 (the Windows bare-name process-start bug): cmd.exe by its absolute path — a bare `cmd` was searched for in
+    # the
     # project directory first (lib/process_win.cyr `_win_sys_exe`).
     var ce = _win_sys_exe("cmd.exe");
     if (ce == 0) { _err_ctx("compiler spawn", cc); return 1; }
@@ -1753,7 +1755,7 @@ fn sys_system(cmd): i64 {
 # x86-macOS (codesign -s - may reject there; its stderr goes to /dev/null, and the unsigned
 # binary runs there anyway). Hoisted from cmd_build's inline v6.0.38 codesign so
 # every run path signs. See CHANGELOG [6.0.66].
-# ⛔ 6.6.20 (SEC-02, CVE-97) — ARGV, NO SHELL. This was `sys_system("codesign -s - -f " + path +
+# ⛔ 6.6.20 (SEC-02, the build-output quoting bug) — ARGV, NO SHELL. This was `sys_system("codesign -s - -f " + path +
 # " 2>/dev/null")`: /bin/sh -c with the path UNQUOTED, and `path` is `cyrius build`'s output, the
 # manifest's `[build] output` included — on ecb `output = "out;touch PWNED"` created PWNED. Now
 # /usr/bin/codesign (by its path: no PATH lookup either) gets the path as ONE argv element, a
@@ -2139,7 +2141,7 @@ fn _capacity_default_src(): i64 {
 # PLACE makes a perfect fixpoint compare as DIFFERENT — the artifact behind the v6.0.44
 # "x86-macOS doesn't self-host" retraction. Signing a COPY leaves the pristine pair for
 # the comparison. `cmd_self` and `cmd_soak` both step through here (`cmd_self`'s old
-# /bin/sh script, which did the same at shared `/tmp` names, is gone: CVE-49, 6.6.9).
+# /bin/sh script, which did the same at shared `/tmp` names, is gone: CYRIUS-2026-0009, 6.6.9).
 # CHANGELOG [6.6.6].
 fn _self_host_step(cc, src, out): i64 {
     #ifdef CYRIUS_TARGET_MACOS

@@ -992,7 +992,7 @@ assert_eq(tls_native_server_recv_client_finished(sW, &finW, 4 + hlN), TLS_ERR_AU
 tls_native_server_transition(sP, TLS_EV_START);
 tls_native_server_transition(sP, TLS_EV_RECV_CH);
 assert_eq(tls_native_get_state(sP), TLS_STATE_WAIT_CLIENT_FLIGHT2, "auth → WAIT_CLIENT_FLIGHT2");
-# 6.6.14 (CVE-64): a presented client certificate must CHAIN to the server's trust roots — it
+# 6.6.14 (CYRIUS-2026-0019): a presented client certificate must CHAIN to the server's trust roots — it
 # used to be parsed and accepted on possession alone. `cca` is a self-signed CA:TRUE P-256 cert
 # with no keyUsage / extendedKeyUsage (a copy of cert23, declared further down), so trusting it
 # makes it a valid client identity; the wall clock is pinned inside its window (2026-06-01 ..
@@ -1032,7 +1032,7 @@ assert(load64(sP + TLS_CTX_OFF_CLIENT_CERT) != 0, "  …the verified leaf is kep
 assert_eq(tls_native_get_peer_cert_der(sP, &gp, 512), 0,
   "  …but the server's peer getter names nobody before the handshake completes (6.6.14)");
 
-# 6.6.14 (CVE-64): the framing of the client's Certificate and CertificateVerify. Each malformed
+# 6.6.14 (CYRIUS-2026-0019): the framing of the client's Certificate and CertificateVerify. Each malformed
 # message below is the trusted `cca` message altered one way, so a parser that skipped the check
 # would accept it (or, for the CertificateVerify, reach the signature and answer AUTHN instead).
 # MUTATIONS measured RED (6.6.14), each check dropped or loosened to `>` alone: the 1.3 request
@@ -1926,9 +1926,9 @@ assert_eq(tls_native_client_verify_hostname(h6), TLS_ERR_CERT_HOSTNAME_MISMATCH,
 assert_eq(tls_native_client_verify_hostname(0), TLS_ERR_INVALID_PARAM, "verify_hostname(null)");
 
 # ================================================================
-# CVE-18 (v6.1.36) — IP-literal parsers + iPAddress-SAN matching
+# CYRIUS-2026-0003 (v6.1.36) — IP-literal parsers + iPAddress-SAN matching
 # ================================================================
-test_group("CVE-18 iPAddress-SAN matching (v6.1.36)");
+test_group("CYRIUS-2026-0003 iPAddress-SAN matching (v6.1.36)");
 
 # --- IPv4 literal parser ---
 var ip4[16];
@@ -1982,7 +1982,7 @@ var hi4 = tls_native_new_client("localhost", 9);
 store64(hi4 + TLS_CTX_OFF_SERVER_CERT, ipsan_cert);
 assert_eq(tls_native_client_verify_hostname(hi4), TLS_OK, "dNSName SAN still matches on the same cert: localhost");
 
-# --- CVE-18: _tn_connect_verify fail-closed enforcement (the core fix) ---
+# --- CYRIUS-2026-0003: _tn_connect_verify fail-closed enforcement (the core fix) ---
 # verify=NONE → always OK (explicit opt-out for testing / pinned peers).
 var cv1 = tls_native_new_client("x", 1);
 tls_native_set_verify(cv1, TLS_VERIFY_NONE);
@@ -2003,7 +2003,7 @@ tls_native_set_ca_bundle(cv3, cert23, 385, 1);   # self-signed cert trusts itsel
 assert_eq(_tn_connect_verify(cv3), TLS_ERR_CERT_HOSTNAME_MISMATCH, "verify=PEER + chain OK + host==0 → reject (no identity to bind)");
 
 # ================================================================
-# 6.6.13 (CVE-63) — RFC 9525 §6.3: an IP-ID never meets a DNS-ID
+# 6.6.13 (CYRIUS-2026-0018) — RFC 9525 §6.3: an IP-ID never meets a DNS-ID
 # ================================================================
 # _tn_cert_san_match classifies the host ONCE: a DNS name is compared with the
 # dNSName entries only, an IP literal with the iPAddress entries only, and a
@@ -2052,7 +2052,7 @@ var i7_dns_ip6_der = hex_decode("3082015d30820103a003020102021424e7b735cd5581c40
 var i7_dns_ip6 = x509_cert_alloc();
 assert_eq(x509_parse(i7_dns_ip6_der, 353, i7_dns_ip6), 1, "i7_dns_ip6 parses");
 assert_eq(_i7_verify(i7_dns_ip6, "::1"), TLS_ERR_CERT_HOSTNAME_MISMATCH, "DNS:::1 does not verify host ::1");
-assert_eq(_i7_verify(ipsan_cert, "::1"), TLS_OK, "IP:::1 verifies host ::1 (CVE-18 fixture)");
+assert_eq(_i7_verify(ipsan_cert, "::1"), TLS_OK, "IP:::1 verifies host ::1 (CYRIUS-2026-0003 fixture)");
 
 # SAN = IP:::ffff:1.2.3.4, DNS:::ffff:1.2.3.4, DNS:010.0.0.1, IP:10.0.0.1
 var i7_mixed_der = hex_decode("308201873082012da003020102021454b2a6334340a88058d3380abfb1c6a517fa4ef0300a06082a8648ce3d04030230133111300f06035504030c0869372d6d69786564301e170d3236313030313233333835395a170d3336303932383233333835395a30133111300f06035504030c0869372d6d697865643059301306072a8648ce3d020106082a8648ce3d0301070342000449259cdc6202b47df77568d766ba2c9c777375533ac822bd3b2fb8920931c7a5930ff5da4468fa768357f08da55dd9c34993995d5c1c7623aa6c37839ace2130a35f305d303c0603551d1104353033871000000000000000000000ffff01020304820e3a3a666666663a312e322e332e3482093031302e302e302e3187040a000001301d0603551d0e0416041496bc061972e0cce6cc4dbe183ea4d3cbfd6d42d6300a06082a8648ce3d0403020348003045022100a74686efc6949bc9a2a8ed601b97ddbad0a8466e4c2c64a2d1f9c2ca124701b0022005e06f1681ccc3e0e0e79eac157324a2d3e65e9720d8994545cf941a306a61b5", 790);
@@ -2150,17 +2150,17 @@ assert_eq(_i7_tn_v4_ok("1..2.3"), 0, "_tn_parse_ipv4 1..2.3: refused");
 assert_eq(_i7_net_v4_ok("1..2.3"), 0, "net_parse_ipv4 1..2.3: refused (agrees)");
 
 # ================================================================
-# CVE-17 (v6.1.36) — keyUsage / EKU / keyCertSign chain enforcement
+# CYRIUS-2026-0002 (v6.1.36) — keyUsage / EKU / keyCertSign chain enforcement
 # ================================================================
 # Three self-signed CA certs that self-anchor (SERVER_CERT == CA root), so each
 # verifies EXCEPT for the one constraint under test. NOW17 is inside all windows.
-test_group("CVE-17 keyUsage / EKU / pathLen enforcement (v6.1.36)");
+test_group("CYRIUS-2026-0002 keyUsage / EKU / pathLen enforcement (v6.1.36)");
 var NOW17 = 1781222400;   # ~2026-06-12
 
 # POSITIVE: keyUsage=digitalSignature+keyCertSign, EKU=serverAuth, CA pathlen:3.
 var d17a = hex_decode("308201aa3082014fa00302010202147a8bccb2c25b00ad95c0937600c91f247067804d300a06082a8648ce3d04030230163114301206035504030c0b6b752d656b752d74657374301e170d3236303631313233303433315a170d3336303630383233303433315a30163114301206035504030c0b6b752d656b752d746573743059301306072a8648ce3d020106082a8648ce3d03010703420004dd4c38507fc2d515b27c1708ebe5f2440aa2deadec8ecad055b14b3c1d22fc2f48d159a0386bc4f25083fa8c8c5d5aec046e271b9a4539e387ecf447a7b2cabba37b3079301d0603551d0e0416041480e883005a2be9ffb2a1c824f824a634ef67dce6301f0603551d2304183016801480e883005a2be9ffb2a1c824f824a634ef67dce6300e0603551d0f0101ff04040302028430130603551d25040c300a06082b0601050507030130120603551d130101ff040830060101ff020103300a06082a8648ce3d040302034900304602210095eeae5a4f7c1c2055b4b61b9039ca552045b36fd2d7a6b774d34521a59a7cfb022100e375224192cfbb7a06bb02270ce07c6f1eed15f184103401795ef6c825483264", 860);
 var p17a = x509_cert_alloc();
-assert_eq(x509_parse(d17a, 430, p17a), 1, "CVE-17 positive cert parses");
+assert_eq(x509_parse(d17a, 430, p17a), 1, "CYRIUS-2026-0002 positive cert parses");
 var x17a = tls_native_new_client("x", 1);
 store64(x17a + TLS_CTX_OFF_SERVER_CERT, p17a);
 tls_native_set_ca_bundle(x17a, d17a, 430, 1);
@@ -2213,9 +2213,9 @@ if (pid31 == 0) {
     # CHILD: client
     sys_close(sfd31);
     var clx = tls_native_new_client("localhost", 9);
-    # CVE-18 (v6.1.36): connect() is now fail-closed — this hermetic loopback
+    # CYRIUS-2026-0003 (v6.1.36): connect() is now fail-closed — this hermetic loopback
     # uses a self-signed test cert with no trust anchor, so it opts out of
-    # verification (the handshake + CVE-30 app-data drain are what's exercised
+    # verification (the handshake + the TLS post-handshake false-EOF bug app-data drain are what's exercised
     # here; chain/hostname verification is covered by the .29/.30 cases above).
     tls_native_set_verify(clx, TLS_VERIFY_NONE);
     if (tls_native_connect(clx, cfd31) != TLS_OK) { sys_exit(10); }

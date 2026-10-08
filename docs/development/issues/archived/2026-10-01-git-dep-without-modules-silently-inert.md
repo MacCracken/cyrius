@@ -1,6 +1,6 @@
 # A `[deps.X]` with `git` + `tag` but no `modules` is silently ignored — 🟡 OPEN
 
-**Status:** ✅ **RESOLVED v6.6.13** (bite I10, CVE-62 for the [deps.NAME] traversal found with it) — a modules-less `[deps.X]` means `dist/X.cyr` when the tag ships it, otherwise a named warning and a `vendored nothing` count. See CHANGELOG [6.6.13].
+**Status:** ✅ **RESOLVED v6.6.13** (bite I10, the deps-header dot-dot path bug for the [deps.NAME] traversal found with it) — a modules-less `[deps.X]` means `dist/X.cyr` when the tag ships it, otherwise a named warning and a `vendored nothing` count. See CHANGELOG [6.6.13].
 **Placement:** **6.6.13**, bite I10 (2026-10-01, with the other open issues) — see `roadmap.md` § 6.6.13.
 `cbt/deps.cyr` only: a tooling lane.
 **Discovered:** 2026-10-01, agnostic 0.1.7 (moving four dep tags in `cyrius.cyml` changed nothing in

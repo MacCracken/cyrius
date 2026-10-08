@@ -869,7 +869,7 @@ fn GVBOOL(S, vi): i64 {
     if (vi >= 1048576) { return 0; }
     return load8(_gvb_base + vi);
 }
-# CVE-24 (v6.1.40): cap the per-fn stack-slot count. SFLC counts FRAME SLOTS
+# the locals-cap bug (v6.1.40): cap the per-fn stack-slot count. SFLC counts FRAME SLOTS
 # (a `stack var buf[N]` registers N/8 fillers), and the four slot-indexed local
 # tables — fn_local_names/local_depths/local_types/local_slice_widths, relocated
 # to S+0x5D9D000.. (4×128 KB) — hold 16384 slots each. Fire before the
@@ -2308,7 +2308,7 @@ var _wd_stall = 0;
 # v6.5.19: past-EOF read counter (see _wd_eof_tick / PEEKT).
 var _wd_eof = 0;
 
-# ── v6.5.19 (CVE-40): recursive-descent DEPTH bound.
+# ── v6.5.19 (the define-body copy overflow bug): recursive-descent DEPTH bound.
 #
 # THE DEFECT. Neither watchdog above can see this one. `_wd_tick` bounds a parse that
 # STALLS (GTI stops advancing) and `_wd_eof_tick` bounds reads PAST EOF — but a deeply
@@ -2316,7 +2316,8 @@ var _wd_eof = 0;
 # inert while the native stack runs out. `fn f() { ` repeated 514 times SIGSEGVs cycc;
 # so do nested blocks, `if`, `while`, parenthesised expressions, unary-minus chains and
 # call chains, at their own depths. Reachable from ordinary untrusted stdin
-# (`cat hostile.cyr | cycc`), which is the CVE-32/33 threat model exactly.
+# (`cat hostile.cyr | cycc`), which is the include filename-capture overflow bug/the READFILE path-composition overflow
+# bug threat model exactly.
 #
 # PROVEN TO BE STACK EXHAUSTION, NOT A TABLE. The crash depth scales LINEARLY with
 # RLIMIT_STACK — 512 at 8 MB, 1026 at 16 MB, 2053 at 32 MB — i.e. ~16 KB of stack per
@@ -2477,9 +2478,10 @@ fn _xd_check(S, d0, tag): i64 {
 # ⛔ THE SECURITY RULE, AND WHY IT IS NOT NEGOTIABLE. The marker is in-band, so a
 # HOSTILE .cyr can write one. If an absolute directory were honoured, `#@incdir
 # /home/u/.ssh` + `include "id_rsa"` would reconstruct exactly the read-anything
-# primitive CVE-16 was filed to remove. So `PP_SCAN_INCDIR` accepts only a
+# primitive the absolute-include path bug was filed to remove. So `PP_SCAN_INCDIR` accepts only a
 # RELATIVE, `..`-free directory: composed with an include name that has itself
-# already passed the CVE-02/CVE-16 guards, the result is relative and `..`-free,
+# already passed the include dot-dot path bug/the absolute-include path bug guards, the result is relative and
+# `..`-free,
 # i.e. confined to the CWD subtree — provably not one file more than a plain
 # relative include could already reach. The CLI relativises an absolute source
 # against CWD and emits no marker when it cannot; that path keeps today's

@@ -70,7 +70,7 @@ fn EDEFER_SAVE(S): i64 {
 # among them — so leaving it behind wrote every return register into dead stack after the wipe:
 # sigil 3.13.7's signer left the ECDSA nonce k there (xmm1 held the DRBG's last SHA state). The
 # clear uses immediate stores, so it touches no register the convention returns in; r11 carries
-# the entry rsp out of slot [24] before that slot is zeroed. CHANGELOG [6.6.15] (CVE-69)
+# the entry rsp out of slot [24] before that slot is zeroed. CHANGELOG [6.6.15] (the secret-var epilogue spill gap)
 fn EDEFER_RESTORE(S): i64 {
     _IR_REC0(S, IR_RAW_EMIT);
     _EBN(S, 0x30244C6F0FF3, 6);         # movdqu xmm1, [rsp+48]

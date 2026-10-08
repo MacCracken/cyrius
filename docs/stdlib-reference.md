@@ -682,7 +682,7 @@ fixed alongside the `http_get_r` addition at v5.8.31.
 v6.6.9: the URL's host is resolved with `net_resolve_ipv4` (before it, the host
 string's pointer was passed to `sock_connect` as the address, so no call reached
 any host), and the request is capped at 2048 bytes — a longer URL is refused
-instead of overflowing the request buffer (CVE-50).
+instead of overflowing the request buffer (CYRIUS-2026-0010).
 
 ### dynlib.cyr
 

@@ -22,7 +22,7 @@
 # 45 hard errors overnight.
 #
 # ⛔ THREE TRAPS THIS GATE ENCODES, each of which silently produced a wrong answer first:
-#   1. Absolute `include` paths are REJECTED (CVE-16). An entry built from
+#   1. Absolute `include` paths are REJECTED (the absolute-include path bug). An entry built from
 #      `include "<abs>/alloc.cyr"` yields only rejection errors, so the loop saw zero
 #      undefined symbols and re-added nothing while appearing to work. Sources are spliced.
 #   2. A PRIVATE PEER is not the answer, its DISPATCHER is. SYS_MMAP is defined in

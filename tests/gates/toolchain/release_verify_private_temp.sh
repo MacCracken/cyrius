@@ -1,9 +1,9 @@
 #!/bin/sh
-# release_verify_private_temp.sh — v6.6.6 bite 17e, CVE-44. The release installer stages every
+# release_verify_private_temp.sh — v6.6.6 bite 17e, CYRIUS-2026-0007. The release installer stages every
 # downloaded artifact in a PRIVATE directory, so no other local user can steer the signature
 # check that authorises the install.
 #
-# ⛔ CVE-44 (scripts/ci.sh, as of 6.6.5). Six fixed, world-writable paths:
+# ⛔ CYRIUS-2026-0007 (scripts/ci.sh, as of 6.6.5). Six fixed, world-writable paths:
 #     /tmp/$TARBALL  /tmp/$TARBALL.sha256  /tmp/SHA256SUMS
 #     /tmp/SHA256SUMS.sig  /tmp/cyrius-release.pub  /tmp/cyrius_tsum
 # — the tarball being installed, AND the three inputs to the Ed25519 check that is supposed to
@@ -23,7 +23,7 @@
 # ⚠ HERMETIC, NO NETWORK. `curl`, `cyrsign`, `sha256sum` and `shasum` are stubbed on PATH ahead
 # of the real ones, serving a fake release built here. The stub `cyrsign` records the pubkey it
 # was handed and accepts ONLY the genuine key, so "which key reached the verifier" is directly
-# observable — which is the whole question CVE-44 asks.
+# observable — which is the whole question CYRIUS-2026-0007 asks.
 #
 # AXES
 #   1. ANTI-VACUOUS: a well-formed fake release installs — rc 0, "signature verified", the
@@ -31,7 +31,7 @@
 #   2. THE ATTACK: another user's files are pre-created at the installer's fixed tarball names,
 #      the tarball itself a SYMLINK out of the shared directory. The install must leave that
 #      link target byte-for-byte, leave the planted files untouched, verify against the real key
-#      and install the real payload. This is the DETERMINISTIC half of CVE-44 (`curl -o` and
+#      and install the real payload. This is the DETERMINISTIC half of CYRIUS-2026-0007 (`curl -o` and
 #      `printf >` follow a symlink). ⚠ The four version-INDEPENDENT names (SHA256SUMS, .sig,
 #      cyrius-release.pub, cyrius_tsum) are deliberately NOT planted: they are shared with every
 #      process on the box and planting them would make this gate collide with a concurrent
@@ -70,7 +70,7 @@ command -v sha256sum > /dev/null 2>&1 || { echo "FAIL: sha256sum missing — the
 
 REALKEY="adbde6b11ccf8d86dc760387fa7f4dfbe3942fa318e459fb6e62d1536e254008"
 grep -q "CYRIUS_RELEASE_PUBKEY=\"$REALKEY\"" scripts/ci.sh || { echo "FAIL: the pinned release pubkey in scripts/ci.sh is not the one this gate stubs against — update the gate"; exit 1; }
-# The SHARED directory whose fixed names CVE-44 is about, named once rather than spelled inline:
+# The SHARED directory whose fixed names CYRIUS-2026-0007 is about, named once rather than spelled inline:
 # the gate must plant the installer's own literal paths, and a `/tmp/<name>` literal is exactly
 # what tests/gates/toolchain/gates_never_write_tree.sh axis 5 forbids in a gate — rightly, since
 # two concurrent check.sh runs would collide. Both concerns are met by naming it here and making
@@ -138,7 +138,7 @@ grep -qx "$REALKEY" "$D/keys1" || { fail "axis 1: the verifier was handed '$(cat
 
 # ── axis 2: THE ATTACK — every fixed /tmp name pre-created by another user ──
 # Two of them are SYMLINKS into a directory the installer has no business writing, which is the
-# DETERMINISTIC half of CVE-44: `curl -o` and `printf >` follow a symlink, so a name the
+# DETERMINISTIC half of CYRIUS-2026-0007: `curl -o` and `printf >` follow a symlink, so a name the
 # attacker created first redirects the installer's write anywhere the installing user can write.
 # (The other half — swapping SHA256SUMS/.sig/cyrius-release.pub between the write and the verify
 # so the signature is checked against the attacker's key — is a race, and this gate does not
@@ -169,7 +169,7 @@ if plant; then
     x=0
     [ "$rc" -eq 0 ] || { fail "axis 2: the install failed although the real release is available (rc=$rc):"; sed 's/^/      /' "$D/a2.out" | head -6; x=1; }
     cksum < "$D/victim/precious_tarball" > "$D/victim.after"
-    cmp -s "$D/victim.before" "$D/victim.after" || { fail "axis 2: the installer wrote THROUGH a planted /tmp symlink and clobbered a file outside its own staging area — arbitrary-file overwrite as the installing user (CVE-44)"; x=1; }
+    cmp -s "$D/victim.before" "$D/victim.after" || { fail "axis 2: the installer wrote THROUGH a planted /tmp symlink and clobbered a file outside its own staging area — arbitrary-file overwrite as the installing user (CYRIUS-2026-0007)"; x=1; }
     grep -qx "$REALKEY" "$D/keys2" || { fail "axis 2: the verifier was handed '$(cat "$D/keys2")', not the pinned key"; x=1; }
     got2=$("$D/home2/versions/$VER/bin/cycc" 2>/dev/null || echo "<nothing installed>")
     [ "$got2" = "the genuine payload" ] || { fail "axis 2: '$got2' was installed — the planted /tmp tarball won"; x=1; }
@@ -212,4 +212,4 @@ printf 'curl -sfL "$URL" -o "%s/$TARBALL"\nprintf x > %s/cyrius-release.pub\n# %
 [ "$x" = 0 ] && echo "  ok: axis 4: scripts/ci.sh names no fixed /tmp path and checks its mktemp -d (detector self-tested)"
 
 [ "$FAIL" = 0 ] || exit 1
-echo "PASS: release_verify_private_temp (4 axes, CVE-44)"
+echo "PASS: release_verify_private_temp (4 axes, CYRIUS-2026-0007)"

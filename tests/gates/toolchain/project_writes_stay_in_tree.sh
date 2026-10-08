@@ -1,6 +1,6 @@
 #!/bin/sh
 # Gate: the CLI rewrites a PROJECT's own files through a symlink ONLY to a file inside the
-# project (6.6.20, CVE-98 — SEC-03 of the v6.6.x closeout security re-scan).
+# project (6.6.20, the committed-symlink write bug — SEC-03 of the v6.6.x closeout security re-scan).
 #
 # THE DEFECT. 6.6.6 made the writers of a user's file keep a symlink and write the file it
 # names (lib/io.cyr file_replace_atomic, cbt's _aw_open_replace) — wherever it pointed. A

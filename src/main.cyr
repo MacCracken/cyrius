@@ -125,7 +125,7 @@
 #   0x19A000  gvar_cnt      [8]
 #   0x71A000  file_map_cnt  [8]           file:line error map entry count (v6.1.35: relocated from 0x19A100)
 #   0x71A040  file_map      [24576]       1024 entries × 24 B (start_line, line_count, fname_offset);
-#                                         CVE-31 cap 128→1024, relocated from 0x19A108 into the freed
+# the silent broken-input bug cap 128→1024, relocated from 0x19A108 into the freed
 #                                         0x71A000 band (the .27 output_buf gap, below TS@0x800000)
 #   0x721000  file_map_str  [32768]       filename string scratch (v6.1.35: relocated from 0x19D000[4096])
 #   0x729000  gvar_toks     [32768]       first 4096 deferred global var inits (v6.3.41: relocated+grown
@@ -139,17 +139,17 @@
 #
 # --- Preprocessor + local var state ---
 #   0x190400  include_fname [768]         preprocessor include/#ref filename scratch
-#                                        v6.4.81 CVE-32: this was recorded one page high
+# v6.4.81 the include filename-capture overflow bug: this was recorded one page high
 #                                        (0x190500) and 16x too small; no code has ever written
 #                                        that address (every use is 0x190400) and all three
 #                                        capture loops were unbounded, so heapmap.sh was
 #                                        validating a region that does not exist.
-#   0x190700  pp_expand_outpos [8]        PP_EXPAND's output-cursor return slot (CVE-39: this
+#   0x190700  pp_expand_outpos [8]        PP_EXPAND's output-cursor return slot (the include-length ifdef bug: this
 #                                         is why include_fname is 768, not 1024)
 #   0x190800  pp_flag_table [128]         #ifdef / #define flag-name hashes, 16 slots × 8 B
 #   0x190880  pp_flag_values [128]        the 16 flags' #define values, 8 B each (PP_DEFINE writes,
 #                                        PP_GETVAL reads). Ends 0x190900; 0x190900-0x191000 is free.
-#   0x191000  (FREED v6.1.40)             was fn_local_names → relocated+grown to 0x5D9D000 (CVE-24)
+#   0x191000  (FREED v6.1.40)             was fn_local_names → relocated+grown to 0x5D9D000 (the locals-cap bug)
 #   0x191800  lex_pp file-scratch [16KB]  the `#ref` file read buffer (PP_REF_PASS's READFILE, 16384 B;
 #                                        was ALSO local_depths, which moved to 0x5DBD000 @ v6.1.40)
 #   0x192000  macro_tables  [20480]       (nested — time-shared with the #ref read buffer above: PREPROCESS
@@ -158,10 +158,10 @@
 #                                        passes and the #ref read lands on the macro table.)
 #                                        16 function-like macros: hashes 0x192000, offsets 0x192080,
 #                                        lengths 0x192100 (128 B each), bodies 0x193000 (16 KB pool,
-#                                        bounded v6.5.45 CVE-40) → ends 0x197000.
+#                                        bounded v6.5.45 the define-body copy overflow bug) → ends 0x197000.
 #   0x192200  (FREED v6.1.40)             was local_types → relocated to 0x5DDD000
 #   0x193400  (FREED v6.1.40)             was local_slice_widths → relocated to 0x5DFD000
-#   --- the 4 slot-indexed per-fn local tables RELOCATED to the heap top @ 0x5D9D000 (CVE-24 v6.1.40):
+#   --- the 4 slot-indexed per-fn local tables RELOCATED to the heap top @ 0x5D9D000 (the locals-cap bug v6.1.40):
 #       indexed by stack-frame SLOT (a `stack var buf[N]` registers N/8 fillers), so a large stack array
 #       overflowed the old 256/576-slot tables. Grown to 16384 slots (128 KB frames) each + capped in
 #       SFLC. See the 0x5D9D000 block below. ---
@@ -626,7 +626,7 @@
 #                                        See CHANGELOG [5.11.33] +
 #                                        [5.11.68].
 #
-#   --- per-fn local tables, relocated here + grown @ v6.1.40 (CVE-24); see the local-var note above ---
+#   --- per-fn local tables, relocated here + grown @ v6.1.40 (the locals-cap bug); see the local-var note above ---
 #   0x5D9D000 fn_local_names    [131072]  16384 local-name slots × 8B (was 0x191000/256). SFLC caps the
 #                                        per-fn slot count at 16384 (= 128 KB stack frame) — a `stack var
 #                                        buf[N]` registers N/8 fillers, so large arrays overran the old table.

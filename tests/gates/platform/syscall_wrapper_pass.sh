@@ -396,7 +396,7 @@ check "SYS_SOCK_PEER = 106 present (agnos 1.57.7)" 1 \
     "$(grep -cE 'SYS_SOCK_PEER[[:space:]]*=[[:space:]]*106;' lib/syscalls_x86_64_agnos.cyr || true)"
 check "SYS_SPAWN_LIMITS = 107 present (agnos 1.57.7)" 1 \
     "$(grep -cE 'SYS_SPAWN_LIMITS[[:space:]]*=[[:space:]]*107;' lib/syscalls_x86_64_agnos.cyr || true)"
-# CVE-48 (v6.6.7): a LOOPBACK listen class lives in a per-slot table, so sys_close must clear
+# CYRIUS-2026-0008 (v6.6.7): a LOOPBACK listen class lives in a per-slot table, so sys_close must clear
 # it with the port — a recycled slot must not inherit a stale class (the v6.2.22 recycled-slot
 # rule the port already follows). The class derivation itself is RUN by
 # tests/gates/platform/agnos_peer_fake_kernel.sh axis 4.

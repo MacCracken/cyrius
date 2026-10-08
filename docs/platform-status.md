@@ -72,7 +72,7 @@ gained its memory and stack traps; the matching statement is in `programs/cxvm.c
 **cxvm is an interpreter for TRUSTED bytecode. It is not a sandbox: a guest can ask the host
 kernel for anything the cxvm process may do.** What it does and does not guarantee, as of 6.6.12:
 
-- **The VM keeps a guest inside its own memory (6.6.12, CVE-58).** Every load and store
+- **The VM keeps a guest inside its own memory (6.6.12, the cxvm host-memory bug).** Every load and store
   (`load8/16/32/64`, `store8/16/32/64`) is checked for its FULL width against the data segment
   `[8, _CX_MEM_SIZE)`; `[0, 8)` is refused as the null page (guest 0 is the in-memory copy of the
   bytecode, so a null store used to succeed silently). The data and call stacks (65536 entries

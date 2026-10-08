@@ -1,9 +1,14 @@
 # Cyrius Security Audit — 2026-07-27
 
+> ⚠ **2026-10-08 — withdrawn and renumbered.** The `CVE-NN` ids this file used were re-read against the rule that
+> an id is ONLY for an actual security vulnerability (CLAUDE.md § *Security Audit Process*). The real ones are now
+> `CYRIUS-2026-NNNN` (headings read `CYRIUS-… (was CVE-NN)`); the rest were withdrawn as bugs and are named by a short
+> label. Mapping, next id and why: [`2026-10-08-security-ledger.md`](2026-10-08-security-ledger.md).
+
 > **Routine full audit** on the CLAUDE.md "Security Audit Process" cadence
 > (*full audit every 2-3 minors*), run as compliance item 9 of the **v6.4.x
 > closeout**. It supersedes [`2026-06-10-deep-dive-review.md`](2026-06-10-deep-dive-review.md)
-> (cycc 6.1.31), whose last identifier is CVE-31.
+> (cycc 6.1.31), whose last identifier is the silent broken-input bug.
 >
 > **This document is a RECORD, not a work list.** Every finding below was
 > already fixed and shipped in **v6.4.81** before this file was written — an
@@ -40,36 +45,36 @@ something other than what the code did.**
 1. **cycc smashes its own heap on a long `include` path** — no flag, no opt-in,
    from ordinary source text. `include "zzz/<31490 A's>.cyr"` → **SIGSEGV, exit
    139**. Compiling untrusted source is the compiler's entire job, so this is
-   the wrong side of the only trust boundary the tool has (**CVE-32**).
+   the wrong side of the only trust boundary the tool has (**the include filename-capture overflow bug**).
 2. **The heap map hid it for three minors.** `src/main.cyr` documented that
    scratch at `0x190500 [256]` — an address **no code has ever written** (every
    use is `0x190400`, unbounded). `tests/gates/memory/heapmap.sh` validated the comment,
    found no overlap, and reported PASS across every closeout since.
 3. **The security control was the subvertible part.** `cyrius deps --verify`
    read its SHA-256 digests, and the force-pushed-tag refusal read its git HEAD,
-   out of fixed, world-writable, no-`O_EXCL` `/tmp` names (**CVE-35**).
+   out of fixed, world-writable, no-`O_EXCL` `/tmp` names (**CYRIUS-2026-0005**).
 
 All five confirmed findings were small. None needed a heap-layout change; all
 shipped in one release with the gate GREEN.
 
 ---
 
-## Security findings (CVE-32 …)
+## Security findings (the include filename-capture overflow bug …)
 
 | CVE | Sev | Title | Files | Fixed |
 |---|---|---|---|---|
-| **CVE-32** | **High** | Three unbounded include/`#ref` filename capture loops overrun the `S+0x190400` scratch — **SIGSEGV from source text**; silent PP-state corruption below the threshold | `src/frontend/lex_pp.cyr:1997,2370,2497` | v6.4.81 |
-| **CVE-33** | **High** | `READFILE`'s `CYRIUS_HOME/lib/` fallback composes an unbounded path into a **512-byte** local — both copy loops unbounded | `src/frontend/lex.cyr:610,612,614` | v6.4.81 |
-| **CVE-34** | Medium | Long `$HOME` overruns `_cyrius_lib` — a *bare top-level* `[256]` array is 2048 B, and the copy was bounded only by `elen` (≤4096) with ~32 B appended after | `src/frontend/lex.cyr:208,275` | v6.4.81 |
-| **CVE-35** | Medium | Dependency-integrity controls read their results from predictable shared `/tmp` (no `O_EXCL`, no `O_NOFOLLOW`) — lockfile digests and the force-pushed-tag refusal | `cbt/deps.cyr:2025,2066` | v6.4.81 |
-| **CVE-36** | Medium | `cyrius run/test/fuzz/bench/soak` compile to a predictable `/tmp` name and then **execve** it | `cbt/commands.cyr:150,164,250,291,1518` | v6.4.81 |
+| withdrawn (was CVE-32; a bug) | **High** | Three unbounded include/`#ref` filename capture loops overrun the `S+0x190400` scratch — **SIGSEGV from source text**; silent PP-state corruption below the threshold | `src/frontend/lex_pp.cyr:1997,2370,2497` | v6.4.81 |
+| withdrawn (was CVE-33; a bug) | **High** | `READFILE`'s `CYRIUS_HOME/lib/` fallback composes an unbounded path into a **512-byte** local — both copy loops unbounded | `src/frontend/lex.cyr:610,612,614` | v6.4.81 |
+| withdrawn (was CVE-34; a bug) | Medium | Long `$HOME` overruns `_cyrius_lib` — a *bare top-level* `[256]` array is 2048 B, and the copy was bounded only by `elen` (≤4096) with ~32 B appended after | `src/frontend/lex.cyr:208,275` | v6.4.81 |
+| **CYRIUS-2026-0005** (was CVE-35) | Medium | Dependency-integrity controls read their results from predictable shared `/tmp` (no `O_EXCL`, no `O_NOFOLLOW`) — lockfile digests and the force-pushed-tag refusal | `cbt/deps.cyr:2025,2066` | v6.4.81 |
+| **CYRIUS-2026-0006** (was CVE-36) | Medium | `cyrius run/test/fuzz/bench/soak` compile to a predictable `/tmp` name and then **execve** it | `cbt/commands.cyr:150,164,250,291,1518` | v6.4.81 |
 
 Detail follows. Every claim below was re-verified against live source while
 writing this file.
 
 ---
 
-### CVE-32 (High) — heap smash from an `include` path
+### Withdrawn 2026-10-08 (was CVE-32; a bug, not a security vulnerability) (High) — heap smash from an `include` path
 
 `PREPROCESS` captures the filename of `include`, of a post-macro-expansion
 `include`, and of `#ref` into one shared scratch at `S+0x190400`. **All three
@@ -113,20 +118,20 @@ PASS at every closeout. The map is corrected in all five forks to
 
 ---
 
-### CVE-33 (High) — unbounded composition into a 512-byte local
+### Withdrawn 2026-10-08 (was CVE-33; a bug, not a security vulnerability) (High) — unbounded composition into a 512-byte local
 
 When an `include "lib/…"` fails to open, `READFILE` retries under
 `$HOME/.cyrius/versions/<VER>/lib/`. It built that path into `var fbuf[512]`
 with **neither** copy loop bounded: the first copies `_cyrius_lib_len` bytes
-(which can reach ~2 KB — see CVE-34), the second copies the caller-supplied
+(which can reach ~2 KB — see the long-HOME overflow bug), the second copies the caller-supplied
 `path` until NUL.
 
-**Vector.** Same as CVE-32 — source text, via the include path, combined with an
+**Vector.** Same as the include filename-capture overflow bug — source text, via the include path, combined with an
 environment the user does not necessarily control on a shared box.
 
 **Impact.** Stack-frame overrun with attacker-influenced bytes.
 
-**Fix (v6.4.81).** `var fbuf[4096]` (matching the CVE-32 bound), both loops stop
+**Fix (v6.4.81).** `var fbuf[4096]` (matching the include filename-capture overflow bug bound), both loops stop
 at 4095, and a truncated path simply fails to open and falls into the existing
 `-1` / "cannot open include file" path — `lex.cyr:610-615`.
 
@@ -136,7 +141,7 @@ load-bearing in the next finding.
 
 ---
 
-### CVE-34 (Medium) — `_cyrius_lib` overflow from a long `$HOME`
+### Withdrawn 2026-10-08 (was CVE-34; a bug, not a security vulnerability) (Medium) — `_cyrius_lib` overflow from a long `$HOME`
 
 `var _cyrius_lib[256]` (`lex.cyr:208`) is a **bare top-level array**, so it is
 256 × 8 = **2048 B** under the v6.4.10 contract — not 256. `_init_cyrius_lib`
@@ -157,7 +162,7 @@ best-effort by design, so giving it up is the correct failure mode.
 
 ---
 
-### CVE-35 (Medium) — dependency-integrity controls read from predictable shared `/tmp`
+### CYRIUS-2026-0005 (was CVE-35) (Medium) — dependency-integrity controls read from predictable shared `/tmp`
 
 Two of them, and they are precisely the controls that exist to detect tampering:
 
@@ -170,7 +175,7 @@ Two of them, and they are precisely the controls that exist to detect tampering:
   same pattern through `/tmp/cyrius_githead_out`.
 
 **Vector.** Any local user on a shared or multi-user box (or a shared CI runner)
-who wins the name. Note the argv hardening from CVE-14 is intact and unrelated —
+who wins the name. Note the argv hardening from the deps-verify shell-line bug is intact and unrelated —
 `path` is a distinct argv element here, never concatenated into `/bin/sh -c`.
 This is the *output* channel, not the input one.
 
@@ -181,7 +186,7 @@ returns a verdict the attacker wrote. Same for the force-pushed-tag refusal.
 
 ---
 
-### CVE-36 (Medium) — compile-to-fixed-`/tmp`-then-execve
+### CYRIUS-2026-0006 (was CVE-36) (Medium) — compile-to-fixed-`/tmp`-then-execve
 
 `cyrius run` / `test` / `fuzz` / `bench` / `soak` each compiled to a fixed
 `/tmp` name and then executed the result (`cbt/commands.cyr:150,164,250,291,1518`).
@@ -194,7 +199,7 @@ narrower: the final name is predictable, and there is a window between the
 rename and the `execve` in which another local user can replace the file that is
 about to be run.
 
-**Fix for CVE-35 and CVE-36 (v6.4.81).** All **23** fixed `/tmp` literals in
+**Fix for CYRIUS-2026-0005 and CYRIUS-2026-0006 (v6.4.81).** All **23** fixed `/tmp` literals in
 `cbt/` now route through a single private per-invocation directory —
 `_cbt_tmpdir()` / `_cbt_tmpfile()` at `cbt/build.cyr:413,446`. `/tmp/cyrius-<pid>`,
 created with `sys_mkdir(d, 448)` = mode **0700**. Two properties matter:
@@ -224,7 +229,7 @@ Two candidates survived a first read and **failed adversarial verification.**
 Both are written down because each is the kind of finding that looks right on a
 second pass too, and re-filing them costs a future auditor a day.
 
-### CVE-37 (withdrawn) — `file_write_atomic`'s temp file
+### Withdrawn 2026-10-08 (was CVE-37; a bug, not a security vulnerability) (withdrawn) — `file_write_atomic`'s temp file
 
 **Claim.** `file_write_atomic` (`lib/io.cyr:355`) opens its temp with
 `O_WRONLY|O_CREAT|O_TRUNC` and no `O_EXCL`, so a pre-planted symlink at the temp
@@ -238,13 +243,13 @@ does not pass `O_EXCL`.
 shared directory — it lands wherever `path` lands. An attacker who can plant a
 file at `<path>.cyrtmp.<pid>.<ctr>` already has write access to that directory
 and can therefore write `path` itself. No privilege boundary is crossed, so
-there is nothing to escalate. Contrast CVE-35/36, where the shared `/tmp`
+there is nothing to escalate. Contrast CYRIUS-2026-0005/CYRIUS-2026-0006, where the shared `/tmp`
 namespace *is* the boundary crossing — that is the distinction to hold onto.
 
 *(Adding `O_EXCL` here would still be a defensible robustness change. It is not
 a security finding, and it should not be filed as one.)*
 
-### CVE-38 (withdrawn) — macOS `_macho_codesign` shell concatenation
+### Withdrawn 2026-10-08 (was CVE-38; a bug, not a security vulnerability) (withdrawn) — macOS `_macho_codesign` shell concatenation
 
 **Claim.** `_macho_codesign` (`cbt/build.cyr:642`) concatenates a path into a
 `sys_system` string —
@@ -313,17 +318,17 @@ are outside the audit by construction.
 
 ## Prior audit's tail — presence check
 
-The 2026-06-10 review closed with CVE-14…CVE-31 open and tracked in `issues/`.
-**Presence check performed this pass:** every identifier CVE-14 through CVE-31
+The 2026-06-10 review closed with CYRIUS-2026-0002 … CYRIUS-2026-0004 open and tracked in `issues/`.
+**Presence check performed this pass:** every identifier CYRIUS-2026-0002 … CYRIUS-2026-0004
 now carries at least one in-tree `CVE-NN` fix marker across
 `src/`, `lib/`, `cbt/`, `scripts/`, `tests/`, `.github/` — the v6.1.33–v6.1.41
-hardening burst, plus CVE-20's `seed-derive-cycc.sh` trust-root closure
+hardening burst, plus the seed-chain cycc hardening item's `seed-derive-cycc.sh` trust-root closure
 (2026-06-20) which is now a CI job and gate step 2.
 
 **This is a marker census, not a re-audit.** This pass did not re-derive the
 adequacy of each of those eighteen fixes; it confirmed each has a landed,
 commented change rather than a note. A future full deep-dive should re-verify
-the TLS/entropy group (CVE-17/18/19/30) in particular, since it is the largest
+the TLS/entropy group (CYRIUS-2026-0002/CYRIUS-2026-0003/the entropy-fallback hardening item/the TLS post-handshake false-EOF bug) in particular, since it is the largest
 and the one whose correctness is least visible from a marker.
 
 ---

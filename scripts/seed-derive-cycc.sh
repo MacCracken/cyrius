@@ -1,6 +1,6 @@
 #!/bin/sh
 # scripts/seed-derive-cycc.sh — prove `build/cycc` is machine-derivable from
-# the ~29 KB seed (CVE-20 resolution, 2026-06-20). No bridge rung.
+# the ~29 KB seed (the seed-chain cycc hardening item resolution, 2026-06-20). No bridge rung.
 #
 # Chain:
 #   bootstrap/asm (seed) assembles bootstrap/cybs.cyr  -> cybs

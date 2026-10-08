@@ -1,5 +1,6 @@
 # ================================================================
-# programs/checks/heap_audit.cyr — heap-map / cap-drift / CVE-05 / DCE / capacity / struct-cap gates
+# programs/checks/heap_audit.cyr — heap-map / cap-drift / the compiler heap guard-page gap / DCE / capacity / struct-cap
+# gates
 # ================================================================
 # v6.0.90: split out of the monolithic programs/check.cyr (10.2K LoC).
 # Fn DEFINITIONS only — no includes, no module-level vars, no driver.
@@ -41,7 +42,7 @@ fn _verify_inline(buf, n, pattern, region): i64 {
 }
 
 fn _cve05_guard_gate(): i64 {
-    var label = "CVE-05 tok_names mangle-path: no magic-256 NPOS_GUARD in any source-identifier copy site (v5.11.65)";
+    var label = "the compiler heap guard-page gap tok_names mangle-path: no magic-256 NPOS_GUARD in any source-identifier copy site (v5.11.65)";
     var files[88];
     store64(&files + 0,  _root_path("src/frontend/parse_decl.cyr"));
     store64(&files + 8,  _root_path("src/frontend/parse_expr.cyr"));

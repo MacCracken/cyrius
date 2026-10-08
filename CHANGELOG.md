@@ -212,7 +212,7 @@ enum lvalue checks); dead-code floor unchanged (52 fns / 10,597 B). `build/cycc-
 - **`true` and `false`** are reserved words (tokens 169 / 170; statement keywords 28 → 30, reserved tokens 109 →
   111), the values 1 and 0. `bool` stays an 8-byte word (`sizeof(bool) == 8`, ADR-002).
 - **`!e` is a real operator** (token 171): 1 when `e`'s word is 0, else 0, binding like unary minus (`!x + 1` is
-  `(!x) + 1`); an f64 operand is tested by its raw bits, as `if (x)` tests it. ⚠ **CVE-104:** until 6.7.3 the lexer
+  `(!x) + 1`); an f64 operand is tested by its raw bits, as `if (x)` tests it. ⚠ **the dropped-bang lexer bug:** until 6.7.3 the lexer
   silently DROPPED a lone `!`, so `!x` compiled as `x` and `if (!ok)` meant `if (ok)` (`fn f(x) { return !x; }`
   returned x). No live use was found anywhere.
 - **A write into a bool is checked.** A bool local or global, field, parameter, `fn g(): bool` return, multi-value
@@ -253,8 +253,8 @@ enum lvalue checks); dead-code floor unchanged (52 fns / 10,597 B). `build/cycc-
 
 ### Security
 
-- **CVE-103 (P2): the compiled `cyriusly cmdtools` ran whatever `scripts/cyriusly` the CURRENT directory held**
-  (lane cyriusly; CVE-94's filed remainder). Inside any checkout shipping one it ran with the user's privileges
+- **the cyriusly cmdtools CWD-script bug (P2): the compiled `cyriusly cmdtools` ran whatever `scripts/cyriusly` the CURRENT directory held**
+  (lane cyriusly; the cyriusly operand bugs' filed remainder). Inside any checkout shipping one it ran with the user's privileges
   ("PWNED from the checkout: cmdtools list", rc 0). Every store writer now ships the shell twin to
   `versions/<v>/scripts/cyriusly` (install.sh's refresh-only — refusing, before anything is written, a tree whose
   bins ship cyriusly without it — tarball and source-bootstrap paths; release.yml and both macOS builders), and
@@ -262,7 +262,7 @@ enum lvalue checks); dead-code floor unchanged (52 fns / 10,597 B). `build/cycc-
   that is not a version (`../evil`) or a missing twin — no fallback. `verify-store.sh` judges and restores the twin.
   ⚠ An installed x86_64 cyriusly whose active version predates 6.7.3 now refuses `cmdtools` by name. Gates:
   `cyriusly_version_operand_refused.sh` axes 7 (rewritten) and 9, `released_slot_written_from_tag.sh` 7 / 7b / 8.
-- **CVE-104 (P2): the lexer silently dropped a lone `!`** — see B2 above. The next free CVE id is **105**.
+- **the dropped-bang lexer bug (P2): the lexer silently dropped a lone `!`** — see B2 above. The next free ledger id is **CYRIUS-2026-0036**.
 
 ### Fixed — the repair lane
 
@@ -608,7 +608,7 @@ miscompiles into the release: a call to a redefined fn binding its FIRST definit
 corrupting `sp`, and user fns named `mulh64` / `fncallN` mis-binding or crashing. The headline repairs: a `continue`
 patched to the wrong loop, `: f64` fns returning a stale xmm0 on x86 / Windows / Intel Mac, an inlined fn stepping a
 `*T` by one byte, a generic `: *T` result stepping 8 for every instance, the `#if` nesting stack and the `use` alias
-table writing through live compiler state, and a `[package] cyrius` pin that path-traversed into an `execve` (CVE-79,
+table writing through live compiler state, and a `[package] cyrius` pin that path-traversed into an `execve` (the package-pin path bug,
 P0). Defaults taken where a finding needed a design call: a bare struct passed to a `*T` parameter takes its address
 at every size; release-gate step 3 fails on any SKIP outside a named allowlist; check.sh reaps dead CLI temp dirs (no
 CLI signal handling); a redefinition patches a jump at the old entry, so programs that redefine nothing compile to the
@@ -616,7 +616,7 @@ same bytes; the intrinsic names are refused at declaration rather than lexed as 
 writer leaves every x86-family compiler, `src/common/heap_regions.cyr` is the drivers' one heap-region block,
 `heapmap.sh` checks every driver and every `S + 0x…` literal, and a per-fork dead-code floor is gated. Constant-arm
 folding (DEAD-10), one alloc'd IR arena (HEAP-12) and `var f: f32` literal rounding (LEX-EXPR-04) go to the backlog.
-**CVE-79 … CVE-102** (24; CVE-97…102 are the closeout security re-scan's findings, carried at integration); the next free id is **103**.
+**CYRIUS-2026-0029 … CYRIUS-2026-0035** (24 ids when spent as CVE-79…102; 7 after the 2026-10-08 withdrawal — the other 17 were bugs; CYRIUS-2026-0034 … CYRIUS-2026-0035 are the closeout security re-scan's findings, carried at integration); the next free id is **CYRIUS-2026-0036**.
 
 **Gate (merged tree):** `scripts/release-gate.sh` **GREEN** on `8e7b74dc` (2026-10-07, 12:37–13:23): self-host fixpoint
 (1,575,984 B), ARM binary lockstep (1,325,704 B), seed → cybs → cycc byte-identical, full check.sh — 219 of 219 shell
@@ -635,14 +635,14 @@ Dead-code floor 73 fns / 36,937 B → **52 / 10,597 B**.
 
 **Bench:** self_compile **984 ms** at the gate. Same-box interleaved A/B vs 6.6.19 (15 runs each): 924 → 985 ms own
 source (+6.6 %), **987 ms on 6.6.19's source (+6.8 %)** — a compiler-speed cost, not growth tax. A per-commit scan of
-the merge history puts all of it on ONE bite: s-pplex `0d85cdcd` (CVE-86, the preprocessor reads attribute lines as
+the merge history puts all of it on ONE bite: s-pplex `0d85cdcd` (the attribute-line desync bug, the preprocessor reads attribute lines as
 code), +50 ms on the same input; every other lane is within ±6 ms. Not optimised here — in the backlog.
 
 ### Security
 
 All twenty-four entries are appended to `docs/audit/2026-09-03-security-audit.md`.
 
-- **CVE-79 (P0): a `[package] cyrius` pin was joined into a path and EXECUTED** (c-pin, CBT-01; the security re-scan's
+- **the package-pin path bug (P0): a `[package] cyrius` pin was joined into a path and EXECUTED** (c-pin, CBT-01; the security re-scan's
   SEC-01). `_try_redirect_to_pinned` (`cbt/cyrius.cyr`) built `<home>/versions/<pin>/bin/cyrius` from the raw manifest
   value and `execve`'d it before any verb ran, checking only `file_exists`: a cloned repo that ships an executable
   `payload/bin/cyrius` and pins `cyrius = "../../(…)/proc/self/cwd/payload"` had it run by every verb — `cyrius
@@ -663,7 +663,7 @@ All twenty-four entries are appended to `docs/audit/2026-09-03-security-audit.md
   spellings, the `CYRIUS_RESOLVED=1` siblings, `6/x` / `6\x` / `6:x` with a payload where each would lead, controls, a
   wine leg for `cyrius.exe`; RED with the reader reverted or with a charset admitting `/`, `\` or `:`);
   `cyriusly_version_operand_refused.sh` axis 6.
-- **CVE-80 (P1): `lib/pam.cyr` authenticated a WRONG password under an inherited SIGCHLD = SIG_IGN** (l-plat; found by
+- **CYRIUS-2026-0029 (P1): `lib/pam.cyr` authenticated a WRONG password under an inherited SIGCHLD = SIG_IGN** (l-plat; found by
   the RLM-01 verifier). `pam_unix_authenticate` did a blocking `waitpid` on the `unix_chkpwd` helper, threw the result
   away and decoded the status buffer anyway. A process that inherits SIGCHLD = SIG_IGN — it survives `execve`, and
   whoever runs the program chooses it — has its children reaped by the kernel, so `waitpid` fails ECHILD, never writes
@@ -673,7 +673,7 @@ All twenty-four entries are appended to `docs/audit/2026-09-03-security-audit.md
   `tests/tcyr/platform/shadow_pam.tcyr` gains two SIG_IGN rows, each after a zeroed stack (a wrong root password, an
   unknown user); the 6.6.19 `pam.cyr` returns `PAM_AUTH_OK` on both. Filed in shakti: bump the pin, reset SIGCHLD at
   startup.
-- **CVE-81 (P1): the 65th `use` alias overwrote the alias table and live compiler state** (s-decl, HEAP-02).
+- **the use-alias table overflow bug (P1): the 65th `use` alias overwrote the alias table and live compiler state** (s-decl, HEAP-02).
   `_tl_use_alias` (`src/frontend/parse_fn.cyr`) stored alias #n at `use_from[n]` / `use_to[n]` unchecked; both tables
   are 64 entries and abut, so with 65 aliases a call of the first alias's bare name resolved to whatever fn carried
   the 65th alias's — rc 0, no diagnostic, a wrong call at run time. 66–120 aliases failed with a bogus "undefined
@@ -682,9 +682,9 @@ All twenty-four entries are appended to `docs/audit/2026-09-03-security-audit.md
   the 65th alias is refused, "too many `use` aliases (max 64)", before the first store (raising the cap would be a
   heap-layout change; the refusal is not). Gate `tests/gates/frontend/use_alias_table_cap.sh` (64 aliases resolve; 65
   / 200 / 5,100 refused by name; mutants — cap removed, cap at 63, the `return` dropped — each RED).
-- **CVE-82 (P1): `PP_EXPAND` copied a function-like macro's parameter names and arguments into 512-byte stack buffers
-  unbounded** (s-ppcaps, LEX-EXPR-01; a CVE-40 sibling). `var pnames[512]` and `var args[512]` are fn-local — 512
-  BYTES — and neither copy checked its index (CVE-40 at 6.5.45 bounded only the body copy): a 516-byte argument
+- **the PP_EXPAND buffer overflow bug (P1): `PP_EXPAND` copied a function-like macro's parameter names and arguments into 512-byte stack buffers
+  unbounded** (s-ppcaps, LEX-EXPR-01; a define-body copy overflow bug sibling). `var pnames[512]` and `var args[512]` are fn-local — 512
+  BYTES — and neither copy checked its index (the define-body copy overflow bug at 6.5.45 bounded only the body copy): a 516-byte argument
   expanded to nothing and compiled clean (`fn f(): i64 { return PICK("<516 a's>", 7); }` returned 0 where 7 is right),
   518 bytes and up smashed the frame and cycc died of SIGSEGV, a ~600-byte parameter list did the same from the
   definition side, and a parameter list with no `)` read past the stored definition. Since 6.5.73. Found while fixing
@@ -698,7 +698,7 @@ All twenty-four entries are appended to `docs/audit/2026-09-03-security-audit.md
   `Z()` / `Z( )` still invoke a zero-parameter macro and `F()` still passes one empty argument. Gate
   `tests/gates/frontend/pp_table_caps.sh` §D (17 rows; the pre-fix compiler fails all 6 buffer refusals, the
   pre-count-check compiler the 5 count refusals; mutants D1–D6 each RED).
-- **CVE-83 (P1): a resolve that skipped a tagged git dep dropped its CVE-21 commit pin from `cyrius.lock`, and the
+- **CYRIUS-2026-0030 (P1): a resolve that skipped a tagged git dep dropped its release-integrity hardening item commit pin from `cyrius.lock`, and the
   next resolve accepted a repointed tag** (c-lock, CBTB-01). `cmd_deps` pins only the tagged deps it cloned and
   verified in THAT run, and `cmd_deps_lock` wrote either those fresh lines or (bare `--lock`, the 6.6.4 repair) the
   inherited ones — never both. So any dep a resolve skipped lost its `commit` line while its `lib/` hash row stayed:
@@ -707,7 +707,7 @@ All twenty-four entries are appended to `docs/audit/2026-09-03-security-audit.md
   auto-deps verb (`build`, `run`, `test`, `bench`, `publish`, …), even when the build then failed. Measured on the
   slot-open CLI: `deps --features gpu` reported 2 commit-pinned, plain `deps` 1; with the optional dep's tag repointed
   and its cache cleared, `deps --features gpu` exited 0, vendored the new bytes and re-pinned — the trust-on-first-use
-  floor CVE-21 exists to close, on a routine workflow (a fresh CI checkout). Fix: `cmd_deps_lock` always merges — the
+  floor the release-integrity hardening item exists to close, on a routine workflow (a fresh CI checkout). Fix: `cmd_deps_lock` always merges — the
   fresh lines plus every inherited `commit` line no fresh line supersedes, keyed exactly as `_lock_commit_lookup`
   reads a pin (name, url-normalised git, tag; the first cut keyed on the name and review measured a diamond losing
   `x@v2`'s pin that way) — and sorts the block by (name, git, tag), so alternating gatings no longer churn it.
@@ -722,7 +722,7 @@ All twenty-four entries are appended to `docs/audit/2026-09-03-security-audit.md
   path-override pins survive a feature-less `deps` and `build`, then refuse their repointed tags by name; a diamond; a
   respelled url; 1,000 retained lines; a fork at the same tag; libro's two-names-one-repo shape; the slot-open CLI
   fails every axis but K1, and each mutant of the drop key, the sort, the window and the summary turns its axes RED).
-- **CVE-84 (P1): Windows had no munmap route — every large `fl_free` / `cyr_munmap` leaked its whole mapping** (s-pe,
+- **CYRIUS-2026-0031 (P1): Windows had no munmap route — every large `fl_free` / `cyr_munmap` leaked its whole mapping** (s-pe,
   REV-LIB-PLATFORM-01; l-plat, RLM-07 and the comment half). The PE backend had no reroute for syscall 11: it returned
   -38, with a warning on the literal path and none on a var-held number. `fl_free` unmaps every block over 4 KiB and
   ignored the result, so each large `fl_alloc` / `fl_free` kept its mapping (four 8 MiB rounds under wine: four
@@ -742,7 +742,7 @@ All twenty-four entries are appended to `docs/audit/2026-09-03-security-audit.md
   `mmap_include_order.tcyr` lose a false `#ifndef CYRIUS_TARGET_WIN` that had hidden the -38 from the cross-OS gate;
   `pe_unrouted_warning_names_site.sh` munmap rows; `tests/tcyr/crossos/freelist_unmap_failure_reported.tcyr` (a forged
   out-of-range block makes Linux's munmap refuse: `fl_free` returns -22).
-- **CVE-85 (P2): `#if` / `#ifdef` / `#ifndef` / `#ifplat` nesting past 64 levels wrote through live compiler state**
+- **the if-nesting overflow bug (P2): `#if` / `#ifdef` / `#ifndef` / `#ifplat` nesting past 64 levels wrote through live compiler state**
   (s-ppcaps, HEAP-01). The per-level state stack at `S+0x197F10` is 64 bytes, and no push site checked the depth: each
   deeper level wrote its state byte upward through freed space, then `gvar_cnt`, the jump-target count (a loud
   `function exceeds 1023 jump targets` at ~24.8K levels) and, at ~344K levels, `gvar_initval`, which
@@ -753,8 +753,8 @@ All twenty-four entries are appended to `docs/audit/2026-09-03-security-audit.md
   run for every arm in both passes; 65 and 9,000 refused at the 65th directive; the pre-fix compiler fails all 8
   refusal rows).
   At integration the eighth push site — the included-file `#ifplat` arm the TAB/evaluation fix added — takes the same cap (`pp_table_caps.sh`, 65 included `#ifplat`).
-- **CVE-86 (P2): an attribute line holding a multi-line string desynced the preprocessor from the lexer — a forged
-  `#@file` defeated `private`** (s-pplex, LEX-EXPR-02; the CVE-45 / CVE-55 class). The lexer lexes the rest of an
+- **the attribute-line desync bug (P2): an attribute line holding a multi-line string desynced the preprocessor from the lexer — a forged
+  `#@file` defeated `private`** (s-pplex, LEX-EXPR-02; the file-marker forge (private visibility) bug / the multi-line string attribution bug class). The lexer lexes the rest of an
   attribute line (`#assert`, `#regalloc`, `#deprecated`, `#must_use`, `#pure`, `#io`, `#alloc`, `#naked`, `#inline`,
   `#pe_import`) as CODE, string literals included, and a literal may hold a raw LF; the preprocessor read every such
   `#` as a comment opener, so after `#assert 1 == 1, "x<LF>"` it took the literal's closing quote for an opening one
@@ -766,14 +766,14 @@ All twenty-four entries are appended to `docs/audit/2026-09-03-security-audit.md
   replacing ten hand-unrolled byte chains), which LEX dispatches on and every preprocessor walk asks through
   `PP_LEXST_AT` — 6.6.6 had declined this for fear two lists would drift; with one there is nothing to drift. Belt and
   braces, `PP_NEUT_BOLMARK` neutralises FM_BUILD's exact 8-byte key `#@file "` at any line start whatever the string
-  state, which also closes the CVE-45 data-side residual. ⚠ Behaviour changes: a macro invocation whose arguments wrap
+  state, which also closes the file-marker forge (private visibility) bug data-side residual. ⚠ Behaviour changes: a macro invocation whose arguments wrap
   onto the next line on an attribute line expands again (6.6.6–6.6.19 failed it `undefined function`); a literal whose
   next line opens `#@file "` now holds `# file ` there (the one shape that was already mis-compiled). Gate
   `tests/gates/frontend/file_marker_forge_refused.sh` axes 11–26 (the slot-open compiler fails 14; mutants split the
   two halves); `macro_invocation_boundary.sh` axis 11 re-pinned; `lexer_attribute_word_boundary.sh` census B0
   re-derived from `LEXATTRWORD`. Not covered: `cyaudit` and `cyrius_api_surface` keep their own copies of the old
   state machine (filed; Known).
-- **CVE-87 (P2): `[deps.]` / `[deps..]` / control-byte header names passed the CVE-62 guard** (c-deps, CBTB-02; the
+- **the deps-name guard bug (P2): `[deps.]` / `[deps..]` / control-byte header names passed the deps-header dot-dot path bug guard** (c-deps, CBTB-02; the
   re-scan's SEC-09). `_dep_reject_unsafe_name` refused only `/` and `..`: an empty name, a `.`-led one, a backslash
   and control bytes passed, and the header scan ran across newlines, so a header could span lines. The name becomes
   the clone dir `<home>/deps/<name>/<tag>`, so `[deps.]` / `[deps..]` made it ANOTHER dep's name directory: from the
@@ -781,12 +781,12 @@ All twenty-four entries are appended to `docs/audit/2026-09-03-security-audit.md
   occupation — symlinks committed in it became that name's tag slots, and a later legitimate resolve verified a
   planted symlink into the user's own repo and printed `reset --hard` / `clean -qffdx` advice for it), the tamper
   refusal printed `rm -rf <home>/deps/./victim` (every cached tag of victim), and the name was echoed raw (a terminal
-  escape or a forged line). No content poisoning: the CVE-43 origin and tree-vs-tag checks held. Fix: one silent name
+  escape or a forged line). No content poisoning: the dep-cache tamper-check hardening item origin and tree-vs-tag checks held. Fix: one silent name
   rule, `_dep_name_unsafe` (empty, `.`-led, `/`, `\`, `..`, a control byte), checked before any path is derived, root
   or transitive; one refusal line, `_dep_refuse_name`, with the name escaped by the new `_shown` / `_ew_shown` printer
-  (CVE-76's tag printer, generalised — the CVE-76 refusal escapes the name too); `deps --dry-run` lists `[deps.]` and
+  (the deps-tag dot-dot path bug's tag printer, generalised — the deps-tag dot-dot path bug refusal escapes the name too); `deps --dry-run` lists `[deps.]` and
   refuses it the same way. Gate `deps_modules_default_or_warned.sh` D8b–D8f (RED on the slot-open CLI).
-- **CVE-88 (P2): a `[deps.X] modules` entry with `..`, or a dep file committed as a symlink, vendored any readable
+- **the modules dot-dot / symlink vendoring bug (P2): a `[deps.X] modules` entry with `..`, or a dep file committed as a symlink, vendored any readable
   file into `lib/`** (c-deps, BACKLOG-04). Each `modules` entry was joined onto the dep's dir and copied with no
   check, so `modules = ["../secret"]` (or `dist/../../secret`) vendored any file the user can read into `lib/X_secret`
   at exit 0 — from the root manifest or any TRANSITIVE one, where `../../../../secret` climbs out of the dep cache.
@@ -794,7 +794,7 @@ All twenty-four entries are appended to `docs/audit/2026-09-03-security-audit.md
   a relative link out of the cache, or `dist ->` a directory) vendored the target with rc 0 and a verified commit pin
   — root or transitive, with or without a `modules` key (the default `dist/<name>.cyr` too), through a modular
   sub-module or its `index.cyml` — and a linked `.deps` sidecar's lines were echoed back on stderr (a public CI log).
-  The CVE-43 cache verify passed: the link IS the tag's content. Path deps alike. Fix: an entry with a `..` component
+  The dep-cache tamper-check hardening item cache verify passed: the link IS the tag's content. Path deps alike. Fix: an entry with a `..` component
   (split on `/` and `\`) or a leading `/` / `\` is refused by name before any gate, clone or copy
   (`_dep_mod_path_unsafe` / `_dep_modules_refused`; `./dist/x.cyr` and `v..2/w.cyr` stay legal; an absolute entry was
   never itself a vector and is refused anyway). Every dep file is read only from inside the dep's tree:
@@ -804,16 +804,16 @@ All twenty-four entries are appended to `docs/audit/2026-09-03-security-audit.md
   clone in the dep cache and no `dist/` or `src/` under `~/Repos` holds a symlink. Gate
   `deps_modules_default_or_warned.sh` D10a–D10c, D11a–D11h (floor 15 → 31). ⚠ Not closed: a TRANSITIVE manifest's
   `path` still vendors any local file (Known).
-- **CVE-89 (P2): on a CRLF `cyrius.lock` the moved-tag check failed open, and `deps --verify` failed every file**
-  (c-lock, CBTB-05; a CVE-21 residual). 6.6.4 made `_dep_lock_load` and the hash lookup CRLF-tolerant and missed two
+- **CYRIUS-2026-0032 (P2): on a CRLF `cyrius.lock` the moved-tag check failed open, and `deps --verify` failed every file**
+  (c-lock, CBTB-05; a release-integrity hardening item residual). 6.6.4 made `_dep_lock_load` and the hash lookup CRLF-tolerant and missed two
   readers. `_lock_commit_lookup` kept the `\r` on the tag field, matched no line and answered "no pin", so on a CRLF
   checkout — a plain `git -c core.autocrlf=true clone` makes one — a repointed tag on a fresh cache was vendored and
-  re-pinned at exit 0, skipping the CVE-21 refusal. `--verify` read each path up to the `\n` and reported every file
+  re-pinned at exit 0, skipping the release-integrity hardening item refusal. `--verify` read each path up to the `\n` and reported every file
   `cannot hash`: closed, but every failure false. Fix: both readers strip one trailing `\r` (a truncated line still
   fails closed). Gate `deps_commit_pins_kept.sh` K10 (a CRLF lock and a repointed tag: refused by name, lock and
   `lib/` untouched) and K11 (`--verify`: N verified, 0 failed, the lock still CRLF). ⚠ The 6.6.4 entry's note that
   `--verify` on a CRLF lock "already failed loud" no longer describes the tool.
-- **CVE-90 (P2): aarch64 frame displacements past 64 KiB were emitted as a 16-bit `movz` — loads and stores landed 64
+- **CYRIUS-2026-0033 (P2): aarch64 frame displacements past 64 KiB were emitted as a 16-bit `movz` — loads and stores landed 64
   KiB off** (s-a64args; the BACKLOG-02 sibling, raised in its review). `_EFP_ADDR_X9` (the address of every local and
   parameter past `ldur` / `stur`'s 256-byte reach), `EFLADDR_X8`'s large-frame arm (the X8 struct-result pointer) and
   `ESTORESTACKPARM`'s destination arm built the displacement with ONE `movz #(abs & 0xFFFF)`, on a comment's word that
@@ -831,7 +831,7 @@ All twenty-four entries are appended to `docs/audit/2026-09-03-security-audit.md
   (554 of 607 corpus files; each of the 53 that differ includes sigil or mabda, or is `tail.cyr` or the edited test).
   Tested with BACKLOG-02: `tests/gates/codegen/wide_call_stack_unwind.sh` (n = 8,200 and a frame probe, under qemu and
   natively) and `tests/tcyr/crossos/wide_call_stack_unwind.tcyr` (8,200-argument and frame rows; pi and ecb).
-- **CVE-91 (P2): `scripts/funcgate-stage.sh`'s live-home / store guard compared a physical path with raw ones, so a
+- **the funcgate-stage symlinked-HOME bug (P2): `scripts/funcgate-stage.sh`'s live-home / store guard compared a physical path with raw ones, so a
   symlinked `$HOME` walked past it to `rm -rf`** (g-gates, RS-01). The guard compared the target's PHYSICAL path (`cd
   && pwd -P`) with the RAW strings `$HOME` and `$HOME/.cyrius`: on a symlinked home (Fedora Atomic and FreeBSD link
   `/home`), a symlinked parent or a trailing slash on HOME, `funcgate-stage.sh … "$HOME/"` deleted the whole home and
@@ -844,14 +844,14 @@ All twenty-four entries are appended to `docs/audit/2026-09-03-security-audit.md
   component are refused. Gate `tests/gates/toolchain/funcgate_refuses_live_home.sh` 4 → 12 axes (axis 1 now on a
   ONE-version store, so it exercises the store compare itself; axes 5–12 run from a scratch repo root, so a regression
   wipes a copy, never the checkout; each fails against the old script).
-- **CVE-92 (P3): `cyrius publish` ran its version through the shell** (c-cmd; found in REFACTOR-11's review). The
+- **the cyrius-publish VERSION quoting bug (P3): `cyrius publish` ran its version through the shell** (c-cmd; found in REFACTOR-11's review). The
   version was joined unquoted into `git tag -a v<ver> -m 'Release v<ver>'` and handed to `sys_system`, so a
   `./VERSION` holding `1.0;touch PWNED` ran `touch` (measured against the 6.6.19 CLI) — a contributor's one-line
   VERSION change executed on the maintainer's machine at publish time. Fix: a version holding a byte outside a tag
   name's charset (`0-9 A-Z a-z . - + _`) is refused by name and never reaches a shell — for `./VERSION` and for the
   manifest version publish now reads (CLI section). Gate `distlib_bundle_selfcheck.sh` axis 10 (a `git` recorder first
   on PATH; `4.5.5;touch PWNED` refused, nothing tagged or generated).
-- **CVE-93 (P3): `cyrius distlib`'s RETIRED-name blast door could be skipped by warning volume** (c-cmd, CBT-02). The
+- **the distlib 256 KB scan bug (P3): `cyrius distlib`'s RETIRED-name blast door could be skipped by warning volume** (c-cmd, CBT-02). The
   v6.6.2 check — a bundle calling a name the stdlib has RETIRED (`payload`, `tag`) must fail even under the
   self-check's `--allow-undef` — scanned the self-check's stderr capture through a fixed 256 KB buffer: a bundle whose
   compile warned more than that before the retired call (measured: 1,400 long undefined hook names, a 326,629-byte
@@ -862,14 +862,14 @@ All twenty-four entries are appended to `docs/audit/2026-09-03-security-audit.md
   ~326 KB repro, with an anti-vacuous check that the capture is over 256 KB and the warning starts past byte 262,143).
   That gate's RETIRED-name axes sat inside the `if [ "$fails" = "0" ]` that prints PASS, so they could never fail it
   (with `payload` dropped from the retired list the old gate printed FAIL and still exited 0); they count now.
-- **CVE-94 (P3): `cyriusly uninstall ../versions` deleted the whole toolchain store, the active version included;
+- **the cyriusly operand bugs (P3): `cyriusly uninstall ../versions` deleted the whole toolchain store, the active version included;
   `install` spliced its operand into `sh -c`** (c-pin, RS-04; the re-scan's SEC-06). `uninstall` ran `rm -rf
   <home>/versions/<ver>` through `/bin/sh -c` with no check on `<ver>`, and the active-version guard is a string
   compare: on 6.6.19 `uninstall ../versions` printed "Uninstalled Cyrius ../versions", exit 0, every version gone, and
   `uninstall 6.6.18/../6.6.19` deleted the ACTIVE one. `install '6.6.19;cmd'` ran `cmd` (`curl … |
   CYRIUS_VERSION=<ver> sh`), `cmdtools 'list;cmd'` the same, and `use ../x` wrote that pin into `cyrius.cyml` or, with
   `--global`, re-pointed `~/.cyrius/bin` outside the store. The shell twin `scripts/cyriusly` — what the aarch64 and
-  macOS tarballs ship as `bin/cyriusly`, and install.sh's fallback — had the uninstall and use halves. And, a CVE-21
+  macOS tarballs ship as `bin/cyriusly`, and install.sh's fallback — had the uninstall and use halves. And, a release-integrity hardening item
   residual, the compiled `install` fetched install.sh from the mutable `main` branch (v6.2.30 had moved only the twin
   to the tag). Fix: both peers refuse, by name with exit 1, a version operand that is not a leading digit then
   `[0-9A-Za-z.-]` with no `..`, in `use`, `install` and `uninstall`, ahead of the active-version guard; the compiled
@@ -879,9 +879,9 @@ All twenty-four entries are appended to `docs/audit/2026-09-03-security-audit.md
   peers against a throwaway store, a fake `curl`; the 6.6.19 tree deletes the store, runs the injected command and
   fetches from `main`). Not covered: `cyriusly cmdtools` still finds the twin relative to the CURRENT directory
   (filed; Known).
-- **CVE-95 (P3): manifest strings reached the terminal raw, and `[package] name` injected a live line into a distlib
+- **the manifest terminal-escape bug (P3): manifest strings reached the terminal raw, and `[package] name` injected a live line into a distlib
   bundle** (c-deps, REFACTOR-06 + CBTB-07). `cyrius deps` echoed manifest strings — a dep's `path`, its `git` URL (the
-  declared one, and the cached origin in the CVE-43 refusal, whose declared URL a transitive manifest controls),
+  declared one, and the cached origin in the dep-cache tamper-check hardening item refusal, whose declared URL a transitive manifest controls),
   `modules` entries, sub-module names and the paths built from them — raw into its errors and warnings, so the
   consumer's manifest or any TRANSITIVE dep's could put a terminal escape sequence on the user's screen (clear it,
   retitle the window via OSC, forge an earlier line). `[embed]`'s refusal printed the NAME and path it was refusing
@@ -896,30 +896,30 @@ All twenty-four entries are appended to `docs/audit/2026-09-03-security-audit.md
   distlib's `[package] name` takes the profile rule `[A-Za-z0-9_-]{1,32}` (`_distlib_bad_pkg_name`; all 126 ecosystem
   package names comply). Gates `tests/gates/toolchain/manifest_strings_shown_escaped.sh` (E1–E9, E4b) and
   `embed_manifest_refusals.sh` axis 7.
-- **CVE-96 (P3): native TLS's Ed25519 signer left a copy of the long-term private seed in an allocator buffer on every
+- **the Ed25519 seed-copy gap (P3): native TLS's Ed25519 signer left a copy of the long-term private seed in an allocator buffer on every
   signature** (l-net, NET-05; defence in depth). `_tn_sign` (`lib/tls_native_hs13.cyr`, the one signer of the TLS 1.3
   CertificateVerify, the 1.2 ServerKeyExchange and the 1.2 client CertificateVerify) expanded the key with
   `ed25519_keypair(kmat, sk64, pk32)` into two `_tn_alloc` buffers and never wiped them; sigil writes `seed || pk`
   into `sk_out`, so every Ed25519 handshake signature — a server's, and since 6.6.14 an mTLS client's — left one more
   copy of the seed in the no-free heap or the connection's arena: a long-running server accumulated one per handshake.
-  CVE-70 had wiped the ephemeral ECDHE secrets only. (`KEY_MAT` itself lives in the same allocator for the ctx's
+  the ECDHE key zeroisation gap had wiped the ephemeral ECDHE secrets only. (`KEY_MAT` itself lives in the same allocator for the ctx's
   lifetime, which is why this is defence in depth rather than a new exposure class.) Fix: the expanded key is a
   `secret var sk64[64]`, zeroised on every return, `pk32` a plain stack array, and the arm allocates nothing (its
   `TLS_ERR_OOM` returns are gone). `tests/tcyr/crypto/tls_native_ed25519_sign_wipe.tcyr` (the arena holds the seed
   once after `load_creds` and still once after three signatures — it was 4; a window over the released stack finds no
   copy, against a planted control that must be found; x86_64, qemu-aarch64, wine).
 
-- **CVE-97 (P1) — a manifest `[build] output` reached `/bin/sh -c` unquoted on macOS (the ad-hoc codesign) and was cmd.exe's quoted redirect target on Windows — a `"` in it ran the rest of the line (measured under wine) — and on Linux it wrote the 0755 binary outside the checkout (`../`, absolute, through a committed directory link)** (sec-shell SEC-02). Fix: `cbt/manifest.cyr` `_cfg_output_refused` (new; the [embed] path rules `_proj_path_bad` applied to a manifest output — an output given as an argument stays the operator's), `cbt/build.cyr` `_macho_codesign` (execs `/usr/bin/codesign` by argv, no shell) and `_w_cmd_operand_ok` at every cmd.exe line builder, `lib/process_win.cyr` `_w_cmd_operand_bad` (a `"`, `%` or control byte is refused). Test: `tests/gates/toolchain/build_output_confined.sh` (mutation: the refusal off → 18 rows red).
-- **CVE-98 (P1) — `cyrius update`, `cyrius deps --lock` (and every auto-deps verb's relock), `cyriusly use`, `cyrius fmt --write` and `cyrius port` wrote a checkout's own files THROUGH a committed symlink to any path — a dangling `cyrius.cyml -> ~/.ssh/authorized_keys` beside a `cyrius.toml` holding a key line made `cyrius update` create the key file** (sec-symlink SEC-03). Fix: `lib/io.cyr` `_io_replace_target_in(root, rel)` / `_io_replace_atomic_in` / `_io_contain_refusal`: a link is followed only while every hop is relative, stays under the project root, passes no directory link, and never lands in or on `.git` (any spelling); every listed writer goes through it. Test: the sec-symlink gates registered in scripts/check.sh (containment rows per writer, `.git` rows, directory-link `..` rows).
-- **CVE-99 (P2) — `[package] version = "${file:PATH}"` read ANY file — absolute, `..`, `.git/config`, through a committed symlink, a FIFO (hang) — into the built binary (`#@pkgver`) and `--print-config`, and a multi-line value (or a literal with a `\n` escape) was compiled as SOURCE: the [embed] hardening's bypass; the ./VERSION fallback had the same reach** (sec-shell SEC-04). Fix: `cbt/manifest.cyr` `_proj_path_bad` / `_proj_read` (one checker for every manifest key that names a project file, shared with [embed]); `cbt/deps.cyr` `_dep_expand_file_interp` and `_project_version` read through it and refuse a control byte. Test: `tests/gates/toolchain/pkgver_file_interp_confined.sh`.
-- **CVE-100 (P2) — `file_write_atomic` (lib/io.cyr) and the CLI's `_aw_open` opened their predictable temp `"<path>.cyrtmp.<pid>.<ctr>"` with O_WRONLY|O_CREAT|O_TRUNC, so a symlink planted at the next name redirected the write into the file it named and was then renamed over the path (cyrsign `.sig`, cyrfmt `--write`, cyrius-init, sigil trust-store writes, the CLI's lock/index writes)** (sec-tmp SEC-05). Fix: `lib/io.cyr` `_io_tmp_open`: the temp is created O_EXCL|O_NOFOLLOW, a taken name is skipped (up to 64, then refused by name); `_aw_open` and `file_write_atomic` both use it. Test: `tests/gates/toolchain/atomic_temp_exclusive.sh`, `tests/tcyr/crossos/atomic_write_temp_exclusive.tcyr`.
-- **CVE-101 (P2) — with a trusted verifier present, a release whose signature had been STRIPPED installed — in all three installers (`scripts/install.sh` only required a signature at or above its local TOFU floor; `scripts/ci.sh` and `scripts/install.ps1` had no floor; install.ps1 also took the version from the download's own name); the compiled `cyriusly install` fetched `install.sh` from `main`, not the tag** (sec-install SEC-07 (+ SEC-06's remainder)). Fix: the first signed release (6.2.31) is a constant in all three installers: with a verifier present a release at or above it — or any malformed version — whose signature cannot be fetched is refused by name; an auto-resolved "latest" below it is refused; `CYRIUS_ALLOW_UNSIGNED=1` / `-AllowUnsigned` stays the explicit override; install.ps1 trusts no version the download names. Test: `tests/gates/toolchain/install_signature_required.sh` (install.sh / ci.sh / install.ps1 in step); install.ps1 measured on cass.
-- **CVE-102 (P2) — on Windows the CLI started `cmd` and `certutil` by a BARE name, and CreateProcessW searches the parent's current directory before System32: a `cmd.exe` committed to a checkout ran on its first `cyrius build`, and a committed `certutil.exe` chose the hashes `cyrius deps --lock` recorded (measured on cass, Windows 11)** (sec-pe SEC-08). Fix: `lib/process_win.cyr` `_win_sys_exe` (GetSystemDirectoryW via GetProcAddress + callptr) gives the quoted absolute path for every cmd.exe / certutil.exe spawn in `cbt/build.cyr`, `cbt/deps.cyr` and `lib/process_win.cyr`; a caller refuses when the directory cannot be read and never falls back to the bare name. Test: `tests/gates/platform/pe_system_programs_absolute.sh` (wine, planting in the caller's own directory), `tests/tcyr/crossos/system_programs_not_from_cwd.tcyr`.
+- **the build-output quoting bug (P1) — a manifest `[build] output` reached `/bin/sh -c` unquoted on macOS (the ad-hoc codesign) and was cmd.exe's quoted redirect target on Windows — a `"` in it ran the rest of the line (measured under wine) — and on Linux it wrote the 0755 binary outside the checkout (`../`, absolute, through a committed directory link)** (sec-shell SEC-02). Fix: `cbt/manifest.cyr` `_cfg_output_refused` (new; the [embed] path rules `_proj_path_bad` applied to a manifest output — an output given as an argument stays the operator's), `cbt/build.cyr` `_macho_codesign` (execs `/usr/bin/codesign` by argv, no shell) and `_w_cmd_operand_ok` at every cmd.exe line builder, `lib/process_win.cyr` `_w_cmd_operand_bad` (a `"`, `%` or control byte is refused). Test: `tests/gates/toolchain/build_output_confined.sh` (mutation: the refusal off → 18 rows red).
+- **the committed-symlink write bug (P1) — `cyrius update`, `cyrius deps --lock` (and every auto-deps verb's relock), `cyriusly use`, `cyrius fmt --write` and `cyrius port` wrote a checkout's own files THROUGH a committed symlink to any path — a dangling `cyrius.cyml -> ~/.ssh/authorized_keys` beside a `cyrius.toml` holding a key line made `cyrius update` create the key file** (sec-symlink SEC-03). Fix: `lib/io.cyr` `_io_replace_target_in(root, rel)` / `_io_replace_atomic_in` / `_io_contain_refusal`: a link is followed only while every hop is relative, stays under the project root, passes no directory link, and never lands in or on `.git` (any spelling); every listed writer goes through it. Test: the sec-symlink gates registered in scripts/check.sh (containment rows per writer, `.git` rows, directory-link `..` rows).
+- **the file-include manifest read bug (P2) — `[package] version = "${file:PATH}"` read ANY file — absolute, `..`, `.git/config`, through a committed symlink, a FIFO (hang) — into the built binary (`#@pkgver`) and `--print-config`, and a multi-line value (or a literal with a `\n` escape) was compiled as SOURCE: the [embed] hardening's bypass; the ./VERSION fallback had the same reach** (sec-shell SEC-04). Fix: `cbt/manifest.cyr` `_proj_path_bad` / `_proj_read` (one checker for every manifest key that names a project file, shared with [embed]); `cbt/deps.cyr` `_dep_expand_file_interp` and `_project_version` read through it and refuse a control byte. Test: `tests/gates/toolchain/pkgver_file_interp_confined.sh`.
+- **CYRIUS-2026-0034 (P2) — `file_write_atomic` (lib/io.cyr) and the CLI's `_aw_open` opened their predictable temp `"<path>.cyrtmp.<pid>.<ctr>"` with O_WRONLY|O_CREAT|O_TRUNC, so a symlink planted at the next name redirected the write into the file it named and was then renamed over the path (cyrsign `.sig`, cyrfmt `--write`, cyrius-init, sigil trust-store writes, the CLI's lock/index writes)** (sec-tmp SEC-05). Fix: `lib/io.cyr` `_io_tmp_open`: the temp is created O_EXCL|O_NOFOLLOW, a taken name is skipped (up to 64, then refused by name); `_aw_open` and `file_write_atomic` both use it. Test: `tests/gates/toolchain/atomic_temp_exclusive.sh`, `tests/tcyr/crossos/atomic_write_temp_exclusive.tcyr`.
+- **CYRIUS-2026-0035 (P2) — with a trusted verifier present, a release whose signature had been STRIPPED installed — in all three installers (`scripts/install.sh` only required a signature at or above its local TOFU floor; `scripts/ci.sh` and `scripts/install.ps1` had no floor; install.ps1 also took the version from the download's own name); the compiled `cyriusly install` fetched `install.sh` from `main`, not the tag** (sec-install SEC-07 (+ SEC-06's remainder)). Fix: the first signed release (6.2.31) is a constant in all three installers: with a verifier present a release at or above it — or any malformed version — whose signature cannot be fetched is refused by name; an auto-resolved "latest" below it is refused; `CYRIUS_ALLOW_UNSIGNED=1` / `-AllowUnsigned` stays the explicit override; install.ps1 trusts no version the download names. Test: `tests/gates/toolchain/install_signature_required.sh` (install.sh / ci.sh / install.ps1 in step); install.ps1 measured on cass.
+- **the Windows bare-name process-start bug (P2) — on Windows the CLI started `cmd` and `certutil` by a BARE name, and CreateProcessW searches the parent's current directory before System32: a `cmd.exe` committed to a checkout ran on its first `cyrius build`, and a committed `certutil.exe` chose the hashes `cyrius deps --lock` recorded (measured on cass, Windows 11)** (sec-pe SEC-08). Fix: `lib/process_win.cyr` `_win_sys_exe` (GetSystemDirectoryW via GetProcAddress + callptr) gives the quoted absolute path for every cmd.exe / certutil.exe spawn in `cbt/build.cyr`, `cbt/deps.cyr` and `lib/process_win.cyr`; a caller refuses when the directory cannot be read and never falls back to the bare name. Test: `tests/gates/platform/pe_system_programs_absolute.sh` (wine, planting in the caller's own directory), `tests/tcyr/crossos/system_programs_not_from_cwd.tcyr`.
 
 ### Compiler
 
-Five compiler fixes are security items, listed above: the `use` alias table (CVE-81), `PP_EXPAND`'s buffers and
-argument count (CVE-82), `#if` nesting (CVE-85), attribute lines (CVE-86) and aarch64 frames past 64 KiB (CVE-90).
+Five compiler fixes are security items, listed above: the `use` alias table (the use-alias table overflow bug), `PP_EXPAND`'s buffers and
+argument count (the PP_EXPAND buffer overflow bug), `#if` nesting (the if-nesting overflow bug), attribute lines (the attribute-line desync bug) and aarch64 frames past 64 KiB (CYRIUS-2026-0033).
 
 - **A `continue` inside a `for` nested in a `while` nested in a `for` stole the outer `for`'s pending jump** (s-loop,
   RPF-01, P0). The 6.6.3 nested-continue defect one level deeper: a `for`'s pending `continue` jumps lived in one flat
@@ -1013,7 +1013,7 @@ argument count (CVE-82), `#if` nesting (CVE-85), attribute lines (CVE-86) and aa
   `ldr x9, [x29, #imm]` past **2,053 parameters** (at 2,054 it read the saved fp) — wrong argument values, no
   diagnostic. Fix: the cleanup splits the way `EPATCHFRAME` does (`add sp, sp, #hi, lsl #12` + `#lo`, with a
   `movz/movk x16` arm past 16 MB), and both loads take the register-offset form through x16 past 32,760 (`_EMOV_XN`,
-  shared with CVE-90's fix). Same bite, cx: a frame of 64 KiB or more lowered sp by its size mod 64 KiB (`ESUBRSP`
+  shared with CYRIUS-2026-0033's fix). Same bite, cx: a frame of 64 KiB or more lowered sp by its size mod 64 KiB (`ESUBRSP`
   reserved it with a lone `movi`, and `EPATCHFRAME` patched 16 bits), so callee frames landed INSIDE the caller's (on
   cxvm a 65,480-byte buffer filled by a callee never finished); `ESUBRSP` always emits a `movhi r252` slot that
   `EPATCHFRAME` patches (every cx fn prologue +4 bytes). Gate `tests/gates/codegen/wide_call_stack_unwind.sh` (13
@@ -1253,7 +1253,7 @@ argument count (CVE-82), `#if` nesting (CVE-85), attribute lines (CVE-86) and aa
   100, ...) }` arms (`src/frontend/lex.cyr`) are the `SYS_OPEN != 2` path, dead in a PE compiler (`main_win.cyr`
   declares `SYS_OPEN = 2`), and a 4-argument open is not a PE route, so every cycc_win build printed four "syscall 2
   with 4 argument(s) is not routed" warnings — noise that buries a real one (the fifth, `lex_pp.cyr`'s munmap, was
-  real: CVE-84). They sit under `#ifndef CYRIUS_TARGET_WIN`; build/cycc and every non-PE fork are byte-identical, and
+  real: CYRIUS-2026-0031). They sit under `#ifndef CYRIUS_TARGET_WIN`; build/cycc and every non-PE fork are byte-identical, and
   the PE compiler self-hosts byte-identical under wine. `pe_unrouted_warning_names_site.sh` builds the PE compiler
   with install.sh's cycc_win recipe and fails on an unrouted-syscall warning at any of those sites. (Folding constant
   arms instead, DEAD-10, is backlog.)
@@ -1264,7 +1264,7 @@ argument count (CVE-82), `#if` nesting (CVE-85), attribute lines (CVE-86) and aa
   reroutes, `EMUNMAP_PE` included, plus ECALLPTR_PE's n ≤ 4 arm) is `_pe_align_frame` / `_pe_align_unframe`. cycc
   −4,096 B; the 575-file tcyr + programs + tests/win corpus compiles byte-identical for x86-Linux, PE and x86-Mach-O.
 - Elsewhere in this entry: aarch64 calls of 262+ arguments and the cx frame-size fix (Compiler), aarch64 frames past
-  64 KiB (CVE-90), the PE munmap route (CVE-84).
+  64 KiB (CYRIUS-2026-0033), the PE munmap route (CYRIUS-2026-0031).
 
 ### Compiler forks, heap map and dead code
 
@@ -1477,7 +1477,7 @@ argument count (CVE-82), `#if` nesting (CVE-85), attribute lines (CVE-86) and aa
   unchanged. `cyrius publish` tags `_project_version()`, refuses — before distlib runs or anything is tagged — when
   the manifest and `./VERSION` both name a version and differ (naming both, suggesting `version = "${file:VERSION}"`),
   refuses a project with neither by name, and now publishes a manifest-only project (refused before as "no VERSION
-  file"). Its shell half is CVE-92. `distlib_bundle_selfcheck.sh` axes 1, 9, 10.
+  file"). Its shell half is the cyrius-publish VERSION quoting bug. `distlib_bundle_selfcheck.sh` axes 1, 9, 10.
 - **`cyrius audit --internal=platform-check` runs exactly release-gate step 4** (c-cmd, CLN-05, P3). It passed the
   `crossos` selector to ach only: pi and cass ran a bare self-host and ecb an inline self-host + exit-42 sequence
   predating `cross-os-selfhost.sh`'s ecb arm (no platform libtest, no cx guards), while the ach comment claimed it
@@ -1515,7 +1515,7 @@ argument count (CVE-82), `#if` nesting (CVE-85), attribute lines (CVE-86) and aa
   `build_config_windows_arm.sh` axis 5 (under wine: a 719-byte value beats `[build] defines = ["A"]`).
 - **`cyrius deps` reads its manifest through the one reader** (c-deps, REFACTOR-02, P2). Its `[deps.NAME]` walker
   matched headers as the literal `[deps.` and keys at column 0, outside 6.6.17's reader. Measured: an INDENTED `tag`
-  was dropped (rc 0, no commit pin, `lib/foo.cyr` the unreleased HEAD — the CVE-21 pin lost); indented `path` /
+  was dropped (rc 0, no commit pin, `lib/foo.cyr` the unreleased HEAD — the release-integrity hardening item pin lost); indented `path` /
   `modules` vendored nothing silently; `[ deps.foo ]` was ignored and `[deps.foo ]` vendored `lib/foo _foo.cyr`; a
   `[deps.foo]` written inside a `"""` description resolved; a later `[docs] tag = …` or `[[bin]] tag = …` was read as
   the dep's own key; `optional = tru` read as true; and the `[deps] stdlib` read was a section-blind byte scan, so a
@@ -1565,10 +1565,10 @@ argument count (CVE-82), `#if` nesting (CVE-85), attribute lines (CVE-86) and aa
   (`9223372036854775808.00`); from 1e20 a bounded exponent form `1.00e+300`, rounded half-even. The documented
   `max(43, decimals + 24)` bound is unchanged. ⚠ Visible output change for |val| ≥ 1e20. Differentially checked
   against a correctly rounded reference over 4,130 cases on x86, aarch64 and PE (60 on cx). `fmt_int_buf_bounded.tcyr`
-  now asserts the TEXT, not just the length (CVE-78's `-1e30` row passed with the wrong number; 20 rows fail on the
+  now asserts the TEXT, not just the length (CYRIUS-2026-0028's `-1e30` row passed with the wrong number; 20 rows fail on the
   old code).
 - **`fmt_sprintf`'s `%x` wrote 17 bytes into a 16-byte stack buffer** (l-misc, RLM-05, P3; the one-byte sibling of
-  CVE-78, latent). `fmt_hex_buf` writes up to 17 bytes and the `%x` scratch was `var xtmp[16]`, so for any value with
+  CYRIUS-2026-0028, latent). `fmt_hex_buf` writes up to 17 bytes and the `%x` scratch was `var xtmp[16]`, so for any value with
   a nibble at bit 60 or higher (every negative) the NUL landed on the neighbouring slot — dead after the call today,
   one frame-layout change from a silent corruption. `programs/cyrld.cyr`'s `printhex`, five cyrld `fmt_int_buf`
   scratches and `benches/bench_fmt.bcyr`'s `[8]` were short too; all are `[24]`, and `fmt_hex_buf` documents its
@@ -1615,7 +1615,7 @@ argument count (CVE-82), `#if` nesting (CVE-85), attribute lines (CVE-86) and aa
   desynchronised, the state still OPEN); and the copy was never reclaimed (409,600 B per 100 × 4 KiB frames). The
   sender builds the frame in one 4,096-byte stack buffer, masking a fill at a time by the ABSOLUTE payload offset,
   each fill through `sock_send_all`: it allocates nothing, an empty frame is not special, a frame under ~4 KiB is one
-  write. A negative length, and one of 4 GiB or more (the 64-bit length header carries the low 32 bits only — CVE-53's
+  write. A negative length, and one of 4 GiB or more (the 64-bit length header carries the low 32 bits only — CYRIUS-2026-0011's
   bound — so it announced `len mod 2^32`), are refused before any I/O. `ws_client_short_write.tcyr` (+1 group: empty
   frames, both refusals with nothing on the wire, a 5,000-byte frame across the fill boundary, a 70,000-byte frame
   pinning absolute-offset masking); `stdlib_alloc_refusal_sentinels.sh` pins that the sender allocates nothing.
@@ -1661,7 +1661,7 @@ argument count (CVE-82), `#if` nesting (CVE-85), attribute lines (CVE-86) and aa
   for all five verbs after a zeroed stack; hermetic ssh / scp rows), new static gate
   `tests/gates/toolchain/regression_wait_status_checked.sh` (every `_regression_wait_deadline` in `lib/regression.cyr`
   and `programs/checks/` checked before its buffer is decoded; 21 rows red on the slot-open tree), new
-  `tests/tcyr/crossos/async_process_unobserved.tcyr`. The pam instance is CVE-80.
+  `tests/tcyr/crossos/async_process_unobserved.tcyr`. The pam instance is CYRIUS-2026-0029.
 - **`regression_run_with_timeout` no longer reads a waitpid error as the deadline** (l-plat, RLM-02, P2). Its own 100
   ms WNOHANG loop had no `waitpid < 0` arm — the one wait 6.6.7's fix never reached: under SIG_IGN it spun the whole
   timeout, counted a phantom deadline kill (the check driver then printed a false "TIMEOUT … killed at the deadline"),
@@ -1878,7 +1878,7 @@ argument count (CVE-82), `#if` nesting (CVE-85), attribute lines (CVE-86) and aa
 Nothing here gates the release. Notes, filed in each repo and never orders — adopting a change is the sibling's call
 at its own pin bump (⛔ none bumps its pin before 6.6.20 is tagged):
 
-- **shakti** — bump the pin to 6.6.20 (CVE-80) and reset SIGCHLD to SIG_DFL at startup. Filed:
+- **shakti** — bump the pin to 6.6.20 (CYRIUS-2026-0029) and reset SIGCHLD to SIG_DFL at startup. Filed:
   `docs/development/issues/2026-10-06-pam-wait-unobserved-sigchld-ign.md` (shakti `f04d26d`, not pushed).
 - **yantra** (folded) — `_yantra_sleep_ms` passes an unguarded ms to `poll` (a negative ms hangs on Linux and macOS,
   one past INT_MAX truncates, and on Windows syscall 7 is unrouted): use the stdlib `sleep_ms`. Filed in its roadmap
@@ -1886,7 +1886,7 @@ at its own pin bump (⛔ none bumps its pin before 6.6.20 is tagged):
   NET-01 is a double close on every target: drop the `sock_close` (text ready in the l-net lane's sibling note; to
   file). Fix upstream, then re-vendor.
 - **sigil** (folded) — `src/mldsa.cyr:29`'s rationale ("cyrius routes no PE syscall 11 to VirtualFree …") is stale
-  once CVE-84 ships (the workspace pool stays worth keeping for speed); its four unconditional `#define LINUX`
+  once CYRIUS-2026-0031 ships (the workspace pool stays worth keeping for speed); its four unconditional `#define LINUX`
   (`ima_core`, `luks`, `tpm_core`, `dmverity`) are read by nothing. To file; fix upstream, never the fold.
 - **sandhi** (folded) — the "tls ctx is a 24-byte struct" comment (`src/http/conn.cyr:229`) against `lib/tls.cyr`'s
   `_TLS_LIBSSL_SHIM_LEN = 40`, and a comment (folded at `lib/sandhi.cyr:14915`) saying the Linux wait "calls
@@ -1899,7 +1899,7 @@ at its own pin bump (⛔ none bumps its pin before 6.6.20 is tagged):
   its `scripts/test.sh` suggests no longer shrinks a kernel image. Not filed by the lane.
 - **agnodrm** — four `qemu_repro_*.core` files (~9.5 MB each) are committed to its repo and tagged in 1.5.1, 1.6.0 and
   1.6.2; removing them is a `git rm`, a `*.core` ignore line and a release there (the dep-cache copies are tag content
-  — deleting them would trip the CVE-43 cache verify). To file.
+  — deleting them would trip the dep-cache tamper-check hardening item cache verify). To file.
 - The lanes' read-only surveys found no consumer that meets a new refusal: no function-like `#define` anywhere, and no
   object-like one redefined with a different value; no declaration of `sizeof` / `mulh64` / `fncallN` outside a
   `fnptr.cyr`; all 126 pins plain `X.Y.Z` and all 126 package names inside distlib's profile rule; no `[deps.]`
@@ -1916,7 +1916,7 @@ In roadmap.md's *Potential backlog* unless marked filed:
   IR family spans five bands and the x86 per-fn compaction tables interleave with struct / defer tables, so sizing the
   IR family from one alloc'd arena is the consolidation (main.cyr's ir_nodes line points here); LEX-EXPR-04 — `var f:
   f32 = 1.5` stores the f64 bit pattern while `var a: f32[N] = { 1.5 }` rounds the same literal.
-- **The dependency read side** (CVE-88's open half): a TRANSITIVE manifest's `path` still vendors any local file (a
+- **The dependency read side** (the modules dot-dot / symlink vendoring bug's open half): a TRANSITIVE manifest's `path` still vendors any local file (a
   git dep whose tag ships `[deps.evil] path = "<abs dir>" modules = ["secret.cyr"]` gives the consumer
   `lib/evil_secret.cyr`, rc 0, a lock) — confining it to its own manifest's tree is a design item (54 legitimate root
   `path = "../sibling"` uses); and a transitive `git = "<local path>"` clones any local repository into the cache and
@@ -1970,12 +1970,12 @@ In roadmap.md's *Potential backlog* unless marked filed:
   - (c-deps) the tag rule refuses C0 and DEL but not UTF-8 C1 (`\xc2\x9b`, a CSI on terminals that honour C1), and
     recovery advice echoes a tag raw so it can be pasted.
   - (c-cmd) `cyrius package` prints its `version:` from `./VERSION` (`_project_version()` is the one-line fix, in
-    `cbt/deps.cyr`); `cyrius lint`'s syntax pre-pass reads its compiler capture through a fixed 64 KB buffer (CVE-93's
+    `cbt/deps.cyr`); `cyrius lint`'s syntax pre-pass reads its compiler capture through a fixed 64 KB buffer (the distlib 256 KB scan bug's
     shape on a non-security path).
   - (c-build) `_try_redirect_to_pinned`'s `CYRIUS_RESOLVED=1` append is not routed through `_cc_child_envp` (harmless
     today).
   - (g-gates) `scripts/install.sh`'s `_rs_real`, which `funcgate-stage.sh` copied, leaves a `..` after a missing
-    directory unresolved, so a guard comparing its output can be walked past as CVE-91's was; install.sh writes
+    directory unresolved, so a guard comparing its output can be walked past as the funcgate-stage symlinked-HOME bug's was; install.sh writes
     `build/cycc_win` with a plain `>` (two check.sh runs in one worktree can race on it — the C9 class);
     `test_runner_bounded.sh` stops at axis 1b under `bash -eo pipefail` (it passes under `sh`, as check.sh runs it —
     the C7 class); `_chk_home_is_owned`'s header says an unsignalable pid counts as ALIVE, but `kill -0 … 2>/dev/null`
@@ -2013,7 +2013,7 @@ compile the file's bytes as `NAME()` / `NAME_len()`, read at build time, and `cy
 bundle names — agnosai's 2026-08-10 proposal; four hardening fixes a security review found **before release** (so no
 CVE id is spent). **Threads / async**: x86 macOS starts real threads (T1), and `async_await_readable_ms` exists on
 macOS and Windows (A1) and agnos (A2), where the legacy `async_await_readable` now really waits instead of returning
-at once. Three lanes (intern, embed, threads) after R1–R3 on main. The next free CVE id stays **79**.
+at once. Three lanes (intern, embed, threads) after R1–R3 on main. The next free ledger id stays **CYRIUS-2026-0029**.
 
 **Gate (merged tree):** `scripts/release-gate.sh` **GREEN** on `19ceb8c6` (2026-10-06, 16:20–17:01): self-host fixpoint (1,586,184 B), ARM binary lockstep (1,323,400 B), seed → cybs → cycc byte-identical, full check.sh — 192 of 192 shell gates produced a result, 0 failed, the 2 named agnos-parity SKIPs — and cross-OS self-host + the `crossos/` suite on REAL ecb, ach, cass and pi (all `SELFHOST_OK` + `LIBTEST_OK`; the first real-hardware run of x86-macOS real threads on ach in the merged tree). The merged check.sh before it had one load flake (`tls_first_use_thread_race`'s S0 port precondition), which passed 3/3 alone and in the gate.
 
@@ -2131,7 +2131,7 @@ data file into a generated `.cyr` and checked it in, so an edited data file ship
   `cbt/build.cyr`) into the materialized unit right after `#@pkgver` and BEFORE the dep includes and `#@srcline` —
   line-neutral (an entry error on line 3 still reports `<source>:3`). A function, not a `var`: a top-level string
   `var` is a deferred runtime store, which an x86 `kernel;` build runs after its program. Generated plain text, never a
-  compiler marker that reads a file (the CVE-45 class). Escaping: 0x20–0x7E raw except `"` and `\`, every other byte
+  compiler marker that reads a file (the file-marker forge (private visibility) bug class). Escaping: 0x20–0x7E raw except `"` and `\`, every other byte
   `\xHH`, so each literal is one pure-ASCII line no preprocessor rule can see into. Rendered once per process
   (`cyrius test` compiles many units). Measured: a 2,000,000-byte random embed + stdlib + 3,000 small literals
   round-trips in 937 ms, against 509 ms for the same bytes hand-written and included last (before B0b: 18.2 s — the
@@ -2306,7 +2306,7 @@ A/B differential (`--poison=ab`); an overwrite stops the harness with exit 86. *
 aarch64 a literal syscall number no longer carries the translation chain and a variable one calls a shared per-class
 stub — `build/cycc-native-aarch64` **−718,792 B (−35.2 %)**. DCE now says when it declined to compact, and why, on
 every target that declines; arm64 macOS sign-extends `pthread_create`'s result (`sxtw`). Four lanes (dce, poison, a64,
-cbt). **CVE-78**; the next free id is **79**. Per the user's decision (2026-10-06) this release ships the distlib
+cbt). **CYRIUS-2026-0028**; the next free id is **CYRIUS-2026-0029**. Per the user's decision (2026-10-06) this release ships the distlib
 change only: all 12 folded stdlibs regenerate in ONE wave after the tag, and their re-vendor, the log / ws /
 ws_server fold bundles and the tls_native mirror retirement are 6.6.19 (R1–R3).
 
@@ -2321,7 +2321,7 @@ regenerated (`cyrius pulsar`), 2,042,184 → **1,323,392 B** (−718,792, −35.
 
 ### Security
 
-- **CVE-78 (P1): `fmt_int_buf` wrote 24 bytes at `buf` whatever the number's length** (`lib/fmt.cyr`, poison-1 +
+- **CYRIUS-2026-0028 (P1): `fmt_int_buf` wrote 24 bytes at `buf` whatever the number's length** (`lib/fmt.cyr`, poison-1 +
   d81e7f05). It built digits in place from `buf+23` downward and shifted them, so any `buf + pos` caller with less
   than 24 bytes of room overran: `fmt_float`'s own 32-byte stack buffer for |val| ≳ 1e8, and heap callers such as
   `alloc(32)+10` (patra, bench and yantra format at `buf + off`). The scratch is now a local and exactly `len + 1`
@@ -2538,7 +2538,7 @@ indirect calls on Windows and cx), the loud grammar gaps (pointer fields and lin
 closure capture, nested generic arguments, attributes in impl bodies) and the `p + n` rule — `sizeof(T)` at every
 site (user decision) — plus diagnostics, TLS / platform / stdlib, cbt, and the harness. Growing the compiler past
 2048 fns broke the seed chain: cybs had never lexed a leading `_`, which is fixed in cybs itself. Seven lanes
-(srca, srcb, srcc, lib, man, tool, gate). **CVE-77**; the next free id is **78**.
+(srca, srcb, srcc, lib, man, tool, gate). **CYRIUS-2026-0027**; the next free id is **CYRIUS-2026-0028**.
 
 **Gate (merged tree):** `scripts/release-gate.sh` **GREEN** on `54764d9a` (2026-10-06, 00:02–00:43): self-host fixpoint, ARM binary lockstep (step 1b), seed → cybs → cycc byte-identical (incl. the new step 6/6), full check.sh — 189 of 189 shell gates produced a result, 0 failed, 2 named agnos-parity SKIPs (`agnos_monotonic_clock_rdtsc`, `agnos_sysinfo_tail_parity`, as at 6.6.15) — and cross-OS self-host + the `crossos/` suite on REAL ecb, ach, cass and pi (all `SELFHOST_OK` + `LIBTEST_OK`; 6.6.16 had been tagged without this leg). `verify-store`: every tagged slot OK. Two full merged-tree check.sh runs before it found four integration defects, all fixed above.
 
@@ -2550,10 +2550,10 @@ site (user decision) — plus diagnostics, TLS / platform / stdlib, cbt, and the
 
 ### Security
 
-- **CVE-77 (P3): on Windows, a server ctx's system trust set honours each root's store PURPOSE** (lib l1; the
-  trust-store half of CVE-75). `tls_native_set_ca_system` exported the CurrentUser `ROOT` store once, filtered for
+- **CYRIUS-2026-0027 (P3): on Windows, a server ctx's system trust set honours each root's store PURPOSE** (lib l1; the
+  trust-store half of CYRIUS-2026-0026). `tls_native_set_ca_system` exported the CurrentUser `ROOT` store once, filtered for
   serverAuth, and handed that one set to every ctx — so a SERVER ctx, which verifies CLIENT chains, anchored client
-  identities at roots Windows trusts for server authentication only (6.6.16's CVE-75 enforced a CA certificate's own
+  identities at roots Windows trusts for server authentication only (6.6.16's CYRIUS-2026-0026 enforced a CA certificate's own
   extendedKeyUsage, not the root program's per-root purpose, `CERT_ENHKEY_USAGE_PROP_ID`). The store policy
   (`_tn_w_policy`, `_tn_w_dated`, `_tn_w_eku_purpose`, `_tn_w_export`) now takes the chain purpose, and a server ctx
   loads a second set — prop 9 must name clientAuth (or anyExtendedKeyUsage, or be absent); a Disable / NotBefore
@@ -2921,7 +2921,7 @@ site (user decision) — plus diagnostics, TLS / platform / stdlib, cbt, and the
   a link failure for a portable caller built for agnos. agnos has no syscall for any of them, so they are built on
   `lib/net.cyr`'s tagged-fd adapter over sock_connect#47 / sock_listen#56 / sock_accept#57 / sock_peer#106, at the
   Linux-common arity, answering -errno; a shape agnos cannot express (UDP, IPv6, AF_UNIX, SOCK_NONBLOCK) declines -38;
-  `sys_bind` keeps CVE-48's address rule; `sys_accept4` is non-blocking (-11 when nothing is pending) and checks its
+  `sys_bind` keeps CYRIUS-2026-0008's address rule; `sys_accept4` is non-blocking (-11 when nothing is pending) and checks its
   address-length arguments before taking a connection. No `SYS_*` number minted. `agnos_peer_fake_kernel.sh` axes
   5–6. API snapshot +5.
 - **`cbt/cyrius.cyr` compiles for `CYRIUS_TARGET_AGNOS=1`** (l6) — it stopped at ~110 errors. The CLI's verbs run
@@ -2941,7 +2941,7 @@ site (user decision) — plus diagnostics, TLS / platform / stdlib, cbt, and the
   `tests/gates/toolchain/lib_sync_relocks.sh` (8 axes).
 - **An untagged git dep no longer shares a `tag = "main"` dep's cache dir** (t2). Both lived at
   `<home>/deps/<name>/main`, so one served the other's bytes or was refused as a "tampered cache". The untagged key
-  is `<name>/.untagged` (CVE-76's validator refuses a `.`-led tag component), and the no-home temp fallback uses the
+  is `<name>/.untagged` (the deps-tag dot-dot path bug's validator refuses a `.`-led tag component), and the no-home temp fallback uses the
   same layout. No `~/Repos` manifest declares either shape. `tests/gates/toolchain/deps_untagged_cache_not_aliased.sh`.
 - **The CLI picks its home by cycc's rule** (t3). `find_tools` took the LAST duplicate `HOME` / `CYRIUS_HOME`, kept an
   empty `CYRIUS_HOME` as the home `""`, and read only the first 32 KB of the environment; on Windows a `CYRIUS_HOME`
@@ -3040,20 +3040,20 @@ booked on its enclosing fn; a capturing closure called through `fncallN` at top 
 that never blocked on arm64 macOS / Windows; a PEM server key decoded on every accept), the two finds the user
 promoted from the planning premise checks on 2026-10-04 (a local `*i8` / `*i16` / `*i32` truncated to its pointee
 width; libssl-only verbs writing into a native ctx), the toolchain gates (cwd-independent, private wine prefixes),
-and the ganita 1.2.13 / sandhi 1.10.7 folds. **CVE-74 … CVE-76**; the next free id is **77**. Every further
+and the ganita 1.2.13 / sandhi 1.10.7 folds. **CYRIUS-2026-0025 … CYRIUS-2026-0026**; the next free id is **CYRIUS-2026-0027**. Every further
 lane-review find went to 6.6.17 (user, 2026-10-04/05).
 
 **Gate (merged tree):** self-host fixpoint + seed-derive GREEN; cycc **1,535,360 B** (`.text` **1,357,032**), +43,216 B over 6.6.15's 1,492,144; `build/cycc-native-aarch64` regenerated (`cyrius pulsar`). Full check.sh: 169/169 shell gates produced a result, the 453-file `.tcyr` suite PASS; two reds — `gates_never_write_tree` axis 9 (a detector false positive, fixed in this release) and `audit_scope_covers_suite` (TIMEOUT at 900 s under load; ~750 s alone, filed for 6.6.17). Cross-OS ran per bite on ecb / ach / cass / pi in the lanes; the full `release-gate.sh` and the bench were not run on the merged tree (user, 2026-10-05: hand off).
 
 ### Security
 
-- **CVE-74 (P1): a peer that resets a plain TCP connection no longer kills the writer with SIGPIPE.**
+- **CYRIUS-2026-0025 (P1): a peer that resets a plain TCP connection no longer kills the writer with SIGPIPE.**
   `lib/net.cyr`'s `_net_os_send` — under `sock_send` / `sock_send_all` / `sock_send_a`, and so under `lib/http.cyr`,
   `lib/ws.cyr`, `lib/ws_server.cyr`, `lib/yantra.cyr` and folded sandhi's client paths — and the async writers
   (`async_send`'s task and `async_relay_once`, `lib/async.cyr` / `lib/async_macos.cyr`) were a flagless `write(2)` on
   Linux and macOS. A write to a reset peer raised SIGPIPE, whose default action ends the process: any peer could kill
   a client or server, remotely and unauthenticated, unless the program ignored SIGPIPE itself (exit 141 on x86_64,
-  qemu-aarch64, pi, ecb and ach against 6.6.15). CVE-66 (6.6.14) fixed the class on the TLS transport only. Every
+  qemu-aarch64, pi, ecb and ach against 6.6.15). CYRIUS-2026-0021 (6.6.14) fixed the class on the TLS transport only. Every
   such write now goes through one private leaf, `_fd_write_nosigpipe` (`lib/syscalls.cyr`): on Linux
   `send(.., MSG_NOSIGNAL)` (`sendto` with no destination, `write(2)` again on `ENOTSOCK`); on macOS `SO_NOSIGPIPE` set
   on every call, so a socket made by a raw `sys_socket` is covered too, and xnu's `EINVAL` on a socket shut down both
@@ -3065,10 +3065,10 @@ lane-review find went to 6.6.17 (user, 2026-10-04/05).
   qemu-aarch64, pi, ecb and ach, 7/7 on cass; all seven reset rows read 141 on the 6.6.15 lib. (The syscall it
   makes is a visible change — see *Changed*.)
 
-- **CVE-75 (P2): a CA's extendedKeyUsage now binds what it may vouch for — on every intermediate and on the trust
+- **CYRIUS-2026-0026 (P2): a CA's extendedKeyUsage now binds what it may vouch for — on every intermediate and on the trust
   anchor.** `_tn_verify_chain` (`lib/tls_native_hs12.cyr`) — the native client's server-chain verifier and, since
   6.6.14, the mTLS server's client-chain verifier — applied the chain's purpose to the LEAF only; a CA was checked
-  for keyCertSign and pathLen (CVE-17) but never for its own EKU. So a clientAuth-, codeSigning- or S/MIME-only CA
+  for keyCertSign and pathLen (CYRIUS-2026-0002) but never for its own EKU. So a clientAuth-, codeSigning- or S/MIME-only CA
   could issue a leaf the native client accepted as a TLS server, and a serverAuth-only CA in an mTLS server's trust
   set could issue a client identity: all 16 such chains in the new verdict table verified `TLS_OK` on 6.6.15, where
   `openssl verify -purpose sslserver | sslclient` refuses each (error 26). Now `_tn_eku_purpose_ok` is the one EKU
@@ -3087,8 +3087,8 @@ lane-review find went to 6.6.17 (user, 2026-10-04/05).
   `tls_native_client_auth.tcyr` gains a serverAuth-only client CA and its EKU-less twin, in TLS 1.3 and 1.2 (297
   assertions, on every host). Five mutations each measured RED.
 
-- **CVE-76 (P2): a `[deps.X] tag` can no longer move the dep-cache path out of `<home>/deps/<name>`**
-  (`cbt/deps.cyr`). CVE-62's class on the TAG field: 6.6.13 guarded the header, never the tag, which is joined into
+- **the deps-tag dot-dot path bug (P2): a `[deps.X] tag` can no longer move the dep-cache path out of `<home>/deps/<name>`**
+  (`cbt/deps.cyr`). the deps-header dot-dot path bug's class on the TAG field: 6.6.13 guarded the header, never the tag, which is joined into
   `<home>/deps/<name>/<tag>` behind only a shell-metacharacter check. From a root or a TRANSITIVE manifest,
   `tag = "../../../esc/sub"` made git create the clone dir's leading components outside the cache (left behind after
   git refused the ref), and `tag = "../../.."` naming an existing directory skipped the clone and printed the
@@ -3226,7 +3226,7 @@ lane-review find went to 6.6.17 (user, 2026-10-04/05).
   slot); and it read only the first 4 KB of `/proc/self/environ`, so a large variable ahead of `HOME` made it
   vanish. Now `CYRIUS_HOME/versions/<V>/lib/` when set and non-empty, else `HOME/.cyrius/versions/<V>/lib/`; a set
   `CYRIUS_HOME` is authoritative (never a fall-through to HOME's slot, a mix of two stdlibs), empty counts as unset,
-  a relative one resolves from the CWD, and a value over 1,984 B (CVE-34's bound) disables the fallback rather than
+  a relative one resolves from the CWD, and a value over 1,984 B (the long-HOME overflow bug's bound) disables the fallback rather than
   truncating it. The environment is read in chunks to EOF with the match state carried across boundaries; the
   pin-drift check runs on either branch; the version comes from `_VERSION_TOOLCHAIN`. `_init_cyrius_lib` shrank
   from 68 lines to 24 through small helpers (cybs-safe; seed-derive green); still Linux-only. Gate
@@ -3500,7 +3500,7 @@ lane-review find went to 6.6.17 (user, 2026-10-04/05).
   that still runs after the top-level program is warned once: `in a kernel build the initializer of 'X' runs after
   the top-level program …` (C6; agnos gets 2).
 
-- **The plain-socket write is a different syscall on Linux and macOS** (CVE-74): `sendto(2)` instead of `write(2)` on
+- **The plain-socket write is a different syscall on Linux and macOS** (CYRIUS-2026-0025): `sendto(2)` instead of `write(2)` on
   Linux (no cost), one `setsockopt(2)` per send on macOS. ⚠ A seccomp filter that allows `write` but not `sendto`
   now kills a self-confined plain-socket writer on its first send (SIGSYS) — kavach's basic filter is one (see
   *Downstream*).
@@ -3559,10 +3559,10 @@ lane-review find went to 6.6.17 (user, 2026-10-04/05).
   - **sandhi** (fixed upstream, at its next release) — a pooled server can serve on arm64 macOS and Windows where
     `CHAN_BLOCKING == 1` instead of serving inline; a PEM server key costs 0 B per request;
     `sandhi_session_cache_supported()` reads 1 on OpenSSL 3 under the libssl backend; `_sandhi_server_conn_blocking`
-    is redundant (N4) and the SIGPIPE-guard comment is stale (CVE-74).
+    is redundant (N4) and the SIGPIPE-guard comment is stale (CYRIUS-2026-0025).
   - **kavach** — `security_create_basic_seccomp_filter` (kill on a miss) allows `write` but not `sendto`, so a
     process that loads it on itself and writes a plain socket is killed from 6.6.16 (a native TLS writer already was
-    since 6.6.14's CVE-66); its sandboxed spawn paths are not affected. The retired agnosys library's vendored
+    since 6.6.14's CYRIUS-2026-0021); its sandboxed spawn paths are not affected. The retired agnosys library's vendored
     copies (akshara, attn11, cyim-lsp, commandress, darshini, takumi `lib/agnosys.cyr`) carry the same allowlist; no
     `src/` calls it.
   - **bayan** — `tests/bayan.tcyr` takes `&` of its two deprecated names and now gets 4 warnings, as its own comment
@@ -3590,12 +3590,12 @@ release), which contains 3.13.8 (tag `bbaecc4`: constant-time P-256 / P-384 ECDH
 constant-time engine) and 3.13.9 (its pin to 6.6.14 and the Windows rooted-path fix). ECDHE on P-256 /
 P-384 across the native TLS stack — the 1.2 client, the 1.3 client with HelloRetryRequest, the server in
 both versions — with every ephemeral secret zeroed. Two compiler defects: the `secret var` epilogue leak
-and B0a string interning. **CVE-68 … CVE-73**; the next free id is **74**. The remaining 6.6.x releases
+and B0a string interning. **CYRIUS-2026-0023 … CYRIUS-2026-0024**; the next free id is **CYRIUS-2026-0025**. The remaining 6.6.x releases
 were sequenced the same day (roadmap.md § *The 6.6.x tail*, accepted by the user).
 
 **Bench** (same box, best of 7, interleaved): self_compile **873 ms** against 6.6.14's **871 ms** (+2 ms, +0.2 % —
 noise; `bench-history.sh` reads 876 ms; another session's compiler shared the box, so both absolute figures
-read a little high); cycc **1,492,144 B** (`.text` **1,315,016**), +4,248 B over 6.6.14's 1,487,896 — the CVE-69
+read a little high); cycc **1,492,144 B** (`.text` **1,315,016**), +4,248 B over 6.6.14's 1,487,896 — the secret-var epilogue spill gap
 epilogue clear (+4,096, crossing a page) and the `#naked` refusal's diagnostics (+152). **Gate:**
 `release-gate.sh` GREEN — fixpoint, ARM lockstep, seed-derive, check.sh (156/156 shell gates, 0 failures, the
 two known agnos-parity SKIPs), and cross-OS self-host + crossos tests on ecb, ach, cass and pi; the per-file
@@ -3624,19 +3624,19 @@ two known agnos-parity SKIPs), and cross-OS self-host + crossos tests on ecb, ac
   stack each call used is wiped before it returns. Verified against RFC 5903 §8.1 / §8.2, all
   25 + 25 NIST CAVP KAS ECC CDH primitive vectors, and OpenSSL 3.6.5 (6 embedded vectors + 100
   random live pairs, 0 mismatches); sigil's `ecdh.tcyr` 460/0 on x86_64, the pi, ecb, ach and
-  cass (sigil 3.13.9 pins cyrius 6.6.14; under 3.13.8's 6.6.9 pin this repo's CVE-51 clock defect
+  cass (sigil 3.13.9 pins cyrius 6.6.14; under 3.13.8's 6.6.9 pin this repo's the Intel-Mac clock stale-register bug clock defect
   failed the two "every timed derive succeeded" assertions on ach). P-256
   keygen / shared 2.57 / 2.55 ms, P-384 7.18 / 7.48 ms on the x86_64 dev host (ecb ~1.85× and the
   pi slower: the aarch64 high-half multiply is software). This is what native TLS 1.2 ECDHE on
-  secp256r1 / secp384r1 builds on — the remedy CVE-64's *Not covered* named for the 1.2 client's
-  x25519-only key exchange. **Security (sigil 3.13.8, HIGH; CVE-68):** `ecdsa_p256_sign` /
+  secp256r1 / secp384r1 builds on — the remedy CYRIUS-2026-0019's *Not covered* named for the 1.2 client's
+  x25519-only key exchange. **Security (sigil 3.13.8, HIGH; CYRIUS-2026-0023):** `ecdsa_p256_sign` /
   `ecdsa_p384_sign` — and so native-TLS CertificateVerify — ran the nonce through a ladder on the
   verify path's variable-time field arithmetic and computed k⁻¹ and r·d on variable-time mod-n
   code; a fixed-vs-random Welch t-test measured \|t\| = 6.3 at 400 samples on the 3.13.7 entry,
   0.7 at 1200 on 3.13.8. Signing now runs on the same constant-time engine (`src/ec_ct.cyr`:
   Montgomery arithmetic with branch-free carries and selects, complete Renes–Costello–Batina
   formulas, fixed 4-bit window with a full-table masked lookup), byte-identical signatures, and
-  faster: P-256 sign 13.3 → 2.7 ms, P-384 30.1 → 7.9 ms. **Security (sigil 3.13.8, MEDIUM; CVE-68 part B):** every signature left its nonce k behind — all of it ~43 KB down in dead stack (the
+  faster: P-256 sign 13.3 → 2.7 ms, P-384 30.1 → 7.9 ms. **Security (sigil 3.13.8, MEDIUM; CYRIUS-2026-0023 part B):** every signature left its nonce k behind — all of it ~43 KB down in dead stack (the
   HMAC_DRBG's last HMAC context; HMAC never wiped its context, whose final state is the MAC) and
   half of it in xmm1 (the SHA-NI state), which the signer's own `secret var` epilogue then wrote
   below its frame after its stack wipe; with k and one (r, s), d = r⁻¹(s·k − e). The same holds for
@@ -3646,7 +3646,7 @@ two known agnos-parity SKIPs), and cross-OS self-host + crossos tests on ecb, ac
   burns 128 / 160 KB of stack from a plain wrapper after its secret callee has returned. The
   register half is a cyrius defect — the defer walker's `EDEFER_SAVE` area (x86_64 rax / rdx / r8
   / xmm0 / xmm1, aarch64 x0–x3 / q0 / q1) is never cleared, so every `secret var` epilogue plants
-  live registers in dead stack after its wipe; fixed in cyrius in this release (**CVE-69**), and sigil no longer depends on it for its
+  live registers in dead stack after its wipe; fixed in cyrius in this release (**the secret-var epilogue spill gap**), and sigil no longer depends on it for its
   secret-scalar entry points. `pt_scalarmul_secret` / `pt384_scalarmul_secret` keep their
   signatures, now return the affine result (Z = 1), and live in `ec_ct.cyr`. **Removed private
   symbols** (nothing in the ecosystem uses them): `_ecs256_init`, `_ecs384_init`,
@@ -3659,9 +3659,9 @@ two known agnos-parity SKIPs), and cross-OS self-host + crossos tests on ecb, ac
   signers, x86_64 and aarch64, was checked by disassembly to be a loop bound, a public exponent
   bit, a public size or a public verdict (re-checked at sigil 3.13.9 on 6.6.14 codegen: identical counts, and
   the engine's core functions compile to the same instructions as under 6.6.9). **Security (sigil
-  3.13.9, MEDIUM, Windows; CVE-73):** sigil's TPM / Secure Boot / IMA / dm-verity / LUKS helpers probed rooted POSIX
+  3.13.9, MEDIUM, Windows; CYRIUS-2026-0024):** sigil's TPM / Secure Boot / IMA / dm-verity / LUKS helpers probed rooted POSIX
   paths, which are drive-relative on Windows (`/dev/tpmrm0` is `C:\dev\tpmrm0`) — this repo's
-  CVE-54 / -57 / -65 class: on cass a planted `C:\dev\tpmrm0` made `tpm_available()` say yes, a
+  CYRIUS-2026-0012 / -57 / -65 class: on cass a planted `C:\dev\tpmrm0` made `tpm_available()` say yes, a
   planted securityfs made `ima_get_status` / `ima_read_measurements` report the planted log and
   `ima_write_policy` write into the planted file, a planted `C:\sys\module\dm_verity` made
   `dmverity_supported()` say yes, and `luks_write_keyfile` staged the key in a planted `C:\tmp`.
@@ -3673,7 +3673,7 @@ two known agnos-parity SKIPs), and cross-OS self-host + crossos tests on ecb, ac
   concurrently (measured on cass; filing draft `filings/cyrius-thread-win-threads-concurrent-false.md`).
   Folded byte-identical to sigil 3.13.9's `dist/sigil.cyr` (`7d7a880`).
 
-- **Security (CVE-69, P2): a `secret var` fn's epilogue no longer leaves its return registers in
+- **Security (the secret-var epilogue spill gap, P2): a `secret var` fn's epilogue no longer leaves its return registers in
   dead stack after its own wipe.** The defer walker (`_defer_emit_walk`, which runs every `defer`
   and `secret var` block on every return) saves the whole return convention in a 64-byte area
   below sp before running the blocks — x86_64 rax, rdx, r8, the entry rsp, xmm0, xmm1; aarch64
@@ -3694,18 +3694,18 @@ two known agnos-parity SKIPs), and cross-OS self-host + crossos tests on ecb, ac
   qemu-aarch64 / pi / ecb (8 of 8), ach (7 of 7), cass and wine (3 rows), GREEN after on all.
   The sigil probe: `xmm1*10+rdx hits = 11` → `0`. `cross-os-selfhost.sh <host> crossos`:
   SELFHOST_OK and 171 / 171 crossos on pi, ecb, ach and cass. (`src/backend/x86/float.cyr`,
-  `src/backend/aarch64/emit.cyr`; register entry CVE-69.)
+  `src/backend/aarch64/emit.cyr`; register entry the secret-var epilogue spill gap.)
 
-- **Ephemeral secrets (CVE-70, P2; and CVE-71, P3).** Neither
+- **Ephemeral secrets (the ECDHE key zeroisation gap, P2; and the all-zero x25519 check item, P3).** Neither
   1.3 side nor the 1.2 server ever zeroised its ephemeral private key or shared secret / premaster
   — on the global heap every past connection's stayed in the process for its life (forward
   secrecy rests on them being gone). Now each step zeroises each secret as soon as it is used (and
   the 1.3 client's first share's key when a HelloRetryRequest replaces it), so the next flight
   already leaves without them, and `tls_native_connect`, `tls_native_accept` and
   `tls_native_accept_12` wipe both on every exit. Every library-allocated EPH_PRIV / SHARED buffer
-  is 48 bytes so one wipe fits every group. CVE-71 (P3): the all-zero x25519 check above.
+  is 48 bytes so one wipe fits every group. the all-zero x25519 check item (P3): the all-zero x25519 check above.
 
-- **A `defer` or `secret var` in a `#naked` fn is refused** (**CVE-72**, P3; a CVE-47 residual). A `#naked` fn has no
+- **A `defer` or `secret var` in a `#naked` fn is refused** (**the naked-fn secret-var gap**, P3; a tail-call secret-var wipe gap residual). A `#naked` fn has no
   epilogue — its body ends in its own asm return — so the defer walker emitted after the body was
   unreachable: the block never ran and the secret was never zeroised, and both compiled clean
   (`#naked fn f() { defer { _g = 5; } asm { 0xC3; } }`, then `return _g;`, exited 0, want 5).
@@ -3924,7 +3924,7 @@ two known agnos-parity SKIPs), and cross-OS self-host + crossos tests on ecb, ac
   client; `-cipher` ECDHE-RSA only, ECDHE-ECDSA-AES128 only, RSA-then-CHACHA20), each row asserting
   the group and the HelloRetryRequest, every 1.3 G row that completes also the server's §D.4 CCS
   (exactly one, its 2nd record — read from the record headers `-msg` dumps, which OpenSSL 3.0 and
-  3.6 both print; 3.0 prints no "ChangeCipherSpec" line for it); the CVE-64 mTLS rows unchanged.
+  3.6 both print; 3.0 prints no "ChangeCipherSpec" line for it); the CYRIUS-2026-0019 mTLS rows unchanged.
   eac97bb2's lib fails 21 of the first 24 new rows; MH1 (message_hash replaced by ClientHello1 —
   invisible natively, both sides share the helper) RED on the 10 HelloRetryRequest rows, MH2 (the
   second ClientHello read refusing a CCS) on 3, MH3 (the §D.4 CCS never sent) on 7 (3.6 and 3.0),
@@ -3975,9 +3975,9 @@ two known agnos-parity SKIPs), and cross-OS self-host + crossos tests on ecb, ac
 ## [6.6.14] — 2026-10-02
 
 The TLS follow-ups (user, 2026-10-02: "6.6.14 - all the remaining noted tls issues"): every TLS
-defect 6.6.13 noted and did not fix — its *6.6.14 candidates*, the *Not covered* lines of CVE-59 …
-CVE-63, the two TLS gaps its CHANGELOG reported for the backlog, and the TLS gates' port race — over
-five lanes, cut from the slot bump `bcdd1818`. **CVE-64 … CVE-67**; the next free id is **68**.
+defect 6.6.13 noted and did not fix — its *6.6.14 candidates*, the *Not covered* lines of CYRIUS-2026-0015 …
+CYRIUS-2026-0018, the two TLS gaps its CHANGELOG reported for the backlog, and the TLS gates' port race — over
+five lanes, cut from the slot bump `bcdd1818`. **CYRIUS-2026-0019 … CYRIUS-2026-0022**; the next free id is **CYRIUS-2026-0023**.
 Folds **sigil 3.13.7** (tagged at `2c8edf8`, before this release): the lenient trust-bundle decode.
 No `src/` change: `build/cycc` differs from 6.6.13 only by its version string.
 
@@ -3993,7 +3993,7 @@ refused — the Winsock transport and the Windows store, two lanes, working toge
 
 ### Security
 
-- **CVE-64 (P1) — a native TLS server that required client certificates authenticated nobody: any
+- **CYRIUS-2026-0019 (P1) — a native TLS server that required client certificates authenticated nobody: any
   client that offered only TLS 1.2 connected UNAUTHENTICATED, a TLS 1.3 client was accepted on
   POSSESSION of any leaf (self-signed, expired, from any CA), and `tls_set_verify` dropped
   `SSL_VERIFY_FAIL_IF_NO_PEER_CERT`.** (A1 + A2 + A3, the 6.6.14 TLS follow-ups.) Three defects that
@@ -4142,7 +4142,7 @@ refused — the Winsock transport and the Windows store, two lanes, working toge
   `>` alone is RED), `tls_native_alert_mapping.tcyr`'s and `tls_native_ccs_deadline.tcyr`'s mTLS
   server rows.
 
-- **CVE-65 (P2) — on Windows, the native TLS client read its system trust roots from a
+- **CYRIUS-2026-0020 (P2) — on Windows, the native TLS client read its system trust roots from a
   DRIVE-RELATIVE `/etc/ssl/cert.pem` any local user can plant — and Windows had no real system store
   at all.** (W1–W3; the 6.6.13 TLS follow-up "On Windows, `_tn_ca_read` opens `/etc/ssl/cert.pem`".)
   `_tn_ca_read` (`lib/tls_native_hs12.cyr`) opened `/etc/ssl/cert.pem` and three sibling POSIX paths
@@ -4153,7 +4153,7 @@ refused — the Winsock transport and the Windows store, two lanes, working toge
   with no file `tls_native_set_ca_system` returned `TLS_ERR_IO` and 0 roots; with a planted
   `cert.pem` it returned `TLS_OK` with exactly 1 root, the planted one, and a certificate it signed
   verified. And with no file — the normal case — Windows had no roots at all, so every verifying
-  native connect there would have failed once native TLS ran over Winsock. The CVE-54 / CVE-57
+  native connect there would have failed once native TLS ran over Winsock. The CYRIUS-2026-0012 / CYRIUS-2026-0014
   class, reached through the trust store; live in 6.6.13 through a custom transport,
   `tls_init_main()`, `tls_ctx_set_verify_paths` and `tls_native_client_verify_chain` — and this
   release's Winsock transport (backlog j, below) would have made it live for EVERY Windows
@@ -4223,9 +4223,9 @@ refused — the Winsock transport and the Windows store, two lanes, working toge
   on cass, pi, ecb and ach; the local per-file loop 187/187 exit 0 on x86_64 (all 165 `crossos/` +
   the 22 `crypto/tls*`); `check.sh` GREEN (156/156 shell gates, 0 failures).
 
-- **CVE-66 (P1), the native half — a native TLS write to a peer that had reset the connection raised
+- **CYRIUS-2026-0021 (P1), the native half — a native TLS write to a peer that had reset the connection raised
   SIGPIPE: any peer could kill a native TLS client or server process that had not ignored the
-  signal.** (I2; roadmap backlog f; CVE-61's "Not covered".) Every native record write — 
+  signal.** (I2; roadmap backlog f; CYRIUS-2026-0017's "Not covered".) Every native record write — 
   `tls_native_write` / `tls_write`, the handshake's own writes, the close_notify `tls_close` sends,
   and the fatal alerts 6.6.13's ChangeCipherSpec policy sends — went through one flagless
   `write(2)`. When the peer closes, the next write reaches a closed socket, its kernel answers RST,
@@ -4265,8 +4265,8 @@ refused — the Winsock transport and the Windows store, two lanes, working toge
   2 pass); `_tn_nosigpipe` a no-op (5 rows → 141, ecb + ach); a refused `SO_NOSIGPIPE` ignored (the
   shut-down-first row → 141, ecb + ach); the `ENOTSOCK` fallback removed (the file rows fail).
 
-- **CVE-66 (P1), the libssl half — a write to a peer that had closed raised SIGPIPE and killed a
-  libssl-backed client or server.** (C2, roadmap backlog (f); CVE-60's *Not covered*.) libssl's socket
+- **CYRIUS-2026-0021 (P1), the libssl half — a write to a peer that had closed raised SIGPIPE and killed a
+  libssl-backed client or server.** (C2, roadmap backlog (f); CYRIUS-2026-0016's *Not covered*.) libssl's socket
   BIO writes with `write(2)`, not `send(MSG_NOSIGNAL)`, and Linux has no per-socket `SO_NOSIGPIPE`, so a
   write to a closed peer raised SIGPIPE, whose default action terminates the process: measured on
   6.6.13 (OpenSSL 3.6.5, SIGPIPE at `SIG_DFL`), the first `tls_write` after the peer closed exited 141,
@@ -4304,8 +4304,8 @@ refused — the Winsock transport and the Windows store, two lanes, working toge
   outside the wrapper (3), no consume (7), a pre-pending SIGPIPE consumed (1), process-wide `SIG_IGN`
   instead (23). x86_64 Linux (the only libssl host). The native half is the io lane's bullet.
 
-- **CVE-67 (P3) — the native TLS client took any `*.` dNSName as a wildcard: a certificate for `*.com`
-  verified every `.com` host.** (C6; CVE-59's *Not covered*.) `_tn_host_match`
+- **CYRIUS-2026-0022 (P3) — the native TLS client took any `*.` dNSName as a wildcard: a certificate for `*.com`
+  verified every `.com` host.** (C6; CYRIUS-2026-0015's *Not covered*.) `_tn_host_match`
   (`lib/tls_native_conn.cyr`) matched `"*." + suffix` against the host's first label whatever the
   suffix was, and let the star stand for any bytes: `DNS:*.com` verified `a.com` and `example.com`,
   `DNS:*.` verified `a.`, `DNS:*.example.com.` (trailing dot), `DNS:*.*.example.com`, `DNS:*.a_b.com`,
@@ -4385,7 +4385,7 @@ refused — the Winsock transport and the Windows store, two lanes, working toge
   cannot read `FIONBIO` back, and blocking is the mode net.cyr creates sockets in (as
   `net_connect_sa_nb` already leaves them). A HANDLE that is not a socket is still bounded only
   between calls. ⚠ Interplay: with native TLS live on Windows, a VERIFYING connect there needs
-  system roots — lane wintrust's CVE-65 fix (the CurrentUser ROOT store) is what gives it some.
+  system roots — lane wintrust's CYRIUS-2026-0020 fix (the CurrentUser ROOT store) is what gives it some.
   **Test:** `tests/tcyr/crossos/tls_native_socket_transport.tcyr` (new, in the release gate's
   cross-OS set; 44 assertions) spawns ITSELF (`spawn(argv(0), scenario, port)` — fork + execve on
   POSIX, CreateProcessW on Windows; threads run inline on cass and ach) and runs a real TLS 1.3 and
@@ -4443,7 +4443,7 @@ refused — the Winsock transport and the Windows store, two lanes, working toge
   Linux.
 
 - **libssl: a failed connection stays failed — the re-read after a fatal alert was 0, a clean end.**
-  (C3, CVE-60's *Not covered*.) After a fatal alert a second `SSL_read` reports
+  (C3, CYRIUS-2026-0016's *Not covered*.) After a fatal alert a second `SSL_read` reports
   `SSL_ERROR_ZERO_RETURN` (OpenSSL sets `RECEIVED_SHUTDOWN` and leaves `warn_alert` at 0 =
   close_notify), so the libssl `tls_read` answered an attacked stream with 0 on the re-read, where native
   keeps `TLS_ERR_ALERT`. **Fix:** the libssl shim grows 32 → 40 bytes; +32 (`_TLS_SHIM_OFF_ERR`) keeps
@@ -4462,7 +4462,7 @@ refused — the Winsock transport and the Windows store, two lanes, working toge
   re-reads return the first code, the write `TLS_ERR_PROTOCOL`, zero further `SSL_read` / `SSL_write`
   calls and no `SSL_shutdown`; the close_notify row stays 0 / 0 / a half-close write / one
   `SSL_shutdown`. Every row runs four times — TLS 1.3 and 1.2, each as is and with a deadline set,
-  because a deadline sends `tls_read` / `tls_write` down their own branch (`_tls_ssl_io`, CVE-61's
+  because a deadline sends `tls_read` / `tls_write` down their own branch (`_tls_ssl_io`, CYRIUS-2026-0017's
   loop). 56 fail against the 6.6.13 `lib/tls.cyr`; mutants each RED: the slot never written (56),
   `SSL_shutdown` always called (16), `WOULD_BLOCK` made sticky (124), the deadline read branch
   without the sticky wrapper (18), the deadline write branch without it (2).
@@ -4489,7 +4489,7 @@ refused — the Winsock transport and the Windows store, two lanes, working toge
   missing file; a server ctx refused with nothing read. 12 fail against the pre-fix verbs. x86_64, and
   natively on pi, ecb, ach and cass.
 
-- **The native TLS client sent an IP-literal host as SNI.** (C5, roadmap backlog (d); CVE-63's *Not
+- **The native TLS client sent an IP-literal host as SNI.** (C5, roadmap backlog (d); CYRIUS-2026-0018's *Not
   covered*.) Both ClientHello builders — `tls_native_client_build_hello` (1.3,
   `lib/tls_native_hs13.cyr`) and `tls_native_12_build_client_hello` (1.2, `lib/tls_native_hs12.cyr`) —
   wrote the host into a server_name extension whenever one was set: `127.0.0.1`, `::1`, even
@@ -4590,7 +4590,7 @@ refused — the Winsock transport and the Windows store, two lanes, working toge
   failed): it now sets SIG_DFL itself. `tls_native_alert_mapping.tcyr`'s forked server and
   `tls_native_ccs_deadline.tcyr`'s write hook sent records in separate writes while the end under test
   refuses, alerts and closes after reading the first — a peer descheduled between its writes met the
-  closed socket (a rare SIGPIPE kill before CVE-66, `TLS_ERR_IO` since; aarch64 native, 1 failed; a
+  closed socket (a rare SIGPIPE kill before CYRIUS-2026-0021, `TLS_ERR_IO` since; aarch64 native, 1 failed; a
   loaded pi failed 4 of 20 and 3 of 3 runs): each now builds the records into one buffer and writes it
   once (0 of 20 and 0 of 12 after). Reproduced CI's conditions with `perl -e '$SIG{PIPE}="IGNORE"; exec'`,
   piped output and busy-loops on pi; a stress sweep of the other forked-peer TLS / socket tests (8 runs
@@ -4608,7 +4608,7 @@ refused — the Winsock transport and the Windows store, two lanes, working toge
 ### Known / not fixed
 
 - **agnos: a native TLS write can still overshoot the caller's deadline by one `sock_send#48`
-  stall (~8 s)** (I3; CVE-61's "Not covered"). Re-measured with a fake-kernel probe whose #48
+  stall (~8 s)** (I3; CYRIUS-2026-0017's "Not covered"). Re-measured with a fake-kernel probe whose #48
   takes 8 s: under a +1 s deadline the write returns `TLS_ERR_TIMEOUT` ~8.25 s late, on the 6.6.13
   and 6.6.14 libs alike. The stdlib cannot bound it on today's ABI: agnos's #48 waits for the ACK
   of the segment it sent inside the call (`tcp_send_ex`, `TCP_PROGRESS_US` = 8 s, hard-coded; `a4`
@@ -4621,15 +4621,15 @@ refused — the Winsock transport and the Windows store, two lanes, working toge
   `docs/development/issues/2026-10-02-sock-send-ignores-the-caller-deadline.md` (the #48 time bound the
   bullet above needs); kavach — `docs/development/issues/2026-10-02-basic-seccomp-kills-native-tls-writes.md`
   (the `basic` profile allows `write` but not `sendto`, so from this release a sandboxed native-TLS writer is
-  killed; CVE-66's behaviour change). The native 1.2 client's ECDHE on P-256 / P-384 (CVE-64's *Not covered*)
+  killed; CYRIUS-2026-0021's behaviour change). The native 1.2 client's ECDHE on P-256 / P-384 (CYRIUS-2026-0019's *Not covered*)
   waits for a constant-time ECDH primitive in sigil, placed after this release for a 6.6.15 refold.
 
 ## [6.6.13] — 2026-10-01
 
 The memory-fix and reported-issue release (re-planned by the user 2026-10-01): the three silent
 memory-corruption finds that led the backlog (M1–M3) and the eleven open issues (I1–I11), over six lanes,
-after the sigil 3.13.6 / ganita 1.2.11 / bayan 1.5.10 + 1.5.11 folds. It spends **CVE-59 … CVE-63**; the
-next free id is **64**. ⛔ bayan **1.5.11** is folded from its tag and was cut for this release.
+after the sigil 3.13.6 / ganita 1.2.11 / bayan 1.5.10 + 1.5.11 folds. It spends **CYRIUS-2026-0015 … CYRIUS-2026-0018**; the
+next free id is **CYRIUS-2026-0019**. ⛔ bayan **1.5.11** is folded from its tag and was cut for this release.
 
 **Bench** (same box, best of 7): self_compile **851 ms** against 6.6.12's **835 ms** (+16 ms, +1.9 %;
 `bench-history.sh` reads 846 ms); cycc **1,487,896 B** (`.text` **1,314,632**), +16,952 B (+1.2 %) over
@@ -4640,11 +4640,11 @@ cross-OS self-host + crossos tests on ecb, ach, cass and pi; the per-file `.tcyr
 
 ### Security
 
-- **CVE-59 (P1) — the libssl TLS backend never bound the server's certificate to the host:
+- **CYRIUS-2026-0015 (P1) — the libssl TLS backend never bound the server's certificate to the host:
   any chain-valid certificate verified any host.** (I1.) A certificate for `DNS:localhost` verified
   `www.example.com`, `127.0.0.1` and `host == 0`; a CN-only leaf and a partial wildcard
   (`f*.example.com`) verified too. Man-in-the-middle, silent: the handshake reported success. The
-  libssl twin of CVE-18. Reached by every `-D CYRIUS_TLS_LIBSSL` build (hoosh's remote HTTPS) and
+  libssl twin of CYRIUS-2026-0003. Reached by every `-D CYRIUS_TLS_LIBSSL` build (hoosh's remote HTTPS) and
   by a default build after `tls_set_backend(TLS_BACKEND_LIBSSL)`. **Root cause:**
   `tls_connect_alloc` (`lib/tls.cyr`) set `SSL_VERIFY_PEER` and SNI and nothing else.
   `SSL_VERIFY_PEER` checks the chain; OpenSSL checks an identity only when one is put in the SSL's
@@ -4689,7 +4689,7 @@ cross-OS self-host + crossos tests on ecb, ach, cass and pi; the per-file `.tcyr
   symbol's leg: available, then SIGSEGV), `SSL_set1_host`-style routing (the `[::1]` rows), SNI for
   every host (the IP SNI rows).
 
-- **CVE-60 (P1) — the libssl backend's `tls_read` / `tls_write` returned a C `int`
+- **CYRIUS-2026-0016 (P1) — the libssl backend's `tls_read` / `tls_write` returned a C `int`
   zero-extended: one flipped bit on the wire read as ~4 GiB, and a fatal alert or a cut stream read
   as a clean end.** (I2 (c), issue `2026-09-30-tls-client-memory-and-alert-gaps`; found by its
   premise check.) `SSL_read` / `SSL_write` return an `int`, and `fncall3` hands back the whole
@@ -4732,7 +4732,7 @@ cross-OS self-host + crossos tests on ecb, ach, cass and pi; the per-file `.tcyr
   length is bounded by `bufmax` — `tests/tcyr/crypto/tls_libssl_spki_int_return.tcyr` (red on the 6.6.12
   code, green on x86_64 and qemu-aarch64; found by the I2 (c) review).
 
-- **CVE-61 (P2) — the native TLS stack skipped plaintext ChangeCipherSpec records without
+- **CYRIUS-2026-0017 (P2) — the native TLS stack skipped plaintext ChangeCipherSpec records without
   limit and took no deadline: anyone on the path, with no key, held a client for ever.** (I8, issue
   `2026-10-01-tls-native-no-deadline`; found by the abaco 2.4.12 HTTPS review.) Every record read
   went through `_tn_sock_read_record_skip_ccs`, which dropped ANY number of CCS records
@@ -4741,7 +4741,7 @@ cross-OS self-host + crossos tests on ecb, ach, cass and pi; the per-file `.tcyr
   still blocked at 10 s under a 2 s `SO_RCVTIMEO`). And nothing bounded a record read: it looped
   `read(2)` until the record was complete, so a peer dripping one byte just inside the timeout held a
   16 KB record for days, and the transport vtable is process-global, so a caller could not install a
-  per-connection bound. Same availability class as CVE-30. **Fix (a) — one CCS policy per read
+  per-connection bound. Same availability class as the TLS post-handshake false-EOF bug. **Fix (a) — one CCS policy per read
   site** (`_tn_read_rec(ctx, fd, buf, cap, policy)`, `lib/tls_native_conn.cyr`; the old reader is
   deleted and `lib/` holds 0 occurrences of its name): TLS 1.3 allows ONE CCS per connection, before
   the peer's Finished, and drops it (RFC 8446 §5; `_TN_CCS_MAY` at the client's ServerHello, server
@@ -4816,7 +4816,7 @@ cross-OS self-host + crossos tests on ecb, ach, cass and pi; the per-file `.tcyr
   deadline makes no socket call; 5 mutants, each RED. The existing TLS suite stays green unchanged,
   OpenSSL `s_client` interop included (46 files, x86_64 and qemu-aarch64).
 
-- **CVE-62 — a `[deps.NAME]` header with `/` or `..` cloned OUTSIDE the dep cache
+- **the deps-header dot-dot path bug — a `[deps.NAME]` header with `/` or `..` cloned OUTSIDE the dep cache
   (`cbt/deps.cyr` `_process_named_deps`).** **Root cause:** the header name becomes a path — the
   clone dir `<home>/deps/<name>/<tag>` (mkdir + `git clone`) and the `lib/<name>_<base>`
   destination — and the v6.2.51 traversal guard `_dep_reject_unsafe_name` was applied to modular
@@ -4830,9 +4830,9 @@ cross-OS self-host + crossos tests on ecb, ach, cass and pi; the per-file `.tcyr
   manifest and in every transitive one. Pinned by `deps_modules_default_or_warned.sh` D8 (root and
   transitive).
 
-- **CVE-63 (P3) — the native TLS client verified an IP-literal host against dNSName SAN
+- **CYRIUS-2026-0018 (P3) — the native TLS client verified an IP-literal host against dNSName SAN
   entries, wildcards included.** (I7.) A certificate whose only SAN was `DNS:127.0.0.1`, or
-  `DNS:*.0.0.1`, verified `https://127.0.0.1`. RFC 9525 §6.3, the rule CVE-18 cites, compares an IP
+  `DNS:*.0.0.1`, verified `https://127.0.0.1`. RFC 9525 §6.3, the rule CYRIUS-2026-0003 cites, compares an IP
   literal with iPAddress entries only. **Root cause:** `_tn_cert_san_match`
   (`lib/tls_native_conn.cyr`) ran `_tn_host_match` on every dNSName whatever the host was, and
   parsed the host as an address only inside the iPAddress branch. Three parser defects fed the same
@@ -5353,7 +5353,7 @@ cross-OS self-host + crossos tests on ecb, ach, cass and pi; the per-file `.tcyr
   ITS tag instead (agnostic's root tags moved ahead of agnosai's and the lock kept agnosai's). A
   `modular`-only git block hit the same guard. **Fix:** a block with neither `modules` nor
   `modular` now means `modules = ["dist/X.cyr"]` when the tag (or path) ships that file — probed
-  after the clone and its CVE-21 pin, then vendored through the ordinary copy path (sidecar pull,
+  after the clone and its release-integrity hardening item pin, then vendored through the ordinary copy path (sidecar pull,
   stdlib-clobber and symlink guards, visited + queued), so the root's tag wins and the lock pins
   it. The probe is strictly `dist/X.cyr`. An explicit `modules = []` is NOT defaulted: it stays
   the "declared, not linked" spelling (clone + pin, nothing vendored, no warning). A
@@ -5428,7 +5428,7 @@ cross-OS self-host + crossos tests on ecb, ach, cass and pi; the per-file `.tcyr
 
 - **`tls_native_set_deadline(ctx, abs_ns)` (`lib/tls_native_conn.cyr`), `tls_set_deadline(ctx,
   abs_ns)` (`lib/tls.cyr`) and `TLS_ERR_TIMEOUT` (-22) — a per-connection deadline for the handshake
-  and every later read and write** (I8, CVE-61 above). `abs_ns` is absolute, on lib/chrono's
+  and every later read and write** (I8, CYRIUS-2026-0017 above). `abs_ns` is absolute, on lib/chrono's
   monotonic `clock_now_ns()` scale; 0 clears it; it may be set before connect / accept and changed
   between reads. Past it the read or write in progress returns `TLS_ERR_TIMEOUT` and the native ctx
   fails with it (plaintext already held from a record is still delivered). On the shim, set it
@@ -5544,7 +5544,7 @@ cross-OS self-host + crossos tests on ecb, ach, cass and pi; the per-file `.tcyr
   the 6.2.8 trust-store / mTLS verbs or the 6.2.24 / 6.2.25 server verbs. It now lists every public
   `tls_*` verb in `lib/tls.cyr` (40, each grep >= 1): backend selection (`tls_set_backend`,
   `tls_get_backend`); the native defaults beside libssl's (verify PEER, the OS store as one shared
-  root set, the in-handshake hostname binding, CVE-17 / CVE-18); `tls_connect_alloc_in`; the
+  root set, the in-handshake hostname binding, CYRIUS-2026-0002 / CYRIUS-2026-0003); `tls_connect_alloc_in`; the
   server verbs and what native client-certificate checking does (possession, not a chain — an empty
   Certificate passes under `tls_set_verify` — and TLS 1.3 only: the native 1.2 server never requests
   a certificate, so a client offering only 1.2 is accepted unauthenticated unless the hook pins the
@@ -5629,8 +5629,8 @@ repair items (the 6.6.11 lanes' finds, bayan's TOML parse, sankhya's DCE pin —
 and every sibling follow-up. Every item was premise-checked on the tree first; five were already fixed
 or false and dropped (R6's "`var c: i64[4]` is refused" was really R4's subscript). Twenty bites in
 seven worktree lanes, merged with **no conflicts** — every cross-lane hunk travelled as a named hand-off
-patch. Three CVEs: **CVE-56** (`log_info_kv` wrote past a 512-byte stack buffer), **CVE-57** (on
-Windows the folded sandhi resolver read a plantable `C:\etc\resolv.conf`) and **CVE-58** (cxvm let guest
+patch. Three CVEs: **CYRIUS-2026-0013** (`log_info_kv` wrote past a 512-byte stack buffer), **CYRIUS-2026-0014** (on
+Windows the folded sandhi resolver read a plantable `C:\etc\resolv.conf`) and **the cxvm host-memory bug** (cxvm let guest
 bytecode write the interpreter's own memory). Narrow variables are stored and read at their width
 everywhere; nested struct literals, struct copies from fields and globals, and field chains of any
 depth are correct; typed arrays take subscripts; cx gets real tail calls; macOS, Windows and
@@ -5646,8 +5646,8 @@ tree: 6.6.11's compiler ~841 ms, 6.6.12's ~845 ms — flat.
 
 ### Security
 
-- **CVE-56 (P1): `lib/log.cyr`'s `log_info_kv` / `log_info_int` wrote a caller-controlled string past
-  their 512-byte STACK scratch (B10, item S-B2; the CVE-50 class).** **Root cause:** both fns built
+- **CYRIUS-2026-0013 (P1): `lib/log.cyr`'s `log_info_kv` / `log_info_int` wrote a caller-controlled string past
+  their 512-byte STACK scratch (B10, item S-B2; the CYRIUS-2026-0010 class).** **Root cause:** both fns built
   `"msg key=val"` in `var buf[512]` by copying `strlen(msg)`, `strlen(key)` and `strlen(val)` bytes with no
   bound, so a logged request value longer than the scratch overwrote the fn's own locals and its return
   address — a 4 KB value exited 139 before the sink was reached. **Fix:** every copy goes through one
@@ -5655,14 +5655,14 @@ tree: 6.6.11's compiler ~841 ms, 6.6.12's ~845 ms — flat.
   `=`, the sign and 19 digits, so the number is never cut. **Test:** `tests/tcyr/stdlib/log_kv_bounded.tcyr`
   (a 4 KB value, msg or key: rc 0, the sink sees exactly 511 bytes, head intact, `...` mark; the 511/512
   boundary; i64::MIN survives a 4 KB msg). Mutation: the 6.6.11 `log.cyr` exits 139.
-- **CVE-57 (P1) — on Windows, the folded sandhi resolver read a drive-relative, plantable
+- **CYRIUS-2026-0014 (P1) — on Windows, the folded sandhi resolver read a drive-relative, plantable
   `C:\etc\resolv.conf`.** (B15, item SA11.) **Root cause:** sandhi's own DNS resolver
   (`src/net/resolve.cyr`, folded as `lib/sandhi.cyr`) opened `"/etc/resolv.conf"` on every target,
   and both lookups fell back to 8.8.8.8 without one. On Windows a rooted path is drive-relative,
   and any authenticated user may create folders at the root of the system drive. So a local user
   could choose the nameserver that every other user's sandhi lookups went to, `sandhi_http_get`
   included. 6.6.11 gave PE working Winsock UDP, which made the path live end to end. It is the
-  CVE-54 class, which 6.6.11 closed in the stdlib's own `net_resolve_ipv4`, reached through a
+  CYRIUS-2026-0012 class, which 6.6.11 closed in the stdlib's own `net_resolve_ipv4`, reached through a
   fold. **Fix, at the source (sandhi 1.10.4):** on `CYRIUS_TARGET_WIN` the A lookup is
   `net_resolve_ipv4` (getaddrinfo: the real hosts file and the adapters' DNS), the AAAA lookup
   answers 0, the reader returns -1 without opening anything, and 8.8.8.8 is never used. The v6
@@ -5676,7 +5676,7 @@ tree: 6.6.11's compiler ~841 ms, 6.6.12's ~845 ms — flat.
   and the 1.10.4 fold passes 15/15. Under wine the reader rows also bite (the 1.10.3 reader
   returned the Linux host's 127.0.0.53; 3 of 13 fail). The every-target rows pass on x86_64,
   aarch64 (qemu), ecb, ach and in the agnosticos container.
-- **CVE-58: cxvm guest bytecode could write cxvm's host memory (B06, item Q6).** **Root cause:**
+- **the cxvm host-memory bug: cxvm guest bytecode could write cxvm's host memory (B06, item Q6).** **Root cause:**
   `programs/cxvm.cyr` checked nothing a guest controls. Every load/store was `_cx_mem + reg`, so a
   guest address past the 1 MB data segment (or negative) read and wrote cxvm's own heap — the register
   file, the stacks, the loaded code — and guest address 0, the in-memory copy of the bytecode, stored
@@ -6016,7 +6016,7 @@ tree: 6.6.11's compiler ~841 ms, 6.6.12's ~845 ms — flat.
   `mach_absolute_time` out-pointer) at an 8-byte stack slot pushed as 0, and returns that mach time
   for every id but 0 — ns at Intel's 1:1 timebase (ach: Δmach/Δµs ≈ 1000). Id 0 keeps the timeval
   path, which `clock_epoch_*`, `tls_native_conn` and sigil's cert window depend on. rdx is never
-  NULL-or-stale (CVE-51 stays closed). **Held by** `darwin_clock_no_stray_write.tcyr`, which now also
+  NULL-or-stale (the Intel-Mac clock stale-register bug stays closed). **Held by** `darwin_clock_no_stray_write.tcyr`, which now also
   asserts on every target that `clock_now_ns()` is not epoch-scale while `clock_epoch_ns()` is and
   that both advance at the same rate across a 200 ms sleep, and on Darwin that raw `syscall(228, 4)`
   is not epoch-scale (the 6.6.11 compiler fails both on ach); `macho_clock_buffer_contract.sh`'s
@@ -6355,7 +6355,7 @@ tree: 6.6.11's compiler ~841 ms, 6.6.12's ~845 ms — flat.
   `CYRIUS_HOME` at their 6.6.6 pin. ⛔ **vani 1.2.8, mabda 4.1.6 and sakshi 2.5.6 must be TAGGED
   before cyrius 6.6.12 is**; the folds were copied byte-identical from those commits' `dist/`, and
   `docs/ecosystem.md`'s three fold rows name the commits.
-- **sandhi 1.10.4 folded (`lib/sandhi.cyr`, sandhi commit `88115b3`) — CVE-57 above; a
+- **sandhi 1.10.4 folded (`lib/sandhi.cyr`, sandhi commit `88115b3`) — CYRIUS-2026-0014 above; a
   stop-enabled server wakes on macOS; the suites run on macOS.** (B15, items SA11 + SA6.) **SA6:**
   sandhi's four suites had never run on macOS. At this release they were run on ecb and ach with the
   6.6.11 release tarballs in a per-run directory, and ecb hung. **Root cause:** the four blocking
@@ -6376,13 +6376,13 @@ tree: 6.6.11's compiler ~841 ms, 6.6.12's ~845 ms — flat.
   sandhi's CI gains a `macos-14` job and a structural row that keeps every `"/etc/"` literal and
   8.8.8.8 fallback inside `#ifndef CYRIUS_TARGET_WIN`. The pin moves 6.6.10 → 6.6.11.
 - **yantra 1.0.7 folded (`lib/yantra.cyr`, yantra commit `1095e5e`) — `_cdp_set_nodelay` through
-  `sys_setsockopt`; yantra's own build picks up the CVE-53 reader fix.** (B15, items SB2 + SB3.)
+  `sys_setsockopt`; yantra's own build picks up the CYRIUS-2026-0011 reader fix.** (B15, items SB2 + SB3.)
   **Root cause (SB2):** a raw `syscall(54, ...)`, the x86-Linux setsockopt number, whose option cell
   came from a leaked `alloc(4)` on every CDP connect. The PE build warned on it, and on agnos 54 is
   `SYS_UDP_UNBIND`. **Fix, at the source:** `sys_setsockopt(fd, 6, 1, &one, 4)` with a stack cell;
   on agnos, whose stdlib peer has no setsockopt, it declines with -38 and issues no syscall. yantra's
   new `tests/cdp_nodelay.tcyr` shows 16 calls allocate nothing (1.0.6: 128 bytes). **SB3:** yantra
-  is the only repo whose own code reaches the `lib/ws.cyr` client reader that CVE-53 fixed. The fold
+  is the only repo whose own code reaches the `lib/ws.cyr` client reader that CYRIUS-2026-0011 fixed. The fold
   has carried the fixed reader since 6.6.10, but yantra's standalone build at pin 6.6.9 did not. The
   pin moves to 6.6.11 and `cyrius.lock` is regenerated. Its Chromium/CDP e2e smoke is 11/11 and its
   chromedriver e2e 9/9 against live browsers. yantra's `dist/` is untracked, so the fold is
@@ -6433,7 +6433,7 @@ tree: 6.6.11's compiler ~841 ms, 6.6.12's ~845 ms — flat.
   `sys_getrlimit` wrappers once cyrius 6.6.12 is tagged (it retires its aarch64 declines, the
   `k_fchown` fchownat workaround and the raw 8 / 291 / 163 sites). The ~6 ecosystem bundles K5's
   per-target sidecar rule touches regenerate their `.deps` in the commit that moves each repo's pin
-  to ≥ 6.6.11 — no dedicated sweep (measured at 6.6.11: no sidecar changes today). CVE-53's `lib/ws.cyr`
+  to ≥ 6.6.11 — no dedicated sweep (measured at 6.6.11: no sidecar changes today). CYRIUS-2026-0011's `lib/ws.cyr`
   reader: 50 repos vendor `ws.cyr` and 52 `ws_server.cyr`, but only yantra's own code reaches the
   client reader — fixed by yantra 1.0.7 above; bote 3.3.14 already vendors the fixed server reader.
 
@@ -6444,8 +6444,8 @@ The fifth batch release: the 6.6.9 review finds I–K and the 6.6.10 finds that 
 (L–P), placed by the user, plus the sibling items and `cyrius coverage` excluding `main`. Every item was
 premise-checked on the tree before planning (L2 was already fixed at 6.6.10 and dropped). Fourteen bites
 in six worktree lanes; cross-lane hunks travelled as named hand-off patches and the merge had one
-conflict (two lanes' additions to the same cross-OS leg, both kept). Two CVEs: **CVE-54** (on Windows,
-`net_resolve_ipv4` read a drive-relative `C:\etc\hosts` that any local user can plant) and **CVE-55** (a
+conflict (two lanes' additions to the same cross-OS leg, both kept). Two CVEs: **CYRIUS-2026-0012** (on Windows,
+`net_resolve_ipv4` read a drive-relative `C:\etc\hosts` that any local user can plant) and **the multi-line string attribution bug** (a
 multi-line string literal shifted file attribution, so a call to another file's `private` fn compiled).
 Windows gains working sockets, so `http_*` runs there; struct results are type-checked against their
 destination; a qualified enum access must name its own enum; every `.tcyr` reader grades the LAST assert
@@ -6461,7 +6461,7 @@ drift.
 
 ### Security
 
-- **CVE-54 (P1): on Windows, `net_resolve_ipv4` read a DRIVE-RELATIVE `/etc/hosts` that any local
+- **CYRIUS-2026-0012 (P1): on Windows, `net_resolve_ipv4` read a DRIVE-RELATIVE `/etc/hosts` that any local
   user can plant (B07, item I5; entry in `docs/audit/2026-09-03-security-audit.md`).** **Root cause:** the resolver read
   `/etc/hosts` and `/etc/resolv.conf` on every target, and on Windows a rooted path is DRIVE-RELATIVE:
   `/etc/hosts` is `C:\etc\hosts`, which any authenticated user may create, so one local user could
@@ -6477,7 +6477,7 @@ drift.
   `C:\etc\hosts` already present or a failed write fails a named row instead of leaving "the planted
   name does not resolve" to pass vacuously (measured on cass with a pre-existing file: 1 row fails).
   Mutation, measured on cass: with the POSIX steps restored the planted 10.9.8.7 came back.
-- **CVE-55 (P2): a multi-line string literal shifted file attribution, so a call to another file's
+- **the multi-line string attribution bug (P2): a multi-line string literal shifted file attribution, so a call to another file's
   `private` fn COMPILED (B05, items N1, N3; entry in the audit).** A newline inside a string literal
   was not counted as a line. After any multi-line
   string every later token was lexed one line HIGH per newline: `var s = "a<LF>b<LF>c";` then an
@@ -6839,7 +6839,7 @@ drift.
   `_http_build_request(method, host, path)` took no port, so `http://localhost:8080/x` sent
   `Host: localhost` — and `tests/tcyr/crossos/http_connect_by_name.tcyr` expected exactly that for its
   ephemeral-port listener, pinning the defect. The builder is now `(method, host, port, path)` and
-  appends `:port` unless it is 80, counted toward the CVE-50 cap before the buffer exists;
+  appends `:port` unless it is 80, counted toward the CYRIUS-2026-0010 cap before the buffer exists;
   `_http_prepare` gains the port and its three callers pass it. Rows: `:80` has no suffix, `:8080`,
   1- and 5-digit ports, the cap edge counts the suffix, and the live test builds its expected Host
   from the bound port.
@@ -7139,7 +7139,7 @@ drift.
 ### Downstream
 
 - **sandhi 1.10.3 folded (`lib/sandhi.cyr`, sandhi commit `fba0433`) — the DNS TXID fails CLOSED
-  again (CVE-19 residual; no new CVE).** (bite 14.) **Root cause:** CVE-19's fail-closed TXID
+  again (the entropy-fallback hardening item residual; no new CVE).** (bite 14.) **Root cause:** the entropy-fallback hardening item's fail-closed TXID
   (d4b24c76, 2026-06-11) was applied to THIS fold only; the next re-vendor (d6032e26) brought back
   sandhi's clock-ns fallback, so since then a failed `sys_getrandom` sent the query with
   `(clock_now_ns() ^ (ns >> 16)) & 0xFFFF` — a TXID an off-path attacker can estimate. **Fix, at
@@ -7182,8 +7182,8 @@ The fourth batch release: the 6.6.8 review finds (groups B–G) and group H of t
 the user. Every item was premise-checked on the tree and re-verified before planning; three were already
 fixed and dropped. Seventeen bites in six worktree lanes, and the merge had **no conflicts** — one lane
 owned every gate registration and every cross-lane hunk travelled as a named hand-off patch. The
-premise-check found an unfiled CVE-class write (**CVE-51**: x86-macOS `clock_now_*` wrote 8 bytes into
-the program image through a stale `rdx`); **CVE-52** (a stray `@` silently accepted) and **CVE-53**
+premise-check found an unfiled CVE-class write (**the Intel-Mac clock stale-register bug**: x86-macOS `clock_now_*` wrote 8 bytes into
+the program image through a stale `rdx`); **the dropped-at-sign lexer bug** (a stray `@` silently accepted) and **CYRIUS-2026-0011**
 (`ws_recv_frame` read unbounded) are also here. Nine sibling patch releases (sigil 3.13.4, ganita
 1.2.8, sandhi 1.10.2, patra 1.15.1, bayan 1.5.8, yantra 1.0.6 folded; kriya 1.7.2, ranga 2.0.3, majra
 2.9.2 not vendored). The stdlib's unchecked-allocation census is now **0 of 240 sites**, and the whole
@@ -7196,7 +7196,7 @@ rounds: 6.6.9's compiler ~833 ms, 6.6.10's ~833 ms — flat.
 
 ### Security
 
-- **CVE-53 (P1): `lib/ws.cyr`'s `ws_recv_frame` let a remote peer choose its allocation size and
+- **CYRIUS-2026-0011 (P1): `lib/ws.cyr`'s `ws_recv_frame` let a remote peer choose its allocation size and
   read frames it had not received.** (bite 14; entry in `docs/audit/2026-09-03-security-audit.md`.)
   **Root cause:** the extended-length, mask and payload reads were single unchecked `sys_read`
   calls — a short read (any frame larger than one TCP segment) left stale stack bytes as the
@@ -7206,7 +7206,7 @@ rounds: 6.6.9's compiler ~833 ms, 6.6.10's ~833 ms — flat.
   frame part (EINTR retried); a 64-bit length with any top-32 bit set, or above the new public
   `WS_RECV_MAX_PAYLOAD` (16 MiB), is refused before any allocation; the allocation is checked; a
   refused or short frame returns 0 with `len_out` 0 and marks the connection CLOSED. Same file:
-  `_ws_handshake_request` overran its fixed 512-byte buffer with a long path (the CVE-50 shape —
+  `_ws_handshake_request` overran its fixed 512-byte buffer with a long path (the CYRIUS-2026-0010 shape —
   the next `alloc` came back full of path bytes), `ws_connect` read status bytes past a short
   response, and `ws_new` / the sender's mask buffer used `alloc` unchecked. `lib/ws_server.cyr`'s
   reader gets the same exact reads (a split frame used to drop a healthy client) and refuses the
@@ -7230,7 +7230,7 @@ rounds: 6.6.9's compiler ~833 ms, 6.6.10's ~833 ms — flat.
   failing 4-arg openat), `sys_getdents64(open("."), buf, 4096)` returned 136 and zeroed the
   sentinel; the records were Darwin's, not the `linux_dirent64` the doc promises (d_type @20 /
   d_name @21, not @18 / @19). The same stale-register out-pointer class as bite 1's clock write
-  (CVE-51). **Fix:** `#ifdef CYRIUS_TARGET_MACOS return 0 - 78;`, no syscall — lib/fs.cyr's
+  (the Intel-Mac clock stale-register bug). **Fix:** `#ifdef CYRIUS_TARGET_MACOS return 0 - 78;`, no syscall — lib/fs.cyr's
   `dir_list` already has the Darwin lister that passes basep. Default taken: decline, not
   translate. Pinned in `crossos/darwin_unrouted_syscall_faults.tcyr` (sentinel primed, -78 and
   intact asserted; the old wrapper FAILS both on both Macs).
@@ -7304,7 +7304,7 @@ rounds: 6.6.9's compiler ~833 ms, 6.6.10's ~833 ms — flat.
   on both Macs: each verb's 6.6.9 body, the exact read, both retire deletes, the filter-keyed wake,
   the child's setsid, the refused-alloc checks and the refused-registration reap each redden or
   hang it. ⚠ Its ach run needs
-  bite 1's CVE-51 fix in the compiler: with the 6.6.9 compiler, `clock_now_ms` on x86-macOS writes
+  bite 1's the Intel-Mac clock stale-register bug fix in the compiler: with the 6.6.9 compiler, `clock_now_ms` on x86-macOS writes
   through a stale rdx and crashes the test. The tree-kill row needs `proc_kill_tree` to end the
   child's process group on macOS (bite 11).
 
@@ -7459,7 +7459,7 @@ rounds: 6.6.9's compiler ~833 ms, 6.6.10's ~833 ms — flat.
   (bite 15), `toplevel_destructure_var_cap.sh` (bite 2); in `programs/checks/main.cyr` —
   `cap_errors_stop_storing.sh`, `assert_enum_constants.sh`, `pe_unrouted_warning_names_site.sh`
   (bite 2), `macos_peer_surface_parity.sh` (bite 3) and `lexer_errors_name_file_line.sh` (S2 bite 9,
-  CVE-52). `pp_flag_cap.sh`'s driver label no longer says "hard-errors" (a refusal since v6.4.62), and
+  the dropped-at-sign lexer bug). `pp_flag_cap.sh`'s driver label no longer says "hard-errors" (a refusal since v6.4.62), and
   the labels of `dx_multi_error.sh`, `cli_temp_dir_no_leak.sh` and `lexer_attribute_word_boundary.sh`
   name what bite 9 changed in them. `check_gate_census.sh` reads every gate as registered exactly once
   on a merge of every lane.
@@ -7555,7 +7555,7 @@ rounds: 6.6.9's compiler ~833 ms, 6.6.10's ~833 ms — flat.
   `_cdp_http_get` sent the CDP discovery request with `sock_send` and ignored the count, then parsed
   a "response" to a request that never went out; it now uses `sock_send_all` and returns 0, pinned
   by yantra's new offline `tests/cdp_http_short_send.tcyr` (seccomp-denied write; the old code
-  returned the canned body). yantra reads WS frames through this stdlib's `ws_recv`, so CVE-53
+  returned the canned body). yantra reads WS frames through this stdlib's `ws_recv`, so CYRIUS-2026-0011
   reaches it through `lib/ws.cyr`; its Chromium/CDP e2e smoke passes 11/11 against the 6.6.10
   reader (live Chromium 153).
 - ⛔ **majra 2.9.2 must be TAGGED by the user** — commit `53dfc94` on majra main, untagged. Independent
@@ -7767,9 +7767,9 @@ pre-pass and static-data advisory on every backend; diagnostic exits (no rc 139 
 sin/cos/atan ≤ 1 ulp on every target with x86 off bare `fsin`/`fcos`; POSIX open semantics on Windows
 (`CREATE_NEW` never follows a reparse point, `O_NOFOLLOW`, `O_DIRECTORY`, `is_symlink`); bench statistics
 (min ≤ avg); stdlib self-sufficiency across families A–E; distlib and `cyrius deps` integrity; CLI
-verdicts said once and `cyrius self` off shared `/tmp` (**CVE-49**); CI delegating to the check driver
+verdicts said once and `cyrius self` off shared `/tmp` (**CYRIUS-2026-0009**); CI delegating to the check driver
 with SKIP no longer scored as PASS; and `lib/http.cyr`, which could not connect to ANY host and overran
-its request buffer (**CVE-50**). The last ten filed issues are fixed — **the open issue queue is empty.**
+its request buffer (**CYRIUS-2026-0010**). The last ten filed issues are fixed — **the open issue queue is empty.**
 
 **Bench:** self_compile **961 → 795 ms (−17 %)**; same-box A/B, three rounds: 6.6.8's compiler ~980 ms,
 6.6.9's ~797 ms (−18.6 %) — bite 1's name index, which also takes a 20,000-global program from ~4.9 s to
@@ -8107,7 +8107,7 @@ a native cx compiler also exits 1 on the slice / await / async triggers.
   file costs no heap; CRLF tolerated; comments honoured); then one A query to the first IPv4
   `nameserver` in `/etc/resolv.conf`, 127.0.0.1 when there is none (glibc's default). The DNS query
   uses a `getrandom` transaction id (then `/dev/urandom`; with neither the lookup FAILS — no
-  clock / stack-address fallback, the CVE-19 rule), a connected UDP socket, 2 s × 2 sends, stack buffers only, and
+  clock / stack-address fallback, the entropy-fallback hardening item rule), a connected UDP socket, 2 s × 2 sends, stack buffers only, and
   ignores any datagram that is not the reply to THIS query (wrong id, not a response, a different
   question) — so a forged or stray datagram cannot end the lookup; CNAME chains and compression
   pointers are skipped with every read bounded. IPv4 only, no `search` domains — `lib/sandhi.cyr`
@@ -8326,7 +8326,7 @@ a native cx compiler also exits 1 on the slice / await / async triggers.
   request bytes; mutation (the host string back in `sock_connect`) turns three rows red in 10 s
   instead of hanging. Real DNS verified by hand on x86_64 Linux, ecb, ach and pi
   (`http_get("http://example.com/")` → 200).
-- **CVE-50: `_http_build_request` no longer writes a long URL past its 2048-byte buffer.** (bite 12;
+- **CYRIUS-2026-0010: `_http_build_request` no longer writes a long URL past its 2048-byte buffer.** (bite 12;
   `docs/audit/2026-09-03-security-audit.md`.) It `alloc(2048)`d and `memcpy`d the method, path and
   host in unchecked, so a 4000-byte path filled the NEXT allocation with the path's bytes (measured;
   under threads that allocation can be another thread's live object, and at a chunk end the write
@@ -8345,7 +8345,7 @@ a native cx compiler also exits 1 on the slice / await / async triggers.
   reach any host, so both commands failed — after hanging on a connect to an unroutable address,
   or at once when the pointer's bytes happened to make an unreachable one (phylax printed its
   "HTTP status -1" error; abaco set `AI_ERR_HTTP`). No source change is needed. A URL whose request would exceed 2048 bytes now
-  fails as a bad URL instead of overflowing (CVE-50). Resolution is IPv4-only with no `search`
+  fails as a bad URL instead of overflowing (CYRIUS-2026-0010). Resolution is IPv4-only with no `search`
   domains: a host that only has an AAAA record, or a short name that relies on a search suffix,
   does not resolve here — use `lib/sandhi.cyr` for those.
 - **`lib/bench.cyr`: a row's per-op `min`/`max` are decided for the ROW, by op count — a
@@ -8621,7 +8621,7 @@ a native cx compiler also exits 1 on the slice / await / async triggers.
   why it failed (`_sha_fail_why`: the capture, no hasher on PATH, or the file), and the lint
   pre-pass refuses by name. An **absolute** `$TMPDIR` is the temp base (`_cbt_env_str`; trailing
   slashes dropped, a relative value ignored); the private 0700 exclusive-mkdir directory is
-  unchanged (CVE-35/36). Also: the hasher falls back to `shasum -a 256 -b` when `sha256sum` is
+  unchanged (CYRIUS-2026-0005/CYRIUS-2026-0006). Also: the hasher falls back to `shasum -a 256 -b` when `sha256sum` is
   not on PATH — **macOS 13 has no `sha256sum`** (measured on ach), so `deps --lock`/`--verify`
   could never hash there; `_git_cfg_hazard` now fails closed on a NEGATIVE git status too (`> 1`
   let "not run" through to a size check that, with the capture now pre-created, would read
@@ -8694,13 +8694,13 @@ a native cx compiler also exits 1 on the slice / await / async triggers.
   `build_log_informative.sh` row 6 (missing file → one `error:` line naming it; rejected source →
   the compiler's status; nothing of check's verdict on stdout; test's row); the 6.6.8 CLI fails
   seven of its ten assertions and the over-fix (never say anything) fails the rejected-source rows.
-- **CVE-49: `cyrius self` no longer stages and executes compilers at predictable shared `/tmp`
+- **CYRIUS-2026-0009: `cyrius self` no longer stages and executes compilers at predictable shared `/tmp`
   names, and a failed macOS self-host stage no longer leaks.** (bite 10; audit + a 6.6.6 review
   find.) **Root cause:** `cmd_self`'s POSIX arm forked `/bin/sh -c` over a script that wrote step
   1's compiler to `/tmp/cyr_cc5_$$`, copied it to `/tmp/cyr_ccr_$$` and EXECUTED that copy —
   predictable names, no O_EXCL, a pre-planted symlink followed. Another local user who creates
   the names first can clobber a file the invoker can write, or swap the binary between the `cp`
-  and the exec (the CVE-35/CVE-36 class; Linux's protected_symlinks/protected_regular blunt it,
+  and the exec (the CYRIUS-2026-0005/CYRIUS-2026-0006 class; Linux's protected_symlinks/protected_regular blunt it,
   macOS has nothing). The same script scored a **0-byte compiler as PASS**, rc 0 (`/bin/sh` runs
   an empty executable as an empty script; `cmp` of two empty files is equal) — measured with the
   6.6.8 CLI on x86-64 Linux, pi, ecb and ach. Separately `_self_host_step_macos` returned before
@@ -8721,7 +8721,7 @@ a native cx compiler also exits 1 on the slice / await / async triggers.
   `cyrius build`). The PE arm (`_win_cmd_self`) names its step failures the same way. `_copy_binary` removes dst on any
   failure; `_self_host_step_macos` unlinks its copy on every return and names a failed chmod
   (a failed ad-hoc sign stays non-fatal: Intel macOS refuses it and runs the binary anyway).
-  Entry appended to `docs/audit/2026-09-03-security-audit.md`; the next CVE id is 50. Gate:
+  Entry appended to `docs/audit/2026-09-03-security-audit.md`; the next ledger id is CYRIUS-2026-0010. Gate:
   `cbt_no_shared_tmp_paths.sh` — no `/tmp/` in any cbt string literal (a comment- and
   char-literal-aware scanner with a self-test and a 2000-literal floor), `cyrius self` over a
   stub compiler (PASS with step 2 run from the private dir; step-1, step-2, mismatch and 0-byte
@@ -9842,8 +9842,8 @@ batched 10 / 11 / 11 bites and shipped strictly one release at a time. 6.6.7 tak
 and the baseOS layer: `defer` and `secret` on every return path, the `#derive` body walker (Critical),
 PE `fsync` that flushes, the agnos 1.57.6–1.57.9 peers, the kybernet PID-1 stdlib, fail-closed lint
 walkers — and the stdlib fold of nine libs, five of which needed a sibling patch release first. Ten bites
-in six worktree lanes; 12 filed issues fixed (each filed repro re-run on the merged tree). **CVE-46,
-CVE-47, CVE-48.**
+in six worktree lanes; 12 filed issues fixed (each filed repro re-run on the merged tree). **the closure secret-var wipe gap,
+the tail-call secret-var wipe gap, CYRIUS-2026-0008.**
 
 **Bench:** cycc **1,328,336 → 1,346,088 B** (+17,752, +1.3 %; `.text` 1,179,392). self_compile reads
 **957 ms** against 6.6.6's recorded 869 ms (+10.1 %), but the same-box A/B says otherwise: the 6.6.6
@@ -9877,7 +9877,7 @@ rounds each) — the rest is the box, not the code, and every phase moved alike 
   emitters use it, so the next per-fn global cannot drift out of one of them. Consumers see
   correct code where they saw a fall-through, a hang or a crash; no source change.
 - **A `defer` inside a closure ran in the ENCLOSING frame; a `secret var` inside a closure was
-  never zeroised (CVE-46).** (bite 1.) The closure path had no defer machinery of its own — no
+  never zeroised (the closure secret-var wipe gap).** (bite 1.) The closure path had no defer machinery of its own — no
   flag-zeroing trampoline and no walker — so its `defer`/`secret` entries were appended to the
   enclosing fn's table: the closure's return never ran them, the enclosing trampoline wrote 0
   into the enclosing slot at the closure's flag index (`fn outer(a, b, c, d)` returned **1204**
@@ -9885,7 +9885,7 @@ rounds each) — the rest is the box, not the code, and every phase moved alike 
   happened to be non-zero (**cran=10** for 0). A closure's secret key survived both the closure's
   and the enclosing fn's return. **Fix:** the epilogue's defer machinery is now ONE authority
   shared by PARSE_FN_DEF and the closure path (`_defer_emit_init`, `_rp_patch_here`,
-  `_defer_emit_walk`), walking [`_defer_base`, count). See the CVE-46 entry in
+  `_defer_emit_walk`), walking [`_defer_base`, count). See the closure secret-var wipe gap entry in
   `docs/audit/2026-09-03-security-audit.md`.
 - **A generic instantiation DROPPED the enclosing fn's defers.** (bite 1.)
   `defer { cran = cran + 1; } ... var r = wrap<Pt>(p); return r;` returned the right value and
@@ -9903,7 +9903,7 @@ rounds each) — the rest is the box, not the code, and every phase moved alike 
   exit lands past the walker (`_coro_sjp`), so a defer runs exactly once, when the body completes
   — `0,0,1` over three forces where it was `0,0,0`.
 - **A `defer` / `secret var` was skipped by every tail-shaped `return f(..);` — `return Ok(fd);`
-  and `return Err(e);` included (CVE-47).** (bite 2.) **Root cause:** PARSE_RETURN lowers
+  and `return Err(e);` included (the tail-call secret-var wipe gap).** (bite 2.) **Root cause:** PARSE_RETURN lowers
   `return IDENT(args);` to epilogue + `jmp` (ETAILJMP; call + inline epilogue on cx), which never
   reaches the return landing or the defer walker, and none of its diverts asked whether the fn had
   a `defer`/`secret`. Ok/Err are synthesized ctor fns, so the value-form Result return is exactly
@@ -9920,7 +9920,7 @@ rounds each) — the rest is the box, not the code, and every phase moved alike 
   fn loses its tail calls, so a DEEP self-recursion in a fn with a `defer` now grows the stack
   (documented in the guide's Defer section: write it as a loop, or keep the defer in a wrapper).
   sigil, agnodrm, agnostic, kavach, itihas, aegis and the agnosys bundle can re-adopt `defer` in
-  Result-returning fns. See CVE-47 in `docs/audit/2026-09-03-security-audit.md`.
+  Result-returning fns. See the tail-call secret-var wipe gap in `docs/audit/2026-09-03-security-audit.md`.
 - **The defer walker kept only the FIRST return register, so a call in a defer body destroyed the
   rest of the return value.** (bite 2.) **Root cause:** the walker wrapped the blocks in one
   `EPUSHR`/`EPOPR` (rax / x0 / r0), but a block is ordinary code. With a defer body that makes a
@@ -10351,7 +10351,7 @@ rounds each) — the rest is the box, not the code, and every phase moved alike 
   Serialize bytes, Deserialize of the CORRECT JSON field by field (the repro's own round-trip
   check was vacuous and is replaced), accessors with a neighbour-allocation canary, and enum
   codecs over `,` / newline / comment / char-literal / `: stack` shapes.
-  `tests/gates/frontend/preprocessor_scratch_bounds.sh` follows the capture bounds (CVE-41) into
+  `tests/gates/frontend/preprocessor_scratch_bounds.sh` follows the capture bounds (the derive name-capture overflow bug) into
   the new walk — the field and type names now share one bounded appender — and gains a
   behavioural axis: a 40-byte struct, field, type and spaced `Vec< … >` type name are each refused,
   a 31-byte one still compiles.
@@ -10491,7 +10491,7 @@ rounds each) — the rest is the box, not the code, and every phase moved alike 
   return a real status (exit `code & 0xFF`, fault `128 + vector`, signal `0x100 | sig`). The W*
   helpers now follow ABI §4.9; `sys_waitpid`'s comment no longer promises a bare exit code. Verified
   on QEMU: a killed child is 265 → signaled, signal 9; `exit(7)` → exited, 7.
-- **Security (CVE-48): on agnos, a server bound to 127.0.0.1 listened on the network.** (bite 4.)
+- **Security (CYRIUS-2026-0008): on agnos, a server bound to 127.0.0.1 listened on the network.** (bite 4.)
   `net.cyr`'s agnos `sock_bind` dropped the address (the v6.2.22 adapter: "addr is ignored") and
   every listen went out as `sock_listen`#56 class 0 — before 1.57.7 the NIC, since 1.57.7 the NIC
   **and** loopback. daimon's unauthenticated control API binds 127.0.0.1. **Fix:** the bind address
@@ -10502,7 +10502,7 @@ rounds each) — the rest is the box, not the code, and every phase moved alike 
   (the flagged #56 is refused there — fail closed, no probe) instead of exposing its API. QEMU
   (1.57.10): a dial to 127.0.0.1 is accepted, a dial to the host's own address on the same port is
   refused — while a 0.0.0.0 listener accepts that same dial, and the pre-fix build's 127.0.0.1
-  listener did too. Full write-up: `docs/audit/2026-09-03-security-audit.md` § CVE-48.
+  listener did too. Full write-up: `docs/audit/2026-09-03-security-audit.md` § CYRIUS-2026-0008.
 - **agnos peer argument misroutes.** (bite 4.) Three wrappers passed values the kernel decodes into
   a DIFFERENT operation, silently: `sys_spawn_path` / `sys_spawn_path_env` with a length above
   0xFFFF set `spawn_path`#43's flag bits (a 0x10005 became a 5-byte `SPAWN_F_ARGV` spawn), an
@@ -10736,8 +10736,8 @@ O_APPEND outside vendored code and several are audit logs or journals** (sigil, 
 log, patra's JSONL, agnosai's durable state, kriya's tee); 43 use O_TRUNC. Nothing needs a source change
 — pinning 6.6.6 fixes it. See *PE open flags* below.
 
-**Security:** **CVE-44** — the release installer staged a tarball AND its signature inputs at fixed `/tmp`
-names, so a local user could swap them between download and verify. **CVE-45** — an INCLUDED file, a
+**Security:** **CYRIUS-2026-0007** — the release installer staged a tarball AND its signature inputs at fixed `/tmp`
+names, so a local user could swap them between download and verify. **the file-marker forge (private visibility) bug** — an INCLUDED file, a
 `#define` macro body or a `#derive` tail could each forge a `#@file` marker, which is what `private`
 visibility is enforced against; it was live in this repo, where a deliberate error in `lex_pp.cyr` was
 attributed to a file that exists nowhere in the tree.
@@ -11136,7 +11136,7 @@ merged green.
   hosts as a compile-time assertion. cycc **1,315,016 B unchanged**; 0 of 330 `.tcyr` binaries
   changed a byte.
 
-- **CVE-45's consumer side: program DATA could still mint a file-map span.** (bite 5g, review
+- **the file-marker forge (private visibility) bug's consumer side: program DATA could still mint a file-map span.** (bite 5g, review
   round.) Bite 5b closed the producer routes, and `PP_NEUT_FMARK` skips string literals on
   purpose so a program whose data contains `#@file` keeps its bytes. That left `FM_BUILD`
   accepting `#@file` at **any offset**, so a literal could mint a span anyway:
@@ -11155,7 +11155,7 @@ merged green.
   `tests/gates/frontend/file_marker_forge_refused.sh` 12 → **14 axes / 6 mutations**; axis 9
   derives its expected line with `grep -n` rather than from the compiler, and ⚠ mutation M6
   (`FM_ATBOL` → 0) is RED on **seven** axes because a file map that records nothing enforces
-  nothing — which is what stops axis 9 passing vacuously. The CVE-45 entry in
+  nothing — which is what stops axis 9 passing vacuously. The file-marker forge (private visibility) bug entry in
   `docs/audit/2026-09-03-security-audit.md` records both the residual and what remains (a marker
   at a line start inside a multi-line literal needs two raw `"` bytes in one literal, which
   closes it — an argument from the grammar, now written down rather than implicit).
@@ -11247,7 +11247,7 @@ merged green.
   gate registrations in `programs/checks/main.cyr`, which stopped the check driver compiling.
   cycc **1,310,856 B → 1,310,920 B (+64)**; 0 of 330 `.tcyr` binaries changed a byte.
 
-- **An INCLUDED file could forge a `#@file` marker and defeat `private` visibility (CVE-45).**
+- **An INCLUDED file could forge a `#@file` marker and defeat `private` visibility (the file-marker forge (private visibility) bug).**
   (bite 5b.) `private` is enforced through the file map: the preprocessor mints
   `#@file "NAME" BASE` markers, `FM_BUILD` turns them into spans, and a reference to a private
   symbol from outside its span is refused. `FM_BUILD` scans the FINAL buffer for `#@file` at
@@ -11273,7 +11273,7 @@ merged green.
   forge axis is scored against a **twin that must build and run**, so "it does not compile"
   cannot pass for a fix; axis 7 pins that real markers still attribute a diagnostic to the
   included file and its own line, so the forge axes cannot pass vacuously. Security entry
-  appended to `docs/audit/2026-09-03-security-audit.md`; **the next free CVE id is 45**. 0 of 330
+  appended to `docs/audit/2026-09-03-security-audit.md`; **the next free ledger id is CYRIUS-2026-0008**. 0 of 330
   `.tcyr` binaries changed a byte; cycc size unchanged at **1,310,856 B**.
 
 - **A comment whose first word merely STARTED with an attribute name was parsed as code.**
@@ -12061,7 +12061,7 @@ merged green.
   without the `.sha256` sidecar `install.ps1` is fail-closed on.** (bite 25a.)
   `scripts/cass-install-gate.sh` builds the real Windows tarball, ships it to cass and runs
   the REAL `install.ps1` — the one pillar that proves a Windows user's install works. Since
-  CVE-21 (v6.2.30) `install.ps1` refuses a tarball it cannot hash: with no `-Sha256` and no
+  the release-integrity hardening item (v6.2.30) `install.ps1` refuses a tarball it cannot hash: with no `-Sha256` and no
   `<tarball>.sha256` beside it, it throws *"refusing to install unverified tarball"* before
   extracting a byte. The gate `scp`'d the tarball alone, so every run spent 3 MB of scp and
   then died at the hash check with `INSTALL FAIL (1)` — the install itself never executed
@@ -12301,7 +12301,7 @@ merged green.
   effect: a repo whose `lib/` contains an unreadable or dangling `*.cyr` now fails `cyrius deps`
   instead of locking around it.
 
-- ⛔ **SECURITY / CVE-44 — the release installer staged the tarball and all three signature
+- ⛔ **SECURITY / CYRIUS-2026-0007 — the release installer staged the tarball and all three signature
   inputs at fixed `/tmp` names** (bite 17e). `scripts/ci.sh` used `/tmp/$TARBALL`,
   `/tmp/${TARBALL}.sha256`, `/tmp/SHA256SUMS`, `/tmp/SHA256SUMS.sig`, `/tmp/cyrius-release.pub`
   and `/tmp/cyrius_tsum` — the tarball being installed *and* every input to the Ed25519 check
@@ -12314,17 +12314,17 @@ merged green.
   swap the sums, the signature or the public key between the write and the verify, or the tarball
   between the verify and `tar xzf`, and an arbitrary tarball installs with `signature verified
   (Ed25519)` printed above it. A verification whose inputs another local user can swap is not a
-  verification — this is a hole in CVE-13's fix, not a separate inconvenience. **Fix:** one
+  verification — this is a hole in the release-signing hardening item's fix, not a separate inconvenience. **Fix:** one
   `mktemp -d`, `chmod 700`, everything staged inside it, cleaned by an `EXIT` trap; a `mktemp`
   that cannot produce a directory **aborts** the install rather than falling back to a shared one.
   Deliberately not a check — "is this still the file I wrote?" is itself a TOCTOU. Written up as
-  **CVE-44** in `docs/audit/2026-09-03-security-audit.md`; `CLAUDE.md`'s next-id counter moved to
+  **CYRIUS-2026-0007** in `docs/audit/2026-09-03-security-audit.md`; `CLAUDE.md`'s next-id counter moved to
   45 in the same commit. Gated by `tests/gates/toolchain/release_verify_private_temp.sh` (4 axes,
   hermetic — `curl`/`cyrsign`/the checksum tools stubbed on `PATH` over a fake release, no
   network), the 6.6.5 script verbatim reddening axes 2, 3 and 4.
 
 - **Nine more `scripts/*.sh` staged work at fixed `/tmp` names or took an unchecked `mktemp`**
-  (bite 17f) — the same defect as CVE-44, one directory over. `install.sh` compiled a **compiler**
+  (bite 17f) — the same defect as CYRIUS-2026-0007, one directory over. `install.sh` compiled a **compiler**
   to `/tmp/cc5_verify`, made it executable and ran it (and its `TMPDIR=$(mktemp -d)` was
   unchecked, so an empty `TMPDIR` would have made every `"$TMPDIR/x"` below it `/x` — the install
   writing at the filesystem root, with the closing `rm -rf "$TMPDIR"` becoming `rm -rf ""`);
@@ -12361,7 +12361,7 @@ merged green.
   `mktemp` per call that it never wrote to. **Axis 7 now sweeps `scripts/**` and `benches/**` at
   any depth** (floor 28, 29 live). Mutation ledger: each of the three restored to its pre-fix
   body reddens the axis; and with all three live, putting the sweep back to `-maxdepth 1` reads
-  **green** — which is what the first cut did. Recorded against CVE-44 in
+  **green** — which is what the first cut did. Recorded against CYRIUS-2026-0007 in
   `docs/audit/2026-09-03-security-audit.md` as the same class.
 
 - **`install.sh` and the shell `cyriusly` still removed `~/.cyrius/{bin,lib}` before re-creating
@@ -12423,7 +12423,7 @@ merged green.
   `#ifdef CYRIUS_TARGET_WIN` block *and* `test_scratch` to still be used for the other targets.
   Removing the guard, or giving the non-PE branch the fixed name, each redden it.
 
-- **The CVE-44 write-up stated a measurement the committed gate cannot make** (bite 17n, from
+- **The CYRIUS-2026-0007 write-up stated a measurement the committed gate cannot make** (bite 17n, from
   bite 17's review). It said "both planted link targets were clobbered, one with the public key,
   one with the release tarball", and that axis 2 pre-plants "all six names … two as symlinks".
   `release_verify_private_temp.sh` plants **two** names, of which **one** is a symlink, and its
@@ -12514,7 +12514,7 @@ merged green.
 
 - **Every `cyrius` run left an empty `/tmp/cyrius-<pid>` directory behind — 5,005 of them on the
   maintainer's box.** (bite 9a.) `_cbt_tmpdir()` (`cbt/build.cyr`) has created a private
-  `<base>/cyrius-<pid>` on first use since **v6.4.81**, where it closed CVE-35/CVE-36 — which were
+  `<base>/cyrius-<pid>` on first use since **v6.4.81**, where it closed CYRIUS-2026-0005/CYRIUS-2026-0006 — which were
   about the shared `/tmp` **namespace**, not about **lifetime** — and from that release through
   6.6.5 nothing ever removed it. Measured at 6.6.5: **5,005** such directories, **398 of the 400
   newest of them EMPTY**; the 2 non-empty ones held a `test_bin` from a killed runner. Every
@@ -12545,7 +12545,7 @@ merged green.
   *fail* on PE — it **succeeds wrongly**: `pid` is `-1`, the parent takes the `pid != 0` branch,
   "waits" on nothing and decodes an **uninitialised stack slot** as the child's status. 6.6.5
   armed four sites (the compile spawn, the tool spawn, the program run, the cx run); with
-  `_sha256sum_file`, which has spawned through `exec_capture` since CVE-14, that left **twelve
+  `_sha256sum_file`, which has spawned through `exec_capture` since the deps-verify shell-line bug, that left **twelve
   of seventeen** (the census is derived, not counted by hand: the gate below prints it).
   **Measured on real cass (Windows 11) against the 6.6.5 CLI**: `cyrius self` **exits 0** after
   printing only `=== Self-Hosting Check ===` — a green self-host verdict for a self-host that
@@ -13089,7 +13089,7 @@ merged green.
   v6.0.38) and ach (Intel, v6.4.59) arms that build the real release tarball, `scp` it to
   the Mac and run the **real** `scripts/install.sh` against it with
   `CYRIUS_INSTALL_TARBALL=…`. Neither ever sent the `.sha256`. install.sh's local-tarball
-  hook verifies **fail-closed only if a sidecar sits beside the tarball** (the CVE-21
+  hook verifies **fail-closed only if a sidecar sits beside the tarball** (the release-integrity hardening item
   branch); with none it copies the file and installs it. So the two gates whose entire job
   is "the published artifact installs on a real Mac" had never once verified that the
   artifact arrived intact, and the **Intel-Mac pillar has verified a hash on no release
@@ -13126,7 +13126,7 @@ merged green.
   diagnostics, or install.sh's post-extract verdicts), and the refusing run must not — so
   the claim rests on a marker the gate has just watched two other runs produce. Ledger
   row `g` isolates it: downgrading install.sh's local-sidecar mismatch from `err` to
-  `warn … continuing anyway` (the pre-CVE-21 advisory shape) turns **only** that assertion
+  `warn … continuing anyway` (the pre-the release-integrity hardening item advisory shape) turns **only** that assertion
   red; the `no bin/` grep it replaced caught none of it. ⚠ `scripts/cross-os-selfhost.sh`'s
   `ecb-install` arm and
   `scripts/cass-install-gate.sh` have the **same shape and are not fixed here** — they
@@ -13561,7 +13561,7 @@ merged green.
 
 - `tests/gates/toolchain/release_verify_private_temp.sh` — 4 axes over the release installer's
   staging, run hermetically with `curl`, `cyrsign` and the checksum tools stubbed on `PATH`:
-  an anti-vacuous install, the CVE-44 exploit (the two version-specific `/tmp` names pre-created,
+  an anti-vacuous install, the CYRIUS-2026-0007 exploit (the two version-specific `/tmp` names pre-created,
   the tarball as a symlink out of `/tmp`, with its link target required byte-for-byte and the
   planted files neither written nor removed), the abort-never-fall-back rule, and a static check
   over `scripts/ci.sh`. The four version-INDEPENDENT names are deliberately not planted — they
@@ -13717,7 +13717,7 @@ merged green.
   dir is the canonical checked mktemp, one per line (a hand-built `${TMPDIR:-/tmp}/…` is refused; a
   mktemp TEMPLATE is the one legitimate use), no gate names a fixed `/tmp/<name>`, and the driver
   carries no `"/tmp/<name>"` literal. Exempt, read-only: `/tmp/cyrius-*` (the CLI's own temp,
-  CVE-35/36) and `/tmp/.wine-*`. Self-tested on 14 shapes + 2 clean files; mutation-proven nine ways
+  CYRIUS-2026-0005/CYRIUS-2026-0006) and `/tmp/.wine-*`. Self-tested on 14 shapes + 2 clean files; mutation-proven nine ways
   (four 6.6.5 files put back, each detector half disabled, and each hardening below reverted). ⚠ As
   first committed the detector passed five respellings (found in review; none was in the tree): a
   failure branch that exits 0 (`… || { echo SKIP; exit 0; }` — a vacuous pass counted as checked,
@@ -13893,7 +13893,7 @@ merged green.
 The 6.6.5 repair release — every open issue in docs/development/issues/, one bite each. All nine issues
 open at 2026-09-17 are fixed and archived, and every one widened under investigation: the fn-local-slot
 filing became the aggregate-layout guess (silently wrong since 5.8.17), the lint-wrapper filing became ~60
-CLI spellings across every verb (several deleted or rewrote files), the deps filing became `CVE-43`, and the
+CLI spellings across every verb (several deleted or rewrote files), the deps filing became `the dep-cache tamper-check hardening item`, and the
 stack-alignment filing uncovered three wrong ENTRY bases (PE, UEFI, x86 Mach-O). The pre-existing defects the
 release's own reviews turned up are NOT in 6.6.5 — by the user's call they are the 6.6.6 queue
 (`docs/development/roadmap.md` *v6.6.6*): six filed issues plus six roadmap items.
@@ -14291,7 +14291,7 @@ matched deferrals — each affected repo's roadmap carries a "Moving the cyrius 
     sibling gate in this same change and not carried across. Both are disassemble-to-a-file
     now: rc 0 under `/bin/sh`, `bash -e` and `bash -eo pipefail`.
   - The new `_PE_ROUTE_PERFCOUNTER` helper had been inserted BETWEEN `PARSE_FACTOR` and its
-    own CVE-40 recursion-depth comment block; moved above it. Comment-only, and
+    own the define-body copy overflow bug recursion-depth comment block; moved above it. Comment-only, and
     `build/cycc` recompiling the tree reproduces itself byte-for-byte (1,294,040 B).
 - ⛔ **`tests/tcyr/crossos/bench_timer_floor.tcyr` had MEASURED this defect, written it up, and
   declared it correct.** Its axis 2 comment recorded, from real pi,
@@ -15251,8 +15251,8 @@ matched deferrals — each affected repo's roadmap carries a "Moving the cyrius 
   change — and the same check ACCEPTED seven shapes of real tampering, vendoring the
   modified bytes** (filed by mabda 4.1.3, 2026-09-16;
   `issues/archived/2026-09-16-mabda-deps-tamper-check-stale-index.md`). **Security fix —
-  recorded as CVE-43** in `docs/audit/2026-09-03-security-audit.md`.
-  The CVE-21 (v6.2.30) working-tree check ran `git -C <cache> diff-index --quiet HEAD`.
+  recorded as the dep-cache tamper-check hardening item** in `docs/audit/2026-09-03-security-audit.md`.
+  The release-integrity hardening item (v6.2.30) working-tree check ran `git -C <cache> diff-index --quiet HEAD`.
   That command judges the working tree from the SHARED cache's own `.git/index` — its
   cached stat data, its `assume-unchanged`/`skip-worktree` bits, its config — and never
   refreshes it. Both halves of that trust were wrong.
@@ -15272,7 +15272,7 @@ matched deferrals — each affected repo's roadmap carries a "Moving the cyrius 
   files are invisible to `diff-index` entirely, so a module planted at a declared-but-absent
   path, or at the `lib/<basename>` fallback, was vendored as `lib/<dep>_<base>.cyr`.
   **Two holes AROUND the check.** `if (_head != 0)` had no `else`: a cache with no `.git`
-  (hand-staged, rsync'd without it, or dubious ownership) skipped all three CVE-21 checks —
+  (hand-staged, rsync'd without it, or dubious ownership) skipped all three the release-integrity hardening item checks —
   tampered bytes vendored and the commit pin dropped, 1 → 0. And with `CYRIUS_HOME` inside a
   git repo (a CI workspace, a dotfiles `$HOME`), `git -C` discovery climbed out of that
   `.git`-less cache into the **enclosing** repo, so `cyrius.lock` pinned a FOREIGN repo's
@@ -15418,7 +15418,7 @@ matched deferrals — each affected repo's roadmap carries a "Moving the cyrius 
   ⚠ **And the same comparison decides whether the COMMIT PIN binds** (`_lock_commit_lookup`
   matches on name+url+tag) — where the failure mode is not a refusal but a SILENT TOFU
   RE-PIN: respell the url in the manifest and the moved-tag check the pin exists for is
-  skipped for that resolve, which is the CVE-21 hole one spelling away. Normalised there too;
+  skipped for that resolve, which is the release-integrity hardening item hole one spelling away. Normalised there too;
   gate axis R28d, mutant M34.
   ⛔ **A `.gitattributes` CARRIED BY THE TAG decided the comparison.** `diff-files` compares
   `clean(working tree)` with the blob, and `clean` is whatever the attributes say — so with
@@ -16222,7 +16222,7 @@ cass / pi self-host + the full `tests/tcyr/crossos/` set on real hardware); chec
   whatever was on disk with `O_TRUNC`, never opening the lock it inherited — the lock was
   updated to agree with the one thing it exists to catch. The lock format recorded no pin, so
   even a reader could not tell "the pin changed" from "the snapshot changed". The git-dep half
-  has had the check since CVE-21 (v6.2.30): a tagged dep's resolved HEAD is compared against
+  has had the check since the release-integrity hardening item (v6.2.30): a tagged dep's resolved HEAD is compared against
   the `commit\t` line and a mismatch refuses. This is the stdlib half, keyed on the pin:
   `cyrius.lock` now ends with a `cyrius\t<pin>` trailer (LAST, so a pre-6.6.4 `--verify`
   skips it — measured: a 6.6.3 wrapper verifies a trailer lock `0 failed`; at the head it
@@ -16237,7 +16237,7 @@ cass / pi self-host + the full `tests/tcyr/crossos/` set on real hardware); chec
   the snapshot DISAGREE") because the same shape appears when the LOCK moved (`cyrius update`
   + `--lock`).
   **Two more defects found under it (the review):** the bare `cyrius deps --lock` verb reached
-  `cmd_deps_lock` with `_dep_commit_lines == 0` and **dropped every CVE-21 commit pin** —
+  `cmd_deps_lock` with `_dep_commit_lines == 0` and **dropped every the release-integrity hardening item commit pin** —
   measured as the `commit\t` line count going 1 → 0 (the old verb printed no suffix at all),
   after which the next `cyrius deps` TOFU-accepted a repointed tag it would otherwise have
   refused (its help text called the flag "redundant");
@@ -17469,7 +17469,7 @@ plus two backend fixup files.
   helper, so the next copy site added inherits the fix instead of repeating the bug a fourth time.
 
   ⚠ **This one is frozen into the release that carries it:** `cyriusly install <v>` fetches
-  `install.sh` from that version's IMMUTABLE TAG (the CVE-21 hardening), so a published version's
+  `install.sh` from that version's IMMUTABLE TAG (the release-integrity hardening item hardening), so a published version's
   installer cannot be hot-fixed. Until a release carries the fix, the workaround is to switch away
   from the version first (`cyriusly use <other>`, then install) — the ETXTBSY only occurs when
   overwriting the image you are currently executing.
@@ -17610,8 +17610,8 @@ plus two backend fixup files.
 - ⛔ **The security re-scan cadence had slipped inside CLAUDE.md itself.** The rule exists
   because the cadence slipped once before ("last: v5.0.1" for three minors) — and the corrected
   line then pointed at the **2026-07-27** audit for the whole of v6.5.x while
-  `docs/audit/2026-09-03-security-audit.md` (CVE-38…CVE-42, cycc 6.5.45) existed. Corrected, and
-  with it the **"next CVE number is 39"** note: it is **43**. A rule that records a date is a
+  `docs/audit/2026-09-03-security-audit.md` (no ledger id: all withdrawn as bugs, cycc 6.5.45) existed. Corrected, and
+  with it the **"next ledger number is CYRIUS-2026-0007"** note: it is **43**. A rule that records a date is a
   self-drifting value like any other.
 
 - **vidya `types.cyml` "Live structural facts" read `cycc 6.5.10 / 1,141,792 B` — 62 releases
@@ -19824,7 +19824,7 @@ wrong before:
 **Release gate GREEN, all 5 steps.** Self-host fixpoint **1,195,992 B**, seed → cybs → cycc
 derivable from the 29,024 B seed, `check.sh` **231 / 0**, cross-OS on REAL hardware — **ecb + ach
 + cass + pi**, each `SELFHOST_OK` + crossos `LIBTEST_OK`. Bench `self_compile` **711 ms** (`.46`
-708). `cycc` **1,195,992 B, +104 over `.46`**; `.text` **1,045,904 B, +176** — the two CVE-41
+708). `cycc` **1,195,992 B, +104 over `.46`**; `.text` **1,045,904 B, +176** — the two the derive name-capture overflow bug
 bounds checks and their diagnostics, plus the wrapper's known-Critical pin warning.
 
 **Band K phase 3 — the minor close.** Every carried item, plus a systemic defect class found
@@ -19832,7 +19832,7 @@ while checking one of them. ⭐ **Two of the three carried items had premises th
 wrong**, and the corrections are made in the documents that carried them rather than quietly in
 this one.
 
-### CVE-41 — the `#derive` name captures, and a deferral reason that was wrong twice
+### the derive name-capture overflow bug — the `#derive` name captures, and a deferral reason that was wrong twice
 
 `docs/audit/2026-09-03-security-audit.md` deferred this saying it "needs a heap/brk layout change
 (relocating the `#derive` name scratch out from under `S+0x197020`) … a two-step-bootstrap
@@ -20009,7 +20009,7 @@ derives "does the kernel write it?" from live kernel source.
 derivable from the 29,024 B seed, `check.sh` **228 / 0**, cross-OS on REAL hardware — **ecb +
 ach + cass + pi**, each `SELFHOST_OK` + crossos `LIBTEST_OK`. Bench `self_compile` **712 ms**
 (`.44` 740 — inside the noise this project has already been burned by reading as signal).
-`cycc` **1,195,832 B, +56 over `.44`**; `.text` **1,045,272 B, +176** — the CVE-39/40 bounds
+`cycc` **1,195,832 B, +56 over `.44`**; `.text` **1,045,272 B, +176** — the include-length ifdef bug/the define-body copy overflow bug bounds
 checks plus the `PP_MACRO_TEXT_FULL` diagnostic. ⚠ **The gate is what found the Windows half of
 the `getenv` defect**: it went RED on cass after the macOS fix landed, which is the cross-host
 leg doing precisely the job it exists for.
@@ -20082,7 +20082,7 @@ Nine parallel audit dimensions over the v6.5.x minor, with an adversarial verify
 attacked findings confirmed, 1 refuted** (that one would have been a wrong fix). Full record in
 `docs/audit/2026-09-03-security-audit.md`. Two land here:
 
-- ⭐ **CVE-39 — an include path's LENGTH silently changes which `#ifdef` branch compiles.** The
+- ⭐ **the include-length ifdef bug — an include path's LENGTH silently changes which `#ifdef` branch compiles.** The
   three filename capture loops guarded at 4095 because the map declared the region `[4096]`, but
   `PP_EXPAND`'s output-cursor slot sits 768 bytes in and the **`#ifdef` feature-flag table** 1024
   bytes in. **Measured against a pre-fix compiler built for the purpose: a 1210-character include
@@ -20090,7 +20090,7 @@ attacked findings confirmed, 1 refuted** (that one would have been a wrong fix).
   length changed the generated code. ⚠ **768 is the bound, not 1024**: the first cut of this fix
   used 1024, reasoning from the flag table alone and missing the cursor slot 256 bytes below it —
   so the gate now *derives* the bound from live writes rather than trusting the map.
-- ⭐ **CVE-40 — the `#define` body copy was unbounded**, on the length *and* on the accumulating
+- ⭐ **the define-body copy overflow bug — the `#define` body copy was unbounded**, on the length *and* on the accumulating
   write position, walking out of the 16 KB macro text pool into live compiler state. Bounded with
   an honest error; the guard tests the **accumulator**, because bounding one macro's length still
   overruns on the sixteenth `#define`.
@@ -23036,7 +23036,7 @@ final `PP_MACRO_PASS` has no such state and rewriting there would mangle a strin
 `#@file`. Real markers are unaffected (`PP_FMARK` writes straight to `out`). Verified:
 `"#@file x"` survives byte-exact and include diagnostics still attribute to `inc.cyr:2`.
 ⚠ **Not a CVE** — a forger already controls the source being compiled; this is a soundness
-hole in `private`, not a sandbox escape. **The next CVE number remains 41.**
+hole in `private`, not a sandbox escape. **The next ledger number remains CYRIUS-2026-0007.**
 
 ### Changed — sandhi 1.9.10 folded
 
@@ -23198,7 +23198,7 @@ header off by 11×); the fifth is silent heap corruption under threads.
 
 **Release gate GREEN, all 5 steps.** Self-host fixpoint **1,154,816 B** (was 1,142,016 —
 +12,800 B for the preprocessor line-accounting, the file-map last-line fix, the lint pre-pass
-and the CVE-39 depth/termination bounds; the freelist lock is size-neutral in cycc),
+and the include-length ifdef bug depth/termination bounds; the freelist lock is size-neutral in cycc),
 seed → cybs → cycc derivable from the 29,024 B seed, `check.sh` **178 / 0**, and cross-OS
 self-host on REAL hardware — **ecb + ach + cass + pi, each SELFHOST_OK + crossos 45/45**.
 
@@ -23208,7 +23208,7 @@ source line, which is per-line hot-path work spread across the whole change rath
 dominating patch.
 
 ⚠ **A host result only certifies the binary it ran.** An earlier four-host green covered
-1,150,648 B; the lint and CVE-39 work then superseded it, so all four hosts were re-run
+1,150,648 B; the lint and the include-length ifdef bug work then superseded it, so all four hosts were re-run
 against 1,154,816 B. The first of those runs also went RED on cass with `rc=255` /
 `Connection reset by peer` — an SSH collision from two cross-OS runs hitting one host at once,
 not a compiler failure. `cross-os-selfhost.sh` uses fixed `/tmp` and remote paths: **one host
@@ -23233,7 +23233,7 @@ at a time, always.**
    copy the newline) and needs rebasing onto this tree, where three later bites edited the same
    file. **Pinned 6.5.20.**
 2. **`switch`: a case body can only be left safely by `return`** — P1 **silent miscompile**,
-   found while doing the CVE-39 termination work. One shape gives the wrong answer with no
+   found while doing the include-length ifdef bug termination work. One shape gives the wrong answer with no
    diagnostic; two SIGSEGV the produced binary. Filed because the fix is in the jump-table
    emitter and break-chain protocol, both **per-backend** (x86 / aarch64 / macho / PE / cx), so
    it needs its own full gate cycle — fixpoint, seed-derive and four-host cross-OS — which a
@@ -23464,7 +23464,7 @@ consumer's structures arbitrarily far away.
   compiled purely because every real consumer happened to include alloc.cyr too.
 - **No `atomic_fence` on the x86 lock paths**, unlike `alloc.cyr`'s twin — a correction,
   not an omission. `atomic_cas` has carried acquire-release on both arches since
-  CVE-28/v6.1.38, and a plain store is already a correct release under x86 TSO (what
+  the aarch64 atomics-barrier bug/v6.1.38, and a plain store is already a correct release under x86 TSO (what
   Linux's x86 `spin_unlock` compiles to). `alloc.cyr:59` calls `atomic_fence` "a cheap
   near-no-op"; measured it is **~22 ns**, about 2× the whole CAS and 83 % of the lock
   cost. The aarch64 release fence is REQUIRED and is kept.
@@ -24861,7 +24861,7 @@ so no bisect indicated.
   success.
   ⛔ **The marker is in-band, so a hostile `.cyr` can write one**, and the original filing
   was wrong to call it a trusted channel. Honouring an absolute directory would have rebuilt
-  the read-anything primitive CVE-16 removed. Two rules close it: the directory must be
+  the read-anything primitive the absolute-include path bug removed. Two rules close it: the directory must be
   **relative and `..`-free**, and it is read **only at byte 0** (the CLI writes it ahead of
   the dep prepend, so a marker further down stays a comment). Both mutation-proven against a
   real escape target. The cost is stated plainly: `cyrius build /abs/dir/x.cyr` gets no
@@ -25816,7 +25816,7 @@ message that confidently names the wrong keyword is the v6.4.77 bug in miniature
 
 The compiler did not track which source file a `fn` came from. It turned out most of that
 already existed for a different reason — the preprocessor's `#@file` markers and `FM_BUILD`,
-built for CVE-31 diagnostics — so the arc needed an index-returning sibling of `FM_LOOKUP`
+built for the silent broken-input bug diagnostics — so the arc needed an index-returning sibling of `FM_LOOKUP`
 rather than new preprocessor infrastructure.
 
 **But the map was silently wrong.** `#@file` was emitted only on ENTERING an include, never
@@ -25992,7 +25992,7 @@ by findings from verification work rather than feature work** —
 | release | what displaced it | how it was found |
 |---|---|---|
 | .80 | `1 - 2 + 3` == **5** (`_cfo`, PEXPR tier) | adversarial verifier checking a **vidya** precedence claim |
-| .81 | 4th `_cfo` occurrence (`p * 3 + 1` == 4) + CVE-32/33/34 | closeout code-review + security passes |
+| .81 | 4th `_cfo` occurrence (`p * 3 + 1` == 4) + the include filename-capture overflow bug/the READFILE path-composition overflow bug/the long-HOME overflow bug | closeout code-review + security passes |
 | .82 | closeout proper · TS arena · agnos #94/#95 | heap-map audit + backlog re-triage |
 | .83 | intrinsics could not flank a TERM-tier operator | the .82 **vidya sweep**, by running the compiler |
 | .84 | `chan_try_send` + macOS channel SIGSYS | consumer filing + the **cross-OS gate on ach** |
@@ -26004,7 +26004,7 @@ Docs reconciled: `state.md`, `roadmap.md`'s head stamp and shipped list, `doc-he
 
 Mechanical (1–3b) green on real hardware · heap-map audit (4) · dead-code (5) · refactor (6) ·
 code-review (7) · cleanup (8) · security re-scan (9) → `docs/audit/2026-07-27-security-audit.md`
-(CVE-32…36, CVE-37/38 refuted) · downstream pins (10) · docs+vidya (11) — `gotchas.cyml`
+(CYRIUS-2026-0005 … CYRIUS-2026-0006, the file_write_atomic temp item (withdrawn)/the codesign shell-concatenation item (withdrawn) refuted) · downstream pins (10) · docs+vidya (11) — `gotchas.cyml`
 refreshed after 30 releases with no entry · backlog re-triage (12) — 11 open issues verified
 against **live code**, every one now carrying an explicit `**Status:**`, and the "v7-PARKED"
 placement-rule violation (DWARF + incremental compilation) corrected.
@@ -26174,7 +26174,7 @@ cycc 1,108,368 → **1,112,464 B** (+4096).
 **The v6.4.x closeout** — the last engineering release of the minor, before v6.5.0 opens on
 `pub`/`private`. Worth recording how it went: the closeout ran as an audit at .80 and the audit kept
 finding live bugs, so **.80 and .81 were both displaced by it** (`1 - 2 + 3` == 5, then a fourth
-`_cfo` occurrence + CVE-32/33/34). This release is the closeout proper plus the two items that needed
+`_cfo` occurrence + the include filename-capture overflow bug/the READFILE path-composition overflow bug/the long-HOME overflow bug). This release is the closeout proper plus the two items that needed
 their own verification.
 
 ### Fixed — the TS frontend arena overlapped `tok_types` by 10 MB
@@ -26250,7 +26250,7 @@ plausible small integer a timing consumer would treat as a timestamp.
 - **Placement rule enforced** — `roadmap.md` had DWARF debug-info and incremental compilation parked
   at "v7-PARKED", contradicting its own rule ~200 lines above. 7.x is the language book +
   legal-for-public-release and nothing else; both moved back into the 6.x line.
-- **Security** — new `docs/audit/2026-07-27-security-audit.md` (CVE-32…CVE-36), with CVE-37/38
+- **Security** — new `docs/audit/2026-07-27-security-audit.md` (CYRIUS-2026-0005 … CYRIUS-2026-0006), with the file_write_atomic temp item (withdrawn)/the codesign shell-concatenation item (withdrawn)
   recorded as **REFUTED** so a later pass does not re-file them. `CLAUDE.md:164` had claimed the last
   full audit was "v5.0.1"; it was the 2026-06-10 deep-dive at cycc 6.1.31 — three minors stale, which
   is how the cadence slipped.
@@ -26309,14 +26309,14 @@ first repro attempt gave `OpV_mul` a body of `a * b`, which aliases the folded a
 **passed while broken** — the helpers now return values plain integer arithmetic cannot
 produce.
 
-### Security — CVE-32/33/34: three unbounded copies reachable from untrusted source
+### Security — the include filename-capture overflow bug/the READFILE path-composition overflow bug/the long-HOME overflow bug: three unbounded copies reachable from untrusted source
 
 cycc compiles untrusted source by design, so these are all on the wrong side of that
 boundary. Found by the closeout's security re-scan (CLAUDE.md item 9); the last full audit
 was `docs/audit/2026-06-10-deep-dive-review.md` at cycc 6.1.31, whose last identifier is
-CVE-31.
+the silent broken-input bug.
 
-- **CVE-32 (High) — heap smash from an `include` path.** The include / `#ref` filename
+- **the include filename-capture overflow bug (High) — heap smash from an `include` path.** The include / `#ref` filename
   scratch at `S+0x190400` was filled by **three** unbounded loops (`include`,
   post-macro-expansion `include`, `#ref`). `include "zzz/<31490 A's>.cyr"` walked the write
   through the include-count cell at `S+0x197F00` and **SIGSEGV'd (exit 139)**; 31480 bytes
@@ -26325,12 +26325,12 @@ CVE-31.
   the `#ref` read buffer at `0x191800`) via a shared `PP_FNAME_TOO_LONG` helper — split into
   its own fn because `PREPROCESS` is already near cybs's per-fn literal/global ceiling and
   seed-derive is the gate that would have caught it.
-- **CVE-33 (High) — unbounded composition into a 512-byte local.** `READFILE`'s
+- **the READFILE path-composition overflow bug (High) — unbounded composition into a 512-byte local.** `READFILE`'s
   `CYRIUS_HOME/lib/` fallback built its path into `var fbuf[512]` with *neither* copy loop
   bounded, and both a long `_cyrius_lib` and a caller-supplied `path` can overrun the frame.
   Widened to 4096 and both loops bounded; a truncated path takes the existing "cannot open
   include file" path.
-- **CVE-34 (Medium) — `_cyrius_lib` overflow from a long `$HOME`.** `var _cyrius_lib[256]`
+- **the long-HOME overflow bug (Medium) — `_cyrius_lib` overflow from a long `$HOME`.** `var _cyrius_lib[256]`
   is a **bare top-level array**, so it is 256×8 = 2048 B (the v6.4.10 contract), and the
   `HOME=` copy was bounded only by `elen` (≤4096 from `/proc/self/environ`), with ~32 more
   bytes of `/.cyrius/versions/<VER>/lib/` appended unconditionally afterwards. Now reserves
@@ -26339,7 +26339,7 @@ CVE-31.
 
 ### Fixed — the heap map was documenting a region that does not exist
 
-CVE-32 survived three minors of heap-map audits because the map hid it. `src/main.cyr:90`
+the include filename-capture overflow bug survived three minors of heap-map audits because the map hid it. `src/main.cyr:90`
 (and the four other forks carrying the map) recorded the preprocessor filename scratch as
 `0x190500  include_fname [256]` — **one page high and 16× too small**. No code has ever
 written `0x190500`; every use is `0x190400`, and unbounded. `tests/heapmap.sh` was
@@ -26396,7 +26396,7 @@ closeout procedure says "document it and move on".
   as **5 bytes** (off by 13,107x) from a trailing `issue [5]`. Both fixed; region count 94 -> **100**.
   Mutation-proven: a probe region planted inside `ir_nodes` now turns the gate RED (exit 1) where it
   previously passed.
-- **CVE-35/36 — 23 fixed `/tmp` literals in `cbt/`.** The dependency-integrity controls read their
+- **CYRIUS-2026-0005/CYRIUS-2026-0006 — 23 fixed `/tmp` literals in `cbt/`.** The dependency-integrity controls read their
   results out of predictable shared paths (`_sha256sum_file`, which produces the `cyrius.lock`
   digests, and `_git_head_sha`, which gates the force-pushed-tag refusal), and `cyrius
   run/test/fuzz/bench/soak` compiled to a fixed name and then executed it. All 23 now route through
@@ -31946,7 +31946,7 @@ _check.sh 114→**115**; cycc self-host fixpoint + seed→cybs→cycc byte-ident
 
 **v6.3.23 — unreviewed dimensions (DX-01 + DX-02 + SEC-AGNOS-01).** Closes the "completeness critic"
 cluster from the 2026-06-10 deep-dive — the DX / AGNOS / LSP dimensions no analyst owned
-([`unreviewed-dimensions`](docs/development/issues/archived/2026-06-10-unreviewed-dimensions.md)). CVE-29
+([`unreviewed-dimensions`](docs/development/issues/archived/2026-06-10-unreviewed-dimensions.md)). the thread guard-page hardening item
 (thread-stack guard page) already shipped v6.2.44; LEGAL-01 alone remains, deferred to v7. cycc
 changes only via DX-01 — a shared symbol-dump helper behind the `CYRIUS_SYMS` env guard, so every
 emitted program stays byte-identical.
@@ -31985,11 +31985,11 @@ emitted program stays byte-identical.
 ### Assessed — SEC-AGNOS-01 (no cyrius-side code change needed)
 - Reviewed the AGNOS userspace target's security posture against function bodies (not comments):
   **entropy** SAFE (all native-TLS randomness → `_tn_rand_bytes` → real `sys_getrandom` #45,
-  fail-closed, no fixed-seed / counter fallback — CVE-19 lineage closed for AGNOS); **W^X** emitted by
+  fail-closed, no fixed-seed / counter fallback — the entropy-fallback hardening item lineage closed for AGNOS); **W^X** emitted by
   default (agnos is ELF `_emit_fmt==0` kmode-0 → the 2-PT_LOAD text-`R E`/data-`RW ` split; loader
   enforcement is an agnos-kernel property); **PIE/ASLR** non-PIE ET_EXEC at fixed 0x400078 by default
   (userland PIE is wired via `EMITELF_USER(S,3)` but real ASLR needs the agnos kernel to randomize the
-  ET_DYN base — cross-repo, filed upstream); **`alloc_agnos`** shares the CVE-24/25/26 overflow guards
+  ET_DYN base — cross-repo, filed upstream); **`alloc_agnos`** shares the locals-cap bug/CYRIUS-2026-0004/the alloc_agnos size-guard hardening item overflow guards
   at full parity. Two stale comments corrected in passing (`aarch64/fixup.cyr` W^X "default OFF" →
   default ON; `main.cyr` `--pie` "ignored outside kernel" → userland PIE is wired). Full write-up in
   the issue doc's Resolution section.
@@ -32038,13 +32038,13 @@ cycc **1,027,672 B**._
 
 ## [6.3.21] — 2026-07-01
 
-**v6.3.21 — the security-audit tail (RM-06).** Closes the overdue CVE-09…13 tail from the
+**v6.3.21 — the security-audit tail (RM-06).** Closes the overdue CYRIUS-2026-0001 tail from the
 2026-06-10 deep-dive audit: one real codegen fix + a trust-chain completion + a threat-model
 refresh, with a per-item premise-check that caught two stale roadmap/doc claims. cycc changes only
-via CVE-09 (x86 jump.cyr); the rest is docs + install script.
+via the jump-target table overflow bug (x86 jump.cyr); the rest is docs + install script.
 
 ### Fixed
-- **CVE-09 — x86 jump-target table overflow now HARD-ERRORS instead of silently mis-eliminating.**
+- **the jump-target table overflow bug — x86 jump-target table overflow now HARD-ERRORS instead of silently mis-eliminating.**
   `src/backend/x86/jump.cyr`'s per-fn jump-target table holds 1023 entries (the count eats the first
   8 B of the 8 KB budget). Past 1023, `EJMP`/`EPATCH` silently dropped targets → `ir_build_bbs` missed
   a basic-block boundary → **LASE** (Load-After-Store Elim, `CYRIUS_IR=3`) could eliminate a load that
@@ -32056,30 +32056,30 @@ via CVE-09 (x86 jump.cyr); the rest is docs + install script.
   check.sh **110→111**. x86-only (the table + LASE are x86-only).
 
 ### Security / Changed
-- **CVE-11 — stack canaries ACCEPTED-WITH-RATIONALE** (not emitted). The `PROT_NONE` guard page below
-  every thread stack (CVE-29, v6.2.44) + W^X code/data separation (v6.3.12) + opt-in PIE/ASLR (v6.1.6)
+- **the no-stack-canary hardening item — stack canaries ACCEPTED-WITH-RATIONALE** (not emitted). The `PROT_NONE` guard page below
+  every thread stack (the thread guard-page hardening item, v6.2.44) + W^X code/data separation (v6.3.12) + opt-in PIE/ASLR (v6.1.6)
   supersede per-call canaries for a bare-metal-first sovereign language; a stack overflow is caught as
   a loud SIGSEGV, not silent. Documented in `threat-model.md` Known Limitations.
-- **CVE-21 anti-downgrade floor** (`scripts/install.sh`) — completes the release trust chain: v6.2.31
+- **the release-integrity hardening item anti-downgrade floor** (`scripts/install.sh`) — completes the release trust chain: v6.2.31
   signs releases, but a client still accepted an unsigned same-or-newer version if `SHA256SUMS.sig` was
   stripped. Now a successful signed verify TOFU-pins `~/.cyrius/signed-since` (highest signed version);
   a later UNSIGNED install at/above that floor is refused fail-closed unless `CYRIUS_ALLOW_UNSIGNED=1`.
   Legit downgrades to a pre-signing version stay allowed. `_version_ge` + floor logic unit-tested (7
   version cases + 4 floor cases); E2E upgrade path rides the cass/ecb install gates.
-- **CVE-10 — tmp-file race paper-closed** (vector fixed v4.10.0, never ticked).
+- **CYRIUS-2026-0001 — tmp-file race paper-closed** (vector fixed v4.10.0, never ticked).
 - **RM-02 — `threat-model.md` refreshed**: the **16 MB output-buffer cap** added (was omitted), the
-  CVE-09 jump cap recorded, CVE-09/10/11 status stamped, "last reviewed" → v6.3.21. (The roadmap's claim
+  the jump-target table overflow bug jump cap recorded, the jump-target table overflow bug/CYRIUS-2026-0001/the no-stack-canary hardening item status stamped, "last reviewed" → v6.3.21. (The roadmap's claim
   that the doc "misstates the TLS backend / PIE / input cap" was itself STALE — those were accurate.)
 - **Audit cadence PINNED**: next FULL security audit at the **v6.4.0 boundary** (CLAUDE.md §9).
 
 ### Docs (premise-check catches)
-- The v6.3.23 roadmap row listed **CVE-29 as pending**, but the `PROT_NONE` thread-stack guard shipped
+- The v6.3.23 roadmap row listed **the thread guard-page hardening item as pending**, but the `PROT_NONE` thread-stack guard shipped
   **v6.2.44** — corrected. The `lib/tls_native.cyr` "KNOWN HOLES" header (`set_alpn` / `set_version_range`
   / `close`) is also stale — all three are implemented (verified in-tree) — flagged for cleanup.
 
 _Self-host fixpoint + seed→cybs→cycc byte-identical; check.sh **111/111**; ecb + cass + pi
 **SELFHOST_OK** (the x86 codegen change self-hosts on all real hardware); differential.sh **304/304
-identical** (CVE-09 logic-preserving); self_compile **539 ms**; cycc **1,027,672 B** (+8 B, the
+identical** (the jump-target table overflow bug logic-preserving); self_compile **539 ms**; cycc **1,027,672 B** (+8 B, the
 hard-error path)._
 
 ## [6.3.20] — 2026-07-01
@@ -32387,7 +32387,7 @@ stack-allocate per-thread (`lea [rbp-N]`); array locals went through the *global
   change was needed** — one shared-frontend change covers x86 + aarch64 + all 7 forks. Gated
   (`_ensure_stack_arrays`, parse.cyr) → default codegen byte-identical.
 - **`THREAD_STACK_SIZE` 64 KB → 2 MB** (`lib/thread.cyr`, ungated) so large array-locals fit on a
-  spawned thread's stack (the largest is 256 KB; the CVE-29 guard page turns overflow into a loud
+  spawned thread's stack (the largest is 256 KB; the thread guard-page hardening item guard page turns overflow into a loud
   SIGSEGV). A per-call heap path was rejected — the bump allocator has no `free()`.
 - **`tests/fixtures/concurrency/array_local_threadsafe.cyr`** + **`_array_local_threadsafe_gate`**
   (check.sh **108 → 109**): 8-thread test exits 0 under `CYRIUS_STACK_ARRAYS=1`, corrupts (exit 1) by
@@ -33125,19 +33125,19 @@ byte-identical 1,073,672 B; self-hosts byte-identical; check.sh 98/98 → 99/99
 ## [6.2.51] — 2026-06-27
 
 **v6.2.51 — v6.2.x end-of-minor closeout (pre-v6.3.0).** Mechanical gates + a
-6-dimension judgment-pass audit over the minor; one real security finding (CVE-32)
+6-dimension judgment-pass audit over the minor; one real security finding (the include filename-capture overflow bug)
 + two hardening/consolidation fixes land, the rest of the surface is clean or
 deferred to v6.3.x. **CLI + test + one comment only → cycc byte-identical
-1,073,672 B; self-hosts byte-identical; check.sh 97/97 → 98/98 (+CVE-32 gate);
+1,073,672 B; self-hosts byte-identical; check.sh 97/97 → 98/98 (+the include filename-capture overflow bug gate);
 bootstrap closure (seed→cybs→cycc) byte-identical; ecb + cass + pi `SELFHOST_OK`.**
 
 ### Security
-- **CVE-32 (P1) — path traversal in the Phase C modular resolver.** `_dep_pull_submodule`
+- **the include filename-capture overflow bug (P1) — path traversal in the Phase C modular resolver.** `_dep_pull_submodule`
   (cbt/deps.cyr) ran `sys_unlink` on `lib/<pkg>_<submod>.cyr` using a dep-/index-controlled,
-  unsanitized sub-module name BEFORE `_dep_copy_file`'s CVE-04 guard — a malicious
+  unsanitized sub-module name BEFORE `_dep_copy_file`'s the dep modules path-escape bug guard — a malicious
   `dist/<pkg>/index.cyml` sibling like `a/../../../x` could delete/overwrite an arbitrary
   `.cyr` during automatic `cyrius deps`. Same dep-resolver injection class hardened at
-  v6.1.33 (CVE-14/15/16) that the new .50 modular path failed to replicate. Fix: a shared
+  v6.1.33 (the deps-verify shell-line bug/the git argument-quoting bug/the absolute-include path bug) that the new .50 modular path failed to replicate. Fix: a shared
   `_dep_reject_unsafe_name` (rejects any `/` or `..`) at EVERY ingestion point — the
   sub-module name (top of `_dep_pull_submodule`, before any fs op), each index-returned
   `lib:<leaf>`, and the producer-side `pkg_name` in `_distlib_modular_emit`. Regression
@@ -33478,7 +33478,7 @@ compiler `src/` changed (`_entry_base` PIE-awareness) → cycc 1,073,560 →
 
 ## [6.2.44] — 2026-06-25
 
-**v6.2.44 — CVE-29 thread-stack guard page + cross-arch `_PE`/Mach-O stub
+**v6.2.44 — the thread guard-page hardening item thread-stack guard page + cross-arch `_PE`/Mach-O stub
 completeness.** A small reactive slot: one real memory-safety fix and three
 latent cross-arch dangling-ref fixes that a (deferred) undefined-fn hard-error
 spike surfaced. **x86 compiler `src/` untouched → cycc byte-identical
@@ -33487,7 +33487,7 @@ spike surfaced. **x86 compiler `src/` untouched → cycc byte-identical
 SELFHOST_OK); self_compile 513 ms.**
 
 ### Fixed
-- **CVE-29 — thread stacks now have a `PROT_NONE` guard page** (`lib/thread.cyr`).
+- **the thread guard-page hardening item — thread stacks now have a `PROT_NONE` guard page** (`lib/thread.cyr`).
   `mmap_stack` mapped the whole stack RW with no guard, so a stack overflow ran
   off the low (downward-growing) end and silently scribbled the adjacent
   allocator region (the global 256 MB chunk arena) instead of faulting. Now
@@ -33495,7 +33495,7 @@ SELFHOST_OK); self_compile 513 ms.**
   overflow SIGSEGVs at a defined boundary. `munmap_stack` widened to free the
   guard. x86_64 + aarch64-Linux only (WIN/AGNOS use the serial-thread fallback,
   which never calls `mmap_stack`). 5 thread suites (39 assertions) pass
-  unchanged; verified on pi. From `2026-06-10-unreviewed-dimensions` (CVE-29).
+  unchanged; verified on pi. From `2026-06-10-unreviewed-dimensions` (the thread guard-page hardening item).
 - **Cross-arch `_PE` / Mach-O emit-stub completeness** — three dead-branch
   dangling refs that warned on every aarch64 cross-build (and would be FATAL
   under `--strict`), latent since v6.2.12/.13:
@@ -33723,7 +33723,7 @@ verified on REAL Darwin arm64 (ecb); bench self_compile 505 ms (jitter).**
   port now emit the modern template: `workflow_call:` (release gates on CI),
   `scripts/install.sh`-based toolchain install (NOT hand-rolled `curl+tar+cp` —
   the exact anti-pattern the old bash heredocs shipped), pinned `actions/checkout`
-  + `softprops/action-gh-release` SHAs (CVE-21), and `${file:VERSION}` manifest.
+  + `softprops/action-gh-release` SHAs (the release-integrity hardening item), and `${file:VERSION}` manifest.
 - **sandhi 1.6.12 → 1.6.13** (`lib/sandhi.cyr`, re-folded byte-identical from the
   1.6.13 `cyrius distlib` output). Client connections silently lost their socket
   fd to a `SandhiConnOff` server/client enum-offset symbol collision; the server
@@ -34190,7 +34190,7 @@ byte-identical (1,071,936 B); check.sh 92/92; self_compile 512 ms (flat vs .30's
 
 ## [6.2.32] — 2026-06-20
 
-**v6.2.32 — CVE-20 RESOLVED: `seed → cybs → cycc` self-hosts byte-identical (no
+**v6.2.32 — the seed-chain cycc hardening item RESOLVED: `seed → cybs → cycc` self-hosts byte-identical (no
 bridge rung) + trust-chain tooling/doc honesty + release hygiene.** The ~29 KB
 seed now machine-derives the committed `cycc` in two hops — `cybs`
 (`bootstrap/cybs.cyr`, hand-written x86 asm) was grown to compile ALL of
@@ -34200,7 +34200,7 @@ nothing touches `src/`); check.sh **92/92**; self_compile 516 ms (flat vs .31's
 ~513). 16-agent adversarial review: **11 findings fixed** (a trust-claim
 overclaim cluster + stale README counts).
 
-### Bootstrap / trust chain — CVE-20 RESOLVED
+### Bootstrap / trust chain — the seed-chain cycc hardening item RESOLVED
 - `seed → cybs → cycc` reproduces `build/cycc` byte-identical: `bootstrap/asm`
   assembles `cybs`; `cybs` reproduces the seed (closure) + compiles
   `src/main.cyr` → gen1; gen1 → gen2 == `build/cycc` (self-host fixpoint,
@@ -34219,7 +34219,7 @@ overclaim cluster + stale README counts).
   tell them apart).
 
 ### Docs — trust-state honesty (no overclaim) + stale-count fixes
-- README / SECURITY.md / state.md / roadmap.md / roadmap_6.md + 2 CVE-20 issue
+- README / SECURITY.md / state.md / roadmap.md / roadmap_6.md + 2 the seed-chain cycc hardening item issue
   files: precise **two-leg** trust framing — `seed-derive-cycc.sh` is
   **single-root closure** validation (trusts the committed asm binary); the
   **independent** asm re-derivation from the Rust seed (`archive/seed/`) is
@@ -34242,15 +34242,15 @@ overclaim cluster + stale README counts).
 
 ## [6.2.31] — 2026-06-20
 
-**v6.2.31 — CVE-20/21 trust-chain integrity, part 2: sovereign release signing +
-trust-root attestation.** Closes the CVE-20/21 arc inside v6.2.x with cyrius's
+**v6.2.31 — the seed-chain cycc hardening item/the release-integrity hardening item trust-chain integrity, part 2: sovereign release signing +
+trust-root attestation.** Closes the seed-chain cycc hardening item/the release-integrity hardening item arc inside v6.2.x with cyrius's
 OWN crypto — no external `minisign`/`gpg`. cycc **byte-identical** (1,071,936 B —
 every change is a new program / scripts / CI / docs / the sigil re-fold; nothing
 touches `src/`); check.sh **92/92**; self_compile ~513 ms (flat); cross-OS
 pi/ecb/cass `SELFHOST_OK`. Two-round adversarial review (33 agents): **10 findings
 fixed**, 1 hardening follow-on filed.
 
-### Security — CVE-13 CLOSED (releases are now signed, sovereignly)
+### Security — the release-signing hardening item CLOSED (releases are now signed, sovereignly)
 - **`cyrsign`** (`programs/cyrsign.cyr`) — a standalone Ed25519
   signer/verifier over **sigil's in-tree curve** (`keygen` / `sign` / `verify`).
   Builds + signs/verifies on all four targets (ELF / PE / Mach-O / aarch64), 0
@@ -34273,7 +34273,7 @@ fixed**, 1 hardening follow-on filed.
   **ProcessPrng**), which is what unblocked cyrsign on PE (Windows). Re-folded
   byte-identical.
 
-### Security — CVE-20 interim attestation (scope-honest)
+### Security — the seed-chain cycc hardening item interim attestation (scope-honest)
 - **`trust-root-attest`** CI job (`scripts/build-cycc-verify.sh`): asserts the
   committed `build/cycc` is a byte-identical **self-host fixpoint** (compiles its
   own source → fixpoint → equals the committed binary). This catches accidental
@@ -34289,15 +34289,15 @@ fixed**, 1 hardening follow-on filed.
   exact-64-byte signature read (was silently truncating); OOM-guard the file
   read; secret-var zeroization of the seed/expanded key.
 - release CI: ship cyrsign on all 5 platforms; fail-closed on missing signing key.
-- Corrected the CVE-20 attestation overclaim (it is fixpoint/drift, not "diverse
+- Corrected the seed-chain cycc hardening item attestation overclaim (it is fixpoint/drift, not "diverse
   double compilation" / "tamper cannot match source") across ci.yml + 3 docs.
 - Filed the client-side anti-downgrade floor (rollback protection) as a P3
   hardening follow-on (`2026-06-20-signature-downgrade-floor.md`).
 
 ## [6.2.30] — 2026-06-20
 
-**v6.2.30 — CVE-21 trust-chain integrity, part 1: fail-closed release path + immutable pins.**
-First of a 2-release arc (CVE-20/21; part 2 = .31 detached signing + the seed→cybs→cycc
+**v6.2.30 — the release-integrity hardening item trust-chain integrity, part 1: fail-closed release path + immutable pins.**
+First of a 2-release arc (the seed-chain cycc hardening item/the release-integrity hardening item; part 2 = .31 detached signing + the seed→cybs→cycc
 reconstruction CI). Closes the advisory-or-mutable links in the install / dep / CI supply
 chain — the exact surface the "own the trust chain, no external governance" stance exists to
 remove. cycc **byte-identical** (1,071,936 B — every change is CLI / scripts / docs / fold,
@@ -34305,7 +34305,7 @@ none touch `src/`); check.sh **92/92**; self_compile **508 ms** (flat); cross-OS
 all `SELFHOST_OK`. **+ RM-02** threat-model fix **+ mabda 3.3.0→3.4.2** fold. Adversarial
 review (25 agents): **8 findings confirmed + fixed** (13 dismissed).
 
-### Security — CVE-21 (release / dep integrity was advisory or mutable)
+### Security — the release-integrity hardening item (release / dep integrity was advisory or mutable)
 - **Installers fail-closed on checksums.** `install.sh` aborts on a checksum mismatch (was
   "continuing anyway") and now REQUIRES the published `.sha256` sidecar on the network path;
   a portable `_verify_checksum` helper tries sha256sum / shasum / gsha256sum (macOS lacks
@@ -34328,10 +34328,10 @@ review (25 agents): **8 findings confirmed + fixed** (13 dismissed).
   extracting and pin their actions to SHAs — they previously re-opened the install hole one
   layer down in every scaffolded project (the review's lone P1).
 
-### Security — CVE-20 (trust-root reframe)
+### Security — the seed-chain cycc hardening item (trust-root reframe)
 - Documented that the committed `build/cycc`, **not** the 29 KB seed, is the de-facto trust
   root for binary releases (the seed verifies only the asm↔cybs closure; nothing rebuilds cycc
-  from it). SECURITY.md, README bootstrap chain, threat-model.md trust boundary; CVE-12
+  from it). SECURITY.md, README bootstrap chain, threat-model.md trust boundary; the seed trust-root hardening item
   reframed. The seed→cybs→cycc reconstruction CI that makes `cycc` machine-derivable lands at
   **v6.2.31**.
 
@@ -35272,7 +35272,7 @@ platform gate are separate commands.
   fail-closed `-1` stub; it now fills the buffer with cryptographically-secure
   bytes via ProcessPrng (the modern, dependency-light Win32 CSPRNG), returning
   `len` on success / `-1` on the (practically-never) failure — **no weak
-  fallback** (CVE-19). New backend plumbing: `src/backend/pe/emit.cyr` adds DLL
+  fallback** (the entropy-fallback hardening item). New backend plumbing: `src/backend/pe/emit.cyr` adds DLL
   id 3 = `bcryptprimitives.dll` + `_pe_ensure_procprng`/`_pe_procprng_get` (the
   4th import DLL); `src/backend/x86/emit.cyr` `EPROCPRNG_PE` (2-arg Win64 call,
   `pbData`→rcx/`cbData`→rdx); `src/frontend/parse_expr.cyr` dispatch
@@ -36015,7 +36015,7 @@ layout). The fix is a new spelling plus a full audit of the exposed surface.
 Multi-Arc" cycle closed at v6.1.41 (41 patches): userland PIE codegen, the TS/TSX→JS
 emitter, the **bayan/ganita stdlib carve** (data-format + math out of the kernel
 path), **native-TLS-as-default** (.21), the **Phase-F security-hardening pack**
-(CVE-14…31 + AR-03), the **CVE-24** per-fn local-table relocation + cap, and the
+(CYRIUS-2026-0002 … CYRIUS-2026-0004 + AR-03), the **the locals-cap bug** per-fn local-table relocation + cap, and the
 pre-v6.2.0 closeout (3-dimension audit → 3 fixed residuals + a full doc/vidya
 sync). cycc self-host 1,050,608 B; check.sh 89/89; ecb/ach/pi/cass `SELFHOST_OK`;
 bootstrap closure reproducible.
@@ -36114,7 +36114,7 @@ API-surface change.
 
 ### Fixed
 - **Mach-O output-cap parity (P1) — `_check_output_cap` on the true on-disk size.**
-  CVE-23 (v6.1.35) migrated every ELF/PE writer to the shared 16 MB output_buf cap
+  the output_buf cap bug (v6.1.35) migrated every ELF/PE writer to the shared 16 MB output_buf cap
   on the true file size, but the two Mach-O emitters were missed: `EMITMACHO_ARM64`
   capped only code size (excluding `var buf[N]` globals, strings, `__LINKEDIT`) and
   `EMITMACHO_EXEC` checked `content_sz` without the 4 KB header prefix (a filesz
@@ -36124,7 +36124,7 @@ API-surface change.
   Both now call `_check_output_cap(S, …)` (`seg_filesz` / `FILE_END`) before the
   first store. Self-host-invisible (cycc's own Mach-O output is far under 16 MB).
 - **Security-reject return code (P2) — a rejected hostile include now fails the
-  build.** The path-traversal (CVE-02) and absolute-path (CVE-16) include rejects in
+  build.** The path-traversal (the include dot-dot path bug) and absolute-path (the absolute-include path bug) include rejects in
   `lex.cyr` `return 0`, which the preprocessor treated as a successfully-opened
   *empty* include — so `include "/etc/passwd"` printed `error: … rejected` but the
   build **exited 0** (the CO-02 exit-masking class, re-opened on the security path).
@@ -36159,13 +36159,13 @@ under-reservation (HIGH; codegen). **user pushes/tags after CI.**
 
 ## [6.1.40] — 2026-06-12
 
-**v6.1.x slot 40: CVE-24 — per-fn local-table overflow (grow + cap).** Closes the
+**v6.1.x slot 40: the locals-cap bug — per-fn local-table overflow (grow + cap).** Closes the
 sixth and final item of the F3 memory-safety pack (deferred from v6.1.38 after the
 audit's premise turned out wrong), and with it the urgent set of the 2026-06-10
 deep-dive audit. No public API-surface change.
 
 ### Fixed
-- **CVE-24 — a large stack frame silently overflowed the per-fn local tables.**
+- **the locals-cap bug — a large stack frame silently overflowed the per-fn local tables.**
   `SFLC` / `local_cnt` counts **stack-frame slots, not variables** — a
   `stack var buf[N]` registers N/8 per-slot filler entries — so the four
   slot-indexed tables (`fn_local_names`/`local_depths` 256 slots,
@@ -36230,15 +36230,15 @@ pushes/tags after CI.**
 ## [6.1.38] — 2026-06-12
 
 **v6.1.x slot 38: F3 memory-safety parity pack** — five hardening bites from the
-2026-06-10 deep-dive audit (CVE-25/26/27/28 + AR-03), closing silent
+2026-06-10 deep-dive audit (CYRIUS-2026-0004/the alloc_agnos size-guard hardening item/the PE import-registry bounds bug/the aarch64 atomics-barrier bug + AR-03), closing silent
 out-of-bounds / missing-barrier gaps across the agnos allocator, the str-builder,
 the aarch64 atomics, the PE import registry, and the fixup-table cap. No public
 API-surface change — every guard is on an underscore-private fn; `alloc` /
-`atomic_*` / `str_builder_*` signatures are unchanged. (CVE-24, the sixth audit
+`atomic_*` / `str_builder_*` signatures are unchanged. (the locals-cap bug, the sixth audit
 item, was deferred — see below.)
 
 ### Fixed
-- **CVE-26 — agnos `alloc()` accepted negative / oversized sizes**
+- **the alloc_agnos size-guard hardening item — agnos `alloc()` accepted negative / oversized sizes**
   (`lib/alloc_agnos.cyr`). The Linux/macOS/Windows allocators reject `size<=0` and
   `size>ALLOC_MAX` before the lock; the agnos peer did not, so a negative `size`
   made `asz` negative, the `_heap_ptr+asz>_heap_end` overflow check stayed false,
@@ -36246,12 +36246,12 @@ item, was deferred — see below.)
   same pre-lock guards + `ALLOC_MAX=0x10000000` (defined locally — alloc.cyr's
   lives inside the `#ifdef CYRIUS_TARGET_LINUX` block, out of scope for this
   standalone peer).
-- **CVE-25 — str-builder dropped allocator OOM** (`lib/str.cyr`). `_sb_grow`
+- **CYRIUS-2026-0004 — str-builder dropped allocator OOM** (`lib/str.cyr`). `_sb_grow`
   discarded its return code and the five builders (`str_builder_add` / `_add_cstr`
   / `putc` / `_add_int` / `_add_byte`) wrote on regardless. `_sb_grow` now returns
   `_sb_grow_a(default_alloc(),…)` (0=ok / -1=OOM) and each builder aborts via a new
   `_sb_die()` (mirrors `_vec_die`) on failure instead of corrupting the heap.
-- **CVE-28 — aarch64 atomics had no memory barrier** (`lib/atomic.cyr`,
+- **the aarch64 atomics-barrier bug — aarch64 atomics had no memory barrier** (`lib/atomic.cyr`,
   `lib/alloc.cyr`). `atomic_cas` / `atomic_fetch_add` used bare `ldxr` / `stxr`
   LL-SC loops with NO barrier — the `dmb ish` the docs claimed was never emitted —
   so a peer thread could observe a CAS-published pointer before the pointee's
@@ -36260,7 +36260,7 @@ item, was deferred — see below.)
   leaves the relative branch offsets untouched (inserting `dmb` would have broken
   them). Added an explicit `atomic_fence()` before the `default_alloc` vtable
   CAS-publish for unambiguous publish-after-init ordering on every arch.
-- **CVE-27 — PE import registry had no bounds check** (`src/backend/pe/emit.cyr`).
+- **the PE import-registry bounds bug — PE import registry had no bounds check** (`src/backend/pe/emit.cyr`).
   `_pe_imp_add` / `_pe_pending_imp_add` appended names/offsets with no guard; >256
   imports or >4096 B of packed names silently overran neighbouring globals. Added
   count (`>=256`) + name-buffer (`+nlen+1>4096`) guards. The arrays already hold
@@ -36280,18 +36280,18 @@ item, was deferred — see below.)
 
 **Verification:** self-host **byte-identical** on x86 + aarch64 (qemu) + PE (wine);
 **cross-OS gate `SELFHOST_OK` on all four real hosts** (pi / ecb / ach / cass —
-re-run after the review fix); **CVE-28 validated on real aarch64 silicon**
+re-run after the review fix); **the aarch64 atomics-barrier bug validated on real aarch64 silicon**
 (`atomics.tcyr` 4-thread contention on pi) with `ldaxr` / `stlxr` disasm-confirmed
 (`c85ffc04` / `c805fc02`); check.sh **89/89**. A four-dimension
 adversarial-review-the-diff workflow caught that the AR-03 jump off-by-one fix
 initially touched only **1 of the table's 4 accessors** — self-host-invisible (only
 bites at 1023+ jump targets, which cycc never reaches; same class as v6.1.35
-CVE-23) — all four now corrected. Bench `self_compile ~496 ms` (no regression),
-cycc **+736 B → 1,050,704 B**. `tests/tcyr/atomics.tcyr` header updated for CVE-28.
+the output_buf cap bug) — all four now corrected. Bench `self_compile ~496 ms` (no regression),
+cycc **+736 B → 1,050,704 B**. `tests/tcyr/atomics.tcyr` header updated for the aarch64 atomics-barrier bug.
 **user pushes/tags after CI.**
 
 ### Deferred
-- **CVE-24 (per-fn locals "no cap")** — re-scoped out of this pack. The audit's
+- **the locals-cap bug (per-fn locals "no cap")** — re-scoped out of this pack. The audit's
   premise ("locals registration has no cap → add a count guard") was wrong:
   `SFLC` / `local_cnt` counts **stack-frame slots, not variables** — a
   `stack var buf[N]` registers N/8 per-slot filler entries, so the slot-indexed
@@ -36340,7 +36340,7 @@ mandatory cross-OS); new regression `tests/tcyr/const_chained_multiply_fold.tcyr
 ## [6.1.36] — 2026-06-11
 
 **v6.1.x slot 36 (Phase F — security hardening, pack F2): TLS-authn hardening —
-CVE-17 + CVE-18 + CVE-30 + CVE-19**, from the 2026-06-10 deep-dive
+CYRIUS-2026-0002 + CYRIUS-2026-0003 + the TLS post-handshake false-EOF bug + the entropy-fallback hardening item**, from the 2026-06-10 deep-dive
 ([`docs/audit/2026-06-10-deep-dive-review.md`](docs/audit/2026-06-10-deep-dive-review.md)).
 Each gap was premise-checked against current code (two premise-check assumptions
 were corrected: there is no raw-`alloc(256)` X509Cert bypass — the attestation
@@ -36350,7 +36350,7 @@ no `src/` changes), check.sh **89/89**, and was adversarially reviewed before cu
 **sigil bumped 3.7.10 → 3.7.11 (distlib inliner fix) → 3.7.12 (x509 parse).**
 
 ### Fixed
-- **CVE-17 — TLS certificate-chain verification ignored pathLen / keyUsage /
+- **CYRIUS-2026-0002 — TLS certificate-chain verification ignored pathLen / keyUsage /
   extendedKeyUsage.** sigil 3.7.12 now parses keyUsage + EKU into a grown
   `X509Cert` (256 → 272 B; `x509_cert_key_usage`/`x509_cert_eku`) and enforces
   pathLenConstraint in `x509_verify_chain` (the general walker, which also
@@ -36361,7 +36361,7 @@ no `src/` changes), check.sh **89/89**, and was adversarially reviewed before cu
   (`_tn_ca_signer_ok`). A leaf with a code-signing-only EKU, or a CA lacking
   keyCertSign, or a pathLen-violating chain is now rejected; real chains
   (Cloudflare leaf, attestation chains) still verify.
-- **CVE-18 — `tls_native_connect` returned a connected-but-UNVERIFIED channel;
+- **CYRIUS-2026-0003 — `tls_native_connect` returned a connected-but-UNVERIFIED channel;
   the wrapper skipped hostname binding when `host==0`.** `connect`/`connect_12`
   are now fail-closed (`_tn_connect_verify`): per the ctx verify mode they
   verify the chain + hostname before returning `TLS_OK`, so a bare-metal/AGNOS
@@ -36371,7 +36371,7 @@ no `src/` changes), check.sh **89/89**, and was adversarially reviewed before cu
   matching the connect IP against the cert's iPAddress SAN (decided over the
   reject-IP-connects alternative). The wrapper's redundant + buggy post-connect
   verify was removed.
-- **CVE-30 — post-handshake records (NewSessionTicket / KeyUpdate) collapsed to
+- **the TLS post-handshake false-EOF bug — post-handshake records (NewSessionTicket / KeyUpdate) collapsed to
   a false EOF.** `tls_native_read` now drains them in a bounded loop via
   `_tn_open_record` (which surfaces the inner content type); NSTs are consumed,
   KeyUpdate rotates the receive keys (and answers update_requested by rotating
@@ -36379,7 +36379,7 @@ no `src/` changes), check.sh **89/89**, and was adversarially reviewed before cu
   no API break). A standard TLS 1.3 server's immediate NST no longer reads as
   EOF before any data; a 0-length application_data record (RFC 8446 §5.1) is
   also drained, not treated as EOF.
-- **CVE-19 — fail-weak entropy.** `ws.cyr` (mask + Sec-WebSocket-Key) and
+- **the entropy-fallback hardening item — fail-weak entropy.** `ws.cyr` (mask + Sec-WebSocket-Key) and
   `sandhi.cyr` (DNS query-ID) routed `/dev/urandom`-with-weak-fallback
   (uninitialized buffer / clock-ns TXID) through `sys_getrandom`, **fail-closed**
   (Linux + macOS via getentropy). `tls_native_server_new_session_ticket`'s two
@@ -36402,9 +36402,9 @@ no `src/` changes), check.sh **89/89**, and was adversarially reviewed before cu
 **Verification:** cycc self-host **byte-identical** (1,049,856 B — F2 is
 stdlib-only, no compiler change); check.sh **89/89** (+1 = the dist-self-contained
 gate); **ecb + ach + pi + cass all `SELFHOST_OK`**; live Cloudflare TLS verifies
-end-to-end (CVE-18 verify + CVE-17 enforce + CVE-30 drain); hermetic
+end-to-end (CYRIUS-2026-0003 verify + CYRIUS-2026-0002 enforce + the TLS post-handshake false-EOF bug drain); hermetic
 negative-cert + IP-parser + entropy tests; sigil x509 + attestation suites green;
-cross-target compile (Linux/Windows/AGNOS) for the CVE-19 stubs. Benchmark:
+cross-target compile (Linux/Windows/AGNOS) for the entropy-fallback hardening item stubs. Benchmark:
 `self_compile ~529 ms` (box noise — cycc unchanged), `cycc 1,049,856 bytes`.
 Adversarially reviewed pre-cut (cve17/cve18 dimensions clean; 3 review-found gaps
 fixed: NST entropy, 0-length-record drain, dist-gate robustness). Closes the
@@ -36413,14 +36413,14 @@ F2 pack. **user pushes/tags after CI.**
 ## [6.1.35] — 2026-06-11
 
 **v6.1.x slot 35 (Phase F — security hardening, pack F1b part 2): the remaining
-three live silent-failure regressions — CVE-23 + CVE-31 + CO-02.** Completes the
+three live silent-failure regressions — the output_buf cap bug + the silent broken-input bug + CO-02.** Completes the
 F1b cluster opened in v6.1.34 from the 2026-06-10 deep-dive
 ([`docs/audit/2026-06-10-deep-dive-review.md`](docs/audit/2026-06-10-deep-dive-review.md));
 closes [`issues/.../2026-06-10-live-silent-failure-regressions.md`]. Same theme:
 a loud failure had been silently turned into a silent one.
 
 ### Fixed
-- **CVE-23 — the 16 MB `output_buf` cap was enforced only at the single x86-ELF
+- **the output_buf cap bug — the 16 MB `output_buf` cap was enforced only at the single x86-ELF
   flush point**, leaving the aarch64-ELF, the two `EMITELF_KERNEL` emitters, the
   x86-kernel emitters and the PE `_pe_layout` writer to overrun the buffer
   silently during emit. Added one shared `_check_output_cap` in
@@ -36438,7 +36438,7 @@ a loud failure had been silently turned into a silent one.
     most-exercised emitter, shipping since the cap was introduced) — closed in
     the same pass. `EMITELF_SHARED` (`e_shoff=0`, no section headers) and the
     PE writer (`_pe_image_file_size`) were already correct.
-- **CVE-31 — frontend input validation (three sinks).** (a) A missing `include`
+- **the silent broken-input bug — frontend input validation (three sinks).** (a) A missing `include`
   file read back as **0 bytes and was silently treated as empty** — `READFILE`
   now returns `-1` on open-fail (vs `0` on a genuinely empty file) and the PP
   include sites (`src/frontend/lex.cyr`, `lex_pp.cyr`) **fail loud** on `-1`.
@@ -36458,7 +36458,7 @@ a loud failure had been silently turned into a silent one.
   `regression_exec_capture_status` surfaces the **exit code + a signal flag**;
   tcyr gates now fail on any non-zero exit, and the output/codegen gates fail on
   a crash (signal) only. Added a negative-compile gate
-  `_input_validation_rejects_gate` so the CVE-31 loud-failure paths are
+  `_input_validation_rejects_gate` so the silent broken-input bug loud-failure paths are
   regression-covered — and (per the same review) it uses a stricter
   `_input_rejects_subcase` that asserts the compiler **exited nonzero**, not
   merely that the message printed, so a future print-then-exit-0 regression
@@ -36470,7 +36470,7 @@ arithmetic); check.sh **88/88** (was 87/87; +1 = the input-validation reject
 gate); **ecb + ach + pi + cass all `SELFHOST_OK`** (real-hardware byte-identical,
 cross-OS gate re-run after the guard fix). Benchmark: `self_compile ~556 ms`
 (vs ~506 ms @ 6.1.34 — box noise + the 3.4 KB growth), `cycc 1,049,856 bytes`.
-The CVE-23 guard-correctness and CO-02 gate-strictness fixes were both found by
+The output_buf cap bug guard-correctness and CO-02 gate-strictness fixes were both found by
 an adversarial multi-agent review of the diff *before* cut — neither was
 caught by byte-identical self-host (the compiler's own output is far below
 16 MB and exits cleanly). Closes the F1b cluster. **user pushes/tags after CI.**
@@ -36478,13 +36478,13 @@ caught by byte-identical self-host (the compiler's own output is far below
 ## [6.1.34] — 2026-06-11
 
 **v6.1.x slot 34 (Phase F — security hardening, pack F1b part 1): two live
-silent-failure regressions — CVE-22 + CO-03.** From the 2026-06-10 deep-dive
+silent-failure regressions — the vec_die recursion bug + CO-03.** From the 2026-06-10 deep-dive
 ([`docs/audit/2026-06-10-deep-dive-review.md`](docs/audit/2026-06-10-deep-dive-review.md)).
 Both are "a loud failure was silently turned into a silent failure," neither
 biting in-tree yet because no test exercises the path.
 
 ### Fixed
-- **CVE-22 — `_vec_die`/`_hm_die` infinitely self-recursed on every non-AGNOS
+- **the vec_die recursion bug — `_vec_die`/`_hm_die` infinitely self-recursed on every non-AGNOS
   target.** v6.0.56 (commit `4bc39019`) replaced a working `syscall(60,1)` with a
   target dispatch whose `#ifndef CYRIUS_TARGET_AGNOS` branch called the die fn
   *itself* (`lib/vec.cyr`, `lib/hashmap.cyr`). So on Linux/macOS/Windows every
@@ -36507,20 +36507,20 @@ biting in-tree yet because no test exercises the path.
 self-host **byte-identical** (1,046,480 B); aarch64 output now skips the
 peephole (was a no-op on the compiler's own code) → **pi `SELFHOST_OK`**;
 check.sh **87/87**; **ecb + cass + pi `SELFHOST_OK`**. **user pushes/tags after
-CI.** Phase F continues — F1b part 2 (CVE-23 emitter caps · CVE-31 frontend
+CI.** Phase F continues — F1b part 2 (the output_buf cap bug emitter caps · the silent broken-input bug frontend
 input validation · CO-02 check.sh exit-masking) next.
 
 ## [6.1.33] — 2026-06-11
 
 **v6.1.x slot 33 (Phase F — security hardening, pack F1a): dep-resolver / include
-injection class — CVE-14/15/16.** From the 2026-06-10 deep-dive
+injection class — the deps-verify shell-line bug/the git argument-quoting bug/the absolute-include path bug.** From the 2026-06-10 deep-dive
 ([`docs/audit/2026-06-10-deep-dive-review.md`](docs/audit/2026-06-10-deep-dive-review.md));
 closes [`issues/.../2026-06-10-deps-resolver-injection-class.md`]. Three
-shell-injection sinks the CVE-01/02 fixes left open — converted to argv `execve`
+shell-injection sinks the dep-resolver shell-quoting bug/the include dot-dot path bug fixes left open — converted to argv `execve`
 (no shell), the right shape the original audit recommended.
 
 ### Fixed
-- **CVE-14 (P0-class) — `_sha256sum_file` Linux branch built `sha256sum <path>`
+- **the deps-verify shell-line bug (P0-class) — `_sha256sum_file` Linux branch built `sha256sum <path>`
   and ran it via `/bin/sh -c`** with no metacharacter validation (`cbt/deps.cyr`).
   This sink is reached by `cmd_deps_lock`, which **auto-runs on every `cyrius
   deps`/`build`** (it hashes `dir_list` filenames), so a lockfile path or a
@@ -36529,14 +36529,14 @@ shell-injection sinks the CVE-01/02 fixes left open — converted to argv `execv
   — verified: a file literally named `a;touch PWNED;b.cyr` is hashed without
   executing `touch`, and the hash matches system `sha256sum`. (Windows already
   used the safe `exec_capture` argv path.)
-- **CVE-15 — dep `git clone` built a `/bin/sh` string + `sys_system`.** The CVE-01
+- **the git argument-quoting bug — dep `git clone` built a `/bin/sh` string + `sys_system`.** The dep-resolver shell-quoting bug
   denylist rejects `;|\`$&()` but **not space or a leading `-`**, so
   `git = "-c protocol.ext.allow=always --upload-pack=… ext::sh …"` became
   positional git args → local RCE. Now execs `git` via argv with a **`--`
   separator** before the url/dir positionals, so a url/tag beginning with `-`
   can't be read as a git flag. (The metachar denylist is kept as defense-in-depth.)
-- **CVE-16 — absolute include paths were accepted** (`src/frontend/lex.cyr`
-  `READFILE`). The CVE-02 fix landed only the `..`-traversal half; a hostile
+- **the absolute-include path bug — absolute include paths were accepted** (`src/frontend/lex.cyr`
+  `READFILE`). The include dot-dot path bug fix landed only the `..`-traversal half; a hostile
   `.cyr` could `include "/home/u/.ssh/id_rsa"` and surface the contents via error
   text / output. Now **rejects leading-`/` paths** unless
   `CYRIUS_ALLOW_ABSOLUTE_INCLUDES=1` (mirrors `CYRIUS_ALLOW_PARENT_INCLUDES`). The
@@ -36544,9 +36544,9 @@ shell-injection sinks the CVE-01/02 fixes left open — converted to argv `execv
   so it's unaffected.
 
 **Verification:** cycc self-hosts byte-identical (1,046,320 B, +600 B for the
-CVE-16 guard); check.sh **87/87**; **ecb + cass + pi `SELFHOST_OK`**. CVE-14
-hash-correctness + injection-safety proven; CVE-15 git-clone runs via argv;
-CVE-16 reject + override + normal-compile all verified. **user pushes/tags after
+the absolute-include path bug guard); check.sh **87/87**; **ecb + cass + pi `SELFHOST_OK`**. the deps-verify shell-line bug
+hash-correctness + injection-safety proven; the git argument-quoting bug git-clone runs via argv;
+the absolute-include path bug reject + override + normal-compile all verified. **user pushes/tags after
 CI.** Phase F continues (live-silent-failure regressions next).
 
 ## [6.1.32] — 2026-06-11
@@ -43293,7 +43293,7 @@ instead.
 
 **Five v6.0.0 accompanying-refactor items absorbed** into
 v5.x close band over .65-.68:
-- ✅ CVE-05 critical region overflow checks (.65)
+- ✅ the compiler heap guard-page gap critical region overflow checks (.65)
 - ✅ Bridge-compiler retirement (.66)
 - ✅ `scripts/build-cyc.sh` skeleton (.67)
 - ✅ cc3-era residue cleanup, load-bearing portion (.67)
@@ -43348,7 +43348,7 @@ preserved.
 
 Originally pinned 2026-05-05 at v5.8.61 ship as the
 "last-minor-before-v6.0 effort"; re-pinned to v5.11.68
-at the 2026-05-12 tight-close. CVE-05 was split out of
+at the 2026-05-12 tight-close. the compiler heap guard-page gap was split out of
 this slot at v5.11.65; the closeout stays purely a layout
 reorg per "Big Heavy One Thing" — orthogonal to write-
 boundary checks.
@@ -43475,10 +43475,10 @@ Cross-arch propagation per
   (0x2D7C000).
 - `check.sh` **76/76**; `cyrius test` **152/152**.
 
-### Why .68 stayed pure layout (not bundled with CVE-05)
+### Why .68 stayed pure layout (not bundled with the compiler heap guard-page gap)
 
-CVE-05 split out at v5.11.65 because the audit at that slot
-entry showed earlier work (CVE-06 + EB() + NPOS_GUARD) had
+the compiler heap guard-page gap split out at v5.11.65 because the audit at that slot
+entry showed earlier work (the string-data region overflow bug + EB() + NPOS_GUARD) had
 already covered the bulk of the write-boundary surface, and
 the remaining tok_names mangle-path gap was structurally
 orthogonal to the heap-map layout reshuffle. Keeping the
@@ -43489,7 +43489,7 @@ slots split:
 
 ### v6.0-runway scoreboard (post-.68)
 
-**Five v6.0.0 items absorbed** into v5.x close band — CVE-05
+**Five v6.0.0 items absorbed** into v5.x close band — the compiler heap guard-page gap
 (.65), bridge retirement (.66), build-cyc.sh skeleton (.67),
 cc3-era residue load-bearing portion (.67), heap-map full
 reorganization (.68 — was explicitly pinned as a v6.0-runway
@@ -43622,7 +43622,7 @@ close band; v6.0.0's surface shrinks correspondingly:
   vidya bulk refresh still pinned for v6.0.0 Closeout Pass
   §11)
 
-CVE-05 (.65) also closed early from the v5.11.68 batching.
+the compiler heap guard-page gap (.65) also closed early from the v5.11.68 batching.
 
 ### Memory pins
 
@@ -43726,20 +43726,20 @@ the actual `seed → cyrc → cc5` path used in practice.
 
 ## [5.11.65] — 2026-05-19
 
-**CVE-05 split forward from .68 — tok_names mangle-path
+**the compiler heap guard-page gap split forward from .68 — tok_names mangle-path
 write-boundary guard.** First v6.0-runway slot; .68 stays
 a pure heap-map reorg per "Big Heavy One Thing" (the
 write-side checks are orthogonal to the layout reshuffle).
 
 ### Security
 
-- **CVE-05: heap region overlap — tok_names write-boundary
+- **the compiler heap guard-page gap: heap region overlap — tok_names write-boundary
   checks** (audit
   [`docs/audit/2026-04-13-security-audit.md`](docs/audit/archived/2026-04-13-security-audit.md)
-  § CVE-05). Audit at slot entry confirmed the bulk of
-  CVE-05's surface was already covered by earlier work:
+  § the compiler heap guard-page gap). Audit at slot entry confirmed the bulk of
+  the compiler heap guard-page gap's surface was already covered by earlier work:
   - `str_data` (2 MB @ 0x21A000) — write-side guarded by
-    CVE-06 (lex.cyr:1440 loop-top check + `_LEX_EMIT_UTF8`
+    the string-data region overflow bug (lex.cyr:1440 loop-top check + `_LEX_EMIT_UTF8`
     internal pessimistic guard at lex.cyr:154).
   - `codebuf` (3 MB @ 0x64A000) — append-side guarded by
     `EB()` on both x86 (emit.cyr:79) and aarch64
@@ -43793,15 +43793,15 @@ write-side checks are orthogonal to the layout reshuffle).
 
 ### Audit follow-up
 
-- `docs/audit/2026-04-13-security-audit.md` § CVE-05
+- `docs/audit/2026-04-13-security-audit.md` § the compiler heap guard-page gap
   unpinned from v5.11.68 (where it had been batched with
   the heap-map reorg at 2026-05-13); marked **shipped
   v5.11.65** with the corrected scope (the actual gap was
   tok_names mangle-path, not full per-region rework — the
-  rest was already covered by CVE-06 + `EB()` + `NPOS_GUARD`).
+  rest was already covered by the string-data region overflow bug + `EB()` + `NPOS_GUARD`).
   Long-term `mmap`-with-guard-pages tracks separately for
   v6.x heap-layout work.
-- `docs/development/roadmap.md` v5.11.68 entry — CVE-05
+- `docs/development/roadmap.md` v5.11.68 entry — the compiler heap guard-page gap
   batching language removed; .68 stays a pure heap-map
   layout reorg.
 
@@ -43826,7 +43826,7 @@ write-side checks are orthogonal to the layout reshuffle).
 ### Memory pins
 
 - [`project_v5_11_65_cve_05_split`] — v6.0-runway slot
-  shape; .65 ships CVE-05 split forward so .68 stays a
+  shape; .65 ships the compiler heap guard-page gap split forward so .68 stays a
   pure heap-map reorg.
 - [`feedback_cross_arch_propagation_mandatory`] — all
   6 main_*.cyr variants treated in same slot (the 4
@@ -46627,7 +46627,7 @@ All three `git mv`'d to `docs/development/proposals/archived/` (new
 subdir mirroring `issues/archived/`). `docs/doc-health.md` refreshed:
 header date 2026-05-13, at-a-glance counts, Tier 1/3/5/6/8 rows,
 ADR-008 forward question (v5.12.x retired), Tier 5 audit footer
-(v5.10.x close-out audit didn't ship standalone — CVE-08 went at .41
+(v5.10.x close-out audit didn't ship standalone — the missing-cld bug went at .41
 instead; next full-audit pin re-targeted to before v6.0.0). Caught
 2 untracked proposals (`pie-support`, `raise-compile-source-cap`),
 1 untracked doc (`lib-tls-contract.md`), 1 new audit
@@ -46861,7 +46861,7 @@ sweep:
 1. `float.cyr:41` peephole — shipped v5.11.40
 2. TS test harness program — shipped v5.11.11
 3. `ESTORESTACKPARM` cx >6 args — folded v5.9.33
-4. CVE-09 jump-target overflow — shipped (warn at jtc==1024)
+4. the jump-target table overflow bug jump-target overflow — shipped (warn at jtc==1024)
 5. LSP `semanticTokens/full` — shipped v5.9.10 baseline +
    extended this slot
 
@@ -46872,17 +46872,17 @@ truth; roadmap.md carries forward-looking work only.
 
 ## [5.11.41] — 2026-05-12
 
-**CVE-08 security hardening (`cld` before `rep movsb`) +
+**the missing-cld bug security hardening (`cld` before `rep movsb`) +
 doc-cleanup: `completed-phases.md` phase-out trim + roadmap
 held-items reconciliation.** Code + docs paired per
 [[feedback_release_needs_code_not_just_docs]] ("I DON'T SHIP
 AIR" — user 2026-05-12). The doc cleanup was the original
-2026-05-12 sweep direction; the CVE-08 fix was found during the
+2026-05-12 sweep direction; the missing-cld bug fix was found during the
 sweep of pending audit items.
 
-### CVE-08 — direction-flag hardening before rep movsb
+### the missing-cld bug — direction-flag hardening before rep movsb
 
-`docs/audit/2026-04-13-security-audit.md` § CVE-08 flagged that
+`docs/audit/2026-04-13-security-audit.md` § the missing-cld bug flagged that
 `rep movsb` / `rep stosb` depend on the direction flag (DF)
 being clear. SysV ABI requires DF=0 at fn entry, but a signal
 handler or foreign inline asm could set DF=1 — `rep movsb` with
@@ -46896,11 +46896,11 @@ in the toolchain — `lib/string.cyr`'s historical `rep movsb` /
 pure-Cyrius byte loops; only the compiler-emitted struct-by-
 value-return path still uses `rep movsb`.
 
-**Audit closure**: CVE-08 was originally pinned for v4.3.x.
+**Audit closure**: the missing-cld bug was originally pinned for v4.3.x.
 38 minor patches later it lands as a self-contained 1-byte
-fix at v5.11.41. Other audit P2/P3 items (CVE-07 PIE,
-CVE-09 jump-table overflow, CVE-10 temp-file race, CVE-11 stack
-canaries, CVE-12 seed trust, CVE-13 release signing) remain —
+fix at v5.11.41. Other audit P2/P3 items (the no-PIE hardening item PIE,
+the jump-target table overflow bug jump-table overflow, CYRIUS-2026-0001 temp-file race, the no-stack-canary hardening item stack
+canaries, the seed trust-root hardening item seed trust, the release-signing hardening item release signing) remain —
 file as future-slot candidates as conditions surface.
 
 ### completed-phases.md trim — 627 → 95 lines
@@ -52645,7 +52645,7 @@ same latent fragility.
 
 - **`docs/development/threat-model.md`** — refreshed (was flagged
   🟠 read-through). Added: fdlopen-helper + libssl trust
-  boundaries; CVE-02 path-traversal mitigation note; stdlib TLS
+  boundaries; the include dot-dot path bug path-traversal mitigation note; stdlib TLS
   surface table (v5.6.37 / v5.10.21 / v5.10.27 / v5.10.34 + 0-RTT
   replay / verify-callback security caveats); reframed "zero
   external dependencies" to "zero external **language**
@@ -61302,7 +61302,7 @@ Quick scan clean:
   LSP child-process spawn pattern; path from CYRIUS_HOME env).
 - `READFILE` / `sys_open` paths all bounded — include resolution
   + `/proc/self/cmdline` (hardcoded).
-- 56 `store8`/`store64` calls in lex.cyr — all CVE-06 cap-
+- 56 `store8`/`store64` calls in lex.cyr — all the string-data region overflow bug cap-
   guarded (str_data 2 MB cap + bounds check at .59 + .61).
 - No new unsafe patterns introduced across the cycle.
 
@@ -89246,7 +89246,7 @@ string"* now build and run.
 
 ### Fixed (bote 4.8.3 blockers — found while attempting to compile bote)
 - **Path traversal rejection too strict for sibling-directory deps**
-  (`src/frontend/lex.cyr`). The CVE-02 guard rejected any `..`
+  (`src/frontend/lex.cyr`). The include dot-dot path bug guard rejected any `..`
   path component, blocking the standard `[deps.X] path = "../foo"`
   pattern (bote uses this for libro/majra). Added
   `CYRIUS_ALLOW_PARENT_INCLUDES=1` env override — strict by default
@@ -90849,7 +90849,7 @@ cycle. Per CLAUDE.md's closeout-pass doctrine.
   libro, daimon, hoosh, agnoshi, bote, kavach) pinned to 4.4.5 ahead
   of this closeout.
 - **Security re-scan**: 1 `sys_system` caller (cyrius deps git clone,
-  CVE-01 validated), all `READFILE` callers in compiler paths with
+  the dep-resolver shell-quoting bug validated), all `READFILE` callers in compiler paths with
   bounded buffers. No new attack surface since the 4.2.x audit.
 - **Doc sync** — `docs/architecture/cyrius.md` refreshed from v4.0.0
   stats (303KB cc3, 8 modules, 36 tests, 6 downstream) to current
@@ -91160,34 +91160,34 @@ cycle. Per CLAUDE.md's closeout-pass doctrine.
 ## [4.2.4] — 2026-04-13
 
 ### Security
-- **CVE-06: String data bounds checking** (`src/frontend/lex.cyr`): lexer
+- **the string-data region overflow bug: String data bounds checking** (`src/frontend/lex.cyr`): lexer
   now checks `spos >= 262144` before every string literal byte write.
   Errors instead of silently corrupting the next heap region.
-- **CVE-09: Jump target table overflow warning** (`src/backend/x86/jump.cyr`):
+- **the jump-target table overflow bug: Jump target table overflow warning** (`src/backend/x86/jump.cyr`):
   warns when table hits 1024 entries. LASE automatically disabled for that
   function (overflow count > 1024 prevents IS_JUMP_TARGET false negatives).
 
 ## [4.2.3] — 2026-04-13
 
 ### Security
-- **CVE-02: Path traversal protection** (`src/frontend/lex.cyr`): `READFILE`
+- **the include dot-dot path bug: Path traversal protection** (`src/frontend/lex.cyr`): `READFILE`
   now rejects paths containing `..` components. Prevents `include "../../../etc/passwd"`.
-- **CVE-03: Include-once table overflow** (`src/frontend/lex.cyr`): was
+- **the include-once table overflow bug: Include-once table overflow** (`src/frontend/lex.cyr`): was
   silent return on overflow (65th file ignored). Now errors with message.
   Prevents silent duplicate symbol corruption.
-- **CVE-04: Dep write path validation** (`programs/cyrius.cyr`): `_dep_copy_file`
+- **the dep modules path-escape bug: Dep write path validation** (`programs/cyrius.cyr`): `_dep_copy_file`
   rejects destinations containing `..`. Prevents crafted cyrius.toml from
   writing outside `lib/`.
 
 ## [4.2.2] — 2026-04-13
 
 ### Security
-- **CVE-01: Git URL sanitization** (`programs/cyrius.cyr`): dep resolver
+- **the dep-resolver shell-quoting bug: Git URL sanitization** (`programs/cyrius.cyr`): dep resolver
   rejects git URLs/tags containing shell metacharacters (`;|`$&()`).
   Prevents command injection via malicious `cyrius.toml`.
-- **CVE-08: Direction flag safety** (`lib/string.cyr`): `cld` before
+- **the missing-cld bug: Direction flag safety** (`lib/string.cyr`): `cld` before
   `rep movsb`/`rep stosb`. Prevents corruption if DF set by signal handler.
-- **CVE-10: Temp file race fix** (`programs/cyrius.cyr`): PID-based temp
+- **CYRIUS-2026-0001: Temp file race fix** (`programs/cyrius.cyr`): PID-based temp
   path (`/tmp/cyrius_cpp_{pid}`) replaces predictable path.
 
 ### Added

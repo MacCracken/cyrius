@@ -23,7 +23,7 @@ _CYRIUS_HOME_DEFAULTED=0
 CYRIUS_HOME="${CYRIUS_HOME:-$HOME/.cyrius}"
 REPO="MacCracken/cyrius"
 VERSION="${CYRIUS_VERSION:-}"
-# CVE-13 (v6.2.31): the release Ed25519 public key — the signature trust anchor.
+# the release-signing hardening item (v6.2.31): the release Ed25519 public key — the signature trust anchor.
 # Canonical copy: keys/cyrius-release.ed25519.pub. install.sh ships from an
 # immutable tag — but since 6.6.20 (SEC-07) `cyriusly install <v>` runs the
 # installer of max(<v>, its installer floor), so THIS copy verifies OLDER releases
@@ -204,7 +204,7 @@ _install_file() {   # _install_file <src> <dst-dir> [mode]
     return 0
 }
 
-# ── 6.7.3 (CVE-103): the SHELL TWIN goes into the store, at versions/<v>/scripts/cyriusly ──
+# ── 6.7.3 (the cyriusly cmdtools CWD-script bug): the SHELL TWIN goes into the store, at versions/<v>/scripts/cyriusly ──
 #
 # The compiled cyriusly (programs/cyriusly.cyr — the x86_64 tarball's bin/cyriusly) delegates
 # `cmdtools` to the shell twin scripts/cyriusly. No store held a copy, so it ran the literal
@@ -281,7 +281,7 @@ _switch_active() {   # _switch_active <version-dir>
     return 0
 }
 
-# CVE-21 (v6.2.30): portable, fail-closed checksum verify. Returns 0 on a
+# the release-integrity hardening item (v6.2.30): portable, fail-closed checksum verify. Returns 0 on a
 # verified match, non-zero on mismatch, and 2 when no SHA-256 tool exists (a
 # box that cannot verify must not silently install). $1 = a sha256sum-format
 # checksum file ("<hex>  <name>"); run from the directory holding the file.
@@ -299,7 +299,7 @@ _verify_checksum() {
     fi
 }
 
-# CVE-13 (v6.2.31): verify the release's sovereign Ed25519 signature over
+# the release-signing hardening item (v6.2.31): verify the release's sovereign Ed25519 signature over
 # SHA256SUMS using a TRUSTED, PRE-EXISTING cyrsign (a prior install on PATH or
 # in $CYRIUS_HOME/bin) — the upgrade path. Deliberately NOT the cyrsign inside
 # the tarball being installed (a malicious tarball verifying itself is circular).
@@ -331,7 +331,7 @@ _verify_signature() {
     return 0
 }
 
-# CVE-21 anti-downgrade floor (v6.3.21): once a signed release has been verified on
+# the release-integrity hardening item anti-downgrade floor (v6.3.21): once a signed release has been verified on
 # this machine, a later install AT OR ABOVE that version MUST also be signed — an
 # absent/stripped SHA256SUMS.sig at/above the floor is a downgrade attack (v6.2.31
 # signs releases, but the pre-floor code accepted an unsigned same-or-newer version).
@@ -357,7 +357,7 @@ _signed_floor_pin() {
 
 # ⛔ 6.6.20 (SEC-07) — THE FIRST SIGNED RELEASE IS A CONSTANT, NOT A TOFU GUESS. Every release
 # from 6.2.31 on publishes SHA256SUMS + SHA256SUMS.sig: release.yml has refused to publish an
-# unsigned release since that tag (CVE-13), and all of them carry the pair. So once a trusted
+# unsigned release since that tag (the release-signing hardening item), and all of them carry the pair. So once a trusted
 # verifier is on this machine, a release at or above 6.2.31 whose signature cannot be fetched is a
 # STRIPPED signature, never an unsigned release. The TOFU floor below could not say that: it only
 # guarded versions at/above the highest one verified HERE, so with signed-since = 6.6.19 a tampered
@@ -418,7 +418,7 @@ _signed_floor_enforce() {
         if [ "${CYRIUS_ALLOW_UNSIGNED:-0}" = "1" ]; then
             info "anti-downgrade: $VERSION >= signed floor $_floor but UNSIGNED — allowed via CYRIUS_ALLOW_UNSIGNED=1 (NOT recommended)"
         else
-            err "anti-downgrade (CVE-21): refusing UNSIGNED $VERSION — a signed release ($_floor) was previously verified on this machine, so an absent/stripped signature at or above that version is a downgrade attack. Set CYRIUS_ALLOW_UNSIGNED=1 only if you genuinely trust this unsigned build."
+            err "anti-downgrade (the release-integrity hardening item): refusing UNSIGNED $VERSION — a signed release ($_floor) was previously verified on this machine, so an absent/stripped signature at or above that version is a downgrade attack. Set CYRIUS_ALLOW_UNSIGNED=1 only if you genuinely trust this unsigned build."
         fi
     fi
 }
@@ -450,7 +450,7 @@ esac
 if [ "$REFRESH_ONLY" -eq 1 ]; then
     printf "\n${BOLD}Refreshing install snapshot for %s${RESET}\n" "$VERSION"
     _released_slot_guard    # v6.6.4: exits 1 before anything is written (see the contract above)
-    _twin_required scripts/cyriusly "$(_parse_release_array bins)"   # 6.7.3: likewise (CVE-103)
+    _twin_required scripts/cyriusly "$(_parse_release_array bins)"   # 6.7.3: likewise (the cyriusly cmdtools CWD-script bug)
     mkdir -p "$CYRIUS_HOME/versions/$VERSION/bin"
     mkdir -p "$CYRIUS_HOME/versions/$VERSION/lib"
 
@@ -746,7 +746,7 @@ if [ "$REFRESH_ONLY" -eq 1 ]; then
             _refreshed=$((_refreshed + 1))
         fi
     done
-    # 6.7.3 (CVE-103): the shell twin the compiled cyriusly's `cmdtools` runs (see _install_twin)
+    # 6.7.3 (the cyriusly cmdtools CWD-script bug): the shell twin the compiled cyriusly's `cmdtools` runs (see _install_twin)
     if _install_twin scripts/cyriusly "$_R_BINS"; then _refreshed=$((_refreshed + 1)); fi
 
     # Stdlib refresh (follow symlinks so dep content gets dereferenced).
@@ -880,7 +880,7 @@ installed=0
 _got_tarball=0
 if [ -n "${CYRIUS_INSTALL_TARBALL:-}" ] && [ -f "$CYRIUS_INSTALL_TARBALL" ]; then
     info "installing from local tarball: $CYRIUS_INSTALL_TARBALL"
-    # CVE-21 (v6.2.30): if a .sha256 sidecar sits next to the explicit local
+    # the release-integrity hardening item (v6.2.30): if a .sha256 sidecar sits next to the explicit local
     # tarball, verify it fail-closed; absent a sidecar this trusted offline
     # hook proceeds (it points at a file the operator built/placed themselves).
     if [ -f "${CYRIUS_INSTALL_TARBALL}.sha256" ]; then
@@ -905,7 +905,7 @@ if [ -n "${CYRIUS_INSTALL_TARBALL:-}" ] && [ -f "$CYRIUS_INSTALL_TARBALL" ]; the
 else
     info "downloading Cyrius ${VERSION}..."
     if curl -sSfL "${DOWNLOAD_URL}/${TARBALL}" -o "$TMPDIR/$TARBALL" 2>/dev/null; then
-        # CVE-21 (v6.2.30): the published .sha256 is REQUIRED and the match is
+        # the release-integrity hardening item (v6.2.30): the published .sha256 is REQUIRED and the match is
         # fail-closed. Pre-fix this fetched the sidecar "if available" and on a
         # mismatch printed "continuing anyway" then installed the tarball
         # regardless — the advisory-integrity hole the sovereignty stance exists
@@ -926,7 +926,7 @@ else
                 err "checksum mismatch for ${TARBALL} — aborting (corrupted or tampered download)."
             fi
         fi
-        # CVE-13 (v6.2.31): if a trusted prior cyrsign is present (upgrade path),
+        # the release-signing hardening item (v6.2.31): if a trusted prior cyrsign is present (upgrade path),
         # additionally verify the release Ed25519 signature; fail-closed on a bad
         # signature. First install has no prior verifier → the HTTPS + .sha256
         # above is the floor (TOFU); the signature guards every later upgrade and
@@ -949,7 +949,7 @@ else
                     info "signature check skipped (CYRIUS_ALLOW_UNSIGNED=1; integrity is HTTPS + SHA256 only)"
                 fi
             else
-                # No trusted verifier on this machine (first install). CVE-21 anti-downgrade: an
+                # No trusted verifier on this machine (first install). the release-integrity hardening item anti-downgrade: an
                 # unsigned release at/above a previously-verified signed floor is still refused
                 # (fail-closed) unless CYRIUS_ALLOW_UNSIGNED=1.
                 _signed_floor_enforce
@@ -1028,7 +1028,7 @@ if [ "$_got_tarball" -eq 1 ]; then
         info "cyrius-init templates installed"
     fi
 
-    # 6.7.3 (CVE-103): the shell twin (see _install_twin). Lenient here — a tarball cut before
+    # 6.7.3 (the cyriusly cmdtools CWD-script bug): the shell twin (see _install_twin). Lenient here — a tarball cut before
     # 6.7.3 has no scripts/, and every 6.7.3+ builder stages one.
     if _install_twin "$EXTRACTED/scripts/cyriusly" ""; then info "cyriusly shell twin installed"; fi
 
@@ -1060,7 +1060,7 @@ if [ "$installed" -eq 0 ]; then
     _signed_floor_enforce
     warn "no prebuilt release found, bootstrapping from source..."
     cd "$TMPDIR"
-    # CVE-21 (v6.2.30): clone the immutable tag ONLY. Pre-fix, a failed tag
+    # the release-integrity hardening item (v6.2.30): clone the immutable tag ONLY. Pre-fix, a failed tag
     # clone silently fell back to `git clone --depth 1` (the default branch /
     # untrusted HEAD), so a missing/renamed/force-pushed tag installed `main`
     # instead of the requested release. A tag-clone failure is now fatal.
@@ -1076,7 +1076,7 @@ if [ "$installed" -eq 0 ]; then
     # in a world-writable directory holding a COMPILER this script then ran: another local user
     # could create them first (the sticky bit stops a delete, not a create) and the `>` would
     # follow their symlink, or they could replace the binary between the two runs. Two installs
-    # at once also clobbered each other. Same defect as CVE-44 in scripts/ci.sh. CHANGELOG [6.6.6]
+    # at once also clobbered each other. Same defect as CYRIUS-2026-0007 in scripts/ci.sh. CHANGELOG [6.6.6]
     _sh1="$TMPDIR/cc5_verify"
     _sh2="$TMPDIR/cc5_verify2"
     cat src/main.cyr | ./build/cycc > "$_sh1"
@@ -1175,7 +1175,7 @@ if [ "$installed" -eq 0 ]; then
             _install_file "scripts/$script" "$CYRIUS_HOME/versions/$VERSION/bin" 755
         fi
     done
-    # 6.7.3 (CVE-103): the shell twin the compiled cyriusly's `cmdtools` runs (see _install_twin)
+    # 6.7.3 (the cyriusly cmdtools CWD-script bug): the shell twin the compiled cyriusly's `cmdtools` runs (see _install_twin)
     if _install_twin scripts/cyriusly "$_BINS"; then info "cyriusly shell twin installed"; fi
 
     # Copy stdlib

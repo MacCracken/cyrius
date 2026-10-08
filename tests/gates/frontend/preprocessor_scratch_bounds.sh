@@ -1,9 +1,9 @@
 #!/bin/sh
-# preprocessor_scratch_bounds.sh — v6.5.45 (CVE-39, CVE-40)
+# preprocessor_scratch_bounds.sh — v6.5.45 (the include-length ifdef bug, the define-body copy overflow bug)
 #
 # ⛔ TWO SOURCE-FED WRITE LOOPS WROTE PAST THEIR SCRATCH REGIONS, BOTH SILENTLY.
 #
-# CVE-39 — include/#ref filename capture. The heap map declared `0x190400 include_fname [4096]`
+# the include-length ifdef bug — include/#ref filename capture. The heap map declared `0x190400 include_fname [4096]`
 # and all three capture loops guarded at 4095 FROM THAT NUMBER. But two live things sit inside
 # that declared span: PP_EXPAND's output-cursor return slot at S+0x190700 (768 B in) and the
 # `#ifdef` FEATURE-FLAG TABLE at S+0x190800 (1024 B in). MEASURED at v6.5.45 with a pre-fix
@@ -14,7 +14,7 @@
 # table alone and missing the cursor slot 256 bytes below it. That is why this gate derives the
 # bound from the live writes rather than from any comment.
 #
-# CVE-40 — `#define` body copy into the macro text pool at S+0x193000. The loop ran to
+# the define-body copy overflow bug — `#define` body copy into the macro text pool at S+0x193000. The loop ran to
 # end-of-line with no check on the length OR on the ACCUMULATING write position, so a long body
 # — or enough ordinary ones in sequence — walked out of the pool into live compiler state.
 #
@@ -44,10 +44,10 @@ GUARDS=$(grep -oE '\(r?fi >= [0-9]+\) \{ PP_FNAME_TOO_LONG' "$PP" | grep -oE '[0
 [ "$GUARDS" -lt "$USABLE" ] \
     || fail "filename capture is bounded at $GUARDS but only $USABLE bytes are free above 0x190400 (next live writer at $(printf '0x%X' $NEXT)) — a long path corrupts it silently"
 NG=$(grep -cE '\(r?fi >= [0-9]+\) \{ PP_FNAME_TOO_LONG' "$PP")
-[ "$NG" -eq 3 ] || fail "expected 3 guarded filename capture loops, found $NG — CVE-32 bounded three and a fourth would be unguarded"
+[ "$NG" -eq 3 ] || fail "expected 3 guarded filename capture loops, found $NG — the include filename-capture overflow bug bounded three and a fourth would be unguarded"
 
 # ── axis 2: the macro body copy is bounded, and on the ACCUMULATING position ──────────
-grep -q 'PP_MACRO_TEXT_FULL' "$PP" || fail "the #define body copy has no overflow guard (CVE-40)"
+grep -q 'PP_MACRO_TEXT_FULL' "$PP" || fail "the #define body copy has no overflow guard (the define-body copy overflow bug)"
 sed -n '/var mdst = S + 0x193000/,/^ *}/p' "$PP" | grep -q '_pp_macro_text_pos + mlen + 1 >= mcap' \
     || fail "the #define body guard does not test the ACCUMULATING write position — bounding this macro's length alone still overruns on the sixteenth #define"
 
@@ -58,7 +58,7 @@ grep -qE '^#   0x190400  include_fname \[768\]' "$MAIN" \
 grep -q '0x190700  pp_expand_outpos' "$MAIN" \
     || fail "the heap map does not declare the PP_EXPAND cursor slot at 0x190700 — the next reader re-derives the 768 the hard way, or gets it wrong"
 
-# ── axis 4 (v6.5.47, CVE-41): every source-fed NAME capture in the `#derive` construct is
+# ── axis 4 (v6.5.47, the derive name-capture overflow bug): every source-fed NAME capture in the `#derive` construct is
 # bounded, and they all agree. Three sit in one function — struct name, field name, type name —
 # and only the TYPE one had a guard. Nothing compared them, so the asymmetry survived inside a
 # single construct. ⚠ The ceiling is 31, not the 64 the `sname` scratch declares, because both
@@ -77,16 +77,16 @@ NG4=$(printf '%s\n' "$DERIVE_GUARDS" | grep -c .)
     || fail "the #derive name captures disagree on their bound ($(printf '%s' "$DERIVE_GUARDS" | tr '\n' ' ')) — a disagreement means one of them is the hole"
 for v in sni _pp_dlen; do
     grep -qE "\($v >= [0-9]+\)" "$PP" \
-        || fail "the #derive capture bounded by \`$v\` has no guard — it writes source text into a fixed-stride slot with no limit (CVE-41)"
+        || fail "the #derive capture bounded by \`$v\` has no guard — it writes source text into a fixed-stride slot with no limit (the derive name-capture overflow bug)"
 done
 [ "$DERIVE_GUARDS" -lt 32 ] \
     || fail "the #derive name guards are $DERIVE_GUARDS, but the names are copied at a 32-byte stride — the bound must leave room for the NUL"
 # The field-name and type-name slots are filled by the bounded appender, and by nothing else
 # from source: every other store into them writes a literal terminator.
 grep -q 'PP_DAPPEND_ID(base, p, end, S + 0x1FC000 + fc \* 32' "$PP" \
-    || fail "the #derive field-name capture no longer goes through PP_DAPPEND_ID / PP_DPUT — find its bound (CVE-41)"
+    || fail "the #derive field-name capture no longer goes through PP_DAPPEND_ID / PP_DPUT — find its bound (the derive name-capture overflow bug)"
 grep -q 'PP_DTYPE(base, p + 1, end, S + 0x1FE000 + fc \* 32)' "$PP" \
-    || fail "the #derive type-name capture no longer goes through PP_DTYPE / PP_DPUT — find its bound (CVE-41)"
+    || fail "the #derive type-name capture no longer goes through PP_DTYPE / PP_DPUT — find its bound (the derive name-capture overflow bug)"
 RAW=$(sed 's/#.*//' "$PP" | grep -E 'store8\(S \+ 0x1F[CE]000 \+' | grep -vE ', 0\);' || true)
 [ -z "$RAW" ] \
     || fail "a store into the #derive field/type slots bypasses the bounded appender: $RAW"

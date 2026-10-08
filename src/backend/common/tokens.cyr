@@ -36,8 +36,9 @@ fn TOKVAL(S, i): i64 { return L64(S + 0xAC00000 + i * 8); }
 # top-level constructs, **40 crashed or hung**, and `fn`, `var x`, `async` (2-5 bytes)
 # SIGSEGV'd with **ZERO bytes of stderr** — no error line, no diagnostic, nothing.
 # That is a bare `cat file.cyr | cycc` on a clipped file, i.e. reachable from untrusted
-# source, which is the CVE-32/33/34 class. See docs/audit/2026-08-11-security-audit.md
-# (CVE-39) and tests/gates/diagnostics/truncated_input_terminates.sh.
+# source, which is the include filename-capture overflow bug/the READFILE path-composition overflow bug/the long-HOME
+# overflow bug class. See docs/audit/2026-08-11-security-audit.md
+# (the include-length ifdef bug) and tests/gates/diagnostics/truncated_input_terminates.sh.
 #
 # So the clamp is now UNCONDITIONAL. The cost objection in the old comment does not
 # apply to it: it was written about clamping inside TOKTYP, which would tax the

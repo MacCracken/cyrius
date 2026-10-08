@@ -1,4 +1,4 @@
-# ws_server_recv_frame_exact.tcyr — 6.6.10 (the CVE-53 sweep): lib/ws_server.cyr's frame
+# ws_server_recv_frame_exact.tcyr — 6.6.10 (the CYRIUS-2026-0011 sweep): lib/ws_server.cyr's frame
 # reader reads every part EXACTLY and refuses a 64-bit length with its top bits set.
 #
 # The server twin of ws_recv_frame_short_reads.tcyr (a separate file because lib/ws.cyr and

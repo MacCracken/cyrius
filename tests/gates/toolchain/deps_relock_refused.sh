@@ -8,7 +8,7 @@
 # lock existed to catch exactly this and was instead updated to agree with it: Phase 1
 # copied from `versions/<pin>/lib` unconditionally and cmd_deps_lock re-hashed the disk with
 # O_TRUNC, never reading the lock it inherited. The git-dep half has had the check since
-# CVE-21 (v6.2.30) — a repointed tag is refused against the `commit\t` line — this is the
+# the release-integrity hardening item (v6.2.30) — a repointed tag is refused against the `commit\t` line — this is the
 # stdlib half, keyed on the pin: the lock now carries a `cyrius\t<pin>` trailer, and a leaf
 # whose snapshot hash differs from the locked one under the same pin is refused by name.
 # `cyrius deps --relock` is the explicit accept; a pin bump re-locks silently.
@@ -22,7 +22,7 @@
 # which makes `build` rewrite an EXISTING lock on every run, as the old resolver did.
 #
 # Two more defects the review found ride along: bare `cyrius deps --lock` re-hashed lib/ with
-# `_dep_commit_lines == 0` and DROPPED every CVE-21 commit pin (A6); a CRLF checkout of the
+# `_dep_commit_lines == 0` and DROPPED every the release-integrity hardening item commit pin (A6); a CRLF checkout of the
 # lock silently turned the guard OFF (A7 — it now fails closed; since 6.6.20 `--verify` and
 # the commit-pin lookup read a CRLF lock too, see deps_commit_pins_kept.sh).
 #
@@ -212,7 +212,7 @@ if [ "$rc" -ne 0 ] && grep -q 'cannot hash' "$W/a5b.out" && cmp -s "$P/cyrius.lo
 else bad "A5b (rc=$rc): $(grep -m1 -i 'error\|hash' "$W/a5b.out")"; fi
 ( cd "$P" && "$CY" deps --relock > /dev/null 2>&1 ) || true
 
-# ── A6: bare `deps --lock` KEEPS the CVE-21 commit pins ──────────────────────────────────
+# ── A6: bare `deps --lock` KEEPS the release-integrity hardening item commit pins ──────────────────────────────────
 before_c="$(grep -c '^commit	' "$P/cyrius.lock" || true)"
 [ "$before_c" -ge 1 ] || bad "A6 setup: no commit pin in the lock ($before_c)"
 rc=0; if ( cd "$P" && "$CY" deps --lock > "$W/a6.out" 2>&1 ); then rc=0; else rc=$?; fi

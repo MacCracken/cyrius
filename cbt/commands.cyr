@@ -1182,11 +1182,11 @@ fn cmd_self(): i64 {
         _err_ctx("self-host: compiler not found", _cc);
         return 1;
     }
-    # ⛔ 6.6.9 bite 10 (CVE-49) — NATIVE, IN THE PRIVATE TEMP DIR. The POSIX arm used to
+    # ⛔ 6.6.9 bite 10 (CYRIUS-2026-0009) — NATIVE, IN THE PRIVATE TEMP DIR. The POSIX arm used to
     # fork `/bin/sh -c` over a script that staged all three compilers at PREDICTABLE SHARED
     # names — `/tmp/cyr_cc5_$$`, `/tmp/cyr_ccr_$$`, `/tmp/cyr_cc4_$$` — writing them with `>`
     # and `cp` (no O_EXCL, following a pre-planted symlink) and then EXECUTING `$ccr`. That
-    # is the CVE-35/CVE-36 class the 0700 exclusive-mkdir directory closed everywhere else
+    # is the CYRIUS-2026-0005/CYRIUS-2026-0006 class the 0700 exclusive-mkdir directory closed everywhere else
     # at v6.4.81; this verb predated it and was never moved. Linux's protected_symlinks /
     # protected_regular blunt it; macOS has no equivalent. Now the two steps and the
     # verdict go through the SAME helpers `cmd_soak` uses — `_self_host_step` (raw pipe,
@@ -2372,7 +2372,7 @@ fn _cross_os_selfhost(): i64 {
     #
     # ⛔ v6.6.6 (bite 26a) — SHIP THE .sha256 SIDECAR, AND REQUIRE IT ON THE FAR SIDE.
     # This arm scp'd the tarball alone, and install.sh's local-tarball hook verifies a
-    # checksum only IF a sidecar sits beside it (scripts/install.sh, the CVE-21 branch).
+    # checksum only IF a sidecar sits beside it (scripts/install.sh, the release-integrity hardening item branch).
     # So the pillar that exists to prove "the published artifact installs" had never once
     # verified that the artifact arrived intact — a truncated scp or a tampered file on the
     # far side would have installed, and the gate would have gone green over it. The
@@ -3483,7 +3483,7 @@ fn _distlib_vec_has_n(v, n, name): i64 {
 # own build — and only then against the entry's directory (`#@incdir`, lex.cyr READFILE), so the
 # entry lives in `dist/.dlverify-<pid>/` beside a copy of the PINNED snapshot's lib/: a leaf the
 # project has not vendored (the one the loop just re-added) resolves there, from the pin.
-# (Under the project, because CVE-16 refuses absolute includes and cycc an absolute `#@incdir`.)
+# (Under the project, because the absolute-include path bug refuses absolute includes and cycc an absolute `#@incdir`.)
 # ⚠ A consequence, stated: a need of a recorded leaf that a named dep's module already brings
 # by its own include (bote-core's leaf bayan uses file_open; libro's bundle includes io) is met
 # in the unit and not recorded — as it is met in every consumer's build, through that dep.
@@ -4172,7 +4172,7 @@ fn _distlib_verify_rounds(leaves, out_path, named_deps, root, m): i64 {
         round = round + 1;
         # ⛔ NEVER AN ABSOLUTE `include`. An entry built from `include "<abs path>"` is
         # rejected outright — "absolute include path rejected ... set
-        # CYRIUS_ALLOW_ABSOLUTE_INCLUDES=1 to permit" — which is the CVE-16 hardening and
+        # CYRIUS_ALLOW_ABSOLUTE_INCLUDES=1 to permit" — which is the absolute-include path bug hardening and
         # must not be weakened for a convenience check. Measured: the first cut of this loop
         # captured 227 bytes of stderr that were entirely those rejections, so it saw zero
         # undefined symbols and silently re-added nothing while looking like it worked. The
@@ -5218,7 +5218,8 @@ fn _distlib_mentions(buf, n, name): i64 {
 }
 
 fn _distlib_modular_emit(pkg_name, modules, mbuf, mlen): i64 {
-    if (_distlib_bad_pkg_name(pkg_name) == 1) { return 1; }   # CVE-32: producer-side pkg name (dist/<pkg>/)
+    # the include filename-capture overflow bug: producer-side pkg name (dist/<pkg>/)
+    if (_distlib_bad_pkg_name(pkg_name) == 1) { return 1; }
     sys_mkdir("dist", 0x1ED);
     var dir_sb = str_builder_new();
     str_builder_add_cstr(dir_sb, "dist/");
@@ -6185,7 +6186,7 @@ fn cmd_distlib(profile): i64 {
     var dl_errf = _cbt_tmpfile("distlib_err");
     var dl_retired = 0;
     var dl_cap = 0;
-    # ⛔ 6.6.20 (CVE-98): the entry is the PROJECT's `.distchk<pid>.cyr`, and a name that exists
+    # ⛔ 6.6.20 (the committed-symlink write bug): the entry is the PROJECT's `.distchk<pid>.cyr`, and a name that exists
     # is removed, never followed — `file_write_all` (O_TRUNC) wrote through a committed link
     # there, so a checkout planting `.distchk<N>.cyr -> <any path>` for a range of pids (a CI
     # container's are small and steady) had `cyrius distlib` create or truncate that file.
@@ -6374,7 +6375,8 @@ fn _mem_starts(p, lit, n): i64 {
 # ./VERSION. Publish read ./VERSION alone, so once distlib stamped the manifest's, a project whose
 # two disagreed tagged vVERSION over a bundle saying `# Version: <manifest>`. Two sources that
 # disagree are refused, not settled by precedence — one of them is stale and only the author knows
-# which — and before anything is generated. ⛔ CVE-92: the version is joined into a `git tag`
+# which — and before anything is generated. ⛔ the cyrius-publish VERSION quoting bug: the version is joined into a `git
+# tag`
 # shell line, and a ./VERSION holding `1.0;touch PWNED` RAN `touch` — so a version holding a byte
 # outside a tag name's charset is refused rather than run. Returns the version, or 0 after naming
 # the refusal.

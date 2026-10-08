@@ -177,7 +177,7 @@ write_broken 'fn a() { var s = "unterminated;\n    return 0; }\nfn main() { retu
 write_broken 'fn a() { return (1 + 2; }\nfn main() { return 0; }\nvar r = main();\n'
 write_broken 'fn a(; ) { return 0; }\nfn main() { return 0; }\nvar r = main();\n'
 write_broken 'fn main() { return 0; }\nvar r = main()\n}}} ]]] (((\n'
-# 6.6.10 (CVE-52): a stray `@` was dropped by the LEXER, so `return @@@;` compiled at rc 0
+# 6.6.10 (the dropped-at-sign lexer bug): a stray `@` was dropped by the LEXER, so `return @@@;` compiled at rc 0
 # and lint printed `0 warnings` over it. Refused by name now, like `$`.
 write_broken 'fn a() { return @@@; }\nfn main() { return a(); }\nvar r = main();\n'
 write_broken 'fn a() { var y = 5 @- 3; return y; }\nfn main() { return a(); }\nvar r = main();\n'

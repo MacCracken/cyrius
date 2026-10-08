@@ -137,7 +137,7 @@ fn gettid(): i64 { return _thr_self(); }
 # The HANDLE a caller holds IS this pointer, as on arm64, so join / is_done are shared below.
 var _THR_CTL = 48;
 var _THR_STACK = 2097152;            # lib/thread.cyr THREAD_STACK_SIZE parity (2 MiB)
-var _THR_GUARD = 4096;               # one PROT_NONE page below the stack (CVE-29 parity)
+var _THR_GUARD = 4096;               # one PROT_NONE page below the stack (the thread guard-page hardening item parity)
 var _THR_HDR = 1040;                 # TLS header: word 0 + TLOCAL_MAX_SLOTS (128) slots, 16-rounded
 var _thr_registered = 0;
 

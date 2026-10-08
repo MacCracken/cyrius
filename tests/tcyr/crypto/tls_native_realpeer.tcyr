@@ -62,7 +62,7 @@ if (sys_connect(fd, &sa, 16) != 0) {
         var req = "GET / HTTP/1.1\r\nHost: one.one.one.one\r\nConnection: close\r\n\r\n";
         tls_write(ctx, req, strlen(req));
         var resp = alloc(16384);
-        # CVE-30 (v6.1.36): tls_read now drains the server's post-handshake
+        # the TLS post-handshake false-EOF bug (v6.1.36): tls_read now drains the server's post-handshake
         # NewSessionTicket internally, so the FIRST read returns application
         # data. This test used to loop up to 8 times, treating each NST's
         # 0-return as a non-EOF — that caller-side workaround is gone.

@@ -1,14 +1,14 @@
 #!/bin/sh
-# cbt_no_shared_tmp_paths.sh — 6.6.9 bite 10, CVE-49. The CLI stages nothing at a shared
+# cbt_no_shared_tmp_paths.sh — 6.6.9 bite 10, CYRIUS-2026-0009. The CLI stages nothing at a shared
 # `/tmp/<name>`, and `cyrius self` stages its compilers in the private temp dir and leaves
 # nothing behind.
 #
-# ⛔ CVE-49 (cbt/commands.cyr, as of 6.6.8). `cyrius self`'s POSIX arm forked `/bin/sh -c`
+# ⛔ CYRIUS-2026-0009 (cbt/commands.cyr, as of 6.6.8). `cyrius self`'s POSIX arm forked `/bin/sh -c`
 # over a script that staged THREE compilers at predictable shared names —
 #     cycc=/tmp/cyr_cc5_$$  ccr=/tmp/cyr_ccr_$$  cc4=/tmp/cyr_cc4_$$
 # — wrote them with `>` and `cp` (no O_EXCL; a pre-planted symlink is followed) and then
 # EXECUTED `$ccr`. PIDs are predictable, so another local user who creates those names first
-# owns the file the verb runs. That is the CVE-35/CVE-36 class: v6.4.81 moved every other cbt
+# owns the file the verb runs. That is the CYRIUS-2026-0005/CYRIUS-2026-0006 class: v6.4.81 moved every other cbt
 # temp into `_cbt_tmpdir()`'s 0700 exclusive-mkdir directory, and this verb predated it.
 # Linux's protected_symlinks/protected_regular blunt it; macOS (ecb, ach) has no equivalent.
 #

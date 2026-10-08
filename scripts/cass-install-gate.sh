@@ -40,7 +40,7 @@ trap _cig_cleanup EXIT
 
 sh scripts/build-windows-tarball.sh "$T/windist" >/dev/null 2>&1
 # ── v6.6.6: SHIP THE CHECKSUM SIDECAR, THE WAY A REAL RELEASE DOES ──────────────────
-# install.ps1 has been fail-closed on the tarball hash since CVE-21 (v6.2.30): with no
+# install.ps1 has been fail-closed on the tarball hash since the release-integrity hardening item (v6.2.30): with no
 # -Sha256 and no "<tarball>.sha256" beside it, it throws "refusing to install unverified
 # tarball" BEFORE it extracts anything. This gate staged the tarball ALONE, so it was RED
 # on its own terms — every run died at the hash check, never reached the install, and the

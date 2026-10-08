@@ -1,4 +1,4 @@
-# Native TLS chain-verification authn gaps — CVE-17/18
+# Native TLS chain-verification authn gaps — CYRIUS-2026-0002/CYRIUS-2026-0003
 
 **Discovered:** 2026-06-10 during the deep-dive review ([`docs/audit/2026-06-10-deep-dive-review.md`](../../../audit/2026-06-10-deep-dive-review.md))
 **Severity:** High
@@ -6,7 +6,7 @@
 the **default** backend since v6.1.21 (libssl is opt-out via `-D CYRIUS_TLS_LIBSSL`)
 and is slated to go public at ~v7, so these are sovereignty + public-release gates.
 
-## CVE-17 — chain validation ignores pathLen / EKU / keyUsage / revocation (P1)
+## CYRIUS-2026-0002 — chain validation ignores pathLen / EKU / keyUsage / revocation (P1)
 
 `tls_native_client_verify_chain`'s path-build loop (`tls_native.cyr:4829-4863`)
 tests only `x509_cert_is_ca` + `_x509_in_window` + `_x509_verify_link` per link.
@@ -32,7 +32,7 @@ for pathLen/keyUsage is already parsed; only EKU needs new code. Decide a
 revocation policy (OCSP-stapling consumption, or a documented short-lived-cert
 posture) before v7.
 
-## CVE-18 — CONNECTED-but-UNVERIFIED context by default; hostname skipped when host==0 (P1)
+## CYRIUS-2026-0003 — CONNECTED-but-UNVERIFIED context by default; hostname skipped when host==0 (P1)
 
 `tls_native_connect` (`tls_native.cyr:5058-5101`) completes the handshake and
 returns `TLS_OK` with **no** chain or hostname verification. A direct consumer

@@ -617,7 +617,8 @@ fn _tc_must_divert(S, cfi, ti_after): i64 {
 # What THIS fn must still do after the callee returns, or what its frame must outlive.
 fn _tc_frame_divert(S, cfi): i64 {
     # 6.6.7 — a fn with a `defer` or `secret var` ANYWHERE in its body: the jmp skipped the walker,
-    # so the block never ran and a secret was never zeroised (CVE-47). The WHOLE body, prescanned
+    # so the block never ran and a secret was never zeroised (the tail-call secret-var wipe gap). The WHOLE body,
+    # prescanned
     # at its `{` (`_body_has_defer`) — a registered-so-far count misses a loop whose tail return
     # lexically precedes the defer. Such a fn never tail-calls; a deep self-recursion needs a loop.
     if (_cur_fn_has_defer == 1) { return 1; }
@@ -7596,7 +7597,7 @@ fn SKIP_GENERICS(S): i64 {
 # `>>`, seen from `Vec`), which the caller owes to `_consume_gt` (`_ta_pending_gt`).
 # v6.5.19: EOF guard. `fn f<`, `struct S<`, `enum E<` truncated here span a loop whose only exit
 # was `>`; this skipper emits no diagnostic, so `_had_error` stayed 0 and the v6.4.62 watchdog
-# never ticked — cycc HUNG outright. See _wd_eof_tick (src/common/util.cyr) and CVE-39.
+# never ticked — cycc HUNG outright. See _wd_eof_tick (src/common/util.cyr) and the include-length ifdef bug.
 fn _skip_targ_list(S): i64 {
     var d = 0;
     var go = 1;
@@ -10088,7 +10089,7 @@ fn _warn_large_static(totvar, dvb, dcn): i64 {
 # This is the whole answer to "how does the pass-1 mangle coexist with pass 2's", which
 # the filing called a design decision on the name pool: FINDFN compares by STRING, so a
 # string minted in either pass serves both, and pool GROWTH is unchanged because the
-# second mint is discarded. Lifted verbatim out of PARSE_FN_DEF (v5.11.65 CVE-05 length
+# second mint is discarded. Lifted verbatim out of PARSE_FN_DEF (v5.11.65 the compiler heap guard-page gap length
 # walk included) so there is one mangler, not two. CHANGELOG [6.6.5]
 fn _mod_name_intern(S, mmod, noff): i64 {
     if (mmod == 0) { return noff; }
@@ -10433,8 +10434,8 @@ fn _tl_use(S): i64 {
 }
 
 # Append the mangled `mod_fn` to tok_names (NPOS is stable after lexing) and record the alias
-# in the use table. v5.11.65 (CVE-05): bounded by the actual source lengths.
-# 6.6.20 (CVE-81): use_from / use_to hold 64 entries each and ABUT (use_from[64] is use_to[0],
+# in the use table. v5.11.65 (the compiler heap guard-page gap): bounded by the actual source lengths.
+# 6.6.20 (the use-alias table overflow bug): use_from / use_to hold 64 entries each and ABUT (use_from[64] is use_to[0],
 # use_to[64] the count), so the 65th alias silently re-bound alias #1 and later ones walked the
 # heap up to gvar_cnt. Refuse BEFORE any store; ERR_MSG does not exit, so the return is the stop.
 fn _tl_use_alias(S, umod, ufn): i64 {
@@ -10856,7 +10857,7 @@ fn _stkp_flush(S, nint): i64 {
     return 0;
 }
 
-# v6.5.19 (CVE-40): the fn-definition tier. `fn f() { ` repeated 514 times SIGSEGV'd —
+# v6.5.19 (the define-body copy overflow bug): the fn-definition tier. `fn f() { ` repeated 514 times SIGSEGV'd —
 # the cheapest of the six vectors at ~16 KB of stack per level, and the one neither the
 # PARSE_STMT nor the PEXPR bound caught, because a nested definition recursed through
 # THIS function rather than the statement wrapper (a top-level `fn` is dispatched from

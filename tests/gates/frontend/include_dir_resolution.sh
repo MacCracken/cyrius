@@ -13,7 +13,7 @@
 #
 # ⛔ WHY HALF THIS FILE IS ATTACKS. In-band means a HOSTILE .cyr can write the
 # marker itself. If an absolute directory were honoured, `#@incdir /etc` +
-# `include "hostname"` would rebuild precisely the read-anything primitive CVE-16
+# `include "hostname"` would rebuild precisely the read-anything primitive the absolute-include path bug
 # was filed to remove — the feature would have quietly reopened a closed CVE. So
 # the guard (relative, `..`-free, byte 0 only) is the load-bearing part, and axes
 # 4-8 attack it directly rather than trusting that it was implemented.
@@ -93,7 +93,7 @@ OUT=$(mktemp -d) && [ -d "$OUT" ] || { echo "FAIL: include_dir_resolution: mktem
 trap 'rm -rf "$D" "$OUT"' EXIT
 echo 'fn secret_value(): i64 { return 55; }' > "$OUT/secret.cyr"
 
-echo "axis 4 — an absolute #@incdir is refused (CVE-16 must stay closed):"
+echo "axis 4 — an absolute #@incdir is refused (the absolute-include path bug must stay closed):"
 check "absolute directory rejected (55 = escaped)" 90 "$(run "#@incdir $OUT
 include \"secret.cyr\"
 fn main(): i64 { return secret_value(); }
@@ -102,7 +102,7 @@ syscall(60, r);")"
 
 # The same file reached by a RELATIVE path that climbs out — $D and $OUT are both
 # mktemp dirs under the same parent, so `../<basename>` is a genuine escape.
-echo "axis 5 — a .. component in #@incdir is refused (CVE-02 must stay closed):"
+echo "axis 5 — a .. component in #@incdir is refused (the include dot-dot path bug must stay closed):"
 check "leading .. rejected (55 = escaped)" 90 "$(run "#@incdir ../$(basename "$OUT")
 include \"secret.cyr\"
 fn main(): i64 { return secret_value(); }
@@ -130,7 +130,7 @@ syscall(60, r);')"
 
 # ── AXIS 7: the include-name guards still fire WITH a marker set. The marker must
 # not become a way to smuggle a hostile name past checks that already exist.
-echo "axis 7 — CVE-02/CVE-16 still apply to the include NAME under a valid marker:"
+echo "axis 7 — the include dot-dot path bug/the absolute-include path bug still apply to the include NAME under a valid marker:"
 ( cd "$D" && printf '#@incdir src/sub\ninclude "../../etc/hostname"\nvar r = 0;\n' > t2.cyr && "$CC" < t2.cyr > /dev/null 2>e2.txt )
 check "traversal include name still rejected" 1 "$(grep -c 'path traversal rejected' "$D/e2.txt")"
 ( cd "$D" && printf '#@incdir src/sub\ninclude "/etc/hostname"\nvar r = 0;\n' > t3.cyr && "$CC" < t3.cyr > /dev/null 2>e3.txt )
@@ -169,7 +169,7 @@ fi
 
 echo ""
 if [ "$fails" = "0" ]; then
-    echo "PASS: include-dir-resolution — subfolder includes resolve, CWD still wins, CVE-02/16 closed"
+    echo "PASS: include-dir-resolution — subfolder includes resolve, CWD still wins, the include dot-dot path bug/the absolute-include path bug closed"
     exit 0
 fi
 echo "FAIL: include-dir-resolution — $fails assertion(s) failed"

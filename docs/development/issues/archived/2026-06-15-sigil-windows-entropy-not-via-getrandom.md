@@ -9,7 +9,7 @@
 
 - **Filed**: 2026-06-15 (surfaced by the v6.2.12 adversarial review of the Windows ProcessPrng work).
 - **Affects**: `lib/sigil.cyr` (folded from the sigil repo) — every keygen/nonce/blinding entropy site; transitively `lib/tls_native.cyr` (TLS nonces) which leans on sigil. **Windows (PE) only.** Linux/macOS/aarch64/AGNOS unaffected (they have `/dev/urandom`).
-- **Severity**: **Medium** — fail-CLOSED, not fail-weak. On Windows these paths `file_open("/dev/urandom")` → `<0` → return `0`/`-1` (no weak entropy emitted — the CVE-19 invariant holds), but sigil RSA/Ed25519/ML-DSA keygen + RSA-PSS nonce/blinding and native-TLS nonces are **unusable** on Windows.
+- **Severity**: **Medium** — fail-CLOSED, not fail-weak. On Windows these paths `file_open("/dev/urandom")` → `<0` → return `0`/`-1` (no weak entropy emitted — the entropy-fallback hardening item invariant holds), but sigil RSA/Ed25519/ML-DSA keygen + RSA-PSS nonce/blinding and native-TLS nonces are **unusable** on Windows.
 
 ## Background
 
@@ -32,7 +32,7 @@ don't consume it.
 Route sigil's entropy gather through the stdlib `random_bytes` / `sys_getrandom`
 (which is per-target-correct: getrandom on Linux/AGNOS, getentropy on macOS,
 ProcessPrng on Windows) instead of opening `/dev/urandom` directly. Keep the
-fail-closed behaviour (no weak fallback — CVE-19). Then re-fold `lib/sigil.cyr` and
+fail-closed behaviour (no weak fallback — the entropy-fallback hardening item). Then re-fold `lib/sigil.cyr` and
 re-verify a sigil keygen + a native-TLS handshake on `cass`. NOT a direct edit of the
 vendored `lib/sigil.cyr` (it's a fold of the sigil repo).
 

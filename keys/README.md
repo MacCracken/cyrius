@@ -1,6 +1,6 @@
 # Release signing keys
 
-The **public** trust anchor for Cyrius release signatures (CVE-13, v6.2.31).
+The **public** trust anchor for Cyrius release signatures (the release-signing hardening item, v6.2.31).
 
 - `cyrius-release.ed25519.pub` — the 64-hex Ed25519 **public** key. Committed
   here (and referenced in [`../SECURITY.md`](../SECURITY.md)) as the out-of-band

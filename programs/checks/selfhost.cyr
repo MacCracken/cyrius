@@ -598,7 +598,7 @@ fn _stderr_match_subcase(case_label, src_str, expect_substr, want_present): i64 
 # a clean exit-0 silent-accept and not a crash). The plain _stderr_match_subcase
 # only greps stderr — it can't carry the exit-code assertion because many of its
 # callers are lint HINTS that legitimately exit 0. So the input-validation gate
-# uses this stricter variant. The CVE-31 paths sys_exit(1). See CHANGELOG [6.1.35].
+# uses this stricter variant. The silent broken-input bug paths sys_exit(1). See CHANGELOG [6.1.35].
 fn _input_rejects_subcase(case_label, src_str, expect_substr): i64 {
     var src_path = _tmp_path("audit_irj_src_");
     var fd = sys_open(src_path, 577, 420);

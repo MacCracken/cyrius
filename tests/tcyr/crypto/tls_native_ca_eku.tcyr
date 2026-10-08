@@ -1,10 +1,10 @@
-# tls_native_ca_eku.tcyr — 6.6.16 (CVE-75): the native chain verifier enforces a CA's
+# tls_native_ca_eku.tcyr — 6.6.16 (CYRIUS-2026-0026): the native chain verifier enforces a CA's
 # extendedKeyUsage for the chain's purpose, on every intermediate AND on the trust anchor.
 #
 # THE DEFECT (premise-checked on the 6.6.15 lib): _tn_verify_chain (lib/tls_native_hs12.cyr) — the
 # client's verifier of a server chain (_TN_PURPOSE_SERVER) and, since 6.6.14, the mTLS server's
 # verifier of a client chain (_TN_PURPOSE_CLIENT, TLS 1.3 and 1.2) — applied the purpose to the
-# LEAF only. A CA was checked for keyCertSign and pathLen (_tn_ca_signer_ok, CVE-17) and never for
+# LEAF only. A CA was checked for keyCertSign and pathLen (_tn_ca_signer_ok, CYRIUS-2026-0002) and never for
 # its extendedKeyUsage, so a CA confined to clientAuth, codeSigning or S/MIME could issue a leaf
 # the native client accepted as a TLS server, and a serverAuth-only CA in an mTLS server's trust
 # set could issue a client identity. OpenSSL refuses both (error 26, unsuitable certificate

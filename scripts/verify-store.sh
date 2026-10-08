@@ -17,7 +17,7 @@
 #           and bin/asm = the tag's bootstrap/asm) compared against the tag; bin/cybs REBUILT
 #           from the tag (its seed assembling its bootstrap/cybs.cyr — deterministic, ms) and
 #           compared; every other installed bin is judged by SOURCE_COMMIT and NAMED as such
-#   scripts/cyriusly   the shell twin (6.7.3, CVE-103 — what the compiled cyriusly's `cmdtools`
+#   scripts/cyriusly   the shell twin (6.7.3, the cyriusly cmdtools CWD-script bug — what the compiled cyriusly's `cmdtools`
 #           runs) compared against the tag's; MISSING from a slot at or above 6.7.3 is BAD
 #   SOURCE_COMMIT   (written by install.sh since 6.6.4) must be the tag's commit and clean
 # Untagged slots (an in-flight bump) are reported, not judged.
@@ -66,7 +66,7 @@ _tag_cybs() {
     git show "refs/tags/$1:bootstrap/cybs.cyr" | "$WK/seed" > "$2" 2>/dev/null && [ -s "$2" ] || return 1
     chmod +x "$2"
 }
-# 6.7.3 (CVE-103): every store writer ships the shell twin to <slot>/scripts/cyriusly from this
+# 6.7.3 (the cyriusly cmdtools CWD-script bug): every store writer ships the shell twin to <slot>/scripts/cyriusly from this
 # release on; a slot below it never had one and is not judged for it. 0 when $1 >= the floor.
 _TWIN_SINCE=6.7.3
 _twin_shipped() { [ "$(printf '%s\n%s\n' "$1" "$_TWIN_SINCE" | sort -t. -k1,1n -k2,2n -k3,3n | head -1)" = "$_TWIN_SINCE" ]; }
@@ -107,7 +107,7 @@ verify_slot() {   # $1 = version
             cybs_judged=1; n_bin_bad=$((n_bin_bad+1)); printf '    FAIL      bin/cybs: the tag'"'"'s seed did not assemble the tag'"'"'s bootstrap/cybs.cyr\n'
         fi
     fi
-    # the shell twin (6.7.3, CVE-103) — what the compiled cyriusly's `cmdtools` runs
+    # the shell twin (6.7.3, the cyriusly cmdtools CWD-script bug) — what the compiled cyriusly's `cmdtools` runs
     if git cat-file -e "refs/tags/$v:scripts/cyriusly" 2>/dev/null; then
         if [ -f "$slot/scripts/cyriusly" ]; then
             if ! git show "refs/tags/$v:scripts/cyriusly" | cmp -s - "$slot/scripts/cyriusly"; then n_bin_bad=$((n_bin_bad+1)); [ "$MODE" = report ] && printf '    DIFFERS   scripts/cyriusly (the shell twin, tracked at the tag)\n'; fi
@@ -198,7 +198,7 @@ restore_slot() {   # $1 = version
             echo "  FAIL: could not re-assemble cybs from the tag" >&2; bad=$((bad+1))
         fi
     fi
-    # the shell twin (6.7.3, CVE-103): written when it differs, or when it is missing from a slot
+    # the shell twin (6.7.3, the cyriusly cmdtools CWD-script bug): written when it differs, or when it is missing from a slot
     # at or above the release that started shipping it
     if git cat-file -e "refs/tags/$v:scripts/cyriusly" 2>/dev/null && { [ -f "$slot/scripts/cyriusly" ] || _twin_shipped "$v"; }; then
         if [ ! -f "$slot/scripts/cyriusly" ] || ! git show "refs/tags/$v:scripts/cyriusly" | cmp -s - "$slot/scripts/cyriusly"; then

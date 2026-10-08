@@ -1,28 +1,28 @@
-# Dep-resolver / include injection class — CVE-14/15/16 — ✅ RESOLVED v6.1.33
+# Dep-resolver / include injection class — the deps-verify shell-line bug/the git argument-quoting bug/the absolute-include path bug — ✅ RESOLVED v6.1.33
 
 > **RESOLVED (2026-06-11, v6.1.33).** All three sinks converted to argv `execve`
-> (no shell): CVE-14 `_sha256sum_file` → `/usr/bin/env sha256sum <path>` (path a
+> (no shell): the deps-verify shell-line bug `_sha256sum_file` → `/usr/bin/env sha256sum <path>` (path a
 > distinct argv element; verified `a;touch PWNED;b.cyr` hashed without exec, hash
-> matches system `sha256sum`); CVE-15 `git clone` → argv `execve` with a `--`
-> separator (leading-`-` url/tag can't become a flag); CVE-16 absolute includes
+> matches system `sha256sum`); the git argument-quoting bug `git clone` → argv `execve` with a `--`
+> separator (leading-`-` url/tag can't become a flag); the absolute-include path bug absolute includes
 > rejected in `lex.cyr::READFILE` unless `CYRIUS_ALLOW_ABSOLUTE_INCLUDES=1`. cycc
 > self-host byte-identical; check.sh 87/87; ecb+cass+pi `SELFHOST_OK`. See
 > CHANGELOG [6.1.33].
 
 **Discovered:** 2026-06-10 during the deep-dive review ([`docs/audit/2026-06-10-deep-dive-review.md`](../../../audit/2026-06-10-deep-dive-review.md))
-**Severity:** Critical (CVE-14 is P0-class)
-**Affects:** cycc / cyrius 6.1.31 (CVE-15/16 long-standing; CVE-14 since the `_sha256sum_file` Linux branch)
+**Severity:** Critical (the deps-verify shell-line bug is P0-class)
+**Affects:** cycc / cyrius 6.1.31 (the git argument-quoting bug/the absolute-include path bug long-standing; the deps-verify shell-line bug since the `_sha256sum_file` Linux branch)
 
 ## Summary
 
-Three injection sinks in the dep resolver and include path handling. CVE-14
-and CVE-15 are the *same root* the original CVE-01 closed (shell string built
-from manifest/lockfile data), in sibling sinks the CVE-01 fix didn't touch.
-CVE-16 is the *unshipped half* of CVE-02. The audit's preferred fix for all
+Three injection sinks in the dep resolver and include path handling. the deps-verify shell-line bug
+and the git argument-quoting bug are the *same root* the original the dep-resolver shell-quoting bug closed (shell string built
+from manifest/lockfile data), in sibling sinks the dep-resolver shell-quoting bug fix didn't touch.
+the absolute-include path bug is the *unshipped half* of the include dot-dot path bug. The audit's preferred fix for all
 three — `execve` with argv arrays, no shell, plus an absolute-path reject — was
-recommended for CVE-01/02 and is the right shape here.
+recommended for the dep-resolver shell-quoting bug/the include dot-dot path bug and is the right shape here.
 
-## CVE-14 — `deps --verify`/`--lock` lockfile path → `/bin/sh -c` (P0/P1)
+## the deps-verify shell-line bug — `deps --verify`/`--lock` lockfile path → `/bin/sh -c` (P0/P1)
 
 `_sha256sum_file`'s Linux branch concatenates `path` into `"sha256sum "+path`
 and execs it via `/bin/sh -c` with **no metacharacter validation**
@@ -38,7 +38,7 @@ Exposure is **broad**: `cmd_deps_lock` auto-runs on every `cyrius deps`/`build`
 filename, not just on explicit `--verify`. That breadth is why it's arguably
 P0, not P1.
 
-The git-clone path **does** sanitize `;|\`$&()` (`:692,703` — the CVE-01 fix);
+The git-clone path **does** sanitize `;|\`$&()` (`:692,703` — the dep-resolver shell-quoting bug fix);
 the Windows branch is already safe (`certutil` via `exec_capture` argv,
 `:1288-1294`). This sink was simply missed.
 
@@ -47,10 +47,10 @@ the Windows branch is already safe (`certutil` via `exec_capture` argv,
 `exec_capture` style; `sys_execve` is already used in `lib/callback`/`pam`/
 `regression`). Reject paths containing shell metacharacters as a belt-and-suspenders.
 
-## CVE-15 — git/tag arg-injection (CVE-01 residual) (P1)
+## the git argument-quoting bug — git/tag arg-injection (the dep-resolver shell-quoting bug residual) (P1)
 
 Dep resolution still builds a shell string `git clone --depth 1 -q <git> <dir>`
-and runs `sys_system(cmd)` (`deps.cyr:716-732`). The CVE-01 denylist (`:694`)
+and runs `sys_system(cmd)` (`deps.cyr:716-732`). The dep-resolver shell-quoting bug denylist (`:694`)
 rejects only `;|\`$&()` — **not space (32), leading `-`, `<`/`>`, newline, or
 glob**. The git value is captured verbatim between quotes (`:617-624`), so
 embedded spaces survive. A manifest like:
@@ -68,12 +68,12 @@ field a distinct argv element (no shell, no concat); and/or reject any git/tag
 value beginning with `-` and reject whitespace. Denylisting a shell string is
 the wrong shape — argv is.
 
-## CVE-16 — absolute-path includes (CVE-02 residual) (P2)
+## the absolute-include path bug — absolute-path includes (the include dot-dot path bug residual) (P2)
 
-`READFILE`'s CVE-02 guard (`lex.cyr:622-637`) walks the path rejecting only
+`READFILE`'s the include dot-dot path bug guard (`lex.cyr:622-637`) walks the path rejecting only
 `..` components. There is no leading-`/` rejection anywhere in `lex.cyr`. A
 hostile `.cyr` can `include "/home/user/.ssh/id_rsa"`; contents are lexed and
-can surface via error text or be embedded into output. The original CVE-02 fix
+can surface via error text or be embedded into output. The original the include dot-dot path bug fix
 spec (archived audit, line 39) said *"reject paths containing `..` **or
 absolute paths starting with `/`**"* — only the `..` half landed.
 

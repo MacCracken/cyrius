@@ -9,7 +9,7 @@
 #
 # THE DEFECT. fmt_sprintf's %x scratch was `var xtmp[16]`: any value with a nibble at bit 60
 # or higher (every negative, for one) is 16 digits, and the NUL landed on the neighbouring
-# stack slot — CVE-78's class, one byte wide. It was latent (that slot, `xval`, is dead after
+# stack slot — CYRIUS-2026-0028's class, one byte wide. It was latent (that slot, `xval`, is dead after
 # the call), so no run-time probe can see it, which is why this is a census: the size the
 # caller DECLARED against the bytes the callee WRITES. cyrld's printhex had the same `[16]`,
 # and five cyrld fmt_int_buf scratches were `[16]` against a 21-byte worst case.

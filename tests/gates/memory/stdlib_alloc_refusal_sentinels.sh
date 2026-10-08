@@ -24,7 +24,7 @@
 #   * chan_new's `buf` check (k=2)              -> rc 1   (returned a channel over a 0 buffer)
 #   * normalize: the 6.6.9 step-buffer `return off` -> rc 1 (a SHORTER string, returned as success);
 #     dropping the -1 propagation in the walk    -> rc 1 at the nested row (k=4)
-#   * each of lib/ws.cyr's three checks (ws_new, the handshake buffer, CVE-53's ws_recv_frame
+#   * each of lib/ws.cyr's three checks (ws_new, the handshake buffer, CYRIUS-2026-0011's ws_recv_frame
 #     payload) and lib/ws_server.cyr's six (ws_server_new, concat, digest, ws_server_send_close,
 #     the recv buffer, the recv copy) -> rc 139 in its probe. (lib/ws.cyr's sender had a fourth,
 #     its masked copy; 6.6.20 removed that allocation, and its two rows now pin that the sender
@@ -238,7 +238,7 @@ syscall(60, ec);
 CYR
 
 
-# ── the WebSocket client (lib/ws.cyr) — CVE-53's "the allocation is checked" half ──
+# ── the WebSocket client (lib/ws.cyr) — CYRIUS-2026-0011's "the allocation is checked" half ──
 # Frames come from a FILE in the probe's cwd, as ws_recv_frame_short_reads.tcyr does, so no
 # socket is needed. ⚠ THE REFUSED-PAYLOAD ROW USES A ZERO-LENGTH FRAME ON PURPOSE: for a non-empty
 # frame an unchecked alloc would read into address 0, get EFAULT, and close the connection — the
@@ -327,7 +327,7 @@ fn main(): i64 {
     _fi_arm(1); _served("_ws_send_frame allocates nothing (2-byte frame)", 1, ws_send_text(ow, "hi") == 2);
     _fi_arm(1); _served("_ws_send_frame allocates nothing (ws_ping)", 1, ws_ping(ow) == 0);
 
-    # CVE-53: the payload allocation (zero-length frame — see the note above this probe)
+    # CYRIUS-2026-0011: the payload allocation (zero-length frame — see the note above this probe)
     var w0 = _frame_ws(0);
     _fi_arm(1); _refused("ws_recv_frame payload (empty frame)", 1, _recv_refused(w0), 1);
     var w3 = _frame_ws(3);

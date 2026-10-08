@@ -259,7 +259,7 @@ fn _pe_wpad(O, off, align): i64 {
 # auto-discovery from kernel32-wrapper calls).
 
 fn _pe_imp_add(name): i64 {
-    # CVE-27 (v6.1.38): bounds-check before writing. _pe_imp_name_offs is 256 i64
+    # the PE import-registry bounds bug (v6.1.38): bounds-check before writing. _pe_imp_name_offs is 256 i64
     # slots and _pe_imp_name_buf holds 4096 bytes (global `var x[N]` = N i64 slots,
     # so [256]=256 entries and [512]=4096 B — the "32 slots" comments were wrong).
     # With no guard, >256 imports or >4096 B of packed names silently corrupt the
@@ -922,7 +922,7 @@ fn _pe_createdxgi_get(): i64 { return _pe_createdxgi_idx; }
 # buffer with cryptographically-secure bytes and returns nonzero on success
 # (it does not fail in practice). The 4th import DLL — exercises the same
 # multi-DLL IAT foundation as dxgi (id 2). Backs lib/syscalls_windows.cyr's
-# sys_getrandom, replacing the fail-closed -1 stub. NO weak fallback (CVE-19).
+# sys_getrandom, replacing the fail-closed -1 stub. NO weak fallback (the entropy-fallback hardening item).
 # See issue 2026-06-11-windows-entropy-primitive.md.
 var _pe_procprng_ready = 0;
 var _pe_procprng_idx   = 0;
@@ -1429,7 +1429,7 @@ fn _pe_tlsset_get(): i64 { return _pe_tlsset_idx; }
 # iterates the buffer and forwards each entry to `_pe_imp_add`
 # after placing `ExitProcess` at imp_idx=0.
 fn _pe_pending_imp_add(S, name): i64 {
-    # CVE-27 (v6.1.38): bounds-check (see _pe_imp_add). _pe_pending_imp_offs is 256
+    # the PE import-registry bounds bug (v6.1.38): bounds-check (see _pe_imp_add). _pe_pending_imp_offs is 256
     # i64 slots and _pe_pending_imp_buf holds 4096 bytes; an unbounded run of
     # `#pe_import` directives (or one huge symbol) would otherwise overflow into
     # the neighbouring registry globals at parse time.
@@ -1785,7 +1785,7 @@ fn _pe_layout(S): i64 {
         _pe_image_size = (_pe_reloc_rva + _pe_reloc_vsize + 0xFFF) & (0 - 0x1000);
     }
 
-    # CVE-23: enforce the output-buffer cap (_output_cap) once the final on-disk
+    # the output_buf cap bug: enforce the output-buffer cap (_output_cap) once the final on-disk
     # image size is known (covers both _pe_image_file_size computation paths) —
     # EMITPE_EXEC writes the whole image to _output_base with no internal guard.
     _check_output_cap(S, _pe_image_file_size);
@@ -1926,7 +1926,7 @@ fn EMITPE_EXEC(S): i64 {
     # otherwise firmware honors ImageBase = 0x140000000 directly.
     if (_TARGET_EFI_APPLICATION == 1 && _pe_reloc_vsize == 0) { _dllc = 0x0100; }
     o = _pe_w16(O, o, _dllc);
-    # v6.5.19 (CVE-40): 8 MB, was 1 MB. RESERVE is address space, not committed memory
+    # v6.5.19 (the define-body copy overflow bug): 8 MB, was 1 MB. RESERVE is address space, not committed memory
     # (SizeOfStackCommit below stays 4 KB), so this costs nothing at runtime. It exists
     # so the recursive-descent depth bound in `_rd_enter` is actually reachable on
     # Windows: at the worst-measured ~16 KB of stack per nesting level, 256 levels needs

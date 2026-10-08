@@ -9,7 +9,7 @@
 # untagged first, the tagged project was refused as a "tampered cache".
 #
 # THE FIX: the untagged key is `<home>/deps/<name>/.untagged`. A `.`-led component is refused in
-# every tag by CVE-76's validator, so no tag can name it.
+# every tag by the deps-tag dot-dot path bug's validator, so no tag can name it.
 #
 # AXES
 #   1. tag = "main" first, then untagged: each project vendors its own ref's bytes (expected

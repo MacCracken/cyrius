@@ -1,4 +1,4 @@
-# cyrsign — sovereign release signer/verifier (CVE-13, v6.2.31).
+# cyrsign — sovereign release signer/verifier (the release-signing hardening item, v6.2.31).
 #
 # Detached Ed25519 signatures over a file (in practice the release SHA256SUMS),
 # using cyrius's OWN crypto (sigil's in-tree ed25519) — NO external minisign /
@@ -135,7 +135,7 @@ fn _cs_read_file(path, out_len): i64 {
 fn _cs_keygen(): i64 {
     secret var sk[64];   # seed (0..32) || pk (32..64) — secret material, zeroized on exit
     var pk[32];
-    # CVE-13 (v6.2.31): fail closed on a CSPRNG failure. ed25519_generate_keypair
+    # the release-signing hardening item (v6.2.31): fail closed on a CSPRNG failure. ed25519_generate_keypair
     # returns 0 and leaves sk/pk all-ZERO if entropy gather fails — emitting that
     # as the "seed" would hand out a deterministic, attacker-known signing key.
     if (ed25519_generate_keypair(&sk, &pk) != 1) {

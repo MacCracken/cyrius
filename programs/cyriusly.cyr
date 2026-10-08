@@ -282,7 +282,7 @@ fn _write_cyml_cyrius_pin(ver_cstr): i64 {
     # v6.6.6: the user's manifest is replaced crash-safe and the write is CHECKED — this was an
     # unchecked file_write_all, so a full disk truncated cyrius.cyml and `use` still said it
     # worked. CHANGELOG [6.6.6]
-    # 6.6.20 (CVE-98): a link here is followed only to a file inside the project — a checkout's
+    # 6.6.20 (the committed-symlink write bug): a link here is followed only to a file inside the project — a checkout's
     # `cyrius.cyml -> <another project>/cyrius.cyml` had THAT manifest's pin rewritten.
     if (_io_replace_atomic_in(".", "cyrius.cyml", out, out_n) != 0) {
         if (_io_contain_link != 0) { _io_contain_refusal("error"); return 1; }
@@ -297,7 +297,7 @@ fn _write_cyml_cyrius_pin(ver_cstr): i64 {
 # v5.11.25 dispatcher: tells the user which version a `cyrius` in
 # this cwd would actually use.
 #
-# ⛔ 6.6.20 (CBT-01's second reader, CVE-79) — this reads `[package].cyrius` with its own inline
+# ⛔ 6.6.20 (CBT-01's second reader, the package-pin path bug) — this reads `[package].cyrius` with its own inline
 # scan, and it printed the value raw: a manifest pinning `"6.6<ESC>]0;owned<BEL>…../../x"` set the
 # terminal title and cleared the screen, and a traversal pin was reported as a valid pin while
 # `cyrius` itself refuses that manifest. The value now gets the CLI reader's rule
@@ -733,13 +733,15 @@ fn _cmd_uninstall(ver_cstr): i64 {
 
 # ⛔ 6.6.20 (SEC-07) — THE INSTALLER `install` RUNS IS NEVER OLDER THAN _CY_INSTALLER_FLOOR, the
 # first scripts/install.sh that refuses a stripped signature on any release since 6.2.31 (the
-# first signed one). This verb fetched the installer from the tag it was INSTALLING (CVE-21's tag
+# first signed one). This verb fetched the installer from the tag it was INSTALLING (the release-integrity hardening
+# item's tag
 # rule), so `install 6.6.15` ran 6.6.15's own installer, which skipped the signature whenever
 # SHA256SUMS was missing: measured with a trusted cyrsign in the active bin/, signed-since 6.6.19
 # and a stub curl serving the real 6.6.15 installer plus a fabricated 6.6.15 tarball and .sha256
 # and no SHA256SUMS -> rc 0, the tampered cycc ACTIVE, the verifier never called. Every release
 # from 6.2.31 to 6.6.19 is installed by a pre-SEC-07 installer that way. Now the installer comes
-# from the IMMUTABLE tag max(<ver>, floor) (never `main`, CVE-21) and CYRIUS_VERSION is still
+# from the IMMUTABLE tag max(<ver>, floor) (never `main`, the release-integrity hardening item) and CYRIUS_VERSION is
+# still
 # <ver>, so a downgrade runs the floor's installer and an upgrade the target's own.
 # ⚠ The floor names the release that ships SEC-07's install.sh; raise it (here AND in
 # scripts/cyriusly) whenever an installer fix must reach every `cyriusly install`. The floor's
@@ -770,7 +772,8 @@ fn _cmd_install(ver_cstr): i64 {
     syscall(1, 1, ver_cstr, vlen);
     syscall(1, 1, "...\n", 4);
     # 6.6.20 (RS-04): a CONSTANT script and the version is its `$1`; the operand was spliced into
-    # the line before. The installer comes from an immutable TAG, never the mutable `main` (CVE-21,
+    # the line before. The installer comes from an immutable TAG, never the mutable `main` (the release-integrity
+    # hardening item,
     # v6.2.30, moved the shell twin; this port had kept fetching main) — and since SEC-07 never
     # from a tag older than the floor (see _CY_INSTALL_SH above). CHANGELOG [6.6.20]
     var in_args = vec_new();
@@ -860,7 +863,8 @@ fn _cy_err_s(s): i64 {
     return 0;
 }
 
-# ⛔ 6.7.3 (CVE-103) — THE TWIN IS THE INSTALL'S, NEVER THE CURRENT DIRECTORY'S. `cmdtools` ran the
+# ⛔ 6.7.3 (the cyriusly cmdtools CWD-script bug) — THE TWIN IS THE INSTALL'S, NEVER THE CURRENT DIRECTORY'S. `cmdtools`
+# ran the
 # literal `scripts/cyriusly`, a path relative to the CWD: inside any checkout shipping a
 # `scripts/cyriusly`, `cyriusly cmdtools list` executed that repository's script with the user's
 # privileges (measured on 6.7.3: "PWNED from the checkout: cmdtools list", rc 0), and outside one
@@ -907,7 +911,7 @@ fn _cy_twin_path(): i64 {
 # `cyriusly cmdtools [action] [tool]` — manage starship/p10k integrations.
 # Defers to the shell twin's `cmdtools` because the verb has substantial shell-side state
 # (heredoc'd starship/p10k config blocks); a native port is a slot of its own. Which twin runs:
-# `_cy_twin_path` above (6.7.3, CVE-103).
+# `_cy_twin_path` above (6.7.3, the cyriusly cmdtools CWD-script bug).
 # 6.6.20 (RS-04): the operands ride as ARGV — this concatenated them into a `/bin/sh -c` line, so
 # `cyriusly cmdtools 'list;cmd'` ran `cmd`. CHANGELOG [6.6.20]
 fn _cmd_cmdtools(action_cstr, tool_cstr): i64 {

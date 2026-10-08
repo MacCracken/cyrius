@@ -1,10 +1,10 @@
-# The folded sandhi's DNS TXID fails CLOSED when getrandom fails (CVE-19).
+# The folded sandhi's DNS TXID fails CLOSED when getrandom fails (the entropy-fallback hardening item).
 #
 # ⛔ THE DEFECT (sandhi <= 1.10.2, folded through 6.6.10): when sys_getrandom returned fewer
 # than 2 bytes, `_sandhi_resolve_random_u16` fell back to `(clock_now_ns() ^ (ns >> 16)) &
 # 0xFFFF` and both resolvers sent the query with it — a TXID an off-path attacker can
 # estimate from the query time, re-opening the Kaminsky window the TXID exists to close.
-# CVE-19's fix (d4b24c76, 2026-06-11) was applied to THIS fold only and the next re-vendor
+# the entropy-fallback hardening item's fix (d4b24c76, 2026-06-11) was applied to THIS fold only and the next re-vendor
 # (d6032e26) brought the fallback back, because sandhi's source never had it. sandhi 1.10.3
 # fixes it at the source; this file is the cyrius-side tripwire for a re-vendor that loses it
 # again. The failure arm is driven through the helpers sandhi split out for it, since forcing
@@ -40,7 +40,7 @@ include "lib/sandhi.cyr"
 include "lib/async.cyr"
 include "lib/assert.cyr"
 
-test_group("sandhi fold: DNS TXID fails closed (CVE-19)");
+test_group("sandhi fold: DNS TXID fails closed (the entropy-fallback hardening item)");
 var tb[2];
 store8(&tb, 0xAB);
 store8(&tb + 1, 0xCD);

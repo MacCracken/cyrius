@@ -1,4 +1,4 @@
-# Native TLS: post-handshake records collapse to false EOF — CVE-30
+# Native TLS: post-handshake records collapse to false EOF — the TLS post-handshake false-EOF bug
 
 **Discovered:** 2026-06-10 during the deep-dive review ([`docs/audit/2026-06-10-deep-dive-review.md`](../../../audit/2026-06-10-deep-dive-review.md))
 **Severity:** High

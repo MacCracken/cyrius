@@ -4,7 +4,7 @@
 (items 2 + 3 + exit-code in v6.2.52; the var-table migration in **v6.3.0**).
 
 The pre-v6.3.0 closeout's 6-dimension judgment-pass audit surfaced these. The one P1
-the audit found (CVE-32 modular path-traversal) was fixed in v6.2.51.
+the audit found (the include filename-capture overflow bug modular path-traversal) was fixed in v6.2.51.
 
 ## 1. Finish the var-table growable migration — ✅ RESOLVED v6.3.0
 **Premise-check finding: it was NOT 3 tables but a FAMILY of SEVEN** vcnt-indexed

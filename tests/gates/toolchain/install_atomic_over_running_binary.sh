@@ -12,7 +12,7 @@
 #     $ cyriusly install 6.6.0
 #     cp: cannot create regular file '.../versions/6.6.0/bin/cyriusly': Text file busy
 #
-# ⚠ And `cyriusly install <v>` fetches install.sh from that version's IMMUTABLE TAG (CVE-21),
+# ⚠ And `cyriusly install <v>` fetches install.sh from that version's IMMUTABLE TAG (the release-integrity hardening item),
 # so a broken installer is frozen into the release that carries it — it cannot be hot-fixed for
 # an already-published version. That is what makes this worth a gate: the blast radius of the
 # next occurrence is a release, not a working tree.

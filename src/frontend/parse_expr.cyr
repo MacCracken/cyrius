@@ -1039,7 +1039,7 @@ fn _PE_ROUTE_SOCK(S, sc_num, argc): i64 {
     return 0;
 }
 
-# v6.5.19 (CVE-40): the bottom expression tier, and the last of the five chokepoints.
+# v6.5.19 (the define-body copy overflow bug): the bottom expression tier, and the last of the five chokepoints.
 # Unary `-` recurses HERE, not in PARSE_TERM — `- - - … 1` compiled fine at 1024 with the
 # PEXPR and PARSE_TERM bounds in place and still SIGSEGV'd at 16384, because a unary
 # operand descends straight back into this tier. Guarding PEXPR/PARSE_TERM/PARSE_FACTOR
@@ -4747,7 +4747,7 @@ fn _PARSE_INTRIN_IMPL(S, ptyp): i64 {
     return 0;
 }
 
-# v6.5.19 (CVE-40): the unary/term tier needs its OWN depth entry — PEXPR's wrapper does
+# v6.5.19 (the define-body copy overflow bug): the unary/term tier needs its OWN depth entry — PEXPR's wrapper does
 # not cover it. A `-`/`!` chain and a `g(g(g(...)))` call chain recurse INSIDE this tier
 # without ever returning to PEXPR, so `- - - … 1` at 16384 deep still SIGSEGV'd with the
 # PEXPR bound in place. Same wrapper shape as PARSE_STMT/PEXPR; the return value is
@@ -5113,7 +5113,7 @@ fn EPTR_SCALE(S, ps): i64 {
 fn BUILD_OP_NAME(S, stype, op_str, op_len): i64 {
     var si = stype - 1;
     var snoff = L64(S + 0x1A6018 + si * 8);
-    # v5.11.65 (CVE-05): bound against actual struct-name length + op
+    # v5.11.65 (the compiler heap guard-page gap): bound against actual struct-name length + op
     # suffix; was magic-256 pessimistic budget. See CHANGELOG [5.11.65].
     var _snlen = 0; while (load8(S + 0xEC00000 + snoff + _snlen) != 0) { _snlen = _snlen + 1; }
     NPOS_GUARD(S, _snlen + 1 + op_len + 1);
@@ -5393,7 +5393,7 @@ fn EMIT_OVF_CALL(S, fname_str): i64 {
     return 0;
 }
 
-# v6.5.19 (CVE-40): the expression-tier depth chokepoint, shaped exactly like the
+# v6.5.19 (the define-body copy overflow bug): the expression-tier depth chokepoint, shaped exactly like the
 # PARSE_STMT wrapper in parse.cyr (v6.4.62) so there is one pattern, not two. PARSE_STMT
 # alone does NOT cover the expression vectors — nested parens, unary-minus chains and
 # call chains recurse through PEXPR/PARSE_TERM without ever re-entering a statement — so

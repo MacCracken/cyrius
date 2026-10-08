@@ -3,7 +3,7 @@
 # `true` is 1 and `false` is 0 (ADR-002 keeps i64 the core: sizeof(bool) == 8). `!e` is 1 when e's
 # word is 0, else 0; it binds like unary minus (its operand is a factor), and an f64 operand is
 # tested by its raw bits, as `if (x)` tests it. Until 6.7.3 the lexer DROPPED a lone `!`, so `!x`
-# compiled as `x` (CVE-104). The user's decisions (2026-10-07): a WRITE into a bool is checked —
+# compiled as `x` (the dropped-bang lexer bug). The user's decisions (2026-10-07): a WRITE into a bool is checked —
 # only a boolean value (true / false, a comparison, `!`, `&&` / `||`, another bool) is accepted —
 # and a bool READS as the integer 0 or 1 everywhere. The refusals are
 # tests/gates/frontend/bool_checked.sh.

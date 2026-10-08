@@ -1,10 +1,10 @@
-# Live silent-failure regressions (fix-now cluster) — CVE-22/23/31, CO-02/03
+# Live silent-failure regressions (fix-now cluster) — the vec_die recursion bug/the output_buf cap bug/the silent broken-input bug, CO-02/03
 
-> **STATUS: RESOLVED.** **✅ CVE-22 + CO-03 shipped v6.1.34** (F1b pt1):
+> **STATUS: RESOLVED.** **✅ the vec_die recursion bug + CO-03 shipped v6.1.34** (F1b pt1):
 > `_vec_die`/`_hm_die` self-recursion → restored `syscall(60,1)`; DSE/LASE/#regalloc
 > x86 byte-passes gated on `_AARCH64_BACKEND==0`. **✅ F1b pt2 — code complete + green,
 > lands as v6.1.35 (cut pending):**
-> - **CVE-23** — one shared `_check_output_cap` in `backend/common/runtime.cyr`
+> - **the output_buf cap bug** — one shared `_check_output_cap` in `backend/common/runtime.cyr`
 >   (mirrors the x86 top-3-vars diagnostic) called from the 5 unguarded ELF/PE writers
 >   (aarch64 EMITELF + both EMITELF_KERNELs + the x86 kernel emitters + `_pe_layout`).
 >   A pre-cut adversarial review caught that the ELF guards checked PT_LOAD `filesz`,
@@ -13,7 +13,7 @@
 >   16 MB. Fixed to pass `shdr_off + shnum*shentsize` (the `EMITELF_OBJ` convention)
 >   on every ELF emitter, incl. the **pre-existing** x86 `EMITELF_USER` path that
 >   shared the slack. `EMITELF_SHARED` (no section headers) + PE were already correct.
-> - **CVE-31** — (a) missing-include is now a hard error (READFILE returns -1 on
+> - **the silent broken-input bug** — (a) missing-include is now a hard error (READFILE returns -1 on
 >   open-fail vs 0 on empty; the PP include sites fail loud); (b) unrecognized ASCII
 >   bytes error in the lexer's final else; (c) `file_map` relocated to the freed
 >   `0x71A000` band, cap 128→1024 + str 4KB→32KB + warn-once/str-overflow guards.
@@ -28,7 +28,7 @@
 >
 > **Verification:** x86 self-host byte-identical (1,049,856 B); check.sh **88/88**;
 > aarch64 (pi) + PE (cass) + Mach-O (ecb/ach) all `SELFHOST_OK` (cross-OS re-run
-> after the guard fix). The two review-found gaps (CVE-23 true-size guard, CO-02
+> after the guard fix). The two review-found gaps (the output_buf cap bug true-size guard, CO-02
 > exit assertion) were both fixed pre-cut — neither was reachable by self-host
 > (cycc's own output is far below 16 MB and exits cleanly). Archived at cut.
 
@@ -42,7 +42,7 @@ Five confirmed "a loud failure was silently turned into a silent failure"
 bugs. None bite today only because no test exercises the path. All are
 small and byte-identical for valid inputs — a single packed release.
 
-## CVE-22 — `_vec_die`/`_hm_die` infinitely self-recurse (P1)
+## the vec_die recursion bug — `_vec_die`/`_hm_die` infinitely self-recurse (P1)
 
 v6.0.56 (commit `4bc39019`) replaced a working `syscall(60,1)` with a target
 dispatch whose `#ifndef CYRIUS_TARGET_AGNOS` branch **calls itself**
@@ -59,7 +59,7 @@ both fns (one line each). Add a tcyr that triggers a vec OOB and asserts the
 exit code (per the per-file exit-code discipline). cycc has no lib includes →
 self-host unaffected.
 
-## CVE-23 — 16 MB `output_buf` cap unenforced on non-x86-user emitters (P2)
+## the output_buf cap bug — 16 MB `output_buf` cap unenforced on non-x86-user emitters (P2)
 
 `grep 16777216`: the cap is checked only in `x86/fixup.cyr:1073/1392/1816`
 (EMITELF user/shared/obj) + `macho/emit.cyr:94,298`. It is **absent** from
@@ -75,7 +75,7 @@ unguarded writers; check `_pe_image_file_size` at the end of `_pe_layout`.
 Mechanical, byte-identical for under-cap output. **Land before v6.2.x** so
 backend #7 (riscv64) inherits the guard rather than repeating the v6.1.27 gap.
 
-## CVE-31 — compiler silently accepts broken input (P1)
+## the silent broken-input bug — compiler silently accepts broken input (P1)
 
 `READFILE` returns 0 for unopenable paths (`lex.cyr:650-657`) and the PP
 include site adds `nr=0` bytes + sets `had_include=1` with no check

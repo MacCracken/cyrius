@@ -3,7 +3,7 @@
 **Status:** ✅ **RESOLVED v6.6.7** (bite 4) — a three-tier monotonic deadline (#95, then the RTC armed on its first non-zero read, then the pause count only with no clock), -11 on timeout, per-socket `sock_set_recv_timeout` / `sock_set_send_timeout` on agnos. Gate `tests/gates/platform/agnos_sock_recv_bound.sh` includes the mirshi TCP exchange this filing describes (port 0, not a fixed port). See `CHANGELOG.md` [6.6.7]. It stays in the open dir for the slot-close archive pass.
 **Original status:** 🟡 OPEN: the backstop documented as being "for when the RTC is unreadable" is applied
 whether the RTC reads or not, and it counts pauses, which do not take a fixed time on agnos.
-**Placement:** **6.6.7 bite 4** — agnos 1.57.6–1.57.9 peer surface; the a4=r10 class (cycc zeroes r10 on short agnos syscalls); monotonic socket-recv deadline; loopback listen class (CVE-48). Pinned 2026-09-27 in [roadmap.md](../roadmap.md) *The 6.6.7 → 6.6.9 batch* (releases ship strictly in order).
+**Placement:** **6.6.7 bite 4** — agnos 1.57.6–1.57.9 peer surface; the a4=r10 class (cycc zeroes r10 on short agnos syscalls); monotonic socket-recv deadline; loopback listen class (CYRIUS-2026-0008). Pinned 2026-09-27 in [roadmap.md](../roadmap.md) *The 6.6.7 → 6.6.9 batch* (releases ship strictly in order).
 **Discovered:** 2026-09-23 during daimon 2.4.2. daimon's AGNOS guest test failed in CI on a forwarded
 MCP call, and in one of three local runs. Timing 6000 pauses in the guest then made the cause
 measurable (below).

@@ -26,7 +26,7 @@
 > (v6.2.30):** `threat-model.md` corrected — native TLS is the default backend
 > (since v6.1.21), PIE/ASLR ships (since v6.1.6), input buffer is 1 MB, the
 > Known-Limitations "No ASLR" row replaced, the libssl trust-boundary row flipped
-> to opt-in, and the CVE-20 binary-trust-root nuance added; last-reviewed →
+> to opt-in, and the seed-chain cycc hardening item binary-trust-root nuance added; last-reviewed →
 > v6.2.30. The README user-facing version/size/count stamp lag was also refreshed
 > this slot (→ v6.2.29 / 1,071,936 B / 99 modules / 190 tcyr / 92 gates). **All
 > RM items now resolved — archive this issue.** (Remaining user-facing lag =

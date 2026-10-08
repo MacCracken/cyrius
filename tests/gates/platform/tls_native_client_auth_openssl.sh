@@ -1,5 +1,5 @@
 #!/bin/sh
-# tls_native_client_auth_openssl.sh — 6.6.14 (CVE-64). Native TLS client authentication, both
+# tls_native_client_auth_openssl.sh — 6.6.14 (CYRIUS-2026-0019). Native TLS client authentication, both
 # directions, against an INDEPENDENT peer: OpenSSL's s_client presenting certificates to the
 # native server, and the native TLS 1.2 client answering s_server's CertificateRequest. A peer
 # that shared our code could share the defect; the native<->native matrix on every host is

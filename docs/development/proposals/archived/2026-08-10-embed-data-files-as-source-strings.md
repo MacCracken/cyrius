@@ -15,7 +15,7 @@ consumer hand-rolling the same generator.
 >   line-neutral, `fn NAME(): i64` returning the bytes as a NUL-terminated literal (every byte outside printable
 >   ASCII, and `"` / `\`, as `\xHH`) plus `fn NAME_len(): i64`. A function, not the `var` this proposal sketched:
 >   a top-level string `var` is a deferred runtime store, which a `kernel;` build runs after its program. Not a
->   `#@embed` compiler marker either — plain generated text, so no compiler directive reads a file (the CVE-45
+>   `#@embed` compiler marker either — plain generated text, so no compiler directive reads a file (the file-marker forge (private visibility) bug
 >   class). `--print-config` shows the entries.
 > - **Shipped — distlib:** `[lib] embed = [...]` / `[lib.P] embed = [...]` carry the named embeds into a bundle
 >   and nothing else; `distlib --check` goes STALE when a data file changes — the freshness gate the consumer

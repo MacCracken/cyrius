@@ -120,7 +120,7 @@ var _fl_lock = 0;
 #
 # ⚠ NO `atomic_fence()` here, unlike alloc.cyr's twin — and that is a correction,
 # not an omission. `atomic_cas` carries ACQUIRE-RELEASE ordering on BOTH arches
-# since CVE-28/v6.1.38 (x86 `lock cmpxchg` is seq-cst; aarch64 uses ldaxr/stlxr),
+# since the aarch64 atomics-barrier bug/v6.1.38 (x86 `lock cmpxchg` is seq-cst; aarch64 uses ldaxr/stlxr),
 # so an acquire fence after a winning CAS is pure cost. alloc.cyr:59 still calls it
 # "a cheap near-no-op": measured on this hardware, `atomic_fence()` is ~22 ns — an
 # out-of-line call emitting `mfence`, about 2× the whole CAS, and 83 % of the cost

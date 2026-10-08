@@ -1,4 +1,4 @@
-# tls_libssl_read_errors.tcyr — 6.6.13 (CVE-60): the libssl backend's tls_read / tls_write
+# tls_libssl_read_errors.tcyr — 6.6.13 (CYRIUS-2026-0016): the libssl backend's tls_read / tls_write
 # return the native backend's codes, and never a zero-extended C int.
 #
 # ⛔ THE DEFECT. lib/tls.cyr's libssl branch returned SSL_read / SSL_write's raw `int`. fncall3 hands
@@ -11,14 +11,14 @@
 # TLS_ERR_IO (socket error / EOF with no close_notify), TLS_ERR_ALERT (a received alert),
 # TLS_ERR_PROTOCOL (any other libssl failure, a bad record MAC included).
 #
-# 6.6.14 — and a failed connection STAYS failed (CVE-60's "Not covered"): after a fatal alert a
+# 6.6.14 — and a failed connection STAYS failed (CYRIUS-2026-0016's "Not covered"): after a fatal alert a
 # second SSL_read reported SSL_ERROR_ZERO_RETURN (OpenSSL sets RECEIVED_SHUTDOWN, warn_alert 0 =
 # close_notify), so the re-read was 0 — a clean end — where native keeps TLS_ERR_ALERT. The shim
 # now keeps the first failure at +32: every later tls_read returns it, every later tls_write
 # returns TLS_ERR_PROTOCOL (native's rule), neither calls SSL — counted here by spies interposed
 # on the resolved SSL_read / SSL_write / SSL_shutdown pointers — and tls_close skips SSL_shutdown.
 # Every row runs twice per protocol version: as is, and with a deadline set (tls_set_deadline), since
-# a deadline routes tls_read / tls_write through their own branch (_tls_ssl_io, CVE-61's loop) and
+# a deadline routes tls_read / tls_write through their own branch (_tls_ssl_io, CYRIUS-2026-0017's loop) and
 # the stored error must hold there too.
 #
 # 6.6.16 — and a failed HANDSHAKE stays failed. tls_connect_complete / tls_accept_complete returned 0

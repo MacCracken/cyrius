@@ -298,7 +298,7 @@ fn EDEFER_SAVE(S): i64 {
 }
 # ⛔ Cleared (xzr pairs) before the `add` releases it: the area outlives the blocks — the
 # `secret var` wipe among them — so it held every return register in dead stack after the wipe.
-# See x86 float.cyr `EDEFER_RESTORE`. CHANGELOG [6.6.15] (CVE-69)
+# See x86 float.cyr `EDEFER_RESTORE`. CHANGELOG [6.6.15] (the secret-var epilogue spill gap)
 fn EDEFER_RESTORE(S): i64 {
     EW(S, 0xAD4107E0);   # ldp q0, q1, [sp, #32]
     EW(S, 0xA9410FE2);   # ldp x2, x3, [sp, #16]

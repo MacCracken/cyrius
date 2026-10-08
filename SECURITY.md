@@ -25,14 +25,14 @@ Cyrius is a systems language compiler. Security-relevant areas:
      NO bridge rung — asm assembles `cybs` (`bootstrap/cybs.cyr`); `cybs`
      reproduces the asm binary (closure); `cybs` compiles `src/main.cyr` → gen1;
      gen1 → gen2 == `build/cycc` (self-host fixpoint, gen2 == gen3).
-  **CVE-20 (resolved 2026-06-20):** `build/cycc` is now machine-derivable from
+  **the seed-chain cycc hardening item (resolved 2026-06-20):** `build/cycc` is now machine-derivable from
   the seed (it used to be a disjoint blob nobody re-derived). The
   `trust-root-attest` CI job runs the **closure** check (`seed-derive-cycc.sh`)
   plus a self-host-fixpoint drift backstop (`build-cycc-verify.sh`) — it does
   **not** run `verify.sh`. Full trusting-trust resistance = **both legs**: a
   backdoor in `build/cycc` would have to live in the committed asm binary
   (caught by `verify.sh` re-deriving asm from the Rust source) or in the
-  hand-auditable `cybs.cyr` / `main.cyr` source. (The CVE-20 completing fix was a
+  hand-auditable `cybs.cyr` / `main.cyr` source. (The seed-chain cycc hardening item completing fix was a
   missing NUL-terminator in cybs's string lexer, which had broken the
   preprocessor macro-hash and dropped the Linux `#ifdef` block.)
 - **Kernel code**: AGNOS kernel memory safety, interrupt handling, syscall validation
@@ -56,7 +56,7 @@ alloc/vec overflow guards. v5.1.0+ adds macOS Mach-O.
 | 5.x.x (5.0.0+) | Best-effort |
 | < 5.0.0 | No |
 
-## Release Integrity & Signing (v6.2.31, CVE-13)
+## Release Integrity & Signing (v6.2.31, the release-signing hardening item)
 
 Releases are protected by a **sovereign** signing chain — cyrius's own crypto,
 no external `minisign` / `gpg`:
@@ -64,7 +64,7 @@ no external `minisign` / `gpg`:
 1. **Per-artifact checksums.** Every release tarball ships a `.sha256` sidecar.
    The installers ([`scripts/install.sh`](scripts/install.sh),
    [`scripts/ci.sh`](scripts/ci.sh), [`scripts/install.ps1`](scripts/install.ps1))
-   verify it **fail-closed** before extracting (CVE-21, v6.2.30) — HTTPS +
+   verify it **fail-closed** before extracting (the release-integrity hardening item, v6.2.30) — HTTPS +
    checksum is the first-install floor.
 2. **Detached Ed25519 signature.** When the signing key (`CYRIUS_RELEASE_SK`) is
    configured, the release also publishes `SHA256SUMS` (the aggregate of all

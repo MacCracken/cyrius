@@ -80,7 +80,7 @@ v6.5.40):
 0x207B000 IR liveness       2 MB    ir_live_in / ir_live_out
 0x457C000 lexid heads     ~130 KB   identifier-interning chain heads (entries live at 0xF400000)
 0x459D000 preprocess_out   24 MB    include / #derive expansion buffer (v6.5.39)
-0x5D9D000 local tables    512 KB    4 slot-indexed per-fn tables × 128 KB (CVE-24, v6.1.40)
+0x5D9D000 local tables    512 KB    4 slot-indexed per-fn tables × 128 KB (the locals-cap bug, v6.1.40)
 0x5E9D000 IR nodes / cp    20 MB    the IR arena (v6.3.28)
 0x7400000 input_buf        24 MB    raw stdin + the preprocessor's working buffer (v6.5.39)
 0x8C00000 tok_types        32 MB    4,194,304 token type slots (v6.5.39)

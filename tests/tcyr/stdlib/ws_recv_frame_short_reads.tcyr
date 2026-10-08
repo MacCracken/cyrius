@@ -1,4 +1,4 @@
-# ws_recv_frame_short_reads.tcyr — 6.6.10 (CVE-53): lib/ws.cyr's ws_recv_frame reads every
+# ws_recv_frame_short_reads.tcyr — 6.6.10 (CYRIUS-2026-0011): lib/ws.cyr's ws_recv_frame reads every
 # frame part EXACTLY and bounds the length a peer declares.
 #
 # ⛔ THE DEFECT. The extended-length, mask and payload reads were single unchecked sys_read

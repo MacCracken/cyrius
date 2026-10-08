@@ -10,7 +10,7 @@
 # ⚠ GUEST CONTRACT: cxvm runs TRUSTED bytecode — it is NOT a sandbox. The 0x70 syscall opcode
 #   passes every number but 0/1/2/3/8/60/318/228 to the host kernel with the guest's raw
 #   arguments, so running an untrusted .cyx == running a native binary with cxvm's privileges.
-#   What cxvm DOES guarantee since 6.6.12 (CVE-58): a guest cannot reach the HOST's memory
+#   What cxvm DOES guarantee since 6.6.12 (the cxvm host-memory bug): a guest cannot reach the HOST's memory
 #   through the VM itself. Every load/store is checked against [8, _CX_MEM_SIZE) for its full
 #   width, the translated syscall buffers likewise (-EFAULT, as Linux answers), the data and
 #   call stacks trap on overflow/underflow, the guest stack traps before it reaches the loaded
@@ -106,7 +106,7 @@ var _cx_csp = 0;
 # the bottom traps (cx_push / cx_call_push). They held 1024 entries with NO check until
 # 6.6.12, so the 513th nested call (two entries per frame: the return address and the saved
 # fp) wrote into the next host allocation — the loaded code — and a deep recursion ended with
-# a garbage exit code instead of a diagnostic (CVE-58). 65536 entries (512 KiB each) makes
+# a garbage exit code instead of a diagnostic (the cxvm host-memory bug). 65536 entries (512 KiB each) makes
 # the guest's own 1 MB data segment, not these arrays, the binding limit on recursion depth.
 # CHANGELOG [6.6.12]
 var _CX_STACK_ENTRIES = 65536;
@@ -164,7 +164,7 @@ fn _cx_host_clock_gettime(clk, ts): i64 {
 fn cx_reg_get(r): i64 { return load64(_cx_regs + r * 8); }
 fn cx_reg_set(r, v): i64 { store64(_cx_regs + r * 8, v); return 0; }
 
-# ── VM traps (6.6.12, CVE-58) ────────────────────────────────────────────────────────────
+# ── VM traps (6.6.12, the cxvm host-memory bug) ────────────────────────────────────────────────────────────
 # A guest fault is reported, never performed: `cxvm: <what> <value> at pc <N>` on stderr, exit
 # 1. `pc` is the byte offset of the faulting instruction in the bytecode (after the 8-byte
 # header), i.e. the same numbering `_cx_pc` and the backend's code offsets use.
@@ -220,7 +220,7 @@ fn _cx_fault(what, wlen, v): i64 {
 # store through a null pointer used to succeed silently — x86 answers the same program with
 # SIGSEGV). The upper test is written `a > SIZE - w` so no guest value can overflow it. Before
 # 6.6.12 every load/store was `_cx_mem + reg` with no check, so a guest address past 1 MB read
-# and wrote cxvm's own heap — the register file, the stacks, the loaded code (CVE-58).
+# and wrote cxvm's own heap — the register file, the stacks, the loaded code (the cxvm host-memory bug).
 fn _cx_addr(a, w): i64 {
     if (a < 8) { _cx_fault("guest address out of range:", 27, a); }
     if (a > _CX_MEM_SIZE - w) { _cx_fault("guest address out of range:", 27, a); }
@@ -486,7 +486,7 @@ fn cx_run(code, code_len): i64 {
             # lib/hashseed.cyr is the stdlib's only caller of either on cx, and
             # its OS-RNG draw AND its clock fallback both failed, leaving every
             # cx process on the same published seed. CHANGELOG [6.6.8]
-            # 6.6.12 (CVE-58): each buffer is range-checked for its FULL length before it is
+            # 6.6.12 (the cxvm host-memory bug): each buffer is range-checked for its FULL length before it is
             # translated — `read(fd, buf, n)` with buf + n past 1 MB had the host kernel write
             # cxvm's own heap. An out-of-range buffer answers -EFAULT without reaching the host,
             # which is what Linux answers a bad pointer with. CHANGELOG [6.6.12]

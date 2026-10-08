@@ -789,7 +789,7 @@ fn tls_native_12_parse_client_key_exchange(msg, msg_len, peer_pub_out32): i64 {
 }
 
 # ----------------------------------------------------------------
-# TLS 1.2 client authentication (6.6.14, CVE-64)
+# TLS 1.2 client authentication (6.6.14, CYRIUS-2026-0019)
 # ----------------------------------------------------------------
 # RFC 5246 §7.4.4 / §7.4.6 / §7.4.8. A server whose verify mode is not TLS_VERIFY_NONE sends a
 # CertificateRequest between its ServerKeyExchange and ServerHelloDone; the client answers with a
@@ -1417,7 +1417,7 @@ fn _tn_12_key_curve(ctx): i64 {
 # Server: build the coalesced flight ServerHello ‖ Certificate ‖
 # ServerKeyExchange [‖ CertificateRequest] ‖ ServerHelloDone into `out`, feeding each raw
 # handshake message into the transcript. The CertificateRequest is sent when the ctx's verify
-# mode is not TLS_VERIFY_NONE (6.6.14, CVE-64: it never was). Requires the transcript
+# mode is not TLS_VERIFY_NONE (6.6.14, CYRIUS-2026-0019: it never was). Requires the transcript
 # initialized + the ClientHello already fed, plus CIPHER, SERVER_RANDOM,
 # EPH_PUB, and loaded creds. Returns the total length or a negative
 # TLS_ERR_*.
@@ -1575,7 +1575,7 @@ fn tls_native_connect_12(ctx, sock_fd): i64 {
     var pm = load64(ctx + TLS_CTX_OFF_SHARED);
     # Our flight before the CCS, as handshake messages in `hm`: [Certificate,] ClientKeyExchange
     # [, CertificateVerify] (RFC 5246 §7.3). The Certificate answers a CertificateRequest
-    # (6.6.14, CVE-64): ours when _tn_12_parse_cert_request chose a scheme, else an empty one.
+    # (6.6.14, CYRIUS-2026-0019): ours when _tn_12_parse_cert_request chose a scheme, else an empty one.
     var creq = load64(ctx + TLS_CTX_OFF_CERT_REQUESTED);
     var cscheme = load64(ctx + TLS_CTX_OFF_CLIENT_SIG_SCHEME);
     var hcap = 512;
@@ -1658,7 +1658,7 @@ fn tls_native_connect_12(ctx, sock_fd): i64 {
     var vr = tls_native_12_verify_finished(ctx, sfin, sfinlen, "server finished");
     if (vr != TLS_OK) { return _tn_ctx_fail(ctx, vr); }
     store64(ctx + TLS_CTX_OFF_STATE, TLS_STATE_CONNECTED);
-    var cvr = _tn_connect_verify(ctx);   # CVE-18: fail-closed chain + hostname
+    var cvr = _tn_connect_verify(ctx);   # CYRIUS-2026-0003: fail-closed chain + hostname
     if (cvr != TLS_OK) { return cvr; }
     return TLS_OK;
 }
@@ -1726,7 +1726,7 @@ fn _tn_12_server_hs(ctx, sock_fd, ch_msg, ch_len): i64 {
     if (inbuf == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     # The client's flight before its CCS — [Certificate,] ClientKeyExchange [, CertificateVerify]
     # (RFC 5246 §7.3) — read one whole message at a time, however the client split its records.
-    # The Certificate and CertificateVerify come only when we asked (6.6.14, CVE-64): the three
+    # The Certificate and CertificateVerify come only when we asked (6.6.14, CYRIUS-2026-0019): the three
     # messages are bounded at 16 KiB (the 1.3 server reads a client Certificate of at most 8 KiB),
     # which keeps an mTLS 1.2 handshake inside the 128 KiB arena an mTLS 1.3 one fits; without
     # client auth the flight is the 37-byte ClientKeyExchange alone.
@@ -2093,7 +2093,7 @@ fn tls_native_ca_skipped(ctx): i64 {
 # trust anchors. Tries the standard bundle locations across distros + macOS
 # (the path is NOT the same everywhere: Debian/Ubuntu use
 # /etc/ssl/certs/ca-certificates.crt, RHEL/Fedora /etc/pki/..., macOS/Arch
-# /etc/ssl/cert.pem). Windows reads none of them (drive-relative there — CVE-65) and
+# /etc/ssl/cert.pem). Windows reads none of them (drive-relative there — CYRIUS-2026-0020) and
 # exports its CurrentUser ROOT store as the bundle instead (_tn_ca_read_win, 6.6.14).
 # Returns TLS_OK, TLS_ERR_IO if no bundle is readable, or a parse error.
 # v6.5.36 — the bundle is read and allocated ONCE per process, not per call.
@@ -2140,12 +2140,12 @@ var _tn_ca_sys_skipped = 0;  # blocks of the bundle the set could not use       
 # not in the bundle, counted into `_tn_ca_sys_skipped`. Always 0 elsewhere.
 # Written by the claim holder only, in _tn_ca_read_win. CHANGELOG [6.6.14]
 var _tn_ca_sys_refused = 0;
-# ⛔ CVE-77 — THE STORE'S PURPOSE IS THE CHAIN'S PURPOSE. The set above is the system roots
+# ⛔ CYRIUS-2026-0027 — THE STORE'S PURPOSE IS THE CHAIN'S PURPOSE. The set above is the system roots
 # trusted for SERVER authentication, which a CLIENT ctx anchors a server chain to. A SERVER ctx
 # anchors CLIENT chains (mTLS, _TN_PURPOSE_CLIENT), and Windows records per root which purposes
 # its root program trusts it for (CERT_ENHKEY_USAGE_PROP_ID): tls_native_set_ca_system gave an
 # mTLS server the serverAuth export, so a root Windows trusts for server authentication only
-# anchored client identities — the trust-store half of CVE-75, which enforces a CA CERTIFICATE's
+# anchored client identities — the trust-store half of CYRIUS-2026-0026, which enforces a CA CERTIFICATE's
 # own extendedKeyUsage. Windows now exports a second set for a server ctx, filtered for
 # clientAuth by the same rules (_tn_w_policy), cached and published exactly like the first. A
 # POSIX bundle carries no per-root purpose (it is the distro's serverAuth export), so both roles
@@ -2227,7 +2227,7 @@ fn _tn_ca_load_into(st, pbuf, plen, pset, pskip, pref, purpose): i64 {
 # the ctx's allocator. Records the set's skipped count for tls_native_ca_skipped. A bundle with no
 # usable root is TLS_ERR_CERT_INVALID every time (the ctx keeps any set it had), as
 # tls_native_set_ca_bundle answers it. A SERVER ctx (it verifies client chains) gets, on Windows,
-# the roots the store trusts for client authentication (CVE-77, above); a client ctx, and
+# the roots the store trusts for client authentication (CYRIUS-2026-0027, above); a client ctx, and
 # every ctx elsewhere, the roots trusted for server authentication.
 fn tls_native_set_ca_system(ctx): i64 {
     if (ctx == 0) { return TLS_ERR_INVALID_PARAM; }
@@ -2262,11 +2262,11 @@ fn _tn_ca_install(ctx, len, set, skipped): i64 {
 # when no candidate is readable (the caller caches that). Called only by the claim holder. `refused`
 # receives the roots the store refused (Windows; 0 elsewhere), `purpose` the TlsChainPurpose the
 # roots must be trusted for — a POSIX bundle has no per-root purpose, so it is read the same for both.
-# ⛔ CVE-65 (6.6.14) — NEVER THE POSIX PATHS ON WINDOWS. There a rooted path is DRIVE-RELATIVE:
+# ⛔ CYRIUS-2026-0020 (6.6.14) — NEVER THE POSIX PATHS ON WINDOWS. There a rooted path is DRIVE-RELATIVE:
 # "/etc/ssl/cert.pem" is C:\etc\ssl\cert.pem, and any authenticated user may create folders at the
 # root of the system drive, so one local user could plant trust anchors every native TLS client on
 # the box then trusted (measured on cass: a planted cert.pem installed as the only root). Windows
-# reads its own store instead (_tn_ca_read_win) — CVE-54 / CVE-57's class. CHANGELOG [6.6.14]
+# reads its own store instead (_tn_ca_read_win) — CYRIUS-2026-0012 / CYRIUS-2026-0014's class. CHANGELOG [6.6.14]
 fn _tn_ca_read(buf, cap, refused, purpose): i64 {
     store64(refused, 0);
     #ifdef CYRIUS_TARGET_WIN
@@ -2302,7 +2302,7 @@ fn _tn_ca_read(buf, cap, refused, purpose): i64 {
 }
 
 #ifdef CYRIUS_TARGET_WIN
-# ⛔ CVE-65 (6.6.14) — THE WINDOWS SYSTEM STORE. Before it Windows had no system roots at all (the
+# ⛔ CYRIUS-2026-0020 (6.6.14) — THE WINDOWS SYSTEM STORE. Before it Windows had no system roots at all (the
 # POSIX paths were its only source), so every verifying native connect there failed.
 #
 # WHICH STORE: CurrentUser\ROOT, opened read-only. It is the store the current-user chain engine
@@ -2313,7 +2313,7 @@ fn _tn_ca_read(buf, cap, refused, purpose): i64 {
 # WHICH ROOTS: the ones the root's own properties and the Disallowed store say Windows trusts for TLS
 # server authentication — the policy only ever REMOVES roots, and anything it cannot judge is refused.
 # (A server ctx's set asks the same of CLIENT authentication — every "serverAuth" below reads
-# "clientAuth" for it; CVE-77 at `_tn_ca_cl_state`.)
+# "clientAuth" for it; CYRIUS-2026-0027 at `_tn_ca_cl_state`.)
 #   - a root whose root-program purposes (CERT_ENHKEY_USAGE_PROP_ID) leave out serverAuth is not a
 #     TLS anchor (cass: 6, e.g. Thawte Timestamping CA) — the analogue of the Mozilla trust bits the
 #     POSIX bundles are already filtered by;
@@ -2660,12 +2660,12 @@ fn tls_native_set_client_key(ctx, key, key_len): i64 {
     return TLS_OK;
 }
 
-# CVE-17 (v6.1.36): a CA that signs the next link down must, if it carries a
+# CYRIUS-2026-0002 (v6.1.36): a CA that signs the next link down must, if it carries a
 # keyUsage extension, assert keyCertSign (0x04); and its pathLenConstraint (if
 # set, != -1) must permit `below` intermediate CAs beneath it toward the leaf.
 # `below` is the path-build depth at which this CA signs (0 = it directly signs
 # the leaf). Uses the sigil 3.7.12 keyUsage/pathLen fields. Returns 1 if OK.
-# ⛔ 6.6.16 (CVE-75) — WHY `purpose`: a CA's extendedKeyUsage confines what it may vouch
+# ⛔ 6.6.16 (CYRIUS-2026-0026) — WHY `purpose`: a CA's extendedKeyUsage confines what it may vouch
 # for, and this never looked at it. A CA limited to clientAuth / codeSigning / S/MIME could issue
 # a leaf the native client took as a TLS server, and a serverAuth-only CA in an mTLS server's
 # trust set could issue a client identity; OpenSSL refuses both. The check sits HERE, inside the
@@ -2828,7 +2828,7 @@ fn _tn_leaf_purpose_ok(leaf, purpose): i64 {
 # terminates any cross-sign cycle. See
 # docs/development/issues/archived/2026-06-09-native-tls-handshake-gap-public-servers.md,
 # CHANGELOG [6.1.19].
-# ⛔ 6.6.14 (CVE-64) — WHY. This was the client's verifier only, and the server checked a client
+# ⛔ 6.6.14 (CYRIUS-2026-0019) — WHY. This was the client's verifier only, and the server checked a client
 # certificate's POSSESSION (its CertificateVerify) and never its chain: any self-signed leaf was
 # accepted as an identity by a server that asked for verification. CHANGELOG [6.6.14]
 fn _tn_verify_chain(ctx, leaf, inters, now_unix, purpose): i64 {
@@ -2836,7 +2836,7 @@ fn _tn_verify_chain(ctx, leaf, inters, now_unix, purpose): i64 {
     if (leaf == 0) { return _tn_ctx_fail(ctx, TLS_ERR_CERT_INVALID); }
     if (rootset == 0) { return _tn_ctx_fail(ctx, TLS_ERR_CERT_INVALID); }
     if (_x509_in_window(leaf, now_unix) == 0) { return _tn_ctx_fail(ctx, TLS_ERR_CERT_INVALID); }
-    # CVE-17 (v6.1.36): the leaf must permit the TLS identity it is used as.
+    # CYRIUS-2026-0002 (v6.1.36): the leaf must permit the TLS identity it is used as.
     if (_tn_leaf_purpose_ok(leaf, purpose) != 1) { return _tn_ctx_fail(ctx, TLS_ERR_CERT_INVALID); }
     var ni = 0;
     if (inters != 0) { ni = load64(inters); }
@@ -2852,7 +2852,7 @@ fn _tn_verify_chain(ctx, leaf, inters, now_unix, purpose): i64 {
                 if (_x509_in_window(R, now_unix) == 1) {
                     if (x509_cert_is_ca(R) == 1) {
                         if (_x509_verify_link(cur, R) == 1) {
-                            # CVE-17: the anchoring root must assert keyCertSign
+                            # CYRIUS-2026-0002: the anchoring root must assert keyCertSign
                             # (if it has keyUsage) + honor pathLen for `depth`;
                             # 6.6.16: and its EKU must permit `purpose`.
                             if (_tn_ca_signer_ok(R, depth, purpose) == 1) { return TLS_OK; }
@@ -2872,7 +2872,7 @@ fn _tn_verify_chain(ctx, leaf, inters, now_unix, purpose): i64 {
                     if (x509_cert_is_ca(P) == 1) {
                         if (_x509_in_window(P, now_unix) == 1) {
                             if (_x509_verify_link(cur, P) == 1) {
-                                # CVE-17: signing intermediate must assert
+                                # CYRIUS-2026-0002: signing intermediate must assert
                                 # keyCertSign + honor pathLen for `depth`;
                                 # 6.6.16: and its EKU must permit `purpose`.
                                 if (_tn_ca_signer_ok(P, depth, purpose) == 1) { nextp = P; ii = ni; }

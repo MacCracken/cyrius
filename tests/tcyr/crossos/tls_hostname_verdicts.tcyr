@@ -1,11 +1,11 @@
-# tls_hostname_verdicts.tcyr — 6.6.14 (CVE-67): one SAN / host table, and both TLS backends'
+# tls_hostname_verdicts.tcyr — 6.6.14 (CYRIUS-2026-0022): one SAN / host table, and both TLS backends'
 # verdicts on it, so the native matcher and libssl cannot drift apart again.
 #
 # ⛔ THE DEFECT. The native matcher (_tn_host_match, lib/tls_native_conn.cyr) took ANY dNSName
 # beginning "*." as a wildcard over the host's first label: a certificate for "*.com" verified
 # a.com, b.com and every other .com host; "*.example.com.", "*.a_b.com", "*.*.example.com" and
 # "*." matched names OpenSSL refuses, and the star stood for bytes ("a_b") OpenSSL does not let it.
-# The libssl binder (6.6.13, CVE-59) hands the same host to OpenSSL's X509_check_host with
+# The libssl binder (6.6.13, CYRIUS-2026-0015) hands the same host to OpenSSL's X509_check_host with
 # NO_PARTIAL_WILDCARDS | NEVER_CHECK_SUBJECT, which refuses every one of those. And OpenSSL reads a
 # host that STARTS with '.' as a subdomain pattern (".example.com" matches a.example.com), which
 # native never did. Now native implements OpenSSL's valid_star + wildcard_match exactly, and the
@@ -153,7 +153,7 @@ fn test_wildcards(): i64 {
     _hv_row("D:*.example.com", "example.com", 0, "*.example.com / example.com: the star needs a label");
     _hv_row("D:*.example.com", "a.b.example.com", 0, "*.example.com / a.b.example.com: ONE label");
     _hv_row("D:*.example.com", "a_b.example.com", 0, "*.example.com / a_b.example.com: the star stands for LDH bytes only");
-    _hv_row("D:*.com", "a.com", 0, "*.com / a.com: one label after the star is no wildcard (the CVE-67 row)");
+    _hv_row("D:*.com", "a.com", 0, "*.com / a.com: one label after the star is no wildcard (the CYRIUS-2026-0022 row)");
     _hv_row("D:*.com", "com", 0, "*.com / com");
     _hv_row("D:*.com", "*.com", 1, "*.com / *.com: compared literally");
     _hv_row("D:*.", "a.", 0, "*. / a.");

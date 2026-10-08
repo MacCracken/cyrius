@@ -2,7 +2,7 @@
 #
 # i2d_PUBKEY returns a C `int`; through fncall2 the -1 failure arrives zero-extended as
 # 4294967295, which passed the old `written > 0` test and came back as the SPKI LENGTH — a
-# caller copying or hashing that many bytes reads far past `buf` (CVE-60's class, the
+# caller copying or hashing that many bytes reads far past `buf` (CYRIUS-2026-0016's class, the
 # introspection sibling of tls_read/tls_write). The libssl entry points are replaced by
 # cyrius stubs, so the row needs no libssl and no network. CHANGELOG [6.6.13]
 include "lib/assert.cyr"

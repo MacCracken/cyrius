@@ -8,7 +8,7 @@
 # ach (Intel) arm at v6.4.59. Both built the real release tarball, `scp`'d it to the Mac and
 # ran the REAL `scripts/install.sh` against it with `CYRIUS_INSTALL_TARBALL=…`. Neither ever
 # sent a checksum. install.sh's local-tarball hook verifies fail-closed **only if a sidecar
-# sits beside the tarball** (the CVE-21 branch); with no sidecar it copies the file and
+# sits beside the tarball** (the release-integrity hardening item branch); with no sidecar it copies the file and
 # installs it. So the two gates whose whole job is "the published artifact installs on a
 # real Mac" had never once verified that the artifact arrived intact, and the Intel-Mac arm
 # has verified a hash on NO release since it was added. The tarball builders have ALWAYS
@@ -58,7 +58,7 @@
 #   f. the axis-1 detector's tarball arm disabled          -> axis 1 self-test FAIL
 #   g. (bite 26 review) install.sh's local-sidecar         -> axis 3(b) FAIL, AND NOTHING ELSE —
 #      MISMATCH downgraded from `err` to `warn … continuing   "install.sh reached the UNPACK for
-#      anyway" (the pre-CVE-21 advisory shape). The check      a tarball whose checksum did not
+#      anyway" (the pre-the release-integrity hardening item advisory shape). The check      a tarball whose checksum did not
 #      still runs and still reports the mismatch; it just      match". The `no bin/` grep this
 #      no longer stops the install.                            assertion replaced caught none of
 #                                                              it — see the axis-3 note.

@@ -20,7 +20,7 @@ CYRIUS_HOME="${CYRIUS_HOME:-$HOME/.cyrius}"
 TARBALL="cyrius-${VERSION}-x86_64-linux.tar.gz"
 URL="https://github.com/MacCracken/cyrius/releases/download/${VERSION}/${TARBALL}"
 
-# ⛔ CVE-44 (v6.6.6) — EVERY downloaded artifact lands in a PRIVATE directory, never a fixed
+# ⛔ CYRIUS-2026-0007 (v6.6.6) — EVERY downloaded artifact lands in a PRIVATE directory, never a fixed
 # /tmp name. This script used /tmp/$TARBALL, /tmp/$TARBALL.sha256, /tmp/SHA256SUMS,
 # /tmp/SHA256SUMS.sig, /tmp/cyrius-release.pub and /tmp/cyrius_tsum — six predictable paths, in
 # a world-writable directory, holding the tarball being installed AND the three inputs to the
@@ -48,7 +48,7 @@ curl -sfL "$URL" -o "$TD/$TARBALL" || {
     exit 1
 }
 
-# CVE-21 (v6.2.30): verify the published .sha256 sidecar fail-closed before
+# the release-integrity hardening item (v6.2.30): verify the published .sha256 sidecar fail-closed before
 # extracting. Pre-fix, ci.sh curl'd + untarred with NO integrity check at all —
 # a CI pipeline installing an unverified toolchain is the supply-chain hole the
 # sovereignty stance exists to remove. macOS runners ship `shasum`, not
@@ -75,7 +75,7 @@ curl -sfL "${URL}.sha256" -o "$TD/${TARBALL}.sha256" || {
 echo "  checksum verified"
 rm -f "$TD/${TARBALL}.sha256"
 
-# CVE-13 (v6.2.31): if a trusted cyrsign is present (a prior install on PATH /
+# the release-signing hardening item (v6.2.31): if a trusted cyrsign is present (a prior install on PATH /
 # in $CYRIUS_HOME/bin — the upgrade path), also verify the sovereign Ed25519
 # signature over SHA256SUMS against the pinned public key, then confirm this
 # tarball matches the SIGNED manifest line. Fail-closed. A fresh CI box with no

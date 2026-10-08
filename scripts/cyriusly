@@ -105,7 +105,7 @@ case "${1:-help}" in
         # env var leaked into curl-only and `sh` ran install.sh
         # without seeing it → resolved "latest" from GitHub API.
         #
-        # CVE-21 (v6.2.30): fetch install.sh from an immutable TAG, never
+        # the release-integrity hardening item (v6.2.30): fetch install.sh from an immutable TAG, never
         # the mutable `main` branch. Pre-fix, a main-branch compromise
         # instantly hit every `cyriusly install` even when pinning a tag.
         #

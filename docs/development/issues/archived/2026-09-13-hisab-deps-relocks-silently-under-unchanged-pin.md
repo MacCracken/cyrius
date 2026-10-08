@@ -4,7 +4,7 @@
 resolve entry, and a stdlib leaf whose pinned-snapshot hash disagrees with the locked one under
 an unchanged pin is refused by name with both hashes (no lock write, no binary);
 `cyrius deps --relock` is the explicit accept; a pin bump re-locks silently; a pre-6.6.4 lock
-fails open once and comes back stamped. Found under it: bare `deps --lock` dropped every CVE-21
+fails open once and comes back stamped. Found under it: bare `deps --lock` dropped every the release-integrity hardening item
 commit pin; a CRLF lock turned the guard off; `--verify` read only 64 KB. Gated by
 `tests/gates/toolchain/deps_relock_refused.sh` (14 axes, local `file://` git dep). The filed repro
 flips BUG → OK. The companion cause (the store written from a drifted tree) is closed in the

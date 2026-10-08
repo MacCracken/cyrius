@@ -1074,7 +1074,7 @@ fn PARSE_ENUM_DEF(S, emit_code): i64 {
         # exit was `}`, so at EOF it re-registered the same member forever, and the
         # per-member write walked the 1024-entry enum-const table off its region at
         # ~1027 iterations. The v6.4.62 watchdog could not catch it — that one detects a
-        # STALL, and this loop ADVANCES GTI every iteration. See CVE-39.
+        # STALL, and this loop ADVANCES GTI every iteration. See the include-length ifdef bug.
         elif (PEEKT(S) == 12) { ego = 0; }
         else {
             if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
@@ -1128,7 +1128,7 @@ fn PARSE_ENUM_DEF(S, emit_code): i64 {
                     if (is_stack_enum == 1) {
                         if (ctor_arity > 1) { ERR_MSG(S, "stack enum variant takes 0 or 1 fields (the pair holds tag + one payload)", 73); }
                     }
-                    # v5.11.65 (CVE-05): bound NPOS_GUARD by actual
+                    # v5.11.65 (the compiler heap guard-page gap): bound NPOS_GUARD by actual
                     # variant-name length; was magic-256.
                     var _vnlen2 = 0; while (load8(S + 0xEC00000 + vnoff + _vnlen2) != 0) { _vnlen2 = _vnlen2 + 1; }
                     NPOS_GUARD(S, _vnlen2 + 1);
@@ -1288,7 +1288,7 @@ fn PARSE_ENUM_DEF(S, emit_code): i64 {
                     # intrinsic (the call lowers to the intrinsic, or SIGSEGVs). A unit variant
                     # declares no fn and stays accepted (`E.mulh64`). CHANGELOG [6.6.20]
                     _RSV_INTRINSIC_DECL(S, vnoff, vti, 0);
-                    # v5.11.65 (CVE-05): bound NPOS_GUARD by actual
+                    # v5.11.65 (the compiler heap guard-page gap): bound NPOS_GUARD by actual
                     # variant-name length; was magic-256.
                     var _vnlen1 = 0; while (load8(S + 0xEC00000 + vnoff + _vnlen1) != 0) { _vnlen1 = _vnlen1 + 1; }
                     NPOS_GUARD(S, _vnlen1 + 1);
@@ -1329,7 +1329,7 @@ fn PARSE_ENUM_DEF(S, emit_code): i64 {
             if (PEEKT(S) == 5 || PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
         }
     }
-    # v6.5.19: the loop can now exit on EOF as well as on `}` (the CVE-39 guard above),
+    # v6.5.19: the loop can now exit on EOF as well as on `}` (the include-length ifdef bug guard above),
     # so the closing brace has to be VERIFIED rather than assumed. Without this,
     # `enum E {` truncated mid-body exited 0 and cycc emitted a binary for a file that
     # simply stops — trading a SIGSEGV for silent acceptance, which is worse.
@@ -1698,7 +1698,7 @@ fn PARSE_STRUCT_DEF(S): i64 {
     var go = 1;
     while (go == 1) {
         if (PEEKT(S) == 14) { go = 0; }
-        # v6.5.19: EOF guard — same class as the enum member loop above (CVE-39).
+        # v6.5.19: EOF guard — same class as the enum member loop above (the include-length ifdef bug).
         # `struct`, `struct S`, `struct S {`, `struct S { a` all SIGSEGV'd at 6.5.18.
         elif (PEEKT(S) == 12) { go = 0; }
         else {
@@ -1792,7 +1792,7 @@ fn PARSE_UNION_DEF(S): i64 {
     var go = 1;
     while (go == 1) {
         if (PEEKT(S) == 14) { go = 0; }
-        # v6.5.19: EOF guard — the union twin of the struct loop above (CVE-39).
+        # v6.5.19: EOF guard — the union twin of the struct loop above (the include-length ifdef bug).
         elif (PEEKT(S) == 12) { go = 0; }
         else {
             if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
