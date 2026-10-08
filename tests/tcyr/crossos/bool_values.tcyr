@@ -1,0 +1,63 @@
+# bool_values.tcyr — 6.7.3 (B2): `true`, `false`, `!` and `bool`, at run time on every backend.
+#
+# `true` is 1 and `false` is 0 (ADR-002 keeps i64 the core: sizeof(bool) == 8). `!e` is 1 when e's
+# word is 0, else 0; it binds like unary minus (its operand is a factor), and an f64 operand is
+# tested by its raw bits, as `if (x)` tests it. Until 6.7.3 the lexer DROPPED a lone `!`, so `!x`
+# compiled as `x` (CVE-104). The user's decisions (2026-10-07): a WRITE into a bool is checked —
+# only a boolean value (true / false, a comparison, `!`, `&&` / `||`, another bool) is accepted —
+# and a bool READS as the integer 0 or 1 everywhere. The refusals are
+# tests/gates/frontend/bool_checked.sh.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/assert.cyr"
+
+enum Flag { OFF = false; ON = true; }
+#assert true == 1
+#assert !false
+#assert !!7 == 1
+const T1 = !0;
+const F1 = !9;
+
+fn not_of(x) { return !x; }
+
+fn values(): i64 {
+    assert_eq(true, 1, "V1: true is 1");
+    assert_eq(false, 0, "V2: false is 0");
+    assert_eq(!0, 1, "V3: !0");
+    assert_eq(!7, 0, "V4: !7");
+    assert_eq(!!5, 1, "V5: !!5");
+    assert_eq(not_of(0 - 3), 0, "V6: !x on a negative");
+    var x = 5;
+    var hit = 0;
+    if (!x) { hit = 1; }
+    assert_eq(hit, 0, "V7: if (!x) with x = 5 is not taken");
+    x = 0;
+    if (!x) { hit = 1; }
+    assert_eq(hit, 1, "V8: if (!x) with x = 0 is taken");
+    var done = 0;
+    var n = 0;
+    while (!done) { n = n + 1; if (n == 4) { done = 1; } }
+    assert_eq(n, 4, "V9: while (!done)");
+    assert_eq(!x + 1, 2, "V10: ! binds tighter than + (like unary minus)");
+    assert_eq(!(x + 1), 0, "V11: !(..) over a parenthesised sum");
+    assert_eq(-!x, 0 - 1, "V12: unary minus over !");
+    assert_eq(!0.0, 1, "V13: !0.0 tests the raw word");
+    assert_eq(!(-0.0), 0, "V14: !(-0.0) is 0 (its sign bit is set), as if (-0.0) is taken");
+    assert_eq((3 < 4) && !false, 1, "V15: && with !");
+    assert_eq(!(3 < 4) || false, 0, "V16: || with !");
+    var s = 0;
+    switch (x == 0) { case true: s = 1; case false: s = 2; }
+    assert_eq(s, 1, "V17: case true");
+    assert_eq(ON, 1, "V18: an enum value from true");
+    assert_eq(OFF, 0, "V19: an enum value from false");
+    assert_eq(T1 + F1, 1, "V20: a const from !");
+    return 0;
+}
+
+fn run(): i64 {
+    values();
+    return 0;
+}
+var r0 = run();
+var rr = assert_summary();
+syscall(60, rr);

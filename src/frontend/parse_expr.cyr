@@ -4253,7 +4253,36 @@ fn PARSE_INTRIN(S, ptyp): i64 {
     return r;
 }
 
+# 6.7.3 (B2) — `true` (169), `false` (170) and `!` (171) as factor-level values, dispatched from
+# PARSE_INTRIN so both tiers that parse a factor (PARSE_TERM, _PARSE_FACTOR_IMPL) take them from
+# ONE place. `!e` binds like unary minus (its operand is a factor) and is `e == 0` on the operand's
+# word — an f64 operand is tested by its raw bits, as `if (x)` tests it. The value is a fresh i64:
+# no variable, no float type, no float-builtin mark. CHANGELOG [6.7.3]
+fn _bx_factor_tok(S, t): i64 {
+    if (t < 169) { return 0; }
+    if (t > 171) { return 0; }
+    STI(S, GTI(S) + 1);
+    if (t == 169) { EMOVI(S, 1); }
+    if (t == 170) { EMOVI(S, 0); }
+    if (t == 171) {
+        PARSE_FACTOR(S);
+        EPUSHR(S);
+        EMOVI(S, 0);
+        EMOVCA(S);
+        EPOPR(S);
+        ESETCC(S, 17);
+    }
+    SESTYPE(S, 0);
+    SPSC(S, 0);
+    SESVAR(S, 0 - 1);
+    _esv_name = 0 - 1;
+    SEXW(S, 0);
+    _fbr_k = 0;
+    return 1;
+}
+
 fn _PARSE_INTRIN_IMPL(S, ptyp): i64 {
+    if (_bx_factor_tok(S, ptyp) == 1) { return 1; }
     if (ptyp >= 93) { if (ptyp <= 99) { PARSE_SIMD_EXT(S, ptyp); return 1; } }
     if (ptyp >= 100) { if (ptyp <= 104) { PARSE_SIMD_EXT(S, ptyp); return 1; } }
     # v5.10.17 — f64v_dot/scale/axpy

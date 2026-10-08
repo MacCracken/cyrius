@@ -1704,6 +1704,9 @@ fn LEXID(S, p, npos): i64 {
         if (kw & 0xFFFFFFFF == 0x6D756E65) { ADDTOK(S, 60, 0); return p; }
         # "impl" = 0x6C706D69
         if (kw & 0xFFFFFFFF == 0x6C706D69) { ADDTOK(S, 77, 0); return p; }
+        # 6.7.3 (B2): "true" = 0x65757274 → token 169, the bool value 1. No cyrius or ecosystem
+        # source uses `true` / `false` as an identifier (surveyed 2026-10-07).
+        if (kw & 0xFFFFFFFF == 0x65757274) { ADDTOK(S, 169, 0); return p; }
     }
     if (klen == 5) {
         if (kw & 0xFFFFFFFFFF == 0x00656C696877) { ADDTOK(S, 16, 0); return p; }
@@ -1729,6 +1732,8 @@ fn LEXID(S, p, npos): i64 {
         # or a compile-time-evaluable fn (`const fn`). No cyrius or ecosystem source uses `const` as
         # an identifier (surveyed 2026-10-07), so cycc's own token stream is unchanged.
         if (kw & 0xFFFFFFFFFF == 0x74736E6F63) { ADDTOK(S, 168, 0); return p; }
+        # 6.7.3 (B2): "false" = 0x65736C6166 → token 170, the bool value 0.
+        if (kw & 0xFFFFFFFFFF == 0x65736C6166) { ADDTOK(S, 170, 0); return p; }
     }
     if (klen == 6) {
         # v6.5.0 — "public" = 0x63696C627570, lexed to token 73, the SAME token as the
@@ -2375,12 +2380,14 @@ fn LEX(S): i64 {
                                                             else { if (c == 41) { ADDTOK(S, 11, 0); p = p + 1; }
                                                                 else { if (c == 123) { ADDTOK(S, 13, 0); p = p + 1; }
                                                                     else { if (c == 125) { ADDTOK(S, 14, 0); p = p + 1; }
-                                                                        # !=
+                                                                        # != , or `!` (token 171, logical not). A lone `!` was DROPPED
+                                                                        # here until 6.7.3, so `!x` compiled as `x` (CVE-104, the
+                                                                        # CVE-52 class). CHANGELOG [6.7.3]
                                                                         else { if (c == 33) {
                                                                                 if (p + 1 < bl) {
                                                                                     if (load8(S + 0x459D000 + p + 1) == 61) { ADDTOK(S, 18, 0); p = p + 2; }
-                                                                                    else { p = p + 1; }
-                                                                                } else { p = p + 1; }
+                                                                                    else { ADDTOK(S, 171, 0); p = p + 1; }
+                                                                                } else { ADDTOK(S, 171, 0); p = p + 1; }
                                                                             }
                                                                             # < or <= or <<
                                                                             else { if (c == 60) {

@@ -7,6 +7,7 @@
     { "include": "#strings" },
     { "include": "#numbers" },
     { "include": "#keywords" },
+    { "include": "#constants" },
     { "include": "#types" },
     { "include": "#functions" },
     { "include": "#directives" }
@@ -40,11 +41,15 @@
       ]
     },
     "keywords": {
-      "match": "\\b(fn|var|if|elif|else|while|for|return|break|continue|include|struct|union|enum|defer|switch|case|default|asm|sizeof|secret|match|in|shared)\\b",
+      "match": "\\b(fn|var|if|elif|else|while|for|return|break|continue|include|struct|union|enum|defer|switch|case|default|asm|sizeof|secret|match|in|shared|impl|trait|const)\\b",
       "name": "keyword.control.cyrius"
     },
+    "constants": {
+      "match": "\\b(true|false)\\b",
+      "name": "constant.language.cyrius"
+    },
     "types": {
-      "match": "\\b(i8|i16|i32|i64|u8|u16|u32|u64)\\b",
+      "match": "\\b(i8|i16|i32|i64|u8|u16|u32|u64|f32|f64|bool)\\b",
       "name": "storage.type.cyrius"
     },
     "functions": {
