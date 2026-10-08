@@ -1,9 +1,14 @@
-# `cyriusly cmdtools` runs whatever `scripts/cyriusly` the current directory holds — OPEN
+# `cyriusly cmdtools` runs whatever `scripts/cyriusly` the current directory holds — RESOLVED
 
-**Status:** 🟡 **OPEN** — the fix needs a packaging decision: the compiled cyriusly has no
-installed shell twin to resolve.
-**Placement:** unpinned — for the 6.6.20 integration to pin (lane c-pin filed it; roadmap edits
-are integration's). SECURITY — needs a CVE id.
+**Status:** ✅ **RESOLVED in 6.7.3 — CVE-103** (`docs/audit/2026-09-03-security-audit.md`). Fix
+option 1, decided: every store writer ships the twin to `<home>/versions/<v>/scripts/cyriusly`
+(install.sh's refresh-only, tarball and source-bootstrap paths; all four POSIX tarball builders),
+and `cmdtools` runs `<home>/versions/<current>/scripts/cyriusly` only — refusing by name a
+relative home, a `current` that is not a version, or an active slot with no twin; no fallback to
+the binary's own slot or the CWD. `scripts/verify-store.sh` judges and restores the twin. Gates:
+`tests/gates/toolchain/cyriusly_version_operand_refused.sh` axes 7 (7a–7e) and 9 (9a–9d),
+`tests/gates/toolchain/released_slot_written_from_tag.sh` axes 7, 7b, 8. CHANGELOG [6.7.3].
+**Placement:** the 6.7.3 repair lane (was: unpinned, filed by 6.6.20 lane c-pin). SECURITY — CVE-103.
 **Discovered:** 2026-10-06, 6.6.20 closeout fix batch, lane c-pin review round 1 (RS-04 sibling)
 **Severity:** Medium (P2) — a toolchain verb executes repository-shipped code, the CBT-01 class;
 the trigger is one rarely-run verb inside a hostile checkout, not every `cyrius` verb

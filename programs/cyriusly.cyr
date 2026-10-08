@@ -854,19 +854,68 @@ fn _cmd_setup(): i64 {
     return 0;
 }
 
+# The NUL-terminated `s` on stderr.
+fn _cy_err_s(s): i64 {
+    syscall(1, 2, s, strlen(s));
+    return 0;
+}
+
+# ⛔ 6.7.3 (CVE-103) — THE TWIN IS THE INSTALL'S, NEVER THE CURRENT DIRECTORY'S. `cmdtools` ran the
+# literal `scripts/cyriusly`, a path relative to the CWD: inside any checkout shipping a
+# `scripts/cyriusly`, `cyriusly cmdtools list` executed that repository's script with the user's
+# privileges (measured on 6.7.3: "PWNED from the checkout: cmdtools list", rc 0), and outside one
+# the verb failed rc 127, because no store held a twin to find. Every writer now installs it at
+# `<home>/versions/<v>/scripts/cyriusly` (scripts/install.sh `_install_twin`), and it is resolved
+# from the ACTIVE version only: <home> must be absolute (a relative CYRIUS_HOME is CWD resolution
+# again) and `current` must have a version's shape (`../evil` is a path, not a version). Anything
+# else is refused by name — there is no fallback. The binary's OWN slot is deliberately not tried:
+# a binary run from a shared directory would resolve a twin beside it that another user planted.
+# tests/gates/toolchain/cyriusly_version_operand_refused.sh axes 7 and 9. CHANGELOG [6.7.3]
+#
+# The twin's path, or 0 after a refusal on stderr.
+fn _cy_twin_path(): i64 {
+    var home = _cyrius_home();
+    if (load8(home) != 47) {
+        _cy_err_tok("cyriusly: cmdtools: the install home is not an absolute path: ", home);
+        _cy_err_s("  set CYRIUS_HOME to an absolute path; cyriusly never resolves the shell twin");
+        _cy_err_s(" from the current directory\n");
+        return 0;
+    }
+    var cur[64];
+    _cyrius_current_into(&cur, 64);
+    if (_cy_version_ok(&cur) == 0) {
+        _cy_err_s("cyriusly: cmdtools: no active version: '");
+        _cy_err_s(home);
+        _cy_err_s("/current' reads '");
+        _cy_err_shown(&cur, strlen(&cur));
+        _cy_err_s("'\n  run: cyriusly use <version> --global\n");
+        return 0;
+    }
+    var twin = _path_join(_path_join(_path_join(home, "versions"), &cur), "scripts/cyriusly");
+    if (file_exists(twin) == 0 || is_dir(str_from(twin)) == 1) {
+        _cy_err_tok("cyriusly: cmdtools needs the shell twin ", twin);
+        _cy_err_s("  the active version's install does not ship it. Installs before 6.7.3 never did:");
+        _cy_err_s(" switch to 6.7.3 or later (cyriusly use <version> --global).\n");
+        _cy_err_s("  A 6.7.3+ install without it: reinstall it (cyriusly install <version>, or");
+        _cy_err_s(" sh scripts/install.sh --refresh-only from its checkout)\n");
+        _cy_err_s("  cyriusly never runs a scripts/cyriusly from the current directory\n");
+        return 0;
+    }
+    return twin;
+}
+
 # `cyriusly cmdtools [action] [tool]` — manage starship/p10k integrations.
-# Defers to scripts/cyriusly cmdtools because the verb has substantial
-# shell-side state (heredoc'd starship/p10k config blocks). Native port
-# is a v5.11.x or v6.x slot in its own right; for this closeout we
-# delegate transparently so users get a unified entry point.
+# Defers to the shell twin's `cmdtools` because the verb has substantial shell-side state
+# (heredoc'd starship/p10k config blocks); a native port is a slot of its own. Which twin runs:
+# `_cy_twin_path` above (6.7.3, CVE-103).
 # 6.6.20 (RS-04): the operands ride as ARGV — this concatenated them into a `/bin/sh -c` line, so
-# `cyriusly cmdtools 'list;cmd'` ran `cmd`. ⚠ The twin is still found relative to the CWD
-# (`scripts/cyriusly`); that half is filed (docs/development/issues/
-# 2026-10-06-cyriusly-cmdtools-runs-the-cwd-script.md). CHANGELOG [6.6.20]
+# `cyriusly cmdtools 'list;cmd'` ran `cmd`. CHANGELOG [6.6.20]
 fn _cmd_cmdtools(action_cstr, tool_cstr): i64 {
+    var twin = _cy_twin_path();
+    if (twin == 0) { return 1; }
     var ct_args = vec_new();
     vec_push(ct_args, "/bin/sh");
-    vec_push(ct_args, "scripts/cyriusly");
+    vec_push(ct_args, twin);
     vec_push(ct_args, "cmdtools");
     if (action_cstr != 0) { vec_push(ct_args, action_cstr); }
     if (tool_cstr != 0) { vec_push(ct_args, tool_cstr); }

@@ -2113,6 +2113,10 @@ _chk_gate "$ROOT/tests/gates/toolchain/build_output_confined.sh"
 # `..`) in BOTH peers (programs/cyriusly.cyr and scripts/cyriusly): `uninstall ../versions`
 # deleted the whole store, the active version included, and `install` spliced the operand into a
 # /bin/sh -c line. A fake curl on PATH; nothing reaches the network.
+# 6.7.3 (CVE-103) — the compiled `cyriusly cmdtools` ran the CURRENT directory's scripts/cyriusly
+# (any checkout's script, with the user's privileges); it runs <home>/versions/<current>/scripts/
+# cyriusly only, refusing by name otherwise, and every store writer ships that twin (axes 7, 9:
+# install.sh's tarball and refresh-only paths run hermetically, in throwaway homes).
 _chk_gate "$ROOT/tests/gates/toolchain/cyriusly_version_operand_refused.sh"
 # 6.6.20 (SEC-07, CVE-101) — with a trusted verifier present, a release at or above the first
 # signed release (6.2.31) whose SHA256SUMS / .sig cannot be fetched is REFUSED by name in
