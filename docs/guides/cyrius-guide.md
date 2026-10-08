@@ -120,8 +120,10 @@ float idiom stays legal); `CYRIUS_TYPE_CHECK=0` silences them.
 an `f64` warns: 1's bits are a subnormal, write `t += 1.0`). Until 6.6.11 only a local got
 the float arithmetic: `G += 1.0` on an `f64` global added the two bit patterns as integers,
 and `for (var x: f64 = 0.0; x < 1.0; x += 0.25)` ran twice instead of four times, silently.
-`%=`, `&=`, `|=`, `^=`, `<<=` and `>>=` are integer operations on any variable. A `for`
-step accepts all ten compound operators (it used to accept five).
+`%=`, `&=`, `|=`, `^=`, `<<=`, `>>=` and `>>>=` are integer operations on any variable. A
+`for` step accepts all eleven compound operators (it used to accept five; `>>>=` since 6.7.5).
+Since 6.7.5 the same float rules hold on an `f64` / `f32` **field** (`p.x *= 2.0`) — see
+[Compound assignment](#compound-assignment-every-lvalue-675).
 
 ## Variables
 
@@ -304,7 +306,7 @@ closure:
 ```
 var t: i16[8];
 t[i] = 0 - 5;          # stores 2 bytes
-t[i] += 1;             # all ten compound operators (+= -= *= /= %= &= |= ^= <<= >>=)
+t[i] += 1;             # all eleven compound operators (+= -= *= /= %= &= |= ^= <<= >>= >>>=)
 var v = t[i];          # -4: an i8/i16/i32 element is sign-extended, u8/u16/u32 zero-extended
 if (t[0]) { ... }      # tests the element
 ```
@@ -506,6 +508,59 @@ checked variants compile to calls into `lib/overflow.cyr` helpers
 exit code 57 is reserved to distinguish overflow panics from POSIX signal
 exits and assert-summary returns.
 
+### Compound assignment: every lvalue (6.7.5)
+
+`x OP= e` takes eleven operators — `+= -= *= /= %= &= |= ^= <<= >>= >>>=` (`>>>=`, the
+arithmetic shift, since 6.7.5) — on **every lvalue**: a variable, a subscript `a[i]`, a field at
+any depth (`p.x`, `o.i.b`, `a.next.v` through a `*T` field, `h.name.len` through a `Str`, a
+slice's `s.len`), through a `*T` local, parameter or global, `self: *T`, a closure capture, and
+`*p`. It works in a statement, at top level, in a classic-`for` step (`for (h.n = 0; h.n < 5;
+h.n += 1)` — a field or `*p` step takes `=` too, and a struct-valued field step copies the whole
+struct) and, on a local, in a `const fn`. Before 6.7.5 a field, `*p`, `>>>=` and a field or `*p`
+`for` step were all syntax errors (`expected '=', got '+'`).
+
+It operates at the place's width and kind, exactly as reading it does: an `i8` / `i16` / `i32`
+field or element is loaded sign-extended and stored at its own width (so it wraps there),
+`+= -= *= /=` on an `f64` / `f32` place are float operations with the same warnings as
+`x = x + e`, `p += n` on a `*T` place steps `sizeof(T)`, and `*p OP= v` is a WORD operation, as
+`*p` is (see [Pointers](#pointers)).
+
+```
+struct H { n; m; }
+var h = H { 1, 2 };
+h.n += 4;            # 5
+h.m <<= 3;           # 16
+var t: i32[4];
+t[1] -= 7;           # -7, stored in 4 bytes
+var v = 0 - 64;
+v >>>= 2;            # -16: the sign is kept (`>>=` would fill with zeros)
+```
+
+⚠ **The address is taken first.** A compound assignment computes the lvalue's address ONCE,
+BEFORE it evaluates the right-hand side — as `a[i] OP= v` always has — while a plain assignment
+`x.f = e` evaluates `e` first and then stores. The two differ only when the right-hand side moves
+the lvalue:
+
+```
+struct H { n; m; }
+var A = H { 10, 0 };
+var B = H { 20, 0 };
+var GP: *H = &A;
+fn repoint(): i64 { GP = &B; return 1; }
+GP.n += repoint();             # A.n becomes 11: GP named A when the address was taken
+```
+
+From the same start, `GP.n = GP.n + repoint();` reads `A.n` (10), moves `GP`, and writes 11 into
+`B.n`.
+
+Refused by name: a compound assignment to a **struct value** — a struct variable (`a += b`, a
+local of any size, a by-value parameter or a global) or a struct-typed field (`r.tl += 1`) — which
+used to operate on the struct's first word and never call an overloaded `P_add` (13 where
+`a = a + b` gives 33): write `a = a + b`. Likewise a `bool` (variable or field: its result is not a
+bool — write `b = b && c`), a const or an enum constant, and a field of a call's result
+(`mk(3).n += 1`: the result is a temporary). A handle keeps its pointer arithmetic: `p += 1` on a
+`*T` steps `sizeof(T)`, and a pointer-mode struct variable or a `Str` is an address.
+
 ## Memory
 
 ```
@@ -551,6 +606,7 @@ var x = 42;
 var p = &x;            # Address of x
 var v = *p;            # Dereference → 42
 *p = 99;               # Write through pointer
+*p += 1;               # 100: a word load, add and store (6.7.5)
 
 # Typed pointers (auto-scale arithmetic)
 var buf[64];
@@ -562,7 +618,9 @@ var b = *(p + 1);      # 20 (adds 8 bytes, not 1)
 ```
 
 A `*T` variable is an 8-byte address whatever `T` is, and `*p` always loads 8 bytes
-(use `load8` / `load16` / `load32` for narrower reads). `T` must name a type
+(use `load8` / `load16` / `load32` for narrower reads). `*p = v` and `*p OP= v` (6.7.5) write 8
+bytes the same way — `*p += 1` through a `*i32` is a WORD add over two elements; write
+`store32(p, load32(p) + 1)` or subscript a typed array for an element. `T` must name a type
 ([Type names](#type-names-6616)). **`p + n`, `p - n`, `p += n` and `p -= n` step
 `sizeof(T)` elements, wherever `p` is declared** — a local, a parameter, a global, a
 closure capture, a struct field or a fn result: `*u8` / `*i8` step 1, `*i16` 2, `*i32` /
@@ -623,6 +681,7 @@ var p = Point { 10, 20 };           # Positional — fields in declaration order
 var q = Point { x: 10, y: 20 };     # Named — any order, every field required
 var sum = p.x + p.y;    # 30
 p.x = 42;               # Field assignment
+p.x += 8;               # 50: every compound operator, at the field's width (6.7.5)
 
 # Nested structs
 struct Rect { tl: Point; br: Point; }
@@ -647,6 +706,12 @@ fields' widths, and never descended further: `struct HO { o: Odd; t: i8; u: i32;
 `struct Odd { a: i8; b: i16; }` (8 bytes) had its literal write 13 bytes past the object — over
 the next global, or the calling fn's frame — and a struct nested two levels deep took the wrong
 number of values. Both were silent, on every target.
+
+A field takes every compound operator (6.7.5): `p.x += 1`, `r.br.x *= 2`, `n.next.val -= 1`, an
+`f64` field's `p.x *= 2.0` as a float operation — see
+[Compound assignment](#compound-assignment-every-lvalue-675). A `bool` field (`b.ok += 1`) and a
+struct-typed field (`r.tl += 1`: a struct value is not an integer) are refused by name, as a bool
+or struct variable is.
 
 ### Field chains and call results (v6.6.12)
 
@@ -674,7 +739,8 @@ itself (`mk(3).total()` calls `Box_total`, as a value or as the statement `mk(3)
 for a named struct, not to a nested field (`mk(3).v.sum()`, like `b.v.sum()`, is a syntax error). At top level there is no frame:
 `var G = mk(3).n;` is refused by name — call it inside a fn. A field of a call to a fn that
 does not return a struct is refused too, and so is an assignment to a result's field
-(`mk(3).n = 5;`): the result is a temporary.
+(`mk(3).n = 5;`, `mk(3).n += 1;`, and a method's, `b.mk(4).n = 5;` — which was
+`expected ';', got '='` until 6.7.5): the result is a temporary.
 
 ⚠ Before v6.6.12 a chain stopped after two levels — `n.v.v.x` was the syntax error
 `expected ';', got '.'` — and a `.field` after a call was `expected ')', got '.'` in every

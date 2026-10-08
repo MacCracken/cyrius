@@ -1639,7 +1639,7 @@ fn _ifs_bx(S, k, ti, fnoff): i64 {
     return _bx_refuse(S, ti, "cannot store a value that is not a bool into bool field ", fnoff, 0, 0 - 1);
 }
 
-# The field store's end: its terminator (`;`), consumed. CHANGELOG [6.7.5]
+# The field store's end: its terminator — `;`, or a classic-for step's `)` — consumed. 6.7.5
 fn _fst_end(S, term): i64 {
     if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
     STI(S, GTI(S) + 1);
