@@ -3554,6 +3554,7 @@ fn PARSE_GVAR_REG(S): i64 {
     var ann_float = 0;   # v6.2.19 math arc: F64_TYID / F32_TYID for `var x: f64`/`f32`
     var ann_ti = 0;      # 6.6.13 (M2): the annotation's type token (an array's element size)
     var ann_vec = 0;     # 6.6.17 (a3): a vector annotation's descriptor (<= -2048), else 0
+    var ann_bool = 0;    # 6.7.3 (B2): `var g: bool` — its initializer is checked
     if (PEEKT(S) == 49) {
         STI(S, GTI(S) + 1);
         ann_ti = GTI(S);
@@ -3574,6 +3575,7 @@ fn PARSE_GVAR_REG(S): i64 {
                 ann_signed = _tn_sgn(ann_c);
                 ann_float = _tn_flt(ann_c);
                 ann_sid = _tn_sid(ann_c);
+                ann_bool = _tn_bool(ann_c);
             }
             STI(S, GTI(S) + 1);
             ann_sid = _gen_ann_sid(S, ann_sid);   # 6.6.11: `W1<Pt>` is the instance, not the base
@@ -3623,6 +3625,7 @@ fn PARSE_GVAR_REG(S): i64 {
     var sit_lit = 0;
     var sit_val = 0;
     var sit_shadow = 0;
+    var rhs_ti = 0;     # 6.7.3: the initializer's first token (a static bool is judged by its shape)
     var cf_has = 0;     # 6.6.6: the initializer folded to a constant (any target, any value)
     var cf_val = 0;
     var chk_lit = 0;    # v6.2.11: `= NUM ;` literal for the collision guardrail
@@ -3638,6 +3641,7 @@ fn PARSE_GVAR_REG(S): i64 {
         # (where MASK is also a struct name) must allocate a scalar slot, not STRUCTSZ bytes.
         # 6.6.12: `Box<Pt> { .. }` too (`_lit_head`), and an annotation must agree with it.
         var lh_ti = GTI(S);
+        rhs_ti = lh_ti;
         ssid = _lit_head(S);
         STI(S, lh_ti);
         if (ssid > 0) {
@@ -3750,6 +3754,7 @@ fn PARSE_GVAR_REG(S): i64 {
     # destructure form stamps per name — each carries its own _GVAR_VIS (v6.6.4).
     var gvi = _gv_fold(S, vcnt, sti);   # 6.6.6: a redeclaration reuses the global's slot
     _GVAR_VIS(S, gvi, sti);
+    SVBOOL(S, gvi, ann_bool);   # 6.7.3 (B2): like the float flag, the last declaration's
     SGFI(S, gvi, _gv_ufv(S, sti, psc + ann_sid + ann_scalar + ann_float));   # 6.6.10
     _gv_float_copy(S, gvi, sti, psc + ann_sid + ann_scalar + ann_float);     # 6.6.11
     _gv_diag_sid(S, gvi, sti, psc + ann_sid + ann_scalar + ann_float + is_struct);   # 6.6.13 I11
@@ -3792,6 +3797,7 @@ fn PARSE_GVAR_REG(S): i64 {
     if (_TARGET_CX == 1) { if (cf_has == 1) { if (is_struct == 0) { if (sit_lit == 0) {
                     S64(_vgsi_base + gvi * 8, cf_val);
                 } } } }
+    _bx_gv_reg(S, ann_bool, sit_lit, rhs_ti, noff);   # 6.7.3: a baked bool is judged here
     if (sit_lit == 1) {
         S64(_vgsi_base + gvi * 8, sit_val);
         SLVAR(S, gvi);
@@ -4030,6 +4036,36 @@ fn _gvi_expr(S, gps): i64 {
     return 0;
 }
 
+# 6.7.3 (B2) — a declaration-zone `var g: bool = e;` is judged exactly once: a value the folder
+# BAKES into the image (the final `sit_lit` 1: `= true`, a constant shadow or redeclaration, cx
+# included) here, by its token shape — `true` / `false`, optionally parenthesised, then `;` (the
+# pass-1 folder folds no names, so that is the whole static boolean subset); any other (deferred,
+# `= false`, a call, a const) at the replay, by the stamp.
+fn _bx_lit_bool(S, ti): i64 {
+    var d = 0;
+    while (TOKTYP(S, ti) == 10) { d = d + 1; ti = ti + 1; }
+    var t = TOKTYP(S, ti);
+    if (t != 169 && t != 170) { return 0; }
+    ti = ti + 1;
+    while (d > 0) { if (TOKTYP(S, ti) != 11) { return 0; } d = d - 1; ti = ti + 1; }
+    if (TOKTYP(S, ti) != 5) { return 0; }
+    return 1;
+}
+fn _bx_gv_reg(S, ann_bool, sit_lit, ti, noff): i64 {
+    if (ann_bool == 0) { return 0; }
+    if (sit_lit == 0) { return 0; }
+    if (_bx_lit_bool(S, ti) == 1) { return 0; }
+    return _bx_refuse(S, ti, "cannot initialize bool ", noff, " with a value that is not a bool", 0 - 1);
+}
+fn _bx_gvi_expr(S, gps, gi, noff): i64 {
+    var ti = GTI(S);
+    _gvi_expr(S, gps);
+    if (_gvb_base == 0) { return 0; }   # no bool global anywhere: no lookup
+    if (_BX_IS(S) == 1) { return 0; }
+    if (GVBOOL(S, _gv_ent_slot(S, gi, 0, noff)) == 0) { return 0; }
+    return _bx_refuse(S, ti, "cannot initialize bool ", noff, " with a value that is not a bool", 0 - 1);
+}
+
 fn EMIT_GVAR_INITS(S): i64 {
     _gv_hide_program(S, 1);   # 6.6.6: a kernel replay reads declaration-zone globals (FINDVAR)
     _gvk_pre(S);              # 6.6.16 (C6): enum-named scalars baked; resolves as the replay does
@@ -4136,7 +4172,7 @@ fn EMIT_GVAR_INITS(S): i64 {
         }
         if (did_struct == 0) {
             if (_gci_init(S, idx, gps, noff) == 0) {   # 6.6.12: a whole struct source is copied
-                _gvi_expr(S, gps);
+                _bx_gvi_expr(S, gps, gi, noff);   # 6.7.3: _gvi_expr, and a bool global's value judged
                 if (idx >= 0) { _gv_store(S, idx); _gv_slvar(S, idx); }   # 6.6.13: at its width
             }
             _gvk_left(S, gi, sti, idx);   # 6.6.16 (C6): a kernel build names what stays late
@@ -5715,6 +5751,7 @@ fn PARSE_VAR(S): i64 {
         }
         SLVAR(S, vcnt);
         SGFI(S, vcnt, ufv);   # 6.6.10: see _UFV_G
+        SVBOOL(S, vcnt, lbool);   # 6.7.3 (B2)
         # 6.6.13 I11: an untyped `var g = f(..);` here records f for the Str -> cstring diagnostic,
         # as PARSE_GVAR_REG does for a global above the first statement (_gv_diag_sid).
         var gdc = 0;

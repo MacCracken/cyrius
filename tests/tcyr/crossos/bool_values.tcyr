@@ -17,6 +17,11 @@ enum Flag { OFF = false; ON = true; }
 #assert !!7 == 1
 const T1 = !0;
 const F1 = !9;
+var GT: bool = true;
+var GF: bool = false;
+var GC: bool = (3 < 4);
+fn one(): i64 { return 1; }
+var GD: bool = one() == 1;
 
 fn not_of(x) { return !x; }
 
@@ -78,9 +83,21 @@ fn locals(): i64 {
     return 0;
 }
 
+fn globals(): i64 {
+    assert_eq(GT + GF * 2 + GC * 4 + GD * 8, 13, "G1: static, deferred and parenthesised bool globals");
+    GF = GT && GC;
+    assert_eq(GF, 1, "G2: a global assigned an &&");
+    GF = !GF;
+    assert_eq(GF, 0, "G3: ... and its negation");
+    var l: bool = GT;
+    assert_eq(l, 1, "G4: a local from a bool global");
+    return 0;
+}
+
 fn run(): i64 {
     values();
     locals();
+    globals();
     return 0;
 }
 var r0 = run();

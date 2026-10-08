@@ -1390,6 +1390,7 @@ fn _UFV_L(S, li): i64 {
 }
 fn _UFV_G(S, vi): i64 {
     _vecg_refuse(S, vi);   # 6.6.17 (a3): the untyped-global read rung — a vector global's too
+    if (GVBOOL(S, vi) == 1) { _BX_MARK(S); }   # 6.7.3: a bool global's read is a boolean value
     if (_gfi_base == 0) { return 0; }
     if (vi < 0) { return 0; }
     if (load8(_gfi_base + vi) == 1) { _FBR_MARK(S, 3); }
