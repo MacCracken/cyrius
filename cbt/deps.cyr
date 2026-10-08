@@ -1934,7 +1934,7 @@ fn _dep_parse_name_lists(buf, n, section, names, lists): i64 {
 # source resolves its tag, its commit pin checked — on a dev box exactly as in CI. A `path` beside
 # `git` / `tag` is a DEV OVERRIDE, read only in local mode, and only the CLI switches that on:
 #     --local / --local=a,b   > --no-local >   CYRIUS_LOCAL=1 / CYRIUS_LOCAL=a,b   > off
-# (`--locked`, `publish`, `package` and `distlib` resolve what a release ships: the switch
+# (`--locked`, `publish`, `package`, `distlib` and `update` resolve what a release ships: the switch
 # is off there, and `--local` is refused by name). Until 6.7.6 a path beside git/tag won whenever
 # the directory existed — silently, with no clone and no commit pin — so a dev box and CI built
 # different code from one manifest, and the ecosystem toggled path lines in and out by hand (166
@@ -2089,7 +2089,7 @@ fn _dep_switch_setup(verb): i64 {
     }
     var rel = 0;
     if (streq(verb, "publish") == 1 || streq(verb, "package") == 1) { rel = 1; }
-    if (streq(verb, "distlib") == 1) { rel = 1; }
+    if (streq(verb, "distlib") == 1 || streq(verb, "update") == 1) { rel = 1; }
     var argl = _cli_has("--local");
     var argn = _cli_has("--no-local");
     if (argl == 1 && argn == 1) { _err("--local and --no-local contradict each other"); return 1; }
@@ -2938,6 +2938,12 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
             var dep_fetched = 0;
             if (need_clone == 1) {
                 var clone_dir = _dep_clone_dir(dep_name, dep_tag);
+                # 6.7.6 (R8): `cyrius update` re-fetches an UNTAGGED clone — it floats by design, and
+                # the cache froze it at its first fetch. A tag is immutable and is never re-fetched.
+                if (_dep_update_mode == 1 && dep_tag == 0 && is_dir(str_from(clone_dir)) == 1) {
+                    _status(_cat2(_cat2(_cat2("  ", _shown(dep_name)), ": untagged — re-fetching "), _shown(dep_git)));
+                    _dep_rm_tree(clone_dir);
+                }
                 if (is_dir(str_from(clone_dir)) == 0) { dep_fetched = 1; }
                 if (is_dir(str_from(clone_dir)) == 0) {
                     var git_ok = 1;
@@ -4330,7 +4336,185 @@ fn cmd_update(): i64 {
         }
     }
 
+    # 6.7.6 (R8) — THE DEPENDENCIES, which `update` always promised ("re-resolve all deps to latest
+    # tags") and never touched. An UNTAGGED dep's clone is re-fetched — it floats by design, and the
+    # cache froze it at its first fetch (`_dep_update_mode`, in the resolver); then the manifest
+    # re-resolves (lib/ + cyrius.lock); then each root dep's NEWER tags are listed. cyrius.cyml is
+    # never edited: moving a dependency to another tag is its author's decision, made in the file.
+    if (_mf_load() == 1 && _dep_has_named(_mf_buf, _mf_len) == 1) {
+        println("  dependencies:");
+        _dep_update_mode = 1;
+        var dr = cmd_deps();
+        _dep_update_mode = 0;
+        if (dr != 0) { return 1; }
+        _dep_report_newer_tags(_mf_buf, _mf_len);
+    }
     return 0;
+}
+
+# 1 when the manifest header declares a [deps.NAME] table.
+fn _dep_has_named(buf, n): i64 {
+    var info[32];
+    var p = 0;
+    while (p < n) {
+        p = _toml_line(buf, n, p, &info);
+        var hc = 0;
+        if (_dep_hdr_name(buf, n, &info, &hc) != 0) { return 1; }
+    }
+    return 0;
+}
+
+# A version-shaped tag — `[v]N(.N)*` — as its numeric parts (a vec), or 0 for any other shape (a
+# pre-release, a named tag), which `update` does not order.
+fn _dep_ver_parts(t): i64 {
+    var i = 0;
+    if (load8(t) == 118 || load8(t) == 86) { i = 1; }   # v / V
+    var out = vec_new();
+    var have = 0;
+    var cur = 0;
+    while (load8(t + i) != 0) {
+        var c = load8(t + i);
+        if (c >= 48 && c <= 57) {
+            if (cur > 99999999) { return 0; }
+            cur = cur * 10 + (c - 48);
+            have = 1;
+        } elif (c == 46 && have == 1) {
+            vec_push(out, cur);
+            cur = 0;
+            have = 0;
+        } else { return 0; }
+        i = i + 1;
+    }
+    if (have == 0) { return 0; }
+    vec_push(out, cur);
+    return out;
+}
+
+# <0, 0, >0 as version a orders before, equal to, after version b (both from _dep_ver_parts).
+fn _dep_ver_cmp(a, b): i64 {
+    var i = 0;
+    while (i < vec_len(a) || i < vec_len(b)) {
+        var x = 0;
+        var y = 0;
+        if (i < vec_len(a)) { x = vec_get(a, i); }
+        if (i < vec_len(b)) { y = vec_get(b, i); }
+        if (x != y) { return x - y; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# `cyrius update`: for each root [deps.NAME] with a remote git and a version-shaped tag, the
+# remote's tags that order after it (`git ls-remote --tags`), newest first.
+#     sigil: 3.9.9 pinned; newer tags: 3.10.0, 3.9.10 (cyrius.cyml is not edited)
+fn _dep_report_newer_tags(buf, n): i64 {
+    var info[32];
+    var rec = alloc(_DS_SIZE);
+    var p = 0;
+    while (p < n) {
+        p = _toml_line(buf, n, p, &info);
+        var hc = 0;
+        var nm = _dep_hdr_name(buf, n, &info, &hc);
+        if (nm == 0 || hc == 0 || _dep_name_unsafe(nm) == 1) { continue; }
+        p = _dep_sec_read(buf, n, p, ".", rec);
+        var git = load64(rec + _DS_GIT);
+        var tag = load64(rec + _DS_TAG);
+        if (git == 0 || tag == 0 || _dep_git_remote(git) == 0) { continue; }
+        var mine = _dep_ver_parts(tag);
+        sys_write(STDOUT_FD, "    ", 4);
+        var sn = _shown(nm);
+        sys_write(STDOUT_FD, sn, strlen(sn));
+        sys_write(STDOUT_FD, ": ", 2);
+        var st = _shown(tag);
+        sys_write(STDOUT_FD, st, strlen(st));
+        if (mine == 0) { println(" pinned (not a version number: newer tags are not compared)"); continue; }
+        var tf = _cbt_tmpfile("ls_remote");
+        var rc = _dep_wt_run(0, "ls-remote", "--tags", "--", git, tf);
+        if (rc != 0) {
+            sys_unlink(tf);
+            sys_write(STDOUT_FD, " pinned; the remote's tags could not be listed", 46);
+            var why = 0;
+            if (_dep_wt_err != 0) { why = _git_first_line_of(_dep_wt_err); }
+            if (why != 0) { sys_write(STDOUT_FD, " (", 2); var sw = _shown(why); sys_write(STDOUT_FD, sw, strlen(sw)); sys_write(STDOUT_FD, ")", 1); }
+            sys_write(STDOUT_FD, "\n", 1);
+            continue;
+        }
+        var newer = _dep_newer_tags(tf, mine);
+        sys_unlink(tf);
+        if (vec_len(newer) == 0) { println(" pinned; it is the newest version tag"); continue; }
+        sys_write(STDOUT_FD, " pinned; newer tags: ", 21);
+        var k = 0;
+        while (k < vec_len(newer) && k < 6) {
+            if (k > 0) { sys_write(STDOUT_FD, ", ", 2); }
+            var ns = _shown(vec_get(newer, k));
+            sys_write(STDOUT_FD, ns, strlen(ns));
+            k = k + 1;
+        }
+        if (vec_len(newer) > 6) {
+            sys_write(STDOUT_FD, " (and ", 6);
+            fmt_int(vec_len(newer) - 6);
+            sys_write(STDOUT_FD, " more)", 6);
+        }
+        println(" (cyrius.cyml is not edited)");
+    }
+    return 0;
+}
+
+# The first line of the file at `path` (bounded), or 0.
+fn _git_first_line_of(path): i64 {
+    var buf = alloc(256);
+    var nn = file_read_all(path, buf, 255);
+    if (nn <= 0) { return 0; }
+    var i = 0;
+    while (i < nn && load8(buf + i) != 10 && load8(buf + i) != 13) { i = i + 1; }
+    if (i == 0) { return 0; }
+    store8(buf + i, 0);
+    return buf;
+}
+
+# The `refs/tags/<t>` names in an `ls-remote --tags` capture whose version orders after `mine`,
+# newest first (peeled `^{}` lines skipped, each tag once).
+fn _dep_newer_tags(tf, mine): i64 {
+    var out = vec_new();
+    var vers = vec_new();
+    var nn = 0;
+    var b = file_read_whole(tf, &nn);
+    if (b == 0 || nn <= 0) { return out; }
+    var pos = 0;
+    while (pos < nn) {
+        var le = pos;
+        while (le < nn && load8(b + le) != 10) { le = le + 1; }
+        var t = pos;
+        while (t < le && load8(b + t) != 9) { t = t + 1; }
+        if (t + 11 < le && memeq(b + t + 1, "refs/tags/", 10) == 1) {
+            var s = t + 11;
+            var e = le;
+            if (e > s && load8(b + e - 1) == 13) { e = e - 1; }
+            var peeled = 0;
+            if (e - s > 3 && memeq(b + e - 3, "^{}", 3) == 1) { peeled = 1; }
+            if (peeled == 0) {
+                var tg = _git_cstr_copy(b + s, e - s);
+                var tv = _dep_ver_parts(tg);
+                if (tv != 0 && _dep_ver_cmp(tv, mine) > 0 && _dep_list_has(out, tg) == 0) {
+                    # insertion, newest first
+                    var at = 0;
+                    while (at < vec_len(out) && _dep_ver_cmp(vec_get(vers, at), tv) > 0) { at = at + 1; }
+                    vec_push(out, tg);
+                    vec_push(vers, tv);
+                    var j = vec_len(out) - 1;
+                    while (j > at) {
+                        vec_set(out, j, vec_get(out, j - 1));
+                        vec_set(vers, j, vec_get(vers, j - 1));
+                        j = j - 1;
+                    }
+                    vec_set(out, at, tg);
+                    vec_set(vers, at, tv);
+                }
+            }
+        }
+        pos = le + 1;
+    }
+    return out;
 }
 
 

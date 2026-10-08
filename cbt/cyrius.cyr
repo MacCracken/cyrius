@@ -164,7 +164,7 @@ fn _help_project(): i64 {
     _help_row("port [--dry-run] <rust-project>", "scaffold from a Rust project (→ rust-old/)");
     _help_row("deps [--verify|--lock|--relock|--no-lock|--dry-run|--locked|--local[=a,b]]",
       "resolve [deps] into lib/ + cyrius.lock (git first; --local builds sibling checkouts)");
-    _help_row("update", "re-resolve all deps to latest tags");
+    _help_row("update", "refresh lib/ from the toolchain, re-fetch untagged deps, list newer tags, re-resolve");
     _help_row("lib sync [--dry-run] [--full] [--no-lock] [--relock]",
       "vendor declared [deps].stdlib from pin (--full = whole snapshot), re-lock what it wrote");
     _help_row("distlib [--all|--check] [--modular] [profile]",
@@ -1031,6 +1031,7 @@ fn main(): i64 {
 
     if (streq(cmd, "update") == 1) {
         if (_cli_operands_ok("update", 0, 0) == 0) { return 1; }
+        if (_dep_switch_setup("update") != 0) { return 1; }   # 6.7.6: update resolves the tags
         return cmd_update();
     }
 
