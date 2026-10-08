@@ -12,6 +12,12 @@ READS as the integer 0 or 1 everywhere; a bare `return;` in a bool fn is refused
 `false`) **and a repair lane for the filed issues** (user, 2026-10-07: the two 6.7.x filings and the four open issue
 files — six fixes, each built and verified in its own worktree, merged here).
 
+**Release gate GREEN** (`release-gate.sh` on `8f669df2`, 2026-10-08 04:56 → 05:05, **9 min 1 s**): fixpoint 1,725,776 B,
+ARM lockstep 1,528,760 B, seed-derive OK, check.sh — **425 of 425** shell gates produced a result, 0 failed, the 2
+named agnos-parity SKIPs — and cross-OS self-host + the `crossos/` suite on REAL ecb, ach, cass and pi (all
+`SELFHOST_OK` + `LIBTEST_OK`). The gate's verify-store report still lists the 16 slots with a stale `bin/cybs` (the
+6.6.20 backlog item; `verify-store.sh --restore <v>` writes the live store, so it is the user's to run).
+
 **Size:** cycc **1,725,776 B** (`.text` **1,536,016**), +34,424 B over 6.7.2's 1,691,352 — B2 (the boolean stamp and
 its write checks, ~+22 KB) and the lanes (the struct-argument checks ~+4 KB, the in-loop tail-call selectors, the
 enum lvalue checks); dead-code floor unchanged (52 fns / 10,597 B). `build/cycc-native-aarch64` **1,528,760 B**
