@@ -1244,9 +1244,9 @@ fn _deps_transitive_gate(): i64 {
     str_builder_add_cstr(sbCyml_B, sc1);
     str_builder_add_cstr(sbCyml_B, "/B/cyrius.cyml");
     var sbCB = str_builder_new();
-    str_builder_add_cstr(sbCB, "[package]\nname = \"B\"\n[deps.C]\npath = \"");
-    str_builder_add_cstr(sbCB, sc1);
-    str_builder_add_cstr(sbCB, "/C\"\nmodules = [\"dist/C.cyr\"]\n");
+    # 6.7.6: a dependency's own manifest names its siblings RELATIVELY — an absolute path there is
+    # refused (not portable); the root's may stay absolute.
+    str_builder_add_cstr(sbCB, "[package]\nname = \"B\"\n[deps.C]\npath = \"../C\"\nmodules = [\"dist/C.cyr\"]\n");
     _write_file(str_data(str_builder_build(sbCyml_B)),
         str_data(str_builder_build(sbCB)));
 
@@ -1341,9 +1341,7 @@ fn _deps_transitive_gate(): i64 {
     str_builder_add_cstr(pByml, sc2);
     str_builder_add_cstr(pByml, "/B/cyrius.cyml");
     var pByml_body = str_builder_new();
-    str_builder_add_cstr(pByml_body, "[package]\nname = \"B\"\n[deps.D]\npath = \"");
-    str_builder_add_cstr(pByml_body, sc2);
-    str_builder_add_cstr(pByml_body, "/D\"\nmodules = [\"dist/D.cyr\"]\n");
+    str_builder_add_cstr(pByml_body, "[package]\nname = \"B\"\n[deps.D]\npath = \"../D\"\nmodules = [\"dist/D.cyr\"]\n");
     _write_file(str_data(str_builder_build(pByml)),
         str_data(str_builder_build(pByml_body)));
 
@@ -1351,9 +1349,7 @@ fn _deps_transitive_gate(): i64 {
     str_builder_add_cstr(pCyml, sc2);
     str_builder_add_cstr(pCyml, "/C/cyrius.cyml");
     var pCyml_body = str_builder_new();
-    str_builder_add_cstr(pCyml_body, "[package]\nname = \"C\"\n[deps.D]\npath = \"");
-    str_builder_add_cstr(pCyml_body, sc2);
-    str_builder_add_cstr(pCyml_body, "/D\"\nmodules = [\"dist/D.cyr\"]\n");
+    str_builder_add_cstr(pCyml_body, "[package]\nname = \"C\"\n[deps.D]\npath = \"../D\"\nmodules = [\"dist/D.cyr\"]\n");
     _write_file(str_data(str_builder_build(pCyml)),
         str_data(str_builder_build(pCyml_body)));
 
@@ -1424,9 +1420,7 @@ fn _deps_transitive_gate(): i64 {
     str_builder_add_cstr(p3Byml, sc3);
     str_builder_add_cstr(p3Byml, "/B/cyrius.cyml");
     var p3B_body = str_builder_new();
-    str_builder_add_cstr(p3B_body, "[package]\nname = \"B\"\n[deps.A]\npath = \"");
-    str_builder_add_cstr(p3B_body, sc3);
-    str_builder_add_cstr(p3B_body, "/A\"\nmodules = [\"dist/A.cyr\"]\n");
+    str_builder_add_cstr(p3B_body, "[package]\nname = \"B\"\n[deps.A]\npath = \"../A\"\nmodules = [\"dist/A.cyr\"]\n");
     _write_file(str_data(str_builder_build(p3Byml)),
         str_data(str_builder_build(p3B_body)));
 

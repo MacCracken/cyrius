@@ -4992,6 +4992,8 @@ fn _embed_collisions(ents): i64 {
     }
     n = n + _embed_owner_dir("src", ents, 0);
     n = n + _embed_owner_dir("lib", ents, 0);
+    # 6.7.6: a local-mode resolve vendored into build/local-deps/lib, which the compile reads first
+    if (_dep_local_active == 1) { n = n + _embed_owner_dir("build/local-deps/lib", ents, 0); }
     return n;
 }
 

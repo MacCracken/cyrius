@@ -35,7 +35,19 @@ output = "build/kybernet"  # a default for a bare `cyrius build`, not an asserti
 [deps]
 stdlib = ["string", "fmt", "alloc", "io", "vec", "str", "syscalls", "assert"]
 # Per-stdlib-dep entries (e.g. [deps.sigil], [deps.sandhi]) follow.
+
+[deps.libro]
+git  = "https://github.com/MacCracken/libro"
+tag  = "2.1.0"              # what every build resolves, its commit pinned in cyrius.lock
+path = "../libro"           # a DEV OVERRIDE: read only in local mode (CYRIUS_LOCAL=1 / --local)
+modules = ["dist/libro.cyr"]
 ```
+
+Since 6.7.6 a `path` beside `git` / `tag` is read only when the developer switches local mode on
+(`CYRIUS_LOCAL=1`, `CYRIUS_LOCAL=libro`, or `--local`); every other build — CI included — resolves
+the tag, and local mode vendors into `build/local-deps/lib/`, never writing `lib/` or
+`cyrius.lock`. A path-only entry (no `git`) is the dep's source in every mode. `cyrius deps
+--locked` is the CI check. The guide's *Build Tool & Dependencies* section has the whole rule.
 
 ## .ark Package Format
 

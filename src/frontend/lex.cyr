@@ -705,6 +705,81 @@ fn _rf_fits(path, skip, pre): i64 {
     return 0;
 }
 
+# ── 6.7.6 — the local-development overlay, CYRIUS_LIB_OVERLAY ─────────────────────────────
+# `cyrius` in LOCAL mode (CYRIUS_LOCAL / --local: a `[deps.X] path` beside `git` / `tag` builds
+# the sibling working tree) vendors that resolution into build/local-deps/lib/ and leaves lib/ —
+# the tag resolution, which is tracked — alone. It names that directory here, and an include of
+# `lib/<rest>` tries `<overlay>/<rest>` FIRST, then resolves as it always did. That is what lets a
+# source's own `include "lib/sigil.cyr"` read the override: include-once is keyed on the path
+# STRING, so prepending `build/local-deps/lib/sigil.cyr` beside it compiled BOTH copies and the
+# later one — the tag's, from lib/ — won ("last definition wins"). 11 of the 21 consumers that
+# declare a path override hand-include it (measured 2026-10-08).
+# The confinement is `#@incdir`'s (common/util.cyr): a RELATIVE directory with no `..` and at most
+# 480 bytes, composed with an include name that already passed the traversal and absolute guards
+# above, so the open stays inside the CWD subtree. Any other value is ignored. It is an
+# environment value, not an in-band marker, so no source can set it. Read once.
+var _rf_ov[512];          # a top-level array: N*8 bytes under cycc, N under cybs — 480 fits both
+var _rf_ov_len = 0 - 1;   # -1 = not read yet, 0 = no overlay
+
+fn _rf_ov_load(): i64 {
+    _rf_ov_len = 0;
+    var v = _read_env("CYRIUS_LIB_OVERLAY");
+    if (v == 0) { return 0; }
+    var n = 0;
+    while (load8(v + n) != 0) {
+        if (n >= 480) { return 0; }          # over-long → no overlay, never truncated
+        store8(&_rf_ov + n, load8(v + n));
+        n = n + 1;
+    }
+    while (n > 0) {                          # strip trailing separators
+        var t = load8(&_rf_ov + n - 1);
+        if (t != 47 && t != 92) { break; }
+        n = n - 1;
+    }
+    if (n == 0) { return 0; }
+    if (load8(&_rf_ov) == 47) { return 0; }  # '/'  absolute
+    if (load8(&_rf_ov) == 92) { return 0; }  # '\'  rooted / UNC
+    if (n > 1) { if (load8(&_rf_ov + 1) == 58) { return 0; } }   # 'X:' drive
+    var i = 0;
+    while (i < n) {
+        if (load8(&_rf_ov + i) == 46) { if (load8(&_rf_ov + i + 1) == 46) { return 0; } }
+        i = i + 1;
+    }
+    store8(&_rf_ov + n, 0);
+    _rf_ov_len = n;
+    return 0;
+}
+
+# The overlay's copy of `path` opened, or -1: no overlay, `path` is not `lib/<rest>`, or the
+# overlay has no such file. `path` is at most 767 bytes (PP_FNAME_TOO_LONG) and the overlay at
+# most 480, so the composed path always fits.
+fn _rf_ov_open(path): i64 {
+    if (_rf_ov_len < 0) { _rf_ov_load(); }
+    if (_rf_ov_len == 0) { return 0 - 1; }
+    if (load8(path) != 108) { return 0 - 1; }       # 'l'
+    if (load8(path + 1) != 105) { return 0 - 1; }   # 'i'
+    if (load8(path + 2) != 98) { return 0 - 1; }    # 'b'
+    if (load8(path + 3) != 47) { return 0 - 1; }    # '/'
+    var obuf[4096];
+    var o = 0;
+    while (o < _rf_ov_len) { store8(&obuf + o, load8(&_rf_ov + o)); o = o + 1; }
+    var pi = 3;                                     # from the '/'
+    while (load8(path + pi) != 0) {
+        if (o >= 4095) { return 0 - 1; }
+        store8(&obuf + o, load8(path + pi));
+        o = o + 1;
+        pi = pi + 1;
+    }
+    store8(&obuf + o, 0);
+    var fd = 0 - 1;
+    if (SYS_OPEN == 2) { fd = syscall(SYS_OPEN, &obuf, 0, 0); }
+    #ifndef CYRIUS_TARGET_WIN
+    else { fd = syscall(SYS_OPEN, 0 - 100, &obuf, 0, 0); }
+    #endif
+    if (fd < 0) { return 0 - 1; }
+    return fd;
+}
+
 fn READFILE(path, dst, maxsz): i64 {
     # the include dot-dot path bug: reject path traversal (.. components) UNLESS explicitly
     # allowed via CYRIUS_ALLOW_PARENT_INCLUDES=1. Bote (and any project
@@ -763,15 +838,18 @@ fn READFILE(path, dst, maxsz): i64 {
             return 0 - 1;
         }
     }
-    var fd = 0;
-    if (SYS_OPEN == 2) { fd = syscall(SYS_OPEN, path, 0, 0); }
-    # The openat arm (here and at the two fallbacks below) is dead in a PE compiler —
-    # main_win.cyr declares SYS_OPEN = 2 — and a 4-argument open is not a PE route, so each
-    # drew a "not routed" warning in every cycc_win build: noise that hides a real unrouted
-    # call. Compiled out there. CHANGELOG [6.6.20]
-    #ifndef CYRIUS_TARGET_WIN
-    else { fd = syscall(SYS_OPEN, 0 - 100, path, 0, 0); }
-    #endif
+    # 6.7.6: a `lib/` include tries the local-development overlay first (`_rf_ov_open`).
+    var fd = _rf_ov_open(path);
+    if (fd < 0) {
+        if (SYS_OPEN == 2) { fd = syscall(SYS_OPEN, path, 0, 0); }
+        # The openat arm (here and at the two fallbacks below) is dead in a PE compiler —
+        # main_win.cyr declares SYS_OPEN = 2 — and a 4-argument open is not a PE route, so each
+        # drew a "not routed" warning in every cycc_win build: noise that hides a real unrouted
+        # call. Compiled out there. CHANGELOG [6.6.20]
+        #ifndef CYRIUS_TARGET_WIN
+        else { fd = syscall(SYS_OPEN, 0 - 100, path, 0, 0); }
+        #endif
+    }
     # Fallback: if open fails and path starts with "lib/", try the store slot
     # `_init_cyrius_lib` chose — CYRIUS_HOME/versions/<VERSION>/lib/, else
     # HOME/.cyrius/versions/<VERSION>/lib/ — with `lib/` replaced by it.

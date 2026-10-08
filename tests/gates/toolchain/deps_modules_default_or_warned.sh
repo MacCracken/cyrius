@@ -539,7 +539,8 @@ tag = "2.0.0"
 git = "file://$F"
 EOF
 rc=0; ( cd "$P" && "$CY" deps --dry-run > "$P.out" 2> "$P.err" ) || rc=$?
-if [ "$rc" -eq 1 ] && grep -qxF "  foo" "$P.out" && grep -qxF "error: [deps.] $REFUSE_NAME_TAIL" "$P.err" \
+# 6.7.6: a dry-run line names the dep AND where it would come from (`  foo  tag 2.0.0 from …`)
+if [ "$rc" -eq 1 ] && grep -q "^  foo  tag 2\.0\.0 from file://" "$P.out" && grep -qxF "error: [deps.] $REFUSE_NAME_TAIL" "$P.err" \
    && grep -qxF "error: [deps.e\\x1bx] $REFUSE_NAME_TAIL" "$P.err" && ! grep -qF "$ESC" "$P.err" "$P.out" \
    && [ ! -d "$P/lib" ] && [ ! -f "$P/cyrius.lock" ]; then
     ok "D8f deps --dry-run: lists foo, refuses [deps.] and the ESC name by the resolver's own line (escaped), rc 1, writes nothing"

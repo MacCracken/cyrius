@@ -45,13 +45,18 @@
 # AXES (every origin is a local file:// repo — no network):
 #   K1  setup: `deps --features gpu --aarch64` pins all five tagged deps (anti-vacuous floor)
 #   K2  a feature-less, x86 `deps` with the override dir present keeps all five pins, same shas,
-#       and its summary says so: `5 commit-pinned (1 re-verified)` — only `good` was checked
+#       and its summary says so: `5 commit-pinned (2 re-verified)` — `good`, and since 6.7.6
+#       `ovr` too: a path beside git/tag is a dev override read only in local mode, so the
+#       default run builds the TAG (it said `(1 re-verified)`: the checkout won, unpinned) and
+#       names the unused checkout in one `hint:` line
+#   K2L under CYRIUS_LOCAL=1 the override is used and cyrius.lock is not written at all
 #   K2l the bare `deps --lock` verb (no resolve) keeps them and says `(0 re-verified)`
 #   K3  a feature-less `cyrius build` (the auto-deps path) keeps them too
 #   K4  optional dep: tag repointed + fresh cache → `deps --features gpu` REFUSED, lib untouched
 #   K5  transitive dep of the optional dep: same, refused by name
 #   K6  target-gated dep: same under `--aarch64`, refused by name
-#   K7  path-override dep: override dir removed, tag repointed → refused by name
+#   K7  path-override dep: tag repointed with the override checkout PRESENT → refused by name
+#       (6.7.6; the checkout was removed first while a present one won silently)
 #   K8  a tag bump v1 → v2 pins the dep at v2 and KEEPS its v1 line (no pin a lookup could
 #       read is dropped); K8r: v2 repointed + fresh cache → refused by name
 #   K9  the merged lock verifies (`deps --verify`: N verified, 0 failed)
@@ -215,12 +220,23 @@ if [ "$rc" -eq 0 ] && [ "$(npins)" -eq 5 ]; then ok "K1 setup: 5 commit pins (go
 else bad "K1 setup (rc=$rc, $(npins) pins: $(pinset)): $(tail -3 "$W/k1.out")"; fi
 want=$(pinset)
 
-# ── K2: the override dir appears; a feature-less x86 resolve re-verifies only `good` ───────
+# ── K2: the override dir appears. 6.7.6 (lane C): a path beside git/tag is a DEV OVERRIDE read
+#    only in local mode, so a default feature-less x86 resolve builds ovr from its TAG and
+#    re-verifies it — `good` and `ovr`, 2 — where the checkout used to win silently, unpinned.
+#    K2L: under CYRIUS_LOCAL=1 the override IS used, and local mode writes no lock at all, so
+#    every pin survives byte for byte.
 mkdir -p "$P/ovr-local/dist" && printf 'fn ovr_f(): i64 { return 1; }\n' > "$P/ovr-local/dist/ovr.cyr"
 rc=0; if _cy deps > "$W/k2.out" 2>&1; then rc=0; else rc=$?; fi
-if [ "$rc" -eq 0 ] && grep -q '^cyrius.lock: .*, 5 commit-pinned (1 re-verified)$' "$W/k2.out" && [ "$(npins)" -eq 5 ] && [ "$(pinset)" = "$want" ]; then
-    ok "K2 feature-less, x86, override present: the lock kept all 5 pins unchanged, 1 re-verified"
-else bad "K2 (rc=$rc, $(npins) pins: $(pinset), want $want): $(grep -m1 'cyrius.lock' "$W/k2.out")"; fi
+if [ "$rc" -eq 0 ] && grep -q '^cyrius.lock: .*, 5 commit-pinned (2 re-verified)$' "$W/k2.out" && [ "$(npins)" -eq 5 ] && [ "$(pinset)" = "$want" ] \
+   && grep -q '^hint: 1 dep has a local checkout not in use (ovr)' "$W/k2.out"; then
+    ok "K2 feature-less, x86, override present, no switch: ovr resolved from its TAG (2 re-verified), all 5 pins unchanged, the unused checkout named in one hint"
+else bad "K2 (rc=$rc, $(npins) pins: $(pinset), want $want): $(grep -m2 'cyrius.lock\|hint' "$W/k2.out")"; fi
+cp "$P/cyrius.lock" "$W/k2L.lock"
+rc=0; if ( export CYRIUS_LOCAL=1; _cy deps ) > "$W/k2L.out" 2>&1; then rc=0; else rc=$?; fi
+if [ "$rc" -eq 0 ] && cmp -s "$P/cyrius.lock" "$W/k2L.lock" && grep -q '^local: ovr <- ovr-local ' "$W/k2L.out" \
+   && cmp -s "$P/build/local-deps/lib/ovr.cyr" "$P/ovr-local/dist/ovr.cyr"; then
+    ok "K2L CYRIUS_LOCAL=1: ovr built from ovr-local (one local: line), cyrius.lock byte-identical (local mode writes none)"
+else bad "K2L (rc=$rc): $(grep -m2 'local\|error' "$W/k2L.out")"; fi
 #    K2l: the bare `--lock` verb resolves nothing. `N commit-pinned` is the merged pin set, so
 #    `(0 re-verified)` is what still tells a resolve that verified nothing (a pure `path =`
 #    override, the tell ecosystem-migration-6.6.2.md documents) from one that verified them all.
@@ -239,7 +255,9 @@ else bad "K3 (rc=$rc, $(npins) pins: $(pinset)): $(grep -m2 -i 'error\|cyrius.lo
 refused K4 opt --features gpu
 refused K5 optdep --features gpu
 refused K6 tgt --aarch64
-rm -rf "$P/ovr-local"
+# K7 (6.7.6): the override checkout STAYS — a default resolve builds the tag whatever sits in
+# ovr-local, so a repointed tag is refused with the dev checkout right there (it used to be
+# removed first, because a present one silently won and nothing was checked at all).
 refused K7 ovr
 
 # ── K8: a deliberate tag bump pins the new tag and KEEPS the old tag's line ─────────────

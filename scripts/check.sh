@@ -421,6 +421,11 @@ for _kv in CYRIUS_CHECK_TIMEOUT CYRIUS_CHECK_LONG_TIMEOUT; do
             ;;
     esac
 done
+# 6.7.6 (lane C) — the dependency switches belong to the CALLER's shell, never to the suite: a
+# CYRIUS_LOCAL=1 in a profile (the documented way to build against sibling checkouts) would turn
+# every gate whose fixture declares a `path` beside git/tag into a local-mode run, and
+# CYRIUS_LOCKED / CYRIUS_LIB_OVERLAY likewise. A gate that tests one sets it itself.
+unset CYRIUS_LOCAL CYRIUS_LOCKED CYRIUS_LIB_OVERLAY
 _chk_home_is_owned() {
     [ -f "$1/.owner" ] || return 1
     _op=$(cat "$1/.owner" 2>/dev/null || true)
@@ -2315,6 +2320,14 @@ _chk_gate "$ROOT/tests/gates/memory/lib_buffers_sized_by_const.sh"   # 6.7.6 (Br
 _chk_gate "$ROOT/tests/gates/toolchain/test_absorbs_tests.sh"   # 6.7.6 (Break 1 lane G)
 _chk_gate "$ROOT/tests/gates/frontend/silent_values_checked.sh"   # 6.7.6 (Break 1, lane D)
 _chk_gate "$ROOT/tests/gates/codegen/struct_value_codegen.sh"   # 6.7.6 (Break 1, lane E)
+# 6.7.6 (Break 1, lane C) — cyrius.cyml git first, local development by an explicit switch
+_chk_gate "$ROOT/tests/gates/toolchain/lib_overlay_include.sh"
+_chk_gate "$ROOT/tests/gates/toolchain/deps_git_first_local_switch.sh"
+_chk_gate "$ROOT/tests/gates/toolchain/deps_locked_writes_nothing.sh"
+_chk_gate "$ROOT/tests/gates/toolchain/deps_sources_reported.sh"
+_chk_gate "$ROOT/tests/gates/toolchain/manifest_unknown_keys_warned.sh"
+_chk_gate "$ROOT/tests/gates/toolchain/deps_update_refetches_untagged.sh"
+_chk_gate "$ROOT/tests/gates/toolchain/operands_checked_before_resolve.sh"
 _chk_gate "$ROOT/tests/gates/toolchain/cybs_call_arity_named.sh"
 _chk_gate "$ROOT/tests/gates/platform/agnos_proc_kill_tree_refused.sh"
 _chk_gate "$ROOT/tests/gates/platform/cx_compiler_reads_env.sh"

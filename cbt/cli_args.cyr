@@ -62,15 +62,18 @@ fn _cli_global_spec(): i64 {
 
 # The dep/target block. Every flag here changes WHICH deps resolve or WHAT target
 # they resolve for, so it is applied before _auto_deps (rule 5).
+# 6.7.6 (lane C): `--local[=a,b]` / `--no-local` (the local-development switch; cbt/deps.cyr
+# "LOCAL MODE") and `--locked` (resolve the tags, compare with lib/ + cyrius.lock, write nothing)
+# change which deps resolve too, so they sit in this block.
 fn _cli_target_spec(): i64 {
-    return "--aarch64|--win|--agnos|--target=|--features=|--no-default-features|--check-lib-sync|-D=";
+    return "--aarch64|--win|--agnos|--target=|--features=|--no-default-features|--check-lib-sync|-D=|--local?|--no-local|--locked";
 }
 
 # `deps` takes the resolution-affecting subset: -D and --check-lib-sync mean nothing
 # to it, and accepting a flag a verb cannot act on is the silent drop this file exists
 # to remove.
 fn _cli_deps_spec(): i64 {
-    return "--aarch64|--win|--agnos|--target=|--features=|--no-default-features";
+    return "--aarch64|--win|--agnos|--target=|--features=|--no-default-features|--local?|--no-local|--locked";
 }
 
 fn _cli_extra_spec(verb): i64 {
@@ -268,8 +271,17 @@ fn _cli_help_extra(verb): i64 {
         println("              pinned snapshot changed under an UNCHANGED [package].cyrius pin");
         println("              (otherwise refused, v6.6.4), and locks any file --verify");
         println("              reports as not in cyrius.lock.");
-        println("  --dry-run   list the [deps.NAME] entries that WOULD resolve; write nothing.");
-        println("Related: cyrius update    re-resolve to latest tags.");
+        println("  --dry-run   list each [deps.NAME] and where it WOULD come from; write nothing.");
+        println("  -v          after the resolve, list where each dependency came from.");
+        println("Git first: a [deps.NAME] with git + tag resolves the TAG, its commit pin checked,");
+        println("on every machine. A `path` beside git/tag is a dev override read only in LOCAL mode:");
+        println("  --local[=a,b]  build the sibling checkouts (every override, or the named ones);");
+        println("                 also CYRIUS_LOCAL=1 / CYRIUS_LOCAL=a,b. One `local:` line each;");
+        println("                 vendored into build/local-deps/lib/ — lib/ and cyrius.lock untouched.");
+        println("  --no-local     resolve the tags for this run whatever CYRIUS_LOCAL says.");
+        println("  --locked       resolve the tags, compare with lib/ and cyrius.lock, write nothing,");
+        println("                 and fail naming each difference (CI; also CYRIUS_LOCKED=1).");
+        println("Related: cyrius update    re-fetch untagged deps, list newer tags, re-resolve.");
     }
     if (streq(verb, "check") == 1) {
         println("");
@@ -610,6 +622,48 @@ fn _cli_operands_ok(verb, min, max): i64 {
         return 0;
     }
     return 1;
+}
+
+# 6.7.6 — THE OPERANDS OF A RESOLVING VERB ARE CHECKED BEFORE THE RESOLVE. main() runs
+# _auto_deps — clones, vendoring, the lock — ahead of each verb's own branch, so `cyrius run
+# missing.cyr` fetched every dependency and only then said "no such file", and `cyrius bench a b`
+# resolved before refusing the extra operand. The counts are the branches' own (each branch still
+# checks; this runs first), and a FILE operand must exist. `test` / `tests` are absent on purpose:
+# their operands are being reworked (`cyrius test` absorbs `cyrius tests`, lane G of 6.7.6), and
+# that change brings its own check. 0, or 1 after naming the problem.
+fn _cli_preflight(verb): i64 {
+    var mn = 0 - 1;
+    var mx = 0 - 1;
+    var files = 0;   # how many leading operands name a file that must exist (2 = file or dir)
+    if (streq(verb, "build") == 1) { mn = 0; mx = 2; files = 1; }
+    elif (streq(verb, "run") == 1) { mn = 1; mx = 1; files = 1; }
+    elif (streq(verb, "bench") == 1) { mn = 0; mx = 1; files = 2; }
+    elif (streq(verb, "fuzz") == 1) { mn = 0; mx = 1; files = 2; }
+    elif (streq(verb, "soak") == 1) { mn = 0; mx = 1; }
+    elif (streq(verb, "smoke") == 1) { mn = 0; mx = 0; }
+    elif (streq(verb, "check") == 1) { mn = 1; files = 3; }
+    elif (streq(verb, "audit") == 1) { mn = 0; mx = 0; }
+    elif (streq(verb, "capacity") == 1) { mn = 0; mx = 1; files = 1; }
+    elif (streq(verb, "distlib") == 1) { mn = 0; mx = 1; }
+    elif (streq(verb, "doctest") == 1) { mn = 1; mx = 1; files = 1; }
+    elif (streq(verb, "publish") == 1) { mn = 0; mx = 0; }
+    elif (streq(verb, "package") == 1) { mn = 0; mx = 0; }
+    else { return 0; }
+    if (_cli_operands_ok(verb, mn, mx) == 0) { return 1; }
+    if (files == 0 || _cli_npos() == 0) { return 0; }
+    var last = 1;
+    if (files == 3) { last = _cli_npos(); }
+    var i = 0;
+    while (i < last) {
+        var p = _cli_pos_at(i);
+        i = i + 1;
+        if (file_exists(p) == 1) { continue; }
+        if (files == 2 && is_dir(str_from(p)) == 1) { continue; }
+        if (files == 2) { _err_ctx("no such file or directory", p); }
+        else { _err_ctx("no such file", p); }
+        return 1;
+    }
+    return 0;
 }
 
 # ── flag effects, applied BEFORE _auto_deps (rule 5) ──────────────
