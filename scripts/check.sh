@@ -1167,6 +1167,18 @@ _chk_gate "$ROOT/tests/gates/frontend/struct_literal_type_refused.sh"
 # Mutation-proven (ledger in header). The copy/layout half is struct_field_value_copy.tcyr (crossos).
 _chk_gate "$ROOT/tests/gates/frontend/struct_copy_source_type_refused.sh"
 
+# 6.7.3 (repair lane): a struct ARGUMENT is type-checked against its parameter. Only a struct-typed
+# field into an address-passed parameter was (6.6.12, above); every other argument was pushed as it
+# came and read with the callee's layout (`bq(p)`, a Pt into `b: Q`: 0; `bs(mk1(p))`, a Box<Pt> into
+# `b: Box`: 4 where 8 is right; `q + mkp()`: SIGSEGV). Refused by name in the field arm's words:
+# locals (inline, pointer-mode, `*T`), globals, captures, free calls, method / operator results,
+# fields, the three argument loops, generic instance vs base both ways, a by-value struct of 8 B or
+# less and a `Str` handle parameter, an operator's two operands and a method's `self`. `&p`, an
+# untyped value and a fn pointer stay accepted. 44 refusal rows on the MESSAGE (each the only
+# error), 9 acceptances against field-by-field controls. Mutation-proven (ledger in header). The
+# runtime half is tests/tcyr/crossos/struct_arg_type_accepted.tcyr (crossos).
+_chk_gate "$ROOT/tests/gates/frontend/struct_arg_type_refused.sh"
+
 # 6.6.12 (B04, R3): a `.field` on a CALL RESULT is refused by name wherever it cannot compile — at
 # top level for every return class (no frame to hold the result; each the only error, including
 # the leading declaration block and a struct-typed initialiser), on a callee that returns no
