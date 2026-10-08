@@ -15,6 +15,9 @@
 #   X  `--syntax-only` (what `cyrius lint` runs): a struct the file cannot see, or a field it does
 #      not know, takes `OP= e` silently, as it takes `= e` (no invented syntax error)
 #   D  `*p OP= v` at word width (the address once), at top level; the rest are tcyr Q rows
+#   F  a classic-for step takes a field / `*p` destination, `=` and `OP=` (the rest are tcyr T rows):
+#      at top level; a struct field refused there too; a struct of another type refused by name (the
+#      step's `)` reaches the struct-copy sources); junk before the `)` reported
 #   C  `>>>=` (the eleventh operator, the arithmetic shift) in a const fn run in const contexts;
 #      T: a mistyped `x >>> 2;` names the token (it said "got unknown")
 #   A  ANTI-VACUOUS: the tcyr on x86_64 under the default pipeline, CYRIUS_IR=1, CYRIUS_IR=3 and
@@ -37,6 +40,11 @@
 #   M8b no EASHRCL arm in `_asg_compound_op`              -> RED A (tcyr A1-A6 A9: the value unchanged)
 #   M8c 152 dropped from the shared `_is_cop_tok`        -> RED C1 and A (the values file does not build)
 #   M9 `_deref_store` loading nothing (rax = the address) -> RED D1 and A (tcyr Q1-Q7)
+#   M10 `_fsc_src` told `;` in a for step (no terminator) -> RED F3 (it BUILDS: one word of `q`) and A
+#      (tcyr T5: 52, the 6.6.20 one-word class; T6 T7)
+#   M10b `_for_step_replay` without the field arm         -> RED F1-F4 and A (the values file does not build)
+#   M10c `_for_step_replay` without the `*p` arm          -> RED A (the values file does not build: T8 T9)
+#   M10d `_fsc_expr` not arming `_fla_stp` for a step     -> RED A (tcyr T6: one word of `z.k`, 76)
 # (The IR_RAW_EMIT record at the address and the flags-tracker clear after the load are defensive:
 # no row kills them — measured.)
 set -u
@@ -133,6 +141,11 @@ exits c01 3 "C1: >>>= in a const fn: a const, an array size, #assert" 'const fn 
 refused t01 "expected '=', got '>>>'" "T1: a mistyped \`x >>> 2;\` names the token" "fn main(): i64 { var x = 1; x >>> 2; return x; }$E"
 
 exits d01 9 "D1: \`*p += 2;\` at top level" 'var v = 5;\nvar p = &v;\nv = 7;\n*p += 2;\nsyscall(60, v);\n'
+
+exits f01 55 "F1: a field step at top level" 'struct H { n; m; }\nvar G = H { 0, 0 };\nvar c = 0;\nc = 0;\nfor (G.n = 0; G.n < 5; G.n += 1) { c = c + 1; }\nsyscall(60, c * 10 + G.n);\n'
+refused f02 "compound assignment to struct field 'i' is refused" "F2: a struct-typed field step" "${ST}fn main(): i64 { var o = O { 0, 1, 2 }; for (o.x = 0; o.x < 1; o.i += 1) { o.x = 1; } return 0; }$E"
+refused f03 "cannot copy 'q' into a struct field of a different struct type: 'i'" "F3: a step copying a struct of another type" "${ST}struct J { a; b; }\nfn main(): i64 { var o = O { 0, 1, 2 }; var q = J { 5, 6 }; for (o.x = 0; o.x < 1; o.i = q) { o.x = 1; } return o.i.b; }$E"
+refused f04 "expected ')', got number" "F4: junk before a field step's ')'" "${SH}fn main(): i64 { var h = H { 0, 0 }; for (h.n = 0; h.n < 3; h.n += 1 2) { } return h.n; }$E"
 
 exits o01 112 "O1: OP= takes the address before the right-hand side (GP.n += repoint())" 'struct H { n; m; }\nvar A = H { 10, 0 };\nvar B = H { 20, 0 };\nvar GP: *H = &A;\nfn repoint(): i64 { GP = &B; return 1; }\nfn main(): i64 { GP.n += repoint(); return A.n * 10 + B.n / 10; }\nsyscall(60, main());\n'
 exits o02 101 "O2: a plain store evaluates the right-hand side first (unchanged)" 'struct H { n; m; }\nvar A = H { 10, 0 };\nvar B = H { 20, 0 };\nvar GP: *H = &A;\nfn repoint(): i64 { GP = &B; return 1; }\nfn main(): i64 { GP.n = GP.n + repoint(); return A.n * 10 + B.n / 10; }\nsyscall(60, main());\n'

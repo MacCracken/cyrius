@@ -863,7 +863,7 @@ fn _fsc_name(S, ft, fnoff): i64 {
 # 0 = not that shape (cursor untouched). A <= 8 B result (an odd-sized one: only those reach
 # here — see `_fsc_src`) comes back in rax and is left to the byte-exact store, `_fst_odd`, at
 # top level and in a fn alike.
-fn _fsc_call(S, ft, fnoff): i64 {
+fn _fsc_call(S, ft, fnoff, term): i64 {
     # 6.6.10 (bite 7 review): `name<..>(` too, and the fn the call REACHES — `b.v = idp(p);` sized
     # the copy from the base's i64 `T` return and stored one word.
     var o = _gcall_open(S, GTI(S));
@@ -872,7 +872,7 @@ fn _fsc_call(S, ft, fnoff): i64 {
     if (fi < 0) { return 0; }
     var rs = GFRS(S, fi);
     if (rs <= 0) { return 0; }
-    if (_call_follow(S, o - 1) != 5) { return 0; }
+    if (_call_follow(S, o - 1) != term) { return 0; }
     if (rs != ft) { _fsc_type_err(S, PEEKV(S), fnoff); return 0; }
     var cls = _ret_agg_class(S, fi);
     if (cls == 0) { return 0; }
@@ -885,15 +885,18 @@ fn _fsc_call(S, ft, fnoff): i64 {
 # Any other right-hand side: parse it with the two destination arms armed. A method / operator
 # call spanning it lands in a temp (1); a struct-typed field spanning it is recorded (1);
 # otherwise its value is in rax (2) for the ordinary store.
-fn _fsc_expr(S, ft, fnoff): i64 {
+fn _fsc_expr(S, ft, fnoff, term): i64 {
     var st = GTI(S);
     var sv = _fla_want;
     _fla_want = st;
+    var fs = _fla_stp;
+    if (term == 11) { _fla_stp = st; }   # 6.7.5: a for step's field source ends at `)`
     _fla_hit = 0;
     var w = _sc_arm(S);
     PCMPE(S);
     _sc_want = w;
     _fla_want = sv;
+    _fla_stp = fs;
     var t = _sc_whole(S, st);
     if (t >= 0 || t == 0 - 1) { return _fsc_from_call(S, t, ft, fnoff); }
     # 6.6.11: a <= 8 B struct result (rax, no temp) is type-checked too, then stored. See `_sc_post`.
@@ -913,24 +916,25 @@ fn _fsc_from_call(S, t, ft, fnoff): i64 {
     return 1;
 }
 
-# The dispatch, cursor on the right-hand side of `x.f = `: 0 = not a struct copy (nothing
+# The dispatch, cursor on the right-hand side of `x.f = ` (the store ends at `term`, `;` or a for
+# step's `)`, 6.7.5): 0 = not a struct copy (nothing
 # parsed), 1 = the source is recorded for `_fsc_copy`, 2 = the RHS is parsed and its value is
 # in rax. Every source shape is taken at every width.
 # ⛔ 6.6.11 — an exact-register field (1/2/4/8 B) used to return 0 here, before the call and
 # expression arms, because its one-word store was already the right COPY. It was not the right
 # TYPE CHECK: `h.p = y.mq()` and `h.p = mkq8()` stored a Q8 into a P8 field with no diagnostic.
 # The arms below store through the same width ladder (2) when the value is in rax. CHANGELOG [6.6.11]
-fn _fsc_src(S, ft, fnoff): i64 {
+fn _fsc_src(S, ft, fnoff, term): i64 {
     if (ft <= 0) { return 0; }
     if (IS_STR_FIELD(S, ft) == 1) { return 0; }
     if (PEEKT(S) == 2) {
-        if (TOKTYP(S, GTI(S) + 1) == 5) { return _fsc_name(S, ft, fnoff); }
+        if (TOKTYP(S, GTI(S) + 1) == term) { return _fsc_name(S, ft, fnoff); }
     }
     if (PEEKT(S) == 2) {
-        var r = _fsc_call(S, ft, fnoff);
+        var r = _fsc_call(S, ft, fnoff, term);
         if (r != 0) { return r; }
     }
-    return _fsc_expr(S, ft, fnoff);
+    return _fsc_expr(S, ft, fnoff, term);
 }
 
 # ⛔ 6.6.10 (bite 5 review) — A VALUE IN rax STORED INTO A 3/5/6/7-BYTE FIELD (an odd-sized
@@ -1684,8 +1688,10 @@ fn _slice_fld_store(S, lli, fnoff, term): i64 {
     return _fst_end(S, term);
 }
 
-# Store to a struct field: ident.field = expr; or ident.inner.field = expr;
-fn PARSE_FIELD_STORE(S, noff): i64 {
+# Store to a struct field: ident.field = expr; or ident.inner.field = expr; — ending at `term`: `;`
+# for a statement, `)` for a classic-for step (6.7.5, `_for_step_replay`). The terminator reaches
+# the struct-copy sources (`_fsc_src`), or a struct-valued step copied ONE word (the 6.6.20 class).
+fn PARSE_FIELD_STORE(S, noff, term): i64 {
     STI(S, GTI(S) + 1);  # consume DOT
     if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
     var fnoff = PEEKV(S);
@@ -1719,7 +1725,7 @@ fn PARSE_FIELD_STORE(S, noff): i64 {
             # land in the register only — invisible to slice_set's
             # subsequent memory reads. Address-based store keeps the
             # memory write authoritative.
-            if (GSLICE_W(S, lli) > 0) { return _slice_fld_store(S, lli, fnoff, 5); }
+            if (GSLICE_W(S, lli) > 0) { return _slice_fld_store(S, lli, fnoff, term); }
         }
     }
     if (idx == 0 - 1) {
@@ -1754,7 +1760,7 @@ fn PARSE_FIELD_STORE(S, noff): i64 {
         # v6.5.19 --syntax-only: silent, no _panic — but the `= expr` tail has NOT been
         # consumed at this point, so it must be parsed exactly as the resolvable path
         # below does or the leftover `=` becomes an INVENTED syntax error.
-        if (_syntax_only == 1) { return _synonly_fld_tail(S, 5); }
+        if (_syntax_only == 1) { return _synonly_fld_tail(S, term); }
         ERR_IDENT(S, "no struct type in scope for ", noff, "; a '.field' assignment needs its struct declaration (missing include?)", 0 - 1);
         return 0;
     }
@@ -1763,7 +1769,7 @@ fn PARSE_FIELD_STORE(S, noff): i64 {
     if (fi < 0) {
         # v6.5.19 --syntax-only: silent, no _panic — and consume the `= expr` tail, or
         # the leftover `=` is reported as a syntax error this file does not have.
-        if (_syntax_only == 1) { return _synonly_fld_tail(S, 5); }
+        if (_syntax_only == 1) { return _synonly_fld_tail(S, term); }
         ERR_IDENT(S, "unknown field ", fnoff, " on struct ", L64(S + 0x1A6018 + si * 8));
         return 0;
     }
@@ -1782,16 +1788,14 @@ fn PARSE_FIELD_STORE(S, noff): i64 {
     var lfn = GETFNAME(S, _rlf_si, _rlf_fi);
     var lfk = _fk_bx(S, _rlf_si, _rlf_fi);   # 6.6.10: read before the RHS can re-resolve a field (6.7.3: + bool)
     var fcop = _asg_compound_tok(S);   # 6.7.5 (B8): `x.f OP= e`, the address first (_fld_compound)
-    if (fcop != 0) { _fld_compound(S, idx, sid, off, hop, fcop); return _fst_end(S, 5); }
+    if (fcop != 0) { _fld_compound(S, idx, sid, off, hop, fcop); return _fst_end(S, term); }
     if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); }
     STI(S, GTI(S) + 1);
     # 6.6.10: a struct VALUE into a struct-typed field copies the whole struct. See `_fsc_src`.
-    var fsc = _fsc_src(S, ft, lfn);
+    var fsc = _fsc_src(S, ft, lfn, term);   # 6.7.5: `term` — a for step's source ends at `)`
     if (fsc == 1) {
         _fsc_copy(S, idx, sid, off, STRUCTSZ(S, ft - 1));
-        if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
-        STI(S, GTI(S) + 1);
-        return 0;
+        return _fst_end(S, term);
     }
     if (fsc == 0) {
         var fst_ti = GTI(S);
@@ -1801,9 +1805,7 @@ fn PARSE_FIELD_STORE(S, noff): i64 {
     var fst_sz = FIELDSZ(S, ft);
     if (_fst_odd_sz(fst_sz) == 1) {
         _fst_odd(S, idx, sid, off, fst_sz);
-        if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
-        STI(S, GTI(S) + 1);
-        return 0;
+        return _fst_end(S, term);
     }
     # Store value to struct field (width-correct). Route to local or
     # global addr-emit based on idx encoding (same convention as
@@ -1819,9 +1821,7 @@ fn PARSE_FIELD_STORE(S, noff): i64 {
     elif (fst_sz == 2) { ESTORE16(S); }
     elif (fst_sz == 4) { ESTORE32(S); }
     else { ESTOC(S); }
-    if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
-    STI(S, GTI(S) + 1);
-    return 0;
+    return _fst_end(S, term);
 }
 
 # Parse struct init: var name = StructName { expr, expr, ... };

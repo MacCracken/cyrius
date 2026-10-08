@@ -9,7 +9,8 @@
 # and stepping sizeof(T) on a `*T` field. The field's ADDRESS is computed once, BEFORE the right-hand
 # side, as `a[i] OP= v` does; a plain `x.f = e` evaluates `e` first (row O1 against O2). `>>>=`,
 # the arithmetic shift, is the eleventh compound operator on every form, a const fn's too (A rows).
-# `*p OP= v` is a word operation, the address first (Q rows).
+# `*p OP= v` is a word operation, the address first (Q rows). A classic-for step takes a field and
+# `*p`, `=` and `OP=` alike; a struct-valued field step copies the whole struct (T rows).
 # The refusals, the warnings and the mutation ledger are tests/gates/frontend/field_compound_checked.sh.
 include "lib/syscalls.cyr"
 include "lib/string.cyr"
@@ -27,6 +28,9 @@ struct P { x: f64; y: f64; }
 struct Q { s: f32; t; }
 struct HP { n; p: *i32; name: Str; }
 struct NP { k; nx: *N; }
+struct Z { k: I; }
+struct I3 { a; b; c; }
+struct O3 { x; i: I3; }
 struct Pair<T> { a: T; b: T; }
 union U { a: i64; b: i64; }
 union UF { f: f64; i: i64; }
@@ -56,6 +60,7 @@ var CELL2 = 20;
 var CP = 0;
 fn which(): i64 { return CP; }
 fn moveit(): i64 { CP = &CELL2; return 1; }
+fn mk3(v): I3 { var r = I3 { v, v + 1, v + 2 }; return r; }
 
 fn forms(): i64 {
     var h = H { 1, 2 };
@@ -306,6 +311,60 @@ fn derefs(): i64 {
     return 0;
 }
 
+# A classic-for step takes a field and `*p` (6.7.5), `=` and `OP=` alike; a struct-valued field
+# step copies the whole struct (its `)` reaches the struct-copy sources).
+fn fsteps(): i64 {
+    var h = H { 0, 0 };
+    var c = 0;
+    for (h.n = 0; h.n < 5; h.n += 1) { c = c + 1; }
+    assert_eq(c * 10 + h.n, 55, "T1: a field OP= step");
+    c = 0;
+    for (h.m = 0; h.m < 9; h.m = h.m + 3) { c = c + 1; }
+    assert_eq(c * 10 + h.m, 39, "T2: a field = step");
+    var b = N { 0, 0 };
+    var a = N { 0, &b };
+    c = 0;
+    for (a.next.v = 1; a.next.v < 100; a.next.v *= 2) { c = c + 1; if (c > 20) { break; } }
+    assert_eq(c * 1000 + b.v, 7128, "T3: through a `*T` field hop");
+    c = 0;
+    for (h.n = 0; h.n < 10; h.n += 2) {
+        if (h.n == 4) { continue; }
+        c = c + 1;
+    }
+    assert_eq(c, 4, "T4: continue lands on the field step");
+    var o = O { 0, 1, 2 };
+    var j = I { 5, 6 };
+    for (o.x = 0; o.x < 1; o.i = j) { o.x = 1; }
+    assert_eq(o.i.a * 10 + o.i.b, 56, "T5: a 16-byte struct field step copies the whole struct");
+    var z = Z { 7, 8 };
+    for (o.x = 0; o.x < 1; o.i = z.k) { o.x = 1; }
+    assert_eq(o.i.a * 10 + o.i.b, 78, "T6: ... from a struct-typed field");
+    var o3 = O3 { 0, 1, 2, 3 };
+    for (o3.x = 0; o3.x < 1; o3.i = mk3(3)) { o3.x = 1; }
+    assert_eq(o3.i.a * 100 + o3.i.b * 10 + o3.i.c, 345, "T7: ... from a call returning a 24-byte struct");
+    var v = 0;
+    var p = &v;
+    c = 0;
+    for (v = 1; v < 50; *p *= 3) { c = c + 1; }
+    assert_eq(c * 100 + v, 481, "T8: a *p OP= step");
+    c = 0;
+    for (v = 0; v < 3; *p = v + 1) { c = c + 1; }
+    assert_eq(c * 10 + v, 33, "T9: a *p = step");
+    var w = W { 1, 2, 3, 4, 5 };
+    c = 0;
+    for (w.c = 120; w.c > 0; w.c += 3) { c = c + 1; if (c > 9) { break; } }
+    assert_eq(c * 1000 + w.c, 2873, "T10: an i8 field step wraps at its width");
+    var s: [i64] = 0;
+    c = 0;
+    for (s.len = 0; s.len < 4; s.len += 1) { c = c + 1; }
+    assert_eq(c * 10 + s.len, 44, "T11: a slice .len step");
+    var pf = P { 0.0, 0.0 };
+    c = 0;
+    for (pf.x = 0.0; pf.x < 1.0; pf.x += 0.25) { c = c + 1; if (c > 9) { break; } }
+    assert_eq(c, 4, "T12: an f64 field step is float arithmetic");
+    return 0;
+}
+
 fn run(): i64 {
     alloc_init();
     forms();
@@ -317,6 +376,7 @@ fn run(): i64 {
     rhs();
     ashr();
     derefs();
+    fsteps();
     return 0;
 }
 # Top-level statements: the compound arm with no fn around it (before `run`, which reads GT).
