@@ -6344,6 +6344,62 @@ fn _cst_lvalue_check(S, noff, what): i64 {
     ERR_IDENT(S, what, noff, " - a const has no storage (declare it `var` to change it)", 0 - 1);
     return 1;
 }
+# 6.7.3: an enum constant is not an lvalue either — `A = ..`, `A OP= ..`, `&A` and the qualified
+# `E.A` spellings are refused by name, as for a const. Every read of `A` folds to the declared
+# value, so a write landed only in the variant's 8-byte slot and `&A` handed that dead copy out.
+# `vi` is the slot the name RESOLVED to (GVENUMID is set only by enum registration), so a local,
+# a closure capture and a later top-level `var A` (last definition wins) stay variables.
+# CHANGELOG [6.7.3]
+fn _enum_lv_refuse(S, vi, noff, what): i64 {
+    if (vi < 0) { return 0; }
+    if (GVENUMID(S, vi) == 0) { return 0; }
+    ERR_IDENT(S, what, noff, " - an enum constant is a fixed value, not a variable (declare a `var` to change it)", 0 - 1);
+    return 1;
+}
+# The left of `=` / `OP=` (a statement or a classic-for step): a const, then an enum constant.
+# The global lookup goes first — one hash probe — so a local's assignment never pays a second
+# FINDLOCAL scan; the local only matters when the name resolves to an enum constant.
+fn _asg_lvalue_refused(S, noff): i64 {
+    if (_cst_n > 0 || _lc_n > 0) { if (_cst_lvalue_check(S, noff, "cannot assign to const ") == 1) { return 1; } }
+    var vi = _findvar_core(S, noff);   # not FINDVAR: the store's own lookup reports `private`
+    if (vi < 0) { return 0; }
+    if (GVENUMID(S, vi) == 0) { return 0; }
+    if (GINFN(S) == 1) { if (FINDLOCAL(S, noff) >= 0) { return 0; } }
+    return _enum_lv_refuse(S, vi, noff, "cannot assign to enum constant ");
+}
+# `&name` (cursor past the name): the address-of ladder's own order — local, closure capture,
+# global — then the qualified `&E.A` when no global of that name exists.
+fn _addr_lvalue_refused(S, noff): i64 {
+    if (_cst_n > 0 || _lc_n > 0) { if (_cst_lvalue_check(S, noff, "cannot take the address of const ") == 1) { return 1; } }
+    if (GINFN(S) == 1) { if (FINDLOCAL(S, noff) >= 0) { return 0; } }
+    if (_cl_capturing == 1) { if (_cl_env_lidx >= 0) {
+            var esl = _cl_snap_find(S, noff);
+            if (esl >= 0) { if (_cl_cap_find(esl) >= 0) { return 0; } }
+        } }
+    var vi = _findvar_core(S, noff);
+    if (vi < 0) { return _enum_qual_lv_refuse(S, noff, "cannot take the address of enum constant "); }
+    return _enum_lv_refuse(S, vi, noff, "cannot take the address of enum constant ");
+}
+# `&E.A` (cursor on the `.`, `bnoff` = E, which names no variable): refused as `&A` is when E is
+# an enum declaring A, the cursor stepped past `A`. 0 otherwise, the cursor kept.
+fn _enum_qual_lv_refuse(S, bnoff, what): i64 {
+    if (PEEKT(S) != 41) { return 0; }
+    if (TOKTYP(S, GTI(S) + 1) != 2) { return 0; }
+    var vn = TOKVAL(S, GTI(S) + 1);
+    var vi = _enum_variant_in(S, bnoff, vn);
+    if (vi < 0) { return 0; }
+    STI(S, GTI(S) + 2);
+    return _enum_lv_refuse(S, vi, vn, what);
+}
+# PARSE_FIELD_STORE, base `bnoff` naming no variable, `.vn` consumed: `E.A = ..` / `E.A OP= ..` on
+# a variant of an enum named E is refused as `A = ..` is, and the statement stepped over.
+fn _enum_qual_store_refused(S, bnoff, vn): i64 {
+    var vi = _enum_variant_in(S, bnoff, vn);
+    if (vi < 0) { return 0; }
+    _enum_lv_refuse(S, vi, vn, "cannot assign to enum constant ");
+    _cst_skip_decl(S);   # the rest of the statement, to its `;`
+    return 1;
+}
 # Cursor on a top-level `const NAME = ...;` the pre-scan recorded: step over it (no code).
 fn _cst_skip_decl(S): i64 {
     _pub_pending = 0;

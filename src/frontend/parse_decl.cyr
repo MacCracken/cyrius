@@ -1602,6 +1602,7 @@ fn PARSE_FIELD_STORE(S, noff): i64 {
     if (idx == 0 - 1) {
         idx = FINDVAR(S, noff);
         if (idx < 0) {
+            if (_enum_qual_store_refused(S, noff, fnoff) == 1) { return 0; }   # 6.7.3: `E.A = ..`
             # v6.5.19: --syntax-only treats the unknown base as an opaque value; the
             # `sid == 0` arm below then consumes the field access without emitting a
             # diagnostic, keeping the stream in sync. See _syntax_only.

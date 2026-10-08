@@ -4012,10 +4012,11 @@ fn _PARSE_STMT_IMPL(S): i64 {
         if (_arr_sub_stmt(S, noff) == 1) { return 0; }   # 6.6.12: `a[i] = v;` (parse_expr.cyr)
         # assignment or compound assignment: already consumed IDENT
         # 6.7.2 (B1): a const is not an lvalue — refused by name (the statement still parses on).
-        if (_cst_n > 0 || _lc_n > 0) { if (_cst_lvalue_check(S, noff, "cannot assign to const ") == 1) {
-                _cst_skip_decl(S);   # the rest of the statement, to its `;`
-                return 0;
-            } }
+        # 6.7.3: nor is an enum constant (_asg_lvalue_refused, parse_fn.cyr).
+        if (_asg_lvalue_refused(S, noff) == 1) {
+            _cst_skip_decl(S);   # the rest of the statement, to its `;`
+            return 0;
+        }
         # Check for +=, -=, *=, /=, %=, &=, |=, ^=, <<=, >>=
         var compound_op = _asg_compound_tok(S);
         _asg_ti = 0 - 1;

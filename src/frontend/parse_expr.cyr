@@ -2148,9 +2148,8 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
         var anoff = PEEKV(S);
         STI(S, GTI(S) + 1);
-        if (_cst_n > 0 || _lc_n > 0) {   # 6.7.2 (B1): a const has no address
-            if (_cst_lvalue_check(S, anoff, "cannot take the address of const ") == 1) { EMOVI(S, 0); return 0; }
-        }
+        # 6.7.2 (B1): a const has no address; 6.7.3: nor has an enum constant (parse_fn.cyr).
+        if (_addr_lvalue_refused(S, anoff) == 1) { EMOVI(S, 0); return 0; }
         # Resolution order is local → global → function: a VALUE of a
         # given name shadows a function of the same name (correct lexical
         # scoping). Pre-v6.0.35 this checked FINDFN *first*, so a local

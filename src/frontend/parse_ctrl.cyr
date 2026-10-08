@@ -292,6 +292,10 @@ fn _for_step_aggregate(S, noff): i64 {
     return r;
 }
 fn _for_step_assign(S, noff): i64 {
+    # 6.7.3: a const or an enum constant is no lvalue in the step either — 6.7.2's const refusal
+    # missed this path, and a top-level const's size-0 slot let the store overwrite a neighbour.
+    # No skip: the step ends at `)` and PARSE_FOR restores the cursor. CHANGELOG [6.7.3]
+    if (_asg_lvalue_refused(S, noff) == 1) { return 0; }
     var step_cop = _asg_compound_tok(S);
     if (step_cop == 0) {
         if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); }
