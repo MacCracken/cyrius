@@ -631,6 +631,12 @@ bool — write `b = b && c`), a const or an enum constant, and a field of a call
 (`mk(3).n += 1`: the result is a temporary). A handle keeps its pointer arithmetic: `p += 1` on a
 `*T` steps `sizeof(T)`, and a pointer-mode struct variable or a `Str` is an address.
 
+Since 6.7.6 the same refusal covers the other values that are not one integer or float, each of
+which operated on its first word: a **SIMD vector** (`v += w` on an `i64v2` / `f64v2` … local or
+parameter added to lane 0 only — use the packed-op builtins), a **typed array** (`var a: i64[4];
+a += 8` added to `a[0]`, an `f64[N]` added bit patterns — write `a[i] += b`) and a **slice**
+(`s += 1` moved `.ptr` — write `s.ptr += 1` / `s.len -= 1`). A bare `var b[N]` keeps its `OP=`.
+
 ## Memory
 
 ```

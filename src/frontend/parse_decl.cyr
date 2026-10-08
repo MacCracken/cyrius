@@ -48,9 +48,19 @@ fn _arr_desc(ew, sgn): i64 {
     if (sgn == 1) { return ew | 0x40; }
     return ew;
 }
-fn _arr_gsgn(ew, sgn): i64 {
-    if (ew <= 0) { return 0; }
+# ⛔ 6.7.6 (Break 1, lane D) — 0x80 in the descriptor: the array was declared with an element TYPE
+# (`var a: T[N]`, any T — f64, a struct and a vector included, which carry no integer width), so
+# `a OP= v` on its name is refused by name (_asg_wide_refused, parse.cyr) — it operated on element 0.
+# A bare `var a[N]` stays 0. The subscript reads only `& 0x3F` (width) and `& 0x40` (sign), so the
+# mark changes no load; a global keeps it under 0x100 like any descriptor. CHANGELOG [6.7.6]
+fn _arr_desc_t(ew, sgn, typed): i64 {
     var d = _arr_desc(ew, sgn);
+    if (typed != 0) { d = d | 0x80; }
+    return d;
+}
+fn _arr_gsgn(ew, sgn, typed): i64 {
+    var d = _arr_desc_t(ew, sgn, typed);
+    if (d == 0) { return 0; }
     return 0x100 | d;
 }
 # A global's element descriptor, 0 when it is not an element-typed array.
@@ -326,7 +336,7 @@ fn PARSE_ARRAY(S, noff, ew, sgn, eb, ann_ti): i64 {
         S64(S + 0x5D9D000 + sa_named * 8, noff);
         SLDEP(S, sa_named, GSDEP(S));
         SLAGG(S, sa_named, sa_nslots);   # 6.6.5: the slots ARE the array
-        SLAEW(S, sa_named, _arr_desc(ew, sgn));   # 6.6.12: after SLAGG (see util.cyr SLAEW)
+        SLAEW(S, sa_named, _arr_desc_t(ew, sgn, ann_ti));   # 6.6.12: after SLAGG (see util.cyr SLAEW); 6.7.6: + the typed mark
         SLTYPE(S, sa_named, 0);
         SFLC(S, sa_named + 1);
         return 0;
@@ -334,7 +344,7 @@ fn PARSE_ARRAY(S, noff, ew, sgn, eb, ann_ti): i64 {
     var vcnt = GVCNT(S);
     S64(_varn_base + vcnt * 8, noff);
     S64(_vars_base + vcnt * 8, aligned);
-    SVSGN(S, vcnt, _arr_gsgn(ew, sgn));   # 6.6.12: the element descriptor (see _arr_gsgn)
+    SVSGN(S, vcnt, _arr_gsgn(ew, sgn, ann_ti));   # 6.6.12: the element descriptor (see _arr_gsgn); 6.7.6: + the typed mark
     # 6.6.5 — a fn-local STATIC array is scoped to its block, not stamped as a file global.
     # The v6.6.4 stamp is what turned this shape's cross-file collision into an error naming
     # the CONSUMER's variable; scoping the name removes the collision instead of renaming it.
@@ -2404,7 +2414,7 @@ fn PARSE_GVAR_ARR(S, noff, sti, ew, sgn, eb): i64 {
     var vc0 = GVCNT(S);
     S64(_varn_base + vc0 * 8, noff);
     S64(_vars_base + vc0 * 8, sz);
-    SVSGN(S, vc0, _arr_gsgn(ew, sgn));   # 6.6.12: before the fold, so a redeclaration compares it
+    SVSGN(S, vc0, _arr_gsgn(ew, sgn, eb));   # 6.6.12: before the fold, so a redeclaration compares it; 6.7.6: + the typed mark
     var vc = _gv_fold(S, vc0, sti);   # 6.6.6: a redeclaration reuses the global's slot
     SLVAR(S, vc);
     # v6.6.4: stamp visibility here too. PARSE_GVAR_REG returns into this fn BEFORE its

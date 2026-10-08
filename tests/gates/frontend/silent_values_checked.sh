@@ -15,6 +15,10 @@
 #      as the whole first argument routes to the base's `_int` overload: `println(n)` with `n: i64`
 #      ran println's cstring body over 42 (rc 139). The runtime half is
 #      tests/tcyr/crossos/int_name_routes_int_overload.tcyr (A rows).
+#   O  `OP=` on a SIMD vector (a local or parameter), a TYPED array (`var a: T[N]`, any T, local, global
+#      or static) or a slice is REFUSED by name, as 6.7.5 refused it on a struct: each integer-operated
+#      on the first word (`a += 8` added to a[0], `s += 1` to `.ptr`), as a statement and a for step.
+#      The element forms, the slice fields and a bare `var b[N]` (not decided) keep working.
 #   A  ANTI-VACUOUS: each crossos tcyr on x86_64 (default, CYRIUS_IR=3, CYRIUS_DCE=1) and with
 #      compilers built from this tree on aarch64 (qemu), cx (cxvm) and PE (wine, a private prefix),
 #      with its full assertion count.
@@ -76,6 +80,27 @@ refused p06 "$BB" "P6: inside a fn (the v6.5.67 rule, unchanged)" "${PR}fn main(
 exits p07 42 "P7: the top-level destructure binds both (both zones)" "${PR}var t, v = mk(42);\nsyscall(1, 1, \"\", 0);\nvar t2, v2 = mk(0);\nvar o = one();\nsyscall(60, v + t + (t2 - 1) * 100 + (v2 - 99) + o - 7);\n"
 exits p08 7 "P8: a one-value global from a plain fn is untouched" "${PR}var o = one();\nsyscall(1, 1, \"\", 0);\nvar o2 = one();\nsyscall(60, o * o2 / 7);\n"
 
+# ── O: `OP=` on a vector, a typed array or a slice is refused by name ──────────────────────────
+OS='struct P { x; y; }\nvar GA: i64[4];\n'
+OV="compound assignment to vector"
+OA="compound assignment to array"
+OL="compound assignment to slice"
+refused o01 "$OV 'v' is refused - a vector value is not an integer or a float" "O1: \`v += 1\` on an i64v2 local" "${OS}fn main(): i64 { var v: i64v2 = 0; v += 1; return 0; }\nsyscall(60, main());\n"
+refused o02 "$OV 'v'" "O2: ... on an f64v2 parameter" "${OS}fn f(v: f64v2): i64 { v -= 1.0; return 0; }\nsyscall(60, 0);\n"
+refused o03 "$OA 'a' is refused - an array is not an integer or a float (index an element: \`a[i] += b\`)" "O3: \`a += 8\` on a \`var a: i64[4]\` local" "${OS}fn main(): i64 { var a: i64[4]; a += 8; return 0; }\nsyscall(60, main());\n"
+refused o04 "$OA 'fa'" "O4: ... an f64[2] local" "${OS}fn main(): i64 { var fa: f64[2]; fa += 1.5; return 0; }\nsyscall(60, main());\n"
+refused o05 "$OA 'pa'" "O5: ... a struct-element array" "${OS}fn main(): i64 { var pa: P[2]; pa |= 1; return 0; }\nsyscall(60, main());\n"
+refused o06 "$OA 'GA'" "O6: ... a typed-array global, at top level" "${OS}GA += 8;\nsyscall(60, 0);\n"
+refused o07 "$OA 'a'" "O7: ... a for step" "${OS}fn main(): i64 { var a: i64[4]; var i = 0; for (i = 0; i < 2; a += 8) { i = i + 1; } return 0; }\nsyscall(60, main());\n"
+refused o08 "$OA 'big'" "O8: ... an array over the frame budget (static storage)" "${OS}fn main(): i64 { var big: u8[130000]; big >>>= 1; return 0; }\nsyscall(60, main());\n"
+refused o09 "$OL 's' is refused - a slice is not an integer or a float (step a field: \`s.ptr += n\`, \`s.len -= n\`)" "O9: \`s += 1\` on a slice local" "${OS}fn main(): i64 { var s: [u8] = 0; s += 1; return 0; }\nsyscall(60, main());\n"
+printf '%b' "${OS}fn main(): i64 { var a: i64[4]; a += 1; var s: [u8] = 0; s -= 1; return 0; }\nsyscall(60, main());\n" > "$T/o10.cyr"
+build o10
+if [ "$(grep -c '^error' "$T/o10.err")" -eq 2 ]; then ok "O10: an array then a slice: both reported (the parse stays in sync)"
+else bad "O10: want 2 error lines: $(grep '^error' "$T/o10.err" | tr '\n' '|')"; fi
+exits o11 21 "O11: the element forms and the slice fields still work" "${OS}fn main(): i64 { var a: i64[4]; a[0] = 1; a[0] += 8; var d: u8[4]; var s: [u8] = 0; store64(&s, &d); store64(&s + 8, 4); s.ptr += 1; s.len -= 2; return a[0] + (s.ptr - &d) * 10 + s.len; }\nsyscall(60, main());\n"
+exits o12 9 "O12: a bare \`var b[16]\` keeps its OP= (not a typed array; not decided)" "fn main(): i64 { var b[16]; store64(&b, 1); b += 8; return load64(&b); }\nsyscall(60, main());\n"
+
 # ── I: CYRIUS_IR=3 and the x86 f32 conversions ──────────────────────────────────────────────────
 I1='fn lo32(p): i64 { return load32(p) & 0xFFFFFFFF; }\nfn main(): i64 {\n    var y: f64 = 1.5;\n    var fy: f32 = f32_from(y);\n    var ok = 0;\n    if (lo32(&fy) == 0x3FC00000) { ok = ok + 1; }\n    var m: f32 = f32_from(1.5);\n    var m2: f32 = m * f32_from(2.0);\n    if (f32_to(m2) == 0x4008000000000000) { ok = ok + 2; }\n    var g: f32 = y;\n    if (lo32(&g) == 0x3FC00000) { ok = ok + 4; }\n    return ok;\n}\nsyscall(60, main());\n'
 exits i1 7 "I1: f32_from / f32_to / an f32 initializer under CYRIUS_IR=3" "$I1" CYRIUS_IR=3
@@ -135,4 +160,4 @@ tcyr_all AR tests/tcyr/crossos/int_name_routes_int_overload.tcyr 20
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — f32 initializers round (F); a top-level pair bind refused (P); an integer name routes to _int (R); IR=3 keeps the f32 conversions (I); every tcyr on x86_64 / IR / DCE / aarch64 / cx / PE (A)"
+echo "PASS: $G — f32 initializers round (F); a top-level pair bind refused (P); an integer name routes to _int (R); vector / typed-array / slice OP= refused (O); IR=3 keeps the f32 conversions (I); every tcyr on x86_64 / IR / DCE / aarch64 / cx / PE (A)"
