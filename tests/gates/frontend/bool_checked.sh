@@ -120,7 +120,7 @@ refused w55 "$SL" "W55: a global var G: bool = P { 7, true }" 'struct P { a; on:
 refused w56 "to bool parameter 'b' of 'P_add'" "W56: an operator's operand into its fn's bool parameter (p + 5)" 'struct P { a; }\nimpl P { fn add(self, b: bool): i64 { return b; } }\nfn main(): i64 { var p: P; p.a = 1; return p + 5; }\nsyscall(60, main());\n'
 refused w57 "$RT" "W57: a tuple return (5, 1) from a single-value bool fn" 'fn g(): bool { return (5, 1); }\nfn main(): i64 { return g(); }\nsyscall(60, main());\n'
 refused w58 "undefined variable 'zz'" "W58: an undefined name in the value is reported once (no bool cascade)" "$M var b: bool = false; b = zz; return b; }$E"
-refused w59 "array initializer elements must be constants" "W59: a bool[N] element 1 < 2 is refused once, as not a constant" 'var A: bool[2] = {1 < 2, true};\nsyscall(60, A);\n'
+# W59 (a bool[N] element `1 < 2` refused as not a constant) is A16 since 6.7.4: a list element is a const context
 
 exits a1 255 "A1: every boolean producer into a local (true, false, <, !, &&, ||, parens, another bool, !!, f64_lt, a for step)" "$M var a = 3; var t: bool = true; var f: bool = false; var c: bool = a < 4; var d: bool = !a; var e: bool = (a > 1) && (a < 9); var g: bool = c || d; var h: bool = (c); var i: bool = ((a == 3)); var j: bool = c; var k: bool = !!a; var l: bool = f64_lt(1.0, 2.0); t = c; t = !t; t = a != 3; t = d && c; for (var q = 0; q < 2; t = q > 0) { q = q + 1; } return t + c * 2 + e * 4 + g * 8 + h * 16 + i * 32 + j * 64 + k * 128 + l * 256 + f; }\nsyscall(60, main() % 256);\n"
 exits a2 10 "A2: a bool reads as 0 / 1 (n + ok, ok * 4)" "$M var ok: bool = true; var n = 5 + ok; var m = ok * 4; return n + m; }$E"
@@ -136,6 +136,7 @@ exits a12 13 "A12: a bool[N] list of true / false / (true) / a bool const" 'cons
 exits a13 0 "A13: an #inline bool fn run off its end is false" 'var A = 0;\n#inline\nfn g(p): bool { A = 77; }\nfn main(): i64 { var b: bool = g(&A); return b; }\nsyscall(60, main());\n'
 exits a14 0 "A14: an auto-inlined generic bool fn run off its end is false" 'var A = 0;\nfn g<T>(x: T): bool { A = 66; }\nfn main(): i64 { var d: bool = g(5); return d; }\nsyscall(60, main());\n'
 exits a15 1 "A15: an operator's bool parameter takes a parenthesised comparison" 'struct P { a; }\nimpl P { fn add(self, b: bool): i64 { return b; } }\nfn main(): i64 { var p: P; p.a = 1; return p + (2 > 1); }\nsyscall(60, main());\n'
+exits a16 3 "A16: a bool[N] list takes comparisons and !, evaluated (6.7.4: a list element is a const context)" 'const K = 2;\nvar A: bool[3] = {1 < 2, K == 3, !false};\nfn main(): i64 { return load64(&A) + load64(&A + 8) * 4 + load64(&A + 16) * 2; }\nsyscall(60, main());\n'
 exits a5 0 "A5: a global after the first statement takes a comparison" 'var x = 1;\nsyscall(60, 0);\nvar G: bool = x > 0;\n'
 
 # X — `--syntax-only` (cyrius lint's pre-pass) checks nothing: a sibling file's names are unknown there.

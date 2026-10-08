@@ -94,11 +94,13 @@ refuse range_i32    'does not fit a 4-byte element' 'var a: i32[1] = {0x10000000
 refuse range_bare   'byte-array literal value must be in [0, 255]' 'var b[1] = {256};\nsyscall(60, 0);\n'
 refuse range_bare_n 'byte-array literal value must be in [0, 255]' 'var b[1] = {-1};\nsyscall(60, 0);\n'
 # ── constant ─────────────────────────────────────────────────────────────────────────────────
-refuse const_call  'array initializer elements must be constants' 'fn f(): i64 { return 1; }\nvar a: i64[2] = {f(), 1};\nsyscall(60, 0);\n'
-refuse const_var   'array initializer elements must be constants' 'var k = 1;\nvar a: i64[1] = {k};\nsyscall(60, 0);\n'
+# 6.7.4: a list element is a const context (the compile-time evaluator), so a non-constant one is
+# refused in that context's words — it names what the element is.
+refuse const_call  "'f' is not a \`const fn\`" 'fn f(): i64 { return 1; }\nvar a: i64[2] = {f(), 1};\nsyscall(60, 0);\n'
+refuse const_var   "'k' is a variable - a const context takes only constants" 'var k = 1;\nvar a: i64[1] = {k};\nsyscall(60, 0);\n'
 refuse const_str   'array initializer elements must be constants' 'var a: i64[1] = {"x"};\nsyscall(60, 0);\n'
 refuse const_float 'a float literal initializes only an f64 or f32 array element' 'var a: i64[1] = {1.5};\nsyscall(60, 0);\n'
-refuse const_post  'array initializer elements must be constants' 'syscall(1, 1, "", 0);\nvar k = 2;\nvar a: u16[1] = {k};\nsyscall(60, 0);\n'
+refuse const_post  "'k' is a variable - a const context takes only constants" 'syscall(1, 1, "", 0);\nvar k = 2;\nvar a: u16[1] = {k};\nsyscall(60, 0);\n'
 # ── type ─────────────────────────────────────────────────────────────────────────────────────
 refuse type_struct  "an initializer list for an array of 'Pt' is not supported" 'struct Pt { x; y; }\nvar a: Pt[2] = {1, 2, 3, 4};\nsyscall(60, 0);\n'
 refuse type_vector  "an initializer list for an array of 'i8v16' is not supported" 'var a: i8v16[2] = {1};\nsyscall(60, 0);\n'

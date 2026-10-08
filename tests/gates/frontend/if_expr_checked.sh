@@ -11,7 +11,8 @@
 #   A  ANTI-VACUOUS: built and run — values, only the taken branch, the join's flag / fold resets
 #   C  const contexts: the compile-time evaluator runs the taken arm, walks the rest
 #   S  the token / byte scanners that walk an expression unparsed: pass 1's #assert extent, the
-#      #derive enum-member value, a `return` statement's end
+#      #derive enum-member value, a `return` statement's end — and globals: array-list elements
+#      (the evaluator), a kernel build's static bake (the folder's if-arm)
 #
 # Mutations (scratch trees, each RED here — run 2026-10-08): the join's `_flags_reflect_rax = 0`
 # removed -> A4; every `_cfo` clear at the join removed (the helper's and both PARSE_INTRIN callers')
@@ -21,7 +22,9 @@
 # (`1 / 0` faults, a false cycle); `_cst_kind_peek` answering 0 for an unevaluated const -> R24 C3;
 # the deferred re-check removed -> R24 BUILDS; pass 1's line-break #assert walk restored -> S1 S2;
 # the #derive member-value walk stopping after one operand -> S3; `_body_ends_in_return` ending a
-# `return` at an if-expression's `}` -> S9 BUILDS. (The three peephole-tracker resets and the
+# `return` at an if-expression's `}` -> S9 BUILDS; _gai_skip counting parentheses only -> S5 S6 S7;
+# a bool[N] element's kind unchecked -> S7 BUILDS (and bool_checked W53); no folder if-arm -> S8
+# (a kernel build names a constant-condition global as late). (The three peephole-tracker resets and the
 # SESVAR / `_esv_name` reset are defensive: no row kills them.)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -104,6 +107,17 @@ exits s01 4 "S1: a multi-line top-level #assert holding an if-expression, then a
 exits s02 5 "S2: #assert 1<LF> == 1 then a struct (the 6.7.2 continuation)" '#assert 1\n    == 1, "m";\nstruct P { a; }\nfn main(): i64 { var p: P; p.a = 5; return p.a; }\nsyscall(60, main());\n'
 exits s03 7 "S3: #derive(Deserialize) on enum { A = 1 + 1; B = 5; C = 7; } decodes the LAST member" "${INC}#derive(Deserialize)\nenum EX { A = 1 + 1; B = 5; C = 7; }\nfn main(): i64 { alloc_init(); var t, v = EX_from_json_str(\"\\\"C\\\"\"); return t * 100 + v; }\nsyscall(60, main());\n"
 exits s04 27 "S4: ... with an if-expression member value" "${INC}const D = 1;\n#derive(Deserialize)\nenum EX { A = if (D) { 2 } else { 3 }; B = 5; C = 7; }\nfn main(): i64 { alloc_init(); var t, v = EX_from_json_str(\"\\\"C\\\"\"); return t * 100 + v + A * 10; }\nsyscall(60, main());\n"
+exits s05 53 "S5: a list element holding an if-expression (every element is a const context)" 'const K = 2;\nvar T: i64[2] = { if (K == 2) { 5 } else { 7 }, 3 };\nfn main(): i64 { return load64(&T) * 10 + load64(&T + 8); }\nsyscall(60, main());\n'
+exits s06 2 "S6: a bool[N] list element that is an all-bool if-expression" 'const K = 2;\nvar B: bool[2] = { if (K == 2) { K > 1 } else { false }, false };\nfn main(): i64 { return load64(&B) * 2 + load64(&B + 8); }\nsyscall(60, main());\n'
+refused s07 "a bool array's element takes a boolean value" "S7: a bool[N] list element that is an integer if-expression" 'const K = 2;\nvar B: bool[1] = { if (K == 2) { 1 } else { 0 } };\nsyscall(60, 0);\n'
+printf 'kernel;\nconst D = 1;\nvar G = if (D) { 11 } else { 22 };\nvar H = if (D == 0) { 1 } elif (D == 1) { 33 } else { 3 };\nasm { 0xF4 }\n' > "$T/s08.cyr"
+build s08
+if [ "$rc" -ne 0 ]; then bad "S8: a kernel build of constant-condition if-expression globals: rc $rc"
+elif grep -q 'runs after the top-level program' "$T/s08.err"; then bad "S8: a constant-condition if-expression global was left to the late replay"
+else ok "S8: a kernel build bakes constant-condition if-expression globals (no late-replay warning)"; fi
+printf 'kernel;\nfn f(): i64 { return 1; }\nvar G = if (f()) { 11 } else { 22 };\nasm { 0xF4 }\n' > "$T/s08b.cyr"
+build s08b
+if grep -q 'runs after the top-level program' "$T/s08b.err"; then ok "S8b: ... and a call condition is still named as late"; else bad "S8b: a call-condition if-expression global was not named as late"; fi
 refused s09 "multi-value destructure binds 2 names, but 'f' returns 1 value" "S9: a fn returning an if-expression is provably single" 'fn f(c): i64 { return if (c) { 1 } else { 2 }; }\nfn main(): i64 { var a, b = f(1); return a + b; }\nsyscall(60, main());\n'
 exits a15 3   "A15: a statement-start if is still the if statement" "fn f(c): i64 { var r = 0; if (c) { r = 3; } else { r = 4; } return r; }$E"
 
