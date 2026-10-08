@@ -2549,6 +2549,7 @@ fn _CF_TRY(S, ti, term): i64 {
 # (_gai_f32). An integer in an f64 / f32 element keeps its bits, with the warning a scalar gives.
 # CHANGELOG [6.6.16]
 var _gai_w = 0;        # the element bytes _gai_kind found
+var _gai_bool = 0;     # 6.7.3: the list being walked fills a `bool[N]` (each element checked)
 var _gai_ok = 0;       # _gai_val: 1 = the element is a constant
 var _pp_depth = 0;     # PARSE_PROG nesting: 1 = module scope (see _gai_stmt)
 
@@ -2655,6 +2656,7 @@ fn _gai_walk(S, cap, bare): i64 {
         var t = PEEKT(S);
         if (t == 5 || t == 12) { ERR_EXPECT(S, 14); return n; }
         if (n == cap) { _gai_cap_err(S, cap, bare); }
+        _bx_gai_elem(S);   # 6.7.3: a bool element takes a boolean value
         _gai_skip(S, 0);
         n = n + 1;
         if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
@@ -2668,7 +2670,38 @@ fn _gai_decl(S, ann_ti, n, sz): i64 {
     var bare = 0;
     if (ann_ti == 0) { bare = 1; n = sz; }
     if (_gai_kind(S, ann_ti) == 0) { _gai_type_err(S, ann_ti); }
+    _gai_bool = 0;
+    if (ann_ti > 0) { if (TOKTYP(S, ann_ti) == 2) { _gai_bool = _bx_is_bool_name(S, TOKVAL(S, ann_ti)); } }
     _gai_walk(S, n, bare);
+    _gai_bool = 0;
+    return 0;
+}
+
+# 6.7.3 (B2) — an element of a `bool[N]` list (cursor on it): `true` / `false`, optionally
+# parenthesised, or a bool const — the list is baked by the constant folder, so that is the whole
+# boolean subset a list can hold (the user's decision: a write into a bool takes a boolean value).
+fn _bx_gai_elem(S): i64 {
+    if (_gai_bool == 0) { return 0; }
+    var ti = GTI(S);
+    var d = 0;
+    while (TOKTYP(S, ti) == 10) { d = d + 1; ti = ti + 1; }
+    var t = TOKTYP(S, ti);
+    var ok = 0;
+    if (t == 169 || t == 170) { ok = 1; }
+    if (t == 2) {
+        var ci = _cst_find(S, TOKVAL(S, ti));
+        if (ci >= 0) { _cst_value(S, ci); if (_cst_kk == 3) { ok = 1; } }
+    }
+    if (ok == 1) {
+        ti = ti + 1;
+        while (d > 0) { if (TOKTYP(S, ti) != 11) { ok = 0; } d = d - 1; ti = ti + 1; }
+        var e = TOKTYP(S, ti);
+        if (e != 31 && e != 14) { ok = 0; }
+        if (ok == 1) { return 0; }
+    }
+    if (_bx_live(S) == 0) { return 0; }
+    if (_tn_once(S, GTI(S)) == 0) { return 0; }
+    _gai_err(S, GTI(S), "a bool array's element takes a boolean value: true, false or a bool const");
     return 0;
 }
 

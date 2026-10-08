@@ -53,7 +53,7 @@ var GF64S1: f64 = 1.5;
 var GF64S3: f64 = 0.1;
 var GF32: f32[3] = {1.5, -0.1, 3.25};
 var GU128: u128[3] = {7, -1, 0x123456789};
-var GBOOL: bool[3] = {1, 0, 1};
+var GBOOL: bool[3] = {true, false, true};   # 6.7.3: a bool element takes a boolean value
 var GPTR: *i64[2] = {0x1000, 8};
 
 # a partial list (the rest is 0) and a narrow canary packed right after a 12-byte array
