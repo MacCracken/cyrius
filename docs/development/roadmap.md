@@ -79,7 +79,7 @@ in [completed-phases.md](completed-phases.md) § *v6.6.x*; the detail is the CHA
 | **6.7.2** | **B1 `const` + C1 `const fn`** together — decisions taken at the open (spec below); ✅ landed 2026-10-07 |
 | **6.7.3** | **B2 `bool` / `true` / `false`** — decisions taken at the open (spec below) · **+ a repair lane for the filed issues** (user, 2026-10-07 — an exception to operating rule 1, the user's call): the two 6.7.x filings (struct-argument type check, enum-constant assignment) and the four open issue files (tail call in a loop, `cyriusly cmdtools`, the hashmap_fast leak, the tools' attribute-line rule); ✅ landed 2026-10-08 (CHANGELOG [6.7.3]) |
 | **6.7.4** | **B3 — the if-expression** — decisions taken at the open (spec below); ✅ landed 2026-10-08 (CHANGELOG [6.7.4]) |
-| **6.7.5** | **B5 `loop` / `do … while` + B8 compound assignment on a field** — the last two of "by size" (~~B2~~ 6.7.3 · ~~B3~~ 6.7.4), so Break 1 follows (user, 2026-10-08: "continue with 6.7.5"; decisions asked at the open) |
+| **6.7.5** | **B5 `loop` / `do … while` + B8 compound assignment on a field** — the last two of "by size" (~~B2~~ 6.7.3 · ~~B3~~ 6.7.4), so Break 1 follows (user, 2026-10-08: "continue with 6.7.5"; decisions asked at the open); ✅ landed 2026-10-08 (CHANGELOG [6.7.5]) |
 | **W2 — stdlib wave** | after 6.7.5 is tagged: the 12 folded stdlibs move their pin to **6.7.5**, each with a patch release (a minor where an API changes — "so be it", user 2026-10-08), carrying their high / critical filed issues, the migration concerns, and the simplifications the 6.7.x features allow; everything else is roadmapped in that repo. Plan: § *W2* below |
 | **6.7.6 — Break 1** | the W2 tags re-vendored byte-identical · catch-up: the high / critical backlog + found issues (user picks) · `cyrius test` / `tests` consolidation · **cybs stack arguments** (below) |
 | then | B4 tuples · B6 default + named arguments · B7 narrow struct fields (ABI survey + migration) · C2 bounds-checked mode (+ P5 execution coverage) · **checked `dyn`** (decided 2026-10-07, open question 5) |
@@ -170,7 +170,7 @@ field walk at the nested `<` (re-measured 6.7.1: `#derive(accessors)` never defi
    (v5.8.29). Proposed: an if-expression (`var v = if (c) { a } else { b };`) — **asked at B3's start.**
 4. **Tuples as values.** `var t = (1, 2); t.0` — proposed as sugar over an anonymous struct (layout and ABI
    unchanged; multi-return keeps its register pair) — asked at B4's start.
-5. **`loop { … }` and `do { … } while (c);`.** A `continue` in a `do … while` goes to the condition. ⚠ `loop`
+5. ✅ **LANDED 6.7.5.** **`loop { … }` and `do { … } while (c);`.** A `continue` in a `do … while` goes to the condition. ⚠ `loop`
    is the ONE keyword with real collisions (survey below) — whether it is a full reserved word (rename 224
    sites in 10 repos) or contextual (a keyword only when `{` follows) is **asked at B5's start.**
 6. **Default and named arguments.** `fn f(a, b = 2)` and `f(a: 1, b: 2)`; the v6.5.1 arity check becomes
@@ -178,11 +178,11 @@ field walk at the nested `<` (re-measured 6.7.1: `#derive(accessors)` never defi
 7. **Narrow unsigned and `f32` struct fields.** Today `u8` / `u16` / `u32` / `f32` fields take a full word;
    narrowing changes the LAYOUT of every struct that declares one — an ABI change. Ships with the migration,
    never silently.
-8. **Compound assignment on a field** (BACKLOG-13). `h.n += 4` is `expected '=', got '+'` for a struct local
+8. ✅ **LANDED 6.7.5.** **Compound assignment on a field** (BACKLOG-13). `h.n += 4` is `expected '=', got '+'` for a struct local
    and a field alike; every compound operator on every lvalue form (field, chain, `p.f` through a pointer, a
    subscript), with `*=` / `/=` on f64 fields following the 6.6.11 float rules.
 
-**B5 + B8 decisions (user, 2026-10-08, at the 6.7.5 open):**
+**B5 + B8 decisions (user, 2026-10-08, at the 6.7.5 open) — ✅ LANDED in 6.7.5 (CHANGELOG [6.7.5]):**
 - **`loop` is CONTEXTUAL** — `loop {` at the start of a statement is the loop statement, and `loop` anywhere else
   stays an identifier (the `kernel` precedent, v5.8.45, demoted from reserved for the same reason; `self` is
   recognised by name too). The user first chose a full reserved word on a question that wrongly called contextual
@@ -335,10 +335,10 @@ probes. The proposal takes the **still-real critical / high** items, the two pre
 | A. Refold | the 12 W2 tags re-vendored byte-identical (`cmp` against each tag's `dist/`; yantra rebuilt from its tag) + `docs/ecosystem.md`'s rows + the fold gates; strike the sibling bullets W2 shipped | M |
 | B. Bootstrap | **cybs stack arguments** (pre-placed, below) · **cybs drops a lone `!`** (`bootstrap/cybs.cyr:1185-1199` jumps to `lexer_skip`; seed-built cybs gives `f(0) = 0` for `return !x;`, cycc gives 1) — the CVE-104 class in the trusted root, latent (0 sites in `src/` today) but `!` has been legal cyrius since 6.7.3 | M |
 | C. Security | a TRANSITIVE manifest's `path` (absolute or `..`) or local `git = "<path>"` vendors any readable local file into the consumer's `lib/`, exit 0 (`cbt/deps.cyr:1791`; the CVE-88 class) — **the rule is the user's call** (confine to the manifest's own tree + remote-only transitive git, or refuse both) | M |
-| D. Silent wrong values | a top-level `var v = Ok(42);` keeps the tag and drops the payload, silently (refused inside a fn since v6.5.67) · `var x: f32 = 1.5` stores the f64 bits · `println(n)` on a typed i64 local segfaults · `CYRIUS_PKG_VERSION` not visible two include levels deep (the open issue) — **two of these change what a program does: the user's call** (f32: round or refuse; pair bind: refuse) | 4 × S |
-| E. Struct-value codegen | three crashes on valid code — `rd3((a))`, `s - mk3(4)`, `p + p.dup()` · a Str field as a struct source · a name intrinsic inheriting a struct type (`fncall1(&f, n) + 1` → 100; filed at 6.7.4) | M-L |
+| D. Silent wrong values | `OP=` on a u128 / SIMD vector / typed-array local / slice local operates on the first word (the struct case was refused at 6.7.5 — **refusing these is the user's call**) · a top-level `var v = Ok(42);` keeps the tag and drops the payload, silently (refused inside a fn since v6.5.67) · `var x: f32 = 1.5` stores the f64 bits · `println(n)` on a typed i64 local segfaults · `CYRIUS_PKG_VERSION` not visible two include levels deep (the open issue) — **two of these change what a program does: the user's call** (f32: round or refuse; pair bind: refuse) | 4 × S |
+| E. Struct-value codegen | three crashes on valid code — `rd3((a))`, `s - mk3(4)`, `p + p.dup()` · a parenthesised struct source into a struct field copies one word (`o.i = (z.k)`, 6.7.5 review) · a Str field as a struct source · a name intrinsic inheriting a struct type (`fncall1(&f, n) + 1` → 100; filed at 6.7.4) · **the x86 stale-flags branch on an `i8`/`i16`/`i32` field** (`if (h.m)` after `x = x + 1;`, 6.7.5 review) | M-L |
 | F. cx | `~x` is `x` (XOR with a non-all-ones register) · `lib/fnptr.cyr` has no cx arm (`fncall2(&fncall1, …)` → 0) · calls over 248 arguments · probe the 14+ integer-argument / vector-register band | S-M |
-| G. Tooling | `cyrius test` absorbs `cyrius tests` (pre-placed, below) | S-M |
+| G. Tooling | `cyrius test` absorbs `cyrius tests` (pre-placed, below) — and runs this repo's own corpus (22 `.tcyr` defining `fn run()` collide with `lib/process.cyr`'s `run` today) | S-M |
 | H. cyrius `lib/` | size each stack buffer by the constant that bounds it (11 constants, ~17 sites — among them the CVE-56 site, `_LOG_LINE_MAX` vs `var buf[512]` in `lib/log.cyr`); private names become `const`, public ones keep their `var` (no API change) · `lib/trait.cyr`'s header promises `impl` sugar that ADR-007 made static | S-M |
 
 Also after the tag (the user's call — it writes the live store): `verify-store.sh --restore` for the 16 slots whose
@@ -646,6 +646,41 @@ CHANGELOG [6.6.17] *Downstream* (no ecosystem sweep).
   - **A fn whose body ends in `loop { … }` or `do … while` is not "provably returning"** to pass 1
     (`_body_ends_in_return` reads a final `do` as a `while` statement): GFLG bit 1024 stays clear, so a
     `var a, b = f()` refusal is missed for such an `f` — conservative (a missed refusal, never a false one).
+  - **⚠ x86 MISCOMPILE: `if (s.f)` / `while (s.f)` on an `i8` / `i16` / `i32` field of an INLINE struct branches on
+    stale flags** after any arithmetic statement (6.7.5 B8 review; identical on 6.7.4): `struct H { n; m: i8; }`,
+    `var h = H { 1, 0 }; var x = 5; x = x + 1; if (h.m) { return 1; } return 0;` exits 1 on x86 (aarch64 / cx 0); an
+    i32 field's `while` runs 4 times. PARSE_FIELD_LOAD's narrow load (EFIELD_LOAD_W with width 1 / 2 / 4, then
+    EADDIMM_X1) never clears `_flags_reflect_rax`, as `_arr_sub_load` does for subscripts. Every compound statement
+    leaves the tracker set, so `h.m -= 2; if (h.m)` is one more trigger (the plain `h.m = h.m - 2` resets it).
+    **High — Break 1 lane E.**
+  - **A parenthesised struct source into a struct-typed field copies ONE word** (6.7.5 B8 review; same on 6.7.4):
+    `o.i = (z.k);` and `o.i = (j);` give 72 where 78 is right; a for-step field destination inherits it. The
+    `rd3((a))` class. **High — Break 1 lane E.**
+  - **CYRIUS_IR=3 reads garbage for a SIGNED narrow field through a pointer or a closure capture** (6.7.5 B8 review;
+    same on 6.7.4; nondeterministic): `fn h(s: *S): i64 { return s.a + s.b; }` over `i8` fields gives 30 / 14 / 78
+    where 37 is right. The read path's negative-width EFIELD_LOAD_W is not IR_RAW_EMIT-recorded (6.6.12 fixed only
+    `_arr_sub_load`). Opt-in IR only.
+  - **`OP=` and `=` on a typed-array local operate on element 0** (6.7.5 B8 lane): `var a: i64[4]; … a += 8;` adds to
+    `a[0]`, and `a = 8` sets it; **`s += 1` on a slice local adds to `.ptr`**. The struct-value class the user refused
+    for structs at 6.7.5; whether these are refused too is the user's call (with the u128 / vector row above).
+  - **A variable or subscript for-step never checks its `)`**: `for (i = 0; i < 3; i += 1 2)` builds and runs (junk
+    accepted); field and `*p` steps report "expected ')'" since 6.7.5 (B8 lane).
+  - **`--syntax-only` (`cyrius lint`) invents "expected '=', got '.'" for `a.f.g = 1;`** (and `+=`) when `f: *Foo` and
+    `Foo` is declared in another file — the syntax-only arms do not take a hop to an unknown pointee (B8 review;
+    the v6.5.19 false-accusation class).
+  - **A captured 8-byte pointer-mode struct local is copied into the closure env; a 16-byte one is captured by
+    reference** (B8 review): `var q: S8 = alloc(8)` — writes inside the closure are not seen outside; `var hq: H =
+    alloc(16)` — they are. `=` and `OP=` agree; the inconsistency is `_CL_CAP_BASE_RA`'s rule.
+  - **On cx, a fn returning a 16-byte struct is refused** ("int-class 16B struct pair-return ABI not supported"), so
+    `tests/tcyr/crossos/for_step_struct_assign.tcyr` does not build for cx (B8 lane; pre-existing).
+  - **`cyrius test <file>` inside this repo cannot build the 22 `.tcyr` that define `fn run()`**: the manifest's
+    `[deps] stdlib` prepends `lib/process.cyr`, whose `fn run(cmd, arg1, arg2)` (:688) collides ("duplicate fn 'run'
+    disagrees about arity"). check.sh and the cross-OS runner feed `build/cycc` directly, so nothing gates it.
+    **Break 1 lane G** (`cyrius test` absorbs `tests` — it should run this repo's own corpus).
+  - Diagnostics (low): a const fn's scope error is reported twice (the definition check, then the parser); an unclosed
+    call argument list followed by a loop cascades three errors; a method-call for-step (`for (..; ..; h.m())`)
+    cascades "undefined function"; a missing `}` at EOF with two blocks open prints its second error at `0:1` with no
+    file (6.7.5 lanes and review).
 
 - **Found by the 6.6.20 closeout and not fixed in it (2026-10-07; backlog — only the user promotes).**
   - **A parenthesised struct argument to an address-passed parameter pushes the struct's VALUE**: `rd3((a))`
