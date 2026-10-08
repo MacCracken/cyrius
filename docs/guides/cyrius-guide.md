@@ -478,8 +478,8 @@ while (1 == 1) {
 # Bitwise
 & | ^ ~ << >> >>>
 
-# Logical (short-circuit, chainable)
-&&  ||
+# Logical (short-circuit, chainable); `!` is logical not (6.7.3)
+&&  ||  !
 
 # Explicit overflow operators (v5.6.2)
 +%  -%  *%      # wrapping (alias for bare + - * — 2's complement wrap)
@@ -3398,6 +3398,63 @@ fn f(v): i64 {
   with x86-64 and AArch64 — round to nearest even, subnormals, infinities, signed zeros. A NaN
   is refused (its bits differ between targets), as are division by zero, an f64 out of the
   i64 range in `f64_to`, more than 10,000,000 steps, and calls nested deeper than 2,000.
+
+## Booleans: `bool`, `true`, `false`, `!` (6.7.3)
+
+```
+var ready: bool = false;          # true is 1, false is 0
+var big: bool = n > 100;          # a comparison is a bool
+var ok: bool = !failed && big;    # so are !, && and ||
+fn even(n): bool { return n % 2 == 0; }
+fn set(on: bool) { .. }
+
+var count = 10 + ready;           # a bool READS as the integer 0 or 1
+```
+
+`bool` is an 8-byte word (ADR-002 keeps `i64` the core: `sizeof(bool) == 8`) holding 0 or 1.
+`true` and `false` are reserved words.
+
+**A write into a bool is checked** (the user's decision, 2026-10-07). A bool variable (local or
+global), field, parameter, fn return, multi-value-return element or const takes only a
+**boolean value**: `true` / `false`, a comparison (`==` `!=` `<` `>` `<=` `>=`, and the
+`f64_eq` / `f64_lt` / `f64_gt` / `f64_le` / `f64_ge` builtins), `!x`, `&&` / `||`, another bool
+(a bool variable, field, parameter, capture or const, a call to a `: bool` fn), or any of these
+in parentheses. Everything else is refused by name — the literals `0` and `1` included:
+
+```
+var b: bool = 1;      # error: cannot initialize bool 'b' with a value that is not a bool
+b = n;                # error: cannot assign a value that is not a bool to bool 'b'
+b += 1;               # error: compound assignment to bool 'b' is refused (write `b = !b`)
+p.on = 2;             # error: cannot store a value that is not a bool into bool field 'on'
+set(1);               # error: cannot pass a value that is not a bool to bool parameter 'on' of 'set'
+fn g(): bool { return 1; }   # error: cannot return a value that is not a bool from bool fn 'g'
+```
+
+Write `x != 0` to make a bool of an integer. Arithmetic over a bool is an integer, not a bool:
+`ok + 0`, `-ok`, `~ok` and `(a < b) + 1` are refused into a bool. An untyped variable stays an
+integer whatever initialised it (`var x = a < b;` then `var c: bool = x;` is refused) — inference
+would change what existing programs do. Raw memory is not checked: `store64(p, 7)` and `*p = 7`
+through a `*bool`, and `ret2`, write what they are given; a `*p` read is an integer.
+
+**A bool reads as the integer 0 or 1 everywhere** — `n + ok`, `ok * 4`, a bool passed to an
+`i64` parameter — and a condition (`if`, `while`, `&&`) still takes any integer.
+
+**`!e`** is 1 when `e`'s word is 0, else 0. It binds like unary minus — its operand is a factor,
+so `!x + 1` is `(!x) + 1` — and an `f64` operand is tested by its raw bits, as `if (x)` tests it
+(`!(-0.0)` is 0). ⚠ Until 6.7.3 the lexer silently DROPPED a lone `!`, so `!x` compiled as `x`
+(CVE-104).
+
+**`fn g(): bool`**: a bare `return;` in it is refused (it returns 0); running off the end
+returns `false`; a tail call `return h(..);` must call a bool fn. **Consts**: a const is a bool
+when its value is (`const DEBUG = true;`, `const ON = !OFF;`, a `: bool` const fn's result), and
+every const context takes it as 0 / 1 (`#assert`, case labels, enum values, array sizes). A
+`bool[N]` initializer list takes `true`, `false` and bool consts. **`#derive`**: Serialize writes
+JSON `true` / `false`; both decoders store 1 for `true` and 0 for any other value;
+`#derive(accessors)` gives a typed getter `: bool` and a setter `v: bool`.
+
+The checks are skipped under `cyrius lint`'s `--syntax-only` (a sibling file's names are unknown
+there) and are not switched off by `CYRIUS_TYPE_CHECK=0`. The refusals are pinned by
+`tests/gates/frontend/bool_checked.sh`; the runtime half by `tests/tcyr/crossos/bool_values.tcyr`.
 
 ## Generic Functions
 
