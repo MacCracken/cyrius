@@ -906,6 +906,7 @@ fn _fsc_expr(S, ft, fnoff, term): i64 {
         if (_fla_ft != ft) { _fsc_type_err(S, _fla_name, fnoff); return 2; }
         return 1;
     }
+    if (_fls_whole(S, st) == 1) { if (_fls_sid != ft) { _fsc_type_err(S, _fls_name, fnoff); } }   # 6.7.6
     return 2;
 }
 fn _fsc_from_call(S, t, ft, fnoff): i64 {
@@ -1014,6 +1015,45 @@ fn _fla_lit_end(S): i64 {
     if (PEEKT(S) == 14) { return 1; }
     return 0;
 }
+# ⛔ 6.7.6 — A `Str` FIELD WAS NEVER TYPED AS A STRUCT SOURCE: `bq(h.name)` with `fn bq(b: Q)` and
+# `var q: Q = h.name;` compiled and read Q's fields out of the Str's 16-byte header and past it
+# (silent), as did `q = h.name`, `o.q = h.name` and `q + h.name`. A `: Str` field is one slot
+# holding a Str HANDLE, so the copy arms (`_fla_take`, `_fpk_note`) rightly never take it — its
+# load stays the handle. It is recorded here instead, for the destinations' type checks: into a
+# `Str` it is a handle as ever; into a struct VALUE of another type it is refused by name, as a
+# `Str` variable is (`var q: Q = s;` has been since 6.6.6); a handle destination rebinds at any
+# type (6.6.16 C2). `h.name.len` is a hop, not this. CHANGELOG [6.7.6]
+fn _fls_note(S, beg, ft): i64 {
+    if (ft <= 0) { return 0; }
+    if (ft >= 2048) { return 0; }
+    if (IS_STR_FIELD(S, ft) == 0) { return 0; }
+    _fls_beg = beg;
+    _fls_end = GTI(S);
+    _fls_sid = ft;
+    _fls_name = GETFNAME(S, _rlf_si, _rlf_fi);
+    return 0;
+}
+# 1 = the expression [st, cursor) is one whole `Str` field read, inside any parentheses wrapping it.
+fn _fls_whole(S, st): i64 {
+    if (_fls_beg < st) { return 0; }
+    var k = _fls_beg - st;
+    if (_fls_end + k != GTI(S)) { return 0; }
+    var i = 0;
+    while (i < k) {
+        if (TOKTYP(S, st + i) != 10) { return 0; }
+        if (TOKTYP(S, _fls_end + i) != 11) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+# A `Str` field into a struct VALUE destination of type `dt` (`0 - sid`): refused by name when `dt`
+# is another struct. 1 = refused.
+fn _fls_type_err(S, dt, dnoff): i64 {
+    if (dt >= 0) { return 0; }
+    if (dt <= 0 - 2048) { return 0; }
+    return _AGG_ASSIGN_TYPE_ERR(S, dt, 0 - _fls_sid, dnoff, _fls_name);
+}
+
 # 6.7.3 — a whole struct-typed field as the argument of a parameter that is not address-passed
 # (`_sarg_byval_small`, parse_fn.cyr): its struct, end token and name, recorded WITHOUT changing the
 # load — the by-value word is pushed exactly as before. The reader compares the end with the cursor.
@@ -1609,6 +1649,7 @@ fn _field_load_on(S, noff, fnoff, pfl_beg, idx, sid): i64 {
     if (_fld_hop_sid(S) > 0) { return _load_hop(S, noff, pfl_beg, idx, sid, off); }   # 6.6.17
     if (hop < 0) { if (_fld_meth_inline(S, ft) == 1) { return _load_inline_hop(S, noff, pfl_beg, idx, sid, off); } }   # 6.7.0 (A5)
     if (hop < 0) { if (_fpk_want == pfl_beg) { _fpk_note(S, ft); } }   # 6.7.3: passive, emits nothing
+    if (hop < 0) { _fls_note(S, pfl_beg, ft); }   # 6.7.6: passive, emits nothing
     if (hop < 0) { if (_fla_want == pfl_beg) { if (_fla_take(S, idx, sid, off, ft) == 1) { return 0; } } }   # 6.6.10
     # Load variable address + field offset, then load value (width-correct).
     # Pointer-vs-inline struct-base resolution: v5.5.36 local-encoded idx

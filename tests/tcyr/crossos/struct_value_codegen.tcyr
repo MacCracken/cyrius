@@ -17,9 +17,13 @@
 #   O  a struct result over 8 B (a free call, a method, an operator; retptr or rax:rdx) as the
 #      right operand of an operator that takes it by address: `s - mk3(4)` and `p + p.dup()`
 #      pushed its first word and SIGSEGV'd.
+#   S  a `: Str` field as a source is a Str HANDLE: into a Str parameter, variable, declaration and
+#      field (bare or wrapped) it is the handle as ever. Into a struct of ANOTHER type it is now
+#      refused by name (the gate's S rows) — it compiled and read past the Str's header.
 include "lib/syscalls.cyr"
 include "lib/string.cyr"
 include "lib/alloc.cyr"
+include "lib/str.cyr"
 include "lib/fnptr.cyr"
 include "lib/assert.cyr"
 
@@ -283,8 +287,39 @@ fn operand_pairs(): i64 {
 }
 #endif
 
+# S — a `: Str` field into Str destinations: the handle, unchanged.
+struct HS { name: Str; k; }
+struct OS { n; s: Str; }
+fn slen(b: Str): i64 { return str_len(b); }
+var GHS: HS = HS { 0, 7 };
+fn strs(): i64 {
+    var h: HS;
+    h.name = str_from("abcd");
+    h.k = 7;
+    assert_eq(slen(h.name), 4, "S1: slen(h.name), a Str parameter");
+    assert_eq(slen((h.name)), 4, "S2: slen((h.name))");
+    var s: Str = h.name;
+    assert_eq(str_len(s), 4, "S3: var s: Str = h.name");
+    var w: Str = (h.name);
+    assert_eq(str_len(w), 4, "S4: var w: Str = (h.name)");
+    # (S5, `u = h.name;` into a Str variable, is the gate's S10 row: under CYRIUS_IR=3 a plain
+    # `local = field` statement loads the wrong word, pre-existing and not this file's subject.)
+    var o: OS;
+    o.n = 0;
+    o.s = h.name;
+    assert_eq(str_len(o.s), 4, "S6: o.s = h.name, a Str field");
+    var t = h.name;
+    assert_eq(str_len(t), 4, "S7: var t = h.name (untyped)");
+    assert_eq(h.name.len, 4, "S8: h.name.len is a hop through the handle");
+    GHS.name = str_from("xyz");
+    var g: Str = GHS.name;
+    assert_eq(str_len(g), 3, "S9: a global's Str field");
+    return 0;
+}
+
 fn rows(): i64 {
     alloc_init();
+    strs();
     flags();
     intrinsics();
     assert_eq(GI1 * 10 + GI2, 81, "I7: at top level (fncall1 + 1, mulh64 + 1)");

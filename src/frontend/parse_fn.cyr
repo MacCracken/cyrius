@@ -1805,6 +1805,7 @@ fn _sarg_byval_small(S, fi, argc): i64 {
     if (asid == 0) {
         if (_sc_whole(S, st) != 0 - 2) { asid = _sc_sid; nm = _sc_fn; }
         elif (_fpk_ft > 0) { if (_fpk_end == GTI(S)) { asid = _fpk_ft; nm = _fpk_name; } }
+        elif (_fls_whole(S, st) == 1) { asid = _fls_sid; nm = _fls_name; }   # 6.7.6: a `Str` field
     }
     _sarg_type_err(S, fi, argc, asid, nm);
     EPUSHR(S);
@@ -3073,6 +3074,7 @@ fn _sc_pwrap(S, start): i64 {
 # ever. Returns 1 when `p` is declared. CHANGELOG [6.6.6]
 fn _sc_var_receive(S, noff, pscale, ext, start): i64 {
     if (_fla_hit == 1) { return _fla_var_receive(S, noff, pscale); }   # 6.6.11: `var p: S = b.v`
+    if (_fls_whole(S, start) == 1) { _fls_type_err(S, pscale, noff); return 0; }   # 6.7.6: a `Str` field
     var t = _sc_whole(S, start);
     if (t == 0 - 3) { _sc_decl_mismatch(S, pscale, _sc_sid); return 0; }   # 6.6.11: <= 8 B, in rax
     if (t < 0) { return 0; }
@@ -3110,9 +3112,19 @@ fn _vecg_rhs_ok(S, start): i64 {
     return 0;
 }
 
+# 6.7.6 — `var G: Q = H.name;` (a `: Str` field) into a struct global of another type: refused by
+# name, as in a fn (`_fls_type_err`). The declared name is not at hand here, so it is not named.
+fn _fls_global_err(S, pscale): i64 {
+    if (pscale >= 0) { return 0; }
+    if (pscale <= 0 - 2048) { return 0; }
+    if (pscale == 0 - _fls_sid) { return 0; }
+    ERR_IDENT(S, "cannot copy ", _fls_name, " (a Str field) into a global of a different struct type", 0 - 1);
+    return 1;
+}
 # A top-level struct-typed destination given a whole method/operator result of another struct —
 # <= 8 B (-3, in rax) or 9-16 B (-1, no frame) — refused by name (1). CHANGELOG [6.6.11]
 fn _sc_global_mismatch(S, pscale, start): i64 {
+    if (_fls_whole(S, start) == 1) { return _fls_global_err(S, pscale); }   # 6.7.6: a `Str` field
     var t = _sc_whole(S, start);
     if (t != 0 - 3) { if (t != 0 - 1) { return 0; } }
     if (pscale >= 0) { return 0; }
@@ -3145,6 +3157,7 @@ fn _push_struct_expr_arg(S, fi, argc, tail): i64 {
     if (_fla_hit == 1) { return _fla_push_arg(S, fi, argc, tail); }
     var t = _sc_whole(S, st);
     if (t >= 0 || t == 0 - 3) { _sarg_type_err(S, fi, argc, _sc_sid, _sc_fn); }   # 6.7.3
+    if (t == 0 - 2) { if (_fls_whole(S, st) == 1) { _sarg_type_err(S, fi, argc, _fls_sid, _fls_name); } }   # 6.7.6
     if (t == 0 - 3) { t = _sc_small_temp(S); }   # 6.6.20
     if (t >= 0) { _sarg_escapes(fi, argc, tail); EFLADDR(S, t); }   # 6.6.20: a temp in this frame
     if (t == 0 - 1) { _refuse_toplevel_struct_call(S, _sc_fn); }
@@ -3313,6 +3326,9 @@ fn _op_arg_check(S, fi, rb): i64 {
     } elif (_sc_whole(S, rb) != 0 - 2) {
         asid = _sc_sid;
         nm = _sc_fn;
+    } elif (_fls_whole(S, rb) == 1) {   # 6.7.6: a `Str` field
+        asid = _fls_sid;
+        nm = _fls_name;
     } elif (TOKTYP(S, rb) == 2) {
         var o = _gcall_open(S, rb);
         if (o >= 0) { if (_call_close(S, o) + 1 == e) {

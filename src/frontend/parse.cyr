@@ -1204,6 +1204,12 @@ var _pw_end = 0 - 1;
 # The first token of a parenthesised declaration initialiser's inside (`_scv_peel`): a whole free
 # call starting there records its struct temp (`_fnc_agg`), as a method call's does. -1 = none.
 var _sc_fcw = 0 - 1;
+# 6.7.6 — the last WHOLE `Str` field read (`h.name`): its first token, the token after it, the Str
+# struct id and the field's name (`_fls_note`, parse_decl.cyr). Passive — the load is unchanged.
+var _fls_beg = 0 - 1;
+var _fls_end = 0 - 1;
+var _fls_sid = 0;
+var _fls_name = 0;
 fn _pwrap_k(S, st): i64 {
     var k = 0;
     var c = 0;
@@ -3179,7 +3185,7 @@ fn _pcmpe_struct_assign(S, noff, term): i64 {
     _fla_stp = fs;
     if (_fla_hit == 1) { return _fla_assign(S, noff, term); }
     var t = _sc_whole(S, st);
-    if (t == 0 - 2) { return 0; }
+    if (t == 0 - 2) { _fls_asg_check(S, noff, st); return 0; }   # 6.7.6: a `Str` field
     var n = _agc_operand(S, noff);
     if (t == 0 - 3) { _asg_ret_sid = _sc_sid; }   # a <= 8 B struct VALUE: not a pointer mismatch
     if (_AGG_ASSIGN_TYPE_ERR(S, _agc_t, 0 - _sc_sid, noff, _sc_fn) == 1) { return 0; }
@@ -3221,6 +3227,14 @@ fn _asg_paren(S, noff, term, which): i64 {
     if (which == 2) { _pw_close(S, k); return 0; }
     STI(S, st);
     return 0;
+}
+# 6.7.6 — `q = h.name;` with a `: Str` field into a struct VALUE of another type is refused by name;
+# a handle destination rebinds at any type (6.6.16 C2), and a `Str` one is a handle. See `_fls_note`.
+fn _fls_asg_check(S, noff, st): i64 {
+    if (_fls_whole(S, st) == 0) { return 0; }
+    _agc_operand(S, noff);
+    if (_agc_hdl() == 1) { return 0; }
+    return _fls_type_err(S, _agc_t, noff);
 }
 # 1 = `noff` names a struct operand (`_agc_operand`'s type in the struct band): the destination a
 # parenthesised source is unwrapped for. Any other `x = (e);` keeps its plain parse.
