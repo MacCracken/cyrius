@@ -453,6 +453,12 @@ CHANGELOG [6.6.17] *Downstream* (no ecosystem sweep).
     variable of a different struct/vector type"), so the argument path is the gap; refusing it changes what
     compiles (a language decision — the user's). Repro: the two programs above, `build/cycc` 6.7.1.
 
+  - ⚠ **An enum constant is silently assignable** (found at the 6.7.2 open, B1): `enum E { A = 5; }` then `A = 6;`
+    and `A += 1;` compile and change nothing — every read folds to 5 — and `&A` returns real storage holding 5 (the
+    variant's slot has 8 bytes). A silent no-op. 6.7.2's `const` refuses all three by name ("cannot assign to const",
+    "cannot take the address of const"); doing the same for enum constants changes what compiles (the user's call).
+    Repro: the three lines above, `build/cycc` 6.7.2.
+
 - **Found by the 6.6.20 closeout and not fixed in it (2026-10-07; backlog — only the user promotes).**
   - **A parenthesised struct argument to an address-passed parameter pushes the struct's VALUE**: `rd3((a))`
     (`p: *P3`), `rd1((s))` (`p: *S1`), `rd1((mk1(4)))` — SIGSEGV on x86 / aarch64, an access violation on PE, a guest
