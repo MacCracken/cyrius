@@ -1233,7 +1233,25 @@ lexer_not_letter:
     je lexer_tilde
     cmp rax, 35           # '#' comment
     je lexer_comment
-    jmp lexer_skip
+# Any other byte outside a string or a comment is refused, naming it. 6.7.6 - it was dropped,
+# so `g()?` lexed as `g()` and a UTF-8 `cafe` as `caf` (no cybs input carries one today).
+lexer_char_err:
+    mov rax, 1
+    mov rdi, 2
+    mov rsi, err_char
+    mov rdx, 79
+    syscall
+    mov rsi, r15
+    add rsi, r8
+    mov rax, [rsi]
+    and rax, 0xFF
+    or rax, 0x0A00        # the byte, then a newline (the input is dead: cybs exits)
+    mov [rsi], rax
+    mov rax, 1
+    mov rdi, 2
+    mov rdx, 2
+    syscall
+    jmp sys_exit_err
 lexer_eq_or_eqeq:
     mov rcx, r8
     inc rcx
@@ -5484,6 +5502,8 @@ err_undef:
     db "undefined variable\n"
 err_bang:
     db "cybs: a lone `!` (logical not) is not supported by the bootstrap compiler; write `x == 0`\n"
+err_char:
+    db "cybs: the bootstrap compiler cannot lex this byte outside a string or comment: "
 pp_pat_include:
     db "include "
 pp_pat_ifdef:
