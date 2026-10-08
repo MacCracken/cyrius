@@ -5313,7 +5313,7 @@ fn _ce_expr(S): i64 {
         var r = _ce_land(S);
         if (lt == 1) { _ce_skip = _ce_skip - 1; v = 1; }
         else { v = 0; if (r != 0) { v = 1; } }
-        _ce_k = 0;
+        _ce_k = 3;   # 6.7.3: an || link is a bool
     }
     return v;
 }
@@ -5328,7 +5328,7 @@ fn _ce_land(S): i64 {
         var r = _ce_atom(S);
         if (lf == 1) { _ce_skip = _ce_skip - 1; v = 0; }
         else { v = 0; if (r != 0) { v = 1; } }
-        _ce_k = 0;
+        _ce_k = 3;   # 6.7.3: an && link is a bool
     }
     return v;
 }
@@ -5341,7 +5341,7 @@ fn _ce_atom(S): i64 {
     _ce_ti = _ce_ti + 1;
     var b = _ce_add(S);
     var bk = _ce_k;
-    _ce_k = 0;
+    _ce_k = 3;   # 6.7.3: a comparison is a bool
     if (_ce_err == 1) { return 0; }
     if (_ce_skip > 0) { return 0; }
     if (ak == 2 || bk == 2) { _ce_bad(S, "a string in a comparison: a const string is a value to pass, not to compare", 75); return 0; }
@@ -5456,6 +5456,7 @@ fn _ce_unary(S): i64 {
         var v = _ce_unary(S);
         if (_ce_k == 2) { _ce_bad(S, "a string in arithmetic: a const string is a value to pass, not to compute with", 78); return 0; }
         if (_ce_k == 1) { return _sf_neg(v); }
+        if (_ce_k == 3) { _ce_k = 0; }   # 6.7.3: `-ok` is an integer, as at run time
         return 0 - v;
     }
     if (t == 37) {
@@ -5470,7 +5471,7 @@ fn _ce_unary(S): i64 {
         _ce_ti = _ce_ti + 1;
         var nv = _ce_unary(S);
         if (_ce_k == 2) { _ce_bad(S, "a string in arithmetic: a const string is a value to pass, not to compute with", 78); return 0; }
-        _ce_k = 0;
+        _ce_k = 3;
         if (nv == 0) { return 1; }
         return 0;
     }
@@ -5481,8 +5482,8 @@ fn _ce_factor(S): i64 {
     if (_ce_err == 1) { return 0; }
     var t = TOKTYP(S, _ce_ti);
     if (t == 1) { var v = TOKVAL(S, _ce_ti); _ce_ti = _ce_ti + 1; return v; }
-    if (t == 169) { _ce_ti = _ce_ti + 1; return 1; }   # true (6.7.3)
-    if (t == 170) { _ce_ti = _ce_ti + 1; return 0; }   # false
+    if (t == 169) { _ce_ti = _ce_ti + 1; _ce_k = 3; return 1; }   # true (6.7.3) — kind 3, a bool
+    if (t == 170) { _ce_ti = _ce_ti + 1; _ce_k = 3; return 0; }   # false
     if (t == 61) { var fv = FLIT_NUM(TOKVAL(S, _ce_ti)); _ce_ti = _ce_ti + 1; _ce_k = 1; return fv; }
     if (t == 30) { var sv = TOKVAL(S, _ce_ti); _ce_ti = _ce_ti + 1; _ce_k = 2; return sv; }
     if (t == 10) {
@@ -5723,10 +5724,20 @@ fn _ce_invoke(S, fi, base, n): i64 {
 # The declared return kind of const fn fi: 1 for `: f64`, else 0.
 fn _ce_retkind(S, fi): i64 {
     if (GFRS(S, fi) == 0 - 9) { return 1; }
+    if (_bx_fn_is_bool(S, fi) == 1) { return 3; }   # 6.7.3: a `: bool` const fn
     return 0;
 }
 # Name the n argument entries at `base` after fi's parameters (`(` at op), typing and narrowing
 # each by its declaration; returns the body's `{` token, or -1.
+# 6.7.3 (B2): a const fn's bool parameter given a value that is not a bool (its kind is not 3) —
+# the const-context half of the argument check (a const initializer never reaches the parser's
+# argument loops).
+fn _ce_bool_arg(S, k, pn): i64 {
+    if (k == 3) { return 0; }
+    if (_ce_skip > 0) { return 0; }
+    _ce_badn(S, "cannot pass a value that is not a bool to bool parameter ", pn, " of a const fn");
+    return 0;
+}
 fn _ce_bind_params(S, op, base, n, fi): i64 {
     var i = op + 1;
     var k = 0;
@@ -5737,9 +5748,11 @@ fn _ce_bind_params(S, op, base, n, fi): i64 {
             var w = 8;
             var pk = 0;
             if (TOKTYP(S, i + 1) == 49) { w = _ce_type_w(S, i + 2); if (w == 9) { pk = 1; w = 8; } }
+            if (w == 10) { w = 8; pk = 3; }   # 6.7.3: a bool parameter
             if (k < n) {
                 var e = _ce_st + (base + k) * 40;
                 var av = load64(e + 8);
+                if (pk == 3) { _ce_bool_arg(S, load64(e + 16), pn); }
                 if (load64(e + 16) == 2) { pk = 2; }
                 if (pk == 0) { av = _ce_narrow(av, w); }
                 store64(e, pn); store64(e + 8, av); store64(e + 16, pk); store64(e + 24, w);
@@ -5763,6 +5776,7 @@ fn _ce_type_w(S, ti): i64 {
     if (TOKTYP(S, ti) != 2) { return 0; }
     var p = S + 0xEC00000 + TOKVAL(S, ti);
     if (load8(p) == 102) { if (load8(p + 1) == 54) { if (load8(p + 2) == 52) { if (load8(p + 3) == 0) { return 9; } } } }
+    if (_bx_is_bool_name(S, TOKVAL(S, ti)) == 1) { return 10; }   # 6.7.3: bool — 8 bytes, kind 3
     if (load8(p) != 105) { return 0; }
     var c1 = load8(p + 1);
     var c2 = load8(p + 2);
@@ -5845,8 +5859,9 @@ fn _ce_var(S, isc): i64 {
     if (TOKTYP(S, _ce_ti) == 49) {
         if (isc == 1) { _ce_bad(S, "a const takes no type annotation: its type is its value's", 57); return 0; }
         w = _ce_type_w(S, _ce_ti + 1);
-        if (w == 0) { _ce_badn(S, "type ", TOKVAL(S, _ce_ti + 1), " in a const fn: its locals are i64, i32, i16, i8 or f64"); return 0; }
+        if (w == 0) { _ce_badn(S, "type ", TOKVAL(S, _ce_ti + 1), " in a const fn: its locals are i64, i32, i16, i8, f64 or bool"); return 0; }
         if (w == 9) { dk = 1; w = 8; }
+        if (w == 10) { dk = 3; w = 8; }
         _ce_ti = _ce_ti + 2;
     }
     if (TOKTYP(S, _ce_ti) != 4) { _ce_bad(S, "a local in a const fn needs an initial value", 44); return 0; }
@@ -6218,7 +6233,7 @@ fn _cst_eval(S, ci): i64 {
     S64(e + 32, 2);
     S64(e + 40, k);
     S64(e + 48, v);
-    if (k == 0) { S64(_vecv_base + vi * 8, v); SVECP(S, vi, 1); }
+    if (k == 0 || k == 3) { S64(_vecv_base + vi * 8, v); SVECP(S, vi, 1); }   # 6.7.3: a bool folds as an int
     else {
         SVECP(S, vi, 0);
         if (k == 1) { S64(e + 56, FLIT_ADD(v)); }
@@ -6241,7 +6256,7 @@ fn _cst_sweep(S): i64 {
     }
     return 0;
 }
-# The const kind of global var slot vi: 0 = not a const, 1 = int, 2 = f64, 3 = string.
+# The const kind of global var slot vi: 0 = not a const, 1 = int, 2 = f64, 3 = string, 4 = bool.
 fn _cst_vkind(S, vi): i64 {
     var ci = _vcst_ix(S, vi);
     if (ci < 0) { return 0; }
@@ -6299,7 +6314,7 @@ fn _ce_eval_here(S): i64 {
 fn _ce_eval_int(S, what): i64 {
     var ti = GTI(S);
     var v = _ce_eval_here(S);
-    if (_ce_err == 0) { if (_ce_k != 0) {
+    if (_ce_err == 0) { if (_ce_k != 0 && _ce_k != 3) {   # 6.7.3: a bool is the integer 0 / 1
             _ce_err = 1;
             var sv = GTI(S);
             STI(S, ti);
@@ -6322,6 +6337,7 @@ fn _cst_emit_val(S, k, v, fx): i64 {
     _cfp = GCP(S);
     EMOVI(S, v);
     if (v >= 0) { if (v < 0x10000) { _cfv = v; _cfo = 1; } }
+    if (k == 3) { _BX_MARK(S); }   # 6.7.3: a bool const's read is a boolean value
     return 0;
 }
 # The factor's reads. A local const (1 = emitted), then a top-level f64 / string const (an integer

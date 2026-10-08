@@ -1349,7 +1349,7 @@ var _ctp_closed = 0;   # `_ctp_bounds` met a `>>` that closed the parameter list
 # 6.7.2 (B1, C1) — compile-time constants and `const fn` (src/frontend/parse_fn.cyr, the const module).
 var _cst_tab = 0;      # top-level consts (8 words): name, init token, decl token, var slot, state, kind, value, float index
 var _cst_n = 0;
-var _cst_kk = 0;       # `_cst_value`'s second result: the const's kind (0 i64, 1 f64, 2 string)
+var _cst_kk = 0;       # `_cst_value`'s second result: the const's kind (0 i64, 1 f64, 2 string, 3 bool)
 var _vcst = 0;         # per global var slot: its `_cst_tab` index + 1 (u32), 0 = not a const
 var _lc_tab = 0;       # local consts (6 words): name, scope depth, inline depth, kind, value, float index
 var _lc_n = 0;
@@ -1357,7 +1357,7 @@ var _lc_floor = 0;     # entries below it belong to an enclosing fn (invisible h
 var _fnt_cfn = 0;      # per fn: 1 = a `const fn`
 var _pending_cfn = 0;  # a `const` prefix consumed before PARSE_FN_DEF
 var _ce_ti = 0;        # the evaluator's cursor
-var _ce_k = 0;         # the kind of the last value (0 i64, 1 f64, 2 string)
+var _ce_k = 0;         # the kind of the last value (0 i64, 1 f64, 2 string, 3 bool — 6.7.3)
 var _ce_err = 0;       # one evaluation's error latch (the first error is reported)
 var _ce_skip = 0;      # > 0: walk without executing (an untaken arm, a short-circuit, the definition check)
 var _ce_top = 0;       # 1 while a TOP-LEVEL const's initializer runs (no locals of any fn)

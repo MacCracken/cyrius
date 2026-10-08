@@ -17,6 +17,16 @@ enum Flag { OFF = false; ON = true; }
 #assert !!7 == 1
 const T1 = !0;
 const F1 = !9;
+const CT = true;
+const CF = !CT;
+const CC = 3 < 4;
+const fn cneg(b: bool): bool { return !b; }
+const fn cpos(x): bool { return x > 0; }
+const CN = cneg(CC);
+const CP = cpos(5) && CT;
+enum CE { CEA = CT; CEB = CP + 1; }
+#assert CT
+#assert !CF
 var GT: bool = true;
 var GF: bool = false;
 var GC: bool = (3 < 4);
@@ -140,12 +150,27 @@ fn fns(): i64 {
     return 0;
 }
 
+fn consts(): i64 {
+    assert_eq(CT + CF * 2 + CC * 4 + CN * 8 + CP * 16, 21, "K1: bool consts from true, !, a comparison, bool const fns");
+    const L = 2 > 1;
+    var b: bool = L;
+    var c: bool = CN || CP;
+    assert_eq(b + c * 2, 3, "K2: a local bool const and top-level ones into bools");
+    assert_eq(CEB, 2, "K3: an enum value from a bool const");
+    var s = 0;
+    switch (1) { case CT: s = 1; default: s = 2; }
+    assert_eq(s, 1, "K4: a case label from a bool const");
+    assert_eq(cneg(false), 1, "K5: a bool const fn called at run time");
+    return 0;
+}
+
 fn run(): i64 {
     values();
     locals();
     globals();
     fields();
     fns();
+    consts();
     return 0;
 }
 var r0 = run();
