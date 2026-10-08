@@ -134,6 +134,11 @@ jobs:
           done
           cp scripts/ci.sh "$STAGE/bin/" 2>/dev/null || true
           chmod +x "$STAGE/bin"/*
+          # 6.7.3 (CVE-103): the shell twin — bin/cyriusly here is the COMPILED binary, whose
+          # `cmdtools` runs <home>/versions/<v>/scripts/cyriusly (install.sh `_install_twin`)
+          mkdir -p "$STAGE/scripts"
+          cp scripts/cyriusly "$STAGE/scripts/"
+          chmod +x "$STAGE/scripts/cyriusly"
 
           # v6.2.40: ship the native scaffolder's templates so `cyrius init`
           # / `cyrius port` (the cyrius-init binary, staged via the bins loop)
@@ -210,6 +215,11 @@ jobs:
           file "$STAGE/bin/cyrius-init" | grep -q "ARM aarch64" || { echo "ERROR: cyrius-init not aarch64"; file "$STAGE/bin/cyrius-init"; exit 1; }
           cp scripts/cyriusly "$STAGE/bin/"
           chmod +x "$STAGE/bin"/*
+          # 6.7.3 (CVE-103): the twin at scripts/ too, so every POSIX slot has the one layout
+          # scripts/verify-store.sh judges (see the x86_64 job)
+          mkdir -p "$STAGE/scripts"
+          cp scripts/cyriusly "$STAGE/scripts/"
+          chmod +x "$STAGE/scripts/cyriusly"
 
           # Native scaffolder templates (see x86 job).
           mkdir -p "$STAGE/programs"

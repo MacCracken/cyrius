@@ -204,6 +204,34 @@ _install_file() {   # _install_file <src> <dst-dir> [mode]
     return 0
 }
 
+# ── 6.7.3 (CVE-103): the SHELL TWIN goes into the store, at versions/<v>/scripts/cyriusly ──
+#
+# The compiled cyriusly (programs/cyriusly.cyr — the x86_64 tarball's bin/cyriusly) delegates
+# `cmdtools` to the shell twin scripts/cyriusly. No store held a copy, so it ran the literal
+# `scripts/cyriusly` from the CURRENT directory: inside any checkout shipping one, that
+# repository's script ran with the user's privileges. It cannot live in bin/, where the compiled
+# binary already sits under that name, so it mirrors its repo path (as programs/
+# cyrius-init-templates does). When the [release] bins ship the compiled cyriusly a missing twin
+# is a REFUSAL — that binary would refuse `cmdtools` by name; with no compiled cyriusly (a
+# pre-6.7.3 tarball, a tree that ships none) it is skipped. The refresh-only path runs
+# `_twin_required` before it writes anything. CHANGELOG [6.7.3]
+_twin_required() {   # _twin_required <twin> <bins>
+    [ -f "$1" ] && return 0
+    case " $2 " in
+        *" cyriusly "*) err "cyrius.cyml [release] bins ship the compiled cyriusly, but its shell twin $1 does not exist — refusing (cyriusly cmdtools runs versions/$VERSION/scripts/cyriusly)" ;;
+    esac
+    return 0
+}
+_install_twin() {   # _install_twin <twin> <bins> — 0 when installed, 1 when skipped (call it in an `if`)
+    _twin_required "$1" "$2"
+    [ -f "$1" ] || return 1
+    _it_dst="$CYRIUS_HOME/versions/$VERSION/scripts"
+    mkdir -p "$_it_dst" || err "cannot create $_it_dst"
+    _install_file "$1" "$_it_dst" 755
+    cmp -s "$1" "$_it_dst/cyriusly" || err "could not install the shell twin into $_it_dst"
+    return 0
+}
+
 # ── v6.6.6: the ACTIVE-toolchain switch never leaves the user without one ──
 #
 # ⛔ WHAT WAS WRONG: `rm -rf "$CYRIUS_HOME/bin" "$CYRIUS_HOME/lib"` and then two `ln -sf`, at
@@ -422,6 +450,7 @@ esac
 if [ "$REFRESH_ONLY" -eq 1 ]; then
     printf "\n${BOLD}Refreshing install snapshot for %s${RESET}\n" "$VERSION"
     _released_slot_guard    # v6.6.4: exits 1 before anything is written (see the contract above)
+    _twin_required scripts/cyriusly "$(_parse_release_array bins)"   # 6.7.3: likewise (CVE-103)
     mkdir -p "$CYRIUS_HOME/versions/$VERSION/bin"
     mkdir -p "$CYRIUS_HOME/versions/$VERSION/lib"
 
@@ -717,6 +746,8 @@ if [ "$REFRESH_ONLY" -eq 1 ]; then
             _refreshed=$((_refreshed + 1))
         fi
     done
+    # 6.7.3 (CVE-103): the shell twin the compiled cyriusly's `cmdtools` runs (see _install_twin)
+    if _install_twin scripts/cyriusly "$_R_BINS"; then _refreshed=$((_refreshed + 1)); fi
 
     # Stdlib refresh (follow symlinks so dep content gets dereferenced).
     # v5.8.49: walk subdirs recursively so nested stdlib (e.g.
@@ -997,6 +1028,10 @@ if [ "$_got_tarball" -eq 1 ]; then
         info "cyrius-init templates installed"
     fi
 
+    # 6.7.3 (CVE-103): the shell twin (see _install_twin). Lenient here — a tarball cut before
+    # 6.7.3 has no scripts/, and every 6.7.3+ builder stages one.
+    if _install_twin "$EXTRACTED/scripts/cyriusly" ""; then info "cyriusly shell twin installed"; fi
+
     installed=1
 fi
 
@@ -1128,7 +1163,8 @@ if [ "$installed" -eq 0 ]; then
     done
     _install_file bootstrap/asm "$CYRIUS_HOME/versions/$VERSION/bin" 755
 
-    # Scripts from [release].scripts (includes cyriusly + cyrius-*.sh)
+    # Scripts from [release].scripts (cyrius-repl.sh, cyrius-watch.sh, cyrius-prompt-info — the
+    # compiled cyriusly rides the bins loop above, its shell twin the line after this loop)
     # v5.11.69: shim scripts (cyrius-init/port/repl) live in
     # scripts/shims/ — look there first, fall through to flat scripts/.
     _SCRIPTS=$(_parse_release_array scripts)
@@ -1139,6 +1175,8 @@ if [ "$installed" -eq 0 ]; then
             _install_file "scripts/$script" "$CYRIUS_HOME/versions/$VERSION/bin" 755
         fi
     done
+    # 6.7.3 (CVE-103): the shell twin the compiled cyriusly's `cmdtools` runs (see _install_twin)
+    if _install_twin scripts/cyriusly "$_BINS"; then info "cyriusly shell twin installed"; fi
 
     # Copy stdlib
     if [ -d lib ]; then

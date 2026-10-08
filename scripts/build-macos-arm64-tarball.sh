@@ -62,6 +62,11 @@ cat src/main_cx.cyr | CYRIUS_MACHO_ARM=1 "$WORK/cc_x" > "$WORK/$STAGE/bin/cycc_c
 cp scripts/cyriusly scripts/cyrius-prompt-info "$WORK/$STAGE/bin/"
 cp scripts/shims/cyrius-repl.sh "$WORK/$STAGE/bin/"
 chmod +x "$WORK/$STAGE/bin"/*
+# 6.7.3 (CVE-103): the twin at scripts/ too — install.sh lands it at versions/<v>/scripts/cyriusly,
+# the one layout every POSIX slot has and scripts/verify-store.sh judges
+mkdir -p "$WORK/$STAGE/scripts"
+cp scripts/cyriusly "$WORK/$STAGE/scripts/"
+chmod +x "$WORK/$STAGE/scripts/cyriusly"
 
 # Validate every Mach-O binary (magic cffaedfe, cputype 0x0100000C) —
 # refuse to package a non-arm64 / empty artifact.

@@ -30,6 +30,8 @@
 #   revert pulsar's step 4 to its own copy loop (verbatim)     → axis 6 red
 #   make verify-store never set `bad`                          → axis 7 red
 #   make --restore skip the lib loop                           → axis 8 red
+#   6.7.3 (CVE-103): verify-store never judging scripts/cyriusly → axes 7 7b red;
+#           --restore never writing it                            → axis 8 red
 #   6.6.17: the guard's home resolution back to `$(cd … && pwd -P)` → axes 4g 4h 4i 4j red
 #           (rc 1, no message); resolving a missing home as empty     → axis 4h red;
 #           resolving only one missing level (the first cut)           → axis 4j red
@@ -48,6 +50,9 @@ bad() { echo "  FAIL: $1"; fail=$((fail+1)); }
 R="$W/repo"; mkdir -p "$R/lib" "$R/build" "$R/scripts" "$R/programs" "$R/src"
 cp "$ROOT/scripts/install.sh" "$R/scripts/install.sh"
 cp "$ROOT/scripts/verify-store.sh" "$R/scripts/verify-store.sh"
+# the shell twin, tracked at the tag (6.7.3, CVE-103): every writer ships it to
+# versions/<v>/scripts/cyriusly, and verify-store judges it for a tag at or above 6.7.3
+cp "$ROOT/scripts/cyriusly" "$R/scripts/cyriusly"
 printf '9.9.9\n' > "$R/VERSION"
 printf 'fn probe_lib(): i64 { return 1; }\n' > "$R/lib/probe.cyr"
 printf 'tracked-compiler-bytes-v1\n' > "$R/build/cycc"; chmod +x "$R/build/cycc"
@@ -220,18 +225,28 @@ H7="$W/home7"; mkdir -p "$H7/versions/9.9.9/lib" "$H7/versions/9.9.9/bin"
 printf 'fn probe_lib(): i64 { return 99; }\n' > "$H7/versions/9.9.9/lib/probe.cyr"     # mutated lib
 printf 'fn extra(): i64 { return 0; }\n' > "$H7/versions/9.9.9/lib/extra.cyr"         # not at the tag
 printf 'other-bytes\n' > "$H7/versions/9.9.9/bin/cycc"                                 # tracked bin drifted
+mkdir -p "$H7/versions/9.9.9/scripts"; printf 'echo tampered\n' > "$H7/versions/9.9.9/scripts/cyriusly"   # the twin drifted
 printf 'deadbeef dirty\ntree-matches-tag: no\n' > "$H7/versions/9.9.9/SOURCE_COMMIT"
 rc=0; if ( cd "$R" && CYRIUS_HOME="$H7" sh scripts/verify-store.sh > "$W/a7.out" 2>&1 ); then rc=0; else rc=$?; fi
 if [ "$rc" -ne 0 ] && grep -q 'DIFFERS   lib/probe.cyr' "$W/a7.out" && grep -q 'NOT-AT-TAG lib/extra.cyr' "$W/a7.out" \
-   && grep -q 'DIFFERS   bin/cycc' "$W/a7.out" && grep -q 'inputs DRIFTED' "$W/a7.out" && grep -q '1 BAD' "$W/a7.out"; then
-    ok "verify-store: names the drifted lib, the file not at the tag, the drifted tracked bin, the foreign stamp; exits non-zero"
+   && grep -q 'DIFFERS   bin/cycc' "$W/a7.out" && grep -q 'DIFFERS   scripts/cyriusly' "$W/a7.out" \
+   && grep -q 'inputs DRIFTED' "$W/a7.out" && grep -q '1 BAD' "$W/a7.out"; then
+    ok "verify-store: names the drifted lib, the file not at the tag, the drifted tracked bin and shell twin, the foreign stamp; exits non-zero"
 else bad "axis 7 (rc=$rc): $(cat "$W/a7.out")"; fi
+# 7b (6.7.3): a slot at or above 6.7.3 with NO twin is BAD — every writer ships it since then
+H7b="$W/home7b"; mkdir -p "$H7b/versions/9.9.9/lib"; cp "$R/lib/probe.cyr" "$H7b/versions/9.9.9/lib/probe.cyr"
+printf '%s\ntree-matches-tag: yes\n' "$(git -C "$R" rev-list -n1 9.9.9)" > "$H7b/versions/9.9.9/SOURCE_COMMIT"
+rc=0; if ( cd "$R" && CYRIUS_HOME="$H7b" sh scripts/verify-store.sh > "$W/a7b.out" 2>&1 ); then rc=0; else rc=$?; fi
+if [ "$rc" -ne 0 ] && grep -q 'MISSING   scripts/cyriusly' "$W/a7b.out" && grep -q '1 BAD' "$W/a7b.out"; then
+    ok "verify-store: a 6.7.3+ slot without the shell twin is BAD, the twin named MISSING"
+else bad "axis 7b (rc=$rc): $(cat "$W/a7b.out")"; fi
 rc=0; if ( cd "$R" && CYRIUS_HOME="$H7" sh scripts/verify-store.sh --restore 9.9.9 > "$W/a8.out" 2>&1 ); then rc=0; else rc=$?; fi
 if [ "$rc" -eq 0 ] && grep -q 'return 1' "$H7/versions/9.9.9/lib/probe.cyr" && [ ! -f "$H7/versions/9.9.9/lib/extra.cyr" ] \
    && [ "$(cat "$H7/versions/9.9.9/bin/cycc")" = "tracked-compiler-bytes-v1" ] \
+   && cmp -s "$ROOT/scripts/cyriusly" "$H7/versions/9.9.9/scripts/cyriusly" \
    && [ "$(head -1 "$H7/versions/9.9.9/SOURCE_COMMIT")" = "$(git -C "$R" rev-list -n1 9.9.9)" ] \
    && ( cd "$R" && CYRIUS_HOME="$H7" sh scripts/verify-store.sh > "$W/a8b.out" 2>&1 ) && grep -q '0 BAD' "$W/a8b.out"; then
-    ok "verify-store --restore: lib + tracked bin back to the tag, stray file removed, stamp = tag commit, report now clean"
+    ok "verify-store --restore: lib + tracked bin + shell twin back to the tag, stray file removed, stamp = tag commit, report now clean"
 else bad "axis 8 (rc=$rc): $(tail -4 "$W/a8.out")"; fi
 
 # ── axis 9: a clean slot verifies OK (anti-vacuous — the report must not red everything) ──
