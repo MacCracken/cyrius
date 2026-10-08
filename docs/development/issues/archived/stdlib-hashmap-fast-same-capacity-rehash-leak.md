@@ -1,7 +1,7 @@
 # `lib/hashmap_fast.cyr` — the same-capacity rehash allocates fresh arrays and never releases the old ones
 
-**Status:** 🟡 **OPEN** — filed at the 6.6.20 closeout. It is a different file from the 6.6.20 lane that met it (l-hash, which owned `lib/hashmap.cyr` only), and no 6.6.20 lane covers `lib/hashmap_fast.cyr`.
-**Placement:** unpinned — 6.x-line backlog (roadmap *Potential backlog*, "Found by the 6.6.20 lanes").
+**Status:** ✅ **RESOLVED in 6.7.3** (repair lane hashmap-fast) — the same-capacity rebuild is in place (`_fhm_rebuild_in_place`) and allocates nothing: the reproduction below now allocates 278,528 B (the one doubling), with 3 in-place rebuilds after it and the same three arrays. Rows: `tests/tcyr/stdlib/hashmap_fast_rebuild_in_place.tcyr`. See CHANGELOG [6.7.3].
+**Placement:** was unpinned (6.x-line backlog, "Found by the 6.6.20 lanes"); promoted into the 6.7.3 repair lane.
 **Discovered:** 2026-10-06 by the 6.6.20 closeout review of lane l-hash (RLM-03). That lane fixed the same leak in `lib/hashmap.cyr`.
 **Severity:** Medium. Memory grows without bound in a long-running process that churns an fhm map at a steady size.
 **Affects:** cycc 6.6.8 → 6.6.20. 6.6.8 added the same-capacity rehash. Before 6.6.8 the table only ever doubled.
@@ -143,3 +143,19 @@ Acceptance criteria:
 None needed for correctness: answers stay right, only memory grows. A consumer that churns an fhm
 map for a long time can rebuild it into a fresh `fhm_new()` itself. That releases nothing under the
 bump allocator either, so it only helps with an allocator that frees.
+
+## Resolution (6.7.3)
+
+Not the abseil swap loop: a group version of `lib/hashmap.cyr`'s anchor walk. The anchor is the
+first group with an EMPTY slot, picked BEFORE the tombstones become EMPTY (no live probe path
+crosses it); every tombstone then becomes EMPTY; the walk visits each group once, from the one after
+the anchor round to the anchor ITSELF, and moves each entry to the first group with an EMPTY slot on
+its probe path when that group lies before its own. Both differences from hashmap.cyr are
+load-bearing — a mutant of each fails rows. With no group holding an EMPTY slot (metadata written
+outside the API) it falls back to `_fhm_rehash` at the same capacity.
+
+Acceptance: AC1's steady rows hold 56 live in 128 slots (55 = 42.97% at the trigger; 9 rebuilds in
+100,000 rounds, ~25 ms) rather than 7,000 in 16,384, which needs ~3M rounds for 3 rebuilds; the
+7,000 / 16,384 figure was measured once for the CHANGELOG (1,114,112 B before, 278,528 B after).
+AC2 and AC3 are rows of the same file; the four mutants (allocating rebuild, no re-placement, anchor
+picked after the conversion, anchor group skipped) fail 8, 11, 2 and 2 rows.
