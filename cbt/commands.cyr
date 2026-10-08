@@ -1327,6 +1327,9 @@ fn _libsync_declared_mods(): i64 {
     # 6.6.17: the WHOLE manifest through the one reader (this read 32,767 bytes).
     if (_mf_load() != 1) { return 0; }
     var mods = _dep_declared_stdlib(_mf_buf, _mf_len);
+    # 6.7.6 (part T): the test scope's leaves are vendored into lib/ too, so `lib sync` refreshes them
+    var tl = _tc_resolve_leaves();
+    if (tl > 0) { mods = _tc_cat(mods, tl); }
     if (mods != 0 && vec_len(mods) > 0) { return mods; }
     return 0;
 }

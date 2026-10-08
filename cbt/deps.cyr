@@ -3969,6 +3969,10 @@ fn cmd_deps(): i64 {
     _dep_ctx_kind = 0;
     _dep_ctx_owner = 0;
 
+    # === Phase 4 (6.7.6, part T): the TEST SCOPE ===
+    # After every production dependency, so a leaf both sides name is the production one first.
+    errors = errors + _deps_test_scope();
+
     # v5.7.14: `copied` is the count of distinct deps resolved (direct +
     # transitive). _dep_visited grows once per resolved dep across both
     # phases.
@@ -4078,6 +4082,34 @@ fn cmd_deps(): i64 {
     return 0;
 }
 
+# 6.7.6 (part T) — the test scope's dependencies, vendored by EVERY resolve, into the same write
+# root and under the same lock as the rest: `[test] stdlib` leaves (copied as a transitive pull —
+# never pushed onto `_dep_includes`, so `cyrius build` does not prepend them; the test scope
+# prepends them, cbt/manifest.cyr `_tc_incs_for`). lib/ and cyrius.lock are then one function of
+# the manifest whichever verb resolved — a build and a test never take turns rewriting the lock.
+# Returns the error count.
+fn _deps_test_scope(): i64 {
+    var errs = 0;
+    var leaves = _tc_resolve_leaves();
+    if (leaves < 0) { return 1; }
+    if (leaves != 0) {
+        if (_dep_stdlib_seen == 0) { _dep_stdlib_seen_init(); }
+        var dir = _dep_find_stdlib_dir();
+        if (dir == 0) {
+            _ew("error: cannot find cyrius stdlib (for [test] stdlib)\n");
+            return 1;
+        }
+        var i = 0;
+        while (i < vec_len(leaves)) {
+            var lf = vec_get(leaves, i);
+            if (_dep_copy_stdlib_recursive(dir, lf, 0) == 1) { errs = errs + 1; }
+            elif (_verbose == 1) { _ew("  stdlib (test): "); _ew_shown(lf); _ew("\n"); }
+            i = i + 1;
+        }
+    }
+    return errs;
+}
+
 # Auto-resolve deps if manifest has [deps] section.
 # Called before build/run/test to ensure lib/ is populated.
 fn _auto_deps(): i64 {
@@ -4128,6 +4160,12 @@ fn _auto_deps(): i64 {
     if (_dep_read_cyml_package_version() < 0) { return 1; }
     _embeds = 0;
     if (vec_len(ee) > 0) { _embeds = ee; }
+    # 6.7.6 (part T): a manifest whose only dependency is a test leaf still resolves
+    if (has_deps == 0) {
+        var tl = _tc_resolve_leaves();
+        if (tl < 0) { return 1; }
+        if (tl != 0) { has_deps = 1; }
+    }
     if (has_deps == 0) { return 0; }
     var dr = cmd_deps();
     if (dr != 0) { return dr; }

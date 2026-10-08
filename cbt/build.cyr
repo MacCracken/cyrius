@@ -700,6 +700,7 @@ fn _materialize_source(source): i64 {
     if (_build_modules != 0) { if (vec_len(_build_modules) > 0) { need_tmp = 1; } }
     if (_embeds != 0) { if (vec_len(_embeds) > 0) { need_tmp = 1; } }
     if (_test_scope == 1 && _tc_cur_mods != 0) { if (vec_len(_tc_cur_mods) > 0) { need_tmp = 1; } }
+    if (_test_scope == 1 && _skip_deps == 0 && _tc_cur_incs != 0) { if (vec_len(_tc_cur_incs) > 0) { need_tmp = 1; } }
     if (need_tmp == 1) {
         # Atomic temp file: O_EXCL rejects if path already exists (TOCTOU safe)
         var pid = sys_getpid();
@@ -763,6 +764,17 @@ fn _materialize_source(source): i64 {
                         _mat_write(tfd, "\"\n", 2);
                         ii = ii + 1;
                     }
+                }
+            }
+            # 6.7.6 (part T): the test scope's leaves (`[test] stdlib`), after the [deps] prepend
+            # they may build on; skipped with it (--no-deps, `[build] test_standalone`).
+            if (_test_scope == 1 && _skip_deps == 0 && _tc_cur_incs != 0) {
+                var tii = 0;
+                while (tii < vec_len(_tc_cur_incs)) {
+                    _mat_write(tfd, "include \"", 9);
+                    _mat_write_cstr(tfd, vec_get(_tc_cur_incs, tii));
+                    _mat_write(tfd, "\"\n", 2);
+                    tii = tii + 1;
                 }
             }
             # Prepend defines

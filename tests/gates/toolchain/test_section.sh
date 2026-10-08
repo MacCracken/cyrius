@@ -27,6 +27,16 @@
 #          ends at 1s / 2s / 1s, named)
 #   T4-T6  a refused --timeout / timeout / defines value is named and nothing runs
 #   T7     --print-config shows test.modules / test.defines / test.timeout with their origins
+#   L1     `[test] stdlib` leaves are vendored into lib/, locked, and prepended to a test that
+#          includes nothing itself
+#   L2-L3  `cyrius build` does not prepend them: the binary loses assert + bench, and a build
+#          source calling assert_summary does not compile
+#   L4     lib/ and cyrius.lock are identical whether a build or a test resolved (every resolve
+#          vendors the test leaves; only the prepend is scoped)
+#   L5     a manifest whose only dependency is [test] stdlib still resolves
+#   L6-L7  a non-leaf name is refused by name (deps and test); a leaf the stdlib lacks fails
+#   L8     --print-config shows test.stdlib
+#   L9     `cyrius distlib`: the published sidecar names no [test] stdlib leaf
 #
 # MUTATION LEDGER (6.7.6) — each mutant built in a SCRATCH copy of the tree (cbt/ + lib/ + src/ +
 # build/cycc + VERSION + this gate), the gate run against it; the unmutated copy PASSES, and each
@@ -44,6 +54,12 @@
 #   M11 deps.cyr: _auto_deps hands [test] defines to every resolving verb             S4
 #   M11b manifest.cyr: _cfg_apply_build appends [test] defines to cyrius build        S5
 #   M12 manifest.cyr: _tc_scope_verb leaves bench out of the test scope               S2
+#   M13 deps.cyr: _deps_test_scope pulls the leaves top-level (onto _dep_includes)     L2 L3
+#   M14 build.cyr: the test-scope includes are never prepended                         L1 L5
+#   M15 deps.cyr: _auto_deps ignores [test] stdlib when there is no [deps]            L5
+#   M16 deps.cyr: phase 4 (the test scope) dropped from cmd_deps                      L1 L4 L5 L6 L7
+#   M17 commands.cyr: distlib seeds the sidecar with [test] stdlib (the pre-6.6.18 union)  L9
+#   M18 manifest.cyr: _tc_resolve_leaves skips the leaf-name rule                      L6
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
 G=test_section
@@ -268,5 +284,68 @@ if [ "$RC" = 0 ] && grep -qF '  test.modules = ["support/fix.cyr"]  (manifest: [
     && grep -qF '  test.timeout = 300  (default)' "$W/out" && grep -qF '  build.defines = ["BUILDDEF"]  (manifest: [build] defines)' "$W/out"; then
     echo "  ok T7: --print-config shows test.modules / test.defines / test.timeout and where each came from"
 else fail "T7: rc $RC"; show; fi
+
+# ── [test] stdlib: vendored by every resolve, prepended in the test scope only ─────────────
+# lproj <name> <deps-stdlib-list> <test-stdlib-list or ""> — main.cyr calls an assert fn; the test
+# uses assert with no include of its own
+lproj() {
+    rm -rf "$W/$1"; mkdir -p "$W/$1/src" "$W/$1/tests"
+    { printf '[package]\nname = "%s"\nversion = "0.1.0"\ncyrius = "%s"\n\n[build]\nentry = "src/main.cyr"\noutput = "build/m"\n' "$1" "$VER"
+      [ -n "$2" ] && printf '\n[deps]\nstdlib = [%s]\n' "$2"
+      [ -n "$3" ] && printf '\n[test]\nstdlib = [%s]\n' "$3"
+      true; } > "$W/$1/cyrius.cyml"
+    printf 'fn main(): i64 {\n    println("hello");\n    return 0;\n}\nvar r = main();\nsyscall(60, r);\n' > "$W/$1/src/main.cyr"
+    printf 'fn main() {\n    alloc_init();\n    assert(1, "one");\n    assert_eq(1 + 1, 2, "two");\n    return assert_summary();\n}\nsyscall(60, main());\n' > "$W/$1/tests/a.tcyr"
+}
+PROD='"string", "fmt", "alloc", "io", "vec", "str", "syscalls"'
+lproj la "$PROD, \"assert\", \"bench\"" ""
+lproj lb "$PROD" '"assert", "bench"'
+cy la test; ra=$RC
+cy lb test
+if [ "$ra" = 0 ] && [ "$RC" = 0 ] && grep -q '^1 passed, 0 failed$' "$W/out" && [ -f "$W/lb/lib/assert.cyr" ] && [ -f "$W/lb/lib/bench.cyr" ] \
+    && grep -q 'lib/assert.cyr' "$W/lb/cyrius.lock" && grep -q 'lib/bench.cyr' "$W/lb/cyrius.lock"; then
+    echo "  ok L1: [test] stdlib = assert, bench — vendored into lib/, locked, and prepended to the test (no include of its own)"
+else fail "L1: rc $RC (assert in [deps]: $ra)"; show; fi
+cy la build; cy lb build
+sa=$(wc -c < "$W/la/build/m" 2>/dev/null || echo 0); sb=$(wc -c < "$W/lb/build/m" 2>/dev/null || echo 0)
+if [ "$sb" -gt 0 ] && [ "$sa" -gt "$sb" ]; then echo "  ok L2: the production binary loses assert + bench: $sa -> $sb bytes"
+else fail "L2: sizes [deps] $sa, [test] $sb"; fi
+printf 'var r = assert_summary();\nsyscall(60, 0);\n' > "$W/lb/src/main.cyr"
+cy lb build
+if [ "$RC" != 0 ] && grep -q "assert_summary" "$W/out" "$W/err"; then echo "  ok L3: cyrius build has no [test] stdlib in scope (assert_summary is undefined there)"
+else fail "L3: rc $RC"; show; fi
+cp -R "$W/lb" "$W/lc"; rm -rf "$W/lc/lib" "$W/lc/cyrius.lock"; cp -R "$W/lb" "$W/ld"; rm -rf "$W/ld/lib" "$W/ld/cyrius.lock"
+cy lc build; cy ld test tests/a.tcyr
+if [ -f "$W/lc/lib/assert.cyr" ] && diff -r "$W/lc/lib" "$W/ld/lib" > /dev/null && cmp -s "$W/lc/cyrius.lock" "$W/ld/cyrius.lock"; then
+    echo "  ok L4: lib/ and cyrius.lock are the same whether a build or a test resolved them"
+else fail "L4: lib/ or cyrius.lock differ between a build and a test resolve"; diff -r "$W/lc/lib" "$W/ld/lib" | head -3; fi
+lproj le "" '"string", "fmt", "alloc", "syscalls", "vec", "assert"'
+cy le test
+if [ "$RC" = 0 ] && grep -q '^1 passed, 0 failed$' "$W/out" && [ -f "$W/le/lib/assert.cyr" ]; then echo "  ok L5: no [deps] at all — [test] stdlib alone still resolves and is prepended"
+else fail "L5: rc $RC"; show; fi
+lproj lf "$PROD" '"assert", "../x"'
+cy lf deps; rd=$RC; grep -qF "error: cyrius.cyml [test] stdlib names '../x', which is not a stdlib leaf name" "$W/err"; gd=$?
+cy lf test
+if [ "$rd" = 1 ] && [ "$gd" = 0 ] && [ "$RC" = 1 ] && grep -qF "error: cyrius.cyml [test] stdlib names '../x', which is not a stdlib leaf name" "$W/err" && [ ! -f "$W/lf/lib/assert.cyr" ]; then
+    echo "  ok L6: a [test] stdlib entry that is not a leaf name is refused by name (deps and test) before anything is vendored"
+else fail "L6: deps rc $rd (named: $gd), test rc $RC"; show; fi
+lproj lg "$PROD" '"assert", "nosuchleaf"'
+cy lg test
+if [ "$RC" = 1 ] && grep -q 'nosuchleaf' "$W/err" && [ "$(grep -c '^1 passed' "$W/out")" = 0 ]; then echo "  ok L7: a [test] stdlib leaf the stdlib does not have fails the resolve, named"
+else fail "L7: rc $RC"; show; fi
+cy lb build --print-config
+grep -qF '  test.stdlib = ["assert", "bench"]  (manifest: [test] stdlib)' "$W/out" && echo "  ok L8: --print-config shows test.stdlib" || { fail "L8"; show; }
+# L9: the published sidecar — a bundle in a project whose tests declare assert never names it
+# (the distlib verify needs cycc and cycc_aarch64 beside the CLI)
+mkdir -p "$W/tools"; cp "$W/cyrius" "$CC" "$W/tools/" 2>/dev/null
+if ( "$CC" < src/main_aarch64.cyr > "$W/tools/cycc_aarch64" ) 2> /dev/null && chmod +x "$W/tools/cycc_aarch64" "$W/tools/cyrius"; then
+    lproj lh "$PROD" '"assert", "bench"'
+    printf '\n[lib]\nmodules = ["src/lh.cyr"]\n' >> "$W/lh/cyrius.cyml"
+    printf 'fn lh_add(a, b): i64 { return a + b; }\nfn lh_show(s): i64 { println(s); return 0; }\n' > "$W/lh/src/lh.cyr"
+    RC=0; ( cd "$W/lh" && HOME="$W/h" CYRIUS_HOME="$W/home" CYRIUS_RESOLVED=1 CYRIUS_NO_WARN_PIN_DRIFT=1 "$W/tools/cyrius" distlib ) > "$W/out" 2> "$W/err" < /dev/null || RC=$?
+    if [ "$RC" = 0 ] && [ -f "$W/lh/dist/lh.cyr" ] && ! grep -qx 'assert\|bench' "$W/lh/dist/lh.deps" 2>/dev/null; then
+        echo "  ok L9: cyrius distlib — the sidecar names no [test] stdlib leaf ($(grep -v '^#' "$W/lh/dist/lh.deps" 2>/dev/null | tr '\n' ' '))"
+    else fail "L9: rc $RC"; show; cat "$W/lh/dist/lh.deps" 2>/dev/null | sed 's/^/      /'; fi
+else echo "  skip L9: could not stage cycc_aarch64 beside the CLI"; fi
 [ "$FAIL" = 0 ] || { echo "FAIL: $G ($FAIL row(s))"; exit 1; }
 echo "PASS: $G"
