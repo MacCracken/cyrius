@@ -38,6 +38,13 @@
 #     - Args 7+: 16 bytes per arg (preserves SP alignment), pushed in
 #       pidx order via `str xN, [sp, #-16]!`.
 #
+#   cx bytecode (CYRIUS_TARGET_CX — the only symbol a cx build predefines):
+#     - No asm: each fncallN is `callptr(fp, …)`, the bytecode's own indirect
+#       call (`callind`). A DIRECT `fncallN(..)` is lowered by the compiler and
+#       never runs these bodies; an ADDRESS-TAKEN `&fncallN` called through
+#       another indirect call does — it returned 0 for every callee on cx until
+#       6.7.6, when this arm was added. CHANGELOG [6.7.6]
+#
 # Common to all backends:
 #   - fp loaded into rax (x86) / x9 (aarch64) for the indirect call.
 #   - Result comes back in rax / x0 and is stored to the result slot.
@@ -157,6 +164,9 @@ fn fncall0(fp): i64 {
         0x48; 0x89; 0x45; 0xF0;    # mov [rbp-16], rax (result)
     }
     #endif
+    #ifdef CYRIUS_TARGET_CX
+    result = callptr(fp);
+    #endif
     return result;
 }
 
@@ -226,6 +236,9 @@ fn fncall1(fp, a): i64 {
         0x48; 0x83; 0xC4; 0x20;    # add rsp, 0x20
         0x48; 0x89; 0x45; 0xE8;    # mov [rbp-24], rax (result)
     }
+    #endif
+    #ifdef CYRIUS_TARGET_CX
+    result = callptr(fp, a);
     #endif
     return result;
 }
@@ -302,6 +315,9 @@ fn fncall2(fp, a, b): i64 {
         0x48; 0x83; 0xC4; 0x20;    # add rsp, 0x20
         0x48; 0x89; 0x45; 0xE0;    # mov [rbp-32], rax (result)
     }
+    #endif
+    #ifdef CYRIUS_TARGET_CX
+    result = callptr(fp, a, b);
     #endif
     return result;
 }
@@ -384,6 +400,9 @@ fn fncall3(fp, a, b, c): i64 {
         0x48; 0x83; 0xC4; 0x20;    # add rsp, 0x20
         0x48; 0x89; 0x45; 0xD8;    # mov [rbp-40], rax (result)
     }
+    #endif
+    #ifdef CYRIUS_TARGET_CX
+    result = callptr(fp, a, b, c);
     #endif
     return result;
 }
@@ -472,6 +491,9 @@ fn fncall4(fp, a, b, c, d): i64 {
         0x48; 0x83; 0xC4; 0x20;    # add rsp, 0x20
         0x48; 0x89; 0x45; 0xD0;    # mov [rbp-48], rax (result)
     }
+    #endif
+    #ifdef CYRIUS_TARGET_CX
+    result = callptr(fp, a, b, c, d);
     #endif
     return result;
 }
@@ -569,6 +591,9 @@ fn fncall5(fp, a, b, c, d, e): i64 {
         0x48; 0x83; 0xC4; 0x30;         # add rsp, 0x30
         0x48; 0x89; 0x45; 0xC8;         # mov [rbp-56], rax (result)
     }
+    #endif
+    #ifdef CYRIUS_TARGET_CX
+    result = callptr(fp, a, b, c, d, e);
     #endif
     return result;
 }
@@ -673,6 +698,9 @@ fn fncall6(fp, a, b, c, d, e, f): i64 {
         0x48; 0x83; 0xC4; 0x30;         # add rsp, 0x30
         0x48; 0x89; 0x45; 0xC0;         # mov [rbp-64], rax (result)
     }
+    #endif
+    #ifdef CYRIUS_TARGET_CX
+    result = callptr(fp, a, b, c, d, e, f);
     #endif
     return result;
 }
@@ -816,6 +844,9 @@ fn fncall7(fp, a, b, c, d, e, f, g): i64 {
         0x48; 0x89; 0x45; 0xB8;         # mov [rbp-72], rax (result)
     }
     #endif
+    #ifdef CYRIUS_TARGET_CX
+    result = callptr(fp, a, b, c, d, e, f, g);
+    #endif
     return result;
 }
 
@@ -954,6 +985,9 @@ fn fncall8(fp, a, b, c, d, e, f, g, h): i64 {
         0x48; 0x83; 0xC4; 0x40;         # add rsp, 0x40
         0x48; 0x89; 0x45; 0xB0;         # mov [rbp-80], rax (result)
     }
+    #endif
+    #ifdef CYRIUS_TARGET_CX
+    result = callptr(fp, a, b, c, d, e, f, g, h);
     #endif
     return result;
 }

@@ -170,7 +170,15 @@ fn EMOVDR(S): i64 { CX_EMIT(S, 20, 0, 13, 1); return 0; }                       
 fn EANDR(S): i64 { CX_EMIT(S, 32, 0, 0, 1); return 0; }
 fn EORR(S): i64 { CX_EMIT(S, 33, 0, 0, 1); return 0; }
 fn EXORR(S): i64 { CX_EMIT(S, 34, 0, 0, 1); return 0; }
-fn ENOTR(S): i64 { CX_EMIT(S, 34, 0, 0, 31); return 0; }   # xor r0, r0, r31(all-ones) — approx NOT
+# `~x` = x XOR all-ones, the all-ones built in r1 (dead here: every caller has just parsed the
+# operand into r0, or ends a shift whose count r1 held). It XORed with r31, which nothing ever set:
+# cxvm zeroes its registers, so `~x` was `x` and `bitset` / `bitclr`'s `~mask` was `mask`, while
+# r31 is also an argument register from 29 arguments on. CHANGELOG [6.7.6]
+fn ENOTR(S): i64 {
+    CX_MOVI(S, 1, 0 - 1);                 # r1 = all-ones (movi + movhi + movhh + movhk)
+    CX_EMIT(S, 34, 0, 0, 1);              # xor r0, r0, r1
+    return 0;
+}
 fn ESHLCL(S): i64 { CX_EMIT(S, 35, 0, 0, 1); return 0; }   # shl r0, r0, r1
 fn ESHRCL(S): i64 { CX_EMIT(S, 36, 0, 0, 1); return 0; }   # shr r0, r0, r1
 fn EASHRCL(S): i64 { CX_EMIT(S, 37, 0, 0, 1); return 0; }  # asr r0, r0, r1 (`>>>`)
@@ -562,17 +570,58 @@ fn ETLFRAME_CLOSE(S, patch, nslots): i64 {
     return 0;
 }
 
+# ⛔ 6.7.6 — THE cx CALL'S REGISTER WINDOW, AND THE ARGUMENTS PAST IT. The register file at a call:
+#   r0..r2     the accumulator, the secondary operand, scratch — never an argument
+#   r3..r234   integer arguments 0..231: argument k rides r(3 + k) for k < _CX_ARG_REGS (232)
+#   r235..r250 value-form vector arguments, _CX_VEC_BASE + 2 * ordinal (8 ordinals, see below)
+#   r251/r252  the call-boundary scratch (`_cx_fpaddr`); r253 / r254 fp / sp
+# Argument k >= _CX_ARG_REGS is passed in the GUEST stack, the way SysV passes
+# arguments 7+: the caller lowers sp by 8 per such argument and stores argument k at
+# [sp + 8 * (k - _CX_ARG_REGS)]; the callee's fp IS that sp (EFNPRO: `mov fp, sp`), so ESTOREPARM
+# copies it from [fp + 8 * (k - _CX_ARG_REGS)] — above the callee's own frame, which grows down
+# from fp — into its slot; ECALLCLEAN raises sp again. A call of up to _CX_ARG_REGS integer
+# arguments emits exactly what it always did. Before 6.7.6 every argument was a register: argument 248 was
+# popped into r251, 250 into fp, 251 into sp, and past 252 the operand byte wrapped to r0 — 249
+# arguments returned a wrong value and 252 trapped "cxvm: guest stack overflow" — and the vector
+# band sat at r16..r31, which ARE integer argument registers from 14 arguments (ESTOREPARM_F64V2).
+# CHANGELOG [6.7.6]
+var _CX_ARG_REGS = 232;
+var _CX_VEC_BASE = 235;
+
 fn ECALLPOPS(S, n): i64 {
-    # Pop args into r3-r8 (argument registers)
+    # Pop args into r3.. (argument registers); the ones past the window first, into the guest stack.
     var i = n - 1;
+    if (n > _CX_ARG_REGS) { i = _cx_pop_stack_args(S, n); }
     while (i >= 0) {
         CX_EMIT(S, 129, 3 + i, 0, 0);  # pop into arg register
         i = i - 1;
     }
     return 0;
 }
+# Arguments _CX_ARG_REGS..n-1 — the top of the data stack — into a block of 8 * (n - _CX_ARG_REGS)
+# bytes reserved below sp. r0 / r251 / r252 are free here (every argument is on the data stack, and
+# the callee pointer of an indirect call is in a frame slot). Returns the last register argument.
+fn _cx_pop_stack_args(S, n): i64 {
+    CX_MOVI(S, 252, (n - _CX_ARG_REGS) * 8);
+    CX_EMIT(S, 17, 254, 254, 252);        # sub  sp, sp, r252   (cxvm traps a guest stack overflow)
+    var i = n - 1;
+    while (i >= _CX_ARG_REGS) {
+        CX_EMIT(S, 129, 0, 0, 0);         # pop  r0             (argument i)
+        CX_MOVI(S, 252, (i - _CX_ARG_REGS) * 8);
+        CX_EMIT(S, 16, 251, 254, 252);    # add  r251, sp, r252
+        CX_EMIT(S, 67, 251, 0, 0);        # store64 [r251], r0
+        i = i - 1;
+    }
+    return i;
+}
 
-fn ECALLCLEAN(S, n): i64 { return 0; }  # no cleanup needed in bytecode
+# Takes back the guest-stack argument block ECALLPOPS reserved; nothing below the window.
+fn ECALLCLEAN(S, n): i64 {
+    if (n <= _CX_ARG_REGS) { return 0; }
+    CX_MOVI(S, 252, (n - _CX_ARG_REGS) * 8);
+    CX_EMIT(S, 16, 254, 254, 252);        # add  sp, sp, r252   (r0 / r4 / r5, the result, untouched)
+    return 0;
+}
 
 # Jump helpers
 fn EJCC(S, cc): i64 {
@@ -779,8 +828,8 @@ fn EFLLOAD_F64V4_PAIR(S, idx): i64 {
 # them as scratch: ECALLIND (`fncallN` / `callptr`), the prologue's frame `movi` (ESUBRSP), and
 # each parameter store. A 12-argument call read argument 11 as a frame address (measured on cxvm:
 # 12581018 where 650 is right, direct and indirect alike). r251 / r252 sit above every argument
-# register a call of up to 248 arguments uses, below fp / sp (r253 / r254). `_cx_fpaddr` leaves
-# r251 = fp - off. CHANGELOG [6.6.17]
+# register (the window and the vector band, see _CX_ARG_REGS), below fp / sp (r253 / r254).
+# `_cx_fpaddr` leaves r251 = fp - off. CHANGELOG [6.6.17]
 fn _cx_fpaddr(S, off): i64 {
     CX_EMIT(S, 2, 251, 253, 0);           # mov  r251, fp
     CX_MOVI(S, 252, off);                 # movi r252, off
@@ -789,14 +838,18 @@ fn _cx_fpaddr(S, off): i64 {
 }
 # v6.4.54 — cx value-form SIMD param/return marshaling. cxvm has no vector register
 # file, so 16B/32B value-form vectors ride a GP register-PAIR transport: SIMD ordinal
-# k occupies r(16+2k)=lo / r(16+2k+1)=hi (a 32B f64v4 spans two ordinals → the 4
-# consecutive regs r(16+2k)..r(16+2k+3)). r16.. is clear of int-args up to 13 of them, returns
-# (r0..r3), the call-boundary scratch (r251/r252) and the ENOTR sentinel (r31); nothing between the caller's
-# ELOAD (call site) and the callee's ESTOREPARM (fn entry) touches r16.., so the pair
-# survives the call. Frame lane layout reuses _cx_ldisp and mirrors EFL{STORE,LOAD}_*_PAIR.
-# 16B covers f64v2 / f32v4 / i32v4 (2-slot pair); f64v4 is the 4-slot quad. CHANGELOG [6.4.54].
+# k occupies r(B+2k)=lo / r(B+2k+1)=hi, B = _CX_VEC_BASE (a 32B f64v4 spans two ordinals → the
+# 4 consecutive regs r(B+2k)..r(B+2k+3)). The frontend caps the ordinals at 8 (the XMM0..XMM7
+# budget), so the band is r235..r250: above every integer argument register (r3..r234, see
+# _CX_ARG_REGS), below the call-boundary scratch (r251/r252), clear of the returns (r0..r3).
+# Nothing between the caller's ELOAD (call site, after ECALLPOPS) and the callee's ESTOREPARM
+# (fn entry) touches it, so the pair survives the call. ⛔ It was r16..r31 until 6.7.6 — integer
+# argument registers from 14 arguments: `g(v, a0..a13)` read a13 as the vector's low lane (the
+# caller loaded the vector over it) and the vector as garbage. Frame lane layout reuses _cx_ldisp
+# and mirrors EFL{STORE,LOAD}_*_PAIR. 16B covers f64v2 / f32v4 / i32v4 (2-slot pair); f64v4 is
+# the 4-slot quad. CHANGELOG [6.4.54] [6.7.6]
 fn ESTOREPARM_F64V2(S, simd_ord, named_idx): i64 {
-    var base = 16 + simd_ord * 2;
+    var base = _CX_VEC_BASE + simd_ord * 2;
     _cx_fpaddr(S, _cx_ldisp(named_idx));     # 6.6.17: r251 / r252 scratch (see _cx_fpaddr)
     CX_EMIT(S, 67, 251, base, 0);            # store64 [r251], r_lo
     _cx_fpaddr(S, _cx_ldisp(named_idx - 1)); # filler slot (hi half)
@@ -804,7 +857,7 @@ fn ESTOREPARM_F64V2(S, simd_ord, named_idx): i64 {
     return 0;
 }
 fn ESTOREPARM_F64V4(S, simd_ord, named_idx): i64 {
-    var base = 16 + simd_ord * 2;
+    var base = _CX_VEC_BASE + simd_ord * 2;
     var k = 0;
     while (k < 4) {
         _cx_fpaddr(S, _cx_ldisp(named_idx - k));
@@ -815,7 +868,7 @@ fn ESTOREPARM_F64V4(S, simd_ord, named_idx): i64 {
 }
 fn ESTOREPARM_SIMD_WIN64(S, pidx, named_idx, nbytes): i64 { return 0; }  # v6.4.31 PE-only; stub off-PE
 fn ELOAD_F64V2_TO_XMM(S, simd_ord, named_idx): i64 {
-    var base = 16 + simd_ord * 2;
+    var base = _CX_VEC_BASE + simd_ord * 2;
     _cx_fpaddr(S, _cx_ldisp(named_idx));     # 6.6.17: runs after the caller's pops (_cx_fpaddr)
     CX_EMIT(S, 65, base, 251, 0);            # load64 r_lo, [r251]
     _cx_fpaddr(S, _cx_ldisp(named_idx - 1));
@@ -823,7 +876,7 @@ fn ELOAD_F64V2_TO_XMM(S, simd_ord, named_idx): i64 {
     return 0;
 }
 fn ELOAD_F64V4_TO_XMM(S, simd_ord, named_idx): i64 {
-    var base = 16 + simd_ord * 2;
+    var base = _CX_VEC_BASE + simd_ord * 2;
     var k = 0;
     while (k < 4) {
         _cx_fpaddr(S, _cx_ldisp(named_idx - k));
@@ -905,9 +958,21 @@ fn EPATCHFRAME(S, patch, size): i64 {
 
 fn ESTOREPARM(S, pidx, lidx, pc): i64 {
     # Store param register to local slot. 6.6.17: r251 / r252 temps — r14 / r15 ARE argument
-    # registers from 12 arguments (see _cx_fpaddr).
+    # registers from 12 arguments (see _cx_fpaddr). 6.7.6: past the register window the parameter
+    # is in the caller's guest-stack block (see ECALLPOPS).
+    if (pidx >= _CX_ARG_REGS) { return _cx_storeparm_stack(S, pidx, lidx); }
     _cx_fpaddr(S, _cx_ldisp(lidx));
     CX_EMIT(S, 67, 251, 3 + pidx, 0);    # store64 [r251], arg_reg
+    return 0;
+}
+# Parameter `pidx` >= _CX_ARG_REGS: [fp + 8 * (pidx - _CX_ARG_REGS)] -> its slot, through r1 (no
+# argument rides r1, and nothing is live in it in a prologue). CHANGELOG [6.7.6]
+fn _cx_storeparm_stack(S, pidx, lidx): i64 {
+    CX_MOVI(S, 252, (pidx - _CX_ARG_REGS) * 8);
+    CX_EMIT(S, 16, 251, 253, 252);        # add  r251, fp, r252   (the caller's argument block)
+    CX_EMIT(S, 65, 1, 251, 0);            # load64 r1, [r251]
+    _cx_fpaddr(S, _cx_ldisp(lidx));
+    CX_EMIT(S, 67, 251, 1, 0);            # store64 [r251], r1
     return 0;
 }
 

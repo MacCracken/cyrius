@@ -347,7 +347,13 @@ fn add(a, b) {
 var r = add(20, 22);   # r = 42
 ```
 
-- Up to 6 register params, 7+ passed on stack
+- Up to 6 register params, 7+ passed on stack (4 / 5+ on Windows). A fn takes any number of
+  parameters on every target; on the cx bytecode target the first 232 integer arguments ride
+  registers and the rest the guest stack. ⚠ **Before 6.7.6 a cx call of more than 248 arguments
+  was wrong**: cx held every argument in a register, so from 249 arguments the callee read wrong
+  values and from 252 cxvm trapped "guest stack overflow" — and a value-form vector argument
+  (`f64v2`, `f64v4`, `f32v4`, `i32v4`) beside 14 or more integer arguments overwrote the 14th
+  one there, because cx's vector registers were integer argument registers from that point.
 - Forward calls work (functions can call functions defined later)
 - Relaxed ordering: functions can appear after statements (v1.11.0+)
 - **A fn is defined at top level** (or inside a top-level block). A named `fn` / `async fn` inside
@@ -560,6 +566,13 @@ Right shift comes in two forms (v6.4.46): `>>` is a **logical** shift
 (zero-fill) and `>>>` is an **arithmetic**, sign-preserving shift. Note
 this is the **reverse** of JS/Java, where `>>` is arithmetic and `>>>` is
 the zero-fill logical shift.
+
+`~x` is the bitwise complement (all 64 bits flipped) on every target. ⚠ **Before
+6.7.6, on the cx bytecode target `~x` was `x`** — the emitter XORed with a register
+nothing ever set — so `var x = 6; return ~x + 10;` gave 16 there (3 everywhere else),
+and `bitset` / `bitclr`, which complement their mask, kept the bits they were asked to
+clear. Pinned by `tests/tcyr/codegen/cx_backend_parity.tcyr`, run natively and on
+cxvm by `tests/gates/codegen/cx_backend_parity.sh`.
 
 Wrapping ops (`+%` etc.) document intent at the call site that a wrap is
 expected — bytes are identical to the bare operator. Saturating and
@@ -3378,6 +3391,13 @@ same indirect-call sequence as `callptr` rather than to a call into
 resolve), but the marshalling is the compiler's, which is the better one for
 more than four arguments on Windows and more than six elsewhere. At top level
 it stays an ordinary call into the library.
+
+The library body runs only when `fncallN` itself is called through a pointer —
+`fncall2(&fncall1, &add1, 41)`, or `&fncall3` handed to code that calls it. On the
+cx bytecode target each `fncallN` is `callptr(fp, …)` (there is no asm on cx). ⚠
+**Before 6.7.6 `lib/fnptr.cyr` had no cx arm**, so an address-taken `&fncallN`
+returned 0 there for every callee (`fncall2(&fncall1, &add1, 41)` gave 0, 42
+everywhere else). Pinned by `tests/tcyr/codegen/cx_backend_parity.tcyr`.
 
 ## Closures
 
