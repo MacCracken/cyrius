@@ -596,8 +596,12 @@ exits and assert-summary returns.
 `x OP= e` takes eleven operators — `+= -= *= /= %= &= |= ^= <<= >>= >>>=` (`>>>=`, the
 arithmetic shift, since 6.7.5) — on **every lvalue**: a variable, a subscript `a[i]`, a field at
 any depth (`p.x`, `o.i.b`, `a.next.v` through a `*T` field, `h.name.len` through a `Str`, a
-slice's `s.len`), through a `*T` local, parameter or global, `self: *T`, a closure capture, and
-`*p`. It works in a statement, at top level, in a classic-`for` step (`for (h.n = 0; h.n < 5;
+slice's `s.len`), through a `*T` local, parameter or global, `self: *T`, a field or element of a
+closure capture, and `*p`. A closure captures by value, so `|d| { h.n += d; }` and `a[1] += d`
+change the closure's own copy (it persists from call to call; the enclosing fn's `h` is untouched)
+and `p.n += d` through a captured `*T` reaches the pointee. A captured NAME is not an lvalue in
+the closure: `x += d`, like `x = x + d`, is `undefined variable 'x'`. It works in a statement, at
+top level, in a classic-`for` step (`for (h.n = 0; h.n < 5;
 h.n += 1)` — a field or `*p` step takes `=` too, and a struct-valued field step copies the whole
 struct) and, on a local, in a `const fn`. Before 6.7.5 a field, `*p`, `>>>=` and a field or `*p`
 `for` step were all syntax errors (`expected '=', got '+'`).
@@ -2270,9 +2274,14 @@ myproject/
 (`cyrius bench benches/perf`). Before v6.5.7 the bench and fuzz walkers were flat, so
 `benches/perf/core.bcyr` simply never ran *and the command reported success over it*; a
 directory argument ran nothing, printed nothing and exited 0. A path that does not exist is
-now refused rather than silently building a do-nothing program, and every form prints the
-`=== N passed, M failed ===` summary — the single-file form used not to, which made it
-unscriptable.
+now refused rather than silently building a do-nothing program, and every `bench` / `fuzz` form
+prints the `=== N passed, M failed ===` summary — their single-file form used not to, which made
+it unscriptable. `cyrius test <file>` prints the test's own output (its `N passed, M failed (T
+total)` assert summary, not a `===` line) and its exit status is the test's: non-zero, with a
+`FAIL:` line naming the file, when the test exits non-zero, dies of a signal, times out, or exits
+0 with an assert summary that reports failures (or, when its source calls `assert_summary()`, with
+none or one of 0 assertions). The suite forms (bare, a directory, several operands) end with an
+`N passed, M failed` tally of the files they ran.
 
 **One test verb (6.7.6).** `cyrius test <file>` runs that file, `cyrius test <dir>` runs every
 `.tcyr` under the directory (recursive — `cyrius test tests/tcyr/crossos`), several operands
