@@ -712,6 +712,9 @@ fn main(): i64 {
     # AUTO_DEPS_VERBS BEGIN
     if (streq(cmd, "build") == 1 || streq(cmd, "run") == 1 || streq(cmd, "test") == 1 || streq(cmd, "tests") == 1 || streq(cmd, "bench") == 1 || streq(cmd, "fuzz") == 1 || streq(cmd, "soak") == 1 || streq(cmd, "smoke") == 1 || streq(cmd, "check") == 1 || streq(cmd, "audit") == 1 || streq(cmd, "capacity") == 1 || streq(cmd, "distlib") == 1 || streq(cmd, "doctest") == 1 || streq(cmd, "publish") == 1 || streq(cmd, "package") == 1) {
         # AUTO_DEPS_VERBS END
+        # 6.7.6 (R): the operands are checked BEFORE the resolve — `cyrius run missing.cyr` cloned
+        # and vendored every dependency and only then said "no such file".
+        if (_cli_preflight(cmd) != 0) { return 1; }
         # 6.7.6 (lane C): the local-development switch and --locked, for this verb
         if (_dep_switch_setup(cmd) != 0) { return 1; }
         var dr = _auto_deps();

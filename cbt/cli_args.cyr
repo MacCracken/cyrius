@@ -617,6 +617,48 @@ fn _cli_operands_ok(verb, min, max): i64 {
     return 1;
 }
 
+# 6.7.6 — THE OPERANDS OF A RESOLVING VERB ARE CHECKED BEFORE THE RESOLVE. main() runs
+# _auto_deps — clones, vendoring, the lock — ahead of each verb's own branch, so `cyrius run
+# missing.cyr` fetched every dependency and only then said "no such file", and `cyrius bench a b`
+# resolved before refusing the extra operand. The counts are the branches' own (each branch still
+# checks; this runs first), and a FILE operand must exist. `test` / `tests` are absent on purpose:
+# their operands are being reworked (`cyrius test` absorbs `cyrius tests`, lane G of 6.7.6), and
+# that change brings its own check. 0, or 1 after naming the problem.
+fn _cli_preflight(verb): i64 {
+    var mn = 0 - 1;
+    var mx = 0 - 1;
+    var files = 0;   # how many leading operands name a file that must exist (2 = file or dir)
+    if (streq(verb, "build") == 1) { mn = 0; mx = 2; files = 1; }
+    elif (streq(verb, "run") == 1) { mn = 1; mx = 1; files = 1; }
+    elif (streq(verb, "bench") == 1) { mn = 0; mx = 1; files = 2; }
+    elif (streq(verb, "fuzz") == 1) { mn = 0; mx = 1; files = 2; }
+    elif (streq(verb, "soak") == 1) { mn = 0; mx = 1; }
+    elif (streq(verb, "smoke") == 1) { mn = 0; mx = 0; }
+    elif (streq(verb, "check") == 1) { mn = 1; files = 3; }
+    elif (streq(verb, "audit") == 1) { mn = 0; mx = 0; }
+    elif (streq(verb, "capacity") == 1) { mn = 0; mx = 1; files = 1; }
+    elif (streq(verb, "distlib") == 1) { mn = 0; mx = 1; }
+    elif (streq(verb, "doctest") == 1) { mn = 1; mx = 1; files = 1; }
+    elif (streq(verb, "publish") == 1) { mn = 0; mx = 0; }
+    elif (streq(verb, "package") == 1) { mn = 0; mx = 0; }
+    else { return 0; }
+    if (_cli_operands_ok(verb, mn, mx) == 0) { return 1; }
+    if (files == 0 || _cli_npos() == 0) { return 0; }
+    var last = 1;
+    if (files == 3) { last = _cli_npos(); }
+    var i = 0;
+    while (i < last) {
+        var p = _cli_pos_at(i);
+        i = i + 1;
+        if (file_exists(p) == 1) { continue; }
+        if (files == 2 && is_dir(str_from(p)) == 1) { continue; }
+        if (files == 2) { _err_ctx("no such file or directory", p); }
+        else { _err_ctx("no such file", p); }
+        return 1;
+    }
+    return 0;
+}
+
 # ── flag effects, applied BEFORE _auto_deps (rule 5) ──────────────
 # _dry_run in particular: it used to be set inside the build loop, which runs AFTER
 # the resolver, so `cyrius build --dry-run s o` in a [deps] project printed
