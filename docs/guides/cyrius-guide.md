@@ -394,6 +394,13 @@ var f64_add = 1;
 Read the table rather than memorising a subset — the partial lists that used to appear in
 docs were the reason people were surprised by the other sixty.
 
+**`do` is reserved; `loop` is not (6.7.5).** `do` (the `do … while` statement) is a full
+statement keyword: `fn do()`, `var do` and a field named `do` are refused by name. `loop` is
+**contextual**, the way `kernel` is (a keyword only as the top-level `kernel;`): it is the
+loop statement only when `loop {` starts a statement, and an ordinary identifier everywhere
+else, so the `var loop` flags that existing code is full of keep compiling. It is in neither
+table, and `cyrius.cyml`'s `[embed]` accepts it as a NAME.
+
 Eleven more names are reserved although that table does not hold them: the
 **identifier-spelled intrinsics** `sizeof`, `mulh64` and `fncall0` … `fncall8`. They lex as
 ordinary identifiers and the compiler lowers every call to them BY NAME (`_is_ident_intrinsic`
@@ -438,10 +445,16 @@ else { ... }
 # While
 while (x < 10) { x = x + 1; }
 
+# Loop (6.7.5) — no condition at all; leave it with `break` or `return`.
+loop { x = x + 1; if (x == 10) { break; } }
+
+# Do … while (6.7.5) — the body runs once before the first test.
+do { x = x + 1; } while (x < 10);
+
 # For — all three clauses (init; cond; step) are required and non-empty.
 # Cyrius does not accept `for (;;)` / `for (; c;)` (omitted clauses).
-# For an unbounded or custom-stepped loop, use `while`; the idiomatic
-# forms are the counted `for` above and `for x in …`.
+# For an unbounded loop use `loop { … }`, and `while` for a custom-stepped
+# one; the idiomatic counted forms are the `for` above and `for x in …`.
 for (var i = 0; i < 10; i = i + 1) { ... }
 
 # For-in — a half-open range, or every element of a vec (lib/vec.cyr).
@@ -451,12 +464,13 @@ for i in 0..10 { ... }          # i = 0, 1, ..., 9
 for x in v { ... }              # x = vec_get(v, 0), vec_get(v, 1), ...
 
 # Break / Continue
-# `break` leaves the NEAREST ENCLOSING while, for, switch or match (v6.5.20 — C
-#   semantics; before that a `break` inside a switch/match was a MISCOMPILE, see
-#   "Switch" below).
+# `break` leaves the NEAREST ENCLOSING while, loop, do, for, switch or match (v6.5.20 —
+#   C semantics; before that a `break` inside a switch/match was a MISCOMPILE, see
+#   "Switch" below). It takes no value (`break 5;` is a syntax error).
 # `continue` always belongs to the nearest enclosing LOOP. A switch or match in
 #   between is transparent to it — `continue` inside a case skips to the loop's next
-#   iteration, it does not fall out of the switch.
+#   iteration, it does not fall out of the switch. In a `do … while` it goes to the
+#   CONDITION (as in C), never straight back to the top.
 # continue works correctly in all loop types (v1.11.1 bug #13 fix)
 # Both must have something to leave IN THE SAME FUNCTION (v6.6.7): a `break` with no
 #   enclosing loop/switch/match, or a `continue` with no enclosing loop, is a compile
@@ -464,11 +478,57 @@ for x in v { ... }              # x = vec_get(v, 0), vec_get(v, 1), ...
 #   inside a closure body whose only loop is the ENCLOSING fn's. Before v6.6.7 both
 #   compiled clean: `break` became a wild jump and `continue` jumped to the loop top of
 #   whichever fn last had a loop.
-while (1 == 1) {
+loop {
     if (done == 1) { break; }
     if (skip == 1) { continue; }
 }
 ```
+
+### `loop` and `do … while` (6.7.5)
+
+`loop { … }` is `while (1) { … }` written plainly: no condition is emitted or tested at its
+top (a `while (1)` tests its constant every pass), so `break` and `return` are its only
+exits. `do { … } while (c);` runs its body once, then tests `c` after every pass; the
+trailing `;` is required. Both are statements — neither produces a value, and `break`
+takes none.
+
+```
+fn first_square_over(lim): i64 {
+    var i = 0;
+    loop {
+        i = i + 1;
+        if (i * i > lim) { return i; }
+    }
+}
+
+fn digits(n): i64 {
+    var d = 0;
+    do { d = d + 1; n = n / 10; } while (n > 0);   # digits(0) is 1: the body ran once
+    return d;
+}
+```
+
+- **`continue` in a `do` goes to the condition.** `do { i += 1; if (i < 5) { continue; } }
+  while (i < 3);` stops at 3 — the `continue` re-tests `i < 3`; jumping back to the top
+  instead would have run on to 5.
+- **The `do` body is its own scope**, like every braced body (6.6.17): the condition cannot
+  see a `var` declared inside it. `do { var t = next(); } while (t != 0);` is refused with
+  `undefined variable 't'` — declare `t` before the `do`.
+- **`do` is a reserved word** (it was never an identifier in cyrius or its ecosystem).
+  **`loop` is contextual**, like `kernel`: it is the loop statement only as `loop {` at the
+  start of a statement, and an ordinary identifier everywhere else — `var loop = 1;`,
+  `while (loop == 1) { … loop = 0; }`, a fn, a field or a struct named `loop` all compile as
+  they always did. (An identifier at the start of a statement is never followed by `{`, so
+  the two never meet.)
+- **Anywhere a `while` goes**: inside fns, closures and generic instances, and at top level
+  (entry code, as a top-level `while` is). A `switch` / `match` inside one is left by its own
+  `break`. A tail call (`return f(..);`) inside one keeps its `jmp` unless the loop takes a
+  frame address — a `do`'s condition included, since it is decided after the whole statement.
+- **In a `const fn`** both are part of the pure subset (see *Constants and `const fn`*), run by
+  the compile-time evaluator under the same 10,000,000-step budget, so an endless `loop` in a
+  const context is refused by name rather than hanging the compiler.
+- An if-expression branch holds one expression, so a `loop` or `do` there is refused by name
+  ("takes one expression, not a statement"), as a `while` is.
 
 ## Operators
 
@@ -3420,8 +3480,9 @@ fn f(v): i64 {
   integer and f64 arithmetic, comparisons, `&&` / `||`, shifts with the runtime's semantics
   (`>>` logical, `>>>` arithmetic), locals (`var x = ..;`, typed `i64` / `i32` / `i16` / `i8` /
   `f64`, a narrow one narrowing as at run time), local consts, assignment and `OP=`, if / elif
-  / else, while, `for (..; ..; ..)`, `for i in a..b`, return, break, continue, calls of const
-  fns (recursion included), the exact f64 builtins (`f64_add`..`f64_div`, `f64_from`,
+  / else, while, `loop` and `do … while` (6.7.5), `for (..; ..; ..)`, `for i in a..b`, return,
+  break, continue, calls of const fns (recursion included), the exact f64 builtins
+  (`f64_add`..`f64_div`, `f64_from`,
   `f64_to`, `f64_eq` / `lt` / `gt` / `le` / `ge`, `f64_neg`, `f64_abs`, `f64_floor`,
   `f64_ceil`, `f64_trunc`). Not: memory (`load64`, arrays, `&x`, fields), syscalls, globals, an
   ordinary fn's call, a transcendental builtin, a generic const fn.
