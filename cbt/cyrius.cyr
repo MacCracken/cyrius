@@ -717,6 +717,10 @@ fn main(): i64 {
         if (_cli_preflight(cmd) != 0) { return 1; }
         # 6.7.6 (lane C): the local-development switch and --locked, for this verb
         if (_dep_switch_setup(cmd) != 0) { return 1; }
+        # 6.7.6 (part T): test / bench / fuzz compile in the TEST SCOPE — [test], cbt/manifest.cyr
+        if (_tc_scope_verb(cmd) == 1) {
+            if (_tc_setup(cmd) != 0) { return 1; }
+        }
         var dr = _auto_deps();
         # v6.5.37 (A1) — clamp here too: _auto_deps propagates the same raw count, so a
         # 256-error resolve made `cyrius build` exit 0 as well.

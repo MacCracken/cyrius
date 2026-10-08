@@ -69,6 +69,9 @@ fn _mf_vocab_b(i): i64 {
     if (i == 38) { return "embed|*|read|-|-|-|every compile: the file's bytes as NAME() / NAME_len(), prepended before the entry"; }
     # 6.7.6 (Break 1 lane C, part T): [test] — what test / bench / fuzz compiles get and nothing else
     if (i == 39) { return "test|files|read|-|-|<path>...|bare cyrius test: these (file / dir / list) first, then tests/ ([build] test is the older spelling)"; }
+    if (i == 40) { return "test|modules|read|-|-|-|test / bench / fuzz compiles only: these files prepended before the entry"; }
+    if (i == 41) { return "test|defines|read|-|CYRIUS_DEFINES|-D|test / bench / fuzz compiles only: one #define per name"; }
+    if (i == 42) { return "test|timeout|read|-|CYRIUS_TEST_TIMEOUT|--timeout|test / bench / fuzz: seconds each may run (0 = no deadline; default 300)"; }
     return 0;
 }
 
@@ -645,6 +648,22 @@ fn _mf_bool(section, key): i64 {
     return 0 - 2;
 }
 
+# 6.7.6 — the whole number at buf[p] (decimal digits, at most 9, then the end of the token);
+# -2 for any other value (a string, a sign, a float, a 10th digit).
+fn _toml_uint_at(buf, n, p): i64 {
+    var v = 0;
+    var k = 0;
+    while (p + k < n) {
+        var c = load8(buf + p + k);
+        if (c < 48 || c > 57) { break; }
+        v = v * 10 + (c - 48);
+        k = k + 1;
+    }
+    if (k == 0 || k > 9) { return 0 - 2; }
+    if (_toml_tok_end(buf, n, p + k) == 0) { return 0 - 2; }
+    return v;
+}
+
 # `[section] key` — a string or an array of strings — as a vec of cstrs; 0 when absent, 0 with
 # _toml_bad set when present with another type.
 fn _mf_strs(section, key): i64 {
@@ -1216,7 +1235,7 @@ var _CFG_DEFAULT = 0;
 var _CFG_MANIFEST = 1;
 var _CFG_ENV = 2;
 var _CFG_ARG = 3;
-var _CFG_N = 15;
+var _CFG_N = 18;
 var _CK_ENTRY = 0;
 var _CK_OUTPUT = 1;
 var _CK_DCE = 2;
@@ -1234,6 +1253,9 @@ var _CK_EMBED = 13;        # 6.6.19: the [embed] entries, as "NAME=path" (manife
 # 6.7.6 (part T) — the [test] rows. `--print-config` resolves them AFTER the [build] rows
 # (_cfg_resolve_test_rows), so a malformed [test] value never fails a `cyrius build`.
 var _CK_TEST_FILES = 14;   # [test] files, else [build] test
+var _CK_TEST_MODULES = 15;
+var _CK_TEST_DEFINES = 16;
+var _CK_TEST_TIMEOUT = 17; # an int (seconds); 0 = no deadline
 # 1 when the resolved `dce` is on and did NOT come from the environment: compile() then hands cycc
 # CYRIUS_DCE=1, replacing any inherited value (an argument beats CYRIUS_DCE=0).
 var _cfg_dce_inject = 0;
@@ -1257,14 +1279,18 @@ fn _cfg_name(i): i64 {
     if (i == _CK_PKG_CYRIUS) { return "package.cyrius"; }
     if (i == _CK_SECTIONS_BASE) { return "sections.base"; }
     if (i == _CK_TEST_FILES) { return "test.files"; }
+    if (i == _CK_TEST_MODULES) { return "test.modules"; }
+    if (i == _CK_TEST_DEFINES) { return "test.defines"; }
+    if (i == _CK_TEST_TIMEOUT) { return "test.timeout"; }
     return "embed";
 }
 
-# 0 = string, 1 = bool, 2 = list
+# 0 = string, 1 = bool, 2 = list, 3 = whole number
 fn _cfg_kind(i): i64 {
+    if (i == _CK_TEST_TIMEOUT) { return 3; }
     if (i == _CK_DCE || i == _CK_STRICT || i == _CK_TEST_STANDALONE) { return 1; }
     if (i == _CK_DEFINES || i == _CK_TEST || i == _CK_MODULES || i == _CK_PROGRAMS || i == _CK_EMBED) { return 2; }
-    if (i == _CK_TEST_FILES) { return 2; }
+    if (i == _CK_TEST_FILES || i == _CK_TEST_MODULES || i == _CK_TEST_DEFINES) { return 2; }
     return 0;
 }
 
@@ -1587,6 +1613,209 @@ fn _cfg_resolve_test_rows(): i64 {
     var tf = _cfg_test_files(&tw);
     if (tf < 0) { return 1; }
     if (tf != 0) { _cfg_put(_CK_TEST_FILES, tf, _CFG_MANIFEST, tw); }
+    if (_tc_load() != 0) { return 1; }
+    var tm = load64(_tc_root + _TA_MODULES);
+    if (tm != 0) { _cfg_put(_CK_TEST_MODULES, tm, _CFG_MANIFEST, "[test] modules"); }
+    var td = load64(_tc_root + _TA_DEFINES);
+    if (td != 0) { _cfg_put(_CK_TEST_DEFINES, td, _CFG_MANIFEST, "[test] defines"); }
+    _cfg_env_csv(_CK_TEST_DEFINES, "CYRIUS_DEFINES");
+    if (_cfg_org(_CK_TEST_DEFINES) == _CFG_ENV) {
+        if (_cfg_defines_ok(_cfg_val(_CK_TEST_DEFINES), "CYRIUS_DEFINES") != 0) { return 1; }
+    }
+    _cfg_put(_CK_TEST_TIMEOUT, 300, _CFG_DEFAULT, 0);
+    var tt = load64(_tc_root + _TA_TIMEOUT);
+    if (tt >= 0) { _cfg_put(_CK_TEST_TIMEOUT, tt, _CFG_MANIFEST, "[test] timeout"); }
+    var te = _cbt_env_int("CYRIUS_TEST_TIMEOUT", 0 - 1);
+    if (te >= 0) { _cfg_put(_CK_TEST_TIMEOUT, te, _CFG_ENV, "CYRIUS_TEST_TIMEOUT"); }
+    return 0;
+}
+
+# ================================================================
+# [test] — THE TEST SCOPE (6.7.6, Break 1 lane C, part T)
+# ================================================================
+# Test-only configuration in its own section, applied to the compiles of `cyrius test`, `bench`
+# and `fuzz` (and `cyrius audit`'s test / bench sweep) — the TEST SCOPE — and to nothing else:
+# `build`, `run`, `distlib`, `package` never see it.
+#     [test]
+#     files   = ["src/test.cyr"]   # what a bare `cyrius test` runs first (_cfg_test_files)
+#     modules = ["tests/support/fixtures.cyr"]   # prepended after [build] modules
+#     defines = ["TESTING"]        # -D > CYRIUS_DEFINES > these (fuzz: [build] defines first)
+#     timeout = 300                # seconds per test; --timeout > CYRIUS_TEST_TIMEOUT > this > 300
+# ADDITIVE: a manifest without [test] compiles every test exactly as before. CHANGELOG [6.7.6]
+var _test_scope = 0;       # 1 while test / bench / fuzz compile and run their units
+var _tc_verb = "test";     # "test" / "bench" / "fuzz" / "audit": fuzz keeps [build] defines (6.6.18)
+var _tc_arg_timeout = 0 - 1;   # --timeout N (seconds), -1 = not given
+var _tc_cur_timeout = 0 - 1;   # the unit being run: [test] timeout, -1 = not declared
+var _tc_cur_mods = 0;      # the unit being compiled: [test] modules (vec), 0 = none
+# One [test] table, as read: a record of the lists it declares (0 = absent) and its timeout
+# (-1 = absent).
+var _TA_STDLIB = 0;
+var _TA_MODULES = 8;
+var _TA_DEFINES = 16;
+var _TA_TIMEOUT = 24;
+var _TA_EMBED = 32;
+var _TA_SIZE = 40;
+var _tc_state = 0;         # 0 = not read, 1 = read, 2 = refused (named)
+var _tc_root = 0;          # the project's [test] (a _TA record)
+
+fn _tc_bad(label, key, want): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, label);
+    str_builder_add_cstr(sb, " [test] ");
+    str_builder_add_cstr(sb, key);
+    str_builder_add_cstr(sb, " must be ");
+    str_builder_add_cstr(sb, want);
+    _err(str_data(str_builder_build(sb)));
+    return 1;
+}
+
+# `[test] key` in buf[0, n) as a vec of cstrs (a string reads as one); 0 when absent, -1 after
+# naming another type.
+fn _tc_strs(buf, n, label, key): i64 {
+    var v = _toml_find(buf, n, "test", key);
+    if (v < 0) { return 0; }
+    _toml_bad = 0;
+    var l = _toml_strs_at(buf, n, v);
+    if (l == 0 || _toml_bad == 1) {
+        _toml_bad = 0;
+        _tc_bad(label, key, "a string or an array of strings");
+        return 0 - 1;
+    }
+    return l;
+}
+
+# `base` + "/" + `p` for a relative `p` (a test.cyml's own paths are relative to its directory);
+# `p` itself when `base` is "" or `p` is absolute.
+fn _tc_join(base, p): i64 {
+    if (load8(base) == 0 || load8(p) == 47) { return p; }
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, base);
+    str_builder_add_cstr(sb, "/");
+    str_builder_add_cstr(sb, p);
+    return str_data(str_builder_build(sb));
+}
+
+# Read ONE [test] table from buf[0, n) — the project's (`label` "cyrius.cyml", `base` "") — into a
+# fresh _TA record. 0 after naming a value of the wrong type.
+fn _tc_read(buf, n, label, base): i64 {
+    var rec = alloc(_TA_SIZE);
+    store64(rec + _TA_STDLIB, 0);
+    store64(rec + _TA_MODULES, 0);
+    store64(rec + _TA_DEFINES, 0);
+    store64(rec + _TA_TIMEOUT, 0 - 1);
+    store64(rec + _TA_EMBED, 0);
+    var m = _tc_strs(buf, n, label, "modules");
+    if (m < 0) { return 0; }
+    if (m != 0) {
+        var jm = vec_new();
+        var i = 0;
+        while (i < vec_len(m)) { vec_push(jm, _tc_join(base, vec_get(m, i))); i = i + 1; }
+        store64(rec + _TA_MODULES, jm);
+    }
+    var d = _tc_strs(buf, n, label, "defines");
+    if (d < 0) { return 0; }
+    if (d != 0) {
+        if (_cfg_defines_ok(d, _cat2(label, " [test] defines")) != 0) { return 0; }
+        store64(rec + _TA_DEFINES, d);
+    }
+    var tv = _toml_find(buf, n, "test", "timeout");
+    if (tv >= 0) {
+        var t = _toml_uint_at(buf, n, tv);
+        if (t < 0) { _tc_bad(label, "timeout", "a whole number of seconds (0 = no deadline)"); return 0; }
+        store64(rec + _TA_TIMEOUT, t);
+    }
+    return rec;
+}
+
+# The project's [test], read once. 0, or 1 after naming what is wrong (the test-scope verb fails).
+fn _tc_load(): i64 {
+    if (_tc_state == 1) { return 0; }
+    if (_tc_state == 2) { return 1; }
+    var ml = _mf_load();
+    if (ml < 0) { _tc_state = 2; return 1; }
+    var r = 0;
+    if (ml == 1) { r = _tc_read(_mf_buf, _mf_len, "cyrius.cyml", ""); }
+    else { r = _tc_read("", 0, "cyrius.cyml", ""); }
+    if (r == 0) { _tc_state = 2; return 1; }
+    _tc_root = r;
+    _tc_state = 1;
+    return 0;
+}
+
+# `a` with `b`'s entries appended (either may be 0); a fresh vec, or 0 when both are empty.
+fn _tc_cat(a, b): i64 {
+    var out = vec_new();
+    var i = 0;
+    if (a != 0) { while (i < vec_len(a)) { vec_push(out, vec_get(a, i)); i = i + 1; } }
+    i = 0;
+    if (b != 0) { while (i < vec_len(b)) { vec_push(out, vec_get(b, i)); i = i + 1; } }
+    if (vec_len(out) == 0) { return 0; }
+    return out;
+}
+
+# 1 for the verbs that compile in the test scope: test (and its deprecated alias tests), bench,
+# fuzz. (`cyrius audit` turns it on for its test / bench sweep itself.)
+fn _tc_scope_verb(verb): i64 {
+    if (streq(verb, "test") == 1 || streq(verb, "tests") == 1) { return 1; }
+    if (streq(verb, "bench") == 1 || streq(verb, "fuzz") == 1) { return 1; }
+    return 0;
+}
+
+# Turn the test scope on for `verb` ("test" / "bench" / "fuzz" — "tests" is test — or "audit"):
+# the project's [test] read and checked, and --timeout read. Before the dependency resolve (the
+# argument rule's rule 5): a refused value stops the verb before anything is written. 0, or 1
+# after naming what is wrong.
+fn _tc_setup(verb): i64 {
+    _tc_verb = verb;
+    if (streq(verb, "tests") == 1) { _tc_verb = "test"; }
+    if (_tc_load() != 0) { return 1; }
+    _tc_arg_timeout = 0 - 1;
+    if (streq(verb, "audit") == 0) {
+        var ta = _cli_val("--timeout");
+        if (ta != 0) {
+            var tn = _cli_int(ta);
+            if (_cli_int_ok == 0 || tn < 0 || tn > 999999999) {
+                _err_ctx("--timeout needs a whole number of seconds (0 = no deadline)", ta);
+                return 1;
+            }
+            _tc_arg_timeout = tn;
+        }
+    }
+    _test_scope = 1;
+    return 0;
+}
+
+# The configuration of ONE test-scope unit at `path`: `_defines`, `_tc_cur_mods` and
+# `_tc_cur_timeout`, from the project's [test]. Called before each compile (cmd_test,
+# _bench_run_one, _fuzz_run_one). 0, or 1 after naming what is wrong (the unit is then a failure,
+# not compiled). Defines: -D > CYRIUS_DEFINES > the manifest's, where fuzz's begin with
+# [build] defines (they reach every harness since 6.6.18).
+fn _tc_for(path): i64 {
+    if (_test_scope == 0) { return 0; }
+    if (_tc_load() != 0) { return 1; }
+    var rec = _tc_root;
+    _tc_cur_mods = load64(rec + _TA_MODULES);
+    _tc_cur_timeout = load64(rec + _TA_TIMEOUT);
+    var dv = _cli_values("-D");
+    if (vec_len(dv) > 0) {
+        _defines = dv;
+        return 0;
+    }
+    var ee = _cfg_env("CYRIUS_DEFINES");
+    if (ee != 0) {
+        var ev = _split_csv(ee);
+        if (vec_len(ev) > 0) {
+            if (_cfg_defines_ok(ev, "CYRIUS_DEFINES") != 0) { return 1; }
+            _defines = ev;
+            return 0;
+        }
+    }
+    var md = 0;
+    if (streq(_tc_verb, "fuzz") == 1) {
+        md = _mf_strs("build", "defines");
+        if (_toml_bad == 1) { md = 0; }   # named by _cfg_apply_defines before the run
+    }
+    _defines = _tc_cat(md, load64(rec + _TA_DEFINES));
     return 0;
 }
 
@@ -1655,6 +1884,13 @@ fn _cfg_out(s): i64 {
 fn _cfg_print_value(i): i64 {
     var v = _cfg_val(i);
     var k = _cfg_kind(i);
+    if (k == 3) {
+        var ib[24];
+        var il = fmt_int_buf(v, &ib);
+        sys_write(STDOUT_FD, &ib, il);
+        if (v == 0) { _cfg_out(" (no deadline)"); }
+        return 0;
+    }
     if (k == 1) {
         if (v == 1) { return _cfg_out("true"); }
         return _cfg_out("false");
