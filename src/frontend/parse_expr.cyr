@@ -1358,6 +1358,136 @@ fn _bx_compound(S, noff): i64 {
     if (_bx_dest(S, noff) == 0) { return 0; }
     return _bx_refuse(S, GTI(S), "compound assignment to bool ", noff, " is refused - its result is not a bool (write `b = b && c`, `b = !b`)", 0 - 1);
 }
+# ── fns (6.7.3): GFLG bit 4096 = declared `: bool`; bits 8192 << k = element k of a multi-value
+# return declared bool; `_pbool_get` = a bool parameter. All recorded in pass 1 for forward calls
+# and re-recorded by each definition in pass 2 (_bx_fn_reset first). ──
+fn _bx_is_bool_name(S, noff): i64 {
+    if (FINDSTRUCT(S, noff) > 0) { return 0; }
+    return _tn_bool(_tn_scalar(L64(S + 0xEC00000 + noff)));
+}
+fn _bx_fn_is_bool(S, fi): i64 {
+    if (fi < 0) { return 0; }
+    if ((GFLG(S, fi) & 4096) != 0) { return 1; }
+    return 0;
+}
+fn _bx_fname(S, fi): i64 { return L64(_fnt_names + fi * 8); }
+fn _bx_fn_reset(S, fi): i64 {
+    SFLG(S, fi, GFLG(S, fi) & (0 - 61441));   # bits 4096 .. 32768
+    _pbool_reset(fi);
+    return 0;
+}
+# A return type `: name` the classifier did not take (rc 0): bool sets bit 4096 and returns an i64
+# (-8); anything else is unchanged (pass 1) / refused by name (pass 2, _bx_ret_or_refuse).
+fn _bx_sig_ret(S, fi, rc, noff): i64 {
+    if (rc != 0) { return rc; }
+    if (_bx_is_bool_name(S, noff) == 0) { return 0; }
+    SFLG(S, fi, GFLG(S, fi) | 4096);
+    return 0 - 8;
+}
+fn _bx_ret_or_refuse(S, fi, noff): i64 {
+    var rc = _bx_sig_ret(S, fi, 0, noff);
+    if (rc != 0) { return rc; }
+    return _tn_ret_refuse(S);
+}
+# Element `n` of `: (T1, T2[, T3])`, whose name token is `ti`.
+fn _bx_mret_note(S, fi, n, ti): i64 {
+    if (n >= 3) { return 0; }
+    if (TOKTYP(S, ti) != 2) { return 0; }
+    if (_bx_is_bool_name(S, TOKVAL(S, ti)) == 0) { return 0; }
+    SFLG(S, fi, GFLG(S, fi) | (8192 << n));
+    return 0;
+}
+# Pass 1: the parameter at ordinal `pc` (cursor on its type name, not behind a `*`).
+fn _bx_pscan(S, fi, pc): i64 {
+    if (_bx_is_bool_name(S, PEEKV(S)) == 1) { _pbool_set(fi, pc, 1); }
+    return 0;
+}
+# Pass 2: is the parameter whose type name is `tnoff` a bool (not a `*bool`)?
+fn _bx_ptype(S, tnoff): i64 {
+    if (_ptrp_now(S) != 0) { return 0; }
+    return _bx_is_bool_name(S, tnoff);
+}
+fn _bx_param(S, fi, pc, li, b): i64 {
+    _pbool_set(fi, pc, b);
+    SLBOOL(S, li, b);
+    return 0;
+}
+# The name of parameter `ord` of fn `fi`, read from its definition's tokens (the `<..>` of a type
+# argument skipped), or -1.
+fn _bx_pname(S, fi, ord): i64 {
+    var i = _gen_def_open(S, fi);
+    if (i < 0) { return 0 - 1; }
+    i = i + 1;
+    var k = 0;
+    var d = 0;
+    var want = 1;
+    var n = GTCNT(S);
+    while (i < n) {
+        var t = TOKTYP(S, i);
+        if (d == 0) {
+            if (t == 11) { return 0 - 1; }
+            if (t == 31) { k = k + 1; want = 1; }
+            elif (want == 1) { if (t == 2) { if (k == ord) { return TOKVAL(S, i); } want = 0; } }
+        }
+        if (t == 10 || t == 19) { d = d + 1; }
+        if (t == 11 || t == 20) { d = d - 1; }
+        if (t == 39) { d = d - 2; }
+        if (d < 0) { d = 0; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+# An argument for parameter `ord` of fn `fi` (`noff` its name): PCMPE, then the check.
+fn _bx_pcmpe_arg(S, fi, ord, noff): i64 {
+    var t = GTI(S);
+    PCMPE(S);
+    if (_pbool_get(fi, ord) == 0) { return 0; }
+    if (_BX_IS(S) == 1) { return 0; }
+    var pn = _bx_pname(S, fi, ord);
+    if (pn < 0) { return _bx_refuse(S, t, "cannot pass a value that is not a bool to a bool parameter of ", noff, 0, 0 - 1); }
+    return _bx_refuse(S, t, "cannot pass a value that is not a bool to bool parameter ", pn, " of ", noff);
+}
+# `return e;` in the fn being parsed.
+fn _bx_pcmpe_ret(S): i64 {
+    var t = GTI(S);
+    PCMPE(S);
+    if (_bx_fn_is_bool(S, _cur_fn_ix) == 0) { return 0; }
+    if (_BX_IS(S) == 1) { return 0; }
+    return _bx_refuse(S, t, "cannot return a value that is not a bool from bool fn ", _bx_fname(S, _cur_fn_ix), 0, 0 - 1);
+}
+# `return (a, b[, c]);` — element `k`.
+fn _bx_pcmpe_mret(S, k): i64 {
+    var t = GTI(S);
+    PCMPE(S);
+    if (_cur_fn_ix < 0) { return 0; }
+    if ((GFLG(S, _cur_fn_ix) & (8192 << k)) == 0) { return 0; }
+    if (_BX_IS(S) == 1) { return 0; }
+    return _bx_refuse(S, t, "cannot return a value that is not a bool as a bool element of ", _bx_fname(S, _cur_fn_ix), 0, 0 - 1);
+}
+# A bare `return;` returns 0 — refused in a bool fn (the user's decision, 2026-10-07).
+fn _bx_bare_ret(S): i64 {
+    if (_bx_fn_is_bool(S, _cur_fn_ix) == 0) { return 0; }
+    return _bx_refuse(S, GTI(S) - 1, "a bare `return;` in bool fn ", _bx_fname(S, _cur_fn_ix), " returns 0 - write `return false;`", 0 - 1);
+}
+# `return h(..);` taken as a tail call in a bool fn: h must be a bool fn.
+fn _bx_tc_ret(S, tcfi, ti, tcnoff): i64 {
+    if (_bx_fn_is_bool(S, _cur_fn_ix) == 0) { return 0; }
+    if (_bx_fn_is_bool(S, tcfi) == 1) { return 0; }
+    return _bx_refuse(S, ti, "cannot return ", tcnoff, " (not a bool fn) from bool fn ", _bx_fname(S, _cur_fn_ix));
+}
+# Running off the end of a bool fn returns `false` (the user's decision, 2026-10-07): a `mov 0`
+# on the fall-through path only — every `return` jumps past it to the landing.
+fn _bx_falloff(S): i64 {
+    if (_bx_fn_is_bool(S, _cur_fn_ix) == 1) { EMOVI(S, 0); }
+    return 0;
+}
+# A capture read (`env[k]`): the snapshot carries the enclosing slot's whole depth word, bit 58 too.
+fn _cl_cap_load(S, esl): i64 {
+    ELOAD64(S);
+    if (_cl_snap == 0) { return 0; }
+    if (((L64(_cl_snap + _cl_snap_n * 8 + esl * 8) >> 58) & 1) == 1) { _BX_MARK(S); }
+    return 0;
+}
 # A parenthesised factor carries both result flags across its `)`: the float-builtin kind (low
 # bits) and the boolean stamp (16).
 fn _paren_pre(S): i64 {
@@ -2140,7 +2270,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
                         # address, the same convention an enclosing inline aggregate has in
                         # its own frame. A single-word capture is a value; load it.
                         if (L64(&_cl_cap_w + cl_capi * 8) > 1) { SPSC(S, 1); return 0; }
-                        ELOAD64(S);                                      # rax = captured value
+                        _cl_cap_load(S, cl_esl);                         # rax = captured value (6.7.3: + a bool's mark)
                         return 0;
                     }
                 }

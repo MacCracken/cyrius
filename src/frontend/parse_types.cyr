@@ -611,6 +611,7 @@ fn _call_ret_ps(S, fi): i64 {
     var ps = 0;
     if (fi >= 0) { if (_fn_rps != 0) { ps = L64(_fn_rps + fi * 8); } }
     SPSC(S, ps);
+    if (_bx_fn_is_bool(S, fi) == 1) { _BX_MARK(S); }   # 6.7.3: a bool fn's call is a boolean value
     return 0;
 }
 

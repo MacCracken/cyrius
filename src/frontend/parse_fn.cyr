@@ -826,7 +826,7 @@ fn PARSE_RETURN(S): i64 {
                                     # pushes it; one that takes an address in this frame sets
                                     # `_fn_local_addr`, read by `_tc_after_args_divert` below.
                                     if (_try_push_struct_addr_arg(S, _tc_prefi, tcargc, 1) == 0) {
-                                        PCMPE(S);
+                                        _bx_pcmpe_arg(S, _tc_prefi, tcargc, tcnoff);   # PCMPE + 6.7.3's bool check
                                         EPUSHR(S);
                                     }
                                     tcargc = tcargc + 1;
@@ -844,6 +844,7 @@ fn PARSE_RETURN(S): i64 {
                             var tcfi = FINDFN(S, tcnoff);
                             if (tcfi < 0) { tcfi = REGFN(S, tcnoff); }
                             _callee_site_checks(S, tcfi, tcnoff, _tc_wti);   # v6.6.4: tail calls warned nothing
+                            _bx_tc_ret(S, tcfi, _tc_wti - 2, tcnoff);        # 6.7.3: a bool fn tail-calls a bool fn
                             # v5.8.20: #pure enforcement on the tail-call path —
                             # `return helper(args);` bypasses PARSE_FNCALL but
                             # still needs the #io / #alloc check.
@@ -935,13 +936,13 @@ fn PARSE_RETURN(S): i64 {
                     ERR_MSG(S, "multi-value return needs 2 or 3 types", 37);
                 }
                 STI(S, GTI(S) + 1);  # consume (
-                PCMPE(S);
+                _bx_pcmpe_mret(S, 0);   # PCMPE + 6.7.3's bool element check, each element
                 EPUSHR(S);                                                          # push a
                 if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
-                PCMPE(S);
+                _bx_pcmpe_mret(S, 1);
                 EPUSHR(S);                                                          # push b
                 if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
-                PCMPE(S);                                                           # rax = c
+                _bx_pcmpe_mret(S, 2);                                               # rax = c
                 EMOVR3RAX(S);                                                       # ret3 = c
                 EPOPR(S);                                                           # rax = b
                 EMOVRDXRAX(S);                                                      # rdx = b
@@ -955,10 +956,10 @@ fn PARSE_RETURN(S): i64 {
         if (mr_is_tuple == 1) {
             # Multi-return: return (a, b) → same codegen as ret2(a, b)
             STI(S, GTI(S) + 1);  # consume (
-            PCMPE(S);
+            _bx_pcmpe_mret(S, 0);   # PCMPE + 6.7.3's bool element check
             EPUSHR(S);
             if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);  # consume ,
-            PCMPE(S);
+            _bx_pcmpe_mret(S, 1);
             # rax = b, stack = a → mov rdx, rax; pop rax
             EMOVRDXRAX(S);
             EPOPR(S);
@@ -1337,13 +1338,14 @@ fn PARSE_RETURN(S): i64 {
     # position — in a `: f64` fn too, since 6.6.20 boxes rax into xmm0
     # once at the landing for every arm, `_ret_box_f64`).
     if (PEEKT(S) == 5) {
+        _bx_bare_ret(S);   # 6.7.3: refused in a bool fn
         EMOVI(S, 0);
         STI(S, GTI(S) + 1);                             # consume ';'
         var br_rp = EJMP0(S);
         vec_push(rp_vec, br_rp);
         return 0;
     }
-    PCMPE(S);
+    _bx_pcmpe_ret(S);   # PCMPE, then (6.7.3) a bool fn's value is checked
     # v6.4.55: scalar f64 return (sentinel -9) — the rax→xmm0 move SysV/Win64 want is emitted
     # once at the return landing since 6.6.20 (`_ret_box_f64`), so it covers every arm.
     if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
@@ -2368,7 +2370,7 @@ fn _call_arg_one(S, fi, uarg, noff, tbl, st): i64 {
     _check_int_lit_cstring_arg(S, fi, uarg, noff);
     _check_str_cstring_arg(S, fi, uarg, noff);   # 6.6.13 I11
     if (_try_push_str_literal_arg(S, fi, uarg) == 0) {
-        if (_try_push_struct_addr_arg(S, fi, uarg, 0) == 0) { PCMPE(S); EPUSHR(S); }
+        if (_try_push_struct_addr_arg(S, fi, uarg, 0) == 0) { _bx_pcmpe_arg(S, fi, uarg, noff); EPUSHR(S); }
     }
     store64(st, load64(st) + 1);
     return 0;
@@ -3806,7 +3808,7 @@ fn PARSE_FNCALL(S, noff): i64 {
                             if (iargc == 0) { if (_t0 < 0) { _inl_simd_arg(S, p0_slot, _w0, _t0); _sd = 1; } }
                             if (iargc == 1) { if (_t1 < 0) { _inl_simd_arg(S, p1_slot, _w1, _t1); _sd = 1; } }
                             if (_sd == 0) {
-                                PCMPE(S);
+                                _bx_pcmpe_arg(S, fi, iargc, noff);   # PCMPE + 6.7.3's bool check
                                 if (iargc == 0) { _inl_store_arg(S, p0_slot, _w0); }
                                 if (iargc == 1) { _inl_store_arg(S, p1_slot, _w1); }
                             }
@@ -4009,7 +4011,7 @@ fn PARSE_FNCALL(S, noff): i64 {
                 else { argo = 0; }
                 continue;
             }
-            PCMPE(S);
+            _bx_pcmpe_arg(S, fi, argc, noff);   # PCMPE + 6.7.3's bool check
             EPUSHR(S);
             argc = argc + 1;
             _fc_int_argc = _fc_int_argc + 1;
@@ -8580,6 +8582,7 @@ fn _parse_multiret_sig(S, fi, quiet): i64 {
     var go = 1;
     while (go == 1) {
         if (PEEKT(S) != 2) { if (PEEKT(S) != 8) { ERR_EXPECT(S, 2); return n; } }
+        _bx_mret_note(S, fi, n, GTI(S));   # 6.7.3: a bool element
         var t = _mret_elem(S, fi, quiet);
         if (n < 3) { SFRT(S, fi, n, t); }
         n = n + 1;
@@ -8737,6 +8740,12 @@ fn _param_wants_struct_ptr(S, tnoff, isptr): i64 {
 }
 # 1 = the parameter being parsed was declared `name: *T` (`_mark_ptr_param` marked the slot it
 # takes next; `_param_record` clears the mark).
+# The rough return-type scan (PARSE_FN_DEF, before the parameters): a `: T` type parameter and
+# (6.7.3) `: bool` are i64-shaped scalars, never the retptr default that shifts every parameter.
+fn _rs_scalar_name(S, fi, noff): i64 {
+    if (_is_tparam_of(S, fi, noff) == 1) { return 1; }
+    return _bx_is_bool_name(S, noff);
+}
 fn _ptrp_now(S): i64 {
     if (_cur_fn_ptrp == GFLC(S) + 1) { return 1; }
     return 0;
@@ -8906,6 +8915,7 @@ fn _prescan_params(S, fi): i64 {
 fn _prescan_params_scan(S, fi): i64 {
     if (PEEKT(S) != 10) { return 0; }   # no '(' — malformed; pass-2 will ERR
     STI(S, GTI(S) + 1);                 # consume '('
+    _bx_fn_reset(S, fi);                # 6.7.3: this definition's bool facts are recorded afresh
     var pc = 0;
     var str_mask = 0;
     var cstring_mask = 0;
@@ -8954,6 +8964,7 @@ fn _prescan_params_scan(S, fi): i64 {
                         var _pb = FINDSTRUCT(S, PEEKV(S));
                         if (_pb > 0) { _pb = _psid_scan(S, fi, pc, _pb, struct_mask, _pptr); struct_mask = _psid_mask; }
                         bvcp = _bvcp_note(S, bvcp, struct_mask, pc, _pb);
+                        if (_pptr == 0) { _bx_pscan(S, fi, pc); }   # 6.7.3: a bool parameter
                         STI(S, GTI(S) + 1);                  # consume type name
                         SKIP_GENERICS(S);                    # `: Vec<i64>` etc.
                     }
@@ -9074,6 +9085,7 @@ fn _prescan_fn_sig(S): i64 {
             else {
                 if (PEEKT(S) == 2) {
                     var rtc = _classify_return_type(S, PEEKV(S));
+                    rtc = _bx_sig_ret(S, fi, rtc, PEEKV(S));        # 6.7.3: `: bool` is an i64, bit 4096
                     if (rtc > 0) { rtc = _gtype_sid(S, fi, rtc); }   # 6.6.10: `: Box<Pt>`
                     if (rtc != 0) { SFRS(S, fi, rtc); }
                 }
@@ -10637,6 +10649,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     # annotation after `)` sets it later if present; otherwise this fn
     # returns a scalar value in rax as usual.
     SFRS(S, fi, 0);
+    _bx_fn_reset(S, fi);   # 6.7.3: bit 4096 / the multi-return bits / the bool parameter row
     # v5.5.36 Phase 3 — clear fn's variadic flag. Set to 1 in the
     # param loop below if the user writes `fn f(a, ...)`.
     SFVA(S, fi, 0);
@@ -11085,7 +11098,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                     # so the rough-scan does NOT default to the retptr/stash ABI, which
                     # would reserve arg-reg 0 for a hidden retptr and shift user params
                     # by one (the `id<T>(x:T):T` → x lands in rsi, reads 0 bug).
-                    if (_rs_is_scalar == 0) { if (_is_tparam_of(S, fi, _rs_rt_noff) == 1) { _rs_is_scalar = 1; } }
+                    if (_rs_is_scalar == 0) { if (_rs_scalar_name(S, fi, _rs_rt_noff) == 1) { _rs_is_scalar = 1; } }
                     if (_rs_is_scalar == 0) {
                         _cur_fn_ret_stash = 8;
                     }
@@ -11275,6 +11288,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
             # v6.4.57 (Gap A) — scalar f64/f32 param tag (declared per-param here,
             # set from the type-name byte-match below, applied at the SLTYPE site).
             var pt_float = 0;
+            var pt_bool = 0;   # 6.7.3 (B2): `b: bool` — an argument for it is checked
             # v5.10.38 — hoist pt_simd_class out of the nested type-
             # annotation block so the SIMD vs int-class path branch
             # below can see it. 0 = int-class (default), 1 = f64v2,
@@ -11311,6 +11325,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                         var _pfn = L64(S + 0xEC00000 + tnoff) & 0xFFFFFFFF;
                         if (_pfn == 0x00343666) { pt_float = F64_TYID; }
                         elif (_pfn == 0x00323366) { pt_float = F32_TYID; }
+                        pt_bool = _bx_ptype(S, tnoff);
                     }
                     if (_ptc == 1) { str_mask = _pmw(str_mask, pc, 2); }   # 6.6.17 (a10): _pmw, see there
                     elif (_ptc == 2) { cstring_mask = _pmw(cstring_mask, pc, 4); }
@@ -11470,6 +11485,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                 # by value on an `async fn`. Over 8 B such a parameter is COPIED in the prologue
                 # (`_sptr_params_localize`, after `_stkp_flush` below).
                 _param_record(S, li, pnoff, _is_async);
+                _bx_param(S, fi, pc, li, pt_bool);   # 6.7.3: last — after _param_record's bit 56
                 # Only emit register params now (0-5). v5.5.36 Phase 2b:
                 # x86 struct-returning fns reserve arg-reg 0 (RDI on SysV,
                 # RCX on Win64) for the hidden retptr, so user param 0
@@ -11649,7 +11665,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                 # is all the pre-pass needs. A real build is untouched — _syntax_only is 0.
                 # 6.6.16 (C8): _tn_ret_refuse names the type, once, with no cascade (and skips
                 # a `<..>` after it); under --syntax-only it refuses nothing and answers -8.
-                else { _rtc = _tn_ret_refuse(S); }
+                else { _rtc = _bx_ret_or_refuse(S, fi, rt_noff); }   # 6.7.3: `: bool` is an i64, bit 4096
             }
             if (_rtc > 0) { _rtc = _gtype_sid(S, fi, _rtc); }   # 6.6.10: `: Box<Pt>`
             SFRS(S, fi, _rtc);
@@ -11923,6 +11939,8 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     # Defer flag init (zeroing trampoline), return landing, LIFO defer walk — the shared
     # epilogue authority (parse.cyr `_defer_emit_init` / `_rp_patch_here` / `_defer_emit_walk`),
     # over THIS fn's ranges [_defer_base, count) and [_rp_base, len). CHANGELOG [6.6.7]
+    _bx_falloff(S);   # 6.7.3: off the end of a bool fn is `false` (before the defer trampoline: with
+                      # defers the fall-through jmps round it to the landing; returns land past it)
     _defer_emit_init(S, defer_init_jmp, body_cp);
     _rp_patch_here(S);
     _ret_box_f64(S, _cur_fn_ret_scalar);   # 6.6.20: every return arm, and falling off the end

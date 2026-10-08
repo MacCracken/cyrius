@@ -1022,6 +1022,52 @@ fn SFIC(S, fi, c0, c1): i64 {
     S64(_fnt_instconc + fi * 16 + 8, c1);
     return 0;
 }
+# 6.7.3 (B2) — per fn, a row [capacity][one byte per parameter ordinal]: 1 = the parameter is
+# declared `: bool`, so an argument for it is checked. Allocated on the first such parameter and
+# grown on demand (no ordinal cap); the table is lazy at the max fn cap like _fnt_pmhi, so the brk
+# layout does not move. Pass 1 (_prescan_params_scan) records it for forward calls; pass 2
+# re-records each definition.
+var _fnt_pbool = 0;
+fn _pbool_get(fi, ord): i64 {
+    if (_fnt_pbool == 0) { return 0; }
+    if (fi < 0) { return 0; }
+    var row = L64(_fnt_pbool + fi * 8);
+    if (row == 0) { return 0; }
+    if (ord >= load64(row)) { return 0; }
+    return load8(row + 8 + ord);
+}
+fn _pbool_set(fi, ord, b): i64 {
+    if (fi < 0) { return 0; }
+    if (_fnt_pbool == 0) { if (b == 0) { return 0; } _fnt_pbool = alloc(131072 * 8); }
+    var row = L64(_fnt_pbool + fi * 8);
+    var cap = 0;
+    if (row != 0) { cap = load64(row); }
+    if (ord >= cap) {
+        if (b == 0) { return 0; }
+        var ncap = 16;
+        while (ncap <= ord) { ncap = ncap * 2; }
+        var nr = alloc(8 + ncap);
+        var i = 0;
+        while (i < ncap) { store8(nr + 8 + i, 0); i = i + 1; }
+        i = 0;
+        while (i < cap) { store8(nr + 8 + i, load8(row + 8 + i)); i = i + 1; }
+        store64(nr, ncap);
+        S64(_fnt_pbool + fi * 8, nr);
+        row = nr;
+    }
+    store8(row + 8 + ord, b);
+    return 0;
+}
+fn _pbool_reset(fi): i64 {
+    if (_fnt_pbool == 0) { return 0; }
+    if (fi < 0) { return 0; }
+    var row = L64(_fnt_pbool + fi * 8);
+    if (row == 0) { return 0; }
+    var n = load64(row);
+    var i = 0;
+    while (i < n) { store8(row + 8 + i, 0); i = i + 1; }
+    return 0;
+}
 # 6.6.17 (a10) — the per-fn OVERFLOW ROW of parameter kinds for ordinals past the per-fn masks
 # (parse_fn.cyr `_pmw`): per fn 0, or a row [capacity][one kind byte per ordinal], allocated on the
 # first such parameter and grown on demand, so no parameter count is refused. The table is
