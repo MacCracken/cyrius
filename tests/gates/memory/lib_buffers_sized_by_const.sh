@@ -95,7 +95,7 @@ for row in "lib/tls_native.cyr:TLS_RECORD_MAX_PLAINTEXT" "lib/tls_native.cyr:TLS
            "lib/tls_native_hs13.cyr:TLS_RANDOM_LEN" "lib/async_macos.cyr:KEV_SIZE" \
            "lib/thread_local.cyr:TLS_REG_MAX" "lib/syscalls_x86_64_agnos.cyr:SPAWN_ARGV_MAX"; do
     f=${row%%:*}; v=${row#*:}
-    if grep -qE "^const _$v *= *[0-9]+;" "$f" && grep -qE "^var $v *= *_$v;" "$f"; then _ok "$f: $v = _$v"
+    if grep -qE "^const _$v *= *[^;]+;" "$f" && grep -qE "^var $v *= *_$v;" "$f"; then _ok "$f: $v = _$v"
     else _fail "$f: expected 'const _$v = N;' and 'var $v = _$v;' — a literal in the var is a second copy of the bound its buffers are sized by"; fi
 done
 need lib/thread_local.cyr 2 '^var _tls_(key|blk)\[_TLS_REG_MAX\];' "the arm64-macOS thread registry"

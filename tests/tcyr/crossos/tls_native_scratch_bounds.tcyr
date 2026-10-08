@@ -9,6 +9,12 @@
 # TLS_ERR_RECORD_OVERFLOW (RFC 8446 §5.2), a negative length TLS_ERR_INVALID_PARAM, and neither
 # writes `out` or moves the sequence number.
 #
+# ⛔ THE HKDF-EXPAND-LABEL SCRATCH. tls_native_hkdf_expand_label (lib/tls_native_keysched.cyr)
+# built the HkdfLabel in a 512-byte stack scratch while its checks admit a 514-byte label
+# (a 249-byte label + "tls13 " and a 255-byte context): the context's last two bytes went past
+# the scratch — on x86 into the spilled `out_len`, so HKDF then wrote 258 bytes into a 32-byte
+# `out`. The scratch is now sized by the format's maximum, 2 + (1 + 255) + (1 + 255).
+#
 # Pure functions — no socket, no peer — so it runs on every cross-OS host, where the frame
 # layout (and so where an overrun lands) differs per target.
 include "lib/syscalls.cyr"
@@ -84,6 +90,52 @@ fn test_seal_at_the_bound(): i64 {
     return 0;
 }
 
+# Expand-Label at the format's extremes against a reference HkdfLabel built on the heap and fed
+# to HKDF-Expand directly; `out` is followed by a canary that must survive.
+fn _sb_label(hash_algo, hlen, ll, cl): i64 {
+    var sec = alloc(48);
+    var i = 0;
+    while (i < 48) { store8(sec + i, i + 1); i = i + 1; }
+    var label = alloc(256);
+    i = 0;
+    while (i < 256) { store8(label + i, 97 + (i % 26)); i = i + 1; }
+    var cx = alloc(256);
+    i = 0;
+    while (i < 256) { store8(cx + i, 255 - i); i = i + 1; }
+    var out = alloc(hlen + 64);
+    memset(out + hlen, 0x5A, 64);
+    var rc = tls_native_hkdf_expand_label(sec, hlen, label, ll, cx, cl, hash_algo, out, hlen);
+    if (rc != TLS_OK) { return rc; }
+    var info = alloc(600);
+    store8(info, 0);
+    store8(info + 1, hlen);
+    store8(info + 2, ll + 6);
+    memcpy(info + 3, "tls13 ", 6);
+    memcpy(info + 9, label, ll);
+    store8(info + 9 + ll, cl);
+    memcpy(info + 10 + ll, cx, cl);
+    var ref = alloc(hlen);
+    if (hash_algo == TLS_HASH_SHA256) { hkdf_expand(sec, hlen, info, 10 + ll + cl, ref, hlen); }
+    else { hkdf_expand_sha384(sec, hlen, info, 10 + ll + cl, ref, hlen); }
+    i = 0;
+    while (i < hlen) { if (load8(out + i) != load8(ref + i)) { return 1; } i = i + 1; }
+    i = 0;
+    while (i < 64) { if (load8(out + hlen + i) != 0x5A) { return 2; } i = i + 1; }
+    return 0;
+}
+
+fn test_expand_label_bound(): i64 {
+    test_group("tls_native_hkdf_expand_label: the largest HkdfLabel fits its scratch");
+    assert_eq(_TLS_HKDF_LABEL_BUF_LEN, 514, "the scratch holds 2 + (1 + 255) + (1 + 255) bytes");
+    assert_eq(_sb_label(TLS_HASH_SHA256, 32, 249, 255), 0, "SHA-256, label 249 + context 255: the reference output, the canary after `out` intact (it overran `out`)");
+    assert_eq(_sb_label(TLS_HASH_SHA384, 48, 249, 255), 0, "SHA-384, label 249 + context 255: the reference output, the canary intact");
+    assert_eq(_sb_label(TLS_HASH_SHA256, 32, 248, 254), 0, "SHA-256, label 248 + context 254: the reference output");
+    assert_eq(_sb_label(TLS_HASH_SHA256, 32, 12, 32), 0, "SHA-256, a handshake-sized label and context: the reference output");
+    assert_eq(_sb_label(TLS_HASH_SHA256, 32, 250, 0), TLS_ERR_INVALID_PARAM, "a 250-byte label (256 with the prefix): refused");
+    assert_eq(_sb_label(TLS_HASH_SHA256, 32, 1, 256), TLS_ERR_INVALID_PARAM, "a 256-byte context: refused");
+    return 0;
+}
+
 alloc_init();
 _sb_key = alloc(32);
 memset(_sb_key, 7, 32);
@@ -91,4 +143,5 @@ _sb_iv = alloc(12);
 memset(_sb_iv, 3, 12);
 test_seal_bound();
 test_seal_at_the_bound();
+test_expand_label_bound();
 var r = assert_summary();
