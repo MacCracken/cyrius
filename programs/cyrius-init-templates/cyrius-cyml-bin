@@ -8,8 +8,11 @@ cyrius = "{CYRIUS_VER}"
 
 [build]
 entry = "src/main.cyr"
-test = "src/test.cyr"
 output = "build/{PROJ}"
 
 [deps]
-stdlib = ["string", "fmt", "alloc", "io", "vec", "str", "syscalls", "assert", "bench"]
+stdlib = ["string", "fmt", "alloc", "io", "vec", "str", "syscalls"]
+
+[test]
+files = ["src/test.cyr"]
+stdlib = ["assert", "bench"]

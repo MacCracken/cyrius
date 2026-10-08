@@ -23,7 +23,8 @@
 #      environment, argument) — in both directions.
 #   5. self-test: a census row the vocabulary lacks IS reported (the detector is not blind).
 #   6. the STATUS COLUMN IS TRUE AT RUNTIME, for every key of the sections `cyrius build
-#      --print-config` resolves ([package], [build], [coverage], [sections], [embed]): a manifest
+#      --print-config` resolves ([package], [build], [coverage], [sections], [embed], and since
+#      6.7.6 [test]): a manifest
 #      declaring a `read` key (or one of its synonyms) shows it with origin `manifest: [s] key` and
 #      warns nothing; a `held` / `dropped` key is warned BY NAME and resolves nothing; an `info`
 #      key does neither. (6.6.17 review: `[build] src` — a declared synonym that WAS read — warned
@@ -115,27 +116,32 @@ mkdir -p "$W/rt"
 # version (the toolchain pin), else true
 probe() {
     printf '[%s]\n%s = "x"\n' "$1" "$2" > "$W/rt/cyrius.cyml"
-    ( cd "$W/rt" && env -u CYRIUS_DCE -u CYRIUS_DEFINES CYRIUS_RESOLVED=1 "$W/cyrius" build --print-config ) > "$W/rt.out" 2>&1 || true
+    ( cd "$W/rt" && env -u CYRIUS_DCE -u CYRIUS_DEFINES -u CYRIUS_TEST_TIMEOUT CYRIUS_RESOLVED=1 "$W/cyrius" build --print-config ) > "$W/rt.out" 2>&1 || true
     # 6.6.20: `[package] cyrius` is a path component, so "x" is refused by name — probe a version
     if grep -q 'is not a version' "$W/rt.out"; then
         printf '[%s]\n%s = "0.0.1"\n' "$1" "$2" > "$W/rt/cyrius.cyml"
-        ( cd "$W/rt" && env -u CYRIUS_DCE -u CYRIUS_DEFINES CYRIUS_RESOLVED=1 "$W/cyrius" build --print-config ) > "$W/rt.out" 2>&1 || true
+        ( cd "$W/rt" && env -u CYRIUS_DCE -u CYRIUS_DEFINES -u CYRIUS_TEST_TIMEOUT CYRIUS_RESOLVED=1 "$W/cyrius" build --print-config ) > "$W/rt.out" 2>&1 || true
+    fi
+    # 6.7.6: `[test] timeout` is a whole number of seconds
+    if grep -q 'must be a whole number' "$W/rt.out"; then
+        printf '[%s]\n%s = 5\n' "$1" "$2" > "$W/rt/cyrius.cyml"
+        ( cd "$W/rt" && env -u CYRIUS_DCE -u CYRIUS_DEFINES -u CYRIUS_TEST_TIMEOUT CYRIUS_RESOLVED=1 "$W/cyrius" build --print-config ) > "$W/rt.out" 2>&1 || true
     fi
     if grep -q 'must be true or false' "$W/rt.out"; then
         printf '[%s]\n%s = true\n' "$1" "$2" > "$W/rt/cyrius.cyml"
-        ( cd "$W/rt" && env -u CYRIUS_DCE -u CYRIUS_DEFINES CYRIUS_RESOLVED=1 "$W/cyrius" build --print-config ) > "$W/rt.out" 2>&1 || true
+        ( cd "$W/rt" && env -u CYRIUS_DCE -u CYRIUS_DEFINES -u CYRIUS_TEST_TIMEOUT CYRIUS_RESOLVED=1 "$W/cyrius" build --print-config ) > "$W/rt.out" 2>&1 || true
     fi
 }
 x=$FAIL; nrt=0
 while read -r sec key st syn _env _arg; do
-    case "$sec" in package|build|coverage|sections|embed) ;; *) continue ;; esac
-    if [ "$sec" = embed ]; then
+    case "$sec" in package|build|coverage|sections|embed|test|test.embed) ;; *) continue ;; esac
+    if [ "$sec" = embed ] || [ "$sec" = test.embed ]; then
         printf 'probe\n' > "$W/rt/probe.txt"
-        printf '[embed]\nPROBE = "probe.txt"\n' > "$W/rt/cyrius.cyml"
-        ( cd "$W/rt" && env -u CYRIUS_DCE -u CYRIUS_DEFINES CYRIUS_RESOLVED=1 "$W/cyrius" build --print-config ) > "$W/rt.out" 2>&1 || true
+        printf '[%s]\nPROBE = "probe.txt"\n' "$sec" > "$W/rt/cyrius.cyml"
+        ( cd "$W/rt" && env -u CYRIUS_DCE -u CYRIUS_DEFINES -u CYRIUS_TEST_TIMEOUT CYRIUS_RESOLVED=1 "$W/cyrius" build --print-config ) > "$W/rt.out" 2>&1 || true
         nrt=$((nrt + 1))
-        grep -qF 'embed = ["PROBE=probe.txt"]  (manifest: [embed])' "$W/rt.out" && ! grep -qE '^(warn|error):' "$W/rt.out" \
-            || fail "axis 6: [embed] * is listed READ, but --print-config does not show PROBE=probe.txt from [embed] silently: $(grep -E 'embed|warn:|error:' "$W/rt.out" | head -2)"
+        grep -qF "$sec = [\"PROBE=probe.txt\"]  (manifest: [$sec])" "$W/rt.out" && ! grep -qE '^(warn|error):' "$W/rt.out" \
+            || fail "axis 6: [$sec] * is listed READ, but --print-config does not show PROBE=probe.txt from [$sec] silently: $(grep -E 'embed|warn:|error:' "$W/rt.out" | head -2)"
         continue
     fi
     names=$key; [ "$st" = read ] && [ "$syn" != "-" ] && names="$key $(printf '%s' "$syn" | tr ',' ' ')"
@@ -152,7 +158,7 @@ while read -r sec key st syn _env _arg; do
     done
 done < "$W/vocab"
 [ "$nrt" -ge 18 ] || fail "axis 6: only $nrt keys probed at runtime (floor 18) — the vocabulary read nothing"
-[ "$FAIL" = "$x" ] && echo "  ok axis 6: all $nrt [package]/[build]/[coverage]/[sections]/[embed] keys and synonyms behave as their status says (read resolves silently, held/dropped warn and resolve nothing, info does neither)"
+[ "$FAIL" = "$x" ] && echo "  ok axis 6: all $nrt [package]/[build]/[coverage]/[sections]/[embed]/[test] keys and synonyms behave as their status says (read resolves silently, held/dropped warn and resolve nothing, info does neither)"
 
 [ "$FAIL" = 0 ] || exit 1
 echo "PASS: manifest_key_inventory (vocabulary vs census vs templates vs guide vs runtime)"

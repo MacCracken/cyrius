@@ -698,7 +698,12 @@ fn _materialize_source(source): i64 {
     }
     if (_defines != 0) { if (vec_len(_defines) > 0) { need_tmp = 1; } }
     if (_build_modules != 0) { if (vec_len(_build_modules) > 0) { need_tmp = 1; } }
-    if (_embeds != 0) { if (vec_len(_embeds) > 0) { need_tmp = 1; } }
+    # 6.7.6 (part T): in the test scope, [embed] + [test.embed] when the unit has test embeds
+    var emv = _embeds;
+    if (_test_scope == 1 && _tc_cur_embeds != 0) { emv = _tc_cur_embeds; }
+    if (emv != 0) { if (vec_len(emv) > 0) { need_tmp = 1; } }
+    if (_test_scope == 1 && _tc_cur_mods != 0) { if (vec_len(_tc_cur_mods) > 0) { need_tmp = 1; } }
+    if (_test_scope == 1 && _skip_deps == 0 && _tc_cur_incs != 0) { if (vec_len(_tc_cur_incs) > 0) { need_tmp = 1; } }
     if (need_tmp == 1) {
         # Atomic temp file: O_EXCL rejects if path already exists (TOCTOU safe)
         var pid = sys_getpid();
@@ -744,10 +749,10 @@ fn _materialize_source(source): i64 {
             # nothing, and a NAME that collides with a stdlib or user fn then has its LATER
             # definition in a real file, which the duplicate diagnostic attributes correctly
             # (prelude lines are blamed on `<source>`). Before `#@srcline`, so line-neutral.
-            if (_embeds != 0) {
-                if (vec_len(_embeds) > 0) {
+            if (emv != 0) {
+                if (vec_len(emv) > 0) {
                     var emn = 0;
-                    var emb = _embed_render(_embeds, &emn);
+                    var emb = _embed_render(emv, &emn);
                     _mat_write(tfd, emb, emn);
                 }
             }
@@ -762,6 +767,17 @@ fn _materialize_source(source): i64 {
                         _mat_write(tfd, "\"\n", 2);
                         ii = ii + 1;
                     }
+                }
+            }
+            # 6.7.6 (part T): the test scope's leaves (`[test] stdlib`), after the [deps] prepend
+            # they may build on; skipped with it (--no-deps, `[build] test_standalone`).
+            if (_test_scope == 1 && _skip_deps == 0 && _tc_cur_incs != 0) {
+                var tii = 0;
+                while (tii < vec_len(_tc_cur_incs)) {
+                    _mat_write(tfd, "include \"", 9);
+                    _mat_write_cstr(tfd, vec_get(_tc_cur_incs, tii));
+                    _mat_write(tfd, "\"\n", 2);
+                    tii = tii + 1;
                 }
             }
             # Prepend defines
@@ -794,6 +810,23 @@ fn _materialize_source(source): i64 {
                         _mat_err = _MAT_ERR_NAMED;
                     }
                     mi = mi + 1;
+                }
+            }
+            # 6.7.6 (part T): `[test] modules` — test / bench / fuzz compiles only, after [build]'s
+            if (_test_scope == 1 && _tc_cur_mods != 0) {
+                var ti = 0;
+                while (ti < vec_len(_tc_cur_mods)) {
+                    var tpath = vec_get(_tc_cur_mods, ti);
+                    var tmfd = sys_open(tpath, O_RDONLY, 0);
+                    if (tmfd >= 0) {
+                        _mat_copy_fd(tfd, tmfd);
+                        sys_close(tmfd);
+                        _mat_write(tfd, "\n", 1);
+                    } else {
+                        _err_ctx("test module cannot be read (declared in [test] modules)", tpath);
+                        _mat_err = _MAT_ERR_NAMED;
+                    }
+                    ti = ti + 1;
                 }
             }
             # v6.5.24 — `#@srcline` marks where the ENTRY FILE's own line 1 begins, so
@@ -1852,8 +1885,13 @@ var _RUN_TIMEOUT_KILLED = 0 - 2;
 # is a batch run: its test's leftovers are ended all the same. Every caller passes the value
 # straight to `run_binary_timed` or `proc_set_timeout_ms`, which treat any value <= 0 as "no
 # deadline". CHANGELOG [6.6.10]
+# 6.7.6 (part T): in the test scope (test / bench / fuzz) the precedence is every key's —
+# `--timeout N` > CYRIUS_TEST_TIMEOUT > `[test] timeout` > 300 s.
 fn _run_timeout_ms(): i64 {
-    var v = _cbt_env_int("CYRIUS_TEST_TIMEOUT", 0 - 1);
+    var v = 0 - 1;
+    if (_test_scope == 1) { v = _tc_arg_timeout; }
+    if (v < 0) { v = _cbt_env_int("CYRIUS_TEST_TIMEOUT", 0 - 1); }
+    if (v < 0 && _test_scope == 1) { v = _tc_cur_timeout; }
     if (v == 0) { return 0 - 1; }
     if (v > 0) { return v * 1000; }
     return 300000;
@@ -1893,6 +1931,9 @@ fn run_binary_timed(path, timeout_ms, args): i64 {
     return _win_run_timed(path, timeout_ms, args);
     #endif
     #ifndef CYRIUS_TARGET_WIN
+    # 6.7.6 (part T): a test-scope unit gets CYRIUS_TEST_FILE / CYRIUS_TEST_DIR (`_tc_run_env`)
+    var renv = _envp;
+    if (_test_scope == 1 && _tc_run_inj != 0) { renv = _cc_child_envp(_tc_run_inj, 0); }
     # Bug 2 (v6.0.66): cmd_test/run/bench/fuzz/doctest compile to /tmp and run via
     # run_binary without signing — only cmd_build signed (6.0.38). On arm64 macOS an
     # unsigned binary is AMFI-SIGKILL'd (128+9=137). Sign here so EVERY run path works.
@@ -1941,7 +1982,7 @@ fn run_binary_timed(path, timeout_ms, args): i64 {
                 sys_close(qfd);
             }
             var qav = _run_argv(path, args, "/usr/bin/qemu-aarch64");
-            sys_execve("/usr/bin/qemu-aarch64", qav, _envp);
+            sys_execve("/usr/bin/qemu-aarch64", qav, renv);
             sys_exit(127);
         }
         #endif
@@ -1953,7 +1994,7 @@ fn run_binary_timed(path, timeout_ms, args): i64 {
             sys_close(cfd);
         }
         var nav = _run_argv(path, args, 0);
-        sys_execve(path, nav, _envp);
+        sys_execve(path, nav, renv);
         sys_exit(127);
     }
     # A failed fork has no child to wait for — and `pid` is then -errno, which the waits and
@@ -2438,6 +2479,12 @@ fn _win_cmdline_cap(path, cap): i64 {
 # outlives it" (see run_binary_timed). It used TerminateProcess on the child alone.
 # `cyrius run` (0) keeps `_win_wait_close`: the program owns what it starts.
 fn _win_run_timed(path, timeout_ms, args): i64 {
+    # 6.7.6 (part T): the child inherits this process's environment (no envp to hand
+    # CreateProcessW here), so a test-scope unit's CYRIUS_TEST_FILE / CYRIUS_TEST_DIR are set on it
+    if (_test_scope == 1 && _tc_run_file != 0) {
+        _win_setenv("CYRIUS_TEST_FILE", _tc_run_file);
+        _win_setenv("CYRIUS_TEST_DIR", _tc_run_dir);
+    }
     var wbuf = 0;
     if (_run_stdout_to != 0) { wbuf = _win_cmdline_cap(path, _run_stdout_to); }
     else { wbuf = _win_cmdline(path, args); }

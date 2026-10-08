@@ -410,6 +410,15 @@ fn cmd_test(source): i64 {
         _fail = _fail + 1;
         return 1;
     }
+    # 6.7.6 (part T): this unit's test-scope configuration — [test] defines / modules / timeout
+    if (_tc_for(source) != 0) {
+        sys_write(STDERR_FD, "  FAIL: ", 8);
+        sys_write(STDERR_FD, source, strlen(source));
+        var tcm = " (not compiled; its test configuration was refused, above)\n";
+        sys_write(STDERR_FD, tcm, strlen(tcm));
+        _fail = _fail + 1;
+        return 1;
+    }
     var tsa_skip = _skip_deps;
     if (tsa == 1) { _skip_deps = 1; }
     var tmpbin = _cbt_tmpexe("test_bin");
@@ -487,7 +496,8 @@ fn cmd_test(source): i64 {
         # strlen, not a hand-counted literal: the first cut of this line counted 61
         # for a 63-byte string (the em-dash is 3 bytes) and truncated its own hint
         # mid-word. There is no reason to count bytes by hand when strlen is in scope.
-        var tmsg = "s — killed; set CYRIUS_TEST_TIMEOUT=<seconds>, 0 to disable)\n";
+        # 6.7.6: the three channels, highest first (argument > environment > manifest)
+        var tmsg = "s — killed; --timeout <seconds>, CYRIUS_TEST_TIMEOUT or [test] timeout raise it, 0 disables)\n";
         sys_write(STDERR_FD, tmsg, strlen(tmsg));
     } else {
         # ⛔ v6.5.37 — NAME THE FAILING TEST, AND SAY IF IT DIED OF A SIGNAL.
@@ -593,7 +603,8 @@ fn _tests_first_run(p): i64 {
     return 1;
 }
 
-# 6.6.17 (P1): run what `[build] test` declares — a file as-is whatever its extension (the init
+# 6.6.17 (P1): run what `[build] test` declares — 6.7.6: `[test] files`, of which `[build] test` is
+# the older spelling (_cfg_test_files) — a file as-is whatever its extension (the init
 # template's is src/test.cyr), a directory's .tcyr files recursively. 41 manifests declared the key
 # and nothing read it (kashi's 393 assertions never ran in CI). A target that does not exist is a
 # FAILED run, by name — a typo must not read as "nothing to test".
@@ -608,7 +619,8 @@ fn _tests_run_declared(targets): i64 {
             _tests_found = 1;
             if (_tests_first_run(t) == 1) { cmd_test(t); }
         } else {
-            _err_ctx("cyrius.cyml [build] test names a path that does not exist", t);
+            # 6.7.6: names the key it was read under — `[test] files` or the older `[build] test`
+            _err_ctx(_cat2(_cat2("cyrius.cyml ", _tc_files_where), " names a path that does not exist"), t);
             _fail = _fail + 1;
         }
     }
@@ -785,6 +797,14 @@ fn cmd_tests(dir): i64 {
 # through exactly the same path as a discovered one.
 fn _fuzz_run_one(path, passcnt_ptr, failcnt_ptr, found_ptr): i64 {
     store64(found_ptr, 1);
+    # 6.7.6 (part T): this harness's test-scope configuration, named before its line opens
+    if (_tc_for(path) != 0) {
+        sys_write(STDOUT_FD, "  ", 2);
+        sys_write(STDOUT_FD, path, strlen(path));
+        println("  COMPILE FAIL (its test configuration was refused, above)");
+        store64(failcnt_ptr, load64(failcnt_ptr) + 1);
+        return 1;
+    }
     var tmpbin = _cbt_tmpexe("fuzz");
     var pl = strlen(path);
     sys_write(STDOUT_FD, "  ", 2);
@@ -1019,6 +1039,7 @@ fn _bench_summary(passed, failed): i64 {
 # Run one .bcyr file: compile, execute, propagate exit code.
 # Returns 0 on success, 1 on compile error, or the binary's exit code.
 fn _bench_run_one(path): i64 {
+    if (_tc_for(path) != 0) { return 1; }   # 6.7.6 (part T): named there; the bench fails
     var tmpbin = _cbt_tmpexe("bench");
     var pre_err = _err_count;
     var r = compile(path, tmpbin);
@@ -1306,6 +1327,9 @@ fn _libsync_declared_mods(): i64 {
     # 6.6.17: the WHOLE manifest through the one reader (this read 32,767 bytes).
     if (_mf_load() != 1) { return 0; }
     var mods = _dep_declared_stdlib(_mf_buf, _mf_len);
+    # 6.7.6 (part T): the test scope's leaves are vendored into lib/ too, so `lib sync` refreshes them
+    var tl = _tc_resolve_leaves();
+    if (tl > 0) { mods = _tc_cat(mods, tl); }
     if (mods != 0 && vec_len(mods) > 0) { return mods; }
     return 0;
 }
@@ -2676,6 +2700,13 @@ fn _audit_sweep(): i64 {
     #endif
 
     _status("── tests ──");
+    # 6.7.6 (part T): the sweep compiles its tests and benches in the TEST SCOPE, as `cyrius test`
+    # and `cyrius bench` do — a test leaning on [test] would otherwise fail here alone (the
+    # v6.4.73 class: audit reporting failures `cyrius test` does not have).
+    if (_tc_setup("audit") != 0) {
+        println("  FAIL: cyrius.cyml [test] was refused (above); tests and benches NOT run");
+        return 1;
+    }
     var tdir = "tests/tcyr";
     if (is_dir(str_from(tdir)) == 0) { tdir = "tests"; }
     if (is_dir(str_from(tdir)) == 1) {
@@ -2684,6 +2715,7 @@ fn _audit_sweep(): i64 {
 
     _status("── bench ──");
     cmd_bench(0);   # perf measurement — non-fatal
+    _test_scope = 0;
 
     return rc;
 }

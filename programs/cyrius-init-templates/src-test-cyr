@@ -1,4 +1,4 @@
-# {PROJ} — top-level test entry (referenced by cyrius.cyml [build].test).
+# {PROJ} — top-level test entry (referenced by cyrius.cyml [test] files).
 # For unit tests, prefer adding cases to tests/{PROJ}.tcyr.
 
 include "lib/syscalls.cyr"

@@ -25,7 +25,8 @@ Initial scaffold only.
 
 Direct (declared in `cyrius.cyml`):
 
-- stdlib — string, fmt, alloc, io, vec, str, syscalls, assert
+- stdlib — string, fmt, alloc, io, vec, str, syscalls
+- test stdlib (`[test] stdlib`, test / bench / fuzz builds only) — assert, bench
 
 ## Consumers
 

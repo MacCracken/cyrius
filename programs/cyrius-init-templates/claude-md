@@ -37,7 +37,7 @@ Project was scaffolded with `cyrius init` (greenfield) or `cyrius port` (Rust â†
 ```sh
 cyrius deps                          # resolve sibling deps
 {BUILD_HINT}
-cyrius test                          # run [build].test + tests/*.tcyr
+cyrius test                          # run [test] files + tests/*.tcyr
 ```
 
 ## Key Principles

@@ -7,7 +7,7 @@ Written in [Cyrius](https://github.com/MacCracken/cyrius).
 ```sh
 cyrius deps                              # resolve stdlib deps
 cyrius build src/main.cyr build/{PROJ}    # compile
-cyrius test                              # run [build].test + tests/*.tcyr
+cyrius test                              # run [test] files + tests/*.tcyr
 ```
 
 ## License

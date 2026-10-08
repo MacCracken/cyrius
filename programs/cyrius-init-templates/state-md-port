@@ -24,7 +24,8 @@ _Replace with parity test status once tests land._
 
 Direct (declared in `cyrius.cyml`):
 
-- stdlib — string, fmt, alloc, vec, str, syscalls, io, args, assert
+- stdlib — string, fmt, alloc, vec, str, syscalls, io, args
+- test stdlib (`[test] stdlib`, test / bench / fuzz builds only) — assert
 
 ## Consumers
 
