@@ -134,14 +134,14 @@ probe() {
 }
 x=$FAIL; nrt=0
 while read -r sec key st syn _env _arg; do
-    case "$sec" in package|build|coverage|sections|embed|test) ;; *) continue ;; esac
-    if [ "$sec" = embed ]; then
+    case "$sec" in package|build|coverage|sections|embed|test|test.embed) ;; *) continue ;; esac
+    if [ "$sec" = embed ] || [ "$sec" = test.embed ]; then
         printf 'probe\n' > "$W/rt/probe.txt"
-        printf '[embed]\nPROBE = "probe.txt"\n' > "$W/rt/cyrius.cyml"
+        printf '[%s]\nPROBE = "probe.txt"\n' "$sec" > "$W/rt/cyrius.cyml"
         ( cd "$W/rt" && env -u CYRIUS_DCE -u CYRIUS_DEFINES -u CYRIUS_TEST_TIMEOUT CYRIUS_RESOLVED=1 "$W/cyrius" build --print-config ) > "$W/rt.out" 2>&1 || true
         nrt=$((nrt + 1))
-        grep -qF 'embed = ["PROBE=probe.txt"]  (manifest: [embed])' "$W/rt.out" && ! grep -qE '^(warn|error):' "$W/rt.out" \
-            || fail "axis 6: [embed] * is listed READ, but --print-config does not show PROBE=probe.txt from [embed] silently: $(grep -E 'embed|warn:|error:' "$W/rt.out" | head -2)"
+        grep -qF "$sec = [\"PROBE=probe.txt\"]  (manifest: [$sec])" "$W/rt.out" && ! grep -qE '^(warn|error):' "$W/rt.out" \
+            || fail "axis 6: [$sec] * is listed READ, but --print-config does not show PROBE=probe.txt from [$sec] silently: $(grep -E 'embed|warn:|error:' "$W/rt.out" | head -2)"
         continue
     fi
     names=$key; [ "$st" = read ] && [ "$syn" != "-" ] && names="$key $(printf '%s' "$syn" | tr ',' ' ')"

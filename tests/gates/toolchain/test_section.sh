@@ -37,6 +37,11 @@
 #   L6-L7  a non-leaf name is refused by name (deps and test); a leaf the stdlib lacks fails
 #   L8     --print-config shows test.stdlib
 #   L9     `cyrius distlib`: the published sidecar names no [test] stdlib leaf
+#   E1     `[test.embed]` GOLDEN() / GOLDEN_len() reach a test, beside [embed]'s
+#   E2     `cyrius build` carries no test embed (not in the binary; GOLDEN_len undefined there)
+#   E3     --print-config shows test.embed
+#   E4-E7  the [embed] rules, by name: a NAME [embed] has, a NAME a stdlib leaf declares (after the
+#          resolve), a path climbing out, a [test.embed.X] table — nothing runs
 #
 # MUTATION LEDGER (6.7.6) — each mutant built in a SCRATCH copy of the tree (cbt/ + lib/ + src/ +
 # build/cycc + VERSION + this gate), the gate run against it; the unmutated copy PASSES, and each
@@ -60,6 +65,10 @@
 #   M16 deps.cyr: phase 4 (the test scope) dropped from cmd_deps                      L1 L4 L5 L6 L7
 #   M17 commands.cyr: distlib seeds the sidecar with [test] stdlib (the pre-6.6.18 union)  L9
 #   M18 manifest.cyr: _tc_resolve_leaves skips the leaf-name rule                      L6
+#   M19 build.cyr: the test scope renders [embed] only                                 E1
+#   M20 manifest.cyr: [test.embed] NAMEs not checked against [embed]'s                 E4
+#   M21 manifest.cyr: [test.embed]'s collision check skipped                           E5
+#   M22 manifest.cyr: _embed_load scans [test.embed] too (every compile carries it)    E2 E5
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
 G=test_section
@@ -347,5 +356,69 @@ if ( "$CC" < src/main_aarch64.cyr > "$W/tools/cycc_aarch64" ) 2> /dev/null && ch
         echo "  ok L9: cyrius distlib — the sidecar names no [test] stdlib leaf ($(grep -v '^#' "$W/lh/dist/lh.deps" 2>/dev/null | tr '\n' ' '))"
     else fail "L9: rc $RC"; show; cat "$W/lh/dist/lh.deps" 2>/dev/null | sed 's/^/      /'; fi
 else echo "  skip L9: could not stage cycc_aarch64 beside the CLI"; fi
+
+# ── [test.embed]: the [embed] rules, test / bench / fuzz compiles only ─────────────────────
+proj e <<'EOF'
+[build]
+entry = "src/main.cyr"
+output = "build/m"
+
+[embed]
+PROD = "data/p.bin"
+
+[test.embed]
+GOLDEN = "tests/data/golden.bin"
+EOF
+mkdir -p "$W/e/tests/data" "$W/e/data" "$W/e/src"
+printf 'TESTONLY-GOLDEN-7f3a' > "$W/e/tests/data/golden.bin"
+printf 'prod' > "$W/e/data/p.bin"
+printf 'syscall(1, 1, GOLDEN(), GOLDEN_len());\nsyscall(1, 1, "\\n", 1);\nsyscall(60, GOLDEN_len() + PROD_len() - 24);\n' > "$W/e/tests/g.tcyr"
+printf 'syscall(60, PROD_len() - 4);\n' > "$W/e/src/main.cyr"
+cy e test tests/g.tcyr
+if [ "$RC" = 0 ] && grep -q '^TESTONLY-GOLDEN-7f3a$' "$W/out"; then echo "  ok E1: [test.embed] GOLDEN() / GOLDEN_len() reach the test, beside [embed] PROD"
+else fail "E1: rc $RC"; show; fi
+cy e build
+nb=$(grep -c 'TESTONLY-GOLDEN-7f3a' "$W/e/build/m" 2>/dev/null || true)
+printf 'syscall(60, GOLDEN_len());\n' > "$W/e/src/m2.cyr"
+cy e build src/m2.cyr build/m2
+if [ -x "$W/e/build/m" ] && [ "$nb" = 0 ] && [ "$RC" != 0 ] && grep -q "GOLDEN_len" "$W/out" "$W/err"; then
+    echo "  ok E2: cyrius build carries no test embed: not in the binary, GOLDEN_len() undefined there"
+else fail "E2: build/m holds the test bytes $nb time(s); m2 rc $RC"; show; fi
+cy e build --print-config
+grep -qF '  test.embed = ["GOLDEN=tests/data/golden.bin"]  (manifest: [test.embed])' "$W/out" && echo "  ok E3: --print-config shows test.embed" || { fail "E3"; show; }
+emb() {   # emb <name> <[test.embed] body> — the e project with another [test.embed]
+    proj "$1" <<EOF
+[embed]
+PROD = "data/p.bin"
+
+$2
+EOF
+    mkdir -p "$W/$1/tests/data" "$W/$1/data"; cp "$W/e/tests/data/golden.bin" "$W/$1/tests/data/"; cp "$W/e/data/p.bin" "$W/$1/data/"
+    prog "$W/$1/tests/a.tcyr" a 0
+}
+emb e4 '[test.embed]
+PROD = "tests/data/golden.bin"'
+cy e4 test
+if [ "$RC" = 1 ] && grep -qF 'error: cyrius.cyml [test.embed] PROD: is declared twice' "$W/err" && [ "$(marks a)" = 0 ]; then
+    echo "  ok E4: a [test.embed] NAME [embed] already declares is refused by name; nothing runs"
+else fail "E4: rc $RC, a $(marks a)x"; show; fi
+emb e5 '[test.embed]
+vec = "tests/data/golden.bin"'
+cy e5 test
+if [ "$RC" = 1 ] && grep -qF 'error: cyrius.cyml [test.embed] vec: vec_len is already declared by the stdlib leaf vec' "$W/err" && [ "$(marks a)" = 0 ]; then
+    echo "  ok E5: a [test.embed] NAME a stdlib leaf declares (vec_len) is refused by name; the test is not run"
+else fail "E5: rc $RC, a $(marks a)x"; show; fi
+emb e6 '[test.embed]
+G2 = "../x"'
+cy e6 test
+if [ "$RC" = 1 ] && grep -qF 'error: cyrius.cyml [test.embed] G2 = "../x": the path climbs out with ..' "$W/err" && [ "$(marks a)" = 0 ]; then
+    echo "  ok E6: a [test.embed] path climbing out of the project is refused by name; nothing runs"
+else fail "E6: rc $RC, a $(marks a)x"; show; fi
+emb e7 '[test.embed.extra]
+G3 = "tests/data/golden.bin"'
+cy e7 test
+if [ "$RC" = 1 ] && grep -qF 'error: cyrius.cyml: [test.embed] is one table of NAME = "path" entries; a [test.embed.X] / [[test.embed]] section is not read' "$W/err"; then
+    echo "  ok E7: a [test.embed.X] table is refused by name"
+else fail "E7: rc $RC"; show; fi
 [ "$FAIL" = 0 ] || { echo "FAIL: $G ($FAIL row(s))"; exit 1; }
 echo "PASS: $G"

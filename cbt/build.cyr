@@ -698,7 +698,10 @@ fn _materialize_source(source): i64 {
     }
     if (_defines != 0) { if (vec_len(_defines) > 0) { need_tmp = 1; } }
     if (_build_modules != 0) { if (vec_len(_build_modules) > 0) { need_tmp = 1; } }
-    if (_embeds != 0) { if (vec_len(_embeds) > 0) { need_tmp = 1; } }
+    # 6.7.6 (part T): in the test scope, [embed] + [test.embed] when the unit has test embeds
+    var emv = _embeds;
+    if (_test_scope == 1 && _tc_cur_embeds != 0) { emv = _tc_cur_embeds; }
+    if (emv != 0) { if (vec_len(emv) > 0) { need_tmp = 1; } }
     if (_test_scope == 1 && _tc_cur_mods != 0) { if (vec_len(_tc_cur_mods) > 0) { need_tmp = 1; } }
     if (_test_scope == 1 && _skip_deps == 0 && _tc_cur_incs != 0) { if (vec_len(_tc_cur_incs) > 0) { need_tmp = 1; } }
     if (need_tmp == 1) {
@@ -746,10 +749,10 @@ fn _materialize_source(source): i64 {
             # nothing, and a NAME that collides with a stdlib or user fn then has its LATER
             # definition in a real file, which the duplicate diagnostic attributes correctly
             # (prelude lines are blamed on `<source>`). Before `#@srcline`, so line-neutral.
-            if (_embeds != 0) {
-                if (vec_len(_embeds) > 0) {
+            if (emv != 0) {
+                if (vec_len(emv) > 0) {
                     var emn = 0;
-                    var emb = _embed_render(_embeds, &emn);
+                    var emb = _embed_render(emv, &emn);
                     _mat_write(tfd, emb, emn);
                 }
             }

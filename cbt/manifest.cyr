@@ -74,6 +74,7 @@ fn _mf_vocab_b(i): i64 {
     if (i == 42) { return "test|timeout|read|-|CYRIUS_TEST_TIMEOUT|--timeout|test / bench / fuzz: seconds each may run (0 = no deadline; default 300)"; }
     if (i == 43) { return "test|stdlib|read|-|-|-|cyrius deps vendors them into lib/; prepended to test / bench / fuzz compiles only (never a build, never a dist sidecar)"; }
     if (i == 44) { return "deps.*|scope|read|-|-|-|\"test\": resolved by every resolve, prepended to test / bench / fuzz compiles only; a dependency's own are never walked"; }
+    if (i == 45) { return "test.embed|*|read|-|-|-|test / bench / fuzz compiles only: as [embed] (NAME() / NAME_len())"; }
     return 0;
 }
 
@@ -742,6 +743,15 @@ var _EMBED_POOL = 2097151;
 var _embed_state = 0;      # 0 = not read, 1 = read (_embed_all), 2 = refused (already named)
 var _embed_all = 0;        # vec of 32-byte entries { name, path, bytes, len }, in file order
 var _embed_coll_later = 0; # 1 while _auto_deps loads [embed] ahead of a [deps] resolve (CBTB-04)
+# 6.7.6 (part T): ONE reader for `[embed]` and the test scope's `[test.embed]` — the table it reads
+# (`_emb_sec`), the file it is in (`_emb_file`: "cyrius.cyml", or a directory's test.cyml), that
+# file's TOML (`_emb_buf` / `_emb_len`) and the directory its paths are relative to (`_emb_base`:
+# "" for the project's own manifest).
+var _emb_sec = "embed";
+var _emb_file = "cyrius.cyml";
+var _emb_buf = 0;
+var _emb_len = 0;
+var _emb_base = "";
 
 fn _embed_e_name(e): i64 { return load64(e); }
 fn _embed_e_path(e): i64 { return load64(e + 8); }
@@ -1052,7 +1062,10 @@ fn _proj_read(path, lenp, whyp, kind): i64 {
 # CHANGELOG [6.6.20] (the manifest terminal-escape bug).
 fn _embed_refuse(disp, path, why): i64 {
     var sb = str_builder_new();
-    str_builder_add_cstr(sb, "cyrius.cyml [embed] ");
+    str_builder_add_cstr(sb, _emb_file);
+    str_builder_add_cstr(sb, " [");
+    str_builder_add_cstr(sb, _emb_sec);
+    str_builder_add_cstr(sb, "] ");
     str_builder_add_cstr(sb, _shown(disp));
     if (path != 0) {
         str_builder_add_cstr(sb, " = \"");
@@ -1099,23 +1112,30 @@ fn _embed_entry(out, seen, name, disp, vp): i64 {
     }
     vec_push(seen, name);
     var c = 0;
-    if (vp < _mf_len) { c = load8(_mf_buf + vp); }
+    if (vp < _emb_len) { c = load8(_emb_buf + vp); }
     if (c == 123) { return _embed_refuse(disp, 0, "is an inline table; [embed] takes one path string per entry (the {dir, glob, prefix} set form is not supported: list each file)"); }
     if (c == 91) { return _embed_refuse(disp, 0, "is an array; [embed] takes one path string per entry"); }
     if (c != 34 && c != 39) { return _embed_refuse(disp, 0, "must be a path string"); }
     _toml_bad = 0;
     var e = 0;
-    var path = _toml_str_at(_mf_buf, _mf_len, vp, &e);
+    var path = _toml_str_at(_emb_buf, _emb_len, vp, &e);
     if (path == 0) { return _embed_refuse(disp, 0, "is not a single-line TOML string (a multi-line string, or an invalid escape: write a literal 'path')"); }
     _toml_bad = 0;
     why = _proj_path_bad(path, _PP_EMBED);
     if (why != 0) { return _embed_refuse(disp, path, why); }
+    # 6.7.6: a test.cyml's paths are relative to its directory; the joined path is the one checked
+    # (a link on the directory's own components included), read and recorded
+    var full = _tc_join(_emb_base, path);
+    if (full != path) {
+        why = _proj_path_bad(full, _PP_EMBED);
+        if (why != 0) { return _embed_refuse(disp, path, why); }
+    }
     var len = 0;
-    var bytes = _proj_read(path, &len, &why, _PP_EMBED);
+    var bytes = _proj_read(full, &len, &why, _PP_EMBED);
     if (bytes == 0) { return _embed_refuse(disp, path, why); }
     var ent = alloc(32);
     store64(ent, name);
-    store64(ent + 8, path);
+    store64(ent + 8, full);
     store64(ent + 16, bytes);
     store64(ent + 24, len);
     vec_push(out, ent);
@@ -1124,41 +1144,47 @@ fn _embed_entry(out, seen, name, disp, vp): i64 {
 
 # The [embed] entries — validated, each file read once — as a vec (empty when there is no
 # manifest or no [embed]), or -1 after naming every refusal. Read once per process.
-fn _embed_load(): i64 {
-    if (_embed_state == 1) { return _embed_all; }
-    if (_embed_state == 2) { return 0 - 1; }
-    var ml = _mf_load();
-    if (ml < 0) { return 0 - 1; }
-    var out = vec_new();
-    var seen = vec_new();
+# Scan the table `_emb_sec` of `_emb_buf` (see above) into `out` (each entry validated and read);
+# `seen` holds every NAME so far. Returns how many refusals were named.
+fn _embed_scan(out, seen): i64 {
     var bad = 0;
     var info[32];
     var insec = 0;
+    var sl = strlen(_emb_sec);
     var p = 0;
-    while (ml == 1 && p < _mf_len) {
-        p = _toml_line(_mf_buf, _mf_len, p, &info);
+    while (p < _emb_len) {
+        p = _toml_line(_emb_buf, _emb_len, p, &info);
         var kind = load64(&info);
         if (kind == 1 || kind == 2) {
             insec = 0;
-            var hs = _mf_buf + load64(&info + 8);
+            var hs = _emb_buf + load64(&info + 8);
             var hl = load64(&info + 16);
             var is_e = 0;
-            if (hl == 5 && memeq(hs, "embed", 5) == 1) { is_e = 1; }
-            if (hl > 6 && memeq(hs, "embed.", 6) == 1) { is_e = 2; }
+            if (hl == sl && memeq(hs, _emb_sec, sl) == 1) { is_e = 1; }
+            if (hl > sl + 1 && memeq(hs, _emb_sec, sl) == 1 && load8(hs + sl) == 46) { is_e = 2; }
             if (is_e == 1 && kind == 1) { insec = 1; }
             elif (is_e != 0) {
-                _err("cyrius.cyml: [embed] is one table of NAME = \"path\" entries; a [embed.X] / [[embed]] section is not read (the {dir, glob, prefix} set form is not supported: list each file)");
+                var esb = str_builder_new();
+                str_builder_add_cstr(esb, _emb_file);
+                str_builder_add_cstr(esb, ": [");
+                str_builder_add_cstr(esb, _emb_sec);
+                str_builder_add_cstr(esb, "] is one table of NAME = \"path\" entries; a [");
+                str_builder_add_cstr(esb, _emb_sec);
+                str_builder_add_cstr(esb, ".X] / [[");
+                str_builder_add_cstr(esb, _emb_sec);
+                str_builder_add_cstr(esb, "]] section is not read (the {dir, glob, prefix} set form is not supported: list each file)");
+                _err(str_data(str_builder_build(esb)));
                 bad = bad + 1;
             }
         } elif (kind == 3 && insec == 1) {
             var ks = load64(&info + 8);
             var kl = load64(&info + 16);
             var name = alloc(kl + 1);
-            memcpy(name, _mf_buf + ks, kl);
+            memcpy(name, _emb_buf + ks, kl);
             store8(name + kl, 0);
             var disp = name;
             if (ks > 0) {
-                var q = load8(_mf_buf + ks - 1);
+                var q = load8(_emb_buf + ks - 1);
                 if (q == 34 || q == 39) {
                     disp = alloc(kl + 3);
                     store8(disp, q);
@@ -1169,6 +1195,31 @@ fn _embed_load(): i64 {
             }
             bad = bad + _embed_entry(out, seen, name, disp, load64(&info + 24));
         }
+    }
+    return bad;
+}
+
+# Point the embed reader at table `sec` of `file`'s TOML buf[0, n), paths relative to `base`.
+fn _embed_at(sec, file, buf, n, base): i64 {
+    _emb_sec = sec;
+    _emb_file = file;
+    _emb_buf = buf;
+    _emb_len = n;
+    _emb_base = base;
+    return 0;
+}
+
+fn _embed_load(): i64 {
+    if (_embed_state == 1) { return _embed_all; }
+    if (_embed_state == 2) { return 0 - 1; }
+    var ml = _mf_load();
+    if (ml < 0) { return 0 - 1; }
+    var out = vec_new();
+    var seen = vec_new();
+    var bad = 0;
+    if (ml == 1) {
+        _embed_at("embed", "cyrius.cyml", _mf_buf, _mf_len, "");
+        bad = _embed_scan(out, seen);
     }
     if (bad == 0 && vec_len(out) > 0) {
         var total = 0;
@@ -1237,7 +1288,7 @@ var _CFG_DEFAULT = 0;
 var _CFG_MANIFEST = 1;
 var _CFG_ENV = 2;
 var _CFG_ARG = 3;
-var _CFG_N = 19;
+var _CFG_N = 20;
 var _CK_ENTRY = 0;
 var _CK_OUTPUT = 1;
 var _CK_DCE = 2;
@@ -1259,6 +1310,7 @@ var _CK_TEST_MODULES = 15;
 var _CK_TEST_DEFINES = 16;
 var _CK_TEST_TIMEOUT = 17; # an int (seconds); 0 = no deadline
 var _CK_TEST_STDLIB = 18;
+var _CK_TEST_EMBED = 19;   # [test.embed], as "NAME=path"
 # 1 when the resolved `dce` is on and did NOT come from the environment: compile() then hands cycc
 # CYRIUS_DCE=1, replacing any inherited value (an argument beats CYRIUS_DCE=0).
 var _cfg_dce_inject = 0;
@@ -1286,6 +1338,7 @@ fn _cfg_name(i): i64 {
     if (i == _CK_TEST_DEFINES) { return "test.defines"; }
     if (i == _CK_TEST_TIMEOUT) { return "test.timeout"; }
     if (i == _CK_TEST_STDLIB) { return "test.stdlib"; }
+    if (i == _CK_TEST_EMBED) { return "test.embed"; }
     return "embed";
 }
 
@@ -1295,6 +1348,7 @@ fn _cfg_kind(i): i64 {
     if (i == _CK_DCE || i == _CK_STRICT || i == _CK_TEST_STANDALONE) { return 1; }
     if (i == _CK_DEFINES || i == _CK_TEST || i == _CK_MODULES || i == _CK_PROGRAMS || i == _CK_EMBED) { return 2; }
     if (i == _CK_TEST_FILES || i == _CK_TEST_MODULES || i == _CK_TEST_DEFINES || i == _CK_TEST_STDLIB) { return 2; }
+    if (i == _CK_TEST_EMBED) { return 2; }
     return 0;
 }
 
@@ -1633,6 +1687,18 @@ fn _cfg_resolve_test_rows(): i64 {
     if (tt >= 0) { _cfg_put(_CK_TEST_TIMEOUT, tt, _CFG_MANIFEST, "[test] timeout"); }
     var te = _cbt_env_int("CYRIUS_TEST_TIMEOUT", 0 - 1);
     if (te >= 0) { _cfg_put(_CK_TEST_TIMEOUT, te, _CFG_ENV, "CYRIUS_TEST_TIMEOUT"); }
+    var tev = load64(_tc_root + _TA_EMBED);
+    if (tev != 0) {
+        if (_tc_embed_collisions() != 0) { return 1; }
+        var ev = vec_new();
+        var i = 0;
+        while (i < vec_len(tev)) {
+            var e = vec_get(tev, i);
+            vec_push(ev, _cat2(_cat2(_embed_e_name(e), "="), _embed_e_path(e)));
+            i = i + 1;
+        }
+        _cfg_put(_CK_TEST_EMBED, ev, _CFG_MANIFEST, "[test.embed]");
+    }
     return 0;
 }
 
@@ -1649,6 +1715,8 @@ fn _cfg_resolve_test_rows(): i64 {
 #     modules = ["tests/support/fixtures.cyr"]   # prepended after [build] modules
 #     defines = ["TESTING"]        # -D > CYRIUS_DEFINES > these (fuzz: [build] defines first)
 #     timeout = 300                # seconds per test; --timeout > CYRIUS_TEST_TIMEOUT > this > 300
+#     [test.embed]
+#     GOLDEN = "tests/data/golden.bin"   # the [embed] rules, test-scope compiles only
 # ADDITIVE: a manifest without [test] compiles every test exactly as before. CHANGELOG [6.7.6]
 var _test_scope = 0;       # 1 while test / bench / fuzz compile and run their units
 var _tc_verb = "test";     # "test" / "bench" / "fuzz" / "audit": fuzz keeps [build] defines (6.6.18)
@@ -1656,6 +1724,8 @@ var _tc_arg_timeout = 0 - 1;   # --timeout N (seconds), -1 = not given
 var _tc_cur_timeout = 0 - 1;   # the unit being run: [test] timeout, -1 = not declared
 var _tc_cur_mods = 0;      # the unit being compiled: [test] modules (vec), 0 = none
 var _tc_cur_incs = 0;      # ...its test-scope includes ("lib/<leaf>.cyr", vec), 0 = none
+var _tc_cur_embeds = 0;    # ...[embed] + its [test.embed] entries (vec), 0 = only [embed]'s
+var _tc_coll = 0;          # [test.embed]'s collision check: 0 = not run, 1 = clear, 2 = refused
 # One [test] table, as read: a record of the lists it declares (0 = absent) and its timeout
 # (-1 = absent).
 var _TA_STDLIB = 0;
@@ -1666,6 +1736,7 @@ var _TA_EMBED = 32;
 var _TA_SIZE = 40;
 var _tc_state = 0;         # 0 = not read, 1 = read, 2 = refused (named)
 var _tc_root = 0;          # the project's [test] (a _TA record)
+var _tc_root_embeds = 0;   # [embed] + the project's [test.embed], built once (one render memo)
 
 fn _tc_bad(label, key, want): i64 {
     var sb = str_builder_new();
@@ -1746,7 +1817,34 @@ fn _tc_read(buf, n, label, base): i64 {
         if (t < 0) { _tc_bad(label, "timeout", "a whole number of seconds (0 = no deadline)"); return 0; }
         store64(rec + _TA_TIMEOUT, t);
     }
+    # [test.embed]: the [embed] rules, every NAME distinct from [embed]'s (and NAME_len's). The
+    # project's [embed] NAMEs as written — not `_embed_load`, whose collision check must wait for
+    # the dependency resolve (6.6.20) and this runs before it.
+    var seen = vec_new();
+    if (_mf_state == 1) { seen = _toml_section_keys(_mf_buf, _mf_len, "embed"); }
+    var tes = vec_new();
+    _embed_at("test.embed", label, buf, n, base);
+    var eb = _embed_scan(tes, seen);
+    _embed_at("embed", "cyrius.cyml", _mf_buf, _mf_len, "");
+    if (eb > 0) { return 0; }
+    if (vec_len(tes) > 0) { store64(rec + _TA_EMBED, tes); }
     return rec;
+}
+
+# [test.embed]'s NAMEs against every declaration in scope — the stdlib snapshot, the project's
+# sources, lib/ (the [embed] rule, `_embed_collisions`). Once, after the dependency resolve (lib/
+# vendored: the 6.6.20 ordering). 0, or 1 after naming each collision.
+fn _tc_embed_collisions(): i64 {
+    if (_tc_coll == 1) { return 0; }
+    if (_tc_coll == 2) { return 1; }
+    _tc_coll = 1;
+    var tev = load64(_tc_root + _TA_EMBED);
+    if (tev == 0) { return 0; }
+    _emb_sec = "test.embed";
+    var r = _embed_collisions(tev);
+    _emb_sec = "embed";
+    if (r != 0) { _tc_coll = 2; return 1; }
+    return 0;
 }
 
 # The project's [test], read once. 0, or 1 after naming what is wrong (the test-scope verb fails).
@@ -1911,6 +2009,12 @@ fn _tc_for(path): i64 {
     _tc_cur_timeout = load64(rec + _TA_TIMEOUT);
     _tc_cur_incs = 0;
     if (_tc_incs_for(load64(rec + _TA_STDLIB)) != 0) { return 1; }
+    _tc_cur_embeds = 0;
+    if (load64(rec + _TA_EMBED) != 0) {
+        if (_tc_embed_collisions() != 0) { return 1; }
+        if (_tc_root_embeds == 0) { _tc_root_embeds = _tc_cat(_embeds, load64(rec + _TA_EMBED)); }
+        _tc_cur_embeds = _tc_root_embeds;
+    }
     var dv = _cli_values("-D");
     if (vec_len(dv) > 0) {
         _defines = dv;

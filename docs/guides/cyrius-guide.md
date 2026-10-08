@@ -2357,6 +2357,7 @@ cyrius build configuration (argument > environment > manifest > default)
 | `[test]` | `defines` | read | — | `CYRIUS_DEFINES` | `-D` | test / bench / fuzz compiles only: one #define per name |
 | `[test]` | `timeout` | read | — | `CYRIUS_TEST_TIMEOUT` | `--timeout` | test / bench / fuzz: seconds each may run (0 = no deadline; default 300) |
 | `[test]` | `stdlib` | read | — | — | — | cyrius deps vendors them into lib/; prepended to test / bench / fuzz compiles only (never a build, never a dist sidecar) |
+| `[test.embed]` | `*` | read | — | — | — | test / bench / fuzz compiles only: as [embed] (NAME() / NAME_len()) |
 | `[deps]` | `stdlib` | read | — | — | — | cyrius deps: stdlib leaves vendored into lib/ and auto-prepended |
 | `[deps.*]` | `git` | read | — | — | — | cyrius deps: the repository to clone |
 | `[deps.*]` | `tag` | read | — | — | — | cyrius deps: the tag to check out |
