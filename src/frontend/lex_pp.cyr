@@ -1653,8 +1653,8 @@ fn PP_DAPPEND_ID(base, p, end, dst, msg, mlen): i64 {
     return p;
 }
 
-# A field's type, after its `:` — an identifier, optionally `<` identifier `>` (trivia
-# allowed around each, as the parser allows). Written to `dst` without the trivia, so
+# A field's type, after its `:` — an identifier, optionally followed by a type-argument list
+# (trivia allowed around each, as the parser allows). Written to `dst` without the trivia, so
 # `Vec< i64 >` records `Vec<i64>` exactly like the unspaced form. Returns `end` (stop the
 # walk) on a shape the grammar does not have — see PP_DERIVE_FIELDS.
 fn PP_DTYPE(base, p, end, dst): i64 {
@@ -1669,15 +1669,40 @@ fn PP_DTYPE(base, p, end, dst): i64 {
     if (q >= end) { return p; }
     if (load8(base + q) != 60) { return p; }
     PP_DPUT(dst, 60, "error: #derive field type name too long (max 31 bytes)\n", 55);
-    q = PP_DTRIV(base, q + 1, end);
-    if (q >= end) { _pp_dstop = 1; return end; }
-    if (PP_IDSTART(load8(base + q)) == 0) { _pp_dstop = 1; return end; }
-    q = PP_DAPPEND_ID(base, q, end, dst, "error: #derive field type name too long (max 31 bytes)\n", 55);
-    q = PP_DTRIV(base, q, end);
-    if (q >= end) { _pp_dstop = 1; return end; }
-    if (load8(base + q) != 62) { _pp_dstop = 1; return end; }
-    PP_DPUT(dst, 62, "error: #derive field type name too long (max 31 bytes)\n", 55);
-    return q + 1;
+    return PP_DTARGS(base, q + 1, end, dst);
+}
+# ⛔ 6.7.1 (C3) — a type-argument list, just past its `<` (already written): every argument, each an
+# identifier with an optional list of its own, through the `>` that closes this one. Recorded whole —
+# `Vec<Box<i64>>`, `Pair<i32,Pt>`. The walk took ONE identifier and wanted `>`, so a NESTED list
+# (`xs: Vec<Box<i64>>`, which the parser takes since 6.6.17) or a second argument stopped it, and
+# every field after that one lost its derived code — `#derive(accessors)` never defined them.
+# A source `>>` is two bytes here, one closer each. CHANGELOG [6.7.1]
+fn PP_DTARGS(base, p, end, dst): i64 {
+    while (p < end) {
+        p = PP_DTRIV(base, p, end);
+        if (p >= end) { _pp_dstop = 1; return end; }
+        if (PP_IDSTART(load8(base + p)) == 0) { _pp_dstop = 1; return end; }
+        p = PP_DAPPEND_ID(base, p, end, dst, "error: #derive field type name too long (max 31 bytes)\n", 55);
+        var q = PP_DTRIV(base, p, end);
+        if (q >= end) { _pp_dstop = 1; return end; }
+        if (load8(base + q) == 60) {
+            PP_DPUT(dst, 60, "error: #derive field type name too long (max 31 bytes)\n", 55);
+            q = PP_DTARGS(base, q + 1, end, dst);
+            if (q >= end) { return end; }
+            q = PP_DTRIV(base, q, end);
+            if (q >= end) { _pp_dstop = 1; return end; }
+        }
+        var c = load8(base + q);
+        if (c == 62) {
+            PP_DPUT(dst, 62, "error: #derive field type name too long (max 31 bytes)\n", 55);
+            return q + 1;
+        }
+        if (c != 44) { _pp_dstop = 1; return end; }
+        PP_DPUT(dst, 44, "error: #derive field type name too long (max 31 bytes)\n", 55);
+        p = q + 1;
+    }
+    _pp_dstop = 1;
+    return end;
 }
 
 # 6.6.17 — a `name: *T` field (the parser takes it since 6.6.17). To every derived codec the

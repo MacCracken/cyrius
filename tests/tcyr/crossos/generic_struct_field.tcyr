@@ -1,0 +1,59 @@
+# generic_struct_field.tcyr — 6.7.1 (C3 prerequisite): a struct FIELD typed with a generic struct
+# instance, `b: Box<i32>`, read and written through, on every backend.
+#
+# ⛔ Before 6.7.1 such a field was `expected identifier, got '<'`. It cannot be instantiated where
+# the field is read — a struct's fields fill one contiguous slice of the field pool, and an instance
+# registered mid-definition would land its own fields inside it — so every generic field type is
+# minted by a pre-scan of the body BEFORE the outer struct registers (`_sdef_gen_prescan`), and the
+# field then names the instance. Rows: a plain outer with fields before and after (F1-F3, by value
+# too), `Box<Pt>` (F4), two type arguments `Pair<i32, Pt>` (F5), nested `Box<Box<i32>>` (F6),
+# `Box<i64>` is the base `Box` (F7), `Box<T>` inside a generic outer follows its instance (F8 `W<Pt>`,
+# F9 `W<i32>`) and is the base in the base `W` (F10), a union (F11). Layouts are packed:
+# `Box<i32>` is 4 + 8 = 12 B. The refusals (a field naming its own struct) and the `#derive` walk
+# are tests/gates/frontend/generic_struct_field.sh. Mutation: skip `_sdef_gen_prescan` -> cycc
+# SIGSEGVs on this file.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/assert.cyr"
+
+struct Pt { x; y; }
+struct Box<T> { v: T; n; }
+struct Pair<A, B> { a: A; b: B; }
+# a generic-instance field in a plain struct, before and after other fields
+struct H { a: i64; b: Box<i32>; c: i64; }
+struct HP { p: Box<Pt>; k: i32; }
+struct H2 { q: Pair<i32, Pt>; z; }
+struct HN { nb: Box<Box<i32>>; tail; }
+struct HI { bi: Box<i64>; e; }
+# inside a generic struct: Box<T> follows the instance
+struct W<T> { w: Box<T>; m; }
+union U { ub: Box<i32>; raw; }
+
+fn hsum(h: H): i64 { return h.a + h.b.v + h.b.n + h.c; }
+
+fn run(): i64 {
+    var h: H; h.a = 1; h.b.v = 2; h.b.n = 3; h.c = 4;
+    assert_eq(h.a + h.b.v + h.b.n + h.c, 10, "F1: H fields through b: Box<i32>");
+    assert_eq(sizeof(H), 28, "F2: sizeof(H) = 8 + 12 (Box<i32>: v 4, n 8; packed) + 8");
+    assert_eq(hsum(h), 10, "F3: H passed by value");
+    var hp: HP; hp.p.v.x = 40; hp.p.v.y = 2; hp.p.n = 5; hp.k = 7;
+    assert_eq(hp.p.v.x + hp.p.v.y + hp.p.n + hp.k, 54, "F4: Box<Pt> field");
+    var h2: H2; h2.q.a = 3; h2.q.b.x = 4; h2.q.b.y = 5; h2.z = 6;
+    assert_eq(h2.q.a + h2.q.b.x + h2.q.b.y + h2.z, 18, "F5: Pair<i32, Pt> field");
+    var hn: HN; hn.nb.v.v = 9; hn.nb.v.n = 10; hn.nb.n = 11; hn.tail = 12;
+    assert_eq(hn.nb.v.v + hn.nb.v.n + hn.nb.n + hn.tail, 42, "F6: Box<Box<i32>> field");
+    var hi: HI; hi.bi.v = 20; hi.bi.n = 21; hi.e = 1;
+    assert_eq(hi.bi.v + hi.bi.n + hi.e, 42, "F7: Box<i64> is the base Box");
+    var w: W<Pt>; w.w.v.x = 30; w.w.v.y = 10; w.w.n = 1; w.m = 1;
+    assert_eq(w.w.v.x + w.w.v.y + w.w.n + w.m, 42, "F8: Box<T> inside W<Pt>");
+    var wi: W<i32>; wi.w.v = 40; wi.w.n = 1; wi.m = 1;
+    assert_eq(wi.w.v + wi.w.n + wi.m, 42, "F9: Box<T> inside W<i32>");
+    var wb: W; wb.w.v = 41; wb.m = 1;
+    assert_eq(wb.w.v + wb.m, 42, "F10: the base W (Box<T> = the base Box)");
+    var u: U; u.ub.v = 42;
+    assert_eq(u.ub.v, 42, "F11: Box<i32> in a union");
+    return 0;
+}
+var r0 = run();
+var rr = assert_summary();
+syscall(60, rr);

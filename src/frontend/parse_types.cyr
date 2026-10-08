@@ -1545,6 +1545,111 @@ fn _vec_field_elem(S, si, fnoff): i64 {
     return elemc;
 }
 
+# ⛔ 6.7.1 (C3) — A FIELD WHOSE TYPE IS A GENERIC STRUCT INSTANCE, `b: Box<i32>`. It was `expected
+# identifier, got '<'`: the field parse took the name `Box` and stopped at its `<`. The instance cannot
+# be minted where the field is read — a struct's fields fill a contiguous slice of the field pool from
+# the pool top REGSTRUCT recorded, and a new instance registered mid-definition would land its own
+# fields inside that slice. So every generic field type is instantiated FIRST, by a pre-scan of the
+# body before the outer struct registers (`_sdef_gen_prescan`), and the field parse then finds the
+# instance deduped (`_sfield_named`). In a generic struct's base definition its own type parameters are
+# the i64 base's (`b: Box<T>` in `W<T>` is the base `Box`); an instance binds them to its arguments.
+# A field naming the struct being defined — itself, or inside its type arguments — is refused: the
+# struct would contain itself. CHANGELOG [6.7.1]
+fn _sfield_gen(S, fs, stp): i64 {
+    var sv_n0 = _tp_n0; var sv_c0 = _tp_c0; var sv_n1 = _tp_n1; var sv_c1 = _tp_c1;
+    if (stp != 0) { if (_tp_c0 == 0) {
+            var t0 = stp & 0xFFFFFFFF;
+            if (t0 != 0) { _tp_bind(S, 0, t0 - 1, 0 - 8); }
+            var t1 = (stp >> 32) & 0xFFFFFFFF;
+            if (t1 != 0) { _tp_bind(S, 1, t1 - 1, 0 - 8); }
+        } }
+    var g = _gen_ann_sid(S, fs);
+    _tp_n0 = sv_n0; _tp_c0 = sv_c0; _tp_n1 = sv_n1; _tp_c1 = sv_c1;
+    return g;
+}
+# 1 iff the type-argument list starting at token j (just past its `<`) names `own` anywhere.
+fn _targs_name(S, j, own): i64 {
+    var n = GTCNT(S);
+    var d = 1;
+    while (j < n) {
+        var t = TOKTYP(S, j);
+        if (t == 12 || t == 5 || t == 13) { return 0; }
+        if (t == 2) { if (STREQ(S, TOKVAL(S, j), own) == 1) { return 1; } }
+        if (t == 19) { d = d + 1; }
+        if (t == 20) { d = d - 1; }
+        if (t == 39) { d = d - 2; }
+        if (t == 152) { d = d - 3; }
+        if (d <= 0) { return 0; }
+        j = j + 1;
+    }
+    return 0;
+}
+# Cursor on a struct body's `{` (`own` its source name, `stp` its type parameters): instantiate every
+# `name: Generic<..>` field type before the struct registers. The cursor is put back.
+fn _sdef_gen_prescan(S, stp, own): i64 {
+    if (_MONOMORPH_OK != 1) { return 0; }
+    if (PEEKT(S) != 13) { return 0; }
+    var sv = GTI(S);
+    var sv_in = _inst_name;
+    var n = GTCNT(S);
+    var i = sv + 1;
+    var d = 1;
+    while (i < n) {
+        var t = TOKTYP(S, i);
+        if (t == 12) { break; }
+        if (t == 13) { d = d + 1; }
+        if (t == 14) { d = d - 1; if (d == 0) { break; } }
+        if (d == 1) { if (t == 49) { if (TOKTYP(S, i - 1) == 2) { if (TOKTYP(S, i + 1) == 2) { if (TOKTYP(S, i + 2) == 19) {
+                            var fn0 = TOKVAL(S, i + 1);
+                            var fs = FINDSTRUCT(S, fn0);
+                            if (fs > 0) { if (GSTP(S, fs - 1) != 0) { if (STREQ(S, fn0, own) == 0) { if (_targs_name(S, i + 3, own) == 0) {
+                                            STI(S, i + 2);
+                                            _sfield_gen(S, fs, stp);
+                                            _inst_name = sv_in;
+                                        } } } }
+                        } } } } }
+        i = i + 1;
+    }
+    _ta_pending_gt = 0;
+    STI(S, sv);
+    return 0;
+}
+# 1 iff struct si's name is a minted instance (`Box$i32`): '$' is never a source identifier byte.
+fn _sname_minted(S, si): i64 {
+    var p = S + 0xEC00000 + L64(S + 0x1A6018 + si * 8);
+    var i = 0;
+    while (load8(p + i) != 0) {
+        if (load8(p + i) == 36) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+# A field typed by a struct name (`tnoff`, cursor after it): a generic one's `<..>` is its instance
+# (`_sdef_gen_prescan` minted it already, so this finds it); anything else is `_add_named_field`.
+fn _sfield_named(S, si, fnoff, tnoff, stp, own): i64 {
+    if (PEEKT(S) == 19) { if (_MONOMORPH_OK == 1) {
+            var fs = FINDSTRUCT(S, tnoff);
+            if (fs > 0) { if (GSTP(S, fs - 1) != 0) {
+                    if (STREQ(S, tnoff, own) == 1 || _targs_name(S, GTI(S) + 1, own) == 1) {
+                        # Reported at the definition; an instance re-parse (`W$i32`) stays quiet.
+                        if (_panic == 0 && _sname_minted(S, si) == 0) {
+                            ERR_IDENT(S, "field ", fnoff, " makes a struct contain itself: ", own);
+                            PRSTR("  note: a link to another one is an i64 (pointer) field\n");
+                            _panic = 0;
+                        }
+                        _ta_pending_gt = 0;
+                        _skip_targ_list(S);
+                        ADDFIELD(S, si, fnoff);
+                        return 0;
+                    }
+                    var g = _sfield_gen(S, fs, stp);
+                    ADDFIELDTYPED(S, si, fnoff, g);
+                    return 0;
+                } }
+        } }
+    return _add_named_field(S, si, fnoff, tnoff);
+}
+
 fn PARSE_STRUCT_DEF(S): i64 {
     var _sdefstart = GTI(S);   # v6.3.10: the `struct` token, for generic instance re-emit
     STI(S, GTI(S) + 1);  # consume STRUCT
@@ -1557,6 +1662,8 @@ fn PARSE_STRUCT_DEF(S): i64 {
     var _stp = _capture_tparams(S);
     # v6.3.10: re-emitting a `Box$ty` instance uses the mangled name verbatim.
     if (_inst_name != 0) { noff = _inst_name; }
+    var _sown = TOKVAL(S, _sname_ti);
+    _sdef_gen_prescan(S, _stp, _sown);   # 6.7.1 (C3): `b: Box<i32>` fields, before REGSTRUCT
     var _sprev = FINDSTRUCT(S, noff);
     var sid = REGSTRUCT(S, noff);
     if (sid == 0) { return _skip_refused_body(S); }   # 6.6.10: table full — never index -1
@@ -1622,7 +1729,7 @@ fn PARSE_STRUCT_DEF(S): i64 {
                         if (fscalar < 8) { ADDFIELDTYPED(S, si, fnoff, 0 - fscalar); }
                         else { ADDFIELD(S, si, fnoff); }
                     } else {
-                        _add_named_field(S, si, fnoff, tnoff);   # 6.6.10: refuses an unknown name
+                        _sfield_named(S, si, fnoff, tnoff, _stp, _sown);   # 6.6.10: refuses an unknown name; 6.7.1: `Box<i32>`
                     }
                 }
             } else {
@@ -1647,6 +1754,7 @@ fn PARSE_UNION_DEF(S): i64 {
     var _uname_ti = GTI(S);
     STI(S, GTI(S) + 1);
     SKIP_GENERICS(S);
+    _sdef_gen_prescan(S, 0, noff);   # 6.7.1 (C3): `b: Box<i32>` fields, before REGSTRUCT
     var _uprev = FINDSTRUCT(S, noff);
     var sid = REGSTRUCT(S, noff);
     if (sid == 0) { return _skip_refused_body(S); }   # 6.6.10: table full — never index -1
@@ -1690,7 +1798,7 @@ fn PARSE_UNION_DEF(S): i64 {
                     if (fscalar < 8) { ADDFIELDTYPED(S, si, fnoff, 0 - fscalar); }
                     else { ADDFIELD(S, si, fnoff); }
                 } else {
-                    _add_named_field(S, si, fnoff, tnoff);   # 6.6.10: refuses an unknown name
+                    _sfield_named(S, si, fnoff, tnoff, 0, noff);   # 6.6.10: refuses an unknown name; 6.7.1: `Box<i32>`
                 }
             } else {
                 ADDFIELD(S, si, fnoff);

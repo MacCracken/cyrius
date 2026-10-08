@@ -23,6 +23,21 @@ C3, trait-bounded generics (roadmap.md § Spec — C3; the user's decisions of 2
   qemu, PE under wine — cx has no 16-byte struct pair return, generic or not); gate rows
   `generic_type_arg_unknown_refused.sh` K (now: runs, with the value) and `private_forward_reference.sh`
   axis 3 `struct_targ` (now: builds and exits 1).
+- **A struct field typed with a generic struct instance** (C3 prerequisite; BACKLOG-13): `struct H { a: i64;
+  b: Box<i32>; c: i64; }`, `Box<Pt>`, `Pair<i32, Pt>`, `Box<Box<i32>>`, in a struct or a union, and `w: Box<T>`
+  inside a generic struct (the instance's `Box<Pt>` in `W<Pt>`, the base `Box` in the base `W`). It was
+  `expected identifier, got '<'`. The instance cannot be minted where the field is read — a struct's fields fill
+  one contiguous slice of the field pool, and an instance registered mid-definition lands its fields inside it
+  (the mutation SIGSEGVs cycc) — so a pre-scan instantiates every generic field type before the outer struct
+  registers. A field naming the struct being defined (`b: W<i32>` in `W<T>`, `b: Box<A>` in `A`) is refused
+  once: it would contain itself.
+- **`#derive` reads nested type arguments** (BACKLOG-13): its field walk took one identifier inside `<..>` and
+  wanted `>`, so `xs: Vec<Box<i64>>` (which the parser takes since 6.6.17) or `Vec<Pair<i64, i64>>` stopped it,
+  and every field after one had no derived code — `#derive(accessors)` never defined them. An inline generic
+  instance in a `#derive`d struct is refused by the derive's layout check, as any inline struct that is not
+  itself derived is.
+  Tests: `tests/tcyr/crossos/generic_struct_field.tcyr` (11 rows; x86, aarch64, PE, cx) and the gate
+  `tests/gates/frontend/generic_struct_field.sh` (7 rows, mutation-checked).
 
 ## [6.7.0] — 2026-10-07
 

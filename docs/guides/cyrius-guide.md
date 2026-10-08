@@ -3445,6 +3445,18 @@ alloc(16);` ahead of the first top-level statement reads and writes `G.v.x` and 
 block was typed as the base `W1`, where `v: T` is an i64 — `G.v.x` failed to parse and
 `w1s(G)` read the wrong storage). A global declared after a statement already did.
 
+**A field may name a generic struct instance (6.7.1)** — `struct H { a: i64; b: Box<i32>; c: i64; }`,
+`p: Box<Pt>`, `q: Pair<i32, Pt>`, `nb: Box<Box<i32>>`, in a struct or a union — laid out at the
+instance's size (packed: `Box<i32>` is 4 + 8 = 12 B, so `H` is 28). Inside a generic struct, `w: Box<T>`
+follows the instance (`W<Pt>`'s field is a `Box<Pt>`) and is the base `Box` in the base `W`. A field
+naming the struct being defined — `b: W<i32>` in `W<T>`, or `b: Box<A>` in `A` — is refused: the struct
+would contain itself (hold it by pointer, `b: *A`). Before 6.7.1 such a field was `expected identifier,
+got '<'`. `#derive` reads nested type arguments too (`xs: Vec<Box<i64>>`, `ps: Vec<Pair<i64, i64>>`;
+before 6.7.1 they stopped its field walk, and every field after one had no derived code). ⚠ A
+`#derive`d struct cannot hold a generic instance INLINE: the derive computes its layout before
+types exist and refuses it at its layout check, as it refuses any inline struct that is not itself
+derived.
+
 **Type arguments nest (6.6.17)** wherever a type is written — `var x: Vec<Box<i64>>`,
 `var b: Box<Vec<i64>>`, `var z: Box<Box<i32>>`, a parameter, a global, a `Vec<Box<i64>>`
 field, `idv<Vec<i64>>(x)`, and a multi-value return element `(Box<i64>, i64)` — with the
