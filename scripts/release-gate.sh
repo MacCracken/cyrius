@@ -138,6 +138,9 @@ fail() {
     fi
     echo "Do NOT version-bump / tag / hand off until this is GREEN."
     echo "================================================================"
+    # 6.7.0: cross-OS legs still running in the background (the parallel gate) are stopped; each
+    # removes its own local and remote staging on the way out (cross-os-selfhost.sh's trap).
+    if [ -n "${_RG_LEG_PIDS:-}" ]; then kill -TERM $_RG_LEG_PIDS 2>/dev/null || true; wait $_RG_LEG_PIDS 2>/dev/null || true; fi
     rm -rf "$T"
     exit 1
 }
@@ -217,6 +220,23 @@ fi
 echo "  OK: build/cycc is machine-derivable from the seed"
 
 # 3. check.sh -----------------------------------------------------------------
+# 6.7.0 — THE FOUR CROSS-OS LEGS RUN ALONGSIDE check.sh. They were walked one by one AFTER it, so
+# the gate took ~46 minutes: check.sh, then ecb, ach, cass and pi in turn. cross-os-selfhost.sh has
+# been safe to run concurrently since 6.6.6 (private local + remote staging per run) and its work
+# is mostly on the remote host, so the legs start here and are WAITED FOR, in host order, at step
+# 4. CYRIUS_GATE_SERIAL=1 keeps the old walk. CHANGELOG [6.7.0]
+_RG_PAR=1
+if [ "${CYRIUS_GATE_SERIAL:-0}" = "1" ]; then _RG_PAR=0; fi
+_RG_LEG_PIDS=""
+if [ "$QUICK" != "1" ] && [ "$_RG_PAR" = "1" ]; then
+    for H in ecb ach cass pi; do
+        sh scripts/cross-os-selfhost.sh "$H" "crossos" > "$T/co.$H.out" 2>&1 &
+        eval "_RG_PID_$H=\$!"
+        _RG_LEG_PIDS="$_RG_LEG_PIDS $!"
+    done
+    echo "  (the cross-OS legs ecb ach cass pi started in the background — step 4 waits for them)"
+fi
+
 step "3/5" "check.sh (full gate suite)"
 # v6.5.0: capture the EXIT STATUS, not just the printed summary.
 #
@@ -265,7 +285,13 @@ step "4/5" "cross-OS self-host + cross-host platform tcyr: ecb (macOS-arm64) + a
 # has the exit-42 rot-guard + the crossos subdir fires its platform libtest.
 for H in ecb ach cass pi; do
     echo "  --- $H ---"
-    sh scripts/cross-os-selfhost.sh "$H" "crossos" > "$T/co.out" 2>&1
+    if [ "$_RG_PAR" = "1" ]; then
+        eval "_rg_p=\$_RG_PID_$H"
+        wait "$_rg_p" 2>/dev/null || true
+        cp "$T/co.$H.out" "$T/co.out"
+    else
+        sh scripts/cross-os-selfhost.sh "$H" "crossos" > "$T/co.out" 2>&1
+    fi
     if ! grep -q "SELFHOST_OK: $H" "$T/co.out"; then
         tail -8 "$T/co.out"
         fail "cross-OS self-host FAILED on $H (a green CI check is NOT this — run the compiler on the hardware)"

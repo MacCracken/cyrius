@@ -1,4 +1,5 @@
 #!/bin/sh
+# check: serial — a timing/scaling measurement; the parallel check.sh runs it alone, after its pool (6.7.0)
 # string_intern_scale_linear.sh — 6.6.19 B0b. String-literal interning is LINEAR in the literal
 # count, and a big literal early in the pool costs every later literal nothing.
 #

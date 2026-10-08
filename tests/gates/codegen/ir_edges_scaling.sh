@@ -1,4 +1,5 @@
 #!/bin/sh
+# check: serial — a timing/scaling measurement; the parallel check.sh runs it alone, after its pool (6.7.0)
 # ir_edges_scaling.sh — v6.5.54. ir_build_edges resolves jump targets within a function,
 # not by scanning the whole program.
 #

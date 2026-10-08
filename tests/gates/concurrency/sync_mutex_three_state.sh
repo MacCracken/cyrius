@@ -1,4 +1,5 @@
 #!/bin/sh
+# check: serial — a timing/scaling measurement; the parallel check.sh runs it alone, after its pool (6.7.0)
 # Gate: the Linux mutex is the THREE-state futex lock, and stays that way (v6.5.9).
 #
 # WHAT CHANGED. `mutex_unlock` used to enter the kernel with FUTEX_WAKE on EVERY release,

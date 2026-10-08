@@ -1,4 +1,5 @@
 #!/bin/sh
+# check: serial — a timing/scaling measurement; the parallel check.sh runs it alone, after its pool (6.7.0)
 # tests/gates/toolchain/bench_timer_floor_measured.sh — v6.5.19 bench-timer gate.
 #
 # `lib/bench.cyr` opened with `clock_gettime: ~120ns per call` for two years. Measured

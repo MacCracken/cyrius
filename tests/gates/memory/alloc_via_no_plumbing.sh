@@ -1,4 +1,5 @@
 #!/bin/sh
+# check: serial — a timing/scaling measurement; the parallel check.sh runs it alone, after its pool (6.7.0)
 # Gate: the allocator dispatch helpers stay free of call plumbing (v6.5.10).
 #
 # THE FILED DEFECT (agnosai, 2026-08-07, measured on live 6.5.9). `alloc_via` cost

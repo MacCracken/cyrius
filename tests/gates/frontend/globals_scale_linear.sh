@@ -1,4 +1,5 @@
 #!/bin/sh
+# check: serial — a timing/scaling measurement; the parallel check.sh runs it alone, after its pool (6.7.0)
 # globals_scale_linear.sh — 6.6.9 bite 1. Compile time is LINEAR in the number of globals.
 #
 # THE DEFECT (issue 2026-09-20, measured at 6.6.8). The global var table had no name index:

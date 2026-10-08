@@ -15,6 +15,8 @@ shell gates produced a result, 0 failed, the 2 named agnos-parity SKIPs — and 
 suite on REAL ecb, ach, cass and pi (all `SELFHOST_OK` + `LIBTEST_OK`). The first run was RED in one driver row:
 `auto_deps_verb_gate` read `compile (` inside the new help text as a call (fixed in the gate: call edges come from
 string-masked lines, `a3ba2b2f`).
+Re-run GREEN in the new parallel form (below) before the tooling commit: **8 min 47 s for the whole gate** (it was 46),
+419 of 419 gate scripts, all four hosts.
 
 **Size:** cycc **1,601,768 B** (`.text` **1,420,992**), +25,784 B over 6.6.20's 1,575,984 — the trait tables,
 pre-scan and checks, the typed-`self` path and the nested-field hop. `build/cycc-native-aarch64` 1,325,704 →
@@ -87,6 +89,23 @@ more arguments with a bare "syntax error" — seed-derive caught a 7-argument he
   behaviour changed; `cyrius`, `help`, `-h` and `--help` print the same bytes. New gate
   `tests/gates/toolchain/help_lists_every_verb.sh` derives the verb set from the dispatcher (floor 39) and checks
   each is listed once, no listed verb is undispatched, the column, and `cyrius <verb> --help` (15 mutations).
+
+### Tooling — the check suite runs in parallel
+
+- **`scripts/check.sh` runs its full suite in parallel by default: ~45 minutes → under 7.** The serial run executed the
+  driver's phases, then its ~195 `_gate` rows, then the ~226 shell gates, one at a time, on a 16-core box (CI looks fast
+  only because it splits a subset across ~20 runners). Now the driver starts in the background with
+  `CYRIUS_CHECK_GATES_ELSEWHERE=1` (its `_gate` rows return at once), and every registered gate script — the driver's
+  and the shell ones, 419 — runs in ONE `xargs -P` pool of `cyrius_check --run-gate` workers (the per-gate deadline,
+  PDEATHSIG and tree-kill unchanged), sized `CYRIUS_CHECK_JOBS` (default half the online CPUs, at most 8;
+  `CYRIUS_CHECK_JOBS=1` is the serial run). A gate whose text carries `# check: serial` — the eight timing tripwires and
+  scaling ratios (`alloc_via_no_plumbing`, `sync_mutex_three_state`, the `*_scale_linear` / `ir_edges_scaling` /
+  `lexid_buckets_by_content` ratios, `test_runner_bounded`, `bench_timer_floor_measured`) — runs alone after the pool.
+  Logs print in registry order and score exactly as before; a signal reaches the driver, the pool and every worker.
+  Measured: the full run in **6 min 37 s**, 419 of 419 results.
+- **`scripts/release-gate.sh` starts the four cross-OS legs alongside check.sh** and waits for them, in host order, at
+  step 4. `cross-os-selfhost.sh` has been safe to run concurrently since 6.6.6 (private local + remote staging per
+  run) and the gate never used it; a red step stops the legs. `CYRIUS_GATE_SERIAL=1` keeps the old walk.
 
 ### Bootstrap
 

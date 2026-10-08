@@ -490,7 +490,21 @@ fn _gate_score(name, rc): i64 {
     return rc;
 }
 
+# 6.7.0 — a PARALLEL check.sh (the default full run) runs every registered gate script in its own
+# pool, so it starts the driver with CYRIUS_CHECK_GATES_ELSEWHERE=1 and this row returns at once:
+# each script runs ONCE, there. Only "1" means it; the serial run (CYRIUS_CHECK_JOBS=1) and every
+# selector leave it unset. CHANGELOG [6.7.0]
+var _gates_elsewhere = 0 - 1;
+fn _gates_else(): i64 {
+    if (_gates_elsewhere < 0) {
+        _gates_elsewhere = 0;
+        var v = getenv("CYRIUS_CHECK_GATES_ELSEWHERE");
+        if (v != 0) { if (streq(v, "1") == 1) { _gates_elsewhere = 1; } }
+    }
+    return _gates_elsewhere;
+}
 fn _gate(name, script_rel): i64 {
+    if (_gates_else() == 1) { return 0; }
     var script_abs = _root_path(script_rel);
     var rc = _gate_run(script_abs);
     _G_SKIP_SUBJECT = script_rel;

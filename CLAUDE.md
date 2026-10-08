@@ -390,7 +390,9 @@ per-session memory files so they survive environment changes.
   and removes both on a green run. This line read *"run it ONE host at a time — fixed /tmp +
   remote paths clobber under concurrency"*, which was a documented workaround standing in for
   the fix: ~40 fixed names, and the pre-run `rm -rf ~/_cyaud` could delete a LIVE run's tree.
-  The release gate still walks the hosts sequentially, for load, not for safety.
+  Since 6.7.0 the release gate RUNS the four legs alongside check.sh (`CYRIUS_GATE_SERIAL=1` keeps the old
+  walk), and check.sh's full run is itself parallel (`CYRIUS_CHECK_JOBS`, default half the cores ≤ 8; `=1` is serial;
+  `# check: serial` marks a timing gate that runs alone): the whole gate takes ~9 minutes, not ~46.
 - A helper that compiles is not a helper that works — end-to-end verify new helpers before commit.
 - Hardware-only bugs (GPU/COM, no debugger/stdout): exit-code probes over SSH.
 - Logic-preserving refactors are proven with the byte-identical self-host + differential-corpus recipe — and stale includes invalidate the comparison (refresh first).

@@ -303,7 +303,9 @@ if [ -x "$D/drv77" ]; then
         printf '_chk_gate "$ROOT/tests/gates/zzskip/ok.sh"\n' >> "$W9/scripts/check.sh"
         run9() {  # $1 = out, $2 = CYRIUS_CHECK_NO_SKIP value
             _rc=0
-            ( cd "$W9" && env CYRIUS_HOME="$W9/home" TMPDIR="$W9/tmp" CYRIUS_CHECK_NO_SKIP="$2" sh scripts/check.sh ) \
+            # CYRIUS_CHECK_JOBS=1: this axis edits and cuts the SERIAL driver call; the parallel
+            # run (6.7.0, the default) scores the driver through the same _chk_driver_result.
+            ( cd "$W9" && env CYRIUS_HOME="$W9/home" TMPDIR="$W9/tmp" CYRIUS_CHECK_NO_SKIP="$2" CYRIUS_CHECK_JOBS=1 sh scripts/check.sh ) \
                 > "$1.raw" 2>&1 || _rc=$?
             strip_ansi < "$1.raw" > "$1"
             echo "$_rc" > "$1.rc"

@@ -1,4 +1,5 @@
 #!/bin/sh
+# check: serial — a timing/scaling measurement; the parallel check.sh runs it alone, after its pool (6.7.0)
 # lexid_buckets_by_content.sh — v6.5.50. LEXID's dedup index must bucket identifiers by
 # CONTENT, not by length alone, so a unit full of same-length names does not degenerate.
 #

@@ -102,8 +102,15 @@ MISSING $_gn"
         _CHK_FAILS=$((_CHK_FAILS + 1))
         return 0
     fi
+    if [ "$_CHK_PAR" = 1 ]; then _chk_enqueue "$_g"; return 0; fi
     _chk_run_bg "$CHECK_BIN" --run-gate "$_g" "$@"
-    _grc=$_CHK_RC
+    _chk_score "$_gn" "$_CHK_RC"
+    return 0
+}
+# The verdict of one gate run: `$1` its name, `$2` the exit status `--run-gate` reported.
+_chk_score() {
+    _gn=$1
+    _grc=$2
     if [ "$_grc" = 0 ]; then
         _CHK_RESULTS="$_CHK_RESULTS
 PASS $_gn"
@@ -142,6 +149,97 @@ FAIL $_gn"
     return 0
 }
 
+# The driver's verdict (`$1`, its exit status) and its SKIP rows (`--skip-report`) into the tally.
+_chk_driver_result() {
+    _CHK_DRIVER_RC=$1
+    while IFS= read -r _dsk || [ -n "$_dsk" ]; do
+        [ -n "$_dsk" ] || continue
+        _CHK_RESULTS="$_CHK_RESULTS
+DSKIP $_dsk"
+        _CHK_DRV_SKIPS=$((_CHK_DRV_SKIPS + 1))
+    done < "$_CHK_DRV_SKIPS_F"
+    _CHK_SKIPS=$((_CHK_SKIPS + _CHK_DRV_SKIPS))
+    if [ "$_CHK_DRIVER_RC" = "0" ]; then
+        _CHK_RESULTS="$_CHK_RESULTS
+PASS $_CHK_DRIVER"
+    else
+        _CHK_RESULTS="$_CHK_RESULTS
+FAIL $_CHK_DRIVER"
+        _CHK_FAILS=$((_CHK_FAILS + 1))
+        echo ""
+        echo "  ^^ FAILED (exit $_CHK_DRIVER_RC): $_CHK_DRIVER"
+        echo "  CONTINUING — the shell gates below still run; the verdict is the summary at the end."
+    fi
+    return 0
+}
+
+# 6.7.0 — the parallel full run (see the driver block below for why). Worker count: CYRIUS_CHECK_JOBS
+# (1 = the serial run), default half the online CPUs, capped at 8.
+_chk_jobs() {
+    _j="${CYRIUS_CHECK_JOBS:-}"
+    if [ -z "$_j" ]; then
+        _j=$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)
+        case "$_j" in ''|*[!0-9]*) _j=2 ;; esac
+        _j=$((_j / 2))
+        if [ "$_j" -gt 8 ]; then _j=8; fi
+        if [ "$_j" -lt 1 ]; then _j=1; fi
+    fi
+    case "$_j" in
+        ''|*[!0-9]*|0) printf "error: CYRIUS_CHECK_JOBS must be a positive integer (1 = serial); got '%s'\n" "$_j" >&2; exit 2 ;;
+    esac
+    echo "$_j"
+}
+# A gate for the pool, or — `# check: serial` in its text — for the quiet run after it.
+_chk_enqueue() {
+    if grep -q '^# check: serial' "$1" 2>/dev/null; then echo "$1" >> "$_CHK_PDIR/serial"
+    else echo "$1" >> "$_CHK_PDIR/queue"; fi
+    return 0
+}
+# Start the driver in the background (its `_gate` rows skipped) and queue its gate scripts.
+_chk_par_start() {
+    _chk_driver_gate_manifest | while IFS= read -r _m; do [ -n "$_m" ] && _chk_enqueue "$ROOT/$_m"; done
+    CYRIUS_CHECK_GATES_ELSEWHERE=1 "$CHECK_BIN" --skip-report "$_CHK_DRV_SKIPS_F" > "$_CHK_PDIR/driver.log" 2>&1 &
+    _CHK_DRV_PID=$!
+    _CHK_CHILD="$_CHK_DRV_PID"
+    echo "check: PARALLEL run — the driver in the background; every gate script queued for a pool of $_CHK_JOBS (CYRIUS_CHECK_JOBS=1 for the serial run)"
+    return 0
+}
+# Run the pool, wait for the driver, run the serial gates, then report everything in order.
+_chk_par_drain() {
+    [ "$_CHK_PAR" = 1 ] || return 0
+    cat > "$_CHK_PDIR/one.sh" <<'ONE'
+echo $$ >> "$CHK_PD/pids"
+i=${1%% *}
+g=${1#* }
+"$CHK_BIN" --run-gate "$g" > "$CHK_PD/$i.log" 2>&1
+echo $? > "$CHK_PD/$i.rc"
+ONE
+    awk '{print NR " " $0}' "$_CHK_PDIR/queue" > "$_CHK_PDIR/numbered"
+    CHK_PD="$_CHK_PDIR" CHK_BIN="$CHECK_BIN" xargs -P "$_CHK_JOBS" -I{} sh "$_CHK_PDIR/one.sh" {} < "$_CHK_PDIR/numbered" &
+    _xp=$!
+    _CHK_CHILD="$_CHK_DRV_PID $_xp"
+    _CHK_RC=0
+    wait "$_xp" || true
+    wait "$_CHK_DRV_PID" || _CHK_RC=$?
+    _CHK_CHILD=""
+    cat "$_CHK_PDIR/driver.log"
+    _chk_driver_result "$_CHK_RC"
+    while IFS= read -r _ln; do
+        _i=${_ln%% *}
+        _g=${_ln#* }
+        cat "$_CHK_PDIR/$_i.log" 2>/dev/null
+        _r=$(cat "$_CHK_PDIR/$_i.rc" 2>/dev/null || echo 1)
+        _chk_score "${_g#"$ROOT/"}" "$_r"
+    done < "$_CHK_PDIR/numbered"
+    if [ -s "$_CHK_PDIR/serial" ]; then
+        echo "check: the $(wc -l < "$_CHK_PDIR/serial" | tr -d ' ') \`# check: serial\` gate(s), alone:"
+        _CHK_PAR=0
+        while IFS= read -r _g; do _chk_gate "$_g"; done < "$_CHK_PDIR/serial"
+        _CHK_PAR=1
+    fi
+    return 0
+}
+
 _CHK_DONE=0
 _CHK_SIGNAL=""
 _CHK_TIMEOUTS=0
@@ -149,6 +247,9 @@ _CHK_SKIPS=0
 _CHK_DRV_SKIPS=0        # of _CHK_SKIPS, the driver's own SKIP rows (its --skip-report)
 _CHK_DRV_SKIPS_F=""
 _CHK_DRV_SKIPS_RM=""    # the private dir holding it, when no staged home did
+_CHK_PAR=0              # 6.7.0: 1 = this full run is the PARALLEL one (_chk_par_*)
+_CHK_PDIR=""            # its private work dir (queue, per-gate logs and exit codes)
+_CHK_DRV_PID=
 _CHK_NO_SKIP=0
 # CYRIUS_CHECK_NO_SKIP: "1" = a gate that exits 77 (could not run) is a FAIL; unset, empty or
 # "0" = it is reported and counted as a SKIP. Anything else is REFUSED (exit 2) — `=true` or
@@ -177,6 +278,7 @@ _chk_finish() {
     esac
     if [ -n "$_CHK_STAGED_DIR" ]; then rm -rf "$_CHK_STAGED_DIR"; fi
     if [ -n "$_CHK_DRV_SKIPS_RM" ]; then rm -rf "$_CHK_DRV_SKIPS_RM"; fi
+    if [ -n "$_CHK_PDIR" ]; then rm -rf "$_CHK_PDIR"; fi
     # A run interrupted while building the driver leaves its per-run side files (6.6.20).
     if [ -n "${_CHK_BIN_NEW:-}" ]; then rm -f "$_CHK_BIN_NEW" "$_CHK_BIN_ERR"; fi
     if [ "$_CHK_STARTED" != "1" ]; then exit "$_xrc"; fi
@@ -252,8 +354,10 @@ _chk_finish() {
 _chk_on_signal() {
     _CHK_SIGNAL=$1
     if [ -n "$_CHK_CHILD" ]; then
-        kill -TERM "$_CHK_CHILD" 2>/dev/null || true
-        wait "$_CHK_CHILD" 2>/dev/null || true
+        # shellcheck disable=SC2086 — a list of pids in a parallel run (_chk_par_drain)
+        kill -TERM $_CHK_CHILD 2>/dev/null || true
+        if [ -n "$_CHK_PDIR" ] && [ -f "$_CHK_PDIR/pids" ]; then kill -TERM $(cat "$_CHK_PDIR/pids") 2>/dev/null || true; fi
+        wait $_CHK_CHILD 2>/dev/null || true
     fi
     _chk_finish
 }
@@ -738,6 +842,16 @@ fi
 
 _chk_read_no_skip
 _chk_stage_home
+_CHK_JOBS=$(_chk_jobs) || exit 2
+if [ "$_CHK_JOBS" -gt 1 ]; then
+    _CHK_PAR=1
+    _CHK_PDIR=$(mktemp -d "${TMPDIR:-/tmp}/cyrius-check-par.XXXXXX") && [ -d "$_CHK_PDIR" ] || { printf "error: mktemp -d failed for the parallel run (TMPDIR=%s)\n" "${TMPDIR:-/tmp}" >&2; exit 1; }
+    : > "$_CHK_PDIR/queue"
+    : > "$_CHK_PDIR/serial"
+    : > "$_CHK_PDIR/pids"
+    # every registered gate produces a result here — the driver's own included
+    _CHK_MANIFEST=$(_chk_gate_registry)
+fi
 
 # ⛔ v6.6.6: RECORD the driver's verdict, do NOT abort on it. `"$CHECK_BIN"` used to be a
 # bare command under `set -e`, so any red row in it skipped every shell gate below — see the
@@ -756,25 +870,20 @@ else
 fi
 _CHK_DRV_SKIPS_F="$_CHK_DRV_SKIPS_D/.driver-skips"
 : > "$_CHK_DRV_SKIPS_F"
-_chk_run_bg "$CHECK_BIN" --skip-report "$_CHK_DRV_SKIPS_F"
-_CHK_DRIVER_RC=$_CHK_RC
-while IFS= read -r _dsk || [ -n "$_dsk" ]; do
-    [ -n "$_dsk" ] || continue
-    _CHK_RESULTS="$_CHK_RESULTS
-DSKIP $_dsk"
-    _CHK_DRV_SKIPS=$((_CHK_DRV_SKIPS + 1))
-done < "$_CHK_DRV_SKIPS_F"
-_CHK_SKIPS=$((_CHK_SKIPS + _CHK_DRV_SKIPS))
-if [ "$_CHK_DRIVER_RC" = "0" ]; then
-    _CHK_RESULTS="$_CHK_RESULTS
-PASS $_CHK_DRIVER"
+# 6.7.0 — THE PARALLEL FULL RUN (the default; CYRIUS_CHECK_JOBS=1 is the serial one). The serial
+# run took ~45 minutes on a 16-core box because it ran the driver's phases, then its ~195
+# `_gate` rows, then the ~226 shell gates below, ONE AT A TIME — CI looks fast only because it
+# splits a subset across ~20 runners. Here the driver starts in the background with
+# CYRIUS_CHECK_GATES_ELSEWHERE=1 (it skips its `_gate` rows), every registered gate script — the
+# driver's and the shell ones — goes into ONE pool of $_CHK_JOBS `--run-gate` workers (deadline,
+# PDEATHSIG and tree-kill unchanged), and a gate marked `# check: serial` (a timing tripwire or a
+# scaling ratio, which load would falsify) runs alone after the pool. Logs print in registry
+# order and score exactly as the serial run scores them. CHANGELOG [6.7.0]
+if [ "$_CHK_PAR" = 1 ]; then
+    _chk_par_start
 else
-    _CHK_RESULTS="$_CHK_RESULTS
-FAIL $_CHK_DRIVER"
-    _CHK_FAILS=$((_CHK_FAILS + 1))
-    echo ""
-    echo "  ^^ FAILED (exit $_CHK_DRIVER_RC): $_CHK_DRIVER"
-    echo "  CONTINUING — the shell gates below still run; the verdict is the summary at the end."
+_chk_run_bg "$CHECK_BIN" --skip-report "$_CHK_DRV_SKIPS_F"
+_chk_driver_result "$_CHK_RC"
 fi
 
 # v6.2.28 D7: the bare-metal kernel BOOT gate — a real QEMU execution of the
@@ -2236,3 +2345,6 @@ _chk_gate "$ROOT/tests/gates/platform/esysxlat_fold.sh"
 # 6.6.18 (XLAT-4) — the pre-commit hook's build/cycc-native-aarch64 band is 700K–2M: a COPY of
 # scripts/hooks/pre-commit in a throwaway `git init` refuses an un-folded 2,042,184 B build.
 _chk_gate "$ROOT/tests/gates/toolchain/precommit_arm_size_band.sh"
+
+# 6.7.0: a parallel run executes everything queued above, then reports (_chk_par_drain).
+_chk_par_drain
