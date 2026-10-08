@@ -480,6 +480,75 @@ fn _resolve_field_base_addr(S, idx, sid): i64 {
     return 0;
 }
 
+# ⛔ 6.7.5 (B8) — COMPOUND ASSIGNMENT ON A FIELD, `x.f OP= e` (BACKLOG-13): it was `expected '=',
+# got '+'` on every field lvalue. The field's ADDRESS is computed ONCE, BEFORE the right-hand side,
+# as `a[i] OP= v` does (`_arr_sub_assign`) — the user's decision (2026-10-08). A plain `x.f = e`
+# evaluates `e` first and stays so, so `GP.n += repoint()` writes the object GP named BEFORE the
+# call, where `GP.n = GP.n + repoint()` writes the one it names after it.
+# rax = the field's address: `_resolve_field_base_addr`'s ladder, the same base decisions (a
+# capture's env, a pointer-mode or address-passed local loaded, an inline one addressed, a global
+# loaded when it holds the address) — in rax, plus the offset, plus a `Str` hop (`hop >= 0`).
+# ⚠ It does NOT set `_fn_local_addr`: the address never leaves the statement (a method's receiver
+# does, `_load_inline_hop`). Setting it would divert every in-loop tail call of the fn.
+fn _fld_addr_ra(S, idx, sid, off, hop): i64 {
+    _IR_REC0(S, IR_RAW_EMIT);   # the frame / capture base is raw bytes on x86 (as `_arr_sub_addr`)
+    if (idx <= 0 - 1000000) { _CL_CAP_BASE_RA(S, 0 - 1000000 - idx, sid); }
+    elif (idx < 0 - 1) {
+        var li = 0 - 2 - idx;
+        if (_local_struct_is_ptr(S, li, 0 - sid) == 1) { EFLLOAD(S, li); } else { EFLADDR(S, li); }
+    } else {
+        if (_gv_holds_addr(S, idx) == 1) { EVLOAD(S, idx); } else { EVADDR(S, idx); }
+    }
+    if (off > 0) { EADDRA_IMM(S, off); }
+    if (hop >= 0) {
+        ELOAD64(S);
+        if (hop > 0) { EADDRA_IMM(S, hop); }
+    }
+    return 0;
+}
+# `x.f OP= e` past the pair, the leaf field in `_rlf_si` / `_rlf_fi` (read here: cybs caps a fn at
+# six parameters): the address once, the field loaded at its width (i8 / i16 / i32 signed, as a
+# read of it), `_asg_compound_op` — its float arm for an f64 / f32 field, its `*T` step for a
+# pointer field — then the store at that width. A `bool` field is refused as `b += 1` is (B2), and
+# a struct-typed field as a struct variable is (a struct value is not an integer); both still parse
+# on, at word width. A `Str` / `Vec` / `*T` field is a handle: integer arithmetic on the word.
+fn _fld_compound(S, idx, sid, off, hop, cop): i64 {
+    var si = _rlf_si;
+    var fi = _rlf_fi;
+    var ft = GETFTYPE(S, si, fi);
+    var w = FIELDSZ(S, ft);
+    if (ft < 0) { if (IS_VEC_FIELD(S, ft) == 0) { w = 0 - w; } }
+    if (ft > 0) { if (IS_STR_FIELD(S, ft) == 0) {
+            _err_in_sync(S, "compound assignment to struct field ", GETFNAME(S, si, fi), " is refused - a struct value is not an integer or a float (write `a = a + b`)");
+            w = 8;
+        } }
+    if (GFBOOL(S, si, fi) == 1) { _bx_refuse(S, GTI(S), "compound assignment to bool field ", GETFNAME(S, si, fi), " is refused - its result is not a bool (write `b = b && c`, `b = !b`)", 0 - 1); }
+    var k = GFFK(S, si, fi);
+    var lt = 0;
+    if (k == 1) { lt = F64_TYID; }
+    if (k == 2) { lt = F32_TYID; }
+    var ps = _fld_ps_get(S, si, fi);
+    _fld_addr_ra(S, idx, sid, off, hop);
+    EPUSHR(S);                  # the field's address
+    _arr_sub_load(S, w);        # rax = the field (clears the flags tracker)
+    _asg_cstep = ps;            # last, right before the op that reads it
+    _asg_compound_op(S, cop, lt);
+    return _asg_store_w(S, w);
+}
+# The store of `_fld_compound` and `_arr_sub_assign` (`a[i] = v` / `a[i] OP= v`): rax = the value,
+# the address on the stack; `w` the load width (negative = signed). Warns on a narrowing store.
+fn _asg_store_w(S, w): i64 {
+    var aw = w;
+    if (aw < 0) { aw = 0 - aw; }
+    if (aw > 0) { if (GEXW(S) > aw) { WARN(S, "narrowing assignment (value may truncate)", 41); } }
+    EPOPC(S);                   # rcx = the address, rax = the value
+    if (aw == 1) { ESTORE8(S); }
+    elif (aw == 2) { ESTORE16(S); }
+    elif (aw == 4) { ESTORE32(S); }
+    else { ESTORE64(S); }
+    return 0;
+}
+
 # ⛔ 6.6.5 — COPYING AN INLINE AGGREGATE WHEN EITHER SIDE IS A GLOBAL. Two facts make this
 # ADDRESS-based rather than the slot-index loop the local/local path uses:
 #   * A GLOBAL SLOT INDEX IS NOT A WORD INDEX. `SVCNT` advances by ONE per variable while
@@ -1566,6 +1635,55 @@ fn _ifs_bx(S, k, ti, fnoff): i64 {
     return _bx_refuse(S, ti, "cannot store a value that is not a bool into bool field ", fnoff, 0, 0 - 1);
 }
 
+# The field store's end: its terminator (`;`), consumed. CHANGELOG [6.7.5]
+fn _fst_end(S, term): i64 {
+    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
+    STI(S, GTI(S) + 1);
+    return 0;
+}
+# v6.5.19 --syntax-only, a `.field` store whose struct or field this file cannot see: silent, no
+# _panic, and the tail parsed as the resolvable path parses it (`= e` or 6.7.5's `OP= e`), or the
+# leftover token is reported as a syntax error the file does not have. See `_synonly_skip_chain`.
+fn _synonly_fld_tail(S, term): i64 {
+    _synonly_skip_chain(S);
+    if (_asg_compound_tok(S) == 0) {
+        if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); }
+        STI(S, GTI(S) + 1);
+    }
+    PCMPE(S);
+    return _fst_end(S, term);
+}
+# v5.8.16 §8 — `s.ptr = e;` / `s.len = e;` on a slice local `lli`, through the slot's ADDRESS (see
+# PARSE_FIELD_STORE). 6.7.5 (B8): and `s.len OP= e`, the address first — a plain word, as
+# PARSE_FIELD_LOAD reads `.ptr` / `.len`.
+fn _slice_fld_store(S, lli, fnoff, term): i64 {
+    var fname = L64(S + 0xEC00000 + fnoff);
+    var fld_off = 0 - 1;
+    if (fname & 0xFFFFFFFF == 0x00727470) { fld_off = 0; }      # "ptr\0"
+    elif (fname & 0xFFFFFFFF == 0x006E656C) { fld_off = 8; }    # "len\0"
+    else { ERR_MSG(S, "slice has only .ptr and .len fields", 35); }
+    var cop = _asg_compound_tok(S);
+    if (cop != 0) {
+        _IR_REC0(S, IR_RAW_EMIT);
+        EFLADDR(S, lli);
+        if (fld_off > 0) { EADDRA_IMM(S, fld_off); }
+        EPUSHR(S);
+        _arr_sub_load(S, 8);
+        _asg_compound_op(S, cop, 0);
+        _asg_store_w(S, 8);
+        return _fst_end(S, term);
+    }
+    if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); }
+    STI(S, GTI(S) + 1);
+    PCMPE(S);
+    EPUSHR(S);
+    EFLADDR_X1(S, lli);
+    if (fld_off > 0) { EADDIMM_X1(S, fld_off); }
+    EPOPR(S);
+    ESTOC(S);
+    return _fst_end(S, term);
+}
+
 # Store to a struct field: ident.field = expr; or ident.inner.field = expr;
 fn PARSE_FIELD_STORE(S, noff): i64 {
     STI(S, GTI(S) + 1);  # consume DOT
@@ -1601,25 +1719,7 @@ fn PARSE_FIELD_STORE(S, noff): i64 {
             # land in the register only — invisible to slice_set's
             # subsequent memory reads. Address-based store keeps the
             # memory write authoritative.
-            var sw = GSLICE_W(S, lli);
-            if (sw > 0) {
-                var fname = L64(S + 0xEC00000 + fnoff);
-                var fld_off = 0 - 1;
-                if (fname & 0xFFFFFFFF == 0x00727470) { fld_off = 0; }      # "ptr\0"
-                elif (fname & 0xFFFFFFFF == 0x006E656C) { fld_off = 8; }    # "len\0"
-                else { ERR_MSG(S, "slice has only .ptr and .len fields", 35); }
-                if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); }
-                STI(S, GTI(S) + 1);
-                PCMPE(S);
-                EPUSHR(S);
-                EFLADDR_X1(S, lli);
-                if (fld_off > 0) { EADDIMM_X1(S, fld_off); }
-                EPOPR(S);
-                ESTOC(S);
-                if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
-                STI(S, GTI(S) + 1);
-                return 0;
-            }
+            if (GSLICE_W(S, lli) > 0) { return _slice_fld_store(S, lli, fnoff, 5); }
         }
     }
     if (idx == 0 - 1) {
@@ -1654,16 +1754,8 @@ fn PARSE_FIELD_STORE(S, noff): i64 {
         # v6.5.19 --syntax-only: silent, no _panic — but the `= expr` tail has NOT been
         # consumed at this point, so it must be parsed exactly as the resolvable path
         # below does or the leftover `=` becomes an INVENTED syntax error.
-        if (_syntax_only == 1) {
-            _synonly_skip_chain(S);
-            if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); }
-            STI(S, GTI(S) + 1);
-            PCMPE(S);
-            if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
-            STI(S, GTI(S) + 1);
-            return 0;
-        }
-        ERR_IDENT(S, "no struct type in scope for ", noff, "; a '.field =' assignment needs its struct declaration (missing include?)", 0 - 1);
+        if (_syntax_only == 1) { return _synonly_fld_tail(S, 5); }
+        ERR_IDENT(S, "no struct type in scope for ", noff, "; a '.field' assignment needs its struct declaration (missing include?)", 0 - 1);
         return 0;
     }
     var si = sid - 1;
@@ -1671,15 +1763,7 @@ fn PARSE_FIELD_STORE(S, noff): i64 {
     if (fi < 0) {
         # v6.5.19 --syntax-only: silent, no _panic — and consume the `= expr` tail, or
         # the leftover `=` is reported as a syntax error this file does not have.
-        if (_syntax_only == 1) {
-            _synonly_skip_chain(S);
-            if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); }
-            STI(S, GTI(S) + 1);
-            PCMPE(S);
-            if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
-            STI(S, GTI(S) + 1);
-            return 0;
-        }
+        if (_syntax_only == 1) { return _synonly_fld_tail(S, 5); }
         ERR_IDENT(S, "unknown field ", fnoff, " on struct ", L64(S + 0x1A6018 + si * 8));
         return 0;
     }
@@ -1697,6 +1781,8 @@ fn PARSE_FIELD_STORE(S, noff): i64 {
     var hop = _rlf_hop;   # 6.6.17: saved before the RHS can re-resolve a field
     var lfn = GETFNAME(S, _rlf_si, _rlf_fi);
     var lfk = _fk_bx(S, _rlf_si, _rlf_fi);   # 6.6.10: read before the RHS can re-resolve a field (6.7.3: + bool)
+    var fcop = _asg_compound_tok(S);   # 6.7.5 (B8): `x.f OP= e`, the address first (_fld_compound)
+    if (fcop != 0) { _fld_compound(S, idx, sid, off, hop, fcop); return _fst_end(S, 5); }
     if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); }
     STI(S, GTI(S) + 1);
     # 6.6.10: a struct VALUE into a struct-typed field copies the whole struct. See `_fsc_src`.

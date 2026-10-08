@@ -2821,15 +2821,28 @@ fn _agc_from_temp(S, t, dli, dgv, n, sid): i64 {
 # not 4. Neither checked the right operand, so `t += 1` on an f64 silently added a subnormal.
 # Out of _PARSE_STMT_IMPL on purpose: cybs miscompiles that body SILENTLY past its per-fn
 # reference limit. CHANGELOG [6.6.11]
+# The compound-assignment operators (the token before `=`): ONE list, read by the runtime pair
+# below and by the const fn evaluator (`_ce_cop`), so the two cannot drift. CHANGELOG [6.7.5]
+fn _is_cop_tok(ct): i64 {
+    if (ct == 6 || ct == 7 || ct == 8 || ct == 9 || ct == 34 || ct == 27 || ct == 35 || ct == 36 || ct == 38 || ct == 39) { return 1; }
+    return 0;
+}
 # The `op =` pair at the cursor: consumes both and returns the op token, else 0.
 fn _asg_compound_tok(S): i64 {
     var ct = PEEKT(S);
-    if (ct == 6 || ct == 7 || ct == 8 || ct == 9 || ct == 34 || ct == 27 || ct == 35 || ct == 36 || ct == 38 || ct == 39) {
+    if (_is_cop_tok(ct) == 1) {
         var tn = GTI(S) + 1;
         if (tn < GTCNT(S)) {
             if (TOKTYP(S, tn) == 4) { STI(S, GTI(S) + 2); return ct; }
         }
     }
+    return 0;
+}
+# 1 = an assignment follows the cursor, `=` or an `op =` pair (nothing consumed). CHANGELOG [6.7.5]
+fn _asg_pair_at(S): i64 {
+    if (PEEKT(S) == 4) { return 1; }
+    if (_is_cop_tok(PEEKT(S)) == 0) { return 0; }
+    if (TOKTYP(S, GTI(S) + 1) == 4) { return 1; }
     return 0;
 }
 # 6.7.0 (A5) — cursor on the `.` after a statement's first IDENT: 1 when a chain of `.name`s ends in
@@ -3435,6 +3448,9 @@ fn _stmt_method_call(S, noff): i64 {
     var pair = _callee_returns_pair_at(S, GTI(S) - 1);
     _mcall_last = 0 - 1;
     PARSE_FIELD_LOAD(S, noff);
+    # 6.7.5 (B8): `b.mk(4).x = 5;` / `.. += 5;` — a field of the call's result is no lvalue (it was
+    # `expected ';', got '='`). A chain ending in a call keeps that message.
+    if (_mcall_last < 0) { if (_asg_pair_at(S) == 1) { _asg_temp_refused(S); return 0; } }
     if (_mcall_last >= 0) { if (PEEKT(S) == 5) { _must_use_warn(S, L64(_fnt_names + _mcall_last * 8)); } }
     _stmt_qmark(S, pair);
     if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }

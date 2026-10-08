@@ -6107,7 +6107,7 @@ fn _ce_stmt(S): i64 {
 # `x OP= e` at the cursor (an IDENT): the operator, or 0.
 fn _ce_cop(S): i64 {
     var ct = TOKTYP(S, _ce_ti + 1);
-    if (ct == 6 || ct == 7 || ct == 8 || ct == 9 || ct == 34 || ct == 27 || ct == 35 || ct == 36 || ct == 38 || ct == 39) {
+    if (_is_cop_tok(ct) == 1) {   # 6.7.5: the runtime's own list (parse.cyr)
         if (TOKTYP(S, _ce_ti + 2) == 4) { return ct; }
     }
     return 0;
