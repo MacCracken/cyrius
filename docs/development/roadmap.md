@@ -78,8 +78,9 @@ in [completed-phases.md](completed-phases.md) § *v6.6.x*; the detail is the CHA
 | **6.7.1** | **C3 — trait-bounded generics** (needs A), with its prerequisite the multi-type-param struct-type-arg residual and the generic-struct field — decisions taken at the open (spec below); ✅ landed 2026-10-07 |
 | **6.7.2** | **B1 `const` + C1 `const fn`** together — decisions taken at the open (spec below); ✅ landed 2026-10-07 |
 | **6.7.3** | **B2 `bool` / `true` / `false`** — decisions taken at the open (spec below) · **+ a repair lane for the filed issues** (user, 2026-10-07 — an exception to operating rule 1, the user's call): the two 6.7.x filings (struct-argument type check, enum-constant assignment) and the four open issue files (tail call in a loop, `cyriusly cmdtools`, the hashmap_fast leak, the tools' attribute-line rule); ✅ landed 2026-10-08 (CHANGELOG [6.7.3]) |
-| **6.7.4 →** | the next of "then, by size" below |
-| then, by size | B2 `bool` / `true` / `false` · B3 the if-expression · B5 `loop` / `do … while` · B8 compound assignment on a field |
+| **6.7.4** | **B3 — the if-expression** — decisions taken at the open (spec below) |
+| **6.7.5 →** | the next of "then, by size" below |
+| then, by size | ~~B2~~ (6.7.3) · ~~B3~~ (6.7.4) · B5 `loop` / `do … while` · B8 compound assignment on a field |
 | **Break 1** | catch-up: backlog + found issues (user picks) · `cyrius test` / `tests` consolidation · **cybs stack arguments** (below) |
 | then | B4 tuples · B6 default + named arguments · B7 narrow struct fields (ABI survey + migration) · C2 bounds-checked mode (+ P5 execution coverage) · **checked `dyn`** (decided 2026-10-07, open question 5) |
 | **Break 2** | catch-up |
@@ -180,6 +181,17 @@ field walk at the nested `<` (re-measured 6.7.1: `#derive(accessors)` never defi
 8. **Compound assignment on a field** (BACKLOG-13). `h.n += 4` is `expected '=', got '+'` for a struct local
    and a field alike; every compound operator on every lvalue form (field, chain, `p.f` through a pointer, a
    subscript), with `*=` / `/=` on f64 fields following the 6.6.11 float rules.
+
+**B3 decisions (user, 2026-10-08, at the 6.7.4 open):**
+- **Syntax: `if (c) { a } elif (d) { b } else { e }` as an expression, ONE expression per branch** (no statements,
+  no `;` inside the braces); `else` is required (an if-expression without it has no value); only the taken branch
+  runs. At the start of a statement `if` stays the if statement.
+- **Types: every branch the same scalar kind** — integer (pointers and bools included), `f64` or `f32`; mixing an
+  `f64` branch with an integer one is refused by name, and so is a struct value over 8 bytes. The result is a bool
+  when every branch is boolean (`var b: bool = if (c) { x > 0 } else { false };` is accepted).
+- **Placement: anywhere an expression goes** — initializers, assignments, arguments, returns, inside other
+  expressions (`n + if (c) { 1 } else { 2 }`) — **and const contexts** (`const X = if (DEBUG) { 1 } else { 0 };`,
+  array sizes, case labels, enum values, `#assert`), where the compile-time evaluator runs it.
 
 **B2 decisions (user, 2026-10-07, at the 6.7.3 open) — ✅ LANDED in 6.7.3 (CHANGELOG [6.7.3]):**
 - **A write into a `bool` is checked: refused by name unless the value is boolean.** A bool variable, field,
