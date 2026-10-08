@@ -9,12 +9,15 @@
 #
 #   R  refused once, by name, at the right token
 #   A  ANTI-VACUOUS: built and run — values, only the taken branch, the join's flag / fold resets
+#   C  const contexts: the compile-time evaluator runs the taken arm, walks the rest
 #
 # Mutations (scratch trees, each RED here — run 2026-10-08): the join's `_flags_reflect_rax = 0`
 # removed -> A4; every `_cfo` clear at the join removed (the helper's and both PARSE_INTRIN callers')
 # -> A5; the final `_BX_MARK` dropped -> A8; the `_FBR_MARK` at the join dropped -> A6; the merge
 # accepting every kind -> R8-R11 R17 R18 BUILD; the struct classifier answering "a word" -> R12-R18;
-# `else` optional -> R1 R2; the `;` check dropped -> R3. (The three peephole-tracker resets and the
+# `else` optional -> R1 R2; the `;` check dropped -> R3; the evaluator running every arm -> C1 C2
+# (`1 / 0` faults, a false cycle); `_cst_kind_peek` answering 0 for an unevaluated const -> R24 C3;
+# the deferred re-check removed -> R24 BUILDS. (The three peephole-tracker resets and the
 # SESVAR / `_esv_name` reset are defensive: no row kills them.)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -68,6 +71,12 @@ refused r17 "$MIX: struct 'T1' here, struct 'S1' before it" "R17: two small stru
 refused r18 "$MIX: an integer here, struct 'S1' before it" "R18: a small struct and an integer" 'struct S1 { v; }\nfn f(c): i64 { var a: S1; a.v = 1; var z = if (c) { a } else { 0 }; return 0; }\nsyscall(60, f(1));\n'
 refused r19 "cannot initialize bool 'b'" "R19: an integer branch into a bool (B2)" "fn f(c): i64 { var b: bool = if (c) { 1 } else { false }; return b; }$E"
 refused r20 "a \`: stack\` enum returns two values" "R20: a value-form pair" 'enum R : stack { Ok(v); Err(e); }\nfn f(c): i64 { var x = if (c) { Ok(1) } else { 0 }; return 0; }\nsyscall(60, f(1));\n'
+refused r21 "an if expression needs an else" "R21: a const with no else" 'const X = if (1) { 1 };\nsyscall(60, 0);\n'
+refused r22 "$MIX: an integer here, an f64 before it" "R22: a const mixing f64 and an integer" 'const X = if (1) { 1.5 } else { 2 };\nsyscall(60, 0);\n'
+refused r23 "$MIX: an integer here, a string before it" "R23: a const mixing a string and an integer" 'const S = if (1) { "a" } else { 0 };\nsyscall(60, 0);\n'
+refused r24 "$MIX: an f64 here, an integer before it" "R24: an untaken arm's forward f64 const (re-checked when every const is known)" 'const A = if (true) { 1 } else { B };\nconst B = 2.5;\nsyscall(60, A);\n'
+refused r25 "$MIX: an integer here, an f64 before it" "R25: a const fn body's mix is reported once (by the parser)" 'const fn g(x) { return if (x) { 1.5 } else { 2 }; }\nsyscall(60, 0);\n'
+refused r26 "holds one expression, without ';'" "R26: a ';' in a const's branch" 'const X = if (1) { 1; } else { 2 };\nsyscall(60, 0);\n'
 
 exits a01 35  "A1: if / else, both ways"          "fn f(c): i64 { return if (c) { 3 } else { 5 }; }\nsyscall(60, f(1) * 10 + f(0));\n"
 exits a02 100 "A2: an elif chain"                  "fn g(n): i64 { return if (n == 0) { 10 } elif (n == 1) { 20 } elif (n == 2) { 30 } else { 40 }; }\nsyscall(60, g(0) + g(1) + g(2) + g(7));\n"
@@ -83,6 +92,9 @@ exits a11 104 "A11: ... and dispatches its operator" 'struct S1 { v; }\nfn mk(n)
 exits a12 92  "A12: as the 7th argument"           "fn f7(a, b, c, d, e, g, h): i64 { return a + h; }\nfn f(c): i64 { return f7(1, 2, 3, 4, 5, 6, if (c) { 40 } else { 50 }); }\nsyscall(60, f(1) + f(0));\n"
 exits a13 111 "A13: nested if-expressions"         "fn f(c): i64 { return if (c) { if (c > 1) { 100 } else { 10 } } else { 1 }; }\nsyscall(60, f(2) + f(1) + f(0));\n"
 exits a14 7   "A14: a global initializer"          'var A = 3;\nvar G = if (A > 2) { 7 } else { 9 };\nsyscall(60, G);\n'
+exits c01 249 "C1: every const context — consts, an elif const, an array size, #assert, an enum value, a recursive const fn, an untaken 1 / 0, a bool const, a string const, a local const, a case label" 'const D = 1;\nconst X = if (D) { 10 } else { 20 };\nconst Y = if (D == 0) { 1 } elif (D == 1) { 2 } else { 3 };\nvar arr: i64[if (D) { 4 } else { 8 }];\n#assert X == 10\nenum E { EA = if (D) { 5 } else { 6 }; }\nconst fn fact(n) { return if (n <= 1) { 1 } else { n * fact(n - 1) }; }\nconst F = fact(5);\nconst Z = if (D) { 7 } else { 1 / 0 };\nconst B = if (D) { true } else { false };\nconst S = if (D) { "dbg" } else { "rel" };\nfn main(): i64 { const L = if (X > 5) { 3 } else { 4 }; var b: bool = B; var s = 0; switch (2) { case if (D) { 2 } else { 3 }: s = 1; default: s = 0; } return X + Y + EA + F + Z + L + b + s + load8(S); }\nsyscall(60, main() % 256);\n'
+exits c02 2 "C2: an untaken arm naming a forward const is no cycle" 'const A = if (true) { 1 } else { B };\nconst B = A;\nsyscall(60, A + B);\n'
+exits c03 3 "C3: an untaken arm's forward const of the same kind" 'const A = if (true) { 1.5 } else { B };\nconst B = 2.5;\nfn main(): i64 { return f64_to(A * 2.0); }\nsyscall(60, main());\n'
 exits a15 3   "A15: a statement-start if is still the if statement" "fn f(c): i64 { var r = 0; if (c) { r = 3; } else { r = 4; } return r; }$E"
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: if_expr_checked — $fails row(s) red"; exit 1; fi

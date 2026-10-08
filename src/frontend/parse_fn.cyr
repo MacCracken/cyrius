@@ -5676,6 +5676,7 @@ fn _ce_binop(S, t, a, ak, b, bk): i64 {
     if (_ce_err == 1) { return 0; }
     if (_ce_skip > 0) {
         if (ak == 1) { if (t == 6 || t == 7 || t == 8 || t == 9) { _ce_k = 1; } }
+        if (ak == 4) { if (t == 6 || t == 7 || t == 8 || t == 9) { _ce_k = 4; } }   # 6.7.4: still unknown
         return 0;
     }
     if (ak == 2 || bk == 2) { _ce_bad(S, "a string in arithmetic: a const string is a value to pass, not to compute with", 78); return 0; }
@@ -5758,6 +5759,7 @@ fn _ce_factor(S): i64 {
     }
     if (_ce_fbuiltin(t) == 1) { return _ce_fcall(S, t); }
     if (t == 2) { return _ce_name(S); }
+    if (t == 15) { return _ce_ifx(S); }   # 6.7.4 (B3): an if-expression
     _ce_bad(S, "not a compile-time expression: a const context takes literals, consts, enum constants, sizeof, const fn calls and arithmetic", 124);
     return 0;
 }
@@ -6213,6 +6215,175 @@ fn _ce_if(S): i64 {
     }
     return 0;
 }
+# 6.7.4 (B3) — THE IF-EXPRESSION IN A CONST CONTEXT, the parser's grammar and rules: `if (c) { a }
+# elif (d) { b } else { e }`, one expression per arm, `else` required; the taken arm runs and the
+# others (and every later condition) are walked in skip mode, so `if (N > 0) { 10 / N } else { 0 }`
+# never divides by zero. Every arm the same class — an integer (a bool included), an f64, a string —
+# else refused by name, in the parser's words (outside a const fn: its body is also compiled, and the
+# parser reports it there). The result is a bool when every arm is. An arm walked in skip mode that
+# names a top-level const not evaluated yet (pass 1) has kind 4, unknown: it is recorded and
+# re-checked when every const is known (_ce_xpend_check), so a forward const neither makes a false
+# cycle nor slips a mismatch through. CHANGELOG [6.7.4]
+fn _ce_ifx(S): i64 {
+    var p0 = _ce_pend_n;
+    _ce_ti = _ce_ti + 1;
+    var c = _ce_cond(S);
+    var done = 0;
+    var res = 0;
+    var st = 0;
+    var run = 0;
+    if (_ce_skip == 0) { if (c == 1) { run = 1; done = 1; } }
+    var v = _ce_xarm(S, run);
+    if (run == 1) { res = v; }
+    st = _ce_xmerge(S, st, _ce_k, _ce_xbt);
+    var go = 1;
+    var els = 0;
+    while (go == 1) {
+        if (_ce_err == 1) { return 0; }
+        var t = TOKTYP(S, _ce_ti);
+        if (t == 50) {
+            _ce_ti = _ce_ti + 1;
+            if (done == 1) { _ce_skip = _ce_skip + 1; }
+            var c2 = _ce_cond(S);
+            if (done == 1) { _ce_skip = _ce_skip - 1; c2 = 0; }
+            run = 0;
+            if (_ce_skip == 0) { if (c2 == 1) { run = 1; done = 1; } }
+            v = _ce_xarm(S, run);
+            if (run == 1) { res = v; }
+            st = _ce_xmerge(S, st, _ce_k, _ce_xbt);
+        } elif (t == 23) {
+            _ce_ti = _ce_ti + 1;
+            run = 0;
+            if (_ce_skip == 0) { if (done == 0) { run = 1; } }
+            v = _ce_xarm(S, run);
+            if (run == 1) { res = v; }
+            st = _ce_xmerge(S, st, _ce_k, _ce_xbt);
+            els = 1;
+            go = 0;
+        } else { go = 0; }
+    }
+    if (_ce_err == 1) { return 0; }
+    if (els == 0) { _ce_bad(S, "an if expression needs an else - its value must come from every path", 68); return 0; }
+    _ce_xpend_class(p0, st & 255);
+    _ce_k = _ce_xresk(st);
+    return res;
+}
+# One arm `{ expr }`: run (1) or walked in skip mode (0); its kind in `_ce_k`, its first token in
+# `_ce_xbt`.
+fn _ce_xarm(S, run): i64 {
+    if (_ce_expect(S, 13) == 0) { return 0; }
+    var bt = _ce_ti;
+    var t = TOKTYP(S, _ce_ti);
+    if (t == 14) { _ce_bad(S, "an if expression branch needs a value", 37); return 0; }
+    if (_ie_stmt_tok(t) == 1) { _ce_bad(S, "an if expression branch takes one expression, not a statement - an if statement runs statements", 95); return 0; }
+    if (run == 0) { _ce_skip = _ce_skip + 1; }
+    var v = _ce_expr(S);
+    if (run == 0) { _ce_skip = _ce_skip - 1; }
+    var k = _ce_k;
+    if (_ce_err == 1) { return 0; }
+    if (TOKTYP(S, _ce_ti) == 5) { _ce_bad(S, "an if expression branch holds one expression, without ';' - an if statement runs statements", 91); return 0; }
+    _ce_expect(S, 14);
+    _ce_k = k;
+    _ce_xbt = bt;
+    return v;
+}
+# A kind as a class: 1 an integer (a bool too), 2 an f64, 3 a string, 0 unknown.
+fn _ce_xcls(k): i64 {
+    if (k == 1) { return 2; }
+    if (k == 2) { return 3; }
+    if (k == 4) { return 0; }
+    return 1;
+}
+# Merge an arm of kind `k` (first token `bt`) into `st`: class (low byte), 256 = an arm that is not a
+# bool, 512 = an arm of unknown kind was recorded.
+fn _ce_xmerge(S, st, k, bt): i64 {
+    if (_ce_err == 1) { return st; }
+    if (k != 3) { if (k != 4) { st = st | 256; } }
+    var cl = _ce_xcls(k);
+    if (cl == 0) {
+        if (_ce_infn == 0) { _ce_xpend_push(bt); }
+        return st | 512;
+    }
+    var c0 = st & 255;
+    if (c0 == 0) { return st | cl; }
+    if (c0 != cl) { if (_ce_infn == 0) { _ce_xmix_err(S, bt, c0, cl); } }
+    return st;
+}
+fn _ce_xresk(st): i64 {
+    var c = st & 255;
+    if (c == 0) { if ((st & 512) != 0) { return 4; } }   # every arm unknown: still unknown
+    if (c == 2) { return 1; }
+    if (c == 3) { return 2; }
+    if (c == 1) { if ((st & 256) == 0) { return 3; } }
+    return 0;
+}
+fn _ce_xkname(c): i64 {
+    if (c == 1) { PRSTR("an integer"); }
+    if (c == 2) { PRSTR("an f64"); }
+    if (c == 3) { PRSTR("a string"); }
+    return 0;
+}
+fn _ce_xmix_err(S, ti, c0, cl): i64 {
+    if (_ce_err == 1) { return 0; }
+    _ce_err = 1;
+    if (_panic == 1) { return 0; }
+    var sv = GTI(S);
+    STI(S, ti);
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    PRSTR(": if expression branches differ in type: ");
+    _ce_xkname(cl);
+    PRSTR(" here, ");
+    _ce_xkname(c0);
+    PRSTR(" before it\n");
+    _err_excerpt(S);
+    _had_error = 1;
+    STI(S, sv);
+    return 0;
+}
+fn _ce_xpend_push(bt): i64 {
+    if (_ce_pend == 0) { _ce_pend = alloc(16 * 4096); }
+    if (_ce_pend_n >= 4096) { return 0; }
+    S64(_ce_pend + _ce_pend_n * 16, bt);
+    S64(_ce_pend + _ce_pend_n * 16 + 8, 0);
+    _ce_pend_n = _ce_pend_n + 1;
+    return 0;
+}
+# The expression's class, now known, onto the arms it recorded (from entry p0).
+fn _ce_xpend_class(p0, cl): i64 {
+    var i = p0;
+    while (i < _ce_pend_n) {
+        S64(_ce_pend + i * 16 + 8, cl);
+        i = i + 1;
+    }
+    return 0;
+}
+# Every top-level const is known: walk each recorded arm again (skip mode) and refuse a class that
+# differs from its expression's.
+fn _ce_xpend_check(S): i64 {
+    var i = 0;
+    while (i < _ce_pend_n) {
+        var cl = L64(_ce_pend + i * 16 + 8);
+        if (cl != 0) { _ce_xpend_one(S, L64(_ce_pend + i * 16), cl); }
+        i = i + 1;
+    }
+    _ce_pend_n = 0;
+    return 0;
+}
+fn _ce_xpend_one(S, bt, cl): i64 {
+    var sv_ti = _ce_ti; var sv_top = _ce_top; var sv_in = _ce_infn; var sv_err = _ce_err; var sv_skip = _ce_skip;
+    _ce_ti = bt;
+    _ce_top = 1;
+    _ce_infn = 0;
+    _ce_err = 0;
+    _ce_skip = 1;
+    _ce_expr(S);
+    var c2 = _ce_xcls(_ce_k);
+    if (_ce_err == 0) { if (c2 != 0) { if (c2 != cl) { _ce_xmix_err(S, bt, cl, c2); } } }
+    _ce_ti = sv_ti; _ce_top = sv_top; _ce_infn = sv_in; _ce_err = sv_err; _ce_skip = sv_skip;
+    return 0;
+}
+
 fn _ce_while(S): i64 {
     _ce_ti = _ce_ti + 1;
     var top = _ce_ti;
@@ -6465,7 +6636,7 @@ fn _cst_value(S, ci): i64 {
 fn _cst_kind_peek(S, ci): i64 {
     var e = _cst_tab + ci * 64;
     if (L64(e + 32) == 2) { return L64(e + 40); }
-    return 0;
+    return 4;   # 6.7.4: not evaluated yet — its kind is unknown (an if-expression re-checks it later)
 }
 # Run const ci's initializer at the TOP context (no locals of whatever fn forced it).
 fn _cst_eval(S, ci): i64 {
@@ -6516,6 +6687,7 @@ fn _cst_sweep(S): i64 {
         if (L64(_cst_tab + i * 64 + 32) == 0) { _cst_value(S, i); }
         i = i + 1;
     }
+    _ce_xpend_check(S);   # 6.7.4: every const is known now
     return 0;
 }
 # The const kind of global var slot vi: 0 = not a const, 1 = int, 2 = f64, 3 = string, 4 = bool.
@@ -6567,6 +6739,7 @@ fn _ce_eval_here(S): i64 {
     _ce_steps = 0;
     var v = _ce_expr(S);
     var k = _ce_k;
+    if (k == 4) { k = 0; }   # 6.7.4: an unknown kind lives only inside skip mode
     STI(S, _ce_ti);
     _ce_ti = sv_ti; _ce_top = sv_top; _ce_infn = sv_in; _ce_skip = sv_skip; _ce_fb = sv_fb;
     _ce_k = k;

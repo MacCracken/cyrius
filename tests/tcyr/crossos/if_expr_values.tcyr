@@ -22,6 +22,18 @@ fn mk1(n): S1 { var s: S1; s.v = n; return s; }
 fn S1_add(a: S1, b: S1): S1 { var r: S1; r.v = a.v + b.v; return r; }
 fn take1(s: S1): i64 { return s.v; }
 struct P { a; b; }
+const CD = 1;
+const CX = if (CD) { 10 } else { 20 };
+const CY = if (CD == 0) { 1 } elif (CD == 1) { 2 } else { 3 };
+var CARR: i64[if (CD) { 4 } else { 8 }];
+#assert CX == 10
+enum CE { CEA = if (CD) { 5 } else { 6 }; }
+const fn cfact(n) { return if (n <= 1) { 1 } else { n * cfact(n - 1) }; }
+const CF = cfact(5);
+const CZ = if (CD) { 7 } else { 1 / 0 };
+const CB = if (CD) { true } else { false };
+const CS = if (CD) { "dbg" } else { "rel" };
+const CH = if (CD) { 1.5 } else { 2.5 };
 var GA = 3;
 var GI = if (GA > 2) { 70 } else { 90 };
 
@@ -89,11 +101,32 @@ fn kinds(): i64 {
     return 0;
 }
 
+fn consts(): i64 {
+    assert_eq(CX * 10 + CY, 102, "C1: consts, an elif chain");
+    store64(&CARR + 24, 9);
+    assert_eq(load64(&CARR + 24), 9, "C2: an array size (4 elements)");
+    assert_eq(CEA, 5, "C3: an enum value");
+    assert_eq(CF, 120, "C4: a recursive const fn");
+    assert_eq(CZ, 7, "C5: an untaken 1 / 0 never runs");
+    var b: bool = CB;
+    assert_eq(b, 1, "C6: a bool const");
+    assert_eq(load8(CS), 100, "C7: a string const");
+    assert_eq(f64_to(CH * 2.0), 3, "C8: an f64 const");
+    const L = if (CX > 5) { 3 } else { 4 };
+    assert_eq(L, 3, "C9: a local const");
+    var s = 0;
+    switch (2) { case if (CD) { 2 } else { 3 }: s = 1; default: s = 0; }
+    assert_eq(s, 1, "C10: a case label");
+    assert_eq(cfact(4), 24, "C11: the const fn at run time");
+    return 0;
+}
+
 fn run(): i64 {
     alloc_init();
     values();
     places();
     kinds();
+    consts();
     return 0;
 }
 var r0 = run();

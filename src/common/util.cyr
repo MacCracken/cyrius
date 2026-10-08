@@ -1378,6 +1378,11 @@ var _clm = 0;          # case-label / enum-value memo (3 words): token, value, e
 var _clm_n = 0;
 var _case_ok = 0;
 var _ce_asrt = 0;      # 1 while an `#assert` expression is evaluated (sizeof names the context)
+# 6.7.4 (B3): an if-expression's untaken arm whose kind was unknown (4: a top-level const not yet
+# evaluated, pass 1) — 2 words each (arm token, the expression's class), re-checked by _cst_sweep.
+var _ce_pend = 0;
+var _ce_pend_n = 0;
+var _ce_xbt = 0;       # the first token of the arm _ce_xarm just walked
 fn _tp_clear(S): i64 { _tp_n0 = 0; _tp_c0 = 0; _tp_n1 = 0; _tp_c1 = 0; return 0; }
 fn _tp_bind(S, slot, noff, conc): i64 {
     if (slot == 0) { _tp_n0 = noff; _tp_c0 = conc; }
