@@ -14,6 +14,9 @@
 #   Q  a PARENTHESISED struct source into a struct-typed field (`o.i = (z.k)`: 72 where 78 is
 #      right), a struct variable (`w = (j)`: one word) or a declaration (`var q: K = (z.k)`:
 #      SIGSEGV), in a fn, at top level and in a for step — every source shape.
+#   O  a struct result over 8 B (a free call, a method, an operator; retptr or rax:rdx) as the
+#      right operand of an operator that takes it by address: `s - mk3(4)` and `p + p.dup()`
+#      pushed its first word and SIGSEGV'd.
 include "lib/syscalls.cyr"
 include "lib/string.cyr"
 include "lib/alloc.cyr"
@@ -234,6 +237,52 @@ fn q_pairs(): i64 {
 }
 #endif
 
+# O — a struct result over 8 B as the RIGHT operand of an operator whose parameter takes it by
+# address (`*S`, or a by-value struct over 8 B): its temp's address, not its first word (SIGSEGV).
+struct V3 { x; y; z; }
+struct W3 { x; y; z; }
+fn V3_sub(a: *V3, b: *V3): i64 { return a.z - b.z; }
+fn W3_sub(a: W3, b: W3): i64 { return a.z - b.z; }
+fn mkv(v): V3 { var t: V3 = V3 { v, v, v }; return t; }
+fn mkw(v): W3 { var t: W3 = W3 { v, v, v }; return t; }
+fn gpv(p: *V3): *V3 { return p; }
+impl V3 { fn less5(self): V3 { var t: V3 = V3 { self.x, self.y, self.z - 5 }; return t; } }
+fn operands(): i64 {
+    var s: V3 = V3 { 9, 9, 9 };
+    var t: V3 = V3 { 1, 1, 4 };
+    var w: W3 = W3 { 9, 9, 9 };
+    assert_eq(s - mkv(4), 5, "O1: s - mkv(4), a retptr call into a *V3 operand (the filed repro)");
+    assert_eq(s - (mkv(4)), 5, "O2: s - (mkv(4))");
+    assert_eq(s - s.less5(), 5, "O3: s - s.less5(), a retptr method result");
+    assert_eq(w - mkw(4), 5, "O4: w - mkw(4), a by-value 24-byte operand");
+    assert_eq(s - gpv(&t), 5, "O5: s - gpv(&t): a call returning a pointer stays a pointer");
+    var a: P3 = P3 { 1, 2, 3 };
+    var b: P3 = P3 { 10, 20, 30 };
+    var c: P3 = a + (b + mk3(1));
+    assert_eq(s3(&c), 69, "O6: a + (b + mk3(1)), nested operator and call results");
+    var d: P3 = a + mk3(2);
+    assert_eq(s3(&d), 12, "O7: var d: P3 = a + mk3(2)");
+    return 0;
+}
+#ifndef CYRIUS_TARGET_CX
+struct T2 { x; y; }
+struct U2 { x; y; }
+fn T2_add(a: T2, b: T2): i64 { return a.x + b.x + a.y + b.y; }
+fn U2_add(a: *U2, b: *U2): i64 { return a.x + b.x + a.y + b.y; }
+fn mkt2(v): T2 { var t: T2 = T2 { v, v + 1 }; return t; }
+impl T2 { fn dup(self): T2 { var t: T2 = T2 { self.x, self.y }; return t; } }
+impl U2 { fn dup(self): U2 { var t: U2 = U2 { self.x, self.y }; return t; } }
+fn operand_pairs(): i64 {
+    var p: T2 = T2 { 1, 2 };
+    var u: U2 = U2 { 1, 2 };
+    assert_eq(p + p.dup(), 6, "O8: p + p.dup(), a rax:rdx method result (the filed repro)");
+    assert_eq(p + (p.dup()), 6, "O9: p + (p.dup())");
+    assert_eq(u + u.dup(), 6, "O10: u + u.dup() into a *U2 operand");
+    assert_eq(p + mkt2(4), 12, "O11: p + mkt2(4), a rax:rdx free call");
+    return 0;
+}
+#endif
+
 fn rows(): i64 {
     alloc_init();
     flags();
@@ -246,7 +295,9 @@ fn rows(): i64 {
     q_decls();
 #ifndef CYRIUS_TARGET_CX
     q_pairs();
+    operand_pairs();
 #endif
+    operands();
     assert_eq(s3(&GQD) * 100 + s3(&GQF) * 10 + GQS.z, 1107, "Q27: top level: var G: P3 = (GP3), = ((GP3)), G = (GP3)");
     return 0;
 }
