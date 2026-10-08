@@ -81,15 +81,15 @@ out=$(run_verb bench)
 check "bench finds benches/perf/nested.bcyr" "1" "$(printf '%s' "$out" | grep -c 'perf/nested.bcyr' || true)"
 out=$(run_verb fuzz)
 check "fuzz finds fuzz/deep/nested.fcyr" "0" "$(printf '%s' "$out" | grep -ci 'no fuzz harnesses found' || true)"
-out=$(run_verb tests)
+out=$( ( cd "$P" && timeout 300 "$CYRIUS" test tests 2>&1 ) )
 # Both the scaffolded tests/vprobe.tcyr and the nested tests/unit/nested.tcyr must
 # run, i.e. 2 passed. The string appears on more than one line, so test presence
 # rather than an exact count.
-check "tests finds tests/unit/nested.tcyr" "yes" \
+check "test tests finds tests/unit/nested.tcyr" "yes" \
     "$(printf '%s' "$out" | grep -q '2 passed' && echo yes || echo no)"
 
 echo "axis 5 — an explicit SUBFOLDER argument is honoured (the callout form):"
-for pair in "bench:benches/perf" "fuzz:fuzz/deep" "tests:tests/unit"; do
+for pair in "bench:benches/perf" "fuzz:fuzz/deep" "test:tests/unit"; do
     v=${pair%%:*}; d=${pair##*:}
     rc=0; ( cd "$P" && timeout 300 "$CYRIUS" "$v" "$d" >/dev/null 2>&1 ) || rc=$?
     check "cyrius $v $d" 0 "$rc"

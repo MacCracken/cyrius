@@ -22,7 +22,7 @@
 # AXES (each: exit status, the directory named, and no green verdict)
 #   W0  control: the READABLE fixture — test "1 passed, 1 failed" rc 1; audit fmt FAIL
 #   W1  `cyrius test`            (bare auto-discover)   tests/bad unreadable
-#   W2  `cyrius tests tests`     (the plural verb)
+#   W2  `cyrius test tests`      (the directory form — `cyrius tests tests` until 6.7.6)
 #   W3  `cyrius audit`           src/bad unreadable — fmt and lint walkers
 #   W4  `cyrius fuzz`            fuzz/sub unreadable
 #   W5  `cyrius bench benches`   benches/sub unreadable
@@ -172,8 +172,8 @@ else
     check "   …names it" yes "$(has 'cannot list directory: tests/bad')"
     check "   …and never '1 passed, 0 failed'" no "$(has '1 passed, 0 failed')"
 
-    cy "$P" tests tests
-    check "W2 \`cyrius tests tests\`: rc 1, tests/bad named" "1 yes" "$RC $(has 'cannot list directory: tests/bad')"
+    cy "$P" test tests
+    check "W2 \`cyrius test tests\` (directory form): rc 1, tests/bad named" "1 yes" "$RC $(has 'cannot list directory: tests/bad')"
 
     cy "$P" audit
     check "W3 \`cyrius audit\` with src/bad unreadable: rc non-zero" yes "$([ "$RC" -ne 0 ] && [ "$RC" -ne 124 ] && echo yes || echo no)"

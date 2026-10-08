@@ -33,7 +33,7 @@ fn _mf_vocab_a(i): i64 {
     if (i == 6) { return "package|repository|info|-|-|-|people and package recipes"; }
     if (i == 7) { return "build|entry|read|src|-|<source>|cyrius build, cyrius package: the source"; }
     if (i == 8) { return "build|output|read|-|-|<output>|cyrius build, cyrius package: the output (a default)"; }
-    if (i == 9) { return "build|test|read|-|-|<file>...|bare cyrius test: these (file / dir / list), then tests/"; }
+    if (i == 9) { return "build|test|read|-|-|<path>...|bare cyrius test: these (file / dir / list), then tests/"; }
     if (i == 10) { return "build|modules|read|-|-|-|every compile: these files prepended before the entry"; }
     if (i == 11) { return "build|dce|read|-|CYRIUS_DCE|--dce|cyrius build: dead-code elimination (bool)"; }
     if (i == 12) { return "build|strict|held|-|-|--strict|has had no effect since 6.3.2: a reachable undefined function is an error by default; --allow-undef downgrades it"; }

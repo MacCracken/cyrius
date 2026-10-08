@@ -130,8 +130,8 @@ fn _help_build(): i64 {
     _help_row("clean", "remove build/ contents");
     println("");
     println("Test:");
-    _help_row("test [--aarch64] [test.tcyr...]", "compile + run each, check exit 0 (none: the whole suite)");
-    _help_row("tests [--aarch64] [dir]", "recursively run all .tcyr under dir (default tests/)");
+    _help_row("test [--aarch64] [file.tcyr|dir]...", "compile + run each (a dir: every .tcyr under it); none: the whole suite");
+    _help_row("tests [dir]", "DEPRECATED: use `test <dir>` (goes in the next release)");
     _help_row("bench [file.bcyr|dir]", "compile + run benchmarks (default: benches/ + tests/)");
     _help_row("fuzz [--poison[=ab]] [file.fcyr|dir]", "run fuzz harnesses (default: fuzz/ + tests/)");
     _help_row("coverage [--full] [--min <pct>]",
@@ -815,12 +815,20 @@ fn main(): i64 {
     if (streq(cmd, "test") == 1) {
         # 0..N files. `cyrius test a.tcyr b.tcyr` used to run ONLY a and report its
         # verdict for the pair.
+        # 6.7.6: ...or DIRECTORIES — `cyrius test <dir>` runs every .tcyr under it, recursively
+        # (it was `error: not a file`; that walk was the separate `cyrius tests <dir>` verb, now a
+        # deprecated alias). One directory is exactly `cmd_tests`; a mix runs each file once
+        # (_test_path). CHANGELOG [6.7.6]
+        if (_cli_npos() == 1) {
+            if (is_dir(str_from(_cli_pos_at(0))) == 1) { return cmd_tests(_cli_pos_at(0)); }
+        }
         if (_cli_npos() > 0) {
             _pass = 0; _fail = 0;
             if (_cli_npos() == 1) { return cmd_test(_cli_pos_at(0)); }
+            _tests_seen = vec_new();
             var tri = 0;
             while (tri < _cli_npos()) {
-                cmd_test(_cli_pos_at(tri));
+                _test_path(_cli_pos_at(tri));
                 tri = tri + 1;
             }
             if (_dry_run == 0) {
@@ -878,12 +886,14 @@ fn main(): i64 {
 
     # v6.0.62: plural verb — recursive folder/suite runner. `cyrius tests`
     # walks tests/ at any depth; `cyrius tests <dir>` scopes to a subtree.
-    # Distinct from `cyrius test <file>` (single) + bare `cyrius test`
-    # (auto-discover), both unchanged.
+    # 6.7.6: DEPRECATED — `cyrius test <dir>` is the same walk. It stays one release with a
+    # one-line notice naming the new spelling, then goes (roadmap, Break 1). CHANGELOG [6.7.6]
     if (streq(cmd, "tests") == 1) {
         if (_cli_operands_ok("tests", 0, 1) == 0) { return 1; }
-        if (_cli_npos() > 0) { return cmd_tests(_cli_pos_at(0)); }
-        return cmd_tests("tests");
+        var tsd = "tests";
+        if (_cli_npos() > 0) { tsd = _cli_pos_at(0); }
+        _tests_verb_deprecated(tsd);
+        return cmd_tests(tsd);
     }
 
     if (streq(cmd, "bench") == 1) {

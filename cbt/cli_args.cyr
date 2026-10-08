@@ -149,7 +149,7 @@ fn _cli_spec(verb): i64 {
 fn _cli_operands(verb): i64 {
     if (streq(verb, "build") == 1) { return "[<source> [<output>]]"; }
     if (streq(verb, "run") == 1) { return "<source.cyr> [args...] | <prog.cyx>"; }
-    if (streq(verb, "test") == 1) { return "[<test.tcyr>...]"; }
+    if (streq(verb, "test") == 1) { return "[<test.tcyr|dir>...]"; }
     if (streq(verb, "tests") == 1) { return "[<dir>]"; }
     if (streq(verb, "bench") == 1) { return "[<bench.bcyr|dir>]"; }
     if (streq(verb, "fuzz") == 1) { return "[<harness.fcyr|dir>]"; }
@@ -305,8 +305,13 @@ fn _cli_help_extra(verb): i64 {
     }
     if (streq(verb, "test") == 1) {
         println("");
-        println("  With no <test.tcyr>: what ./cyrius.cyml [build] test declares (a file, a directory");
+        println("  A <dir> runs every .tcyr under it (recursive); several operands run each file once.");
+        println("  With no operand: what ./cyrius.cyml [build] test declares (a file, a directory");
         println("  or a list) runs first, then every .tcyr under tests/ (recursive); each file once.");
+    }
+    if (streq(verb, "tests") == 1) {
+        println("");
+        println("  Deprecated: `cyrius test <dir>` is the same recursive walk; `tests` goes in the next release.");
     }
     if (streq(verb, "run") == 1) {
         println("");
