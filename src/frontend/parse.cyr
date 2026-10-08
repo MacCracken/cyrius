@@ -1209,6 +1209,20 @@ var _sc_n0 = 0;         # 1 when `_sc_pre` pushed a retptr as int arg 0
 # instead of descending and reporting the values it is then short. CHANGELOG [6.6.12]
 var _sc_rbeg = 0 - 1;
 var _sc_rend = 0 - 1;
+# ⛔ 6.7.6 — A STRUCT RESULT AS THE LEFT OPERAND (`p.dup() + p`, `mk3(4) - s`, `a + b + c`): the
+# last struct-valued call result, stamped where it ENDS (a free call in `_call_scale_fix`, a method
+# or operator in `_sc_post` / `_sc_post_small`) with the code pointer, so it describes the value in
+# rax only while nothing has been emitted since. `_op_lst` matches it against a left operand. The
+# `_fnc_l*` record is `_fnc_agg`'s temp for a >16 B free call. CHANGELOG [6.7.6]
+var _lsc_beg = 0 - 1;   # its first token
+var _lsc_end = 0 - 1;   # the token after it
+var _lsc_cp = 0 - 1;    # the code pointer where it ended
+var _lsc_sid = 0;       # its struct
+var _lsc_tmp = 0 - 1;   # its frame temp; -1 / -4 = in rax (rax:rdx over 8 B) or no frame
+var _lsc_hit = 0;       # 1 = `_op_lst` matched the left operand just classified
+var _fnc_lo = 0 - 1;    # `_fnc_agg`'s last emitted call: its `(`,
+var _fnc_lt = 0 - 1;    #   its temp,
+var _fnc_lcp = 0 - 1;   #   and the code pointer after it
 
 # ⭐ 6.7.6 — REDUNDANT PARENTHESES AROUND A WHOLE STRUCT SOURCE ARE TRANSPARENT. Every struct
 # destination (an address-passed argument, a struct-typed field, a struct variable) picks its copy

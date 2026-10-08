@@ -615,8 +615,12 @@ exits and assert-summary returns.
 `x OP= e` takes eleven operators — `+= -= *= /= %= &= |= ^= <<= >>= >>>=` (`>>>=`, the
 arithmetic shift, since 6.7.5) — on **every lvalue**: a variable, a subscript `a[i]`, a field at
 any depth (`p.x`, `o.i.b`, `a.next.v` through a `*T` field, `h.name.len` through a `Str`, a
-slice's `s.len`), through a `*T` local, parameter or global, `self: *T`, a closure capture, and
-`*p`. It works in a statement, at top level, in a classic-`for` step (`for (h.n = 0; h.n < 5;
+slice's `s.len`), through a `*T` local, parameter or global, `self: *T`, a field or element of a
+closure capture, and `*p`. A closure captures by value, so `|d| { h.n += d; }` and `a[1] += d`
+change the closure's own copy (it persists from call to call; the enclosing fn's `h` is untouched)
+and `p.n += d` through a captured `*T` reaches the pointee. A captured NAME is not an lvalue in
+the closure: `x += d`, like `x = x + d`, is `undefined variable 'x'`. It works in a statement, at
+top level, in a classic-`for` step (`for (h.n = 0; h.n < 5;
 h.n += 1)` — a field or `*p` step takes `=` too, and a struct-valued field step copies the whole
 struct) and, on a local, in a `const fn`. Before 6.7.5 a field, `*p`, `>>>=` and a field or `*p`
 `for` step were all syntax errors (`expected '=', got '+'`).
@@ -1202,12 +1206,19 @@ declaration in a fn or at top level (`var q: P3 = (z.k);`, `var G: P3 = (A);`), 
 Parentheses that are only PART of the source keep their meaning (`sz((a) + (b))` adds first).
 Before 6.7.6 every one of these took the struct's FIRST WORD: an address-passed argument and a
 declaration SIGSEGV'd, and a field or variable kept one word of the copy, silently.
+The same holds for a struct fn's **return value** (6.7.6): `return (j);`, `return (mk3(v));`,
+`return ((j));` and `return (a + b);` are `return j;`, `return mk3(v);` and `return a + b;`, in
+both return classes (a retptr struct over 16 bytes, a 9-16 byte struct in two registers) — they
+were refused (*return must be a bare local identifier ...*, *... got `(...)`*) — and so is
+`return (a) + b;`, a parenthesised left operand. A refused shape inside the parentheses is
+refused as it is without them.
 
 **A struct result over 8 bytes is a valid RIGHT operand** of an operator whose parameter takes it
 by address (a `*T` parameter, or a by-value struct over 8 bytes): `s - mk3(4)`, `s - s.dbl()`,
 `p + p.dup()` for a 16-byte `p` — the result lands in a frame temporary whose address is passed.
-At top level there is no frame, so `G + G.dup()` and `G + mk2(3)` are refused by name, as a
-`*T` operand of 8 bytes or less already was. Before 6.7.6 the operand's first word was passed as
+At top level there is no frame, so `G + G.dup()` and `G + mk2(3)` are refused by name (*... is
+passed by address (a struct over 8 bytes) ...*; *(a `*` parameter)* when the operator fn takes a
+`*T`), as a `*T` operand of 8 bytes or less already was. Before 6.7.6 the operand's first word was passed as
 the struct's address: SIGSEGV.
 
 ```cyrius
@@ -1222,6 +1233,23 @@ fn demo(): i64 {
     return (s - mk3(4)) + rd3((q)) + s.z;   # 5 + 4 + 9
 }
 ```
+
+**A struct result is a LEFT operand too, and dispatches from its own type** (6.7.6): the result
+of a call, a method or an operator that returns a struct by value — `mk3(4) - s`, `p.dup() + p`,
+`a + b + c` with a struct-returning `+`, `(mk3(4)) - s`, `mk3(4) * s` — calls `T_op` for the struct
+it returns, exactly as a struct variable in that place does: an operand of 8 bytes or less is
+passed by value (or, to a `*T` parameter, through a temporary), a larger one by its temporary's
+address. A missing `T_op` is refused by name (*refusing to emit binary with 1 reachable undefined
+function(s)*, naming `T_op`) — `mkw(3) + 4` for an 8-byte `W` with no `W_add` too — and so is an
+operator fn whose first parameter is another struct. At top level, a left operand that needs a
+frame (an address-passed one) is refused by name, as the right operand is. Before 6.7.6 only a
+NAME typed the left operand: a call's result was an untyped word, so `p.dup() + p` added the two
+first words (2 where 6 is right), `a + b + c` added an address to a first word and crashed, and
+`mk3(4) - s + 10` dispatched `P3_add` — from the struct type `s` left behind. A `Str` result is a
+heap handle and never dispatches (`gs() + 8` is pointer arithmetic). The same expression works as
+an argument (`sz(mk3(1) + a)`), a declaration's initialiser (`var r = mk3(4) - s;`, `var q: P3 =
+mk3(1) + a;`) and a struct fn's return value (`return mk3(1) + a;`) — those two were `expected
+';', got '-'` before 6.7.6, the receive having taken the call alone.
 
 **A `: Str` field is a `Str` handle as a source.** `h.name` into a `Str` parameter, variable or
 field, or an untyped one, is the handle as ever (a pointer-mode struct variable rebinds to it,
@@ -2271,9 +2299,14 @@ myproject/
 (`cyrius bench benches/perf`). Before v6.5.7 the bench and fuzz walkers were flat, so
 `benches/perf/core.bcyr` simply never ran *and the command reported success over it*; a
 directory argument ran nothing, printed nothing and exited 0. A path that does not exist is
-now refused rather than silently building a do-nothing program, and every form prints the
-`=== N passed, M failed ===` summary — the single-file form used not to, which made it
-unscriptable.
+now refused rather than silently building a do-nothing program, and every `bench` / `fuzz` form
+prints the `=== N passed, M failed ===` summary — their single-file form used not to, which made
+it unscriptable. `cyrius test <file>` prints the test's own output (its `N passed, M failed (T
+total)` assert summary, not a `===` line) and its exit status is the test's: non-zero, with a
+`FAIL:` line naming the file, when the test exits non-zero, dies of a signal, times out, or exits
+0 with an assert summary that reports failures (or, when its source calls `assert_summary()`, with
+none or one of 0 assertions). The suite forms (bare, a directory, several operands) end with an
+`N passed, M failed` tally of the files they ran.
 
 **One test verb (6.7.6).** `cyrius test <file>` runs that file, `cyrius test <dir>` runs every
 `.tcyr` under the directory (recursive — `cyrius test tests/tcyr/crossos`), several operands
@@ -3606,6 +3639,13 @@ cx bytecode target each `fncallN` is `callptr(fp, …)` (there is no asm on cx).
 **Before 6.7.6 `lib/fnptr.cyr` had no cx arm**, so an address-taken `&fncallN`
 returned 0 there for every callee (`fncall2(&fncall1, &add1, 41)` gave 0, 42
 everywhere else). Pinned by `tests/tcyr/codegen/cx_backend_parity.tcyr`.
+⚠ **Before 6.7.6 the x86_64 SysV `fncall8` body (Linux, macOS, agnos) passed arguments 7
+and 8 in C's order**, while a cyrius callee reads its LAST argument at `[rsp]`: an
+address-taken `&fncall8` handed a cyrius callee 7 and 8 swapped (`12345687` for `1..8`;
+a direct `fncall8(..)` was right, the compiler marshals it). It now passes them in
+cyrius's order, as a direct call does; an 8-argument C function on x86_64 therefore needs a
+shim, as one with 7+ arguments on aarch64 always has (`docs/ffi/fncall-abi.md`). Pinned by
+`tests/tcyr/crossos/fncall_stack_args.tcyr`.
 
 ## Closures
 

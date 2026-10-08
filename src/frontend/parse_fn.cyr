@@ -1097,102 +1097,7 @@ fn PARSE_RETURN(S): i64 {
     # pointer value and returns it via rax (matching the existing
     # stdlib convention: `Str` values are 16-byte heap structs
     # passed around as pointers, not by-value).
-    if (_cur_fn_ret_sid > 0 && _cur_fn_ret_stash > 0) {
-        # 6.6.6: `return f(..);` where `f` returns this same struct — emitted into a temp, then
-        # copied into our retptr like `return IDENT;`. It used to take the tail path and crash.
-        var srn_lli = _return_struct_call(S);
-        if (srn_lli < 0) { srn_lli = _return_struct_expr(S); }   # a method / operator (bite 14 review)
-        if (srn_lli < 0) {
-            if (PEEKT(S) != 2) {
-                ERR_MSG(S, "struct-return fn: return must be a bare local identifier, or a call to a fn returning the same struct", 101);
-            }
-            var srn_noff = PEEKV(S);
-            if (TOKTYP(S, GTI(S) + 1) != 5) {
-                ERR_MSG(S, "struct-return fn: return must be a bare local identifier, or a call to a fn returning the same struct", 101);
-            }
-            srn_lli = FINDLOCAL(S, srn_noff);
-            if (srn_lli < 0) {
-                ERR_MSG(S, "struct-return: identifier is not a local", 40);
-            }
-            var srn_lt = GLTYPE(S, srn_lli);
-            if (srn_lt >= 0) {
-                ERR_MSG(S, "struct-return: identifier is not struct-typed", 45);
-            }
-            if ((0 - srn_lt) != _cur_fn_ret_sid) {
-                ERR_MSG(S, "struct-return: identifier type != fn ret_sid", 44);
-            }
-            STI(S, GTI(S) + 1);            # consume IDENT
-        }
-        if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
-        STI(S, GTI(S) + 1);            # consume ';'
-        # 6.6.6 — `return q;` where `q` is a by-value struct PARAMETER: its slot holds the
-        # caller's ADDRESS, so the byte-copy below would copy the pointer word. Materialise the
-        # struct into an inline temp and return THAT. See `_local_is_sptr_param`.
-        # 6.6.17 (a1): and a HANDLE (a pointer-mode local). See `_ret_local_inline`.
-        srn_lli = _ret_local_inline(S, srn_lli);
-        # Byte-copy size (aligned up to 8 — the retptr slot is already
-        # 8-aligned so padded copies are safe)
-        var srn_sz = STRUCTSZ(S, _cur_fn_ret_sid - 1);
-        var srn_aligned = (srn_sz + 7) & (0 - 8);
-        # Source disp: &IDENT (bottom of struct) in the fn's frame
-        var srn_src_disp = 0 - ((srn_lli + 1) * 8);
-        if (_cur_fn_regalloc > 0) { srn_src_disp = srn_src_disp - _cur_fn_regalloc * 8; }
-        if (_cur_fn_ret_stash > 0) { srn_src_disp = srn_src_disp - _cur_fn_ret_stash; }
-        # Retptr stash disp: [rbp - regalloc*8 - 8]
-        var srn_stash_disp = 0 - (_cur_fn_regalloc * 8 + 8);
-        # v5.9.26 Phase 2b-aarch64 (LDRB/STRB byte-copy loop):
-        # cx bytecode still has no struct-return opcode → ERR_MSG;
-        # aarch64 emits the LDRB/STRB analog of x86's `rep movsb`.
-        # Encoding plan (3-instr loop body + setup + tail):
-        #   movz/sub  x9, x29, #|src_disp|         ; via _EFP_ADDR_X9
-        #   ldur      x10, [x29, #stash_disp]      ; retptr
-        #   movz      x11, #aligned_byte_count
-        # loop:
-        #   ldrb      w12, [x9], #1                ; post-inc source
-        #   strb      w12, [x10], #1               ; post-inc dest
-        #   subs      x11, x11, #1
-        #   b.ne      loop                         ; -3 instructions back
-        #   ldur      x0, [x29, #stash_disp]       ; reload retptr
-        # Constraints:
-        #   - aligned size must fit MOVZ imm16 (< 65536). Cyrius
-        #     struct sizes are bounded well below this in practice;
-        #     guard error fires for the implausible large case.
-        #   - stash_disp = -(regalloc*8 + 8). With regalloc cap of
-        #     5, stash_disp in [-48,-8] always fits LDUR's signed
-        #     9-bit immediate (-256..+255). Defensive guard checks.
-        # v5.9.40 — struct-by-value return now goes through each
-        # backend's `ESTRUCT_BYVAL_COPY` helper. Closes Phase 2c #1
-        # (cx was the last remaining ERR_MSG path; aarch64 landed
-        # at v5.9.26, x86 has been there since v5.6.12). Each
-        # backend chooses its own copy strategy:
-        #   x86      — push rsi/rdi + lea/mov + `rep movsb` (3 B)
-        #   aarch64  — LDRB/STRB byte-loop with post-increment
-        #   cx       — load8/store8 byte-loop with explicit
-        #              add r9/r10/r11 + jnz back-jump (cxvm has
-        #              no rep/post-incr semantics).
-        # Constraints (apply to all backends in practice; named
-        # at this call site for clarity since they are real
-        # encoding limits, not invariants of the helper):
-        #   - aligned byte count must fit MOVZ imm16 (< 65536) on
-        #     aarch64. Cyrius struct sizes are bounded well below
-        #     this; guard fires for the implausible large case.
-        #   - stash_disp = -(regalloc*8 + 8) on aarch64 must fit
-        #     LDUR's signed 9-bit immediate (-256..+255). With
-        #     regalloc cap of 5, stash_disp is in [-48,-8] — safe.
-        if (_AARCH64_BACKEND == 1) {
-            if (srn_aligned > 65535) {
-                ERR_MSG(S, "struct return by value: struct >= 64 KB pending Phase 2c (movz/movk chain)", 74);
-            }
-            if (srn_stash_disp < 0 - 256) {
-                ERR_MSG(S, "struct return by value: stash_disp out of LDUR imm9 range — increase regalloc-aware fallback", 94);
-            }
-        }
-        ESTRUCT_BYVAL_COPY(S, srn_src_disp, srn_stash_disp, srn_aligned);
-        # jmp to epilogue (regular return-patch path)
-        var srn_rp = EJMP0(S);
-        vec_push(rp_vec, srn_rp);
-        return 0;
-    }
+    if (_cur_fn_ret_sid > 0 && _cur_fn_ret_stash > 0) { return _ret_struct_big(S); }   # 6.7.6: out of this body
     # v5.10.45 Phase 1 — int-class 16B struct pair-return.
     # Fires when the current fn is annotated `: StructName` with
     # STRUCTSZ in [9,16] AND the struct sid != Str's sid AND the
@@ -1203,49 +1108,7 @@ fn PARSE_RETURN(S): i64 {
     # Falls through to scalar PCMPE for non-IDENT shapes (those
     # land on a follow-up slot — same staging as f64v2's v5.10.28
     # Phase 1 left non-IDENT to a follow-up).
-    if (_cur_fn_ret_pair == 1) {
-        if (PEEKT(S) == 2) {
-            if (TOKTYP(S, GTI(S) + 1) == 5) {
-                var _ip_noff = PEEKV(S);
-                var _ip_lli = FINDLOCAL(S, _ip_noff);
-                if (_ip_lli >= 0) {
-                    var _ip_lt = GLTYPE(S, _ip_lli);
-                    # Multi-slot typed local: lt < 0 AND -lt == ret_sid.
-                    # Single-slot heap-handle pattern (e.g. `var s = alloc(...)`
-                    # in a fn returning : Str) falls through to scalar PCMPE.
-                    if (_ip_lt < 0) {
-                        if ((0 - _ip_lt) == _cur_fn_ret_sid) {
-                            STI(S, GTI(S) + 1);     # consume IDENT
-                            STI(S, GTI(S) + 1);     # consume ';'
-                            # 6.6.6 — an address-passed parameter holds the caller's pointer,
-                            # not the pair. Materialise it inline first.
-                            # 6.6.17 (a1): and a HANDLE. See `_ret_local_inline`.
-                            _ip_lli = _ret_local_inline(S, _ip_lli);
-                            EFLLOAD_STRUCT_INT_PAIR(S, _ip_lli);
-                            var _ip_rp = EJMP0(S);
-                            vec_push(rp_vec, _ip_rp);
-                            return 0;
-                        }
-                    }
-                }
-            }
-        }
-        # 6.6.6 — EVERYTHING ELSE. A method / overloaded operator returning this same struct is
-        # landed in a frame temp and loaded as the pair; a call returning it in the same two
-        # registers passes straight through PCMPE; anything else cannot be carried and is
-        # refused by name instead of silently handing back rax plus an unwritten rdx.
-        # See `_refuse_pair_return`.
-        if (_pair_ret_expr_shape(S) == 1) {
-            var _pe_t = _return_struct_expr(S);
-            EFLLOAD_STRUCT_INT_PAIR(S, _pe_t);
-            if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
-            STI(S, GTI(S) + 1);     # consume ';'
-            var _pe_rp = EJMP0(S);
-            vec_push(rp_vec, _pe_rp);
-            return 0;
-        }
-        if (_pair_ret_call_ok(S) == 0) { _refuse_pair_return(S); }
-    }
+    if (_cur_fn_ret_pair == 1) { if (_ret_struct_pair(S) == 1) { return 0; } }   # 6.7.6: out of this body
     if (_ret_small_ptrp(S) == 1) { return 0; }   # 6.6.17 (a1 review): `return p;`, p: *T, T <= 8 B
     # v5.10.28 — f64v2 multi-register pair return ABI.
     # When the current fn is annotated `: f64v2` (encoding -2093 in
@@ -1708,7 +1571,9 @@ fn _try_push_struct_addr_arg(S, fi, argc, tail): i64 {
         # 6.6.12: `take(mk(p).v)` — the argument is a FIELD of the result, taken like `take(b.v)`.
         if (_call_dotted(S, GTI(S)) == 1) { return _push_struct_expr_arg(S, fi, argc, tail); }
         if (_arg_call_class(S) == 0) { return 0; }   # 6.6.10: the instance's class
-        if (_call_is_whole_arg(S, o - 1) == 0) { return 0; }
+        # 6.7.6: a struct call that is only the LEFT operand (`sz(mk(1) + a)`) dispatches its
+        # operator fn, whose struct result takes the operator path's temp, as `sz(a + mk(1))`.
+        if (_call_is_whole_arg(S, o - 1) == 0) { return _push_struct_expr_arg(S, fi, argc, tail); }
         _sarg_escapes(fi, argc, tail);   # 6.6.20: a temp in this frame
         EFLADDR(S, _struct_call_into_temp(S));
         EPUSHR(S);
@@ -1920,6 +1785,185 @@ fn _ret_local_inline(S, li): i64 {
     if (GLAGG(S, li) != 0) { return li; }
     if (_agc_plain_big(S, GLTYPE(S, li)) == 0) { return li; }
     return _sptr_param_temp(S, li, _cur_fn_ret_sid);
+}
+# ⛔ 6.7.6 — `return (j);`, `return (mk3(v));`, `return (a + b);` in a fn returning a struct over 8 B
+# were refused ("return must be a bare local identifier, or a call ..." / "... got `(...)`"): the
+# struct return took its shape from the first token. Parentheses wrapping the WHOLE return value are
+# transparent, as for every other struct destination (`_pwrap_k`): `_ret_peel` steps inside them
+# and makes `)` the value's terminator (`_ret_term`), `_ret_end` closes them before the `;`, and a
+# call the rax:rdx class passes straight through is handed back to the scalar path wrap and all
+# (`_ret_unpeel`). The two class bodies moved out of PARSE_RETURN (cybs's per-fn reference
+# ceiling). CHANGELOG [6.7.6]
+var _ret_pk = 0;     # the parentheses `_ret_peel` stepped into
+var _ret_term = 5;   # the token that ends the return value: `;`, or the wrap's first `)`
+fn _ret_peel(S): i64 {
+    _ret_pk = 0;
+    _ret_term = 5;
+    if (PEEKT(S) != 10) { return 0; }
+    var k = _pwrap_k(S, GTI(S));
+    if (TOKTYP(S, _pw_end) != 5) { return 0; }
+    STI(S, GTI(S) + k);
+    _ret_pk = k;
+    _ret_term = 11;
+    return 0;
+}
+fn _ret_unpeel(S): i64 {
+    STI(S, GTI(S) - _ret_pk);
+    _ret_pk = 0;
+    _ret_term = 5;
+    return 0;
+}
+fn _ret_end(S): i64 {
+    _pw_close(S, _ret_pk);
+    _ret_pk = 0;
+    _ret_term = 5;
+    if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
+    STI(S, GTI(S) + 1);
+    return 0;
+}
+# The retptr class (`_cur_fn_ret_stash` > 0): the value copied into our caller's buffer.
+fn _ret_struct_big(S): i64 {
+    _ret_peel(S);
+    # 6.6.6: `return f(..);` where `f` returns this same struct — emitted into a temp, then
+    # copied into our retptr like `return IDENT;`. It used to take the tail path and crash.
+    var srn_lli = _return_struct_call(S);
+    if (srn_lli < 0) { srn_lli = _return_struct_expr(S); }   # a method / operator (bite 14 review)
+    if (srn_lli < 0) {
+        if (PEEKT(S) != 2) {
+            ERR_MSG(S, "struct-return fn: return must be a bare local identifier, or a call to a fn returning the same struct", 101);
+        }
+        var srn_noff = PEEKV(S);
+        if (TOKTYP(S, GTI(S) + 1) != _ret_term) {
+            ERR_MSG(S, "struct-return fn: return must be a bare local identifier, or a call to a fn returning the same struct", 101);
+        }
+        srn_lli = FINDLOCAL(S, srn_noff);
+        if (srn_lli < 0) {
+            ERR_MSG(S, "struct-return: identifier is not a local", 40);
+        }
+        var srn_lt = GLTYPE(S, srn_lli);
+        if (srn_lt >= 0) {
+            ERR_MSG(S, "struct-return: identifier is not struct-typed", 45);
+        }
+        if ((0 - srn_lt) != _cur_fn_ret_sid) {
+            ERR_MSG(S, "struct-return: identifier type != fn ret_sid", 44);
+        }
+        STI(S, GTI(S) + 1);            # consume IDENT
+    }
+    _ret_end(S);                   # 6.7.6: a wrap's `)`, then `;`
+    # 6.6.6 — `return q;` where `q` is a by-value struct PARAMETER: its slot holds the
+    # caller's ADDRESS, so the byte-copy below would copy the pointer word. Materialise the
+    # struct into an inline temp and return THAT. See `_local_is_sptr_param`.
+    # 6.6.17 (a1): and a HANDLE (a pointer-mode local). See `_ret_local_inline`.
+    srn_lli = _ret_local_inline(S, srn_lli);
+    # Byte-copy size (aligned up to 8 — the retptr slot is already
+    # 8-aligned so padded copies are safe)
+    var srn_sz = STRUCTSZ(S, _cur_fn_ret_sid - 1);
+    var srn_aligned = (srn_sz + 7) & (0 - 8);
+    # Source disp: &IDENT (bottom of struct) in the fn's frame
+    var srn_src_disp = 0 - ((srn_lli + 1) * 8);
+    if (_cur_fn_regalloc > 0) { srn_src_disp = srn_src_disp - _cur_fn_regalloc * 8; }
+    if (_cur_fn_ret_stash > 0) { srn_src_disp = srn_src_disp - _cur_fn_ret_stash; }
+    # Retptr stash disp: [rbp - regalloc*8 - 8]
+    var srn_stash_disp = 0 - (_cur_fn_regalloc * 8 + 8);
+    # v5.9.26 Phase 2b-aarch64 (LDRB/STRB byte-copy loop):
+    # cx bytecode still has no struct-return opcode → ERR_MSG;
+    # aarch64 emits the LDRB/STRB analog of x86's `rep movsb`.
+    # Encoding plan (3-instr loop body + setup + tail):
+    #   movz/sub  x9, x29, #|src_disp|         ; via _EFP_ADDR_X9
+    #   ldur      x10, [x29, #stash_disp]      ; retptr
+    #   movz      x11, #aligned_byte_count
+    # loop:
+    #   ldrb      w12, [x9], #1                ; post-inc source
+    #   strb      w12, [x10], #1               ; post-inc dest
+    #   subs      x11, x11, #1
+    #   b.ne      loop                         ; -3 instructions back
+    #   ldur      x0, [x29, #stash_disp]       ; reload retptr
+    # Constraints:
+    #   - aligned size must fit MOVZ imm16 (< 65536). Cyrius
+    #     struct sizes are bounded well below this in practice;
+    #     guard error fires for the implausible large case.
+    #   - stash_disp = -(regalloc*8 + 8). With regalloc cap of
+    #     5, stash_disp in [-48,-8] always fits LDUR's signed
+    #     9-bit immediate (-256..+255). Defensive guard checks.
+    # v5.9.40 — struct-by-value return now goes through each
+    # backend's `ESTRUCT_BYVAL_COPY` helper. Closes Phase 2c #1
+    # (cx was the last remaining ERR_MSG path; aarch64 landed
+    # at v5.9.26, x86 has been there since v5.6.12). Each
+    # backend chooses its own copy strategy:
+    #   x86      — push rsi/rdi + lea/mov + `rep movsb` (3 B)
+    #   aarch64  — LDRB/STRB byte-loop with post-increment
+    #   cx       — load8/store8 byte-loop with explicit
+    #              add r9/r10/r11 + jnz back-jump (cxvm has
+    #              no rep/post-incr semantics).
+    # Constraints (apply to all backends in practice; named
+    # at this call site for clarity since they are real
+    # encoding limits, not invariants of the helper):
+    #   - aligned byte count must fit MOVZ imm16 (< 65536) on
+    #     aarch64. Cyrius struct sizes are bounded well below
+    #     this; guard fires for the implausible large case.
+    #   - stash_disp = -(regalloc*8 + 8) on aarch64 must fit
+    #     LDUR's signed 9-bit immediate (-256..+255). With
+    #     regalloc cap of 5, stash_disp is in [-48,-8] — safe.
+    if (_AARCH64_BACKEND == 1) {
+        if (srn_aligned > 65535) {
+            ERR_MSG(S, "struct return by value: struct >= 64 KB pending Phase 2c (movz/movk chain)", 74);
+        }
+        if (srn_stash_disp < 0 - 256) {
+            ERR_MSG(S, "struct return by value: stash_disp out of LDUR imm9 range — increase regalloc-aware fallback", 94);
+        }
+    }
+    ESTRUCT_BYVAL_COPY(S, srn_src_disp, srn_stash_disp, srn_aligned);
+    # jmp to epilogue (regular return-patch path)
+    var srn_rp = EJMP0(S);
+    vec_push(rp_vec, srn_rp);
+    return 0;
+}
+# The rax:rdx class (9-16 B): 1 = the return was emitted; 0 = a call returning this struct in the
+# same two registers (or a refused shape) left for the scalar path, the cursor at the value.
+fn _ret_struct_pair(S): i64 {
+    _ret_peel(S);
+    if (PEEKT(S) == 2) {
+        if (TOKTYP(S, GTI(S) + 1) == _ret_term) {
+            var _ip_noff = PEEKV(S);
+            var _ip_lli = FINDLOCAL(S, _ip_noff);
+            if (_ip_lli >= 0) {
+                var _ip_lt = GLTYPE(S, _ip_lli);
+                # Multi-slot typed local: lt < 0 AND -lt == ret_sid.
+                # Single-slot heap-handle pattern (e.g. `var s = alloc(...)`
+                # in a fn returning : Str) falls through to scalar PCMPE.
+                if (_ip_lt < 0) {
+                    if ((0 - _ip_lt) == _cur_fn_ret_sid) {
+                        STI(S, GTI(S) + 1);     # consume IDENT
+                        _ret_end(S);            # 6.7.6: a wrap's `)`, then `;`
+                        # 6.6.6 — an address-passed parameter holds the caller's pointer,
+                        # not the pair. Materialise it inline first.
+                        # 6.6.17 (a1): and a HANDLE. See `_ret_local_inline`.
+                        _ip_lli = _ret_local_inline(S, _ip_lli);
+                        EFLLOAD_STRUCT_INT_PAIR(S, _ip_lli);
+                        var _ip_rp = EJMP0(S);
+                        vec_push(rp_vec, _ip_rp);
+                        return 1;
+                    }
+                }
+            }
+        }
+    }
+    # 6.6.6 — EVERYTHING ELSE. A method / overloaded operator returning this same struct is
+    # landed in a frame temp and loaded as the pair; a call returning it in the same two
+    # registers passes straight through PCMPE; anything else cannot be carried and is
+    # refused by name instead of silently handing back rax plus an unwritten rdx.
+    # See `_refuse_pair_return`.
+    if (_pair_ret_expr_shape(S) == 1) {
+        var _pe_t = _return_struct_expr(S);
+        EFLLOAD_STRUCT_INT_PAIR(S, _pe_t);
+        _ret_end(S);            # 6.7.6: a wrap's `)`, then `;`
+        var _pe_rp = EJMP0(S);
+        vec_push(rp_vec, _pe_rp);
+        return 1;
+    }
+    if (_pair_ret_call_ok(S) == 0) { _refuse_pair_return(S); }
+    _ret_unpeel(S);   # 6.7.6: a call passes through the scalar path, wrap and all
+    return 0;
 }
 # ⛔ 6.6.17 (a1 review) — `return p;` from a fn returning a struct of 8 B or less, where `p: *T` is
 # a pointer to it. That class returns the struct's VALUE in rax (the scalar path below), and a
@@ -2800,6 +2844,18 @@ fn _call_dotted(S, ti): i64 {
     return 1;
 }
 
+# ⛔ 6.7.6 — 1 = the call `name(..)` / `name<..>(..)` at token `ti` is followed by token type `term`
+# (`;`): it is the whole initialiser or return value. A receive that sized itself from the callee's
+# return took the call alone when it was only an operator's LEFT operand, so `var r = mk3(4) - s;`
+# and `return mk(1) + a;` were `expected ';', got '-'` on valid code. A call this cannot open (an
+# unresolvable `<..>`) answers 1, as before. CHANGELOG [6.7.6]
+fn _call_ends_at(S, ti, term): i64 {
+    var o = _gcall_open(S, ti);
+    if (o < 0) { return 1; }
+    if (TOKTYP(S, _call_close(S, o) + 1) == term) { return 1; }
+    return 0;
+}
+
 # Is the call at `ti` the WHOLE argument (followed by `,` or `)`)? A call inside a larger
 # expression (`f(a) + 1`) is left to the ordinary value path.
 fn _call_is_whole_arg(S, ti): i64 {
@@ -2814,6 +2870,7 @@ fn _call_is_whole_arg(S, ti): i64 {
 fn _return_struct_call(S): i64 {
     if (_gcall_open(S, GTI(S)) < 0) { return 0 - 1; }   # 6.6.10: `name(` or `name<..>(`
     if (_call_dotted(S, GTI(S)) == 1) { return 0 - 1; }   # 6.6.12: a field of the result
+    if (_call_ends_at(S, GTI(S), _ret_term) == 0) { return 0 - 1; }   # 6.7.6: a left operand (`_ret_expr_head`)
     var fi = _gen_resolve_call(S, GTI(S));   # 6.6.10: a generic's instance, not its base
     if (fi < 0) { return 0 - 1; }
     if (GFRS(S, fi) != _cur_fn_ret_sid) { return 0 - 1; }
@@ -2833,6 +2890,7 @@ fn _refuse_toplevel_pair_init(S, pscale, ti): i64 {
     if (pscale >= 0) { return 0; }
     if (_gcall_open(S, ti) < 0) { return 0; }
     if (_call_dotted(S, ti) == 1) { return 0; }   # 6.6.12: `_call_field` refuses a field of it
+    if (_call_ends_at(S, ti, 5) == 0) { return 0; }   # 6.7.6: a left operand refuses itself
     var fi = _gen_resolve_call(S, ti);
     if (fi < 0) { return 0; }
     if (_grc_err < 0) { return 0; }   # a failed instantiation: the call refuses itself, once
@@ -2937,6 +2995,7 @@ fn _sc_post(S, fi, noff, beg, t): i64 {
     _sc_tmp = t;
     _sc_sid = GFRS(S, fi);
     _sc_fn = noff;
+    _lsc_note(S, fi, beg, t);   # 6.7.6: for a left operand
     return 0;
 }
 
@@ -2957,6 +3016,7 @@ fn _sc_post_small(S, fi, noff, beg): i64 {
     _sc_tmp = 0 - 3;
     _sc_sid = sid;
     _sc_fn = noff;
+    _lsc_note(S, fi, beg, 0 - 1);   # 6.7.6: for a left operand
     return 0;
 }
 
@@ -3376,11 +3436,7 @@ fn _op_term_cont(t): i64 {
 # one but not that shape: the struct-return diagnostic, and a junk slot 0 (cursor at `;`, the
 # binary is never written). CHANGELOG [6.6.6]
 fn _return_struct_expr(S): i64 {
-    if (PEEKT(S) != 2) { return 0 - 1; }
-    var nx = TOKTYP(S, GTI(S) + 1);
-    if (nx == 41) {
-        if (TOKTYP(S, GTI(S) + 3) != 10) { return 0 - 1; }
-    } elif (_is_op_dispatch_tok(nx) == 0) { return 0 - 1; }
+    if (_ret_expr_head(S) == 0) { return 0 - 1; }
     var st = GTI(S);
     var w = _sc_arm(S);
     PCMPE(S);
@@ -3414,13 +3470,26 @@ fn _pair_ret_call_ok(S): i64 {
     return 1;
 }
 fn _pair_ret_expr_shape(S): i64 {
+    return _ret_expr_head(S);
+}
+# The method / overloaded-operator shape at the cursor: `x.m(`, `x OP`, and (6.7.6) a call or a
+# parenthesised operand that is an operator's LEFT operand, `f(..) OP`, `(x) OP` — a call's result
+# now dispatches (`_op_lst`); a wrap around the WHOLE value was peeled first (`_ret_peel`).
+fn _ret_expr_head(S): i64 {
+    if (PEEKT(S) == 10) {
+        _pwrap_k(S, GTI(S));
+        return _is_op_dispatch_tok(TOKTYP(S, _pw_end));
+    }
     if (PEEKT(S) != 2) { return 0; }
     var nx = TOKTYP(S, GTI(S) + 1);
     if (nx == 41) {
         if (TOKTYP(S, GTI(S) + 3) == 10) { return 1; }
         return 0;
     }
-    return _is_op_dispatch_tok(nx);
+    if (_is_op_dispatch_tok(nx) == 1) { return 1; }
+    var o = _gcall_open(S, GTI(S));
+    if (o < 0) { return 0; }
+    return _is_op_dispatch_tok(TOKTYP(S, _call_close(S, o) + 1));
 }
 # Name what is actually there, so the diagnostic points at the construct and not just the fn.
 fn _pair_ret_offender(S): i64 {
@@ -4029,6 +4098,7 @@ fn _fnc_agg(S, fi, noff): i64 {
         if (cls == 2) { _refuse_toplevel_struct_call(S, noff); }
         return 0;
     }
+    var o = GTI(S) - 1;
     var t = _agg_temp(S, GFRS(S, fi));
     _struct_call_emit(S, fi, noff, t);
     EFLLOAD(S, t);
@@ -4040,6 +4110,9 @@ fn _fnc_agg(S, fi, noff): i64 {
         _sc_sid = GFRS(S, fi);
         _sc_fn = noff;
     }
+    _fnc_lo = o;   # 6.7.6: the temp, for a left operand (`_lsc_free`)
+    _fnc_lt = t;
+    _fnc_lcp = GCP(S);
     return 1;
 }
 

@@ -20,6 +20,16 @@
 #   S  a `: Str` field as a source is a Str HANDLE: into a Str parameter, variable, declaration and
 #      field (bare or wrapped) it is the handle as ever. Into a struct of ANOTHER type it is now
 #      refused by name (the gate's S rows) — it compiled and read past the Str's header.
+#   L  (6.7.6 follow-up, E2) a struct-returning call, method or operator result as the LEFT operand
+#      dispatches its operator fn from its own type: `p.dup() + p` integer-added first words (2 where
+#      6), `a + b + a` with a struct-returning `+` SIGSEGV'd, `mk3(4) - s + 10` dispatched an
+#      undefined `P3_add` from `s`'s leftover type. Bare, wrapped, of every size and class, as an
+#      argument; the refusals (top level, a missing or mismatched operator fn) are the gate's L rows.
+#      L30+: such an expression as a declaration's initialiser or a struct fn's return value — the
+#      receive took the call alone (`var r = mk3(4) - s;`: expected ';', got '-').
+#   R  (6.7.6 follow-up, E2) parentheses around a struct fn's WHOLE return value are transparent:
+#      `return (j);`, `return (mk3(v));`, `return ((j));`, `return (a + b);` were refused ("return must
+#      be a bare local identifier ..." / "... got `(...)`"), and `return (a) + b;` with them.
 include "lib/syscalls.cyr"
 include "lib/string.cyr"
 include "lib/alloc.cyr"
@@ -287,6 +297,168 @@ fn operand_pairs(): i64 {
 }
 #endif
 
+# L — a struct result as the LEFT operand dispatches its operator fn from its own type (6.7.6 E2).
+struct LV { x; y; z; }
+struct LW { v; }
+struct LU { v; }
+fn P3_sub(a: *P3, b: *P3): i64 { return a.z - b.z; }
+fn P3_mul(a: *P3, b: *P3): i64 { return a.x * b.y; }
+fn LV_add(a: LV, b: LV): LV { var t: LV = LV { a.x + b.x, a.y + b.y, a.z + b.z }; return t; }
+fn LV_div(a: LV, b): i64 { return a.x * 100 + a.y * 10 + a.z; }
+fn mklv(v): LV { var t: LV = LV { v, v + 1, v + 2 }; return t; }
+impl LV { fn dup(self): LV { var t: LV = LV { self.x, self.y, self.z }; return t; } }
+fn LW_add(a: LW, b: LW): LW { var t: LW; t.v = a.v + b.v * 2; return t; }
+fn LW_sub(a: *LW, b: *LW): i64 { return a.v * 10 - b.v; }
+fn mklw(v): LW { var t: LW; t.v = v; return t; }
+impl LW { fn twice(self): LW { var t: LW; t.v = self.v * 2; return t; } }
+fn LU_mul(a: LU, b): i64 { return a.v + 1000; }
+fn mklu(v): LU { var t: LU; t.v = v; return t; }
+fn lvsz(p: LV): i64 { return p.x + p.y + p.z; }
+fn lvsum(p: *LV): i64 { return p.x * 100 + p.y * 10 + p.z; }
+var GLW: LW = LW { 3 };
+var GLR = mklw(5) + GLW;
+fn lefts(): i64 {
+    var s: P3 = P3 { 9, 9, 9 };
+    assert_eq(mk3(4) - s + 10, 5, "L1: mk3(4) - s + 10, a retptr free call (dispatched P3_add from s)");
+    assert_eq((mk3(4)) - s, 0 - 5, "L2: (mk3(4)) - s, wrapped");
+    assert_eq(((mk3(4))) - s, 0 - 5, "L3: ((mk3(4))) - s, a double wrap");
+    assert_eq(mk3(3) * s, 27, "L4: mk3(3) * s, a `*` dispatch");
+    assert_eq(1 + mk3(3) * s, 28, "L5: 1 + mk3(3) * s, the term's left operand");
+    var a: LV = LV { 1, 2, 3 };
+    var b: LV = LV { 10, 20, 30 };
+    var c: LV = a + b + a;
+    assert_eq(lvsum(&c), 1476, "L6: a + b + a, an operator result (SIGSEGV)");
+    var d: LV = a.dup() + b;
+    assert_eq(lvsum(&d), 1353, "L7: a.dup() + b, a retptr method result");
+    assert_eq(lvsz(mklv(1) + a), 12, "L8: lvsz(mklv(1) + a), as an argument");
+    assert_eq((a + b) / 0, 1353, "L9: (a + b) / 0, a wrapped operator result");
+    var w: LW = mklw(3);
+    var w2: LW = mklw(3) + w;
+    assert_eq(w2.v, 9, "L10: mklw(3) + w, an 8 B result by value");
+    var w3: LW = w + w + w;
+    assert_eq(w3.v, 15, "L11: w + w + w, an 8 B operator result");
+    assert_eq(mklw(5) - w, 47, "L12: mklw(5) - w into `*LW`, the value parked in a temp");
+    assert_eq(w.twice() - w, 57, "L13: w.twice() - w, an 8 B method result into `*LW`");
+    assert_eq(mklu(4) * 2, 1004, "L14: mklu(4) * 2, by value, an untyped right operand");
+    return 0;
+}
+fn lv_ret(a: LV): LV { return mklv(1) + a; }
+fn lw_ret(a: LW): LW { return mklw(1) + a; }
+fn left_decls(): i64 {
+    var s: P3 = P3 { 9, 9, 9 };
+    var r = mk3(4) - s;
+    assert_eq(r, 0 - 5, "L30: var r = mk3(4) - s; (the filed repro: expected ';', got '-')");
+    var a: LV = LV { 1, 2, 3 };
+    var q: LV = mklv(1) + a;
+    assert_eq(lvsum(&q), 246, "L31: var q: LV = mklv(1) + a;");
+    var q2 = mklv(2) + a;
+    assert_eq(q2.x * 100 + q2.y * 10 + q2.z, 357, "L32: var q2 = mklv(2) + a; (untyped: the struct)");
+    var q3 = lv_ret(a);
+    assert_eq(lvsum(&q3), 246, "L33: return mklv(1) + a; from a `: LV` fn");
+    var w: LW = mklw(3);
+    var w4 = lw_ret(w);
+    assert_eq(w4.v, 7, "L34: return mklw(1) + a; from a `: LW` fn");
+    var w5: LW = mklw(2) + w;
+    assert_eq(w5.v, 8, "L35: var w5: LW = mklw(2) + w;");
+    return 0;
+}
+#ifndef CYRIUS_TARGET_CX
+struct LP { x; y; }
+struct LQ { x; y; }
+fn LP_add(a: LP, b: LP): i64 { return a.x + b.x + a.y + b.y; }
+fn LP_sub(a: LP, b: LP): i64 { return a.x - b.x + a.y - b.y + 20; }
+fn LQ_add(a: *LQ, b: *LQ): LQ { var t: LQ = LQ { a.x + b.x, a.y * b.y }; return t; }
+fn mklp(v): LP { var t: LP = LP { v, v }; return t; }
+fn mklq(v): LQ { var t: LQ = LQ { v, v + 1 }; return t; }
+impl LP {
+    fn dup(self): LP { var t: LP = LP { self.x, self.y }; return t; }
+    fn addq(self, q: LP): LP { var t: LP = LP { self.x + q.x, self.y + q.y }; return t; }
+}
+fn lq(q: *LQ): i64 { return q.x * 100 + q.y; }
+fn left_pairs(): i64 {
+    var p: LP = LP { 1, 2 };
+    var s: LP = LP { 9, 9 };
+    assert_eq(p.dup() + p, 6, "L20: p.dup() + p, a rax:rdx method result (the filed repro: 2)");
+    assert_eq(mklp(4) - s, 10, "L21: mklp(4) - s, a rax:rdx free call");
+    assert_eq((p.dup()) + p, 6, "L22: (p.dup()) + p, wrapped");
+    assert_eq(mklp(1).dup() + p, 5, "L23: mklp(1).dup() + p, a method on a call result");
+    assert_eq(p.addq(s) + p, 24, "L24: p.addq(s) + p, the method's struct argument does not type it");
+    var u: LQ = LQ { 2, 3 };
+    assert_eq(lq(mklq(1) + u + u), 518, "L25: lq(mklq(1) + u + u), `*LQ` operands, a rax:rdx operator result");
+    assert_eq(lq((u + u) + mklq(2)), 627, "L26: lq((u + u) + mklq(2))");
+    return 0;
+}
+fn lq_ret(a: LQ): LQ { return mklq(1) + a; }
+fn left_pair_decls(): i64 {
+    var s: LP = LP { 9, 9 };
+    var r = mklp(4) - s;
+    assert_eq(r, 10, "L36: var r = mklp(4) - s; (a rax:rdx head)");
+    var u: LQ = LQ { 2, 3 };
+    var q: LQ = mklq(1) + u;
+    assert_eq(lq(&q), 306, "L37: var q: LQ = mklq(1) + u;");
+    var q2 = lq_ret(u);
+    assert_eq(lq(&q2), 306, "L38: return mklq(1) + a; from a `: LQ` (rax:rdx) fn");
+    return 0;
+}
+#endif
+
+# R — a parenthesised return value in a struct-returning fn (6.7.6 E2).
+struct RW { v; }
+fn LV_sub(a: LV, b: LV): LV { var t: LV = LV { a.x - b.x, a.y - b.y, a.z - b.z }; return t; }
+fn rv1(j: LV): LV { return (j); }
+fn rv2(v): LV { return (mklv(v)); }
+fn rv3(j: LV): LV { return ((j)); }
+fn rv4(a: LV, b: LV): LV { return (a + b); }
+fn rv5(a: LV, b: LV): LV { return (a) + b; }
+fn rv6(a: LV): LV { return (mklv(1)) - a; }
+fn mkrw(v): RW { var t: RW; t.v = v; return t; }
+fn rw1(j: RW): RW { return (j); }
+fn rw2(v): RW { return (mkrw(v)); }
+fn rets(): i64 {
+    var a: LV = LV { 1, 2, 3 };
+    var b: LV = LV { 4, 5, 6 };
+    var r1 = rv1(a);
+    assert_eq(lvsum(&r1), 123, "R1: return (j); from a `: LV` fn (the filed repro: refused)");
+    var r2 = rv2(2);
+    assert_eq(lvsum(&r2), 234, "R2: return (mklv(v)); (the filed repro: refused)");
+    var r3 = rv3(a);
+    assert_eq(lvsum(&r3), 123, "R3: return ((j));");
+    var r4 = rv4(a, b);
+    assert_eq(lvsum(&r4), 579, "R4: return (a + b);");
+    var r5 = rv5(a, b);
+    assert_eq(lvsum(&r5), 579, "R5: return (a) + b;");
+    var r6 = rv6(a);
+    assert_eq(lvsum(&r6), 0, "R6: return (mklv(1)) - a;");
+    var w: RW = mkrw(7);
+    var w1: RW = rw1(w);
+    var w2: RW = rw2(8);
+    assert_eq(w1.v * 10 + w2.v, 78, "R7: return (j); / return (mkrw(v)); from a `: RW` (8 B) fn");
+    return 0;
+}
+#ifndef CYRIUS_TARGET_CX
+fn LP_mul(a: LP, b: LP): LP { var t: LP = LP { a.x * b.x, a.y * b.y }; return t; }
+fn rp1(j: LP): LP { return (j); }
+fn rp2(v): LP { return (mklp(v)); }
+fn rp3(a: LP, b: LP): LP { return (a * b); }
+fn rp4(a: LP, b: LP): LP { return (a) * b; }
+fn rp5(a: LP): LP { return ((mklp(2))) * a; }
+fn lpv(p: *LP): i64 { return p.x * 10 + p.y; }
+fn ret_pairs(): i64 {
+    var p: LP = LP { 2, 3 };
+    var r1 = rp1(p);
+    assert_eq(lpv(&r1), 23, "R10: return (j); from a `: LP` (rax:rdx) fn (the filed repro's class: got `(...)`)");
+    var r2 = rp2(4);
+    assert_eq(lpv(&r2), 44, "R11: return (mklp(v)); a pair passed through, wrap and all");
+    var r3 = rp3(p, p);
+    assert_eq(lpv(&r3), 49, "R12: return (a * b);");
+    var r4 = rp4(p, p);
+    assert_eq(lpv(&r4), 49, "R13: return (a) * b;");
+    var r5 = rp5(p);
+    assert_eq(lpv(&r5), 46, "R14: return ((mklp(2))) * a;");
+    return 0;
+}
+#endif
+
 # S — a `: Str` field into Str destinations: the handle, unchanged.
 struct HS { name: Str; k; }
 struct OS { n; s: Str; }
@@ -333,6 +505,15 @@ fn rows(): i64 {
     operand_pairs();
 #endif
     operands();
+    lefts();
+    left_decls();
+    rets();
+#ifndef CYRIUS_TARGET_CX
+    left_pairs();
+    left_pair_decls();
+    ret_pairs();
+#endif
+    assert_eq(GLR, 11, "L15: mklw(5) + GLW at top level, an 8 B value");
     assert_eq(s3(&GQD) * 100 + s3(&GQF) * 10 + GQS.z, 1107, "Q27: top level: var G: P3 = (GP3), = ((GP3)), G = (GP3)");
     return 0;
 }

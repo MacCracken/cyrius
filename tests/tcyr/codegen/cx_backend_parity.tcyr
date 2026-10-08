@@ -219,12 +219,9 @@ assert_eq(via4(), 1234, "callptr(&fncall4, &s4, 1..4)");
 assert_eq(via5(), 12345, "callptr(&fncall5, &s5, 1..5)");
 assert_eq(via6(), 123456, "callptr(&fncall6, &s6, 1..6)");
 assert_eq(via7(), 1234567, "callptr(&fncall7, &s7, 1..7)");
-# ⚠ cx only: lib/fnptr.cyr's x86-SysV fncall8 asm stores arg 7 at [rsp] and arg 8 at [rsp+8] (the C
-# order), while a cyrius callee reads its LAST argument at [rsp] — so on x86 Linux this row gives
-# 12345687 (g and h swapped). Not a cx defect; reported from 6.7.6 lane F as its own item.
-#ifdef CYRIUS_TARGET_CX
-assert_eq(via8(), 12345678, "callptr(&fncall8, &s8, 1..8)");
-#endif
+# Every target since 6.7.6 (lane E2): lib/fnptr.cyr's x86-SysV fncall8 asm stored arg 7 at [rsp]
+# (the C order) while a cyrius callee reads its LAST argument there — 12345687 on x86 Linux.
+assert_eq(via8(), 12345678, "callptr(&fncall8, &s8, 1..8) (x86 SysV gave 12345687)");
 assert_eq(via_var(), 69, "&fncall2 and its callee through locals");
 var top1 = fncall2(&fncall1, &add1, 41);
 assert_eq(top1, 42, "fncall2(&fncall1, &add1, 41) at top level");

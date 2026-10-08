@@ -17,7 +17,7 @@ header for the authoritative breakdown):
 
 | Target                  | Args                                  | Args overflow         | Return | Indirect-call reg |
 |-------------------------|---------------------------------------|-----------------------|--------|-------------------|
-| x86_64 SysV (Linux/macOS) | 1–6 in `rdi, rsi, rdx, rcx, r8, r9` | `[rsp+0], [rsp+8], …` | `rax`  | `rax`             |
+| x86_64 SysV (Linux/macOS/agnos) | 1–6 in `rdi, rsi, rdx, rcx, r8, r9` | cyrius's order: the LAST at `[rsp+0]`, then backwards | `rax`  | `rax`             |
 | x86_64 MS-x64 (Windows PE / UEFI) | 1–4 in `rcx, rdx, r8, r9`, +32 B shadow space | `[rsp+0x20+(N-5)*8]` | `rax`  | `rax`             |
 | aarch64 (cyrius subset of AAPCS64) | 1–6 in `x0, x1, x2, x3, x4, x5`   | `[sp+0], [sp+16], …` | `x0`   | `x9`              |
 
@@ -32,6 +32,15 @@ is 16-byte aligned in a function body **between statements**.
 `fncall7` / `fncall8`'s x86 variants reserve 16 bytes via
 `sub rsp, 16` to hold the stack arg(s) plus padding; aarch64 pushes
 each stack arg with `str xN, [sp, #-16]!`.
+
+On x86_64 SysV a cyrius call passes arguments 7+ **last-first**: the
+LAST argument at `[rsp+0]` (`ECALLPOPS`; the callee reads it back with
+`ESTORESTACKPARM`), the reverse of SysV's C order. With one stack
+argument (7 in all) the two agree. ⚠ Until 6.7.6 `fncall8`'s x86 asm
+alone used the C order (arg 7 at `[rsp]`), so an address-taken
+`&fncall8` handed a cyrius callee arguments 7 and 8 swapped
+(`12345687`); it now uses cyrius's, like every other call
+(`tests/tcyr/crossos/fncall_stack_args.tcyr`).
 
 > ⛔ **"Between statements" is load-bearing, and until 6.6.5 this file
 > said "in every function body" without it.** x86 evaluates expressions
@@ -74,7 +83,10 @@ All of:
    AAPCS64 — the ABI diverges past arg 6. `fncall7` / `fncall8` are
    **cyrius-to-cyrius safe** but **not AAPCS64-compatible** for the
    last two args. C functions with 7+ args on aarch64 must route
-   through a C shim regardless.
+   through a C shim regardless. **On x86_64 SysV: ≤ 7 args** — with
+   8, cyrius puts argument 8 at `[rsp]` where C expects argument 7
+   (see the note under *Calling convention*), so an 8-argument C
+   function needs a shim too.
 
 If all five hold, direct call is correct:
 
