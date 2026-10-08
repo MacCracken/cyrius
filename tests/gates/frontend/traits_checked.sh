@@ -17,6 +17,8 @@
 #   C  ANTI-VACUOUS: a well-formed trait + impls + defaults + qualified calls build and run, a
 #      trait declared BELOW its impl included; and a program with no trait at all is untouched
 #   D  `trait` is a reserved word: `var trait = 1;` is refused by name
+#   E  (6.7.6) lib/trait.cyr is the RUN-TIME vtable pattern: its header does not promise `impl`
+#      as sugar over it (ADR-007 §7), and it still builds and dispatches
 #
 # Mutations: make `_tr_check_impl` return at entry -> A1-A4 RED (they build). Make `_tr_prepass`
 # skip traits -> A1 fires for every impl and C RED. Drop the FINDFN fallback -> C RED (P_Show_show
@@ -106,5 +108,16 @@ if [ "$rc" -eq 0 ]; then bad "D: \`var trait = 1;\` BUILT"
 elif grep -q "trait" "$T/d1.err"; then ok "D: \`trait\` is a reserved word, named in the refusal"
 else bad "D: refused without naming trait: $(grep '^error' "$T/d1.err" | head -1)"; fi
 
+# ── E (6.7.6) — lib/trait.cyr is the RUN-TIME pattern, and its header says so ──
+# Its header promised "`impl Trait for Type` can be added later as sugar over this pattern" for
+# a year after ADR-007 §7 made language traits static (no vtables). Mutation: restore that
+# sentence -> E1 RED.
+if grep -qiE 'added later as sugar|sugar over this pattern' lib/trait.cyr; then
+    bad "E1: lib/trait.cyr promises \`impl\` as sugar over its vtables — language traits dispatch statically (ADR-007 §7)"
+elif grep -q 'ADR-007' lib/trait.cyr; then ok "E1: lib/trait.cyr names itself the run-time pattern, distinct from the language's static traits (ADR-007)"
+else bad "E1: lib/trait.cyr's header no longer points at ADR-007 — say what it is relative to the language's traits"; fi
+printf 'include "lib/trait.cyr"\nfn main(): i64 {\n    var o = int_as_display(42);\n    var s = to_string(o);\n    if (str_eq_cstr(s, "42") == 1) { return 7; }\n    return 1;\n}\nsyscall(60, main());\n' > "$T/e2.cyr"
+exits e2 7 "E2: lib/trait.cyr builds and dispatches through its vtable (int_as_display -> to_string)"
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: traits_checked — $fails row(s) red"; exit 1; fi
-echo "PASS: traits_checked — impl X for T is checked against trait X (8 refusals, each named), an ambiguous plain name is refused at a method call and explained on a direct call, well-formed traits build (declared below their impls too), and trait is reserved"
+echo "PASS: traits_checked — impl X for T is checked against trait X (8 refusals, each named), an ambiguous plain name is refused at a method call and explained on a direct call, well-formed traits build (declared below their impls too), trait is reserved, and lib/trait.cyr is the run-time vtable pattern"

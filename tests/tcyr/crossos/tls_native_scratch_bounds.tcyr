@@ -1,0 +1,147 @@
+# tls_native_scratch_bounds.tcyr — 6.7.6: the native TLS stack's fixed STACK scratches hold the
+# largest input their public entry points accept.
+#
+# ⛔ THE RECORD SEAL. tls_native_record_seal (lib/tls_native_hs13.cyr) copies the content into a
+# stack scratch of 2^14 + 1 bytes but checked only the CIPHERTEXT cap (content + 1 + tag <=
+# 2^14 + 256), which admits 16623 content bytes: 16385..16623 bytes ran up to 239 of the caller's
+# bytes past the scratch, over the frame's saved registers and return address (SIGSEGV), and a
+# negative length wrote the inner type byte below it. More than 2^14 is now
+# TLS_ERR_RECORD_OVERFLOW (RFC 8446 §5.2), a negative length TLS_ERR_INVALID_PARAM, and neither
+# writes `out` or moves the sequence number.
+#
+# ⛔ THE HKDF-EXPAND-LABEL SCRATCH. tls_native_hkdf_expand_label (lib/tls_native_keysched.cyr)
+# built the HkdfLabel in a 512-byte stack scratch while its checks admit a 514-byte label
+# (a 249-byte label + "tls13 " and a 255-byte context): the context's last two bytes went past
+# the scratch — on x86 into the spilled `out_len`, so HKDF then wrote 258 bytes into a 32-byte
+# `out`. The scratch is now sized by the format's maximum, 2 + (1 + 255) + (1 + 255).
+#
+# Pure functions — no socket, no peer — so it runs on every cross-OS host, where the frame
+# layout (and so where an overrun lands) differs per target.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/str.cyr"
+include "lib/io.cyr"
+include "lib/tls_native.cyr"
+include "lib/assert.cyr"
+
+var _sb_key = 0;
+var _sb_iv = 0;
+
+# Seal `n` content bytes of 0x41 under a fresh sequence number into a buffer with room to spare.
+# Returns the seal's result; `seq_out` gets the sequence word afterwards, `out_out` the record.
+fn _sb_seal(n, seq_out, out_out): i64 {
+    var seq = alloc(8);
+    store64(seq, 0);
+    var cap = 16384 + 1024;
+    if (n > 0) { cap = n + 1024; }
+    var inner = alloc(cap);
+    memset(inner, 0x41, cap);
+    var out = alloc(cap + 512);
+    memset(out, 0x5A, cap + 512);
+    var r = tls_native_record_seal(TLS_AES_128_GCM_SHA256, _sb_key, _sb_iv, seq, TLS_CT_APPLICATION_DATA,
+      inner, n, out, cap + 512);
+    store64(seq_out, load64(seq));
+    store64(out_out, out);
+    return r;
+}
+
+fn test_seal_bound(): i64 {
+    test_group("tls_native_record_seal: content over 2^14 is refused, before anything is written");
+    var sq = 0;
+    var o = 0;
+    var r = _sb_seal(16385, &sq, &o);
+    assert_eq(r, TLS_ERR_RECORD_OVERFLOW, "2^14 + 1 content bytes: TLS_ERR_RECORD_OVERFLOW (it sealed an over-length record)");
+    assert_eq(sq, 0, "2^14 + 1: the sequence number did not move");
+    assert_eq(load8(o), 0x5A, "2^14 + 1: out untouched");
+    r = _sb_seal(16500, &sq, &o);
+    assert_eq(r, TLS_ERR_RECORD_OVERFLOW, "16500 content bytes: TLS_ERR_RECORD_OVERFLOW (it ran past the stack scratch)");
+    r = _sb_seal(16623, &sq, &o);
+    assert_eq(r, TLS_ERR_RECORD_OVERFLOW, "16623 content bytes, the most the ciphertext cap admits: TLS_ERR_RECORD_OVERFLOW");
+    assert_eq(sq, 0, "16623: the sequence number did not move");
+    r = _sb_seal(0 - 1, &sq, &o);
+    assert_eq(r, TLS_ERR_INVALID_PARAM, "a negative length: TLS_ERR_INVALID_PARAM (it wrote below the scratch)");
+    assert_eq(sq, 0, "a negative length: the sequence number did not move");
+    assert_eq(load8(o), 0x5A, "a negative length: out untouched");
+    return 0;
+}
+
+fn test_seal_at_the_bound(): i64 {
+    test_group("tls_native_record_seal: exactly 2^14 content bytes seals and opens back");
+    var sq = 0;
+    var o = 0;
+    var n = TLS_RECORD_MAX_PLAINTEXT;
+    var r = _sb_seal(n, &sq, &o);
+    assert_eq(r, TLS_RECORD_HEADER_LEN + n + 1 + 16, "2^14: header + content + type + tag");
+    assert_eq(sq, 0x0100000000000000, "2^14: the (big-endian) sequence number moved once");
+    var seq = alloc(8);
+    store64(seq, 0);
+    var back = alloc(n + 64);
+    var ct = alloc(8);
+    var got = tls_native_record_open(TLS_AES_128_GCM_SHA256, _sb_key, _sb_iv, seq, o, r, back, n + 64, ct);
+    assert_eq(got, n, "2^14: opens to 2^14 bytes");
+    assert_eq(load64(ct), TLS_CT_APPLICATION_DATA, "2^14: the inner type survives");
+    var same = 1;
+    var i = 0;
+    while (i < n) { if (load8(back + i) != 0x41) { same = 0; } i = i + 1; }
+    assert_eq(same, 1, "2^14: every content byte survives");
+    r = _sb_seal(0, &sq, &o);
+    assert_eq(r, TLS_RECORD_HEADER_LEN + 1 + 16, "0 content bytes: header + type + tag");
+    return 0;
+}
+
+# Expand-Label at the format's extremes against a reference HkdfLabel built on the heap and fed
+# to HKDF-Expand directly; `out` is followed by a canary that must survive.
+fn _sb_label(hash_algo, hlen, ll, cl): i64 {
+    var sec = alloc(48);
+    var i = 0;
+    while (i < 48) { store8(sec + i, i + 1); i = i + 1; }
+    var label = alloc(256);
+    i = 0;
+    while (i < 256) { store8(label + i, 97 + (i % 26)); i = i + 1; }
+    var cx = alloc(256);
+    i = 0;
+    while (i < 256) { store8(cx + i, 255 - i); i = i + 1; }
+    var out = alloc(hlen + 64);
+    memset(out + hlen, 0x5A, 64);
+    var rc = tls_native_hkdf_expand_label(sec, hlen, label, ll, cx, cl, hash_algo, out, hlen);
+    if (rc != TLS_OK) { return rc; }
+    var info = alloc(600);
+    store8(info, 0);
+    store8(info + 1, hlen);
+    store8(info + 2, ll + 6);
+    memcpy(info + 3, "tls13 ", 6);
+    memcpy(info + 9, label, ll);
+    store8(info + 9 + ll, cl);
+    memcpy(info + 10 + ll, cx, cl);
+    var ref = alloc(hlen);
+    if (hash_algo == TLS_HASH_SHA256) { hkdf_expand(sec, hlen, info, 10 + ll + cl, ref, hlen); }
+    else { hkdf_expand_sha384(sec, hlen, info, 10 + ll + cl, ref, hlen); }
+    i = 0;
+    while (i < hlen) { if (load8(out + i) != load8(ref + i)) { return 1; } i = i + 1; }
+    i = 0;
+    while (i < 64) { if (load8(out + hlen + i) != 0x5A) { return 2; } i = i + 1; }
+    return 0;
+}
+
+fn test_expand_label_bound(): i64 {
+    test_group("tls_native_hkdf_expand_label: the largest HkdfLabel fits its scratch");
+    assert_eq(_TLS_HKDF_LABEL_BUF_LEN, 514, "the scratch holds 2 + (1 + 255) + (1 + 255) bytes");
+    assert_eq(_sb_label(TLS_HASH_SHA256, 32, 249, 255), 0, "SHA-256, label 249 + context 255: the reference output, the canary after `out` intact (it overran `out`)");
+    assert_eq(_sb_label(TLS_HASH_SHA384, 48, 249, 255), 0, "SHA-384, label 249 + context 255: the reference output, the canary intact");
+    assert_eq(_sb_label(TLS_HASH_SHA256, 32, 248, 254), 0, "SHA-256, label 248 + context 254: the reference output");
+    assert_eq(_sb_label(TLS_HASH_SHA256, 32, 12, 32), 0, "SHA-256, a handshake-sized label and context: the reference output");
+    assert_eq(_sb_label(TLS_HASH_SHA256, 32, 250, 0), TLS_ERR_INVALID_PARAM, "a 250-byte label (256 with the prefix): refused");
+    assert_eq(_sb_label(TLS_HASH_SHA256, 32, 1, 256), TLS_ERR_INVALID_PARAM, "a 256-byte context: refused");
+    return 0;
+}
+
+alloc_init();
+_sb_key = alloc(32);
+memset(_sb_key, 7, 32);
+_sb_iv = alloc(12);
+memset(_sb_iv, 3, 12);
+test_seal_bound();
+test_seal_at_the_bound();
+test_expand_label_bound();
+var r = assert_summary();

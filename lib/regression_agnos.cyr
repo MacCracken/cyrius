@@ -266,7 +266,7 @@ fn _rga_code(reaped, st): i64 {
 # Run `bin [arg]` with every output DISCARDED (drained, never closed on the child) and no stdin;
 # the exit-code verbs' shared body.
 fn _rga_run_discard(bin, arg, envp, timeout_ms): i64 {
-    var b[1024];
+    var b[_SPAWN_ARGV_MAX];
     var e[1024];
     var j[88];
     _rga_job_init(&j);
@@ -282,7 +282,7 @@ fn _rga_run_discard(bin, arg, envp, timeout_ms): i64 {
 fn _rga_run_capture(bin, arg, buf, buflen, envp, status_out, merge): i64 {
     store64(status_out, 0 - 1);
     store64(status_out + 8, 0);
-    var b[1024];
+    var b[_SPAWN_ARGV_MAX];
     var e[1024];
     var j[88];
     _rga_job_init(&j);
@@ -310,7 +310,7 @@ fn regression_pipe_to_bin_capture(bin_path, src_path, out_path, envp): i64 {
     }
     var src_fd = 0 - 1;
     if (src_path != 0) { src_fd = file_open(src_path, 0, 0); }
-    var b[1024];
+    var b[_SPAWN_ARGV_MAX];
     var e[1024];
     var j[88];
     _rga_job_init(&j);

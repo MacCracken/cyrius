@@ -541,7 +541,10 @@ Opt-in runtime bounds checking. Aborts with error message on violation.
 
 ### trait.cyr
 
-Vtable-based trait objects for polymorphic dispatch. Includes: alloc, fmt, fnptr, str.
+Vtable-based trait objects for run-time polymorphic dispatch — a library pattern with no
+compiler checking. It is not the language's `trait` / `impl Trait for Type` (6.7.0), which
+dispatch statically and build no vtables ([ADR-007](adr/007-traits.md) §7); checked `dyn`
+trait objects are planned later in 6.7.x. Includes: alloc, fmt, fnptr, str.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|

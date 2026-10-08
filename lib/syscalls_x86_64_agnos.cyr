@@ -592,7 +592,8 @@ enum AgnosRedirOp {
     REDIR_CLEAR = 0x200;   # #62 a1 = exactly REDIR_CLEAR: empty the caller's redirect set
 }
 var SPAWN_LINE_MAX = 127;    # #43 line form (flags == 0) and #37: payload bytes
-var SPAWN_ARGV_MAX = 1024;   # #43 SPAWN_F_ARGV blob: total bytes, NULs included (min 2)
+const _SPAWN_ARGV_MAX = 1024;   # #43 SPAWN_F_ARGV blob: total bytes, NULs included (min 2)
+var SPAWN_ARGV_MAX = _SPAWN_ARGV_MAX;   # the const sizes every argv blob buffer (6.7.6)
 var SPAWN_ARGC_MAX = 16;     # entries / tokens, both forms — MORE IS REFUSED (-SPAWN_E_ARGS), never dropped
 
 # ================================================================

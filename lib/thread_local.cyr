@@ -37,9 +37,9 @@
 # Because allocated lib slots start at 16, they can NEVER alias the 0-15 range,
 # so a partially-migrated program (new lib + old app) stays collision-free.
 #
-# The macOS/agnos/foreign fallback arrays below hold 128 slots each (a bare
-# top-level `var x[N]` is N*8 bytes = N i64 slots since v6.4.10), and the
-# Windows per-thread block is sized to TLOCAL_MAX_SLOTS.
+# The macOS/agnos/foreign fallback arrays below hold _TLOCAL_MAX_SLOTS slots each (a bare
+# top-level `var x[N]` is N*8 bytes = N i64 slots since v6.4.10), and the Windows per-thread
+# block is _TLOCAL_MAX_SLOTS * 8 bytes: every one is sized by the const (6.7.6).
 #
 # (Historical note: sandhi's _SANDHI_RPC_POLICY_SLOT=16 was once flagged here
 # as a latent OOB slot -- it is NOT a thread-local slot at all, but a 16-byte
@@ -65,7 +65,9 @@ var TLOCAL_BLOCK_SIZE = 4096;
 # allocator (thread_local_alloc) hands out 16-127. The Linux %fs block is
 # TLOCAL_BLOCK_SIZE (512 slots) so it already covers this; the macOS/agnos/
 # foreign arrays are 128 slots; the Windows per-thread block sizes to this.
-var TLOCAL_MAX_SLOTS = 128;
+# 6.7.6: the const sizes every slot array and block; the public var keeps the API.
+const _TLOCAL_MAX_SLOTS = 128;
+var TLOCAL_MAX_SLOTS = _TLOCAL_MAX_SLOTS;
 
 # macOS thread-local slots. macOS owns the thread-pointer register: on arm64 the
 # kernel overwrites any userspace TPIDR_EL0 install on the FIRST preemption —
@@ -86,7 +88,7 @@ include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 
 #ifdef CYRIUS_TARGET_MACOS
-var _tlocal_macos[128];     # 128 i64 slots (top-level var[N] = N*8 bytes), zero-init .bss
+var _tlocal_macos[_TLOCAL_MAX_SLOTS];     # i64 slots (top-level var[N] = N*8 bytes), zero-init .bss
 
 # ⛔ v6.5.44 — THE OLD PREMISE EXPIRED, AND THE EXPIRY IS THE WHOLE POINT. This file justified a
 # process-global slot array with "cyrius threads don't run on macOS (thread.cyr is clone-only,
@@ -107,9 +109,10 @@ var _tlocal_macos[128];     # 128 i64 slots (top-level var[N] = N*8 bytes), zero
 # before its first thread_create) pays ONE load instead of a 64-entry scan on every
 # thread_local_get/set.
 #ifdef CYRIUS_ARCH_AARCH64
-var TLS_REG_MAX = 64;
-var _tls_key[64];           # TPIDRRO_EL0 of the owning thread, 0 = free slot
-var _tls_blk[64];           # its 128-slot block
+const _TLS_REG_MAX = 64;
+var TLS_REG_MAX = _TLS_REG_MAX;
+var _tls_key[_TLS_REG_MAX]; # TPIDRRO_EL0 of the owning thread, 0 = free slot
+var _tls_blk[_TLS_REG_MAX]; # its _TLOCAL_MAX_SLOTS-slot block
 var _tls_live = 0;          # count of registered worker threads
 
 # Thread identity. The asm block is the fn's TAIL deliberately: cyrius's aarch64 epilogue is
@@ -236,7 +239,7 @@ fn _tlocal_base(): i64 {
 # macOS path, a process-global slot array is race-free — there is only one
 # thread. Mirrors sigil's crypto-bank contract (slot 0, fresh slot reads 0).
 #ifdef CYRIUS_TARGET_AGNOS
-var _tlocal_agnos[128];     # 128 i64 slots (top-level var[N] = N*8 bytes), zero-init
+var _tlocal_agnos[_TLOCAL_MAX_SLOTS];     # i64 slots (top-level var[N] = N*8 bytes), zero-init
 #endif
 
 # Foreign-host coexistence (v6.3.26). When cyrius code runs INSIDE a
@@ -266,7 +269,7 @@ var _tlocal_agnos[128];     # 128 i64 slots (top-level var[N] = N*8 bytes), zero
 # `main`); a foreign multi-thread consumer would need a pthread-key backing,
 # tracked as a follow-up.
 var _tlocal_foreign = 0;    # set by thread_local_use_foreign_tls()
-var _tlocal_fallback[128];  # 128 i64 slots (top-level var[N] = N*8 bytes), foreign mode only
+var _tlocal_fallback[_TLOCAL_MAX_SLOTS];  # i64 slots (top-level var[N] = N*8 bytes), foreign mode only
 
 # Declare that cyrius is running inside a foreign (glibc) host that owns the
 # thread-pointer register. Idempotent. Must be called before any
@@ -469,7 +472,7 @@ fn thread_local_set(slot, val): i64 {
 
 var _tlocal_win_idx = 0 - 1;   # TlsAlloc'd index; -1 = not yet allocated
 
-# Resolve (lazily allocating) THIS thread's 1024-byte (128-slot) block:
+# Resolve (lazily allocating) THIS thread's _TLOCAL_MAX_SLOTS-slot block:
 # allocate the process-global TLS index on first use, then ensure the
 # current thread has its own zeroed block installed at it.
 fn _tlocal_win_block(): i64 {
@@ -479,10 +482,11 @@ fn _tlocal_win_block(): i64 {
     var blk = syscall(61453, _tlocal_win_idx);       # TlsGetValue(idx)
     if (blk == 0) {
         alloc_init();
-        blk = alloc(1024);   # TLOCAL_MAX_SLOTS (128) * 8 bytes
+        const NB = _TLOCAL_MAX_SLOTS * 8;           # the block's bytes
+        blk = alloc(NB);
         if (blk == 0) { return 0; }
         var i = 0;
-        while (i < 1024) { store8(blk + i, 0); i = i + 1; }
+        while (i < NB) { store8(blk + i, 0); i = i + 1; }
         syscall(61454, _tlocal_win_idx, blk);        # TlsSetValue(idx, blk)
     }
     return blk;

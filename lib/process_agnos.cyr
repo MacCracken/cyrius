@@ -309,7 +309,7 @@ fn _agp_store_status(status_out, st): i64 {
 # Err(SPAWN_E_*) when it could not be started (Err(1) on a pre-1.57.6 kernel), Err(PROC_ECHILD)
 # when it could not be waited for.
 fn run(cmd, arg1, arg2): Result {
-    var b[1024];
+    var b[_SPAWN_ARGV_MAX];
     var pid = _agp_spawn(&b, _agp_argv3(&b, cmd, arg1, arg2), 0, 0);
     if (pid < 0) { return Err(0 - pid); }
     var st = _agp_wait(pid);
@@ -320,7 +320,7 @@ fn run(cmd, arg1, arg2): Result {
 # Run `cmd arg1 arg2` and capture its stdout into `buf`. Returns Result(bytes captured), or
 # Err(SPAWN_E_*) / Err(1) when nothing ran. The exit status is discarded (POSIX parity).
 fn run_capture(cmd, arg1, arg2, buf, buflen): Result {
-    var b[1024];
+    var b[_SPAWN_ARGV_MAX];
     var st[16];
     var n = _agp_capture(&b, _agp_argv3(&b, cmd, arg1, arg2), 0, 0, buf, buflen, &st);
     if (n < 0) { return Err(0 - n); }
@@ -329,7 +329,7 @@ fn run_capture(cmd, arg1, arg2, buf, buflen): Result {
 
 # Spawn `cmd arg1 arg2` without waiting. Returns Result(pid); reap it with wait_pid.
 fn spawn(cmd, arg1, arg2): Result {
-    var b[1024];
+    var b[_SPAWN_ARGV_MAX];
     var pid = _agp_spawn(&b, _agp_argv3(&b, cmd, arg1, arg2), 0, 0);
     if (pid < 0) { return Err(0 - pid); }
     return Ok(pid);
@@ -352,7 +352,7 @@ fn getppid(): i64 { return 0; }
 # Run a cstr argv vec (args[0] = the path) and wait. Returns the exit code, or -1 when it
 # could not be run, died of a signal, or could not be waited for.
 fn exec_vec(args): i64 {
-    var b[1024];
+    var b[_SPAWN_ARGV_MAX];
     return _agp_wait_exit(_agp_spawn(&b, _agp_argv_vec(&b, args, 0), 0, 0));
 }
 
@@ -363,7 +363,7 @@ fn exec_vec(args): i64 {
 fn exec_capture_status(args, buf, buflen, status_out): i64 {
     store64(status_out, 0 - 1);
     store64(status_out + 8, 0);
-    var b[1024];
+    var b[_SPAWN_ARGV_MAX];
     var st[16];
     var n = _agp_capture(&b, _agp_argv_vec(&b, args, 0), 0, 0, buf, buflen, &st);
     if (n < 0) { return 0 - 1; }
@@ -381,20 +381,20 @@ fn exec_capture(args, buf, buflen): i64 {
 
 # Run a cstr argv vec with a cstr env vec ("KEY=VALUE"). Exit code or -1, as exec_vec.
 fn exec_env(args, env): i64 {
-    var b[1024];
+    var b[_SPAWN_ARGV_MAX];
     var e[1024];
     return _agp_wait_exit(_agp_spawn(&b, _agp_argv_vec(&b, args, 0), &e, _agp_env_vec(&e, env, 0)));
 }
 
 # Run a Str argv vec and wait. Exit code or -1, as exec_vec.
 fn exec_vec_str(args): i64 {
-    var b[1024];
+    var b[_SPAWN_ARGV_MAX];
     return _agp_wait_exit(_agp_spawn(&b, _agp_argv_vec(&b, args, 1), 0, 0));
 }
 
 # Run a Str argv vec and capture stdout. Returns the bytes captured, or -1 when nothing ran.
 fn exec_capture_str(args, buf, buflen): i64 {
-    var b[1024];
+    var b[_SPAWN_ARGV_MAX];
     var st[16];
     var n = _agp_capture(&b, _agp_argv_vec(&b, args, 1), 0, 0, buf, buflen, &st);
     if (n < 0) { return 0 - 1; }
@@ -403,7 +403,7 @@ fn exec_capture_str(args, buf, buflen): i64 {
 
 # Run a Str argv vec with a Str env vec. Exit code or -1, as exec_vec.
 fn exec_env_str(args, env): i64 {
-    var b[1024];
+    var b[_SPAWN_ARGV_MAX];
     var e[1024];
     return _agp_wait_exit(_agp_spawn(&b, _agp_argv_vec(&b, args, 1), &e, _agp_env_vec(&e, env, 1)));
 }
@@ -413,6 +413,6 @@ fn exec_env_str(args, env): i64 {
 # pipes, redirects, quoting, `$(...)` and `VAR=val cmd` are NOT interpreted — they arrive as
 # literal arguments. Exit code or -1, as exec_vec.
 fn exec_cmd(cmdline): i64 {
-    var b[1024];
+    var b[_SPAWN_ARGV_MAX];
     return _agp_wait_exit(_agp_spawn(&b, _agp_argv_line(&b, cmdline), 0, 0));
 }
