@@ -4,6 +4,8 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [6.7.1] — 2026-10-07
+
 ## [6.7.0] — 2026-10-07
 
 The v6.7.x language minor opens: arc A, real traits (ADR-007), with the CI moved to Ubuntu 26.04 and current
