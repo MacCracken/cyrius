@@ -1,5 +1,6 @@
 # vec.cyr — dynamic array (vector)
 # Usage: include "lib/vec.cyr"
+# cybs (the bootstrap compiler) compiles this file on the seed chain: no 6.7.x syntax, float, unary minus or `>>>`.
 # Requires alloc_init() called first.
 #
 # v6.6.6: SELF-SUFFICIENT. The usage line said "include lib/alloc.cyr THEN include lib/vec.cyr"

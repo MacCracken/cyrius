@@ -778,11 +778,16 @@ emit_store_param:
     je emit_sp_r8
     cmp rax, 5
     je emit_sp_r9
-    jmp emit_sp_done     # a 7th+ parameter is not stored: unreachable (see below)
-# A definition with 7+ parameters keeps its first six. lib/fnptr.cyr's fncall6..8 (included by the
-# compiler's alloc/vec) are such definitions; nothing cybs compiles can call one with all its
-# arguments - a 7+ argument call is refused by name (arity_err), and a short call is refused by
-# cycc's own arity check on the same source - so the unstored parameters are never read.
+# Parameter i >= 6 is a stack argument (SysV, as emit_fn_call_pops passes it): copy
+# [rbp + 16 + (i-6)*8] into its local through rax. 6.7.6 - it was never stored before.
+    shl rax, 3
+    sub rax, 32
+    shl rax, 24
+    or rax, 0x858B48      # 48 8B 85 d32 = mov rax, [rbp+d32] (7 bytes)
+    call emit_8bytes
+    dec r13
+    mov rax, 0x858948     # 48 89 85 = mov [rbp+d32], rax (d32 = the local, rdx)
+    jmp emit_sp_write
 emit_sp_rdi:
     mov rax, 0xBD8948     # 48 89 BD = mov [rbp+d32], rdi
     jmp emit_sp_write
@@ -869,6 +874,11 @@ emit_call_to:
     pop rsi
     ret
 emit_fn_call_pops:
+    push rsi
+    mov rsi, r15
+    add rsi, 0x7600060
+    mov [rsi], rax       # the call's arity, for emit_fn_call_clean after the call
+    pop rsi
     cmp rax, 0
     je emit_fcp_0
     cmp rax, 1
@@ -883,7 +893,69 @@ emit_fn_call_pops:
     je emit_fcp_5
     cmp rax, 6
     je emit_fcp_6
-    jmp arity_err        # 7+ arguments: cybs passes only the six register arguments
+# 7+ arguments (SysV; 6.7.6). a[0] was pushed first, so a[n-1] is on top. Push a copy of
+# a[n-1] .. a[6]: copy k reads [rsp + 16k] (each copy pushed moves the rest 8 further away),
+# leaving a[6] at [rsp] for the call. Then a[i] (i < 6) is at [rsp + 8(2n-7-i)].
+    push rbx
+    push rcx
+    mov rbx, rax         # rbx = n
+    xor rcx, rcx         # rcx = 16k
+emit_fcp_copy:
+    mov rax, 0x24848B48  # 48 8B 84 24 d32 = mov rax, [rsp+d32]
+    call emit_rsp_d32
+    call emit_push_rax
+    add rcx, 16
+    mov rax, rbx
+    sub rax, 6
+    shl rax, 4
+    cmp rcx, rax
+    jl emit_fcp_copy
+    mov rcx, rbx
+    shl rcx, 4
+    sub rcx, 56          # 8(2n-7): a[0]
+    mov rax, 0x24BC8B48  # mov rdi, [rsp+d32]
+    call emit_rsp_d32
+    sub rcx, 8
+    mov rax, 0x24B48B48  # mov rsi, [rsp+d32]
+    call emit_rsp_d32
+    sub rcx, 8
+    mov rax, 0x24948B48  # mov rdx, [rsp+d32]
+    call emit_rsp_d32
+    sub rcx, 8
+    mov rax, 0x248C8B48  # mov rcx, [rsp+d32]
+    call emit_rsp_d32
+    sub rcx, 8
+    mov rax, 0x24848B4C  # mov r8, [rsp+d32]
+    call emit_rsp_d32
+    sub rcx, 8
+    mov rax, 0x248C8B4C  # mov r9, [rsp+d32]
+    call emit_rsp_d32
+    pop rcx
+    pop rbx
+    ret
+emit_rsp_d32:            # emit the 4-byte [rsp+d32] opcode in rax, d32 = rcx
+    push rcx
+    shl rcx, 32
+    or rax, rcx
+    call emit_8bytes
+    pop rcx
+    ret
+emit_fn_call_clean:      # after a call: drop the 2n-6 words a 7+ argument call left (above)
+    push rsi
+    push rcx
+    mov rsi, r15
+    add rsi, 0x7600060
+    mov rcx, [rsi]
+    cmp rcx, 7
+    jl emit_fcc_done
+    shl rcx, 4
+    sub rcx, 48
+    mov rax, 0x24A48D48  # 48 8D A4 24 d32 = lea rsp, [rsp+d32]
+    call emit_rsp_d32
+emit_fcc_done:
+    pop rcx
+    pop rsi
+    ret
 emit_fcp_0:
     ret
 emit_fcp_1:
@@ -1161,7 +1233,25 @@ lexer_not_letter:
     je lexer_tilde
     cmp rax, 35           # '#' comment
     je lexer_comment
-    jmp lexer_skip
+# Any other byte outside a string or a comment is refused, naming it. 6.7.6 - it was dropped,
+# so `g()?` lexed as `g()` and an identifier lost its UTF-8 bytes (no cybs input has one today).
+lexer_char_err:
+    mov rax, 1
+    mov rdi, 2
+    mov rsi, err_char
+    mov rdx, 79
+    syscall
+    mov rsi, r15
+    add rsi, r8
+    mov rax, [rsi]
+    and rax, 0xFF
+    or rax, 0x0A00        # the byte, then a newline (the input is dead: cybs exits)
+    mov [rsi], rax
+    mov rax, 1
+    mov rdi, 2
+    mov rdx, 2
+    syscall
+    jmp sys_exit_err
 lexer_eq_or_eqeq:
     mov rcx, r8
     inc rcx
@@ -1186,17 +1276,26 @@ lexer_bang:
     mov rcx, r8
     inc rcx
     cmp rcx, r12
-    jge lexer_skip       # lone '!' — skip
+    jge lexer_bang_err   # lone '!' at the end of the input
     mov rsi, r15
     add rsi, rcx
     mov rax, [rsi]
     and rax, 0xFF
     cmp rax, 61
-    jne lexer_skip       # '!' without '=' — skip
+    jne lexer_bang_err   # '!' without '='
     mov rax, 18          # NEQ
     call lexer_emit_simple
     inc r8
     jmp lexer_skip
+# A lone '!' (logical not, cyrius since 6.7.3) is refused by name. 6.7.6 - it was skipped,
+# so `return !x;` compiled as `return x;` in the trusted root (the dropped-'!' bug class).
+lexer_bang_err:
+    mov rax, 1
+    mov rdi, 2
+    mov rsi, err_bang
+    mov rdx, 90
+    syscall
+    jmp sys_exit_err
 lexer_lt_or_lte:
     mov rcx, r8
     inc rcx
@@ -2919,6 +3018,7 @@ parse_assign_fn_emit:
     cmp rax, -1
     je parse_assign_fn_fixup
     call emit_call_to
+    call emit_fn_call_clean
     jmp parse_assign_semi
 parse_assign_fn_fixup:
     call emit_call_placeholder
@@ -2928,6 +3028,7 @@ parse_assign_fn_fixup:
     or rbx, r9           # type-2 | fn_index
     call record_fixup_at
     pop rbx
+    call emit_fn_call_clean
 parse_assign_semi:
     call peek_tok_type
     cmp rax, 5
@@ -4074,6 +4175,7 @@ pffn_local_g:
     call emit_var_load
 pffn_callrax:
     call emit_call_rax
+    call emit_fn_call_clean
     pop r9
     pop r8
     ret
@@ -4089,6 +4191,7 @@ parse_factor_fn_emit:
     cmp rax, -1
     je parse_factor_fn_fixup
     call emit_call_to
+    call emit_fn_call_clean
     pop r9
     pop r8
     ret
@@ -4100,6 +4203,7 @@ parse_factor_fn_fixup:
     or rbx, r9
     call record_fixup_at
     pop rbx
+    call emit_fn_call_clean
     pop r9
     pop r8
     ret
@@ -4445,13 +4549,6 @@ parse_err:
     mov rdi, 2
     mov rsi, err_syntax
     mov rdx, 13
-    syscall
-    jmp sys_exit_err
-arity_err:
-    mov rax, 1
-    mov rdi, 2
-    mov rsi, err_arity
-    mov rdx, 85
     syscall
     jmp sys_exit_err
 peek_tok_type:
@@ -5401,10 +5498,12 @@ elf_template:
     dq 0x0000000000001000
 err_syntax:
     db "syntax error\n"
-err_arity:
-    db "cybs: a call or fn with more than 6 arguments (cybs passes only the 6 register args)\n"
 err_undef:
     db "undefined variable\n"
+err_bang:
+    db "cybs: a lone `!` (logical not) is not supported by the bootstrap compiler; write `x == 0`\n"
+err_char:
+    db "cybs: the bootstrap compiler cannot lex this byte outside a string or comment: "
 pp_pat_include:
     db "include "
 pp_pat_ifdef:

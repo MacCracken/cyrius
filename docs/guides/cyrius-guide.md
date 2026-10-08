@@ -5521,7 +5521,7 @@ is built with this toolchain.
 
 ```
 bootstrap/asm (29KB seed)
-  → cybs (~12 KB bootstrap compiler)
+  → cybs (~21 KB bootstrap compiler)
     → cycc (modular compiler + IR)
       → cycc_aarch64 (Linux + macOS Mach-O cross-compiler)
       → cycc_win    (Windows PE32+ cross-compiler)

@@ -1,5 +1,6 @@
 # fnptr.cyr — function pointer support via indirect call
 # Usage: include "lib/fnptr.cyr"
+# cybs (the bootstrap compiler) compiles this file on the seed chain: no 6.7.x syntax, float, unary minus or `>>>`.
 #
 # Call a function through a pointer stored in a variable. The fncallN
 # functions load args, call through the pointer, return the result.

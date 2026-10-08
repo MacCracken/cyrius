@@ -1,5 +1,6 @@
 # atomic.cyr — atomic memory primitives for concurrent stdlib code
 # Usage: include "lib/atomic.cyr"
+# cybs (the bootstrap compiler) compiles this file on the seed chain: no 6.7.x syntax, float, unary minus or `>>>`.
 # Requires: none (pure inline asm + cyrius primitives)
 #
 # Provides race-safe 8-byte read-modify-write and memory-ordering

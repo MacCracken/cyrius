@@ -269,7 +269,7 @@ All 9 items complete:
 
 ```
 bootstrap/asm (29KB committed binary)
-  → assembles cybs.cyr → cybs (12,344 B compiler)
+  → assembles cybs.cyr → cybs (~21 KB compiler)
     → compiles asm.cyr → asm_v2 (byte-identical ✓)
 
 Archive: seed (Rust, 2254 lines) — independent verification path
