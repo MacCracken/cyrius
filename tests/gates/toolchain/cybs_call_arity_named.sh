@@ -13,6 +13,8 @@
 # cannot compile in the bootstrap path is caught by the normal suite, not first by seed-derive.
 #
 #   A  closure: the seed assembles cybs, and cybs reproduces the seed
+#   S  bootstrap/cybs.cyr fits the seed's caps (input < 131072 B — past it the seed drops the rest
+#      silently — and at most 512 labels)
 #   B  a 7- and a 9-argument call return the right values — as statements, inside an expression
 #      with a value pending (`k + f9(..)`), with a 7-argument call as an argument, and through
 #      lib/fnptr.cyr's fncall7 / fncall8 (their 7+ parameters stored, their SysV stack arguments
@@ -25,6 +27,7 @@
 #   emit_fn_call_pops copies from [rsp + 8k] instead of [rsp + 16k]  (stack args out of order)
 #   emit_fn_call_clean emits nothing                         (`k + f9(..)` pops a stale word)
 #   rdi and rsi register loads swapped                       (register arguments misrouted)
+#   cybs.cyr padded with comments past 131072 B / given 20 more labels    -> S RED
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || { echo "FAIL: cybs_call_arity_named: cannot cd to $ROOT"; exit 1; }
@@ -34,6 +37,15 @@ D=$(mktemp -d) && [ -d "$D" ] || { echo "FAIL: cybs_call_arity_named: mktemp -d 
 trap 'rm -rf "$D"' EXIT
 fail=0
 bad() { echo "  FAIL: cybs_call_arity_named $1"; fail=$((fail + 1)); }
+
+# S — the seed (bootstrap/asm, from bootstrap/asm.cyr) reads at most 131072 input bytes and DROPS the
+# rest with exit 0 (probed 6.7.6: 3 bytes over assembled a cybs 1 byte short, silently), and its
+# label table holds 512 entries. cybs.cyr must stay inside both; the seed itself is the trust root.
+sz=$(wc -c < bootstrap/cybs.cyr)
+nl=$(grep -cE '^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*[[:space:]]*:' bootstrap/cybs.cyr)
+if [ "$sz" -ge 131072 ]; then bad "S: bootstrap/cybs.cyr is $sz B — the seed reads 131072 and silently drops the rest"
+elif [ "$nl" -gt 512 ]; then bad "S: bootstrap/cybs.cyr defines $nl labels — the seed's label table holds 512"
+else echo "  ok   S: bootstrap/cybs.cyr fits the seed: $sz / 131072 B, $nl / 512 labels"; fi
 
 cat bootstrap/cybs.cyr | bootstrap/asm > "$D/cybs" 2>/dev/null || true
 chmod +x "$D/cybs" 2>/dev/null || true
