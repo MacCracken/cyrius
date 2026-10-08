@@ -1,0 +1,375 @@
+# hashmap_fast_rebuild_in_place.tcyr — 6.7.3. THE SAME-CAPACITY REBUILD IS IN PLACE AND
+# ALLOCATES NOTHING.
+#
+# ⛔ THE DEFECT (6.6.20 closeout review RLM-03, lib/hashmap_fast.cyr, 6.6.8 -> 6.7.2): since 6.6.8
+# fhm_set rebuilds when live + tombstones reach 87.5%, doubling only past 43.75% live and
+# otherwise rebuilding at the SAME capacity. Both went through _fhm_rehash, which allocates three
+# fresh arrays (cap meta bytes + two cap*8 arrays) and never releases the old ones. The default
+# allocator is a bump whose free is a no-op, so a map churned at a steady size leaked ~17 B per
+# slot on every same-capacity rebuild, without bound — and a steady-size fhm_set could return -1
+# with the allocator exhausted although the insert needed no memory. lib/hashmap.cyr had the
+# same leak and fixed it at 6.6.20; hashmap_fast did not get that half.
+#
+# Measured at 6.7.3 before the fix, 7,000 live keys in 16,384 slots over 3M delete+insert
+# rounds: 1,114,112 B allocated = the one doubling + 3 x 278,528 B leaked. After: 278,528 B (the
+# doubling), then 3 in-place rebuilds with 0 B allocated and the same three arrays.
+#
+# Rows:
+#   * STEADY-SIZE CHURN (56 live in 128 slots, so 55 = 42.97% at the trigger — just under the
+#     43.75% doubling line — over 100,000 rounds; 7,000 / 16,384 needs ~3M rounds per 3): the
+#     table rebuilds >= 3 times, alloc_used() does not move, the meta / keys / vals arrays stay
+#     the same, every fhm_set returns 0, every delete finds its key, every live entry is
+#     reachable from its home group after each rebuild, a miss stops before walking the table,
+#     and every key in the window reads back its latest value;
+#   * FIXED LAYOUT (128 slots): chains that cross groups the walk refills — X homed in group 7
+#     sits in group 2 behind groups 7, 0 and 1, P homed in group 7 sits in group 1, Y homed in
+#     group 6 sits in group 7 — then the insert at the trigger rebuilds in place and every one
+#     of them still reads back. Mutation-checked: an allocating rebuild (the 6.7.2 behaviour), a
+#     walk that skips re-placement, an anchor group chosen AFTER the tombstones are converted,
+#     and a walk that skips its anchor group each fail rows here;
+#   * NO EMPTY SLOT ANYWHERE (tombstones written outside the API): the rebuild cannot anchor,
+#     falls back to fresh arrays at the same capacity, and the insert still succeeds.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/vec.cyr"
+include "lib/hashmap_fast.cyr"
+include "lib/assert.cyr"
+
+var _fx_tmp = 0;
+
+# Write the key "k<decimal i>" into the 24-byte buffer `k` and return it.
+fn _fx_wk(k, i): i64 {
+    store8(k, 107);
+    var n = i;
+    var d = 0;
+    if (n == 0) { store8(_fx_tmp, 48); d = 1; }
+    while (n > 0) { store8(_fx_tmp + d, 48 + (n % 10)); n = n / 10; d = d + 1; }
+    var j = 0;
+    while (j < d) { store8(k + 1 + j, load8(_fx_tmp + d - 1 - j)); j = j + 1; }
+    store8(k + 1 + d, 0);
+    return k;
+}
+
+# The next key "k<i>" (i from *next on) whose home group in a 128-slot table is `g`.
+fn _fx_key_at_group(g, next): i64 {
+    var i = load64(next);
+    while (1 == 1) {
+        var k = _fx_wk(alloc(24), i);
+        i = i + 1;
+        if (((_fhm_hash(k) & 127) >> 4) == g) {
+            store64(next, i);
+            return k;
+        }
+    }
+    return 0;
+}
+
+# Set `n` keys homed in group g, recording them in `buf`; key i maps to 1000 + g*100 + i.
+fn _fx_fill(m, buf, n, g, next): i64 {
+    var i = 0;
+    while (i < n) {
+        var k = _fx_key_at_group(g, next);
+        store64(buf + i * 8, k);
+        fhm_set(m, k, 1000 + g * 100 + i);
+        i = i + 1;
+    }
+    return 0;
+}
+
+# The slot holding `key`, found by scanning the metadata (independent of the probe), or -1.
+fn _fx_slot_of(m, key): i64 {
+    var cap = fhm_cap(m);
+    var i = 0;
+    while (i < cap) {
+        var b = load8(load64(m) + i);
+        if (b != 0) {
+            if (b != 255) {
+                if (streq(load64(load64(m + 8) + i * 8), key) == 1) { return i; }
+            }
+        }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+# Live entries a probe from their home group cannot reach: a group with an EMPTY slot ends every
+# probe, so an entry is lost when any group before its own on its path has one.
+fn _fx_unreachable(m): i64 {
+    var meta = load64(m);
+    var keys = load64(m + 8);
+    var cap = fhm_cap(m);
+    var bad = 0;
+    var i = 0;
+    while (i < cap) {
+        var b = load8(meta + i);
+        if (b != 0) {
+            if (b != 255) {
+                var g = i & (0 - 16);
+                var t = (_fhm_hash(load64(keys + i * 8)) & (cap - 1)) & (0 - 16);
+                while (t != g) {
+                    if (_fhm_empty16(meta, t) != 0) {
+                        bad = bad + 1;
+                        t = g;
+                    } else {
+                        t = (t + 16) & (cap - 1);
+                    }
+                }
+            }
+        }
+        i = i + 1;
+    }
+    return bad;
+}
+
+# Groups a probe for `key` visits before it stops at a group with an EMPTY slot (cap/16 + 1 when
+# no group has one — a full-table walk).
+fn _fx_miss_walk(m, key): i64 {
+    var meta = load64(m);
+    var cap = fhm_cap(m);
+    var t = (_fhm_hash(key) & (cap - 1)) & (0 - 16);
+    var n = 1;
+    while (n <= cap / 16) {
+        if (_fhm_empty16(meta, t) != 0) { return n; }
+        t = (t + 16) & (cap - 1);
+        n = n + 1;
+    }
+    return n;
+}
+
+# 1 when each of the `n` keys in buf reads back 1000 + g*100 + i (want_present 1) or is absent
+# (want_present 0).
+fn _fx_all(m, buf, n, g, want_present): i64 {
+    var ok = 1;
+    var i = 0;
+    while (i < n) {
+        var v = fhm_get_or(m, load64(buf + i * 8), 0 - 7);
+        if (want_present == 1) {
+            if (v != 1000 + g * 100 + i) { ok = 0; }
+        } else {
+            if (v != 0 - 7) { ok = 0; }
+        }
+        i = i + 1;
+    }
+    return ok;
+}
+
+# Hold `live` keys and replace the oldest with a new one `rounds` times, once the table has
+# reached its steady size. A ring of live+1 key buffers, so the churn itself allocates nothing.
+fn _fx_steady_rows(live, rounds): i64 {
+    var ring = live + 1;
+    var bufs = alloc(ring * 24);
+    var m = fhm_new();
+    var i = 0;
+    while (i < live) { fhm_set(m, _fx_wk(bufs + i * 24, i), i); i = i + 1; }
+    var s = 0;
+    # warm up until the one doubling has happened
+    while (fhm_cap(m) < 128) {
+        fhm_delete(m, bufs + (s % ring) * 24);
+        fhm_set(m, _fx_wk(bufs + ((s + live) % ring) * 24, s + live), s + live);
+        s = s + 1;
+        if (s >= live * 4) { return assert(0, "the churn doubled the table within 4x live"); }
+    }
+    var a0 = load64(m);
+    var a1 = load64(m + 8);
+    var a2 = load64(m + 16);
+    var u0 = alloc_used();
+    var r0 = _fhm_rebuilds;
+    var rlast = r0;
+    var refused = 0;
+    var lostdel = 0;
+    var lost = 0;
+    var tombs_left = 0;
+    var end = s + rounds;
+    while (s < end) {
+        if (fhm_delete(m, bufs + (s % ring) * 24) != 1) { lostdel = lostdel + 1; }
+        if (fhm_set(m, _fx_wk(bufs + ((s + live) % ring) * 24, s + live), s + live) != 0) {
+            refused = refused + 1;
+        }
+        if (_fhm_rebuilds != rlast) {
+            rlast = _fhm_rebuilds;
+            lost = lost + _fx_unreachable(m);
+            tombs_left = tombs_left + load64(m + 40);
+        }
+        s = s + 1;
+    }
+    assert(_fhm_rebuilds - r0 >= 3, "the measured churn rebuilt the table at least 3 times (anti-vacuous)");
+    assert_eq(alloc_used() - u0, 0, "steady-size churn allocates 0 bytes");
+    assert_eq(load64(m), a0, "metadata array kept in place");
+    assert_eq(load64(m + 8), a1, "keys array kept in place");
+    assert_eq(load64(m + 16), a2, "values array kept in place");
+    assert_eq(fhm_cap(m), 128, "the table holds its steady size");
+    assert_eq(refused, 0, "every fhm_set succeeded");
+    assert_eq(lostdel, 0, "every delete found the oldest key");
+    assert_eq(lost, 0, "after every rebuild, every live entry is reachable from its home group");
+    assert_eq(tombs_left, 0, "every rebuild dropped every tombstone");
+    assert_eq(fhm_count(m), live, "the live count is exact");
+    var held = 0;
+    i = s;
+    while (i < s + live) {
+        if (fhm_get_or(m, bufs + (i % ring) * 24, 0 - 7) == i) { held = held + 1; }
+        i = i + 1;
+    }
+    assert_eq(held, live, "every key in the window reads back its latest value");
+    # misses: absent keys (indices already deleted) report absent, and no probe walks the table
+    var kb = alloc(24);
+    var absent = 0;
+    var maxwalk = 0;
+    i = 0;
+    while (i < 200) {
+        _fx_wk(kb, i);
+        if (fhm_has(m, kb) == 0) { absent = absent + 1; }
+        var w = _fx_miss_walk(m, kb);
+        if (w > maxwalk) { maxwalk = w; }
+        i = i + 1;
+    }
+    assert_eq(absent, 200, "deleted keys stay deleted");
+    assert(maxwalk <= fhm_cap(m) / 16, "a miss stops at a group with an EMPTY slot, never a full-table walk");
+    return 0;
+}
+
+# A table whose chains cross groups the walk refills, then the insert at the trigger.
+fn _fx_layout_rows(): i64 {
+    var nx = alloc(8);
+    store64(nx, 0);
+    var m = fhm_new();
+    var i = 0;
+    while (i < 57) { fhm_set(m, _fx_wk(alloc(24), 900000 + i), i); i = i + 1; }
+    fhm_clear(m);
+    assert_eq(fhm_cap(m), 128, "57 keys doubled the table to 128 slots");
+    var reb0 = _fhm_rebuilds;
+    var g6 = alloc(16 * 8);
+    var g7 = alloc(16 * 8);
+    var g0 = alloc(16 * 8);
+    var g1 = alloc(16 * 8);
+    var g3 = alloc(16 * 8);
+    var g4 = alloc(16 * 8);
+    var g5 = alloc(16 * 8);
+    # group 6 fills, so Y (home 6) overflows into group 7; then group 6 is deleted: 16 tombstones
+    _fx_fill(m, g6, 16, 6, nx);
+    var ky = _fx_key_at_group(6, nx);
+    fhm_set(m, ky, 77);
+    assert_eq(_fx_slot_of(m, ky), 112, "Y (home group 6) overflowed into group 7 (anti-vacuous)");
+    i = 0;
+    while (i < 16) { fhm_delete(m, load64(g6 + i * 8)); i = i + 1; }
+    assert_eq(load64(m + 40), 16, "group 6's deletes left 16 tombstones");
+    # groups 7 and 0 fill, so P (home 7) lands in group 1; group 1 fills, so X (home 7) lands in 2
+    _fx_fill(m, g7, 15, 7, nx);
+    _fx_fill(m, g0, 16, 0, nx);
+    var kp = _fx_key_at_group(7, nx);
+    fhm_set(m, kp, 88);
+    assert_eq(_fx_slot_of(m, kp), 16, "P (home group 7) crossed groups 7 and 0 into group 1 (anti-vacuous)");
+    _fx_fill(m, g1, 15, 1, nx);
+    var kx = _fx_key_at_group(7, nx);
+    fhm_set(m, kx, 99);
+    assert_eq(_fx_slot_of(m, kx), 32, "X (home group 7) crossed groups 7, 0 and 1 into group 2 (anti-vacuous)");
+    # tombstone group 1 and one slot of group 0; fill and tombstone groups 3 and 4; fill group 5
+    i = 0;
+    while (i < 15) { fhm_delete(m, load64(g1 + i * 8)); i = i + 1; }
+    fhm_delete(m, load64(g0));
+    _fx_fill(m, g3, 16, 3, nx);
+    i = 0;
+    while (i < 16) { fhm_delete(m, load64(g3 + i * 8)); i = i + 1; }
+    _fx_fill(m, g4, 16, 4, nx);
+    i = 0;
+    while (i < 16) { fhm_delete(m, load64(g4 + i * 8)); i = i + 1; }
+    _fx_fill(m, g5, 15, 5, nx);
+    assert_eq(_fhm_rebuilds, reb0, "no rebuild before the trigger (anti-vacuous)");
+    assert_eq(fhm_count(m) + load64(m + 40), 112, "live + tombstones sit exactly at the 87.5% trigger");
+    assert_eq(_fhm_empty16(load64(m), 0), 0, "group 0 has no EMPTY slot before the rebuild (anti-vacuous)");
+    assert_eq(_fhm_empty16(load64(m), 16), 0, "group 1 has no EMPTY slot before the rebuild (anti-vacuous)");
+    assert(_fhm_empty16(load64(m), 32) != 0, "group 2 is the first group with an EMPTY slot (anti-vacuous)");
+    var a0 = load64(m);
+    var a1 = load64(m + 8);
+    var a2 = load64(m + 16);
+    var kn = _fx_key_at_group(3, nx);
+    var u0 = alloc_used();
+    fhm_set(m, kn, 55);
+    assert_eq(_fhm_rebuilds - reb0, 1, "the insert at the trigger rebuilt the table");
+    assert_eq(alloc_used() - u0, 0, "the same-capacity rebuild allocated nothing");
+    assert_eq(load64(m), a0, "metadata array kept in place");
+    assert_eq(load64(m + 8), a1, "keys array kept in place");
+    assert_eq(load64(m + 16), a2, "values array kept in place");
+    assert_eq(fhm_cap(m), 128, "the capacity is unchanged");
+    assert_eq(fhm_get_or(m, kx, 0 - 7), 99, "X, whose chain crossed the refilled groups, survives");
+    assert_eq(fhm_get_or(m, kp, 0 - 7), 88, "P survives");
+    assert_eq(fhm_get_or(m, ky, 0 - 7), 77, "Y survives");
+    assert_eq(fhm_get_or(m, kn, 0 - 7), 55, "the new key reads back");
+    assert_eq(_fx_all(m, g7, 15, 7, 1), 1, "group 7's keys read back");
+    assert_eq(_fx_all(m, g5, 15, 5, 1), 1, "group 5's keys read back");
+    assert_eq(fhm_get_or(m, load64(g0), 0 - 7), 0 - 7, "the deleted group-0 key stays deleted");
+    assert_eq(_fx_all(m, g6, 16, 6, 0), 1, "group 6's deleted keys stay deleted");
+    assert_eq(_fx_all(m, g1, 15, 1, 0), 1, "group 1's deleted keys stay deleted");
+    assert_eq(_fx_all(m, g3, 16, 3, 0), 1, "group 3's deleted keys stay deleted");
+    assert_eq(_fx_unreachable(m), 0, "every live entry is reachable from its home group");
+    assert_eq(load64(m + 40), 0, "the rebuild dropped every tombstone");
+    assert_eq(fhm_count(m), 49, "the live count is exact");
+    return 0;
+}
+
+# Tombstones planted by hand in every EMPTY slot: the in-place walk has no anchor, so the
+# same-capacity rebuild falls back to fresh arrays — and the insert still succeeds.
+fn _fx_no_empty_rows(): i64 {
+    var m = fhm_new();
+    fhm_set(m, "a", 1);
+    # 30 one-letter keys grow the table to 64 slots; keep three of them
+    var ks = alloc(30 * 8);
+    var i = 0;
+    while (i < 30) {
+        var k = alloc(8);
+        store8(k, 65 + i);
+        store8(k + 1, 0);
+        store64(ks + i * 8, k);
+        fhm_set(m, k, i);
+        i = i + 1;
+    }
+    i = 3;
+    while (i < 30) { fhm_delete(m, load64(ks + i * 8)); i = i + 1; }
+    var cap = fhm_cap(m);
+    var meta = load64(m);
+    var planted = 0;
+    i = 0;
+    while (i < cap) {
+        if (load8(meta + i) == 0) {
+            store8(meta + i, 255);
+            planted = planted + 1;
+        }
+        i = i + 1;
+    }
+    store64(m + 40, load64(m + 40) + planted);
+    assert(planted > 0, "tombstones were planted in every EMPTY slot (anti-vacuous)");
+    var r0 = _fhm_rebuilds;
+    assert_eq(fhm_set(m, "new", 42), 0, "the insert succeeds");
+    assert_eq(_fhm_rebuilds - r0, 1, "it rebuilt the table");
+    assert(load64(m) != meta, "with no EMPTY slot to anchor, the rebuild used fresh arrays");
+    assert_eq(fhm_cap(m), cap, "the fallback kept the capacity");
+    assert_eq(fhm_get(m, "new"), 42, "the new key reads back");
+    assert_eq(fhm_get(m, "a"), 1, "a reads back");
+    var ok = 1;
+    i = 0;
+    while (i < 3) {
+        if (fhm_get_or(m, load64(ks + i * 8), 0 - 7) != i) { ok = 0; }
+        i = i + 1;
+    }
+    assert_eq(ok, 1, "the held keys read back");
+    assert_eq(load64(m + 40), 0, "no tombstones remain");
+    return 0;
+}
+
+fn main(): i64 {
+    alloc_init();
+    _fx_tmp = alloc(32);
+    # A FIXED seed, so the churn's layout — and the rebuild count — is the same on every run.
+    # The layout rows pick keys by home group, so they do not depend on it.
+    _hm_seed = 0x5DEECE66D;
+    test_group("steady-size churn just under the 43.75% doubling line allocates nothing");
+    _fx_steady_rows(56, 100000);
+    test_group("fixed layout: chains that cross groups the walk refills");
+    _fx_layout_rows();
+    test_group("a table with no EMPTY slot still rebuilds");
+    _fx_no_empty_rows();
+    var rc = assert_summary();
+    return rc;
+}
+var ec = main();
+syscall(60, ec);
