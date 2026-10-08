@@ -1022,7 +1022,8 @@ var _flc_hwm = 0;
 # parse_fn.cyr. See CHANGELOG [6.5.14]. 6.6.20: also set where an address in this
 # frame is pushed WITHOUT a `&` — an inline aggregate argument, a temp, a field of a
 # frame aggregate, a method's `self`, an operator's operand — and can outlive the call
-# (`_sarg_escapes`; `_tc_sarg_divert` has the rules).
+# (`_sarg_escapes`). It is set SO FAR, so inside a loop a tail call waits for the end of its
+# outermost loop to read it (`_tcp_site` / `_tcp_loop_end`, parse_fn.cyr). CHANGELOG [6.7.3]
 var _fn_local_addr = 0;
 # v6.3.7 — set to 1 when the current fn emits a closure literal. Closures are
 # emitted INLINE in the enclosing fn's code range (jumped over), so the enclosing
@@ -1343,7 +1344,7 @@ fn _fnst_get_xp(S, b): i64 {
 # loop, the return-patch and defer ranges starting where the enclosing fn's end. The caller then
 # sets what is specific to it (`_cur_fn_ix`, captures, locals snapshot). Returns the snapshot.
 fn _fnst_save(S): i64 {
-    var b = alloc(320);
+    var b = alloc(328);
     store64(b, GLVAR(S));
     store64(b + 8, GINFN(S));
     store64(b + 16, GFLC(S));
@@ -1357,6 +1358,7 @@ fn _fnst_save(S): i64 {
     store64(b + 80, _in_defer);
     store64(b + 304, _cur_fn_has_defer);
     store64(b + 312, _cur_iself_sid);   # 6.7.0 (A4): kept, not cleared — a closure inherits it
+    store64(b + 320, _tcp_base);        # 6.7.3: the in-loop tail calls' range, as rp_vec's
     _fnst_put_cg(b);
     _fnst_put_coro(b);
     _fnst_put_xp(S, b);
@@ -1364,6 +1366,7 @@ fn _fnst_save(S): i64 {
     SFLC(S, 0);
     SSDEP(S, 0);
     _rp_base = vec_len(rp_vec);
+    _tcp_base = _tcp_len();
     _defer_base = L64(S + 0x1AC020);
     _loop_depth = 0;
     _brk_depth = 0;
@@ -1376,6 +1379,7 @@ fn _fnst_save(S): i64 {
 # patched by it), then put every enclosing global back.
 fn _fnst_restore(S, b): i64 {
     vec_truncate(rp_vec, _rp_base);
+    _tcp_drop(S);   # 6.7.3: its in-loop tail calls were resolved at its end (`_tcp_resolve`)
     S64(S + 0x1AC020, _defer_base);
     SLVAR(S, load64(b));
     SINFN(S, load64(b + 8));
@@ -1390,6 +1394,7 @@ fn _fnst_restore(S, b): i64 {
     _in_defer = load64(b + 80);
     _cur_fn_has_defer = load64(b + 304);
     _cur_iself_sid = load64(b + 312);
+    _tcp_base = load64(b + 320);
     _fnst_get_cg(b);
     _fnst_get_coro(b);
     _fnst_get_xp(S, b);
@@ -3833,8 +3838,9 @@ fn _PARSE_STMT_IMPL(S): i64 {
         return 0;
     }
     if (typ == 15) { PARSE_IF(S); return 0; }
-    if (typ == 16) { PARSE_WHILE(S); return 0; }
-    if (typ == 55) { PARSE_FOR(S); return 0; }
+    # 6.7.3: after the WHOLE loop — a C-style `for`'s step is emitted after its body.
+    if (typ == 16) { PARSE_WHILE(S); _tcp_loop_end(); return 0; }
+    if (typ == 55) { PARSE_FOR(S); _tcp_loop_end(); return 0; }
     if (typ == 57) { PARSE_SWITCH(S); return 0; }
     if (typ == 75) { PARSE_MATCH(S); return 0; }
     if (typ == 33) { PARSE_RETURN(S); return 0; }

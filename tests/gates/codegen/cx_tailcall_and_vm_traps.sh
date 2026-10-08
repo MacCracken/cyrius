@@ -24,7 +24,9 @@
 #      recursion cxvm's stacks can hold, so it only passes in constant stack; the 20,000,000 premise
 #      repro passes too — measured 29 s on cxvm, too slow for every check.sh run); mutual tail
 #      recursion, a tail call whose arguments are nested calls, a >6-arg tail-shaped call (normal
-#      path) and a thin<->wide frame ping-pong all equal native.
+#      path) and a thin<->wide frame ping-pong all equal native. (6.7.3) A tail call inside a loop:
+#      diverted when the loop takes a frame address after it (A3; cx gave 13 where 7 is right),
+#      and kept, 2,000,000 deep, when the address comes only after the loop (A4).
 #   B. deep NON-tail recursion: depth 1000 and 5000 now return the right value (they gave 231 / 135);
 #      a runaway one traps LOUDLY ("cxvm: guest stack overflow") instead of overwriting the program's
 #      globals and heap; hand-made images hit the call-stack and data-stack overflow traps and both
@@ -58,6 +60,10 @@
 #   the negative-pc check removed                  -> D10 RED (decodes host memory: "... at pc -8")
 #   cx EVSTORE_W / EFLSTORE_W back to 8-byte stores -> E1 (59) + E2 (15) + E3 (1) RED
 #   (6.6.13) _gv_cx_prestore back to EVSTORE         -> E4 (255) + E5 (7) RED; native stays 0
+#   (6.7.3) `_tcp_resolve` always keeps               -> A3 RED (native exits 5, the old wrong value;
+#                                                       the frontend is shared, so `both` stops there)
+#   (6.7.3) the loop's end never decides              -> A4 RED (native 139: the whole fn's flag
+#           (`_tcp_loop_end` returns at once)              diverted the call, the stack overflowed)
 #   (the narrow LOADS are width-correct too, but a wide masked load gives the same value except at
 #   the very end of the data segment, which no compiled row can place a global at — not a row.)
 set -u
@@ -151,6 +157,42 @@ fn main(): i64 {
 }
 syscall(60, main());
 ' 63 240
+# 6.7.3 — a tail call inside a loop is decided at the end of its outermost loop: diverted when the
+# loop takes a frame address after it (cx read 13 where 7 is right: the `jmp` freed the frame `x`
+# points into), kept otherwise — here with the address taken only after the loop, which the whole
+# fn's flag would have diverted (a 2,000,000-deep recursion then overflows cxvm's stacks).
+both "A3 an in-loop tail call before 'x = &s' diverts (6.7.3)" 'struct P3 { a; b; c; }
+fn rd(p, k) {
+    var j1 = 901; var j2 = 902; var j3 = 903; var j4 = 904; var j5 = 905; var j6 = 906;
+    return load64(p) + load64(p + 8) + load64(p + 16) + k + (j1 + j2 + j3 + j4 + j5 + j6) - 5421;
+}
+fn f(k) {
+    var s = P3 { 1, 2, 3 };
+    var x = 0;
+    var i = 0;
+    while (i < 2) {
+        if (i == 1) { return rd(x, k); }
+        x = &s;
+        i = i + 1;
+    }
+    return 0;
+}
+syscall(60, f(1));
+' 7
+both "A4 2,000,000-deep in-loop self tail call, the address taken after the loop (6.7.3)" 'struct P3 { a; b; c; }
+fn after(n, acc): i64 {
+    var s = P3 { 1, 2, 3 };
+    while (1) {
+        if (n == 0) { break; }
+        return after(n - 1, acc + 1);
+    }
+    var x = &s;
+    return acc + load64(x + 8) - 2;
+}
+var r = after(2000000, 0);
+if (r == 2000000) { syscall(60, 0); }
+syscall(60, 3);
+' 0 240
 
 echo "B. deep non-tail recursion and the VM stacks"
 for n in 1000 5000; do

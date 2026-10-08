@@ -630,7 +630,9 @@ fn _tc_frame_divert(S, cfi): i64 {
     if (_cur_fn_coro == 1) { return 1; }
     # v6.5.14 — a pointer to a local laundered through a variable (`var p = &buf; return f(p);`):
     # the epilogue frees the frame the callee reads. Set wherever this fn materialises `&local`,
-    # and since 6.6.20 wherever such an address escapes implicitly (`_tc_sarg_divert`, rule 1).
+    # and since 6.6.20 wherever such an address escapes implicitly (`_sarg_escapes`; rule 1
+    # above `_tc_after_args_divert`). Set SO FAR: inside a loop, a 0 here is not yet the answer
+    # — the call waits for the end of its outermost loop (`_tcp_site`). CHANGELOG [6.7.3]
     if (_fn_local_addr == 1) { return 1; }
     # 6.6.6 — a struct-returning CALLER copies into its own retptr, which a `jmp` cannot do.
     if (_cur_fn_ret_sid > 0) { if (_cur_fn_ret_stash > 0) { return 1; } }
@@ -674,7 +676,8 @@ fn _tc_callee_divert(S, cfi): i64 {
     # 6.6.6 — a >16 B struct-returning callee writes through a retptr the tail path never passes.
     if (_ret_agg_class(S, cfi) == 2) { return 1; }
     if (cfi < 0) { return 0; }
-    # (v6.3.36's "any address-passed param diverts" is replaced since 6.6.20: `_tc_sarg_divert`.)
+    # (v6.3.36's "any address-passed param diverts" is replaced since 6.6.20 by the rules above
+    # `_tc_after_args_divert`.)
     # v6.4.53 — value-form SIMD params travel in vector registers; the tail path loads only the
     # integer ones (`return f32v4_add(v, v)` returned v). These two lines also make PARSE_FNCALL's
     # SIMD argument class check the only one a tail-shaped call needs (6.6.20).
@@ -709,7 +712,6 @@ fn _tc_args_divert(S, cfi, ti_after): i64 {
     # FIRST token AND that argument's mask bit is set): looser forms were measured to cost a
     # self-recursive tail call its TCO.
     if (_tc_str_literal_arg(S, ti_after, cfi) == 1) { return 1; }
-    if (_tc_sarg_divert(cfi) == 1) { return 1; }   # 6.6.20
     return 0;
 }
 # ⛔ 6.6.20 — AN ADDRESS-PASSED PARAMETER NO LONGER COSTS EVERY TAIL CALL. Any address-passed
@@ -732,17 +734,14 @@ fn _tc_args_divert(S, cfi, ti_after): i64 {
 #   2. That flag is set-SO-FAR, which is the whole question only where nothing after the return can
 #      run before it: outside every loop (the only backward jumps; a `defer` body and a coroutine
 #      already divert). Inside a loop a later `x = &s;` runs before the next iteration's return, so
-#      an address-passed callee keeps 6.6.19's divert there — this line.
+#      there the call waits for the flag at the end of its OUTERMOST loop (`_tcp_site`). 6.6.20
+#      diverted an address-passed callee there always and every other callee never — a wrong
+#      value for the second, a lost `jmp` for the first. CHANGELOG [6.7.3]
 #   3. The call's OWN arguments can create such an address after this decision (`dQ(G, s.me())`,
 #      `dP(idu(idp(s)), k)`): the arm emits an ordinary call when they did (`_tc_after_args_divert`).
 #      An address pushed AS one of its arguments always counts, by-value callee or not
 #      (`return dV(s, k);`): the `jmp` frees the frame before the callee's copy runs.
 # CHANGELOG [6.6.20]
-fn _tc_sarg_divert(cfi): i64 {
-    if (_smask_args(cfi) == 0) { return 0; }
-    if (_loop_depth > 0) { return 1; }
-    return 0;
-}
 # Once the tail arm has evaluated its arguments into their registers: 1 = emit an ordinary call
 # instead of the `jmp`. Over the register ceiling the epilogue would free the stack arguments
 # ECALLPOPS wrote (6.6.5); and when evaluating an argument took an address in this frame
@@ -751,6 +750,121 @@ fn _tc_sarg_divert(cfi): i64 {
 fn _tc_after_args_divert(argc): i64 {
     if (argc > _ARG_REG_COUNT()) { return 1; }
     if (_fn_local_addr == 1) { return 1; }
+    return 0;
+}
+# The ordinary call the tail arm takes instead of the `jmp`, its arguments already in their
+# registers: call, clean up, and jump to the return landing like any other `return`.
+fn _tc_emit_call(S, fi, argc): i64 {
+    var foff = L64(_fnt_offsets + fi * 8);
+    if (foff >= 0) { ECALLTO(S, foff); }
+    else { ECALLFIX(S, fi); }
+    ECALLCLEAN(S, argc);
+    vec_push(rp_vec, EJMP0(S));
+    return 0;
+}
+# ⛔ 6.7.3 — A TAIL CALL INSIDE A LOOP WAITS FOR ITS VERDICT. `_fn_local_addr` is set SO FAR, so
+# a `return f(..);` that comes EARLIER in a loop body than the statement taking a frame address
+# (`while (..) { if (i == 1) { return rd(x, k); } x = &s; .. }`) found it 0, kept its `jmp`, and
+# on the next iteration handed `rd` a pointer into the frame the `jmp` had just freed: a silent
+# wrong value on every backend since 6.5.14, through `&s` and through each implicit address
+# 6.6.20 flags (a method's `self`, an operator's operand, a field of an inline aggregate, ..).
+# A prescan cannot answer it — since 6.6.20 most of what sets the flag depends on types and on
+# the callee's signature — and bodies are parsed once. So the site is emitted with a SELECTOR
+# `jmp` in front of the tail sequence, and decided once the flag is final for it: when its
+# OUTERMOST enclosing loop ends (`_tcp_loop_end`, after the whole loop statement, a C-style
+# `for`'s step included). Nothing after that loop can run before the call again (cyrius has no
+# goto; its only back-edges are loops), and an address taken BEFORE the loop already diverted
+# the call (`_tc_frame_divert`), so the flag then is exactly "an address was taken in this
+# loop". A fn that takes an address only AFTER the loop keeps its `jmp`. Every nested body (a
+# closure, a generic instance) has its own range of sites (`_tcp_base`, in the `_fnst_save`
+# snapshot) and its own flag. Record (64 B): +0 the selector, +8 the tail sequence's start,
+# +16 the callee, +24 argc, +32/+40/+48 `_xdepth` / `_xcall_pad` / `_xcall_d` (ETAILJMP consumes
+# what ECALLCLEAN needs), +56 the verdict: 0 = open, 1 = keep, 2 = divert. CHANGELOG [6.7.3]
+fn _tcp_len(): i64 {
+    if (_tcp_vec == 0) { return 0; }
+    return vec_len(_tcp_vec);
+}
+fn _tcp_site(S, fi, argc): i64 {
+    if (_tcp_vec == 0) { _tcp_vec = vec_new(); }
+    var r = alloc(64);
+    store64(r, EJMP0(S));
+    store64(r + 8, GCP(S));
+    store64(r + 16, fi);
+    store64(r + 24, argc);
+    store64(r + 32, _xdepth);
+    store64(r + 40, _xcall_pad);
+    store64(r + 48, _xcall_d);
+    store64(r + 56, 0);
+    vec_push(_tcp_vec, r);
+    ETAILJMP(S, fi);
+    return 0;
+}
+# Called after every loop statement: when it was an outermost one, every site still open in
+# this fn was inside it, and the flag now covers that whole loop. Not inside a `defer` body,
+# which runs at the fn end (its loop depth restarts at 0 while the loop it sits in is still
+# open); a fn with a `defer` never tail-calls anyway (`_cur_fn_has_defer`).
+fn _tcp_loop_end(): i64 {
+    if (_loop_depth != 0) { return 0; }
+    if (_in_defer != 0) { return 0; }
+    var n = _tcp_len();
+    var i = _tcp_base;
+    while (i < n) {
+        var r = vec_get(_tcp_vec, i);
+        if (load64(r + 56) == 0) { store64(r + 56, 1 + _fn_local_addr); }
+        i = i + 1;
+    }
+    return 0;
+}
+# A diverted site's ordinary call, emitted out of line at the fn end with the call state its
+# arguments were marshalled under.
+fn _tcp_stub(S, r): i64 {
+    var xd = _xdepth;
+    var xc = _xcall_d;
+    _xdepth = load64(r + 32);
+    _xcall_pad = load64(r + 40);
+    _xcall_d = load64(r + 48);
+    _tc_emit_call(S, load64(r + 16), load64(r + 24));
+    _xdepth = xd;
+    _xcall_pad = 0;
+    _xcall_d = xc;
+    return 0;
+}
+# At the body's end (PARSE_FN_DEF and the closure path, before the return landing): a kept
+# site's selector becomes a jump to the next instruction (the SCP trick `_defer_emit_init`
+# plays on the fn-entry jmp); a diverted one's jumps to its stub. The body's fall-through is
+# routed round the stubs. An open site is impossible (its loop ended inside this body); it
+# would take the whole fn's flag, which is sound.
+fn _tcp_resolve(S): i64 {
+    var n = _tcp_len();
+    var i = _tcp_base;
+    var routed = 0;
+    while (i < n) {
+        var r = vec_get(_tcp_vec, i);
+        var v = load64(r + 56);
+        if (v == 0) { v = 1 + _fn_local_addr; }
+        if (v == 2) {
+            if (routed == 0) { vec_push(rp_vec, EJMP0(S)); routed = 1; }
+            EPATCH(S, load64(r));
+            _tcp_stub(S, r);
+        } else {
+            var cp = GCP(S);
+            SCP(S, load64(r + 8));
+            EPATCH(S, load64(r));
+            SCP(S, cp);
+        }
+        i = i + 1;
+    }
+    if (n > _tcp_base) { vec_truncate(_tcp_vec, _tcp_base); }
+    return 0;
+}
+# Leaving or entering a body with sites still pending means a body emitter skipped
+# `_tcp_resolve`: the selector would stay a `jmp +0` (the old wrong value, x86) or a branch to
+# itself (aarch64, cx). Loud, unless an error already stopped the compile.
+fn _tcp_drop(S): i64 {
+    var n = _tcp_len();
+    if (n <= _tcp_base) { return 0; }
+    if (_had_error == 0) { ERR_MSG(S, "internal: an in-loop tail call was never resolved", 49); }
+    vec_truncate(_tcp_vec, _tcp_base);
     return 0;
 }
 
@@ -878,21 +992,13 @@ fn PARSE_RETURN(S): i64 {
                             # the reason frontend/expr_in_fn_args and stdlib/flags failed as PE.
                             # `_ARG_REG_COUNT()` is the same function the closure ABI uses, so
                             # the two cannot drift. CHANGELOG [6.6.5]
-                            if (_tc_after_args_divert(tcargc) == 1) {
-                                # a normal call: over the register ceiling (the tail-call epilogue
-                                # would clobber the stack args), or an argument took an address in
-                                # this frame (6.6.20)
-                                var foff2 = L64(_fnt_offsets + tcfi * 8);
-                                if (foff2 >= 0) { ECALLTO(S, foff2); }
-                                else { ECALLFIX(S, tcfi); }
-                                ECALLCLEAN(S, tcargc);
-                                # Jump to function epilogue (same as normal return)
-                                var rp2 = EJMP0(S);
-                                vec_push(rp_vec, rp2);
-                            } else {
-                                # Emit epilogue + jmp (tail call, ≤6 args only)
-                                ETAILJMP(S, tcfi);
-                            }
+                            # A normal call: over the register ceiling (the tail-call epilogue
+                            # would clobber the stack args), or an argument took an address in
+                            # this frame (6.6.20). Inside a loop the `jmp` waits for the loop's
+                            # end (`_tcp_site`, 6.7.3); elsewhere it is the epilogue + `jmp`.
+                            if (_tc_after_args_divert(tcargc) == 1) { _tc_emit_call(S, tcfi, tcargc); }
+                            elif (_loop_depth > 0) { _tcp_site(S, tcfi, tcargc); }
+                            else { ETAILJMP(S, tcfi); }
                             return 0;
                         } }
                 }
@@ -8854,7 +8960,7 @@ fn _prescan_maybe_naked(S, ti): i64 {
 # (`_fn_local_addr`, which costs every later tail call in the fn) unless nothing can hold it once
 # the call returns: an ordinary call whose callee copies that parameter (`_pm_copies`). A tail
 # call's own argument (`tail` = 1) always escapes — the `jmp` frees the frame before the callee's
-# copy runs. See `_tc_sarg_divert`. CHANGELOG [6.6.20]
+# copy runs. The rules are above `_tc_after_args_divert`. CHANGELOG [6.6.20]
 fn _sarg_escapes(fi, argc, tail): i64 {
     if (tail == 0) { if (_pm_copies(fi, argc) == 1) { return 0; } }
     _fn_local_addr = 1;
@@ -11112,6 +11218,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     # and that fn's pending returns / registered defers live below these bases (0 at top level).
     vec_truncate(rp_vec, _rp_base);
     S64(S + 0x1AC020, _defer_base);  # defer_count = this fn's base
+    _tcp_drop(S);   # 6.7.3: no in-loop tail call is left over from the previous body
     S64(S + 0x19E000, 0);  # jump_target_count = 0
     S64(S + 0x1A0000, 0);  # v5.6.27: jump_src_cnt = 0 (per-fn compaction)
     S64(S + 0x1A2008, 0);  # v5.6.27: nop_run_cnt = 0
@@ -11913,6 +12020,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     # epilogue authority (parse.cyr `_defer_emit_init` / `_rp_patch_here` / `_defer_emit_walk`),
     # over THIS fn's ranges [_defer_base, count) and [_rp_base, len). CHANGELOG [6.6.7]
     _defer_emit_init(S, defer_init_jmp, body_cp);
+    _tcp_resolve(S);   # 6.7.3: the in-loop tail calls' verdicts (a fn with a defer has none)
     _rp_patch_here(S);
     _ret_box_f64(S, _cur_fn_ret_scalar);   # 6.6.20: every return arm, and falling off the end
     _defer_emit_walk(S);

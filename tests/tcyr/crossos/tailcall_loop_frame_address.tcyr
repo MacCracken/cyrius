@@ -1,0 +1,425 @@
+# tailcall_loop_frame_address.tcyr — a tail call inside a loop keeps its `jmp` exactly when no
+# address in the caller's own frame is taken anywhere in its OUTERMOST enclosing loop.
+#
+# THE BUG (6.5.14 -> 6.7.2, every backend; fixed 6.7.3). A tail call diverts to an ordinary call
+# once its fn has put an address in its own frame into a value (`_fn_local_addr`), because the
+# `jmp` frees the frame that address points into. The flag is set SO FAR, at the moment the parser
+# reaches the `&`, so a `return f(..);` that comes EARLIER in a loop body than the statement taking
+# the address kept its `jmp`, and on the next iteration handed the callee a pointer into the frame
+# the `jmp` had just freed:
+#     while (i < 2) { if (i == 1) { return rd(x, k); } x = &s; i = i + 1; }
+# gave 5 on x86 / PE and 13 on aarch64 / cx, where 7 is right — exit 0, no diagnostic. The same
+# through every implicit address 6.6.20 flags (a method's `self`, an operator's operand, a field of
+# an inline aggregate, a struct call's temp) and in every loop form. 6.6.20 had closed it for an
+# ADDRESS-PASSED callee only, by diverting every such call inside any loop — which cost a
+# `while (1) { .. return walk1(p, ..); }` walk over `p: *S1` its TCO (rc 139 at 1,000,000 deep).
+#
+# THE FIX. Inside a loop the call is emitted behind a selector `jmp` and decided when its outermost
+# loop ends — after the whole loop statement, a C-style `for`'s step included. Nothing after that
+# loop can run before the call again (the only back-edges are loops), and an address taken before
+# the loop already diverted it, so the flag then is exactly "an address was taken in this loop".
+# Kept: the selector jumps to the next instruction. Diverted: it jumps to an ordinary call emitted
+# at the fn's end. A closure and a generic instance decide their own sites against their own flag.
+#
+# HOW A ROW TELLS A KEPT TAIL CALL FROM A DIVERTED ONE (tailcall_struct_ptr_params.tcyr's
+# technique). Each probe callee stores the address of one of its own locals in `_dmark`. Called
+# directly from the checker it lands at some depth; a wrapper that tail-calls it with a `jmp` puts
+# it at the SAME depth, an ordinary call puts it DEEPER. Every row asserts the value and the depth.
+#
+# MUTATION LEDGER (6.7.3, each by editing the tree and re-running this file)
+#   `_tcp_resolve` always keeps                     -> every "diverted" row RED (wrong value, same depth)
+#   `_tcp_resolve` always diverts                   -> every "kept" row RED (deeper) and the deep rows
+#                                                      overflow the stack (139)
+#   `_tcp_loop_end` never stamps (the whole fn's     -> the "kept: the address is taken after the
+#     flag decides instead)                            loop" rows RED (deeper) and `after` / `after_for`
+#                                                      overflow; the diverted rows stay green
+#   `_tcp_loop_end` dropped after PARSE_FOR only    -> the C-style / range / collection `for` rows of
+#                                                      "kept ... after the loop" RED, the `while` ones
+#                                                      green; with it stamped BEFORE the step
+#                                                      (in `_loop_body`), `d_step` RED (wrong value)
+#   the closure's `_tcp_resolve` deleted            -> compile error "internal: an in-loop tail call
+#                                                      was never resolved" (`_tcp_drop`)
+#
+# ⚠ CROSS-HOST because the selector, the tail-call epilogue and the stub's call are per backend
+# (x86 / PE / Mach-O, aarch64), and a frame address read after a `jmp` gives a different wrong
+# value on each.
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/vec.cyr"
+
+struct P3 { a; b; c; }
+struct W { x; inner: P3; }
+struct S1 { v; }
+var G = P3 { 10, 20, 30 };
+var G1 = S1 { 1 };
+var GP = 0;   # &G, set below: a bare `G` into an untyped parameter is its first field
+var _dmark = 0;
+var _cv = 0;
+
+# Probe callees: each records its own depth. The j* locals overwrite a freed caller frame, so a
+# wrongly kept tail call also reads the wrong value.
+fn dU(q, k) {
+    var j1 = 901; var j2 = 902; var j3 = 903; var j4 = 904; var j5 = 905; var j6 = 906;
+    _dmark = &j1;
+    return load64(q) + load64(q + 8) + load64(q + 16) + k + (j1 + j2 + j3 + j4 + j5 + j6) - 5421;
+}
+fn dP(p: *P3, k) {
+    var j1 = 901; var j2 = 902; var j3 = 903; var j4 = 904; var j5 = 905; var j6 = 906;
+    _dmark = &j1;
+    return p.a + p.b + p.c + k + (j1 + j2 + j3 + j4 + j5 + j6) - 5421;
+}
+fn idp(p: *P3) { return p; }
+fn mk(a, b, c): P3 { var r = P3 { a, b, c }; return r; }
+# A method and an operator that hand their receiver / operand back.
+fn P3_me(self) { return self; }
+fn P3_add(a, b) { return a; }
+fn _same(m, base): i64 { if (m == base) { return 1; } return 0; }
+fn _deeper(m, base): i64 { if (m < base) { return 1; } return 0; }
+fn two(): i64 { var v = vec_new(); vec_push(v, 0); vec_push(v, 1); return v; }
+
+# --- diverted: the address is taken later in the loop than the return ------------------------
+fn d_amp(k) {   # the issue's repro
+    var s = P3 { 1, 2, 3 }; var x = 0; var i = 0;
+    while (i < 2) { if (i == 1) { return dU(x, k); } x = &s; i = i + 1; }
+    return 0;
+}
+fn d_idp(k) {
+    var s = P3 { 1, 2, 3 }; var x = 0; var i = 0;
+    while (i < 2) { if (i == 1) { return dU(x, k); } x = idp(s); i = i + 1; }
+    return 0;
+}
+fn d_for(k) {
+    var s = P3 { 1, 2, 3 }; var x = 0;
+    for (var i = 0; i < 2; i = i + 1) { if (i == 1) { return dU(x, k); } x = &s; }
+    return 0;
+}
+fn d_step(k) {   # the address is taken in the STEP, which is emitted after the body
+    var s = P3 { 1, 2, 3 }; var x = 0; var i = 0;
+    for (x = 0; i < 2; x = &s) { if (i == 1) { return dU(x, k); } i = i + 1; }
+    return 0;
+}
+fn d_range(k) {
+    var s = P3 { 1, 2, 3 }; var x = 0;
+    for i in 0..2 { if (i == 1) { return dU(x, k); } x = &s; }
+    return 0;
+}
+fn d_coll(k) {
+    var s = P3 { 1, 2, 3 }; var x = 0; var v = two();
+    for it in v { if (it == 1) { return dU(x, k); } x = &s; }
+    return 0;
+}
+fn d_nest(k) {   # the return in the inner loop, the address in the outer body after it
+    var s = P3 { 1, 2, 3 }; var x = 0; var i = 0;
+    while (i < 2) {
+        var j = 0;
+        while (j < 1) { if (i == 1) { return dU(x, k); } j = j + 1; }
+        x = &s; i = i + 1;
+    }
+    return 0;
+}
+fn d_inner(k) {   # the return in the outer body, the address in an inner loop after it
+    var s = P3 { 1, 2, 3 }; var x = 0; var i = 0;
+    while (i < 2) {
+        if (i == 1) { return dU(x, k); }
+        var j = 0;
+        while (j < 1) { x = &s; j = j + 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+fn d_self(k) {
+    var s = P3 { 1, 2, 3 }; var x = 0; var i = 0;
+    while (i < 2) { if (i == 1) { return dU(x, k); } x = s.me(); i = i + 1; }
+    return 0;
+}
+fn d_oper(k) {
+    var s = P3 { 1, 2, 3 }; var t = P3 { 4, 5, 6 }; var x = 0; var i = 0;
+    while (i < 2) { if (i == 1) { return dU(x, k); } x = s + t; i = i + 1; }
+    return 0;
+}
+fn d_fld(k) {
+    var w: W; w.x = 0; w.inner.a = 1; w.inner.b = 2; w.inner.c = 3; var x = 0; var i = 0;
+    while (i < 2) { if (i == 1) { return dU(x, k); } x = idp(w.inner); i = i + 1; }
+    return 0;
+}
+fn d_hop(k) {
+    var w: W; w.x = 0; w.inner.a = 1; w.inner.b = 2; w.inner.c = 3; var x = 0; var i = 0;
+    while (i < 2) { if (i == 1) { return dU(x, k); } x = w.inner.me(); i = i + 1; }
+    return 0;
+}
+fn d_tmp(k) {
+    var x = 0; var i = 0;
+    while (i < 2) { if (i == 1) { return dU(x, k); } x = idp(mk(1, 2, 3)); i = i + 1; }
+    return 0;
+}
+fn d_ptr(k) {   # an address-passed `*P3` callee: the same rule
+    var s = P3 { 1, 2, 3 }; var x = 0; var i = 0;
+    while (i < 2) { if (i == 1) { return dP(x, k); } x = &s; i = i + 1; }
+    return 0;
+}
+
+# --- kept: no frame address in the loop ------------------------------------------------------
+fn k_clean(q, k) {
+    var i = 0;
+    while (i < 2) { if (i == 1) { return dU(q, k); } i = i + 1; }
+    return 0;
+}
+fn k_ptr(q: *P3, k) {   # 6.6.20 diverted this one always (an address-passed callee in a loop)
+    var i = 0;
+    while (i < 2) { if (i == 1) { return dP(q, k); } i = i + 1; }
+    return 0;
+}
+
+# --- kept: the address is taken only AFTER the outermost loop --------------------------------
+fn k_while(q, k) {
+    var s = P3 { 1, 2, 3 }; var i = 0;
+    while (i < 2) { if (i == 1) { return dU(q, k); } i = i + 1; }
+    var x = &s;
+    return load64(x);
+}
+fn k_for(q, k) {
+    var s = P3 { 1, 2, 3 };
+    for (var i = 0; i < 2; i = i + 1) { if (i == 1) { return dU(q, k); } }
+    var x = &s;
+    return load64(x);
+}
+fn k_range(q, k) {
+    var s = P3 { 1, 2, 3 };
+    for i in 0..2 { if (i == 1) { return dU(q, k); } }
+    var x = &s;
+    return load64(x);
+}
+fn k_coll(q, k) {
+    var s = P3 { 1, 2, 3 }; var v = two();
+    for it in v { if (it == 1) { return dU(q, k); } }
+    var x = &s;
+    return load64(x);
+}
+fn k_nest(q, k) {   # the inner loop's end is not the verdict; the outer one's is
+    var s = P3 { 1, 2, 3 }; var i = 0;
+    while (i < 2) {
+        var j = 0;
+        while (j < 1) { if (i == 1) { return dU(q, k); } j = j + 1; }
+        i = i + 1;
+    }
+    var x = idp(s);
+    return load64(x);
+}
+# Two loops, each decided on its own: the first takes no address (kept), the second takes one
+# after its return (diverted).
+fn k_two(q, k, sel) {
+    var s = P3 { 1, 2, 3 }; var x = 0; var i = 0;
+    while (i < 2) { if (i == 1) { if (sel == 0) { return dU(q, k); } } i = i + 1; }
+    i = 0;
+    while (i < 2) { if (i == 1) { return dU(x, k); } x = &s; i = i + 1; }
+    return 0;
+}
+
+# --- each nested body decides against its own flag -------------------------------------------
+# The enclosing fn takes no frame address; its closure does, after its own in-loop return.
+fn c_outer(q, k) {
+    var f = |k2| {
+        var s = P3 { 1, 2, 3 }; var x = 0; var i = 0;
+        while (i < 2) { if (i == 1) { return dU(x, k2); } x = &s; i = i + 1; }
+        return 0;
+    };
+    _cv = fncall1(f, k);
+    var i = 0;
+    while (i < 1) { return dU(q, k); }
+    return 0;
+}
+# The reverse: the enclosing fn takes an address in its loop, its closure takes none. The
+# closure's own loop ends while the enclosing return is still open; it must not decide it.
+fn c_rev(q, k) {
+    var s = P3 { 1, 2, 3 }; var x = 0; var i = 0;
+    while (i < 2) {
+        if (i == 1) { return dU(x, k); }
+        var f = |k2| { var n = 0; while (n < 1) { return dU(GP, k2); } return 0; };
+        _cv = fncall1(f, k);
+        x = &s; i = i + 1;
+    }
+    return 0;
+}
+# A generic instance emitted between the host's in-loop return and its `&s`: the host diverts,
+# the instance's own in-loop tail call keeps its `jmp`.
+fn gk<T>(v: T, q, k) {
+    var i = 0;
+    while (i < 1) { return dU(q, k); }
+    return 0;
+}
+fn g_host(q, k) {
+    var s = P3 { 1, 2, 3 }; var x = 0; var i = 0;
+    while (i < 2) {
+        if (i == 1) { return dU(x, k); }
+        var d = gk<P3>(s, q, 0);
+        if (d != 12) { return 200 + d; }
+        x = &s; i = i + 1;
+    }
+    return 0;
+}
+
+# --- deep: 1,000,000 levels, constant stack only with the `jmp` ------------------------------
+fn walk1(p: *S1, n, acc) {   # 6.6.20's documented cost: rc 139
+    while (1) {
+        if (n == 0) { return acc; }
+        return walk1(p, n - 1, acc + p.v);
+    }
+    return 0;
+}
+fn spin(n, acc) {
+    var i = 0;
+    while (i < 1) {
+        if (n == 0) { return acc; }
+        return spin(n - 1, acc + 1);
+    }
+    return 0;
+}
+fn st_a(n, acc) {   # a state machine, `while (1) { .. return next(..); }`
+    while (1) {
+        if (n == 0) { return acc; }
+        return st_b(n - 1, acc + 1);
+    }
+    return 0;
+}
+fn st_b(n, acc) {
+    while (1) {
+        if (n == 0) { return acc; }
+        return st_a(n - 1, acc + 2);
+    }
+    return 0;
+}
+fn after(n, acc) {   # the address comes after the loop: the whole-fn flag would divert
+    var s = P3 { 1, 2, 3 };
+    while (1) {
+        if (n == 0) { break; }
+        return after(n - 1, acc + 1);
+    }
+    var x = &s;
+    return acc + load64(x + 8) - 2;
+}
+fn after_for(n, acc) {
+    var s = P3 { 1, 2, 3 };
+    for (var i = 0; i < 1; i = i + 1) {
+        if (n == 0) { break; }
+        return after_for(n - 1, acc + 1);
+    }
+    var x = &s;
+    return acc + load64(x + 16) - 3;
+}
+
+fn check_loop_tailcalls(): i64 {
+    # A heap P3, so the kept rows' argument is no address in any frame (and a bare inline struct
+    # into an untyped parameter would be its first field, not its address).
+    var q = alloc(24);
+    store64(q, 3); store64(q + 8, 4); store64(q + 16, 5);
+    dU(q, 0);
+    var baseU = _dmark;
+    dP(q, 0);
+    var baseP = _dmark;
+    var r = 0;
+
+    test_group("diverted: a frame address taken later in the loop than the return");
+    r = d_amp(1);
+    assert_eq(r, 7, "`x = &s` after the return in a `while`: value");
+    assert_eq(_deeper(_dmark, baseU), 1, "`x = &s` after the return in a `while`: diverted");
+    r = d_idp(1);
+    assert_eq(r, 7, "`x = idp(s)`: value");
+    assert_eq(_deeper(_dmark, baseU), 1, "`x = idp(s)`: diverted");
+    r = d_for(1);
+    assert_eq(r, 7, "a C-style `for`: value");
+    assert_eq(_deeper(_dmark, baseU), 1, "a C-style `for`: diverted");
+    r = d_step(1);
+    assert_eq(r, 7, "`x = &s` in a C-style `for`'s step: value");
+    assert_eq(_deeper(_dmark, baseU), 1, "`x = &s` in a C-style `for`'s step: diverted");
+    r = d_range(1);
+    assert_eq(r, 7, "`for i in 0..2`: value");
+    assert_eq(_deeper(_dmark, baseU), 1, "`for i in 0..2`: diverted");
+    r = d_coll(1);
+    assert_eq(r, 7, "`for it in v` (a collection): value");
+    assert_eq(_deeper(_dmark, baseU), 1, "`for it in v` (a collection): diverted");
+    r = d_nest(1);
+    assert_eq(r, 7, "the return in an inner loop, the address in the outer body: value");
+    assert_eq(_deeper(_dmark, baseU), 1, "the return in an inner loop, the address in the outer body: diverted");
+    r = d_inner(1);
+    assert_eq(r, 7, "the return in the outer body, the address in an inner loop: value");
+    assert_eq(_deeper(_dmark, baseU), 1, "the return in the outer body, the address in an inner loop: diverted");
+    r = d_self(1);
+    assert_eq(r, 7, "`x = s.me()` (a method's `self`): value");
+    assert_eq(_deeper(_dmark, baseU), 1, "`x = s.me()` (a method's `self`): diverted");
+    r = d_oper(1);
+    assert_eq(r, 7, "`x = s + t` (an operator's operand): value");
+    assert_eq(_deeper(_dmark, baseU), 1, "`x = s + t` (an operator's operand): diverted");
+    r = d_fld(1);
+    assert_eq(r, 7, "`x = idp(w.inner)` (a field of an inline aggregate): value");
+    assert_eq(_deeper(_dmark, baseU), 1, "`x = idp(w.inner)` (a field of an inline aggregate): diverted");
+    r = d_hop(1);
+    assert_eq(r, 7, "`x = w.inner.me()` (a method on a nested inline field): value");
+    assert_eq(_deeper(_dmark, baseU), 1, "`x = w.inner.me()` (a method on a nested inline field): diverted");
+    r = d_tmp(1);
+    assert_eq(r, 7, "`x = idp(mk(1, 2, 3))` (a struct call's temp): value");
+    assert_eq(_deeper(_dmark, baseU), 1, "`x = idp(mk(1, 2, 3))` (a struct call's temp): diverted");
+    r = d_ptr(1);
+    assert_eq(r, 7, "a `*P3` callee, `x = &s` after the return: value");
+    assert_eq(_deeper(_dmark, baseP), 1, "a `*P3` callee, `x = &s` after the return: diverted");
+
+    test_group("kept: no frame address in the loop");
+    r = k_clean(q, 1);
+    assert_eq(r, 13, "an untyped callee: value");
+    assert_eq(_same(_dmark, baseU), 1, "an untyped callee: kept");
+    r = k_ptr(q, 1);
+    assert_eq(r, 13, "a `*P3` callee (6.6.20 diverted it): value");
+    assert_eq(_same(_dmark, baseP), 1, "a `*P3` callee (6.6.20 diverted it): kept");
+
+    test_group("kept: the address is taken after the outermost loop");
+    r = k_while(q, 1);
+    assert_eq(r, 13, "a `while`: value");
+    assert_eq(_same(_dmark, baseU), 1, "a `while`: kept");
+    r = k_for(q, 1);
+    assert_eq(r, 13, "a C-style `for`: value");
+    assert_eq(_same(_dmark, baseU), 1, "a C-style `for`: kept");
+    r = k_range(q, 1);
+    assert_eq(r, 13, "`for i in 0..2`: value");
+    assert_eq(_same(_dmark, baseU), 1, "`for i in 0..2`: kept");
+    r = k_coll(q, 1);
+    assert_eq(r, 13, "`for it in v` (a collection): value");
+    assert_eq(_same(_dmark, baseU), 1, "`for it in v` (a collection): kept");
+    r = k_nest(q, 1);
+    assert_eq(r, 13, "the return in an inner loop: value");
+    assert_eq(_same(_dmark, baseU), 1, "the return in an inner loop: kept");
+    r = k_two(q, 1, 0);
+    assert_eq(r, 13, "the first of two loops, the second taking an address: value");
+    assert_eq(_same(_dmark, baseU), 1, "the first of two loops, the second taking an address: kept");
+    r = k_two(q, 1, 1);
+    assert_eq(r, 7, "the second of two loops, after its own return: value");
+    assert_eq(_deeper(_dmark, baseU), 1, "the second of two loops, after its own return: diverted");
+
+    test_group("each nested body decides against its own flag");
+    _cv = 0;
+    r = c_outer(q, 1);
+    assert_eq(_cv, 7, "a closure's in-loop return before its own `&s`: value");
+    assert_eq(r, 13, "the enclosing fn's in-loop tail call: value");
+    assert_eq(_same(_dmark, baseU), 1, "the enclosing fn's in-loop tail call (no address of its own): kept");
+    _cv = 0;
+    r = c_rev(q, 1);
+    assert_eq(_cv, 61, "a clean closure's in-loop tail call, inside a loop that takes an address: value");
+    assert_eq(r, 7, "the enclosing fn's return before its `&s`, a closure in between: value");
+    assert_eq(_deeper(_dmark, baseU), 1, "the enclosing fn's return before its `&s`, a closure in between: diverted");
+    r = g_host(q, 1);
+    assert_eq(r, 7, "the host's return before its `&s`, a generic instance in between: value");
+    assert_eq(_deeper(_dmark, baseU), 1, "the host's return before its `&s`, a generic instance in between: diverted");
+    r = gk<P3>(G, q, 1);
+    assert_eq(r, 13, "the generic instance's own in-loop tail call: value");
+    assert_eq(_same(_dmark, baseU), 1, "the generic instance's own in-loop tail call: kept");
+
+    test_group("deep: 1,000,000 levels in constant stack");
+    assert_eq(walk1(G1, 1000000, 0), 1000000, "`while (1) { .. return walk1(p, ..); }` over `p: *S1`");
+    assert_eq(spin(1000000, 0), 1000000, "an in-loop self tail call");
+    assert_eq(st_a(1000000, 0), 1500000, "a `while (1)` state machine, two fns");
+    assert_eq(after(1000000, 0), 1000000, "a `while`, the address taken after it");
+    assert_eq(after_for(1000000, 0), 1000000, "a C-style `for`, the address taken after it");
+    return 0;
+}
+alloc_init();
+GP = &G;
+check_loop_tailcalls();
+var r = assert_summary();

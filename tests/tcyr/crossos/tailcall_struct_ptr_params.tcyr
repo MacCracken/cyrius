@@ -20,7 +20,9 @@
 #      tail call diverts. An ordinary call whose callee COPIES that parameter in its prologue keeps
 #      nothing (a `p: T` over 8 B, a Win64 vector): it sets no flag, as on 6.6.19;
 #   2. inside a loop that flag is not yet set when a lexically earlier return runs on the next
-#      iteration, so there an address-passed callee always diverts;
+#      iteration, so there the verdict waits for the end of the outermost loop (6.7.3: a call
+#      to ANY callee, kept when no frame address is taken in that loop; 6.6.20 diverted an
+#      address-passed callee there always — tailcall_loop_frame_address.tcyr has the rows);
 #   3. an address created while evaluating the tail call's OWN arguments (`dQ(G, s.me())`,
 #      `dP(idu(idp(s)), k)`) turns that call into an ordinary call.
 # Rules 1 and 3 cover a callee with no address-passed parameter too (`dU`).
@@ -367,8 +369,9 @@ fn t1_loc(k) { var s = S1 { 5 }; return dP1(s, k); }
 fn t1_call(k) { return dP1(mk1(5), k); }
 fn t1_aid(k) { var s = S1 { 5 }; return dU1(idp1(s), k); }
 fn t1_aop(k) { var s = S1 { 5 }; var t = S1 { 9 }; return dU1(s - t, k); }
-# Inside a loop an address-passed callee always diverts (rule 2) — now a `*S1` one too, which
-# 6.6.19 kept (no address-passed bit at 8 B): the price of `t1_lpa`, which 6.6.19 got wrong.
+# Inside a loop the verdict waits for the loop's end (rule 2): with no frame address in the loop
+# a `*S1` callee keeps its `jmp`, as 6.6.19 kept it and 6.6.20 did not (it diverted every
+# address-passed callee inside a loop, the price it paid for `t1_lpa`). CHANGELOG [6.7.3]
 fn t1_lp(q: *S1, k) {
     var i = 0;
     while (i < 2) {
@@ -635,7 +638,7 @@ fn check_struct_ptr_tailcalls(): i64 {
     assert_eq(_deeper(_dmark, baseU1), 1, "`dU1(s - t, k)` (a `*S1` operand in the tail call's arguments): diverted");
     r = t1_lp(q1, 1);
     assert_eq(r, 6, "a `*S1` tail call inside a loop: value");
-    assert_eq(_deeper(_dmark, baseP1), 1, "a `*S1` tail call inside a loop: diverted (rule 2)");
+    assert_eq(_same(_dmark, baseP1), 1, "a `*S1` tail call inside a loop, no frame address in it: kept (rule 2)");
     r = t1_lpa(1);
     assert_eq(r, 6, "`x = &s` (an S1) after the return, inside a loop: value");
     assert_eq(_deeper(_dmark, baseP1), 1, "`x = &s` (an S1) after the return, inside a loop: diverted");
