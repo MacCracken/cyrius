@@ -1,9 +1,9 @@
 # `CYRIUS_PKG_VERSION` resolves from a file the entry includes, but not from one it includes in turn
 
-**Status:** 🟡 **OPEN**.
-**Placement:** unpinned.
+**Status:** ✅ **RESOLVED — FIXED at v6.7.6** (Break 1, lane D). See `CHANGELOG.md` [6.7.6].
+**Placement:** 6.7.6 (Break 1, lane D).
 **Discovered:** 2026-10-07, by **agnostic** (0.1.15), retiring its work-around for
-[`archived/2026-08-20-pkgver-not-visible-in-included-files.md`](archived/2026-08-20-pkgver-not-visible-in-included-files.md)
+[`2026-08-20-pkgver-not-visible-in-included-files.md`](2026-08-20-pkgver-not-visible-in-included-files.md)
 (fixed at 6.5.34).
 **Severity:** Low. A compile error, never a miscompile: the program does not build, and the
 diagnostic names the reference.
@@ -23,7 +23,7 @@ compiled because a comment in it mentions the name, and every other suite failed
 
 ## Reproduction
 
-[`repros/2026-10-07-pkgver-not-visible-in-nested-includes.sh`](repros/2026-10-07-pkgver-not-visible-in-nested-includes.sh)
+[`repros/2026-10-07-pkgver-not-visible-in-nested-includes.sh`](../repros/2026-10-07-pkgver-not-visible-in-nested-includes.sh)
 builds three entries in a throwaway project pinned to the installed toolchain:
 
 ```
@@ -37,7 +37,7 @@ c: FAILED — error:src/inc.cyr:1:49: undefined variable 'CYRIUS_PKG_VERSION' (m
 - **b** — the entry includes `inc.cyr`, which names it (the 6.5.34 case).
 - **c** — the entry includes `mid.cyr`, which includes `inc.cyr`.
 
-## Where to look (unverified)
+## Where to look (as filed; confirmed — see Resolution)
 
 The 6.5.34 fix keeps the declaration at the top and blanks it "at the tail of `PP_PASS` — the first
 point at which every top-level `include` has been expanded" if the finished unit never names it.
@@ -51,3 +51,19 @@ green.
 agnostic keeps its pre-6.5.34 work-around: `src/main.cyr` (the entry) reads the constant and hands
 it to `src/routes/health.cyr` through a setter. Its roadmap records the retirement as blocked on
 this.
+
+## Resolution (6.7.6)
+
+The filing's reading was right. `PP_RESOLVE_PKGVER` ran at the tail of `PP_PASS`, which expands only
+the ENTRY's `include`s — an included file's own `include` lines are copied through and expanded
+later, by `PP_IFDEF_PASS`'s fixpoint loop — so `inc.cyr` (two levels down) was not in the buffer when
+the scan decided nothing named the constant, and the declaration was blanked under the reference.
+The scan now runs once, in `PREPROCESS`, after every pass (the macro pass included), on the finished
+unit. The declaration still cannot move (a global is not visible above its declaration); its offset
+survives the later passes because only the `#@file` marker line precedes it, and it is re-checked
+(`PP_PKGVER_AT`) before blanking — a declaration not found where it was written is kept.
+
+`tests/gates/frontend/pkgver_visible_in_includes.sh` axis 5 covers two and three levels (both red on the
+pre-fix compiler), and axis 6 keeps an unreferenced marker byte-neutral over nested includes.
+
+agnostic may now retire its setter work-around (a note in its roadmap is the integrator's to file).
