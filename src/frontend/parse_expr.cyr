@@ -3761,6 +3761,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         # Defer init, return landing, defer walk, epilogue — the same shared epilogue as
         # PARSE_FN_DEF, over the closure's own ranges. CHANGELOG [6.6.7]
         _defer_emit_init(S, cl_dij, cl_bcp);
+        _tcp_resolve(S);   # 6.7.3: as PARSE_FN_DEF
         _rp_patch_here(S);
         _defer_emit_walk(S);
         EFNEPI(S);

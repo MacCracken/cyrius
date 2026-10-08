@@ -1,7 +1,16 @@
-# A tail call earlier in a loop body than the statement that takes a frame address keeps its `jmp` — OPEN
+# A tail call earlier in a loop body than the statement that takes a frame address keeps its `jmp` — RESOLVED 6.7.3
 
-**Status:** 🟡 **OPEN** — the fix costs tail calls inside loops; which ones is a design choice (below).
-**Placement:** unpinned — for integration to pin (6.6.x closeout or the 6.7.x line).
+**Status:** ✅ **RESOLVED in 6.7.3** — option (c)'s exact verdict, without a second parse: inside a
+loop the tail call is emitted behind a selector `jmp` and decided when its OUTERMOST loop ends (after
+the whole loop statement, a C-style `for`'s step included), from `_fn_local_addr` at that point —
+kept (the selector falls into the tail sequence) when that loop took no frame address, otherwise
+diverted to an ordinary call emitted at the fn end. A fn that takes an address only AFTER the loop
+keeps its `jmp`; closures and generic instances decide their own sites against their own flag.
+6.6.20's rule 2 (every address-passed callee diverted inside any loop) is deleted, so the
+warning-paragraph `walk1` shape below runs in constant stack again (64, was 139). Gated by
+`tests/tcyr/crossos/tailcall_loop_frame_address.tcyr` (61 rows, cross-host) and
+`tests/gates/codegen/cx_tailcall_and_vm_traps.sh` A3 / A4.
+**Placement:** 6.7.3 repair lane (tailcall-loop).
 **Discovered:** 2026-10-07, review of lane s-ret (6.6.20 closeout, RPF-03).
 **Severity:** Critical by this directory's guide (a silent wrong value from valid code), narrow in shape.
 **Affects:** cycc 6.5.14 → 6.6.20 (every backend; measured x86 and aarch64-under-qemu).
