@@ -7,7 +7,13 @@
 #      register nothing ever set — cxvm zeroes its register file — so `~x` was `x`: `~6 + 10` gave
 #      16 where x86, aarch64 and PE give 3, and bitclr / bitset kept the bits they were asked to
 #      clear. The emitter now builds all-ones in r1 and XORs with it.
+#   B  an ADDRESS-TAKEN `&fncallN` called through another indirect call. A direct `fncallN(..)` is
+#      lowered by the compiler, but `&fncallN` runs lib/fnptr.cyr's body, whose arms are per-target
+#      asm — and there was no cx arm, so `fncall2(&fncall1, &add1, 41)` gave 0 on cx (x86 42). Each
+#      fncallN now has a CYRIUS_TARGET_CX arm, `callptr(fp, ..)`. Rows: every N, through fncallN and
+#      callptr, in a fn and at top level; the digit-folding callees catch a dropped or swapped arg.
 include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
 include "lib/assert.cyr"
 
 fn tilde10(x) { return ~x + 10; }
@@ -15,6 +21,26 @@ fn tilde(x) { return ~x; }
 fn tilde_local() { var x = 6; return ~x + 10; }
 fn clr(v, o, w) { return bitclr(v, o, w); }
 fn set(v, o, w, n) { return bitset(v, o, w, n); }
+
+fn k0() { return 7; }
+fn add1(x) { return x + 1; }
+fn s2(a, b) { return a * 10 + b; }
+fn s3(a, b, c) { return a * 100 + b * 10 + c; }
+fn s4(a, b, c, d) { return a * 1000 + b * 100 + c * 10 + d; }
+fn s5(a, b, c, d, e) { return a * 10000 + b * 1000 + c * 100 + d * 10 + e; }
+fn s6(a, b, c, d, e, f) { return a * 100000 + b * 10000 + c * 1000 + d * 100 + e * 10 + f; }
+fn s7(a, b, c, d, e, f, g) { return a * 1000000 + b * 100000 + c * 10000 + d * 1000 + e * 100 + f * 10 + g; }
+fn s8(a, b, c, d, e, f, g, h) { return a * 10000000 + b * 1000000 + c * 100000 + d * 10000 + e * 1000 + f * 100 + g * 10 + h; }
+fn via0() { return fncall1(&fncall0, &k0); }
+fn via1() { return fncall2(&fncall1, &add1, 41); }
+fn via2() { return fncall3(&fncall2, &s2, 4, 2); }
+fn via3() { return callptr(&fncall3, &s3, 1, 2, 3); }
+fn via4() { return callptr(&fncall4, &s4, 1, 2, 3, 4); }
+fn via5() { return callptr(&fncall5, &s5, 1, 2, 3, 4, 5); }
+fn via6() { return callptr(&fncall6, &s6, 1, 2, 3, 4, 5, 6); }
+fn via7() { return callptr(&fncall7, &s7, 1, 2, 3, 4, 5, 6, 7); }
+fn via8() { return callptr(&fncall8, &s8, 1, 2, 3, 4, 5, 6, 7, 8); }
+fn via_var() { var f = &fncall2; var g = &s2; return callptr(f, g, 6, 9); }
 
 alloc_init();
 
@@ -27,5 +53,24 @@ assert_eq(tilde(0x0F0F), 0 - 0x0F10, "~0x0F0F");
 assert_eq(tilde(0x7FFFFFFFFFFFFFFF), 0x8000000000000000, "~INT64_MAX is the sign bit alone");
 assert_eq(clr(0xFF, 4, 4), 0x0F, "bitclr(0xFF, 4, 4) clears bits 4..7 (cx kept them: 0xF0)");
 assert_eq(set(0xFF, 4, 4, 0xA), 0xAF, "bitset(0xFF, 4, 4, 0xA) (cx gave 0xF0)");
+
+test_group("B — an address-taken &fncallN runs its callee on every backend");
+assert_eq(via1(), 42, "fncall2(&fncall1, &add1, 41) (the filed repro: cx gave 0)");
+assert_eq(via0(), 7, "fncall1(&fncall0, &k0)");
+assert_eq(via2(), 42, "fncall3(&fncall2, &s2, 4, 2)");
+assert_eq(via3(), 123, "callptr(&fncall3, &s3, 1, 2, 3)");
+assert_eq(via4(), 1234, "callptr(&fncall4, &s4, 1..4)");
+assert_eq(via5(), 12345, "callptr(&fncall5, &s5, 1..5)");
+assert_eq(via6(), 123456, "callptr(&fncall6, &s6, 1..6)");
+assert_eq(via7(), 1234567, "callptr(&fncall7, &s7, 1..7)");
+# ⚠ cx only: lib/fnptr.cyr's x86-SysV fncall8 asm stores arg 7 at [rsp] and arg 8 at [rsp+8] (the C
+# order), while a cyrius callee reads its LAST argument at [rsp] — so on x86 Linux this row gives
+# 12345687 (g and h swapped). Not a cx defect; reported from 6.7.6 lane F as its own item.
+#ifdef CYRIUS_TARGET_CX
+assert_eq(via8(), 12345678, "callptr(&fncall8, &s8, 1..8)");
+#endif
+assert_eq(via_var(), 69, "&fncall2 and its callee through locals");
+var top1 = fncall2(&fncall1, &add1, 41);
+assert_eq(top1, 42, "fncall2(&fncall1, &add1, 41) at top level");
 
 var r = assert_summary();

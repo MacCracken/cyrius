@@ -3386,6 +3386,13 @@ resolve), but the marshalling is the compiler's, which is the better one for
 more than four arguments on Windows and more than six elsewhere. At top level
 it stays an ordinary call into the library.
 
+The library body runs only when `fncallN` itself is called through a pointer —
+`fncall2(&fncall1, &add1, 41)`, or `&fncall3` handed to code that calls it. On the
+cx bytecode target each `fncallN` is `callptr(fp, …)` (there is no asm on cx). ⚠
+**Before 6.7.6 `lib/fnptr.cyr` had no cx arm**, so an address-taken `&fncallN`
+returned 0 there for every callee (`fncall2(&fncall1, &add1, 41)` gave 0, 42
+everywhere else). Pinned by `tests/tcyr/codegen/cx_backend_parity.tcyr`.
+
 ## Closures
 
 A closure literal `|params| body` is an anonymous function; its value is a

@@ -7,13 +7,21 @@
 #      all-ones; nothing ever set it and cxvm zeroes its registers. `var x = 6; return ~x + 10;`
 #      exited 16 on cx, 3 on x86 / aarch64 / PE; bitclr / bitset complement their mask, so they
 #      kept the bits they were asked to clear (bitclr(0xFF, 4, 4) = 0xF0, want 0x0F).
+#   B  lib/fnptr.cyr had no CYRIUS_TARGET_CX arm. A direct `fncallN(..)` is lowered by the
+#      compiler, but an ADDRESS-TAKEN `&fncallN` called through another indirect call runs the
+#      library body, whose per-target asm arms matched nothing on cx: `fncall2(&fncall1, &add1, 41)`
+#      exited 0 on cx, 42 natively. Each fncallN now ends in `#ifdef CYRIUS_TARGET_CX` `result =
+#      callptr(fp, ..)`.
 #
 # ROWS
 #   T  tests/tcyr/codegen/cx_backend_parity.tcyr: native x86 and cxvm must each print
 #      "<N> passed, 0 failed (<N> total)" and exit 0, N = the assertions counted in the source
-#      (floor below). The same file on aarch64 (qemu-aarch64) and PE (wine, a private prefix torn
-#      down on exit) is the other ABIs' oracle; either leg is a named SKIP when its tool is absent.
+#      (floor below) — on cx every one, natively those outside `#ifdef CYRIUS_TARGET_CX` blocks (the
+#      &fncall8 row: x86-SysV's fncall8 asm passes args 7/8 in the C order, a separate finding).
+#      The same file on aarch64 (qemu-aarch64) and PE (wine, a private prefix torn down on exit) is
+#      the other ABIs' oracle; either leg is a named SKIP when its tool is absent.
 #   A1 the filed repro, inline: native and cxvm both exit 3.
+#   B1 the filed repro, inline: native and cxvm both exit 42.
 #
 # COMPILERS. CC=${CYCC:-build/cycc} builds the native legs and the cx compiler from THIS tree's
 # src/main_cx.cyr, and cxvm from programs/cxvm.cyr. A cx-backend mutation is therefore picked up
@@ -22,6 +30,8 @@
 # MUTATION LEDGER (6.7.6, each in a scratch copy of the tree, the gate run from that copy with the
 # real build/cycc; the real tree is green):
 #   ENOTR back to `CX_EMIT(S, 34, 0, 0, 31)`        -> T cx RED (0 passed, 8 failed) + A1 RED (cx 16)
+#   lib/fnptr.cyr's nine CYRIUS_TARGET_CX arms gone   -> T cx RED (8 passed, 11 failed: every B row)
+#                                                       + B1 RED (cx 0)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -74,16 +84,18 @@ both() {
 
 echo "T. tests/tcyr/codegen/cx_backend_parity.tcyr, native and on cxvm"
 TC=tests/tcyr/codegen/cx_backend_parity.tcyr
-N=$(grep -c '^[[:space:]]*assert_[a-z]*(' "$TC")
-FLOOR=8
-if [ "$N" -lt "$FLOOR" ]; then bad "T: only $N assertions in $TC (floor $FLOOR) — rows were lost"
+# NCX: every assertion; N: those outside `#ifdef CYRIUS_TARGET_CX` ... `#endif` (cx-only rows).
+NCX=$(grep -c '^[[:space:]]*assert_[a-z]*(' "$TC")
+N=$(awk '/^[[:space:]]*#ifdef CYRIUS_TARGET_CX/{s=1; next} /^[[:space:]]*#endif/{s=0; next} !s && /^[[:space:]]*assert_[a-z]*\(/{n++} END{print n+0}' "$TC")
+FLOOR=18
+if [ "$N" -lt "$FLOOR" ]; then bad "T: only $N assertions outside the cx-only blocks of $TC (floor $FLOOR) — rows were lost"
 else
     nat_file "$TC"
     if [ "$NATRC" = 0 ] && [ "$NATOUT" = "$N passed, 0 failed ($N total)" ]; then ok "T native: $NATOUT"
     else bad "T native: exit $NATRC, '$NATOUT' (want '$N passed, 0 failed ($N total)')"; fi
     cx_file "$TC" 120
-    if [ "$CXRC" = 0 ] && [ "$CXOUT" = "$N passed, 0 failed ($N total)" ]; then ok "T cx: $CXOUT"
-    else bad "T cx: exit $CXRC, '$CXOUT' (want '$N passed, 0 failed ($N total)')${CXERR:+ — $CXERR} $(grep -m3 'FAIL' "$D/c.out" | tr '\n' ' ')"; fi
+    if [ "$CXRC" = 0 ] && [ "$CXOUT" = "$NCX passed, 0 failed ($NCX total)" ]; then ok "T cx: $CXOUT"
+    else bad "T cx: exit $CXRC, '$CXOUT' (want '$NCX passed, 0 failed ($NCX total)')${CXERR:+ — $CXERR} $(grep -m3 'FAIL' "$D/c.out" | tr '\n' ' ')"; fi
     if command -v qemu-aarch64 > /dev/null 2>&1; then
         "$CC" < src/main_aarch64.cyr > "$D/cc_a64" 2> /dev/null; chmod +x "$D/cc_a64" 2> /dev/null
         if [ -s "$D/cc_a64" ] && "$D/cc_a64" < "$TC" > "$D/t.a" 2> "$D/t.aerr" && [ -s "$D/t.a" ]; then
@@ -111,7 +123,15 @@ var r = main();
 syscall(60, r);
 ' 3
 
+echo "B. an address-taken &fncallN"
+both "B1 fncall2(&fncall1, &add1, 41) (the filed repro; cx gave 0)" 'include "lib/fnptr.cyr"
+fn add1(x) { return x + 1; }
+fn main() { return fncall2(&fncall1, &add1, 41); }
+var r = main();
+syscall(60, r);
+' 42
+
 echo
 echo "cx_backend_parity: $pass passed, $fail failed"
 [ "$fail" = 0 ] || exit 1
-echo "PASS cx_backend_parity: ~x is the complement on cx (bitset / bitclr with it), as on every native backend"
+echo "PASS cx_backend_parity: ~x is the complement on cx (bitset / bitclr with it) and an address-taken &fncallN runs its callee there, as on every native backend"
