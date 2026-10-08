@@ -54,7 +54,8 @@ var _DS_MODULAR = 48;
 var _DS_OPTIONAL = 56;      # 1, 0, or -1 (the key is present and is not true / false)
 var _DS_TARGET = 64;
 var _DS_BAD = 72;           # the key whose value has the wrong type, or 0
-var _DS_SIZE = 80;
+var _DS_UNKNOWN = 80;       # vec of keys nothing reads (the root manifest's are warned)
+var _DS_SIZE = 88;
 
 # Print the refusal ONCE (the copy loop calls this ~100x per resolve) and return 1,
 # the same error code the dep modules path-escape bug traversal guard uses. Full incident writeup lives at
@@ -1960,10 +1961,12 @@ fn _dep_parse_name_lists(buf, n, section, names, lists): i64 {
 # A [deps.NAME] section's keys, from the line at buf[si] up to the next table header of either
 # kind, into the `_DS_*` slots of `rec` (`_DS_SIZE` bytes). Returns where that header starts.
 # path / git / tag / target are TOML strings (6.6.17, m6: another type sets `_DS_BAD`); modules /
-# requires / modular are string arrays; optional is the bareword `true` or `false`.
+# requires / modular are string arrays; optional is the bareword `true` or `false`. A key nothing
+# reads is listed in `_DS_UNKNOWN`.
 fn _dep_sec_read(buf, n, si, manifest_dir, rec): i64 {
     var z = 0;
     while (z < _DS_SIZE) { store64(rec + z, 0); z = z + 8; }
+    store64(rec + _DS_UNKNOWN, vec_new());
     var info[32];
     while (si < n) {
         var nx = _toml_line(buf, n, si, &info);
@@ -2007,6 +2010,11 @@ fn _dep_sec_read(buf, n, si, manifest_dir, rec): i64 {
                 var ob = _dep_bareword_bool(buf, n, kv);
                 store64(rec + _DS_OPTIONAL, ob);
                 if (ob < 0) { store64(rec + _DS_BAD, "optional"); }
+            } else {
+                var uk = alloc(kl + 1);
+                memcpy(uk, buf + ks, kl);
+                store8(uk + kl, 0);
+                vec_push(load64(rec + _DS_UNKNOWN), uk);
             }
         }
     }
@@ -2790,6 +2798,9 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
             # disagrees with the lock — gates the module copy so poisoned
             # content never lands in lib/.
             var dep_pin_ok = 1;
+            # 6.7.6 (R11): a key nothing reads, in the project's OWN manifest, is named — `dev = true`
+            # read as silence. A dependency's manifest is its author's business.
+            if (_dep_ctx_kind == 0) { _dep_warn_unknown_keys(dep_name, load64(rec + _DS_UNKNOWN)); }
             if (dep_bad != 0) {
                 _ew("error: [deps.");
                 _ew_shown(dep_name);
@@ -3598,6 +3609,73 @@ fn _deps_dry_list(manifest, buf, n): i64 {
     return 0;
 }
 
+# 6.7.6 (R11) — a key nothing reads in the project's own `[deps.NAME]`, named as `[build]`'s are
+# (`_cfg_warn_section`): `dev = true` or a misspelt `modlues` read as silence.
+fn _dep_warn_unknown_keys(name, keys): i64 {
+    if (keys == 0) { return 0; }
+    var i = 0;
+    while (i < vec_len(keys)) {
+        var sb = str_builder_new();
+        str_builder_add_cstr(sb, "cyrius.cyml [deps.");
+        str_builder_add_cstr(sb, _shown(name));
+        str_builder_add_cstr(sb, "] ");
+        str_builder_add_cstr(sb, _shown(vec_get(keys, i)));
+        str_builder_add_cstr(sb, " is not a known key and nothing reads it (cyrius help manifest lists them)");
+        _warn(str_data(str_builder_build(sb)));
+        i = i + 1;
+    }
+    return 0;
+}
+
+var _dep_mf_warned = 0;
+
+# 6.7.6 (R11) — the project's own manifest: a TABLE nothing reads (`[dev-dependencies]`,
+# `[[bin]]`, a misspelt `[dep.x]`) and a `[deps]` key nothing reads are named, once per run. A
+# section is known when the vocabulary (`cyrius help manifest`) declares it; `[deps.NAME]` and
+# `[lib.PROFILE]` take any name.
+fn _dep_warn_manifest(): i64 {
+    if (_dep_mf_warned == 1 || _mf_state != 1) { return 0; }
+    _dep_mf_warned = 1;
+    _cfg_warn_section("deps");
+    var info[32];
+    var p = 0;
+    while (p < _mf_len) {
+        p = _toml_line(_mf_buf, _mf_len, p, &info);
+        var k = load64(&info);
+        if (k != 1 && k != 2) { continue; }
+        var hl = load64(&info + 16);
+        var nm = alloc(hl + 1);
+        memcpy(nm, _mf_buf + load64(&info + 8), hl);
+        store8(nm + hl, 0);
+        if (k == 1 && _dep_section_known(nm) == 1) { continue; }
+        var sb = str_builder_new();
+        str_builder_add_cstr(sb, "cyrius.cyml [");
+        if (k == 2) { str_builder_add_cstr(sb, "["); }
+        str_builder_add_cstr(sb, _shown(nm));
+        str_builder_add_cstr(sb, "]");
+        if (k == 2) { str_builder_add_cstr(sb, "]"); }
+        str_builder_add_cstr(sb, " is not a known section and nothing reads it (cyrius help manifest lists them)");
+        _warn(str_data(str_builder_build(sb)));
+    }
+    return 0;
+}
+
+# 1 when the vocabulary declares section `nm` (a `deps.NAME` / `lib.PROFILE` table matches its
+# `.*` row; the header name rule itself is the resolver's, which refuses a bad one by name).
+fn _dep_section_known(nm): i64 {
+    var sec = nm;
+    if (strlen(nm) >= 5 && memeq(nm, "deps.", 5) == 1) { return 1; }
+    if (strlen(nm) >= 4 && memeq(nm, "lib.", 4) == 1) { return 1; }
+    var i = 0;
+    var row = _mf_vocab(0);
+    while (row != 0) {
+        if (streq(_mf_vocab_field(row, 0), sec) == 1) { return 1; }
+        i = i + 1;
+        row = _mf_vocab(i);
+    }
+    return 0;
+}
+
 # 6.7.6 (part L) — `--locked`: compare what the tags resolved (into `scratch`, a private
 # directory standing for lib/) with the committed lib/ and cyrius.lock, as a DEFAULT resolve would
 # rewrite them: every file the tags vendor must be in lib/ byte for byte and in the lock at its
@@ -3723,6 +3801,7 @@ fn cmd_deps(): i64 {
     if (_mf_load() != 1) { _err("cannot read manifest"); return 1; }
     var buf = _mf_buf;
     var n = _mf_len;
+    _dep_warn_manifest();            # 6.7.6 (R11): unknown sections / [deps] keys, named once
     _dep_parse_groups(buf, n);       # v6.2.49 Phase B: [groups] (buf is the TOML header, CYML body already stripped)
     _dep_register_default_std_group();  # v6.3.32 Phase D: built-in `std` default group (after parse so a manifest's own `std` wins)
     _dep_parse_features(buf, n);     # v6.3.1 lever 2: [features] table (populates _dep_feature_names/_deps; gating happens in _process_named_deps)
@@ -3999,6 +4078,7 @@ fn _auto_deps(): i64 {
     var ml = _mf_load();
     if (ml < 0) { return 1; }
     if (ml == 0) { return 0; }
+    _dep_warn_manifest();   # 6.7.6 (R11): a table / [deps] key nothing reads is named, once
     var has_deps = 0;
     var info[32];
     var p = 0;
