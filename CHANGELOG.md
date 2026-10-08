@@ -4,6 +4,8 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [6.7.2] — 2026-10-07
+
 ## [6.7.1] — 2026-10-07
 
 C3, trait-bounded generics (roadmap.md § Spec — C3; the user's decisions of 2026-10-07: a bound is a contract,

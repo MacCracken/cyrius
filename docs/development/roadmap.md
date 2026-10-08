@@ -31,7 +31,7 @@ the unpinned watching list is [roadmap-future.md](roadmap-future.md); per-releas
 
 ## Where we are
 
-**Current head: v6.7.1** (2026-10-07) — **C3 landed: trait-bounded generics** (6.7.0 shipped: tag `6.7.0` @ `64b7a523`)
+**Current head: v6.7.2** (2026-10-07) — **slot open: B1 `const` + C1 `const fn`** (6.7.1 shipped: tag `6.7.1` @ `33481747`)
 · cycc **1,631,440 B** (`.text` **1,449,624**) · `cycc-native-aarch64` **1,393,448 B** · **514** `.tcyr` (**223** in
 `crossos/`) · **106** `lib/*.cyr` · **417** shell gates under `tests/gates/<bucket>/` · api-surface **5,827** · **4 open
 issues** · **2 open proposals** · the next free CVE id is **103**.
