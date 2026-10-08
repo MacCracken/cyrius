@@ -398,9 +398,24 @@ fn cmd_test(source): i64 {
         return 0;
     }
     _total = _total + 1;
+    # 6.7.6: `[build] test_standalone = true` compiles the test with no [deps] stdlib prepend (see
+    # _cfg_test_standalone, cbt/manifest.cyr). A value that is not a bool was named once; every
+    # test then fails, not compiled — never silently compiled the other way. CHANGELOG [6.7.6]
+    var tsa = _cfg_test_standalone();
+    if (tsa < 0) {
+        sys_write(STDERR_FD, "  FAIL: ", 8);
+        sys_write(STDERR_FD, source, strlen(source));
+        var tsm = " (not compiled; see the error above)\n";
+        sys_write(STDERR_FD, tsm, strlen(tsm));
+        _fail = _fail + 1;
+        return 1;
+    }
+    var tsa_skip = _skip_deps;
+    if (tsa == 1) { _skip_deps = 1; }
     var tmpbin = _cbt_tmpexe("test_bin");
     var pre_err = _err_count;
     var r = compile(source, tmpbin);
+    _skip_deps = tsa_skip;
     if (r != 0) {
         # 6.6.9 bite 10 — the row stays (it is the suite's tally line and names the file),
         # but it no longer calls a failure cbt NAMED — a missing file, an unwritable temp —

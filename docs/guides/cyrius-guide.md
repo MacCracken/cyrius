@@ -2224,7 +2224,14 @@ itself reads every value but `1` as off, so it used to be a silent no.
 `[build] test` (a file, a directory, or a list of either — `src/test.cyr` is what `cyrius init`
 writes) is what a bare `cyrius test` runs FIRST, before every `.tcyr` under `tests/`; a file both
 name runs once, and a declared path that does not exist is a named failure. Before 6.6.17
-nothing read the key, so a declared `src/test.cyr` never ran — 41 manifests declared one. A
+nothing read the key, so a declared `src/test.cyr` never ran — 41 manifests declared one.
+`[build] test_standalone = true` (6.7.6) makes `cyrius test` — every form, and `cyrius audit`'s
+test sweep — compile each test with only the includes the file itself writes: no `[deps] stdlib`
+prepend. It is for a project whose tests are self-contained, the way cycc compiles a file fed to
+it directly: there, a test that defines a fn some prepended stdlib module also defines (this
+repo's 22 tests with `fn run()`, against `lib/process.cyr`'s `fn run(cmd, arg1, arg2)`) is a
+duplicate-fn error under the prepend and compiles fine without it. Absent or `false` changes
+nothing; `[embed]`, `[build] modules` and defines still apply. A
 mistyped value (`dce = "yes"`) is refused by name, and so is a define holding a control
 character (it would start a new source line in the compiled unit). `[build] target` is **held**
 (pass `--target` / `--aarch64` / `--win` / `--agnos`), `[build] features` is **dropped** (features
@@ -2262,6 +2269,7 @@ cyrius build configuration (argument > environment > manifest > default)
 | `[build]` | `entry` | read | `src` | — | `<source>` | cyrius build, cyrius package: the source |
 | `[build]` | `output` | read | — | — | `<output>` | cyrius build, cyrius package: the output (a default) |
 | `[build]` | `test` | read | — | — | `<path>...` | bare cyrius test: these (file / dir / list), then tests/ |
+| `[build]` | `test_standalone` | read | — | — | — | cyrius test: each test compiles standalone, its own includes only (no [deps] stdlib prepend; bool) |
 | `[build]` | `modules` | read | — | — | — | every compile: these files prepended before the entry |
 | `[build]` | `dce` | read | — | `CYRIUS_DCE` | `--dce` | cyrius build: dead-code elimination (bool) |
 | `[build]` | `strict` | held | — | — | `--strict` | has had no effect since 6.3.2: a reachable undefined function is an error by default; --allow-undef downgrades it |
