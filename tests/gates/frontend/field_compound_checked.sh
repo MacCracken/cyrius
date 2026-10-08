@@ -14,6 +14,8 @@
 #      (kind 1), an f32 one with an f64 right operand (kind 5); an i8 field `+= 1` does not
 #   X  `--syntax-only` (what `cyrius lint` runs): a struct the file cannot see, or a field it does
 #      not know, takes `OP= e` silently, as it takes `= e` (no invented syntax error)
+#   C  `>>>=` (the eleventh operator, the arithmetic shift) in a const fn run in const contexts;
+#      T: a mistyped `x >>> 2;` names the token (it said "got unknown")
 #   A  ANTI-VACUOUS: the tcyr on x86_64 under the default pipeline, CYRIUS_IR=1, CYRIUS_IR=3 and
 #      CYRIUS_DCE=1, and with compilers built from this tree on aarch64 (qemu) and cx (cxvm); plus
 #      the address-once order row on its own (112 where a plain store gives 101)
@@ -29,6 +31,10 @@
 #   R-a `_asg_temp_refused` not called by `_stmt_method_call` -> RED R4 R5 ("expected ';'")
 #   R-b no struct-field refusal                           -> RED R2 (it BUILDS)
 #   R-c no bool-field refusal                             -> RED R1 (it BUILDS)
+#   M8 `_ce_cop` skipping 152 (the evaluator's own list)  -> RED C1 and A (tcyr A7 refused at the
+#      definition: the values file does not build)
+#   M8b no EASHRCL arm in `_asg_compound_op`              -> RED A (tcyr A1-A6 A9: the value unchanged)
+#   M8c 152 dropped from the shared `_is_cop_tok`        -> RED C1 and A (the values file does not build)
 # (The IR_RAW_EMIT record at the address and the flags-tracker clear after the load are defensive:
 # no row kills them — measured.)
 set -u
@@ -120,6 +126,9 @@ quiet w03 "W3: an i8 field += 1, an f64 field += an f64" "struct W { c: i8; d; }
 
 synonly x01 "X1: a struct the file cannot see (e.size += 1)" "fn k(): i64 { e.size += 1; ee.size *= 2; return 0; }\n"
 synonly x02 "X2: a field the struct does not declare (h.zz += 1)" "struct H { n; m; }\nfn f(h: H): i64 { h.zz += 1; h.yy <<= 2; return 0; }\n"
+
+exits c01 3 "C1: >>>= in a const fn: a const, an array size, #assert" 'const fn h(x): i64 { var y = x; y >>>= 1; return y; }\nconst K = h(0 - 6);\nvar arr: i64[h(16)];\n#assert K == 0 - 3\nfn main(): i64 { arr[7] = 0 - K; return arr[7]; }\nsyscall(60, main());\n'
+refused t01 "expected '=', got '>>>'" "T1: a mistyped \`x >>> 2;\` names the token" "fn main(): i64 { var x = 1; x >>> 2; return x; }$E"
 
 exits o01 112 "O1: OP= takes the address before the right-hand side (GP.n += repoint())" 'struct H { n; m; }\nvar A = H { 10, 0 };\nvar B = H { 20, 0 };\nvar GP: *H = &A;\nfn repoint(): i64 { GP = &B; return 1; }\nfn main(): i64 { GP.n += repoint(); return A.n * 10 + B.n / 10; }\nsyscall(60, main());\n'
 exits o02 101 "O2: a plain store evaluates the right-hand side first (unchanged)" 'struct H { n; m; }\nvar A = H { 10, 0 };\nvar B = H { 20, 0 };\nvar GP: *H = &A;\nfn repoint(): i64 { GP = &B; return 1; }\nfn main(): i64 { GP.n = GP.n + repoint(); return A.n * 10 + B.n / 10; }\nsyscall(60, main());\n'

@@ -7,7 +7,8 @@
 # a union, a generic instance, a closure capture, a `*T` global, a pointer-mode local — at the
 # field's width (i8 / i16 / i32 signed, as a read of it), as float arithmetic on an f64 / f32 field
 # and stepping sizeof(T) on a `*T` field. The field's ADDRESS is computed once, BEFORE the right-hand
-# side, as `a[i] OP= v` does; a plain `x.f = e` evaluates `e` first (row O1 against O2).
+# side, as `a[i] OP= v` does; a plain `x.f = e` evaluates `e` first (row O1 against O2). `>>>=`,
+# the arithmetic shift, is the eleventh compound operator on every form, a const fn's too (A rows).
 # The refusals, the warnings and the mutation ledger are tests/gates/frontend/field_compound_checked.sh.
 include "lib/syscalls.cyr"
 include "lib/string.cyr"
@@ -46,6 +47,9 @@ fn repoint(): i64 { GR = &GB; return 1; }
 fn f7(a, b, c, d, e, f, g): i64 { return a + b * 2 + c * 3 + d * 4 + e * 5 + f * 6 + g * 7; }
 fn fmul(a: f64, b: f64): f64 { return a * b; }
 fn bits(v) { return v; }
+const fn cshr(x): i64 { var y = x; y >>>= 2; return y; }
+const KSHR = cshr(0 - 16);
+var GS = 0 - 64;
 
 fn forms(): i64 {
     var h = H { 1, 2 };
@@ -230,6 +234,36 @@ fn rhs(): i64 {
     return 0;
 }
 
+# `>>>=` (6.7.5): the arithmetic shift, the eleventh compound operator, on every form.
+fn ashr(): i64 {
+    var x = 0 - 16;
+    x >>>= 2;
+    assert_eq(x, 0 - 4, "A1: >>>= on a local keeps the sign");
+    GS >>>= 3;
+    assert_eq(GS, 0 - 8, "A2: >>>= on a global");
+    var h = H { 0 - 64, 3 };
+    h.n >>>= 3;
+    assert_eq(h.n, 0 - 8, "A3: >>>= on a field");
+    var w = W { 1, 2, 0 - 128, 4, 5 };
+    w.c >>>= 1;
+    assert_eq(w.c * 10 + w.e, 0 - 636, "A4: >>>= on an i8 field (signed load)");
+    var a: i64[4];
+    a[2] = 0 - 32;
+    a[2] >>>= 1;
+    assert_eq(a[2], 0 - 16, "A5: >>>= on a subscript");
+    var n = 0;
+    for (var k = 0 - 64; k < 0 - 1; k >>>= 1) { n = n + 1; if (n > 20) { break; } }
+    assert_eq(n, 6, "A6: >>>= as a for step");
+    assert_eq(KSHR, 0 - 4, "A7: >>>= in a const fn (a const context)");
+    assert_eq(cshr(0 - 40), 0 - 10, "A8: the same const fn at run time");
+    var u = 0 - 1;
+    var v = 0 - 1;
+    u >>>= 63;
+    v >>= 63;
+    assert_eq(u * 10 + v, 0 - 9, "A9: >>>= fills with the sign, >>= with zeros");
+    return 0;
+}
+
 fn run(): i64 {
     alloc_init();
     forms();
@@ -239,6 +273,7 @@ fn run(): i64 {
     steps();
     order();
     rhs();
+    ashr();
     return 0;
 }
 # Top-level statements: the compound arm with no fn around it (before `run`, which reads GT).

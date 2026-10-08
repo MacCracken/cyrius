@@ -2084,6 +2084,7 @@ fn TOKNAME(typ): i64 {
     if (typ == 18) { return "'!='"; }
     if (typ == 19) { return "'<'"; }
     if (typ == 20) { return "'>'"; }
+    if (typ == 152) { return "'>>>'"; }   # 6.7.5: `x >>>= 2` mistyped said "got unknown"
     if (typ == 23) { return "else"; }
     if (typ == 28) { return "'['"; }
     if (typ == 29) { return "']'"; }
