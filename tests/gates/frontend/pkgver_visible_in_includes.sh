@@ -106,7 +106,10 @@ check "error line with marker"    3 "$b"
 # the tail of PP_PASS, which expands only the ENTRY's includes (an included file's own `include`
 # lines are expanded later, by PP_IFDEF_PASS), so the declaration was blanked under the reference:
 #     error:src/inc.cyr:1:..: undefined variable 'CYRIUS_PKG_VERSION'
-# Mutation: run PP_RESOLVE_PKGVER at the tail of PP_PASS again -> 5a and 5b red, axis 1 green.
+# Mutation (verified 2026-10-08, a scratch tree run as CYCC=<mutant>): PP_RESOLVE_PKGVER back at the
+# tail of PP_PASS (PREPROCESS's call removed) -> both axis-5 `compiles` rows red, axes 1-4 and 6 green.
+# Mutation (verified): PP_PKGVER_AT's re-check inverted (a found declaration is never blanked) ->
+# axis 3 and axis 6 red (`marked == unmarked`), axes 1, 2, 4, 5 green.
 mkdir -p "$D/nest/src"
 printf 'fn pkg_v(): i64 { return CYRIUS_PKG_VERSION; }\n' > "$D/nest/src/inc.cyr"
 printf 'include "src/inc.cyr"\n' > "$D/nest/src/mid.cyr"

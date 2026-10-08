@@ -27,7 +27,23 @@
 #      with its full assertion count.
 #
 # MUTATION LEDGER (scratch trees, each rebuilt with the one change, run as CYCC=<mutant>; 2026-10-08):
-#   (filled in below as each row lands)
+#   M1 `_f32_init_round` never narrows                    -> RED I1 I2 and AF on every leg (25 rows)
+#   M2 `_gvi_store` without the rounding (decl zone)      -> RED AF on every leg (F1-F9: 11 rows)
+#   M3 `_decl_float_init` without the rounding (PARSE_VAR) -> RED I1 I2 and AF (L/V/A/R/T: 14 rows)
+#   M4 EF32_FROM not IR-recorded                          -> RED I1 and AF under CYRIUS_IR=3 (V1)
+#   M4b EF32_TO not IR-recorded                           -> RED I1 and AF under CYRIUS_IR=3 (A1)
+#   M5 `_refuse_single_pair_bind` gated on GINFN again    -> RED P1-P5 (each BUILDS); P6 green
+#   M6 the replay's `_gvi_pair_bind` not called           -> RED P1 P3 P4 (the declaration zone)
+#   M7 `_od_arg_kind` never routes a name                 -> RED AR on every leg (rc 139 at P1)
+#   M8 `_inl_param_marks` not called                      -> RED AR R11 on every leg
+#   M9 `_od_arg_kind` without the capture arm             -> RED AR R16 on every leg
+#   M10 `_gv_last_marks` without SVINTD                   -> RED AR R12 R13 (and the crash at P3)
+#   M11 `_bx_ptype` never answers 2 (no parameter mark)   -> RED AR R7 R8 R11
+#   M14 `_asg_wide_refused` never refuses                 -> RED O1-O10 (each BUILDS)
+#   M15 no 0x80 typed mark in the array descriptor        -> RED O4 O5 (f64 / struct elements BUILD)
+#   M16 `_bx_pcmpe_arg` reading `== 0` again (2 is a bool) -> RED every A leg (print_num's `n: i64`
+#      refused as "not a bool"; cx's compiler does not build)
+#   (M12 / M13 — the pkgver scan — are in pkgver_visible_in_includes.sh's ledger.)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
