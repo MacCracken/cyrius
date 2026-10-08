@@ -877,8 +877,8 @@ local, a global, a by-value parameter, a pointer-mode local), and through a gene
 reach `r.v`, at top level as in a fn — since v6.6.16 that copy is the callee's own, made on entry
 as for every by-value struct argument (see below). From v6.6.12 to v6.6.15 a fn copied the field
 into a frame temporary and top level, with no frame, passed the field itself, which the callee
-then wrote. A field of a different struct type is refused (`cannot pass 'q' to a by-value
-parameter of a different struct type in a call to 'take'`). Before v6.6.12 the field's first word was passed as the struct's
+then wrote. A field of a different struct type is refused (`cannot pass 'q' to a parameter of a
+different struct type in a call to 'take'`). Before v6.6.12 the field's first word was passed as the struct's
 address, and the callee SIGSEGV'd. **A top-level copy-init** — `var B: P3 = A;` from an inline
 global, or `var G: P3 = BX.v;` from a global's field, in the leading declaration block or after
 the first statement — gives `B` its own STRUCTSZ bytes and copies them. Before v6.6.12 `B` got one
@@ -887,6 +887,24 @@ the first statement — gives `B` its own STRUCTSZ bytes and copies them. Before
 struct, exactly as in a fn. The source must be declared ABOVE the copy: `var B: P3 = A;` before
 `var A = P3 { .. };` is refused (`cannot copy-init 'B' from a global declared below it`), since
 globals are initialised in declaration order and `A` has not been initialised when `B` copies it.
+
+⚠ **A struct ARGUMENT is checked against its parameter (v6.7.3).** An argument whose static struct
+type differs from the parameter's is refused by name, as the same copy into a variable is
+(`var q: Q = p;`): `bq(p)` with `p: Pt` and `fn bq(b: Q)` reports `cannot pass 'p' to a parameter of
+a different struct type in a call to 'bq'`. It covers every argument that HAS a struct type — a
+named local (inline, pointer-mode `var p: Pt = alloc(16)`, or `u: *Pt`), a global, a closure
+capture, a field, a call or method / operator result (named by the fn: `'mkp'`, `'Pt_dup'`) —
+into a by-value parameter of any size, a `p: *T` parameter or a `s: Str` handle, through a call, a
+method's arguments, a tail call and an operator's two operands (parameters 0 and 1 of `Q_add`), and
+a method's `self` (`impl Pt { fn m(self: Q) }` with `p.m()`). A generic INSTANCE is its own struct:
+a `Box<Pt>` passed where `b: Box` is declared is refused, and the reverse — so is `gx(b)` for
+`fn gx<T>(b: Box<T>)`, which does not infer `T` through `Box<T>` and so calls the `Box` base; write
+`gx<Pt>(b)`. An argument with NO struct type stays accepted: `&p` (an address, as
+`var q: *Q = &p;` is), an untyped variable (`var u = &p; bq(u)`), a literal, a call returning an
+integer or a pointer, and a fn pointer (`fncall1(&bq, &p)`). Before v6.7.3 only a FIELD into an
+address-passed parameter was checked: every other mismatch compiled clean and the callee read the
+argument with its own layout — `bq(p)` read past the 16-byte `Pt` (0), `bs(mk1(p))` returned `b.v.y`
+where `b.n` was 8, and `q + mkp()` or `sl(p)` for `sl(s: Str)` SIGSEGV'd.
 
 ⚠ **A by-value struct PARAMETER is a COPY, at every width (v6.6.16).** A `q: P3` parameter over
 8 bytes still TRAVELS by address — the caller passes its struct's address, so the calling
