@@ -13,13 +13,20 @@ subset; a `do` body is its own scope and its `continue` goes to the condition. `
 lvalue — fields, slices, `*p`, classic-`for` steps — with the address taken once, before the right-hand side; `OP=`
 on a struct value is refused by name). Built in two worktree lanes and merged here.
 
+**Release gate GREEN** (`release-gate.sh` on `97c00373`, 2026-10-08 11:52 → 12:01, **~9 min**): fixpoint 1,759,824 B,
+ARM lockstep 1,530,056 B, seed-derive OK, check.sh — **428 of 428** shell gates produced a result, 0 failed, the 2
+named agnos-parity SKIPs — and cross-OS self-host + the `crossos/` suite on REAL ecb, ach, cass and pi (all
+`SELFHOST_OK` + `LIBTEST_OK`). verify-store still lists the 16 slots with a stale `bin/cybs` (Break 1's post-tag
+item; `--restore` writes the live store, so it is the user's to run).
+
 **Size:** cycc **1,759,824 B** (`.text` **1,571,240**), +8,392 B over 6.7.4's 1,751,432 — B5 (~+4.1 KB: the two
 statements, the contextual test in every scanner, the evaluator arms) and B8 (~+4.3 KB: the field / slice / deref
 compound paths, the for-step destinations, the struct-value refusal); dead-code floor unchanged (52 fns /
 10,597 B). `build/cycc-native-aarch64` **1,530,056 B**. `.tcyr` 524 → **526** (233 in `crossos/`); shell gates
 422 → **424**; api-surface **5,827** (unchanged).
 
-**Bench:** Same-box interleaved A/B vs 6.7.4 (15 runs each): **1,121 → 1,120 ms on 6.7.4's source (−0.1 %)**,
+**Bench:** self_compile **1,128 ms** (bench-history). Same-box interleaved A/B vs 6.7.4 (15 runs each): **1,121 →
+1,120 ms on 6.7.4's source (−0.1 %)**,
 1,128 → 1,128 ms on 6.7.5's own (+0.0 %).
 
 ### Language — `loop` and `do … while` (B5)
