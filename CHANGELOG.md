@@ -13,6 +13,11 @@ runs; every branch the same kind — an integer (pointers and bools included), a
 const contexts included; every global array-list element a const context; strings their own kind in const
 contexts only).
 
+**Release gate GREEN** (`release-gate.sh` on `d6b0b637`, 2026-10-08 07:22 → 07:31, **9 min 0 s**): fixpoint 1,751,432 B,
+ARM lockstep 1,529,848 B, seed-derive OK, check.sh — **426 of 426** shell gates produced a result, 0 failed, the 2
+named agnos-parity SKIPs — and cross-OS self-host + the `crossos/` suite on REAL ecb, ach, cass and pi (all
+`SELFHOST_OK` + `LIBTEST_OK`).
+
 **Size:** cycc **1,751,432 B** (`.text` **1,561,832**), +25,656 B over 6.7.3's 1,725,776 — the runtime
 if-expression (parse_ctrl.cyr `_ie_*`), its evaluator half (`_ce_ifx` and the unknown-kind re-check), the
 expression-extent walker, the #derive value walk and the folder's if-arm; dead-code floor unchanged (52 fns /
