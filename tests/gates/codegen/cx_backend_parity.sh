@@ -28,8 +28,9 @@
 # ROWS
 #   T  tests/tcyr/codegen/cx_backend_parity.tcyr: native x86 and cxvm must each print
 #      "<N> passed, 0 failed (<N> total)" and exit 0, N = the assertions counted in the source
-#      (floor below) — on cx every one, natively those outside `#ifdef CYRIUS_TARGET_CX` blocks (the
-#      &fncall8 row: x86-SysV's fncall8 asm passes args 7/8 in the C order, a separate finding).
+#      (floor below) — on cx every one, natively those outside `#ifdef CYRIUS_TARGET_CX` blocks (none
+#      since 6.7.6 lane E2 fixed x86-SysV's fncall8, which passed args 7/8 in the C order: the
+#      &fncall8 row, cx-only until then, now runs everywhere — floor 57 -> 58).
 #      The same file on aarch64 (qemu-aarch64) and PE (wine, a private prefix torn down on exit) is
 #      the other ABIs' oracle; either leg is a named SKIP when its tool is absent.
 #   A1 the filed repro, inline: native and cxvm both exit 3.
@@ -115,7 +116,7 @@ TC=tests/tcyr/codegen/cx_backend_parity.tcyr
 # NCX: every assertion; N: those outside `#ifdef CYRIUS_TARGET_CX` ... `#endif` (cx-only rows).
 NCX=$(grep -c '^[[:space:]]*assert_[a-z]*(' "$TC")
 N=$(awk '/^[[:space:]]*#ifdef CYRIUS_TARGET_CX/{s=1; next} /^[[:space:]]*#endif/{s=0; next} !s && /^[[:space:]]*assert_[a-z]*\(/{n++} END{print n+0}' "$TC")
-FLOOR=57
+FLOOR=58
 if [ "$N" -lt "$FLOOR" ]; then bad "T: only $N assertions outside the cx-only blocks of $TC (floor $FLOOR) — rows were lost"
 else
     nat_file "$TC"

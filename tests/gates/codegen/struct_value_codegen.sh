@@ -48,6 +48,10 @@
 #      a passed-through pair call keeps its wrap (`_ret_unpeel`); `return (a) + b;` is an operator
 #      receive (`_ret_expr_head`). The top-level operand refusal says "(a struct over 8 bytes)" for
 #      a by-value or untyped operator parameter, "(a `*` parameter)" only for a `*S` one
+#   N  (lane E2) lib/fnptr.cyr's x86_64 SysV fncall8 (Linux, macOS, agnos arms) stored argument 7 at
+#      [rsp] — the C order — while a cyrius callee reads its LAST argument there: an address-taken
+#      `&fncall8` swapped 7 and 8 (12345687). Every target is tests/tcyr/crossos/fncall_stack_args.tcyr
+#      (the release gate's hosts) and cx_backend_parity.tcyr's &fncall8 row, cx-only until now
 #
 # MUTATION LEDGER (scratch copies of the tree, each rebuilt with the one change and the gate run
 # from that copy as CYCC=<mutant>; 2026-10-08):
@@ -239,6 +243,8 @@ refused r04 'got `5`' "R4: return (5); from a Pt fn, refused once naming 5" "str
 refused r05 'struct-return: identifier type != fn ret_sid' "R5: return (q); with q: Q from a P3 fn, refused as return q; is" "struct Q { x; y; z; }\nstruct P3 { x; y; z; }\nfn f(q: Q): P3 { return (q); }\nfn main(): i64 { var a: Q = Q { 1, 2, 3 }; var r: P3 = f(a); return r.x; }$E"
 refused r06 "the left operand of 'Pt_add' is passed by address (a struct over 8 bytes)" "R6: a by-value 16-byte operand at top level is not called a * parameter" "${LPT}var G: Pt = Pt { 1, 2 };\nvar r = G.dup() + G;\nsyscall(60, r);\n"
 refused r07 'the left operand of '"'"'LW_sub'"'"' is passed by address (a `*` parameter)' "R7: a *LW operand at top level keeps its wording" "${LW}var G: LW = LW { 3 };\nvar r = mklw(5) - G;\nsyscall(60, r);\n"
+# N (6.7.6 E2) — lib/fnptr.cyr's address-taken fncall8 passes a cyrius callee args 7 / 8 in cyrius's order.
+exits n01 78 "N1: callptr(&fncall8, &s8, 1..8) % 100 (x86 SysV: 87, args 7 and 8 swapped)" "include \"lib/alloc.cyr\"\ninclude \"lib/fnptr.cyr\"\nfn s8(a, b, c, d, e, f, g, h) { return a * 10000000 + b * 1000000 + c * 100000 + d * 10000 + e * 1000 + f * 100 + g * 10 + h; }\nfn main() { return callptr(&fncall8, &s8, 1, 2, 3, 4, 5, 6, 7, 8) % 100; }$E"
 
 tcyr "A1: the values file (x86_64)" "$CC" ""
 tcyr "A2: ... under CYRIUS_IR=1" "$CC" "" CYRIUS_IR=1

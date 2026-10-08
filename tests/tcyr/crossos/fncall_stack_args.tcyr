@@ -1,0 +1,50 @@
+# fncall_stack_args.tcyr — 6.7.6 (Break 1 follow-up, lane E2): lib/fnptr.cyr's fncall7 / fncall8
+# pass a cyrius callee its stack arguments in CYRIUS's order on every target.
+#
+# A DIRECT `fncallN(..)` is lowered by the compiler and never runs lib/fnptr.cyr's body; an
+# ADDRESS-TAKEN `&fncallN` called through another indirect call does, and its arms are per-target
+# asm. The x86_64 SysV arms (Linux, macOS, agnos) of fncall8 stored argument 7 at [rsp] and 8 at
+# [rsp+8] — the C order — while a cyrius callee reads its LAST argument at [rsp] (`ESTORESTACKPARM`),
+# so `callptr(&fncall8, &s8, 1..8)` gave 12345687 on x86 Linux and Intel macOS, 12345678 on
+# aarch64, PE and cx. In this directory so the release gate runs it on the real hosts (ach is the
+# Intel-macOS arm). The callees fold every position with a distinct weight: a swapped, dropped or
+# stale argument changes the value.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+include "lib/assert.cyr"
+
+fn s6(a, b, c, d, e, f) { return a * 100000 + b * 10000 + c * 1000 + d * 100 + e * 10 + f; }
+fn s7(a, b, c, d, e, f, g) { return a * 1000000 + b * 100000 + c * 10000 + d * 1000 + e * 100 + f * 10 + g; }
+fn s8(a, b, c, d, e, f, g, h) { return a * 10000000 + b * 1000000 + c * 100000 + d * 10000 + e * 1000 + f * 100 + g * 10 + h; }
+
+fn direct() {
+    assert_eq(fncall6(&s6, 1, 2, 3, 4, 5, 6), 123456, "fncall6(&s6, 1..6), lowered by the compiler");
+    assert_eq(fncall7(&s7, 1, 2, 3, 4, 5, 6, 7), 1234567, "fncall7(&s7, 1..7), lowered");
+    assert_eq(fncall8(&s8, 1, 2, 3, 4, 5, 6, 7, 8), 12345678, "fncall8(&s8, 1..8), lowered");
+    return 0;
+}
+fn through_body() {
+    assert_eq(callptr(&fncall6, &s6, 1, 2, 3, 4, 5, 6), 123456, "callptr(&fncall6, &s6, 1..6), the library body");
+    assert_eq(callptr(&fncall7, &s7, 1, 2, 3, 4, 5, 6, 7), 1234567, "callptr(&fncall7, &s7, 1..7), one stack argument");
+    assert_eq(callptr(&fncall8, &s8, 1, 2, 3, 4, 5, 6, 7, 8), 12345678, "callptr(&fncall8, &s8, 1..8) (x86 SysV: 12345687)");
+    assert_eq(callptr(&fncall8, &s8, 9, 8, 7, 6, 5, 4, 3, 2), 98765432, "callptr(&fncall8, &s8, 9..2)");
+    var f8 = &fncall8;
+    var t8 = &s8;
+    assert_eq(callptr(f8, t8, 1, 2, 3, 4, 5, 6, 0, 9), 12345609, "fncall8 and its callee through locals");
+    return 0;
+}
+fn rows() {
+    direct();
+    through_body();
+    return 0;
+}
+var r0 = rows();
+var top8 = callptr(&fncall8, &s8, 1, 2, 3, 4, 5, 6, 7, 8);
+assert_eq(top8, 12345678, "callptr(&fncall8, &s8, 1..8) at top level");
+var top8d = fncall8(&s8, 1, 2, 3, 4, 5, 6, 7, 8);
+assert_eq(top8d, 12345678, "fncall8(&s8, 1..8) at top level");
+var top7d = fncall7(&s7, 1, 2, 3, 4, 5, 6, 7);
+assert_eq(top7d, 1234567, "fncall7(&s7, 1..7) at top level");
+var rr = assert_summary();
+syscall(60, rr);

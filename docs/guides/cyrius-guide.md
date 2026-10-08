@@ -3503,6 +3503,13 @@ cx bytecode target each `fncallN` is `callptr(fp, …)` (there is no asm on cx).
 **Before 6.7.6 `lib/fnptr.cyr` had no cx arm**, so an address-taken `&fncallN`
 returned 0 there for every callee (`fncall2(&fncall1, &add1, 41)` gave 0, 42
 everywhere else). Pinned by `tests/tcyr/codegen/cx_backend_parity.tcyr`.
+⚠ **Before 6.7.6 the x86_64 SysV `fncall8` body (Linux, macOS, agnos) passed arguments 7
+and 8 in C's order**, while a cyrius callee reads its LAST argument at `[rsp]`: an
+address-taken `&fncall8` handed a cyrius callee 7 and 8 swapped (`12345687` for `1..8`;
+a direct `fncall8(..)` was right, the compiler marshals it). It now passes them in
+cyrius's order, as a direct call does; an 8-argument C function on x86_64 therefore needs a
+shim, as one with 7+ arguments on aarch64 always has (`docs/ffi/fncall-abi.md`). Pinned by
+`tests/tcyr/crossos/fncall_stack_args.tcyr`.
 
 ## Closures
 
