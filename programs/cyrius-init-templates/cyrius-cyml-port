@@ -11,4 +11,7 @@ entry = "src/main.cyr"
 output = "build/{PROJ}"
 
 [deps]
-stdlib = ["string", "fmt", "alloc", "vec", "str", "syscalls", "io", "args", "assert"]
+stdlib = ["string", "fmt", "alloc", "vec", "str", "syscalls", "io", "args"]
+
+[test]
+stdlib = ["assert"]

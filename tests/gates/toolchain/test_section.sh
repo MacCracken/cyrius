@@ -48,6 +48,9 @@
 #   N1-N3  run / test / bench / fuzz take --no-deps (the [deps] prepend dropped) and --no-lock (no
 #          cyrius.lock written), as build does
 #   N4     `cyrius test --help` lists --no-deps, --no-lock, --timeout and --locked
+#   I1     `cyrius init --bin` / `--lib` (the tree's templates): assert / bench in [test] stdlib, not
+#          [deps]; build, test, bench and fuzz all green
+#   I2     the --bin template declares [test] files, not [build] test
 #
 # MUTATION LEDGER (6.7.6) — each mutant built in a SCRATCH copy of the tree (cbt/ + lib/ + src/ +
 # build/cycc + VERSION + this gate), the gate run against it; the unmutated copy PASSES, and each
@@ -79,6 +82,8 @@
 #   M24 manifest.cyr: _tc_for never sets the unit's CYRIUS_TEST_FILE / _DIR            R1 R2
 #   M25 cli_args.cyr: test does not declare --no-deps / --no-lock                      N1 N2 N4
 #   M26 cli_args.cyr: run does not declare --no-deps                                   N3
+#   M27 cyrius-cyml-bin: assert / bench back in [deps] stdlib, [build] test             I1 I2
+#   M28 cyrius-cyml-lib: the [test] stdlib dropped (assert / bench nowhere)             I1
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
 G=test_section
@@ -480,5 +485,27 @@ cy n test --help
 if grep -q -- '--no-deps' "$W/out" && grep -q -- '--no-lock' "$W/out" && grep -q -- '--timeout' "$W/out" && grep -q -- '--locked' "$W/out"; then
     echo "  ok N4: cyrius test --help lists --no-deps, --no-lock, --timeout and --locked"
 else fail "N4"; show; fi
+
+# ── `cyrius init`: the templates keep assert / bench out of production ─────────────────────
+mkdir -p "$W/home/programs"
+cp -R programs/cyrius-init-templates "$W/home/programs/" && cp VERSION "$W/home/VERSION" \
+    && "$CC" < programs/cyrius-init.cyr > "$W/home/bin/cyrius-init" 2> /dev/null && chmod +x "$W/home/bin/cyrius-init" \
+    || { fail "I0: cannot stage cyrius-init and its templates"; }
+mkdir -p "$W/init"
+for kind in bin lib; do
+    RC=0; ( cd "$W/init" && HOME="$W/h" CYRIUS_HOME="$W/home" CYRIUS_RESOLVED=1 "$W/cyrius" init "i$kind" --$kind ) > "$W/out" 2> "$W/err" < /dev/null || RC=$?
+    IP="$W/init/i$kind"; x=$FAIL
+    [ "$RC" = 0 ] && [ -f "$IP/cyrius.cyml" ] || fail "I1 $kind: init rc $RC"
+    sed -n '/^\[deps\]/,/^\[/p' "$IP/cyrius.cyml" | grep -q '"assert"\|"bench"' && fail "I1 $kind: [deps] stdlib still names assert / bench"
+    grep -qx 'stdlib = \["assert", "bench"\]' "$IP/cyrius.cyml" || fail "I1 $kind: no [test] stdlib = [\"assert\", \"bench\"]"
+    for v in build test bench fuzz; do
+        RC=0; ( cd "$IP" && HOME="$W/h" CYRIUS_HOME="$W/home" CYRIUS_RESOLVED=1 CYRIUS_NO_WARN_PIN_DRIFT=1 "$W/cyrius" $v ) > "$W/out" 2> "$W/err" < /dev/null || RC=$?
+        [ "$RC" = 0 ] || { fail "I1 $kind: cyrius $v rc $RC"; show; }
+        [ "$v" = build ] || grep -q 'passed, 0 failed' "$W/out" || fail "I1 $kind: cyrius $v reported no pass"
+    done
+    [ "$FAIL" = "$x" ] && echo "  ok I1 $kind: cyrius init --$kind — assert / bench in [test] stdlib, not [deps]; build, test, bench and fuzz all green"
+done
+grep -qx 'files = \["src/test.cyr"\]' "$W/init/ibin/cyrius.cyml" && ! grep -q '^test = ' "$W/init/ibin/cyrius.cyml" \
+    && echo "  ok I2: the --bin template declares [test] files, not [build] test" || fail "I2: the --bin template's test entry"
 [ "$FAIL" = 0 ] || { echo "FAIL: $G ($FAIL row(s))"; exit 1; }
 echo "PASS: $G"
