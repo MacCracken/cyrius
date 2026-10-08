@@ -3212,6 +3212,7 @@ fn _gv_clear(S, vi): i64 {
     if (GVVEC(S, vi) != 0) { SVVEC(S, vi, 0); }
     if (_gv_ptr_sid(S, vi) != 0) { S64(_gv_psid + vi * 8, 0); }
     if (GVBOOL(S, vi) != 0) { SVBOOL(S, vi, 0); }   # 6.7.3
+    if (GVINTD(S, vi) != 0) { SVINTD(S, vi, 0); }   # 6.7.6
     return 0;
 }
 
@@ -3980,7 +3981,7 @@ fn PARSE_GVAR_REG(S): i64 {
     # destructure form stamps per name — each carries its own _GVAR_VIS (v6.6.4).
     var gvi = _gv_fold(S, vcnt, sti);   # 6.6.6: a redeclaration reuses the global's slot
     _GVAR_VIS(S, gvi, sti);
-    SVBOOL(S, gvi, ann_bool);   # 6.7.3 (B2): like the float flag, the last declaration's
+    _gv_last_marks(S, gvi, ann_bool, ann_scalar);   # 6.7.3 (B2): like the float flag, the last declaration's; 6.7.6: + the integer mark
     SGFI(S, gvi, _gv_ufv(S, sti, psc + ann_sid + ann_scalar + ann_float));   # 6.6.10
     _gv_float_copy(S, gvi, sti, psc + ann_sid + ann_scalar + ann_float);     # 6.6.11
     _gv_diag_sid(S, gvi, sti, psc + ann_sid + ann_scalar + ann_float + is_struct);   # 6.6.13 I11
@@ -5930,7 +5931,7 @@ fn PARSE_VAR(S): i64 {
             _sl_marks(S, li, scalar_signed, scalar_type, slice_elt_w, pscale);
             SFLC(S, li + 1);
             SLFI(S, li, ufv);   # 6.6.10: set on EVERY declaration, after SFLC cleared it (see _UFV_L)
-            SLBOOL(S, li, lbool);   # 6.7.3: last — the high half is rewritten above
+            _sl_last_marks(S, li, lbool, scalar_type);   # 6.7.3: last — the high half is rewritten above; 6.7.6: + bit 59
         }
     } else {
         _sc_global_receive(S, pscale, scv_start);   # 6.6.6: no frame at top level — refused by name
@@ -5973,7 +5974,7 @@ fn PARSE_VAR(S): i64 {
         }
         SLVAR(S, vcnt);
         SGFI(S, vcnt, ufv);   # 6.6.10: see _UFV_G
-        SVBOOL(S, vcnt, lbool);   # 6.7.3 (B2)
+        _gv_last_marks(S, vcnt, lbool, scalar_type);   # 6.7.3 (B2); 6.7.6: + the integer mark
         # 6.6.13 I11: an untyped `var g = f(..);` here records f for the Str -> cstring diagnostic,
         # as PARSE_GVAR_REG does for a global above the first statement (_gv_diag_sid).
         var gdc = 0;

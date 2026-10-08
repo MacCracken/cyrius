@@ -8,6 +8,13 @@
 #   I  CYRIUS_IR=3 keeps the x86 f32 conversions (`f32_from`, `f32_to`, and the initializer's): their
 #      raw bytes were not IR-recorded, so the opt-in pass forwarded rax across them (a prerequisite
 #      of F under IR=3; pre-existing since the builtins landed).
+#   P  a top-level `var v = pair_fn();` is REFUSED by name, with the fn-body rule's wording (v6.5.67):
+#      it kept the tag and dropped the payload, silently — in the declaration zone (the replay's
+#      `_gvi_expr`) and after the first statement (PARSE_VAR) alike; the destructure still binds.
+#   R  a name DECLARED an integer (a local, a parameter — #inline too —, a closure capture, a global)
+#      as the whole first argument routes to the base's `_int` overload: `println(n)` with `n: i64`
+#      ran println's cstring body over 42 (rc 139). The runtime half is
+#      tests/tcyr/crossos/int_name_routes_int_overload.tcyr (A rows).
 #   A  ANTI-VACUOUS: each crossos tcyr on x86_64 (default, CYRIUS_IR=3, CYRIUS_DCE=1) and with
 #      compilers built from this tree on aarch64 (qemu), cx (cxvm) and PE (wine, a private prefix),
 #      with its full assertion count.
@@ -124,7 +131,8 @@ tcyr_all() {   # <tag> <tcyr path> <assertion floor>
     else echo "  SKIP $tg PE — wine not installed"; skips=$((skips + 1)); fi
 }
 tcyr_all AF tests/tcyr/crossos/f32_scalar_init_rounds.tcyr 30
+tcyr_all AR tests/tcyr/crossos/int_name_routes_int_overload.tcyr 20
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — f32 initializers round (F); a top-level pair bind refused (P); IR=3 keeps the f32 conversions (I); every tcyr on x86_64 / IR / DCE / aarch64 / cx / PE (A)"
+echo "PASS: $G — f32 initializers round (F); a top-level pair bind refused (P); an integer name routes to _int (R); IR=3 keeps the f32 conversions (I); every tcyr on x86_64 / IR / DCE / aarch64 / cx / PE (A)"

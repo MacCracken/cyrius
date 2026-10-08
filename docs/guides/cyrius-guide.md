@@ -4188,6 +4188,13 @@ print_num(n)           # Print decimal to stdout
 println(s)             # Print string + newline
 ```
 
+`println(x)` routes by its argument: a `Str` to `println_str`, a NUMBER to `println_int`. A number
+is a call declared to return `: i64`, or (6.7.6) a NAME declared an integer — a local, parameter,
+closure capture or global annotated `i8`..`i64` / `u8`..`u64` — as the whole argument
+(`var n: i64 = 42; println(n);` prints 42; until 6.7.6 it ran the cstring body over 42 and crashed).
+An untyped name is passed as a cstring (it may hold one); write `println_int(x)` or annotate it.
+Any base with a `: cstring` parameter 0, an `: i64` return and a `<base>_int` sibling routes the same way.
+
 ## Standard Libraries
 
 ```
