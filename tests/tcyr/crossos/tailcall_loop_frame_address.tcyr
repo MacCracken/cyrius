@@ -39,6 +39,10 @@
 #                                                      (in `_loop_body`), `d_step` RED (wrong value)
 #   the closure's `_tcp_resolve` deleted            -> compile error "internal: an in-loop tail call
 #                                                      was never resolved" (`_tcp_drop`)
+# (6.7.5, `loop` / `do`, each in a scratch tree)
+#   `_tcp_loop_end` stamped before a do's condition -> `d_cond` RED (904, the freed frame; kept)
+#   `_tcp_loop_end` dropped after loop / do         -> the `loop` / `do` kept rows RED (deeper) and
+#                                                      `after_do` overflows the stack (139)
 #
 # ⚠ CROSS-HOST because the selector, the tail-call epilogue and the stub's call are per backend
 # (x86 / PE / Mach-O, aarch64), and a frame address read after a `jmp` gives a different wrong
@@ -157,6 +161,23 @@ fn d_ptr(k) {   # an address-passed `*P3` callee: the same rule
     while (i < 2) { if (i == 1) { return dP(x, k); } x = &s; i = i + 1; }
     return 0;
 }
+# 6.7.5 (B5): `loop` and `do … while` are loops like the rest. A do's CONDITION is parsed after its
+# body, so the verdict comes after it: an address taken there must still divert the body's call.
+fn put(pp, v) { store64(pp, v); return 1; }
+fn d_loop(k) {
+    var s = P3 { 1, 2, 3 }; var x = 0; var i = 0;
+    loop { if (i == 1) { return dU(x, k); } x = &s; i = i + 1; }
+}
+fn d_do(k) {
+    var s = P3 { 1, 2, 3 }; var x = 0; var i = 0;
+    do { if (i == 1) { return dU(x, k); } x = &s; i = i + 1; } while (i < 2);
+    return 0;
+}
+fn d_cond(k) {   # the address is taken in the do's CONDITION
+    var s = P3 { 1, 2, 3 }; var x = 0; var i = 0;
+    do { if (i == 1) { return dU(x, k); } i = i + 1; } while (put(&x, &s) == 1);
+    return 0;
+}
 
 # --- kept: no frame address in the loop ------------------------------------------------------
 fn k_clean(q, k) {
@@ -203,6 +224,18 @@ fn k_nest(q, k) {   # the inner loop's end is not the verdict; the outer one's i
         i = i + 1;
     }
     var x = idp(s);
+    return load64(x);
+}
+fn k_loop(q, k) {
+    var s = P3 { 1, 2, 3 }; var i = 0;
+    loop { if (i == 1) { return dU(q, k); } if (i > 5) { break; } i = i + 1; }
+    var x = &s;
+    return load64(x);
+}
+fn k_do(q, k) {
+    var s = P3 { 1, 2, 3 }; var i = 0;
+    do { if (i == 1) { return dU(q, k); } i = i + 1; } while (i < 2);
+    var x = &s;
     return load64(x);
 }
 # Two loops, each decided on its own: the first takes no address (kept), the second takes one
@@ -306,6 +339,21 @@ fn after_for(n, acc) {
     var x = &s;
     return acc + load64(x + 16) - 3;
 }
+fn spin_loop(n, acc) {   # 6.7.5: `loop { .. return spin_loop(..); }`
+    loop {
+        if (n == 0) { return acc; }
+        return spin_loop(n - 1, acc + 1);
+    }
+}
+fn after_do(n, acc) {
+    var s = P3 { 1, 2, 3 };
+    do {
+        if (n == 0) { break; }
+        return after_do(n - 1, acc + 1);
+    } while (n > 0);
+    var x = &s;
+    return acc + load64(x + 8) - 2;
+}
 
 fn check_loop_tailcalls(): i64 {
     # A heap P3, so the kept rows' argument is no address in any frame (and a bare inline struct
@@ -361,6 +409,15 @@ fn check_loop_tailcalls(): i64 {
     r = d_ptr(1);
     assert_eq(r, 7, "a `*P3` callee, `x = &s` after the return: value");
     assert_eq(_deeper(_dmark, baseP), 1, "a `*P3` callee, `x = &s` after the return: diverted");
+    r = d_loop(1);
+    assert_eq(r, 7, "a `loop` (6.7.5): value");
+    assert_eq(_deeper(_dmark, baseU), 1, "a `loop` (6.7.5): diverted");
+    r = d_do(1);
+    assert_eq(r, 7, "a `do … while` (6.7.5): value");
+    assert_eq(_deeper(_dmark, baseU), 1, "a `do … while` (6.7.5): diverted");
+    r = d_cond(1);
+    assert_eq(r, 7, "`&s` taken in a do's CONDITION, after the body (6.7.5): value");
+    assert_eq(_deeper(_dmark, baseU), 1, "`&s` taken in a do's CONDITION, after the body (6.7.5): diverted");
 
     test_group("kept: no frame address in the loop");
     r = k_clean(q, 1);
@@ -386,6 +443,12 @@ fn check_loop_tailcalls(): i64 {
     r = k_nest(q, 1);
     assert_eq(r, 13, "the return in an inner loop: value");
     assert_eq(_same(_dmark, baseU), 1, "the return in an inner loop: kept");
+    r = k_loop(q, 1);
+    assert_eq(r, 13, "a `loop` (6.7.5): value");
+    assert_eq(_same(_dmark, baseU), 1, "a `loop` (6.7.5): kept");
+    r = k_do(q, 1);
+    assert_eq(r, 13, "a `do … while` (6.7.5): value");
+    assert_eq(_same(_dmark, baseU), 1, "a `do … while` (6.7.5): kept");
     r = k_two(q, 1, 0);
     assert_eq(r, 13, "the first of two loops, the second taking an address: value");
     assert_eq(_same(_dmark, baseU), 1, "the first of two loops, the second taking an address: kept");
@@ -417,6 +480,8 @@ fn check_loop_tailcalls(): i64 {
     assert_eq(st_a(1000000, 0), 1500000, "a `while (1)` state machine, two fns");
     assert_eq(after(1000000, 0), 1000000, "a `while`, the address taken after it");
     assert_eq(after_for(1000000, 0), 1000000, "a C-style `for`, the address taken after it");
+    assert_eq(spin_loop(1000000, 0), 1000000, "an in-`loop` self tail call (6.7.5)");
+    assert_eq(after_do(1000000, 0), 1000000, "a `do … while`, the address taken after it (6.7.5)");
     return 0;
 }
 alloc_init();

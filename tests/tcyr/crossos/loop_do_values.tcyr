@@ -1,0 +1,260 @@
+# loop_do_values.tcyr — 6.7.5 (B5): `loop { … }` and `do { … } while (c);`, at run time on every
+# backend.
+#
+# `loop` is `while (1)` written plainly — no condition is emitted; `break` (no value) leaves it.
+# `do` runs its body once before the first test, and its `continue` goes to the CONDITION, not the
+# top. The do body is its own scope: the condition does not see a `var` declared in it. `loop` is
+# CONTEXTUAL — the statement only as `loop {` at the start of a statement; everywhere else it is an
+# identifier (a `var loop` flag, a fn, a field, a struct named `loop` all keep compiling). `do` is
+# reserved. The refusals, the codegen shapes and the per-backend legs are
+# tests/gates/frontend/loop_do_checked.sh; the in-loop tail-call verdicts are
+# tests/tcyr/crossos/tailcall_loop_frame_address.tcyr.
+#
+# ⚠ CROSS-HOST: each form's top, back-edge, break chain and forward `continue` are emitted per
+# backend (x86 / PE / Mach-O, aarch64, cx).
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+include "lib/assert.cyr"
+
+var TL_N = 0;
+var TL_D = 0;
+
+# ── contextual: `loop` stays an identifier everywhere but `loop {` at a statement start ─────────
+struct loop { a; b; }
+struct HasLoop { loop; n; }
+fn loopfn(x): i64 { return x + 1; }
+fn loop(x): i64 { return x * 3; }
+
+var calls = 0;
+fn bump(): i64 { calls = calls + 1; return 1; }
+fn f7(a, b, c, d, e, g, h): i64 { return a + b + c + d + e + g + h; }
+fn isodd(n): bool { loop { if (n % 2 == 1) { return true; } return false; } }
+fn first_over(lim): i64 {
+    var i = 0;
+    loop {
+        i = i + 1;
+        if (i * i > lim) { return i; }
+    }
+}
+
+fn loops(): i64 {
+    test_group("loop");
+    var i = 0;
+    loop { i = i + 1; if (i == 5) { break; } }
+    assert_eq(i, 5, "L1: break leaves the loop");
+    var s = 0;
+    i = 0;
+    loop {
+        i = i + 1;
+        if (i > 10) { break; }
+        if (i % 2 == 0) { continue; }
+        s = s + i;
+    }
+    assert_eq(s, 25, "L2: continue goes to the top (the odd numbers to 10)");
+    var outer = 0;
+    var inner = 0;
+    loop {
+        outer = outer + 1;
+        var j = 0;
+        loop { j = j + 1; inner = inner + 1; if (j == 3) { break; } }
+        if (outer == 4) { break; }
+    }
+    assert_eq(outer * 100 + inner, 412, "L3: a nested loop's break leaves only the inner one");
+    assert_eq(first_over(50), 8, "L4: return from inside a loop (a fn ending in a loop)");
+    var b1: bool = isodd(7);
+    var b2: bool = isodd(4);
+    assert_eq(b1 * 10 + b2, 10, "L5: a bool fn ending in a loop, returning from inside");
+    return 0;
+}
+
+fn dos(): i64 {
+    test_group("do ... while");
+    var n = 0;
+    do { n = n + 1; } while (0 == 1);
+    assert_eq(n, 1, "D1: a false condition runs the body once");
+    var i = 0;
+    do { i += 1; if (i < 5) { continue; } } while (i < 3);
+    assert_eq(i, 3, "D2: continue goes to the CONDITION (5 if it skipped it)");
+    calls = 0;
+    n = 0;
+    do { n = n + 1; if (n == 2) { break; } } while (bump() == 1);
+    assert_eq(n * 10 + calls, 21, "D3: break skips the condition (one test, after the first pass)");
+    n = 0;
+    var m = 0;
+    do { n = n + 1; m = m + 2; } while (n < 3 && m < 100);
+    assert_eq(n, 3, "D4: an && condition");
+    n = 0;
+    do { n = n + 1; } while (n < 2 || n == 4);
+    assert_eq(n, 2, "D5: an || condition");
+    var x: f64 = 0.0;
+    n = 0;
+    do { x = x + 0.5; n = n + 1; } while (x < 2.0);
+    assert_eq(n, 4, "D6: an f64 compare");
+    n = 0;
+    do { n = n + 1; } while (loopfn(n) < 6);
+    assert_eq(n, 5, "D7: a call in the condition");
+    var k = 1;
+    n = 0;
+    do { n = n + 1; } while (if (k == 1) { n < 3 } else { n < 7 });
+    assert_eq(n, 3, "D8: an if-expression as the condition");
+    return 0;
+}
+
+enum Col { RED; GREEN; BLUE; }
+fn nesting(): i64 {
+    test_group("nesting");
+    # a loop's continue goes to ITS top, not the enclosing for's step (the 6.6.3 class)
+    var s = 0;
+    for (var a = 0; a < 3; a = a + 1) {
+        var j = 0;
+        loop { j = j + 1; if (j < 3) { continue; } break; }
+        s = s + j;
+    }
+    assert_eq(s, 9, "N1: continue in a loop inside a for");
+    var t = 0;
+    var r = 0;
+    loop {
+        r = r + 1;
+        for (var b = 0; b < 4; b = b + 1) { if (b == 2) { continue; } t = t + 1; }
+        if (r == 2) { break; }
+    }
+    assert_eq(t, 6, "N2: a for (with its own continue) inside a loop");
+    var w = 0;
+    var d = 0;
+    do {
+        d = d + 1;
+        var q = 0;
+        while (q < 3) { q = q + 1; if (q == 2) { continue; } w = w + 1; }
+    } while (d < 2);
+    assert_eq(w, 4, "N3: a while (with its own continue) inside a do");
+    var hits = 0;
+    var i = 0;
+    loop {
+        i = i + 1;
+        if (i > 6) { break; }
+        switch (i % 3) {
+            case 0: { continue; }
+            case 1: { hits = hits + 10; break; }
+            default: { hits = hits + 1; }
+        }
+        hits = hits + 100;
+    }
+    assert_eq(hits, 422, "N4: a switch inside a loop: break leaves the switch, continue the loop");
+    hits = 0;
+    i = 0;
+    do {
+        i = i + 1;
+        switch (i) {
+            case 2: { continue; }
+            case 3: { break; }
+            default: { hits = hits + 1; }
+        }
+        hits = hits + 10;
+    } while (i < 4);
+    assert_eq(hits, 32, "N5: a switch inside a do: continue goes to the condition");
+    var c = Col.RED;
+    var seen = 0;
+    do {
+        match c {
+            RED => { seen = seen + 1; c = Col.GREEN; }
+            GREEN => { seen = seen + 10; c = Col.BLUE; break; }
+            BLUE => { seen = seen + 100; }
+        }
+    } while (c != Col.BLUE);
+    assert_eq(seen, 11, "N6: a match inside a do (break leaves the match)");
+    return 0;
+}
+
+# The reload-elimination tracker is killed at each loop top (a back-edge target): the first read
+# of the loop variable after `var i = 0;` must be reloaded on every pass (the v6.3.30 class).
+fn reload(): i64 {
+    test_group("back-edge reload");
+    var i = 0;
+    loop { i = i + 1; if (i == 5) { break; } }
+    assert_eq(i, 5, "R1: loop top after a store");
+    var j = 0;
+    do { j = j + 1; } while (j < 5);
+    assert_eq(j, 5, "R2: do top after a store");
+    var k = 0;
+    var n = 0;
+    do { k = k + 1; if (k < 4) { continue; } n = n + 1; } while (k < 6);
+    assert_eq(k * 10 + n, 63, "R3: the do condition reached by continue and by fall-through");
+    return 0;
+}
+
+var dcount = 0;
+fn with_defer(n): i64 {
+    defer { dcount = dcount + 1; }
+    var i = 0;
+    loop { i = i + 1; if (i == n) { return i; } }
+}
+fn gcount<T>(v: T, n): i64 {
+    var i = 0;
+    loop { i = i + 1; if (i == n) { break; } }
+    var j = 0;
+    do { j = j + 1; } while (j < n);
+    return i * 10 + j;
+}
+fn places(): i64 {
+    test_group("places");
+    assert_eq(TL_N * 10 + TL_D, 36, "P1: a top-level loop and do");
+    var f = |x| { var i = 0; loop { i = i + x; if (i > 5) { break; } } return i; };
+    assert_eq(fncall1(f, 2), 6, "P2: a loop inside a closure");
+    var g = |y| { var j = 0; do { j = j + y; } while (j < 7); return j; };
+    assert_eq(fncall1(g, 3), 9, "P3: a do inside a closure");
+    assert_eq(gcount<i64>(1, 4), 44, "P4: a loop and a do in a generic instance");
+    var acc = 0;
+    var i = 0;
+    loop {
+        i = i + 1;
+        acc = acc + f7(1, 2, 3, 4, 5, 6, i);
+        if (i == 2) { break; }
+    }
+    assert_eq(acc, 45, "P5: a 7-argument call inside a loop body");
+    dcount = 0;
+    assert_eq(with_defer(4) * 10 + dcount, 41, "P6: return from a loop in a fn with a defer");
+    return 0;
+}
+
+fn contextual(): i64 {
+    test_group("contextual loop");
+    var p = loop { 3, 4 };
+    assert_eq(p.a * 10 + p.b, 34, "X1: struct loop's literal");
+    # kriya's shape: a `var loop` flag driving a while
+    var loop = 1;
+    var n = 0;
+    while (loop == 1) { n = n + 1; if (n == 3) { loop = 0; } }
+    assert_eq(n * 10 + loop, 30, "X2: var loop is a variable");
+    var h: HasLoop;
+    h.loop = 5;
+    h.n = 6;
+    assert_eq(h.loop * 10 + h.n, 56, "X3: a field named loop");
+    return 0;
+}
+fn contextual_fn(): i64 {
+    assert_eq(loop(4), 12, "X4: a fn named loop");
+    var k = loop(2) + loopfn(1);
+    assert_eq(k, 8, "X5: ... called in an expression");
+    return 0;
+}
+
+# ── top level: a `loop` and a `do` are entry code, like a top-level `while` (the fns below them
+# are still defined — relaxed ordering) ──────────────────────────────────────────────────────────
+loop { TL_N = TL_N + 1; if (TL_N == 3) { break; } }
+do { TL_D = TL_D + 2; } while (TL_D < 5);
+
+fn run(): i64 {
+    alloc_init();
+    loops();
+    dos();
+    nesting();
+    reload();
+    places();
+    contextual();
+    contextual_fn();
+    return 0;
+}
+var r0 = run();
+var rr = assert_summary();
+syscall(60, rr);

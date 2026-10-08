@@ -2173,6 +2173,25 @@ fn _TOK_IS_KERNEL(S): i64 {
     return 1;
 }
 
+# 6.7.5 (B5): 1 iff token `ti` is the CONTEXTUAL keyword `loop` — the bare ident "loop" followed
+# directly by `{`. `loop` is no token (the `kernel` precedent above): 215 `var loop` flags in six
+# ecosystem repos keep compiling, and `loop {` starts the loop statement only where a statement
+# starts (`_loop_stmt`, parse_ctrl.cyr) — never a valid identifier use there, since an identifier
+# statement takes `=`, `(`, `.`, `[` or an operator next. Every scanner that walks statement
+# tokens unparsed asks this too (the inline scan, the if-expression branch, the const fn
+# evaluator, the closure prescan, error recovery). CHANGELOG [6.7.5]
+fn _TOK_IS_LOOP(S, ti): i64 {
+    if (TOKTYP(S, ti) != 2) { return 0; }
+    if (TOKTYP(S, ti + 1) != 13) { return 0; }
+    var p = S + 0xEC00000 + TOKVAL(S, ti);
+    if (load8(p) != 108)     { return 0; }  # 'l'
+    if (load8(p + 1) != 111) { return 0; }  # 'o'
+    if (load8(p + 2) != 111) { return 0; }  # 'o'
+    if (load8(p + 3) != 112) { return 0; }  # 'p'
+    if (load8(p + 4) != 0)   { return 0; }  # NUL — full match, not "loop*"
+    return 1;
+}
+
 # Is this token type a reserved keyword (that a user might mistakenly
 # try to use as an identifier)? Used by ERR_EXPECT to print a clearer
 # diagnostic when a user writes e.g. `var match = 1;`.
@@ -2614,6 +2633,7 @@ fn _sync_skip(S): i64 {
             elif (t == 15) { go = 0; }                     # if
             elif (t == 16) { go = 0; }                     # while
             elif (t == 172) { go = 0; }                    # do (6.7.5)
+            elif (_TOK_IS_LOOP(S, GTI(S)) == 1) { go = 0; }   # `loop {` (6.7.5, contextual)
             elif (t == 55) { go = 0; }                     # for
             elif (t == 33) { go = 0; }                     # return
             elif (t == 57) { go = 0; }                     # switch

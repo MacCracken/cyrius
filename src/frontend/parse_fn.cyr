@@ -6278,7 +6278,7 @@ fn _ce_xarm(S, run): i64 {
     var bt = _ce_ti;
     var t = TOKTYP(S, _ce_ti);
     if (t == 14) { _ce_bad(S, "an if expression branch needs a value", 37); return 0; }
-    if (_ie_stmt_tok(t) == 1) { _ce_bad(S, "an if expression branch takes one expression, not a statement - an if statement runs statements", 95); return 0; }
+    if (_ie_stmt_at(S, _ce_ti) == 1) { _ce_bad(S, "an if expression branch takes one expression, not a statement - an if statement runs statements", 95); return 0; }
     if (run == 0) { _ce_skip = _ce_skip + 1; }
     var v = _ce_expr(S);
     if (run == 0) { _ce_skip = _ce_skip - 1; }
@@ -12467,6 +12467,9 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                 if (st == 15) { can_inline = 0; if (_inl_why == 0) { _inl_why = 4; } }
                 if (st == 16) { can_inline = 0; if (_inl_why == 0) { _inl_why = 4; } }
                 if (st == 55) { can_inline = 0; if (_inl_why == 0) { _inl_why = 4; } }
+                # 6.7.5 (B5): `do`, and the contextual `loop {` — no token, so the three tests above
+                # never see it, and a body holding a `loop` was the one loop form replayed.
+                if (st == 172 || _TOK_IS_LOOP(S, sci) == 1) { can_inline = 0; if (_inl_why == 0) { _inl_why = 4; } }
                 # 6.6.7 — a `defer` / `secret var` belongs to the fn that REGISTERS it, and the
                 # replay re-parses this body inside the CALLER, so the block would join the
                 # caller's defer table and run at the CALLER's return (measured: `g(5); seen =
