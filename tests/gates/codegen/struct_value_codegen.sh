@@ -1,0 +1,85 @@
+#!/bin/sh
+# tests/gates/codegen/struct_value_codegen.sh — 6.7.6 (Break 1, lane E)
+#
+# STRUCT VALUES AND STRUCT FIELDS AS OPERANDS — crashes and silent wrong values on valid code. The
+# runtime half is tests/tcyr/crossos/struct_value_codegen.tcyr, which this gate builds and runs on
+# x86_64 (default pipeline, CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu) and cx (cxvm),
+# compilers built from this tree (rows A); the release gate runs it on the four real hosts.
+#
+#   F  x86: `if (h.m)` / `while (h.m)` on an i8 / i16 / i32 field branched on the flags of the
+#      statement before it (EFIELD_LOAD_W's narrow load never cleared `_flags_reflect_rax`)
+#
+# MUTATION LEDGER (scratch copies of the tree, each rebuilt with the one change and the gate run
+# from that copy as CYCC=<mutant>; 2026-10-08):
+#   M-F x86 EFIELD_LOAD_W without `_flags_reflect_rax = 0`  -> RED F1 (exit 1) and A1-A4 (tcyr F1-F4
+#       F6 F8); A5 A6 green (aarch64 / cx never set the tracker)
+set -u
+ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
+CC=${CYCC:-"$ROOT/build/cycc"}
+G=struct_value_codegen
+[ -x "$CC" ] || { echo "FAIL: $G: no compiler at $CC"; exit 1; }
+T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: $G: mktemp -d failed"; exit 1; }
+trap 'rm -rf "$T"' EXIT
+cd "$ROOT"
+ulimit -c 0 2>/dev/null
+fails=0
+skips=0
+ok()  { echo "  ok   $1"; }
+bad() { echo "  FAIL $1"; fails=$((fails + 1)); }
+build() { rc=0; timeout 60 "$CC" < "$T/$1.cyr" > "$T/$1.bin" 2> "$T/$1.err" || rc=$?; }
+refused() {   # <name> <message fragment> <what> <source>
+    printf '%b' "$4" > "$T/$1.cyr"
+    build "$1"
+    n=$(grep -c '^error' "$T/$1.err")
+    if [ "$rc" -eq 0 ]; then bad "$3: BUILT (rc 0)"
+    elif [ "$rc" -eq 124 ]; then bad "$3: the compiler did not finish (timeout)"
+    elif ! grep -qF "$2" "$T/$1.err"; then bad "$3: refused, but not as expected: $(grep '^error' "$T/$1.err" | head -1)"
+    elif [ "$n" -ne 1 ]; then bad "$3: $n error lines (want 1): $(grep '^error' "$T/$1.err" | head -2 | tr '\n' '|')"
+    else ok "$3: refused once"; fi
+}
+exits() {   # <name> <want> <what> <source>
+    printf '%b' "$4" > "$T/$1.cyr"
+    build "$1"
+    if [ "$rc" -ne 0 ]; then bad "$3: rc $rc: $(grep '^error' "$T/$1.err" | head -1)"; return; fi
+    chmod +x "$T/$1.bin"; got=0; timeout 10 "$T/$1.bin" > /dev/null 2>&1 || got=$?
+    if [ "$got" -eq "$2" ]; then ok "$3: exit $got"; else bad "$3: exit $got, want $2"; fi
+}
+# tcyr <what> <compiler> <runner> [ENV=V]: build the values file, run it, require "0 failed".
+TC=tests/tcyr/crossos/struct_value_codegen.tcyr
+tcyr() {
+    n=$(printf '%s' "$1" | tr -c 'a-zA-Z0-9' '_')
+    rc=0
+    if [ -n "${4:-}" ]; then env "$4" "$2" < "$TC" > "$T/tc_$n" 2> "$T/tc_$n.err" || rc=$?
+    else "$2" < "$TC" > "$T/tc_$n" 2> "$T/tc_$n.err" || rc=$?; fi
+    if [ "$rc" -ne 0 ] || [ ! -s "$T/tc_$n" ]; then bad "$1: the values file did not build (rc $rc): $(grep '^error' "$T/tc_$n.err" | head -1)"; return; fi
+    chmod +x "$T/tc_$n"
+    got=0
+    if [ -n "$3" ]; then timeout 120 $3 "$T/tc_$n" > "$T/tc_$n.out" 2>&1 || got=$?
+    else timeout 60 "$T/tc_$n" > "$T/tc_$n.out" 2>&1 || got=$?; fi
+    if [ "$got" -eq 0 ] && grep -q ' 0 failed' "$T/tc_$n.out"; then ok "$1: $(grep ' 0 failed' "$T/tc_$n.out")"
+    else bad "$1: exit $got: $(grep -E 'FAIL|failed' "$T/tc_$n.out" | head -4 | tr '\n' '|')"; fi
+}
+E='\nsyscall(60, main());\n'
+
+exits f01 0 "F1: if (h.m) on a zero i8 field after x = x + 1 (the filed repro: 1 on x86)" "struct H { n; m: i8; k: i32; }\nfn main(): i64 { var h = H { 1, 0, 3 }; var x = 5; x = x + 1; if (h.m) { return 1; } return 0; }$E"
+
+tcyr "A1: the values file (x86_64)" "$CC" ""
+tcyr "A2: ... under CYRIUS_IR=1" "$CC" "" CYRIUS_IR=1
+tcyr "A3: ... under CYRIUS_IR=3" "$CC" "" CYRIUS_IR=3
+tcyr "A4: ... under CYRIUS_DCE=1" "$CC" "" CYRIUS_DCE=1
+if command -v qemu-aarch64 > /dev/null 2>&1; then
+    if "$CC" < src/main_aarch64.cyr > "$T/cc_a64" 2> "$T/cc_a64.err" && [ -s "$T/cc_a64" ]; then
+        chmod +x "$T/cc_a64"
+        tcyr "A5: aarch64 (qemu)" "$T/cc_a64" qemu-aarch64
+    else bad "A5: src/main_aarch64.cyr did not build"; fi
+else echo "  SKIP: aarch64 leg (qemu-aarch64 not installed)"; skips=$((skips + 1)); fi
+if "$CC" < src/main_cx.cyr > "$T/cc_cx" 2> "$T/cc_cx.err" && [ -s "$T/cc_cx" ] \
+   && "$CC" < programs/cxvm.cyr > "$T/cxvm" 2> "$T/cxvm.err" && [ -s "$T/cxvm" ]; then
+    chmod +x "$T/cc_cx" "$T/cxvm"
+    printf '#!/bin/sh\nexec "%s" < "$1"\n' "$T/cxvm" > "$T/cxrun"; chmod +x "$T/cxrun"
+    tcyr "A6: cx (cxvm)" "$T/cc_cx" "$T/cxrun"
+else bad "A6: src/main_cx.cyr or programs/cxvm.cyr did not build"; fi
+
+if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
+if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
+echo "PASS: $G — struct values and narrow fields as operands: values on x86_64 / IR / DCE / aarch64 / cx (A)"

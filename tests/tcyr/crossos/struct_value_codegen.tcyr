@@ -1,0 +1,64 @@
+# struct_value_codegen.tcyr — 6.7.6 (Break 1, lane E): struct values and struct fields as operands,
+# at run time on every backend. Each group is one repaired defect; the refusals, the shapes a target
+# lacks and the mutation ledger are tests/gates/codegen/struct_value_codegen.sh.
+#
+#   F  `if (h.m)` / `while (h.m)` on an i8 / i16 / i32 field after an arithmetic statement: x86
+#      skipped the `test` and branched on the statement's flags (the narrow field load never cleared
+#      the flags tracker). Each row's field disagrees with the flags the statement before it left.
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/assert.cyr"
+
+struct H { n; m: i8; k: i32; }
+struct H2 { n; m: i16; }
+
+var GH = H { 1, 0, 0 };
+
+fn bits(v) { return v; }
+
+# F — each row in its own fn, so the flags state it tests is the one its own statement left.
+fn f_i8(): i64 { var h = H { 1, 0, 3 }; var x = 5; x = x + 1; if (h.m) { return 1; } return 0; }
+fn f_i16(): i64 { var h = H2 { 1, 0 }; var a: i64[2]; a[0] = 3; a[0] -= 1; if (h.m) { return 1; } return 0; }
+fn f_compound(): i64 { var h = H { 1, 2, 3 }; h.m -= 2; if (h.m) { return 1; } return 0; }
+fn f_while(): i64 {
+    var h = H { 1, 0, 0 };
+    var x = 4;
+    var c = 0;
+    x = x + 3;
+    while (h.k) { c = c + 1; if (c > 3) { break; } }
+    return c;
+}
+fn f_ptr(p: *H): i64 { var x = 1; x = x + 1; if (p.m) { return 1; } return 0; }
+fn f_global(): i64 { var x = 2; x = x * 3 + 1; if (GH.k) { return 1; } return 0; }
+fn f_zero_flags(): i64 { var h = H { 1, 0 - 1, 0 }; var y = bits(3); y = y - 3; if (h.m) { return 1; } return 0; }
+fn f_zero_i32(): i64 {
+    var h = H { 1, 0, 7 };
+    var y = bits(3);
+    var c = 0;
+    y = y - 3;
+    while (h.k) { c = c + 1; h.k = h.k - 1; if (c > 20) { break; } }
+    return c;
+}
+
+fn flags(): i64 {
+    assert_eq(f_i8(), 0, "F1: if (h.m) on a zero i8 field after x = x + 1");
+    assert_eq(f_i16(), 0, "F2: if (h.m) on a zero i16 field after a[0] -= 1");
+    assert_eq(f_compound(), 0, "F3: h.m -= 2 then if (h.m)");
+    assert_eq(f_while(), 0, "F4: while (h.k) on a zero i32 field runs no iteration");
+    var h = H { 1, 0, 0 };
+    assert_eq(f_ptr(&h), 0, "F5: if (p.m) through a *H parameter");
+    assert_eq(f_global(), 0, "F6: if (GH.k) on a global's i32 field");
+    assert_eq(f_zero_flags(), 1, "F7: if (h.m) on a NONZERO i8 field after y = y - 3 left ZF set");
+    assert_eq(f_zero_i32(), 7, "F8: while (h.k) on a nonzero i32 field after y = y - 3 counts it down");
+    return 0;
+}
+
+fn rows(): i64 {
+    alloc_init();
+    flags();
+    return 0;
+}
+var r0 = rows();
+var rr = assert_summary();
+syscall(60, rr);
