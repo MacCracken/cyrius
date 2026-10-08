@@ -353,6 +353,12 @@ probes. The proposal takes the **still-real critical / high** items, the two pre
   **`OP=` on a SIMD vector, a typed-array variable or a slice variable is refused by name** (write the long form or
   index an element), as 6.7.5 refused it for structs — and so are **a whole-array `a = 8` on a typed-array variable**
   (it set `a[0]`) and **`OP=` on a bare `var b[N]`** (its first word).
+- **u128 comparisons compare all 128 bits** (`==`, `!=`, `<`, `<=`, `>`, `>=`; against a u128 or a zero-extended
+  integer) on every backend — they compared the low words only (user, 2026-10-08, third round). Applied without a new
+  question (lane D2): an integer operand of a u128 operator is zero-extended (the initializer rule); unary minus is
+  the decided `-`; `stack var b[N]` is a bare array like `var b[N]`. A plain u128 assignment (`b = c`, `b = 5`) copies
+  the whole value, as the initializer does (it kept the old high word — a bug). cybs passes stack arguments in
+  cycc's order (the last argument at `[rsp]`), so one convention holds and `fncall8` matches both.
 - **Every write into an f32 rounds to f32** — initializers, assignments, field stores, struct-literal fields and
   arguments to an `f32` parameter (they stored the f64 bit pattern silently).
 - **A struct-returning call or method result dispatches as a LEFT operand too** (`p.dup() + p` calls `P_add`; it did an
@@ -722,6 +728,17 @@ CHANGELOG [6.6.17] *Downstream* (no ecosystem sweep).
     file (6.7.5 lanes and review).
 
 - **Found by 6.7.6 (Break 1) and not fixed in it (2026-10-08; backlog — only the user promotes).**
+  - **Struct-operator results, found by lane E2 (repros `~/.cache/c6/b1f_E2/p/`):** an untyped `var r = mk3(4) - s;`
+    is typed `P3` from the call although `P3_sub` returns an integer (`r.x` dereferences it); after an integer `-` whose
+    right side is a struct, the result keeps the struct's type (`n - s + 10` dispatches `P3_add` and crashes,
+    `lo1.cyr`); `-s + t` ignores the minus (`neg1.cyr`); `return (a, b);` in a struct-returning fn goes through the
+    multi-value path and the caller reads garbage over 16 bytes (`x3.cyr`, `x4.cyr`); `return mk2(1) == p;` in a 9-16 B
+    struct fn passes the leading-call check and leaves the second register unwritten (closing it refuses code that
+    compiles today — the user's call); a write to a captured NAME inside a closure says "undefined variable".
+  - **u128 beyond `+` / `-` / comparisons, found by lane D2:** a `v: u128` parameter is an 8-byte slot holding the low
+    word (`&v + 8` reads a neighbour); a `: u128` return type and u128 struct fields are refused; a u128 captured by a
+    closure reads as its address (`c + 1` is address + 1). `*p = 1.5` through `p: *f32` is a word store (the documented
+    `*p` rule).
   - **The seed (`bootstrap/asm`) silently truncates its input at 131,072 bytes and has a 512-entry label table with no
     bounds check** (lane B): a 131,075-byte `cybs.cyr` assembled a cybs one byte short, exit 0; 520 labels overwrite
     the first entries. `cybs.cyr` is 111,489 B / 499 labels today (~19.5 KB and 13 labels of headroom); gate row S of
