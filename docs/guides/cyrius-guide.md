@@ -1177,12 +1177,19 @@ declaration in a fn or at top level (`var q: P3 = (z.k);`, `var G: P3 = (A);`), 
 Parentheses that are only PART of the source keep their meaning (`sz((a) + (b))` adds first).
 Before 6.7.6 every one of these took the struct's FIRST WORD: an address-passed argument and a
 declaration SIGSEGV'd, and a field or variable kept one word of the copy, silently.
+The same holds for a struct fn's **return value** (6.7.6): `return (j);`, `return (mk3(v));`,
+`return ((j));` and `return (a + b);` are `return j;`, `return mk3(v);` and `return a + b;`, in
+both return classes (a retptr struct over 16 bytes, a 9-16 byte struct in two registers) — they
+were refused (*return must be a bare local identifier ...*, *... got `(...)`*) — and so is
+`return (a) + b;`, a parenthesised left operand. A refused shape inside the parentheses is
+refused as it is without them.
 
 **A struct result over 8 bytes is a valid RIGHT operand** of an operator whose parameter takes it
 by address (a `*T` parameter, or a by-value struct over 8 bytes): `s - mk3(4)`, `s - s.dbl()`,
 `p + p.dup()` for a 16-byte `p` — the result lands in a frame temporary whose address is passed.
-At top level there is no frame, so `G + G.dup()` and `G + mk2(3)` are refused by name, as a
-`*T` operand of 8 bytes or less already was. Before 6.7.6 the operand's first word was passed as
+At top level there is no frame, so `G + G.dup()` and `G + mk2(3)` are refused by name (*... is
+passed by address (a struct over 8 bytes) ...*; *(a `*` parameter)* when the operator fn takes a
+`*T`), as a `*T` operand of 8 bytes or less already was. Before 6.7.6 the operand's first word was passed as
 the struct's address: SIGSEGV.
 
 ```cyrius

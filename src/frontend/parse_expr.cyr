@@ -5396,13 +5396,24 @@ fn _op_bare(S, b, e): i64 {
     if (TOKTYP(S, b + 2) != 11) { return 0; }
     return 1;
 }
+# 1 = operand `k` of operator fn `fi` is a `*S` parameter: a struct parameter its prologue does not
+# copy (a by-value one over 8 B is copied, `_pm_copies`; an untyped one is no struct parameter).
+fn _op_star_param(fi, k): i64 {
+    if (fi < 0) { return 0; }
+    if (_pm_struct(fi, k) == 0) { return 0; }
+    if (_pm_copies(fi, k) == 1) { return 0; }
+    return 1;
+}
 fn _refuse_toplevel_op_operand(S, fi, k): i64 {
     if (_panic == 1) { return 0 - 1; }
     syscall(SYS_WRITE, 2, "error:", 6);
     _err_head(S);
     if (k == 0) { PRSTR(": the left operand of '"); } else { PRSTR(": the right operand of '"); }
     PRSTR(S + 0xEC00000 + L64(_fnt_names + fi * 8));
-    PRSTR("' is passed by address (a `*` parameter), and a struct value that is not a variable needs a fn's frame to hold it — name it in a variable, or compute it inside a fn\n");
+    # 6.7.6: a by-value or untyped parameter receives a struct over 8 B by address too.
+    if (_op_star_param(fi, k) == 1) { PRSTR("' is passed by address (a `*` parameter)"); }
+    else { PRSTR("' is passed by address (a struct over 8 bytes)"); }
+    PRSTR(", and a struct value that is not a variable needs a fn's frame to hold it — name it in a variable, or compute it inside a fn\n");
     _had_error = 1;
     return 0 - 1;
 }

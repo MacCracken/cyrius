@@ -41,6 +41,13 @@
 #      (`var r = mk3(4) - s;`, `return mk(1) + a;`: expected ';', got '-'): it now takes only a call
 #      that ends the statement (`_call_ends_at`), and `_ret_expr_head` sends `f(..) OP` to the
 #      operator receive (rows L12-L15)
+#   R  (lane E2) parentheses around a struct fn's WHOLE return value: `return (j);`, `return
+#      (mk3(v));`, `return (a + b);` were refused ("return must be a bare local identifier ..." for
+#      the retptr class, "... got `(...)`" for rax:rdx); `_ret_peel` steps inside them for both
+#      classes (`_ret_struct_big` / `_ret_struct_pair`, out of PARSE_RETURN), `_ret_end` closes them,
+#      a passed-through pair call keeps its wrap (`_ret_unpeel`); `return (a) + b;` is an operator
+#      receive (`_ret_expr_head`). The top-level operand refusal says "(a struct over 8 bytes)" for
+#      a by-value or untyped operator parameter, "(a `*` parameter)" only for a `*S` one
 #
 # MUTATION LEDGER (scratch copies of the tree, each rebuilt with the one change and the gate run
 # from that copy as CYCC=<mutant>; 2026-10-08):
@@ -105,6 +112,14 @@
 #   M-D3 `_ret_expr_head` without its call-head arm           -> RED A1-A6 (tcyr L33 refused); L13
 #       green — a rax:rdx `+` result passes through the call-return path
 #   M-D4 `_refuse_toplevel_pair_init` without `_call_ends_at` -> RED L15 (2 error lines)
+#   M-R1 `_ret_peel` never peeling                           -> RED R1-R5, A1-A6 (no build)
+#   M-R2 `_ret_end` without `_pw_close`                       -> RED R1-R3 (expected ';'), A1-A6 (no build)
+#   M-R3 `_ret_struct_pair` without `_ret_unpeel`             -> RED R4 (2 error lines), A1-A5 (no build;
+#       cx has no pairs)
+#   M-R4 `_return_struct_call` ending at `;` inside a wrap    -> RED R2, A1-A6 (no build)
+#   M-R5 `_ret_expr_head` without its `(` arm                 -> RED A1-A6 (tcyr R5 refused)
+#   M-R6 `_op_star_param` never 1                             -> RED R7
+#   M-R7 `_op_star_param` always 1 (the old wording)          -> RED R6
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -216,6 +231,14 @@ exits l12 5 "L12: var r = mk3(4) - s; in a fn (the filed repro: expected ';', go
 exits l13 5 "L13: return mk2(1) + a; from a fn returning Pt (expected ';')" "struct Pt { x; y; }\nfn Pt_add(a: Pt, b: Pt): Pt { var t: Pt = Pt { a.x + b.x, a.y + b.y }; return t; }\nfn mk2(v): Pt { var t: Pt = Pt { v, v }; return t; }\nfn rp(a: Pt): Pt { return mk2(1) + a; }\nfn main(): i64 { var p: Pt = Pt { 1, 2 }; var q: Pt = rp(p); return q.x + q.y; }$E"
 refused l14 "struct-return fn: return must be a bare local identifier" "L14: return mk3(1) + a; whose + returns an integer" "${P3S}fn P3_add(a: P3, b: P3): i64 { return a.x + b.x; }\nfn rp(a: P3): P3 { return mk3(1) + a; }\nfn main(): i64 { var p: P3 = P3 { 1, 2, 3 }; var q: P3 = rp(p); return q.x; }$E"
 refused l15 "the left operand of 'Pt_add' is passed by address" "L15: var G: Pt = mk2(3) + H; at top level, refused once" "struct Pt { x; y; }\nfn Pt_add(a: Pt, b: Pt): Pt { var t: Pt = Pt { a.x + b.x, a.y + b.y }; return t; }\nfn mk2(v): Pt { var t: Pt = Pt { v, v }; return t; }\nvar H: Pt = Pt { 1, 2 };\nvar G: Pt = mk2(3) + H;\nsyscall(60, G.x);\n"
+# R (6.7.6 E2) — parentheses around a struct fn's whole return value; the top-level operand wording.
+exits r01 6 "R1: return (j); from a fn returning a 24-byte P3 (the filed repro: refused)" "struct P3 { x; y; z; }\nfn cp(j: P3): P3 { return (j); }\nfn main(): i64 { var j = P3 { 1, 2, 3 }; var q: P3 = cp(j); return q.x + q.y + q.z; }$E"
+exits r02 6 "R2: return (mk3(v)); (the filed repro: refused)" "struct P3 { x; y; z; }\nfn mk3(v): P3 { var t: P3 = P3 { v, v, v }; return t; }\nfn cp(v): P3 { return (mk3(v)); }\nfn main(): i64 { var q: P3 = cp(2); return q.x + q.y + q.z; }$E"
+exits r03 3 "R3: return (j); from a fn returning a 16-byte Pt (refused: got (...))" "struct Pt { x; y; }\nfn cp(j: Pt): Pt { return (j); }\nfn main(): i64 { var j = Pt { 1, 2 }; var q: Pt = cp(j); return q.x + q.y; }$E"
+refused r04 'got `5`' "R4: return (5); from a Pt fn, refused once naming 5" "struct Pt { x; y; }\nfn f(): Pt { return (5); }\nfn main(): i64 { var q: Pt = f(); return q.x; }$E"
+refused r05 'struct-return: identifier type != fn ret_sid' "R5: return (q); with q: Q from a P3 fn, refused as return q; is" "struct Q { x; y; z; }\nstruct P3 { x; y; z; }\nfn f(q: Q): P3 { return (q); }\nfn main(): i64 { var a: Q = Q { 1, 2, 3 }; var r: P3 = f(a); return r.x; }$E"
+refused r06 "the left operand of 'Pt_add' is passed by address (a struct over 8 bytes)" "R6: a by-value 16-byte operand at top level is not called a * parameter" "${LPT}var G: Pt = Pt { 1, 2 };\nvar r = G.dup() + G;\nsyscall(60, r);\n"
+refused r07 'the left operand of '"'"'LW_sub'"'"' is passed by address (a `*` parameter)' "R7: a *LW operand at top level keeps its wording" "${LW}var G: LW = LW { 3 };\nvar r = mklw(5) - G;\nsyscall(60, r);\n"
 
 tcyr "A1: the values file (x86_64)" "$CC" ""
 tcyr "A2: ... under CYRIUS_IR=1" "$CC" "" CYRIUS_IR=1

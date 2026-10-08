@@ -27,6 +27,9 @@
 #      argument; the refusals (top level, a missing or mismatched operator fn) are the gate's L rows.
 #      L30+: such an expression as a declaration's initialiser or a struct fn's return value — the
 #      receive took the call alone (`var r = mk3(4) - s;`: expected ';', got '-').
+#   R  (6.7.6 follow-up, E2) parentheses around a struct fn's WHOLE return value are transparent:
+#      `return (j);`, `return (mk3(v));`, `return ((j));`, `return (a + b);` were refused ("return must
+#      be a bare local identifier ..." / "... got `(...)`"), and `return (a) + b;` with them.
 include "lib/syscalls.cyr"
 include "lib/string.cyr"
 include "lib/alloc.cyr"
@@ -399,6 +402,63 @@ fn left_pair_decls(): i64 {
 }
 #endif
 
+# R — a parenthesised return value in a struct-returning fn (6.7.6 E2).
+struct RW { v; }
+fn LV_sub(a: LV, b: LV): LV { var t: LV = LV { a.x - b.x, a.y - b.y, a.z - b.z }; return t; }
+fn rv1(j: LV): LV { return (j); }
+fn rv2(v): LV { return (mklv(v)); }
+fn rv3(j: LV): LV { return ((j)); }
+fn rv4(a: LV, b: LV): LV { return (a + b); }
+fn rv5(a: LV, b: LV): LV { return (a) + b; }
+fn rv6(a: LV): LV { return (mklv(1)) - a; }
+fn mkrw(v): RW { var t: RW; t.v = v; return t; }
+fn rw1(j: RW): RW { return (j); }
+fn rw2(v): RW { return (mkrw(v)); }
+fn rets(): i64 {
+    var a: LV = LV { 1, 2, 3 };
+    var b: LV = LV { 4, 5, 6 };
+    var r1 = rv1(a);
+    assert_eq(lvsum(&r1), 123, "R1: return (j); from a `: LV` fn (the filed repro: refused)");
+    var r2 = rv2(2);
+    assert_eq(lvsum(&r2), 234, "R2: return (mklv(v)); (the filed repro: refused)");
+    var r3 = rv3(a);
+    assert_eq(lvsum(&r3), 123, "R3: return ((j));");
+    var r4 = rv4(a, b);
+    assert_eq(lvsum(&r4), 579, "R4: return (a + b);");
+    var r5 = rv5(a, b);
+    assert_eq(lvsum(&r5), 579, "R5: return (a) + b;");
+    var r6 = rv6(a);
+    assert_eq(lvsum(&r6), 0, "R6: return (mklv(1)) - a;");
+    var w: RW = mkrw(7);
+    var w1: RW = rw1(w);
+    var w2: RW = rw2(8);
+    assert_eq(w1.v * 10 + w2.v, 78, "R7: return (j); / return (mkrw(v)); from a `: RW` (8 B) fn");
+    return 0;
+}
+#ifndef CYRIUS_TARGET_CX
+fn LP_mul(a: LP, b: LP): LP { var t: LP = LP { a.x * b.x, a.y * b.y }; return t; }
+fn rp1(j: LP): LP { return (j); }
+fn rp2(v): LP { return (mklp(v)); }
+fn rp3(a: LP, b: LP): LP { return (a * b); }
+fn rp4(a: LP, b: LP): LP { return (a) * b; }
+fn rp5(a: LP): LP { return ((mklp(2))) * a; }
+fn lpv(p: *LP): i64 { return p.x * 10 + p.y; }
+fn ret_pairs(): i64 {
+    var p: LP = LP { 2, 3 };
+    var r1 = rp1(p);
+    assert_eq(lpv(&r1), 23, "R10: return (j); from a `: LP` (rax:rdx) fn (the filed repro's class: got `(...)`)");
+    var r2 = rp2(4);
+    assert_eq(lpv(&r2), 44, "R11: return (mklp(v)); a pair passed through, wrap and all");
+    var r3 = rp3(p, p);
+    assert_eq(lpv(&r3), 49, "R12: return (a * b);");
+    var r4 = rp4(p, p);
+    assert_eq(lpv(&r4), 49, "R13: return (a) * b;");
+    var r5 = rp5(p);
+    assert_eq(lpv(&r5), 46, "R14: return ((mklp(2))) * a;");
+    return 0;
+}
+#endif
+
 # S — a `: Str` field into Str destinations: the handle, unchanged.
 struct HS { name: Str; k; }
 struct OS { n; s: Str; }
@@ -447,9 +507,11 @@ fn rows(): i64 {
     operands();
     lefts();
     left_decls();
+    rets();
 #ifndef CYRIUS_TARGET_CX
     left_pairs();
     left_pair_decls();
+    ret_pairs();
 #endif
     assert_eq(GLR, 11, "L15: mklw(5) + GLW at top level, an 8 B value");
     assert_eq(s3(&GQD) * 100 + s3(&GQF) * 10 + GQS.z, 1107, "Q27: top level: var G: P3 = (GP3), = ((GP3)), G = (GP3)");
