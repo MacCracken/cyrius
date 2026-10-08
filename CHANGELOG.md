@@ -6,6 +6,79 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [6.7.4] — 2026-10-08
 
+B3 — the if-expression (roadmap.md § Spec — B; the user's decisions of 2026-10-08: `if (c) { a } elif (d) { b }
+else { e }` wherever an expression is parsed, one expression per branch, `else` required, only the taken branch
+runs; every branch the same kind — an integer (pointers and bools included), an f64, an f32 or one struct type of
+8 bytes or less, which the result keeps — and a struct value over 8 bytes refused; anywhere an expression goes,
+const contexts included; every global array-list element a const context; strings their own kind in const
+contexts only).
+
+**Size:** cycc **1,751,432 B** (`.text` **1,561,832**), +25,656 B over 6.7.3's 1,725,776 — the runtime
+if-expression (parse_ctrl.cyr `_ie_*`), its evaluator half (`_ce_ifx` and the unknown-kind re-check), the
+expression-extent walker, the #derive value walk and the folder's if-arm; dead-code floor unchanged (52 fns /
+10,597 B; `_assert_skip_expr`, `_bx_gai_elem` and `_bx_gai_boolop` removed). `build/cycc-native-aarch64`
+**1,529,848 B**. `.tcyr` 523 → **524** (231 in `crossos/`); shell gates 421 → **422**.
+
+**Bench:** self_compile **1,114 ms** (bench-history). Same-box interleaved A/B vs 6.7.3 (15 runs each): **1,096 →
+1,101 ms on 6.7.3's source (+0.5 %)**, 1,114 → 1,119 ms on 6.7.4's own (+0.4 %).
+
+### Language — the if-expression (B3)
+
+- **`var v = if (c) { a } elif (d) { b } else { e };`** — an `if` that appears where an expression is parsed is a
+  value (PARSE_INTRIN dispatches token 15, so both factor tiers take it and it binds as a factor: `if (c) {a} else
+  {b} + 1` is `(if ..) + 1`). At the start of a statement `if` is still the if statement, and a closure's block
+  body is statements as before. C's `c ? a : b` is not cyrius — `?` propagates a Result.
+- **One expression per branch, `else` required, only the taken branch runs.** Refused by name: a missing `else`
+  ("its value must come from every path"), a statement, an assignment (`{ y = 1 }`, `{ y += 1 }`), a `;`, an empty
+  branch, a second expression.
+- **One kind.** Every branch an integer (pointers and bools included), an `f64`, an `f32`, or one struct type of
+  8 bytes or less — whose type the result keeps (SESTYPE + a struct-call record, so `var z: S = ..`, the 6.7.3
+  struct-argument check and operator overloads see it). A mix is refused by name ("if expression branches differ
+  in type: an integer here, an f64 before it"), and so is a struct over 8 bytes, a vector, a `u128` / slice, a
+  `: stack` pair. A Str is a handle (a pointer word). All-boolean branches make a bool (6.7.3). An untyped var
+  holding a float is an integer (ADR-002): the refusal says to declare it `: f64`. Each branch is classified right
+  after its PCMPE, by SHAPE for a struct (GESTYPE leaks from a name intrinsic's argument — filed).
+- **The join.** The emission is the if statement's (ECONDOP(ECONDCMP)); the value is in rax / x0 / r0 on every
+  backend. At the join, what describes only the last branch is reset: `_flags_reflect_rax` (an if-expression used
+  as a condition branched on the condition's stale flags), the rewinding peephole trackers, `_cfo` (a following
+  `+ 3` folded into the last branch); the float-builtin flag and the bool stamp go on last.
+- **Const contexts** — a const's value, a local const, an array size, `#assert`, a case label, an enum value, a
+  const fn body: the evaluator runs the taken arm and walks the rest in skip mode (an untaken `1 / 0` never
+  faults). There a string is its own kind (`const B = if (D) {"dbg"} else {"rel"};`) and a string / integer mix
+  is refused — inside a const fn too. An untaken arm naming a const declared later is kind 4, unknown: recorded,
+  and re-checked once every const is known (`const A = if (true) {1} else {B}; const B = A;` is no false cycle; a
+  forward f64 `B` is still refused).
+- **Every global array-list element is a const context** (the user's decision: one evaluator for every
+  compile-time value, as 6.7.2 did for the others). Comparisons, `&&` / `||`, `!`, const fn calls, f64 const
+  arithmetic and the if-expression are legal elements; a `bool[N]` element is judged by its kind (`{1 < 2,
+  !false}` is accepted — bool_checked W59 is now A16; B2's pass-1 token-shape check is gone); a non-constant
+  element is refused in the const context's words (array_initializer_refusals' const_call / const_var /
+  const_post rows name the call or the variable). Every list that compiled before produces the same bytes. A
+  kernel build bakes a constant-condition if-expression global (the folder's quiet if-arm).
+
+### Fixed — scanners that walk an expression unparsed (two of them 6.7.2 holes)
+
+- **Pass 1's `#assert` extent** is the evaluator's grammar (`_ce_extent`). The line-break heuristic stopped
+  mid-expression: `#assert 1<LF> == 1, "m";` (6.7.2) — and any multi-line if-expression in a top-level #assert —
+  read the next declaration as part of it ("undefined variable 'P'").
+- **#derive's enum-member value walk** skips the whole value (`PP_DVALUE`, comments included). It stopped at the
+  first operator, so since 6.7.2 every member after `A = 1 + 1` lost its derived code (`EX_from_json_str("C")`
+  was an Err).
+- **`_body_ends_in_return`** ends a `return` at its own `;`: `return if (c) {1} else {2};` is provably single,
+  so `var a, b = f();` is refused as for any one-value fn.
+
+Fixed in the feature's one review round, before release: a const fn body's string / integer mix gave a wrong
+constant silently; Str handles were refused as structs; a `u128` / slice local was taken as its low word; an
+unknown arm made a const a bool; a `#` comment holding a quote in a multi-line #derive value dropped later
+members; three diagnostics cascaded or were unclear.
+
+Tests: `tests/gates/frontend/if_expr_checked.sh` (R / A / C / S / V rows — refusals, values, const contexts,
+scanners, review fixes; seventeen mutations each RED), `tests/tcyr/crossos/if_expr_values.tcyr` (37 rows on x86,
+aarch64 (qemu), PE (wine) and cx).
+
+**Filed, not fixed** (roadmap.md *Potential backlog*): a name intrinsic's result inherits its last argument's
+struct type (`mulh64(3, n) + 1` dispatches `Num_add`); on cx `~x` is `x` (pre-existing).
+
 ## [6.7.3] — 2026-10-07
 
 B2 `bool` / `true` / `false` / `!` (roadmap.md § Spec — B; the user's decisions of 2026-10-07 and 2026-10-08: a

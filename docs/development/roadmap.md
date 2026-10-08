@@ -31,9 +31,9 @@ the unpinned watching list is [roadmap-future.md](roadmap-future.md); per-releas
 
 ## Where we are
 
-**Current head: v6.7.4** (2026-10-08) — **slot open: B3 the if-expression** (6.7.3 shipped: tag `6.7.3` @ `9a8eee4c`)
-· cycc **1,725,776 B** (`.text` **1,536,016**) · `cycc-native-aarch64` **1,528,760 B** · **523** `.tcyr` (**230** in
-`crossos/`) · **106** `lib/*.cyr` · **421** shell gates under `tests/gates/<bucket>/` · api-surface **5,827** · **1 open
+**Current head: v6.7.4** (2026-10-08) — **B3 the if-expression landed** (6.7.3 shipped: tag `6.7.3` @ `9a8eee4c`)
+· cycc **1,751,432 B** (`.text` **1,561,832**) · `cycc-native-aarch64` **1,529,848 B** · **524** `.tcyr` (**231** in
+`crossos/`) · **106** `lib/*.cyr` · **422** shell gates under `tests/gates/<bucket>/` · api-surface **5,827** · **1 open
 issue** · **2 open proposals** · the next free CVE id is **105**.
 
 > ⚠ **Every figure above was DERIVED on the day, not carried** (2026-10-07 at the 6.7.0 open).
@@ -78,7 +78,7 @@ in [completed-phases.md](completed-phases.md) § *v6.6.x*; the detail is the CHA
 | **6.7.1** | **C3 — trait-bounded generics** (needs A), with its prerequisite the multi-type-param struct-type-arg residual and the generic-struct field — decisions taken at the open (spec below); ✅ landed 2026-10-07 |
 | **6.7.2** | **B1 `const` + C1 `const fn`** together — decisions taken at the open (spec below); ✅ landed 2026-10-07 |
 | **6.7.3** | **B2 `bool` / `true` / `false`** — decisions taken at the open (spec below) · **+ a repair lane for the filed issues** (user, 2026-10-07 — an exception to operating rule 1, the user's call): the two 6.7.x filings (struct-argument type check, enum-constant assignment) and the four open issue files (tail call in a loop, `cyriusly cmdtools`, the hashmap_fast leak, the tools' attribute-line rule); ✅ landed 2026-10-08 (CHANGELOG [6.7.3]) |
-| **6.7.4** | **B3 — the if-expression** — decisions taken at the open (spec below) |
+| **6.7.4** | **B3 — the if-expression** — decisions taken at the open (spec below); ✅ landed 2026-10-08 (CHANGELOG [6.7.4]) |
 | **6.7.5 →** | the next of "then, by size" below |
 | then, by size | ~~B2~~ (6.7.3) · ~~B3~~ (6.7.4) · B5 `loop` / `do … while` · B8 compound assignment on a field |
 | **Break 1** | catch-up: backlog + found issues (user picks) · `cyrius test` / `tests` consolidation · **cybs stack arguments** (below) |
@@ -166,7 +166,7 @@ field walk at the nested `<` (re-measured 6.7.1: `#derive(accessors)` never defi
 2. ✅ **LANDED 6.7.3.** **`true`, `false`** (and `bool` as a real type for intent, typechecks and `#derive` — ⚠ `bool` ALREADY
    parses as an 8-byte type name: `sizeof(bool) == 8`, `var a: bool[3]` in three tcyr files). 0 and 1
    underneath (ADR-002 keeps i64 the core).
-3. **A conditional expression.** ⚠ C's `c ? a : b` collides with the postfix `?` that propagates a `Result`
+3. ✅ **LANDED 6.7.4.** **A conditional expression.** ⚠ C's `c ? a : b` collides with the postfix `?` that propagates a `Result`
    (v5.8.29). Proposed: an if-expression (`var v = if (c) { a } else { b };`) — **asked at B3's start.**
 4. **Tuples as values.** `var t = (1, 2); t.0` — proposed as sugar over an anonymous struct (layout and ABI
    unchanged; multi-return keeps its register pair) — asked at B4's start.
@@ -182,7 +182,7 @@ field walk at the nested `<` (re-measured 6.7.1: `#derive(accessors)` never defi
    and a field alike; every compound operator on every lvalue form (field, chain, `p.f` through a pointer, a
    subscript), with `*=` / `/=` on f64 fields following the 6.6.11 float rules.
 
-**B3 decisions (user, 2026-10-08, at the 6.7.4 open):**
+**B3 decisions (user, 2026-10-08, at the 6.7.4 open) — ✅ LANDED in 6.7.4 (CHANGELOG [6.7.4]):**
 - **Syntax: `if (c) { a } elif (d) { b } else { e }` as an expression, ONE expression per branch** (no statements,
   no `;` inside the braces); `else` is required (an if-expression without it has no value); only the taken branch
   runs. At the start of a statement `if` stays the if statement.

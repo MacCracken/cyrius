@@ -13,6 +13,8 @@
 #   S  the token / byte scanners that walk an expression unparsed: pass 1's #assert extent, the
 #      #derive enum-member value, a `return` statement's end — and globals: array-list elements
 #      (the evaluator), a kernel build's static bake (the folder's if-arm)
+#   V  the shapes the feature's one review round found (a const fn's string mix, u128, an unknown
+#      arm's bool-ness, cascades)
 #
 # Mutations (scratch trees, each RED here — run 2026-10-08): the join's `_flags_reflect_rax = 0`
 # removed -> A4; every `_cfo` clear at the join removed (the helper's and both PARSE_INTRIN callers')
