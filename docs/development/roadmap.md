@@ -547,6 +547,10 @@ CHANGELOG [6.6.17] *Downstream* (no ecosystem sweep).
 
 
 **6.7.6 — W2 follow-ups (2026-10-08).**
+- **agnos** (filings only): its 21 `tests/<dir>/cyrius.cyml` are program build manifests (`cyrius build --agnos`),
+  not test units, so 6.7.6's per-directory `test.cyml` does not replace them as the design hoped.
+- **Consumers at their 6.7.6 pin bump** (notes, no sweep): assert / bench can move to `[test] stdlib` and hand-written
+  CI test loops can go; the 63 stale `dist/*.deps` sidecars clear on a regenerate.
 - **yantra** (stdlib, its next release): its e2e `.tcyr` files call `yantra_tls_pin_verify_ed25519` /
   `_hybrid` (in `src/security.cyr`) without including it — an undefined-function warning in the Android / iOS test
   builds; results unaffected (both 4/4).
@@ -735,6 +739,13 @@ CHANGELOG [6.6.17] *Downstream* (no ecosystem sweep).
     multi-value path and the caller reads garbage over 16 bytes (`x3.cyr`, `x4.cyr`); `return mk2(1) == p;` in a 9-16 B
     struct fn passes the leading-call check and leaves the second register unwritten (closing it refuses code that
     compiles today — the user's call); a write to a captured NAME inside a closure says "undefined variable".
+  - **Test tooling, found by lane C (test half):** `cmd_test` labels any exit status above 128 as a signal (a test
+    exiting 232 prints "killed by signal 104" — `run_binary_timed` returns 128+signal and the raw code on one channel);
+    `cyrius bench` / `cyrius fuzz` exit 0 when they find nothing (only `cyrius test`'s contract was in scope); a
+    `[test.embed]` name duplicating `[embed]`'s says "declared twice" without naming `[embed]`. Applied in the lane, to
+    know at review: `[test] stdlib` leaves and `scope = "test"` deps are vendored and locked by EVERY resolve
+    (`cyrius build` included — otherwise build and test take turns rewriting the lock); `CYRIUS_DEFINES` now reaches
+    test and bench compiles (the environment rung of `[test] defines`).
   - **u128 beyond `+` / `-` / comparisons, found by lane D2:** a `v: u128` parameter is an 8-byte slot holding the low
     word (`&v + 8` reads a neighbour); a `: u128` return type and u128 struct fields are refused; a u128 captured by a
     closure reads as its address (`c + 1` is address + 1). `*p = 1.5` through `p: *f32` is a word store (the documented
