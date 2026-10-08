@@ -1,5 +1,6 @@
 # alloc.cyr — heap allocator with per-OS dispatch.
 # Usage: include "lib/alloc.cyr"
+# cybs (the bootstrap compiler) compiles this file on the seed chain: no 6.7.x syntax, float, unary minus or `>>>`.
 #
 # v5.8.37: alloc_init() is now OPTIONAL — alloc() lazy-inits the
 # heap on first call if alloc_init() was never invoked. Pre-v5.8.37
