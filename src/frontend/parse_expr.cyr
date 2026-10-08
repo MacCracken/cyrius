@@ -1656,12 +1656,31 @@ fn _call_field(S): i64 {
 # 1 = the statement is consumed through its `;`. One call in PARSE_STMT: that body is near cybs's
 # per-function reference limit. A field of a temporary is not an lvalue: refused by name.
 # CHANGELOG [6.6.12]
+# 6.7.5 (B8): `mk(3).n += 1;` too — refused as `= 1` is, the statement stepped over.
 fn _stmt_call_field(S): i64 {
     if (_call_field(S) == 0) { return 0; }
-    if (PEEKT(S) == 4) { ERR_MSG(S, "cannot assign to a field of a call result: the result is a temporary", 68); }
-    else { if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); } }
+    if (_asg_pair_at(S) == 1) { return _asg_temp_refused(S); }
+    if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
     STI(S, GTI(S) + 1);
     return 1;
+}
+# `= e` / `OP= e` on a field of a call's result (`mk(3).n`, `b.mk(4).x`): refused by name, the rest
+# of the statement stepped over — the parse is then in sync, so the panic latch is left as it was
+# and the next statement is parsed (and reported) normally. 1.
+fn _asg_temp_refused(S): i64 {
+    var p0 = _panic;
+    ERR_MSG(S, "cannot assign to a field of a call result: the result is a temporary", 68);
+    _cst_skip_decl(S);
+    _panic = p0;
+    return 1;
+}
+# A refusal inside a statement that is then parsed to its end: reported once, and the panic latch
+# left as it was, so the statement after it is parsed and reported (`_bx_refuse`'s rule). 6.7.5
+fn _err_in_sync(S, msg, noff, tail): i64 {
+    if (_panic == 1) { return 0; }
+    ERR_IDENT(S, msg, noff, tail, 0 - 1);
+    _panic = 0;
+    return 0;
 }
 
 # v6.3.10 (explicit): `foo<i64>(x)` / `foo<Pt>(p)` — cursor on the `<`. Out of
@@ -1932,14 +1951,7 @@ fn _arr_sub_assign(S, noff): i64 {
         if (w != 0) { _arr_sub_load(S, w); }
         _asg_compound_op(S, cop, 0);
     }
-    var aw = w;
-    if (aw < 0) { aw = 0 - aw; }
-    if (aw > 0) { if (GEXW(S) > aw) { WARN(S, "narrowing assignment (value may truncate)", 41); } }
-    EPOPC(S);             # rcx = the element address, rax = the value
-    if (aw == 1) { ESTORE8(S); }
-    elif (aw == 2) { ESTORE16(S); }
-    elif (aw == 4) { ESTORE32(S); }
-    else { ESTORE64(S); }
+    _asg_store_w(S, w);   # at the element's width (parse_decl.cyr, shared with a field's OP=)
     return 1;
 }
 # The statement arm (_PARSE_STMT_IMPL): the assignment and its `;`.

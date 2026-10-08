@@ -2821,15 +2821,30 @@ fn _agc_from_temp(S, t, dli, dgv, n, sid): i64 {
 # not 4. Neither checked the right operand, so `t += 1` on an f64 silently added a subnormal.
 # Out of _PARSE_STMT_IMPL on purpose: cybs miscompiles that body SILENTLY past its per-fn
 # reference limit. CHANGELOG [6.6.11]
+# The compound-assignment operators (the token before `=`): ONE list, read by the runtime pair
+# below and by the const fn evaluator (`_ce_cop`), so the two cannot drift. 152 is `>>>`, so
+# `>>>=` is the eleventh (6.7.5): `>>>` has been an operator since v6.4.46. CHANGELOG [6.7.5]
+fn _is_cop_tok(ct): i64 {
+    if (ct == 6 || ct == 7 || ct == 8 || ct == 9 || ct == 34 || ct == 27 || ct == 35 || ct == 36 || ct == 38 || ct == 39) { return 1; }
+    if (ct == 152) { return 1; }
+    return 0;
+}
 # The `op =` pair at the cursor: consumes both and returns the op token, else 0.
 fn _asg_compound_tok(S): i64 {
     var ct = PEEKT(S);
-    if (ct == 6 || ct == 7 || ct == 8 || ct == 9 || ct == 34 || ct == 27 || ct == 35 || ct == 36 || ct == 38 || ct == 39) {
+    if (_is_cop_tok(ct) == 1) {
         var tn = GTI(S) + 1;
         if (tn < GTCNT(S)) {
             if (TOKTYP(S, tn) == 4) { STI(S, GTI(S) + 2); return ct; }
         }
     }
+    return 0;
+}
+# 1 = an assignment follows the cursor, `=` or an `op =` pair (nothing consumed). CHANGELOG [6.7.5]
+fn _asg_pair_at(S): i64 {
+    if (PEEKT(S) == 4) { return 1; }
+    if (_is_cop_tok(PEEKT(S)) == 0) { return 0; }
+    if (TOKTYP(S, GTI(S) + 1) == 4) { return 1; }
     return 0;
 }
 # 6.7.0 (A5) — cursor on the `.` after a statement's first IDENT: 1 when a chain of `.name`s ends in
@@ -2858,6 +2873,7 @@ fn _asg_compound_load(S, noff): i64 {
             ERR_IDENT(S, "compound assignment to an untyped `self` is refused - in an impl it points at ", L64(S + 0x1A6018 + (_cur_iself_sid - 1) * 8), ": declare `self: *T` to step whole elements", 0 - 1);
         } }
     var li = FINDLOCAL(S, noff);
+    _asg_struct_refused(S, noff, li);   # 6.7.5 (B8): `a += b` on a struct value
     if (li >= 0) {
         var lt = _load_lt(S, li);
         _asg_cstep = _slot_ptr_step(S, li);
@@ -2885,6 +2901,31 @@ fn _asg_compound_load(S, noff): i64 {
         return GVTYPE(S, gi);
     }
     return 0;
+}
+
+# ⛔ 6.7.5 (B8) — `a OP= b` ON A STRUCT VALUE IS REFUSED BY NAME (user, 2026-10-08), as B2 refused
+# `b += 1` on a bool: it compiled and integer-operated on the struct's FIRST word, never calling an
+# overloaded `T_add` — 13 where `a = a + b` gives 33 — silently, as a statement and as a for step.
+# A struct value is an inline aggregate local (GLAGG: `var a = P { .. }`, `var a: P`, a <= 8 B one
+# too), an address-passed by-value parameter (`_local_is_sptr_param`) and an inline struct global
+# (GVPM 2). A HANDLE keeps its 6.6.17 pointer step: a `*T` slot, a pointer-mode local or global
+# (it holds the address), a `Str`. (u128 and SIMD-vector OP= are filed, not decided here.) The
+# statement still parses on, so the parse stays in sync. `li` = FINDLOCAL's answer. CHANGELOG [6.7.5]
+fn _asg_struct_refused(S, noff, li): i64 {
+    var sv = 0;
+    if (li >= 0) {
+        var lt = GLTYPE(S, li);
+        if (lt < 0) { if (lt > 0 - 2048) { if (GLPTRP(S, li) == 0) {
+                    if (GLAGG(S, li) == 1) { sv = 1; }
+                    elif (_local_is_sptr_param(S, li) == 1) { sv = 1; }
+                } } }
+    } else {
+        var gi = _findvar_core(S, noff);
+        if (gi >= 0) { if (GVTYPE(S, gi) > 0) { if (GVPM(S, gi) == 2) { sv = 1; } } }
+    }
+    if (sv == 0) { return 0; }
+    _err_in_sync(S, "compound assignment to struct ", noff, " is refused - a struct value is not an integer or a float (write `a = a + b`)");
+    return 1;
 }
 
 # ⛔ 6.6.12 — THE STORE OF AN ASSIGNMENT, at the slot's width: a local (g == 0) or a global
@@ -2958,7 +2999,33 @@ fn _asg_compound_op(S, cop, lt): i64 {
     elif (cop == 36) { EXORR(S); }
     elif (cop == 38) { ESHLCL(S); }
     elif (cop == 39) { ESHRCL(S); }
+    elif (cop == 152) { EASHRCL(S); }   # 6.7.5: `>>>=`, the arithmetic shift
     if (st > 0) { if (cop == 6 || cop == 7) { SPSC(S, st); } }   # 6.6.17: the result is the pointer
+    return 0;
+}
+
+# `*expr = v` / `*expr OP= v` (cursor on the `*`), ending at `term` — `;` for a statement, `)` for
+# a classic-for step: the address once, before the value, then a WORD store, as `*p` reads a word
+# whatever p's type (the guide's Pointers). 6.7.5 (B8): the compound form — it was "expected '=',
+# got '+'" — loads the word, `_asg_compound_op`s it (integer arithmetic) and stores it back. Out of
+# _PARSE_STMT_IMPL, whose body sits at cybs's silent per-fn reference ceiling. CHANGELOG [6.7.5]
+fn _deref_store(S, term): i64 {
+    STI(S, GTI(S) + 1);   # `*`
+    PARSE_FACTOR(S);
+    EPUSHR(S);            # the address
+    var cop = _asg_compound_tok(S);
+    if (cop == 0) {
+        if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); }
+        STI(S, GTI(S) + 1);
+        PCMPE(S);
+    } else {
+        ELOAD64(S);       # rax = the word at the address
+        _asg_compound_op(S, cop, 0);
+    }
+    EPOPC(S);             # rcx = the address, rax = the value
+    ESTORE64(S);
+    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
+    STI(S, GTI(S) + 1);
     return 0;
 }
 
@@ -3435,6 +3502,9 @@ fn _stmt_method_call(S, noff): i64 {
     var pair = _callee_returns_pair_at(S, GTI(S) - 1);
     _mcall_last = 0 - 1;
     PARSE_FIELD_LOAD(S, noff);
+    # 6.7.5 (B8): `b.mk(4).x = 5;` / `.. += 5;` — a field of the call's result is no lvalue (it was
+    # `expected ';', got '='`). A chain ending in a call keeps that message.
+    if (_mcall_last < 0) { if (_asg_pair_at(S) == 1) { _asg_temp_refused(S); return 0; } }
     if (_mcall_last >= 0) { if (PEEKT(S) == 5) { _must_use_warn(S, L64(_fnt_names + _mcall_last * 8)); } }
     _stmt_qmark(S, pair);
     if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
@@ -3896,22 +3966,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
         }
         return 0;
     }
-    # *expr = val; (pointer store)
-    if (typ == 8) {
-        STI(S, GTI(S) + 1);
-        PARSE_FACTOR(S);
-        # rax now holds the address
-        EPUSHR(S);
-        if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); }
-        STI(S, GTI(S) + 1);
-        PCMPE(S);
-        # rax = value, stack = address
-        EPOPC(S);
-        ESTORE64(S);
-        if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
-        STI(S, GTI(S) + 1);
-        return 0;
-    }
+    if (typ == 8) { _deref_store(S, 5); return 0; }   # `*expr = v;` / `*expr OP= v;`
     # Expression statements: syscall(...); store8(...); load8(...);
     if (typ == 24) { PCMPE(S); if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); } STI(S, GTI(S) + 1); return 0; }
     if (typ == 26) { PCMPE(S); if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); } STI(S, GTI(S) + 1); return 0; }
@@ -4016,7 +4071,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
             }
             # Not a method call — rewind and do field store
             STI(S, save_ti);
-            PARSE_FIELD_STORE(S, noff);
+            PARSE_FIELD_STORE(S, noff, 5);
             return 0;
         }
         if (_arr_sub_stmt(S, noff) == 1) { return 0; }   # 6.6.12: `a[i] = v;` (parse_expr.cyr)
@@ -4027,7 +4082,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
             _cst_skip_decl(S);   # the rest of the statement, to its `;`
             return 0;
         }
-        # Check for +=, -=, *=, /=, %=, &=, |=, ^=, <<=, >>=
+        # Check for +=, -=, *=, /=, %=, &=, |=, ^=, <<=, >>=, >>>=
         var compound_op = _asg_compound_tok(S);
         _asg_ti = 0 - 1;
         _asg_ufv = 0 - 1;

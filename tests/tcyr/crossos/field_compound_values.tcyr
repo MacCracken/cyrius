@@ -1,0 +1,387 @@
+# field_compound_values.tcyr — 6.7.5 (B8): compound assignment on every lvalue form, at run time
+# on every backend.
+#
+# `x.f OP= e` was `expected '=', got '+'` on every field. It now takes every compound operator on
+# every field lvalue — a local, a global, a top-level statement, a `*T` parameter, `self`, a chain
+# (`o.i.b`), a `*T` field hop (`a.next.v`), a `Str` hop (`h.name.len`), a slice's `.len` / `.ptr`,
+# a union, a generic instance, a closure capture, a `*T` global, a pointer-mode local — at the
+# field's width (i8 / i16 / i32 signed, as a read of it), as float arithmetic on an f64 / f32 field
+# and stepping sizeof(T) on a `*T` field. The field's ADDRESS is computed once, BEFORE the right-hand
+# side, as `a[i] OP= v` does; a plain `x.f = e` evaluates `e` first (row O1 against O2). `>>>=`,
+# the arithmetic shift, is the eleventh compound operator on every form, a const fn's too (A rows).
+# `*p OP= v` is a word operation, the address first (Q rows). A classic-for step takes a field and
+# `*p`, `=` and `OP=` alike; a struct-valued field step copies the whole struct (T rows).
+# The refusals, the warnings and the mutation ledger are tests/gates/frontend/field_compound_checked.sh.
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/str.cyr"
+include "lib/fnptr.cyr"
+include "lib/assert.cyr"
+
+struct H { n; m; }
+struct I { a; b; }
+struct O { x; i: I; }
+struct N { v; next: *N; }
+struct W { a: u8; b: i32; c: i8; e: i16; d; }
+struct P { x: f64; y: f64; }
+struct Q { s: f32; t; }
+struct HP { n; p: *i32; name: Str; }
+struct NP { k; nx: *N; }
+struct Z { k: I; }
+struct I3 { a; b; c; }
+struct O3 { x; i: I3; }
+struct Pair<T> { a: T; b: T; }
+union U { a: i64; b: i64; }
+union UF { f: f64; i: i64; }
+
+var G = H { 1, 2 };
+var GP: *H = &G;
+var GT = H { 5, 6 };
+var GA = H { 10, 0 };
+var GB = H { 20, 0 };
+var GR: *H = &GA;
+
+fn bump(p: *H): i64 { p.n += 4; p.m *= 3; return 0; }
+impl H {
+    fn inc(self: *H): i64 { self.n += 100; return self.n; }
+    fn dec(self): i64 { self.m -= 1; return self.m; }
+}
+fn gen_add<T>(p: *H, v: T): i64 { p.n += v; return p.n; }
+fn repoint(): i64 { GR = &GB; return 1; }
+fn f7(a, b, c, d, e, f, g): i64 { return a + b * 2 + c * 3 + d * 4 + e * 5 + f * 6 + g * 7; }
+fn fmul(a: f64, b: f64): f64 { return a * b; }
+fn bits(v) { return v; }
+const fn cshr(x): i64 { var y = x; y >>>= 2; return y; }
+const KSHR = cshr(0 - 16);
+var GS = 0 - 64;
+var CELL1 = 10;
+var CELL2 = 20;
+var CP = 0;
+fn which(): i64 { return CP; }
+fn moveit(): i64 { CP = &CELL2; return 1; }
+fn mk3(v): I3 { var r = I3 { v, v + 1, v + 2 }; return r; }
+
+fn forms(): i64 {
+    var h = H { 1, 2 };
+    h.n += 4;
+    h.m -= 1;
+    assert_eq(h.n * 10 + h.m, 51, "F1: an inline local");
+    G.n = 1;
+    G.m = 2;
+    G.n += 10;
+    GP.m ^= 7;
+    assert_eq(G.n * 10 + G.m, 115, "F2: a global, and a `*T` global");
+    assert_eq(GT.n * 100 + GT.m, 1518, "F3: top-level statements");
+    bump(&h);
+    assert_eq(h.n * 10 + h.m, 93, "F4: a `*T` parameter");
+    assert_eq(h.inc(), 109, "F5: a typed `self: *T`");
+    assert_eq(h.dec(), 2, "F6: an untyped `self`");
+    var o = O { 1, 2, 3 };
+    o.i.b += 4;
+    o.i.a <<= 3;
+    assert_eq(o.i.a * 100 + o.i.b + o.x * 1000, 2607, "F7: a chain o.i.b");
+    var b = N { 7, 0 };
+    var a = N { 1, &b };
+    a.next.v *= 6;
+    assert_eq(b.v, 42, "F8: through a `*T` field (a.next.v)");
+    var np = NP { 0, &a };
+    np.nx.next.v -= 2;
+    assert_eq(b.v, 40, "F9: two hops (np.nx.next.v)");
+    var hp: HP;
+    hp.n = 0;
+    hp.name = str_from("abcdef");
+    hp.name.len -= 2;
+    assert_eq(str_len(hp.name), 4, "F10: a Str hop (h.name.len)");
+    var s: [i64] = 0;
+    s.len = 5;
+    s.len += 3;
+    s.ptr = 16;
+    s.ptr *= 2;
+    assert_eq(s.len * 100 + s.ptr, 832, "F11: a slice's .len / .ptr");
+    var u: U;
+    u.a = 5;
+    u.b += 1;
+    assert_eq(u.a, 6, "F12: a union");
+    var q = Pair<i64> { 3, 4 };
+    q.b += 10;
+    assert_eq(q.a * 100 + q.b, 314, "F13: a generic instance Pair<i64>");
+    var c = H { 1, 2 };
+    var f = || { c.n += 40; return c.n; };
+    assert_eq(fncall0(f) * 10 + c.n, 411, "F14: a closure capture (the env copy)");
+    var pm: H = alloc(16);
+    pm.n = 1;
+    pm.m = 2;
+    pm.n += 4;
+    assert_eq(pm.n * 10 + pm.m, 52, "F15: a pointer-mode local");
+    var g = H { 1, 0 };
+    assert_eq(gen_add(&g, 10), 11, "F16: inside a generic fn");
+    return 0;
+}
+
+fn ops(): i64 {
+    var h = H { 100, 7 };
+    h.n /= 7;
+    assert_eq(h.n, 14, "P1: /=");
+    h.m %= 4;
+    assert_eq(h.m, 3, "P2: %=");
+    h.n |= 0x100;
+    assert_eq(h.n, 270, "P3: |=");
+    h.n &= 0x10F;
+    assert_eq(h.n, 270, "P4: &=");
+    h.n >>= 1;
+    assert_eq(h.n, 135, "P5: >>=");
+    h.n <<= 2;
+    assert_eq(h.n, 540, "P6: <<=");
+    h.n ^= 0xFF;
+    assert_eq(h.n, 739, "P7: ^=");
+    h.n *= 0 - 2;
+    assert_eq(h.n, 0 - 1478, "P8: *= a negative");
+    h.n -= 22;
+    assert_eq(h.n, 0 - 1500, "P9: -=");
+    h.n /= 0 - 3;
+    assert_eq(h.n, 500, "P10: /= a negative (signed division)");
+    h.m = 0 - 1;
+    h.m >>= 60;
+    assert_eq(h.m, 15, "P11: >>= is logical");
+    return 0;
+}
+
+fn widths(): i64 {
+    var w = W { 250, 0x7FFFFFFF, 127, 32767, 9 };
+    w.a += 10;
+    assert_eq(w.a, 260, "D1: a u8 field is a word (250 + 10)");
+    w.b += 1;
+    assert_eq(w.b, 0 - 2147483648, "D2: an i32 field wraps (signed)");
+    w.c += 1;
+    assert_eq(w.c, 0 - 128, "D3: an i8 field wraps (signed)");
+    w.e += 1;
+    assert_eq(w.e, 0 - 32768, "D4: an i16 field wraps (signed)");
+    assert_eq(w.d, 9, "D5: the field after them is untouched");
+    w.c = 0 - 4;
+    w.c /= 2;
+    assert_eq(w.c, 0 - 2, "D6: an i8 field loads signed (-4 / 2)");
+    w.e = 0 - 400;
+    w.e >>= 1;
+    assert_eq(w.e, 0 - 200, "D7: an i16 `>>=` loads signed (32568 unsigned), stores 16 bits");
+    w.b = 0 - 6;
+    w.b *= 3;
+    assert_eq(w.b, 0 - 18, "D8: an i32 *= a negative");
+    assert_eq(w.c * 1000 + w.d, 0 - 1991, "D9: the neighbours still hold");
+    return 0;
+}
+
+fn floats(): i64 {
+    var p = P { 1.5, 2.0 };
+    p.x *= 4.0;
+    assert_eq(bits(p.x), 6.0, "L1: f64 *=");
+    p.y /= 0.5;
+    assert_eq(bits(p.y), 4.0, "L2: f64 /=");
+    p.x += p.y;
+    assert_eq(bits(p.x), 10.0, "L3: f64 += f64 field");
+    p.x -= 2.5;
+    assert_eq(bits(p.x), 7.5, "L4: f64 -=");
+    var q = Q { f32_from(1.5), 7 };
+    q.s *= f32_from(4.0);
+    q.s += f32_from(0.5);
+    assert_eq(f64_to(f32_to(q.s) * 10.0), 65, "L5: f32 *= and +=");
+    assert_eq(q.t, 7, "L6: the field after an f32 is untouched");
+    var pf = Pair<f64> { 1.5, 2.0 };
+    pf.a *= 4.0;
+    pf.b -= 0.5;
+    assert_eq(bits(pf.a + pf.b), 7.5, "L7: Pair<f64>");
+    var uf: UF;
+    uf.f = 2.5;
+    uf.f *= 2.0;
+    assert_eq(bits(uf.f), 5.0, "L8: a union's f64 member");
+    return 0;
+}
+
+fn steps(): i64 {
+    var arr: i32[4];
+    arr[0] = 1;
+    arr[1] = 2;
+    arr[2] = 3;
+    arr[3] = 4;
+    var hp: HP;
+    hp.p = &arr;
+    hp.p += 2;
+    assert_eq(load32(hp.p), 3, "S1: a `*i32` field += steps 4");
+    hp.p -= 1;
+    assert_eq(load32(hp.p), 2, "S2: a `*i32` field -= steps 4");
+    var ns: N[3];
+    var a = N { 0, &ns };
+    a.next += 2;
+    assert_eq(bits(a.next) - bits(&ns), 32, "S3: a `*N` field += steps sizeof(N)");
+    return 0;
+}
+
+fn order(): i64 {
+    GA.n = 10;
+    GB.n = 20;
+    GR = &GA;
+    GR.n += repoint();
+    assert_eq(GA.n * 10 + GB.n / 10, 112, "O1: OP= takes the address BEFORE the right-hand side");
+    GA.n = 10;
+    GB.n = 20;
+    GR = &GA;
+    GR.n = GR.n + repoint();
+    assert_eq(GA.n * 10 + GB.n / 10, 101, "O2: a plain store evaluates the right-hand side first");
+    return 0;
+}
+
+fn rhs(): i64 {
+    var h = H { 1, 2 };
+    h.n += f7(1, 1, 1, 1, 1, 1, 1);
+    assert_eq(h.n, 29, "R1: a 7-argument call (stack arguments under two pending pushes)");
+    h.m *= f7(1, 0, 0, 0, 0, 0, 1) - 6;
+    assert_eq(h.m, 4, "R2: ... in an expression");
+    var p = P { 2.0, 0.0 };
+    p.x *= fmul(1.5, 2.0);
+    assert_eq(bits(p.x), 6.0, "R3: an f64 call");
+    var o = O { 0, 3, 4 };
+    o.i.a += o.i.b * 10;
+    assert_eq(o.i.a, 43, "R4: the right-hand side reads the struct");
+    return 0;
+}
+
+# `>>>=` (6.7.5): the arithmetic shift, the eleventh compound operator, on every form.
+fn ashr(): i64 {
+    var x = 0 - 16;
+    x >>>= 2;
+    assert_eq(x, 0 - 4, "A1: >>>= on a local keeps the sign");
+    GS >>>= 3;
+    assert_eq(GS, 0 - 8, "A2: >>>= on a global");
+    var h = H { 0 - 64, 3 };
+    h.n >>>= 3;
+    assert_eq(h.n, 0 - 8, "A3: >>>= on a field");
+    var w = W { 1, 2, 0 - 128, 4, 5 };
+    w.c >>>= 1;
+    assert_eq(w.c * 10 + w.e, 0 - 636, "A4: >>>= on an i8 field (signed load)");
+    var a: i64[4];
+    a[2] = 0 - 32;
+    a[2] >>>= 1;
+    assert_eq(a[2], 0 - 16, "A5: >>>= on a subscript");
+    var n = 0;
+    for (var k = 0 - 64; k < 0 - 1; k >>>= 1) { n = n + 1; if (n > 20) { break; } }
+    assert_eq(n, 6, "A6: >>>= as a for step");
+    assert_eq(KSHR, 0 - 4, "A7: >>>= in a const fn (a const context)");
+    assert_eq(cshr(0 - 40), 0 - 10, "A8: the same const fn at run time");
+    var u = 0 - 1;
+    var v = 0 - 1;
+    u >>>= 63;
+    v >>= 63;
+    assert_eq(u * 10 + v, 0 - 9, "A9: >>>= fills with the sign, >>= with zeros");
+    return 0;
+}
+
+# `*p OP= v` (6.7.5): the address once, then a WORD load, op and store — `*p` reads and writes
+# 8 bytes whatever p's type, as `*p = v` always has.
+fn derefs(): i64 {
+    var v = 5;
+    var p = &v;
+    *p += 7;
+    *p *= 2;
+    assert_eq(v, 24, "Q1: *p += and *=");
+    *p -= 28;
+    *p >>>= 1;
+    assert_eq(v, 0 - 2, "Q2: *p -= and >>>=");
+    var a: i64[3];
+    a[1] = 40;
+    var q = bits(&a);
+    *(q + 8) /= 4;
+    assert_eq(a[1], 10, "Q3: *(expr) /=");
+    var h = H { 3, 4 };
+    *(&h) += 10;
+    assert_eq(h.n * 10 + h.m, 134, "Q4: through &h (its first word)");
+    var w: i32[2];
+    w[0] = 1;
+    w[1] = 2;
+    var r = bits(&w);
+    *r += 0x100000001;
+    assert_eq(w[0] * 10 + w[1], 23, "Q5: a word op: an i32 pair moves together");
+    CELL1 = 10;
+    CELL2 = 20;
+    CP = &CELL1;
+    *which() += moveit();
+    assert_eq(CELL1 * 100 + CELL2, 1120, "Q6: the address once, before the right-hand side");
+    *p = 1;
+    *p += f7(1, 1, 1, 1, 1, 1, 1);
+    assert_eq(v, 29, "Q7: a 7-argument call on the right");
+    return 0;
+}
+
+# A classic-for step takes a field and `*p` (6.7.5), `=` and `OP=` alike; a struct-valued field
+# step copies the whole struct (its `)` reaches the struct-copy sources).
+fn fsteps(): i64 {
+    var h = H { 0, 0 };
+    var c = 0;
+    for (h.n = 0; h.n < 5; h.n += 1) { c = c + 1; }
+    assert_eq(c * 10 + h.n, 55, "T1: a field OP= step");
+    c = 0;
+    for (h.m = 0; h.m < 9; h.m = h.m + 3) { c = c + 1; }
+    assert_eq(c * 10 + h.m, 39, "T2: a field = step");
+    var b = N { 0, 0 };
+    var a = N { 0, &b };
+    c = 0;
+    for (a.next.v = 1; a.next.v < 100; a.next.v *= 2) { c = c + 1; if (c > 20) { break; } }
+    assert_eq(c * 1000 + b.v, 7128, "T3: through a `*T` field hop");
+    c = 0;
+    for (h.n = 0; h.n < 10; h.n += 2) {
+        if (h.n == 4) { continue; }
+        c = c + 1;
+    }
+    assert_eq(c, 4, "T4: continue lands on the field step");
+    var o = O { 0, 1, 2 };
+    var j = I { 5, 6 };
+    for (o.x = 0; o.x < 1; o.i = j) { o.x = 1; }
+    assert_eq(o.i.a * 10 + o.i.b, 56, "T5: a 16-byte struct field step copies the whole struct");
+    var z = Z { 7, 8 };
+    for (o.x = 0; o.x < 1; o.i = z.k) { o.x = 1; }
+    assert_eq(o.i.a * 10 + o.i.b, 78, "T6: ... from a struct-typed field");
+    var o3 = O3 { 0, 1, 2, 3 };
+    for (o3.x = 0; o3.x < 1; o3.i = mk3(3)) { o3.x = 1; }
+    assert_eq(o3.i.a * 100 + o3.i.b * 10 + o3.i.c, 345, "T7: ... from a call returning a 24-byte struct");
+    var v = 0;
+    var p = &v;
+    c = 0;
+    for (v = 1; v < 50; *p *= 3) { c = c + 1; }
+    assert_eq(c * 100 + v, 481, "T8: a *p OP= step");
+    c = 0;
+    for (v = 0; v < 3; *p = v + 1) { c = c + 1; }
+    assert_eq(c * 10 + v, 33, "T9: a *p = step");
+    var w = W { 1, 2, 3, 4, 5 };
+    c = 0;
+    for (w.c = 120; w.c > 0; w.c += 3) { c = c + 1; if (c > 9) { break; } }
+    assert_eq(c * 1000 + w.c, 2873, "T10: an i8 field step wraps at its width");
+    var s: [i64] = 0;
+    c = 0;
+    for (s.len = 0; s.len < 4; s.len += 1) { c = c + 1; }
+    assert_eq(c * 10 + s.len, 44, "T11: a slice .len step");
+    var pf = P { 0.0, 0.0 };
+    c = 0;
+    for (pf.x = 0.0; pf.x < 1.0; pf.x += 0.25) { c = c + 1; if (c > 9) { break; } }
+    assert_eq(c, 4, "T12: an f64 field step is float arithmetic");
+    return 0;
+}
+
+fn run(): i64 {
+    alloc_init();
+    forms();
+    ops();
+    widths();
+    floats();
+    steps();
+    order();
+    rhs();
+    ashr();
+    derefs();
+    fsteps();
+    return 0;
+}
+# Top-level statements: the compound arm with no fn around it (before `run`, which reads GT).
+GT.n += 10;
+GT.m *= 3;
+var r0 = run();
+var rr = assert_summary();
+syscall(60, rr);
