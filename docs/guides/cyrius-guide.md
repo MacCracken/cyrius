@@ -3200,9 +3200,9 @@ enum-variant namespace.
 Result-returning fns use the `_r` suffix:
 
 ```
-var fd_r = file_open_r("/etc/hostname", 0, 0);
-if (is_err_result(fd_r) == 1) {
-    if (load64(fd_r + 8) == IoNotFound) { ... }
+var t, fd = file_open_r("/etc/hostname", 0, 0);   # bind both: the tag, then the fd or the error
+if (is_err_result(t) == 1) {
+    if (fd == IoNotFound) { ... }
 }
 
 # With ? propagation:
