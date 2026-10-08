@@ -34,7 +34,7 @@ the unpinned watching list is [roadmap-future.md](roadmap-future.md); per-releas
 **Current head: v6.7.6** (2026-10-08) — **slot open: Break 1 (W2 refold + the high / critical backlog)** (6.7.5 shipped: tag `6.7.5` @ `efa15103`)
 · cycc **1,759,824 B** (`.text` **1,571,240**) · `cycc-native-aarch64` **1,530,056 B** · **526** `.tcyr` (**233** in
 `crossos/`) · **106** `lib/*.cyr` · **424** shell gates under `tests/gates/<bucket>/` · api-surface **5,827** · **1 open
-issue** · **2 open proposals** · the next free ledger id is **CYRIUS-2026-0036**.
+issue** · **2 open proposals** · the next free ledger id is **CYRIUS-2026-0037**.
 
 > ⚠ **Every figure above was DERIVED on the day, not carried** (2026-10-07 at the 6.7.0 open).
 > `version-bump.sh` rewrites the version token, replaces the `(…)` after it with the bump date, and

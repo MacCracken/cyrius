@@ -2425,3 +2425,17 @@ allowed → D9f red; tag printed raw → D9f red.
 
 **Verified.** `tests/tcyr/crossos/bool_values.tcyr` V3–V16 (`!0`, `!7`, `!!5`, `if (!x)`, `while (!done)`, precedence over `+`, `-!x`, `!0.0`, `!(-0.0)`, with `&&` / `||`) on x86, aarch64 (qemu), PE (wine) and cx; on real ecb / ach / cass / pi through the release gate's cross-OS leg. `tests/gates/frontend/bool_checked.sh`: the mutation that restores the dropping lexer arm turns A1 A4 A6 A7 A10 RED.
 
+## CYRIUS-2026-0036 — `tls_native_record_seal` wrote past its stack scratch for 16,385–16,623 content bytes
+
+*Appended 2026-10-08 (cyrius 6.7.6, Break 1 lane H, bite H-2). Found by: sizing each `lib/` buffer by the bound that
+governs it (lane H) — `ptbuf[16385]` was guarded only by the CIPHERTEXT cap.*
+
+- **Attacker / boundary:** a network peer whose length a program passes to the public seal functions
+  (`tls_native_seal_app`, `tls_native_{client,server}_seal_handshake`, `tls_native_record_seal`).
+- **Vector:** content between 2^14 + 1 and 16,623 bytes passes the ciphertext check and is copied into the 16,385-byte
+  stack scratch; a negative length wrote below it.
+- **Impact:** the caller's plaintext over the return address (rc 139 measured on x86 and aarch64). `tls_native_write`
+  refuses > 2^14, so the library's own write path was never exposed — direct callers were.
+- **Fix (6.7.6):** > 2^14 returns `TLS_ERR_RECORD_OVERFLOW`, a negative length `TLS_ERR_INVALID_PARAM`; the scratch is
+  sized by `TLS_RECORD_MAX_PLAINTEXT`. Gate rows: `tests/tcyr/crossos/tls_native_scratch_bounds.tcyr` (x86, aarch64, PE).
+- **Severity:** P2 (needs an application that forwards a peer length to the low-level API).
