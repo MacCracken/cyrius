@@ -77,7 +77,8 @@ in [completed-phases.md](completed-phases.md) § *v6.6.x*; the detail is the CHA
 | **6.7.0** | **A — real traits** (A1–A6, decisions below; A1–A5 landed 2026-10-07 — [ADR-007](../adr/007-traits.md)) · the CI refresh: every Linux job on **`ubuntu-26.04`** (the `-arm` job on `ubuntu-26.04-arm`) and every action at its latest stable release, SHA-pinned (checkout v7, upload-artifact v7, download-artifact v8, action-gh-release v3) · **`cyrius --help` reorganised** (commands grouped by what they do; nothing renamed or removed) |
 | **6.7.1** | **C3 — trait-bounded generics** (needs A), with its prerequisite the multi-type-param struct-type-arg residual and the generic-struct field — decisions taken at the open (spec below); ✅ landed 2026-10-07 |
 | **6.7.2** | **B1 `const` + C1 `const fn`** together — decisions taken at the open (spec below); ✅ landed 2026-10-07 |
-| **6.7.3 →** | the next of "then, by size" below |
+| **6.7.3** | **B2 `bool` / `true` / `false`** — decisions taken at the open (spec below) · **+ a repair lane for the filed issues** (user, 2026-10-07 — an exception to operating rule 1, the user's call): the two 6.7.x filings (struct-argument type check, enum-constant assignment) and the four open issue files (tail call in a loop, `cyriusly cmdtools`, the hashmap_fast leak, the tools' attribute-line rule) |
+| **6.7.4 →** | the next of "then, by size" below |
 | then, by size | B2 `bool` / `true` / `false` · B3 the if-expression · B5 `loop` / `do … while` · B8 compound assignment on a field |
 | **Break 1** | catch-up: backlog + found issues (user picks) · `cyrius test` / `tests` consolidation · **cybs stack arguments** (below) |
 | then | B4 tuples · B6 default + named arguments · B7 narrow struct fields (ABI survey + migration) · C2 bounds-checked mode (+ P5 execution coverage) · **checked `dyn`** (decided 2026-10-07, open question 5) |
@@ -179,6 +180,26 @@ field walk at the nested `<` (re-measured 6.7.1: `#derive(accessors)` never defi
 8. **Compound assignment on a field** (BACKLOG-13). `h.n += 4` is `expected '=', got '+'` for a struct local
    and a field alike; every compound operator on every lvalue form (field, chain, `p.f` through a pointer, a
    subscript), with `*=` / `/=` on f64 fields following the 6.6.11 float rules.
+
+**B2 decisions (user, 2026-10-07, at the 6.7.3 open):**
+- **A write into a `bool` is checked: refused by name unless the value is boolean.** A bool variable, field,
+  parameter, fn return or const accepts only `true` / `false`, a comparison, `!`, `&&` / `||`, or another bool —
+  the literals `0` and `1` included in the refusal (`var b: bool = 7;`, `f(1)` for `b: bool`, `return 1;` from
+  `fn g(): bool` are all refused).
+- **A bool reads as the integer 0 or 1 everywhere an integer is expected** (ADR-002 keeps i64 the core): `n + ok`,
+  `ok * 4`, a bool passed to an `i64` parameter all compile. Only writes INTO a bool are checked.
+- Unchanged by B2: `sizeof(bool) == 8`; a condition (`if`, `while`, `&&`) still takes any integer.
+
+**The 6.7.3 repair lane (user, 2026-10-07)** — the fixes the user chose with the scope:
+- A struct ARGUMENT whose static struct type differs from its parameter's (a generic instance passed where the base
+  is declared included) is refused by name, as the receive path already refuses it; an untyped i64 pointer argument
+  stays accepted.
+- `A = 6;`, `A += 1;` and `&A` on an enum constant are refused by name, as for a `const`.
+- Tail call in a loop before a frame address: fix (c), the exact two-pass check (no tail call loses its `jmp` that
+  does not have to).
+- `cyriusly cmdtools`: option 1, the shell twin ships into the store and the verb runs that copy (CVE-103).
+- `lib/hashmap_fast.cyr`: the same-capacity rebuild happens in place, as `lib/hashmap.cyr`'s does.
+- `cyaudit` / `cyrius_api_surface`: their lexical-state copies take the attribute-line rule.
 
 **B1 + C1 decisions (user, 2026-10-07, at the 6.7.2 open) — ✅ LANDED in 6.7.2 (CHANGELOG [6.7.2]):**
 - **A `const` holds an integer, an `f64` or a string.** `const LIMIT = 7;`, `const PI = 3.14159;`,
