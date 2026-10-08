@@ -570,17 +570,52 @@ fn ETLFRAME_CLOSE(S, patch, nslots): i64 {
     return 0;
 }
 
+# ⛔ 6.7.6 — THE cx CALL'S REGISTER WINDOW, AND THE ARGUMENTS PAST IT. Integer argument k rides
+# r(3 + k) for k < _CX_ARG_REGS (r3..r250, below the call-boundary scratch r251 / r252 and fp / sp
+# r253 / r254). Argument k >= _CX_ARG_REGS is passed in the GUEST stack, the way SysV passes
+# arguments 7+: the caller lowers sp by 8 per such argument and stores argument k at
+# [sp + 8 * (k - _CX_ARG_REGS)]; the callee's fp IS that sp (EFNPRO: `mov fp, sp`), so ESTOREPARM
+# copies it from [fp + 8 * (k - _CX_ARG_REGS)] — above the callee's own frame, which grows down
+# from fp — into its slot; ECALLCLEAN raises sp again. A call of up to _CX_ARG_REGS arguments
+# emits exactly what it always did. Before 6.7.6 every argument was a register: argument 248 was
+# popped into r251, 250 into fp, 251 into sp, and past 252 the operand byte wrapped to r0 — 249
+# arguments returned a wrong value and 252 trapped "cxvm: guest stack overflow". CHANGELOG [6.7.6]
+var _CX_ARG_REGS = 248;
+
 fn ECALLPOPS(S, n): i64 {
-    # Pop args into r3-r8 (argument registers)
+    # Pop args into r3.. (argument registers); the ones past the window first, into the guest stack.
     var i = n - 1;
+    if (n > _CX_ARG_REGS) { i = _cx_pop_stack_args(S, n); }
     while (i >= 0) {
         CX_EMIT(S, 129, 3 + i, 0, 0);  # pop into arg register
         i = i - 1;
     }
     return 0;
 }
+# Arguments _CX_ARG_REGS..n-1 — the top of the data stack — into a block of 8 * (n - _CX_ARG_REGS)
+# bytes reserved below sp. r0 / r251 / r252 are free here (every argument is on the data stack, and
+# the callee pointer of an indirect call is in a frame slot). Returns the last register argument.
+fn _cx_pop_stack_args(S, n): i64 {
+    CX_MOVI(S, 252, (n - _CX_ARG_REGS) * 8);
+    CX_EMIT(S, 17, 254, 254, 252);        # sub  sp, sp, r252   (cxvm traps a guest stack overflow)
+    var i = n - 1;
+    while (i >= _CX_ARG_REGS) {
+        CX_EMIT(S, 129, 0, 0, 0);         # pop  r0             (argument i)
+        CX_MOVI(S, 252, (i - _CX_ARG_REGS) * 8);
+        CX_EMIT(S, 16, 251, 254, 252);    # add  r251, sp, r252
+        CX_EMIT(S, 67, 251, 0, 0);        # store64 [r251], r0
+        i = i - 1;
+    }
+    return i;
+}
 
-fn ECALLCLEAN(S, n): i64 { return 0; }  # no cleanup needed in bytecode
+# Takes back the guest-stack argument block ECALLPOPS reserved; nothing below the window.
+fn ECALLCLEAN(S, n): i64 {
+    if (n <= _CX_ARG_REGS) { return 0; }
+    CX_MOVI(S, 252, (n - _CX_ARG_REGS) * 8);
+    CX_EMIT(S, 16, 254, 254, 252);        # add  sp, sp, r252   (r0 / r4 / r5, the result, untouched)
+    return 0;
+}
 
 # Jump helpers
 fn EJCC(S, cc): i64 {
@@ -913,9 +948,21 @@ fn EPATCHFRAME(S, patch, size): i64 {
 
 fn ESTOREPARM(S, pidx, lidx, pc): i64 {
     # Store param register to local slot. 6.6.17: r251 / r252 temps — r14 / r15 ARE argument
-    # registers from 12 arguments (see _cx_fpaddr).
+    # registers from 12 arguments (see _cx_fpaddr). 6.7.6: past the register window the parameter
+    # is in the caller's guest-stack block (see ECALLPOPS).
+    if (pidx >= _CX_ARG_REGS) { return _cx_storeparm_stack(S, pidx, lidx); }
     _cx_fpaddr(S, _cx_ldisp(lidx));
     CX_EMIT(S, 67, 251, 3 + pidx, 0);    # store64 [r251], arg_reg
+    return 0;
+}
+# Parameter `pidx` >= _CX_ARG_REGS: [fp + 8 * (pidx - _CX_ARG_REGS)] -> its slot, through r1 (no
+# argument rides r1, and nothing is live in it in a prologue). CHANGELOG [6.7.6]
+fn _cx_storeparm_stack(S, pidx, lidx): i64 {
+    CX_MOVI(S, 252, (pidx - _CX_ARG_REGS) * 8);
+    CX_EMIT(S, 16, 251, 253, 252);        # add  r251, fp, r252   (the caller's argument block)
+    CX_EMIT(S, 65, 1, 251, 0);            # load64 r1, [r251]
+    _cx_fpaddr(S, _cx_ldisp(lidx));
+    CX_EMIT(S, 67, 251, 1, 0);            # store64 [r251], r1
     return 0;
 }
 

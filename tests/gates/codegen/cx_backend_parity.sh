@@ -12,6 +12,13 @@
 #      library body, whose per-target asm arms matched nothing on cx: `fncall2(&fncall1, &add1, 41)`
 #      exited 0 on cx, 42 natively. Each fncallN now ends in `#ifdef CYRIUS_TARGET_CX` `result =
 #      callptr(fp, ..)`.
+#   C  a call of more than 248 arguments. ECALLPOPS popped argument k into r(3 + k) for every k, in
+#      a 256-register file: argument 248 landed in r251 (the call-boundary scratch), 250 in fp, 251
+#      in sp, and from 253 the operand byte wrapped to r0. 249..251 arguments returned a wrong value
+#      (`f(1..250)` returning p250 - p246 exited 2, want 4) and 252+ trapped "cxvm: guest stack
+#      overflow". Arguments 248+ now ride the guest stack: the caller lowers sp by 8 per argument
+#      and stores them there, the callee (fp = that sp) copies them into its slots, ECALLCLEAN
+#      raises sp again.
 #
 # ROWS
 #   T  tests/tcyr/codegen/cx_backend_parity.tcyr: native x86 and cxvm must each print
@@ -22,6 +29,9 @@
 #      the other ABIs' oracle; either leg is a named SKIP when its tool is absent.
 #   A1 the filed repro, inline: native and cxvm both exit 3.
 #   B1 the filed repro, inline: native and cxvm both exit 42.
+#   C1 the filed repro's shape, generated: `f(p1..p250)` returning p250 - p246 exits 4 (cx gave 2);
+#      C2 the same at 260 arguments (cx trapped); C3 260 arguments through callptr, 2000 times in a
+#      loop, and the caller's sp the same afterwards (exit 8 when a call does not take its block back).
 #
 # COMPILERS. CC=${CYCC:-build/cycc} builds the native legs and the cx compiler from THIS tree's
 # src/main_cx.cyr, and cxvm from programs/cxvm.cyr. A cx-backend mutation is therefore picked up
@@ -32,6 +42,12 @@
 #   ENOTR back to `CX_EMIT(S, 34, 0, 0, 31)`        -> T cx RED (0 passed, 8 failed) + A1 RED (cx 16)
 #   lib/fnptr.cyr's nine CYRIUS_TARGET_CX arms gone   -> T cx RED (8 passed, 11 failed: every B row)
 #                                                       + B1 RED (cx 0)
+#   `_CX_ARG_REGS` = 1000000 (every argument a register again, the pre-6.7.6 ABI)
+#                                                    -> T cx RED (the 249 row wrong, then a trap) +
+#                                                       C1 (cx 2) + C2 (trap) + C3 RED; and
+#                                                       wide_call_stack_unwind.sh axis 4 RED
+#   ECALLCLEAN never takes the block back            -> T cx RED (the 8 sp rows: -8 at 249) + C3 (8)
+#   ESTOREPARM's guest-stack branch dropped          -> T cx RED (11 rows) + C1 RED (cx 2)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -74,10 +90,10 @@ nat_file() {
     { ( ulimit -c 0; timeout 60 "$D/n.bin" ) > "$D/n.out" 2>&1 || NATRC=$?; } 2> /dev/null
     NATOUT=$(tail -1 "$D/n.out")
 }
-# both LABEL SRC WANT: cx and native must both exit WANT
+# both LABEL SRC WANT [secs]: cx and native must both exit WANT
 both() {
-    printf '%s' "$2" > "$D/s.cyr"
-    nat_file "$D/s.cyr"; cx_file "$D/s.cyr"
+    printf '%s\n' "$2" > "$D/s.cyr"
+    nat_file "$D/s.cyr"; cx_file "$D/s.cyr" "${4:-60}"
     if [ "$NATRC" != "$3" ]; then bad "$1: native exits $NATRC, want $3 (the expectation itself is wrong)"; return; fi
     if [ "$CXRC" = "$3" ]; then ok "$1 (cx $CXRC = native)"; else bad "$1: cx exits $CXRC (want $3, native $NATRC)${CXERR:+ — $CXERR}"; fi
 }
@@ -87,7 +103,7 @@ TC=tests/tcyr/codegen/cx_backend_parity.tcyr
 # NCX: every assertion; N: those outside `#ifdef CYRIUS_TARGET_CX` ... `#endif` (cx-only rows).
 NCX=$(grep -c '^[[:space:]]*assert_[a-z]*(' "$TC")
 N=$(awk '/^[[:space:]]*#ifdef CYRIUS_TARGET_CX/{s=1; next} /^[[:space:]]*#endif/{s=0; next} !s && /^[[:space:]]*assert_[a-z]*\(/{n++} END{print n+0}' "$TC")
-FLOOR=18
+FLOOR=41
 if [ "$N" -lt "$FLOOR" ]; then bad "T: only $N assertions outside the cx-only blocks of $TC (floor $FLOOR) — rows were lost"
 else
     nat_file "$TC"
@@ -131,7 +147,27 @@ var r = main();
 syscall(60, r);
 ' 42
 
+echo "C. calls of more than 248 arguments"
+# wide N MODE: f(p1..pN) returns pN - p(N-4); MODE direct | loop (2000 callptr calls: exit 4 only
+# when every one returned 4 AND the caller's sp — the address of a local in a fresh frame — is the
+# same after the loop as before it; 9 = a wrong value, 8 = sp moved).
+wide() {
+    awk -v n="$1" -v m="$2" 'BEGIN {
+        printf "fn spp() { var x = 1; return &x; }\n";
+        printf "fn f(";
+        for (i = 1; i <= n; i++) { if (i > 1) printf ", "; printf "p%d", i; }
+        printf ") { return p%d - p%d; }\n", n, n - 4;
+        a = ""; for (i = 1; i <= n; i++) { if (i > 1) a = a ", "; a = a i; }
+        if (m == "direct") printf "fn main() { return f(%s); }\n", a;
+        if (m == "loop") printf "fn main() { var s0 = spp(); var i = 0; var bad = 0; while (i < 2000) { if (callptr(&f, %s) != 4) { bad = bad + 1; } i = i + 1; } if (bad != 0) { return 9; } if (spp() != s0) { return 8; } return 4; }\n", a;
+        printf "var r = main();\nsyscall(60, r);\n";
+    }'
+}
+both "C1 f(1..250) returns p250 - p246 (the filed repro's shape; cx gave 2)" "$(wide 250 direct)" 4
+both "C2 f(1..260) (the filed repro; cx trapped 'guest stack overflow')" "$(wide 260 direct)" 4
+both "C3 260 arguments through callptr, 2000 calls in a loop, sp the same after it" "$(wide 260 loop)" 4 120
+
 echo
 echo "cx_backend_parity: $pass passed, $fail failed"
 [ "$fail" = 0 ] || exit 1
-echo "PASS cx_backend_parity: ~x is the complement on cx (bitset / bitclr with it) and an address-taken &fncallN runs its callee there, as on every native backend"
+echo "PASS cx_backend_parity: ~x is the complement on cx (bitset / bitclr with it), an address-taken &fncallN runs its callee there, and a call of more than 248 arguments passes every one, as on every native backend"

@@ -56,8 +56,9 @@
 #      size mod 64 KiB and every callee frame landed inside the caller's buffer (a fill by a callee
 #      overwrote its own counter and never ended). The frame probe's bytecode must carry
 #      `movhi r252, #1; sub sp, sp, r252` (fe fc 01 00 11 fe fe fc) and exit 42 on cxvm, and the
-#      crossos twin must pass its cx rows (the frame rows; the argument rows are past cx's separate
-#      248-argument limit) with the count derived from its source.
+#      crossos twin must pass its cx rows (the frame rows and, since 6.7.6, the 261..600-argument
+#      rows — a cx call passes arguments 248+ in the guest stack; the 2100 / 8200 rows are aarch64
+#      thresholds kept off cx) with the count derived from its source (floor 22).
 #
 # MUTATION LEDGER (each mutant applied to src/backend/aarch64/emit.cyr in a copy of the tree, the
 # gate run there — it cross-builds cycc_aarch64 from that src). M1-M4 were measured against the 12
@@ -77,6 +78,9 @@
 #   M9 cx ESUBRSP without its movhi slot + EPATCHFRAME's bits 16..31 dropped (src/backend/cx/emit.cyr)
 #                                                            -> RED (axis 4: no movhi word, cxvm exit
 #                                                              14, the twin's cx run 0 passed / 1 failed)
+#   M10 (6.7.6) cx `_CX_ARG_REGS` = 1000000 — every argument a register again (src/backend/cx/emit.cyr)
+#                                                            -> RED (axis 4: the twin's cx run traps
+#                                                              "guest stack overflow" in its 261 row)
 # The crossos twin is red under M1 (old compiler: sp -4096 at 262, SIGILL at 600), M2 + M3 (the 2100
 # rows' values), M4 (sp -16 at 263), M5 (5 rows: 8200 values + the three frame rows), M6 (the
 # retptr row), M7 and M8 (SIGSEGV in the 8200 rows).
@@ -296,8 +300,8 @@ else
     # the twin's cx rows: every assertion outside `#ifndef CYRIUS_TARGET_CX` ... `#endif`
     TW="$ROOT/tests/tcyr/crossos/wide_call_stack_unwind.tcyr"
     ncxw=$(awk '/^[[:space:]]*#ifndef CYRIUS_TARGET_CX/{s=1; next} /^[[:space:]]*#endif/{s=0; next} !s && /^[[:space:]]*assert(_[a-z]+)?\(/{n++} END{print n+0}' "$TW")
-    if [ "$ncxw" -lt 4 ]; then
-        bad "cx twin: only $ncxw assertions outside the cx guard (floor 4: frame_below + the three frame rows)"
+    if [ "$ncxw" -lt 22 ]; then
+        bad "cx twin: only $ncxw assertions outside the cx guard (floor 22: the 261..600-argument rows, frame_below + the three frame rows)"
     else
         rc=0; (cd "$ROOT" && "$T/cycc_cx" < "$TW" > "$T/tw.cyx" 2> "$T/tw.cxerr") || rc=$?
         if [ "$rc" = 0 ] && [ -s "$T/tw.cyx" ]; then

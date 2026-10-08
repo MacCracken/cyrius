@@ -347,7 +347,11 @@ fn add(a, b) {
 var r = add(20, 22);   # r = 42
 ```
 
-- Up to 6 register params, 7+ passed on stack
+- Up to 6 register params, 7+ passed on stack (4 / 5+ on Windows). A fn takes any number of
+  parameters on every target; on the cx bytecode target the first 248 ride registers and the
+  rest the guest stack. ⚠ **Before 6.7.6 a cx call of more than 248 arguments was wrong**: cx
+  held every argument in a register, so from 249 arguments the callee read wrong values and
+  from 252 cxvm trapped "guest stack overflow".
 - Forward calls work (functions can call functions defined later)
 - Relaxed ordering: functions can appear after statements (v1.11.0+)
 - **A fn is defined at top level** (or inside a top-level block). A named `fn` / `async fn` inside
