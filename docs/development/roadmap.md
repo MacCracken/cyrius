@@ -346,9 +346,17 @@ probes. The proposal takes the **still-real critical / high** items, the two pre
   pattern silently.
 - **A top-level `var v = pair_fn();` is refused by name**, with the fn-body rule's wording (v6.5.67) — it kept the tag
   and dropped the payload silently.
-- **`OP=` on a u128 computes** exactly as `b = b OP x` does (the carry included); **`OP=` on a SIMD vector, a
-  typed-array variable or a slice variable is refused by name** (write the long form or index an element), as 6.7.5
-  refused it for structs.
+- **u128 `+` and `-` carry and borrow across all 128 bits, in both spellings** (`b + 1`, `b - 1`, `b += 1`, `b -= 1`)
+  on every backend; **every other operator on a u128 (`*`, `/`, `%`, shifts, bitwise) is refused by name** until it is
+  implemented. *(Corrected 2026-10-08: the first question said `b = b + 1` already carried — it did not; neither
+  spelling carried, the planning probe had misread a pre-filled high word. Lane D found it; the user re-decided.)*
+  **`OP=` on a SIMD vector, a typed-array variable or a slice variable is refused by name** (write the long form or
+  index an element), as 6.7.5 refused it for structs — and so are **a whole-array `a = 8` on a typed-array variable**
+  (it set `a[0]`) and **`OP=` on a bare `var b[N]`** (its first word).
+- **Every write into an f32 rounds to f32** — initializers, assignments, field stores, struct-literal fields and
+  arguments to an `f32` parameter (they stored the f64 bit pattern silently).
+- **A struct-returning call or method result dispatches as a LEFT operand too** (`p.dup() + p` calls `P_add`; it did an
+  integer add of first words), as lane E made the right operand dispatch; no matching operator fn is refused by name.
 - **Lane C — `cyrius.cyml` dev- and test-friendly (user, 2026-10-08; NOT a security item):** **git is the priority, local
   dev is an explicit switch.** The manifest syntax stays: a `path` beside `git` / `tag` is a DEV OVERRIDE, used only in
   local mode — `CYRIUS_LOCAL=1`, `CYRIUS_LOCAL=sigil,libro` or `--local`, never by the manifest itself. **With no switch
