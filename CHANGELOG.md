@@ -4,6 +4,8 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [6.7.3] — 2026-10-07
+
 ## [6.7.2] — 2026-10-07
 
 B1 `const` and C1 `const fn` (roadmap.md § Spec — B / C1; the user's decisions of 2026-10-07: a const holds an
