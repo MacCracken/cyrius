@@ -5,9 +5,13 @@
 #   F  `if (h.m)` / `while (h.m)` on an i8 / i16 / i32 field after an arithmetic statement: x86
 #      skipped the `test` and branched on the statement's flags (the narrow field load never cleared
 #      the flags tracker). Each row's field disagrees with the flags the statement before it left.
+#   I  a name intrinsic's result (`mulh64`, `fncall0`..`fncall8`, `callptr`) is an untyped word: it
+#      inherited its LAST argument's struct type, so `fncall1(&f, n) + 1` with `n: Num` dispatched
+#      `Num_add` (100 where 8 is right).
 include "lib/syscalls.cyr"
 include "lib/string.cyr"
 include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
 include "lib/assert.cyr"
 
 struct H { n; m: i8; k: i32; }
@@ -16,6 +20,13 @@ struct H2 { n; m: i16; }
 var GH = H { 1, 0, 0 };
 
 fn bits(v) { return v; }
+
+struct Num { a; b; }
+fn Num_add(x: Num, y) { return 100; }
+fn Num_sub(x: Num, y) { return 100; }
+fn id1(x) { return 7; }
+fn id2(x, y) { return 7; }
+var GN = Num { 1, 2 };
 
 # F — each row in its own fn, so the flags state it tests is the one its own statement left.
 fn f_i8(): i64 { var h = H { 1, 0, 3 }; var x = 5; x = x + 1; if (h.m) { return 1; } return 0; }
@@ -54,9 +65,26 @@ fn flags(): i64 {
     return 0;
 }
 
+# I — the intrinsic's result is a plain word, whatever its last argument was.
+fn intrinsics(): i64 {
+    var n: Num = Num { 1, 2 };
+    assert_eq(mulh64(3, n) + 1, 1, "I1: mulh64(3, n) + 1 (not Num_add)");
+    assert_eq(fncall1(&id1, n) + 1, 8, "I2: fncall1(&id1, n) + 1");
+    assert_eq(callptr(&id1, n) + 1, 8, "I3: callptr(&id1, n) + 1");
+    assert_eq(fncall2(&id2, 1, n) - 1, 6, "I4: fncall2(&id2, 1, n) - 1 (not Num_sub)");
+    assert_eq(fncall1(&id1, GN) + 1, 8, "I5: a global struct as the last argument");
+    var a = fncall1(&id1, n) + mulh64(5, n);
+    assert_eq(a, 7, "I6: two intrinsic results added");
+    return 0;
+}
+var GI1 = fncall1(&id1, GN) + 1;
+var GI2 = mulh64(3, GN) + 1;
+
 fn rows(): i64 {
     alloc_init();
     flags();
+    intrinsics();
+    assert_eq(GI1 * 10 + GI2, 81, "I7: at top level (fncall1 + 1, mulh64 + 1)");
     return 0;
 }
 var r0 = rows();

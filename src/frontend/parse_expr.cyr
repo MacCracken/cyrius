@@ -756,6 +756,36 @@ fn _PINDIRECT_CALL_IN(S): i64 {
         ECALLCLEAN(S, cp_argc);             # unwind the arg frame
     }
     _cfo = 0;
+    _icall_untyped(S);   # 6.7.6: the result is not its last argument's struct
+    return 0;
+}
+
+# ⛔ 6.7.6 — A NAME INTRINSIC'S RESULT INHERITED ITS LAST ARGUMENT'S STRUCT TYPE. `mulh64(..)`,
+# `fncall0`..`fncall8(..)` and `callptr(..)` parse their arguments as expressions inside the call's
+# factor, and the expression state the last one left (its struct type, its variable) survived the
+# call: with `n: Num` and `fn Num_add`, `fncall1(&f, n) + 1` and `mulh64(3, n) + 1` dispatched
+# `Num_add` (100 where 8 / 1 is right), silently. A free call resets the type in PARSE_FNCALL; these
+# lower in place, so the result — an untyped word — is marked here. CHANGELOG [6.7.6]
+fn _icall_untyped(S): i64 {
+    SESTYPE(S, 0);
+    SESVAR(S, 0 - 1);
+    _esv_name = 0 - 1;
+    return 0;
+}
+# `mulh64(a, b)` (cursor on the name): the high 64 bits of a 64x64 unsigned multiply. Out of
+# _PARSE_FACTOR_IMPL, whose body sits at cybs's silent per-fn reference ceiling. CHANGELOG [6.7.6]
+fn _lower_mulh64(S): i64 {
+    STI(S, GTI(S) + 1);
+    if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); }
+    STI(S, GTI(S) + 1);
+    PCMPE(S); EPUSHR(S);
+    if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); }
+    STI(S, GTI(S) + 1);
+    PCMPE(S); EPOPC(S); EMULH(S);
+    if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
+    STI(S, GTI(S) + 1);
+    _cfo = 0;
+    _icall_untyped(S);
     return 0;
 }
 
@@ -2045,20 +2075,8 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         } }
     # mulh64(a, b) — high 64 bits of a 64×64 unsigned multiply
     # The WHOLE name (_is_mulh64_word): a 6-byte prefix compiled a user fn `mulh64x(..)` as
-    # this intrinsic. CHANGELOG [6.6.11]
-    if (typ == 2) { if (_is_mulh64_word(S, PEEKV(S)) == 1) {
-            STI(S, GTI(S) + 1);
-            if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); }
-            STI(S, GTI(S) + 1);
-            PCMPE(S); EPUSHR(S);
-            if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); }
-            STI(S, GTI(S) + 1);
-            PCMPE(S); EPOPC(S); EMULH(S);
-            if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
-            STI(S, GTI(S) + 1);
-            _cfo = 0;
-            return 0;
-        } }
+    # this intrinsic. CHANGELOG [6.6.11]  6.7.6: lowered in `_lower_mulh64` (the result's type).
+    if (typ == 2) { if (_is_mulh64_word(S, PEEKV(S)) == 1) { _lower_mulh64(S); return 0; } }
     # v6.5.17 — fncall0..fncall8 lower to the SAME sequence as `callptr`, so a
     # capturing closure reaches the callee through them too.
     #
