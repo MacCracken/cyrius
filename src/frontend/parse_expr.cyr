@@ -4930,6 +4930,19 @@ fn _op_lhs_sv(S, fi, beg, opti): i64 {
     var bare = _op_bare(S, beg, opti);
     return _op_operand_sv(S, fi, 0, GESVAR(S), bare, _op_is_sval(S, beg, opti));
 }
+# 6.7.3 — the LEFT operand is ARGUMENT 0 of the operator fn its struct `stype` picked: refused by
+# name when that fn declares parameter 0 as another struct (`fn Pt_add(a: Q, b: Pt)` read a Pt as a
+# Q). Named by the operand's first name (`p`, `(p)`, `mkp(..)`), else by its struct. Emits nothing.
+# CHANGELOG [6.7.3]
+fn _op_lhs_check(S, fi, stype, beg): i64 {
+    if (stype <= 0) { return 0; }
+    if (stype >= 2048) { return 0; }
+    var nt = beg;
+    if (TOKTYP(S, nt) == 10) { nt = nt + 1; }
+    var nm = L64(S + 0x1A6018 + (stype - 1) * 8);
+    if (TOKTYP(S, nt) == 2) { nm = TOKVAL(S, nt); }
+    return _sarg_type_err(S, fi, 0, stype, nm);
+}
 # 1 = the operand [b, e) just parsed is a struct VALUE: its recorded type is a struct (a name
 # under `-` / `~` / parentheses, `k * s`), or it is one whole method / operator result of 8 B or
 # less (`_sc_post_small`'s record, -3: the value is in rax), bare or in parentheses. `&s`, a `*S`
@@ -4983,6 +4996,7 @@ fn EMIT_OP_DISPATCH(S, stype, op_str, op_len, beg): i64 {
     var opti = GTI(S) - 1;   # the operator, just consumed — the call the warning names (6.6.16)
     # For struct vars, push address instead of value (6.6.20: and for a `*S` operand at any size)
     var svar = _op_lhs_sv(S, ofp, beg, opti);
+    _op_lhs_check(S, ofp, stype, beg);   # 6.7.3
     _OP_OPERAND_ADDR(S, svar, ofp, 0);
     EPUSHR(S);
     var rsvar = _op_rhs(S, ofp);   # the rhs, parsed: a struct var's address too (6.6.20: _op_rhs)
@@ -5032,6 +5046,7 @@ fn _EMIT_OP_DISPATCH_AGG(S, stype, op_str, op_len, beg): i64 {
     var ofi = FINDFN(S, opnoff);
     if (ofi < 0) { ofi = REGFN(S, opnoff); }
     var svar = _op_lhs_sv(S, ofi, beg, opti);   # GESVAR, or (6.6.20) a `*S` operand's address
+    _op_lhs_check(S, ofi, stype, beg);   # 6.7.3
     var park = 0 - 1;
     if (svar == 0 - 1) { park = _op_park_lhs(S, ofi); }
     var t = _sc_pre(S, ofi, opnoff, beg);

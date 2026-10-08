@@ -1486,6 +1486,77 @@ fn _CHECK_ARITY(S, line, noff, fi, argc, need_off): i64 {
     return 0;
 }
 
+# ⛔ 6.7.3 — A STRUCT ARGUMENT WAS NEVER TYPE-CHECKED AGAINST ITS PARAMETER, except a struct-typed
+# FIELD into an address-passed one (`_fla_addr`, 6.6.12). `bq(p)` with `p: Pt` and `fn bq(b: Q)`
+# compiled clean and read past the 16-byte Pt (0, or 97 from a global, or SIGSEGV for an operator),
+# from a local, a global, a capture, a call, a method result, a tail call, a generic, a method's
+# `self` and an operator's operands alike — while `var q: Q = p;` has been refused since 6.6.6.
+# The argument's STATIC struct (`asid`, 0 = untyped / scalar / unknown: accepted as ever, which
+# keeps `&p`, a literal and an untyped value passing) against the parameter's recorded struct
+# (GFPSID — the instance's for a generic; a by-value struct of 8 B or less and a `Str` handle are
+# recorded too since 6.7.3, `_psid_plain`): when both are known and differ, refused by name, in
+# the field arm's words. The argument is still pushed, so the parse stays in step and the one
+# compile reports every bad site; `_had_error` withholds the binary. Returns 1 after reporting.
+# CHANGELOG [6.7.3]
+fn _sarg_type_err(S, fi, argc, asid, anoff): i64 {
+    if (fi < 0) { return 0; }
+    if (asid <= 0) { return 0; }
+    if (asid >= 2048) { return 0; }    # a vector descriptor: not this rule
+    var ps = GFPSID(S, fi, argc);
+    if (ps <= 0) { return 0; }
+    if (ps == asid) { return 0; }
+    ERR_IDENT(S, "cannot pass ", anoff, " to a parameter of a different struct type in a call to ", L64(_fnt_names + fi * 8));
+    return 1;
+}
+# The struct a WHOLE free call `name(..)` / `name<..>(..)` at the cursor returns (the instance's,
+# for a generic), or 0. Moves nothing. Resolves the call (`_gen_resolve_call`), so it is called
+# only where `_arg_call_class` already resolves it, or after the argument's own parse (a dedup hit).
+fn _sarg_call_sid(S, ti): i64 {
+    var o = _gcall_open(S, ti);
+    if (o < 0) { return 0; }
+    if (_call_dotted(S, ti) == 1) { return 0; }
+    if (_call_is_whole_arg(S, o - 1) == 0) { return 0; }
+    return _sarg_call_rs(S, ti);
+}
+# ... the struct the call at `ti` returns, once it is known to be the whole argument.
+fn _sarg_call_rs(S, ti): i64 {
+    var cfi = _gen_resolve_call(S, ti);
+    if (cfi < 0) { return 0; }
+    if (_grc_err < 0) { return 0; }    # a failed instantiation refuses itself, once
+    var rs = GFRS(S, cfi);
+    if (rs <= 0) { return 0; }
+    if (rs >= 2048) { return 0; }
+    return rs;
+}
+# The static struct of the NAME at token `ti`: a struct-typed local (inline, pointer-mode or `*T`
+# — `_sl_ptr_type` records -sid for those too), a captured struct, or a recorded aggregate global,
+# looked up in the order the argument arms push them; 0 = untyped / scalar / vector / unknown.
+fn _sarg_name_sid(S, ti): i64 {
+    if (TOKTYP(S, ti) != 2) { return 0; }
+    var nm = TOKVAL(S, ti);
+    if (GINFN(S) == 1) {
+        var li = FINDLOCAL(S, nm);
+        if (li >= 0) {
+            var lt = GLTYPE(S, li);
+            if (lt >= 0) { return 0; }
+            if (lt <= 0 - 2048) { return 0; }
+            return 0 - lt;
+        }
+        if (_CL_CAP_FIELD_IDX(S, nm) < 0 - 1) { return _cap_fld_sid; }
+    }
+    return _sarg_gv_sid(S, FINDVAR(S, nm));
+}
+# A global's struct: only a recorded aggregate (GVPM, `_var_ptrmode`) — GVTYPE's positive range is
+# shared with scalar widths, so nothing else is read as one (see `_push_struct_addr_global`).
+fn _sarg_gv_sid(S, gvi): i64 {
+    if (gvi < 0) { return 0; }
+    if (GVPM(S, gvi) == 0) { return 0; }
+    var vt = GVTYPE(S, gvi);
+    if (vt <= 0) { return 0; }
+    if (vt >= 2048) { return 0; }
+    return vt;
+}
+
 # v6.3.36 (issue [5]) — if callee `fi` declares param `argc` as a plain struct >8 B
 # (bit set in its _fnt_structmask) AND the current arg is a bare struct-typed local
 # identifier (`foo(s)`, next token `,` or `)`), push the local's ADDRESS instead of
@@ -1499,9 +1570,11 @@ fn _CHECK_ARITY(S, line, noff, fi, argc, need_off): i64 {
 # their mask bit clear → value-passed (fixes the str_split/toml/vec_push_a regression).
 fn _try_push_struct_addr_arg(S, fi, argc, tail): i64 {
     if (fi < 0) { return 0; }
-    if (_pm_struct(fi, argc) == 0) { return 0; }   # 6.6.17 (a10)
+    if (_pm_struct(fi, argc) == 0) { return _sarg_byval_small(S, fi, argc); }   # 6.6.17 (a10); 6.7.3
     if (PEEKT(S) != 2) { return 0; }
     var nx = TOKTYP(S, GTI(S) + 1);
+    # 6.7.3: a whole free call's struct, checked here — where `_arg_call_class` resolves it anyway.
+    if (nx == 10 || nx == 19) { _sarg_type_err(S, fi, argc, _sarg_call_sid(S, GTI(S)), PEEKV(S)); }
     # ⛔ 6.6.6 — a by-value struct param given a struct-valued CALL (`h(mk(1, 2))`): the callee
     # takes the struct's ADDRESS, so the result needs storage to point at. It used to be pushed
     # as a value — the first word for a rax:rdx return (the callee then dereferenced a field),
@@ -1533,8 +1606,8 @@ fn _try_push_struct_addr_arg(S, fi, argc, tail): i64 {
     var li = 0 - 1;
     if (GINFN(S) == 1) { li = FINDLOCAL(S, PEEKV(S)); }
     if (li < 0) {
-        if (_push_struct_addr_cap(S) == 1) { return 1; }
-        return _push_struct_addr_global(S);
+        if (_push_struct_addr_cap(S, fi, argc) == 1) { return 1; }
+        return _push_struct_addr_global(S, fi, argc);
     }
     var lt = GLTYPE(S, li);
     if (lt >= 0) { return 0; }          # must be a struct-typed local (SLTYPE = -sid)
@@ -1554,7 +1627,10 @@ fn _try_push_struct_addr_arg(S, fi, argc, tail): i64 {
     # CHANGELOG [6.6.5]
     var _sa_ptr = 0;
     if (_is_simd_any(S, lt) == 1) { if (_TARGET_PE == 0) { return 0; } }
-    else { _sa_ptr = _local_struct_is_ptr(S, li, lt); }
+    else {
+        _sarg_type_err(S, fi, argc, 0 - lt, PEEKV(S));   # 6.7.3
+        _sa_ptr = _local_struct_is_ptr(S, li, lt);
+    }
     # 6.6.20: an inline aggregate (a by-value parameter's copy too, 6.6.16 C7) is pushed as an
     # address in this frame, exactly as `&s` is — see `_sarg_escapes`.
     if (_sa_ptr == 1) { EFLLOAD(S, li); } else { _sarg_escapes(fi, argc, tail); EFLADDR(S, li); }
@@ -1563,14 +1639,52 @@ fn _try_push_struct_addr_arg(S, fi, argc, tail): i64 {
     return 1;
 }
 
+# ⛔ 6.7.3 — a parameter that records a struct but is NOT address-passed: a plain struct of 8 B or
+# less (BY VALUE, one word) or a `Str` handle. It has no struct-mask bit, so it never reached the
+# arms above and nothing compared its argument — `bs1(t)` with `t: T1` into `b: S1` compiled clean.
+# The argument is parsed and pushed exactly as the caller's own fallback pushes it (PCMPE +
+# EPUSHR: byte-identical), and its static struct is checked: a bare name; a whole free call,
+# resolved AFTER the parse (a dedup hit — resolving it first would move a generic's instantiation);
+# a whole method / operator result (`_sc_post`'s record); a whole struct-typed field (the passive
+# `_fpk` record, parse_decl.cyr). Returns 1 (consumed) only for such a parameter; 0 leaves every
+# other one to the caller. All three argument loops reach it. CHANGELOG [6.7.3]
+fn _sarg_byval_small(S, fi, argc): i64 {
+    if (GFPSID(S, fi, argc) <= 0) { return 0; }
+    var st = GTI(S);
+    var asid = 0;
+    var nm = 0;
+    var call = 0;
+    if (PEEKT(S) == 2) {
+        nm = PEEKV(S);
+        var nx = TOKTYP(S, st + 1);
+        if (nx == 31 || nx == 11) { asid = _sarg_name_sid(S, st); }
+        elif (nx == 10 || nx == 19) { call = 1; }
+    }
+    var fk = _fpk_want;
+    _fpk_want = st;
+    _fpk_ft = 0;
+    _sc_beg = 0 - 1;                   # only this argument's own record may match
+    PCMPE(S);
+    _fpk_want = fk;
+    if (call == 1) { asid = _sarg_call_sid(S, st); }
+    if (asid == 0) {
+        if (_sc_whole(S, st) != 0 - 2) { asid = _sc_sid; nm = _sc_fn; }
+        elif (_fpk_ft > 0) { if (_fpk_end == GTI(S)) { asid = _fpk_ft; nm = _fpk_name; } }
+    }
+    _sarg_type_err(S, fi, argc, asid, nm);
+    EPUSHR(S);
+    return 1;
+}
+
 # ⛔ 6.6.20 — the CLOSURE-CAPTURE arm. A captured struct of 8 B or less is one env word holding
 # the struct BY VALUE, and it was pushed as that value — harmless while only a struct over 8 B was
 # address-passed (its one word holds the struct's address), fatal once a `p: *S` parameter of any
 # size is: `|| rd1(s)` SIGSEGV'd where `|| rd3(a)` worked. `_CL_CAP_BASE_RA` is the address for
 # every shape (the env word's own address, or the address it holds). Returns 1 when handled.
-fn _push_struct_addr_cap(S): i64 {
+fn _push_struct_addr_cap(S, fi, argc): i64 {
     var cx = _CL_CAP_FIELD_IDX(S, PEEKV(S));
     if (cx >= 0 - 1) { return 0; }
+    _sarg_type_err(S, fi, argc, _cap_fld_sid, PEEKV(S));   # 6.7.3
     _CL_CAP_BASE_RA(S, 0 - 1000000 - cx, _cap_fld_sid);
     EPUSHR(S);
     STI(S, GTI(S) + 1);                 # consume IDENT
@@ -1585,11 +1699,12 @@ fn _push_struct_addr_cap(S): i64 {
 # slot holds the address (push the slot). 0 means this global is not a recorded aggregate, so
 # leave it to the ordinary value push rather than guessing from GVTYPE, whose positive range is
 # shared with scalar widths. CHANGELOG [6.6.5]
-fn _push_struct_addr_global(S): i64 {
+fn _push_struct_addr_global(S, fi, argc): i64 {
     var gvi = FINDVAR(S, PEEKV(S));
     if (gvi < 0) { return 0; }
     var gpm = GVPM(S, gvi);
     if (gpm == 0) { return 0; }
+    _sarg_type_err(S, fi, argc, _sarg_gv_sid(S, gvi), PEEKV(S));   # 6.7.3
     if (gpm == 1) { EVLOAD(S, gvi); } else { EVADDR(S, gvi); }
     EPUSHR(S);
     STI(S, GTI(S) + 1);                 # consume IDENT
@@ -2669,8 +2784,13 @@ fn _sc_post(S, fi, noff, beg, t): i64 {
         if (cls == 1) { EFLSTORE_STRUCT_INT_PAIR(S, t); }
         else { EFLLOAD(S, t); SESTYPE(S, 0); }
     } else {
-        if (GINFN(S) == 1) { return 0; }   # a 9-16 B result nobody asked to store: rax:rdx as ever
-        if (cls == 2) {                    # top level: `_sc_pre` already refused it
+        # A 9-16 B result nobody asked to store: rax:rdx as ever. 6.7.3: recorded with
+        # `_sc_tmp` -4 ("in rax:rdx, no temp") for the argument type checks (`_sarg_byval_small`,
+        # `_op_arg_check`). Every other `_sc_whole` consumer arms `_sc_want` at its own start, so
+        # its whole expression has a temp and it never sees -4 — and `_op_is_sval` reads only -3.
+        # CHANGELOG [6.7.3]
+        if (GINFN(S) == 1) { t = 0 - 4; }
+        elif (cls == 2) {                  # top level: `_sc_pre` already refused it
             _sc_rbeg = beg;
             _sc_rend = GTI(S);
             return 0;
@@ -2845,6 +2965,7 @@ fn _push_struct_expr_arg(S, fi, argc, tail): i64 {
     _fla_arg = fa;
     if (_fla_hit == 1) { return _fla_push_arg(S, fi, argc, tail); }
     var t = _sc_whole(S, st);
+    if (t >= 0 || t == 0 - 3) { _sarg_type_err(S, fi, argc, _sc_sid, _sc_fn); }   # 6.7.3
     if (t == 0 - 3) { t = _sc_small_temp(S); }   # 6.6.20
     if (t >= 0) { _sarg_escapes(fi, argc, tail); EFLADDR(S, t); }   # 6.6.20: a temp in this frame
     if (t == 0 - 1) { _refuse_toplevel_struct_call(S, _sc_fn); }
@@ -2931,7 +3052,36 @@ fn _op_rhs(S, fi): i64 {
     }
     var sv = 1;
     if (GTI(S) != ce) { sv = _op_is_sval(S, rb, GTI(S)); }
+    _op_arg_check(S, fi, rb);   # 6.7.3
     return _op_operand_sv(S, fi, 1, GESVAR(S), _op_bare(S, rb, GTI(S)), sv);
+}
+# ⛔ 6.7.3 — the right operand [rb, cursor) of operator fn `fi`, already parsed, is ARGUMENT 1 of
+# that fn: its static struct against parameter 1's (`_sarg_type_err`) — a bare name (`p`, `(p)`),
+# a whole method / operator result, or a whole free call (resolved after the parse: a dedup hit).
+# `q + p` with `fn Q_add(a: Q, b: Q)` read past p (1) and `q + mkp()` SIGSEGV'd. A whole field is
+# `_fla_addr`'s (address-passed operand, 6.6.20). Emits nothing. CHANGELOG [6.7.3]
+fn _op_arg_check(S, fi, rb): i64 {
+    if (fi < 0) { return 0; }
+    if (GFPSID(S, fi, 1) <= 0) { return 0; }
+    var e = GTI(S);
+    var asid = 0;
+    var nm = 0;
+    if (_op_bare(S, rb, e) == 1) {
+        var nt = rb;
+        if (e == rb + 3) { nt = rb + 1; }
+        asid = _sarg_name_sid(S, nt);
+        nm = TOKVAL(S, nt);
+    } elif (_sc_whole(S, rb) != 0 - 2) {
+        asid = _sc_sid;
+        nm = _sc_fn;
+    } elif (TOKTYP(S, rb) == 2) {
+        var o = _gcall_open(S, rb);
+        if (o >= 0) { if (_call_close(S, o) + 1 == e) {
+                asid = _sarg_call_rs(S, rb);
+                nm = TOKVAL(S, rb);
+            } }
+    }
+    return _sarg_type_err(S, fi, 1, asid, nm);
 }
 # The token after a whole free call `name(..)` / `name<..>(..)` at the cursor that returns a struct
 # of 8 B or less (`_arg_call_class` 3), or -1.
@@ -8862,10 +9012,38 @@ fn _sarg_escapes(fi, argc, tail): i64 {
 }
 
 # 6.6.12 — record the struct id of an ADDRESS-passed struct parameter (see SFPSID, util.cyr).
+# 6.7.3: and of a plain one passed by value (8 B or less) or a `Str` handle (`_psid_plain`), for
+# the argument type check — so a recorded id no longer means address-passed (readers test
+# `_pm_struct`). CHANGELOG [6.7.3]
 fn _psid_note(S, fi, pc, sid, mask): i64 {
-    if (pc < 62) { if (((mask >> pc) & 1) == 0) { return 0; } }
-    elif ((_pm_row_get(fi, pc) & 1) == 0) { return 0; }   # 6.6.17 (a10): the overflow row
+    if (_psid_addr(fi, pc, mask) == 0) { if (_psid_plain(S, sid) == 0) { return 0; } }
     return SFPSID(S, fi, pc, sid);
+}
+fn _psid_addr(fi, pc, mask): i64 {
+    if (pc < 62) { return (mask >> pc) & 1; }
+    return _pm_row_get(fi, pc) & 1;   # 6.6.17 (a10): the overflow row
+}
+# 6.7.3 — a struct parameter WITHOUT the address-passed bit that still names a struct: a plain one
+# (8 B or less, BY VALUE) or a heap handle (`Str` / `Result` / `Option` / `Tagged`, value-passed
+# pointers) — the receive path refuses `var s: Str = p` for a handle too. A vector (classes 6-8,
+# the descriptor band) is never recorded. CHANGELOG [6.7.3]
+fn _psid_plain(S, sid): i64 {
+    if (sid <= 0) { return 0; }
+    if (sid >= 2048) { return 0; }
+    var c = _classify_param_type(S, L64(S + 0x1A6018 + (sid - 1) * 8));
+    if (c == 0) { return 1; }
+    if (c == 2) { return 0; }
+    if (c > 5) { return 0; }
+    if (c < 0) { return 0; }
+    return 1;
+}
+# Pass 2's write (PARSE_FN_DEF): a REDEFINED fn's by-value record is left as pass 1 wrote it — the
+# LAST definition's, which every call reaches (`_fn_redirect`) — since a second definition taking
+# another plain struct of 8 B or less passes the signature check (no mask tells the two apart), and
+# writing the earlier one's here mis-checked the calls between the two. CHANGELOG [6.7.3]
+fn _psid_def_note(S, fi, pc, sid, mask): i64 {
+    if (_psid_addr(fi, pc, mask) == 0) { if ((GFLG(S, fi) & 2048) != 0) { return 0; } }
+    return _psid_note(S, fi, pc, sid, mask);
 }
 # Pass 1's half: a parameter typed with struct `base` — its address-passed bit follows the
 # instance (`_gtype_param_mask`), and the sid is recorded. Returns the instance sid; the updated
@@ -11443,7 +11621,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                 # `-pt_sid` only if explicitly annotated.
                 SLTYPE(S, li, 0);
                 if (pt_sid > 0) { SLTYPE(S, li, 0 - pt_sid); }
-                _psid_note(S, fi, pc, pt_sid, struct_mask);   # 6.6.12: see SFPSID (util.cyr)
+                _psid_def_note(S, fi, pc, pt_sid, struct_mask);   # 6.6.12: see SFPSID (util.cyr); 6.7.3
                 # v6.4.57 (Gap A) — a scalar f64/f32 param gets the same positive
                 # F64_TYID/F32_TYID tag a `var y: f64` local gets, so parse_expr's
                 # local-load (lt == F64_TYID/F32_TYID) routes ops to the float
