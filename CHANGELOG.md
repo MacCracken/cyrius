@@ -6,6 +6,134 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [6.7.3] — 2026-10-07
 
+B2 `bool` / `true` / `false` / `!` (roadmap.md § Spec — B; the user's decisions of 2026-10-07 and 2026-10-08: a
+WRITE into a bool is checked and refused by name unless the value is boolean, the literals 0 and 1 included; a bool
+READS as the integer 0 or 1 everywhere; a bare `return;` in a bool fn is refused and running off its end returns
+`false`) **and a repair lane for the filed issues** (user, 2026-10-07: the two 6.7.x filings and the four open issue
+files — six fixes, each built and verified in its own worktree, merged here).
+
+**Size:** cycc **1,725,776 B** (`.text` **1,536,016**), +34,424 B over 6.7.2's 1,691,352 — B2 (the boolean stamp and
+its write checks, ~+22 KB) and the lanes (the struct-argument checks ~+4 KB, the in-loop tail-call selectors, the
+enum lvalue checks); dead-code floor unchanged (52 fns / 10,597 B). `build/cycc-native-aarch64` **1,528,760 B**
+(+67,200). `.tcyr` 517 → **523** (230 in `crossos/`); shell gates 418 → **421**.
+
+**Bench:** self_compile **1,097 ms** (bench-history). Same-box interleaved A/B vs 6.7.2 (15 runs each): **1,068 →
+1,072 ms on 6.7.2's source (+0.4 %)**, 1,097 → 1,100 ms on 6.7.3's own (+0.3 %).
+
+### Language — `bool`, `true`, `false`, `!` (B2)
+
+- **`true` and `false`** are reserved words (tokens 169 / 170; statement keywords 28 → 30, reserved tokens 109 →
+  111), the values 1 and 0. `bool` stays an 8-byte word (`sizeof(bool) == 8`, ADR-002).
+- **`!e` is a real operator** (token 171): 1 when `e`'s word is 0, else 0, binding like unary minus (`!x + 1` is
+  `(!x) + 1`); an f64 operand is tested by its raw bits, as `if (x)` tests it. ⚠ **CVE-104:** until 6.7.3 the lexer
+  silently DROPPED a lone `!`, so `!x` compiled as `x` and `if (!ok)` meant `if (ok)` (`fn f(x) { return !x; }`
+  returned x). No live use was found anywhere.
+- **A write into a bool is checked.** A bool local or global, field, parameter, `fn g(): bool` return, multi-value
+  return element, const or `bool[N]` list element takes only a BOOLEAN value — `true` / `false`, a comparison (the
+  `f64_eq` / `lt` / `gt` / `le` / `ge` builtins included), `!x`, `&&` / `||`, another bool (a variable, field,
+  parameter, capture or const, a call to a `: bool` fn), or any of these in parentheses — and refuses everything
+  else by name, `0` and `1` included: `cannot initialize bool 'b' with a value that is not a bool`, `cannot assign
+  …`, `compound assignment to bool 'b' is refused` (every `OP=`), `cannot store … into bool field 'on'`, `cannot
+  pass … to bool parameter 'on' of 'set'` (every argument loop: calls, methods, #inline, tail calls, an operator
+  overload's operand), `cannot return … from bool fn 'g'` (a tail call must call a bool fn), and `a bare
+  `return;` in bool fn 'g' returns 0`. Arithmetic over a bool is an integer (`ok + 0`, `-ok`, `(a < b) + 1` are
+  refused into a bool); an untyped variable is never inferred bool; raw memory (`store64`, `*p = v`, `ret2`) is
+  unchecked. **A bool reads as 0 / 1** wherever an integer goes (`n + ok`, a bool into an `i64` parameter);
+  conditions take any integer, as before. Running off the end of a bool fn (inlined or not) returns `false`.
+- **How.** A value is boolean iff the last boolean producer stamped the code pointer and token index at its last
+  emission and both still match at the write site (`_BX_MARK` / `_BX_IS`, parse_expr.cyr — the 6.6.10 `_FBR_MARK`
+  pattern): every construct ending in a boolean operand either emits after it or consumes a token, so the stamp dies
+  by itself and nothing has to clear it. SESTYPE is untouched (EMIT_OP_DISPATCH reads any nonzero estype as a struct
+  id). Bool-ness lives in bit 58 of a local's depth word, a lazy byte map per global and per field, GFLG bit 4096 /
+  8192 << k per fn and a per-fn parameter row, all recorded in pass 1 for forward calls. No heap-layout change.
+- **Consts** are bool when their value is (`const ON = !OFF;`, a `: bool` const fn's result): kind 3 in the
+  compile-time evaluator, folded as 0 / 1 in every const context; a const fn's bool parameter refuses a non-bool
+  argument in a const context. **`#derive`**: a bool field used to emit calls to the nonexistent `bool_to_json` /
+  `bool_from_json`; Serialize now writes JSON `true` / `false`, both decoders store 1 for `true` and 0 otherwise,
+  and `#derive(accessors)` gives a typed getter `: bool` and setter `v: bool`.
+- **Fixed in the feature's one review round, before release:** an #inline (or auto-inlined generic) bool fn run off
+  its end returned whatever rax held; a struct literal into a bool compiled; an operator overload's operand into its
+  fn's bool parameter was unchecked; a tuple `return (5, 1);` from a single-value bool fn returned 5; an undefined
+  name inside a bool write, and a non-constant `bool[N]` element, were reported twice.
+- The rough return-type scan (before the parameters) took `: bool` for a retptr return and shifted every parameter
+  — `_rs_scalar_name` (found by the crossos rows). Existing tests that wrote integers into bools now write `false` /
+  `true` (`type_name_refused.sh` axis 2, `type_name_resolver.tcyr` row 5, `global_array_initializer.tcyr`).
+  Tests: `tests/tcyr/crossos/bool_values.tcyr` (47 rows on x86, aarch64 (qemu), PE (wine) and cx),
+  `tests/tcyr/derive/derive_serialize_bool.tcyr` (8); the gate `tests/gates/frontend/bool_checked.sh` (78 rows —
+  W refusals, A anti-vacuous runs, X `--syntax-only`, R reserved words; eight mutations each RED). Tooling: [embed]'s
+  reserved list, the LSP highlighter (+ `impl` / `trait` / `const` it lacked), the VS Code grammar, lint_fmt's
+  reserved rows.
+
+### Security
+
+- **CVE-103 (P2): the compiled `cyriusly cmdtools` ran whatever `scripts/cyriusly` the CURRENT directory held**
+  (lane cyriusly; CVE-94's filed remainder). Inside any checkout shipping one it ran with the user's privileges
+  ("PWNED from the checkout: cmdtools list", rc 0). Every store writer now ships the shell twin to
+  `versions/<v>/scripts/cyriusly` (install.sh's refresh-only — refusing, before anything is written, a tree whose
+  bins ship cyriusly without it — tarball and source-bootstrap paths; release.yml and both macOS builders), and
+  `cmdtools` runs `<home>/versions/<current>/scripts/cyriusly` only, refusing by name a relative home, a `current`
+  that is not a version (`../evil`) or a missing twin — no fallback. `verify-store.sh` judges and restores the twin.
+  ⚠ An installed x86_64 cyriusly whose active version predates 6.7.3 now refuses `cmdtools` by name. Gates:
+  `cyriusly_version_operand_refused.sh` axes 7 (rewritten) and 9, `released_slot_written_from_tag.sh` 7 / 7b / 8.
+- **CVE-104 (P2): the lexer silently dropped a lone `!`** — see B2 above. The next free CVE id is **105**.
+
+### Fixed — the repair lane
+
+- **A struct ARGUMENT is type-checked against its parameter** (the 6.7.1 filing; lane struct-arg). Only a struct
+  FIELD into an address-passed parameter was compared (6.6.12); every other argument was pushed as it came and the
+  callee read it with its own layout, silently — `bq(p)` (a 16-byte Pt into `fn bq(b: Q)`) read past it, `bs(mk1(p))`
+  (a `Box<Pt>` into `fn bs(b: Box)`) returned 4 where 8 is right, a global Pt gave 97, `q + p` gave 1, and
+  `q + mkp()`, `q + p.dup()` and `sl(p)` into `s: Str` SIGSEGV'd. An argument whose static struct VALUE type
+  differs from its parameter's is refused: `cannot pass 'p' to a parameter of a different struct type in a call to
+  'bq'` — a local, global, capture, field, free call (a generic instance's included, both ways), method or operator
+  result; through calls, method arguments and tail calls; into a by-value parameter of any size, a `p: *T` or a
+  `Str` handle; an operator's two operands and a method's `self`. A typed POINTER of another struct converts freely,
+  like `&p` and the receive path's `var q: *Q = u;` (**the user's decision, 2026-10-08** — the lane had refused the
+  `*Pt` local form only); an untyped value, a literal and a fn pointer stay accepted. Zero codegen change over a
+  649-file differential corpus but one test row that passed a P3 handle to a `Str` parameter
+  (`struct_ptrmode_assign_copy.tcyr`, rewritten). Gate `struct_arg_type_refused.sh` (41 refusals, 12 acceptances,
+  mutation-proven); `crossos/struct_arg_type_accepted.tcyr` (38 rows).
+- **An enum constant is not an lvalue** (the 6.7.2 filing; lane enum-assign). `A = 6;`, `A += 1;` (every `OP=`),
+  `&A`, the qualified `E.A = ..` / `E.A OP= ..` / `&E.A`, a for step writing one and `&Ctor` of a payload variant are
+  refused by name, as for a const: `cannot assign to enum constant 'A' - an enum constant is a fixed value, not a
+  variable`. They compiled silently — every read folds to the declared value while the write landed in the
+  variant's slot (`A = 6; A * 10 + load64(&A)` was 56). A local / captured / later top-level `var A` stays a
+  variable. **And 6.7.2's const refusal missed the `for` step**: `for (..; ..; N = 100)` compiled and, a top-level
+  const's slot having size 0, stored over a neighbouring global (179 where 86 is right) — closed by the same check.
+  766 corpus files byte-identical. Gate `enum_const_not_lvalue.sh`; `const_checked.sh` L5 / L6;
+  `crossos/enum_const_namesakes.tcyr`.
+- **A tail call inside a loop is decided at the end of its outermost loop** (issue
+  `tail-call-in-loop-before-frame-address`; lane tailcall-loop). `_fn_local_addr` is set when the parser REACHES the
+  address, so a `return f(..);` earlier in a loop body than `x = &s` kept its `jmp` and handed the callee a pointer
+  into the frame it had just freed (5 on x86 / PE, 13 on aarch64 / cx, where 7 is right — since 6.5.14, through every
+  implicit address 6.6.20 flags and every loop form). An in-loop tail call in a fn with no frame address yet now
+  waits behind a selector `jmp` that the end of its OUTERMOST loop statement patches: kept, or an out-of-line call
+  stub at the fn end. A fn taking an address only after the loop keeps its `jmp`. ⚠ **Behaviour change against
+  6.6.20 (RPF-03 rule 2): `_tc_sarg_divert` is deleted**, so address-passed callees keep TCO inside loops again (the
+  issue's 1,000,000-deep `walk1` over `p: *S1` exits 64; it was 139); `tailcall_struct_ptr_params.tcyr`'s `t1_lp`
+  row flips to "kept". cycc's own five in-loop tail calls keep their `jmp`. `crossos/tailcall_loop_frame_address.tcyr`
+  (61 rows); `cx_tailcall_and_vm_traps.sh` A3 / A4.
+- **`lib/hashmap_fast.cyr`'s same-capacity rebuild happens in place** (issue
+  `stdlib-hashmap-fast-same-capacity-rehash-leak`; lane hashmap-fast). Since 6.6.8 it allocated three fresh arrays
+  and freed none — ~17 B per slot per rebuild under the bump allocator, without bound, and a steady-size `fhm_set`
+  could return -1. `_fhm_rebuild_in_place` (hashmap.cyr's anchor walk lifted to 16-slot groups): 7,000 live / 16,384
+  slots over 3M rounds allocate **278,528 B** (the one doubling), was 1,114,112. `tests/tcyr/stdlib/
+  hashmap_fast_rebuild_in_place.tcyr` (52 rows, four mutants killed); `docs/stdlib-reference.md`.
+- **cyaudit and cyrius_api_surface read an attribute line as code, as the compiler does** (issue
+  `tool-lexst-copies-miss-attribute-lines`; lane tool-lexst). Their copies of the old `PP_LEXST` read every `#` as a
+  comment, so a string opened on an attribute line put them a quote out of step: `cyrius vet` said `no dependencies`
+  and `deny` `0 violations` on files the compiler refuses, and a valid program got a false MISSING. Each tool carries
+  the rule (copied, not shared — nothing under `src/` moved); `cyaudit_include_directives.sh` axis 7 derives the
+  words from LEXATTRWORD (26 → 44 checks); `lexer_attribute_word_boundary.sh` F8 / F8b (49 → 51).
+
+**Filed, not fixed** (roadmap.md *Potential backlog*, "Found by the 6.7.x feature releases"): generic inference
+through a generic struct parameter (`gx(b)` for `fn gx<T>(b: Box<T>)`); a Str-typed field as a struct source; a bare
+const / enum name as a statement reported as an assignment; a global read inside its own bool redeclaration;
+hashmap_fast's overwrite can rebuild; `scripts/ci.sh` vs the real release tarball layout; install.sh's
+source-bootstrap ships no init templates; api-surface's per-line string reset; the six hand-kept attribute lists;
+and, added to the 6.6.20 bullet, a METHOD result over 8 B as an operator's operand SIGSEGVs. **Open issue** filed by
+agnostic during the release: `2026-10-07-pkgver-not-visible-in-nested-includes` (not in 6.7.3's scope).
+
 ## [6.7.2] — 2026-10-07
 
 B1 `const` and C1 `const fn` (roadmap.md § Spec — B / C1; the user's decisions of 2026-10-07: a const holds an
