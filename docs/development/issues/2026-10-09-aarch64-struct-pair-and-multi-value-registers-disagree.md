@@ -1,10 +1,10 @@
-# aarch64: a 16-byte struct return travels in x0:x1, a multi-value return in x0:x2 — where the two meet, the second word is lost — OPEN
+# aarch64: a 16-byte struct return travels in x0:x1, a multi-value return in x0:x2 — where the two meet, the second word is lost — RESOLVED
 
-**Status:** 🟡 **OPEN** — reproduced 2026-10-09 against 6.7.6 @ e44470b7 (`build/cycc` and the aarch64 / cx / PE
-compilers built from that tree): repro A exits 56 on x86_64 and PE and **55** on aarch64; repro B exits 56 on x86_64
-and PE and **50** on aarch64. Both were re-run on real hardware: **pi** (aarch64 Linux) 55 / 50, **ecb** (macOS
-arm64, `CYRIUS_MACHO_ARM=1`) 55 / 250. cx refuses both (the separate cx issue below).
-**Placement:** unpinned — 6.x-line backlog — never 7.x.
+> ✅ **RESOLVED in v6.7.7** (6f27b485; CHANGELOG [6.7.7]) every 9-16 B struct return on aarch64 carries its high word in BOTH x1 (the struct pair) and x2 (the multi-value slot): `EFLLOAD_STRUCT_INT_PAIR` writes x2 too and a struct fn's `return (a, b[, c]);` / `ret2` land through `_mret_land` (`ESTRUCT_PAIR_HI_SYNC`, `mov x1, x2`; a no-op on x86 / cx), so every row of the table below gives the x86 value on qemu, pi and ecb — gate `codegen/struct_pair_multi_value_crossing.sh`, `crossos/struct_pair_multi_value_crossing.tcyr`.
+
+**Status:** ✅ **RESOLVED in v6.7.7** — see the banner above (filed OPEN 2026-10-09 against 6.7.6 @ e44470b7:
+repro A 55 and repro B 50 on aarch64 / pi, 55 / 250 on ecb, where x86_64 and PE gave 56).
+**Placement:** 6.7.7 — shipped (the integration lane "aarch64 registers", decisions 2026-10-09).
 **Discovered:** 2026-10-08 by the 6.7.7 B4 (tuples) planners' cross-target probes (u1, t6); filed 2026-10-09 by the
 B4 lane (bite T0).
 **Severity:** High — a silent miscompile of valid source on aarch64 (Linux, macOS arm64, native), correct on x86_64.
