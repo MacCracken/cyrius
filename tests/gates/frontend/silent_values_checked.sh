@@ -108,6 +108,27 @@
 #   M43 `_w128_store` takes only a `+` / `-` result (D2's)      -> RED U35, S1 S2 S3, AS on every leg
 #   (M44 x86 EW128_CMP without its IR_RAW_EMIT mark stayed GREEN, the IR=3 legs included: the `lea`
 #   before it is already marked opaque. The mark is kept, as EW128_ACCM's.)
+# D4 (the truth tests, 2026-10-08; the same method, the gate as it stands here run from each scratch
+# tree with CYCC=<mutant>; the AC rows named are the first the leg prints):
+#   M45 `_w128_truth` never takes a u128                        -> RED T1 T2 T3, AC on every leg (T1 T2 T3 ..)
+#   M46 ECONDCMP's bare-value path without its hook             -> RED T1 T2 T3, AC on every leg (T1 T2 T3 ..)
+#   M47 `_PLOGIC_AND` without its two hooks                     -> RED T3, AC on every leg (T9 T10 T11)
+#   M48 PCMPE's `||` without its two hooks                      -> RED T3, AC on every leg (T9 T12 T13)
+#   M49 `!` (_bx_factor_tok) without its hook                   -> RED T1 T2 T3, AC on every leg (T15 T20 T35)
+#   M50 `_w128_subj` never takes a u128 (match / switch)        -> RED T1-T5, AC on every leg (T21 T24 T26 ..)
+#   M51 `_w128_subj` reads the subject in place (no copy)       -> RED T3, AC on every leg (T28; T37 T38, a
+#       global read as a frame slot)
+#   M52 PARSE_SWITCH lets a u128 subject take the jump table     -> RED AC on x86 and PE only (T31)
+#   M53 x86 EW128_TST reads the low word twice                  -> RED T1 T2 T3, AC on x86 and PE only
+#   M54 aarch64 EW128_TST without the `orr` (the low word)       -> RED AC on aarch64 only (T1 T2 T3 ..)
+#   M55 cx EW128_TST without the `or` (the low word)             -> RED AC on cx only (T1 T2 T3 ..)
+#   M57 `_sw_case_test` without its u128 arm                    -> RED T5, AC on every leg (T31 T33 T34)
+#   M58 `_match_arm_test` without its u128 arm                  -> RED T5, AC on every leg (T22 T23 T25)
+#   M59 `_w128_case` reads a u128 arm's low word                -> RED AC on every leg (T25)
+#   (M56 x86 EW128_TST without its IR_RAW_EMIT mark stayed GREEN, the IR=3 legs included — M44's
+#   reason, the `lea` before it is marked. The mark is kept. T1 / T3 / T4 alone stay green under M57 /
+#   M58: the integer path's stored subject word is then the copy's ADDRESS, never 0 to 3, so the
+#   default arm wins by accident — T5 is the row that pins them.)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -237,6 +258,7 @@ exits t01 5 "T1: \`if (b)\`, \`!b\`, \`match b\`, \`switch (b)\` read the high w
 exits t02 5 "T2: ... the same program under CYRIUS_IR=3" "$T1" CYRIUS_IR=3
 exits t03 173 "T3: top level — \`if (G)\`, \`!G\`, \`G && 1\`, \`0 || G\`, \`match G\`, \`switch (G)\` on 2^64 (exited 82)" "var G: u128 = 0;\nstore64(&G + 8, 1);\nvar r = 0;\nif (G) { r = r + 1; }\nif (!G) { r = r + 2; }\nif (G && 1) { r = r + 4; }\nif (0 || G) { r = r + 8; }\nmatch G { 0 => { r = r + 16; } _ => { r = r + 32; } }\nswitch (G) { case 0: r = r + 64; default: r = r + 128; }\nsyscall(60, r);\n"
 exits t04 100 "T4: a table-sized \`switch\` (four dense cases) on 2^64 + 2 takes default; \`!d\` and \`d || 0\` as values (exited 13)" "fn main(): i64 {\n    var d: u128 = 0;\n    store64(&d, 2); store64(&d + 8, 1);\n    var w = 0;\n    switch (d) { case 0: w = 10; case 1: w = 11; case 2: w = 12; case 3: w = 13; default: w = 99; }\n    var x = !d;\n    var y = d || 0;\n    return w + x * 100 + y;\n}\nsyscall(60, main());\n"
+exits t05 165 "T5: \`match\` / \`switch\` take the arm a u128 subject equals (5), and not for 2^64 + 5 (exited 85)" "fn main(): i64 {\n    var b: u128 = 5;\n    var r = 0;\n    match b { 5 => { r = r + 1; } _ => { r = r + 2; } }\n    switch (b) { case 5: r = r + 4; default: r = r + 8; }\n    store64(&b + 8, 1);\n    match b { 5 => { r = r + 16; } _ => { r = r + 32; } }\n    switch (b) { case 5: r = r + 64; default: r = r + 128; }\n    return r;\n}\nsyscall(60, main());\n"
 
 # ── S (D3): a plain u128 assignment takes the whole value ───────────────────────────────────────
 # The D2 finding's repro (a1.cyr, exit 73 = 1353 % 256): `b = c` and `b = 5` over a high word of 3.
