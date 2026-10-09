@@ -2501,7 +2501,9 @@ instruction.
   by any leaf of the pinned stdlib snapshot, by `[build] entry` or `[build] modules`, or by a `.cyr`
   under `src/` or `lib/` — is refused (`[embed] vec` is, because of `vec_len`): left to "the last
   definition wins", the stdlib would silently win in your build, and the embed would silently
-  replace the stdlib function in every consumer of a bundle that carries it.
+  replace the stdlib function in every consumer of a bundle that carries it. The one leaf not
+  counted is the project's own fold — the snapshot leaf named for its `[package] name`, which
+  declares `NAME` because this `[embed]` generated it (sankoch building sankoch, 6.7.6).
 - The path is relative to the project and stays inside it: no leading `/`, no `\`, no `:` (a
   drive, or an NTFS stream such as `.git::$INDEX_ALLOCATION`), no `..`, no control character, no
   8.3 short-name component (`~` and a digit, as in `GIT~1`), no code point HFS+ ignores (U+200C–200F,

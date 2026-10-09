@@ -4920,7 +4920,8 @@ fn _distlib_leaf_defining(root, name): i64 {
 # includes a bundle carrying the embed, the bundle comes AFTER the stdlib, so the embed silently
 # REPLACES the stdlib fn (measured: `[embed] vec_new` in a bundle -> `vec: alloc failed`, exit 1,
 # and only a `duplicate fn` warning; the distlib self-check passed). Owners checked: every leaf of
-# the pinned stdlib snapshot (the D1 index, _distlib_snap_cache), and the project's own sources —
+# the pinned stdlib snapshot (the D1 index, _distlib_snap_cache) but the project's own fold (6.7.6),
+# and the project's own sources —
 # `[build] entry`, `[build] modules`, every .cyr under src/ and lib/ (dist/ is the output, never
 # an owner). Called once from _embed_load; returns the number refused (each named).
 var _emb_hit = 0;
@@ -5006,16 +5007,25 @@ fn _embed_collisions(ents): i64 {
     var root = _distlib_stdlib_root();
     if (root != 0) {
         if (_distlib_snap_cache(root) != 0) { return 1; }
+        # ⛔ The leaf named for THIS project ([package] name) is its own fold: a snapshot of these
+        # sources plus the modules generated from this very [embed], never in the build's scope
+        # beside them — so a NAME it declares is not a collision (sankoch 2.8.3's
+        # _brotli_dict_bin, refused by its own fold the release cyrius re-vendored it). Every
+        # other leaf still is; src/, [build] and lib/ below still are. CHANGELOG [6.7.6]
+        var own = _mf_str("package", "name");
         var i = 0;
         while (i < vec_len(_dl_snap_names)) {
+            var lname = vec_get(_dl_snap_names, i);
+            var lset = vec_get(_dl_snap_sets, i);
+            i = i + 1;
+            if (own != 0 && streq(lname, own) == 1) { continue; }
             var sb = str_builder_new();
             str_builder_add_cstr(sb, "the stdlib leaf ");
-            str_builder_add_cstr(sb, vec_get(_dl_snap_names, i));
+            str_builder_add_cstr(sb, lname);
             str_builder_add_cstr(sb, " (");
             str_builder_add_cstr(sb, root);
             str_builder_add_cstr(sb, ")");
-            n = n + _embed_owner_check(vec_get(_dl_snap_sets, i), ents, str_data(str_builder_build(sb)));
-            i = i + 1;
+            n = n + _embed_owner_check(lset, ents, str_data(str_builder_build(sb)));
         }
     }
     var ent = _mf_key_str("build", "entry");
