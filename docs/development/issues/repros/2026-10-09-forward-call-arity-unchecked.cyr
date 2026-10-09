@@ -1,0 +1,29 @@
+# 2026-10-09 — a call to a fn defined LATER is never arity-checked (the backward-only gate in
+# _CHECK_ARITY). Every call path: a plain call, a too-few call, a method and a tail call.
+# Expected: the four errors these calls get when the callees are defined above them —
+#   error:<source>:12: 'g' expects 1 argument, got 2
+#   error:<source>:16: 'g' expects 1 argument, got 2
+#   error:<source>:17: 'h' expects 3 arguments, got 2
+#   error:<source>:18: 'P_m' expects 2 arguments, got 3
+# Actual (6.7.6 @ e44470b7): no diagnostic, rc 0, a binary — it exits 0: each surplus argument
+#   is dropped silently, and h's `c` is whatever its register held.
+struct P { v; }
+fn t(): i64 {
+    return g(1, 2);
+}
+fn main(): i64 {
+    var p = P { 5 };
+    var x = g(1, 2);
+    var y = h(1, 2);
+    var z = p.m(1, 2);
+    var e = 0;
+    if (x != 1) { e = e | 1; }
+    if (z != 6) { e = e | 2; }
+    if (t() != 1) { e = e | 4; }
+    return e;
+}
+fn g(a): i64 { return a; }
+fn h(a, b, c): i64 { return a + b + c; }
+impl P { fn m(self, k): i64 { return self.v + k; } }
+var r = main();
+syscall(60, r);

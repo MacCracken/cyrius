@@ -177,6 +177,20 @@ fn extract_fn_name(line, len, buf): i64 {
     return 0;
 }
 
+# The offset just past the string or char literal whose opening quote is at line[p] (a `\`
+# escapes the next byte), else len.
+fn _doc_lit_end(line, p, len): i64 {
+    var q = load8(line + p);
+    p += 1;
+    while (p < len) {
+        var c = load8(line + p);
+        if (c == 92) { p += 2; }
+        elif (c == q) { return p + 1; }
+        else { p += 1; }
+    }
+    return len;
+}
+
 fn extract_fn_sig(line, len, buf) {
     # Extract from "fn" to end of line (trimmed)
     var si = 0;
@@ -184,12 +198,14 @@ fn extract_fn_sig(line, len, buf) {
         if (load8(line + si) == 102) {
             if (load8(line + si + 1) == 110) {
                 if (load8(line + si + 2) == 32) {
-                    # Find the closing ) or {
+                    # Find the body's { — not one inside a string or char literal: since 6.7.7
+                    # a parameter default can be `s = "{x}"`. CHANGELOG [6.7.7]
                     var se = si;
                     while (se < len) {
                         var c = load8(line + se);
                         if (c == 123) { break; }
-                        se += 1;
+                        if (c == 34 || c == 39) { se = _doc_lit_end(line, se, len); }
+                        else { se += 1; }
                     }
                     # Trim trailing spaces
                     while (se > si) {

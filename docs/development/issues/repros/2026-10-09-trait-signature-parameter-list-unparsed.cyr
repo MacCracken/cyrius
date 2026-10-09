@@ -1,0 +1,19 @@
+# 2026-10-09 — a trait's REQUIRED signature's parameter list is never parsed (only its commas are
+# counted, for the impl's arity check), and neither is a trait DEFAULT method's when every impl
+# overrides it. Junk in either compiles.
+# Expected: a parse error at `+` (line 9) and at `1` (line 10).
+# Actual (6.7.6 @ e44470b7): no diagnostic, rc 0, exit 7.
+# (The DEFAULT method's list IS parsed when an impl inherits the body: drop P's `tw` and line 10
+# reports "expected ')', got number 1".)
+trait Sh {
+    fn sh(self, n + foo bar): i64;
+    fn tw(self, k 1 2): i64 { return 1; }
+}
+struct P { v; }
+impl Sh for P {
+    fn sh(self, n): i64 { return self.v + n; }
+    fn tw(self, k): i64 { return k; }
+}
+fn main(): i64 { var p = P { 5 }; return p.sh(2); }
+var rc = main();
+syscall(60, rc);

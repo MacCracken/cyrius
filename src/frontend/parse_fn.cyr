@@ -692,6 +692,10 @@ fn _tc_callee_divert(S, cfi): i64 {
 }
 # What the ARGUMENT LIST needs. The scan runs to the call's matching `)`.
 fn _tc_args_divert(S, cfi, ti_after): i64 {
+    # 6.7.7 (B6) — a call that fills a parameter default or names an argument is PARSE_FNCALL's: the
+    # one marshaller is the only site that fills (the tail arm's `_CHECK_ARITY` mode 3 makes a miss
+    # here loud). A full-arity positional call to a defaulted fn keeps its `jmp`. CHANGELOG [6.7.7]
+    if (_pd_call_fills(S, cfi, ti_after) == 1) { return 1; }
     var has_lit = 0;
     var depth = 1;
     var i = ti_after + 1;
@@ -984,7 +988,7 @@ fn PARSE_RETURN(S): i64 {
                             # (`return f(args);`). Mutually exclusive with
                             # PARSE_FNCALL (no double-fire); the most common call
                             # form, so covering it closes the bulk of the hole.
-                            _CHECK_ARITY(S, _tc_line, tcnoff, tcfi, tcargc, 1);
+                            _CHECK_ARITY(S, _tc_line, tcnoff, tcfi, tcargc, 3);
                             # ⛔ 6.6.5 — this said `tcargc > 6`, the SysV register ceiling, on
                             # every target. On Win64 the ceiling is 4, so `return f5(...)` and
                             # `return f6(...)` took the TAIL-CALL branch: ETAILJMP's `mov rsp,rbp`
@@ -1404,34 +1408,31 @@ fn _TYPE_CHECK_ENABLED(): i64 {
 # from `_str` / `_int` / `_cstr` suffixes on sibling fns.
 # See `_OVERLOAD_SUFFIX` + REGFN's auto-register block.
 
-# v6.2.41 — shared call-site arity check (issue 2026-06-23-call-arity-no-check).
-# cyrius has no overloading and no default args, so a positional arg-count
-# mismatch is never intentional — the canonical free catch a compiler owes, and
-# the worst footgun in a no-bounds-checking language (a stale call binds garbage
-# / shifts args; tentib M3c shipped a mis-bound kernel that built `OK`). Emitted
-# as a non-fatal WARNING (hard-error / --strict-arity escalation is a separate
-# later scope). Shared by all three call-emit paths — PARSE_FNCALL's normal +
-# inline-replay paths and the `return f(args);` tail-call path — so the
-# diagnostic is uniform and covers the common call forms. Carve-outs:
-#   - BACKWARD refs only (offset >= 0): a forward-declared callee has offset -1
-#     and pc not yet known → checking would 556-false-positive building main.cyr.
-#   - VARIADICS `fn f(a, ...)` (GFVA==1) take a flexible tail.
-#   - `syscall` never reaches here (own path); fncallN are fixed-arity.
-#   - Variant constructors register their real arity (parse_types.cyr), so they
-#     validate here rather than needing an exemption.
-# NOT yet covered (documented gap for the hard-error escalation): struct-return-
-# by-value assignment (hidden retptr arg0) and `return (a, b)` multi-return.
-# `need_off`: 1 = require the backward-ref offset gate (normal + tail-call paths,
-# where a forward-ref callee has offset -1 and pc=0 → must skip). 0 = skip the
-# gate (inline-replay path: the callee is provably backward — inlining requires
-# its body — and pc is reliable there; the gate would otherwise wrongly skip an
-# inlined-only fn that was DCE'd to no standalone body, e.g. a small backend
-# helper, which still has offset -1 despite being defined).
+# ⭐ THE CALL-SITE ARITY CHECK (v6.2.41; an error since v6.5.1), shared by every call path — the one
+# marshaller (PARSE_FNCALL, the method form, the struct-valued receives), the inline replay, the
+# tail arm and the operator dispatches — so the diagnostic is one. A count mismatch is never
+# intentional: there is no overloading by arity. The count must lie in min..max: max is the
+# parameter count, min the first defaulted parameter's index (6.7.7; a fn without defaults has
+# min = max, and the message is the v6.5.1 text, byte for byte).
+# ⛔ 6.7.7 (fork F2, user 2026-10-09) — EVERY CALL TO A FN PASS 1 RECORDED IS CHECKED, A FORWARD ONE
+# INCLUDED. The check used to skip any callee whose body was not yet emitted (offset -1: "pc not
+# yet known"), so `g(1, 2)` to a `fn g(a)` defined further down built and dropped the 2 — on every
+# path (plain, too few, a method, a tail call, a fn inside a top-level block). But pass 1 records
+# every definition's parameter count (v6.3.5) and stamps its GFDS (6.6.5) before pass 2 parses any
+# call; a name no definition registered (REGFN at the call, GFDS 0) keeps the skip and ends in the
+# undefined-function diagnostic. VARIADICS (GFVA) take any tail; `syscall` has its own path.
+# `need_off` names the path: 0 = the inline replay (its callee always has a body), 1 = a direct
+# call (the marshaller fills a short call's defaults after this check), 3 = the tail arm (it never
+# fills: `_tc_args_divert` sends such a call to PARSE_FNCALL), 4 = an operator dispatch (exactly two
+# operands; an operator fn takes no default, D19) — `_pd_arity_mode`.
+# CHANGELOG [6.2.41] [6.5.1] [6.7.7]
 fn _CHECK_ARITY(S, line, noff, fi, argc, need_off): i64 {
-    if (need_off == 1) { if (L64(_fnt_offsets + fi * 8) < 0) { return 0; } }
+    if (need_off != 0) { if (L64(_fnt_offsets + fi * 8) < 0) { if (GFDS(S, fi) == 0) { return 0; } } }
     if (GFVA(S, fi) != 0) { return 0; }
     var pc = L64(_fnt_params + fi * 8);
-    if (argc == pc) { return 0; }
+    if (_pd_row(fi) != 0) { if (_pd_arity_mode(S, line, noff, fi, argc, need_off) == 1) { return 0; } }
+    var mn = _pd_min(fi);
+    if (argc >= mn) { if (argc <= pc) { return 0; } }
     # v6.5.1 — ERROR, not warning. A call with the wrong argument count cannot
     # produce correct code: the surplus parameter is bound to whatever happens to
     # be in the register or stack slot. This was a *warning* for its entire life and
@@ -1448,9 +1449,10 @@ fn _CHECK_ARITY(S, line, noff, fi, argc, need_off): i64 {
     syscall(SYS_WRITE, 2, ": '", 3);
     PRSTR(S + 0xEC00000 + noff);
     syscall(SYS_WRITE, 2, "' expects ", 10);
+    if (mn != pc) { PRNUM(mn); syscall(SYS_WRITE, 2, " to ", 4); }   # 6.7.7: "1 to 3 arguments"
     PRNUM(pc);
     syscall(SYS_WRITE, 2, " argument", 9);
-    if (pc != 1) { syscall(SYS_WRITE, 2, "s", 1); }
+    if (pc != 1 || mn != pc) { syscall(SYS_WRITE, 2, "s", 1); }
     syscall(SYS_WRITE, 2, ", got ", 6);
     PRNUM(argc);
     syscall(SYS_WRITE, 2, "\n", 1);
@@ -2178,6 +2180,1237 @@ fn _tok_ends_arg(S, ti): i64 {
     return 0;
 }
 
+# ⭐ 6.7.7 (B6) — THE PARAMETER-LIST AND ARGUMENT-LIST WALKERS: one rule for every walker that
+# steps over a parameter or an argument (default and named arguments). Cursor-free, read-only.
+#   * In a parameter's TYPE `<` / `>` nest (`m: Map<K, V>`); in its DEFAULT, after a depth-0 `=`,
+#     they are operators (`b = A < B`), so a default is skipped with `( [ {` balance only. A walker
+#     that counted `<` there would lose the list's end.
+#   * In an ARGUMENT list a closure's `|a, b|` bars, at an argument's start (or after a `name:`
+#     label), hold a comma that separates nothing. (`_CALL_ARGC_PEEK`, `_call_arg_start` and
+#     `_tc_str_literal_arg` count it: issue 2026-10-09-closure-literal-comma-counted-as-argument.)
+# At the end of input each returns the EOF token, never its start, so a walker that `continue`s
+# from the result always moves. CHANGELOG [6.7.7]
+
+# From token `q`: the first `,` or `)` outside `( [ {` nesting, or the EOF token.
+fn _tok_item_end(S, q): i64 {
+    var d = 0;
+    var n = GTCNT(S);
+    while (q < n) {
+        var t = TOKTYP(S, q);
+        if (t == 12) { return q; }
+        if (d == 0) { if (t == 31 || t == 11) { return q; } }
+        if (t == 10 || t == 28 || t == 13) { d = d + 1; }
+        if (t == 11 || t == 29 || t == 14) { d = d - 1; }
+        if (d < 0) { d = 0; }
+        q = q + 1;
+    }
+    return q;
+}
+# The depth-0 `,` or `)` that ends the parameter default whose `=` is token `i` (or the EOF token).
+fn _pl_dflt_end(S, i): i64 {
+    return _tok_item_end(S, i + 1);
+}
+# A parameter TYPE's nesting depth after token type `t`: `( [ { <` open; `>>` / `>>>` close two /
+# three (`Vec<Vec<i64>>`).
+fn _pl_tdepth(t, d): i64 {
+    if (t == 10 || t == 28 || t == 13 || t == 19) { return d + 1; }
+    if (t == 11 || t == 29 || t == 14 || t == 20) { d = d - 1; }
+    if (t == 39) { d = d - 2; }
+    if (t == 152) { d = d - 3; }
+    if (d < 0) { return 0; }
+    return d;
+}
+# The depth-0 `,` or `)` that ends the parameter whose first token is `i` (a name, or `...`), or the
+# EOF token: its type balanced by `_pl_tdepth`, a default from its depth-0 `=` by `_pl_dflt_end`.
+fn _pl_next(S, i): i64 {
+    var q = i;
+    var d = 0;
+    var n = GTCNT(S);
+    while (q < n) {
+        var t = TOKTYP(S, q);
+        if (t == 12) { return q; }
+        if (d == 0) {
+            if (t == 31 || t == 11) { return q; }
+            if (t == 4) { return _pl_dflt_end(S, q); }
+        }
+        d = _pl_tdepth(t, d);
+        q = q + 1;
+    }
+    return q;
+}
+# 1 when the parameter list whose `(` is token `op` declares a default (a parameter-level `=`).
+fn _pl_has_dflt(S, op): i64 {
+    var q = op + 1;
+    var d = 0;
+    var n = GTCNT(S);
+    while (q < n) {
+        var t = TOKTYP(S, q);
+        if (t == 12) { return 0; }
+        if (d == 0) {
+            if (t == 11) { return 0; }
+            if (t == 4) { return 1; }
+        }
+        d = _pl_tdepth(t, d);
+        q = q + 1;
+    }
+    return 0;
+}
+# 1 when token `ti` starts a named argument's label `name:`. Nothing else starts a call argument
+# `IDENT :` — there is no ternary and no `::`, and a struct literal is only a `var` initializer.
+fn _pd_label_at(S, ti): i64 {
+    if (TOKTYP(S, ti) != 2) { return 0; }
+    if (TOKTYP(S, ti + 1) != 49) { return 0; }
+    return 1;
+}
+# The depth-0 `,` or `)` that ends the call argument whose first token is `i` (just past the `(` or
+# a `,`), or the EOF token. A closure's `|..|` bars at its start, or after its label, are stepped
+# over whole (`||` is one token, with no bars; a closure's parameters are untyped, so no `:`) —
+# EVERY leading head: a body that opens with `|` or `||` is another closure literal (there is no
+# unary `|`), so `|a| |b, d| ..` holds no argument separator. CHANGELOG [6.7.7]
+fn _arg_next(S, i): i64 {
+    var q = i;
+    if (_pd_label_at(S, q) == 1) { q = q + 2; }
+    var go = 1;
+    while (go == 1) {
+        var t = TOKTYP(S, q);
+        if (t == 54) { q = q + 1; }
+        elif (t == 35) {
+            q = q + 1;
+            while (TOKTYP(S, q) != 35 && TOKTYP(S, q) != 12) { q = q + 1; }
+            if (TOKTYP(S, q) == 35) { q = q + 1; }
+        } else { go = 0; }
+    }
+    return _tok_item_end(S, q);
+}
+# 1 when an argument of the call whose `(` is token `open` is named (`f(1, c: 3)`).
+fn _pd_named_at(S, open): i64 {
+    var q = open + 1;
+    if (TOKTYP(S, q) == 11) { return 0; }
+    var n = GTCNT(S);
+    while (q < n) {
+        if (_pd_label_at(S, q) == 1) { return 1; }
+        q = _arg_next(S, q);
+        if (TOKTYP(S, q) != 31) { return 0; }
+        q = q + 1;
+    }
+    return 0;
+}
+# The depth-0 `=` of the parameter whose first token is `i` (its type nests `<..>`), or -1 when
+# the parameter ends first.
+fn _pl_eq(S, i): i64 {
+    var q = i;
+    var d = 0;
+    var n = GTCNT(S);
+    while (q < n) {
+        var t = TOKTYP(S, q);
+        if (t == 12) { return 0 - 1; }
+        if (d == 0) {
+            if (t == 31 || t == 11) { return 0 - 1; }
+            if (t == 4) { return q; }
+        }
+        d = _pl_tdepth(t, d);
+        q = q + 1;
+    }
+    return 0 - 1;
+}
+# The first parameter-level `=` of the list whose `(` is token `op`, or -1.
+fn _pd_first_eq(S, op): i64 {
+    var q = op + 1;
+    if (TOKTYP(S, q) == 11) { return 0 - 1; }
+    var n = GTCNT(S);
+    while (q < n) {
+        var eq = _pl_eq(S, q);
+        if (eq >= 0) { return eq; }
+        q = _pl_next(S, q);
+        if (TOKTYP(S, q) != 31) { return 0 - 1; }
+        q = q + 1;
+    }
+    return 0 - 1;
+}
+
+# ⭐ 6.7.7 (B6) — PARAMETER DEFAULTS, THE DEFINITION SIDE. `fn f(a, b = 2, c: f64 = 1.5)`: a default
+# is a compile-time constant (what a top-level `const X = ..;` takes, minus a `{`) on a TRAILING
+# parameter (user, 2026-10-08). Pass 1 records each definition's defaults (`_pd_record_at`, from
+# `_prescan_params_scan`) and refuses a bad SHAPE there; the end of pass 1 evaluates every default
+# once, in the top context with the parser cursor on its own token — so FINDFN's file scoping and
+# a const's `private` judge it at the definition, and no caller's local is ever visible — and
+# refuses a value its parameter's type does not take (`_pd_sweep`). A refused row has min = max: a
+# call passes every argument. Names are never stored: the definition's tokens hold them. Every
+# refusal is one line at its token (`_tn_once`), and the parse stays in step. CHANGELOG [6.7.7]
+# Row (alloc'd per definition that declares a default): [0] max = the parameter count, [8] min =
+# the first default's index (max when refused), [16] the list's `(`, [24] flags (1 a refused
+# shape: never evaluated; 2 redefined; 4 refused), [32] d0 = the first default's index, then for
+# parameter d0 + j at [40 + j * 56]: its `=` token, its type token (-1 untyped), state (0 new, 1
+# being evaluated, 2 done, 3 refused), kind (0 i64, 1 f64, 2 string, 3 bool), value, float-literal
+# index (an f64's), its name.
+var _fnt_pdflt = 0;   # per fn (131072, alloc'd at the first default anywhere): its row, 0 = none
+fn _pd_row(fi): i64 {
+    if (_fnt_pdflt == 0) { return 0; }
+    if (fi < 0) { return 0; }
+    return load64(_fnt_pdflt + fi * 8);
+}
+fn SFPD(fi, row): i64 {
+    if (_fnt_pdflt == 0) { _fnt_pdflt = alloc(131072 * 8); }
+    store64(_fnt_pdflt + fi * 8, row);
+    return 0;
+}
+# A row refused: min = max, so its calls pass every argument (`shape` 1: never evaluated).
+fn _pd_refuse_row(row, shape): i64 {
+    var f = L64(row + 24) | 4;
+    if (shape == 1) { f = f | 1; }
+    S64(row + 24, f);
+    S64(row + 8, L64(row));
+    return 0;
+}
+
+# A refusal AT token `ti`: `_pd_eo` opens the line (0 when the token was reported already, or an
+# earlier error holds the panic latch — the `_bx_refuse` rule), the caller prints the text,
+# `_pd_ec` closes it (the excerpt; no binary). The latch is left as it was.
+fn _pd_eo(S, ti): i64 {
+    if (_panic == 1) { return 0; }
+    if (_tn_once(S, ti) == 0) { return 0; }
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head_at(S, ti);
+    syscall(SYS_WRITE, 2, ": ", 2);
+    return 1;
+}
+fn _pd_ec(S, ti): i64 {
+    syscall(SYS_WRITE, 2, "\n", 1);
+    var sv = GTI(S);
+    STI(S, ti);
+    _err_excerpt(S);
+    STI(S, sv);
+    _had_error = 1;
+    return 0;
+}
+fn _pd_say(S, ti, msg): i64 {
+    if (_pd_eo(S, ti) == 0) { return 0; }
+    PRSTR(msg);
+    return _pd_ec(S, ti);
+}
+fn _pd_q(S, noff): i64 {
+    syscall(SYS_WRITE, 2, "'", 1);
+    PRSTR(S + 0xEC00000 + noff);
+    syscall(SYS_WRITE, 2, "'", 1);
+    return 0;
+}
+# "parameter 'p' of 'f'"
+fn _pd_pof(S, pnoff, fi): i64 {
+    PRSTR("parameter ");
+    _pd_q(S, pnoff);
+    PRSTR(" of ");
+    _pd_q(S, _bx_fname(S, fi));
+    return 0;
+}
+
+# ── pass 1: the record ──────────────────────────────────────────────────────────────────────
+# Definition fi, whose list's `(` is token `op` (cursor-free; `_prescan_params_scan` has just
+# written its parameter count). A list with no default records nothing.
+fn _pd_record_at(S, fi, op): i64 {
+    var row = _pd_row(fi);
+    if (row != 0) { if (L64(row + 16) == op) { return 0; } }
+    if ((GFLG(S, fi) & 2048) != 0) {
+        if (row != 0 || _pl_has_dflt(S, op) == 1) { _pd_redef(S, fi, op, row); }
+        return 0;
+    }
+    if (_pl_has_dflt(S, op) == 0) {
+        if (row != 0) { SFPD(fi, 0); }
+        return 0;
+    }
+    var max = L64(_fnt_params + fi * 8);
+    row = alloc(40 + max * 56);
+    S64(row, max);
+    S64(row + 8, max);
+    S64(row + 16, op);
+    S64(row + 24, 0);
+    S64(row + 32, max);
+    SFPD(fi, row);
+    if (_pd_shape(S, fi, row) == 1) { _pd_refuse_row(row, 1); }
+    return 0;
+}
+# D15: a fn defined twice (fn flag 2048, pass 1) where any definition declares a default — which
+# list a call would be checked and filled against is not one thing. Reported once.
+fn _pd_redef(S, fi, op, row): i64 {
+    if (row == 0) {
+        row = alloc(40);
+        S64(row + 16, op);
+        S64(row + 24, 0);
+        SFPD(fi, row);
+    }
+    var max = L64(_fnt_params + fi * 8);
+    S64(row, max);
+    S64(row + 32, max);
+    var seen = L64(row + 24) & 2;
+    S64(row + 24, L64(row + 24) | 2);
+    _pd_refuse_row(row, 1);
+    if (seen != 0) { return 0; }
+    var nt = GFDS(S, fi);
+    if (_pd_eo(S, nt) == 0) { return 0; }
+    PRSTR("fn ");
+    _pd_q(S, _bx_fname(S, fi));
+    PRSTR(" is defined twice and declares parameter defaults");
+    return _pd_ec(S, nt);
+}
+# Walk definition fi's parameters: each default's entry recorded; a bad shape refused at its token.
+# The whole-list refusals come first (D11 a variadic fn; D13 a method of `impl Trait for T` — a
+# trait default an impl inherits is that too, and `_tr_scan_tm` already refused its first `=`, so
+# nothing more is said), then D1 a parameter with no default after one with a default, and D10 /
+# D4 in `_pd_shape1`. 1 = refused.
+fn _pd_shape(S, fi, row): i64 {
+    var op = L64(row + 16);
+    if (GFVA(S, fi) != 0) {
+        _pd_say(S, _pd_first_eq(S, op), "a variadic fn takes no parameter defaults");
+        return 1;
+    }
+    if (_impl_trait != 0) {
+        var ft = _pd_first_eq(S, op);
+        if (_pd_eo(S, ft) == 0) { return 1; }
+        _pd_q(S, TOKVAL(S, GFDS(S, fi)));
+        PRSTR(" implements trait ");
+        _pd_q(S, _impl_trait);
+        PRSTR(": its parameters take no defaults (the trait's signature is the contract)");
+        _pd_ec(S, ft);
+        return 1;
+    }
+    var max = L64(row);
+    var q = op + 1;
+    var k = 0;
+    var d0 = 0 - 1;
+    while (k < max) {
+        if (TOKTYP(S, q) != 2) { return 1; }   # malformed: pass 2 refuses the list
+        var eq = _pl_eq(S, q);
+        if (eq >= 0) {
+            if (d0 < 0) { d0 = k; S64(row + 8, k); S64(row + 32, k); }
+            if (_pd_shape1(S, row, k, q, eq) == 1) { return 1; }
+        } elif (d0 >= 0) {
+            if (_pd_eo(S, q) == 1) {
+                _pd_pof(S, TOKVAL(S, q), fi);
+                PRSTR(" needs a default: it follows one that has a default (defaults are trailing)");
+                _pd_ec(S, q);
+            }
+            return 1;
+        }
+        q = _pl_next(S, q);
+        if (TOKTYP(S, q) != 31) { break; }
+        q = q + 1;
+        k = k + 1;
+    }
+    return 0;
+}
+# Parameter k of a definition (its name `q`, its `=` `eq`): its entry; D10 a default on the
+# receiver `self`, D4 a `{` in a default (a block or an if-expression — the signature tools all
+# take the first `{` for the body; a const names it). 1 = refused.
+fn _pd_shape1(S, row, k, q, eq): i64 {
+    var en = row + 40 + (k - L64(row + 32)) * 56;
+    S64(en, eq);
+    var tt = 0 - 1;
+    if (TOKTYP(S, q + 1) == 49) { tt = q + 2; }
+    S64(en + 8, tt);
+    S64(en + 16, 0);
+    S64(en + 24, 0);
+    S64(en + 32, 0);
+    S64(en + 40, 0 - 1);
+    S64(en + 48, TOKVAL(S, q));
+    if (k == 0) { if (_noff_is(S, TOKVAL(S, q), "self", 4) == 1) {
+            _pd_say(S, eq, "the receiver 'self' takes no default");
+            return 1;
+        } }
+    var e = _pl_dflt_end(S, eq);
+    var i = eq + 1;
+    while (i < e) {
+        if (TOKTYP(S, i) == 13) {
+            _pd_say(S, eq + 1, "a parameter default cannot hold a block or an if-expression - declare a const and name it");
+            return 1;
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+# D12 / D14 (`_tr_scan_tm`, pass 1): a default in a trait method's list — its default method's
+# or its REQUIRED signature's (fork F1, user 2026-10-09: an error; it was accepted and ignored).
+fn _pd_trait_refuse(S, tx, p, op): i64 {
+    var eq = _pd_first_eq(S, op);
+    if (eq < 0) { return 0; }
+    if (_pd_eo(S, eq) == 0) { return 0; }
+    PRSTR("trait ");
+    _pd_q(S, L64(_tr_tab + tx * 32));
+    PRSTR(" method ");
+    _pd_q(S, TOKVAL(S, p + 1));
+    PRSTR(": a trait's methods take no parameter defaults");
+    return _pd_ec(S, eq);
+}
+# D18 (the closure parameter loop, cursor on the `=`): a closure is reached only through fncallN /
+# callptr, which pass every argument. The cursor is left on the `,` or `|` that ends the default.
+fn _pd_cl_refuse(S): i64 {
+    var ti = GTI(S);
+    _pd_say(S, ti, "a closure's parameters take no defaults");
+    var q = ti + 1;
+    var d = 0;
+    var n = GTCNT(S);
+    while (q < n) {
+        var t = TOKTYP(S, q);
+        if (t == 12) { break; }
+        if (d == 0) { if (t == 31 || t == 35) { break; } }
+        if (t == 10 || t == 28 || t == 13) { d = d + 1; }
+        if (t == 11 || t == 29 || t == 14) { d = d - 1; }
+        if (d < 0) { break; }
+        q = q + 1;
+    }
+    STI(S, q);
+    return 0;
+}
+# Pass 2, a definition pass 1 did not record (`_PARSE_FN_DEF_IMPL`'s else-branch; `op` its `(`):
+# a generic instance shares its base's row (one record, one report); an async fn's `f$impl` has
+# none (the row is on pass 1's `f`, whose constructor takes every parameter); an earlier
+# definition of a redefined fn is D15's. Anything else that declares a default is refused (D17),
+# a backstop: no call before it could be checked or filled. (Pass 1 records every other
+# definition, a fn inside a top-level block included — `_prescan_block_fn`, 6.6.17.)
+fn _pd_late(S, fi, op, isasync): i64 {
+    if (_inst_name != 0) {
+        var br = _pd_row(_inst_base_fi);
+        if (br != 0) { SFPD(fi, br); }
+        return 0;
+    }
+    if (isasync == 1) { return 0; }
+    if ((GFLG(S, fi) & 2048) != 0) { return 0; }   # an earlier definition of a redefined fn: D15
+    if (_pd_row(fi) != 0) { return 0; }
+    if (TOKTYP(S, op) != 10) { return 0; }
+    if (_pl_has_dflt(S, op) == 0) { return 0; }
+    var eq = _pd_first_eq(S, op);
+    if (_pd_eo(S, eq) == 0) { return 0; }
+    PRSTR("fn ");
+    _pd_q(S, _bx_fname(S, fi));
+    PRSTR(" declares parameter defaults, but pass 1 did not record its definition (internal) - its calls could not be checked or filled");
+    return _pd_ec(S, eq);
+}
+# Pass 2, the list just counted (`pc`): a row's max is pass 1's count, and the range check, the fill
+# and the named placement all read it. Two counts that differ would check a call against one and
+# fill it against the other, silently (pass 1 once stopped at a type token that is not a name:
+# `a: u128`, `*fn`). A backstop: refused, loudly. A redefined fn's row is D15's. CHANGELOG [6.7.7]
+fn _pd_pc_check(S, fi, pc): i64 {
+    var row = _pd_row(fi);
+    if (row == 0) { return 0; }
+    if (L64(row) == pc) { return 0; }
+    if ((GFLG(S, fi) & 2048) != 0) { return 0; }
+    var op = L64(row + 16);
+    if (_pd_eo(S, op) == 0) { return 0; }
+    PRSTR("internal: fn ");
+    _pd_q(S, _bx_fname(S, fi));
+    PRSTR(" declares parameter defaults, and its two passes count its parameters apart (");
+    PRNUM(L64(row));
+    PRSTR(" and ");
+    PRNUM(pc);
+    PRSTR(") - its calls could not be checked or filled");
+    return _pd_ec(S, op);
+}
+
+# ── the end of pass 1: the values ───────────────────────────────────────────────────────────
+# Every recorded default evaluated and checked once, used or not, as every top-level const is
+# (`_tl_pass1`, after `_cst_sweep`, in every fork).
+fn _pd_sweep(S): i64 {
+    if (_fnt_pdflt == 0) { return 0; }
+    var n = GFNC(S);
+    var fi = 0;
+    while (fi < n) {
+        var row = _pd_row(fi);
+        if (row != 0) {
+            var pi = L64(row + 32);
+            while (pi < L64(row)) {
+                _pd_value(S, fi, pi);
+                pi = pi + 1;
+            }
+        }
+        fi = fi + 1;
+    }
+    return 0;
+}
+# Parameter pi's default of fi, evaluated once (memoised): its row entry (kind at +24, value at
+# +32, float-literal index at +40), or 0 when it is refused (reported once). A default reached
+# while it is being evaluated is defined in terms of itself (D16).
+fn _pd_value(S, fi, pi): i64 {
+    var row = _pd_row(fi);
+    if (row == 0) { return 0; }
+    if ((L64(row + 24) & 1) != 0) { return 0; }
+    var d0 = L64(row + 32);
+    if (pi < d0) { return 0; }
+    if (pi >= L64(row)) { return 0; }
+    var en = row + 40 + (pi - d0) * 56;
+    var st = L64(en + 16);
+    if (st == 2) { return en; }
+    if (st == 3) { return 0; }
+    if (st == 1) {
+        if (_pd_eo(S, L64(en) + 1) == 1) {
+            PRSTR("the default of ");
+            _pd_pof(S, L64(en + 48), fi);
+            PRSTR(" is defined in terms of itself");
+            _pd_ec(S, L64(en) + 1);
+        }
+        S64(en + 16, 3);
+        _pd_refuse_row(row, 0);
+        return 0;
+    }
+    S64(en + 16, 1);
+    if (_pd_eval(S, fi, row, en) == 0) {
+        S64(en + 16, 3);
+        _pd_refuse_row(row, 0);
+        return 0;
+    }
+    S64(en + 16, 2);
+    return en;
+}
+# One default: D2 (it names a parameter of its own fn), the evaluator (D3, in its own words), D20
+# (it does not end at its `,` / `)`), then the parameter's type (`_pd_kind_ok`). 1 = taken.
+fn _pd_eval(S, fi, row, en): i64 {
+    var eq = L64(en);
+    var end = _pl_dflt_end(S, eq);
+    if (_pd_param_ref(S, fi, row, eq, end) == 1) { return 0; }
+    var o: i64[3];
+    var sv = GTI(S);
+    var pw = _panic;
+    STI(S, eq + 1);
+    var v = _ce_top_expr(S, eq + 1, &o);
+    STI(S, sv);
+    if (load64(&o + 8) != 0) {
+        if (pw == 0) { _panic = 0; }
+        return 0;
+    }
+    if (load64(&o + 16) != end) {
+        _pd_say(S, load64(&o + 16), "a parameter default is one constant expression, ending at ',' or ')'");
+        return 0;
+    }
+    if (_pd_kind_ok(S, fi, en, load64(&o), v) == 0) { return 0; }
+    S64(en + 24, load64(&o));
+    S64(en + 32, v);
+    if (load64(&o) == 1) { S64(en + 40, FLIT_ADD(v)); }
+    return 1;
+}
+# D2: a name in the default (`eq` .. `end`) naming a parameter or a type parameter of its own fn —
+# refused before the evaluator could read a global of the same name. Not a field (`.x`), not a
+# call (`x(`). 1 = refused.
+fn _pd_param_ref(S, fi, row, eq, end): i64 {
+    var i = eq + 1;
+    while (i < end) {
+        if (TOKTYP(S, i) == 2) { if (TOKTYP(S, i - 1) != 41) { if (TOKTYP(S, i + 1) != 10) {
+                    var w = _pd_names_param(S, fi, row, TOKVAL(S, i));
+                    if (w != 0) {
+                        if (_pd_eo(S, i) == 1) {
+                            PRSTR("a default must be a compile-time constant: ");
+                            _pd_q(S, TOKVAL(S, i));
+                            if (w == 2) { PRSTR(" is a type parameter of "); }
+                            else { PRSTR(" is a parameter of "); }
+                            _pd_q(S, _bx_fname(S, fi));
+                            _pd_ec(S, i);
+                        }
+                        return 1;
+                    }
+                } } }
+        i = i + 1;
+    }
+    return 0;
+}
+# 1 when `noff` names a parameter of the list in `row`, 2 a type parameter of fi, else 0.
+fn _pd_names_param(S, fi, row, noff): i64 {
+    var q = L64(row + 16) + 1;
+    var n = GTCNT(S);
+    while (q < n) {
+        if (TOKTYP(S, q) == 2) { if (STREQ(S, TOKVAL(S, q), noff) == 1) { return 1; } }
+        q = _pl_next(S, q);
+        if (TOKTYP(S, q) != 31) { break; }
+        q = q + 1;
+    }
+    if (_pd_is_tparam(S, fi, L64(row + 16), noff) == 1) { return 2; }
+    return 0;
+}
+# 1 when `noff` is one of fi's type parameters, read from its definition's `<..>` (its name is
+# token GFDS, the list's `(` is `op`; a bound's trait names are not parameters).
+fn _pd_is_tparam(S, fi, op, noff): i64 {
+    if (GFDS(S, fi) == 0) { return 0; }
+    var q = GFDS(S, fi) + 1;
+    if (TOKTYP(S, q) != 19) { return 0; }
+    var d = 0;
+    while (q < op) {
+        var t = TOKTYP(S, q);
+        if (t == 2) { if (d == 1) {
+                var pt = TOKTYP(S, q - 1);
+                if (pt == 19 || pt == 31) { if (STREQ(S, TOKVAL(S, q), noff) == 1) { return 1; } }
+            } }
+        d = _pl_tdepth(t, d);
+        q = q + 1;
+    }
+    return 0;
+}
+
+# ── the parameter's type: the defaults it takes ───────────────────────────────────────────
+# The default class of a parameter whose type token is `tt` (-1 untyped): 0 untyped, 1 bool, 2
+# f64, 3 f32, 4 cstring, 5 a pointer (`*T`) or a Vec handle, 8 + w a signed / 24 + w an unsigned
+# integer of w bytes (an enum is an i64). A type that takes no default is negative (`_pd_cname`
+# names it); -12 is a name nothing resolves, which pass 2 refuses by name.
+fn _pd_pclass(S, fi, tt, op): i64 {
+    if (tt < 0) { return 0; }
+    var t = TOKTYP(S, tt);
+    if (t == 8) { return 5; }
+    if (t == 105) { return 0 - 6; }
+    if (t == 10) { return 0 - 8; }
+    if (t != 2) { return 0 - 12; }
+    var noff = TOKVAL(S, tt);
+    if (_pd_is_tparam(S, fi, op, noff) == 1) { return 0 - 9; }
+    var pc = _classify_param_type(S, noff);
+    if (pc == 1) { return 0 - 1; }
+    if (pc == 2) { return 4; }
+    if (pc == 3) { return 0 - 2; }
+    if (pc == 4) { return 0 - 3; }
+    if (pc == 5) { return 0 - 4; }
+    if (pc != 0) { return 0 - 5; }   # f64v2 / f64v4 / f32v4 / an integer vector
+    return _pd_tclass(_tn_resolve(S, noff));
+}
+fn _pd_tclass(c): i64 {
+    var k = _tn_class(c);
+    var v = _tn_val(c);
+    if (k == 1) { return 8 + v; }
+    if (k == 2) { return 24 + v; }
+    if (k == 3) { if (v == 4) { return 3; } return 2; }
+    if (k == 4) {
+        if (v == 1) { return 1; }
+        if (v == 2) { return 16; }   # an enum: its values are i64
+        if (v == 8) { return 5; }    # Vec: a handle
+        if (v == 7) { return 0 - 9; }
+        return 0 - 12;
+    }
+    if (k == 5) { return 0 - 5; }
+    if (k == 6) { return 0 - 7; }
+    return 0 - 12;
+}
+fn _pd_cname(c): i64 {
+    if (c == 0 - 1) { PRSTR("a Str"); }
+    elif (c == 0 - 2) { PRSTR("a Result"); }
+    elif (c == 0 - 3) { PRSTR("an Option"); }
+    elif (c == 0 - 4) { PRSTR("a Tagged"); }
+    elif (c == 0 - 5) { PRSTR("a vector"); }
+    elif (c == 0 - 6) { PRSTR("a 128-bit integer"); }
+    elif (c == 0 - 7) { PRSTR("a struct"); }
+    elif (c == 0 - 8) { PRSTR("a tuple"); }
+    else { PRSTR("a type parameter"); }
+    return 0;
+}
+# 1 when integer v fits class c (8 + w signed, 24 + w unsigned; 8 bytes take every value).
+fn _pd_fits(c, v): i64 {
+    if (c >= 24) {
+        var uw = c - 24;
+        if (uw >= 8) { return 1; }
+        if (v < 0) { return 0; }
+        if (v > (1 << (uw * 8)) - 1) { return 0; }
+        return 1;
+    }
+    var w = c - 8;
+    if (w >= 8) { return 1; }
+    var hi = (1 << (w * 8 - 1)) - 1;
+    if (v > hi) { return 0; }
+    if (v < 0 - hi - 1) { return 0; }
+    return 1;
+}
+# The default kinds (k: 0 i64, 1 f64, 2 string, 3 bool) a parameter's type takes — untyped: an
+# integer, a bool or a string (its literal's address, as a positional); an integer type: an
+# integer in its range or a bool; bool: a bool; f64 / f32: a float, or 0 / an IEEE bit pattern
+# (`_ic_val_ok`, the `var x: f64 = n` rule); cstring: a string or 0; `*T`: an integer. 1 = taken.
+fn _pd_kind_ok(S, fi, en, k, v): i64 {
+    var c = _pd_pclass(S, fi, L64(en + 8), L64(_pd_row(fi) + 16));
+    if (c == 0 - 12) { return 0; }
+    if (c < 0) { return _pd_d9(S, fi, en, c); }
+    if (c == 0) {
+        if (k != 1) { return 1; }
+        var ti = L64(en) + 1;
+        if (_pd_eo(S, ti) == 1) {
+            _pd_pof(S, L64(en + 48), fi);
+            PRSTR(" is untyped: a float default needs it declared ': f64' (or ': f32')");
+            _pd_ec(S, ti);
+        }
+        return 0;
+    }
+    if (c == 1) { if (k == 3) { return 1; } return _pd_d7(S, fi, en, "a bool"); }
+    if (c == 2 || c == 3) {
+        if (k == 1) { return 1; }
+        if (k == 0) {
+            if (_ic_val_ok(v) == 0) { return 1; }
+            return _pd_d7(S, fi, en, 0);
+        }
+        return _pd_d7(S, fi, en, "a float");
+    }
+    if (c == 4) {
+        if (k == 2) { return 1; }
+        if (k == 0) { if (v == 0) { return 1; } }
+        return _pd_d7(S, fi, en, "a string (or 0)");
+    }
+    if (c == 5) { if (k == 0) { return 1; } return _pd_d7(S, fi, en, "an integer"); }
+    if (k == 0 || k == 3) {
+        if (_pd_fits(c, v) == 1) { return 1; }
+        return _pd_d8(S, fi, en, v);
+    }
+    return _pd_d7(S, fi, en, "an integer");
+}
+# The type at token tt, as written (`*T`, a name, u128).
+fn _pd_tname(S, tt): i64 {
+    if (TOKTYP(S, tt) == 8) { PRSTR("*"); tt = tt + 1; }
+    if (TOKTYP(S, tt) == 105) { PRSTR("u128"); return 0; }
+    if (TOKTYP(S, tt) == 2) { PRSTR(S + 0xEC00000 + TOKVAL(S, tt)); }
+    return 0;
+}
+# D7 "parameter 'b' of 'f' is ': bool': its default must be a bool" (`want` 0: D6, an integer
+# default on f64 / f32 — its bits, a subnormal). Returns 0.
+fn _pd_d7(S, fi, en, want): i64 {
+    var ti = L64(en) + 1;
+    if (_pd_eo(S, ti) == 0) { return 0; }
+    _pd_pof(S, L64(en + 48), fi);
+    PRSTR(" is ': ");
+    _pd_tname(S, L64(en + 8));
+    if (want == 0) { PRSTR("': an integer default is its bit pattern - write 1.0"); }
+    else {
+        PRSTR("': its default must be ");
+        PRSTR(want);
+    }
+    _pd_ec(S, ti);
+    return 0;
+}
+# D8 "the default 300 does not fit parameter 'x' of 'f' (': u8')". Returns 0.
+fn _pd_d8(S, fi, en, v): i64 {
+    var ti = L64(en) + 1;
+    if (_pd_eo(S, ti) == 0) { return 0; }
+    PRSTR("the default ");
+    PRNUM(v);
+    PRSTR(" does not fit ");
+    _pd_pof(S, L64(en + 48), fi);
+    PRSTR(" (': ");
+    _pd_tname(S, L64(en + 8));
+    PRSTR("')");
+    _pd_ec(S, ti);
+    return 0;
+}
+# D9 "parameter 'p' of 'f' is a struct: it takes no default". Returns 0.
+fn _pd_d9(S, fi, en, c): i64 {
+    var ti = L64(en) + 1;
+    if (_pd_eo(S, ti) == 0) { return 0; }
+    _pd_pof(S, L64(en + 48), fi);
+    PRSTR(" is ");
+    _pd_cname(c);
+    PRSTR(": it takes no default");
+    _pd_ec(S, ti);
+    return 0;
+}
+
+# ── the call site: min..max, and a short call's defaults ──────────────────────────────────────
+# A call is checked against min..max (`_CHECK_ARITY`). A direct call short of max takes the
+# missing trailing parameters' defaults, pushed after its written arguments in parameter order —
+# each emitted exactly as its literal would be (`_cst_emit_val`; into an f32 parameter it rounds,
+# as every f32 write does since 6.7.6) — so ECALLPOPS sees one int-class word per parameter on
+# every target. A default is never a vector, a struct or a Str (`_pd_kind_ok`), so the vector
+# second pass and the address pushes are untouched. Only the one marshaller fills
+# (`_owncall_args_at`: PARSE_FNCALL, the method form, the struct-valued receives, the PE
+# vector-retptr calls); the tail arm never sees such a call (`_tc_args_divert`, with
+# `_CHECK_ARITY` mode 3 as the backstop) and an operator passes exactly two operands (D19).
+# A const context fills from the same values (`_ce_fill`). CHANGELOG [6.7.7]
+# min: the first defaulted parameter's index (max with no row, or a refused one).
+fn _pd_min(fi): i64 {
+    var row = _pd_row(fi);
+    if (row != 0) { return L64(row + 8); }
+    return L64(_fnt_params + fi * 8);
+}
+# After a direct call's written arguments (`p` of them, `self` counted; `st` the marshaller's
+# state): the defaults of parameters p .. max - 1, when p is in range. The expression type is
+# reset after a push: `_cst_emit_val` leaves an f64 default's, and the method form has no reset of
+# its own (`p.m() * 2` with `d: f64 = 1.5` read the call's result as an f64).
+fn _pd_fill(S, fi, p, st): i64 {
+    var row = _pd_row(fi);
+    if (row == 0) { return 0; }
+    if (p < L64(row + 8)) { return 0; }   # short of the required ones: the arity error
+    var max = L64(row);
+    if (p >= max) { return 0; }
+    while (p < max) {
+        _pd_push_default(S, fi, p, st);
+        p = p + 1;
+    }
+    SESTYPE(S, 0);
+    return 0;
+}
+fn _pd_push_default(S, fi, pi, st): i64 {
+    var en = _pd_value(S, fi, pi);
+    if (en == 0) { EMOVI(S, 0); }   # refused, and reported at the default: the count stays right
+    else {
+        _cst_emit_val(S, L64(en + 24), L64(en + 32), L64(en + 40));
+        if (L64(en + 24) == 1) { if (_pbool_get(fi, pi) == 3) { _f32_init_round(S, F32_TYID); } }
+    }
+    EPUSHR(S);
+    store64(st, load64(st) + 1);
+    return 0;
+}
+# 1 when the call whose `(` is token `open` fills a default or names an argument: the call the
+# tail arm must not take (`_tc_args_divert`). Its written arguments are counted by `_arg_next`,
+# which steps over a closure's `|a, b|` bars — counted as two arguments, `return ap(|a, b| ..)`
+# to `fn ap(c, n = 5)` would look full and jump with `n` unset.
+fn _pd_call_fills(S, fi, open): i64 {
+    if (_pd_named_at(S, open) == 1) { return 1; }
+    var row = _pd_row(fi);
+    if (row == 0) { return 0; }
+    var n = 0;
+    var q = open + 1;
+    if (TOKTYP(S, q) != 11) {
+        var go = 1;
+        while (go == 1) {
+            n = n + 1;
+            q = _arg_next(S, q);
+            if (TOKTYP(S, q) == 31) { q = q + 1; } else { go = 0; }
+        }
+    }
+    if (n < L64(row)) { return 1; }
+    return 0;
+}
+# `_CHECK_ARITY` for a callee that declares defaults, modes 3 and 4 (1 = reported). Mode 3, the
+# tail arm, short of max but in range: `_tc_args_divert` missed a call that fills — an internal
+# error, never a `jmp` with a parameter unset. Mode 4, an operator dispatch: D19.
+fn _pd_arity_mode(S, line, noff, fi, argc, mode): i64 {
+    if (mode == 4) {
+        return _pd_line_err(S, line, "operator fn ", noff, " declares a parameter default: an operator passes exactly its two operands");
+    }
+    if (mode != 3) { return 0; }
+    if (argc < _pd_min(fi)) { return 0; }
+    if (argc >= L64(_fnt_params + fi * 8)) { return 0; }
+    return _pd_line_err(S, line, "internal: tail call to ", noff, " reached the tail arm short of its defaults");
+}
+# "error:<file>:<line>: <a>'<name>'<b>", the arity check's form. Returns 1.
+fn _pd_line_err(S, line, a, noff, b): i64 {
+    syscall(SYS_WRITE, 2, "error:", 6);
+    FM_LOOKUP(S, line);
+    PRSTR(": ");
+    PRSTR(a);
+    _pd_q(S, noff);
+    PRSTR(b);
+    syscall(SYS_WRITE, 2, "\n", 1);
+    _had_error = 1;
+    return 1;
+}
+# C15 (`_PINDIRECT_CALL_IN`, after `)`): `fncallN(&f, ..)` / `callptr(&f, ..)` passing fewer than
+# f's parameters when f declares defaults. A call through a fn pointer passes every argument — the
+# callee cannot know it was called short. Reported at the `&` (token `ti`).
+fn _pd_icall_short(S, cfi, argc, ti): i64 {
+    var row = _pd_row(cfi);
+    if (row == 0) { return 0; }
+    if (argc >= L64(row)) { return 0; }
+    if (_pd_eo(S, ti) == 0) { return 0; }
+    PRSTR("a call through a fn pointer passes every argument: ");
+    _pd_q(S, _bx_fname(S, cfi));
+    PRSTR(" takes ");
+    PRNUM(L64(row));
+    PRSTR(" (defaults fill only direct calls)");
+    return _pd_ec(S, ti);
+}
+# A const fn call (`_ce_call`, `n` arguments on the frame stack) short of its parameters: the
+# defaults pushed after them, as the callee's parameters bind them (the values the end of pass 1
+# computes — or computes now, for a const context forced earlier in pass 1). The count it leaves;
+# a call short of the required ones stays short (`_ce_bind_params` refuses it).
+fn _ce_fill(S, fi, n): i64 {
+    var row = _pd_row(fi);
+    if (row == 0) { return n; }
+    if (n < L64(row + 8)) { return n; }
+    while (n < L64(row)) {
+        var en = _pd_value(S, fi, n);
+        if (en == 0) { _ce_err = 1; return n; }   # refused, and reported at the default
+        _ce_fr_push(S, 0 - 1, L64(en + 32), L64(en + 24), 8);
+        n = n + 1;
+    }
+    return n;
+}
+
+# ── the call site: named arguments ──────────────────────────────────────────────────────────
+# `f(1, c: 3)`: the positionals first, then `name: value` in any order, each parameter at most
+# once (user, 2026-10-08). WRITTEN order is evaluation order; PARAMETER order is placement. The
+# one marshaller (`_owncall_args_at`) runs the positionals and hands the cursor, on the first
+# label, to `_pd_named`, which checks the whole call before it emits anything (`_pd_nscan`,
+# cursor-free) and then marshals it one of two ways:
+#   * IN ORDER (each name after the one before it — the common `f(1, c: 3)`): every argument where
+#     it stands, a gap's defaults pushed before it (constants: no side effect, so written order
+#     holds). No temporaries.
+#   * REORDERED: each argument evaluated as written through its parameter's gates
+#     (`_call_arg_one`), its int-class word popped into a hidden temporary (`_HTEMP`: a frame slot
+#     in a fn, a dead global at top level), then every parameter pushed in parameter order — its
+#     temporary, or its default. A vector is recorded at its parameter-order XMM / V ordinal
+#     (`_simd_ord_at`), never pushed.
+# Either way ECALLPOPS sees one int-class word per parameter, in parameter order, on every target
+# (SysV 6 / Win64 4 / aarch64 8 registers, then the stack; cx). Direct calls only: fncallN /
+# callptr refuse a label (C7), a builtin's undefined-name error gets a note (C14), a call that
+# names an argument is never overload-routed (C10) nor inlined, and a const context binds names
+# the same way (`_ce_call_named`). CHANGELOG [6.7.7]
+# The marshaller's state for the named phase: st[24] the first user parameter (p0), st[32] the
+# arity line, st[40] 1 = reordered, st[48] the per-call table (alloc'd, 24 B per parameter: the
+# value's first token or 0 = not named, 1 = spilled, its temporary).
+
+# The ordinal of fi's parameter named `noff`, or -1 — read from the definition's tokens.
+fn _pd_index(S, fi, noff): i64 {
+    var max = L64(_fnt_params + fi * 8);
+    var k = 0;
+    while (k < max) {
+        var pn = _bx_pname(S, fi, k);
+        if (pn < 0) { return 0 - 1; }
+        if (STREQ(S, pn, noff) == 1) { return k; }
+        k = k + 1;
+    }
+    return 0 - 1;
+}
+# The XMM / V ordinal of fi's vector parameter pi: the widths of the vector parameters before it (a
+# 32-byte vector takes two), exactly as a positional call's running ordinal reaches it.
+fn _simd_ord_at(fi, pi): i64 {
+    var o = 0;
+    var j = 0;
+    while (j < pi) {
+        var c = _pm_simd(fi, j);
+        if (c == 2) { o = o + 2; }
+        elif (c > 0) { o = o + 1; }
+        j = j + 1;
+    }
+    return o;
+}
+# The first label of the call whose argument list starts at token q (a label is always there).
+fn _pd_first_label(S, q): i64 {
+    var n = GTCNT(S);
+    while (q < n) {
+        if (_pd_label_at(S, q) == 1) { return q; }
+        q = _arg_next(S, q);
+        if (TOKTYP(S, q) != 31) { return q; }
+        q = q + 1;
+    }
+    return q;
+}
+# The named phase (cursor on the call's first label; `p` the positionals written before it, `self`
+# counted). Consumes through `)`; the marshaller pops st[0] words.
+fn _pd_named(S, fi, noff, p, tbl, st): i64 {
+    var c = _pd_ncallee(S, fi, noff, GTI(S));
+    if (c == 2) { return _pd_ninplace(S, fi, noff, p, tbl, st); }
+    if (c == 0) { c = _pd_nscan(S, fi, noff, p, st); }
+    if (c != 0) { return _pd_nskip(S); }
+    if (load64(st + 40) == 0) { _pd_ninorder(S, fi, noff, p, tbl, st); }
+    else { _pd_nreorder(S, fi, noff, p, tbl, st); }
+    SESTYPE(S, 0);   # the last argument's type is not the call's (an f64 one leaked into `p.m(..) * 2`)
+    return 0;
+}
+# The callee's refusals (at the first label `lb`): C9 no declared parameter list (a variant
+# constructor; an unresolved callee — under --syntax-only a sibling file's fn, which is no error
+# there: 2, the arguments pushed in place), C11 a variadic fn, C12 a fn defined twice. 1 = refused.
+fn _pd_ncallee(S, fi, noff, lb): i64 {
+    if (_gen_def_open(S, fi) < 0) {
+        if (_syntax_only == 1) { return 2; }
+        if (_pd_eo(S, lb) == 1) {
+            _pd_q(S, noff);
+            PRSTR(" takes no named arguments: it has no declared parameter list");
+            _pd_ec(S, lb);
+        }
+        return 1;
+    }
+    if (GFVA(S, fi) != 0) {
+        if (_pd_eo(S, lb) == 1) {
+            _pd_q(S, noff);
+            PRSTR(" is variadic: its arguments are positional");
+            _pd_ec(S, lb);
+        }
+        return 1;
+    }
+    if ((GFLG(S, fi) & 2048) != 0) {
+        if (_pd_eo(S, lb) == 1) {
+            _pd_q(S, noff);
+            PRSTR(" is defined twice: name its arguments only on a fn defined once");
+            _pd_ec(S, lb);
+        }
+        return 1;
+    }
+    return 0;
+}
+# The whole call, checked before anything is emitted (cursor-free, from the first label at the
+# cursor): C1 more positionals than parameters, C5 a positional after a named one, C2 an unknown
+# name, C8 `self:` in the dot form, C4 a parameter given by position and by name, C3 one named
+# twice, C6 a required one missing, C13 a reordered call in a `#naked` fn. Records each named
+# parameter's value token (st[48]) and whether the call is reordered (st[40]). 1 = refused, once.
+fn _pd_nscan(S, fi, noff, p, st): i64 {
+    var max = L64(_fnt_params + fi * 8);
+    var lb = GTI(S);
+    if (p > max) {
+        _CHECK_ARITY(S, load64(st + 32), noff, fi, p + _pd_nargs(S, lb), 1);
+        return 1;
+    }
+    var tb = alloc(max * 24 + 24);
+    store64(st + 48, tb);
+    store64(st + 40, 0);
+    var q = lb;
+    var last = 0 - 1;
+    var n = GTCNT(S);
+    while (q < n) {
+        if (_pd_label_at(S, q) == 0) { return _pd_c5(S, q, noff); }
+        var pi = _pd_index(S, fi, TOKVAL(S, q));
+        if (pi < 0) { return _pd_c2(S, q, fi, noff, load64(st + 24)); }
+        if (pi < p) { return _pd_c4(S, q, fi, noff, pi, load64(st + 24)); }
+        if (load64(tb + pi * 24) != 0) { return _pd_c3(S, q, fi); }
+        store64(tb + pi * 24, q + 2);
+        if (pi < last) { store64(st + 40, 1); }
+        last = pi;
+        q = _arg_next(S, q);
+        if (TOKTYP(S, q) != 31) { break; }
+        q = q + 1;
+    }
+    var mn = _pd_min(fi);
+    var k = p;
+    while (k < mn) {
+        if (load64(tb + k * 24) == 0) { return _pd_c6(S, q, fi, k); }
+        k = k + 1;
+    }
+    if (load64(st + 40) == 1) { if (_cur_fn_naked == 1) {
+            if (_pd_eo(S, lb) == 1) {
+                PRSTR("a reordered named call needs a frame: not inside #naked fn ");
+                _pd_q(S, _bx_fname(S, _cur_fn_ix));
+                _pd_ec(S, lb);
+            }
+            return 1;
+        } }
+    return 0;
+}
+# The arguments from token q to the call's `)` (a closure's `|a, b|` bars hold no separator).
+fn _pd_nargs(S, q): i64 {
+    var c = 0;
+    var n = GTCNT(S);
+    while (q < n) {
+        c = c + 1;
+        q = _arg_next(S, q);
+        if (TOKTYP(S, q) != 31) { return c; }
+        q = q + 1;
+    }
+    return c;
+}
+# C2 "'f' has no parameter named 'c' - its parameters are: a, b" (from p0: not the dot form's
+# `self`). Returns 1.
+fn _pd_c2(S, q, fi, noff, p0): i64 {
+    if (_pd_eo(S, q) == 0) { return 1; }
+    _pd_q(S, noff);
+    PRSTR(" has no parameter named ");
+    _pd_q(S, TOKVAL(S, q));
+    var max = L64(_fnt_params + fi * 8);
+    if (p0 >= max) { PRSTR(" - it takes no other arguments"); }
+    else {
+        PRSTR(" - its parameters are: ");
+        var k = p0;
+        while (k < max) {
+            if (k > p0) { PRSTR(", "); }
+            var pn = _bx_pname(S, fi, k);
+            if (pn >= 0) { PRSTR(S + 0xEC00000 + pn); }
+            k = k + 1;
+        }
+    }
+    _pd_ec(S, q);
+    return 1;
+}
+# C3 a parameter named twice. Returns 1.
+fn _pd_c3(S, q, fi): i64 {
+    if (_pd_eo(S, q) == 0) { return 1; }
+    _pd_pof(S, TOKVAL(S, q), fi);
+    PRSTR(" is named twice");
+    _pd_ec(S, q);
+    return 1;
+}
+# C5 a positional argument (at token q) after a named one. Returns 1.
+fn _pd_c5(S, q, noff): i64 {
+    if (_pd_eo(S, q) == 0) { return 1; }
+    PRSTR("a positional argument cannot follow a named one (in a call to ");
+    _pd_q(S, noff);
+    PRSTR(")");
+    _pd_ec(S, q);
+    return 1;
+}
+# C6 required parameter k not given (reported at token q, the call's `)`). Returns 1.
+fn _pd_c6(S, q, fi, k): i64 {
+    if (_pd_eo(S, q) == 0) { return 1; }
+    PRSTR("missing argument for ");
+    _pd_pof(S, _bx_pname(S, fi, k), fi);
+    PRSTR(" (it has no default)");
+    _pd_ec(S, q);
+    return 1;
+}
+# C4 a parameter given by position and by name; C8 `self:` in the dot form (`self` is parameter 0,
+# the receiver). Returns 1.
+fn _pd_c4(S, q, fi, noff, pi, p0): i64 {
+    if (_pd_eo(S, q) == 0) { return 1; }
+    if (pi == 0) { if (p0 == 1) {
+            PRSTR("'self' is the receiver of a method call (o.m(..)) - it cannot be named");
+            _pd_ec(S, q);
+            return 1;
+        } }
+    _pd_pof(S, TOKVAL(S, q), fi);
+    PRSTR(" is given by position and by name");
+    _pd_ec(S, q);
+    return 1;
+}
+# One named argument for parameter pi (cursor on its value): a vector's register is its
+# parameter-order ordinal; then the parameter's gates.
+fn _pd_arg_at(S, fi, pi, noff, tbl, st): i64 {
+    if (_pm_simd(fi, pi) > 0) { store64(st + 16, _simd_ord_at(fi, pi)); }
+    return _call_arg_one(S, fi, pi, noff, tbl, st);
+}
+# Parameters k .. e - 1, each a default (`_pd_nscan` checked), pushed in parameter order.
+fn _pd_fill_to(S, fi, k, e, st): i64 {
+    while (k < e) {
+        _pd_push_default(S, fi, k, st);
+        k = k + 1;
+    }
+    return 0;
+}
+fn _pd_close(S): i64 {
+    if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
+    STI(S, GTI(S) + 1);
+    return 0;
+}
+# In order: each argument where it stands, a gap's defaults before it, the trailing ones after.
+# (A cursor that is not on a label here was left by an argument's own parse error, reported.)
+fn _pd_ninorder(S, fi, noff, p, tbl, st): i64 {
+    var next = p;
+    var go = 1;
+    while (go == 1) {
+        var pi = 0 - 1;
+        if (_pd_label_at(S, GTI(S)) == 1) { pi = _pd_index(S, fi, PEEKV(S)); }
+        if (pi < 0) { go = 0; }
+        else {
+            _pd_fill_to(S, fi, next, pi, st);
+            STI(S, GTI(S) + 2);   # the label and its `:`
+            _pd_arg_at(S, fi, pi, noff, tbl, st);
+            next = pi + 1;
+            if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); } else { go = 0; }
+        }
+    }
+    _pd_close(S);
+    _pd_fill_to(S, fi, next, L64(_fnt_params + fi * 8), st);
+    return 0;
+}
+# Reordered: each argument evaluated as written into a hidden temporary, then every parameter from
+# p pushed in parameter order (a vector was recorded at its own ordinal: nothing to push).
+fn _pd_nreorder(S, fi, noff, p, tbl, st): i64 {
+    var tb = load64(st + 48);
+    var go = 1;
+    while (go == 1) {
+        var pi = 0 - 1;
+        if (_pd_label_at(S, GTI(S)) == 1) { pi = _pd_index(S, fi, PEEKV(S)); }
+        if (pi < 0) { go = 0; }
+        else {
+            STI(S, GTI(S) + 2);
+            var n0 = load64(st);
+            _pd_arg_at(S, fi, pi, noff, tbl, st);
+            if (load64(st) > n0) {
+                EPOPR(S);
+                var h = _HTEMP(S);
+                _HTSTORE(S, h);
+                store64(st, n0);
+                store64(tb + pi * 24 + 8, 1);
+                store64(tb + pi * 24 + 16, h);
+            }
+            if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); } else { go = 0; }
+        }
+    }
+    _pd_close(S);
+    var max = L64(_fnt_params + fi * 8);
+    var k = p;
+    while (k < max) {
+        if (load64(tb + k * 24 + 8) == 1) {
+            _HTLOAD(S, load64(tb + k * 24 + 16));
+            EPUSHR(S);
+            store64(st, load64(st) + 1);
+        } elif (load64(tb + k * 24) == 0) { _pd_push_default(S, fi, k, st); }
+        k = k + 1;
+    }
+    return 0;
+}
+# A refused call: the rest of its arguments parsed, nothing pushed, so the stream stays in step
+# (`_had_error` withholds the binary).
+fn _pd_nskip(S): i64 {
+    var go = 1;
+    while (go == 1) {
+        if (_pd_label_at(S, GTI(S)) == 1) { STI(S, GTI(S) + 2); }
+        PCMPE(S);
+        if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); } else { go = 0; }
+    }
+    return _pd_close(S);
+}
+# --syntax-only, a callee with no declared list (a sibling file's fn): each `name: value` pushed
+# where it stands, as a positional would be — only the grammar is judged (C5).
+fn _pd_ninplace(S, fi, noff, p, tbl, st): i64 {
+    var go = 1;
+    while (go == 1) {
+        if (_pd_label_at(S, GTI(S)) == 1) { STI(S, GTI(S) + 2); }
+        else { _pd_c5(S, GTI(S), noff); }
+        _call_arg_one(S, fi, p, noff, tbl, st);
+        p = p + 1;
+        if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); } else { go = 0; }
+    }
+    return _pd_close(S);
+}
+# C10 (`_fnc_route`, cursor on the first argument of a call that names one): such a call is never
+# overload-routed — and it is refused when the positional call could be (the base has a `_str` /
+# `_int` sibling, or its `&x` first argument a `<base>_ptr` one), so it never silently reaches a
+# different fn than the same arguments written by position. Returns -1 (not routed).
+fn _pd_route_named(S, fi, noff): i64 {
+    var hit = 0;
+    if (L64(_fnt_ovstr + fi * 8) > 0) { hit = 1; }
+    if (L64(_fnt_ovint + fi * 8) > 0) { hit = 1; }
+    if (PEEKT(S) == 27) { if (_fnc_ptr_sib(S, noff) >= 0) { hit = 1; } }
+    if (hit == 0) { return 0 - 1; }
+    var lb = _pd_first_label(S, GTI(S));
+    if (_pd_eo(S, lb) == 1) {
+        PRSTR("a call with named arguments cannot be overload-routed: ");
+        _pd_q(S, noff);
+        PRSTR(" has a routed sibling - call the one you mean");
+        _pd_ec(S, lb);
+    }
+    return 0 - 1;
+}
+# C7 (`_PINDIRECT_CALL_IN`, cursor on a label; `cst` the call's first argument): fncallN / callptr
+# pass every argument by position. Reported once per call (at its first label); the label is
+# stepped over and its value parsed, so the stream stays in step.
+fn _pd_icall_named(S, cst): i64 {
+    _pd_say(S, _pd_first_label(S, cst), "named arguments need a direct call - fncallN / callptr pass arguments by position");
+    STI(S, GTI(S) + 2);
+    return 0;
+}
+# C14 (every undefined-name report, `_gv_note_blockscoped`; cursor just past the name): a name
+# followed by `:` at an argument's start is a named argument to something that takes none — a
+# builtin, an intrinsic. The two errors stay; this says why.
+fn _pd_c14_note(S): i64 {
+    var ti = GTI(S);
+    if (TOKTYP(S, ti) != 49) { return 0; }
+    if (TOKTYP(S, ti - 1) != 2) { return 0; }
+    var pt = TOKTYP(S, ti - 2);
+    if (pt != 10 && pt != 31) { return 0; }
+    PRSTR("note: named arguments go only to a direct call of a declared fn (builtins, fncallN and callptr take positional arguments)\n");
+    return 0;
+}
+# The first token of the argument a call to fi (`(` at `open`) passes parameter k — for the
+# generic inference that reads an argument before the call is parsed (`_gen_infer_tp`,
+# `_gs_arg_named`, `_tok_gen_ret_sid`). A call with no label keeps the positional rule
+# (`_call_arg_start`); with one, a positional before the first label, else the value after the
+# label naming parameter k, else -1. So `g(n: 2, x: p)` instantiates `g$Pt` as `g(p, 2)` does.
+fn _call_arg_for(S, fi, open, k): i64 {
+    if (_pd_named_at(S, open) == 0) { return _call_arg_start(S, open, k); }
+    var q = open + 1;
+    var pc = 0;
+    var n = GTCNT(S);
+    while (q < n) {
+        if (_pd_label_at(S, q) == 1) { break; }
+        if (pc == k) { return _call_arg_start(S, open, k); }
+        pc = pc + 1;
+        q = _arg_next(S, q);
+        if (TOKTYP(S, q) != 31) { return 0 - 1; }
+        q = q + 1;
+    }
+    if (fi < 0) { return 0 - 1; }
+    var pn = _bx_pname(S, fi, k);
+    if (pn < 0) { return 0 - 1; }
+    while (q < n) {
+        if (_pd_label_at(S, q) == 1) { if (STREQ(S, TOKVAL(S, q), pn) == 1) { return q + 2; } }
+        q = _arg_next(S, q);
+        if (TOKTYP(S, q) != 31) { return 0 - 1; }
+        q = q + 1;
+    }
+    return 0 - 1;
+}
+
 # 1 when the name at offset `noff` is exactly the `n`-byte text `lit`. (cycc does not include
 # lib/string.cyr, so this is the compare.)
 fn _noff_is(S, noff, lit, n): i64 {
@@ -2651,6 +3884,18 @@ fn _simd_arg_record(S, cls, tbl, cnt, pc): i64 {
 # vector's first word as its pointer (Win64 page fault). Every own-call argument loop shares
 # it — those three, and (via `_owncall_args`) the four PE-only vector-retptr loops, whose own
 # copy had the gates but not the arity check. CHANGELOG [6.6.6]
+# The gates, in order (each keyed by the PARAMETER index `uarg`, so any caller that knows the index
+# inherits all of them):
+#   * a SIMD-class parameter (v5.10.38) must be a local vector IDENT; it is recorded, never pushed,
+#     and loaded into XMM/V after ECALLPOPS, so int-arg evaluation cannot clobber the vector regs.
+#   * an integer LITERAL into a param annotated `: cstring` is a hard error (v6.5.3 — the callee
+#     derefs the number; `0`, the idiomatic NULL, is exempt); only an EXPLICIT annotation counts
+#     (v5.10.24). A Str or a Str's data pointer into one warns (6.6.13 I11).
+#   * a string literal into a `: Str` param is wrapped in `str_from` (else the callee reads a raw
+#     cstr as a header).
+#   * a bare inline struct into a struct-pointer param pushes its address (v6.3.36).
+#   * otherwise PCMPE (plus 6.7.3's bool check and 6.7.6's f32 rounding) and EPUSHR.
+# CHANGELOG [5.10.38] [6.5.3] [6.6.5] [6.6.13] [6.3.36]
 fn _call_arg_one(S, fi, uarg, noff, tbl, st): i64 {
     var cls = _pm_simd(fi, uarg);   # 6.6.17 (a10)
     if (cls > 0) {
@@ -2669,39 +3914,58 @@ fn _call_arg_one(S, fi, uarg, noff, tbl, st): i64 {
     return 0;
 }
 
-# The argument list of an own-call (cursor just past `(`): every argument through
-# `_call_arg_one`, then `)`, the arity check PARSE_FNCALL runs, ECALLPOPS of the int args and
-# the vector loads. `int0` = int args the caller already pushed (x86's retptr). Returns the
-# int-class total, for ECALLCLEAN.
-# Also the four WIN64-ONLY own-calls (a 16/32-byte vector returned through a retptr:
-# `_try_vector_call_assign`, the `_f2c`/`_f4c` receives, the PE `return f(..)` path). They had a
-# loop of their own with the cstring/Str/struct-address gates and NO arity check, so `v = f(3)`
-# on a 2-param `f` built clean on PE alone. On PE the simd mask is 0 (a vector param is
-# address-passed), so `_call_arg_one` IS that loop's body. CHANGELOG [6.6.6]
-fn _owncall_args(S, fi, noff, int0): i64 {
-    var tbl: i64[24];
-    var st: i64[3];
+# ⭐ 6.7.7 — THE ONE ARGUMENT MARSHALLER of every direct call to a known callee (cursor just past
+# `(`): every argument through `_call_arg_one`, then `)`, the arity check, ECALLPOPS of the
+# int-class args and the vector loads. `int0` = int args the caller already pushed (x86's retptr;
+# the method form's retptr and `self`). `p0` = the first user parameter's index: 0, or 1 for
+# `o.m(..)`, whose `self` is parameter 0. `line` = the arity message's line (the caller's — the
+# method form names the `(`). Returns the int-class total, for ECALLCLEAN.
+# ⭐ "One call syntax" was never "one call path": PARSE_FNCALL, the method form and the
+# struct-valued receives each grew their own copy of this loop, and each copy missed a gate the
+# others had — the method form shipped with NONE of the four callee-mask gates and no arity check
+# (6.6.5: `h.slen("abcde")` read 0, `h.vmix(2, v, 3)` shifted `j` a register, `w.pr(42)` into a
+# `: cstring` SIGSEGV'd, `q.one(5, 99)` built), the receives had none (6.6.6), and the four
+# WIN64-ONLY vector-retptr calls (`_try_vector_call_assign`, the `_f2c`/`_f4c` receives, the PE
+# `return f(..)`) had no arity check, so `v = f(3)` on a 2-param `f` built clean on PE alone.
+# 6.7.7 folded PARSE_FNCALL's and the method form's loops onto this one, so a call-site obligation
+# is written once. CHANGELOG [6.6.5] [6.6.6] [6.7.7]
+fn _owncall_args_at(S, fi, noff, int0, p0, line): i64 {
+    var tbl: i64[24];   # 8 args x 3 words, a LOCAL — a nested call gets its own (v6.2.1: i64[24])
+    var st: i64[7];     # [0..16] below; [24..48] the named phase's (`_pd_named`)
     store64(&st, int0);
     store64(&st + 8, 0);
     store64(&st + 16, 0);
-    var line = GTLINE(S, GTI(S));
-    var uarg = 0;
+    var uarg = p0;
     if (PEEKT(S) != 11) {
         var go = 1;
         while (go == 1) {
-            _call_arg_one(S, fi, uarg, noff, &tbl, &st);
-            uarg = uarg + 1;
-            if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
-            else { go = 0; }
+            if (_pd_label_at(S, GTI(S)) == 1) { go = 0; }   # 6.7.7 (B6): a named argument
+            else {
+                _call_arg_one(S, fi, uarg, noff, &tbl, &st);
+                uarg = uarg + 1;
+                if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
+                else { go = 0; }
+            }
         }
     }
-    if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
-    STI(S, GTI(S) + 1);                         # consume ')'
-    _CHECK_ARITY(S, line, noff, fi, uarg, 1);
+    if (_pd_label_at(S, GTI(S)) == 1) {
+        store64(&st + 24, p0);
+        store64(&st + 32, line);
+        _pd_named(S, fi, noff, uarg, &tbl, &st);   # 6.7.7 (B6): checked whole, then in parameter order
+    } else {
+        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
+        STI(S, GTI(S) + 1);                         # consume ')'
+        _CHECK_ARITY(S, line, noff, fi, uarg, 1);   # `uarg` counts `self`, as `_fnt_params` does
+        _pd_fill(S, fi, uarg, &st);                 # 6.7.7 (B6): a short call's parameter defaults
+    }
     var n = load64(&st);
-    ECALLPOPS(S, n);
-    _simd_arg_second_pass(S, &tbl, load64(&st + 8));
+    ECALLPOPS(S, n);   # int-class args only: a vector was recorded, not pushed
+    _simd_arg_second_pass(S, &tbl, load64(&st + 8));   # after ECALLPOPS: int args cannot clobber XMM/V
     return n;
+}
+# The plain form (p0 = 0), its line the first argument's (cursor just past `(`).
+fn _owncall_args(S, fi, noff, int0): i64 {
+    return _owncall_args_at(S, fi, noff, int0, 0, GTLINE(S, GTI(S)));
 }
 
 # ⭐ 6.6.6 — A STRUCT-VALUED CALL NEEDS SOMEWHERE TO PUT ITS RESULT, WHEREVER IT IS WRITTEN.
@@ -4045,13 +5309,15 @@ fn _CALL_ARGC_PEEK(S): i64 {
 # drift. Deliberately permissive in the two cases where the param count is not
 # yet knowable, which preserves pre-6.5.1 behaviour rather than silently dropping
 # a legitimate redirect:
-#   - target not yet DEFINED (offset < 0): its param count is still 0 from REGFN.
-#     Same exemption `_CHECK_ARITY` makes via its `need_off` gate.
+#   - target not yet DEFINED (offset < 0): routed as before 6.5.1. (`_CHECK_ARITY` checks
+#     the routed call since 6.7.7, against pass 1's count.)
 #   - target is VARIADIC: arity is unconstrained by construction.
+# 6.7.7: the count is the target's min..max (a sibling that declares defaults fills the rest).
 fn _OV_ARITY_OK(S, fi, argc): i64 {
     if (L64(_fnt_offsets + fi * 8) < 0) { return 1; }
     if (GFVA(S, fi) != 0) { return 1; }
-    if (L64(_fnt_params + fi * 8) == argc) { return 1; }
+    if (argc > L64(_fnt_params + fi * 8)) { return 0; }
+    if (argc >= _pd_min(fi)) { return 1; }
     return 0;
 }
 
@@ -4143,15 +5409,13 @@ fn _fnc_agg(S, fi, noff): i64 {
     return 1;
 }
 
-fn PARSE_FNCALL(S, noff): i64 {
-    STI(S, GTI(S) + 1);  # consume (
-    # Check for inline candidate
-    var fi = FINDFN(S, noff);
-    if (fi < 0) { fi = REGFN(S, noff); }
-    # 6.6.10: a generic callee — infer a struct type argument (-> its instance) or refuse a scalar
-    # call of a stub generic. See _gen_call_head.
-    var _gfi = _gen_call_head(S, fi, noff);
-    if (_gfi != fi) { fi = _gfi; noff = L64(_fnt_names + fi * 8); }
+# PARSE_FNCALL's overload routing on the FIRST argument (cursor on it, just past `(`): the routed
+# callee, or -1 when the call is not routed (the caller then keeps its own `noff`, so a `use`
+# alias keeps its name). Out of PARSE_FNCALL's body, which sits at cybs's per-fn reference
+# ceiling. CHANGELOG [6.7.7]
+fn _fnc_route(S, fi, noff): i64 {
+    if (_pd_named_at(S, GTI(S) - 1) == 1) { return _pd_route_named(S, fi, noff); }   # 6.7.7 (B6): C10
+    var r = 0 - 1;
     # v5.10.25 — registry-based overload dispatch on the FIRST argument: for a fn `<base>`
     # with a `<base>_str` / `<base>_int` sibling (tables filled at REGFN time; user pairs work
     # the same way), `base(arg, ..)` is routed to the sibling when the arg matches, behind the
@@ -4183,7 +5447,7 @@ fn PARSE_FNCALL(S, noff): i64 {
                     var _od_st = _od_str_target - 1;
                     if (_OV_ARITY_OK(S, _od_st, _CALL_ARGC_PEEK(S)) == 1) {
                         fi = _od_st;
-                        noff = L64(_fnt_names + fi * 8);
+                        r = fi;
                     }
                 }
             }
@@ -4213,7 +5477,7 @@ fn PARSE_FNCALL(S, noff): i64 {
                     var _od_it = _od_int_target - 1;
                     if (_OV_ARITY_OK(S, _od_it, _CALL_ARGC_PEEK(S)) == 1) {
                         fi = _od_it;
-                        noff = L64(_fnt_names + fi * 8);
+                        r = fi;
                     }
                 }
             }
@@ -4232,35 +5496,69 @@ fn PARSE_FNCALL(S, noff): i64 {
     # the per-fn overload tables). Compile-time cost: O(N) name
     # compare over registered fns per pointer-form call site.
     if (PEEKT(S) == 27) {
-        var _po_base_p = S + 0xEC00000 + noff;
-        var _po_base_len = 0;
-        while (load8(_po_base_p + _po_base_len) != 0) { _po_base_len = _po_base_len + 1; }
-        # 128-byte scratch — must hold base_len + len("_ptr") + null.
-        # The 120-char base-length guard below leaves headroom.
-        # Pre-bumped from 16 bytes — was overflow-prone for any base
-        # name >11 chars (e.g. `f64v2_add_ptr` direct call constructed
-        # `f64v2_add_ptr_ptr` = 18 bytes; the overflow corrupted
-        # adjacent stack data and returned wrong values from any fn
-        # call that hit this dispatch path).
-        if (_po_base_len < 120) {
-            var _po_scratch[128];
-            var _po_i = 0;
-            while (_po_i < _po_base_len) {
-                store8(&_po_scratch + _po_i, load8(_po_base_p + _po_i));
-                _po_i = _po_i + 1;
-            }
-            store8(&_po_scratch + _po_base_len + 0, 95);   # '_'
-            store8(&_po_scratch + _po_base_len + 1, 112);  # 'p'
-            store8(&_po_scratch + _po_base_len + 2, 116);  # 't'
-            store8(&_po_scratch + _po_base_len + 3, 114);  # 'r'
-            store8(&_po_scratch + _po_base_len + 4, 0);
-            var _po_fi = _FINDFN_CSTR(S, &_po_scratch, _po_base_len + 4);
-            if (_po_fi >= 0) {
-                fi = _po_fi;
-                noff = L64(_fnt_names + fi * 8);
-            }
-        }
+        var _po_fi = _fnc_ptr_sib(S, noff);
+        if (_po_fi >= 0) { r = _po_fi; }
     }
+    return r;
+}
+# The `<base>_ptr` sibling of the fn named `noff`, or -1 (v5.10.39, above). Out of `_fnc_route` so
+# C10 asks the same question (6.7.7).
+fn _fnc_ptr_sib(S, noff): i64 {
+    var _po_base_p = S + 0xEC00000 + noff;
+    var _po_base_len = 0;
+    while (load8(_po_base_p + _po_base_len) != 0) { _po_base_len = _po_base_len + 1; }
+    # 128-byte scratch — must hold base_len + len("_ptr") + null.
+    # The 120-char base-length guard below leaves headroom.
+    # Pre-bumped from 16 bytes — was overflow-prone for any base
+    # name >11 chars (e.g. `f64v2_add_ptr` direct call constructed
+    # `f64v2_add_ptr_ptr` = 18 bytes; the overflow corrupted
+    # adjacent stack data and returned wrong values from any fn
+    # call that hit this dispatch path).
+    if (_po_base_len >= 120) { return 0 - 1; }
+    var _po_scratch[128];
+    var _po_i = 0;
+    while (_po_i < _po_base_len) {
+        store8(&_po_scratch + _po_i, load8(_po_base_p + _po_i));
+        _po_i = _po_i + 1;
+    }
+    store8(&_po_scratch + _po_base_len + 0, 95);   # '_'
+    store8(&_po_scratch + _po_base_len + 1, 112);  # 'p'
+    store8(&_po_scratch + _po_base_len + 2, 116);  # 't'
+    store8(&_po_scratch + _po_base_len + 3, 114);  # 'r'
+    store8(&_po_scratch + _po_base_len + 4, 0);
+    return _FINDFN_CSTR(S, &_po_scratch, _po_base_len + 4);
+}
+
+# 1 when a call to `fi` must take the normal path even though the callee is inline-eligible.
+# v6.4.31: on Win64 PE a value-form SIMD param (address-passed, struct_mask set) or a SIMD return
+# (retptr-style) can't survive the inline replay, which homes args with an 8-byte EFLSTORE and
+# returns scalar-in-rax — it would truncate the 16/32-byte vector; such callees take the normal
+# struct-ptr / retptr path. 6.6.20: nor a REDEFINED fn (flag 2048, pass 1) on any target —
+# replaying the body in hand bound the call to whichever definition came first; a plain call
+# reaches the last one. 6.7.7: nor a call that names an argument — the replay binds by position
+# (the one marshaller places names). Out of PARSE_FNCALL's body (cybs ceiling).
+# CHANGELOG [6.6.20] [6.7.7]
+fn _fnc_no_inline(S, fi): i64 {
+    if (_TARGET_PE == 1) {
+        if (_smask_args(fi) != 0) { return 1; }
+        if (_is_simd_any(S, GFRS(S, fi)) == 1) { return 1; }
+    }
+    if ((GFLG(S, fi) & 2048) != 0) { return 1; }
+    if (_pd_named_at(S, GTI(S) - 1) == 1) { return 1; }
+    return 0;
+}
+
+fn PARSE_FNCALL(S, noff): i64 {
+    STI(S, GTI(S) + 1);  # consume (
+    # Check for inline candidate
+    var fi = FINDFN(S, noff);
+    if (fi < 0) { fi = REGFN(S, noff); }
+    # 6.6.10: a generic callee — infer a struct type argument (-> its instance) or refuse a scalar
+    # call of a stub generic. See _gen_call_head.
+    var _gfi = _gen_call_head(S, fi, noff);
+    if (_gfi != fi) { fi = _gfi; noff = L64(_fnt_names + fi * 8); }
+    var _rfi = _fnc_route(S, fi, noff);   # 6.7.7: the routing, out of this body
+    if (_rfi >= 0) { fi = _rfi; noff = L64(_fnt_names + fi * 8); }
     # v5.6.4: #deprecated call-site warning, with the `private` check (see
     # _callee_site_checks). It names the first token after the `(` we just consumed,
     # which is on the call-site's line.
@@ -4275,19 +5573,7 @@ fn PARSE_FNCALL(S, noff): i64 {
     # local yields as an rvalue (`var k = r;`, `h(r)` into an untyped param), so the two agree.
     # At top level there is no frame to hold it: refused by name. CHANGELOG [6.6.6]
     if (_fnc_agg(S, fi, noff) == 1) { return 0; }   # 6.7.6: out of this body (cybs ceiling)
-    # v6.4.31: on Win64 PE a value-form SIMD param (address-passed, struct_mask
-    # set) or a SIMD return (retptr-style) can't survive the inline replay, which
-    # homes args with an 8-byte EFLSTORE and returns scalar-in-rax — it would
-    # truncate the 16/32-byte vector. Force such callees through the normal
-    # struct-ptr / retptr path (handled in parse_decl + PARSE_FNCALL below).
-    var _pe_no_inline = 0;
-    if (_TARGET_PE == 1) {
-        if (_smask_args(fi) != 0) { _pe_no_inline = 1; }
-        if (_is_simd_any(S, GFRS(S, fi)) == 1) { _pe_no_inline = 1; }
-    }
-    # 6.6.20: nor a REDEFINED fn (flag 2048, pass 1) on any target — replaying the body in hand
-    # bound the call to whichever definition came first; a plain call reaches the last one.
-    if ((GFLG(S, fi) & 2048) != 0) { _pe_no_inline = 1; }
+    var _pe_no_inline = _fnc_no_inline(S, fi);   # 6.7.7: out of this body
     if (GFINL(S, fi) != 0) { if (GIDEP(S) < 3) { if (GINFN(S) == 1) { if (_pe_no_inline == 0) {
                     # INLINE PATH: replay function body tokens at call site
                     var pc = L64(_fnt_params + fi * 8);
@@ -4463,122 +5749,11 @@ fn PARSE_FNCALL(S, noff): i64 {
                     # what the duplicate-variable check reads; the slots stay spent.
                     return 0;
                 } } } }
-    # NORMAL CALL PATH
-    # Args pushed left-to-right: arg1 first (bottom), argN last (top).
-    # ECALLPOPS pops top 6 into registers: rdi=argN-5, ..., r9=argN.
-    # For >6 args, the first (argc-6) remain on stack in forward order.
-    # ESTORESTACKPARM compensates for the reversed register assignment.
-    # Auto-coerce string literals to Str for params annotated : Str.
-    var argc = 0;
-    # v6.2.41 — capture the call-site line before the arg loop advances GTI,
-    # so the arity warning below points at the call, not the token after `)`.
-    var _ar_line = GTLINE(S, GTI(S));
-    # v5.10.38 — caller-side SIMD-arg routing. Read the callee's
-    # per-fn SIMD mask (2 bits per param: 00 int, 01 f64v2, 10 f64v4).
-    # When non-zero, value-form SIMD args get loaded into XMM/V regs
-    # AFTER ECALLPOPS so int-arg eval (which may clobber XMM during
-    # PCMPE) doesn't trample SIMD state. Scratch table records each
-    # SIMD arg's (named_lli, simd_pc, class) so the second pass can
-    # emit ELOAD_F64V2_TO_XMM / _F64V4_TO_XMM at the call site.
-    var _fc_simd_table: i64[24];   # 8 args × 3 i64s = 24 slots (v6.2.1: i64[24]=192B; bare [24] was 24B → OOB past arg 0)
-    var _fc_simd_count = 0;
-    var _fc_simd_pc_caller = 0;
-    var _fc_int_argc = 0;
-    if (PEEKT(S) != 11) {
-        var argo = 1;
-        while (argo == 1) {
-            # v5.10.38 — SIMD-class arg routing (must precede the
-            # int-class type-check + push path). When the callee's
-            # mask flags this argc as SIMD, the arg MUST be a local
-            # f64v2/f64v4 IDENT (value-form caller pattern). Record
-            # the IDENT's local idx + this caller-side simd ordinal
-            # for the post-ECALLPOPS emission pass. Skip the int-
-            # class push entirely; argc still advances for mask
-            # alignment but _fc_int_argc does NOT.
-            # 6.6.5: the body of this arm is now `_simd_arg_record`, shared with the
-            # method-call path in parse_decl.cyr, which had no SIMD routing at all and
-            # shifted every argument after a vector one by a register. CHANGELOG [6.6.5]
-            var _fc_class = _pm_simd(fi, argc);   # 6.6.17 (a10)
-            if (_fc_class > 0) {
-                _fc_simd_pc_caller = _fc_simd_pc_caller + _simd_arg_record(S, _fc_class, &_fc_simd_table, _fc_simd_count, _fc_simd_pc_caller);
-                _fc_simd_count = _fc_simd_count + 1;
-                argc = argc + 1;
-                if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
-                else { argo = 0; }
-                continue;
-            }
-            # The argument type checks (default ON since v5.10.5; `CYRIUS_TYPE_CHECK=0` opts out).
-            # The v5.10.3 overload dispatch above has already routed the well-known shapes
-            # (println(Str) -> println_str, strlen(Str) -> str_len, println(i64) -> println_int);
-            # what is left are mismatches with no route, gated on the callee's param being
-            # EXPLICITLY annotated `: cstring` (v5.10.24 — the old str_mask-cleared polarity
-            # flooded every untyped param that legitimately takes a Str-as-pointer).
-            #
-            # v6.5.3 — an integer LITERAL passed to a param explicitly annotated
-            # `: cstring` is unambiguously wrong. Unlike an i64 variable or a fn-call
-            # result — which cyrius genuinely cannot distinguish from a pointer, per
-            # ADR-002's i64-everywhere tenet — a literal is known at parse time to be a
-            # NUMBER. Previously this compiled with NO diagnostic and SIGSEGV'd at
-            # runtime, because the callee dereferences it as a char*: `println(42)`
-            # printed nothing and died with signal 11. The `_int` overload route never
-            # covered it either, since that route only ever fires for a bare fn-call
-            # argument (never a literal, never a variable).
-            #
-            # `0` is EXEMPT — it is the idiomatic NULL for a cstring param.
-            # Hard error, not a warning: there is no reading of this program under which
-            # the call is correct, and a warning here is what let the crash ship.
-            # 6.6.5: extracted to `_check_int_lit_cstring_arg`, shared with the method-call
-            # path in parse_decl.cyr — `w.pr(42)` into a `: cstring` param compiled clean
-            # and SIGSEGV'd where the identical free fn was a hard error. CHANGELOG [6.6.5]
-            _check_int_lit_cstring_arg(S, fi, argc, noff);
-            # A Str (or a Str's data pointer) into a `: cstring` param: a warning, from the ONE
-            # helper every argument loop shares. Its hint never suggests `str_data(x)` — a Str's
-            # bytes are not NUL-terminated at its length, so that is the bug, not the fix.
-            # CHANGELOG [6.6.13]
-            _check_str_cstring_arg(S, fi, argc, noff);   # 6.6.13 I11
-            # Auto-coercion: if this param is : Str and the arg is a string literal,
-            # emit str_from(literal) instead of the raw cstr pointer.
-            # 6.6.5: extracted to `_try_push_str_literal_arg`, shared with the method-call
-            # path in parse_decl.cyr, where `h.m("lit")` into a `: Str` param silently read
-            # back 0. CHANGELOG [6.6.5]
-            if (_try_push_str_literal_arg(S, fi, argc) == 1) {
-                argc = argc + 1;
-                _fc_int_argc = _fc_int_argc + 1;
-                if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
-                else { argo = 0; }
-                continue;
-            }
-            # v6.3.36 (issue [5]) — bare inline-struct arg to a struct-pointer param:
-            # push its address (frame-safe non-tail path). Falls through otherwise.
-            if (_try_push_struct_addr_arg(S, fi, argc, 0) == 1) {
-                argc = argc + 1;
-                _fc_int_argc = _fc_int_argc + 1;
-                if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
-                else { argo = 0; }
-                continue;
-            }
-            _bx_pcmpe_arg(S, fi, argc, noff);   # PCMPE + 6.7.3's bool check
-            EPUSHR(S);
-            argc = argc + 1;
-            _fc_int_argc = _fc_int_argc + 1;
-            if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
-            else { argo = 0; }
-        }
-    }
-    if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
-    STI(S, GTI(S) + 1);
-    # v6.2.41 — normal-path call-site arity check (see _CHECK_ARITY above).
-    _CHECK_ARITY(S, _ar_line, noff, fi, argc, 1);
-    # v5.10.38 — SysV split-counter: ECALLPOPS only pops the int-class
-    # arg count from the stack into RDI/RSI/RDX/RCX/R8/R9. SIMD args
-    # haven't been pushed (they were recorded for the second pass
-    # below).
-    ECALLPOPS(S, _fc_int_argc);
-    # Second pass: emit XMM/V loads for recorded SIMD args. AFTER
-    # ECALLPOPS so int-arg eval can't clobber XMM state. AT the call
-    # site so XMM holds the values entering the called fn.
-    # 6.6.5: extracted to `_simd_arg_second_pass`, shared with the method-call path.
-    _simd_arg_second_pass(S, &_fc_simd_table, _fc_simd_count);
+    # NORMAL CALL PATH — the one marshaller (6.7.7; the gates and their history are at
+    # `_call_arg_one`). Args are pushed left to right; ECALLPOPS moves the last ones into the
+    # argument registers and leaves the rest on the stack in order. The arity message names the
+    # line of the first argument, captured before the loop advances (v6.2.41).
+    var _fc_int_argc = _owncall_args_at(S, fi, noff, 0, 0, GTLINE(S, GTI(S)));
     var foff = L64(_fnt_offsets + fi * 8);
     if (foff >= 0) {
         ECALLTO(S, foff);
@@ -4638,7 +5813,8 @@ fn _tr_cap(S, ti, what, n): i64 {
     return 0 - 1;
 }
 # Cursor-free: the parameter count of the list whose `(` is token `p`, and `_tr_pend` = the token
-# after its `)`. A comma inside `<..>` (`m: Map<K, V>`) or nested parens is not a separator.
+# after its `)`. A comma inside `<..>` (`m: Map<K, V>`) or nested parens is not a separator, and a
+# parameter default is skipped whole (`_pl_dflt_end`).
 fn _tr_arity(S, p): i64 {
     var q = p + 1;
     if (TOKTYP(S, q) == 11) { _tr_pend = q + 1; return 0; }
@@ -4656,6 +5832,7 @@ fn _tr_arity(S, p): i64 {
         elif (t == 20) { ad = ad - 1; }
         elif (t == 39) { ad = ad - 2; }
         elif (t == 31) { if (pd == 0) { if (ad <= 0) { n = n + 1; } } }
+        elif (t == 4) { if (pd == 0) { q = _pl_dflt_end(S, q); continue; } }   # 6.7.7: a default
         q = q + 1;
     }
     _tr_pend = q;
@@ -4749,6 +5926,7 @@ fn _tr_scan_trait(S, ti): i64 {
 fn _tr_scan_tm(S, tx, p, end): i64 {
     var op = _tr_paren(S, p);
     if (op < 0) { return p + 1; }
+    if (_pl_has_dflt(S, op) == 1) { _pd_trait_refuse(S, tx, p, op); }   # 6.7.7 (B6): D12 / D14 (F1)
     var ar = _tr_arity(S, op);
     var q = _tr_pend;
     while (q < end - 1) {
@@ -5538,6 +6716,7 @@ fn _bnd_sites(S, fi, open): i64 {
         if (t == 12) { return 0; }
         if (d == 0) {
             if (t == 11) { break; }
+            if (t == 4) { i = _pl_dflt_end(S, i); continue; }   # 6.7.7: a default (`<` is an operator there)
             if (t == 2) { if (TOKTYP(S, i - 1) == 10 || TOKTYP(S, i - 1) == 31) { _bnr_decl(S, tp, blk, i); } }
         }
         if (t == 10 || t == 19 || t == 28) { d = d + 1; }
@@ -6222,6 +7401,7 @@ fn _ce_call(S, noff): i64 {
     if (fi < 0) { _ce_badn(S, "unknown fn ", noff, " in a const context"); return 0; }
     if (GFCFN(S, fi) != 1) { _ce_badn(S, "", noff, " is not a `const fn` - a const context calls only const fns"); return 0; }
     _ce_ti = _ce_ti + 2;   # the name, `(`
+    if (_pd_named_at(S, _ce_ti - 1) == 1) { return _ce_call_named(S, fi); }   # 6.7.7 (B6)
     # The arguments are pushed on the frame stack, unnamed, and become the callee's parameters in
     # place (`_ce_bind_params` names them) — a call allocates nothing, however deep the recursion.
     var base = _ce_sp;
@@ -6240,7 +7420,94 @@ fn _ce_call(S, noff): i64 {
     _ce_expect(S, 11);
     if (_ce_err == 1) { _ce_sp = base; return 0; }
     if (_ce_skip > 0) { _ce_sp = base; _ce_k = _ce_retkind(S, fi); return 0; }
+    n = _ce_fill(S, fi, n);   # 6.7.7 (B6): a short call's parameter defaults
+    if (_ce_err == 1) { _ce_sp = base; return 0; }
     return _ce_invoke(S, fi, base, n);
+}
+# 6.7.7 (B6) — a const fn call that names an argument (`const N = f(1, c: 3);`, `#assert`, an
+# array size, an enum value, a case label, a local const). Every parameter's frame entry is
+# reserved first (kind -1: not given), so a nested call runs above them; each written argument is
+# evaluated in WRITTEN order into its parameter's entry; the missing ones take their defaults; the
+# callee then runs on all of them. The refusals are the parser's texts (C2-C6), said only in a
+# const context of its own (`_ce_infn == 0`) — a const fn's body is compiled by the parser too,
+# which reports the same call once.
+fn _ce_call_named(S, fi): i64 {
+    var max = L64(_fnt_params + fi * 8);
+    var noff = _bx_fname(S, fi);
+    var base = _ce_sp;
+    var j = 0;
+    while (j < max) { _ce_fr_push(S, 0 - 1, 0, 0 - 1, 8); j = j + 1; }
+    var k = 0;
+    var named = 0;
+    var go = 1;
+    while (go == 1) {
+        if (_ce_err == 1) { _ce_sp = base; return 0; }
+        var at = _ce_ti;
+        var pi = k;
+        if (_pd_label_at(S, at) == 1) {
+            named = 1;
+            pi = _pd_index(S, fi, TOKVAL(S, at));
+            if (pi < 0) { if (_ce_nopen(S) == 1) { _pd_c2(S, at, fi, noff, 0); } _ce_sp = base; return 0; }
+            _ce_ti = _ce_ti + 2;
+        } else {
+            if (named == 1) { if (_ce_nopen(S) == 1) { _pd_c5(S, at, noff); } _ce_sp = base; return 0; }
+            k = k + 1;
+            if (pi >= max) {
+                if (_ce_nopen(S) == 1) { _pd_say(S, at, "a const fn called with the wrong number of arguments"); }
+                _ce_sp = base;
+                return 0;
+            }
+        }
+        var e = _ce_st + (base + pi) * 40;
+        if (load64(e + 16) != 0 - 1) {
+            if (_ce_nopen(S) == 1) {
+                if (pi < k) { _pd_c4(S, at, fi, noff, pi, 0); } else { _pd_c3(S, at, fi); }
+            }
+            _ce_sp = base;
+            return 0;
+        }
+        var av = _ce_expr(S);
+        if (_ce_err == 1) { _ce_sp = base; return 0; }
+        store64(e + 8, av);
+        store64(e + 16, _ce_k);
+        if (TOKTYP(S, _ce_ti) == 31) { _ce_ti = _ce_ti + 1; } else { go = 0; }
+    }
+    var cl = _ce_ti;
+    _ce_expect(S, 11);
+    if (_ce_err == 1) { _ce_sp = base; return 0; }
+    if (_ce_skip > 0) { _ce_sp = base; _ce_k = _ce_retkind(S, fi); return 0; }
+    var p = 0;
+    while (p < max) {
+        var e2 = _ce_st + (base + p) * 40;
+        if (load64(e2 + 16) == 0 - 1) {
+            var en = _pd_value(S, fi, p);
+            if (en == 0) {
+                if (_pd_refused(fi) == 1) { _ce_err = 1; }   # reported at the default (as `_ce_fill`)
+                elif (_ce_nopen(S) == 1) { _pd_c6(S, cl, fi, p); }
+                _ce_sp = base;
+                return 0;
+            }
+            store64(e2 + 8, L64(en + 32));
+            store64(e2 + 16, L64(en + 24));
+        }
+        p = p + 1;
+    }
+    return _ce_invoke(S, fi, base, max);
+}
+# 1 when fi's defaults were refused (reported at the default; its calls pass every argument).
+fn _pd_refused(fi): i64 {
+    var row = _pd_row(fi);
+    if (row == 0) { return 0; }
+    if ((L64(row + 24) & 4) != 0) { return 1; }
+    return 0;
+}
+# A const context's named-call refusal: 1 when it is to be said (the first error of this
+# evaluation, outside a const fn's body), 0 when `_ce_err` is only set.
+fn _ce_nopen(S): i64 {
+    if (_ce_err == 1) { return 0; }
+    _ce_err = 1;
+    if (_ce_infn == 1) { return 0; }
+    return 1;
 }
 fn _ce_invoke(S, fi, base, n): i64 {
     if (_ce_depth >= 2000) { _ce_sp = base; _ce_bad(S, "compile-time evaluation nested deeper than 2000 const fn calls", 62); return 0; }
@@ -6306,7 +7573,11 @@ fn _ce_bind_params(S, op, base, n, fi): i64 {
                 store64(e, pn); store64(e + 8, av); store64(e + 16, pk); store64(e + 24, w);
             }
             k = k + 1;
-            while (TOKTYP(S, i) != 31 && TOKTYP(S, i) != 11) { i = i + 1; }
+            # 6.7.7: to its `,` / `)` with `( [ {` balanced, so a default (`b = sq2(1, 2)`) is one
+            # parameter. NOT `_pl_next`: this count must agree with `_ce_nparams` (paren depth only)
+            # at the definition check, and a `<`-aware one refuses an uncalled `const fn f(p:
+            # Pair<i64, i64>, b)` that compiles today.
+            i = _tok_item_end(S, i);
             if (TOKTYP(S, i) == 31) { i = i + 1; }
         } else { i = i + 1; }
     }
@@ -6989,25 +8260,43 @@ fn _cst_kind_peek(S, ci): i64 {
     if (L64(e + 32) == 2) { return L64(e + 40); }
     return 4;   # 6.7.4: not evaluated yet — its kind is unknown (an if-expression re-checks it later)
 }
-# Run const ci's initializer at the TOP context (no locals of whatever fn forced it).
-fn _cst_eval(S, ci): i64 {
-    var e = _cst_tab + ci * 64;
-    S64(e + 32, 1);
+# Evaluate the constant expression at token `ti` at the TOP context: no locals of whatever forced
+# it, its own step budget (a sweep runs them back to back), every evaluator flag put back. Returns
+# the value; `out` receives [0] its kind (0 i64, 1 f64, 2 string, 3 bool), [1] 1 when the evaluator
+# refused it (already reported), [2] the token after it — the caller judges what may end it (a
+# const's `;`; a parameter default's `,` / `)`). CHANGELOG [6.7.2] [6.7.7]
+fn _ce_top_expr(S, ti, out): i64 {
     var sv_ti = _ce_ti; var sv_top = _ce_top; var sv_in = _ce_infn; var sv_err = _ce_err;
     var sv_skip = _ce_skip; var sv_fb = _ce_fb; var sv_steps = _ce_steps; var sv_as = _ce_asrt;
-    _ce_steps = 0;   # each const its own budget (the sweep runs them all back to back)
+    _ce_steps = 0;
     _ce_asrt = 0;
-    _ce_ti = L64(e + 8);
+    _ce_ti = ti;
     _ce_top = 1;
     _ce_infn = 0;
     _ce_err = 0;
     _ce_skip = 0;
     var v = _ce_expr(S);
-    var k = _ce_k;
-    if (_ce_err == 0) { if (TOKTYP(S, _ce_ti) != 5) { _ce_bad(S, "expected ';' after a const's value", 34); } }
-    var bad = _ce_err;
+    store64(out, _ce_k);
+    store64(out + 8, _ce_err);
+    store64(out + 16, _ce_ti);
     _ce_ti = sv_ti; _ce_top = sv_top; _ce_infn = sv_in; _ce_err = sv_err; _ce_skip = sv_skip; _ce_fb = sv_fb;
     _ce_steps = sv_steps; _ce_asrt = sv_as;
+    return v;
+}
+# Run const ci's initializer at the TOP context (no locals of whatever fn forced it).
+fn _cst_eval(S, ci): i64 {
+    var e = _cst_tab + ci * 64;
+    S64(e + 32, 1);
+    var o: i64[3];
+    var v = _ce_top_expr(S, L64(e + 8), &o);
+    var k = load64(&o);
+    var bad = load64(&o + 8);
+    if (bad == 0) {
+        if (TOKTYP(S, load64(&o + 16)) != 5) {
+            _bnd_errm_at(S, load64(&o + 16), "expected ';' after a const's value", 34);
+            bad = 1;
+        }
+    }
     var vi = L64(e + 24);
     if (bad == 1) {
         S64(e + 32, 3); S64(e + 40, 0); S64(e + 48, 0);
@@ -8283,6 +9572,7 @@ fn _gs_params(S, fi, open): i64 {
         if (t == 12) { break; }
         if (d == 0) {
             if (t == 11) { i = i + 1; break; }
+            if (t == 4) { i = _pl_dflt_end(S, i); continue; }   # 6.7.7: a default (`<` is an operator there)
             if (t == 31) { pc = pc + 1; }
             if (t == 2) { pk = _gs_param(S, fi, i, pc, pk); }
         }
@@ -8371,8 +9661,8 @@ fn _gs_use(S, fi, i, mode): i64 {
     if ((GFGM(S, cfi) & 3) == 0) { if (_bnd_base_bad(S, cfi) == 0) { return 0; } }   # 6.7.1: a bounded one too
     if (nx == 19) { return _gs_targs_fwd(S, fi, i + 2); }
     var m = GFGM(S, cfi);
-    if (_gs_arg_named(S, i + 1, (m >> 8) & 255) == 1) { return 1; }
-    return _gs_arg_named(S, i + 1, (m >> 16) & 255);
+    if (_gs_arg_named(S, cfi, i + 1, (m >> 8) & 255) == 1) { return 1; }
+    return _gs_arg_named(S, cfi, i + 1, (m >> 16) & 255);
 }
 # `callee<...>(`: 1 iff a type argument names one of fi's own type parameters.
 fn _gs_targs_fwd(S, fi, j): i64 {
@@ -8391,11 +9681,11 @@ fn _gs_targs_fwd(S, fi, j): i64 {
     }
     return 0;
 }
-# 1 iff argument k-1 (k is 1-based; 0 = none) of the call whose `(` is at `open` is a bare
-# T-typed name.
-fn _gs_arg_named(S, open, k): i64 {
+# 1 iff the argument for parameter k-1 (k is 1-based; 0 = none) of the call to cfi whose `(` is at
+# `open` is a bare T-typed name (6.7.7: by name too, `_call_arg_for`).
+fn _gs_arg_named(S, cfi, open, k): i64 {
     if (k == 0) { return 0; }
-    var a = _call_arg_start(S, open, k - 1);
+    var a = _call_arg_for(S, cfi, open, k - 1);
     if (a < 0) { return 0; }
     if (TOKTYP(S, a) != 2) { return 0; }
     var nt = TOKTYP(S, a + 1);
@@ -8520,7 +9810,7 @@ fn _gen_infer_tp(S, fi, open, which): i64 {
     var k = which + 1;
     if ((m & 4) != 0) { k = (m >> (8 + which * 8)) & 255; }
     if (k == 0) { return 0 - 8; }
-    var a = _call_arg_start(S, open, k - 1);
+    var a = _call_arg_for(S, fi, open, k - 1);   # 6.7.7: or the argument naming it
     if (a < 0) { return 0 - 8; }
     if (_gen_arg_whole(S, a) == 0) { return 0 - 8; }
     var sv = GTI(S);
@@ -9592,7 +10882,8 @@ fn _classify_return_type(S, rt_noff): i64 {
 # miscompile CO-01 describes). Structs / enums / globals were already pass-1
 # order-independent; this extends the same treatment to fn signatures.
 #
-# _prescan_skip_fn is the verbatim pre-CO-01 body-skip, so pass-1's TOKEN CURSOR
+# _prescan_skip_fn is the pre-CO-01 body-skip (6.7.7: with the parameter list skipped
+# whole first, which moves no cursor a brace-free list ends at), so pass-1's TOKEN CURSOR
 # advances exactly as it did before. _prescan_fn_sig extracts metadata on a
 # throwaway cursor then RESETS and replays this — registration/mask writes are
 # the only new effect, never a change in where pass-1 leaves the cursor.
@@ -9600,6 +10891,12 @@ fn _prescan_skip_fn(S): i64 {
     STI(S, GTI(S) + 1);  # consume FN
     STI(S, GTI(S) + 1);  # consume name
     if (PEEKT(S) == 19) { while (PEEKT(S) != 20 && PEEKT(S) != 12) { STI(S, GTI(S) + 1); } STI(S, GTI(S) + 1); }
+    # 6.7.7: the parameter list as one balanced `( .. )` first, so nothing in a parameter default
+    # (a refused `{`) is taken for the body. The same cursor for every list that holds no brace.
+    if (PEEKT(S) == 10) {
+        var cp = _tok_close_paren(S, GTI(S));
+        if (cp > 0) { STI(S, cp + 1); }
+    }
     var dep = 0;
     var fsk = 1;
     while (fsk == 1) {
@@ -9836,6 +11133,7 @@ fn _prescan_params(S, fi): i64 {
 }
 fn _prescan_params_scan(S, fi): i64 {
     if (PEEKT(S) != 10) { return 0; }   # no '(' — malformed; pass-2 will ERR
+    var pdo = GTI(S);                   # 6.7.7 (B6): the list's `(`, for `_pd_record_at`
     STI(S, GTI(S) + 1);                 # consume '('
     _bx_fn_reset(S, fi);                # 6.7.3: this definition's bool facts are recorded afresh
     var pc = 0;
@@ -9889,8 +11187,14 @@ fn _prescan_params_scan(S, fi): i64 {
                         if (_pptr == 0) { _bx_pscan(S, fi, pc); }   # 6.7.3: a bool parameter
                         STI(S, GTI(S) + 1);                  # consume type name
                         SKIP_GENERICS(S);                    # `: Vec<i64>` etc.
+                    } elif (PEEKT(S) != 12) {
+                        # 6.7.7: a type token that is not a name (`u128`, the `fn` of `*fn`), taken
+                        # as pass 2 takes it — stopping here counted the list short. CHANGELOG [6.7.7]
+                        STI(S, GTI(S) + 1);
+                        SKIP_GENERICS(S);
                     }
                 }
+                if (PEEKT(S) == 4) { STI(S, _pl_dflt_end(S, GTI(S))); }   # 6.7.7 (B6): a default (recorded below)
                 pc = pc + 1;
                 if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }  # comma → next param
                 else { pgo = 0; }
@@ -9910,6 +11214,7 @@ fn _prescan_params_scan(S, fi): i64 {
     S64(_fnt_simdmask + fi * 8, simd_mask);
     S64(_fnt_structmask + fi * 8, struct_mask);
     SFBVCP(fi, bvcp);
+    _pd_record_at(S, fi, pdo);   # 6.7.7 (B6): its parameter defaults
     return 0;
 }
 
@@ -10643,6 +11948,7 @@ fn _tl_pass1(S, objok): i64 {
     _prescan_tail(S);
     SMOD(S, 0);
     _cst_sweep(S);    # 6.7.2: every top-level const evaluated (and checked), used or not
+    _pd_sweep(S);     # 6.7.7 (B6): every parameter default too
     return 0;
 }
 
@@ -11480,11 +12786,13 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
             if ((GFLG(S, fi) & 64) != 0) { _this_priv = 1; }
         }
     } else {
-        # Not prescanned — a fn defined inside a top-level block (one inside a fn body is
-        # refused, parse.cyr `_refuse_nested_fn`), or a monomorphized instance. The v6.5.38
-        # identity rule still applies; it lives in `_fn_def_slot` now so pass 1 and pass 2
-        # cannot drift apart about what a definition owns.
+        # Not found — a monomorphized instance, an async fn's `f$impl`, or an earlier definition
+        # of a redefined fn (pass 1 keeps the last one's start). A fn inside a top-level block is
+        # prescanned since 6.6.17 (`_prescan_block_fn`; one inside a fn body is refused, parse.cyr
+        # `_refuse_nested_fn`). The v6.5.38 identity rule still applies; it lives in
+        # `_fn_def_slot` now so pass 1 and pass 2 cannot drift apart about what a definition owns.
         fi = _fn_def_slot(S, noff, _vis_fid, _this_priv);
+        _pd_late(S, fi, GTI(S), _is_async);   # 6.7.7 (B6): an instance's defaults are its base's
     }
     var _dup_off = L64(_fnt_offsets + fi * 8);
     if (_dup_off >= 0) {
@@ -12450,6 +13758,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                 if (pc == 0) { _ipt_pack = _ipt_pack | ((pt_simd_sid - 2048) + 1); }
                 if (pc == 1) { _ipt_pack = _ipt_pack | ((((pt_simd_sid - 2048) + 1)) << 16); }
             }
+            if (PEEKT(S) == 4) { STI(S, _pl_dflt_end(S, GTI(S))); }   # 6.7.7 (B6): a default (pass 1 checked it)
             pc = pc + 1;
             if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
             else { pgo = 0; }
@@ -12476,6 +13785,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     # exactly the param slots. For a fn with no wide params this equals `pc`, so nothing moves.
     var ra_pslots = GFLC(S);
     S64(_fnt_params + fi * 8, pc);
+    _pd_pc_check(S, fi, pc);   # 6.7.7: one parameter count for a defaulted fn
     # ⛔ v6.5.37 — A DUPLICATE THAT DISAGREES ABOUT ARITY IS AN ERROR, NOT A WARNING.
     #
     # `duplicate fn ... last definition wins` is easy to read as benign shadowing, and
@@ -12790,6 +14100,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
         var can_inline = 1;
         var _inl_why = 0;
         if (pc > 2) { can_inline = 0; _inl_why = 1; }
+        if (_pd_row(fi) != 0) { can_inline = 0; if (_inl_why == 0) { _inl_why = 7; } }   # 6.7.7 (B6): a call may fill
         # v6.3.9 (F-fns): ceiling 16->32 — admits slightly larger straight-line
         # generic/inline bodies. pc<=2 (above) + the forbidden-token scan below
         # (no control-flow / var-decl) are UNCHANGED, so inl_packed (2 param
@@ -12859,6 +14170,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                 if (_inl_why == 4) { WARN(S, "#inline ignored: body has control flow or a var declaration", 59); }
                 if (_inl_why == 5) { WARN(S, "#inline ignored: body has a defer/secret block", 46); }
                 if (_inl_why == 6) { WARN(S, "#inline ignored: pointer (*T) parameter", 39); }
+                if (_inl_why == 7) { WARN(S, "#inline ignored: fn has parameter defaults", 42); }
             }
         }
     }

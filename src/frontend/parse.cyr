@@ -340,7 +340,7 @@ fn _tok_gen_ret_sid(S, a, i, j, fi): i64 {
     var pk = w + 1;
     if ((m & 4) != 0) { pk = (m >> (8 + w * 8)) & 255; }
     if (pk == 0) { return 0; }
-    var at = _call_arg_start(S, j + 1, pk - 1);
+    var at = _call_arg_for(S, fi, j + 1, pk - 1);   # 6.7.7: or the argument naming it
     if (at < 0) { return 0; }
     if (TOKTYP(S, at) != 2) { return 0; }
     var nt = TOKTYP(S, at + 1);

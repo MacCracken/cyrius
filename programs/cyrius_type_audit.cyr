@@ -81,6 +81,20 @@ fn _file_size_fd(fd): i64 {
     return load64(&stat_buf + 48);
 }
 
+# The offset just past the string or char literal whose opening quote is at buf[p] (a `\`
+# escapes the next byte), else eol.
+fn _ta_lit_end(buf, p, eol): i64 {
+    var q = load8(buf + p);
+    p = p + 1;
+    while (p < eol) {
+        var c = load8(buf + p);
+        if (c == 92) { p = p + 2; }
+        elif (c == q) { return p + 1; }
+        else { p = p + 1; }
+    }
+    return eol;
+}
+
 # Match `fn NAME(args)`. Returns 1 if line at `bp` opens a fn decl,
 # else 0. On match, writes name_off / name_len / has_ann / private
 # back via the four `_out` store64 addresses. Skips leading whitespace.
@@ -115,16 +129,20 @@ fn _match_fn_decl(buf, bp, eol, name_off_out, name_len_out, has_ann_out, private
     # `(`
     if (p >= eol) { return 0; }
     if (load8(buf + p) != 40) { return 0; }   # '('
-    # Skip past matching `)`. Don't worry about nested parens
-    # in default values etc. — stdlib doesn't use them in
-    # signatures.
+    # Skip past the matching `)` — nested parentheses balanced, and a string or char literal
+    # stepped over whole: since 6.7.7 a parameter default can be `b = f(1, 2)` or `s = ")"`,
+    # and a `)` in a literal closed the list early (the fn then read as unannotated).
+    # CHANGELOG [6.7.7]
     var depth = 1;
     p = p + 1;
     while (p < eol && depth > 0) {
         var cp = load8(buf + p);
-        if (cp == 40) { depth = depth + 1; }
-        elif (cp == 41) { depth = depth - 1; }
-        p = p + 1;
+        if (cp == 34 || cp == 39) { p = _ta_lit_end(buf, p, eol); }
+        else {
+            if (cp == 40) { depth = depth + 1; }
+            elif (cp == 41) { depth = depth - 1; }
+            p = p + 1;
+        }
     }
     if (depth != 0) { return 0; }
     # Skip whitespace then check for `:`

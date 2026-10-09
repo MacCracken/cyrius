@@ -1,0 +1,23 @@
+# 2026-10-09 — an integer constant passed to an `f64` / `f32` parameter keeps its integer bits
+# (3 → the subnormal 0x3) with no warning, on every call path, while `var x: f64 = 3;` warns
+# "an integer stored into an f64/f32 slot keeps its integer bits (write a float literal)".
+# Expected: four warnings — lines 11 (a tail call), 15, 16 (`: f32`) and 17 (a method) — ADR-002 keeps
+#   the bits, so a warning, not a conversion.
+# Actual (6.7.6 @ e44470b7): no warning, rc 0, exit 15 (all four get 0, not 6; f(3.0) is right).
+struct P { x; }
+fn f(x: f64): i64 { return f64_to(x * 2.0); }
+fn g(x: f32): i64 { var d: f64 = f32_to(x); return f64_to(d * 2.0); }
+impl P { fn m(self, x: f64): i64 { return f64_to(x * 2.0); } }
+fn t(): i64 { return f(3); }
+fn main(): i64 {
+    var p = P { 1 };
+    var e = 0;
+    if (f(3) != 6) { e = e | 1; }
+    if (g(3) != 6) { e = e | 2; }
+    if (p.m(3) != 6) { e = e | 4; }
+    if (t() != 6) { e = e | 8; }
+    if (f(3.0) != 6) { e = e | 16; }
+    return e;
+}
+var r = main();
+syscall(60, r);

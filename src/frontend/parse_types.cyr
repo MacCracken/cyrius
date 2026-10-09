@@ -1910,6 +1910,7 @@ fn _gv_blockscoped(S, noff): i64 {
 }
 fn _gv_note_blockscoped(S, noff): i64 {
     _bx_undef_ti = GTI(S);   # 6.7.3: every undefined-name report passes here; a bool check skips a value holding it
+    _pd_c14_note(S);         # 6.7.7 (B6): `syscall(n: 60, ..)` — a named argument to a builtin
     var k = _gv_blockscoped(S, noff);
     if (k == 0) { return 0; }
     syscall(SYS_WRITE, 2, "note: '", 7);

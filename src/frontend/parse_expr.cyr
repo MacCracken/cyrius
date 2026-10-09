@@ -381,10 +381,38 @@ fn _cl_prescan_nested(S): i64 {
     if (PEEKT(S) == 14) { STI(S, GTI(S) + 1); }
     return 0;
 }
+# ⛔ 6.7.7 — A NAMED ARGUMENT'S LABEL IS NOT A READ. In `|n| w3(1, c: n)` the capture pre-scan took
+# the label `c` for a read: of the enclosing fn's local `c` (a capture the body never uses, so the
+# closure was refused without lib/alloc.cyr), and at top level of whatever name the local table
+# still held from the last fn compiled (the callee's own parameter — a capture of a dead slot,
+# SIGSEGV). A label is `IDENT :` just after a `(` or `,` whose innermost unclosed bracket is a `(`;
+# a struct literal's field (`Pt { x: n, y: 2 }`, in a `{`) keeps its reading. CHANGELOG [6.7.7]
+fn _cl_is_arg_label(S, ti): i64 {
+    if (TOKTYP(S, ti + 1) != 49) { return 0; }
+    if (ti < 1) { return 0; }
+    var p = TOKTYP(S, ti - 1);
+    if (p != 10 && p != 31) { return 0; }
+    var q = ti - 1;
+    var d = 0;
+    while (q >= 0) {
+        var t = TOKTYP(S, q);
+        if (t == 11 || t == 29 || t == 14) { d = d + 1; }
+        elif (t == 10 || t == 28 || t == 13) {
+            if (d == 0) {
+                if (t == 10) { return 1; }
+                return 0;
+            }
+            d = d - 1;
+        }
+        q = q - 1;
+    }
+    return 0;
+}
 # One identifier read in a closure body: capture it when it is a free variable.
 fn _cl_prescan_ident(S, noff): i64 {
     if (TOKTYP(S, GTI(S) + 1) == 10) { return 0; }   # a call name
     if (_TOK_IS_LOOP_AT(S, GTI(S)) == 1) { return 0; }  # 6.7.5: the `loop {` statement, not a read
+    if (_cl_is_arg_label(S, GTI(S)) == 1) { return 0; }   # 6.7.7: `w3(1, c: n)`'s `c`, not a read
     if (FINDLOCAL(S, noff) >= 0) { return 0; }
     if (_cl_shadow_find(S, noff) >= 0) { return 0; }
     var esl = _cl_snap_find(S, noff);
@@ -737,6 +765,7 @@ fn _PINDIRECT_CALL_IN(S): i64 {
     }
     while (PEEKT(S) == 31) {                # ',' → another arg
         STI(S, GTI(S) + 1);                 # consume ','
+        if (_pd_label_at(S, GTI(S)) == 1) { _pd_icall_named(S, cst); }   # 6.7.7 (B6): C7
         PCMPE(S);                           # eval arg → rax
         EPUSHR(S);                          # push arg
         cp_argc = cp_argc + 1;
@@ -759,6 +788,7 @@ fn _PINDIRECT_CALL_IN(S): i64 {
             ERR_MSG(S, "fncallN argument count does not match the N in its name", 55);
         }
     }
+    _pd_icall_short(S, cfi, cp_argc, cst);   # 6.7.7 (B6): C15 — defaults fill only a direct call
     # The env rides in an argument REGISTER or not at all. Under SysV the caller
     # places stack arguments anchored on the LAST one (ECALLPOPS puts a_n at
     # [rsp+0]) and the callee reads them back the same way (ESTORESTACKPARM's
@@ -1528,7 +1558,7 @@ fn _inl_param_marks(S, fi, s0, s1, pc): i64 {
     return 0;
 }
 # The name of parameter `ord` of fn `fi`, read from its definition's tokens (the `<..>` of a type
-# argument skipped), or -1.
+# argument and a parameter's default skipped), or -1.
 fn _bx_pname(S, fi, ord): i64 {
     var i = _gen_def_open(S, fi);
     if (i < 0) { return 0 - 1; }
@@ -1541,6 +1571,7 @@ fn _bx_pname(S, fi, ord): i64 {
         var t = TOKTYP(S, i);
         if (d == 0) {
             if (t == 11) { return 0 - 1; }
+            if (t == 4) { i = _pl_dflt_end(S, i); continue; }   # 6.7.7: a default (`<` is an operator there)
             if (t == 31) { k = k + 1; want = 1; }
             elif (want == 1) { if (t == 2) { if (k == ord) { return TOKVAL(S, i); } want = 0; } }
         }
@@ -4175,6 +4206,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
                 var cpnoff = PEEKV(S);
                 _RSV_INTRINSIC_DECL(S, cpnoff, GTI(S), 0);   # 6.6.20: a closure param `|sizeof|`
                 STI(S, GTI(S) + 1);
+                if (PEEKT(S) == 4) { _pd_cl_refuse(S); }   # 6.7.7 (B6): D18
                 var cpli = GFLC(S);
                 S64(S + 0x5D9D000 + cpli * 8, cpnoff);
                 SLDEP(S, cpli, 0);
@@ -5871,8 +5903,10 @@ fn EMIT_OP_DISPATCH(S, stype, op_str, op_len, beg): i64 {
     # happened to be in the third argument register: `a + b` compiled clean and computed with
     # garbage. Every OTHER call position has had a hard arity error since v6.5.1 (`_CHECK_ARITY`)
     # — this one was simply never wired to it. The line is the LHS's first token, not the cursor,
-    # which by here has walked past the whole expression. CHANGELOG [6.6.6]
-    _CHECK_ARITY(S, GTLINE(S, beg), opnoff, ofi, 2, 1);
+    # which by here has walked past the whole expression. Mode 4: an operator fn that declares a
+    # parameter default is refused (it is passed exactly two operands, never filled; 6.7.7).
+    # CHANGELOG [6.6.6] [6.7.7]
+    _CHECK_ARITY(S, GTLINE(S, beg), opnoff, ofi, 2, 4);
     var ofoff = L64(_fnt_offsets + ofi * 8);
     if (ofoff >= 0) { ECALLTO(S, ofoff); }
     else { ECALLFIX(S, ofi); }
@@ -5919,8 +5953,8 @@ fn _EMIT_OP_DISPATCH_AGG(S, stype, op_str, op_len, beg): i64 {
     _sc_x8(S, ofi, t);
     _callee_site_checks(S, ofi, opnoff, opti);
     # 6.6.6 — same arity check as the scalar dispatch above. The retptr/X8 the struct-returning
-    # form adds is NOT a declared parameter, so the expected count is still exactly 2.
-    _CHECK_ARITY(S, GTLINE(S, beg), opnoff, ofi, 2, 1);
+    # form adds is NOT a declared parameter, so the expected count is still exactly 2 (mode 4).
+    _CHECK_ARITY(S, GTLINE(S, beg), opnoff, ofi, 2, 4);
     var ofoff = L64(_fnt_offsets + ofi * 8);
     if (ofoff >= 0) { ECALLTO(S, ofoff); }
     else { ECALLFIX(S, ofi); }

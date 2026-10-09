@@ -1,0 +1,11 @@
+# 2026-10-09 — the comma between a closure literal's parameters (`|a, b|`) is counted as an
+# argument separator by the token-level argument scanners. Shape 1: generic inference
+# (`_call_arg_start`) reads argument 1 at `b|`, not at `p`.
+# Expected: compiles; exit 7 (gx infers T = Pt from p and returns p.x).
+# Actual (6.7.6 @ e44470b7): rc 1 — "generic 'gx' has no i64 (or other scalar) instance: it uses
+#   its type parameter as a struct …". The one-parameter closure `|a| a` compiles and exits 7.
+struct Pt { x; y; }
+fn gx<T>(c, v: T): i64 { return v.x; }
+fn main(): i64 { var p = Pt { 7, 9 }; return gx(|a, b| a + b, p); }
+var r = main();
+syscall(60, r);
