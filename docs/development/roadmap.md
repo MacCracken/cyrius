@@ -739,6 +739,10 @@ CHANGELOG [6.6.17] *Downstream* (no ecosystem sweep).
     multi-value path and the caller reads garbage over 16 bytes (`x3.cyr`, `x4.cyr`); `return mk2(1) == p;` in a 9-16 B
     struct fn passes the leading-call check and leaves the second register unwritten (closing it refuses code that
     compiles today — the user's call); a write to a captured NAME inside a closure says "undefined variable".
+  - **cybs compiles a call to an UNDEFINED function in statement position silently** (`nosuch(1);`, and `gp(1,2,3,4);` as
+    a statement) and the program segfaults (139); the expression form errors (lane BX). Refusing an unresolved call
+    needs a check that gen1 carries no unresolved fixups and probably new labels (cybs has 11 free) — the trusted
+    root's first rung, so it is placed, not slipped in.
   - **Found by the 6.7.6 review (pre-existing, not made worse):** a u128 captured by a closure reads as the address of
     its env copy (`|q| { c == 5 }` false; `c + 0` adds the address; `hi(&c)` is right — parse_expr.cyr ~2697); a
     struct-typed FIELD as the LEFT operand of an overloaded operator passes the containing struct's address (`h.p - s`
