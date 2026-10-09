@@ -2834,8 +2834,13 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
         var hclosed = 0;
         var dep_name = _dep_hdr_name(buf, n, &info, &hclosed);
         if (dep_name != 0) {
+            # 6.7.6: the test-scope pass walks the root manifest a second time — a header refused
+            # below was named, and counted, by the first pass (once, not twice)
+            var named_before = 0;
+            if (_dep_test_pass == 1 && _dep_ctx_kind == 0) { named_before = 1; }
             # A header with no `]` on its line: the old scan ran its NAME across the newline.
             if (hclosed == 0) {
+                if (named_before == 1) { continue; }
                 _dep_refuse_unclosed(dep_name);
                 errors = errors + 1;
                 continue;
@@ -2851,6 +2856,7 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
             # 6.6.20 (the deps-name guard bug): `[deps.]` / `[deps..]` / `[deps..x]`, `\` and control bytes too
             # (_dep_name_unsafe) — the empty and dot names aliased ANOTHER dep's cache root.
             if (_dep_name_unsafe(dep_name) == 1) {
+                if (named_before == 1) { continue; }
                 _dep_refuse_name(dep_name);
                 errors = errors + 1;
                 continue;

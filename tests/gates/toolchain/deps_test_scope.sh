@@ -22,6 +22,9 @@
 #   D9  `deps --locked` holds the test dep to the lock too: lib/mockpeer.cyr removed is named
 #   D10 a name both sides reach — the root's test-scope leaf@v2, a production dep's own leaf@v1 —
 #       resolves the production v1, and the diamond notice names the v2 that was not used
+#   D11 the test-scope pass walks the root manifest a second time: an unsafe `[deps.a..b]` and an
+#       unclosed `[deps.zz` header are each refused ONCE, and the root manifest counts once in the
+#       summary (`1 errors` — a pass's count is clamped to 1 since v6.5.37 — not 2)
 #
 # MUTATION LEDGER (6.7.6) — each mutant built in a SCRATCH copy of the tree, the gate run against
 # it; the unmutated copy PASSES, and each mutant turns the rows named RED:
@@ -33,6 +36,7 @@
 #   M4  manifest.cyr: _tc_incs_for drops _dep_test_includes                        D2
 #   M5  deps.cyr: a scope value other than "test" read as no scope                 D6
 #   M6  deps.cyr: the dry run walks a dependency's own test deps                   D7
+#   M7  deps.cyr: the test-scope pass refuses the root's headers again (6.7.6 FXCL-5)  D11
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
 G=deps_test_scope
@@ -186,6 +190,34 @@ rc=0; cy deps > "$W/d10.out" 2>&1 || rc=$?
 if [ "$rc" = 0 ] && grep -q 'return 1;' "$P/lib/leaf.cyr" && grep -qF 'note: leaf v2 (wanted by the root) not used; v1 (prod) resolved first' "$W/d10.out"; then
     ok "D10 the production dependency's leaf@v1 resolves first; the root's test-scope leaf@v2 is named, not used"
 else bad "D10 (rc $rc): lib/leaf.cyr '$(cat "$P/lib/leaf.cyr" 2>/dev/null)' — $(tr '\n' '|' < "$W/d10.out")"; fi
+# ── D11 ──
+P="$W/twice"; rm -rf "$P"; mkdir -p "$P/src"
+cat > "$P/cyrius.cyml" <<EOF
+[package]
+name = "twice"
+version = "0.1.0"
+cyrius = "$V"
+
+[deps.a..b]
+git = "file://$W/o/leaf"
+tag = "v1"
+
+[deps.zz
+git = "file://$W/o/leaf"
+tag = "v1"
+
+[deps.mockpeer]
+git = "file://$W/o/mockpeer"
+tag = "v1"
+modules = ["dist/mockpeer.cyr"]
+scope = "test"
+EOF
+rc=0; cy deps > "$W/d11.out" 2>&1 || rc=$?
+n1=$(grep -c '^error: \[deps.a\.\.b\] is not a usable dep name' "$W/d11.out")
+n2=$(grep -c '^error: \[deps.zz has no closing' "$W/d11.out")
+if [ "$rc" = 1 ] && [ "$n1" = 1 ] && [ "$n2" = 1 ] && grep -q ' deps resolved, 1 errors$' "$W/d11.out"; then
+    ok "D11 an unsafe and an unclosed root header: each refused once, the root manifest counted once"
+else bad "D11 (rc $rc; a..b named ${n1}x, zz named ${n2}x): $(grep 'resolved' "$W/d11.out")"; fi
 
 echo "$G: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1
