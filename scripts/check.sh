@@ -2334,6 +2334,10 @@ _chk_gate "$ROOT/tests/gates/toolchain/test_absorbs_tests.sh"   # 6.7.6 (Break 1
 _chk_gate "$ROOT/tests/gates/frontend/silent_values_checked.sh"   # 6.7.6 (Break 1, lane D)
 _chk_gate "$ROOT/tests/gates/codegen/struct_value_codegen.sh"   # 6.7.6 (Break 1, lane E)
 _chk_gate "$ROOT/tests/gates/frontend/tuple_checked.sh"   # 6.7.7 (B4)
+# 6.7.7 — a whole-struct store into a packed global of 3 / 5 / 6 / 7 bytes wrote 8 (EVSTORE_W stored
+# exactly only 1 / 2 / 4), over the next global: the filed repro and every size 1..16 x every store
+# form, x86 / IR / DCE / aarch64 / cx / PE. Mutation ledger in the header.
+_chk_gate "$ROOT/tests/gates/codegen/global_struct_store_width.sh"
 # 6.7.6 (Break 1, lane C) — cyrius.cyml git first, local development by an explicit switch
 _chk_gate "$ROOT/tests/gates/toolchain/lib_overlay_include.sh"
 _chk_gate "$ROOT/tests/gates/toolchain/deps_git_first_local_switch.sh"

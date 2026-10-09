@@ -4094,14 +4094,16 @@ fn _gv_hide_program(S, on): i64 {
 # Narrow scalar globals are PACKED in the var area, so the 8-byte EVSTORE both sites used
 # wrote the value's upper bytes over the next 7/6/4 bytes of globals: `var a: u8 = 0;
 # var b: u8 = 7;` read b as 0, because b's image value was laid down before the program ran
-# and a's replayed store then zeroed it. Exact 1/2/4 — not `< 8` — because an inline struct
-# global can be 3/5/6/7 bytes, and those keep the full store EVSTORE_W would fall back to
-# anyway. Sign does not matter here; the load side sign-extends (GVSGN). Not
-# _asg_store_slot: that warns on narrowing, which a declaration does not, and SLVARs again.
-# CHANGELOG [6.6.13]
+# and a's replayed store then zeroed it. Sign does not matter here; the load side sign-extends
+# (GVSGN). Not _asg_store_slot: that warns on narrowing, which a declaration does not, and SLVARs
+# again. CHANGELOG [6.6.13]
+# 6.7.7 — every width under 8 goes to EVSTORE_W, which stores a 3 / 5 / 6 / 7-byte width exactly now
+# (`_ESTORE_ODD_RCX`) where it fell back to the 8-byte store. No declaration reaches here at such a
+# width today (a struct global initialised from an expression is registered at 8 bytes; a literal is
+# laid down field by field), so this keeps "at the slot's width" true for every width. CHANGELOG [6.7.7]
 fn _gv_store(S, vi): i64 {
     var w = L64(_vars_base + vi * 8);
-    if (w == 1 || w == 2 || w == 4) { EVSTORE_W(S, vi, w); return 0; }
+    if (w > 0) { if (w < 8) { EVSTORE_W(S, vi, w); return 0; } }
     EVSTORE(S, vi);
     return 0;
 }

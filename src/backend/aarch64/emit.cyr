@@ -3349,7 +3349,27 @@ fn EVSTORE_W(S, idx, width): i64 {
     if (width == 1) { EW(S, 0x39000020); return 0; }
     if (width == 2) { EW(S, 0x79000020); return 0; }
     if (width == 4) { EW(S, 0xB9000020); return 0; }
+    if (width > 0) { if (width < 8) { _ESTORE_ODD_X1(S, width); return 0; } }
     EW(S, 0xF9000020); return 0;
+}
+# The low `w` bytes of x0 to [x1], for a width of 3 / 5 / 6 / 7 — the x86 `_ESTORE_ODD_RCX`'s
+# reason (a packed struct global is exactly its size). Pieces of 4, 2, 1 at rising offsets; a later
+# piece is shifted down into x16 (`lsr x16, x0, #8*off`), so x0 and x1 are kept. CHANGELOG [6.7.7]
+fn _ESTORE_ODD_X1(S, w): i64 {
+    var off = 0;
+    var c = 4;
+    while (c > 0) {
+        if ((w & c) != 0) {
+            var rt = 0;
+            if (off > 0) { EW(S, 0xD340FC10 | ((8 * off) << 16)); rt = 16; }   # lsr x16, x0, #8*off
+            if (c == 4) { EW(S, 0xB9000020 | rt); }                              # str  wT, [x1]
+            elif (c == 2) { EW(S, 0x79000020 | ((off / 2) << 10) | rt); }        # strh wT, [x1, #off]
+            else { EW(S, 0x39000020 | (off << 10) | rt); }                       # strb wT, [x1, #off]
+            off = off + c;
+        }
+        c = c / 2;
+    }
+    return 0;
 }
 
 # v5.9.40 — sub-byte struct field load (parse_decl.cyr:252).

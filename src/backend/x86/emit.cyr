@@ -619,7 +619,33 @@ fn EVSTORE_W(S, idx, width): i64 {
     if (width == 1) { ESTORE8(S); return 0; }
     if (width == 2) { ESTORE16(S); return 0; }
     if (width == 4) { ESTORE32(S); return 0; }
+    if (width > 0) { if (width < 8) { _ESTORE_ODD_RCX(S, width); return 0; } }
     ESTOC(S);
+    return 0;
+}
+# The low `w` bytes of rax to [rcx], for a width of 3 / 5 / 6 / 7: a packed struct global is
+# exactly its size, so the 8-byte store a whole-struct assignment took (`G = l;`, `G = mk();`) wrote
+# the next 5 / 3 / 2 / 1 bytes of globals. Pieces of 4, 2, 1 at rising offsets (each naturally
+# aligned on the 8-aligned global); rax is rotated right under each later piece and rotated back
+# after, so no scratch register is taken and rax still holds the value. CHANGELOG [6.7.7]
+fn _ESTORE_ODD_RCX(S, w): i64 {
+    var off = 0;
+    var rot = 0;
+    var c = 4;
+    while (c > 0) {
+        if ((w & c) != 0) {
+            if (off > rot) {
+                EB(S, 0x48); EB(S, 0xC1); EB(S, 0xC8); EB(S, 8 * (off - rot));   # ror rax, 8*(off-rot)
+                rot = off;
+            }
+            if (c == 2) { EB(S, 0x66); }
+            if (c == 1) { EB(S, 0x88); } else { EB(S, 0x89); }   # mov [rcx(+d8)], al / ax / eax
+            if (off > 0) { EB(S, 0x41); EB(S, off); } else { EB(S, 0x01); }
+            off = off + c;
+        }
+        c = c / 2;
+    }
+    if (rot > 0) { EB(S, 0x48); EB(S, 0xC1); EB(S, 0xC0); EB(S, 8 * rot); }   # rol rax, 8*rot
     return 0;
 }
 

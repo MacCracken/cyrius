@@ -1,0 +1,861 @@
+# global_struct_store_width.tcyr — 6.7.7 — a whole-struct store into a GLOBAL writes exactly the
+# struct's bytes, on every backend.
+#
+# ⛔ THE DEFECT. Narrow scalar globals and narrow struct fields are PACKED (6.6.10, 6.6.13), so an
+# inline struct global is exactly its size and the next global can start right after it: a 3 / 5 /
+# 6 / 7-byte global has neighbours at +3 / +5 / +6 / +7. A struct of 8 bytes or fewer travels as
+# ONE value (rax / x0 / r0) and its store into a global is `_asg_store_slot`'s EVSTORE_W at the
+# global's width — which stored exactly only 1 / 2 / 4 bytes and sent every other width to the
+# 8-byte store. `G = l;` (the filed repro), `G = mk();`, a method result, a by-value parameter,
+# another global, a wrapped source, a for step and a closure body, in a fn, at top level and on a
+# global declared after the first statement, all wrote the value's upper bytes over the next
+# 5 / 3 / 2 / 1 bytes of globals — silently, measured on x86, aarch64 (qemu), cx and PE (wine);
+# both Mach-O targets share the x86 / aarch64 emitters.
+# Filed: docs/development/issues/2026-10-09-global-odd-size-struct-store-overwrites-next-global.md
+# THE FIX: EVSTORE_W stores a 3 / 5 / 6 / 7-byte width as 4 + 2 + 1 pieces on every backend
+# (x86 `_ESTORE_ODD_RCX` — PE and Mach-O x86 too; aarch64 `_ESTORE_ODD_X1` — Mach-O arm64 too;
+# cx `_CX_STORE_ODD`). CHANGELOG [6.7.7]
+#
+# NOT THE PATH (measured): the declaration replay's `_gv_store`, the filing's probable cause. A
+# struct global initialised from an EXPRESSION (`var G: S3 = H;`, `= mk();`, in the leading block or
+# after the first statement) is registered at 8 bytes, so its 8-byte store is in bounds, and a
+# literal (`= S3 { .. }`) is laid down field by field. The J rows keep those two as controls.
+# A struct over 8 bytes is copied byte-exact (`_agc_copy_bytes`) or received at its size, so the
+# 9..16-byte rows passed before the fix too: they show the tail word never had the defect.
+#
+# THE ROWS, per shape — Bn is n `i8` fields (n = 1..16); Mn mixes i16 / i32 / i64 fields to the odd
+# sizes 3 / 5 / 6 / 7 and the 9 / 15-byte tails. The destination GX is followed by seven packed
+# `i8` globals 0x51..0x57 (I asserts the packing: padding after GX would hide the overrun), and
+# every row stores the pattern 0x21 + k, then checks the destination's bytes AND the seven bytes
+# after it. A..H in a fn: a local, a call, a method, a by-value parameter, a global, a wrapped
+# source, a for step, a closure capture. T at top level after the first statement: a global, and a
+# call when the struct fits in 8 bytes (a wider result needs a frame and is refused there). K: a
+# global declared after the first statement. J: the declaration-zone controls. cx refuses a
+# 9..16-byte struct return by name, so B and C are fenced off there for those shapes.
+#
+# Mutation ledger (2026-10-09; a scratch copy of the tree, rebuilt with the one change; the gate
+# tests/gates/codegen/global_struct_store_width.sh runs this file on every leg):
+#   the merged 6.7.7 compiler, before the fix  -> 88 of 304 red on x86, aarch64 and PE; 88 of 284 on cx
+#   M1 x86 EVSTORE_W without its odd arm       -> x86 and PE 88 red; aarch64 and cx green
+#   M2 aarch64 EVSTORE_W without it            -> aarch64 88 red
+#   M3 cx EVSTORE_W without it                 -> cx 88 red
+#   M4 x86: each ror by 8*off, not 8*(off-rot) -> x86 and PE 22 red (byte 6 of every 7-byte shape)
+#   M6 aarch64: the later pieces store w0, not the shifted w16 -> aarch64 88 red
+#   M7 cx: every later piece stored at r1 + 0  -> cx 88 red
+#   GREEN, recorded: M5 x86 without the closing `rol` (no caller reads rax after the store; it is
+#   kept so EVSTORE_W leaves rax as every store emitter does) and M8 `_gv_store` back to exact
+#   1 / 2 / 4 (no declaration reaches it at an odd width — above).
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+include "lib/assert.cyr"
+
+# Struct shapes: Bn is n `i8` fields (n bytes), Mn mixes widths to the same odd sizes.
+struct B1 { f0: i8; }
+struct B2 { f0: i8; f1: i8; }
+struct B3 { f0: i8; f1: i8; f2: i8; }
+struct B4 { f0: i8; f1: i8; f2: i8; f3: i8; }
+struct B5 { f0: i8; f1: i8; f2: i8; f3: i8; f4: i8; }
+struct B6 { f0: i8; f1: i8; f2: i8; f3: i8; f4: i8; f5: i8; }
+struct B7 { f0: i8; f1: i8; f2: i8; f3: i8; f4: i8; f5: i8; f6: i8; }
+struct B8 { f0: i8; f1: i8; f2: i8; f3: i8; f4: i8; f5: i8; f6: i8; f7: i8; }
+struct B9 { f0: i8; f1: i8; f2: i8; f3: i8; f4: i8; f5: i8; f6: i8; f7: i8; f8: i8; }
+struct B10 { f0: i8; f1: i8; f2: i8; f3: i8; f4: i8; f5: i8; f6: i8; f7: i8; f8: i8; f9: i8; }
+struct B11 { f0: i8; f1: i8; f2: i8; f3: i8; f4: i8; f5: i8; f6: i8; f7: i8; f8: i8; f9: i8; f10: i8; }
+struct B12 { f0: i8; f1: i8; f2: i8; f3: i8; f4: i8; f5: i8; f6: i8; f7: i8; f8: i8; f9: i8; f10: i8; f11: i8; }
+struct B13 { f0: i8; f1: i8; f2: i8; f3: i8; f4: i8; f5: i8; f6: i8; f7: i8; f8: i8; f9: i8; f10: i8; f11: i8; f12: i8; }
+struct B14 { f0: i8; f1: i8; f2: i8; f3: i8; f4: i8; f5: i8; f6: i8; f7: i8; f8: i8; f9: i8; f10: i8; f11: i8; f12: i8; f13: i8; }
+struct B15 { f0: i8; f1: i8; f2: i8; f3: i8; f4: i8; f5: i8; f6: i8; f7: i8; f8: i8; f9: i8; f10: i8; f11: i8; f12: i8; f13: i8; f14: i8; }
+struct B16 { f0: i8; f1: i8; f2: i8; f3: i8; f4: i8; f5: i8; f6: i8; f7: i8; f8: i8; f9: i8; f10: i8; f11: i8; f12: i8; f13: i8; f14: i8; f15: i8; }
+struct M3 { a: i16; b: i8; }
+struct M5 { a: i32; b: i8; }
+struct M6 { a: i32; b: i16; }
+struct M7 { a: i32; b: i16; c: i8; }
+struct M9 { a: i64; b: i8; }
+struct M15 { a: i64; b: i32; c: i16; d: i8; }
+
+# Per shape X: HX holds the pattern (byte k = 0x21 + k), GX is the destination, and the seven
+# `i8` globals TX_0..TX_6 are packed right after GX (asserted by the L rows) with 0x51..0x57.
+var HB1: B1 = B1 { 0x21 };
+var GB1: B1 = B1 { 0 };
+var TB1_0: i8 = 0x51; var TB1_1: i8 = 0x52; var TB1_2: i8 = 0x53; var TB1_3: i8 = 0x54; var TB1_4: i8 = 0x55; var TB1_5: i8 = 0x56; var TB1_6: i8 = 0x57;
+var HB2: B2 = B2 { 0x21, 0x22 };
+var GB2: B2 = B2 { 0, 0 };
+var TB2_0: i8 = 0x51; var TB2_1: i8 = 0x52; var TB2_2: i8 = 0x53; var TB2_3: i8 = 0x54; var TB2_4: i8 = 0x55; var TB2_5: i8 = 0x56; var TB2_6: i8 = 0x57;
+var HB3: B3 = B3 { 0x21, 0x22, 0x23 };
+var GB3: B3 = B3 { 0, 0, 0 };
+var TB3_0: i8 = 0x51; var TB3_1: i8 = 0x52; var TB3_2: i8 = 0x53; var TB3_3: i8 = 0x54; var TB3_4: i8 = 0x55; var TB3_5: i8 = 0x56; var TB3_6: i8 = 0x57;
+var HB4: B4 = B4 { 0x21, 0x22, 0x23, 0x24 };
+var GB4: B4 = B4 { 0, 0, 0, 0 };
+var TB4_0: i8 = 0x51; var TB4_1: i8 = 0x52; var TB4_2: i8 = 0x53; var TB4_3: i8 = 0x54; var TB4_4: i8 = 0x55; var TB4_5: i8 = 0x56; var TB4_6: i8 = 0x57;
+var HB5: B5 = B5 { 0x21, 0x22, 0x23, 0x24, 0x25 };
+var GB5: B5 = B5 { 0, 0, 0, 0, 0 };
+var TB5_0: i8 = 0x51; var TB5_1: i8 = 0x52; var TB5_2: i8 = 0x53; var TB5_3: i8 = 0x54; var TB5_4: i8 = 0x55; var TB5_5: i8 = 0x56; var TB5_6: i8 = 0x57;
+var HB6: B6 = B6 { 0x21, 0x22, 0x23, 0x24, 0x25, 0x26 };
+var GB6: B6 = B6 { 0, 0, 0, 0, 0, 0 };
+var TB6_0: i8 = 0x51; var TB6_1: i8 = 0x52; var TB6_2: i8 = 0x53; var TB6_3: i8 = 0x54; var TB6_4: i8 = 0x55; var TB6_5: i8 = 0x56; var TB6_6: i8 = 0x57;
+var HB7: B7 = B7 { 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27 };
+var GB7: B7 = B7 { 0, 0, 0, 0, 0, 0, 0 };
+var TB7_0: i8 = 0x51; var TB7_1: i8 = 0x52; var TB7_2: i8 = 0x53; var TB7_3: i8 = 0x54; var TB7_4: i8 = 0x55; var TB7_5: i8 = 0x56; var TB7_6: i8 = 0x57;
+var HB8: B8 = B8 { 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28 };
+var GB8: B8 = B8 { 0, 0, 0, 0, 0, 0, 0, 0 };
+var TB8_0: i8 = 0x51; var TB8_1: i8 = 0x52; var TB8_2: i8 = 0x53; var TB8_3: i8 = 0x54; var TB8_4: i8 = 0x55; var TB8_5: i8 = 0x56; var TB8_6: i8 = 0x57;
+var HB9: B9 = B9 { 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29 };
+var GB9: B9 = B9 { 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+var TB9_0: i8 = 0x51; var TB9_1: i8 = 0x52; var TB9_2: i8 = 0x53; var TB9_3: i8 = 0x54; var TB9_4: i8 = 0x55; var TB9_5: i8 = 0x56; var TB9_6: i8 = 0x57;
+var HB10: B10 = B10 { 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A };
+var GB10: B10 = B10 { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+var TB10_0: i8 = 0x51; var TB10_1: i8 = 0x52; var TB10_2: i8 = 0x53; var TB10_3: i8 = 0x54; var TB10_4: i8 = 0x55; var TB10_5: i8 = 0x56; var TB10_6: i8 = 0x57;
+var HB11: B11 = B11 { 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B };
+var GB11: B11 = B11 { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+var TB11_0: i8 = 0x51; var TB11_1: i8 = 0x52; var TB11_2: i8 = 0x53; var TB11_3: i8 = 0x54; var TB11_4: i8 = 0x55; var TB11_5: i8 = 0x56; var TB11_6: i8 = 0x57;
+var HB12: B12 = B12 { 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C };
+var GB12: B12 = B12 { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+var TB12_0: i8 = 0x51; var TB12_1: i8 = 0x52; var TB12_2: i8 = 0x53; var TB12_3: i8 = 0x54; var TB12_4: i8 = 0x55; var TB12_5: i8 = 0x56; var TB12_6: i8 = 0x57;
+var HB13: B13 = B13 { 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D };
+var GB13: B13 = B13 { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+var TB13_0: i8 = 0x51; var TB13_1: i8 = 0x52; var TB13_2: i8 = 0x53; var TB13_3: i8 = 0x54; var TB13_4: i8 = 0x55; var TB13_5: i8 = 0x56; var TB13_6: i8 = 0x57;
+var HB14: B14 = B14 { 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E };
+var GB14: B14 = B14 { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+var TB14_0: i8 = 0x51; var TB14_1: i8 = 0x52; var TB14_2: i8 = 0x53; var TB14_3: i8 = 0x54; var TB14_4: i8 = 0x55; var TB14_5: i8 = 0x56; var TB14_6: i8 = 0x57;
+var HB15: B15 = B15 { 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F };
+var GB15: B15 = B15 { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+var TB15_0: i8 = 0x51; var TB15_1: i8 = 0x52; var TB15_2: i8 = 0x53; var TB15_3: i8 = 0x54; var TB15_4: i8 = 0x55; var TB15_5: i8 = 0x56; var TB15_6: i8 = 0x57;
+var HB16: B16 = B16 { 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F, 0x30 };
+var GB16: B16 = B16 { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+var TB16_0: i8 = 0x51; var TB16_1: i8 = 0x52; var TB16_2: i8 = 0x53; var TB16_3: i8 = 0x54; var TB16_4: i8 = 0x55; var TB16_5: i8 = 0x56; var TB16_6: i8 = 0x57;
+var HM3: M3 = M3 { 0x2221, 0x23 };
+var GM3: M3 = M3 { 0, 0 };
+var TM3_0: i8 = 0x51; var TM3_1: i8 = 0x52; var TM3_2: i8 = 0x53; var TM3_3: i8 = 0x54; var TM3_4: i8 = 0x55; var TM3_5: i8 = 0x56; var TM3_6: i8 = 0x57;
+var HM5: M5 = M5 { 0x24232221, 0x25 };
+var GM5: M5 = M5 { 0, 0 };
+var TM5_0: i8 = 0x51; var TM5_1: i8 = 0x52; var TM5_2: i8 = 0x53; var TM5_3: i8 = 0x54; var TM5_4: i8 = 0x55; var TM5_5: i8 = 0x56; var TM5_6: i8 = 0x57;
+var HM6: M6 = M6 { 0x24232221, 0x2625 };
+var GM6: M6 = M6 { 0, 0 };
+var TM6_0: i8 = 0x51; var TM6_1: i8 = 0x52; var TM6_2: i8 = 0x53; var TM6_3: i8 = 0x54; var TM6_4: i8 = 0x55; var TM6_5: i8 = 0x56; var TM6_6: i8 = 0x57;
+var HM7: M7 = M7 { 0x24232221, 0x2625, 0x27 };
+var GM7: M7 = M7 { 0, 0, 0 };
+var TM7_0: i8 = 0x51; var TM7_1: i8 = 0x52; var TM7_2: i8 = 0x53; var TM7_3: i8 = 0x54; var TM7_4: i8 = 0x55; var TM7_5: i8 = 0x56; var TM7_6: i8 = 0x57;
+var HM9: M9 = M9 { 0x2827262524232221, 0x29 };
+var GM9: M9 = M9 { 0, 0 };
+var TM9_0: i8 = 0x51; var TM9_1: i8 = 0x52; var TM9_2: i8 = 0x53; var TM9_3: i8 = 0x54; var TM9_4: i8 = 0x55; var TM9_5: i8 = 0x56; var TM9_6: i8 = 0x57;
+var HM15: M15 = M15 { 0x2827262524232221, 0x2C2B2A29, 0x2E2D, 0x2F };
+var GM15: M15 = M15 { 0, 0, 0, 0 };
+var TM15_0: i8 = 0x51; var TM15_1: i8 = 0x52; var TM15_2: i8 = 0x53; var TM15_3: i8 = 0x54; var TM15_4: i8 = 0x55; var TM15_5: i8 = 0x56; var TM15_6: i8 = 0x57;
+
+# The declaration-zone controls: a copy-init and a call-init of an odd shape register a full
+# 8-byte global (measured), so the 8-byte replay store is in bounds; each is followed by a packed
+# `i8` that must keep its value.
+fn dmkB3(): B3 { var l: B3 = HB3; return l; }
+fn dmkB5(): B5 { var l: B5 = HB5; return l; }
+fn dmkB6(): B6 { var l: B6 = HB6; return l; }
+fn dmkB7(): B7 { var l: B7 = HB7; return l; }
+var DGB3: B3 = HB3;
+var DGTB3: i8 = 0x51;
+var DCB3: B3 = dmkB3();
+var DCTB3: i8 = 0x52;
+var DGB5: B5 = HB5;
+var DGTB5: i8 = 0x51;
+var DCB5: B5 = dmkB5();
+var DCTB5: i8 = 0x52;
+var DGB6: B6 = HB6;
+var DGTB6: i8 = 0x51;
+var DCB6: B6 = dmkB6();
+var DCTB6: i8 = 0x52;
+var DGB7: B7 = HB7;
+var DGTB7: i8 = 0x51;
+var DCB7: B7 = dmkB7();
+var DCTB7: i8 = 0x52;
+
+# -1 when the n bytes at g are the pattern 0x21 + k; else the first offset that is not.
+fn gs_pat(g, n): i64 {
+    var k = 0;
+    while (k < n) { if (load8(g + k) != 0x21 + k) { return k; } k = k + 1; }
+    return 0 - 1;
+}
+# -1 when the seven bytes at g are still 0x51..0x57; else the first offset that is not.
+fn gs_tail(g): i64 {
+    var k = 0;
+    while (k < 7) { if (load8(g + k) != 0x51 + k) { return k; } k = k + 1; }
+    return 0 - 1;
+}
+# -1 when the destination holds the pattern AND its seven neighbour bytes are untouched.
+fn gs_bad(g, n): i64 {
+    var k = gs_pat(g, n);
+    if (k >= 0) { return k; }
+    k = gs_tail(g + n);
+    if (k >= 0) { return n + k; }
+    return 0 - 1;
+}
+# Zero the destination and lay the seven neighbour bytes back down (a failed row cannot leak into
+# the next one).
+fn gs_reset(g, n): i64 {
+    var k = 0;
+    while (k < n) { store8(g + k, 0); k = k + 1; }
+    k = 0;
+    while (k < 7) { store8(g + n + k, 0x51 + k); k = k + 1; }
+    return 0;
+}
+fn gs_row(g, n, what): i64 {
+    assert_eq(gs_bad(g, n), 0 - 1, what);
+    gs_reset(g, n);
+    return 0;
+}
+
+fn mkB1(): B1 { var l: B1; l.f0 = 0x21; return l; }
+impl B1 { fn pat(self): B1 { var l: B1; l.f0 = 0x21; return l; } }
+fn putB1(p: B1): i64 { GB1 = p; return 0; }
+fn rowsB1(): i64 {
+    var g = &GB1;
+    gs_reset(g, 1);
+    var l: B1; l.f0 = 0x21;
+    GB1 = l; gs_row(g, 1, "B1 A: GB1 = l (a local)");
+    GB1 = mkB1(); gs_row(g, 1, "B1 B: GB1 = mkB1() (a call)");
+    GB1 = l.pat(); gs_row(g, 1, "B1 C: GB1 = l.pat() (a method)");
+    putB1(l); gs_row(g, 1, "B1 D: GB1 = p (a by-value parameter)");
+    GB1 = HB1; gs_row(g, 1, "B1 E: GB1 = HB1 (a global)");
+    GB1 = (l); gs_row(g, 1, "B1 F: GB1 = (l) (a wrapped source)");
+    var i = 0;
+    for (i = 0; i < 1; GB1 = l) { i = i + 1; }
+    gs_row(g, 1, "B1 G: a for step GB1 = l");
+    var f = || { GB1 = l; return 0; };
+    fncall0(f); gs_row(g, 1, "B1 H: GB1 = l in a closure (a captured source)");
+    return 0;
+}
+fn mkB2(): B2 { var l: B2; l.f0 = 0x21; l.f1 = 0x22; return l; }
+impl B2 { fn pat(self): B2 { var l: B2; l.f0 = 0x21; l.f1 = 0x22; return l; } }
+fn putB2(p: B2): i64 { GB2 = p; return 0; }
+fn rowsB2(): i64 {
+    var g = &GB2;
+    gs_reset(g, 2);
+    var l: B2; l.f0 = 0x21; l.f1 = 0x22;
+    GB2 = l; gs_row(g, 2, "B2 A: GB2 = l (a local)");
+    GB2 = mkB2(); gs_row(g, 2, "B2 B: GB2 = mkB2() (a call)");
+    GB2 = l.pat(); gs_row(g, 2, "B2 C: GB2 = l.pat() (a method)");
+    putB2(l); gs_row(g, 2, "B2 D: GB2 = p (a by-value parameter)");
+    GB2 = HB2; gs_row(g, 2, "B2 E: GB2 = HB2 (a global)");
+    GB2 = (l); gs_row(g, 2, "B2 F: GB2 = (l) (a wrapped source)");
+    var i = 0;
+    for (i = 0; i < 1; GB2 = l) { i = i + 1; }
+    gs_row(g, 2, "B2 G: a for step GB2 = l");
+    var f = || { GB2 = l; return 0; };
+    fncall0(f); gs_row(g, 2, "B2 H: GB2 = l in a closure (a captured source)");
+    return 0;
+}
+fn mkB3(): B3 { var l: B3; l.f0 = 0x21; l.f1 = 0x22; l.f2 = 0x23; return l; }
+impl B3 { fn pat(self): B3 { var l: B3; l.f0 = 0x21; l.f1 = 0x22; l.f2 = 0x23; return l; } }
+fn putB3(p: B3): i64 { GB3 = p; return 0; }
+fn rowsB3(): i64 {
+    var g = &GB3;
+    gs_reset(g, 3);
+    var l: B3; l.f0 = 0x21; l.f1 = 0x22; l.f2 = 0x23;
+    GB3 = l; gs_row(g, 3, "B3 A: GB3 = l (a local)");
+    GB3 = mkB3(); gs_row(g, 3, "B3 B: GB3 = mkB3() (a call)");
+    GB3 = l.pat(); gs_row(g, 3, "B3 C: GB3 = l.pat() (a method)");
+    putB3(l); gs_row(g, 3, "B3 D: GB3 = p (a by-value parameter)");
+    GB3 = HB3; gs_row(g, 3, "B3 E: GB3 = HB3 (a global)");
+    GB3 = (l); gs_row(g, 3, "B3 F: GB3 = (l) (a wrapped source)");
+    var i = 0;
+    for (i = 0; i < 1; GB3 = l) { i = i + 1; }
+    gs_row(g, 3, "B3 G: a for step GB3 = l");
+    var f = || { GB3 = l; return 0; };
+    fncall0(f); gs_row(g, 3, "B3 H: GB3 = l in a closure (a captured source)");
+    return 0;
+}
+fn mkB4(): B4 { var l: B4; l.f0 = 0x21; l.f1 = 0x22; l.f2 = 0x23; l.f3 = 0x24; return l; }
+impl B4 { fn pat(self): B4 { var l: B4; l.f0 = 0x21; l.f1 = 0x22; l.f2 = 0x23; l.f3 = 0x24; return l; } }
+fn putB4(p: B4): i64 { GB4 = p; return 0; }
+fn rowsB4(): i64 {
+    var g = &GB4;
+    gs_reset(g, 4);
+    var l: B4; l.f0 = 0x21; l.f1 = 0x22; l.f2 = 0x23; l.f3 = 0x24;
+    GB4 = l; gs_row(g, 4, "B4 A: GB4 = l (a local)");
+    GB4 = mkB4(); gs_row(g, 4, "B4 B: GB4 = mkB4() (a call)");
+    GB4 = l.pat(); gs_row(g, 4, "B4 C: GB4 = l.pat() (a method)");
+    putB4(l); gs_row(g, 4, "B4 D: GB4 = p (a by-value parameter)");
+    GB4 = HB4; gs_row(g, 4, "B4 E: GB4 = HB4 (a global)");
+    GB4 = (l); gs_row(g, 4, "B4 F: GB4 = (l) (a wrapped source)");
+    var i = 0;
+    for (i = 0; i < 1; GB4 = l) { i = i + 1; }
+    gs_row(g, 4, "B4 G: a for step GB4 = l");
+    var f = || { GB4 = l; return 0; };
+    fncall0(f); gs_row(g, 4, "B4 H: GB4 = l in a closure (a captured source)");
+    return 0;
+}
+fn mkB5(): B5 { var l: B5; l.f0 = 0x21; l.f1 = 0x22; l.f2 = 0x23; l.f3 = 0x24; l.f4 = 0x25; return l; }
+impl B5 { fn pat(self): B5 { var l: B5; l.f0 = 0x21; l.f1 = 0x22; l.f2 = 0x23; l.f3 = 0x24; l.f4 = 0x25; return l; } }
+fn putB5(p: B5): i64 { GB5 = p; return 0; }
+fn rowsB5(): i64 {
+    var g = &GB5;
+    gs_reset(g, 5);
+    var l: B5; l.f0 = 0x21; l.f1 = 0x22; l.f2 = 0x23; l.f3 = 0x24; l.f4 = 0x25;
+    GB5 = l; gs_row(g, 5, "B5 A: GB5 = l (a local)");
+    GB5 = mkB5(); gs_row(g, 5, "B5 B: GB5 = mkB5() (a call)");
+    GB5 = l.pat(); gs_row(g, 5, "B5 C: GB5 = l.pat() (a method)");
+    putB5(l); gs_row(g, 5, "B5 D: GB5 = p (a by-value parameter)");
+    GB5 = HB5; gs_row(g, 5, "B5 E: GB5 = HB5 (a global)");
+    GB5 = (l); gs_row(g, 5, "B5 F: GB5 = (l) (a wrapped source)");
+    var i = 0;
+    for (i = 0; i < 1; GB5 = l) { i = i + 1; }
+    gs_row(g, 5, "B5 G: a for step GB5 = l");
+    var f = || { GB5 = l; return 0; };
+    fncall0(f); gs_row(g, 5, "B5 H: GB5 = l in a closure (a captured source)");
+    return 0;
+}
+fn mkB6(): B6 { var l: B6; l.f0 = 0x21; l.f1 = 0x22; l.f2 = 0x23; l.f3 = 0x24; l.f4 = 0x25; l.f5 = 0x26; return l; }
+impl B6 { fn pat(self): B6 { var l: B6; l.f0 = 0x21; l.f1 = 0x22; l.f2 = 0x23; l.f3 = 0x24; l.f4 = 0x25; l.f5 = 0x26; return l; } }
+fn putB6(p: B6): i64 { GB6 = p; return 0; }
+fn rowsB6(): i64 {
+    var g = &GB6;
+    gs_reset(g, 6);
+    var l: B6; l.f0 = 0x21; l.f1 = 0x22; l.f2 = 0x23; l.f3 = 0x24; l.f4 = 0x25; l.f5 = 0x26;
+    GB6 = l; gs_row(g, 6, "B6 A: GB6 = l (a local)");
+    GB6 = mkB6(); gs_row(g, 6, "B6 B: GB6 = mkB6() (a call)");
+    GB6 = l.pat(); gs_row(g, 6, "B6 C: GB6 = l.pat() (a method)");
+    putB6(l); gs_row(g, 6, "B6 D: GB6 = p (a by-value parameter)");
+    GB6 = HB6; gs_row(g, 6, "B6 E: GB6 = HB6 (a global)");
+    GB6 = (l); gs_row(g, 6, "B6 F: GB6 = (l) (a wrapped source)");
+    var i = 0;
+    for (i = 0; i < 1; GB6 = l) { i = i + 1; }
+    gs_row(g, 6, "B6 G: a for step GB6 = l");
+    var f = || { GB6 = l; return 0; };
+    fncall0(f); gs_row(g, 6, "B6 H: GB6 = l in a closure (a captured source)");
+    return 0;
+}
+fn mkB7(): B7 { var l: B7; l.f0 = 0x21; l.f1 = 0x22; l.f2 = 0x23; l.f3 = 0x24; l.f4 = 0x25; l.f5 = 0x26; l.f6 = 0x27; return l; }
+impl B7 { fn pat(self): B7 { var l: B7; l.f0 = 0x21; l.f1 = 0x22; l.f2 = 0x23; l.f3 = 0x24; l.f4 = 0x25; l.f5 = 0x26; l.f6 = 0x27; return l; } }
+fn putB7(p: B7): i64 { GB7 = p; return 0; }
+fn rowsB7(): i64 {
+    var g = &GB7;
+    gs_reset(g, 7);
+    var l: B7; l.f0 = 0x21; l.f1 = 0x22; l.f2 = 0x23; l.f3 = 0x24; l.f4 = 0x25; l.f5 = 0x26; l.f6 = 0x27;
+    GB7 = l; gs_row(g, 7, "B7 A: GB7 = l (a local)");
+    GB7 = mkB7(); gs_row(g, 7, "B7 B: GB7 = mkB7() (a call)");
+    GB7 = l.pat(); gs_row(g, 7, "B7 C: GB7 = l.pat() (a method)");
+    putB7(l); gs_row(g, 7, "B7 D: GB7 = p (a by-value parameter)");
+    GB7 = HB7; gs_row(g, 7, "B7 E: GB7 = HB7 (a global)");
+    GB7 = (l); gs_row(g, 7, "B7 F: GB7 = (l) (a wrapped source)");
+    var i = 0;
+    for (i = 0; i < 1; GB7 = l) { i = i + 1; }
+    gs_row(g, 7, "B7 G: a for step GB7 = l");
+    var f = || { GB7 = l; return 0; };
+    fncall0(f); gs_row(g, 7, "B7 H: GB7 = l in a closure (a captured source)");
+    return 0;
+}
+fn mkB8(): B8 { var l: B8; l.f0 = 0x21; l.f1 = 0x22; l.f2 = 0x23; l.f3 = 0x24; l.f4 = 0x25; l.f5 = 0x26; l.f6 = 0x27; l.f7 = 0x28; return l; }
+impl B8 { fn pat(self): B8 { var l: B8; l.f0 = 0x21; l.f1 = 0x22; l.f2 = 0x23; l.f3 = 0x24; l.f4 = 0x25; l.f5 = 0x26; l.f6 = 0x27; l.f7 = 0x28; return l; } }
+fn putB8(p: B8): i64 { GB8 = p; return 0; }
+fn rowsB8(): i64 {
+    var g = &GB8;
+    gs_reset(g, 8);
+    var l: B8; l.f0 = 0x21; l.f1 = 0x22; l.f2 = 0x23; l.f3 = 0x24; l.f4 = 0x25; l.f5 = 0x26; l.f6 = 0x27; l.f7 = 0x28;
+    GB8 = l; gs_row(g, 8, "B8 A: GB8 = l (a local)");
+    GB8 = mkB8(); gs_row(g, 8, "B8 B: GB8 = mkB8() (a call)");
+    GB8 = l.pat(); gs_row(g, 8, "B8 C: GB8 = l.pat() (a method)");
+    putB8(l); gs_row(g, 8, "B8 D: GB8 = p (a by-value parameter)");
+    GB8 = HB8; gs_row(g, 8, "B8 E: GB8 = HB8 (a global)");
+    GB8 = (l); gs_row(g, 8, "B8 F: GB8 = (l) (a wrapped source)");
+    var i = 0;
+    for (i = 0; i < 1; GB8 = l) { i = i + 1; }
+    gs_row(g, 8, "B8 G: a for step GB8 = l");
+    var f = || { GB8 = l; return 0; };
+    fncall0(f); gs_row(g, 8, "B8 H: GB8 = l in a closure (a captured source)");
+    return 0;
+}
+#ifndef CYRIUS_TARGET_CX
+fn mkB9(): B9 { var l: B9; l.f0 = 0x21; l.f1 = 0x22; l.f2 = 0x23; l.f3 = 0x24; l.f4 = 0x25; l.f5 = 0x26; l.f6 = 0x27; l.f7 = 0x28; l.f8 = 0x29; return l; }
+impl B9 { fn pat(self): B9 { var l: B9; l.f0 = 0x21; l.f1 = 0x22; l.f2 = 0x23; l.f3 = 0x24; l.f4 = 0x25; l.f5 = 0x26; l.f6 = 0x27; l.f7 = 0x28; l.f8 = 0x29; return l; } }
+#endif
+fn putB9(p: B9): i64 { GB9 = p; return 0; }
+fn rowsB9(): i64 {
+    var g = &GB9;
+    gs_reset(g, 9);
+    var l: B9; l.f0 = 0x21; l.f1 = 0x22; l.f2 = 0x23; l.f3 = 0x24; l.f4 = 0x25; l.f5 = 0x26; l.f6 = 0x27; l.f7 = 0x28; l.f8 = 0x29;
+    GB9 = l; gs_row(g, 9, "B9 A: GB9 = l (a local)");
+    #ifndef CYRIUS_TARGET_CX
+    GB9 = mkB9(); gs_row(g, 9, "B9 B: GB9 = mkB9() (a call)");
+    GB9 = l.pat(); gs_row(g, 9, "B9 C: GB9 = l.pat() (a method)");
+    #endif
+    putB9(l); gs_row(g, 9, "B9 D: GB9 = p (a by-value parameter)");
+    GB9 = HB9; gs_row(g, 9, "B9 E: GB9 = HB9 (a global)");
+    GB9 = (l); gs_row(g, 9, "B9 F: GB9 = (l) (a wrapped source)");
+    var i = 0;
+    for (i = 0; i < 1; GB9 = l) { i = i + 1; }
+    gs_row(g, 9, "B9 G: a for step GB9 = l");
+    var f = || { GB9 = l; return 0; };
+    fncall0(f); gs_row(g, 9, "B9 H: GB9 = l in a closure (a captured source)");
+    return 0;
+}
+#ifndef CYRIUS_TARGET_CX
+fn mkB10(): B10 { var l: B10; l.f0 = 0x21; l.f1 = 0x22; l.f2 = 0x23; l.f3 = 0x24; l.f4 = 0x25; l.f5 = 0x26; l.f6 = 0x27; l.f7 = 0x28; l.f8 = 0x29; l.f9 = 0x2A; return l; }
+impl B10 { fn pat(self): B10 { var l: B10; l.f0 = 0x21; l.f1 = 0x22; l.f2 = 0x23; l.f3 = 0x24; l.f4 = 0x25; l.f5 = 0x26; l.f6 = 0x27; l.f7 = 0x28; l.f8 = 0x29; l.f9 = 0x2A; return l; } }
+#endif
+fn putB10(p: B10): i64 { GB10 = p; return 0; }
+fn rowsB10(): i64 {
+    var g = &GB10;
+    gs_reset(g, 10);
+    var l: B10; l.f0 = 0x21; l.f1 = 0x22; l.f2 = 0x23; l.f3 = 0x24; l.f4 = 0x25; l.f5 = 0x26; l.f6 = 0x27; l.f7 = 0x28; l.f8 = 0x29; l.f9 = 0x2A;
+    GB10 = l; gs_row(g, 10, "B10 A: GB10 = l (a local)");
+    #ifndef CYRIUS_TARGET_CX
+    GB10 = mkB10(); gs_row(g, 10, "B10 B: GB10 = mkB10() (a call)");
+    GB10 = l.pat(); gs_row(g, 10, "B10 C: GB10 = l.pat() (a method)");
+    #endif
+    putB10(l); gs_row(g, 10, "B10 D: GB10 = p (a by-value parameter)");
+    GB10 = HB10; gs_row(g, 10, "B10 E: GB10 = HB10 (a global)");
+    GB10 = (l); gs_row(g, 10, "B10 F: GB10 = (l) (a wrapped source)");
+    var i = 0;
+    for (i = 0; i < 1; GB10 = l) { i = i + 1; }
+    gs_row(g, 10, "B10 G: a for step GB10 = l");
+    var f = || { GB10 = l; return 0; };
+    fncall0(f); gs_row(g, 10, "B10 H: GB10 = l in a closure (a captured source)");
+    return 0;
+}
+#ifndef CYRIUS_TARGET_CX
+fn mkB11(): B11 { var l: B11; l.f0 = 0x21; l.f1 = 0x22; l.f2 = 0x23; l.f3 = 0x24; l.f4 = 0x25; l.f5 = 0x26; l.f6 = 0x27; l.f7 = 0x28; l.f8 = 0x29; l.f9 = 0x2A; l.f10 = 0x2B; return l; }
+impl B11 { fn pat(self): B11 { var l: B11; l.f0 = 0x21; l.f1 = 0x22; l.f2 = 0x23; l.f3 = 0x24; l.f4 = 0x25; l.f5 = 0x26; l.f6 = 0x27; l.f7 = 0x28; l.f8 = 0x29; l.f9 = 0x2A; l.f10 = 0x2B; return l; } }
+#endif
+fn putB11(p: B11): i64 { GB11 = p; return 0; }
+fn rowsB11(): i64 {
+    var g = &GB11;
+    gs_reset(g, 11);
+    var l: B11; l.f0 = 0x21; l.f1 = 0x22; l.f2 = 0x23; l.f3 = 0x24; l.f4 = 0x25; l.f5 = 0x26; l.f6 = 0x27; l.f7 = 0x28; l.f8 = 0x29; l.f9 = 0x2A; l.f10 = 0x2B;
+    GB11 = l; gs_row(g, 11, "B11 A: GB11 = l (a local)");
+    #ifndef CYRIUS_TARGET_CX
+    GB11 = mkB11(); gs_row(g, 11, "B11 B: GB11 = mkB11() (a call)");
+    GB11 = l.pat(); gs_row(g, 11, "B11 C: GB11 = l.pat() (a method)");
+    #endif
+    putB11(l); gs_row(g, 11, "B11 D: GB11 = p (a by-value parameter)");
+    GB11 = HB11; gs_row(g, 11, "B11 E: GB11 = HB11 (a global)");
+    GB11 = (l); gs_row(g, 11, "B11 F: GB11 = (l) (a wrapped source)");
+    var i = 0;
+    for (i = 0; i < 1; GB11 = l) { i = i + 1; }
+    gs_row(g, 11, "B11 G: a for step GB11 = l");
+    var f = || { GB11 = l; return 0; };
+    fncall0(f); gs_row(g, 11, "B11 H: GB11 = l in a closure (a captured source)");
+    return 0;
+}
+#ifndef CYRIUS_TARGET_CX
+fn mkB12(): B12 { var l: B12; l.f0 = 0x21; l.f1 = 0x22; l.f2 = 0x23; l.f3 = 0x24; l.f4 = 0x25; l.f5 = 0x26; l.f6 = 0x27; l.f7 = 0x28; l.f8 = 0x29; l.f9 = 0x2A; l.f10 = 0x2B; l.f11 = 0x2C; return l; }
+impl B12 { fn pat(self): B12 { var l: B12; l.f0 = 0x21; l.f1 = 0x22; l.f2 = 0x23; l.f3 = 0x24; l.f4 = 0x25; l.f5 = 0x26; l.f6 = 0x27; l.f7 = 0x28; l.f8 = 0x29; l.f9 = 0x2A; l.f10 = 0x2B; l.f11 = 0x2C; return l; } }
+#endif
+fn putB12(p: B12): i64 { GB12 = p; return 0; }
+fn rowsB12(): i64 {
+    var g = &GB12;
+    gs_reset(g, 12);
+    var l: B12; l.f0 = 0x21; l.f1 = 0x22; l.f2 = 0x23; l.f3 = 0x24; l.f4 = 0x25; l.f5 = 0x26; l.f6 = 0x27; l.f7 = 0x28; l.f8 = 0x29; l.f9 = 0x2A; l.f10 = 0x2B; l.f11 = 0x2C;
+    GB12 = l; gs_row(g, 12, "B12 A: GB12 = l (a local)");
+    #ifndef CYRIUS_TARGET_CX
+    GB12 = mkB12(); gs_row(g, 12, "B12 B: GB12 = mkB12() (a call)");
+    GB12 = l.pat(); gs_row(g, 12, "B12 C: GB12 = l.pat() (a method)");
+    #endif
+    putB12(l); gs_row(g, 12, "B12 D: GB12 = p (a by-value parameter)");
+    GB12 = HB12; gs_row(g, 12, "B12 E: GB12 = HB12 (a global)");
+    GB12 = (l); gs_row(g, 12, "B12 F: GB12 = (l) (a wrapped source)");
+    var i = 0;
+    for (i = 0; i < 1; GB12 = l) { i = i + 1; }
+    gs_row(g, 12, "B12 G: a for step GB12 = l");
+    var f = || { GB12 = l; return 0; };
+    fncall0(f); gs_row(g, 12, "B12 H: GB12 = l in a closure (a captured source)");
+    return 0;
+}
+#ifndef CYRIUS_TARGET_CX
+fn mkB13(): B13 { var l: B13; l.f0 = 0x21; l.f1 = 0x22; l.f2 = 0x23; l.f3 = 0x24; l.f4 = 0x25; l.f5 = 0x26; l.f6 = 0x27; l.f7 = 0x28; l.f8 = 0x29; l.f9 = 0x2A; l.f10 = 0x2B; l.f11 = 0x2C; l.f12 = 0x2D; return l; }
+impl B13 { fn pat(self): B13 { var l: B13; l.f0 = 0x21; l.f1 = 0x22; l.f2 = 0x23; l.f3 = 0x24; l.f4 = 0x25; l.f5 = 0x26; l.f6 = 0x27; l.f7 = 0x28; l.f8 = 0x29; l.f9 = 0x2A; l.f10 = 0x2B; l.f11 = 0x2C; l.f12 = 0x2D; return l; } }
+#endif
+fn putB13(p: B13): i64 { GB13 = p; return 0; }
+fn rowsB13(): i64 {
+    var g = &GB13;
+    gs_reset(g, 13);
+    var l: B13; l.f0 = 0x21; l.f1 = 0x22; l.f2 = 0x23; l.f3 = 0x24; l.f4 = 0x25; l.f5 = 0x26; l.f6 = 0x27; l.f7 = 0x28; l.f8 = 0x29; l.f9 = 0x2A; l.f10 = 0x2B; l.f11 = 0x2C; l.f12 = 0x2D;
+    GB13 = l; gs_row(g, 13, "B13 A: GB13 = l (a local)");
+    #ifndef CYRIUS_TARGET_CX
+    GB13 = mkB13(); gs_row(g, 13, "B13 B: GB13 = mkB13() (a call)");
+    GB13 = l.pat(); gs_row(g, 13, "B13 C: GB13 = l.pat() (a method)");
+    #endif
+    putB13(l); gs_row(g, 13, "B13 D: GB13 = p (a by-value parameter)");
+    GB13 = HB13; gs_row(g, 13, "B13 E: GB13 = HB13 (a global)");
+    GB13 = (l); gs_row(g, 13, "B13 F: GB13 = (l) (a wrapped source)");
+    var i = 0;
+    for (i = 0; i < 1; GB13 = l) { i = i + 1; }
+    gs_row(g, 13, "B13 G: a for step GB13 = l");
+    var f = || { GB13 = l; return 0; };
+    fncall0(f); gs_row(g, 13, "B13 H: GB13 = l in a closure (a captured source)");
+    return 0;
+}
+#ifndef CYRIUS_TARGET_CX
+fn mkB14(): B14 { var l: B14; l.f0 = 0x21; l.f1 = 0x22; l.f2 = 0x23; l.f3 = 0x24; l.f4 = 0x25; l.f5 = 0x26; l.f6 = 0x27; l.f7 = 0x28; l.f8 = 0x29; l.f9 = 0x2A; l.f10 = 0x2B; l.f11 = 0x2C; l.f12 = 0x2D; l.f13 = 0x2E; return l; }
+impl B14 { fn pat(self): B14 { var l: B14; l.f0 = 0x21; l.f1 = 0x22; l.f2 = 0x23; l.f3 = 0x24; l.f4 = 0x25; l.f5 = 0x26; l.f6 = 0x27; l.f7 = 0x28; l.f8 = 0x29; l.f9 = 0x2A; l.f10 = 0x2B; l.f11 = 0x2C; l.f12 = 0x2D; l.f13 = 0x2E; return l; } }
+#endif
+fn putB14(p: B14): i64 { GB14 = p; return 0; }
+fn rowsB14(): i64 {
+    var g = &GB14;
+    gs_reset(g, 14);
+    var l: B14; l.f0 = 0x21; l.f1 = 0x22; l.f2 = 0x23; l.f3 = 0x24; l.f4 = 0x25; l.f5 = 0x26; l.f6 = 0x27; l.f7 = 0x28; l.f8 = 0x29; l.f9 = 0x2A; l.f10 = 0x2B; l.f11 = 0x2C; l.f12 = 0x2D; l.f13 = 0x2E;
+    GB14 = l; gs_row(g, 14, "B14 A: GB14 = l (a local)");
+    #ifndef CYRIUS_TARGET_CX
+    GB14 = mkB14(); gs_row(g, 14, "B14 B: GB14 = mkB14() (a call)");
+    GB14 = l.pat(); gs_row(g, 14, "B14 C: GB14 = l.pat() (a method)");
+    #endif
+    putB14(l); gs_row(g, 14, "B14 D: GB14 = p (a by-value parameter)");
+    GB14 = HB14; gs_row(g, 14, "B14 E: GB14 = HB14 (a global)");
+    GB14 = (l); gs_row(g, 14, "B14 F: GB14 = (l) (a wrapped source)");
+    var i = 0;
+    for (i = 0; i < 1; GB14 = l) { i = i + 1; }
+    gs_row(g, 14, "B14 G: a for step GB14 = l");
+    var f = || { GB14 = l; return 0; };
+    fncall0(f); gs_row(g, 14, "B14 H: GB14 = l in a closure (a captured source)");
+    return 0;
+}
+#ifndef CYRIUS_TARGET_CX
+fn mkB15(): B15 { var l: B15; l.f0 = 0x21; l.f1 = 0x22; l.f2 = 0x23; l.f3 = 0x24; l.f4 = 0x25; l.f5 = 0x26; l.f6 = 0x27; l.f7 = 0x28; l.f8 = 0x29; l.f9 = 0x2A; l.f10 = 0x2B; l.f11 = 0x2C; l.f12 = 0x2D; l.f13 = 0x2E; l.f14 = 0x2F; return l; }
+impl B15 { fn pat(self): B15 { var l: B15; l.f0 = 0x21; l.f1 = 0x22; l.f2 = 0x23; l.f3 = 0x24; l.f4 = 0x25; l.f5 = 0x26; l.f6 = 0x27; l.f7 = 0x28; l.f8 = 0x29; l.f9 = 0x2A; l.f10 = 0x2B; l.f11 = 0x2C; l.f12 = 0x2D; l.f13 = 0x2E; l.f14 = 0x2F; return l; } }
+#endif
+fn putB15(p: B15): i64 { GB15 = p; return 0; }
+fn rowsB15(): i64 {
+    var g = &GB15;
+    gs_reset(g, 15);
+    var l: B15; l.f0 = 0x21; l.f1 = 0x22; l.f2 = 0x23; l.f3 = 0x24; l.f4 = 0x25; l.f5 = 0x26; l.f6 = 0x27; l.f7 = 0x28; l.f8 = 0x29; l.f9 = 0x2A; l.f10 = 0x2B; l.f11 = 0x2C; l.f12 = 0x2D; l.f13 = 0x2E; l.f14 = 0x2F;
+    GB15 = l; gs_row(g, 15, "B15 A: GB15 = l (a local)");
+    #ifndef CYRIUS_TARGET_CX
+    GB15 = mkB15(); gs_row(g, 15, "B15 B: GB15 = mkB15() (a call)");
+    GB15 = l.pat(); gs_row(g, 15, "B15 C: GB15 = l.pat() (a method)");
+    #endif
+    putB15(l); gs_row(g, 15, "B15 D: GB15 = p (a by-value parameter)");
+    GB15 = HB15; gs_row(g, 15, "B15 E: GB15 = HB15 (a global)");
+    GB15 = (l); gs_row(g, 15, "B15 F: GB15 = (l) (a wrapped source)");
+    var i = 0;
+    for (i = 0; i < 1; GB15 = l) { i = i + 1; }
+    gs_row(g, 15, "B15 G: a for step GB15 = l");
+    var f = || { GB15 = l; return 0; };
+    fncall0(f); gs_row(g, 15, "B15 H: GB15 = l in a closure (a captured source)");
+    return 0;
+}
+#ifndef CYRIUS_TARGET_CX
+fn mkB16(): B16 { var l: B16; l.f0 = 0x21; l.f1 = 0x22; l.f2 = 0x23; l.f3 = 0x24; l.f4 = 0x25; l.f5 = 0x26; l.f6 = 0x27; l.f7 = 0x28; l.f8 = 0x29; l.f9 = 0x2A; l.f10 = 0x2B; l.f11 = 0x2C; l.f12 = 0x2D; l.f13 = 0x2E; l.f14 = 0x2F; l.f15 = 0x30; return l; }
+impl B16 { fn pat(self): B16 { var l: B16; l.f0 = 0x21; l.f1 = 0x22; l.f2 = 0x23; l.f3 = 0x24; l.f4 = 0x25; l.f5 = 0x26; l.f6 = 0x27; l.f7 = 0x28; l.f8 = 0x29; l.f9 = 0x2A; l.f10 = 0x2B; l.f11 = 0x2C; l.f12 = 0x2D; l.f13 = 0x2E; l.f14 = 0x2F; l.f15 = 0x30; return l; } }
+#endif
+fn putB16(p: B16): i64 { GB16 = p; return 0; }
+fn rowsB16(): i64 {
+    var g = &GB16;
+    gs_reset(g, 16);
+    var l: B16; l.f0 = 0x21; l.f1 = 0x22; l.f2 = 0x23; l.f3 = 0x24; l.f4 = 0x25; l.f5 = 0x26; l.f6 = 0x27; l.f7 = 0x28; l.f8 = 0x29; l.f9 = 0x2A; l.f10 = 0x2B; l.f11 = 0x2C; l.f12 = 0x2D; l.f13 = 0x2E; l.f14 = 0x2F; l.f15 = 0x30;
+    GB16 = l; gs_row(g, 16, "B16 A: GB16 = l (a local)");
+    #ifndef CYRIUS_TARGET_CX
+    GB16 = mkB16(); gs_row(g, 16, "B16 B: GB16 = mkB16() (a call)");
+    GB16 = l.pat(); gs_row(g, 16, "B16 C: GB16 = l.pat() (a method)");
+    #endif
+    putB16(l); gs_row(g, 16, "B16 D: GB16 = p (a by-value parameter)");
+    GB16 = HB16; gs_row(g, 16, "B16 E: GB16 = HB16 (a global)");
+    GB16 = (l); gs_row(g, 16, "B16 F: GB16 = (l) (a wrapped source)");
+    var i = 0;
+    for (i = 0; i < 1; GB16 = l) { i = i + 1; }
+    gs_row(g, 16, "B16 G: a for step GB16 = l");
+    var f = || { GB16 = l; return 0; };
+    fncall0(f); gs_row(g, 16, "B16 H: GB16 = l in a closure (a captured source)");
+    return 0;
+}
+fn mkM3(): M3 { var l: M3; l.a = 0x2221; l.b = 0x23; return l; }
+impl M3 { fn pat(self): M3 { var l: M3; l.a = 0x2221; l.b = 0x23; return l; } }
+fn putM3(p: M3): i64 { GM3 = p; return 0; }
+fn rowsM3(): i64 {
+    var g = &GM3;
+    gs_reset(g, 3);
+    var l: M3; l.a = 0x2221; l.b = 0x23;
+    GM3 = l; gs_row(g, 3, "M3 A: GM3 = l (a local)");
+    GM3 = mkM3(); gs_row(g, 3, "M3 B: GM3 = mkM3() (a call)");
+    GM3 = l.pat(); gs_row(g, 3, "M3 C: GM3 = l.pat() (a method)");
+    putM3(l); gs_row(g, 3, "M3 D: GM3 = p (a by-value parameter)");
+    GM3 = HM3; gs_row(g, 3, "M3 E: GM3 = HM3 (a global)");
+    GM3 = (l); gs_row(g, 3, "M3 F: GM3 = (l) (a wrapped source)");
+    var i = 0;
+    for (i = 0; i < 1; GM3 = l) { i = i + 1; }
+    gs_row(g, 3, "M3 G: a for step GM3 = l");
+    var f = || { GM3 = l; return 0; };
+    fncall0(f); gs_row(g, 3, "M3 H: GM3 = l in a closure (a captured source)");
+    return 0;
+}
+fn mkM5(): M5 { var l: M5; l.a = 0x24232221; l.b = 0x25; return l; }
+impl M5 { fn pat(self): M5 { var l: M5; l.a = 0x24232221; l.b = 0x25; return l; } }
+fn putM5(p: M5): i64 { GM5 = p; return 0; }
+fn rowsM5(): i64 {
+    var g = &GM5;
+    gs_reset(g, 5);
+    var l: M5; l.a = 0x24232221; l.b = 0x25;
+    GM5 = l; gs_row(g, 5, "M5 A: GM5 = l (a local)");
+    GM5 = mkM5(); gs_row(g, 5, "M5 B: GM5 = mkM5() (a call)");
+    GM5 = l.pat(); gs_row(g, 5, "M5 C: GM5 = l.pat() (a method)");
+    putM5(l); gs_row(g, 5, "M5 D: GM5 = p (a by-value parameter)");
+    GM5 = HM5; gs_row(g, 5, "M5 E: GM5 = HM5 (a global)");
+    GM5 = (l); gs_row(g, 5, "M5 F: GM5 = (l) (a wrapped source)");
+    var i = 0;
+    for (i = 0; i < 1; GM5 = l) { i = i + 1; }
+    gs_row(g, 5, "M5 G: a for step GM5 = l");
+    var f = || { GM5 = l; return 0; };
+    fncall0(f); gs_row(g, 5, "M5 H: GM5 = l in a closure (a captured source)");
+    return 0;
+}
+fn mkM6(): M6 { var l: M6; l.a = 0x24232221; l.b = 0x2625; return l; }
+impl M6 { fn pat(self): M6 { var l: M6; l.a = 0x24232221; l.b = 0x2625; return l; } }
+fn putM6(p: M6): i64 { GM6 = p; return 0; }
+fn rowsM6(): i64 {
+    var g = &GM6;
+    gs_reset(g, 6);
+    var l: M6; l.a = 0x24232221; l.b = 0x2625;
+    GM6 = l; gs_row(g, 6, "M6 A: GM6 = l (a local)");
+    GM6 = mkM6(); gs_row(g, 6, "M6 B: GM6 = mkM6() (a call)");
+    GM6 = l.pat(); gs_row(g, 6, "M6 C: GM6 = l.pat() (a method)");
+    putM6(l); gs_row(g, 6, "M6 D: GM6 = p (a by-value parameter)");
+    GM6 = HM6; gs_row(g, 6, "M6 E: GM6 = HM6 (a global)");
+    GM6 = (l); gs_row(g, 6, "M6 F: GM6 = (l) (a wrapped source)");
+    var i = 0;
+    for (i = 0; i < 1; GM6 = l) { i = i + 1; }
+    gs_row(g, 6, "M6 G: a for step GM6 = l");
+    var f = || { GM6 = l; return 0; };
+    fncall0(f); gs_row(g, 6, "M6 H: GM6 = l in a closure (a captured source)");
+    return 0;
+}
+fn mkM7(): M7 { var l: M7; l.a = 0x24232221; l.b = 0x2625; l.c = 0x27; return l; }
+impl M7 { fn pat(self): M7 { var l: M7; l.a = 0x24232221; l.b = 0x2625; l.c = 0x27; return l; } }
+fn putM7(p: M7): i64 { GM7 = p; return 0; }
+fn rowsM7(): i64 {
+    var g = &GM7;
+    gs_reset(g, 7);
+    var l: M7; l.a = 0x24232221; l.b = 0x2625; l.c = 0x27;
+    GM7 = l; gs_row(g, 7, "M7 A: GM7 = l (a local)");
+    GM7 = mkM7(); gs_row(g, 7, "M7 B: GM7 = mkM7() (a call)");
+    GM7 = l.pat(); gs_row(g, 7, "M7 C: GM7 = l.pat() (a method)");
+    putM7(l); gs_row(g, 7, "M7 D: GM7 = p (a by-value parameter)");
+    GM7 = HM7; gs_row(g, 7, "M7 E: GM7 = HM7 (a global)");
+    GM7 = (l); gs_row(g, 7, "M7 F: GM7 = (l) (a wrapped source)");
+    var i = 0;
+    for (i = 0; i < 1; GM7 = l) { i = i + 1; }
+    gs_row(g, 7, "M7 G: a for step GM7 = l");
+    var f = || { GM7 = l; return 0; };
+    fncall0(f); gs_row(g, 7, "M7 H: GM7 = l in a closure (a captured source)");
+    return 0;
+}
+#ifndef CYRIUS_TARGET_CX
+fn mkM9(): M9 { var l: M9; l.a = 0x2827262524232221; l.b = 0x29; return l; }
+impl M9 { fn pat(self): M9 { var l: M9; l.a = 0x2827262524232221; l.b = 0x29; return l; } }
+#endif
+fn putM9(p: M9): i64 { GM9 = p; return 0; }
+fn rowsM9(): i64 {
+    var g = &GM9;
+    gs_reset(g, 9);
+    var l: M9; l.a = 0x2827262524232221; l.b = 0x29;
+    GM9 = l; gs_row(g, 9, "M9 A: GM9 = l (a local)");
+    #ifndef CYRIUS_TARGET_CX
+    GM9 = mkM9(); gs_row(g, 9, "M9 B: GM9 = mkM9() (a call)");
+    GM9 = l.pat(); gs_row(g, 9, "M9 C: GM9 = l.pat() (a method)");
+    #endif
+    putM9(l); gs_row(g, 9, "M9 D: GM9 = p (a by-value parameter)");
+    GM9 = HM9; gs_row(g, 9, "M9 E: GM9 = HM9 (a global)");
+    GM9 = (l); gs_row(g, 9, "M9 F: GM9 = (l) (a wrapped source)");
+    var i = 0;
+    for (i = 0; i < 1; GM9 = l) { i = i + 1; }
+    gs_row(g, 9, "M9 G: a for step GM9 = l");
+    var f = || { GM9 = l; return 0; };
+    fncall0(f); gs_row(g, 9, "M9 H: GM9 = l in a closure (a captured source)");
+    return 0;
+}
+#ifndef CYRIUS_TARGET_CX
+fn mkM15(): M15 { var l: M15; l.a = 0x2827262524232221; l.b = 0x2C2B2A29; l.c = 0x2E2D; l.d = 0x2F; return l; }
+impl M15 { fn pat(self): M15 { var l: M15; l.a = 0x2827262524232221; l.b = 0x2C2B2A29; l.c = 0x2E2D; l.d = 0x2F; return l; } }
+#endif
+fn putM15(p: M15): i64 { GM15 = p; return 0; }
+fn rowsM15(): i64 {
+    var g = &GM15;
+    gs_reset(g, 15);
+    var l: M15; l.a = 0x2827262524232221; l.b = 0x2C2B2A29; l.c = 0x2E2D; l.d = 0x2F;
+    GM15 = l; gs_row(g, 15, "M15 A: GM15 = l (a local)");
+    #ifndef CYRIUS_TARGET_CX
+    GM15 = mkM15(); gs_row(g, 15, "M15 B: GM15 = mkM15() (a call)");
+    GM15 = l.pat(); gs_row(g, 15, "M15 C: GM15 = l.pat() (a method)");
+    #endif
+    putM15(l); gs_row(g, 15, "M15 D: GM15 = p (a by-value parameter)");
+    GM15 = HM15; gs_row(g, 15, "M15 E: GM15 = HM15 (a global)");
+    GM15 = (l); gs_row(g, 15, "M15 F: GM15 = (l) (a wrapped source)");
+    var i = 0;
+    for (i = 0; i < 1; GM15 = l) { i = i + 1; }
+    gs_row(g, 15, "M15 G: a for step GM15 = l");
+    var f = || { GM15 = l; return 0; };
+    fncall0(f); gs_row(g, 15, "M15 H: GM15 = l in a closure (a captured source)");
+    return 0;
+}
+
+alloc_init();
+
+# The leading-block layout and values: every neighbour byte still holds its image value.
+assert_eq(&TB1_0 - &GB1, 1, "B1 I: TB1_0 is packed right after GB1");
+assert_eq(gs_pat(&HB1, 1), 0 - 1, "B1 I: HB1 holds the pattern");
+assert_eq(gs_tail(&TB1_0), 0 - 1, "B1 I: TB1_0..TB1_6 hold their image values");
+assert_eq(&TB2_0 - &GB2, 2, "B2 I: TB2_0 is packed right after GB2");
+assert_eq(gs_pat(&HB2, 2), 0 - 1, "B2 I: HB2 holds the pattern");
+assert_eq(gs_tail(&TB2_0), 0 - 1, "B2 I: TB2_0..TB2_6 hold their image values");
+assert_eq(&TB3_0 - &GB3, 3, "B3 I: TB3_0 is packed right after GB3");
+assert_eq(gs_pat(&HB3, 3), 0 - 1, "B3 I: HB3 holds the pattern");
+assert_eq(gs_tail(&TB3_0), 0 - 1, "B3 I: TB3_0..TB3_6 hold their image values");
+assert_eq(&TB4_0 - &GB4, 4, "B4 I: TB4_0 is packed right after GB4");
+assert_eq(gs_pat(&HB4, 4), 0 - 1, "B4 I: HB4 holds the pattern");
+assert_eq(gs_tail(&TB4_0), 0 - 1, "B4 I: TB4_0..TB4_6 hold their image values");
+assert_eq(&TB5_0 - &GB5, 5, "B5 I: TB5_0 is packed right after GB5");
+assert_eq(gs_pat(&HB5, 5), 0 - 1, "B5 I: HB5 holds the pattern");
+assert_eq(gs_tail(&TB5_0), 0 - 1, "B5 I: TB5_0..TB5_6 hold their image values");
+assert_eq(&TB6_0 - &GB6, 6, "B6 I: TB6_0 is packed right after GB6");
+assert_eq(gs_pat(&HB6, 6), 0 - 1, "B6 I: HB6 holds the pattern");
+assert_eq(gs_tail(&TB6_0), 0 - 1, "B6 I: TB6_0..TB6_6 hold their image values");
+assert_eq(&TB7_0 - &GB7, 7, "B7 I: TB7_0 is packed right after GB7");
+assert_eq(gs_pat(&HB7, 7), 0 - 1, "B7 I: HB7 holds the pattern");
+assert_eq(gs_tail(&TB7_0), 0 - 1, "B7 I: TB7_0..TB7_6 hold their image values");
+assert_eq(&TB8_0 - &GB8, 8, "B8 I: TB8_0 is packed right after GB8");
+assert_eq(gs_pat(&HB8, 8), 0 - 1, "B8 I: HB8 holds the pattern");
+assert_eq(gs_tail(&TB8_0), 0 - 1, "B8 I: TB8_0..TB8_6 hold their image values");
+assert_eq(&TB9_0 - &GB9, 9, "B9 I: TB9_0 is packed right after GB9");
+assert_eq(gs_pat(&HB9, 9), 0 - 1, "B9 I: HB9 holds the pattern");
+assert_eq(gs_tail(&TB9_0), 0 - 1, "B9 I: TB9_0..TB9_6 hold their image values");
+assert_eq(&TB10_0 - &GB10, 10, "B10 I: TB10_0 is packed right after GB10");
+assert_eq(gs_pat(&HB10, 10), 0 - 1, "B10 I: HB10 holds the pattern");
+assert_eq(gs_tail(&TB10_0), 0 - 1, "B10 I: TB10_0..TB10_6 hold their image values");
+assert_eq(&TB11_0 - &GB11, 11, "B11 I: TB11_0 is packed right after GB11");
+assert_eq(gs_pat(&HB11, 11), 0 - 1, "B11 I: HB11 holds the pattern");
+assert_eq(gs_tail(&TB11_0), 0 - 1, "B11 I: TB11_0..TB11_6 hold their image values");
+assert_eq(&TB12_0 - &GB12, 12, "B12 I: TB12_0 is packed right after GB12");
+assert_eq(gs_pat(&HB12, 12), 0 - 1, "B12 I: HB12 holds the pattern");
+assert_eq(gs_tail(&TB12_0), 0 - 1, "B12 I: TB12_0..TB12_6 hold their image values");
+assert_eq(&TB13_0 - &GB13, 13, "B13 I: TB13_0 is packed right after GB13");
+assert_eq(gs_pat(&HB13, 13), 0 - 1, "B13 I: HB13 holds the pattern");
+assert_eq(gs_tail(&TB13_0), 0 - 1, "B13 I: TB13_0..TB13_6 hold their image values");
+assert_eq(&TB14_0 - &GB14, 14, "B14 I: TB14_0 is packed right after GB14");
+assert_eq(gs_pat(&HB14, 14), 0 - 1, "B14 I: HB14 holds the pattern");
+assert_eq(gs_tail(&TB14_0), 0 - 1, "B14 I: TB14_0..TB14_6 hold their image values");
+assert_eq(&TB15_0 - &GB15, 15, "B15 I: TB15_0 is packed right after GB15");
+assert_eq(gs_pat(&HB15, 15), 0 - 1, "B15 I: HB15 holds the pattern");
+assert_eq(gs_tail(&TB15_0), 0 - 1, "B15 I: TB15_0..TB15_6 hold their image values");
+assert_eq(&TB16_0 - &GB16, 16, "B16 I: TB16_0 is packed right after GB16");
+assert_eq(gs_pat(&HB16, 16), 0 - 1, "B16 I: HB16 holds the pattern");
+assert_eq(gs_tail(&TB16_0), 0 - 1, "B16 I: TB16_0..TB16_6 hold their image values");
+assert_eq(&TM3_0 - &GM3, 3, "M3 I: TM3_0 is packed right after GM3");
+assert_eq(gs_pat(&HM3, 3), 0 - 1, "M3 I: HM3 holds the pattern");
+assert_eq(gs_tail(&TM3_0), 0 - 1, "M3 I: TM3_0..TM3_6 hold their image values");
+assert_eq(&TM5_0 - &GM5, 5, "M5 I: TM5_0 is packed right after GM5");
+assert_eq(gs_pat(&HM5, 5), 0 - 1, "M5 I: HM5 holds the pattern");
+assert_eq(gs_tail(&TM5_0), 0 - 1, "M5 I: TM5_0..TM5_6 hold their image values");
+assert_eq(&TM6_0 - &GM6, 6, "M6 I: TM6_0 is packed right after GM6");
+assert_eq(gs_pat(&HM6, 6), 0 - 1, "M6 I: HM6 holds the pattern");
+assert_eq(gs_tail(&TM6_0), 0 - 1, "M6 I: TM6_0..TM6_6 hold their image values");
+assert_eq(&TM7_0 - &GM7, 7, "M7 I: TM7_0 is packed right after GM7");
+assert_eq(gs_pat(&HM7, 7), 0 - 1, "M7 I: HM7 holds the pattern");
+assert_eq(gs_tail(&TM7_0), 0 - 1, "M7 I: TM7_0..TM7_6 hold their image values");
+assert_eq(&TM9_0 - &GM9, 9, "M9 I: TM9_0 is packed right after GM9");
+assert_eq(gs_pat(&HM9, 9), 0 - 1, "M9 I: HM9 holds the pattern");
+assert_eq(gs_tail(&TM9_0), 0 - 1, "M9 I: TM9_0..TM9_6 hold their image values");
+assert_eq(&TM15_0 - &GM15, 15, "M15 I: TM15_0 is packed right after GM15");
+assert_eq(gs_pat(&HM15, 15), 0 - 1, "M15 I: HM15 holds the pattern");
+assert_eq(gs_tail(&TM15_0), 0 - 1, "M15 I: TM15_0..TM15_6 hold their image values");
+
+assert_eq(gs_pat(&DGB3, 3), 0 - 1, "B3 J: var DGB3 = HB3; (declaration zone) holds the pattern");
+assert_eq(DGTB3, 0x51, "B3 J: the i8 after DGB3 keeps its value");
+assert_eq(gs_pat(&DCB3, 3), 0 - 1, "B3 J: var DCB3 = dmkB3(); (declaration zone) holds the pattern");
+assert_eq(DCTB3, 0x52, "B3 J: the i8 after DCB3 keeps its value");
+assert_eq(gs_pat(&DGB5, 5), 0 - 1, "B5 J: var DGB5 = HB5; (declaration zone) holds the pattern");
+assert_eq(DGTB5, 0x51, "B5 J: the i8 after DGB5 keeps its value");
+assert_eq(gs_pat(&DCB5, 5), 0 - 1, "B5 J: var DCB5 = dmkB5(); (declaration zone) holds the pattern");
+assert_eq(DCTB5, 0x52, "B5 J: the i8 after DCB5 keeps its value");
+assert_eq(gs_pat(&DGB6, 6), 0 - 1, "B6 J: var DGB6 = HB6; (declaration zone) holds the pattern");
+assert_eq(DGTB6, 0x51, "B6 J: the i8 after DGB6 keeps its value");
+assert_eq(gs_pat(&DCB6, 6), 0 - 1, "B6 J: var DCB6 = dmkB6(); (declaration zone) holds the pattern");
+assert_eq(DCTB6, 0x52, "B6 J: the i8 after DCB6 keeps its value");
+assert_eq(gs_pat(&DGB7, 7), 0 - 1, "B7 J: var DGB7 = HB7; (declaration zone) holds the pattern");
+assert_eq(DGTB7, 0x51, "B7 J: the i8 after DGB7 keeps its value");
+assert_eq(gs_pat(&DCB7, 7), 0 - 1, "B7 J: var DCB7 = dmkB7(); (declaration zone) holds the pattern");
+assert_eq(DCTB7, 0x52, "B7 J: the i8 after DCB7 keeps its value");
+
+# In a fn: every store form, every shape.
+rowsB1();
+rowsB2();
+rowsB3();
+rowsB4();
+rowsB5();
+rowsB6();
+rowsB7();
+rowsB8();
+rowsB9();
+rowsB10();
+rowsB11();
+rowsB12();
+rowsB13();
+rowsB14();
+rowsB15();
+rowsB16();
+rowsM3();
+rowsM5();
+rowsM6();
+rowsM7();
+rowsM9();
+rowsM15();
+
+# At top level, after the first statement: a global source, and a call (a struct over 8 bytes
+# needs a frame for its result, so it is refused at top level and has no row).
+GB1 = HB1; gs_row(&GB1, 1, "B1 T: GB1 = HB1 at top level");
+GB1 = mkB1(); gs_row(&GB1, 1, "B1 T: GB1 = mkB1() at top level");
+GB2 = HB2; gs_row(&GB2, 2, "B2 T: GB2 = HB2 at top level");
+GB2 = mkB2(); gs_row(&GB2, 2, "B2 T: GB2 = mkB2() at top level");
+GB3 = HB3; gs_row(&GB3, 3, "B3 T: GB3 = HB3 at top level");
+GB3 = mkB3(); gs_row(&GB3, 3, "B3 T: GB3 = mkB3() at top level");
+GB4 = HB4; gs_row(&GB4, 4, "B4 T: GB4 = HB4 at top level");
+GB4 = mkB4(); gs_row(&GB4, 4, "B4 T: GB4 = mkB4() at top level");
+GB5 = HB5; gs_row(&GB5, 5, "B5 T: GB5 = HB5 at top level");
+GB5 = mkB5(); gs_row(&GB5, 5, "B5 T: GB5 = mkB5() at top level");
+GB6 = HB6; gs_row(&GB6, 6, "B6 T: GB6 = HB6 at top level");
+GB6 = mkB6(); gs_row(&GB6, 6, "B6 T: GB6 = mkB6() at top level");
+GB7 = HB7; gs_row(&GB7, 7, "B7 T: GB7 = HB7 at top level");
+GB7 = mkB7(); gs_row(&GB7, 7, "B7 T: GB7 = mkB7() at top level");
+GB8 = HB8; gs_row(&GB8, 8, "B8 T: GB8 = HB8 at top level");
+GB8 = mkB8(); gs_row(&GB8, 8, "B8 T: GB8 = mkB8() at top level");
+GB9 = HB9; gs_row(&GB9, 9, "B9 T: GB9 = HB9 at top level");
+GB10 = HB10; gs_row(&GB10, 10, "B10 T: GB10 = HB10 at top level");
+GB11 = HB11; gs_row(&GB11, 11, "B11 T: GB11 = HB11 at top level");
+GB12 = HB12; gs_row(&GB12, 12, "B12 T: GB12 = HB12 at top level");
+GB13 = HB13; gs_row(&GB13, 13, "B13 T: GB13 = HB13 at top level");
+GB14 = HB14; gs_row(&GB14, 14, "B14 T: GB14 = HB14 at top level");
+GB15 = HB15; gs_row(&GB15, 15, "B15 T: GB15 = HB15 at top level");
+GB16 = HB16; gs_row(&GB16, 16, "B16 T: GB16 = HB16 at top level");
+GM3 = HM3; gs_row(&GM3, 3, "M3 T: GM3 = HM3 at top level");
+GM3 = mkM3(); gs_row(&GM3, 3, "M3 T: GM3 = mkM3() at top level");
+GM5 = HM5; gs_row(&GM5, 5, "M5 T: GM5 = HM5 at top level");
+GM5 = mkM5(); gs_row(&GM5, 5, "M5 T: GM5 = mkM5() at top level");
+GM6 = HM6; gs_row(&GM6, 6, "M6 T: GM6 = HM6 at top level");
+GM6 = mkM6(); gs_row(&GM6, 6, "M6 T: GM6 = mkM6() at top level");
+GM7 = HM7; gs_row(&GM7, 7, "M7 T: GM7 = HM7 at top level");
+GM7 = mkM7(); gs_row(&GM7, 7, "M7 T: GM7 = mkM7() at top level");
+GM9 = HM9; gs_row(&GM9, 9, "M9 T: GM9 = HM9 at top level");
+GM15 = HM15; gs_row(&GM15, 15, "M15 T: GM15 = HM15 at top level");
+
+# A global declared after the first statement (PARSE_VAR's registration) is packed the same way.
+var LGB3: B3 = B3 { 0, 0, 0 };
+var LTB3_0: i8 = 0x51; var LTB3_1: i8 = 0x52; var LTB3_2: i8 = 0x53; var LTB3_3: i8 = 0x54; var LTB3_4: i8 = 0x55; var LTB3_5: i8 = 0x56; var LTB3_6: i8 = 0x57;
+assert_eq(&LTB3_0 - &LGB3, 3, "B3 K: LTB3_0 is packed right after LGB3");
+LGB3 = HB3; gs_row(&LGB3, 3, "B3 K: LGB3 = HB3 (declared after the first statement)");
+fn lputB3(): i64 { var l: B3 = HB3; LGB3 = l; return 0; }
+lputB3(); gs_row(&LGB3, 3, "B3 K: LGB3 = l in a fn");
+var LGB7: B7 = B7 { 0, 0, 0, 0, 0, 0, 0 };
+var LTB7_0: i8 = 0x51; var LTB7_1: i8 = 0x52; var LTB7_2: i8 = 0x53; var LTB7_3: i8 = 0x54; var LTB7_4: i8 = 0x55; var LTB7_5: i8 = 0x56; var LTB7_6: i8 = 0x57;
+assert_eq(&LTB7_0 - &LGB7, 7, "B7 K: LTB7_0 is packed right after LGB7");
+LGB7 = HB7; gs_row(&LGB7, 7, "B7 K: LGB7 = HB7 (declared after the first statement)");
+fn lputB7(): i64 { var l: B7 = HB7; LGB7 = l; return 0; }
+lputB7(); gs_row(&LGB7, 7, "B7 K: LGB7 = l in a fn");
+var LGM5: M5 = M5 { 0, 0 };
+var LTM5_0: i8 = 0x51; var LTM5_1: i8 = 0x52; var LTM5_2: i8 = 0x53; var LTM5_3: i8 = 0x54; var LTM5_4: i8 = 0x55; var LTM5_5: i8 = 0x56; var LTM5_6: i8 = 0x57;
+assert_eq(&LTM5_0 - &LGM5, 5, "M5 K: LTM5_0 is packed right after LGM5");
+LGM5 = HM5; gs_row(&LGM5, 5, "M5 K: LGM5 = HM5 (declared after the first statement)");
+fn lputM5(): i64 { var l: M5 = HM5; LGM5 = l; return 0; }
+lputM5(); gs_row(&LGM5, 5, "M5 K: LGM5 = l in a fn");
+var LGM6: M6 = M6 { 0, 0 };
+var LTM6_0: i8 = 0x51; var LTM6_1: i8 = 0x52; var LTM6_2: i8 = 0x53; var LTM6_3: i8 = 0x54; var LTM6_4: i8 = 0x55; var LTM6_5: i8 = 0x56; var LTM6_6: i8 = 0x57;
+assert_eq(&LTM6_0 - &LGM6, 6, "M6 K: LTM6_0 is packed right after LGM6");
+LGM6 = HM6; gs_row(&LGM6, 6, "M6 K: LGM6 = HM6 (declared after the first statement)");
+fn lputM6(): i64 { var l: M6 = HM6; LGM6 = l; return 0; }
+lputM6(); gs_row(&LGM6, 6, "M6 K: LGM6 = l in a fn");
+
+var r = assert_summary();
+syscall(SYS_EXIT, r);
