@@ -13,12 +13,25 @@
 # child the call waited out the whole `grace_ms` and then 300 more 10 ms rounds, killing
 # nothing — grace + 3 s of dead time in a public stdlib verb. Off Linux it now reaps what has
 # already ended, signals nothing and returns 0 at once. CHANGELOG [6.6.8]
+#
+# ⛔ 6.7.7 — NO ROW RACES THE HOST'S SPEED. Each row used to bet on a wall clock it did not own:
+# a 600 ms deadline had to outlast a script's start, 200 ms naps assumed a child had ended, and
+# "returns at once" was < 1,000 ms against a child that lived 1.5 s. The 6.7.6 gate went RED on
+# ach. Measured there: the FIRST exec of a freshly written script costs ~370 ms (macOS assesses
+# a new executable before it runs; a second exec of the same file costs ~20 ms), and concurrent
+# first execs QUEUE — so the deadline row failed 4 of 10 runs at 2 copies at once and 15 of 20
+# at 4. Now a premise is WAITED FOR, never napped on (`_rtc_wait_ended`); "at once" is < 5 s
+# against regressions that cost 20 s or more (the child is HELD alive until released, or naps
+# 30 s); the script's first exec is paid once, unarmed, outside any deadline; and a deadline
+# that still fired before the script recorded its child is retried with the deadline doubled,
+# because that attempt had no grandchild to judge. CHANGELOG [6.7.7]
 include "lib/assert.cyr"
 include "lib/alloc.cyr"
 include "lib/string.cyr"
 include "lib/fmt.cyr"
 include "lib/io.cyr"
 include "lib/syscalls.cyr"
+include "lib/sys.cyr"
 include "lib/vec.cyr"
 include "lib/str.cyr"
 include "lib/tagged.cyr"
@@ -40,6 +53,50 @@ fn _rtc_read_pid(path): i64 {
     return v;
 }
 
+#ifndef CYRIUS_TARGET_WIN
+#ifndef CYRIUS_TARGET_AGNOS
+# 1 once `p` has ENDED — a zombie nobody has reaped yet, or gone — and it is NOT reaped here.
+# kill(p, 0) cannot say so alone: it answers 0 for a zombie on Linux AND Darwin (measured on
+# ach). Linux reads /proc/<p>/stat (`_regression_proc_zombie`); Darwin reads kinfo_proc through
+# sysctl {CTL_KERN 1, KERN_PROC 14, KERN_PROC_PID 1, p}: p_stat is the byte at 36 (after p_un,
+# p_vmspace, p_sigacts and p_flag; SZOMB = 5) and p_pid the int at 40, read back first so a
+# layout slip answers "not ended" and the caller's premise row goes red instead of passing on
+# garbage. Measured on ach: a live child p_stat 2, a zombie 5, a reaped one length 0.
+fn _rtc_ended(p): i64 {
+    if (sys_kill(p, 0) != 0) { return 1; }
+    #ifdef CYRIUS_TARGET_MACOS
+    var mib[16];
+    store32(&mib, 1);
+    store32(&mib + 4, 14);
+    store32(&mib + 8, 1);
+    store32(&mib + 12, p);
+    var kp[1024];                 # struct kinfo_proc is 648 bytes
+    var len = 1024;
+    if (_sysctl_raw(&mib, 4, &kp, &len, 0, 0) < 0) { return 0; }
+    if (len == 0) { return 1; }  # no such process any more
+    if (len < 44) { return 0; }
+    if (load32(&kp + 40) != p) { return 0; }
+    if (load8(&kp + 36) == 5) { return 1; }
+    return 0;
+    #endif
+    #ifndef CYRIUS_TARGET_MACOS
+    return _regression_proc_zombie(p);
+    #endif
+}
+
+# Wait up to `ms` for `p` to have ended (`_rtc_ended`); 1 if it did. A premise is waited for,
+# not napped on (6.7.7) — the ceiling only bounds a host that never gets there.
+fn _rtc_wait_ended(p, ms): i64 {
+    var t0 = clock_now_ms();
+    while (_rtc_ended(p) == 0) {
+        if (clock_now_ms() - t0 >= ms) { return 0; }
+        syscall(7, 0, 0, 5);
+    }
+    return 1;
+}
+#endif
+#endif
+
 fn main(): i64 {
     alloc_init();
     test_group("regression_terminate_children keeps its contract on this target");
@@ -52,31 +109,44 @@ fn main(): i64 {
     #endif
     #ifndef CYRIUS_TARGET_WIN
     #ifndef CYRIUS_TARGET_AGNOS
-    # A live child that ends BY ITSELF (exit 7) after ~1.5 s, unless it is signalled first.
+    # A live child that ends BY ITSELF (exit 7) when the parent closes `hold_w` — never before,
+    # unless it is signalled. Held, not napping (it napped 1.5 s until 6.7.7), so the call below
+    # cannot finish early by outliving it: the old off-Linux shape waits the whole grace + 3 s.
+    var pfd[8];
+    assert_eq(sys_pipe(&pfd), 0, "premise: a pipe to hold the child");
+    var hold_r = load32(&pfd);
+    var hold_w = load32(&pfd + 4);
     var pid = sys_fork();
     if (pid == 0) {
-        syscall(7, 0, 0, 1500);
+        sys_close(hold_w);
+        var hb[8];
+        sys_read(hold_r, &hb, 1);   # EOF once the parent closes its end, or dies
         sys_exit(7);
     }
+    sys_close(hold_r);
     assert_eq(pid > 0, 1, "fork");
     var t0 = clock_now_ms();
-    var n = regression_terminate_children(3000);
+    var n = regression_terminate_children(20000);
     var el = clock_now_ms() - t0;
     # Linux: the child is SIGTERMed and gone at once. Elsewhere: nothing is signalled and the
     # call returns at once. Either way it is never held for the child's lifetime — the old
-    # off-Linux shape polled until the child ended BY ITSELF (measured on ecb/ach: ~1.6 s
-    # here, then reaped it, so the caller never saw its status; up to grace + 3 s in general).
-    assert_eq(el < 1000, 1, "it returned without waiting out the grace period");
+    # off-Linux shape polled until the child ended BY ITSELF (measured on ecb/ach: ~1.6 s for
+    # the 1.5 s nap; grace + 3 s in general, 23 s here) — and a Linux verb that signalled
+    # nothing would wait out the 20 s grace. 5 s is a loaded host's "at once".
+    assert_eq(el < 5000, 1, "it returned without waiting out the grace period");
     var st[8];
     store64(&st, 0);
     #ifdef CYRIUS_TARGET_LINUX
+    sys_close(hold_w);
     assert_eq(n, 1, "Linux: it counted the one live descendant");
     assert_eq(sys_waitpid(pid, &st, 1) < 0, 1, "Linux: the child was ended and reaped");
     #endif
     #ifndef CYRIUS_TARGET_LINUX
     assert_eq(n, 0, "off Linux: it returns 0");
+    assert_eq(sys_waitpid(pid, &st, 1), 0, "off Linux: the child was left alone, still running");
+    sys_close(hold_w);             # release it
     var w = sys_waitpid(pid, &st, 0);
-    assert_eq(w, pid, "off Linux: the child was left alone, still ours to reap");
+    assert_eq(w, pid, "off Linux: …and still ours to reap");
     assert_eq(WIFEXITED(load32(&st)), 1, "off Linux: …it exited by itself, it was not signalled");
     assert_eq(WEXITSTATUS(load32(&st)), 7, "off Linux: …with its own status");
     #endif
@@ -88,7 +158,7 @@ fn main(): i64 {
     var zp = sys_fork();
     if (zp == 0) { sys_exit(0); }
     assert_eq(zp > 0, 1, "fork (a child that exits at once)");
-    syscall(7, 0, 0, 200);                       # it has ended; nobody has reaped it
+    assert_eq(_rtc_wait_ended(zp, 20000), 1, "premise: it has ended, and nobody has reaped it");
     var zn = regression_terminate_children(200);
     assert_eq(zn, 0, "a zombie child is not counted as a running descendant");
     assert_eq(sys_waitpid(zp, &st, 1) < 0, 1, "…and it was reaped");
@@ -97,11 +167,11 @@ fn main(): i64 {
     var r1 = sys_fork();
     if (r1 == 0) { sys_exit(0); }
     var r2 = sys_fork();
-    if (r2 == 0) { syscall(7, 0, 0, 1500); sys_exit(0); }
-    syscall(7, 0, 0, 200);
+    if (r2 == 0) { syscall(7, 0, 0, 30000); sys_exit(0); }
+    assert_eq(_rtc_wait_ended(r1, 20000), 1, "premise: the first child has ended");
     var t1 = clock_now_ms();
     assert_eq(regression_reap_orphans(), 1, "it reaped the one child that had ended");
-    assert_eq(clock_now_ms() - t1 < 1000, 1, "…without waiting for the live one");
+    assert_eq(clock_now_ms() - t1 < 5000, 1, "…without waiting for the live one (it naps 30 s)");
     assert_eq(sys_waitpid(r1, &st, 1) < 0, 1, "…and the ended one is gone");
     sys_kill(r2, 9);
     sys_waitpid(r2, &st, 0);
@@ -113,9 +183,13 @@ fn main(): i64 {
     test_group("a regression_* deadline ends the grandchild too (6.6.11)");
     var scr = test_scratch("cyrius_rtc_sh");
     var pidf = test_scratch("cyrius_rtc_bg");
+    var armf = test_scratch("cyrius_rtc_arm");
     sys_unlink(pidf);
+    sys_unlink(armf);
     var sb = str_builder_new();
-    str_builder_add_cstr(sb, "#!/bin/sh\n/bin/sleep 30 &\necho $! > ");
+    str_builder_add_cstr(sb, "#!/bin/sh\n[ -f ");
+    str_builder_add_cstr(sb, armf);
+    str_builder_add_cstr(sb, " ] || exit 0\n/bin/sleep 30 &\necho $! > ");
     str_builder_add_cstr(sb, pidf);
     str_builder_add_cstr(sb, "\nwait\n");
     var body = str_builder_build(sb);
@@ -126,23 +200,36 @@ fn main(): i64 {
     sys_chmod(scr, 493);
     var envp[8];
     store64(&envp, 0);
-    var rc = regression_run_with_timeout(scr, 600, &envp);
-    assert_eq(rc, 0 - 2, "the deadline fired (-2)");
-    var bg = _rtc_read_pid(pidf);
-    assert_eq(bg > 0, 1, "premise: the script recorded its background child");
-    var gone = 0;
-    var k = 0;
-    while (k < 150 && gone == 0) {
-        if (bg <= 0) { gone = 1; }
-        elif (sys_kill(bg, 0) != 0) { gone = 1; }
-        elif (_regression_proc_zombie(bg) == 1) { gone = 1; }
-        else { syscall(7, 0, 0, 20); }
-        k = k + 1;
+    # Run it once UNARMED (it exits 0 at once), outside any tight deadline: macOS checks a new
+    # executable on its first exec (~370 ms on ach, queued behind concurrent first execs), and
+    # that cost belongs to no deadline below. Then arm it.
+    assert_eq(regression_run_with_timeout(scr, 30000, &envp), 0, "premise: the script ran unarmed");
+    var afd = sys_open(armf, 577, 420);
+    assert_eq(afd >= 0, 1, "premise: the script was armed");
+    sys_close(afd);
+    # The deadline must land AFTER the script has started its child, or there is no grandchild
+    # to judge — an attempt whose deadline fired first is repeated with the deadline doubled
+    # (600 ms, 1.2 s, 2.4 s, 4.8 s; see 6.7.7 in the header). Every attempt must still end in
+    # the deadline (-2): the script `wait`s on a 30 s sleep, so one that never fires returns 0.
+    var rc = 0 - 2;
+    var bg = 0;
+    var dl = 600;
+    while (rc == 0 - 2 && bg <= 0 && dl <= 4800) {
+        sys_unlink(pidf);
+        rc = regression_run_with_timeout(scr, dl, &envp);
+        bg = _rtc_read_pid(pidf);
+        dl = dl * 2;
     }
+    assert_eq(rc, 0 - 2, "the deadline fired (-2)");
+    assert_eq(bg > 0, 1, "premise: the script recorded its background child");
+    # Gone within 10 s of the deadline's return — the sleep it would otherwise be lives 30 s.
+    var gone = 1;
+    if (bg > 0) { gone = _rtc_wait_ended(bg, 10000); }
     assert_eq(gone, 1, "the script's background child was ended too (macOS: its process group)");
-    if (bg > 0) { sys_kill(bg, 9); }
+    if (gone == 0) { sys_kill(bg, 9); }
     regression_reap_orphans();
     sys_unlink(pidf);
+    sys_unlink(armf);
     sys_unlink(scr);
     #endif
     #endif
