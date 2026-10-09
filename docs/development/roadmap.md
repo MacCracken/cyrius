@@ -31,7 +31,9 @@ v6.6.x closed at 6.6.20. 6.7.0–6.7.6 shipped (2026-10-07 → 2026-10-08): [com
    ship around it (a prerequisite bug). A P0 security finding is reported the turn it is found — whether it interrupts
    the arc is the user's call.
 2. **Catch-up breaks clear the backlog.** Break 1 was 6.7.6. Break 2 is 6.7.10 – 6.7.12 (user, 2026-10-09): the open
-   queue repaired to 0 bugs, so fuller audits can follow; the closeout is 6.7.13.
+   queue repaired to 0 bugs, so fuller audits can follow. 6.7.13 is the full security audit + the refactor /
+   optimization review (user, 2026-10-09). The closeout's number is OPEN (user, 2026-10-09): what the 6.7.13
+   reviews produce ships first, in as many releases as it takes, and the closeout follows.
 3. **Every language decision is the user's** — asked at the arc's start, recorded with its date, never a lane's
    "default" (CLAUDE.md *Execution integrity*).
 4. **Every new syntax ships with** a `tests/tcyr/crossos/` file (it runs on ecb / ach / cass / pi), a guide section and a
@@ -48,7 +50,9 @@ v6.6.x closed at 6.6.20. 6.7.0–6.7.6 shipped (2026-10-07 → 2026-10-08): [com
 | 6.7.10 | Break 2, repair 1: the 6.7.7 follow-ons (multi-value receives, call arguments, struct operators) · cybs · install, scanner and CLI hygiene |
 | 6.7.11 | Break 2, repair 2: **the platform release** — Darwin / aarch64 syscall translation, the Windows reroutes, the syscall peers, the Windows trust store, the CLI path and lock work (ecb · ach · cass · pi at slot one) |
 | 6.7.12 | Break 2, repair 3: global initialisers · the IR arena (a heap-layout change) · diagnostics · u128 / asm / pointer-call stores · TLS conformance · plus whatever 6.7.8–6.7.11 file |
-| closeout | **6.7.13**: the closeout checklist ([cycle-discipline.md](cycle-discipline.md)) — the checklist, not an audit campaign |
+| 6.7.13 | **the full security audit + the refactor / optimization review** (user, 2026-10-09): the audit the 2–3-minor rule owes (last: 6.5.45), its findings fixed in the release · the largest files elevated · the libs improved with what the last months added |
+| 6.7.14 → | what the 6.7.13 reviews produce — the number of releases is open, set at 6.7.13's close (user, 2026-10-09) |
+| closeout | **after the review follow-ups** (number open): the closeout checklist ([cycle-discipline.md](cycle-discipline.md)) — the checklist, not an audit campaign |
 
 **Break 2 is 6.7.10 – 6.7.12** (user, 2026-10-09): repair the open queue to 0, so fuller audits can follow. Each repair
 release runs its lanes in waves, at most two `src/` lanes at a time. Each lane owns its files, and a cross-lane hunk
@@ -333,8 +337,8 @@ Win64 value-form vectors. cxvm. Seed-derive and the asm closure for cybs.
 - TLS:
   - [native TLS conformance](issues/2026-10-08-tls-native-conformance-bite.md);
   - [the client-cert PEM sized at the CA maximum](issues/2026-10-08-tls-client-cert-pem-decode-sized-at-ca-max-roots.md).
-- Slack: what 6.7.8–6.7.11 file. If it does not fit, a 6.7.13 repair release is said at this open, and the closeout
-  moves to 6.7.14.
+- Slack: what 6.7.8–6.7.11 file. If it does not fit, a further repair release is said at this open, inserted before the
+  audit release (which renumbers by one).
 
 **Lanes.**
 - Wave 1: globals (`src/`) · IR arena (`src/`, commits `build/cycc`, two-step).
@@ -351,15 +355,44 @@ Win64 value-form vectors. cxvm. Seed-derive and the asm closure for cybs.
 
 **Hosts.** wine (IR=1 / IR=3 on the PE fork). Seed-derive (cybs compiles `ir.cyr`). openssl locally. The standard legs.
 
-### Closeout — 6.7.13
+### 6.7.13 — the full security audit + the refactor / optimization review (user, 2026-10-09)
+
+Its own release, after the queue is at 0 bugs — **not** the closeout (the closeout stays the checklist). Scope is
+set at its open, in one round; the output of both reviews is FIXES (CLAUDE.md *Execution integrity*), with only what
+cannot pack filed.
+
+- **The full security audit** (CLAUDE.md § *Security Audit Process*; last full audit
+  `docs/audit/2026-09-03-security-audit.md` at 6.5.45 — the 2–3-minor rule is due): map the attack surfaces (the TLS
+  stacks, `net` / `http` / `ws` / sandhi, DNS, shared temp paths and Windows plantable paths, the release / download
+  channel and the seed → cybs → cycc chain, `pam`, secrets in memory) as they stand after 6.7.x's growth; scan; report
+  in `docs/audit/<date>-security-audit.md`; a ledger id only for an actual vulnerability (attacker + boundary named);
+  P0 / P1 fixed in the release, each with a regression test.
+- **The refactor / optimization review — elevate the large files.** The frontend has outgrown its files
+  (`parse_fn.cyr` ~13.9 K lines, `parse_expr.cyr` ~6.4 K, `parse_decl.cyr` ~6.2 K, `lex_pp.cyr` ~5.3 K, `parse.cyr`
+  ~4.5 K; `cbt/commands.cyr` / `deps.cyr` ~6.6 K each): split them along their real seams (the trait / generic /
+  const-fn modules, the call path, the statement dispatch), shrink the giant fns that sit near cybs's per-fn
+  reference ceiling (PARSE_FNCALL, PARSE_RETURN, `_PARSE_FN_DEF_IMPL`, `_PARSE_FACTOR_IMPL`, `_field_load_on`), dedupe
+  the walkers and scanners the 6.7.x features each grew. Logic-preserving: byte-identical self-host + the whole-corpus
+  differential, seed-derive on every bite. Optimization: the self_compile growth tax (1,175 ms at 6.7.6) and cycc size,
+  measured same-box before / after.
+- **Improve the libs with what the last months added**: where it makes `lib/` clearer or safer, use the 6.7.x
+  language (traits, `const` / `const fn`, `bool`, tuples, default / named arguments, `loop` / `do`, `OP=`), fill the
+  gaps the folds and the repair releases exposed, and retire hand-rolled patterns the language now covers. ⚠ A lib
+  file `src/` includes must stay compilable by cybs (no new syntax there); a public symbol's removal or semantic change
+  is the user's call (`removed_symbol_census.sh`); a fold's improvement lands in its SOURCE repo and is re-vendored.
+
+### 6.7.14 → — what the reviews produce, then the closeout (number open)
+
+The 6.7.13 reviews' findings that did not pack into 6.7.13 ship next, in as many releases as they take — sized and
+placed at 6.7.13's close, never squeezed into the closeout. Then the closeout:
+
 
 The [cycle-discipline.md](cycle-discipline.md) checklist, ticked into its ledger:
 - **Mechanical:** `release-gate.sh` (record check.sh's count) and the bench.
 - **Judgment:** heap map (the retired IR bands), the dead-code floor, the 2–3 consolidations the minor earned, code
   review, cleanup.
-- **Compliance:** the security re-scan; folds byte-identical to their tags (yantra, bayan); `verify-store.sh`.
-  - The full security audit is due by the 2–3-minor rule (last: 2026-09-03, at 6.5.45). It is the "fuller audit",
-    placed by the user.
+- **Compliance:** the security re-scan (the full audit ran in 6.7.13); folds byte-identical to their tags (yantra,
+  bayan); `verify-store.sh`.
 - **Docs:** CHANGELOG / roadmap / state; vidya (tuples, defaults, `dyn`, the bounds mode, packed fields, coverage);
   the backlog re-triaged to 0 open.
 
