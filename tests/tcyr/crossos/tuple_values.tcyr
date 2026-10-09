@@ -21,9 +21,18 @@
 # literals (`(a, b)` as a `var` initializer — annotated or not — assigned to a tuple variable or
 # field, passed to a tuple parameter, wrapped in parentheses; every element evaluated before an
 # assignment's store, so `t = (t.1, t.0)` swaps), globals (literal globals in the declaration zone,
-# baked or stored, and after the first statement; a neighbour intact after an element write).
+# baked or stored, and after the first statement; a neighbour intact after an element write),
+# capture (the bridge: `var t: (i64, i64) = f();` / `t = f();` take every value of a multi-value call
+# by the tuple's type — a declared `: (T1, T2[, T3])` callee, an undeclared or `ret2` one, a `: stack`
+# pair, a Result pair, a method, an explicit generic, a callee declared below; in a fn, a for step,
+# both global zones), returns (`return t;` from a fn declared with its values: a local, a copied
+# parameter, a global, arity 3, (f64, f64), wrapped, in a defer fn, in a loop, an #inline replay),
+# reassign (`a, b = f();` re-assigns existing variables — locals, parameters, globals, top level,
+# arity 3, f64 and bool targets, a for step — and the decision's re-poll loop, written so a stale
+# pair fails).
 
 include "lib/assert.cyr"
+include "lib/result.cyr"
 
 struct TvH { a; p: (i64, i64); b; }
 struct TvS3 { t: (i64, f64, bool); }
@@ -42,6 +51,11 @@ var TV_L5 = (tv_c7(), 2);
 var TV_N1: (i64, i64) = (1, 2);
 var TV_N2 = 77;
 fn tv_c7(): i64 { return 7; }
+# Declaration-zone captures (the replay calls them after every fn is parsed; pass 1 registers each
+# 8n bytes inline), and a neighbour after one.
+var TV_C1: (i64, i64) = tv_m2(3);
+var TV_C3: (i64, i64, i64) = tv_m3(7, 8, 9);
+var TV_CN = 61;
 
 # --- types ---
 fn tv_types(): i64 {
@@ -455,6 +469,237 @@ fn tv_globals(): i64 {
 fn tv_later(t: (i64, i64), k): i64 { return t.0 * 100 + t.1 * 10 + k; }
 fn tv_cp(t: (i64, i64)): i64 { return t.0 * 10 + t.1; }
 
+# --- capture ---
+enum TvRes: stack { TvOk(v); TvErr(e); }
+fn tv_sok(x) { return TvOk(x); }
+fn tv_serr(x) { return TvErr(x); }
+fn tv_rq(x): Result {
+    if (x > 0) { return Ok(x); }
+    return Err(9);
+}
+fn tv_m2(x): (i64, i64) { return (x, x + 4); }
+fn tv_m3(a, b, c): (i64, i64, i64) { return (a, b, c); }
+fn tv_mf(x): (f64, i64) { return (1.5, x); }
+fn tv_mb(x): (bool, i64) { return (x > 3, x); }
+fn tv_dm(a, b) { return (a / b, a % b); }
+fn tv_r2(a, b) { ret2(a, b); }
+fn tv_g2<T>(a: T): (i64, i64) { return (a, a + 1); }
+struct TvB { v; }
+impl TvB {
+    fn mk(self, a): (i64, i64) { return (a, a + self.v); }
+}
+fn tv_capture(): i64 {
+    var t: (i64, i64) = tv_m2(5);
+    assert_eq(t.0 * 10 + t.1, 59, "`var t: (i64, i64) = f();` captures both values");
+    var u: (i64, i64, i64) = tv_m3(1, 2, 3);
+    assert_eq(u.0 * 100 + u.1 * 10 + u.2, 123, "arity 3: rax, rdx and the third register");
+    var w: (f64, i64) = tv_mf(4);
+    assert(w.0 == 1.5, "an f64 value captured into an f64 element");
+    assert(w.0 + w.0 == 3.0, "... typed f64: + is a float add");
+    assert_eq(w.1, 4, "... beside an i64");
+    var b: (bool, i64) = tv_mb(5);
+    var k = 0;
+    if (b.0) { k = 1; }
+    assert_eq(k * 10 + b.1, 15, "a declared bool value into a bool element");
+    var d: (i64, i64) = tv_dm(17, 5);
+    assert_eq(d.0 * 10 + d.1, 32, "an undeclared `return (a, b)` callee");
+    var e: (i64, i64) = tv_r2(6, 7);
+    assert_eq(e.0 * 10 + e.1, 67, "a `ret2` callee");
+    var s: (i64, i64) = tv_sok(9);
+    assert_eq(s.0 * 100 + s.1, 9, "a `: stack` pair: the tag (0) and the payload");
+    s = tv_serr(4);
+    assert_eq(s.0 * 100 + s.1, 104, "... re-captured: tag 1, payload 4");
+    var q: (i64, i64) = tv_rq(3);
+    assert_eq(q.0 * 100 + q.1, 3, "a Result pair, Ok");
+    q = tv_rq(0);
+    assert_eq(q.0 * 100 + q.1, 109, "... Err");
+    var bb: TvB;
+    bb.v = 3;
+    var m: (i64, i64) = bb.mk(4);
+    assert_eq(m.0 * 10 + m.1, 47, "a method call");
+    var g: (i64, i64) = tv_g2<i64>(6);
+    assert_eq(g.0 * 10 + g.1, 67, "an explicit generic call");
+    var fw: (i64, i64) = tv_m2later(2);
+    assert_eq(fw.0 * 10 + fw.1, 24, "a callee declared below");
+    t = tv_m2(t.1);
+    assert_eq(t.0 * 100 + t.1, 913, "`t = f(t.1);`: the argument reads the old t, both values captured");
+    var i = 0;
+    for (t = tv_m2(0); i < 3; t = tv_m2(t.0 + 1)) { i = i + 1; }
+    assert_eq(t.0 * 10 + t.1, 37, "a capture as a classic-for init and step");
+    if (t.0 == 3) {
+        var t: (i64, i64) = tv_m2(t.1 + 1);
+        assert_eq(t.0 * 100 + t.1, 812, "`var t: T = f(t.1 + 1);` reads the OUTER t (the name withheld)");
+    }
+    assert_eq(t.0 * 10 + t.1, 37, "... and the outer t is untouched");
+    var n = 0;
+    var acc = 0;
+    while (n < 3) {
+        var lp: (i64, i64) = tv_m2(n);
+        acc = acc * 10 + lp.1;
+        n = n + 1;
+    }
+    assert_eq(acc, 456, "a capture in a loop body, each pass its own");
+    assert_eq(TV_C1.0 * 10 + TV_C1.1, 37, "a declaration-zone capture");
+    assert_eq(TV_C3.0 * 100 + TV_C3.1 * 10 + TV_C3.2, 789, "... arity 3");
+    TV_C1.1 = 9;
+    assert_eq(TV_CN, 61, "the global after a zone capture is intact after `G.1 = 9`");
+    TV_C1 = tv_m2(1);
+    assert_eq(TV_C1.0 * 10 + TV_C1.1, 15, "`G = f();` into a global, in a fn");
+    return 0;
+}
+fn tv_m2later(x): (i64, i64) { return (x, x * 2); }
+
+# --- returns ---
+fn tv_rl(x): (i64, i64) {
+    var t: (i64, i64);
+    t.0 = x;
+    t.1 = x + 4;
+    return t;
+}
+fn tv_rpar(t: (i64, i64)): (i64, i64) {
+    t.0 = t.0 + 1;
+    return t;
+}
+fn tv_rglob(): (i64, i64) { return TV_G3; }
+fn tv_r3(a): (i64, i64, i64) {
+    var t = (a, a + 1, a + 2);
+    return t;
+}
+fn tv_rf(): (f64, f64) {
+    var t: (f64, f64) = (1.5, 2.25);
+    return t;
+}
+fn tv_rb(x): (bool, i64) {
+    var t: (bool, i64) = (x > 3, x);
+    return t;
+}
+fn tv_rwrap(x): (i64, i64) {
+    var t = (x, 2);
+    return ((t));
+}
+var _tv_dfr = 0;
+fn tv_rdefer(x): (i64, i64) {
+    defer { _tv_dfr = _tv_dfr * 10 + 1; }
+    var t = (x, x * 3);
+    return t;
+}
+fn tv_rloop(n): (i64, i64) {
+    var t = (0, 0);
+    var i = 0;
+    while (i < n) {
+        t = (t.0 + 1, t.1 + 2);
+        if (i == 3) { return t; }
+        i = i + 1;
+    }
+    return t;
+}
+# The #inline replay parses this body in the caller's frame (one statement, no local).
+#inline
+fn tv_rinl(): (i64, i64) { return TV_G3; }
+fn tv_returns(): i64 {
+    var a, b = tv_rl(5);
+    assert_eq(a * 10 + b, 59, "`return t;` from a local");
+    var p = (4, 6);
+    var c, d = tv_rpar(p);
+    assert_eq(c * 10 + d, 56, "`return t;` from a by-value parameter (its copy)");
+    assert_eq(p.0, 4, "... the caller's tuple untouched");
+    var e, g = tv_rglob();
+    assert_eq(e * 10 + g, 23, "`return G;` from a global");
+    var h, i, j = tv_r3(1);
+    assert_eq(h * 100 + i * 10 + j, 123, "arity 3");
+    var x, y = tv_rf();
+    assert(x == 1.5, "(f64, f64): the first value");
+    assert(y == 2.25, "(f64, f64): the second value");
+    var bo, bv = tv_rb(5);
+    var k = 0;
+    if (bo) { k = 1; }
+    assert_eq(k * 10 + bv, 15, "(bool, i64)");
+    var m, n = tv_rwrap(7);
+    assert_eq(m * 10 + n, 72, "`return ((t));` - parentheses are transparent");
+    _tv_dfr = 0;
+    var o, q = tv_rdefer(2);
+    assert_eq(o * 10 + q, 26, "`return t;` in a fn with a defer: the values survive the walker");
+    assert_eq(_tv_dfr, 1, "... and the defer ran once");
+    var r, s = tv_rloop(9);
+    assert_eq(r * 10 + s, 48, "`return t;` inside a loop");
+    var r2, s2 = tv_rloop(2);
+    assert_eq(r2 * 10 + s2, 24, "... and after it");
+    var u, v = tv_rinl();
+    assert_eq(u * 10 + v, 23, "`return G;` in an #inline replay");
+    var t: (i64, i64) = tv_rl(1);
+    assert_eq(t.0 * 10 + t.1, 15, "a returned tuple captured into a tuple");
+    t = tv_rpar(t);
+    assert_eq(t.0 * 10 + t.1, 25, "... passed back in and re-captured");
+    return 0;
+}
+
+# --- reassign ---
+var _tv_pn = 0;
+fn tv_poll(): (i64, i64) {
+    _tv_pn = _tv_pn + 1;
+    return (_tv_pn, _tv_pn + 4);
+}
+fn tv_rpoll() {
+    _tv_pn = _tv_pn + 1;
+    if (_tv_pn < 3) { return TvErr(_tv_pn); }
+    return TvOk(7);
+}
+fn tv_swap(a, b) { return (b, a); }
+fn tv_pick(v, w): (i64, i64) { return (v, w); }
+var TV_RA = 0;
+var TV_RB = 0;
+fn tv_reassign(pa, pb): i64 {
+    var a = 0;
+    var b = 0;
+    a, b = tv_m2(5);
+    assert_eq(a * 10 + b, 59, "`a, b = f();` re-assigns two locals");
+    pa, pb = tv_m2(2);
+    assert_eq(pa * 10 + pb, 26, "... two parameters");
+    TV_RA, TV_RB = tv_m2(3);
+    assert_eq(TV_RA * 10 + TV_RB, 37, "... two globals");
+    var c = 0;
+    a, b, c = tv_m3(1, 2, 3);
+    assert_eq(a * 100 + b * 10 + c, 123, "`a, b, c = f();`, arity 3");
+    var x: f64 = 0.0;
+    x, a = tv_mf(9);
+    assert(x == 1.5, "an f64 target takes an f64 value");
+    assert_eq(a, 9, "... beside an i64");
+    var ok: bool = false;
+    ok, b = tv_mb(5);
+    var k = 0;
+    if (ok) { k = 1; }
+    assert_eq(k * 10 + b, 15, "a bool target takes a declared bool value");
+    a, b = tv_swap(a, b);
+    assert_eq(a * 10 + b, 59, "`a, b = swap(a, b);`: every value read before any store");
+    var i = 0;
+    for (i = 0; i < 3; a, b = tv_m2(a + 1)) { i = i + 1; }
+    assert_eq(a * 100 + b, 812, "a multi-value assignment as a classic-for step");
+    for (a, b = tv_m2(0); a < 2; a, b = tv_m2(a + 1)) { c = c + 1; }
+    assert_eq(a * 100 + b * 10 + c, 265, "... as its init too");
+    var z1 = 5;
+    var z2 = 6;
+    a, b = tv_pick(fncall0(|| { var q = 0; q, TV_RB = tv_m2(7); return q * 10 + TV_RB; }), 3);
+    assert_eq(a * 10 + b + z1 * z2 - 30, 813, "one inside a closure among the arguments: the outer targets kept");
+    _tv_pn = 0;
+    var st = 0;
+    var v = 0;
+    var acc = 0;
+    while (st != 3) {
+        st, v = tv_poll();
+        acc = acc * 10 + v;
+    }
+    assert_eq(acc, 567, "the re-poll loop: each pass re-assigns both values (a stale one fails)");
+    _tv_pn = 0;
+    st = 1;
+    acc = 0;
+    while (st != 0) {
+        st, v = tv_rpoll();
+        acc = acc * 10 + v;
+    }
+    assert_eq(acc, 127, "the re-poll loop over a `: stack` pair: Err, Err, then Ok");
+    return 0;
+}
+
 tv_types();
 tv_access();
 tv_copies();
@@ -463,6 +708,9 @@ tv_params();
 tv_tailcalls();
 tv_literals();
 tv_globals();
+tv_capture();
+tv_returns();
+tv_reassign(0, 0);
 # A global declared after the first statement, copied from a tuple field.
 var TV_G2: (i64, i64) = TV_GH.p;
 assert_eq(TV_G2.0 * 10 + TV_G2.1, 23, "a global after the first statement, copied from a tuple field");
@@ -472,5 +720,13 @@ var TV_P2 = (TV_P1.0 + 1, 6);
 var TV_P3: (i64, i64) = ((7, 8));
 assert(TV_P1.1 == 0.25, "a global literal after the first statement: its f64 element");
 assert_eq(TV_P2.0 * 10 + TV_P2.1 + TV_P3.0 * 1000 + TV_P3.1 * 100, 7856, "un-annotated and wrapped ones");
+# ... a capture global after the first statement, and a capture and a multi-value assignment at top level.
+var TV_P4: (f64, i64) = tv_mf(3);
+assert(TV_P4.0 == 1.5, "a capture global after the first statement: its f64 element");
+assert_eq(TV_P4.1, 3, "... its i64 element");
+TV_P4 = tv_mf(8);
+assert_eq(TV_P4.1, 8, "`G = f();` at top level");
+TV_RA, TV_RB = tv_m2(4);
+assert_eq(TV_RA * 10 + TV_RB, 48, "`a, b = f();` at top level");
 var r = assert_summary();
 syscall(60, r);

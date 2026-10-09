@@ -37,8 +37,25 @@
 #      PW every `_pwrap_k` caller that can see a literal gives a named outcome, never "expected ')'"
 #      AS a literal local in a suspending `async fn`, read and re-assigned across awaits; SEC1
 #         `secret var t = ( .. );` wiped whole at the epilogue
+#   T5 — the bridge: a tuple CAPTURES a multi-value call by its type (`var t: T = f();`, `t = f();`, `G = f();`,
+#      both global zones), `return t;` from a fn declared with its values, and `a, b = f();` re-assigning
+#      existing variables (the positive shapes are tuple_values.tcyr's capture / returns / reassign, the A rows):
+#      R14 `return t;` from a fn that does not declare those values (S6: an undeclared fn's, refused once), an
+#         arity / class mismatch, a closure, an `async fn`, `return h.p;`
+#      R15 `f().0` on a multi-value call: the refusal says how to read the values
+#      R16 a capture refused: a struct / vector callee, an arity or element-class disagreement, > 3 elements, a
+#         `: f64` callee into a non-f64 element, an unchecked callee into a bool element; a one-value callee, a
+#         wrapped call, `f()?`, `callptr` and a call that is not the whole value are R12 ("not a tuple")
+#      R17i-l a multi-value call stored into a tuple FIELD: bind it first
+#      R18 `a, b = f()` targets that are no plain variable, > 3, a duplicate, a const / enum constant, a struct /
+#         tuple / vector / array / u128 / slice / f32 target, a bool target from a non-bool value, an undefined
+#         or captured name; R19 a right-hand side that is not one whole call (the destructure's texts);
+#         R20 `(a, b) = f();` / `var (q, r) = f();` unchanged
+#      AS2 a capture, a re-capture and `a, q = f()` in a SUSPENDING `async fn` across awaits (CG1: the stores are
+#         addressed — the coroutine's heap frame orders an aggregate from its low slot)
 #   X  `--syntax-only` (cyrius lint's pre-pass): a fn with a tuple parameter, and a call to a
-#      sibling file's fn with a tuple argument, report nothing; X4 literals, a sibling's fn given one
+#      sibling file's fn with a tuple argument, report nothing; X4 literals, a sibling's fn given one;
+#      X5 sibling targets and callees in captures and `a, b = f()`, `return t;`
 #   A  tests/tcyr/crossos/tuple_values.tcyr with its full assertion count (derived from the source)
 #      on x86 (default, CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu), cx (cxvm), PE
 #      (wine, a private prefix). A leg whose tool is missing is a SKIP that names it (exit 77).
@@ -107,6 +124,31 @@
 # tests benches fuzz bootstrap docs/development/issues but tuple_values.tcyr (1034 files) compiles byte-identical —
 # stdout, stderr and exit code; default, CYRIUS_DCE=1 and --syntax-only — with the T4 compiler and the T3 one, and
 # the aarch64, cx and PE compilers likewise over all 537 other tests/tcyr files.
+# T5 (2026-10-09; the same recipe, run FROM the scratch copy; each mutant measured RED, the real tree 269/269 —
+# the crossos file at 168 assertions):
+#   M8a the drain stores in push order (slot k takes the value pushed k-th from the top) -> AS2 and A1-A7 (`(5, 9)`
+#       captured as 95, arity 3 as 321)
+#   M8b arity 3 without `EMOVRA_R3` (the third value is rdx's again) -> AS2 and A1-A7 (122 where 123 is right, in a
+#       capture, a zone capture and `a, b, c = f()`)
+#   M8c (CG1) a local capture's slots stored through EFLSTORE, not addressed -> AS2 (the coroutine frame's word order;
+#       the stack frame's and IR=3's happen to agree)
+#   M9  no `_ret_tuple_var` -> R14a-c, R14f-j, R14l, R14m, R14o, R14p (the value refusal instead) and A1-A7 (the
+#       file does not build); R14d gives two errors
+#   M10 `return t;` loads slot 1 into rax and slot 0 into rdx -> A1-A7 (`return t;` 95 where 59 is right)
+#   M10b the pointer-mode backstop removed (`_tup_ptr_refuse` returns 0) -> R12e-i and R16k-o BUILD (the capture
+#       declines those right-hand sides to it)
+#   M13 no `_tup_asg` call arm -> R16p, R16w, AS2 and A1-A7 (`t = f();` is "not a tuple"; a `: stack` pair "bind both")
+#   M15 `_masg_stmt` without `_dt_arity_check` -> R19f, R19g BUILD
+#   M19 the capture's class check removed (`_tup_cap_class` -> 1) -> R16a-k, R16p, R16r-t, R16v, R16w, R12c, R12g BUILD
+#   M22 PARSE_FIELD_STORE's first-target `,` refusal removed -> R18a, R18d ("expected '=', got ','")
+#   M23 `_masg_stmt` reads its targets back from `_masg_ix` AFTER the call -> A1-A7 (a multi-value assignment in a
+#       closure among the arguments re-used the table: the outer stores went to the closure's slots, 26 where 813)
+#   (`_ret_tuple_var` runs for every `return`: its wrap scan is one linear pass. A `_pwrap_k` peel there was
+#   quadratic in the depth — tests/gates/diagnostics/recursion_depth_bounded.sh's `nested parens @ 65536`
+#   timed out, 99 s — and that row is the guard.)
+# THE EVIDENCE BEYOND THESE ROWS (T5, 2026-10-09): the same 1034 files compile byte-identical — stdout, stderr and exit
+# code; default, CYRIUS_DCE=1 and --syntax-only — with the T5 compiler and the T4 one, and the aarch64, cx and PE
+# compilers likewise over all 537 other tests/tcyr files.
 # Defensive, no killing row (named): `_tok_start` set to the digit before LEXID — today every
 # diagnostic at a selector points at the token AFTER it, so the IDENT's own offset is not observed;
 # the guard's `]` (29) — no valid program today follows a subscript with `.field`, so `a[1].0` is
@@ -492,6 +534,124 @@ CC_SV=$CC; CC="$T/acc4"
 exits as1 0 "AS1: \`var t = (5, 6, 7);\` in a suspending async fn, \`t = (t.2, t.0, b);\` between awaits" 'include "lib/alloc.cyr"\ninclude "lib/string.cyr"\ninclude "lib/fmt.cyr"\ninclude "lib/vec.cyr"\ninclude "lib/syscalls.cyr"\ninclude "lib/async.cyr"\nstruct P2 { x; y; }\nfn nopark(): i64 { return 0; }\nasync fn steps(C): i64 {\n    var a = 3;\n    var t = (5, 6, 7);\n    var p = P2 { 1, 2 };\n    var b = 4;\n    var s1 = await nopark();\n    t = (t.2, t.0, b);\n    var s2 = await nopark();\n    return t.0 * 1000 + t.1 * 100 + t.2 * 10 + a + p.y * 10000;\n}\nfn main(): i64 {\n    alloc_init();\n    var C = steps(0);\n    var r1 = future_force(C);\n    var r2 = future_force(C);\n    var r3 = future_force(C);\n    if (r3 != 27543) { syscall(60, 1); }\n    syscall(60, 0);\n    return 0;\n}\nvar e = main();\n'
 CC=$CC_SV
 
+# ── T5: the bridge — a tuple CAPTURES a multi-value call by its type, `return t;`, `a, b = f();` ────
+# The positive shapes (every callee class, `t = f()`, a for step, both global zones, `return t;` from a
+# local / parameter / global / defer fn / loop / #inline replay, `a, b = f()` everywhere, the re-poll
+# loop) are tests/tcyr/crossos/tuple_values.tcyr's `capture` / `returns` / `reassign` (the A rows).
+MK='fn mk(a): (i64, i64) { return (a, a + 1); }\n'
+MF='fn mkf(a): (i64, f64) { return (a, 1.5); }\n'
+F5='fn f(): i64 {\n'
+F5V='fn f(): i64 {\n    var a = 0;\n    var b = 0;\n'
+E5='\n    return 0;\n}\nsyscall(60, f());\n'
+CAP="cannot capture '"
+# R14 — `return t;` from a fn that does not declare those values: refused by name (it was the value refusal).
+RT="cannot return tuple 't' (i64, i64)"
+RTD=" - a tuple is returned by a fn declared with its values, \`: (i64, i64)\`"
+TL5='    var t = (1, 2);\n    return t;\n}\n'
+refused r14a "$RT$RTD" "R14a (S6): an undeclared fn's \`return t;\`, refused once" "fn g() {\n${TL5}syscall(60, g());\n"
+refused r14b "$RT$RTD" "R14b: a scalar fn" "fn g(): i64 {\n${TL5}syscall(60, g());\n"
+refused r14c "$RT$RTD" "R14c: an 8-byte struct fn (its value class)" "struct Q { a; }\nfn g(): Q {\n${TL5}syscall(60, 0);\n"
+refused r14d "is returned in two registers, so \`return\` takes a local of that struct or a call returning it" "R14d: a 9-16 B struct fn: its own class refuses \`t\` (once)" "${P}fn g(): P {\n${TL5}syscall(60, 0);\n"
+refused r14e "struct-return: identifier type != fn ret_sid" "R14e: a retptr struct fn: \`_ret_struct_big\` reports first" "struct P3 { a; b; c; }\nfn g(): P3 {\n    var t = (1, 2, 3);\n    return t;\n}\nsyscall(60, 0);\n"
+refused r14f "$RT$RTD" "R14f: a vector fn" "fn g(): f64v2 {\n${TL5}syscall(60, 0);\n"
+refused r14g "$RT from 'g' - it returns (i64, i64, i64)" "R14g: an arity mismatch" "fn g(): (i64, i64, i64) {\n${TL5}syscall(60, 0);\n"
+refused r14h "$RT from 'g' - it returns (i64, f64)" "R14h: an element class mismatch (i64 / f64)" "fn g(): (i64, f64) {\n${TL5}syscall(60, 0);\n"
+refused r14i "$RT from 'g' - it returns (bool, i64)" "R14i: an i64 element into a declared bool value" "fn g(): (bool, i64) {\n${TL5}syscall(60, 0);\n"
+refused r14j "cannot return tuple 't' (bool, i64) from 'g' - it returns (i64, i64)" "R14j: a bool element into a declared i64 value (classes match exactly)" "fn g(): (i64, i64) {\n    var t: (bool, i64) = (true, 2);\n    return t;\n}\nsyscall(60, 0);\n"
+refused r14k "tuple 't' used as a value" "R14k: a closure's \`return t;\` of a captured tuple: the value refusal" "include \"lib/alloc.cyr\"\nfn g(): i64 {\n    var t = (1, 2);\n    var c = fncall0(|| { return t; });\n    return c;\n}\nsyscall(60, 0);\n"
+refused r14l "cannot return tuple 'u' (i64, i64)$RTD" "R14l: a closure's own tuple local" "include \"lib/alloc.cyr\"\nfn g(): i64 {\n    var c = fncall0(|| { var u = (3, 4); return u; });\n    return c;\n}\nsyscall(60, 0);\n"
+refused r14n "tuple field 'p' used as a value" "R14n: \`return h.p;\` (a tuple field)" "struct H { a; p: (i64, i64); }\nfn g(): (i64, i64) {\n    var h: H;\n    return h.p;\n}\nsyscall(60, 0);\n"
+refused r14o "cannot return tuple 'G' (i64, i64)$RTD" "R14o: a tuple global from a scalar fn" "var G = (1, 2);\nfn g(): i64 { return G; }\nsyscall(60, g());\n"
+printf '#!/bin/sh\nCYRIUS_ASYNC=1 exec "%s" "$@"\n' "$CC" > "$T/acc5"; chmod +x "$T/acc5"
+CC_SV=$CC; CC="$T/acc5"
+refused r14m "$RT from an \`async fn\` - it returns one value" "R14m: an \`async fn\` declared \`: (i64, i64)\` (its Future carries one i64)" "include \"lib/alloc.cyr\"\nasync fn g(): (i64, i64) {\n${TL5}syscall(60, 0);\n"
+refused r14p "$RT from an \`async fn\` - it returns one value" "R14p: an undeclared \`async fn\`" "include \"lib/alloc.cyr\"\nasync fn g() {\n${TL5}syscall(60, 0);\n"
+CC=$CC_SV
+# R15 — `f().N` on a multi-value call: today's refusal plus how to read the values.
+R15="cannot take a field of the result of 'mk': it returns 2 values - bind them first, \`var t: (i64, i64) = mk(..);\`, then read \`t.0\`"
+refused r15a "$R15" "R15a: \`return mk(1).0;\`" "${MK}fn f(): i64 { return mk(1).0; }\nsyscall(60, f());\n"
+refused r15b "$R15" "R15b: in an operand" "${MK}fn f(): i64 { var x = mk(1).0 + 1; return x; }\nsyscall(60, f());\n"
+refused r15c "it returns 2 values - bind them first, \`var t: (i64, f64) = B_mk(..);\`" "R15c: a method's result (its declared values spelled)" "struct B { v; }\nimpl B { fn mk(self, a): (i64, f64) { return (a, 1.5); } }\nfn f(): i64 { var b: B; return b.mk(1).1; }\nsyscall(60, f());\n"
+# R16 — a capture refused, mirroring the destructure. Its own texts for a callee class or element that
+# disagrees; a one-value callee, a wrapped call, \`f()?\`, \`callptr\` or any other value is no capture at
+# all — the tuple's "not a tuple" refusal (R12).
+refused r16a "${CAP}mkf' into tuple (i64, i64) - it returns 2 values, (i64, f64)" "R16a: an f64 value into an i64 element" "${MK}${MF}${F5}    var t: (i64, i64) = mkf(1);${E5}"
+refused r16b "${CAP}mk' into tuple (f64, f64) - it returns 2 values, (i64, i64)" "R16b: an i64 value into an f64 element" "${MK}${F5}    var t: (f64, f64) = mk(1);${E5}"
+refused r16c "${CAP}mk' into tuple (bool, i64) - it returns 2 values, (i64, i64)" "R16c: a non-bool value into a bool element" "${MK}${F5}    var t: (bool, i64) = mk(1);${E5}"
+refused r16d "${CAP}mk' into tuple (i64, i64, i64) - it returns 2 values, (i64, i64)" "R16d: a declared-arity mismatch (3 from 2)" "${MK}${F5}    var t: (i64, i64, i64) = mk(1);${E5}"
+refused r16e "${CAP}mk3' into tuple (i64, i64) - it returns 3 values, (i64, i64, i64)" "R16e: ... (2 from 3)" "fn mk3(a): (i64, i64, i64) { return (a, a, a); }\n${F5}    var t: (i64, i64) = mk3(1);${E5}"
+refused r16f "${CAP}mk' into tuple (i64, i64, i64, i64) - a call returns at most 3 values" "R16f: 4 or more elements" "${MK}${F5}    var t: (i64, i64, i64, i64) = mk(1);${E5}"
+refused r16g "${CAP}mkp' into tuple (i64, i64) - it returns struct 'P', not a tuple" "R16g: a struct-returning callee" "${P}fn mkp(): P { var p: P; p.a = 1; p.b = 2; return p; }\n${F5}    var t: (i64, i64) = mkp();${E5}"
+refused r16h "${CAP}vv' into tuple (i64, i64) - it returns a vector, not a tuple" "R16h: a vector-returning callee" "fn vv(): f64v2 { var v: f64v2; return v; }\n${F5}    var t: (i64, i64) = vv();${E5}"
+refused r16i "${CAP}mf2' into tuple (i64, f64) - it is declared \`: f64\`, so every value it returns is an f64" "R16i: a \`: f64\` callee into an i64 element" "fn mf2(a): f64 { ret2(a, a); }\n${F5}    var t: (i64, f64) = mf2(1);${E5}"
+refused r16j "${CAP}dm' into tuple (bool, i64) - element 0 is a bool, and the call does not declare that value bool" "R16j: an undeclared callee into a bool element" "fn dm(a, b) { return (a / b, a % b); }\n${F5}    var t: (bool, i64) = dm(1, 2);${E5}"
+refused r16k "$I12 't' with a value that is not a tuple" "R16k: a provably one-value callee (the R12 refusal)" "fn one(x) { return x; }\n${F5}    var t: (i64, i64) = one(1);${E5}"
+refused r16l "$I12 't' with a value that is not a tuple" "R16l: a wrapped call \`(mk(1))\` (the destructure refuses it too)" "${MK}${F5}    var t: (i64, i64) = (mk(1));${E5}"
+refused r16m "$I12 't' with a value that is not a tuple" "R16m: \`f()?\` (one value)" "enum Res: stack { Ok(v); Err(e); }\nfn sok(x) { return Ok(x); }\nfn g(): i64 { var t: (i64, i64) = sok(1)?; return Ok(t.0); }\nsyscall(60, 0);\n"
+refused r16n "$I12 't' with a value that is not a tuple" "R16n: a call that is not the whole value" "${MK}${F5}    var t: (i64, i64) = mk(1) + 1;${E5}"
+refused r16o "$I12 't' with a value that is not a tuple" "R16o: \`callptr\`" "${MK}${F5}    var p = 0;\n    var t: (i64, i64) = callptr(p, 1);${E5}"
+refused r16p "${CAP}mkf' into tuple (i64, i64) - it returns 2 values, (i64, f64)" "R16p: \`t = f();\` into an existing tuple" "${MK}${MF}${F5}    var t: (i64, i64);\n    t = mkf(1);${E5}"
+refused r16q "$A12 't'" "R16q: \`t = (mk(1));\`, wrapped (R12)" "${MK}${F5}    var t: (i64, i64);\n    t = (mk(1));${E5}"
+refused r16r "${CAP}mk' into tuple (i64, f64) - it returns 2 values, (i64, i64)" "R16r: a declaration-zone capture (the replay judges the callee)" "${MK}var G: (i64, f64) = mk(1);\nsyscall(60, 0);\n"
+refused r16s "$I12 'G' with a value that is not a tuple" "R16s: a zone capture of a one-value callee (pass 1 registered it inline)" "fn one(x) { return x; }\nvar G: (i64, i64) = one(1);\nsyscall(60, 0);\n"
+refused r16t "${CAP}mk' into tuple (i64, i64, i64) - it returns 2 values, (i64, i64)" "R16t: a global capture after the first statement" "${MK}syscall(1, 1, \"\", 0);\nvar G: (i64, i64, i64) = mk(1);\nsyscall(60, 0);\n"
+refused r16u "$A12 'G'" "R16u: \`G = mk(2) + 1;\` at top level (R12)" "${MK}var G: (i64, i64) = mk(1);\nG = mk(2) + 1;\nsyscall(60, 0);\n"
+refused r16v "${CAP}mk' into tuple (i64, i64) - it returns 2 values, (i64, f64)" "R16v: a method's declared values" "struct B { v; }\nimpl B { fn mk(self, a): (i64, f64) { return (a, 1.5); } }\n${F5}    var b: B;\n    var t: (i64, i64) = b.mk(1);${E5}"
+refused r16w "${CAP}mk' into tuple (i64, i64) - it returns 2 values, (i64, f64)" "R16w: a classic-for step \`t = mk(i)\`" "${MF}fn mk(a): (i64, f64) { return (a, 0.5); }\n${F5}    var t: (i64, i64);\n    for (var i = 0; i < 2; t = mk(i)) { i = i + 1; }${E5}"
+# R17 — a multi-value call stored into a tuple FIELD: bind it first (the argument form is T3's R17a-h).
+R17F="is not stored into a tuple field - bind it first: \`var t: (i64, i64) = "
+TH5='struct H { a; p: (i64, i64); }\n'
+refused r17i "a multi-value call 'mk' $R17F" "R17i: \`h.p = mk(3);\`" "${TH5}${MK}${F5}    var h: H;\n    h.p = mk(3);${E5}"
+refused r17j "a multi-value call 'B_mk' $R17F" "R17j: a method" "${TH5}struct B { v; }\nimpl B { fn mk(self, a): (i64, i64) { return (a, a); } }\n${F5}    var h: H;\n    var b: B;\n    h.p = b.mk(3);${E5}"
+refused r17k "a multi-value call 'mk' $R17F" "R17k: a global's field, at top level" "${TH5}${MK}var GH = H { 1, 2, 3 };\nGH.p = mk(3);\nsyscall(60, 0);\n"
+refused r17l "a multi-value call 'mk' $R17F" "R17l: a classic-for step's field" "${TH5}${MK}${F5}    var h: H;\n    for (var i = 0; i < 2; h.p = mk(i)) { i = i + 1; }${E5}"
+# R18 — `a, b = f();` re-assigns plain variables: every other target refused by name (each was "expected '='").
+NP="a multi-value assignment \`a, b = f();\` re-assigns plain variables"
+TGT=" from a multi-value call - its targets are i64, f64 or bool variables"
+refused r18a "$NP - a field is not one" "R18a: a field first target \`h.x, b = ..\`" "struct H1 { x; }\n${MK}${F5V}    var h: H1;\n    h.x, b = mk(1);${E5}"
+refused r18b "$NP - an element is not one" "R18b: a subscript first target" "${MK}${F5V}    var arr: i64[2];\n    arr[0], b = mk(1);${E5}"
+refused r18c "$NP - \`*p\` is not one" "R18c: a deref first target" "${MK}${F5V}    var p = &a;\n    *p, b = mk(1);${E5}"
+refused r18d "$NP - a field is not one" "R18d: a tuple element first target \`t.0, b = ..\`" "${MK}${F5V}    var t = (1, 2);\n    t.0, b = mk(1);${E5}"
+refused r18e "$NP - a field is not one" "R18e: a later field target" "${MK}${F5V}    var h = (1, 2);\n    a, h.0 = mk(1);${E5}"
+refused r18f "$NP - an element is not one" "R18f: a later subscript target" "${MK}${F5V}    var arr: i64[2];\n    a, arr[1] = mk(1);${E5}"
+refused r18g "$NP - \`*p\` is not one" "R18g: a later deref target" "${MK}${F5V}    var p = &a;\n    a, *p = mk(1);${E5}"
+refused r18h "$NP - its form is \`=\`, not a compound \`OP=\`" "R18h: \`a, b += f();\`" "${MK}${F5V}    a, b += mk(1);${E5}"
+refused r18i "a multi-value assignment re-assigns 2 or 3 variables - a call returns at most 3 values" "R18i: 4 targets" "${MK}${F5V}    var c = 0;\n    var d = 0;\n    a, b, c, d = mk(1);${E5}"
+refused r18j "a multi-value assignment re-assigns each variable once - this one is named twice" "R18j: a duplicate target" "${MK}${F5V}    a, a = mk(1);${E5}"
+refused r18k "cannot assign to const 'C'" "R18k: a const target" "${MK}const C = 1;\n${F5V}    a, C = mk(1);${E5}"
+refused r18l "cannot assign to enum constant 'EA'" "R18l: an enum constant target" "${MK}enum E { EA, EB }\n${F5V}    EA, b = mk(1);${E5}"
+refused r18m "cannot re-assign struct 'p'$TGT" "R18m: a struct target" "${P}${MK}${F5V}    var p: P;\n    p, b = mk(1);${E5}"
+refused r18n "cannot re-assign tuple 't' from a multi-value call - capture the call into it whole: \`t = f();\`" "R18n: a tuple target" "${MK}${F5V}    var t = (1, 2);\n    t, b = mk(1);${E5}"
+refused r18o "cannot re-assign vector 'v'$TGT" "R18o: a vector target" "${MK}${F5V}    var v: f64v2;\n    v, b = mk(1);${E5}"
+refused r18p "cannot re-assign array 'arr'$TGT" "R18p: an array target" "${MK}${F5V}    var arr: i64[2];\n    arr, b = mk(1);${E5}"
+refused r18q "cannot re-assign u128 'u'$TGT" "R18q: a u128 target" "${MK}${F5V}    var u: u128 = 0;\n    u, b = mk(1);${E5}"
+refused r18r "cannot re-assign slice 's'$TGT" "R18r: a slice target" "${MK}${F5V}    var s: [u8] = 0;\n    s, b = mk(1);${E5}"
+refused r18s "cannot re-assign f32 'x'$TGT" "R18s: an f32 target" "${MK}${F5V}    var x: f32 = 0.0;\n    x, b = mk(1);${E5}"
+refused r18t "cannot assign a value that is not a bool to bool 'k' - the call does not declare that value bool" "R18t: a bool target from a declared i64 value" "${MK}${F5V}    var k: bool = false;\n    k, b = mk(1);${E5}"
+refused r18u "cannot assign a value that is not a bool to bool 'k' - the call does not declare that value bool" "R18u: a bool target from an undeclared callee" "fn dm(a, b) { return (a / b, a % b); }\n${F5V}    var k: bool = false;\n    k, b = dm(1, 2);${E5}"
+refused r18v "undefined variable 'zz'" "R18v: an undefined target (as \`x = ..\` reports it)" "${MK}${F5V}    zz, b = mk(1);${E5}"
+refused r18w "undefined variable 'a'" "R18w: a closure's captured target (as \`x = ..\` inside a closure)" "include \"lib/alloc.cyr\"\n${MK}${F5V}    var c = fncall0(|| { var z = 0; a, z = mk(1); return z; });${E5}"
+refused r18x "cannot re-assign tuple 'GV' from a multi-value call" "R18x: a global tuple target" "${MK}var GV = (1, 2);\n${F5V}    GV, b = mk(1);${E5}"
+# R19 — a right-hand side that is not one whole call: the destructure's own texts.
+R19="multi-value destructure needs a call on the right-hand side"
+refused r19a "$R19" "R19a: \`a, b = 5;\`" "${MK}${F5V}    a, b = 5;${E5}"
+refused r19b "$R19" "R19b: \`a, b = (b, a);\` (a literal is no call)" "${MK}${F5V}    a, b = (b, a);${E5}"
+refused r19c "$R19" "R19c: \`a, b = t;\`" "${MK}${F5V}    var t = (1, 2);\n    a, b = t;${E5}"
+refused r19d "$R19" "R19d: a wrapped call" "${MK}${F5V}    a, b = (mk(1));${E5}"
+refused r19e "$R19" "R19e: a call that is not the whole value" "${MK}${F5V}    a, b = mk(1) + 1;${E5}"
+refused r19f "multi-value destructure binds 2 names, but 'one' returns 1 value" "R19f: a provably one-value callee" "fn one(x) { return x; }\n${F5V}    a, b = one(1);${E5}"
+refused r19g "multi-value destructure count does not match the fn's declared return arity" "R19g: a declared-arity mismatch" "fn mk3(a): (i64, i64, i64) { return (a, a, a); }\n${F5V}    a, b = mk3(1);${E5}"
+refused r19h "$R19" "R19h: a classic-for step whose value is not a call" "${MK}${F5V}    for (var i = 0; i < 2; a, b = i) { i = i + 1; }${E5}"
+# R20 — unchanged: `(a, b) = f();` and `var (q, r) = f();` keep their errors.
+refused r20a "unexpected '('" "R20a: \`(a, b) = f();\` (unchanged)" "${MK}${F5V}    (a, b) = mk(1);${E5}"
+refused r20b "expected identifier, got '('" "R20b: \`var (q, r) = f();\` (unchanged)" "${MK}fn f(): i64 {\n    var (q, r) = mk(1);\n    return 0;\n}\nsyscall(60, f());\n"
+# AS2 — a capture and a multi-value assignment in a SUSPENDING `async fn`, across awaits: the block's span
+# recorded before the call, every value pushed before any store, the stores addressed (the coroutine's heap
+# frame, whose slots ascend, holds the block whole).
+CC_SV=$CC; CC="$T/acc5"
+exits as2 0 "AS2: \`var t: (i64, i64, i64) = m3(..);\`, \`t = m3(..);\` and \`a, q = m2(a);\` across awaits" 'include "lib/alloc.cyr"\ninclude "lib/string.cyr"\ninclude "lib/fmt.cyr"\ninclude "lib/vec.cyr"\ninclude "lib/syscalls.cyr"\ninclude "lib/async.cyr"\nstruct P2 { x; y; }\nfn nopark(): i64 { return 0; }\nfn m3(x, y, z): (i64, i64, i64) { return (x, y, z); }\nfn m2(x): (i64, i64) { return (x, 1); }\nasync fn steps(C): i64 {\n    var a = 3;\n    var t: (i64, i64, i64) = m3(5, 6, 7);\n    var p = P2 { 1, 2 };\n    var b = 4;\n    var s1 = await nopark();\n    t = m3(t.2, t.0, b);\n    var q = 0;\n    var s2 = await nopark();\n    a, q = m2(a);\n    return t.0 * 1000 + t.1 * 100 + t.2 * 10 + a + p.y * 10000 + q * 100000;\n}\nfn main(): i64 {\n    alloc_init();\n    var C = steps(0);\n    var r1 = future_force(C);\n    var r2 = future_force(C);\n    var r3 = future_force(C);\n    if (r3 != 127543) { syscall(60, 1); }\n    syscall(60, 0);\n    return 0;\n}\nvar e = main();\n'
+CC=$CC_SV
+
 # ── X: --syntax-only (cyrius lint's pre-pass) ──────────────────────────────────────────────────────
 # A fn with a tuple parameter, its call, and calls to a sibling file's fns (unknown here) with a tuple
 # argument and a sibling's call as a tuple argument: nothing tuple-related is reported.
@@ -505,11 +665,18 @@ printf 'struct H { a; p: (i64, i64); }\nfn take(t: (i64, i64), k): i64 { return 
 "$CC" --syntax-only < "$T/x04.cyr" > /dev/null 2> "$T/x04.err" || true
 if grep -q "tuple\|^error:<source>" "$T/x04.err"; then bad "X4: --syntax-only reported: $(grep -m1 "tuple\|^error:<source>" "$T/x04.err")"
 else ok "X4: --syntax-only: literals declared, assigned, stored, passed (a sibling's fn too) — silent"; fi
+# X5 (T5): a sibling file's globals as `a, b = f()` targets (their stores dropped), a sibling's callee
+# captured (into a bool element too: an unknown callee is not judged here), `t = f()`, a for step, and
+# `return t;` — nothing reported.
+printf 'fn f(): i64 {\n    var b = 0;\n    sib_a, b = sib_mk();\n    var t: (i64, i64) = sib_mk2(1);\n    t = sib_mk2(2);\n    var k: (bool, i64) = sib_mk3();\n    b, sib_c, sib_d = sib_mk3();\n    for (var i = 0; i < 2; b, sib_a = sib_mk()) { i = i + 1; }\n    return t.0;\n}\nfn g(): (i64, i64) { var t = (1, 2); return t; }\nsyscall(60, f());\n' > "$T/x05.cyr"
+"$CC" --syntax-only < "$T/x05.cyr" > /dev/null 2> "$T/x05.err" || true
+if grep -q "tuple\|^error:<source>" "$T/x05.err"; then bad "X5: --syntax-only reported: $(grep -m1 "tuple\|^error:<source>" "$T/x05.err")"
+else ok "X5: --syntax-only: sibling targets and callees in captures and multi-value assignments, \`return t;\` — silent"; fi
 
 # ── A: tests/tcyr/crossos/tuple_values.tcyr on every pipeline and target ───────────────────────────
 TV="$ROOT/tests/tcyr/crossos/tuple_values.tcyr"
 want=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TV")
-[ "$want" -ge 111 ] || bad "A0: only $want assertions derived from $TV (floor 111)"
+[ "$want" -ge 168 ] || bad "A0: only $want assertions derived from $TV (floor 168)"
 tcyr_ok() {   # <label> <output file> <exit> <want>
     if [ "$3" -eq 0 ] && grep -q "^$4 passed, 0 failed" "$2"; then ok "$1: $4 passed"
     else bad "$1: exit $3, $(grep -E 'passed|FAIL' "$2" | tr -d '\r' | head -3 | tr '\n' '|')"; fi
@@ -554,4 +721,4 @@ else echo "  SKIP A7 PE — wine not installed"; skips=$((skips + 1)); fi
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: tuple_checked — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: tuple_checked — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: tuple_checked — tuples: the lexer (L); the type in a var, a struct field and a parameter, \`t.N\`, copies (S, P); the literal in its five positions, wrapped, in both zones and a kernel build (C, S1, S4, K1, PW, AS); every open shape refused by name (R1-R13, R17, R21); --syntax-only silent (X); tuple_values.tcyr on x86 / IR / DCE / aarch64 / cx / PE (A)"
+echo "PASS: tuple_checked — tuples: the lexer (L); the type in a var, a struct field and a parameter, \`t.N\`, copies (S, P); the literal in its five positions, wrapped, in both zones and a kernel build (C, S1, S4, K1, PW, AS); every open shape refused by name (R1-R13, R17, R21); the bridge — captures, \`return t;\`, \`a, b = f();\` — and its refusals (R14-R20, AS2); --syntax-only silent (X); tuple_values.tcyr on x86 / IR / DCE / aarch64 / cx / PE (A)"

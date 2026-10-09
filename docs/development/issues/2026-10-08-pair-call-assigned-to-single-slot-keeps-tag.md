@@ -1,9 +1,14 @@
 # A pair-returning call stored into ONE slot keeps only the tag, silently — OPEN
 
-**Status:** 🟡 **OPEN** — reproduced 2026-10-08 against 6.7.6 @ 2fb6ad8b with `build/cycc` (x86_64): the
-roadmap's repro exits 0 with no diagnostic; a `: stack` pair stored through a field, a subscript, `*p` or `OP=`
-compiles clean and drops the payload; `t, v = f();` is still `expected '=', got ','`.
-**Placement:** 6.7.7 (being fixed in this release) — its fix is a language decision asked at the 6.7.7 open — never 7.x.
+**Status:** 🟡 **OPEN** — item 3 only (below). Reproduced 2026-10-08 against 6.7.6 @ 2fb6ad8b with `build/cycc`
+(x86_64): the roadmap's repro exits 0 with no diagnostic; a `: stack` pair stored through a field, a subscript, `*p` or
+`OP=` compiles clean and drops the payload. **Item 4 is delivered** (6.7.7 B4, bite T5, 2026-10-09): `t, v = f(7);`
+re-assigns both names (`tests/tcyr/crossos/tuple_values.tcyr` `reassign`, the re-poll loop over a `: stack` pair
+included). **Items 1–2 are settled** by the user's decision (2026-10-08): `var x = f();` / `x = f();` keep their
+documented first-value meaning (the `ret2` / `rethi()` split); a tuple captures every value by its type instead —
+`var t: (i64, i64) = f();`.
+**Placement:** 6.7.7 — item 3 is bite T5b of the B4 lane (the user's decision, 2026-10-09: REFUSE the four lossy
+`: stack` stores, as the guide already says) — never 7.x.
 **Discovered:** 2026-10-08 against `build/cycc` 6.7.6 (roadmap.md's backlog); filed 2026-10-08 from roadmap.md.
 **Severity:** Medium
 **Affects:** cycc ≤ 6.7.6 (raw pair returns since multi-return, v3.7.2; the `: stack` store holes since v6.6.0)
@@ -84,6 +89,20 @@ Expected (if refused): a compile error naming the pair. Actual: both build with 
 - `_dt_arity_check` (`parse_decl.cyr:5080`) checks the destructure's count against a declared arity; nothing checks
   a single bind of a declared multi-value fn.
 - The statement parser takes `IDENT ,` as nothing; there is no multi-target assignment production.
+
+## Resolution so far (6.7.7)
+
+- **Item 4 — delivered (B4 bite T5).** `a, b = f();` / `a, b, c = f();` re-assigns existing variables: the
+  destructure's contract (one whole call; its declared arity; a provably one-value callee refused) on 2 or 3 plain
+  names, every value pushed before any store, each target stored at its width. A field, subscript, `*p`, tuple element
+  or `OP=` target, a const / enum constant, an aggregate / vector / u128 / slice / array / f32 target, a name given
+  twice and a bool target whose value is not declared bool are refused by name. The roadmap's first repro now has its
+  spelling: `t, v = f(7);`. Gate: `tests/gates/frontend/tuple_checked.sh` rows R18 / R19 / R20.
+- **Items 1–2 — settled, no change** (the user's decision, 2026-10-08): a single bind / assignment of a multi-value
+  call keeps its first value, as the guide documents; the tuple capture `var t: (i64, i64) = f();` is the spelling that
+  keeps them all.
+- **Item 3 — open, bite T5b of the same lane** (the user's decision, 2026-10-09: refuse): `_refuse_lossy_pair` at the
+  field, subscript, `*p` and `OP=` stores, each with a refusal row and a `?`-consumes row.
 
 ## Proposed fix
 

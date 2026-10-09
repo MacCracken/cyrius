@@ -2204,6 +2204,32 @@ fn _IFS_K(t): i64 {
     return 0;
 }
 
+# A `.field` on the result of a call (fn `fi`, named `noff`) that returns no struct: refused. 6.7.7
+# (B4, T5, R15): a MULTI-VALUE one is told how to read its values — bind them into a tuple first.
+fn _call_fld_err(S, fi, noff): i64 {
+    if (fi >= 0) { if (GFRS(S, fi) == MULTIRET_SID) { return _mret_fld_err(S, fi, noff); } }
+    ERR_IDENT(S, "cannot take a field of the result of ", noff, ": it does not return a struct", 0 - 1);
+    return 0;
+}
+fn _mret_fld_err(S, fi, noff): i64 {
+    if (_panic == 1) { return 0; }
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    PRSTR(": cannot take a field of the result of '");
+    PRSTR(S + 0xEC00000 + noff);
+    PRSTR("': it returns ");
+    PRNUM(GFRN(S, fi));
+    PRSTR(" values - bind them first, `var t: ");
+    _mret_spell(S, fi);
+    PRSTR(" = ");
+    PRSTR(S + 0xEC00000 + noff);
+    PRSTR("(..);`, then read `t.0`\n");
+    _err_excerpt(S);
+    _had_error = 1;
+    _panic = 1;
+    return 0;
+}
+
 # ⛔ 6.6.12 — A `.field` ON A CALL RESULT (`f(mk(p).n)`, `var r = mkp(3).y;`, `mk(p).v.x + 1`)
 # parsed nowhere: the factor returned straight after the call and the `.` was a syntax error in
 # every expression position. Cursor just past the callee IDENT; 1 = the call and its whole field
@@ -2224,7 +2250,7 @@ fn _call_field(S): i64 {
     if (sid <= 0 || GINFN(S) != 1) {
         # --syntax-only: a return type from a sibling file reads as a scalar, so stay silent.
         if (_syntax_only == 0) {
-            if (sid <= 0) { ERR_IDENT(S, "cannot take a field of the result of ", TOKVAL(S, ti), ": it does not return a struct", 0 - 1); }
+            if (sid <= 0) { _call_fld_err(S, fi, TOKVAL(S, ti)); }   # 6.7.7 (T5): + a multi-value one's hint
             else { _refuse_toplevel_struct_call(S, TOKVAL(S, ti)); }
         }
         # --syntax-only still parses a plain call's arguments, for the grammar errors in them.
@@ -2547,9 +2573,11 @@ fn _arr_sub_assign(S, noff): i64 {
     EPUSHR(S);            # the element address
     var cop = _asg_compound_tok(S);
     if (cop == 0) {
-        if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); }
-        STI(S, GTI(S) + 1);
-        PCMPE(S);
+        if (_masg_not_plain(S, " - an element is not one") == 0) {   # 6.7.7 (T5): `a[i], b = f();`
+            if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); }
+            STI(S, GTI(S) + 1);
+            PCMPE(S);
+        }
     } else {
         if (w != 0) { _arr_sub_load(S, w); }
         _asg_compound_op(S, cop, 0);
