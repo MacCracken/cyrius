@@ -375,6 +375,27 @@ cannot pack filed.
   the walkers and scanners the 6.7.x features each grew. Logic-preserving: byte-identical self-host + the whole-corpus
   differential, seed-derive on every bite. Optimization: the self_compile growth tax (1,175 ms at 6.7.6) and cycc size,
   measured same-box before / after.
+  - **The layout direction (user, 2026-10-09 — "just thoughts", settled at 6.7.13's open):** folders with direct
+    names instead of prefixed files, as `backend/` already does — `src/frontend/parse/expr.cyr` for `parse_expr.cyr`,
+    `parse/types/type.cyr` (beside `struct.cyr`, `tuple.cyr`, …) for `parse_types.cyr`, `parse/fn/` for the pieces of
+    `parse_fn.cyr` (definitions, the call path, the return / tail path, traits, generics, the const-fn evaluator),
+    `lex/` for `lex.cyr` + `lex_pp.cyr`; `cbt/` likewise (`commands.cyr` / `deps.cyr` by verb and stage). Measured
+    2026-10-09: cycc embeds no `src/frontend/` path (a pure move rebuilds byte-identical); the include chain is the
+    seven forks' `lex.cyr` / `parse.cyr` lines plus `parse.cyr`'s own; cybs's include handler takes a 4 KB name per
+    nesting level; ~90 gate files and the docs name these paths. How:
+    1. **Moves first, as their own bites — `git mv` + include lines + every path reference, no content change** (the
+       grep covers `tests/gates/`, `scripts/`, `.github/workflows/`, `programs/`, `cbt/`, docs, vidya, the open issues'
+       `file:line` pointers); byte-identical cycc and seed-derive prove it. Then the splits, each its own bite, so
+       history follows (`git log --follow`) and every diff stays reviewable.
+    2. **Keep the include graph as flat as today** — one parent includes a folder's files — since cybs's nesting
+       depth is bounded; seed-derive on every bite.
+    3. **Watch basename collisions** (`lex/lex.cyr` beside `ts/lex.cyr`) wherever a tool or diagnostic keys on a
+       basename (`#@file` markers, `CYRIUS_SYMS`, crash localization, cyrdoc).
+    4. **`src/`, `cbt/` and `programs/` are internal — free to move. `lib/` paths are the stdlib's public contract**
+       (`include "lib/str.cyr"`, `[deps] stdlib`, distlib): reorganizing `lib/` keeps every old path working (a
+       one-line include of the new home) and is the user's call per module.
+    5. **At 6.7.13, not before** — with no lanes in flight, and after the repair releases, whose issue files cite
+       today's `file:line`.
 - **Improve the libs with what the last months added**: where it makes `lib/` clearer or safer, use the 6.7.x
   language (traits, `const` / `const fn`, `bool`, tuples, default / named arguments, `loop` / `do`, `OP=`), fill the
   gaps the folds and the repair releases exposed, and retire hand-rolled patterns the language now covers. ⚠ A lib
