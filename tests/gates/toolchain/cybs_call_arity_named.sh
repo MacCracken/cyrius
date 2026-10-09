@@ -1,5 +1,5 @@
 #!/bin/sh
-# tests/gates/toolchain/cybs_call_arity_named.sh — 6.7.0, stack arguments 6.7.6
+# tests/gates/toolchain/cybs_call_arity_named.sh — 6.7.0, stack arguments 6.7.6, variable callees 6.7.6 BX
 #
 # cybs (the hand-assembly bootstrap compiler the seed assembles) passed only the six register
 # arguments: `emit_fn_call_pops` handled 0..6 and `emit_store_param` stored parameters 0..5. A
@@ -26,6 +26,14 @@
 #      arguments by POSITION (f8 is `.. + h * 10 + i`), so a swapped pair of stack arguments is red
 #      under either compiler — lane E2 had made f8 symmetric while cybs and cycc disagreed (D3).
 #   C  ANTI-VACUOUS: a 6-argument call still compiles and runs (exit 42)
+#   E  a call through a function-pointer VARIABLE keeps every argument (6.7.6 BX): cybs loaded a
+#      global callee with emit_var_load's `movabs rcx, &g; mov rax, [rcx]` AFTER the argument
+#      registers, so argument 4 (rcx) arrived as the global's address — `gp = &f4; gp(1, 2, 3, 4)`
+#      gave 1230 + junk. Now `mov rax, [&g]` (48 A1). Rows: a global inside a fn and at top
+#      level, a 7-argument call through a global (cycc's stack order), and the local and param
+#      shapes (rbp-relative, never clobbered). Calling a variable BY NAME is cybs's spelling;
+#      cycc's is `callptr(gp, ..)` — the gate derives both from one template and requires each
+#      compiler's run to set all five bits.
 #   D  cybs compiles src/main.cyr
 #
 # Mutations (6.7.6, each verified RED on B in a scratch copy of the tree):
@@ -40,6 +48,10 @@
 #   parse_fn_def does not call count_params (n stays 0)            -> B exits 0
 #   emit_fn_call_clean drops lane B's 2n-6 words                   -> B exits 59 (`k + f9(..)`)
 #   emit_fn_call_pops loads a[0] from [rsp + 8(n-2)]               -> B exits 139
+# BX (the variable-callee load; each a scratch copy of the tree with the one change, 2026-10-08):
+#   pffn_local_g calls emit_var_load again (the 6.7.5 code)          -> E exits 24 (bits 1, 2, 4)
+#   only the top-level arm goes back to emit_var_load                -> E exits 29 (bit 2)
+#   the 48 A1 load records no fixup (address 0)                      -> E exits 139
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || { echo "FAIL: cybs_call_arity_named: cannot cd to $ROOT"; exit 1; }
@@ -117,9 +129,47 @@ chmod +x "$D/c6" 2>/dev/null || true
 got=0; "$D/c6" || got=$?
 [ "$got" -eq 42 ] && echo "  ok   C: a 6-argument call compiles and runs (exit 42)" || bad "C: a 6-argument call exited $got, want 42"
 
+# E — IND(fp, ..) is `fp(..)` for cybs and `callptr(fp, ..)` for cycc; each check adds its bit, 31.
+cat > "$D/ind.tpl" <<'EOF'
+var gp = 0;
+var gq = 0;
+fn f4(a, b, c, d) { return a * 1000 + b * 100 + c * 10 + d; }
+fn f7(a, b, c, d, e, g, h) { return a * 1000000 + b * 100000 + c * 10000 + d * 1000 + e * 100 + g * 10 + h; }
+fn t1() { gp = &f4; return IND(gp, 1, 2, 3, 4); }
+fn t3() { gq = &f7; return IND(gq, 1, 2, 3, 4, 5, 6, 7); }
+fn t4() { var p = &f4; return IND(p, 1, 2, 3, 4); }
+fn tp(q) { return IND(q, 7, 6, 5, 4, 3, 2, 1); }
+fn t5() { return tp(&f7); }
+var ok = 0;
+if (t1() == 1234) { ok = ok + 1; }
+var r2 = IND(gp, 4, 3, 2, 1);
+if (r2 == 4321) { ok = ok + 2; }
+if (t3() == 1234567) { ok = ok + 4; }
+if (t4() == 1234) { ok = ok + 8; }
+if (t5() == 7654321) { ok = ok + 16; }
+syscall(60, ok);
+EOF
+sed 's/IND(\([a-z]*\), /\1(/g' "$D/ind.tpl" > "$D/ind_cybs.cyr"
+sed 's/IND(/callptr(/g' "$D/ind.tpl" > "$D/ind_cycc.cyr"
+ebits="bits: 1 global in a fn, 2 global at top level, 4 global 7 arguments, 8 local, 16 param 7 arguments"
+rc=0; "$D/cybs" < "$D/ind_cybs.cyr" > "$D/ind" 2> "$D/ind.err" || rc=$?
+if [ "$rc" -ne 0 ] || [ ! -s "$D/ind" ]; then bad "E: cybs refused a call through a function-pointer variable (rc $rc): $(head -1 "$D/ind.err")"
+else
+  chmod +x "$D/ind"
+  got=0; "$D/ind" || got=$?
+  if [ "$got" -eq 31 ]; then echo "  ok   E: calls through a global / local / param function pointer keep all their arguments (4 and 7)"
+  else bad "E: calls through a function-pointer variable exited $got, want 31 ($ebits)"; fi
+fi
+if [ -x "$CC" ]; then
+  "$CC" < "$D/ind_cycc.cyr" > "$D/ind_cc" 2>/dev/null || true
+  chmod +x "$D/ind_cc" 2>/dev/null || true
+  got=0; [ -s "$D/ind_cc" ] && { "$D/ind_cc" || got=$?; }
+  [ "$got" -eq 31 ] || bad "E: the fixture is not valid cyrius any more — $(basename "$CC") (callptr spelling) exited $got, want 31 ($ebits)"
+fi
+
 rc=0; "$D/cybs" < src/main.cyr > "$D/gen1" 2> "$D/gen1.err" || rc=$?
 if [ "$rc" -ne 0 ] || [ ! -s "$D/gen1" ]; then bad "D: cybs could not compile src/main.cyr (rc $rc): $(head -1 "$D/gen1.err")"
 else echo "  ok   D: cybs compiles src/main.cyr"; fi
 
 if [ "$fail" -ne 0 ]; then echo "FAIL: cybs_call_arity_named — $fail row(s) red"; exit 1; fi
-echo "PASS: cybs_call_arity_named — cybs passes 7+ arguments on the stack (7- and 9-argument calls, fncall7/fncall8 right), a 6-argument call works, and cybs compiles src/main.cyr (closure intact)"
+echo "PASS: cybs_call_arity_named — cybs passes 7+ arguments on the stack (7- and 9-argument calls, fncall7/fncall8 right), a 6-argument call works, a call through a function-pointer variable keeps argument 4, and cybs compiles src/main.cyr (closure intact)"

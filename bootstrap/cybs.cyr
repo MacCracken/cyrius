@@ -4173,12 +4173,7 @@ parse_factor_fn_new:
     add rsi, 0x7600028   # in_function
     mov rax, [rsi]
     cmp rax, 1
-    je pffn_local
-    mov rax, r8
-    call find_var_index
-    call emit_var_load
-    jmp pffn_callrax
-pffn_local:
+    jne pffn_local_g
     mov rax, r8
     call find_fn_local_index
     cmp rax, -1
@@ -4186,9 +4181,18 @@ pffn_local:
     call emit_fn_var_load
     jmp pffn_callrax
 pffn_local_g:
+# A global loads through rax alone, 48 A1 moffs64 = mov rax, [&g]: emit_var_load's
+# `movabs rcx, &g` came after the argument registers and clobbered rcx, argument 4. 6.7.6
     mov rax, r8
     call find_var_index
-    call emit_var_load
+    push rbx
+    mov rbx, rax
+    mov rax, 0xA148
+    call emit_2bytes
+    call record_fixup_rbx
+    xor rax, rax
+    call emit_8bytes
+    pop rbx
 pffn_callrax:
     call emit_call_rax
     call emit_fn_call_clean
