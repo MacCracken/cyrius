@@ -59,3 +59,9 @@ token's text; mapping to `file:line` needs the include boundaries pp_expand alre
 seed's caps — cybs.cyr is at **501 / 512 labels** and **112,175 / 131,072 input bytes** (gate row S,
 `tests/gates/toolchain/cybs_call_arity_named.sh`; see `2026-10-08-seed-asm-silent-caps-input-labels-code.md`), so
 the label budget decides how much of (b) fits. Seed-derive + closure after. No change to what cycc compiles.
+
+## Seed headroom (2026-10-09)
+
+Changing `bootstrap/cybs.cyr` needs no new seed, but the seed assembles it under three unchecked caps; the label
+table is the tight one (501 / 512). Size this fix's new labels against that headroom before placing it: if it needs
+more than is left, it rides the seed-rotation minor (roadmap_6.md § *A seed-rotation minor*), never a patch.

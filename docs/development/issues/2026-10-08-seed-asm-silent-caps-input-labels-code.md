@@ -6,7 +6,9 @@ assembles with exit 0 to a 130 B program that segfaults (its tail was dropped); 
 lbl5` for a label that is defined; 80,000 B of code assembles with exit 0 to a program whose tail is replaced
 (SIGSEGV). Latent today: `bootstrap/cybs.cyr` is inside all three (112,175 / 131,072 B, 501 / 512 labels, cybs's code
 21,660 / 65,536 B).
-**Placement:** unpinned — 6.x-line backlog — never 7.x. (a new seed binary is a new trusted root — the user's call)
+**Placement:** v6.7.x repair release — the code-cap row in gate row S (no new seed). The seed's own bounds checks
+belong to a seed-rotation MINOR, only if a new seed is ever needed (roadmap_6.md § *A seed-rotation minor*; user,
+2026-10-09) — never a patch, never 7.x.
 **Discovered:** 6.7.6 Break 1 (roadmap commit a29d1492, 2026-10-08; the input cap was probed then — "3 bytes over
 assembled a cybs 1 byte short, silently"); filed 2026-10-08 from roadmap.md.
 **Severity:** Medium — silent miscompilation by the trust root, latent (no shipped input is over a cap; two of the
@@ -53,8 +55,9 @@ Expected: each over-cap input refused by the seed with a message naming the cap,
 ## Proposed fix
 
 Bounds checks in `asm.cyr` (refuse: read one more byte after the cap and fail if it arrives; `lc >= 512` in `ADDL`;
-`cp >= 65536` in `EB`), and possibly larger regions. **Any of it is a new `bootstrap/asm` — a new trusted root, the
-USER's call**: the closure step (`cybs(bootstrap/asm.cyr) == bootstrap/asm`, seed-derive step 2) means asm.cyr and the
+`cp >= 65536` in `EB`), and possibly larger regions. **Any of it is a new `bootstrap/asm` — a new trusted root, and (user, 2026-10-09) its own MINOR,
+never a patch and never 7.x: roadmap_6.md § *A seed-rotation minor* — bounds checks, headroom for future expansion,
+and a full review of the seed while it is open**: the closure step (`cybs(bootstrap/asm.cyr) == bootstrap/asm`, seed-derive step 2) means asm.cyr and the
 committed binary change together, with `bootstrap/SHA256SUMS`. Until then, the cheap interim that needs no new seed:
 add a CODE row to gate row S (cybs's assembled size − 120 B ELF header < 65,536 — today 21,660), so all three caps are
 guarded for the one input that matters.

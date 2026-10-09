@@ -1,7 +1,8 @@
 # Cyrius Development Roadmap — after v6.7.x
 
 **Scope — FORWARD ONLY**: the work placed after the active minor (v6.7.x): the DCE compaction arc and the net
-migration, v6.8.x/v6.9.x RISC-V rv64, and the shape of what follows v6.x. Not a record of shipped work and not a spec
+migration, a seed-rotation minor (only if a new seed is ever needed), v6.8.x/v6.9.x RISC-V rv64, and the shape of
+what follows v6.x. Not a record of shipped work and not a spec
 for the active minor.
 
 | You want | Go to |
@@ -104,6 +105,36 @@ nothing (raw 160 on the aarch64 fork is silent). Already shipped and no longer l
 - **Acceptance**: every family named in `lib/syscalls_linux_common.cyr` (or the peer that owns it) with a Darwin arm, a
   row whose placement `esysxlat_row_order.sh` passes, and a runtime assertion in `tests/tcyr/crossos/` that fails when
   the number is wrong.
+
+---
+
+## A seed-rotation minor — only if a new seed is needed at all (user, 2026-10-09)
+
+**Not scheduled — a consideration.** The seed (`bootstrap/asm`, 29,024 B, `bootstrap/SHA256SUMS`) assembles exactly one
+input, `bootstrap/cybs.cyr`, and today that input is inside all three of the seed's unchecked caps (input 112,175 /
+131,072 B · labels 501 / 512 · code 21,660 / 65,536 B — [issue](issues/2026-10-08-seed-asm-silent-caps-input-labels-code.md)).
+So nothing forces a new seed: v6.7.x only guards the one input (gate row S of `cybs_call_arity_named.sh` gains the
+code-cap row it lacks). **The trigger** is cybs.cyr outgrowing a cap — the label table is the tight one (11 left), and
+the two open cybs fixes ([the silent statement call](issues/2026-10-08-cybs-undefined-fn-call-in-statement-silent.md),
+[the locationless syntax error](issues/2026-10-08-cybs-bare-syntax-error-no-location.md)) are sized against that
+headroom first — or a deliberate decision to rotate.
+
+**If it happens, it is its own MINOR** (the user): a new seed is a new trusted root, so it never rides a patch and it
+is never a reason to open 7.x — it opens a 6.x minor (a minor break). While the seed is open, everything about it is
+done once:
+
+1. **Bounds checks** on every fixed region (input, labels, code, and any other table): an over-cap input is refused
+   with a message naming the cap, a non-zero exit and nothing emitted — never a silent truncation or overwrite.
+2. **Headroom for future expansion**: caps sized for cybs's growth (its pending fixes, later rungs), not for today's
+   cybs.cyr.
+3. **Review and improvement while it is touched**: a full audit of `bootstrap/asm.cyr` (every fixed region and its
+   offsets, the instruction subset, error paths and exit codes, messages that name file and line where the input has
+   them), anything that simplifies the closure step, and size — the seed stays the smallest trusted base it can be.
+4. **The trust procedure as one change**: `asm.cyr`, the committed `bootstrap/asm` and `bootstrap/SHA256SUMS` move
+   together; the closure step (`cybs(asm.cyr) == bootstrap/asm`) and `scripts/seed-derive-cycc.sh` stay byte-exact; the
+   release signature, install / CI hash checks and the trust-story docs are updated in the same release; the
+   CHANGELOG and ecosystem-migration.md say what changed in the root and why.
+5. **cybs work that needs more than the old headroom** rides with it.
 
 ---
 

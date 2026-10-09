@@ -53,3 +53,9 @@ Then a fn-pointer variable in statement position (`fp(5);`) is refused instead o
 a cybs row asserting `nosuch(1);` exits non-zero with the name. Mandatory after: the seed-derive gate
 (`sh scripts/seed-derive-cycc.sh`) and the closure (`cybs(bootstrap/asm.cyr) == bootstrap/asm`). No change to what
 cycc compiles; cybs's accepted language only narrows to what cycc already refuses.
+
+## Seed headroom (2026-10-09)
+
+Changing `bootstrap/cybs.cyr` needs no new seed, but the seed assembles it under three unchecked caps; the label
+table is the tight one (501 / 512). Size this fix's new labels against that headroom before placing it: if it needs
+more than is left, it rides the seed-rotation minor (roadmap_6.md § *A seed-rotation minor*), never a patch.
