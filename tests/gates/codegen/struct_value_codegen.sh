@@ -7,9 +7,15 @@
 # compilers built from this tree (rows A); the release gate runs it on the four real hosts.
 #
 #   F  x86: `if (h.m)` / `while (h.m)` on an i8 / i16 / i32 field branched on the flags of the
-#      statement before it (EFIELD_LOAD_W's narrow load never cleared `_flags_reflect_rax`)
+#      statement before it (EFIELD_LOAD_W's narrow load never cleared `_flags_reflect_rax`).
+#      F2+ (6.7.6 follow-up, FE): the same skip after a narrow typed LOCAL (EFLLOAD_W's narrow arms),
+#      mulh64 (EMULH) and — found by the audit — `~`, `&x`, `&g`, `&f`, a string literal, f64_floor
+#      and every PE syscall reroute (tcyr F15-F21). EFLLOAD_W and EMULH clear the tracker, and
+#      ECONDCMP skips its `test` only when the setter was the LAST emit (`_flags_cp`)
 #   I  a name intrinsic's result (`mulh64`, `fncallN`, `callptr`) kept its LAST argument's struct
-#      type, so `fncall1(&f, n) + 1` with `n: Num` dispatched `Num_add` (100 where 8 is right)
+#      type, so `fncall1(&f, n) + 1` with `n: Num` dispatched `Num_add` (100 where 8 is right).
+#      I3 (FE): ... but an `&f` callee returning `: f64` with an f64 last argument keeps the f64 type
+#      that leak gave it (`_icall_result`): `fncall1(&dbl, d) + 1.0` is an f64 add, as in 6.7.5
 #   P  a PARENTHESISED argument to an address-passed parameter (`rd3((a))`, `rd1((s))`,
 #      `rd1((mk1(4)))`) pushed its value: SIGSEGV. Parentheses wrapping the whole argument are
 #      transparent (`_sarg_paren`); its refusals (another struct, no frame at top level) are the
@@ -19,6 +25,10 @@
 #      (`var q: K = (z.k)`: SIGSEGV), in a fn and at top level: transparent at every destination
 #      (`_fsc_paren`, `_asg_paren`, `_scv_peel` + `_sc_pwrap` + `_fnc_agg`, `_sci_pname`,
 #      `_gci_src`); a source of another struct is refused once, by name, as unwrapped
+#   Q10 / O7 (6.7.6 follow-up, FE): a closure body declaring a `var` inside the wrap / the operand ran
+#      PARSE_VAR's arm inside the outer one, which zeroed `_scv_pk` / `_scv_term` and cleared
+#      `_sc_fcw`: Q10 refused ("expected ';', got ')'"), O7 SIGSEGV. `_scv_arm` saves them and
+#      `_scv_disarm` restores them (`_scv_vec`); tcyr Q28-Q30 and O12-O14
 #   O  a struct result over 8 B as the RIGHT operand of an address-passed operator parameter
 #      (`s - mk3(4)`, `p + p.dup()`, by-value or `*S`, bare or wrapped) pushed its first word:
 #      SIGSEGV. The operand asks for the result's temp (`_op_big_arm` / `_op_big_take`); at top
@@ -126,6 +136,20 @@
 #   M-R7 `_op_star_param` always 1 (the old wording)          -> RED R6
 #   M-N1a lib/fnptr.cyr's Linux x86 fncall8 arm back to the C order -> RED N1 (87); the same mutant
 #       turns cx_backend_parity.sh RED (M-N1b: T native 57 passed, 1 failed)
+#   (FE, 2026-10-08, the same procedure)
+#   M-F2 ECONDCMP without its `GCP(S) != _flags_cp` test         -> RED F5 F6, A1-A4 (tcyr F15-F20; F21
+#       on PE under wine: 12 red with the pre-fix compiler); A5 A6 green (the tracker is x86's only)
+#   M-F3 M-F2 + EFLLOAD_W without its clear                      -> RED F2 F3 F5 F6, A1-A4 (tcyr F9-F12)
+#   M-F4 M-F2 + EMULH without its clear                          -> RED F4 F5 F6, A1-A4 (tcyr F14)
+#   M-V1 `_scv_restore` resetting as before (pk 0, term 5, fcw / fla -1) -> RED Q10 (expected ';'),
+#       O7 (139), A1-A6 (the values file does not build: tcyr Q28)
+#   M-V2 `_scv_restore` not restoring `_sc_fcw`                  -> RED Q10 O7 (139), A1-A5 (SIGSEGV at
+#       tcyr Q28), A6 (tcyr Q28 O12-O14 wrong values)
+#   M-V3 `_scv_restore` not restoring `_scv_pk`                  -> RED Q10 (expected ';'), A1-A6 (no build)
+#   M-I3 `_icall_result` never typing f64                         -> RED I3 (exit 2), A1-A6 (tcyr I8-I11 I14)
+#   M-I4 `_icall_result` ignoring the last argument's type        -> RED A1-A6 (tcyr I13)
+#   M-I5 `_icall_result` ignoring the callee (`cfi` / `: f64`)    -> RED A1-A6 (tcyr I12)
+#   M-I6 `_lfa_load` not recording `_lfa_end` (no static callee)   -> RED I3, A1-A6 (tcyr I8-I11 I14)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -175,9 +199,15 @@ tcyr() {
 E='\nsyscall(60, main());\n'
 
 exits f01 0 "F1: if (h.m) on a zero i8 field after x = x + 1 (the filed repro: 1 on x86)" "struct H { n; m: i8; k: i32; }\nfn main(): i64 { var h = H { 1, 0, 3 }; var x = 5; x = x + 1; if (h.m) { return 1; } return 0; }$E"
+exits f02 0 "F2: if (b) on a zero u8 LOCAL after x = x + 1 (the filed repro: 1 on x86)" "fn main(): i64 { var b: u8 = 0; var x = 5; x = x + 1; if (b) { return 1; } return 0; }$E"
+exits f03 1 "F3: if (b) on a nonzero i8 local after y = y - 3 left ZF set (0 on x86)" "fn g(y): i64 { var b: i8 = 0 - 1; y = y - 3; if (b) { return 1; } return 0; }\nfn main(): i64 { return g(3); }$E"
+exits f04 0 "F4: if (mulh64(x, y + 1)) with mulh64(5, 7) == 0 (the filed repro: 1)" "fn g(x, y): i64 { if (mulh64(x, y + 1)) { return 1; } return 0; }\nfn main(): i64 { return g(5, 6); }$E"
+exits f05 0 "F5: if (~(a + b)) with a + b == -1 (1 on x86)" "fn g(a, b): i64 { if (~(a + b)) { return 1; } return 0; }\nfn main(): i64 { return g(0 - 2, 1); }$E"
+exits f06 1 "F6: if (&z) after y = y - 3 (0 on x86)" "fn g(y): i64 { var z = 0; y = y - 3; if (&z) { return 1; } return 0; }\nfn main(): i64 { return g(3); }$E"
 NUM='struct Num { a; b; }\nfn Num_add(x: Num, y) { return 100; }\nfn id1(x) { return 7; }\n'
 exits i01 8 "I1: fncall1(&id1, n) + 1 (the filed repro: 100)" "include \"lib/fnptr.cyr\"\n${NUM}fn main() { var n: Num = Num { 1, 2 }; return fncall1(&id1, n) + 1; }$E"
 exits i02 1 "I2: mulh64(3, n) + 1 (the filed repro: 100)" "${NUM}fn main() { var n: Num = Num { 1, 2 }; return mulh64(3, n) + 1; }$E"
+exits i03 1 "I3: fncall1(&dbl, d) + 1.0, dbl: f64 and d: f64, is an f64 add (6.7.5: 7.0; E-2: integer add)" "include \"lib/fnptr.cyr\"\nfn dbl(x: f64): f64 { return x * 2.0; }\nfn main(): i64 { var d: f64 = 3.0; var r = fncall1(&dbl, d) + 1.0; var t: f64 = 7.0; if (r == t) { return 1; } return 2; }$E"
 P3S='struct P3 { x; y; z; }\nfn rd3(p: *P3) { return p.z; }\nfn mk3(v): P3 { var t: P3 = P3 { v, v, v }; return t; }\n'
 S1S='struct S1 { v; }\nfn rd1(p: *S1) { return p.v; }\nfn mk1(v): S1 { var t: S1; t.v = v; return t; }\n'
 exits p01 3 "P1: rd3((a)) (the filed repro: SIGSEGV)" "${P3S}fn main() { var a: P3 = P3 { 1, 2, 3 }; return rd3((a)); }$E"
@@ -195,6 +225,8 @@ refused q06 "cannot copy 'q' into a struct field of a different struct type: 'i'
 refused q07 "cannot copy 'mkq' into a variable of a different struct/vector type: 'v'" "Q7: v = (mkq(5))" "${KQ}fn main(): i64 { var v = K { 0, 0, 0 }; v = (mkq(5)); return v.a; }$E"
 refused q08 "fn return struct-id differs from declared var type" "Q8: var v: K = (mkq(5))" "${KQ}fn main(): i64 { var v: K = (mkq(5)); return v.a; }$E"
 refused q09 "cannot copy 'k' into a variable of a different struct/vector type: 'v'" "Q9: var v: K = (z.k) with z.k: Q" "struct K { a; b; c; }\nstruct Q { a; b; c; }\nstruct Z { m; k: Q; }\nfn main(): i64 { var z = Z { 1, 2, 3, 4 }; var v: K = (z.k); return v.a; }$E"
+exits q10 0 "Q10: var q: K = (mkk(fncall1(|x| { var y = x * x; return y; }, 2))); (the filed repro: expected ';')" "include \"lib/fnptr.cyr\"\nstruct K { a; b; c; }\nfn mkk(v): K { var t: K = K { v, v + 1, v + 2 }; return t; }\nfn main(): i64 { var q: K = (mkk(fncall1(|x| { var y = x * x; return y; }, 2))); return q.a * 100 + q.b * 10 + q.c - 456; }$E"
+exits o07 5 "O7: s - mkv(fncall1(|x| { var y = x; return y; }, 4)) (the filed repro: SIGSEGV)" "include \"lib/fnptr.cyr\"\nstruct V3 { x; y; z; }\nfn V3_sub(a: *V3, b: *V3): i64 { return a.z - b.z; }\nfn mkv(v): V3 { var t: V3 = V3 { v, v, v }; return t; }\nfn main(): i64 { var s: V3 = V3 { 9, 9, 9 }; return s - mkv(fncall1(|x| { var y = x; return y; }, 4)); }$E"
 exits o01 5 "O1: s - mk3(4) into *P3 operands (the filed repro: SIGSEGV)" "${P3S}fn P3_sub(a: *P3, b: *P3) { return a.z - b.z; }\nfn main() { var s: P3 = P3 { 9, 9, 9 }; return s - mk3(4); }$E"
 PT2='struct Pt { x; y; }\nfn Pt_add(a: Pt, b: Pt) { return a.x + b.x + a.y + b.y; }\nimpl Pt { fn dup(self): Pt { var t: Pt = Pt { self.x, self.y }; return t; } }\nfn mk2(v): Pt { var t: Pt = Pt { v, v }; return t; }\n'
 exits o02 6 "O2: p + p.dup() (the filed repro: SIGSEGV)" "${PT2}fn main() { var p: Pt = Pt { 1, 2 }; return p + p.dup(); }$E"

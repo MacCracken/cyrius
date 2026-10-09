@@ -113,7 +113,8 @@ boxed idiom, not converted. Until 6.7.6 the initializer stored the f64 bits, so 
 silently. **Every other write into an `f32` rounds the same way (6.7.6)**: an assignment `x = 1.5`
 (a local or a global, a statement or a classic-`for` step), a field store `p.x = 1.5` (through a
 `*T` too), a struct-literal field `P { 1.5 }` and an argument to an `f32` parameter (`f(1.5)`, a
-method, a fn defined below the call). Each stored the f64 bits as well. An `f32` operator still
+method, a fn defined below the call, and the right operand of an operator overload: `r + 1.5` with
+`fn R_add(self, b: f32)`). Each stored the f64 bits as well. An `f32` operator still
 reads its right operand as f32 bits (the next paragraph): `x = x + 1.5` adds 1.5's low 32 bits, then
 stores an `f32` — write `x + f32_from(1.5)`.
 
@@ -606,11 +607,14 @@ operand, a value, an if-expression condition): `b < c` is true for `b` 2^64 - 1 
 operand, and `!b` (`b == 0`) — `if (b)` is true for `b` 2^64, whose low word is 0. A `match b` /
 `switch (b)` on a `u128` subject compares it on all 128 bits with each arm or case value, an integer
 zero-extended (`case -1:` is 2^64 - 1) and a `u128` arm as it is; the subject is read once, before
-any arm is tested. A `u128` read where an integer is expected — an argument, `var n = b`,
+any arm is tested. A `match n` on an INTEGER subject compares a `u128` arm on all 128 bits too,
+the subject zero-extended, as `n == b` does: `match 0 { b => .. }` does not take the arm for `b`
+2^64. A `u128` read where an integer is expected — an argument, `var n = b`,
 `return b` — is its low word, as it always was. A `u128` parameter is an 8-byte slot (the low word).
 Before 6.7.6 neither spelling carried (both worked on the low word and left the high word alone),
 the other operators did the same silently, a comparison read the low words as SIGNED integers, a
-truth test and a `match` / `switch` subject read the low word, a plain `b = c` / `b = 5` stored the
+truth test and a `match` / `switch` subject (and a `u128` arm of an integer `match`) read the low
+word, a plain `b = c` / `b = 5` stored the
 low word and kept the old high word, and a `u128` local initializer stored its value into BOTH
 halves.
 
@@ -1272,7 +1276,11 @@ Str's 16-byte header and past it.
 
 The result of a name intrinsic — `mulh64(..)`, `fncall0`..`fncall8(..)`, `callptr(..)` — is an
 untyped word whatever its last argument was: `fncall1(&f, n) + 1` with `n` a struct adds 1. Before
-6.7.6 it kept the last argument's struct type and dispatched that struct's `_add`.
+6.7.6 it kept the last argument's struct type and dispatched that struct's `_add`. The one case
+where that old typing was right is kept: when the callee is written `&f` and `f` returns `: f64`,
+and the last argument is an f64, the result is an f64 (`fncall1(&dbl, d) + 1.0` is an f64 add), as
+it was before 6.7.6. Through a variable or a closure, or with any other last argument, the result
+is an untyped word: write `f64_add(fncall1(fp, d), 1.0)` or bind it to a `var r: f64`.
 
 ## Strings
 
@@ -4023,7 +4031,9 @@ and a closure's `{ block }` body is statements as before.
 one struct type of 8 bytes or less, whose type the result keeps (so `var z: S = if ..`, struct
 arguments and operator overloads see it). Mixing kinds is refused by name (`if expression branches
 differ in type: an integer here, an f64 before it`), and so is a struct value over 8 bytes, a vector,
-a `u128` or a `: stack` pair — branch on a pointer (`&x`) instead. The result is a `bool` when every
+a `u128` (a `u128` name, and since 6.7.6 a `u128` `+` / `-` result such as `{ b - 1 }`, which compiled
+and lost its high word) or a `: stack` pair — branch on a pointer (`&x`) instead. A `u128` comparison
+(`{ b == c }`) is an integer, as everywhere. The result is a `bool` when every
 branch is boolean (6.7.3): `var b: bool = if (c) { x > 0 } else { false };`. ⚠ An untyped variable
 holding a float is an integer (ADR-002), so `if (c) { u } else { 2.5 }` with `var u = 1.5;` is a
 mix — declare it `: f64`. And an untyped `var t = if (c) { 1.5 } else { 2.5 };` stays untyped (as

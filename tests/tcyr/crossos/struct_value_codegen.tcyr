@@ -5,18 +5,26 @@
 #   F  `if (h.m)` / `while (h.m)` on an i8 / i16 / i32 field after an arithmetic statement: x86
 #      skipped the `test` and branched on the statement's flags (the narrow field load never cleared
 #      the flags tracker). Each row's field disagrees with the flags the statement before it left.
+#      F9+ (6.7.6 follow-up, FE): the same skip after every other emit that wrote rax without
+#      clearing the tracker — a narrow typed LOCAL, mulh64, `~`, `&x` / `&g` / `&f` / a string
+#      literal, f64_floor and (F21, PE only) a Win32 syscall reroute. ECONDCMP now skips the test
+#      only when the flag-setting op was the last thing emitted.
 #   I  a name intrinsic's result (`mulh64`, `fncall0`..`fncall8`, `callptr`) is an untyped word: it
 #      inherited its LAST argument's struct type, so `fncall1(&f, n) + 1` with `n: Num` dispatched
-#      `Num_add` (100 where 8 is right).
+#      `Num_add` (100 where 8 is right). I8-I14 (FE): the one type the old leak got right is kept —
+#      an `&f` callee returning `: f64` with an f64 last argument is an f64 (`+ 1.0` adds 7.0).
 #   P  a PARENTHESISED argument to an address-passed parameter (`rd3((a))`, `rd1((s))`,
 #      `rd1((mk1(4)))`) was pushed as its value and dereferenced: SIGSEGV. Parentheses around the
 #      whole argument are transparent at any depth, for every argument shape.
 #   Q  a PARENTHESISED struct source into a struct-typed field (`o.i = (z.k)`: 72 where 78 is
 #      right), a struct variable (`w = (j)`: one word) or a declaration (`var q: K = (z.k)`:
-#      SIGSEGV), in a fn, at top level and in a for step — every source shape.
+#      SIGSEGV), in a fn, at top level and in a for step — every source shape. Q28-Q30 (6.7.6
+#      follow-up, FE): with a closure that declares a `var` inside the wrap (refused: the inner
+#      declaration reset the outer one's state).
 #   O  a struct result over 8 B (a free call, a method, an operator; retptr or rax:rdx) as the
 #      right operand of an operator that takes it by address: `s - mk3(4)` and `p + p.dup()`
-#      pushed its first word and SIGSEGV'd.
+#      pushed its first word and SIGSEGV'd. O12-O14 (FE): the call's argument holds a closure that
+#      declares a `var` (SIGSEGV: the inner declaration cleared the operand's `_sc_fcw`).
 #   S  a `: Str` field as a source is a Str HANDLE: into a Str parameter, variable, declaration and
 #      field (bare or wrapped) it is the handle as ever. Into a struct of ANOTHER type it is now
 #      refused by name (the gate's S rows) — it compiled and read past the Str's header.
@@ -49,6 +57,9 @@ fn Num_add(x: Num, y) { return 100; }
 fn Num_sub(x: Num, y) { return 100; }
 fn id1(x) { return 7; }
 fn id2(x, y) { return 7; }
+fn dblf(x: f64): f64 { return x * 2.0; }
+fn mulf(x: f64, y: f64): f64 { return x * y; }
+fn intf(x: f64): i64 { return 7; }
 var GN = Num { 1, 2 };
 
 # F — each row in its own fn, so the flags state it tests is the one its own statement left.
@@ -75,6 +86,23 @@ fn f_zero_i32(): i64 {
     return c;
 }
 
+fn f_l_u8(): i64 { var b: u8 = 0; var x = 5; x = x + 1; if (b) { return 1; } return 0; }
+fn f_l_i16(): i64 { var b: i16 = 0; var x = 5; x = x + 1; if (b) { return 1; } return 0; }
+fn f_l_i32(): i64 { var b: i32 = 0; var x = 5; var c = 0; x = x + 1; while (b) { c = c + 1; if (c > 3) { break; } } return c; }
+fn f_l_i8n(): i64 { var b: i8 = 0 - 1; var y = bits(3); y = y - 3; if (b) { return 1; } return 0; }
+var GB8: u8 = 0;
+fn f_g_u8(): i64 { var x = 5; x = x + 1; if (GB8) { return 1; } return 0; }
+fn f_mulh(x, y): i64 { if (mulh64(x, y + 1)) { return 1; } return 0; }
+fn f_not(a, b): i64 { if (~(a + b)) { return 1; } return 0; }
+fn f_laddr(): i64 { var z = 0; var y = bits(3); y = y - 3; if (&z) { return 1; } return 0; }
+fn f_str(): i64 { var y = bits(3); y = y - 3; if ("s") { return 1; } return 0; }
+fn f_faddr(): i64 { var y = bits(3); y = y - 3; if (&f_str) { return 1; } return 0; }
+fn f_gaddr(): i64 { var y = bits(3); y = y - 3; if (&GB8) { return 1; } return 0; }
+fn f_floor(k): i64 { if (f64_floor(k + 0)) { return 1; } return 0; }
+#ifdef CYRIUS_TARGET_WIN
+fn f_seek(w): i64 { if (syscall(8, 1, 0, w + 1)) { return 1; } return 0; }
+#endif
+
 fn flags(): i64 {
     assert_eq(f_i8(), 0, "F1: if (h.m) on a zero i8 field after x = x + 1");
     assert_eq(f_i16(), 0, "F2: if (h.m) on a zero i16 field after a[0] -= 1");
@@ -85,6 +113,21 @@ fn flags(): i64 {
     assert_eq(f_global(), 0, "F6: if (GH.k) on a global's i32 field");
     assert_eq(f_zero_flags(), 1, "F7: if (h.m) on a NONZERO i8 field after y = y - 3 left ZF set");
     assert_eq(f_zero_i32(), 7, "F8: while (h.k) on a nonzero i32 field after y = y - 3 counts it down");
+    assert_eq(f_l_u8(), 0, "F9: if (b) on a zero u8 LOCAL after x = x + 1");
+    assert_eq(f_l_i16(), 0, "F10: if (b) on a zero i16 local");
+    assert_eq(f_l_i32(), 0, "F11: while (b) on a zero i32 local runs no iteration");
+    assert_eq(f_l_i8n(), 1, "F12: if (b) on a NONZERO i8 local after y = y - 3 left ZF set");
+    assert_eq(f_g_u8(), 0, "F13: if (G) on a zero u8 GLOBAL after x = x + 1");
+    assert_eq(f_mulh(5, 6), 0, "F14: if (mulh64(5, 6 + 1)) is 0");
+    assert_eq(f_not(0 - 2, 1), 0, "F15: if (~(a + b)) with a + b == -1");
+    assert_eq(f_laddr(), 1, "F16: if (&z) after y = y - 3");
+    assert_eq(f_str(), 1, "F17: if (\"s\") after y = y - 3");
+    assert_eq(f_faddr(), 1, "F18: if (&fn) after y = y - 3");
+    assert_eq(f_gaddr(), 1, "F19: if (&global) after y = y - 3");
+    assert_eq(f_floor(0x3FE0000000000000), 0, "F20: if (f64_floor(0.5 + 0)) is 0.0");
+#ifdef CYRIUS_TARGET_WIN
+    assert_eq(f_seek(0 - 1), 0, "F21: if (syscall(8, 1, 0, w + 1)): the PE lseek reroute's 0");
+#endif
     return 0;
 }
 
@@ -98,10 +141,31 @@ fn intrinsics(): i64 {
     assert_eq(fncall1(&id1, GN) + 1, 8, "I5: a global struct as the last argument");
     var a = fncall1(&id1, n) + mulh64(5, n);
     assert_eq(a, 7, "I6: two intrinsic results added");
+    # I8+ (FE): an `&f` callee returning `: f64` with an f64 last argument keeps the f64 type 6.7.5
+    # gave it (the last argument's) — `+ 1.0` is an f64 add; any other call stays an untyped word.
+    var d: f64 = 3.0;
+    var t: f64 = 7.0;
+    var r: f64 = fncall1(&dblf, d) + 1.0;
+    assert_eq(r == t, 1, "I8: fncall1(&dblf, d) + 1.0 is an f64 add (7.0)");
+    var r2: f64 = callptr(&dblf, d) + 1.0;
+    assert_eq(r2 == t, 1, "I9: callptr(&dblf, d) + 1.0");
+    var two: f64 = 2.0;
+    var r3: f64 = fncall2(&mulf, d, two) + 1.0;
+    assert_eq(r3 == t, 1, "I10: fncall2(&mulf, d, 2.0) + 1.0");
+    var w: f64 = 12.5;
+    var r4: f64 = fncall1(&dblf, fncall1(&dblf, d)) + 0.5;
+    assert_eq(r4 == w, 1, "I11: nested: fncall1(&dblf, fncall1(&dblf, d)) + 0.5");
+    # I12 / I13 add 1.0 to an untyped word: an integer add of its bits (an f64 add would give 1.0).
+    assert_eq(fncall1(&intf, d) + 1.0, 0x3FF0000000000007, "I12: an integer callee with an f64 argument: an untyped word");
+    var x = 5;
+    assert_eq(fncall1(&dblf, x) + 1.0, 0x3FF000000000000A, "I13: an f64 callee with an integer argument: untyped, as before 6.7.6");
+    assert_eq(GI3 == t, 1, "I14: at top level");
     return 0;
 }
 var GI1 = fncall1(&id1, GN) + 1;
 var GI2 = mulh64(3, GN) + 1;
+var GD3: f64 = 3.0;
+var GI3: f64 = fncall1(&dblf, GD3) + 1.0;
 
 # P — parenthesised arguments. P3 is 24 B (a retptr return), S1 8 B (in rax).
 struct P3 { x; y; z; }
@@ -230,6 +294,12 @@ fn q_decls(): i64 {
     assert_eq(s3(&d6), 78, "Q21: var d6: P3 = ((j))");
     d1.x = 99;
     assert_eq(j.x, 21, "Q22: var d1: P3 = (j) copied: a write to d1 leaves j");
+    var d7: P3 = (mk3(fncall1(|x| { var y = x * x; return y; }, 2)));
+    assert_eq(s3(&d7), 12, "Q28: var d7: P3 = (mk3(fncall1(a closure declaring a var))) (refused: expected ';')");
+    var d8: P3 = (mk3(fncall1(|x| { var y = x; return y; }, 2)).dbl());
+    assert_eq(s3(&d8), 12, "Q29: var d8: P3 = (mk3(..closure var..).dbl())");
+    var d9: P3 = (mk3(fncall1(|x| { var t: P3 = mk3(x); return t.z; }, 1)));
+    assert_eq(s3(&d9), 3, "Q30: the closure declares a struct-typed var of its own");
     return 0;
 }
 #ifndef CYRIUS_TARGET_CX
@@ -276,6 +346,9 @@ fn operands(): i64 {
     assert_eq(s3(&c), 69, "O6: a + (b + mk3(1)), nested operator and call results");
     var d: P3 = a + mk3(2);
     assert_eq(s3(&d), 12, "O7: var d: P3 = a + mk3(2)");
+    assert_eq(s - mkv(fncall1(|x| { var y = x; return y; }, 4)), 5, "O12: s - mkv(fncall1(a closure declaring a var)) (SIGSEGV)");
+    assert_eq(s - (mkv(fncall1(|x| { var y = x; return y; }, 4))), 5, "O13: ... wrapped");
+    assert_eq(mkv(fncall1(|x| { var y = x; return y; }, 12)) - s, 3, "O14: ... as the LEFT operand");
     return 0;
 }
 #ifndef CYRIUS_TARGET_CX

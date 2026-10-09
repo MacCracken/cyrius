@@ -18,7 +18,15 @@ var _AARCH64_BACKEND = 0;
 # architecturally undefined per Intel SDM). Read by ECONDCMP in
 # parse_ctrl.cyr to skip a redundant ETESTAZ when the bare-value-
 # in-rax flow already has correct ZF.
+# ⛔ 6.7.6 — and the setter's CP (`_flags_cp`, via _flags_set): ECONDCMP skips the test ONLY when
+# nothing was emitted since the setter. The "every rax writer clears it" contract above was kept by
+# hand and missed by a class of emitters — a narrow typed local load, mulh64, `~`, `&x` / `&g` /
+# `&f` / a string literal, f64_floor and every PE syscall reroute (raw `pop rax` + an IAT call) — so
+# `y = y - 3; if (b)` branched on the subtraction's ZF. The CP test closes the class: an emit after
+# the setter, flag-preserving or not, forces the `test`. CHANGELOG [6.7.6]
 var _flags_reflect_rax = 0;
+var _flags_cp = 0 - 1;
+fn _flags_set(S): i64 { _flags_reflect_rax = 1; _flags_cp = GCP(S); return 0; }
 
 # v5.6.9 O2 category 3: redundant push/pop cancellation tracker.
 # Records CP immediately AFTER any EPUSHR/ESPILL emit. When the
@@ -97,7 +105,7 @@ fn EMOVI(S, v): i64 {
     if (v == 0) {
         # xor eax, eax (2 bytes, clears rax — faster and smaller than movabs)
         EB(S, 0x31); EB(S, 0xC0);
-        _flags_reflect_rax = 1;   # xor rax, rax → ZF=1; flag good
+        _flags_set(S);   # xor rax, rax → ZF=1; flag good
         return 0;
     }
     if (v > 0) { if (v < 0x80000000) {
@@ -179,7 +187,7 @@ fn _TRY_COMBINE_SHUTTLE(S): i64 {
     }
     return 0;
 }
-fn EADDR(S): i64 { if (_IR_REC0(S, IR_ADD) == 1) { return 0; } _TRY_COMBINE_SHUTTLE(S); E3(S, 0xC80148); _flags_reflect_rax = 1; return 0; }
+fn EADDR(S): i64 { if (_IR_REC0(S, IR_ADD) == 1) { return 0; } _TRY_COMBINE_SHUTTLE(S); E3(S, 0xC80148); _flags_set(S); return 0; }
 # v5.11.51: rax += imm32 (sign-extended to 64). Used by the byte-array
 # literal `var foo[N] = { 0x.., ... };` parser path to compute &var + i
 # without going through a full expression evaluation. Encoding:
@@ -190,7 +198,7 @@ fn EADDRA_IMM(S, n): i64 {
     EB(S, (n >> 8) & 0xFF);
     EB(S, (n >> 16) & 0xFF);
     EB(S, (n >> 24) & 0xFF);
-    _flags_reflect_rax = 1;
+    _flags_set(S);
     return 0;
 }
 # v5.11.54: MS-x64 reg-move + RSP-adjust named ops, used by the EFI
@@ -307,12 +315,13 @@ fn EALIGN_RSP_16(S): i64 {
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xE4); EB(S, 0xF0);
     return 0;
 }
-fn ESUBR(S): i64 { if (_IR_REC0(S, IR_SUB) == 1) { return 0; } E3(S, 0xC82948); _flags_reflect_rax = 1; return 0; }
+fn ESUBR(S): i64 { if (_IR_REC0(S, IR_SUB) == 1) { return 0; } E3(S, 0xC82948); _flags_set(S); return 0; }
 fn EIMUL(S): i64 { if (_IR_REC0(S, IR_MUL) == 1) { return 0; } _TRY_COMBINE_SHUTTLE(S); E3(S, 0xE9F748); _flags_reflect_rax = 0; return 0; }
 # EMULH: high 64 bits of unsigned rcx * rax. MUL rcx → rdx:rax; then rax = rdx.
 # Used by the mulh64(a, b) builtin.
 # v5.6.14: record IR_RAX_CLOBBER so LASE sees the rax overwrite.
-fn EMULH(S): i64 { _IR_REC0(S, IR_RAX_CLOBBER); if (IR_ENABLED(S) == 2) { return 0; } E3(S, 0xE1F748); E3(S, 0xD08948); return 0; }
+# 6.7.6: `mul` leaves ZF undefined and `mov rax, rdx` writes none — clears the flags tracker.
+fn EMULH(S): i64 { _IR_REC0(S, IR_RAX_CLOBBER); if (IR_ENABLED(S) == 2) { return 0; } E3(S, 0xE1F748); E3(S, 0xD08948); _flags_reflect_rax = 0; return 0; }
 fn ECQO(S): i64 { if (IR_ENABLED(S) == 2) { return 0; } E2(S, 0x9948); return 0; }
 # v5.6.14: EIDIV writes quotient to rax → record IR_RAX_CLOBBER.
 fn EIDIV(S): i64 { _IR_REC0(S, IR_RAX_CLOBBER); if (IR_ENABLED(S) == 2) { return 0; } E3(S, 0xF9F748); return 0; }
@@ -328,7 +337,7 @@ fn ELODC(S): i64 { _IR_REC0(S, IR_RAX_CLOBBER); if (IR_ENABLED(S) == 2) { return
 # store half of that pair, never brought along.
 fn ESTOC(S): i64 { if (_IR_REC0(S, IR_STORE64) == 1) { return 0; } E3(S, 0x018948); return 0; }
 fn ECMPR(S): i64 { if (_IR_REC0(S, IR_CMP) == 1) { return 0; } E3(S, 0xC83948); _flags_reflect_rax = 0; return 0; }
-fn ETESTAZ(S): i64 { if (_IR_REC0(S, IR_TEST_AZ) == 1) { return 0; } E3(S, 0xC08548); _flags_reflect_rax = 1; return 0; }
+fn ETESTAZ(S): i64 { if (_IR_REC0(S, IR_TEST_AZ) == 1) { return 0; } E3(S, 0xC08548); _flags_set(S); return 0; }
 fn EMOVRDXRAX(S): i64 { if (_IR_REC0(S, IR_MOV_RDX_RAX) == 1) { return 0; } E3(S, 0xC28948); return 0; }
 fn EMOVRA_RDX(S): i64 { if (_IR_REC0(S, IR_MOV_RAX_RDX) == 1) { return 0; } E3(S, 0xD08948); _flags_reflect_rax = 0; return 0; }
 # ⛔ 6.7.6 (Break 1, D2) — u128 `+` / `-` (parse_expr.cyr _w128_*): rcx = a 16-byte accumulator;
@@ -496,11 +505,11 @@ fn ESTORE8(S): i64 { if (_IR_REC0(S, IR_STORE8) == 1) { return 0; } E2(S, 0x0188
 fn ESTORE16(S): i64 { if (_IR_REC0(S, IR_STORE16) == 1) { return 0; } EB(S, 0x66); E2(S, 0x0189); return 0; }
 fn ESTORE32(S): i64 { if (_IR_REC0(S, IR_STORE32) == 1) { return 0; } E2(S, 0x0189); return 0; }
 fn ESTORE64(S): i64 { if (_IR_REC0(S, IR_STORE64) == 1) { return 0; } E3(S, 0x018948); return 0; }
-fn EXORAA(S): i64 { if (_IR_REC0(S, IR_XOR_AA) == 1) { return 0; } E3(S, 0xC03148); _flags_reflect_rax = 1; return 0; }
+fn EXORAA(S): i64 { if (_IR_REC0(S, IR_XOR_AA) == 1) { return 0; } E3(S, 0xC03148); _flags_set(S); return 0; }
 # Bitwise
-fn EANDR(S): i64 { if (_IR_REC0(S, IR_AND) == 1) { return 0; } _TRY_COMBINE_SHUTTLE(S); E3(S, 0xC82148); _flags_reflect_rax = 1; return 0; }
-fn EORR(S): i64 { if (_IR_REC0(S, IR_OR) == 1) { return 0; } _TRY_COMBINE_SHUTTLE(S); E3(S, 0xC80948); _flags_reflect_rax = 1; return 0; }
-fn EXORR(S): i64 { if (_IR_REC0(S, IR_XOR) == 1) { return 0; } _TRY_COMBINE_SHUTTLE(S); E3(S, 0xC83148); _flags_reflect_rax = 1; return 0; }
+fn EANDR(S): i64 { if (_IR_REC0(S, IR_AND) == 1) { return 0; } _TRY_COMBINE_SHUTTLE(S); E3(S, 0xC82148); _flags_set(S); return 0; }
+fn EORR(S): i64 { if (_IR_REC0(S, IR_OR) == 1) { return 0; } _TRY_COMBINE_SHUTTLE(S); E3(S, 0xC80948); _flags_set(S); return 0; }
+fn EXORR(S): i64 { if (_IR_REC0(S, IR_XOR) == 1) { return 0; } _TRY_COMBINE_SHUTTLE(S); E3(S, 0xC83148); _flags_set(S); return 0; }
 fn ENOTR(S): i64 { if (_IR_REC0(S, IR_NOT) == 1) { return 0; } E3(S, 0xD0F748); return 0; }
 fn ESHLCL(S): i64 { if (_IR_REC0(S, IR_SHL) == 1) { return 0; } E3(S, 0xE0D348); _flags_reflect_rax = 0; return 0; }
 fn ESHRCL(S): i64 { if (_IR_REC0(S, IR_SHR) == 1) { return 0; } E3(S, 0xE8D348); _flags_reflect_rax = 0; return 0; }
@@ -513,7 +522,7 @@ fn EASHRCL(S): i64 { if (_IR_REC0(S, IR_ASHR) == 1) { return 0; } E3(S, 0xF8D348
 # no-op and doesn't modify flags. Callers only pass n>=1, so the
 # "set flag" path is always safe. Still clear defensively so an
 # accidental n==0 caller doesn't leave a stale 1.
-fn ESHLIMM(S, n): i64 { EB(S, 0x48); EB(S, 0xC1); EB(S, 0xE0); EB(S, n & 0x3F); if (n > 0) { _flags_reflect_rax = 1; } return 0; }
+fn ESHLIMM(S, n): i64 { EB(S, 0x48); EB(S, 0xC1); EB(S, 0xE0); EB(S, n & 0x3F); if (n > 0) { _flags_set(S); } return 0; }
 # v5.8.56: ESHRIMM removed — sibling of ESHLIMM (heavily used at
 # parse_expr.cyr:1141) that never got a call site. Re-add when a
 # parser path actually needs `shr rax, imm`.
@@ -625,6 +634,9 @@ fn EFLLOAD_W(S, idx, width): i64 {
     # so every user-visible local sits 8 bytes deeper in the frame.
     if (_cur_fn_regalloc > 0) { disp = disp - _cur_fn_regalloc * 8; }
     if (_cur_fn_ret_stash > 0) { disp = disp - _cur_fn_ret_stash; }
+    # 6.7.6 — a load writes no flags: clear the tracker, as EVLOAD_W / EFIELD_LOAD_W / EFLLOAD do
+    # (the narrow arms never did, so `x = x + 1; if (b)` on a u8 / i16 / i32 local skipped its test).
+    _flags_reflect_rax = 0;
     # v6.3.35: a NEGATIVE width = SIGNED sub-i64 → sign-extend (movsx) rather than the
     # historical zero-extend (movzx). Positive width is unchanged (byte-identical until
     # a caller opts in). Fixes signed i8/i16/i32 reading a stored negative as a huge +.

@@ -239,6 +239,28 @@ fn ttruth(): i64 {
     assert_eq(w, 5, "T33: `case -1` is zero-extended: 2^64 - 1 takes it");
     switch (c) { case 1: w = 7; default: w = 8; }
     assert_eq(w, 7, "T34: `switch (c)` on 1 takes case 1");
+    # FE: an INTEGER subject against a u128 arm compares all 128 bits, as `n == b` does (the subject
+    # zero-extended) — it compared the arm's low word, so `match 0 { b => }` took the arm for 2^64.
+    var ni = 0;
+    match ni { b => { m = 1; } _ => { m = 2; } }
+    assert_eq(m, 2, "T39: `match 0 { b => }` with b = 2^64 takes the default (b's low word is 0)");
+    var f: u128 = 5;
+    ni = 5;
+    match ni { f => { m = 3; } _ => { m = 4; } }
+    assert_eq(m, 3, "T40: `match 5 { f => }` with f = 5 takes the arm");
+    ni = 0 - 1;
+    set2(&f, M, 0);
+    match ni { f => { m = 5; } _ => { m = 6; } }
+    assert_eq(m, 5, "T41: the subject -1 is zero-extended: it matches 2^64 - 1");
+    set2(&f, M, M);
+    match ni { f => { m = 5; } _ => { m = 6; } }
+    assert_eq(m, 6, "T42: ... and not 2^128 - 1");
+    ni = 1;
+    match ni { b + 1 => { m = 7; } _ => { m = 8; } }
+    assert_eq(m, 8, "T43: a u128 `+` result arm (2^64 + 1) against 1");
+    ni = 3;
+    match ni { 0 => { m = 9; } b => { m = 10; } 3 => { m = 11; } _ => { m = 12; } }
+    assert_eq(m, 11, "T44: integer, u128 and integer arms in one match: the 3 arm");
     # A u128 global in a fn.
     set2(&GZ, 0, 3);
     n = 0;
@@ -270,5 +292,8 @@ match GZ { 0 => { tm = 1; } _ => { tm = 2; } }
 assert_eq(tm, 2, "T37: a top-level `match GZ` on 2^64");
 switch (GZ) { case 0: tm = 3; default: tm = 4; }
 assert_eq(tm, 4, "T38: a top-level `switch (GZ)` on 2^64");
+var tn = 0;
+match tn { GZ => { tm = 5; } _ => { tm = 6; } }
+assert_eq(tm, 6, "T45: a top-level `match 0 { GZ => }` on 2^64");
 var rr = assert_summary();
 syscall(60, rr);

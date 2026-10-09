@@ -2089,12 +2089,15 @@ fn _sw_case_test(S, swidx, val, swh): i64 {
 }
 # One `match` arm's test (the cursor on its value): the jump taken when the subject is not that value.
 # ⛔ 6.7.6 (D4): a u128 subject (`mh`, its temporary; -1 for an integer one) compares all 128 bits — an
-# arm value zero-extended, a u128 arm as it is (_w128_case).
+# arm value zero-extended, a u128 arm as it is (_w128_case). And (FE) an INTEGER subject against a
+# u128 arm compares all 128 bits as `n == b` does (_w128_cmp_r: the subject zero-extended) — it
+# compared the arm's low word, so `match 0 { b => }` took the arm for b = 2^64.
 fn _match_arm_test(S, midx, mh): i64 {
     if (mh != 0 - 1) { PCMPE(S); return _w128_case(S, mh); }
     _HTLOAD(S, midx);
     EPUSHR(S);
     PCMPE(S);
+    if (_w128_cmp_r(S, 17) == 1) { ETESTAZ(S); return EJCC(S, 0x84); }
     EMOVCA(S);
     EPOPR(S);
     ECMPR(S);

@@ -46,7 +46,8 @@ fn ECONDCMP(S): i64 {
     # before.
     if (op < 17 || op > 22) {
         _w128_truth(S, 18);   # 6.7.6 (D4): a bare u128 condition tests all 128 bits
-        if (_flags_reflect_rax == 0) { ETESTAZ(S); }
+        # 6.7.6: the flags are rax's only if the setter was the LAST emit (`_flags_cp`, x86/emit.cyr)
+        if (_flags_reflect_rax == 0 || GCP(S) != _flags_cp) { ETESTAZ(S); }
         return 18;
     }
     EPUSHR(S);
@@ -438,6 +439,9 @@ fn _ie_kind(S, st, bti): i64 {
     var cl = 1;
     var sid = 0;
     var typed = 0;
+    # 6.7.6 (FE): a u128 `+` / `-` RESULT (the D2 stamp, carried across a `)`) is a u128 value, refused
+    # as a u128 name is (`_ie_wide_name`) — `{ b - 0 }` compiled and its high word was lost.
+    if (_W128_IS(S) == 1) { _ie_big_err(S, bti, 0); return 0; }
     if (isb == 0) {
         sid = _ie_struct_sid(S, bti);
         if (sid < 0) { _ie_big_err(S, bti, 0); return 0; }

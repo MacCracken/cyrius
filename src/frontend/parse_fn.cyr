@@ -3037,7 +3037,35 @@ fn _sc_decl_mismatch(S, pscale, sid): i64 {
 # previous `_sc_want`, for `_scv_disarm`. CHANGELOG [6.6.11]
 var _scv_pk = 0;     # 6.7.6: the parentheses `_scv_peel` stepped into, closed by `_scv_disarm`
 var _scv_term = 5;   # ... and the token that ends the initialiser inside them (`)`), else `;`
+# ⛔ 6.7.6 (FE) — declarations NEST: a closure body inside an initialiser or an operator operand
+# (`var q: K = (mkk(fncall1(|x| { var y = x; return y; }, 2)));`, `s - mkv(fncall1(|x| { var y = x;
+# return y; }, 4))`) runs PARSE_VAR inside the outer one. The inner arm zeroed `_scv_pk` / `_scv_term`
+# and its disarm set `_sc_fcw` / `_fla_want` to -1, so the outer wrap never closed ("expected ';',
+# got ')'") and the outer call recorded no temp (`_fnc_agg`): its first word was passed as its
+# address, SIGSEGV. Each arm now saves the four on `_scv_vec` and its disarm restores them, as
+# `_op_big_arm` / `_op_big_disarm` do; the returned word packs the previous `_sc_want` (low 32
+# bits, + 1) and the save's depth (high), so a disarm reads its own save even after an unbalanced
+# inner one. CHANGELOG [6.7.6]
+var _scv_vec = 0;
+fn _scv_save(): i64 {
+    if (_scv_vec == 0) { _scv_vec = vec_new(); }
+    var d = vec_len(_scv_vec);
+    vec_push(_scv_vec, _scv_pk);
+    vec_push(_scv_vec, _scv_term);
+    vec_push(_scv_vec, _sc_fcw);
+    vec_push(_scv_vec, _fla_want);
+    return d;
+}
+fn _scv_restore(d): i64 {
+    _scv_pk = vec_get(_scv_vec, d);
+    _scv_term = vec_get(_scv_vec, d + 1);
+    _sc_fcw = vec_get(_scv_vec, d + 2);
+    _fla_want = vec_get(_scv_vec, d + 3);
+    vec_truncate(_scv_vec, d);
+    return 0;
+}
 fn _scv_arm(S, pscale): i64 {
+    var d = _scv_save();
     _scv_pk = 0;
     _scv_term = 5;
     if (pscale < 0) { if (pscale > 0 - 2048) {
@@ -3045,14 +3073,13 @@ fn _scv_arm(S, pscale): i64 {
             _scv_call_check(S, pscale);
             if (GINFN(S) == 1) { _fla_arm(GTI(S), pscale); }
         } }
-    return _sc_arm(S);
+    var w = _sc_arm(S);
+    return (w + 1) | (d << 32);
 }
 fn _scv_disarm(S, w): i64 {
-    _sc_want = w;
-    _fla_want = 0 - 1;
-    _sc_fcw = 0 - 1;
+    _sc_want = (w & 0xFFFFFFFF) - 1;
     if (_scv_pk > 0) { _pw_close(S, _scv_pk); }   # 6.7.6: the wrap `_scv_peel` stepped into
-    _scv_pk = 0;
+    _scv_restore(w >> 32);
     return 0;
 }
 # ⛔ 6.7.6 — `var q: K = (z.k);`, `= (j.dup())`, `= (a + b)`, `= (mk(4))` in a fn: the initialiser

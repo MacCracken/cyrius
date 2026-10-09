@@ -678,8 +678,47 @@ fn PINDIRECT_CALL(S): i64 {
     return 0;
 }
 
+# ⛔ 6.7.6 (FE) — E-2's `_icall_untyped` (below) also dropped the f64 TYPE a fncallN / callptr result
+# carried before 6.7.6: the leak typed it as its last argument, so `fncall1(&dbl, d) + 1.0` with
+# `fn dbl(x: f64): f64` and `d: f64` was an f64 add (7.0), and 6.7.6 made it an integer add of the
+# bit patterns. The decided fix was the STRUCT leak only. So where the callee is known — the callee
+# expression is exactly `&f` resolving to fn `f` (`_lfa_load` records it, after the local / capture /
+# global shadowing) — and `f` returns `: f64`, the result keeps the f64 type in the case 6.7.5 gave
+# it (the last argument an f64), and in no other. CHANGELOG [6.7.6]
+var _lfa_fi = 0 - 1;    # the fn the last `&f` factor loaded ...
+var _lfa_end = 0 - 1;   # ... and the token after its name
+fn _lfa_load(S, fnaddr, fc, fni): i64 {
+    _lfa_fi = fni;
+    _lfa_end = GTI(S);
+    ELOAD_FN_ADDR(S, fnaddr, fc, fni);
+    return 0;
+}
+fn _icall_mark(S): i64 {
+    _lfa_end = 0 - 1;
+    return GTI(S);
+}
+# The callee expression parsed from `cst` to the cursor: its fn when it is exactly `&f`, else -1.
+fn _icall_callee(S, cst): i64 {
+    if (TOKTYP(S, cst) != 27) { return 0 - 1; }
+    if (GTI(S) != cst + 2) { return 0 - 1; }
+    if (_lfa_end != cst + 2) { return 0 - 1; }
+    return _lfa_fi;
+}
+# The result of a call through fncallN / callptr to `cfi` (-1: not known): an untyped word, or an
+# f64 under the rule above.
+fn _icall_result(S, cfi): i64 {
+    var lt = GESTYPE(S);   # what 6.7.5 typed the result as: the last argument's type
+    _icall_untyped(S);
+    if (lt != F64_TYID) { return 0; }
+    if (cfi < 0) { return 0; }
+    if (GFRS(S, cfi) != 0 - 9) { return 0; }
+    SESTYPE(S, F64_TYID);
+    return 0;
+}
 fn _PINDIRECT_CALL_IN(S): i64 {
+    var cst = _icall_mark(S);
     PCMPE(S);                               # eval callee → rax
+    var cfi = _icall_callee(S, cst);
     var cp_v = GFLC(S);
     S64(S + 0x5D9D000 + cp_v * 8, 0 - 1);   # anonymous (stale-name guard)
     SLDEP(S, cp_v, 0);
@@ -762,7 +801,7 @@ fn _PINDIRECT_CALL_IN(S): i64 {
         ECALLCLEAN(S, cp_argc);             # unwind the arg frame
     }
     _cfo = 0;
-    _icall_untyped(S);   # 6.7.6: the result is not its last argument's struct
+    _icall_result(S, cfi);   # 6.7.6: the result is not its last argument's struct (an f64: FE)
     return 0;
 }
 
@@ -1572,9 +1611,14 @@ fn _bx_falloff_fi(S, fi): i64 {
     return 0;
 }
 # An operator overload's right operand is the operator fn's parameter 1 (`p + 5` into
-# `fn P_add(self, b: bool)`), as `p.add(5)` passes it — checked the same way.
+# `fn P_add(self, b: bool)`), as `p.add(5)` passes it — checked the same way. ⛔ 6.7.6 (FE): and
+# into an `f32` parameter it ROUNDS, as `_bx_pcmpe_arg` does for `p.add(1.5)` (the decision: every
+# write into an f32) — `r + 1.5` passed 1.5's f64 pattern and the callee read its low 32 bits (0).
+# The operand is still in rax: `_op_rhs` calls this right after PARSE_TERM.
 fn _bx_op_rhs(S, fi, rb): i64 {
-    if (_pbool_get(fi, 1) != 1) { return 0; }
+    var pk = _pbool_get(fi, 1);
+    if (pk == 3) { _f32_init_round(S, F32_TYID); return 0; }
+    if (pk != 1) { return 0; }
     if (_BX_IS(S) == 1) { return 0; }
     var pn = _bx_pname(S, fi, 1);
     if (pn < 0) { return _bx_refuse(S, rb, "cannot pass a value that is not a bool to a bool parameter of ", _bx_fname(S, fi), 0, 0 - 1); }
@@ -2925,7 +2969,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
             # v5.11.36 path-A: parser-to-emit named-op refactor.
             # Dispatch + fixup record + SFCNT all live in
             # <backend>/emit.cyr::ELOAD_FN_ADDR.
-            ELOAD_FN_ADDR(S, fnaddr, fc, fni);
+            _lfa_load(S, fnaddr, fc, fni);   # 6.7.6 (FE): ELOAD_FN_ADDR, recording `f` for fncallN
             return 0;
         }
         # Nothing of this name exists in any scope.

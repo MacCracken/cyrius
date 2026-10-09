@@ -87,6 +87,7 @@
 #   M28 `_asg_plain_chk` without the f32 rounding               -> RED W1 W2, AW on every leg (W1-W6 W9 W10)
 #   M29 `_ifs_bx` / `_spi_leaf_check` without it                -> RED W1 W2, AW on every leg (W11-W14 W16)
 #   M30 `_bx_pcmpe_arg` without the f32 arm                     -> RED W1 W2, AW on every leg (W17-W20)
+#   M30b `_bx_op_rhs` without the f32 arm (FE)                 -> RED W3, AW on every leg (W22-W26)
 #   M31 `_bx_pscan` without the f32 mark (pass 1)               -> RED AW on every leg (W19, a forward call)
 #   M32 `_asg_plain_chk` without the array refusal              -> RED B1-B7 (each BUILDS)
 #   M33 `_arr_named_marks` without SLBARR                       -> RED B11 B16
@@ -125,6 +126,8 @@
 #   M57 `_sw_case_test` without its u128 arm                    -> RED T5, AC on every leg (T31 T33 T34)
 #   M58 `_match_arm_test` without its u128 arm                  -> RED T5, AC on every leg (T22 T23 T25)
 #   M59 `_w128_case` reads a u128 arm's low word                -> RED AC on every leg (T25)
+#   M60 `_match_arm_test` without its integer-subject u128 arm (FE) -> RED T6, AC on every leg (T39 T42
+#       T43 T45)
 #   (M56 x86 EW128_TST without its IR_RAW_EMIT mark stayed GREEN, the IR=3 legs included — M44's
 #   reason, the `lea` before it is marked. The mark is kept. T1 / T3 / T4 alone stay green under M57 /
 #   M58: the integer path's stored subject word is then the copy's ADDRESS, never 0 to 3, so the
@@ -259,6 +262,7 @@ exits t02 5 "T2: ... the same program under CYRIUS_IR=3" "$T1" CYRIUS_IR=3
 exits t03 173 "T3: top level — \`if (G)\`, \`!G\`, \`G && 1\`, \`0 || G\`, \`match G\`, \`switch (G)\` on 2^64 (exited 82)" "var G: u128 = 0;\nstore64(&G + 8, 1);\nvar r = 0;\nif (G) { r = r + 1; }\nif (!G) { r = r + 2; }\nif (G && 1) { r = r + 4; }\nif (0 || G) { r = r + 8; }\nmatch G { 0 => { r = r + 16; } _ => { r = r + 32; } }\nswitch (G) { case 0: r = r + 64; default: r = r + 128; }\nsyscall(60, r);\n"
 exits t04 100 "T4: a table-sized \`switch\` (four dense cases) on 2^64 + 2 takes default; \`!d\` and \`d || 0\` as values (exited 13)" "fn main(): i64 {\n    var d: u128 = 0;\n    store64(&d, 2); store64(&d + 8, 1);\n    var w = 0;\n    switch (d) { case 0: w = 10; case 1: w = 11; case 2: w = 12; case 3: w = 13; default: w = 99; }\n    var x = !d;\n    var y = d || 0;\n    return w + x * 100 + y;\n}\nsyscall(60, main());\n"
 exits t05 165 "T5: \`match\` / \`switch\` take the arm a u128 subject equals (5), and not for 2^64 + 5 (exited 85)" "fn main(): i64 {\n    var b: u128 = 5;\n    var r = 0;\n    match b { 5 => { r = r + 1; } _ => { r = r + 2; } }\n    switch (b) { case 5: r = r + 4; default: r = r + 8; }\n    store64(&b + 8, 1);\n    match b { 5 => { r = r + 16; } _ => { r = r + 32; } }\n    switch (b) { case 5: r = r + 64; default: r = r + 128; }\n    return r;\n}\nsyscall(60, main());\n"
+exits t06 20 "T6: an INTEGER subject against a u128 arm compares all 128 bits, as \`n == b\` does (D4 f1.cyr: exited 10)" "fn main(): i64 {\n    var b: u128 = 0;\n    store64(&b + 8, 1);\n    var n = 0;\n    var m = 0;\n    match n { b => { m = 1; } _ => { m = 2; } }\n    var k = 0;\n    if (n == b) { k = 1; }\n    return m * 10 + k;\n}\nsyscall(60, main());\n"
 
 # ── S (D3): a plain u128 assignment takes the whole value ───────────────────────────────────────
 # The D2 finding's repro (a1.cyr, exit 73 = 1353 % 256): `b = c` and `b = 5` over a high word of 3.
@@ -272,6 +276,9 @@ exits s03 70 "S3: globals and top level: \`G = H\` copies, \`G = 7\` zero-extend
 W4='struct P { x: f32; }\nfn tk(a: f32): i64 { return load32(&a) & 0xFFFFFFFF; }\nfn rt(): f64 { return 1.5; }\nfn main(): i64 {\n    var h: f32 = 0;\n    h = 1.5;\n    var p = P { 1.5 };\n    var q = P { 0 };\n    q.x = 1.5;\n    var r: f32 = rt();\n    var ok = 0;\n    if ((load32(&h) & 0xFFFFFFFF) == 0x3FC00000) { ok = ok + 1; }\n    if ((load32(&p) & 0xFFFFFFFF) == 0x3FC00000) { ok = ok + 2; }\n    if ((load32(&q) & 0xFFFFFFFF) == 0x3FC00000) { ok = ok + 4; }\n    if (tk(1.5) == 0x3FC00000) { ok = ok + 8; }\n    if ((load32(&r) & 0xFFFFFFFF) == 0x3FC00000) { ok = ok + 16; }\n    return ok;\n}\nsyscall(60, main());\n'
 exits w01 31 "W1: an assignment, a struct literal, a field store and an argument round (f4.cyr: exited 16)" "$W4"
 exits w02 31 "W2: ... the same program under CYRIUS_IR=3" "$W4" CYRIUS_IR=3
+# FE: an operator overload's RIGHT operand into an `f32` parameter (the review's f4.cyr: exited 0)
+W5='struct R { n; }\nstruct R3 { a; b; c; }\nfn R_add(self, b: f32): i64 { return load32(&b) & 0xFFFFFFFF; }\nfn R_sub(a: R, b: f32): i64 { return load32(&b) & 0xFFFFFFFF; }\nfn R3_mul(a: R3, b: f32): R3 { var t: R3 = R3 { load32(&b) & 0xFFFFFFFF, 0, 0 }; return t; }\nfn main(): i64 {\n    var r = R { 1 };\n    var ok = 0;\n    if (r + 1.5 == 0x3FC00000) { ok = ok + 1; }\n    if (r - 0.1 == 0x3DCCCCCD) { ok = ok + 2; }\n    var d: f64 = 2.5;\n    if (r + d == 0x40200000) { ok = ok + 4; }\n    var q = R3 { 1, 2, 3 };\n    var o: R3 = q * 0.1;\n    if (o.a == 0x3DCCCCCD) { ok = ok + 8; }\n    return ok;\n}\nsyscall(60, main());\n'
+exits w03 15 "W3: an operator's right operand into an \`f32\` parameter rounds (f4.cyr: exited 0)" "$W5"
 
 # ── B (D2): a whole typed array and a bare array's OP= are refused by name ──────────────────────
 BS='struct P { x; y; }\nvar GA: i64[4];\nvar GB[32];\n'
@@ -350,9 +357,9 @@ tcyr_all AF tests/tcyr/crossos/f32_scalar_init_rounds.tcyr 30
 tcyr_all AR tests/tcyr/crossos/int_name_routes_int_overload.tcyr 20
 tcyr_all AU tests/tcyr/crossos/u128_compound_matches_long_form.tcyr 14
 tcyr_all AU2 tests/tcyr/crossos/u128_add_sub_carry.tcyr 33
-tcyr_all AC tests/tcyr/crossos/u128_compare_all_bits.tcyr 85
+tcyr_all AC tests/tcyr/crossos/u128_compare_all_bits.tcyr 92
 tcyr_all AS tests/tcyr/crossos/u128_assign_whole_value.tcyr 21
-tcyr_all AW tests/tcyr/crossos/f32_writes_round.tcyr 21
+tcyr_all AW tests/tcyr/crossos/f32_writes_round.tcyr 27
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
