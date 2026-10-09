@@ -1893,11 +1893,51 @@ fn _tup_gen_past(S, q, e): i64 {
     while (q < e) {
         if (TOKTYP(S, q) == 2) {
             if (TOKTYP(S, q + 1) == 19) {
-                var o = _gcall_open(S, q);
+                var o = _tup_gopen(S, q);
                 if (o > e) { return o; }
             }
         }
         q = q + 1;
+    }
+    return 0 - 1;
+}
+# ⛔ 6.7.7 (B4 review) — THE DECLARATION ZONE'S PASS 1 READS A GENERIC CALL BY ITS TOKENS. It sizes a
+# zone global (`_tup_gci`) before the fns and structs below it are declared, so `_gcall_open` (a
+# KNOWN generic with resolvable type arguments) did not see `pk<i64, i64>(..)` with `pk` declared
+# below, and the comma between its type arguments was a tuple comma there and none in the replay:
+# `var G = (pk<i64, i64>(1, 2));` registered a tuple (G refused as a value), `var G: (i64, i64) =
+# (pk<..>(..));` stored one word, `(pk<..>(..), 3)` was typed `(i64, i64, i64)`, and a capture of
+# `g<i64>(5)` was refused. Set (1) only while `_tup_gci` reads; the replay still reads by `_gcall_open`
+# and refuses by name what this reading gets wrong (`_gvi_tup_odd`, `_gvi_tup_slot`).
+var _tup_p1 = 0;
+fn _tup_gopen(S, ti): i64 {
+    if (_tup_p1 == 1) { return _gcall_syn(S, ti); }
+    return _gcall_open(S, ti);
+}
+# The `(` of the call at token ti by its shape — `name(`, or `name<..>(` whose list holds only type
+# spellings (names, `,` and nested `<..>`: what `_parse_one_type_arg` reads) and closes right before
+# a `(` — or -1. No lookup: the name may be declared below.
+fn _gcall_syn(S, ti): i64 {
+    if (TOKTYP(S, ti) != 2) { return 0 - 1; }
+    var nt = TOKTYP(S, ti + 1);
+    if (nt == 10) { return ti + 1; }
+    if (nt != 19) { return 0 - 1; }
+    if (_MONOMORPH_OK == 0) { return 0 - 1; }
+    var i = ti + 2;
+    var d = 1;
+    var n = GTCNT(S);
+    while (i < n) {
+        var t = TOKTYP(S, i);
+        if (t == 19) { d = d + 1; }
+        elif (t == 20) { d = d - 1; }
+        elif (t == 39) { d = d - 2; }
+        elif (t == 152) { d = d - 3; }
+        elif (t != 2 && t != 31) { return 0 - 1; }
+        if (d <= 0) {
+            if (TOKTYP(S, i + 1) != 10) { return 0 - 1; }
+            return i + 1;
+        }
+        i = i + 1;
     }
     return 0 - 1;
 }
@@ -1928,12 +1968,35 @@ fn _tup_lit_at(S, st): i64 {
 fn _tup_lit_stray(S, ti0): i64 {
     if (TOKTYP(S, ti0) != 10) { return 0; }
     if (_tup_commas(S, ti0) == 0) { return 0; }
-    _tup_err(S, ti0, "a tuple `( .. )` is a value only as a `var` initializer, assigned to a tuple variable or field, as a tuple argument, or after `return` - here one value is expected", 0 - 1, 0);
+    if (_tup_ret_wrap(S, ti0) == 1) {   # 6.7.7 (B4 review): `return ((a, b));` names its own spelling
+        _tup_err(S, ti0, "a multi-value return is written `return (a, b);` - drop the extra parentheses", 0 - 1, 0);
+    } else {
+        _tup_err(S, ti0, "a tuple `( .. )` is a value only as a `var` initializer, assigned to a tuple variable or field, as a tuple argument, or after `return` - here one value is expected", 0 - 1, 0);
+    }
     STI(S, _call_close(S, ti0) + 1);
     _synonly_skip_chain(S);
     EMOVI(S, 0);
     SESTYPE(S, 0);
     _cfo = 0;
+    return 1;
+}
+# 1 = the literal whose `(` is `ti0` is the group just inside `return`'s own parentheses (`return
+# ((a, b));`, any depth — each wrap closing right after it, `_pwrap_k`): a multi-value return keeps
+# its exact spelling `return (a, b);`, and the general text above lists "after `return`" as a place a
+# literal goes. A literal that is one ELEMENT there (`return ((1, 2), 3);`) keeps the general text.
+fn _tup_ret_wrap(S, ti0): i64 {
+    var k = ti0 - 1;
+    if (k < 1) { return 0; }
+    if (TOKTYP(S, k) != 10) { return 0; }
+    while (k > 0) {
+        if (TOKTYP(S, k) != 10) { break; }
+        k = k - 1;
+    }
+    if (TOKTYP(S, k) != 33) { return 0; }
+    var pe = _pw_end;
+    var w = _pwrap_k(S, k + 1);
+    _pw_end = pe;
+    if (k + w != ti0) { return 0; }
     return 1;
 }
 fn _tok_ends_operand(S, ti): i64 {

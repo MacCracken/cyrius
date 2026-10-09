@@ -3862,7 +3862,10 @@ fn _masg_stmt(S, term): i64 {
     if (n == 3) { x2 = _masg_target(S, t0, 2); }
     _dt_rhs_check_t(S, term);
     var fi = _dt_call_fn(S);
-    if (fi >= 0) { _dt_arity_check(S, fi, n); }
+    if (_masg_callee(S, fi, n) == 1) {
+        _masg_skip(S);
+        return _masg_end(S, term);
+    }
     _masg_bools(S, t0, n, fi);
     PCMPE(S);
     _tup_drain_push(S, n);
@@ -3875,6 +3878,26 @@ fn _masg_stmt(S, term): i64 {
     EPOPR(S);
     _masg_store(S, x0);
     return _masg_end(S, term);
+}
+# The callee `fi` (-1: unknown) of `a, b = f();`, cursor on it: a struct- or vector-returning one is
+# refused by name, as the capture refuses it (`_tup_cap_class`) — a struct return is no multi-value
+# call: a 24 B one's values were its retptr's words, and a 16 B one crossed aarch64's struct pair
+# (x0:x1) into the multi-value drain (x0:x2; issue 2026-10-09-aarch64-struct-pair-and-multi-value-
+# registers-disagree), 50 where 59 is right. Then the destructure's arity check. 1 = refused.
+# CHANGELOG [6.7.7] (B4 review)
+fn _masg_callee(S, fi, n): i64 {
+    if (fi < 0) { return 0; }
+    var rs = GFRS(S, fi);
+    if (rs > 0) {
+        _tup_cap_err(S, 0, fi, 2, 0);
+        return 1;
+    }
+    if (rs <= 0 - 2048) {
+        _tup_cap_err(S, 0, fi, 3, 0);
+        return 1;
+    }
+    _dt_arity_check(S, fi, n);
+    return 0;
 }
 # rax into target `x` (`_masg_ix`'s encoding), at its width; none for -1.
 fn _masg_store(S, x): i64 {

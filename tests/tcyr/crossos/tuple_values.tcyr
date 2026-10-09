@@ -59,6 +59,10 @@ fn tv_c7(): i64 { return 7; }
 var TV_C1: (i64, i64) = tv_m2(3);
 var TV_C3: (i64, i64, i64) = tv_m3(7, 8, 9);
 var TV_CN = 61;
+# ... and with an explicit generic DECLARED BELOW (pass 1 reads `name<..>(` by its tokens): a capture,
+# and a literal whose generic call's `<A, B>` holds no tuple comma — `(i64, i64)`, not three elements.
+var TV_C2: (i64, i64) = tv_g2<i64>(5);
+var TV_L6 = (tv_pk<i64, i64>(1, 2), 3);
 
 # --- types ---
 fn tv_types(): i64 {
@@ -467,6 +471,7 @@ fn tv_globals(): i64 {
     TV_L1 = (TV_L1.1, TV_L1.0);
     assert_eq(TV_L1.0 * 10 + TV_L1.1, 43, "a literal assigned to a global swaps");
     assert_eq(tv_bump((TV_L2.2, TV_L2.0)), 107010, "global elements in a literal argument");
+    assert_eq(tv_cp(TV_L6), 123, "a zone literal holding `pk<i64, i64>(..)` (declared below) is (i64, i64)");
     return 0;
 }
 fn tv_later(t: (i64, i64), k): i64 { return t.0 * 100 + t.1 * 10 + k; }
@@ -487,6 +492,7 @@ fn tv_mb(x): (bool, i64) { return (x > 3, x); }
 fn tv_dm(a, b) { return (a / b, a % b); }
 fn tv_r2(a, b) { ret2(a, b); }
 fn tv_g2<T>(a: T): (i64, i64) { return (a, a + 1); }
+fn tv_pk<A, B>(a: A, b: B): i64 { return a * 10 + b; }
 struct TvB { v; }
 impl TvB {
     fn mk(self, a): (i64, i64) { return (a, a + self.v); }
@@ -544,6 +550,7 @@ fn tv_capture(): i64 {
     assert_eq(acc, 456, "a capture in a loop body, each pass its own");
     assert_eq(TV_C1.0 * 10 + TV_C1.1, 37, "a declaration-zone capture");
     assert_eq(TV_C3.0 * 100 + TV_C3.1 * 10 + TV_C3.2, 789, "... arity 3");
+    assert_eq(TV_C2.0 * 10 + TV_C2.1, 56, "a declaration-zone capture of an explicit generic declared below");
     TV_C1.1 = 9;
     assert_eq(TV_CN, 61, "the global after a zone capture is intact after `G.1 = 9`");
     TV_C1 = tv_m2(1);

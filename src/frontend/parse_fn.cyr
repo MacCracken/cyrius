@@ -2234,6 +2234,8 @@ fn _ret_tup_err(S, ti, sid, kind): i64 {
         PRSTR(S + 0xEC00000 + L64(_fnt_names + _cur_fn_ix * 8));
         PRSTR("' - it returns ");
         _mret_spell(S, _cur_fn_ix);
+    } elif (GETFCOUNT(S, sid - 1) > 3) {   # 6.7.7 (B4 review): no fn declares 4 values (the return registers)
+        PRSTR(" - a fn returns at most 3 values: return its elements, or pass the tuple to a parameter");
     } else {
         PRSTR(" - a tuple is returned by a fn declared with its values, `: ");
         PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (sid - 1) * 8));

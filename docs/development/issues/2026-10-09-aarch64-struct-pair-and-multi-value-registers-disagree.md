@@ -103,9 +103,12 @@ checked). A gate row per crossing in the table above, run on aarch64 (qemu local
 Related:
 - [`2026-10-08-cx-16b-struct-return-refused.md`](2026-10-08-cx-16b-struct-return-refused.md) — cx has no struct pair
   at all yet; its proposed fix puts the high word in r4, the multi-value peer, which would avoid this split on cx.
-- The 6.7.7 tuples (B4) are designed not to widen this: a tuple return is the multi-value convention, never the
-  struct-pair class, and the planned tuple capture (`var t: (i64, i64) = f();`) refuses a struct-returning callee
-  by name.
+- The 6.7.7 tuples (B4) do not widen this: a tuple return is the multi-value convention, never the struct-pair
+  class, and the tuple capture (`var t: (i64, i64) = f();`, `t = f();`) and the new multi-value assignment
+  `a, b = f();` refuse a struct- or vector-returning callee by name. `a, b = f();` took one until the B4 review
+  (2026-10-09) — a new crossing site: a 16 B struct callee gave 59 on x86 and PE and 50 on aarch64 (qemu), a 24 B one
+  wrong values everywhere; refused since (tuple_checked.sh R19i-R19o, R19m on the aarch64 compiler). The pre-existing
+  destructure `var a, b = mk(5);` (repro B) still takes a struct callee and is this issue's to fix.
 
 ## Consumer-side workaround
 

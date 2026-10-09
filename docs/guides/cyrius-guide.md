@@ -1613,10 +1613,12 @@ whole run of letters and digits. `p.0` on a named struct is an unknown field too
 
 **Where a literal goes.** A `var` initializer, an assignment to a tuple variable (`t = (..);`),
 a store into a tuple field (`h.p = (..);`), a tuple argument (`width((3, 10))`) and `return (a,
-b);`. Parentheses around the whole literal are transparent (`((1, 2))`). Anywhere else — an
-operand, an untyped or `callptr` argument, an if-expression branch, `(1, 2).0`, a struct literal's
-element — it is refused by name. At top level only the declaration works: `G = (3, 4);` and
-`take((1, 2))` build the literal in a frame temporary first, so they need a fn.
+b);`. In the var, assignment, field and argument positions, parentheses around the whole literal
+are transparent (`((1, 2))`); a multi-value return keeps its exact spelling, `return (a, b);`
+(`return ((a, b));` is refused). Anywhere else — an operand, an untyped or `callptr` argument, an
+if-expression branch, `(1, 2).0`, a struct literal's element — it is refused by name. At top level
+only the declaration works: `G = (3, 4);` and `take((1, 2))` build the literal in a frame temporary
+first, so they need a fn.
 
 ### Capture by type: `var t: T = f();`
 
@@ -1651,8 +1653,9 @@ check it (its `bool` element is refused: an unknown value is not a bool). Every 
 before any is stored, so `t = f(t.1, t.0);` reads the old `t`.
 
 **`a, b = f();` re-assigns existing variables** (two or three plain variables: locals,
-parameters, globals; a classic-`for` step too) with the destructure's contract. A loop that
-re-polls no longer binds a fresh pair on every pass:
+parameters, globals; a classic-`for` step too) with the destructure's contract, except that a
+struct- or vector-returning callee is refused by name, as the capture refuses it: a struct return
+is not multiple values. A loop that re-polls no longer binds a fresh pair on every pass:
 
 ```
 fn reading(k): (i64, i64) {                # (status, value): status 0 = the last one
@@ -1715,9 +1718,11 @@ tuple FIELD (`h.p == 5`). Compare elements, or copy the tuple into a tuple place
 | `(i32, i64)`, `(*T, i64)`, `(P, i64)` | `a tuple element is i64, f64 or bool, not 'i32'` (…) |
 | `var p = (1, 2.5);` | `a float element needs the tuple's type declared …` |
 | `(1, 2) + 3`, `g((1, 2))` (untyped `g`) | ``a tuple `( .. )` is a value only as a `var` initializer, …`` |
+| `return ((1, 2));` | ``a multi-value return is written `return (a, b);` - drop the extra parentheses`` |
 | `var k: i64 = (1, 2);` | `a tuple literal cannot initialize 'k' - its declared type is not a tuple` |
 | `G = (3, 4);` at top level | `a tuple literal assigned at top level has no frame to be built in …` |
 | `var t: (i64, i64) = mk();` (`mk` returns `P`) | `cannot capture 'mk' into tuple (i64, i64) - it returns struct 'P', not a tuple` |
+| `a, b = mk();` (`mk` returns `P`) | `cannot re-assign from 'mk' - it returns struct 'P', not multiple values` |
 | `var t: (i64, i64) = f();` (`f` is `: (i64, f64)`) | `cannot capture 'f' into tuple (i64, i64) - it returns 2 values, (i64, f64)` |
 | `var t: (i64, i64) = (f());`, `= one(1)`, `= 5` | `cannot initialize tuple 't' with a value that is not a tuple` |
 | `take(f())` into a tuple parameter | ``a multi-value call 'f' is not a tuple argument - bind it first: `var t: (i64, i64) = f(..);` …`` |
@@ -1726,7 +1731,8 @@ tuple FIELD (`h.p == 5`). Compare elements, or copy the tuple into a tuple place
 | `return t;` from a fn not declared `: (i64, i64)` | ``cannot return tuple 't' (i64, i64) - a tuple is returned by a fn declared with its values …`` |
 | `h.x, b = f();`, `a[i], b`, `*p, q` | ``a multi-value assignment `a, b = f();` re-assigns plain variables - a field is not one`` (…) |
 | `a, b = 5;`, `a, b = t;` | `multi-value destructure needs a call on the right-hand side` |
-| `first(t)`, a tuple in a generic fn or struct | `a tuple cannot bind a type parameter: 'first' is generic …` |
+| `first(t)` (`first` is generic) | `a tuple cannot bind a type parameter: 'first' is generic …` |
+| a tuple type in a generic fn, a tuple field in a generic struct | `a tuple type in a generic fn is refused …` / `a tuple field in a generic struct is refused …` |
 | `const C = (1, 2);`, a tuple in a `const fn` | `a tuple in a const context …` |
 | `*(i64, i64)`, `[(i64, i64)]`, `(i64, i64)[4]`, `sizeof((i64, i64))`, `Box<(i64, i64)>` | `a tuple type cannot be a pointer target` (… a slice / array element, a sizeof operand, a type argument) |
 | `#derive(..)` on a struct with a tuple field | `#derive reads named field types; 't' is a tuple …` |

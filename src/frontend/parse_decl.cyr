@@ -2648,7 +2648,10 @@ fn _tup_elem_bad(S, t0, asid): i64 {
 # Element `k` of a literal of type `sid`, cursor on its first token: parsed (the value in rax) and
 # judged — R8; un-annotated (`infer`), R7: a float is refused, its type must be declared; typed, the
 # struct literal's field checks (`_ifs_bx`: an integer into f64 warned, a bool element a bool).
+# An element is a one-slot store: a `: stack` pair there kept the tag and dropped the payload
+# (`var t = (f(7), 3);`), so it is refused as at every other one (T5b; `f(7)?` consumes the pair).
 fn _tup_elem_val(S, sid, k, infer): i64 {
+    _refuse_lossy_pair(S);   # 6.7.7 (B4 review)
     var t0 = GTI(S);
     var asid = _expr_struct_sid(S, t0);
     if (_tup_elem_bad(S, t0, asid) == 1) { return 0; }
@@ -2909,7 +2912,8 @@ fn _tup_cap_elem(S, sid, fi, rs, k): i64 {
     if (te == 3) { return 6; }
     return 0;
 }
-# A refused capture (cursor on its right-hand side), once per token, in sync. Returns 2.
+# A refused capture (cursor on its right-hand side), once per token, in sync. Returns 2. `sid` 0: the
+# callee of a multi-value assignment `a, b = f();` (`_masg_callee`; kinds 2 and 3).
 fn _tup_cap_err(S, sid, fi, kind, k): i64 {
     if (_syntax_only == 1) { return 2; }
     if (_panic == 1) { return 2; }
@@ -2919,17 +2923,29 @@ fn _tup_cap_err(S, sid, fi, kind, k): i64 {
     if (_tok_method_open(S, st) == 1) { ct = st + 2; }
     syscall(SYS_WRITE, 2, "error:", 6);
     _err_head(S);
-    PRSTR(": cannot capture '");
-    PRSTR(S + 0xEC00000 + TOKVAL(S, ct));
-    PRSTR("' into tuple ");
-    PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (sid - 1) * 8));
+    var w = "a tuple";
+    if (sid == 0) {
+        w = "multiple values";
+        PRSTR(": cannot re-assign from '");
+        PRSTR(S + 0xEC00000 + TOKVAL(S, ct));
+        PRSTR("'");
+    } else {
+        PRSTR(": cannot capture '");
+        PRSTR(S + 0xEC00000 + TOKVAL(S, ct));
+        PRSTR("' into tuple ");
+        PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (sid - 1) * 8));
+    }
     if (kind == 1) { PRSTR(" - a call returns at most 3 values (its return registers)"); }
     elif (kind == 2) {
         PRSTR(" - it returns struct '");
         PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (GFRS(S, fi) - 1) * 8));
-        PRSTR("', not a tuple");
+        PRSTR("', not ");
+        PRSTR(w);
     }
-    elif (kind == 3) { PRSTR(" - it returns a vector, not a tuple"); }
+    elif (kind == 3) {
+        PRSTR(" - it returns a vector, not ");
+        PRSTR(w);
+    }
     elif (kind == 4) {
         PRSTR(" - it returns ");
         PRNUM(GFRN(S, fi));
@@ -4600,7 +4616,7 @@ fn PARSE_GVAR_REG(S): i64 {
             is_struct = 1;
             _lit_ann_check(S, 0 - ann_sid, ssid, ann_bool);
         } else {
-            ssid = _gci_inline(S, ann_sid);   # 6.6.12: `var G: T = A;` / `= X.f;` — inline; 6.7.7: a tuple literal
+            ssid = _gci_inline(S, ann_sid, ann_ti);   # 6.6.12: `var G: T = A;` / `= X.f;` — inline; 6.7.7: a tuple literal
             if (ssid > 0) { is_struct = 1; }
         }
         # Static-init detection: shape is exactly `= NUM ;`. Negative
@@ -4995,11 +5011,14 @@ fn _gvi_pair_bind(S): i64 {
 # literal's walker, closing at `)`), then every element stored, as a struct literal is. 1 = done
 # (`;` consumed), 0 = not a whole literal (the replay goes on).
 fn _gvi_tuple(S, gi, idx, gps, sti, noff): i64 {
-    if (PEEKT(S) == 2) { return _gvi_tup_cap(S, gi, idx, gps, sti, noff); }   # 6.7.7 (T5): a capture
+    if (PEEKT(S) == 2) {   # 6.7.7 (T5): a capture
+        if (_gvi_tup_cap(S, gi, idx, gps, sti, noff) == 1) { return 1; }
+        return _gvi_tup_odd(S, gi, idx, gps, sti, noff);
+    }
     var st = GTI(S);
     var lp = _tup_lit_at(S, st);
-    if (lp < 0) { return 0; }
-    if (TOKTYP(S, _pw_end) != 5) { return 0; }
+    if (lp < 0) { return _gvi_tup_odd(S, gi, idx, gps, sti, noff); }
+    if (TOKTYP(S, _pw_end) != 5) { return _gvi_tup_odd(S, gi, idx, gps, sti, noff); }
     var sid = 0;
     var infer = 0;
     if (TOKTYP(S, sti + 2) != 49) { infer = 1; }
@@ -5013,6 +5032,7 @@ fn _gvi_tuple(S, gi, idx, gps, sti, noff): i64 {
     var n = _tup_lit_shape(S, lp, sid);
     if (n == 0) { return _tup_lit_skip(S, st, 5); }
     if (infer == 1) { sid = _tup_ints(S, n); }
+    if (_gvi_tup_slot(S, idx, sid, gps, noff, lp) == 0) { return _tup_lit_skip(S, st, 5); }
     STI(S, lp + 1);
     _spc_cl = 11;
     _spc_try(S, gi, idx, sid);
@@ -5021,6 +5041,38 @@ fn _gvi_tuple(S, gi, idx, gps, sti, noff): i64 {
     _tup_elems(S, sid, idx, 0 - 1, infer);
     _pw_close(S, lp - st);
     _gv_slvar(S, idx);
+    _gvk_left(S, gi, sti, idx);
+    if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
+    STI(S, GTI(S) + 1);
+    return 1;
+}
+# ⛔ 6.7.7 (B4 review) — THE REPLAY AGREES WITH PASS 1 OR REFUSES BY NAME. Pass 1 sized the global from
+# the tokens alone (`_tup_gci`, before the fns and structs below it were declared); the replay reads
+# them with everything declared. Where the two still disagree — only a `<` comparison spelled like a
+# generic call's type arguments (`x < a, b > (c)`) can now — the declaration is refused: storing a
+# literal into the 8-byte slot pass 1 made overran the next global, and the value store into a
+# tuple pass 1 made inline kept one word (R12).
+# The literal's slot (`sid` the literal's tuple): 1 = the tuple pass 1 registered inline; else 0,
+# refused at the literal (quietly under a tuple annotation: pass 1 refused that declaration, R12).
+fn _gvi_tup_slot(S, idx, sid, gps, noff, lp): i64 {
+    if (idx < 0) { return 1; }
+    if (GVPM(S, idx) == 2) { if (GVTYPE(S, idx) == sid) { return 1; } }
+    if (gps < 0) { return 0; }
+    _tup_err(S, lp, "the declaration zone reads a `<` comparison in the tuple literal of ", noff, " as an explicit generic call (`name<A, B>(..)`) - parenthesize the comparison");
+    return 0;
+}
+# A global pass 1 registered INLINE as a tuple whose initializer, read with every fn declared, is no
+# literal, no capture and no whole tuple source (`_gci_init` copies one): refused by name, the `;`
+# consumed (1); else 0 (the replay goes on).
+fn _gvi_tup_odd(S, gi, idx, gps, sti, noff): i64 {
+    if (idx < 0) { return 0; }
+    if (GVPM(S, idx) != 2) { return 0; }
+    if (_tup_is(S, GVTYPE(S, idx)) == 0) { return 0; }
+    if (gps < 0) { if (_gci_src(S, GTI(S)) != 0) { return 0; } }
+    var ti = GTI(S);
+    if (gps < 0) { ti = sti + 3; }   # the annotation's `(`, where pass 1 reports R12
+    _tup_err(S, ti, "cannot initialize tuple ", noff, " with a value that is not a tuple");
+    _masg_skip(S);
     _gvk_left(S, gi, sti, idx);
     if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
     STI(S, GTI(S) + 1);
@@ -5345,8 +5397,9 @@ fn _gci_chain(S, ti, sid): i64 {
 # Returns the struct to register inline (`sid`), else 0. 6.7.7 (B4): or a TUPLE LITERAL's — the
 # annotation's tuple, an un-annotated one's `(i64 x n)` — registered inline (8n bytes) for the
 # replay's `_gvi_tuple`; a literal under any other annotation is not inline (the replay refuses it).
-fn _gci_inline(S, sid): i64 {
-    var ts = _tup_gci(S, sid);
+# `ann` is the annotation's first token (0: none).
+fn _gci_inline(S, sid, ann): i64 {
+    var ts = _tup_gci(S, sid, ann);
     if (ts >= 0) { return ts; }
     if (sid <= 0) { return 0; }
     if (STRUCTSZ(S, sid - 1) <= 8) { return 0; }
@@ -5354,8 +5407,16 @@ fn _gci_inline(S, sid): i64 {
     return sid;
 }
 # Pass 1's half of a declaration-zone tuple literal, cursor on the RHS: -1 when it is no whole
-# literal up to the `;`; else the tuple to register inline, or 0. Quiet: the replay reports.
-fn _tup_gci(S, sid): i64 {
+# literal up to the `;`; else the tuple to register inline, or 0. Quiet: the replay reports. The
+# tokens are read as the replay will read them with every fn declared (`_tup_p1`, parse_expr.cyr): a
+# generic call's `<A, B>` holds no tuple comma, whether the generic is declared above or below.
+fn _tup_gci(S, sid, ann): i64 {
+    _tup_p1 = 1;
+    var r = _tup_gci_in(S, sid, ann);
+    _tup_p1 = 0;
+    return r;
+}
+fn _tup_gci_in(S, sid, ann): i64 {
     var lp = _tup_lit_at(S, GTI(S));
     if (lp < 0) { return _tup_gci_call(S, sid); }   # 6.7.7 (T5): or a capture's whole call
     if (TOKTYP(S, _pw_end) != 5) { return 0 - 1; }
@@ -5363,6 +5424,7 @@ fn _tup_gci(S, sid): i64 {
         if (_tup_is(S, sid) == 1) { return sid; }
         return 0;
     }
+    if (ann != 0) { return 0; }   # `var G: i64 = ( .. );` is no tuple (the replay refuses its literal)
     var n = _tup_commas(S, lp) + 1;
     if (n > 256) { return 0; }
     return _tup_ints(S, n);
@@ -5761,7 +5823,7 @@ fn _dt_arity_check(S, fi, n): i64 {
 # the call at the cursor, or -1. CHANGELOG [6.6.16]
 fn _dt_call_open(S): i64 {
     var ti = GTI(S);
-    var o = _gcall_open(S, ti);
+    var o = _tup_gopen(S, ti);   # 6.7.7 (B4 review): `_gcall_open`, but by its tokens in the zone's pass 1
     if (o >= 0) { return o; }
     if (_tok_method_open(S, ti) == 1) { return ti + 3; }
     return 0 - 1;
