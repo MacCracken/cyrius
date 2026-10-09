@@ -170,7 +170,7 @@ build() { rc=0; timeout 60 "$CC" ${2:-} < "$T/$1.cyr" > "$T/$1.bin" 2> "$T/$1.er
 refused() {   # <name> <message fragment> <what> <source> <line:col> [<compiler flag>]
     printf '%b' "$4" > "$T/$1.cyr"
     build "$1" "${6:-}"
-    n=$(grep -c '^error' "$T/$1.err")
+    n=$(grep -c '^error' "$T/$1.err" || true)
     if [ "$rc" -eq 0 ]; then bad "$3: BUILT (rc 0)"
     elif [ "$rc" -eq 124 ]; then bad "$3: the compiler did not finish (timeout)"
     elif ! grep -qF "$2" "$T/$1.err"; then bad "$3: refused, but not as expected: $(grep '^error' "$T/$1.err" | head -1)"
@@ -300,10 +300,10 @@ else
         if [ -z "$d" ] || [ -z "$w" ] || [ -z "$t" ] || [ -z "$e" ]; then bad "T: the symbol map does not name down / w / t2 / tend"
         else
             ds=$(printf '%x' "0x$d"); ws=$(printf '%x' "0x$w")
-            nj=$(objdump -d --start-address=0x"$d" --stop-address=0x"$w" "$T/t01.bin" | grep -cE "jmp +0x$ds\b")
+            nj=$(objdump -d --start-address=0x"$d" --stop-address=0x"$w" "$T/t01.bin" | grep -cE "jmp +0x$ds\b" || true)
             [ "$nj" -eq 1 ] && ok "T1: the full-arity self tail call to a defaulted fn keeps its jmp" || bad "T1: down has $nj jmp(s) to itself, want 1"
-            nc=$(objdump -d --start-address=0x"$t" --stop-address=0x"$e" "$T/t01.bin" | grep -cE "call +0x$ws\b")
-            nj2=$(objdump -d --start-address=0x"$t" --stop-address=0x"$e" "$T/t01.bin" | grep -cE "jmp +0x$ws\b")
+            nc=$(objdump -d --start-address=0x"$t" --stop-address=0x"$e" "$T/t01.bin" | grep -cE "call +0x$ws\b" || true)
+            nj2=$(objdump -d --start-address=0x"$t" --stop-address=0x"$e" "$T/t01.bin" | grep -cE "jmp +0x$ws\b" || true)
             if [ "$nc" -eq 1 ] && [ "$nj2" -eq 0 ]; then ok "T2: a \`return w(1)\` that fills is a call"
             else bad "T2: t2 has $nc call(s) and $nj2 jmp(s) to w, want 1 and 0"; fi
         fi
@@ -325,7 +325,7 @@ else
         if [ -z "$g" ] || [ -z "$h" ] || [ -z "$e" ]; then bad "W1: the symbol map does not name g / h / hend"
         else
             gs=$(printf '%x' "0x$g")
-            nc=$(objdump -d --start-address=0x"$h" --stop-address=0x"$e" "$T/w01.bin" | grep -cE "call +0x$gs\b")
+            nc=$(objdump -d --start-address=0x"$h" --stop-address=0x"$e" "$T/w01.bin" | grep -cE "call +0x$gs\b" || true)
             [ "$nc" -eq 2 ] && ok "W1: ... and h calls g twice (not inlined)" || bad "W1: h has $nc call(s) to g, want 2 (inlined?)"
         fi
     else echo "  SKIP W1's call row: no objdump"; skips=$((skips + 1)); fi
@@ -390,7 +390,7 @@ else
         f=$(awk '$2 == "s2" { print $1 }' "$T/i01.syms"); h=$(awk '$2 == "h" { print $1 }' "$T/i01.syms"); e=$(awk '$2 == "hend" { print $1 }' "$T/i01.syms")
         if [ -z "$f" ] || [ -z "$h" ] || [ -z "$e" ]; then bad "I1: the symbol map does not name s2 / h / hend"
         else
-            nc=$(objdump -d --start-address=0x"$h" --stop-address=0x"$e" "$T/i01.bin" | grep -cE "call +0x$(printf '%x' "0x$f")\b")
+            nc=$(objdump -d --start-address=0x"$h" --stop-address=0x"$e" "$T/i01.bin" | grep -cE "call +0x$(printf '%x' "0x$f")\b" || true)
             [ "$nc" -eq 2 ] && ok "I1: h calls s2 for the two named calls (the positional one is inlined)" || bad "I1: h has $nc call(s) to s2, want 2"
         fi
     else echo "  SKIP I1's call row: no objdump"; skips=$((skips + 1)); fi
@@ -457,7 +457,7 @@ if tool cyrius cbt/cyrius.cyr && premise "S-hdr" "$T/st/hw/d.cyr"; then
     for l in 'cyr_val hf(cyr_val a, cyr_val b);' 'cyr_val hg(cyr_val a, cyr_val b, cyr_val c);' 'cyr_val hh(cyr_val s, cyr_val n);' 'cyr_val hk(cyr_val a, cyr_val c, cyr_val d);' 'cyr_val hw(cyr_val a, cyr_val b, cyr_val e);' 'cyr_val hz(cyr_val a, cyr_val b);'; do
         grep -qxF "$l" "$T/st/hdr.out" || miss="$miss [$l]"
     done
-    n=$(grep -c '^cyr_val h' "$T/st/hdr.out")
+    n=$(grep -c '^cyr_val h' "$T/st/hdr.out" || true)
     if [ "$rc" -eq 0 ] && [ -z "$miss" ] && [ "$n" -eq 6 ]; then ok "S-hdr: cyrius header: a defaulted parameter is one C parameter (6 prototypes)"
     else bad "S-hdr: rc $rc, $n prototype(s); missing:$miss; got: $(grep '^cyr_val h' "$T/st/hdr.out" | tr '\n' '|')"; fi
 fi
@@ -584,7 +584,7 @@ fi
 
 # ── A: the crossos tcyr, every leg, with its full assertion count ────────────────────────────
 TC="$ROOT/tests/tcyr/crossos/default_named_args_values.tcyr"
-WANT=$(grep -cE '^ *assert_eq\(' "$TC")
+WANT=$(grep -cE '^ *assert_eq\(' "$TC" || true)
 [ "$WANT" -ge 100 ] || bad "A0: only $WANT assertions derived from the tcyr (floor 100)"
 # cx has no 9-16 B register-pair struct return: its leg counts without the rows under `#ifndef CYRIUS_TARGET_CX`.
 NCX=$(awk '/^ *#ifndef CYRIUS_TARGET_CX/ { s = 1 } /^ *#endif/ { s = 0 } s && /^ *assert_eq\(/ { n++ } END { print n + 0 }' "$TC")
