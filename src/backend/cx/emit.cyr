@@ -40,6 +40,7 @@ var _TARGET_CX = 1;
 # here so parse_ctrl.cyr / parse_expr.cyr resolve the symbol on cx
 # builds. Always 0 on cx — bytecode has no flag-reuse semantic.
 var _flags_reflect_rax = 0;
+var _flags_cp = 0 - 1;   # 6.7.6: the setter's CP, read by ECONDCMP (x86/emit.cyr); never set here
 # v5.6.9 push/pop-cancel + v5.6.10 combine-shuttle peephole trackers.
 # x86 + aarch64 emit use these for peephole rewinds; cx emits 4-byte
 # bytecode instructions, has no equivalent peephole, so trackers are

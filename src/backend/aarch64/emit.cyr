@@ -7,6 +7,7 @@
 # aarch64 work that switches to `adds`/`subs` (e.g. checked overflow
 # from v5.6.2) can start setting this flag and the peephole fires.
 var _flags_reflect_rax = 0;
+var _flags_cp = 0 - 1;   # 6.7.6: the setter's CP, read by ECONDCMP (x86/emit.cyr); never set here
 
 # v5.6.9 O2 category 3: redundant push/pop elimination. Tracks CP
 # immediately after the last EPUSHR/ESPILL. If the very next emit is

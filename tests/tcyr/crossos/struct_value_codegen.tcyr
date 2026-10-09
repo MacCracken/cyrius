@@ -5,6 +5,10 @@
 #   F  `if (h.m)` / `while (h.m)` on an i8 / i16 / i32 field after an arithmetic statement: x86
 #      skipped the `test` and branched on the statement's flags (the narrow field load never cleared
 #      the flags tracker). Each row's field disagrees with the flags the statement before it left.
+#      F9+ (6.7.6 follow-up, FE): the same skip after every other emit that wrote rax without
+#      clearing the tracker — a narrow typed LOCAL, mulh64, `~`, `&x` / `&g` / `&f` / a string
+#      literal, f64_floor and (F21, PE only) a Win32 syscall reroute. ECONDCMP now skips the test
+#      only when the flag-setting op was the last thing emitted.
 #   I  a name intrinsic's result (`mulh64`, `fncall0`..`fncall8`, `callptr`) is an untyped word: it
 #      inherited its LAST argument's struct type, so `fncall1(&f, n) + 1` with `n: Num` dispatched
 #      `Num_add` (100 where 8 is right).
@@ -75,6 +79,23 @@ fn f_zero_i32(): i64 {
     return c;
 }
 
+fn f_l_u8(): i64 { var b: u8 = 0; var x = 5; x = x + 1; if (b) { return 1; } return 0; }
+fn f_l_i16(): i64 { var b: i16 = 0; var x = 5; x = x + 1; if (b) { return 1; } return 0; }
+fn f_l_i32(): i64 { var b: i32 = 0; var x = 5; var c = 0; x = x + 1; while (b) { c = c + 1; if (c > 3) { break; } } return c; }
+fn f_l_i8n(): i64 { var b: i8 = 0 - 1; var y = bits(3); y = y - 3; if (b) { return 1; } return 0; }
+var GB8: u8 = 0;
+fn f_g_u8(): i64 { var x = 5; x = x + 1; if (GB8) { return 1; } return 0; }
+fn f_mulh(x, y): i64 { if (mulh64(x, y + 1)) { return 1; } return 0; }
+fn f_not(a, b): i64 { if (~(a + b)) { return 1; } return 0; }
+fn f_laddr(): i64 { var z = 0; var y = bits(3); y = y - 3; if (&z) { return 1; } return 0; }
+fn f_str(): i64 { var y = bits(3); y = y - 3; if ("s") { return 1; } return 0; }
+fn f_faddr(): i64 { var y = bits(3); y = y - 3; if (&f_str) { return 1; } return 0; }
+fn f_gaddr(): i64 { var y = bits(3); y = y - 3; if (&GB8) { return 1; } return 0; }
+fn f_floor(k): i64 { if (f64_floor(k + 0)) { return 1; } return 0; }
+#ifdef CYRIUS_TARGET_WIN
+fn f_seek(w): i64 { if (syscall(8, 1, 0, w + 1)) { return 1; } return 0; }
+#endif
+
 fn flags(): i64 {
     assert_eq(f_i8(), 0, "F1: if (h.m) on a zero i8 field after x = x + 1");
     assert_eq(f_i16(), 0, "F2: if (h.m) on a zero i16 field after a[0] -= 1");
@@ -85,6 +106,21 @@ fn flags(): i64 {
     assert_eq(f_global(), 0, "F6: if (GH.k) on a global's i32 field");
     assert_eq(f_zero_flags(), 1, "F7: if (h.m) on a NONZERO i8 field after y = y - 3 left ZF set");
     assert_eq(f_zero_i32(), 7, "F8: while (h.k) on a nonzero i32 field after y = y - 3 counts it down");
+    assert_eq(f_l_u8(), 0, "F9: if (b) on a zero u8 LOCAL after x = x + 1");
+    assert_eq(f_l_i16(), 0, "F10: if (b) on a zero i16 local");
+    assert_eq(f_l_i32(), 0, "F11: while (b) on a zero i32 local runs no iteration");
+    assert_eq(f_l_i8n(), 1, "F12: if (b) on a NONZERO i8 local after y = y - 3 left ZF set");
+    assert_eq(f_g_u8(), 0, "F13: if (G) on a zero u8 GLOBAL after x = x + 1");
+    assert_eq(f_mulh(5, 6), 0, "F14: if (mulh64(5, 6 + 1)) is 0");
+    assert_eq(f_not(0 - 2, 1), 0, "F15: if (~(a + b)) with a + b == -1");
+    assert_eq(f_laddr(), 1, "F16: if (&z) after y = y - 3");
+    assert_eq(f_str(), 1, "F17: if (\"s\") after y = y - 3");
+    assert_eq(f_faddr(), 1, "F18: if (&fn) after y = y - 3");
+    assert_eq(f_gaddr(), 1, "F19: if (&global) after y = y - 3");
+    assert_eq(f_floor(0x3FE0000000000000), 0, "F20: if (f64_floor(0.5 + 0)) is 0.0");
+#ifdef CYRIUS_TARGET_WIN
+    assert_eq(f_seek(0 - 1), 0, "F21: if (syscall(8, 1, 0, w + 1)): the PE lseek reroute's 0");
+#endif
     return 0;
 }
 

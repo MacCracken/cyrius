@@ -46,7 +46,8 @@ fn ECONDCMP(S): i64 {
     # before.
     if (op < 17 || op > 22) {
         _w128_truth(S, 18);   # 6.7.6 (D4): a bare u128 condition tests all 128 bits
-        if (_flags_reflect_rax == 0) { ETESTAZ(S); }
+        # 6.7.6: the flags are rax's only if the setter was the LAST emit (`_flags_cp`, x86/emit.cyr)
+        if (_flags_reflect_rax == 0 || GCP(S) != _flags_cp) { ETESTAZ(S); }
         return 18;
     }
     EPUSHR(S);

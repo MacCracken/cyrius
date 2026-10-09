@@ -7,7 +7,11 @@
 # compilers built from this tree (rows A); the release gate runs it on the four real hosts.
 #
 #   F  x86: `if (h.m)` / `while (h.m)` on an i8 / i16 / i32 field branched on the flags of the
-#      statement before it (EFIELD_LOAD_W's narrow load never cleared `_flags_reflect_rax`)
+#      statement before it (EFIELD_LOAD_W's narrow load never cleared `_flags_reflect_rax`).
+#      F2+ (6.7.6 follow-up, FE): the same skip after a narrow typed LOCAL (EFLLOAD_W's narrow arms),
+#      mulh64 (EMULH) and — found by the audit — `~`, `&x`, `&g`, `&f`, a string literal, f64_floor
+#      and every PE syscall reroute (tcyr F15-F21). EFLLOAD_W and EMULH clear the tracker, and
+#      ECONDCMP skips its `test` only when the setter was the LAST emit (`_flags_cp`)
 #   I  a name intrinsic's result (`mulh64`, `fncallN`, `callptr`) kept its LAST argument's struct
 #      type, so `fncall1(&f, n) + 1` with `n: Num` dispatched `Num_add` (100 where 8 is right)
 #   P  a PARENTHESISED argument to an address-passed parameter (`rd3((a))`, `rd1((s))`,
@@ -126,6 +130,11 @@
 #   M-R7 `_op_star_param` always 1 (the old wording)          -> RED R6
 #   M-N1a lib/fnptr.cyr's Linux x86 fncall8 arm back to the C order -> RED N1 (87); the same mutant
 #       turns cx_backend_parity.sh RED (M-N1b: T native 57 passed, 1 failed)
+#   (FE, 2026-10-08, the same procedure)
+#   M-F2 ECONDCMP without its `GCP(S) != _flags_cp` test         -> RED F5 F6, A1-A4 (tcyr F15-F20; F21
+#       on PE under wine: 12 red with the pre-fix compiler); A5 A6 green (the tracker is x86's only)
+#   M-F3 M-F2 + EFLLOAD_W without its clear                      -> RED F2 F3 F5 F6, A1-A4 (tcyr F9-F12)
+#   M-F4 M-F2 + EMULH without its clear                          -> RED F4 F5 F6, A1-A4 (tcyr F14)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -175,6 +184,11 @@ tcyr() {
 E='\nsyscall(60, main());\n'
 
 exits f01 0 "F1: if (h.m) on a zero i8 field after x = x + 1 (the filed repro: 1 on x86)" "struct H { n; m: i8; k: i32; }\nfn main(): i64 { var h = H { 1, 0, 3 }; var x = 5; x = x + 1; if (h.m) { return 1; } return 0; }$E"
+exits f02 0 "F2: if (b) on a zero u8 LOCAL after x = x + 1 (the filed repro: 1 on x86)" "fn main(): i64 { var b: u8 = 0; var x = 5; x = x + 1; if (b) { return 1; } return 0; }$E"
+exits f03 1 "F3: if (b) on a nonzero i8 local after y = y - 3 left ZF set (0 on x86)" "fn g(y): i64 { var b: i8 = 0 - 1; y = y - 3; if (b) { return 1; } return 0; }\nfn main(): i64 { return g(3); }$E"
+exits f04 0 "F4: if (mulh64(x, y + 1)) with mulh64(5, 7) == 0 (the filed repro: 1)" "fn g(x, y): i64 { if (mulh64(x, y + 1)) { return 1; } return 0; }\nfn main(): i64 { return g(5, 6); }$E"
+exits f05 0 "F5: if (~(a + b)) with a + b == -1 (1 on x86)" "fn g(a, b): i64 { if (~(a + b)) { return 1; } return 0; }\nfn main(): i64 { return g(0 - 2, 1); }$E"
+exits f06 1 "F6: if (&z) after y = y - 3 (0 on x86)" "fn g(y): i64 { var z = 0; y = y - 3; if (&z) { return 1; } return 0; }\nfn main(): i64 { return g(3); }$E"
 NUM='struct Num { a; b; }\nfn Num_add(x: Num, y) { return 100; }\nfn id1(x) { return 7; }\n'
 exits i01 8 "I1: fncall1(&id1, n) + 1 (the filed repro: 100)" "include \"lib/fnptr.cyr\"\n${NUM}fn main() { var n: Num = Num { 1, 2 }; return fncall1(&id1, n) + 1; }$E"
 exits i02 1 "I2: mulh64(3, n) + 1 (the filed repro: 100)" "${NUM}fn main() { var n: Num = Num { 1, 2 }; return mulh64(3, n) + 1; }$E"
