@@ -14,7 +14,7 @@ unpinned watching list is [roadmap-future.md](roadmap-future.md), volatile state
 
 ## Where we are
 
-**Current head: v6.7.6** (2026-10-08) — Break 1 shipped · cycc **1,806,240 B** · `.text` **1,612,016** · `cycc-native-aarch64` **1,601,032 B** · **537** `.tcyr`, **243** in `crossos/` · **106** `lib/*.cyr` · **441** shell gates under `tests/gates/<bucket>/` · api-surface **5,828** · **73** open issues · **1** open proposal · next ledger id **CYRIUS-2026-0036**
+**Current head: v6.7.6** (2026-10-08) — Break 1 shipped · cycc **1,806,240 B** · `.text` **1,612,016** · `cycc-native-aarch64` **1,601,032 B** · **537** `.tcyr`, **243** in `crossos/` · **106** `lib/*.cyr` · **441** shell gates under `tests/gates/<bucket>/` · api-surface **5,828** · **68** open issues · **1** open proposal · next ledger id **CYRIUS-2026-0036**
 
 > Every figure above is DERIVED (2026-10-08), never carried. `version-bump.sh` rewrites only the stamp's version and
 > the `(…)` after it — re-derive the rest at each release (`find tests/gates -name '*.sh' | wc -l`, …). Keep the stamp
@@ -42,7 +42,7 @@ v6.6.x closed at 6.6.20. 6.7.0–6.7.6 shipped (2026-10-07 → 2026-10-08): [com
 | Release | Content |
 |---|---|
 | 6.7.0 – 6.7.6 | ✅ shipped — A traits · C3 trait-bounded generics · B1 `const` + C1 `const fn` · B2 `bool` · B3 the if-expression · B5 `loop` / `do` + B8 `OP=` on every lvalue · the W2 stdlib wave + Break 1 |
-| 6.7.7 | **B4** tuples + **B6** default and named arguments (decisions below, user 2026-10-08) · the fixes: [`cyrius distlib`'s order-dependent owner](issues/2026-10-08-distlib-owner-first-declarer-credits-fold-monolith.md) · [the ach-timing terminate-children test](issues/2026-10-08-crossos-terminate-children-timing-on-ach.md) · [the silent `x += 1.5`](issues/2026-10-08-compound-assign-f64-rhs-on-int-slot-silent.md) · [install.sh's init templates](issues/2026-10-08-install-sh-source-bootstrap-no-init-templates.md) · [`ci.sh` and a real release tarball](issues/2026-10-08-ci-sh-cannot-install-release-tarball.md) · [the pair-into-one-slot stores (with B4)](issues/2026-10-08-pair-call-assigned-to-single-slot-keeps-tag.md) |
+| 6.7.7 | **B4** tuples + **B6** default and named arguments (decisions below, user 2026-10-08) · the fixes: [`cyrius distlib`'s order-dependent owner](issues/archived/2026-10-08-distlib-owner-first-declarer-credits-fold-monolith.md) · [the ach-timing terminate-children test](issues/archived/2026-10-08-crossos-terminate-children-timing-on-ach.md) · [the silent `x += 1.5`](issues/archived/2026-10-08-compound-assign-f64-rhs-on-int-slot-silent.md) · [install.sh's init templates](issues/archived/2026-10-08-install-sh-source-bootstrap-no-init-templates.md) · [`ci.sh` and a real release tarball](issues/archived/2026-10-08-ci-sh-cannot-install-release-tarball.md) · [the pair-into-one-slot stores (with B4)](issues/2026-10-08-pair-call-assigned-to-single-slot-keeps-tag.md) |
 | 6.7.8 → | the remaining features, decisions asked at each start: **B7** narrow struct fields (layout decided below) · **C2** the bounds-checked mode (+ P5 execution coverage) · **checked `dyn`** |
 | Break 2 | catch-up — the user picks from the candidates below |
 | closeout | the closeout checklist ([cycle-discipline.md](cycle-discipline.md)) — the checklist, not an audit campaign |

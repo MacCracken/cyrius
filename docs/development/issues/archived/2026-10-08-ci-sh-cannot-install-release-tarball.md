@@ -1,9 +1,9 @@
-# `scripts/ci.sh` cannot install a real release tarball ("cycc not found") — OPEN
+# `scripts/ci.sh` cannot install a real release tarball ("cycc not found") — RESOLVED
 
-**Status:** 🟡 **OPEN** — reproduced 2026-10-08 against 6.7.6 @ 2fb6ad8b: `scripts/ci.sh 6.7.6` fed a tarball packed
-the way `release.yml` packs it (one top directory, `cyrius-6.7.6-x86_64-linux/`), through a stub `curl` in a scratch
-`CYRIUS_HOME`, verifies the checksum, extracts, then exits 1 `error: cycc not found`.
-**Placement:** 6.7.7 (being fixed in this release) — never 7.x.
+> ✅ **RESOLVED in v6.7.7** (merge f4aed864 (lane install, 005d81a9 + 66e936e1); CHANGELOG [6.7.7] § *Fixed*). ci.sh installs the tarball release.yml packs and never writes through a linked `bin/`; the gate runs release.yml's own package step.
+
+**Status:** ✅ **RESOLVED in v6.7.7** — see the banner above (filed OPEN 2026-10-08 against 6.7.6 @ 2fb6ad8b).
+**Placement:** 6.7.7 — shipped.
 **Discovered:** 6.7.3 docs pass (2026-10-08, roadmap.md Break 2 *Tooling*); filed 2026-10-08 from roadmap.md.
 **Severity:** Medium — a hard failure for every CI that installs through `ci.sh`; `install.sh` installs the same tarball.
 **Affects:** `scripts/ci.sh` since its `versions/<v>/bin/*` glob (2026-04-06) through 6.7.6 — it is also shipped

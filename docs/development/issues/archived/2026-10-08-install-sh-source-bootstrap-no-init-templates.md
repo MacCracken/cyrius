@@ -1,12 +1,9 @@
-# install.sh's source-bootstrap path ships no `cyrius-init-templates` — `cyrius init` / `port` lose their templates — OPEN
+# install.sh's source-bootstrap path ships no `cyrius-init-templates` — `cyrius init` / `port` lose their templates — RESOLVED
 
-**Status:** 🟡 **OPEN** — verified 2026-10-08 against 6.7.6 @ 2fb6ad8b: the source-bootstrap branch of
-`scripts/install.sh` (1046-1188) copies `lib/` and never `programs/cyrius-init-templates/`; a `cyrius-init` built
-from `programs/cyrius-init.cyr` by the tree's `build/cycc` into a scratch `versions/6.7.6/bin/` laid out the way that
-branch lays it out (bin + lib, no `programs/`) prints 21 `error: missing template '…'` lines for `cyrius-init demo` —
-and then `Created demo/` and exit 0. The `git clone` of the tag itself was not run (it needs the network; the
-branch's copy list was read).
-**Placement:** 6.7.7 (being fixed in this release) — never 7.x.
+> ✅ **RESOLVED in v6.7.7** (merge f4aed864 (lane install, 9d5c540f); CHANGELOG [6.7.7] § *Fixed*). install.sh's source-bootstrap path copies `programs/cyrius-init-templates`; a gate runs every install path.
+
+**Status:** ✅ **RESOLVED in v6.7.7** — see the banner above (filed OPEN 2026-10-08 against 6.7.6 @ 2fb6ad8b).
+**Placement:** 6.7.7 — shipped.
 **Discovered:** 6.7.3 docs pass (2026-10-08, roadmap.md Break 2 *Tooling*); filed 2026-10-08 from roadmap.md.
 **Severity:** Medium — a silently broken scaffold on every install that falls back to building from source (no
 prebuilt tarball for the tag, or `CYRIUS_INSTALL_TARBALL` unset with downloads failing).

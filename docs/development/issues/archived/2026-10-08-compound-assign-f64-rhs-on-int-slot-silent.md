@@ -1,9 +1,9 @@
-# `x += 1.5` on an integer slot is silent where `x = x + 1.5` warns — OPEN
+# `x += 1.5` on an integer slot is silent where `x = x + 1.5` warns — RESOLVED
 
-**Status:** 🟡 **OPEN** — reproduced 2026-10-08 against 6.7.6 @ 2fb6ad8b with `build/cycc`: `x = x + 1.5` and
-`h.n = h.n + 1.5` warn "integer arithmetic with an f64 right operand"; `x += 1.5`, `h.n += 1.5`, `x -= 1.5`,
-`x *= 2.0`, `x /= y` (`y: f64`), a global `g += 1.5`, `a[0] += 1.5` and `*p += 1.5` are all silent.
-**Placement:** 6.7.7 (being fixed in this release) — never 7.x.
+> ✅ **RESOLVED in v6.7.7** (merge f0fd31e5 (lane cmpdwarn, 085d5ac7); CHANGELOG [6.7.7] § *Fixed*). `x OP= e` on an integer place now warns kind 2 on an f64 right operand, as the long form does; codegen unchanged over the 661-file corpus.
+
+**Status:** ✅ **RESOLVED in v6.7.7** — see the banner above (filed OPEN 2026-10-08 against 6.7.6 @ 2fb6ad8b).
+**Placement:** 6.7.7 — shipped.
 **Discovered:** 6.7.5 planning probe `iw` (roadmap commit 68de8001); filed 2026-10-08 from roadmap.md.
 **Severity:** Low
 **Affects:** cycc 6.6.8 – 6.7.6 (the kind-2 warning's whole life; the field / `*p` forms since 6.7.5)

@@ -4,6 +4,64 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased] — `.7` in flight
+
+B4 tuples and B6 default + named arguments (the user's decisions: roadmap.md § Spec) — *entry written at
+integration* — plus the fixes below, built in four worktree lanes (distlib, achflake, cmpdwarn, install) with one
+review round each, and the backlog moved into `docs/development/issues/`.
+
+### Fixed — the found issues
+
+- **`cyrius distlib` no longer depends on the filesystem's listing order** — check.sh was RED (444 of 445) whenever
+  `TMPDIR` was on tmpfs. The fault was not the partial-target rule the backlog named: since 6.6.18 the sidecar verify
+  starts with nothing in its unit, so a name undefined on EVERY target took its owner from `_distlib_leaf_defining`,
+  which picked the first declarer in directory order with no fold rule — tmpfs lists newest-first, so a fold
+  monolith won; ext4's hash order passed by luck (how the 6.7.6 gate read GREEN). The snapshot is now sorted in
+  `cyrius deps`' byte order (`_dep_name_cmp`) — every first-match reader (the every-target owner, the partial rule's
+  hits and refusals, `[embed]` collision text, build hints) answers the same on every host — and the every-target
+  owner keeps the fold rule (a fold bundle owns a name only when no non-fold file declares it). The gate now fails a
+  regression on every filesystem: axis 3 lists a monolith first under byte, creation and newest-first order, and the
+  new axis 8 arranges a tie among non-fold leaves until a wrong declarer lists first (never a vacuous pass). Three
+  mutants RED on tmpfs and ext4.
+- **`crossos/regression_terminate_children.tcyr` no longer races the host's clock** (RED once on ach in the 6.7.6
+  gate). The cause: macOS checks a newly written executable on its first run (~370 ms on ach; concurrent first runs
+  queue — 4 at once up to ~1.7 s), against a 600 ms deadline. The script is now run once outside any deadline; a
+  deadline that fires before the script recorded its child is retried with the deadline doubled; the
+  terminate-children child is held by a pipe (20 s grace, "returns at once" under 5 s); the "child has exited" waits
+  read the process state (Linux `/proc`, macOS `sysctl`) instead of sleeping. Each regression shape still fails
+  (the deadline never fires, only the child killed, the grace waited out). Passed sequential and 4/8/16 concurrent
+  runs on ach, ecb, pi and Linux, and under qemu and wine.
+- **`x OP= e` on an integer place warns on an f64 right operand** — `x += 1.5` (and `h.n`, `*p`, `a[i]`, `s.len`, a
+  `*T`, a for step) was silent while `x = x + 1.5` warned "integer arithmetic with an f64 right operand". The shared
+  `_asg_compound_op` reads the operand's type before any emit (so `q += f64_sqrt(u)` is seen) and warns for
+  `+= -= *= /=` as the long forms do; an f64 / f32 destination and the other operators stay silent. A warning only:
+  the 661-file corpus compiles byte-identical. `f64_int_mix_warn.sh` axis 14.
+
+### Fixed — from the backlog
+
+- **install.sh's source-bootstrap path ships the `cyrius init` templates** — only the refresh-only and tarball paths
+  copied `programs/cyrius-init-templates`, so `cyrius init` / `port` lost their templates after a source install.
+  New gate `install_paths_ship_init_templates.sh` runs every install path (and install.ps1's copies by grep, and
+  ci.sh) against throwaway homes.
+- **`scripts/ci.sh` installs the tarball release.yml actually packs** — release.yml packs one top-level
+  `cyrius-<v>-x86_64-linux/`; ci.sh untarred it into `$CYRIUS_HOME` and linked `versions/<v>/bin/*`, a layout no
+  release has had: every real install failed "cycc not found", read green because both gates that ran ci.sh fed it a
+  fabricated layout. ci.sh now unpacks into its private staging dir, refuses a tarball with no `bin/` or `lib/` by
+  name, and lays out `versions/<v>` as install.sh's tarball path does. Its review fix: on a home install.sh made
+  (`bin` / `lib` are directory links into the active slot) the per-file `ln -sf` wrote THROUGH the link and turned the
+  old slot's binaries into links to the new one — ci.sh now re-points the links as `_switch_active` does and never
+  touches the old slot. New gate `ci_installs_the_release_tarball.sh` runs release.yml's own package step under
+  `bash -e`; the two older gates build release-shaped tarballs; `release_verify_private_temp.sh`'s axis-4 detector
+  no longer aborts under `bash -eo pipefail`.
+
+### Docs — the backlog is `docs/development/issues/`
+
+- The user's directive (2026-10-08): "issues that are backlogged should have issue/ filed, not sit in the roadmap".
+  The whole roadmap backlog and Break 2 list became issue files, each premise-checked against 6.7.6 (repro, root
+  cause re-derived, proposed fix), plus what the 6.7.7 lanes found out of scope; roadmap.md carries placements and
+  links; `issues/README.md` gains the *Open queue* index. CLAUDE.md, the issues README and cycle-discipline carry the
+  rule; the old "keep issues/ lean, fold the tail into the roadmap" target is retired.
+
 ## [6.7.6] — 2026-10-08
 
 **Break 1** — the v6.7.x catch-up release (roadmap.md § *Break 1 — 6.7.6*): the high / critical backlog and the

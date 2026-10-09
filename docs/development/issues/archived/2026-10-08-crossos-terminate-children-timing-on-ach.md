@@ -1,11 +1,9 @@
-# `crossos/regression_terminate_children.tcyr` asserts wall-clock bounds and failed once on ach — OPEN
+# `crossos/regression_terminate_children.tcyr` asserts wall-clock bounds and failed once on ach — RESOLVED
 
-**Status:** 🟡 **OPEN** — not re-verified on hardware (needs ach). Verified 2026-10-08 against 6.7.6 @ 2fb6ad8b that the
-test still asserts the three wall-clock bounds below (read), and that it passes 3 of 3 on this Linux box (compiled with
-the tree's `build/cycc`, 14 passed). The 6.7.6 record (CHANGELOG [6.7.6] gate line; `state.md` Gates row): the first
-release-gate run (21:43) was RED on ach alone with this test, then 11 of 11 passes on ach (eight exactly as the runner
-runs it) and a GREEN re-run. Which assertion failed was not recorded.
-**Placement:** 6.7.7 (being fixed in this release) — never 7.x.
+> ✅ **RESOLVED in v6.7.7** (merge 9430635b (lane achflake, 45d51d5a); CHANGELOG [6.7.7] § *Fixed*). The test raced macOS's first-run check of a new executable (~370 ms on ach) against a 600 ms deadline. The first run happens outside any deadline, an early deadline retries doubled, and exits are awaited by process state, not sleeps.
+
+**Status:** ✅ **RESOLVED in v6.7.7** — see the banner above (filed OPEN 2026-10-08 against 6.7.6 @ 2fb6ad8b).
+**Placement:** 6.7.7 — shipped.
 **Discovered:** 2026-10-08, the 6.7.6 release gate's cross-OS leg on ach (Intel Mac); filed 2026-10-08 from roadmap.md
 (the CHANGELOG's "Filed:" meant that backlog line; no issue file existed, open or archived).
 **Severity:** Low — an intermittent RED on one release-gate host; no product defect is indicated.

@@ -234,13 +234,8 @@ about.
 
 Regenerate from the files (title = first heading, group = `**Placement:**`); never hand-count.
 
-**6.7.7 — in this release** (6)
+**6.7.7 — in this release** (1)
 
-- [`scripts/ci.sh` cannot install a real release tarball ("cycc not found")](2026-10-08-ci-sh-cannot-install-release-tarball.md)
-- [`x += 1.5` on an integer slot is silent where `x = x + 1.5` warns](2026-10-08-compound-assign-f64-rhs-on-int-slot-silent.md)
-- [`crossos/regression_terminate_children.tcyr` asserts wall-clock bounds and failed once on ach](2026-10-08-crossos-terminate-children-timing-on-ach.md)
-- [`cyrius distlib` credits a symbol undefined on EVERY target to its first declarer in directory order — a fold monolith wins; check.sh is RED whenever `TMPDIR` is on tmpfs](2026-10-08-distlib-owner-first-declarer-credits-fold-monolith.md)
-- [install.sh's source-bootstrap path ships no `cyrius-init-templates` — `cyrius init` / `port` lose their templates](2026-10-08-install-sh-source-bootstrap-no-init-templates.md)
 - [A pair-returning call stored into ONE slot keeps only the tag, silently](2026-10-08-pair-call-assigned-to-single-slot-keeps-tag.md)
 
 **Break 2 candidates — the user picks** (15)

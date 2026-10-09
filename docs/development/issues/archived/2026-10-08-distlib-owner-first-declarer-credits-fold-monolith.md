@@ -1,12 +1,9 @@
-# `cyrius distlib` credits a symbol undefined on EVERY target to its first declarer in directory order — a fold monolith wins; check.sh is RED whenever `TMPDIR` is on tmpfs — OPEN
+# `cyrius distlib` credits a symbol undefined on EVERY target to its first declarer in directory order — a fold monolith wins; check.sh is RED whenever `TMPDIR` is on tmpfs — RESOLVED
 
-**Status:** 🟡 **OPEN** — reproduced 2026-10-08 against 6.7.6 @ 2fb6ad8b: `tests/gates/toolchain/distlib_sidecar_host_independent.sh`
-run 3 of 3 with `TMPDIR` on tmpfs (a scratch dir under `/tmp`, tmpfs on this box), the CLI built from `cbt/cyrius.cyr`
-with the tree's `build/cycc` (byte-identical to `build/cyrius`) → `FAIL: … axis 3: [zzz_mono sysz ] — EINTRZ (undefined
-on PE only) was credited to a monolith, the first declarer in directory order`. A `-v` run of the axis-3 fixture shows
-WHERE: `sidecar verify round 1: zzz_mono recorded for 'EINTRZ' (every target)` — the every-target branch, not
-`_distlib_partial_owner`.
-**Placement:** 6.7.7 (being fixed in this release) — never 7.x.
+> ✅ **RESOLVED in v6.7.7** (merge 19df188c (lane distlib, 7b977e32); CHANGELOG [6.7.7] § *Fixed*). `cyrius distlib` took a name undefined on every target from its first declarer in directory order with no fold rule — a fold monolith won on tmpfs (check.sh 444/445). The snapshot is sorted in byte order and the every-target owner keeps the fold rule; the gate fails a regression on every filesystem.
+
+**Status:** ✅ **RESOLVED in v6.7.7** — see the banner above (filed OPEN 2026-10-08 against 6.7.6 @ 2fb6ad8b).
+**Placement:** 6.7.7 — shipped.
 **Discovered:** 2026-10-08, after the 6.7.6 release gate (reproduced then on a pristine `git archive` of HEAD; recorded in
 `state.md`'s Gates row and roadmap.md's backlog); filed 2026-10-08 from roadmap.md.
 **Severity:** Medium — a sidecar whose content depends on the publishing host's directory order (exactly what the gate
