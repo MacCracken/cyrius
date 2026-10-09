@@ -570,7 +570,16 @@ fn LOOKAHEAD_IS_TYPE_ARG_CALL(S): i64 {
             }
         } elif (t == 5) { return 0; }
         elif (t == 13) { return 0; }
-        elif (t == 10) { return 0; }
+        elif (t == 10) {
+            # 6.7.7 (R3): a tuple TYPE ARGUMENT, `f<( .. )>(..)` — stepped over, so the call parses
+            # and _parse_one_type_arg refuses the type by name. Only right after `<` or `,`: any
+            # other `(` ends the lookahead as before (both callers have a generic fn in hand, whose
+            # bare name is no value, so no comparison that compiled reads differently).
+            if (depth < 1) { return 0; }
+            var pt = TOKTYP(S, i - 1);
+            if (pt != 19) { if (pt != 31) { return 0; } }
+            i = _call_close(S, i);
+        }
         i = i + 1;
     }
     return 0;
@@ -1269,6 +1278,7 @@ fn PARSE_FACTOR(S): i64 {
     var _rc = _PARSE_FACTOR_IMPL(S);
     _call_scale_fix(S, _ti0);   # 6.6.17: a call's result scales by its declared return only
     _w128_rchk(S, _ti0);        # 6.7.6 (D2): a u128 as the right operand of a refused operator
+    _tup_rchk(S, _ti0);         # 6.7.7 (B4): a whole tuple is not a value
     _rd_exit();
     # 6.6.5 — `syscall(…)` (token 24) is stack-NEUTRAL by construction: it pushes its
     # arguments and every backend's emitter consumes exactly those, leaving the result in
@@ -1833,6 +1843,23 @@ fn _w128_rchk(S, ti0): i64 {
     if (_w128_refused_op(t) == 0) { return 0; }
     if (t == 8 || t == 27) { if (_tok_ends_operand(S, ti0 - 2) == 0) { return 0; } }
     return _w128_refuse_at(S, ti0 - 1, t, 0);
+}
+# ⛔ 6.7.7 (B4) — A TUPLE IS NOT A NUMBER (R11). A factor that is exactly one name (`GTI == ti0 + 1`)
+# whose load stamped a tuple's sid — every inline-aggregate load stamps it: a local, an
+# address-passed parameter, a closure capture, a global; `_PARSE_FACTOR_IMPL` resets it at entry —
+# is a whole tuple read as a VALUE: `t == u`, `t + 1`, `!t`, `if (t)`, `print(t)`, `var x = t;`, an
+# untyped argument. Under the struct rule each of those took the tuple's first word (or dispatched
+# a `(i64, i64)_add` that cannot exist), silently. Refused by name, once per token, and the stamp
+# cleared so no operator dispatch follows. Every legitimate whole-tuple use — a copy, a tuple
+# argument, a field store, a struct-literal element, `&t` — consumes the name without a factor.
+# (A whole tuple-typed FIELD is refused at its load, `_tup_fld_rchk`.) CHANGELOG [6.7.7]
+fn _tup_rchk(S, ti0): i64 {
+    if (GTI(S) != ti0 + 1) { return 0; }
+    if (TOKTYP(S, ti0) != 2) { return 0; }
+    if (_tup_is(S, GESTYPE(S)) == 0) { return 0; }
+    _tup_err(S, ti0, "tuple ", TOKVAL(S, ti0), " used as a value - take an element (`t.0`) or copy it whole into a tuple");
+    SESTYPE(S, 0);
+    return 0;
 }
 fn _tok_ends_operand(S, ti): i64 {
     if (ti < 0) { return 0; }
@@ -2532,10 +2559,10 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
                 szval = 16;
                 STI(S, GTI(S) + 1);
             } else {
-                if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
                 # 6.6.16 (C8): the one type-name resolver — a bound type parameter its argument's
                 # size, else the WHOLE name (u8..u64, f32, f64, bool, cstring, an enum, a vector, a
                 # struct), else refused by name. sizeof(f64) / sizeof(u8) did not compile. CHANGELOG [6.6.16]
+                # 6.7.7: _sizeof_type expects the name itself (and refuses a tuple type by name).
                 szval = _sizeof_type(S, 0);   # 6.6.17: + `<..>` (_sizeof_type)
             }
             if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }

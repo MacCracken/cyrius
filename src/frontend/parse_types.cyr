@@ -273,6 +273,7 @@ fn _tn_once(S, ti): i64 {
 # accessors; a refused name leaves all of them 0, i.e. a plain i64. An ARRAY element (`T[N]`,
 # the `[` next) is not refused here: _arr_name_ebytes names it as an array element.
 fn _tn_ann(S, ti, vnoff): i64 {
+    if (TOKTYP(S, ti) == 10) { STI(S, ti); return _tn_code(6, _tup_type(S, 0)); }   # 6.7.7 (B4): `(T, ..)`
     var c = _tn_resolve_at(S, ti);
     if (c == 0) {
         if (TOKTYP(S, ti + 1) != 28) { _tn_refuse(S, ti, " for variable ", vnoff); }
@@ -287,9 +288,240 @@ fn _tn_ann(S, ti, vnoff): i64 {
 # float tag, the sid. That arm used to read the binding's raw code as a width: T = f64 (-9) made
 # a 9-byte word (`T[N]` reserved 9 * N while sizeof(T) is 8) and T = i8 never sign-extended.
 fn _tn_var_ann(S, ti, vnoff): i64 {
+    if (TOKTYP(S, ti) == 10) { return _tn_ann(S, ti, vnoff); }   # 6.7.7: a tuple, before the binding
     var b = _tp_resolve(S, TOKVAL(S, ti));
     if (b != 0) { return _tn_from_rc(b); }
     return _tn_ann(S, ti, vnoff);
+}
+# 6.7.7 (B4): the first token of a `var` annotation's named type — an IDENT, or the `(` of a tuple
+# type. One call where the declaration ladders read `PEEKT(S) == 2` (no hot body gains a reference).
+fn _tn_head(S): i64 {
+    var t = PEEKT(S);
+    if (t == 2 || t == 10) { return 1; }
+    return 0;
+}
+
+# A slice element's first token (PARSE_VAR's `[T]` / `slice<T>` arms): a name, `u128`, or (6.7.7) a
+# tuple's `(`, which _tn_slice_w refuses by name. One call where the arms read two.
+fn _tn_slice_head(S): i64 {
+    var t = PEEKT(S);
+    if (t == 2 || t == 105 || t == 10) { return 1; }
+    return 0;
+}
+
+# ⛔ 6.7.7 (B4) — TUPLE TYPES (the user's decision, 2026-10-08). `(T1, T2, ..)` is an ANONYMOUS
+# STRUCT of 8-byte slots, interned ONCE per element list in the struct table under its canonical
+# spelling `(i64, f64)` — the name every struct diagnostic prints. `(` is never an identifier byte,
+# so the name collides with no user struct and no minted `Box$..`. Its fields are named "0", "1",
+# .. (FINDFIELD compares names by content, so the lexer's `t.0` selector finds them), every one 8
+# bytes: i64 an integer word, f64 a float field (GFFK), bool a checked bool field (GFBOOL). From
+# there a tuple IS a struct for every existing rule — inline locals and globals, copies
+# type-checked by sid (equal element lists are the same sid), struct fields, `t.0` reads and
+# writes, OP=. The vocabulary is i64 / f64 / bool; every other element, and every type position
+# the decision leaves open, is refused by name. Interning registers a struct, so it must never run
+# INSIDE another struct's definition (REGSTRUCT starts the new struct's fields at the field pool's
+# top): PARSE_STRUCT_DEF interns its tuple fields before it registers (`_sdef_tup_prescan`) and
+# then only looks them up. CHANGELOG [6.7.7]
+var _tup_fnames = 0;   # the field names "0".."255": name-pool offset + 1, minted on first use
+fn _tup_fname(S, k): i64 {
+    if (_tup_fnames == 0) { _tup_fnames = alloc(256 * 8); }
+    var o = load64(_tup_fnames + k * 8);
+    if (o != 0) { return o - 1; }
+    NPOS_GUARD(S, 4);
+    var np = GNPOS(S);
+    var w = np;
+    if (k >= 100) { store8(S + 0xEC00000 + w, 48 + k / 100); w = w + 1; }
+    if (k >= 10) { store8(S + 0xEC00000 + w, 48 + (k / 10) % 10); w = w + 1; }
+    store8(S + 0xEC00000 + w, 48 + k % 10);
+    store8(S + 0xEC00000 + w + 1, 0);
+    SNPOS(S, w + 2);
+    store64(_tup_fnames + k * 8, np + 1);
+    return np;
+}
+# 1 = struct `sid` (1-based) is a tuple type: its name starts with `(`.
+fn _tup_is(S, sid): i64 {
+    if (sid <= 0) { return 0; }
+    if (sid > GSTC(S)) { return 0; }
+    if (load8(S + 0xEC00000 + L64(S + 0x1A6018 + (sid - 1) * 8)) == 40) { return 1; }
+    return 0;
+}
+# A tuple refusal at token `ti`: "<msg>['<name>'][<tail>]". Reported ONCE per token, in sync — the
+# panic latch is left as it was, so every refusal of a file is reported and none swallows the next
+# statement — and not at all under `--syntax-only` (lint's pre-pass resolves no type). 1 = reported.
+fn _tup_err(S, ti, msg, noff, tail): i64 {
+    if (_syntax_only == 1) { return 0; }
+    if (_panic == 1) { return 0; }
+    if (_tn_once(S, ti) == 0) { return 0; }
+    var sv = GTI(S);
+    STI(S, ti);
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    syscall(SYS_WRITE, 2, ": ", 2);
+    PRSTR(msg);
+    if (noff >= 0) {
+        syscall(SYS_WRITE, 2, "'", 1);
+        PRSTR(S + 0xEC00000 + noff);
+        syscall(SYS_WRITE, 2, "'", 1);
+    }
+    if (tail != 0) { PRSTR(tail); }
+    syscall(SYS_WRITE, 2, "\n", 1);
+    _err_excerpt(S);
+    _had_error = 1;
+    STI(S, sv);
+    return 1;
+}
+# Cursor on a tuple type's `(` in a position the decision leaves open (`what` names it): refused by
+# name at the `(`, and the whole `( .. )` consumed — the parse goes on in sync.
+fn _tup_pos_refuse(S, what): i64 {
+    var ti = GTI(S);
+    _tup_err(S, ti, "a tuple type cannot be ", 0 - 1, what);
+    STI(S, _call_close(S, ti) + 1);
+    return 0;
+}
+# One element of a tuple type, consumed through the next depth-0 `,` or `)`: 1 = i64, 2 = f64,
+# 3 = bool. Anything else is refused (`mode` 0) and read as i64, so `t.0` uses do not cascade.
+fn _tup_elem(S, mode): i64 {
+    var ti = GTI(S);
+    var t = PEEKT(S);
+    var k = 1;
+    if (t == 2) {
+        var c = _tn_resolve_at(S, ti);
+        if (c == _tn_code(1, 8)) { k = 1; }
+        elif (c == _tn_code(3, 8)) { k = 2; }
+        elif (c == _tn_code(4, 1)) { k = 3; }
+        elif (mode == 0) {
+            if (c == 0) { _tn_refuse(S, ti, " as a tuple element", 0 - 1); }
+            elif (_tn_class(c) == 6) { _tup_err(S, ti, "a tuple element is i64, f64 or bool, not struct ", TOKVAL(S, ti), 0); }
+            else { _tup_err(S, ti, "a tuple element is i64, f64 or bool, not ", TOKVAL(S, ti), 0); }
+        }
+    } elif (mode == 0) {
+        if (t == 31 || t == 11) { _tup_err(S, ti, "an empty element in a tuple type", 0 - 1, 0); }
+        elif (t == 8) { _tup_err(S, ti, "a tuple element is i64, f64 or bool, not a pointer `*T`", 0 - 1, 0); }
+        elif (t == 10) { _tup_err(S, ti, "a tuple element is i64, f64 or bool, not a nested tuple", 0 - 1, 0); }
+        elif (t == 28) { _tup_err(S, ti, "a tuple element is i64, f64 or bool, not a slice", 0 - 1, 0); }
+        elif (t == 105) { _tup_err(S, ti, "a tuple element is i64, f64 or bool, not u128", 0 - 1, 0); }
+        else { _tup_err(S, ti, "a tuple element is i64, f64 or bool", 0 - 1, 0); }
+    }
+    _tup_skip_elem(S);
+    return k;
+}
+fn _tup_skip_elem(S): i64 {
+    var d = 0;
+    var go = 1;
+    while (go == 1) {
+        var t = PEEKT(S);
+        if (t == 12 || t == 5 || t == 13 || t == 14 || t == 4) { return 0; }
+        if (d == 0) { if (t == 31 || t == 11) { return 0; } }
+        if (t == 10 || t == 28 || t == 19) { d = d + 1; }
+        elif (t == 11 || t == 29 || t == 20) { d = d - 1; }
+        elif (t == 39) { d = d - 2; }
+        elif (t == 152) { d = d - 3; }
+        if (d < 0) { d = 0; }
+        STI(S, GTI(S) + 1);
+    }
+    return 0;
+}
+# Append element `n` (kind `k`) to the canonical name being built at `w`; returns the new end.
+fn _tup_put(S, w, n, k): i64 {
+    var p = S + 0xEC00000;
+    if (n > 0) { store8(p + w, 44); store8(p + w + 1, 32); w = w + 2; }
+    if (k == 3) {
+        store8(p + w, 98); store8(p + w + 1, 111); store8(p + w + 2, 111); store8(p + w + 3, 108);
+        return w + 4;
+    }
+    if (k == 2) { store8(p + w, 102); } else { store8(p + w, 105); }
+    store8(p + w + 1, 54);
+    store8(p + w + 2, 52);
+    return w + 3;
+}
+# THE INTERNING. Cursor on a tuple type's `(`; returns its sid, the cursor left ON the closing `)`
+# (the declaration ladders' shared `STI` steps past it). The canonical name is built at the name
+# pool's top and committed only on a miss, which registers the struct and its fields in one run.
+# `mode` 0 interns and reports; 1 (inside PARSE_STRUCT_DEF, the replay) only looks up, quietly — a
+# miss returns 0. Arity is 2..256 (the struct field cap); a refused shape still interns (`()` and
+# `(T)` padded with i64, past 256 cut), so one refusal is the only error.
+fn _tup_type(S, mode): i64 {
+    var open = GTI(S);
+    if (mode == 0) { _tup_gen_chk(S, open); }
+    NPOS_GUARD(S, 1600);
+    var np = GNPOS(S);
+    store8(S + 0xEC00000 + np, 40);
+    var w = np + 1;
+    var n = 0;
+    var cnt = 0;
+    var trail = 0;
+    STI(S, open + 1);
+    if (PEEKT(S) == 11) {
+        if (mode == 0) { _tup_err(S, open, "a tuple type has 2 or more elements - `()` is empty", 0 - 1, 0); }
+    } else {
+        var go = 1;
+        while (go == 1) {
+            var k = _tup_elem(S, mode);
+            if (n < 256) { w = _tup_put(S, w, n, k); n = n + 1; }
+            cnt = cnt + 1;
+            go = 0;
+            if (PEEKT(S) == 31) {
+                STI(S, GTI(S) + 1);
+                go = 1;
+                if (PEEKT(S) == 11) {
+                    if (mode == 0) { _tup_err(S, GTI(S) - 1, "a trailing comma in a tuple type", 0 - 1, 0); }
+                    trail = 1;
+                    go = 0;
+                }
+            }
+        }
+    }
+    if (mode == 0) {
+        if (cnt + trail == 1) { _tup_err(S, open, "a tuple type has 2 or more elements - write the one type without parentheses", 0 - 1, 0); }
+        if (cnt > 256) { _tup_err(S, open, "a tuple type has at most 256 elements", 0 - 1, 0); }
+    }
+    while (n < 2) { w = _tup_put(S, w, n, 1); n = n + 1; }
+    if (PEEKT(S) != 11) { if (mode == 0) { ERR_EXPECT(S, 11); } }
+    store8(S + 0xEC00000 + w, 41);
+    store8(S + 0xEC00000 + w + 1, 0);
+    var sid = FINDSTRUCT(S, np);
+    if (sid > 0) { return sid; }
+    if (mode == 1) { return 0; }
+    SNPOS(S, w + 2);
+    sid = REGSTRUCT(S, np);
+    if (sid == 0) { return 0; }
+    _tup_fields(S, sid - 1, np, n);
+    return sid;
+}
+# The fields of new tuple struct `si`, read back from its canonical name at `np`.
+fn _tup_fields(S, si, np, n): i64 {
+    var p = np + 1;
+    var i = 0;
+    while (i < n) {
+        var b = load8(S + 0xEC00000 + p);
+        var k = 0;
+        if (b == 102) { k = 1; }
+        if (b == 98) { k = 3; }
+        ADDFIELDFK(S, si, _tup_fname(S, i), k);
+        while (load8(S + 0xEC00000 + p) != 44 && load8(S + 0xEC00000 + p) != 41) { p = p + 1; }
+        p = p + 2;
+        i = i + 1;
+    }
+    return 0;
+}
+# R4 — a tuple type in a GENERIC fn (its signature or its body) is refused: a type parameter and a
+# tuple have no rule together yet. Read from the tokens: the nearest `fn` before `ti` is the
+# enclosing one (fns do not nest), generic when `fn name <` (CYRIUS_MONOMORPH=0 binds nothing).
+fn _tup_gen_chk(S, ti): i64 {
+    var k = ti - 1;
+    while (k >= 0) {
+        if (TOKTYP(S, k) == 32) { break; }
+        k = k - 1;
+    }
+    if (k < 0) { return 0; }
+    if (TOKTYP(S, k + 2) != 19) { return 0; }
+    var j = k + 1;
+    while (j < ti) {
+        if (TOKTYP(S, j) == 13) { break; }
+        j = j + 1;
+    }
+    if (j < ti) { if (_tok_body_spans(S, k, ti) == 0) { return 0; } }
+    return _tup_err(S, ti, "a tuple type in a generic fn is refused - a type parameter and a tuple do not combine yet", 0 - 1, 0);
 }
 
 # ⛔ 6.6.17 — `p + n` ON A `*T` STEPS sizeof(T) ELEMENTS, AT EVERY SITE (the user's decision,
@@ -314,12 +546,31 @@ fn _tn_var_ann(S, ti, vnoff): i64 {
 # stays a plain pointer word (`_load_lt`, behind the slot's bit 56) and `p = p.next` rebinds it.
 # `ann` is the annotation's first token.
 fn _sl_ptr_type(S, li, ps, ann): i64 {
+    if (ps < 0) { _tup_ptr_refuse(S, 0 - ps, ann, L64(S + 0x5D9D000 + li * 8)); }   # 6.7.7: never a pointer-mode tuple
     if (ps > 0) {
         var sid = _ptr_ann_sid(S, ann);
         if (sid > 0) { SLTYPE(S, li, 0 - sid); return 0; }
         if (ps != 8) { SLTYPE(S, li, 0); return 0; }
     }
     SLTYPE(S, li, ps);
+    return 0;
+}
+# ⛔ 6.7.7 (B4) — A TUPLE-TYPED DECLARATION IS NEVER POINTER-MODE. A struct over 8 B declared from
+# an expression (`var p: P = mk();`) leaves its slot holding an ADDRESS; no expression's value is a
+# tuple's address, so such an initialiser into a tuple is refused by name — it stored one word (the
+# struct first-word rule). Every source that IS a tuple (another tuple, a tuple field) takes its own
+# copy path before a declaration gets here. `ti` is the annotation's `(`, where it is reported; an
+# annotation with no `=` after it (`var G: (i64, i64);` at top level) is left to the "uninitialized"
+# refusal its declaration gets anyway. CHANGELOG [6.7.7]
+fn _tup_ptr_refuse(S, sid, ti, noff): i64 {
+    if (_tup_is(S, sid) == 0) { return 0; }
+    if (TOKTYP(S, _call_close(S, ti) + 1) != 4) { return 0; }
+    return _tup_err(S, ti, "cannot initialize tuple ", noff, " with a value that is not a tuple");
+}
+# A global's struct type, the pointer-mode test above first (one call where SVTYPE was).
+fn _tup_svtype(S, vi, sid, noff, ti): i64 {
+    _tup_ptr_refuse(S, sid, ti, noff);
+    SVTYPE(S, vi, sid);
     return 0;
 }
 # 6.7.6 (Break 1, lane D) — the LAST marks of a scalar local's / global's registration: `bool`
@@ -478,6 +729,9 @@ fn _ptr_annot(S, vnoff, quiet): i64 {
     if (PEEKT(S) == 2 || PEEKT(S) == 105) {
         STI(S, GTI(S) + 1);
         SKIP_GENERICS(S);
+    } elif (PEEKT(S) == 10) {
+        if (quiet == 0) { _tup_pos_refuse(S, "a pointer target `*( .. )`"); }   # 6.7.7 (R3)
+        else { STI(S, _call_close(S, GTI(S)) + 1); }
     } elif (quiet == 0) { ERR_EXPECT(S, 2); }
     return ps;
 }
@@ -638,6 +892,11 @@ fn _call_ret_ps(S, fi): i64 {
 # A slice element `[T]` / `slice<T>` at token `ti`: its width. A bound type parameter is its
 # argument's size; a name that is no type is refused (it was 8, silently).
 fn _tn_slice_w(S, ti, vnoff): i64 {
+    if (TOKTYP(S, ti) == 10) {                    # 6.7.7 (R3): `[( .. )]` / `slice<( .. )>`
+        _tup_pos_refuse(S, "a slice element");
+        STI(S, GTI(S) - 1);                       # on the `)`: the caller steps past it
+        return 8;
+    }
     if (TOKTYP(S, ti) == 105) { return 16; }      # u128
     if (TOKTYP(S, ti) != 2) { return 8; }
     var b = _tp_resolve(S, TOKVAL(S, ti));
@@ -675,6 +934,12 @@ fn _tn_sizeof(S, ti, asrt): i64 {
 # declares (`_gen_ann_sid`), so `sizeof(Box<i32>)` is what that variable occupies; any other
 # `T<..>` (`Vec<i64>`, a handle) is T's own size. `asrt` as _tn_sizeof's.
 fn _sizeof_type(S, asrt): i64 {
+    if (PEEKT(S) == 10) {                         # 6.7.7 (R3): `sizeof(( .. ))`
+        _tup_pos_refuse(S, "a sizeof operand");
+        if (asrt == 1) { _panic = 1; }            # as _tn_sizeof's #assert operand: no "#assert failed"
+        return 0;
+    }
+    if (PEEKT(S) != 2) { if (PEEKT(S) != 105) { ERR_EXPECT(S, 2); } }   # 6.7.7: moved out of _PARSE_FACTOR_IMPL
     var ti = GTI(S);
     var sz = _tn_sizeof(S, ti, asrt);
     STI(S, ti + 1);
@@ -1561,6 +1826,11 @@ fn _vec_elem_code(S, si, fnoff, etoff): i64 {
 # element code is read only by the derive codecs. The lexer's `>>` closes T's list AND the
 # `Vec<` one, which `_ta_pending_gt` carries.
 fn _vec_field_elem(S, si, fnoff): i64 {
+    if (PEEKT(S) == 10) {                   # 6.7.7 (R3): `Vec<( .. )>`, refused by name
+        _tup_pos_refuse(S, "a Vec element");
+        if (PEEKT(S) == 20) { STI(S, GTI(S) + 1); }
+        return 0;
+    }
     if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
     var etoff = PEEKV(S);
     STI(S, GTI(S) + 1);                     # consume the element type name
@@ -1687,6 +1957,56 @@ fn _sfield_named(S, si, fnoff, tnoff, stp, own): i64 {
     return _add_named_field(S, si, fnoff, tnoff);
 }
 
+# ⛔ 6.7.7 (B4) — a struct field typed by a tuple (`t: (i64, f64)`). Cursor on the struct body's
+# `{` (`sname_ti` the struct's name): every depth-1 `name: (` field type is interned HERE, before the
+# struct registers — interning registers a struct, whose fields would land inside this one's slice of
+# the packed field pool (the reason `_sdef_gen_prescan` exists). The field arm then only looks the
+# type up (`_sfield_tup`). A generic struct (`struct S<T>`, read from the tokens) is refused by
+# name: a tuple field there has no rule yet (R4). The cursor is put back. CHANGELOG [6.7.7]
+fn _sdef_tup_prescan(S, sname_ti): i64 {
+    if (PEEKT(S) != 13) { return 0; }
+    var sv = GTI(S);
+    var n = GTCNT(S);
+    var i = sv + 1;
+    var d = 1;
+    while (i < n) {
+        var t = TOKTYP(S, i);
+        if (t == 12) { break; }
+        if (t == 13) { d = d + 1; }
+        if (t == 14) { d = d - 1; if (d == 0) { break; } }
+        if (d == 1) { if (t == 49) { if (TOKTYP(S, i - 1) == 2) { if (TOKTYP(S, i + 1) == 10) {
+                        if (TOKTYP(S, sname_ti + 1) == 19) {
+                            _tup_err(S, i + 1, "a tuple field in a generic struct is refused - a type parameter and a tuple do not combine yet", 0 - 1, 0);
+                        }
+                        STI(S, i + 1);
+                        _tup_type(S, 0);
+                        i = GTI(S);
+                    } } } }
+        i = i + 1;
+    }
+    STI(S, sv);
+    return 0;
+}
+# The field `fnoff: ( .. )`, cursor on its `:` — the interned tuple (`_sdef_tup_prescan`), looked up;
+# a union's (`uni` 1) is refused by name and kept as an i64 word. The `)` is consumed.
+fn _sfield_tup(S, si, fnoff, uni): i64 {
+    STI(S, GTI(S) + 1);   # consume ':'
+    var ti = GTI(S);
+    if (uni == 1) {
+        _tup_err(S, ti, "union field ", fnoff, " cannot be a tuple");
+        STI(S, _call_close(S, ti) + 1);
+        ADDFIELD(S, si, fnoff);
+        return 0;
+    }
+    var tsid = _tup_type(S, 1);
+    if (tsid == 0) {
+        if (_had_error == 0) { ERR_MSG(S, "internal error: a tuple field type was not interned before its struct", 69); }
+        ADDFIELD(S, si, fnoff);
+    } else { ADDFIELDTYPED(S, si, fnoff, tsid); }
+    STI(S, GTI(S) + 1);   # consume ')'
+    return 0;
+}
+
 fn PARSE_STRUCT_DEF(S): i64 {
     var _sdefstart = GTI(S);   # v6.3.10: the `struct` token, for generic instance re-emit
     STI(S, GTI(S) + 1);  # consume STRUCT
@@ -1705,6 +2025,7 @@ fn PARSE_STRUCT_DEF(S): i64 {
     if (_inst_name != 0) { noff = _inst_name; }
     var _sown = TOKVAL(S, _sname_ti);
     _sdef_gen_prescan(S, _stp, _sown);   # 6.7.1 (C3): `b: Box<i32>` fields, before REGSTRUCT
+    _sdef_tup_prescan(S, _sname_ti);     # 6.7.7 (B4): `t: (i64, f64)` fields, before REGSTRUCT
     var _sprev = FINDSTRUCT(S, noff);
     var sid = REGSTRUCT(S, noff);
     if (sid == 0) { _sdef_bb = _sv_sbb; return _skip_refused_body(S); }   # 6.6.10: table full — never index -1
@@ -1727,6 +2048,7 @@ fn PARSE_STRUCT_DEF(S): i64 {
             STI(S, GTI(S) + 1);
             # Check for type annotation: field: Type
             if (PEEKT(S) == 49 && TOKTYP(S, GTI(S) + 1) == 8) { _add_ptr_field(S, si, fnoff); }   # 6.6.17: `: *T`
+            elif (PEEKT(S) == 49 && TOKTYP(S, GTI(S) + 1) == 10) { _sfield_tup(S, si, fnoff, 0); }   # 6.7.7: `: (T, ..)`
             elif (PEEKT(S) == 49) {
                 STI(S, GTI(S) + 1);
                 if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
@@ -1819,6 +2141,7 @@ fn PARSE_UNION_DEF(S): i64 {
             var fnoff = PEEKV(S);
             STI(S, GTI(S) + 1);
             if (PEEKT(S) == 49 && TOKTYP(S, GTI(S) + 1) == 8) { _add_ptr_field(S, si, fnoff); }   # 6.6.17: `: *T`
+            elif (PEEKT(S) == 49 && TOKTYP(S, GTI(S) + 1) == 10) { _sfield_tup(S, si, fnoff, 1); }   # 6.7.7: refused
             elif (PEEKT(S) == 49) {
                 STI(S, GTI(S) + 1);
                 if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }

@@ -6238,7 +6238,7 @@ fn _ce_sizeof(S): i64 {
     STI(S, _ce_ti);
     var sz = 0;
     var p0 = _panic;
-    if (PEEKT(S) == 2 || PEEKT(S) == 105) { sz = _sizeof_type(S, _ce_asrt); }   # its own refusal, by name
+    if (PEEKT(S) == 2 || PEEKT(S) == 105 || PEEKT(S) == 10) { sz = _sizeof_type(S, _ce_asrt); }   # its own refusal, by name (6.7.7: + a tuple)
     if (_panic != p0) { _ce_err = 1; }
     _ce_ti = GTI(S);
     STI(S, sv);
@@ -6445,6 +6445,7 @@ fn _ce_var(S, isc): i64 {
     var dk = 0;
     if (TOKTYP(S, _ce_ti) == 49) {
         if (isc == 1) { _ce_bad(S, "a const takes no type annotation: its type is its value's", 57); return 0; }
+        if (TOKTYP(S, _ce_ti + 1) == 10) { _ce_bad(S, "a tuple in a const fn: its locals are i64, i32, i16, i8, f64 or bool", 68); return 0; }   # 6.7.7 (R5)
         w = _ce_type_w(S, _ce_ti + 1);
         if (w == 0) { _ce_badn(S, "type ", TOKVAL(S, _ce_ti + 1), " in a const fn: its locals are i64, i32, i16, i8, f64 or bool"); return 0; }
         if (w == 9) { dk = 1; w = 8; }
@@ -7851,6 +7852,22 @@ fn _sf_ceil(x): i64 {
 
 # Parse: impl TraitName for TypeName { fn method(self) { } ... }
 # Methods get mangled to TypeName_method (trait name is documentation only for now)
+# ⛔ 6.7.7 (B4) — `impl ( .. ) {` / `impl Tr for ( .. ) {`: a tuple has no methods (R3). Refused by
+# name at the `(`, and the whole block skipped — pass 1 skipped it too (`_impl_name_skip`), so no
+# method of it is registered. CHANGELOG [6.7.7]
+fn _impl_tup_refuse(S): i64 {
+    _tup_err(S, GTI(S), "a tuple has no methods - `impl` on a tuple type is refused", 0 - 1, 0);
+    STI(S, _call_close(S, GTI(S)) + 1);
+    _skip_refused_body(S);
+    return 0;
+}
+# Pass 1's impl skip: one name, or (6.7.7) a tuple type's whole `( .. )`, which PARSE_IMPL refuses.
+fn _impl_name_skip(S): i64 {
+    if (PEEKT(S) == 10) { STI(S, _call_close(S, GTI(S)) + 1); return 0; }
+    STI(S, GTI(S) + 1);
+    return 0;
+}
+
 fn PARSE_IMPL(S): i64 {
     # v6.6.4: a marker live here can only be STALE — `public impl` is consumed un-armed by
     # _TL_VIS, and a per-method `public fn` re-arms inside the loop below. Pass 2's `var` skip
@@ -7864,6 +7881,7 @@ fn PARSE_IMPL(S): i64 {
     var impl_ti = GTI(S);
     STI(S, GTI(S) + 1);  # consume IMPL
     # `impl Trait for Type {` or (6.7.0, A3) the inherent `impl Type {` — methods with no trait.
+    if (PEEKT(S) == 10) { return _impl_tup_refuse(S); }   # 6.7.7 (R3): `impl ( .. ) {`
     if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
     var trait_noff = PEEKV(S);
     STI(S, GTI(S) + 1);  # consume the trait (or, inherent, the type) name
@@ -7872,6 +7890,7 @@ fn PARSE_IMPL(S): i64 {
     else {
         if (PEEKT(S) != 55) { ERR_MSG(S, "expected '{' (an inherent `impl Type {`) or 'for' (`impl Trait for Type {`)", 75); }
         STI(S, GTI(S) + 1);  # consume FOR
+        if (PEEKT(S) == 10) { return _impl_tup_refuse(S); }   # 6.7.7 (R3): `impl Tr for ( .. ) {`
         if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
         type_noff = PEEKV(S);
         STI(S, GTI(S) + 1);  # consume type name
@@ -9117,6 +9136,7 @@ fn _enum_id_of(S, noff): i64 {
 }
 
 fn _parse_one_type_arg(S): i64 {
+    if (PEEKT(S) == 10) { _tup_pos_refuse(S, "a type argument"); return 0 - 8; }   # 6.7.7 (R3)
     var noff = PEEKV(S);
     STI(S, GTI(S) + 1);                              # consume the type-arg name
     if (PEEKT(S) != 19) {                            # no `<` → plain scalar / struct
@@ -9532,7 +9552,7 @@ fn _parse_multiret_sig(S, fi, quiet): i64 {
     var n = 0;
     var go = 1;
     while (go == 1) {
-        if (PEEKT(S) != 2) { if (PEEKT(S) != 8) { ERR_EXPECT(S, 2); return n; } }
+        if (PEEKT(S) != 2) { if (PEEKT(S) != 8) { if (PEEKT(S) != 10) { ERR_EXPECT(S, 2); return n; } } }   # 6.7.7: `(` refused by _mret_elem
         _bx_mret_note(S, fi, n, GTI(S));   # 6.7.3: a bool element
         var t = _mret_elem(S, fi, quiet);
         if (n < 3) { SFRT(S, fi, n, t); }
@@ -9559,6 +9579,11 @@ fn _parse_multiret_sig(S, fi, quiet): i64 {
 # 6.6.17: and an element takes type arguments (`(Box<i64>, i64)`), resolved as a single return
 # type's are (`_gtype_sid`): it was `expected ')', got '<'`.
 fn _mret_elem(S, fi, quiet): i64 {
+    if (PEEKT(S) == 10) {   # 6.7.7 (R3): `((i64, i64), i64)` — a nested tuple, refused by name
+        if (quiet == 0) { _tup_pos_refuse(S, "a multi-value return element"); }
+        else { STI(S, _call_close(S, GTI(S)) + 1); }
+        return 0 - 8;
+    }
     if (PEEKT(S) == 8) {
         _ptr_annot(S, 0 - 1, quiet);
         return 0 - 8;
@@ -10510,10 +10535,10 @@ fn _fn_by_defti(S, noff, ti): i64 {
 # byte-identical to before.
 fn _prescan_skip_impl(S): i64 {
     STI(S, GTI(S) + 1);  # consume IMPL
-    STI(S, GTI(S) + 1);  # consume the trait (or, inherent, the type) name
+    _impl_name_skip(S);  # consume the trait (or, inherent, the type) name
     if (PEEKT(S) == 55) {   # 6.7.0 (A3): absent in an inherent `impl Type {`
         STI(S, GTI(S) + 1);  # consume FOR
-        STI(S, GTI(S) + 1);  # consume type name
+        _impl_name_skip(S);  # consume type name
     }
     if (PEEKT(S) == 13) {
         STI(S, GTI(S) + 1);

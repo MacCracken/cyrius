@@ -1843,6 +1843,7 @@ fn PP_DFIELD_TAIL(S, base, p, end, fc): i64 {
     p = PP_DTRIV(base, p, end);
     if (p < end) {
         if (load8(base + p) == 58) {
+            PP_DTUP(S, base, PP_DTRIV(base, p + 1, end), end, fc);   # 6.7.7 (B4): a tuple field type
             p = PP_DTYPE(base, p + 1, end, S + 0x1FE000 + fc * 32);
             p = PP_DTRIV(base, p, end);
         }
@@ -1868,6 +1869,27 @@ fn PP_DFIELD_TAIL(S, base, p, end, fc): i64 {
     if (c == 44) { return p + 1; }
     if (PP_IDSTART(c) == 0) { _pp_dstop = 1; return end; }
     return p;
+}
+
+# ⛔ 6.7.7 (B4) — a `#derive`d struct's field typed by a TUPLE (`t: (i64, i64)`, a type since
+# 6.7.7). The walk reads named field types only; at the `(` it STOPPED, and every field after this
+# one silently lost its derived code (`_pp_dfull` stays 0, so not even the layout backstop ran).
+# Refused by name instead, as the walk's capture bounds are: `q` is the type's first byte.
+fn PP_DTUP(S, base, q, end, fc): i64 {
+    if (q >= end) { return 0; }
+    if (load8(base + q) != 40) { return 0; }
+    syscall(SYS_WRITE, 2, "error: #derive reads named field types; '", 41);
+    var f = S + 0x1FC000 + fc * 32;
+    var n = 0;
+    while (load8(f + n) != 0) { n = n + 1; }
+    syscall(SYS_WRITE, 2, f, n);
+    syscall(SYS_WRITE, 2, "' is a tuple (in the declaration of ", 36);
+    n = 0;
+    while (load8(S + 0x197020 + n) != 0) { n = n + 1; }
+    syscall(SYS_WRITE, 2, S + 0x197020, n);
+    syscall(SYS_WRITE, 2, ")\n", 2);
+    syscall(SYS_EXIT, 1);
+    return 0;
 }
 
 # Walk the body [p, end) — `end` is the closing `}` — and fill the field table. Returns

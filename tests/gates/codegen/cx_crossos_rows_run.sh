@@ -9,7 +9,7 @@
 # runner executes a crossos .tcyr on cxvm, so the cx half of those fixes would otherwise ship as a
 # false green — a row in tests/tcyr/crossos/ proves nothing about cx until something runs it there.
 #
-# ROWS (12, all required — the count is checked, so a row that silently stops running is RED)
+# ROWS (14, all required — the count is checked, so a row that silently stops running is RED)
 #   R1  B01 inline rows (V1: plain / compound for steps and compound-op loads on packed u8 / i8 /
 #       u16 globals and narrow locals): exit 0 AND the `cx-rows B01 ok` marker — native, then cxvm.
 #       On cx this needs B06's width-correct EVSTORE_W / EFLSTORE_W as well as B01's frontend fix.
@@ -31,6 +31,8 @@
 #       refusal as the ONLY kind of error (nine sites today), by name; the day cx compiles the
 #       file, the row instead requires it to pass on cxvm with the full count — it can never go
 #       quietly unrun.
+#   R7  tests/tcyr/crossos/tuple_values.tcyr (6.7.7, B4: tuples as values) — native and cxvm each
+#       print `<N> passed, 0 failed` with N derived from the source (38 at T2, floor 38) and exit 0.
 #   Anti-vacuous: each inline file's native leg is the control (a cx green on a file that is wrong
 #   everywhere is impossible), each .tcyr must match a count derived from its source, and each
 #   inline success needs a stdout marker printed only when every row in it is right.
@@ -353,8 +355,12 @@ else
     fi
 fi
 
-WANT=12
+echo "R7 — tuple_values.tcyr (6.7.7, B4), native then cxvm, the count derived from the source:"
+tcyr_native tests/tcyr/crossos/tuple_values.tcyr 38
+tcyr_cx     tests/tcyr/crossos/tuple_values.tcyr 38
+
+WANT=14
 if [ "$fail" -ne 0 ]; then echo "FAIL: cx_crossos_rows_run — $fail row(s) red, $pass green"; exit 1; fi
 if [ "$pass" -ne "$WANT" ]; then echo "FAIL: cx_crossos_rows_run — $pass rows ran, want $WANT (a row stopped running)"; exit 1; fi
-echo "PASS: cx_crossos_rows_run — $pass/$WANT rows: V1-V4 hold on cxvm and natively (B01/B02/B03 inline rows, narrow_slot_width + generic_struct_inference counts derived from source, struct_field_value_copy's cx refusal pinned by name)"
+echo "PASS: cx_crossos_rows_run — $pass/$WANT rows: V1-V4 hold on cxvm and natively (B01/B02/B03 inline rows, narrow_slot_width + generic_struct_inference + tuple_values counts derived from source, struct_field_value_copy's cx refusal pinned by name)"
 exit 0

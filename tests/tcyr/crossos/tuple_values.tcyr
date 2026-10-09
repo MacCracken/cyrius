@@ -1,0 +1,177 @@
+# tuple_values.tcyr — cross-host: tuples as values (6.7.7, B4), on every target.
+#
+# The user's decision (2026-10-08): `(a, b)` builds a value laid out as an anonymous struct of
+# 8-byte slots; `t.0` / `t.1` read and write it (OP= included); `(i64, f64)` is a type wherever a
+# struct type goes. A tuple type is interned once per element list as a struct named by its
+# spelling, fields "0", "1", .. — so every struct rule (inline storage, copies type-checked by
+# sid, struct fields, field access) is a tuple rule, on x86, aarch64, cx and PE alike.
+#
+# ⚠ Values are DISTINGUISHABLE and ORDER-SENSITIVE (`(5, 9) -> 59`, as multi_return.tcyr explains):
+# a slot swap or a first-word-twice copy cannot pass.
+#
+# Sections: types (the type, its identity, its size inside a struct), access (`t.N` reads and
+# writes, OP=, the f64 and bool element kinds, chains), copies (by value: a declaration, an
+# assignment, a parenthesised source, into and out of a tuple field, globals), fields (a struct
+# with a tuple field: layout, the neighbours intact, positional literals).
+
+include "lib/assert.cyr"
+
+struct TvH { a; p: (i64, i64); b; }
+struct TvS3 { t: (i64, f64, bool); }
+struct TvW { q: (i64, i64); z: (f64, f64); }
+
+var TV_GH = TvH { 1, 2, 3, 4 };
+var TV_GZ: (i64, i64) = TV_GH.p;
+var TV_G3: (i64, i64) = TV_GZ;
+
+# --- types ---
+fn tv_types(): i64 {
+    assert_eq(sizeof(TvH), 32, "a struct with a (i64, i64) field is 32 bytes");
+    assert_eq(sizeof(TvS3), 24, "a 3-element tuple field is 24 bytes");
+    assert_eq(sizeof(TvW), 32, "two tuple fields are 16 bytes each");
+    var a: (i64, i64);
+    a.0 = 5;
+    a.1 = 9;
+    var b: (i64, f64);
+    b.0 = 7;
+    b.1 = 2.5;
+    var a2: (i64,i64) = a;
+    var b2: (i64,   f64) = b;
+    assert_eq(a2.0 * 10 + a2.1, 59, "(i64,i64) and (i64, i64) are one type");
+    assert_eq(b2.0, 7, "(i64, f64) element 0");
+    assert(b2.1 == 2.5, "(i64, f64) element 1 is an f64");
+    var c: (bool, i64, f64);
+    c.0 = true;
+    c.1 = 3;
+    c.2 = 0.5;
+    var k = 0;
+    if (c.0) { k = c.1; }
+    assert_eq(k, 3, "(bool, i64, f64)");
+    return 0;
+}
+
+# --- access ---
+fn tv_access(): i64 {
+    var t: (i64, f64, bool);
+    t.0 = 3;
+    t.1 = 1.5;
+    t.2 = true;
+    t.0 += 4;
+    t.0 *= 2;
+    t.1 += 0.5;
+    t.1 *= 2.0;
+    assert_eq(t.0, 14, "t.0 += / *=");
+    assert(t.1 == 4.0, "t.1 f64 += / *=");
+    assert(t.1 + t.1 == 8.0, "an f64 element is typed: + is a float add");
+    var hits = 0;
+    if (t.2) { hits = hits + 1; }
+    t.2 = !t.2;
+    if (t.2) { hits = hits + 10; }
+    assert_eq(hits, 1, "a bool element reads and writes");
+    var h: TvH;
+    h.a = 1;
+    h.b = 6;
+    h.p.0 = 4;
+    h.p.1 = 5;
+    h.p.1 += 10;
+    assert_eq(h.a * 1000 + h.p.0 * 100 + h.p.1 + h.b * 10000, 61415, "h.p.N chains read and write");
+    var s: TvS3;
+    s.t.0 = 1;
+    s.t.1 = 0.25;
+    s.t.2 = false;
+    assert(s.t.1 == 0.25, "an f64 element of a tuple field");
+    assert_eq(s.t.0, 1, "an i64 element of a tuple field");
+    return 0;
+}
+
+# One tuple per frame: each level's survives the deeper calls.
+fn tv_rec(n): i64 {
+    var t: (i64, i64);
+    t.0 = n;
+    t.1 = n * 2;
+    if (n == 0) { return 0; }
+    var r = tv_rec(n - 1);
+    return r * 10 + t.0 + t.1 - n * 2;
+}
+
+# --- copies ---
+fn tv_copies(): i64 {
+    var t: (i64, i64);
+    t.0 = 5;
+    t.1 = 9;
+    var u: (i64, i64) = t;
+    u.0 = 6;
+    assert_eq(t.0 * 10 + t.1, 59, "a copy is by value: the source is untouched");
+    assert_eq(u.0 * 10 + u.1, 69, "the copy");
+    var w: (i64, i64);
+    w = u;
+    u.1 = 1;
+    assert_eq(w.0 * 10 + w.1, 69, "an assignment copies");
+    var x: (i64, i64) = (t);
+    assert_eq(x.0 * 10 + x.1, 59, "a parenthesised source copies");
+    x = (w);
+    assert_eq(x.0 * 10 + x.1, 69, "a parenthesised assignment copies");
+    var h: TvH;
+    h.a = 0;
+    h.b = 0;
+    h.p = t;
+    assert_eq(h.p.0 * 10 + h.p.1, 59, "a tuple into a tuple field");
+    var y: (i64, i64) = h.p;
+    y.0 = 1;
+    assert_eq(h.p.0, 5, "a field copied out is by value");
+    w = h.p;
+    assert_eq(w.0 * 10 + w.1, 59, "a field assigned out");
+    var h2: TvH;
+    h2.p = h.p;
+    assert_eq(h2.p.0 * 10 + h2.p.1, 59, "field to field");
+    assert_eq(TV_GZ.0 * 10 + TV_GZ.1, 23, "a declaration-zone global copied from a literal's tuple field");
+    var gz: (i64, i64) = TV_GZ;
+    gz.0 = 4;
+    assert_eq(gz.0 * 10 + gz.1 + TV_GZ.0 * 100, 243, "a local declared from a global is a copy");
+    TV_GZ = t;
+    assert_eq(TV_G3.0 * 10 + TV_G3.1, 23, "a global declared from a global is a copy");
+    assert_eq(TV_GZ.0 * 10 + TV_GZ.1, 59, "a global assigned from a local");
+    t = TV_GZ;
+    assert_eq(t.1, 9, "a local assigned from a global");
+    assert_eq(tv_rec(3), 123, "one tuple per frame across recursion");
+    return 0;
+}
+
+# --- fields ---
+fn tv_fields(): i64 {
+    var h: TvH;
+    h.a = 11;
+    h.b = 44;
+    h.p.0 = 22;
+    h.p.1 = 33;
+    h.p.1 = 99;
+    assert_eq(h.b, 44, "the field after a tuple field is intact after p.1 is written");
+    assert_eq(h.a, 11, "the field before it too");
+    assert_eq(h.p.0 * 100 + h.p.1, 2299, "both elements");
+    var lit = TV_GH.a * 1000 + TV_GH.p.0 * 100 + TV_GH.p.1 * 10 + TV_GH.b;
+    assert_eq(lit, 1234, "a positional literal fills the tuple's leaves");
+    var t: (i64, i64);
+    t.0 = 7;
+    t.1 = 8;
+    var h3 = TvH { 1, t, 4 };
+    assert_eq(h3.p.0 * 10 + h3.p.1, 78, "a whole tuple as a struct-literal element");
+    assert_eq(h3.a * 10 + h3.b, 14, "and the fields around it");
+    var wv: TvW;
+    wv.q.0 = 1;
+    wv.q.1 = 2;
+    wv.z.0 = 0.5;
+    wv.z.1 = 1.5;
+    assert(wv.z.0 + wv.z.1 == 2.0, "an (f64, f64) field");
+    assert_eq(wv.q.0 * 10 + wv.q.1, 12, "beside an (i64, i64) one");
+    return 0;
+}
+
+tv_types();
+tv_access();
+tv_copies();
+tv_fields();
+# A global declared after the first statement, copied from a tuple field.
+var TV_G2: (i64, i64) = TV_GH.p;
+assert_eq(TV_G2.0 * 10 + TV_G2.1, 23, "a global after the first statement, copied from a tuple field");
+var r = assert_summary();
+syscall(60, r);

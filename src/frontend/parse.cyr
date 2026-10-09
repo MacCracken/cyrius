@@ -3295,6 +3295,17 @@ fn _asg_rhs_steps(S, di, rsid): i64 {
     return 0;
 }
 
+# 6.7.7 (R12) — `t = 5;` / `t = x;` / `t = g();` into a TUPLE variable: the source parsed to a plain
+# value (no struct record — a whole tuple or tuple field took its copy path before), and the store
+# would write one word of the tuple (the struct first-word rule), silently. Refused by name at the
+# source (`st`). 1 = refused. CHANGELOG [6.7.7]
+fn _tup_asg_chk(S, noff, st): i64 {
+    _agc_operand(S, noff);
+    if (_agc_t >= 0) { return 0; }
+    if (_tup_is(S, 0 - _agc_t) == 0) { return 0; }
+    _tup_err(S, st, "cannot assign a value that is not a tuple to tuple ", noff, 0);
+    return 1;
+}
 fn _pcmpe_struct_assign(S, noff, term): i64 {
     if (PEEKT(S) == 10) { if (_asg_struct_dst(S, noff) == 1) {   # 6.7.6: a wrapped source
             var pr = _asg_paren(S, noff, term, 2);
@@ -3314,7 +3325,7 @@ fn _pcmpe_struct_assign(S, noff, term): i64 {
     _fla_stp = fs;
     if (_fla_hit == 1) { return _fla_assign(S, noff, term); }
     var t = _sc_whole(S, st);
-    if (t == 0 - 2) { _fls_asg_check(S, noff, st); return 0; }   # 6.7.6: a `Str` field
+    if (t == 0 - 2) { _fls_asg_check(S, noff, st); _tup_asg_chk(S, noff, st); return 0; }   # 6.7.6: a `Str` field; 6.7.7 (R12): a value is never a tuple
     var n = _agc_operand(S, noff);
     if (t == 0 - 3) { _asg_ret_sid = _sc_sid; }   # a <= 8 B struct VALUE: not a pointer mismatch
     if (_AGG_ASSIGN_TYPE_ERR(S, _agc_t, 0 - _sc_sid, noff, _sc_fn) == 1) { return 0; }
