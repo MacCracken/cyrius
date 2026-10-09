@@ -205,7 +205,7 @@ rm -f "$D/stub/mktemp"
 [ "$x" = 0 ] && echo "  ok: axis 3: mktemp failing aborts the install (rc $rc) with no fallback to a shared directory"
 
 # ── axis 4: STATIC — no fixed /tmp name, and the temp dir is a checked mktemp ──
-_fixed_tmp() { grep -n '"/tmp/\|[^A-Za-z_]/tmp/[A-Za-z0-9_$]' "$1" | grep -v '^[0-9]*:[[:space:]]*#' | grep -v 'TMPDIR:-/tmp'; }
+_fixed_tmp() { grep -n '"/tmp/\|[^A-Za-z_]/tmp/[A-Za-z0-9_$]' "$1" | grep -v '^[0-9]*:[[:space:]]*#' | grep -v 'TMPDIR:-/tmp' || true; }  # || true: no hit is the pass, not a pipefail abort
 x=0
 hits=$(_fixed_tmp scripts/ci.sh)
 [ -z "$hits" ] || { fail "axis 4: scripts/ci.sh still names a fixed /tmp path:"; printf '%s\n' "$hits" | sed 's/^/      /'; x=1; }
