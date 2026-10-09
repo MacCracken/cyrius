@@ -2332,6 +2332,7 @@ patra::tbl_scan/6
 patra::tbl_scan_where/9
 patra::tbl_update/7
 patra::wal_commit/2
+patra::wal_exists/1
 patra::wal_forget/1
 patra::wal_is_active/1
 patra::wal_log_hdr/1
