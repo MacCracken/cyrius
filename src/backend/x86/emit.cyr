@@ -397,6 +397,18 @@ fn EW128_CMP(S, op): i64 {
     _flags_reflect_rax = 0;
     return 0;
 }
+# ⛔ 6.7.6 (Break 1, D4) — a u128 TRUTH TEST (parse_expr.cyr _w128_truth): rax = the ADDRESS of a u128;
+# rax = (value == 0) for op 17, (value != 0) for op 18, 0 / 1, across all 128 bits — `if (b)`, `!b`,
+# an `&&` / `||` operand. rdx is scratch. IR-opaque, as EW128_CMP is. CHANGELOG [6.7.6]
+fn EW128_TST(S, op): i64 {
+    _IR_REC0(S, IR_RAW_EMIT);
+    E3(S, 0x508B48); EB(S, 8);                        # mov rdx, [rax+8]
+    E3(S, 0x100B48);                                  # or rdx, [rax]    ZF = the value is 0
+    EB(S, 0x0F); EB(S, 0x94 + op - 17); EB(S, 0xC0);  # sete / setne al
+    EB(S, 0x48); EB(S, 0x0F); EB(S, 0xB6); EB(S, 0xC0);   # movzx rax, al
+    _flags_reflect_rax = 0;
+    return 0;
+}
 # v6.5.21 — THIRD multi-value return slot = r8. Volatile on BOTH SysV and Win64,
 # and an argument register on both, so it is already understood by the call
 # machinery — unlike r10/r11, which cyrius uses as cross-sequence scratch (the

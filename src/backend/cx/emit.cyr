@@ -293,6 +293,19 @@ fn EW128_CMP(S, op): i64 {
     }
     return 0;
 }
+# ⛔ 6.7.6 (Break 1, D4) — a u128 TRUTH TEST (parse_expr.cyr _w128_truth): r0 = the ADDRESS of a u128;
+# r0 = (value == 0) for op 17, (value != 0) for op 18, 0 / 1, across all 128 bits. r8, r10 and r12
+# are scratch. CHANGELOG [6.7.6]
+fn EW128_TST(S, op): i64 {
+    CX_MOVI(S, 12, 8);
+    CX_EMIT(S, 16, 10, 0, 12);            # add r10, r0, r12
+    CX_EMIT(S, 65, 10, 10, 0);            # load64 r10, [r10]        the high word
+    CX_EMIT(S, 65, 8, 0, 0);              # load64 r8, [r0]          the low word
+    CX_EMIT(S, 33, 8, 8, 10);             # or r8, r8, r10
+    CX_MOVI(S, 12, 0);
+    CX_EMIT(S, 48 + op - 17, 0, 8, 12);   # eq / ne r0, r8, 0
+    return 0;
+}
 
 # Comparison: setCC pattern → compare and set r0 to 0/1
 fn ECMPR(S): i64 { return 0; }  # no-op, comparison done inline

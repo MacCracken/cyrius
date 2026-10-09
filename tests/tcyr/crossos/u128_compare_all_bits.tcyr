@@ -2,7 +2,9 @@
 # decision, 2026-10-08, third round): `==` `!=` `<` `<=` `>` `>=`, UNSIGNED, a u128 against a u128 or an
 # integer (zero-extended, lane D2's operand rule) on either side, in every context a comparison is
 # parsed — an `if` / `while` / `for` condition, an `&&` / `||` operand, a value, an if-expression
-# condition, a chained `a < b < c` — at fn and top level.
+# condition, a chained `a < b < c` — at fn and top level. The T rows (6.7.6, D4): a TRUTH TEST is a
+# comparison with zero, so a bare condition, an `&&` / `||` operand, `!b` and a `match` / `switch`
+# subject read all 128 bits too.
 #
 # ⛔ THE DEFECT. Every u128 comparison read the LOW words, signed: `b == c` was true for values 2^64
 # apart, `b < c` false for 1 and 2^64, and a low word with its top bit set compared below 1. Each pair
@@ -128,7 +130,125 @@ fn tmain(): i64 {
     return 0;
 }
 
+# ── 6.7.6 (D4): a TRUTH TEST is a comparison with zero, so it reads all 128 bits too (the user's
+# decision, 2026-10-08) — a bare condition, an `&&` / `||` operand, `!b`, and a `match` / `switch`
+# subject (each case value zero-extended). Each read the LOW word: 2^64 was false to `if (b)`, `!b` was
+# 1, and match / switch took the 0 arm. Every loop below is bounded whatever the test reads.
+var GZ: u128 = 0;
+# Sets *p to 0 (both words) and returns 0: a match arm that changes the subject after it was read.
+fn zero2(p): i64 { set2(p, 0, 0); return 0; }
+fn ttruth(): i64 {
+    var b: u128 = 0;
+    var c: u128 = 0;
+    var z: u128 = 0;
+    set2(&b, 0, 1);                       # 2^64: its low word is 0
+    set2(&c, 1, 0);                       # 1: its high word is 0
+    var n = 0;
+    if (b) { n = n + 1; }
+    if (c) { n = n + 2; }
+    if (z) { n = n + 4; }
+    assert_eq(n, 3, "T1: `if (b)` tests both words (2^64 true, 1 true, 0 false)");
+    n = 0;
+    if (z) { n = 1; } elif (b) { n = 2; } else { n = 3; }
+    assert_eq(n, 2, "T2: `elif (b)` on 2^64");
+    n = 0;
+    if ((b)) { n = 1; }
+    assert_eq(n, 1, "T3: a parenthesised `if ((b))`");
+    n = 0;
+    while (b) { n = n + 1; if (n == 3) { set2(&b, 0, 0); } if (n > 8) { break; } }
+    assert_eq(n, 3, "T4: `while (b)` runs until both words are 0");
+    set2(&b, 0, 1);
+    n = 0;
+    do { n = n + 1; if (n == 2) { set2(&b, 0, 0); } if (n > 8) { break; } } while (b);
+    assert_eq(n, 2, "T5: `do .. while (b)`");
+    set2(&b, 0, 1);
+    n = 0;
+    var k = 0;
+    for (k = 0; b; k = k + 1) { n = n + 1; if (n == 4) { set2(&b, 0, 0); } if (n > 8) { break; } }
+    assert_eq(n, 4, "T6: a `for` condition `b`");
+    set2(&b, 0, 1);
+    var r = if (b) { 7 } else { 9 };
+    assert_eq(r, 7, "T7: an if-expression condition");
+    r = if (z) { 7 } elif (b) { 8 } else { 9 };
+    assert_eq(r, 8, "T8: an if-expression `elif` condition");
+    # `&&` / `||` operands, as a condition and as a value, a u128 on either side.
+    n = 0;
+    if (b && 1) { n = n + 1; }
+    if (1 && b) { n = n + 2; }
+    if (z || b) { n = n + 4; }
+    if (b || z) { n = n + 8; }
+    if (b && c) { n = n + 16; }
+    if (z && b) { n = n + 32; }
+    if (z || z) { n = n + 64; }
+    assert_eq(n, 31, "T9: `&&` / `||` conditions test each u128 operand on all 128 bits");
+    assert_eq(b && 1, 1, "T10: `b && 1` as a value");
+    assert_eq(1 && b, 1, "T11: `1 && b` as a value");
+    assert_eq(b || 0, 1, "T12: `b || 0` as a value");
+    assert_eq(0 || b, 1, "T13: `0 || b` as a value");
+    assert_eq(z || z, 0, "T14: `z || z` (both 0) as a value");
+    # `!` is `== 0` on all 128 bits.
+    assert_eq(!b, 0, "T15: `!b` on 2^64 is 0");
+    assert_eq(!c, 0, "T16: `!c` on 1 is 0");
+    assert_eq(!z, 1, "T17: `!z` on 0 is 1");
+    assert_eq(!(b - 1), 0, "T18: `!(b - 1)` (2^64 - 1, a computed u128) is 0");
+    assert_eq(!(b - b), 1, "T19: `!(b - b)` (0) is 1");
+    n = 0;
+    if (!b) { n = 1; }
+    if (!z) { n = n + 2; }
+    assert_eq(n, 2, "T20: `if (!b)` / `if (!z)`");
+    # `match` on a u128 subject: each arm value zero-extended, compared on all 128 bits.
+    var m = 0;
+    match b { 0 => { m = 1; } 1 => { m = 2; } _ => { m = 3; } }
+    assert_eq(m, 3, "T21: `match b` on 2^64 takes neither the 0 nor the 1 arm");
+    match c { 0 => { m = 1; } 1 => { m = 2; } _ => { m = 3; } }
+    assert_eq(m, 2, "T22: `match c` on 1 takes the 1 arm");
+    var d: u128 = 0;
+    set2(&d, M, 0);
+    match d { 0 - 1 => { m = 4; } _ => { m = 5; } }
+    assert_eq(m, 4, "T23: an arm value -1 is zero-extended: 2^64 - 1 matches it");
+    set2(&d, M, M);
+    match d { 0 - 1 => { m = 4; } _ => { m = 5; } }
+    assert_eq(m, 5, "T24: ... 2^128 - 1 does not");
+    var e: u128 = 0;
+    set2(&e, 0, 1);
+    match b { e => { m = 6; } _ => { m = 7; } }
+    assert_eq(m, 6, "T25: a u128 arm value compares as it is (2^64 == 2^64)");
+    set2(&e, 0, 2);
+    match b { e => { m = 6; } _ => { m = 7; } }
+    assert_eq(m, 7, "T26: ... 2^64 != 2^65 (equal low words)");
+    match b + 1 { 1 => { m = 8; } _ => { m = 9; } }
+    assert_eq(m, 9, "T27: `match b + 1` (2^64 + 1) does not take the 1 arm");
+    match b { zero2(&b) => { m = 10; } _ => { m = 11; } }
+    assert_eq(m, 11, "T28: the subject is read once, before an arm changes it");
+    set2(&b, 0, 1);
+    # `switch` on a u128 subject: a chain, a dense table-sized one, no default, a negative case.
+    var w = 0;
+    switch (b) { case 0: w = 1; default: w = 2; }
+    assert_eq(w, 2, "T29: `switch (b)` on 2^64 takes default, not case 0");
+    set2(&d, 2, 1);
+    switch (d) { case 0: w = 10; case 1: w = 11; case 2: w = 12; case 3: w = 13; default: w = 99; }
+    assert_eq(w, 99, "T30: four dense cases (a jump table on x86) and 2^64 + 2: default");
+    set2(&d, 2, 0);
+    switch (d) { case 0: w = 10; case 1: w = 11; case 2: w = 12; case 3: w = 13; default: w = 99; }
+    assert_eq(w, 12, "T31: ... and 2 takes case 2");
+    w = 0;
+    switch (b) { case 0: w = 1; case 1: w = 2; }
+    assert_eq(w, 0, "T32: no default: 2^64 takes no case");
+    set2(&d, M, 0);
+    switch (d) { case 0 - 1: w = 5; default: w = 6; }
+    assert_eq(w, 5, "T33: `case -1` is zero-extended: 2^64 - 1 takes it");
+    switch (c) { case 1: w = 7; default: w = 8; }
+    assert_eq(w, 7, "T34: `switch (c)` on 1 takes case 1");
+    # A u128 global in a fn.
+    set2(&GZ, 0, 3);
+    n = 0;
+    if (GZ) { n = 1; }
+    assert_eq(n + !GZ, 1, "T35: a u128 global: `if (GZ)` true, `!GZ` 0");
+    return 0;
+}
+
 var tr = tmain();
+var tt = ttruth();
 # At top level (the temporaries are dead globals).
 set2(&GA, 2, 1);
 set2(&GB, 3, 0);
@@ -138,5 +258,17 @@ assert_eq(GA - GB == M, 1, "C46: ... `GA - GB == 2^64 - 1`");
 var top = 0;
 if (GB < GA) { top = 1; }
 assert_eq(top, 1, "C47: a top-level `if` condition");
+# Truth tests at top level (D4): the subject temporaries are dead globals there.
+set2(&GZ, 0, 1);
+top = 0;
+if (GZ) { top = top + 1; }
+if (!GZ) { top = top + 2; }
+if (GZ && 1) { top = top + 4; }
+assert_eq(top, 5, "T36: at top level, `if (GZ)`, `if (!GZ)`, `GZ && 1` on 2^64");
+var tm = 0;
+match GZ { 0 => { tm = 1; } _ => { tm = 2; } }
+assert_eq(tm, 2, "T37: a top-level `match GZ` on 2^64");
+switch (GZ) { case 0: tm = 3; default: tm = 4; }
+assert_eq(tm, 4, "T38: a top-level `switch (GZ)` on 2^64");
 var rr = assert_summary();
 syscall(60, rr);

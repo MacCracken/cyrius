@@ -45,6 +45,7 @@ fn ECONDCMP(S): i64 {
     # true there; the skip becomes a no-op and ETESTAZ fires as
     # before.
     if (op < 17 || op > 22) {
+        _w128_truth(S, 18);   # 6.7.6 (D4): a bare u128 condition tests all 128 bits
         if (_flags_reflect_rax == 0) { ETESTAZ(S); }
         return 18;
     }
