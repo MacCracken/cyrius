@@ -1814,6 +1814,7 @@ fn _synonly_fld_tail(S, term): i64 {
         if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); }
         STI(S, GTI(S) + 1);
     }
+    _refuse_lossy_pair(S);   # 6.7.7 (T5b): as the resolvable store refuses it
     PCMPE(S);
     return _fst_end(S, term);
 }
@@ -1840,6 +1841,7 @@ fn _slice_fld_store(S, lli, fnoff, term): i64 {
     if (_masg_not_plain(S, " - a field is not one") == 1) { return _fst_end(S, term); }   # 6.7.7 (T5): `s.len, b = f();`
     if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); }
     STI(S, GTI(S) + 1);
+    _refuse_lossy_pair(S);   # 6.7.7 (T5b): `s.len = f();` stored the tag
     PCMPE(S);
     EPUSHR(S);
     EFLADDR_X1(S, lli);
@@ -1953,6 +1955,7 @@ fn PARSE_FIELD_STORE(S, noff, term): i64 {
     if (_masg_not_plain(S, " - a field is not one") == 1) { return _fst_end(S, term); }   # 6.7.7 (T5): `h.x, b = f();`
     if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); }
     STI(S, GTI(S) + 1);
+    _refuse_lossy_pair(S);   # 6.7.7 (T5b): `h.n = f();` stored the tag, into any field type
     # 6.6.10: a struct VALUE into a struct-typed field copies the whole struct. See `_fsc_src`.
     var fsrc = GTI(S);   # 6.7.7: the source's first token (where a tuple field's refusal points)
     var fsc = _fsc_src(S, ft, lfn, term);   # 6.7.5: `term` — a for step's source ends at `)`

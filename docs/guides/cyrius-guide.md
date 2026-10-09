@@ -3362,7 +3362,7 @@ fn use_res(): i64 {
   means *returning* a pair, so the Err path re-emits **both** halves — a version that restored
   only the tag would hand the caller a stale payload.
 
-#### Bind the pair as a pair — the three refusals
+#### Bind the pair as a pair — the refusals
 
 A value-form Result is two values. Any context that keeps only one would silently discard the
 payload, which for an `Err` is the error code, so each is a compile error naming the fix:
@@ -3372,9 +3372,15 @@ payload, which for an `Err` is the error code, so each is a compile error naming
 var r = f();             # ✗ single-variable bind      (v6.5.67)
 r = f();                 # ✗ assignment                (v6.6.0)
 store64(&slot, f());     # ✗ storing into a slot       (v6.6.0)
+h.n = f();               # ✗ a field, any field type   (6.7.7)
+a[i] = f();              # ✗ an element                (6.7.7)
+*p = f();                # ✗ through a pointer         (6.7.7)
+x += f();                # ✗ any compound `OP=`        (6.7.7)
 
 var t, v = f();          # ✓ bind both halves
+t, v = f();              # ✓ re-assign both halves     (6.7.7)
 var v = f()?;            # ✓ `?` consumes the pair and yields one value
+h.n = f()?;              # ✓ ... at any store: a field, an element, `*p`, `x += f()?`
 return f();              # ✓ forwarding the pair onward
 ```
 

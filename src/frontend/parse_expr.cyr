@@ -1775,7 +1775,11 @@ fn _w128_binop(S, op, e): i64 {
         h = _w128_tmp(S);
         _w128_accm(S, h, 2, lk, lv);
     }
-    if (e == 0) { PARSE_TERM(S); } else { PCMPE(S); }
+    if (e == 0) { PARSE_TERM(S); }
+    else {
+        _refuse_lossy_pair(S);   # 6.7.7 (T5b): `b += f();` added the tag, zero-extended
+        PCMPE(S);
+    }
     _w128_rhs(S, h, op);
     return 0;
 }
@@ -2576,6 +2580,7 @@ fn _arr_sub_assign(S, noff): i64 {
         if (_masg_not_plain(S, " - an element is not one") == 0) {   # 6.7.7 (T5): `a[i], b = f();`
             if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); }
             STI(S, GTI(S) + 1);
+            _refuse_lossy_pair(S);   # 6.7.7 (T5b): `a[i] = f();` stored the tag
             PCMPE(S);
         }
     } else {

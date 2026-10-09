@@ -1,14 +1,15 @@
-# A pair-returning call stored into ONE slot keeps only the tag, silently — OPEN
+# A pair-returning call stored into ONE slot keeps only the tag, silently — RESOLVED
 
-**Status:** 🟡 **OPEN** — item 3 only (below). Reproduced 2026-10-08 against 6.7.6 @ 2fb6ad8b with `build/cycc`
-(x86_64): the roadmap's repro exits 0 with no diagnostic; a `: stack` pair stored through a field, a subscript, `*p` or
-`OP=` compiles clean and drops the payload. **Item 4 is delivered** (6.7.7 B4, bite T5, 2026-10-09): `t, v = f(7);`
-re-assigns both names (`tests/tcyr/crossos/tuple_values.tcyr` `reassign`, the re-poll loop over a `: stack` pair
-included). **Items 1–2 are settled** by the user's decision (2026-10-08): `var x = f();` / `x = f();` keep their
-documented first-value meaning (the `ret2` / `rethi()` split); a tuple captures every value by its type instead —
-`var t: (i64, i64) = f();`.
-**Placement:** 6.7.7 — item 3 is bite T5b of the B4 lane (the user's decision, 2026-10-09: REFUSE the four lossy
-`: stack` stores, as the guide already says) — never 7.x.
+**Status:** ✅ **RESOLVED in 6.7.7 (B4, bites T5 and T5b)** — CHANGELOG `[6.7.7]` *Language — tuples (B4)*. **Item 3
+is fixed** (bite T5b, 2026-10-09 — the user's decision: refuse, as the guide already said): a `: stack` pair stored
+through a field (any field type, a slice's `.len`, the `--syntax-only` tail), a subscript, `*p` or any compound `OP=`
+— `h.n = f(7);`, `a[0] = f(7);`, `*p = f(7);`, `x += f(7);`, a classic-for step's, at top level — is refused at the
+callee with the "bind both" text; `?` still consumes the pair at each (`h.n = f(7)?;` stores the payload). **Item 4
+is delivered** (bite T5, 2026-10-09): `t, v = f(7);` re-assigns both names (`tests/tcyr/crossos/tuple_values.tcyr`
+`reassign`, the re-poll loop over a `: stack` pair included). **Items 1–2 are settled** by the user's decision
+(2026-10-08): `var x = f();` / `x = f();` keep their documented first-value meaning (the `ret2` / `rethi()` split); a
+tuple captures every value by its type instead — `var t: (i64, i64) = f();`.
+**Placement:** 6.7.7 — closed by the B4 lane (T5 + T5b); archived at integration.
 **Discovered:** 2026-10-08 against `build/cycc` 6.7.6 (roadmap.md's backlog); filed 2026-10-08 from roadmap.md.
 **Severity:** Medium
 **Affects:** cycc ≤ 6.7.6 (raw pair returns since multi-return, v3.7.2; the `: stack` store holes since v6.6.0)
@@ -29,8 +30,8 @@ plain assignment") is not what the live compiler does; the live surface is:
    ("multi-value destructure count does not match the fn's declared return arity", `_dt_arity_check`).
 3. **A `: stack` pair stored into a field, a subscript, through `*p`, or with `OP=` compiles clean and drops the
    payload** (`h.n = f(7);`, `a[0] = f(7);`, `*p = f(7);`, `x += f(7);` — each exits 0 where 7 is the payload). The
-   guide's *Bind the pair as a pair — the three refusals* says "any context that keeps only one … is a compile
-   error"; only `var r = f();`, `r = f();` and `store64(&slot, f());` are.
+   guide's *Bind the pair as a pair* says "any context that keeps only one … is a compile error"; only
+   `var r = f();`, `r = f();` and `store64(&slot, f());` are.
 4. **There is no re-assignment form.** `t, v = f(7);` is `expected '=', got ','`, so a loop that re-polls a `Result`
    must declare a fresh `var t, v = f();` each iteration and copy the payload out of the loop's scope.
 
@@ -90,7 +91,7 @@ Expected (if refused): a compile error naming the pair. Actual: both build with 
   a single bind of a declared multi-value fn.
 - The statement parser takes `IDENT ,` as nothing; there is no multi-target assignment production.
 
-## Resolution so far (6.7.7)
+## Resolution (6.7.7)
 
 - **Item 4 — delivered (B4 bite T5).** `a, b = f();` / `a, b, c = f();` re-assigns existing variables: the
   destructure's contract (one whole call; its declared arity; a provably one-value callee refused) on 2 or 3 plain
@@ -101,10 +102,17 @@ Expected (if refused): a compile error naming the pair. Actual: both build with 
 - **Items 1–2 — settled, no change** (the user's decision, 2026-10-08): a single bind / assignment of a multi-value
   call keeps its first value, as the guide documents; the tuple capture `var t: (i64, i64) = f();` is the spelling that
   keeps them all.
-- **Item 3 — open, bite T5b of the same lane** (the user's decision, 2026-10-09: refuse): `_refuse_lossy_pair` at the
-  field, subscript, `*p` and `OP=` stores, each with a refusal row and a `?`-consumes row.
+- **Item 3 — fixed (B4 bite T5b; the user's decision, 2026-10-09: refuse).** `_refuse_lossy_pair` runs right before
+  the value's parse at the field store (`PARSE_FIELD_STORE`, before the struct-copy dispatch so a struct-typed field is
+  covered too; `_slice_fld_store`; `_synonly_fld_tail`, so `cyrius lint` agrees), the subscript store
+  (`_arr_sub_assign`), `_deref_store` and `_asg_compound_op` (every compound place: a variable's, a field's, an
+  element's, `*p`'s, a for step's; a u128 place's in `_w128_binop`). The issue's second repro reports its first three stores (the panic latch swallows
+  the fourth's error in the same fn); each shape alone is one error at its callee. `?` consumes the pair at every one
+  of them. Nothing that compiles changed otherwise: the tree's 1035 `.cyr` / `.tcyr` / `.fcyr` / `.bcyr` files compile
+  byte-identical (default, `CYRIUS_DCE=1`, `--syntax-only`). Gate: `tests/gates/frontend/stack_enum_lossy_context.sh`
+  axis 15 (rows 15a–15z, mutations M24a–M24i).
 
-## Proposed fix
+## Proposed fix (as filed)
 
 Three decisions, all the USER's (each changes what compiles or adds syntax), asked at the 6.7.7 open:
 

@@ -844,6 +844,12 @@ fn _call_is_propagated(S, ti): i64 {
 # is: `_callee_returns_pair` also feeds `_tpair`, which is what tells `?` it holds a pair.
 # ⭐ ANTI-VACUOUS BY CONSTRUCTION: the flag tested is set only on `: stack` constructors, so a
 # BOXED Result — still the documented idiom at thousands of sites — is untouched.
+# ⛔ 6.7.7 (B4 T5b; the user's decision, 2026-10-09) — and at the other one-slot stores, which
+# compiled clean and kept the tag: a field (`h.n = f();`, any field type, a slice's `.len`, the
+# --syntax-only tail), an element (`a[i] = f();`), `*p = f();` and every compound `x += f();`
+# (`_asg_compound_op`: a field's, an element's, `*p`'s, a for step's; a u128 place's in
+# `_w128_binop`). Each call sits right before its PCMPE, where the term's own pair lookahead runs
+# (a generic callee is instantiated there, inline: earlier would move its bytes). CHANGELOG [6.7.7]
 fn _refuse_lossy_pair(S): i64 {
     if (_callee_returns_pair(S) == 0) { return 0; }
     if (_call_is_propagated(S, GTI(S) + 1) == 1) { return 0; }
@@ -3154,6 +3160,7 @@ fn _asg_compound_op(S, cop, lt): i64 {
     _asg_cstep = 0;
     if (_W128_IS(S) == 1) { if (_w128_cop(S, cop) == 1) { return 0; } }   # 6.7.6 (D2): a u128 place
     EPUSHR(S);
+    _refuse_lossy_pair(S);   # 6.7.7 (T5b): `x += f();` combined the tag, every OP= place
     PCMPE(S);
     var rt = _FBR_ST(S);
     if (st > 1) { if (cop == 6 || cop == 7) { EPTR_SCALE(S, st); } }   # 6.6.17: `p += n` steps T
@@ -3191,6 +3198,7 @@ fn _deref_store(S, term): i64 {
         if (_masg_not_plain(S, " - `*p` is not one") == 0) {   # 6.7.7 (T5): `*p, q = f();`
             if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); }
             STI(S, GTI(S) + 1);
+            _refuse_lossy_pair(S);   # 6.7.7 (T5b): `*p = f();` stored the tag
             PCMPE(S);
         }
     } else {
