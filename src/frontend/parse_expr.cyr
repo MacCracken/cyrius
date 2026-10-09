@@ -737,6 +737,7 @@ fn _PINDIRECT_CALL_IN(S): i64 {
     }
     while (PEEKT(S) == 31) {                # ',' → another arg
         STI(S, GTI(S) + 1);                 # consume ','
+        if (_pd_label_at(S, GTI(S)) == 1) { _pd_icall_named(S, cst); }   # 6.7.7 (B6): C7
         PCMPE(S);                           # eval arg → rax
         EPUSHR(S);                          # push arg
         cp_argc = cp_argc + 1;

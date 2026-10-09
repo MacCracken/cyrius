@@ -8,10 +8,14 @@
 # over a default with `( [ {` balance only (`b = A < B`: `<` is an operator there). A call passes
 # min..max arguments; a direct call short of max takes the missing trailing defaults, pushed after
 # its written arguments in parameter order, each emitted exactly as its literal would be. A
-# `return f(..)` that fills is an ordinary call (the tail arm never fills); a full-arity one keeps
-# its `jmp`. The refusals, the #inline rule, the objdump rows and the per-backend legs are
+# `return f(..)` that fills or names an argument is an ordinary call (the tail arm never fills); a
+# full-arity positional one keeps its `jmp`. `f(1, c: 3)`: named arguments follow the
+# positionals, in any order, each parameter at most once — evaluated in WRITTEN order, placed in
+# PARAMETER order (an out-of-order call through hidden temporaries; an in-order one with none).
+# The refusals, the #inline rule, the objdump rows and the per-backend legs are
 # tests/gates/frontend/default_named_args_checked.sh.
-# Callees weigh their arguments by position (`a * 100 + b * 10 + c`), so a swap reads wrong.
+# Callees weigh their arguments by position (`a * 100 + b * 10 + c`), so a swap reads wrong; a
+# side-effect log reads the evaluation order.
 #
 # ⚠ CROSS-HOST: the arguments travel through each backend's call convention (SysV 6 / Win64 4 /
 # aarch64 8 registers, then the stack; cx), f64 / f32 as int-class bits; a 16-byte vector return
@@ -67,11 +71,14 @@ fn mk2(a, b = 4): P2 { var r: P2 = P2 { a, b }; return r; }
 fn pair_ret(): i64 {
     var q: P2 = mk2(5);
     assert_eq(q.x * 10 + q.y, 54, "A14: a 9-16 B struct-returning callee, filled");
+    var q2: P2 = mk2(b: 1, a: 9);
+    assert_eq(q2.x * 10 + q2.y, 91, "A14: a 9-16 B struct-returning callee, by name");
     return 0;
 }
 #endif
 # A 16-byte vector return (Win64: a retptr) with a default.
 fn vmk(a, b = 2): f64v2 { return f64v2(f64_from(a), f64_from(b)); }
+fn vrn(): f64v2 { return vmk(b: 1, a: 6); }
 
 # Const contexts: a const fn with a default holding a comma, at full arity and filled.
 const CN = cf(1, 2, 3);
@@ -82,6 +89,13 @@ var CARR1: i64[cf(0, 0)];
 #assert cf(2) == 223, "a const fn call filled from its defaults in #assert"
 enum EV { EV0 = cf(0, 1, 2), EV1 }
 enum EW { EW0 = cf(0), EW1 }
+const fn cgn(x): i64 { return cf(c: x, a: 1); }
+const CGN = cgn(5);
+const CNN = cf(1, c: 9);
+const CNR = cf(c: 2, b: 5, a: 2);
+var CARR2: i64[cf(c: 4, a: 0, b: 0)];
+#assert cf(c: 5, a: 2) == 225, "a const fn called by name in #assert"
+enum EX { EX0 = cf(b: 1, a: 0), EX1 }
 
 # Tail position: a full-arity `return f(..)` to a defaulted fn keeps its `jmp` (1,000,000 deep);
 # a `return f(..)` that fills is an ordinary call.
@@ -94,9 +108,89 @@ fn tail_fill(): i64 { return w3(4); }
 # call fills `n` (counted as two arguments, it would jump with `n` unset).
 fn ap(c, n = 5): i64 { return fncall2(c, n, 2); }
 fn tail_closure(): i64 { return ap(|a, b| a + b); }
+fn tail_closure_named(): i64 { return ap(n: 3, c: |a, b| a + b); }
 
 #inline
 fn add2(a, b): i64 { return a + b; }
+#inline
+fn sub2(a, b): i64 { return a * 10 + b; }
+
+# ── named arguments ──────────────────────────────────────────────────────────────────────────
+var g_log = 0;
+fn lg(v): i64 { g_log = g_log * 10 + v; return v; }
+# Nine parameters: past every target's argument registers (Win64 4, SysV 6, aarch64 8), so named
+# arguments land in stack slots too.
+fn n9(a, b, c, d, e, f, g, h, i): i64 {
+    return a * 1 + b * 2 + c * 3 + d * 4 + e * 5 + f * 6 + g * 7 + h * 8 + i * 9;
+}
+fn n9d(a, b, c, d, e, f, g, h = 8, i = 9): i64 {
+    return a * 1 + b * 2 + c * 3 + d * 4 + e * 5 + f * 6 + g * 7 + h * 8 + i * 9;
+}
+# Vectors by name: each is loaded into the XMM / V register of its PARAMETER position (on PE it
+# travels by pointer in its int slot).
+fn vtwo(a: f64v2, b: f64v2): i64 { return f64_to(load64(&a)) * 10 + f64_to(load64(&b)); }
+fn vmix(k, a: f64v2, j, b: f64v4): i64 {
+    return k * 1000 + j * 100 + f64_to(load64(&a + 8)) * 10 + f64_to(load64(&b + 24));
+}
+# A generic inferring T through a name.
+fn gsc<T>(x: T, n): T { return x + n; }
+fn tail_named(): i64 { return w3(c: 6, a: 5); }
+fn tail_named_gen(p: Pt): i64 { return gen(c: 7, v: p); }
+var g_dl = 0;
+fn dfr(): i64 {
+    defer { g_dl = w3(c: 1, a: 2); }
+    return w3(c: 5, a: 1);
+}
+fn named(): i64 {
+    assert_eq(w3(1, c: 7), 127, "A6: in order, f(1, c: 7) fills b");
+    assert_eq(w3(a: 4, b: 5), 453, "A6: every argument named, in order, c filled");
+    assert_eq(w3(c: 9, a: 4, b: 5), 459, "A7: fully reordered");
+    assert_eq(w3(1, c: 8, b: 6), 168, "A7: a positional, then reordered names");
+    assert_eq(lt_dflt(c: 9, a: 1), 119, "A6: a name after a default holding `<` (the walkers' operator rule)");
+    g_log = 0;
+    assert_eq(w3(c: lg(3), a: lg(1), b: lg(2)), 123, "A8: placed in parameter order ...");
+    assert_eq(g_log, 312, "A8: ... evaluated in written order");
+    assert_eq(n9(i: 9, h: 8, g: 7, f: 6, e: 5, d: 4, c: 3, b: 2, a: 1), 285, "A9: nine parameters named, reversed");
+    assert_eq(n9(1, 2, 3, i: 90, e: 50, d: 40, h: 80, g: 70, f: 60), 2724, "A9: register and stack parameters by name");
+    assert_eq(n9d(1, 2, 3, 4, 5, 6, 7, i: 90), 1014, "A9: a stack parameter named, the one before it filled");
+    var p = Pt { 6, 1 };
+    assert_eq(p.m(k: 5), 653, "A11: p.m(k: 5) fills j");
+    assert_eq(p.m(j: 7, k: 0), 607, "A11: p.m(j: 7, k: 0), reordered");
+    assert_eq(Pt_m(&p, j: 3), 613, "A11: Pt_m(&p, j: 3)");
+    assert_eq(Pt_m(self: &p, k: 3), 633, "A11: Pt_m(self: &p, k: 3) — `self` named in the plain form");
+    assert_eq(p.md(d: 2.5) * 2, 42, "L1: a named f64 argument leaves the method call's result an i64");
+    assert_eq(gen(c: 9, v: p), 619, "A12: a generic instantiated on a struct through a name");
+    assert_eq(gen(v: p, b: 0), 604, "A12: ... in order");
+    assert_eq(gsc(n: 2, x: 5), 7, "A12: T inferred i64 through a name");
+    assert_eq(tail_named(), 526, "A13: return w3(c: 6, a: 5) (an ordinary call)");
+    assert_eq(tail_named_gen(p), 617, "A13: a named generic tail call");
+    var b: Big = mk(b: 4, a: 3);
+    assert_eq(b.a * 100 + b.b * 10 + b.c, 347, "A14: a >16 B struct-returning callee, named and reordered");
+    var b2: Big = mk(a: 5);
+    assert_eq(b2.a * 100 + b2.b * 10 + b2.c, 582, "A14: ... named, filled");
+    assert_eq(sub2(b: 1, a: 5), 51, "A17: an #inline fn called by name (the normal path)");
+    assert_eq(sub2(5, 1), 51, "A17: ... and by position (inlined)");
+    assert_eq(w3(c: w3(b: 1, a: 0, c: 2), a: 1), 132, "A18: a named call inside a named argument");
+    g_dl = 0;
+    assert_eq(dfr(), 125, "A19: a fn with a defer returns a named call");
+    assert_eq(g_dl, 221, "A19: ... and its defer body makes one");
+    var x: f64v2 = f64v2(f64_from(1), f64_from(2));
+    var y: f64v2 = f64v2(f64_from(3), f64_from(4));
+    var v4: f64v4 = f64v4(f64_from(1), f64_from(2), f64_from(3), f64_from(7));
+    var v2: f64v2 = f64v2(f64_from(5), f64_from(6));
+    assert_eq(vtwo(x, y), 13, "A20: two vectors by position");
+    assert_eq(vtwo(b: y, a: x), 13, "A20: ... by name, reordered (each its parameter's register)");
+    assert_eq(vmix(b: v4, j: 3, a: v2, k: 1), 1367, "A20: an f64v2 and an f64v4 among integers, reordered");
+    assert_eq(vmix(1, a: v2, j: 3, b: v4), 1367, "A20: ... in order");
+    var cl = |n| w3(n, c: 1);
+    assert_eq(fncall1(cl, 4), 421, "A21: a closure body making a named call");
+    assert_eq(ap(n: 3, c: |a, b| a * b), 6, "A24: a closure literal as a named argument");
+    assert_eq(tail_closure_named(), 5, "A24: ... in tail position");
+    assert_eq(fwd_w(c: 1, a: 2), 281, "A5: a forward call by name, reordered");
+    assert_eq(fwd_w(2, c: 1), 281, "A5: ... in order");
+    assert_eq(late(c: 0, a: 9), 960, "A4: a named call filling a default declared after the fn");
+    return 0;
+}
 
 fn direct(): i64 {
     assert_eq(w3(1, 5, 7), 157, "P1: every argument passed to a defaulted fn");
@@ -143,6 +237,10 @@ fn filled(): i64 {
     assert_eq(f64_to(f64v2_lo(&v)) * 10 + f64_to(f64v2_hi(&v)), 12, "A22: var v: f64v2 = vmk(1)");
     v = vmk(5);
     assert_eq(f64_to(f64v2_lo(&v)) * 10 + f64_to(f64v2_hi(&v)), 52, "A22: v = vmk(5)");
+    var vn: f64v2 = vmk(b: 3, a: 4);
+    assert_eq(f64_to(f64v2_lo(&vn)) * 10 + f64_to(f64v2_hi(&vn)), 43, "A22: var v: f64v2 = vmk(b: 3, a: 4)");
+    vn = vrn();
+    assert_eq(f64_to(f64v2_lo(&vn)) * 10 + f64_to(f64v2_hi(&vn)), 61, "A22: return vmk(b: 1, a: 6) from an f64v2 fn");
     assert_eq(down(1000000), 2000000, "A23: a filled call, then 1,000,000 full-arity tail calls");
     assert_eq(add2(3, 4) + w3(0), 30, "A17: an #inline fn and a defaulted fn side by side");
     return 0;
@@ -167,6 +265,18 @@ fn consts_ctx(): i64 {
     const LCF = cf(7);
     assert_eq(LCF, 723, "A16: a local const from a filled const fn call");
     assert_eq(cf(4), 423, "A16: a const fn filled at run time");
+    assert_eq(CNN, 129, "A16: const N = cf(1, c: 9)");
+    assert_eq(CGN, 125, "A16: a const fn whose body makes a named call");
+    assert_eq(CNR, 252, "A16: const N = cf(c: 2, b: 5, a: 2), reordered");
+    CARR2[3] = 6;
+    assert_eq(CARR2[3], 6, "A16: an array sized by a named const fn call (4)");
+    assert_eq(EX0, 13, "A16: an enum value from a named const fn call");
+    s = 0;
+    switch (225) { case cf(2, c: 5): s = 1; default: s = 2; }
+    assert_eq(s, 1, "A16: a case label from a named const fn call");
+    const LCN = cf(c: 1, a: 7);
+    assert_eq(LCN, 721, "A16: a local const from a named const fn call");
+    assert_eq(cf(c: 6, a: 4), 426, "A16: a const fn called by name at run time");
     return 0;
 }
 
@@ -195,11 +305,18 @@ fn run(): i64 {
     #endif
     consts_ctx();
     forward();
+    named();
     return 0;
 }
 const LATE_K = 6;
 enum LateE { LA, LB, LC }
 var r0 = run();
+# A15: a reordered named call at top level (its temporaries are hidden globals: no frame here).
+var tl_named = w3(c: 9, b: 8, a: 7);
+assert_eq(tl_named, 789, "A15: a reordered named call at top level");
+g_log = 0;
+var tl_log = w3(b: lg(2), c: lg(3), a: lg(1));
+assert_eq(tl_log * 1000 + g_log, 123231, "A15: ... placed in parameter order, evaluated as written");
 if (1 == 1) {
     fn blk_g(a, b = 1): i64 { return a * 10 + b; }
 }

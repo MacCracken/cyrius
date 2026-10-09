@@ -2991,6 +2991,399 @@ fn _ce_fill(S, fi, n): i64 {
     return n;
 }
 
+# ── the call site: named arguments ──────────────────────────────────────────────────────────
+# `f(1, c: 3)`: the positionals first, then `name: value` in any order, each parameter at most
+# once (user, 2026-10-08). WRITTEN order is evaluation order; PARAMETER order is placement. The
+# one marshaller (`_owncall_args_at`) runs the positionals and hands the cursor, on the first
+# label, to `_pd_named`, which checks the whole call before it emits anything (`_pd_nscan`,
+# cursor-free) and then marshals it one of two ways:
+#   * IN ORDER (each name after the one before it — the common `f(1, c: 3)`): every argument where
+#     it stands, a gap's defaults pushed before it (constants: no side effect, so written order
+#     holds). No temporaries.
+#   * REORDERED: each argument evaluated as written through its parameter's gates
+#     (`_call_arg_one`), its int-class word popped into a hidden temporary (`_HTEMP`: a frame slot
+#     in a fn, a dead global at top level), then every parameter pushed in parameter order — its
+#     temporary, or its default. A vector is recorded at its parameter-order XMM / V ordinal
+#     (`_simd_ord_at`), never pushed.
+# Either way ECALLPOPS sees one int-class word per parameter, in parameter order, on every target
+# (SysV 6 / Win64 4 / aarch64 8 registers, then the stack; cx). Direct calls only: fncallN /
+# callptr refuse a label (C7), a builtin's undefined-name error gets a note (C14), a call that
+# names an argument is never overload-routed (C10) nor inlined, and a const context binds names
+# the same way (`_ce_call_named`). CHANGELOG [6.7.7]
+# The marshaller's state for the named phase: st[24] the first user parameter (p0), st[32] the
+# arity line, st[40] 1 = reordered, st[48] the per-call table (alloc'd, 24 B per parameter: the
+# value's first token or 0 = not named, 1 = spilled, its temporary).
+
+# The ordinal of fi's parameter named `noff`, or -1 — read from the definition's tokens.
+fn _pd_index(S, fi, noff): i64 {
+    var max = L64(_fnt_params + fi * 8);
+    var k = 0;
+    while (k < max) {
+        var pn = _bx_pname(S, fi, k);
+        if (pn < 0) { return 0 - 1; }
+        if (STREQ(S, pn, noff) == 1) { return k; }
+        k = k + 1;
+    }
+    return 0 - 1;
+}
+# The XMM / V ordinal of fi's vector parameter pi: the widths of the vector parameters before it (a
+# 32-byte vector takes two), exactly as a positional call's running ordinal reaches it.
+fn _simd_ord_at(fi, pi): i64 {
+    var o = 0;
+    var j = 0;
+    while (j < pi) {
+        var c = _pm_simd(fi, j);
+        if (c == 2) { o = o + 2; }
+        elif (c > 0) { o = o + 1; }
+        j = j + 1;
+    }
+    return o;
+}
+# The first label of the call whose argument list starts at token q (a label is always there).
+fn _pd_first_label(S, q): i64 {
+    var n = GTCNT(S);
+    while (q < n) {
+        if (_pd_label_at(S, q) == 1) { return q; }
+        q = _arg_next(S, q);
+        if (TOKTYP(S, q) != 31) { return q; }
+        q = q + 1;
+    }
+    return q;
+}
+# The named phase (cursor on the call's first label; `p` the positionals written before it, `self`
+# counted). Consumes through `)`; the marshaller pops st[0] words.
+fn _pd_named(S, fi, noff, p, tbl, st): i64 {
+    var c = _pd_ncallee(S, fi, noff, GTI(S));
+    if (c == 2) { return _pd_ninplace(S, fi, noff, p, tbl, st); }
+    if (c == 0) { c = _pd_nscan(S, fi, noff, p, st); }
+    if (c != 0) { return _pd_nskip(S); }
+    if (load64(st + 40) == 0) { _pd_ninorder(S, fi, noff, p, tbl, st); }
+    else { _pd_nreorder(S, fi, noff, p, tbl, st); }
+    SESTYPE(S, 0);   # the last argument's type is not the call's (an f64 one leaked into `p.m(..) * 2`)
+    return 0;
+}
+# The callee's refusals (at the first label `lb`): C9 no declared parameter list (a variant
+# constructor; an unresolved callee — under --syntax-only a sibling file's fn, which is no error
+# there: 2, the arguments pushed in place), C11 a variadic fn, C12 a fn defined twice. 1 = refused.
+fn _pd_ncallee(S, fi, noff, lb): i64 {
+    if (_gen_def_open(S, fi) < 0) {
+        if (_syntax_only == 1) { return 2; }
+        if (_pd_eo(S, lb) == 1) {
+            _pd_q(S, noff);
+            PRSTR(" takes no named arguments: it has no declared parameter list");
+            _pd_ec(S, lb);
+        }
+        return 1;
+    }
+    if (GFVA(S, fi) != 0) {
+        if (_pd_eo(S, lb) == 1) {
+            _pd_q(S, noff);
+            PRSTR(" is variadic: its arguments are positional");
+            _pd_ec(S, lb);
+        }
+        return 1;
+    }
+    if ((GFLG(S, fi) & 2048) != 0) {
+        if (_pd_eo(S, lb) == 1) {
+            _pd_q(S, noff);
+            PRSTR(" is defined twice: name its arguments only on a fn defined once");
+            _pd_ec(S, lb);
+        }
+        return 1;
+    }
+    return 0;
+}
+# The whole call, checked before anything is emitted (cursor-free, from the first label at the
+# cursor): C1 more positionals than parameters, C5 a positional after a named one, C2 an unknown
+# name, C8 `self:` in the dot form, C4 a parameter given by position and by name, C3 one named
+# twice, C6 a required one missing, C13 a reordered call in a `#naked` fn. Records each named
+# parameter's value token (st[48]) and whether the call is reordered (st[40]). 1 = refused, once.
+fn _pd_nscan(S, fi, noff, p, st): i64 {
+    var max = L64(_fnt_params + fi * 8);
+    var lb = GTI(S);
+    if (p > max) {
+        _CHECK_ARITY(S, load64(st + 32), noff, fi, p + _pd_nargs(S, lb), 1);
+        return 1;
+    }
+    var tb = alloc(max * 24 + 24);
+    store64(st + 48, tb);
+    store64(st + 40, 0);
+    var q = lb;
+    var last = 0 - 1;
+    var n = GTCNT(S);
+    while (q < n) {
+        if (_pd_label_at(S, q) == 0) { return _pd_c5(S, q, noff); }
+        var pi = _pd_index(S, fi, TOKVAL(S, q));
+        if (pi < 0) { return _pd_c2(S, q, fi, noff, load64(st + 24)); }
+        if (pi < p) { return _pd_c4(S, q, fi, noff, pi, load64(st + 24)); }
+        if (load64(tb + pi * 24) != 0) { return _pd_c3(S, q, fi); }
+        store64(tb + pi * 24, q + 2);
+        if (pi < last) { store64(st + 40, 1); }
+        last = pi;
+        q = _arg_next(S, q);
+        if (TOKTYP(S, q) != 31) { break; }
+        q = q + 1;
+    }
+    var mn = _pd_min(fi);
+    var k = p;
+    while (k < mn) {
+        if (load64(tb + k * 24) == 0) { return _pd_c6(S, q, fi, k); }
+        k = k + 1;
+    }
+    if (load64(st + 40) == 1) { if (_cur_fn_naked == 1) {
+            if (_pd_eo(S, lb) == 1) {
+                PRSTR("a reordered named call needs a frame: not inside #naked fn ");
+                _pd_q(S, _bx_fname(S, _cur_fn_ix));
+                _pd_ec(S, lb);
+            }
+            return 1;
+        } }
+    return 0;
+}
+# The arguments from token q to the call's `)` (a closure's `|a, b|` bars hold no separator).
+fn _pd_nargs(S, q): i64 {
+    var c = 0;
+    var n = GTCNT(S);
+    while (q < n) {
+        c = c + 1;
+        q = _arg_next(S, q);
+        if (TOKTYP(S, q) != 31) { return c; }
+        q = q + 1;
+    }
+    return c;
+}
+# C2 "'f' has no parameter named 'c' - its parameters are: a, b" (from p0: not the dot form's
+# `self`). Returns 1.
+fn _pd_c2(S, q, fi, noff, p0): i64 {
+    if (_pd_eo(S, q) == 0) { return 1; }
+    _pd_q(S, noff);
+    PRSTR(" has no parameter named ");
+    _pd_q(S, TOKVAL(S, q));
+    var max = L64(_fnt_params + fi * 8);
+    if (p0 >= max) { PRSTR(" - it takes no other arguments"); }
+    else {
+        PRSTR(" - its parameters are: ");
+        var k = p0;
+        while (k < max) {
+            if (k > p0) { PRSTR(", "); }
+            var pn = _bx_pname(S, fi, k);
+            if (pn >= 0) { PRSTR(S + 0xEC00000 + pn); }
+            k = k + 1;
+        }
+    }
+    _pd_ec(S, q);
+    return 1;
+}
+# C3 a parameter named twice. Returns 1.
+fn _pd_c3(S, q, fi): i64 {
+    if (_pd_eo(S, q) == 0) { return 1; }
+    _pd_pof(S, TOKVAL(S, q), fi);
+    PRSTR(" is named twice");
+    _pd_ec(S, q);
+    return 1;
+}
+# C5 a positional argument (at token q) after a named one. Returns 1.
+fn _pd_c5(S, q, noff): i64 {
+    if (_pd_eo(S, q) == 0) { return 1; }
+    PRSTR("a positional argument cannot follow a named one (in a call to ");
+    _pd_q(S, noff);
+    PRSTR(")");
+    _pd_ec(S, q);
+    return 1;
+}
+# C6 required parameter k not given (reported at token q, the call's `)`). Returns 1.
+fn _pd_c6(S, q, fi, k): i64 {
+    if (_pd_eo(S, q) == 0) { return 1; }
+    PRSTR("missing argument for ");
+    _pd_pof(S, _bx_pname(S, fi, k), fi);
+    PRSTR(" (it has no default)");
+    _pd_ec(S, q);
+    return 1;
+}
+# C4 a parameter given by position and by name; C8 `self:` in the dot form (`self` is parameter 0,
+# the receiver). Returns 1.
+fn _pd_c4(S, q, fi, noff, pi, p0): i64 {
+    if (_pd_eo(S, q) == 0) { return 1; }
+    if (pi == 0) { if (p0 == 1) {
+            PRSTR("'self' is the receiver of a method call (o.m(..)) - it cannot be named");
+            _pd_ec(S, q);
+            return 1;
+        } }
+    _pd_pof(S, TOKVAL(S, q), fi);
+    PRSTR(" is given by position and by name");
+    _pd_ec(S, q);
+    return 1;
+}
+# One named argument for parameter pi (cursor on its value): a vector's register is its
+# parameter-order ordinal; then the parameter's gates.
+fn _pd_arg_at(S, fi, pi, noff, tbl, st): i64 {
+    if (_pm_simd(fi, pi) > 0) { store64(st + 16, _simd_ord_at(fi, pi)); }
+    return _call_arg_one(S, fi, pi, noff, tbl, st);
+}
+# Parameters k .. e - 1, each a default (`_pd_nscan` checked), pushed in parameter order.
+fn _pd_fill_to(S, fi, k, e, st): i64 {
+    while (k < e) {
+        _pd_push_default(S, fi, k, st);
+        k = k + 1;
+    }
+    return 0;
+}
+fn _pd_close(S): i64 {
+    if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
+    STI(S, GTI(S) + 1);
+    return 0;
+}
+# In order: each argument where it stands, a gap's defaults before it, the trailing ones after.
+# (A cursor that is not on a label here was left by an argument's own parse error, reported.)
+fn _pd_ninorder(S, fi, noff, p, tbl, st): i64 {
+    var next = p;
+    var go = 1;
+    while (go == 1) {
+        var pi = 0 - 1;
+        if (_pd_label_at(S, GTI(S)) == 1) { pi = _pd_index(S, fi, PEEKV(S)); }
+        if (pi < 0) { go = 0; }
+        else {
+            _pd_fill_to(S, fi, next, pi, st);
+            STI(S, GTI(S) + 2);   # the label and its `:`
+            _pd_arg_at(S, fi, pi, noff, tbl, st);
+            next = pi + 1;
+            if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); } else { go = 0; }
+        }
+    }
+    _pd_close(S);
+    _pd_fill_to(S, fi, next, L64(_fnt_params + fi * 8), st);
+    return 0;
+}
+# Reordered: each argument evaluated as written into a hidden temporary, then every parameter from
+# p pushed in parameter order (a vector was recorded at its own ordinal: nothing to push).
+fn _pd_nreorder(S, fi, noff, p, tbl, st): i64 {
+    var tb = load64(st + 48);
+    var go = 1;
+    while (go == 1) {
+        var pi = 0 - 1;
+        if (_pd_label_at(S, GTI(S)) == 1) { pi = _pd_index(S, fi, PEEKV(S)); }
+        if (pi < 0) { go = 0; }
+        else {
+            STI(S, GTI(S) + 2);
+            var n0 = load64(st);
+            _pd_arg_at(S, fi, pi, noff, tbl, st);
+            if (load64(st) > n0) {
+                EPOPR(S);
+                var h = _HTEMP(S);
+                _HTSTORE(S, h);
+                store64(st, n0);
+                store64(tb + pi * 24 + 8, 1);
+                store64(tb + pi * 24 + 16, h);
+            }
+            if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); } else { go = 0; }
+        }
+    }
+    _pd_close(S);
+    var max = L64(_fnt_params + fi * 8);
+    var k = p;
+    while (k < max) {
+        if (load64(tb + k * 24 + 8) == 1) {
+            _HTLOAD(S, load64(tb + k * 24 + 16));
+            EPUSHR(S);
+            store64(st, load64(st) + 1);
+        } elif (load64(tb + k * 24) == 0) { _pd_push_default(S, fi, k, st); }
+        k = k + 1;
+    }
+    return 0;
+}
+# A refused call: the rest of its arguments parsed, nothing pushed, so the stream stays in step
+# (`_had_error` withholds the binary).
+fn _pd_nskip(S): i64 {
+    var go = 1;
+    while (go == 1) {
+        if (_pd_label_at(S, GTI(S)) == 1) { STI(S, GTI(S) + 2); }
+        PCMPE(S);
+        if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); } else { go = 0; }
+    }
+    return _pd_close(S);
+}
+# --syntax-only, a callee with no declared list (a sibling file's fn): each `name: value` pushed
+# where it stands, as a positional would be — only the grammar is judged (C5).
+fn _pd_ninplace(S, fi, noff, p, tbl, st): i64 {
+    var go = 1;
+    while (go == 1) {
+        if (_pd_label_at(S, GTI(S)) == 1) { STI(S, GTI(S) + 2); }
+        else { _pd_c5(S, GTI(S), noff); }
+        _call_arg_one(S, fi, p, noff, tbl, st);
+        p = p + 1;
+        if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); } else { go = 0; }
+    }
+    return _pd_close(S);
+}
+# C10 (`_fnc_route`, cursor on the first argument of a call that names one): such a call is never
+# overload-routed — and it is refused when the positional call could be (the base has a `_str` /
+# `_int` sibling, or its `&x` first argument a `<base>_ptr` one), so it never silently reaches a
+# different fn than the same arguments written by position. Returns -1 (not routed).
+fn _pd_route_named(S, fi, noff): i64 {
+    var hit = 0;
+    if (L64(_fnt_ovstr + fi * 8) > 0) { hit = 1; }
+    if (L64(_fnt_ovint + fi * 8) > 0) { hit = 1; }
+    if (PEEKT(S) == 27) { if (_fnc_ptr_sib(S, noff) >= 0) { hit = 1; } }
+    if (hit == 0) { return 0 - 1; }
+    var lb = _pd_first_label(S, GTI(S));
+    if (_pd_eo(S, lb) == 1) {
+        PRSTR("a call with named arguments cannot be overload-routed: ");
+        _pd_q(S, noff);
+        PRSTR(" has a routed sibling - call the one you mean");
+        _pd_ec(S, lb);
+    }
+    return 0 - 1;
+}
+# C7 (`_PINDIRECT_CALL_IN`, cursor on a label; `cst` the call's first argument): fncallN / callptr
+# pass every argument by position. Reported once per call (at its first label); the label is
+# stepped over and its value parsed, so the stream stays in step.
+fn _pd_icall_named(S, cst): i64 {
+    _pd_say(S, _pd_first_label(S, cst), "named arguments need a direct call - fncallN / callptr pass arguments by position");
+    STI(S, GTI(S) + 2);
+    return 0;
+}
+# C14 (every undefined-name report, `_gv_note_blockscoped`; cursor just past the name): a name
+# followed by `:` at an argument's start is a named argument to something that takes none — a
+# builtin, an intrinsic. The two errors stay; this says why.
+fn _pd_c14_note(S): i64 {
+    var ti = GTI(S);
+    if (TOKTYP(S, ti) != 49) { return 0; }
+    if (TOKTYP(S, ti - 1) != 2) { return 0; }
+    var pt = TOKTYP(S, ti - 2);
+    if (pt != 10 && pt != 31) { return 0; }
+    PRSTR("note: named arguments go only to a direct call of a declared fn (builtins, fncallN and callptr take positional arguments)\n");
+    return 0;
+}
+# The first token of the argument a call to fi (`(` at `open`) passes parameter k — for the
+# generic inference that reads an argument before the call is parsed (`_gen_infer_tp`,
+# `_gs_arg_named`, `_tok_gen_ret_sid`). A call with no label keeps the positional rule
+# (`_call_arg_start`); with one, a positional before the first label, else the value after the
+# label naming parameter k, else -1. So `g(n: 2, x: p)` instantiates `g$Pt` as `g(p, 2)` does.
+fn _call_arg_for(S, fi, open, k): i64 {
+    if (_pd_named_at(S, open) == 0) { return _call_arg_start(S, open, k); }
+    var q = open + 1;
+    var pc = 0;
+    var n = GTCNT(S);
+    while (q < n) {
+        if (_pd_label_at(S, q) == 1) { break; }
+        if (pc == k) { return _call_arg_start(S, open, k); }
+        pc = pc + 1;
+        q = _arg_next(S, q);
+        if (TOKTYP(S, q) != 31) { return 0 - 1; }
+        q = q + 1;
+    }
+    if (fi < 0) { return 0 - 1; }
+    var pn = _bx_pname(S, fi, k);
+    if (pn < 0) { return 0 - 1; }
+    while (q < n) {
+        if (_pd_label_at(S, q) == 1) { if (STREQ(S, TOKVAL(S, q), pn) == 1) { return q + 2; } }
+        q = _arg_next(S, q);
+        if (TOKTYP(S, q) != 31) { return 0 - 1; }
+        q = q + 1;
+    }
+    return 0 - 1;
+}
+
 # 1 when the name at offset `noff` is exactly the `n`-byte text `lit`. (cycc does not include
 # lib/string.cyr, so this is the compare.)
 fn _noff_is(S, noff, lit, n): i64 {
@@ -3511,7 +3904,7 @@ fn _call_arg_one(S, fi, uarg, noff, tbl, st): i64 {
 # is written once. CHANGELOG [6.6.5] [6.6.6] [6.7.7]
 fn _owncall_args_at(S, fi, noff, int0, p0, line): i64 {
     var tbl: i64[24];   # 8 args x 3 words, a LOCAL — a nested call gets its own (v6.2.1: i64[24])
-    var st: i64[3];
+    var st: i64[7];     # [0..16] below; [24..48] the named phase's (`_pd_named`)
     store64(&st, int0);
     store64(&st + 8, 0);
     store64(&st + 16, 0);
@@ -3519,16 +3912,25 @@ fn _owncall_args_at(S, fi, noff, int0, p0, line): i64 {
     if (PEEKT(S) != 11) {
         var go = 1;
         while (go == 1) {
-            _call_arg_one(S, fi, uarg, noff, &tbl, &st);
-            uarg = uarg + 1;
-            if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
-            else { go = 0; }
+            if (_pd_label_at(S, GTI(S)) == 1) { go = 0; }   # 6.7.7 (B6): a named argument
+            else {
+                _call_arg_one(S, fi, uarg, noff, &tbl, &st);
+                uarg = uarg + 1;
+                if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
+                else { go = 0; }
+            }
         }
     }
-    if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
-    STI(S, GTI(S) + 1);                         # consume ')'
-    _CHECK_ARITY(S, line, noff, fi, uarg, 1);   # `uarg` counts `self`, as `_fnt_params` does
-    _pd_fill(S, fi, uarg, &st);                 # 6.7.7 (B6): a short call's parameter defaults
+    if (_pd_label_at(S, GTI(S)) == 1) {
+        store64(&st + 24, p0);
+        store64(&st + 32, line);
+        _pd_named(S, fi, noff, uarg, &tbl, &st);   # 6.7.7 (B6): checked whole, then in parameter order
+    } else {
+        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
+        STI(S, GTI(S) + 1);                         # consume ')'
+        _CHECK_ARITY(S, line, noff, fi, uarg, 1);   # `uarg` counts `self`, as `_fnt_params` does
+        _pd_fill(S, fi, uarg, &st);                 # 6.7.7 (B6): a short call's parameter defaults
+    }
     var n = load64(&st);
     ECALLPOPS(S, n);   # int-class args only: a vector was recorded, not pushed
     _simd_arg_second_pass(S, &tbl, load64(&st + 8));   # after ECALLPOPS: int args cannot clobber XMM/V
@@ -4985,6 +5387,7 @@ fn _fnc_agg(S, fi, noff): i64 {
 # alias keeps its name). Out of PARSE_FNCALL's body, which sits at cybs's per-fn reference
 # ceiling. CHANGELOG [6.7.7]
 fn _fnc_route(S, fi, noff): i64 {
+    if (_pd_named_at(S, GTI(S) - 1) == 1) { return _pd_route_named(S, fi, noff); }   # 6.7.7 (B6): C10
     var r = 0 - 1;
     # v5.10.25 — registry-based overload dispatch on the FIRST argument: for a fn `<base>`
     # with a `<base>_str` / `<base>_int` sibling (tables filled at REGFN time; user pairs work
@@ -5066,33 +5469,37 @@ fn _fnc_route(S, fi, noff): i64 {
     # the per-fn overload tables). Compile-time cost: O(N) name
     # compare over registered fns per pointer-form call site.
     if (PEEKT(S) == 27) {
-        var _po_base_p = S + 0xEC00000 + noff;
-        var _po_base_len = 0;
-        while (load8(_po_base_p + _po_base_len) != 0) { _po_base_len = _po_base_len + 1; }
-        # 128-byte scratch — must hold base_len + len("_ptr") + null.
-        # The 120-char base-length guard below leaves headroom.
-        # Pre-bumped from 16 bytes — was overflow-prone for any base
-        # name >11 chars (e.g. `f64v2_add_ptr` direct call constructed
-        # `f64v2_add_ptr_ptr` = 18 bytes; the overflow corrupted
-        # adjacent stack data and returned wrong values from any fn
-        # call that hit this dispatch path).
-        if (_po_base_len < 120) {
-            var _po_scratch[128];
-            var _po_i = 0;
-            while (_po_i < _po_base_len) {
-                store8(&_po_scratch + _po_i, load8(_po_base_p + _po_i));
-                _po_i = _po_i + 1;
-            }
-            store8(&_po_scratch + _po_base_len + 0, 95);   # '_'
-            store8(&_po_scratch + _po_base_len + 1, 112);  # 'p'
-            store8(&_po_scratch + _po_base_len + 2, 116);  # 't'
-            store8(&_po_scratch + _po_base_len + 3, 114);  # 'r'
-            store8(&_po_scratch + _po_base_len + 4, 0);
-            var _po_fi = _FINDFN_CSTR(S, &_po_scratch, _po_base_len + 4);
-            if (_po_fi >= 0) { r = _po_fi; }
-        }
+        var _po_fi = _fnc_ptr_sib(S, noff);
+        if (_po_fi >= 0) { r = _po_fi; }
     }
     return r;
+}
+# The `<base>_ptr` sibling of the fn named `noff`, or -1 (v5.10.39, above). Out of `_fnc_route` so
+# C10 asks the same question (6.7.7).
+fn _fnc_ptr_sib(S, noff): i64 {
+    var _po_base_p = S + 0xEC00000 + noff;
+    var _po_base_len = 0;
+    while (load8(_po_base_p + _po_base_len) != 0) { _po_base_len = _po_base_len + 1; }
+    # 128-byte scratch — must hold base_len + len("_ptr") + null.
+    # The 120-char base-length guard below leaves headroom.
+    # Pre-bumped from 16 bytes — was overflow-prone for any base
+    # name >11 chars (e.g. `f64v2_add_ptr` direct call constructed
+    # `f64v2_add_ptr_ptr` = 18 bytes; the overflow corrupted
+    # adjacent stack data and returned wrong values from any fn
+    # call that hit this dispatch path).
+    if (_po_base_len >= 120) { return 0 - 1; }
+    var _po_scratch[128];
+    var _po_i = 0;
+    while (_po_i < _po_base_len) {
+        store8(&_po_scratch + _po_i, load8(_po_base_p + _po_i));
+        _po_i = _po_i + 1;
+    }
+    store8(&_po_scratch + _po_base_len + 0, 95);   # '_'
+    store8(&_po_scratch + _po_base_len + 1, 112);  # 'p'
+    store8(&_po_scratch + _po_base_len + 2, 116);  # 't'
+    store8(&_po_scratch + _po_base_len + 3, 114);  # 'r'
+    store8(&_po_scratch + _po_base_len + 4, 0);
+    return _FINDFN_CSTR(S, &_po_scratch, _po_base_len + 4);
 }
 
 # 1 when a call to `fi` must take the normal path even though the callee is inline-eligible.
@@ -5101,13 +5508,16 @@ fn _fnc_route(S, fi, noff): i64 {
 # returns scalar-in-rax — it would truncate the 16/32-byte vector; such callees take the normal
 # struct-ptr / retptr path. 6.6.20: nor a REDEFINED fn (flag 2048, pass 1) on any target —
 # replaying the body in hand bound the call to whichever definition came first; a plain call
-# reaches the last one. Out of PARSE_FNCALL's body (cybs ceiling). CHANGELOG [6.6.20] [6.7.7]
+# reaches the last one. 6.7.7: nor a call that names an argument — the replay binds by position
+# (the one marshaller places names). Out of PARSE_FNCALL's body (cybs ceiling).
+# CHANGELOG [6.6.20] [6.7.7]
 fn _fnc_no_inline(S, fi): i64 {
     if (_TARGET_PE == 1) {
         if (_smask_args(fi) != 0) { return 1; }
         if (_is_simd_any(S, GFRS(S, fi)) == 1) { return 1; }
     }
     if ((GFLG(S, fi) & 2048) != 0) { return 1; }
+    if (_pd_named_at(S, GTI(S) - 1) == 1) { return 1; }
     return 0;
 }
 
@@ -6964,6 +7374,7 @@ fn _ce_call(S, noff): i64 {
     if (fi < 0) { _ce_badn(S, "unknown fn ", noff, " in a const context"); return 0; }
     if (GFCFN(S, fi) != 1) { _ce_badn(S, "", noff, " is not a `const fn` - a const context calls only const fns"); return 0; }
     _ce_ti = _ce_ti + 2;   # the name, `(`
+    if (_pd_named_at(S, _ce_ti - 1) == 1) { return _ce_call_named(S, fi); }   # 6.7.7 (B6)
     # The arguments are pushed on the frame stack, unnamed, and become the callee's parameters in
     # place (`_ce_bind_params` names them) — a call allocates nothing, however deep the recursion.
     var base = _ce_sp;
@@ -6985,6 +7396,91 @@ fn _ce_call(S, noff): i64 {
     n = _ce_fill(S, fi, n);   # 6.7.7 (B6): a short call's parameter defaults
     if (_ce_err == 1) { _ce_sp = base; return 0; }
     return _ce_invoke(S, fi, base, n);
+}
+# 6.7.7 (B6) — a const fn call that names an argument (`const N = f(1, c: 3);`, `#assert`, an
+# array size, an enum value, a case label, a local const). Every parameter's frame entry is
+# reserved first (kind -1: not given), so a nested call runs above them; each written argument is
+# evaluated in WRITTEN order into its parameter's entry; the missing ones take their defaults; the
+# callee then runs on all of them. The refusals are the parser's texts (C2-C6), said only in a
+# const context of its own (`_ce_infn == 0`) — a const fn's body is compiled by the parser too,
+# which reports the same call once.
+fn _ce_call_named(S, fi): i64 {
+    var max = L64(_fnt_params + fi * 8);
+    var noff = _bx_fname(S, fi);
+    var base = _ce_sp;
+    var j = 0;
+    while (j < max) { _ce_fr_push(S, 0 - 1, 0, 0 - 1, 8); j = j + 1; }
+    var k = 0;
+    var named = 0;
+    var go = 1;
+    while (go == 1) {
+        if (_ce_err == 1) { _ce_sp = base; return 0; }
+        var at = _ce_ti;
+        var pi = k;
+        if (_pd_label_at(S, at) == 1) {
+            named = 1;
+            pi = _pd_index(S, fi, TOKVAL(S, at));
+            if (pi < 0) { if (_ce_nopen(S) == 1) { _pd_c2(S, at, fi, noff, 0); } _ce_sp = base; return 0; }
+            _ce_ti = _ce_ti + 2;
+        } else {
+            if (named == 1) { if (_ce_nopen(S) == 1) { _pd_c5(S, at, noff); } _ce_sp = base; return 0; }
+            k = k + 1;
+            if (pi >= max) {
+                if (_ce_nopen(S) == 1) { _pd_say(S, at, "a const fn called with the wrong number of arguments"); }
+                _ce_sp = base;
+                return 0;
+            }
+        }
+        var e = _ce_st + (base + pi) * 40;
+        if (load64(e + 16) != 0 - 1) {
+            if (_ce_nopen(S) == 1) {
+                if (pi < k) { _pd_c4(S, at, fi, noff, pi, 0); } else { _pd_c3(S, at, fi); }
+            }
+            _ce_sp = base;
+            return 0;
+        }
+        var av = _ce_expr(S);
+        if (_ce_err == 1) { _ce_sp = base; return 0; }
+        store64(e + 8, av);
+        store64(e + 16, _ce_k);
+        if (TOKTYP(S, _ce_ti) == 31) { _ce_ti = _ce_ti + 1; } else { go = 0; }
+    }
+    var cl = _ce_ti;
+    _ce_expect(S, 11);
+    if (_ce_err == 1) { _ce_sp = base; return 0; }
+    if (_ce_skip > 0) { _ce_sp = base; _ce_k = _ce_retkind(S, fi); return 0; }
+    var p = 0;
+    while (p < max) {
+        var e2 = _ce_st + (base + p) * 40;
+        if (load64(e2 + 16) == 0 - 1) {
+            var en = _pd_value(S, fi, p);
+            if (en == 0) {
+                if (_pd_refused(fi) == 1) { _ce_err = 1; }   # reported at the default (as `_ce_fill`)
+                elif (_ce_nopen(S) == 1) { _pd_c6(S, cl, fi, p); }
+                _ce_sp = base;
+                return 0;
+            }
+            store64(e2 + 8, L64(en + 32));
+            store64(e2 + 16, L64(en + 24));
+        }
+        p = p + 1;
+    }
+    return _ce_invoke(S, fi, base, max);
+}
+# 1 when fi's defaults were refused (reported at the default; its calls pass every argument).
+fn _pd_refused(fi): i64 {
+    var row = _pd_row(fi);
+    if (row == 0) { return 0; }
+    if ((L64(row + 24) & 4) != 0) { return 1; }
+    return 0;
+}
+# A const context's named-call refusal: 1 when it is to be said (the first error of this
+# evaluation, outside a const fn's body), 0 when `_ce_err` is only set.
+fn _ce_nopen(S): i64 {
+    if (_ce_err == 1) { return 0; }
+    _ce_err = 1;
+    if (_ce_infn == 1) { return 0; }
+    return 1;
 }
 fn _ce_invoke(S, fi, base, n): i64 {
     if (_ce_depth >= 2000) { _ce_sp = base; _ce_bad(S, "compile-time evaluation nested deeper than 2000 const fn calls", 62); return 0; }
@@ -9138,8 +9634,8 @@ fn _gs_use(S, fi, i, mode): i64 {
     if ((GFGM(S, cfi) & 3) == 0) { if (_bnd_base_bad(S, cfi) == 0) { return 0; } }   # 6.7.1: a bounded one too
     if (nx == 19) { return _gs_targs_fwd(S, fi, i + 2); }
     var m = GFGM(S, cfi);
-    if (_gs_arg_named(S, i + 1, (m >> 8) & 255) == 1) { return 1; }
-    return _gs_arg_named(S, i + 1, (m >> 16) & 255);
+    if (_gs_arg_named(S, cfi, i + 1, (m >> 8) & 255) == 1) { return 1; }
+    return _gs_arg_named(S, cfi, i + 1, (m >> 16) & 255);
 }
 # `callee<...>(`: 1 iff a type argument names one of fi's own type parameters.
 fn _gs_targs_fwd(S, fi, j): i64 {
@@ -9158,11 +9654,11 @@ fn _gs_targs_fwd(S, fi, j): i64 {
     }
     return 0;
 }
-# 1 iff argument k-1 (k is 1-based; 0 = none) of the call whose `(` is at `open` is a bare
-# T-typed name.
-fn _gs_arg_named(S, open, k): i64 {
+# 1 iff the argument for parameter k-1 (k is 1-based; 0 = none) of the call to cfi whose `(` is at
+# `open` is a bare T-typed name (6.7.7: by name too, `_call_arg_for`).
+fn _gs_arg_named(S, cfi, open, k): i64 {
     if (k == 0) { return 0; }
-    var a = _call_arg_start(S, open, k - 1);
+    var a = _call_arg_for(S, cfi, open, k - 1);
     if (a < 0) { return 0; }
     if (TOKTYP(S, a) != 2) { return 0; }
     var nt = TOKTYP(S, a + 1);
@@ -9287,7 +9783,7 @@ fn _gen_infer_tp(S, fi, open, which): i64 {
     var k = which + 1;
     if ((m & 4) != 0) { k = (m >> (8 + which * 8)) & 255; }
     if (k == 0) { return 0 - 8; }
-    var a = _call_arg_start(S, open, k - 1);
+    var a = _call_arg_for(S, fi, open, k - 1);   # 6.7.7: or the argument naming it
     if (a < 0) { return 0 - 8; }
     if (_gen_arg_whole(S, a) == 0) { return 0 - 8; }
     var sv = GTI(S);

@@ -1,9 +1,11 @@
 #!/bin/sh
 # tests/gates/frontend/default_named_args_checked.sh — 6.7.7 (B6)
 #
-# PARAMETER DEFAULTS (and, from bite 4, named arguments). The user's decision (2026-10-08): a default
-# is a compile-time constant (a literal, a `const`, a `const fn` call — the 6.7.2 evaluator) on a
-# TRAILING parameter; typed parameters take defaults; the arity check becomes min..max. 2026-10-09,
+# PARAMETER DEFAULTS AND NAMED ARGUMENTS. The user's decision (2026-10-08): a default is a
+# compile-time constant (a literal, a `const`, a `const fn` call — the 6.7.2 evaluator) on a
+# TRAILING parameter; typed parameters take defaults; the arity check becomes min..max; named
+# arguments follow the positionals, in any order, each parameter at most once, evaluated left to
+# right as written (placed in parameter order); direct calls only. 2026-10-09,
 # fork F1: a default in a trait's REQUIRED signature is an ERROR (it compiled, ignored); fork F2:
 # EVERY forward call is arity-checked (a wrong-arity call to a fn defined later built). Pass 1
 # records every definition's defaults and refuses a bad SHAPE at its token; the end of pass 1
@@ -34,6 +36,17 @@
 #      record the parameter count and the `: f64`); X0 the grammar refusals under --syntax-only
 #   W  `#inline` on a defaulted fn is ignored by name, and both calls — full and filled — stay calls
 #      (objdump)
+#   N  named arguments: R21 the call-side refusals, once each, at the label (C2 an unknown name, C3
+#      named twice, C4 by position and by name, C5 a positional after a named one, C6 a required one
+#      missing, C7 through fncallN / callptr, C8 `self:` in the dot form, C9 a callee with no declared
+#      list, C10 an overload-routed base, C11 a variadic fn, C12 a redefined fn, C13 a reordered call
+#      in a #naked fn, C1-named too many positionals; C14 a builtin: today's two errors and a note);
+#      R22 the same refusals in a const context; X0c / X0d C5 / C7 under --syntax-only; G1-G3 generics
+#      (T inferred through a name, the tail form, one report for a bad default with two instances);
+#      I1 / I2 #inline (a named call to an inline-eligible fn is a call, objdump; an inlined body
+#      holding one); TL1 a reordered call at top level under CYRIUS_IR=0 / 1 / 3; X1 / X2 lint (a
+#      sibling's fn called by name, a default naming a sibling's const: --syntax-only, then `cyrius
+#      lint` on a hermetic CYRIUS_HOME); AS1 CYRIUS_ASYNC=1
 #   A  ANTI-VACUOUS: the crossos tcyr built and run — x86 plain, CYRIUS_IR=3 and CYRIUS_DCE=1, then
 #      aarch64 (qemu), cx (cxvm) and PE (wine), each with the full assertion count (cx: less the rows
 #      under `#ifndef CYRIUS_TARGET_CX`, derived)
@@ -72,6 +85,20 @@
 #   M20 `_ce_top = 0` in default evaluation: NOT RED alone, by construction — the end of pass 1
 #       evaluates every default before any caller's scope exists (no local const, GINFN 0); with
 #       `_pd_sweep` also dropped (the default evaluated lazily at the call) -> E1 (99, want 29)
+#   (bite 4)
+#   M4  the named bypass in `_fnc_no_inline` dropped      -> I1/I2 (the replay reads `b:` as a
+#                                                          variable) and the tcyr on every leg (A17)
+#   M5  the reordered phase pushes in written order       -> A7, A9 (and A8, A11, A14, A16, A22) on
+#       (no temporaries)                                     every leg; G1, G2, TL1, AS1, N-gates
+#   M6  named arguments evaluated in parameter order      -> A8 (123, want 312) and A15 on every leg;
+#                                                          TL1 (exit 65)
+#   M7  `_simd_ord_at` replaced by the running ordinal    -> A20 on x86 (plain / IR=3 / DCE), aarch64
+#                                                          and cx (vtwo(b: y, a: x) = 31); PE green
+#                                                          by design (a vector travels by pointer)
+#   M10 `_bx_pname` without its `=` skip                  -> the tcyr refused on every leg: a name
+#                                                          after `b = A < B` is "no parameter named"
+#   M14 `_HTEMP` a frame slot at top level too            -> TL1 (IR=0 / 1 / 3) and A15 SIGSEGV on x86,
+#                                                          aarch64 and PE
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -241,10 +268,108 @@ else
     else echo "  SKIP W1's call row: no objdump"; skips=$((skips + 1)); fi
 fi
 
+# ── N: named arguments (bite 4) ──────────────────────────────────────────────────────────────
+# R21: the call-side refusals, each once, at its token, with no binary.
+F3='fn f(a, b = 1, c = 2): i64 { return a * 100 + b * 10 + c; }\n'
+refused c2 "'f' has no parameter named 'd' - its parameters are: a, b, c" "C2: an unknown name (the message lists the parameters)" "${F3}fn main(): i64 { return f(1, d: 3); }$E" "2:30"
+refused c3 "parameter 'b' of 'f' is named twice" "C3: a parameter named twice" "${F3}fn main(): i64 { return f(1, b: 3, b: 4); }$E" "2:36"
+refused c4 "parameter 'a' of 'f' is given by position and by name" "C4: a parameter given by position and by name" "${F3}fn main(): i64 { return f(1, a: 3); }$E" "2:30"
+refused c5 "a positional argument cannot follow a named one (in a call to 'f')" "C5: a positional argument after a named one" "${F3}fn main(): i64 { return f(1, b: 3, 4); }$E" "2:36"
+refused c6 "missing argument for parameter 'b' of 'g' (it has no default)" "C6: a required parameter missing from a named call" "fn g(a, b, c = 2): i64 { return a + b + c; }\nfn main(): i64 { return g(1, c: 3); }$E" "2:34"
+refused c7 "named arguments need a direct call - fncallN / callptr pass arguments by position" "C7: a named argument through fncallN (once per call)" "include \"lib/fnptr.cyr\"\n${F3}fn main(): i64 { return fncall3(&f, 1, c: 2, b: 3); }$E" "3:40"
+refused c7b "named arguments need a direct call" "C7b: ... and through callptr" "include \"lib/fnptr.cyr\"\n${F3}fn main(): i64 { return callptr(&f, 1, b: 2, c: 3); }$E" "3:40"
+refused c8 "'self' is the receiver of a method call (o.m(..)) - it cannot be named" "C8: self: in the dot form" "struct P { v; }\nimpl P { fn m(self, k = 1): i64 { return self.v + k; } }\nfn main(): i64 { var p = P { 1 }; return p.m(self: 2); }$E" "3:46"
+refused c9 "'Okk' takes no named arguments: it has no declared parameter list" "C9: a variant constructor (no declared list)" "include \"lib/alloc.cyr\"\nenum R { Okk(v), Er(e) }\nfn main(): i64 { var x = Okk(v: 1); return 0; }$E" "3:30"
+refused c10 "a call with named arguments cannot be overload-routed: 'pr' has a routed sibling - call the one you mean" "C10: a base with a _str sibling, called by name" "include \"lib/syscalls.cyr\"\ninclude \"lib/alloc.cyr\"\ninclude \"lib/str.cyr\"\nfn pr(x): i64 { return 1; }\nfn pr_str(s: Str): i64 { return 2; }\nfn main(): i64 { return pr(x: 5); }$E" "6:28"
+refused c10b "'vadd' has a routed sibling" "C10b: a positional &x first argument with a <base>_ptr sibling, then a name" "fn vadd(a, b): i64 { return 1; }\nfn vadd_ptr(a, b): i64 { return 2; }\nfn main(): i64 { var x = 1; var y = 2; return vadd(&x, b: &y); }$E" "3:56"
+refused c11 "'f' is variadic: its arguments are positional" "C11: a variadic fn called by name" "fn f(a, ...): i64 { return a; }\nfn main(): i64 { return f(a: 1); }$E" "2:27"
+refused c12 "'f' is defined twice: name its arguments only on a fn defined once" "C12: a redefined fn called by name" "fn f(a, b): i64 { return a; }\nfn f(a, b): i64 { return b; }\nfn main(): i64 { return f(b: 1, a: 2); }$E" "3:27"
+refused c13 "a reordered named call needs a frame: not inside #naked fn 'isr'" "C13: a reordered named call in a #naked fn" "fn f(a, b): i64 { return a; }\n#naked\nfn isr() { f(b: 1, a: 2); asm { iretq } }$E" "3:14"
+refused c1n "'f' expects 1 to 3 arguments, got 5" "C1-named: more positionals than parameters, then a name" "${F3}fn main(): i64 { return f(1, 2, 3, 4, b: 4); }$E" "2"
+refused r22 "'cf' has no parameter named 'zz' - its parameters are: a, b" "R22: an unknown name in a const context" "const fn cf(a, b = 1): i64 { return a + b; }\nconst N = cf(1, zz: 3);$E" "2:17"
+refused r22b "parameter 'b' of 'cf' is named twice" "R22b: a const context names a parameter twice" "const fn cf(a, b = 1): i64 { return a + b; }\nconst N = cf(a: 1, b: 2, b: 3);$E" "2:26"
+refused r22c "missing argument for parameter 'a' of 'cf' (it has no default)" "R22c: a const context misses a required one" "const fn cf(a, b = 1): i64 { return a + b; }\nconst N = cf(b: 3);$E" "2:18"
+# The grammar refusals hold under --syntax-only (what `cyrius lint` runs).
+refused x0c "a positional argument cannot follow a named one" "X0c: C5 under --syntax-only, to a callee it cannot resolve" "fn main(): i64 { return sib_f(k: 1, 2); }$E" "1:37" "--syntax-only --allow-undef"
+refused x0d "named arguments need a direct call" "X0d: C7 under --syntax-only" "include \"lib/fnptr.cyr\"\n${F3}fn main(): i64 { return fncall3(&f, 1, b: 2, c: 3); }$E" "3:40" "--syntax-only"
+# A named argument runs its PARAMETER's gates (each keyed by the parameter index): the `: cstring`
+# literal error, the bool check, a `: Str` literal's wrap and a >8 B struct's address push.
+refused ncs "passing integer literal 42 to 'f' which expects a cstring" "N-gates: an integer literal named into a : cstring parameter" "fn f(a, s: cstring): i64 { return a; }\nfn main(): i64 { return f(s: 42, a: 1); }$E" "2:30"
+refused nbl "cannot pass a value that is not a bool to bool parameter 't' of 'bf'" "N-gates: a non-bool named into a bool parameter" "fn bf(a, t: bool): i64 { return a; }\nfn main(): i64 { return bf(t: 1, a: 0); }$E" "2:31"
+exits nst 42 "N-gates: a \`: Str\` literal and a >8 B struct, named and reordered" 'include "lib/syscalls.cyr"\ninclude "lib/alloc.cyr"\ninclude "lib/str.cyr"\nstruct Big { a; b; c; }\nfn rd(s: Big, z): i64 { return s.a * 100 + s.c * 10 + z; }\nfn sl(n, s: Str): i64 { return str_len(s) * 10 + n; }\nfn main(): i64 {\n    alloc_init();\n    var b: Big = Big { 1, 2, 3 };\n    if (rd(z: 4, s: b) != 134) { return 1; }\n    if (sl(s: "hello", n: 7) != 57) { return 2; }\n    return 42;\n}\nsyscall(60, main());\n'
+# C14: a named argument to a builtin keeps today's two errors and gains the note.
+printf 'fn main(): i64 { syscall(n: 60, 3); return 0; }%b' "$E" > "$T/c14.cyr"
+build c14
+if [ "$rc" -eq 0 ]; then bad "C14: a named argument to a builtin BUILT"
+elif ! grep -q "undefined variable 'n'" "$T/c14.err" || ! grep -q "expected ')', got ':'" "$T/c14.err"; then bad "C14: today's two errors changed: $(grep '^error' "$T/c14.err" | tr '\n' '|')"
+elif ! grep -q "^note: named arguments go only to a direct call of a declared fn (builtins, fncallN and callptr take positional arguments)" "$T/c14.err"; then bad "C14: no note naming the rule"
+else ok "C14: a named argument to a builtin: today's two errors, and the note"; fi
+# G: generics through names.
+GS='struct Pt { x; y; }\ntrait Show { fn show(self): i64; }\nimpl Show for Pt { fn show(self): i64 { return self.x; } }\nfn gid<T: Show>(x: T, n = 1): i64 { return x.show() * 10 + n; }\n'
+exits g1 42 "G1: gid(n: 2, x: p) infers T from the named argument and instantiates gid\$Pt" "${GS}fn main(): i64 { var p = Pt { 4, 0 }; return gid(n: 2, x: p); }\nsyscall(60, main());\n"
+exits g2 51 "G2: ... the tail form (return gid(n: 1, x: p) is an ordinary call)" "${GS}fn t(p: Pt): i64 { return gid(n: 1, x: p); }\nfn main(): i64 { var p = Pt { 5, 0 }; return t(p); }\nsyscall(60, main());\n"
+refused g3 "the default 300 does not fit parameter 'n' of 'g' (': u8')" "G3: one error line for a bad default in a generic base with two instances" "struct Pt { x; }\nstruct Qt { y; }\nfn g<T>(v: T, n: u8 = 300): i64 { return n; }\nfn main(): i64 { var p = Pt { 1 }; var q = Qt { 2 }; return g(p, 1) + g(q, 2) + g(n: 3, v: p); }$E" "3:23"
+# I: #inline. I1 a named call to an inline-eligible fn takes the normal path (a call, objdump);
+# I2 an inlined body holding a named call.
+printf '#inline\nfn s2(a, b): i64 { return a * 10 + b; }\n#inline\nfn wr(x): i64 { return s2(b: x, a: 4); }\nfn h(): i64 { return s2(b: 1, a: 5) + s2(3, 2) * 100 + wr(7) * 10000; }\nfn hend(): i64 { return 0; }\nsyscall(60, (h() + hend()) %% 256);\n' > "$T/i01.cyr"
+rc=0; CYRIUS_SYMS="$T/i01.syms" "$CC" < "$T/i01.cyr" > "$T/i01.bin" 2> "$T/i01.err" || rc=$?
+if [ "$rc" -ne 0 ]; then bad "I1/I2: the probe did not build: $(grep '^error' "$T/i01.err" | head -1)"
+else
+    chmod +x "$T/i01.bin"; got=0; timeout 10 "$T/i01.bin" || got=$?
+    want=$(( (51 + 3200 + 470000) % 256 ))
+    [ "$got" -eq "$want" ] && ok "I1/I2: s2(b: 1, a: 5) = 51, s2(3, 2) = 32, an inlined wr(7) holding s2(b: 7, a: 4) = 47: exit $got" || bad "I1/I2: exit $got, want $want"
+    if command -v objdump > /dev/null 2>&1; then
+        f=$(awk '$2 == "s2" { print $1 }' "$T/i01.syms"); h=$(awk '$2 == "h" { print $1 }' "$T/i01.syms"); e=$(awk '$2 == "hend" { print $1 }' "$T/i01.syms")
+        if [ -z "$f" ] || [ -z "$h" ] || [ -z "$e" ]; then bad "I1: the symbol map does not name s2 / h / hend"
+        else
+            nc=$(objdump -d --start-address=0x"$h" --stop-address=0x"$e" "$T/i01.bin" | grep -cE "call +0x$(printf '%x' "0x$f")\b")
+            [ "$nc" -eq 2 ] && ok "I1: h calls s2 for the two named calls (the positional one is inlined)" || bad "I1: h has $nc call(s) to s2, want 2"
+        fi
+    else echo "  SKIP I1's call row: no objdump"; skips=$((skips + 1)); fi
+fi
+# TL1: a reordered named call at top level (hidden globals, no frame) under the IR modes.
+printf 'var g_log = 0;\nfn lg(v): i64 { g_log = g_log * 10 + v; return v; }\nfn w3(a, b = 2, c = 3): i64 { return a * 100 + b * 10 + c; }\nvar r = w3(c: lg(9), b: lg(8), a: lg(7));\nsyscall(60, (r - 789) + (g_log - 987) + 7);\n' > "$T/tl1.cyr"
+for ir in 0 1 3; do
+    rc=0; CYRIUS_IR=$ir "$CC" < "$T/tl1.cyr" > "$T/tl1_$ir.bin" 2> "$T/tl1_$ir.err" || rc=$?
+    if [ "$rc" -ne 0 ]; then bad "TL1 (CYRIUS_IR=$ir): rc $rc: $(grep '^error' "$T/tl1_$ir.err" | head -1)"; continue; fi
+    chmod +x "$T/tl1_$ir.bin"; got=0; timeout 10 "$T/tl1_$ir.bin" || got=$?
+    [ "$got" -eq 7 ] && ok "TL1 (CYRIUS_IR=$ir): a reordered named call at top level: exit 7" || bad "TL1 (CYRIUS_IR=$ir): exit $got, want 7"
+done
+# X: lint. X1 a call to a sibling module's fn by name, X2 a default naming a sibling's const: the
+# compiler's half under `--syntax-only --allow-undef` (what `cyrius lint`'s pre-pass passes), and
+# `cyrius lint` itself on a hermetic CYRIUS_HOME holding this compiler.
+printf 'fn main(): i64 { return sib_f(1, k: 2, c: |a, b| a + b); }\nsyscall(60, main());\n' > "$T/x1.cyr"
+printf 'fn f(a, b = SIB_K): i64 { return a + b; }\nfn main(): i64 { return f(b: 2, a: 1); }\nsyscall(60, main());\n' > "$T/x2.cyr"
+rc=0; "$CC" --syntax-only --allow-undef < "$T/x1.cyr" > /dev/null 2> "$T/x1.err" || rc=$?
+[ "$rc" -eq 0 ] && ! grep -q '^error' "$T/x1.err" && ok "X1: --syntax-only: a sibling module's fn called by name: rc 0" || bad "X1: rc $rc: $(grep '^error' "$T/x1.err" | head -1)"
+rc=0; "$CC" --syntax-only --allow-undef < "$T/x2.cyr" > /dev/null 2> "$T/x2.err" || rc=$?
+if [ "$(grep '^error' "$T/x2.err" | grep -vc "unknown name 'SIB_K' in a const context")" -eq 0 ] && grep -q "unknown name 'SIB_K' in a const context" "$T/x2.err"; then
+    ok "X2: --syntax-only: a default naming a sibling's const gives only lint's context message"
+else bad "X2: $(grep '^error' "$T/x2.err" | head -2 | tr '\n' '|')"; fi
+# (The wrapper runs the cycc BESIDE it, so it is copied next to this compiler.)
+if [ -x "$ROOT/build/cyrius" ] && [ -x "$ROOT/build/cyrlint" ]; then
+    mkdir -p "$T/lh/bin" "$T/lw"
+    cp "$CC" "$T/lh/bin/cycc"; cp "$ROOT/build/cyrlint" "$T/lh/bin/cyrlint"; cp "$ROOT/build/cyrius" "$T/lh/bin/cyrius"
+    chmod +x "$T/lh/bin/cycc" "$T/lh/bin/cyrlint" "$T/lh/bin/cyrius"
+    cp "$T/x1.cyr" "$T/x2.cyr" "$T/lw/"
+    for x in x1 x2; do
+        rc=0; ( cd "$T/lw" && CYRIUS_HOME="$T/lh" HOME="$T/lh" timeout 120 "$T/lh/bin/cyrius" lint "$x.cyr" > "$T/l$x.out" 2> "$T/l$x.err" ) || rc=$?
+        [ "$rc" -eq 0 ] && ok "$(echo "$x" | tr x X)-lint: cyrius lint: rc 0" || bad "$(echo "$x" | tr x X)-lint: cyrius lint rc $rc: $(head -2 "$T/l$x.err" | tr '\n' '|')"
+    done
+else echo "  SKIP X1-lint / X2-lint: build/cyrius or build/cyrlint not built"; skips=$((skips + 1)); fi
+# AS1: an async fn with a default, awaited filled and by name, and its constructor called by name.
+if [ -f "$ROOT/lib/async.cyr" ]; then
+    printf 'include "lib/alloc.cyr"\ninclude "lib/vec.cyr"\ninclude "lib/syscalls.cyr"\ninclude "lib/fnptr.cyr"\ninclude "lib/async.cyr"\nasync fn job(a, b = 2, c = 3): i64 { return a * 100 + b * 10 + c; }\nasync fn outer(x): i64 {\n    var u = await job(x);\n    var v = await job(c: 9, a: x);\n    return u * 1000 + v;\n}\nfn main(): i64 {\n    alloc_init();\n    var C = outer(1);\n    var r = 0;\n    var n = 0;\n    while (n < 4) { r = future_force(C); n = n + 1; }\n    var D = job(b: 7, a: 4);\n    var s = future_force(D);\n    if (r != 123129) { return 1; }\n    if (s != 473) { return 2; }\n    return 42;\n}\nsyscall(60, main());\n' > "$T/as1.cyr"
+    rc=0; CYRIUS_ASYNC=1 "$CC" < "$T/as1.cyr" > "$T/as1.bin" 2> "$T/as1.err" || rc=$?
+    if [ "$rc" -ne 0 ]; then bad "AS1: rc $rc: $(grep '^error' "$T/as1.err" | head -1)"
+    else chmod +x "$T/as1.bin"; got=0; timeout 10 "$T/as1.bin" || got=$?
+        [ "$got" -eq 42 ] && ok "AS1: CYRIUS_ASYNC=1: await job(x) fills, await job(c: 9, a: x) and job(b: 7, a: 4) by name" || bad "AS1: exit $got, want 42"; fi
+else bad "AS1: lib/async.cyr is missing"; fi
+
 # ── A: the crossos tcyr, every leg, with its full assertion count ────────────────────────────
 TC="$ROOT/tests/tcyr/crossos/default_named_args_values.tcyr"
 WANT=$(grep -cE '^ *assert_eq\(' "$TC")
-[ "$WANT" -ge 50 ] || bad "A0: only $WANT assertions derived from the tcyr (floor 50)"
+[ "$WANT" -ge 100 ] || bad "A0: only $WANT assertions derived from the tcyr (floor 100)"
 # cx has no 9-16 B register-pair struct return: its leg counts without the rows under `#ifndef CYRIUS_TARGET_CX`.
 NCX=$(awk '/^ *#ifndef CYRIUS_TARGET_CX/ { s = 1 } /^ *#endif/ { s = 0 } s && /^ *assert_eq\(/ { n++ } END { print n + 0 }' "$TC")
 tcyr_ok() {   # <label> <output file> <exit> [<want>]
@@ -291,4 +416,4 @@ else echo "  SKIP A6: PE leg — wine not installed"; skips=$((skips + 1)); fi
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: default_named_args_checked — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: default_named_args_checked — $skips leg(s) above could not run; every one that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: default_named_args_checked — parameter defaults: refusals (R), shapes (S), the count (K), scope / generics / routing (E), tail calls (T), #inline (W), every backend (A)"
+echo "PASS: default_named_args_checked — parameter defaults and named arguments: refusals (R), shapes (S), the count (K), scope / generics / routing (E), tail calls (T), #inline (W), named arguments (N), every backend (A)"
