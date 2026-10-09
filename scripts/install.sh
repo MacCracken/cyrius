@@ -1183,6 +1183,17 @@ if [ "$installed" -eq 0 ]; then
         cp -r lib "$CYRIUS_HOME/versions/$VERSION/"
     fi
 
+    # The cyrius-init scaffolding templates → versions/<v>/programs/, where the cyrius-init binary
+    # resolves <root>/programs/cyrius-init-templates. The refresh-only and tarball paths shipped
+    # them; this one did not, so `cyrius init` / `cyrius port` had no templates after a source
+    # install. Same contents-into-premade-dir copy as the tarball path. CHANGELOG [6.7.7]
+    if [ -d programs/cyrius-init-templates ]; then
+        rm -rf "$CYRIUS_HOME/versions/$VERSION/programs/cyrius-init-templates"
+        mkdir -p "$CYRIUS_HOME/versions/$VERSION/programs/cyrius-init-templates"
+        cp -R programs/cyrius-init-templates/. "$CYRIUS_HOME/versions/$VERSION/programs/cyrius-init-templates/"
+        info "cyrius-init templates installed"
+    fi
+
     cd /
     info "bootstrapped from source"
 fi

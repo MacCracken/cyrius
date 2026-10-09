@@ -153,20 +153,24 @@ exit 0
 EOF
 chmod +x "$W/cyrsign"
 
-# mkrel <version> <layout: sh|ci> [signed] — a fabricated release whose binaries say TAMPERED.
+# mkrel <version> <installer: sh|ci> [signed] — a fabricated release whose binaries say TAMPERED.
+# Release-shaped for both installers (6.7.7): one top-level cyrius-<v>-<suffix>/ directory, as
+# release.yml packs it; only the suffix differs (ci.sh always fetches x86_64-linux). The ci.sh
+# release used to be a versions/<v>/ tree — the layout the pre-6.7.7 ci.sh expected and no real
+# tarball has (tests/gates/toolchain/ci_installs_the_release_tarball.sh).
 mkrel() {
     rm -rf "$W/rel" "$W/stage"
     mkdir -p "$W/rel" "$W/stage"
-    if [ "$2" = sh ]; then _tb="cyrius-$1-$ARCH-$OSS.tar.gz"; else _tb="cyrius-$1-$CI_SUFFIX.tar.gz"; fi
-    if [ "$2" = sh ]; then _top="$W/stage/cyrius-$1-$ARCH-$OSS"; else _top="$W/stage/versions/$1"; fi
+    if [ "$2" = sh ]; then _sfx="$ARCH-$OSS"; else _sfx="$CI_SUFFIX"; fi
+    _tb="cyrius-$1-$_sfx.tar.gz"
+    _top="$W/stage/cyrius-$1-$_sfx"
     mkdir -p "$_top/bin" "$_top/lib"
     for _b in cycc cyrius cyriusly; do
         printf '#!/bin/sh\necho TAMPERED-%s\n' "$1" > "$_top/bin/$_b"
         chmod +x "$_top/bin/$_b"
     done
     echo 'fn x() {}' > "$_top/lib/x.cyr"
-    if [ "$2" = sh ]; then ( cd "$W/stage" && tar czf "$W/rel/$_tb" "cyrius-$1-$ARCH-$OSS" )
-    else ( cd "$W/stage" && tar czf "$W/rel/$_tb" versions ); fi
+    ( cd "$W/stage" && tar czf "$W/rel/$_tb" "cyrius-$1-$_sfx" )
     ( cd "$W/rel" && $SHA "$_tb" > "$_tb.sha256" )
     if [ "${3:-}" = signed ]; then
         cp "$W/rel/$_tb.sha256" "$W/rel/SHA256SUMS"
