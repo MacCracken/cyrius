@@ -6,7 +6,10 @@ type: state
 
 # Documentation Health — cyrius
 
-> **Last refresh**: 2026-10-06 (**v6.6.20**, the v6.6.x closeout doc sync — CLN-04/06/07/08/09/12,
+> **2026-10-08 (6.7.6) — `docs/development/` audit only:** seven docs archived and the three per-release migration
+> notes consolidated into `ecosystem-migration.md` (Tier 3 below); the rest of this ledger is the 6.6.20 sweep's.
+>
+> **Last full refresh**: 2026-10-06 (**v6.6.20**, the v6.6.x closeout doc sync — CLN-04/06/07/08/09/12,
 > HEAP-11, BACKLOG-00…14). Every figure below was **re-derived from the tree or from the tagged
 > 6.6.19 install slot** (`~/.cyrius/versions/6.6.19`, stamped `tree-matches-tag: yes`), not carried.
 > What it found, and it is the same shape as every sweep before it:
@@ -331,10 +334,10 @@ type: state
 | Bucket | Count | What it means |
 |---|---|---|
 | ✅ **Fresh — re-verified at 6.6.20** | 22 | Tier 1: `README.md`, `CHANGELOG.md`, `CLAUDE.md`, `VERSION`, `BENCHMARKS.md`, `cyrius-guide.md`, `faq.md`, `stdlib-modules.md`, `ecosystem.md`, `size-comparisons.md`, `api-surface.snapshot` · Tier 2: `package-format.md` · Tier 3: `state.md`, `roadmap.md`, `roadmap_6.md`, `roadmap-future.md`, `completed-phases.md`, `cycle-discipline.md`, `ecosystem-migration-6.6.18.md`, `dev-tools-linux.md`, `lib-tls-contract.md` · Tier 4: ADR-003. |
-| 🟡 **Stale in part — refresh in place** | 4 | `platform-status.md` (only the x86 size and the cross-host line re-derived), `architecture/cyrius.md` (per-platform table "as of v6.4.62"), `threat-model.md` (no CVE past the thread guard-page hardening item), `module-manifest-design.md` (the 6.6.17 manifest keys are documented elsewhere). |
+| 🟡 **Stale in part — refresh in place** | 3 | `platform-status.md` (only the x86 size and the cross-host line re-derived), `architecture/cyrius.md` (per-platform table "as of v6.4.62"), `threat-model.md` (no vulnerability past the thread guard-page hardening item). (`module-manifest-design.md` was archived 2026-10-08.) |
 | 🟠 **Read-through outstanding** | 1 | `stdlib-reference.md` — coverage of the 106 modules last counted at v6.5.10. |
 | 🔵 **Evergreen / not re-verified at 6.6.20** | 12 | `tutorial.md`, `docs/benchmarks.md`, `editor-integration.md`, `benchmark-regimes.md`, `crash-localization.md`, ADR-001/-002/-004/-005/-006, `fncall-abi.md`, `struct-packing.md`. |
-| 🗄 **Historical, kept in place** | 5 | `ecosystem-migration-6.6.2.md`, `ecosystem-migration-6.6.13.md`, and the banner-bounded `migration-strategy.md`, `development/benchmarks.md`, `process-notes.md`. |
+| 🗄 **Historical, kept in place** | 0 | The five moved to `docs/development/archive/` on 2026-10-08 (the per-release migration notes consolidated into `ecosystem-migration.md`). |
 | 📄 **Point-in-time, not refreshed** | 5 | The 3 active audits (Tier 5) and the 2 open proposals (Tier 6). |
 | 📦 **Archive — frozen by design** | 520 | `docs/development/archive/` (**8**) + `docs/development/issues/archived/` (**473**) + `docs/development/proposals/archived/` (**34**) + `docs/audit/archived/` (**5**). |
 | ❓ **Open strategic question** | 0 | None. |
@@ -404,24 +407,19 @@ Also closed: 1 issue filing (commandress papercut → archived) from the .60-.63
 
 | File | Last touched | Status | Action |
 |---|---|---|---|
-| `state.md` | 2026-10-06 | ✅ Fresh (reconciled 6.6.20) | 6.6.19 SHIPPED (tag `f5a5175a`), 6.6.20 = the closeout in progress; the ecosystem row is the 6.6.20 downstream check. It had said 6.6.19 was "awaiting the tag" against an integration commit (CLN-07). The `cycc` row is gated by the doc-stamp row and is re-stamped at integration. |
-| `roadmap.md` | 2026-10-06 | ✅ Fresh (re-triaged 6.6.20) | The active minor: 6.6.18 / 6.6.19 SHIPPED, 6.6.20 in progress, the backlog re-triaged (61 bullets; struck / corrected / re-pinned in place — BACKLOG-00…14), the DCE arc spec moved to roadmap_6.md ahead of the v6.7.x rotation. Its `Current head:` stamp is gated by the doc-stamp row and `version_bump_doc_anchors.sh`. |
-| `roadmap_6.md` | 2026-10-06 | ✅ Fresh | v6.7.x spec gained the backlog's v6.7.x candidates (A4 `Struct = *Struct` corrected, A4 `o.m()` vs `T_m(o)`, A5 8-byte method-return inference, B8 compound assignment on a field, C3 generic-struct fields) and the DCE compaction arc's spec. |
-| `roadmap-future.md` | 2026-10-06 | ✅ Fresh | NFKC/NFKD struck as shipped (v5.8.60), the cyrlint gates re-pinned, the aarch64 `f32v8` caveat and the self_compile figures corrected, the imm12 "class CLOSED" line re-opened (6.6.20). |
-| `completed-phases.md` | 2026-10-06 | ✅ Fresh | v6.6.x band gained 6.6.18, 6.6.19 and an in-progress 6.6.20 row (integration completes it). |
-| `cycle-discipline.md` | 2026-10-06 | ✅ Fresh | The Closeout checklist + ledger; the v6.6.x → v6.7.0 ledger entry is drafted at 6.6.20 (gate placeholders filled at integration). |
-| `ecosystem-migration-6.6.2.md` | 2026-10-06 | 🗄 Historical, kept in place | The v6.6.0 value-form sweep worklist, CLOSED 2026-09-12; five dead issue links re-pointed at 6.6.20. Not moved to `archive/`: `docs/retired-symbols.allow` and the `lib/boxed.cyr` / `lib/tagged.cyr` comments cite this path. |
-| `ecosystem-migration-6.6.13.md` | 2026-10-01 | 🗄 Historical census | The `f64_le` / `f64_ge` / `f64_trunc` builtin census (6.6.13). Re-derive before acting on any figure, as it says. |
-| `ecosystem-migration-6.6.18.md` | 2026-10-06 | ✅ Current consumer note | The 6.6.18 sidecar-delta note for consumers at their pin bump. |
-| `dev-tools-linux.md` | 2026-10-06 | ✅ Fresh | Per-environment toolchain; 6.6.20 fixed its cross-OS paragraph (the `vr01_` pointer, "one host at a time" — safe concurrently since v6.6.6). |
-| `benchmark-regimes.md` | 2026-10-01 | 🔵 Evergreen ledger | Which bench rows are comparable; extend it when a measurement regime changes. |
-| `lib-tls-contract.md` | 2026-10-05 | ✅ Fresh | Stdlib TLS contract, re-pinned to the 6.6.13 surface 2026-10-01 and touched for 6.6.16. Verify at the next minor closeout. |
-| `threat-model.md` | 2026-07-12 | 🟡 Not re-verified since 2026-07-12 | It names no CVE past the thread guard-page hardening item; the classes found since (CYRIUS-2026-0005 … CYRIUS-2026-0028) are not reflected. Re-read at the next full security audit. |
-| `migration-strategy.md` | 2026-09-06 | 📦 Historical | Banner-marked frozen v5.7.39 snapshot. |
-| `crash-localization.md` | 2026-07-12 | 🔵 Not re-verified at 6.6.20 | The `CYRIUS_SYMS` mechanism. |
-| `module-manifest-design.md` | 2026-05-18 | 🟡 Stale in part | The `[deps]` design is canonical; the 6.6.17 manifest work (`[build]` keys, `--print-config`, `[coverage]`, `[embed]`) is documented in the guide, not here. |
-| `benchmarks.md` | 2026-05-19 | 📦 Historical | Bounded to the v5.6.x perf arc by its frontmatter. |
-| `process-notes.md` | 2026-06-04 | 📦 Historical | Bounded to pre-v5.0.0 phases by its frontmatter. |
+| `state.md` | 2026-10-08 | ✅ Fresh | 6.7.6 SHIPPED (tag `722bba93`); the consumer census rows are gone (CLAUDE.md top rule) — a Consumers row says where consumer state lives instead. |
+| `roadmap.md` | 2026-10-08 | ✅ Fresh (rewritten) | The landed 6.7.x specs, W2 and Break 1 are gone (their record is the CHANGELOG + completed-phases); the consumer follow-ups were MOVED into each consumer's own roadmap; the backlog re-triaged against the 6.7.6 open's premise-check (the shipped bullets struck, among them the pass-1 DRY that 6.6.17 shipped); a silent pair-assignment bug filed. |
+| `roadmap_6.md` | 2026-10-08 | ✅ Fresh | v6.7.x is the active minor (it still said v6.6.x); `net.cyr` §4, AF_UNIX and the syscall-family detail moved in from the roadmap backlog. |
+| `roadmap-future.md` | 2026-10-08 | ✅ Fresh | Shipped rows deleted rather than struck; `#phf` added from the archived const-eval proposal. |
+| `completed-phases.md` | 2026-10-08 | ✅ Fresh | v6.7.x section (6.7.0–6.7.6); the v6.5.x close corrected to .73; v6.6.x / v6.7.x rows in the per-minor table. |
+| `cycle-discipline.md` | 2026-10-08 | ✅ Fresh | The closeout checklist + ledger. |
+| `ecosystem-migration.md` | 2026-10-08 | ✅ Fresh — new | The consolidated consumer migration guide (pin-move procedure + per-release changes 6.6.0 → 6.7.6); replaces the three per-release notes. |
+| `dev-tools-linux.md` | 2026-10-06 | ✅ Fresh | Per-environment toolchain. |
+| `benchmark-regimes.md` | 2026-10-01 | 🔵 Evergreen ledger | Which bench rows are comparable; extend it when a measurement regime changes (a gate requires the file). |
+| `lib-tls-contract.md` | 2026-10-05 | ✅ Fresh | Stdlib TLS contract, re-pinned to the 6.6.13 surface. Verify at the next minor closeout. |
+| `threat-model.md` | 2026-07-12 | 🟡 Not re-verified since 2026-07-12 | Names no vulnerability past the thread guard-page item; re-read at the next full security audit. |
+| `crash-localization.md` | 2026-10-08 | ✅ Fresh | The `CYRIUS_SYMS` mechanism; its example set the variable on `cat` instead of the compiler (fixed, verified through `cyrius build`). |
+| `archive/` | 2026-10-08 | 📦 Archived | 2026-10-08 audit moved here: `migration-strategy.md` (the v5.7.39 Rust-port wave plan), `ecosystem-migration-6.6.2.md` / `-6.6.13.md` / `-6.6.18.md` (consolidated into `ecosystem-migration.md`), `module-manifest-design.md` (its non-goals — no lock file, no transitive deps — contradict today's manifest; the guide and `architecture/package-format.md` are current), `benchmarks.md` (the v5.6.x arc), `process-notes.md` (pre-v5.0.0 journal). |
 
 ---
 

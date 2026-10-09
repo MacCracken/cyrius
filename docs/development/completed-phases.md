@@ -67,19 +67,36 @@ per-minor max heading, not carried over from the deleted text.
 |---|---|---|---|
 | **v6.0.x** | Language cleanup + stdlib + native TLS arc | **v6.0.91** | Opened the cycle (2026-05-19). The `cyrc → cybs` / `cc5 → cycc` rename landed here — the last binary-name change ever paid for. |
 | **v6.1.x** | Backend codegen multi-arc | **v6.1.41** | PIE codegen x86→aarch64, `.gnu.hash`, TS/TSX→JS emit, bayan/ganita carve-outs. |
-| **v6.2.x** | Platform expansion — bare-metal + dependency model | **v6.2.52** | Bare-metal target formalization, growable heap regions, the modules/module-groupings dependency foundation. **Bare-metal deliverable #4 (forbidden-module check) never shipped** — `CHANGELOG [6.3.4]` says so, and its issue was later archived without a resolution banner. Carried as an open question in [roadmap.md](roadmap.md). |
+| **v6.2.x** | Platform expansion — bare-metal + dependency model | **v6.2.52** | Bare-metal target formalization, growable heap regions, the modules/module-groupings dependency foundation. Bare-metal deliverable #4 (the forbidden-module check) followed at v6.5.24. |
 | **v6.3.x** | Language refinements | **v6.3.45** | Closures with lexical capture, monomorphized generics, async/await syntax, native f64/f32 arithmetic. The opt-in bounds-checked memory mode was *designed* here and never shipped (still 0 hits for `CYRIUS_BOUNDS` in `src/`). |
 | **v6.4.x** | Staging minor → long reactive minor | **v6.4.86** | 86 releases. Closeout cut at **.85**; **.86** was the post-closeout sandhi fold. The SIMD compute arc and the other v6.4.x sections below cover it in more detail. |
-| **v6.5.x** | Performance quality / generated-code, then a long reactive+repair minor | **v6.5.47** (band K closed it; `.48` was the post-closeout sigil fold + the one carried consolidation) | 48 releases. Ran as lettered BANDS rather than a single arc — A–E substrate/IR, F cross-BB regalloc, G–I repair and consumer filings, **J** macOS concurrency (`.43` routing + `.44` real arm64 threads), **K** the closeout (`.45` preprocessor bounds + agnos, `.46` codegen correctness, `.47` the minor close). Detail per release in [CHANGELOG.md](../../CHANGELOG.md); the per-slot narrative that used to live in roadmap.md is summarised below. |
+| **v6.5.x** | Performance quality / generated-code, then a long reactive + repair minor | **v6.5.73** | Ran as lettered BANDS rather than one arc — A–E substrate / IR, F cross-BB regalloc, G–I repair and consumer filings, **J** macOS concurrency, **K** a mid-minor closeout (`.45`–`.47`) — then a long reactive + repair tail to the `.73` closeout (no `.74`: cut in error and re-cut as v6.6.0). Bands below; per release, the CHANGELOG. |
+| **v6.6.x** | Value-form `Result`, then repair; the tooling tail (manifest, distlib, `[embed]`) | **v6.6.20** | One line per release below. |
+| **v6.7.x** | The language minor — traits, trait-bounded generics, the missing common features, `const fn` | active | Opened 2026-10-07; one line per release below. |
 
 ---
 
-## v6.6.x — releases so far (the minor closes at 6.6.20)
+## v6.7.x — one line per release (active)
 
-Added 2026-10-06, when roadmap.md was cleaned of the shipped 6.6.13–6.6.17 sections. One line per release,
-except the repair window (6.6.1–6.6.6) and the repair batch (6.6.7–6.6.12), which ran as one plan each and are
-one line each; the CHANGELOG is the detail. The minor closes at the 6.6.20 closeout (roadmap.md § *The 6.6.x
-tail*).
+The language minor. Each release's spec and the user's decisions are in its CHANGELOG entry (traits: ADR-007); what
+is still ahead is in roadmap.md.
+
+| Release | Shipped | What it was |
+|---|---|---|
+| **6.7.0** | 2026-10-07 | Arc A, real traits (ADR-007): checked `trait` declarations and defaults, the mangled `T_Trait_m` qualified names, inherent `impl T`, `self` typed `*T` inside an impl, `Struct = *Struct` copies at both sizes, methods on nested fields and chains. Also the CI on Ubuntu 26.04 with current SHA-pinned actions, `cyrius --help` regrouped, cybs's 7-argument calls refused by name. |
+| **6.7.1** | 2026-10-07 | C3, trait-bounded generics — a bound is a contract (`<T: Show + Eq>`, also on generic structs), with its prerequisites: struct type arguments on multi-parameter generics and generic-struct fields. `dyn` decided: compiler-checked, later in the minor. |
+| **6.7.2** | 2026-10-07 | B1 `const` (an integer, f64 or string; top level and inside fns; folded wherever it appears) + C1 `const fn` (compile time in const contexts only; the pure subset, checked at the definition; a step budget). |
+| **6.7.3** | 2026-10-08 | B2 `bool` / `true` / `false` / `!` (writes into a bool checked, reads 0 / 1) + a repair lane for the six filed issues (struct-argument type check, enum-constant assignment, tail call in a loop, `cyriusly cmdtools`, the `hashmap_fast` leak, the tools' attribute-line rule). |
+| **6.7.4** | 2026-10-08 | B3, the if-expression: one expression per branch, `else` required, every branch one kind, anywhere an expression goes — const contexts and global array lists included. |
+| **6.7.5** | 2026-10-08 | B5 `loop { … }` (contextual) and `do { … } while (c);` + B8 compound assignment on every lvalue (`>>>=`, the address taken once, `OP=` on a struct value refused); sankoch 2.8.2 refolded. |
+| **6.7.6** | 2026-10-08 | Break 1: the W2 wave refolded (all twelve folds byte-identical to their tags); the high / critical backlog (u128 carry / compare, every f32 write rounds, struct-value codegen, the x86 stale-flags class, cx parity); `cyrius.cyml` git first with local development an explicit switch, and the `[test]` scope; `cyrius test <file\|dir>` absorbs `cyrius tests`; cybs stack arguments and its dropped bytes. Tag `722bba93`. |
+
+---
+
+## v6.6.x — one line per release (closed at 6.6.20)
+
+One line per release, except the repair window (6.6.1–6.6.6) and the repair batch (6.6.7–6.6.12), which ran as one
+plan each; the CHANGELOG is the detail.
 
 | Release | Shipped | What it was |
 |---|---|---|
@@ -93,7 +110,7 @@ tail*).
 | **6.6.17** | 2026-10-06 | The manifest release: P1 (`cyrius.cyml` as configuration, `--print-config`), P5-A (coverage over run programs), one top-level scan for all seven forks, pointer fields + linked lists, `p + n` by sizeof(T), the 6.6.16 lane-review finds, cybs's leading-`_` lexer (the seed broke past 2048 fns); CYRIUS-2026-0027. Cross-OS GREEN again. |
 | **6.6.18** | 2026-10-06 | distlib + poison: P4 option 2 (the compile-verify fixpoint is the only sidecar authority; every bundle raw-includable), P6 `--poison` through an allocator seam (`alloc()` / arena redzones, exit 86, `--poison=ab`), the aarch64 ESYSXLAT compile-time fold (`cycc-native-aarch64` −35.2 %), DCE's "compaction declined: <why>" note, arm64-macOS `sxtw`; CYRIUS-2026-0028. Tag `010538b5`; the 12 folded stdlibs regenerated in one wave after it. |
 | **6.6.19** | 2026-10-06 | The fold release: the 12 folds re-vendored byte-identical from the wave's tags (R1), `log` / `ws` / `ws_server` include their folds (R2), tls_native's mirror of sigil's leaves retired (R3); B0b string interning by index (self_compile −6.7 %); P2 `[embed]` + distlib `embed`, hardened before release (no CVE); x86-macOS real threads (T1) and `async_await_readable_ms` on macOS, Windows and agnos (A1 / A2). Tag `f5a5175a`. |
-| **6.6.20** | 2026-10-07 | The closeout: the Closeout checklist as one audit (141 findings, the 44 P0–P2 bugs each confirmed by a second reviewer), fixed in parallel worktree lanes; plus three backlog items the user promoted (the redefined-fn binding, aarch64 calls with 262+ arguments, the `sizeof` / `mulh64` / `fncallN` names). The ledger is in [cycle-discipline.md](cycle-discipline.md). *(Integration: replace "in progress" with the tag date, and summarise what shipped.)* |
+| **6.6.20** | 2026-10-07 | The closeout: the Closeout checklist as one audit (141 findings, the 44 P0–P2 bugs each confirmed by a second reviewer), fixed in parallel worktree lanes; plus three backlog items the user promoted (the redefined-fn binding, aarch64 calls with 262+ arguments, the `sizeof` / `mulh64` / `fncallN` names). The ledger is in [cycle-discipline.md](cycle-discipline.md). |
 
 ---
 
