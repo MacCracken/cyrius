@@ -4745,9 +4745,12 @@ fn _distlib_resolve_dispatcher(root, leaf): i64 {
 # modules), sankhya (36) and hisab (35) all complete; bote's 30-module full profile dies,
 # and its own `core` profile — the same repo, fewer leaves — finishes inside 2 GB.
 #
-# The cache reads each file ONCE per root. Entries are kept in `dir_list` order so symbol
-# attribution is byte-for-byte what it was; making that order deterministic is a separate
-# question, noted in the issue.
+# The cache reads each file ONCE per root, in BYTE ORDER of the entry names (`_dep_name_cmp`, the
+# order `cyrius deps` expands a family in). ⛔ NEVER `dir_list` order: every owner rule below
+# that takes the first match (the every-target declarer, the partial rule's in-unit / scope
+# hits, a refusal's candidate list, an [embed] collision's named leaf) then answered by the
+# FILESYSTEM — tmpfs lists newest-first, ext4 by a per-filesystem name hash — so one producer's
+# sidecar differed by host and by TMPDIR. CHANGELOG [6.7.7]
 #
 # ⛔ 6.6.10 — THE DECLARATION READER IS cbt/srcscan.cyr's `_src_decls`. This matched
 # column-0 `fn ` / `var ` / `pub fn ` / … lines, so `#inline fn attrleaf_do`, an indented
@@ -4759,7 +4762,7 @@ fn _distlib_resolve_dispatcher(root, leaf): i64 {
 # can lose declarations — contributes its loose `fn X` / `var X` names to
 # `_dl_snap_lost`, so such a symbol is a hard error instead of a silent miss.
 var _dl_snap_root = 0;
-var _dl_snap_names = 0;   # vec of cstr: the LEAF each entry answers for (`alloc`, `unicode`), dir_list order
+var _dl_snap_names = 0;   # vec of cstr: the LEAF each entry answers for (`alloc`, `unicode`), byte order
 var _dl_snap_sets = 0;    # vec of i64: each leaf's _src_ids set of declared names
 var _dl_snap_lost = 0;    # _src_ids set: `fn X` / `var X` names in files whose braces do not balance
 var _dl_snap_lostf = 0;   # vec of cstr: those files, for the error
@@ -4775,6 +4778,7 @@ fn _distlib_snap_cache(root): i64 {
     if (_dl_snap_root != 0) { if (streq(_dl_snap_root, root) == 1) { return 0; } }
     var ents = _cbt_list_dir(root, "the sidecar verify cannot attribute symbols");
     if (ents == 0) { return 0 - 1; }
+    vec_sort_by(ents, &_dep_name_cmp);
     _dl_snap_names = vec_new();
     _dl_snap_sets = vec_new();
     _dl_snap_lost = _src_ids_new(4096);
@@ -4900,17 +4904,26 @@ fn _distlib_snap_lost_decl(name): i64 {
     return 0;
 }
 
+# The owner of a name EVERY target left undefined: the first declarer in byte order that is not
+# a fold BUNDLE, else the first fold. ⛔ The fold rule holds here too, not only in
+# _distlib_partial_owner: since 6.6.18's fixpoint seeds nothing, round 1 sees even a PE-only
+# name (mihi's EINTR) undefined on EVERY target, so this path picks its owner — and the first
+# declarer was whichever file the filesystem listed first (in byte order it is the sigil fold,
+# which sorts before every syscalls peer). CHANGELOG [6.7.7]
 fn _distlib_leaf_defining(root, name): i64 {
     if (_distlib_snap_cache(root) != 0) { return 0; }
     var nlen = strlen(name);
+    var fold1 = 0;
     var i = 0;
     while (i < vec_len(_dl_snap_names)) {
         var lname = vec_get(_dl_snap_names, i);
         var set = vec_get(_dl_snap_sets, i);
         i = i + 1;
-        if (_src_ids_has(set, name, nlen) == 1) { return lname; }
+        if (_src_ids_has(set, name, nlen) == 0) { continue; }
+        if (_distlib_is_fold(root, lname) == 0) { return lname; }
+        if (fold1 == 0) { fold1 = lname; }
     }
-    return 0;
+    return fold1;
 }
 
 # ── [embed] NAME collisions (6.6.19) ───────────────────────────────────────────────────────────
