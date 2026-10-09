@@ -154,7 +154,7 @@ intentional: it keeps the caller / callee codegen uniform across
 arches (`src/backend/aarch64/emit.cyr:ECALLPOPS`) and means any
 `fncallN` consumer writing cyrius-to-cyrius code has identical
 behaviour on both arches. The cost is that aarch64 direct C calls
-with 8+ args must shim — a small cost given wgpu-scale APIs shim
+with 7–8 args must shim — a small cost given wgpu-scale APIs shim
 anyway for struct-by-value reasons.
 
 If a future release widens cyrius's convention to AAPCS64-proper on
