@@ -17,10 +17,13 @@
 #      whole argument are transparent at any depth, for every argument shape.
 #   Q  a PARENTHESISED struct source into a struct-typed field (`o.i = (z.k)`: 72 where 78 is
 #      right), a struct variable (`w = (j)`: one word) or a declaration (`var q: K = (z.k)`:
-#      SIGSEGV), in a fn, at top level and in a for step — every source shape.
+#      SIGSEGV), in a fn, at top level and in a for step — every source shape. Q28-Q30 (6.7.6
+#      follow-up, FE): with a closure that declares a `var` inside the wrap (refused: the inner
+#      declaration reset the outer one's state).
 #   O  a struct result over 8 B (a free call, a method, an operator; retptr or rax:rdx) as the
 #      right operand of an operator that takes it by address: `s - mk3(4)` and `p + p.dup()`
-#      pushed its first word and SIGSEGV'd.
+#      pushed its first word and SIGSEGV'd. O12-O14 (FE): the call's argument holds a closure that
+#      declares a `var` (SIGSEGV: the inner declaration cleared the operand's `_sc_fcw`).
 #   S  a `: Str` field as a source is a Str HANDLE: into a Str parameter, variable, declaration and
 #      field (bare or wrapped) it is the handle as ever. Into a struct of ANOTHER type it is now
 #      refused by name (the gate's S rows) — it compiled and read past the Str's header.
@@ -266,6 +269,12 @@ fn q_decls(): i64 {
     assert_eq(s3(&d6), 78, "Q21: var d6: P3 = ((j))");
     d1.x = 99;
     assert_eq(j.x, 21, "Q22: var d1: P3 = (j) copied: a write to d1 leaves j");
+    var d7: P3 = (mk3(fncall1(|x| { var y = x * x; return y; }, 2)));
+    assert_eq(s3(&d7), 12, "Q28: var d7: P3 = (mk3(fncall1(a closure declaring a var))) (refused: expected ';')");
+    var d8: P3 = (mk3(fncall1(|x| { var y = x; return y; }, 2)).dbl());
+    assert_eq(s3(&d8), 12, "Q29: var d8: P3 = (mk3(..closure var..).dbl())");
+    var d9: P3 = (mk3(fncall1(|x| { var t: P3 = mk3(x); return t.z; }, 1)));
+    assert_eq(s3(&d9), 3, "Q30: the closure declares a struct-typed var of its own");
     return 0;
 }
 #ifndef CYRIUS_TARGET_CX
@@ -312,6 +321,9 @@ fn operands(): i64 {
     assert_eq(s3(&c), 69, "O6: a + (b + mk3(1)), nested operator and call results");
     var d: P3 = a + mk3(2);
     assert_eq(s3(&d), 12, "O7: var d: P3 = a + mk3(2)");
+    assert_eq(s - mkv(fncall1(|x| { var y = x; return y; }, 4)), 5, "O12: s - mkv(fncall1(a closure declaring a var)) (SIGSEGV)");
+    assert_eq(s - (mkv(fncall1(|x| { var y = x; return y; }, 4))), 5, "O13: ... wrapped");
+    assert_eq(mkv(fncall1(|x| { var y = x; return y; }, 12)) - s, 3, "O14: ... as the LEFT operand");
     return 0;
 }
 #ifndef CYRIUS_TARGET_CX
