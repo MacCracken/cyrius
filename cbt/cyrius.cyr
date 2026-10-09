@@ -952,6 +952,10 @@ fn main(): i64 {
             _cli_usage("lib");
             return 1;
         }
+        # 6.7.6: CYRIUS_LOCKED=1 means nothing is written — a sync is nothing but a write
+        var lke = _dep_locked_env();
+        if (lke < 0) { return 1; }
+        if (lke == 1 && _cli_has("--dry-run") == 0) { return _dep_locked_refuse("cyrius lib sync", "lib/ and cyrius.lock"); }
         return cmd_lib_sync();
     }
 
@@ -1024,6 +1028,9 @@ fn main(): i64 {
             return 1;
         }
         if (_dep_switch_setup("deps") != 0) { return 1; }
+        # CYRIUS_LOCKED=1 (the flag form is refused above): nothing is written, so neither is the lock
+        if (_dep_locked == 1 && _cli_has("--lock") == 1) { return _dep_locked_refuse("cyrius deps --lock", "cyrius.lock"); }
+        if (_dep_locked == 1 && _cli_has("--relock") == 1) { return _dep_locked_refuse("cyrius deps --relock", "lib/ and cyrius.lock"); }
         if (_cli_has("--verify") == 1) { return cmd_deps_verify(); }
         if (_cli_has("--lock") == 1) { return cmd_deps_lock(); }
         return cmd_deps();

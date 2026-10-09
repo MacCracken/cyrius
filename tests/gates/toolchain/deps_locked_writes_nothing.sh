@@ -37,6 +37,10 @@
 #   K17 no vendored lib/: `build --locked` builds the tag from the proven resolution (exit 1, lib/
 #       still absent, the lock as it was) and `test --locked` passes; with a stale lock it fails
 #       BEFORE any compile and leaves no resolution behind
+#   K18 CYRIUS_LOCKED=1 writes nothing in ANY verb: `update`, `deps --lock`, `deps --relock` and
+#       `lib sync` are refused by name, rc 1, nothing under the project newer than a stamp (update
+#       wrote ~100 files into lib/ and then said "nothing was written"; deps --lock rewrote the
+#       lock); `deps --verify` and `lib sync --dry-run` (no writes) still run
 #
 # MUTATION LEDGER (measured 2026-10-08, each in a SCRATCH copy of the tree, one at a time; real
 # tree 14/14 green):
@@ -52,6 +56,10 @@
 #   M9  _dep_lib_unvendored always 0 (lib/ required, the pre-fix shape) .. K15 K16 K17 red
 #   M10 _dep_lib_unvendored always 1 (lib/ never compared) ............... K1 K2 K7 K10 K11 red
 #   M11 the proven resolution is removed before the compile ............. K17 red
+#   (6.7.6 FXCL-4, the same way; real tree 18/18 green)
+#   M12 `update` not refused under CYRIUS_LOCKED=1 ...................... K18 red
+#   M13 `deps --lock` / `--relock` not refused under CYRIUS_LOCKED=1 ..... K18 red
+#   M14 `lib sync` not refused under CYRIUS_LOCKED=1 ..................... K18 red
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
 G=deps_locked_writes_nothing
@@ -255,6 +263,22 @@ if [ "$r17a" -eq 0 ] && [ "$ex" -eq 1 ] && [ "$r17t" -eq 0 ] && grep -q '^1 pass
     ok "K17 no vendored lib/: build --locked builds the tag (exit 1) and test --locked passes, lib/ never written; a stale lock fails before any compile"
 else bad "K17 (build rc=$r17a exit=$ex; test rc=$r17t; lib/lock as they were=$kept; stale rc=$rc): $(grep -m2 'differs\|error\|compile' "$W/k17b.out" "$W/k17a.out")"; fi
 reset_tree; rm -rf "$P/build"
+# ── K18 ──
+k18=0; k18w=""
+for v in "update" "deps --lock" "deps --relock" "lib sync"; do
+    sleep 1; touch "$W/stamp18"; sleep 1
+    LCK=1; rc=0; cy $v > "$W/k18.out" 2>&1 || rc=$?; LCK=""
+    newer=$(find "$P" -newer "$W/stamp18" | head -3 | tr '\n' ' ')
+    if [ "$rc" -eq 1 ] && grep -q "^error: cyrius $v writes .*, and CYRIUS_LOCKED=1 means nothing is written — refused" "$W/k18.out" && [ -z "$newer" ]; then
+        k18=$((k18+1))
+    else k18w="$k18w [$v rc=$rc newer=$newer: $(grep -m1 -v unreachable "$W/k18.out")]"; fi
+    reset_tree
+done
+LCK=1; rc=0; cy deps --verify > "$W/k18v.out" 2>&1 || rc=$?; r18v=$rc
+rc=0; cy lib sync --dry-run > "$W/k18d.out" 2>&1 || rc=$?; LCK=""
+if [ "$k18" -eq 4 ] && [ "$r18v" -eq 0 ] && [ "$rc" -eq 0 ]; then
+    ok "K18 CYRIUS_LOCKED=1: update, deps --lock, deps --relock and lib sync refused by name, nothing written; --verify and a dry run still run"
+else bad "K18 ($k18 of 4 refused;$k18w verify rc=$r18v dry-run rc=$rc)"; fi
 # ── K14 ──
 ( cd "$W/o/sib" && printf 'fn sib_v(): i64 { return 5; }\n' > dist/sib.cyr && git commit -qam evil && git tag -f v1 > /dev/null 2>&1 )
 rm -rf "$H/deps/sib"

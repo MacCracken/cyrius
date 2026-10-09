@@ -2928,6 +2928,10 @@ difference with it is named as above. It replaces the hand-rolled CI
 guards (`git diff --exit-code -- cyrius.lock`, `lock-check.sh`, `verify-lock.sh`) and the
 `cyrius deps && cyrius deps --verify` sequence, whose first step rewrote the lock the second then
 checked. `--locked` does not combine with `--local`, `--relock`, `--verify` or `--lock`.
+Locked means nothing is written in ANY verb: under `CYRIUS_LOCKED=1` a verb whose job is a write —
+`cyrius update`, `deps --lock`, `deps --relock`, `lib sync` — is refused by name
+(`error: cyrius update writes lib/ and cyrius.lock, and CYRIUS_LOCKED=1 means nothing is written —
+refused …`); `deps --verify` and `lib sync --dry-run`, which write nothing, still run.
 
 **`cyrius update` (6.7.6).** After refreshing `lib/` from the toolchain (as before), `update`
 re-fetches each UNTAGGED dependency — it floats by design, and the cache froze it at its first

@@ -2135,15 +2135,12 @@ fn _dep_switch_setup(verb): i64 {
     _dep_locked = 0;
     if (_cli_has("--locked") == 1) { _dep_locked = 1; }
     else {
-        var le = _cfg_env("CYRIUS_LOCKED");
-        if (le != 0) {
-            if (streq(le, "1") == 1) { _dep_locked = 1; }
-            elif (streq(le, "0") == 0) {
-                _err_ctx("CYRIUS_LOCKED must be 0 or 1 (or unset)", _shown(le));
-                return 1;
-            }
-        }
+        var le = _dep_locked_env();
+        if (le < 0) { return 1; }
+        _dep_locked = le;
     }
+    # `update` refreshes lib/ and re-resolves into it: the whole verb is a write
+    if (_dep_locked == 1 && streq(verb, "update") == 1) { return _dep_locked_refuse("cyrius update", "lib/ and cyrius.lock"); }
     var rel = 0;
     if (streq(verb, "publish") == 1 || streq(verb, "package") == 1) { rel = 1; }
     if (streq(verb, "distlib") == 1 || streq(verb, "update") == 1) { rel = 1; }
@@ -2186,6 +2183,30 @@ fn _dep_switch_setup(verb): i64 {
         if (vec_len(_dep_local_names) == 0) { _dep_local_on = 0; return 0; }
     }
     return _dep_names_ok("CYRIUS_LOCAL");
+}
+
+# CYRIUS_LOCKED as --locked reads it: 1, 0 (unset or "0"), or -1 after naming any other value.
+fn _dep_locked_env(): i64 {
+    var le = _cfg_env("CYRIUS_LOCKED");
+    if (le == 0) { return 0; }
+    if (streq(le, "1") == 1) { return 1; }
+    if (streq(le, "0") == 1) { return 0; }
+    _err_ctx("CYRIUS_LOCKED must be 0 or 1 (or unset)", _shown(le));
+    return 0 - 1;
+}
+
+# 6.7.6 — LOCKED MEANS NOTHING IS WRITTEN, in every verb. A verb whose whole job is a write
+# (`update`, `deps --lock` / `--relock`, `lib sync`) is refused by name under CYRIUS_LOCKED=1 /
+# --locked rather than run: `update` wrote ~100 files into lib/ and then reported "nothing was
+# written", and `deps --lock` rewrote the lock (6.7.6 review). Always 1.
+fn _dep_locked_refuse(what, writes): i64 {
+    _ew("error: ");
+    _ew(what);
+    _ew(" writes ");
+    _ew(writes);
+    if (_cli_has("--locked") == 1) { _ew(", and --locked means nothing is written — refused\n"); }
+    else { _ew(", and CYRIUS_LOCKED=1 means nothing is written — refused (unset it, or CYRIUS_LOCKED=0, to run it)\n"); }
+    return 1;
 }
 
 # Each selected name must be one a [deps.NAME] header could carry (the header rule).
