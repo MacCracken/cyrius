@@ -4,7 +4,7 @@
 `alloc(16)` blocks sit 104 B apart and `load8(a + 104)` returns the neighbour's live byte with no trap and exit 0
 (`repros/2026-10-08-poison-redzone-jumping-read.cyr`); `grep -n mprotect lib/poison.cyr lib/alloc.cyr
 lib/freelist.cyr` finds nothing, and the `--poison` banner (`cbt/cyrius.cyr:1188`) still says "no guard pages".
-**Placement:** unpinned — 6.x-line backlog (proposal P6's step S7, left out of 6.6.18) — never 7.x.
+**Placement:** open by design — a feature / arc, not a bug: roadmap-future.md § *DX / fuzz tooling* (placed 2026-10-09) — never 7.x.
 **Discovered:** 6.6.18 (the P6 poison arc; CHANGELOG [6.6.18] *Known / not fixed*, and the archived
 `proposals/archived/2026-09-20-fuzz-poison-should-follow-a-custom-allocator-seam.md` "Backlog: guard pages");
 filed 2026-10-08 from roadmap.md.

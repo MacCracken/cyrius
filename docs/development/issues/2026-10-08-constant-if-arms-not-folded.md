@@ -4,7 +4,7 @@
 `repros/2026-10-08-constant-if-arms-not-folded.cyr`: `if (SYS_OPEN == 2)` on an enum constant compiles to
 `mov eax,2; push; mov eax,2; cmp; sete; test; je` plus the whole dead 5-argument `openat` arm, and the dead arm's
 string is in the image. `const C = 2; if (C == 2)` and a bare `const C = 0; if (C)` are not folded either.
-**Placement:** unpinned — 6.x-line backlog (roadmap.md § Potential backlog → *Size and platform internals*) — never 7.x.
+**Placement:** open by design — a feature / arc, not a bug: roadmap_6.md § *The DCE compaction arc* (beside it, the size track) (placed 2026-10-09) — never 7.x.
 **Discovered:** the 6.6.20 closeout planning (2026-10-07), deferred at planning as DEAD-10 (CHANGELOG [6.6.20]
 *Known / not fixed*; REVBE-06's `#ifndef CYRIUS_TARGET_WIN` replaced the PE-warning symptom only); filed 2026-10-08
 from roadmap.md.

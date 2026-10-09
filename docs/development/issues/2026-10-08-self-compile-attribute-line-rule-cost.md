@@ -5,7 +5,7 @@ running parallel work — absolute ms are noisy, the deltas repeat): self-compil
 **1,204 / 1,205 ms** median; a variant whose `PP_LEXST_AT` drops the attribute check but keeps the call **1,202 /
 1,192 ms**; a variant whose eight walk sites call `PP_LEXST` directly **1,159 / 1,147 ms** (−45 / −58 ms). Both
 variants compile HEAD's source to bytes identical to `build/cycc`. The cost is the call layer, not the attribute test.
-**Placement:** unpinned — 6.x-line backlog (roadmap.md § Potential backlog → *Size and platform internals*) — never 7.x.
+**Placement:** 6.7.10 — Break 2, repair 1 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
 **Discovered:** the 6.6.20 bench (2026-10-07): 924 → 987 ms on 6.6.19's source (+6.8 %), bisected to s-pplex
 `0d85cdcd` (+50 ms on the same input; CHANGELOG [6.6.20] *Bench*); filed 2026-10-08 from roadmap.md.
 **Severity:** Low — compiler speed (+~4 % self_compile), no correctness impact.

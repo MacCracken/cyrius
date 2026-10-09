@@ -4,7 +4,7 @@
 cstring; bits: i64; }` with a `Cert_to_json` call is refused (`undefined function 'cstring_to_json'` — reachable —
 and `'cstring_from_json'`); the same struct with `name: Str` builds and prints `{"name":"example.org","bits":256}`.
 sigil still hand-rolls the codec for exactly this reason (`lib/sigil.cyr:1248-1271`).
-**Placement:** unpinned — 6.x-line backlog (asked by the sigil fold) — never 7.x.
+**Placement:** 6.7.9 — features: B7 + P5-B (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
 **Discovered:** sigil's hand-rolled `certpin_info_to_json` ("cyrius #derive(Serialize) does not yet support
 cstring-pointer fields … Drop this and re-#derive the type when the toolchain gains it"); filed 2026-10-08 from
 roadmap.md.

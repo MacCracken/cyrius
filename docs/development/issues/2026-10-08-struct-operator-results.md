@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — all six reproduced 2026-10-08 against 6.7.6 @ 2fb6ad8b with `build/cycc` (repros below, each
 run and its exit recorded); items 2–5 also reproduce on the installed 6.6.20, 6.7.0, 6.7.3 and 6.7.5 compilers; item 1
 is new in 6.7.6 (6.7.5 refused the shape with `expected ';', got '-'`).
-**Placement:** unpinned — 6.x-line backlog — never 7.x.
+**Placement:** 6.7.10 — Break 2, repair 1 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
 **Discovered:** 6.7.6 lane E2 (repros `~/.cache/c6/b1f_E2/p/`, `q/`); filed 2026-10-08 from roadmap.md.
 **Severity:** Medium — silent wrong values and SIGSEGVs on code that compiles clean; each shape has a workaround
 (annotate the variable, name the operand in a variable, return a local).

@@ -5,7 +5,7 @@ with `p: P2` is an INTEGER op on the field's first word, the operator fn is neve
 `s - h.p` dispatches correctly. ⚠ The roadmap's symptom ("passes the containing struct's address, `h.p - s` → -8, want
 -6") does **not** reproduce at HEAD in any shape tried: the -6 it called right is the integer subtraction of first words
 (3 - 9) — with a distinctive operator body the call never happens. Same result on the installed 6.6.20 – 6.7.5.
-**Placement:** unpinned — 6.x-line backlog — never 7.x.
+**Placement:** 6.7.10 — Break 2, repair 1 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
 **Discovered:** the 6.7.6 review (pre-existing; roadmap commit d2d5309b); the "never dispatches" form was already
 listed in CHANGELOG [6.6.20]'s pre-existing finds (`h.w + w2`); filed 2026-10-08 from roadmap.md.
 **Severity:** Medium — a silent wrong value on code that compiles clean; workaround: name the field first

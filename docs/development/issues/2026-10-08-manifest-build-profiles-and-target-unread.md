@@ -4,7 +4,7 @@
 `build/cycc`, throwaway `HOME` / `CYRIUS_HOME`): a manifest with `[build] target = "aarch64"` and `[build.release]
 defines = ["REL"]` builds an x86_64 ELF with `REL` undefined and warns twice; `cyrius build --profile release` is
 `unknown option '--profile'`.
-**Placement:** unpinned — 6.x-line backlog — never 7.x.
+**Placement:** open by design — a feature / arc, not a bug: roadmap-future.md § *DX / toolchain* (placed 2026-10-09) — never 7.x.
 **Discovered:** the 6.6.17 manifest arc (proposal `proposals/archived/2026-09-04-build-tool-manifest-integration.md`
 §3, "P1's deferred half"; CHANGELOG [6.6.17] m4); filed 2026-10-08 from roadmap.md.
 **Severity:** Low — a configuration gap, warned by name; every value has a command-line spelling.

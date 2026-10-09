@@ -4,8 +4,7 @@
 (`repros/2026-10-08-ir-heap-bands-fixed-offsets-and-caps.sh`, 400 fns × 500 statements) compiles and runs by
 default (rc 0, exit 203) and stops under `CYRIUS_IR=1` with `error: IR node buffer full` (rc 1); 200 fns pass. The
 bands and the literal cap are unchanged in `src/common/ir.cyr`.
-**Placement:** unpinned — 6.x-line backlog (roadmap.md § Potential backlog → *Size and platform internals*) —
-never 7.x. A heap / brk LAYOUT change: it needs the two-step bootstrap (cycc → cc5b, cycc == cc5b) and seed-derive.
+**Placement:** 6.7.12 — Break 2, repair 3 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
 **Discovered:** the 6.6.20 closeout planning (2026-10-07), deferred at planning as HEAP-12 (CHANGELOG [6.6.20]
 *Known / not fixed*; `src/main.cyr:642-648`'s ir_nodes margin note points here); filed 2026-10-08 from roadmap.md.
 **Severity:** Low — opt-in IR modes only; the default pipeline is unaffected (the bands are lazy VA it never

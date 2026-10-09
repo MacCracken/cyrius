@@ -5,7 +5,7 @@
 net.cyr's internal `_net_os_setopt` (ws2_32 setsockopt, 0xF032) succeeds on the same fd — probe exit 3 under wine,
 2 on Linux (both succeed). `lib/syscalls_windows.cyr:928` is still `{ return 0 - 38; }`; `lib/net.cyr` has no
 `sock_set_nodelay`. Not re-run on cass (real Windows).
-**Placement:** unpinned — 6.x-line backlog (asked by the yantra fold) — never 7.x.
+**Placement:** 6.7.11 — Break 2, repair 2: the platform release (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
 **Discovered:** yantra 1.0.7's `_cdp_set_nodelay` move to the stdlib `sys_setsockopt` (folded at cyrius 6.6.11;
 `docs/ecosystem.md` yantra row); filed 2026-10-08 from roadmap.md.
 **Severity:** Low — latency only (Nagle / delayed-ACK, ~40 ms a CDP round trip on Windows); nothing fails loudly

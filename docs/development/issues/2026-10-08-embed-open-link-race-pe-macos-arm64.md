@@ -4,7 +4,7 @@
 the path with `openat` only where `walk == 1`; on `CYRIUS_TARGET_WIN` the walk is not compiled and on macOS arm64
 `walk = 0`, so both open the whole path with `O_NOFOLLOW` (last component only). The arm64-Mach-O `openat` route still
 drops the dirfd. Not re-verified on hardware (needs cass and ecb); the race itself was never run.
-**Placement:** Break 2 candidate — the user picks (roadmap.md § Break 2) — never 7.x.
+**Placement:** 6.7.11 — Break 2, repair 2: the platform release (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
 **Discovered:** 6.6.19 (2026-10-06, E-S3 — the residual stated in its CHANGELOG entry and *Known / not fixed*); filed
 2026-10-08 from roadmap.md.
 **Severity:** Medium — the `[embed]` rule "no link anywhere on the path; an untrusted checkout must not ship

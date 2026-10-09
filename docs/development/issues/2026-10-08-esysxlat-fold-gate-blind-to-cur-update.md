@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — re-verified 2026-10-08 against 6.7.6 @ 2fb6ad8b: in a `git archive` copy of HEAD with
 `_esx_fold`'s cur update deleted (`src/backend/aarch64/emit.cyr:1950`), `sh tests/gates/platform/esysxlat_fold.sh`
 prints **PASS** on all six axes (qemu-aarch64 present, axis 2 ran).
-**Placement:** unpinned — 6.x-line backlog (roadmap.md § Potential backlog → *Size and platform internals*) — never 7.x.
+**Placement:** 6.7.11 — Break 2, repair 2: the platform release (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
 **Discovered:** 6.6.18 (2026-10-06) — written into the gate's own mutation ledger as "(c) … NOT CAUGHT"; filed
 2026-10-08 from roadmap.md.
 **Severity:** Low — a test-coverage gap; no wrong output today.

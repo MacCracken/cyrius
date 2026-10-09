@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** (design gap, documented) — reproduced 2026-10-08 against 6.7.6 @ 2fb6ad8b with `build/cycc`:
 `*q = 5` through `q: *i32` over `i32[2]` zeroes the NEXT element; `*p = 1.5` through `p: *f32` over `f32[2]` stores
 1.5's f64 bits as a word (element 0 = 0x00000000, element 1 = 0x3FF80000) instead of the f32 1.5 (0x3FC00000).
-**Placement:** unpinned — 6.x-line backlog — never 7.x.
+**Placement:** 6.7.8 — features: checked dyn + C2 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
 **Discovered:** the 6.7.6 review (roadmap commit d2d5309b: "documented — outside 'every f32 write rounds'"); filed
 2026-10-08 from roadmap.md.
 **Severity:** Low — documented behaviour (guide § Pointers), with a stated workaround (`store32`, or subscript a typed

@@ -4,7 +4,7 @@
 `build/cycc`, throwaway `HOME` / `CYRIUS_HOME`): in a project with no `.bcyr` / `.fcyr`, `cyrius bench` and
 `cyrius fuzz` print "No … found" and exit **0**; `cyrius test` with no `.tcyr` exits 1. The roadmap bullet's other two
 sub-items are ALREADY FIXED and were not filed (below).
-**Placement:** unpinned — 6.x-line backlog — never 7.x.
+**Placement:** 6.7.10 — Break 2, repair 1 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
 **Discovered:** the 6.7.6 review (2026-10-08; roadmap.md backlog, *Tooling* — "Test tooling"); filed 2026-10-08 from
 roadmap.md.
 **Severity:** Medium — a CI line running `cyrius bench` / `cyrius fuzz` over a tree whose harnesses moved or were

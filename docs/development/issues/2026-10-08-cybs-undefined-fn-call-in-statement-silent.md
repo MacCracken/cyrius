@@ -5,8 +5,7 @@
 the program dies with SIGSEGV (exit 139); the expression form `var x = nosuch(1);` is refused (exit 1). A
 statement-position call through a fn-pointer VARIABLE (`fp(5);`) takes the same path and also segfaults, where
 `build/cycc` refuses it (`undefined function 'fp'`).
-**Placement:** unpinned — 6.x-line backlog — never 7.x. (cybs is the trusted root's first rung: the fix is placed,
-not slipped in.)
+**Placement:** 6.7.10 — Break 2, repair 1 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
 **Discovered:** 6.7.6 (roadmap commit c2178734, 2026-10-08); filed 2026-10-08 from roadmap.md.
 **Severity:** Medium — a silent bad binary from the bootstrap compiler. Contained today: cybs only builds `src/`
 (→ gen1) and `bootstrap/asm.cyr`, and gen1 (cycc itself) refuses an undefined function when it compiles gen2, so

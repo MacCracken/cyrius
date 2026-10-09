@@ -6,7 +6,7 @@ the tree's `build/cycc`, in a throwaway `CYRIUS_HOME` holding two snapshots of t
 its row are still 6.6.6's bytes; `deps --verify` (113 verified, 0 failed) and `deps --locked` ("exactly what the tags
 resolve") both pass on that state; `lib sync --full` then refuses (rc 1) as if the 6.6.7 snapshot had changed under
 an unchanged pin.
-**Placement:** Break 2 candidate — the user picks (roadmap.md § Break 2) — never 7.x.
+**Placement:** 6.7.11 — Break 2, repair 2: the platform release (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
 **Discovered:** 6.6.17 (2026-10-05; the loud refusal shipped then, `lib_sync_relocks.sh` axis 2 pins it); filed
 2026-10-08 from roadmap.md.
 **Severity:** Medium — the lock misstates which snapshot its rows came from and the integrity checks agree with it;

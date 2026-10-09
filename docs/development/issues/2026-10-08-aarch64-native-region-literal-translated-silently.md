@@ -1,7 +1,7 @@
 # Inside a native-aarch64 region a raw syscall literal with an ESYSXLAT x86-compat row is translated with no warning — OPEN
 
 **Status:** 🟡 **OPEN** — reproduced 2026-10-08 against 6.7.6 @ 2fb6ad8b. I built an ELF-aarch64 cross compiler from the tree (`cat src/main_aarch64.cyr | build/cycc`) and ran the repro under `qemu-aarch64` on this box: `syscall(9, …)` inside `#ifdef CYRIUS_ARCH_AARCH64` compiles with no warning and runs mmap (exit 22, -EINVAL) instead of the native lgetxattr. The `syscall(1009, …)` control exits 0 (-ENOENT, lgetxattr ran). `syscall(39, 0, 0)` meant as umount2 returns a PID (getpid ran). Not re-verified on hardware (needs pi).
-**Placement:** Break 2 candidate — the user picks (roadmap.md § Break 2) — never 7.x.
+**Placement:** 6.7.11 — Break 2, repair 2: the platform release (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
 **Discovered:** before 2026-10-08 (carried in roadmap.md's backlog; 6.6.12 found the same class for the xattr family and added the 1005..1016 / 1055 / 1291 aliases); filed 2026-10-08 from roadmap.md.
 **Severity:** Medium — the wrong syscall runs silently. Workaround: the `1000 + N` private alias, where the band has a row.
 **Affects:** cycc ≤ 6.7.6, ELF-aarch64 (Linux) output.

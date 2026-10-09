@@ -4,7 +4,7 @@
 `fncall1(&dbl, d) + 1.0` is an f64 add (5.0), `fncall1(fp, d) + 1.0` with `var fp = &dbl;` is an INTEGER add of the
 bit patterns (warns "integer arithmetic with an f64 right operand"; the value is wrong), and binding the result to a
 `var r: f64` first is right.
-**Placement:** unpinned — 6.x-line backlog — never 7.x.
+**Placement:** 6.7.8 — features: checked dyn + C2 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
 **Discovered:** 6.7.6 (lane FE's `_icall_result`, struct_value_codegen.sh rows I / I3); written into the guide as the
 rule; filed 2026-10-08 from roadmap.md.
 **Severity:** Low — a design gap the guide documents, with a stated workaround and a warning at the site.

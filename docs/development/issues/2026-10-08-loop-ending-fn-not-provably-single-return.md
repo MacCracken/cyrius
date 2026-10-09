@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — reproduced 2026-10-08 against 6.7.6 @ 2fb6ad8b with `build/cycc`: `var a, b = one(1);` is
 refused for `fn one(x) { return x + 1; }` but builds silently (b = stale rdx) when `one`'s body is
 `loop { return x + 1; }`, a final `do { … } while (1);`, or `while (1) { return x + 1; }`.
-**Placement:** unpinned — 6.x-line backlog — never 7.x.
+**Placement:** 6.7.10 — Break 2, repair 1 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
 **Discovered:** 6.7.5 decisions pass (roadmap commit 68de8001); filed 2026-10-08 from roadmap.md.
 **Severity:** Low
 **Affects:** cycc 6.6.17 – 6.7.6 (the 6.6.17 (a5) single-return prescan)

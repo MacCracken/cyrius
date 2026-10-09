@@ -4,7 +4,7 @@
 string to the first non-number byte (`f64_parse("2.57,")` with the wanted span "2.5" gives 2.57); the length-bounded
 core `_f64_parse_n(s, n)` is the only bounded entry and is underscore-internal; `f64_parse_n` is undefined. The
 vendored bayan still carries its own copy of the algorithm, `bayan_f64_parse(s, n)` (`lib/bayan.cyr:4696`).
-**Placement:** unpinned — 6.x-line backlog (asked by the bayan fold, its B-4) — never 7.x.
+**Placement:** 6.7.10 — Break 2, repair 1 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
 **Discovered:** the 6.6.13 f64-parse rounding fix (I4) ported bayan's parser as the internal `_f64_parse_n`
 ("internal until bayan calls it", `lib/math.cyr:1354`); the ask is bayan's B-4; filed 2026-10-08 from roadmap.md.
 **Severity:** Low — an API gap with a working stopgap (bayan's duplicate parser).

@@ -1,7 +1,7 @@
 # The x86_64 release tarball ships without `cyrius-repl.sh` (release.yml looks only in `scripts/`, not `scripts/shims/`) — OPEN
 
 **Status:** 🟡 **OPEN** — verified 2026-10-08 by reading `.github/workflows/release.yml:132-134` at 2fb6ad8b: the loop copies `scripts/$script` only, and `cyrius-repl.sh` lives in `scripts/shims/`; install.sh looks in `shims/` first (`scripts/install.sh:739-742`, `:1169-1172`).
-**Placement:** unpinned — 6.x-line backlog — never 7.x.
+**Placement:** 6.7.10 — Break 2, repair 1 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
 **Discovered:** 2026-10-08 by the 6.7.7 install lane (out of its scope); filed 2026-10-08.
 **Severity:** Low — `cyrius repl` is missing from tarball installs.
 **Affects:** release.yml since the shims move

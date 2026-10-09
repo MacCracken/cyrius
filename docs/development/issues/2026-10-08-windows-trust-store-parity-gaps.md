@@ -4,7 +4,7 @@
 (`lib/tls_native_hs12.cyr:2311-2362`, `_tn_w_export` `:2569`, `_tn_ca_read_win` `:2597`): it opens CurrentUser `ROOT`
 read-only, filters by the root-program properties and the `Disallowed` STORE, and reads nothing else. Not re-verified
 on hardware (needs cass); none of the four was measured there.
-**Placement:** Break 2 candidate — the user picks (roadmap.md § Break 2) — never 7.x.
+**Placement:** 6.7.11 — Break 2, repair 2: the platform release (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
 **Discovered:** 6.6.14 (2026-10-02, the wintrust lane's *Not covered* for CYRIUS-2026-0020; backlog entry ca5b83d1);
 filed 2026-10-08 from roadmap.md.
 **Severity:** Medium — two gaps fail closed (servers Windows accepts are refused), two may trust a root the Windows

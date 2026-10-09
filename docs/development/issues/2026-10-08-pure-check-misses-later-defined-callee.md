@@ -1,7 +1,7 @@
 # `#pure`'s `#io` / `#alloc` check is silent for a callee defined later — OPEN
 
 **Status:** 🟡 **OPEN** — reproduced 2026-10-08 against 6.7.6 @ 2fb6ad8b with the tree's `build/cycc`: the repro below prints no warning. The same source with the callees moved above the `#pure` fns prints all four (a plain call, a second plain call, a tail call and a method call).
-**Placement:** Break 2 candidate — the user picks (roadmap.md § Break 2) — never 7.x.
+**Placement:** 6.7.12 — Break 2, repair 3 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
 **Discovered:** before 2026-10-08 (carried in roadmap.md's backlog); filed 2026-10-08 from roadmap.md.
 **Severity:** Low — a missing warning; nothing miscompiles.
 **Affects:** cycc ≤ 6.7.6 (the check exists since v5.8.20; the method arm since 6.6.17).

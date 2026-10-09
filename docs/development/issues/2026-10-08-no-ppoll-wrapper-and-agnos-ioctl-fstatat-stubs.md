@@ -4,7 +4,7 @@
 refused on x86_64 and aarch64 Linux (`undefined function 'sys_ppoll'`; no peer defines it), and one calling
 `sys_ioctl` / `sys_fstatat` is refused under `CYRIUS_TARGET_AGNOS=1` (both undefined) while the Linux build is rc 0.
 yukti carries the stopgaps (`lib/yukti.cyr:64-70, 242-267, 314-345`).
-**Placement:** unpinned — 6.x-line backlog (asked by the yukti fold) — never 7.x.
+**Placement:** 6.7.11 — Break 2, repair 2: the platform release (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
 **Discovered:** yukti 2.3.12–2.3.14 ("Switch to the stdlib wrapper once one exists", `lib/yukti.cyr:322`);
 filed 2026-10-08 from roadmap.md.
 **Severity:** Low — API gaps with shipped fold-side stopgaps.

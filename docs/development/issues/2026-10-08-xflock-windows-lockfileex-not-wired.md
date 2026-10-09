@@ -4,7 +4,7 @@
 `xflock(fd, LOCK_EX)` gets 0 on Linux (exit 11) and **-1** as a PE32+ under wine (exit 10); `lib/io.cyr:447-449`
 still reads `return -1; # Windows: no flock (LockFileEx — not wired)`. Not re-run on cass (real Windows) — the
 failing arm is a constant.
-**Placement:** unpinned — 6.x-line backlog (asked by the patra fold, for crash recovery) — never 7.x.
+**Placement:** 6.7.11 — Break 2, repair 2: the platform release (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
 **Discovered:** patra 1.15.0's Windows transaction work (its `_pt_fdatasync` / `_pt_flock` notes); filed 2026-10-08
 from roadmap.md.
 **Severity:** Medium — no crash, but a fold's durability guarantee is silently absent on one target, with no

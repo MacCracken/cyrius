@@ -4,7 +4,7 @@
 built by the tree's `build/cycc` and run `--update --scope project` on two three-fn scratch projects: a `{` on a raw
 line of a multi-line string drops every later fn from the snapshot; a raw line starting `fn ghost(x, y)` inside a
 string is snapshotted as public `m::ghost/2`. Both sources compile and run (the string prints across lines).
-**Placement:** Break 2 candidate — the user picks (roadmap.md § Break 2) — never 7.x.
+**Placement:** 6.7.10 — Break 2, repair 1 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
 **Discovered:** 6.7.3's attribute-lexing lane (`_asf_lexst_at`, 2026-10-07); filed 2026-10-08 from roadmap.md.
 **Severity:** Medium — the snapshot is silently wrong, so `cyrius api-surface` (and `removed_symbol_census.sh`, keyed on
 it) miss a removed public fn or report a phantom one; no error is printed.

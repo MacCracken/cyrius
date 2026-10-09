@@ -1,0 +1,10 @@
+struct S3 { a: i8; b: i8; c: i8; }
+var G: S3 = S3 { 0, 0, 0 };
+var N1: i8 = 77;
+fn main() {
+    var l: S3; l.a = 1; l.b = 2; l.c = 3;
+    G = l;
+    return N1;
+}
+var r = main();
+syscall(60, r);

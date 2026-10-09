@@ -4,7 +4,7 @@
 `build/cycc`: `syscall(39)` on arm64 Mach-O folds to `movz x16,#20` and is still followed by the full 16-word
 pipe / fork fixup (3 words before `svc`, 13 after `csneg`). Word-level only; not re-verified on hardware (needs ecb —
 the fixups are Darwin behaviour).
-**Placement:** unpinned — 6.x-line backlog (roadmap.md § Potential backlog → *Size and platform internals*) — never 7.x.
+**Placement:** 6.7.11 — Break 2, repair 2: the platform release (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
 **Discovered:** 6.6.18 (2026-10-06), the XLAT-1 lane's leftover (CHANGELOG [6.6.18] *Known / not fixed*); filed
 2026-10-08 from roadmap.md.
 **Severity:** Low — size only.

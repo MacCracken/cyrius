@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — reproduced 2026-10-08 against 6.7.6 @ 2fb6ad8b with `build/cycc` (x86_64): the
 roadmap's repro exits 0 with no diagnostic; a `: stack` pair stored through a field, a subscript, `*p` or `OP=`
 compiles clean and drops the payload; `t, v = f();` is still `expected '=', got ','`.
-**Placement:** 6.7.7 (being fixed in this release) — its fix is a language decision asked at the 6.7.7 open — never 7.x.
+**Placement:** 6.7.7 (roadmap.md § Release sequence) — placed 2026-10-09 — never 7.x.
 **Discovered:** 2026-10-08 against `build/cycc` 6.7.6 (roadmap.md's backlog); filed 2026-10-08 from roadmap.md.
 **Severity:** Medium
 **Affects:** cycc ≤ 6.7.6 (raw pair returns since multi-return, v3.7.2; the `: stack` store holes since v6.6.0)

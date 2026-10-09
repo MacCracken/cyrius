@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — reproduced 2026-10-08 against 6.7.6 @ 2fb6ad8b with `build/cycc`: `bs1(t)` with `t: T1` into
 `p: S1` (both 8 B) is refused, `bs1((t))` and `bs1(((t)))` compile and run (exit 7, T1's word read as an S1). The
 16- and 24-byte by-value cases refuse all three spellings. Same on the installed 6.7.3 and 6.7.5 compilers.
-**Placement:** unpinned — 6.x-line backlog — never 7.x.
+**Placement:** 6.7.10 — Break 2, repair 1 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
 **Discovered:** the 6.7.6 review (pre-existing; roadmap commit d2d5309b); filed 2026-10-08 from roadmap.md.
 **Severity:** Low — a missed refusal (wrong-typed argument accepted), no crash; the unparenthesised spelling is caught.
 **Affects:** cycc 6.7.3 – 6.7.6 (the 6.7.3 check never covered the wrapped spelling)

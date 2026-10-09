@@ -1,7 +1,7 @@
 # In an x86 `kernel;` build a float-literal global scalar is a dead store after the program — OPEN
 
 **Status:** 🟡 **OPEN** — reproduced 2026-10-08 against 6.7.6 @ 2fb6ad8b with the tree's `build/cycc`. For the repro below the compiler prints its own "runs after the top-level program" warning. G's image bytes are 0 while H's hold 7. The disassembly shows `movabs $0x3ff8000000000000,%rax` plus the store to G coming right after `call kmain`. `var F: f32 = 2.5`, `var G: f64 = -1.5` and an untyped `var K = 1.5` behave the same way. Static image and disassembly only; not booted under qemu-system.
-**Placement:** Break 2 candidate — the user picks (roadmap.md § Break 2) — never 7.x.
+**Placement:** 6.7.12 — Break 2, repair 3 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
 **Discovered:** before 2026-10-08 (carried in roadmap.md's backlog; the late-replay warning shipped in 6.6.16 (C6)); filed 2026-10-08 from roadmap.md.
 **Severity:** Medium — the kernel reads 0 for the global, and a kernel that never returns never runs the store. The compiler warns, and the workaround is to assign it in the program.
 **Affects:** cycc ≤ 6.7.6, x86 `kernel;` builds (multiboot), not an EFI application that defines `efi_main`.

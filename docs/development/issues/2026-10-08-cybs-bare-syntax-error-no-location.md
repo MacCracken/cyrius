@@ -4,7 +4,7 @@
 (`bootstrap/asm < bootstrap/cybs.cyr`, == `build/cybs`): each construct below exits 1 with the single line `syntax
 error` — no file, no line, no token, no name of the construct; a top-level `const` and an undefined function called
 in an expression print a bare `undefined variable`.
-**Placement:** unpinned — 6.x-line backlog — never 7.x.
+**Placement:** 6.7.10 — Break 2, repair 1 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
 **Discovered:** 6.7.6 Break 1 (roadmap commit a29d1492, 2026-10-08); filed 2026-10-08 from roadmap.md.
 **Severity:** Low — every case is refused; nothing miscompiles. The cost is time: a cycc-only construct that reaches
 `src/` fails seed-derive (release gate step 2) with two words for a 1.7 MB input spliced from 20+ files.

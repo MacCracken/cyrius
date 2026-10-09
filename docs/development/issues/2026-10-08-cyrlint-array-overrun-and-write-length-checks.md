@@ -5,8 +5,7 @@ tree's `build/cycc` reports `0 warnings` (rc 0) on
 [`repros/2026-10-08-cyrlint-array-overrun-and-write-length-checks.cyr`](repros/2026-10-08-cyrlint-array-overrun-and-write-length-checks.cyr);
 cycc builds it (rc 0) and the binary writes `hello` (no newline) and `abc\n\0\0\0`. A census of the tree found one LIVE
 write-length mismatch (below).
-**Placement:** unpinned — 6.x-line backlog — never 7.x (one cyrlint bite; the overrun half may fold into C2, the
-bounds-checked mode, per roadmap.md).
+**Placement:** 6.7.10 — Break 2, repair 1 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
 **Discovered:** v6.5.30–.33 (the write-length off-by-ones) and the 6.6.20 re-triage (roadmap-future.md § *DX / cyrlint
 tooling*, commit f9f6bfd6); filed 2026-10-08 from roadmap.md.
 **Severity:** Low — preventive lint; the one live mismatch truncates a SKIP message.

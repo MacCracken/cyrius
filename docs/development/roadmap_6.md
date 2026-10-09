@@ -74,6 +74,10 @@ repair-registry cap says so too).
   broken"); axis 3 (ELF still eliminates) is unchanged. Re-grep the decline / `_pe_layout` / IAT-disp32 sites in
   `src/backend/x86/fixup.cyr` at the arc's open — the lines move.
 
+- **Constant `if` arms folded at parse time** (DEAD-10 — [issue](issues/2026-10-08-constant-if-arms-not-folded.md),
+  open by design, placed here 2026-10-09): an optimization, not a bug — the code that runs is correct; it needs emit-state
+  snapshot / rollback on every backend, the same machinery family as compaction.
+
 ### `lib/net.cyr` §4 — per-arch socket syscall peers
 
 `lib/net.cyr` still carries bare x86 numbers (`grep -c CYRIUS_ARCH lib/net.cyr` → 0) and works on aarch64 only because
@@ -84,6 +88,27 @@ a migration — written up in [ecosystem-migration.md](ecosystem-migration.md) w
 ### `lib/net.cyr` AF_UNIX
 
 A design call, default **yes**: `net.cyr` grows a Unix-domain socket surface alongside INET.
+
+### The native-TLS capability arc (placed 2026-10-09)
+
+1–2 releases on top of 6.7.12's conformance bite: RSA client / server keys, the full certificate chain,
+`certificate_authorities`, 1.3 second-flight reassembly past one record, a libssl `tls_set_groups`
+([issue](issues/2026-10-08-native-tls-capability-limits.md) items 1–5, open by design). Capabilities, not defects;
+item 2 changes what an existing multi-block PEM sends, so it is decided at the arc's open. Item 6 (X448 / secp521r1)
+waits on constant-time implementations in sigil's source (roadmap-future.md).
+
+### The public-constants `const` migration of cyrius `lib/` (placed 2026-10-09)
+
+The folds' W2 ask ([issue](issues/2026-10-08-lib-public-constants-const-migration.md), open by design): a stdlib arc
+that CHANGES WHAT COMPILES (a program that re-declares, assigns or takes `&X` of a converted name stops compiling), so
+every name is the user's call at the arc's open, with a per-name collision survey of the folds and sandhi's
+`HTTP_OK` / `HTTP_NOT_FOUND` patch planned with it.
+
+### u128 as a value type (placed 2026-10-09)
+
+u128 parameters, returns and struct fields carried as a 16-byte value — a call / return ABI change on five backends,
+after 6.7.7's aarch64 pair-register fix. 6.7.12 closes the bug half (the capture miscompile; the other shapes refused by
+name — [issue](issues/2026-10-08-u128-params-returns-fields-captures.md)); this is the carriage half.
 
 ### The syscall families still unnamed by the stdlib
 

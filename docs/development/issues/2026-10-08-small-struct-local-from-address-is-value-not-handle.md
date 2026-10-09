@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — reproduced 2026-10-08 against 6.7.6 @ 2fb6ad8b with `build/cycc` (x86_64). ⚠ The
 roadmap framed this as a closure-capture inconsistency (`_CL_CAP_BASE_RA`); the live compiler shows the capture is
 consistent with the declaration — the asymmetry is at the DECLARATION, closure or not.
-**Placement:** unpinned — 6.x-line backlog — never 7.x.
+**Placement:** 6.7.9 — features: B7 + P5-B (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
 **Discovered:** 6.7.5 B8 review (roadmap commit e95f295d: "a captured 8-byte pointer-mode struct local is copied
 into the closure env while a 16-byte one is captured by reference"); filed 2026-10-08 from roadmap.md.
 **Severity:** Medium

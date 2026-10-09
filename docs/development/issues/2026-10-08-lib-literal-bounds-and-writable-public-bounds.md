@@ -4,7 +4,7 @@
 re-derived; item 3's sizes measured (a top-level `var a[72]` spans 576 B and `var c[256]` 2,048 B — `&next - &a`
 probe), and item 5 run on x86_64 Linux (`repros/2026-10-08-tlocal-max-slots-writable-bound.cyr`: after
 `TLOCAL_MAX_SLOTS = 200`, `thread_local_alloc` hands out slot 165 while every slot array holds 128).
-**Placement:** unpinned — 6.x-line backlog — never 7.x.
+**Placement:** 6.7.11 — Break 2, repair 2: the platform release (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
 **Discovered:** 6.7.6 lane H (the literal-bound sweep; CHANGELOG [6.7.6] "lane H's remaining literal bounds"); filed
 2026-10-08 from roadmap.md.
 **Severity:** Medium for item 5 (a program that follows `thread_local_alloc`'s own "bump TLOCAL_MAX_SLOTS" advice

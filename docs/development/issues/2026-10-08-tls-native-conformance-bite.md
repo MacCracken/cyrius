@@ -5,7 +5,7 @@
 with a well-formed control); item 6 by mutation (each of the four checks disabled alone, all 46 TLS `.tcyr` still
 exit 0, while four neighbouring checks disabled the same way each turn a test red); items 1, 2 (the 1.3 half) and 3's
 EncryptedExtensions half by reading the live code.
-**Placement:** Break 2 candidate — the user picks (roadmap.md § Break 2) — never 7.x.
+**Placement:** 6.7.12 — Break 2, repair 3 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
 **Discovered:** items 3-6 by the 6.6.15 TLS lane (2026-10-03, pre-existing); items 1-2 by the 6.6.16 planning premise
 checks (2026-10-04); filed 2026-10-08 from roadmap.md.
 **Severity:** Medium — protocol conformance: malformed or out-of-contract peer messages are accepted (every one still

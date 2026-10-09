@@ -5,7 +5,7 @@
 6 and 7 reproduced on Linux; item 8 reproduced under wine (private `WINEPREFIX`) with the PE CLI cross-built from
 `src/main_win.cyr`; item 1 verified from that PE build's own warning and the code — not re-verified on hardware (needs
 cass); item 3 verified by reading.
-**Placement:** unpinned — 6.x-line backlog — never 7.x.
+**Placement:** 6.7.11 — Break 2, repair 2: the platform release (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
 **Discovered:** the 6.7.6 review (2026-10-08); filed 2026-10-08 from roadmap.md.
 **Severity:** Medium for items 2 and 7 (a unit silently loses its `test.cyml`; another repository's HEAD is reported as
 a local dep's state); Low for the rest.

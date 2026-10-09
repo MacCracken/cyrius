@@ -4,7 +4,7 @@
 in a const fn body says `expected ';', got '.'`; a field read there says the same and cascades a second error; `C.x = 1`
 on a top-level const says `no struct type in scope for 'C'`; on a LOCAL const it prints two errors, `undefined variable
 'L'` and `no struct type in scope for 'L'`. `C = 1` / `L = 1` already say `cannot assign to const` correctly.
-**Placement:** unpinned — 6.x-line backlog — never 7.x.
+**Placement:** 6.7.12 — Break 2, repair 3 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
 **Discovered:** 6.7.5 planning (roadmap commit 68de8001, 2026-10-08); filed 2026-10-08 from roadmap.md.
 **Severity:** Low — every case is refused; only the message is wrong.
 **Affects:** cycc 6.7.2 – 6.7.6 (`const` / `const fn` arrived in 6.7.2).

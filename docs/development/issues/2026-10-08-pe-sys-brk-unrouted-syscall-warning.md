@@ -1,7 +1,7 @@
 # Every PE build that includes `lib/syscalls.cyr` warns "syscall 12 … is not routed" (Windows `sys_brk`) — OPEN
 
 **Status:** 🟡 **OPEN** — reported 2026-10-08 by the backlog filer for the size / fold items (seen on every PE build it made at 2fb6ad8b); the source is `lib/syscalls_windows.cyr:436`.
-**Placement:** unpinned — 6.x-line backlog — never 7.x.
+**Placement:** 6.7.11 — Break 2, repair 2: the platform release (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
 **Discovered:** 2026-10-08 by a backlog filer (out of its scope); filed 2026-10-08.
 **Severity:** Low — a standing false warning on every PE user build trains users to ignore the unrouted-syscall warning, which exists to catch real ones.
 **Affects:** cycc ≤ 6.7.6, PE target

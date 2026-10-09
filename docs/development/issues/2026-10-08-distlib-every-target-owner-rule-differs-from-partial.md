@@ -1,7 +1,7 @@
 # `cyrius distlib`: the every-target owner rule and the partial-target rule still disagree on ties and on in-unit declarers — OPEN
 
 **Status:** 🟡 **OPEN** — reported 2026-10-08 by the 6.7.7 distlib lane after its fix (commit 7b977e32): byte order now decides a tie among non-fold leaves on the every-target path, where the partial path prefers the dispatcher whose peer declares the name or refuses by name. A rough scan of 6.7.6's `lib/` found no such tie, so it does not bite today.
-**Placement:** unpinned — 6.x-line backlog (which rule is right is the user's call) — never 7.x.
+**Placement:** 6.7.10 — Break 2, repair 1 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
 **Discovered:** 2026-10-08 by the 6.7.7 distlib lane (out of its scope); filed 2026-10-08.
 **Severity:** Low — latent: no tie exists in `lib/` today.
 **Affects:** cbt ≤ 6.7.7

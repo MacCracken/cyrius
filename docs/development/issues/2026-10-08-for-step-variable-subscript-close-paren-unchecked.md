@@ -4,7 +4,7 @@
 `for (i = 0; i < 3; i += 1 2)` builds and runs 3 iterations; so do a global step, `i = i + 1 2`,
 `a[0] += 1 2`, `i += 1 ; junk` and a 24 B struct step `a = b 2` (which also stores one word: `a.y` stays 2).
 The field step `c.n += 1 2` reports "expected ')', got number 2".
-**Placement:** unpinned — 6.x-line backlog — never 7.x.
+**Placement:** 6.7.8 — features: checked dyn + C2 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
 **Discovered:** 6.7.5 B8 lane (roadmap commit e95f295d); filed 2026-10-08 from roadmap.md.
 **Severity:** Low
 **Affects:** cycc ≤ 6.7.6 (field and `*p` steps check since 6.7.5)

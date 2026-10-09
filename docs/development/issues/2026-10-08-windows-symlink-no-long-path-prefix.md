@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — re-verified 2026-10-08 against 6.7.6 @ 2fb6ad8b by reading `lib/syscalls_windows.cyr:721-768`
 (no `\\?\` handling, no absolutisation, both paths capped at 519 units). Not re-verified on hardware (needs cass).
-**Placement:** unpinned — 6.x-line backlog — never 7.x.
+**Placement:** 6.7.11 — Break 2, repair 2: the platform release (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
 **Discovered:** 6.6.11, when `_win_widen` stopped CUTTING `sys_symlink`'s paths at 518 units and started refusing
 them (CHANGELOG [6.6.11]); the residual over-MAX_PATH limit was carried in roadmap.md; filed 2026-10-08 from
 roadmap.md.

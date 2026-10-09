@@ -1,7 +1,7 @@
 # `asm { in al, dx; }` is refused: `in` lexes as keyword 76, so the `ASM_IN` emitter is unreachable by its documented spelling — OPEN
 
 **Status:** 🟡 **OPEN** — reproduced 2026-10-08 against 6.7.6 @ 2fb6ad8b with the tree's `build/cycc`: `asm { in al, dx; }` gives `unexpected in` and then `parser recovery aborted`, in both a user-mode and a `kernel;` build. The documented sibling `asm { out dx, al; }` compiles.
-**Placement:** Break 2 candidate — the user picks (roadmap.md § Break 2) — never 7.x.
+**Placement:** 6.7.12 — Break 2, repair 3 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
 **Discovered:** before 2026-10-08 (carried in roadmap.md's backlog); filed 2026-10-08 from roadmap.md.
 **Severity:** Low — the guide and the compiler disagree. Workaround: the raw byte `asm { 0xEC; }`.
 **Affects:** cycc ≤ 6.7.6 (since `in` became the for-in keyword).

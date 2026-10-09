@@ -1,7 +1,7 @@
 # `cyrius init` prints "Created <x>/" and exits 0 when its templates are missing — OPEN
 
 **Status:** 🟡 **OPEN** — verified 2026-10-08 by the 6.7.7 backlog filer (21 "missing template" errors, then `Created demo/`, rc 0) and by reading `programs/cyrius-init.cyr:519-529` at 2fb6ad8b.
-**Placement:** unpinned — 6.x-line backlog — never 7.x.
+**Placement:** 6.7.10 — Break 2, repair 1 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
 **Discovered:** 2026-10-08 by the backlog filer of `install-sh-source-bootstrap-no-init-templates` (out of its scope); filed 2026-10-08.
 **Severity:** Medium — a broken install reports success; the user finds the empty project later.
 **Affects:** cyrius-init ≤ 6.7.6

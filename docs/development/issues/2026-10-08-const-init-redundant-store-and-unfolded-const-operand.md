@@ -4,7 +4,7 @@
 disassembly): `var X = C;` puts 5 in X's data slot AND emits `mov eax,5; movabs rcx,X; mov [rcx],rax` at startup,
 where `var X = 5;` emits no store; `return 2 * C;` emits `mov eax,2; push; mov eax,5; pop rcx; imul rcx`, where
 `C * 2`, `2 * 5` and a named `const D = 2 * C;` are one `mov eax,10`.
-**Placement:** unpinned — 6.x-line backlog — never 7.x.
+**Placement:** 6.7.12 — Break 2, repair 3 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
 **Discovered:** before 2026-10-08 (carried in roadmap.md's backlog; the redundant store is the one 6.6.16's bake kept
 on purpose — "The store stays, so no code changes"); filed 2026-10-08 from roadmap.md.
 **Severity:** Low — code size and startup work only (18 bytes and three instructions per such global on x86_64; one

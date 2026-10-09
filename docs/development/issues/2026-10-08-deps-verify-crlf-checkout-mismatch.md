@@ -4,7 +4,7 @@
 the tree's `build/cycc` and a throwaway `HOME` / `CYRIUS_HOME`: a project committing `lib/` and `cyrius.lock` verifies
 `2 verified, 0 failed` on its LF clone and `0 verified, 2 failed` (`hash mismatch`, rc 1) on a
 `git -c core.autocrlf=true clone`; with `lib/** -text` committed in `.gitattributes` the autocrlf clone verifies again.
-**Placement:** Break 2 candidate — the user picks (roadmap.md § Break 2) — never 7.x.
+**Placement:** 6.7.11 — Break 2, repair 2: the platform release (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
 **Discovered:** 6.6.20 (2026-10-07, the CRLF-lock work behind CYRIUS-2026-0032); filed 2026-10-08 from roadmap.md.
 **Severity:** Medium — a hard CI failure on every Windows checkout of a project that commits `lib/` (Git for Windows
 defaults to `core.autocrlf=true`); the `.gitattributes` workaround exists but nothing tells the user.

@@ -6,7 +6,7 @@ extracted verbatim from `tests/gates/toolchain/gates_never_write_tree.sh`) flags
 This box registers wine for every MZ image (`/proc/sys/fs/binfmt_misc/DOSWin`: enabled, `interpreter /usr/bin/wine`,
 `magic 4d5a`), so the direct run is a wine run in the user's shared `~/.wine` with the user's `HOME`. Whether any gate
 does this today was not surveyed.
-**Placement:** unpinned — 6.x-line backlog — never 7.x.
+**Placement:** 6.7.10 — Break 2, repair 1 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
 **Discovered:** the 6.6.17 lanes (roadmap commit 0986fd97, 2026-10-05); filed 2026-10-08 from roadmap.md.
 **Severity:** Low — a blind spot in a hygiene gate; no gate is known to use the shape.
 **Affects:** `tests/gates/toolchain/gates_never_write_tree.sh` axis 9, 6.6.16 – 6.7.6.

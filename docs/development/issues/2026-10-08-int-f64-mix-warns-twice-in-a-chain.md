@@ -1,7 +1,7 @@
 # One integer + f64 mix warns twice when the expression continues (`x = x + (x + 1.5)`) — OPEN
 
 **Status:** 🟡 **OPEN** — reported 2026-10-08 by the 6.7.7 `+=` warning lane: `_INT_F64_MIX` leaves the expression typed f64 after warning, so the next integer operator warns again; `x += x + 1.5` (new in 6.7.7) inherits it.
-**Placement:** unpinned — 6.x-line backlog — never 7.x.
+**Placement:** 6.7.10 — Break 2, repair 1 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
 **Discovered:** 2026-10-08 by the 6.7.7 cmpdwarn lane (out of its scope); filed 2026-10-08.
 **Severity:** Low — a duplicate diagnostic.
 **Affects:** cycc ≤ 6.7.7

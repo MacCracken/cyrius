@@ -1,7 +1,7 @@
 # `scripts/ci.sh` never links `$CYRIUS_HOME/lib` on a fresh home — OPEN
 
 **Status:** 🟡 **OPEN** — reported 2026-10-08 by the 6.7.7 install lane: after a ci.sh install into an empty home, a consumer with no `cyrius =` pin cannot find the stdlib (fallback (c) in `_dep_find_stdlib_dir`). The 6.7.7 review fix re-points `lib` only for an install.sh-shaped (linked) home.
-**Placement:** unpinned — 6.x-line backlog — never 7.x.
+**Placement:** 6.7.10 — Break 2, repair 1 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
 **Discovered:** 2026-10-08 by the 6.7.7 install lane (out of its scope); filed 2026-10-08.
 **Severity:** Medium — a CI install without a pin finds no stdlib.
 **Affects:** scripts/ci.sh ≤ 6.7.7

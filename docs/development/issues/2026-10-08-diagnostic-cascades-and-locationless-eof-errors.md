@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — all four reproduced 2026-10-08 against 6.7.6 @ 2fb6ad8b with the tree's `build/cycc` (sources
 and output below).
-**Placement:** unpinned — 6.x-line backlog — never 7.x.
+**Placement:** 6.7.12 — Break 2, repair 3 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
 **Discovered:** 6.7.5 review / lane finds (roadmap commit e95f295d, 2026-10-08); filed 2026-10-08 from roadmap.md.
 **Severity:** Low — every input is invalid and is refused; the extra or locationless errors mislead.
 **Affects:** cycc 6.7.6 (1 since 6.7.2's `const fn`; the others not bisected).

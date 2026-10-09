@@ -5,7 +5,7 @@ default pipeline and `CYRIUS_IR=1` are right): (1) `s.a + s.b` over `i8` fields 
 garbage value per run (119 / 199 / 103 where 37 is right — the binary is deterministic, the value is a stack address);
 (2) `h.name = 40; h.k = 7; var u = 0; u = h.name; return u + 1;` gives 8, not 41, and SIGSEGVs when the field is a
 `Str`. Both also reproduce with the installed 6.6.20, 6.7.0, 6.7.3 and 6.7.5 compilers.
-**Placement:** unpinned — 6.x-line backlog — never 7.x.
+**Placement:** 6.7.12 — Break 2, repair 3 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
 **Discovered:** (1) the 6.7.5 B8 review ("same on 6.7.4; nondeterministic"); (2) 6.7.6 lane E (the
 `struct_value_codegen.sh` S10 shape: `u = h.name` into a `Str`); filed 2026-10-08 from roadmap.md.
 **Severity:** Medium — silent wrong values and a SIGSEGV on valid code, but only under the opt-in `CYRIUS_IR=3`

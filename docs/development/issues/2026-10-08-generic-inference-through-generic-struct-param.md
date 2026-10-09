@@ -1,7 +1,7 @@
 # Generic inference does not see through a generic struct parameter (`gx(b)` for `b: Box<T>`) — OPEN
 
 **Status:** 🟡 **OPEN** — reproduced 2026-10-08 against 6.7.6 @ 2fb6ad8b with the tree's `build/cycc`: the repro below is refused at `gx(b)`; the explicit `gx<Pt>(b)` control compiles and exits 8. `_gs_param` still records only a bare `name: T` / `name: *T` parameter as T's carrier.
-**Placement:** Break 2 candidate — the user picks (roadmap.md § Break 2) — never 7.x.
+**Placement:** 6.7.8 — features: checked dyn + C2 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
 **Discovered:** before 2026-10-08 (carried in roadmap.md's backlog; the refusal is gate row R18b, added in 6.7.3); filed 2026-10-08 from roadmap.md.
 **Severity:** Low — a refusal with a documented workaround (`gx<Pt>(b)`), but the message blames a struct mismatch when the real gap is inference.
 **Affects:** cycc ≤ 6.7.6 (before 6.7.3 the call compiled and ran the i64 base, reading `b.n` at the wrong offset; since 6.7.3 it is refused).

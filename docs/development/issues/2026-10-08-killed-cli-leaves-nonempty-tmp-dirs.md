@@ -5,7 +5,7 @@
 contents are a killed compile's temporaries — 180 hold `cpp_<pid>` (the preprocessed unit, up to ~1 MB), 179
 `cc_err`, 179 `check_<pid>.tmp.<pid>`, 17 `wt_err`; none holds a `test_bin`. check.sh's reaper (CLN-03) removes only
 EMPTY ones, by design. Read only — nothing was deleted.
-**Placement:** Break 2 candidate — the user picks (roadmap.md § Break 2) — never 7.x.
+**Placement:** 6.7.10 — Break 2, repair 1 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
 **Discovered:** 6.6.20 closeout (2026-10-06: 49 dead-pid dirs back the same evening, 33 non-empty); filed 2026-10-08
 from roadmap.md.
 **Severity:** Low — disk litter in a shared temp directory (the dirs are 0700 and private; nothing reads them back).

@@ -8,8 +8,7 @@ ALSO enum members in another file (`var O_RDONLY = 0;` in `lib/io.cyr:57` beside
 members; `WS_*` in `lib/ws_server.cyr`) — the second kind is itself part of the collision survey.
 Measured: `var X` + `var X` builds; `const X` beside `var X` (either order), `X = …` on a const and `&X` on a const
 are each a hard error.
-**Placement:** unpinned — 6.x-line backlog (asked by the folds — their W2 public-`const` sweeps wait on cyrius's
-`lib/`) — never 7.x. A user-placed arc: it changes what compiles (below).
+**Placement:** open by design — a feature / arc, not a bug: roadmap_6.md § *The public-constants `const` migration* (placed 2026-10-09) — never 7.x.
 **Discovered:** the 6.7.6 fold wave (W2), which left each fold's public-`const` sweep to its own minor and found
 sandhi's `HTTP_OK` / `HTTP_NOT_FOUND` blocked by `lib/http.cyr`'s same-name `var`s (roadmap.md § *Constraints on any
 fold release*); filed 2026-10-08 from roadmap.md.

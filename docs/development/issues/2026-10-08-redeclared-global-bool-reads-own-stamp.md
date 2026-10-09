@@ -1,7 +1,7 @@
 # A redeclared global read inside its own `bool` redeclaration reads as boolean (`var G = 5; var G: bool = G;` exits 5) — OPEN
 
 **Status:** 🟡 **OPEN** — reproduced 2026-10-08 against 6.7.6 @ 2fb6ad8b with the tree's `build/cycc` (x86_64): the repro compiles clean and exits 5, so a `bool` holds 5. With a different integer global on the right (`var H = 5; var G: bool = H;`) it is refused.
-**Placement:** Break 2 candidate — the user picks (roadmap.md § Break 2) — never 7.x. The fix is a redeclaration rule, so it is **the user's decision**: it changes what compiles.
+**Placement:** 6.7.12 — Break 2, repair 3 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
 **Discovered:** before 2026-10-08 (carried in roadmap.md's backlog); filed 2026-10-08 from roadmap.md.
 **Severity:** Medium — silently breaks 6.7.3's rule that a bool reads as 0 or 1, though only through a self-referential redeclaration.
 **Affects:** cycc 6.7.3–6.7.6 (the boolean stamp, B2).

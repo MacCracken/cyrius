@@ -5,8 +5,7 @@ tag): each of the nine files below, compiled from a scratch `git archive` copy w
 `lib/assert.cyr` prepended (as the manifest does), builds rc 0 with `warning: undefined function
 'yantra_tls_pin_verify_ed25519'` and `… 'yantra_tls_pin_verify_hybrid'`. The roadmap named only the Android / iOS
 e2e files; the set is wider.
-**Placement:** yantra's next patch release, then re-vendored (`cyrius distlib` at the tag — yantra's `dist/` is
-untracked) — never 7.x.
+**Placement:** 6.7.10 — Break 2, repair 1 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
 **Discovered:** the 6.7.6 fold wave (W2, yantra 1.0.9 — the Android / iOS E2E runs, "results unaffected, 4/4
 each"); filed 2026-10-08 from roadmap.md.
 **Severity:** Low — a warning in test builds; the pin-verify fns are unreachable from the tests, so results are

@@ -5,7 +5,7 @@
 (pointers below). One premise in the tree is STALE: the comments blame sigil for RSA, but sigil now ships the
 signers (`rsa_privkey_from_der`, `rsa_pss_sign_sha256/384`, `rsa_pkcs1v15_sign_sha256/384`) — the RSA gap is
 cyrius's TLS wiring.
-**Placement:** unpinned — 6.x-line backlog — never 7.x.
+**Placement:** open by design — a feature / arc, not a bug: roadmap_6.md § *Native TLS capability arc* (items 1–5) and roadmap-future.md (item 6) (placed 2026-10-09) — never 7.x.
 **Discovered:** 6.6.14, CYRIUS-2026-0019's *Not covered* (`docs/audit/2026-09-03-security-audit.md:1295`); filed
 2026-10-08 from roadmap.md.
 **Severity:** Medium — hard interop failures (an RSA client identity; a client leaf issued by an intermediate the

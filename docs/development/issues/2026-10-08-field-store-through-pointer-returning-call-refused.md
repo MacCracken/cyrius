@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — reproduced 2026-10-08 against 6.7.6 @ 2fb6ad8b with `build/cycc`: `gp().n = 5;` and
 `gp().m += 5;` with `fn gp(): *H` are refused "cannot assign to a field of a call result: the result is a
 temporary"; the READ `var q = gp().n;` and `var p: *H = gp(); p.n = 5;` compile and write the pointee.
-**Placement:** unpinned — 6.x-line backlog — never 7.x.
+**Placement:** 6.7.12 — Break 2, repair 3 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
 **Discovered:** 6.7.5 decisions pass (roadmap commit 68de8001); filed 2026-10-08 from roadmap.md.
 **Severity:** Low
 **Affects:** cycc 6.6.17 – 6.7.6 (the read has worked since 6.6.17's `: *T` arm; the store refusal dates from 6.6.12)

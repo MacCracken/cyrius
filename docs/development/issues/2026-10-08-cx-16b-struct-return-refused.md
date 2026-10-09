@@ -5,7 +5,7 @@
 `var q: P2 = p2(20, 22);`; the same source exits 42 on x86_64. A 24 B struct return (retptr) and a
 `return (a, b);` pair both run correctly under `cxvm` (exit 42). `tests/tcyr/crossos/for_step_struct_assign.tcyr`
 fails to compile for cx with four such errors.
-**Placement:** unpinned — 6.x-line backlog — never 7.x.
+**Placement:** 6.7.8 — features: checked dyn + C2 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
 **Discovered:** 6.7.5 B8 lane (roadmap commit e95f295d, pre-existing since v5.10.45); filed 2026-10-08 from roadmap.md.
 **Severity:** Medium
 **Affects:** cycc v5.10.45 – 6.7.6, cx target only (`src/main_cx.cyr`)

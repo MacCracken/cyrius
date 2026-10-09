@@ -4,7 +4,7 @@
 this Linux box (private `WINEPREFIX`, the test cross-built by the tree's `build/cycc` with `CYRIUS_TARGET_WIN=1`): it
 exits 42 run directly and under `wine cmd /c aip.exe` — wine does not reproduce it (as with the v6.4.44 misaligned-stack
 fault this test also guards, which only real Windows showed).
-**Placement:** Break 2 candidate — the user picks (roadmap.md § Break 2) — never 7.x.
+**Placement:** 6.7.11 — Break 2, repair 2: the platform release (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
 **Discovered:** 6.6.17 slot open (2026-10-05): on cass, `cmd /c "cd /d … && aip.exe"` returned 1, 3 of 3, while the
 release gate's `cmd /v /c "…& …"` form exits 42; filed 2026-10-08 from roadmap.md.
 **Severity:** Medium — the Windows IOCP runtime's `async_with_timeout` reports a deadline miss for a task that

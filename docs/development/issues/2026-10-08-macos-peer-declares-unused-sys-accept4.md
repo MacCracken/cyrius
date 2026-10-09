@@ -4,7 +4,7 @@
 `SYS_ACCEPT4` in `lib/` is the `#ifndef CYRIUS_TARGET_MACOS` arm of `sys_accept4`
 (`lib/syscalls_linux_common.cyr:1279-1281`); the macOS arm composes `accept` (43 → BSD 30) + fcntl. The x86 Mach-O
 EMACHO_SYSXLAT has no 288 row. Not re-run on hardware (needs ach) — nothing executes it.
-**Placement:** unpinned — 6.x-line backlog — never 7.x.
+**Placement:** 6.7.11 — Break 2, repair 2: the platform release (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
 **Discovered:** before 2026-10-08 (carried in roadmap.md's backlog as cosmetic); filed 2026-10-08 from roadmap.md.
 **Severity:** Low — cosmetic; a raw `syscall(SYS_ACCEPT4, …)` on x86-macOS fails closed with -ENOSYS (see below).
 **Affects:** cycc ≤ 6.7.6.

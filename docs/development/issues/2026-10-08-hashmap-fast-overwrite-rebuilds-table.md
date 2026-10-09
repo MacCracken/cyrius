@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — re-verified 2026-10-08 against 6.7.6 @ 2fb6ad8b with
 `repros/2026-10-08-hashmap-fast-overwrite-rebuilds.cyr`: overwriting one of 14 live keys in a 16-slot map takes the
 table to 32 slots, allocates 544 B and counts one rebuild (exit 1; expected exit 0).
-**Placement:** unpinned — 6.x-line backlog — never 7.x. **When a rebuild happens is the user's to place.**
+**Placement:** 6.7.10 — Break 2, repair 1 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
 **Discovered:** 6.7.3 (filed in roadmap.md's backlog by the 6.7.x feature releases; CHANGELOG [6.7.3] "hashmap_fast's
 overwrite can rebuild"); filed 2026-10-08 from roadmap.md.
 **Severity:** Low — `lib/hashmap_fast.cyr` is experimental with no callers (its header, `:5-12`), and the behaviour

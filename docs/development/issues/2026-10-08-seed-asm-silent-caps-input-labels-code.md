@@ -6,9 +6,7 @@ assembles with exit 0 to a 130 B program that segfaults (its tail was dropped); 
 lbl5` for a label that is defined; 80,000 B of code assembles with exit 0 to a program whose tail is replaced
 (SIGSEGV). Latent today: `bootstrap/cybs.cyr` is inside all three (112,175 / 131,072 B, 501 / 512 labels, cybs's code
 21,660 / 65,536 B).
-**Placement:** v6.7.x repair release — the code-cap row in gate row S (no new seed). The seed's own bounds checks
-belong to a seed-rotation MINOR, only if a new seed is ever needed (roadmap_6.md § *A seed-rotation minor*; user,
-2026-10-09) — never a patch, never 7.x.
+**Placement:** 6.7.10 — Break 2, repair 1 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
 **Discovered:** 6.7.6 Break 1 (roadmap commit a29d1492, 2026-10-08; the input cap was probed then — "3 bytes over
 assembled a cybs 1 byte short, silently"); filed 2026-10-08 from roadmap.md.
 **Severity:** Medium — silent miscompilation by the trust root, latent (no shipped input is over a cap; two of the

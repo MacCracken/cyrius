@@ -4,7 +4,7 @@
 (`src/frontend/lex.cyr:1024`) is the one list the lexer and the preprocessor share; six tools carry their own copy of
 its ten rows, and only cyaudit's is compared with it (`tests/gates/toolchain/cyaudit_include_directives.sh` axis 7).
 No gate derives the other five copies' rows from `LEXATTRWORD`.
-**Placement:** unpinned — 6.x-line backlog — never 7.x.
+**Placement:** 6.7.10 — Break 2, repair 1 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
 **Discovered:** 6.7.3 (cyaudit became the sixth mirror; roadmap commit 0619c262); filed 2026-10-08 from roadmap.md.
 **Severity:** Low — no live divergence today; the defect is that the next attribute added to the lexer silently
 desyncs five tools.

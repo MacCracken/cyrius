@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — re-verified 2026-10-08 against 6.7.6 @ 2fb6ad8b with
 `repros/2026-10-08-tls-client-cert-pem-scratch.cyr`: a one-block client PEM allocates a 4,800-byte table
 (6,152 B in all), and a well-formed leaf followed by 300 more blocks is refused `-6` (`TLS_ERR_CERT_INVALID`).
-**Placement:** unpinned — 6.x-line backlog — never 7.x.
+**Placement:** 6.7.12 — Break 2, repair 3 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
 **Discovered:** 6.6.14, when `_tn_ca_parse_set` moved to `pem_count_cert_blocks` sizing and left this the last user
 of `TLS_CA_MAX_ROOTS` (its comment, `lib/tls_native_hs12.cyr:1987-1988`); filed 2026-10-08 from roadmap.md.
 **Severity:** Low — a fixed over-allocation per call, and a spurious refusal only for a pathological (> 300 block)

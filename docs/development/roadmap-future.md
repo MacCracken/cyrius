@@ -25,11 +25,14 @@ wrong at the 2026-08-07 pass).
 | **DWARF debug-info emission** | High | When a real debugger story is needed; crash localization (`CYRIUS_SYMS`) is still x86-ELF-only. 6.x-line codegen work, never 7.x. |
 | **`tantu` — the async runtime as its own repo** | Medium | The name is reserved; a future minor, not sequenced. |
 | **Auto-vectorization of scalar SOA loops** | High | Hand-written SIMD (`lib/simd.cyr`, the `f64v*` / `f32v*` types) covers today's needs. |
+| **Named build profiles + `[build] target` read** | Medium | `[build.PROFILE]` and a selector, and `[build] target` read instead of warned ([issue](issues/2026-10-08-manifest-build-profiles-and-target-unread.md), open by design). Two forks that change what an existing manifest builds — the user's, at the pull. Pull when a need is filed. |
+| **Poison guard pages** (proposal P6's step S7) | Medium | Page-backed guarded blocks so `--poison` catches a read that jumps a whole redzone ([issue](issues/2026-10-08-poison-guard-pages-unbuilt.md), open by design): per-target page sizes (16 KiB on Apple arm64), a new PE `VirtualProtect` reroute, and an agnos run that REPORTS "unguarded" (`cyr_mprotect` is a no-op). |
+| **X448 / secp521r1 key exchange** | Medium | TLS capability item 6 ([issue](issues/2026-10-08-native-tls-capability-limits.md)): waits on constant-time implementations in sigil's source. |
 | **Native 256-bit SIMD on aarch64** | Medium | The aarch64 `EMIT_F32V8_*` emitters DELEGATE to the 4-lane NEON `EMIT_F32V_*` ones (since 6.5.49), and `lib/simd.cyr` routes f32v8 through native f32v4 NEON (its f32v8 wrappers gate on `simd_has_avx2()`, 0 off x86). Correct at a 4-lane stride; a native path (SVE) is unplanned. |
 
 ## DX / cyrlint tooling (watching)
 
-Two static checks, one `cyrlint` bite when pulled ([issue](issues/2026-10-08-cyrlint-array-overrun-and-write-length-checks.md)). `programs/cyrlint.cyr` implements
+Two static checks, one `cyrlint` bite — **placed in 6.7.10's scanners lane** (2026-10-09; [issue](issues/2026-10-08-cyrlint-array-overrun-and-write-length-checks.md)). `programs/cyrlint.cyr` implements
 neither (re-checked at the 6.6.20 re-triage). Linter / formatter / LSP evolution is 6.x-line work.
 
 - **Bare-local-array slot-write lint** — warn when a bare `var a[N]` (N *bytes*, rounded to 8) is written past its
