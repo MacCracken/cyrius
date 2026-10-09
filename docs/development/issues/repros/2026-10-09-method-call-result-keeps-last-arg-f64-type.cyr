@@ -1,0 +1,19 @@
+# 2026-10-09 — a method call's result keeps the expression type of its LAST argument: after
+# `p.m(1.5)` the result is still typed f64, so `* 2` is taken as an f64 multiply of an integer.
+# Expected: exit 42, no warning (m returns the i64 21; the free-fn spelling m2(&p, 1.5) * 2 is 42).
+# Actual (6.7.6 @ e44470b7): "warning: f64 arithmetic with a non-f64 right operand" on line 11,
+#   and exit 1 (r is 0; r2 is right).
+struct P { x; }
+impl P { fn m(self, d: f64): i64 { return 21; } }
+fn m2(p, d: f64): i64 { return 21; }
+fn main(): i64 {
+    var p = P { 1 };
+    var r = p.m(1.5) * 2;
+    var r2 = m2(&p, 1.5) * 2;
+    var e = 0;
+    if (r != 42) { e = e | 1; }
+    if (r2 != 42) { e = e | 2; }
+    return e;
+}
+var r = main();
+syscall(60, r);

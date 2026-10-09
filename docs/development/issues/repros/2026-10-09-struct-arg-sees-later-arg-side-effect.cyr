@@ -1,0 +1,24 @@
+# 2026-10-09 — a struct over 8 bytes passed by value is passed by ADDRESS and copied in the
+# callee's prologue, so an argument evaluated AFTER it that writes the struct is visible to the
+# callee: rd(s, bump(&s)) reads s.a as 11, not the 1 it held when the argument was written.
+# Expected: exit 0 (every row reads 1). The 8-byte struct (passed in a register) is right.
+# Actual (6.7.6 @ e44470b7): rc 0, exit 3 (the 24-byte and the 16-byte rows read 11).
+struct Big { a: i64; b: i64; c: i64; }
+struct Mid { a: i64; b: i64; }
+struct Sm { a: i64; }
+fn bump(p): i64 { store64(p, load64(p) + 10); return 0; }
+fn rd(s: Big, z): i64 { return s.a; }
+fn rm(s: Mid, z): i64 { return s.a; }
+fn rs(s: Sm, z): i64 { return s.a; }
+fn main(): i64 {
+    var b: Big = Big { 1, 2, 3 };
+    var m: Mid = Mid { 1, 2 };
+    var s: Sm = Sm { 1 };
+    var e = 0;
+    if (rd(b, bump(&b)) != 1) { e = e | 1; }
+    if (rm(m, bump(&m)) != 1) { e = e | 2; }
+    if (rs(s, bump(&s)) != 1) { e = e | 4; }
+    return e;
+}
+var r = main();
+syscall(60, r);
