@@ -1012,21 +1012,12 @@ fn PARSE_RETURN(S): i64 {
         } }
     # Check for multi-return: return (a, b) → ret2(a, b)
     if (PEEKT(S) == 10) {
-        # Scan ahead for comma at depth 1 to distinguish (a, b) from (a + b)
-        var mr_scan = GTI(S) + 1;
-        var mr_depth = 1;
+        # The group's own commas tell (a, b) from (a + b) — v6.5.21: COUNTED, so `return (a, b, c);`
+        # is arity 3. 6.7.7 (B4): the tuple literal's detector, which steps a closure's `|a, b|` and a
+        # generic call's `<A, B>` (`return (|a, b| a + b);` was taken for a multi-value return).
+        var mr_commas = _tup_commas(S, GTI(S));
         var mr_is_tuple = 0;
-        # v6.5.21: COUNT the depth-1 commas instead of stopping at the first, so
-        # `return (a, b, c);` is recognised as arity 3 rather than erroring at the
-        # second comma with `expected ')'`.
-        var mr_commas = 0;
-        while (mr_scan < GTCNT(S) && mr_depth > 0) {
-            var mr_tok = TOKTYP(S, mr_scan);
-            if (mr_tok == 10) { mr_depth = mr_depth + 1; }
-            if (mr_tok == 11) { mr_depth = mr_depth - 1; }
-            if (mr_tok == 31 && mr_depth == 1) { mr_is_tuple = 1; mr_commas = mr_commas + 1; }
-            mr_scan = mr_scan + 1;
-        }
+        if (mr_commas > 0) { mr_is_tuple = 1; }
         # ⛔ 6.6.6 — A TUPLE RETURN IS A THIRD SPELLING THE VECTOR REFUSAL BELOW NEVER SEES.
         # Both arms below hand the values back in the ret2/ret3 INT register convention
         # (rax:rdx[:r3]) and `return 0` out of PARSE_RETURN, so they run in front of the
@@ -1113,7 +1104,7 @@ fn PARSE_RETURN(S): i64 {
     # land on a follow-up slot — same staging as f64v2's v5.10.28
     # Phase 1 left non-IDENT to a follow-up).
     if (_cur_fn_ret_pair == 1) { if (_ret_struct_pair(S) == 1) { return 0; } }   # 6.7.6: out of this body
-    if (_ret_small_ptrp(S) == 1) { return 0; }   # 6.6.17 (a1 review): `return p;`, p: *T, T <= 8 B
+    if (_ret_var_forms(S) == 1) { return 0; }   # 6.7.7 (T5): `return t;`, a tuple; 6.6.17 (a1 review): `return p;`, p: *T, T <= 8 B
     # v5.10.28 — f64v2 multi-register pair return ABI.
     # When the current fn is annotated `: f64v2` (encoding -2093 in
     # _cur_fn_ret_scalar; v6.4.14 moved it off the flat -20) AND the
@@ -1553,7 +1544,10 @@ fn _try_push_struct_addr_arg(S, fi, argc, tail): i64 {
     if (PEEKT(S) != 2) { return 0; }
     var nx = TOKTYP(S, GTI(S) + 1);
     # 6.7.3: a whole free call's struct, checked here — where `_arg_call_class` resolves it anyway.
-    if (nx == 10 || nx == 19) { _sarg_type_err(S, fi, argc, _sarg_call_sid(S, GTI(S)), PEEKV(S)); }
+    if (nx == 10 || nx == 19) {
+        _sarg_type_err(S, fi, argc, _sarg_call_sid(S, GTI(S)), PEEKV(S));
+        if (_tup_arg_call(S, fi, argc) == 1) { return 0; }   # 6.7.7 (B4): `g(f())`, f multi-value
+    }
     # ⛔ 6.6.6 — a by-value struct param given a struct-valued CALL (`h(mk(1, 2))`): the callee
     # takes the struct's ADDRESS, so the result needs storage to point at. It used to be pushed
     # as a value — the first word for a rax:rdx return (the callee then dereferenced a field),
@@ -1620,6 +1614,74 @@ fn _try_push_struct_addr_arg(S, fi, argc, tail): i64 {
     return 1;
 }
 
+# ⛔ 6.7.7 (B4) — A MULTI-VALUE CALL AS A TUPLE ARGUMENT (`g(f())`, `f` declared `: (i64, i64)`).
+# The parameter takes a tuple's ADDRESS, and the call leaves its values in the return registers —
+# nothing to point at — so the value push handed the callee the first value as an address (a
+# SIGSEGV, or a silent read through it). Refused by name: bind the values first. Cursor on the
+# callee's name; 1 = reported (the caller then pushes the argument as before, the parse in step,
+# `_had_error` withholding the binary). A whole call only: `g(f() + 1)` is an integer, which the
+# struct rule passes as an address as it does any untyped value. CHANGELOG [6.7.7]
+fn _tup_arg_call(S, fi, argc): i64 {
+    var ps = GFPSID(S, fi, argc);
+    if (_tup_is(S, ps) == 0) { return 0; }
+    var ti = GTI(S);
+    var o = _gcall_open(S, ti);
+    if (o < 0) { return 0; }
+    if (_call_dotted(S, ti) == 1) { return 0; }
+    if (_call_is_whole_arg(S, o - 1) == 0) { return 0; }
+    var cfi = _gen_resolve_call(S, ti);
+    if (cfi < 0) { return 0; }
+    if (GFRS(S, cfi) != MULTIRET_SID) { return 0; }
+    return _tup_arg_mv_err(S, ti, ps, TOKVAL(S, ti), "(..)");
+}
+# ... and a whole METHOD or operator call (`g(x.f())`, `g(a + b)`), after its parse: `_sc_post_small`
+# stamps a multi-value result's span (`_mrc_note`, read by nothing else); one that is the whole
+# argument (from `st` to the cursor) is refused the same way.
+var _mrc_beg = 0 - 1;   # its first token
+var _mrc_end = 0 - 1;   # the token after it
+var _mrc_fn = 0;        # its name
+fn _mrc_note(S, noff, beg): i64 {
+    _mrc_beg = beg;
+    _mrc_end = GTI(S);
+    _mrc_fn = noff;
+    return 0;
+}
+fn _tup_arg_mrc(S, fi, argc, st): i64 {
+    if (_mrc_beg != st) { return 0; }
+    if (_mrc_end != GTI(S)) { return 0; }
+    var ps = GFPSID(S, fi, argc);
+    if (_tup_is(S, ps) == 0) { return 0; }
+    return _tup_arg_mv_err(S, st, ps, _mrc_fn, 0);
+}
+# The R17 report at token `ti`: tuple `ps`, the call named `noff`; `tail` != 0 spells the call in
+# the hint as `name<tail>` (a free call), 0 as `...`. 1 = refused (reported once).
+var _tamv_fld = 0;   # 6.7.7 (T5): 1 = the field form, `h.p = f();` (`_tup_fsc_call`)
+fn _tup_arg_mv_err(S, ti, ps, noff, tail): i64 {
+    if (_syntax_only == 1) { return 0; }
+    if (_panic == 1) { return 1; }
+    if (_tn_once(S, ti) == 0) { return 1; }
+    var sv = GTI(S);
+    STI(S, ti);
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    PRSTR(": a multi-value call '");
+    PRSTR(S + 0xEC00000 + noff);
+    if (_tamv_fld == 1) { PRSTR("' is not stored into a tuple field - bind it first: `var t: "); }   # 6.7.7 (T5)
+    else { PRSTR("' is not a tuple argument - bind it first: `var t: "); }
+    PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (ps - 1) * 8));
+    PRSTR(" = ");
+    if (tail != 0) {
+        PRSTR(S + 0xEC00000 + noff);
+        PRSTR(tail);
+    } else { PRSTR("..."); }
+    if (_tamv_fld == 1) { PRSTR(";`, then store `t`\n"); }
+    else { PRSTR(";`, then pass `t`\n"); }
+    _err_excerpt(S);
+    _had_error = 1;
+    STI(S, sv);
+    return 1;
+}
+
 # ⛔ 6.7.6 — A PARENTHESISED ARGUMENT TO AN ADDRESS-PASSED PARAMETER WAS PUSHED AS ITS VALUE:
 # `rd3((a))` (`p: *P3`), `rd1((s))`, `rd1((mk1(4)))` SIGSEGV'd on x86 and aarch64 (an access
 # violation on PE, a guest error on cx), because every arm above keys on the argument's first token
@@ -1629,6 +1691,7 @@ fn _try_push_struct_addr_arg(S, fi, argc, tail): i64 {
 # one that does not is (`_push_struct_expr_arg`). Returns as the caller's arms do. CHANGELOG [6.7.6]
 fn _sarg_paren(S, fi, argc, tail): i64 {
     var st = GTI(S);
+    if (_tup_sarg_lit(S, fi, argc, tail) == 1) { return 1; }   # 6.7.7 (B4): a tuple literal
     var k = _pwrap_k(S, st);
     var e = TOKTYP(S, _pw_end);
     if (e != 31) { if (e != 11) { return _push_struct_expr_arg(S, fi, argc, tail); } }
@@ -1638,6 +1701,43 @@ fn _sarg_paren(S, fi, argc, tail): i64 {
         return 0;
     }
     _pw_close(S, k);
+    return 1;
+}
+
+# ⛔ 6.7.7 (B4) — a tuple LITERAL as an address-passed argument (`take((1, 2))`, any wrap; every
+# argument loop, the tail arm with `tail` 1): into a TUPLE parameter it is built in a frame temp and
+# the temp's address pushed — an address in this frame, so a tail call diverts (`_sarg_escapes`).
+# Into any other struct parameter it is refused by name, and at top level (no frame for the temp,
+# R10); the literal is then consumed and 0 pushed, the parse in step. 1 = handled; 0 = not a whole
+# literal argument. (An untyped parameter's literal is the stray refusal at its factor.)
+fn _tup_sarg_lit(S, fi, argc, tail): i64 {
+    var st = GTI(S);
+    var lp = _tup_lit_at(S, st);
+    if (lp < 0) { return 0; }
+    var e = TOKTYP(S, _pw_end);
+    if (e != 31) { if (e != 11) { return 0; } }
+    var ps = GFPSID(S, fi, argc);
+    var ok = 1;
+    if (_tup_is(S, ps) == 0) {
+        _tup_err(S, lp, "a tuple literal is passed only to a tuple parameter - this parameter of ", L64(_fnt_names + fi * 8), " is not a tuple");
+        ok = 0;
+    } elif (GINFN(S) != 1) {
+        _tup_err(S, lp, "a tuple literal argument at top level has no frame to be built in - call ", L64(_fnt_names + fi * 8), " inside a fn");
+        ok = 0;
+    } elif (_tup_lit_shape(S, lp, ps) == 0) { ok = 0; }
+    if (ok == 0) {
+        _tup_lit_skip(S, st, 0);
+        EMOVI(S, 0);
+        EPUSHR(S);
+        return 1;
+    }
+    var t = _agg_temp(S, ps);
+    STI(S, lp);
+    _tup_elems(S, ps, 0, t, 0);
+    _pw_close(S, lp - st);
+    _sarg_escapes(fi, argc, tail);
+    EFLADDR(S, t);
+    EPUSHR(S);
     return 1;
 }
 
@@ -1653,6 +1753,18 @@ fn _sarg_paren(S, fi, argc, tail): i64 {
 fn _sarg_byval_small(S, fi, argc): i64 {
     if (GFPSID(S, fi, argc) <= 0) { return 0; }
     var st = GTI(S);
+    var asid = _expr_struct_sid(S, st);
+    _sarg_type_err(S, fi, argc, asid, _ess_nm);
+    EPUSHR(S);
+    return 1;
+}
+# The expression at the cursor (token `st`) parsed with its static-struct records armed — a bare
+# name; a whole free call, resolved AFTER the parse; a whole method / operator result; a whole
+# struct-typed field; a whole `Str` field — returning that struct (0 = untyped / scalar / unknown),
+# `_ess_nm` the name a refusal names. Extracted from `_sarg_byval_small` (6.7.7) for the tuple
+# literal's elements (`_tup_elem_val`), which are refused when they are struct values.
+var _ess_nm = 0;
+fn _expr_struct_sid(S, st): i64 {
     var asid = 0;
     var nm = 0;
     var call = 0;
@@ -1674,9 +1786,8 @@ fn _sarg_byval_small(S, fi, argc): i64 {
         elif (_fpk_ft > 0) { if (_fpk_end == GTI(S)) { asid = _fpk_ft; nm = _fpk_name; } }
         elif (_fls_whole(S, st) == 1) { asid = _fls_sid; nm = _fls_name; }   # 6.7.6: a `Str` field
     }
-    _sarg_type_err(S, fi, argc, asid, nm);
-    EPUSHR(S);
-    return 1;
+    _ess_nm = nm;
+    return asid;
 }
 
 # ⛔ 6.6.20 — the CLOSURE-CAPTURE arm. A captured struct of 8 B or less is one env word holding
@@ -1802,6 +1913,7 @@ fn _ret_peel(S): i64 {
     _ret_pk = 0;
     _ret_term = 5;
     if (PEEKT(S) != 10) { return 0; }
+    if (_tup_lit_at(S, GTI(S)) >= 0) { return 0; }   # 6.7.7: `return ((a, b));` — a literal, not a wrap
     var k = _pwrap_k(S, GTI(S));
     if (TOKTYP(S, _pw_end) != 5) { return 0; }
     STI(S, GTI(S) + k);
@@ -1963,7 +2075,9 @@ fn _ret_struct_pair(S): i64 {
         vec_push(rp_vec, _pe_rp);
         return 1;
     }
-    if (_pair_ret_call_ok(S) == 0) { _refuse_pair_return(S); }
+    if (_pair_ret_call_ok(S) == 0) {   # 6.7.7: a tuple literal's own refusal is its factor's
+        if (_tup_lit_at(S, GTI(S)) < 0) { _refuse_pair_return(S); }
+    }
     _ret_unpeel(S);   # 6.7.6: a call passes through the scalar path, wrap and all
     return 0;
 }
@@ -1991,6 +2105,149 @@ fn _ret_small_ptrp(S): i64 {
     var rp = EJMP0(S);
     vec_push(rp_vec, rp);
     return 1;
+}
+# `return IDENT;` forms after the struct classes, one call in PARSE_RETURN (cybs's per-fn ceiling).
+fn _ret_var_forms(S): i64 {
+    if (_ret_tuple_var(S) == 1) { return 1; }
+    return _ret_small_ptrp(S);
+}
+# ⛔ 6.7.7 (B4, T5) — `return t;` with `t` a TUPLE — a local, a by-value parameter (copied in, so
+# inline) or a global — from a fn DECLARED with its values, `: (T1, T2[, T3])`, element for element
+# by class (f64, bool, any other integer class): its slots are loaded into the multi-value return
+# registers as `return (t.0, t.1);` loads them (rax, rdx[, r3]; every load before the moves that
+# set rdx / r3), and it lands as that arm lands (EJMP0 + rp_vec), so the defer walker, EDEFER_SAVE
+# and the #inline replay treat it as that arm. Anything else is refused by name: an undeclared,
+# scalar, struct or vector fn, a closure, an `async fn`, an arity or class mismatch (a retptr struct
+# fn reports first, `_ret_struct_big`). Under the struct rule the scalar path refused it as a value
+# (`_tup_rchk`). Parentheses around `t` are transparent (6.7.6): `(`s, the name, as many `)`s, `;` —
+# read in one linear pass, since this runs for every `return` (a `_pwrap_k` peel is quadratic in the
+# depth: `return ((..((1))..));` 65536 deep took 99 s). 1 = done (`;` consumed); 0 = not a tuple
+# (cursor kept). CHANGELOG [6.7.7]
+var _rtv_sid = 0;
+fn _ret_tuple_var(S): i64 {
+    var st = GTI(S);
+    var k = 0;
+    while (TOKTYP(S, st + k) == 10) { k = k + 1; }
+    var ti = st + k;
+    if (TOKTYP(S, ti) != 2) { return 0; }
+    var j = 1;
+    while (j <= k) {
+        if (TOKTYP(S, ti + j) != 11) { return 0; }
+        j = j + 1;
+    }
+    if (TOKTYP(S, ti + j) != 5) { return 0; }
+    var idx = _ret_tup_idx(S, TOKVAL(S, ti));
+    if (idx == 0 - 1) { return 0; }
+    var sid = _rtv_sid;
+    STI(S, ti + j + 1);   # past the `)`s and the `;`
+    if (_ret_tup_ok(S, ti, sid) == 0) { return 1; }
+    var n = GETFCOUNT(S, sid - 1);
+    _fld_addr_ra(S, idx, sid, 0, 0 - 1);
+    ELOAD64(S);
+    EPUSHR(S);
+    if (n == 3) {
+        _fld_addr_ra(S, idx, sid, 8, 0 - 1);
+        ELOAD64(S);
+        EPUSHR(S);
+    }
+    _fld_addr_ra(S, idx, sid, (n - 1) * 8, 0 - 1);
+    ELOAD64(S);
+    if (n == 3) {
+        EMOVR3RAX(S);
+        EPOPR(S);
+    }
+    EMOVRDXRAX(S);
+    EPOPR(S);
+    var rp = EJMP0(S);
+    vec_push(rp_vec, rp);
+    return 1;
+}
+# The tuple `noff` names, resolved as a factor resolves it — a local, then (a closure's capture is
+# not one here: the value path refuses it) a global: its field-base index (`0 - 2 - li`, or the
+# global's), `_rtv_sid` its tuple; -1 = not a tuple.
+fn _ret_tup_idx(S, noff): i64 {
+    _rtv_sid = 0;
+    if (GINFN(S) == 1) {
+        var li = FINDLOCAL(S, noff);
+        if (li >= 0) {
+            if (GLAGG(S, li) == 0) { return 0 - 1; }
+            var lt = GLTYPE(S, li);
+            if (lt >= 0) { return 0 - 1; }
+            if (_tup_is(S, 0 - lt) == 0) { return 0 - 1; }
+            _rtv_sid = 0 - lt;
+            return 0 - 2 - li;
+        }
+        if (_CL_CAP_FIELD_IDX(S, noff) < 0 - 1) { return 0 - 1; }
+    }
+    var gi = _findvar_core(S, noff);
+    if (gi < 0) { return 0 - 1; }
+    if (GVPM(S, gi) != 2) { return 0 - 1; }
+    if (_tup_is(S, GVTYPE(S, gi)) == 0) { return 0 - 1; }
+    _rtv_sid = GVTYPE(S, gi);
+    return FINDVAR(S, noff);   # the reference: its visibility checked
+}
+# 1 = the fn being parsed declares tuple `sid`'s values (`t` at token `ti`); else refused, 0. An
+# #inline replay parses the CALLEE's body in the caller's context: its definition checked itself.
+fn _ret_tup_ok(S, ti, sid): i64 {
+    if (GIDEP(S) != 0) { return 1; }
+    if (_cur_fn_ret_pair == 1) { return 0; }   # a 9-16 B struct fn: its class refused `t` (`_ret_struct_pair`)
+    var fi = _cur_fn_ix;
+    if (fi < 0) { return _ret_tup_err(S, ti, sid, 1); }
+    if (_cur_fn_coro == 1 || _fn_async_impl(S, fi) == 1) { return _ret_tup_err(S, ti, sid, 2); }
+    if (GFRS(S, fi) != MULTIRET_SID) { return _ret_tup_err(S, ti, sid, 1); }
+    var n = GETFCOUNT(S, sid - 1);
+    if (GFRN(S, fi) != n) { return _ret_tup_err(S, ti, sid, 3); }
+    var k = 0;
+    while (k < n) {
+        if (_tup_ek(S, sid, k) != _mret_ek(S, fi, k)) { return _ret_tup_err(S, ti, sid, 3); }
+        k = k + 1;
+    }
+    return 1;
+}
+# 1 = fn `fi` is an `async fn`'s body: the name `_mint_impl_name` gave it ends `$impl` (`$` is no
+# identifier byte, and `impl` is a keyword, so no generic instance ends so). Its Future carries one i64.
+fn _fn_async_impl(S, fi): i64 {
+    var nm = S + 0xEC00000 + L64(_fnt_names + fi * 8);
+    var n = 0;
+    while (load8(nm + n) != 0) { n = n + 1; }
+    if (n < 5) { return 0; }
+    if (load8(nm + n - 5) != 36) { return 0; }
+    if (load8(nm + n - 4) != 105) { return 0; }
+    if (load8(nm + n - 3) != 109) { return 0; }
+    if (load8(nm + n - 2) != 112) { return 0; }
+    if (load8(nm + n - 1) != 108) { return 0; }
+    return 1;
+}
+fn _ret_tup_err(S, ti, sid, kind): i64 {
+    if (_syntax_only == 1) { return 0; }
+    if (_panic == 1) { return 0; }
+    if (_tn_once(S, ti) == 0) { return 0; }
+    var sv = GTI(S);
+    STI(S, ti);
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    PRSTR(": cannot return tuple '");
+    PRSTR(S + 0xEC00000 + TOKVAL(S, ti));
+    PRSTR("' ");
+    PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (sid - 1) * 8));
+    if (kind == 2) { PRSTR(" from an `async fn` - it returns one value"); }
+    elif (kind == 3) {
+        PRSTR(" from '");
+        PRSTR(S + 0xEC00000 + L64(_fnt_names + _cur_fn_ix * 8));
+        PRSTR("' - it returns ");
+        _mret_spell(S, _cur_fn_ix);
+    } elif (GETFCOUNT(S, sid - 1) > 3) {   # 6.7.7 (B4 review): no fn declares 4 values (the return registers)
+        PRSTR(" - a fn returns at most 3 values: return its elements, or pass the tuple to a parameter");
+    } else {
+        PRSTR(" - a tuple is returned by a fn declared with its values, `: ");
+        PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (sid - 1) * 8));
+        PRSTR("`");
+    }
+    PRSTR("\n");
+    _err_excerpt(S);
+    _had_error = 1;
+    STI(S, sv);
+    return 0;
 }
 fn _sptr_param_temp(S, li, sid): i64 {
     var t = _agg_temp(S, sid);
@@ -4273,6 +4530,7 @@ fn _sc_post(S, fi, noff, beg, t): i64 {
 fn _sc_post_small(S, fi, noff, beg): i64 {
     if (fi < 0) { return 0; }
     var sid = GFRS(S, fi);
+    if (sid == MULTIRET_SID) { return _mrc_note(S, noff, beg); }   # 6.7.7 (B4)
     if (sid <= 0) { return 0; }
     if (STRUCTSZ(S, sid - 1) > 8) { return 0; }
     _sc_beg = beg;
@@ -4355,6 +4613,7 @@ fn _scv_disarm(S, w): i64 {
 # (`= (j)`) is `_try_struct_copy_init`'s. CHANGELOG [6.7.6]
 fn _scv_peel(S): i64 {
     if (PEEKT(S) != 10) { return 0; }
+    if (_tup_lit_at(S, GTI(S)) >= 0) { return 0; }   # 6.7.7: a tuple literal is not a wrap
     var k = _pwrap_k(S, GTI(S));
     if (TOKTYP(S, _pw_end) != 5) { return 0; }
     STI(S, GTI(S) + k);
@@ -4506,6 +4765,7 @@ fn _push_struct_expr_arg(S, fi, argc, tail): i64 {
     _fla_want = fw;
     _fla_arg = fa;
     if (_fla_hit == 1) { return _fla_push_arg(S, fi, argc, tail); }
+    _tup_arg_mrc(S, fi, argc, st);   # 6.7.7 (B4): `g(x.f())`, f multi-value
     var t = _sc_whole(S, st);
     if (t >= 0 || t == 0 - 3) { _sarg_type_err(S, fi, argc, _sc_sid, _sc_fn); }   # 6.7.3
     if (t == 0 - 2) { if (_fls_whole(S, st) == 1) { _sarg_type_err(S, fi, argc, _fls_sid, _fls_name); } }   # 6.7.6
@@ -4896,6 +5156,13 @@ fn _refuse_async_struct_param(S, li, pnoff): i64 {
     _err_head(S);
     syscall(SYS_WRITE, 2, ": async fn parameter '", 22);
     PRSTR(S + 0xEC00000 + pnoff);
+    if (_tup_is(S, 0 - lt) == 1) {   # 6.7.7 (B4): a tuple has no pointer form (`*( .. )` is refused)
+        PRSTR("' is a tuple ");
+        PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + ((0 - lt) - 1) * 8));
+        PRSTR(", which an `async fn` does not capture yet - pass its elements as separate parameters\n");
+        _had_error = 1;
+        return 0;
+    }
     syscall(SYS_WRITE, 2, "' is a struct passed by value, which an `async fn` does not capture yet — pass a pointer to it (`", 99);
     PRSTR(S + 0xEC00000 + pnoff);
     syscall(SYS_WRITE, 2, ": *", 3);
@@ -7213,6 +7480,10 @@ fn _ce_factor(S): i64 {
     if (t == 61) { var fv = FLIT_NUM(TOKVAL(S, _ce_ti)); _ce_ti = _ce_ti + 1; _ce_k = 1; return fv; }
     if (t == 30) { var sv = TOKVAL(S, _ce_ti); _ce_ti = _ce_ti + 1; _ce_k = 2; return sv; }
     if (t == 10) {
+        if (_tup_commas(S, _ce_ti) > 0) {   # 6.7.7 (B4, R5): `const C = (1, 2);`, a literal in a const fn
+            _ce_bad(S, "a tuple in a const context - a const is one value (take a tuple at run time: `var t = ( .. );`)", 95);
+            return 0;
+        }
         _ce_ti = _ce_ti + 1;
         var pv = _ce_expr(S);
         var pk = _ce_k;
@@ -7383,7 +7654,7 @@ fn _ce_sizeof(S): i64 {
     STI(S, _ce_ti);
     var sz = 0;
     var p0 = _panic;
-    if (PEEKT(S) == 2 || PEEKT(S) == 105) { sz = _sizeof_type(S, _ce_asrt); }   # its own refusal, by name
+    if (PEEKT(S) == 2 || PEEKT(S) == 105 || PEEKT(S) == 10) { sz = _sizeof_type(S, _ce_asrt); }   # its own refusal, by name (6.7.7: + a tuple)
     if (_panic != p0) { _ce_err = 1; }
     _ce_ti = GTI(S);
     STI(S, sv);
@@ -7678,6 +7949,7 @@ fn _ce_var(S, isc): i64 {
     var dk = 0;
     if (TOKTYP(S, _ce_ti) == 49) {
         if (isc == 1) { _ce_bad(S, "a const takes no type annotation: its type is its value's", 57); return 0; }
+        if (TOKTYP(S, _ce_ti + 1) == 10) { _ce_bad(S, "a tuple in a const fn: its locals are i64, i32, i16, i8, f64 or bool", 68); return 0; }   # 6.7.7 (R5)
         w = _ce_type_w(S, _ce_ti + 1);
         if (w == 0) { _ce_badn(S, "type ", TOKVAL(S, _ce_ti + 1), " in a const fn: its locals are i64, i32, i16, i8, f64 or bool"); return 0; }
         if (w == 9) { dk = 1; w = 8; }
@@ -8139,6 +8411,7 @@ fn _ce_check_fn(S, fi): i64 {
         STI(S, sv);
         return 0;
     }
+    if (_ce_tup_param(S, op) == 1) { return 0; }
     var sv_ti = _ce_ti; var sv_fb = _ce_fb; var sv_sp = _ce_sp; var sv_in = _ce_infn; var sv_err = _ce_err;
     _ce_err = 0;
     _ce_fb = _ce_sp;
@@ -8156,6 +8429,25 @@ fn _ce_check_fn(S, fi): i64 {
     _ce_skip = _ce_skip - 1;
     _ce_ret = 0;
     _ce_ti = sv_ti; _ce_fb = sv_fb; _ce_sp = sv_sp; _ce_infn = sv_in; _ce_err = sv_err;
+    return 0;
+}
+# ⛔ 6.7.7 (B4, R5) — a const fn takes no TUPLE parameter: a compile-time evaluation binds each
+# parameter to one value, and a tuple is several. It said "expected ';', got '.'" at the first `t.0`,
+# and nothing at all for an unused one (callable at run time, a constant nowhere). Refused once, at the
+# parameter's type, by name. 1 = refused. CHANGELOG [6.7.7]
+fn _ce_tup_param(S, op): i64 {
+    var i = op + 1;
+    while (TOKTYP(S, i) == 2) {
+        if (TOKTYP(S, i + 1) == 49) {
+            if (TOKTYP(S, i + 2) == 10) {
+                _tup_err(S, i + 2, "const fn parameter ", TOKVAL(S, i), " is a tuple, which a compile-time evaluation does not take - pass its elements as separate parameters");
+                return 1;
+            }
+        }
+        i = _tok_item_end(S, i);
+        if (TOKTYP(S, i) != 31) { return 0; }
+        i = i + 1;
+    }
     return 0;
 }
 fn _ce_nparams(S, op): i64 {
@@ -9084,6 +9376,22 @@ fn _sf_ceil(x): i64 {
 
 # Parse: impl TraitName for TypeName { fn method(self) { } ... }
 # Methods get mangled to TypeName_method (trait name is documentation only for now)
+# ⛔ 6.7.7 (B4) — `impl ( .. ) {` / `impl Tr for ( .. ) {`: a tuple has no methods (R3). Refused by
+# name at the `(`, and the whole block skipped — pass 1 skipped it too (`_impl_name_skip`), so no
+# method of it is registered. CHANGELOG [6.7.7]
+fn _impl_tup_refuse(S): i64 {
+    _tup_err(S, GTI(S), "a tuple has no methods - `impl` on a tuple type is refused", 0 - 1, 0);
+    STI(S, _call_close(S, GTI(S)) + 1);
+    _skip_refused_body(S);
+    return 0;
+}
+# Pass 1's impl skip: one name, or (6.7.7) a tuple type's whole `( .. )`, which PARSE_IMPL refuses.
+fn _impl_name_skip(S): i64 {
+    if (PEEKT(S) == 10) { STI(S, _call_close(S, GTI(S)) + 1); return 0; }
+    STI(S, GTI(S) + 1);
+    return 0;
+}
+
 fn PARSE_IMPL(S): i64 {
     # v6.6.4: a marker live here can only be STALE — `public impl` is consumed un-armed by
     # _TL_VIS, and a per-method `public fn` re-arms inside the loop below. Pass 2's `var` skip
@@ -9097,6 +9405,7 @@ fn PARSE_IMPL(S): i64 {
     var impl_ti = GTI(S);
     STI(S, GTI(S) + 1);  # consume IMPL
     # `impl Trait for Type {` or (6.7.0, A3) the inherent `impl Type {` — methods with no trait.
+    if (PEEKT(S) == 10) { return _impl_tup_refuse(S); }   # 6.7.7 (R3): `impl ( .. ) {`
     if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
     var trait_noff = PEEKV(S);
     STI(S, GTI(S) + 1);  # consume the trait (or, inherent, the type) name
@@ -9105,6 +9414,7 @@ fn PARSE_IMPL(S): i64 {
     else {
         if (PEEKT(S) != 55) { ERR_MSG(S, "expected '{' (an inherent `impl Type {`) or 'for' (`impl Trait for Type {`)", 75); }
         STI(S, GTI(S) + 1);  # consume FOR
+        if (PEEKT(S) == 10) { return _impl_tup_refuse(S); }   # 6.7.7 (R3): `impl Tr for ( .. ) {`
         if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
         type_noff = PEEKV(S);
         STI(S, GTI(S) + 1);  # consume type name
@@ -9817,7 +10127,23 @@ fn _gen_infer_tp(S, fi, open, which): i64 {
     STI(S, a);
     var c = _infer_conc_at_cursor(S);
     STI(S, sv);
+    if (_tup_is(S, c) == 1) { return _gen_tup_bind(S, fi, a, c); }
     return c;
+}
+# ⛔ 6.7.7 (B4, R4) — A TUPLE NEVER BINDS A TYPE PARAMETER. `first(t)` with `t: (i64, i64)` inferred
+# T = the tuple and minted `first$(i64, i64)` — a generic over a tuple, which the decision leaves open
+# (a tuple type in a generic fn is refused; so is the explicit `first<(i64, i64)>(t)`). Refused once,
+# at the argument, and T binds i64 — the base, as a refused bound's call does. That recovery calls a
+# base whose body may be written for a struct T (the stub refusal, an inlined `x.0`) or whose `T`
+# return a capture then declines, so the panic latch swallows the rest of the statement's cascade, as
+# an ERR_IDENT refusal's does — set on every parse of the call (an inline replay re-parses it; the
+# report is once per token). `--syntax-only` resolves as it did: lint's pre-pass judges no type.
+# CHANGELOG [6.7.7]
+fn _gen_tup_bind(S, fi, a, c): i64 {
+    if (_syntax_only == 1) { return c; }
+    _tup_err(S, a, "a tuple cannot bind a type parameter: ", L64(_fnt_names + fi * 8), " is generic - pass an element (`t.0`), or take the tuple in a fn that is not generic");
+    _panic = 1;
+    return 0 - 8;
 }
 # ⛔ 6.6.10 (bite 7 review) — only a WHOLE argument binds a type parameter: a bare name (next
 # token `,` / `)`) or one whole call. The first cut read the argument's first token, so `f(p.y)`,
@@ -10350,6 +10676,7 @@ fn _enum_id_of(S, noff): i64 {
 }
 
 fn _parse_one_type_arg(S): i64 {
+    if (PEEKT(S) == 10) { _tup_pos_refuse(S, "a type argument"); return 0 - 8; }   # 6.7.7 (R3)
     var noff = PEEKV(S);
     STI(S, GTI(S) + 1);                              # consume the type-arg name
     if (PEEKT(S) != 19) {                            # no `<` → plain scalar / struct
@@ -10765,7 +11092,7 @@ fn _parse_multiret_sig(S, fi, quiet): i64 {
     var n = 0;
     var go = 1;
     while (go == 1) {
-        if (PEEKT(S) != 2) { if (PEEKT(S) != 8) { ERR_EXPECT(S, 2); return n; } }
+        if (PEEKT(S) != 2) { if (PEEKT(S) != 8) { if (PEEKT(S) != 10) { ERR_EXPECT(S, 2); return n; } } }   # 6.7.7: `(` refused by _mret_elem
         _bx_mret_note(S, fi, n, GTI(S));   # 6.7.3: a bool element
         var t = _mret_elem(S, fi, quiet);
         if (n < 3) { SFRT(S, fi, n, t); }
@@ -10792,6 +11119,11 @@ fn _parse_multiret_sig(S, fi, quiet): i64 {
 # 6.6.17: and an element takes type arguments (`(Box<i64>, i64)`), resolved as a single return
 # type's are (`_gtype_sid`): it was `expected ')', got '<'`.
 fn _mret_elem(S, fi, quiet): i64 {
+    if (PEEKT(S) == 10) {   # 6.7.7 (R3): `((i64, i64), i64)` — a nested tuple, refused by name
+        if (quiet == 0) { _tup_pos_refuse(S, "a multi-value return element"); }
+        else { STI(S, _call_close(S, GTI(S)) + 1); }
+        return 0 - 8;
+    }
     if (PEEKT(S) == 8) {
         _ptr_annot(S, 0 - 1, quiet);
         return 0 - 8;
@@ -11080,6 +11412,48 @@ fn _psid_note(S, fi, pc, sid, mask): i64 {
     if (_psid_addr(fi, pc, mask) == 0) { if (_psid_plain(S, sid) == 0) { return 0; } }
     return SFPSID(S, fi, pc, sid);
 }
+# ⛔ 6.7.7 (B4) — A TUPLE PARAMETER (`t: (i64, f64)`). A tuple is an anonymous struct of 8-byte slots
+# and at least 16 B, so it takes the by-value struct path whole: ADDRESS-passed (the struct-mask
+# bit), copied in the callee's prologue (`_sptr_params_localize`), its sid recorded for the argument
+# check (`_psid_note`) and on the slot (SLTYPE = -sid). Both passes need the arm: pass 1 stopped at
+# the `(` — a short parameter count and a mask-0 ABI, so a call parsed before the definition pushed
+# the tuple's first word where the callee dereferences an address. `*( .. )` is refused by name (a
+# tuple is never a pointer target), and pass 1 steps over it quietly. CHANGELOG [6.7.7]
+var _tup_pt = 0;   # pass 2: the tuple parameter's sid (0 = refused); pass 1: the same, for `_tup_bvcp`
+# Pass 2 (PARSE_FN_DEF), cursor on the type's `(`: returns the struct mask with parameter `pc`'s
+# bit set, `_tup_pt` the sid; the cursor is left ON the `)` for the loop's shared step past the type.
+fn _tup_param(S, pc, smask): i64 {
+    _tup_pt = 0;
+    if (_ptrp_now(S) == 1) {
+        _tup_pos_refuse(S, "a pointer target `*( .. )`");
+        STI(S, GTI(S) - 1);
+        return smask;
+    }
+    _tup_pt = _tup_type(S, 0);
+    if (_tup_pt <= 0) { return smask; }
+    return _pmw(smask, pc, 1);
+}
+# Pass 1 (`_prescan_params_scan`), cursor on the `(`: the same mask and record, interned quietly;
+# the cursor is left PAST the `)`.
+fn _tup_pscan(S, fi, pc, smask, isptr): i64 {
+    _tup_pt = 0;
+    if (isptr == 1) {
+        STI(S, _call_close(S, GTI(S)) + 1);
+        return smask;
+    }
+    _tup_pt = _tup_type(S, 2);
+    if (PEEKT(S) == 11) { STI(S, GTI(S) + 1); }
+    if (_tup_pt <= 0) { return smask; }
+    var m = _pmw(smask, pc, 1);
+    _psid_note(S, fi, pc, _tup_pt, m);
+    return m;
+}
+# ... and its prologue copy (`_bvcp_note`'s plain-struct answer): every tuple parameter is copied in.
+fn _tup_bvcp(m, pc): i64 {
+    if (_tup_pt <= 0) { return m; }
+    if (pc >= 62) { return m; }
+    return m | (1 << pc);
+}
 fn _psid_addr(fi, pc, mask): i64 {
     if (pc < 62) { return (mask >> pc) & 1; }
     return _pm_row_get(fi, pc) & 1;   # 6.6.17 (a10): the overflow row
@@ -11162,6 +11536,10 @@ fn _prescan_params_scan(S, fi): i64 {
                     STI(S, GTI(S) + 1);                      # consume ':'
                     var _pptr = 0;
                     if (PEEKT(S) == 8) { STI(S, GTI(S) + 1); _pptr = 1; }   # skip '*' (pointer)
+                    if (PEEKT(S) == 10) {                    # 6.7.7 (B4): a tuple `( .. )`
+                        struct_mask = _tup_pscan(S, fi, pc, struct_mask, _pptr);
+                        bvcp = _tup_bvcp(bvcp, pc);
+                    }
                     if (PEEKT(S) == 2) {
                         var c = _classify_param_type(S, PEEKV(S));
                         if (c == 1) { str_mask = _pmw(str_mask, pc, 2); }
@@ -11751,10 +12129,10 @@ fn _fn_by_defti(S, noff, ti): i64 {
 # byte-identical to before.
 fn _prescan_skip_impl(S): i64 {
     STI(S, GTI(S) + 1);  # consume IMPL
-    STI(S, GTI(S) + 1);  # consume the trait (or, inherent, the type) name
+    _impl_name_skip(S);  # consume the trait (or, inherent, the type) name
     if (PEEKT(S) == 55) {   # 6.7.0 (A3): absent in an inherent `impl Type {`
         STI(S, GTI(S) + 1);  # consume FOR
-        STI(S, GTI(S) + 1);  # consume type name
+        _impl_name_skip(S);  # consume type name
     }
     if (PEEKT(S) == 13) {
         STI(S, GTI(S) + 1);
@@ -13533,6 +13911,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
             if (PEEKT(S) == 49) {
                 STI(S, GTI(S) + 1);  # consume :
                 if (PEEKT(S) == 8) { STI(S, GTI(S) + 1); _mark_ptr_param(S); }  # skip * for pointer types
+                if (PEEKT(S) == 10) { struct_mask = _tup_param(S, pc, struct_mask); pt_sid = _tup_pt; }   # 6.7.7 (B4)
                 if (PEEKT(S) == 2) {
                     var tnoff = PEEKV(S);
                     # v6.3.5 CO-01 — classify the param type-name once via the

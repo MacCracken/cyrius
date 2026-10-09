@@ -927,7 +927,8 @@ fn cmd_header(arg): i64 {
         if (ne >= le) { continue; }
         if (load8(hbuf + ne) != 40) { continue; }
 
-        # Extract params between ( and its own ) — a default holds parentheses (`b = f(1, 2)`)
+        # Extract params between ( and its own ) — a default holds parentheses (`b = f(1, 2)`), a
+        # tuple parameter's type nests one (`t: (i64, i64)`). CHANGELOG [6.7.7]
         var ps = ne + 1;
         var pe = _hdr_close(hbuf, ps, le, 0);
 
@@ -959,7 +960,9 @@ fn cmd_header(arg): i64 {
                     if (load8(hbuf + pne - 1) != 32) { break; }
                     pne = pne - 1;
                 }
-                # Skip the type annotation and the default, to this parameter's own `,`
+                # Skip the type annotation and the default, to this parameter's own `,` — a tuple
+                # type's commas are inside it, and a tuple parameter is one `cyr_val` (it travels as
+                # an address). CHANGELOG [6.7.7]
                 pi = _hdr_close(hbuf, pi, pe, 1);
                 if (pne > pns) {
                     if (first == 0) { sys_write(STDOUT_FD, ", ", 2); }

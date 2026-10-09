@@ -585,5 +585,299 @@ var e = main();
 syscall(60, e & 0xFF, 0,0,0,0);
 EOF
 
-echo 'PASS stack_enum_lossy_context: lossy binds refused on stack enums (bare ctor, forwarding wrapper) · `?` propagates the pair with its Err payload intact · destructure and return-forwarding still work · nullary variants allowed and unflagged · assignment and store64 refused (v6.6.0) · statement-position `?` propagates the pair · top-level destructure works · BOXED enums unaffected by all of it · forward references resolve (`?`, chains, and the diagnostic) · the propagation pass mints no fn-table entries · the explicit generic and method spellings are refused the same way, through wrappers in either order and on any receiver the parser types (by scope, by inference), and their one-value binds and destructures work (6.6.16)'
+# ── axis 15 — 6.7.7 (B4 T5b): THE OTHER ONE-SLOT STORES ─────────────────────────────────────
+# ⛔ The guide's *Bind the pair as a pair* said "any context that keeps only one … is a compile error",
+# and four of them compiled clean and kept the TAG: a field (`h.n = mk(7);`), an element (`a[0] =
+# mk(7);`), a store through a pointer (`*p = mk(7);`) and a compound assignment (`x += mk(7);`) — the
+# pair issue's item 3 (2026-10-08-pair-call-assigned-to-single-slot-keeps-tag.md), each exiting 0
+# where 7 is the payload. Refused now (the user's decision, 2026-10-09), each at the callee with the
+# "bind both" text and NOTHING else: into any field type (a struct-typed field took the tag as its first
+# word), a slice's `.len`, every compound place (a field's, an element's, `*p`'s, a u128's), a for step,
+# at top level, the generic / method / forward / stdlib spellings, and `--syntax-only` (a field the file
+# cannot see is refused as the compile refuses any field). `?` CONSUMES the pair — `h.n = mk(x)?;` stores
+# the payload and propagates the Err with its payload — at every one of the stores (15s-15v, 15t2), and a
+# boxed enum, a nullary variant and a one-value call stay legal there (15w).
+# Mutations (scratch tree, measured red): M24a PARSE_FIELD_STORE's call dropped -> 15a 15b 15j 15n 15o;
+# M24b moved after `_fsc_src` into the `fsc == 0` arm -> 15b; M24c `_slice_fld_store`'s dropped -> 15i;
+# M24d `_arr_sub_assign`'s -> 15c 15k 15p 15q; M24e `_deref_store`'s -> 15d 15l; M24f `_asg_compound_op`'s
+# -> 15e-15h 15m 15r; M24g `_synonly_fld_tail`'s -> 15x 15y; M24h `_refuse_lossy_pair` without
+# `_call_is_propagated` -> 15s-15v 15t2 15z; M24i `_w128_binop`'s (the u128 compound) -> 15i2.
+# refuse_at <label> <axis> <needle> — exactly ONE error, the "bind both" one, at the first byte of
+# <needle> (which occurs once in the source: its line and column are derived, never quoted).
+refuse_at() {
+  cat > "$T/p.cyr"
+  if "$CC" < "$T/p.cyr" > "$T/p" 2>"$T/p.err"; then
+    echo "FAIL stack_enum_lossy_context $2: $1 COMPILED — the payload is silently dropped."
+    exit 1
+  fi
+  _n=$(grep -c '^error' "$T/p.err")
+  _at=$(awk -v n="$3" 'index($0, n) { print NR ":" index($0, n); exit }' "$T/p.cyr")
+  if [ "$_n" -ne 1 ] || ! grep -q "^error:<source>:$_at: .*bind both" "$T/p.err"; then
+    echo "FAIL stack_enum_lossy_context $2: $1 — want ONE 'bind both' error at $_at, got $_n:"
+    grep -E '^error' "$T/p.err" | head -3 | sed 's/^/    /'
+    exit 1
+  fi
+}
+P15='include "lib/syscalls.cyr"
+enum SR: stack { SOk(v); SErr(e); }
+fn mk(x) { if (x < 0) { return SErr(33); } return SOk(x); }
+struct P { a; b; }
+struct H { n; p: P; }
+'
+refuse_at "h.n = mk(7)" axis15a "mk(7);" <<EOF
+${P15}fn main(): i64 { var h: H; h.n = mk(7); return h.n; }
+var e = main();
+EOF
+refuse_at "h.p = mk(7), a struct-typed field" axis15b "mk(7);" <<EOF
+${P15}fn main(): i64 { var h: H; h.p = mk(7); return h.p.a; }
+var e = main();
+EOF
+refuse_at "a[0] = mk(7)" axis15c "mk(7);" <<EOF
+${P15}fn main(): i64 { var a: i64[2]; a[0] = mk(7); return a[0]; }
+var e = main();
+EOF
+refuse_at "*p = mk(7)" axis15d "mk(7);" <<EOF
+${P15}fn main(): i64 { var x = 0; var p = &x; *p = mk(7); return x; }
+var e = main();
+EOF
+refuse_at "x += mk(7)" axis15e "mk(7);" <<EOF
+${P15}fn main(): i64 { var x = 0; x += mk(7); return x; }
+var e = main();
+EOF
+refuse_at "h.n += mk(7)" axis15f "mk(7);" <<EOF
+${P15}fn main(): i64 { var h: H; h.n = 0; h.n += mk(7); return h.n; }
+var e = main();
+EOF
+refuse_at "a[0] |= mk(7)" axis15g "mk(7);" <<EOF
+${P15}fn main(): i64 { var a: i64[2]; a[0] = 0; a[0] |= mk(7); return a[0]; }
+var e = main();
+EOF
+refuse_at "*p -= mk(7)" axis15h "mk(7);" <<EOF
+${P15}fn main(): i64 { var x = 0; var p = &x; *p -= mk(7); return x; }
+var e = main();
+EOF
+refuse_at "b += mk(7), a u128 place" axis15i2 "mk(7);" <<EOF
+${P15}fn main(): i64 { var b: u128 = 0; b += mk(7); return 0; }
+var e = main();
+EOF
+refuse_at "s.len = mk(7), a slice's field" axis15i "mk(7);" <<EOF
+${P15}fn main(): i64 { var s: [u8] = 0; s.len = mk(7); return s.len; }
+var e = main();
+EOF
+refuse_at "for-step h.n = mk(7)" axis15j "mk(7))" <<EOF
+${P15}fn main(): i64 { var h: H; var i = 0; for (i = 0; i < 1; h.n = mk(7)) { i = i + 1; } return h.n; }
+var e = main();
+EOF
+refuse_at "for-step a[0] = mk(7)" axis15k "mk(7))" <<EOF
+${P15}fn main(): i64 { var a: i64[2]; var i = 0; for (i = 0; i < 1; a[0] = mk(7)) { i = i + 1; } return a[0]; }
+var e = main();
+EOF
+refuse_at "for-step *p = mk(7)" axis15l "mk(7))" <<EOF
+${P15}fn main(): i64 { var x = 0; var p = &x; var i = 0; for (i = 0; i < 1; *p = mk(7)) { i = i + 1; } return x; }
+var e = main();
+EOF
+refuse_at "for-step x += mk(7)" axis15m "mk(7))" <<EOF
+${P15}fn main(): i64 { var x = 0; var i = 0; for (i = 0; i < 1; x += mk(7)) { i = i + 1; } return x; }
+var e = main();
+EOF
+refuse_at "top level G.n = mk(7)" axis15n "mk(7);" <<EOF
+${P15}var G = H { 0, 0, 0 };
+G.n = mk(7);
+syscall(60, G.n);
+EOF
+refuse_at "a forward callee: h.n = late(7)" axis15o "late(7);" <<EOF
+${P15}fn main(): i64 { var h: H; h.n = late(7); return h.n; }
+fn late(x) { return mk(x); }
+var e = main();
+EOF
+refuse_at "the stdlib Result: a[1] = Ok(9)" axis15p "Ok(9);" <<'EOF'
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/alloc.cyr"
+include "lib/vec.cyr"
+include "lib/result.cyr"
+include "lib/syscalls.cyr"
+fn main(): i64 { var a: i64[2]; a[1] = Ok(9); return a[1]; }
+var e = main();
+EOF
+refuse_at "a[0] = gdiv<i32>(..), the explicit generic" axis15q "gdiv<i32>(6, 2);" <<EOF
+${GM}fn main(): i64 { var a: i64[2]; a[0] = gdiv<i32>(6, 2); return a[0]; }
+var e = main();
+EOF
+refuse_at "x += p.div(..), the method" axis15r "p.div(2);" <<EOF
+${GM}fn main(): i64 { var p: Pt; p.x = 6; p.y = 0; var x = 0; x += p.div(2); return x; }
+var e = main();
+EOF
+# `?` consumes the pair at each store: Ok(3) stores 3 and the Err path returns BOTH halves (33 in the
+# payload). relay(3) packs four stores, so a store that lost its value shows in its digit.
+accept "? at a field, an element, *p and x OP= — the payloads" axis15s 26 <<EOF
+${P15}fn relay(x) {
+    var h: H;
+    h.n = mk(x)?;
+    var a: i64[2];
+    a[1] = mk(x + 1)?;
+    var y = 0;
+    var p = &y;
+    *p = mk(x + 2)?;
+    y *= mk(x + 3)?;
+    return SOk(h.n * 1000 + a[1] * 100 + y);
+}
+fn main(): i64 {
+    var t, v = relay(3);
+    var t2, v2 = relay(0 - 1);
+    if (t != 0) { return 101; }
+    if (v != 3430) { return 102; }
+    if (t2 != 1) { return 103; }
+    if (v2 != 33) { return 104; }
+    return 26;
+}
+var e = main();
+syscall(60, e & 0xFF, 0,0,0,0);
+EOF
+accept "? at a struct-typed field's word, a slice's len and h.n +=" axis15t 27 <<EOF
+${P15}fn relay(x) {
+    var h: H;
+    h.p.b = mk(x)?;
+    h.n = 10;
+    h.n += mk(x)?;
+    var s: [u8] = 0;
+    s.len = mk(x)?;
+    return SOk(h.p.b * 100 + h.n + s.len);
+}
+fn main(): i64 {
+    var t, v = relay(4);
+    var t2, v2 = relay(0 - 1);
+    if (t != 0) { return 101; }
+    if (v != 418) { return 102; }
+    if (t2 != 1) { return 103; }
+    if (v2 != 33) { return 104; }
+    return 27;
+}
+var e = main();
+syscall(60, e & 0xFF, 0,0,0,0);
+EOF
+accept "? at a u128 place's += and -=" axis15t2 30 <<EOF
+${P15}fn relay(x) {
+    var b: u128 = 5;
+    b += mk(x)?;
+    b -= mk(1)?;
+    var n = b;
+    return SOk(n);
+}
+fn main(): i64 {
+    var t, v = relay(4);
+    var t2, v2 = relay(0 - 1);
+    if (t != 0) { return 101; }
+    if (v != 8) { return 102; }
+    if (t2 != 1) { return 103; }
+    if (v2 != 33) { return 104; }
+    return 30;
+}
+var e = main();
+syscall(60, e & 0xFF, 0,0,0,0);
+EOF
+accept "? in a classic-for step: an element and a compound" axis15u 28 <<EOF
+${P15}fn relay(x) {
+    var a: i64[2];
+    a[0] = 0;
+    var y = 0;
+    var i = 0;
+    for (i = 0; i < 2; a[0] = mk(x + i)?) { i = i + 1; y += mk(x)?; }
+    return SOk(a[0] * 10 + y);
+}
+fn main(): i64 {
+    var t, v = relay(5);
+    if (t != 0) { return 101; }
+    if (v != 80) { return 102; }
+    return 28;
+}
+var e = main();
+syscall(60, e & 0xFF, 0,0,0,0);
+EOF
+accept "? through the generic and the method spellings" axis15v 29 <<EOF
+${GM}fn relay(d) {
+    var p: Pt; p.x = 12; p.y = 0;
+    var a: i64[2];
+    a[0] = gdiv<i32>(12, d)?;
+    a[1] = 1;
+    a[1] += p.div(d)?;
+    return GOk(a[0] * 10 + a[1]);
+}
+fn main(): i64 {
+    var t, v = relay(3);
+    var t2, v2 = relay(0);
+    if (t != 0) { return 101; }
+    if (v != 45) { return 102; }
+    if (t2 != 1) { return 103; }
+    if (v2 != 99) { return 104; }
+    return 29;
+}
+var e = main();
+syscall(60, e & 0xFF, 0,0,0,0);
+EOF
+# ANTI-OVER-REACH: a BOXED enum, a nullary `: stack` variant and a one-value call stay legal at every store.
+accept "boxed, nullary and one-value sources at the four stores" axis15w 42 <<'EOF'
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/alloc.cyr"
+include "lib/vec.cyr"
+include "lib/syscalls.cyr"
+enum B { BOk(v); BErr(e); }
+enum Opt: stack { ONone(); OSome(v); }
+fn look(n) { return BOk(n * 2); }
+fn one(x): i64 { return x; }
+struct H { n; m; }
+fn main(): i64 {
+    alloc_init();
+    var h: H;
+    h.n = look(3);
+    h.m = ONone();
+    h.m += one(5);
+    var a: i64[2];
+    a[0] = look(4);
+    a[1] = one(1);
+    a[1] += ONone();
+    var x = 0;
+    var p = &x;
+    *p = one(6);
+    *p += one(1);
+    if (load64(h.n + 8) != 6) { return 101; }
+    if (h.m != 5) { return 102; }
+    if (load64(a[0] + 8) != 8) { return 103; }
+    if (a[1] != 1) { return 104; }
+    if (x != 7) { return 105; }
+    return 42;
+}
+var e = main();
+syscall(60, e & 0xFF, 0,0,0,0);
+EOF
+# --syntax-only (what `cyrius lint` runs): a field the file cannot see is refused as the compile refuses
+# any field (15x, 15y) — a sibling file's callee is not judged here, so it stays silent (15z).
+synonly_refuse() {   # <axis> <needle>: one 'bind both' error at <needle>, under --syntax-only
+  cat > "$T/x.cyr"
+  "$CC" --syntax-only < "$T/x.cyr" > /dev/null 2> "$T/x.err" && {
+    echo "FAIL stack_enum_lossy_context $1: --syntax-only accepted a lossy field store"; exit 1; }
+  _n=$(grep -c '^error' "$T/x.err")
+  _at=$(awk -v n="$2" 'index($0, n) { print NR ":" index($0, n); exit }' "$T/x.cyr")
+  if [ "$_n" -ne 1 ] || ! grep -q "^error:<source>:$_at: .*bind both" "$T/x.err"; then
+    echo "FAIL stack_enum_lossy_context $1: --syntax-only — want ONE 'bind both' error at $_at, got $_n:"
+    grep -E '^error' "$T/x.err" | head -3 | sed 's/^/    /'
+    exit 1
+  fi
+}
+synonly_refuse axis15x "mk(7);" <<EOF
+${P15}fn k(): i64 { e.size = mk(7); return 0; }
+EOF
+synonly_refuse axis15y "mk(8);" <<EOF
+${P15}fn k(h: H): i64 { h.zz += mk(8); return 0; }
+EOF
+printf '%sfn k(h: H): i64 { e.size = sib_mk(7); e.size += sib_mk(8); h.zz = sib_mk(9); e.n = mk(1)?; return 0; }\n' "$P15" > "$T/x.cyr"
+rc=0; "$CC" --syntax-only < "$T/x.cyr" > /dev/null 2> "$T/x.err" || rc=$?
+if [ "$rc" -ne 0 ] || grep -q '^error' "$T/x.err"; then
+  echo "FAIL stack_enum_lossy_context axis15z: --syntax-only reported a sibling's callee or a \`?\` store (rc $rc):"
+  grep -E '^error' "$T/x.err" | head -3 | sed 's/^/    /'
+  exit 1
+fi
+
+echo 'PASS stack_enum_lossy_context: lossy binds refused on stack enums (bare ctor, forwarding wrapper) · `?` propagates the pair with its Err payload intact · destructure and return-forwarding still work · nullary variants allowed and unflagged · assignment and store64 refused (v6.6.0) · statement-position `?` propagates the pair · top-level destructure works · BOXED enums unaffected by all of it · forward references resolve (`?`, chains, and the diagnostic) · the propagation pass mints no fn-table entries · the explicit generic and method spellings are refused the same way, through wrappers in either order and on any receiver the parser types (by scope, by inference), and their one-value binds and destructures work (6.6.16) · a field, an element, `*p` and every compound `OP=` refused too — any field type, a slice'"'"'s len, a u128 place, a for step, top level, --syntax-only — with `?` consuming the pair at each (6.7.7)'
 exit 0

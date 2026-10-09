@@ -1893,13 +1893,13 @@ fn _lsp_brace_next(buf, p, total): i64 {
 #                    → on `,` → back to param-name
 #                    → on `)` → exit signature
 #   type-annotation → on `,` → param-name; on `)` → exit
-# 6.7.7: a parameter may carry a default (`b = f(x, y)`), so the `,` /
-# `)` / `:` above count only at the list's own bracket depth
-# (`sig_depth`), and a char literal is skipped like a string — the
-# default's `y` was registered as a parameter and its `)` ended the
-# signature, dropping the parameters after it. The `=` itself needs no
-# state: only a depth-0 `,` (or the list's `(`) leads to param-name.
-# CHANGELOG [6.7.7]
+# 6.7.7: a parameter may carry a default (`b = f(x, y)`) and a tuple
+# type (`t: (i64, i64)`), so the `,` / `)` / `:` above count only at
+# the list's own bracket depth (`sig_depth`), and a char literal is
+# skipped like a string — the default's `y` (the tuple's `i64`) was
+# registered as a parameter and its `)` ended the signature, dropping
+# the parameters after it. The `=` itself needs no state: only a
+# depth-0 `,` (or the list's `(`) leads to param-name. CHANGELOG [6.7.7]
 # Scope is intentionally NOT tracked: a `var x` in one fn and a
 # different `var x` in another both get colored as `variable` —
 # the visual outcome is identical so the simplification is free.

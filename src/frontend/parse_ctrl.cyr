@@ -823,6 +823,7 @@ fn _for_step_replay(S): i64 {
     if (PEEKT(S) == 8) { return _deref_store(S, 11); }
     var noff = PEEKV(S);
     STI(S, GTI(S) + 1);
+    if (PEEKT(S) == 31) { return _masg_stmt(S, 11); }   # 6.7.7 (T5): `a, b = f()` is an assignment too
     if (PEEKT(S) == 41) {
         var d = GTI(S);
         var mc = _stmt_dot_chain_call(S);
