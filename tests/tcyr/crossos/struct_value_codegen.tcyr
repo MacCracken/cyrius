@@ -11,7 +11,8 @@
 #      only when the flag-setting op was the last thing emitted.
 #   I  a name intrinsic's result (`mulh64`, `fncall0`..`fncall8`, `callptr`) is an untyped word: it
 #      inherited its LAST argument's struct type, so `fncall1(&f, n) + 1` with `n: Num` dispatched
-#      `Num_add` (100 where 8 is right).
+#      `Num_add` (100 where 8 is right). I8-I14 (FE): the one type the old leak got right is kept —
+#      an `&f` callee returning `: f64` with an f64 last argument is an f64 (`+ 1.0` adds 7.0).
 #   P  a PARENTHESISED argument to an address-passed parameter (`rd3((a))`, `rd1((s))`,
 #      `rd1((mk1(4)))`) was pushed as its value and dereferenced: SIGSEGV. Parentheses around the
 #      whole argument are transparent at any depth, for every argument shape.
@@ -56,6 +57,9 @@ fn Num_add(x: Num, y) { return 100; }
 fn Num_sub(x: Num, y) { return 100; }
 fn id1(x) { return 7; }
 fn id2(x, y) { return 7; }
+fn dblf(x: f64): f64 { return x * 2.0; }
+fn mulf(x: f64, y: f64): f64 { return x * y; }
+fn intf(x: f64): i64 { return 7; }
 var GN = Num { 1, 2 };
 
 # F — each row in its own fn, so the flags state it tests is the one its own statement left.
@@ -137,10 +141,31 @@ fn intrinsics(): i64 {
     assert_eq(fncall1(&id1, GN) + 1, 8, "I5: a global struct as the last argument");
     var a = fncall1(&id1, n) + mulh64(5, n);
     assert_eq(a, 7, "I6: two intrinsic results added");
+    # I8+ (FE): an `&f` callee returning `: f64` with an f64 last argument keeps the f64 type 6.7.5
+    # gave it (the last argument's) — `+ 1.0` is an f64 add; any other call stays an untyped word.
+    var d: f64 = 3.0;
+    var t: f64 = 7.0;
+    var r: f64 = fncall1(&dblf, d) + 1.0;
+    assert_eq(r == t, 1, "I8: fncall1(&dblf, d) + 1.0 is an f64 add (7.0)");
+    var r2: f64 = callptr(&dblf, d) + 1.0;
+    assert_eq(r2 == t, 1, "I9: callptr(&dblf, d) + 1.0");
+    var two: f64 = 2.0;
+    var r3: f64 = fncall2(&mulf, d, two) + 1.0;
+    assert_eq(r3 == t, 1, "I10: fncall2(&mulf, d, 2.0) + 1.0");
+    var w: f64 = 12.5;
+    var r4: f64 = fncall1(&dblf, fncall1(&dblf, d)) + 0.5;
+    assert_eq(r4 == w, 1, "I11: nested: fncall1(&dblf, fncall1(&dblf, d)) + 0.5");
+    # I12 / I13 add 1.0 to an untyped word: an integer add of its bits (an f64 add would give 1.0).
+    assert_eq(fncall1(&intf, d) + 1.0, 0x3FF0000000000007, "I12: an integer callee with an f64 argument: an untyped word");
+    var x = 5;
+    assert_eq(fncall1(&dblf, x) + 1.0, 0x3FF000000000000A, "I13: an f64 callee with an integer argument: untyped, as before 6.7.6");
+    assert_eq(GI3 == t, 1, "I14: at top level");
     return 0;
 }
 var GI1 = fncall1(&id1, GN) + 1;
 var GI2 = mulh64(3, GN) + 1;
+var GD3: f64 = 3.0;
+var GI3: f64 = fncall1(&dblf, GD3) + 1.0;
 
 # P — parenthesised arguments. P3 is 24 B (a retptr return), S1 8 B (in rax).
 struct P3 { x; y; z; }

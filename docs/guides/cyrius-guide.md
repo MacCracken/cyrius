@@ -1273,7 +1273,11 @@ Str's 16-byte header and past it.
 
 The result of a name intrinsic — `mulh64(..)`, `fncall0`..`fncall8(..)`, `callptr(..)` — is an
 untyped word whatever its last argument was: `fncall1(&f, n) + 1` with `n` a struct adds 1. Before
-6.7.6 it kept the last argument's struct type and dispatched that struct's `_add`.
+6.7.6 it kept the last argument's struct type and dispatched that struct's `_add`. The one case
+where that old typing was right is kept: when the callee is written `&f` and `f` returns `: f64`,
+and the last argument is an f64, the result is an f64 (`fncall1(&dbl, d) + 1.0` is an f64 add), as
+it was before 6.7.6. Through a variable or a closure, or with any other last argument, the result
+is an untyped word: write `f64_add(fncall1(fp, d), 1.0)` or bind it to a `var r: f64`.
 
 ## Strings
 

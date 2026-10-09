@@ -13,7 +13,9 @@
 #      and every PE syscall reroute (tcyr F15-F21). EFLLOAD_W and EMULH clear the tracker, and
 #      ECONDCMP skips its `test` only when the setter was the LAST emit (`_flags_cp`)
 #   I  a name intrinsic's result (`mulh64`, `fncallN`, `callptr`) kept its LAST argument's struct
-#      type, so `fncall1(&f, n) + 1` with `n: Num` dispatched `Num_add` (100 where 8 is right)
+#      type, so `fncall1(&f, n) + 1` with `n: Num` dispatched `Num_add` (100 where 8 is right).
+#      I3 (FE): ... but an `&f` callee returning `: f64` with an f64 last argument keeps the f64 type
+#      that leak gave it (`_icall_result`): `fncall1(&dbl, d) + 1.0` is an f64 add, as in 6.7.5
 #   P  a PARENTHESISED argument to an address-passed parameter (`rd3((a))`, `rd1((s))`,
 #      `rd1((mk1(4)))`) pushed its value: SIGSEGV. Parentheses wrapping the whole argument are
 #      transparent (`_sarg_paren`); its refusals (another struct, no frame at top level) are the
@@ -144,6 +146,10 @@
 #   M-V2 `_scv_restore` not restoring `_sc_fcw`                  -> RED Q10 O7 (139), A1-A5 (SIGSEGV at
 #       tcyr Q28), A6 (tcyr Q28 O12-O14 wrong values)
 #   M-V3 `_scv_restore` not restoring `_scv_pk`                  -> RED Q10 (expected ';'), A1-A6 (no build)
+#   M-I3 `_icall_result` never typing f64                         -> RED I3 (exit 2), A1-A6 (tcyr I8-I11 I14)
+#   M-I4 `_icall_result` ignoring the last argument's type        -> RED A1-A6 (tcyr I13)
+#   M-I5 `_icall_result` ignoring the callee (`cfi` / `: f64`)    -> RED A1-A6 (tcyr I12)
+#   M-I6 `_lfa_load` not recording `_lfa_end` (no static callee)   -> RED I3, A1-A6 (tcyr I8-I11 I14)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -201,6 +207,7 @@ exits f06 1 "F6: if (&z) after y = y - 3 (0 on x86)" "fn g(y): i64 { var z = 0; 
 NUM='struct Num { a; b; }\nfn Num_add(x: Num, y) { return 100; }\nfn id1(x) { return 7; }\n'
 exits i01 8 "I1: fncall1(&id1, n) + 1 (the filed repro: 100)" "include \"lib/fnptr.cyr\"\n${NUM}fn main() { var n: Num = Num { 1, 2 }; return fncall1(&id1, n) + 1; }$E"
 exits i02 1 "I2: mulh64(3, n) + 1 (the filed repro: 100)" "${NUM}fn main() { var n: Num = Num { 1, 2 }; return mulh64(3, n) + 1; }$E"
+exits i03 1 "I3: fncall1(&dbl, d) + 1.0, dbl: f64 and d: f64, is an f64 add (6.7.5: 7.0; E-2: integer add)" "include \"lib/fnptr.cyr\"\nfn dbl(x: f64): f64 { return x * 2.0; }\nfn main(): i64 { var d: f64 = 3.0; var r = fncall1(&dbl, d) + 1.0; var t: f64 = 7.0; if (r == t) { return 1; } return 2; }$E"
 P3S='struct P3 { x; y; z; }\nfn rd3(p: *P3) { return p.z; }\nfn mk3(v): P3 { var t: P3 = P3 { v, v, v }; return t; }\n'
 S1S='struct S1 { v; }\nfn rd1(p: *S1) { return p.v; }\nfn mk1(v): S1 { var t: S1; t.v = v; return t; }\n'
 exits p01 3 "P1: rd3((a)) (the filed repro: SIGSEGV)" "${P3S}fn main() { var a: P3 = P3 { 1, 2, 3 }; return rd3((a)); }$E"
