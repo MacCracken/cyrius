@@ -1,0 +1,118 @@
+# default_named_args_values.tcyr — 6.7.7 (B6): parameter defaults and named arguments, at run time
+# on every backend.
+#
+# `fn f(a, b = 2, c: f64 = 1.5)`: a default is a compile-time constant (what a top-level
+# `const X = ..;` takes, minus a `{`) on a TRAILING parameter, evaluated once at the end of pass 1
+# in the definition's own scope. Pass 1 records every definition's defaults — a fn defined below
+# its call, a method, a generic, a const fn, a fn inside a top-level block — and both passes step
+# over a default with `( [ {` balance only (`b = A < B`: `<` is an operator there). The refusals,
+# the #inline rule and the per-backend legs are tests/gates/frontend/default_named_args_checked.sh.
+# Callees weigh their arguments by position (`a * 100 + b * 10 + c`), so a swap reads wrong.
+#
+# ⚠ CROSS-HOST: the arguments travel through each backend's call convention (SysV 6 / Win64 4 /
+# aarch64 8 registers, then the stack; cx), f64 / f32 as int-class bits.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+include "lib/assert.cyr"
+
+const K = 5;
+const A = 1;
+const B = 2;
+enum Col { RED, GREEN, BLUE }
+struct Pt { x; y; }
+struct Big { a; b; c; }
+const fn sq(n): i64 { return n * n; }
+const fn sq2(x, y): i64 { return x * y; }
+
+# ── definitions: every accepted default class, called with every argument ──────────────────────
+fn w3(a, b = 2, c = 3): i64 { return a * 100 + b * 10 + c; }
+fn consts(a, b = K * 2, c = Col.BLUE, d = sizeof(Pt), e = sq(3), g = 0 - 1, h = -1): i64 {
+    return a * 1000000 + b * 100000 + c * 10000 + d * 1000 + e * 100 + g * 10 + h;
+}
+fn typed(x: f64 = 1.5, y: f32 = 0.1, t: bool = true, u: u8 = 200,
+  p: *u8 = 0, cs: cstring = "c", s = "hi"): i64 {
+    var r = f64_to(f64_mul(x, 2.0)) * 1000 + u;
+    if (t) { r = r + 100000; }
+    if (p == 0) { r = r + 1000000; }
+    return r + load8(cs) - 97 + load8(s) - 104;
+}
+fn lt_dflt(a, b = A < B, c = 4): i64 { return a * 100 + b * 10 + c; }
+const fn cf(a, b = sq2(1, 2), c = 3): i64 { return a * 100 + b * 10 + c; }
+
+# A default holding `<` in a bounded generic and an inherent impl (each walker skips it whole).
+trait Show { fn show(self): i64; }
+impl Show for Pt { fn show(self): i64 { return self.x; } }
+impl Pt { fn m(self, k = A < B, j = 3): i64 { return self.x * 100 + k * 10 + j; } }
+fn gen<T: Show>(v: T, b = A < B, c = 4): i64 { return v.show() * 100 + b * 10 + c; }
+
+# A struct-returning callee with a default.
+fn mk(a, b = 7): Big { var r: Big = Big { a, b, a + b }; return r; }
+
+# Const contexts: a const fn with a default holding a comma, at full arity.
+const CN = cf(1, 2, 3);
+var CARR: i64[cf(0, 0, 4)];
+#assert cf(2, 1, 5) == 215, "a const fn with defaults in #assert"
+enum EV { EV0 = cf(0, 1, 2), EV1 }
+
+# Tail position: a full-arity `return f(..)` to a defaulted fn.
+fn down(n, acc = 0): i64 {
+    if (n == 0) { return acc; }
+    return down(n - 1, acc + 2);
+}
+
+fn direct(): i64 {
+    assert_eq(w3(1, 5, 7), 157, "P1: every argument passed to a defaulted fn");
+    assert_eq(consts(1, 2, 3, 4, 5, 6, 7), 1234567, "P2: const / enum / sizeof / const fn / negative defaults");
+    var ty = typed(2.5, 0.5, false, 9, 0, "d", "i");
+    assert_eq(ty, 1005013, "P3: f64 / f32 / bool / u8 / *u8 / cstring / string defaults");
+    assert_eq(lt_dflt(1, 0, 5), 105, "P4: a default holding `<` (the walkers' operator rule)");
+    var p = Pt { 6, 1 };
+    assert_eq(p.m(1, 2), 612, "P5: an inherent method with defaults (`A < B`), by the dot form");
+    assert_eq(Pt_m(&p, 0, 9), 609, "P6: the same method as Pt_m(&p, ..)");
+    assert_eq(gen(p, 0, 8), 608, "P7: a bounded generic with a `<` default, instantiated on a struct");
+    var b: Big = mk(3, 4);
+    assert_eq(b.a * 100 + b.b * 10 + b.c, 347, "P8: a struct-returning callee with a default");
+    assert_eq(down(100000, 0), 200000, "P9: a full-arity tail call to a defaulted fn, 100000 deep");
+    var cl = |n| w3(n, 1, 1);
+    assert_eq(fncall1(cl, 4), 411, "P10: a closure body calling a defaulted fn");
+    return 0;
+}
+
+fn consts_ctx(): i64 {
+    assert_eq(CN, 123, "C1: const N = cf(..) (a default holding a comma)");
+    CARR[3] = 5;
+    assert_eq(CARR[3], 5, "C2: an array sized by a const fn with defaults");
+    assert_eq(EV0, 12, "C3: an enum value from a const fn with defaults");
+    var s = 0;
+    switch (215) { case cf(2, 1, 5): s = 1; default: s = 2; }
+    assert_eq(s, 1, "C4: a case label from a const fn with defaults");
+    assert_eq(cf(4, 5, 6), 456, "C5: a const fn with defaults, called at run time");
+    return 0;
+}
+
+# Forward calls: pass 1 records a definition below its call — its parameter count past the
+# default, and its `: f64` return (FWD-pc).
+fn forward(): i64 {
+    var r: f64 = fwd_f(3, 1) * 2.0;
+    assert_eq(f64_to(r), 8, "F1: a forward call to fn fwd_f(a, b = 1): f64, in f64 arithmetic");
+    assert_eq(fwd_w(1, 2, 3), 123, "F2: a forward call to a defaulted fn");
+    assert_eq(blk_g(5, 6), 56, "F3: a forward call to a defaulted fn inside a top-level block");
+    return 0;
+}
+fn fwd_f(a, b = 1): f64 { return f64_from(a + b); }
+fn fwd_w(a, b = 8, c = 9): i64 { return a * 100 + b * 10 + c; }
+
+fn run(): i64 {
+    alloc_init();
+    direct();
+    consts_ctx();
+    forward();
+    return 0;
+}
+var r0 = run();
+if (1 == 1) {
+    fn blk_g(a, b = 1): i64 { return a * 10 + b; }
+}
+var rr = assert_summary();
+syscall(60, rr);
