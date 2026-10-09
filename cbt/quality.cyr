@@ -907,11 +907,19 @@ fn cmd_header(arg): i64 {
         if (ne >= le) { continue; }
         if (load8(hbuf + ne) != 40) { continue; }
 
-        # Extract params between ( and )
+        # Extract params between ( and ) — the `)` that closes the list, at paren depth 0. A tuple
+        # parameter's type nests one (`t: (i64, i64)`); the first `)` cut the list inside it and
+        # printed the element type as a parameter (`cyr_val i64`). CHANGELOG [6.7.7]
         var ps = ne + 1;
         var pe = ps;
+        var pdep = 0;
         while (pe < le) {
-            if (load8(hbuf + pe) == 41) { break; }
+            var bc = load8(hbuf + pe);
+            if (bc == 41) {
+                if (pdep == 0) { break; }
+                pdep = pdep - 1;
+            }
+            if (bc == 40) { pdep = pdep + 1; }
             pe = pe + 1;
         }
 
@@ -942,13 +950,19 @@ fn cmd_header(arg): i64 {
                     if (load8(hbuf + pne - 1) != 32) { break; }
                     pne = pne - 1;
                 }
-                # Skip type annotation if present
-                if (pi < pe) { if (load8(hbuf + pi) == 58) {
-                        while (pi < pe) {
-                            if (load8(hbuf + pi) == 44) { break; }
-                            pi = pi + 1;
-                        }
-                    } }
+                # Skip the rest of the parameter — its type annotation — to the `,` at paren
+                # depth 0: a tuple type's own commas are inside it, and a tuple parameter is one
+                # `cyr_val` (it travels as an address). Every byte up to that `,` is stepped, so a
+                # `)` the name scan stopped at inside the list (malformed source) cannot stall the
+                # walk now that the list runs past the first `)`. CHANGELOG [6.7.7]
+                var tdep = 0;
+                while (pi < pe) {
+                    var tc = load8(hbuf + pi);
+                    if (tc == 44 && tdep <= 0) { break; }
+                    if (tc == 40) { tdep = tdep + 1; }
+                    if (tc == 41) { tdep = tdep - 1; }
+                    pi = pi + 1;
+                }
                 if (pne > pns) {
                     if (first == 0) { sys_write(STDOUT_FD, ", ", 2); }
                     sys_write(STDOUT_FD, "cyr_val ", 8);

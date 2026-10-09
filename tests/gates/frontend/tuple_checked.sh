@@ -63,6 +63,14 @@
 #      R5e-R5h a const fn's tuple parameter (used, unused, called in a const, after a `Pair<i64, i64>` one), refused
 #         once at its definition; R5i the other const fn parameters untouched
 #      CL1-CL2 re-assigning a whole captured tuple is "undefined variable", as any captured assignment is
+#   T7 — the tools that read a signature by hand (rows T1 / T2; the CLI and the LSP built from this tree with $CC):
+#      T1 `cyrius header` (cbt/quality.cyr cmd_header) cut the parameter list at its FIRST `)` and skipped a type to
+#         its first `,`: `fn g(t: (i64, i64), x)` printed `cyr_val g(cyr_val t, cyr_val i64);`. A tuple parameter is
+#         one `cyr_val` (it travels as an address) and the parameters after it are kept; T1b with the list
+#         read past the first `)`, a malformed one (`fn bad(a (b), c)`) still ends — the walk steps every byte
+#      T2 cyrius-lsp's semantic tokens (`_lsp_collect_locals`): a tuple type's `,` reset the walk to "parameter
+#         name" and its `)` ended the signature — `i64` / `bool` were coloured as parameters (all through the file:
+#         the table is by name) and the parameters after the tuple were not
 #   X  `--syntax-only` (cyrius lint's pre-pass): a fn with a tuple parameter, and a call to a
 #      sibling file's fn with a tuple argument, report nothing; X4 literals, a sibling's fn given one;
 #      X5 sibling targets and callees in captures and `a, b = f()`, `return t;`
@@ -176,6 +184,16 @@
 # THE EVIDENCE BEYOND THESE ROWS (T6, 2026-10-09): the same 1034 files compile byte-identical — stdout, stderr and exit
 # code; default, CYRIUS_DCE=1 and --syntax-only — with the T6 compiler and the T5b one, and the aarch64, cx and PE
 # compilers likewise over all 538 tests/tcyr files (tuple_values.tcyr's new sections included: T6 adds refusals only).
+# T7 (2026-10-09; the same recipe, run FROM the scratch copy — the rows build the CLI and the LSP from its cbt/ and
+# programs/; each mutant measured RED, the real tree 295/295):
+#   MT1a cmd_header's list end back to the first `)`   -> T1 (`g(cyr_val t)`: the parameters after the tuple lost)
+#   MT1b the parameter skip back to the first `,`       -> T1 (`g(cyr_val t, cyr_val i64, cyr_val x)`)
+#   MT1c the skip only after a `:` (the old guard)       -> T1b (a `)` the name scan stops at is never stepped: the
+#        walk never ends, timeout)
+#   MT2a `_lsp_collect_locals` never counts a `(` in a type -> T2 (`i64` / `bool` parameters, `u` / `z` lost)
+#   MT2b its `,` resets to "param name" at any depth    -> T2 (the same)
+#   MT2c its `)` ends the signature at any depth        -> T2 (`u` / `z` lost)
+# T7 changes no src/: the compiler is T6's, byte for byte.
 # Defensive, no killing row (named): `_tok_start` set to the digit before LEXID — today every
 # diagnostic at a selector points at the token AFTER it, so the IDENT's own offset is not observed;
 # the guard's `]` (29) — no valid program today follows a subscript with `.field`, so `a[1].0` is
@@ -746,6 +764,49 @@ printf 'fn first<T>(x: T): i64 { return 7; }\nfn f(): i64 {\n    var t = (5, 9);
 if [ "$(grep -c '^error' "$T/x07.err")" -eq 1 ] && grep -q "expected ')', got ';'" "$T/x07.err"; then ok "X7: --syntax-only: the syntax error after \`first(t)\` in its statement is reported, once"
 else bad "X7: --syntax-only: $(grep '^error' "$T/x07.err" | head -2 | tr '\n' '|') (want one \"expected ')', got ';'\")"; fi
 
+# ── T7: the tools that read a signature by hand — `cyrius header` and the LSP (rows T1 / T2) ────────
+# Each tool is built from THIS tree with $CC (a build that fails or yields a tiny file is a red row:
+# cycc on empty stdin exits 0) and run in a scratch dir with no cyrius.cyml and a throwaway HOME /
+# CYRIUS_HOME, so it never re-execs a pinned toolchain nor reads the live store.
+mkdir -p "$T/tl" "$T/tl/home" "$T/tl/ch"
+tool_build() {   # <out> <source> -> 0 when built
+    "$CC" < "$2" > "$1" 2> "$1.err" && [ "$(wc -c < "$1")" -gt 20000 ] && chmod +x "$1"
+}
+printf 'fn g(t: (i64, i64), x): i64 { return t.0 + x; }\npub fn h(a, w: (f64, i64, bool), z): (i64, i64) { return (a, z); }\nfn k(): (i64, i64) { return (1, 2); }\nfn m(p: (i64, i64)): i64 { return p.1; }\nfn n(a, b: i64): i64 { return a + b; }\n' > "$T/tl/tup.cyr"
+if tool_build "$T/tl/cyrius" cbt/cyrius.cyr; then
+    rc=0; (cd "$T/tl" && HOME="$T/tl/home" CYRIUS_HOME="$T/tl/ch" timeout 30 ./cyrius header tup.cyr > hdr.out 2> hdr.err) || rc=$?
+    got=$(grep '^cyr_val ' "$T/tl/hdr.out" | tr '\n' '|')
+    want='cyr_val g(cyr_val t, cyr_val x);|cyr_val h(cyr_val a, cyr_val w, cyr_val z);|cyr_val k(void);|cyr_val m(cyr_val p);|cyr_val n(cyr_val a, cyr_val b);|'
+    if [ "$rc" -eq 0 ] && [ "$got" = "$want" ]; then ok "T1: \`cyrius header\`: a tuple parameter is one \`cyr_val\`, the parameters after it kept (5 prototypes)"
+    else bad "T1: \`cyrius header\` rc $rc: got [$got]"; fi
+    # T1b: the list now runs past the first `)`, so a `)` the name scan stops at inside it (malformed source,
+    # which the header verb does not compile) must still be stepped: the walk finishes, the fn after it is read.
+    printf 'fn bad(a (b), c): i64 { return 0; }\nfn after(z): i64 { return z; }\n' > "$T/tl/bad.cyr"
+    rc=0; (cd "$T/tl" && HOME="$T/tl/home" CYRIUS_HOME="$T/tl/ch" timeout 10 ./cyrius header bad.cyr > bad.out 2> bad.err) || rc=$?
+    if [ "$rc" -eq 0 ] && grep -qxF 'cyr_val after(cyr_val z);' "$T/tl/bad.out"; then ok "T1b: \`cyrius header\`: a malformed parameter list still ends (the next fn read)"
+    else bad "T1b: \`cyrius header\` on a malformed parameter list: rc $rc (124: it never finished)"; fi
+else bad "T1: could not build cbt/cyrius.cyr: $(head -1 "$T/tl/cyrius.err")"; fi
+# T2: the semantic tokens of a file whose fns take a tuple, decoded to absolute `line:col:len:type` (type 6 is
+# `parameter` in the legend; 5 `keyword`). The fixture's parameters are all one letter, so a longer type-6 token is
+# a type name taken for a parameter.
+printf 'fn g(t: (i64, i64), u): i64 {\n    return t.0 + u;\n}\nfn h(a, w: (f64, i64, bool), z) { return a + w.0 + z; }\n' > "$T/tl/st.cyr"
+if tool_build "$T/tl/lsp" programs/cyrius-lsp.cyr; then
+    lsp_frame() { printf 'Content-Length: %d\r\n\r\n%s' "$(printf '%s' "$1" | wc -c | tr -d ' ')" "$1"; }
+    { lsp_frame '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}'
+      lsp_frame '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file://'"$T/tl/st.cyr"'","languageId":"cyrius","version":1,"text":""}}}'
+      lsp_frame '{"jsonrpc":"2.0","id":2,"method":"textDocument/semanticTokens/full","params":{"textDocument":{"uri":"file://'"$T/tl/st.cyr"'"}}}'
+      lsp_frame '{"jsonrpc":"2.0","id":99,"method":"shutdown"}'; } > "$T/tl/lsp.in"
+    # No `cyrius` on the child's PATH: didOpen's diagnostics compile is not what this row tests.
+    (cd "$T/tl" && PATH=/usr/bin:/bin HOME="$T/tl/home" timeout 30 ./lsp < lsp.in > lsp.out 2> lsp.run.err) || :
+    grep -o '"id":2,"result":{"data":\[[0-9,]*\]' "$T/tl/lsp.out" | sed 's/.*\[//; s/\]$//' | tr ',' '\n' | \
+        awk 'NF { a[n++] = $1 } END { l = 0; c = 0; for (i = 0; i + 4 < n; i += 5) { if (a[i] > 0) { l += a[i]; c = a[i + 1] } else { c += a[i + 1] }; print l ":" c ":" a[i + 2] ":" a[i + 3] } }' > "$T/tl/st.tok"
+    tk() { if grep -qx "$1" "$T/tl/st.tok"; then echo y; else echo n; fi; }
+    got="$(tk 0:5:1:6)$(tk 0:20:1:6)$(tk 1:17:1:6)$(tk 3:29:1:6)$(tk 3:51:1:6)"
+    long=$(awk -F: '$4 == 6 && $3 > 1' "$T/tl/st.tok" | tr '\n' ' ')
+    if [ "$got" = yyyyy ] && [ -z "$long" ]; then ok "T2: cyrius-lsp: \`u\` / \`z\` after a tuple parameter are parameters, \`i64\` / \`bool\` are not"
+    else bad "T2: cyrius-lsp: t,u,u-use,z,z-use as parameters = $got (want yyyyy); type names taken for parameters: [$long]"; fi
+else bad "T2: could not build programs/cyrius-lsp.cyr: $(head -1 "$T/tl/lsp.err")"; fi
+
 # ── A: tests/tcyr/crossos/tuple_values.tcyr on every pipeline and target ───────────────────────────
 TV="$ROOT/tests/tcyr/crossos/tuple_values.tcyr"
 want=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TV")
@@ -794,4 +855,4 @@ else echo "  SKIP A7 PE — wine not installed"; skips=$((skips + 1)); fi
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: tuple_checked — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: tuple_checked — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: tuple_checked — tuples: the lexer (L); the type in a var, a struct field and a parameter, \`t.N\`, copies (S, P); the literal in its five positions, wrapped, in both zones and a kernel build (C, S1, S4, K1, PW, AS); every open shape refused by name (R1-R13, R17, R21); the bridge — captures, \`return t;\`, \`a, b = f();\` — and its refusals (R14-R20, AS2); a captured tuple re-assigned whole (CL); --syntax-only silent (X); tuple_values.tcyr on x86 / IR / DCE / aarch64 / cx / PE (A)"
+echo "PASS: tuple_checked — tuples: the lexer (L); the type in a var, a struct field and a parameter, \`t.N\`, copies (S, P); the literal in its five positions, wrapped, in both zones and a kernel build (C, S1, S4, K1, PW, AS); every open shape refused by name (R1-R13, R17, R21); the bridge — captures, \`return t;\`, \`a, b = f();\` — and its refusals (R14-R20, AS2); a captured tuple re-assigned whole (CL); \`cyrius header\` and the LSP read a tuple parameter (T1, T2); --syntax-only silent (X); tuple_values.tcyr on x86 / IR / DCE / aarch64 / cx / PE (A)"

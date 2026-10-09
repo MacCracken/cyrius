@@ -1892,7 +1892,9 @@ fn _lsp_brace_next(buf, p, total): i64 {
 #   param-after-name → on `:` → type-annotation mode (no register)
 #                    → on `,` → back to param-name
 #                    → on `)` → exit signature
-#   type-annotation → on `,` → param-name; on `)` → exit
+#   type-annotation → on `,` → param-name; on `)` → exit — both only
+#                     at paren depth 0: a tuple type `t: (i64, i64)`
+#                     nests one, and its own `,` / `)` are inside it (6.7.7)
 # Scope is intentionally NOT tracked: a `var x` in one fn and a
 # different `var x` in another both get colored as `variable` —
 # the visual outcome is identical so the simplification is free.
@@ -1903,6 +1905,11 @@ fn _lsp_collect_locals(fb, ftotal): i64 {
     # 3=expect param name, 4=after param name,
     # 5=type annotation
     var var_pending = 0;   # 1 = just saw `var`, next ident is local
+    # 6.7.7: `(` nesting inside a parameter's type (state 5). A tuple type `t: (i64, i64)` has
+    # its own `,` and `)`: at any depth they reset to "param name" / ended the signature, so
+    # `i64` was coloured as a parameter and the parameters after the tuple were lost.
+    # CHANGELOG [6.7.7]
+    var sig_depth = 0;
     while (p < ftotal) {
         var c = load8(fb + p);
         if (c == 10) { p = p + 1; }
@@ -1968,12 +1975,16 @@ fn _lsp_collect_locals(fb, ftotal): i64 {
         else {
             if (c == 40) {                            # `(`
                 if (sig_state == 2) { sig_state = 3; }
+                if (sig_state == 5) { sig_depth = sig_depth + 1; }
             } elif (c == 41) {                        # `)`
-                if (sig_state >= 3) { sig_state = 0; }
+                if (sig_state == 5 && sig_depth > 0) { sig_depth = sig_depth - 1; }
+                elif (sig_state >= 3) { sig_state = 0; }
             } elif (c == 58) {                        # `:`
-                if (sig_state == 4) { sig_state = 5; }
+                if (sig_state == 4) { sig_state = 5; sig_depth = 0; }
             } elif (c == 44) {                        # `,`
-                if (sig_state >= 3) { sig_state = 3; }
+                if (sig_state >= 3) {
+                    if (sig_state != 5 || sig_depth == 0) { sig_state = 3; }
+                }
             } elif (c == 123) {                       # `{`
                 # Defensive: a `{` outside the signature ends any
                 # stale signature state (covers `fn name() { ... }`
