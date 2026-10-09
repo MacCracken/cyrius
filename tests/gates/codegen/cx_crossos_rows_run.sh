@@ -357,8 +357,8 @@ else
 fi
 
 echo "R7 — tuple_values.tcyr (6.7.7, B4), native then cxvm, the count derived from the source:"
-tcyr_native tests/tcyr/crossos/tuple_values.tcyr 191
-tcyr_cx     tests/tcyr/crossos/tuple_values.tcyr 191
+tcyr_native tests/tcyr/crossos/tuple_values.tcyr 203
+tcyr_cx     tests/tcyr/crossos/tuple_values.tcyr 203
 
 WANT=14
 if [ "$fail" -ne 0 ]; then echo "FAIL: cx_crossos_rows_run — $fail row(s) red, $pass green"; exit 1; fi

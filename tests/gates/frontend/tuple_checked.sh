@@ -76,6 +76,10 @@
 #      X5 sibling targets and callees in captures and `a, b = f()`, `return t;`
 #      X6 a tuple given to a generic, a const fn's tuple parameter: silent (lint judges no type); X7 a syntax
 #      error after that call in its statement is still reported (the compile's refusal latches; lint must not)
+#   I  with B6's default and named arguments (the 6.7.7 integration, b4_plan §9): I1 a tuple parameter beside a
+#      defaulted one, filled, named, reordered, and forward; I2 a named tuple-literal argument in a direct call and
+#      two tail calls (objdump: both `call`s); I3 / I3b a tuple parameter takes no default; I4 / I4b a named
+#      multi-value argument into a tuple parameter: bind it first
 #   A  tests/tcyr/crossos/tuple_values.tcyr with its full assertion count (derived from the source)
 #      on x86 (default, CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu), cx (cxvm), PE
 #      (wine, a private prefix). A leg whose tool is missing is a SKIP that names it (exit 77).
@@ -219,6 +223,16 @@
 #   Mz7 `_tup_ret_wrap` returns 0 -> R9n, R9s, PW5, PW7 (the general text)
 #   Mz7b `_tup_ret_wrap` without its `_pwrap_k` test (any literal right after `return (`) -> R9t (the return text)
 #   Mz8 `_ret_tup_err` without its arity arm -> R14q, R14r (the declaration advice)
+# 6.7.7 INTEGRATION (B4 x B6, 2026-10-09; the same recipe, mutants of the merged src/; the I rows and the tcyr on x86):
+#   MI1 `_prescan_params_scan`'s tuple arm and its non-name type arm two `if`s again (the hunk-picked merge) ->
+#       I1, I2, I4, I4b (pass 1 counts `t: (i64, i64), k` as one parameter: B6's two-pass backstop), the tcyr
+#       (`tv_later`: "expects 1 argument, got 2")
+#   MI2 `_pd_call_fills` without its named-call line (a full-arity named tail call reaches the tail arm) -> I2,
+#       I4b ("undefined variable" at the label), the tcyr
+#   MI3 `_ce_factor`'s tuple-literal arm never taken -> I3 ("expected ')', got ','")
+#   MI3b `_pd_pclass` without its `(` arm -> I3b BUILDS (a tuple parameter given the default 0)
+#   MI4 `_pd_arg_at` pushes the bare value, bypassing `_call_arg_one`'s gates (b4_plan H19) -> I1 (a named
+#       tuple variable "used as a value"), I2 (a named literal refused as a stray), I4 / I4b BUILD, the tcyr
 # Defensive, no killing row (named): `_tok_start` set to the digit before LEXID — today every
 # diagnostic at a selector points at the token AFTER it, so the IDENT's own offset is not observed;
 # the guard's `]` (29) — no valid program today follows a subscript with `.field`, so `a[1].0` is
@@ -886,10 +900,45 @@ if tool_build "$T/tl/lsp" programs/cyrius-lsp.cyr; then
     else bad "T2: cyrius-lsp: t,u,u-use,z,z-use as parameters = $got (want yyyyy); type names taken for parameters: [$long]"; fi
 else bad "T2: could not build programs/cyrius-lsp.cyr: $(head -1 "$T/tl/lsp.err")"; fi
 
+# ── I: with B6's default and named arguments (the integration rows, b4_plan §9) ─────────────────────
+# I1 a tuple parameter beside a defaulted one: `f((1, 2))` filled, `f(u, k: 5)` named, the tuple itself
+# named (`f(t: u)`, `f(k: 7, t: u)`: its address, through the named path's parameter gates), and as a
+# FORWARD call (pass 1 steps the tuple's type once — a second step took the list's own `,` and counted
+# one parameter: "'g' expects 1 argument"); I2 a named argument whose value is a tuple literal, in a
+# direct call and a tail call — the value, and (objdump) the tail calls are `call`s, never a `jmp`;
+# I3 a tuple parameter takes no default: `= (1, 2)` is a tuple in a const context, `= 0` B6's
+# by-type refusal; I4 a named multi-value argument into a tuple parameter is refused as a positional
+# one is ("bind it first"), in order and reordered. The runtime rows are tuple_values.tcyr's I1 / I2.
+exits i01 42 "I1: \`f((1, 2))\`, \`f(u, k: 5)\` and \`f(k: 7, t: u)\` beside a defaulted parameter, backward and forward" 'fn f(t: (i64, i64), k = 2): i64 { return t.0 * 100 + t.1 * 10 + k; }\nfn main(): i64 {\n    var u: (i64, i64) = (3, 4);\n    if (f((1, 2)) != 122) { return 1; }\n    if (f(u, k: 5) != 345) { return 2; }\n    if (g((1, 2)) != 5122) { return 3; }\n    if (g(u, k: 5) != 5345) { return 4; }\n    if (u.0 * 10 + u.1 != 34) { return 5; }\n    if (f(t: u) != 342) { return 6; }\n    if (f(k: 7, t: u) != 347) { return 7; }\n    return 42;\n}\nfn g(t: (i64, i64), k = 2): i64 {\n    t.0 = t.0 + 50;\n    return t.0 * 100 + t.1 * 10 + k;\n}\nsyscall(60, main());\n'
+printf 'fn f(t: (i64, i64), x = 1, y = 9): i64 { return t.0 * 1000 + t.1 * 100 + x * 10 + y; }\nfn tl(n): i64 { return f(t: (n, 2), x: 3); }\nfn tr(n): i64 { return f(y: 4, t: (n, 5), x: 6); }\nfn tend(): i64 { return 0; }\nfn main(): i64 {\n    if (f(t: (1, 2), x: 3) != 1239) { return 1; }\n    if (tl(1) != 1239) { return 2; }\n    if (tr(5) != 5564) { return 3; }\n    return 42 + tend();\n}\nsyscall(60, main());\n' > "$T/i02.cyr"
+rc=0; CYRIUS_SYMS="$T/i02.syms" "$CC" < "$T/i02.cyr" > "$T/i02.bin" 2> "$T/i02.err" || rc=$?
+if [ "$rc" -ne 0 ]; then bad "I2: the probe did not build: $(grep '^error' "$T/i02.err" | head -1)"
+else
+    chmod +x "$T/i02.bin"; got=0; timeout 10 "$T/i02.bin" || got=$?
+    [ "$got" -eq 42 ] && ok "I2: a named tuple literal argument, direct and in two tail calls (in order, reordered): exit 42" || bad "I2: exit $got, want 42"
+    if command -v objdump > /dev/null 2>&1; then
+        f=$(awk '$2 == "f" { print $1 }' "$T/i02.syms"); a=$(awk '$2 == "tl" { print $1 }' "$T/i02.syms"); e=$(awk '$2 == "tend" { print $1 }' "$T/i02.syms")
+        if [ -z "$f" ] || [ -z "$a" ] || [ -z "$e" ]; then bad "I2: the symbol map does not name f / tl / tend"
+        else
+            fs=$(printf '%x' "0x$f")
+            nc=$(objdump -d --start-address=0x"$a" --stop-address=0x"$e" "$T/i02.bin" | grep -cE "call +0x$fs\b" || true)
+            nj=$(objdump -d --start-address=0x"$a" --stop-address=0x"$e" "$T/i02.bin" | grep -cE "jmp +0x$fs\b" || true)
+            if [ "$nc" -eq 2 ] && [ "$nj" -eq 0 ]; then ok "I2: ... both tail calls are calls (the literal's temp is in the frame a jmp frees)"
+            else bad "I2: tl / tr have $nc call(s) and $nj jmp(s) to f, want 2 and 0"; fi
+        fi
+    else echo "  SKIP I2's objdump row: no objdump"; skips=$((skips + 1)); fi
+fi
+IU='fn main(): i64 { var u: (i64, i64) = (1, 2); return f(u); }\nsyscall(60, main());\n'
+refused i03 "a tuple in a const context" "I3: \`fn f(t: (i64, i64) = (1, 2))\` (a tuple parameter takes no default)" "fn f(t: (i64, i64) = (1, 2)): i64 { return t.0; }\n${IU}"
+refused i03b "parameter 't' of 'f' is a tuple: it takes no default" "I3b: \`fn f(t: (i64, i64) = 0)\`" "fn f(t: (i64, i64) = 0): i64 { return t.0; }\n${IU}"
+IG='fn p(): (i64, i64) { return (1, 2); }\nfn g(t: (i64, i64), k = 0): i64 { return t.0 + t.1 + k; }\n'
+refused i04 "a multi-value call 'p' is not a tuple argument - bind it first" "I4: \`g(t: p())\`, a named multi-value argument into a tuple parameter" "${IG}fn main(): i64 { return g(t: p()); }\nsyscall(60, main());\n"
+refused i04b "a multi-value call 'p' is not a tuple argument - bind it first" "I4b: ... reordered, \`g(k: 1, t: p())\`" "${IG}fn main(): i64 { return g(k: 1, t: p()); }\nsyscall(60, main());\n"
+
 # ── A: tests/tcyr/crossos/tuple_values.tcyr on every pipeline and target ───────────────────────────
 TV="$ROOT/tests/tcyr/crossos/tuple_values.tcyr"
 want=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TV")
-[ "$want" -ge 191 ] || bad "A0: only $want assertions derived from $TV (floor 191)"
+[ "$want" -ge 203 ] || bad "A0: only $want assertions derived from $TV (floor 203)"
 tcyr_ok() {   # <label> <output file> <exit> <want>
     if [ "$3" -eq 0 ] && grep -q "^$4 passed, 0 failed" "$2"; then ok "$1: $4 passed"
     else bad "$1: exit $3, $(grep -E 'passed|FAIL' "$2" | tr -d '\r' | head -3 | tr '\n' '|')"; fi
@@ -940,4 +989,4 @@ else echo "  SKIP A7 PE — wine not installed"; skips=$((skips + 1)); fi
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: tuple_checked — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: tuple_checked — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: tuple_checked — tuples: the lexer (L); the type in a var, a struct field and a parameter, \`t.N\`, copies (S, P); the literal in its five positions, wrapped, in both zones and a kernel build (C, S1, S4, K1, PW, AS); every open shape refused by name (R1-R13, R17, R21); the bridge — captures, \`return t;\`, \`a, b = f();\` — and its refusals (R14-R20, AS2); the zone's pass 1 reading a generic call by its tokens (ZG); a captured tuple re-assigned whole (CL); \`cyrius header\` and the LSP read a tuple parameter (T1, T2); --syntax-only silent (X); tuple_values.tcyr on x86 / IR / DCE / aarch64 / cx / PE (A)"
+echo "PASS: tuple_checked — tuples: the lexer (L); the type in a var, a struct field and a parameter, \`t.N\`, copies (S, P); the literal in its five positions, wrapped, in both zones and a kernel build (C, S1, S4, K1, PW, AS); every open shape refused by name (R1-R13, R17, R21); the bridge — captures, \`return t;\`, \`a, b = f();\` — and its refusals (R14-R20, AS2); the zone's pass 1 reading a generic call by its tokens (ZG); a captured tuple re-assigned whole (CL); \`cyrius header\` and the LSP read a tuple parameter (T1, T2); --syntax-only silent (X); with default and named arguments (I1-I4); tuple_values.tcyr on x86 / IR / DCE / aarch64 / cx / PE (A)"

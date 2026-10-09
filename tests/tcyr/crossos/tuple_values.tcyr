@@ -32,7 +32,9 @@
 # pair fails), closures (a closure captures a tuple as it captures a struct: a by-value copy taken when
 # it is made — later writes unseen, its own element writes kept in its copy, which outlives the frame;
 # a captured tuple passed on, nested, copied out, its element kinds kept), defers (a defer reads a
-# tuple as it is at the exit; the values a fn returns are taken before its defers write the tuple).
+# tuple as it is at the exit; the values a fn returns are taken before its defers write the tuple),
+# dnamed (with default and named arguments, the 6.7.7 integration: a tuple parameter beside a defaulted
+# one — filled, named, reordered, forward — and a named tuple-literal argument, direct and in tail calls).
 
 include "lib/assert.cyr"
 include "lib/result.cyr"
@@ -838,6 +840,41 @@ fn tv_defers(): i64 {
     return 0;
 }
 
+# --- defaults and named arguments (6.7.7 integration: B4 tuples x B6 default / named arguments) ---
+# A tuple parameter beside a defaulted one takes every argument form: a literal or a variable,
+# positional or named, in or out of order, with the default filled — each through the one
+# marshaller's struct-address gate, so the callee copies the caller's tuple (its writes never reach
+# it), never its first word. A forward call counts the tuple parameter as ONE parameter (pass 1 steps
+# its type once). A named argument's value may be a tuple literal, in a direct call and in a tail
+# call — which is an ordinary call: it names (and here fills), and the literal's temp is this frame's.
+fn tv_dn(t: (i64, i64), k = 2): i64 { return t.0 * 100 + t.1 * 10 + k; }
+fn tv_dn3(t: (i64, i64), x = 1, y = 9): i64 { return t.0 * 1000 + t.1 * 100 + x * 10 + y; }
+fn tv_dntail(n): i64 {
+    if (n > 0) { return tv_dn3(t: (n, 2), x: 3); }
+    return tv_dn3(y: 4, t: (n + 5, 5), x: 6);
+}
+fn tv_dnfull(n): i64 { return tv_dn3(t: (n, 2), x: 3, y: 4); }
+fn tv_dnamed(): i64 {
+    var u: (i64, i64) = (3, 4);
+    assert_eq(tv_dn((1, 2)), 122, "I1: a tuple literal argument beside a defaulted parameter, the default filled");
+    assert_eq(tv_dn(u), 342, "I1: ... a tuple variable, the default filled");
+    assert_eq(tv_dn(u, k: 5), 345, "I1: ... and a named argument after it");
+    assert_eq(tv_dn(t: u), 342, "I1: ... the tuple itself named, the default filled");
+    assert_eq(tv_dn(k: 7, t: (5, 6)), 567, "I1: ... reordered, a tuple literal named last");
+    assert_eq(tv_dnlater((1, 2)), 5122, "I1: a forward call to a fn with a tuple and a defaulted parameter, filled");
+    assert_eq(tv_dnlater(u, k: 5), 5345, "I1: ... named");
+    assert_eq(u.0 * 10 + u.1, 34, "I1: ... the caller's tuple untouched (the callee wrote its copy)");
+    assert_eq(tv_dn3(t: (1, 2), x: 3), 1239, "I2: a named tuple literal argument, a default filled");
+    assert_eq(tv_dntail(1), 1239, "I2: ... in a tail call");
+    assert_eq(tv_dntail(0), 5564, "I2: ... reordered, in a tail call");
+    assert_eq(tv_dnfull(7), 7234, "I2: ... full arity, every argument named, in a tail call");
+    return 0;
+}
+fn tv_dnlater(t: (i64, i64), k = 2): i64 {
+    t.0 = t.0 + 50;
+    return t.0 * 100 + t.1 * 10 + k;
+}
+
 tv_types();
 tv_access();
 tv_copies();
@@ -851,6 +888,7 @@ tv_returns();
 tv_reassign(0, 0);
 tv_closures();
 tv_defers();
+tv_dnamed();
 # A global declared after the first statement, copied from a tuple field.
 var TV_G2: (i64, i64) = TV_GH.p;
 assert_eq(TV_G2.0 * 10 + TV_G2.1, 23, "a global after the first statement, copied from a tuple field");
