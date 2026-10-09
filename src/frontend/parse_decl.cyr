@@ -1590,62 +1590,15 @@ fn _field_load_on(S, noff, fnoff, pfl_beg, idx, sid): i64 {
         # a Q (see `_sarg_type_err`). An untyped `self` records the impl's own struct.
         if (sid > 0) { _sarg_type_err(S, mfi, 0, sid, noff); }
         EPUSHR(S);
-        # Parse remaining args.
-        #
-        # ⛔ 6.6.5 — THIS LOOP RUNS PARSE_FNCALL'S FOUR CALLEE-MASK GATES, not one. It used
-        # to run none: a bare `PCMPE + EPUSHR` per argument with no callee mask in hand. The
-        # first cut of this bite added only the struct-pointer gate, which left two SILENT
-        # WRONG VALUES on the very loop it rewrote (both measured against the identical free
-        # fn, which has always taken the PARSE_FNCALL path):
-        #   * `_fnt_strmask` — `h.slen("abcde")` returned 0 where `free_slen(0, "abcde")`
-        #     returned 5. Without the `str_from` wrap the callee gets a raw cstr pointer.
-        #   * `_fnt_simdmask` — a vector param is NOT an int-class push; it is recorded and
-        #     loaded into XMM after ECALLPOPS. Pushing it as an int arg shifted every LATER
-        #     argument by one register: `h.vmix(2, v, 3)` returned 927 against the free fn's
-        #     923, `j` having received the vector's low half.
-        # The second cut added the fourth, `_fnt_cstrmask` — v6.5.3's integer-literal-into-
-        # `: cstring` HARD ERROR. `w.pr(42)` compiled clean and SIGSEGV'd where the identical
-        # `free_pr(0, 42)` was refused; v6.5.3 made that an error rather than a warning
-        # precisely because the alternative is a runtime crash. ⭐ The count is the lesson:
-        # "one call syntax" is not "one call path" — ENUMERATE the masks against
-        # PARSE_FNCALL's loop rather than fixing whichever one the bug report named.
-        # `argc` indexes the callee's params, so it starts at 1 (`self` is param 0 and is
-        # int-class); `m_int_argc` is what ECALLPOPS/ECALLCLEAN take, since SIMD args never
-        # reach the stack. CHANGELOG [6.6.5]
+        # The arguments: PARSE_FNCALL's own marshaller, `self` as parameter 0 (p0 = 1) and int
+        # arg `m_n0` (after the retptr `_sc_pre` pushed). ⛔ This path had its own loop with NONE of
+        # PARSE_FNCALL's callee-mask gates and no arity check until 6.6.5 — the history is at
+        # `_owncall_args_at`; it shares that loop since 6.7.7. The arity message names the `(`.
+        # CHANGELOG [6.6.5] [6.7.7]
         var m_ti = GTI(S);           # the `(`; the method's NAME is the token before it
         var m_line = GTLINE(S, m_ti);
         STI(S, GTI(S) + 1);  # consume (
-        var argc = 1;
-        var m_simd_table: i64[24];   # 8 args x 3 i64s, a LOCAL — a nested call gets its own
-        var m_st: i64[3];            # [int args (self is one), vectors, XMM/V ordinal]
-        store64(&m_st, 1 + m_n0);    # `self`, plus the retptr `_sc_pre` pushed before it
-        store64(&m_st + 8, 0);
-        store64(&m_st + 16, 0);
-        if (PEEKT(S) != 11) {
-            var mgo = 1;
-            while (mgo == 1) {
-                # 6.6.6: the gates live in `_call_arg_one`, shared with both struct-valued
-                # `var` receives, which had none of them. CHANGELOG [6.6.6]
-                _call_arg_one(S, mfi, argc, mname, &m_simd_table, &m_st);
-                argc = argc + 1;
-                if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
-                else { mgo = 0; }
-            }
-        }
-        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
-        STI(S, GTI(S) + 1);  # consume )
-        # ⛔ 6.6.5 — and the arity check, which this path ALSO never had. `q.one(5, 99)` on a
-        # 2-param method built and returned 6; `q.one()` built and returned whatever was in
-        # the register nothing set; the identical `free_one(0, 5, 99)` has been a hard error
-        # since v6.5.1. It is available here only because this bite resolves `mfi` BEFORE the
-        # argument loop — previously there was no callee to ask. `argc` counts `self`, and so
-        # does the callee's `_fnt_params`, so the two are directly comparable; `need_off = 1`
-        # keeps the same forward-reference carve-out every other call path uses.
-        # CHANGELOG [6.6.5]
-        _CHECK_ARITY(S, m_line, mname, mfi, argc, 1);
-        var m_int_argc = load64(&m_st);
-        ECALLPOPS(S, m_int_argc);
-        _simd_arg_second_pass(S, &m_simd_table, load64(&m_st + 8));
+        var m_int_argc = _owncall_args_at(S, mfi, mname, 1 + m_n0, 1, m_line);
         _sc_x8(S, mfi, m_rt);        # 6.6.6: aarch64's retptr register
         _callee_site_checks(S, mfi, mname, m_ti - 1);   # v6.6.4: `s.method()` is its own call path
         _pure_effect_warn(S, mfi, mname);               # 6.6.17: and #pure's #io / #alloc check
