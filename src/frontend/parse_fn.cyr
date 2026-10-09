@@ -2264,14 +2264,21 @@ fn _pd_label_at(S, ti): i64 {
 }
 # The depth-0 `,` or `)` that ends the call argument whose first token is `i` (just past the `(` or
 # a `,`), or the EOF token. A closure's `|..|` bars at its start, or after its label, are stepped
-# over whole (`||` is one token, with no bars; a closure's parameters are untyped, so no `:`).
+# over whole (`||` is one token, with no bars; a closure's parameters are untyped, so no `:`) —
+# EVERY leading head: a body that opens with `|` or `||` is another closure literal (there is no
+# unary `|`), so `|a| |b, d| ..` holds no argument separator. CHANGELOG [6.7.7]
 fn _arg_next(S, i): i64 {
     var q = i;
     if (_pd_label_at(S, q) == 1) { q = q + 2; }
-    if (TOKTYP(S, q) == 35) {
-        q = q + 1;
-        while (TOKTYP(S, q) != 35 && TOKTYP(S, q) != 12) { q = q + 1; }
-        if (TOKTYP(S, q) == 35) { q = q + 1; }
+    var go = 1;
+    while (go == 1) {
+        var t = TOKTYP(S, q);
+        if (t == 54) { q = q + 1; }
+        elif (t == 35) {
+            q = q + 1;
+            while (TOKTYP(S, q) != 35 && TOKTYP(S, q) != 12) { q = q + 1; }
+            if (TOKTYP(S, q) == 35) { q = q + 1; }
+        } else { go = 0; }
     }
     return _tok_item_end(S, q);
 }
@@ -2575,6 +2582,26 @@ fn _pd_late(S, fi, op, isasync): i64 {
     _pd_q(S, _bx_fname(S, fi));
     PRSTR(" declares parameter defaults, but pass 1 did not record its definition (internal) - its calls could not be checked or filled");
     return _pd_ec(S, eq);
+}
+# Pass 2, the list just counted (`pc`): a row's max is pass 1's count, and the range check, the fill
+# and the named placement all read it. Two counts that differ would check a call against one and
+# fill it against the other, silently (pass 1 once stopped at a type token that is not a name:
+# `a: u128`, `*fn`). A backstop: refused, loudly. A redefined fn's row is D15's. CHANGELOG [6.7.7]
+fn _pd_pc_check(S, fi, pc): i64 {
+    var row = _pd_row(fi);
+    if (row == 0) { return 0; }
+    if (L64(row) == pc) { return 0; }
+    if ((GFLG(S, fi) & 2048) != 0) { return 0; }
+    var op = L64(row + 16);
+    if (_pd_eo(S, op) == 0) { return 0; }
+    PRSTR("internal: fn ");
+    _pd_q(S, _bx_fname(S, fi));
+    PRSTR(" declares parameter defaults, and its two passes count its parameters apart (");
+    PRNUM(L64(row));
+    PRSTR(" and ");
+    PRNUM(pc);
+    PRSTR(") - its calls could not be checked or filled");
+    return _pd_ec(S, op);
 }
 
 # ── the end of pass 1: the values ───────────────────────────────────────────────────────────
@@ -11160,6 +11187,11 @@ fn _prescan_params_scan(S, fi): i64 {
                         if (_pptr == 0) { _bx_pscan(S, fi, pc); }   # 6.7.3: a bool parameter
                         STI(S, GTI(S) + 1);                  # consume type name
                         SKIP_GENERICS(S);                    # `: Vec<i64>` etc.
+                    } elif (PEEKT(S) != 12) {
+                        # 6.7.7: a type token that is not a name (`u128`, the `fn` of `*fn`), taken
+                        # as pass 2 takes it — stopping here counted the list short. CHANGELOG [6.7.7]
+                        STI(S, GTI(S) + 1);
+                        SKIP_GENERICS(S);
                     }
                 }
                 if (PEEKT(S) == 4) { STI(S, _pl_dflt_end(S, GTI(S))); }   # 6.7.7 (B6): a default (recorded below)
@@ -13753,6 +13785,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     # exactly the param slots. For a fn with no wide params this equals `pc`, so nothing moves.
     var ra_pslots = GFLC(S);
     S64(_fnt_params + fi * 8, pc);
+    _pd_pc_check(S, fi, pc);   # 6.7.7: one parameter count for a defaulted fn
     # ⛔ v6.5.37 — A DUPLICATE THAT DISAGREES ABOUT ARITY IS AN ERROR, NOT A WARNING.
     #
     # `duplicate fn ... last definition wins` is easy to read as benign shadowing, and

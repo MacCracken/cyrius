@@ -109,6 +109,13 @@ fn tail_fill(): i64 { return w3(4); }
 fn ap(c, n = 5): i64 { return fncall2(c, n, 2); }
 fn tail_closure(): i64 { return ap(|a, b| a + b); }
 fn tail_closure_named(): i64 { return ap(n: 3, c: |a, b| a + b); }
+# A closure whose body is another closure literal: EVERY leading head is stepped over (`|b, d|`'s
+# comma split the argument — the tail form reached the tail arm short of its default, the named
+# form read a positional after a named one).
+fn ap2(c, n = 5): i64 { var inner = fncall1(c, 1); return fncall2(inner, n, 2); }
+fn apz(c, n = 5): i64 { var inner = fncall0(c); return fncall2(inner, n, 2); }
+fn tail_nested(): i64 { return ap2(|a| |b, d| a * 100 + b * 10 + d); }
+fn tail_nested_z(): i64 { return apz(|| |b, d| b * 10 + d); }
 
 #inline
 fn add2(a, b): i64 { return a + b; }
@@ -186,6 +193,8 @@ fn named(): i64 {
     assert_eq(fncall1(cl, 4), 421, "A21: a closure body making a named call");
     assert_eq(ap(n: 3, c: |a, b| a * b), 6, "A24: a closure literal as a named argument");
     assert_eq(tail_closure_named(), 5, "A24: ... in tail position");
+    assert_eq(ap2(c: |a| |b, d| a * 100 + b * 10 + d), 152, "A24: a closure returning a closure, as a named argument");
+    assert_eq(ap2(|a| |b, d| a * 100 + b * 10 + d, n: 3), 132, "A24: ... by position, then a name");
     assert_eq(fwd_w(c: 1, a: 2), 281, "A5: a forward call by name, reordered");
     assert_eq(fwd_w(2, c: 1), 281, "A5: ... in order");
     assert_eq(late(c: 0, a: 9), 960, "A4: a named call filling a default declared after the fn");
@@ -231,6 +240,8 @@ fn filled(): i64 {
     assert_eq(gen_tail(p), 614, "G0: ... in tail position");
     assert_eq(tail_fill(), 423, "A13: return w3(4) fills (an ordinary call, not a jmp)");
     assert_eq(tail_closure(), 7, "A24: return ap(|a, b| a + b) fills n");
+    assert_eq(tail_nested(), 152, "A24: return ap2(|a| |b, d| ..) fills n (every closure head stepped over)");
+    assert_eq(tail_nested_z(), 52, "A24: ... a `||` head too");
     var b: Big = mk(3);
     assert_eq(b.a * 100 + b.b * 10 + b.c, 380, "A14: a >16 B struct-returning callee, filled");
     var v: f64v2 = vmk(1);
@@ -317,6 +328,12 @@ assert_eq(tl_named, 789, "A15: a reordered named call at top level");
 g_log = 0;
 var tl_log = w3(b: lg(2), c: lg(3), a: lg(1));
 assert_eq(tl_log * 1000 + g_log, 123231, "A15: ... placed in parameter order, evaluated as written");
+# A21 at top level: a closure making a reordered named call, just after a fn with a parameter
+# named like the label — the capture pre-scan read the label `c` as a read of that stale local
+# (a capture of a dead slot: SIGSEGV). A label is not a read.
+fn tl_lbl(a, c): i64 { return a * c; }
+var tl_cl = |n| w3(c: n, a: 1);
+assert_eq(fncall1(tl_cl, 7), 127, "A21: a top-level closure making a reordered named call");
 if (1 == 1) {
     fn blk_g(a, b = 1): i64 { return a * 10 + b; }
 }

@@ -381,10 +381,38 @@ fn _cl_prescan_nested(S): i64 {
     if (PEEKT(S) == 14) { STI(S, GTI(S) + 1); }
     return 0;
 }
+# ⛔ 6.7.7 — A NAMED ARGUMENT'S LABEL IS NOT A READ. In `|n| w3(1, c: n)` the capture pre-scan took
+# the label `c` for a read: of the enclosing fn's local `c` (a capture the body never uses, so the
+# closure was refused without lib/alloc.cyr), and at top level of whatever name the local table
+# still held from the last fn compiled (the callee's own parameter — a capture of a dead slot,
+# SIGSEGV). A label is `IDENT :` just after a `(` or `,` whose innermost unclosed bracket is a `(`;
+# a struct literal's field (`Pt { x: n, y: 2 }`, in a `{`) keeps its reading. CHANGELOG [6.7.7]
+fn _cl_is_arg_label(S, ti): i64 {
+    if (TOKTYP(S, ti + 1) != 49) { return 0; }
+    if (ti < 1) { return 0; }
+    var p = TOKTYP(S, ti - 1);
+    if (p != 10 && p != 31) { return 0; }
+    var q = ti - 1;
+    var d = 0;
+    while (q >= 0) {
+        var t = TOKTYP(S, q);
+        if (t == 11 || t == 29 || t == 14) { d = d + 1; }
+        elif (t == 10 || t == 28 || t == 13) {
+            if (d == 0) {
+                if (t == 10) { return 1; }
+                return 0;
+            }
+            d = d - 1;
+        }
+        q = q - 1;
+    }
+    return 0;
+}
 # One identifier read in a closure body: capture it when it is a free variable.
 fn _cl_prescan_ident(S, noff): i64 {
     if (TOKTYP(S, GTI(S) + 1) == 10) { return 0; }   # a call name
     if (_TOK_IS_LOOP_AT(S, GTI(S)) == 1) { return 0; }  # 6.7.5: the `loop {` statement, not a read
+    if (_cl_is_arg_label(S, GTI(S)) == 1) { return 0; }   # 6.7.7: `w3(1, c: n)`'s `c`, not a read
     if (FINDLOCAL(S, noff) >= 0) { return 0; }
     if (_cl_shadow_find(S, noff) >= 0) { return 0; }
     var esl = _cl_snap_find(S, noff);

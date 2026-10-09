@@ -22,7 +22,10 @@
 #   K  the count: C1 a call outside min..max ("'f' expects 1 to 3 arguments, got 4"), backward and
 #      forward; C15 a call through a fn pointer short of a defaulted fn's parameters; R23 a fn
 #      without defaults keeps the v6.5.1 text; R24 (F2) the forward-call issue's verbatim repros
-#      give exactly the errors the same calls get below their callees
+#      give exactly the errors the same calls get below their callees; R24c a right-count forward
+#      call to a fn with a `u128` / `*u128` / `*fn` parameter builds (pass 1 counts a type token
+#      that is not a name); R24d a forward call to such a fn keeps its `: f64` / struct return;
+#      U1-U5 a default after such a parameter: filled, named, D1, D3
 #   T  objdump: T1 a full-arity self tail call to a defaulted fn keeps its `jmp`; T2 a `return f(1)`
 #      that fills is a `call` (the tail arm never fills)
 #   E  E1 a default is a top-level constant (a caller's local const of the same name never reaches
@@ -55,7 +58,8 @@
 #      I1 / I2 #inline (a named call to an inline-eligible fn is a call, objdump; an inlined body
 #      holding one); TL1 a reordered call at top level under CYRIUS_IR=0 / 1 / 3; X1 / X2 lint (a
 #      sibling's fn called by name, a default naming a sibling's const: --syntax-only, then `cyrius
-#      lint` on a hermetic CYRIUS_HOME); AS1 CYRIUS_ASYNC=1
+#      lint` on a hermetic CYRIUS_HOME); AS1 CYRIUS_ASYNC=1; N-cl a named argument's label in a
+#      closure body is not a read (no capture: in a fn, and at top level after the callee)
 #   A  ANTI-VACUOUS: the crossos tcyr built and run — x86 plain, CYRIUS_IR=3 and CYRIUS_DCE=1, then
 #      aarch64 (qemu), cx (cxvm) and PE (wine), each with the full assertion count (cx: less the rows
 #      under `#ifndef CYRIUS_TARGET_CX`, derived)
@@ -119,6 +123,26 @@
 #   MT8 type-audit's paren match not literal-aware        -> S-ta (ta_s, ta_c unannotated: 2/5)
 #   MT9 lib/vec.cyr's vec_get gains `z = 0` (the for-in   -> S-R5 (names lib/vec.cyr:86 vec_get)
 #       call passes 2)
+#   (review fixes)
+#   MU1 pass 1 takes only a NAME as a parameter's type    -> R24c (all four: "'g' expects 1 argument,
+#       (`_prescan_params_scan`'s non-name arm dropped)      got 3"), U1-U5: `_pd_pc_check` refuses
+#                                                          each, loudly ("its two passes count its
+#                                                          parameters apart (1 and 2)"); R24d
+#                                                          ("'g' expects 1 argument, got 2"; at
+#                                                          e44470b7: exit 0, and SIGSEGV)
+#   MU2 MU1 plus `_pd_pc_check` dropped                   -> U1 exit 0, U2 exit 2, U3 exit 1 (silent),
+#                                                          U3b the mode-3 internal error, U4 / U5
+#                                                          build; R24c / R24d as MU1. (Dropped
+#                                                          alone, `_pd_pc_check` has no killing row:
+#                                                          a backstop no valid program reaches, as
+#                                                          M21's D17 is.)
+#   MU3 `_arg_next` steps over the FIRST `|..|` head only  -> the tcyr on every leg: "internal: tail
+#                                                          call to 'ap2' reached the tail arm short"
+#   MU3b `_arg_next` without its `||` arm                 -> the tcyr on every leg: the same for 'apz'
+#   MU4 `_cl_is_arg_label` never 1 (a label is a read)    -> N-cl (refused: "a capturing closure needs
+#                                                          include lib/alloc.cyr"; exit 139), the tcyr
+#                                                          exit 139 on x86 (plain / IR=3 / DCE) and
+#                                                          aarch64, 5 on PE (A21 at top level)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -231,6 +255,25 @@ r24() {   # <label> <repro> <expected error lines, '|'-separated>
 [ -f "$R24D/2026-10-09-forward-call-arity-unchecked.cyr" ] || bad "R24: the issue's repro is missing"
 r24 "R24 (F2): forward calls — plain, too few, a method, a tail call" 2026-10-09-forward-call-arity-unchecked.cyr "error:<source>:12: 'g' expects 1 argument, got 2|error:<source>:16: 'g' expects 1 argument, got 2|error:<source>:17: 'h' expects 3 arguments, got 2|error:<source>:18: 'P_m' expects 2 arguments, got 3|"
 r24 "R24b (F2): a forward call to a fn inside a top-level block" 2026-10-09-forward-call-arity-unchecked-toplevel-block.cyr "error:<source>:6: 'g' expects 1 argument, got 2|"
+# R24c: pass 1 counts a parameter whose type token is not a name (`u128`, `*u128`, the `fn` of
+# `*fn`): it stopped there, so a RIGHT-count forward call was refused ("'g' expects 1 argument").
+exits r24u 3 "R24c: a forward call with the right count to fn g(a: u128, b, c) builds and runs" 'fn main(): i64 { var x = g(1, 2, 3); return x; }\nfn g(a: u128, b, c): i64 { return c; }\nsyscall(60, main());\n'
+exits r24p 3 "R24c: ... to fn g(a: u64, b: *u128, c)" 'fn main(): i64 { var x = g(1, 2, 3); return x; }\nfn g(a: u64, b: *u128, c): i64 { return c; }\nsyscall(60, main());\n'
+exits r24f 3 "R24c: ... to fn g(a: *fn, b, c), in tail position" 'fn main(): i64 { return g(1, 2, 3); }\nfn g(a: *fn, b, c): i64 { return c; }\nsyscall(60, main());\n'
+refused r24w "'g' expects 3 arguments, got 2" "R24c: ... and a wrong count to it is refused with the whole count" "fn main(): i64 { var x = g(1, 2); return x; }\nfn g(a: u128, b, c): i64 { return c; }\nsyscall(60, main());\n" "1"
+# R24d: the same stop left pass 1's return-type scan on the parameter, so a forward call to such a
+# fn lost its `: f64` (exit 0) and its >16 B struct return (SIGSEGV) before 6.7.7.
+exits r24r 6 "R24d: a forward call to fn g(a: u128, b): f64, in f64 arithmetic" 'fn main(): i64 { var r: f64 = g(1, 3) * 2.0; return f64_to(r); }\nfn g(a: u128, b): f64 { return f64_from(b); }\nsyscall(60, main());\n'
+exits r24s 23 "R24d: ... to fn mk(a: u128, k): Big (a retptr struct return)" 'struct Big { a; b; c; }\nfn main(): i64 { var b: Big = mk(1, 2); return b.a * 100 + b.b * 10 + b.c; }\nfn mk(a: u128, k): Big { var r = Big { 1, k, 3 }; return r; }\nsyscall(60, main() - 100);\n'
+# U: a default after a parameter whose type token is not a name. Pass 1 counted the list short, so
+# the default was never recorded, evaluated, refused or filled — while pass 2's count let the
+# short call through: the callee read an unset register (exit 0 / 2, silently).
+exits u1 7 "U1: a default after a u128 parameter is filled" 'fn g(a: u128, b = 7): i64 { return b; }\nfn main(): i64 { var r = g(5); return r; }\nsyscall(60, main());\n'
+exits u2 7 "U2: ... after a *fn parameter (a stale argument register in the callee)" 'fn h(x, y, z): i64 { return 99; }\nfn g(a: *fn, b = 7): i64 { return b; }\nfn main(): i64 { h(1, 2, 3); var r = g(5); return r; }\nsyscall(60, main());\n'
+exits u3 71 "U3: ... a named call after a u128 parameter" 'fn g(a: u128, b = 7, c = 9): i64 { return b * 10 + c; }\nfn main(): i64 { var r = g(5, c: 1); return r; }\nsyscall(60, main());\n'
+exits u3t 79 "U3b: ... after a *u128 parameter, filled in tail position" 'fn g(a: *u128, b = 7, c = 9): i64 { return b * 10 + c; }\nfn t(): i64 { return g(0); }\nsyscall(60, t());\n'
+refused u4 "parameter 'c' of 'g' needs a default: it follows one that has a default (defaults are trailing)" "U4: D1 after a u128 parameter" "fn g(a: u128, b = 1, c): i64 { return c; }$E" "1:22"
+refused u5 "unknown name 'nope' in a const context" "U5: D3 after a *fn parameter" "fn g(a: *fn, b = 1 + nope): i64 { return b; }$E" "1:22"
 
 # ── E: scope, generics, routing ──────────────────────────────────────────────────────────────
 exits e1 29 "E1: a default is a top-level constant (main's local const K = 9 never reaches f's b = K)" 'const K = 2;\nfn f(a, b = K): i64 { return b; }\nfn main(): i64 { const K = 9; var x = f(1); return x * 10 + K; }\nsyscall(60, main());\n'
@@ -324,6 +367,11 @@ if [ "$rc" -eq 0 ]; then bad "C14: a named argument to a builtin BUILT"
 elif ! grep -q "undefined variable 'n'" "$T/c14.err" || ! grep -q "expected ')', got ':'" "$T/c14.err"; then bad "C14: today's two errors changed: $(grep '^error' "$T/c14.err" | tr '\n' '|')"
 elif ! grep -q "^note: named arguments go only to a direct call of a declared fn (builtins, fncallN and callptr take positional arguments)" "$T/c14.err"; then bad "C14: no note naming the rule"
 else ok "C14: a named argument to a builtin: today's two errors, and the note"; fi
+# N-cl: a named argument's label inside a closure body is not a READ — the capture pre-scan took
+# `c:` for the enclosing fn's local `c` (refused without lib/alloc.cyr), and at top level for the
+# stale local table's `c` (the callee's own parameter: a capture of a dead slot, SIGSEGV).
+exits cla 9 "N-cl: a closure's named call whose label names an enclosing local captures nothing (no lib/alloc.cyr)" 'include "lib/fnptr.cyr"\nfn w3(a, b = 2, c = 3): i64 { return a * 100 + b * 10 + c; }\nfn main(): i64 { var c = 50; var cl = |n| w3(1, c: n); return fncall1(cl, 7) - 127 + 9; }\nsyscall(60, main());\n'
+exits clb 9 "N-cl: a top-level closure's reordered named call, just after its callee" 'include "lib/fnptr.cyr"\ninclude "lib/alloc.cyr"\nfn w3(a, b = 2, c = 3): i64 { return a * 100 + b * 10 + c; }\nalloc_init();\nvar cl = |n| w3(c: n, a: 1);\nvar r = fncall1(cl, 7);\nsyscall(60, (r - 127) + 9);\n'
 # G: generics through names.
 GS='struct Pt { x; y; }\ntrait Show { fn show(self): i64; }\nimpl Show for Pt { fn show(self): i64 { return self.x; } }\nfn gid<T: Show>(x: T, n = 1): i64 { return x.show() * 10 + n; }\n'
 exits g1 42 "G1: gid(n: 2, x: p) infers T from the named argument and instantiates gid\$Pt" "${GS}fn main(): i64 { var p = Pt { 4, 0 }; return gid(n: 2, x: p); }\nsyscall(60, main());\n"
