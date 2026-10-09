@@ -32,7 +32,7 @@
 #       file, the row instead requires it to pass on cxvm with the full count — it can never go
 #       quietly unrun.
 #   R7  tests/tcyr/crossos/tuple_values.tcyr (6.7.7, B4: tuples as values) — native and cxvm each
-#       print `<N> passed, 0 failed` with N derived from the source (65 at T3, 111 at T4, 168 at T5: floor 168)
+#       print `<N> passed, 0 failed` with N derived from the source (65 at T3, 111 at T4, 168 at T5, 191 at T6: floor 191)
 #       and exit 0.
 #   Anti-vacuous: each inline file's native leg is the control (a cx green on a file that is wrong
 #   everywhere is impossible), each .tcyr must match a count derived from its source, and each
@@ -357,8 +357,8 @@ else
 fi
 
 echo "R7 — tuple_values.tcyr (6.7.7, B4), native then cxvm, the count derived from the source:"
-tcyr_native tests/tcyr/crossos/tuple_values.tcyr 168
-tcyr_cx     tests/tcyr/crossos/tuple_values.tcyr 168
+tcyr_native tests/tcyr/crossos/tuple_values.tcyr 191
+tcyr_cx     tests/tcyr/crossos/tuple_values.tcyr 191
 
 WANT=14
 if [ "$fail" -ne 0 ]; then echo "FAIL: cx_crossos_rows_run — $fail row(s) red, $pass green"; exit 1; fi

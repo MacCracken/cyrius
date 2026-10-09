@@ -2870,7 +2870,9 @@ fn _tup_cap_check(S, sid, term): i64 {
     if (o < 0) { return 0; }
     var e = _call_close(S, o) + 1;
     if (TOKTYP(S, e) != term) { return 0; }
-    var r = _tup_cap_class(S, sid, _dt_call_fn(S));
+    var fi = _dt_call_fn(S);
+    var r = 2;   # 6.7.7 (T6): resolving the callee refused it (R4, `id(t)`): the tuple kept, the call skipped
+    if (_panic == 0) { r = _tup_cap_class(S, sid, fi); }
     if (r == 2) { STI(S, e); }
     return r;
 }

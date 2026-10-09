@@ -7176,6 +7176,7 @@ fn _ce_check_fn(S, fi): i64 {
         STI(S, sv);
         return 0;
     }
+    if (_ce_tup_param(S, op) == 1) { return 0; }
     var sv_ti = _ce_ti; var sv_fb = _ce_fb; var sv_sp = _ce_sp; var sv_in = _ce_infn; var sv_err = _ce_err;
     _ce_err = 0;
     _ce_fb = _ce_sp;
@@ -7193,6 +7194,25 @@ fn _ce_check_fn(S, fi): i64 {
     _ce_skip = _ce_skip - 1;
     _ce_ret = 0;
     _ce_ti = sv_ti; _ce_fb = sv_fb; _ce_sp = sv_sp; _ce_infn = sv_in; _ce_err = sv_err;
+    return 0;
+}
+# ⛔ 6.7.7 (B4, R5) — a const fn takes no TUPLE parameter: a compile-time evaluation binds each
+# parameter to one value, and a tuple is several. It said "expected ';', got '.'" at the first `t.0`,
+# and nothing at all for an unused one (callable at run time, a constant nowhere). Refused once, at the
+# parameter's type, by name. 1 = refused. CHANGELOG [6.7.7]
+fn _ce_tup_param(S, op): i64 {
+    var i = op + 1;
+    while (TOKTYP(S, i) == 2) {
+        if (TOKTYP(S, i + 1) == 49) {
+            if (TOKTYP(S, i + 2) == 10) {
+                _tup_err(S, i + 2, "const fn parameter ", TOKVAL(S, i), " is a tuple, which a compile-time evaluation does not take - pass its elements as separate parameters");
+                return 1;
+            }
+        }
+        i = _tok_item_end(S, i);
+        if (TOKTYP(S, i) != 31) { return 0; }
+        i = i + 1;
+    }
     return 0;
 }
 fn _ce_nparams(S, op): i64 {
@@ -8872,7 +8892,23 @@ fn _gen_infer_tp(S, fi, open, which): i64 {
     STI(S, a);
     var c = _infer_conc_at_cursor(S);
     STI(S, sv);
+    if (_tup_is(S, c) == 1) { return _gen_tup_bind(S, fi, a, c); }
     return c;
+}
+# ⛔ 6.7.7 (B4, R4) — A TUPLE NEVER BINDS A TYPE PARAMETER. `first(t)` with `t: (i64, i64)` inferred
+# T = the tuple and minted `first$(i64, i64)` — a generic over a tuple, which the decision leaves open
+# (a tuple type in a generic fn is refused; so is the explicit `first<(i64, i64)>(t)`). Refused once,
+# at the argument, and T binds i64 — the base, as a refused bound's call does. That recovery calls a
+# base whose body may be written for a struct T (the stub refusal, an inlined `x.0`) or whose `T`
+# return a capture then declines, so the panic latch swallows the rest of the statement's cascade, as
+# an ERR_IDENT refusal's does — set on every parse of the call (an inline replay re-parses it; the
+# report is once per token). `--syntax-only` resolves as it did: lint's pre-pass judges no type.
+# CHANGELOG [6.7.7]
+fn _gen_tup_bind(S, fi, a, c): i64 {
+    if (_syntax_only == 1) { return c; }
+    _tup_err(S, a, "a tuple cannot bind a type parameter: ", L64(_fnt_names + fi * 8), " is generic - pass an element (`t.0`), or take the tuple in a fn that is not generic");
+    _panic = 1;
+    return 0 - 8;
 }
 # ⛔ 6.6.10 (bite 7 review) — only a WHOLE argument binds a type parameter: a bare name (next
 # token `,` / `)`) or one whole call. The first cut read the argument's first token, so `f(p.y)`,

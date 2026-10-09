@@ -53,9 +53,21 @@
 #         R20 `(a, b) = f();` / `var (q, r) = f();` unchanged
 #      AS2 a capture, a re-capture and `a, q = f()` in a SUSPENDING `async fn` across awaits (CG1: the stores are
 #         addressed — the coroutine's heap frame orders an aggregate from its low slot)
+#   T6 — generics, const fns, closures (the positive closure and defer shapes are tuple_values.tcyr's `closures` /
+#      `defers`; a tuple across an `await` is AS1 / AS2, `return t;` in an `async fn` R14m / R14p, a tuple
+#      parameter R6a):
+#      R4e-R4q a tuple binding a type parameter by INFERENCE (`first(t)` minted `first$(i64, i64)`): a local, a
+#         parameter, a global, either type parameter, a struct-reading or value-using generic body, a capture / a
+#         re-capture / a destructure of the call, a tail call, a generic declared below, an #inline replay — each
+#         refused once; R4r a struct, an element and a scalar still bind T
+#      R5e-R5h a const fn's tuple parameter (used, unused, called in a const, after a `Pair<i64, i64>` one), refused
+#         once at its definition; R5i the other const fn parameters untouched
+#      CL1-CL2 re-assigning a whole captured tuple is "undefined variable", as any captured assignment is
 #   X  `--syntax-only` (cyrius lint's pre-pass): a fn with a tuple parameter, and a call to a
 #      sibling file's fn with a tuple argument, report nothing; X4 literals, a sibling's fn given one;
 #      X5 sibling targets and callees in captures and `a, b = f()`, `return t;`
+#      X6 a tuple given to a generic, a const fn's tuple parameter: silent (lint judges no type); X7 a syntax
+#      error after that call in its statement is still reported (the compile's refusal latches; lint must not)
 #   A  tests/tcyr/crossos/tuple_values.tcyr with its full assertion count (derived from the source)
 #      on x86 (default, CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu), cx (cxvm), PE
 #      (wine, a private prefix). A leg whose tool is missing is a SKIP that names it (exit 77).
@@ -149,6 +161,21 @@
 # THE EVIDENCE BEYOND THESE ROWS (T5, 2026-10-09): the same 1034 files compile byte-identical — stdout, stderr and exit
 # code; default, CYRIUS_DCE=1 and --syntax-only — with the T5 compiler and the T4 one, and the aarch64, cx and PE
 # compilers likewise over all 537 other tests/tcyr files.
+# T6 (2026-10-09; the same recipe, run FROM the scratch copy; each mutant measured RED, the real tree 292/292 — the
+# crossos file at 191 assertions):
+#   M17i `_gen_infer_tp` without its tuple check (the plan's M17: `first(t)` builds) -> R4e-R4j, R4n-R4q BUILD (each
+#       minted a `$(i64, i64)` instance); R4k / R4l / R4m refused by another message (the instance's body, the capture)
+#   M17p `_gen_tup_bind` without the panic latch -> R4i, R4j, R4l, R4m (a second error: the other argument, the stub
+#       base's refusal, the capture's / assignment's decline)
+#   M17r `_tup_cap_check` without its recovery (a refused callee's capture judged anyway) -> R4l (the base's one value
+#       declined: the tuple undeclared, `u.0` "no struct type in scope for 'u'")
+#   M17s `_gen_tup_bind` without its `--syntax-only` guard -> X7 (lint's pre-pass latched the statement: the syntax
+#       error after the call went unreported)
+#   M5t `_ce_check_fn` without `_ce_tup_param` -> R5e ("expected ';', got '.'"), R5f-R5h BUILD
+#   M5w `_ce_tup_param` reading only the first parameter -> R5h BUILDS
+# THE EVIDENCE BEYOND THESE ROWS (T6, 2026-10-09): the same 1034 files compile byte-identical — stdout, stderr and exit
+# code; default, CYRIUS_DCE=1 and --syntax-only — with the T6 compiler and the T5b one, and the aarch64, cx and PE
+# compilers likewise over all 538 tests/tcyr files (tuple_values.tcyr's new sections included: T6 adds refusals only).
 # Defensive, no killing row (named): `_tok_start` set to the digit before LEXID — today every
 # diagnostic at a selector points at the token AFTER it, so the IDENT's own offset is not observed;
 # the guard's `]` (29) — no valid program today follows a subscript with `.field`, so `a[1].0` is
@@ -266,6 +293,26 @@ refused r04a "a tuple type in a generic fn is refused" "R4a: a tuple local in a 
 refused r04b "a tuple field in a generic struct is refused" "R4b: a tuple field in a generic struct" 'struct B<T> { v: T; t: (i64, i64); }\nfn f(): i64 { var b: B<i64>; b.v = 3; return b.v; }\nsyscall(60, f());\n'
 refused r04c "a tuple type in a generic fn is refused" "R4c: a tuple parameter in a generic fn's signature" 'fn g<T>(x: T, t: (i64, i64)): T { return x; }\nfn f(): i64 { return g(3, 0); }\nsyscall(60, f());\n'
 refused r04d "a tuple type in a generic fn is refused" "R4d: an un-annotated literal in a generic fn (it mints its type there; once over the instances)" 'fn g<T>(x: T): T {\n    var t = (x, 1);\n    return t.0;\n}\nfn f(): i64 { return g(3) + g(4); }\nsyscall(60, f());\n'
+# R4e-R4r (T6) — a tuple never binds a type parameter by INFERENCE: `first(t)` minted `first$(i64, i64)`, a
+# generic over a tuple. Refused once, at the argument, whatever the generic's body (a struct-reading stub's
+# refusal and an inlined `x.0` stay quiet), the call's position or its receiver (a capture keeps the tuple).
+RB="a tuple cannot bind a type parameter: '"
+FG='fn first<T>(x: T): i64 { return 7; }\n'
+IG='fn id<T>(x: T): T { return x; }\n'
+refused r04e "${RB}first' is generic" "R4e: \`first(t)\`, a tuple local (it minted \`first\$(i64, i64)\`)" "${FG}fn f(): i64 {\n    var t = (5, 9);\n    return first(t) + 1;\n}\nsyscall(60, f());\n"
+refused r04f "${RB}first' is generic" "R4f: a tuple parameter" "${FG}fn f(t: (i64, i64)): i64 { return first(t); }\nfn g(): i64 {\n    var t = (1, 2);\n    return f(t);\n}\nsyscall(60, g());\n"
+refused r04g "${RB}first' is generic" "R4g: a tuple global, at top level" "${FG}var T0 = (1, 2);\nvar G2 = first(T0);\nsyscall(60, G2);\n"
+refused r04h "${RB}two' is generic" "R4h: the second type parameter, \`two(1, t)\`" 'fn two<A, B>(x: A, y: B): i64 { return 7; }\nfn f(): i64 {\n    var t = (5, 9);\n    return two(1, t);\n}\nsyscall(60, f());\n'
+refused r04i "${RB}two' is generic" "R4i: both, \`two(t, t)\` (once)" 'fn two<A, B>(x: A, y: B): i64 { return 7; }\nfn f(): i64 {\n    var t = (5, 9);\n    var y = two(t, t);\n    return y;\n}\nsyscall(60, f());\n'
+refused r04j "${RB}fld' is generic" "R4j: a generic reading T as a struct (\`x.0\`): no stub refusal, no error in its inlined body" 'fn fld<T>(x: T): i64 { return x.0; }\nfn f(): i64 {\n    var t = (5, 9);\n    return fld(t);\n}\nsyscall(60, f());\n'
+refused r04k "${RB}add1' is generic" "R4k: a generic using T as a value (\`x + 1\`)" 'fn add1<T>(x: T): i64 { return x + 1; }\nfn f(): i64 {\n    var t = (5, 9);\n    var y = add1(t);\n    return y;\n}\nsyscall(60, f());\n'
+refused r04l "${RB}id' is generic" "R4l: \`var u: (i64, i64) = id(t);\` then \`u.0\` (the tuple kept, the call skipped)" "${IG}fn f(): i64 {\n    var t = (5, 9);\n    var u: (i64, i64) = id(t);\n    return u.0;\n}\nsyscall(60, f());\n"
+refused r04m "${RB}id' is generic" "R4m: \`u = id(t);\` into an existing tuple" "${IG}fn f(): i64 {\n    var t = (5, 9);\n    var u: (i64, i64);\n    u = id(t);\n    return u.0;\n}\nsyscall(60, f());\n"
+refused r04n "${RB}mk' is generic" "R4n: \`var a, b = mk(t);\`, the destructure" 'fn mk<T>(x: T): (i64, i64) { return (1, 2); }\nfn f(): i64 {\n    var t = (5, 9);\n    var a, b = mk(t);\n    return a + b;\n}\nsyscall(60, f());\n'
+refused r04o "${RB}first' is generic" "R4o: a tail call in a loop, \`return first(t);\`" "${FG}fn f(n): i64 {\n    var t = (5, 9);\n    while (n > 0) {\n        n = n - 1;\n        if (n == 3) { return first(t); }\n    }\n    return 0;\n}\nsyscall(60, f(5));\n"
+refused r04p "${RB}later' is generic" "R4p: a generic declared below the call" 'fn f(): i64 {\n    var t = (5, 9);\n    return later(t);\n}\nfn later<T>(x: T): i64 { return 7; }\nsyscall(60, f());\n'
+refused r04q "${RB}first' is generic" "R4q: in an #inline fn replayed twice (once)" "${FG}#inline\nfn h(t: (i64, i64)): i64 { return first(t); }\nfn f(): i64 {\n    var t = (5, 9);\n    return h(t) + h(t);\n}\nsyscall(60, f());\n"
+exits r04r 21 "R4r: a struct, an element and a scalar still bind T (\`first(p)\`, \`first(t.0)\`, \`first(5)\`)" "${P}${FG}fn f(): i64 {\n    var p = P { 1, 2 };\n    var t = (5, 9);\n    return first(p) + first(t.0) + first(5);\n}\nsyscall(60, f());\n"
 
 # ── R6: async ──────────────────────────────────────────────────────────────────────────────────────
 # An `async fn` runs its body at force time, so a by-value struct parameter is refused (the inherited
@@ -448,6 +495,14 @@ refused r05a "a tuple in a const context" "R5a: \`const C = (1, 2);\` (it was \"
 refused r05b "a tuple in a const context" "R5b: a tuple literal in a const fn's evaluation" 'const fn cf(x: i64): i64 {\n    var t = (x, 1);\n    return t.0;\n}\nconst C = cf(3);\nsyscall(60, C);\n'
 refused r05c "a tuple in a const context" "R5c: \`#assert (1, 2) == 3\`" 'fn f(): i64 {\n    #assert (1, 2) == 3, "x"\n    return 0;\n}\nsyscall(60, f());\n'
 refused r05d "a tuple in a const context" "R5d: \`return (x, 1)\` in a const fn's evaluation" 'const fn cf(x: i64): i64 {\n    return (x, 1);\n}\nconst C = cf(3);\nsyscall(60, C);\n'
+# R5e-R5i (T6) — a const fn takes no TUPLE parameter (a compile-time evaluation binds one value per
+# parameter): refused at its definition, once — used or not, called at run time or in a const.
+CF="const fn parameter 't' is a tuple, which a compile-time evaluation does not take - pass its elements as separate parameters"
+refused r05e "$CF" "R5e: \`t.0\` in its body (it was \"expected ';', got '.'\")" 'const fn cf(t: (i64, i64)): i64 { return t.0; }\nfn f(): i64 { return 3; }\nsyscall(60, f());\n'
+refused r05f "$CF" "R5f: an unused one, called at run time (it compiled: a constant nowhere)" 'const fn cf(t: (i64, i64)): i64 { return 3; }\nfn f(): i64 {\n    var t = (1, 2);\n    return cf(t);\n}\nsyscall(60, f());\n'
+refused r05g "$CF" "R5g: called in a const, \`const C = cf(1);\` (once)" 'const fn cf(t: (i64, i64)): i64 { return 3; }\nconst C = cf(1);\nsyscall(60, C);\n'
+refused r05h "$CF" "R5h: after a parameter whose type holds a comma (\`p: Pair<i64, i64>\`) and an untyped one" 'struct Pair<A, B> { a: A; b: B; }\nconst fn cf(p: Pair<i64, i64>, k, t: (i64, f64)): i64 { return k; }\nfn f(): i64 { return 3; }\nsyscall(60, f());\n'
+exits r05i 3 "R5i: const fns with i64 / f64 / bool and \`Pair<i64, i64>\` parameters are untouched" 'struct Pair<A, B> { a: A; b: B; }\nconst fn cf(a: i64, b: f64, c: bool): i64 { return a; }\nconst fn cg(p: Pair<i64, i64>, k: i64): i64 { return k; }\nconst C = cf(3, 1.5, true);\nsyscall(60, C);\n'
 
 # R7 — an UN-annotated literal's elements are i64 (ADR-002: an untyped float is an integer); a float
 # element is refused: declare the tuple's type (the user's decision, 2026-10-09).
@@ -645,6 +700,11 @@ refused r19h "$R19" "R19h: a classic-for step whose value is not a call" "${MK}$
 # R20 — unchanged: `(a, b) = f();` and `var (q, r) = f();` keep their errors.
 refused r20a "unexpected '('" "R20a: \`(a, b) = f();\` (unchanged)" "${MK}${F5V}    (a, b) = mk(1);${E5}"
 refused r20b "expected identifier, got '('" "R20b: \`var (q, r) = f();\` (unchanged)" "${MK}fn f(): i64 {\n    var (q, r) = mk(1);\n    return 0;\n}\nsyscall(60, f());\n"
+# CL (T6) — a closure captures a tuple as it captures a struct: a by-value copy (tuple_values.tcyr's
+# `closures`). Re-assigning the WHOLE captured tuple is what any captured assignment is: "undefined
+# variable" — the literal and the capture forms too (an element write is the closure's copy).
+refused cl1 "undefined variable 't'" "CL1: \`t = (3, 4);\` to a captured tuple" 'include "lib/alloc.cyr"\nfn f(): i64 {\n    var t = (1, 2);\n    var c = || { t = (3, 4); return t.0; };\n    return fncall0(c);\n}\nsyscall(60, f());\n'
+refused cl2 "undefined variable 't'" "CL2: \`t = m2(5);\` to a captured tuple" 'include "lib/alloc.cyr"\nfn m2(x): (i64, i64) { return (x, 1); }\nfn f(): i64 {\n    var t = (1, 2);\n    var c = || { t = m2(5); return t.0; };\n    return fncall0(c);\n}\nsyscall(60, f());\n'
 # AS2 — a capture and a multi-value assignment in a SUSPENDING `async fn`, across awaits: the block's span
 # recorded before the call, every value pushed before any store, the stores addressed (the coroutine's heap
 # frame, whose slots ascend, holds the block whole).
@@ -673,10 +733,23 @@ printf 'fn f(): i64 {\n    var b = 0;\n    sib_a, b = sib_mk();\n    var t: (i64
 if grep -q "tuple\|^error:<source>" "$T/x05.err"; then bad "X5: --syntax-only reported: $(grep -m1 "tuple\|^error:<source>" "$T/x05.err")"
 else ok "X5: --syntax-only: sibling targets and callees in captures and multi-value assignments, \`return t;\` — silent"; fi
 
+# X6 (T6): a tuple argument to a generic (a struct-reading one too) and a const fn's tuple parameter — the
+# compile refuses both (R4, R5); lint's pre-pass, which judges no type, resolves them as before: silent.
+printf 'fn first<T>(x: T): i64 { return 7; }\nfn fld<T>(x: T): i64 { return x.0; }\nconst fn cf(t: (i64, i64)): i64 { return 3; }\nfn f(): i64 {\n    var t = (5, 9);\n    var u: (i64, i64) = first(t);\n    return first(t) + fld(t) + u.0;\n}\nsyscall(60, f());\n' > "$T/x06.cyr"
+"$CC" --syntax-only < "$T/x06.cyr" > /dev/null 2> "$T/x06.err" || true
+if grep -q "tuple\|^error" "$T/x06.err"; then bad "X6: --syntax-only reported: $(grep -m1 "tuple\|^error" "$T/x06.err")"
+else ok "X6: --syntax-only: a tuple given to a generic (a struct-reading one too), a const fn's tuple parameter — silent"; fi
+# X7 (T6): ... and a real syntax error later in that statement is still lint's to report — the compile's
+# refusal latches the statement (its recovery calls the generic's base), lint's pre-pass must not.
+printf 'fn first<T>(x: T): i64 { return 7; }\nfn f(): i64 {\n    var t = (5, 9);\n    var y = first(t) + (2;\n    return y;\n}\nsyscall(60, f());\n' > "$T/x07.cyr"
+"$CC" --syntax-only < "$T/x07.cyr" > /dev/null 2> "$T/x07.err" || true
+if [ "$(grep -c '^error' "$T/x07.err")" -eq 1 ] && grep -q "expected ')', got ';'" "$T/x07.err"; then ok "X7: --syntax-only: the syntax error after \`first(t)\` in its statement is reported, once"
+else bad "X7: --syntax-only: $(grep '^error' "$T/x07.err" | head -2 | tr '\n' '|') (want one \"expected ')', got ';'\")"; fi
+
 # ── A: tests/tcyr/crossos/tuple_values.tcyr on every pipeline and target ───────────────────────────
 TV="$ROOT/tests/tcyr/crossos/tuple_values.tcyr"
 want=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TV")
-[ "$want" -ge 168 ] || bad "A0: only $want assertions derived from $TV (floor 168)"
+[ "$want" -ge 191 ] || bad "A0: only $want assertions derived from $TV (floor 191)"
 tcyr_ok() {   # <label> <output file> <exit> <want>
     if [ "$3" -eq 0 ] && grep -q "^$4 passed, 0 failed" "$2"; then ok "$1: $4 passed"
     else bad "$1: exit $3, $(grep -E 'passed|FAIL' "$2" | tr -d '\r' | head -3 | tr '\n' '|')"; fi
@@ -721,4 +794,4 @@ else echo "  SKIP A7 PE — wine not installed"; skips=$((skips + 1)); fi
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: tuple_checked — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: tuple_checked — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: tuple_checked — tuples: the lexer (L); the type in a var, a struct field and a parameter, \`t.N\`, copies (S, P); the literal in its five positions, wrapped, in both zones and a kernel build (C, S1, S4, K1, PW, AS); every open shape refused by name (R1-R13, R17, R21); the bridge — captures, \`return t;\`, \`a, b = f();\` — and its refusals (R14-R20, AS2); --syntax-only silent (X); tuple_values.tcyr on x86 / IR / DCE / aarch64 / cx / PE (A)"
+echo "PASS: tuple_checked — tuples: the lexer (L); the type in a var, a struct field and a parameter, \`t.N\`, copies (S, P); the literal in its five positions, wrapped, in both zones and a kernel build (C, S1, S4, K1, PW, AS); every open shape refused by name (R1-R13, R17, R21); the bridge — captures, \`return t;\`, \`a, b = f();\` — and its refusals (R14-R20, AS2); a captured tuple re-assigned whole (CL); --syntax-only silent (X); tuple_values.tcyr on x86 / IR / DCE / aarch64 / cx / PE (A)"
