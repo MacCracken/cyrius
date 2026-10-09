@@ -4025,7 +4025,9 @@ and a closure's `{ block }` body is statements as before.
 one struct type of 8 bytes or less, whose type the result keeps (so `var z: S = if ..`, struct
 arguments and operator overloads see it). Mixing kinds is refused by name (`if expression branches
 differ in type: an integer here, an f64 before it`), and so is a struct value over 8 bytes, a vector,
-a `u128` or a `: stack` pair — branch on a pointer (`&x`) instead. The result is a `bool` when every
+a `u128` (a `u128` name, and since 6.7.6 a `u128` `+` / `-` result such as `{ b - 1 }`, which compiled
+and lost its high word) or a `: stack` pair — branch on a pointer (`&x`) instead. A `u128` comparison
+(`{ b == c }`) is an integer, as everywhere. The result is a `bool` when every
 branch is boolean (6.7.3): `var b: bool = if (c) { x > 0 } else { false };`. ⚠ An untyped variable
 holding a float is an integer (ADR-002), so `if (c) { u } else { 2.5 }` with `var u = 1.5;` is a
 mix — declare it `: f64`. And an untyped `var t = if (c) { 1.5 } else { 2.5 };` stays untyped (as

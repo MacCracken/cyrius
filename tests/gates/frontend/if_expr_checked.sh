@@ -14,7 +14,7 @@
 #      #derive enum-member value, a `return` statement's end — and globals: array-list elements
 #      (the evaluator), a kernel build's static bake (the folder's if-arm)
 #   V  the shapes the feature's one review round found (a const fn's string mix, u128, an unknown
-#      arm's bool-ness, cascades)
+#      arm's bool-ness, cascades) and (V8-V13, 6.7.6 FE) a u128 `+` / `-` result as a branch
 #
 # Mutations (scratch trees, each RED here — run 2026-10-08): the join's `_flags_reflect_rax = 0`
 # removed -> A4; every `_cfo` clear at the join removed (the helper's and both PARSE_INTRIN callers')
@@ -27,7 +27,8 @@
 # `return` at an if-expression's `}` -> S9 BUILDS; _gai_skip counting parentheses only -> S5 S6 S7;
 # a bool[N] element's kind unchecked -> S7 BUILDS (and bool_checked W53); no folder if-arm -> S8
 # (a kernel build names a constant-condition global as late). (The three peephole-tracker resets and the
-# SESVAR / `_esv_name` reset are defensive: no row kills them.)
+# SESVAR / `_esv_name` reset are defensive: no row kills them.) FE, 2026-10-08: `_ie_kind` without its
+# `_W128_IS` refusal -> V8-V12 BUILD (V13 green).
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -94,6 +95,17 @@ refused v04 "$MIX: an f64 here, an integer before it" "V4: a const-context mix i
 refused v05 "$MIX: an f64 here, an integer before it" "V5: a nested if-expression of later f64 consts is reported once" 'const A = if (true) { 1 } else { if (true) { B } else { C } };\nconst B = 1.5;\nconst C = 2.5;\nsyscall(60, A);\n'
 refused v06 "holds a value, not an assignment" "V6: { y += 1 }" "fn f(c): i64 { var y = 0; var x = if (c) { y += 1 } else { 2 }; return x; }$E"
 refused v07 "this one goes on past it" "V7: { 1 2 }" "fn f(c): i64 { var x = if (c) { 1 2 } else { 2 }; return x; }$E"
+# FE (6.7.6, the 6.7.6 review): a u128 `+` / `-` RESULT is a u128 value, refused as the name is (V2) —
+# it compiled and lost its high word (u9.cyr: hi = 0 where 9 is right).
+U8='fn f(c): i64 {\n    var b: u128 = 0;\n    store64(&b + 8, 9);\n    var n = 3;\n    '
+U8E='\n    return load64(&z + 8);\n}\nsyscall(60, f(1));\n'
+WRB="cannot be a vector, u128 or slice value"
+refused v08 "$WRB" "V8: { b - 0 } initialising a u128 (the filed repro)" "${U8}var z: u128 = if (c) { b - 0 } else { 0 };${U8E}"
+refused v09 "$WRB" "V9: y = if (c) { b + 1 } else { 0 } (the filed repro)" "${U8}var z: u128 = 0;\n    z = if (c) { b + 1 } else { 0 };${U8E}"
+refused v10 "$WRB" "V10: { (b + 1) }, the stamp carried across its )" "${U8}var z: u128 = if (c) { (b + 1) } else { 0 };${U8E}"
+refused v11 "$WRB" "V11: the else branch { n + b }" "${U8}var z: u128 = if (c) { 0 } else { n + b };${U8E}"
+refused v12 "$WRB" "V12: a nested if-expression's { b - 1 }" "${U8}var z = if (c) { if (c) { b - 1 } else { 0 } } else { 0 };${U8E}"
+exits v13 12 "V13: a u128 comparison, a field read and an address are integer branches (built)" "${U8}var p = if (c) { &b } else { &b };\n    var z: u128 = 0;\n    var e = if (c) { (b != z) + 2 } else { 0 };\n    return load64(p + 8) + e + if (c) { load64(&b) } else { 1 } + if (c) { b == z } else { 1 };\n}\nsyscall(60, f(1));\n"
 
 exits a01 35  "A1: if / else, both ways"          "fn f(c): i64 { return if (c) { 3 } else { 5 }; }\nsyscall(60, f(1) * 10 + f(0));\n"
 exits a02 100 "A2: an elif chain"                  "fn g(n): i64 { return if (n == 0) { 10 } elif (n == 1) { 20 } elif (n == 2) { 30 } else { 40 }; }\nsyscall(60, g(0) + g(1) + g(2) + g(7));\n"
