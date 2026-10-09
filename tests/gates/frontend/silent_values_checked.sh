@@ -30,6 +30,12 @@
 #      condition, an `&&` / `||` operand, a value, an if-expression condition, a chained `a < b < c`),
 #      at fn and top level: it compared the low words, signed. Runtime: u128_compare_all_bits.tcyr
 #      (A rows).
+#   T  (D4, the user's decision 2026-10-08: a truth test IS a comparison with zero) a u128 TRUTH TEST
+#      reads all 128 bits — a bare `if` / `elif` / `while` / `do .. while` / `for` / if-expression
+#      condition, an `&&` / `||` operand, `!b` (`b == 0`) — and a `match b` / `switch (b)` on a u128
+#      subject compares it on all 128 bits, each arm / case value zero-extended (a u128 arm as it is),
+#      the subject read once: each read the low word (2^64 was false, `!b` 1, the 0 arm taken). Fn and
+#      top level. Runtime: u128_compare_all_bits.tcyr's T rows (A rows).
 #   S  (D3) a PLAIN u128 assignment takes the whole value, as the declaration does: `b = c` (a u128
 #      variable or a `+` / `-` result) copies all 16 bytes and `b = 5` zero-extends — local and global,
 #      statement, for step and top level. Only a `+` / `-` result did; `b = c` / `b = 5` stored the low
@@ -102,6 +108,27 @@
 #   M43 `_w128_store` takes only a `+` / `-` result (D2's)      -> RED U35, S1 S2 S3, AS on every leg
 #   (M44 x86 EW128_CMP without its IR_RAW_EMIT mark stayed GREEN, the IR=3 legs included: the `lea`
 #   before it is already marked opaque. The mark is kept, as EW128_ACCM's.)
+# D4 (the truth tests, 2026-10-08; the same method, the gate as it stands here run from each scratch
+# tree with CYCC=<mutant>; the AC rows named are the first the leg prints):
+#   M45 `_w128_truth` never takes a u128                        -> RED T1 T2 T3, AC on every leg (T1 T2 T3 ..)
+#   M46 ECONDCMP's bare-value path without its hook             -> RED T1 T2 T3, AC on every leg (T1 T2 T3 ..)
+#   M47 `_PLOGIC_AND` without its two hooks                     -> RED T3, AC on every leg (T9 T10 T11)
+#   M48 PCMPE's `||` without its two hooks                      -> RED T3, AC on every leg (T9 T12 T13)
+#   M49 `!` (_bx_factor_tok) without its hook                   -> RED T1 T2 T3, AC on every leg (T15 T20 T35)
+#   M50 `_w128_subj` never takes a u128 (match / switch)        -> RED T1-T5, AC on every leg (T21 T24 T26 ..)
+#   M51 `_w128_subj` reads the subject in place (no copy)       -> RED T3, AC on every leg (T28; T37 T38, a
+#       global read as a frame slot)
+#   M52 PARSE_SWITCH lets a u128 subject take the jump table     -> RED AC on x86 and PE only (T31)
+#   M53 x86 EW128_TST reads the low word twice                  -> RED T1 T2 T3, AC on x86 and PE only
+#   M54 aarch64 EW128_TST without the `orr` (the low word)       -> RED AC on aarch64 only (T1 T2 T3 ..)
+#   M55 cx EW128_TST without the `or` (the low word)             -> RED AC on cx only (T1 T2 T3 ..)
+#   M57 `_sw_case_test` without its u128 arm                    -> RED T5, AC on every leg (T31 T33 T34)
+#   M58 `_match_arm_test` without its u128 arm                  -> RED T5, AC on every leg (T22 T23 T25)
+#   M59 `_w128_case` reads a u128 arm's low word                -> RED AC on every leg (T25)
+#   (M56 x86 EW128_TST without its IR_RAW_EMIT mark stayed GREEN, the IR=3 legs included — M44's
+#   reason, the `lea` before it is marked. The mark is kept. T1 / T3 / T4 alone stay green under M57 /
+#   M58: the integer path's stored subject word is then the copy's ADDRESS, never 0 to 3, so the
+#   default arm wins by accident — T5 is the row that pins them.)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -223,6 +250,16 @@ exits c01 61 "C1: \`==\` / \`!=\` / \`<\` / \`>\` and a value read the high word
 exits c02 61 "C2: ... the same program under CYRIUS_IR=3" "$C1" CYRIUS_IR=3
 exits c03 3 "C3: unsigned — a low word of 2^63 is above 1, and an integer is zero-extended" "var G: u128 = 0;\nstore64(&G, 0x8000000000000000);\nvar r = 0;\nif (G > 1) { r = r + 1; }\nif (G == 0x8000000000000000) { r = r + 2; }\nif (G < 0) { r = r + 4; }\nsyscall(60, r);\n"
 
+# ── T (D4): a u128 truth test reads all 128 bits; match / switch compare a u128 subject on all 128 ──
+# The planning probe (lane D3's k2.cyr, exit 27): b = 2^64 — `if (b)` was false, `!b` 1, match and
+# switch took the 0 arm (the comparison, r, was already right): want r 1 + t 4 = 5.
+T1='fn main(): i64 {\n    var b: u128 = 0;\n    store64(&b + 8, 1);\n    var r = if (b > 4) { 1 } else { 0 };\n    var m = 0;\n    match b { 0 => { m = 1; } _ => { m = 0; } }\n    var t = 0;\n    if (b) { t = t + 1; }\n    var u = 0;\n    if (!b) { u = 1; }\n    var w = 0;\n    switch (b) { case 0: w = 1; default: w = 0; }\n    return r + m * 2 + t * 4 + u * 8 + w * 16;\n}\nsyscall(60, main());\n'
+exits t01 5 "T1: \`if (b)\`, \`!b\`, \`match b\`, \`switch (b)\` read the high word (k2.cyr: exited 27)" "$T1"
+exits t02 5 "T2: ... the same program under CYRIUS_IR=3" "$T1" CYRIUS_IR=3
+exits t03 173 "T3: top level — \`if (G)\`, \`!G\`, \`G && 1\`, \`0 || G\`, \`match G\`, \`switch (G)\` on 2^64 (exited 82)" "var G: u128 = 0;\nstore64(&G + 8, 1);\nvar r = 0;\nif (G) { r = r + 1; }\nif (!G) { r = r + 2; }\nif (G && 1) { r = r + 4; }\nif (0 || G) { r = r + 8; }\nmatch G { 0 => { r = r + 16; } _ => { r = r + 32; } }\nswitch (G) { case 0: r = r + 64; default: r = r + 128; }\nsyscall(60, r);\n"
+exits t04 100 "T4: a table-sized \`switch\` (four dense cases) on 2^64 + 2 takes default; \`!d\` and \`d || 0\` as values (exited 13)" "fn main(): i64 {\n    var d: u128 = 0;\n    store64(&d, 2); store64(&d + 8, 1);\n    var w = 0;\n    switch (d) { case 0: w = 10; case 1: w = 11; case 2: w = 12; case 3: w = 13; default: w = 99; }\n    var x = !d;\n    var y = d || 0;\n    return w + x * 100 + y;\n}\nsyscall(60, main());\n"
+exits t05 165 "T5: \`match\` / \`switch\` take the arm a u128 subject equals (5), and not for 2^64 + 5 (exited 85)" "fn main(): i64 {\n    var b: u128 = 5;\n    var r = 0;\n    match b { 5 => { r = r + 1; } _ => { r = r + 2; } }\n    switch (b) { case 5: r = r + 4; default: r = r + 8; }\n    store64(&b + 8, 1);\n    match b { 5 => { r = r + 16; } _ => { r = r + 32; } }\n    switch (b) { case 5: r = r + 64; default: r = r + 128; }\n    return r;\n}\nsyscall(60, main());\n"
+
 # ── S (D3): a plain u128 assignment takes the whole value ───────────────────────────────────────
 # The D2 finding's repro (a1.cyr, exit 73 = 1353 % 256): `b = c` and `b = 5` over a high word of 3.
 S1='fn main(): i64 {\n    var b: u128 = 0;\n    store64(&b + 8, 3);\n    var c: u128 = 1;\n    b = c;\n    var r = load64(&b) * 10 + load64(&b + 8);\n    store64(&b + 8, 3);\n    b = 5;\n    r = r * 100 + load64(&b) * 10 + load64(&b + 8);\n    return r;\n}\nsyscall(60, main());\n'
@@ -313,10 +350,10 @@ tcyr_all AF tests/tcyr/crossos/f32_scalar_init_rounds.tcyr 30
 tcyr_all AR tests/tcyr/crossos/int_name_routes_int_overload.tcyr 20
 tcyr_all AU tests/tcyr/crossos/u128_compound_matches_long_form.tcyr 14
 tcyr_all AU2 tests/tcyr/crossos/u128_add_sub_carry.tcyr 33
-tcyr_all AC tests/tcyr/crossos/u128_compare_all_bits.tcyr 47
+tcyr_all AC tests/tcyr/crossos/u128_compare_all_bits.tcyr 85
 tcyr_all AS tests/tcyr/crossos/u128_assign_whole_value.tcyr 21
 tcyr_all AW tests/tcyr/crossos/f32_writes_round.tcyr 21
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — f32 initializers round (F); a top-level pair bind refused (P); an integer name routes to _int (R); vector / typed-array / slice OP= refused (O); u128 + / - carry and every other u128 operator refused (U); u128 comparisons compare all 128 bits (C); a plain u128 assignment takes the whole value (S); every f32 write rounds (W); a whole typed array and a bare array OP= refused (B); IR=3 keeps the f32 conversions (I); every tcyr on x86_64 / IR / DCE / aarch64 / cx / PE (A)"
+echo "PASS: $G — f32 initializers round (F); a top-level pair bind refused (P); an integer name routes to _int (R); vector / typed-array / slice OP= refused (O); u128 + / - carry and every other u128 operator refused (U); u128 comparisons compare all 128 bits (C); a u128 truth test and match / switch subject read all 128 bits (T); a plain u128 assignment takes the whole value (S); every f32 write rounds (W); a whole typed array and a bare array OP= refused (B); IR=3 keeps the f32 conversions (I); every tcyr on x86_64 / IR / DCE / aarch64 / cx / PE (A)"

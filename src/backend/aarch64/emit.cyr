@@ -459,6 +459,18 @@ fn EW128_CMP(S, op): i64 {
     else { EW(S, 0x9A9F37E0); }                                            # cset x0, hs
     return 0;
 }
+# ⛔ 6.7.6 (Break 1, D4) — a u128 TRUTH TEST (parse_expr.cyr _w128_truth): x0 = the ADDRESS of a u128;
+# x0 = (value == 0) for op 17, (value != 0) for op 18, 0 / 1, across all 128 bits. x9 / x10 are
+# scratch. CHANGELOG [6.7.6]
+fn EW128_TST(S, op): i64 {
+    EW(S, 0xA9402809);                           # ldp x9, x10, [x0]
+    EW(S, 0xAA0A0129);                           # orr x9, x9, x10
+    EW(S, 0xF100013F);                           # cmp x9, #0
+    if (op == 17) { EW(S, 0x9A9F17E0); }         # cset x0, eq
+    else { EW(S, 0x9A9F07E0); }                  # cset x0, ne
+    _flags_reflect_rax = 0;
+    return 0;
+}
 
 # === Load through x0 (dereference) ===
 fn ELOAD8(S): i64 { EW(S, 0x39400000); return 0; }    # ldrb w0, [x0]

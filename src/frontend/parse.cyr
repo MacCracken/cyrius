@@ -2074,11 +2074,39 @@ fn _HTLOAD(S, h): i64 {
     return 0;
 }
 
+# One `switch` case's test (chain path): the jump taken when the subject is not `val`. ⛔ 6.7.6 (D4): a
+# u128 subject (`swh`, its temporary; -1 for an integer one) compares all 128 bits against `val`
+# zero-extended (_w128_case) — it compared the low word, so 2^64 took `case 0:`.
+fn _sw_case_test(S, swidx, val, swh): i64 {
+    if (swh != 0 - 1) { EMOVI(S, val); return _w128_case(S, swh); }
+    _HTLOAD(S, swidx);
+    EPUSHR(S);
+    EMOVI(S, val);
+    EMOVCA(S);
+    EPOPR(S);
+    ECMPR(S);
+    return EJCC(S, 0x85);
+}
+# One `match` arm's test (the cursor on its value): the jump taken when the subject is not that value.
+# ⛔ 6.7.6 (D4): a u128 subject (`mh`, its temporary; -1 for an integer one) compares all 128 bits — an
+# arm value zero-extended, a u128 arm as it is (_w128_case).
+fn _match_arm_test(S, midx, mh): i64 {
+    if (mh != 0 - 1) { PCMPE(S); return _w128_case(S, mh); }
+    _HTLOAD(S, midx);
+    EPUSHR(S);
+    PCMPE(S);
+    EMOVCA(S);
+    EPOPR(S);
+    ECMPR(S);
+    return EJCC(S, 0x85);
+}
+
 fn PARSE_SWITCH(S): i64 {
     STI(S, GTI(S) + 1);
     if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); }
     STI(S, GTI(S) + 1);
     PCMPE(S);
+    var swh = _w128_subj(S);   # 6.7.6 (D4): a u128 subject, all 128 bits (-1: an integer one)
     if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
     STI(S, GTI(S) + 1);
     if (PEEKT(S) != 13) { ERR_EXPECT(S, 13); }
@@ -2154,6 +2182,7 @@ fn PARSE_SWITCH(S): i64 {
     # parser on the correctness-preserving chain path.
     if (_AARCH64_BACKEND == 1) { use_table = 0; }
     if (_TARGET_CX == 1) { use_table = 0; }
+    if (swh != 0 - 1) { use_table = 0; }   # 6.7.6 (D4): a u128 subject takes the chain (_sw_case_test)
     # Allocate hidden global to hold switch value
     var swidx = _HTEMP(S);
     _HTSTORE(S, swidx);
@@ -2262,13 +2291,7 @@ fn PARSE_SWITCH(S): i64 {
                 var val = _case_val(S);   # 6.7.2: the pre-scan's value
                 if (PEEKT(S) != 49) { ERR_EXPECT(S, 49); }
                 STI(S, GTI(S) + 1);
-                _HTLOAD(S, swidx);
-                EPUSHR(S);
-                EMOVI(S, val);
-                EMOVCA(S);
-                EPOPR(S);
-                ECMPR(S);
-                var skip = EJCC(S, 0x85);
+                var skip = _sw_case_test(S, swidx, val, swh);
                 var cgo = 1;
                 while (cgo == 1) {
                     if (PEEKT(S) == 58) { cgo = 0; }
@@ -2317,6 +2340,7 @@ fn PARSE_MATCH(S): i64 {
     var match_line = GTLINE(S, GTI(S));
     STI(S, GTI(S) + 1);
     PCMPE(S);
+    var mh = _w128_subj(S);   # 6.7.6 (D4): a u128 subject, all 128 bits (-1: an integer one)
     if (PEEKT(S) != 13) { ERR_EXPECT(S, 13); }
     STI(S, GTI(S) + 1);
     # Store match value in hidden temp var
@@ -2442,13 +2466,7 @@ fn PARSE_MATCH(S): i64 {
                     }
                 }
                 # val => { stmts }
-                _HTLOAD(S, midx);
-                EPUSHR(S);
-                PCMPE(S);
-                EMOVCA(S);
-                EPOPR(S);
-                ECMPR(S);
-                var skip = EJCC(S, 0x85);
+                var skip = _match_arm_test(S, midx, mh);
                 # Expect =>
                 if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); }
                 STI(S, GTI(S) + 1);

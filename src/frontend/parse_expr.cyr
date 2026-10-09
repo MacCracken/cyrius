@@ -1910,6 +1910,53 @@ fn _w128_cmp_emit(S, op, h, rk, rv): i64 {
     return 0;
 }
 
+# ⛔ 6.7.6 (Break 1, D4) — A u128 TRUTH TEST IS A COMPARISON WITH ZERO, so it reads all 128 bits too
+# (the user's decision, 2026-10-08, D3's rule carried there): a bare condition — `if (b)`, `elif`,
+# `while`, `do .. while`, a `for` condition, an if-expression condition (ECONDCMP) —, an `&&` / `||`
+# operand (_PLOGIC_AND, PCMPE), `!b` (`b == 0`, _bx_factor_tok), and a `match b` / `switch (b)` subject:
+# each case value zero-extended and compared on all 128 bits (_w128_subj, _w128_case). Each read the
+# LOW word: b = 2^64 was false to `if (b)`, `!b` was 1, and match / switch took the 0 arm.
+# The value the stamp names, when it is a u128: rax = (value == 0) (op 17) / (value != 0) (op 18),
+# a boolean (1, handled); else nothing (0).
+fn _w128_truth(S, op): i64 {
+    if (_W128_IS(S) == 0) { return 0; }
+    var k = _w128_k;
+    _w128_k = 0;
+    _w128_addr(S, k, _w128_v, 0);
+    EW128_TST(S, op);
+    SESTYPE(S, 0);
+    SPSC(S, 0);
+    _cfo = 0;
+    return 1;
+}
+# A `match` / `switch` subject just parsed (the cursor on the token after it): when it is a u128, its
+# whole value into a temporary of its own — a `+` / `-` result is one already — as an integer subject
+# is stored once, before any arm is tested. Returns the temporary's handle, or -1 (no handle is -1:
+# a frame slot is >= 0, a top-level one <= -2).
+fn _w128_subj(S): i64 {
+    if (_W128_IS(S) == 0) { return 0 - 1; }
+    var k = _w128_k;
+    var h = _w128_v;
+    _w128_k = 0;
+    if (k != 3) {
+        var v = h;
+        h = _w128_tmp(S);
+        _w128_accm(S, h, 2, k, v);
+    }
+    return h;
+}
+# One `match` arm or `switch` case value, just parsed, against the u128 subject in temporary `sh`: a
+# u128 compared as it is, an integer zero-extended, on all 128 bits. Returns the patch of the jump
+# taken when they differ (the arm's skip).
+fn _w128_case(S, sh): i64 {
+    var rk = 3;
+    var rv = 0;
+    if (_W128_IS(S) == 1) { rk = _w128_k; rv = _w128_v; }
+    else { rv = _w128_tmp(S); _w128_acci(S, rv, 2); }
+    _w128_cmp_emit(S, 17, sh, rk, rv);
+    ETESTAZ(S);
+    return EJCC(S, 0x84);
+}
 # ⛔ 6.6.10 — UNARY MINUS ON AN UNTYPED FLOAT VARIABLE. `var c = 1.5; -c` is an INTEGER
 # negation of 1.5's bits (-3.0; `-z` of 0.0 is +0, `-n` of -2.5 is 1.75), silent, because an
 # untyped var is i64-boxed (ADR-002) and nothing recorded what initialised it. WARN, the
@@ -4910,11 +4957,13 @@ fn _bx_factor_tok(S, t): i64 {
     if (t == 170) { EMOVI(S, 0); }
     if (t == 171) {
         PARSE_FACTOR(S);
-        EPUSHR(S);
-        EMOVI(S, 0);
-        EMOVCA(S);
-        EPOPR(S);
-        ESETCC(S, 17);
+        if (_w128_truth(S, 17) == 0) {   # 6.7.6 (D4): `!b` on a u128 is `b == 0` on all 128 bits
+            EPUSHR(S);
+            EMOVI(S, 0);
+            EMOVCA(S);
+            EPOPR(S);
+            ESETCC(S, 17);
+        }
     }
     SESTYPE(S, 0);
     SPSC(S, 0);
@@ -6199,6 +6248,7 @@ fn _PLOGIC_AND(S): i64 {
     var lop = PEEKT(S);
     while (lop == 53) {
         # cmp rax, 0 ; je skip  — short-circuit && when the left side is false.
+        _w128_truth(S, 18);          # 6.7.6 (D4): a u128 operand tests all 128 bits
         EPUSHR(S);
         EMOVI(S, 0);
         EMOVCA(S);
@@ -6207,6 +6257,7 @@ fn _PLOGIC_AND(S): i64 {
         var p_skip = EJCC(S, 0x84);
         STI(S, GTI(S) + 1);          # consume &&
         _PLOGIC_ATOM(S);             # right operand
+        _w128_truth(S, 18);          # 6.7.6 (D4)
         # normalize right side to boolean (cmp 0; setne al; movzx)
         EPUSHR(S);
         EMOVI(S, 0);
@@ -6236,6 +6287,7 @@ fn PCMPE(S): i64 {
     var lop = PEEKT(S);
     while (lop == 54) {
         # cmp rax, 0 ; jne skip  — short-circuit || when the left side is true.
+        _w128_truth(S, 18);          # 6.7.6 (D4): a u128 operand tests all 128 bits
         EPUSHR(S);
         EMOVI(S, 0);
         EMOVCA(S);
@@ -6244,6 +6296,7 @@ fn PCMPE(S): i64 {
         var p_skip = EJCC(S, 0x85);
         STI(S, GTI(S) + 1);          # consume ||
         _PLOGIC_AND(S);              # right operand: a full && chain (tighter)
+        _w128_truth(S, 18);          # 6.7.6 (D4)
         # normalize right side to boolean (cmp 0; setne al; movzx)
         EPUSHR(S);
         EMOVI(S, 0);
