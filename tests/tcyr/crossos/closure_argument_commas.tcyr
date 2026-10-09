@@ -1,0 +1,86 @@
+# closure_argument_commas.tcyr — 6.7.7 — a closure literal's `|a, b|` comma separates no arguments,
+# in every scanner that numbers or counts a call's arguments before the call is parsed.
+#
+# Three scanners found "argument k" on the raw token stream by counting depth-0 commas, tracking
+# only `( [ {`, so every argument after a two-parameter closure was numbered one too high
+# (issue 2026-10-09-closure-literal-comma-counted-as-argument). Measured on the merged 6.7.7
+# compiler, on x86, aarch64, cx and PE alike:
+#   * `_call_arg_start` (generic type-argument inference): `gx(|a, b| a + b, p)` read the closure's
+#     `b` as argument 1, inferred T from a scalar and refused valid source ("generic 'gx' has no i64
+#     (or other scalar) instance") — the direct call, a generic forwarding T past a closure, a call
+#     with a named argument after the closure, and a `var q = pick(|a, b| .., p)` receive;
+#   * `_tc_str_literal_arg` (the tail-call divert for a string literal into a `: Str` parameter):
+#     `return sl(|a, b| a + b, "hello");` kept its `jmp` without the `str_from` wrap, and returned 0
+#     where the non-tail call returns 5;
+#   * `_CALL_ARGC_PEEK` (the overload-routing arity gate): `show(s, |a, b| a + b)` counted three
+#     arguments and was not routed to `show_str` (1 where 2 is right).
+# All three now step by `_arg_next`, the one argument walker. One-parameter closures (`|a| a`,
+# no comma) and `||` (one token) were always right and are the controls.
+#
+# ⚠ CROSS-HOST: the scanners are frontend-only, but each wrong reading changes the code emitted —
+# a refused build, a tail `jmp` with a raw literal in a Str register, a call to the wrong fn — so
+# every row runs on x86, aarch64, cx and PE.
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+include "lib/str.cyr"
+include "lib/assert.cyr"
+
+struct Pt { x; y; }
+
+# ── _call_arg_start: generic type-argument inference ────────────────────────────────────────────
+fn gx<T>(c, v: T): i64 { return v.x * 100 + fncall2(c, 2, 3); }
+fn gx_one<T>(c, v: T): i64 { return v.x * 100 + fncall1(c, 5); }
+fn inner<T>(c, v: T): i64 { return v.x * 100 + fncall2(c, 1, 1); }
+fn outer<T>(v: T): i64 { return inner(|a, b| a + b, v); }
+fn gx3<T>(c, v: T, n): i64 { return v.x * 100 + fncall2(c, 4, 5) * 10 + n; }
+fn g_shape1(): i64 { var p = Pt { 7, 9 }; return gx(|a, b| a + b, p); }
+fn g_three(): i64 { var p = Pt { 7, 9 }; return gx(|a, b, c| a * b, p); }
+fn g_one(): i64 { var p = Pt { 7, 9 }; return gx_one(|a| a, p); }
+fn g_fwd(): i64 { var p = Pt { 7, 9 }; return outer(p); }
+fn g_named(): i64 { var p = Pt { 7, 9 }; return gx3(|a, b| a * b, p, n: 3); }
+# cx has no 9-16 B register-pair struct return, so the receive row is not built there.
+#ifndef CYRIUS_TARGET_CX
+fn pick<T>(c, v: T): T { return v; }
+fn g_recv(): i64 { var p = Pt { 7, 9 }; var q = pick(|a, b| a + b, p); return q.x * 10 + q.y; }
+#endif
+
+# ── _tc_str_literal_arg: a tail call's string literal into a `: Str` parameter ─────────────────
+fn sl(c, t: Str): i64 { return str_len(t) * 100 + fncall2(c, 2, 3); }
+fn sl3(c, d, t: Str): i64 { return str_len(t) * 100 + d; }
+fn viaret(): i64 { return sl(|a, b| a + b, "hello"); }
+fn viavar(): i64 { var n = sl(|a, b| a + b, "hello"); return n; }
+fn viaret3(): i64 { return sl(|a, b, c| a + b, "hello"); }
+fn viaret_mid(): i64 { return sl3(|a, b| a + b, 7, "hey"); }
+fn viaret_one(): i64 { return sl(|a| a + 3, "hello"); }
+
+# ── _CALL_ARGC_PEEK: the overload-routing arity gate ────────────────────────────────────────────
+fn show(x, c): i64 { return 1000 + fncall2(c, 2, 3); }
+fn show_str(s: Str, c): i64 { return str_len(s) * 100 + fncall2(c, 2, 3); }
+fn ov_two(): i64 { var s = str_from("hi"); return show(s, |a, b| a * b); }
+fn ov_three(): i64 { var s = str_from("hi"); return show(s, |a, b, c| a + b); }
+fn ov_one(): i64 { var s = str_from("hi"); return show(s, |a| a * 2); }
+
+fn rows(): i64 {
+    alloc_init();
+    assert_eq(g_shape1(), 705, "the issue's shape 1: gx(|a, b| a + b, p) infers T = Pt (it was refused)");
+    assert_eq(g_three(), 706, "gx(|a, b, c| a * b, p): two closure commas");
+    assert_eq(g_one(), 705, "control: gx_one(|a| a, p)");
+    assert_eq(g_fwd(), 702, "a generic forwards T past a closure: inner(|a, b| a + b, v)");
+    assert_eq(g_named(), 903, "a named argument after the closure: gx3(|a, b| a * b, p, n: 3)");
+#ifndef CYRIUS_TARGET_CX
+    assert_eq(g_recv(), 79, "var q = pick(|a, b| a + b, p) receives the Pt");
+#endif
+    assert_eq(viaret(), 505, "the issue's shape 2: return sl(|a, b| a + b, \"hello\") wraps the literal");
+    assert_eq(viavar(), 505, "control: the same call outside tail position");
+    assert_eq(viaret3(), 505, "the tail form with a three-parameter closure");
+    assert_eq(viaret_mid(), 307, "the tail form with the literal two arguments after the closure");
+    assert_eq(viaret_one(), 505, "control: return sl(|a| a + 3, \"hello\")");
+    assert_eq(ov_two(), 206, "show(s, |a, b| a * b) is routed to show_str");
+    assert_eq(ov_three(), 205, "show(s, |a, b, c| a + b) is routed to show_str");
+    assert_eq(ov_one(), 204, "control: show(s, |a| a * 2) is routed to show_str");
+    return 0;
+}
+rows();
+var r = assert_summary();
