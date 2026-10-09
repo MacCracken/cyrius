@@ -2141,9 +2141,7 @@ fn _dep_switch_setup(verb): i64 {
     }
     # `update` refreshes lib/ and re-resolves into it: the whole verb is a write
     if (_dep_locked == 1 && streq(verb, "update") == 1) { return _dep_locked_refuse("cyrius update", "lib/ and cyrius.lock"); }
-    var rel = 0;
-    if (streq(verb, "publish") == 1 || streq(verb, "package") == 1) { rel = 1; }
-    if (streq(verb, "distlib") == 1 || streq(verb, "update") == 1) { rel = 1; }
+    var rel = _dep_verb_rel(verb);
     var argl = _cli_has("--local");
     var argn = _cli_has("--no-local");
     if (argl == 1 && argn == 1) { _err("--local and --no-local contradict each other"); return 1; }
@@ -2183,6 +2181,22 @@ fn _dep_switch_setup(verb): i64 {
         if (vec_len(_dep_local_names) == 0) { _dep_local_on = 0; return 0; }
     }
     return _dep_names_ok("CYRIUS_LOCAL");
+}
+
+# 1 for a verb that resolves what a release ships — the tags, whatever the local switch says.
+fn _dep_verb_rel(verb): i64 {
+    if (streq(verb, "publish") == 1 || streq(verb, "package") == 1) { return 1; }
+    if (streq(verb, "distlib") == 1 || streq(verb, "update") == 1) { return 1; }
+    return 0;
+}
+
+# 1 when this run honours the local switch: not --locked and not a release verb. The hint line
+# tells the developer the switch builds an unused checkout, so it is said only where it would —
+# `cyrius package` printed it, CYRIUS_LOCAL set or not, beside "CYRIUS_LOCAL is ignored here".
+fn _dep_switch_honoured(): i64 {
+    if (_dep_locked == 1) { return 0; }
+    if (_dep_switch_verb == 0) { return 1; }
+    return 1 - _dep_verb_rel(_dep_switch_verb);
 }
 
 # CYRIUS_LOCKED as --locked reads it: 1, 0 (unset or "0"), or -1 after naming any other value.
@@ -2481,7 +2495,7 @@ fn _dep_pick(name, rec, kind, owner, mode): i64 {
                 _ew(_dep_ci_builds(git, load64(rec + _DS_TAG)));
                 _ew(" from git\n");
             }
-            if (sel == 0 && pdir == 1 && mode == 1 && _dep_local_on == 0 && _dep_locked == 0) {
+            if (sel == 0 && pdir == 1 && mode == 1 && _dep_local_on == 0 && _dep_switch_honoured() == 1) {
                 if (_dep_hint == 0) { _dep_hint = vec_new(); }
                 if (_dep_list_has(_dep_hint, name) == 0) { vec_push(_dep_hint, name); }
             }

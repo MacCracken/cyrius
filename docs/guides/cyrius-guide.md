@@ -2813,6 +2813,8 @@ off. The manifest can never switch it on, so no commit flips what CI builds.
 - **No switch** — CI and a dev box alike — builds the tag. When a declared checkout exists but was
   not used, ONE line says so:
   `hint: 1 dep has a local checkout not in use (sigil); CYRIUS_LOCAL=1 builds it (this run built the tag)`.
+  It is said only where the switch works — never under `--locked` or a release verb (`publish`,
+  `package`, `distlib`, `update`), which resolve the tags whatever `CYRIUS_LOCAL` says.
 - **Local mode**, per selected override whose `path` is a directory: the working tree is used, no
   clone, and one line names it:
   `local: sigil <- ../sigil @1a2b3c4, 118 commits past 3.9.9, dirty — CI builds 3.9.9`.

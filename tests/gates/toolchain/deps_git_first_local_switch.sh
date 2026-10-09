@@ -48,9 +48,12 @@
 #       L2's build/local-deps still holding the override)
 #   L13 each local-mode resolve starts from an EMPTY build/local-deps/lib (a planted file is gone)
 #   L14 R12: a path dep's missing module is "not found in the local path …", never "at tag"
+#   L15 the hint names the switch, so it is said only where the switch works: a release verb
+#       (`cyrius package`) prints NO hint — with CYRIUS_LOCAL=1 (its one note says the switch is
+#       ignored; the hint said "CYRIUS_LOCAL=1 builds it" beside it) and without it
 #
 # MUTATION LEDGER (measured 2026-10-08, each in a SCRATCH copy of the tree — never the worktree —
-# one at a time; the real tree is 14/14 green):
+# one at a time; the real tree is 15/15 green):
 #   M1  root `_dep_pick`: a path that is a directory wins without the switch (the old precedence)
 #                                                                  L1 L3 L4 L5 L10 L12 red
 #   M2  `_dep_local_begin` leaves `_dep_vroot` at lib/ (local mode writes lib/)  L2 L12 red
@@ -62,6 +65,7 @@
 #   M8  a local checkout follows an UNSELECTED override ................... L8 red
 #   M9  the prescan never finds an override in use (vendors into lib/) .... L2 L12 red
 #   M10 `_dep_local_begin` does not clear build/local-deps/lib ............ L13 red
+#   M11 the hint is collected whatever the verb (6.7.6 FXCL-6, pre-fix shape) .. L15 red
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
 G=deps_git_first_local_switch
@@ -303,6 +307,14 @@ rc=0; cy deps > "$W/l14.out" 2>&1 || rc=$?
 if [ "$rc" -eq 1 ] && grep -qF '[deps.leaf] modules entry "dist/nothere.cyr" not found in the local path ' "$W/l14.out" && ! grep -q 'at tag' "$W/l14.out"; then
     ok "L14 a path dep's missing module names the local path, not a tag"
 else bad "L14 (rc=$rc): $(grep -m1 error "$W/l14.out")"; fi
+# ── L15: no hint where the switch is ignored ──
+P="$WS/app"
+LCL=1; rc=0; cy package > "$W/l15a.out" 2>&1 || rc=$?; r15a=$rc; LCL=""
+rc=0; cy package > "$W/l15b.out" 2>&1 || rc=$?
+if [ "$r15a" -eq 0 ] && [ "$(grep -c '^note: CYRIUS_LOCAL is ignored here' "$W/l15a.out")" -eq 1 ] && ! grep -q '^hint: ' "$W/l15a.out" \
+   && [ "$rc" -eq 0 ] && ! grep -q '^hint: ' "$W/l15b.out" && [ -d "$WS/sib" ]; then
+    ok "L15 a release verb with ../sib present: no hint, with CYRIUS_LOCAL=1 (one note) or without"
+else bad "L15 (switch rc=$r15a, none rc=$rc): $(grep -m2 'hint\|note' "$W/l15a.out" "$W/l15b.out")"; fi
 
 echo "$G: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1
