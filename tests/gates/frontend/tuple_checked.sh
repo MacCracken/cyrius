@@ -9,14 +9,19 @@
 #
 #   L  the lexer: `.` then a digit after an IDENT, `)` or `]` is a selector (IDENT DOT IDENT"0"), and
 #      every other `.digit` lexes exactly as before — ranges, floats, `t. 0` with a space
-#   S  shapes: S2 a struct with a tuple field (its layout, the neighbours intact); S5 `#derive` on
-#      a struct with a tuple field is refused by name
+#   S  shapes: S2 a struct with a tuple field (its layout, the neighbours intact); S3 a forward call
+#      to a fn declared below with a tuple parameter and a second one (pass 1's parameter scan);
+#      S5 `#derive` on a struct with a tuple field is refused by name
 #   R  the shapes the decision leaves open, each refused by name (one error line, its fragment):
 #      R1 an element outside i64 / f64 / bool; R2 arity and spelling; R3 a type position outside
-#      a var / a struct field (T2's); R4 a tuple in a generic fn / struct; R11 a tuple (or a tuple
-#      field) used as a value; R12 a non-tuple source into a tuple place; R13 methods; R21 `t.N`
-#      spellings that name no element
-#   P  positive: the type, `t.N`, copies, fields — exit codes, values distinguishable
+#      a var / a struct field / a parameter; R4 a tuple in a generic fn / struct; R6 an `async fn`
+#      tuple parameter; R11 a tuple (or a tuple field) used as a value; R12 a non-tuple source into
+#      a tuple place (an argument of another struct or tuple type too); R13 methods; R17 a
+#      multi-value call as a tuple argument (`g(f())`: bind it first); R21 `t.N` spellings that
+#      name no element
+#   P  positive: the type, `t.N`, copies, fields, parameters — exit codes, values distinguishable
+#   X  `--syntax-only` (cyrius lint's pre-pass): a fn with a tuple parameter, and a call to a
+#      sibling file's fn with a tuple argument, report nothing
 #   A  tests/tcyr/crossos/tuple_values.tcyr with its full assertion count (derived from the source)
 #      on x86 (default, CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu), cx (cxvm), PE
 #      (wine, a private prefix). A leg whose tool is missing is a SKIP that names it (exit 77).
@@ -52,6 +57,19 @@
 # stdout, stderr and exit code, default and CYRIUS_DCE=1 — with the T2 compiler and the T1 one, and
 # the aarch64, cx and PE compilers likewise over all 537 pre-existing tests/tcyr files. No program
 # that compiled before T2 compiles differently.
+# T3 (2026-10-09; the same recipe; each mutant measured RED, the real tree 120/120):
+#   M3  no pass-1 parameter arm (`_prescan_params_scan` without `_tup_pscan`) -> S3 and A1-A4 / A7
+#       (a forward call counted one parameter with no struct-mask bit: the tuple was read as a value)
+#   M14 no `g(f())` refusal (`_tup_arg_call` dropped) -> R17a-R17f BUILD; R17a's binary exits 139 (the
+#       first value pushed as the tuple's address)
+#   M14b no method / operator refusal (`_tup_arg_mrc` dropped) -> R17g, R17h BUILD; both binaries exit 139
+#   Mbv pass 1 records no prologue copy (`_tup_bvcp` a no-op) -> A1-A4 / A7: tuple_values' "after an earlier
+#       call to a copying callee declared below: kept" (the tail call diverted for nothing)
+#   Masy the `async fn` tuple branch dropped -> R6a: the struct message, advising `t: *(i64, i64)`
+# THE EVIDENCE BEYOND THESE ROWS (T3, 2026-10-09): every .cyr / .tcyr / .fcyr / .bcyr in src lib programs cbt
+# tests benches fuzz bootstrap docs/development/issues but tuple_values.tcyr (1034 files) compiles byte-identical —
+# stdout, stderr and exit code; default, CYRIUS_DCE=1 and --syntax-only — with the T3 compiler and the T2 one, and
+# the aarch64, cx and PE compilers likewise over all 537 other tests/tcyr files.
 # Defensive, no killing row (named): `_tok_start` set to the digit before LEXID — today every
 # diagnostic at a selector points at the token AFTER it, so the IDENT's own offset is not observed;
 # the guard's `]` (29) — no valid program today follows a subscript with `.field`, so `a[1].0` is
@@ -119,6 +137,10 @@ refused l05 "expected identifier, got number 0" "L5: \`p. 0\` (a space) is still
 # ── S: shapes ──────────────────────────────────────────────────────────────────────────────────────
 TH='struct H { a; p: (i64, i64); b; }\n'
 exits s02 47 "S2: \`struct H { a; p: (i64, i64); b; }\` is 32 bytes, and \`b\` is intact after \`p.1\` is written" "${TH}fn f(): i64 {\n    var h: H;\n    h.a = 1;\n    h.b = 7;\n    h.p.0 = 3;\n    h.p.1 = 9;\n    if (sizeof(H) != 32) { return 99; }\n    return h.b * 10 - h.p.1 - h.a * 14;\n}\nsyscall(60, f());\n"
+# S3: a forward call to a fn declared BELOW with a tuple parameter and then a second one. Pass 1's
+# parameter scan stopped at the `(`: one parameter counted, no struct-mask bit — the call was refused
+# ("expects 1 argument") or, with the arity right, pushed the tuple's first word as its address.
+exits s03 64 "S3: \`later(t, 1000)\` before \`fn later(t: (i64, i64), k)\` (pass 1 scans the tuple parameter)" 'fn f(): i64 {\n    var t: (i64, i64);\n    t.0 = 5;\n    t.1 = 9;\n    var r = later(t, 1000);\n    return r - 1000 + t.0;\n}\nfn later(t: (i64, i64), k): i64 {\n    t.0 = t.0 + 100;\n    return t.0 * 10 + t.1 + k;\n}\nsyscall(60, f() - 1000);\n'
 refused s05 "#derive reads named field types; 't' is a tuple (in the declaration of D)" "S5: \`#derive\` on a struct with a tuple field (it silently dropped every later field's code)" '#derive(accessors)\nstruct D { a; t: (i64, i64); b; }\nfn f(): i64 { var d: D; d.a = 3; return d.a; }\nsyscall(60, f());\n'
 
 # ── R1: the element vocabulary is i64 / f64 / bool ─────────────────────────────────────────────────
@@ -133,6 +155,7 @@ refused r01f "a tuple element is i64, f64 or bool, not u128" "R1f: \`(u128, i64)
 refused r01g "a tuple element is i64, f64 or bool, not a slice" "R1g: \`([u8], i64)\`" "${V}([u8], i64)${W}"
 refused r01h "unknown type 'Nope' as a tuple element" "R1h: an unknown name" "${V}(Nope, i64)${W}"
 refused r01i "a tuple element is i64, f64 or bool, not 'f32'" "R1i: \`(f32, i64)\`" "${V}(f32, i64)${W}"
+refused r01j "a tuple element is i64, f64 or bool, not 'i32'" "R1j: a parameter \`t: (i32, i64)\`" 'fn g(t: (i32, i64)): i64 { return 1; }\nfn f(): i64 { return 3; }\nsyscall(60, f());\n'
 
 # ── R2: arity and spelling ─────────────────────────────────────────────────────────────────────────
 refused r02a "a tuple type has 2 or more elements - \`()\` is empty" "R2a: \`()\`" "${V}()${W}"
@@ -157,10 +180,21 @@ refused r03l "a tuple has no methods - \`impl\` on a tuple type is refused" "R3l
 refused r03m "a tuple type cannot be a multi-value return element" "R3m: \`fn g(): ((i64, i64), i64)\`" 'fn g(): ((i64, i64), i64) { return (1, 2); }\nfn f(): i64 { return 3; }\nsyscall(60, f());\n'
 refused r03n "a tuple in a const fn" "R3n: a tuple local in a const fn's evaluation" 'const fn cf(x: i64): i64 {\n    var t: (i64, i64);\n    return x;\n}\nconst C = cf(3);\nsyscall(60, C);\n'
 refused r03o "a tuple type cannot be a Vec element" "R3o: a \`Vec<(i64, i64)>\` struct field (it said \"expected identifier\")" 'struct W { v: Vec<(i64, i64)>; }\nfn f(): i64 { return 3; }\nsyscall(60, f());\n'
+refused r03p "a tuple type cannot be a pointer target" "R3p: a parameter \`t: *(i64, i64)\`" 'fn g(t: *(i64, i64)): i64 { return 1; }\nfn f(): i64 { return 3; }\nsyscall(60, f());\n'
 
 # ── R4: generics ───────────────────────────────────────────────────────────────────────────────────
 refused r04a "a tuple type in a generic fn is refused" "R4a: a tuple local in a generic fn" 'fn g<T>(x: T): T {\n    var t: (i64, i64);\n    t.0 = x;\n    return t.0;\n}\nfn f(): i64 { return g(3); }\nsyscall(60, f());\n'
 refused r04b "a tuple field in a generic struct is refused" "R4b: a tuple field in a generic struct" 'struct B<T> { v: T; t: (i64, i64); }\nfn f(): i64 { var b: B<i64>; b.v = 3; return b.v; }\nsyscall(60, f());\n'
+refused r04c "a tuple type in a generic fn is refused" "R4c: a tuple parameter in a generic fn's signature" 'fn g<T>(x: T, t: (i64, i64)): T { return x; }\nfn f(): i64 { return g(3, 0); }\nsyscall(60, f());\n'
+
+# ── R6: async ──────────────────────────────────────────────────────────────────────────────────────
+# An `async fn` runs its body at force time, so a by-value struct parameter is refused (the inherited
+# rule, `_refuse_async_struct_param`). Its usual advice is a pointer, which a tuple cannot be: the
+# tuple form names the type and says to pass the elements.
+printf '#!/bin/sh\nCYRIUS_ASYNC=1 exec "%s" "$@"\n' "$CC" > "$T/acc"; chmod +x "$T/acc"
+CC_SV=$CC; CC="$T/acc"
+refused r06a "async fn parameter 't' is a tuple (i64, i64), which an \`async fn\` does not capture yet - pass its elements as separate parameters" "R6a: an \`async fn\` with a tuple parameter (CYRIUS_ASYNC=1)" 'include "lib/alloc.cyr"\nasync fn af(t: (i64, i64)): i64 { return t.0; }\nfn f(): i64 { return 3; }\nsyscall(60, f());\n'
+CC=$CC_SV
 
 # ── R11: a whole tuple is not a value ──────────────────────────────────────────────────────────────
 TT='fn g(x): i64 { return x; }\nfn f(): i64 {\n    var t: (i64, i64);\n    t.0 = 1;\n    t.1 = 2;\n'
@@ -204,6 +238,11 @@ refused r12m "cannot copy 'p' into a variable of a different struct/vector type:
 refused r12n "cannot copy 'u' into a variable of a different struct/vector type: 't'" "R12n: another tuple type" "${TT}    var u: (i64, f64);\n    t = u;${TE}"
 refused r12o "cannot copy 'u' into a variable of a different struct/vector type: 'v'" "R12o: another tuple type, a declaration" "${TT}    var u: (i64, f64);\n    var v: (i64, i64) = u;${TE}"
 refused r12p "uninitialized variable not allowed" "R12p: \`var G: (i64, i64);\` in the declaration zone keeps its one \"uninitialized\" refusal" 'var G: (i64, i64);\nsyscall(60, 0);\n'
+# R12q-s: an argument is type-checked by sid against a tuple parameter (`_sarg_type_err`), both ways.
+TK='fn take(t: (i64, i64)): i64 { return t.0 * 10 + t.1; }\n'
+refused r12q "cannot pass 'p' to a parameter of a different struct type in a call to 'take'" "R12q: a struct as a tuple argument" "${P}${TK}fn f(): i64 {\n    var p: P;\n    p.a = 1;\n    return take(p);\n}\nsyscall(60, f());\n"
+refused r12r "cannot pass 'u' to a parameter of a different struct type in a call to 'take'" "R12r: another tuple type as the argument" "${TK}fn f(): i64 {\n    var u: (i64, f64);\n    u.0 = 1;\n    return take(u);\n}\nsyscall(60, f());\n"
+refused r12s "cannot pass 't' to a parameter of a different struct type in a call to 'tp'" "R12s: a tuple as a struct argument" "${P}fn tp(p: P): i64 { return p.a; }\nfn f(): i64 {\n    var t: (i64, i64);\n    t.0 = 1;\n    return tp(t);\n}\nsyscall(60, f());\n"
 
 # ── R13: a tuple has no methods ────────────────────────────────────────────────────────────────────
 M13="a tuple has no methods"
@@ -222,6 +261,20 @@ refused r13g "$D13" "R13g: \`mk().0()\`, on a call's result" "${PM}fn mk(): P {\
 refused r13h "$D13" "R13h: \`q.p.0()\`, on a nested struct field" "${PM}struct Q { p: P; }\nfn f(): i64 {\n    var q: Q;\n    return q.p.0();\n}\nsyscall(60, f());\n"
 refused r13i "$D13" "R13i: \`p.0().a\` — the chain after it is consumed (one error)" "${PM}fn f(): i64 {\n    var p: P;\n    var x = p.0().a;\n    return x;\n}\nsyscall(60, f());\n"
 
+# ── R17: a multi-value call is not a tuple argument ───────────────────────────────────────────────
+# The parameter takes a tuple's ADDRESS; the call leaves its values in the return registers, so the
+# value push handed the callee the first value as an address (x86: SIGSEGV). Bind it first.
+MK='fn mk(a): (i64, i64) { return (a, a + 1); }\n'
+R17="is not a tuple argument - bind it first: \`var t: (i64, i64) = "
+refused r17a "a multi-value call 'mk' $R17" "R17a: \`take(mk(3))\` in a fn" "${MK}${TK}fn f(): i64 { return take(mk(3)) + 1; }\nsyscall(60, f());\n"
+refused r17b "a multi-value call 'mk' $R17" "R17b: at top level" "${MK}${TK}syscall(60, take(mk(3)));\n"
+refused r17c "a multi-value call 'mk' $R17" "R17c: a tail call, \`mk\` declared below" "${TK}fn f(): i64 { return take(mk(3)); }\n${MK}syscall(60, f());\n"
+refused r17d "a multi-value call 'mk' $R17" "R17d: the second argument, in a loop's tail call" "fn take2(k, t: (i64, i64)): i64 { return t.0 * 10 + t.1 + k; }\n${MK}fn f(): i64 {\n    var i = 0;\n    while (i < 3) {\n        if (i == 2) { return take2(1, mk(3)); }\n        i = i + 1;\n    }\n    return 0;\n}\nsyscall(60, f());\n"
+refused r17e "a multi-value call 'mk' $R17" "R17e: an explicit generic \`mk<i64>(3)\`" "fn mk<T>(a: T): (i64, i64) { return (a, a + 1); }\n${TK}fn f(): i64 { return take(mk<i64>(3)); }\nsyscall(60, f());\n"
+refused r17f "a multi-value call 'mk' $R17" "R17f: \`take((mk(3)))\`, parenthesised" "${MK}${TK}fn f(): i64 { return take((mk(3))); }\nsyscall(60, f());\n"
+refused r17g "a multi-value call 'B_mk' $R17" "R17g: a method \`take(b.mk(3))\`" "struct B { v; }\nimpl B { fn mk(self, a): (i64, i64) { return (a, a + self.v); } }\n${TK}fn f(): i64 {\n    var b: B;\n    b.v = 1;\n    return take(b.mk(3));\n}\nsyscall(60, f());\n"
+refused r17h "a multi-value call 'P_add' $R17" "R17h: an operator \`take(p + q)\`" "${P}fn P_add(a: P, b: P): (i64, i64) { return (a.a + b.a, a.b + b.b); }\n${TK}fn f(): i64 {\n    var p = P { 1, 2 };\n    var q = P { 3, 4 };\n    return take(p + q);\n}\nsyscall(60, f());\n"
+
 # ── R21: `t.N` spellings that name no element ──────────────────────────────────────────────────────
 refused r21a "unknown field '2' on struct '(i64, i64)'" "R21a: \`t.2\` past the arity (a read)" "${TT}    return t.2;${TE}"
 refused r21b "unknown field '2' on struct '(i64, i64)'" "R21b: \`t.2 = 1\` (a write)" "${TT}    t.2 = 1;${TE}"
@@ -234,11 +287,28 @@ exits p01 59 "P1: \`var t: (i64, i64);\` then \`t.0 = 5; t.1 = 9;\`" 'fn f(): i6
 exits p02 96 "P2: copies are by value (a declaration, an assignment, a field)" "${TH}fn f(): i64 {\n    var t: (i64, i64);\n    t.0 = 5;\n    t.1 = 9;\n    var u: (i64, i64) = t;\n    u.0 = 6;\n    var w: (i64, i64);\n    w = u;\n    u.1 = 1;\n    var h: H;\n    h.p = w;\n    w.0 = 0;\n    return h.p.0 * 10 + h.p.1 + t.0 * 0 + (u.1 - 1) * 50 + (t.0 - 5) * 7 + 27;\n}\nsyscall(60, f());\n"
 exits p03 23 "P3: a declaration-zone global copied from a struct literal's tuple field" "${TH}var GH = H { 1, 2, 3, 4 };\nvar G: (i64, i64) = GH.p;\nsyscall(60, G.0 * 10 + G.1);\n"
 exits p04 61 "P4: f64 and bool elements keep their kind" 'fn f(): i64 {\n    var t: (i64, f64, bool);\n    t.0 = 6;\n    t.1 = 0.5;\n    t.2 = true;\n    t.1 *= 2.0;\n    var k = 0;\n    if (t.2) { k = 1; }\n    if (t.1 == 1.0) { k = k + t.0 * 10; }\n    return k;\n}\nsyscall(60, f());\n'
+exits p05 64 "P5: a tuple parameter is the callee's copy (its write never reaches the caller)" 'fn take(t: (i64, i64), k): i64 {\n    t.0 = t.0 + 100;\n    return t.0 * 10 + t.1 + k;\n}\nfn f(): i64 {\n    var t: (i64, i64);\n    t.0 = 5;\n    t.1 = 9;\n    var r = take(t, 1000);\n    return r - 1000 + t.0;\n}\nsyscall(60, f() - 1000);\n'
+# P6: `#inline` on a fn with a tuple parameter falls back to a call (the struct rule, `_inl_param_why`)
+printf '#inline\nfn ti(t: (i64, i64)): i64 { return t.0 * 10 + t.1; }\nfn f(): i64 {\n    var t: (i64, i64);\n    t.0 = 4;\n    t.1 = 2;\n    return ti(t) + ti((t));\n}\nsyscall(60, f());\n' > "$T/p06.cyr"
+build p06
+if [ "$rc" -ne 0 ]; then bad "P6: rc $rc: $(grep '^error' "$T/p06.err" | head -1)"
+elif ! grep -q "#inline ignored: struct/aggregate parameter" "$T/p06.err"; then bad "P6: no '#inline ignored' warning: $(head -1 "$T/p06.err")"
+else chmod +x "$T/p06.bin"; got=0; timeout 10 "$T/p06.bin" || got=$?
+    if [ "$got" -eq 84 ]; then ok "P6: \`#inline\` with a tuple parameter: a call (warned), exit 84"; else bad "P6: exit $got, want 84"; fi
+fi
+
+# ── X: --syntax-only (cyrius lint's pre-pass) ──────────────────────────────────────────────────────
+# A fn with a tuple parameter, its call, and calls to a sibling file's fns (unknown here) with a tuple
+# argument and a sibling's call as a tuple argument: nothing tuple-related is reported.
+printf 'fn take(t: (i64, i64), k): i64 { return t.0 * 10 + t.1 + k; }\nfn f(): i64 {\n    var t: (i64, i64);\n    t.0 = 1;\n    t.1 = 2;\n    return take(t, 3) + sib_take(t, 4) + take(sib_mk(), 5);\n}\nsyscall(60, f());\n' > "$T/x03.cyr"
+"$CC" --syntax-only < "$T/x03.cyr" > /dev/null 2> "$T/x03.err" || true
+if grep -q "tuple\|^error:<source>" "$T/x03.err"; then bad "X3: --syntax-only reported: $(grep -m1 "tuple\|^error:<source>" "$T/x03.err")"
+else ok "X3: --syntax-only: a tuple parameter, a sibling's fn given a tuple, a sibling's call as a tuple argument — silent"; fi
 
 # ── A: tests/tcyr/crossos/tuple_values.tcyr on every pipeline and target ───────────────────────────
 TV="$ROOT/tests/tcyr/crossos/tuple_values.tcyr"
 want=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TV")
-[ "$want" -ge 38 ] || bad "A0: only $want assertions derived from $TV (floor 38)"
+[ "$want" -ge 65 ] || bad "A0: only $want assertions derived from $TV (floor 65)"
 tcyr_ok() {   # <label> <output file> <exit> <want>
     if [ "$3" -eq 0 ] && grep -q "^$4 passed, 0 failed" "$2"; then ok "$1: $4 passed"
     else bad "$1: exit $3, $(grep -E 'passed|FAIL' "$2" | tr -d '\r' | head -3 | tr '\n' '|')"; fi
@@ -283,4 +353,4 @@ else echo "  SKIP A7 PE — wine not installed"; skips=$((skips + 1)); fi
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: tuple_checked — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: tuple_checked — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: tuple_checked — tuples: the lexer (L); the type in a var and a struct field, \`t.N\`, copies (S, P); every open shape refused by name (R1-R4, R11-R13, R21); tuple_values.tcyr on x86 / IR / DCE / aarch64 / cx / PE (A)"
+echo "PASS: tuple_checked — tuples: the lexer (L); the type in a var, a struct field and a parameter, \`t.N\`, copies (S, P); every open shape refused by name (R1-R4, R6, R11-R13, R17, R21); --syntax-only silent (X); tuple_values.tcyr on x86 / IR / DCE / aarch64 / cx / PE (A)"

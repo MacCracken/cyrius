@@ -1551,7 +1551,10 @@ fn _try_push_struct_addr_arg(S, fi, argc, tail): i64 {
     if (PEEKT(S) != 2) { return 0; }
     var nx = TOKTYP(S, GTI(S) + 1);
     # 6.7.3: a whole free call's struct, checked here — where `_arg_call_class` resolves it anyway.
-    if (nx == 10 || nx == 19) { _sarg_type_err(S, fi, argc, _sarg_call_sid(S, GTI(S)), PEEKV(S)); }
+    if (nx == 10 || nx == 19) {
+        _sarg_type_err(S, fi, argc, _sarg_call_sid(S, GTI(S)), PEEKV(S));
+        if (_tup_arg_call(S, fi, argc) == 1) { return 0; }   # 6.7.7 (B4): `g(f())`, f multi-value
+    }
     # ⛔ 6.6.6 — a by-value struct param given a struct-valued CALL (`h(mk(1, 2))`): the callee
     # takes the struct's ADDRESS, so the result needs storage to point at. It used to be pushed
     # as a value — the first word for a rax:rdx return (the callee then dereferenced a field),
@@ -1615,6 +1618,71 @@ fn _try_push_struct_addr_arg(S, fi, argc, tail): i64 {
     if (_sa_ptr == 1) { EFLLOAD(S, li); } else { _sarg_escapes(fi, argc, tail); EFLADDR(S, li); }
     EPUSHR(S);
     STI(S, GTI(S) + 1);                 # consume IDENT
+    return 1;
+}
+
+# ⛔ 6.7.7 (B4) — A MULTI-VALUE CALL AS A TUPLE ARGUMENT (`g(f())`, `f` declared `: (i64, i64)`).
+# The parameter takes a tuple's ADDRESS, and the call leaves its values in the return registers —
+# nothing to point at — so the value push handed the callee the first value as an address (a
+# SIGSEGV, or a silent read through it). Refused by name: bind the values first. Cursor on the
+# callee's name; 1 = reported (the caller then pushes the argument as before, the parse in step,
+# `_had_error` withholding the binary). A whole call only: `g(f() + 1)` is an integer, which the
+# struct rule passes as an address as it does any untyped value. CHANGELOG [6.7.7]
+fn _tup_arg_call(S, fi, argc): i64 {
+    var ps = GFPSID(S, fi, argc);
+    if (_tup_is(S, ps) == 0) { return 0; }
+    var ti = GTI(S);
+    var o = _gcall_open(S, ti);
+    if (o < 0) { return 0; }
+    if (_call_dotted(S, ti) == 1) { return 0; }
+    if (_call_is_whole_arg(S, o - 1) == 0) { return 0; }
+    var cfi = _gen_resolve_call(S, ti);
+    if (cfi < 0) { return 0; }
+    if (GFRS(S, cfi) != MULTIRET_SID) { return 0; }
+    return _tup_arg_mv_err(S, ti, ps, TOKVAL(S, ti), "(..)");
+}
+# ... and a whole METHOD or operator call (`g(x.f())`, `g(a + b)`), after its parse: `_sc_post_small`
+# stamps a multi-value result's span (`_mrc_note`, read by nothing else); one that is the whole
+# argument (from `st` to the cursor) is refused the same way.
+var _mrc_beg = 0 - 1;   # its first token
+var _mrc_end = 0 - 1;   # the token after it
+var _mrc_fn = 0;        # its name
+fn _mrc_note(S, noff, beg): i64 {
+    _mrc_beg = beg;
+    _mrc_end = GTI(S);
+    _mrc_fn = noff;
+    return 0;
+}
+fn _tup_arg_mrc(S, fi, argc, st): i64 {
+    if (_mrc_beg != st) { return 0; }
+    if (_mrc_end != GTI(S)) { return 0; }
+    var ps = GFPSID(S, fi, argc);
+    if (_tup_is(S, ps) == 0) { return 0; }
+    return _tup_arg_mv_err(S, st, ps, _mrc_fn, 0);
+}
+# The R17 report at token `ti`: tuple `ps`, the call named `noff`; `tail` != 0 spells the call in
+# the hint as `name<tail>` (a free call), 0 as `...`. 1 = refused (reported once).
+fn _tup_arg_mv_err(S, ti, ps, noff, tail): i64 {
+    if (_syntax_only == 1) { return 0; }
+    if (_panic == 1) { return 1; }
+    if (_tn_once(S, ti) == 0) { return 1; }
+    var sv = GTI(S);
+    STI(S, ti);
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    PRSTR(": a multi-value call '");
+    PRSTR(S + 0xEC00000 + noff);
+    PRSTR("' is not a tuple argument - bind it first: `var t: ");
+    PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (ps - 1) * 8));
+    PRSTR(" = ");
+    if (tail != 0) {
+        PRSTR(S + 0xEC00000 + noff);
+        PRSTR(tail);
+    } else { PRSTR("..."); }
+    PRSTR(";`, then pass `t`\n");
+    _err_excerpt(S);
+    _had_error = 1;
+    STI(S, sv);
     return 1;
 }
 
@@ -3139,6 +3207,7 @@ fn _sc_post(S, fi, noff, beg, t): i64 {
 fn _sc_post_small(S, fi, noff, beg): i64 {
     if (fi < 0) { return 0; }
     var sid = GFRS(S, fi);
+    if (sid == MULTIRET_SID) { return _mrc_note(S, noff, beg); }   # 6.7.7 (B4)
     if (sid <= 0) { return 0; }
     if (STRUCTSZ(S, sid - 1) > 8) { return 0; }
     _sc_beg = beg;
@@ -3372,6 +3441,7 @@ fn _push_struct_expr_arg(S, fi, argc, tail): i64 {
     _fla_want = fw;
     _fla_arg = fa;
     if (_fla_hit == 1) { return _fla_push_arg(S, fi, argc, tail); }
+    _tup_arg_mrc(S, fi, argc, st);   # 6.7.7 (B4): `g(x.f())`, f multi-value
     var t = _sc_whole(S, st);
     if (t >= 0 || t == 0 - 3) { _sarg_type_err(S, fi, argc, _sc_sid, _sc_fn); }   # 6.7.3
     if (t == 0 - 2) { if (_fls_whole(S, st) == 1) { _sarg_type_err(S, fi, argc, _fls_sid, _fls_name); } }   # 6.7.6
@@ -3762,6 +3832,13 @@ fn _refuse_async_struct_param(S, li, pnoff): i64 {
     _err_head(S);
     syscall(SYS_WRITE, 2, ": async fn parameter '", 22);
     PRSTR(S + 0xEC00000 + pnoff);
+    if (_tup_is(S, 0 - lt) == 1) {   # 6.7.7 (B4): a tuple has no pointer form (`*( .. )` is refused)
+        PRSTR("' is a tuple ");
+        PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + ((0 - lt) - 1) * 8));
+        PRSTR(", which an `async fn` does not capture yet - pass its elements as separate parameters\n");
+        _had_error = 1;
+        return 0;
+    }
     syscall(SYS_WRITE, 2, "' is a struct passed by value, which an `async fn` does not capture yet — pass a pointer to it (`", 99);
     PRSTR(S + 0xEC00000 + pnoff);
     syscall(SYS_WRITE, 2, ": *", 3);
@@ -9872,6 +9949,48 @@ fn _psid_note(S, fi, pc, sid, mask): i64 {
     if (_psid_addr(fi, pc, mask) == 0) { if (_psid_plain(S, sid) == 0) { return 0; } }
     return SFPSID(S, fi, pc, sid);
 }
+# ⛔ 6.7.7 (B4) — A TUPLE PARAMETER (`t: (i64, f64)`). A tuple is an anonymous struct of 8-byte slots
+# and at least 16 B, so it takes the by-value struct path whole: ADDRESS-passed (the struct-mask
+# bit), copied in the callee's prologue (`_sptr_params_localize`), its sid recorded for the argument
+# check (`_psid_note`) and on the slot (SLTYPE = -sid). Both passes need the arm: pass 1 stopped at
+# the `(` — a short parameter count and a mask-0 ABI, so a call parsed before the definition pushed
+# the tuple's first word where the callee dereferences an address. `*( .. )` is refused by name (a
+# tuple is never a pointer target), and pass 1 steps over it quietly. CHANGELOG [6.7.7]
+var _tup_pt = 0;   # pass 2: the tuple parameter's sid (0 = refused); pass 1: the same, for `_tup_bvcp`
+# Pass 2 (PARSE_FN_DEF), cursor on the type's `(`: returns the struct mask with parameter `pc`'s
+# bit set, `_tup_pt` the sid; the cursor is left ON the `)` for the loop's shared step past the type.
+fn _tup_param(S, pc, smask): i64 {
+    _tup_pt = 0;
+    if (_ptrp_now(S) == 1) {
+        _tup_pos_refuse(S, "a pointer target `*( .. )`");
+        STI(S, GTI(S) - 1);
+        return smask;
+    }
+    _tup_pt = _tup_type(S, 0);
+    if (_tup_pt <= 0) { return smask; }
+    return _pmw(smask, pc, 1);
+}
+# Pass 1 (`_prescan_params_scan`), cursor on the `(`: the same mask and record, interned quietly;
+# the cursor is left PAST the `)`.
+fn _tup_pscan(S, fi, pc, smask, isptr): i64 {
+    _tup_pt = 0;
+    if (isptr == 1) {
+        STI(S, _call_close(S, GTI(S)) + 1);
+        return smask;
+    }
+    _tup_pt = _tup_type(S, 2);
+    if (PEEKT(S) == 11) { STI(S, GTI(S) + 1); }
+    if (_tup_pt <= 0) { return smask; }
+    var m = _pmw(smask, pc, 1);
+    _psid_note(S, fi, pc, _tup_pt, m);
+    return m;
+}
+# ... and its prologue copy (`_bvcp_note`'s plain-struct answer): every tuple parameter is copied in.
+fn _tup_bvcp(m, pc): i64 {
+    if (_tup_pt <= 0) { return m; }
+    if (pc >= 62) { return m; }
+    return m | (1 << pc);
+}
 fn _psid_addr(fi, pc, mask): i64 {
     if (pc < 62) { return (mask >> pc) & 1; }
     return _pm_row_get(fi, pc) & 1;   # 6.6.17 (a10): the overflow row
@@ -9953,6 +10072,10 @@ fn _prescan_params_scan(S, fi): i64 {
                     STI(S, GTI(S) + 1);                      # consume ':'
                     var _pptr = 0;
                     if (PEEKT(S) == 8) { STI(S, GTI(S) + 1); _pptr = 1; }   # skip '*' (pointer)
+                    if (PEEKT(S) == 10) {                    # 6.7.7 (B4): a tuple `( .. )`
+                        struct_mask = _tup_pscan(S, fi, pc, struct_mask, _pptr);
+                        bvcp = _tup_bvcp(bvcp, pc);
+                    }
                     if (PEEKT(S) == 2) {
                         var c = _classify_param_type(S, PEEKV(S));
                         if (c == 1) { str_mask = _pmw(str_mask, pc, 2); }
@@ -12314,6 +12437,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
             if (PEEKT(S) == 49) {
                 STI(S, GTI(S) + 1);  # consume :
                 if (PEEKT(S) == 8) { STI(S, GTI(S) + 1); _mark_ptr_param(S); }  # skip * for pointer types
+                if (PEEKT(S) == 10) { struct_mask = _tup_param(S, pc, struct_mask); pt_sid = _tup_pt; }   # 6.7.7 (B4)
                 if (PEEKT(S) == 2) {
                     var tnoff = PEEKV(S);
                     # v6.3.5 CO-01 — classify the param type-name once via the

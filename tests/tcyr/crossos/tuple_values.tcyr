@@ -12,7 +12,12 @@
 # Sections: types (the type, its identity, its size inside a struct), access (`t.N` reads and
 # writes, OP=, the f64 and bool element kinds, chains), copies (by value: a declaration, an
 # assignment, a parenthesised source, into and out of a tuple field, globals), fields (a struct
-# with a tuple field: layout, the neighbours intact, positional literals).
+# with a tuple field: layout, the neighbours intact, positional literals), params (a tuple
+# parameter is a by-value struct parameter: address-passed, copied on entry — the callee's writes
+# never reach the caller; a forward call, a method, a trait method, Win64's 5th / 6th argument on
+# the stack, every argument source), tailcalls (a tail call given a tuple in this frame diverts to a
+# real call — the `jmp` would free what the callee copies from — in a loop and out of one; one
+# given a global's tuple keeps its `jmp`, as does one after an earlier call that copied its tuple).
 
 include "lib/assert.cyr"
 
@@ -166,10 +171,172 @@ fn tv_fields(): i64 {
     return 0;
 }
 
+# --- params ---
+struct TvAcc { base; }
+trait TvSum { fn sum(self, t: (i64, i64), k): i64; }
+impl TvSum for TvAcc {
+    fn sum(self, t: (i64, i64), k): i64 { return self.base + t.0 * 10 + t.1 + k; }
+}
+impl TvAcc {
+    fn addk(self, t: (i64, f64, bool), k): i64 {
+        var r = self.base + t.0 + k;
+        if (t.1 == 2.5) { r = r + 10; }
+        if (t.2) { r = r + 100; }
+        return r;
+    }
+}
+# The callee writes its parameter: its own copy, never the caller's tuple.
+fn tv_bump(t: (i64, i64)): i64 {
+    t.0 = t.0 + 100;
+    t.1 *= 2;
+    return t.0 * 1000 + t.1;
+}
+fn tv_kinds(t: (i64, f64, bool)): i64 {
+    var r = t.0;
+    if (t.1 == 2.5) { r = r + 10; }
+    if (t.2) { r = r + 100; }
+    return r;
+}
+fn tv_six(a, b, c, d, t: (i64, i64), u: (i64, i64)): i64 {
+    return a + b + c + d + t.0 * 1000 + t.1 * 100 + u.0 * 10 + u.1;
+}
+# The 7th and 9th parameters: on the stack on SysV x86 (past six) and aarch64 (past eight).
+fn tv_nine(a, b, c, d, e, f, t: (i64, i64), g, u: (i64, f64)): i64 {
+    var r = a + b + c + d + e + f + g + t.0 * 1000 + t.1 * 100 + u.0 * 10;
+    if (u.1 == 0.5) { r = r + 5; }
+    return r;
+}
+# Each frame's copy: a deeper call's write is not seen on the way back up.
+fn tv_prec(t: (i64, i64), n): i64 {
+    t.0 = t.0 + 1;
+    if (n == 0) { return t.0; }
+    var r = tv_prec(t, n - 1);
+    return r * 10 + t.0;
+}
+# The parameter copied out, re-assigned, forwarded.
+fn tv_pcopy(t: (i64, i64)): i64 {
+    var u: (i64, i64) = t;
+    u.0 = 7;
+    t = u;
+    t.1 = 4;
+    return u.0 * 100 + u.1 * 10 + t.1 + tv_bump(t) * 0;
+}
+# A forward call: `tv_later` is declared BELOW (pass 1 records its tuple parameter, then `k`).
+fn tv_fwd(): i64 {
+    var t: (i64, i64);
+    t.0 = 5;
+    t.1 = 9;
+    return tv_later(t, 7);
+}
+fn tv_params(): i64 {
+    var t: (i64, i64);
+    t.0 = 5;
+    t.1 = 9;
+    assert_eq(tv_bump(t), 105018, "a tuple argument: the callee's copy");
+    assert_eq(t.0 * 10 + t.1, 59, "the callee's writes never reach the caller");
+    assert_eq(tv_bump((t)), 105018, "a parenthesised tuple argument");
+    var u: (i64, f64, bool);
+    u.0 = 3;
+    u.1 = 2.5;
+    u.2 = true;
+    assert_eq(tv_kinds(u), 113, "an (i64, f64, bool) parameter keeps its element kinds");
+    assert_eq(tv_fwd(), 597, "a forward call: a tuple parameter, then a second one");
+    var a: TvAcc;
+    a.base = 1000;
+    assert_eq(a.sum(t, 5), 1064, "a trait method with a tuple parameter");
+    assert_eq(a.addk(u, 1), 1114, "a method with an (i64, f64, bool) parameter");
+    var v: (i64, i64);
+    v.0 = 7;
+    v.1 = 8;
+    assert_eq(tv_six(1, 2, 3, 4, t, v), 5988, "tuples as the 5th and 6th arguments (Win64: the stack)");
+    var w: (i64, f64);
+    w.0 = 6;
+    w.1 = 0.5;
+    assert_eq(tv_nine(1, 1, 1, 1, 1, 1, v, 2, w), 7873, "tuples as the 7th and 9th arguments (the stack)");
+    assert_eq(tv_prec(t, 2), 876, "recursion: a copy per frame");
+    assert_eq(tv_pcopy(t), 794, "a parameter copied out, re-assigned, forwarded");
+    var h: TvH;
+    h.a = 0;
+    h.b = 0;
+    h.p.0 = 1;
+    h.p.1 = 2;
+    assert_eq(tv_bump(h.p), 101004, "a tuple field as the argument");
+    assert_eq(h.p.0 * 10 + h.p.1, 12, "the field untouched");
+    assert_eq(tv_bump(TV_G3), 102006, "a global tuple as the argument");
+    assert_eq(TV_G3.0 * 10 + TV_G3.1, 23, "the global untouched");
+    var c = || tv_bump(t) + t.1;
+    assert_eq(fncall0(c), 105027, "a captured tuple passed on");
+    assert_eq(t.0, 5, "the capture's callee did not reach the caller's tuple");
+    return 0;
+}
+
+# --- tailcalls ---
+# The `_dmark` technique of tailcall_struct_ptr_params.tcyr: the probe records the address of its
+# own local. Called straight from the checker it lands at some depth; a wrapper that tail-calls it
+# with a `jmp` puts it at the SAME depth, one that calls it normally puts it DEEPER. The j* locals
+# overwrite a freed caller frame, so a wrongly kept `jmp` reads a wrong value too.
+var _tv_dmark = 0;
+fn tv_dt(t: (i64, i64), k): i64 {
+    var j1 = 901; var j2 = 902; var j3 = 903; var j4 = 904; var j5 = 905; var j6 = 906;
+    _tv_dmark = &j1;
+    return t.0 * 10 + t.1 + k + (j1 + j2 + j3 + j4 + j5 + j6) - 5421;
+}
+fn tv_tc_loc(k): i64 {
+    var t: (i64, i64);
+    t.0 = 5;
+    t.1 = 9;
+    return tv_dt(t, k);
+}
+fn tv_tc_loop(k): i64 {
+    var t: (i64, i64);
+    t.0 = 3;
+    t.1 = 9;
+    var i = 0;
+    while (i < 3) {
+        if (i == 2) { return tv_dt(t, k); }
+        t.0 = t.0 + 1;
+        i = i + 1;
+    }
+    return 0;
+}
+fn tv_tc_fwd(t: (i64, i64), k): i64 { return tv_dt(t, k); }
+fn tv_tc_glob(k): i64 { return tv_dt(TV_G3, k); }
+# An earlier ordinary call handed a tuple in this frame to a callee declared BELOW that copies it
+# (pass 1's record): it keeps nothing, so the tail call keeps its `jmp`.
+fn tv_tc_after(k): i64 {
+    var t: (i64, i64);
+    t.0 = 1;
+    t.1 = 2;
+    var v = tv_cp(t);
+    return tv_dt(TV_G3, k + v - 12);
+}
+fn tv_tailcalls(): i64 {
+    var t: (i64, i64);
+    t.0 = 6;
+    t.1 = 1;
+    tv_dt(t, 0);
+    var base = _tv_dmark;
+    assert_eq(tv_tc_loc(1), 60, "`return take(t);` with a local tuple: the value");
+    assert_eq(_tv_dmark < base, 1, "`return take(t);` with a local tuple: diverted (a real call)");
+    assert_eq(tv_tc_loop(1), 60, "`return take(t);` inside a loop: the value");
+    assert_eq(_tv_dmark < base, 1, "`return take(t);` inside a loop: diverted");
+    assert_eq(tv_tc_fwd(t, 2), 63, "a forwarded tuple parameter: the value");
+    assert_eq(_tv_dmark < base, 1, "a forwarded tuple parameter (this frame's copy): diverted");
+    assert_eq(tv_tc_glob(1), 24, "a global's tuple: the value");
+    assert_eq(_tv_dmark == base, 1, "a global's tuple: the `jmp` is kept");
+    assert_eq(tv_tc_after(1), 24, "after an earlier copying call: the value");
+    assert_eq(_tv_dmark == base, 1, "after an earlier call to a copying callee declared below: kept");
+    return 0;
+}
+fn tv_later(t: (i64, i64), k): i64 { return t.0 * 100 + t.1 * 10 + k; }
+fn tv_cp(t: (i64, i64)): i64 { return t.0 * 10 + t.1; }
+
 tv_types();
 tv_access();
 tv_copies();
 tv_fields();
+tv_params();
+tv_tailcalls();
 # A global declared after the first statement, copied from a tuple field.
 var TV_G2: (i64, i64) = TV_GH.p;
 assert_eq(TV_G2.0 * 10 + TV_G2.1, 23, "a global after the first statement, copied from a tuple field");

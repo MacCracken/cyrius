@@ -438,8 +438,9 @@ fn _tup_put(S, w, n, k): i64 {
 # (the declaration ladders' shared `STI` steps past it). The canonical name is built at the name
 # pool's top and committed only on a miss, which registers the struct and its fields in one run.
 # `mode` 0 interns and reports; 1 (inside PARSE_STRUCT_DEF, the replay) only looks up, quietly — a
-# miss returns 0. Arity is 2..256 (the struct field cap); a refused shape still interns (`()` and
-# `(T)` padded with i64, past 256 cut), so one refusal is the only error.
+# miss returns 0; 2 (pass 1's parameter scan, `_tup_pscan`) interns quietly — pass 2 parses the
+# same tokens with mode 0 and reports. Arity is 2..256 (the struct field cap); a refused shape
+# still interns (`()` and `(T)` padded with i64, past 256 cut), so one refusal is the only error.
 fn _tup_type(S, mode): i64 {
     var open = GTI(S);
     if (mode == 0) { _tup_gen_chk(S, open); }
