@@ -2621,7 +2621,9 @@ itself whatever the cwd. Compile-time fixtures are `[test] modules` and `[test.e
 reports a failure), any compile failure (of a test, of a refused `[test]` value, of the dependency
 resolve), and when it finds no tests at all; 0 exactly when every test it found passed. A CI step
 is one line, `cyrius test` or `cyrius test tests/net`, under `set -e`: no loop over files, no grep
-of the summary. `test`, `run`, `bench` and `fuzz` take `--no-deps`, `--no-lock`, `--locked` and
+of the summary. An operand that does not exist — any of them, `cyrius test a.tcyr missing.tcyr`
+too — is refused by name BEFORE the dependency resolve (no clone, no `lib/`, no lock written), as
+for `run`, `bench`, `fuzz` and `build`. `test`, `run`, `bench` and `fuzz` take `--no-deps`, `--no-lock`, `--locked` and
 `--local` as `cyrius build` does; `test`, `bench` and `fuzz` take `--timeout N`.
 
 ## Build Tool & Dependencies

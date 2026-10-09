@@ -151,9 +151,12 @@ for v in run check; do
 done
 OUT=$( cd "$D" && "$CY" check src/bad.cyr 2>/dev/null )
 r "$(echo "$OUT" | grep -c 'bad.cyr')"                    0 "check's error verdict is whole on stderr (no name leaks to stdout)"
+# 6.7.6: `cyrius test`'s operands are checked before the dependency resolve (_cli_preflight), so a
+# missing one is refused there, named once — no FAIL row for a file that was never a unit.
 OUT=$( cd "$D" && "$CY" test nothere.tcyr 2>&1 ); RCV=$?
 r "$(echo "$OUT" | grep -c 'compile error')"              0 "test does not call a MISSING file a compile error"
-r "$(echo "$OUT" | grep -c 'FAIL: nothere.tcyr')"         1 "…but still prints the file's FAIL row"
+r "$(echo "$OUT" | grep -c '^error:')"                    1 "…it prints ONE error line"
+r "$(echo "$OUT" | grep -c 'error: no such file or directory: nothere.tcyr')" 1 "…and that line names the cause"
 if [ "$RCV" = 0 ]; then echo "FAIL: test of a missing file exited 0"; FAIL=1; fi
 cp "$D/src/bad.cyr" "$D/bad.tcyr"
 OUT=$( cd "$D" && "$CY" test bad.tcyr 2>&1 )
