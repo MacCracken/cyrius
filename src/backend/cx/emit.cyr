@@ -311,13 +311,16 @@ fn EW128_TST(S, op): i64 {
 # Comparison: setCC pattern → compare and set r0 to 0/1
 fn ECMPR(S): i64 { return 0; }  # no-op, comparison done inline
 # cx arc B follow-up: cx has no flags, and EJCC re-synthesizes a TWO-operand
-# `eq r0,r0,r1` on the bare-boolean truthiness path (ECONDCMP's no-cmp branch,
-# parse_ctrl.cyr:47-50) where only r0 holds the boolean and r1 is STALE garbage —
-# so `if (f64_lt(...))` / `if (bool)` mis-branched ("always true"). x86's ETESTAZ
+# `eq r0,r0,r1` on the bare-boolean truthiness path (ECONDCMP's no-cmp branch)
+# where only r0 holds the boolean and r1 is STALE garbage — so
+# `if (f64_lt(...))` / `if (bool)` mis-branched ("always true"). x86's ETESTAZ
 # emits `test rax,rax` (flag from the single value); cx has no flags, so instead we
 # set r1 = 0, turning EJCC's `eq r0,r0,r1` into `eq r0,r0,0` = a genuine `r0 == 0`
-# truthiness test. ETESTAZ only fires on the bare-boolean condition path (r1 is
-# scratch there — both callers, parse_ctrl.cyr:48 + parse_fn.cyr:3409, are truthiness).
+# truthiness test. Every caller is a truthiness test of r0 followed by EJCC, with
+# r1 scratch: ECONDCMP's bare value and its u128 chain arm (parse_ctrl.cyr),
+# `_w128_case` (parse_expr.cyr: a u128 match / switch arm), `_match_arm_test`'s
+# u128 arm on an integer subject and `_defer_emit_walk`'s flag test (parse.cyr).
+# Find them by name (`grep -n 'ETESTAZ(S)' src/frontend`), not by line.
 fn ETESTAZ(S): i64 { CX_MOVI(S, 1, 0); return 0; }  # r1 = 0 so EJCC's eq r0,r0,r1 tests r0==0
 # v6.5.21: these were `return 0;` stubs, so multi-return (`return (a, b);` and
 # the legacy `ret2`/`rethi`) SILENTLY returned the FIRST value twice on cx —

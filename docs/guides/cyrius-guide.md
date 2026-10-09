@@ -607,11 +607,14 @@ operand, a value, an if-expression condition): `b < c` is true for `b` 2^64 - 1 
 operand, and `!b` (`b == 0`) — `if (b)` is true for `b` 2^64, whose low word is 0. A `match b` /
 `switch (b)` on a `u128` subject compares it on all 128 bits with each arm or case value, an integer
 zero-extended (`case -1:` is 2^64 - 1) and a `u128` arm as it is; the subject is read once, before
-any arm is tested. A `u128` read where an integer is expected — an argument, `var n = b`,
+any arm is tested. A `match n` on an INTEGER subject compares a `u128` arm on all 128 bits too,
+the subject zero-extended, as `n == b` does: `match 0 { b => .. }` does not take the arm for `b`
+2^64. A `u128` read where an integer is expected — an argument, `var n = b`,
 `return b` — is its low word, as it always was. A `u128` parameter is an 8-byte slot (the low word).
 Before 6.7.6 neither spelling carried (both worked on the low word and left the high word alone),
 the other operators did the same silently, a comparison read the low words as SIGNED integers, a
-truth test and a `match` / `switch` subject read the low word, a plain `b = c` / `b = 5` stored the
+truth test and a `match` / `switch` subject (and a `u128` arm of an integer `match`) read the low
+word, a plain `b = c` / `b = 5` stored the
 low word and kept the old high word, and a `u128` local initializer stored its value into BOTH
 halves.
 
