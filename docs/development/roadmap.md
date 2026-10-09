@@ -550,9 +550,8 @@ CHANGELOG [6.6.17] *Downstream* (no ecosystem sweep).
 - **lane C (git first) — filed 2026-10-08** in each repo's `docs/development/roadmap.md` (docs commits, not pushed):
   anukulana `7e999e6`, ark `fb7a62c`, crab `4099974`, cyrius-yeomans-descent `dcb47db`, daimon `06dbecd`, dig `ee3abce`,
   ifran `8ba5d16`, kii `d3d12ae`, mehman `f4fe31e`, mela `852f35d`, t-ron `912ce00`, takumi `2882e9a`, tula `9a426f9`,
-  yo `f4a1318`; agnos `497855bf`, puka `1b913f7`, agnostic `dfa69be`. **Not filed — working tree dirty:** anuenue
-  (`cyrius.lock` + four `lib/*.cyr`), aegis, attn11, phylax, shabda, shabdakosh, whirl (each only an uncommitted
-  `docs/development/roadmap.md` holding older, never-committed cyrius notes) — file once clean.
+  yo `f4a1318`; agnos `497855bf`, puka `1b913f7`, agnostic `dfa69be`. ⛔ **Consumer note-filing is retired (user, 2026-10-08 — CLAUDE.md top rule: do not actively review consumers
+  unless it is a reported issue).** No further notes go into consumer repos; the unfiled ones are dropped.
 - **agnos** (filings only): its 21 `tests/<dir>/cyrius.cyml` are program build manifests (`cyrius build --agnos`),
   not test units, so 6.7.6's per-directory `test.cyml` does not replace them as the design hoped.
 - **Consumers at their 6.7.6 pin bump** (notes, no sweep): assert / bench can move to `[test] stdlib` and hand-written
@@ -572,9 +571,8 @@ CHANGELOG [6.6.17] *Downstream* (no ecosystem sweep).
 - **takumi** — declare `sakshi` in `[deps] stdlib` before the 6.6.18 pin bump (sandhi's fold calls it; it reached
   `lib/` only through sigil's old sidecar). takumi `b4b8e9a`.
 - **samvada** — has no Windows `sys_recvmsg` wrapper (`lib/syscalls_linux_common` + agnos only); mabda's 6.6.18
-  distlib names it on `x86_64-windows`. ⚠ **Not filed yet**: samvada's `docs/development/roadmap.md` has uncommitted
-  changes (with nine other files); it stays here until that tree is clean.
-- **To file after the tag** (docs commits in each repo, not pushed): **rekha** — drop `programs/prelude.cyr` and
+  distlib names it on `x86_64-windows`. Not filed — dropped (2026-10-08 top rule).
+- ~~**To file after the tag**~~ — dropped, never filed (2026-10-08 top rule): **rekha** — drop `programs/prelude.cyr` and
   the CI sidecar pin (P4), and adopt `--poison[=ab]` through `poison_alloc` for `sd_alloc` (P6); **kriya**, **puka** —
   `--poison` now covers `alloc()` and an overwrite exits 86, so their poison runs check something real; **agora** —
   re-evaluate N4 against P6.
