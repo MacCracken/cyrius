@@ -81,13 +81,20 @@ VER="9.9.9-probe$$"
 TARBALL="cyrius-${VER}-x86_64-linux.tar.gz"
 
 # ── the fake release: a tarball with one identifiable payload file ──
-mkdir -p "$D/rel/versions/$VER/bin" "$D/rel/versions/$VER/lib" "$D/release"
+# Release-shaped (6.7.7): ONE top-level directory, cyrius-<v>-x86_64-linux/ with bin/ and lib/, as
+# release.yml packs it. It was a versions/<v>/ tree — a layout no release has had, which the
+# pre-6.7.7 ci.sh expected and so installed while every real tarball failed "cycc not found"
+# (tests/gates/toolchain/ci_installs_the_release_tarball.sh). The ledger above was measured
+# against that shape; the 6.6.5 script cannot install this one at all.
+STAGE="cyrius-${VER}-x86_64-linux"
+mkdir -p "$D/rel/$STAGE/bin" "$D/rel/$STAGE/lib" "$D/release"
 # ci.sh ends by requiring an executable bin/cycc and bin/cyrius, so the fake payload is two
 # tiny executables whose OUTPUT identifies which tarball won.
-printf '#!/bin/sh\necho "the genuine payload"\n' > "$D/rel/versions/$VER/bin/cycc"
-printf '#!/bin/sh\necho "the genuine payload"\n' > "$D/rel/versions/$VER/bin/cyrius"
-chmod +x "$D/rel/versions/$VER/bin/cycc" "$D/rel/versions/$VER/bin/cyrius"
-( cd "$D/rel" && tar czf "$D/release/$TARBALL" versions )
+printf '#!/bin/sh\necho "the genuine payload"\n' > "$D/rel/$STAGE/bin/cycc"
+printf '#!/bin/sh\necho "the genuine payload"\n' > "$D/rel/$STAGE/bin/cyrius"
+chmod +x "$D/rel/$STAGE/bin/cycc" "$D/rel/$STAGE/bin/cyrius"
+printf 'fn x(): i64 { return 0; }\n' > "$D/rel/$STAGE/lib/x.cyr"
+( cd "$D/rel" && tar czf "$D/release/$TARBALL" "$STAGE" )
 ( cd "$D/release" && sha256sum "$TARBALL" > "${TARBALL}.sha256" && sha256sum "$TARBALL" > SHA256SUMS )
 printf 'not-a-real-signature\n' > "$D/release/SHA256SUMS.sig"
 
@@ -144,11 +151,12 @@ grep -qx "$REALKEY" "$D/keys1" || { fail "axis 1: the verifier was handed '$(cat
 # so the signature is checked against the attacker's key — is a race, and this gate does not
 # pretend to observe a race; both halves close for the same reason, an unguessable 0700 dir.)
 ATTACKKEY="deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
-mkdir -p "$D/evil/versions/$VER/bin" "$D/victim"
-printf '#!/bin/sh\necho "the ATTACKER payload"\n' > "$D/evil/versions/$VER/bin/cycc"
-cp "$D/evil/versions/$VER/bin/cycc" "$D/evil/versions/$VER/bin/cyrius"
-chmod +x "$D/evil/versions/$VER/bin/cycc" "$D/evil/versions/$VER/bin/cyrius"
-( cd "$D/evil" && tar czf "$D/evil/$TARBALL" versions )
+mkdir -p "$D/evil/$STAGE/bin" "$D/evil/$STAGE/lib" "$D/victim"
+printf '#!/bin/sh\necho "the ATTACKER payload"\n' > "$D/evil/$STAGE/bin/cycc"
+cp "$D/evil/$STAGE/bin/cycc" "$D/evil/$STAGE/bin/cyrius"
+chmod +x "$D/evil/$STAGE/bin/cycc" "$D/evil/$STAGE/bin/cyrius"
+printf 'fn x(): i64 { return 0; }\n' > "$D/evil/$STAGE/lib/x.cyr"
+( cd "$D/evil" && tar czf "$D/evil/$TARBALL" "$STAGE" )
 printf 'a file the installer must never write\n' > "$D/victim/precious_tarball"
 PLANTED="$SHARED_TMP/$TARBALL $SHARED_TMP/${TARBALL}.sha256"
 plant() {

@@ -23,6 +23,10 @@
 #      equal the tree's
 #   4  install.ps1 (static — no PowerShell on a check host): it copies <stage>\programs into
 #      versions\<v>\programs AND <home>\programs (bin\ is a copy at both levels on Windows)
+#   5  scripts/ci.sh (the CI installer — always the x86_64-linux tarball), a stub curl serving a
+#      release-shaped tarball + its .sha256: the slot's templates equal the tree's. (Before 6.7.7
+#      ci.sh could not install a real tarball at all — tests/gates/toolchain/
+#      ci_installs_the_release_tarball.sh.)
 # "Equal" is `diff -r` against programs/cyrius-init-templates, whose file count is floored so an
 # empty tree cannot read green.
 #
@@ -30,7 +34,8 @@
 # install.sh (the 6.7.6 shape) -> axis 3 RED ("templates MISSING"), axes 1, 2, 4 green; the
 # refresh-only copy removed -> axis 2 RED ("MISSING"); the tarball path's `cp -R` removed -> axis 1
 # RED (an empty directory: "differ"); install.ps1's `Copy-Item "$Stage\programs\*"` line removed
-# -> axis 4 RED. Each mutant reddens its own axis alone.
+# -> axis 4 RED; ci.sh's templates copy removed -> axis 5 RED (and the 6.7.6 ci.sh -> axis 5 RED,
+# exit 1 "cycc not found"). Each mutant reddens its own axis alone.
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 NAME=install_paths_ship_init_templates
@@ -77,7 +82,7 @@ inst() {
 # shipped <label> <home> — the slot's templates are the tree's, byte for byte
 shipped() {
     _st="$2/store/versions/9.9.9/programs/cyrius-init-templates"
-    if [ "$RC" -ne 0 ]; then bad "$1: install.sh exit $RC"; return 1; fi
+    if [ "$RC" -ne 0 ]; then bad "$1: the installer exited $RC"; return 1; fi
     if [ ! -d "$_st" ]; then bad "$1: templates MISSING — versions/9.9.9/programs/cyrius-init-templates was not installed"; return 1; fi
     if ! diff -r "$TPL" "$_st" > "$W/diff" 2>&1; then
         bad "$1: the installed templates differ from programs/cyrius-init-templates"
@@ -141,5 +146,33 @@ grep -qF 'Copy-Item "$Stage\programs\*" "$VerDir\programs\" -Force -Recurse' "$P
 grep -qF 'Copy-Item "$VerDir\programs\*" "$CyriusHome\programs\" -Force -Recurse' "$PS" || { bad "axis 4: install.ps1 no longer copies the templates beside <home>\\bin"; a4=1; }
 [ "$a4" -eq 0 ] && echo "  ok axis 4: install.ps1 copies the templates into versions\\<v>\\programs and <home>\\programs"
 
+# ── axis 5: scripts/ci.sh ──
+if command -v sha256sum > /dev/null 2>&1; then
+    T5="$W/t5"; S5="$T5/stage/cyrius-9.9.9-x86_64-linux"; TB5="cyrius-9.9.9-x86_64-linux.tar.gz"
+    mkdir -p "$S5/bin" "$S5/lib" "$S5/programs" "$T5/rel" "$T5/cibin" "$T5/cwd" "$W/h5/tmp"
+    printf '#!/bin/sh\necho stub\n' > "$S5/bin/cycc"
+    cp "$S5/bin/cycc" "$S5/bin/cyrius"
+    chmod +x "$S5/bin/cycc" "$S5/bin/cyrius"
+    printf 'fn x(): i64 { return 0; }\n' > "$S5/lib/x.cyr"
+    cp -R "$TPL" "$S5/programs/"
+    { ( cd "$T5/stage" && tar czf "$T5/rel/$TB5" "cyrius-9.9.9-x86_64-linux" ) && ( cd "$T5/rel" && sha256sum "$TB5" > "$TB5.sha256" ); } \
+        || { echo "FAIL: $NAME — cannot build the axis-5 tarball"; exit 1; }
+    cat > "$T5/cibin/curl" <<EOF
+#!/bin/sh
+out=""; url=""
+while [ \$# -gt 0 ]; do case "\$1" in -o) out=\$2; shift 2 ;; -*) shift ;; *) url=\$1; shift ;; esac; done
+f="$T5/rel/\${url##*/}"
+[ -f "\$f" ] || exit 22
+if [ -n "\$out" ]; then cp "\$f" "\$out"; else cat "\$f"; fi
+EOF
+    chmod +x "$T5/cibin/curl"
+    RC=0
+    ( cd "$T5/cwd" && env -i HOME="$W/h5" CYRIUS_HOME="$W/h5/store" PATH="$T5/cibin:/usr/bin:/bin" TMPDIR="$W/h5/tmp" \
+        sh "$ROOT/scripts/ci.sh" 9.9.9 ) > "$W/out" 2>&1 || RC=$?
+    shipped "axis 5 (ci.sh)" "$W/h5" && echo "  ok axis 5: scripts/ci.sh ships the templates to versions/<v>/programs"
+else
+    echo "  skip axis 5: no sha256sum (ci.sh verifies the tarball with it or shasum)"
+fi
+
 [ "$fail" -eq 0 ] || { echo "FAIL: $NAME"; exit 1; }
-echo "PASS: $NAME (the tarball, refresh-only and source-bootstrap paths of install.sh, and install.ps1, ship programs/cyrius-init-templates)"
+echo "PASS: $NAME (the tarball, refresh-only and source-bootstrap paths of install.sh, install.ps1 and scripts/ci.sh ship programs/cyrius-init-templates)"
