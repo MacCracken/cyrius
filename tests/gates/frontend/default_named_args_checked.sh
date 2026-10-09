@@ -33,7 +33,16 @@
 #      default in a bounded generic, an inherent impl and a plain fn (each walker skips it whole);
 #      C1 a const fn whose default holds a comma (`b = sq2(1, 2)`), run in a const context; FWD-pc a
 #      forward call to `fn f(a, b = 1): f64` in f64 arithmetic (pass 1 steps over the default to
-#      record the parameter count and the `: f64`); X0 the grammar refusals under --syntax-only
+#      record the parameter count and the `: f64`); X0 the grammar refusals under --syntax-only.
+#      The tools that read a parameter list (bite 5; each built here from this tree with $CC, each
+#      fixture compiling first): S-hdr `cyrius header` (one C parameter per parameter, its type and
+#      default skipped whole); S-asf api-surface (`name/MIN-MAX` for a defaulted fn, `name/N`
+#      otherwise, string / char literals skipped; removed_symbol_census.sh's strip reads both);
+#      S-doc cyrdoc (a `{` in a string / char default does not end the signature); S-lsp
+#      cyrius-lsp (a default's names are not parameters, and its `)` does not end the list); S-ta
+#      type-audit (a `)` in a literal default does not close the list); S-fmt cyrfmt accepts the
+#      crossos tcyr; S-R5 no helper the compiler calls with a FIXED argument count declares a
+#      default (the names derived from src; each must be defined in lib/)
 #   W  `#inline` on a defaulted fn is ignored by name, and both calls — full and filled — stay calls
 #      (objdump)
 #   N  named arguments: R21 the call-side refusals, once each, at the label (C2 an unknown name, C3
@@ -99,6 +108,17 @@
 #                                                          after `b = A < B` is "no parameter named"
 #   M14 `_HTEMP` a frame slot at top level too            -> TL1 (IR=0 / 1 / 3) and A15 SIGSEGV on x86,
 #                                                          aarch64 and PE
+#   (bite 5 — the tools; each mutant RED on its own row only, every other row green)
+#   MT1 `_hdr_close` counts no depth                      -> S-hdr (`cyr_val hg(.., cyr_val 2)`)
+#   MT2 the header's name scan does not stop at `=`      -> S-hdr (`cyr_val b = 2`, `cyr_val s =`)
+#   MT3 `_asf_arity` skips `#` comments only (no literal) -> S-asf (af/1-4, ah/1-4, awr/1-3)
+#   MT4 `_asf_amin` not taken from the first default      -> S-asf (af/2, ak/1: no ranges)
+#   MT5 cyrdoc's signature scan not literal-aware         -> S-doc (`fn df(a, s = "`)
+#   MT6 the LSP's `sig_depth` never raised                -> S-lsp (YY a parameter; c, d not)
+#   MT7 the LSP collector skips no char literal           -> S-lsp (`c = ')'` ends the list: no d)
+#   MT8 type-audit's paren match not literal-aware        -> S-ta (ta_s, ta_c unannotated: 2/5)
+#   MT9 lib/vec.cyr's vec_get gains `z = 0` (the for-in   -> S-R5 (names lib/vec.cyr:86 vec_get)
+#       call passes 2)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -366,6 +386,154 @@ if [ -f "$ROOT/lib/async.cyr" ]; then
         [ "$got" -eq 42 ] && ok "AS1: CYRIUS_ASYNC=1: await job(x) fills, await job(c: 9, a: x) and job(b: 7, a: 4) by name" || bad "AS1: exit $got, want 42"; fi
 else bad "AS1: lib/async.cyr is missing"; fi
 
+# ── S: the tools that read a parameter list (bite 5) ─────────────────────────────────────────
+# Each tool is built HERE from this tree's source with $CC (a mutant's source builds a mutant's
+# tool), and each fixture first compiles — it is real B6 syntax, not a tool's guess at it.
+mkdir -p "$T/st/hh" "$T/st/hw" "$T/st/ap/src" "$T/st/ta/lib" "$T/st/dc" "$T/st/lw/home" "$T/st/lw/cwd"
+tool() {   # <name> <source, from the tree root>: built with $CC into $T/st/<name>
+    rc=0; "$CC" < "$ROOT/$2" > "$T/st/$1" 2> "$T/st/$1.err" || rc=$?
+    if [ "$rc" -ne 0 ] || [ ! -s "$T/st/$1" ]; then bad "S: $2 does not build: $(grep '^error' "$T/st/$1.err" | head -1)"; return 1; fi
+    chmod +x "$T/st/$1"
+}
+premise() {   # <label> <fixture>: it compiles
+    rc=0; ( cd "$(dirname "$2")" && timeout 60 "$CC" < "$2" > "$T/st/premise.bin" 2> "$T/st/premise.err" ) || rc=$?
+    [ "$rc" -eq 0 ] && return 0
+    bad "$1: the fixture does not compile: $(grep '^error' "$T/st/premise.err" | head -1)"; return 1
+}
+# S-hdr: `cyrius header` — every parameter, its type and default skipped whole (`b = sq2(1, 2)`
+# held a `,` and a `)`, `s = ",)"` both); it printed `cyr_val b = 2` (not C) and lost parameters.
+printf 'const fn sq2(x, y): i64 { return x * y; }\nfn hf(a, b = 2): i64 { return a + b; }\nfn hg(a, b = sq2(1, 2), c: f64 = 1.5): i64 { return a; }\nfn hh(s = ",)", n: i64 = 3): i64 { return n; }\nfn hk(a, c = \047,\047, d: u8 = 7): i64 { return a; }\nfn hw(a, b = 1 < 2, e = 3): i64 { return a; }\nfn hz(a, b): i64 { return a; }\nsyscall(60, 0);\n' > "$T/st/hw/d.cyr"
+if tool cyrius cbt/cyrius.cyr && premise "S-hdr" "$T/st/hw/d.cyr"; then
+    rc=0; ( cd "$T/st/hw" && CYRIUS_HOME="$T/st/hh" HOME="$T/st/hh" timeout 60 "$T/st/cyrius" header d.cyr > "$T/st/hdr.out" 2>&1 ) || rc=$?
+    miss=""
+    for l in 'cyr_val hf(cyr_val a, cyr_val b);' 'cyr_val hg(cyr_val a, cyr_val b, cyr_val c);' 'cyr_val hh(cyr_val s, cyr_val n);' 'cyr_val hk(cyr_val a, cyr_val c, cyr_val d);' 'cyr_val hw(cyr_val a, cyr_val b, cyr_val e);' 'cyr_val hz(cyr_val a, cyr_val b);'; do
+        grep -qxF "$l" "$T/st/hdr.out" || miss="$miss [$l]"
+    done
+    n=$(grep -c '^cyr_val h' "$T/st/hdr.out")
+    if [ "$rc" -eq 0 ] && [ -z "$miss" ] && [ "$n" -eq 6 ]; then ok "S-hdr: cyrius header: a defaulted parameter is one C parameter (6 prototypes)"
+    else bad "S-hdr: rc $rc, $n prototype(s); missing:$miss; got: $(grep '^cyr_val h' "$T/st/hdr.out" | tr '\n' '|')"; fi
+fi
+# S-asf: api-surface — `name/MIN-MAX` when a parameter defaults, `name/N` when none does; a string
+# or char literal in a default is skipped (`s = "a,b#"` counted its `,` and read `#` as a comment),
+# a wrapped list too; removed_symbol_census.sh's `/…` strip reads both shapes as the bare name.
+cat > "$T/st/ap/src/am.cyr" <<'EOF'
+const fn sq2(x, y): i64 { return x * y; }
+fn af(a, s = "a,b#"): i64 { return a; }
+fn ag(a, b): i64 { return a; }
+fn ah(a, b = sq2(1, 2), c = ','): i64 { return a; }
+fn ak(x = 1): i64 { return x; }
+fn ae(): i64 { return 0; }
+fn awr(a, b = 1,
+  c = "x)", # a comment, with a comma
+  d = 4): i64 { return a; }
+fn alt(a, b = 1 < 2, c: f64 = 1.5): i64 { return a; }
+syscall(60, 0);
+EOF
+if tool api programs/cyrius_api_surface.cyr && premise "S-asf" "$T/st/ap/src/am.cyr"; then
+    rc=0; ( cd "$T/st/ap" && timeout 20 "$T/st/api" --update --scope=project --snapshot="$T/st/A.snap" ) > "$T/st/api.out" 2>&1 || rc=$?
+    got=$(grep '^am::a' "$T/st/A.snap" | tr '\n' ' ')
+    want='am::ae/0 am::af/1-2 am::ag/2 am::ah/1-3 am::ak/0-1 am::alt/1-3 am::awr/1-4 '
+    if [ "$rc" -eq 0 ] && [ "$got" = "$want" ]; then ok "S-asf: api-surface: name/MIN-MAX for a defaulted fn, name/N otherwise, literals skipped"
+    else bad "S-asf: rc $rc: got '$got', want '$want'"; fi
+    # (the census's own expression, tests/gates/toolchain/removed_symbol_census.sh)
+    got=$(grep '^am::a' "$T/st/A.snap" | sed 's|.*::||; s|/.*||' | tr '\n' ' ')
+    [ "$got" = "ae af ag ah ak alt awr " ] && ok "S-asf: removed_symbol_census.sh's strip reads /N and /MIN-MAX as the bare name" || bad "S-asf: the census strip gives '$got'"
+fi
+# S-doc: cyrdoc — the signature runs to the body's `{`, not to a `{` in a string or char default.
+printf '# doc for df\nfn df(a, s = "{x}"): i64 { return a; }\n# doc for dg\nfn dg(a, c = \047{\047): i64 { return a; }\nfn dh(a, b = 1): i64 { return a; }\nsyscall(60, 0);\n' > "$T/st/dc/d.cyr"
+if tool cyrdoc programs/cyrdoc.cyr && premise "S-doc" "$T/st/dc/d.cyr"; then
+    rc=0; ( cd "$T/st/dc" && timeout 20 "$T/st/cyrdoc" d.cyr ) > "$T/st/doc.out" 2>&1 || rc=$?
+    miss=""
+    for l in '### `fn df(a, s = "{x}"): i64`' "### \`fn dg(a, c = '{'): i64\`" '### `fn dh(a, b = 1): i64`'; do
+        grep -qxF "$l" "$T/st/doc.out" || miss="$miss [$l]"
+    done
+    if [ "$rc" -eq 0 ] && [ -z "$miss" ]; then ok "S-doc: cyrdoc: a { inside a string or char default does not end the signature"
+    else bad "S-doc: rc $rc; missing:$miss; got: $(grep '^###' "$T/st/doc.out" | tr '\n' '|')"; fi
+fi
+# S-lsp: cyrius-lsp's semantic tokens — a default's names are not parameters, and its `)` (a call,
+# or a char literal) does not end the list: `YY` was colored a parameter and `c` / `d` were not.
+printf 'fn lf(a, b = sq2(XX, YY), c = \047)\047, d: i64 = 3): i64 {\n    return a + b + c + d + XX + YY;\n}\nconst XX = 2;\nconst YY = 3;\nconst fn sq2(x, y): i64 { return x * y; }\nsyscall(60, lf(1) & 0);\n' > "$T/st/lw/doc.cyr"
+if [ "$(uname -s)" != Linux ]; then echo "  SKIP S-lsp: cyrius-lsp is driven here on Linux only"; skips=$((skips + 1))
+elif tool lsp programs/cyrius-lsp.cyr && premise "S-lsp" "$T/st/lw/doc.cyr"; then
+    D="$T/st/lw/doc.cyr"
+    lmsg() { printf 'Content-Length: %d\r\n\r\n%s' "$(printf '%s' "$1" | wc -c)" "$1"; }
+    { lmsg '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}'
+      lmsg '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file://'"$D"'","languageId":"cyrius","version":1,"text":""}}}'
+      lmsg '{"jsonrpc":"2.0","id":2,"method":"textDocument/semanticTokens/full","params":{"textDocument":{"uri":"file://'"$D"'"}}}'
+      lmsg '{"jsonrpc":"2.0","id":3,"method":"shutdown"}'; } | \
+      ( cd "$T/st/lw/cwd" && env -i HOME="$T/st/lw/home" PATH=/usr/bin:/bin timeout 60 "$T/st/lsp" 2> /dev/null ) | tr '\r' '\n' > "$T/st/lsp.out"
+    data=$(grep -o '"id":2,"result":{"data":\[[0-9,]*\]' "$T/st/lsp.out" | sed 's/.*\[//; s/\]//')
+    # Decode the 5-int deltas into `line:name=type`; type 6 is `parameter`.
+    awk -v DATA="$data" 'NR == FNR { L[NR - 1] = $0; next }
+        END { n = split(DATA, a, ","); ln = 0; col = 0
+              for (i = 1; i + 4 <= n; i += 5) {
+                  if (a[i] > 0) { ln += a[i]; col = a[i + 1] } else { col += a[i + 1] }
+                  print ln ":" substr(L[ln], col + 1, a[i + 2]) "=" a[i + 3] } }' "$D" /dev/null > "$T/st/lsp.tok"
+    p0=$(grep '^0:.*=6$' "$T/st/lsp.tok" | sed 's/^0://; s/=6$//' | tr '\n' ' ')
+    p1=$(grep '^1:.*=6$' "$T/st/lsp.tok" | sed 's/^1://; s/=6$//' | tr '\n' ' ')
+    if [ -n "$data" ] && [ "$p0" = "a b c d " ] && [ "$p1" = "a b c d " ]; then ok "S-lsp: cyrius-lsp: the parameters are a b c d (not a default's XX / YY), in the signature and the body"
+    else bad "S-lsp: parameter tokens: line 0 '$p0', line 1 '$p1' (want 'a b c d ' each)"; fi
+fi
+# S-ta: type-audit — a `)` in a string or char default does not close the list (the fn then read
+# as unannotated).
+printf 'const fn sq2(x, y): i64 { return x * y; }\nfn ta_s(a, s = ")"): i64 { return a; }\nfn ta_c(a, c = \047)\047): i64 { return a; }\nfn ta_n(a, b = sq2(1, 2)): i64 { return a; }\nfn ta_bare(a, b = 1) { return a; }\nfn ta_plain(a): i64 { return a; }\n' > "$T/st/ta/lib/ta.cyr"
+if tool tau programs/cyrius_type_audit.cyr && premise "S-ta" "$T/st/ta/lib/ta.cyr"; then
+    rc=0; ( cd "$T/st/ta" && timeout 20 "$T/st/tau" --module=ta > "$T/st/ta.out" 2> "$T/st/ta.err" ) || rc=$?
+    un=$(grep '^  ta::' "$T/st/ta.out" | tr -d ' ' | tr '\n' ' ')
+    if [ "$un" = "ta::ta_bare " ] && grep -q '^  ta: 4/5 annotated' "$T/st/ta.err"; then ok "S-ta: type-audit: only the fn with no return type is unannotated (4/5)"
+    else bad "S-ta: rc $rc: unannotated '$un'; $(grep 'ta:' "$T/st/ta.err" | head -1)"; fi
+fi
+# S-fmt: cyrfmt has no parameter rule — it accepts every B6 shape in the crossos tcyr.
+if tool cyrfmt programs/cyrfmt.cyr; then
+    rc=0; "$T/st/cyrfmt" --check "$ROOT/tests/tcyr/crossos/default_named_args_values.tcyr" > "$T/st/fmt.out" 2>&1 || rc=$?
+    [ "$rc" -eq 0 ] && ok "S-fmt: cyrfmt --check accepts the crossos tcyr" || bad "S-fmt: rc $rc: $(head -1 "$T/st/fmt.out")"
+fi
+# S-R5: no helper the COMPILER calls with a fixed argument count declares a parameter default — the
+# synthesized call (for-in, closures, enum constructors, await, slices, the overflow modes, the
+# aarch64 polyfills, `: Str` literals) would pass fewer words than the helper reads. The names are
+# derived from src (`_FINDFN_CSTR` / `EMIT_OVF_CALL` literals) plus the four the compiler spells
+# byte by byte; each must be defined in lib/, and no definition may hold a depth-1 `=`.
+R5N=$( (grep -rhoE '(_FINDFN_CSTR\(S, |EMIT_OVF_CALL\(S, )"[A-Za-z_0-9]+"' "$ROOT/src" | sed 's/.*"\([^"]*\)"/\1/'; printf 'vec_len\nvec_get\nalloc\nstr_from\n') | sort -u | tr '\n' ' ')
+R5C=$(echo "$R5N" | wc -w | tr -d ' ')
+if [ "$R5C" -lt 20 ]; then bad "S-R5: only $R5C compiler-called helper names derived from src (floor 20)"
+else
+    find "$ROOT/lib" -name '*.cyr' | sort > "$T/st/r5.files"
+    awk -v NAMES="$R5N" -v Q="'" '
+        BEGIN { n = split(NAMES, nm, " "); for (i = 1; i <= n; i++) want[nm[i]] = 1 }
+        { line[NR] = $0; file[NR] = FILENAME; fl[NR] = FNR }
+        END {
+            for (r = 1; r <= NR; r++) {
+                t = line[r]
+                if (!match(t, /^[ \t]*((pub|public|const|async|#[A-Za-z_]+(\([^)]*\))?)[ \t]+)*fn[ \t]+[A-Za-z_][A-Za-z0-9_]*[ \t]*\(/)) continue
+                hd = substr(t, 1, RLENGTH); s = substr(t, RLENGTH + 1)
+                nmx = hd; sub(/[ \t]*\($/, "", nmx); sub(/.*fn[ \t]+/, "", nmx)
+                if (!(nmx in want)) continue
+                print "FOUND " nmx
+                d = 1; st = 0; has = 0; rr = r
+                while (d > 0) {
+                    for (p = 1; p <= length(s) && d > 0; p++) {
+                        c = substr(s, p, 1)
+                        if (st == 1) { if (c == "\\") p++; else if (c == "\"") st = 0; continue }
+                        if (st == 4) { if (c == "\\") p++; else if (c == Q) st = 0; continue }
+                        if (c == "#") break
+                        if (c == "\"") st = 1
+                        else if (c == Q) st = 4
+                        else if (c == "(" || c == "[") d++
+                        else if (c == ")" || c == "]") d--
+                        else if (c == "=" && d == 1) has = 1
+                    }
+                    if (d > 0) { rr++; if (rr > NR || file[rr] != file[r]) break; s = line[rr]; st = 0 }
+                }
+                if (has == 1) print "DEFAULT " file[r] ":" fl[r] ": " nmx
+            }
+        }' $(cat "$T/st/r5.files") > "$T/st/r5.out"
+    nodef=""
+    for nm in $R5N; do grep -qx "FOUND $nm" "$T/st/r5.out" || nodef="$nodef $nm"; done
+    if [ -n "$nodef" ]; then bad "S-R5: compiler-called helper(s) not found defined in lib/:$nodef"
+    elif grep -q '^DEFAULT ' "$T/st/r5.out"; then bad "S-R5: a compiler-called helper declares a parameter default: $(grep '^DEFAULT ' "$T/st/r5.out" | sed 's/^DEFAULT //' | tr '\n' '|')"
+    else ok "S-R5: none of the $R5C compiler-called helpers declares a parameter default ($(grep -c '^FOUND ' "$T/st/r5.out") definitions in lib/)"; fi
+fi
+
 # ── A: the crossos tcyr, every leg, with its full assertion count ────────────────────────────
 TC="$ROOT/tests/tcyr/crossos/default_named_args_values.tcyr"
 WANT=$(grep -cE '^ *assert_eq\(' "$TC")
@@ -416,4 +584,4 @@ else echo "  SKIP A6: PE leg — wine not installed"; skips=$((skips + 1)); fi
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: default_named_args_checked — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: default_named_args_checked — $skips leg(s) above could not run; every one that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: default_named_args_checked — parameter defaults and named arguments: refusals (R), shapes (S), the count (K), scope / generics / routing (E), tail calls (T), #inline (W), named arguments (N), every backend (A)"
+echo "PASS: default_named_args_checked — parameter defaults and named arguments: refusals (R), shapes and tools (S), the count (K), scope / generics / routing (E), tail calls (T), #inline (W), named arguments (N), every backend (A)"
