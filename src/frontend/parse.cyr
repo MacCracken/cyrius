@@ -3146,15 +3146,20 @@ fn _asg_compound_float(S, fop, lt): i64 {
 # `x OP= <expr>` with rax = x (from _asg_compound_load, whose slot type is `lt`): leaves the
 # combined value in rax for the caller's store. %, &, |, ^, <<, >> on a float slot take the
 # integer arm, as they always have.
+# 6.7.7: the integer arm's `+= -= *= /=` warns kind 2 on an f64 right operand, as `x = x + 1.5`
+# does (_INT_F64_MIX): `x += 1.5` / `h.n += 1.5` added 1.5's bit pattern, silently. Warn only —
+# nothing emitted changes. The type is read before EPTR_SCALE emits (_FBR_KIND dies at an emit).
 fn _asg_compound_op(S, cop, lt): i64 {
     var st = _asg_cstep;
     _asg_cstep = 0;
     if (_W128_IS(S) == 1) { if (_w128_cop(S, cop) == 1) { return 0; } }   # 6.7.6 (D2): a u128 place
     EPUSHR(S);
     PCMPE(S);
+    var rt = _FBR_ST(S);
     if (st > 1) { if (cop == 6 || cop == 7) { EPTR_SCALE(S, st); } }   # 6.6.17: `p += n` steps T
     var fop = _asg_float_fop(cop, lt);
     if (fop >= 0) { return _asg_compound_float(S, fop, lt); }
+    if (rt == F64_TYID) { if (cop >= 6) { if (cop <= 9) { _FLT_TYPE_WARN(S, 2); } } }   # CHANGELOG [6.7.7]
     EMOVCA(S);   # rcx = expr; pop rax = x; rax = x OP rcx
     EPOPR(S);
     if (cop == 6) { EADDR(S); }
