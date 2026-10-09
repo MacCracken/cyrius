@@ -2145,6 +2145,12 @@ _chk_gate "$ROOT/tests/gates/toolchain/cyriusly_version_operand_refused.sh"
 # own pre-SEC-07 installer, so it still did. A stub curl and verifier; no network. install.ps1's
 # functional half runs on cass; here it is static.
 _chk_gate "$ROOT/tests/gates/toolchain/install_signature_required.sh"
+# 6.7.7 — every install path ships the cyrius-init templates to versions/<v>/programs, where the
+# installed cyrius-init resolves them: install.sh's source-bootstrap path copied bin/ and lib/ only,
+# so `cyrius init` / `cyrius port` had no templates after a source install. install.sh's tarball,
+# refresh-only and source-bootstrap paths run hermetically (stub curl / git, throwaway homes);
+# install.ps1 is static.
+_chk_gate "$ROOT/tests/gates/toolchain/install_paths_ship_init_templates.sh"
 # 6.6.20 (CLN-13) — no stdlib include of cbt/cyrius.cyr brings in only dead code (lib/tagged.cyr
 # did: 18 dead fns on every target). Static census over the include closure, self-tested.
 _chk_gate "$ROOT/tests/gates/toolchain/cli_includes_all_used.sh"
