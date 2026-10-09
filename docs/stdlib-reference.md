@@ -1670,8 +1670,8 @@ Sovereign TLS 1.2 + 1.3 stack — no OpenSSL. ECDSA (P-256/P-384) / RSA (PSS, PK
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `tls_native_open_app` | `tls_native_open_app(cipher, key, static_iv, seq8, record, record_len, out, out_max) → len/err` | Decrypt application record (post-handshake) |
-| `tls_native_seal_app` | `tls_native_seal_app(cipher, key, static_iv, seq8, plain, plain_len, out, out_max) → len/err` | Encrypt application record (post-handshake) |
+| `tls_native_open_app` | `tls_native_open_app(ctx, record, record_len, out, out_max) → len/0/err` | Decrypt one peer record under the peer's app-traffic key (TLS 1.3 or 1.2, by the ctx's version): the application-data length; 0 for a close_notify / user_canceled alert or a post-handshake handshake record; `TLS_ERR_ALERT` for an error alert |
+| `tls_native_seal_app` | `tls_native_seal_app(ctx, buf, len, out, out_max) → len/err` | Seal `len` bytes of `buf` as one application_data record in `out`, under this role's app-traffic write key / IV / sequence (TLS 1.3 or 1.2, by the ctx's version); more than 2^14 bytes is `TLS_ERR_RECORD_OVERFLOW` (the caller fragments) |
 | `tls_native_install_app_keys` | `tls_native_install_app_keys(ctx) → TLS_OK/err` | Install derived app-traffic keys into context |
 
 **Sequence & state tracking:**
@@ -1683,7 +1683,7 @@ Sovereign TLS 1.2 + 1.3 stack — no OpenSSL. ECDSA (P-256/P-384) / RSA (PSS, PK
 | `tls_native_handshake_write_header` | `tls_native_handshake_write_header(buf, type, length) → 4` | Write 4-byte handshake message header |
 | `tls_native_handshake_read_header` | `tls_native_handshake_read_header(buf, buflen, type_out, length_out) → 4/err` | Parse handshake header, extract type + body length |
 | `tls_native_ccs_record_write` | `tls_native_ccs_record_write(buf) → len` | Write ChangeCipherSpec record (legacy 1.2, middlebox compat in 1.3) |
-| `tls_native_psk_binder` | `tls_native_psk_binder(cipher, psk, psk_len, transcript, transcript_len, binder_out) → len/err` | Compute PSK binder for 0-RTT resumption |
+| `tls_native_psk_binder` | `tls_native_psk_binder(psk, psk_len, hash_algo, transcript_hash, th_len, out) → TLS_OK/err` | Compute the PSK binder (RFC 8446 §4.2.11.2) over `transcript_hash` into `out` (Hash.length bytes) |
 
 ### ws.cyr
 

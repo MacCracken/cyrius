@@ -19,12 +19,15 @@ header for the authoritative breakdown):
 |-------------------------|---------------------------------------|-----------------------|--------|-------------------|
 | x86_64 SysV (Linux/macOS/agnos) | 1–6 in `rdi, rsi, rdx, rcx, r8, r9` | cyrius's order: the LAST at `[rsp+0]`, then backwards | `rax`  | `rax`             |
 | x86_64 MS-x64 (Windows PE / UEFI) | 1–4 in `rcx, rdx, r8, r9`, +32 B shadow space | `[rsp+0x20+(N-5)*8]` | `rax`  | `rax`             |
-| aarch64 (cyrius subset of AAPCS64) | 1–6 in `x0, x1, x2, x3, x4, x5`   | `[sp+0], [sp+16], …` | `x0`   | `x9`              |
+| aarch64 (cyrius subset of AAPCS64) | 1–6 in `x0, x1, x2, x3, x4, x5`   | cyrius's order: the LAST at `[sp+0]`, then backwards, 16 B apart | `x0`   | `x9`              |
 
 On aarch64 cyrius uses only **6** argument registers (not AAPCS64's
 8) to stay symmetric with x86_64 SysV. Stack args on aarch64 occupy
 **16 bytes each** (8 data + 8 padding) to preserve the 16-byte SP
-alignment AAPCS64 and AArch64 SPAlignmentCheck require.
+alignment AAPCS64 and AArch64 SPAlignmentCheck require, and go
+**last-first** as on x86_64: the LAST argument at `[sp+0]`, argument
+7 of N at `[sp+16*(N-7)]` (`ECALLPOPS`; the callee reads parameter i
+back from `[x29+16+16*(N-1-i)]` in `ESTORESTACKPARM`).
 
 Cyrius pads the local frame to a 16-byte boundary
 (`src/frontend/parse_fn.cyr`: `fsz = (flc*8 + 15) & ~15`), so RSP / SP
@@ -116,7 +119,7 @@ Any one of:
 | `float` / `double` parameter or return         | Float passing uses xmm / v registers cyrius doesn't touch |
 | Variadic callee (e.g. `printf`, `wgpuLog*`)    | SysV needs `AL` set; AAPCS64 needs `x8` set           |
 | >6 args calling a C function on aarch64        | Cyrius 6-reg convention ≠ AAPCS64 8-reg convention    |
-| 7–8 args calling a C function on x86_64 SysV   | Cyrius passes stack arguments last-first (the last at `[rsp]`, since 6.7.6 `fncall8` too); C reads argument 7 at `[rsp]` |
+| 8+ args calling a C function on x86_64 SysV    | Cyrius passes stack arguments last-first (the last at `[rsp]`, since 6.7.6 `fncall8` too); C reads argument 7 at `[rsp]` |
 | Nested pointer chains passed individually      | Tolerable but struct-pack is cleaner + fewer FFI slots |
 
 The canonical shim pattern: accept a packed-args struct by pointer,
