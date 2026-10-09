@@ -288,7 +288,7 @@ notes (Helix / Zed / VS Code / JetBrains).
 
 ## Migration
 
-`cyrius port` scaffolds Cyrius projects from Rust repos. See [migration strategy](docs/development/migration-strategy.md) for the porting playbook.
+`cyrius port` scaffolds Cyrius projects from Rust repos. Moving an existing project to a newer cyrius: [ecosystem migration](docs/development/ecosystem-migration.md).
 
 ## Development
 

@@ -1058,7 +1058,7 @@ the `_f64_trig_*` fns — remain private.)
 > They were `lib/math.cyr` fns until 6.6.13, at 2-3× the cost of a builtin. A vendored
 > `lib/math.cyr` older than 6.6.13 no longer compiles under a 6.6.13 cycc
 > (`reserved keyword 'f64_le'`): re-vendor it with `cyrius deps`. Call sites are unchanged.
-> See `docs/development/ecosystem-migration-6.6.13.md`.
+> See `docs/development/ecosystem-migration.md` § 6.6.13.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|

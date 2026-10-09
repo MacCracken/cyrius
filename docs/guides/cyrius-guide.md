@@ -2787,7 +2787,7 @@ is printed as a warning with the targets it fails on (a deliberate consumer hook
 A non-symbol failure on agnos alone is a warning too. A consumer whose build fails on a leaf it
 never declared gets the remedy under the error — `hint: '<name>' is defined by stdlib leaf
 '<leaf>' — add it to [deps] stdlib in cyrius.cyml`; see
-[ecosystem-migration-6.6.18.md](../development/ecosystem-migration-6.6.18.md).
+[ecosystem-migration.md](../development/ecosystem-migration.md) § 6.6.18.
 
 ```toml
 # cyrius.cyml

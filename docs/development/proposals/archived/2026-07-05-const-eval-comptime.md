@@ -1,5 +1,9 @@
 # Compile-time evaluation (const-eval / `const fn` / comptime) — bake computation, not just data
 
+> ✅ **RESOLVED in 6.7.2 — archived 2026-10-08.** C1 `const fn` shipped (option 1, the decided rung; CHANGELOG
+> [6.7.2]). Option 3, `#phf` (a compile-time perfect-hash table), stays on `roadmap-future.md`'s watching list —
+> only if a filed need remains that `const fn` and the generated-`.cyr` idiom do not cover.
+
 **Filed:** 2026-07-05 (by a shabdakosh consumer during its v3.0.0 Rust→CYRIUS port —
 surfaced porting `dictionary/static_dict.rs`, which is `phf`-feature-gated)
 **Status:** PROPOSED — a **capability-gap tracker**, not an urgent fix. Large feature,

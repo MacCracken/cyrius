@@ -9,8 +9,9 @@ installed. (The compiler binary was renamed `cc3` → `cc5` at v5.0.0 and `cc5` 
 ## Usage
 
 ```sh
-# Compile with symbols written to a side-file
-CYRIUS_SYMS=/tmp/myproj-syms.txt cat src/main.cyr | cycc > build/myproj
+# Compile with symbols written to a side-file (the variable is read by the compiler,
+# so it goes on the compiler's side of a pipe; `cyrius build` passes it through)
+CYRIUS_SYMS=/tmp/myproj-syms.txt cyrius build
 
 # File format: one function per line, `VA name`
 #   000000000040007d strlen

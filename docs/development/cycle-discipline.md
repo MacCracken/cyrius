@@ -34,84 +34,29 @@ motion. No bookkeeping-only slots.
 
 ## Bottom-to-top priority (v5.10.1 user direction)
 
-When choosing between competing slots, walk the stack
-bottom→top: agnosys (baseOS/kernel) > stdlib runtime services >
-specialized libraries (hisab) > applications > optimization-only.
-Memory pin: `feedback_priority_bottom_to_top`.
+When choosing between competing slots, walk the stack bottom → top: baseOS / kernel blockers > stdlib runtime
+services > specialized libraries > applications > optimization-only. It orders FILED work and the roadmap; a
+consumer's work is never taken up unfiled (CLAUDE.md, top rule — agnos is a consumer).
 
 ## Premise-check at slot entry
 
-Pins go stale; empirically test the gap before committing scope.
-v5.10.45 (struct-byval scope re-cast) and v5.10.49 (PE pin
-debunked) both saved 1-3 slots of mis-aimed work by 15-minute
-empirical re-tests. Memory pin:
-`feedback_premise_check_at_slot_entry`.
+Pins go stale; empirically test the gap before committing scope. v5.10.45 (struct-byval scope re-cast) and v5.10.49
+(PE pin debunked) each saved 1–3 slots of mis-aimed work with a 15-minute re-test, and three consecutive 6.x slots
+turned out to be already-shipped work.
 
 ## Cross-host smoke wrapper discipline (v5.10.49 lesson)
 
-When SSH-ing to cass (Win64) to capture an exit code, the obvious
-`cmd /c "prog.exe & echo %errorlevel%"` shape expands `%errorlevel%`
-at **parse time** and falsely reports `exit=0`. Use either:
-- `cmd /v /c "prog.exe & echo exit=!errorlevel!"` (delayed expansion)
-- `.bat` indirection (newlines split parse passes; what
-  `_pe_exit_gate` — now `programs/checks/platform_win_macho.cyr`, since
-  `programs/check.cyr` was split into `programs/checks/` — always used
-  correctly: it scp's a `.bat` that echoes `exit=%ERRORLEVEL%` and runs it
-  with `cmd /c`)
-
-Memory pin: `feedback_windows_errorlevel_test_wrapper`.
+On cass (Win64), `cmd /c "prog.exe & echo %errorlevel%"` expands `%errorlevel%` at **parse time** and falsely reports
+`exit=0`. Use `cmd /v /c "prog.exe & echo exit=!errorlevel!"` (delayed expansion) or a `.bat` that echoes
+`exit=%ERRORLEVEL%` (what `programs/checks/platform_win_macho.cyr` does). More cass gotchas: CLAUDE.md *Verification
+habits*.
 
 ## Cycle-close shape
 
-Every recent minor cycle has closed in the same three-step
-shape, with the **last patch reserved for dep updates**:
-
-1. **End cycle** — the substantive engineering work lands at
-   `vN.M.K`. This is the "Big Heavy One Thing" closeout slot
-   per the [Slot acceptance principle](#slot-acceptance-principle-revised-at-v5100).
-2. **Update deps** — fold any deps that GA'd during the cycle
-   window via the v5.7.0 sandhi pattern (vendor source
-   byte-identical into `lib/<name>.cyr`, drop the `[deps.*]`
-   entry, regen).
-3. **Last release with updated deps** at `vN.M.K+1` — the
-   "fold-applied tag." If no deps fold during the window,
-   `vN.M.K` is the final patch and `vN.M.K+1` stays unused.
-   Engineering work does NOT land in the fold-applied tag —
-   that's exclusively for the sandhi vendor + drop ceremony.
-
-Then the new minor opens at `vN.(M+1).0`.
-
-**Examples in recent history**: the v5.8.x close at v5.8.65
-absorbed the six-distlib sandhi foldin (sakshi 2.2.3 / patra
-1.9.3 / sigil 3.1.0 / vani 0.9.2 / yukti 2.2.2 / sankoch 2.2.4).
-v5.9.x close at v5.9.43 absorbed niyama 1.0.1. v5.10.x close at
-v5.10.50 absorbed the wrap-up + .49 PE debunk. **v6.4.x is the
-cleanest recent instance of all three steps**: the engineering
-band ran .80–.84, **v6.4.85** was the closeout-complete cut
-(docs / ledger / handoff reconciled, cycc byte-identical to .84
-at 1,112,464 B — no code change), and **v6.4.86** was the
-fold-applied tag (sandhi 1.9.3 → 1.9.5, byte-identical vendor,
-cycc unchanged because `lib/sandhi.cyr` is outside cycc's
-include closure).
-
-**The conditional third step really is conditional.** v5.11.x
-was pinned here as "heap-map full reorg at v5.11.68
-(engineering), conditional mabda 3.0 fold at v5.11.69" — the
-mabda 3.0 fold was **dropped at user direction post-.67**, and
-v5.11.69 shipped instead as the v5.x cycle-close doc / scripts /
-vidya sweep (see CHANGELOG [5.11.69]). Neither outcome is a
-deviation: `vN.M.K+1` either carries a fold or carries nothing
-that needs engineering.
-
-**Exceptions are explicit, not accidental**. The v5.11.1–.7
-stdlib annotation arc landed at the **start** of v5.11.x, not
-the end — that was a user-directed priority flip (annotation
-arc first, everything else after), called out in the v5.11.x
-intro at slot entry. Future deviations from the close-shape
-should be similarly explicit at cycle entry rather than
-discovered mid-cycle.
-
-Memory pin: `feedback_cycle_close_shape`.
+A minor closes with the closeout checklist below, shipped as the last engineering patch of the minor; then the next
+minor opens at `vN.(M+1).0`. A fold that GA'd during the window may follow as a fold-applied patch (vendor
+byte-identical, no engineering) — v6.4.85 → v6.4.86 is the clean instance; it is conditional, never padding.
+Deviations from this shape are stated at the minor's open, not discovered mid-minor.
 
 ## Closeout checklist + ledger
 
@@ -142,29 +87,14 @@ a separate arc).
 
 **Judgment passes** (where bugs hide — see CLAUDE.md items 4–8)
 - [ ] Heap-map audit · dead-code audit (record floor) · refactor pass · code-review pass · cleanup sweep
-- [x] ⭐ ~~**v6.5.x carries one heap-map item BY NAME: reclaim `0x4D9D000 output_buf [16777216]`.**~~
-      **✅ ALREADY RECLAIMED — verified at the v6.5.73 closeout, not taken on this entry's word.**
-      `preprocess_out` now spans `0x459D000..0x5D9D000` (24 MiB), so 0x4D9D000 sits INSIDE it; the
-      band was absorbed when that cap grew, and `heapmap.sh` parses 102 regions with zero overlaps
-      and no region at that address. ⚠ The item below it was right that stale references linger —
-      five were found and fixed at the closeout (a doubled `— was 0x4D9D000 — was 0x4D9D000`, a
-      brk boundary quoted as `0x00000..0x4D9D000`, and a `pfx` scratch address that has been
-      `_output_base` since v6.4.51). **A checklist entry is a claim like any other: re-derive it.**
-      Nothing has written that band since **v6.4.52**, when output became a 1 GiB off-heap
-      `alloc(1073741824)` — but it is still documented as a live 16 MB region in the heap map of
-      **all five** `src/main*.cyr` forks, and the map is **machine-read** by `tests/gates/memory/heapmap.sh`, so
-      the phantom is audited as real. The 2026-08-07 doc sweep fixed the *description* only and left
-      the band RESERVED on purpose, so the overlap audit would not move mid-minor. Reclaiming it is a
-      LAYOUT change → **two-step bootstrap**, and it belongs here, not in a patch.
-      ⚠ `tok_types` briefly lived at this address and has since moved to `0x2D7C000`; grep for stale
-      `0x4D9D000` references (vidya carried one) before freeing it.
 
 **Compliance / external**
-- [ ] Security re-scan (full audit every 2–3 minors) · downstream `cyrius.cyml` pins → the released tag
+- [ ] Security re-scan (full audit every 2–3 minors) · folds: each fold's latest tag equals its `docs/ecosystem.md` row and
+      `lib/` is byte-identical to it (consumers are never surveyed — CLAUDE.md top rule)
 
 **Docs (silent-rot prevention)**
 - [ ] CHANGELOG / roadmap / `state.md` current · vidya refresh (CLAUDE.md item 11 — language/field_notes/impl/deps + version cross-check)
-- [ ] **Backlog re-triage (rot sweep)** — verify open `issues/` + `proposals/` resolved-status against **LIVE code**, not the file's own claim; archive resolved; re-pin deferrals in order (finish-out items soonest, big arcs after the queue is clean). **Enforce: no codegen/runtime in 7.x → 6.x line or the `roadmap.md` "potential backlog."** Mark stale-shipped watching entries SHIPPED. Keep the open dir lean (~10–12). See `feedback_no_codegen_parking_in_v7`.
+- [ ] **Backlog re-triage (rot sweep)** — verify open `issues/` + `proposals/` resolved-status against **LIVE code**, not the file's own claim; archive resolved; re-pin deferrals in order (finish-out items soonest, big arcs after the queue is clean). **Enforce: no codegen/runtime in 7.x → 6.x line or the `roadmap.md` "potential backlog."** Delete stale-shipped watching entries (the CHANGELOG is the record). Keep the open dir lean (~10–12). (CLAUDE.md placement rule: nothing codegen at 7.x.)
 
 ### Closeout ledger (newest first)
 
@@ -345,11 +275,10 @@ floor, a re-triage that keeps re-pinning the same item).
   failure value and dispatched three distinct incomplete-request cases as if whole; now
   `-2` TOO_LARGE → 413, `-3` INCOMPLETE → 400, unsupported transfer coding → 501). cycc
   byte-identical — `lib/sandhi.cyr` is outside its include closure. api-surface 4752 → **4755**,
-  0 removed. This is step 3 of the [Cycle-close shape](#cycle-close-shape) — the closeout proper
+  0 removed. This is the fold-applied patch of the [Cycle-close shape](#cycle-close-shape) — the closeout proper
   is .80–.85, and .86 is the separate fold-applied tag, which is why the heading names both.
 - **Follow-ups**: none deferred silently. Everything not fixed is filed with a NAMED reason.
 
 - _v6.3.x → v6.4.0 and earlier: full gate detail predates this ledger — canonical in
   [CHANGELOG.md](../../CHANGELOG.md) + [completed-phases.md](completed-phases.md)._
 
-Memory pin: `feedback_cycle_close_shape`.

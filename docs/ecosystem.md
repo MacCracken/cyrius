@@ -36,8 +36,9 @@ plus whenever a port lands or a new repo joins.
 > ⭐ **THE SCOPE OF THIS TABLE, STATED SO IT CANNOT BE BORROWED AGAIN:** it covers the
 > **fold-table stdlibs only**. It is evidence about *these repos* and about nothing else. Any
 > claim about "the ecosystem" needs `tests/gates/toolchain/removed_symbol_census.sh`, which walks
-> every sibling checkout including vendored `lib/` and `dist/`, and the per-repo worklist in
-> [`docs/development/ecosystem-migration-6.6.2.md`](development/ecosystem-migration-6.6.2.md).
+> every sibling checkout including vendored `lib/` and `dist/`, and the migration notes in
+> [`docs/development/ecosystem-migration.md`](development/ecosystem-migration.md) (the 6.6.2 per-repo worklist is
+> archived: [`archive/ecosystem-migration-6.6.2.md`](development/archive/ecosystem-migration-6.6.2.md)).
 > Tracked domain consumers of the boxed primitives: **agnostik**, **agnova**, plus the five repos
 > that vendor `agnostik/dist` (aethersafha, anuenue, ark, kybernet, mela).
 

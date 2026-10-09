@@ -20,8 +20,8 @@ to file, read this.
 ## What doesn't belong here
 
 - **Feature wishlists without a consumer stopgap.** Speculative
-  language extensions go in `docs/development/roadmap.md` under
-  "candidate themes", not here. The bar for an issue is: *someone
+  language extensions go on the watching list in
+  `docs/development/roadmap-future.md`, not here. The bar for an issue is: *someone
   is working around this in production code right now.*
 - **One-line questions.** If it fits in a chat message, don't
   file it.
@@ -236,7 +236,7 @@ v5.1.0+ adds macOS Mach-O support (per CLAUDE.md's DO-NOT block).
 ## Pointers
 
 - [`archived/`](./archived/) — resolved issues, indexed.
-- [`../roadmap.md`](../roadmap.md) — shipped / planned releases.
+- [`../roadmap.md`](../roadmap.md) — the active minor's plan and the unscheduled backlog.
 - [`../state.md`](../state.md) — current cycle state (version, cycc size, in-flight slots).
 - `../../../CHANGELOG.md` — source of truth for what each release
   actually shipped.
