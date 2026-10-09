@@ -3734,9 +3734,8 @@ fn run() {                           # callptr needs a function frame
 the given args (any count); the result lands in the usual return register.
 It works on every backend (x86_64, aarch64, Windows PE) and is the basis
 for COM-vtable dispatch (`callptr(load64(load64(obj) + slot*8), obj, …)`).
-The callee is spilled to a frame slot, so `callptr` must be used **inside a
-function** (top-level use is a compile error — top-level vars are globals,
-with no frame).
+The callee is spilled to a frame slot; at top level (since 6.6.16) the compiler gives the
+call its own micro-frame, so `callptr` works there too.
 
 The older `lib/fnptr.cyr` helper API (`fncall0`..`fncall8`) still works for
 existing code:
@@ -3750,8 +3749,8 @@ Since v6.5.17 a `fncallN(…)` call written **inside a function** compiles to th
 same indirect-call sequence as `callptr` rather than to a call into
 `lib/fnptr.cyr` — the include is still required (it is what makes the name
 resolve), but the marshalling is the compiler's, which is the better one for
-more than four arguments on Windows and more than six elsewhere. At top level
-it stays an ordinary call into the library.
+more than four arguments on Windows and more than six elsewhere. Since 6.6.16 a
+top-level call is lowered the same way, in its own micro-frame.
 
 The library body runs only when `fncallN` itself is called through a pointer —
 `fncall2(&fncall1, &add1, 41)`, or `&fncall3` handed to code that calls it. On the

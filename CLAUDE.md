@@ -30,20 +30,17 @@ sh bootstrap/bootstrap.sh          # bootstrap from seed
 cat src/main.cyr | build/cycc > /tmp/cycc && chmod +x /tmp/cycc  # build compiler
 cat src/main.cyr | /tmp/cycc > /tmp/cc5b && cmp /tmp/cycc /tmp/cc5b  # self-hosting verify
 sh scripts/check.sh                # full audit
-cyrius test                        # run the whole .tcyr suite (recursive since v6.5.11)
-cyrius test <file>                 # run ONE .tcyr — singular takes a FILE, never a dir
-cyrius tests <dir>                 # run a subtree, e.g. `cyrius tests tests/tcyr/crossos`
+cyrius test                        # run the whole .tcyr suite (recursive; this repo's whole corpus via [build] test_standalone)
+cyrius test <file|dir>...          # files, and directories walked recursively, e.g. `cyrius test tests/tcyr/crossos`
 cyrius fuzz                        # run .fcyr harnesses (recursive)
 cyrius bench                       # run .bcyr benchmarks (recursive)
 ```
 
-> ⚠ **`test` (singular) takes a FILE; `tests` (plural) takes a DIRECTORY.** This block
-> read *"`cyrius test` — recursive; takes a dir arg since v6.5.7"* until v6.5.11, and
-> **both halves were wrong**: bare `cyrius test` was two depth-1 `dir_list` scans (it
-> found 2 of 4 files in a mixed-depth probe tree), and `cyrius test <dir>` errors
-> `not a file` and exits 1. v6.5.11 made the bare verb genuinely recursive, so the
-> promise this line had been making for four releases is now true — the dir-arg half
-> stays with the plural verb. `docs/guides/cyrius-guide.md` carried the same error.
+> **`cyrius test` takes files AND directories since 6.7.6** (a directory is walked recursively; several operands run each
+> file once); `cyrius tests <dir>` is a deprecated alias for 6.7.6 only and prints a one-line notice. In this repo
+> `cyrius.cyml` sets `[build] test_standalone = true`, so each test compiles with only its own includes — 22 `.tcyr`
+> define `fn run()`, which the manifest's stdlib prepend (`lib/process.cyr`'s `run`) used to collide with. *(History:
+> until 6.7.6 the singular took a FILE and the plural a DIRECTORY, and this block had to warn about it.)*
 
 ## Key Principles
 
@@ -147,9 +144,12 @@ Gates, fail-fast:
    cover it: **cybs** (the hand-assembly bootstrap compiler the 29 KB seed
    assembles) is far more limited than `build/cycc` and fails **SILENTLY** on
    things `build/cycc` compiles fine — too many global/call references in one
-   function, tail calls; and a call with **7+ arguments** (cybs passes only the six register
-   arguments — refused BY NAME since 6.7.0, and `cybs_call_arity_named.sh` runs cybs over
-   `src/main.cyr` in check.sh; stack arguments are scheduled in roadmap.md). **Mandatory for ANY `src/` change, on EVERY release — not
+   function, tail calls. *(A call with 7+ arguments was refused BY NAME from 6.7.0 — cybs passed
+   only the six register arguments; since 6.7.6 cybs passes stack arguments in cycc's order and
+   `cybs_call_arity_named.sh` proves 7- and 9-argument calls. cybs also refuses a lone `!` and any
+   byte it does not lex, by name, since 6.7.6 — it used to drop them silently. The seed it is
+   assembled by reads at most 131,072 bytes and holds 512 labels: row S of that gate guards
+   `bootstrap/cybs.cyr`'s headroom.)* **Mandatory for ANY `src/` change, on EVERY release — not
    only at minor/major closeouts.** (`gen1`, cybs's output, DIFFERING IN SIZE from
    `build/cycc` is NORMAL — it's the bootstrap intermediate, and the *sign* of that
    difference has flipped over the project's life. This line read "~72 KB smaller"

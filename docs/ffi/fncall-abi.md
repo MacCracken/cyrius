@@ -116,6 +116,7 @@ Any one of:
 | `float` / `double` parameter or return         | Float passing uses xmm / v registers cyrius doesn't touch |
 | Variadic callee (e.g. `printf`, `wgpuLog*`)    | SysV needs `AL` set; AAPCS64 needs `x8` set           |
 | >6 args calling a C function on aarch64        | Cyrius 6-reg convention ≠ AAPCS64 8-reg convention    |
+| 7–8 args calling a C function on x86_64 SysV   | Cyrius passes stack arguments last-first (the last at `[rsp]`, since 6.7.6 `fncall8` too); C reads argument 7 at `[rsp]` |
 | Nested pointer chains passed individually      | Tolerable but struct-pack is cleaner + fewer FFI slots |
 
 The canonical shim pattern: accept a packed-args struct by pointer,
