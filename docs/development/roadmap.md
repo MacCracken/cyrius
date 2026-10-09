@@ -739,6 +739,18 @@ CHANGELOG [6.6.17] *Downstream* (no ecosystem sweep).
     multi-value path and the caller reads garbage over 16 bytes (`x3.cyr`, `x4.cyr`); `return mk2(1) == p;` in a 9-16 B
     struct fn passes the leading-call check and leaves the second register unwritten (closing it refuses code that
     compiles today — the user's call); a write to a captured NAME inside a closure says "undefined variable".
+  - **Found by the 6.7.6 review (pre-existing, not made worse):** a u128 captured by a closure reads as the address of
+    its env copy (`|q| { c == 5 }` false; `c + 0` adds the address; `hi(&c)` is right — parse_expr.cyr ~2697); a
+    struct-typed FIELD as the LEFT operand of an overloaded operator passes the containing struct's address (`h.p - s`
+    → -8, want -6; the right operand is right); a parenthesised argument to a ≤ 8 B by-value struct parameter skips the
+    6.7.3 type check (`bs1((t))` compiles, `bs1(t)` is refused — `_sarg_byval_small` returns before the 6.7.6 unwrap);
+    `*p = v` through `p: *f32` / `*i32` is a raw 8-byte word store (documented — outside "every f32 write rounds");
+    `_abs_path(".")` returns `<cwd>/.`; the PE CLI build still warns getcwd (79) / brk (12) unrouted, so `_abs_path` is
+    the identity on Windows and CYRIUS_TEST_FILE / DIR are relative there; `cyrius update` copies the whole pinned stdlib
+    snapshot into lib/ whatever `[deps] stdlib` declares; `_dep_local_state`'s GIT_CEILING_DIRECTORIES is not normalised
+    (a sibling sub-directory reports "not a git checkout" on the `local:` line); under wine the PE CLI cannot hash (no
+    certutil), so no lock is written there. The seed has a third silent cap — CODE at S+0x20000 is 65,536 B and EB
+    stores unbounded (cybs code is ~21.6 KB, ~3x headroom; not gated). cybs label headroom is 10 (502 of 512).
   - **Test tooling, found by lane C (test half):** `cmd_test` labels any exit status above 128 as a signal (a test
     exiting 232 prints "killed by signal 104" — `run_binary_timed` returns 128+signal and the raw code on one channel);
     `cyrius bench` / `cyrius fuzz` exit 0 when they find nothing (only `cyrius test`'s contract was in scope); a
