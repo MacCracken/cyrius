@@ -333,6 +333,9 @@ fn ETESTAZ(S): i64 { CX_MOVI(S, 1, 0); return 0; }  # r1 = 0 so EJCC's eq r0,r0,
 # clobbers it. Opcode 2 is `mov ra, rb` with ra = DEST.
 fn EMOVRDXRAX(S): i64 { CX_EMIT(S, 2, 4, 0, 0); return 0; }  # mov rdx, rax → mov r4, r0
 fn EMOVRA_RDX(S): i64 { CX_EMIT(S, 2, 0, 4, 0); return 0; }  # mov rax, rdx → mov r0, r4
+# 6.7.7 — cx has no 9-16 B struct pair yet (EFLLOAD_STRUCT_INT_PAIR refuses it): nothing to sync.
+# See the aarch64 ESTRUCT_PAIR_HI_SYNC. CHANGELOG [6.7.7]
+fn ESTRUCT_PAIR_HI_SYNC(S): i64 { return 0; }
 # v6.5.21 — THIRD multi-value return slot = r5 (cx's r10 peer). Same
 # survivability argument as r4: cxvm's `call` pushes only the PC, and
 # EFNPRO/EFNEPI touch only fp/sp.

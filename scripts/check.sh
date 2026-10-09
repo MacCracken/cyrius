@@ -2334,6 +2334,10 @@ _chk_gate "$ROOT/tests/gates/toolchain/test_absorbs_tests.sh"   # 6.7.6 (Break 1
 _chk_gate "$ROOT/tests/gates/frontend/silent_values_checked.sh"   # 6.7.6 (Break 1, lane D)
 _chk_gate "$ROOT/tests/gates/codegen/struct_value_codegen.sh"   # 6.7.6 (Break 1, lane E)
 _chk_gate "$ROOT/tests/gates/frontend/tuple_checked.sh"   # 6.7.7 (B4)
+# 6.7.7 — a 9-16 B struct return and a multi-value return agree on aarch64: the struct pair (x0:x1)
+# and the multi-value slot (x2) were read across each other — `var p: P = f()` of a `return (a, b);`,
+# `var a, b = f()` / `rethi()` of a `return p;` — silently wrong on pi / ecb. x86 + qemu legs.
+_chk_gate "$ROOT/tests/gates/codegen/struct_pair_multi_value_crossing.sh"
 # 6.7.6 (Break 1, lane C) — cyrius.cyml git first, local development by an explicit switch
 _chk_gate "$ROOT/tests/gates/toolchain/lib_overlay_include.sh"
 _chk_gate "$ROOT/tests/gates/toolchain/deps_git_first_local_switch.sh"

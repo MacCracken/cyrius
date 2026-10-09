@@ -5017,8 +5017,7 @@ fn PARSE_SIMD_EXT(S, ptyp): i64 {
         EPOPR(S);
         if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
         # Don't consume ; here — PARSE_STMT handles it via expression statement path
-        var rp = EJMP0(S);
-        vec_push(rp_vec, rp);
+        _mret_land(S);   # 6.7.7: + a 9-16 B struct fn's pair register (aarch64 x1)
         return 0;
     }
     # f64_atan(x) — v5.11.37 path-A: dispatch lives in <backend>/emit.cyr.
