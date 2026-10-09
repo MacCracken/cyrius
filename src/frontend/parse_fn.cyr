@@ -2178,6 +2178,115 @@ fn _tok_ends_arg(S, ti): i64 {
     return 0;
 }
 
+# ⭐ 6.7.7 (B6) — THE PARAMETER-LIST AND ARGUMENT-LIST WALKERS: one rule for every walker that
+# steps over a parameter or an argument (default and named arguments). Cursor-free, read-only.
+#   * In a parameter's TYPE `<` / `>` nest (`m: Map<K, V>`); in its DEFAULT, after a depth-0 `=`,
+#     they are operators (`b = A < B`), so a default is skipped with `( [ {` balance only. A walker
+#     that counted `<` there would lose the list's end.
+#   * In an ARGUMENT list a closure's `|a, b|` bars, at an argument's start (or after a `name:`
+#     label), hold a comma that separates nothing. (`_CALL_ARGC_PEEK`, `_call_arg_start` and
+#     `_tc_str_literal_arg` count it: issue 2026-10-09-closure-literal-comma-counted-as-argument.)
+# At the end of input each returns the EOF token, never its start, so a walker that `continue`s
+# from the result always moves. CHANGELOG [6.7.7]
+
+# From token `q`: the first `,` or `)` outside `( [ {` nesting, or the EOF token.
+fn _tok_item_end(S, q): i64 {
+    var d = 0;
+    var n = GTCNT(S);
+    while (q < n) {
+        var t = TOKTYP(S, q);
+        if (t == 12) { return q; }
+        if (d == 0) { if (t == 31 || t == 11) { return q; } }
+        if (t == 10 || t == 28 || t == 13) { d = d + 1; }
+        if (t == 11 || t == 29 || t == 14) { d = d - 1; }
+        if (d < 0) { d = 0; }
+        q = q + 1;
+    }
+    return q;
+}
+# The depth-0 `,` or `)` that ends the parameter default whose `=` is token `i` (or the EOF token).
+fn _pl_dflt_end(S, i): i64 {
+    return _tok_item_end(S, i + 1);
+}
+# A parameter TYPE's nesting depth after token type `t`: `( [ { <` open; `>>` / `>>>` close two /
+# three (`Vec<Vec<i64>>`).
+fn _pl_tdepth(t, d): i64 {
+    if (t == 10 || t == 28 || t == 13 || t == 19) { return d + 1; }
+    if (t == 11 || t == 29 || t == 14 || t == 20) { d = d - 1; }
+    if (t == 39) { d = d - 2; }
+    if (t == 152) { d = d - 3; }
+    if (d < 0) { return 0; }
+    return d;
+}
+# The depth-0 `,` or `)` that ends the parameter whose first token is `i` (a name, or `...`), or the
+# EOF token: its type balanced by `_pl_tdepth`, a default from its depth-0 `=` by `_pl_dflt_end`.
+fn _pl_next(S, i): i64 {
+    var q = i;
+    var d = 0;
+    var n = GTCNT(S);
+    while (q < n) {
+        var t = TOKTYP(S, q);
+        if (t == 12) { return q; }
+        if (d == 0) {
+            if (t == 31 || t == 11) { return q; }
+            if (t == 4) { return _pl_dflt_end(S, q); }
+        }
+        d = _pl_tdepth(t, d);
+        q = q + 1;
+    }
+    return q;
+}
+# 1 when the parameter list whose `(` is token `op` declares a default (a parameter-level `=`).
+fn _pl_has_dflt(S, op): i64 {
+    var q = op + 1;
+    var d = 0;
+    var n = GTCNT(S);
+    while (q < n) {
+        var t = TOKTYP(S, q);
+        if (t == 12) { return 0; }
+        if (d == 0) {
+            if (t == 11) { return 0; }
+            if (t == 4) { return 1; }
+        }
+        d = _pl_tdepth(t, d);
+        q = q + 1;
+    }
+    return 0;
+}
+# 1 when token `ti` starts a named argument's label `name:`. Nothing else starts a call argument
+# `IDENT :` — there is no ternary and no `::`, and a struct literal is only a `var` initializer.
+fn _pd_label_at(S, ti): i64 {
+    if (TOKTYP(S, ti) != 2) { return 0; }
+    if (TOKTYP(S, ti + 1) != 49) { return 0; }
+    return 1;
+}
+# The depth-0 `,` or `)` that ends the call argument whose first token is `i` (just past the `(` or
+# a `,`), or the EOF token. A closure's `|..|` bars at its start, or after its label, are stepped
+# over whole (`||` is one token, with no bars; a closure's parameters are untyped, so no `:`).
+fn _arg_next(S, i): i64 {
+    var q = i;
+    if (_pd_label_at(S, q) == 1) { q = q + 2; }
+    if (TOKTYP(S, q) == 35) {
+        q = q + 1;
+        while (TOKTYP(S, q) != 35 && TOKTYP(S, q) != 12) { q = q + 1; }
+        if (TOKTYP(S, q) == 35) { q = q + 1; }
+    }
+    return _tok_item_end(S, q);
+}
+# 1 when an argument of the call whose `(` is token `open` is named (`f(1, c: 3)`).
+fn _pd_named_at(S, open): i64 {
+    var q = open + 1;
+    if (TOKTYP(S, q) == 11) { return 0; }
+    var n = GTCNT(S);
+    while (q < n) {
+        if (_pd_label_at(S, q) == 1) { return 1; }
+        q = _arg_next(S, q);
+        if (TOKTYP(S, q) != 31) { return 0; }
+        q = q + 1;
+    }
+    return 0;
+}
+
 # 1 when the name at offset `noff` is exactly the `n`-byte text `lit`. (cycc does not include
 # lib/string.cyr, so this is the compare.)
 fn _noff_is(S, noff, lit, n): i64 {
@@ -4560,7 +4669,8 @@ fn _tr_cap(S, ti, what, n): i64 {
     return 0 - 1;
 }
 # Cursor-free: the parameter count of the list whose `(` is token `p`, and `_tr_pend` = the token
-# after its `)`. A comma inside `<..>` (`m: Map<K, V>`) or nested parens is not a separator.
+# after its `)`. A comma inside `<..>` (`m: Map<K, V>`) or nested parens is not a separator, and a
+# parameter default is skipped whole (`_pl_dflt_end`).
 fn _tr_arity(S, p): i64 {
     var q = p + 1;
     if (TOKTYP(S, q) == 11) { _tr_pend = q + 1; return 0; }
@@ -4578,6 +4688,7 @@ fn _tr_arity(S, p): i64 {
         elif (t == 20) { ad = ad - 1; }
         elif (t == 39) { ad = ad - 2; }
         elif (t == 31) { if (pd == 0) { if (ad <= 0) { n = n + 1; } } }
+        elif (t == 4) { if (pd == 0) { q = _pl_dflt_end(S, q); continue; } }   # 6.7.7: a default
         q = q + 1;
     }
     _tr_pend = q;
@@ -5460,6 +5571,7 @@ fn _bnd_sites(S, fi, open): i64 {
         if (t == 12) { return 0; }
         if (d == 0) {
             if (t == 11) { break; }
+            if (t == 4) { i = _pl_dflt_end(S, i); continue; }   # 6.7.7: a default (`<` is an operator there)
             if (t == 2) { if (TOKTYP(S, i - 1) == 10 || TOKTYP(S, i - 1) == 31) { _bnr_decl(S, tp, blk, i); } }
         }
         if (t == 10 || t == 19 || t == 28) { d = d + 1; }
@@ -6228,7 +6340,11 @@ fn _ce_bind_params(S, op, base, n, fi): i64 {
                 store64(e, pn); store64(e + 8, av); store64(e + 16, pk); store64(e + 24, w);
             }
             k = k + 1;
-            while (TOKTYP(S, i) != 31 && TOKTYP(S, i) != 11) { i = i + 1; }
+            # 6.7.7: to its `,` / `)` with `( [ {` balanced, so a default (`b = sq2(1, 2)`) is one
+            # parameter. NOT `_pl_next`: this count must agree with `_ce_nparams` (paren depth only)
+            # at the definition check, and a `<`-aware one refuses an uncalled `const fn f(p:
+            # Pair<i64, i64>, b)` that compiles today.
+            i = _tok_item_end(S, i);
             if (TOKTYP(S, i) == 31) { i = i + 1; }
         } else { i = i + 1; }
     }
@@ -6911,25 +7027,43 @@ fn _cst_kind_peek(S, ci): i64 {
     if (L64(e + 32) == 2) { return L64(e + 40); }
     return 4;   # 6.7.4: not evaluated yet — its kind is unknown (an if-expression re-checks it later)
 }
-# Run const ci's initializer at the TOP context (no locals of whatever fn forced it).
-fn _cst_eval(S, ci): i64 {
-    var e = _cst_tab + ci * 64;
-    S64(e + 32, 1);
+# Evaluate the constant expression at token `ti` at the TOP context: no locals of whatever forced
+# it, its own step budget (a sweep runs them back to back), every evaluator flag put back. Returns
+# the value; `out` receives [0] its kind (0 i64, 1 f64, 2 string, 3 bool), [1] 1 when the evaluator
+# refused it (already reported), [2] the token after it — the caller judges what may end it (a
+# const's `;`; a parameter default's `,` / `)`). CHANGELOG [6.7.2] [6.7.7]
+fn _ce_top_expr(S, ti, out): i64 {
     var sv_ti = _ce_ti; var sv_top = _ce_top; var sv_in = _ce_infn; var sv_err = _ce_err;
     var sv_skip = _ce_skip; var sv_fb = _ce_fb; var sv_steps = _ce_steps; var sv_as = _ce_asrt;
-    _ce_steps = 0;   # each const its own budget (the sweep runs them all back to back)
+    _ce_steps = 0;
     _ce_asrt = 0;
-    _ce_ti = L64(e + 8);
+    _ce_ti = ti;
     _ce_top = 1;
     _ce_infn = 0;
     _ce_err = 0;
     _ce_skip = 0;
     var v = _ce_expr(S);
-    var k = _ce_k;
-    if (_ce_err == 0) { if (TOKTYP(S, _ce_ti) != 5) { _ce_bad(S, "expected ';' after a const's value", 34); } }
-    var bad = _ce_err;
+    store64(out, _ce_k);
+    store64(out + 8, _ce_err);
+    store64(out + 16, _ce_ti);
     _ce_ti = sv_ti; _ce_top = sv_top; _ce_infn = sv_in; _ce_err = sv_err; _ce_skip = sv_skip; _ce_fb = sv_fb;
     _ce_steps = sv_steps; _ce_asrt = sv_as;
+    return v;
+}
+# Run const ci's initializer at the TOP context (no locals of whatever fn forced it).
+fn _cst_eval(S, ci): i64 {
+    var e = _cst_tab + ci * 64;
+    S64(e + 32, 1);
+    var o: i64[3];
+    var v = _ce_top_expr(S, L64(e + 8), &o);
+    var k = load64(&o);
+    var bad = load64(&o + 8);
+    if (bad == 0) {
+        if (TOKTYP(S, load64(&o + 16)) != 5) {
+            _bnd_errm_at(S, load64(&o + 16), "expected ';' after a const's value", 34);
+            bad = 1;
+        }
+    }
     var vi = L64(e + 24);
     if (bad == 1) {
         S64(e + 32, 3); S64(e + 40, 0); S64(e + 48, 0);
@@ -8205,6 +8339,7 @@ fn _gs_params(S, fi, open): i64 {
         if (t == 12) { break; }
         if (d == 0) {
             if (t == 11) { i = i + 1; break; }
+            if (t == 4) { i = _pl_dflt_end(S, i); continue; }   # 6.7.7: a default (`<` is an operator there)
             if (t == 31) { pc = pc + 1; }
             if (t == 2) { pk = _gs_param(S, fi, i, pc, pk); }
         }
@@ -9514,7 +9649,8 @@ fn _classify_return_type(S, rt_noff): i64 {
 # miscompile CO-01 describes). Structs / enums / globals were already pass-1
 # order-independent; this extends the same treatment to fn signatures.
 #
-# _prescan_skip_fn is the verbatim pre-CO-01 body-skip, so pass-1's TOKEN CURSOR
+# _prescan_skip_fn is the pre-CO-01 body-skip (6.7.7: with the parameter list skipped
+# whole first, which moves no cursor a brace-free list ends at), so pass-1's TOKEN CURSOR
 # advances exactly as it did before. _prescan_fn_sig extracts metadata on a
 # throwaway cursor then RESETS and replays this — registration/mask writes are
 # the only new effect, never a change in where pass-1 leaves the cursor.
@@ -9522,6 +9658,12 @@ fn _prescan_skip_fn(S): i64 {
     STI(S, GTI(S) + 1);  # consume FN
     STI(S, GTI(S) + 1);  # consume name
     if (PEEKT(S) == 19) { while (PEEKT(S) != 20 && PEEKT(S) != 12) { STI(S, GTI(S) + 1); } STI(S, GTI(S) + 1); }
+    # 6.7.7: the parameter list as one balanced `( .. )` first, so nothing in a parameter default
+    # (a refused `{`) is taken for the body. The same cursor for every list that holds no brace.
+    if (PEEKT(S) == 10) {
+        var cp = _tok_close_paren(S, GTI(S));
+        if (cp > 0) { STI(S, cp + 1); }
+    }
     var dep = 0;
     var fsk = 1;
     while (fsk == 1) {

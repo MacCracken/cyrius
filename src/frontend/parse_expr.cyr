@@ -1528,7 +1528,7 @@ fn _inl_param_marks(S, fi, s0, s1, pc): i64 {
     return 0;
 }
 # The name of parameter `ord` of fn `fi`, read from its definition's tokens (the `<..>` of a type
-# argument skipped), or -1.
+# argument and a parameter's default skipped), or -1.
 fn _bx_pname(S, fi, ord): i64 {
     var i = _gen_def_open(S, fi);
     if (i < 0) { return 0 - 1; }
@@ -1541,6 +1541,7 @@ fn _bx_pname(S, fi, ord): i64 {
         var t = TOKTYP(S, i);
         if (d == 0) {
             if (t == 11) { return 0 - 1; }
+            if (t == 4) { i = _pl_dflt_end(S, i); continue; }   # 6.7.7: a default (`<` is an operator there)
             if (t == 31) { k = k + 1; want = 1; }
             elif (want == 1) { if (t == 2) { if (k == ord) { return TOKVAL(S, i); } want = 0; } }
         }
