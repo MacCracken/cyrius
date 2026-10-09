@@ -2316,8 +2316,12 @@ it unscriptable. `cyrius test <file>` prints the test's own output (its `N passe
 total)` assert summary, not a `===` line) and its exit status is the test's: non-zero, with a
 `FAIL:` line naming the file, when the test exits non-zero, dies of a signal, times out, or exits
 0 with an assert summary that reports failures (or, when its source calls `assert_summary()`, with
-none or one of 0 assertions). The suite forms (bare, a directory, several operands) end with an
-`N passed, M failed` tally of the files they ran.
+none or one of 0 assertions). The `FAIL:` line says which: `(exit 3)`, `(killed by signal 11
+SIGSEGV — …)`, `(timed out after …)`. The signal is read from the wait status, so a test that
+EXITS with 232 or 139 says `(exit 232)` / `(exit 139)` (6.7.6 — any status over 128 used to be
+called a signal: exit 232 was "killed by signal 104"); `cyrius test <file>`'s own exit status stays
+the shell's `128 + signal` for a signal. The suite forms (bare, a directory, several operands) end
+with an `N passed, M failed` tally of the files they ran.
 
 **One test verb (6.7.6).** `cyrius test <file>` runs that file, `cyrius test <dir>` runs every
 `.tcyr` under the directory (recursive — `cyrius test tests/tcyr/crossos`), several operands
