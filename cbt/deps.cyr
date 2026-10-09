@@ -2899,9 +2899,11 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                 if (dep_scope == 1) { continue; }
             } elif (dep_scope != 1) { continue; }
             # v5.7.14: closest-wins skip. 6.7.6 (R7): after the keys are read, so a diamond — the
-            # same name wanted at another tag — is SAID rather than dropped in silence.
+            # same name wanted at another tag — is SAID rather than dropped in silence. Only by an
+            # entry this run would resolve: one gated out (optional with no active feature, another
+            # target) wants nothing here, and was called "wanted" (6.7.6 review).
             if (_dep_name_visited(dep_name) == 1) {
-                _dep_diamond(dep_name, rec);
+                if (_dep_gated(dep_name, rec) == 0) { _dep_diamond(dep_name, rec); }
                 continue;
             }
             var dep_path = load64(rec + _DS_PATH);

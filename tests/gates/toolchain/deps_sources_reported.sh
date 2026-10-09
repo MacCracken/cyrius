@@ -26,14 +26,18 @@
 #       names build/local-deps/lib/ as the destination; -v says `local ../sib …`
 #   S7  the dry run fails where the real run fails: a cached tag dep whose manifest names a
 #       path-only entry — the SAME refusal line from both, rc 1 each
+#   S8  only an entry this run would resolve can be "wanted": p4's leaf v2 is `optional` with no
+#       active feature and p5's leaf v2 is `target = "aarch64"` (an x86_64 build) — no note for
+#       either, leaf resolved at p1's v1 (both were called "wanted by p4 / p5")
 #
 # MUTATION LEDGER (measured 2026-10-08, each in a SCRATCH copy of the tree, one at a time; real
-# tree 7/7 green):
+# tree 8/8 green):
 #   M1  no `_dep_diamond` call at the closest-wins skip ............... S4 red
 #   M2  `_dep_diamond` reports equal tags too ......................... S5 red
 #   M3  the dry run ignores the source rule (always the git line) ..... S6 S7 red
 #   M4  the dry run does not walk the cache (no transitive lines) ..... S3 S7 red
 #   M5  `deps -v` prints no sources ................................... S2 S6 red
+#   M6  the diamond notice ignores the optional / target gates (6.7.6 FXCL-7) .. S8 red
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
 G=deps_sources_reported
@@ -71,6 +75,8 @@ mkorigin p1 1 "[package]\nname = \"p1\"\n\n[deps.leaf]\ngit = \"file://$W/o/leaf
 mkorigin p2 2 "[package]\nname = \"p2\"\n\n[deps.leaf]\ngit = \"file://$W/o/leaf\"\ntag = \"v2\"\nmodules = [\"dist/leaf.cyr\"]\n"
 mkorigin p3 3 "[package]\nname = \"p3\"\n\n[deps.leaf]\ngit = \"file://$W/o/leaf\"\ntag = \"v1\"\nmodules = [\"dist/leaf.cyr\"]\n"
 mkorigin bad 4 "[package]\nname = \"bad\"\n\n[deps.leaf]\npath = \"../leaf\"\nmodules = [\"dist/leaf.cyr\"]\n"
+mkorigin p4 4 "[package]\nname = \"p4\"\n\n[deps.leaf]\ngit = \"file://$W/o/leaf\"\ntag = \"v2\"\nmodules = [\"dist/leaf.cyr\"]\noptional = true\n"
+mkorigin p5 5 "[package]\nname = \"p5\"\n\n[deps.leaf]\ngit = \"file://$W/o/leaf\"\ntag = \"v2\"\nmodules = [\"dist/leaf.cyr\"]\ntarget = \"aarch64\"\n"
 mkorigin sib 1
 mkdir -p "$W/ws" && git clone -q "$W/o/sib" "$W/ws/sib" && ( cd "$W/ws/sib" && printf 'fn sib_v(): i64 { return 2; }\n' > dist/sib.cyr && git commit -qam dev )
 sha7() { git -C "$W/o/$1" rev-parse --short=7 "$2^{commit}"; }
@@ -140,6 +146,12 @@ want="error: bad's manifest names [deps.leaf] path = \"../leaf\" with no git / t
 if [ "$r7r" -eq 1 ] && [ "$rc" -eq 1 ] && grep -qxF "$want" "$W/s7r.out" && grep -qxF "$want" "$W/s7d.out"; then
     ok "S7 the dry run fails where the real run fails: the same refusal line for a cached dep's path-only entry, rc 1 each"
 else bad "S7 (real rc=$r7r dry rc=$rc): $(grep -m1 error "$W/s7r.out") / $(grep -m1 error "$W/s7d.out")"; fi
+# ── S8 ──
+{ deps2 p1 p4; printf '\n[deps.p5]\ngit = "file://%s/o/p5"\ntag = "v1"\nmodules = ["dist/p5.cyr"]\n' "$W"; } > "$W/d18"; mkp app8 < "$W/d18"
+rc=0; cy -v deps > "$W/s8.out" 2>&1 || rc=$?
+if [ "$rc" -eq 0 ] && ! grep -q '^note: ' "$W/s8.out" && grep -q 'return 10;' "$P/lib/leaf.cyr"; then
+    ok "S8 a gated-out entry (optional with no feature, another target) wants nothing: no note, leaf at v1"
+else bad "S8 (rc=$rc): $(grep note "$W/s8.out" | tr '\n' '|') leaf=[$(cat "$P/lib/leaf.cyr" 2>/dev/null)]"; fi
 
 echo "$G: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1

@@ -2857,6 +2857,8 @@ dependency sources:
 
 A **diamond** — a dependency already resolved, wanted again at another tag — still resolves
 closest-first, and now says so: `note: leaf 2.0 (wanted by p2) not used; 1.0 (p1) resolved first`.
+Only an entry the run would resolve is "wanted": one gated out (`optional` with no active feature,
+another `target`) is not named.
 A key nothing reads in your own `[deps]` / `[deps.NAME]`, and a table nothing reads
 (`[dev-dependencies]`, `[[bin]]`), is warned by name, as `[build]`'s unknown keys are.
 
