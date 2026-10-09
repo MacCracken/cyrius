@@ -11539,8 +11539,7 @@ fn _prescan_params_scan(S, fi): i64 {
                     if (PEEKT(S) == 10) {                    # 6.7.7 (B4): a tuple `( .. )`
                         struct_mask = _tup_pscan(S, fi, pc, struct_mask, _pptr);
                         bvcp = _tup_bvcp(bvcp, pc);
-                    }
-                    if (PEEKT(S) == 2) {
+                    } elif (PEEKT(S) == 2) {
                         var c = _classify_param_type(S, PEEKV(S));
                         if (c == 1) { str_mask = _pmw(str_mask, pc, 2); }
                         elif (c == 2) { cstring_mask = _pmw(cstring_mask, pc, 4); }
@@ -11567,7 +11566,8 @@ fn _prescan_params_scan(S, fi): i64 {
                         SKIP_GENERICS(S);                    # `: Vec<i64>` etc.
                     } elif (PEEKT(S) != 12) {
                         # 6.7.7: a type token that is not a name (`u128`, the `fn` of `*fn`), taken
-                        # as pass 2 takes it — stopping here counted the list short. CHANGELOG [6.7.7]
+                        # as pass 2 takes it — stopping here counted the list short. A tuple type is
+                        # stepped whole above (the token after it is the list's own). CHANGELOG [6.7.7]
                         STI(S, GTI(S) + 1);
                         SKIP_GENERICS(S);
                     }
