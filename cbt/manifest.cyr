@@ -1967,43 +1967,75 @@ var _tc_eff_dirs = 0;      # memo: a project directory ("" = the root) ...
 var _tc_eff_recs = 0;      # ... and its effective [test] (a _TA record; 0 = refused, named)
 var _tc_cyml_found = 0;    # the test.cyml files the resolver reads (vec), 0 = not looked yet
 
-# The directory of unit `p`, relative to the project ("" = the root), or -1 when the unit is not
-# inside the project.
+# The directory of unit `p`, relative to the project ("" = the root) with its `.` segments dropped,
+# or -1 when the unit is not inside the project. However the unit is spelt — `tests/net/x.tcyr`,
+# `./tests/./net/x.tcyr`, the absolute `<cwd>/tests/net/x.tcyr`, Windows' `tests\net\x.tcyr` — the
+# same directory, so the same test.cyml chain: a spelling that missed it compiled a different test
+# binary in silence (6.7.6 review).
 fn _tc_unit_dir(p): i64 {
     var np = _test_norm(p);
     #ifdef CYRIUS_TARGET_WIN
-    # A drive (`C:`) or a `\` path is not read as a project path: its directory chain would reach
-    # a drive root's test.cyml (the drive-relative plant class). Its unit gets cyrius.cyml's [test].
+    # `\` is a separator here: a relative `tests\net\x.tcyr` is tests/net/x.tcyr. A drive (`C:`,
+    # `C:x` too) is not read as a project path, and a rooted `\x` is not either (below: this host
+    # cannot name its working directory, `_abs_path` is the identity) — its directory chain would
+    # reach a drive root's test.cyml (the drive-relative plant class). Such a unit gets cyrius.cyml's
+    # [test] only.
+    np = _test_norm(_tc_fwd_slashes(np));
     var wi = 0;
     while (load8(np + wi) != 0) {
-        if (load8(np + wi) == 58 || load8(np + wi) == 92) { return 0 - 1; }
+        if (load8(np + wi) == 58) { return 0 - 1; }
         wi = wi + 1;
     }
     #endif
     if (load8(np) == 47) {
         var cwd = _abs_path(".");
         var cl = strlen(cwd);
+        # `_abs_path` joins "<cwd>/" + ".": the working directory is what precedes that "/."
+        if (cl >= 2 && load8(cwd + cl - 1) == 46 && load8(cwd + cl - 2) == 47) { cl = cl - 2; }
         if (cl < 2 || strlen(np) <= cl + 1) { return 0 - 1; }
         if (memeq(np, cwd, cl) == 0 || load8(np + cl) != 47) { return 0 - 1; }
         np = np + cl + 1;
     }
     var n = strlen(np);
-    var last = 0 - 1;
+    var d = alloc(n + 1);
+    var dl = 0;
     var s = 0;
     var i = 0;
     while (i <= n) {
         if (i == n || load8(np + i) == 47) {
-            if (i - s == 2 && load8(np + s) == 46 && load8(np + s + 1) == 46) { return 0 - 1; }
-            if (i < n) { last = i; }
+            var sl = i - s;
+            if (sl == 2 && load8(np + s) == 46 && load8(np + s + 1) == 46) { return 0 - 1; }
+            # every segment but the last (the unit's own name) is a directory; `.` and an empty
+            # segment name none
+            var dot = 0;
+            if (sl == 0) { dot = 1; }
+            if (sl == 1 && load8(np + s) == 46) { dot = 1; }
+            if (i < n && dot == 0) {
+                if (dl > 0) { store8(d + dl, 47); dl = dl + 1; }
+                memcpy(d + dl, np + s, sl);
+                dl = dl + sl;
+            }
             s = i + 1;
         }
         i = i + 1;
     }
-    if (last < 0) { return ""; }
-    var d = alloc(last + 1);
-    memcpy(d, np, last);
-    store8(d + last, 0);
+    store8(d + dl, 0);
     return d;
+}
+
+# `p` with every `\` turned into `/` (a fresh cstr) — Windows' separator, for a project path.
+fn _tc_fwd_slashes(p): i64 {
+    var n = strlen(p);
+    var out = alloc(n + 1);
+    var i = 0;
+    while (i < n) {
+        var c = load8(p + i);
+        if (c == 92) { c = 47; }
+        store8(out + i, c);
+        i = i + 1;
+    }
+    store8(out + n, 0);
+    return out;
 }
 
 # "<dir>/test.cyml" ("test.cyml" for the root).

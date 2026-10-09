@@ -2605,8 +2605,12 @@ CAPTURE = "capture.bin"        # tests/net/capture.bin — paths are relative to
   `cyrius.cyml`, of every one under `tests/`, `benches/` and `fuzz/`, and of those on the way to
   `[test] files`. A `test.cyml` elsewhere still applies when its unit runs; a leaf it names that
   the resolve did not vendor is named. A directory the resolve cannot list is warned by name.
-- A unit outside the project (an absolute path elsewhere, a `..`) gets `cyrius.cyml`'s `[test]`
-  only.
+- However the unit is spelt, it is one directory and one chain: `tests/net/x.tcyr`,
+  `./tests/./net/x.tcyr`, the absolute `<project>/tests/net/x.tcyr` (as the working directory
+  names it) and, on Windows, `tests\net\x.tcyr` all read `tests/net/test.cyml` and the levels
+  above it, each once.
+- A unit outside the project (an absolute path elsewhere, a `..`; on Windows any drive-qualified
+  `C:…` or rooted `\…` path) gets `cyrius.cyml`'s `[test]` only.
 
 **At run time** each unit gets `CYRIUS_TEST_FILE` (the unit) and `CYRIUS_TEST_DIR` (its
 directory) in its environment — absolute where the host can say so — so a test finds data beside
