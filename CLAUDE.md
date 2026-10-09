@@ -19,7 +19,7 @@ This file is **rules, process and procedures only** — no state, no history. St
 - [`docs/development/state.md`](docs/development/state.md) — volatile state: version, sizes, gate results, corpus counts,
   in-flight work, the next security-ledger id, the user's open decisions, the verification hosts' last result.
 - [`docs/development/roadmap.md`](docs/development/roadmap.md) — the active minor (remaining features, break candidates,
-  folded-stdlib follow-ups, the unscheduled backlog); [`roadmap_6.md`](docs/development/roadmap_6.md) — work placed after
+  folded-stdlib follow-ups, the backlog's placements); [`roadmap_6.md`](docs/development/roadmap_6.md) — work placed after
   it; [`roadmap-future.md`](docs/development/roadmap-future.md) — the watching list.
 - [`CHANGELOG.md`](CHANGELOG.md) — the source of truth for what shipped, with the user's decisions;
   [`completed-phases.md`](docs/development/completed-phases.md) — one line per release.
@@ -128,7 +128,7 @@ ledger to record each run are in [`cycle-discipline.md`](docs/development/cycle-
 
 > ⛔ **A closeout is THIS CHECKLIST, not an audit campaign** (user, 2026-10-07 — 6.6.20 took ~38 hours and half a
 > weekly budget for an hours-long job). One light pass per item; fix what packs trivially into the closeout patch; the
-> rest goes to the backlog for the USER to place. **At most ONE review round per change** — read the sibling paths and
+> rest is filed as issues for the USER to place. **At most ONE review round per change** — read the sibling paths and
 > run the gates BEFORE committing, so a fix never needs review → fix → re-review. No approval-gated Workflow / Agent
 > launches mid-release; ultracode is not licence to widen scope. When the scope question is real ("the audit found N
 > things — fix all, some, or file them?"), ask it ONCE, up front. A "handoff" means updating `state.md`, only when
@@ -164,8 +164,8 @@ ledger to record each run are in [`cycle-discipline.md`](docs/development/cycle-
 12. **Backlog re-triage** — sweep `docs/development/issues/` + `proposals/` and re-pin the roadmap. Verify each item's
     status against LIVE code and the CHANGELOG, never the file's own claim. Archive the resolved; batch the rest by
     theme and dependency (finish-out items soonest). **Nothing codegen is EVER parked at 7.x** — 7.x is the language
-    book + legal-for-public-release only; every technical item lives in the 6.x line or roadmap.md's backlog. Delete
-    stale-shipped watching entries. Keep the open issue dir lean (~10–12).
+    book + legal-for-public-release only; every technical item is an issue file placed in the 6.x line. Delete
+    stale-shipped watching entries.
 
 Order matters: mechanical first (if self-host breaks, stop), then judgment, then docs, so the docs reflect what the
 judgment passes changed. A closeout refactor lands in the closeout only if it stays byte-identical; otherwise it is the
@@ -265,7 +265,7 @@ reintroduce one; derive counts (`find tests/gates -name '*.sh' | wc -l`), never 
   LAYOUT change (two-step bootstrap), a decision that is the user's, or a full gate cycle the release cannot absorb.
   "Different subsystem" and "it's P2" are not reasons.
 - **Fixing bugs is not hunting bugs.** One implementer + one reviewer per bite, reviewing THE BITE; an out-of-scope find
-  goes to the backlog (only the user promotes it); a severe one met in passing is reported in one line, not swept for.
+  is filed as an issue (only the user promotes it); a severe one met in passing is reported in one line, not swept for.
 - **Deferral is real only when FILED** (its own issue, that turn) AND pinned to a roadmap slot with acceptance criteria;
   then move on. **"File the issue" means file only** — never bundle an implementation with it.
 - **Read the actual code before concluding something blocks work.** Premise-check the CLAIMS in issue files, not just
@@ -344,8 +344,10 @@ reintroduce one; derive counts (`find tests/gates -name '*.sh' | wc -l`), never 
 - The CHANGELOG is canonical history; `state.md` is volatile state only; this file is rules only.
 - **Archive docs, don't delete** — and grep `.github/workflows/`, `scripts/` and `tests/gates/` for hard-coded paths
   first.
-- Issues archive to `docs/development/issues/archived/` at slot close; keep the open dir a lean working queue (~10–12)
-  and fold the P3 / "someday" tail into roadmap entries.
+- **The backlog IS `docs/development/issues/`** (user, 2026-10-08: "issues that are backlogged should have issue/ filed,
+  not sit in the roadmap"). Every backlogged bug, gap or stdlib ask is its own issue file with a repro and a
+  `**Placement:**` line; the roadmap carries only placements and links, never the item's text. Resolved files archive
+  to `issues/archived/` at slot close.
 - Audit a corpus (vidya gotchas, the backlog) by DISSOLVING repeated instances into their class, not appending.
 - Source comments keep the WHY plus a one-line `CHANGELOG [X.Y.Z]` pointer — not history blocks.
 

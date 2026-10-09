@@ -1,0 +1,11 @@
+# 2026-10-08-struct-operator-results.md, item 5 (cycc 6.6.20-6.7.6): `return mk2(1) == p;` in a fn
+# returning the 16-byte Pt passes the leading-call check, so rax is the comparison and rdx is mk2's
+# stale second word. Any non-overloadable operator does it (`<`, `&`, `<<`, `&&`; `%` leaves the
+# remainder). Expected: refused, as `return mk2(1).x;` is ("... returned in two registers ...").
+# Actual: builds; exit 41 (q.y = mk2(1)'s y, never written by g). Closing it refuses code that
+# compiles today - the user's call.
+struct Pt { x; y; }
+fn mk2(v): Pt { var t: Pt = Pt { v, v + 40 }; return t; }
+fn g(p: Pt): Pt { return mk2(1) == p; }
+fn main(): i64 { var p: Pt = Pt { 1, 2 }; var q: Pt = g(p); return q.y; }
+syscall(60, main());

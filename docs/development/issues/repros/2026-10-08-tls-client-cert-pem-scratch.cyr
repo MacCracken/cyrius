@@ -1,0 +1,49 @@
+# tls_native_set_client_cert's PEM path sizes its decode table at TLS_CA_MAX_ROOTS (300) entries
+# x 16 B = 4,800 B whatever the input holds, and the STRICT decode it calls refuses a PEM with more
+# than 300 blocks outright — so a well-formed leaf is TLS_ERR_CERT_INVALID (-6, "chain doesn't
+# verify") once 300 more certificates follow it.
+# Make the inputs (the Ed25519 self-signed leaf from tests/tcyr/crypto/tls_native_mtls_client.tcyr),
+# in an empty scratch dir:
+#   HEX=$(grep -o 'hex_decode("3082013c[0-9a-f]*' <repo>/tests/tcyr/crypto/tls_native_mtls_client.tcyr | head -1 | cut -d'"' -f2)
+#   { echo "-----BEGIN CERTIFICATE-----"; echo $HEX | xxd -r -p | base64 -w 64; echo "-----END CERTIFICATE-----"; } > one.pem
+#   for i in $(seq 300); do cat one.pem; done > c300.pem
+#   for i in $(seq 301); do cat one.pem; done > c301.pem
+# Build from the repo root and run in that dir:
+#   cat docs/development/issues/repros/2026-10-08-tls-client-cert-pem-scratch.cyr | build/cycc > <dir>/cc && (cd <dir> && ./cc)
+# Actual on 6.7.6:
+#   one.pem rc=0 pem_bytes=489 alloc_bytes=6152      (4,800 of it the 300-entry table)
+#   c300.pem rc=0 pem_bytes=146700 alloc_bytes=151776
+#   c301.pem rc=-6 pem_bytes=147189 alloc_bytes=151992
+#define CYRIUS_TLS_NATIVE
+include "lib/fdlopen.cyr"
+include "lib/str.cyr"
+include "lib/chrono.cyr"
+include "lib/random.cyr"
+include "lib/dynlib.cyr"
+include "lib/tls_native.cyr"
+include "lib/tls.cyr"
+include "lib/io.cyr"
+
+fn try(path: cstring): i64 {
+    var len = 0;
+    var pem = file_read_whole(path, &len);
+    var ctx = tls_native_new_client("127.0.0.1", 9);
+    var u0 = alloc_used();
+    var rc = tls_native_set_client_cert(ctx, pem, len, 0);
+    var used = alloc_used() - u0;
+    syscall(1, 1, path, strlen(path));
+    syscall(1, 1, " rc=", 4); print_num(rc);
+    syscall(1, 1, " pem_bytes=", 11); print_num(len);
+    syscall(1, 1, " alloc_bytes=", 13); print_num(used);
+    syscall(1, 1, "\n", 1);
+    return rc;
+}
+fn main(): i64 {
+    alloc_init();
+    try("one.pem");
+    try("c300.pem");
+    try("c301.pem");
+    return 0;
+}
+var r = main();
+syscall(60, r);

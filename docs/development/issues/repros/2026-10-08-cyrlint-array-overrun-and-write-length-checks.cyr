@@ -1,0 +1,24 @@
+# Repro for 2026-10-08-cyrlint-array-overrun-and-write-length-checks.md
+# cyrlint (programs/cyrlint.cyr) reports `0 warnings` for every line marked BAD; cycc builds it (rc 0).
+var SYS_WRITE = 1;
+
+# (1) A bare local `var a[N]` is N BYTES. Since 6.6.12 `a[i]` on it is refused by the compiler, so the
+#     remaining shape is the explicit-offset store written as if `a` held N slots.
+fn overrun(): i64 {
+    var a[16];
+    store64(&a, 1);
+    store64(&a + 8, 2);
+    store64(&a + 16, 3);        # BAD: past the 16 bytes
+    store64(&a + 24, 4);        # BAD
+    return load64(&a + 24);
+}
+
+# (2) A write whose length does not match its literal's byte length.
+fn writes(): i64 {
+    syscall(1, 1, "hello\n", 5);            # BAD: 6 bytes, writes "hello" with no newline
+    syscall(SYS_WRITE, 2, "abc\n", 7);      # BAD: 4 bytes, writes 3 bytes past the literal
+    return 0;
+}
+
+var r = overrun() + writes();
+syscall(60, 0);

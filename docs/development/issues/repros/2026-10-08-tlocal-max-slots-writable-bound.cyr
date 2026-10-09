@@ -1,0 +1,25 @@
+# TLOCAL_MAX_SLOTS is a writable public var, and thread_local_alloc's own comment says to "bump
+# TLOCAL_MAX_SLOTS" when it is exhausted — but every slot array and block is sized by the const
+# _TLOCAL_MAX_SLOTS (128). After the bump the allocator hands out slots the storage does not have.
+# Actual on 6.7.6 (x86_64 Linux): "slot handed out: 165  storage slots (const): 128".
+# (On x86_64 Linux the %fs block is TLOCAL_BLOCK_SIZE = 4096 B = 512 slots, so the write itself
+# lands; on macOS / agnos / foreign mode / Windows the store overruns a 128-slot array.)
+#   cat docs/development/issues/repros/2026-10-08-tlocal-max-slots-writable-bound.cyr \
+#     | build/cycc > /tmp/tl && chmod +x /tmp/tl && /tmp/tl
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/thread_local.cyr"
+
+fn main(): i64 {
+    TLOCAL_MAX_SLOTS = 200;
+    var last = 0;
+    var i = 0;
+    while (i < 150) { last = thread_local_alloc(); i = i + 1; }
+    syscall(1, 1, "slot handed out: ", 17); print_num(last);
+    syscall(1, 1, "  storage slots (const): ", 25); print_num(_TLOCAL_MAX_SLOTS);
+    syscall(1, 1, "\n", 1);
+    return 0;
+}
+var r = main();
+syscall(60, r);

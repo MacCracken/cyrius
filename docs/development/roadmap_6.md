@@ -154,10 +154,10 @@ of a launch date ([`docs/audit/2026-06-10-deep-dive-review.md`](../audit/2026-06
 - **Diagnostics — the error-reporting half shipped in v6.4.x** (column + excerpt v6.4.60, multi-error recovery
   v6.4.62, the reserved-word diagnostic naming the token v6.4.77).
 - **Debug-info (DWARF) — still absent**, and crash localization is x86-ELF-only. 6.x-line codegen work: it is a
-  roadmap.md backlog item, not a v7 item.
+  roadmap-future.md row, not a v7 item.
 - **stdlib-reference coverage** — `docs/stdlib-reference.md` covers a subset of the `lib/*.cyr` modules (re-derive the
   gap; 65 of 99 at 2026-08-07, 106 modules now). Docs work, so it can ride the public-release track.
-- **Toolchain evolution (LSP / formatter / linter)** — `cbt/` and `programs/` tooling: 6.x-line work, in roadmap.md's
-  backlog (the cyrlint gates) when it has a concrete item.
+- **Toolchain evolution (LSP / formatter / linter)** — `cbt/` and `programs/` tooling: 6.x-line work, an `issues/` file
+  (the cyrlint gates) when it has a concrete item.
 - **The agnos peer** (`lib/*agnos*.cyr`) — agnos is a CONSUMER. Its peer changes when agnos files an issue against
   cyrius (`docs/development/issues/`), never proactively.

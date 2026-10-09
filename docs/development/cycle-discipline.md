@@ -94,7 +94,7 @@ a separate arc).
 
 **Docs (silent-rot prevention)**
 - [ ] CHANGELOG / roadmap / `state.md` current · vidya refresh (CLAUDE.md item 11 — language/field_notes/impl/deps + version cross-check)
-- [ ] **Backlog re-triage (rot sweep)** — verify open `issues/` + `proposals/` resolved-status against **LIVE code**, not the file's own claim; archive resolved; re-pin deferrals in order (finish-out items soonest, big arcs after the queue is clean). **Enforce: no codegen/runtime in 7.x → 6.x line or the `roadmap.md` "potential backlog."** Delete stale-shipped watching entries (the CHANGELOG is the record). Keep the open dir lean (~10–12). (CLAUDE.md placement rule: nothing codegen at 7.x.)
+- [ ] **Backlog re-triage (rot sweep)** — verify open `issues/` + `proposals/` resolved-status against **LIVE code**, not the file's own claim; archive resolved; re-pin deferrals in order (finish-out items soonest, big arcs after the queue is clean). **Enforce: no codegen/runtime in 7.x — every technical item is an `issues/` file placed in the 6.x line** (the backlog IS `issues/` since 2026-10-08; the roadmap carries placements and links only). Delete stale-shipped watching entries (the CHANGELOG is the record). (CLAUDE.md placement rule: nothing codegen at 7.x.)
 
 ### Closeout ledger (newest first)
 

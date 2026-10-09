@@ -1,0 +1,8 @@
+# 2026-10-08-struct-operator-results.md, item 4 (cycc 6.6.20-6.7.6; lane E2's x3.cyr): `return (a, b);`
+# in a fn returning a 24-byte struct takes the multi-value path (rax:rdx) and never writes the
+# caller's retptr buffer. Expected: refused, as `return (5);` is ("struct-return fn: return must be a
+# bare local identifier ..."). Actual: builds; exit 0 (q is the caller's untouched temp: 0, 0, 0).
+struct P3 { x; y; z; }
+fn f(a, b): P3 { return (a, b); }
+fn main(): i64 { var q: P3 = f(1, 2); return q.x * 100 + q.y * 10 + q.z; }
+syscall(60, main());

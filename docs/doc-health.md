@@ -461,7 +461,7 @@ Open issues are tracked artifacts (filed by consumers or internal observation). 
 
 - **Open issues: 0** — `issues/` holds only `README.md`, `archived/` (**473** files) and `repros/` (binary + source repro storage, not tracked filings).
 - **Open proposals: 2** — `2026-07-05-const-eval-comptime.md` (P3 `const fn` → roadmap_6.md § v6.7.x C1; its header re-stamped at 6.6.20) and `2026-09-20-coverage-should-accept-run-programs-as-a-corpus.md` (P5: A shipped 6.6.17, B execution coverage → v6.7.x with C2). **34** archived.
-- Out-of-scope finds live in roadmap.md's *Potential backlog* (re-triaged at 6.6.20), not as issue files.
+- *(2026-10-08: superseded — the backlog IS `issues/` now, one file per item; the roadmap carries placements and links.)* Out-of-scope finds lived in roadmap.md's *Potential backlog* (re-triaged at 6.6.20), not as issue files.
 
 Per the `feedback_close_to_archive_issues` memory pin: re-opens are a `git mv` back, not a re-file.
 

@@ -1,0 +1,7 @@
+# 2026-10-08-struct-operator-results.md, item 3 (cycc 6.6.20-6.7.6; lane E2's neg1.cyr): `-s + t`
+# dispatches P3_add(&s, &t) exactly as `s + t` does: the minus is computed into rax and discarded.
+# Expected: not 6 (what `-s` on a struct means is the user's call). Actual: exit 6 (= s.x + t.x).
+struct P3 { x; y; z; }
+fn P3_add(a: *P3, b: *P3): i64 { return a.x + b.x; }
+fn main(): i64 { var s: P3 = P3 { 5, 6, 7 }; var t: P3 = P3 { 1, 1, 1 }; return -s + t; }
+syscall(60, main());

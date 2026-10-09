@@ -22,11 +22,14 @@ wrong at the 2026-08-07 pass).
 | **Phase 3-full varargs** (`va_arg` for by-value structs + nested) | Medium | Phase 3-min shipped v5.5.36. Niche — most code passes an array of args. |
 | **Incremental compilation** | High | Reconsider when cycc self-host crosses ~2 s (**1,175 ms at 6.7.6**; 923 ms at 6.6.19). ⚠ Quote a pair, not a point: the same binary has measured a 52 ms spread across three runs, wider than most release-over-release deltas. Every release's bench run is the report. |
 | **`#phf` — a compile-time perfect-hash table** | Medium | The const-eval proposal's option 3 (archived at 6.7.2, when C1 `const fn` answered its decided scope): bake a collision-free lookup from a checked-in key set. Only if a filed need remains that `const fn` + the generated-`.cyr` idiom do not cover. |
+| **DWARF debug-info emission** | High | When a real debugger story is needed; crash localization (`CYRIUS_SYMS`) is still x86-ELF-only. 6.x-line codegen work, never 7.x. |
+| **`tantu` — the async runtime as its own repo** | Medium | The name is reserved; a future minor, not sequenced. |
+| **Auto-vectorization of scalar SOA loops** | High | Hand-written SIMD (`lib/simd.cyr`, the `f64v*` / `f32v*` types) covers today's needs. |
 | **Native 256-bit SIMD on aarch64** | Medium | The aarch64 `EMIT_F32V8_*` emitters DELEGATE to the 4-lane NEON `EMIT_F32V_*` ones (since 6.5.49), and `lib/simd.cyr` routes f32v8 through native f32v4 NEON (its f32v8 wrappers gate on `simd_has_avx2()`, 0 off x86). Correct at a 4-lane stride; a native path (SVE) is unplanned. |
 
 ## DX / cyrlint tooling (watching)
 
-Two static checks, one `cyrlint` bite when pulled (roadmap.md backlog, *Tooling*). `programs/cyrlint.cyr` implements
+Two static checks, one `cyrlint` bite when pulled ([issue](issues/2026-10-08-cyrlint-array-overrun-and-write-length-checks.md)). `programs/cyrlint.cyr` implements
 neither (re-checked at the 6.6.20 re-triage). Linter / formatter / LSP evolution is 6.x-line work.
 
 - **Bare-local-array slot-write lint** — warn when a bare `var a[N]` (N *bytes*, rounded to 8) is written past its

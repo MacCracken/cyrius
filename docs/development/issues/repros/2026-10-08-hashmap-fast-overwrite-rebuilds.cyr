@@ -1,0 +1,42 @@
+# fhm_set on a key that is ALREADY PRESENT rebuilds (here: doubles) the table when the
+# trigger is reached. 14 live keys in 16 slots is the trigger ((14 + 0) * 8 >= 16 * 7).
+# Expected (lib/hashmap.cyr's rule since 6.6.20): an overwrite never rebuilds -> cap stays 16,
+# 0 bytes allocated, exit 0. Actual on 6.7.6: cap 16 -> 32, 544 bytes allocated, exit 1.
+#   cat docs/development/issues/repros/2026-10-08-hashmap-fast-overwrite-rebuilds.cyr \
+#     | build/cycc > /tmp/fhm && chmod +x /tmp/fhm && /tmp/fhm; echo $?
+include "lib/hashmap_fast.cyr"
+
+fn say(label: cstring, n: i64): i64 {
+    syscall(1, 1, label, strlen(label));
+    print_num(n);
+    syscall(1, 1, "\n", 1);
+    return 0;
+}
+
+fn main(): i64 {
+    var m = fhm_new();
+    var keys: i64[14];
+    var i = 0;
+    while (i < 14) {
+        var k = alloc(8);
+        store8(k, 97 + i);
+        store8(k + 1, 0);
+        keys[i] = k;
+        fhm_set(m, k, i);
+        i = i + 1;
+    }
+    var cap0 = fhm_cap(m);
+    var used0 = alloc_used();
+    var rb0 = _fhm_rebuilds;
+    var rc = fhm_set(m, keys[0], 999);   # overwrite: the key is already present
+    say("count after overwrite: ", fhm_count(m));
+    say("cap before: ", cap0);
+    say("cap after:  ", fhm_cap(m));
+    say("bytes allocated by the overwrite: ", alloc_used() - used0);
+    say("rebuilds: ", _fhm_rebuilds - rb0);
+    say("rc: ", rc);
+    if (fhm_cap(m) != cap0) { return 1; }
+    return 0;
+}
+var r = main();
+syscall(60, r);

@@ -14,7 +14,7 @@ unpinned watching list is [roadmap-future.md](roadmap-future.md), volatile state
 
 ## Where we are
 
-**Current head: v6.7.6** (2026-10-08) — Break 1 shipped · cycc **1,806,240 B** · `.text` **1,612,016** · `cycc-native-aarch64` **1,601,032 B** · **537** `.tcyr`, **243** in `crossos/` · **106** `lib/*.cyr` · **441** shell gates under `tests/gates/<bucket>/` · api-surface **5,828** · **0** open issues · **1** open proposal · next ledger id **CYRIUS-2026-0036**
+**Current head: v6.7.6** (2026-10-08) — Break 1 shipped · cycc **1,806,240 B** · `.text` **1,612,016** · `cycc-native-aarch64` **1,601,032 B** · **537** `.tcyr`, **243** in `crossos/` · **106** `lib/*.cyr` · **441** shell gates under `tests/gates/<bucket>/` · api-surface **5,828** · **73** open issues · **1** open proposal · next ledger id **CYRIUS-2026-0036**
 
 > Every figure above is DERIVED (2026-10-08), never carried. `version-bump.sh` rewrites only the stamp's version and
 > the `(…)` after it — re-derive the rest at each release (`find tests/gates -name '*.sh' | wc -l`, …). Keep the stamp
@@ -27,7 +27,7 @@ v6.6.x closed at 6.6.20. 6.7.0–6.7.6 shipped (2026-10-07 → 2026-10-08): [com
 ## The v6.7.x operating rule (user, 2026-10-07)
 
 1. **Language only between the breaks.** A feature release carries language features and nothing else. What it finds
-   is FILED to the backlog below, with a repro, the same turn; it is fixed in the release only when the feature cannot
+   is FILED as an issue (`docs/development/issues/`), with a repro, the same turn; it is fixed in the release only when the feature cannot
    ship around it (a prerequisite bug). A P0 security finding is reported the turn it is found — whether it interrupts
    the arc is the user's call.
 2. **Catch-up breaks clear the backlog.** Break 1 was 6.7.6. Break 2 comes after the remaining features, before the
@@ -42,7 +42,8 @@ v6.6.x closed at 6.6.20. 6.7.0–6.7.6 shipped (2026-10-07 → 2026-10-08): [com
 | Release | Content |
 |---|---|
 | 6.7.0 – 6.7.6 | ✅ shipped — A traits · C3 trait-bounded generics · B1 `const` + C1 `const fn` · B2 `bool` · B3 the if-expression · B5 `loop` / `do` + B8 `OP=` on every lvalue · the W2 stdlib wave + Break 1 |
-| next | the remaining features, one or two releases each, decisions asked at each start: **B4** tuples · **B6** default + named arguments · **B7** narrow struct fields · **C2** the bounds-checked mode (+ P5 execution coverage) · **checked `dyn`** |
+| 6.7.7 | **B4** tuples + **B6** default and named arguments (decisions below, user 2026-10-08) · the fixes: [`cyrius distlib`'s order-dependent owner](issues/2026-10-08-distlib-owner-first-declarer-credits-fold-monolith.md) · [the ach-timing terminate-children test](issues/2026-10-08-crossos-terminate-children-timing-on-ach.md) · [the silent `x += 1.5`](issues/2026-10-08-compound-assign-f64-rhs-on-int-slot-silent.md) · [install.sh's init templates](issues/2026-10-08-install-sh-source-bootstrap-no-init-templates.md) · [`ci.sh` and a real release tarball](issues/2026-10-08-ci-sh-cannot-install-release-tarball.md) · [the pair-into-one-slot stores (with B4)](issues/2026-10-08-pair-call-assigned-to-single-slot-keeps-tag.md) |
+| 6.7.8 → | the remaining features, decisions asked at each start: **B7** narrow struct fields (layout decided below) · **C2** the bounds-checked mode (+ P5 execution coverage) · **checked `dyn`** |
 | Break 2 | catch-up — the user picks from the candidates below |
 | closeout | the closeout checklist ([cycle-discipline.md](cycle-discipline.md)) — the checklist, not an audit campaign |
 
@@ -50,81 +51,59 @@ v6.6.x closed at 6.6.20. 6.7.0–6.7.6 shipped (2026-10-07 → 2026-10-08): [com
 
 ⚠ Every new keyword is a new reserved word (`IS_KEYWORD_TOK`).
 
-- **B4 — tuples as values.** `var t = (1, 2); t.0` — proposed as sugar over an anonymous struct (layout and ABI
-  unchanged; multi-return keeps its register pair). Asked at B4's start.
-- **B6 — default and named arguments.** `fn f(a, b = 2)` and `f(a: 1, b: 2)`; the v6.5.1 arity check becomes
-  min..max. Overloading by arity stays out (v6.5.1: a count mismatch is never intentional).
-- **B7 — narrow unsigned and `f32` struct fields.** Today `u8` / `u16` / `u32` / `f32` fields take a full word;
-  narrowing changes the LAYOUT of every struct that declares one — an ABI change. `lib/` declares none; cyrius's own
-  tcyr files (23 fields) change in the release. It ships with its migration written up in the CHANGELOG and
-  [ecosystem-migration.md](ecosystem-migration.md) — never silently.
+- **B4 — tuples as values — DECIDED (user, 2026-10-08, at the 6.7.7 open): a tuple bridges to the multi-value
+  returns, captured by TYPE.** `(a, b)` builds a value laid out as an anonymous struct of 8-byte slots; `t.0` / `t.1`
+  read and write it (`OP=` included); `(i64, f64)` is a type wherever a struct type goes (a `var`, a parameter, a
+  field, a return). `var t: (i64, i64) = f();` captures every value of a multi-value call, and `a, b = f();`
+  re-assigns existing variables (the re-poll gap — a loop re-polling a `Result` had to bind a fresh pair each pass).
+  `var x = f();` keeps its documented first-value meaning (the `ret2` / `rethi()` idiom), so nothing that compiles
+  today changes. A shape the decision leaves open is refused by name (extensible later), never given a default
+  meaning.
+- **B6 — default and named arguments — DECIDED (user, 2026-10-08, at the 6.7.7 open): constant defaults.**
+  `fn f(a, b = 2)`: a default is a compile-time constant (a literal, a `const`, a `const fn` call — the 6.7.2
+  evaluator) on a TRAILING parameter. `f(1, c: 3)`: named arguments follow the positionals, in any order, each
+  parameter at most once, evaluated left to right as written. Direct calls only — a call through a fn pointer or a
+  closure stays positional with its exact arity. The v6.5.1 arity check becomes min..max; overloading by arity stays
+  out (a count mismatch is never intentional).
+- **B7 — narrow unsigned and `f32` struct fields — layout DECIDED (user, 2026-10-08): packed.** `u8` / `u16` /
+  `u32` become 1 / 2 / 4 bytes and zero-extend on read, `f32` 4 bytes, with no padding — the rule `i8` / `i16` / `i32`
+  fields follow today (`struct { a: i8; b: i64; }` is 9 bytes). Only structs declaring one of them move — an ABI
+  change: `lib/` declares none; cyrius's own tcyr files (23 fields) change in the release. It ships with its
+  migration written up in the CHANGELOG and [ecosystem-migration.md](ecosystem-migration.md) — never silently.
 - **C2 — the opt-in bounds-checked memory mode** (`CYRIUS_BOUNDS` / `#bounds`, OFF by default). 6.6.12 shipped the
   unchecked half for integer-element `var a: T[N]`; still to do: `*T` pointer subscripts, slice writes and the
   checked mode itself. The stdlib must run clean under it (what it trips is a stdlib repair for the next break).
   **With it, proposal P5's execution half**
   ([proposals/2026-09-20-coverage-should-accept-run-programs-as-a-corpus.md](proposals/2026-09-20-coverage-should-accept-run-programs-as-a-corpus.md);
   P5-A shipped in 6.6.17) — the same insertion point and build-flag plumbing. The bare-local-array slot-write lint
-  (backlog, *Tooling*) may fold in here.
+  ([issue](issues/2026-10-08-cyrlint-array-overrun-and-write-length-checks.md)) may fold in here.
 - **Checked `dyn` — DECIDED (user, 2026-10-07).** Static dispatch stays the default (ADR-004). `o: dyn Show` is an
   ordinary 16-byte `{data, vtable}` struct (ADR-002's one-word model holds); the compiler builds and VERIFIES the
   vtable from `impl Show for T`, and `o.show()` is an indirect call visible in the declared type. Why: the run-time
   vtables `lib/trait.cyr` and hand-rolled code build are unchecked — a wrong slot or a missing method is a crash.
 
-## Break 2 — candidates (premise-checked at the 6.7.6 open, 2026-10-08; the user picks)
+## Break 2 — candidates (the user picks)
 
-- **Compiler**
-  - Generic inference does not see through a generic STRUCT parameter: `gx(b)` for `fn gx<T>(b: Box<T>)` with
-    `b: Box<Pt>` resolves the base `gx` (T = i64), refused as a struct mismatch since 6.7.3; `gx<Pt>(b)` works. Likely
-    `_gen_infer_tp`; gate row R18b pins the refusal.
-  - A bare `const` or enum-constant name as a statement is reported as an assignment (`N;` → "cannot assign to const
-    'N'"): `_PARSE_STMT_IMPL` runs the lvalue check before it has seen `=` / `OP=`. Cosmetic; changing it changes a
-    6.7.2 diagnostic.
-  - A redeclared global read inside its own bool redeclaration reads as boolean (`var G = 5; var G: bool = G;` exits
-    5). The fix is a redeclaration rule (refuse a redeclaration that changes bool-ness) — the user's call.
-  - `#pure`'s `#io` / `#alloc` check reads the callee's flags at the call, so a call to an `#io` fn defined LATER is
-    silent; reuse the const-fn pass-1 record.
-  - `asm { in al, dx; }` is refused because `in` is keyword 76, so the `ASM_IN` emitter arm is unreachable (the guide
-    documents the form).
-  - In an x86 `kernel;` build, float-literal global scalars (`var G: f64 = 1.5;`) are dead stores after the program;
-    bake them (6.7.2's evaluator gives the f64 bits).
-  - Inside an aarch64 region (`#@a+`), a raw literal that HAS an ESYSXLAT x86-compat row is translated with no warning
-    (`syscall(9, ..)` meant as lgetxattr runs mmap); the native spelling is the 1000+N alias.
-  - The `ptrace` native-declaration decision (roadmap_6.md § *syscall families*).
-- **Tooling**
-  - `scripts/ci.sh` cannot install a real release tarball: release.yml packs a top directory, ci.sh globs
-    `versions/<v>/bin/*` and finds nothing ("cycc not found"); the only gate that runs it feeds it a fabricated layout.
-  - install.sh's source-bootstrap path ships no `cyrius-init-templates` (only the refresh-only and tarball paths copy
-    them), so `cyrius init` / `port` lose their templates there. A two-line copy plus a gate row.
-  - api-surface's line scanner resets its string state at every newline: a `{` on a raw line of a multi-line string
-    empties the snapshot for the rest of the file, and a `fn` line there is listed as public (`_asf_lexst_at` already
-    models strings across lines).
-  - `cyrius deps --verify` on a CRLF checkout of a committed `lib/` (`core.autocrlf=true`) reports a mismatch for every
-    file — the lock hashes the LF bytes. Remedy today: `.gitattributes` `lib/** -text`. Normalise or document.
-  - `cyrius deps` / `build` run after a pin move but BEFORE `lib sync --full` stamp the new pin over lock rows of files
-    `deps` does not vendor, and `lib sync` then refuses (it names `--relock`; the loud refusal shipped in 6.6.17).
-  - A killed `cyrius` run leaves a NON-EMPTY `cyrius-<pid>` dir in `/tmp` that nothing reaps (CLN-03 reaps only empty
-    dead-pid dirs). Open: whether a non-empty one past an age bound is reaped too, and which runs land in `/tmp`
-    although `TMPDIR` is exported.
-- **Platform**
-  - The `[embed]` link race (E-S3 residual). Windows keeps the per-component reparse-point check plus a whole-path
-    `O_NOFOLLOW` open, so a directory swapped for a junction between them is followed — fix with
-    `GetFinalPathNameByHandleW` on the opened handle + containment (a new PE reroute). arm64 macOS reroutes
-    `SYS_OPENAT` 56 to BSD `open`, DROPPING the dirfd — it needs a dirfd-preserving route and a `crossos/` companion.
-    Needs cass and ecb.
-  - `tests/win/async_iocp_pe.cyr` on cass returns 1 at step 2 (`async_with_timeout`) under a plain `cmd /c`; the
-    release gate's `cmd /v /c` form exits 42.
-  - The Windows trust store (CYRIUS-2026-0020's *Not covered*): CurrentUser `ROOT` under the ProtectedRoots policy is
-    unverified; the auto-updated disallowed CTL is not read; a root with a dated distrust is refused whole; roots
-    Windows has not fetched yet are invisible.
-- **TLS conformance, as one bite**: the 1.3 ECDSA arms of `_tn_verify_sig_scheme` do not bind the leaf's curve to the
-  scheme (RFC 8446 §4.2.3); the 1.3 CertificateVerify and 1.2 ServerKeyExchange length checks use `>`, so trailing
-  bytes are accepted; the 1.3 client accepts a ServerHello (likely EncryptedExtensions too) carrying an extension it
-  never offered (the walk must still admit pre_shared_key on resumption). Riding along: the 1.2 client does not check
-  the server certificate's curve against its supported_groups; the 1.2 server takes a `legacy_session_id` over 32
-  bytes; four 1.2-client ServerKeyExchange checks (`lib/tls_native_hs12.cyr` ~679 / 688 / 691 / 711) have no test that
-  fails without them.
-- **The live store** (the user's to run — it writes `~/.cyrius`): `sh scripts/verify-store.sh --restore <v>` for the 16
-  slots whose `bin/cybs` is a stale 12,344 B (6.6.3–6.6.9, 6.6.11–6.6.19).
+Premise-checked at the 6.7.6 open and again when each was filed as an issue (2026-10-08). Each file carries the
+repro, the root cause and the proposed fix; a fix that changes what compiles says so. Also for the user: the ptrace
+native-declaration decision ([roadmap_6.md](roadmap_6.md) § *syscall families*) and the live-store restore
+([state.md](state.md) *Open decisions*).
+
+- [Inside a native-aarch64 region a raw syscall literal with an ESYSXLAT x86-compat row is translated with no warning](issues/2026-10-08-aarch64-native-region-literal-translated-silently.md)
+- [api-surface's line scanner resets its string state at every newline — a multi-line string hides or invents public fns](issues/2026-10-08-api-surface-multiline-string-desync.md)
+- [`asm { in al, dx; }` is refused: `in` lexes as keyword 76, so the `ASM_IN` emitter is unreachable by its documented spelling](issues/2026-10-08-asm-in-mnemonic-unreachable.md)
+- [`tests/win/async_iocp_pe.cyr` returns 1 at step 2 (`async_with_timeout`) on cass under a plain `cmd /c`](issues/2026-10-08-async-iocp-pe-plain-cmd-c-step2.md)
+- [A bare const / enum-constant name as a statement is reported as an assignment (`N;` → "cannot assign to const 'N'")](issues/2026-10-08-bare-const-statement-reported-as-assignment.md)
+- [`cyrius deps` / `build` after a pin move, before `lib sync --full`, stamp the new pin over the old pin's lock rows](issues/2026-10-08-deps-before-lib-sync-stamps-new-pin.md)
+- [`cyrius deps --verify` fails every file on a CRLF checkout of a committed `lib/` (`core.autocrlf=true`)](issues/2026-10-08-deps-verify-crlf-checkout-mismatch.md)
+- [`[embed]` / `${file:}` link race on Windows and Apple Silicon (the E-S3 residual)](issues/2026-10-08-embed-open-link-race-pe-macos-arm64.md)
+- [Generic inference does not see through a generic struct parameter (`gx(b)` for `b: Box<T>`)](issues/2026-10-08-generic-inference-through-generic-struct-param.md)
+- [In an x86 `kernel;` build a float-literal global scalar is a dead store after the program](issues/2026-10-08-kernel-float-global-init-not-baked.md)
+- [A killed `cyrius` run leaves a NON-EMPTY `cyrius-<pid>` temp dir that nothing reaps](issues/2026-10-08-killed-cli-leaves-nonempty-tmp-dirs.md)
+- [`#pure`'s `#io` / `#alloc` check is silent for a callee defined later](issues/2026-10-08-pure-check-misses-later-defined-callee.md)
+- [A redeclared global read inside its own `bool` redeclaration reads as boolean (`var G = 5; var G: bool = G;` exits 5)](issues/2026-10-08-redeclared-global-bool-reads-own-stamp.md)
+- [Native TLS conformance, as one bite: six handshake checks that are missing, loose or untested](issues/2026-10-08-tls-native-conformance-bite.md)
+- [Windows native-TLS trust store: four gaps against the Windows chain engine (CYRIUS-2026-0020's *Not covered*)](issues/2026-10-08-windows-trust-store-parity-gaps.md)
 
 ## Folded-stdlib follow-ups (cyrius's own work)
 
@@ -132,19 +111,15 @@ The twelve folds — sakshi, sigil, bayan, sandhi, ganita, niyama, mabda, vani, 
 language's own stdlib. A fix lands in the fold's SOURCE repo and is released there, then re-vendored byte-identical
 (`cmp` against the tag's `dist/`) with its `docs/ecosystem.md` row updated. Each fold's own roadmap holds its longer
 list (W2 left there: public `const` / `bool` sweeps in each repo's own minor, traits for hand-rolled dispatch after
-checked `dyn`, sigil 3.14.0's cbank retirement, …). Open here:
+checked `dyn`, sigil 3.14.0's cbank retirement, …; sandhi's libssl session-resumption test). Filed here:
 
-- **yantra** — its e2e `.tcyr` files include `src/mobile.cyr` / `src/web.cyr`, which call
-  `yantra_tls_pin_verify_ed25519` / `_hybrid`, without `src/security.cyr`: an undefined-function warning in the Android
-  / iOS test builds (results unaffected, 4/4 each).
-- **sandhi** — an end-to-end session-resumption test on the libssl backend (declined by default in W2 — libssl
-  retires at sandhi 2.0; in sandhi's roadmap).
-- **What the folds asked of cyrius's `lib/`**: a public length-bounded `f64_parse` (bayan B-4) · a `ppoll` wrapper and
-  agnos `ioctl` / `fstatat` stubs (yukti) · an `xflock` / `LockFileEx` route on Windows (patra crash recovery) ·
-  `#derive(Serialize)` cstring fields (sigil) · `sock_set_nodelay` with a real Windows route — `sys_setsockopt` is a
-  -38 stub on Windows although `net.cyr` reaches setsockopt through ws2_32 (0xF032), so `TCP_NODELAY` is never set on
-  PE (yantra) · the public-constants-are-`const` migration of cyrius `lib/` (302 names — a user-placed arc with a
-  per-name collision survey).
+- [`#derive(Serialize)` does not support a `: cstring` field — it is taken for a nested struct (asked by sigil)](issues/2026-10-08-derive-serialize-cstring-fields.md)
+- [`lib/math.cyr` has no public length-bounded `f64_parse` — the correctly rounded core is internal (`_f64_parse_n`)](issues/2026-10-08-f64-parse-no-public-length-bounded-form.md)
+- [cyrius's own `lib/` still spells its public constants as `var` — the public-constants-are-`const` migration (asked by the folds' W2 sweeps)](issues/2026-10-08-lib-public-constants-const-migration.md)
+- [No stdlib `ppoll` wrapper, and the agnos peer lacks `sys_ioctl` / `sys_fstatat` stubs (asked by yukti)](issues/2026-10-08-no-ppoll-wrapper-and-agnos-ioctl-fstatat-stubs.md)
+- [No `sock_set_nodelay`, and Windows `sys_setsockopt` is a -38 stub although net.cyr reaches ws2_32 setsockopt — `TCP_NODELAY` is never set on PE (asked by yantra)](issues/2026-10-08-sock-set-nodelay-windows-route.md)
+- [`xflock` has no Windows route (`LockFileEx` not wired) — patra's crash recovery never runs on Windows (asked by patra)](issues/2026-10-08-xflock-windows-lockfileex-not-wired.md)
+- [yantra: nine test files include `src/web.cyr` / `src/mobile.cyr` without `src/security.cyr` (undefined-function warnings)](issues/2026-10-08-yantra-tests-miss-security-include.md)
 - **Constraints on any fold release**: never change the fold API cyrius's own `lib/` calls (sigil's 73 fns, 8 of them
   private `_x509_*` / `_ecdsa_*` used by `tls_native_hs12` / `hs13` / `tls.cyr`; sakshi's 6 in `log.cyr`; bayan
   `base64_encode` in `ws` / `ws_server`; sandhi `sandhi_server_find_header` in `ws_server`). cyrius must not make the
@@ -154,144 +129,15 @@ checked `dyn`, sigil 3.14.0's cbank retirement, …). Open here:
   6.7.x syntax raises a fold's minimum toolchain. yukti pulls sakshi and patra as git tags, so it releases after them.
   yantra's `dist/` is untracked: its refold is `cyrius distlib` at the tag.
 
-## Potential backlog — 6.x-cycle, unscheduled (NOT parked to 7.x)
+## The backlog — `docs/development/issues/`
 
-> Items are ADDED here during the feature releases, with a repro; only the user promotes one into a release.
-> Re-triaged 2026-10-08 against the 6.7.6 open's premise-check: what shipped is gone — its record is the CHANGELOG.
-> Placed later-minor work (the DCE compaction arc, `net.cyr` §4, AF_UNIX, the syscall families) is in
-> [roadmap_6.md](roadmap_6.md).
-
-**Compiler — language and codegen**
-- **Assigning a pair-returning call to an existing single variable keeps only the tag, silently** (found 2026-10-08,
-  `build/cycc` 6.7.6): `var t, v = f(5); var rt = 0; rt = f(7); return rt;` with `fn f(x) { return ret2(0, x); }`
-  exits 0 with no diagnostic. The single-bind refusal covers `var x = f()` (in a fn since v6.5.67, top level since
-  6.7.6) but not a plain assignment; and there is no `t, v = f();` re-assignment form (`expected '=', got ','`), so a
-  loop that re-polls a `Result` must bind a fresh pair each iteration. Refusing the assignment changes what compiles,
-  and a re-assignment form is new syntax — both the user's call.
-- `x += 1.5` on an integer slot is silent while `x = x + 1.5` warns ("integer arithmetic with an f64 right
-  operand"): `_asg_compound_op`'s integer arm has no kind-2 check, so `h.n += 1.5` is silent too. One warn in the
-  shared helper.
-- "the result is a temporary" is false for a pointer return: `gp().n = 5` with `fn gp(): *H` is refused
-  (`_stmt_call_field`, parse_expr.cyr). Whether a field of a returned pointer is an lvalue is a language question.
-- A fn whose body ends in `loop { … }` or `do … while` is not "provably returning" to pass 1
-  (`_body_ends_in_return` reads a final `do` as a `while`): GFLG bit 1024 stays clear, so a `var a, b = f()` refusal
-  is missed for such an `f` — conservative.
-- A variable or subscript for-step never checks its `)` (`for (i = 0; i < 3; i += 1 2)` builds); field and `*p` steps
-  do since 6.7.5.
-- A captured 8-byte pointer-mode struct local is copied into the closure env while a 16-byte one is captured by
-  reference (`_CL_CAP_BASE_RA`'s rule); `=` and `OP=` agree.
-- cx: a fn returning a 16-byte struct is refused ("int-class 16B struct pair-return ABI not supported"), so
-  `crossos/for_step_struct_assign.tcyr` does not build for cx.
-- Struct-operator results (found by 6.7.6 lane E2; repros `~/.cache/c6/b1f_E2/p/`): an untyped `var r = mk3(4) - s;`
-  is typed `P3` although `P3_sub` returns an integer; after an integer `-` whose right side is a struct the result
-  keeps the struct's type (`n - s + 10` dispatches `P3_add` and crashes); `-s + t` ignores the minus;
-  `return (a, b);` in a struct-returning fn takes the multi-value path and the caller reads garbage over 16 B;
-  `return mk2(1) == p;` in a 9–16 B struct fn leaves the second register unwritten (closing it refuses code that
-  compiles today — the user's call); a write to a captured NAME inside a closure says "undefined variable".
-- A struct-typed FIELD as the LEFT operand of an overloaded operator passes the containing struct's address
-  (`h.p - s` → -8, want -6); the right operand is right.
-- A parenthesised argument to a ≤ 8 B by-value struct parameter skips the 6.7.3 type check (`bs1((t))` compiles,
-  `bs1(t)` is refused — `_sarg_byval_small` returns before the 6.7.6 unwrap).
-- u128 beyond `+` / `-` / comparisons: a `v: u128` parameter is an 8-byte slot holding the low word (`&v + 8` reads a
-  neighbour); a `: u128` return type and u128 struct fields are refused; a u128 captured by a closure reads as the
-  address of its env copy (parse_expr.cyr ~2697).
-- A call through a variable / closure returning f64 gives an untyped word (the return type cannot be known; documented
-  in the guide).
-- `*p = v` through `p: *f32` / `*i32` is a raw 8-byte word store (documented — outside "every f32 write rounds").
-- `CYRIUS_IR=3` (opt-in): a SIGNED narrow field through a pointer or a closure capture reads garbage (the
-  negative-width EFIELD_LOAD_W is not IR_RAW_EMIT-recorded; 6.6.12 fixed only `_arr_sub_load`); and
-  `struct HS { name; k; } … h.name = 40; var u = 0; u = h.name; return u + 1;` gives 8, not 41 (gate row S10).
-- A top-level `var X = CONST;` stores statically AND emits a redundant run-time store; `2 * CONST` in a run-time
-  expression is not folded (it is in an array size or a named const).
-
-**Diagnostics**
-- TOKNAME has no names for `<=`, `>=`, `%`, `&`, `|`, `^`, `<<`, `>>`, so "expected '=', got unknown".
-- A field store in a const fn body reports "expected ';', got '.'"; `C.x = ..` on a const reports "no struct type in
-  scope for 'C'" — neither names the real refusal.
-- `--syntax-only` (`cyrius lint`) invents "expected '=', got '.'" for `a.f.g = 1;` (and `+=`) when `f: *Foo` and `Foo`
-  is declared in another file (the v6.5.19 false-accusation class).
-- Low: a const fn's scope error is reported twice; an unclosed call argument list followed by a loop cascades three
-  errors; a method-call for-step cascades "undefined function"; a missing `}` at EOF with two blocks open prints its
-  second error at `0:1` with no file.
-
-**Bootstrap — cybs and the seed (the trusted root)**
-- cybs compiles a call to an UNDEFINED function in statement position silently (`nosuch(1);` → the program segfaults);
-  the expression form errors. Refusing it needs a check that gen1 carries no unresolved fixups and probably new labels
-  — the trusted root's first rung, so it is placed, not slipped in.
-- cybs reports a bare "syntax error" with no file or line for syntax it does not support (`const`, `loop`, `do`,
-  if-expressions, unary minus, `>>>`, `>>=`).
-- The seed (`bootstrap/asm`) silently truncates its input at 131,072 bytes, has a 512-entry label table with no bounds
-  check, and stores into CODE (S+0x20000, 65,536 B) unbounded. Gate row S of `cybs_call_arity_named.sh` guards
-  `cybs.cyr`'s headroom; a real fix is a new seed binary — a new trusted root, the user's call.
-
-**Tooling**
-- ⚠ **`cyrius distlib`'s owner rule credits a fold monolith by directory order — check.sh is RED whenever `TMPDIR` is on
-  tmpfs** (found 2026-10-08; reproduced on a pristine `git archive` of HEAD at 6.7.6): with `TMPDIR` unset (`/tmp` is
-  tmpfs here, which lists newest-first) `tests/gates/toolchain/distlib_sidecar_host_independent.sh` fails axis 3 every
-  run — `[zzz_mono sysz]`: the PE-only `EINTRZ` is credited to `zzz_mono`, the first declarer in directory order,
-  although the monoliths carry a fold header and the rule says a fold bundle is never the owner while a non-fold file
-  (the `sysz_linux` / `sysz_macos` peers) declares the name. With `TMPDIR` on this box's ext4 it passes 3 of 3 (hash order; the
-  fixture gives a first-declarer regression only 3-in-5 odds of showing on ext4) — which is how the 6.7.6 release gate
-  read GREEN. Host-dependent sidecars are exactly what the
-  gate exists to stop.
-- Six hand-kept copies of the lexer's attribute-word list (cyrlint, cyrfmt, cyrdoc, cbt/srcscan, api-surface,
-  cyaudit); only cyaudit's is held to LEXATTRWORD by a census. Move LEXATTRWORD into an includable pure file (measured
-  byte-identical on all seven forks) or give each tool the census.
-- CLI leftovers (6.7.6 review): on Windows `_abs_path` is the identity (the PE CLI warns getcwd / brk unrouted), so an
-  absolute in-project path counts as outside the project for `test.cyml` and `CYRIUS_TEST_FILE` / `DIR` are relative;
-  a symlinked working directory spelled with the logical `$PWD` does not match the physical one; `_abs_path(".")`
-  returns `<cwd>/.`; `_process_named_deps` reports one error per manifest walk ("1 errors" for two);
-  `cyrius lib sync --dry-run` prints `would sync: <integer>` (`cbt/commands.cyr` ~1796); `cyrius update` copies the
-  whole pinned stdlib snapshot into `lib/` whatever `[deps] stdlib` declares; `_dep_local_state`'s
-  GIT_CEILING_DIRECTORIES is not normalised; under wine the PE CLI cannot hash (no certutil), so it writes no lock.
-- Test tooling: `cmd_test` labels any exit status above 128 a signal (a test exiting 232 prints "killed by signal
-  104"); `cyrius bench` / `cyrius fuzz` exit 0 when they find nothing; a `[test.embed]` name duplicating `[embed]`'s
-  says "declared twice" without naming `[embed]`.
-- `crossos/regression_terminate_children.tcyr` is timing-sensitive on ach: it asserts a call returns under 1,000 ms and
-  a 600 ms deadline kills a background `sleep 30`; RED once in the 6.7.6 gate, then 11/11. Widen the bounds or measure
-  against a calibrated clock.
-- Named manifest profiles (`[build.PROFILE]`, P1's deferred half) and `[build] target` (recognised and warned since
-  6.6.17, not read).
-- `gates_never_write_tree.sh` axis 9's static wine scan cannot see a PE binary run directly through binfmt_misc.
-- The two cyrlint gates, one bite: a bare-local-array slot-write lint and a `SYS_WRITE` byte-length gate (detail:
-  [roadmap-future.md](roadmap-future.md) § *DX / cyrlint tooling*).
-
-**Runtime and `lib/`**
-- P6 S7, poison guard pages — the one way to catch a read that jumps a whole redzone. `mprotect`; 16 KiB pages on Apple
-  arm64; `VirtualProtect` reaches no stdlib path; agnos `cyr_mprotect` is a no-op, so an agnos run must REPORT
-  "unguarded".
-- `tls_native_set_client_cert` sizes its decode at `TLS_CA_MAX_ROOTS` (300); sigil's `pem_count_cert_blocks` could size
-  it exactly.
-- TLS capability limits (CYRIUS-2026-0019's *Not covered*): no native RSA client certificates; the native client and
-  server send their leaf only; an empty certificate_authorities; the 1.3 server reads each client message from one
-  record (a client Certificate of at most 8 KiB). Not taken so far: a libssl-backend `tls_set_groups`; X448 /
-  secp521r1 (sigil has neither ECDH).
-- Windows `sys_symlink` widens at 519 units with no `\\?\`, so a link path over 260 units fails -1 (honest).
-- The unused `SYS_ACCEPT4 = 288` in `lib/syscalls_macos.cyr` (cosmetic: `sys_accept4` is composed from accept + fcntl).
-- Literal bounds left in `lib/` (6.7.6 lane H): the agnos env blob `1024` in `_agp_env_vec` / `_rga_env` /
-  `_async_agnos_run`; `lib/regex.cyr`'s `splits: i64[64]` beside a literal `sn >= 64`; `_fl_heads[72]`
-  (`lib/freelist.cyr`) and `_dynlib_registry[256]` (`lib/dynlib.cyr`) take 576 / 2,048 bytes where their comments say
-  72 / 256; the async ctx layouts hard-code the 40-byte kill state instead of `_PROC_KILL_STATE`; internal loops bound
-  by the writable public `TLOCAL_MAX_SLOTS` / `TLS_REG_MAX`.
-- `lib/hashmap_fast.cyr`: an OVERWRITE of a present key can rebuild (and double) the table — `fhm_set` checks its
-  trigger before `_fhm_insert` knows the key is new (544 B at 14 live, 16 → 32 slots, and it can return -1);
-  `lib/hashmap.cyr` triggers only for a NEW key since 6.6.20. When a rebuild happens is the user's to place.
-
-**Size and platform internals**
-- The x86-macOS `EMACHO_SYSXLAT` fold — XLAT-1's method on the x86 Mach-O chain (its rows are copied into every site,
-  ~1.3 KB each, ~0.8 MB of the x86-macOS compiler).
-- XLAT-3: arm64-macOS pipe / fork post-`svc` fixups for literal numbers (~68 B a site; verifiable on ecb only).
-- `esysxlat_fold.sh` cannot see a fold that skips its `cur` update (no live re-capture row; a synthetic row in the
-  gate's own probe would).
-- DEAD-10: fold constant `if (SYS_OPEN == 2)` arms at parse time (6.7.2's evaluator makes it easy). HEAP-12: one
-  `alloc()` arena for the IR heap bands (a two-step bootstrap).
-- self_compile +6.8 % from the attribute-line rule (s-pplex `0d85cdcd`, 924 → 987 ms; likely the preprocessor half,
-  `lex_pp.cyr`): take it back without reopening the forged-`#@file` vector.
-
-**Long tail**
-- DWARF debug-info emission — when a real debugger story is needed (crash localization is still x86-ELF-only).
-- `tantu` — the async runtime extracted to its own repo (name reserved); a future minor, not sequenced.
-- Auto-vectorization of scalar SOA loops.
+The backlog is [`issues/`](issues/) (user, 2026-10-08: "issues that are backlogged should have issue/ filed, not sit
+in the roadmap"): one file per item, each with a repro and a `**Placement:**` line. This file carries placements and
+links only. Only the user promotes an unplaced item into a release. **73** files were filed on 2026-10-08 —
+the whole former backlog, premise-checked against 6.7.6, plus what the 6.7.7 lanes found — grouped in
+[`issues/README.md`](issues/README.md) § *Open queue*. Placed later-minor work (the DCE compaction arc, `net.cyr` §4,
+AF_UNIX, the syscall families) is in [roadmap_6.md](roadmap_6.md); unpinned features (DWARF, `tantu`,
+auto-vectorization, …) are in [roadmap-future.md](roadmap-future.md).
 
 ## 7.x — public-release ONLY
 

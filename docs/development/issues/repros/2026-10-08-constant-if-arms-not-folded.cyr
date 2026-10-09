@@ -1,0 +1,10 @@
+# DEAD-10 repro — a constant `if` condition is compared at run time and its dead arm is emitted.
+# cat this | build/cycc > /tmp/d10 && objdump -d -M intel /tmp/d10
+#   expected: no compare, no else arm, no "/zzz-dead-arm-marker" string in the image
+#   actual (6.7.6): mov eax,2; push; mov eax,2; cmp; sete; test; je + the whole 5-argument openat arm,
+#                   and the marker string is in the data (grep -a -c zzz-dead-arm-marker /tmp/d10 -> 1)
+enum Sys { SYS_OPEN = 2; SYS_EXIT = 60; }
+var r = 0;
+if (SYS_OPEN == 2) { r = 7; }
+else { r = syscall(SYS_OPEN, 0 - 100, "/zzz-dead-arm-marker", 0, 0); }
+syscall(SYS_EXIT, r);

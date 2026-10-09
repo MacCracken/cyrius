@@ -1,0 +1,36 @@
+# The TLS 1.2 server's ClientHello parse must refuse a legacy_session_id longer than 32 bytes
+# (RFC 5246 §7.4.1.2: SessionID<0..32>; decode_error). Exit 0 = refused; 1 = accepted (the bug).
+include "lib/tls_native.cyr"
+include "lib/str.cyr"
+include "lib/chrono.cyr"
+include "lib/random.cyr"
+include "lib/assert.cyr"
+
+var cert23 = hex_decode("3082017d30820123a0030201020214561cee528775ffec8d05834b308f1ad80d7e7dbe300a06082a8648ce3d04030230143112301006035504030c096c6f63616c686f7374301e170d3236303630313138343930365a170d3336303532393138343930365a30143112301006035504030c096c6f63616c686f73743059301306072a8648ce3d020106082a8648ce3d030107034200049167a2981f570fdbd8d94bf20fb4f5c89d77aa5b58cf4ed416bafa0256a2561a04f1e71d57537fc532fc87ca980eb8ba1f8f8704fc7f6a793ba6598b97bb3275a3533051301d0603551d0e04160414e6e9022c5ba23153aa7b2a0004574c417dfbf42e301f0603551d23041830168014e6e9022c5ba23153aa7b2a0004574c417dfbf42e300f0603551d130101ff040530030101ff300a06082a8648ce3d04030203480030450220274b9132990767c26d383d8712024a2c8cdb63e38af642893d1a59ab44a29758022100a57e61df420d2425c712ad284d0ad53ef9c8cdbfd07ba65c952eaead0dc13729", 770);
+var key23 = hex_decode("308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b0201010420b19108bb3950b49995a9c770e12613b12d96dc2409a464fdc43c63a41b1d4668a144034200049167a2981f570fdbd8d94bf20fb4f5c89d77aa5b58cf4ed416bafa0256a2561a04f1e71d57537fc532fc87ca980eb8ba1f8f8704fc7f6a793ba6598b97bb3275", 276);
+
+fn main(): i64 {
+    var cl = tls_native_new_client("localhost", 9);
+    var ch[512];
+    var chn = tls_native_12_build_client_hello(cl, &ch, 512);
+    if (chn <= 0) { println("setup: no ClientHello"); return 2; }
+    # Re-emit it with a 33-byte legacy_session_id (the built one is empty).
+    var m[600];
+    var p = &m;
+    memcpy(p, &ch, 4 + 2 + 32);
+    store8(p + 38, 33);
+    var i = 0;
+    while (i < 33) { store8(p + 39 + i, 0x5A); i = i + 1; }
+    memcpy(p + 39 + 33, &ch + 39, chn - 39);
+    var n = chn + 33;
+    var blen = n - 4;
+    store8(p + 1, (blen >> 16) & 0xFF); store8(p + 2, (blen >> 8) & 0xFF); store8(p + 3, blen & 0xFF);
+    var srv = tls_native_new_server(cert23, 385, key23, 138);
+    if (tls_native_server_load_creds(srv) != TLS_OK) { println("setup: creds"); return 2; }
+    var chosen = _tn_12_parse_client_hello(srv, p + 4, blen);
+    if (chosen > 0) { println("ACCEPTED: 1.2 server negotiated a suite for a 33-byte legacy_session_id"); return 1; }
+    println("refused (correct)");
+    return 0;
+}
+var r = main();
+syscall(SYS_EXIT, r);

@@ -1,0 +1,21 @@
+# 2026-10-08 — `#pure`'s #io / #alloc check misses a callee defined LATER.
+# Expected: four warnings — f calls #io 'wr' and #alloc 'grab', g tail-calls #io 'wr',
+#   h calls #io method 'A_m'. Actual (6.7.6): none. Moving the callees above the #pure fns
+#   gives all four.
+struct A { v; }
+#pure
+fn f(): i64 { var a = wr(); var b = grab(); return a + b; }
+#pure
+fn g(): i64 { return wr(); }
+#pure
+fn h(p: *A): i64 { return p.m() + 0; }
+#io
+fn wr(): i64 { syscall(1, 1, "x", 1); return 1; }
+#alloc
+fn grab(): i64 { return 2; }
+impl A {
+    #io
+    fn m(self): i64 { syscall(1, 1, "y", 1); return 1; }
+}
+fn main(): i64 { var a: A; a.v = 0; return f() + g() + h(&a); }
+syscall(60, main());

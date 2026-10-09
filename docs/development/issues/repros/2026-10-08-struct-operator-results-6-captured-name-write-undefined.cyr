@@ -1,0 +1,14 @@
+# 2026-10-08-struct-operator-results.md, item 6 (lane E2's q/c1.cyr): a write to a captured NAME inside
+# a closure is reported as "undefined variable 'x'" though `x` is defined, captured and readable in
+# the same body (`|d| { return x + d; }` builds and returns 7). Run from the repo root (includes).
+# Expected: a diagnostic that names the real refusal (a captured name is not assignable in the
+# closure). Actual: error:<source>:11:25: undefined variable 'x'
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+fn main(): i64 {
+    var x = 5;
+    var f = |d| { x += d; return x; };
+    return callptr(f, 2);
+}
+syscall(60, main());

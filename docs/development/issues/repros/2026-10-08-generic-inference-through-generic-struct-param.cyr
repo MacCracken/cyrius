@@ -1,0 +1,14 @@
+# 2026-10-08 — `gx(b)` does not infer T through `b: Box<T>`.
+# Expected: compiles, exits 8 (gx$Pt reads b.n). Actual: refused —
+#   cannot pass 'b' to a parameter of a different struct type in a call to 'gx'
+# Control: `return gx<Pt>(b);` compiles and exits 8.
+struct Pt { x; y; }
+struct Box<T> { v: T; n; }
+fn mk1<T>(x: T): Box<T> { var b: Box<T>; b.v = x; b.n = 8; return b; }
+fn gx<T>(b: Box<T>): i64 { return b.n; }
+fn go(): i64 {
+    var p: Pt; p.x = 3; p.y = 4;
+    var b: Box<Pt> = mk1(p);
+    return gx(b);
+}
+syscall(60, go());

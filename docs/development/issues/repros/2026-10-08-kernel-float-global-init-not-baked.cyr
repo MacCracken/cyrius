@@ -1,0 +1,10 @@
+# 2026-10-08 — in an x86 `kernel;` build a float-literal global is not baked: its store runs
+# in the late replay, AFTER the top-level program (`call kmain`), so kmain reads 0.
+# Expected: G's 8 image bytes hold 0x3FF8000000000000 (1.5), as H's hold 7.
+# Actual (6.7.6): the "initializer of 'G' runs after the top-level program" warning, G's image
+# bytes are 0, and the `movabs $0x3ff8000000000000` + store come after `call kmain`.
+kernel;
+var G: f64 = 1.5;
+var H = 7;
+fn kmain(): i64 { return load64(&G) + H; }
+kmain();

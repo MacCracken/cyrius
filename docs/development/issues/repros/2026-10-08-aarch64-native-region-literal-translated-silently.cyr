@@ -1,0 +1,19 @@
+# 2026-10-08 — inside a native-aarch64 region a raw literal that HAS an ESYSXLAT x86-compat
+# row is translated, with no warning. 9 is lgetxattr on aarch64; ESYSXLAT turns it into mmap.
+# Build with the ELF-aarch64 cross compiler, run under qemu-aarch64 (or on pi):
+#   expected: exit 0   (native lgetxattr on a missing path: -ENOENT), or a compile warning
+#   actual:   exit 22  (mmap(…, flags 0) ran: -EINVAL), no warning
+# Control: `syscall(1009, …)` (the 1000+N private alias) exits 0.
+fn probe(): i64 {
+    var r = 0;
+#ifdef CYRIUS_ARCH_AARCH64
+    r = syscall(9, "/nonexistent", "user.x", 0, 0);   # lgetxattr(path, name, 0, 0)
+#endif
+    return r;
+}
+fn main(): i64 {
+    var r = probe();
+    if (r == 0 - 2) { return 0; }   # -ENOENT: native lgetxattr ran
+    return 0 - r;                   # 22 = -EINVAL: x86 mmap ran instead
+}
+syscall(60, main());

@@ -1,0 +1,8 @@
+# 2026-10-08-struct-operator-results.md, item 2 (cycc 6.6.20-6.7.6; lane E2's lo1.cyr): after an INTEGER
+# `-` whose right operand is a struct, the result keeps the struct's type and slot, so `+ 10` calls
+# P3_add(&s, 10) - `n - s` is discarded and the callee dereferences 10. `+` and `*` behave the same.
+# Expected: `+ 10` is an integer add (no P3_add call). Actual: exit 139 (SIGSEGV inside P3_add).
+struct P3 { x; y; z; }
+fn P3_add(a: *P3, b: *P3): i64 { return a.x + b.x; }
+fn main(): i64 { var s: P3 = P3 { 5, 6, 7 }; var n = 3; return n - s + 10; }
+syscall(60, main());

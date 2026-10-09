@@ -1,0 +1,9 @@
+# 2026-10-08-struct-operator-results.md, item 1 (cycc 6.7.6): an untyped `var r = mk3(4) - s;` is typed
+# P3 (the leading call's struct) though P3_sub returns an integer, so `r.x` compiles and dereferences -5.
+# Expected: "no struct type in scope for 'r'" (as `var r = a - s;` with a local `a` reports).
+# Actual: builds; exit 139 (SIGSEGV).   cat <this> | build/cycc > /tmp/r && chmod +x /tmp/r && /tmp/r
+struct P3 { x; y; z; }
+fn P3_sub(a: *P3, b: *P3): i64 { return a.z - b.z; }
+fn mk3(v): P3 { var t: P3 = P3 { v, v, v }; return t; }
+fn main(): i64 { var s: P3 = P3 { 9, 9, 9 }; var r = mk3(4) - s; return r.x + 10; }
+syscall(60, main());
