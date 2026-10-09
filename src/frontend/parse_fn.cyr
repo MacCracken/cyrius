@@ -1008,21 +1008,12 @@ fn PARSE_RETURN(S): i64 {
         } }
     # Check for multi-return: return (a, b) → ret2(a, b)
     if (PEEKT(S) == 10) {
-        # Scan ahead for comma at depth 1 to distinguish (a, b) from (a + b)
-        var mr_scan = GTI(S) + 1;
-        var mr_depth = 1;
+        # The group's own commas tell (a, b) from (a + b) — v6.5.21: COUNTED, so `return (a, b, c);`
+        # is arity 3. 6.7.7 (B4): the tuple literal's detector, which steps a closure's `|a, b|` and a
+        # generic call's `<A, B>` (`return (|a, b| a + b);` was taken for a multi-value return).
+        var mr_commas = _tup_commas(S, GTI(S));
         var mr_is_tuple = 0;
-        # v6.5.21: COUNT the depth-1 commas instead of stopping at the first, so
-        # `return (a, b, c);` is recognised as arity 3 rather than erroring at the
-        # second comma with `expected ')'`.
-        var mr_commas = 0;
-        while (mr_scan < GTCNT(S) && mr_depth > 0) {
-            var mr_tok = TOKTYP(S, mr_scan);
-            if (mr_tok == 10) { mr_depth = mr_depth + 1; }
-            if (mr_tok == 11) { mr_depth = mr_depth - 1; }
-            if (mr_tok == 31 && mr_depth == 1) { mr_is_tuple = 1; mr_commas = mr_commas + 1; }
-            mr_scan = mr_scan + 1;
-        }
+        if (mr_commas > 0) { mr_is_tuple = 1; }
         # ⛔ 6.6.6 — A TUPLE RETURN IS A THIRD SPELLING THE VECTOR REFUSAL BELOW NEVER SEES.
         # Both arms below hand the values back in the ret2/ret3 INT register convention
         # (rax:rdx[:r3]) and `return 0` out of PARSE_RETURN, so they run in front of the
@@ -1695,6 +1686,7 @@ fn _tup_arg_mv_err(S, ti, ps, noff, tail): i64 {
 # one that does not is (`_push_struct_expr_arg`). Returns as the caller's arms do. CHANGELOG [6.7.6]
 fn _sarg_paren(S, fi, argc, tail): i64 {
     var st = GTI(S);
+    if (_tup_sarg_lit(S, fi, argc, tail) == 1) { return 1; }   # 6.7.7 (B4): a tuple literal
     var k = _pwrap_k(S, st);
     var e = TOKTYP(S, _pw_end);
     if (e != 31) { if (e != 11) { return _push_struct_expr_arg(S, fi, argc, tail); } }
@@ -1704,6 +1696,43 @@ fn _sarg_paren(S, fi, argc, tail): i64 {
         return 0;
     }
     _pw_close(S, k);
+    return 1;
+}
+
+# ⛔ 6.7.7 (B4) — a tuple LITERAL as an address-passed argument (`take((1, 2))`, any wrap; every
+# argument loop, the tail arm with `tail` 1): into a TUPLE parameter it is built in a frame temp and
+# the temp's address pushed — an address in this frame, so a tail call diverts (`_sarg_escapes`).
+# Into any other struct parameter it is refused by name, and at top level (no frame for the temp,
+# R10); the literal is then consumed and 0 pushed, the parse in step. 1 = handled; 0 = not a whole
+# literal argument. (An untyped parameter's literal is the stray refusal at its factor.)
+fn _tup_sarg_lit(S, fi, argc, tail): i64 {
+    var st = GTI(S);
+    var lp = _tup_lit_at(S, st);
+    if (lp < 0) { return 0; }
+    var e = TOKTYP(S, _pw_end);
+    if (e != 31) { if (e != 11) { return 0; } }
+    var ps = GFPSID(S, fi, argc);
+    var ok = 1;
+    if (_tup_is(S, ps) == 0) {
+        _tup_err(S, lp, "a tuple literal is passed only to a tuple parameter - this parameter of ", L64(_fnt_names + fi * 8), " is not a tuple");
+        ok = 0;
+    } elif (GINFN(S) != 1) {
+        _tup_err(S, lp, "a tuple literal argument at top level has no frame to be built in - call ", L64(_fnt_names + fi * 8), " inside a fn");
+        ok = 0;
+    } elif (_tup_lit_shape(S, lp, ps) == 0) { ok = 0; }
+    if (ok == 0) {
+        _tup_lit_skip(S, st, 0);
+        EMOVI(S, 0);
+        EPUSHR(S);
+        return 1;
+    }
+    var t = _agg_temp(S, ps);
+    STI(S, lp);
+    _tup_elems(S, ps, 0, t, 0);
+    _pw_close(S, lp - st);
+    _sarg_escapes(fi, argc, tail);
+    EFLADDR(S, t);
+    EPUSHR(S);
     return 1;
 }
 
@@ -1719,6 +1748,18 @@ fn _sarg_paren(S, fi, argc, tail): i64 {
 fn _sarg_byval_small(S, fi, argc): i64 {
     if (GFPSID(S, fi, argc) <= 0) { return 0; }
     var st = GTI(S);
+    var asid = _expr_struct_sid(S, st);
+    _sarg_type_err(S, fi, argc, asid, _ess_nm);
+    EPUSHR(S);
+    return 1;
+}
+# The expression at the cursor (token `st`) parsed with its static-struct records armed — a bare
+# name; a whole free call, resolved AFTER the parse; a whole method / operator result; a whole
+# struct-typed field; a whole `Str` field — returning that struct (0 = untyped / scalar / unknown),
+# `_ess_nm` the name a refusal names. Extracted from `_sarg_byval_small` (6.7.7) for the tuple
+# literal's elements (`_tup_elem_val`), which are refused when they are struct values.
+var _ess_nm = 0;
+fn _expr_struct_sid(S, st): i64 {
     var asid = 0;
     var nm = 0;
     var call = 0;
@@ -1740,9 +1781,8 @@ fn _sarg_byval_small(S, fi, argc): i64 {
         elif (_fpk_ft > 0) { if (_fpk_end == GTI(S)) { asid = _fpk_ft; nm = _fpk_name; } }
         elif (_fls_whole(S, st) == 1) { asid = _fls_sid; nm = _fls_name; }   # 6.7.6: a `Str` field
     }
-    _sarg_type_err(S, fi, argc, asid, nm);
-    EPUSHR(S);
-    return 1;
+    _ess_nm = nm;
+    return asid;
 }
 
 # ⛔ 6.6.20 — the CLOSURE-CAPTURE arm. A captured struct of 8 B or less is one env word holding
@@ -1868,6 +1908,7 @@ fn _ret_peel(S): i64 {
     _ret_pk = 0;
     _ret_term = 5;
     if (PEEKT(S) != 10) { return 0; }
+    if (_tup_lit_at(S, GTI(S)) >= 0) { return 0; }   # 6.7.7: `return ((a, b));` — a literal, not a wrap
     var k = _pwrap_k(S, GTI(S));
     if (TOKTYP(S, _pw_end) != 5) { return 0; }
     STI(S, GTI(S) + k);
@@ -2029,7 +2070,9 @@ fn _ret_struct_pair(S): i64 {
         vec_push(rp_vec, _pe_rp);
         return 1;
     }
-    if (_pair_ret_call_ok(S) == 0) { _refuse_pair_return(S); }
+    if (_pair_ret_call_ok(S) == 0) {   # 6.7.7: a tuple literal's own refusal is its factor's
+        if (_tup_lit_at(S, GTI(S)) < 0) { _refuse_pair_return(S); }
+    }
     _ret_unpeel(S);   # 6.7.6: a call passes through the scalar path, wrap and all
     return 0;
 }
@@ -3290,6 +3333,7 @@ fn _scv_disarm(S, w): i64 {
 # (`= (j)`) is `_try_struct_copy_init`'s. CHANGELOG [6.7.6]
 fn _scv_peel(S): i64 {
     if (PEEKT(S) != 10) { return 0; }
+    if (_tup_lit_at(S, GTI(S)) >= 0) { return 0; }   # 6.7.7: a tuple literal is not a wrap
     var k = _pwrap_k(S, GTI(S));
     if (TOKTYP(S, _pw_end) != 5) { return 0; }
     STI(S, GTI(S) + k);
@@ -6145,6 +6189,10 @@ fn _ce_factor(S): i64 {
     if (t == 61) { var fv = FLIT_NUM(TOKVAL(S, _ce_ti)); _ce_ti = _ce_ti + 1; _ce_k = 1; return fv; }
     if (t == 30) { var sv = TOKVAL(S, _ce_ti); _ce_ti = _ce_ti + 1; _ce_k = 2; return sv; }
     if (t == 10) {
+        if (_tup_commas(S, _ce_ti) > 0) {   # 6.7.7 (B4, R5): `const C = (1, 2);`, a literal in a const fn
+            _ce_bad(S, "a tuple in a const context - a const is one value (take a tuple at run time: `var t = ( .. );`)", 95);
+            return 0;
+        }
         _ce_ti = _ce_ti + 1;
         var pv = _ce_expr(S);
         var pk = _ce_k;

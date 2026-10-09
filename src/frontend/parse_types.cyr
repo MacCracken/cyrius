@@ -478,6 +478,12 @@ fn _tup_type(S, mode): i64 {
     }
     while (n < 2) { w = _tup_put(S, w, n, 1); n = n + 1; }
     if (PEEKT(S) != 11) { if (mode == 0) { ERR_EXPECT(S, 11); } }
+    return _tup_commit(S, np, w, n, mode);
+}
+# The interning's second half: close the canonical name built at `np` (`n` elements, its end at
+# `w`), then look it up — a hit is the sid, the name not committed — or, `mode` != 1, register it
+# and its fields in one run.
+fn _tup_commit(S, np, w, n, mode): i64 {
     store8(S + 0xEC00000 + w, 41);
     store8(S + 0xEC00000 + w + 1, 0);
     var sid = FINDSTRUCT(S, np);
@@ -488,6 +494,21 @@ fn _tup_type(S, mode): i64 {
     if (sid == 0) { return 0; }
     _tup_fields(S, sid - 1, np, n);
     return sid;
+}
+# 6.7.7 (B4) — an UN-ANNOTATED literal's type: `n` i64 elements (2..256, the caller checked), interned
+# exactly as the spelled `(i64, .., i64)` is, so `var q = (1, 2);` and `var u: (i64, i64) = q;` are
+# one type. Not inside a struct definition (no caller is).
+fn _tup_ints(S, n): i64 {
+    NPOS_GUARD(S, 1600);
+    var np = GNPOS(S);
+    store8(S + 0xEC00000 + np, 40);
+    var w = np + 1;
+    var i = 0;
+    while (i < n) {
+        w = _tup_put(S, w, i, 1);
+        i = i + 1;
+    }
+    return _tup_commit(S, np, w, n, 0);
 }
 # The fields of new tuple struct `si`, read back from its canonical name at `np`.
 fn _tup_fields(S, si, np, n): i64 {

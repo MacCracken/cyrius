@@ -1275,7 +1275,8 @@ fn PARSE_FACTOR(S): i64 {
     var _xd0 = _xdepth;
     var _xt0 = PEEKT(S);
     var _ti0 = GTI(S);
-    var _rc = _PARSE_FACTOR_IMPL(S);
+    var _rc = 0;
+    if (_tup_lit_stray(S, _ti0) == 0) { _rc = _PARSE_FACTOR_IMPL(S); }   # 6.7.7 (B4): R9
     _call_scale_fix(S, _ti0);   # 6.6.17: a call's result scales by its declared return only
     _w128_rchk(S, _ti0);        # 6.7.6 (D2): a u128 as the right operand of a refused operator
     _tup_rchk(S, _ti0);         # 6.7.7 (B4): a whole tuple is not a value
@@ -1860,6 +1861,76 @@ fn _tup_rchk(S, ti0): i64 {
     _tup_err(S, ti0, "tuple ", TOKVAL(S, ti0), " used as a value - take an element (`t.0`) or copy it whole into a tuple");
     SESTYPE(S, 0);
     return 0;
+}
+# ⛔ 6.7.7 (B4) — THE TUPLE LITERAL `(a, b)`: a `(` group with a comma at its own depth. ONE detector
+# for every position — PARSE_RETURN's multi-value arm, the accepting positions and the stray
+# refusal — so they cannot disagree. A comma inside a nested `( [ {` group separates nothing, nor
+# does one between a closure's `|a, b|` bars at an element's start (B6's argument walker,
+# `_arg_next`), nor one inside an explicit generic call's type arguments (`pk<i64, i64>(1, 2)`,
+# `_gcall_open`). PARSE_RETURN's own paren-depth scan counted both, so `return (|a, b| a + b);` and
+# `return (pk<i64, i64>(1, 2));` were taken for multi-value returns ("expected ','").
+# CHANGELOG [6.7.7]
+# The depth-0 `,` or `)` that ends the element whose first token is `i` (or the EOF token).
+fn _tup_item_end(S, i): i64 {
+    var e = _arg_next(S, i);
+    var q = i;
+    var go = 1;
+    while (go == 1) {
+        var g = _tup_gen_past(S, q, e);
+        if (g < 0) { return e; }
+        q = _call_close(S, g) + 1;
+        e = _tok_item_end(S, q);
+    }
+    return e;
+}
+# The `(` of an explicit generic call `name<..>(` that starts in [q, e) and opens PAST `e` — so `e`
+# is a comma inside its type arguments — or -1. (One nested inside a group there is balanced whole.)
+fn _tup_gen_past(S, q, e): i64 {
+    while (q < e) {
+        if (TOKTYP(S, q) == 2) {
+            if (TOKTYP(S, q + 1) == 19) {
+                var o = _gcall_open(S, q);
+                if (o > e) { return o; }
+            }
+        }
+        q = q + 1;
+    }
+    return 0 - 1;
+}
+# The commas of the group whose `(` is token `open`: 0 = a parenthesised expression.
+fn _tup_commas(S, open): i64 {
+    var n = 0;
+    var q = _tup_item_end(S, open + 1);
+    while (TOKTYP(S, q) == 31) {
+        n = n + 1;
+        q = _tup_item_end(S, q + 1);
+    }
+    return n;
+}
+# A literal at token `st`, inside any wrap (`((1, 2))`, the 6.7.6 transparency rule): the token of
+# the literal's own `(`, with `_pw_end` the token after the OUTERMOST `)` (the caller tests its
+# terminator there); -1 when `st` opens none. `_pwrap_k` counts the literal's own `(` as a wrap.
+fn _tup_lit_at(S, st): i64 {
+    if (TOKTYP(S, st) != 10) { return 0 - 1; }
+    var lp = st + _pwrap_k(S, st) - 1;
+    if (_tup_commas(S, lp) == 0) { return 0 - 1; }
+    return lp;
+}
+# R9 — a literal anywhere a VALUE is parsed (PARSE_FACTOR, before its body): every accepting
+# position claims its literal before an expression is parsed, so a factor that opens one is an
+# operand, an untyped / fn-pointer / `callptr` argument, a branch, a nested element, `(1, 2).0`.
+# Refused by name; the group and a selector chain after it are consumed and 0 is the value, so
+# the parse goes on in step. 1 = refused (the factor is done).
+fn _tup_lit_stray(S, ti0): i64 {
+    if (TOKTYP(S, ti0) != 10) { return 0; }
+    if (_tup_commas(S, ti0) == 0) { return 0; }
+    _tup_err(S, ti0, "a tuple `( .. )` is a value only as a `var` initializer, assigned to a tuple variable or field, as a tuple argument, or after `return` - here one value is expected", 0 - 1, 0);
+    STI(S, _call_close(S, ti0) + 1);
+    _synonly_skip_chain(S);
+    EMOVI(S, 0);
+    SESTYPE(S, 0);
+    _cfo = 0;
+    return 1;
 }
 fn _tok_ends_operand(S, ti): i64 {
     if (ti < 0) { return 0; }

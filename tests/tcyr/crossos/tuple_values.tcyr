@@ -17,7 +17,11 @@
 # never reach the caller; a forward call, a method, a trait method, Win64's 5th / 6th argument on
 # the stack, every argument source), tailcalls (a tail call given a tuple in this frame diverts to a
 # real call — the `jmp` would free what the callee copies from — in a loop and out of one; one
-# given a global's tuple keeps its `jmp`, as does one after an earlier call that copied its tuple).
+# given a global's tuple keeps its `jmp`, as does one after an earlier call that copied its tuple),
+# literals (`(a, b)` as a `var` initializer — annotated or not — assigned to a tuple variable or
+# field, passed to a tuple parameter, wrapped in parentheses; every element evaluated before an
+# assignment's store, so `t = (t.1, t.0)` swaps), globals (literal globals in the declaration zone,
+# baked or stored, and after the first statement; a neighbour intact after an element write).
 
 include "lib/assert.cyr"
 
@@ -28,6 +32,16 @@ struct TvW { q: (i64, i64); z: (f64, f64); }
 var TV_GH = TvH { 1, 2, 3, 4 };
 var TV_GZ: (i64, i64) = TV_GH.p;
 var TV_G3: (i64, i64) = TV_GZ;
+# Declaration-zone literal globals: constant elements (baked into the image), an un-annotated one,
+# an f64 element, a wrapped one, a call element (stored by the replay), and a neighbour after one.
+var TV_L1: (i64, i64) = (3, 4);
+var TV_L2 = (5, 6, 7);
+var TV_L3: (i64, f64, bool) = (1, 2.5, true);
+var TV_L4: (i64, i64) = ((8, 9));
+var TV_L5 = (tv_c7(), 2);
+var TV_N1: (i64, i64) = (1, 2);
+var TV_N2 = 77;
+fn tv_c7(): i64 { return 7; }
 
 # --- types ---
 fn tv_types(): i64 {
@@ -300,6 +314,16 @@ fn tv_tc_loop(k): i64 {
     return 0;
 }
 fn tv_tc_fwd(t: (i64, i64), k): i64 { return tv_dt(t, k); }
+# A tuple LITERAL argument is built in a temp in this frame: the tail call diverts, in a loop too.
+fn tv_tc_lit(k): i64 { return tv_dt((5, 9), k); }
+fn tv_tc_litloop(k): i64 {
+    var i = 0;
+    while (i < 3) {
+        if (i == 2) { return tv_dt(((i + 3, 9)), k); }
+        i = i + 1;
+    }
+    return 0;
+}
 fn tv_tc_glob(k): i64 { return tv_dt(TV_G3, k); }
 # An earlier ordinary call handed a tuple in this frame to a callee declared BELOW that copies it
 # (pass 1's record): it keeps nothing, so the tail call keeps its `jmp`.
@@ -326,6 +350,106 @@ fn tv_tailcalls(): i64 {
     assert_eq(_tv_dmark == base, 1, "a global's tuple: the `jmp` is kept");
     assert_eq(tv_tc_after(1), 24, "after an earlier copying call: the value");
     assert_eq(_tv_dmark == base, 1, "after an earlier call to a copying callee declared below: kept");
+    assert_eq(tv_tc_lit(1), 60, "`return take((5, 9));`, a literal argument: the value");
+    assert_eq(_tv_dmark < base, 1, "`return take((5, 9));`: diverted (the literal's temp is in this frame)");
+    assert_eq(tv_tc_litloop(1), 60, "`return take(((i + 3, 9)));` inside a loop: the value");
+    assert_eq(_tv_dmark < base, 1, "`return take(((i + 3, 9)));` inside a loop: diverted");
+    return 0;
+}
+
+# --- literals ---
+var _tv_seq = 0;
+fn tv_next(): i64 {
+    _tv_seq = _tv_seq + 1;
+    return _tv_seq;
+}
+fn tv_seven(a, b, c, d, e, f, g): i64 { return a * 1000000 + b * 100000 + c * 10000 + d * 1000 + e * 100 + f * 10 + g; }
+fn tv_half(): f64 { return 0.5; }
+fn tv_lit3(t: (i64, i64, i64)): i64 { return t.0 * 100 + t.1 * 10 + t.2; }
+fn tv_literals(): i64 {
+    var a: (i64, i64) = (5, 9);
+    assert_eq(a.0 * 10 + a.1, 59, "an annotated literal");
+    var b = (3, 4);
+    assert_eq(b.0 * 10 + b.1, 34, "an un-annotated literal is (i64, i64)");
+    var b2: (i64, i64) = b;
+    assert_eq(b2.1, 4, "... the same type as the spelled one");
+    var c: (i64, f64, bool) = (7, 2.5, true);
+    var k = 0;
+    if (c.2) { k = 1; }
+    assert(c.1 == 2.5, "an f64 element of an annotated literal");
+    assert(c.1 + c.1 == 5.0, "... typed: + is a float add");
+    assert_eq(c.0 * 10 + k, 71, "an i64 and a bool element");
+    var d = (true, 2);
+    assert_eq(d.0 * 10 + d.1, 12, "an un-annotated bool element is an i64 1");
+    var e: (i64, f64, bool) = (tv_seven(1, 2, 3, 4, 5, 6, 7), tv_half(), 3 > 2);
+    assert_eq(e.0, 1234567, "a 7-argument call as an element");
+    assert(e.1 == 0.5, "an f64 call as an element");
+    assert_eq(e.2, 1, "a comparison as a bool element");
+    _tv_seq = 0;
+    var o = (tv_next(), tv_next(), tv_next());
+    assert_eq(o.0 * 100 + o.1 * 10 + o.2, 123, "elements are evaluated left to right");
+    var t = (5, 9);
+    t = (t.1, t.0);
+    assert_eq(t.0 * 10 + t.1, 95, "`t = (t.1, t.0)` swaps: every element before the store");
+    t = ((t.1 + 1, t.0 + 1));
+    assert_eq(t.0 * 10 + t.1, 6 * 10 + 10, "a wrapped assignment");
+    if (t.0 == 6) {
+        var t = (t.1, 1);
+        assert_eq(t.0 * 10 + t.1, 101, "`var t = (t.1, 1);` reads the OUTER t (its name is withheld)");
+    }
+    assert_eq(t.0, 6, "... and the outer t is untouched");
+    var w = ((4, 5));
+    var w2: (i64, i64) = (((6, 7)));
+    assert_eq(w.0 * 10 + w.1 + w2.0 * 1000 + w2.1 * 100, 6745, "wrapped declarations");
+    var h: TvH;
+    h.a = 1;
+    h.b = 2;
+    h.p = (6, 7);
+    assert_eq(h.p.0 * 10 + h.p.1, 67, "`h.p = (6, 7)`, a tuple field");
+    assert_eq(h.a * 10 + h.b, 12, "... the fields around it intact");
+    h.p = ((h.p.1, h.p.0));
+    assert_eq(h.p.0 * 10 + h.p.1, 76, "a wrapped field store swaps too");
+    assert_eq(tv_bump((1, 2)), 101004, "a literal argument");
+    assert_eq(tv_bump(((2, 3))), 102006, "a wrapped literal argument");
+    assert_eq(tv_kinds((3, 2.5, true)), 113, "an (i64, f64, bool) literal argument");
+    assert_eq(tv_six(1, 2, 3, 4, (5, 9), (7, 8)), 5988, "literals as the 5th and 6th arguments (Win64: the stack)");
+    assert_eq(tv_nine(1, 1, 1, 1, 1, 1, (7, 8), 2, (6, 0.5)), 7873, "literals as the 7th and 9th arguments");
+    var acc: TvAcc;
+    acc.base = 1000;
+    assert_eq(acc.sum((5, 9), 5), 1064, "a literal to a trait method");
+    assert_eq(acc.addk((3, 2.5, true), 1), 1114, "a literal to a method");
+    assert_eq(tv_lit3((tv_next(), b.0, tv_seven(0, 0, 0, 0, 0, 0, 9))), 439, "a 3-element literal argument");
+    var x = 0;
+    for (var j = 0; j < 3; t = (t.0 + 1, t.1 + 2)) { x = x + j; j = j + 1; }
+    assert_eq(t.0 * 100 + t.1, 916, "a literal assigned in a classic-for step");
+    var z = (fncall1(|q| { var r = (q, 7); return r.0 * 10 + r.1; }, 4), 2);
+    assert_eq(z.0 * 10 + z.1, 472, "an element holding a closure that builds its own literal");
+    var n = 0;
+    while (n < 3) {
+        var lp = (n, n * 2);
+        t = (lp.1, lp.0);
+        n = n + 1;
+    }
+    assert_eq(t.0 * 10 + t.1, 42, "a literal in a loop body, each pass its own");
+    return 0;
+}
+
+# --- globals ---
+fn tv_globals(): i64 {
+    assert_eq(TV_L1.0 * 10 + TV_L1.1, 34, "a declaration-zone literal global");
+    assert_eq(TV_L2.0 * 100 + TV_L2.1 * 10 + TV_L2.2, 567, "an un-annotated declaration-zone literal");
+    var k = 0;
+    if (TV_L3.2) { k = 1; }
+    assert(TV_L3.1 == 2.5, "an f64 element of a zone literal");
+    assert_eq(TV_L3.0 * 10 + k, 11, "its i64 and bool elements");
+    assert_eq(TV_L4.0 * 10 + TV_L4.1, 89, "a wrapped zone literal");
+    assert_eq(TV_L5.0 * 10 + TV_L5.1, 72, "a zone literal with a call element (stored by the replay)");
+    TV_N1.1 = 9;
+    assert_eq(TV_N2, 77, "the global after a zone tuple is intact after `G.1 = 9`");
+    assert_eq(TV_N1.0 * 10 + TV_N1.1, 19, "... and the element written");
+    TV_L1 = (TV_L1.1, TV_L1.0);
+    assert_eq(TV_L1.0 * 10 + TV_L1.1, 43, "a literal assigned to a global swaps");
+    assert_eq(tv_bump((TV_L2.2, TV_L2.0)), 107010, "global elements in a literal argument");
     return 0;
 }
 fn tv_later(t: (i64, i64), k): i64 { return t.0 * 100 + t.1 * 10 + k; }
@@ -337,8 +461,16 @@ tv_copies();
 tv_fields();
 tv_params();
 tv_tailcalls();
+tv_literals();
+tv_globals();
 # A global declared after the first statement, copied from a tuple field.
 var TV_G2: (i64, i64) = TV_GH.p;
 assert_eq(TV_G2.0 * 10 + TV_G2.1, 23, "a global after the first statement, copied from a tuple field");
+# ... and literal globals after the first statement: annotated, un-annotated, wrapped.
+var TV_P1: (i64, f64) = (4, 0.25);
+var TV_P2 = (TV_P1.0 + 1, 6);
+var TV_P3: (i64, i64) = ((7, 8));
+assert(TV_P1.1 == 0.25, "a global literal after the first statement: its f64 element");
+assert_eq(TV_P2.0 * 10 + TV_P2.1 + TV_P3.0 * 1000 + TV_P3.1 * 100, 7856, "un-annotated and wrapped ones");
 var r = assert_summary();
 syscall(60, r);

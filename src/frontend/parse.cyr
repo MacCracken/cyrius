@@ -3385,7 +3385,53 @@ fn _asg_struct_dst(S, noff): i64 {
     return 1;
 }
 
+# ⛔ 6.7.7 (B4) — `t = (a, b);` into a TUPLE variable (a local, a by-value parameter, a global; and a
+# classic-for step, `term` 11): the whole literal is built in a frame temp — every element evaluated
+# before any store, so `t = (t.1, t.0);` swaps — and copied in, as a struct call's result is. A
+# literal into a variable of any other aggregate type is refused by name (a scalar's, or a name that
+# is not a variable here, is the stray refusal at its factor). At top level there is no frame for
+# the temp: refused by name (R10; `var G = (..);` declares one). 1 = done (`term` consumed).
+fn _tup_asg(S, noff, term): i64 {
+    if (PEEKT(S) != 10) { return 0; }
+    var st = GTI(S);
+    var lp = _tup_lit_at(S, st);
+    if (lp < 0) { return 0; }
+    if (TOKTYP(S, _pw_end) != term) { return 0; }   # an operand (`(1, 2) + u`): the stray refusal
+    var n = _agc_operand(S, noff);
+    var dt = _agc_t;
+    if (dt == 0) {   # a scalar: the literal's factor refuses it; no variable here (a closure's capture
+        if (_tup_asg_known(S, noff) == 0) { _tn_once(S, lp); }   # too): only the store's "undefined"
+        return 0;
+    }
+    if (dt <= 0 - 2048 || _tup_is(S, 0 - dt) == 0) {
+        _tup_err(S, lp, "cannot assign a tuple literal to ", noff, " - it is not a tuple");
+        return _tup_lit_skip(S, st, term);
+    }
+    var sid = 0 - dt;
+    if (GINFN(S) != 1) {
+        _tup_err(S, lp, "a tuple literal assigned at top level has no frame to be built in - assign ", noff, " inside a fn (a top-level `var G = ( .. );` declares one)");
+        return _tup_lit_skip(S, st, term);
+    }
+    var dli = _agc_li;
+    var dgv = _agc_gvi;
+    if (_agc_pp != 0) { dli = _AGC_DREF(dli); }
+    if (_tup_lit_shape(S, lp, sid) == 0) { return _tup_lit_skip(S, st, term); }
+    var t = _agg_temp(S, sid);
+    STI(S, lp);
+    _tup_elems(S, sid, 0, t, 0);
+    _pw_close(S, lp - st);
+    _agc_from_temp(S, t, dli, dgv, n, sid);
+    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
+    STI(S, GTI(S) + 1);
+    return 1;
+}
+fn _tup_asg_known(S, noff): i64 {
+    if (GINFN(S) == 1) { if (FINDLOCAL(S, noff) >= 0) { return 1; } }
+    if (_findvar_core(S, noff) >= 0) { return 1; }
+    return 0;
+}
 fn _try_aggregate_copy_assign(S, noff, term): i64 {
+    if (_tup_asg(S, noff, term) == 1) { return 1; }   # 6.7.7 (B4): a tuple literal
     if (PEEKT(S) == 10) { if (_asg_paren(S, noff, term, 0) == 1) { return 1; } return 0; }   # 6.7.6
     if (PEEKT(S) != 2) { return 0; }
     if (TOKTYP(S, GTI(S) + 1) != term) { return 0; }

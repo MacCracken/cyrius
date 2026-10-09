@@ -163,7 +163,11 @@ fi
 # 6.7.2: `_cst_record` (parse_fn.cyr) registers a top-level `const`'s SIZE-0 slot from the pass-1
 # pre-scan (`_cst_prepass`), which walks brace depth 0 only — top level, never inside a fn (a
 # const inside a fn is a local const, in its own table, with no slot).
-VN_SPEC="PARSE_VAR:4 PARSE_GVAR_REG:1 _gv_reg8:1 PARSE_STRUCT_INIT:1 PARSE_GVAR_ARR:1 PARSE_ENUM_DEF:1 PARSE_ARRAY:1 _HTEMP:1 _HTNAMED:1 _gci_toplevel:1 _cst_record:1"
+#
+# 6.7.7 (B4): `_tup_lit_global` (parse_decl.cyr) is a tuple literal global after the first statement
+# (`var G = (1, 2);`), PARSE_STRUCT_INIT's shape — reached from `_tup_var_lit` only under GINFN != 1 (in
+# a fn the literal is a frame block, `_tup_lit_local`): top level, never inside a fn.
+VN_SPEC="PARSE_VAR:4 PARSE_GVAR_REG:1 _gv_reg8:1 PARSE_STRUCT_INIT:1 PARSE_GVAR_ARR:1 PARSE_ENUM_DEF:1 PARSE_ARRAY:1 _HTEMP:1 _HTNAMED:1 _gci_toplevel:1 _cst_record:1 _tup_lit_global:1"
 vn_attr=$(for f in $(find src/frontend src/common src/backend -name '*.cyr'); do
     awk '/^fn /{fn=$2; sub(/\(.*/,"",fn)} /S64\(_varn_base/{print fn}' "$f"
 done | sort | uniq -c | awk '{print $2":"$1}')

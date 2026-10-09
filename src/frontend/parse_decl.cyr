@@ -994,6 +994,8 @@ fn _fsc_src(S, ft, fnoff, term): i64 {
 # Any other `(`-led source is an expression, as before. Returns as `_fsc_src`. CHANGELOG [6.7.6]
 fn _fsc_paren(S, ft, fnoff, term): i64 {
     var st = GTI(S);
+    var tl = _tup_fsc_lit(S, ft, fnoff, term);   # 6.7.7 (B4): a tuple literal
+    if (tl != 0) { return tl; }
     var k = _pwrap_k(S, st);
     if (TOKTYP(S, _pw_end) != term) { return _fsc_expr(S, ft, fnoff, term); }
     STI(S, st + k);
@@ -1004,6 +1006,39 @@ fn _fsc_paren(S, ft, fnoff, term): i64 {
     }
     _pw_close(S, k);
     return r;
+}
+
+# ⛔ 6.7.7 (B4) — `h.p = (a, b);` into a TUPLE field: built in a frame temp and recorded as the copy's
+# source (1) — `_tup_asg`'s rule, a field destination. A literal into a field of another struct type
+# is refused by name, and at top level (no frame for the temp, R10); the literal is then consumed
+# and 0 is the value (2), its `(` marked reported so the field's own value check stays quiet. 0 =
+# not a whole literal.
+fn _tup_fsc_lit(S, ft, fnoff, term): i64 {
+    var st = GTI(S);
+    var lp = _tup_lit_at(S, st);
+    if (lp < 0) { return 0; }
+    if (TOKTYP(S, _pw_end) != term) { return 0; }
+    var ok = 1;
+    if (_tup_is(S, ft) == 0) {
+        _tup_err(S, lp, "cannot store a tuple literal into field ", fnoff, " - it is not a tuple");
+        ok = 0;
+    } elif (GINFN(S) != 1) {
+        _tup_err(S, lp, "a tuple literal stored at top level has no frame to be built in - store it into ", fnoff, " inside a fn");
+        ok = 0;
+    } elif (_tup_lit_shape(S, lp, ft) == 0) { ok = 0; }
+    if (ok == 0) {
+        _tn_once(S, st);
+        _tup_lit_skip(S, st, 0);
+        EMOVI(S, 0);
+        return 2;
+    }
+    var t = _agg_temp(S, ft);
+    STI(S, lp);
+    _tup_elems(S, ft, 0, t, 0);
+    _pw_close(S, lp - st);
+    _fsc_reset();
+    _fsc_li = t;
+    return 1;
 }
 
 # ⛔ 6.6.10 (bite 5 review) — A VALUE IN rax STORED INTO A 3/5/6/7-BYTE FIELD (an odd-sized
@@ -2473,6 +2508,247 @@ fn _STRUCT_LIT_LOCAL(S, noff, sid): i64 {
     return 0;
 }
 
+# ⛔ 6.7.7 (B4) — THE TUPLE LITERAL `(a, b)` (the user's decision, 2026-10-08): a value laid out as an
+# anonymous struct of 8-byte slots. It is taken in FIVE positions, each claiming it before an
+# expression is parsed — a `var` initializer (`_tup_var`: a local, a global in either zone), an
+# assignment to a tuple variable (`_tup_asg`) or tuple field (`_tup_fsc_lit`), a tuple argument
+# (`_tup_sarg_lit`), and `return`'s multi-value arm — so a factor that opens one anywhere else is
+# refused by name (`_tup_lit_stray`). Parentheses wrapping the whole literal are transparent
+# (6.7.6). An annotated literal's elements take the annotation's types and the struct literal's
+# checks (an integer into an f64 element keeps its bits, warned; a bool element takes a bool); an
+# UN-annotated one is `(i64, .., i64)`, and a float element there is refused (ADR-002: an untyped
+# float is an integer — the user's decision, 2026-10-09: declare the tuple's type). A struct, tuple,
+# u128, vector or slice element is refused by name. The elements are evaluated and stored in order
+# through ADDRESSED stores from the block's named slot (EMIT_STRUCT_FIELD_W; `_STRUCT_LIT_LOCAL`'s
+# discipline: the span recorded before a byte is emitted, the name withheld until the elements are
+# parsed, so `var t = (t.1, 1);` reads the OUTER t). An assignment, a field store and an argument
+# build into a frame temp first, so `t = (t.1, t.0);` swaps. CHANGELOG [6.7.7]
+
+# After a refused literal whose outermost wrap opens at `st`: the cursor past its `)`, and `term`
+# consumed when it follows (0: left for the caller). 1.
+fn _tup_lit_skip(S, st, term): i64 {
+    STI(S, _call_close(S, st) + 1);
+    if (term != 0) { if (PEEKT(S) == term) { STI(S, GTI(S) + 1); } }
+    return 1;
+}
+# R2 and the arity, from the tokens of the literal whose `(` is `lp`: an empty element, a trailing
+# comma and more than 256 elements are refused; for a type `sid` (> 0) the count must be its arity.
+# Returns the count, or 0 after a refusal (reported).
+fn _tup_lit_shape(S, lp, sid): i64 {
+    var n = 0;
+    var q = lp + 1;
+    var go = 1;
+    while (go == 1) {
+        var t = TOKTYP(S, q);
+        if (t == 31) { _tup_err(S, q, "an empty element in a tuple literal", 0 - 1, 0); return 0; }
+        if (t == 11) { _tup_err(S, q - 1, "a trailing comma in a tuple literal", 0 - 1, 0); return 0; }
+        n = n + 1;
+        q = _tup_item_end(S, q);
+        go = 0;
+        if (TOKTYP(S, q) == 31) { q = q + 1; go = 1; }
+    }
+    if (n > 256) { _tup_err(S, lp, "a tuple literal has at most 256 elements", 0 - 1, 0); return 0; }
+    if (sid <= 0) { return n; }
+    if (n == GETFCOUNT(S, sid - 1)) { return n; }
+    _tup_arity_err(S, lp, sid, n);
+    return 0;
+}
+fn _tup_arity_err(S, ti, sid, n): i64 {
+    if (_syntax_only == 1) { return 0; }
+    if (_panic == 1) { return 0; }
+    if (_tn_once(S, ti) == 0) { return 0; }
+    var sv = GTI(S);
+    STI(S, ti);
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    PRSTR(": tuple ");
+    PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (sid - 1) * 8));
+    PRSTR(" has ");
+    PRNUM(GETFCOUNT(S, sid - 1));
+    PRSTR(" elements - this literal has ");
+    PRNUM(n);
+    PRSTR("\n");
+    _err_excerpt(S);
+    _had_error = 1;
+    STI(S, sv);
+    return 1;
+}
+# A bare name that is no i64 / f64 / bool value: 1 a vector, 2 a slice, 3 a u128 (a local's 2-slot
+# pair, a 16-byte global); else 0. Lookups only (the factor resolved and reported the name).
+fn _tup_wide_name(S, nm): i64 {
+    if (GINFN(S) == 1) {
+        var li = FINDLOCAL(S, nm);
+        if (li >= 0) {
+            var lt = GLTYPE(S, li);
+            if (lt <= 0 - 2048) { return 1; }
+            if (lt != 0) { return 0; }
+            if (GLSPAN(S, li) != 2) { return 0; }
+            if (GSLICE_W(S, li) > 0) { return 2; }
+            return 3;
+        }
+    }
+    var gv = _findvar_core(S, nm);
+    if (gv < 0) { return 0; }
+    if (GVVEC(S, gv) != 0) { return 1; }
+    if (GVW128(S, gv) == 1) { return 3; }
+    if (GVPM(S, gv) != 0) { return 0; }
+    if (L64(_vars_base + gv * 8) == 16) { return 2; }
+    return 0;
+}
+# R8 — the element just parsed (from token `t0`, its static struct `asid`) is a struct value (a heap
+# handle — `Str`, `Result`, `Option`, `Tagged` — is a pointer, an i64), a u128, a vector or a slice:
+# refused by name. (A whole tuple was refused at its factor, `_tup_rchk`, at the same token.)
+fn _tup_elem_bad(S, t0, asid): i64 {
+    if (asid > 0) {
+        if (asid < 2048) {
+            var nm = L64(S + 0x1A6018 + (asid - 1) * 8);
+            var c = _classify_param_type(S, nm);
+            if (c == 1 || c == 3 || c == 4 || c == 5) { return 0; }
+            _tup_err(S, t0, "a tuple element is i64, f64 or bool, not struct ", nm, 0);
+            return 1;
+        }
+    }
+    var w = 0;
+    if (_W128_IS(S) == 1) { w = 3; }
+    if (w == 0) {
+        if (TOKTYP(S, t0) == 2) { if (GTI(S) == t0 + 1) { w = _tup_wide_name(S, TOKVAL(S, t0)); } }
+    }
+    if (w == 0) { return 0; }
+    if (w == 1) { _tup_err(S, t0, "a tuple element is i64, f64 or bool, not a vector", 0 - 1, 0); }
+    elif (w == 2) { _tup_err(S, t0, "a tuple element is i64, f64 or bool, not a slice", 0 - 1, 0); }
+    else { _tup_err(S, t0, "a tuple element is i64, f64 or bool, not u128", 0 - 1, 0); }
+    return 1;
+}
+# Element `k` of a literal of type `sid`, cursor on its first token: parsed (the value in rax) and
+# judged — R8; un-annotated (`infer`), R7: a float is refused, its type must be declared; typed, the
+# struct literal's field checks (`_ifs_bx`: an integer into f64 warned, a bool element a bool).
+fn _tup_elem_val(S, sid, k, infer): i64 {
+    var t0 = GTI(S);
+    var asid = _expr_struct_sid(S, t0);
+    if (_tup_elem_bad(S, t0, asid) == 1) { return 0; }
+    if (infer == 1) {
+        if (_UFV_IS_FLOAT(S) == 1) {
+            _tup_err(S, t0, "a float element needs the tuple's type declared - an un-annotated tuple literal's elements are i64 (declare the tuple's type: `var t: (i64, f64) = ( .. );`)", 0 - 1, 0);
+        }
+        return 0;
+    }
+    _ifs_bx(S, _fk_bx(S, sid - 1, k), t0, _tup_fname(S, k));
+    return 0;
+}
+# THE ELEMENT LOOP, shared by every position: the literal whose `(` is the cursor (its shape vetted,
+# `_tup_lit_shape`) stored into tuple `sid` — frame slot `li` (>= 0: a local, a temp; field 0 is that
+# slot) or global `gidx` (`li` -1). The cursor is left past its `)`.
+fn _tup_elems(S, sid, gidx, li, infer): i64 {
+    var sv = _sl_base_li;
+    STI(S, GTI(S) + 1);   # consume (
+    var n = GETFCOUNT(S, sid - 1);
+    var k = 0;
+    while (k < n) {
+        _tup_elem_val(S, sid, k, infer);
+        _sl_base_li = li;   # read by EMIT_STRUCT_FIELD_W: set after the element (a closure in it may declare its own)
+        _sfw_have = 1;
+        EMIT_STRUCT_FIELD_W(S, gidx, k * 8, 8);   # consumes the `,` after the element
+        k = k + 1;
+    }
+    _sl_base_li = sv;
+    if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
+    STI(S, GTI(S) + 1);
+    return 0;
+}
+# `var t[: T] = ( .. );` in a fn, cursor on the literal's own `(`: the block reserved with its span
+# recorded and its name withheld, the elements stored, then the name.
+fn _tup_lit_local(S, noff, sid, infer): i64 {
+    var nslots = GETFCOUNT(S, sid - 1);
+    var existing = FINDLOCAL(S, noff);
+    if (existing >= 0) { if (GLDEP(S, existing) == GSDEP(S)) { ERRDUPVAR(S); } }
+    if (GFLC(S) + nslots + 1 >= 15360) {
+        ERR_MSG(S, "struct literal exceeds the per-fn stack-slot budget; build it through alloc() instead", 85);
+        STI(S, _call_close(S, GTI(S)) + 1);
+        return 0;
+    }
+    var k = 0;
+    while (k < nslots - 1) {
+        var fl = GFLC(S);
+        S64(S + 0x5D9D000 + fl * 8, 0 - 1);
+        SLDEP(S, fl, GSDEP(S));
+        SLTYPE(S, fl, 0);
+        SSLICE_W(S, fl, 0);
+        SFLC(S, fl + 1);
+        k = k + 1;
+    }
+    var named = GFLC(S);
+    S64(S + 0x5D9D000 + named * 8, 0 - 1);   # anonymous until the elements are parsed
+    SLDEP(S, named, GSDEP(S));
+    SLTYPE(S, named, 0);
+    SSLICE_W(S, named, 0);
+    SLAGG(S, named, nslots);                  # the span BEFORE a byte is emitted (a coroutine frame)
+    SFLC(S, named + 1);
+    _tup_elems(S, sid, 0, named, infer);
+    S64(S + 0x5D9D000 + named * 8, noff);
+    SLDEP(S, named, GSDEP(S));
+    SLAGG(S, named, nslots);
+    SLTYPE(S, named, 0 - sid);
+    return 0;
+}
+# ... a global after the first statement (PARSE_STRUCT_INIT's shape: inline, its name registered
+# after the elements); `dti` the declaration's token, for its visibility.
+fn _tup_lit_global(S, noff, sid, infer, dti): i64 {
+    var vcnt = GVCNT(S);
+    S64(_varn_base + vcnt * 8, noff);
+    S64(_vars_base + vcnt * 8, STRUCTSZ(S, sid - 1));
+    SVTYPE(S, vcnt, sid);
+    SVPM(S, vcnt, 2);
+    _tup_elems(S, sid, vcnt, 0 - 1, infer);
+    SLVAR(S, vcnt);
+    _GVAR_VIS(S, vcnt, dti);
+    SVCNT(S, vcnt + 1);
+    return 0;
+}
+# PARSE_VAR's arm, where its `: stack` pair refusal stood (cursor on `=`): a literal initializer —
+# the whole of it, up to the `;` — declares the tuple (1, the `;` consumed). Anything else is not
+# this arm's: the pair refusal runs and PARSE_VAR goes on (0). `ann` is the annotation's first token
+# (0: none), `pscale` PARSE_VAR's. A refused literal still lets the name be declared, so its later
+# uses do not cascade: under a non-tuple annotation PARSE_VAR parses on (0; the literal's factor
+# refusal is the one already reported, at the same token); a tuple-typed one whose literal has the
+# wrong shape is skipped and declared as `var t: T;` is (0, cursor on the `;`).
+fn _tup_var(S, noff, pscale, ann): i64 {
+    if (PEEKT(S) == 4) {
+        var lp = _tup_lit_at(S, GTI(S) + 1);
+        if (lp >= 0) { if (TOKTYP(S, _pw_end) == 5) { return _tup_var_lit(S, noff, pscale, ann, lp); } }
+    }
+    _refuse_single_pair_bind(S);
+    return 0;
+}
+fn _tup_var_lit(S, noff, pscale, ann, lp): i64 {
+    var st = GTI(S) + 1;
+    var sid = 0;
+    var infer = 0;
+    if (ann == 0) { infer = 1; }
+    elif (pscale < 0) { if (pscale > 0 - 2048) { if (_tup_is(S, 0 - pscale) == 1) { sid = 0 - pscale; } } }
+    if (infer == 0) {
+        if (sid == 0) {   # R9: a scalar, struct, bool, slice, vector or pointer annotation
+            _tup_err(S, lp, "a tuple literal cannot initialize ", noff, " - its declared type is not a tuple");
+            return 0;
+        }
+    }
+    var n = _tup_lit_shape(S, lp, sid);
+    if (n == 0) {
+        if (infer == 0) { if (GINFN(S) == 1) { _tup_lit_skip(S, st, 0); return 0; } }
+        return _tup_lit_skip(S, st, 5);
+    }
+    if (infer == 1) {
+        _tup_gen_chk(S, lp);   # R4: an un-annotated literal mints its type, in a generic fn too
+        sid = _tup_ints(S, n);
+    }
+    STI(S, lp);
+    if (GINFN(S) == 1) { _tup_lit_local(S, noff, sid, infer); }
+    else { _tup_lit_global(S, noff, sid, infer, st); }
+    _pw_close(S, lp - st);
+    if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
+    STI(S, GTI(S) + 1);
+    return 1;
+}
+
 # 6.6.13 (M2): `eb` is the bytes per element (_arr_ebytes), 0 for a bare `var g[N]`.
 fn PARSE_GVAR_ARR(S, noff, sti, ew, sgn, eb): i64 {
     STI(S, GTI(S) + 1);
@@ -3108,7 +3384,7 @@ fn _gai_flit(S, ti): i64 {
     _gai_ok = 0;
     if (TOKTYP(S, ti) != 61) { return 0; }
     var e = TOKTYP(S, ti + 1);
-    if (e != 31) { if (e != 14) { return 0; } }
+    if (e != 31) { if (e != 14) { if (e != _spc_cl) { return 0; } } }   # 6.7.7: a tuple's `)`
     _gai_ok = 1;
     var bits = FLIT_NUM(TOKVAL(S, ti));
     if (neg == 1) { bits = bits ^ (1 << 63); }
@@ -4019,9 +4295,9 @@ fn PARSE_GVAR_REG(S): i64 {
         if (ssid > 0) {
             is_struct = 1;
             _lit_ann_check(S, 0 - ann_sid, ssid, ann_bool);
-        } elif (_gci_inline(S, ann_sid) == 1) {   # 6.6.12: `var G: T = A;` / `= X.f;` — inline
-            is_struct = 1;
-            ssid = ann_sid;
+        } else {
+            ssid = _gci_inline(S, ann_sid);   # 6.6.12: `var G: T = A;` / `= X.f;` — inline; 6.7.7: a tuple literal
+            if (ssid > 0) { is_struct = 1; }
         }
         # Static-init detection: shape is exactly `= NUM ;`. Negative
         # literals (`= - NUM ;`), hex-as-expr, parenthesized literals,
@@ -4207,6 +4483,7 @@ var _gvk_late = 0;   # 1 = this replay runs AFTER the top-level program (main.cy
 var _gvk_bk = 0;     # per deferred entry: 1 = _gvk_pre baked its scalar, 2 = _spc_try its literal
 var _spc_ti = 0;     # the struct walker's token
 var _spc_ok = 0;     # 0 = a leaf did not fold: the literal is not baked
+var _spc_cl = 14;    # the token that closes the literal: `}`, or (6.7.7) a tuple literal's `)`
 
 # main.cyr's x86 kernel branch, before its late replay. An EFI application that defines `efi_main`
 # runs that replay before it calls efi_main (main.cyr), so efi_main sees every value: no warning.
@@ -4325,7 +4602,7 @@ fn _spc_walk(S, sid, d): i64 {
     _spc_ok = 1;
     _spc_fields(S, sid - 1, 0, d);
     if (_spc_ok == 0) { return 0; }
-    if (TOKTYP(S, _spc_ti) != 14) { return 0; }
+    if (TOKTYP(S, _spc_ti) != _spc_cl) { return 0; }
     return 1;
 }
 fn _spc_fields(S, si, base, d): i64 {
@@ -4355,8 +4632,10 @@ fn _spc_leaf(S, si, fi, off, d): i64 {
         ti = ti + 1;
         if (TOKTYP(S, ti - 1) == 7) { ti = ti + 1; }
     } else {
+        var tm = 31;   # 6.7.7: a tuple literal's last element ends at its `)`
+        if (_spc_cl == 11) { if (fi == GETFCOUNT(S, si) - 1) { tm = 11; } }
         _cf_enum = 1;
-        v = _CF_TRY(S, ti, 31);
+        v = _CF_TRY(S, ti, tm);
         _cf_enum = 0;
         if (_cf_ok == 0) { _spc_ok = 0; return 0; }
         ti = _cf_ti;
@@ -4406,6 +4685,41 @@ fn _gvi_pair_bind(S): i64 {
     _refuse_single_pair_bind(S);
     STI(S, sv);
     return 0;
+}
+# 6.7.7 (B4) — a declaration-zone TUPLE LITERAL, replayed (cursor on the RHS; pass 1 registered the
+# global inline, `_tup_gci`): its constant elements baked into the image (`_spc_try`, the struct
+# literal's walker, closing at `)`), then every element stored, as a struct literal is. 1 = done
+# (`;` consumed), 0 = not a whole literal (the replay goes on).
+fn _gvi_tuple(S, gi, idx, gps, sti, noff): i64 {
+    var st = GTI(S);
+    var lp = _tup_lit_at(S, st);
+    if (lp < 0) { return 0; }
+    if (TOKTYP(S, _pw_end) != 5) { return 0; }
+    var sid = 0;
+    var infer = 0;
+    if (TOKTYP(S, sti + 2) != 49) { infer = 1; }
+    elif (gps < 0) { if (gps > 0 - 2048) { if (_tup_is(S, 0 - gps) == 1) { sid = 0 - gps; } } }
+    if (infer == 0) {
+        if (sid == 0) {
+            _tup_err(S, lp, "a tuple literal cannot initialize ", noff, " - its declared type is not a tuple");
+            return _tup_lit_skip(S, st, 5);
+        }
+    }
+    var n = _tup_lit_shape(S, lp, sid);
+    if (n == 0) { return _tup_lit_skip(S, st, 5); }
+    if (infer == 1) { sid = _tup_ints(S, n); }
+    STI(S, lp + 1);
+    _spc_cl = 11;
+    _spc_try(S, gi, idx, sid);
+    _spc_cl = 14;
+    STI(S, lp);
+    _tup_elems(S, sid, idx, 0 - 1, infer);
+    _pw_close(S, lp - st);
+    _gv_slvar(S, idx);
+    _gvk_left(S, gi, sti, idx);
+    if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
+    STI(S, GTI(S) + 1);
+    return 1;
 }
 # ⛔ 6.6.11 — a leading-block initialiser, replayed here rather than parsed by PARSE_VAR, so a
 # struct-typed global's whole call / method result was never type-checked (`var G: Odd = mk2();`
@@ -4534,7 +4848,8 @@ fn EMIT_GVAR_INITS(S): i64 {
         # is also a struct name).
         var idx = _gv_target(S, _gv_ent_slot(S, gi, 0, noff), gsup, 0);
         var did_struct = 0;
-        if (PEEKT(S) == 2) {
+        if (PEEKT(S) == 10) { did_struct = _gvi_tuple(S, gi, idx, gps, sti, noff); }   # 6.7.7 (B4)
+        if (did_struct == 0 && PEEKT(S) == 2) {
             var sid = _lit_head(S);   # 6.6.12: `Name {` or `Name<args> {`
             if (sid > 0) {
                 STI(S, GTI(S) + 1);
@@ -4722,11 +5037,30 @@ fn _gci_chain(S, ti, sid): i64 {
 # Pass 1 (PARSE_GVAR_REG), cursor on the RHS: 1 when `var G: T = <src>;` is registered inline —
 # `sid` the declared struct, over 8 B (one that fits keeps its 8-byte value slot), and the source
 # a whole `sid`.
+# Returns the struct to register inline (`sid`), else 0. 6.7.7 (B4): or a TUPLE LITERAL's — the
+# annotation's tuple, an un-annotated one's `(i64 x n)` — registered inline (8n bytes) for the
+# replay's `_gvi_tuple`; a literal under any other annotation is not inline (the replay refuses it).
 fn _gci_inline(S, sid): i64 {
+    var ts = _tup_gci(S, sid);
+    if (ts >= 0) { return ts; }
     if (sid <= 0) { return 0; }
     if (STRUCTSZ(S, sid - 1) <= 8) { return 0; }
     if (_gci_src(S, GTI(S)) != sid) { return 0; }
-    return 1;
+    return sid;
+}
+# Pass 1's half of a declaration-zone tuple literal, cursor on the RHS: -1 when it is no whole
+# literal up to the `;`; else the tuple to register inline, or 0. Quiet: the replay reports.
+fn _tup_gci(S, sid): i64 {
+    var lp = _tup_lit_at(S, GTI(S));
+    if (lp < 0) { return 0 - 1; }
+    if (TOKTYP(S, _pw_end) != 5) { return 0 - 1; }
+    if (sid > 0) {
+        if (_tup_is(S, sid) == 1) { return sid; }
+        return 0;
+    }
+    var n = _tup_commas(S, lp) + 1;
+    if (n > 256) { return 0; }
+    return _tup_ints(S, n);
 }
 # Record the RHS that `_gci_src` classified as a whole `sid` as the copy SOURCE (`_fsc_*`, read by
 # `_agc_copy_bytes`'s `-2` source): a named global is resolved (FINDVAR, so its visibility is
@@ -5367,7 +5701,9 @@ fn PARSE_VAR(S): i64 {
     # payload. Refuse it. The two-variable destructure is handled earlier in this fn, so reaching
     # here with a pair-returning callee means the payload is about to be lost. 6.7.6: at top level
     # too (a global after the first statement; the declaration zone's replay is `_gvi_expr`).
-    _refuse_single_pair_bind(S);
+    # 6.7.7 (B4): `_tup_var` runs it — first taking a tuple literal initializer, which declares the
+    # whole tuple here (1: done).
+    if (_tup_var(S, noff, pscale, ann_ti) == 1) { return 0; }
     if (GINFN(S) == 1) {
         if (PEEKT(S) == 4) {
             var _vin_ti = GTI(S) + 1;
