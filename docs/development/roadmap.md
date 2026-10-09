@@ -58,13 +58,18 @@ v6.6.x closed at 6.6.20. 6.7.0–6.7.6 shipped (2026-10-07 → 2026-10-08): [com
   re-assigns existing variables (the re-poll gap — a loop re-polling a `Result` had to bind a fresh pair each pass).
   `var x = f();` keeps its documented first-value meaning (the `ret2` / `rethi()` idiom), so nothing that compiles
   today changes. A shape the decision leaves open is refused by name (extensible later), never given a default
-  meaning.
+  meaning. **The plan's forks (user, 2026-10-09):** an un-annotated literal with a float element is refused —
+  "declare the tuple's type" (`var p: (i64, f64) = (1, 2.5);`; under ADR-002 `var x = 1.5;` is not f64-typed either);
+  and the four lossy `: stack` pair stores (`h.n = f()`, `a[0] = f()`, `*p = f()`, `x += f()`) become the compile
+  error the guide already documents.
 - **B6 — default and named arguments — DECIDED (user, 2026-10-08, at the 6.7.7 open): constant defaults.**
   `fn f(a, b = 2)`: a default is a compile-time constant (a literal, a `const`, a `const fn` call — the 6.7.2
   evaluator) on a TRAILING parameter. `f(1, c: 3)`: named arguments follow the positionals, in any order, each
   parameter at most once, evaluated left to right as written. Direct calls only — a call through a fn pointer or a
   closure stays positional with its exact arity. The v6.5.1 arity check becomes min..max; overloading by arity stays
-  out (a count mismatch is never intentional).
+  out (a count mismatch is never intentional). **The plan's forks (user, 2026-10-09):** a default in a trait's
+  required signature is an error (it compiled and was ignored — the signature's parameter list was never parsed); and
+  EVERY forward call is arity-checked, not only calls to defaulted fns.
 - **B7 — narrow unsigned and `f32` struct fields — layout DECIDED (user, 2026-10-08): packed.** `u8` / `u16` /
   `u32` become 1 / 2 / 4 bytes and zero-extend on read, `f32` 4 bytes, with no padding — the rule `i8` / `i16` / `i32`
   fields follow today (`struct { a: i8; b: i64; }` is 9 bytes). Only structs declaring one of them move — an ABI
