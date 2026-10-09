@@ -35,6 +35,9 @@
 #       with "<cwd>/." and missed; a `.` segment read tests/test.cyml twice)
 #   C13 (wine) Windows: `cyrius.exe test tests\net\e.tcyr` and `cyrius.exe test tests\net` apply
 #       tests\net\test.cyml (a `\` used to send the unit outside the project)
+#   C14 a test.cyml [test.embed] NAME that clashes is refused naming the table that has it: one
+#       cyrius.cyml's [embed] declares, one an enclosing level's [test.embed] declares, and a
+#       NAME_len of the latter (each said only "is declared twice" / "collides with [embed]")
 #
 # MUTATION LEDGER (6.7.6) — each mutant built in a SCRATCH copy of the tree, the gate run against
 # it; the unmutated copy PASSES, and each mutant turns the rows named RED:
@@ -50,6 +53,7 @@
 #   M9  manifest.cyr: _tc_unit_dir compares an absolute path with "<cwd>/." (the strip dropped)  C12
 #   M10 manifest.cyr: _tc_unit_dir keeps `.` segments in the unit's directory               C12
 #   M11 manifest.cyr: Windows: `\` is not read as a separator                                C13
+#   M12 manifest.cyr: _embed_seen_where names no table (6.7.6 FXCL-8b, pre-fix message)      C14
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
 G=test_cyml_per_directory
@@ -215,6 +219,27 @@ if [ "$r12a" = 0 ] && grep -q '^2 passed, 0 failed$' "$W/c12a.out" && [ "$r12b" 
     && ! grep -q 'duplicate fn' "$W/c12a.err" "$W/err"; then
     echo "  ok C12: an absolute in-project path, a doubled slash and a ./ . spelling get C1's chain, each level once"
 else fail "C12: absolute rc $r12a, dotted rc $r12b"; sed 's/^/      /' "$W/c12a.out" "$W/c12a.err" | grep -v unreachable | head -6; show; fi
+
+# ── C14 ──
+proj ec <<'EOF'
+[embed]
+PROD = "data/p.bin"
+
+[test.embed]
+GOLD = "data/g.bin"
+EOF
+mkdir -p "$W/ec/data" "$W/ec/tests/a" "$W/ec/tests/b" "$W/ec/tests/c"
+printf 'p' > "$W/ec/data/p.bin"; printf 'g' > "$W/ec/data/g.bin"
+for d in a b c; do printf 'x' > "$W/ec/tests/$d/x.bin"; lv "$W/ec/tests/$d/t.tcyr" 0; done
+printf '[test.embed]\nPROD = "x.bin"\n' > "$W/ec/tests/a/test.cyml"
+printf '[test.embed]\nGOLD = "x.bin"\n' > "$W/ec/tests/b/test.cyml"
+printf '[test.embed]\nGOLD_len = "x.bin"\n' > "$W/ec/tests/c/test.cyml"
+cy ec test tests/a/t.tcyr tests/b/t.tcyr tests/c/t.tcyr
+if [ "$RC" = 1 ] && grep -qxF 'error: tests/a/test.cyml [test.embed] PROD: is declared twice — cyrius.cyml [embed] declares it too (a test unit compiles both)' "$W/err" \
+    && grep -qxF "error: tests/b/test.cyml [test.embed] GOLD: is declared twice — a [test.embed] of an enclosing level (cyrius.cyml's or a test.cyml above) declares it too (a test unit compiles both)" "$W/err" \
+    && grep -qxF "error: tests/c/test.cyml [test.embed] GOLD_len: collides with GOLD, which a [test.embed] of an enclosing level (cyrius.cyml's or a test.cyml above) declares (NAME_len() is the length accessor of NAME)" "$W/err"; then
+    echo "  ok C14: a test.cyml [test.embed] clash names the table that has the NAME — [embed], or an enclosing [test.embed]"
+else fail "C14: rc $RC"; grep 'error' "$W/err" | sed 's/^/      /'; fi
 
 # ── C13 ──
 if command -v wine > /dev/null 2>&1; then

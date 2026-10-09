@@ -1086,6 +1086,20 @@ fn _embed_is_len_of(a, b): i64 {
     return memeq(a + bl, "_len", 4);
 }
 
+# Where `seen[k]` was declared, for a clash message (6.7.6): its first `_emb_seen_embed` entries
+# are the project's [embed] NAMEs, the rest up to `_emb_seen_outer` (where the table being scanned
+# began) a [test.embed] of an enclosing level, and the rest this table's own. A [test.embed] NAME
+# that repeated [embed]'s said only "is declared twice", naming neither table (6.7.6 review).
+var _emb_seen_embed = 0;
+var _emb_seen_outer = 0;
+
+# 0 for this table's own entry, else the table that declared `seen[k]`, as a message names it.
+fn _embed_seen_where(k): i64 {
+    if (k < _emb_seen_embed) { return "cyrius.cyml [embed]"; }
+    if (k < _emb_seen_outer) { return "a [test.embed] of an enclosing level (cyrius.cyml's or a test.cyml above)"; }
+    return 0;
+}
+
 # One `NAME = value` line of [embed] (the value at _mf_buf[vp]): validated, read and pushed onto
 # `out`; 0, or 1 after naming what is wrong. `seen` holds every NAME so far, valid or not.
 fn _embed_entry(out, seen, name, disp, vp): i64 {
@@ -1094,13 +1108,28 @@ fn _embed_entry(out, seen, name, disp, vp): i64 {
     var k = 0;
     while (k < vec_len(seen)) {
         var o = vec_get(seen, k);
+        var where = _embed_seen_where(k);
         k = k + 1;
         var clash = 0;
-        if (streq(o, name) == 1) { why = "is declared twice"; clash = 1; }
+        if (streq(o, name) == 1) {
+            why = "is declared twice";
+            if (where != 0) { why = _cat2(_cat2("is declared twice — ", where), " declares it too (a test unit compiles both)"); }
+            clash = 1;
+        }
         elif (_embed_is_len_of(name, o) == 1 || _embed_is_len_of(o, name) == 1) {
             var sb = str_builder_new();
-            str_builder_add_cstr(sb, "collides with [embed] ");
-            str_builder_add_cstr(sb, o);
+            str_builder_add_cstr(sb, "collides with ");
+            if (where != 0) {
+                str_builder_add_cstr(sb, o);
+                str_builder_add_cstr(sb, ", which ");
+                str_builder_add_cstr(sb, where);
+                str_builder_add_cstr(sb, " declares");
+            } else {
+                str_builder_add_cstr(sb, "[");
+                str_builder_add_cstr(sb, _emb_sec);
+                str_builder_add_cstr(sb, "] ");
+                str_builder_add_cstr(sb, o);
+            }
             str_builder_add_cstr(sb, " (NAME_len() is the length accessor of NAME)");
             why = str_data(str_builder_build(sb));
             clash = 1;
@@ -1147,6 +1176,7 @@ fn _embed_entry(out, seen, name, disp, vp): i64 {
 # Scan the table `_emb_sec` of `_emb_buf` (see above) into `out` (each entry validated and read);
 # `seen` holds every NAME so far. Returns how many refusals were named.
 fn _embed_scan(out, seen): i64 {
+    _emb_seen_outer = vec_len(seen);   # what was in scope before this table (`_embed_seen_where`)
     var bad = 0;
     var info[32];
     var insec = 0;
@@ -1859,7 +1889,12 @@ fn _tc_load(): i64 {
     # The project's [embed] NAMEs as written — not `_embed_load`, whose collision check must wait
     # for the dependency resolve (6.6.20), and this runs before it.
     var r = 0;
-    if (ml == 1) { r = _tc_read(_mf_buf, _mf_len, "cyrius.cyml", "", _toml_section_keys(_mf_buf, _mf_len, "embed")); }
+    if (ml == 1) {
+        var ek = _toml_section_keys(_mf_buf, _mf_len, "embed");
+        _emb_seen_embed = vec_len(ek);      # every NAME in scope so far is [embed]'s
+        r = _tc_read(_mf_buf, _mf_len, "cyrius.cyml", "", ek);
+        _emb_seen_embed = 0;
+    }
     else { r = _tc_read("", 0, "cyrius.cyml", "", vec_new()); }
     if (r == 0) { _tc_state = 2; return 1; }
     _tc_root = r;
@@ -2160,10 +2195,13 @@ fn _tc_eff(dir): i64 {
                 # its [test.embed] NAMEs are distinct from every one in scope above it
                 var seen = vec_new();
                 if (_mf_state == 1) { seen = _toml_section_keys(_mf_buf, _mf_len, "embed"); }
+                var nemb = vec_len(seen);   # [embed]'s, then the enclosing levels' [test.embed]
                 var oe = load64(outer + _TA_EMBED);
                 var k = 0;
                 if (oe != 0) { while (k < vec_len(oe)) { vec_push(seen, _embed_e_name(vec_get(oe, k))); k = k + 1; } }
+                _emb_seen_embed = nemb;
                 var inner = _tc_read(b, n, cy, dir, seen);
+                _emb_seen_embed = 0;
                 if (inner != 0) {
                     var ok = 1;
                     var ie = load64(inner + _TA_EMBED);

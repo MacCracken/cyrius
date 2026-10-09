@@ -2571,8 +2571,10 @@ scope   = "test"                           # resolved and pinned like any dep; t
 - **`timeout`**: `--timeout N` > `CYRIUS_TEST_TIMEOUT` > `[test] timeout` > 300 s; `0` turns the
   deadline off. A unit past it is killed with its whole process tree and named.
 - **`[test.embed]`** follows every `[embed]` rule (below). Its NAMEs must differ from
-  `[embed]`'s, and the check against the stdlib and the project's sources runs after the
-  dependency resolve, as `[embed]`'s does.
+  `[embed]`'s (and from an enclosing level's `[test.embed]`), and a clash names the table that
+  has the NAME: `cyrius.cyml [test.embed] PROD: is declared twice — cyrius.cyml [embed] declares
+  it too (a test unit compiles both)`. The check against the stdlib and the project's sources
+  runs after the dependency resolve, as `[embed]`'s does.
 - **`scope = "test"`** on a `[deps.NAME]` is the one scope there is (any other value is refused
   by name). The dep is cloned, vendored and commit-pinned by every resolve, but resolved AFTER every
   production dependency — so a name both sides reach is the production one (a production dep's
