@@ -1572,9 +1572,14 @@ fn _bx_falloff_fi(S, fi): i64 {
     return 0;
 }
 # An operator overload's right operand is the operator fn's parameter 1 (`p + 5` into
-# `fn P_add(self, b: bool)`), as `p.add(5)` passes it — checked the same way.
+# `fn P_add(self, b: bool)`), as `p.add(5)` passes it — checked the same way. ⛔ 6.7.6 (FE): and
+# into an `f32` parameter it ROUNDS, as `_bx_pcmpe_arg` does for `p.add(1.5)` (the decision: every
+# write into an f32) — `r + 1.5` passed 1.5's f64 pattern and the callee read its low 32 bits (0).
+# The operand is still in rax: `_op_rhs` calls this right after PARSE_TERM.
 fn _bx_op_rhs(S, fi, rb): i64 {
-    if (_pbool_get(fi, 1) != 1) { return 0; }
+    var pk = _pbool_get(fi, 1);
+    if (pk == 3) { _f32_init_round(S, F32_TYID); return 0; }
+    if (pk != 1) { return 0; }
     if (_BX_IS(S) == 1) { return 0; }
     var pn = _bx_pname(S, fi, 1);
     if (pn < 0) { return _bx_refuse(S, rb, "cannot pass a value that is not a bool to a bool parameter of ", _bx_fname(S, fi), 0, 0 - 1); }

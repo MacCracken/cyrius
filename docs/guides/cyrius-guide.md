@@ -113,7 +113,8 @@ boxed idiom, not converted. Until 6.7.6 the initializer stored the f64 bits, so 
 silently. **Every other write into an `f32` rounds the same way (6.7.6)**: an assignment `x = 1.5`
 (a local or a global, a statement or a classic-`for` step), a field store `p.x = 1.5` (through a
 `*T` too), a struct-literal field `P { 1.5 }` and an argument to an `f32` parameter (`f(1.5)`, a
-method, a fn defined below the call). Each stored the f64 bits as well. An `f32` operator still
+method, a fn defined below the call, and the right operand of an operator overload: `r + 1.5` with
+`fn R_add(self, b: f32)`). Each stored the f64 bits as well. An `f32` operator still
 reads its right operand as f32 bits (the next paragraph): `x = x + 1.5` adds 1.5's low 32 bits, then
 stores an `f32` — write `x + f32_from(1.5)`.
 

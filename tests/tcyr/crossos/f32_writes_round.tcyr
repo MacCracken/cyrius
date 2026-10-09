@@ -2,7 +2,9 @@
 # f32 (the user's decision, 2026-10-08, second round), as lane D made the initializer round: an
 # assignment (`h = 1.5`, a local or a global, a statement or a classic-for step), a field store
 # (`q.x = 1.5`, through a `*T` too), a struct-literal field (`P { 1.5 }`, a local and a global in the
-# declaration zone) and an argument to an `a: f32` parameter (a call, a forward call, a method).
+# declaration zone) and an argument to an `a: f32` parameter (a call, a forward call, a method) —
+# and (FE, W22-W27) an operator overload's RIGHT operand into an `f32` parameter (`r + 1.5` with
+# `fn R_add(self, b: f32)`), the operator spelling of the same call.
 #
 # Each stored the f64 bits silently: the f32 read takes the low 32 of 1.5's 0x3FF8000000000000, so
 # the value read as 0.0 (f4.cyr: only the initializer row was right). Every expected value is the
@@ -27,6 +29,11 @@ fn f64ret(): f64 { return 1.5; }
 fn take(a: f32): i64 { return load32(&a) & 0xFFFFFFFF; }
 fn take2(n, a: f32): i64 { return (load32(&a) & 0xFFFFFFFF) + n * 0; }
 fn P_put(self: *P, v: f32): i64 { self.x = v; return 0; }
+struct R { n; }
+struct R3 { a; b; c; }
+fn R_add(self, b: f32): i64 { return load32(&b) & 0xFFFFFFFF; }
+fn R_sub(a: R, b: f32): i64 { return load32(&b) & 0xFFFFFFFF; }
+fn R3_mul(a: R3, b: f32): R3 { var t: R3 = R3 { load32(&b) & 0xFFFFFFFF, a.b, a.c }; return t; }
 
 fn tmain(): i64 {
     var h: f32 = 0;
@@ -69,9 +76,19 @@ fn tmain(): i64 {
     q.put(-2.75);
     assert_eq(lo32(&q), 0xC0300000, "W20: ... a method argument");
     assert_eq(take(g), 0x3F000000, "W21: an f32 argument is untouched");
+    var r = R { 1 };
+    assert_eq(r + 1.5, 0x3FC00000, "W22: an operator's right operand into an `f32` parameter (`r + 1.5`)");
+    assert_eq(r - 0.1, 0x3DCCCCCD, "W23: ... `r - 0.1`, a by-value left operand");
+    assert_eq(r + d, 0xC0300000, "W24: ... an f64 variable as the right operand");
+    var q3 = R3 { 1, 2, 3 };
+    var o: R3 = q3 * 0.1;
+    assert_eq(o.a, 0x3DCCCCCD, "W25: ... a struct-returning operator fn");
+    assert_eq(r / 1.5, 0x3FC00000, "W26: ... an operator fn defined BELOW the use");
+    assert_eq(r + g, 0x3F000000, "W27: an f32 right operand is untouched");
     return 0;
 }
 fn take_later(a: f32): i64 { return load32(&a) & 0xFFFFFFFF; }
+fn R_div(a: R, b: f32): i64 { return load32(&b) & 0xFFFFFFFF; }
 
 var tr = tmain();
 var rr = assert_summary();
