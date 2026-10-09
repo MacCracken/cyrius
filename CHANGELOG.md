@@ -6,6 +6,185 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [6.7.6] — 2026-10-08
 
+**Break 1** — the v6.7.x catch-up release (roadmap.md § *Break 1 — 6.7.6*): the high / critical backlog and the
+bugs the 6.7.x feature releases filed, `cyrius.cyml` made dev- and test-friendly (git first, local development an
+explicit switch), `cyrius test` absorbing `cyrius tests`, cybs stack arguments, and the W2 refold of the twelve folded
+stdlibs. Built in fourteen worktree lanes (B C D E F G H, then D2 E2 D3 D4, then the review-fix lanes FE CL BX A1) and
+merged here; ONE review round over the release. Every language-visible change below is a user decision of
+2026-10-08 (roadmap.md § *Break 1 decisions*), asked in three rounds — twice correcting a premise the question had
+stated wrongly (u128 carry), which lane D found by probing.
+
+**Size:** cycc **1,806,240 B** (`.text` **1,612,016**), +46,416 B over 6.7.5's 1,759,824 — u128 arithmetic and
+comparisons on three backends, the f32 write paths, the struct-value operand / parenthesis work, the CYRIUS_LIB_OVERLAY
+include path, cx's stack-argument ABI; dead-code floor unchanged (52 fns / 10,597 B). `build/cycc-native-aarch64`
+**1,601,032 B**. `.tcyr` 526 → **537** (243 in `crossos/`); shell gates 424 → **441**; api-surface **5,828** (patra's
+`wal_exists`).
+
+**Bench:** Same-box interleaved A/B vs 6.7.5 (15 runs each): **1,130 → 1,134 ms
+on 6.7.5's source (+0.3 %)**, 1,169 → 1,176 ms on 6.7.6's own (+0.6 %).
+
+### Language — the decisions (user, 2026-10-08)
+
+- **Every write into an `f32` rounds to f32** — initializers (`var x: f32 = 1.5`), assignments, field stores,
+  struct-literal fields, arguments to an `f32` parameter (an operator overload's operands included). They stored the
+  f64 bit pattern silently; an `f32[N]` list element already rounded (6.7.4). `*p = v` through `*f32` stays a raw word
+  store (the documented `*p` rule).
+- **u128 computes like the integer it is.** `+` / `-` carry and borrow across all 128 bits in both spellings (`b + x`,
+  `b += x`, an integer operand zero-extended); comparisons (`==` `!=` `<` `<=` `>` `>=`, unsigned) and truth tests
+  (`if (b)`, `while (b)`, `&&` / `||` operands, `!b`, `match` / `switch` on a u128 subject or arm) read all 128 bits; a
+  plain assignment and an initializer take the whole value (a local initializer used to write the value into BOTH
+  halves; `b = 5` kept the old high word). Every other operator on a u128 (`*` `/` `%`, shifts, bitwise, their `OP=`)
+  is refused by name until implemented. Backends: x86 add/adc · sub/sbb (PE and Mach-O share it), aarch64 adds/adc ·
+  subs/sbc, cx with an unsigned compare. *(The first question said `b = b + 1` already carried — it did not; neither
+  spelling did. Corrected the same day.)*
+- **A top-level `var v = pair_fn();` is refused by name**, with the fn-body rule's wording (v6.5.67): it kept the tag
+  and dropped the payload silently.
+- **Whole-array and wide-value compound writes are refused by name**: `OP=` on a SIMD vector, a typed-array variable or
+  a slice variable, a whole-array `a = 8` on a typed array (it set `a[0]`), `OP=` on a bare `var b[N]` /
+  `stack var b[N]` (its first word) — as 6.7.5 refused `OP=` on a struct.
+- **A struct-returning call / method / operator result dispatches its operator fn as either operand** (`p.dup() + p`
+  calls `P_add` — it integer-added first words; `s - mk3(4)` takes the >8 B result; `mk3(4) - s + 10` dispatches from
+  the call's own type); a missing operator fn is refused by name; at top level an operand that needs a frame is
+  refused by name.
+
+### Fixed — wrong code and crashes in the compiler
+
+- **x86 branched on stale flags** after a narrow field / local load, `mulh64`, `~`, `&x`, a string literal, `f64_floor`
+  and the PE syscall reroutes, whenever the previous statement had set the flags tracker: `if (h.m)` on an `i8` field
+  after `x = x + 1;` took the branch with `h.m == 0`. ECONDCMP now skips its `test` only when the flag-setting
+  instruction was the very last thing emitted — the class closed for every emitter, current and future; cycc's own
+  code is byte-identical.
+- **Struct values:** a parenthesised struct argument to an address-passed parameter (`rd3((a))`, SIGSEGV); a >8 B
+  struct call result as an operand; a parenthesised struct source copied ONE word (`o.i = (z.k)`, `w = (j)`,
+  `var q: K = (z.k)` — SIGSEGV — and a top-level `var G: K = (A)`, and for-steps); a `: Str` field used as a struct
+  source of another type is refused by name; a name intrinsic's result (`mulh64`, `fncall0..8`, `callptr`) no longer
+  inherits its last argument's struct type (`fncall1(&f, n) + 1` → 100), and keeps an f64 type when the callee is
+  `&f` declared `: f64`; `var r = mk3(4) - s;` and `return mk(1) + a;` compile (they were "expected ';'");
+  `return (j);` / `return (mk3(v));` work in both struct-return classes; a closure body's `var` inside a parenthesised
+  struct initialiser or a >8 B right operand no longer wipes the outer parse state.
+- **`println(n)` on a name declared an integer** (`var n: i64 = 42;`) routes to `println_int` — it handed 42 to the
+  cstring overload and crashed (rc 139). An untyped name is unchanged (ADR-002: it may hold a pointer); a name declared
+  an integer that holds a string pointer now prints the number — declare it `: cstring`.
+- **`CYRIUS_PKG_VERSION` resolves at any include depth** (the 2026-10-07 issue filed by agnostic; archived).
+- `CYRIUS_IR=3` kept the x86 `f32_from` / `f32_to` conversions (their raw bytes were not IR-recorded).
+
+### cx (the bytecode backend)
+
+`~x` is the complement (it XORed with an unset register — `~x` was `x`, and `bitset` / `bitclr` broke); `lib/fnptr.cyr`
+has a cx arm for every `fncallN` (an address-taken `&fncallN` returned 0); calls of any number of arguments (arguments
+past the register window go on the guest stack — 249+ were wrong, 252+ trapped); vector arguments ride r235..r250, clear
+of the integer arguments (a vector beside 14+ integers overwrote the 14th).
+
+### Bootstrap (cybs — the trusted root's first rung)
+
+- **cybs passes 7+ arguments** (the roadmap item placed in Break 1): the caller leaves arguments past the sixth on the
+  stack in cycc's order (the last at `[rsp]` — one convention, and `fncall8` matches both compilers) and the callee
+  reads them from its frame; the 6.7.0 by-name refusal is retired, so `src/` may use 7+ argument helpers.
+- **cybs refuses a lone `!` and every byte it does not lex, by name** — it skipped them: `return !x;` compiled as
+  `return x;`, `g()?` as `g()`, `@a = 5;` as `a = 5;` (the CVE-104 class, in the bootstrap).
+- **A call through a global function-pointer variable kept argument 4** — cybs loaded the callee through `rcx` after the
+  argument registers.
+- Row S of `cybs_call_arity_named.sh` guards the seed's silent caps (131,072 input bytes, 512 labels): cybs.cyr is at
+  112,175 B / 501 labels.
+
+### `cyrius.cyml` — dev- and test-friendly, git first (user, 2026-10-08)
+
+- **Git is the priority; local development is an explicit switch.** A `path` beside `git` / `tag` is a DEV OVERRIDE,
+  used only in local mode — `CYRIUS_LOCAL=1`, `CYRIUS_LOCAL=<dep,dep>` or `--local` (never switched on by the
+  manifest). With no switch every machine builds the TAG (its commit pin checked) and prints one hint line naming the
+  local checkouts it did not use, so a local build and CI compile the same code. Local mode prints one `local:` line per
+  override (path, sha, commits past the tag, dirty, what CI builds) and builds from `build/local-deps/` — never writing
+  `lib/` or `cyrius.lock` — with the compiler's new `CYRIUS_LIB_OVERLAY` include path, so a hand-written
+  `include "lib/<dep>.cyr"` sees the override. A dependency resolved from its tag has its own `path` entries ignored; a
+  path-only, local-`git` or absolute entry in it is refused by name; a dependency that is itself a local checkout has its
+  overrides followed for the selected names. A path-only dependency in the root manifest works as before. Not a
+  security item (the user: a dependency you chose already runs its code in your build).
+- **`--locked` / `CYRIUS_LOCKED=1`** resolves the tags, writes NOTHING and names every difference from `lib/` and
+  `cyrius.lock`; without a vendored `lib/` it checks the resolution against the lock alone and a compiling verb builds
+  from `build/locked-deps/`; `update`, `deps --lock` / `--relock` and `lib sync` are refused under it. It replaces the
+  hand-rolled CI lock guards and the `path`-stripping `sed`.
+- `deps -v` and `deps --dry-run` show where each dependency came from (`[test scope]` marked); a diamond (two tags of
+  one dependency) prints a notice; keys nothing reads in `[deps]` / `[deps.*]` and unknown tables are warned by name;
+  `cyrius update` re-fetches untagged dependencies, re-resolves and lists newer tags (it never edits the manifest);
+  every resolving verb checks its operands BEFORE the resolve (`cyrius test <missing>` used to clone and lock first).
+- **The test scope:** a `[test]` section — `files` (`[build] test` stays a synonym), `stdlib`, `modules`, `defines`,
+  `timeout`, `[test.embed]` — and `[deps.X] scope = "test"`, applied to test / bench / fuzz compiles only and kept out of
+  published bundles (a hello world drops 111,456 → 98,280 B once assert / bench move to `[test] stdlib`); a
+  per-directory `test.cyml` (each level appends; an inner `timeout` replaces); `CYRIUS_TEST_FILE` / `CYRIUS_TEST_DIR` in
+  each unit's environment; `--timeout`; `--no-deps` / `--no-lock` on run / test / bench / fuzz; the `cyrius init`
+  templates put assert / bench in `[test] stdlib`. `[test] stdlib` leaves and test-scope dependencies are vendored and
+  locked by EVERY resolve (otherwise build and test would take turns rewriting the lock). `CYRIUS_DEFINES` now reaches
+  test and bench compiles.
+- **`cyrius test <file|dir>...`** absorbs `cyrius tests` (a directory walked recursively; several operands, each file
+  once; an empty directory is a named failure); `cyrius tests` is a deprecated alias for this release with a one-line
+  notice. `[build] test_standalone = true` compiles each test with only its own includes — this repo sets it, so a bare
+  `cyrius test` runs the whole corpus (22 `.tcyr` defining `fn run()` collided with `lib/process.cyr`'s `run` under the
+  stdlib prepend). A non-zero exit is the contract (gated); an exit above 128 is no longer called a signal.
+
+### `lib/`
+
+- **Each stack buffer is sized by the bound that governs it** (18 bounds, 47 buffers — private names `const`, public
+  ones `const _X = N; var X = _X;`, no API change). Sizing them found two overruns, fixed: `tls_native_record_seal`
+  admitted up to 16,623 content bytes into a 16,385-byte stack scratch (and wrote below it for a negative length) —
+  only through the low-level API with a length the record layer itself never produces (it was given
+  `CYRIUS-2026-0036` and the release's review withdrew it before release: a bug, not a vulnerability); the HkdfLabel
+  scratch held 512 of the 514 bytes its checks admit. `tls_native_record_seal_12` refuses a negative length.
+- `lib/fnptr.cyr`: the x86_64 `fncall8` body (Linux, macOS, agnos) passes arguments 7 and 8 in cyrius's order (they
+  arrived swapped for a cyrius callee); an 8+ argument C function on x86_64 now needs a shim (docs/ffi/fncall-abi.md).
+- `lib/trait.cyr`'s header describes the run-time vtable pattern, not future `impl` sugar (ADR-007 §7).
+
+### The security ledger (user, 2026-10-08)
+
+The `CVE-01` … `CVE-104` list was re-read entry by entry against one rule — an id is ONLY for an actual security
+vulnerability, an attacker who does not control the victim's code, build or chosen dependencies crossing a boundary —
+and **69 were withdrawn** (47 bugs, 17 hardening items, 2 binaries run from a checkout the developer chose, 3 already
+withdrawn); **the 35 real ones are `CYRIUS-2026-0001` … `0035`** in their old order. Ids are the project's own
+(`CYRIUS-YYYY-NNNN` — the CVE shape without the CVE Program's namespace; cyrius is not a numbering authority and requests
+none); the ledger is an internal record kept in good form. Every reference was rewritten from one mapping
+(`docs/audit/2026-10-08-security-ledger.md`); CLAUDE.md § *Security Audit Process* now states the rule. **Next id:
+`CYRIUS-2026-0036`.**
+
+### Folds — the W2 wave (all twelve, byte-identical to their tags)
+
+Every folded stdlib moved its pin to 6.7.5 with a release carrying its high / critical filed items, the migration and
+the 6.7.x simplifications (roadmap.md § *W2*), and is re-vendored here byte-identical from its tag: **sakshi 2.5.8**
+(syscall numbers `const`) · **bayan 1.5.13** (TOML refusals: a refused escape buffer is a failure, every allocation in
+the inline / join paths checked) · **sigil 3.13.11** (`pem_decode_privkey` wipes the decoded private-key DER on every
+return; unchecked PEM allocations; the `sha256()` / `sha384()` one-shots wipe their context) · **patra 1.16.0**, a
+minor (WAL recovery before EVERY statement — `patra_begin` truncated a crashed writer's WAL; five silent wrong answers
+become errors or right) · **sandhi 1.10.9** (pooled serve loops on worker threads on macOS / Windows; a Windows stop
+flag stops the server) · **yukti 2.3.16** (SMB mount-option injection refused — a `,uid=0` in a username mounted as
+root; `network_mount`'s symlink guard; `storage_unmount`'s gate) · **yantra 1.0.9** (a negative open backoff hung
+forever; `cdp_close` closed twice; rebuilt by `cyrius distlib` from its tag — `dist/` is untracked — and reproducible)
+· **vani 1.2.10** (`vani_format_is_supported` answers 1 / 0; `O_CLOEXEC`) · **sankoch 2.8.3** (the Brotli dictionary
+is an `[embed]` — its Python generator retired; `loop { … }`) · **mabda 4.2.0**, a minor (the 11 `F64_*` colour
+constants are f64 `const` — they read 0 unless `color_init()` had run) · **ganita 1.2.15** · **niyama 1.1.0**, a minor
+(pcre keeps its backtracking state on a heap stack: a pattern covering more than ~250 subject characters failed or
+reported a later start; the match-time error reaches `niyama_pcre_last_error()`). `docs/ecosystem.md`'s fold rows name
+each tag. **cyrius side of the wave:** an `[embed]` NAME is no longer refused by the project's OWN fold (sankoch 2.8.3
+declares `_brotli_dict_bin` from its own `[embed]`, so building sankoch on 6.7.6 needed it).
+
+Tests: new gates `silent_values_checked.sh`, `struct_value_codegen.sh`, `cx_backend_parity.sh`,
+`lib_buffers_sized_by_const.sh`, `cybs_lexer_drops_nothing.sh`, `deps_git_first_local_switch.sh`,
+`deps_locked_writes_nothing.sh`, `deps_sources_reported.sh`, `deps_test_scope.sh`, `deps_update_refetches_untagged.sh`,
+`lib_overlay_include.sh`, `manifest_unknown_keys_warned.sh`, `operands_checked_before_resolve.sh`,
+`test_absorbs_tests.sh`, `test_cyml_per_directory.sh`, `test_exit_code_contract.sh`, `test_section.sh` — every one with
+a mutation ledger, each mutation verified RED; `cybs_call_arity_named.sh` rewritten (7- and 9-argument calls, the seed's
+caps, the global-pointer clobber); new crossos files on x86, aarch64 (qemu), PE (wine) and cx: `f32_scalar_init_rounds`,
+`f32_writes_round`, `u128_add_sub_carry`, `u128_compare_all_bits`, `u128_assign_whole_value`,
+`u128_compound_matches_long_form`, `int_name_routes_int_overload`, `struct_value_codegen`, `fncall_stack_args`,
+`tls_native_scratch_bounds`; `tests/tcyr/codegen/cx_backend_parity.tcyr`. One timing gate
+(`simd_valueform_no_avx_transition`) now runs serial (it read 190 % under the parallel pool, 100 % alone).
+
+**Filed, not fixed** (roadmap.md *Potential backlog* — "Found by 6.7.6"): struct-operator result typing (`var r =
+mk3(4) - s` typed `P3` where `P3_sub` returns an integer; `n - s + 10`; `-s + t`; `return (a, b)` in a struct fn);
+u128 parameters / returns / fields / closure captures; the seed's silent caps (a new trusted-root binary is the user's
+call) and cybs's undefined-call-in-statement; an IR=3 miscompile; test-tooling and CLI leftovers; lane H's remaining
+literal bounds.
+
+**Downstream:** the 21 consumers with a `path` beside `git` change at their 6.7.6 pin bump (default builds the tag);
+notes filed in each, and in agnos (`test.cyml`), puka (mabda 4.2.0's `color_init`) and agnostic (`CYRIUS_PKG_VERSION`).
+
 ## [6.7.5] — 2026-10-08
 
 B5 `loop { … }` and `do { … } while (c);` + B8 compound assignment on every lvalue (roadmap.md § Spec — B; the

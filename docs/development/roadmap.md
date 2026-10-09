@@ -31,10 +31,10 @@ the unpinned watching list is [roadmap-future.md](roadmap-future.md); per-releas
 
 ## Where we are
 
-**Current head: v6.7.6** (2026-10-08) — **slot open: Break 1 (W2 refold + the high / critical backlog)** (6.7.5 shipped: tag `6.7.5` @ `efa15103`)
-· cycc **1,759,824 B** (`.text` **1,571,240**) · `cycc-native-aarch64` **1,530,056 B** · **526** `.tcyr` (**233** in
-`crossos/`) · **106** `lib/*.cyr` · **424** shell gates under `tests/gates/<bucket>/` · api-surface **5,827** · **1 open
-issue** · **2 open proposals** · the next free ledger id is **CYRIUS-2026-0036**.
+**Current head: v6.7.6** (2026-10-08) — **Break 1 landed: the W2 refold + the high / critical backlog** (6.7.5 shipped: tag `6.7.5` @ `efa15103`)
+· cycc **1,806,240 B** (`.text` **1,612,016**) · `cycc-native-aarch64` **1,601,032 B** · **537** `.tcyr` (**243** in
+`crossos/`) · **106** `lib/*.cyr` · **441** shell gates under `tests/gates/<bucket>/` · api-surface **5,828** · **0 open
+issues** · **2 open proposals** · the next free ledger id is **CYRIUS-2026-0036**.
 
 > ⚠ **Every figure above was DERIVED on the day, not carried** (2026-10-07 at the 6.7.0 open).
 > `version-bump.sh` rewrites the version token, replaces the `(…)` after it with the bump date, and
@@ -80,8 +80,8 @@ in [completed-phases.md](completed-phases.md) § *v6.6.x*; the detail is the CHA
 | **6.7.3** | **B2 `bool` / `true` / `false`** — decisions taken at the open (spec below) · **+ a repair lane for the filed issues** (user, 2026-10-07 — an exception to operating rule 1, the user's call): the two 6.7.x filings (struct-argument type check, enum-constant assignment) and the four open issue files (tail call in a loop, `cyriusly cmdtools`, the hashmap_fast leak, the tools' attribute-line rule); ✅ landed 2026-10-08 (CHANGELOG [6.7.3]) |
 | **6.7.4** | **B3 — the if-expression** — decisions taken at the open (spec below); ✅ landed 2026-10-08 (CHANGELOG [6.7.4]) |
 | **6.7.5** | **B5 `loop` / `do … while` + B8 compound assignment on a field** — the last two of "by size" (~~B2~~ 6.7.3 · ~~B3~~ 6.7.4), so Break 1 follows (user, 2026-10-08: "continue with 6.7.5"; decisions asked at the open); ✅ landed 2026-10-08 (CHANGELOG [6.7.5]) |
-| **W2 — stdlib wave** | after 6.7.5 is tagged: the 12 folded stdlibs move their pin to **6.7.5**, each with a patch release (a minor where an API changes — "so be it", user 2026-10-08), carrying their high / critical filed issues, the migration concerns, and the simplifications the 6.7.x features allow; everything else is roadmapped in that repo. Plan: § *W2* below |
-| **6.7.6 — Break 1** | the W2 tags re-vendored byte-identical · catch-up: the high / critical backlog + found issues (user picks) · `cyrius test` / `tests` consolidation · **cybs stack arguments** (below) |
+| **W2 — stdlib wave** | ✅ all twelve released and refolded in 6.7.6 — after 6.7.5 is tagged: the 12 folded stdlibs move their pin to **6.7.5**, each with a patch release (a minor where an API changes — "so be it", user 2026-10-08), carrying their high / critical filed issues, the migration concerns, and the simplifications the 6.7.x features allow; everything else is roadmapped in that repo. Plan: § *W2* below |
+| **6.7.6 — Break 1** | ✅ landed 2026-10-08 (CHANGELOG [6.7.6]) — the W2 tags re-vendored byte-identical · catch-up: the high / critical backlog + found issues (user picks) · `cyrius test` / `tests` consolidation · **cybs stack arguments** (below) |
 | then | B4 tuples · B6 default + named arguments · B7 narrow struct fields (ABI survey + migration) · C2 bounds-checked mode (+ P5 execution coverage) · **checked `dyn`** (decided 2026-10-07, open question 5) |
 | **Break 2** | catch-up |
 | **closeout** | the closeout checklist ([cycle-discipline.md](cycle-discipline.md)) — the checklist, not an audit campaign (CLAUDE.md) |
@@ -325,7 +325,7 @@ length-bounded `f64_parse` here). **Constraints:** W2 must not change the fold A
 sigil fns incl. 8 private, 6 sakshi, bayan `base64_encode`, sandhi `sandhi_server_find_header`); and a `const`
 beside a same-name `var` is a hard error (sandhi's `HTTP_OK` vs `lib/http.cyr` is why its public consts wait). **Ledger renumbering (2026-10-08):** sigil's and sandhi's sources cite cyrius `CVE-NN` ids in comments; each W2 release rewrites them with the same mapping (`docs/audit/2026-10-08-security-ledger.md` — a kept id to its `CYRIUS-2026-NNNN`, a withdrawn one to its bug label), so the 6.7.6 refold carries the new names; until then `lib/sigil.cyr` / `lib/sandhi.cyr` keep the old ids byte-identical to their tags.
 
-## Break 1 — 6.7.6 (proposed 2026-10-08; the user picks at its open)
+## Break 1 — 6.7.6 (proposed 2026-10-08; the user picked at its open) — ✅ LANDED in 6.7.6 (CHANGELOG [6.7.6])
 
 Surveyed with W2: the frozen *Potential backlog* below was premise-checked item by item against live code and
 probes. The proposal takes the **still-real critical / high** items, the two pre-placed items, and the W2 refold.
