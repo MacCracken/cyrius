@@ -5,15 +5,21 @@
 # `const X = ..;` takes, minus a `{`) on a TRAILING parameter, evaluated once at the end of pass 1
 # in the definition's own scope. Pass 1 records every definition's defaults — a fn defined below
 # its call, a method, a generic, a const fn, a fn inside a top-level block — and both passes step
-# over a default with `( [ {` balance only (`b = A < B`: `<` is an operator there). The refusals,
-# the #inline rule and the per-backend legs are tests/gates/frontend/default_named_args_checked.sh.
+# over a default with `( [ {` balance only (`b = A < B`: `<` is an operator there). A call passes
+# min..max arguments; a direct call short of max takes the missing trailing defaults, pushed after
+# its written arguments in parameter order, each emitted exactly as its literal would be. A
+# `return f(..)` that fills is an ordinary call (the tail arm never fills); a full-arity one keeps
+# its `jmp`. The refusals, the #inline rule, the objdump rows and the per-backend legs are
+# tests/gates/frontend/default_named_args_checked.sh.
 # Callees weigh their arguments by position (`a * 100 + b * 10 + c`), so a swap reads wrong.
 #
 # ⚠ CROSS-HOST: the arguments travel through each backend's call convention (SysV 6 / Win64 4 /
-# aarch64 8 registers, then the stack; cx), f64 / f32 as int-class bits.
+# aarch64 8 registers, then the stack; cx), f64 / f32 as int-class bits; a 16-byte vector return
+# through Win64's retptr; a 1,000,000-deep full-arity tail recursion on cass's 1 MB stack.
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 include "lib/fnptr.cyr"
+include "lib/simd.cyr"
 include "lib/assert.cyr"
 
 const K = 5;
@@ -22,10 +28,11 @@ const B = 2;
 enum Col { RED, GREEN, BLUE }
 struct Pt { x; y; }
 struct Big { a; b; c; }
+struct P2 { x; y; }
 const fn sq(n): i64 { return n * n; }
 const fn sq2(x, y): i64 { return x * y; }
 
-# ── definitions: every accepted default class, called with every argument ──────────────────────
+# ── definitions: every accepted default class ────────────────────────────────────────────────
 fn w3(a, b = 2, c = 3): i64 { return a * 100 + b * 10 + c; }
 fn consts(a, b = K * 2, c = Col.BLUE, d = sizeof(Pt), e = sq(3), g = 0 - 1, h = -1): i64 {
     return a * 1000000 + b * 100000 + c * 10000 + d * 1000 + e * 100 + g * 10 + h;
@@ -37,29 +44,59 @@ fn typed(x: f64 = 1.5, y: f32 = 0.1, t: bool = true, u: u8 = 200,
     if (p == 0) { r = r + 1000000; }
     return r + load8(cs) - 97 + load8(s) - 104;
 }
+fn f32bits(a, y: f32 = 0.1): i64 { return load32(&y) & 0xFFFFFFFF; }
+fn lo32(p): i64 { return load32(p) & 0xFFFFFFFF; }
 fn lt_dflt(a, b = A < B, c = 4): i64 { return a * 100 + b * 10 + c; }
 const fn cf(a, b = sq2(1, 2), c = 3): i64 { return a * 100 + b * 10 + c; }
+# A const and an enum constant declared BELOW the fn (the end of pass 1 evaluates every default).
+fn late(a, b = LATE_K, c = LateE.LC): i64 { return a * 100 + b * 10 + c; }
 
 # A default holding `<` in a bounded generic and an inherent impl (each walker skips it whole).
 trait Show { fn show(self): i64; }
 impl Show for Pt { fn show(self): i64 { return self.x; } }
 impl Pt { fn m(self, k = A < B, j = 3): i64 { return self.x * 100 + k * 10 + j; } }
+impl Pt { fn md(self, d: f64 = 1.5): i64 { return 21; } }
 fn gen<T: Show>(v: T, b = A < B, c = 4): i64 { return v.show() * 100 + b * 10 + c; }
+fn gen_tail(p: Pt): i64 { return gen(p); }
 
-# A struct-returning callee with a default.
+# Struct-returning callees with a default: a >16 B one (retptr) and a 9-16 B one (rax:rdx — not
+# on cx, which has no register-pair struct return; the gate's cx leg counts without its row).
 fn mk(a, b = 7): Big { var r: Big = Big { a, b, a + b }; return r; }
+#ifndef CYRIUS_TARGET_CX
+fn mk2(a, b = 4): P2 { var r: P2 = P2 { a, b }; return r; }
+fn pair_ret(): i64 {
+    var q: P2 = mk2(5);
+    assert_eq(q.x * 10 + q.y, 54, "A14: a 9-16 B struct-returning callee, filled");
+    return 0;
+}
+#endif
+# A 16-byte vector return (Win64: a retptr) with a default.
+fn vmk(a, b = 2): f64v2 { return f64v2(f64_from(a), f64_from(b)); }
 
-# Const contexts: a const fn with a default holding a comma, at full arity.
+# Const contexts: a const fn with a default holding a comma, at full arity and filled.
 const CN = cf(1, 2, 3);
+const CN1 = cf(1);
 var CARR: i64[cf(0, 0, 4)];
+var CARR1: i64[cf(0, 0)];
 #assert cf(2, 1, 5) == 215, "a const fn with defaults in #assert"
+#assert cf(2) == 223, "a const fn call filled from its defaults in #assert"
 enum EV { EV0 = cf(0, 1, 2), EV1 }
+enum EW { EW0 = cf(0), EW1 }
 
-# Tail position: a full-arity `return f(..)` to a defaulted fn.
+# Tail position: a full-arity `return f(..)` to a defaulted fn keeps its `jmp` (1,000,000 deep);
+# a `return f(..)` that fills is an ordinary call.
 fn down(n, acc = 0): i64 {
     if (n == 0) { return acc; }
     return down(n - 1, acc + 2);
 }
+fn tail_fill(): i64 { return w3(4); }
+# A closure passed to a defaulted fn in tail position: its `|a, b|` comma separates nothing, so the
+# call fills `n` (counted as two arguments, it would jump with `n` unset).
+fn ap(c, n = 5): i64 { return fncall2(c, n, 2); }
+fn tail_closure(): i64 { return ap(|a, b| a + b); }
+
+#inline
+fn add2(a, b): i64 { return a + b; }
 
 fn direct(): i64 {
     assert_eq(w3(1, 5, 7), 157, "P1: every argument passed to a defaulted fn");
@@ -79,6 +116,38 @@ fn direct(): i64 {
     return 0;
 }
 
+# ── calls that fill ──────────────────────────────────────────────────────────────────────────
+fn filled(): i64 {
+    assert_eq(w3(1), 123, "A1: f(1) fills b and c");
+    assert_eq(w3(1, 5), 153, "A1: f(1, 5) fills c");
+    assert_eq(consts(1), 2036889, "A2/A3: const, enum, sizeof, const fn and negative defaults filled");
+    assert_eq(late(1), 162, "A4: a const and an enum constant declared after the fn");
+    assert_eq(lt_dflt(1), 114, "A4: a default holding `<`, filled");
+    assert_eq(typed(), 1103202, "A10: f64 / f32 / bool / u8 / *u8 / cstring / string defaults filled");
+    assert_eq(typed(2.5), 1105202, "A10: ... the first given, the rest filled");
+    var t: f32 = 0.1;
+    assert_eq(f32bits(1), lo32(&t), "A10: an f32 default rounds as `var t: f32 = 0.1` does");
+    assert_eq(f32bits(1), 0x3DCCCCCD, "A10: ... to 0.1's f32 bits");
+    var p = Pt { 6, 1 };
+    assert_eq(p.m(), 613, "A11: p.m() fills k and j");
+    assert_eq(p.m(0), 603, "A11: p.m(0) fills j");
+    assert_eq(Pt_m(&p), 613, "A11: Pt_m(&p) fills k and j");
+    assert_eq(p.md() * 2, 42, "L1: a filled f64 default leaves the method call's result an i64");
+    assert_eq(gen(p), 614, "G0: a generic instance fills from its base's defaults");
+    assert_eq(gen_tail(p), 614, "G0: ... in tail position");
+    assert_eq(tail_fill(), 423, "A13: return w3(4) fills (an ordinary call, not a jmp)");
+    assert_eq(tail_closure(), 7, "A24: return ap(|a, b| a + b) fills n");
+    var b: Big = mk(3);
+    assert_eq(b.a * 100 + b.b * 10 + b.c, 380, "A14: a >16 B struct-returning callee, filled");
+    var v: f64v2 = vmk(1);
+    assert_eq(f64_to(f64v2_lo(&v)) * 10 + f64_to(f64v2_hi(&v)), 12, "A22: var v: f64v2 = vmk(1)");
+    v = vmk(5);
+    assert_eq(f64_to(f64v2_lo(&v)) * 10 + f64_to(f64v2_hi(&v)), 52, "A22: v = vmk(5)");
+    assert_eq(down(1000000), 2000000, "A23: a filled call, then 1,000,000 full-arity tail calls");
+    assert_eq(add2(3, 4) + w3(0), 30, "A17: an #inline fn and a defaulted fn side by side");
+    return 0;
+}
+
 fn consts_ctx(): i64 {
     assert_eq(CN, 123, "C1: const N = cf(..) (a default holding a comma)");
     CARR[3] = 5;
@@ -88,6 +157,16 @@ fn consts_ctx(): i64 {
     switch (215) { case cf(2, 1, 5): s = 1; default: s = 2; }
     assert_eq(s, 1, "C4: a case label from a const fn with defaults");
     assert_eq(cf(4, 5, 6), 456, "C5: a const fn with defaults, called at run time");
+    assert_eq(CN1, 123, "A16: const N = cf(1) fills from the defaults");
+    CARR1[2] = 7;
+    assert_eq(CARR1[2], 7, "A16: an array sized by a filled const fn call (3)");
+    assert_eq(EW0, 23, "A16: an enum value from a filled const fn call");
+    s = 0;
+    switch (223) { case cf(2): s = 1; default: s = 2; }
+    assert_eq(s, 1, "A16: a case label from a filled const fn call");
+    const LCF = cf(7);
+    assert_eq(LCF, 723, "A16: a local const from a filled const fn call");
+    assert_eq(cf(4), 423, "A16: a const fn filled at run time");
     return 0;
 }
 
@@ -98,6 +177,10 @@ fn forward(): i64 {
     assert_eq(f64_to(r), 8, "F1: a forward call to fn fwd_f(a, b = 1): f64, in f64 arithmetic");
     assert_eq(fwd_w(1, 2, 3), 123, "F2: a forward call to a defaulted fn");
     assert_eq(blk_g(5, 6), 56, "F3: a forward call to a defaulted fn inside a top-level block");
+    var r2: f64 = fwd_f(3) * 2.0;
+    assert_eq(f64_to(r2), 8, "A5: a forward call that fills, in f64 arithmetic");
+    assert_eq(fwd_w(1), 189, "A5: a forward call that fills b and c");
+    assert_eq(blk_g(5), 51, "A5: a forward call that fills, to a fn inside a top-level block");
     return 0;
 }
 fn fwd_f(a, b = 1): f64 { return f64_from(a + b); }
@@ -106,10 +189,16 @@ fn fwd_w(a, b = 8, c = 9): i64 { return a * 100 + b * 10 + c; }
 fn run(): i64 {
     alloc_init();
     direct();
+    filled();
+    #ifndef CYRIUS_TARGET_CX
+    pair_ret();
+    #endif
     consts_ctx();
     forward();
     return 0;
 }
+const LATE_K = 6;
+enum LateE { LA, LB, LC }
 var r0 = run();
 if (1 == 1) {
     fn blk_g(a, b = 1): i64 { return a * 10 + b; }

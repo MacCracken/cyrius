@@ -759,6 +759,7 @@ fn _PINDIRECT_CALL_IN(S): i64 {
             ERR_MSG(S, "fncallN argument count does not match the N in its name", 55);
         }
     }
+    _pd_icall_short(S, cfi, cp_argc, cst);   # 6.7.7 (B6): C15 — defaults fill only a direct call
     # The env rides in an argument REGISTER or not at all. Under SysV the caller
     # places stack arguments anchored on the LAST one (ECALLPOPS puts a_n at
     # [rsp+0]) and the callee reads them back the same way (ESTORESTACKPARM's
@@ -5873,8 +5874,10 @@ fn EMIT_OP_DISPATCH(S, stype, op_str, op_len, beg): i64 {
     # happened to be in the third argument register: `a + b` compiled clean and computed with
     # garbage. Every OTHER call position has had a hard arity error since v6.5.1 (`_CHECK_ARITY`)
     # — this one was simply never wired to it. The line is the LHS's first token, not the cursor,
-    # which by here has walked past the whole expression. CHANGELOG [6.6.6]
-    _CHECK_ARITY(S, GTLINE(S, beg), opnoff, ofi, 2, 1);
+    # which by here has walked past the whole expression. Mode 4: an operator fn that declares a
+    # parameter default is refused (it is passed exactly two operands, never filled; 6.7.7).
+    # CHANGELOG [6.6.6] [6.7.7]
+    _CHECK_ARITY(S, GTLINE(S, beg), opnoff, ofi, 2, 4);
     var ofoff = L64(_fnt_offsets + ofi * 8);
     if (ofoff >= 0) { ECALLTO(S, ofoff); }
     else { ECALLFIX(S, ofi); }
@@ -5921,8 +5924,8 @@ fn _EMIT_OP_DISPATCH_AGG(S, stype, op_str, op_len, beg): i64 {
     _sc_x8(S, ofi, t);
     _callee_site_checks(S, ofi, opnoff, opti);
     # 6.6.6 — same arity check as the scalar dispatch above. The retptr/X8 the struct-returning
-    # form adds is NOT a declared parameter, so the expected count is still exactly 2.
-    _CHECK_ARITY(S, GTLINE(S, beg), opnoff, ofi, 2, 1);
+    # form adds is NOT a declared parameter, so the expected count is still exactly 2 (mode 4).
+    _CHECK_ARITY(S, GTLINE(S, beg), opnoff, ofi, 2, 4);
     var ofoff = L64(_fnt_offsets + ofi * 8);
     if (ofoff >= 0) { ECALLTO(S, ofoff); }
     else { ECALLFIX(S, ofi); }

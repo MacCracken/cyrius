@@ -692,6 +692,10 @@ fn _tc_callee_divert(S, cfi): i64 {
 }
 # What the ARGUMENT LIST needs. The scan runs to the call's matching `)`.
 fn _tc_args_divert(S, cfi, ti_after): i64 {
+    # 6.7.7 (B6) — a call that fills a parameter default or names an argument is PARSE_FNCALL's: the
+    # one marshaller is the only site that fills (the tail arm's `_CHECK_ARITY` mode 3 makes a miss
+    # here loud). A full-arity positional call to a defaulted fn keeps its `jmp`. CHANGELOG [6.7.7]
+    if (_pd_call_fills(S, cfi, ti_after) == 1) { return 1; }
     var has_lit = 0;
     var depth = 1;
     var i = ti_after + 1;
@@ -984,7 +988,7 @@ fn PARSE_RETURN(S): i64 {
                             # (`return f(args);`). Mutually exclusive with
                             # PARSE_FNCALL (no double-fire); the most common call
                             # form, so covering it closes the bulk of the hole.
-                            _CHECK_ARITY(S, _tc_line, tcnoff, tcfi, tcargc, 1);
+                            _CHECK_ARITY(S, _tc_line, tcnoff, tcfi, tcargc, 3);
                             # ⛔ 6.6.5 — this said `tcargc > 6`, the SysV register ceiling, on
                             # every target. On Win64 the ceiling is 4, so `return f5(...)` and
                             # `return f6(...)` took the TAIL-CALL branch: ETAILJMP's `mov rsp,rbp`
@@ -1404,34 +1408,31 @@ fn _TYPE_CHECK_ENABLED(): i64 {
 # from `_str` / `_int` / `_cstr` suffixes on sibling fns.
 # See `_OVERLOAD_SUFFIX` + REGFN's auto-register block.
 
-# v6.2.41 — shared call-site arity check (issue 2026-06-23-call-arity-no-check).
-# cyrius has no overloading and no default args, so a positional arg-count
-# mismatch is never intentional — the canonical free catch a compiler owes, and
-# the worst footgun in a no-bounds-checking language (a stale call binds garbage
-# / shifts args; tentib M3c shipped a mis-bound kernel that built `OK`). Emitted
-# as a non-fatal WARNING (hard-error / --strict-arity escalation is a separate
-# later scope). Shared by all three call-emit paths — PARSE_FNCALL's normal +
-# inline-replay paths and the `return f(args);` tail-call path — so the
-# diagnostic is uniform and covers the common call forms. Carve-outs:
-#   - BACKWARD refs only (offset >= 0): a forward-declared callee has offset -1
-#     and pc not yet known → checking would 556-false-positive building main.cyr.
-#   - VARIADICS `fn f(a, ...)` (GFVA==1) take a flexible tail.
-#   - `syscall` never reaches here (own path); fncallN are fixed-arity.
-#   - Variant constructors register their real arity (parse_types.cyr), so they
-#     validate here rather than needing an exemption.
-# NOT yet covered (documented gap for the hard-error escalation): struct-return-
-# by-value assignment (hidden retptr arg0) and `return (a, b)` multi-return.
-# `need_off`: 1 = require the backward-ref offset gate (normal + tail-call paths,
-# where a forward-ref callee has offset -1 and pc=0 → must skip). 0 = skip the
-# gate (inline-replay path: the callee is provably backward — inlining requires
-# its body — and pc is reliable there; the gate would otherwise wrongly skip an
-# inlined-only fn that was DCE'd to no standalone body, e.g. a small backend
-# helper, which still has offset -1 despite being defined).
+# ⭐ THE CALL-SITE ARITY CHECK (v6.2.41; an error since v6.5.1), shared by every call path — the one
+# marshaller (PARSE_FNCALL, the method form, the struct-valued receives), the inline replay, the
+# tail arm and the operator dispatches — so the diagnostic is one. A count mismatch is never
+# intentional: there is no overloading by arity. The count must lie in min..max: max is the
+# parameter count, min the first defaulted parameter's index (6.7.7; a fn without defaults has
+# min = max, and the message is the v6.5.1 text, byte for byte).
+# ⛔ 6.7.7 (fork F2, user 2026-10-09) — EVERY CALL TO A FN PASS 1 RECORDED IS CHECKED, A FORWARD ONE
+# INCLUDED. The check used to skip any callee whose body was not yet emitted (offset -1: "pc not
+# yet known"), so `g(1, 2)` to a `fn g(a)` defined further down built and dropped the 2 — on every
+# path (plain, too few, a method, a tail call, a fn inside a top-level block). But pass 1 records
+# every definition's parameter count (v6.3.5) and stamps its GFDS (6.6.5) before pass 2 parses any
+# call; a name no definition registered (REGFN at the call, GFDS 0) keeps the skip and ends in the
+# undefined-function diagnostic. VARIADICS (GFVA) take any tail; `syscall` has its own path.
+# `need_off` names the path: 0 = the inline replay (its callee always has a body), 1 = a direct
+# call (the marshaller fills a short call's defaults after this check), 3 = the tail arm (it never
+# fills: `_tc_args_divert` sends such a call to PARSE_FNCALL), 4 = an operator dispatch (exactly two
+# operands; an operator fn takes no default, D19) — `_pd_arity_mode`.
+# CHANGELOG [6.2.41] [6.5.1] [6.7.7]
 fn _CHECK_ARITY(S, line, noff, fi, argc, need_off): i64 {
-    if (need_off == 1) { if (L64(_fnt_offsets + fi * 8) < 0) { return 0; } }
+    if (need_off != 0) { if (L64(_fnt_offsets + fi * 8) < 0) { if (GFDS(S, fi) == 0) { return 0; } } }
     if (GFVA(S, fi) != 0) { return 0; }
     var pc = L64(_fnt_params + fi * 8);
-    if (argc == pc) { return 0; }
+    if (_pd_row(fi) != 0) { if (_pd_arity_mode(S, line, noff, fi, argc, need_off) == 1) { return 0; } }
+    var mn = _pd_min(fi);
+    if (argc >= mn) { if (argc <= pc) { return 0; } }
     # v6.5.1 — ERROR, not warning. A call with the wrong argument count cannot
     # produce correct code: the surplus parameter is bound to whatever happens to
     # be in the register or stack slot. This was a *warning* for its entire life and
@@ -1448,9 +1449,10 @@ fn _CHECK_ARITY(S, line, noff, fi, argc, need_off): i64 {
     syscall(SYS_WRITE, 2, ": '", 3);
     PRSTR(S + 0xEC00000 + noff);
     syscall(SYS_WRITE, 2, "' expects ", 10);
+    if (mn != pc) { PRNUM(mn); syscall(SYS_WRITE, 2, " to ", 4); }   # 6.7.7: "1 to 3 arguments"
     PRNUM(pc);
     syscall(SYS_WRITE, 2, " argument", 9);
-    if (pc != 1) { syscall(SYS_WRITE, 2, "s", 1); }
+    if (pc != 1 || mn != pc) { syscall(SYS_WRITE, 2, "s", 1); }
     syscall(SYS_WRITE, 2, ", got ", 6);
     PRNUM(argc);
     syscall(SYS_WRITE, 2, "\n", 1);
@@ -2867,6 +2869,128 @@ fn _pd_d9(S, fi, en, c): i64 {
     return 0;
 }
 
+# ── the call site: min..max, and a short call's defaults ──────────────────────────────────────
+# A call is checked against min..max (`_CHECK_ARITY`). A direct call short of max takes the
+# missing trailing parameters' defaults, pushed after its written arguments in parameter order —
+# each emitted exactly as its literal would be (`_cst_emit_val`; into an f32 parameter it rounds,
+# as every f32 write does since 6.7.6) — so ECALLPOPS sees one int-class word per parameter on
+# every target. A default is never a vector, a struct or a Str (`_pd_kind_ok`), so the vector
+# second pass and the address pushes are untouched. Only the one marshaller fills
+# (`_owncall_args_at`: PARSE_FNCALL, the method form, the struct-valued receives, the PE
+# vector-retptr calls); the tail arm never sees such a call (`_tc_args_divert`, with
+# `_CHECK_ARITY` mode 3 as the backstop) and an operator passes exactly two operands (D19).
+# A const context fills from the same values (`_ce_fill`). CHANGELOG [6.7.7]
+# min: the first defaulted parameter's index (max with no row, or a refused one).
+fn _pd_min(fi): i64 {
+    var row = _pd_row(fi);
+    if (row != 0) { return L64(row + 8); }
+    return L64(_fnt_params + fi * 8);
+}
+# After a direct call's written arguments (`p` of them, `self` counted; `st` the marshaller's
+# state): the defaults of parameters p .. max - 1, when p is in range. The expression type is
+# reset after a push: `_cst_emit_val` leaves an f64 default's, and the method form has no reset of
+# its own (`p.m() * 2` with `d: f64 = 1.5` read the call's result as an f64).
+fn _pd_fill(S, fi, p, st): i64 {
+    var row = _pd_row(fi);
+    if (row == 0) { return 0; }
+    if (p < L64(row + 8)) { return 0; }   # short of the required ones: the arity error
+    var max = L64(row);
+    if (p >= max) { return 0; }
+    while (p < max) {
+        _pd_push_default(S, fi, p, st);
+        p = p + 1;
+    }
+    SESTYPE(S, 0);
+    return 0;
+}
+fn _pd_push_default(S, fi, pi, st): i64 {
+    var en = _pd_value(S, fi, pi);
+    if (en == 0) { EMOVI(S, 0); }   # refused, and reported at the default: the count stays right
+    else {
+        _cst_emit_val(S, L64(en + 24), L64(en + 32), L64(en + 40));
+        if (L64(en + 24) == 1) { if (_pbool_get(fi, pi) == 3) { _f32_init_round(S, F32_TYID); } }
+    }
+    EPUSHR(S);
+    store64(st, load64(st) + 1);
+    return 0;
+}
+# 1 when the call whose `(` is token `open` fills a default or names an argument: the call the
+# tail arm must not take (`_tc_args_divert`). Its written arguments are counted by `_arg_next`,
+# which steps over a closure's `|a, b|` bars — counted as two arguments, `return ap(|a, b| ..)`
+# to `fn ap(c, n = 5)` would look full and jump with `n` unset.
+fn _pd_call_fills(S, fi, open): i64 {
+    if (_pd_named_at(S, open) == 1) { return 1; }
+    var row = _pd_row(fi);
+    if (row == 0) { return 0; }
+    var n = 0;
+    var q = open + 1;
+    if (TOKTYP(S, q) != 11) {
+        var go = 1;
+        while (go == 1) {
+            n = n + 1;
+            q = _arg_next(S, q);
+            if (TOKTYP(S, q) == 31) { q = q + 1; } else { go = 0; }
+        }
+    }
+    if (n < L64(row)) { return 1; }
+    return 0;
+}
+# `_CHECK_ARITY` for a callee that declares defaults, modes 3 and 4 (1 = reported). Mode 3, the
+# tail arm, short of max but in range: `_tc_args_divert` missed a call that fills — an internal
+# error, never a `jmp` with a parameter unset. Mode 4, an operator dispatch: D19.
+fn _pd_arity_mode(S, line, noff, fi, argc, mode): i64 {
+    if (mode == 4) {
+        return _pd_line_err(S, line, "operator fn ", noff, " declares a parameter default: an operator passes exactly its two operands");
+    }
+    if (mode != 3) { return 0; }
+    if (argc < _pd_min(fi)) { return 0; }
+    if (argc >= L64(_fnt_params + fi * 8)) { return 0; }
+    return _pd_line_err(S, line, "internal: tail call to ", noff, " reached the tail arm short of its defaults");
+}
+# "error:<file>:<line>: <a>'<name>'<b>", the arity check's form. Returns 1.
+fn _pd_line_err(S, line, a, noff, b): i64 {
+    syscall(SYS_WRITE, 2, "error:", 6);
+    FM_LOOKUP(S, line);
+    PRSTR(": ");
+    PRSTR(a);
+    _pd_q(S, noff);
+    PRSTR(b);
+    syscall(SYS_WRITE, 2, "\n", 1);
+    _had_error = 1;
+    return 1;
+}
+# C15 (`_PINDIRECT_CALL_IN`, after `)`): `fncallN(&f, ..)` / `callptr(&f, ..)` passing fewer than
+# f's parameters when f declares defaults. A call through a fn pointer passes every argument — the
+# callee cannot know it was called short. Reported at the `&` (token `ti`).
+fn _pd_icall_short(S, cfi, argc, ti): i64 {
+    var row = _pd_row(cfi);
+    if (row == 0) { return 0; }
+    if (argc >= L64(row)) { return 0; }
+    if (_pd_eo(S, ti) == 0) { return 0; }
+    PRSTR("a call through a fn pointer passes every argument: ");
+    _pd_q(S, _bx_fname(S, cfi));
+    PRSTR(" takes ");
+    PRNUM(L64(row));
+    PRSTR(" (defaults fill only direct calls)");
+    return _pd_ec(S, ti);
+}
+# A const fn call (`_ce_call`, `n` arguments on the frame stack) short of its parameters: the
+# defaults pushed after them, as the callee's parameters bind them (the values the end of pass 1
+# computes — or computes now, for a const context forced earlier in pass 1). The count it leaves;
+# a call short of the required ones stays short (`_ce_bind_params` refuses it).
+fn _ce_fill(S, fi, n): i64 {
+    var row = _pd_row(fi);
+    if (row == 0) { return n; }
+    if (n < L64(row + 8)) { return n; }
+    while (n < L64(row)) {
+        var en = _pd_value(S, fi, n);
+        if (en == 0) { _ce_err = 1; return n; }   # refused, and reported at the default
+        _ce_fr_push(S, 0 - 1, L64(en + 32), L64(en + 24), 8);
+        n = n + 1;
+    }
+    return n;
+}
+
 # 1 when the name at offset `noff` is exactly the `n`-byte text `lit`. (cycc does not include
 # lib/string.cyr, so this is the compare.)
 fn _noff_is(S, noff, lit, n): i64 {
@@ -3404,6 +3528,7 @@ fn _owncall_args_at(S, fi, noff, int0, p0, line): i64 {
     if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
     STI(S, GTI(S) + 1);                         # consume ')'
     _CHECK_ARITY(S, line, noff, fi, uarg, 1);   # `uarg` counts `self`, as `_fnt_params` does
+    _pd_fill(S, fi, uarg, &st);                 # 6.7.7 (B6): a short call's parameter defaults
     var n = load64(&st);
     ECALLPOPS(S, n);   # int-class args only: a vector was recorded, not pushed
     _simd_arg_second_pass(S, &tbl, load64(&st + 8));   # after ECALLPOPS: int args cannot clobber XMM/V
@@ -4755,13 +4880,15 @@ fn _CALL_ARGC_PEEK(S): i64 {
 # drift. Deliberately permissive in the two cases where the param count is not
 # yet knowable, which preserves pre-6.5.1 behaviour rather than silently dropping
 # a legitimate redirect:
-#   - target not yet DEFINED (offset < 0): its param count is still 0 from REGFN.
-#     Same exemption `_CHECK_ARITY` makes via its `need_off` gate.
+#   - target not yet DEFINED (offset < 0): routed as before 6.5.1. (`_CHECK_ARITY` checks
+#     the routed call since 6.7.7, against pass 1's count.)
 #   - target is VARIADIC: arity is unconstrained by construction.
+# 6.7.7: the count is the target's min..max (a sibling that declares defaults fills the rest).
 fn _OV_ARITY_OK(S, fi, argc): i64 {
     if (L64(_fnt_offsets + fi * 8) < 0) { return 1; }
     if (GFVA(S, fi) != 0) { return 1; }
-    if (L64(_fnt_params + fi * 8) == argc) { return 1; }
+    if (argc > L64(_fnt_params + fi * 8)) { return 0; }
+    if (argc >= _pd_min(fi)) { return 1; }
     return 0;
 }
 
@@ -6855,6 +6982,8 @@ fn _ce_call(S, noff): i64 {
     _ce_expect(S, 11);
     if (_ce_err == 1) { _ce_sp = base; return 0; }
     if (_ce_skip > 0) { _ce_sp = base; _ce_k = _ce_retkind(S, fi); return 0; }
+    n = _ce_fill(S, fi, n);   # 6.7.7 (B6): a short call's parameter defaults
+    if (_ce_err == 1) { _ce_sp = base; return 0; }
     return _ce_invoke(S, fi, base, n);
 }
 fn _ce_invoke(S, fi, base, n): i64 {

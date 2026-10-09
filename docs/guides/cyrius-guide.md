@@ -377,13 +377,20 @@ var r = add(20, 22);   # r = 42
   SIGSEGV). A local function is a closure: `var sq = |x| x * x;`.
 - All functions return a value (`return 0;` if nothing to return)
 - **Calling with the wrong number of arguments is a hard error** (v6.5.1; there is no
-  overloading and no default arguments, so a count mismatch is never intentional). Since
-  **6.6.5** that applies to the `obj.m(...)` method form as well — it used to build and bind
+  overloading by arity, so a count mismatch is never intentional). The count must lie between
+  the fn's required parameters and all of them: a fn that declares parameter defaults
+  (`fn f(a, b = 2, c = 3)`, **6.7.7**) takes 1 to 3 arguments and a direct call fills the rest
+  from the defaults (`'f' expects 1 to 3 arguments, got 4`); any other fn takes exactly its count.
+  Since **6.6.5** that applies to the `obj.m(...)` method form as well — it used to build and bind
   the surplus parameter to whatever was in the register. ⚠ One consequence: an `impl` method
   written with **no `self` parameter** can no longer be called through the dot form, because
   the dot form supplies a receiver the method never declared. Call it by its mangled name
   (`Type_method(args)`), which is how the constructor idiom `fn new(a, b)` inside an `impl` is
-  written anyway. Forward calls are exempt from the check — the callee has no body yet.
+  written anyway. Since **6.7.7** a **forward call is checked too** — a call to a fn defined
+  further down, in a later include or inside a later top-level block, on every call path (a
+  plain call, a method, `return f(..)`, an operator): pass 1 records every definition's
+  parameter count before any call is compiled. Before 6.7.7 such a call built with a surplus
+  argument dropped or a missing one unbound.
 - **`x.m()` passes `self` exactly as `T_m(x)` would.** An untyped `self` in an `impl` is a `*T`
   (since **6.7.0**): `self.x` reads and writes the receiver's fields, `T_m(x)` / `T_m(&x)` / `x.m()`
   agree, and arithmetic on it (`self + 8`, `self[i]`, `self += n`) is refused — read fields with

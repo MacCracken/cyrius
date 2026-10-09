@@ -6,11 +6,6 @@
 # (main_aarch64_macho.cyr). Each is live in another fork that compiles the same file (IR
 # passes only the x86 backend drives, PE- or Mach-O-only emitters, ...) — except TS_PEEKLINE,
 # which tests/tcyr/frontend/ts_lex_combined.tcyr calls.
-# ⚠ 6.7.7 B6 — TRANSIENT, in every fork: _arg_next, _pd_label_at, _pd_named_at are the argument
-# walkers bite 1b writes ahead of their callers (bite 3's `_pd_call_fills`, bite 4's named-argument
-# veto; bite 2's definition record took _pl_next, _pl_tdepth and _pl_has_dflt live). Each line
-# FAILS this gate the moment its fn goes live, so the bite that calls it deletes it; none may
-# survive the B6 lane.
 EADD_RSP_IMM8 win x86m
 EALIGN_RSP_16 win
 EMITMACHO_EXEC a64 a64m
@@ -40,7 +35,6 @@ TS_PEEKLINE x86
 _EMIT_GVAR_STATIC_INITS cx
 _IR_REC a64 a64m a64n cx
 _IR_REC1 a64 a64m a64n cx
-_arg_next a64 a64m a64n cx win x86 x86m
 _check_cyml_pin_drift a64m win x86m
 _codebuf_grow cx
 _dce_drift_check a64 a64m a64n
@@ -69,8 +63,6 @@ _ir_uses_rax a64 a64m a64n cx win x86m
 _ir_uses_rcx a64 a64m a64n cx win x86m
 _ir_write_emovi_at a64 a64m a64n cx win x86m
 _parse_hex_env a64m win x86m
-_pd_label_at a64 a64m a64n cx win x86 x86m
-_pd_named_at a64 a64m a64n cx win x86 x86m
 _prof_clock_ns a64 a64m a64n win x86m
 _prov_kill a64 a64m a64n cx
 _prov_read a64 a64m a64n cx
