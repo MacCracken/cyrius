@@ -739,6 +739,12 @@ CHANGELOG [6.6.17] *Downstream* (no ecosystem sweep).
     multi-value path and the caller reads garbage over 16 bytes (`x3.cyr`, `x4.cyr`); `return mk2(1) == p;` in a 9-16 B
     struct fn passes the leading-call check and leaves the second register unwritten (closing it refuses code that
     compiles today — the user's call); a write to a captured NAME inside a closure says "undefined variable".
+  - **Left by the 6.7.6 review fixes (lanes FE / CL):** a call through a variable / closure returning f64 gives an
+    untyped word (the return type cannot be known; 6.7.5 typed it f64 by the struct-type-leak accident) — documented in
+    the guide; on Windows an absolute in-project path counts as outside the project for `test.cyml` (getcwd is not
+    routed on PE); a symlinked working directory spelled with the logical `$PWD` does not match the physical one;
+    `_process_named_deps` reports one error per manifest walk whatever it refuses ("1 errors" for two); `cyrius lib
+    sync --dry-run` prints `would sync: <integer>` instead of names (`cbt/commands.cyr` ~1796).
   - **cybs compiles a call to an UNDEFINED function in statement position silently** (`nosuch(1);`, and `gp(1,2,3,4);` as
     a statement) and the program segfaults (139); the expression form errors (lane BX). Refusing an unresolved call
     needs a check that gen1 carries no unresolved fixups and probably new labels (cybs has 11 free) — the trusted
