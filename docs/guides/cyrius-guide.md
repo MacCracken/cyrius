@@ -380,7 +380,8 @@ var r = add(20, 22);   # r = 42
   overloading by arity, so a count mismatch is never intentional). The count must lie between
   the fn's required parameters and all of them: a fn that declares parameter defaults
   (`fn f(a, b = 2, c = 3)`, **6.7.7**) takes 1 to 3 arguments and a direct call fills the rest
-  from the defaults (`'f' expects 1 to 3 arguments, got 4`); any other fn takes exactly its count.
+  from the defaults (`'f' expects 1 to 3 arguments, got 4`; see *Default and named arguments*
+  below); any other fn takes exactly its count.
   Since **6.6.5** that applies to the `obj.m(...)` method form as well — it used to build and bind
   the surplus parameter to whatever was in the register. ⚠ One consequence: an `impl` method
   written with **no `self` parameter** can no longer be called through the dot form, because
@@ -463,6 +464,148 @@ declared the intrinsic's name — before 6.6.20 `mulh64(..)` ran the intrinsic i
 constructing, and `fncall1(5, 6)` faulted. A UNIT variant (`mulh64 = 77;`) declares no fn and
 is accepted, but must be read qualified (`E.mulh64`): the bare name parses as the intrinsic, so
 `#derive(Serialize)` on that enum fails too.
+
+### Default and named arguments (6.7.7)
+
+A trailing parameter may declare a **default**, and a direct call may **name** its arguments
+(user decision, 2026-10-08):
+
+```
+const LEVEL = 3;
+const fn twice(n): i64 { return n * 2; }
+
+fn tag(a, b = 2, c = twice(LEVEL)): i64 { return a * 100 + b * 10 + c; }
+
+var t1 = tag(1);                  # 126 — b and c from their defaults
+var t2 = tag(1, 5);               # 156
+var t3 = tag(1, 5, 7);            # 157
+var t4 = tag(1, c: 0);            # 120 — b from its default, c by name
+var t5 = tag(c: 9, a: 4, b: 5);   # 459 — any order: placed as tag(4, 5, 9)
+```
+
+**Defaults**
+
+- **A default is a compile-time constant**: whatever a top-level `const X = …;` takes — a
+  literal, a `const`, an enum constant, `sizeof(T)`, a `const fn` call, arithmetic on them
+  (see *Constants and `const fn`*) — except a block or an if-expression (declare a const and
+  name it). Defaults are **trailing**: every parameter after the first default has one.
+- **It is evaluated once, at its definition**: at the end of pass 1, in the top-level scope of
+  the file that defines the fn, whether or not anything calls it. A caller's locals never reach
+  it (a local `const K` in the caller does not change `b = K`); a const or an enum declared
+  further down is fine; a `private` const or `const fn` of the defining file resolves even when
+  the call is in another file. A default that names a parameter or type parameter of its own fn
+  (`fn g(a, b = a * 2)`) is refused, even when a global of that name exists.
+- **The parameter's type decides what its default may be:**
+
+  | Parameter | Its default may be |
+  |---|---|
+  | untyped | an integer, a bool, or a string (its literal's address, as a positional `"…"` passes) |
+  | `i8` … `i64`, `u8` … `u64`, an enum type | an integer in the type's range, or a bool |
+  | `bool` | a bool |
+  | `f64`, `f32` | a float; an integer only as `0` or an IEEE bit pattern (write `1.0`, not `1`). Into an `f32` it rounds, as every f32 write does |
+  | `cstring` | a string, or `0` |
+  | `*T` | an integer (`p: *u8 = 0`) |
+  | `Str`, a struct, a vector, `u128`, `Result` / `Option` / a tagged enum, a tuple, a type parameter, `self` | nothing: these take no default |
+
+  A float default on an untyped parameter is refused: untyped, a float is only its bits
+  (ADR-002), so declare the parameter `: f64` or `: f32`. A `Str` takes none because its
+  literal is wrapped (a heap allocation) at every call, which is not a constant.
+- **A short call fills from the right.** A direct call passes anywhere from the required
+  parameters to all of them (`'tag' expects 1 to 3 arguments, got 4`). The missing trailing ones
+  are pushed after the written arguments, in parameter order, each exactly as its literal would
+  be, so the callee cannot tell a filled argument from a written one. Pass 1 records every
+  definition's defaults before any call is compiled, so a call to a fn defined further down, in
+  a later include or inside a later top-level block fills like any other. A generic fn's
+  instances fill from their base's defaults; an `async fn` fills at its constructor.
+
+**Named arguments**
+
+- **`f(1, c: 3)`**: after the positional arguments, `name: value` pairs in any order, each
+  parameter at most once. A parameter given neither way takes its default; a required one left
+  out is refused (`missing argument for parameter 'b' of 'g' (it has no default)`), and so is a
+  positional argument after a named one.
+- **Evaluated as written, placed in parameter order.** In `w(c: h(), a: k())`, `h()` runs before
+  `k()`, and `w` still receives `a` first. A call whose names follow parameter order costs
+  nothing extra; an out-of-order call evaluates each argument into a hidden temporary (a frame
+  slot in a fn, a hidden global at top level) and then passes them in parameter order.
+- **A named argument meets its parameter's rules** exactly as a positional one does: the
+  `: cstring` literal check, the bool check, a `: Str` literal's wrap, a struct passed by value,
+  an `f32`'s rounding, a vector in its parameter's register. A generic infers `T` through a
+  name: `gid(n: 2, x: p)` instantiates the same `gid` as `gid(p, 2)`.
+- **Names go to a direct call of a declared fn**: `f(..)`, `o.m(..)` and `T_m(..)`, a
+  struct-returning call, a generic, a fn defined later, an `async fn`, and the `const fn` calls
+  of a const context. In the dot form `self` is the receiver and cannot be named; in
+  `T_m(self: &p, k: 1)` it is an ordinary parameter.
+- **Refused, by name:** a name through `fncallN` / `callptr` (they pass by position); a name to
+  a builtin (`syscall(n: 60, 3)` keeps its two errors and adds a note saying so); to a variadic
+  fn; to a fn defined twice; to a variant constructor (`Ok(v: 1)`: no declared parameter list);
+  to a fn with a `_str` / `_int` / `_ptr` overload sibling (a named call is never routed: call the
+  one you mean); and a reordered call inside a `#naked` fn, which has no frame for the
+  temporaries.
+
+**With the rest of the language**
+
+- **Arity** is checked as min..max (the bullet above). Overloading by arity stays out: a count
+  mismatch is never intentional.
+- **A call through a fn pointer passes every argument.** `fncallN` and `callptr` pass exactly
+  what they are given, so `fncall1(&f, 1)` or `callptr(&f, 1)` to `fn f(a, b = 1, c = 2)` is
+  refused ("a call through a fn pointer passes every argument: 'f' takes 3 (defaults fill only
+  direct calls)"). Through a pointer held in a variable the compiler cannot see the callee,
+  as for any fn: pass all of its parameters.
+- **Tail calls.** A `return f(..)` that fills a default or names an argument is an ordinary call,
+  not a `jmp` (as in a fn with a `defer`). A `return f(..)` that passes every argument by
+  position keeps its `jmp`, so write deep recursion that way.
+- **`#inline`.** A fn with defaults is never inlined: `#inline` on one warns `#inline ignored:
+  fn has parameter defaults`. A named call to an inlinable fn is an ordinary call, because the
+  inlined body binds by position.
+- **Const contexts** call a `const fn` with fills and names as run time does: `const N =
+  cf(1);`, `const M = cf(1, c: 9);`, `#assert`, an array size, an enum value, a `case` label, a
+  local const. A default defined in terms of itself (`const fn cf(a, b = cf(1))`) is refused.
+- **Methods and traits.** An inherent `impl T` method may declare defaults (`p.m()`,
+  `p.m(k: 5)`, `T_m(&p)`). A trait's methods may not, in a required signature or a default
+  body, and neither may a method of `impl Trait for T`: the trait's signature is the contract.
+  ⚠ **Before 6.7.7 a default in a trait's required signature** (`fn sh(self, n = 1): i64;`)
+  **compiled and was ignored**; it is now refused (user decision, 2026-10-09). An operator fn
+  (`V2_add`) declares no default: an operator passes exactly its two operands.
+- **`cyrius lint`** (`--syntax-only`) accepts a file that calls a sibling module's fn by name, or
+  whose default names a sibling's const. The grammar refusals (a positional argument after a
+  named one, a name through `fncallN`) still fire there.
+- **For stdlib authors:** the compiler itself calls some library fns with a FIXED argument
+  count: `alloc`, `vec_len`, `vec_get`, `str_from`, `future_force`, `future_pending`, the
+  `_slice_idx_get_N` family, the `_chk_*` / `_sat_*` overflow helpers, the `_f64_*_polyfill`
+  family and `f64v2_make` / `f64v4_make`. None of them may take a default, because such a
+  call would never fill it. Row S-R5 of `tests/gates/frontend/default_named_args_checked.sh`
+  derives that list from `src/` and fails on a definition that declares one.
+
+Each of these is refused once, at the token it names:
+
+```
+fn f(a = 1, b): i64 { return a + b; }
+# error: parameter 'b' of 'f' needs a default: it follows one that has a default (defaults are trailing)
+fn g(a, b = a * 2): i64 { return b; }
+# error: a default must be a compile-time constant: 'a' is a parameter of 'g'
+fn h(a, b = if (a > 1) { 2 } else { 3 }): i64 { return b; }
+# error: a parameter default cannot hold a block or an if-expression - declare a const and name it
+fn k(a, x = 1.5): i64 { return a; }
+# error: parameter 'x' of 'k' is untyped: a float default needs it declared ': f64' (or ': f32')
+fn m(a, x: f64 = 1): i64 { return a; }
+# error: parameter 'x' of 'm' is ': f64': an integer default is its bit pattern - write 1.0
+fn n(a, x: u8 = 300): i64 { return a; }
+# error: the default 300 does not fit parameter 'x' of 'n' (': u8')
+var c = |a, b = 1| a + b;
+# error: a closure's parameters take no defaults
+tag(1, d: 3);
+# error: 'tag' has no parameter named 'd' - its parameters are: a, b, c
+tag(1, a: 3);
+# error: parameter 'a' of 'tag' is given by position and by name
+tag(1, c: 3, b: 4, c: 5);
+# error: parameter 'c' of 'tag' is named twice
+tag(1, c: 3, 4);
+# error: a positional argument cannot follow a named one (in a call to 'tag')
+```
+
+The same holds for a default on `self`, defaults in a variadic fn, defaults on a fn defined
+twice, and a default that is not one expression (`b = 1 2`).
 
 ## Control Flow
 
@@ -1419,6 +1562,11 @@ Point_Show_show(p) # 12  -> the trait-qualified name
   parameter count, and a required method left out are compile errors naming the trait. A trait may
   be declared above or below its impls. Traits and impls go in the declaration section (before the
   first top-level statement), like `struct` and `fn`.
+- **Parameter defaults (6.7.7).** A trait's methods take none, in a required signature or a
+  default body, and neither does a method of `impl X for T`: the trait's signature is the
+  contract. An inherent `impl T` method may declare them (see *Default and named arguments*
+  under **Functions**). ⚠ A default in a required signature compiled and was ignored before
+  6.7.7; it is refused now.
 - **Defaults** (a member with a body) are instantiated for every impl that does not define its own —
   each impl type gets its own copy, so `self.show()` inside one calls that type's `show`.
 - **Names.** A method is `T_m`; every trait method is also `T_Trait_m`. If **two traits** give `T`
@@ -3784,6 +3932,11 @@ It works on every backend (x86_64, aarch64, Windows PE) and is the basis
 for COM-vtable dispatch (`callptr(load64(load64(obj) + slot*8), obj, …)`).
 The callee is spilled to a frame slot; at top level (since 6.6.16) the compiler gives the
 call its own micro-frame, so `callptr` works there too.
+
+A call through a pointer passes exactly the arguments written: parameter defaults and named
+arguments belong to direct calls (6.7.7, see *Default and named arguments*). So
+`callptr(&f, 1)` or `fncall1(&f, 1)` with fewer arguments than `f`'s parameters is refused by
+name when `f` declares defaults, and so is a `name:` argument.
 
 The older `lib/fnptr.cyr` helper API (`fncall0`..`fncall8`) still works for
 existing code:
