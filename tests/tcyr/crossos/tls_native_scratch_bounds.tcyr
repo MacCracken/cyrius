@@ -7,7 +7,10 @@
 # bytes past the scratch, over the frame's saved registers and return address (SIGSEGV), and a
 # negative length wrote the inner type byte below it. More than 2^14 is now
 # TLS_ERR_RECORD_OVERFLOW (RFC 8446 §5.2), a negative length TLS_ERR_INVALID_PARAM, and neither
-# writes `out` or moves the sequence number.
+# writes `out` or moves the sequence number. Its TLS 1.2 sibling tls_native_record_seal_12
+# (lib/tls_native_hs12.cyr) has carried the 2^14 cap since 6.0.72 but took a small negative
+# length: ChaCha20 with -16 returned a 5-byte "record" (rec_len 0) and moved the sequence
+# number. A negative length is now TLS_ERR_INVALID_PARAM there too (6.7.6 BX).
 #
 # ⛔ THE HKDF-EXPAND-LABEL SCRATCH. tls_native_hkdf_expand_label (lib/tls_native_keysched.cyr)
 # built the HkdfLabel in a 512-byte stack scratch while its checks admit a 514-byte label
@@ -90,6 +93,62 @@ fn test_seal_at_the_bound(): i64 {
     return 0;
 }
 
+# The TLS 1.2 record seal (lib/tls_native_hs12.cyr): `n` content bytes of 0x41 under `cipher`.
+fn _sb_seal12(cipher, n, seq_out, out_out): i64 {
+    var seq = alloc(8);
+    store64(seq, 0);
+    var cap = 16384 + 1024;
+    if (n > 0) { cap = n + 1024; }
+    var plain = alloc(cap);
+    memset(plain, 0x41, cap);
+    var out = alloc(cap + 512);
+    memset(out, 0x5A, cap + 512);
+    var r = tls_native_record_seal_12(cipher, _sb_key, _sb_iv, seq, TLS_CT_APPLICATION_DATA,
+      plain, n, out, cap + 512);
+    store64(seq_out, load64(seq));
+    store64(out_out, out);
+    return r;
+}
+
+fn test_seal12_bound(): i64 {
+    test_group("tls_native_record_seal_12: a negative length is refused, before anything is written");
+    var sq = 0;
+    var o = 0;
+    var r = _sb_seal12(TLS_CHACHA20_POLY1305_SHA256, 0 - 16, &sq, &o);
+    assert_eq(r, TLS_ERR_INVALID_PARAM, "ChaCha20, -16: TLS_ERR_INVALID_PARAM (it returned a 5-byte \"record\")");
+    assert_eq(sq, 0, "ChaCha20, -16: the sequence number did not move");
+    assert_eq(load8(o), 0x5A, "ChaCha20, -16: out untouched");
+    r = _sb_seal12(TLS_CHACHA20_POLY1305_SHA256, 0 - 1, &sq, &o);
+    assert_eq(r, TLS_ERR_INVALID_PARAM, "ChaCha20, -1: TLS_ERR_INVALID_PARAM");
+    r = _sb_seal12(TLS_AES_128_GCM_SHA256, 0 - 1, &sq, &o);
+    assert_eq(r, TLS_ERR_INVALID_PARAM, "AES-128-GCM, -1: TLS_ERR_INVALID_PARAM");
+    assert_eq(sq, 0, "AES-128-GCM, -1: the sequence number did not move");
+    assert_eq(load8(o), 0x5A, "AES-128-GCM, -1: out untouched");
+    r = _sb_seal12(TLS_CHACHA20_POLY1305_SHA256, 16385, &sq, &o);
+    assert_eq(r, TLS_ERR_RECORD_OVERFLOW, "ChaCha20, 2^14 + 1: TLS_ERR_RECORD_OVERFLOW (the 6.0.72 cap)");
+    test_group("tls_native_record_seal_12: 0 and 2^14 content bytes seal; 2^14 opens back");
+    r = _sb_seal12(TLS_CHACHA20_POLY1305_SHA256, 0, &sq, &o);
+    assert_eq(r, TLS_RECORD_HEADER_LEN + 16, "ChaCha20, 0 bytes: header + tag");
+    r = _sb_seal12(TLS_AES_128_GCM_SHA256, 0, &sq, &o);
+    assert_eq(r, TLS_RECORD_HEADER_LEN + 8 + 16, "AES-128-GCM, 0 bytes: header + explicit nonce + tag");
+    var n = TLS_RECORD_MAX_PLAINTEXT;
+    r = _sb_seal12(TLS_CHACHA20_POLY1305_SHA256, n, &sq, &o);
+    assert_eq(r, TLS_RECORD_HEADER_LEN + n + 16, "ChaCha20, 2^14: header + content + tag");
+    assert_eq(sq, 0x0100000000000000, "ChaCha20, 2^14: the (big-endian) sequence number moved once");
+    var seq = alloc(8);
+    store64(seq, 0);
+    var back = alloc(n + 64);
+    var ct = alloc(8);
+    var got = tls_native_record_open_12(TLS_CHACHA20_POLY1305_SHA256, _sb_key, _sb_iv, seq, o, r, back, n + 64, ct);
+    assert_eq(got, n, "ChaCha20, 2^14: opens to 2^14 bytes");
+    assert_eq(load64(ct), TLS_CT_APPLICATION_DATA, "ChaCha20, 2^14: the content type survives");
+    var same = 1;
+    var i = 0;
+    while (i < n) { if (load8(back + i) != 0x41) { same = 0; } i = i + 1; }
+    assert_eq(same, 1, "ChaCha20, 2^14: every content byte survives");
+    return 0;
+}
+
 # Expand-Label at the format's extremes against a reference HkdfLabel built on the heap and fed
 # to HKDF-Expand directly; `out` is followed by a canary that must survive.
 fn _sb_label(hash_algo, hlen, ll, cl): i64 {
@@ -143,5 +202,6 @@ _sb_iv = alloc(12);
 memset(_sb_iv, 3, 12);
 test_seal_bound();
 test_seal_at_the_bound();
+test_seal12_bound();
 test_expand_label_bound();
 var r = assert_summary();

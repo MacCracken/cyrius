@@ -47,10 +47,13 @@ fn tls_native_record_aad_12(seq8, ct, version, length, aad_out13): i64 {
 # Seal `plain` (real content type `ct`) into a TLS 1.2 AEAD record at
 # `out`. `iv` is the GCM 4-byte salt or the ChaCha 12-byte IV per the
 # cipher. Increments `seq8`. Returns the total record length, or a
-# negative TLS_ERR_*.
+# negative TLS_ERR_*. A negative `plain_len` is TLS_ERR_INVALID_PARAM before anything is
+# written — ChaCha20 with -16 returned a 5-byte "record" and moved `seq8` (CHANGELOG [6.7.6],
+# as tls_native_record_seal does).
 fn tls_native_record_seal_12(cipher, key, iv, seq8, ct, plain, plain_len, out, out_max): i64 {
     var tag_len = tls_native_cipher_tag_len(cipher);
     if (tag_len < 0) { return TLS_ERR_CIPHER_NOT_SUPPORTED; }
+    if (plain_len < 0) { return TLS_ERR_INVALID_PARAM; }
     var is_gcm = _tn_cipher_is_gcm(cipher);
     var explicit_len = 0;
     if (is_gcm != 0) { explicit_len = 8; }
