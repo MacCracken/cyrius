@@ -2324,8 +2324,12 @@ it unscriptable. `cyrius test <file>` prints the test's own output (its `N passe
 total)` assert summary, not a `===` line) and its exit status is the test's: non-zero, with a
 `FAIL:` line naming the file, when the test exits non-zero, dies of a signal, times out, or exits
 0 with an assert summary that reports failures (or, when its source calls `assert_summary()`, with
-none or one of 0 assertions). The suite forms (bare, a directory, several operands) end with an
-`N passed, M failed` tally of the files they ran.
+none or one of 0 assertions). The `FAIL:` line says which: `(exit 3)`, `(killed by signal 11
+SIGSEGV — …)`, `(timed out after …)`. The signal is read from the wait status, so a test that
+EXITS with 232 or 139 says `(exit 232)` / `(exit 139)` (6.7.6 — any status over 128 used to be
+called a signal: exit 232 was "killed by signal 104"); `cyrius test <file>`'s own exit status stays
+the shell's `128 + signal` for a signal. The suite forms (bare, a directory, several operands) end
+with an `N passed, M failed` tally of the files they ran.
 
 **One test verb (6.7.6).** `cyrius test <file>` runs that file, `cyrius test <dir>` runs every
 `.tcyr` under the directory (recursive — `cyrius test tests/tcyr/crossos`), several operands
@@ -2575,8 +2579,10 @@ scope   = "test"                           # resolved and pinned like any dep; t
 - **`timeout`**: `--timeout N` > `CYRIUS_TEST_TIMEOUT` > `[test] timeout` > 300 s; `0` turns the
   deadline off. A unit past it is killed with its whole process tree and named.
 - **`[test.embed]`** follows every `[embed]` rule (below). Its NAMEs must differ from
-  `[embed]`'s, and the check against the stdlib and the project's sources runs after the
-  dependency resolve, as `[embed]`'s does.
+  `[embed]`'s (and from an enclosing level's `[test.embed]`), and a clash names the table that
+  has the NAME: `cyrius.cyml [test.embed] PROD: is declared twice — cyrius.cyml [embed] declares
+  it too (a test unit compiles both)`. The check against the stdlib and the project's sources
+  runs after the dependency resolve, as `[embed]`'s does.
 - **`scope = "test"`** on a `[deps.NAME]` is the one scope there is (any other value is refused
   by name). The dep is cloned, vendored and commit-pinned by every resolve, but resolved AFTER every
   production dependency — so a name both sides reach is the production one (a production dep's
@@ -2613,8 +2619,12 @@ CAPTURE = "capture.bin"        # tests/net/capture.bin — paths are relative to
   `cyrius.cyml`, of every one under `tests/`, `benches/` and `fuzz/`, and of those on the way to
   `[test] files`. A `test.cyml` elsewhere still applies when its unit runs; a leaf it names that
   the resolve did not vendor is named. A directory the resolve cannot list is warned by name.
-- A unit outside the project (an absolute path elsewhere, a `..`) gets `cyrius.cyml`'s `[test]`
-  only.
+- However the unit is spelt, it is one directory and one chain: `tests/net/x.tcyr`,
+  `./tests/./net/x.tcyr`, the absolute `<project>/tests/net/x.tcyr` (as the working directory
+  names it) and, on Windows, `tests\net\x.tcyr` all read `tests/net/test.cyml` and the levels
+  above it, each once.
+- A unit outside the project (an absolute path elsewhere, a `..`; on Windows any drive-qualified
+  `C:…` or rooted `\…` path) gets `cyrius.cyml`'s `[test]` only.
 
 **At run time** each unit gets `CYRIUS_TEST_FILE` (the unit) and `CYRIUS_TEST_DIR` (its
 directory) in its environment — absolute where the host can say so — so a test finds data beside
@@ -2625,7 +2635,9 @@ itself whatever the cwd. Compile-time fixtures are `[test] modules` and `[test.e
 reports a failure), any compile failure (of a test, of a refused `[test]` value, of the dependency
 resolve), and when it finds no tests at all; 0 exactly when every test it found passed. A CI step
 is one line, `cyrius test` or `cyrius test tests/net`, under `set -e`: no loop over files, no grep
-of the summary. `test`, `run`, `bench` and `fuzz` take `--no-deps`, `--no-lock`, `--locked` and
+of the summary. An operand that does not exist — any of them, `cyrius test a.tcyr missing.tcyr`
+too — is refused by name BEFORE the dependency resolve (no clone, no `lib/`, no lock written), as
+for `run`, `bench`, `fuzz` and `build`. `test`, `run`, `bench` and `fuzz` take `--no-deps`, `--no-lock`, `--locked` and
 `--local` as `cyrius build` does; `test`, `bench` and `fuzz` take `--timeout N`.
 
 ## Build Tool & Dependencies
@@ -2815,6 +2827,8 @@ off. The manifest can never switch it on, so no commit flips what CI builds.
 - **No switch** — CI and a dev box alike — builds the tag. When a declared checkout exists but was
   not used, ONE line says so:
   `hint: 1 dep has a local checkout not in use (sigil); CYRIUS_LOCAL=1 builds it (this run built the tag)`.
+  It is said only where the switch works — never under `--locked` or a release verb (`publish`,
+  `package`, `distlib`, `update`), which resolve the tags whatever `CYRIUS_LOCAL` says.
 - **Local mode**, per selected override whose `path` is a directory: the working tree is used, no
   clone, and one line names it:
   `local: sigil <- ../sigil @1a2b3c4, 118 commits past 3.9.9, dirty — CI builds 3.9.9`.
@@ -2857,6 +2871,8 @@ dependency sources:
 
 A **diamond** — a dependency already resolved, wanted again at another tag — still resolves
 closest-first, and now says so: `note: leaf 2.0 (wanted by p2) not used; 1.0 (p1) resolved first`.
+Only an entry the run would resolve is "wanted": one gated out (`optional` with no active feature,
+another `target`) is not named.
 A key nothing reads in your own `[deps]` / `[deps.NAME]`, and a table nothing reads
 (`[dev-dependencies]`, `[[bin]]`), is warned by name, as `[build]`'s unknown keys are.
 
@@ -2915,10 +2931,25 @@ error: --locked: 2 difference(s) between what the tags resolve and the committed
 It also names a lock hash the tag disagrees with, a `lib/` file the lock does not cover, a lock
 line for a file that exists nowhere, a file the tags resolve that `lib/` lacks, and a lock that
 records another stdlib pin; with no `cyrius.lock` at all it refuses by name. A clean tree says
-`--locked: lib/ and cyrius.lock are exactly what the tags resolve`. It replaces the hand-rolled CI
+`--locked: lib/ and cyrius.lock are exactly what the tags resolve`.
+
+**A project that does not commit `lib/`** (it is in `.gitignore`, so a fresh CI checkout has none —
+the lock is the committed artifact there): with no vendored `lib/` (absent, or holding no `.cyr`)
+`--locked` checks the resolve against `cyrius.lock` alone and says so in one line —
+`note: --locked: no vendored lib/ here — the resolve is checked against cyrius.lock alone` — naming
+every lock hash, lock line and pin that differs, and ending
+`--locked: cyrius.lock is exactly what the tags resolve (no vendored lib/ to compare)`. A compiling
+verb (`cyrius build --locked`, `test --locked`, …) then compiles that proven resolution from
+`build/locked-deps/lib/` (read through the compiler's `lib/` overlay, as local mode reads
+`build/local-deps/lib/`); `lib/` and the lock are still not written. When `lib/` IS there, every
+difference with it is named as above. It replaces the hand-rolled CI
 guards (`git diff --exit-code -- cyrius.lock`, `lock-check.sh`, `verify-lock.sh`) and the
 `cyrius deps && cyrius deps --verify` sequence, whose first step rewrote the lock the second then
 checked. `--locked` does not combine with `--local`, `--relock`, `--verify` or `--lock`.
+Locked means nothing is written in ANY verb: under `CYRIUS_LOCKED=1` a verb whose job is a write —
+`cyrius update`, `deps --lock`, `deps --relock`, `lib sync` — is refused by name
+(`error: cyrius update writes lib/ and cyrius.lock, and CYRIUS_LOCKED=1 means nothing is written —
+refused …`); `deps --verify` and `lib sync --dry-run`, which write nothing, still run.
 
 **`cyrius update` (6.7.6).** After refreshing `lib/` from the toolchain (as before), `update`
 re-fetches each UNTAGGED dependency — it floats by design, and the cache froze it at its first

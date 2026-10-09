@@ -1875,6 +1875,11 @@ fn _macho_codesign(path): i64 {
 # (Deliberately NOT setpgid on Linux — the subreaper window also catches a descendant that
 # calls setsid() itself, which a process-group kill would miss.)
 var _RUN_TIMEOUT_KILLED = 0 - 2;
+# The signal that ended the last run_binary_timed child, 0 when it exited (or the host has no
+# signals). Its return value folds both into one int — an exit status, or 128 + the signal, as a
+# shell's $? does — so `exit 232` and a signal 104 read alike there; this is the other channel.
+# `cyrius test` called every exit status over 128 a signal (6.7.6 review). CHANGELOG [6.7.6]
+var _run_last_signal = 0;
 
 # Default deadline for the batch verbs (test/tests/bench/fuzz/soak/smoke/doctest).
 # 5 minutes: the same figure tests/gates/**.sh already uses for `timeout`, and ~2
@@ -1927,6 +1932,7 @@ fn _run_sleep_ms(ms): i64 {
 var _run_stdout_to = 0;
 
 fn run_binary_timed(path, timeout_ms, args): i64 {
+    _run_last_signal = 0;
     #ifdef CYRIUS_TARGET_WIN
     return _win_run_timed(path, timeout_ms, args);
     #endif
@@ -2035,7 +2041,10 @@ fn _run_wait_timed(pid, timeout_ms): i64 {
         var status0 = _cbt_wait_status(pid, "the program");   # 6.6.20: -1 = no status to read
         if (status0 < 0) { return 1; }
         if (WIFEXITED(status0) == 1) { return WEXITSTATUS(status0); }
-        if (WIFSIGNALED(status0) == 1) { return 128 + WTERMSIG(status0); }
+        if (WIFSIGNALED(status0) == 1) {
+            _run_last_signal = WTERMSIG(status0);
+            return 128 + WTERMSIG(status0);
+        }
         return 1;
     }
     var waited = 0;
@@ -2045,7 +2054,10 @@ fn _run_wait_timed(pid, timeout_ms): i64 {
         if (w == pid) {
             var status = load32(&status_buf);
             if (WIFEXITED(status) == 1) { return WEXITSTATUS(status); }
-            if (WIFSIGNALED(status) == 1) { return 128 + WTERMSIG(status); }
+            if (WIFSIGNALED(status) == 1) {
+                _run_last_signal = WTERMSIG(status);
+                return 128 + WTERMSIG(status);
+            }
             return 1;
         }
         # v6.5.51 — KILL BEFORE RETURNING. This used to be a bare `return 1;`, which is an

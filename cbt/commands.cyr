@@ -517,18 +517,21 @@ fn cmd_test(source): i64 {
         #
         # A signal is distinguished because it is a different KIND of failure: an assertion
         # failure is the test's verdict, a SIGSEGV is the test never reaching one.
+        # 6.7.6: read from the wait status (`_run_last_signal`), not from exit_code > 128 — a test
+        # that exits 232 was "killed by signal 104".
         sys_write(STDERR_FD, "  FAIL: ", 8);
         sys_write(STDERR_FD, source, strlen(source));
-        if (exit_code > 128) {
+        var sig = _run_last_signal;
+        if (sig > 0) {
             var smsg = " (killed by signal ";
             sys_write(STDERR_FD, smsg, strlen(smsg));
             var sbuf[24];
-            var slen = fmt_int_buf(exit_code - 128, &sbuf);
+            var slen = fmt_int_buf(sig, &sbuf);
             sys_write(STDERR_FD, &sbuf, slen);
-            if (exit_code == 139) { var s11 = " SIGSEGV"; sys_write(STDERR_FD, s11, strlen(s11)); }
-            if (exit_code == 134) { var s6 = " SIGABRT"; sys_write(STDERR_FD, s6, strlen(s6)); }
-            if (exit_code == 132) { var s4 = " SIGILL"; sys_write(STDERR_FD, s4, strlen(s4)); }
-            if (exit_code == 136) { var s8 = " SIGFPE"; sys_write(STDERR_FD, s8, strlen(s8)); }
+            if (sig == 11) { var s11 = " SIGSEGV"; sys_write(STDERR_FD, s11, strlen(s11)); }
+            if (sig == 6) { var s6 = " SIGABRT"; sys_write(STDERR_FD, s6, strlen(s6)); }
+            if (sig == 4) { var s4 = " SIGILL"; sys_write(STDERR_FD, s4, strlen(s4)); }
+            if (sig == 8) { var s8 = " SIGFPE"; sys_write(STDERR_FD, s8, strlen(s8)); }
             var send = " — the test never reached a verdict)\n";
             sys_write(STDERR_FD, send, strlen(send));
         } else {
@@ -5024,8 +5027,9 @@ fn _embed_collisions(ents): i64 {
     }
     n = n + _embed_owner_dir("src", ents, 0);
     n = n + _embed_owner_dir("lib", ents, 0);
-    # 6.7.6: a local-mode resolve vendored into build/local-deps/lib, which the compile reads first
-    if (_dep_local_active == 1) { n = n + _embed_owner_dir("build/local-deps/lib", ents, 0); }
+    # 6.7.6: a local-mode resolve vendored into build/local-deps/lib (a --locked one with no vendored
+    # lib/, build/locked-deps/lib), which the compile reads first — the overlay this run set
+    if (_dep_overlay != 0) { n = n + _embed_owner_dir(_dep_overlay, ents, 0); }
     return n;
 }
 

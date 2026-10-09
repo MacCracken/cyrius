@@ -41,7 +41,9 @@
 #   E2     `cyrius build` carries no test embed (not in the binary; GOLDEN_len undefined there)
 #   E3     --print-config shows test.embed
 #   E4-E7  the [embed] rules, by name: a NAME [embed] has, a NAME a stdlib leaf declares (after the
-#          resolve), a path climbing out, a [test.embed.X] table — nothing runs
+#          resolve), a path climbing out, a [test.embed.X] table — nothing runs. E4 / E4b name
+#          [embed] as the table that already declares the NAME (or the NAME of a NAME_len) —
+#          6.7.6 FXCL-8b: "is declared twice" named neither table
 #   R1-R2  `cyrius test` / `bench` export CYRIUS_TEST_FILE and CYRIUS_TEST_DIR (absolute) to the
 #          unit, replacing an inherited value
 #   R3     `cyrius run` exports neither
@@ -84,6 +86,7 @@
 #   M26 cli_args.cyr: run does not declare --no-deps                                   N3
 #   M27 cyrius-cyml-bin: assert / bench back in [deps] stdlib, [build] test             I1 I2
 #   M28 cyrius-cyml-lib: the [test] stdlib dropped (assert / bench nowhere)             I1
+#   M29 manifest.cyr: _embed_seen_where names no table (the pre-FXCL-8b message)        E4 E4b
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
 G=test_section
@@ -414,9 +417,15 @@ EOF
 emb e4 '[test.embed]
 PROD = "tests/data/golden.bin"'
 cy e4 test
-if [ "$RC" = 1 ] && grep -qF 'error: cyrius.cyml [test.embed] PROD: is declared twice' "$W/err" && [ "$(marks a)" = 0 ]; then
-    echo "  ok E4: a [test.embed] NAME [embed] already declares is refused by name; nothing runs"
+if [ "$RC" = 1 ] && grep -qxF 'error: cyrius.cyml [test.embed] PROD: is declared twice — cyrius.cyml [embed] declares it too (a test unit compiles both)' "$W/err" && [ "$(marks a)" = 0 ]; then
+    echo "  ok E4: a [test.embed] NAME [embed] already declares is refused, naming [embed]; nothing runs"
 else fail "E4: rc $RC, a $(marks a)x"; show; fi
+emb e4b '[test.embed]
+PROD_len = "tests/data/golden.bin"'
+cy e4b test
+if [ "$RC" = 1 ] && grep -qxF 'error: cyrius.cyml [test.embed] PROD_len: collides with PROD, which cyrius.cyml [embed] declares (NAME_len() is the length accessor of NAME)' "$W/err" && [ "$(marks a)" = 0 ]; then
+    echo "  ok E4b: a [test.embed] NAME_len of an [embed] NAME is refused, naming [embed]; nothing runs"
+else fail "E4b: rc $RC, a $(marks a)x"; show; fi
 emb e5 '[test.embed]
 vec = "tests/data/golden.bin"'
 cy e5 test

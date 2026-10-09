@@ -67,6 +67,9 @@ var _dep_local_names = 0;    # 0 = every declared override; else a vec of the se
 var _dep_local_active = 0;   # an override IS in use: this resolve vendors into build/local-deps/lib
 var _dep_vroot = "lib";      # where this resolve WRITES vendored files (include strings stay lib/…)
 var _dep_locked = 0;         # --locked / CYRIUS_LOCKED=1: resolve, compare, write nothing
+var _dep_locked_nolib = 0;   # --locked in a checkout with no vendored lib/: checked against cyrius.lock alone
+var _dep_switch_verb = 0;    # the verb _dep_switch_setup read the switch for (0 = never read)
+var _dep_overlay = 0;        # the compile's lib/ overlay this run set (CYRIUS_LIB_OVERLAY), 0 = none
 var _dep_update_mode = 0;    # `cyrius update`: re-fetch untagged clones, report newer root tags
 var _build_modules = 0;
 # 6.6.19: the [embed] entries every compile carries (cbt/manifest.cyr _embed_load; 0 = none).

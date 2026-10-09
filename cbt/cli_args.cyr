@@ -283,7 +283,8 @@ fn _cli_help_extra(verb): i64 {
         println("                 vendored into build/local-deps/lib/ — lib/ and cyrius.lock untouched.");
         println("  --no-local     resolve the tags for this run whatever CYRIUS_LOCAL says.");
         println("  --locked       resolve the tags, compare with lib/ and cyrius.lock, write nothing,");
-        println("                 and fail naming each difference (CI; also CYRIUS_LOCKED=1).");
+        println("                 and fail naming each difference (CI; also CYRIUS_LOCKED=1). With no");
+        println("                 vendored lib/ (an ignored lib/), cyrius.lock alone is compared.");
         println("Related: cyrius update    re-fetch untagged deps, list newer tags, re-resolve.");
     }
     if (streq(verb, "check") == 1) {
@@ -635,14 +636,19 @@ fn _cli_operands_ok(verb, min, max): i64 {
 # _auto_deps — clones, vendoring, the lock — ahead of each verb's own branch, so `cyrius run
 # missing.cyr` fetched every dependency and only then said "no such file", and `cyrius bench a b`
 # resolved before refusing the extra operand. The counts are the branches' own (each branch still
-# checks; this runs first), and a FILE operand must exist. `test` / `tests` are absent on purpose:
-# their operands are being reworked (`cyrius test` absorbs `cyrius tests`, lane G of 6.7.6), and
-# that change brings its own check. 0, or 1 after naming the problem.
+# checks; this runs first), and a FILE operand must exist — `cyrius test`'s every operand (a file or
+# a directory) and the deprecated `cyrius tests`' directory too: `cyrius test missing.tcyr` cloned,
+# vendored and wrote cyrius.lock before saying "no such file" (6.7.6 review). 0, or 1 after naming
+# the problem.
 fn _cli_preflight(verb): i64 {
     var mn = 0 - 1;
     var mx = 0 - 1;
-    var files = 0;   # how many leading operands name a file that must exist (2 = file or dir)
+    # which operands name a path that must exist: 1 the first (a file), 2 the first (a file or a
+    # directory), 3 every one (a file), 4 every one (a file or a directory), 5 the first (a directory)
+    var files = 0;
     if (streq(verb, "build") == 1) { mn = 0; mx = 2; files = 1; }
+    elif (streq(verb, "test") == 1) { mn = 0; files = 4; }
+    elif (streq(verb, "tests") == 1) { mn = 0; mx = 1; files = 5; }
     elif (streq(verb, "run") == 1) { mn = 1; mx = 1; files = 1; }
     elif (streq(verb, "bench") == 1) { mn = 0; mx = 1; files = 2; }
     elif (streq(verb, "fuzz") == 1) { mn = 0; mx = 1; files = 2; }
@@ -659,14 +665,22 @@ fn _cli_preflight(verb): i64 {
     if (_cli_operands_ok(verb, mn, mx) == 0) { return 1; }
     if (files == 0 || _cli_npos() == 0) { return 0; }
     var last = 1;
-    if (files == 3) { last = _cli_npos(); }
+    if (files == 3 || files == 4) { last = _cli_npos(); }
     var i = 0;
     while (i < last) {
         var p = _cli_pos_at(i);
         i = i + 1;
+        if (files == 5) {
+            if (is_dir(str_from(p)) == 1) { continue; }
+            if (file_exists(p) == 1) { _err_ctx("not a directory (`cyrius test <file>` runs one file)", p); }
+            else { _err_ctx("no such directory", p); }
+            return 1;
+        }
         if (file_exists(p) == 1) { continue; }
-        if (files == 2 && is_dir(str_from(p)) == 1) { continue; }
-        if (files == 2) { _err_ctx("no such file or directory", p); }
+        var dir_ok = 0;
+        if (files == 2 || files == 4) { dir_ok = 1; }
+        if (dir_ok == 1 && is_dir(str_from(p)) == 1) { continue; }
+        if (dir_ok == 1) { _err_ctx("no such file or directory", p); }
         else { _err_ctx("no such file", p); }
         return 1;
     }

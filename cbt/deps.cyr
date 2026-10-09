@@ -2069,6 +2069,47 @@ fn _dep_selected(name): i64 {
     return _dep_list_has(_dep_local_names, name);
 }
 
+# 1 when lib/ holds no vendored file — absent, or no `.cyr` under it: what a fresh checkout of a
+# project that ignores lib/ has. --locked then holds the resolve to cyrius.lock alone.
+fn _dep_lib_unvendored(): i64 {
+    if (is_dir(str_from("lib")) == 0) { return 1; }
+    return 1 - _dep_dir_holds_cyr("lib", 0);
+}
+
+# 1 when `dir` holds a `.cyr` file at any depth (dotfiles skipped, as the lock's walk skips them),
+# or cannot be listed — a lib/ that is there but unreadable is compared, and the compare names it.
+fn _dep_dir_holds_cyr(dir, depth): i64 {
+    if (depth > 32) { return 1; }
+    var ents = vec_new();
+    if (dir_list_checked(str_from(dir), ents) < 0) { return 1; }
+    var i = 0;
+    while (i < vec_len(ents)) {
+        var en = vec_get(ents, i);
+        i = i + 1;
+        var ed = str_data(en);
+        var el = str_len(en);
+        if (el == 0 || load8(ed) == 46) { continue; }
+        var nm = alloc(el + 1);
+        memcpy(nm, ed, el);
+        store8(nm + el, 0);
+        var p = make_path(dir, nm);
+        if (is_dir(str_from(p)) == 1) {
+            if (_dep_dir_holds_cyr(p, depth + 1) == 1) { return 1; }
+            continue;
+        }
+        if (el > 4 && memeq(nm + el - 4, ".cyr", 4) == 1) { return 1; }
+    }
+    return 0;
+}
+
+# 1 when the verb this --locked resolve serves compiles afterwards (every resolving verb but `deps`),
+# so a resolve proved against cyrius.lock with no lib/ to compile from is kept for the compile.
+fn _dep_locked_compiles(): i64 {
+    if (_dep_switch_verb == 0) { return 0; }
+    if (streq(_dep_switch_verb, "deps") == 1) { return 0; }
+    return 1;
+}
+
 # 1 when this run writes lib/ and cyrius.lock (no override in use, not --locked).
 fn _dep_writes_lib(): i64 {
     if (_dep_local_active == 1) { return 0; }
@@ -2079,13 +2120,14 @@ fn _dep_writes_lib(): i64 {
 # Where vendored file `rel` (e.g. "sigil.cyr", "unicode/x.cyr") is WRITTEN this run, and the
 # include string every compile names it by. The second is always lib/<rel>: local mode's compiles
 # read lib/ through CYRIUS_LIB_OVERLAY, and --locked compiles from lib/ only once it is proved to
-# equal what the tags resolve.
+# equal what the tags resolve (with no vendored lib/, from build/locked-deps/lib through the overlay).
 fn _dep_wpath(rel): i64 { return _cat2(_cat2(_dep_vroot, "/"), rel); }
 fn _dep_ipath(rel): i64 { return _cat2("lib/", rel); }
 
 # 6.7.6 — the switch for this run, from the arguments and the environment (see the rule above).
 # `verb` decides whether this verb resolves what a release ships. 0, or 1 after naming a refusal.
 fn _dep_switch_setup(verb): i64 {
+    _dep_switch_verb = verb;
     _dep_local_on = 0;
     _dep_local_names = 0;
     _dep_local_from = 0;
@@ -2093,18 +2135,13 @@ fn _dep_switch_setup(verb): i64 {
     _dep_locked = 0;
     if (_cli_has("--locked") == 1) { _dep_locked = 1; }
     else {
-        var le = _cfg_env("CYRIUS_LOCKED");
-        if (le != 0) {
-            if (streq(le, "1") == 1) { _dep_locked = 1; }
-            elif (streq(le, "0") == 0) {
-                _err_ctx("CYRIUS_LOCKED must be 0 or 1 (or unset)", _shown(le));
-                return 1;
-            }
-        }
+        var le = _dep_locked_env();
+        if (le < 0) { return 1; }
+        _dep_locked = le;
     }
-    var rel = 0;
-    if (streq(verb, "publish") == 1 || streq(verb, "package") == 1) { rel = 1; }
-    if (streq(verb, "distlib") == 1 || streq(verb, "update") == 1) { rel = 1; }
+    # `update` refreshes lib/ and re-resolves into it: the whole verb is a write
+    if (_dep_locked == 1 && streq(verb, "update") == 1) { return _dep_locked_refuse("cyrius update", "lib/ and cyrius.lock"); }
+    var rel = _dep_verb_rel(verb);
     var argl = _cli_has("--local");
     var argn = _cli_has("--no-local");
     if (argl == 1 && argn == 1) { _err("--local and --no-local contradict each other"); return 1; }
@@ -2144,6 +2181,46 @@ fn _dep_switch_setup(verb): i64 {
         if (vec_len(_dep_local_names) == 0) { _dep_local_on = 0; return 0; }
     }
     return _dep_names_ok("CYRIUS_LOCAL");
+}
+
+# 1 for a verb that resolves what a release ships — the tags, whatever the local switch says.
+fn _dep_verb_rel(verb): i64 {
+    if (streq(verb, "publish") == 1 || streq(verb, "package") == 1) { return 1; }
+    if (streq(verb, "distlib") == 1 || streq(verb, "update") == 1) { return 1; }
+    return 0;
+}
+
+# 1 when this run honours the local switch: not --locked and not a release verb. The hint line
+# tells the developer the switch builds an unused checkout, so it is said only where it would —
+# `cyrius package` printed it, CYRIUS_LOCAL set or not, beside "CYRIUS_LOCAL is ignored here".
+fn _dep_switch_honoured(): i64 {
+    if (_dep_locked == 1) { return 0; }
+    if (_dep_switch_verb == 0) { return 1; }
+    return 1 - _dep_verb_rel(_dep_switch_verb);
+}
+
+# CYRIUS_LOCKED as --locked reads it: 1, 0 (unset or "0"), or -1 after naming any other value.
+fn _dep_locked_env(): i64 {
+    var le = _cfg_env("CYRIUS_LOCKED");
+    if (le == 0) { return 0; }
+    if (streq(le, "1") == 1) { return 1; }
+    if (streq(le, "0") == 1) { return 0; }
+    _err_ctx("CYRIUS_LOCKED must be 0 or 1 (or unset)", _shown(le));
+    return 0 - 1;
+}
+
+# 6.7.6 — LOCKED MEANS NOTHING IS WRITTEN, in every verb. A verb whose whole job is a write
+# (`update`, `deps --lock` / `--relock`, `lib sync`) is refused by name under CYRIUS_LOCKED=1 /
+# --locked rather than run: `update` wrote ~100 files into lib/ and then reported "nothing was
+# written", and `deps --lock` rewrote the lock (6.7.6 review). Always 1.
+fn _dep_locked_refuse(what, writes): i64 {
+    _ew("error: ");
+    _ew(what);
+    _ew(" writes ");
+    _ew(writes);
+    if (_cli_has("--locked") == 1) { _ew(", and --locked means nothing is written — refused\n"); }
+    else { _ew(", and CYRIUS_LOCKED=1 means nothing is written — refused (unset it, or CYRIUS_LOCKED=0, to run it)\n"); }
+    return 1;
 }
 
 # Each selected name must be one a [deps.NAME] header could carry (the header rule).
@@ -2418,7 +2495,7 @@ fn _dep_pick(name, rec, kind, owner, mode): i64 {
                 _ew(_dep_ci_builds(git, load64(rec + _DS_TAG)));
                 _ew(" from git\n");
             }
-            if (sel == 0 && pdir == 1 && mode == 1 && _dep_local_on == 0 && _dep_locked == 0) {
+            if (sel == 0 && pdir == 1 && mode == 1 && _dep_local_on == 0 && _dep_switch_honoured() == 1) {
                 if (_dep_hint == 0) { _dep_hint = vec_new(); }
                 if (_dep_list_has(_dep_hint, name) == 0) { vec_push(_dep_hint, name); }
             }
@@ -2562,7 +2639,7 @@ fn _dep_local_begin(): i64 {
         return 1;
     }
     _dep_vroot = root;
-    _dep_overlay_env(1);
+    _dep_overlay_env(root);
     # build/ is where every project's binaries go and 115 of 126 manifested repos ignore it; a
     # project that does not would see this resolve in `git status`, so say so.
     if (_dep_wt_run(0, "check-ignore", "-q", root, 0, 0) == 1) {
@@ -2571,14 +2648,15 @@ fn _dep_local_begin(): i64 {
     return 0;
 }
 
-# The compiler's lib/ overlay (src/frontend/lex.cyr `_rf_ov_open`): set to build/local-deps/lib for
-# a local-mode resolve (`on` 1), otherwise REMOVED from what every child inherits — an overlay is
-# this CLI's to set, never one left in a shell. POSIX rebuilds `_envp`; Windows sets this process's
-# own environment, which its children inherit.
-fn _dep_overlay_env(on): i64 {
+# The compiler's lib/ overlay (src/frontend/lex.cyr `_rf_ov_open`): set to `dir` — build/local-deps/lib
+# for a local-mode resolve, build/locked-deps/lib for a --locked one in a checkout with no vendored
+# lib/ — or, with `dir` 0, REMOVED from what every child inherits: an overlay is this CLI's to set,
+# never one left in a shell. POSIX rebuilds `_envp`; Windows sets this process's own environment,
+# which its children inherit.
+fn _dep_overlay_env(dir): i64 {
+    _dep_overlay = dir;
     #ifdef CYRIUS_TARGET_WIN
-    if (on == 1) { _win_setenv("CYRIUS_LIB_OVERLAY", "build/local-deps/lib"); }
-    else { _win_setenv("CYRIUS_LIB_OVERLAY", 0); }
+    _win_setenv("CYRIUS_LIB_OVERLAY", dir);
     return 0;
     #endif
     #ifndef CYRIUS_TARGET_WIN
@@ -2587,7 +2665,7 @@ fn _dep_overlay_env(on): i64 {
     while (load64(_envp + n * 8) != 0) { n = n + 1; }
     var out = alloc((n + 2) * 8);
     var o = 0;
-    if (on == 1) { store64(out, "CYRIUS_LIB_OVERLAY=build/local-deps/lib"); o = 1; }
+    if (dir != 0) { store64(out, _cat2("CYRIUS_LIB_OVERLAY=", dir)); o = 1; }
     var i = 0;
     while (i < n) {
         var e = load64(_envp + i * 8);
@@ -2770,8 +2848,13 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
         var hclosed = 0;
         var dep_name = _dep_hdr_name(buf, n, &info, &hclosed);
         if (dep_name != 0) {
+            # 6.7.6: the test-scope pass walks the root manifest a second time — a header refused
+            # below was named, and counted, by the first pass (once, not twice)
+            var named_before = 0;
+            if (_dep_test_pass == 1 && _dep_ctx_kind == 0) { named_before = 1; }
             # A header with no `]` on its line: the old scan ran its NAME across the newline.
             if (hclosed == 0) {
+                if (named_before == 1) { continue; }
                 _dep_refuse_unclosed(dep_name);
                 errors = errors + 1;
                 continue;
@@ -2787,6 +2870,7 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
             # 6.6.20 (the deps-name guard bug): `[deps.]` / `[deps..]` / `[deps..x]`, `\` and control bytes too
             # (_dep_name_unsafe) — the empty and dot names aliased ANOTHER dep's cache root.
             if (_dep_name_unsafe(dep_name) == 1) {
+                if (named_before == 1) { continue; }
                 _dep_refuse_name(dep_name);
                 errors = errors + 1;
                 continue;
@@ -2815,9 +2899,11 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                 if (dep_scope == 1) { continue; }
             } elif (dep_scope != 1) { continue; }
             # v5.7.14: closest-wins skip. 6.7.6 (R7): after the keys are read, so a diamond — the
-            # same name wanted at another tag — is SAID rather than dropped in silence.
+            # same name wanted at another tag — is SAID rather than dropped in silence. Only by an
+            # entry this run would resolve: one gated out (optional with no active feature, another
+            # target) wants nothing here, and was called "wanted" (6.7.6 review).
             if (_dep_name_visited(dep_name) == 1) {
-                _dep_diamond(dep_name, rec);
+                if (_dep_gated(dep_name, rec) == 0) { _dep_diamond(dep_name, rec); }
                 continue;
             }
             var dep_path = load64(rec + _DS_PATH);
@@ -3616,7 +3702,10 @@ fn _deps_dry_walk(buf, n, dir, kind, owner, st, seen, qd, qk, qo): i64 {
 fn _deps_dry_list(manifest, buf, n): i64 {
     sys_write(STDOUT_FD, "dry-run: would resolve deps from ", 33);
     sys_write(STDOUT_FD, manifest, strlen(manifest));
-    if (_dep_locked == 1) { println(" and compare them with lib/ and cyrius.lock (nothing written):"); }
+    if (_dep_locked == 1) {
+        if (_dep_lib_unvendored() == 1) { println(" and compare them with cyrius.lock — no vendored lib/ here (nothing written):"); }
+        else { println(" and compare them with lib/ and cyrius.lock (nothing written):"); }
+    }
     elif (_dep_local_on == 1 && _dep_local_prescan(buf, n, _abs_path("."), 0, 0, vec_new()) == 1) {
         println(" into build/local-deps/lib/ (local mode: lib/ and cyrius.lock untouched; nothing written):");
     } else { println(" into lib/ (nothing written):"); }
@@ -3729,7 +3818,8 @@ fn _dep_section_known(nm): i64 {
 # rewrite them: every file the tags vendor must be in lib/ byte for byte and in the lock at its
 # hash; every other lib/ file keeps its lock line, so that line must hold its hash; a lock line
 # for a file that exists nowhere would be dropped; and the lock's `cyrius` line must name this
-# pin. Each difference is named on stderr; returns how many. Writes nothing.
+# pin. With no vendored lib/ (`_dep_locked_nolib`) the lock alone is compared — every hash, every
+# line, the pin. Each difference is named on stderr; returns how many. Writes nothing.
 # Replaces the hand-rolled CI guards (`git diff --exit-code cyrius.lock`, lock-check.sh,
 # verify-lock.sh, …) and the CI sequence whose `deps` rewrote the lock before `--verify` read it.
 fn _deps_locked_compare(scratch): i64 {
@@ -3766,6 +3856,7 @@ fn _deps_locked_compare(scratch): i64 {
             _ew("\n");
             d = d + 1;
         }
+        if (_dep_locked_nolib == 1) { continue; }   # no vendored lib/: the lock alone is the contract
         if (file_exists(lp) == 0) {
             _ew("  differs: "); _ew(lp); _ew(": missing from lib/ (the tags resolve it)\n");
             d = d + 1;
@@ -3889,6 +3980,7 @@ fn cmd_deps(): i64 {
     # scratch, compared with lib/ and the lock afterwards, nothing written.
     _dep_vroot = "lib";
     _dep_local_active = 0;
+    _dep_locked_nolib = 0;
     if (_dep_local_ign != 0 && _quiet == 0) {
         _ew("note: CYRIUS_LOCAL is ignored here — ");
         _ew(_dep_local_ign);
@@ -3904,10 +3996,30 @@ fn cmd_deps(): i64 {
             _err("--locked: there is no cyrius.lock to hold this resolve to — run `cyrius deps` and commit cyrius.lock");
             return 1;
         }
-        locked_root = _cbt_tmpfile("locked-deps");
-        _dep_rm_tree(locked_root);
-        _dep_vroot = _cat2(locked_root, "/lib");
-        _dep_vendor_mode = 0;        # a private scratch under this run's own temp dir
+        # No vendored lib/ — a fresh checkout of a project that ignores lib/ (68 of 126 consumers:
+        # there the lock is the committed artifact and lib/ a build output): the resolve is held to
+        # cyrius.lock alone, and a compiling verb reads it from build/locked-deps/lib through the
+        # overlay, as local mode reads build/local-deps/lib. lib/ and the lock stay unwritten.
+        _dep_locked_nolib = _dep_lib_unvendored();
+        if (_dep_locked_nolib == 1 && _quiet == 0) {
+            _ew("note: --locked: no vendored lib/ here — the resolve is checked against cyrius.lock alone\n");
+        }
+        if (_dep_locked_nolib == 1 && _dep_locked_compiles() == 1) {
+            locked_root = "build/locked-deps";
+            var lk = _dep_dest_is_linked("build/locked-deps/lib/x");
+            if (lk != 0) { return _dep_refuse_symlinked_dest(lk); }
+            _dep_rm_tree(locked_root);
+            if (is_dir(str_from(locked_root)) == 1 || file_exists(locked_root) == 1) {
+                _err_ctx("--locked: cannot clear the previous resolve", locked_root);
+                return 1;
+            }
+            _dep_vroot = "build/locked-deps/lib";
+        } else {
+            locked_root = _cbt_tmpfile("locked-deps");
+            _dep_rm_tree(locked_root);
+            _dep_vroot = _cat2(locked_root, "/lib");
+            _dep_vendor_mode = 0;        # a private scratch under this run's own temp dir
+        }
     } elif (_dep_local_on == 1) {
         _dep_local_active = _dep_local_prescan(buf, n, _consumer_dir, 0, 0, vec_new());
         if (_dep_local_active == 1) {
@@ -4064,17 +4176,29 @@ fn _deps_finish(errors, copied, locked_root): i64 {
     if (locked_root != 0) {
         var ld = _dep_locked_diff;
         if (errors == 0) { ld = ld + _deps_locked_compare(_dep_vroot); }
-        _dep_rm_tree(locked_root);
-        _dep_vroot = "lib";
+        # With no vendored lib/, a compiling verb keeps the proven resolution (build/locked-deps/lib)
+        # and reads it through the overlay; anything else is removed.
+        var keep = 0;
+        if (_dep_locked_nolib == 1 && _dep_locked_compiles() == 1 && errors == 0 && ld == 0) { keep = 1; }
+        if (keep == 1) { _dep_overlay_env(_dep_vroot); }
+        else {
+            _dep_rm_tree(locked_root);
+            _dep_vroot = "lib";
+        }
         _dep_vendor_mode = 1;
         if (errors > 0) { return 1; }
         if (ld > 0) {
             _ew("error: --locked: ");
             fmt_int_fd(STDERR_FD, ld);
-            _ew(" difference(s) between what the tags resolve and the committed lib/ + cyrius.lock (named above); nothing was written — run `cyrius deps` and commit the result\n");
+            if (_dep_locked_nolib == 1) {
+                _ew(" difference(s) between what the tags resolve and the committed cyrius.lock (named above); nothing was written — run `cyrius deps` and commit cyrius.lock\n");
+            } else {
+                _ew(" difference(s) between what the tags resolve and the committed lib/ + cyrius.lock (named above); nothing was written — run `cyrius deps` and commit the result\n");
+            }
             return 1;
         }
-        _status("--locked: lib/ and cyrius.lock are exactly what the tags resolve");
+        if (_dep_locked_nolib == 1) { _status("--locked: cyrius.lock is exactly what the tags resolve (no vendored lib/ to compare)"); }
+        else { _status("--locked: lib/ and cyrius.lock are exactly what the tags resolve"); }
         return 0;
     }
     # 6.7.6: local mode with an override in use writes NO tracked file — the tag resolution's

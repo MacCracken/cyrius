@@ -29,6 +29,15 @@
 #   C11 a directory under tests/ that cannot be listed is WARNED by name and the resolve proceeds (a
 #       build must not fail on it; a unit needing a leaf from an unread test.cyml fails by name, and
 #       the walk that runs those tests fails on the directory itself)
+#   C12 the unit's SPELLING does not change its chain: the absolute `<project>/tests/net/x.tcyr`,
+#       `<project>//tests/y.tcyr` and `./tests/./net/x.tcyr` get exactly C1's levels — tests/test.cyml
+#       once (no duplicate f1_v), not cyrius.cyml's [test] alone (an absolute path was compared
+#       with "<cwd>/." and missed; a `.` segment read tests/test.cyml twice)
+#   C13 (wine) Windows: `cyrius.exe test tests\net\e.tcyr` and `cyrius.exe test tests\net` apply
+#       tests\net\test.cyml (a `\` used to send the unit outside the project)
+#   C14 a test.cyml [test.embed] NAME that clashes is refused naming the table that has it: one
+#       cyrius.cyml's [embed] declares, one an enclosing level's [test.embed] declares, and a
+#       NAME_len of the latter (each said only "is declared twice" / "collides with [embed]")
 #
 # MUTATION LEDGER (6.7.6) — each mutant built in a SCRATCH copy of the tree, the gate run against
 # it; the unmutated copy PASSES, and each mutant turns the rows named RED:
@@ -40,13 +49,28 @@
 #   M6  manifest.cyr: _tc_unit_dir lets a `..` component through                        C8
 #   M7  manifest.cyr: discovery skips the directories of [test] files                   C9b
 #   M8  manifest.cyr: an unlistable directory is skipped by the discovery walk, silently  C11
+#   (6.7.6 FXCL-2, measured the same way; C13 under wine with a private prefix)
+#   M9  manifest.cyr: _tc_unit_dir compares an absolute path with "<cwd>/." (the strip dropped)  C12
+#   M10 manifest.cyr: _tc_unit_dir keeps `.` segments in the unit's directory               C12
+#   M11 manifest.cyr: Windows: `\` is not read as a separator                                C13
+#   M12 manifest.cyr: _embed_seen_where names no table (6.7.6 FXCL-8b, pre-fix message)      C14
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
 G=test_cyml_per_directory
 CC=${CYCC:-"$ROOT/build/cycc"}
 [ -x "$CC" ] || { echo "SKIP: $G: no compiler at $CC"; exit 77; }
 W=$(mktemp -d) && [ -d "$W" ] || { echo "FAIL: $G: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
-trap 'rm -rf "$W"' EXIT
+# C13's PRIVATE wine prefix under $W (never ~/.wine), torn down with its server dir on exit — the
+# defer_every_return_path.sh helper. CHANGELOG [6.6.16] [6.6.17]
+WP="$W/wine"
+_wine_down() {
+    [ -d "$WP" ] || return 0
+    _ws="/tmp/.wine-$(id -u)/server-$(stat -c '%D' "$WP" 2>/dev/null)-$(printf '%x' "$(stat -c '%i' "$WP" 2>/dev/null || echo 0)")"
+    WINEPREFIX="$WP" wineserver -k >/dev/null 2>&1 || true
+    WINEPREFIX="$WP" wineserver -w >/dev/null 2>&1 || true
+    rm -rf "$_ws" || true
+}
+trap '_wine_down; rm -rf "$W"' EXIT
 unset CYRIUS_LOCAL CYRIUS_LOCKED CYRIUS_LIB_OVERLAY CYRIUS_DEFINES CYRIUS_TEST_TIMEOUT
 FAIL=0
 fail() { echo "  FAIL: $*"; FAIL=$((FAIL + 1)); }
@@ -186,6 +210,72 @@ else
         echo "  ok C11: a directory under tests/ that cannot be listed is warned by name; the resolve itself proceeds"
     else fail "C11: rc $RC"; show; fi
 fi
+
+# ── C12 ──
+PP=$(cd "$W/p" && pwd -P)   # the spelling the working directory has (getcwd's), whatever TMPDIR is
+cy p test "$PP/tests/net/x.tcyr" "$PP//tests/y.tcyr"; r12a=$RC; cp "$W/out" "$W/c12a.out"; cp "$W/err" "$W/c12a.err"
+cy p test ./tests/./net/x.tcyr; r12b=$RC
+if [ "$r12a" = 0 ] && grep -q '^2 passed, 0 failed$' "$W/c12a.out" && [ "$r12b" = 0 ] \
+    && ! grep -q 'duplicate fn' "$W/c12a.err" "$W/err"; then
+    echo "  ok C12: an absolute in-project path, a doubled slash and a ./ . spelling get C1's chain, each level once"
+else fail "C12: absolute rc $r12a, dotted rc $r12b"; sed 's/^/      /' "$W/c12a.out" "$W/c12a.err" | grep -v unreachable | head -6; show; fi
+
+# ── C14 ──
+proj ec <<'EOF'
+[embed]
+PROD = "data/p.bin"
+
+[test.embed]
+GOLD = "data/g.bin"
+EOF
+mkdir -p "$W/ec/data" "$W/ec/tests/a" "$W/ec/tests/b" "$W/ec/tests/c"
+printf 'p' > "$W/ec/data/p.bin"; printf 'g' > "$W/ec/data/g.bin"
+for d in a b c; do printf 'x' > "$W/ec/tests/$d/x.bin"; lv "$W/ec/tests/$d/t.tcyr" 0; done
+printf '[test.embed]\nPROD = "x.bin"\n' > "$W/ec/tests/a/test.cyml"
+printf '[test.embed]\nGOLD = "x.bin"\n' > "$W/ec/tests/b/test.cyml"
+printf '[test.embed]\nGOLD_len = "x.bin"\n' > "$W/ec/tests/c/test.cyml"
+cy ec test tests/a/t.tcyr tests/b/t.tcyr tests/c/t.tcyr
+if [ "$RC" = 1 ] && grep -qxF 'error: tests/a/test.cyml [test.embed] PROD: is declared twice — cyrius.cyml [embed] declares it too (a test unit compiles both)' "$W/err" \
+    && grep -qxF "error: tests/b/test.cyml [test.embed] GOLD: is declared twice — a [test.embed] of an enclosing level (cyrius.cyml's or a test.cyml above) declares it too (a test unit compiles both)" "$W/err" \
+    && grep -qxF "error: tests/c/test.cyml [test.embed] GOLD_len: collides with GOLD, which a [test.embed] of an enclosing level (cyrius.cyml's or a test.cyml above) declares (NAME_len() is the length accessor of NAME)" "$W/err"; then
+    echo "  ok C14: a test.cyml [test.embed] clash names the table that has the NAME — [embed], or an enclosing [test.embed]"
+else fail "C14: rc $RC"; grep 'error' "$W/err" | sed 's/^/      /'; fi
+
+# ── C13 ──
+if command -v wine > /dev/null 2>&1; then
+    mkdir -p "$W/whm" "$W/wh/bin" "$W/wh/versions/$VER"
+    if ( cd "$ROOT" && "$CC" < src/main_win.cyr > "$W/cc_win" 2>/dev/null && chmod +x "$W/cc_win" \
+         && "$W/cc_win" < src/main_win.cyr > "$W/wh/bin/cycc.exe" 2>/dev/null \
+         && "$W/cc_win" < cbt/cyrius.cyr > "$W/wh/bin/cyrius.exe" 2>/dev/null ) && cp -R lib "$W/wh/versions/$VER/lib"; then
+        printf '%s\n' "$VER" > "$W/wh/current"
+        proj wq <<'EOF'
+[build]
+entry = "src/main.cyr"
+
+[deps]
+stdlib = ["syscalls"]
+
+[test]
+defines = ["ROOTDEF"]
+EOF
+        mkdir -p "$W/wq/src" "$W/wq/tests/net"
+        printf 'syscall(SYS_EXIT, 0);\n' > "$W/wq/src/main.cyr"
+        printf '[test]\ndefines = ["NETDEF"]\n' > "$W/wq/tests/net/test.cyml"
+        printf 'var rc = 0;\n#ifdef ROOTDEF\nrc = rc + 1;\n#endif\n#ifdef NETDEF\nrc = rc + 2;\n#endif\nsyscall(SYS_EXIT, rc - 3);\n' > "$W/wq/tests/net/e.tcyr"
+        c13=""
+        for op in 'tests\net\e.tcyr' 'tests\net'; do
+            wr=0
+            ( cd "$W/wq" && WINEPREFIX="$WP" HOME="$W/whm" XDG_CACHE_HOME="$W/whm/.cache" WINEDEBUG=-all \
+                WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' CYRIUS_HOME="Z:$W/wh" CYRIUS_RESOLVED=1 \
+                timeout 300 wine "$W/wh/bin/cyrius.exe" test "$op" ) > "$W/c13.out" 2>&1 < /dev/null || wr=$?
+            # a single unit exits with its own status; the directory walk prints the tally
+            if [ "$wr" = 0 ] && { [ "$op" != 'tests\net' ] || grep -q '^1 passed, 0 failed' "$W/c13.out"; }; then c13="$c13 ok"
+            else c13="$c13 [$op rc $wr: $(grep -o '(exit [0-9]*)' "$W/c13.out" | head -1)]"; fi
+        done
+        if [ "$c13" = " ok ok" ]; then echo "  ok C13: (wine) tests\\net\\e.tcyr and tests\\net apply tests\\net\\test.cyml"
+        else fail "C13:$c13"; fi
+    else fail "C13: could not build the PE toolchain"; fi
+else echo "  SKIP C13: Windows leg — wine not installed"; fi
 
 [ "$FAIL" = 0 ] || { echo "FAIL: $G ($FAIL row(s))"; exit 1; }
 echo "PASS: $G"

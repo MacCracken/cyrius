@@ -21,6 +21,9 @@
 #   X9  a dependency resolve that fails (an unknown stdlib leaf): non-zero, nothing run
 #   X10 a missing operand file: non-zero
 #   X11 256 failing tests: still non-zero (an exit status keeps 8 bits; the count is not the code)
+#   X12 the FAIL row says what the wait status says: a test that EXITS 232 or 139 is `(exit 232)` /
+#       `(exit 139)`, a real SIGSEGV / SIGTERM is `(killed by signal 11 SIGSEGV` / `15` — the
+#       runner's one int folds both (exit 232 was "killed by signal 104")
 #
 # MUTATION LEDGER (6.7.6) — each mutant built in a SCRATCH copy of the tree, the gate run against
 # it; the unmutated copy PASSES, and each mutant turns the rows named RED:
@@ -30,6 +33,8 @@
 #   M4  cyrius.cyr: bare `cyrius test` exits 0 over failures                 X2-X7 bare
 #   M5  commands.cyr: the assert-summary grade ignored (exit code alone)     X7 (every form)
 #   M6  commands.cyr: an empty <dir> exits 0                                 X6b
+#   M7  commands.cyr: cmd_test reads a signal off exit_code > 128 (pre-FXCL-8a)  X12
+#   M8  build.cyr: the wait never records the signal (_run_last_signal stays 0)  X12
 # The contract held at this gate's first run (6.7.6): the rows pin it.
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -131,6 +136,20 @@ i=0; while [ $i -lt 256 ]; do prog "$W/m/tests/f$i.tcyr" 1; i=$((i + 1)); done
 step m test tests
 if [ "$RC" != 0 ] && [ "$(cont)" = 0 ] && grep -q '^0 passed, 256 failed$' "$W/out"; then echo "  ok X11: 256 failing tests — rc $RC, not a wrapped 0"
 else fail "X11: rc $RC"; tail -2 "$W/out"; fi
+
+# ── X12 ──
+proj s <<'EOF'
+EOF
+prog "$W/s/tests/e232.tcyr" 232
+prog "$W/s/tests/e139.tcyr" 139
+printf 'store64(0, 1);\nsyscall(60, 0);\n' > "$W/s/tests/segv.tcyr"
+printf 'syscall(62, syscall(39), 15);\nsyscall(60, 0);\n' > "$W/s/tests/term.tcyr"
+step s test tests
+if [ "$RC" != 0 ] && grep -qxF '  FAIL: tests/e232.tcyr (exit 232)' "$W/err" && grep -qxF '  FAIL: tests/e139.tcyr (exit 139)' "$W/err" \
+    && grep -qF '  FAIL: tests/segv.tcyr (killed by signal 11 SIGSEGV' "$W/err" && grep -qF '  FAIL: tests/term.tcyr (killed by signal 15 ' "$W/err" \
+    && [ "$(grep -c 'killed by signal' "$W/err")" = 2 ]; then
+    echo "  ok X12: exit 232 / 139 are exits, a SIGSEGV / SIGTERM are signals — each named by what the wait status says"
+else fail "X12: rc $RC"; grep 'FAIL' "$W/err" | sed 's/^/      /'; fi
 
 [ "$FAIL" = 0 ] || { echo "FAIL: $G ($FAIL row(s))"; exit 1; }
 echo "PASS: $G"
