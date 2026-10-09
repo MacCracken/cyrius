@@ -1610,14 +1610,15 @@ fn _paren_post(S, k): i64 {
 # ⛔ 6.7.6 (Break 1, D2) — u128 `+` AND `-` CARRY AND BORROW ACROSS ALL 128 BITS (the user's decision,
 # 2026-10-08): in both spellings (`b = b + x`, `b += x`), with a u128 or an integer on either side,
 # on every backend. Neither carried: both worked on the low word and left the high word alone.
-# A u128 read is still its LOW word in rax, so every integer context (an argument, a compare, a
-# return, `var n = b`) is unchanged. What it lacked is the high word, and the u128 STAMP says where
+# A u128 read is still its LOW word in rax, so every integer context (an argument, a return,
+# `var n = b`) is unchanged; a comparison reads both words (D3, _w128_cmp below) and so does a plain
+# assignment (D3, _w128_store). What it lacked is the high word, and the u128 STAMP says where
 # the whole value lives — the _BX / _FBR pattern, valid only while nothing has been emitted or
 # consumed since: a u128 local or global (k 1 / 2, the place itself; _sl_load_marks / _UFV_G) or a
 # 16-byte hidden temporary (k 3, _w128_tmp) holding a `+` / `-` result. A `+` / `-` with a u128 on
 # either side computes into a temporary with the backend's add / subtract with carry (EW128_ACCM,
-# EW128_ACCI) and leaves its low word in rax; a store into a u128 place takes all 16 bytes of a
-# k-3 result (_w128_store), and `b += x` / `b -= x` are that long form (_w128_cop). An integer
+# EW128_ACCI) and leaves its low word in rax; a store into a u128 place takes all 16 bytes of the
+# value (_w128_store), and `b += x` / `b -= x` are that long form (_w128_cop). An integer
 # operand is its 64-bit pattern, ZERO-extended — the rule a u128 initializer, a `u128[N]` list
 # element and a constant u128 global already follow (`var z: u128 = 0 - 1;` is 2^64 - 1); unary
 # minus is `0 - x`. Every OTHER operator with a u128 operand — `* / % << >> >>> & | ^ ~`, the `*|
@@ -1843,20 +1844,70 @@ fn _w128_init_place(S, pk, pv): i64 {
     EW128_ACCI(S, 2);
     return 0;
 }
-# An ASSIGNMENT's store into slot `idx` (g 1 a global): when the slot is a u128 and the value a
-# `+` / `-` result (a k-3 temporary), all 16 bytes (1). `b = c` and `b = 5` keep the 8-byte store:
-# they write the low word and leave the high word, as they always have (not decided).
+# An ASSIGNMENT's store into slot `idx` (g 1 a global): when the slot is a u128, all 16 bytes (1),
+# as its declaration's store takes them (_w128_init_place): a u128 source — a variable, a `+` / `-`
+# result — copied, an integer zero-extended. ⛔ 6.7.6 (D3, the user's decision, 2026-10-08, third
+# round): only a `+` / `-` result took the whole value; `b = c` and `b = 5` stored the low word and
+# kept the old high word (`b = c` of 1 over a high word of 3 read 3 * 2^64 + 1).
 fn _w128_store(S, idx, g): i64 {
-    if (_W128_IS(S) == 0) { return 0; }
-    if (_w128_k != 3) { return 0; }
     var pk = 1;
     if (g == 1) { pk = 2; if (GVW128(S, idx) == 0) { return 0; } }
     elif (GLW128(S, idx) == 0) { return 0; }
-    _w128_addr(S, 3, _w128_v, 0);
-    _w128_k = 0;
-    _w128_addr(S, pk, idx, 1);
-    EW128_ACCM(S, 2);
+    _w128_init_place(S, pk, idx);
     return 1;
+}
+
+# ⛔ 6.7.6 (Break 1, D3) — u128 COMPARISONS COMPARE ALL 128 BITS (the user's decision, 2026-10-08, third
+# round): `== != < <= > >=`, UNSIGNED, with a u128 on either side and a u128 or an integer — zero-
+# extended, the D2 operand rule — on the other, wherever a comparison is parsed (_PLOGIC_ATOM: every
+# condition, `&&` / `||` operand, value and if-expression condition; ECONDCMP's chained `a < b < c`).
+# They compared the low words, signed: `b == c` was true for values 2^64 apart and `b < c` false for
+# `b` 1 and `c` 2^64. Both operands are compared in memory — the left one copied into a temporary
+# before the right is parsed, as `x + y` does, so the right side cannot change it; an integer gets a
+# temporary of its own — and EW128_CMP leaves the boolean (0 / 1) in rax.
+# A u128 on the LEFT, the stamp valid at the operator `op` (nothing consumed): handled (1).
+fn _w128_cmp(S, op): i64 {
+    if (_W128_IS(S) == 0) { return 0; }
+    var lk = _w128_k;
+    var h = _w128_v;
+    STI(S, GTI(S) + 1);
+    if (lk != 3) {
+        var lv = h;
+        h = _w128_tmp(S);
+        _w128_accm(S, h, 2, lk, lv);
+    }
+    _cfo = 0;
+    PEXPR(S);
+    var rk = 3;
+    var rv = 0;
+    if (_W128_IS(S) == 1) { rk = _w128_k; rv = _w128_v; }
+    else { rv = _w128_tmp(S); _w128_acci(S, rv, 2); }
+    _w128_cmp_emit(S, op, h, rk, rv);
+    return 1;
+}
+# An integer on the LEFT, pushed, and the right operand just parsed (_PLOGIC_ATOM's integer arm,
+# ECONDCMP's chain): when that is a u128, the integer is popped into a temporary, zero-extended (1).
+fn _w128_cmp_r(S, op): i64 {
+    if (_W128_IS(S) == 0) { return 0; }
+    var rk = _w128_k;
+    var rv = _w128_v;
+    EPOPR(S);
+    var h = _w128_tmp(S);
+    _w128_acci(S, h, 2);
+    _w128_cmp_emit(S, op, h, rk, rv);
+    return 1;
+}
+# rax = (the u128 in temporary `h`) op (the u128 `(rk, rv)`): a boolean value.
+fn _w128_cmp_emit(S, op, h, rk, rv): i64 {
+    _w128_k = 0;
+    _w128_addr(S, rk, rv, 0);
+    _w128_addr(S, 3, h, 1);
+    EW128_CMP(S, op);
+    SESTYPE(S, 0);
+    SPSC(S, 0);
+    _cfo = 0;
+    _BX_MARK(S);
+    return 0;
 }
 
 # ⛔ 6.6.10 — UNARY MINUS ON AN UNTYPED FLOAT VARIABLE. `var c = 1.5; -c` is an INTEGER
@@ -6099,6 +6150,7 @@ fn _PLOGIC_ATOM(S): i64 {
             # f64 lhs, route to EF64_CMP (ucomisd/fcmp + setcc) instead of the
             # integer ESETCC; the operand setup (lhs→rcx, rhs on stack + in rax)
             # mirrors PF64CMP's. Result is an i64 boolean (SESTYPE 0).
+            if (_w128_cmp(S, op) == 1) { return 0; }   # 6.7.6 (D3): a u128 on the left, all 128 bits
             var cmpst = GESTYPE(S);
             STI(S, GTI(S) + 1);
             # v6.4.57 (kind-0 compare-mix warn): peek the rhs FIRST token before it's
@@ -6123,9 +6175,11 @@ fn _PLOGIC_ATOM(S): i64 {
                 SESTYPE(S, 0);
             } else {
                 if (GESTYPE(S) == F64_TYID) { if (_rhs_lit0 == 0) { _FLT_TYPE_WARN(S, 0); } }
-                EMOVCA(S);
-                EPOPR(S);
-                ESETCC(S, op);
+                if (_w128_cmp_r(S, op) == 0) {   # 6.7.6 (D3): a u128 on the right, all 128 bits
+                    EMOVCA(S);
+                    EPOPR(S);
+                    ESETCC(S, op);
+                }
             }
             _cfo = 0;
             _BX_MARK(S);   # 6.7.3: a comparison is a boolean value

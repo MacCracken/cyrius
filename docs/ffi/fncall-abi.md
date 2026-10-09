@@ -40,7 +40,11 @@ argument (7 in all) the two agree. ⚠ Until 6.7.6 `fncall8`'s x86 asm
 alone used the C order (arg 7 at `[rsp]`), so an address-taken
 `&fncall8` handed a cyrius callee arguments 7 and 8 swapped
 (`12345687`); it now uses cyrius's, like every other call
-(`tests/tcyr/crossos/fncall_stack_args.tcyr`).
+(`tests/tcyr/crossos/fncall_stack_args.tcyr`). cybs, the bootstrap
+compiler, passes and reads them in the same order since 6.7.6 (it
+used the C order when it first passed 7+ arguments, earlier in 6.7.6),
+so one convention holds on the seed chain too
+(`tests/gates/toolchain/cybs_call_arity_named.sh`).
 
 > ⛔ **"Between statements" is load-bearing, and until 6.6.5 this file
 > said "in every function body" without it.** x86 evaluates expressions

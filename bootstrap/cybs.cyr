@@ -778,10 +778,16 @@ emit_store_param:
     je emit_sp_r8
     cmp rax, 5
     je emit_sp_r9
-# Parameter i >= 6 is a stack argument (SysV, as emit_fn_call_pops passes it): copy
-# [rbp + 16 + (i-6)*8] into its local through rax. 6.7.6 - it was never stored before.
+# Parameter i >= 6 is a stack argument, in cycc's order (emit_fn_call_pops): the LAST at
+# [rbp + 16], so parameter i of n (count_params) is at [rbp + 16 + (n-1-i)*8] = [rbp + 8(n-i) + 8].
+# Copy it into its local through rax. 6.7.6
+    neg rax
+    mov rsi, r15
+    add rsi, 0x7600068
+    mov rcx, [rsi]
+    add rax, rcx
     shl rax, 3
-    sub rax, 32
+    add rax, 8
     shl rax, 24
     or rax, 0x858B48      # 48 8B 85 d32 = mov rax, [rbp+d32] (7 bytes)
     call emit_8bytes
@@ -826,6 +832,29 @@ emit_sp_done:
     pop rdx
     pop rcx
     pop rsi
+    ret
+count_params:            # 0x7600068 = the parameter count: the IDENTs from r11 through the `)`
+    push r11
+    push rcx
+    push rsi
+    xor rcx, rcx
+count_params_loop:
+    call peek_tok_type
+    cmp rax, 31          # COMMA
+    je count_params_next
+    cmp rax, 2           # IDENT
+    jne count_params_done
+    inc rcx
+count_params_next:
+    inc r11
+    jmp count_params_loop
+count_params_done:
+    mov rsi, r15
+    add rsi, 0x7600068
+    mov [rsi], rcx
+    pop rsi
+    pop rcx
+    pop r11
     ret
 emit_call_placeholder:
     push rsi
@@ -893,27 +922,15 @@ emit_fn_call_pops:
     je emit_fcp_5
     cmp rax, 6
     je emit_fcp_6
-# 7+ arguments (SysV; 6.7.6). a[0] was pushed first, so a[n-1] is on top. Push a copy of
-# a[n-1] .. a[6]: copy k reads [rsp + 16k] (each copy pushed moves the rest 8 further away),
-# leaving a[6] at [rsp] for the call. Then a[i] (i < 6) is at [rsp + 8(2n-7-i)].
-    push rbx
+# 7+ arguments (6.7.6), in cycc's order: a[0] was pushed first, so a[n-1] is on top, at [rsp] —
+# where the callee reads its LAST argument (emit_store_param), down to a[6] at [rsp + 8(n-7)].
+# The stack is already that layout: load a[0..5] from [rsp + 8(n-1-i)] into the registers and
+# leave the n words for emit_fn_call_clean.
     push rcx
-    mov rbx, rax         # rbx = n
-    xor rcx, rcx         # rcx = 16k
-emit_fcp_copy:
-    mov rax, 0x24848B48  # 48 8B 84 24 d32 = mov rax, [rsp+d32]
-    call emit_rsp_d32
-    call emit_push_rax
-    add rcx, 16
-    mov rax, rbx
-    sub rax, 6
-    shl rax, 4
-    cmp rcx, rax
-    jl emit_fcp_copy
-    mov rcx, rbx
-    shl rcx, 4
-    sub rcx, 56          # 8(2n-7): a[0]
-    mov rax, 0x24BC8B48  # mov rdi, [rsp+d32]
+    mov rcx, rax
+    shl rcx, 3
+    sub rcx, 8           # 8(n-1): a[0]
+    mov rax, 0x24BC8B48  # 48 8B BC 24 d32 = mov rdi, [rsp+d32]
     call emit_rsp_d32
     sub rcx, 8
     mov rax, 0x24B48B48  # mov rsi, [rsp+d32]
@@ -931,7 +948,6 @@ emit_fcp_copy:
     mov rax, 0x248C8B4C  # mov r9, [rsp+d32]
     call emit_rsp_d32
     pop rcx
-    pop rbx
     ret
 emit_rsp_d32:            # emit the 4-byte [rsp+d32] opcode in rax, d32 = rcx
     push rcx
@@ -940,7 +956,7 @@ emit_rsp_d32:            # emit the 4-byte [rsp+d32] opcode in rax, d32 = rcx
     call emit_8bytes
     pop rcx
     ret
-emit_fn_call_clean:      # after a call: drop the 2n-6 words a 7+ argument call left (above)
+emit_fn_call_clean:      # after a call: drop the n words a 7+ argument call left (above)
     push rsi
     push rcx
     mov rsi, r15
@@ -948,8 +964,7 @@ emit_fn_call_clean:      # after a call: drop the 2n-6 words a 7+ argument call 
     mov rcx, [rsi]
     cmp rcx, 7
     jl emit_fcc_done
-    shl rcx, 4
-    sub rcx, 48
+    shl rcx, 3
     mov rax, 0x24A48D48  # 48 8D A4 24 d32 = lea rsp, [rsp+d32]
     call emit_rsp_d32
 emit_fcc_done:
@@ -2349,6 +2364,7 @@ parse_fn_def_exists:
     add rsi, 0x7600058
     xor rax, rax
     mov [rsi], rax        # param_count = 0
+    call count_params     # the count, for a stack parameter's slot (emit_store_param)
     call peek_tok_type
     cmp rax, 11          # RPAREN (no params)
     je parse_fn_params_done

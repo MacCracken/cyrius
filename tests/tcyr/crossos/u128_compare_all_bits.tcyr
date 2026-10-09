@@ -1,0 +1,142 @@
+# u128_compare_all_bits.tcyr — 6.7.6 (Break 1, D3): a u128 COMPARISON compares all 128 bits (the user's
+# decision, 2026-10-08, third round): `==` `!=` `<` `<=` `>` `>=`, UNSIGNED, a u128 against a u128 or an
+# integer (zero-extended, lane D2's operand rule) on either side, in every context a comparison is
+# parsed — an `if` / `while` / `for` condition, an `&&` / `||` operand, a value, an if-expression
+# condition, a chained `a < b < c` — at fn and top level.
+#
+# ⛔ THE DEFECT. Every u128 comparison read the LOW words, signed: `b == c` was true for values 2^64
+# apart, `b < c` false for 1 and 2^64, and a low word with its top bit set compared below 1. Each pair
+# below is set with store64 (lo, hi) and every expected answer is written out by hand.
+#
+# ⚠ CROSS-HOST: the compare is the backend's (x86 cmp / sbb and xor / or, aarch64 subs / sbcs and eor /
+# orr, cx a computed unsigned compare); the temporaries are frame slots or, at top level, dead globals.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/assert.cyr"
+
+var M = 0xFFFFFFFFFFFFFFFF;   # 2^64 - 1, the all-ones word
+var T = 0x8000000000000000;   # 2^63: a low word that a SIGNED compare puts below 1
+
+fn set2(p, lo, hi): i64 { store64(p, lo); store64(p + 8, hi); return 0; }
+# `x > zap(&x)` — the left operand is evaluated before the right, as an integer's is.
+fn zap(p): i64 { set2(p, 0, 0); return 3; }
+fn id(n): i64 { return n; }
+
+var GA: u128 = 0;
+var GB: u128 = 0;
+
+fn tmain(): i64 {
+    var b: u128 = 0;
+    var c: u128 = 0;
+    # The high words differ, the low words are equal (the filed shape).
+    set2(&b, 5, 1);
+    set2(&c, 5, 2);
+    assert_eq(b == c, 0, "C1: `==` reads the high words (5 + 2^64 vs 5 + 2^65)");
+    assert_eq(b != c, 1, "C2: `!=`");
+    assert_eq(b < c, 1, "C3: `<`");
+    assert_eq(b <= c, 1, "C4: `<=`");
+    assert_eq(b > c, 0, "C5: `>`");
+    assert_eq(b >= c, 0, "C6: `>=`");
+    assert_eq(c > b, 1, "C7: `>` the other way");
+    assert_eq(c >= b, 1, "C8: `>=` the other way");
+    # The high words decide even when the low words say the opposite.
+    set2(&b, M, 0);
+    set2(&c, 0, 1);
+    assert_eq(b < c, 1, "C9: 2^64 - 1 < 2^64 (the low words say >)");
+    assert_eq(b > c, 0, "C10: ... and not >");
+    # Equal high words: the low words decide, UNSIGNED.
+    set2(&b, T, 3);
+    set2(&c, 1, 3);
+    assert_eq(b > c, 1, "C11: a low word of 2^63 is above 1 (unsigned)");
+    assert_eq(b < c, 0, "C12: ... not below it");
+    assert_eq(b <= c, 0, "C13: `<=` on the low words");
+    assert_eq(b >= c, 1, "C14: `>=` on the low words");
+    # Equal values.
+    set2(&b, 9, M);
+    set2(&c, 9, M);
+    assert_eq(b == c, 1, "C15: equal values are `==`");
+    assert_eq(b <= c, 1, "C16: ... `<=`");
+    assert_eq(b >= c, 1, "C17: ... `>=`");
+    assert_eq(b < c, 0, "C18: ... not `<`");
+    assert_eq(b != c, 0, "C19: ... not `!=`");
+    # An integer operand is zero-extended (D2's rule): M is 2^64 - 1, not -1.
+    set2(&b, M, 0);
+    assert_eq(b == M, 1, "C20: u128 2^64 - 1 == the integer 0xFFFF_FFFF_FFFF_FFFF");
+    set2(&b, M, 1);
+    assert_eq(b == M, 0, "C21: ... not when the high word is set");
+    assert_eq(b > M, 1, "C22: 2^65 - 1 > 2^64 - 1 (an integer on the right)");
+    assert_eq(M < b, 1, "C23: an integer on the LEFT is zero-extended too");
+    assert_eq(7 == b, 0, "C24: `7 == b` reads b's high word");
+    set2(&b, 7, 0);
+    assert_eq(7 == b, 1, "C25: `7 == b` with b = 7");
+    assert_eq(b == 7, 1, "C26: `b == 7` with b = 7");
+    assert_eq(b < T, 1, "C27: 7 < 2^63 (the integer zero-extended, not negative)");
+    # Computed u128 operands (a `+` / `-` result) on either side.
+    set2(&b, M, 0);
+    set2(&c, 0, 1);
+    assert_eq(b + 1 == c, 1, "C28: `b + 1 == c` (the carried sum)");
+    assert_eq(c == b + 1, 1, "C29: `c == b + 1` (a sum on the right)");
+    assert_eq((b + 2) > c, 1, "C30: a parenthesised sum on the left");
+    assert_eq(c - 1 < c, 1, "C31: a difference that borrows");
+    # Contexts.
+    var n = 0;
+    set2(&b, 5, 1);
+    set2(&c, 5, 2);
+    if (b == c) { n = n + 1; }
+    if (b != c) { n = n + 2; }
+    if (b < c && c > b) { n = n + 4; }
+    if (b == c || c < b) { n = n + 8; }
+    if (b > c) { n = n + 16; } elif (b < c) { n = n + 32; }
+    assert_eq(n, 38, "C32: `if` / `elif`, `&&` / `||` conditions");
+    var r = if (b >= c) { 1 } else { 2 };
+    assert_eq(r, 2, "C33: an if-expression condition");
+    var x = b < c;
+    assert_eq(x, 1, "C34: a comparison as a value");
+    assert_eq(id(c > b), 1, "C35: a comparison as an argument");
+    var k = 0;
+    set2(&c, 0, 1);
+    if (1 < 2 < c) { k = 1; }
+    assert_eq(k, 1, "C36: a chained condition `(1 < 2) < c`, c 2^64 (its low word 0)");
+    set2(&c, 1, 1);
+    k = 0;
+    if (2 > 1 == c) { k = 1; }
+    assert_eq(k, 0, "C37: ... `(2 > 1) == c` reads c's high word (c 2^64 + 1)");
+    set2(&b, 0, 2);
+    set2(&c, 5, 1);
+    k = 0;
+    while (b < c && k < 9) { b = b + 1; k = k + 1; }
+    assert_eq(k, 0, "C38: a `while` condition: 2^65 < 2^64 + 5 is false (the low words said 0 < 5)");
+    set2(&b, M - 1, 0);
+    set2(&c, 1, 1);
+    k = 0;
+    while (b < c && k < 9) { b = b + 1; k = k + 1; }
+    assert_eq(k, 3, "C39: a `while` condition across 2^64");
+    set2(&b, 7, 1);
+    set2(&c, 2, 2);
+    k = 0;
+    for (n = 0; b <= c && n < 4; n = n + 1) { k = k + 1; }
+    assert_eq(k, 4, "C40: a `for` condition: 2^64 + 7 <= 2^65 + 2 (the low words said 7 > 2)");
+    # The left operand is evaluated first.
+    set2(&b, 1, 1);
+    assert_eq(b > zap(&b), 1, "C41: the left u128 is read before the right side runs");
+    # Globals.
+    set2(&GA, 4, 8);
+    set2(&GB, 4, 9);
+    assert_eq(GA < GB, 1, "C42: u128 globals");
+    set2(&b, 4, 7);
+    assert_eq(GA == b, 0, "C43: a global against a local (equal low words)");
+    return 0;
+}
+
+var tr = tmain();
+# At top level (the temporaries are dead globals).
+set2(&GA, 2, 1);
+set2(&GB, 3, 0);
+assert_eq(GA > GB, 1, "C44: at top level, 2^64 + 2 > 3");
+assert_eq(GA == 2, 0, "C45: ... and not == 2");
+assert_eq(GA - GB == M, 1, "C46: ... `GA - GB == 2^64 - 1`");
+var top = 0;
+if (GB < GA) { top = 1; }
+assert_eq(top, 1, "C47: a top-level `if` condition");
+var rr = assert_summary();
+syscall(60, rr);

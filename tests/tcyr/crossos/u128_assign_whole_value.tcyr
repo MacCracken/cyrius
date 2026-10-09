@@ -1,0 +1,115 @@
+# u128_assign_whole_value.tcyr — 6.7.6 (Break 1, D3): a PLAIN u128 ASSIGNMENT takes the whole value (the
+# user's decision, 2026-10-08, third round), as the declaration does since D2: `b = c` (a u128 source —
+# a variable, a `+` / `-` result) copies all 16 bytes and `b = 5` / `b = <integer>` zero-extends — a
+# local or a global, in a statement, a classic-for step and at top level.
+#
+# ⛔ THE DEFECT. Only a `+` / `-` result took the whole value; `b = c` and `b = 5` stored the low word and
+# KEPT the old high word: `b = c` of 1 over a high word of 3 read 3 * 2^64 + 1. Every destination below
+# is filled with a sentinel high word first, so a store that skips the high word cannot pass by
+# coincidence, and every expected word is written out by hand.
+#
+# ⚠ CROSS-HOST: the copy is the backend's EW128_ACCM / EW128_ACCI (x86, aarch64, cx); the destination
+# halves are written through the address.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/assert.cyr"
+
+var M = 0xFFFFFFFFFFFFFFFF;   # 2^64 - 1, the all-ones word
+
+fn set2(p, lo, hi): i64 { store64(p, lo); store64(p + 8, hi); return 0; }
+fn junk(p): i64 { return set2(p, 0x5555, 0x5555); }
+fn is2(p, lo, hi): i64 {
+    if (load64(p) != lo) { return 0; }
+    if (load64(p + 8) != hi) { return 0; }
+    return 1;
+}
+fn nine(): i64 { return 9; }
+
+var GA: u128 = 0;
+var GB: u128 = 0;
+
+fn tmain(): i64 {
+    var b: u128 = 0;
+    var c: u128 = 0;
+    var d: u128 = 0;
+    set2(&c, 1, 7);
+    junk(&b);
+    b = c;
+    assert_eq(is2(&b, 1, 7), 1, "S1: `b = c` copies both words");
+    set2(&c, 1, 0);
+    junk(&b);
+    b = c;
+    assert_eq(is2(&b, 1, 0), 1, "S2: `b = c` with c's high word 0 clears b's (it kept 0x5555)");
+    junk(&b);
+    b = 5;
+    assert_eq(is2(&b, 5, 0), 1, "S3: `b = 5` zero-extends");
+    junk(&b);
+    b = M;
+    assert_eq(is2(&b, M, 0), 1, "S4: `b = <2^64 - 1>` zero-extends (the integer is not -1)");
+    junk(&b);
+    b = 0 - 1;
+    assert_eq(is2(&b, M, 0), 1, "S5: `b = 0 - 1` (an integer expression) zero-extends");
+    junk(&b);
+    b = nine();
+    assert_eq(is2(&b, 9, 0), 1, "S6: an integer call result zero-extends");
+    var w = 0x1234;
+    junk(&b);
+    b = *(&w);
+    assert_eq(is2(&b, 0x1234, 0), 1, "S7: a dereferenced word zero-extends");
+    set2(&c, M, 2);
+    set2(&d, 1, 3);
+    junk(&b);
+    b = c + d;
+    assert_eq(is2(&b, 0, 6), 1, "S8: `b = c + d` takes the carried sum (D2)");
+    junk(&b);
+    b = (c);
+    assert_eq(is2(&b, M, 2), 1, "S9: `b = (c)` copies both words");
+    set2(&b, 4, 8);
+    b = b;
+    assert_eq(is2(&b, 4, 8), 1, "S10: `b = b` keeps the value");
+    junk(&b);
+    b = c < d;
+    assert_eq(is2(&b, 1, 0), 1, "S11: a comparison (a 0 / 1 integer) zero-extends");
+    junk(&b);
+    b = c;
+    assert_eq(b == c, 1, "S12: after `b = c`, `b == c` (all 128 bits)");
+    # Globals: a global from a local, a local from a global, a global from a global.
+    set2(&c, 3, 9);
+    junk(&GA);
+    GA = c;
+    assert_eq(is2(&GA, 3, 9), 1, "S13: a global from a u128 local");
+    junk(&b);
+    b = GA;
+    assert_eq(is2(&b, 3, 9), 1, "S14: a local from a u128 global");
+    junk(&GB);
+    GB = GA;
+    assert_eq(is2(&GB, 3, 9), 1, "S15: a global from a u128 global");
+    junk(&GB);
+    GB = 12;
+    assert_eq(is2(&GB, 12, 0), 1, "S16: a global from an integer zero-extends");
+    # A classic-for step.
+    var n = 0;
+    set2(&c, 6, 1);
+    junk(&b);
+    for (n = 0; n < 1; b = c) { n = n + 1; }
+    assert_eq(is2(&b, 6, 1), 1, "S17: a for step `b = c` copies both words");
+    junk(&b);
+    for (n = 0; n < 1; b = 2) { n = n + 1; }
+    assert_eq(is2(&b, 2, 0), 1, "S18: a for step `b = 2` zero-extends");
+    return 0;
+}
+
+var tr = tmain();
+# At top level.
+set2(&GA, 8, 4);
+junk(&GB);
+GB = GA;
+assert_eq(is2(&GB, 8, 4), 1, "S19: a top-level `GB = GA` copies both words");
+junk(&GB);
+GB = 77;
+assert_eq(is2(&GB, 77, 0), 1, "S20: a top-level `GB = 77` zero-extends");
+junk(&GB);
+GB = GA - 9;
+assert_eq(is2(&GB, M, 3), 1, "S21: a top-level `GB = GA - 9` borrows (D2)");
+var rr = assert_summary();
+syscall(60, rr);
