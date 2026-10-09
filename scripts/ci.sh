@@ -194,10 +194,34 @@ fi
 echo "$VERSION" > "$VD/VERSION"
 rm -rf "$EX"
 
-# Symlink binaries
-for bin in "$CYRIUS_HOME"/versions/"$VERSION"/bin/*; do
-    [ -f "$bin" ] && ln -sf "$bin" "$CYRIUS_HOME/bin/$(basename "$bin")"
-done
+# ⛔ 6.7.7 — NEVER WRITE THROUGH A LINKED $CYRIUS_HOME/bin. A home install.sh made (a cached
+# ~/.cyrius, a developer's store) has bin and lib as DIRECTORY links into the active slot
+# (install.sh `_switch_active`). The per-file `ln -sf versions/<v>/bin/X $CYRIUS_HOME/bin/X` wrote
+# through that link: every binary of the OLD slot became a link into the new one — a store slot no
+# longer equal to its tag — while lib stayed on the old stdlib. Such a home is re-pointed the way
+# `_switch_active` does it: `ln -sfn` replaces each link (the name never stops resolving), bin and
+# lib both or neither, and the old slot is never touched. The per-file links are for the plain bin/
+# directory a fresh CI home gets. tests/gates/toolchain/ci_installs_the_release_tarball.sh axis 5.
+# CHANGELOG [6.7.7]
+if [ -L "$CYRIUS_HOME/bin" ]; then
+    _old_bin=$(readlink "$CYRIUS_HOME/bin")
+    ln -sfn "$VD/bin" "$CYRIUS_HOME/bin" || {
+        echo "error: could not point $CYRIUS_HOME/bin at $VD/bin" >&2
+        exit 1
+    }
+    if [ -d "$CYRIUS_HOME/lib" ] && [ ! -L "$CYRIUS_HOME/lib" ]; then
+        rm -rf "$CYRIUS_HOME/lib"    # a legacy REAL directory, as `_relink_active` handles it
+    fi
+    ln -sfn "$VD/lib" "$CYRIUS_HOME/lib" || {
+        ln -sfn "$_old_bin" "$CYRIUS_HOME/bin" || true
+        echo "error: could not point $CYRIUS_HOME/lib at $VD/lib — $CYRIUS_HOME/bin left on $_old_bin" >&2
+        exit 1
+    }
+else
+    for bin in "$VD"/bin/*; do
+        [ -f "$bin" ] && ln -sf "$bin" "$CYRIUS_HOME/bin/$(basename "$bin")"
+    done
+fi
 echo "$VERSION" > "$CYRIUS_HOME/current"
 
 # Verify

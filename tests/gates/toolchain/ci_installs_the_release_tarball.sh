@@ -35,11 +35,17 @@
 #   4  a tarball that is not release-shaped is REFUSED by name — non-zero, no cycc linked, no
 #      `current`: the fabricated versions/<v>/ layout the old gates built, and a
 #      cyrius-<v>-x86_64-linux/ with bin/ but no lib/ (install.sh refuses that one too).
+#   5  over a home install.sh made — $CYRIUS_HOME/bin and lib DIRECTORY links into versions/<old>
+#      (`_switch_active`) — under `sh` and `bash -eo pipefail`: exit 0; versions/<old> keeps exactly
+#      its entries, each a regular file byte-identical to before (never a link into the new slot);
+#      every tarball bin resolves through $CYRIUS_HOME/bin and $CYRIUS_HOME/lib is the new stdlib.
 #
 # MUTATION LEDGER (6.7.7, measured: this gate run from a scratch root carrying a mutated copy)
 #   a. the 6.7.6 ci.sh verbatim                 -> axis 2 RED in both shells (exit 1, "cycc not
 #                                                  found"), both axis-4 rows RED (the fabricated
-#                                                  tarball INSTALLS, exit 0); axis 3 needs axis 2
+#                                                  tarball INSTALLS, exit 0); axis 3 needs axis 2;
+#                                                  axis 5 RED (exit 0, the OLD binaries and stdlib
+#                                                  still active, current = <v>)
 #   b. a half fix: still extracted into the home,  -> axis 2 RED (no versions/<v>/bin, lib,
 #      linking $CYRIUS_HOME/cyrius-<v>-…/bin/*        templates, twin or VERSION; the tree left
 #                                                  in the home), axis 4 RED (no-lib installs)
@@ -51,6 +57,13 @@
 #   g. the stdlib copy dropped                  -> axis 2 RED (both shells)
 #   h. release.yml's x86_64 STAGE renamed       -> RED before any install: the tarball is no
 #                                                  longer the cyrius-<v>-x86_64-linux ci.sh fetches
+#   i. the per-file `ln -sf` loop for every     -> axis 5 RED in both shells: every bin of the
+#      home (the first cut of this fix)            tarball written into versions/<old>/bin, its cycc
+#                                                  and cyrius now LINKS into versions/<v>; lib still
+#                                                  the old slot's; axes 1-4 green
+#   j. the lib re-point dropped                 -> axis 5 RED (lib still the old slot's stdlib)
+#   k. `ln -sf` (no -n) for the bin link        -> axis 5 RED (versions/<old>/bin/bin appears; the
+#                                                  old binaries still active)
 # The tree -> PASS.
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -150,11 +163,12 @@ NBIN=$(find "$EXP/bin" -type f | grep -c . || true)
 [ "$NBIN" -ge "$NB" ] || { bad "axis 1: the tarball's bin/ holds $NBIN file(s), fewer than the $NB [release] bins staged"; a1=1; }
 [ "$a1" -eq 0 ] && echo "  ok axis 1: release.yml's package step built $TB — one top-level directory, $NBIN files in bin/"
 
-# run_ci <home> <shell...> — ci.sh <v> against the stub release host
-run_ci() {
+# run_ci <home> <shell...> — ci.sh <v> against the stub release host, in a fresh home
+# (fresh_home <home> + run_ci_in <home> <shell...> to seed the home in between)
+fresh_home() { rm -rf "$1"; mkdir -p "$1/tmp" "$1/cwd"; }
+run_ci() { fresh_home "$1"; run_ci_in "$@"; }
+run_ci_in() {
     _h=$1; shift
-    rm -rf "$_h"
-    mkdir -p "$_h/tmp" "$_h/cwd"
     RC=0
     ( cd "$_h/cwd" && env -i HOME="$_h" CYRIUS_HOME="$_h/.cyrius" PATH="$W/stub:/usr/bin:/bin" TMPDIR="$_h/tmp" \
         RELDIR="$RELDIR" "$@" "$ROOT/scripts/ci.sh" "$V" ) > "$W/out" 2>&1 || RC=$?
@@ -230,5 +244,43 @@ else
     bad "axis 4: the no-lib tarball: exit $RC, cycc $( [ -e "$H/bin/cycc" ] && echo LINKED || echo absent), current $( [ -e "$H/current" ] && echo WRITTEN || echo absent)"
 fi
 
+# ── axis 5: over a home install.sh made, ci.sh re-points the links and leaves the old slot alone ──
+# install.sh's `_switch_active` makes $CYRIUS_HOME/bin and lib DIRECTORY links into the active
+# slot. The per-file `ln -sf versions/<v>/bin/X $CYRIUS_HOME/bin/X` wrote THROUGH that link, turning
+# every binary of the old slot into a link into the new one (lib stayed on the old stdlib).
+RELDIR="$CO/dist"
+OLD=0.0.1
+for sh_ in "sh" "bash -eo pipefail"; do
+    HH="$W/h5-${sh_%% *}"; H="$HH/.cyrius"; OD="$H/versions/$OLD"
+    fresh_home "$HH"
+    mkdir -p "$OD/bin" "$OD/lib"
+    for b in cycc cyrius; do printf '#!/bin/sh\necho "old %s %s"\n' "$b" "$OLD" > "$OD/bin/$b"; done
+    chmod 755 "$OD/bin/cycc" "$OD/bin/cyrius"
+    printf '# only in the old slot\n' > "$OD/lib/old_only.cyr"
+    echo "$OLD" > "$OD/VERSION"; echo "$OLD" > "$H/current"
+    ln -s "$OD/bin" "$H/bin"; ln -s "$OD/lib" "$H/lib"
+    rm -rf "$W/old5"; cp -R "$OD" "$W/old5"
+    # shellcheck disable=SC2086  # the shell and its flags are words by construction
+    run_ci_in "$HH" $sh_
+    a5=0
+    { [ "$RC" -eq 0 ] && grep -q 'cycc:  ok' "$W/out"; } || { bad "axis 5 [$sh_]: ci.sh over an install.sh-shaped home exit $RC"; a5=1; }
+    # the old slot: the same entries, every one a regular file (never a link), byte-identical
+    [ "$(cd "$OD" && find . | LC_ALL=C sort | tr '\n' ' ')" = "$(cd "$W/old5" && find . | LC_ALL=C sort | tr '\n' ' ')" ] \
+        || { bad "axis 5 [$sh_]: versions/$OLD's entries changed: $(cd "$OD" && find . | LC_ALL=C sort | tr '\n' ' ')"; a5=1; }
+    for f in bin/cycc bin/cyrius lib/old_only.cyr VERSION; do
+        { [ -f "$OD/$f" ] && [ ! -L "$OD/$f" ] && cmp -s "$W/old5/$f" "$OD/$f"; } \
+            || { bad "axis 5 [$sh_]: versions/$OLD/$f $( [ -L "$OD/$f" ] && echo "is now a LINK to $(readlink "$OD/$f")" || echo 'changed or gone')"; a5=1; }
+    done
+    # the active names: every bin and the stdlib resolve into the new slot
+    for f in "$EXP/bin"/*; do
+        b=$(basename "$f")
+        cmp -s "$f" "$H/bin/$b" || { bad "axis 5 [$sh_]: \$CYRIUS_HOME/bin/$b does not resolve to versions/$V/bin/$b"; a5=1; break; }
+    done
+    diff -r "$EXP/lib" "$H/lib" > /dev/null 2>&1 \
+        || { bad "axis 5 [$sh_]: \$CYRIUS_HOME/lib is not versions/$V/lib$( [ -e "$H/lib/old_only.cyr" ] && echo " (still the old slot's stdlib)")"; a5=1; }
+    [ "$(cat "$H/current" 2>/dev/null)" = "$V" ] || { bad "axis 5 [$sh_]: current does not name $V"; a5=1; }
+    [ "$a5" -eq 0 ] && echo "  ok axis 5 [$sh_]: over a home whose bin / lib link into versions/$OLD, ci.sh re-points both to versions/$V and leaves versions/$OLD byte-identical"
+done
+
 [ "$fail" -eq 0 ] || { echo "FAIL: $NAME"; exit 1; }
-echo "PASS: $NAME (ci.sh installs the tarball release.yml's package step builds — bin/, lib/, the init templates and the shell twin into versions/<v>, linked and runnable — and refuses one that is not release-shaped)"
+echo "PASS: $NAME (ci.sh installs the tarball release.yml's package step builds — bin/, lib/, the init templates and the shell twin into versions/<v>, linked and runnable — refuses one that is not release-shaped, and re-points an install.sh home without touching its old slot)"
