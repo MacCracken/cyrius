@@ -2907,7 +2907,18 @@ error: --locked: 2 difference(s) between what the tags resolve and the committed
 It also names a lock hash the tag disagrees with, a `lib/` file the lock does not cover, a lock
 line for a file that exists nowhere, a file the tags resolve that `lib/` lacks, and a lock that
 records another stdlib pin; with no `cyrius.lock` at all it refuses by name. A clean tree says
-`--locked: lib/ and cyrius.lock are exactly what the tags resolve`. It replaces the hand-rolled CI
+`--locked: lib/ and cyrius.lock are exactly what the tags resolve`.
+
+**A project that does not commit `lib/`** (it is in `.gitignore`, so a fresh CI checkout has none —
+the lock is the committed artifact there): with no vendored `lib/` (absent, or holding no `.cyr`)
+`--locked` checks the resolve against `cyrius.lock` alone and says so in one line —
+`note: --locked: no vendored lib/ here — the resolve is checked against cyrius.lock alone` — naming
+every lock hash, lock line and pin that differs, and ending
+`--locked: cyrius.lock is exactly what the tags resolve (no vendored lib/ to compare)`. A compiling
+verb (`cyrius build --locked`, `test --locked`, …) then compiles that proven resolution from
+`build/locked-deps/lib/` (read through the compiler's `lib/` overlay, as local mode reads
+`build/local-deps/lib/`); `lib/` and the lock are still not written. When `lib/` IS there, every
+difference with it is named as above. It replaces the hand-rolled CI
 guards (`git diff --exit-code -- cyrius.lock`, `lock-check.sh`, `verify-lock.sh`) and the
 `cyrius deps && cyrius deps --verify` sequence, whose first step rewrote the lock the second then
 checked. `--locked` does not combine with `--local`, `--relock`, `--verify` or `--lock`.

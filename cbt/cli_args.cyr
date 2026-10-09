@@ -283,7 +283,8 @@ fn _cli_help_extra(verb): i64 {
         println("                 vendored into build/local-deps/lib/ — lib/ and cyrius.lock untouched.");
         println("  --no-local     resolve the tags for this run whatever CYRIUS_LOCAL says.");
         println("  --locked       resolve the tags, compare with lib/ and cyrius.lock, write nothing,");
-        println("                 and fail naming each difference (CI; also CYRIUS_LOCKED=1).");
+        println("                 and fail naming each difference (CI; also CYRIUS_LOCKED=1). With no");
+        println("                 vendored lib/ (an ignored lib/), cyrius.lock alone is compared.");
         println("Related: cyrius update    re-fetch untagged deps, list newer tags, re-resolve.");
     }
     if (streq(verb, "check") == 1) {

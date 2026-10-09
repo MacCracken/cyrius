@@ -28,6 +28,15 @@
 #   K13 --locked with --relock, --verify, --lock or --local (deps, and build for --local): refused
 #       by name
 #   K14 a repointed tag: refused by the commit pin, rc 1, lib/ and the lock untouched
+#   K15 NO VENDORED lib/ (a fresh checkout of a project that ignores lib/ — 68 of 126 consumers; the
+#       lock is their committed artifact): `deps --locked` checks the resolve against cyrius.lock
+#       alone, says so in one line, rc 0, writes nothing (no lib/, no build/, the lock as it was);
+#       an EMPTY lib/ directory is the same case
+#   K16 no vendored lib/ and a lock hash the tag disagrees with: named, rc 1, the summary names the
+#       lock (not lib/), nothing written
+#   K17 no vendored lib/: `build --locked` builds the tag from the proven resolution (exit 1, lib/
+#       still absent, the lock as it was) and `test --locked` passes; with a stale lock it fails
+#       BEFORE any compile and leaves no resolution behind
 #
 # MUTATION LEDGER (measured 2026-10-08, each in a SCRATCH copy of the tree, one at a time; real
 # tree 14/14 green):
@@ -39,6 +48,10 @@
 #   M6  the compare skips the stdlib pin line ............................ K8 red
 #   M7  --locked falls through to the default lock write ................. K1-K8 K10 K11 red
 #   M8  the scratch is not removed ....................................... K1 red
+#   (6.7.6 FXCL-1, the no-lib/ rows, measured the same way; real tree 17/17 green)
+#   M9  _dep_lib_unvendored always 0 (lib/ required, the pre-fix shape) .. K15 K16 K17 red
+#   M10 _dep_lib_unvendored always 1 (lib/ never compared) ............... K1 K2 K7 K10 K11 red
+#   M11 the proven resolution is removed before the compile ............. K17 red
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
 G=deps_locked_writes_nothing
@@ -203,6 +216,45 @@ if [ "$rc" -eq 1 ] && grep -q '^error: --local and --locked contradict each othe
 rc=0; cy build --local --locked > "$W/k13b.out" 2>&1 || rc=$?
 if [ "$rc" -eq 1 ] && grep -q '^error: --local and --locked contradict each other' "$W/k13b.out" && ! grep -q '^compile ' "$W/k13b.out"; then k13=$((k13+1)); fi
 [ "$k13" -eq 5 ] && ok "K13 --locked with --relock / --verify / --lock / --local (deps and build): refused by name" || bad "K13 ($k13 of 5 refused)"
+# ── K15 ── (before K14, which repoints the tag)
+reset_tree; rm -rf "$P/lib" "$P/build"
+sleep 1; touch "$W/stamp15"; sleep 1
+locked k15; r15=$rc
+newer=$(find "$P" -newer "$W/stamp15" | head -3 | tr '\n' ' ')
+left=$(ls -A "$W/tmp" | tr '\n' ' ')
+nl=$(grep -c '^note: --locked: no vendored lib/ here — the resolve is checked against cyrius.lock alone$' "$W/k15.out")
+mkdir "$P/lib"; locked k15e; r15e=$rc; rmdir "$P/lib"
+if [ "$r15" -eq 0 ] && [ "$nl" = 1 ] && grep -q '^--locked: cyrius.lock is exactly what the tags resolve (no vendored lib/ to compare)$' "$W/k15.out" \
+   && ! grep -q 'differs' "$W/k15.out" && [ -z "$newer" ] && [ -z "$left" ] && [ ! -e "$P/lib" ] && [ ! -e "$P/build" ] \
+   && cmp -s "$P/cyrius.lock" "$W/lock0" && [ "$r15e" -eq 0 ] && grep -q '^--locked: cyrius.lock is exactly what the tags resolve' "$W/k15e.out"; then
+    ok "K15 no vendored lib/ (absent, or an empty directory): checked against cyrius.lock alone, said once, rc 0, nothing written"
+else bad "K15 (rc=$r15 note=$nl newer=[$newer] tmp=[$left] empty-lib rc=$r15e): $(grep -m2 'differs\|error\|locked' "$W/k15.out")"; fi
+# ── K16 ──
+sed -i "s|^[0-9a-f]\{64\}  lib/sib.cyr\$|$(printf '%064d' 0)  lib/sib.cyr|" "$P/cyrius.lock"
+printf '%064d  lib/ghost.cyr\n' 0 >> "$P/cyrius.lock"; cp "$P/cyrius.lock" "$W/lock16"
+locked k16
+if [ "$rc" -eq 1 ] && grep -q "^  differs: lib/sib.cyr: cyrius.lock records $(printf '%064d' 0), the tags resolve [0-9a-f]\{64\}$" "$W/k16.out" \
+   && grep -qxF '  differs: cyrius.lock lists lib/ghost.cyr, which neither lib/ nor the tags hold' "$W/k16.out" \
+   && ! grep -q 'missing from lib/' "$W/k16.out" \
+   && grep -q '^error: --locked: 2 difference(s) between what the tags resolve and the committed cyrius.lock (named above)' "$W/k16.out" \
+   && cmp -s "$P/cyrius.lock" "$W/lock16" && [ ! -e "$P/lib" ]; then
+    ok "K16 no vendored lib/: a lock hash the tag disagrees with and a lock line for nothing are named against the lock; nothing written"
+else bad "K16 (rc=$rc): $(grep -m3 'differs\|error' "$W/k16.out")"; fi
+# ── K17 ──
+cp "$W/lock0" "$P/cyrius.lock"; rm -rf "$P/lib" "$P/build"
+rc=0; cy build --locked > "$W/k17a.out" 2>&1 || rc=$?; r17a=$rc
+ex=-1; [ -x "$P/build/app" ] && { ex=0; "$P/build/app" > /dev/null 2>&1 || ex=$?; }
+mkdir -p "$P/tests"; printf 'syscall(SYS_EXIT, sib_v() - 1);\n' > "$P/tests/t.tcyr"
+rc=0; cy test --locked > "$W/k17t.out" 2>&1 || rc=$?; r17t=$rc
+rm -rf "$P/tests"
+kept=0; [ ! -e "$P/lib" ] && cmp -s "$P/cyrius.lock" "$W/lock0" && kept=1
+rm -rf "$P/build"; sed -i "s|^[0-9a-f]\{64\}  lib/sib.cyr\$|$(printf '%064d' 0)  lib/sib.cyr|" "$P/cyrius.lock"
+rc=0; cy build --locked > "$W/k17b.out" 2>&1 || rc=$?
+if [ "$r17a" -eq 0 ] && [ "$ex" -eq 1 ] && [ "$r17t" -eq 0 ] && grep -q '^1 passed, 0 failed$' "$W/k17t.out" && [ "$kept" = 1 ] \
+   && [ "$rc" -eq 1 ] && [ ! -e "$P/build/app" ] && [ ! -e "$P/build/locked-deps" ] && ! grep -q '^compile ' "$W/k17b.out"; then
+    ok "K17 no vendored lib/: build --locked builds the tag (exit 1) and test --locked passes, lib/ never written; a stale lock fails before any compile"
+else bad "K17 (build rc=$r17a exit=$ex; test rc=$r17t; lib/lock as they were=$kept; stale rc=$rc): $(grep -m2 'differs\|error\|compile' "$W/k17b.out" "$W/k17a.out")"; fi
+reset_tree; rm -rf "$P/build"
 # ── K14 ──
 ( cd "$W/o/sib" && printf 'fn sib_v(): i64 { return 5; }\n' > dist/sib.cyr && git commit -qam evil && git tag -f v1 > /dev/null 2>&1 )
 rm -rf "$H/deps/sib"
