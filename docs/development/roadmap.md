@@ -547,6 +547,12 @@ CHANGELOG [6.6.17] *Downstream* (no ecosystem sweep).
 
 
 **6.7.6 — W2 follow-ups (2026-10-08).**
+- **lane C (git first) — filed 2026-10-08** in each repo's `docs/development/roadmap.md` (docs commits, not pushed):
+  anukulana `7e999e6`, ark `fb7a62c`, crab `4099974`, cyrius-yeomans-descent `dcb47db`, daimon `06dbecd`, dig `ee3abce`,
+  ifran `8ba5d16`, kii `d3d12ae`, mehman `f4fe31e`, mela `852f35d`, t-ron `912ce00`, takumi `2882e9a`, tula `9a426f9`,
+  yo `f4a1318`; agnos `497855bf`, puka `1b913f7`, agnostic `dfa69be`. **Not filed — working tree dirty:** anuenue
+  (`cyrius.lock` + four `lib/*.cyr`), aegis, attn11, phylax, shabda, shabdakosh, whirl (each only an uncommitted
+  `docs/development/roadmap.md` holding older, never-committed cyrius notes) — file once clean.
 - **agnos** (filings only): its 21 `tests/<dir>/cyrius.cyml` are program build manifests (`cyrius build --agnos`),
   not test units, so 6.7.6's per-directory `test.cyml` does not replace them as the design hoped.
 - **Consumers at their 6.7.6 pin bump** (notes, no sweep): assert / bench can move to `[test] stdlib` and hand-written
