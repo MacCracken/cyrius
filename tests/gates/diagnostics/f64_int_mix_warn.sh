@@ -48,6 +48,12 @@
 #   axis 13 (6.6.11) `var t = p.y;` / `var u = y;` (a declared f64 field / local) are typed, so
 #           `-t` / `-u` are float negations and draw no kind 3; `var c = 1.5; -c` still does.
 #           Red on 6.6.10 (3 warnings, want 1).
+#   axis 14 (6.7.7) kind 2 for a compound assignment: `x += 1.5` on an INTEGER place is `x = x + 1.5`
+#           and warns as it does — a local, a global, a field (word and i32), `*p`, `a[i]`, `s.len`, a
+#           `*T` (also with a builtin result, read before the pointer step emits) and a classic-for
+#           step, once each; `f += 1.5` on an f64 local / global / field, `x += 1`, `x %= 1.5` (as
+#           `x % 1.5` is silent), an f32 right operand and an untyped float right operand do not, and
+#           CYRIUS_TYPE_CHECK=0 silences it. Red on 6.7.6 (0 of 12).
 # Mutation-proven: with the four `_INT_F64_MIX` calls removed, axis 1 reads 0 of 4 and fails.
 # (6.6.10) with PARSE_INTRIN's `_FBR_MARK` call removed axis 6 fails; with the unary-minus
 # `_FLT_TYPE_WARN(S, 3)` removed, or _cl_restore_locals' flag copy removed, axis 7 fails; with SFLC's `_lfi_clear` call removed
@@ -58,6 +64,8 @@
 # early axis 12 fails; with the for step's two `_asg_rejudge` calls removed axis 12's step
 # program fails (it misses -g / -G3 and flags -h / -G4); with `_decl_float_copy` returning 0
 # axis 13 fails (the SLTYPE stamp itself is pinned by tests/tcyr/crossos/f64_struct_fields.tcyr).
+# (6.7.7) with _asg_compound_op's `_FLT_TYPE_WARN(S, 2)` removed axis 14 reads 0 and fails; with its
+# `rt` read moved after EPTR_SCALE the `q += f64_sqrt(u)` row is missed and axis 14 fails.
 set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -427,5 +435,58 @@ EOF
 build "$W/a13.cyr"
 n=$(count "$K3"); [ "$n" = 1 ] || { bad "axis 13: kind-3 warning count $n, want 1 (-c only; t and u are typed f64)"; sed -n 1,8p "$W/e"; }
 
+# --- axis 14 (6.7.7): a compound assignment on an INTEGER place warns kind 2 ---
+# Lines 15-26 warn (one each); lines 27-35 do not.
+cat > "$W/a14.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct H { n; m: i32; f: f64; }
+var G = 3;
+var GF: f64 = 1.0;
+fn main(): i64 {
+    var one: f64 = 1.5;
+    var u = 4.0;
+    var x = 1;
+    var h: H;
+    h.n = 1; h.m = 2; h.f = 0.5;
+    var a: i64[4];
+    var p = &x;
+    var s: [i64] = 0;
+    var q: *i64 = &x;
+    x += 1.5;
+    x -= one;
+    x *= 2.0;
+    x /= f64_sqrt(u);
+    G += 1.5;
+    h.n += 1.5;
+    h.m -= one;
+    *p += 1.5;
+    a[1] += 1.5;
+    s.len += 1.5;
+    q += f64_sqrt(u);
+    for (var i = 0; i < 3; i += 1.5) { }
+    one += 1.5;
+    GF -= 1.5;
+    h.f *= 2.0;
+    x += 1;
+    x %= 1.5;
+    x += u;
+    var w: f32 = f32_from(1.5);
+    x += w;
+    x &= 7;
+    return 0;
+}
+var r = main();
+syscall(60, r);
+EOF
+build "$W/a14.cyr"
+n=$(count "$K2"); [ "$n" = 12 ] || { bad "axis 14: kind-2 warning count $n, want 12 (lines 15-26)"; sed -n 1,16p "$W/e"; }
+for want in 15 16 17 18 19 20 21 22 23 24 25 26; do
+    grep "$K2" "$W/e" | grep -q ">:$want:" || bad "axis 14: no kind-2 warning at line $want"
+done
+if grep "$K2" "$W/e" | grep -q ">:2[7-9]:\|>:3[0-5]:"; then bad "axis 14: kind 2 fired on a no-warning row (lines 27-35)"; fi
+n=$(count "$K1"); [ "$n" = 0 ] || { bad "axis 14: $n kind-1 warning(s); the f64 destinations take float right operands"; sed -n 1,16p "$W/e"; }
+CYRIUS_TYPE_CHECK=0 "$CC" < "$W/a14.cyr" > "$W/o" 2> "$W/e" || true
+n=$(count "$K2"); [ "$n" = 0 ] || bad "axis 14: CYRIUS_TYPE_CHECK=0 still printed $n kind-2 warning(s)"
+
 [ "$fail" = 0 ] || exit 1
-echo "PASS: f64_int_mix_warn (4 int-left ops warn; no false positives; kind 1 intact; TYPE_CHECK=0 silences; f64 fields and builtin results typed; kinds 3 + 4; kind 5, compound operands, re-judged flags, typed copies)"
+echo "PASS: f64_int_mix_warn (4 int-left ops warn; no false positives; kind 1 intact; TYPE_CHECK=0 silences; f64 fields and builtin results typed; kinds 3 + 4; kind 5, compound operands, re-judged flags, typed copies, compound kind 2)"
