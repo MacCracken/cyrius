@@ -751,6 +751,10 @@ CHANGELOG [6.6.17] *Downstream* (no ecosystem sweep).
     routed on PE); a symlinked working directory spelled with the logical `$PWD` does not match the physical one;
     `_process_named_deps` reports one error per manifest walk whatever it refuses ("1 errors" for two); `cyrius lib
     sync --dry-run` prints `would sync: <integer>` instead of names (`cbt/commands.cyr` ~1796).
+  - **`crossos/regression_terminate_children.tcyr` is timing-sensitive on ach (the Intel Mac):** it asserts a call returns
+    under 1,000 ms and a 600 ms deadline kills a script's background `sleep 30`; it failed once in the 6.7.6 release gate
+    (RED), then passed 11 / 11 on ach and the re-run was GREEN. Widen the bounds or measure against a calibrated host
+    clock — not marked serial (the cross-OS legs are not check.sh's pool).
   - **cybs compiles a call to an UNDEFINED function in statement position silently** (`nosuch(1);`, and `gp(1,2,3,4);` as
     a statement) and the program segfaults (139); the expression form errors (lane BX). Refusing an unresolved call
     needs a check that gen1 carries no unresolved fixups and probably new labels (cybs has 11 free) — the trusted

@@ -14,13 +14,21 @@ merged here; ONE review round over the release. Every language-visible change be
 2026-10-08 (roadmap.md § *Break 1 decisions*), asked in three rounds — twice correcting a premise the question had
 stated wrongly (u128 carry), which lane D found by probing.
 
+**Release gate GREEN** (`release-gate.sh` on `cd8e5b49`, 2026-10-08 21:52 → 22:01, **9 min 21 s**): fixpoint 1,806,240 B,
+ARM lockstep 1,601,032 B, seed-derive OK, check.sh — **445 of 445** shell gates produced a result, 0 failed, the 2
+named agnos-parity SKIPs — and cross-OS self-host + the `crossos/` suite on REAL ecb, ach, cass and pi (all
+`SELFHOST_OK` + `LIBTEST_OK`). The first run (21:43) was RED on ach alone: `crossos/regression_terminate_children.tcyr`
+failed once — it asserts wall-clock bounds (a call returning under 1,000 ms, a 600 ms deadline killing a script's
+background child); it then passed 11 of 11 on ach, eight of them exactly as the runner runs it, and the re-run was
+GREEN. Filed: the test's timing sensitivity on the Intel Mac.
+
 **Size:** cycc **1,806,240 B** (`.text` **1,612,016**), +46,416 B over 6.7.5's 1,759,824 — u128 arithmetic and
 comparisons on three backends, the f32 write paths, the struct-value operand / parenthesis work, the CYRIUS_LIB_OVERLAY
 include path, cx's stack-argument ABI; dead-code floor unchanged (52 fns / 10,597 B). `build/cycc-native-aarch64`
 **1,601,032 B**. `.tcyr` 526 → **537** (243 in `crossos/`); shell gates 424 → **441**; api-surface **5,828** (patra's
 `wal_exists`).
 
-**Bench:** Same-box interleaved A/B vs 6.7.5 (15 runs each): **1,130 → 1,134 ms
+**Bench:** self_compile **1,175 ms** (bench-history). Same-box interleaved A/B vs 6.7.5 (15 runs each): **1,130 → 1,134 ms
 on 6.7.5's source (+0.3 %)**, 1,169 → 1,176 ms on 6.7.6's own (+0.6 %).
 
 ### Language — the decisions (user, 2026-10-08)
