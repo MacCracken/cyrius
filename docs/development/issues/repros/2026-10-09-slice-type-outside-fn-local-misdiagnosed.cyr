@@ -1,0 +1,14 @@
+# Repro: a slice type in the declaration zone is a parse error, while the same lines after the first statement compile.
+# Build (from the cyrius root):  build/cycc < docs/development/issues/repros/2026-10-09-slice-type-outside-fn-local-misdiagnosed.cyr > /tmp/slicez
+# Today (6.7.6 and the merged 6.7.7 tip), both forms are refused, under two different wrong diagnoses:
+#   error:<source>:12:9: unknown type 'slice' for variable 'GT'
+#   error:<source>:11:10: expected '=', got identifier 'u8'
+# Move lines 11-12 below `noop();` (line 13) and the file compiles, runs and exits 0: PARSE_VAR's top-level arm, which
+# takes over after the first statement that is not a declaration, has the `[T]` / `slice<T>` arms that the
+# declaration zone's PARSE_GVAR_REG lacks.
+include "lib/slice.cyr"
+fn noop(): i64 { return 0; }
+var GS: [u8] = 0;          # the guide's own Slices line ("bracket form"), as a leading global
+var GT: slice<u8> = 0;     # the guide's "ident form"
+noop();
+syscall(60, slice_len(&GS) + slice_len(&GT));

@@ -1,0 +1,17 @@
+# A `: stack` pair kept in a struct-literal element or passed as a plain argument: the tag
+# (0 for Ok) is kept, the payload (7) dropped, with no diagnostic. The guide (*Bind the pair as a
+# pair*) says any context that keeps only one half is a compile error.
+# Expected: one "a `: stack` enum returns two values — bind both" error per fn below.
+# Actual (6.6.0 - 6.7.7): compiles clean; exits 30 (= 3 * 10 + 0 + 0 + 0).
+enum Res: stack { Ok(v); Err(e); }
+fn f(x) { return Ok(x); }
+struct P { a; b; }
+struct B { z; }
+impl B { fn m(self, v): i64 { return v; } }
+fn g(v): i64 { return v; }
+fn lit_positional(): i64 { var p = P { f(7), 3 }; return p.a; }        # 0, the tag
+fn lit_named(): i64 { var p = P { a: f(7), b: 3 }; return p.a; }       # 0
+fn arg_free(): i64 { return g(f(7)); }                                  # 0
+fn arg_method(): i64 { var b = B { 0 }; return b.m(f(7)); }             # 0
+var G = P { f(7), 3 };                                                  # G.a is 0
+syscall(60, G.b * 10 + lit_positional() + lit_named() + arg_free() + arg_method());

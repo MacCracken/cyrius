@@ -1,0 +1,10 @@
+# Repro: on cx, a top-level global whose initializer the constant folder folded is ALSO evaluated at run time,
+# so `INT_MIN / -1` (folded to INT_MIN, wrapping, since 6.6.20) traps in cxvm's x86 `idiv`.
+# From the cyrius root:
+#   cat src/main_cx.cyr    | build/cycc > /tmp/cycc_cx && chmod +x /tmp/cycc_cx
+#   cat programs/cxvm.cyr  | build/cycc > /tmp/cxvm    && chmod +x /tmp/cxvm
+#   /tmp/cycc_cx < docs/development/issues/repros/2026-10-09-cx-folded-global-reevaluated-int-min-div.cyr > /tmp/q.cyx
+#   /tmp/cxvm < /tmp/q.cyx; echo $?          # 136 (SIGFPE) on 6.7.6 and the merged 6.7.7 tip
+#   build/cycc < docs/development/issues/repros/2026-10-09-cx-folded-global-reevaluated-int-min-div.cyr > /tmp/q && chmod +x /tmp/q && /tmp/q; echo $?   # x86: 7
+var QMIN = (0 - 0x7FFFFFFFFFFFFFFF - 1) / (0 - 1);   # folds to INT_MIN on every target
+syscall(60, 7 + (QMIN & 0));

@@ -1,0 +1,10 @@
+# A field name inside a closure body is taken as a capture of the enclosing local `y`: the
+# label `y:` of a named struct literal (lit) and the field after `.` (acc). Neither closure
+# reads `y`, so neither captures anything.
+# Expected: compiles without lib/alloc.cyr, exits 16 (7 + 2 = 9, then 7). Actual (6.6.0 - 6.7.7):
+# "a capturing closure needs include "lib/alloc.cyr" for its heap env", once per closure.
+include "lib/fnptr.cyr"
+struct Pt { x; y; }
+fn lit(): i64 { var y = 5; var cl = |n| { var p = Pt { x: n, y: 2 }; return p.x + 2; }; return fncall1(cl, 7); }
+fn acc(): i64 { var y = 5; var cl = |n| { var p = Pt { n, 2 }; return p.y + 5; }; return fncall1(cl, 7); }
+syscall(60, lit() + acc());

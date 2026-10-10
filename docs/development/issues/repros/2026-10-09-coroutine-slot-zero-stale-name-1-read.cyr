@@ -1,0 +1,17 @@
+# Build with CYRIUS_ASYNC=1. A suspending `async fn` (a coroutine) reads the GLOBAL `a`. The fn
+# emitted just before it has a parameter `a` at index 0; the coroutine reserves stack slot 0 for
+# its frame base (SELF) without clearing that slot's NAME, so `a` resolves to slot 0 and reads
+# the coroutine frame's address.
+# Expected: 5. Actual (6.6.0 - 6.7.7, x86_64): compiles clean, exits 99 (the address branch).
+include "lib/alloc.cyr"
+include "lib/async.cyr"
+var a = 5;
+fn nopark(): i64 { return 0; }
+fn m2(a): i64 { return a; }
+async fn steps(C): i64 {
+    var s1 = await nopark();
+    if (a > 65536) { return 99; }
+    return a;
+}
+fn main(): i64 { alloc_init(); var F = steps(0); var r = future_force(F); r = future_force(F); return r; }
+syscall(60, main());

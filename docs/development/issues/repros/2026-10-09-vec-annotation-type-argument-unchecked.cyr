@@ -1,0 +1,21 @@
+# Repro: a `Vec<T>` annotation on a var or parameter never reads its `<T>`.
+# Build (from the cyrius root):  build/cycc < docs/development/issues/repros/2026-10-09-vec-annotation-type-argument-unchecked.cyr > /tmp/vecann && chmod +x /tmp/vecann
+# Run:                           /tmp/vecann ; echo $?
+# Today (6.7.6 and the merged 6.7.7 tip): compiles with no diagnostic, exits 1.
+# Every other type-argument position refuses each of these three by name:
+#   struct H { items: Vec<(i64, i64)>; }  -> "a tuple type cannot be a Vec element"
+#   struct H { items: Vec<nosuchtype>; }   -> "unknown type 'nosuchtype' for struct field 'items'"
+#   var b: Box<(i64, i64)> = 0;            -> "a tuple type cannot be a type argument"
+include "lib/vec.cyr"
+
+fn f(v: Vec<(i64, i64)>): i64 { return vec_len(v); }   # a parameter: not read
+
+fn main(): i64 {
+    var v: Vec<nosuchtype> = vec_new();     # an unknown name: not read
+    var w: Vec<1 + 2> = vec_new();          # not a type at all: not read
+    var u: Vec<(i64, i64)> = vec_new();     # a tuple: not read
+    vec_push(u, 7);
+    return f(u);
+}
+var r = main();
+syscall(60, r);

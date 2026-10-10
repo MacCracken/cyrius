@@ -1,0 +1,12 @@
+# `pr(s)` with `s` a Str is routed to the `pr_str` sibling. `pr_str` is defined BELOW the call,
+# so `_OV_ARITY_OK` lets it through without judging its count (2) against the call's (1).
+# 6.7.7 (fork F2: every forward call arity-checked): error "'pr_str' expects 2 arguments, got 1".
+# 6.7.6: compiled clean and passed garbage for `k` (exit 161).
+# With `pr_str` moved ABOVE `main`, nothing is routed (the gate judges the count) and it exits 11.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/str.cyr"
+fn pr(x): i64 { return 1; }
+fn main(): i64 { alloc_init(); var s: Str = str_from("ab"); return pr(s) * 10 + pr(5); }
+fn pr_str(s: Str, k): i64 { return k; }
+syscall(60, main());

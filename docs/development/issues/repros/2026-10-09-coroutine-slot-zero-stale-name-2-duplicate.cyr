@@ -1,0 +1,16 @@
+# Build with CYRIUS_ASYNC=1. The same stale slot-0 name: a coroutine local named like the
+# PREVIOUS fn's parameter 0 is refused as a duplicate.
+# Expected: compiles, exits 3. Actual (6.6.0 - 6.7.7): "error:<source>:9:14: duplicate variable".
+# Renaming m2's parameter, putting another fn between m2 and steps, or dropping the `await`
+# makes it compile and exit 3.
+include "lib/alloc.cyr"
+include "lib/async.cyr"
+fn nopark(): i64 { return 0; }
+fn m2(a, b): i64 { return a + b; }
+async fn steps(C): i64 {
+    var a = 3;
+    var s1 = await nopark();
+    return a;
+}
+fn main(): i64 { alloc_init(); var F = steps(0); var r = future_force(F); r = future_force(F); return r; }
+syscall(60, main());

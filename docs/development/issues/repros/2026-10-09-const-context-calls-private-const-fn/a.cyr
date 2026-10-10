@@ -1,0 +1,6 @@
+# issues/2026-10-09-const-context-calls-private-const-fn.md — want: refused at line 5,
+# "'pk' is private to its file" (as `var X = pk();` and a call in a fn body are).
+# Actual (6.7.2 .. merged 6.7.7): builds, exits 3.
+include "b.cyr"
+const X = pk();
+syscall(60, X);

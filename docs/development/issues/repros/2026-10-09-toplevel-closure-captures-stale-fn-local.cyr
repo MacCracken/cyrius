@@ -1,0 +1,12 @@
+# A TOP-LEVEL closure reads the global `qa`. The last fn emitted before it (`w`) has a local
+# named `qa`; the closure snapshots the local table, which still holds `w`'s entries, so `qa`
+# is captured from a dead stack slot.
+# Expected: 12. Actual (6.6.0 - 6.7.7): compiles clean, SIGSEGV (rc 139) on x86_64 and aarch64.
+# Renaming `w`'s parameter, or making the closure inside a fn, gives 12.
+include "lib/fnptr.cyr"
+include "lib/alloc.cyr"
+fn w(qa): i64 { return qa; }
+alloc_init();
+var qa = 5;
+var cl = |n| n + qa;
+syscall(60, fncall1(cl, 7));

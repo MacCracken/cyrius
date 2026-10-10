@@ -1,0 +1,6 @@
+# issues/2026-10-09-const-sweep-swallows-later-const-errors.md — want: three errors, 'xx' (line 3),
+# 'yy' (line 4) and 'zz' (line 5). Actual (6.7.2 .. merged 6.7.7): 'xx' and 'zz' only; 'yy' is never reported.
+const A = xx;
+const B = yy;
+fn f(): i64 { return zz; }
+syscall(60, A + B);

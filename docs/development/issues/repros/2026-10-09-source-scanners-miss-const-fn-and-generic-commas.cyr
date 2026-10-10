@@ -1,0 +1,12 @@
+# issues/2026-10-09-source-scanners-miss-const-fn-and-generic-commas.md — the source the tools misread.
+# It compiles and exits 3. Want from `cyrius header`: five prototypes, `cf` included, `pp` / `mp` with two
+# parameters each, `va` as `cyr_val va(cyr_val n, ...)`; from api-surface: cf/1, mp/2, pp/2.
+struct Pair<A, B> { a: A; b: B; }
+struct Mp<K, V> { k: K; v: V; }
+const fn cf(a: i64): i64 { return a; }
+fn pp(p: Pair<i64, i64>, b): i64 { return b; }
+fn mp(m: Mp<i64, i64>, b): i64 { return b; }
+fn va(n, ...): i64 { return n; }
+fn plain(a, b): i64 { return a + b; }
+var r = plain(cf(1), 2);
+syscall(60, r);

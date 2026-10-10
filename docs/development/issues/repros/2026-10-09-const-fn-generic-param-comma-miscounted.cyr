@@ -1,0 +1,7 @@
+# issues/2026-10-09-const-fn-generic-param-comma-miscounted.md — want: builds, exits 7.
+# Actual (6.7.2 .. merged 6.7.7): "a const fn called with the wrong number of arguments" at line 6.
+# Change the call to pick(0, 1, 7) and it builds and exits 7 (a 3-argument call to a 2-parameter fn).
+struct Pair<A, B> { a: A; b: B; }
+const fn pick(p: Pair<i64, i64>, b) { return b; }
+const N = pick(0, 7);
+syscall(60, N);

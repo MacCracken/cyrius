@@ -1,0 +1,8 @@
+# A multi-value call passed to a by-value parameter of a NAMED struct over 8 B.
+# Expected: a compile error naming the call (as a tuple parameter's R17 does), or 34.
+# Actual (6.6.0 - 6.7.7): compiles clean, SIGSEGV (rc 139) on x86_64 and aarch64.
+struct P { a; b; }
+fn mk(a): (i64, i64) { return (a, a + 1); }
+fn take(t: P): i64 { return t.a * 10 + t.b; }
+fn f(): i64 { return take(mk(3)); }
+syscall(60, f());

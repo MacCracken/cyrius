@@ -1,0 +1,2 @@
+private
+const fn pk(): i64 { return 3; }

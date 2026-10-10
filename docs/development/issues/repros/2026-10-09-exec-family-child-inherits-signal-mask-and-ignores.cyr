@@ -1,0 +1,19 @@
+# Repro: a child started by the exec family keeps the parent's signal MASK and IGNORED dispositions.
+# Build (from the cyrius root):  build/cycc < docs/development/issues/repros/2026-10-09-exec-family-child-inherits-signal-mask-and-ignores.cyr > /tmp/sigrepro && chmod +x /tmp/sigrepro
+# Run:                           /tmp/sigrepro
+# Expected (fixed): SigBlk and SigIgn both all zeros, and `yes` ends quietly.
+# Actual (6.7.6):   SigBlk shows bit 1 (SIGINT), SigIgn bit 12 (SIGPIPE), and yes prints "Broken pipe".
+include "lib/process.cyr"
+fn main() {
+    alloc_init();
+    signal_ignore(SIGPIPE);                   # what sandhi's server entry points do (_sandhi_server_ignore_sigpipe)
+    var set[16];                              # N BYTES: a kernel sigset is 8 (rt_sigprocmask's sigsetsize)
+    store64(&set, 2); store64(&set + 8, 0);   # bit 1 = SIGINT (signal 2): what a signalfd user blocks
+    sys_sigprocmask(SIG_BLOCK, &set, 0);
+    var a = vec_new();
+    vec_push(a, "/bin/sh"); vec_push(a, "-c");
+    vec_push(a, "grep -E 'SigBlk|SigIgn' /proc/self/status; yes | head -1");
+    return exec_vec(a);
+}
+var r = main();
+syscall(SYS_EXIT, r);

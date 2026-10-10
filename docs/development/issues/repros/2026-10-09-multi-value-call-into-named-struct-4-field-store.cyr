@@ -1,0 +1,8 @@
+# A struct-typed FIELD stored from a multi-value call.
+# Expected: a compile error naming the call (as a tuple field's R17 does), or 34.
+# Actual (6.6.0 - 6.7.7): compiles clean, exits 30 (b is 0) on x86_64 and aarch64.
+struct P { a; b; }
+fn mk(a): (i64, i64) { return (a, a + 1); }
+struct H { p: P; }
+fn f(): i64 { var h: H; h.p = mk(3); return h.p.a * 10 + h.p.b; }
+syscall(60, f());

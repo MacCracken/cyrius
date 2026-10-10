@@ -1,0 +1,22 @@
+# Build with CYRIUS_ASYNC=1. An `async fn` declared `: (i64, i64)` compiles, but its Future
+# carries ONE i64: `await` yields the first value, a destructure / tuple capture of `await g()`
+# is refused, and the documented `rethi()` read sees whatever rdx holds — the right 2 only on
+# the force that ran the body. Here the second force returns the memoised 1, and `rethi()`
+# reads the 9 that `h()` left in rdx.
+# Expected: a compile error naming the multi-value return (as a struct or vector return of an
+# async fn is refused since 6.6.6), or 12. Actual (6.6.10 - 6.7.7): compiles clean, exits 19.
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+include "lib/async.cyr"
+async fn g(): (i64, i64) { return (1, 2); }
+fn h(): (i64, i64) { return (7, 9); }
+fn main(): i64 {
+    alloc_init();
+    var f = g();
+    var a0 = await f;
+    var x, y = h();
+    var a = await f;
+    var b = rethi();
+    return a * 10 + b;
+}
+syscall(60, main());

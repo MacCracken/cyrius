@@ -1,0 +1,8 @@
+# The method form: `b.mk(3)` returns two values; `take` takes a named 16 B struct by value.
+# Expected: a compile error naming the call, or 34. Actual (6.7.0 - 6.7.7): compiles clean, rc 139.
+struct P { a; b; }
+struct B { z; }
+impl B { fn mk(self, a): (i64, i64) { return (a, a + 1); } }
+fn take(t: P): i64 { return t.a * 10 + t.b; }
+fn f(): i64 { var b = B { 0 }; return take(b.mk(3)); }
+syscall(60, f());

@@ -1,0 +1,27 @@
+# Build with CYRIUS_ASYNC=1. A closure made inside a SUSPENDING `async fn` captures a 2-word and
+# a 3-word struct: the env gets their words in REVERSE order.
+# Expected: 21 * 1000 + 321 = 21321 -> exit 21321 & 255 = 73. Each half alone: 21 and 321.
+# Actual (6.6.8 - 6.7.7, x86_64): 12 and 123 -> 12123 & 255 = 91.
+# Without the `await`, or reading the structs directly (no closure), both halves are right.
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+include "lib/async.cyr"
+struct P2 { x; y; }
+struct P3 { x; y; z; }
+fn nopark(): i64 { return 0; }
+async fn steps(C): i64 {
+    var p = P2 { 1, 2 };
+    var q = P3 { 1, 2, 3 };
+    var s1 = await nopark();
+    var c = || p.y * 10 + p.x;
+    var d = || q.z * 100 + q.y * 10 + q.x;
+    return fncall0(c) * 1000 + fncall0(d);
+}
+fn main(): i64 {
+    alloc_init();
+    var F = steps(0);
+    var r = future_force(F);
+    r = future_force(F);
+    return r;
+}
+syscall(60, main());
