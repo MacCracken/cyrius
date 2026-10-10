@@ -1,6 +1,6 @@
 #!/bin/sh
 # tests/gates/frontend/dyn_checked.sh — 6.7.8 (the checked `dyn` lane: bite D4, the keyword and the type;
-# bite D5, forming; bite D6, the call)
+# bite D5, forming; bite D6, the call; bite D7, the tools and the guide)
 #
 # CHECKED `dyn`. The user's decisions (2026-10-07): `o: dyn Show` is an ordinary 16-byte struct of two
 # words {data, vtable} — ADR-002's one-word model holds; the compiler builds and verifies the vtable from
@@ -45,7 +45,12 @@
 #   X   `--syntax-only` (cyrius lint's pre-pass) reports no dyn refusal (they resolve types), and still
 #       reports the reserved word
 #   TT  the tools: `[embed]`'s reserved list holds `dyn` (embed_manifest_refusals.sh derives and checks
-#       it); cyrius-lsp colours `dyn` a keyword (and `dynamo` not); the VS Code grammar lists it
+#       it); cyrius-lsp colours `dyn` a keyword (and `dynamo` not); the VS Code grammar lists it. (D7) the
+#       source tools on a dyn sample, each built here from this tree: TT4 `cyrius header` (a dyn parameter
+#       is one `cyr_val`), TT5 cyrfmt --check (the sample and crossos/dyn_objects.tcyr), TT6 `cyrius lint`
+#       (the sample, and a file whose dyn's trait lives in a sibling), TT7 cyrdoc (the signatures
+#       verbatim), TT8 api-surface (`f/2`), TT9 type-audit (`: dyn Area` is annotated); TT10 the guide's
+#       "Trait objects: `dyn`" examples compile with no warning and exit the values their comments state
 #   F   (D5) the forming refusals, each once, at the source: F1 an untyped name (a local, a parameter,
 #       a slot a scalar local of another fn left stamped — M-F11's row — a for-in variable); F2 a bare
 #       inline struct (a local, a global); F3 `&` of a pointer / a handle / a scalar / a dyn; F4 a
@@ -194,6 +199,17 @@
 # operand is refused at its factor first (V1 / V3 / V4 clear the stamp, V4 the `_lsc` record), so no
 # operator dispatch is reached with a dyn type today; the arm keeps a future path from dispatching
 # `dyn Show_add`. (M-T34, the arm removed, leaves every row green.)
+# D7 (2026-10-10; no tool and no compiler source changed — the TT4-TT10 rows pin what the tools already
+# do with `dyn`; each mutation a one-edit scratch copy of the tree, its tool or compiler rebuilt from it,
+# this gate run with CYCC= that tree's compiler; the real tree 207/207):
+#   MTT4  `cyrius header` skips a parameter's type as ONE word (cbt/quality.cyr: past `: ` to a space
+#         or `,`) -> TT4 (`cyr_val total(cyr_val a, cyr_val Area, cyr_val b, cyr_val Area);`: the
+#         type's second word read as a parameter)
+#   MTT6  `cyrius lint`'s pre-pass without --syntax-only (cbt/commands.cyr `_lint_syntax_prepass`)
+#         -> TT6 (sib) (rc 1, "does not parse or compile": the sibling's trait is not in scope)
+#   MTT10 the guide's first example stating `= 40` (docs/guides/cyrius-guide.md) -> TT10 (example 1: exit 39)
+#   M-C2  (D6's, re-measured) the call's data and vtable words swapped (src/) -> the TT sample row and TT10
+#         (all three examples: rc 139), with the D6 rows (17 rows)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -572,6 +588,150 @@ if "$CC" < programs/cyrius-lsp.cyr > "$T/tl/lsp" 2> "$T/tl/lsp.err" && [ "$(wc -
     else bad "TT3: cyrius-lsp semantic tokens: $(tr '\n' ' ' < "$T/tl/st.tok")"; fi
 else bad "TT3: could not build programs/cyrius-lsp.cyr: $(head -1 "$T/tl/lsp.err")"; fi
 
+# ── TT (D7): the source tools on a dyn sample; the guide's dyn examples run ─────────────────────────
+# Each tool is built HERE from this tree's source with $CC (a mutant's source builds a mutant's tool),
+# and the sample first compiles and runs — it is real dyn source, not a tool's guess at it. No tool
+# learned `dyn`: they read text, and `dyn Area` is a type with a space in it (the rows pin that).
+mkdir -p "$T/tt/w" "$T/tt/hh" "$T/tt/lh/bin" "$T/tt/ap/src" "$T/tt/ta/lib"
+cat > "$T/tt/w/ds.cyr" <<'EOF'
+# A shape that has an area.
+trait Area {
+    fn area(self): i64;
+    fn twice(self): i64 { return self.area() * 2; }
+}
+
+struct Sq { s; }
+
+impl Area for Sq {
+    fn area(self): i64 { return self.s * self.s; }
+}
+
+# The sum of two shapes' areas, each called through its vtable.
+fn total(a: dyn Area, b: dyn Area): i64 {
+    return a.area() + b.twice();
+}
+
+# A square seen as an Area: the dyn holds `q`, not a copy.
+fn as_area(q: *Sq): dyn Area {
+    var o: dyn Area = q;
+    return o;
+}
+
+# The area of `o` plus `k`.
+fn f(o: dyn Area, k): i64 { return o.area() + k; }
+
+fn main(): i64 {
+    var q = Sq { 3 };
+    var r = Sq { 4 };
+    var a: dyn Area = &q;
+    var b: dyn Area = as_area(&r);
+    return total(a, b) + f(a, 1) - 10;
+}
+syscall(60, main());
+EOF
+# A file whose dyn's trait and type live in a sibling (a manifest prepends it): lint sees this alone.
+cat > "$T/tt/w/sib.cyr" <<'EOF'
+# The sum of two areas.
+fn total2(a: dyn Area, b: dyn Area): i64 {
+    return a.area() + b.twice();
+}
+
+# A square seen as an Area.
+fn mk(q: *Sq): dyn Area {
+    var o: dyn Area = q;
+    return o;
+}
+EOF
+ttool() {   # <name> <source, from the tree root>: built with $CC into $T/tt/<name>
+    rc=0; "$CC" < "$ROOT/$2" > "$T/tt/$1" 2> "$T/tt/$1.err" || rc=$?
+    if [ "$rc" -ne 0 ] || [ ! -s "$T/tt/$1" ]; then bad "TT: $2 does not build: $(grep '^error' "$T/tt/$1.err" | head -1)"; return 1; fi
+    chmod +x "$T/tt/$1"
+}
+rc=0; ( cd "$T/tt/w" && timeout 60 "$CC" < ds.cyr > ds.bin 2> ds.err ) || rc=$?
+got=-1; if [ "$rc" -eq 0 ]; then chmod +x "$T/tt/w/ds.bin"; got=0; timeout 10 "$T/tt/w/ds.bin" || got=$?; fi
+if [ "$rc" -ne 0 ] || [ "$got" -ne 41 ] || grep -q 'warning' "$T/tt/w/ds.err"; then
+    bad "TT: the dyn sample: rc $rc, exit $got (want 41, no warning): $(grep '^error\|warning' "$T/tt/w/ds.err" | head -1)"
+else
+    # TT4: `cyrius header` — a dyn parameter is ONE `cyr_val` (it travels by address, as every struct
+    # over 8 bytes does); its type, with the space in it, is skipped whole to the parameter's `,`. A
+    # trait member and an impl method are not FFI surface (brace depth), nor is `main`.
+    if ttool cyrius cbt/cyrius.cyr; then
+        rc=0; ( cd "$T/tt/w" && CYRIUS_HOME="$T/tt/hh" HOME="$T/tt/hh" timeout 60 "$T/tt/cyrius" header ds.cyr > "$T/tt/hdr.out" 2>&1 ) || rc=$?
+        miss=""
+        for l in 'cyr_val total(cyr_val a, cyr_val b);' 'cyr_val as_area(cyr_val q);' 'cyr_val f(cyr_val o, cyr_val k);'; do
+            grep -qxF "$l" "$T/tt/hdr.out" || miss="$miss [$l]"
+        done
+        n=$(grep -c '^cyr_val ' "$T/tt/hdr.out" || true)
+        if [ "$rc" -eq 0 ] && [ -z "$miss" ] && [ "$n" -eq 3 ]; then ok "TT4: cyrius header: \`fn f(o: dyn Area, k)\` is \`cyr_val f(cyr_val o, cyr_val k);\` (3 prototypes, no trait member / impl method)"
+        else bad "TT4: cyrius header rc $rc, $n prototype(s); missing:$miss; got: $(grep '^cyr_val ' "$T/tt/hdr.out" | tr '\n' '|')"; fi
+    fi
+    # TT5: cyrfmt has no type rule — the sample and the crossos dyn file are canonical as written.
+    if ttool cyrfmt programs/cyrfmt.cyr; then
+        rc=0; "$T/tt/cyrfmt" --check "$T/tt/w/ds.cyr" > "$T/tt/fmt.out" 2>&1 || rc=$?
+        rc2=0; "$T/tt/cyrfmt" --check "$ROOT/tests/tcyr/crossos/dyn_objects.tcyr" >> "$T/tt/fmt.out" 2>&1 || rc2=$?
+        if [ "$rc" -eq 0 ] && [ "$rc2" -eq 0 ]; then ok "TT5: cyrfmt --check: the dyn sample and crossos/dyn_objects.tcyr are canonical"
+        else bad "TT5: cyrfmt --check rc $rc / $rc2: $(head -2 "$T/tt/fmt.out" | tr '\n' '|')"; fi
+    fi
+    # TT6: `cyrius lint` (its --syntax-only pre-pass, then cyrlint) — the sample, and a file whose dyn's
+    # trait lives in a sibling (silent: the pre-pass resolves no names). The wrapper runs the cycc
+    # BESIDE it, so this compiler is copied next to it.
+    if [ -x "$T/tt/cyrius" ] && ttool cyrlint programs/cyrlint.cyr; then
+        cp "$CC" "$T/tt/lh/bin/cycc"; cp "$T/tt/cyrius" "$T/tt/cyrlint" "$T/tt/lh/bin/"
+        for x in ds sib; do
+            rc=0; ( cd "$T/tt/w" && CYRIUS_HOME="$T/tt/lh" HOME="$T/tt/lh" timeout 120 "$T/tt/lh/bin/cyrius" lint "$x.cyr" > "$T/tt/l$x.out" 2> "$T/tt/l$x.err" ) || rc=$?
+            if [ "$rc" -eq 0 ] && grep -qx '0 warnings' "$T/tt/l$x.out" && [ -z "$(grep -v '^0 untracked deferrals$' "$T/tt/l$x.err")" ]; then ok "TT6 ($x): cyrius lint: rc 0, 0 warnings, nothing else said"
+            else bad "TT6 ($x): cyrius lint rc $rc: $(cat "$T/tt/l$x.err" "$T/tt/l$x.out" | grep -v '^===' | head -2 | tr '\n' '|')"; fi
+        done
+    elif [ ! -x "$T/tt/cyrius" ]; then bad "TT6: no cyrius CLI (TT4 did not build it)"; fi
+    # TT7: cyrdoc — each signature verbatim, a dyn parameter and a dyn return included, with its doc.
+    if ttool cyrdoc programs/cyrdoc.cyr; then
+        rc=0; ( cd "$T/tt/w" && timeout 20 "$T/tt/cyrdoc" ds.cyr ) > "$T/tt/doc.out" 2>&1 || rc=$?
+        miss=""
+        for l in '### `fn total(a: dyn Area, b: dyn Area): i64`' "The sum of two shapes' areas, each called through its vtable." '### `fn as_area(q: *Sq): dyn Area`' '### `fn f(o: dyn Area, k): i64`'; do
+            grep -qxF "$l" "$T/tt/doc.out" || miss="$miss [$l]"
+        done
+        if [ "$rc" -eq 0 ] && [ -z "$miss" ]; then ok "TT7: cyrdoc: the dyn signatures verbatim, with their docs"
+        else bad "TT7: cyrdoc rc $rc; missing:$miss"; fi
+    fi
+    # TT8: api-surface — a dyn parameter is one parameter (`f/2`, `total/2`).
+    cp "$T/tt/w/ds.cyr" "$T/tt/ap/src/ds.cyr"
+    if ttool api programs/cyrius_api_surface.cyr; then
+        rc=0; ( cd "$T/tt/ap" && timeout 20 "$T/tt/api" --update --scope=project --snapshot="$T/tt/A.snap" ) > "$T/tt/api.out" 2>&1 || rc=$?
+        got=$(grep '^ds::' "$T/tt/A.snap" 2> /dev/null | tr '\n' ' ')
+        if [ "$rc" -eq 0 ] && [ "$got" = 'ds::as_area/1 ds::f/2 ds::main/0 ds::total/2 ' ]; then ok "TT8: api-surface: a dyn parameter is one (ds::f/2, ds::total/2)"
+        else bad "TT8: api-surface rc $rc: got '$got'"; fi
+    fi
+    # TT9: type-audit — `fn as_area(..): dyn Area` is annotated (every fn of the sample is).
+    cp "$T/tt/w/ds.cyr" "$T/tt/ta/lib/ds.cyr"
+    if ttool tau programs/cyrius_type_audit.cyr; then
+        rc=0; ( cd "$T/tt/ta" && timeout 20 "$T/tt/tau" --module=ds > "$T/tt/ta.out" 2> "$T/tt/ta.err" ) || rc=$?
+        if [ "$rc" -eq 0 ] && grep -q '^  ds: 7/7 annotated' "$T/tt/ta.out" "$T/tt/ta.err" && ! grep -q '^  ds::' "$T/tt/ta.out"; then ok "TT9: type-audit: a \`: dyn Area\` return is annotated (7/7)"
+        else bad "TT9: type-audit rc $rc: $(grep 'ds' "$T/tt/ta.out" "$T/tt/ta.err" | head -2 | tr '\n' '|')"; fi
+    fi
+fi
+# TT10: the guide's dyn examples (docs/guides/cyrius-guide.md, "Trait objects: `dyn` (6.7.8)") compile
+# with no warning and exit the value each one's `return` comment states (`# 9 + 10 + 20 = 39`) —
+# guide_examples_compile.sh only compiles a block, so a stated value that is wrong would ship green
+# there. Floor: the section's 3 examples.
+awk -v out="$T/tt/gx" '
+  /^```/ { if (infence) { infence = 0; next } infence = 1; lang = substr($0, 4); gsub(/[ \t\r]/, "", lang)
+           want = insec && lang == "cyrius"; if (want) { nb++; f = out nb ".cyr"; printf "" > f } next }
+  infence { if (want) print >> f; next }
+  /^## / { insec = ($0 ~ /^## Trait objects: `dyn`/) }
+' docs/guides/cyrius-guide.md
+nb=0
+while [ -s "$T/tt/gx$((nb + 1)).cyr" ]; do
+    nb=$((nb + 1))
+    w=$(grep -E '^[[:space:]]*return .*#.*= [0-9]+[[:space:]]*$' "$T/tt/gx$nb.cyr" | tail -1 | sed -E 's/.*= ([0-9]+)[[:space:]]*$/\1/')
+    if [ -z "$w" ]; then bad "TT10: the guide's dyn example $nb states no value (a \`return ..; # .. = N\` line)"; continue; fi
+    { printf 'include "lib/alloc.cyr"\ninclude "lib/vec.cyr"\n'; cat "$T/tt/gx$nb.cyr"; } > "$T/tt/gxp$nb.cyr"
+    rc=0; timeout 60 "$CC" < "$T/tt/gxp$nb.cyr" > "$T/tt/gx$nb.bin" 2> "$T/tt/gx$nb.err" || rc=$?
+    got=-1; if [ "$rc" -eq 0 ]; then chmod +x "$T/tt/gx$nb.bin"; got=0; timeout 10 "$T/tt/gx$nb.bin" || got=$?; fi
+    if [ "$rc" -eq 0 ] && [ "$got" -eq "$w" ] && ! grep -q 'warning' "$T/tt/gx$nb.err"; then ok "TT10: the guide's dyn example $nb exits $w, the value its comment states"
+    else bad "TT10: the guide's dyn example $nb: rc $rc, exit $got (its comment states $w; no warning wanted): $(grep '^error\|warning' "$T/tt/gx$nb.err" | head -1)"; fi
+done
+[ "$nb" -ge 3 ] || bad "TT10: the guide's dyn section yields $nb example(s) (floor 3) — the extractor or the section moved"
+
 # ── A: the P program and (D6) the PD program on every backend ──────────────────────────────────────
 printf '%b' "${PB}${PL}${ME}" > "$T/ap.cyr"
 printf '%b' "$PD" > "$T/pd.cyr"
@@ -654,4 +814,4 @@ else echo "  SKIP A dyn_objects PE — wine not installed"; skips=$((skips + 1))
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: dyn_checked — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: dyn_checked — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: dyn_checked — \`dyn\`: the reserved word (K); the type in a local, a global, a parameter, a return, a field and a trait signature (TY, S); every open type position refused by name (T1-T13); uninitialised dyn locals (U); opacity — no value, no address, no words (V1-V9); every forming refusal once, at its source (F1-F11), the zone dyn of a kernel build (K), wrapped sources (PF); every destination of a dyn result takes it whole (P); the fold across lines (H28); --syntax-only (X); the tools (TT); the P program and dyn_objects.tcyr on x86 / IR=3 / DCE / aarch64 / cx / PE (A)"
+echo "PASS: dyn_checked — \`dyn\`: the reserved word (K); the type in a local, a global, a parameter, a return, a field and a trait signature (TY, S); every open type position refused by name (T1-T13); uninitialised dyn locals (U); opacity — no value, no address, no words (V1-V9); every forming refusal once, at its source (F1-F11), the zone dyn of a kernel build (K), wrapped sources (PF); every destination of a dyn result takes it whole (P); the fold across lines (H28); --syntax-only (X); the tools — embed, LSP, grammar, header, fmt, lint, doc, api-surface, type-audit — and the guide's dyn examples (TT); the P program and dyn_objects.tcyr on x86 / IR=3 / DCE / aarch64 / cx / PE (A)"

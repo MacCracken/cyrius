@@ -1599,7 +1599,193 @@ Point_Show_show(p) # 12  -> the trait-qualified name
 - **Methods on nested fields and chains**: `b.v.sum()`, `p.v.sum()` through a pointer,
   `mk(3).v.sum()` on a call result, `c.w.v.scale(2);` as a statement — the field's address is the
   method's `self`, so a write through it lands in the outer struct.
-- **Trait objects** (runtime dispatch through a vtable) remain the `lib/trait.cyr` library pattern.
+- **Trait objects** — run-time dispatch through a vtable the compiler builds and checks — are
+  `dyn Tr` (6.7.8), the next section. `lib/trait.cyr` stays as an unchecked library pattern.
+
+## Trait objects: `dyn` (6.7.8)
+
+A trait's methods dispatch statically: `p.area()` is a direct call to the type's method. When the
+type is known only at run time — a list of shapes, a table of handlers — write **`dyn Tr`**: a value
+of any type that implements `Tr`, whose method calls go through a table the compiler builds from
+`impl Tr for T` and checks. Static dispatch stays the default ([ADR-004](../adr/004-convention-based-dispatch.md));
+a trait never turned into a dyn costs nothing.
+
+```cyrius
+trait Shape {
+    fn area(self): i64;
+    fn twice(self): i64 { return self.area() * 2; }   # a default
+}
+struct Sq { s; }
+struct Rect { w; h; }
+impl Shape for Sq { fn area(self): i64 { return self.s * self.s; } }
+impl Shape for Rect { fn area(self): i64 { return self.w * self.h; } }
+
+fn scaled(o: dyn Shape, k): i64 { return o.area() * k; }   # one fn, any Shape
+
+fn main(): i64 {
+    var q = Sq { 3 };
+    var r = Rect { 2, 5 };
+    var a: dyn Shape = &q;           # the dyn holds &q and Sq's table
+    var b: dyn Shape = &r;
+    return scaled(a, 1) + scaled(b, 1) + b.twice();   # 9 + 10 + 20 = 39
+}
+syscall(60, main());
+```
+
+**What a dyn is.** `dyn Tr` is an ordinary 16-byte struct of two words: the **data word** (word 0)
+and a pointer to the **vtable** (word 1) — so [ADR-002](../adr/002-everything-is-i64.md)'s
+one-word values stay as they are, and a dyn goes wherever a 16-byte struct goes: a local, a global
+(after the first statement or in the declaration section), a parameter, a return value, a struct
+field, a trait member's signature, a closure's capture (by value), a `secret var`. A copy copies both
+words: `var o2: dyn Shape = o;`, or `var x = mk();` for a fn returning one. The vtable has one slot
+per trait member, in declaration order.
+
+**Forming one.** Where the destination is typed `dyn Tr` — a `var o: dyn Tr = ..`, an assignment
+`o = ..` (a classic-`for` step too), a field store `h.o = ..`, an argument to a `dyn Tr` parameter,
+a `return` in a fn declared `: dyn Tr` — the compiler forms a dyn from a source it can type:
+
+| Source | Type `T` | Data word |
+|---|---|---|
+| `&p` — an inline struct local, a by-value struct parameter, an inline struct global | p's struct | `&p` |
+| a `*T` local, parameter or global; an untyped impl `self`; a pointer-mode handle (`var h: Sq = alloc(8);`) | `T` | the pointer |
+| a `*T` field (`h.pp`); a call or a method returning `*T` | `T` | the pointer |
+| a **declared** scalar — a local, global or parameter annotated with an integer type, `f64`, `f32`, `bool`, an enum or `cstring` | the annotation | the **value** |
+| a literal: `5`, `-5`, `'A'` (`i64`), `2.5` (`f64`), `true` / `false` (`bool`) | as listed | the value |
+| another dyn of the same trait (a name, a field, a call returning one) | — | a copy |
+
+Parentheses around the whole source change nothing. `T` must implement `Tr`; otherwise the forming
+is refused, naming the missing `impl Tr for T`. A scalar impl (`impl Num for i64`) receives the
+value as `self`:
+
+```cyrius
+trait Num { fn num(self): i64; }
+impl Num for i64 { fn num(self): i64 { return self * 2; } }
+impl Num for f64 { fn num(self: f64): i64 { return f64_to(self * 10.0); } }
+
+var LIMIT: i64 = 4;
+
+fn get(o: dyn Num): i64 { return o.num(); }
+
+fn main(): i64 {
+    var n: i64 = 5;
+    var o: dyn Num = n;          # the data word holds 5, not &n
+    n = 6;                       # o still holds 5
+    return o.num() + get(LIMIT) + get(7) + get(2.5);   # 10 + 8 + 14 + 25 = 57
+}
+syscall(60, main());
+```
+
+Every other source is refused by name, at the source:
+
+- an **untyped name** — under ADR-002 it is an `i64` that may hide a pointer: pass `&x` for a
+  struct, or bind it to a declared type first (`var n: i64 = x;`);
+- a **bare struct** `p` — there is no implicit `&`: write `&p`;
+- `&q` of a pointer (write `q`), `&n` of a scalar (write `n`: a scalar's dyn holds its value), `&o`
+  of a dyn (copy it), and a pointer to a scalar such as `q: *i64` (bind the value: `var n: i64 = *q;`);
+- a closure's captured name (bind it to a declared local first);
+- any other expression — `alloc(..)`, arithmetic, a string literal, an enum constant, `&h.f`,
+  `&a[i]`, a call returning an `i64`: bind it to a declared variable first;
+- at top level, forming into an assignment, a field or an argument — there is no frame to build the
+  dyn in (a top-level `var G: dyn Tr = ..;` is fine, in the declaration section or after it).
+
+**A dyn holds the address, not a copy.** `var o: dyn Shape = &q;` sees every later change to `q`, and
+so does every copy of `o`. A dyn formed from `&local` and returned outlives the local exactly as
+`return &local;` does — it dangles.
+
+**The check, once per pair.** The first forming of a (trait, type) pair checks `impl Tr for T`
+against the trait in full: each parameter after `self` and the return by its resolved type (an
+untyped parameter, or an omitted return, is `i64`), generic-ness and `...`; and the `self` a dyn can
+feed. For a struct `T` that is an untyped `self`, `self: *T`, or a `self: T` over 8 bytes (passed by
+address and copied on entry). **A `self: T` of 8 bytes or less is refused**, naming the method: it
+arrives in a register, and the data word is a pointer — declare `self` untyped or `self: *T`. For a
+scalar `T`, `self` is untyped or `self: T`; `self: *T` is refused. A `#naked` method cannot fill a
+slot. A pair is reported once; a pair never formed keeps the parameter-count check of
+*Traits and impl blocks* — nothing about static traits changes. Every forming site also applies the
+`&f` rule to each method in the table: one private to another file is refused, a `#deprecated` one
+warns.
+
+**Defaults and names.** A member with a default body fills its slot with `T`'s own instance of it,
+so `self.area()` inside `twice` is `T`'s `area`, a static call. When a name collides, the slot holds
+`T_Tr_m`, never an inherent `T_m`.
+
+**The call.** `o.m(args)` is an indirect call through `m`'s slot with the data word as `self`, from
+every receiver a method call takes: a local, a parameter, a global, a capture, `h.o.m()`, `hp.o.m()`
+through a pointer, `self.o.m()`, a call's result, a chain, and at top level. The arguments and the
+result follow the **trait member's** signature exactly as a direct call follows a fn's: by-value
+structs, a dyn formed in place, `: Str` literals, `f64` / `f32` / `bool`, vectors, any number of
+arguments; a struct result of any size, a dyn, a `*T`, an `f64` (typed: `o.rf() + 1.0` is a float
+add). The callee and `self` are read before the arguments run. Refused by name:
+
+- a member the trait does not declare;
+- a **generic** member (`fn pick<U>`): the trait can still be a dyn, but a call through one has no
+  instance of `pick` to run — call it on the concrete type;
+- a member the trait declares without an untyped `self` first (no parameter, or `self: T`);
+- a variadic member, and one returning multiple values or a vector;
+- **named arguments** — a call through a dyn passes them by position;
+- the wrong count, in every call's words (`'dyn Shape.area' expects 1 argument, got 2` — `self`
+  counted).
+
+**The two words are opaque.** A dyn is not a value and has no fields: a dyn used as a value (an
+operator, `if (o)`, `print(o)`, an untyped argument, `var x = o;`), `&o`, `o.data` / `o.vtable`, a
+multi-value destructure, `return (a, b)` in a fn returning a dyn, and a struct literal writing a dyn
+field's words (`H { 1, 2, 3, 4 }`) are all refused. Copy a dyn whole or call its methods. Raw memory
+stays raw: `load64(&w)` of a record holding a dyn, or `rethi()` after a call returning one, reads the
+words as it reads any bytes — unchecked, as `load64` always is.
+
+**Where a dyn may not go.** `dyn Tr` is written after a `:`. It is not a type argument
+(`Vec<dyn Shape>`, `Box<dyn Shape>`, `f<dyn Shape>(..)`), a pointer (`*dyn Shape`), an array,
+slice, tuple or multi-value element, an operand of `sizeof`, an `impl` target, or `dyn A + B` (one
+dyn holds one vtable). A generic, `async`, `const` or `#naked` fn holds none, and neither does a
+generic struct, a union or a `#derive`d struct. To keep many, hold each in a record and keep the
+records:
+
+```cyrius
+trait Shape { fn area(self): i64; }
+struct Sq { s; }
+impl Shape for Sq { fn area(self): i64 { return self.s * self.s; } }
+
+struct Item { id; o: dyn Shape; }          # a record holding a dyn
+
+fn item(id, o: dyn Shape): i64 {
+    var it: Item = alloc(sizeof(Item));    # a heap record (a pointer-mode handle)
+    it.id = id;
+    it.o = o;
+    return it;
+}
+
+fn main(): i64 {
+    alloc_init();
+    var a = Sq { 2 };
+    var b = Sq { 3 };
+    var v = vec_new();                     # a Vec of records, never of dyn
+    vec_push(v, item(1, &a));
+    vec_push(v, item(2, &b));
+    var sum = 0;
+    for (var i = 0; i < vec_len(v); i = i + 1) {
+        var it: Item = vec_get(v, i);
+        sum = sum + it.id * it.o.area();
+    }
+    a.s = 4;                               # each dyn holds &a / &b, not a copy
+    var first: Item = vec_get(v, 0);
+    return sum + first.o.area();           # 1*4 + 2*9 + 16 = 38
+}
+syscall(60, main());
+```
+
+**Initialise it.** Struct locals are not zeroed, so `var o: dyn Shape;` is refused, and so is a
+struct local holding a dyn (directly, through a nested struct or a generic instance) declared
+without its value, or an array of such structs. A heap record holds whatever the allocator gave it
+until a dyn is stored.
+
+**How it is built.** The vtable is a hidden global, one per (trait, type) pair formed, filled where
+each dyn is formed: no target relocates a word in data (PIE, Mach-O arm64, PE). A method in a vtable
+is address-taken, as `&f` makes a fn, so dead-code elimination keeps it. The call is
+`call [rbp+disp32]` on x86 (PE included), `blr` on aarch64. Each trait member a dyn calls is a bodiless fn named `dyn Tr.m`, which an `object;` build
+lists as one undefined symbol (GNU ld links it). [ADR-007](../adr/007-traits.md) records the
+design.
+
+`lib/trait.cyr` keeps its run-time vtables as an unchecked library pattern; its `{ vtable, data }`
+order is the reverse of a dyn's, and the two do not interconvert.
 
 ## Pointer-to-struct dot syntax (v5.8.17)
 

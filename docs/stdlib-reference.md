@@ -543,8 +543,10 @@ Opt-in runtime bounds checking. Aborts with error message on violation.
 
 Vtable-based trait objects for run-time polymorphic dispatch — a library pattern with no
 compiler checking. It is not the language's `trait` / `impl Trait for Type` (6.7.0), which
-dispatch statically and build no vtables ([ADR-007](adr/007-traits.md) §7); checked `dyn`
-trait objects are planned later in 6.7.x. Includes: alloc, fmt, fnptr, str.
+dispatch statically ([ADR-007](adr/007-traits.md) §7), nor the language's checked trait objects,
+`dyn` (6.7.8 — the guide's [*Trait objects: `dyn`*](guides/cyrius-guide.md#trait-objects-dyn-678)),
+whose vtable the compiler builds and verifies; this file stays as the unchecked pattern, its
+`{ vtable, data }` order the reverse of a dyn's. Includes: alloc, fmt, fnptr, str.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
