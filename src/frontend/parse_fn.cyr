@@ -6096,6 +6096,7 @@ var _tr_tab = 0;    # per trait (4 words): name, first method, method count, `tr
 var _tr_n = 0;
 var _trm_tab = 0;   # per trait method (4 words): name, parameter count, default `fn` token + 1 (0 = required), trait
 var _trm_n = 0;
+var _trm_ft = 0;    # per trait method: its `fn` token (6.7.8; the trait-object call's lazy prototypes read it)
 var _ti_tab = 0;    # per impl (8 words): trait name (0 = inherent), type name, first method, method count, `impl` token, `T_Trait` prefix (0 = not minted), trait index (-1 = unknown)
 var _ti_n = 0;
 var _tim_tab = 0;   # per impl method (3 words): name, `fn` token, parameter count
@@ -6108,6 +6109,7 @@ fn _tr_alloc(S): i64 {
     if (_tr_tab != 0) { return 0; }
     _tr_tab = alloc(1024 * 32);
     _trm_tab = alloc(8192 * 32);
+    _trm_ft = alloc(8192 * 8);
     _ti_tab = alloc(4096 * 64);
     _tim_tab = alloc(32768 * 24);
     return 0;
@@ -6252,6 +6254,7 @@ fn _tr_scan_tm(S, tx, p, end): i64 {
     S64(_trm_tab + _trm_n * 32 + 8, ar);
     S64(_trm_tab + _trm_n * 32 + 16, dflt);
     S64(_trm_tab + _trm_n * 32 + 24, tx);
+    S64(_trm_ft + _trm_n * 8, p);
     _trm_n = _trm_n + 1;
     return nx;
 }
@@ -6628,6 +6631,7 @@ fn _tl_trait2(S): i64 {
             STI(S, end);
             return 0;
         }
+        var p0 = p;
         var op = _tr_paren(S, p);
         if (op < 0) { STI(S, p + 1); ERR_EXPECT(S, 2); STI(S, end); return 0; }
         _tr_arity(S, op);
@@ -6646,8 +6650,148 @@ fn _tl_trait2(S): i64 {
             STI(S, end);
             return 0;
         }
+        _tr_sig_check(S, tx, p0, op, q);   # 6.7.8: the signature itself
     }
     STI(S, end);
+    return 0;
+}
+
+# ⛔ 6.7.8 — A TRAIT MEMBER'S SIGNATURE IS PARSED. The pre-scan reads a member's name and counts its
+# commas (the impl's arity check), and until 6.7.8 nothing else read it: junk in a required
+# signature (`fn sh(self, n + foo bar): i64;`), an unknown type name, or junk in a default that every
+# impl overrides compiled, unread. Pass 2 walks each member's signature here, at the trait, emitting
+# nothing, with PARSE_FN_DEF's grammar and its words: `( [param {, param}] ) [: Ret]` and then the
+# `;` or the body; a param is `name [: Type] [= default]` or `...` (last); a Type is `*`.. then a
+# name [<..>], a tuple `( Type, .. )`, `u128`, or `*fn( Type, .. ) [: Type]`. A grammar error is
+# reported even under `--syntax-only` (lint asks exactly that) and never holds the panic latch, so
+# every member of a file reports; an unknown name is `_tn_refuse`'s (silent under `--syntax-only`).
+# One report per member. A default that some impl INHERITS is skipped: PARSE_FN_DEF parses that one
+# whole for the impl (`_tr_defaults`), so its signature is checked there, and reported once.
+# CHANGELOG [6.7.8]
+var _trs_bad = 0;   # the member being walked has reported (or stopped)
+# Member `fn` token `p` of trait `tx`: its `(` is token `op`, its `;` / body `{` token `q`.
+fn _tr_sig_check(S, tx, p, op, q): i64 {
+    if (TOKTYP(S, q) == 13) { if (_tr_dflt_inh(S, tx, TOKVAL(S, p + 1)) == 1) { return 0; } }
+    _trs_bad = 0;
+    var i = _trs_params(S, op + 1, q);
+    if (_trs_bad == 0) {
+        if (TOKTYP(S, i) == 49) {
+            if (TOKTYP(S, i + 1) == 10) { i = _trs_type(S, i + 1, q, " in a multi-value return type", 0 - 1); }
+            else { i = _trs_type(S, i + 1, q, " as a fn return type", 0 - 1); }
+        }
+    }
+    if (_trs_bad == 0) { if (i != q) { _trs_end(S, i); } }
+    return 0;
+}
+# 1 when an impl of trait `tx` does not define `m` — it inherits the default.
+fn _tr_dflt_inh(S, tx, m): i64 {
+    if (tx < 0) { return 0; }
+    var i = 0;
+    while (i < _ti_n) {
+        if (L64(_ti_tab + i * 64 + 48) == tx) { if (_tim_of(S, i, m) < 0) { return 1; } }
+        i = i + 1;
+    }
+    return 0;
+}
+# The parameter list from token `i` (just past its `(`): the token after its `)`.
+fn _trs_params(S, i, q): i64 {
+    if (TOKTYP(S, i) == 11) { return i + 1; }
+    while (_trs_bad == 0) {
+        if (TOKTYP(S, i) == 112) { i = i + 1; }   # `...`: the last
+        else {
+            if (TOKTYP(S, i) != 2) { return _trs_err(S, i, 2); }
+            var pn = TOKVAL(S, i);
+            i = i + 1;
+            if (TOKTYP(S, i) == 49) { i = _trs_type(S, i + 1, q, " for parameter ", pn); }
+            if (_trs_bad == 1) { return i; }
+            if (TOKTYP(S, i) == 4) {   # 6.7.7 (B6): refused in pass 1 (`_pd_trait_refuse`); stepped over
+                i = _pl_dflt_end(S, i);
+                if (i > q) { i = q; }
+            }
+            if (TOKTYP(S, i) == 31) {
+                i = i + 1;
+                continue;
+            }
+        }
+        if (TOKTYP(S, i) != 11) { return _trs_err(S, i, 11); }
+        return i + 1;
+    }
+    return i;
+}
+# A type from token `i`; the token after it. `tail` / `nm` name the site in an unknown-type refusal.
+fn _trs_type(S, i, q, tail, nm): i64 {
+    var st = 0;
+    while (TOKTYP(S, i) == 8) {
+        i = i + 1;
+        st = 1;
+    }
+    var t = TOKTYP(S, i);
+    if (t == 105) { return i + 1; }   # u128
+    if (t == 10) { return _trs_list(S, i + 1, q, tail, nm); }   # a tuple
+    if (t == 32) { if (st == 1) {   # `*fn( .. ) [: T]`
+            if (TOKTYP(S, i + 1) != 10) { return _trs_err(S, i + 1, 10); }
+            i = _trs_list(S, i + 2, q, tail, nm);
+            if (_trs_bad == 0) { if (TOKTYP(S, i) == 49) { i = _trs_type(S, i + 1, q, tail, nm); } }
+            return i;
+        } }
+    if (t != 2) { return _trs_err(S, i, 2); }
+    _trs_name(S, i, tail, nm);
+    i = i + 1;
+    if (TOKTYP(S, i) != 19) { return i; }
+    var d = 0;   # `<..>` is skipped, as PARSE_FN_DEF's SKIP_GENERICS does
+    while (i < q) {
+        t = TOKTYP(S, i);
+        if (t == 19) { d = d + 1; }
+        elif (t == 20) { d = d - 1; }
+        elif (t == 39) { d = d - 2; }
+        elif (t == 152) { d = d - 3; }
+        i = i + 1;
+        if (d <= 0) { return i; }
+    }
+    return _trs_err(S, i, 20);
+}
+# The types of a `( .. )` from token `i` (just past its `(`), comma-separated: the token after `)`.
+fn _trs_list(S, i, q, tail, nm): i64 {
+    if (TOKTYP(S, i) == 11) { return i + 1; }
+    while (_trs_bad == 0) {
+        i = _trs_type(S, i, q, tail, nm);
+        if (_trs_bad == 1) { return i; }
+        if (TOKTYP(S, i) != 31) {
+            if (TOKTYP(S, i) != 11) { return _trs_err(S, i, 11); }
+            return i + 1;
+        }
+        i = i + 1;
+    }
+    return i;
+}
+# A type name at token `i`: a type in scope (the member's own `<U>` included), or, for a parameter,
+# a by-name handle (`s: Str` with no lib/str.cyr — `_tn_param_check`'s rule). Else refused by name.
+fn _trs_name(S, i, tail, nm): i64 {
+    if (_tn_resolve_at(S, i) != 0) { return 0; }
+    if (nm >= 0) { if (_classify_param_type(S, TOKVAL(S, i)) != 0) { return 0; } }
+    _tn_refuse(S, i, tail, nm);
+    if (_syntax_only == 0) { _trs_bad = 1; }
+    return 0;
+}
+# A grammar error at token `ti` (ERR_EXPECT's words), the latch it set cleared; returns `ti`.
+fn _trs_err(S, ti, et): i64 {
+    _trs_bad = 1;
+    if (_panic == 1) { return ti; }
+    var sv = GTI(S);
+    STI(S, ti);
+    ERR_EXPECT(S, et);
+    _panic = 0;
+    STI(S, sv);
+    return ti;
+}
+# A token between the signature and its `;` / body.
+fn _trs_end(S, ti): i64 {
+    if (_panic == 1) { return 0; }
+    var sv = GTI(S);
+    STI(S, ti);
+    ERR_MSG(S, "a trait method declaration ends with ';' (required) or a body (a default)", 73);
+    _panic = 0;
+    STI(S, sv);
     return 0;
 }
 # 1 when trait `tx` declares `m` more than once.

@@ -1567,6 +1567,13 @@ Point_Show_show(p) # 12  -> the trait-qualified name
   parameter count, and a required method left out are compile errors naming the trait. A trait may
   be declared above or below its impls. Traits and impls go in the declaration section (before the
   first top-level statement), like `struct` and `fn`.
+- **A member's signature is parsed (6.7.8)** where the trait declares it, with a `fn` definition's
+  grammar and messages, whether or not an impl uses it: the parameters (`name`, `name: Type`, `...`),
+  their types, the return type, then `;` or the body. Junk (`fn sh(self, n + foo bar): i64;`), a type
+  name that names nothing, or a stray token before the `;` is an error — in a required member and in
+  a default every impl overrides alike (a default an impl inherits is parsed as that impl's method).
+  ⚠ Before 6.7.8 only the parameter count was read; the rest compiled unread. The impl's own check
+  is unchanged: its parameter count must match.
 - **Parameter defaults (6.7.7).** A trait's methods take none, in a required signature or a
   default body, and neither does a method of `impl X for T`: the trait's signature is the
   contract. An inherent `impl T` method may declare them (see *Default and named arguments*
