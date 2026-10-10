@@ -401,6 +401,12 @@ fn ECMPR(S): i64 { EW(S, 0xEB01001F); return 0; }     # cmp x0, x1
 fn ETESTAZ(S): i64 { EW(S, 0xF100001F); return 0; }  # cmp x0, #0 (sets ZF)
 fn EMOVRDXRAX(S): i64 { EW(S, 0xAA0003E2); return 0; }  # mov x2, x0
 fn EMOVRA_RDX(S): i64 { EW(S, 0xAA0203E0); return 0; }  # mov x0, x2 (read second return value — aarch64 multi-return uses x0, x2)
+# ⛔ 6.7.7 — a 9-16 B struct return carries its high word in BOTH x1 (AAPCS64's pair, which
+# EFLSTORE_STRUCT_INT_PAIR reads) and x2 (the multi-value slot the destructure drains and `rethi()`
+# read): a `: P` fn's `return (a, b);` / `ret2` set only x2 and `var p: P = f();` read x1, a
+# `return p;` set only x1 and `var a, b = f();` read x2. This is the multi-value arms' half (x1 =
+# x2); EFLLOAD_STRUCT_INT_PAIR writes x2 itself. A no-op on x86, where both are rdx. CHANGELOG [6.7.7]
+fn ESTRUCT_PAIR_HI_SYNC(S): i64 { EW(S, 0xAA0203E1); return 0; }  # mov x1, x2
 # v6.5.21 — THIRD multi-value return slot = x3. `mov xd, xn` is ORR xd, xzr, xn:
 # 0xAA0003E0 | (n << 16) | d.
 fn EMOVR3RAX(S): i64 { EW(S, 0xAA0003E3); return 0; }  # mov x3, x0
@@ -3061,6 +3067,7 @@ fn EFLLOAD_STRUCT_INT_PAIR(S, idx): i64 {
         var off_hi = disp_hi & 0x1FF;
         EW(S, 0xF84003A0 | (off_lo << 12));   # ldur x0, [x29, #disp_lo]
         EW(S, 0xF84003A1 | (off_hi << 12));   # ldur x1, [x29, #disp_hi]
+        EW(S, 0xAA0103E2);                    # mov x2, x1 — the multi-value slot too (6.7.7, ESTRUCT_PAIR_HI_SYNC)
         return 0;
     }
     # Deep-frame fallback: ldr x0, [x9, #0] + ldr x1, [x9, #8] via
@@ -3068,6 +3075,7 @@ fn EFLLOAD_STRUCT_INT_PAIR(S, idx): i64 {
     _EFP_ADDR_X9(S, disp_lo);
     EW(S, 0xF9400120);   # ldr x0, [x9, #0]  (imm12=0)
     EW(S, 0xF9400521);   # ldr x1, [x9, #8]  (imm12=1 → byte 8)
+    EW(S, 0xAA0103E2);   # mov x2, x1
     return 0;
 }
 
@@ -3349,7 +3357,27 @@ fn EVSTORE_W(S, idx, width): i64 {
     if (width == 1) { EW(S, 0x39000020); return 0; }
     if (width == 2) { EW(S, 0x79000020); return 0; }
     if (width == 4) { EW(S, 0xB9000020); return 0; }
+    if (width > 0) { if (width < 8) { _ESTORE_ODD_X1(S, width); return 0; } }
     EW(S, 0xF9000020); return 0;
+}
+# The low `w` bytes of x0 to [x1], for a width of 3 / 5 / 6 / 7 — the x86 `_ESTORE_ODD_RCX`'s
+# reason (a packed struct global is exactly its size). Pieces of 4, 2, 1 at rising offsets; a later
+# piece is shifted down into x16 (`lsr x16, x0, #8*off`), so x0 and x1 are kept. CHANGELOG [6.7.7]
+fn _ESTORE_ODD_X1(S, w): i64 {
+    var off = 0;
+    var c = 4;
+    while (c > 0) {
+        if ((w & c) != 0) {
+            var rt = 0;
+            if (off > 0) { EW(S, 0xD340FC10 | ((8 * off) << 16)); rt = 16; }   # lsr x16, x0, #8*off
+            if (c == 4) { EW(S, 0xB9000020 | rt); }                              # str  wT, [x1]
+            elif (c == 2) { EW(S, 0x79000020 | ((off / 2) << 10) | rt); }        # strh wT, [x1, #off]
+            else { EW(S, 0x39000020 | (off << 10) | rt); }                       # strb wT, [x1, #off]
+            off = off + c;
+        }
+        c = c / 2;
+    }
+    return 0;
 }
 
 # v5.9.40 — sub-byte struct field load (parse_decl.cyr:252).

@@ -340,7 +340,7 @@ fn _tok_gen_ret_sid(S, a, i, j, fi): i64 {
     var pk = w + 1;
     if ((m & 4) != 0) { pk = (m >> (8 + w * 8)) & 255; }
     if (pk == 0) { return 0; }
-    var at = _call_arg_start(S, j + 1, pk - 1);
+    var at = _call_arg_for(S, fi, j + 1, pk - 1);   # 6.7.7: or the argument naming it
     if (at < 0) { return 0; }
     if (TOKTYP(S, at) != 2) { return 0; }
     var nt = TOKTYP(S, at + 1);
@@ -844,6 +844,12 @@ fn _call_is_propagated(S, ti): i64 {
 # is: `_callee_returns_pair` also feeds `_tpair`, which is what tells `?` it holds a pair.
 # ⭐ ANTI-VACUOUS BY CONSTRUCTION: the flag tested is set only on `: stack` constructors, so a
 # BOXED Result — still the documented idiom at thousands of sites — is untouched.
+# ⛔ 6.7.7 (B4 T5b; the user's decision, 2026-10-09) — and at the other one-slot stores, which
+# compiled clean and kept the tag: a field (`h.n = f();`, any field type, a slice's `.len`, the
+# --syntax-only tail), an element (`a[i] = f();`), `*p = f();` and every compound `x += f();`
+# (`_asg_compound_op`: a field's, an element's, `*p`'s, a for step's; a u128 place's in
+# `_w128_binop`). Each call sits right before its PCMPE, where the term's own pair lookahead runs
+# (a generic callee is instantiated there, inline: earlier would move its bytes). CHANGELOG [6.7.7]
 fn _refuse_lossy_pair(S): i64 {
     if (_callee_returns_pair(S) == 0) { return 0; }
     if (_call_is_propagated(S, GTI(S) + 1) == 1) { return 0; }
@@ -3154,6 +3160,7 @@ fn _asg_compound_op(S, cop, lt): i64 {
     _asg_cstep = 0;
     if (_W128_IS(S) == 1) { if (_w128_cop(S, cop) == 1) { return 0; } }   # 6.7.6 (D2): a u128 place
     EPUSHR(S);
+    _refuse_lossy_pair(S);   # 6.7.7 (T5b): `x += f();` combined the tag, every OP= place
     PCMPE(S);
     var rt = _FBR_ST(S);
     if (st > 1) { if (cop == 6 || cop == 7) { EPTR_SCALE(S, st); } }   # 6.6.17: `p += n` steps T
@@ -3188,9 +3195,12 @@ fn _deref_store(S, term): i64 {
     EPUSHR(S);            # the address
     var cop = _asg_compound_tok(S);
     if (cop == 0) {
-        if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); }
-        STI(S, GTI(S) + 1);
-        PCMPE(S);
+        if (_masg_not_plain(S, " - `*p` is not one") == 0) {   # 6.7.7 (T5): `*p, q = f();`
+            if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); }
+            STI(S, GTI(S) + 1);
+            _refuse_lossy_pair(S);   # 6.7.7 (T5b): `*p = f();` stored the tag
+            PCMPE(S);
+        }
     } else {
         ELOAD64(S);       # rax = the word at the address
         _asg_compound_op(S, cop, 0);
@@ -3295,6 +3305,17 @@ fn _asg_rhs_steps(S, di, rsid): i64 {
     return 0;
 }
 
+# 6.7.7 (R12) — `t = 5;` / `t = x;` / `t = g();` into a TUPLE variable: the source parsed to a plain
+# value (no struct record — a whole tuple or tuple field took its copy path before), and the store
+# would write one word of the tuple (the struct first-word rule), silently. Refused by name at the
+# source (`st`). 1 = refused. CHANGELOG [6.7.7]
+fn _tup_asg_chk(S, noff, st): i64 {
+    _agc_operand(S, noff);
+    if (_agc_t >= 0) { return 0; }
+    if (_tup_is(S, 0 - _agc_t) == 0) { return 0; }
+    _tup_err(S, st, "cannot assign a value that is not a tuple to tuple ", noff, 0);
+    return 1;
+}
 fn _pcmpe_struct_assign(S, noff, term): i64 {
     if (PEEKT(S) == 10) { if (_asg_struct_dst(S, noff) == 1) {   # 6.7.6: a wrapped source
             var pr = _asg_paren(S, noff, term, 2);
@@ -3314,7 +3335,7 @@ fn _pcmpe_struct_assign(S, noff, term): i64 {
     _fla_stp = fs;
     if (_fla_hit == 1) { return _fla_assign(S, noff, term); }
     var t = _sc_whole(S, st);
-    if (t == 0 - 2) { _fls_asg_check(S, noff, st); return 0; }   # 6.7.6: a `Str` field
+    if (t == 0 - 2) { _fls_asg_check(S, noff, st); _tup_asg_chk(S, noff, st); return 0; }   # 6.7.6: a `Str` field; 6.7.7 (R12): a value is never a tuple
     var n = _agc_operand(S, noff);
     if (t == 0 - 3) { _asg_ret_sid = _sc_sid; }   # a <= 8 B struct VALUE: not a pointer mismatch
     if (_AGG_ASSIGN_TYPE_ERR(S, _agc_t, 0 - _sc_sid, noff, _sc_fn) == 1) { return 0; }
@@ -3343,10 +3364,13 @@ fn _asg_paren(S, noff, term, which): i64 {
     var k = _pwrap_k(S, st);
     if (TOKTYP(S, _pw_end) != term) { return 0 - 1; }
     STI(S, st + k);
+    var wsv = _asg_wrapd;
+    _asg_wrapd = st + k;   # 6.7.7 (T5): `t = (f())` is no capture (the destructure refuses `(f())`)
     var r = 0;
     if (which == 0) { r = _try_aggregate_copy_assign(S, noff, 11); }
     elif (which == 1) { r = _try_struct_call_assign(S, noff, 11); }
     else { r = _pcmpe_struct_assign(S, noff, 11); }
+    _asg_wrapd = wsv;
     if (r == 1) {   # the inside consumed its own `)`
         _pw_close(S, k - 1);
         if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
@@ -3374,7 +3398,105 @@ fn _asg_struct_dst(S, noff): i64 {
     return 1;
 }
 
+# ⛔ 6.7.7 (B4) — `t = (a, b);` into a TUPLE variable (a local, a by-value parameter, a global; and a
+# classic-for step, `term` 11): the whole literal is built in a frame temp — every element evaluated
+# before any store, so `t = (t.1, t.0);` swaps — and copied in, as a struct call's result is. A
+# literal into a variable of any other aggregate type is refused by name (a scalar's, or a name that
+# is not a variable here, is the stray refusal at its factor). At top level there is no frame for
+# the temp: refused by name (R10; `var G = (..);` declares one). 1 = done (`term` consumed).
+fn _tup_asg(S, noff, term): i64 {
+    if (PEEKT(S) == 2) { return _tup_asg_call(S, noff, term); }   # 6.7.7 (T5): a capture
+    if (PEEKT(S) != 10) { return 0; }
+    var st = GTI(S);
+    var lp = _tup_lit_at(S, st);
+    if (lp < 0) { return 0; }
+    if (TOKTYP(S, _pw_end) != term) { return 0; }   # an operand (`(1, 2) + u`): the stray refusal
+    var n = _agc_operand(S, noff);
+    var dt = _agc_t;
+    if (dt == 0) {   # a scalar: the literal's factor refuses it; no variable here (a closure's capture
+        if (_tup_asg_known(S, noff) == 0) { _tn_once(S, lp); }   # too): only the store's "undefined"
+        return 0;
+    }
+    if (dt <= 0 - 2048 || _tup_is(S, 0 - dt) == 0) {
+        _tup_err(S, lp, "cannot assign a tuple literal to ", noff, " - it is not a tuple");
+        return _tup_lit_skip(S, st, term);
+    }
+    var sid = 0 - dt;
+    if (GINFN(S) != 1) {
+        _tup_err(S, lp, "a tuple literal assigned at top level has no frame to be built in - assign ", noff, " inside a fn (a top-level `var G = ( .. );` declares one)");
+        return _tup_lit_skip(S, st, term);
+    }
+    var dli = _agc_li;
+    var dgv = _agc_gvi;
+    if (_agc_pp != 0) { dli = _AGC_DREF(dli); }
+    if (_tup_lit_shape(S, lp, sid) == 0) { return _tup_lit_skip(S, st, term); }
+    var t = _agg_temp(S, sid);
+    STI(S, lp);
+    _tup_elems(S, sid, 0, t, 0);
+    _pw_close(S, lp - st);
+    _agc_from_temp(S, t, dli, dgv, n, sid);
+    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
+    STI(S, GTI(S) + 1);
+    return 1;
+}
+# ⛔ 6.7.7 (B4, T5) — `t = f();` / `G = f();` (a for step too, `term` 11): a multi-value call CAPTURED
+# into an existing tuple variable — a local, a by-value parameter (copied in, inline), a global, at
+# top level too (no temp: the values go from the registers straight into the slots, every one read
+# before any is stored, so `t = f(t.1, t.0);` reads the old t). The capture's contract is
+# `_tup_cap_check`'s (parse_decl.cyr), the destructure's: a refused callee is reported and skipped.
+# Not inside a wrap — `t = (f())` is a value, refused as the destructure refuses `(f())` (R12):
+# `_asg_paren` records the wrapped source's first token. 1 = done (`term` consumed).
+var _asg_wrapd = 0 - 1;
+fn _tup_asg_call(S, noff, term): i64 {
+    if (_asg_wrapd == GTI(S)) { return 0; }
+    var sid = _tup_dst_sid(S, noff);
+    if (sid == 0) { return 0; }
+    var c = _tup_cap_check(S, sid, term);
+    if (c == 0) { return 0; }
+    _agc_operand(S, noff);
+    var gv = _agc_gvi;
+    var idx = gv;
+    if (_agc_li >= 0) { idx = 0 - 2 - _agc_li; }
+    if (c == 1) {
+        PCMPE(S);
+        if (idx != 0 - 1) {
+            var n = GETFCOUNT(S, sid - 1);
+            _tup_drain_push(S, n);
+            _tup_drain_store(S, n, idx, sid);
+            if (gv >= 0) { SLVAR(S, gv); }
+        }
+    }
+    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
+    STI(S, GTI(S) + 1);
+    return 1;
+}
+# The tuple a destination name holds, else 0 — lookups only, nothing reported: a local (in a fn)
+# decides by itself, then an inline global. (A closure's capture is no destination: the store's
+# "undefined variable".)
+fn _tup_dst_sid(S, noff): i64 {
+    if (GINFN(S) == 1) {
+        var li = FINDLOCAL(S, noff);
+        if (li >= 0) {
+            if (GLAGG(S, li) == 0) { return 0; }
+            var lt = GLTYPE(S, li);
+            if (lt >= 0) { return 0; }
+            if (_tup_is(S, 0 - lt) == 1) { return 0 - lt; }
+            return 0;
+        }
+    }
+    var gi = _findvar_core(S, noff);
+    if (gi < 0) { return 0; }
+    if (GVPM(S, gi) != 2) { return 0; }
+    if (_tup_is(S, GVTYPE(S, gi)) == 1) { return GVTYPE(S, gi); }
+    return 0;
+}
+fn _tup_asg_known(S, noff): i64 {
+    if (GINFN(S) == 1) { if (FINDLOCAL(S, noff) >= 0) { return 1; } }
+    if (_findvar_core(S, noff) >= 0) { return 1; }
+    return 0;
+}
 fn _try_aggregate_copy_assign(S, noff, term): i64 {
+    if (_tup_asg(S, noff, term) == 1) { return 1; }   # 6.7.7 (B4): a tuple literal
     if (PEEKT(S) == 10) { if (_asg_paren(S, noff, term, 0) == 1) { return 1; } return 0; }   # 6.7.6
     if (PEEKT(S) != 2) { return 0; }
     if (TOKTYP(S, GTI(S) + 1) != term) { return 0; }
@@ -3692,6 +3814,7 @@ fn _stmt_qmark(S, pair): i64 {
 # One call in _PARSE_STMT_IMPL: that body is near cybs's per-function reference limit.
 # CHANGELOG [6.6.12]
 fn _stmt_explicit_generic(S, noff): i64 {
+    if (PEEKT(S) == 31) { return _masg_stmt(S, 5); }   # 6.7.7 (T5): `a, b = f();` (it was "expected '='")
     if (PEEKT(S) != 19) { return 0; }
     if (_MONOMORPH_OK != 1) { return 0; }
     var fi = FINDFN(S, noff);
@@ -3708,6 +3831,244 @@ fn _stmt_explicit_generic(S, noff): i64 {
     _stmt_qmark(S, pair);
     if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
     STI(S, GTI(S) + 1);
+    return 1;
+}
+
+# ⛔ 6.7.7 (B4, T5) — `a, b = f();` / `a, b, c = f();`: A MULTI-VALUE CALL RE-ASSIGNS EXISTING
+# VARIABLES (the user's decision, 2026-10-08 — the re-poll gap: a loop re-polling a `Result` had to
+# bind a fresh pair each pass). The destructure `var a, b = f();`'s contract on its own checks: the
+# right-hand side is ONE whole call (`_dt_rhs_check_t`, ending at `term` — `;`, or a classic-for
+# step's `)`), its declared arity matched and a provably one-value callee refused
+# (`_dt_arity_check`). The targets are 2 or 3 plain names, each resolved as `x = ..` resolves it (a
+# local, then a global; a closure's capture is "undefined"): a const or enum constant, a struct /
+# tuple / vector / u128 / slice / array / f32 target, a name given twice, and a bool target whose
+# value is not declared bool are refused by name, as is a target that is not a plain name (`a,
+# b.x`, `a, b[i]`, `a, *p`, `a, t.0`, `OP=`) — each was "expected '='". Every value is pushed before
+# any store (rax, rdx, r3), then each target takes its own at its width (`_asg_store_slot`, the
+# statement's). Reached through `_stmt_explicit_generic` (no reference in `_PARSE_STMT_IMPL`) and
+# the for-step replay; cursor on the `,` after the first target. Consumes through `term`. 1.
+# CHANGELOG [6.7.7]
+# The targets are held in this fn's own locals across the call's parse: a multi-value assignment
+# inside it (a closure body among the arguments) re-uses `_masg_ix`.
+var _masg_ix[3];   # target i: a local slot (>= 0), a global (`0 - 2 - gi`), -1 none (refused / unresolved)
+fn _masg_stmt(S, term): i64 {
+    var t0 = GTI(S) - 1;
+    var n = _masg_targets(S);
+    if (n == 0) { return _masg_end(S, term); }
+    STI(S, GTI(S) + 1);   # `=`
+    var x0 = _masg_target(S, t0, 0);
+    var x1 = _masg_target(S, t0, 1);
+    var x2 = 0 - 1;
+    if (n == 3) { x2 = _masg_target(S, t0, 2); }
+    _dt_rhs_check_t(S, term);
+    var fi = _dt_call_fn(S);
+    if (_masg_callee(S, fi, n) == 1) {
+        _masg_skip(S);
+        return _masg_end(S, term);
+    }
+    _masg_bools(S, t0, n, fi);
+    PCMPE(S);
+    _tup_drain_push(S, n);
+    if (n == 3) {
+        EPOPR(S);
+        _masg_store(S, x2);
+    }
+    EPOPR(S);
+    _masg_store(S, x1);
+    EPOPR(S);
+    _masg_store(S, x0);
+    return _masg_end(S, term);
+}
+# The callee `fi` (-1: unknown) of `a, b = f();`, cursor on it: a struct- or vector-returning one is
+# refused by name, as the capture refuses it (`_tup_cap_class`) — a struct return is no multi-value
+# call: a 24 B one's values were its retptr's words, and a 16 B one is a struct, not two values (until
+# the 6.7.7 aarch64 fix it also crossed the struct pair x0:x1 into the multi-value drain x0:x2 — 50
+# where 59 is right). The refusal is the B4 decision, not a register workaround. Then the destructure's
+# arity check. 1 = refused.
+# CHANGELOG [6.7.7] (B4 review)
+fn _masg_callee(S, fi, n): i64 {
+    if (fi < 0) { return 0; }
+    var rs = GFRS(S, fi);
+    if (rs > 0) {
+        _tup_cap_err(S, 0, fi, 2, 0);
+        return 1;
+    }
+    if (rs <= 0 - 2048) {
+        _tup_cap_err(S, 0, fi, 3, 0);
+        return 1;
+    }
+    _dt_arity_check(S, fi, n);
+    return 0;
+}
+# rax into target `x` (`_masg_ix`'s encoding), at its width; none for -1.
+fn _masg_store(S, x): i64 {
+    if (x >= 0) { return _asg_store_slot(S, x, 0); }
+    if (x < 0 - 1) { return _asg_store_slot(S, 0 - 2 - x, 1); }
+    return 0;
+}
+fn _masg_end(S, term): i64 {
+    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
+    STI(S, GTI(S) + 1);
+    return 1;
+}
+# The targets after the first, cursor on its `,`: their count (2..3), the cursor left on `=`; 0 = a
+# refusal reported (a target that is no plain name, or a fourth), the cursor at the statement's end.
+fn _masg_targets(S): i64 {
+    var n = 1;
+    while (PEEKT(S) == 31) {
+        STI(S, GTI(S) + 1);   # `,`
+        if (PEEKT(S) != 2) { return _masg_np(S); }
+        STI(S, GTI(S) + 1);
+        n = n + 1;
+        if (PEEKT(S) != 31) { if (PEEKT(S) != 4) { return _masg_np(S); } }
+    }
+    if (n > 3) {
+        _masg_err(S, "a multi-value assignment re-assigns 2 or 3 variables - a call returns at most 3 values", 0);
+        _masg_skip(S);
+        return 0;
+    }
+    return n;
+}
+# A later target that is no plain name (cursor on the token that shows it). 0.
+fn _masg_np(S): i64 {
+    var t = PEEKT(S);
+    var w = " - this target is not one";
+    if (t == 41) { w = " - a field is not one"; }
+    elif (t == 28) { w = " - an element is not one"; }
+    elif (t == 8) { w = " - `*p` is not one"; }
+    elif (_is_cop_tok(t) == 1) { w = " - its form is `=`, not a compound `OP=`"; }
+    _masg_err(S, "a multi-value assignment `a, b = f();` re-assigns plain variables", w);
+    _masg_skip(S);
+    return 0;
+}
+# A FIRST target that is no plain name (`h.x, b = f();`, `a[i], b = ..`, `*p, q = ..` — where the
+# store expects `=`, cursor on the `,`): refused by name, the cursor at the statement's end. 1.
+fn _masg_not_plain(S, what): i64 {
+    if (PEEKT(S) != 31) { return 0; }
+    _masg_err(S, "a multi-value assignment `a, b = f();` re-assigns plain variables", what);
+    _masg_skip(S);
+    return 1;
+}
+# Reported at the cursor, in sync (the panic latch untouched: the statement is parsed to its end).
+fn _masg_err(S, msg, tail): i64 {
+    if (_panic == 1) { return 0; }
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    PRSTR(": ");
+    PRSTR(msg);
+    if (tail != 0) { PRSTR(tail); }
+    PRSTR("\n");
+    _err_excerpt(S);
+    _had_error = 1;
+    return 0;
+}
+# To the statement's end — its `;` at depth 0, or a classic-for step's `)` — not consumed.
+fn _masg_skip(S): i64 {
+    var d = 0;
+    while (PEEKT(S) != 12) {
+        var t = PEEKT(S);
+        if (d == 0) { if (t == 5) { return 0; } }
+        if (t == 10 || t == 13 || t == 28) { d = d + 1; }
+        if (t == 11 || t == 14 || t == 29) {
+            if (d == 0) { return 0; }
+            d = d - 1;
+        }
+        STI(S, GTI(S) + 1);
+    }
+    return 0;
+}
+# Target `i` (token `t0 + 2i`): resolved and judged, recorded in `_masg_ix` and returned.
+fn _masg_target(S, t0, i): i64 {
+    var ti = t0 + i * 2;
+    var sv = GTI(S);
+    STI(S, ti + 1);   # past the name, where `x = ..` reports
+    var x = _masg_resolve(S, TOKVAL(S, ti), ti, t0, i);
+    STI(S, sv);
+    store64(&_masg_ix + i * 8, x);
+    return x;
+}
+fn _masg_resolve(S, nm, ti, t0, i): i64 {
+    var j = 0;
+    while (j < i) {
+        if (TOKVAL(S, t0 + j * 2) == nm) {
+            _masg_err(S, "a multi-value assignment re-assigns each variable once - this one is named twice", 0);
+            return 0 - 1;
+        }
+        j = j + 1;
+    }
+    var p0 = _panic;
+    if (_asg_lvalue_refused(S, nm) == 1) { _panic = p0; return 0 - 1; }
+    if (GINFN(S) == 1) {
+        var li = FINDLOCAL(S, nm);
+        if (li >= 0) {
+            if (_masg_kind(S, nm, li, ti) == 1) { return 0 - 1; }
+            return li;
+        }
+    }
+    var gi = FINDVAR(S, nm);
+    if (gi < 0) {
+        if (_syntax_only == 1) { return 0 - 1; }   # a sibling file's global: the store is dropped
+        ERR_IDENT(S, "undefined variable ", nm, 0, 0 - 1);
+        _gv_note_blockscoped(S, nm);
+        _panic = p0;
+        return 0 - 1;
+    }
+    if (_masg_kind(S, nm, 0 - 1, ti) == 1) { return 0 - 1; }
+    return 0 - 2 - gi;
+}
+# A target that holds no one value: an aggregate, a vector, a u128 / slice pair, an array or an
+# f32 (a local `li`, else the global `nm`) — refused by name. 1 = refused.
+fn _masg_kind(S, nm, li, ti): i64 {
+    var k = 0;
+    var tup = 0;
+    if (li >= 0) {
+        var lt = GLTYPE(S, li);
+        if (GLAEW(S, li) != 0 || GLBARR(S, li) == 1) { k = 5; }
+        elif (_is_simd_any(S, lt) == 1) { k = 2; }
+        elif (lt < 0) { if (GLAGG(S, li) == 1) { k = 1; tup = _tup_is(S, 0 - lt); } }
+        elif (lt == F32_TYID) { k = 3; }
+        elif (GLSPAN(S, li) > 1) { k = 4; if (GSLICE_W(S, li) > 0) { k = 6; } }
+    } else {
+        var gi = _findvar_core(S, nm);
+        if (gi < 0) { return 0; }
+        var gt = GVTYPE(S, gi);
+        if (_arr_gdesc(S, gi) != 0 || _arr_gbare(S, gi) == 1) { k = 5; }
+        elif (GVVEC(S, gi) != 0) { k = 2; }
+        elif (GVPM(S, gi) == 2) { k = 1; tup = _tup_is(S, gt); }
+        elif (gt == F32_TYID) { k = 3; }
+        elif (GVW128(S, gi) == 1) { k = 4; }
+        elif (GVPM(S, gi) == 0) { if (L64(_vars_base + gi * 8) == 16) { k = 6; } }
+    }
+    if (k == 0) { return 0; }
+    var tl = " from a multi-value call - its targets are i64, f64 or bool variables";
+    if (tup == 1) { _tup_err(S, ti, "cannot re-assign tuple ", nm, " from a multi-value call - capture the call into it whole: `t = f();`"); }
+    elif (k == 1) { _tup_err(S, ti, "cannot re-assign struct ", nm, tl); }
+    elif (k == 2) { _tup_err(S, ti, "cannot re-assign vector ", nm, tl); }
+    elif (k == 3) { _tup_err(S, ti, "cannot re-assign f32 ", nm, tl); }
+    elif (k == 4) { _tup_err(S, ti, "cannot re-assign u128 ", nm, tl); }
+    elif (k == 5) { _tup_err(S, ti, "cannot re-assign array ", nm, tl); }
+    else { _tup_err(S, ti, "cannot re-assign slice ", nm, tl); }
+    return 1;
+}
+# A bool target takes only a value its callee DECLARES bool (`: (bool, ..)`) — B2's rule for `b = e`.
+fn _masg_bools(S, t0, n, fi): i64 {
+    var i = 0;
+    while (i < n) {
+        var x = L64(&_masg_ix + i * 8);
+        var b = 0;
+        if (x >= 0) { b = GLBOOL(S, x); }
+        elif (x < 0 - 1) { b = GVBOOL(S, 0 - 2 - x); }
+        if (b == 1) { if (_masg_ebool(S, fi, i) == 0) {
+                _bx_refuse(S, t0 + i * 2, "cannot assign a value that is not a bool to bool ", TOKVAL(S, t0 + i * 2), " - the call does not declare that value bool", 0 - 1);
+            } }
+        i = i + 1;
+    }
+    return 0;
+}
+fn _masg_ebool(S, fi, k): i64 {
+    if (fi < 0) { return 0; }
+    if (GFRS(S, fi) != MULTIRET_SID) { return 0; }
+    if ((GFLG(S, fi) & (8192 << k)) == 0) { return 0; }
     return 1;
 }
 

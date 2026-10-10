@@ -381,10 +381,38 @@ fn _cl_prescan_nested(S): i64 {
     if (PEEKT(S) == 14) { STI(S, GTI(S) + 1); }
     return 0;
 }
+# ⛔ 6.7.7 — A NAMED ARGUMENT'S LABEL IS NOT A READ. In `|n| w3(1, c: n)` the capture pre-scan took
+# the label `c` for a read: of the enclosing fn's local `c` (a capture the body never uses, so the
+# closure was refused without lib/alloc.cyr), and at top level of whatever name the local table
+# still held from the last fn compiled (the callee's own parameter — a capture of a dead slot,
+# SIGSEGV). A label is `IDENT :` just after a `(` or `,` whose innermost unclosed bracket is a `(`;
+# a struct literal's field (`Pt { x: n, y: 2 }`, in a `{`) keeps its reading. CHANGELOG [6.7.7]
+fn _cl_is_arg_label(S, ti): i64 {
+    if (TOKTYP(S, ti + 1) != 49) { return 0; }
+    if (ti < 1) { return 0; }
+    var p = TOKTYP(S, ti - 1);
+    if (p != 10 && p != 31) { return 0; }
+    var q = ti - 1;
+    var d = 0;
+    while (q >= 0) {
+        var t = TOKTYP(S, q);
+        if (t == 11 || t == 29 || t == 14) { d = d + 1; }
+        elif (t == 10 || t == 28 || t == 13) {
+            if (d == 0) {
+                if (t == 10) { return 1; }
+                return 0;
+            }
+            d = d - 1;
+        }
+        q = q - 1;
+    }
+    return 0;
+}
 # One identifier read in a closure body: capture it when it is a free variable.
 fn _cl_prescan_ident(S, noff): i64 {
     if (TOKTYP(S, GTI(S) + 1) == 10) { return 0; }   # a call name
     if (_TOK_IS_LOOP_AT(S, GTI(S)) == 1) { return 0; }  # 6.7.5: the `loop {` statement, not a read
+    if (_cl_is_arg_label(S, GTI(S)) == 1) { return 0; }   # 6.7.7: `w3(1, c: n)`'s `c`, not a read
     if (FINDLOCAL(S, noff) >= 0) { return 0; }
     if (_cl_shadow_find(S, noff) >= 0) { return 0; }
     var esl = _cl_snap_find(S, noff);
@@ -570,7 +598,16 @@ fn LOOKAHEAD_IS_TYPE_ARG_CALL(S): i64 {
             }
         } elif (t == 5) { return 0; }
         elif (t == 13) { return 0; }
-        elif (t == 10) { return 0; }
+        elif (t == 10) {
+            # 6.7.7 (R3): a tuple TYPE ARGUMENT, `f<( .. )>(..)` — stepped over, so the call parses
+            # and _parse_one_type_arg refuses the type by name. Only right after `<` or `,`: any
+            # other `(` ends the lookahead as before (both callers have a generic fn in hand, whose
+            # bare name is no value, so no comparison that compiled reads differently).
+            if (depth < 1) { return 0; }
+            var pt = TOKTYP(S, i - 1);
+            if (pt != 19) { if (pt != 31) { return 0; } }
+            i = _call_close(S, i);
+        }
         i = i + 1;
     }
     return 0;
@@ -737,6 +774,7 @@ fn _PINDIRECT_CALL_IN(S): i64 {
     }
     while (PEEKT(S) == 31) {                # ',' → another arg
         STI(S, GTI(S) + 1);                 # consume ','
+        if (_pd_label_at(S, GTI(S)) == 1) { _pd_icall_named(S, cst); }   # 6.7.7 (B6): C7
         PCMPE(S);                           # eval arg → rax
         EPUSHR(S);                          # push arg
         cp_argc = cp_argc + 1;
@@ -759,6 +797,7 @@ fn _PINDIRECT_CALL_IN(S): i64 {
             ERR_MSG(S, "fncallN argument count does not match the N in its name", 55);
         }
     }
+    _pd_icall_short(S, cfi, cp_argc, cst);   # 6.7.7 (B6): C15 — defaults fill only a direct call
     # The env rides in an argument REGISTER or not at all. Under SysV the caller
     # places stack arguments anchored on the LAST one (ECALLPOPS puts a_n at
     # [rsp+0]) and the callee reads them back the same way (ESTORESTACKPARM's
@@ -1266,9 +1305,11 @@ fn PARSE_FACTOR(S): i64 {
     var _xd0 = _xdepth;
     var _xt0 = PEEKT(S);
     var _ti0 = GTI(S);
-    var _rc = _PARSE_FACTOR_IMPL(S);
+    var _rc = 0;
+    if (_tup_lit_stray(S, _ti0) == 0) { _rc = _PARSE_FACTOR_IMPL(S); }   # 6.7.7 (B4): R9
     _call_scale_fix(S, _ti0);   # 6.6.17: a call's result scales by its declared return only
     _w128_rchk(S, _ti0);        # 6.7.6 (D2): a u128 as the right operand of a refused operator
+    _tup_rchk(S, _ti0);         # 6.7.7 (B4): a whole tuple is not a value
     _rd_exit();
     # 6.6.5 — `syscall(…)` (token 24) is stack-NEUTRAL by construction: it pushes its
     # arguments and every backend's emitter consumes exactly those, leaving the result in
@@ -1528,7 +1569,7 @@ fn _inl_param_marks(S, fi, s0, s1, pc): i64 {
     return 0;
 }
 # The name of parameter `ord` of fn `fi`, read from its definition's tokens (the `<..>` of a type
-# argument skipped), or -1.
+# argument and a parameter's default skipped), or -1.
 fn _bx_pname(S, fi, ord): i64 {
     var i = _gen_def_open(S, fi);
     if (i < 0) { return 0 - 1; }
@@ -1541,6 +1582,7 @@ fn _bx_pname(S, fi, ord): i64 {
         var t = TOKTYP(S, i);
         if (d == 0) {
             if (t == 11) { return 0 - 1; }
+            if (t == 4) { i = _pl_dflt_end(S, i); continue; }   # 6.7.7: a default (`<` is an operator there)
             if (t == 31) { k = k + 1; want = 1; }
             elif (want == 1) { if (t == 2) { if (k == ord) { return TOKVAL(S, i); } want = 0; } }
         }
@@ -1763,7 +1805,11 @@ fn _w128_binop(S, op, e): i64 {
         h = _w128_tmp(S);
         _w128_accm(S, h, 2, lk, lv);
     }
-    if (e == 0) { PARSE_TERM(S); } else { PCMPE(S); }
+    if (e == 0) { PARSE_TERM(S); }
+    else {
+        _refuse_lossy_pair(S);   # 6.7.7 (T5b): `b += f();` added the tag, zero-extended
+        PCMPE(S);
+    }
     _w128_rhs(S, h, op);
     return 0;
 }
@@ -1832,6 +1878,129 @@ fn _w128_rchk(S, ti0): i64 {
     if (_w128_refused_op(t) == 0) { return 0; }
     if (t == 8 || t == 27) { if (_tok_ends_operand(S, ti0 - 2) == 0) { return 0; } }
     return _w128_refuse_at(S, ti0 - 1, t, 0);
+}
+# ⛔ 6.7.7 (B4) — A TUPLE IS NOT A NUMBER (R11). A factor that is exactly one name (`GTI == ti0 + 1`)
+# whose load stamped a tuple's sid — every inline-aggregate load stamps it: a local, an
+# address-passed parameter, a closure capture, a global; `_PARSE_FACTOR_IMPL` resets it at entry —
+# is a whole tuple read as a VALUE: `t == u`, `t + 1`, `!t`, `if (t)`, `print(t)`, `var x = t;`, an
+# untyped argument. Under the struct rule each of those took the tuple's first word (or dispatched
+# a `(i64, i64)_add` that cannot exist), silently. Refused by name, once per token, and the stamp
+# cleared so no operator dispatch follows. Every legitimate whole-tuple use — a copy, a tuple
+# argument, a field store, a struct-literal element, `&t` — consumes the name without a factor.
+# (A whole tuple-typed FIELD is refused at its load, `_tup_fld_rchk`.) CHANGELOG [6.7.7]
+fn _tup_rchk(S, ti0): i64 {
+    if (GTI(S) != ti0 + 1) { return 0; }
+    if (TOKTYP(S, ti0) != 2) { return 0; }
+    if (_tup_is(S, GESTYPE(S)) == 0) { return 0; }
+    _tup_err(S, ti0, "tuple ", TOKVAL(S, ti0), " used as a value - take an element (`t.0`) or copy it whole into a tuple");
+    SESTYPE(S, 0);
+    return 0;
+}
+# ⛔ 6.7.7 (B4) — THE TUPLE LITERAL `(a, b)`: a `(` group with a comma at its own depth. ONE detector
+# for every position — PARSE_RETURN's multi-value arm, the accepting positions and the stray
+# refusal — so they cannot disagree. Its elements are stepped by `_arg_next`, the one argument
+# walker: a comma inside a nested `( [ {` group separates nothing, nor does one between a closure's
+# `|a, b|` bars at an element's start, nor one inside an explicit generic call's type arguments
+# (`pk<i64, i64>(1, 2)`, `_arg_gen_past`). PARSE_RETURN's own paren-depth scan counted both, so
+# `return (|a, b| a + b);` and `return (pk<i64, i64>(1, 2));` were taken for multi-value returns
+# ("expected ','"). CHANGELOG [6.7.7]
+# ⛔ 6.7.7 (B4 review) — THE DECLARATION ZONE'S PASS 1 READS A GENERIC CALL BY ITS TOKENS. It sizes a
+# zone global (`_tup_gci`) before the fns and structs below it are declared, so `_gcall_open` (a
+# KNOWN generic with resolvable type arguments) did not see `pk<i64, i64>(..)` with `pk` declared
+# below, and the comma between its type arguments was a tuple comma there and none in the replay:
+# `var G = (pk<i64, i64>(1, 2));` registered a tuple (G refused as a value), `var G: (i64, i64) =
+# (pk<..>(..));` stored one word, `(pk<..>(..), 3)` was typed `(i64, i64, i64)`, and a capture of
+# `g<i64>(5)` was refused. Set (1) only while `_tup_gci` reads; the replay still reads by `_gcall_open`
+# and refuses by name what this reading gets wrong (`_gvi_tup_odd`, `_gvi_tup_slot`).
+var _tup_p1 = 0;
+fn _tup_gopen(S, ti): i64 {
+    if (_tup_p1 == 1) { return _gcall_syn(S, ti); }
+    return _gcall_open(S, ti);
+}
+# The `(` of the call at token ti by its shape — `name(`, or `name<..>(` whose list holds only type
+# spellings (names, `,` and nested `<..>`: what `_parse_one_type_arg` reads) and closes right before
+# a `(` — or -1. No lookup: the name may be declared below.
+fn _gcall_syn(S, ti): i64 {
+    if (TOKTYP(S, ti) != 2) { return 0 - 1; }
+    var nt = TOKTYP(S, ti + 1);
+    if (nt == 10) { return ti + 1; }
+    if (nt != 19) { return 0 - 1; }
+    if (_MONOMORPH_OK == 0) { return 0 - 1; }
+    var i = ti + 2;
+    var d = 1;
+    var n = GTCNT(S);
+    while (i < n) {
+        var t = TOKTYP(S, i);
+        if (t == 19) { d = d + 1; }
+        elif (t == 20) { d = d - 1; }
+        elif (t == 39) { d = d - 2; }
+        elif (t == 152) { d = d - 3; }
+        elif (t != 2 && t != 31) { return 0 - 1; }
+        if (d <= 0) {
+            if (TOKTYP(S, i + 1) != 10) { return 0 - 1; }
+            return i + 1;
+        }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+# The commas of the group whose `(` is token `open`: 0 = a parenthesised expression.
+fn _tup_commas(S, open): i64 {
+    var n = 0;
+    var q = _arg_next(S, open + 1);
+    while (TOKTYP(S, q) == 31) {
+        n = n + 1;
+        q = _arg_next(S, q + 1);
+    }
+    return n;
+}
+# A literal at token `st`, inside any wrap (`((1, 2))`, the 6.7.6 transparency rule): the token of
+# the literal's own `(`, with `_pw_end` the token after the OUTERMOST `)` (the caller tests its
+# terminator there); -1 when `st` opens none. `_pwrap_k` counts the literal's own `(` as a wrap.
+fn _tup_lit_at(S, st): i64 {
+    if (TOKTYP(S, st) != 10) { return 0 - 1; }
+    var lp = st + _pwrap_k(S, st) - 1;
+    if (_tup_commas(S, lp) == 0) { return 0 - 1; }
+    return lp;
+}
+# R9 — a literal anywhere a VALUE is parsed (PARSE_FACTOR, before its body): every accepting
+# position claims its literal before an expression is parsed, so a factor that opens one is an
+# operand, an untyped / fn-pointer / `callptr` argument, a branch, a nested element, `(1, 2).0`.
+# Refused by name; the group and a selector chain after it are consumed and 0 is the value, so
+# the parse goes on in step. 1 = refused (the factor is done).
+fn _tup_lit_stray(S, ti0): i64 {
+    if (TOKTYP(S, ti0) != 10) { return 0; }
+    if (_tup_commas(S, ti0) == 0) { return 0; }
+    if (_tup_ret_wrap(S, ti0) == 1) {   # 6.7.7 (B4 review): `return ((a, b));` names its own spelling
+        _tup_err(S, ti0, "a multi-value return is written `return (a, b);` - drop the extra parentheses", 0 - 1, 0);
+    } else {
+        _tup_err(S, ti0, "a tuple `( .. )` is a value only as a `var` initializer, assigned to a tuple variable or field, as a tuple argument, or after `return` - here one value is expected", 0 - 1, 0);
+    }
+    STI(S, _call_close(S, ti0) + 1);
+    _synonly_skip_chain(S);
+    EMOVI(S, 0);
+    SESTYPE(S, 0);
+    _cfo = 0;
+    return 1;
+}
+# 1 = the literal whose `(` is `ti0` is the group just inside `return`'s own parentheses (`return
+# ((a, b));`, any depth — each wrap closing right after it, `_pwrap_k`): a multi-value return keeps
+# its exact spelling `return (a, b);`, and the general text above lists "after `return`" as a place a
+# literal goes. A literal that is one ELEMENT there (`return ((1, 2), 3);`) keeps the general text.
+fn _tup_ret_wrap(S, ti0): i64 {
+    var k = ti0 - 1;
+    if (k < 1) { return 0; }
+    if (TOKTYP(S, k) != 10) { return 0; }
+    while (k > 0) {
+        if (TOKTYP(S, k) != 10) { break; }
+        k = k - 1;
+    }
+    if (TOKTYP(S, k) != 33) { return 0; }
+    var pe = _pw_end;
+    var w = _pwrap_k(S, k + 1);
+    _pw_end = pe;
+    if (k + w != ti0) { return 0; }
+    return 1;
 }
 fn _tok_ends_operand(S, ti): i64 {
     if (ti < 0) { return 0; }
@@ -2105,6 +2274,32 @@ fn _IFS_K(t): i64 {
     return 0;
 }
 
+# A `.field` on the result of a call (fn `fi`, named `noff`) that returns no struct: refused. 6.7.7
+# (B4, T5, R15): a MULTI-VALUE one is told how to read its values — bind them into a tuple first.
+fn _call_fld_err(S, fi, noff): i64 {
+    if (fi >= 0) { if (GFRS(S, fi) == MULTIRET_SID) { return _mret_fld_err(S, fi, noff); } }
+    ERR_IDENT(S, "cannot take a field of the result of ", noff, ": it does not return a struct", 0 - 1);
+    return 0;
+}
+fn _mret_fld_err(S, fi, noff): i64 {
+    if (_panic == 1) { return 0; }
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    PRSTR(": cannot take a field of the result of '");
+    PRSTR(S + 0xEC00000 + noff);
+    PRSTR("': it returns ");
+    PRNUM(GFRN(S, fi));
+    PRSTR(" values - bind them first, `var t: ");
+    _mret_spell(S, fi);
+    PRSTR(" = ");
+    PRSTR(S + 0xEC00000 + noff);
+    PRSTR("(..);`, then read `t.0`\n");
+    _err_excerpt(S);
+    _had_error = 1;
+    _panic = 1;
+    return 0;
+}
+
 # ⛔ 6.6.12 — A `.field` ON A CALL RESULT (`f(mk(p).n)`, `var r = mkp(3).y;`, `mk(p).v.x + 1`)
 # parsed nowhere: the factor returned straight after the call and the `.` was a syntax error in
 # every expression position. Cursor just past the callee IDENT; 1 = the call and its whole field
@@ -2125,7 +2320,7 @@ fn _call_field(S): i64 {
     if (sid <= 0 || GINFN(S) != 1) {
         # --syntax-only: a return type from a sibling file reads as a scalar, so stay silent.
         if (_syntax_only == 0) {
-            if (sid <= 0) { ERR_IDENT(S, "cannot take a field of the result of ", TOKVAL(S, ti), ": it does not return a struct", 0 - 1); }
+            if (sid <= 0) { _call_fld_err(S, fi, TOKVAL(S, ti)); }   # 6.7.7 (T5): + a multi-value one's hint
             else { _refuse_toplevel_struct_call(S, TOKVAL(S, ti)); }
         }
         # --syntax-only still parses a plain call's arguments, for the grammar errors in them.
@@ -2448,9 +2643,12 @@ fn _arr_sub_assign(S, noff): i64 {
     EPUSHR(S);            # the element address
     var cop = _asg_compound_tok(S);
     if (cop == 0) {
-        if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); }
-        STI(S, GTI(S) + 1);
-        PCMPE(S);
+        if (_masg_not_plain(S, " - an element is not one") == 0) {   # 6.7.7 (T5): `a[i], b = f();`
+            if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); }
+            STI(S, GTI(S) + 1);
+            _refuse_lossy_pair(S);   # 6.7.7 (T5b): `a[i] = f();` stored the tag
+            PCMPE(S);
+        }
     } else {
         if (w != 0) { _arr_sub_load(S, w); }
         _asg_compound_op(S, cop, 0);
@@ -2531,10 +2729,10 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
                 szval = 16;
                 STI(S, GTI(S) + 1);
             } else {
-                if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
                 # 6.6.16 (C8): the one type-name resolver — a bound type parameter its argument's
                 # size, else the WHOLE name (u8..u64, f32, f64, bool, cstring, an enum, a vector, a
                 # struct), else refused by name. sizeof(f64) / sizeof(u8) did not compile. CHANGELOG [6.6.16]
+                # 6.7.7: _sizeof_type expects the name itself (and refuses a tuple type by name).
                 szval = _sizeof_type(S, 0);   # 6.6.17: + `<..>` (_sizeof_type)
             }
             if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
@@ -4175,6 +4373,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
                 var cpnoff = PEEKV(S);
                 _RSV_INTRINSIC_DECL(S, cpnoff, GTI(S), 0);   # 6.6.20: a closure param `|sizeof|`
                 STI(S, GTI(S) + 1);
+                if (PEEKT(S) == 4) { _pd_cl_refuse(S); }   # 6.7.7 (B6): D18
                 var cpli = GFLC(S);
                 S64(S + 0x5D9D000 + cpli * 8, cpnoff);
                 SLDEP(S, cpli, 0);
@@ -4791,8 +4990,7 @@ fn PARSE_SIMD_EXT(S, ptyp): i64 {
         EPOPR(S);
         if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
         # Don't consume ; here — PARSE_STMT handles it via expression statement path
-        var rp = EJMP0(S);
-        vec_push(rp_vec, rp);
+        _mret_land(S);   # 6.7.7: + a 9-16 B struct fn's pair register (aarch64 x1)
         return 0;
     }
     # f64_atan(x) — v5.11.37 path-A: dispatch lives in <backend>/emit.cyr.
@@ -5858,6 +6056,7 @@ fn EMIT_OP_DISPATCH(S, stype, op_str, op_len, beg): i64 {
     _op_lhs_check(S, ofp, stype, beg);   # 6.7.3
     _OP_OPERAND_ADDR(S, svar, ofp, 0);
     EPUSHR(S);
+    _op_lhs_snap(S, ofp);   # 6.7.7: a by-value operand the right one may write is copied here
     var rsvar = _op_rhs(S, ofp);   # the rhs, parsed: a struct var's address too (6.6.20: _op_rhs)
     _OP_OPERAND_ADDR(S, rsvar, ofp, 1);
     EPUSHR(S);
@@ -5871,8 +6070,10 @@ fn EMIT_OP_DISPATCH(S, stype, op_str, op_len, beg): i64 {
     # happened to be in the third argument register: `a + b` compiled clean and computed with
     # garbage. Every OTHER call position has had a hard arity error since v6.5.1 (`_CHECK_ARITY`)
     # — this one was simply never wired to it. The line is the LHS's first token, not the cursor,
-    # which by here has walked past the whole expression. CHANGELOG [6.6.6]
-    _CHECK_ARITY(S, GTLINE(S, beg), opnoff, ofi, 2, 1);
+    # which by here has walked past the whole expression. Mode 4: an operator fn that declares a
+    # parameter default is refused (it is passed exactly two operands, never filled; 6.7.7).
+    # CHANGELOG [6.6.6] [6.7.7]
+    _CHECK_ARITY(S, GTLINE(S, beg), opnoff, ofi, 2, 4);
     var ofoff = L64(_fnt_offsets + ofi * 8);
     if (ofoff >= 0) { ECALLTO(S, ofoff); }
     else { ECALLFIX(S, ofi); }
@@ -5912,6 +6113,7 @@ fn _EMIT_OP_DISPATCH_AGG(S, stype, op_str, op_len, beg): i64 {
     var n = 2 + _sc_n0;
     if (park >= 0) { EFLLOAD(S, park); } else { _OP_OPERAND_ADDR(S, svar, ofi, 0); }
     EPUSHR(S);
+    _op_lhs_snap(S, ofi);   # 6.7.7 (EMIT_OP_DISPATCH)
     var rsvar = _op_rhs(S, ofi);
     _OP_OPERAND_ADDR(S, rsvar, ofi, 1);
     EPUSHR(S);
@@ -5919,8 +6121,8 @@ fn _EMIT_OP_DISPATCH_AGG(S, stype, op_str, op_len, beg): i64 {
     _sc_x8(S, ofi, t);
     _callee_site_checks(S, ofi, opnoff, opti);
     # 6.6.6 — same arity check as the scalar dispatch above. The retptr/X8 the struct-returning
-    # form adds is NOT a declared parameter, so the expected count is still exactly 2.
-    _CHECK_ARITY(S, GTLINE(S, beg), opnoff, ofi, 2, 1);
+    # form adds is NOT a declared parameter, so the expected count is still exactly 2 (mode 4).
+    _CHECK_ARITY(S, GTLINE(S, beg), opnoff, ofi, 2, 4);
     var ofoff = L64(_fnt_offsets + ofi * 8);
     if (ofoff >= 0) { ECALLTO(S, ofoff); }
     else { ECALLFIX(S, ofi); }

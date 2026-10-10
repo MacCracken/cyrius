@@ -109,7 +109,12 @@ fi
 # dead pointer-mode global (inside a fn it takes a frame temp instead). CHANGELOG [6.6.17]
 # 6.7.6 (D2): _w128_tmp — a u128 `+` / `-` result at TOP LEVEL is a dead global resized to 16 bytes
 # (inside a fn it takes two frame slots instead; parse_expr.cyr).
-HT_SPEC="PARSE_SWITCH:1 PARSE_MATCH:1 _stmt_qmark:3 _PARSE_TERM_IMPL:3 PARSE_FOR:4 _gv_target:1 _await_coro_suspend:1 _await_coro_force:1 _await_spill:1 _ptr_park:1 _w128_tmp:1"
+# 6.7.7 (B6): _pd_nreorder — an out-of-order named call (`g(c: 3, a: 1)`) holds each argument,
+# evaluated as written, until every parameter is pushed in parameter order (parse_fn.cyr).
+# 6.7.7 (call arguments): _sarg_snap — a by-value argument a later argument may write is copied
+# where it stands: one word holds its address; at top level the copy itself is a dead global
+# resized to the struct (inside a fn it is a frame block, `_agg_temp_t`; parse_fn.cyr).
+HT_SPEC="PARSE_SWITCH:1 PARSE_MATCH:1 _stmt_qmark:3 _PARSE_TERM_IMPL:3 PARSE_FOR:4 _gv_target:1 _await_coro_suspend:1 _await_coro_force:1 _await_spill:1 _ptr_park:1 _w128_tmp:1 _pd_nreorder:1 _sarg_snap:2"
 ht_attr=$(for f in $(find src/frontend src/common src/backend -name '*.cyr'); do
     awk '/^fn /{fn=$2; sub(/\(.*/,"",fn)} /_HTEMP\(S\)/{ if ($0 !~ /fn _HTEMP/) print fn }' "$f"
 done | sort | uniq -c | awk '{print $2":"$1}')
@@ -163,7 +168,12 @@ fi
 # 6.7.2: `_cst_record` (parse_fn.cyr) registers a top-level `const`'s SIZE-0 slot from the pass-1
 # pre-scan (`_cst_prepass`), which walks brace depth 0 only — top level, never inside a fn (a
 # const inside a fn is a local const, in its own table, with no slot).
-VN_SPEC="PARSE_VAR:4 PARSE_GVAR_REG:1 _gv_reg8:1 PARSE_STRUCT_INIT:1 PARSE_GVAR_ARR:1 PARSE_ENUM_DEF:1 PARSE_ARRAY:1 _HTEMP:1 _HTNAMED:1 _gci_toplevel:1 _cst_record:1"
+#
+# 6.7.7 (B4): `_tup_greg` (parse_decl.cyr) registers a tuple global after the first statement — a
+# literal's (`var G = (1, 2);`, `_tup_lit_global`, PARSE_STRUCT_INIT's shape) and, since T5, a capture's
+# (`var G: (i64, i64) = f();`, `_tup_cap_global`). Both are reached from PARSE_VAR's `_tup_var` only
+# under GINFN != 1 (in a fn each is a frame block, `_tup_lres`): top level, never inside a fn.
+VN_SPEC="PARSE_VAR:4 PARSE_GVAR_REG:1 _gv_reg8:1 PARSE_STRUCT_INIT:1 PARSE_GVAR_ARR:1 PARSE_ENUM_DEF:1 PARSE_ARRAY:1 _HTEMP:1 _HTNAMED:1 _gci_toplevel:1 _cst_record:1 _tup_greg:1"
 vn_attr=$(for f in $(find src/frontend src/common src/backend -name '*.cyr'); do
     awk '/^fn /{fn=$2; sub(/\(.*/,"",fn)} /S64\(_varn_base/{print fn}' "$f"
 done | sort | uniq -c | awk '{print $2":"$1}')

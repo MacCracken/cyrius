@@ -65,10 +65,13 @@ fn _reset_entries(): i64 {
     return 0;
 }
 
-# Append "module::name/arity" to ENTRIES_BUF; record offset+len.
-fn _push_entry(module_off, module_len, name_off, name_len, arity): i64 {
+# Append "module::name/arity" to ENTRIES_BUF — "module::name/amin-arity" when the fn takes
+# fewer (6.7.7: trailing defaults; a caller through a fn pointer passes all of them, so a range
+# that changes is still a changed signature) — and record offset+len.
+fn _push_entry(module_off, module_len, name_off, name_len, amin, arity): i64 {
     # Fail loud rather than silently overflow the fixed buffers. Worst-case
-    # entry = module + "::" + name + "/" + up-to-24-digit arity; +64 covers it.
+    # entry = module + "::" + name + "/" + up-to-24-digit arity (two and a "-" for a
+    # range); +64 covers it.
     if (ENTRIES_COUNT >= ENTRIES_MAX) {
         syscall(SYS_WRITE, 2, "error: api-surface entry table full (raise ENTRIES_MAX)\n", 56);
         syscall(60, 3);
@@ -94,6 +97,18 @@ fn _push_entry(module_off, module_len, name_off, name_len, arity): i64 {
     p = p + name_len;
     store8(ENTRIES_BUF + p, 47);     # '/'
     p = p + 1;
+    if (amin < arity) {
+        var mn_buf[24];
+        var mn_len = fmt_int_buf(amin, &mn_buf);
+        var m = 0;
+        while (m < mn_len) {
+            store8(ENTRIES_BUF + p + m, load8(&mn_buf + m));
+            m = m + 1;
+        }
+        p = p + mn_len;
+        store8(ENTRIES_BUF + p, 45);     # '-'
+        p = p + 1;
+    }
     var ar_buf[24];
     var ar_len = fmt_int_buf(arity, &ar_buf);
     var k = 0;
@@ -209,7 +224,7 @@ fn _push_synthesized(module_off, module_len,
         j = j + 1;
     }
     var s = str_builder_build(sb);
-    _push_entry(module_off, module_len, str_data(s), str_len(s), arity);
+    _push_entry(module_off, module_len, str_data(s), str_len(s), arity, arity);
     return 0;
 }
 
@@ -522,33 +537,42 @@ fn _scan_derive_decl(b, n, module_off, module_len, p, first, stacked) {
     return close + 1;
 }
 
-# The arity of the parameter list opening at `paren` — commas at depth 1, `#` comments
-# skipped — which may run across LINES. -1 when it never closes.
+# The arity of the parameter list opening at `paren` — commas at depth 1; `#` comments, strings
+# and char literals skipped (_asf_lexst) — which may run across LINES. -1 when it never closes.
 # 6.6.8 — the scan used to require the `)` on the `fn` line, so every wrapped signature
 # (37 in this tree's own lib/, e.g. sandhi_h2_request_send) was silently NOT public surface,
 # and removed_symbol_census.sh, keyed on this snapshot, could not see them. CHANGELOG [6.6.8]
+# 6.7.7 — a parameter may carry a default, and a default may hold a string or a char literal:
+# `s = "a,b#"` counted its comma and read its `#` as a comment. _asf_amin is set to the
+# parameters before the first default (defaults are trailing) — the arity when none has one —
+# and the entry reads `name/MIN-MAX` then. CHANGELOG [6.7.7]
+var _asf_amin = 0;
 fn _asf_arity(b, paren, n): i64 {
     var p = paren + 1;
     var depth = 1;
     var commas = 0;
     var has_arg = 0;
+    var dflt = 0 - 1;    # the ordinal of the first parameter with a depth-1 `=`
+    var st = 0;
     while (p < n) {
         var c = load8(b + p);
-        if (c == 35) {
-            while (p < n) { if (load8(b + p) == 10) { break; } p = p + 1; }
-        } else {
+        if (st == 0) {
             if (c == 40 || c == 91) { depth = depth + 1; }
             if (c == 41 || c == 93) {
                 depth = depth - 1;
                 if (depth == 0) {
-                    if (has_arg == 0) { return 0; }
+                    if (has_arg == 0) { _asf_amin = 0; return 0; }
+                    _asf_amin = commas + 1;
+                    if (dflt >= 0) { _asf_amin = dflt; }
                     return commas + 1;
                 }
             }
             if (c == 44 && depth == 1) { commas = commas + 1; }
-            if (_asf_blank(c) == 0 && c != 10 && c != 13) { has_arg = 1; }
-            p = p + 1;
+            if (c == 61 && depth == 1 && dflt < 0) { dflt = commas; }
+            if (_asf_blank(c) == 0 && c != 10 && c != 13 && c != 35) { has_arg = 1; }
         }
+        st = _asf_lexst(st, c);
+        p = p + 1;
     }
     return 0 - 1;
 }
@@ -662,7 +686,7 @@ fn _scan_file(filebuf, filelen, module_off, module_len) {
                                     var arity = _asf_arity(filebuf, paren, filelen);
                                     if (arity >= 0) {
                                         _push_entry(module_off, module_len,
-                                          filebuf + np, name_end - np, arity);
+                                          filebuf + np, name_end - np, _asf_amin, arity);
                                     }
                                 }
                             }

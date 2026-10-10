@@ -18,17 +18,21 @@
 #      string arithmetic, a NaN (0.0 / 0.0)
 #   U  one name, one declaration: a const twice, a const and a var at top level, a local const
 #      and a var in one scope (either order); `const` is reserved
-#   M  a malformed top-level const is reported, not stepped over
+#   M  a malformed top-level const is reported, not stepped over; (6.7.7) a value that is not one
+#      expression (`sq(3) 4`) is refused once — the end rule `_cst_eval` keeps after `_ce_top_expr`
 #   V  a `private` const read in another file's const context is refused (as a read of it is)
 #   C  ANTI-VACUOUS: consts, a const fn, a local const and every const context build and run; three
-#      heavy consts each within its OWN step budget
+#      heavy consts each within its OWN step budget; (6.7.7) an uncalled const fn whose parameter type
+#      holds a comma inside `<..>` builds (the definition check's two parameter counts agree)
 #
 # Mutations (scratch trees, each RED here — run 2026-10-07): `_cst_lvalue_check` answering 0 ->
 # L1-L3 BUILD; (6.7.3) `_for_step_assign` without its `_asg_lvalue_refused` check -> L5, L6 BUILD
 # (stock 6.7.2 / 6.7.3 too); `_ce_check_fn` a no-op -> D1-D4 BUILD; `_ce_step` not counting -> E3 hangs (killed
 # by the 60 s timeout, RED); `_cst_eval` neither zeroing nor restoring `_ce_steps` (the pre-review
 # shared budget) -> C2 refused as an endless loop; `_ce_name`'s local-variable refusal removed -> I4 refused only as an
-# unknown name.
+# unknown name. 6.7.7 (run 2026-10-09, on the `_ce_top_expr` factor): `_ce_top_expr` neither zeroing nor
+# restoring `_ce_steps` -> C2 refused; `_cst_eval` without its `;` check -> M2 BUILT; `_ce_bind_params` stepping
+# a parameter with the `<`-aware `_pl_next` -> C3 refused ("a const fn called with the wrong number of arguments").
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -90,6 +94,7 @@ refused u4 "'L' is already declared in this scope" "U4: a var, then a local cons
 refused u5 "reserved keyword 'const'" "U5: const is reserved" 'var const = 3;\nsyscall(60, 1);\n'
 
 refused m1 "expected '=', got ';'" "M1: a malformed top-level const is reported (not skipped)" 'const X;\nsyscall(60, 1);\n'
+refused m2 "expected ';' after a const's value" "M2: a const's value is ONE expression" 'const fn sq(a) { return a * a; }\nconst N = sq(3) 4;\nsyscall(60, N);\n'
 # V — a `private` const of another file, read in a const context, is refused as any read of it is
 mkdir -p "$T/v"
 printf 'private\nconst SECRET = 3;\nfn sec_ok(): i64 { return SECRET; }\n' > "$T/v/priv.cyr"
@@ -100,6 +105,10 @@ elif [ "$(grep -c "'SECRET' is private to its file" "$T/v/e")" -ne 1 ]; then bad
 else ok "V1: another file's private const in a const context: refused once"; fi
 # C2 — each top-level const has its OWN step budget: three of ~3.6 M steps each (10.8 M together, past the 10 M budget)
 exits c2 192 "C2: three heavy consts, each within its own budget" 'const fn burn(n) { var s = 0; var i = 0; while (i < n) { s = s + i; i = i + 1; } return s; }\nconst B1 = burn(1200000);\nconst B2 = burn(1200000);\nconst B3 = burn(1200000);\nsyscall(60, (B1 + B2 + B3) & 255);\n'
+# C3 (6.7.7) — the definition check's two parameter counts agree: `_ce_bind_params` walks a parameter
+# with `( [ {` balance only, as `_ce_nparams` counts, so an uncalled const fn whose parameter type
+# holds a comma inside `<..>` still builds (a `<`-aware walk refused it: 3 counted against 2)
+exits c3 3 "C3: an uncalled const fn with a Pair<i64, i64> parameter" 'struct Pair<A, B> { a: A; b: B; }\nconst fn pick(p: Pair<i64, i64>, b) { return b; }\nsyscall(60, 3);\n'
 exits c1 42 "C1: consts, a const fn, a local const, an array size, #assert, a case label, an enum value" 'const N = 4;\nconst fn twice(x) { return x * 2; }\nenum E { EA = twice(N); }\nvar g[N];\n#assert twice(N) == 8, "twice";\nfn f(v): i64 { const L = 2; switch (v) { case twice(N): return 40 + L; default: return 0; } return 1; }\nsyscall(60, f(EA));\n'
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: const_checked — $fails row(s) red"; exit 1; fi

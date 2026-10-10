@@ -1,0 +1,910 @@
+# tuple_values.tcyr — cross-host: tuples as values (6.7.7, B4), on every target.
+#
+# The user's decision (2026-10-08): `(a, b)` builds a value laid out as an anonymous struct of
+# 8-byte slots; `t.0` / `t.1` read and write it (OP= included); `(i64, f64)` is a type wherever a
+# struct type goes. A tuple type is interned once per element list as a struct named by its
+# spelling, fields "0", "1", .. — so every struct rule (inline storage, copies type-checked by
+# sid, struct fields, field access) is a tuple rule, on x86, aarch64, cx and PE alike.
+#
+# ⚠ Values are DISTINGUISHABLE and ORDER-SENSITIVE (`(5, 9) -> 59`, as multi_return.tcyr explains):
+# a slot swap or a first-word-twice copy cannot pass.
+#
+# Sections: types (the type, its identity, its size inside a struct), access (`t.N` reads and
+# writes, OP=, the f64 and bool element kinds, chains), copies (by value: a declaration, an
+# assignment, a parenthesised source, into and out of a tuple field, globals), fields (a struct
+# with a tuple field: layout, the neighbours intact, positional literals), params (a tuple
+# parameter is a by-value struct parameter: address-passed, copied on entry — the callee's writes
+# never reach the caller; a forward call, a method, a trait method, Win64's 5th / 6th argument on
+# the stack, every argument source), tailcalls (a tail call given a tuple in this frame diverts to a
+# real call — the `jmp` would free what the callee copies from — in a loop and out of one; one
+# given a global's tuple keeps its `jmp`, as does one after an earlier call that copied its tuple),
+# literals (`(a, b)` as a `var` initializer — annotated or not — assigned to a tuple variable or
+# field, passed to a tuple parameter, wrapped in parentheses; every element evaluated before an
+# assignment's store, so `t = (t.1, t.0)` swaps), globals (literal globals in the declaration zone,
+# baked or stored, and after the first statement; a neighbour intact after an element write),
+# capture (the bridge: `var t: (i64, i64) = f();` / `t = f();` take every value of a multi-value call
+# by the tuple's type — a declared `: (T1, T2[, T3])` callee, an undeclared or `ret2` one, a `: stack`
+# pair, a Result pair, a method, an explicit generic, a callee declared below; in a fn, a for step,
+# both global zones), returns (`return t;` from a fn declared with its values: a local, a copied
+# parameter, a global, arity 3, (f64, f64), wrapped, in a defer fn, in a loop, an #inline replay),
+# reassign (`a, b = f();` re-assigns existing variables — locals, parameters, globals, top level,
+# arity 3, f64 and bool targets, a for step — and the decision's re-poll loop, written so a stale
+# pair fails), closures (a closure captures a tuple as it captures a struct: a by-value copy taken when
+# it is made — later writes unseen, its own element writes kept in its copy, which outlives the frame;
+# a captured tuple passed on, nested, copied out, its element kinds kept), defers (a defer reads a
+# tuple as it is at the exit; the values a fn returns are taken before its defers write the tuple),
+# dnamed (with default and named arguments, the 6.7.7 integration: a tuple parameter beside a defaulted
+# one — filled, named, reordered, forward — and a named tuple-literal argument, direct and in tail calls).
+
+include "lib/assert.cyr"
+include "lib/result.cyr"
+
+struct TvH { a; p: (i64, i64); b; }
+struct TvS3 { t: (i64, f64, bool); }
+struct TvW { q: (i64, i64); z: (f64, f64); }
+
+var TV_GH = TvH { 1, 2, 3, 4 };
+var TV_GZ: (i64, i64) = TV_GH.p;
+var TV_G3: (i64, i64) = TV_GZ;
+# Declaration-zone literal globals: constant elements (baked into the image), an un-annotated one,
+# an f64 element, a wrapped one, a call element (stored by the replay), and a neighbour after one.
+var TV_L1: (i64, i64) = (3, 4);
+var TV_L2 = (5, 6, 7);
+var TV_L3: (i64, f64, bool) = (1, 2.5, true);
+var TV_L4: (i64, i64) = ((8, 9));
+var TV_L5 = (tv_c7(), 2);
+var TV_N1: (i64, i64) = (1, 2);
+var TV_N2 = 77;
+fn tv_c7(): i64 { return 7; }
+# Declaration-zone captures (the replay calls them after every fn is parsed; pass 1 registers each
+# 8n bytes inline), and a neighbour after one.
+var TV_C1: (i64, i64) = tv_m2(3);
+var TV_C3: (i64, i64, i64) = tv_m3(7, 8, 9);
+var TV_CN = 61;
+# ... and with an explicit generic DECLARED BELOW (pass 1 reads `name<..>(` by its tokens): a capture,
+# and a literal whose generic call's `<A, B>` holds no tuple comma — `(i64, i64)`, not three elements.
+var TV_C2: (i64, i64) = tv_g2<i64>(5);
+var TV_L6 = (tv_pk<i64, i64>(1, 2), 3);
+
+# --- types ---
+fn tv_types(): i64 {
+    assert_eq(sizeof(TvH), 32, "a struct with a (i64, i64) field is 32 bytes");
+    assert_eq(sizeof(TvS3), 24, "a 3-element tuple field is 24 bytes");
+    assert_eq(sizeof(TvW), 32, "two tuple fields are 16 bytes each");
+    var a: (i64, i64);
+    a.0 = 5;
+    a.1 = 9;
+    var b: (i64, f64);
+    b.0 = 7;
+    b.1 = 2.5;
+    var a2: (i64,i64) = a;
+    var b2: (i64,   f64) = b;
+    assert_eq(a2.0 * 10 + a2.1, 59, "(i64,i64) and (i64, i64) are one type");
+    assert_eq(b2.0, 7, "(i64, f64) element 0");
+    assert(b2.1 == 2.5, "(i64, f64) element 1 is an f64");
+    var c: (bool, i64, f64);
+    c.0 = true;
+    c.1 = 3;
+    c.2 = 0.5;
+    var k = 0;
+    if (c.0) { k = c.1; }
+    assert_eq(k, 3, "(bool, i64, f64)");
+    return 0;
+}
+
+# --- access ---
+fn tv_access(): i64 {
+    var t: (i64, f64, bool);
+    t.0 = 3;
+    t.1 = 1.5;
+    t.2 = true;
+    t.0 += 4;
+    t.0 *= 2;
+    t.1 += 0.5;
+    t.1 *= 2.0;
+    assert_eq(t.0, 14, "t.0 += / *=");
+    assert(t.1 == 4.0, "t.1 f64 += / *=");
+    assert(t.1 + t.1 == 8.0, "an f64 element is typed: + is a float add");
+    var hits = 0;
+    if (t.2) { hits = hits + 1; }
+    t.2 = !t.2;
+    if (t.2) { hits = hits + 10; }
+    assert_eq(hits, 1, "a bool element reads and writes");
+    var h: TvH;
+    h.a = 1;
+    h.b = 6;
+    h.p.0 = 4;
+    h.p.1 = 5;
+    h.p.1 += 10;
+    assert_eq(h.a * 1000 + h.p.0 * 100 + h.p.1 + h.b * 10000, 61415, "h.p.N chains read and write");
+    var s: TvS3;
+    s.t.0 = 1;
+    s.t.1 = 0.25;
+    s.t.2 = false;
+    assert(s.t.1 == 0.25, "an f64 element of a tuple field");
+    assert_eq(s.t.0, 1, "an i64 element of a tuple field");
+    return 0;
+}
+
+# One tuple per frame: each level's survives the deeper calls.
+fn tv_rec(n): i64 {
+    var t: (i64, i64);
+    t.0 = n;
+    t.1 = n * 2;
+    if (n == 0) { return 0; }
+    var r = tv_rec(n - 1);
+    return r * 10 + t.0 + t.1 - n * 2;
+}
+
+# --- copies ---
+fn tv_copies(): i64 {
+    var t: (i64, i64);
+    t.0 = 5;
+    t.1 = 9;
+    var u: (i64, i64) = t;
+    u.0 = 6;
+    assert_eq(t.0 * 10 + t.1, 59, "a copy is by value: the source is untouched");
+    assert_eq(u.0 * 10 + u.1, 69, "the copy");
+    var w: (i64, i64);
+    w = u;
+    u.1 = 1;
+    assert_eq(w.0 * 10 + w.1, 69, "an assignment copies");
+    var x: (i64, i64) = (t);
+    assert_eq(x.0 * 10 + x.1, 59, "a parenthesised source copies");
+    x = (w);
+    assert_eq(x.0 * 10 + x.1, 69, "a parenthesised assignment copies");
+    var h: TvH;
+    h.a = 0;
+    h.b = 0;
+    h.p = t;
+    assert_eq(h.p.0 * 10 + h.p.1, 59, "a tuple into a tuple field");
+    var y: (i64, i64) = h.p;
+    y.0 = 1;
+    assert_eq(h.p.0, 5, "a field copied out is by value");
+    w = h.p;
+    assert_eq(w.0 * 10 + w.1, 59, "a field assigned out");
+    var h2: TvH;
+    h2.p = h.p;
+    assert_eq(h2.p.0 * 10 + h2.p.1, 59, "field to field");
+    assert_eq(TV_GZ.0 * 10 + TV_GZ.1, 23, "a declaration-zone global copied from a literal's tuple field");
+    var gz: (i64, i64) = TV_GZ;
+    gz.0 = 4;
+    assert_eq(gz.0 * 10 + gz.1 + TV_GZ.0 * 100, 243, "a local declared from a global is a copy");
+    TV_GZ = t;
+    assert_eq(TV_G3.0 * 10 + TV_G3.1, 23, "a global declared from a global is a copy");
+    assert_eq(TV_GZ.0 * 10 + TV_GZ.1, 59, "a global assigned from a local");
+    t = TV_GZ;
+    assert_eq(t.1, 9, "a local assigned from a global");
+    assert_eq(tv_rec(3), 123, "one tuple per frame across recursion");
+    return 0;
+}
+
+# --- fields ---
+fn tv_fields(): i64 {
+    var h: TvH;
+    h.a = 11;
+    h.b = 44;
+    h.p.0 = 22;
+    h.p.1 = 33;
+    h.p.1 = 99;
+    assert_eq(h.b, 44, "the field after a tuple field is intact after p.1 is written");
+    assert_eq(h.a, 11, "the field before it too");
+    assert_eq(h.p.0 * 100 + h.p.1, 2299, "both elements");
+    var lit = TV_GH.a * 1000 + TV_GH.p.0 * 100 + TV_GH.p.1 * 10 + TV_GH.b;
+    assert_eq(lit, 1234, "a positional literal fills the tuple's leaves");
+    var t: (i64, i64);
+    t.0 = 7;
+    t.1 = 8;
+    var h3 = TvH { 1, t, 4 };
+    assert_eq(h3.p.0 * 10 + h3.p.1, 78, "a whole tuple as a struct-literal element");
+    assert_eq(h3.a * 10 + h3.b, 14, "and the fields around it");
+    var wv: TvW;
+    wv.q.0 = 1;
+    wv.q.1 = 2;
+    wv.z.0 = 0.5;
+    wv.z.1 = 1.5;
+    assert(wv.z.0 + wv.z.1 == 2.0, "an (f64, f64) field");
+    assert_eq(wv.q.0 * 10 + wv.q.1, 12, "beside an (i64, i64) one");
+    return 0;
+}
+
+# --- params ---
+struct TvAcc { base; }
+trait TvSum { fn sum(self, t: (i64, i64), k): i64; }
+impl TvSum for TvAcc {
+    fn sum(self, t: (i64, i64), k): i64 { return self.base + t.0 * 10 + t.1 + k; }
+}
+impl TvAcc {
+    fn addk(self, t: (i64, f64, bool), k): i64 {
+        var r = self.base + t.0 + k;
+        if (t.1 == 2.5) { r = r + 10; }
+        if (t.2) { r = r + 100; }
+        return r;
+    }
+}
+# The callee writes its parameter: its own copy, never the caller's tuple.
+fn tv_bump(t: (i64, i64)): i64 {
+    t.0 = t.0 + 100;
+    t.1 *= 2;
+    return t.0 * 1000 + t.1;
+}
+fn tv_kinds(t: (i64, f64, bool)): i64 {
+    var r = t.0;
+    if (t.1 == 2.5) { r = r + 10; }
+    if (t.2) { r = r + 100; }
+    return r;
+}
+fn tv_six(a, b, c, d, t: (i64, i64), u: (i64, i64)): i64 {
+    return a + b + c + d + t.0 * 1000 + t.1 * 100 + u.0 * 10 + u.1;
+}
+# The 7th and 9th parameters: on the stack on SysV x86 (past six) and aarch64 (past eight).
+fn tv_nine(a, b, c, d, e, f, t: (i64, i64), g, u: (i64, f64)): i64 {
+    var r = a + b + c + d + e + f + g + t.0 * 1000 + t.1 * 100 + u.0 * 10;
+    if (u.1 == 0.5) { r = r + 5; }
+    return r;
+}
+# Each frame's copy: a deeper call's write is not seen on the way back up.
+fn tv_prec(t: (i64, i64), n): i64 {
+    t.0 = t.0 + 1;
+    if (n == 0) { return t.0; }
+    var r = tv_prec(t, n - 1);
+    return r * 10 + t.0;
+}
+# The parameter copied out, re-assigned, forwarded.
+fn tv_pcopy(t: (i64, i64)): i64 {
+    var u: (i64, i64) = t;
+    u.0 = 7;
+    t = u;
+    t.1 = 4;
+    return u.0 * 100 + u.1 * 10 + t.1 + tv_bump(t) * 0;
+}
+# A forward call: `tv_later` is declared BELOW (pass 1 records its tuple parameter, then `k`).
+fn tv_fwd(): i64 {
+    var t: (i64, i64);
+    t.0 = 5;
+    t.1 = 9;
+    return tv_later(t, 7);
+}
+fn tv_params(): i64 {
+    var t: (i64, i64);
+    t.0 = 5;
+    t.1 = 9;
+    assert_eq(tv_bump(t), 105018, "a tuple argument: the callee's copy");
+    assert_eq(t.0 * 10 + t.1, 59, "the callee's writes never reach the caller");
+    assert_eq(tv_bump((t)), 105018, "a parenthesised tuple argument");
+    var u: (i64, f64, bool);
+    u.0 = 3;
+    u.1 = 2.5;
+    u.2 = true;
+    assert_eq(tv_kinds(u), 113, "an (i64, f64, bool) parameter keeps its element kinds");
+    assert_eq(tv_fwd(), 597, "a forward call: a tuple parameter, then a second one");
+    var a: TvAcc;
+    a.base = 1000;
+    assert_eq(a.sum(t, 5), 1064, "a trait method with a tuple parameter");
+    assert_eq(a.addk(u, 1), 1114, "a method with an (i64, f64, bool) parameter");
+    var v: (i64, i64);
+    v.0 = 7;
+    v.1 = 8;
+    assert_eq(tv_six(1, 2, 3, 4, t, v), 5988, "tuples as the 5th and 6th arguments (Win64: the stack)");
+    var w: (i64, f64);
+    w.0 = 6;
+    w.1 = 0.5;
+    assert_eq(tv_nine(1, 1, 1, 1, 1, 1, v, 2, w), 7873, "tuples as the 7th and 9th arguments (the stack)");
+    assert_eq(tv_prec(t, 2), 876, "recursion: a copy per frame");
+    assert_eq(tv_pcopy(t), 794, "a parameter copied out, re-assigned, forwarded");
+    var h: TvH;
+    h.a = 0;
+    h.b = 0;
+    h.p.0 = 1;
+    h.p.1 = 2;
+    assert_eq(tv_bump(h.p), 101004, "a tuple field as the argument");
+    assert_eq(h.p.0 * 10 + h.p.1, 12, "the field untouched");
+    assert_eq(tv_bump(TV_G3), 102006, "a global tuple as the argument");
+    assert_eq(TV_G3.0 * 10 + TV_G3.1, 23, "the global untouched");
+    var c = || tv_bump(t) + t.1;
+    assert_eq(fncall0(c), 105027, "a captured tuple passed on");
+    assert_eq(t.0, 5, "the capture's callee did not reach the caller's tuple");
+    return 0;
+}
+
+# --- tailcalls ---
+# The `_dmark` technique of tailcall_struct_ptr_params.tcyr: the probe records the address of its
+# own local. Called straight from the checker it lands at some depth; a wrapper that tail-calls it
+# with a `jmp` puts it at the SAME depth, one that calls it normally puts it DEEPER. The j* locals
+# overwrite a freed caller frame, so a wrongly kept `jmp` reads a wrong value too.
+var _tv_dmark = 0;
+fn tv_dt(t: (i64, i64), k): i64 {
+    var j1 = 901; var j2 = 902; var j3 = 903; var j4 = 904; var j5 = 905; var j6 = 906;
+    _tv_dmark = &j1;
+    return t.0 * 10 + t.1 + k + (j1 + j2 + j3 + j4 + j5 + j6) - 5421;
+}
+fn tv_tc_loc(k): i64 {
+    var t: (i64, i64);
+    t.0 = 5;
+    t.1 = 9;
+    return tv_dt(t, k);
+}
+fn tv_tc_loop(k): i64 {
+    var t: (i64, i64);
+    t.0 = 3;
+    t.1 = 9;
+    var i = 0;
+    while (i < 3) {
+        if (i == 2) { return tv_dt(t, k); }
+        t.0 = t.0 + 1;
+        i = i + 1;
+    }
+    return 0;
+}
+fn tv_tc_fwd(t: (i64, i64), k): i64 { return tv_dt(t, k); }
+# A tuple LITERAL argument is built in a temp in this frame: the tail call diverts, in a loop too.
+fn tv_tc_lit(k): i64 { return tv_dt((5, 9), k); }
+fn tv_tc_litloop(k): i64 {
+    var i = 0;
+    while (i < 3) {
+        if (i == 2) { return tv_dt(((i + 3, 9)), k); }
+        i = i + 1;
+    }
+    return 0;
+}
+fn tv_tc_glob(k): i64 { return tv_dt(TV_G3, k); }
+# An earlier ordinary call handed a tuple in this frame to a callee declared BELOW that copies it
+# (pass 1's record): it keeps nothing, so the tail call keeps its `jmp`.
+fn tv_tc_after(k): i64 {
+    var t: (i64, i64);
+    t.0 = 1;
+    t.1 = 2;
+    var v = tv_cp(t);
+    return tv_dt(TV_G3, k + v - 12);
+}
+fn tv_tailcalls(): i64 {
+    var t: (i64, i64);
+    t.0 = 6;
+    t.1 = 1;
+    tv_dt(t, 0);
+    var base = _tv_dmark;
+    assert_eq(tv_tc_loc(1), 60, "`return take(t);` with a local tuple: the value");
+    assert_eq(_tv_dmark < base, 1, "`return take(t);` with a local tuple: diverted (a real call)");
+    assert_eq(tv_tc_loop(1), 60, "`return take(t);` inside a loop: the value");
+    assert_eq(_tv_dmark < base, 1, "`return take(t);` inside a loop: diverted");
+    assert_eq(tv_tc_fwd(t, 2), 63, "a forwarded tuple parameter: the value");
+    assert_eq(_tv_dmark < base, 1, "a forwarded tuple parameter (this frame's copy): diverted");
+    assert_eq(tv_tc_glob(1), 24, "a global's tuple: the value");
+    assert_eq(_tv_dmark == base, 1, "a global's tuple: the `jmp` is kept");
+    assert_eq(tv_tc_after(1), 24, "after an earlier copying call: the value");
+    assert_eq(_tv_dmark == base, 1, "after an earlier call to a copying callee declared below: kept");
+    assert_eq(tv_tc_lit(1), 60, "`return take((5, 9));`, a literal argument: the value");
+    assert_eq(_tv_dmark < base, 1, "`return take((5, 9));`: diverted (the literal's temp is in this frame)");
+    assert_eq(tv_tc_litloop(1), 60, "`return take(((i + 3, 9)));` inside a loop: the value");
+    assert_eq(_tv_dmark < base, 1, "`return take(((i + 3, 9)));` inside a loop: diverted");
+    return 0;
+}
+
+# --- literals ---
+var _tv_seq = 0;
+fn tv_next(): i64 {
+    _tv_seq = _tv_seq + 1;
+    return _tv_seq;
+}
+fn tv_seven(a, b, c, d, e, f, g): i64 { return a * 1000000 + b * 100000 + c * 10000 + d * 1000 + e * 100 + f * 10 + g; }
+fn tv_half(): f64 { return 0.5; }
+fn tv_lit3(t: (i64, i64, i64)): i64 { return t.0 * 100 + t.1 * 10 + t.2; }
+fn tv_literals(): i64 {
+    var a: (i64, i64) = (5, 9);
+    assert_eq(a.0 * 10 + a.1, 59, "an annotated literal");
+    var b = (3, 4);
+    assert_eq(b.0 * 10 + b.1, 34, "an un-annotated literal is (i64, i64)");
+    var b2: (i64, i64) = b;
+    assert_eq(b2.1, 4, "... the same type as the spelled one");
+    var c: (i64, f64, bool) = (7, 2.5, true);
+    var k = 0;
+    if (c.2) { k = 1; }
+    assert(c.1 == 2.5, "an f64 element of an annotated literal");
+    assert(c.1 + c.1 == 5.0, "... typed: + is a float add");
+    assert_eq(c.0 * 10 + k, 71, "an i64 and a bool element");
+    var d = (true, 2);
+    assert_eq(d.0 * 10 + d.1, 12, "an un-annotated bool element is an i64 1");
+    var e: (i64, f64, bool) = (tv_seven(1, 2, 3, 4, 5, 6, 7), tv_half(), 3 > 2);
+    assert_eq(e.0, 1234567, "a 7-argument call as an element");
+    assert(e.1 == 0.5, "an f64 call as an element");
+    assert_eq(e.2, 1, "a comparison as a bool element");
+    _tv_seq = 0;
+    var o = (tv_next(), tv_next(), tv_next());
+    assert_eq(o.0 * 100 + o.1 * 10 + o.2, 123, "elements are evaluated left to right");
+    var t = (5, 9);
+    t = (t.1, t.0);
+    assert_eq(t.0 * 10 + t.1, 95, "`t = (t.1, t.0)` swaps: every element before the store");
+    t = ((t.1 + 1, t.0 + 1));
+    assert_eq(t.0 * 10 + t.1, 6 * 10 + 10, "a wrapped assignment");
+    if (t.0 == 6) {
+        var t = (t.1, 1);
+        assert_eq(t.0 * 10 + t.1, 101, "`var t = (t.1, 1);` reads the OUTER t (its name is withheld)");
+    }
+    assert_eq(t.0, 6, "... and the outer t is untouched");
+    var w = ((4, 5));
+    var w2: (i64, i64) = (((6, 7)));
+    assert_eq(w.0 * 10 + w.1 + w2.0 * 1000 + w2.1 * 100, 6745, "wrapped declarations");
+    var h: TvH;
+    h.a = 1;
+    h.b = 2;
+    h.p = (6, 7);
+    assert_eq(h.p.0 * 10 + h.p.1, 67, "`h.p = (6, 7)`, a tuple field");
+    assert_eq(h.a * 10 + h.b, 12, "... the fields around it intact");
+    h.p = ((h.p.1, h.p.0));
+    assert_eq(h.p.0 * 10 + h.p.1, 76, "a wrapped field store swaps too");
+    assert_eq(tv_bump((1, 2)), 101004, "a literal argument");
+    assert_eq(tv_bump(((2, 3))), 102006, "a wrapped literal argument");
+    assert_eq(tv_kinds((3, 2.5, true)), 113, "an (i64, f64, bool) literal argument");
+    assert_eq(tv_six(1, 2, 3, 4, (5, 9), (7, 8)), 5988, "literals as the 5th and 6th arguments (Win64: the stack)");
+    assert_eq(tv_nine(1, 1, 1, 1, 1, 1, (7, 8), 2, (6, 0.5)), 7873, "literals as the 7th and 9th arguments");
+    var acc: TvAcc;
+    acc.base = 1000;
+    assert_eq(acc.sum((5, 9), 5), 1064, "a literal to a trait method");
+    assert_eq(acc.addk((3, 2.5, true), 1), 1114, "a literal to a method");
+    assert_eq(tv_lit3((tv_next(), b.0, tv_seven(0, 0, 0, 0, 0, 0, 9))), 439, "a 3-element literal argument");
+    var x = 0;
+    for (var j = 0; j < 3; t = (t.0 + 1, t.1 + 2)) { x = x + j; j = j + 1; }
+    assert_eq(t.0 * 100 + t.1, 916, "a literal assigned in a classic-for step");
+    var z = (fncall1(|q| { var r = (q, 7); return r.0 * 10 + r.1; }, 4), 2);
+    assert_eq(z.0 * 10 + z.1, 472, "an element holding a closure that builds its own literal");
+    var n = 0;
+    while (n < 3) {
+        var lp = (n, n * 2);
+        t = (lp.1, lp.0);
+        n = n + 1;
+    }
+    assert_eq(t.0 * 10 + t.1, 42, "a literal in a loop body, each pass its own");
+    return 0;
+}
+
+# --- globals ---
+fn tv_globals(): i64 {
+    assert_eq(TV_L1.0 * 10 + TV_L1.1, 34, "a declaration-zone literal global");
+    assert_eq(TV_L2.0 * 100 + TV_L2.1 * 10 + TV_L2.2, 567, "an un-annotated declaration-zone literal");
+    var k = 0;
+    if (TV_L3.2) { k = 1; }
+    assert(TV_L3.1 == 2.5, "an f64 element of a zone literal");
+    assert_eq(TV_L3.0 * 10 + k, 11, "its i64 and bool elements");
+    assert_eq(TV_L4.0 * 10 + TV_L4.1, 89, "a wrapped zone literal");
+    assert_eq(TV_L5.0 * 10 + TV_L5.1, 72, "a zone literal with a call element (stored by the replay)");
+    TV_N1.1 = 9;
+    assert_eq(TV_N2, 77, "the global after a zone tuple is intact after `G.1 = 9`");
+    assert_eq(TV_N1.0 * 10 + TV_N1.1, 19, "... and the element written");
+    TV_L1 = (TV_L1.1, TV_L1.0);
+    assert_eq(TV_L1.0 * 10 + TV_L1.1, 43, "a literal assigned to a global swaps");
+    assert_eq(tv_bump((TV_L2.2, TV_L2.0)), 107010, "global elements in a literal argument");
+    assert_eq(tv_cp(TV_L6), 123, "a zone literal holding `pk<i64, i64>(..)` (declared below) is (i64, i64)");
+    return 0;
+}
+fn tv_later(t: (i64, i64), k): i64 { return t.0 * 100 + t.1 * 10 + k; }
+fn tv_cp(t: (i64, i64)): i64 { return t.0 * 10 + t.1; }
+
+# --- capture ---
+enum TvRes: stack { TvOk(v); TvErr(e); }
+fn tv_sok(x) { return TvOk(x); }
+fn tv_serr(x) { return TvErr(x); }
+fn tv_rq(x): Result {
+    if (x > 0) { return Ok(x); }
+    return Err(9);
+}
+fn tv_m2(x): (i64, i64) { return (x, x + 4); }
+fn tv_m3(a, b, c): (i64, i64, i64) { return (a, b, c); }
+fn tv_mf(x): (f64, i64) { return (1.5, x); }
+fn tv_mb(x): (bool, i64) { return (x > 3, x); }
+fn tv_dm(a, b) { return (a / b, a % b); }
+fn tv_r2(a, b) { ret2(a, b); }
+fn tv_g2<T>(a: T): (i64, i64) { return (a, a + 1); }
+fn tv_pk<A, B>(a: A, b: B): i64 { return a * 10 + b; }
+struct TvB { v; }
+impl TvB {
+    fn mk(self, a): (i64, i64) { return (a, a + self.v); }
+}
+fn tv_capture(): i64 {
+    var t: (i64, i64) = tv_m2(5);
+    assert_eq(t.0 * 10 + t.1, 59, "`var t: (i64, i64) = f();` captures both values");
+    var u: (i64, i64, i64) = tv_m3(1, 2, 3);
+    assert_eq(u.0 * 100 + u.1 * 10 + u.2, 123, "arity 3: rax, rdx and the third register");
+    var w: (f64, i64) = tv_mf(4);
+    assert(w.0 == 1.5, "an f64 value captured into an f64 element");
+    assert(w.0 + w.0 == 3.0, "... typed f64: + is a float add");
+    assert_eq(w.1, 4, "... beside an i64");
+    var b: (bool, i64) = tv_mb(5);
+    var k = 0;
+    if (b.0) { k = 1; }
+    assert_eq(k * 10 + b.1, 15, "a declared bool value into a bool element");
+    var d: (i64, i64) = tv_dm(17, 5);
+    assert_eq(d.0 * 10 + d.1, 32, "an undeclared `return (a, b)` callee");
+    var e: (i64, i64) = tv_r2(6, 7);
+    assert_eq(e.0 * 10 + e.1, 67, "a `ret2` callee");
+    var s: (i64, i64) = tv_sok(9);
+    assert_eq(s.0 * 100 + s.1, 9, "a `: stack` pair: the tag (0) and the payload");
+    s = tv_serr(4);
+    assert_eq(s.0 * 100 + s.1, 104, "... re-captured: tag 1, payload 4");
+    var q: (i64, i64) = tv_rq(3);
+    assert_eq(q.0 * 100 + q.1, 3, "a Result pair, Ok");
+    q = tv_rq(0);
+    assert_eq(q.0 * 100 + q.1, 109, "... Err");
+    var bb: TvB;
+    bb.v = 3;
+    var m: (i64, i64) = bb.mk(4);
+    assert_eq(m.0 * 10 + m.1, 47, "a method call");
+    var g: (i64, i64) = tv_g2<i64>(6);
+    assert_eq(g.0 * 10 + g.1, 67, "an explicit generic call");
+    var fw: (i64, i64) = tv_m2later(2);
+    assert_eq(fw.0 * 10 + fw.1, 24, "a callee declared below");
+    t = tv_m2(t.1);
+    assert_eq(t.0 * 100 + t.1, 913, "`t = f(t.1);`: the argument reads the old t, both values captured");
+    var i = 0;
+    for (t = tv_m2(0); i < 3; t = tv_m2(t.0 + 1)) { i = i + 1; }
+    assert_eq(t.0 * 10 + t.1, 37, "a capture as a classic-for init and step");
+    if (t.0 == 3) {
+        var t: (i64, i64) = tv_m2(t.1 + 1);
+        assert_eq(t.0 * 100 + t.1, 812, "`var t: T = f(t.1 + 1);` reads the OUTER t (the name withheld)");
+    }
+    assert_eq(t.0 * 10 + t.1, 37, "... and the outer t is untouched");
+    var n = 0;
+    var acc = 0;
+    while (n < 3) {
+        var lp: (i64, i64) = tv_m2(n);
+        acc = acc * 10 + lp.1;
+        n = n + 1;
+    }
+    assert_eq(acc, 456, "a capture in a loop body, each pass its own");
+    assert_eq(TV_C1.0 * 10 + TV_C1.1, 37, "a declaration-zone capture");
+    assert_eq(TV_C3.0 * 100 + TV_C3.1 * 10 + TV_C3.2, 789, "... arity 3");
+    assert_eq(TV_C2.0 * 10 + TV_C2.1, 56, "a declaration-zone capture of an explicit generic declared below");
+    TV_C1.1 = 9;
+    assert_eq(TV_CN, 61, "the global after a zone capture is intact after `G.1 = 9`");
+    TV_C1 = tv_m2(1);
+    assert_eq(TV_C1.0 * 10 + TV_C1.1, 15, "`G = f();` into a global, in a fn");
+    return 0;
+}
+fn tv_m2later(x): (i64, i64) { return (x, x * 2); }
+
+# --- returns ---
+fn tv_rl(x): (i64, i64) {
+    var t: (i64, i64);
+    t.0 = x;
+    t.1 = x + 4;
+    return t;
+}
+fn tv_rpar(t: (i64, i64)): (i64, i64) {
+    t.0 = t.0 + 1;
+    return t;
+}
+fn tv_rglob(): (i64, i64) { return TV_G3; }
+fn tv_r3(a): (i64, i64, i64) {
+    var t = (a, a + 1, a + 2);
+    return t;
+}
+fn tv_rf(): (f64, f64) {
+    var t: (f64, f64) = (1.5, 2.25);
+    return t;
+}
+fn tv_rb(x): (bool, i64) {
+    var t: (bool, i64) = (x > 3, x);
+    return t;
+}
+fn tv_rwrap(x): (i64, i64) {
+    var t = (x, 2);
+    return ((t));
+}
+var _tv_dfr = 0;
+fn tv_rdefer(x): (i64, i64) {
+    defer { _tv_dfr = _tv_dfr * 10 + 1; }
+    var t = (x, x * 3);
+    return t;
+}
+fn tv_rloop(n): (i64, i64) {
+    var t = (0, 0);
+    var i = 0;
+    while (i < n) {
+        t = (t.0 + 1, t.1 + 2);
+        if (i == 3) { return t; }
+        i = i + 1;
+    }
+    return t;
+}
+# The #inline replay parses this body in the caller's frame (one statement, no local).
+#inline
+fn tv_rinl(): (i64, i64) { return TV_G3; }
+fn tv_returns(): i64 {
+    var a, b = tv_rl(5);
+    assert_eq(a * 10 + b, 59, "`return t;` from a local");
+    var p = (4, 6);
+    var c, d = tv_rpar(p);
+    assert_eq(c * 10 + d, 56, "`return t;` from a by-value parameter (its copy)");
+    assert_eq(p.0, 4, "... the caller's tuple untouched");
+    var e, g = tv_rglob();
+    assert_eq(e * 10 + g, 23, "`return G;` from a global");
+    var h, i, j = tv_r3(1);
+    assert_eq(h * 100 + i * 10 + j, 123, "arity 3");
+    var x, y = tv_rf();
+    assert(x == 1.5, "(f64, f64): the first value");
+    assert(y == 2.25, "(f64, f64): the second value");
+    var bo, bv = tv_rb(5);
+    var k = 0;
+    if (bo) { k = 1; }
+    assert_eq(k * 10 + bv, 15, "(bool, i64)");
+    var m, n = tv_rwrap(7);
+    assert_eq(m * 10 + n, 72, "`return ((t));` - parentheses are transparent");
+    _tv_dfr = 0;
+    var o, q = tv_rdefer(2);
+    assert_eq(o * 10 + q, 26, "`return t;` in a fn with a defer: the values survive the walker");
+    assert_eq(_tv_dfr, 1, "... and the defer ran once");
+    var r, s = tv_rloop(9);
+    assert_eq(r * 10 + s, 48, "`return t;` inside a loop");
+    var r2, s2 = tv_rloop(2);
+    assert_eq(r2 * 10 + s2, 24, "... and after it");
+    var u, v = tv_rinl();
+    assert_eq(u * 10 + v, 23, "`return G;` in an #inline replay");
+    var t: (i64, i64) = tv_rl(1);
+    assert_eq(t.0 * 10 + t.1, 15, "a returned tuple captured into a tuple");
+    t = tv_rpar(t);
+    assert_eq(t.0 * 10 + t.1, 25, "... passed back in and re-captured");
+    return 0;
+}
+
+# --- reassign ---
+var _tv_pn = 0;
+fn tv_poll(): (i64, i64) {
+    _tv_pn = _tv_pn + 1;
+    return (_tv_pn, _tv_pn + 4);
+}
+fn tv_rpoll() {
+    _tv_pn = _tv_pn + 1;
+    if (_tv_pn < 3) { return TvErr(_tv_pn); }
+    return TvOk(7);
+}
+fn tv_swap(a, b) { return (b, a); }
+fn tv_pick(v, w): (i64, i64) { return (v, w); }
+var TV_RA = 0;
+var TV_RB = 0;
+fn tv_reassign(pa, pb): i64 {
+    var a = 0;
+    var b = 0;
+    a, b = tv_m2(5);
+    assert_eq(a * 10 + b, 59, "`a, b = f();` re-assigns two locals");
+    pa, pb = tv_m2(2);
+    assert_eq(pa * 10 + pb, 26, "... two parameters");
+    TV_RA, TV_RB = tv_m2(3);
+    assert_eq(TV_RA * 10 + TV_RB, 37, "... two globals");
+    var c = 0;
+    a, b, c = tv_m3(1, 2, 3);
+    assert_eq(a * 100 + b * 10 + c, 123, "`a, b, c = f();`, arity 3");
+    var x: f64 = 0.0;
+    x, a = tv_mf(9);
+    assert(x == 1.5, "an f64 target takes an f64 value");
+    assert_eq(a, 9, "... beside an i64");
+    var ok: bool = false;
+    ok, b = tv_mb(5);
+    var k = 0;
+    if (ok) { k = 1; }
+    assert_eq(k * 10 + b, 15, "a bool target takes a declared bool value");
+    a, b = tv_swap(a, b);
+    assert_eq(a * 10 + b, 59, "`a, b = swap(a, b);`: every value read before any store");
+    var i = 0;
+    for (i = 0; i < 3; a, b = tv_m2(a + 1)) { i = i + 1; }
+    assert_eq(a * 100 + b, 812, "a multi-value assignment as a classic-for step");
+    for (a, b = tv_m2(0); a < 2; a, b = tv_m2(a + 1)) { c = c + 1; }
+    assert_eq(a * 100 + b * 10 + c, 265, "... as its init too");
+    var z1 = 5;
+    var z2 = 6;
+    a, b = tv_pick(fncall0(|| { var q = 0; q, TV_RB = tv_m2(7); return q * 10 + TV_RB; }), 3);
+    assert_eq(a * 10 + b + z1 * z2 - 30, 813, "one inside a closure among the arguments: the outer targets kept");
+    _tv_pn = 0;
+    var st = 0;
+    var v = 0;
+    var acc = 0;
+    while (st != 3) {
+        st, v = tv_poll();
+        acc = acc * 10 + v;
+    }
+    assert_eq(acc, 567, "the re-poll loop: each pass re-assigns both values (a stale one fails)");
+    _tv_pn = 0;
+    st = 1;
+    acc = 0;
+    while (st != 0) {
+        st, v = tv_rpoll();
+        acc = acc * 10 + v;
+    }
+    assert_eq(acc, 127, "the re-poll loop over a `: stack` pair: Err, Err, then Ok");
+    return 0;
+}
+
+# --- closures ---
+# A tuple is an anonymous struct, so a closure captures it as it captures a struct (CHANGELOG [6.6.5]):
+# a by-value copy of the whole tuple, taken when the closure is made — a write after that is not seen,
+# the closure's own element writes stay in its copy (kept across its calls, as a captured struct's
+# are), and the copy outlives the frame it was taken from.
+fn tv_mkc(x) {
+    var t = (x, x + 1);
+    var c = || t.0 * 10 + t.1;
+    t.0 = 0;
+    return c;
+}
+fn tv_cpar(t: (i64, i64)): i64 {
+    var c = || t.0 * 100 + t.1;
+    t.1 = 0;
+    return fncall0(c);
+}
+fn tv_closures(): i64 {
+    var t = (5, 9);
+    var c = || t.0 * 10 + t.1;
+    t.0 = 7;
+    t = (1, 2);
+    assert_eq(fncall0(c), 59, "a capture is a copy taken when the closure is made");
+    assert_eq(t.0 * 10 + t.1, 12, "... the outer tuple re-assigned after it");
+    var d = fncall1(|q| tv_bump(t) + q, 5);
+    assert_eq(d, 101009, "a captured tuple passed on to a tuple parameter, from a closure with a parameter");
+    var w = || {
+        t.0 = t.0 + 1;
+        t.1 *= 3;
+        return t.0 * 10 + t.1;
+    };
+    assert_eq(fncall0(w), 26, "an element write in the body: the closure's copy");
+    assert_eq(fncall0(w), 48, "... kept across its calls, as a captured struct's is");
+    assert_eq(t.0 * 10 + t.1, 12, "... never the outer tuple");
+    var e = tv_mkc(4);
+    assert_eq(fncall0(e), 45, "the copy outlives the frame it was taken from");
+    assert_eq(tv_cpar(t), 102, "a tuple parameter captured: its frame's copy, as it was then");
+    var k: (i64, f64, bool) = (3, 2.5, true);
+    var g = || {
+        if (k.2) {
+            if (k.1 * 2.0 == 5.0) { return k.0; }
+            return 2;
+        }
+        return 1;
+    };
+    assert_eq(fncall0(g), 3, "an (i64, f64, bool) capture keeps its element kinds in the body");
+    var n = || {
+        var m = || t.1 * 100 + t.0;
+        return fncall0(m) + t.0;
+    };
+    assert_eq(fncall0(n), 202, "a nested closure captures the captured tuple");
+    var h = || {
+        var u: (i64, i64) = t;
+        u.0 = u.0 + 5;
+        return u.0 * 10 + u.1;
+    };
+    assert_eq(fncall0(h), 62, "a capture copied into a tuple local in the body");
+    var cp = || {
+        var v: (i64, i64) = tv_m2(t.1);
+        return v.0 * 10 + v.1;
+    };
+    assert_eq(fncall0(cp), 26, "a multi-value call captured in the body, from a captured element");
+    return 0;
+}
+
+# --- defers ---
+# A defer runs at the fn's exit and reads its tuples as they are then; the values a fn returns are taken
+# before its defers run (EDEFER_SAVE keeps every multi-value register), so a defer's write to the
+# tuple never reaches them. (`async fn` is CYRIUS_ASYNC=1-gated, which a .tcyr cannot set: tuples
+# across an `await` are tuple_checked.sh's AS rows.)
+var _tv_dlog = 0;
+fn tv_dread(x): i64 {
+    var t = (x, x + 1);
+    defer { _tv_dlog = t.0 * 10 + t.1; }
+    t.0 = t.0 + 2;
+    t = (t.1, t.0);
+    return t.0;
+}
+fn tv_dret(x): (i64, i64) {
+    var t = (x, x + 1);
+    defer {
+        t.0 = 99;
+        _tv_dlog = t.0 * 10 + t.1;
+    }
+    return t;
+}
+fn tv_dlit(x): (i64, i64) {
+    var t = (x, x * 2);
+    defer {
+        t = (0, 0);
+        _tv_dlog = t.0 + t.1 + 3;
+    }
+    return (t.1, t.0);
+}
+fn tv_dpar(t: (i64, i64)): i64 {
+    defer { _tv_dlog = t.0 * 10 + t.1; }
+    t.0 = 8;
+    return t.1;
+}
+fn tv_dcap(x): i64 {
+    var t: (i64, i64) = tv_m2(x);
+    defer { _tv_dlog = t.0 * 10 + t.1; }
+    t = tv_m2(t.1);
+    var a = 0;
+    var b = 0;
+    a, b = tv_m2(t.0 + 1);
+    return a * 10 + b;
+}
+fn tv_defers(): i64 {
+    _tv_dlog = 0;
+    assert_eq(tv_dread(3), 4, "a defer fn returns its tuple's element");
+    assert_eq(_tv_dlog, 45, "... and its defer read the tuple as it was at the exit");
+    _tv_dlog = 0;
+    var a, b = tv_dret(6);
+    assert_eq(a * 10 + b, 67, "`return t;`: the values taken before the defer wrote the tuple");
+    assert_eq(_tv_dlog, 997, "... and the defer's write landed in the tuple");
+    _tv_dlog = 0;
+    var c, d = tv_dlit(4);
+    assert_eq(c * 10 + d, 84, "`return (t.1, t.0);`: the same, for the literal arm");
+    assert_eq(_tv_dlog, 3, "... the defer re-assigned the whole tuple");
+    var p = (1, 2);
+    assert_eq(tv_dpar(p), 2, "a defer reading a tuple parameter");
+    assert_eq(_tv_dlog, 82, "... its copy, as written before the exit");
+    assert_eq(p.0, 1, "... never the caller's");
+    assert_eq(tv_dcap(1), 70, "a capture and a multi-value assignment in a defer fn");
+    assert_eq(_tv_dlog, 59, "... the defer read the re-captured tuple");
+    return 0;
+}
+
+# --- defaults and named arguments (6.7.7 integration: B4 tuples x B6 default / named arguments) ---
+# A tuple parameter beside a defaulted one takes every argument form: a literal or a variable,
+# positional or named, in or out of order, with the default filled — each through the one
+# marshaller's struct-address gate, so the callee copies the caller's tuple (its writes never reach
+# it), never its first word. A forward call counts the tuple parameter as ONE parameter (pass 1 steps
+# its type once). A named argument's value may be a tuple literal, in a direct call and in a tail
+# call — which is an ordinary call: it names (and here fills), and the literal's temp is this frame's.
+fn tv_dn(t: (i64, i64), k = 2): i64 { return t.0 * 100 + t.1 * 10 + k; }
+fn tv_dn3(t: (i64, i64), x = 1, y = 9): i64 { return t.0 * 1000 + t.1 * 100 + x * 10 + y; }
+fn tv_dntail(n): i64 {
+    if (n > 0) { return tv_dn3(t: (n, 2), x: 3); }
+    return tv_dn3(y: 4, t: (n + 5, 5), x: 6);
+}
+fn tv_dnfull(n): i64 { return tv_dn3(t: (n, 2), x: 3, y: 4); }
+fn tv_dnamed(): i64 {
+    var u: (i64, i64) = (3, 4);
+    assert_eq(tv_dn((1, 2)), 122, "I1: a tuple literal argument beside a defaulted parameter, the default filled");
+    assert_eq(tv_dn(u), 342, "I1: ... a tuple variable, the default filled");
+    assert_eq(tv_dn(u, k: 5), 345, "I1: ... and a named argument after it");
+    assert_eq(tv_dn(t: u), 342, "I1: ... the tuple itself named, the default filled");
+    assert_eq(tv_dn(k: 7, t: (5, 6)), 567, "I1: ... reordered, a tuple literal named last");
+    assert_eq(tv_dnlater((1, 2)), 5122, "I1: a forward call to a fn with a tuple and a defaulted parameter, filled");
+    assert_eq(tv_dnlater(u, k: 5), 5345, "I1: ... named");
+    assert_eq(u.0 * 10 + u.1, 34, "I1: ... the caller's tuple untouched (the callee wrote its copy)");
+    assert_eq(tv_dn3(t: (1, 2), x: 3), 1239, "I2: a named tuple literal argument, a default filled");
+    assert_eq(tv_dntail(1), 1239, "I2: ... in a tail call");
+    assert_eq(tv_dntail(0), 5564, "I2: ... reordered, in a tail call");
+    assert_eq(tv_dnfull(7), 7234, "I2: ... full arity, every argument named, in a tail call");
+    return 0;
+}
+fn tv_dnlater(t: (i64, i64), k = 2): i64 {
+    t.0 = t.0 + 50;
+    return t.0 * 100 + t.1 * 10 + k;
+}
+
+tv_types();
+tv_access();
+tv_copies();
+tv_fields();
+tv_params();
+tv_tailcalls();
+tv_literals();
+tv_globals();
+tv_capture();
+tv_returns();
+tv_reassign(0, 0);
+tv_closures();
+tv_defers();
+tv_dnamed();
+# A global declared after the first statement, copied from a tuple field.
+var TV_G2: (i64, i64) = TV_GH.p;
+assert_eq(TV_G2.0 * 10 + TV_G2.1, 23, "a global after the first statement, copied from a tuple field");
+# ... and literal globals after the first statement: annotated, un-annotated, wrapped.
+var TV_P1: (i64, f64) = (4, 0.25);
+var TV_P2 = (TV_P1.0 + 1, 6);
+var TV_P3: (i64, i64) = ((7, 8));
+assert(TV_P1.1 == 0.25, "a global literal after the first statement: its f64 element");
+assert_eq(TV_P2.0 * 10 + TV_P2.1 + TV_P3.0 * 1000 + TV_P3.1 * 100, 7856, "un-annotated and wrapped ones");
+# ... a capture global after the first statement, and a capture and a multi-value assignment at top level.
+var TV_P4: (f64, i64) = tv_mf(3);
+assert(TV_P4.0 == 1.5, "a capture global after the first statement: its f64 element");
+assert_eq(TV_P4.1, 3, "... its i64 element");
+TV_P4 = tv_mf(8);
+assert_eq(TV_P4.1, 8, "`G = f();` at top level");
+TV_RA, TV_RB = tv_m2(4);
+assert_eq(TV_RA * 10 + TV_RB, 48, "`a, b = f();` at top level");
+var r = assert_summary();
+syscall(60, r);

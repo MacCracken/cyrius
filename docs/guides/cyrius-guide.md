@@ -168,6 +168,7 @@ matches the **whole** name:
 | a vector type (`f64v2` … `u64v2`, `f64v4`, `f32v8`) | 16 / 32 | |
 | a struct or union (`Pt`) | its size | a struct **named** like a scalar (`u8pair`) is the struct |
 | a type parameter in scope (`T`) | its argument's size | the `i64` base: 8 |
+| a tuple `(i64, f64)` (6.7.7) | — | 8 bytes per element; only a `var`, a parameter, a struct field and a multi-value return take it (`sizeof((..))` is refused) — see [Tuples](#tuples) |
 
 `var a: T[N]` reserves exactly `N * sizeof(T)`. Inside a generic fn's instance a type
 parameter IS its argument: in `g<f64>`, `var y: T` and a parameter `x: T` are `f64`s (their `+`
@@ -377,13 +378,21 @@ var r = add(20, 22);   # r = 42
   SIGSEGV). A local function is a closure: `var sq = |x| x * x;`.
 - All functions return a value (`return 0;` if nothing to return)
 - **Calling with the wrong number of arguments is a hard error** (v6.5.1; there is no
-  overloading and no default arguments, so a count mismatch is never intentional). Since
-  **6.6.5** that applies to the `obj.m(...)` method form as well — it used to build and bind
+  overloading by arity, so a count mismatch is never intentional). The count must lie between
+  the fn's required parameters and all of them: a fn that declares parameter defaults
+  (`fn f(a, b = 2, c = 3)`, **6.7.7**) takes 1 to 3 arguments and a direct call fills the rest
+  from the defaults (`'f' expects 1 to 3 arguments, got 4`; see *Default and named arguments*
+  below); any other fn takes exactly its count.
+  Since **6.6.5** that applies to the `obj.m(...)` method form as well — it used to build and bind
   the surplus parameter to whatever was in the register. ⚠ One consequence: an `impl` method
   written with **no `self` parameter** can no longer be called through the dot form, because
   the dot form supplies a receiver the method never declared. Call it by its mangled name
   (`Type_method(args)`), which is how the constructor idiom `fn new(a, b)` inside an `impl` is
-  written anyway. Forward calls are exempt from the check — the callee has no body yet.
+  written anyway. Since **6.7.7** a **forward call is checked too** — a call to a fn defined
+  further down, in a later include or inside a later top-level block, on every call path (a
+  plain call, a method, `return f(..)`, an operator): pass 1 records every definition's
+  parameter count before any call is compiled. Before 6.7.7 such a call built with a surplus
+  argument dropped or a missing one unbound.
 - **`x.m()` passes `self` exactly as `T_m(x)` would.** An untyped `self` in an `impl` is a `*T`
   (since **6.7.0**): `self.x` reads and writes the receiver's fields, `T_m(x)` / `T_m(&x)` / `x.m()`
   agree, and arithmetic on it (`self + 8`, `self[i]`, `self += n`) is refused — read fields with
@@ -456,6 +465,148 @@ declared the intrinsic's name — before 6.6.20 `mulh64(..)` ran the intrinsic i
 constructing, and `fncall1(5, 6)` faulted. A UNIT variant (`mulh64 = 77;`) declares no fn and
 is accepted, but must be read qualified (`E.mulh64`): the bare name parses as the intrinsic, so
 `#derive(Serialize)` on that enum fails too.
+
+### Default and named arguments (6.7.7)
+
+A trailing parameter may declare a **default**, and a direct call may **name** its arguments
+(user decision, 2026-10-08):
+
+```
+const LEVEL = 3;
+const fn twice(n): i64 { return n * 2; }
+
+fn tag(a, b = 2, c = twice(LEVEL)): i64 { return a * 100 + b * 10 + c; }
+
+var t1 = tag(1);                  # 126 — b and c from their defaults
+var t2 = tag(1, 5);               # 156
+var t3 = tag(1, 5, 7);            # 157
+var t4 = tag(1, c: 0);            # 120 — b from its default, c by name
+var t5 = tag(c: 9, a: 4, b: 5);   # 459 — any order: placed as tag(4, 5, 9)
+```
+
+**Defaults**
+
+- **A default is a compile-time constant**: whatever a top-level `const X = …;` takes — a
+  literal, a `const`, an enum constant, `sizeof(T)`, a `const fn` call, arithmetic on them
+  (see *Constants and `const fn`*) — except a block or an if-expression (declare a const and
+  name it). Defaults are **trailing**: every parameter after the first default has one.
+- **It is evaluated once, at its definition**: at the end of pass 1, in the top-level scope of
+  the file that defines the fn, whether or not anything calls it. A caller's locals never reach
+  it (a local `const K` in the caller does not change `b = K`); a const or an enum declared
+  further down is fine; a `private` const or `const fn` of the defining file resolves even when
+  the call is in another file. A default that names a parameter or type parameter of its own fn
+  (`fn g(a, b = a * 2)`) is refused, even when a global of that name exists.
+- **The parameter's type decides what its default may be:**
+
+  | Parameter | Its default may be |
+  |---|---|
+  | untyped | an integer, a bool, or a string (its literal's address, as a positional `"…"` passes) |
+  | `i8` … `i64`, `u8` … `u64`, an enum type | an integer in the type's range, or a bool |
+  | `bool` | a bool |
+  | `f64`, `f32` | a float; an integer only as `0` or an IEEE bit pattern (write `1.0`, not `1`). Into an `f32` it rounds, as every f32 write does |
+  | `cstring` | a string, or `0` |
+  | `*T` | an integer (`p: *u8 = 0`) |
+  | `Str`, a struct, a vector, `u128`, `Result` / `Option` / a tagged enum, a tuple, a type parameter, `self` | nothing: these take no default |
+
+  A float default on an untyped parameter is refused: untyped, a float is only its bits
+  (ADR-002), so declare the parameter `: f64` or `: f32`. A `Str` takes none because its
+  literal is wrapped (a heap allocation) at every call, which is not a constant.
+- **A short call fills from the right.** A direct call passes anywhere from the required
+  parameters to all of them (`'tag' expects 1 to 3 arguments, got 4`). The missing trailing ones
+  are pushed after the written arguments, in parameter order, each exactly as its literal would
+  be, so the callee cannot tell a filled argument from a written one. Pass 1 records every
+  definition's defaults before any call is compiled, so a call to a fn defined further down, in
+  a later include or inside a later top-level block fills like any other. A generic fn's
+  instances fill from their base's defaults; an `async fn` fills at its constructor.
+
+**Named arguments**
+
+- **`f(1, c: 3)`**: after the positional arguments, `name: value` pairs in any order, each
+  parameter at most once. A parameter given neither way takes its default; a required one left
+  out is refused (`missing argument for parameter 'b' of 'g' (it has no default)`), and so is a
+  positional argument after a named one.
+- **Evaluated as written, placed in parameter order.** In `w(c: h(), a: k())`, `h()` runs before
+  `k()`, and `w` still receives `a` first. A call whose names follow parameter order costs
+  nothing extra; an out-of-order call evaluates each argument into a hidden temporary (a frame
+  slot in a fn, a hidden global at top level) and then passes them in parameter order.
+- **A named argument meets its parameter's rules** exactly as a positional one does: the
+  `: cstring` literal check, the bool check, a `: Str` literal's wrap, a struct passed by value,
+  an `f32`'s rounding, a vector in its parameter's register. A generic infers `T` through a
+  name: `gid(n: 2, x: p)` instantiates the same `gid` as `gid(p, 2)`.
+- **Names go to a direct call of a declared fn**: `f(..)`, `o.m(..)` and `T_m(..)`, a
+  struct-returning call, a generic, a fn defined later, an `async fn`, and the `const fn` calls
+  of a const context. In the dot form `self` is the receiver and cannot be named; in
+  `T_m(self: &p, k: 1)` it is an ordinary parameter.
+- **Refused, by name:** a name through `fncallN` / `callptr` (they pass by position); a name to
+  a builtin (`syscall(n: 60, 3)` keeps its two errors and adds a note saying so); to a variadic
+  fn; to a fn defined twice; to a variant constructor (`Ok(v: 1)`: no declared parameter list);
+  to a fn with a `_str` / `_int` / `_ptr` overload sibling (a named call is never routed: call the
+  one you mean); and a reordered call inside a `#naked` fn, which has no frame for the
+  temporaries.
+
+**With the rest of the language**
+
+- **Arity** is checked as min..max (the bullet above). Overloading by arity stays out: a count
+  mismatch is never intentional.
+- **A call through a fn pointer passes every argument.** `fncallN` and `callptr` pass exactly
+  what they are given, so `fncall1(&f, 1)` or `callptr(&f, 1)` to `fn f(a, b = 1, c = 2)` is
+  refused ("a call through a fn pointer passes every argument: 'f' takes 3 (defaults fill only
+  direct calls)"). Through a pointer held in a variable the compiler cannot see the callee,
+  as for any fn: pass all of its parameters.
+- **Tail calls.** A `return f(..)` that fills a default or names an argument is an ordinary call,
+  not a `jmp` (as in a fn with a `defer`). A `return f(..)` that passes every argument by
+  position keeps its `jmp`, so write deep recursion that way.
+- **`#inline`.** A fn with defaults is never inlined: `#inline` on one warns `#inline ignored:
+  fn has parameter defaults`. A named call to an inlinable fn is an ordinary call, because the
+  inlined body binds by position.
+- **Const contexts** call a `const fn` with fills and names as run time does: `const N =
+  cf(1);`, `const M = cf(1, c: 9);`, `#assert`, an array size, an enum value, a `case` label, a
+  local const. A default defined in terms of itself (`const fn cf(a, b = cf(1))`) is refused.
+- **Methods and traits.** An inherent `impl T` method may declare defaults (`p.m()`,
+  `p.m(k: 5)`, `T_m(&p)`). A trait's methods may not, in a required signature or a default
+  body, and neither may a method of `impl Trait for T`: the trait's signature is the contract.
+  ⚠ **Before 6.7.7 a default in a trait's required signature** (`fn sh(self, n = 1): i64;`)
+  **compiled and was ignored**; it is now refused (user decision, 2026-10-09). An operator fn
+  (`V2_add`) declares no default: an operator passes exactly its two operands.
+- **`cyrius lint`** (`--syntax-only`) accepts a file that calls a sibling module's fn by name, or
+  whose default names a sibling's const. The grammar refusals (a positional argument after a
+  named one, a name through `fncallN`) still fire there.
+- **For stdlib authors:** the compiler itself calls some library fns with a FIXED argument
+  count: `alloc`, `vec_len`, `vec_get`, `str_from`, `future_force`, `future_pending`, the
+  `_slice_idx_get_N` family, the `_chk_*` / `_sat_*` overflow helpers, the `_f64_*_polyfill`
+  family and `f64v2_make` / `f64v4_make`. None of them may take a default, because such a
+  call would never fill it. Row S-R5 of `tests/gates/frontend/default_named_args_checked.sh`
+  derives that list from `src/` and fails on a definition that declares one.
+
+Each of these is refused once, at the token it names:
+
+```
+fn f(a = 1, b): i64 { return a + b; }
+# error: parameter 'b' of 'f' needs a default: it follows one that has a default (defaults are trailing)
+fn g(a, b = a * 2): i64 { return b; }
+# error: a default must be a compile-time constant: 'a' is a parameter of 'g'
+fn h(a, b = if (a > 1) { 2 } else { 3 }): i64 { return b; }
+# error: a parameter default cannot hold a block or an if-expression - declare a const and name it
+fn k(a, x = 1.5): i64 { return a; }
+# error: parameter 'x' of 'k' is untyped: a float default needs it declared ': f64' (or ': f32')
+fn m(a, x: f64 = 1): i64 { return a; }
+# error: parameter 'x' of 'm' is ': f64': an integer default is its bit pattern - write 1.0
+fn n(a, x: u8 = 300): i64 { return a; }
+# error: the default 300 does not fit parameter 'x' of 'n' (': u8')
+var c = |a, b = 1| a + b;
+# error: a closure's parameters take no defaults
+tag(1, d: 3);
+# error: 'tag' has no parameter named 'd' - its parameters are: a, b, c
+tag(1, a: 3);
+# error: parameter 'a' of 'tag' is given by position and by name
+tag(1, c: 3, b: 4, c: 5);
+# error: parameter 'c' of 'tag' is named twice
+tag(1, c: 3, 4);
+# error: a positional argument cannot follow a named one (in a call to 'tag')
+```
+
+The same holds for a default on `self`, defaults in a variadic fn, defaults on a fn defined
+twice, and a default that is not one expression (`b = 1 2`).
 
 ## Control Flow
 
@@ -826,6 +977,9 @@ var a = Point { 1, 2 };
 var r2 = Rect { a, 10, 5 };  # a nested field also takes a whole struct value (v6.6.12)
 ```
 
+A tuple (`(i64, f64)`, 6.7.7) is an anonymous struct of 8-byte slots named `0`, `1`, …: what this
+section says about a struct value holds for it. See [Tuples](#tuples).
+
 A positional literal fills the **leaves** of the struct in declaration order, descending into
 every nested struct field (at any depth), and writes each leaf at its own offset and width. For
 a nested struct field it also takes a whole struct **value** of that field's type — a local, a
@@ -905,6 +1059,7 @@ A field is untyped (`x;`, 8 bytes, i64) or annotated `x: T`, where `T` is one of
 | a struct or union | its size | Stored **inline**. It must be declared ABOVE the struct that uses it. |
 | `Vec` / `Vec<T>` | 8 | A handle. |
 | `*T` (any type name `T`) | 8 | A pointer: `p.f + n` steps `sizeof(T)` (see [Pointers](#pointers)). Since 6.6.17. |
+| a tuple `(T1, T2, ..)` | 8 × elements | Stored **inline**, an anonymous struct of 8-byte slots: `h.p.0`, `h.p = (1, 2);`. Since 6.7.7 — see [Tuples](#tuples). |
 | a type parameter of the struct being declared (`struct Box<T> { v: T; }`) | per instance | |
 
 ⚠ The field widths are layout (and ABI). `u8`..`u32` and `f32` have always taken 8 bytes;
@@ -1412,6 +1567,11 @@ Point_Show_show(p) # 12  -> the trait-qualified name
   parameter count, and a required method left out are compile errors naming the trait. A trait may
   be declared above or below its impls. Traits and impls go in the declaration section (before the
   first top-level statement), like `struct` and `fn`.
+- **Parameter defaults (6.7.7).** A trait's methods take none, in a required signature or a
+  default body, and neither does a method of `impl X for T`: the trait's signature is the
+  contract. An inherent `impl T` method may declare them (see *Default and named arguments*
+  under **Functions**). ⚠ A default in a required signature compiled and was ignored before
+  6.7.7; it is refused now.
 - **Defaults** (a member with a body) are instantiated for every impl that does not define its own —
   each impl type gets its own copy, so `self.show()` inside one calls that type's `show`.
 - **Names.** A method is `T_m`; every trait method is also `T_Trait_m`. If **two traits** give `T`
@@ -1495,6 +1655,7 @@ syscall(60, 0);                      # exit(0)
 # Native multi-return (v3.7.2) — return (a, b) puts values in rax:rdx
 fn divmod(a, b) { return (a / b, a % b); }
 var q, r = divmod(10, 3);       # q = 3, r = 1 — destructuring bind
+q, r = divmod(20, 3);           # q = 6, r = 2 — re-assigns existing variables (6.7.7)
 
 # ⚠ Parens are REQUIRED on the return and FORBIDDEN on the bind:
 #   return a, b;        → error: expected ';', got ','
@@ -1525,6 +1686,211 @@ fn divmod_old(a, b) { ret2(a / b, a % b); }
 var q2 = divmod_old(10, 3);     # q2 = 3 (rax)
 var r2 = rethi();                # r2 = 1 (rdx)
 ```
+
+To keep a multi-value result whole, capture it in a tuple — `var t: (i64, i64) = divmod(10, 3);`,
+then `t.0` / `t.1` — see [Tuples](#tuples).
+
+## Tuples
+
+A tuple is a fixed group of values, each in its own 8-byte slot (6.7.7). `(a, b)` builds one,
+`(i64, f64)` is its type, and `t.0`, `t.1`, … name its elements:
+
+```
+fn tuples(): i64 {
+    var t = (5, 9);                  # (i64, i64): an un-annotated literal's elements are i64
+    var p: (i64, f64) = (1, 2.5);    # a float element needs the type declared
+    t.0 = t.0 + 1;                   # an element reads and writes like a field
+    t.1 *= 2;                        # every compound operator
+    t = (t.1, t.0);                  # every element is read before any is stored: a swap
+    var u: (i64, i64) = t;           # a copy, by value
+    u.0 = 100;                       # t is untouched
+    if (p.1 > 2.0) { return t.0 * 10 + t.1; }   # 186 — p.1 is an f64: a float compare
+    return 0;
+}
+```
+
+A tuple is an **anonymous struct**: `(i64, f64)` is a struct of two 8-byte fields named `0` and
+`1`, interned once per element list, so a struct's storage rules hold for it — it is stored
+inline, copied byte for byte, passed to a parameter by address and copied on entry — except that
+where a struct's first word would stand in for it as one value, a tuple is refused
+([A tuple is not a number](#a-tuple-is-not-a-number)). Two
+tuple types are the same type exactly when their element lists are equal: `(i64,i64)` and
+`(i64, i64)` copy into each other, and a copy between any other pair is the struct copy's type
+error. Diagnostics name a tuple by its spelling, `(i64, f64)`.
+
+**Where the type goes.** A `var` (a local, or a global in either zone), a parameter, a struct
+field, and a fn's multi-value return `: (T1, T2)` / `: (T1, T2, T3)`:
+
+```
+struct Seg { id; span: (i64, i64); }    # the tuple is laid out inline: Seg is 24 bytes
+
+fn width(s: (i64, i64)): i64 {          # by value: the callee works on its own copy
+    s.1 = s.1 - s.0;
+    return s.1;
+}
+
+fn bounds(n): (i64, i64) {              # two values, in the multi-value return registers
+    var t = (n - 1, n + 1);
+    return t;                           # a tuple from a fn declared with its values
+}
+
+fn seg_demo(): i64 {
+    var g: Seg;
+    g.id = 1;
+    g.span = (3, 10);                   # a literal stored into a tuple field
+    var w = width(g.span);              # 7 — g.span is still (3, 10)
+    var b: (i64, i64) = bounds(5);      # captures BOTH values: (4, 6)
+    var lo = 0;
+    var hi = 0;
+    lo, hi = bounds(w);                 # re-assigns two existing variables: 6, 8
+    return w + b.0 + hi + g.span.1;     # 7 + 4 + 8 + 10 = 29
+}
+```
+
+A positional struct literal fills a tuple field's elements as leaves (`Seg { 1, 3, 10 }`) or takes
+a whole tuple (`Seg { 1, t }`). A top-level `var ORIGIN = (3, 4);` is a global tuple; when every
+element is a constant it is baked into the image, as `var G = P { 3, 4 };` is. `secret var t =
+( .. );` is wiped whole at the fn's exit.
+
+**Elements are `i64`, `f64` or `bool`**, 2 to 256 of them. An `f64` element is typed (`t.1 + t.1`
+is a float add); a `bool` element is checked like a `bool` field. Everything else is refused by
+name, each open to a later release: the narrow integers and `f32`, `u64` (its identity with `i64`
+is undecided), `u128`, a pointer, a slice, a vector, a struct or union, a nested tuple. Store a
+narrow value in an `i64` element. **An un-annotated literal is `(i64, …, i64)`**: an untyped
+float is an integer bit pattern (ADR-002), so `var p = (1, 2.5);` is refused — declare the
+tuple's type, `var p: (i64, f64) = (1, 2.5);`. In an annotated literal an integer into an `f64`
+element keeps its bits and is warned, as in a struct literal.
+
+**`t.N` is a selector only when the digit touches the `.`.** `t.0.1` is two selectors; `t. 0`
+(a space) is a name, a `.` and the number 0. A selector past the arity is an unknown field
+(`unknown field '2' on struct '(i64, i64)'`), and so are `t.01` and `t.0x1`: the selector is the
+whole run of letters and digits. `p.0` on a named struct is an unknown field too. A tuple has no methods: `t.m()`, `t.0()` and `impl (i64, i64)` are refused.
+
+**Where a literal goes.** A `var` initializer, an assignment to a tuple variable (`t = (..);`),
+a store into a tuple field (`h.p = (..);`), a tuple argument (`width((3, 10))`) and `return (a,
+b);`. In the var, assignment, field and argument positions, parentheses around the whole literal
+are transparent (`((1, 2))`); a multi-value return keeps its exact spelling, `return (a, b);`
+(`return ((a, b));` is refused). Anywhere else — an operand, an untyped or `callptr` argument, an
+if-expression branch, `(1, 2).0`, a struct literal's element — it is refused by name. At top level
+only the declaration works: `G = (3, 4);` and `take((1, 2))` build the literal in a frame temporary
+first, so they need a fn.
+
+### Capture by type: `var t: T = f();`
+
+A tuple-typed destination **captures every value of a multi-value call** — `var t: (i64, f64) =
+f();` in a fn or at top level, and `t = f();` into an existing tuple. A plain `var x = f();` is
+still the call's **first** value (the documented `ret2` / `rethi()` idiom): nothing that compiled
+before tuples changed meaning.
+
+```
+fn divmod(a, b): (i64, i64) { return (a / b, a % b); }
+fn halves(x): (i64, f64) { return (x, f64_div(f64_from(x), 2.0)); }
+fn pair_of(x) { return (x, x + 1); }       # undeclared: the capture does not check it
+
+fn capture(): i64 {
+    var x = divmod(20, 3);                 # 6 — one name is still the FIRST value
+    var t: (i64, i64) = divmod(20, 3);     # (6, 2) — a tuple keeps every value
+    var h: (i64, f64) = halves(5);         # (5, 2.5): the f64 element takes the f64 value
+    t = divmod(t.0 * 10, 7);               # re-capture into an existing tuple: (8, 4)
+    var u: (i64, i64) = pair_of(t.1);      # (4, 5)
+    if (h.1 != 2.5) { return 0; }
+    return x * 1000 + t.0 * 100 + t.1 * 10 + u.1;   # 6845
+}
+```
+
+The right-hand side is what the destructure `var a, b = f();` takes ([Multi-Return](#multi-return)):
+one whole call — `f(..)`, `g<T>(..)` or `x.m(..)` — and nothing around it. A callee declared
+`: (T1, T2[, T3])` is checked element by element: its arity must equal the tuple's, an `f64`
+element takes an `f64` value, a `bool` element a declared `bool`, an `i64` element any other
+value. A callee that declares no values — an undeclared `return (a, b)`, `ret2`, a `: stack`
+pair, a `Result` / `Option` / `Tagged` pair — is not checked, exactly as the destructure does not
+check it (its `bool` element is refused: an unknown value is not a bool). Every value is read
+before any is stored, so `t = f(t.1, t.0);` reads the old `t`.
+
+**`a, b = f();` re-assigns existing variables** (two or three plain variables: locals,
+parameters, globals; a classic-`for` step too) with the destructure's contract, except that a
+struct- or vector-returning callee is refused by name, as the capture refuses it: a struct return
+is not multiple values. A loop that re-polls no longer binds a fresh pair on every pass:
+
+```
+fn reading(k): (i64, i64) {                # (status, value): status 0 = the last one
+    if (k < 3) { return (1, k + 4); }
+    return (0, 9);
+}
+
+fn drain(): i64 {
+    var st = 1;
+    var v = 0;
+    var acc = 0;
+    var k = 0;
+    while (st != 0) {
+        st, v = reading(k);                # re-assigns both on every pass
+        acc = acc * 10 + v;
+        k = k + 1;
+    }
+    return acc;                            # 4569
+}
+```
+
+**`return t;` returns a tuple** — a local, a parameter or a global — from a fn **declared with
+its values** (`: (i64, i64)`, the element classes matching exactly), in the same registers
+`return (t.0, t.1);` uses. From any other fn (undeclared, scalar, struct, a closure, an `async
+fn`) it is refused by name.
+
+**A closure captures a tuple as it captures a struct**: a by-value copy of the whole tuple, taken
+when the closure is made.
+
+```
+fn closure_demo(): i64 {
+    var t = (1, 2);
+    var c = || t.0 * 10 + t.1;     # c holds its own copy of t, taken here
+    t.0 = 9;                       # ... so this write is not seen
+    return fncall0(c);             # 12
+}
+```
+
+### A tuple is not a number
+
+A whole tuple is not one value, so it has no meaning in a scalar position. Under the plain
+struct rule `t == u` would compare first words and `var x = t;` would copy one; both are refused:
+
+```text
+var t = (1, 2);
+var u = (3, 4);
+if (t == u) { .. }      # error: tuple 't' used as a value - take an element (`t.0`)
+                        #        or copy it whole into a tuple
+var x = t;              # the same: write `var x: (i64, i64) = t;`, or read `t.0`
+t = 5;                  # error: cannot assign a value that is not a tuple to tuple 't'
+```
+
+The same holds for `if (t)`, `print(t)`, `t + 1`, an untyped-parameter argument and a whole
+tuple FIELD (`h.p == 5`). Compare elements, or copy the tuple into a tuple place.
+
+### Refused by name
+
+| Shape | The error |
+|---|---|
+| `(i32, i64)`, `(*T, i64)`, `(P, i64)` | `a tuple element is i64, f64 or bool, not 'i32'` (…) |
+| `var p = (1, 2.5);` | `a float element needs the tuple's type declared …` |
+| `(1, 2) + 3`, `g((1, 2))` (untyped `g`) | ``a tuple `( .. )` is a value only as a `var` initializer, …`` |
+| `return ((1, 2));` | ``a multi-value return is written `return (a, b);` - drop the extra parentheses`` |
+| `var k: i64 = (1, 2);` | `a tuple literal cannot initialize 'k' - its declared type is not a tuple` |
+| `G = (3, 4);` at top level | `a tuple literal assigned at top level has no frame to be built in …` |
+| `var t: (i64, i64) = mk();` (`mk` returns `P`) | `cannot capture 'mk' into tuple (i64, i64) - it returns struct 'P', not a tuple` |
+| `a, b = mk();` (`mk` returns `P`) | `cannot re-assign from 'mk' - it returns struct 'P', not multiple values` |
+| `var t: (i64, i64) = f();` (`f` is `: (i64, f64)`) | `cannot capture 'f' into tuple (i64, i64) - it returns 2 values, (i64, f64)` |
+| `var t: (i64, i64) = (f());`, `= one(1)`, `= 5` | `cannot initialize tuple 't' with a value that is not a tuple` |
+| `take(f())` into a tuple parameter | ``a multi-value call 'f' is not a tuple argument - bind it first: `var t: (i64, i64) = f(..);` …`` |
+| `h.p = f();` | `a multi-value call 'f' is not stored into a tuple field - bind it first …` |
+| `f().0` | ``cannot take a field of the result of 'f': it returns 2 values - bind them first …`` |
+| `return t;` from a fn not declared `: (i64, i64)` | ``cannot return tuple 't' (i64, i64) - a tuple is returned by a fn declared with its values …`` |
+| `h.x, b = f();`, `a[i], b`, `*p, q` | ``a multi-value assignment `a, b = f();` re-assigns plain variables - a field is not one`` (…) |
+| `a, b = 5;`, `a, b = t;` | `multi-value destructure needs a call on the right-hand side` |
+| `first(t)` (`first` is generic) | `a tuple cannot bind a type parameter: 'first' is generic …` |
+| a tuple type in a generic fn, a tuple field in a generic struct | `a tuple type in a generic fn is refused …` / `a tuple field in a generic struct is refused …` |
+| `const C = (1, 2);`, a tuple in a `const fn` | `a tuple in a const context …` |
+| `*(i64, i64)`, `[(i64, i64)]`, `(i64, i64)[4]`, `sizeof((i64, i64))`, `Box<(i64, i64)>` | `a tuple type cannot be a pointer target` (… a slice / array element, a sizeof operand, a type argument) |
+| `#derive(..)` on a struct with a tuple field | `#derive reads named field types; 't' is a tuple …` |
 
 ## Switch Case Blocks
 
@@ -3362,7 +3728,7 @@ fn use_res(): i64 {
   means *returning* a pair, so the Err path re-emits **both** halves — a version that restored
   only the tag would hand the caller a stale payload.
 
-#### Bind the pair as a pair — the three refusals
+#### Bind the pair as a pair — the refusals
 
 A value-form Result is two values. Any context that keeps only one would silently discard the
 payload, which for an `Err` is the error code, so each is a compile error naming the fix:
@@ -3372,9 +3738,15 @@ payload, which for an `Err` is the error code, so each is a compile error naming
 var r = f();             # ✗ single-variable bind      (v6.5.67)
 r = f();                 # ✗ assignment                (v6.6.0)
 store64(&slot, f());     # ✗ storing into a slot       (v6.6.0)
+h.n = f();               # ✗ a field, any field type   (6.7.7)
+a[i] = f();              # ✗ an element                (6.7.7)
+*p = f();                # ✗ through a pointer         (6.7.7)
+x += f();                # ✗ any compound `OP=`        (6.7.7)
 
 var t, v = f();          # ✓ bind both halves
+t, v = f();              # ✓ re-assign both halves     (6.7.7)
 var v = f()?;            # ✓ `?` consumes the pair and yields one value
+h.n = f()?;              # ✓ ... at any store: a field, an element, `*p`, `x += f()?`
 return f();              # ✓ forwarding the pair onward
 ```
 
@@ -3777,6 +4149,11 @@ It works on every backend (x86_64, aarch64, Windows PE) and is the basis
 for COM-vtable dispatch (`callptr(load64(load64(obj) + slot*8), obj, …)`).
 The callee is spilled to a frame slot; at top level (since 6.6.16) the compiler gives the
 call its own micro-frame, so `callptr` works there too.
+
+A call through a pointer passes exactly the arguments written: parameter defaults and named
+arguments belong to direct calls (6.7.7, see *Default and named arguments*). So
+`callptr(&f, 1)` or `fncall1(&f, 1)` with fewer arguments than `f`'s parameters is refused by
+name when `f` declares defaults, and so is a `name:` argument.
 
 The older `lib/fnptr.cyr` helper API (`fncall0`..`fncall8`) still works for
 existing code:

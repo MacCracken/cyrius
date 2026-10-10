@@ -2325,6 +2325,7 @@ _chk_gate "$ROOT/tests/gates/frontend/bool_checked.sh"    # 6.7.3 (B2)
 _chk_gate "$ROOT/tests/gates/frontend/enum_const_not_lvalue.sh"   # 6.7.3 (repair lane)
 _chk_gate "$ROOT/tests/gates/frontend/if_expr_checked.sh"   # 6.7.4 (B3)
 _chk_gate "$ROOT/tests/gates/frontend/loop_do_checked.sh"   # 6.7.5 (B5)
+_chk_gate "$ROOT/tests/gates/frontend/default_named_args_checked.sh"   # 6.7.7 (B6)
 _chk_gate "$ROOT/tests/gates/frontend/field_compound_checked.sh"   # 6.7.5 (B8)
 _chk_gate "$ROOT/tests/gates/toolchain/cybs_lexer_drops_nothing.sh"   # 6.7.6 (Break 1 lane B)
 _chk_gate "$ROOT/tests/gates/codegen/cx_backend_parity.sh"   # 6.7.6 (Break 1 lane F)
@@ -2332,6 +2333,16 @@ _chk_gate "$ROOT/tests/gates/memory/lib_buffers_sized_by_const.sh"   # 6.7.6 (Br
 _chk_gate "$ROOT/tests/gates/toolchain/test_absorbs_tests.sh"   # 6.7.6 (Break 1 lane G)
 _chk_gate "$ROOT/tests/gates/frontend/silent_values_checked.sh"   # 6.7.6 (Break 1, lane D)
 _chk_gate "$ROOT/tests/gates/codegen/struct_value_codegen.sh"   # 6.7.6 (Break 1, lane E)
+_chk_gate "$ROOT/tests/gates/frontend/tuple_checked.sh"   # 6.7.7 (B4)
+# 6.7.7 — a 9-16 B struct return and a multi-value return agree on aarch64: the struct pair (x0:x1)
+# and the multi-value slot (x2) were read across each other — `var p: P = f()` of a `return (a, b);`,
+# `var a, b = f()` / `rethi()` of a `return p;` — silently wrong on pi / ecb. x86 + qemu legs.
+_chk_gate "$ROOT/tests/gates/codegen/struct_pair_multi_value_crossing.sh"
+# 6.7.7 — a whole-struct store into a packed global of 3 / 5 / 6 / 7 bytes wrote 8 (EVSTORE_W stored
+# exactly only 1 / 2 / 4), over the next global: the filed repro and every size 1..16 x every store
+# form, x86 / IR / DCE / aarch64 / cx / PE. Mutation ledger in the header.
+_chk_gate "$ROOT/tests/gates/codegen/global_struct_store_width.sh"
+_chk_gate "$ROOT/tests/gates/codegen/by_value_arg_copy.sh"   # 6.7.7 (call arguments)
 # 6.7.6 (Break 1, lane C) — cyrius.cyml git first, local development by an explicit switch
 _chk_gate "$ROOT/tests/gates/toolchain/lib_overlay_include.sh"
 _chk_gate "$ROOT/tests/gates/toolchain/deps_git_first_local_switch.sh"

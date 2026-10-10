@@ -333,6 +333,9 @@ fn ETESTAZ(S): i64 { CX_MOVI(S, 1, 0); return 0; }  # r1 = 0 so EJCC's eq r0,r0,
 # clobbers it. Opcode 2 is `mov ra, rb` with ra = DEST.
 fn EMOVRDXRAX(S): i64 { CX_EMIT(S, 2, 4, 0, 0); return 0; }  # mov rdx, rax → mov r4, r0
 fn EMOVRA_RDX(S): i64 { CX_EMIT(S, 2, 0, 4, 0); return 0; }  # mov rax, rdx → mov r0, r4
+# 6.7.7 — cx has no 9-16 B struct pair yet (EFLLOAD_STRUCT_INT_PAIR refuses it): nothing to sync.
+# See the aarch64 ESTRUCT_PAIR_HI_SYNC. CHANGELOG [6.7.7]
+fn ESTRUCT_PAIR_HI_SYNC(S): i64 { return 0; }
 # v6.5.21 — THIRD multi-value return slot = r5 (cx's r10 peer). Same
 # survivability argument as r4: cxvm's `call` pushes only the PC, and
 # EFNPRO/EFNEPI touch only fp/sp.
@@ -1157,7 +1160,31 @@ fn EVLOAD_W(S, idx, width): i64 {
 }
 fn EVSTORE_W(S, idx, width): i64 {
     EVADDR_X1(S, idx);
+    if (width == 3 || width == 5 || width == 6 || width == 7) { _CX_STORE_ODD(S, width); return 0; }
     _CX_STORE_W(S, 1, width);
+    return 0;
+}
+# The low `w` bytes of r0 to [r1], for a width of 3 / 5 / 6 / 7 — the x86 `_ESTORE_ODD_RCX`'s
+# reason (a packed struct global is exactly its size). Pieces of 4, 2, 1 at rising offsets; a later
+# piece is r0 shifted down into r14, stored through r15 = r1 + off, so r0 and r1 are kept.
+# CHANGELOG [6.7.7]
+fn _CX_STORE_ODD(S, w): i64 {
+    var off = 0;
+    var c = 4;
+    while (c > 0) {
+        if ((w & c) != 0) {
+            if (off == 0) { _CX_STORE_W(S, 1, c); }
+            else {
+                CX_MOVI(S, 15, 8 * off);
+                CX_EMIT(S, 36, 14, 0, 15);      # shr r14, r0, r15
+                CX_MOVI(S, 15, off);
+                CX_EMIT(S, 16, 15, 1, 15);      # add r15, r1, r15
+                if (c == 2) { CX_EMIT(S, 70, 15, 14, 0); } else { CX_EMIT(S, 66, 15, 14, 0); }   # store16/8 [r15], r14
+            }
+            off = off + c;
+        }
+        c = c / 2;
+    }
     return 0;
 }
 fn EFLLOAD_W(S, idx, width): i64 {

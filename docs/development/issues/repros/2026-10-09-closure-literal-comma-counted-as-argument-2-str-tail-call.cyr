@@ -1,0 +1,15 @@
+# 2026-10-09 — shape 2: the tail-call divert for a string literal into a `: Str` parameter
+# (`_tc_str_literal_arg`) numbers the literal argument 2, not 1, so `return sl(|a, b| .., "hello");`
+# is not diverted: the tail arm jumps with the raw literal where a Str handle is expected.
+# Expected: exit 55 (both calls see a 5-byte Str).
+# Actual (6.7.6 @ e44470b7): rc 0, exit 5 — viaret() is 0; viavar() (not a tail call) is 5, and
+#   so is the same tail call with `|a| a` or with `0` as its first argument.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/str.cyr"
+fn sl(c, t: Str): i64 { return str_len(t); }
+fn viaret(): i64 { return sl(|a, b| a + b, "hello"); }
+fn viavar(): i64 { var n = sl(|a, b| a + b, "hello"); return n; }
+fn main(): i64 { alloc_init(); return viaret() * 10 + viavar(); }
+var r = main();
+syscall(60, r);

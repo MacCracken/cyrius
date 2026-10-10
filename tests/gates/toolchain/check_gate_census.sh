@@ -189,7 +189,7 @@ echo "axis 7: gates that ignore \$CYCC do not grow (ratchet)"
 # diagnostics/derive_non_struct_rejected.sh (placed from the 6.6.7 reviews) and set this
 # ceiling at what remained. LOWER it as gates are converted; never raise it — a new gate
 # writes the CYCC form. Derived, printed, and floor-checked so a blind grep cannot pass.
-CYCC_CEIL=66   # 6.6.16: srca-3 converted diagnostics/recursion_depth_bounded.sh (6.6.11: B06, B10, B11 converted four more)
+CYCC_CEIL=63   # 6.7.7: lowered to what the tree measures (its note asked; 6.6.16: srca-3 converted diagnostics/recursion_depth_bounded.sh; 6.6.11: B06, B10, B11 converted four more)
 NHARD=$(grep -lE '^CC="?\$ROOT/build/cycc"?$' tests/gates/*/*.sh | grep -c . || true)
 NSOFT=$(grep -lE 'CYCC:-' tests/gates/*/*.sh | grep -c . || true)
 [ "$NSOFT" -ge 10 ] || _fail "only $NSOFT gate(s) honour \$CYCC — the ratchet's reader is blind"

@@ -1,0 +1,160 @@
+# struct_pair_multi_value_crossing.tcyr — 6.7.7. A 9-16 BYTE STRUCT RETURN AND A MULTI-VALUE RETURN
+# MEET IN BOTH DIRECTIONS, AND EVERY CROSSING CARRIES THE SECOND WORD.
+#
+# ⛔ THE DEFECT (issues/2026-10-09-aarch64-struct-pair-and-multi-value-registers-disagree.md). cyrius
+# hands back two machine words two ways: a 9-16 B struct (`fn mk(x): P`) in the struct PAIR's
+# registers, a multi-value return (`return (a, b);`, `ret2`) in the multi-value ones. On x86_64 /
+# PE / Mach-O x86 both are rax:rdx; on aarch64 (ELF, Mach-O arm64, the native fork) the pair is
+# x0:x1 (AAPCS64) and the multi-value second slot x2. The frontend lets them meet both ways, and
+# on aarch64 the second word was read from the register the producer never wrote — silently:
+#   * a `: P` fn's `return (x, y);` / `ret2(x, y)` (x2) received by `var p: P = f();` / `p = f();`
+#     (x1): repro A, 55 where 56 is right on pi / ecb / qemu;
+#   * a `: P` fn's `return p;` (x1) read by `var a, b = f();` at fn scope or at top level, or by
+#     `rethi()` (x2): repro B, 50 on pi and qemu, 250 on ecb.
+# Since 6.7.7 a 9-16 B struct return carries its high word in BOTH registers on aarch64
+# (EFLLOAD_STRUCT_INT_PAIR writes x2 too; `_mret_land`'s ESTRUCT_PAIR_HI_SYNC sets x1 from x2 in a
+# struct fn's multi-value arms), so every consumer reads the word it expects; x86 emits nothing new.
+#
+# ⚠ WHY crossos/: the defect was aarch64-only — this file passes on x86_64 against the broken
+# compiler. It runs on pi and ecb at the release gate, and under qemu-aarch64 in
+# tests/gates/codegen/struct_pair_multi_value_crossing.sh (with the top-level declaration-zone rows
+# a file with includes cannot place, and the mutation ledger). cx has no 16 B struct pair at all yet
+# (issues/2026-10-08-cx-16b-struct-return-refused.md): this file does not build there.
+#
+# ⭐ Every value is (x, x * 10 + 3) for x = 5, read back as a * 100 + b = 553: the two words differ
+# from each other and from every argument register (a two-argument `mk(a, b)` would leave b in x1
+# and hide the defect), and the arithmetic tells which slot each landed in.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/str.cyr"
+include "lib/vec.cyr"
+include "lib/assert.cyr"
+
+struct Pr { a; b; }
+
+# --- producers: the multi-value arms inside a 9-16 B struct fn ---
+fn pr_tup(x): Pr { return (x, x * 10 + 3); }
+fn pr_ret2(x): Pr { ret2(x, x * 10 + 3); }
+fn pr_tup3(x): Pr { return (x, x * 10 + 3, 99); }
+# --- producers: the struct pair itself ---
+fn pr_loc(x): Pr { var p: Pr; p.a = x; p.b = x * 10 + 3; return p; }
+fn pr_pass(x): Pr { return pr_loc(x); }
+fn pr_pass_tup(x): Pr { return pr_tup(x); }
+fn pr_fwd(x) { return pr_loc(x); }
+impl Pr {
+    fn m_tup(self, x): Pr { return (x, x * 10 + 3); }
+    fn m_loc(self, x): Pr { var q: Pr; q.a = x; q.b = x * 10 + 3; return q; }
+}
+fn Pr_add(l, r): Pr { var p: Pr; p.a = load64(l) + load64(r); p.b = load64(l + 8) + load64(r + 8); return p; }
+fn pr_op(x): Pr { var l: Pr; l.a = x; l.b = x * 10; var r: Pr; r.a = 0; r.b = 3; return l + r; }
+fn pr_deep(x): Pr {
+    var l0 = x + 0;
+    var l1 = x + 1;
+    var l2 = x + 2;
+    var l3 = x + 3;
+    var l4 = x + 4;
+    var l5 = x + 5;
+    var l6 = x + 6;
+    var l7 = x + 7;
+    var l8 = x + 8;
+    var l9 = x + 9;
+    var l10 = x + 10;
+    var l11 = x + 11;
+    var l12 = x + 12;
+    var l13 = x + 13;
+    var l14 = x + 14;
+    var l15 = x + 15;
+    var l16 = x + 16;
+    var l17 = x + 17;
+    var l18 = x + 18;
+    var l19 = x + 19;
+    var l20 = x + 20;
+    var l21 = x + 21;
+    var l22 = x + 22;
+    var l23 = x + 23;
+    var l24 = x + 24;
+    var l25 = x + 25;
+    var l26 = x + 26;
+    var l27 = x + 27;
+    var l28 = x + 28;
+    var l29 = x + 29;
+    var l30 = x + 30;
+    var l31 = x + 31;
+    var l32 = x + 32;
+    var l33 = x + 33;
+    var l34 = x + 34;
+    var l35 = x + 35;
+    var l36 = x + 36;
+    var l37 = x + 37;
+    var l38 = x + 38;
+    var l39 = x + 39;
+    var p: Pr; p.a = x; p.b = x * 10 + 3 + l39 - l39;
+    return p;
+}
+var pr_runs = 0;
+fn pr_defer_tup(x): Pr { defer { pr_runs = pr_runs + 1; } return (x, x * 10 + 3); }
+fn pr_defer_loc(x): Pr { defer { pr_runs = pr_runs + 1; } var p: Pr; p.a = x; p.b = x * 10 + 3; return p; }
+fn pr_gen<T>(x: T): Pr { return (x, x * 10 + 3); }
+
+# --- consumers ---
+fn into_struct_tup(): i64 { var p: Pr = pr_tup(5); return p.a * 100 + p.b; }
+fn into_struct_ret2(): i64 { var p: Pr = pr_ret2(5); return p.a * 100 + p.b; }
+fn into_struct_tup3(): i64 { var p: Pr = pr_tup3(5); return p.a * 100 + p.b; }
+fn assign_struct_tup(): i64 { var p: Pr; p.a = 0; p.b = 0; p = pr_tup(5); return p.a * 100 + p.b; }
+fn into_struct_pass_tup(): i64 { var p: Pr = pr_pass_tup(5); return p.a * 100 + p.b; }
+fn into_struct_method_tup(): i64 { var z: Pr; z.a = 0; z.b = 0; var p: Pr = z.m_tup(5); return p.a * 100 + p.b; }
+fn into_struct_defer_tup(): i64 { var p: Pr = pr_defer_tup(5); return p.a * 100 + p.b; }
+fn into_struct_gen(): i64 { var p: Pr = pr_gen<i64>(5); return p.a * 100 + p.b; }
+fn into_struct_loc(): i64 { var p: Pr = pr_loc(5); return p.a * 100 + p.b; }
+fn dt_loc(): i64 { var a, b = pr_loc(5); return a * 100 + b; }
+fn dt_loc3(): i64 { var a, b, c = pr_loc(5); return a * 100 + b; }
+fn dt_pass(): i64 { var a, b = pr_pass(5); return a * 100 + b; }
+fn dt_fwd(): i64 { var a, b = pr_fwd(5); return a * 100 + b; }
+fn dt_method_loc(): i64 { var z: Pr; z.a = 0; z.b = 0; var a, b = z.m_loc(5); return a * 100 + b; }
+fn dt_op(): i64 { var a, b = pr_op(5); return a * 100 + b; }
+fn dt_deep(): i64 { var a, b = pr_deep(5); return a * 100 + b; }
+fn dt_defer_loc(): i64 { var a, b = pr_defer_loc(5); return a * 100 + b; }
+fn dt_tup(): i64 { var a, b = pr_tup(5); return a * 100 + b; }
+fn dt_twice(): i64 { var a, b = pr_loc(5); var c, d = pr_loc(a + b - 53); return c * 100 + d; }
+fn rethi_loc(): i64 { pr_loc(5); var b = rethi(); return b; }
+fn rethi_tup(): i64 { pr_tup(5); var b = rethi(); return b; }
+fn rethi_deep(): i64 { pr_deep(5); var b = rethi(); return b; }
+fn rethi_after_struct(): i64 { var p: Pr = pr_loc(5); var b = rethi(); return p.a * 100 + b; }
+
+alloc_init();
+var tl_a, tl_b = pr_loc(5);
+
+test_group("a 9-16 B struct fn's multi-value return, received as the struct (repro A)");
+assert_eq(into_struct_tup(), 553, "var p: Pr = f(); f returns (x, y)");
+assert_eq(into_struct_ret2(), 553, "var p: Pr = f(); f says ret2(x, y)");
+assert_eq(into_struct_tup3(), 553, "var p: Pr = f(); f returns (x, y, z)");
+assert_eq(assign_struct_tup(), 553, "p = f(); into an existing Pr");
+assert_eq(into_struct_pass_tup(), 553, "return g(x); where g returns (x, y)");
+assert_eq(into_struct_method_tup(), 553, "a method returning (x, y)");
+assert_eq(into_struct_defer_tup(), 553, "(x, y) through a defer");
+assert_eq(into_struct_gen(), 553, "a generic instance returning (x, y)");
+assert_eq(into_struct_loc(), 553, "control: return p; into var p: Pr");
+
+test_group("a 9-16 B struct return, destructured (repro B)");
+assert_eq(dt_loc(), 553, "var a, b = f(); f returns a Pr local");
+assert_eq(dt_loc3(), 553, "var a, b, c = f(); the first two");
+assert_eq(dt_pass(), 553, "return g(x); forwarding a Pr local");
+assert_eq(dt_fwd(), 553, "an untyped fn forwarding a Pr call");
+assert_eq(dt_method_loc(), 553, "a method returning a Pr local");
+assert_eq(dt_op(), 553, "an overloaded operator's result");
+assert_eq(dt_deep(), 553, "a Pr local past the 256-byte frame window");
+assert_eq(dt_defer_loc(), 553, "a Pr local through a defer");
+assert_eq(dt_twice(), 553, "two destructures in a row");
+assert_eq(dt_tup(), 553, "control: (x, y) destructured");
+assert_eq(tl_a * 100 + tl_b, 553, "at top level");
+assert_eq(pr_runs, 2, "each defer ran once");
+
+test_group("rethi() after a 9-16 B struct call");
+assert_eq(rethi_loc(), 53, "f(); rethi(); f returns a Pr local");
+assert_eq(rethi_deep(), 53, "... a Pr local past the 256-byte frame window");
+assert_eq(rethi_after_struct(), 553, "var p: Pr = f(); rethi();");
+assert_eq(rethi_tup(), 53, "control: f returns (x, y)");
+
+var r = assert_summary();

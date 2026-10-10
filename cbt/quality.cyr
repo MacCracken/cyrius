@@ -845,6 +845,26 @@ fn cmd_doctest(arg): i64 {
 # ================================================================
 # Native header: scan the public fn declarations, emit C prototypes
 # ================================================================
+# The offset of the first `)` at bracket depth 0 in b[p, lim) — with `comma` 1, of the first
+# depth-0 `,` too — else lim; `( [ {` balance `) ] }`. cmd_header's parameter walk: since
+# 6.7.7 a parameter may carry a default, and `fn f(a, b = g(1, 2))` cut at the first `)` / `,`
+# lost parameters and printed `cyr_val b = 2` (not C). Strings are blanked by then, so
+# `s = ",)"` is one parameter too. CHANGELOG [6.7.7]
+fn _hdr_close(b, p, lim, comma): i64 {
+    var d = 0;
+    while (p < lim) {
+        var c = load8(b + p);
+        if (c == 40 || c == 91 || c == 123) { d = d + 1; }
+        elif (c == 41 || c == 93 || c == 125) {
+            if (d == 0) { if (c == 41) { return p; } }
+            else { d = d - 1; }
+        }
+        elif (c == 44) { if (d == 0 && comma == 1) { return p; } }
+        p = p + 1;
+    }
+    return lim;
+}
+
 # 6.6.8: the PUBLIC SURFACE, the same rule cmd_coverage counts (_src_public_fn_at): every
 # declaration spelling at brace depth 0, the file-scope `private` rule, `_`-prefixed names
 # and the `main` entry point excluded. This
@@ -907,13 +927,10 @@ fn cmd_header(arg): i64 {
         if (ne >= le) { continue; }
         if (load8(hbuf + ne) != 40) { continue; }
 
-        # Extract params between ( and )
+        # Extract params between ( and its own ) — a default holds parentheses (`b = f(1, 2)`), a
+        # tuple parameter's type nests one (`t: (i64, i64)`). CHANGELOG [6.7.7]
         var ps = ne + 1;
-        var pe = ps;
-        while (pe < le) {
-            if (load8(hbuf + pe) == 41) { break; }
-            pe = pe + 1;
-        }
+        var pe = _hdr_close(hbuf, ps, le, 0);
 
         sys_write(STDOUT_FD, "cyr_val ", 8);
         sys_write(STDOUT_FD, hbuf + fname_start, fname_len);
@@ -921,7 +938,8 @@ fn cmd_header(arg): i64 {
         if (pe == ps) {
             sys_write(STDOUT_FD, "void", 4);
         } else {
-            # Count and emit params
+            # Count and emit params: the name, then its type and default skipped whole. A
+            # defaulted parameter is still a parameter — C passes every argument.
             var pi = ps;
             var first = 1;
             while (pi < pe) {
@@ -933,7 +951,7 @@ fn cmd_header(arg): i64 {
                 var pns = pi;
                 while (pi < pe) {
                     var pc = load8(hbuf + pi);
-                    if (pc == 44 || pc == 58 || pc == 41) { break; }
+                    if (pc == 44 || pc == 58 || pc == 61) { break; }
                     pi = pi + 1;
                 }
                 var pne = pi;
@@ -942,13 +960,10 @@ fn cmd_header(arg): i64 {
                     if (load8(hbuf + pne - 1) != 32) { break; }
                     pne = pne - 1;
                 }
-                # Skip type annotation if present
-                if (pi < pe) { if (load8(hbuf + pi) == 58) {
-                        while (pi < pe) {
-                            if (load8(hbuf + pi) == 44) { break; }
-                            pi = pi + 1;
-                        }
-                    } }
+                # Skip the type annotation and the default, to this parameter's own `,` — a tuple
+                # type's commas are inside it, and a tuple parameter is one `cyr_val` (it travels as
+                # an address). CHANGELOG [6.7.7]
+                pi = _hdr_close(hbuf, pi, pe, 1);
                 if (pne > pns) {
                     if (first == 0) { sys_write(STDOUT_FD, ", ", 2); }
                     sys_write(STDOUT_FD, "cyr_val ", 8);

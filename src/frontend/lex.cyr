@@ -2359,6 +2359,32 @@ fn _lit_ptr(S, v): i64 {
     return S + 0x21A000 + off;
 }
 
+# `.` at p: three dots are the ELLIPSIS (112, variadic `fn f(a, ...)`), anything else a DOT (41) —
+# field access, a range's `..`. 6.7.7 (B4 tuples): after an IDENT, `)` or `]` (2 / 11 / 29, the
+# tokens a field selector follows), a digit run after the DOT is an IDENT, so `t.0` is IDENT DOT
+# IDENT"0" and `t.0.1` two selectors (it was IDENT DOT FLOAT"0.1"). The PREVIOUS-TOKEN guard is what
+# keeps every other `.digit` as it was: `1.5` / `1.0.5` (a number before the DOT) and `0..10` /
+# `a..5` (a range's second `.` follows a DOT). `t. 0` (a space) stays a number. CHANGELOG [6.7.7]
+fn _lex_dot(S, p, bl): i64 {
+    if (p + 2 < bl) {
+        if (load8(S + 0x459D000 + p + 1) == 46) {
+            if (load8(S + 0x459D000 + p + 2) == 46) { ADDTOK(S, 112, 0); return p + 3; }
+        }
+    }
+    ADDTOK(S, 41, 0);
+    p = p + 1;
+    if (p >= bl) { return p; }
+    if (CCLASS(load8(S + 0x459D000 + p)) != 2) { return p; }
+    var tc = GTCNT(S);
+    if (tc < 2) { return p; }
+    var pt = TOKTYP(S, tc - 2);
+    if (pt == 2 || pt == 11 || pt == 29) {
+        _tok_start = p;
+        return LEXID(S, p, GNPOS(S));
+    }
+    return p;
+}
+
 fn LEX(S): i64 {
     var p = 0;
     var bl = GBL(S);
@@ -2410,19 +2436,7 @@ fn LEX(S): i64 {
                         }
                         else { if (c == 59) { ADDTOK(S, 5, 0); p = p + 1; }
                             else { if (c == 44) { ADDTOK(S, 31, 0); p = p + 1; }
-                                else { if (c == 46) {
-                                        # v5.5.36 Phase 3 — collapse three consecutive dots into
-                                        # a single ELLIPSIS token (TOK=112) for variadic fn syntax
-                                        # `fn f(a, ...)`. Single or double dots still emit DOT
-                                        # tokens (struct field access, nested `s.inner.field`).
-                                        if (p + 2 < bl) {
-                                            if (load8(S + 0x459D000 + p + 1) == 46) {
-                                                if (load8(S + 0x459D000 + p + 2) == 46) {
-                                                    ADDTOK(S, 112, 0); p = p + 3;
-                                                } else { ADDTOK(S, 41, 0); p = p + 1; }
-                                            } else { ADDTOK(S, 41, 0); p = p + 1; }
-                                        } else { ADDTOK(S, 41, 0); p = p + 1; }
-                                    }
+                                else { if (c == 46) { p = _lex_dot(S, p, bl); }
                                     else { if (c == 58) { ADDTOK(S, 49, 0); p = p + 1; }
                                         # v5.6.2: overflow operators `+%` / `+|` / `+?` (wrapping /
                                         # saturating / checked). Lookahead one byte; if no match, fall

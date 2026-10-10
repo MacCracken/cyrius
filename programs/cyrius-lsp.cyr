@@ -1893,6 +1893,13 @@ fn _lsp_brace_next(buf, p, total): i64 {
 #                    → on `,` → back to param-name
 #                    → on `)` → exit signature
 #   type-annotation → on `,` → param-name; on `)` → exit
+# 6.7.7: a parameter may carry a default (`b = f(x, y)`) and a tuple
+# type (`t: (i64, i64)`), so the `,` / `)` / `:` above count only at
+# the list's own bracket depth (`sig_depth`), and a char literal is
+# skipped like a string — the default's `y` (the tuple's `i64`) was
+# registered as a parameter and its `)` ended the signature, dropping
+# the parameters after it. The `=` itself needs no state: only a
+# depth-0 `,` (or the list's `(`) leads to param-name. CHANGELOG [6.7.7]
 # Scope is intentionally NOT tracked: a `var x` in one fn and a
 # different `var x` in another both get colored as `variable` —
 # the visual outcome is identical so the simplification is free.
@@ -1901,7 +1908,8 @@ fn _lsp_collect_locals(fb, ftotal): i64 {
     var p = 0;
     var sig_state = 0;     # 0=outside, 1=after fn, 2=after fn-name,
     # 3=expect param name, 4=after param name,
-    # 5=type annotation
+    # 5=type annotation (a default stays in 4 / 5)
+    var sig_depth = 0;     # brackets open inside the parameter list
     var var_pending = 0;   # 1 = just saw `var`, next ident is local
     while (p < ftotal) {
         var c = load8(fb + p);
@@ -1910,14 +1918,14 @@ fn _lsp_collect_locals(fb, ftotal): i64 {
             # `# comment` — skip to EOL
             while (p < ftotal && load8(fb + p) != 10) { p = p + 1; }
         }
-        elif (c == 34) {
-            # string literal — skip to closing `"` (with `\\` escape)
+        elif (c == 34 || c == 39) {
+            # string / char literal — skip to the closing quote (with `\\` escape)
             p = p + 1;
             while (p < ftotal) {
                 var sc = load8(fb + p);
                 if (sc == 92) { p = p + 2; }
                 else {
-                    if (sc == 34) { p = p + 1; break; }
+                    if (sc == c) { p = p + 1; break; }
                     if (sc == 10) { break; }
                     p = p + 1;
                 }
@@ -1939,6 +1947,7 @@ fn _lsp_collect_locals(fb, ftotal): i64 {
                 var_pending = 1;
             } elif (is_fn_kw == 1) {
                 sig_state = 1;
+                sig_depth = 0;
                 var_pending = 0;
             } else {
                 if (var_pending == 1) {
@@ -1966,20 +1975,27 @@ fn _lsp_collect_locals(fb, ftotal): i64 {
             p = id_end;
         }
         else {
-            if (c == 40) {                            # `(`
-                if (sig_state == 2) { sig_state = 3; }
-            } elif (c == 41) {                        # `)`
-                if (sig_state >= 3) { sig_state = 0; }
-            } elif (c == 58) {                        # `:`
-                if (sig_state == 4) { sig_state = 5; }
-            } elif (c == 44) {                        # `,`
-                if (sig_state >= 3) { sig_state = 3; }
+            if (c == 40 || c == 91) {                 # `(` `[`
+                if (sig_state == 2 && c == 40) { sig_state = 3; }
+                elif (sig_state >= 3) { sig_depth = sig_depth + 1; }
+            } elif (c == 41 || c == 93) {             # `)` `]`
+                if (sig_state >= 3) {
+                    if (sig_depth > 0) { sig_depth = sig_depth - 1; }
+                    elif (c == 41) { sig_state = 0; }
+                }
             } elif (c == 123) {                       # `{`
                 # Defensive: a `{` outside the signature ends any
                 # stale signature state (covers `fn name() { ... }`
                 # boundary without sig_state being explicitly reset
                 # on every `)`).
                 sig_state = 0;
+                sig_depth = 0;
+            } elif (sig_depth == 0) {                 # not inside a default's brackets
+                if (c == 58) {                        # `:`
+                    if (sig_state == 4) { sig_state = 5; }
+                } elif (c == 44) {                    # `,`
+                    if (sig_state >= 3) { sig_state = 3; }
+                }
             }
             p = p + 1;
         }
