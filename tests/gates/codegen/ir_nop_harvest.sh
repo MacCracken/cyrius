@@ -18,6 +18,11 @@
 # ⚠ Builds stage1 FROM SOURCE and measures what stage1 emits. The harvesting behaviour under
 # test lives in the compiler being built, not in build/cycc, so a source revert flips this gate
 # RED (mutation-proven: reverting the gate to `IR_ENABLED(S) == 0` gives 19,067 NOPs).
+#
+# 6.7.8 rows (scratch copies of the tree): the C2-1 tree, 0 NOPs in 518,648 instructions -> PASS
+# (and under bash -eo pipefail); the 484763ed src, 499 NOPs -> PASS; an llvm-objdump that prints
+# nothing -> RED "disassembles to 0 instructions"; the harvest gated `IR_ENABLED(S) == 0` -> RED.
+# The pre-fix gate on the C2-1 tree -> RED "could not count NOPs (llvm-objdump missing?)".
 set -u
 R=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$R" || { echo "FAIL: ir_nop_harvest: cannot cd to $R"; exit 1; }
@@ -31,9 +36,19 @@ chmod +x "$T/stage1"
 CYRIUS_IR=3 "$T/stage1" < "$R/src/main.cyr" > "$T/ir3" 2>"$T/e2" || { echo "FAIL ir_nop_harvest: IR=3 build failed"; sed -n 1,3p "$T/e2"; exit 1; }
 chmod +x "$T/ir3"
 
-# 1. the pass ran: NOP count must be far below the un-harvested 19,067.
-N=$(llvm-objdump -d "$T/ir3" 2>/dev/null | grep -cE '\bnopl?\b|\bnop\b')
-if [ -z "$N" ] || [ "$N" -eq 0 ]; then echo "FAIL ir_nop_harvest: could not count NOPs (llvm-objdump missing?)"; exit 1; fi
+# 1. the pass ran: NOP count must be far below the un-harvested 19,067. The disassembly must
+# hold a real instruction count before its NOP count means anything, and then 0 NOPs is the
+# fully harvested build, not a missing tool: the gate read `0` as "llvm-objdump missing?" and
+# went RED when 6.7.8's C2-1 extraction took `_PARSE_FACTOR_IMPL` under the per-fn compactor's
+# 1024-entry caps (`_nrn` / `_jsn`, parse_fn.cyr) and its last 499 NOPs went. CHANGELOG [6.7.8]
+command -v llvm-objdump >/dev/null 2>&1 || { echo "FAIL ir_nop_harvest: llvm-objdump is not installed - the NOP count cannot be taken"; exit 1; }
+llvm-objdump -d "$T/ir3" > "$T/dis" 2>/dev/null
+NI=$(grep -cE '^ *[0-9a-f]+:' "$T/dis" || true)
+if [ -z "$NI" ] || [ "$NI" -lt 100000 ]; then
+  echo "FAIL ir_nop_harvest: the IR=3 build disassembles to ${NI:-0} instructions (a cycc is ~500,000) - llvm-objdump could not read it"
+  exit 1
+fi
+N=$(grep -cE '\bnopl?\b|\bnop\b' "$T/dis" || true)
 if [ "$N" -ge 14000 ]; then
   echo "FAIL ir_nop_harvest: IR=3 build carries $N NOP instructions (un-harvested baseline was 19067,"
   echo "  harvested is ~8250). The compactor is not running under IR mode."
@@ -61,5 +76,5 @@ if ! cmp -s "$T/ir3out" "$T/stage1"; then
   exit 1
 fi
 
-echo "PASS ir_nop_harvest: IR=3 build $N NOPs, ${SI}B vs ${SD}B default, reproduces default cycc"
+echo "PASS ir_nop_harvest: IR=3 build $N NOPs in $NI instructions, ${SI}B vs ${SD}B default, reproduces default cycc"
 exit 0
