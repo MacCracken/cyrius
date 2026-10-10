@@ -4,7 +4,7 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased] — `.7` in flight
+## [6.7.7] — 2026-10-09
 
 B4 tuples and B6 default + named arguments (the user's decisions: roadmap.md § Spec) — *entry written at
 integration* — plus the fixes below, built in four worktree lanes (distlib, achflake, cmpdwarn, install) with one
