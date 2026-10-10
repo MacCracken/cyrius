@@ -26,6 +26,14 @@
 #      the self call first, decided at the loop's end (`_tcp_loop_end`); T5 a closure literal
 #      among the copying call's arguments runs its own tail arm, and the call still diverts; TR
 #      the probe run 3,000,000 deep (the lane's first cut: SIGSEGV)
+#   TU THE RULING (user, 2026-10-09 — "accept the TCO loss"): a tail call whose by-value argument is
+#      copied is an ORDINARY call, its evaluation order right, and only that call loses its `jmp`.
+#      TU1 the reviewer's tco2 shape `return f6(G, n - 1, g6(acc))` CALLS f6, and the self tail
+#      call written after it in the same fn keeps its `jmp` (objdump: one of each); TU2 f6 run
+#      3,000,000 deep, the later call doing the depth, exits 193. A per-fn "writes no memory"
+#      analysis would win the copying call's `jmp` back (issue
+#      2026-10-09-tail-call-by-value-copy-needs-effect-analysis, 6.7.13): TU1's call flips to a
+#      `jmp` then, as the ruling's own expiry
 #   AS AS1: CYRIUS_ASYNC=1 — the copy in an `async fn`, whose frame is the coroutine's heap frame
 #   A  ANTI-VACUOUS: the crossos tcyr built and run — x86 plain, CYRIUS_IR=3 and CYRIUS_DCE=1, then
 #      aarch64 (qemu), cx (cxvm) and PE (wine), each with the full assertion count
@@ -56,6 +64,7 @@
 #                                                              (x86 / aarch64 SIGSEGV, cx, PE)
 #   M12 the tail arm does not restore `_tc_snap_div`          -> T5 (the closure's arm clears it:
 #                                                              `jmp rc` with the copy in the frame)
+#   (TU1 is killed by M8 — two `jmp`s, no call — and by M11 — two calls; TU2 by M11: SIGSEGV)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -191,6 +200,27 @@ else
         nc=$(ts_n call t5 tend rc); nj=$(ts_n jmp t5 tend rc)
         [ "$nc" = 1 ] && [ "$nj" = 0 ] && ok "T5: a closure's own tail arm among the arguments: t5 still calls rc" || bad "T5: t5 has $nc call(s) and $nj jmp(s) to rc, want 1 and 0"
     else echo "  SKIP T3-T5: no objdump"; skips=$((skips + 1)); fi
+fi
+
+# ── TU: the ruling (user, 2026-10-09) — the copying tail call is a call; a later one keeps its jmp ──
+printf 'struct Big { a: i64; b: i64; c: i64; }\nvar G: Big = Big { 1, 2, 3 };\nfn g6(x): i64 { return x + 1; }\nfn f6(s: Big, n, acc): i64 {\n    if (n == 0) { return acc + s.a; }\n    if (n < 3) { return f6(G, n - 1, g6(acc)); }\n    return f6(G, n - 1, acc + 1);\n}\nfn uend(): i64 { return 0; }\nsyscall(60, (f6(G, 3000000, 0) & 255) + uend());\n' > "$T/tu.cyr"
+rc=0; CYRIUS_SYMS="$T/tu.syms" "$CC" < "$T/tu.cyr" > "$T/tu.bin" 2> "$T/tu.err" || rc=$?
+if [ "$rc" -ne 0 ]; then bad "TU: the probe did not build: $(grep '^error' "$T/tu.err" | head -1)"
+else
+    chmod +x "$T/tu.bin"; got=0; timeout 20 "$T/tu.bin" || got=$?
+    [ "$got" -eq 193 ] && ok "TU2: f6 runs 3,000,000 deep on its later self tail call: exit 193 (3000001 & 255)" || bad "TU2: exit $got, want 193 (139: the later self tail call lost its jmp)"
+    if command -v objdump > /dev/null 2>&1; then
+        sort "$T/tu.syms" > "$T/tu.sorted"
+        a=$(awk '$2 == "f6" { print $1 }' "$T/tu.sorted"); e=$(awk '$2 == "uend" { print $1 }' "$T/tu.sorted")
+        if [ -z "$a" ] || [ -z "$e" ]; then bad "TU1: the symbol map does not name f6 / uend"
+        else
+            fs=$(printf '%x' "0x$a")
+            nc=$(objdump -d --start-address=0x"$a" --stop-address=0x"$e" "$T/tu.bin" | grep -cE "call +0x$fs\b" || true)
+            nj=$(objdump -d --start-address=0x"$a" --stop-address=0x"$e" "$T/tu.bin" | grep -cE "jmp +0x$fs\b" || true)
+            if [ "$nc" -eq 1 ] && [ "$nj" -eq 1 ]; then ok "TU1: return f6(G, n - 1, g6(acc)) is a call (its copy); return f6(G, n - 1, acc + 1) after it keeps its jmp"
+            else bad "TU1: f6 has $nc call(s) and $nj jmp(s) to itself, want 1 and 1 (the ruling, user 2026-10-09)"; fi
+        fi
+    else echo "  SKIP TU1: no objdump"; skips=$((skips + 1)); fi
 fi
 
 # ── AS: an `async fn`'s frame ───────────────────────────────────────────────────────────────────
