@@ -1312,6 +1312,7 @@ fn PARSE_FACTOR(S): i64 {
     if (PEEKT(S) == 28) { _sub_post(S, _ti0); }   # 6.7.8 (C2-4b): `h.p[i]`, `f()[i]`, `o.m()[i]`
     _w128_rchk(S, _ti0);        # 6.7.6 (D2): a u128 as the right operand of a refused operator
     _tup_rchk(S, _ti0);         # 6.7.7 (B4): a whole tuple is not a value
+    _pk_post(S, _ti0);          # 6.7.8 (C2-5): a name's, a `*T` field's, a call's kind is its own
     _rd_exit();
     # 6.6.5 — `syscall(…)` (token 24) is stack-NEUTRAL by construction: it pushes its
     # arguments and every backend's emitter consumes exactly those, leaving the result in
@@ -1680,18 +1681,41 @@ var _w128_k = 0;
 var _w128_v = 0;
 var _w128_cp = 0;
 var _w128_ti = 0;
+# ⛔ 6.7.8 (C2-5) — THE POINTER-KIND STAMP. `*p` reads and writes a narrow `*T`'s element at its
+# width, and the element kind rides the pointer-scale word (C2-3a) — but that word is "the last
+# factor's", not "this value's": nothing clears it when an operator CONSUMES a pointer, so after
+# `x == q`, `m & q`, `-q`, `~q` or `mk(q).n` it still holds q's word (6.6.17's step leaks the same
+# way — `(x == q) + 1` adds 4; reported, not changed). A value's kind is its OWN only when the
+# producer that wrote the word ended at THIS code pointer and token — the _BX / _FBR / _W128
+# pattern: a name, a `*T` field or a call (`_pk_post`, the PARSE_FACTOR wrapper), pointer
+# arithmetic on such a value (`_ptr_add` / `_int_plus_ptr` / `_ptr_sub`), an if-expression whose
+# branches agree (`_ie_finish`), carried across a `)` (`_paren_post`). Every reader of the kind as
+# a value's goes through `_pk_word`, which strips it otherwise; the step is never touched, so all
+# arithmetic is what it was. CHANGELOG [6.7.8]
+var _pk_cp = 0;
+var _pk_ti = 0;
+var _pk_w = 0;
+fn _PK_MARK(S, w): i64 { _pk_cp = GCP(S); _pk_ti = GTI(S); _pk_w = w; return 0; }
+fn _PK_IS(S): i64 {
+    if (_pk_cp == 0) { return 0; }
+    if (GCP(S) != _pk_cp) { return 0; }
+    if (GTI(S) != _pk_ti) { return 0; }
+    return 1;
+}
 # A parenthesised factor carries its result flags across its `)`: the float-builtin kind (low
-# bits), the boolean stamp (16) and (6.7.6) the u128 stamp (32).
+# bits), the boolean stamp (16), (6.7.6) the u128 stamp (32) and (6.7.8) the pointer-kind stamp (64).
 fn _paren_pre(S): i64 {
     var k = _FBR_KIND(S);
     if (_BX_IS(S) == 1) { k = k + 16; }
     if (_W128_IS(S) == 1) { k = k + 32; }
+    if (_PK_IS(S) == 1) { k = k + 64; }
     return k;
 }
 fn _paren_post(S, k): i64 {
     if ((k & 15) != 0) { _fbr_ti = GTI(S); }
     if ((k & 16) != 0) { _bxr_ti = GTI(S); }
     if ((k & 32) != 0) { _w128_ti = GTI(S); }
+    if ((k & 64) != 0) { _pk_ti = GTI(S); }
     return 0;
 }
 
@@ -3086,10 +3110,54 @@ fn _slice_sub_read(S, li): i64 {
     return 0;
 }
 
-# `*expr` — the dereference: load64 through the operand's address, an untyped word.
+# The pointer-scale word with its element kind only when the kind is the value's own (the stamp,
+# `_PK_MARK`); otherwise the step alone. 6.7.8 (C2-5)
+fn _pk_word(S): i64 {
+    var w = GPSC(S);
+    if (_PK_IS(S) == 1) { if (_pk_w == w) { return w; } }
+    return _ps_step(w);
+}
+# The PARSE_FACTOR wrapper's end (the factor began at token ti0): vouch for the word's kind when
+# its own producer wrote it last — a bare name (its slot / capture / global mark), a field whose
+# declaration is that `*T` (`_sub_word`: the load ended at the cursor), a call whose callee — or
+# method — declares it. `mk(q).n` keeps q's word and `-q` / `~q` theirs: not vouched for. `(E)`
+# carries E's own stamp across the `)` (`_paren_post`).
+fn _pk_post(S, ti0): i64 {
+    var w = GPSC(S);
+    if (_ps_step(w) <= 0) { return 0; }
+    if (((w >> 40) & 0xFF) == 0) { return 0; }   # no element kind: nothing to vouch for
+    if (GTI(S) == ti0 + 1) { if (TOKTYP(S, ti0) == 2) { return _PK_MARK(S, w); } }
+    var h = _sub_how(S, ti0);
+    if (h == 0) { return 0; }
+    if (h == 2) { if (TOKTYP(S, _sub_open(S) - 1) != 2) {   # `-(q)` / `~(q)` end in `)` too: a call is
+            if (_sub_callee(S) < 0) { return 0; }             # `name(`, `.name(` or `name<..>(`
+        } }
+    if (_sub_word(S, h) != w) { return 0; }
+    return _PK_MARK(S, w);
+}
+# ⛔ 6.7.8 (C2-5) — `*p` AT THE ELEMENT'S WIDTH (the user's decision, 2026-10-10: "`*p`, `*p = v`,
+# `*p OP= v` through a narrow `*T` (`*u8`..`*u32`, `*i8`..`*i32`, `*f32` — f32 rounding included)
+# read and write at the element's width, the same rule `p[i]` gets"). The element of a `*expr`
+# whose operand is a narrow `*T` — a name, a `*T` field, a call declared `: *T`, `p ± n`, a
+# parenthesised one — as its descriptor (step 1, 2 or 4; an integer or an f32), else 0: the
+# operand is a word address (untyped, `*i64` / `*u64` / `*f64` / `*bool`, a struct, a pointer).
+fn _deref_ed(S): i64 {
+    var w = _pk_word(S);
+    var st = _ps_step(w);
+    if (st < 1) { return 0; }
+    if (st > 4) { return 0; }
+    var ed = (w >> 40) & 0xFF;
+    if (_ek_w(ed) != st) { return 0; }
+    return ed;
+}
+# `*expr` — the dereference: the operand's element at its width when it is a narrow `*T`
+# (`_esub_load`, as `p[0]` reads it: sign- / zero-extended, an f32 typed), else load64 — an
+# untyped word. 6.7.8 (C2-5): before, every `*p` read 8 bytes. CHANGELOG [6.7.8]
 fn _deref_read(S): i64 {
     STI(S, GTI(S) + 1);
     PARSE_FACTOR(S);
+    var ed = _deref_ed(S);
+    if (ed != 0) { return _esub_load(S, ed); }
     ELOAD64(S);
     SPSC(S, 0);
     return 0;
@@ -6129,14 +6197,13 @@ fn _PARSE_TERM_IMPL(S): i64 {
 # CHANGELOG [6.6.17]
 fn _ptr_add(S, ps): i64 {
     if (_W128_IS(S) == 1) { return _w128_ilhs(S, 0); }   # 6.7.6 (D2): `n + x` with a u128 x
-    var rs = GPSC(S);
+    var rs = _pk_word(S);   # 6.7.8 (C2-5): the right operand's kind only when its own
     if (ps == 0) { if (_ps_step(rs) > 1) { return _int_plus_ptr(S, rs); } }   # 6.7.8: the step, not the word
     EPTR_SCALE(S, ps);
     EMOVCA(S);
     EUNSPILL(S);
     EADDR(S);
-    SPSC(S, ps);
-    return 0;
+    return _pk_set(S, ps);
 }
 # Stack = n, rax = p: rax = n * rs + p (EIMUL clobbers rcx, so n goes round the stack). `rs` is p's
 # step word (6.7.8): the multiplier is its step, and the result keeps the word.
@@ -6152,8 +6219,7 @@ fn _int_plus_ptr(S, rs): i64 {
     EIMUL(S);            # rax = n * rs
     EPOPC(S);            # rcx = p
     EADDR(S);
-    SPSC(S, rs);
-    return 0;
+    return _pk_set(S, rs);
 }
 fn _ptr_sub(S, ps): i64 {
     if (_W128_IS(S) == 1) { return _w128_ilhs(S, 1); }   # 6.7.6 (D2): `n - x` with a u128 x
@@ -6163,8 +6229,13 @@ fn _ptr_sub(S, ps): i64 {
     EMOVCA(S);
     EPOPR(S);
     ESUBR(S);
-    SPSC(S, ps);
-    return 0;
+    return _pk_set(S, ps);
+}
+# Pointer arithmetic's result: the pointer operand's word (`ps` / `rs`, read through `_pk_word`, so
+# its kind is there only when that operand's own), stamped as this value's. 6.7.8 (C2-5)
+fn _pk_set(S, w): i64 {
+    SPSC(S, w);
+    return _PK_MARK(S, w);
 }
 fn _ptr_diff(S, ps, rs): i64 {
     var st = _ps_step(ps);   # 6.7.8: steps compared — `*i32 - *u32` is an element count, as before
@@ -6590,7 +6661,7 @@ fn PEXPR(S): i64 {
 fn _PEXPR_IMPL(S): i64 {
     var _xbeg = GTI(S);   # every `+` / `-` dispatch's lhs starts here (left-assoc) (6.6.6)
     PARSE_TERM(S);
-    var ps = GPSC(S);
+    var ps = _pk_word(S);   # 6.7.8 (C2-5): the left operand's kind only when its own
     var go = 1;
     while (go == 1) {
         var typ = PEEKT(S);

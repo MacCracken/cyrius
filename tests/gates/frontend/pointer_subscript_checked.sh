@@ -181,6 +181,51 @@
 #   MFLT  `_field_load_type` records no field end (`_flt_ti`) -> RED B0 B0s Ba-Bg R1i R2f R7c
 #   MSO   the --syntax-only silence dropped -> RED X1 X2a
 #   MR7   `_esub_assign`'s second-`[` refusal dropped -> RED R7b R7d R7e ("expected '='")
+#
+# D / DR / AS3 / DW / DM / DX — `*p` AT THE ELEMENT'S WIDTH (C2-5; the user's decision, 2026-10-10:
+# "`*p`, `*p = v`, `*p OP= v` through a narrow `*T` (`*u8`..`*u32`, `*i8`..`*i32`, `*f32` — f32
+# rounding included) read and write at the element's width, the same rule `p[i]` gets"). Before
+# 6.7.8 every `*p` loaded and stored 8 bytes. The operand's element comes from the step word, and
+# only when the word is the operand's OWN (`_pk_word`: the (code pointer, token) stamp written by a
+# name / `*T` field / call in the PARSE_FACTOR wrapper, by pointer arithmetic and an if-expression's
+# join, carried across `)`) — the word otherwise still holds the last factor's, e.g. after `m & q`.
+#   D0  tests/tcyr/crossos/deref_element_width.tcyr compiles with no warning; --syntax-only silent
+#   D   that file on x86 (plain, CYRIUS_IR=3, CYRIUS_IR=1, CYRIUS_DCE=1), aarch64 (qemu), cx, PE (wine):
+#       every narrow kind's width / sign / neighbours, eleven OP= with wraparound, every operand form
+#       (name, parameter, global, field, call, generic, method, `p ± n`, `n + p`, parentheses, an
+#       if-expression, a capture, a generic instance), f32 rounding and typing, the for step, top level,
+#       and the operands that stay a WORD (an untyped name, `*i64` / `*f64` / `*bool`, `**pp`, `m & q`,
+#       `-(-q)`, `~(~q)`, `0 | q`, a call result's untyped field, a bitwise operand of `+`)
+#   DR  the issue's repro VERBATIM (issues/2026-10-08-deref-store-through-narrow-typed-pointer-is-word-
+#       store.md; it exited 14) exits 0 on every leg
+#   AS3 `*p` through a `*i16` parameter and a `*u8` local in a suspending `async fn`, across awaits
+#   DW1-DW3 the store warnings `p[0] = v` gives (an integer constant into a `*f32`, narrowing into a
+#       `*u8`, an f32 compound with an f64 operand); DW4 `*p * 2.0` through a `*f64` still warns (the
+#       untyped word, the documented rule); DW5 an i64 element into a `*f32` and an f32 OP= warn nothing
+#   DM  `*p, x = f2();` through a `*i32` keeps the deref's own refusal, once
+#   DX  `*(1 + p) = v` through a `*u8` stores a WORD: a 1-byte `n + p` carries no step (6.6.17), so no
+#       element — reported at C2-3a (giving it its step changes `(1 + p8) - q32`), the user's call
+#
+# MUTATION LEDGER (C2-5, scratch trees, each its 2-stage mutant cycc, this gate + the value file as
+# CYCC=<mutant>; 2026-10-10):
+#   M26   a narrow store through ESTORE64 (`_asg_store_w(S, 0)`) -> RED Da-Dg DRa-DRe AS3 DW2 (23 checks)
+#   M3    the element's sign ignored in a `*p` read -> RED Da-Dg AS3 (21 checks: `*i8` 0xFF reads 255)
+#   M4    the f32 rounding dropped from `*p = v` (the int-into-float check kept) -> RED Da-Dg DRa-DRe
+#   MPK1  `_pk_word` trusts the word (no stamp) -> RED Da-Dg (8 word-form checks read an element)
+#   MPK2  `_pk_post` takes `-(q)` / `~(q)` for a call -> RED Da-Dg (`*(-(-q))`, `*(~(~q))`)
+#   MPK3  `_paren_post` drops the stamp at `)` -> RED D0 D0s Da-Dg (11 checks: `*(p + 1)` a word)
+#   MPK4  `_ptr_add` stamps nothing -> RED D0 D0s Da-Dg (10 checks)
+#   MPK5  the if-expression's join stamps nothing -> RED Da-Dg (its 4-byte store)
+#   MPK6  `_deref_store` reads the operand's element after its push -> RED Da-Dg DRa-DRe AS3 DW1-DW3
+#   MPK7  `_pk_post` vouches for any field / call -> RED Da-Dg (`*mkn(q).n`)
+#   MPK8 / MPK9 / MPK10  `+`'s left operand, `n + p`'s right, an if-expression branch read through
+#         GPSC, not `_pk_word` -> RED Da-Dg (a bitwise operand of `+`, of `n +`, a bitwise branch)
+#   MPK11 `_pk_post` vouches for no bare name -> RED Da-Dg DRa-DRe AS3 DW1-DW3 (51 checks)
+#   MSEXW an f32 element's store keeps the value's width -> RED DW5 ("narrowing assignment")
+#   M27   `_slot_ptr_step` unmasked: EQUIVALENT — its one caller's `p += n` scales through EPTR_SCALE,
+#         which masks too (C2-3a); typed_pointer_step.tcyr and this gate stay green
+#   The C2-4b compiler (before this bite) -> RED Da Db De Df Dg DRa DRb DRe AS3 DW1-DW3 (Dc / Dd / DRc /
+#   DRd pass: those legs' compilers are built from this tree's src); the value file: 64 of 120 fail
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -764,6 +809,62 @@ so_refused() {   # <name> <fragment> <what> <body>: --syntax-only fails with exa
 so_refused x2a "$R7" "X2a: --syntax-only still refuses get()[1][2]" 'fn f(): i64 { return get()[1][2]; }\n'
 so_refused x2b "&a[i] is not supported" "X2b: --syntax-only still refuses &b[1]" 'fn f(): i64 { var b: i32[4]; var q = &b[1]; return q; }\n'
 
+# ── D: `*p` at the element's width (C2-5) ─────────────────────────────────────────────────────
+# D: the value file on every leg (x86 plain / IR=1 / IR=3 / DCE=1, aarch64, cx, PE), with no
+# warning, silent under --syntax-only.
+DEW=tests/tcyr/crossos/deref_element_width.tcyr
+[ -f "$DEW" ] || { echo "FAIL: $G: $DEW missing"; exit 1; }
+cp "$DEW" "$T/dew.cyr"
+rc=0; "$CC" < "$T/dew.cyr" > "$T/dew.chk" 2> "$T/dew.chk.err" || rc=$?
+nw=$(grep -c '^warning\|^error' "$T/dew.chk.err" || true)
+if [ "$rc" -eq 0 ] && [ "$nw" -eq 0 ]; then ok "D0: the deref file compiles with no warning ($(grep -c 'assert' "$T/dew.cyr") asserts)"
+else bad "D0: rc $rc, $nw diagnostic line(s): $(grep '^warning\|^error' "$T/dew.chk.err" | head -2 | tr '\n' '|')"; fi
+rc=0; "$CC" --syntax-only < "$T/dew.cyr" > /dev/null 2> "$T/dew.so.err" || rc=$?
+if [ "$rc" -eq 0 ] && ! grep -q '^error\|^warning' "$T/dew.so.err"; then ok "D0s: --syntax-only (cyrius lint) reports nothing"
+else bad "D0s: --syntax-only rc $rc: $(grep '^error\|^warning' "$T/dew.so.err" | head -1)"; fi
+legs dew D "*p / *p = v / *p OP= v at the element: every narrow kind, operand and the word forms" full
+
+# DR: the issue's repro VERBATIM (issues/2026-10-08-deref-store-through-narrow-typed-pointer-is-word-
+# store.md) — it exited 14; the element-width rule makes it 0 — on every leg.
+printf '%s\n' 'fn main(): i64 {' '    var b: i32[2];' '    b[0] = 1; b[1] = 7;' '    var q: *i32 = &b;' \
+    '    *q = 5;                         # writes 8 bytes: b[1] becomes 0' '    var a: f32[2];' \
+    '    store32(&a + 4, 0x40400000);    # a[1] = 3.0f' '    var p: *f32 = &a;' \
+    '    *p = 1.5;                       # 1.5'"'"'s f64 bits as a word: a[0] = 0, a[1] = 0x3FF80000' \
+    '    var e = 0;' '    if (b[0] != 5) { e = e | 1; }' '    if (b[1] != 7) { e = e | 2; }' \
+    '    if (load32(&a) != 0x3FC00000) { e = e | 4; }      # f32 1.5' \
+    '    if (load32(&a + 4) != 0x40400000) { e = e | 8; }  # a[1] untouched' '    return e;' '}' \
+    'syscall(60, main());' > "$T/dr.cyr"
+legs dr DR "the issue's repro exits 0 (it exited 14)"
+
+# AS3: `*p` through a `p: *i16` parameter and a `*u8` local in a suspending `async fn`, across awaits.
+CC_SV=$CC; CC="$T/acc"
+exits as3 0 "AS3: *p, *p = v, *p OP= v on a *i16 parameter and a *u8 local in a suspending async fn" \
+    'include "lib/alloc.cyr"\ninclude "lib/string.cyr"\ninclude "lib/fmt.cyr"\ninclude "lib/vec.cyr"\ninclude "lib/syscalls.cyr"\ninclude "lib/async.cyr"\nvar B: i64[2];\nfn nopark(): i64 { return 0; }\nasync fn st(q: *i16): i64 {\n    var p: *u8 = &B + 1;\n    *p = 250;\n    *q = 0 - 3;\n    var s1 = await nopark();\n    *p += 10;\n    *q -= 4;\n    var s2 = await nopark();\n    return *p * 100 + *q + 100;\n}\nfn main(): i64 {\n    alloc_init();\n    store64(&B, 0x7777777777777777);\n    var C = st(&B + 4);\n    var r1 = future_force(C);\n    var r2 = future_force(C);\n    var r3 = future_force(C);\n    if (r3 != 493) { syscall(60, 10 + r3 % 100); }\n    if (load64(&B) != 0x7777FFF977770477) { syscall(60, 3); }\n    syscall(60, 0);\n    return 0;\n}\nvar e = main();\n'
+CC=$CC_SV
+
+# DW: the stores warn as `p[0] = v` does (the approved rule): an integer constant into a `*f32`, a
+# wider integer into a `*u8`, an f32 compound with an f64 operand; `*p * 2.0` through a `*f64` is
+# still the untyped word (the documented rule — p[0] is the typed spelling); DW5 an i64 into a
+# `*f32` and an f32 compound warn nothing.
+warns dw1 "$WI" "DW1: *p = 1 through a \`*f32\`" 'var B: i64[2];\nfn f(): i64 { var p: *f32 = &B; *p = 1; return 0; }\nsyscall(60, f());\n'
+warns dw2 "narrowing assignment" "DW2: *p = w (an i32) through a \`*u8\`" 'var B: i64[2];\nfn f(): i64 { var w: i32 = 300; var p: *u8 = &B; *p = w; return *p; }\nsyscall(60, f());\n'
+warns dw3 "f32 arithmetic with a non-f32 right operand" "DW3: *p *= 2.0 through a \`*f32\` (as \`x *= 2.0\` on an f32 local)" 'var B: i64[2];\nfn f(): i64 { var p: *f32 = &B; *p = 1.5; *p *= 2.0; return 0; }\nsyscall(60, f());\n'
+warns dw4 "integer arithmetic with an f64 right operand" "DW4: *p * 2.0 through a \`*f64\` stays the untyped word" 'var B: i64[2];\nfn f(): i64 { var p: *f64 = &B; var x = *p * 2.0; return x; }\nsyscall(60, f());\n'
+printf '%b' 'var B: i64[2];\nfn f(): i64 {\n    var a: i64[2];\n    a[1] = 3;\n    var p: *f32 = &B;\n    var q: f32 = 0.5;\n    *p = a[1];\n    *(p + 1) = q;\n    *(p + 1) += q;\n    return 0;\n}\nsyscall(60, f());\n' > "$T/dw5.cyr"
+rc=0; timeout 60 "$CC" < "$T/dw5.cyr" > "$T/dw5.bin" 2> "$T/dw5.err" || rc=$?
+if [ "$rc" -eq 0 ] && ! grep -q '^warning\|^error' "$T/dw5.err"; then ok "DW5: an i64 element into a \`*f32\`, and an f32 OP=, warn nothing"
+else bad "DW5: rc $rc: $(grep '^warning\|^error' "$T/dw5.err" | head -1)"; fi
+
+# DM: a narrow `*p` in a multi-value assignment keeps the deref's own refusal, once.
+refused dm "\`*p\` is not one" "DM: *p, x = f2(); through a \`*i32\`" 'fn f2(): i64 { return (3, 4); }\nvar B: i64[2];\nfn f(): i64 { var p: *i32 = &B; var x = 0; *p, x = f2(); return x; }\nsyscall(60, f());\n'
+
+# DX: `n + p` with a ONE-byte step carries no step (6.6.17: only `p + n`'s pointer writes its word
+# back), so `*(1 + p)` through a `*u8` is still a WORD — reported (C2-3a): giving `1 + p` its step
+# turns `(1 + p8) - q32` from a byte difference into an error, the user's call. `*(p + 1)` and
+# `*(1 + p)` on a wider step are the element (the value file's D6).
+exits dx 2 "DX: *(1 + p) = v through a \`*u8\` stores a word (the 1-byte \`n + p\` gap, reported)" \
+    'var B: i64[2];\nfn f(): i64 { store64(&B, 0x1111111111111111); var p: *u8 = &B; *(1 + p) = 0; if (load64(&B) == 0x11) { return 2; } return 1; }\nsyscall(60, f());\n'
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — a stale slice width is no slice (ST1-ST6); the step word carries the element kind with no change to any step, difference, merge, warning or fold (P1-P6, PV legs, S0); an array's exact N is no fold shape (N0); p[i] on a named *T and f64 / f32 / bool arrays read, store and combine at the element (A legs, AS), every other name refused by name (R1-R4), the element stores checked (R9-R11, W); p[i] on a *T field and a call returning *T (B legs), every other base refused by name (R5-R8, R1i-R2g), silent under --syntax-only for another file's bases (X)"
+echo "PASS: $G — a stale slice width is no slice (ST1-ST6); the step word carries the element kind with no change to any step, difference, merge, warning or fold (P1-P6, PV legs, S0); an array's exact N is no fold shape (N0); p[i] on a named *T and f64 / f32 / bool arrays read, store and combine at the element (A legs, AS), every other name refused by name (R1-R4), the element stores checked (R9-R11, W); p[i] on a *T field and a call returning *T (B legs), every other base refused by name (R5-R8, R1i-R2g), silent under --syntax-only for another file's bases (X); *p, *p = v and *p OP= v through a narrow *T at the element (D legs, DR, AS3, DW, DM), the other operands a word (DX)"

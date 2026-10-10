@@ -359,7 +359,8 @@ DECLARED one (6.7.8): `h.p[i]` for a field `p: *T` (of a local, a global, a `*H`
 callee declared `: *T`. The base is evaluated first — the field read, the call made once — and
 then the index; `f()[i] = v`, `h.p[i] += 1` and both in a `for` step store through the pointer.
 A pointer laundered through an untyped name (`var q = p;`) is a plain word and takes no
-subscript.
+subscript. Through a narrow `*T` (`*u8`..`*u32`, `*i8`..`*i32`, `*f32`) `*p` is `p[0]` (6.7.8,
+[Pointers](#pointers)).
 
 Refused, by name (`cannot subscript 'a': ...`):
 
@@ -830,8 +831,8 @@ struct) and, on a local, in a `const fn`. Before 6.7.5 a field, `*p`, `>>>=` and
 It operates at the place's width and kind, exactly as reading it does: an `i8` / `i16` / `i32`
 field or element is loaded sign-extended and stored at its own width (so it wraps there),
 `+= -= *= /=` on an `f64` / `f32` place are float operations with the same warnings as
-`x = x + e`, `p += n` on a `*T` place steps `sizeof(T)`, and `*p OP= v` is a WORD operation, as
-`*p` is (see [Pointers](#pointers)).
+`x = x + e`, `p += n` on a `*T` place steps `sizeof(T)`, and `*p OP= v` works on the element
+through a narrow `*T` and on a word otherwise, as `*p` reads (6.7.8; see [Pointers](#pointers)).
 
 ```
 struct H { n; m; }
@@ -937,13 +938,36 @@ store64(&buf + 8, 20);
 var p: *i64 = &buf;
 var a = *p;            # 10
 var b = *(p + 1);      # 20 (adds 8 bytes, not 1)
+
+# A narrow pointee is read and written at its width (6.7.8)
+var e: i32[2];
+e[1] = 7;
+var q: *i32 = &e;
+*q = 0 - 5;            # stores 4 bytes: e[1] stays 7
+*(q + 1) += 3;         # e[1] = 10
+var c = *q;            # -5: an i32 element is sign-extended
 ```
 
-A `*T` variable is an 8-byte address whatever `T` is, and `*p` always loads 8 bytes
-(use `load8` / `load16` / `load32` for narrower reads). `*p = v` and `*p OP= v` (6.7.5) write 8
-bytes the same way — `*p += 1` through a `*i32` is a WORD add over two elements; write
-`p[0] += 1`, which loads and stores the element at its width ([Subscripts](#subscripts-ai-6612-pi-678),
-6.7.8), or `store32(p, load32(p) + 1)`. `T` must name a type
+A `*T` variable is an 8-byte address whatever `T` is. **Through a narrow `*T` — `*u8` / `*i8`,
+`*u16` / `*i16`, `*u32` / `*i32`, `*f32` — `*p` is the ELEMENT** (6.7.8), exactly as `p[0]` is
+([Subscripts](#subscripts-ai-6612-pi-678)): a read loads T's bytes, an iN sign-extended, a uN
+zero-extended, an `f32` its 4 bytes typed f32 (`*p + x` with `x: f32` is an f32 add, `-*p`
+flips its sign bit); `*p = v` stores T's bytes (an `f64` into a `*f32` rounds to f32, an integer constant
+into one warns, a wider integer into a narrow one warns "narrowing"); `*p OP= v` (6.7.5) loads,
+combines and stores at that width, so it wraps there (an `f32` combines in single precision). The
+pointer is narrow wherever the compiler knows it is one: a name declared `*T` (a local, a parameter,
+a global, a closure capture, a generic instance's at its `T`), a field declared `*T` (`*h.p`,
+`*self.p`, `*mk(4).p`), a call declared `: *T` (`*f()`, `*g<i16>(k)`, `*o.m()`), `p + n`, `p - n`,
+`n + p`, parenthesised, or an if-expression whose branches all are. **Every other operand is a WORD
+address, read and written 8 bytes as before**: an untyped name (`var w = p;` is the spelling for a
+word through a typed pointer), a `*i64` / `*u64` / `*f64` / `*bool` (`*p` through a `*f64` is the
+untyped word — `p[0]` is the typed spelling), `**pp`, and a value that is no longer that pointer: a
+bitwise or comparison result (`*(m & p)`), a negation, a call result's untyped field (`*mk(p).n`). ⚠
+`n + p` with a ONE-byte step carries no step (below), so `*(1 + p)` through a `*u8` is a word —
+write `*(p + 1)` or `p[1]`. `load8` / `store16` / … stay valid for an explicit width. ⚠ Before
+6.7.8 every `*p` loaded 8 bytes and every `*p = v` / `*p OP= v` stored 8, whatever `T`: `*q = 5`
+through a `*i32` zeroed the next element, `*p = 1.5` through a `*f32` stored 1.5's f64 bits as a
+word, `*s` on a `*u8` string read eight characters. `T` must name a type
 ([Type names](#type-names-6616)). **`p + n`, `p - n`, `p += n` and `p -= n` step
 `sizeof(T)` elements, wherever `p` is declared** — a local, a parameter, a global, a
 closure capture, a struct field or a fn result: `*u8` / `*i8` step 1, `*i16` 2, `*i32` /

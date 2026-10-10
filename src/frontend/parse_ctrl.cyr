@@ -434,7 +434,7 @@ fn _ie_kind(S, st, bti): i64 {
     var isb = _BX_IS(S);
     var fbk = _FBR_KIND(S);
     var et = GESTYPE(S);
-    var ps = GPSC(S);
+    var ps = _pk_word(S);   # 6.7.8 (C2-5): the branch's element kind only when its own
     var xw = GEXW(S);
     var cl = 1;
     var sid = 0;
@@ -561,7 +561,7 @@ fn _ie_finish(S, st): i64 {
     _esv_name = 0 - 1;
     var ps = L64(st + 40);
     if (ps < 0) { ps = 0; }
-    SPSC(S, ps);
+    _pk_set(S, ps);   # 6.7.8 (C2-5): the merged word, stamped (a kind only when every branch had it)
     SEXW(S, L64(st + 48));
     SESTYPE(S, 0);
     _fbr_k = 0;

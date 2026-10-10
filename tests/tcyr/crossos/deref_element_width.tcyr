@@ -1,0 +1,495 @@
+# deref_element_width.tcyr — 6.7.8 (C2-5) — `*p`, `*p = v` and `*p OP= v` through a narrow typed
+# pointer (`*u8` .. `*u32`, `*i8` .. `*i32`, `*f32`) read and write the ELEMENT, at its width, on
+# every backend: the user's decision (2026-10-10), "the same rule `p[i]` gets".
+#
+# Before 6.7.8 every `*p` loaded 8 bytes and every `*p = v` / `*p OP= v` stored 8 bytes whatever
+# `p` pointed at, so `*q = 5` through a `*i32` zeroed the next element, `*p = 1.5` through a `*f32`
+# stored 1.5's f64 bits as a word, and `*s` on a `*u8` string read eight characters at once. Now the
+# element is read as `p[0]` reads it — an iN sign-extended, a uN zero-extended, an f32 its 4 bytes
+# typed f32 — and stored as `p[0] = v` stores it (an f64 into an f32 element rounds). The operand is
+# a narrow `*T` when the compiler knows it is one: a name declared `*T` (local, parameter, global,
+# capture, a generic instance's), a field declared `*T`, a call declared `: *T` (a method, a generic
+# call), `p + n`, `p - n`, `n + p`, a parenthesised one, an if-expression whose branches are. Every
+# other operand is the WORD it always was: an untyped address (`var w = p;`), a `*i64` / `*u64` /
+# `*f64` / `*bool`, `**pp`, a bitwise or comparison result (`*(m & p)`), a call result's untyped
+# field (`*mk(p).n`) — rows D12 pin each, so the narrow rule cannot reach past its operands.
+#
+# Every pointer points into BUF, zeroed before each group and followed by a canary; the rows read
+# the stored bytes back through `load8/16/32/64`, so a wrong width or a lost sign cannot pass. The
+# warnings (an integer constant into a `*f32`, narrowing into a `*u8`, `*p * 2.0` through a `*f64`),
+# an `async fn` and the CYRIUS_IR=1 / IR=3 / DCE runs are tests/gates/frontend/pointer_subscript_checked.sh
+# (group D).
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+include "lib/assert.cyr"
+
+var BUF: i64[8];
+var BUF_CAN = 0x5A5A5A5A5A5A5A5A;
+var G32: *i32 = 0;
+var G16: *i16 = 0;
+
+fn zero(): i64 {
+    var i = 0;
+    while (i < 8) { store64(&BUF + i * 8, 0); i = i + 1; }
+    return 0;
+}
+
+# ---- R0: the issue's repro (issues/2026-10-08-deref-store-through-narrow-typed-pointer-is-word-store.md)
+# — it returned 14 (= 2 | 4 | 8). Its body verbatim; the fn is renamed from `main`, which the compiler
+# calls itself and whose return would become this file's exit code, hiding assert_summary's. The
+# program verbatim, `syscall(60, main());` included, is the gate's row DR. ----
+fn repro(): i64 {
+    var b: i32[2];
+    b[0] = 1; b[1] = 7;
+    var q: *i32 = &b;
+    *q = 5;                         # writes 8 bytes: b[1] becomes 0
+    var a: f32[2];
+    store32(&a + 4, 0x40400000);    # a[1] = 3.0f
+    var p: *f32 = &a;
+    *p = 1.5;                       # 1.5's f64 bits as a word: a[0] = 0, a[1] = 0x3FF80000
+    var e = 0;
+    if (b[0] != 5) { e = e | 1; }
+    if (b[1] != 7) { e = e | 2; }
+    if (load32(&a) != 0x3FC00000) { e = e | 4; }      # f32 1.5
+    if (load32(&a + 4) != 0x40400000) { e = e | 8; }  # a[1] untouched
+    return e;
+}
+
+# ---- D1: a local `*T` of every narrow integer kind: the read sign- or zero-extended, `=` at the
+# element's width, the neighbours untouched ----
+fn local_widths(): i64 {
+    zero();
+    store64(&BUF, 0 - 1);
+    var p8: *u8 = &BUF + 1;
+    var s8: *i8 = &BUF + 1;
+    assert_eq(*s8, 0 - 1, "*i8: the byte 0xFF reads -1 (sign-extended)");
+    assert_eq(*p8, 255, "*u8: the byte 0xFF reads 255 (zero-extended)");
+    var p16: *u16 = &BUF + 2;
+    var s16: *i16 = &BUF + 2;
+    assert_eq(*s16, 0 - 1, "*i16: 0xFFFF reads -1");
+    assert_eq(*p16, 65535, "*u16: 0xFFFF reads 65535");
+    var p32: *u32 = &BUF + 4;
+    var s32: *i32 = &BUF + 4;
+    assert_eq(*s32, 0 - 1, "*i32: 0xFFFFFFFF reads -1");
+    assert_eq(*p32, 0xFFFFFFFF, "*u32: 0xFFFFFFFF reads 4294967295");
+    zero();
+    var q8: *i8 = &BUF + 3;
+    *q8 = 0 - 2;
+    assert_eq(load8(&BUF + 3), 254, "*i8: *p = -2 stores the byte 0xFE");
+    assert_eq(load8(&BUF + 4) + load8(&BUF + 2), 0, "*i8: bytes 2 and 4 untouched");
+    var q16: *u16 = &BUF + 8;
+    *q16 = 0x1234;
+    assert_eq(load64(&BUF + 8), 0x1234, "*u16: *p = v stores 2 bytes");
+    var q32: *i32 = &BUF + 16;
+    store64(&BUF + 16, 0x7777777700000000);
+    *q32 = 0 - 3;
+    assert_eq(load32(&BUF + 16), 4294967293, "*i32: *p = -3 is bytes 16..19");
+    assert_eq(load32(&BUF + 20), 0x77777777, "*i32: bytes 20..23 untouched (a word store zeroed them)");
+    var u8p: *u8 = &BUF + 24;
+    *u8p = 0x1FF;
+    assert_eq(load16(&BUF + 24), 0xFF, "*u8: *p = 0x1FF keeps the low byte; byte 25 untouched");
+    assert_eq(BUF_CAN, 0x5A5A5A5A5A5A5A5A, "local widths: the canary after BUF");
+    return 0;
+}
+
+# ---- D1b: every compound operator through a narrow `*T`: the element loaded at its width, the
+# result wrapped at it ----
+fn ops_i8(): i64 {
+    zero();
+    var p: *i8 = &BUF + 1;
+    *p = 20;
+    *p += 5;   assert_eq(*p, 25, "*i8 +=");
+    *p -= 3;   assert_eq(*p, 22, "*i8 -=");
+    *p *= 3;   assert_eq(*p, 66, "*i8 *=");
+    *p /= 4;   assert_eq(*p, 16, "*i8 /=");
+    *p %= 10;  assert_eq(*p, 6, "*i8 %=");
+    *p <<= 4;  assert_eq(*p, 96, "*i8 <<=");
+    *p >>= 2;  assert_eq(*p, 24, "*i8 >>=");
+    *p |= 3;   assert_eq(*p, 27, "*i8 |=");
+    *p &= 13;  assert_eq(*p, 9, "*i8 &=");
+    *p ^= 6;   assert_eq(*p, 15, "*i8 ^=");
+    *p -= 28;  assert_eq(*p, 0 - 13, "*i8 -= below zero");
+    *p >>>= 1; assert_eq(*p, 0 - 7, "*i8 >>>= (arithmetic, on the sign-extended element)");
+    *p += 0 - 122;
+    assert_eq(*p, 127, "*i8 += wraps past -128");
+    assert_eq(load8(&BUF) + load8(&BUF + 2), 0, "*i8 OP=: bytes 0 and 2 untouched");
+    return 0;
+}
+fn ops_u8(): i64 {
+    zero();
+    var p: *u8 = &BUF + 1;
+    *p = 20;
+    *p += 5;   assert_eq(*p, 25, "*u8 +=");
+    *p *= 3;   assert_eq(*p, 75, "*u8 *=");
+    *p -= 80;  assert_eq(*p, 251, "*u8 -= wraps at 0");
+    *p >>>= 1; assert_eq(*p, 125, "*u8 >>>= (the element is zero-extended)");
+    *p += 200; assert_eq(*p, 69, "*u8 += wraps at 256");
+    *p <<= 3;  assert_eq(*p, 40, "*u8 <<= keeps 8 bits");
+    assert_eq(load8(&BUF) + load8(&BUF + 2), 0, "*u8 OP=: bytes 0 and 2 untouched");
+    return 0;
+}
+fn ops_16_32(): i64 {
+    zero();
+    var a: *i16 = &BUF + 2;
+    *a = 30000;
+    *a += 5000;
+    assert_eq(*a, 0 - 30536, "*i16 += wraps past 32767");
+    *a /= 2;
+    assert_eq(*a, 0 - 15268, "*i16 /= on the sign-extended element");
+    var b: *u16 = &BUF + 2;
+    assert_eq(*b, 50268, "*u16: the same bytes, zero-extended");
+    *b ^= 0xFFFF;
+    assert_eq(*b, 15267, "*u16 ^=");
+    assert_eq(load16(&BUF) + load16(&BUF + 4), 0, "*i16 / *u16 OP=: the neighbours untouched");
+    var c: *i32 = &BUF + 8;
+    *c = 0x7FFFFFFF;
+    *c += 1;
+    assert_eq(*c, 0 - 2147483648, "*i32 += wraps past 2^31 - 1");
+    *c >>= 4;
+    assert_eq(*c, 0 - 134217728, "*i32 >>= keeps the element's 32 bits");
+    var d: *u32 = &BUF + 8;
+    *d %= 1000;
+    assert_eq(*d, 568, "*u32 %= on the zero-extended element (4160749568 % 1000)");
+    assert_eq(load32(&BUF + 12), 0, "*i32 / *u32 OP=: bytes 12..15 untouched");
+    return 0;
+}
+
+# ---- D2: parameters — a `*u8` store leaves its neighbours; a `*i16` read is the element ----
+fn put8(p: *u8, v): i64 {
+    *p = v;
+    *p += 1;
+    return *p;
+}
+fn get16(p: *i16): i64 { return *p; }
+fn params(): i64 {
+    zero();
+    store64(&BUF, 0x1111111111111111);
+    assert_eq(put8(&BUF + 3, 0x40), 0x41, "parameter *u8: *p = v; *p += 1; return *p");
+    assert_eq(load64(&BUF), 0x1111111141111111, "parameter *u8: the seven neighbours untouched");
+    store16(&BUF + 10, 0x8001);
+    assert_eq(get16(&BUF + 10), 0 - 32767, "parameter *i16: return *p sign-extends");
+    return 0;
+}
+
+# ---- D3: a `*i32` global — read, `=`, `OP=` ----
+fn globals(): i64 {
+    zero();
+    G32 = &BUF + 4;
+    store64(&BUF, 0x2222222222222222);
+    store64(&BUF + 8, 0x3333333333333333);
+    *G32 = 0 - 9;
+    *G32 *= 3;
+    assert_eq(*G32, 0 - 27, "global *i32: *G = -9; *G *= 3");
+    assert_eq(load32(&BUF), 0x22222222, "global *i32: bytes 0..3 untouched");
+    assert_eq(load64(&BUF + 8), 0x3333333333333333, "global *i32: bytes 8..15 untouched");
+    return 0;
+}
+
+# ---- D4: `*T` fields — of a local, through a `*H` parameter, nested, `self.p`, a call's struct ----
+struct H { n; p: *u16; s: *i8; }
+struct W { h: H; k; }
+impl H {
+    fn bump(self): i64 {
+        *self.p += 7;
+        return *self.p;
+    }
+}
+fn mk(q: *u16): H {
+    var h: H;
+    h.n = 0;
+    h.p = q;
+    h.s = q;
+    return h;
+}
+fn via(hp: *H): i64 {
+    *hp.p = 0xFFFE;
+    return *hp.s;
+}
+fn fields(): i64 {
+    zero();
+    store64(&BUF + 8, 0x4444444444444444);
+    var h: H;
+    h.n = 0;
+    h.p = &BUF + 10;
+    h.s = &BUF + 10;
+    *h.p = 0xABCD;
+    assert_eq(load64(&BUF + 8), 0x44444444ABCD4444, "field *u16: *h.p = v stores 2 bytes");
+    *h.p -= 0xCD;
+    assert_eq(*h.p, 0xAB00, "field *u16: *h.p -= v at the element");
+    assert_eq(via(&h), 0 - 2, "a *H parameter's fields: *hp.p = 0xFFFE; *hp.s reads -2");
+    var w: W;
+    w.k = 0;
+    w.h = h;
+    assert_eq(*w.h.p, 0xFFFE, "nested field: *w.h.p");
+    assert_eq(h.bump(), 5, "method: *self.p += 7 wraps the u16 (0xFFFE + 7)");
+    assert_eq(*mk(&BUF + 10).p, 5, "a call's struct result: *mk(q).p");
+    *mk(&BUF + 10).p = 9;
+    assert_eq(load64(&BUF + 8), 0x4444444400094444, "*mk(q).p = 9 stores through the field (2 bytes)");
+    return 0;
+}
+
+# ---- D5: calls declared `: *T` — direct, generic, method — read, `=`, `OP=` ----
+fn at32(k): *i32 { return &BUF + k * 4; }
+fn gat<T>(k): *T { return &BUF + k * sizeof(T); }
+struct Box { base; }
+impl Box {
+    fn at(self, k): *u8 { return self.base + k; }
+}
+fn calls(): i64 {
+    zero();
+    store64(&BUF + 8, 0x5555555555555555);
+    *at32(2) = 0 - 1;
+    assert_eq(load64(&BUF + 8), 0x55555555FFFFFFFF, "*f() = v through a `: *i32` call stores 4 bytes");
+    assert_eq(*at32(2), 0 - 1, "*f() reads the element, sign-extended");
+    *at32(2) += 3;
+    assert_eq(*at32(2), 2, "*f() += 3");
+    *gat<i16>(6) = 0 - 100;
+    assert_eq(*gat<i16>(6), 0 - 100, "*g<i16>(k): a generic call's `: *T` at its T");
+    assert_eq(load64(&BUF + 8), 0x5555FF9C00000002, "*g<i16>(k) = v stores 2 bytes");
+    var b: Box;
+    b.base = &BUF;
+    *b.at(9) = 0x1FF;
+    assert_eq(*b.at(9), 0xFF, "*o.m(k) through a method declared `: *u8`: one byte");
+    assert_eq(load64(&BUF + 8), 0x5555FF9C0000FF02, "*o.m(k) = v leaves the other bytes");
+    return 0;
+}
+
+# ---- D6: pointer arithmetic keeps the element — `*(p + n)`, `*(p - n)`, `*(n + p)`, parentheses ----
+fn arith(): i64 {
+    zero();
+    var p: *u8 = &BUF + 4;
+    *(p + 1) = 0x81;
+    *(p - 1) = 0x7F;
+    assert_eq(load32(&BUF + 2), 0x81007F00, "*u8: *(p + 1) and *(p - 1) store one byte each");
+    assert_eq(*(p + 1), 0x81, "*u8: *(p + 1) reads one byte");
+    var s: *i8 = p;
+    assert_eq(*(s + 1), 0 - 127, "*i8: *(s + 1) sign-extends");
+    var h: *i16 = &BUF + 16;
+    *(2 + h) = 0 - 5;
+    assert_eq(*(h + 2), 0 - 5, "*i16: *(2 + h) is *(h + 2) (n + p keeps a 2-byte step's element)");
+    assert_eq(load64(&BUF + 16), 0x0000FFFB00000000, "*i16: *(2 + h) = v stores bytes 20..21");
+    store16(&BUF + 18, 0xFFF8);
+    *((h + 1)) += 0x10;
+    assert_eq(load16(&BUF + 18), 8, "*i16: *((h + 1)) += v wraps at the element (nested parentheses)");
+    assert_eq(load16(&BUF + 20), 0xFFFB, "*i16: *((h + 1)) += v carries nothing into element 2");
+    *(h + 3 - 1) -= 1;
+    assert_eq(*(h + 2), 0 - 6, "*i16: *(h + 3 - 1) -= 1");
+    return 0;
+}
+
+# ---- D7: f32 — the element is its 4 bytes and an f32 value; an f64 into it rounds ----
+fn f32s(): i64 {
+    zero();
+    var p: *f32 = &BUF;
+    *p = 1.5;
+    assert_eq(load32(&BUF), 0x3FC00000, "*f32: *p = 1.5 stores the binary32 bits");
+    assert_eq(load32(&BUF + 4), 0, "*f32: *p = 1.5 stores 4 bytes");
+    var q: f32 = 0.25;
+    *p += q;
+    assert_eq(load32(&BUF), 0x3FE00000, "*f32: *p += q stays single precision (1.75)");
+    *p *= q;
+    assert_eq(load32(&BUF), 0x3EE00000, "*f32 *= (0.4375)");
+    var d: f64 = 3.0;
+    *(p + 1) = d;
+    assert_eq(load32(&BUF + 4), 0x40400000, "*f32: an f64 variable stored rounds to f32 (3.0)");
+    *(p + 2) = d * 0.1;
+    assert_eq(load32(&BUF + 8), 0x3E99999A, "*f32: an f64 expression stored rounds (0.3)");
+    var y: f32 = *p;
+    assert_eq(load32(&y), 0x3EE00000, "*f32: var y: f32 = *p copies the bits");
+    assert(*p < *(p + 1), "*f32: *p < *(p + 1) is an f32 compare");
+    var z: f32 = *p + *(p + 1);
+    assert_eq(load32(&z), 0x405C0000, "*f32: *p + *(p + 1) is an f32 add (3.4375)");
+    var n: f32 = -*(p + 1);
+    assert_eq(load32(&n), 0xC0400000, "*f32: -*(p + 1) negates in single precision");
+    assert_eq(load32(&BUF + 12), 0, "*f32: element 3 untouched");
+    return 0;
+}
+
+# ---- D8: the 8-byte pointees keep the untyped word — `*i64`, `*u64`, `*f64`, `*bool` ----
+fn words(): i64 {
+    zero();
+    var a: *i64 = &BUF;
+    *a = 0 - 2;
+    assert_eq(*a, 0 - 2, "*i64: the word");
+    var u: *u64 = &BUF;
+    *u += 3;
+    assert_eq(load64(&BUF), 1, "*u64 +=: the word");
+    var d: *f64 = &BUF + 8;
+    var h: f64 = 1.5;
+    store64(&BUF + 8, load64(&h));
+    assert_eq(*d, 0x3FF8000000000000, "*f64: *d is the untyped word (its bits); d[0] is the typed spelling");
+    var b: *bool = &BUF + 16;
+    store64(&BUF + 16, 0x100);
+    assert_eq(*b, 0x100, "*bool: *b is the whole word");
+    return 0;
+}
+
+# ---- D9: the classic-for step through a narrow `*T` ----
+fn steps(): i64 {
+    zero();
+    store64(&BUF, 0x6666666666666666);
+    var p: *i16 = &BUF + 2;
+    *p = 0;
+    var n = 0;
+    for (n = 0; n < 5; *p += 1) { n = n + 1; }
+    assert_eq(*p, 5, "for step: *p += 1 through a *i16");
+    assert_eq(load64(&BUF), 0x6666666600056666, "for step: the other six bytes untouched");
+    var c: *u8 = &BUF + 7;
+    for (n = 0; n < 3; *c = *c + 100) { n = n + 1; }
+    assert_eq(load8(&BUF + 7), (0x66 + 300) & 255, "for step: *c = *c + 100 wraps at the byte");
+    return 0;
+}
+
+# ---- D10: a generic `*T` at each T ----
+fn gload<T>(p: *T): T { return *p; }
+fn gstore<T>(p: *T, v: T): i64 {
+    *p = v;
+    *p += v;
+    return 0;
+}
+fn generics(): i64 {
+    zero();
+    store64(&BUF, 0x7777777777777777);
+    gstore<i32>(&BUF, 0 - 6);
+    assert_eq(gload<i32>(&BUF), 0 - 12, "generic *T at T = i32: *p = v; *p += v, sign-extended");
+    assert_eq(load32(&BUF + 4), 0x77777777, "generic *T at T = i32: bytes 4..7 untouched");
+    gstore<i8>(&BUF + 5, 100);
+    assert_eq(gload<i8>(&BUF + 5), 0 - 56, "generic *T at T = i8: 100 + 100 wraps at the byte (-56)");
+    assert_eq(load32(&BUF + 4), 0x7777C877, "generic *T at T = i8: one byte stored");
+    return 0;
+}
+
+# ---- D11: a closure reads and writes through a captured `*T` ----
+fn captures(): i64 {
+    zero();
+    var p: *u16 = &BUF + 2;
+    *p = 40000;
+    var rd = |x| *p + x;
+    assert_eq(fncall1(rd, 1), 40001, "capture *u16: *p + 1, zero-extended");
+    var wr = |x| { *p = 0 - x; *p -= 1; return *p; };
+    assert_eq(fncall1(wr, 1), 65534, "capture *u16: *p = -1; *p -= 1");
+    assert_eq(load64(&BUF), 0xFFFE0000, "capture *u16: wrote the shared pointee's 2 bytes only");
+    return 0;
+}
+
+# ---- D12: every other operand is the WORD it was — the narrow rule reaches only the operands the
+# compiler knows to be a narrow `*T` ----
+struct Hn { n; p: *i32; k; }   # 24 bytes: cx returns a struct of more than 16 through memory
+fn mkn(q: *i32): Hn {
+    var h: Hn;
+    h.n = q;
+    h.p = q;
+    h.k = 0;
+    return h;
+}
+fn wordforms(): i64 {
+    zero();
+    var q: *i32 = &BUF;
+    var w = q;
+    *w = 7;
+    assert_eq(load64(&BUF), 7, "untyped address: var w = q; *w = 7 stores a word");
+    store64(&BUF, 0xAAAAAAAA00000001);
+    assert_eq(*w, 0xAAAAAAAA00000001, "untyped address: *w reads a word");
+    assert_eq(*mkn(q).n, 0xAAAAAAAA00000001, "a call result's untyped field (its `*i32` argument's scale is no type)");
+    var m = 0 - 1;
+    assert_eq(*(m & q), 0xAAAAAAAA00000001, "a bitwise result: *(m & q) reads a word");
+    assert_eq(*(-(-q)), 0xAAAAAAAA00000001, "a negation: *(-(-q)) reads a word");
+    assert_eq(*(~(~q)), 0xAAAAAAAA00000001, "a complement: *(~(~q)) reads a word");
+    assert_eq(*(0 | q), 0xAAAAAAAA00000001, "a bitwise or with the pointer on the right reads a word");
+    assert_eq(*((m & q) + 0), 0xAAAAAAAA00000001, "a bitwise result as the left of `+`: still a word");
+    assert_eq(*(0 + (m & q)), 0xAAAAAAAA00000001, "a bitwise result as the right of `n +`: still a word");
+    assert_eq(*load64(&w), 0xAAAAAAAA00000001, "a builtin's result: *load64(&w) reads a word");
+    var c = 1;
+    assert_eq(*(if (c > 0) { q } else { w }), 0xAAAAAAAA00000001, "an if-expression with an untyped branch: a word");
+    assert_eq(*(if (c > 0) { m & q } else { q }), 0xAAAAAAAA00000001, "an if-expression with a bitwise branch: a word");
+    var pp: **i32 = &q;
+    **pp = 3;
+    assert_eq(load64(&BUF), 3, "**pp: the inner pointer carries no element, so a word store");
+    return 0;
+}
+
+# ---- D13: an if-expression whose branches are both `*i32` keeps the element ----
+fn ifexpr(): i64 {
+    zero();
+    store64(&BUF, 0x8888888888888888);
+    store64(&BUF + 8, 0x1234567812345678);
+    var a: *i32 = &BUF;
+    var b: *i32 = &BUF + 4;
+    var c = 0;
+    *(if (c > 0) { a } else { b }) = 0 - 1;
+    assert_eq(load64(&BUF), 0xFFFFFFFF88888888, "if-expression of two *i32: a 4-byte store");
+    assert_eq(load64(&BUF + 8), 0x1234567812345678, "if-expression of two *i32: bytes 8..15 untouched");
+    assert_eq(*(if (c > 0) { a } else { b }), 0 - 1, "if-expression of two *i32: the element read, sign-extended");
+    return 0;
+}
+
+# ---- D14: a byte string walked through `*u8` — the read is one character, a condition tests it ----
+fn slen(s: *u8): i64 {
+    var n = 0;
+    while (*(s + n) != 0) { n = n + 1; }
+    return n;
+}
+fn strings(): i64 {
+    zero();
+    store64(&BUF, 0x4847464544434241);   # "ABCDEFGH"
+    store8(&BUF + 3, 0);
+    assert_eq(slen(&BUF), 3, "*u8 string: *(s + n) != 0 stops at the NUL byte");
+    var p: *u8 = &BUF + 3;
+    var hit = 0;
+    if (*p) { hit = 1; }
+    assert_eq(hit, 0, "*u8: if (*p) tests the byte (0), not the word");
+    var k = 0;
+    var t: *u8 = &BUF;
+    while (*t) { k = k + *t; t = t + 1; }
+    assert_eq(k, 0x41 + 0x42 + 0x43, "*u8: while (*t) sums the characters before the NUL");
+    return 0;
+}
+
+# ---- D15: the address is evaluated once — `*(p + f()) OP= v` calls f once ----
+var CALLS = 0;
+fn nxt(): i64 {
+    CALLS = CALLS + 1;
+    return CALLS;
+}
+fn once(): i64 {
+    zero();
+    store64(&BUF, 0x7777777777777777);
+    store16(&BUF + 2, 0xFFFF);
+    CALLS = 0;
+    var p: *u16 = &BUF;
+    *(p + nxt()) += 1;
+    assert_eq(CALLS, 1, "*(p + f()) += v evaluates f once");
+    assert_eq(load64(&BUF), 0x7777777700007777, "*(p + f()) += v: element 1 wraps, no carry into element 2");
+    return 0;
+}
+
+assert_eq(repro(), 0, "R0: the issue's repro returns 0 (it returned 14: a word store, and 1.5's f64 bits)");
+local_widths();
+ops_i8();
+ops_u8();
+ops_16_32();
+params();
+globals();
+fields();
+calls();
+arith();
+f32s();
+words();
+steps();
+generics();
+captures();
+wordforms();
+ifexpr();
+strings();
+once();
+
+# ---- top level: statements through a global `*i16` ----
+zero();
+store64(&BUF, 0x9999999999999999);
+G16 = &BUF + 2;
+*G16 = 0 - 2;
+*G16 *= 21;
+assert_eq(*G16, 0 - 42, "top level: *G = -2; *G *= 21 through a global *i16");
+assert_eq(load64(&BUF), 0x99999999FFD69999, "top level: bytes 2..3 only");
+var r = assert_summary();
