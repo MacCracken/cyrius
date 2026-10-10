@@ -2443,9 +2443,11 @@ fn _tok_ends_arg(S, ti): i64 {
 #     they are operators (`b = A < B`), so a default is skipped with `( [ {` balance only. A walker
 #     that counted `<` there would lose the list's end.
 #   * In an ARGUMENT list a closure's `|a, b|` bars, at an argument's start (or after a `name:`
-#     label), hold a comma that separates nothing. Every scanner that numbers or counts a call's
+#     label), hold a comma that separates nothing, and so does an explicit generic call's type
+#     argument list (`pk<i64, i64>(1, 2)`). Every scanner that numbers or counts a call's
 #     arguments steps by `_arg_next` — `_CALL_ARGC_PEEK`, `_call_arg_start` and
-#     `_tc_str_literal_arg` counted that comma until the closure-comma fix (CHANGELOG [6.7.7]).
+#     `_tc_str_literal_arg` counted the closure's comma until the closure-comma fix, and every
+#     client counted the type arguments' until the generic-comma fix (CHANGELOG [6.7.7]).
 # At the end of input each returns the EOF token, never its start, so a walker that `continue`s
 # from the result always moves. CHANGELOG [6.7.7]
 
@@ -2520,11 +2522,20 @@ fn _pd_label_at(S, ti): i64 {
     if (TOKTYP(S, ti + 1) != 49) { return 0; }
     return 1;
 }
-# The depth-0 `,` or `)` that ends the call argument whose first token is `i` (just past the `(` or
-# a `,`), or the EOF token. A closure's `|..|` bars at its start, or after its label, are stepped
-# over whole (`||` is one token, with no bars; a closure's parameters are untyped, so no `:`) —
-# EVERY leading head: a body that opens with `|` or `||` is another closure literal (there is no
-# unary `|`), so `|a| |b, d| ..` holds no argument separator. CHANGELOG [6.7.7]
+# The depth-0 `,` or `)` that ends the call argument (or tuple element) whose first token is `i`
+# (just past the `(` or a `,`), or the EOF token. A closure's `|..|` bars at its start, or after its
+# label, are stepped over whole (`||` is one token, with no bars; a closure's parameters are
+# untyped, so no `:`) — EVERY leading head: a body that opens with `|` or `||` is another closure
+# literal (there is no unary `|`), so `|a| |b, d| ..` holds no argument separator.
+# ⛔ 6.7.7 — and a comma inside an explicit generic call's type arguments ends nothing: a generic
+# call that starts before it and opens its `(` past it (`_arg_gen_past`) is stepped over whole, and
+# the walk resumes after its `)`. A comparison `a < b, c > d` keeps its comma: `_tup_gopen` answers
+# only for a KNOWN generic fn whose list resolves as types and closes right before a `(`. Only a
+# comma can lie inside a type-argument list, so an argument ending at `)` is never re-scanned. Until
+# this, B4's `_tup_item_end` alone stepped over it (now folded in here: one walker), so `return
+# w(pk<i64, i64>(1, 2));` into `fn w(a, b = 3)` was an `internal:` error, `w(b: pk<i64, i64>(1, 2),
+# a: 1)` "a positional argument cannot follow a named one", and `show(s, pk<i64, i64>(1, 2))` was
+# not routed to `show_str` (silent since 6.7.6). CHANGELOG [6.7.7]
 fn _arg_next(S, i): i64 {
     var q = i;
     if (_pd_label_at(S, q) == 1) { q = q + 2; }
@@ -2538,7 +2549,28 @@ fn _arg_next(S, i): i64 {
             if (TOKTYP(S, q) == 35) { q = q + 1; }
         } else { go = 0; }
     }
-    return _tok_item_end(S, q);
+    var e = _tok_item_end(S, q);
+    while (TOKTYP(S, e) == 31) {
+        var g = _arg_gen_past(S, q, e);
+        if (g < 0) { return e; }
+        q = _call_close(S, g) + 1;
+        e = _tok_item_end(S, q);
+    }
+    return e;
+}
+# The `(` of an explicit generic call `name<..>(` that starts in [q, e) and opens PAST `e` — so `e`
+# is a comma inside its type arguments — or -1. (One nested inside a group there is balanced whole.)
+fn _arg_gen_past(S, q, e): i64 {
+    while (q < e) {
+        if (TOKTYP(S, q) == 2) {
+            if (TOKTYP(S, q + 1) == 19) {
+                var o = _tup_gopen(S, q);
+                if (o > e) { return o; }
+            }
+        }
+        q = q + 1;
+    }
+    return 0 - 1;
 }
 # 1 when an argument of the call whose `(` is token `open` is named (`f(1, c: 3)`).
 fn _pd_named_at(S, open): i64 {

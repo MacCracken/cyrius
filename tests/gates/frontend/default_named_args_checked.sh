@@ -60,9 +60,26 @@
 #      sibling's fn called by name, a default naming a sibling's const: --syntax-only, then `cyrius
 #      lint` on a hermetic CYRIUS_HOME); AS1 CYRIUS_ASYNC=1; N-cl a named argument's label in a
 #      closure body is not a read (no capture: in a fn, and at top level after the callee)
+#   GC THE ARGUMENT WALKER STEPS OVER AN EXPLICIT GENERIC CALL'S TYPE ARGUMENTS (`_arg_next`; B4's
+#      `_tup_item_end` folded in — one walker). Each row read `pk<i64, i64>(..)`'s comma as an
+#      argument boundary on the merged 6.7.7 compiler: GC1 / GC2 B6's two repros verbatim (the
+#      tail arm's "internal: ... short of its defaults" through `_pd_call_fills`; "a positional
+#      argument cannot follow a named one" through `_pd_nscan`); GC3 the overload repro verbatim
+#      (`_CALL_ARGC_PEEK`: routed to `show_str`, 2 — it returned 1, silent since 6.7.6); GC4 the
+#      tail divert of a string literal into a `: Str` parameter (`_tc_str_literal_arg`); GC5 the
+#      arity error's count after a label (`_pd_nargs`: "got 4", it said 5); GC6 an explicit generic
+#      call as a by-value struct argument adds no copy (`_later_args_may_write`: the size of
+#      `rd(mk<i64, i64>(1, 2), n)` equals `rd(mk(1, 2), n)`'s — a false copy since the lane's
+#      by-value fix, never on the merged compiler, which copies nothing). Controls — a comparison
+#      `a < b, c > (d)` keeps its comma (`a` is no generic fn: `_tup_gopen` looks the name up, as
+#      `_tup_item_end` did): GC7 `return slc(a < b, c > (d), "hello")` still wraps the literal
+#      (argument 2), GC8 `sh3(s, a < b, c > (d))` is still routed to `sh3_str` (3 arguments). The
+#      runtime half is tests/tcyr/crossos/closure_argument_commas.tcyr (AC below).
 #   A  ANTI-VACUOUS: the crossos tcyr built and run — x86 plain, CYRIUS_IR=3 and CYRIUS_DCE=1, then
 #      aarch64 (qemu), cx (cxvm) and PE (wine), each with the full assertion count (cx: less the rows
-#      under `#ifndef CYRIUS_TARGET_CX`, derived)
+#      under `#ifndef CYRIUS_TARGET_CX`, derived); AC the same six legs for
+#      crossos/closure_argument_commas.tcyr, the walker's runtime rows (closure bars, generic
+#      type arguments)
 #
 # MUTATION LEDGER (2026-10-09; each a one-edit scratch COPY of the tree, its build/cycc rebuilt from
 # the mutated src, then this gate and the crossos tcyr run from the copy):
@@ -143,6 +160,15 @@
 #                                                          include lib/alloc.cyr"; exit 139), the tcyr
 #                                                          exit 139 on x86 (plain / IR=3 / DCE) and
 #                                                          aarch64, 5 on PE (A21 at top level)
+#   (the generic-comma fix)
+#   MU5 `_arg_next` without the generic step (`return    -> GC1-GC6; AC refused on every leg (the
+#       _tok_item_end(S, q)`, the pre-fix walker)          internal error first); and, the tuple
+#                                                          walker being this one, tuple_checked.sh's
+#                                                          C3 C4 ZG1-ZG6 ZG10 and its tcyr (A1-A7)
+#   MU6 `_arg_gen_past` reads by shape (`_gcall_syn`,     -> GC7 (exit 122: the raw literal in the
+#       no lookup) instead of `_tup_gopen`                 Str), GC8 (exit 242: not routed); AC refused on
+#                                                          every leg (gc_cmp_infer: "generic 'gx2'
+#                                                          has no i64 ... instance")
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -582,54 +608,86 @@ else
     else ok "S-R5: none of the $R5C compiler-called helpers declares a parameter default ($(grep -c '^FOUND ' "$T/st/r5.out") definitions in lib/)"; fi
 fi
 
-# ── A: the crossos tcyr, every leg, with its full assertion count ────────────────────────────
-TC="$ROOT/tests/tcyr/crossos/default_named_args_values.tcyr"
-WANT=$(grep -cE '^ *assert_eq\(' "$TC" || true)
-[ "$WANT" -ge 100 ] || bad "A0: only $WANT assertions derived from the tcyr (floor 100)"
-# cx has no 9-16 B register-pair struct return: its leg counts without the rows under `#ifndef CYRIUS_TARGET_CX`.
-NCX=$(awk '/^ *#ifndef CYRIUS_TARGET_CX/ { s = 1 } /^ *#endif/ { s = 0 } s && /^ *assert_eq\(/ { n++ } END { print n + 0 }' "$TC")
-tcyr_ok() {   # <label> <output file> <exit> [<want>]
-    w=${4:-$WANT}
-    if [ "$3" -eq 0 ] && grep -q "^$w passed, 0 failed" "$2"; then ok "$1: $w passed"
+# ── GC: an explicit generic call's type arguments separate no arguments ─────────────────────
+PK='fn pk<A, B>(a: A, b: B): i64 { return a * 10 + b; }\nfn w(a, b = 3): i64 { return a + b; }\n'
+exits gc1 15 "GC1: B6's repro: return w(pk<i64, i64>(1, 2)) fills b (_pd_call_fills)" "${PK}fn t(): i64 { return w(pk<i64, i64>(1, 2)); }\nsyscall(60, t());\n"
+exits gc2 13 "GC2: B6's repro: var x = w(b: pk<i64, i64>(1, 2), a: 1) (_pd_nscan)" "${PK}var x = w(b: pk<i64, i64>(1, 2), a: 1);\nsyscall(60, x);\n"
+exits gc3 2 "GC3: the overload repro: show(str_from(\"hi\"), pk<i64, i64>(1, 2)) is routed to show_str (_CALL_ARGC_PEEK)" 'include "lib/syscalls.cyr"\ninclude "lib/alloc.cyr"\ninclude "lib/str.cyr"\nfn pk<A, B>(a: A, b: B): i64 { return a + b; }\nfn show(x, c): i64 { return 1; }\nfn show_str(s: Str, c): i64 { return 2; }\nfn main(): i64 { alloc_init(); return show(str_from("hi"), pk<i64, i64>(1, 2)); }\nsyscall(60, main());\n'
+exits gc4 62 "GC4: return slg(pk<i64, i64>(1, 2), \"hello\") wraps the literal (_tc_str_literal_arg)" 'include "lib/syscalls.cyr"\ninclude "lib/alloc.cyr"\ninclude "lib/str.cyr"\nfn pk<A, B>(a: A, b: B): i64 { return a * 10 + b; }\nfn slg(c, t: Str): i64 { return str_len(t) * 10 + c; }\nfn viaret(): i64 { return slg(pk<i64, i64>(1, 2), "hello"); }\nfn main(): i64 { alloc_init(); return viaret(); }\nsyscall(60, main());\n'
+refused gc5 "'w' expects 1 to 2 arguments, got 4" "GC5: w(1, 2, 3, b: pk<i64, i64>(1, 2)) counts 4 arguments (_pd_nargs)" "${PK}fn main(): i64 { return w(1, 2, 3, b: pk<i64, i64>(1, 2)); }\nsyscall(60, main());\n" "3"
+printf 'struct Big { a: i64; b: i64; c: i64; }\nfn mk<A, B>(a: A, b: B): Big { var r: Big = Big { a, b, 3 }; return r; }\nfn rd(s: Big, z): i64 { return s.a * 10 + s.b + z; }\nfn pg(n): i64 { var r = rd(mk<i64, i64>(1, 2), n); return r; }\nfn pi(n): i64 { var r = rd(mk(1, 2), n); return r; }\nfn zend(): i64 { return 0; }\nsyscall(60, pg(5) * 10 + pi(4) - 186 + zend());\n' > "$T/gc6.cyr"
+rc=0; CYRIUS_SYMS="$T/gc6.syms" "$CC" < "$T/gc6.cyr" > "$T/gc6.bin" 2> "$T/gc6.err" || rc=$?
+if [ "$rc" -ne 0 ]; then bad "GC6: the probe did not build: $(grep '^error' "$T/gc6.err" | head -1)"
+else
+    chmod +x "$T/gc6.bin"; got=0; timeout 10 "$T/gc6.bin" || got=$?
+    sort "$T/gc6.syms" > "$T/gc6.sorted"
+    gsz() { _se=$(awk -v n="$1" 'f { print a " " $1; exit } $2 == n { a = $1; f = 1 }' "$T/gc6.sorted"); [ -n "$_se" ] && echo $(( 0x${_se#* } - 0x${_se% *} )); }
+    sg=$(gsz pg); si=$(gsz pi)
+    if [ "$got" -ne 0 ]; then bad "GC6: exit $got, want 0"
+    elif [ -z "$sg" ] || [ -z "$si" ]; then bad "GC6: the symbol map does not size pg / pi"
+    elif [ "$sg" -eq "$si" ]; then ok "GC6: rd(mk<i64, i64>(1, 2), n) adds no copy ($sg B, as rd(mk(1, 2), n)'s) (_later_args_may_write)"
+    else bad "GC6: rd(mk<i64, i64>(1, 2), n) is $sg B, rd(mk(1, 2), n) $si B — a copy for the type arguments' comma"; fi
+fi
+GCH='include "lib/syscalls.cyr"\ninclude "lib/alloc.cyr"\ninclude "lib/str.cyr"\nfn pk<A, B>(a: A, b: B): i64 { return a * 10 + b; }\n'
+exits gc7 110 "GC7: control: return slc(a < b, c > (d), \"hello\") wraps the literal, argument 2 (a is no generic fn)" "${GCH}"'fn slc(x, y, t: Str): i64 { return str_len(t) * 100 + x * 10 + y; }\nfn r(): i64 { var a = 1; var b = 2; var c = 3; var d = 4; return slc(a < b, c > (d), "hello"); }\nfn main(): i64 { alloc_init(); return r() - 400; }\nsyscall(60, main());\n'
+exits gc8 210 "GC8: control: sh3(s, a < b, c > (d)) is routed to sh3_str (three arguments)" "${GCH}"'fn sh3(x, y, z): i64 { return 1000 + y * 10 + z; }\nfn sh3_str(s: Str, y, z): i64 { return str_len(s) * 100 + y * 10 + z; }\nfn main(): i64 { alloc_init(); var a = 1; var b = 2; var c = 3; var d = 4; var s = str_from("hi"); return sh3(s, a < b, c > (d)); }\nsyscall(60, main());\n'
+
+# ── A / AC: the crossos tcyrs, every leg, with their full assertion counts ──────────────────────
+tcyr_ok() {   # <label> <output file> <exit> <want>
+    if [ "$3" -eq 0 ] && grep -q "^$4 passed, 0 failed" "$2"; then ok "$1: $4 passed"
     else bad "$1: exit $3, $(grep -E 'passed|FAIL|error' "$2" | tr -d '\r' | head -3 | tr '\n' '|')"; fi
 }
-for mode in plain IR3 DCE; do
-    case $mode in
-        plain) env_=""; lbl="A1: x86" ;;
-        IR3) env_="CYRIUS_IR=3"; lbl="A2: x86, CYRIUS_IR=3" ;;
-        DCE) env_="CYRIUS_DCE=1"; lbl="A3: x86, CYRIUS_DCE=1" ;;
-    esac
-    rc=0; env $env_ "$CC" < "$TC" > "$T/tc_$mode" 2> "$T/tc_$mode.err" || rc=$?
-    if [ "$rc" -ne 0 ]; then bad "$lbl: rc $rc: $(grep '^error' "$T/tc_$mode.err" | head -1)"; continue; fi
-    chmod +x "$T/tc_$mode"; got=0; timeout 60 "$T/tc_$mode" > "$T/tc_$mode.out" 2>&1 || got=$?
-    tcyr_ok "$lbl" "$T/tc_$mode.out" "$got"
-done
+# The cross compilers, built once from this tree.
+A64=0; CX=0
 if command -v qemu-aarch64 > /dev/null 2>&1; then
-    if "$CC" < "$ROOT/src/main_aarch64.cyr" > "$T/cc_a64" 2>/dev/null && [ -s "$T/cc_a64" ]; then
-        chmod +x "$T/cc_a64"
-        if "$T/cc_a64" < "$TC" > "$T/tc.a" 2> "$T/tc.aerr"; then
-            chmod +x "$T/tc.a"; got=0; (cd "$T" && timeout 120 qemu-aarch64 ./tc.a > "$T/tc.aout" 2>&1) || got=$?
-            tcyr_ok "A4: aarch64 (qemu)" "$T/tc.aout" "$got"
-        else bad "A4: aarch64: the tcyr did not compile: $(grep '^error' "$T/tc.aerr" | head -1)"; fi
+    if "$CC" < "$ROOT/src/main_aarch64.cyr" > "$T/cc_a64" 2>/dev/null && [ -s "$T/cc_a64" ]; then chmod +x "$T/cc_a64"; A64=1
     else bad "A4: could not build src/main_aarch64.cyr"; fi
-else echo "  SKIP A4: aarch64 leg — qemu-aarch64 not installed"; skips=$((skips + 1)); fi
+else echo "  SKIP A4 / AC4: aarch64 leg — qemu-aarch64 not installed"; skips=$((skips + 1)); fi
 if "$CC" < "$ROOT/src/main_cx.cyr" > "$T/cc_cx" 2>/dev/null && [ -s "$T/cc_cx" ] && \
-   "$CC" < "$ROOT/programs/cxvm.cyr" > "$T/cxvm" 2>/dev/null && [ -s "$T/cxvm" ]; then
-    chmod +x "$T/cc_cx" "$T/cxvm"
-    if "$T/cc_cx" < "$TC" > "$T/tc.cyx" 2> "$T/tc.cxerr" && [ -s "$T/tc.cyx" ]; then
-        got=0; timeout 120 "$T/cxvm" < "$T/tc.cyx" > "$T/tc.cxout" 2>&1 || got=$?
-        tcyr_ok "A5: cx (cxvm)" "$T/tc.cxout" "$got" "$((WANT - NCX))"
-    else bad "A5: cx: the tcyr did not compile: $(grep '^error' "$T/tc.cxerr" | head -1)"; fi
+   "$CC" < "$ROOT/programs/cxvm.cyr" > "$T/cxvm" 2>/dev/null && [ -s "$T/cxvm" ]; then chmod +x "$T/cc_cx" "$T/cxvm"; CX=1
 else bad "A5: could not build src/main_cx.cyr / programs/cxvm.cyr"; fi
-if command -v wine > /dev/null 2>&1; then
-    if CYRIUS_TARGET_WIN=1 "$CC" < "$TC" > "$T/tc.exe" 2> "$T/tc.werr" && [ -s "$T/tc.exe" ]; then
-        got=0
-        (cd "$T" && WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all \
-            WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' timeout 180 wine ./tc.exe > "$T/tc.wout" 2>/dev/null) || got=$?
-        tcyr_ok "A6: PE (wine)" "$T/tc.wout" "$got"
-    else bad "A6: PE: the tcyr did not compile: $(grep '^error' "$T/tc.werr" | head -1)"; fi
-else echo "  SKIP A6: PE leg — wine not installed"; skips=$((skips + 1)); fi
+command -v wine > /dev/null 2>&1 || { echo "  SKIP A6 / AC6: PE leg — wine not installed"; skips=$((skips + 1)); }
+legs() {   # <tcyr> <label prefix> <floor>: x86 plain / IR=3 / DCE, aarch64, cx, PE
+    TC=$1; P=$2
+    WANT=$(grep -cE '^ *assert_eq\(' "$TC" || true)
+    [ "$WANT" -ge "$3" ] || bad "${P}0: only $WANT assertions derived from $(basename "$TC") (floor $3)"
+    # cx has no 9-16 B register-pair struct return: its leg counts without the rows under `#ifndef CYRIUS_TARGET_CX`.
+    NCX=$(awk '/^ *#ifndef CYRIUS_TARGET_CX/ { s = 1 } /^ *#endif/ { s = 0 } s && /^ *assert_eq\(/ { n++ } END { print n + 0 }' "$TC")
+    for mode in plain IR3 DCE; do
+        case $mode in
+            plain) env_=""; lbl="${P}1: x86" ;;
+            IR3) env_="CYRIUS_IR=3"; lbl="${P}2: x86, CYRIUS_IR=3" ;;
+            DCE) env_="CYRIUS_DCE=1"; lbl="${P}3: x86, CYRIUS_DCE=1" ;;
+        esac
+        rc=0; env $env_ "$CC" < "$TC" > "$T/${P}_$mode" 2> "$T/${P}_$mode.err" || rc=$?
+        if [ "$rc" -ne 0 ]; then bad "$lbl: rc $rc: $(grep '^error' "$T/${P}_$mode.err" | head -1)"; continue; fi
+        chmod +x "$T/${P}_$mode"; got=0; timeout 60 "$T/${P}_$mode" > "$T/${P}_$mode.out" 2>&1 || got=$?
+        tcyr_ok "$lbl" "$T/${P}_$mode.out" "$got" "$WANT"
+    done
+    if [ "$A64" -eq 1 ]; then
+        if "$T/cc_a64" < "$TC" > "$T/$P.a" 2> "$T/$P.aerr"; then
+            chmod +x "$T/$P.a"; got=0; (cd "$T" && timeout 120 qemu-aarch64 "./$P.a" > "$T/$P.aout" 2>&1) || got=$?
+            tcyr_ok "${P}4: aarch64 (qemu)" "$T/$P.aout" "$got" "$WANT"
+        else bad "${P}4: aarch64: the tcyr did not compile: $(grep '^error' "$T/$P.aerr" | head -1)"; fi
+    fi
+    if [ "$CX" -eq 1 ]; then
+        if "$T/cc_cx" < "$TC" > "$T/$P.cyx" 2> "$T/$P.cxerr" && [ -s "$T/$P.cyx" ]; then
+            got=0; timeout 120 "$T/cxvm" < "$T/$P.cyx" > "$T/$P.cxout" 2>&1 || got=$?
+            tcyr_ok "${P}5: cx (cxvm)" "$T/$P.cxout" "$got" "$((WANT - NCX))"
+        else bad "${P}5: cx: the tcyr did not compile: $(grep '^error' "$T/$P.cxerr" | head -1)"; fi
+    fi
+    if command -v wine > /dev/null 2>&1; then
+        if CYRIUS_TARGET_WIN=1 "$CC" < "$TC" > "$T/$P.exe" 2> "$T/$P.werr" && [ -s "$T/$P.exe" ]; then
+            got=0
+            (cd "$T" && WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all \
+                WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' timeout 180 wine "./$P.exe" > "$T/$P.wout" 2>/dev/null) || got=$?
+            tcyr_ok "${P}6: PE (wine)" "$T/$P.wout" "$got" "$WANT"
+        else bad "${P}6: PE: the tcyr did not compile: $(grep '^error' "$T/$P.werr" | head -1)"; fi
+    fi
+}
+legs "$ROOT/tests/tcyr/crossos/default_named_args_values.tcyr" A 100
+legs "$ROOT/tests/tcyr/crossos/closure_argument_commas.tcyr" AC 30
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: default_named_args_checked — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: default_named_args_checked — $skips leg(s) above could not run; every one that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: default_named_args_checked — parameter defaults and named arguments: refusals (R), shapes and tools (S), the count (K), scope / generics / routing (E), tail calls (T), #inline (W), named arguments (N), every backend (A)"
+echo "PASS: default_named_args_checked — parameter defaults and named arguments: refusals (R), shapes and tools (S), the count (K), scope / generics / routing (E), tail calls (T), #inline (W), named arguments (N), every backend (A), the argument walker (GC, AC)"

@@ -1898,39 +1898,12 @@ fn _tup_rchk(S, ti0): i64 {
 }
 # ⛔ 6.7.7 (B4) — THE TUPLE LITERAL `(a, b)`: a `(` group with a comma at its own depth. ONE detector
 # for every position — PARSE_RETURN's multi-value arm, the accepting positions and the stray
-# refusal — so they cannot disagree. A comma inside a nested `( [ {` group separates nothing, nor
-# does one between a closure's `|a, b|` bars at an element's start (B6's argument walker,
-# `_arg_next`), nor one inside an explicit generic call's type arguments (`pk<i64, i64>(1, 2)`,
-# `_gcall_open`). PARSE_RETURN's own paren-depth scan counted both, so `return (|a, b| a + b);` and
-# `return (pk<i64, i64>(1, 2));` were taken for multi-value returns ("expected ','").
-# CHANGELOG [6.7.7]
-# The depth-0 `,` or `)` that ends the element whose first token is `i` (or the EOF token).
-fn _tup_item_end(S, i): i64 {
-    var e = _arg_next(S, i);
-    var q = i;
-    var go = 1;
-    while (go == 1) {
-        var g = _tup_gen_past(S, q, e);
-        if (g < 0) { return e; }
-        q = _call_close(S, g) + 1;
-        e = _tok_item_end(S, q);
-    }
-    return e;
-}
-# The `(` of an explicit generic call `name<..>(` that starts in [q, e) and opens PAST `e` — so `e`
-# is a comma inside its type arguments — or -1. (One nested inside a group there is balanced whole.)
-fn _tup_gen_past(S, q, e): i64 {
-    while (q < e) {
-        if (TOKTYP(S, q) == 2) {
-            if (TOKTYP(S, q + 1) == 19) {
-                var o = _tup_gopen(S, q);
-                if (o > e) { return o; }
-            }
-        }
-        q = q + 1;
-    }
-    return 0 - 1;
-}
+# refusal — so they cannot disagree. Its elements are stepped by `_arg_next`, the one argument
+# walker: a comma inside a nested `( [ {` group separates nothing, nor does one between a closure's
+# `|a, b|` bars at an element's start, nor one inside an explicit generic call's type arguments
+# (`pk<i64, i64>(1, 2)`, `_arg_gen_past`). PARSE_RETURN's own paren-depth scan counted both, so
+# `return (|a, b| a + b);` and `return (pk<i64, i64>(1, 2));` were taken for multi-value returns
+# ("expected ','"). CHANGELOG [6.7.7]
 # ⛔ 6.7.7 (B4 review) — THE DECLARATION ZONE'S PASS 1 READS A GENERIC CALL BY ITS TOKENS. It sizes a
 # zone global (`_tup_gci`) before the fns and structs below it are declared, so `_gcall_open` (a
 # KNOWN generic with resolvable type arguments) did not see `pk<i64, i64>(..)` with `pk` declared
@@ -1974,10 +1947,10 @@ fn _gcall_syn(S, ti): i64 {
 # The commas of the group whose `(` is token `open`: 0 = a parenthesised expression.
 fn _tup_commas(S, open): i64 {
     var n = 0;
-    var q = _tup_item_end(S, open + 1);
+    var q = _arg_next(S, open + 1);
     while (TOKTYP(S, q) == 31) {
         n = n + 1;
-        q = _tup_item_end(S, q + 1);
+        q = _arg_next(S, q + 1);
     }
     return n;
 }

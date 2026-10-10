@@ -2570,7 +2570,7 @@ fn _tup_lit_shape(S, lp, sid): i64 {
         if (t == 31) { _tup_err(S, q, "an empty element in a tuple literal", 0 - 1, 0); return 0; }
         if (t == 11) { _tup_err(S, q - 1, "a trailing comma in a tuple literal", 0 - 1, 0); return 0; }
         n = n + 1;
-        q = _tup_item_end(S, q);
+        q = _arg_next(S, q);
         go = 0;
         if (TOKTYP(S, q) == 31) { q = q + 1; go = 1; }
     }
