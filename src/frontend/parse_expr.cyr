@@ -1566,6 +1566,8 @@ fn _bx_param(S, fi, pc, li, b): i64 {
 fn _inl_param_marks(S, fi, s0, s1, pc): i64 {
     if (pc >= 1) { if (_pbool_get(fi, 0) == 2) { SLINTD(S, s0); } }
     if (pc >= 2) { if (_pbool_get(fi, 1) == 2) { SLINTD(S, s1); } }
+    if (pc >= 1) { _dsc_inl(S, fi, 0, s0); }   # 6.7.8 (D5): a declared scalar, as out of line
+    if (pc >= 2) { _dsc_inl(S, fi, 1, s1); }
     return 0;
 }
 # The name of parameter `ord` of fn `fi`, read from its definition's tokens (the `<..>` of a type

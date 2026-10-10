@@ -1,0 +1,457 @@
+# dyn_objects.tcyr — 6.7.8, the checked `dyn` (bite D5: forming). `o: dyn Show` is an ordinary 16-byte
+# struct of two words {data, vtable} (the user's decisions, 2026-10-07): the compiler forms it from a
+# `*T` it knows, a declared scalar or a literal, builds the vtable from `impl Show for T` — one word per
+# trait member in declaration order, T's own method or T's default instance — and fills it at every
+# forming site. The call through a dyn (`o.show()`) is bite D6; here every dyn is dispatched BY HAND
+# through a wrapper record, which is also what proves the layout: `dd(o)` reads word 0 (the data word),
+# `dk(o, k)` calls slot k of the table word 1 points at with the data word as its one argument.
+#
+#   §forming       every FORM source: `&p` of an inline local / a by-value parameter's copy / an inline
+#                  global, a `*T` local / parameter / global, an untyped impl `self`, a pointer-mode
+#                  handle (local and global), a `*T` field, a call and a method returning `*T`, a
+#                  parenthesised source; the data word is the pointer itself (`dd(o) == &p`)
+#   §scalars       a declared i64 / u64 / u8 / i32 / bool / f64 / f32 / enum / cstring local, global and
+#                  parameter, the literals 5 / -5 / 2.5 / -2.5 / true / 'A'; with `impl Num for i64` AND
+#                  `for u64` a u64 local, global and parameter each pick u64's method — the data word is
+#                  the value; a source whose own argument forms another dyn
+#   §self          `self: *T` and a `self: T` over 8 B (address-passed) take the data word as a pointer
+#   §defaults      a slot is T's default instance (decision 6), whose `self.base()` is T's static call;
+#                  a collision with an inherent `base` takes `T_Trait_base`, never the inherent one
+#   §destinations  a local, a global after the first statement, a declaration-zone global (and a zone
+#                  struct literal copying it), an assignment (bare, wrapped), a classic-for step, a field
+#                  of a local / a global / a record through `*T`, an argument (bare, wrapped, the 6th and
+#                  7th — Win64's stack slots), a tail-position argument (the temp diverts the tail call:
+#                  TC), a `return` (bare, wrapped, in a `defer` fn, forwarded through a dyn-returning call)
+#   §sites         the vtable is filled at EVERY forming site: the site that runs first is the second in
+#                  source order (M-F13)
+#   §records       decision 5's pattern: records holding a dyn field, alloc'd, kept in a Vec, `r.o` set
+#                  through a `*Rec`, dispatched in a loop
+#   §inline        a declared-scalar parameter forms the same in an auto-inlined one-statement fn and an
+#                  `#inline` one (the replay re-stamps the parameter, `_dsc_inl`)
+# The refusals (F1-F11), the zone global in a `kernel;` build and the paren-wrapped destinations of a
+# refused source are compile-time: tests/gates/frontend/dyn_checked.sh. cx runs the whole file
+# (tests/gates/codegen/cx_crossos_rows_run.sh R9).
+#
+# MUTATION LEDGER (2026-10-10, bite D5; each a one-edit scratch copy of src/, its compiler rebuilt, this
+# file run): see the header of tests/gates/frontend/dyn_checked.sh (M-F1 .. M-F13), whose rows and this
+# file's together kill every one.
+include "lib/assert.cyr"
+
+trait Show { fn show(self): i64; fn twice(self): i64 { return self.show() * 2; } }
+struct P { a; b; }
+impl Show for P { fn show(self): i64 { return self.a * 10 + self.b; } }
+impl P {
+    fn me(self): *P { return self; }
+    fn asd(self): dyn Show { var o: dyn Show = self; return o; }
+}
+struct Q8 { v; }
+impl Show for Q8 {
+    fn show(self: *Q8): i64 { return self.v + 500; }
+    fn twice(self): i64 { return 77; }
+}
+struct Big { a; b; c; }
+impl Show for Big { fn show(self: Big): i64 { return self.a * 100 + self.b * 10 + self.c; } }
+struct W { o: dyn Show; }
+struct H { a; o: dyn Show; b; }
+struct H2 { k; pp: *P; }
+struct Rec { id; o: dyn Show; }
+
+# The two words, by hand: word 0 is the data word; word 1 points at the table, slot k at + 8k.
+fn dd(o: dyn Show): i64 {
+    var w: W = W { o };
+    return load64(&w);
+}
+fn dk(o: dyn Show, k): i64 {
+    var w: W = W { o };
+    return callptr(load64(load64(&w + 8) + k * 8), load64(&w));
+}
+fn dk0(o: dyn Show): i64 { return dk(o, 0); }
+
+# ── §forming ─────────────────────────────────────────────────────────────────────────────────────────
+var G0 = P { 1, 2 };
+var GPP: *P = &G0;
+fn gp(): *P { return &G0; }
+fn fq(q: *P): i64 {
+    var o: dyn Show = q;
+    return dk0(o);
+}
+fn fv(q: P): i64 {
+    var o: dyn Show = &q;
+    return dk0(o);
+}
+fn form_local(): i64 {
+    var p = P { 4, 9 };
+    var o: dyn Show = &p;
+    if (dd(o) != &p) { return 0; }
+    return dk0(o) * 100 + dk(o, 1);
+}
+fn form_ptr_local(): i64 {
+    var p = P { 4, 9 };
+    var q: *P = &p;
+    var o: dyn Show = q;
+    if (dd(o) != &p) { return 0; }
+    return dk0(o);
+}
+fn form_handle(): i64 {
+    var h: P = alloc(16);
+    h.a = 7;
+    h.b = 3;
+    var o: dyn Show = h;
+    return dk0(o);
+}
+fn form_field(): i64 {
+    var p = P { 4, 9 };
+    var h = H2 { 5, &p };
+    var o: dyn Show = h.pp;
+    if (dd(o) != &p) { return 0; }
+    return dk0(o);
+}
+fn form_calls(): i64 {
+    var p = P { 4, 9 };
+    var o1: dyn Show = gp();
+    var o2: dyn Show = p.me();
+    var o3: dyn Show = p.asd();
+    if (dd(o2) != &p) { return 0; }
+    if (dd(o3) != &p) { return 0; }
+    return dk0(o1) * 10000 + dk0(o2) * 100 + dk0(o3);
+}
+fn form_wrapped(): i64 {
+    var p = P { 4, 9 };
+    var o: dyn Show = ((&p));
+    return dk0(o);
+}
+fn form_globals(): i64 {
+    var o1: dyn Show = &G0;
+    var o2: dyn Show = GPP;
+    if (dd(o1) != &G0) { return 0; }
+    return dk0(o1) * 100 + dk0(o2);
+}
+
+# ── §scalars ─────────────────────────────────────────────────────────────────────────────────────────
+trait Num { fn num(self): i64; }
+enum Color { Red, Green, Blue }
+impl Num for i64 { fn num(self): i64 { return self + 1000; } }
+impl Num for u64 { fn num(self): i64 { return self + 2000; } }
+impl Num for u8 { fn num(self): i64 { return self + 3000; } }
+impl Num for i32 { fn num(self: i32): i64 { return self + 4000; } }
+impl Num for bool { fn num(self): i64 { return self + 5000; } }
+impl Num for f64 {
+    fn num(self: f64): i64 {
+        var y: f64 = self * 2.0;
+        if (y == 5.0) { return 6000; }
+        if (y == 0.0 - 5.0) { return 6002; }
+        return 6001;
+    }
+}
+impl Num for f32 { fn num(self): i64 { if ((self & 0xFFFFFFFF) == 0x40200000) { return 7000; } return 7001; } }
+impl Num for Color { fn num(self): i64 { return self + 8000; } }
+impl Num for cstring { fn num(self): i64 { return strlen(self) + 9000; } }
+struct WN { o: dyn Num; }
+fn nk(o: dyn Num): i64 {
+    var w: WN = WN { o };
+    return callptr(load64(load64(&w + 8)), load64(&w));
+}
+fn nd(o: dyn Num): i64 {
+    var w: WN = WN { o };
+    return load64(&w);
+}
+var GI: i64 = 7;
+var GU: u64 = 8;
+var GC: Color = Color.Green;
+fn sc_u64(n: u64): i64 {
+    var o: dyn Num = n;
+    return nk(o);
+}
+fn sc_i64(n: i64): i64 {
+    var o: dyn Num = n;
+    return nk(o);
+}
+fn sc_bool(b: bool): i64 {
+    var o: dyn Num = b;
+    return nk(o);
+}
+fn sc_locals(): i64 {
+    var a: i64 = 5;
+    var b: u64 = 6;
+    var c: u8 = 7;
+    var d: i32 = 0 - 8;
+    var e: bool = true;
+    var oa: dyn Num = a;
+    var ob: dyn Num = b;
+    var oc: dyn Num = c;
+    var od: dyn Num = d;
+    var oe: dyn Num = e;
+    if (nd(oa) != 5) { return 1; }
+    if (nk(oa) != 1005) { return 2; }
+    if (nk(ob) != 2006) { return 3; }
+    if (nk(oc) != 3007) { return 4; }
+    if (nk(od) != 3992) { return 5; }
+    if (nk(oe) != 5001) { return 6; }
+    return 42;
+}
+fn sc_float(): i64 {
+    var f: f64 = 2.5;
+    var g: f32 = 2.5;
+    var of: dyn Num = f;
+    var og: dyn Num = g;
+    return nk(of) * 10000 + nk(og);
+}
+fn sc_named(): i64 {
+    var h: Color = Color.Blue;
+    var s: cstring = "abcd";
+    var oh: dyn Num = h;
+    var os: dyn Num = s;
+    return nk(oh) * 10000 + nk(os);
+}
+fn sc_globals(): i64 {
+    var o1: dyn Num = GI;
+    var o2: dyn Num = GU;
+    var o3: dyn Num = GC;
+    return nk(o1) * 100000000 + nk(o2) * 10000 + nk(o3);
+}
+# A source whose own argument forms another dyn (of another trait): the outer pair is read before the
+# source is parsed.
+fn pick(o: dyn Num): *P {
+    if (nk(o) == 1005) { return &G0; }
+    return 0;
+}
+fn nested(): i64 {
+    var n: i64 = 5;
+    var o: dyn Show = pick(n);
+    return dk0(o);
+}
+fn sc_lits(): i64 {
+    var o1: dyn Num = 5;
+    var o2: dyn Num = -5;
+    var o3: dyn Num = 2.5;
+    var o4: dyn Num = -2.5;
+    var o5: dyn Num = true;
+    var o6: dyn Num = 'A';
+    if (nk(o1) != 1005) { return 1; }
+    if (nk(o2) != 995) { return 2; }
+    if (nk(o3) != 6000) { return 3; }
+    if (nk(o4) != 6002) { return 4; }
+    if (nk(o5) != 5001) { return 5; }
+    if (nk(o6) != 1065) { return 6; }
+    return 42;
+}
+
+# ── §self ────────────────────────────────────────────────────────────────────────────────────────────
+fn self_forms(): i64 {
+    var q = Q8 { 9 };
+    var b = Big { 1, 2, 3 };
+    var o1: dyn Show = &q;
+    var o2: dyn Show = &b;
+    return dk0(o1) * 10000 + dk0(o2);
+}
+
+# ── §defaults ────────────────────────────────────────────────────────────────────────────────────────
+trait Tw {
+    fn base(self): i64;
+    fn dbl(self): i64 { return self.base() * 2; }
+    fn tri(self): i64 { return self.base() * 3; }
+}
+struct D1 { k; }
+impl Tw for D1 { fn base(self): i64 { return self.k; } fn tri(self): i64 { return 7; } }
+struct C1 { k; }
+impl C1 { fn base(self): i64 { return 999; } }
+impl Tw for C1 { fn base(self): i64 { return self.k; } }
+struct WT { o: dyn Tw; }
+fn tk(o: dyn Tw, k): i64 {
+    var w: WT = WT { o };
+    return callptr(load64(load64(&w + 8) + k * 8), load64(&w));
+}
+fn defaults(): i64 {
+    var d = D1 { 4 };
+    var o: dyn Tw = &d;
+    return tk(o, 0) * 10000 + tk(o, 1) * 100 + tk(o, 2);
+}
+fn collision(): i64 {
+    var c = C1 { 6 };
+    var o: dyn Tw = &c;
+    return tk(o, 0);
+}
+
+# ── §destinations ────────────────────────────────────────────────────────────────────────────────────
+var P0 = P { 1, 2 };
+var P1 = P { 3, 4 };
+var Z: dyn Show = &P0;
+var ZH = H { 5, Z, 6 };
+fn take6(a, b, c, d, e, o: dyn Show): i64 { return a + b + c + d + e + dk0(o); }
+fn take7(a, b, c, d, e, f, o: dyn Show): i64 { return a + b + c + d + e + f + dk0(o); }
+fn mkr(q: *P): dyn Show { return q; }
+fn mkw(q: *P): dyn Show { return ((q)); }
+fn mkd(q: *P): dyn Show {
+    defer { syscall(1, 1, "", 0); }
+    return q;
+}
+fn fwd(q: *P): dyn Show { return mkr(q); }
+fn d_asg(): i64 {
+    var p = P { 4, 9 };
+    var o: dyn Show = &P1;
+    var r = dk0(o);
+    o = &p;
+    r = r * 100 + dk0(o);
+    o = (&P0);
+    return r * 100 + dk0(o);
+}
+fn d_step(): i64 {
+    var p = P { 4, 9 };
+    var o: dyn Show = &P0;
+    var i = 0;
+    var r = 0;
+    for (o = &P1; i < 2; o = &p) {
+        r = r * 100 + dk0(o);
+        i = i + 1;
+    }
+    return r * 100 + dk0(o);
+}
+fn new_h(): *H { return alloc(sizeof(H)); }
+fn d_fields(): i64 {
+    var p = P { 4, 9 };
+    var h = H { 7, Z, 8 };
+    h.o = &p;
+    var r = dk0(h.o) + h.a * 1000 + h.b * 100;
+    var hp: *H = new_h();
+    hp.a = 1;
+    hp.b = 2;
+    hp.o = (&P1);
+    r = r * 10000 + dk0(hp.o) + hp.a * 1000 + hp.b * 100;
+    ZH.o = &P1;
+    return r * 100 + dk0(ZH.o);
+}
+fn d_args(): i64 {
+    var p = P { 4, 9 };
+    var r = dk0(&p);
+    r = r * 100 + dk0((&P1));
+    r = r * 1000 + take6(1, 2, 3, 4, 5, &p);
+    return r * 1000 + take7(1, 2, 3, 4, 5, 6, &P0);
+}
+fn d_rets(): i64 {
+    var p = P { 4, 9 };
+    var r = dk0(mkr(&p));
+    r = r * 100 + dk0(mkw(&P0));
+    r = r * 100 + dk0(mkd(&P1));
+    return r * 100 + dk0(fwd(&p));
+}
+# TC — a dyn formed as a TAIL call's argument lives in this frame's temp: the call diverts (the temp
+# is copied by the callee's prologue only after a `jmp` would have freed it), outside a loop and in one.
+fn tc_a(q: *P, k): i64 {
+    if (k == 0) { return 0; }
+    return tc_b(q, k);
+}
+fn tc_b(o: dyn Show, k): i64 {
+    var x = dk0(o);
+    return x + tc_a(&P1, k - 1);
+}
+# ... and a tail caller with no parameter: the temp sits in the very slots the callee homes its own
+# parameters into, so an undiverted `jmp` hands the callee its own words.
+fn tc_c(): i64 { return tc_b(GPP, 1); }
+fn tc_loop(q: *P, n): i64 {
+    var i = 0;
+    while (i < n) {
+        if (i == n - 1) { return tc_b(q, 1); }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# ── §sites — the site in source order first runs SECOND ──────────────────────────────────────────────
+struct S13 { v; }
+impl Show for S13 { fn show(self): i64 { return self.v + 13; } }
+fn site_first_in_source(q: *S13): i64 {
+    var o: dyn Show = q;
+    return dk0(o);
+}
+fn site_second_in_source(q: *S13): i64 {
+    var o: dyn Show = q;
+    return dk0(o);
+}
+
+# ── §records ─────────────────────────────────────────────────────────────────────────────────────────
+fn new_rec(): *Rec { return alloc(sizeof(Rec)); }
+fn rec_at(v, i): *Rec { return vec_get(v, i); }
+fn mkrec(id, q: *P): *Rec {
+    var r: *Rec = new_rec();
+    r.id = id;
+    r.o = q;
+    return r;
+}
+fn records(): i64 {
+    var v = vec_new();
+    vec_push(v, mkrec(1, &P0));
+    vec_push(v, mkrec(2, &P1));
+    var big: *Rec = new_rec();
+    big.id = 3;
+    big.o = &P0;
+    vec_push(v, big);
+    var s = 0;
+    var i = 0;
+    while (i < vec_len(v)) {
+        var r: *Rec = rec_at(v, i);
+        s = s * 1000 + r.id * 100 + dk0(r.o);
+        i = i + 1;
+    }
+    return s;
+}
+
+# ── §inline ──────────────────────────────────────────────────────────────────────────────────────────
+fn inl_auto(n: u64): i64 { return nk(n); }
+#inline
+fn inl_forced(n: u64): i64 { return nk(n); }
+fn inl_rows(): i64 { return inl_auto(5) * 10000 + inl_forced(6); }
+
+alloc_init();
+# A global after the first statement.
+var GS: dyn Show = &P1;
+var GS2: dyn Show = (GPP);
+
+var gp1 = P { 4, 9 };
+assert_eq(form_local(), 4998, "§forming `&p` of an inline local: data = &p; slot 0 show, slot 1 default twice");
+assert_eq(form_ptr_local(), 49, "§forming a `*P` local: the data word is the pointer");
+assert_eq(fq(&gp1), 49, "§forming a `q: *P` parameter");
+assert_eq(fv(gp1), 49, "§forming `&q` of a by-value parameter's copy");
+assert_eq(form_handle(), 73, "§forming a pointer-mode handle (`var h: P = alloc(16)`)");
+assert_eq(form_field(), 49, "§forming a `*P` field `h.pp`");
+assert_eq(form_calls(), 124949, "§forming a call returning `*P`, a method returning `*P`, an untyped impl `self`");
+assert_eq(form_wrapped(), 49, "§forming a parenthesised source `((&p))`");
+assert_eq(form_globals(), 1212, "§forming `&G0` of an inline global and a `*P` global");
+assert_eq(dk0(GS), 34, "§forming a global after the first statement");
+assert_eq(dk0(GS2), 12, "§forming a global after the first statement from a wrapped `*P` global");
+
+assert_eq(sc_locals(), 42, "§scalars declared i64 / u64 / u8 / i32 / bool locals: the data word is the value");
+assert_eq(sc_float(), 60007000, "§scalars declared f64 / f32 locals: the value's bits");
+assert_eq(sc_named(), 80029004, "§scalars a declared enum and cstring local");
+assert_eq(sc_globals(), 100720088001, "§scalars declared i64 / u64 / enum globals (u64 picks `impl Num for u64`)");
+assert_eq(sc_u64(9), 2009, "§scalars a declared u64 parameter picks `impl Num for u64`");
+assert_eq(sc_i64(9), 1009, "§scalars a declared i64 parameter");
+assert_eq(sc_bool(true), 5001, "§scalars a declared bool parameter");
+assert_eq(nested(), 12, "§scalars a `*P` call whose argument forms a `dyn Num` from a declared i64");
+assert_eq(sc_lits(), 42, "§scalars the literals 5 / -5 / 2.5 / -2.5 / true / 'A'");
+
+assert_eq(self_forms(), 5090123, "§self `self: *Q8` and `self: Big` (24 B, address-passed) take the data word");
+
+assert_eq(defaults(), 40807, "§defaults slot 0 base, slot 1 T's default instance, slot 2 T's own override");
+assert_eq(collision(), 6, "§defaults a collision with an inherent `base`: the slot is `C1_Tw_base`, never `C1_base`");
+
+assert_eq(dk0(Z), 12, "§destinations a declaration-zone global");
+assert_eq(dk0(ZH.o), 12, "§destinations a zone struct literal copying a zone dyn");
+assert_eq(d_asg(), 344912, "§destinations an assignment (bare, wrapped)");
+assert_eq(d_step(), 344949, "§destinations a classic-for step `o = &p`");
+assert_eq(d_fields(), 7849123434, "§destinations a field: local, through `*H` (wrapped), zone global");
+assert_eq(d_args(), 4934064033, "§destinations an argument (bare, wrapped, the 6th and the 7th)");
+assert_eq(d_rets(), 49123449, "§destinations a return (bare, wrapped, in a `defer` fn, forwarded)");
+assert_eq(tc_a(&gp1, 3), 49 + 34 + 34, "§destinations TC: a tail-position argument diverts the call");
+assert_eq(tc_c(), 12, "§destinations TC: a tail caller with no parameter (its temp in the callee's own slots)");
+assert_eq(tc_loop(&gp1, 3), 49, "§destinations TC: the same tail call inside a loop");
+
+var s13 = S13 { 1 };
+assert_eq(site_second_in_source(&s13), 14, "§sites filled at every site: the second in source order runs first");
+assert_eq(site_first_in_source(&s13), 14, "§sites ... and the first one after it");
+
+assert_eq(records(), 112234312, "§records records holding a dyn, kept in a Vec, `r.o = q` through `*Rec`");
+
+assert_eq(inl_rows(), 20052006, "§inline a declared u64 parameter forms in an auto-inlined and an `#inline` fn");
+
+var r = assert_summary();
+syscall(60, r);

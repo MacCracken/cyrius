@@ -1,5 +1,6 @@
 #!/bin/sh
-# tests/gates/frontend/dyn_checked.sh — 6.7.8 (the checked `dyn` lane, bite D4: the keyword and the type)
+# tests/gates/frontend/dyn_checked.sh — 6.7.8 (the checked `dyn` lane: bite D4, the keyword and the type;
+# bite D5, forming)
 #
 # CHECKED `dyn`. The user's decisions (2026-10-07): `o: dyn Show` is an ordinary 16-byte struct of two
 # words {data, vtable} — ADR-002's one-word model holds; the compiler builds and verifies the vtable from
@@ -8,8 +9,12 @@
 # identifier token named `dyn X` before any prepass records a token index (`_dyn_fold`), registered as a
 # struct of two 8-byte words (" data", " vtable" — no field access reaches them) before any user struct
 # (`_dyn_prepass`), so every struct position takes it unchanged; every position the decisions leave open
-# is refused by name, once per token. Forming a dyn (D5) and calling through one (D6) are later bites:
-# here a dyn value comes from a record's dyn field (heap memory, `get`), the way a program would keep one.
+# is refused by name, once per token. D5 FORMS one: at a destination typed `dyn Tr`, from a `*T` the
+# compiler knows, a declared scalar or a literal (decision 1); the pair (Tr, T) checked once, at its first
+# forming (decision 4: full signatures; decision 2: `self: T` of 8 B or less), its vtable a hidden global
+# filled at every forming site (decision 6: a default's slot is T's instance). The rows that form (TY2,
+# PF, the A legs' tests/tcyr/crossos/dyn_objects.tcyr) dispatch BY HAND — `o.show()` is bite D6. The P rows
+# take a dyn value from a record's dyn field (heap memory, `get`), the way a program would keep one.
 #
 #   K   the reserved word: `var dyn`, `fn dyn`, a field `dyn`, a method `dyn` — "got reserved keyword 'dyn'"
 #   TY  each position compiles (and runs, the two words intact): TY1 a local copy, TY2 a global after the
@@ -41,8 +46,24 @@
 #       reports the reserved word
 #   TT  the tools: `[embed]`'s reserved list holds `dyn` (embed_manifest_refusals.sh derives and checks
 #       it); cyrius-lsp colours `dyn` a keyword (and `dynamo` not); the VS Code grammar lists it
+#   F   (D5) the forming refusals, each once, at the source: F1 an untyped name (a local, a parameter,
+#       a slot a scalar local of another fn left stamped — M-F11's row — a for-in variable); F2 a bare
+#       inline struct (a local, a global); F3 `&` of a pointer / a handle / a scalar / a dyn; F4 a
+#       closure's captured name; F5 any other expression (`alloc(16)`, a string, `&h.p`, `n + 1`, an
+#       enum constant, a call returning i64, `callptr`, a struct literal's element); F6 no `impl Tr for
+#       T` (a literal, a struct); F7 `self: Q` by value, Q of 8 B or less (decision 2); F8 a signature
+#       that differs (a parameter's type, the return type, generic-ness, a `...`, `self: Q`, a scalar's
+#       `self: *T`, a pointer to a scalar) — one report per pair, at its first forming; F9 a `#naked`
+#       slot method (an `async` one cannot be written in an impl); F10 a slot method private to another
+#       file (two files); F11 a FORM at top level into an assignment, a field, an argument
+#   K   (D5) a declaration-zone dyn in a `kernel;` build is named late, as every non-constant zone
+#       initializer is; the program's own forming runs
+#   PF  (D5) a parenthesised FORM source at every destination (a local, a zone and a post-statement
+#       global, an assignment, a field, an argument, a return)
 #   A   the P program on x86 (default, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu), cx (cxvm), PE (wine,
-#       a private prefix). A leg whose tool is missing is a SKIP that names it (exit 77).
+#       a private prefix); (D5) tests/tcyr/crossos/dyn_objects.tcyr under CYRIUS_IR=3 and CYRIUS_DCE=1,
+#       and on qemu-aarch64 and wine (cx runs it in codegen/cx_crossos_rows_run.sh R9). A leg whose tool
+#       is missing is a SKIP that names it (exit 77).
 #
 # MUTATION LEDGER (2026-10-10, bite D4; each a one-edit scratch COPY of src/, its compiler rebuilt from
 # the mutated src, then this gate run with CYCC= the mutant; each measured RED, the real tree 115/115; the
@@ -87,7 +108,32 @@
 #   M-T31 / M-T32 the assignment / field-store backstops' dyn arms gone -> V9b / V9c
 #   M-T33 the type-argument refusal not skipping the bare `dyn`        -> T3f (a second error)
 #   MTT2 / MTT3 the VS Code grammar / the LSP's len-3 arm without `dyn` -> TT2 / TT3
-# Defensive, no killing row (named): `_op_fn_peek`'s dyn arm ("dyn Show has no operators") — every dyn
+# D5 (2026-10-10; the same method, the real tree green on every row and on dyn_objects.tcyr; "A" = the
+# dyn_objects legs this gate runs with the mutant itself — x86 IR=3 / DCE and PE; the qemu leg's compiler is
+# built from the real src — and the file run natively):
+#   M-F1  no fill (`_dyn_fill` stores no slot)                        -> TY2, K, PF, A (rc 139: a call through 0)
+#   M-F2  no `_sarg_escapes` in `_dyn_sarg`                           -> A (rc 139: the TC rows — the undiverted
+#         tail call frees the temp its callee copies from; the no-parameter caller and the loop)
+#   M-F3  data and vtable words swapped in `_dyn_build`              -> TY2, K, PF, A (rc 139)
+#   M-F4  slots reversed (slot j filled at 8 * (n - 1 - j))          -> A (28 of the file's rows)
+#   M-F5  plain `T_m` for a slot (no `_tr_prefix`)                   -> A (§defaults: the collision row read
+#         the inherent `base`, 999)
+#   M-F6  a default member's slot left 0                             -> A (rc 139: slot 1, `twice`, through 0)
+#   M-F7  the pair check skipped (`_dyn_pair_chk` answers 1)         -> F7, F8a-f, F8h, F9 (BUILT)
+#   M-F8  decision 2 skipped (`self: T` of 8 B or less accepted)     -> F7 (BUILT)
+#   M-F9  no visibility check at a forming site                      -> F10 (BUILT)
+#   M-F10 `_gci_inline`'s dyn arm gone (a zone dyn not inline)       -> F11a, F11b, K, PF, A (the backstop
+#         refuses every zone dyn global: "cannot initialize dyn Show 'Z' with a value that is not a dyn")
+#   M-F11 bit 62 ignored (any slot's stale `_dsc_tn` name trusted)   -> F1c (BUILT: an untyped local formed as
+#         the i64 a scalar local of another fn left in its slot)
+#   M-F12 no `_dsc_inl` (the #inline replay's parameters unstamped)  -> A (§inline: F1 in the replay, the file
+#         does not build)
+#   M-F13 the fill only at a pair's FIRST forming site               -> PF, A (rc 139: §sites — the site that
+#         runs first, second in source order, calls through an empty table)
+#   M-F14 the impl read AFTER the source is parsed (`_dyn_emit`)     -> A (§scalars `nested`: the outer dyn
+#         built with the vtable of the `dyn Num` formed inside its source — a find of this bite, fixed)
+# Defensive, no killing row (named): `_dyn_f9`'s `async` arm — an impl body cannot hold an `async fn`
+# ("expected '}', got async"), and a trait member is never one. `_op_fn_peek`'s dyn arm ("dyn Show has no operators") — every dyn
 # operand is refused at its factor first (V1 / V3 / V4 clear the stamp, V4 the `_lsc` record), so no
 # operator dispatch is reached with a dyn type today; the arm keeps a future path from dispatching
 # `dyn Show_add`. (M-T34, the arm removed, leaves every row green.)
@@ -152,7 +198,7 @@ refused k04 "$KW" "K4: a method \`p.dyn()\`" "${SH}fn f(p: P): i64 { return p.dy
 
 # ── TY: each position compiles, its two words intact ───────────────────────────────────────────────
 exits ty1 49 "TY1: a local, copied (\`var o2: dyn Show = o;\`)" "${HP}${FM}    var o2: dyn Show = o;\n    var o3: dyn Show = o2;\n    return dw(o3);\n${ME}"
-refused ty2 "cannot initialize dyn Show 'G' with a value that is not a dyn" "TY2: a global after the first statement (the annotation resolves to the dyn; D4 forms no value)" "${SH}syscall(1, 1, \"\", 0);\nvar G: dyn Show = 5;\nsyscall(60, 0);\n"
+exits ty2 3 "TY2: a global after the first statement, formed (D5) from \`&P0\` and dispatched by hand" "${SH}struct W { o: dyn Show; }\nfn dk(o: dyn Show): i64 { var w: W = W { o }; return callptr(load64(load64(&w + 8)), load64(&w)); }\nvar P0 = P { 3, 4 };\nsyscall(1, 1, \"\", 0);\nvar G: dyn Show = &P0;\nsyscall(60, dk(G));\n"
 refused ty2b "'mkd' returns a struct by value, and a struct result needs storage in a fn's frame" "TY2b: \`var G: dyn Show = mkd();\` at top level: the call refuses itself, once (not also \"not a dyn\")" "${HP}fn mkd(): dyn Show { return get(mkw(4, 9)); }\nsyscall(1, 1, \"\", 0);\nvar G: dyn Show = mkd();\nsyscall(60, 0);\n"
 exits ty3 49 "TY3: a parameter (\`fn dw(o: dyn Show)\`)" "${HP}${FM}    return dw(o);\n${ME}"
 exits ty4 49 "TY4: a return threaded through three fns declared below the caller (the rough pair scan)" "${HP}${FM}    var r: dyn Show = a1(o);\n    return dw(r);\n}\nfn a1(o: dyn Show): dyn Show { var x: dyn Show = a2(o); return x; }\nfn a2(o: dyn Show): dyn Show { var y: dyn Show = a3(o); return y; }\nfn a3(o: dyn Show): dyn Show { var z: dyn Show = o; return z; }\nsyscall(60, main());\n"
@@ -266,9 +312,73 @@ refused v06b "cannot re-assign from 'pass' - it returns struct 'dyn Show', not m
 refused v07a "a fn returning dyn Show returns a whole dyn" "V7a: \`return (a, b);\` in a fn returning a dyn" "${HP}fn mk(a, b): dyn Show { return (a, b); }\nsyscall(60, 0);\n"
 refused v07b "a fn returning dyn Show returns a whole dyn" "V7b: \`ret2(a, b)\`" "${HP}fn mk(a, b): dyn Show { ret2(a, b); }\nsyscall(60, 0);\n"
 refused v08 "dyn Show 'o' (a field) is set from a whole dyn - a struct literal cannot write its words" "V8: \`H { 1, 2, 3, 4 }\` (its leaves were the dyn's two words)" "${HP}${FO}var h: H = H { 1, 2, 3, 4 }; return h.a;${FE}"
-refused v09a "cannot initialize dyn Show 'x' with a value that is not a dyn" "V9a: backstop \`var x: dyn Show = 5;\`" "${HP}${FO}var x: dyn Show = 5; return 0;${FE}"
-refused v09b "cannot assign a value that is not a dyn to dyn Show 'x'" "V9b: backstop \`x = 5;\`" "${HP}${FO}var x: dyn Show = o; x = 5; return 0;${FE}"
-refused v09c "cannot store a value that is not a dyn into dyn Show 'o' (a field)" "V9c: backstop \`h.o = 5;\`" "${HP}${FO}var h: H = H { 1, o, 2 }; h.o = 5; return 0;${FE}"
+# Since D5 a literal FORMS (F6 when no impl takes it); the backstops still meet a source the classifier
+# leaves to the struct paths — the value of a callee that resolves nowhere.
+refused v09a "cannot initialize dyn Show 'x' with a value that is not a dyn" "V9a: backstop \`var x: dyn Show = nofn();\`" "${HP}${FO}var x: dyn Show = nofn(); return 0;${FE}"
+refused v09b "cannot assign a value that is not a dyn to dyn Show 'x'" "V9b: backstop \`x = nofn();\`" "${HP}${FO}var x: dyn Show = o; x = nofn(); return 0;${FE}"
+refused v09c "cannot store a value that is not a dyn into dyn Show 'o' (a field)" "V9c: backstop \`h.o = nofn();\`" "${HP}${FO}var h: H = H { 1, o, 2 }; h.o = nofn(); return 0;${FE}"
+
+# ── F: forming (D5) — every refusal once, at the source ────────────────────────────────────────────
+SN='trait Show { fn show(self): i64; }\nstruct P { a; b; }\nimpl Show for P { fn show(self): i64 { return self.a; } }\ntrait Num { fn num(self): i64; }\nimpl Num for i64 { fn num(self): i64 { return self; } }\nenum Color { Red, Green, Blue }\nstruct H { a; o: dyn Show; b; }\nstruct HP { p: P; }\nfn g(x): i64 { return x; }\n'
+FF='cannot form dyn Show from '
+FN='cannot form dyn Num from '
+UT=' - an untyped name may hold a pointer (ADR-002)'
+refused f01a "${FN}'x'${UT}" "F1a: an untyped local" "${SN}fn f(): i64 { var x = 5; var o: dyn Num = x; return 0; }\nsyscall(60, 0);\n"
+refused f01b "${FN}'x'${UT}" "F1b: an untyped parameter" "${SN}fn f(x): i64 { var o: dyn Num = x; return 0; }\nsyscall(60, 0);\n"
+refused f01c "${FN}'u'${UT}" "F1c: an untyped local in the slot a declared \`n: i64\` of another fn held (bit 62 is the stamp's validity)" "${SN}fn a(): i64 { var n: i64 = 5; return n; }\nfn b(): i64 { var u = 7; var o: dyn Num = u; return 0; }\nsyscall(60, a());\n"
+refused f01d "${FN}'i'${UT}" "F1d: a for-in variable (no declared type)" "${SN}fn f(): i64 { for i in 0..3 { var o: dyn Num = i; } return 0; }\nsyscall(60, 0);\n"
+refused f02a "${FF}'p' - no implicit \`&\`: write \`&p\`" "F2a: a bare inline struct local" "${SN}fn f(): i64 { var p = P { 1, 2 }; var o: dyn Show = p; return 0; }\nsyscall(60, 0);\n"
+refused f02b "${FF}'G0' - no implicit \`&\`: write \`&G0\`" "F2b: a bare inline struct global" "${SN}var G0 = P { 1, 2 };\nfn f(): i64 { var o: dyn Show = G0; return 0; }\nsyscall(60, 0);\n"
+refused f03a "${FF}\`&q\` - it is a pointer already: write \`q\`" "F3a: \`&q\` of a \`q: *P\` parameter" "${SN}fn f(q: *P): i64 { var o: dyn Show = &q; return 0; }\nsyscall(60, 0);\n"
+refused f03b "${FF}\`&h\` - it is a pointer already: write \`h\`" "F3b: \`&h\` of a pointer-mode handle" "${SN}include \"lib/alloc.cyr\"\nfn f(): i64 { var h: P = alloc(16); var o: dyn Show = &h; return 0; }\nsyscall(60, 0);\n"
+refused f03c "${FN}\`&n\` - a dyn of a scalar holds its value: write \`n\`" "F3c: \`&n\` of a declared scalar" "${SN}fn f(): i64 { var n: i64 = 5; var o: dyn Num = &n; return 0; }\nsyscall(60, 0);\n"
+refused f03d "${FF}\`&o\` - it is a dyn: copy it whole (\`= o\`)" "F3d: \`&o\` of a dyn" "${SN}fn f(o: dyn Show): i64 { var o2: dyn Show = &o; return 0; }\nsyscall(60, 0);\n"
+refused f04 "${FF}'p' - a closure's captured name: bind it to a declared variable first" "F4: a closure's captured name" "${SN}include \"lib/alloc.cyr\"\nfn f(): i64 { var p = P { 1, 2 }; var c = || { var o: dyn Show = p; return 0; }; return 0; }\nsyscall(60, 0);\n"
+F5M="this expression - a dyn is formed from a \`*T\` the compiler knows"
+refused f05a "${FF}${F5M}" "F5a: \`alloc(16)\` (never a pointer-mode dyn)" "${SN}include \"lib/alloc.cyr\"\nfn f(): i64 { var o: dyn Show = alloc(16); return 0; }\nsyscall(60, 0);\n"
+refused f05b "${FF}${F5M}" "F5b: a string literal" "${SN}fn f(): i64 { var o: dyn Show = \"abc\"; return 0; }\nsyscall(60, 0);\n"
+refused f05c "${FF}${F5M}" "F5c: \`&h.p\`" "${SN}fn f(): i64 { var p = P { 1, 2 }; var h = HP { p }; var o: dyn Show = &h.p; return 0; }\nsyscall(60, 0);\n"
+refused f05d "${FN}${F5M}" "F5d: an operator \`n + 1\`" "${SN}fn f(): i64 { var n: i64 = 1; var o: dyn Num = n + 1; return 0; }\nsyscall(60, 0);\n"
+refused f05e "${FN}${F5M}" "F5e: an enum constant \`Color.Blue\`" "${SN}fn f(): i64 { var o: dyn Num = Color.Blue; return 0; }\nsyscall(60, 0);\n"
+refused f05f "${FN}${F5M}" "F5f: a call returning i64" "${SN}fn f(): i64 { var o: dyn Num = g(1); return 0; }\nsyscall(60, 0);\n"
+refused f05g "${FN}${F5M}" "F5g: \`callptr(&g, 1)\`" "${SN}fn f(): i64 { var o: dyn Num = callptr(&g, 1); return 0; }\nsyscall(60, 0);\n"
+refused f05h "a struct literal does not form a dyn - form it first (\`var d: dyn Show = ..;\`)" "F5h: \`H { 1, &p, 2 }\` (the element taken whole: no cascade)" "${SN}fn f(): i64 { var p = P { 1, 2 }; var h: H = H { 1, &p, 2 }; return h.a; }\nsyscall(60, 0);\n"
+refused f06a "no \`impl Show for i64\` - a dyn Show is formed only from a type that implements Show" "F6a: a literal with no \`impl Show for i64\`" "${SN}fn f(): i64 { var o: dyn Show = 5; return 0; }\nsyscall(60, 0);\n"
+refused f06b "no \`impl Show for Q\`" "F6b: a \`*Q\` with no \`impl Show for Q\`" "${SN}struct Q { a; }\nfn f(q: *Q): i64 { var o: dyn Show = q; return 0; }\nsyscall(60, 0);\n"
+refused f07 "cannot form dyn T2 from Q - its method 'sh' takes \`self: Q\` by value, and a struct of 8 bytes or less arrives in a register" "F7: \`self: Q\`, Q of 8 B (decision 2), naming the method" "${SN}struct Q { a; }\ntrait T2 { fn sh(self): i64; }\nimpl T2 for Q { fn sh(self: Q): i64 { return self.a; } }\nfn f(q: *Q): i64 { var o: dyn T2 = q; return 0; }\nsyscall(60, 0);\n"
+F8M="cannot form dyn T2 from P - its method"
+refused f08a "${F8M} 'sh' does not match its declaration in trait T2: parameter 'n' has another type (an untyped parameter is i64)" "F8a: a parameter's type (\`n: u8\` for an untyped \`n\`)" "${SN}trait T2 { fn sh(self, n): i64; }\nimpl T2 for P { fn sh(self, n: u8): i64 { return n; } }\nfn f(q: *P): i64 { var o: dyn T2 = q; return 0; }\nsyscall(60, 0);\n"
+refused f08b "${F8M} 'sh' does not match its declaration in trait T2: the return type differs" "F8b: the return type (\`: i32\` for none)" "${SN}trait T2 { fn sh(self); }\nimpl T2 for P { fn sh(self): i32 { return 1; } }\nfn f(q: *P): i64 { var o: dyn T2 = q; return 0; }\nsyscall(60, 0);\n"
+refused f08c "${F8M} 'pk' does not match its declaration in trait T2: one is generic, the other is not" "F8c: generic-ness" "${SN}trait T2 { fn pk<U>(self, u: U): i64; }\nimpl T2 for P { fn pk(self, u): i64 { return 1; } }\nfn f(q: *P): i64 { var o: dyn T2 = q; return 0; }\nsyscall(60, 0);\n"
+refused f08d "${F8M} 'sh' does not match its declaration in trait T2: a variadic \`...\` differs" "F8d: a variadic \`...\`" "${SN}trait T2 { fn sh(self, ...): i64; }\nimpl T2 for P { fn sh(self, a): i64 { return 1; } }\nfn f(q: *P): i64 { var o: dyn T2 = q; return 0; }\nsyscall(60, 0);\n"
+refused f08e "${F8M} 'sh' does not match its declaration in trait T2: its \`self\` is not P" "F8e: \`self: Q\` in an impl for P" "${SN}struct Q { a; }\ntrait T2 { fn sh(self): i64; }\nimpl T2 for P { fn sh(self: Q): i64 { return 1; } }\nfn f(q: *P): i64 { var o: dyn T2 = q; return 0; }\nsyscall(60, 0);\n"
+refused f08f "cannot form dyn T2 from i64 - its method 'sh' does not match its declaration in trait T2: \`self: *T\` - the dyn of a scalar holds its value" "F8f: a scalar impl's \`self: *i64\`" "${SN}trait T2 { fn sh(self): i64; }\nimpl T2 for i64 { fn sh(self: *i64): i64 { return 1; } }\nfn f(): i64 { var n: i64 = 5; var o: dyn T2 = n; return 0; }\nsyscall(60, 0);\n"
+refused f08g "${FN}'q' - a pointer to a scalar: the dyn of a scalar holds its value" "F8g: a \`q: *i64\` into a scalar impl" "${SN}fn f(q: *i64): i64 { var o: dyn Num = q; return 0; }\nsyscall(60, 0);\n"
+refused f08h "${F8M} 'z' does not match its declaration in trait T2: the return type differs" "F8h: one report per pair — three forming sites in two fns, one error at the first" "${SN}trait T2 { fn sh(self): i64; fn z(self): i64; }\nimpl T2 for P { fn sh(self): i64 { return 1; } fn z(self): i32 { return 1; } }\nfn f(q: *P): i64 { var o: dyn T2 = q; var o2: dyn T2 = q; return 0; }\nfn h(q: *P): i64 { var o: dyn T2 = q; return 0; }\nsyscall(60, 0);\n"
+refused f09 "${F8M} 'sh' is \`#naked\` - a dyn calls its methods as plain fns" "F9: a \`#naked\` slot method" "${SN}trait T2 { fn sh(self): i64; }\nimpl T2 for P { #naked\nfn sh(self): i64 { asm { 0xC3; } } }\nfn f(q: *P): i64 { var o: dyn T2 = q; return 0; }\nsyscall(60, 0);\n"
+mkdir -p "$T/f10"
+printf 'private\ntrait Show { fn show(self): i64; }\npublic struct P { a; b; }\nimpl Show for P { fn show(self): i64 { return self.a; } }\n' > "$T/f10/a.cyr"
+printf 'include "a.cyr"\nfn f(q: *P): i64 { var o: dyn Show = q; return 0; }\nsyscall(60, 0);\n' > "$T/f10/main.cyr"
+rc=0; (cd "$T/f10" && timeout 60 "$CC" < main.cyr > m.bin 2> m.err) || rc=$?
+if [ "$rc" -ne 0 ] && [ "$(grep -c '^error' "$T/f10/m.err")" -eq 1 ] && grep -qF "'P_show' is private to its file" "$T/f10/m.err"; then ok "F10: a slot method private to another file is refused at the forming site (the \`&f\` rule)"
+else bad "F10: rc $rc: $(grep '^error' "$T/f10/m.err" | head -2 | tr '\n' '|')"; fi
+TLM="a dyn formed at top level has no frame to be built in - form it inside a fn"
+refused f11a "$TLM" "F11a: a top-level assignment \`o = &P0;\`" "${SN}var P0 = P { 1, 2 };\nvar Z: dyn Show = &P0;\nsyscall(1, 1, \"\", 0);\nZ = &P0;\nsyscall(60, 0);\n"
+refused f11b "$TLM" "F11b: a top-level field store \`h.o = &P0;\`" "${SN}var P0 = P { 1, 2 };\nvar Z: dyn Show = &P0;\nvar ZH: H = H { 1, Z, 2 };\nsyscall(1, 1, \"\", 0);\nZH.o = &P0;\nsyscall(60, 0);\n"
+refused f11c "$TLM" "F11c: a top-level argument \`tk(&P0)\`" "${SN}fn tk(o: dyn Show): i64 { return 0; }\nvar P0 = P { 1, 2 };\nsyscall(1, 1, \"\", 0);\ntk(&P0);\nsyscall(60, 0);\n"
+
+# ── K: a declaration-zone dyn in a `kernel;` build ─────────────────────────────────────────────────────
+printf '%b' "kernel;\n${SH}struct W { o: dyn Show; }\nvar P0 = P { 1, 2 };\nvar KD: dyn Show = &P0;\nfn dk(o: dyn Show): i64 { var w: W = W { o }; return callptr(load64(load64(&w + 8)), load64(&w)); }\nfn main(): i64 {\n    var o: dyn Show = &P0;\n    return dk(o) + 40;\n}\nsyscall(60, main());\n" > "$T/k01.cyr"
+rc=0; CYRIUS_ELF64_KERNEL=1 timeout 60 "$CC" < "$T/k01.cyr" > "$T/k01.bin" 2> "$T/k01.err" || rc=$?
+if [ "$rc" -ne 0 ]; then bad "K: the ELF64 kernel build failed: $(grep -m1 '^error' "$T/k01.err")"
+else chmod +x "$T/k01.bin"; got=0; timeout 10 "$T/k01.bin" > /dev/null 2>&1 || got=$?
+    if [ "$got" -ne 41 ]; then bad "K: the kernel program exits $got, want 41 (its own forming)"
+    elif [ "$(grep -c 'in a kernel build the initializer of' "$T/k01.err")" -ne 1 ] || ! grep -q "in a kernel build the initializer of 'KD'" "$T/k01.err"; then bad "K: want exactly one late-initializer warning, for KD: $(grep warning "$T/k01.err" | head -2 | tr '\n' '|')"
+    else ok "K: a kernel build names the zone dyn KD late; the program's own forming runs (exit 41)"; fi
+fi
+
+# ── PF: a parenthesised FORM source at every destination ───────────────────────────────────────────
+exits pf 42 "PF: \`((&p))\` / \`(q)\` as a local, a zone and a post-statement global, an assignment, a field, an argument, a return" "${SH}struct W { o: dyn Show; }\nstruct H2 { a; o: dyn Show; }\nfn dk(o: dyn Show): i64 { var w: W = W { o }; return callptr(load64(load64(&w + 8)), load64(&w)); }\nfn rt(q: *P): dyn Show { return ((q)); }\nvar P0 = P { 3, 4 };\nvar Z: dyn Show = ((&P0));\nfn f(): i64 {\n    var p = P { 5, 6 };\n    var o: dyn Show = ((&p));\n    if (dk(o) != 5) { return 1; }\n    o = (&P0);\n    if (dk(o) != 3) { return 2; }\n    var h = H2 { 1, o };\n    h.o = ((&p));\n    if (dk(h.o) != 5) { return 3; }\n    if (dk(((&p))) != 5) { return 4; }\n    if (dk(rt(&p)) != 5) { return 5; }\n    if (dk(Z) != 3) { return 6; }\n    return 42;\n}\nsyscall(1, 1, \"\", 0);\nvar G: dyn Show = ((&P0));\nif (dk(G) != 3) { syscall(60, 7); }\nsyscall(60, f());\n"
 
 # ── P: every destination of a dyn call result takes it whole ───────────────────────────────────────
 # The value rows: each line returns its own code when the dyn it received is not (4, 9).
@@ -294,6 +404,11 @@ printf 'fn f(): i64 { var dyn = 5; return 0; }\nsyscall(60, f());\n' > "$T/x02.c
 rc=0; "$CC" --syntax-only < "$T/x02.cyr" > /dev/null 2> "$T/x02.err" || rc=$?
 if [ "$rc" -ne 0 ] && grep -qF "$KW" "$T/x02.err"; then ok "X2: --syntax-only still reports \`var dyn\` (the reserved word is grammar)"
 else bad "X2: --syntax-only rc $rc: $(head -1 "$T/x02.err")"; fi
+
+printf '%b' "${SN}fn f(x): i64 { var o: dyn Num = x; var p = P { 1, 2 }; var o2: dyn Show = p; var o3: dyn Show = 5; return 0; }\nsyscall(60, 0);\n" > "$T/x03.cyr"
+rc=0; "$CC" --syntax-only < "$T/x03.cyr" > /dev/null 2> "$T/x03.err" || rc=$?
+if [ "$rc" -eq 0 ] && ! grep -q '^error' "$T/x03.err"; then ok "X3: --syntax-only reports no forming refusal (F1 / F2 / F6 resolve names and impls)"
+else bad "X3: --syntax-only rc $rc: $(grep '^error' "$T/x03.err" | head -1)"; fi
 
 # ── TT: the tools ──────────────────────────────────────────────────────────────────────────────────
 if awk '/^fn _embed_reserved_list\(/,/^}/' cbt/manifest.cyr | grep -q ' dyn '; then ok "TT1: \`[embed]\`'s reserved list holds \`dyn\` (embed_manifest_refusals.sh axis 5 checks it against the compiler)"
@@ -351,6 +466,37 @@ if command -v wine > /dev/null 2>&1; then
     else bad "A PE: did not compile: $(grep '^error' "$T/ap.werr" | head -1)"; fi
 else echo "  SKIP A PE — wine not installed"; skips=$((skips + 1)); fi
 
+# (D5) tests/tcyr/crossos/dyn_objects.tcyr, the forming file: every assertion passes under CYRIUS_IR=3
+# and CYRIUS_DCE=1, on qemu-aarch64 and under wine (the count derived from its source).
+DO=tests/tcyr/crossos/dyn_objects.tcyr
+DON=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$DO")
+dosum() {   # <label> <exit> <output file>
+    if [ "$2" -eq 0 ] && [ "$(tail -1 "$3")" = "$DON passed, 0 failed ($DON total)" ]; then ok "$1: $DON/$DON"
+    else bad "$1: exit $2, $(tail -1 "$3")"; fi
+}
+for mode in IR3 DCE; do
+    if [ "$mode" = IR3 ]; then ev=CYRIUS_IR=3; else ev=CYRIUS_DCE=1; fi
+    rc=0; env $ev "$CC" < "$DO" > "$T/do_$mode.bin" 2> "$T/do_$mode.err" || rc=$?
+    if [ "$rc" -ne 0 ]; then bad "A dyn_objects x86 $ev: rc $rc: $(grep '^error' "$T/do_$mode.err" | head -1)"
+    else chmod +x "$T/do_$mode.bin"; got=0; (cd "$T" && timeout 60 "./do_$mode.bin" > "do_$mode.out" 2>&1) || got=$?
+        dosum "A dyn_objects x86 $ev" "$got" "$T/do_$mode.out"; fi
+done
+if command -v qemu-aarch64 > /dev/null 2>&1 && [ -x "$T/cc_a64" ]; then
+    if "$T/cc_a64" < "$DO" > "$T/do.a" 2> "$T/do.aerr"; then
+        chmod +x "$T/do.a"; got=0; (cd "$T" && timeout 120 qemu-aarch64 ./do.a > do.aout 2>&1) || got=$?
+        dosum "A dyn_objects aarch64 (qemu)" "$got" "$T/do.aout"
+    else bad "A dyn_objects aarch64: did not compile: $(grep '^error' "$T/do.aerr" | head -1)"; fi
+else echo "  SKIP A dyn_objects aarch64 — qemu-aarch64 or the aarch64 compiler missing"; skips=$((skips + 1)); fi
+if command -v wine > /dev/null 2>&1; then
+    if CYRIUS_TARGET_WIN=1 "$CC" < "$DO" > "$T/do.exe" 2> "$T/do.werr" && [ -s "$T/do.exe" ]; then
+        got=0
+        (cd "$T" && WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all \
+            WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' timeout 180 wine ./do.exe > do.wout 2>&1) || got=$?
+        tr -d '\r' < "$T/do.wout" > "$T/do.wout2"
+        dosum "A dyn_objects PE (wine)" "$got" "$T/do.wout2"
+    else bad "A dyn_objects PE: did not compile: $(grep '^error' "$T/do.werr" | head -1)"; fi
+else echo "  SKIP A dyn_objects PE — wine not installed"; skips=$((skips + 1)); fi
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: dyn_checked — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: dyn_checked — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: dyn_checked — \`dyn\`: the reserved word (K); the type in a local, a global, a parameter, a return, a field and a trait signature (TY, S); every open type position refused by name (T1-T13); uninitialised dyn locals (U); opacity — no value, no address, no words (V1-V9); every destination of a dyn result takes it whole (P); the fold across lines (H28); --syntax-only (X); the tools (TT); the P program on x86 / IR=3 / DCE / aarch64 / cx / PE (A)"
+echo "PASS: dyn_checked — \`dyn\`: the reserved word (K); the type in a local, a global, a parameter, a return, a field and a trait signature (TY, S); every open type position refused by name (T1-T13); uninitialised dyn locals (U); opacity — no value, no address, no words (V1-V9); every forming refusal once, at its source (F1-F11), the zone dyn of a kernel build (K), wrapped sources (PF); every destination of a dyn result takes it whole (P); the fold across lines (H28); --syntax-only (X); the tools (TT); the P program and dyn_objects.tcyr on x86 / IR=3 / DCE / aarch64 / cx / PE (A)"

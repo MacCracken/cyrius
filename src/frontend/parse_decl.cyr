@@ -977,6 +977,10 @@ fn _tup_fst_chk(S, ft, fnoff, ti): i64 {
 # The arms below store through the same width ladder (2) when the value is in rax. CHANGELOG [6.6.11]
 fn _fsc_src(S, ft, fnoff, term): i64 {
     if (ft <= 0) { return 0; }
+    if (_dyn_is(S, ft) == 1) {   # 6.7.8 (D5): a dyn formed in a temp
+        var dr = _dyn_fsc(S, ft, term);
+        if (dr != 0) { return dr; }
+    }
     if (IS_STR_FIELD(S, ft) == 1) { return 0; }
     if (PEEKT(S) == 10) { return _fsc_paren(S, ft, fnoff, term); }   # 6.7.6
     if (PEEKT(S) == 2) {
@@ -2123,7 +2127,11 @@ fn _spi_leaf(S, tidx, si, fi, off): i64 {
 # a type on its first-field chain, or a scalar, is carried down into it.
 fn _spi_nested(S, tidx, li, si, fi, off): i64 {
     var ft = GETFTYPE(S, si, fi);
-    if (_spi_pk == 0) { _spi_pk = _spi_src(S, ft); }
+    var est = 0 - 1;   # the element's first token, when it starts here
+    if (_spi_pk == 0) {
+        est = GTI(S);
+        _spi_pk = _spi_src(S, ft);
+    }
     if (_spi_pk == 4) { return _spi_took(S); }
     if (_spi_pk == 1 || _spi_pk == 3) {
         if (_spi_ps == ft) {
@@ -2138,7 +2146,10 @@ fn _spi_nested(S, tidx, li, si, fi, off): i64 {
     }
     # 6.7.8 (V8): a dyn field takes a whole dyn (a copy, above); descending would write its two words
     # from the literal's values. Refused by name; the walk goes on so the literal stays in sync.
-    if (_dyn_is(S, ft) == 1) { _dyn_err(S, GTI(S), "", ft, GETFNAME(S, si, fi), " (a field) is set from a whole dyn - a struct literal cannot write its words"); }
+    if (_dyn_is(S, ft) == 1) {
+        if (_dyn_lit_form(S, est, ft) == 1) { return _spi_took(S); }   # 6.7.8 (D5): F5, the element taken whole
+        _dyn_err(S, GTI(S), "", ft, GETFNAME(S, si, fi), " (a field) is set from a whole dyn - a struct literal cannot write its words");
+    }
     _spi_fields(S, tidx, li, ft - 1, off);
     return 0;
 }
@@ -2774,7 +2785,7 @@ fn _tup_lit_global(S, noff, sid, infer, dti): i64 {
 # refusal is the one already reported, at the same token); a tuple-typed one whose literal has the
 # wrong shape is skipped and declared as `var t: T;` is (0, cursor on the `;`).
 fn _tup_var(S, noff, pscale, ann): i64 {
-    _dyn_var(S, noff, pscale, ann);   # 6.7.8 (U1/U2): a dyn local is declared with its value
+    if (_dyn_var(S, noff, pscale, ann) == 1) { return 1; }   # 6.7.8: U1/U2; (D5) a dyn formed in place
     if (PEEKT(S) == 4) {
         var lp = _tup_lit_at(S, GTI(S) + 1);
         if (lp >= 0) { if (TOKTYP(S, _pw_end) == 5) { return _tup_var_lit(S, noff, pscale, ann, lp); } }
@@ -5027,6 +5038,7 @@ fn _gvi_pair_bind(S): i64 {
 # literal's walker, closing at `)`), then every element stored, as a struct literal is. 1 = done
 # (`;` consumed), 0 = not a whole literal (the replay goes on).
 fn _gvi_tuple(S, gi, idx, gps, sti, noff): i64 {
+    if (_gvi_dyn(S, gi, idx, gps, sti) == 1) { return 1; }   # 6.7.8 (D5): a dyn formed in place
     if (PEEKT(S) == 2) {   # 6.7.7 (T5): a capture
         if (_gvi_tup_cap(S, gi, idx, gps, sti, noff) == 1) { return 1; }
         return _gvi_tup_odd(S, gi, idx, gps, sti, noff);
@@ -5419,6 +5431,7 @@ fn _gci_inline(S, sid, ann): i64 {
     if (ts >= 0) { return ts; }
     if (sid <= 0) { return 0; }
     if (STRUCTSZ(S, sid - 1) <= 8) { return 0; }
+    if (_dyn_is(S, sid) == 1) { return sid; }   # 6.7.8 (D5): a dyn global is always inline (formed or copied)
     if (_gci_src(S, GTI(S)) != sid) { return 0; }
     return sid;
 }
@@ -6828,7 +6841,7 @@ fn PARSE_VAR(S): i64 {
             _sl_marks(S, li, scalar_signed, scalar_type, slice_elt_w, pscale);
             SFLC(S, li + 1);
             SLFI(S, li, ufv);   # 6.6.10: set on EVERY declaration, after SFLC cleared it (see _UFV_L)
-            _sl_last_marks(S, li, lbool, scalar_type);   # 6.7.3: last — the high half is rewritten above; 6.7.6: + bit 59
+            _sl_last_marks(S, li, lbool, scalar_type, ann_ti);   # 6.7.3: last — the high half is rewritten above; 6.7.6: + bit 59
         }
     } else {
         _sc_global_receive(S, pscale, scv_start);   # 6.6.6: no frame at top level — refused by name

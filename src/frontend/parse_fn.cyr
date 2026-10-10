@@ -1565,6 +1565,7 @@ fn _sarg_gv_sid(S, gvi): i64 {
 fn _try_push_struct_addr_arg(S, fi, argc, tail): i64 {
     if (fi < 0) { return 0; }
     if (_pm_struct(fi, argc) == 0) { return _sarg_byval_small(S, fi, argc); }   # 6.6.17 (a10); 6.7.3
+    if (_dyn_sarg(S, fi, argc, tail) == 1) { return 1; }   # 6.7.8 (D5): a dyn formed in a temp
     if (PEEKT(S) == 10) { return _sarg_paren(S, fi, argc, tail); }   # 6.7.6
     if (PEEKT(S) != 2) { return 0; }
     var nx = TOKTYP(S, GTI(S) + 1);
@@ -2061,6 +2062,7 @@ fn _ret_struct_big(S): i64 {
 # same two registers (or a refused shape) left for the scalar path, the cursor at the value.
 fn _ret_struct_pair(S): i64 {
     _ret_peel(S);
+    if (_dyn_ret(S) == 1) { return 1; }   # 6.7.8 (D5): a dyn formed in a temp
     if (PEEKT(S) == 2) {
         if (TOKTYP(S, GTI(S) + 1) == _ret_term) {
             var _ip_noff = PEEKV(S);
@@ -9861,6 +9863,7 @@ fn _param_record(S, li, pnoff, is_async): i64 {
     if (_cur_fn_ptrp != li + 1) { MARK_SMALL_STRUCT(S, li, GLTYPE(S, li)); }
     if (_cur_fn_ptrp == li + 1) { SLPTRP(S, li); }
     _cur_fn_ptrp = 0;
+    _dsc_param_slot(S, li);   # 6.7.8 (D5): last
     return 0;
 }
 # v6.3.37 (C1) — why a fn's PARAMETERS keep it off the inline replay: 3 a struct/Str/Result/Option/
