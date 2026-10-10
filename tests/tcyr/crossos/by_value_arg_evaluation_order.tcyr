@@ -1,0 +1,191 @@
+# by_value_arg_evaluation_order.tcyr — 6.7.7 — a by-value argument is the value it has WHERE IT IS
+# WRITTEN: a later argument's side effect does not reach the callee's copy.
+#
+# A parameter annotated with a plain struct over 8 B (and a Win64 value-form vector) is passed by
+# ADDRESS and copied in the callee's prologue (6.6.16 C7) — after every argument of the call was
+# evaluated. So `rd(b, bump(&b))`, with `bump` adding 10 to `b.a`, read 11 where 1 is right (issue
+# 2026-10-09-struct-arg-sees-later-arg-side-effect), and a value-form vector, loaded into its
+# register after the integer arguments (SysV, aarch64, cx), read the same late value. The shapes:
+# a local (24 / 16 / 12 B, the last odd), a global and a field (in a fn and at top level), a
+# closure capture, a pointer-mode local, `&b`, a by-value tuple, a generic instance, a fn defined
+# after the call, a struct-valued receive, a method's argument and its by-value `self`, named
+# arguments (in order and reordered), a tail call (the ordinary path and the tail arm), an
+# operator's left operand (an i64 and a struct result), a later argument that writes through an
+# operator fn, and f64v2 / f64v4 arguments (an `async fn`'s frame is by_value_arg_copy.sh's AS1).
+# On the merged 6.7.7 compiler every row failed on x86, aarch64, cx and PE but the two controls,
+# the first-position f64v2 (PE only) and the three 1,000,000-deep tail rows (controls too). Now an
+# argument a later argument may write (`_span_may_write`: a call, a builtin, an operator a struct
+# dispatches, ...) is copied where it stands, and the callee receives the copy. The 8 B struct
+# (passed in a register) was always right and is a control, as is an EARLIER argument's side
+# effect, which the callee sees (`rd2(bump(&b), b)` reads 11), and a reordered named call,
+# evaluated as written.
+#
+# ⚠ CROSS-HOST: the copy is emitted by each backend's frame / global addressing and byte-exact
+# load / store pair (`_agc_copy_bytes`), and the arguments travel through each call convention
+# (SysV 6 / Win64 4 / aarch64 8 registers, cx; Win64's by-address vectors, SysV's XMM / aarch64's V
+# loads) — every row runs on x86, aarch64, cx and PE.
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+include "lib/simd.cyr"
+include "lib/assert.cyr"
+
+struct Big { a: i64; b: i64; c: i64; }
+struct Mid { a: i64; b: i64; }
+struct Sm { a: i64; }
+struct Odd { a: i64; b: i32; }
+struct H { n: i64; big: Big; }
+struct W { p: i64; q: i64; r: i64; }
+
+fn bump(p): i64 { store64(p, load64(p) + 10); return 0; }
+fn bump32(p): i64 { store32(p + 8, load32(p + 8) + 10); return 0; }
+fn pbump(p): i64 { bump(p); return p; }
+fn rd(s: Big, z): i64 { return s.a; }
+fn rm(s: Mid, z): i64 { return s.a; }
+fn rs(s: Sm, z): i64 { return s.a; }
+fn rd3(z0, s: Big, z): i64 { return s.a; }
+fn rd2(z, s: Big): i64 { return s.a; }
+fn rodd(s: Odd, z): i64 { return s.b; }
+fn rt(t: (i64, i64, i64), z): i64 { return t.0; }
+fn rdg<T>(s: T, z): i64 { return s.a; }
+fn mkb(s: Big, z): Big { var r: Big = s; return r; }
+fn rw(s: W, z): i64 { return s.p; }
+fn W_add(x: *W, y: *W): i64 { x.p = x.p + 10; return 0; }
+fn Big_add(x: Big, y: *Big): i64 { return x.a * 100 + y.a; }
+fn Big_sub(x: Big, y: *Big): Big { var r: Big = x; r.b = y.a; return r; }
+fn Big_get(self: Big, z): i64 { return self.a; }
+fn Big_arg(self, s: Big, z): i64 { return s.a; }
+fn rv(v: f64v2, z): i64 { return load64(&v); }
+fn rv2(z0, v: f64v2, z): i64 { return load64(&v); }
+fn rv4(z0, v: f64v4, z): i64 { return load64(&v); }
+
+var G: Big = Big { 1, 2, 3 };
+var GH: H = H { 0, 0, 0, 0 };
+
+# ── the issue's repro, verbatim in shape ────────────────────────────────────────────────────────
+fn issue(): i64 {
+    var b: Big = Big { 1, 2, 3 };
+    var m: Mid = Mid { 1, 2 };
+    var s: Sm = Sm { 1 };
+    var e = 0;
+    if (rd(b, bump(&b)) != 1) { e = e | 1; }
+    if (rm(m, bump(&m)) != 1) { e = e | 2; }
+    if (rs(s, bump(&s)) != 1) { e = e | 4; }
+    return e;
+}
+# ── argument sources ────────────────────────────────────────────────────────────────────────────
+fn src_mid(): i64 { var b: Big = Big { 1, 2, 3 }; return rd3(0, b, bump(&b)); }
+fn src_nested(): i64 { var b: Big = Big { 1, 2, 3 }; return rd(b, 1 + bump(&b)); }
+fn src_earlier(): i64 { var b: Big = Big { 1, 2, 3 }; return rd2(bump(&b), b); }
+fn src_global(): i64 { G.a = 1; return rd(G, bump(&G)); }
+fn src_field(): i64 { var h: H; h.n = 0; h.big.a = 1; h.big.b = 2; h.big.c = 3; return rd(h.big, bump(&h + 8)); }
+fn src_capture(): i64 { var c: Big = Big { 1, 2, 3 }; var cl = || rd(c, bump(&c)); return callptr(cl); }
+fn src_heap(): i64 { var p: Big = alloc(24); p.a = 1; return rd(p, bump(p)); }
+fn src_addr(): i64 { var b: Big = Big { 1, 2, 3 }; return rd(&b, bump(&b)); }
+fn src_odd(): i64 { var o: Odd = Odd { 1, 5 }; return rodd(o, bump32(&o)); }
+fn src_tuple(): i64 { var t: (i64, i64, i64) = (1, 2, 3); return rt(t, bump(&t)); }
+fn src_generic(): i64 { var b: Big = Big { 1, 2, 3 }; return rdg(b, bump(&b)); }
+fn src_forward(): i64 { var b: Big = Big { 1, 2, 3 }; return fwd(b, bump(&b)); }
+fn src_receive(): i64 { var b: Big = Big { 1, 2, 3 }; var r: Big = mkb(b, bump(&b)); return r.a; }
+fn src_opwrite(): i64 { var w: W = W { 1, 2, 3 }; var w2: W = W { 0, 0, 0 }; return rw(w, w + w2); }
+# ── call forms ──────────────────────────────────────────────────────────────────────────────────
+fn form_method_arg(): i64 { var b: Big = Big { 1, 2, 3 }; var o: Big = Big { 0, 0, 0 }; return o.arg(b, bump(&b)); }
+fn form_self(): i64 { var b: Big = Big { 1, 2, 3 }; return b.get(bump(&b)); }
+fn form_named(): i64 { var b: Big = Big { 1, 2, 3 }; return rd(s: b, z: bump(&b)); }
+fn form_named_reordered(): i64 { var b: Big = Big { 1, 2, 3 }; return rd(z: bump(&b), s: b); }
+fn form_tail(): i64 { var b: Big = Big { 1, 2, 3 }; return rd(b, bump(&b)); }
+# no `&` in the arguments and a global source: the tail arm itself takes this call (an `&` sends a
+# tail call to the ordinary path), and its copy in this frame makes it an ordinary call
+fn gbump(): i64 { G.a = G.a + 10; return 0; }
+fn form_tail_arm(): i64 { G.a = 1; return rd(G, gbump()); }
+# ... and that copy costs only ITS call the `jmp`: a self tail call beside it in the same fn keeps
+# its own, 1,000,000 deep — after it in the body, after it in a loop (a pending site), and before
+# it in a loop (decided at the loop's end). Controls on the merged compiler; the lane's first cut
+# overflowed the stack here (its copy set the per-fn flag).
+fn gzero(): i64 { return 0; }
+fn rdz(s: Big, z): i64 { return s.a + z; }
+fn walk_after(n, acc): i64 {
+    if (n == 0) { return rdz(G, acc + gzero()); }
+    return walk_after(n - 1, acc + 1);
+}
+fn walk_after_loop(n, acc): i64 {
+    while (n >= 0) {
+        if (n == 0) { return rdz(G, acc + gzero()); }
+        return walk_after_loop(n - 1, acc + 1);
+    }
+    return 0;
+}
+fn walk_before_loop(n, acc): i64 {
+    while (n >= 0) {
+        if (n > 0) { return walk_before_loop(n - 1, acc + 1); }
+        return rdz(G, acc + gzero());
+    }
+    return 0;
+}
+fn form_tail_then_self(): i64 { G.a = 1; return walk_after(1000000, 0); }
+fn form_tail_then_self_loop(): i64 { G.a = 1; return walk_after_loop(1000000, 0); }
+fn form_self_then_tail_loop(): i64 { G.a = 1; return walk_before_loop(1000000, 0); }
+fn form_op(): i64 { var b: Big = Big { 1, 2, 3 }; return b + pbump(&b); }
+fn form_op_struct(): i64 { var b: Big = Big { 1, 2, 3 }; var c: Big = b - pbump(&b); return c.a * 100 + c.b; }
+# ── value-form vectors ──────────────────────────────────────────────────────────────────────────
+fn vec_first(): i64 {
+    var v: f64v2 = f64v2(f64_from(1), f64_from(2));
+    var v0 = load64(&v);
+    if (rv(v, bump(&v)) != v0) { return 1; }
+    return 0;
+}
+fn vec_mid(): i64 {
+    var v: f64v2 = f64v2(f64_from(1), f64_from(2));
+    var v0 = load64(&v);
+    if (rv2(0, v, bump(&v)) != v0) { return 1; }
+    return 0;
+}
+fn vec_wide(): i64 {
+    var v: f64v4 = f64v4(f64_from(1), f64_from(2), f64_from(3), f64_from(4));
+    var v0 = load64(&v);
+    if (rv4(0, v, bump(&v)) != v0) { return 1; }
+    return 0;
+}
+fn fwd(s: Big, z): i64 { return s.a; }
+
+alloc_init();
+assert_eq(issue(), 0, "the issue's repro: rd(b, bump(&b)) / rm(m, ..) read 1 (24 B, 16 B; the 8 B control)");
+assert_eq(src_mid(), 1, "the struct between two arguments: rd3(0, b, bump(&b))");
+assert_eq(src_nested(), 1, "the write inside a larger later argument: rd(b, 1 + bump(&b))");
+assert_eq(src_earlier(), 11, "control: an EARLIER argument's write is seen (rd2(bump(&b), b))");
+assert_eq(src_global(), 1, "a global in a fn: rd(G, bump(&G))");
+assert_eq(src_field(), 1, "a struct field: rd(h.big, bump(&h + 8))");
+assert_eq(src_capture(), 1, "a closure capture: || rd(c, bump(&c))");
+assert_eq(src_heap(), 1, "a pointer-mode local: rd(p, bump(p))");
+assert_eq(src_addr(), 1, "an explicit address: rd(&b, bump(&b))");
+assert_eq(src_odd(), 5, "a 12-byte struct: rodd(o, bump32(&o)) reads b = 5");
+assert_eq(src_tuple(), 1, "a by-value tuple: rt(t, bump(&t))");
+assert_eq(src_generic(), 1, "a generic instance: rdg(b, bump(&b))");
+assert_eq(src_forward(), 1, "a fn defined after the call: fwd(b, bump(&b))");
+assert_eq(src_receive(), 1, "a struct-valued receive: var r: Big = mkb(b, bump(&b))");
+assert_eq(src_opwrite(), 1, "a later operator fn writes it: rw(w, w + w2) with W_add(x: *W, ..)");
+assert_eq(form_method_arg(), 1, "a method's argument: o.arg(b, bump(&b))");
+assert_eq(form_self(), 1, "a method's by-value self: b.get(bump(&b))");
+assert_eq(form_named(), 1, "named, in order: rd(s: b, z: bump(&b))");
+assert_eq(form_named_reordered(), 11, "named, reordered: rd(z: bump(&b), s: b) evaluates bump first, as written");
+assert_eq(form_tail(), 1, "a tail call: return rd(b, bump(&b))");
+assert_eq(form_tail_arm(), 1, "the tail arm: return rd(G, gbump())");
+assert_eq(form_tail_then_self(), 1000001, "a copying tail call, then a self tail call 1,000,000 deep");
+assert_eq(form_tail_then_self_loop(), 1000001, "... the two in a loop (the self call a pending site)");
+assert_eq(form_self_then_tail_loop(), 1000001, "... in a loop, the self call first (decided at the loop's end)");
+assert_eq(form_op(), 111, "an operator's by-value left operand: b + pbump(&b)");
+assert_eq(form_op_struct(), 111, "... with a struct result: b - pbump(&b)");
+assert_eq(vec_first(), 0, "an f64v2 argument: rv(v, bump(&v)) reads the low lane as written");
+assert_eq(vec_mid(), 0, "an f64v2 between two arguments: rv2(0, v, bump(&v))");
+assert_eq(vec_wide(), 0, "an f64v4 argument: rv4(0, v, bump(&v))");
+# top level: no frame — the copy is a hidden global
+G.a = 1;
+assert_eq(rd(G, bump(&G)), 1, "top level: rd(G, bump(&G))");
+GH.big.a = 1;
+assert_eq(rd(GH.big, bump(&GH + 8)), 1, "top level: a global's field, rd(GH.big, bump(&GH + 8))");
+G.a = 1;
+assert_eq(G.get(bump(&G)), 1, "top level: a by-value self, G.get(bump(&G))");
+G.a = 1;
+assert_eq(G + pbump(&G), 111, "top level: an operator's left operand, G + pbump(&G)");
+var r = assert_summary();

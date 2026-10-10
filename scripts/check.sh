@@ -2342,6 +2342,7 @@ _chk_gate "$ROOT/tests/gates/codegen/struct_pair_multi_value_crossing.sh"
 # exactly only 1 / 2 / 4), over the next global: the filed repro and every size 1..16 x every store
 # form, x86 / IR / DCE / aarch64 / cx / PE. Mutation ledger in the header.
 _chk_gate "$ROOT/tests/gates/codegen/global_struct_store_width.sh"
+_chk_gate "$ROOT/tests/gates/codegen/by_value_arg_copy.sh"   # 6.7.7 (call arguments)
 # 6.7.6 (Break 1, lane C) — cyrius.cyml git first, local development by an explicit switch
 _chk_gate "$ROOT/tests/gates/toolchain/lib_overlay_include.sh"
 _chk_gate "$ROOT/tests/gates/toolchain/deps_git_first_local_switch.sh"

@@ -1,12 +1,9 @@
-# A closure literal's `|a, b|` comma is counted as an argument separator — OPEN
+# A closure literal's `|a, b|` comma is counted as an argument separator — RESOLVED
 
-**Status:** 🟡 **OPEN** — reproduced 2026-10-09 against 6.7.6 @ e44470b7 with the tree's `build/cycc`:
-- a generic call with a two-parameter closure before its struct argument is refused with a false "has no i64 …
-  instance" error;
-- a `return sl(|a, b| a + b, "hello");` tail call to a `: Str` parameter passes the raw literal where a Str handle is
-  expected, and returns 0 where the non-tail call returns 5.
-**Placement:** unpinned — 6.x-line backlog — never 7.x. The 6.7.7 B6 lane adds `_arg_next`, an argument walker that
-skips a closure's bars. Moving the three scanners below onto it is the fix.
+> ✅ **RESOLVED in v6.7.7** (1a9a6bfc; CHANGELOG [6.7.7]) `_call_arg_start`, `_tc_str_literal_arg` and `_CALL_ARGC_PEEK` step by `_arg_next`, which steps over a closure's bars: both shapes and the routed call are right on every backend (`crossos/closure_argument_commas.tcyr`).
+
+**Status:** ✅ **RESOLVED in v6.7.7** — see the banner above (filed OPEN 2026-10-09 against 6.7.6 @ e44470b7).
+**Placement:** 6.7.7 — shipped (integration lane: call arguments).
 **Discovered:** 2026-10-09 during the 6.7.7 B6 (default and named arguments) planning (repro
 `closure_comma_generic.cyr`); the tail-call shape was found while filing this issue.
 **Severity:** Medium — one shape is a silent wrong result (shape 2); the other refuses valid source (shape 1).
