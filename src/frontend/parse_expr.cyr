@@ -205,10 +205,11 @@ fn _cl_snap_is_sptr(S, esl): i64 {
     if (_classify_param_type(S, L64(S + 0x1A6018 + (sid - 1) * 8)) != 0) { return 0; }
     return 1;
 }
-# 6.6.17 — the step of enclosing slot `esl` when it is a typed pointer (`_slot_ptr_step`, read
-# from the snapshot: bit 56 of its depth word, the mark in its slice-width word), else 0. A
-# capture of one loaded with scale 0, so `p + 1` stepped 1 and `var q: *T = p;` warned.
-fn _cl_snap_ptr_step(esl): i64 {
+# 6.6.17 — the step word of enclosing slot `esl` when it is a typed pointer (`_slot_ptr_word`, read
+# from the snapshot: bit 56 of its depth word, the mark in its slice-width word — 6.7.8: T's kind
+# included), else 0. A capture of one loaded with scale 0, so `p + 1` stepped 1 and `var q: *T = p;`
+# warned.
+fn _cl_snap_ptr_word(esl): i64 {
     if (_cl_snap == 0) { return 0; }
     if (((L64(_cl_snap + _cl_snap_n * 8 + esl * 8) >> 56) & 1) == 0) { return 0; }
     var w = L64(_cl_snap + _cl_snap_n * 24 + esl * 8);
@@ -243,7 +244,7 @@ fn _CL_CAP_WORDS_RA(S, capi): i64 {
 # aggregate dispatches, exactly as the enclosing-local and global rungs decide it.
 # CHANGELOG [6.6.5]
 fn _CL_CAP_OPTYPE(S, esl, capi): i64 {
-    var ps = _cl_snap_ptr_step(esl);   # 6.6.17: a captured typed pointer carries its step
+    var ps = _cl_snap_ptr_word(esl);   # 6.6.17: a captured typed pointer carries its step (6.7.8: + kind)
     if (ps > 0) { SPSC(S, ps); return 0; }
     if (_cl_snap_span(esl) < 1) { return 0; }
     var t = _cl_snap_type(esl);
@@ -2545,9 +2546,9 @@ fn _sysx_meant_here(S, n): i64 {
 # that: the element at `&a + i * sizeof(T)`, loaded sign- or zero-extended by T, stored at
 # T's width. No bounds check (the opt-in checked mode is a separate item). A bare `var a[N]`
 # states no element width (bytes in a fn, slots at top level), so its subscript is REFUSED by
-# name rather than guessed, as is a float, bool or struct element (it records no integer
-# descriptor, so it reads as bare); a slice local keeps its own bounds-checked `s[i]` (below,
-# in the factor). CHANGELOG [6.6.12]
+# name rather than guessed, as is a float, bool or struct element (a struct records no width; an
+# f64 / f32 / bool records its kind since 6.7.8 (`_ek_fk`) and is refused here all the same); a
+# slice local keeps its own bounds-checked `s[i]` (below, in the factor). CHANGELOG [6.6.12]
 #
 # Cursor at `[` after NAME: consumes `[ idx ]` and leaves rax = &NAME[idx]. Returns the element
 # width, NEGATIVE for a signed element (the EFIELD_LOAD_W convention); 0 after a diagnostic.
@@ -2571,7 +2572,8 @@ fn _arr_sub_addr(S, noff): i64 {
         ix = FINDVAR(S, noff);
         if (ix >= 0) { k = 3; d = _arr_gdesc(S, ix); }
     }
-    var aw = d & 0x3F;
+    var aw = _ek_w(d);
+    if (_ek_fk(d) != 0) { aw = 0; }   # 6.7.8 (C2-3a): an f64 / f32 / bool element is recorded, still refused
     if (k == 0) {
         if (_syntax_only == 0) {
             ERR_IDENT(S, "undefined variable ", noff, " (missing include or enum?)", 0 - 1);
@@ -2599,8 +2601,7 @@ fn _arr_sub_addr(S, noff): i64 {
     else { EVADDR(S, ix); }
     EPOPC(S);
     EADDR(S);             # rax = &NAME + index * sizeof(T)
-    if ((d & 0x40) != 0) { aw = 0 - aw; }
-    return aw;
+    return _ek_lw(d);     # negative when signed
 }
 # Width-correct element load: rax = the element at the address in rax. `w` from _arr_sub_addr.
 fn _arr_sub_load(S, w): i64 {
@@ -2731,9 +2732,10 @@ fn _deref_read(S): i64 {
 }
 
 # A global's load (global `idx`, GVTYPE `vt`): a typed-pointer global (6.6.17: GVTYPE = 0 - its
-# step) puts its step into the pointer-scale word, so `g + n` steps by the pointee.
+# step) puts its step into the pointer-scale word, so `g + n` steps by the pointee — 6.7.8: as the
+# step word, with T's kind from `_gv_ped` (parse_types.cyr).
 fn _gv_load_ps(S, idx, vt): i64 {
-    if (vt < 0) { SPSC(S, 0 - vt); }
+    if (vt < 0) { SPSC(S, _ps_word(0 - vt, _gv_ped_get(idx))); }
     return 0;
 }
 
@@ -2970,7 +2972,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
                 # 8-byte value and propagate F32_TYID so PEXPR/PARSE_TERM route +,-,*,/
                 # and comparisons to EMIT_F32_BINOP / EF32_CMP (single-precision).
                 if (lt == F32_TYID) { EFLLOAD(S, li); SESTYPE(S, F32_TYID); return 0; }
-                SPSC(S, lt);
+                _lt_spsc(S, li, lt);   # SPSC(S, lt); 6.7.8: a step-8 `*T` local's step word
                 # Width-correct load for scalar types (1=i8, 2=i16, 4=i32)
                 # v6.3.34: a sub-i64 SCALAR local (SLTYPE 1/2/4 for i8/i16/i32) is NOT
                 # a pointer — its scale for `+`/`-` arithmetic must be 1, not its byte
@@ -5764,7 +5766,7 @@ fn _PARSE_TERM_IMPL(S): i64 {
 fn _ptr_add(S, ps): i64 {
     if (_W128_IS(S) == 1) { return _w128_ilhs(S, 0); }   # 6.7.6 (D2): `n + x` with a u128 x
     var rs = GPSC(S);
-    if (ps == 0) { if (rs > 1) { return _int_plus_ptr(S, rs); } }
+    if (ps == 0) { if (_ps_step(rs) > 1) { return _int_plus_ptr(S, rs); } }   # 6.7.8: the step, not the word
     EPTR_SCALE(S, ps);
     EMOVCA(S);
     EUNSPILL(S);
@@ -5772,7 +5774,8 @@ fn _ptr_add(S, ps): i64 {
     SPSC(S, ps);
     return 0;
 }
-# Stack = n, rax = p: rax = n * rs + p (EIMUL clobbers rcx, so n goes round the stack).
+# Stack = n, rax = p: rax = n * rs + p (EIMUL clobbers rcx, so n goes round the stack). `rs` is p's
+# step word (6.7.8): the multiplier is its step, and the result keeps the word.
 fn _int_plus_ptr(S, rs): i64 {
     EMOVCA(S);           # rcx = p
     EUNSPILL(S);         # rax = n
@@ -5781,7 +5784,7 @@ fn _int_plus_ptr(S, rs): i64 {
     EADDR(S);            # rax = p
     EPOPC(S);            # rcx = n
     EPUSHR(S);           # push p
-    EMOVI(S, rs);
+    EMOVI(S, _ps_step(rs));
     EIMUL(S);            # rax = n * rs
     EPOPC(S);            # rcx = p
     EADDR(S);
@@ -5800,15 +5803,16 @@ fn _ptr_sub(S, ps): i64 {
     return 0;
 }
 fn _ptr_diff(S, ps, rs): i64 {
-    if (rs != ps) {
+    var st = _ps_step(ps);   # 6.7.8: steps compared — `*i32 - *u32` is an element count, as before
+    if (_ps_step(rs) != st) {
         ERR_MSG(S, "pointer difference of pointers with different element sizes; for a byte count subtract plain addresses (`var a = p;`)", 117);
     }
     EMOVCA(S);
     EPOPR(S);
     ESUBR(S);            # rax = p - q, in bytes
-    if (ps > 1) {
+    if (st > 1) {
         EPUSHR(S);
-        EMOVI(S, ps);
+        EMOVI(S, st);
         EMOVCA(S);
         EPOPR(S);
         ECQO(S);
@@ -5821,7 +5825,8 @@ fn _ptr_diff(S, ps, rs): i64 {
 fn EPTR_SCALE(S, ps): i64 {
     # rax has the offset value; multiply by pointer scale
     # mov rcx, rax; mov rax, ps; imul rcx → rax = offset * scale
-    if (ps > 1) { EMOVCA(S); EMOVI(S, ps); EIMUL(S); }
+    var st = _ps_step(ps);   # 6.7.8 (C2-3a): `ps` may be a step word (`_ps_word`, parse_types.cyr)
+    if (st > 1) { EMOVCA(S); EMOVI(S, st); EIMUL(S); }
     return 0;
 }
 

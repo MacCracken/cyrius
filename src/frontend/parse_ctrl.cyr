@@ -465,7 +465,8 @@ fn _ie_kind(S, st, bti): i64 {
         }
     }
     _ie_merge(S, st, bti, cl, sid, typed + isb * 2 + fbk * 4);
-    if (L64(st + 40) == 0 - 1) { S64(st + 40, ps); } elif (L64(st + 40) != ps) { S64(st + 40, 0); }
+    # 6.7.8 (C2-3a): the pointer step words merge by step (`_ps_merge`) — two kinds of one step keep it.
+    if (L64(st + 40) == 0 - 1) { S64(st + 40, ps); } else { S64(st + 40, _ps_merge(L64(st + 40), ps)); }
     if (xw > L64(st + 48)) { S64(st + 48, xw); }
     return 0;
 }

@@ -9620,9 +9620,14 @@ fn _mark_ptr_param(S): i64 {
     # 6.6.17: and its step, sizeof(T), as a mark on the slot the parameter takes next — read only
     # behind the slot's bit 56, which `_param_record` sets (see `_sl_marks`). Cursor on T; an
     # unknown T is refused by `_tn_param_check`, so this is quiet. `**T` steps a pointer's 8.
+    # 6.7.8 (C2-3a): and T's kind with it (`_ps_word`, parse_types.cyr), under the same binding.
     var ps = 8;
-    if (PEEKT(S) != 8) { ps = _ptr_step_peek(S, 0 - 1, 1); }
-    SSLICE_W(S, GFLC(S), 0 - 0x7E00 - ps);
+    var ed = 0;
+    if (PEEKT(S) != 8) {
+        ps = _ptr_step_peek(S, 0 - 1, 1);
+        ed = _ek_at(S, GTI(S));
+    }
+    SSLICE_W(S, GFLC(S), 0 - 0x7E00 - _ps_word(ps, ed));
     return 0;
 }
 # ⛔ 6.7.0 (A4) — AN UNTYPED `self` IN AN `impl … for T` IS A `*T`. It was a bare address: `self.x`

@@ -554,12 +554,13 @@ fn _tup_gen_chk(S, ti): i64 {
 # the first statement 1/2/4/8 by T; and `p += n` 1 everywhere. Measured across ~/Repos: no source
 # declares a `*T` at all, so nothing relied on the old steps (drafts b7-measure).
 # A `*T` slot stays a full 8-byte word (6.6.16 C8: a narrow SLTYPE truncated the pointer). The
-# step is carried on the slot as a MARK in the slice-width table, `0 - 0x7E00 - step`, read only
+# step is carried on the slot as a MARK in the slice-width table, `0 - 0x7E00 - step` (6.7.8: the
+# step WORD, `_ps_word` — T's kind in bits 40-47, so the mark stays under 2^48 in magnitude), read only
 # when bit 56 of the depth word says the slot is a typed pointer (SLPTRP — set here for a local,
 # by `_param_record` for a parameter): the slice-width table is not reset for a parameter's slot,
 # so a mark is only trusted behind that bit, which every slot gets fresh. A step-8 local keeps
 # SLTYPE 8, the load path it always had. The mark rides the closure snapshot with the depth word
-# (`_cl_snap_ptr_step`). CHANGELOG [6.6.17]
+# (`_cl_snap_ptr_word`). CHANGELOG [6.6.17]
 # `ps` is PARSE_VAR's pscale: > 0 a pointer's step; 0 or `0 - sid` / a vector descriptor for
 # anything else, which is the SLTYPE as it stands.
 # ⛔ 6.6.17 — a `*Struct` local takes dot syntax like a `p: *Struct` parameter (`p.val`,
@@ -598,14 +599,18 @@ fn _tup_svtype(S, vi, sid, noff, ti): i64 {
 # 6.7.6 (Break 1, lane D) — the LAST marks of a scalar local's / global's registration: `bool`
 # (6.7.3) and declared INTEGER (`st` = the annotation's integer width, 1..8; 16 is u128 / a slice),
 # which routes `println(n)` to its `_int` overload (_od_arg_kind, parse_fn.cyr). A global's marks are
-# the last declaration's (0 clears a redeclaration's). CHANGELOG [6.7.6]
-fn _sl_last_marks(S, li, lbool, st): i64 {
+# the last declaration's (0 clears a redeclaration's). 6.7.8 (C2-3a): and a `*T`'s element kind
+# (`ann` the annotation's first token) — a global's beside GVTYPE, so it is no new shape.
+# CHANGELOG [6.7.6]
+fn _sl_last_marks(S, li, lbool, st, ann): i64 {
     SLBOOL(S, li, lbool);
     if (st >= 1) { if (st <= 8) { SLINTD(S, li); } }
+    if (GLPTRP(S, li) == 1) { _sl_ptr_ed(S, li, ann); }
     return 0;
 }
 fn _gv_last_marks(S, vi, b, st, ann): i64 {
     SVBOOL(S, vi, b);
+    _gv_ped_set(vi, _ek_of_ptr_ann(S, ann));
     var n = 0;
     if (st >= 1) { if (st <= 8) { n = 1; } }
     SVINTD(S, vi, n);
@@ -653,6 +658,26 @@ fn _gv_ptr_type(S, vi, ps, ann): i64 {
     if (vi < 1048576) { S64(_gv_psid + vi * 8, sid); }
     return 0;
 }
+# A `*T` global's element kind (6.7.8, C2-3a; `_ps_word`): a byte per global, written with the
+# last declaration's marks (`_gv_last_marks`) and NOT part of `_gv_same_shape`, so `var g: *u8`
+# redeclared `var g: *i8` folds as it always did (the later declaration's kind).
+var _gv_ped = 0;
+fn _gv_ped_set(vi, ed): i64 {
+    if (_gv_ped == 0) {
+        if (ed == 0) { return 0; }
+        _gv_ped = alloc(1048576);
+    }
+    if (vi < 0) { return 0; }
+    if (vi >= 1048576) { return 0; }
+    store8(_gv_ped + vi, ed);
+    return 0;
+}
+fn _gv_ped_get(vi): i64 {
+    if (_gv_ped == 0) { return 0; }
+    if (vi < 0) { return 0; }
+    if (vi >= 1048576) { return 0; }
+    return load8(_gv_ped + vi);
+}
 fn _gv_ptr_sid(S, vi): i64 {
     if (_gv_psid == 0) { return 0; }
     if (vi < 0) { return 0; }
@@ -679,12 +704,50 @@ fn _slice_lw(S, li): i64 {
     if (GLSLICE(S, li) == 0) { return 0; }
     return GSLICE_W(S, li);
 }
-# The step of a typed-pointer slot `li` (a local or a `p: *T` parameter), 0 when it is none.
-fn _slot_ptr_step(S, li): i64 {
+# ⛔ 6.7.8 (C2-3a) — THE STEP WORD CARRIES THE ELEMENT KIND. A typed pointer's step (sizeof(T), the
+# pointer-scale word GPSC while its value is in rax) says nothing about T's kind: `*u8` / `*i8` both
+# step 1, `*u32` / `*f32` / `*i32` 4, `*f64` / `*bool` / `*i64` 8. So the step is stored and carried
+# as ONE word, `ps | ed << 40` (ed = the element descriptor, `_ek_of_ptr_ann`, parse_decl.cyr):
+# in the slot mark, a `name: *T` field's `_fld_ps`, a `: *T` return's `_fn_rps` (a global's GVTYPE
+# is a shape key, so its kind sits beside it in `_gv_ped`). Every setter of GPSC writes the word
+# and pointer arithmetic writes the operand's word back, so `p + n`, `p - n` and a parenthesised
+# pointer keep the kind exactly where they keep the step. The closed list of readers that use the
+# value as a NUMBER takes `_ps_step`: EPTR_SCALE, `_ptr_add`, `_int_plus_ptr`, `_ptr_diff` (parse_
+# expr.cyr) and the if-expression's merge (`_ps_merge`); every other reader tests `== 0` / `> 0`,
+# which the word preserves (ed is nonzero only when the step is). Nothing reads the kind yet: the
+# emitted bytes are unchanged. ⚠ `n + p` with a step-1 pointer drops its step, kind included, as
+# it always has (6.6.17: only `p + n`'s left operand writes its word back). CHANGELOG [6.7.8]
+fn _ps_word(ps, ed): i64 {
+    if (ps <= 0) { return ps; }
+    return ps | (ed << 40);
+}
+fn _ps_step(w): i64 {
+    if (w < 0) { return w; }
+    return w & 0xFFFFFFFFFF;
+}
+# Two branches' words: the same word, else the shared step without a kind, else 0 (no step).
+fn _ps_merge(a, b): i64 {
+    if (a == b) { return a; }
+    if (_ps_step(a) != _ps_step(b)) { return 0; }
+    return _ps_step(a);
+}
+# The step word of a typed-pointer slot `li` (a local or a `p: *T` parameter), 0 when it is none.
+fn _slot_ptr_word(S, li): i64 {
     if (GLPTRP(S, li) == 0) { return 0; }
     var w = GSLICE_W(S, li);
     if (w <= 0 - 0x7E01) { return 0 - w - 0x7E00; }
     return 8;
+}
+fn _slot_ptr_step(S, li): i64 { return _ps_step(_slot_ptr_word(S, li)); }
+# A `var p: *T` local's kind, written into the mark `_sl_marks` just wrote (`ann` the annotation's
+# `*`). `_sl_marks` sits at cybs's 6-parameter cap, so `_sl_last_marks` calls this.
+fn _sl_ptr_ed(S, li, ann): i64 {
+    var ed = _ek_of_ptr_ann(S, ann);
+    if (ed == 0) { return 0; }
+    var w = GSLICE_W(S, li);
+    if (w > 0 - 0x7E01) { return 0; }
+    SSLICE_W(S, li, 0 - 0x7E00 - _ps_word(0 - w - 0x7E00, ed));
+    return 0;
 }
 # The type a VALUE read of local `li` is made at (PARSE_FACTOR, `x OP= ..`): a typed pointer is a
 # plain word (0) whatever its SLTYPE says — a `p: *f32` parameter's slot is typed f32 and a
@@ -696,11 +759,26 @@ fn _load_lt(S, li): i64 {
     if (lt == 8) { return 8; }
     return 0;
 }
+# The factor's pointer scale for local `li` read at `lt` (`_load_lt`): `lt`, which a step-8 `*T`
+# local's SLTYPE 8 is — 6.7.8 (C2-3a): that local's step WORD, T's kind included, so a `*i64` /
+# `*f64` / `*bool` local carries its kind as every other typed pointer does (`_ps_word`). One call
+# in _PARSE_FACTOR_IMPL where `SPSC(S, lt)` was (a same-count swap: cybs's per-fn ceiling).
+fn _lt_spsc(S, li, lt): i64 {
+    if (lt == 8) {
+        var w = _slot_ptr_word(S, li);
+        if (w > 0) {
+            SPSC(S, w);
+            return 0;
+        }
+    }
+    SPSC(S, lt);
+    return 0;
+}
 # An SLTYPE-0 local was just loaded: its marks — the untyped-float flag (_UFV_L) and the pointer
 # step above.
 fn _sl_load_marks(S, li): i64 {
     _UFV_L(S, li);
-    var ps = _slot_ptr_step(S, li);
+    var ps = _slot_ptr_word(S, li);   # 6.7.8 (C2-3a): the step word, kind included
     if (ps > 0) { SPSC(S, ps); }
     if (GLBOOL(S, li) == 1) { _BX_MARK(S); }   # 6.7.3: a bool local's read is a boolean value
     if (GLW128(S, li) == 1) { _W128_MARK(S, 1, li); }   # 6.7.6 (D2): a u128 local's read is the u128
@@ -789,9 +867,10 @@ fn _ptr_step_peek(S, vnoff, quiet): i64 {
 # (`struct Node { val; next: *Node; }` stepped 8, not 16), and a struct declared further down
 # (`struct A { p: *B; }`) was refused "declared after its use", so two structs could not point
 # at each other. Such a field records T's token (`0 - (ti + 1)`); `_fld_ps_get` sizes it.
-var _fld_ps = 0;   # per field-pool entry: the step of a `*T` field (or T's token), 0 otherwise
+var _fld_ps = 0;   # per field-pool entry: the step word of a `*T` field (or T's token), 0 otherwise
 fn _add_ptr_field(S, si, fnoff): i64 {
     STI(S, GTI(S) + 1);                     # consume ':'
+    var ed = _ek_of_ptr_ann(S, GTI(S));     # 6.7.8 (C2-3a): T's kind rides the step (`_ps_word`)
     var ps = _fld_ptr_late(S);
     if (ps == 0) { ps = _ptr_annot(S, fnoff, 0); }
     var ent = L64(S + 0x1AA018 + si * 8) + (L64(S + 0x1A8018 + si * 8) & 0x7FFFFFFFFFFFFFFF);
@@ -800,7 +879,7 @@ fn _add_ptr_field(S, si, fnoff): i64 {
     if (L64(S + 0x1AC018) == top) { return 0; }   # refused (and reported) by ADDFIELD
     if (ent >= 8192) { return 0; }
     if (_fld_ps == 0) { _fld_ps = alloc(8192 * 8); }
-    S64(_fld_ps + ent * 8, ps);
+    S64(_fld_ps + ent * 8, _ps_word(ps, ed));   # a late struct T (`0 - token`) keeps its form
     if (ps < 0) { _fld_pb_note(S, ent, si); }
     return 0;
 }
@@ -863,6 +942,7 @@ fn _fld_ptr_sid(S, si, fi): i64 {
     _tp_n0 = sv_n0; _tp_c0 = sv_c0; _tp_n1 = sv_n1; _tp_c1 = sv_c1;
     return sid;
 }
+# A field's step word (6.7.8: kind included; a late struct T's, sized here, has none).
 fn _fld_ps_get(S, si, fi): i64 {
     if (_fld_ps == 0) { return 0; }
     var ent = (L64(S + 0x1AA018 + si * 8) + fi) & 0x7FFFFFFFFFFFFFFF;
@@ -881,7 +961,7 @@ fn _fld_ps_get(S, si, fi): i64 {
 # A `fn f(): *T` return (cursor on the `*`): recorded as an i64 return plus T's step, which a
 # call to it carries (`_call_ret_ps`). `quiet` 1 in pass 1 (`_prescan_fn_sig`), which only
 # records it; pass 2 (PARSE_FN_DEF) refuses an unknown T and sets the fn's return scalar.
-var _fn_rps = 0;   # per fn: the step of a `*T` return, 0 for any other return
+var _fn_rps = 0;   # per fn: the step word of a `*T` return (6.7.8: + the kind, `_ps_word`), else 0
 var _fn_rpsid = 0; # per fn: T's struct for a `*T` return (6.6.17, `_call_ptr_field`), else 0
 # ⛔ 6.6.20 — a generic INSTANCE's `: *T` is read under the instance's binding, as `_gtype_sid`
 # reads `: Box<T>`: PARSE_FN_DEF binds T only around the parameter loop and the body, and the
@@ -902,10 +982,11 @@ fn _ret_ptr_record(S, fi, quiet): i64 {
         if (_fn_rpsid == 0) { _fn_rpsid = alloc(131072 * 8); }
         S64(_fn_rpsid + fi * 8, psid);
     }
+    var ed = _ek_of_ptr_ann(S, GTI(S));   # 6.7.8 (C2-3a): under the instance's binding, as the step
     var ps = _ptr_annot(S, 0 - 1, quiet);
     SFRS(S, fi, 0 - 8);
     if (_fn_rps == 0) { _fn_rps = alloc(131072 * 8); }
-    S64(_fn_rps + fi * 8, ps);
+    S64(_fn_rps + fi * 8, _ps_word(ps, ed));
     if (quiet == 0) { _cur_fn_ret_scalar = 0 - 8; }
     return 0;
 }

@@ -51,18 +51,88 @@ fn _arr_desc(ew, sgn): i64 {
 # ⛔ 6.7.6 (Break 1, lane D) — 0x80 in the descriptor: the array was declared with an element TYPE
 # (`var a: T[N]`, any T — f64, a struct and a vector included, which carry no integer width), so
 # `a OP= v` on its name is refused by name (_asg_wide_refused, parse.cyr) — it operated on element 0.
-# A bare `var a[N]` stays 0. The subscript reads only `& 0x3F` (width) and `& 0x40` (sign), so the
+# A bare `var a[N]` stays 0. The subscript reads only the width and the kind bits below, so the
 # mark changes no load; a global keeps it under 0x100 like any descriptor. CHANGELOG [6.7.6]
 fn _arr_desc_t(ew, sgn, typed): i64 {
     var d = _arr_desc(ew, sgn);
     if (typed != 0) { d = d | 0x80; }
     return d;
 }
+# ⛔ 6.7.8 (C2-3a) — ONE ELEMENT DESCRIPTOR `ed` FOR ARRAYS AND POINTERS. The byte above, grown by
+# two kinds in its one free bit: 0x20 a FLOAT element (f64 at width 8, f32 at 4) and 0x60 a BOOL
+# (width 8; float + signed is otherwise impossible). Low five bits 0 = no element a subscript can
+# load (bare, struct, pointer, vector, enum, cstring). A typed array of f64 / f32 / bool records its
+# kind now (`_arr_desc_k`) and a `*T` its pointee's (`_ek_of_ptr_ann`: the slot mark, `_gv_ped`,
+# the field and return step words — see `_ps_word`, parse_types.cyr), so C2's `p[i]`, `a[i]` on a
+# float array and `*p` at the element's width read one byte. Nothing loads by the kinds yet: f64 /
+# f32 / bool arrays keep their refusal (_arr_sub_addr) and every emitted byte is unchanged. The
+# descriptor is a byte everywhere it is stored (SLAEW, GVSGN's low byte, the step word's bits 40-47).
+# CHANGELOG [6.7.8]
+fn _ek_w(d): i64 { return d & 0x1F; }        # the element width (1/2/4/8, 16 u128), 0 = none
+fn _ek_lw(d): i64 {                          # the load width, negative when signed (sign-extends)
+    if ((d & 0x60) == 0x40) { return 0 - (d & 0x1F); }
+    return d & 0x1F;
+}
+fn _ek_fk(d): i64 {                          # `_fk_bx`'s kind: 1 f64, 2 f32, 16 bool, 0 an integer
+    var k = d & 0x60;
+    if (k == 0x60) { return 16; }
+    if (k != 0x20) { return 0; }
+    if ((d & 0x1F) == 4) { return 2; }
+    return 1;
+}
+# The kind of a type code (_tn_*, parse_types.cyr): iN / uN its width (| 0x40 for i8..i32), f64
+# 0x28, f32 0x24, bool 0x68, a type parameter no binding resolved 8 (its i64 base); else 0.
+fn _ek_of_code(c): i64 {
+    var k = _tn_class(c);
+    var v = _tn_val(c);
+    if (k == 1) { if (v < 8) { return v | 0x40; } return v; }
+    if (k == 2) { return v; }
+    if (k == 3) { return v | 0x20; }
+    if (k == 4) {
+        if (v == 1) { return 0x68; }
+        if (v == 7) { return 8; }
+    }
+    return 0;
+}
+# The kind of the type named at token `ti` — a bound type parameter through its binding, as
+# `_tn_ptr_step` sizes it. Resolves only: an unknown name is 0 here and refused where it is sized.
+fn _ek_at(S, ti): i64 {
+    var t = TOKTYP(S, ti);
+    if (t == 105) { return 16; }                 # u128: one element does not fit a register
+    if (t != 2) { return 0; }
+    var b = _tp_resolve(S, TOKVAL(S, ti));
+    if (b != 0) { return _ek_of_code(_tn_from_rc(b)); }
+    return _ek_of_code(_tn_resolve_at(S, ti));
+}
+# The pointee kind of a pointer annotation `*T` whose `*` is token `ti`; 0 for `**T` (a pointer
+# element) and for anything that is not a `*` annotation.
+fn _ek_of_ptr_ann(S, ti): i64 {
+    if (ti <= 0) { return 0; }
+    if (TOKTYP(S, ti) != 8) { return 0; }
+    if (TOKTYP(S, ti + 1) == 8) { return 0; }
+    return _ek_at(S, ti + 1);
+}
+# A typed array's descriptor: `_arr_desc_t`, plus the float / bool kind of an element with no
+# integer width (`ann` the element's type token, 0 for a bare array).
+fn _arr_desc_k(S, ew, sgn, typed, ann): i64 {
+    var d = _arr_desc_t(ew, sgn, typed);
+    if (ew == 0) { if (ann > 0) {
+            var k = _ek_at(S, ann);
+            if ((k & 0x20) != 0) { d = d | k; }
+        } }
+    return d;
+}
+# The redeclaration fold compares 6.7.6's descriptor: an f64 / f32 / bool kind maps back to the
+# typed mark alone, so `f64[2]` and `f32[4]` (both 16 B) still fold as they did (_gv_same_shape).
+fn _ek_legacy(g): i64 {
+    if ((g & 0x20) == 0) { return g; }
+    return g & 0x180;
+}
 # ⛔ 6.7.6 (D2): a BARE array (descriptor 0) is `0x100` alone, so its `b OP= v` can be refused by name
 # (_asg_wide_refused, _arr_gbare) — a plain scalar global keeps 0. `_gv_same_shape` compares the two
 # as before (_gsgn_shape).
-fn _arr_gsgn(ew, sgn, typed): i64 {
-    var d = _arr_desc_t(ew, sgn, typed);
+fn _arr_gsgn(S, ew, sgn, typed, ann): i64 {
+    var d = _arr_desc_k(S, ew, sgn, typed, ann);
     return 0x100 | d;
 }
 # A global's element descriptor, 0 when it is not an element-typed array.
@@ -78,7 +148,7 @@ fn _arr_gbare(S, vi): i64 {
 }
 fn _gsgn_shape(g): i64 {
     if (g == 0x100) { return 0; }
-    return g;
+    return _ek_legacy(g);   # 6.7.8 (C2-3a): the element kinds are no new shape
 }
 # The named slot of an array local (PARSE_ARRAY's stack path): its element descriptor (6.6.12), a
 # stale slice width at the index cleared, and (6.7.6, D2) the bare mark when it has no element type.
@@ -365,7 +435,7 @@ fn PARSE_ARRAY(S, noff, ew, sgn, eb, ann_ti): i64 {
         S64(S + 0x5D9D000 + sa_named * 8, noff);
         SLDEP(S, sa_named, GSDEP(S));
         SLAGG(S, sa_named, sa_nslots);   # 6.6.5: the slots ARE the array
-        _arr_named_marks(S, sa_named, _arr_desc_t(ew, sgn, ann_ti));   # 6.6.12: after SLAGG (see util.cyr SLAEW); 6.7.6: + the typed / bare marks
+        _arr_named_marks(S, sa_named, _arr_desc_k(S, ew, sgn, ann_ti, ann_ti));   # 6.6.12: after SLAGG (see util.cyr SLAEW); 6.7.6: + the typed / bare marks; 6.7.8: + the kind
         SLTYPE(S, sa_named, 0);
         SFLC(S, sa_named + 1);
         return 0;
@@ -373,7 +443,7 @@ fn PARSE_ARRAY(S, noff, ew, sgn, eb, ann_ti): i64 {
     var vcnt = GVCNT(S);
     S64(_varn_base + vcnt * 8, noff);
     S64(_vars_base + vcnt * 8, aligned);
-    SVSGN(S, vcnt, _arr_gsgn(ew, sgn, ann_ti));   # 6.6.12: the element descriptor (see _arr_gsgn); 6.7.6: + the typed mark
+    SVSGN(S, vcnt, _arr_gsgn(S, ew, sgn, ann_ti, ann_ti));   # 6.6.12: the element descriptor (see _arr_gsgn); 6.7.6: + the typed mark; 6.7.8: + the kind
     # 6.6.5 — a fn-local STATIC array is scoped to its block, not stamped as a file global.
     # The v6.6.4 stamp is what turned this shape's cross-file collision into an error naming
     # the CONSUMER's variable; scoping the name removes the collision instead of renaming it.
@@ -566,7 +636,7 @@ fn _fld_compound(S, idx, sid, off, hop, cop): i64 {
     var lt = 0;
     if (k == 1) { lt = F64_TYID; }
     if (k == 2) { lt = F32_TYID; }
-    var ps = _fld_ps_get(S, si, fi);
+    var ps = _ps_step(_fld_ps_get(S, si, fi));   # 6.7.8: the step alone (the word carries T's kind)
     _fld_addr_ra(S, idx, sid, off, hop);
     EPUSHR(S);                  # the field's address
     _arr_sub_load(S, w);        # rax = the field (clears the flags tracker)
@@ -3108,7 +3178,7 @@ fn PARSE_GVAR_ARR(S, noff, sti, ew, sgn, eb): i64 {
     var vc0 = GVCNT(S);
     S64(_varn_base + vc0 * 8, noff);
     S64(_vars_base + vc0 * 8, sz);
-    SVSGN(S, vc0, _arr_gsgn(ew, sgn, eb));   # 6.6.12: before the fold, so a redeclaration compares it; 6.7.6: + the typed mark
+    SVSGN(S, vc0, _arr_gsgn(S, ew, sgn, eb, _gai_ann(S, sti)));   # 6.6.12: before the fold, so a redeclaration compares it; 6.7.6: + the typed mark; 6.7.8: + the kind
     var vc = _gv_fold(S, vc0, sti);   # 6.6.6: a redeclaration reuses the global's slot
     SLVAR(S, vc);
     # v6.6.4: stamp visibility here too. PARSE_GVAR_REG returns into this fn BEFORE its
@@ -6812,7 +6882,7 @@ fn PARSE_VAR(S): i64 {
             _sl_marks(S, li, scalar_signed, scalar_type, slice_elt_w, pscale);
             SFLC(S, li + 1);
             SLFI(S, li, ufv);   # 6.6.10: set on EVERY declaration, after SFLC cleared it (see _UFV_L)
-            _sl_last_marks(S, li, lbool, scalar_type);   # 6.7.3: last — the high half is rewritten above; 6.7.6: + bit 59
+            _sl_last_marks(S, li, lbool, scalar_type, ann_ti);   # 6.7.3: last — the high half is rewritten above; 6.7.6: + bit 59; 6.7.8: + a `*T`'s kind
         }
     } else {
         _sc_global_receive(S, pscale, scv_start);   # 6.6.6: no frame at top level — refused by name
