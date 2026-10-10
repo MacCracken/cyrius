@@ -12,12 +12,13 @@
 # arguments (in order and reordered), a tail call (the ordinary path and the tail arm), an
 # operator's left operand (an i64 and a struct result), a later argument that writes through an
 # operator fn, and f64v2 / f64v4 arguments (an `async fn`'s frame is by_value_arg_copy.sh's AS1).
-# On the merged 6.7.7 compiler every row failed on x86, aarch64, cx and PE but the two controls and
-# the first-position f64v2 (PE only). Now an argument a later argument may write
-# (`_span_may_write`: a call, a builtin, an operator a struct dispatches, ...) is copied where it
-# stands, and the callee receives the copy. The 8 B struct (passed in a register) was always right
-# and is a control, as is an EARLIER argument's side effect, which the callee sees
-# (`rd2(bump(&b), b)` reads 11), and a reordered named call, evaluated as written.
+# On the merged 6.7.7 compiler every row failed on x86, aarch64, cx and PE but the two controls,
+# the first-position f64v2 (PE only) and the three 1,000,000-deep tail rows (controls too). Now an
+# argument a later argument may write (`_span_may_write`: a call, a builtin, an operator a struct
+# dispatches, ...) is copied where it stands, and the callee receives the copy. The 8 B struct
+# (passed in a register) was always right and is a control, as is an EARLIER argument's side
+# effect, which the callee sees (`rd2(bump(&b), b)` reads 11), and a reordered named call,
+# evaluated as written.
 #
 # ⚠ CROSS-HOST: the copy is emitted by each backend's frame / global addressing and byte-exact
 # load / store pair (`_agc_copy_bytes`), and the arguments travel through each call convention
@@ -98,6 +99,33 @@ fn form_tail(): i64 { var b: Big = Big { 1, 2, 3 }; return rd(b, bump(&b)); }
 # tail call to the ordinary path), and its copy in this frame makes it an ordinary call
 fn gbump(): i64 { G.a = G.a + 10; return 0; }
 fn form_tail_arm(): i64 { G.a = 1; return rd(G, gbump()); }
+# ... and that copy costs only ITS call the `jmp`: a self tail call beside it in the same fn keeps
+# its own, 1,000,000 deep — after it in the body, after it in a loop (a pending site), and before
+# it in a loop (decided at the loop's end). Controls on the merged compiler; the lane's first cut
+# overflowed the stack here (its copy set the per-fn flag).
+fn gzero(): i64 { return 0; }
+fn rdz(s: Big, z): i64 { return s.a + z; }
+fn walk_after(n, acc): i64 {
+    if (n == 0) { return rdz(G, acc + gzero()); }
+    return walk_after(n - 1, acc + 1);
+}
+fn walk_after_loop(n, acc): i64 {
+    while (n >= 0) {
+        if (n == 0) { return rdz(G, acc + gzero()); }
+        return walk_after_loop(n - 1, acc + 1);
+    }
+    return 0;
+}
+fn walk_before_loop(n, acc): i64 {
+    while (n >= 0) {
+        if (n > 0) { return walk_before_loop(n - 1, acc + 1); }
+        return rdz(G, acc + gzero());
+    }
+    return 0;
+}
+fn form_tail_then_self(): i64 { G.a = 1; return walk_after(1000000, 0); }
+fn form_tail_then_self_loop(): i64 { G.a = 1; return walk_after_loop(1000000, 0); }
+fn form_self_then_tail_loop(): i64 { G.a = 1; return walk_before_loop(1000000, 0); }
 fn form_op(): i64 { var b: Big = Big { 1, 2, 3 }; return b + pbump(&b); }
 fn form_op_struct(): i64 { var b: Big = Big { 1, 2, 3 }; var c: Big = b - pbump(&b); return c.a * 100 + c.b; }
 # ── value-form vectors ──────────────────────────────────────────────────────────────────────────
@@ -143,6 +171,9 @@ assert_eq(form_named(), 1, "named, in order: rd(s: b, z: bump(&b))");
 assert_eq(form_named_reordered(), 11, "named, reordered: rd(z: bump(&b), s: b) evaluates bump first, as written");
 assert_eq(form_tail(), 1, "a tail call: return rd(b, bump(&b))");
 assert_eq(form_tail_arm(), 1, "the tail arm: return rd(G, gbump())");
+assert_eq(form_tail_then_self(), 1000001, "a copying tail call, then a self tail call 1,000,000 deep");
+assert_eq(form_tail_then_self_loop(), 1000001, "... the two in a loop (the self call a pending site)");
+assert_eq(form_self_then_tail_loop(), 1000001, "... in a loop, the self call first (decided at the loop's end)");
 assert_eq(form_op(), 111, "an operator's by-value left operand: b + pbump(&b)");
 assert_eq(form_op_struct(), 111, "... with a struct result: b - pbump(&b)");
 assert_eq(vec_first(), 0, "an f64v2 argument: rv(v, bump(&v)) reads the low lane as written");

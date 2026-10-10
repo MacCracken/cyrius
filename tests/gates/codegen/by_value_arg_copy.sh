@@ -20,6 +20,12 @@
 #      dispatches: the rule does not depend on that)
 #   T  objdump: `return rd(G, gbump())` (no `&`, which diverts any tail call) is an ordinary call —
 #      its copy is in the frame the `jmp` would free — and `return rd(G, n)` keeps its `jmp`
+#   TS the copy costs ONLY its own call the `jmp` (`_tc_snap_div`, never the per-fn
+#      `_fn_local_addr`): T3 a copying tail call before a self tail call in one fn — the self call
+#      keeps its `jmp`; T4 the two in a loop (the self call a pending site, `_tcp_site`) and T4B
+#      the self call first, decided at the loop's end (`_tcp_loop_end`); T5 a closure literal
+#      among the copying call's arguments runs its own tail arm, and the call still diverts; TR
+#      the probe run 3,000,000 deep (the lane's first cut: SIGSEGV)
 #   AS AS1: CYRIUS_ASYNC=1 — the copy in an `async fn`, whose frame is the coroutine's heap frame
 #   A  ANTI-VACUOUS: the crossos tcyr built and run — x86 plain, CYRIUS_IR=3 and CYRIUS_DCE=1, then
 #      aarch64 (qemu), cx (cxvm) and PE (wine), each with the full assertion count
@@ -42,8 +48,14 @@
 #                                                              p.c)`: SIGSEGV, its `jmp` lost)
 #   M10 `_name_struct_val` answers 0 past a `.field`          -> K6
 #   M7 `_sarg_snap`'s top-level arm pushes the source again   -> the tcyr's four top-level rows
-#   M8 `_sarg_snap` without `_sarg_escapes`                   -> T1 (the tail arm keeps its `jmp`
-#                                                              with the copy in the frame it frees)
+#   M8 `_sarg_snap` never sets `_tc_snap_div`                 -> T1, T3, T4, T4B, T5 (the tail arm
+#                                                              keeps its `jmp` with the copy in the
+#                                                              frame it frees)
+#   M11 `_sarg_snap` sets `_fn_local_addr` (the first cut)    -> T3, T4, T4B, TR; the tcyr's three
+#                                                              1,000,000-deep rows on every leg
+#                                                              (x86 / aarch64 SIGSEGV, cx, PE)
+#   M12 the tail arm does not restore `_tc_snap_div`          -> T5 (the closure's arm clears it:
+#                                                              `jmp rc` with the copy in the frame)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -148,6 +160,37 @@ else
             [ "$nj2" -eq 1 ] && ok "T2: return rd(G, n) keeps its jmp (nothing to copy)" || bad "T2: t2 has $nj2 jmp(s) to rd, want 1"
         fi
     else echo "  SKIP T1/T2: no objdump"; skips=$((skips + 1)); fi
+fi
+
+# ── TS: the copy costs only its own call the `jmp` ──────────────────────────────────────────────
+printf 'struct Big { a: i64; b: i64; c: i64; }\nvar G: Big = Big { 1, 2, 3 };\nfn gz(): i64 { return 0; }\nfn idf(x): i64 { return x; }\nfn rdz(s: Big, z): i64 { return s.a + z; }\nfn rc(s: Big, cb): i64 { return s.a; }\nfn t3(n, acc): i64 {\n    if (n == 0) { return rdz(G, acc + gz()); }\n    return t3(n - 1, acc + 1);\n}\nfn t4(n, acc): i64 {\n    while (n >= 0) {\n        if (n == 0) { return rdz(G, acc + gz()); }\n        return t4(n - 1, acc + 1);\n    }\n    return 0;\n}\nfn t4b(n, acc): i64 {\n    while (n >= 0) {\n        if (n > 0) { return t4b(n - 1, acc + 1); }\n        return rdz(G, acc + gz());\n    }\n    return 0;\n}\nfn t5(): i64 { return rc(G, |x| { return idf(x); }); }\nfn tend(): i64 { return 0; }\nsyscall(60, (t3(3000000, 0) - 3000001) + (t4(3000000, 0) - 3000001) + (t4b(3000000, 0) - 3000001) + (t5() - 1) + tend());\n' > "$T/ts.cyr"
+rc=0; CYRIUS_SYMS="$T/ts.syms" "$CC" < "$T/ts.cyr" > "$T/ts.bin" 2> "$T/ts.err" || rc=$?
+if [ "$rc" -ne 0 ]; then bad "TS: the probe did not build: $(grep '^error' "$T/ts.err" | head -1)"
+else
+    chmod +x "$T/ts.bin"; got=0; timeout 20 "$T/ts.bin" || got=$?
+    [ "$got" -eq 0 ] && ok "TR: t3 / t4 / t4b run 3,000,000 deep beside their copying tail call: exit 0" || bad "TR: exit $got, want 0 (139: a self tail call lost its jmp)"
+    if command -v objdump > /dev/null 2>&1; then
+        sort "$T/ts.syms" > "$T/ts.sorted"
+        # ts_n <op> <from fn> <to fn (exclusive)> <target fn>: how many <op>s in [from, to) reach target
+        ts_n() {
+            _a=$(awk -v n="$2" '$2 == n { print $1 }' "$T/ts.sorted"); _e=$(awk -v n="$3" '$2 == n { print $1 }' "$T/ts.sorted")
+            _r=$(awk -v n="$4" '$2 == n { print $1 }' "$T/ts.sorted")
+            if [ -z "$_a" ] || [ -z "$_e" ] || [ -z "$_r" ]; then echo x; return 0; fi
+            objdump -d --start-address=0x"$_a" --stop-address=0x"$_e" "$T/ts.bin" | grep -cE "$1 +0x$(printf '%x' "0x$_r")\b" || true
+        }
+        # A diverted pending site keeps its dead tail sequence (the `jmp`) beside its stub's call:
+        # the self CALL is the count that tells.
+        for r in "T3 t3 t4 the self call keeps its jmp" "T4 t4 t4b in a loop, the pending self call keeps its jmp" \
+                 "T4B t4b t5 in a loop, the self call first, decided at the loop's end, keeps its jmp"; do
+            set -- $r; id=$1; f=$2; nx=$3; shift 3
+            nj=$(ts_n jmp "$f" "$nx" "$f"); nsc=$(ts_n call "$f" "$nx" "$f"); nc=$(ts_n call "$f" "$nx" rdz)
+            if [ "$nj" = 1 ] && [ "$nsc" = 0 ] && [ "$nc" = 1 ]; then ok "$id: $f calls rdz (its copy); $*"
+            else bad "$id: $f has $nj jmp(s) and $nsc call(s) to itself and $nc call(s) to rdz, want 1, 0 and 1"; fi
+        done
+        # t5's range runs to tend: the closure body is emitted inline (its own symbol sits inside)
+        nc=$(ts_n call t5 tend rc); nj=$(ts_n jmp t5 tend rc)
+        [ "$nc" = 1 ] && [ "$nj" = 0 ] && ok "T5: a closure's own tail arm among the arguments: t5 still calls rc" || bad "T5: t5 has $nc call(s) and $nj jmp(s) to rc, want 1 and 0"
+    else echo "  SKIP T3-T5: no objdump"; skips=$((skips + 1)); fi
 fi
 
 # ── AS: an `async fn`'s frame ───────────────────────────────────────────────────────────────────

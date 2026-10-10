@@ -752,9 +752,17 @@ fn _tc_args_divert(S, cfi, ti_after): i64 {
 # ECALLPOPS wrote (6.6.5); and when evaluating an argument took an address in this frame
 # (`_fn_local_addr`, 0 when the arm began — `_tc_frame_divert`), it would free what that address
 # points at. CHANGELOG [6.6.20]
+# 6.7.7 — 1 when THIS tail arm copied a by-value argument into its frame (`_sarg_snap`): the call
+# is an ordinary one, but only this one. The copy is read by the callee's prologue during that
+# call and by nothing after it, so it is not `_fn_local_addr`, which costs every later tail call
+# in the fn (and every pending one in an enclosing loop) its `jmp`. Cleared where the arm starts
+# its arguments and restored after its verdict: a closure literal or a generic instance among
+# those arguments runs its own arms. CHANGELOG [6.7.7]
+var _tc_snap_div = 0;
 fn _tc_after_args_divert(argc): i64 {
     if (argc > _ARG_REG_COUNT()) { return 1; }
     if (_fn_local_addr == 1) { return 1; }
+    if (_tc_snap_div == 1) { return 1; }
     return 0;
 }
 # The ordinary call the tail arm takes instead of the `jmp`, its arguments already in their
@@ -937,6 +945,8 @@ fn PARSE_RETURN(S): i64 {
                             # PARSE_FNCALL, whose class check is the only one (the v6.4.15 SIMD_TC
                             # copy that stood here was unreachable; removed 6.6.20).
                             var _tc_prefi = FINDFN(S, tcnoff);
+                            var _tc_sd0 = _tc_snap_div;   # 6.7.7: this arm's own copy flag
+                            _tc_snap_div = 0;
                             if (PEEKT(S) != 11) {
                                 var tcgo = 1;
                                 while (tcgo == 1) {
@@ -1004,6 +1014,7 @@ fn PARSE_RETURN(S): i64 {
                             if (_tc_after_args_divert(tcargc) == 1) { _tc_emit_call(S, tcfi, tcargc); }
                             elif (_loop_depth > 0) { _tcp_site(S, tcfi, tcargc); }
                             else { ETAILJMP(S, tcfi); }
+                            _tc_snap_div = _tc_sd0;
                             return 0;
                         } }
                 }
@@ -11528,9 +11539,12 @@ fn _snap_slots(S, ty): i64 {
 }
 # The argument just pushed — an address its callee copies through — copied HERE into storage of
 # type `ty` whose address replaces it on the stack: a frame temporary, or at top level (no frame)
-# a hidden global. A frame temporary passed to a tail call escapes (`_sarg_escapes`), so that call
-# is an ordinary one. Byte-exact (`_agc_copy_bytes`): an odd-size struct reads no byte past itself.
-fn _sarg_snap(S, fi, argc, tail, ty): i64 {
+# a hidden global. A frame temporary passed to a tail call (`tail` 1) makes that one call an
+# ordinary one (`_tc_snap_div`); the callee copies it in its prologue, so nothing holds it after
+# the call and it is not `_fn_local_addr` (`_sarg_escapes` is a no-op for a copying callee, the
+# only kind that gets here). Byte-exact (`_agc_copy_bytes`): an odd-size struct reads no byte past
+# itself.
+fn _sarg_snap(S, tail, ty): i64 {
     var n = _snap_slots(S, ty);
     var nb = n * 8;
     if (_is_simd_any(S, ty) == 0) { nb = STRUCTSZ(S, (0 - ty) - 1); }
@@ -11541,7 +11555,7 @@ fn _sarg_snap(S, fi, argc, tail, ty): i64 {
         if (p + 1 > _flc_hwm) { _flc_hwm = p + 1; }
         var t = _agg_temp_t(S, n, ty);
         _agc_copy_bytes(S, t, 0 - 1, _AGC_DREF(p), 0 - 1, nb);
-        _sarg_escapes(fi, argc, tail);
+        if (tail == 1) { _tc_snap_div = 1; }
         EFLADDR(S, t);
     } else {
         var gv = 0 - 2 - _HTEMP(S);
@@ -11558,7 +11572,7 @@ fn _sarg_snap(S, fi, argc, tail, ty): i64 {
 fn _arg_push_snap(S, fi, argc, noff, tail): i64 {
     var ty = _sarg_snap_ty(S, fi, argc);
     if (_try_push_struct_addr_arg(S, fi, argc, tail) == 0) { _bx_pcmpe_arg(S, fi, argc, noff); EPUSHR(S); }
-    if (ty != 0) { _sarg_snap(S, fi, argc, tail, ty); }
+    if (ty != 0) { _sarg_snap(S, tail, ty); }
     return 0;
 }
 # A method's `self` just pushed for `fi` (the cursor on the call's `(`; `sid` the receiver's struct):
@@ -11570,7 +11584,7 @@ fn _self_snap(S, fi, sid): i64 {
     if (ty == 0) { if (sid > 0) { ty = 0 - sid; } }
     if (ty == 0) { return 0; }
     if (_args_may_write(S, GTI(S) + 1) == 0) { return 0; }
-    return _sarg_snap(S, fi, 0, 0, ty);
+    return _sarg_snap(S, 0, ty);
 }
 # An operator's left operand just pushed for operator fn `fi` (the cursor on the right operand):
 # copied where it stands when `fi` copies it and the right operand may write it.
@@ -11581,7 +11595,7 @@ fn _op_lhs_snap(S, fi): i64 {
     if (ty == 0) { return 0; }
     var q = GTI(S);
     if (_span_may_write(S, q, _tok_expr_end(S, q)) == 0) { return 0; }
-    return _sarg_snap(S, fi, 0, 0, ty);
+    return _sarg_snap(S, 0, ty);
 }
 # A value-form vector recorded for its register (entry `i` of `tbl`, `_simd_arg_record`), which is
 # loaded after every integer argument (`_simd_arg_second_pass`): copied here into a frame temporary
