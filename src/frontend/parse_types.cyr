@@ -526,23 +526,35 @@ fn _tup_fields(S, si, np, n): i64 {
     }
     return 0;
 }
-# R4 — a tuple type in a GENERIC fn (its signature or its body) is refused: a type parameter and a
-# tuple have no rule together yet. Read from the tokens: the nearest `fn` before `ti` is the
-# enclosing one (fns do not nest), generic when `fn name <` (CYRIUS_MONOMORPH=0 binds nothing).
-fn _tup_gen_chk(S, ti): i64 {
+# The `fn` token whose signature or body holds token `ti`, else -1. Read from the tokens: the
+# nearest `fn` before `ti` is the enclosing one (fns do not nest) when `ti` is in its signature (no
+# `{` between them) or its `{ .. }` body. ⛔ 6.7.8 — a BODYLESS trait member (`fn pick<U>(..): i64;`)
+# ends at its `;`: the signature scan stops at a `;` or `}` (a signature holds neither). It ran on
+# to the next `{` — a struct's, or nothing — so a tuple-typed zone global or struct field right
+# after a trait whose last member is generic was "a tuple type in a generic fn" (6.7.7).
+fn _tok_enclosing_fn(S, ti): i64 {
     var k = ti - 1;
     while (k >= 0) {
         if (TOKTYP(S, k) == 32) { break; }
         k = k - 1;
     }
-    if (k < 0) { return 0; }
-    if (TOKTYP(S, k + 2) != 19) { return 0; }
+    if (k < 0) { return 0 - 1; }
     var j = k + 1;
     while (j < ti) {
-        if (TOKTYP(S, j) == 13) { break; }
+        var t = TOKTYP(S, j);
+        if (t == 13) { break; }
+        if (t == 5 || t == 14) { return 0 - 1; }
         j = j + 1;
     }
-    if (j < ti) { if (_tok_body_spans(S, k, ti) == 0) { return 0; } }
+    if (j < ti) { if (_tok_body_spans(S, k, ti) == 0) { return 0 - 1; } }
+    return k;
+}
+# R4 — a tuple type in a GENERIC fn (its signature or its body) is refused: a type parameter and a
+# tuple have no rule together yet. Generic when `fn name <` (CYRIUS_MONOMORPH=0 binds nothing).
+fn _tup_gen_chk(S, ti): i64 {
+    var k = _tok_enclosing_fn(S, ti);
+    if (k < 0) { return 0; }
+    if (TOKTYP(S, k + 2) != 19) { return 0; }
     return _tup_err(S, ti, "a tuple type in a generic fn is refused - a type parameter and a tuple do not combine yet", 0 - 1, 0);
 }
 
