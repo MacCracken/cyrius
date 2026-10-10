@@ -106,8 +106,11 @@ taken; it reuses C2's flag plumbing. A third feature release is needed only if a
   in every mode and is an error under it; `@unsafe { }` turns checks off. A violation prints `bounds: index N out of
   [0, LEN) at <file>:<line>` and exits 134 (the slice check's code; lib/bounds.cyr and vec keep exit 1). **`*p` reads
   and writes at the element's width everywhere** (a language change, approved) — `p[i]` covers integer / f64 / f32 /
-  bool elements on names, fields and call results. Slices stay locals (a slice parameter or global is refused by
-  name). **The stdlib run's trips are fixed in 6.7.8**, fold releases included; cyrlint stays in 6.7.10. With it,
+  bool elements on names, fields and call results. Slices stay locals: a slice PARAMETER and a slice declared in the
+  declaration zone are refused by name, while a post-statement top-level slice keeps compiling as documented (user,
+  2026-10-10 — correcting the open's premise). Signed slice elements read sign-extended; cbt's Windows compile arm
+  passes the same env flags as Linux; the self-build scripts scrub an inherited `CYRIUS_POISON`; the slice read as an
+  operator's left operand (a crash since at least 6.7.5) is fixed. **The stdlib run's trips are fixed in 6.7.8**, fold releases included; cyrlint stays in 6.7.10. With it,
   proposal P5's execution half moves to 6.7.9 (on C2's flag plumbing).
 - **Checked `dyn` — DECIDED (user, 2026-10-07; the open shapes 2026-10-10).** Static dispatch stays the default
   (ADR-004). `o: dyn Show` is an ordinary 16-byte `{data, vtable}` struct (ADR-002's one-word model holds); the
@@ -116,7 +119,8 @@ taken; it reuses C2's flag plumbing. A third feature release is needed only if a
   untyped name is refused); a `self: T` of 8 B or less makes forming that dyn refused by name; a generic member is
   refused only when called through a dyn; full signatures are checked for every pair formed into a dyn (count-only
   elsewhere, unchanged); `dyn` is not a type argument; the two words are opaque and `dyn A + B` is refused;
-  `lib/trait.cyr` is kept. Generic inference through `Box<T>` parameters ships in the same lane. Why: the run-time
+  `lib/trait.cyr` is kept. Generic inference through `Box<T>` — and `*Box<T>` (a silent wrong layout today) — parameters ships in the same
+  lane. Why: the run-time
   vtables `lib/trait.cyr` and hand-rolled code build are unchecked — a wrong slot or a missing method is a crash.
 
 ## The releases after 6.7.7 (placed 2026-10-09)
