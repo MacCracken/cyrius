@@ -1,10 +1,10 @@
-# A whole-struct store of 3 / 5 / 6 / 7 bytes into a global writes 8 bytes — the next global is overwritten — OPEN
+# A whole-struct store of 3 / 5 / 6 / 7 bytes into a global writes 8 bytes — the next global is overwritten — RESOLVED
 
-**Status:** 🟡 **OPEN** — reproduced 2026-10-09 against `build/cycc` @ e44470b7 (6.7.6 + the merged 6.7.7 fixes): the
-repro exits 0 where 77 is right (the global after `G` is overwritten); without the `G = l;` store it exits 77. The
-6.7.x release-plan sizing (B7's sizer) measured `{i8,i8,i8}`, `{i32,i8}`, `{i32,i16}` and `{i32,i16,i8}` — both
-`G = l` and `G = mk()` overwrite the global at +3..+7; sizes 1, 2 and 4 store exactly.
-**Placement:** 6.7.7 (roadmap.md § Release sequence) — placed 2026-10-09 — never 7.x.
+> ✅ **RESOLVED in v6.7.7** (b9f419e4; CHANGELOG [6.7.7]) EVSTORE_W stores a 3 / 5 / 6 / 7-byte width as 4 + 2 + 1 pieces on x86 (PE, Mach-O x86), aarch64 (Mach-O arm64, native) and cx; the path was `_asg_store_slot`'s EVSTORE_W, not `_gv_store` (an expression-initialised struct global is registered at 8 bytes). Rows: tests/tcyr/crossos/global_struct_store_width.tcyr (every size 1..16 x every store form) + tests/gates/codegen/global_struct_store_width.sh (this repro verbatim on x86 / aarch64 / cx / PE).
+
+**Status:** ✅ **RESOLVED in v6.7.7** — see the banner above (filed OPEN 2026-10-09: reproduced against `build/cycc` @
+e44470b7, 6.7.6 + the merged 6.7.7 fixes — the repro exited 0 where 77 is right).
+**Placement:** 6.7.7 — shipped.
 **Discovered:** 2026-10-09 by the 6.7.x release-plan sizing (the B7 sizer's probes); filed 2026-10-09.
 **Severity:** High — silent memory corruption of an unrelated global, on valid code, with today's `i8` / `i16` /
 `i32` fields.
