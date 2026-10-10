@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — reproduced 2026-10-09 against 6.7.6 @ e44470b7 with the tree's `build/cycc`: junk in a
 trait's required signature (`fn sh(self, n + foo bar): i64;`) and in a default method that every impl overrides
 (`fn tw(self, k 1 2): i64 { … }`) compiles clean and runs (rc 0, exit 7).
-**Placement:** unpinned — 6.x-line backlog — never 7.x.
+**Placement:** 6.7.8 — checked dyn bite D1 (a vtable is checked against parsed signatures) (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x. The default half shipped in 6.7.7: a default in any trait method's list is an error (user, 2026-10-09).
 **Discovered:** 2026-10-09 during the 6.7.7 B6 (default and named arguments) planning (repro `tsig.cyr`).
 **Severity:** Low — invalid source accepted. Nothing that is valid miscompiles, because the unparsed tokens never
 reach codegen.

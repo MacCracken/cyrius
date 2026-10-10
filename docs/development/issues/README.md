@@ -235,12 +235,10 @@ about.
 Regenerate from the files (title = first heading, group = `**Placement:**`); never hand-count. The
 release plan is roadmap.md § *Release sequence* (placed 2026-10-09).
 
-**6.7.7 — in flight** (2)
+**6.7.7 — in flight** (0)
 
-- [A pair-returning call stored into ONE slot keeps only the tag, silently](2026-10-08-pair-call-assigned-to-single-slot-keeps-tag.md)
-- [A whole-struct store of 3 / 5 / 6 / 7 bytes into a global writes 8 bytes — the next global is overwritten](2026-10-09-global-odd-size-struct-store-overwrites-next-global.md)
 
-**6.7.8 — features: checked dyn + C2 (prerequisites and decisions)** (6)
+**6.7.8 — features: checked dyn + C2 (prerequisites and decisions)** (7)
 
 - [cx: a fn returning a 16-byte struct is refused ("int-class 16B struct pair-return ABI not supported")](2026-10-08-cx-16b-struct-return-refused.md)
 - [`*p = v` through `p: *f32` / `*i32` is a raw 8-byte word store (documented design gap)](2026-10-08-deref-store-through-narrow-typed-pointer-is-word-store.md)
@@ -248,13 +246,14 @@ release plan is roadmap.md § *Release sequence* (placed 2026-10-09).
 - [Generic inference does not see through a generic struct parameter (`gx(b)` for `b: Box<T>`)](2026-10-08-generic-inference-through-generic-struct-param.md)
 - [A call through a variable or closure that returns f64 gives an untyped word (documented design gap)](2026-10-08-indirect-call-f64-result-untyped.md)
 - [A slice type outside a fn-local `var` is a mis-diagnosed parse error: declaration-zone globals, parameters, return types, fields](2026-10-09-slice-type-outside-fn-local-misdiagnosed.md)
+- [A trait's required signature is never parsed, and an overridden default method's is not either](2026-10-09-trait-signature-parameter-list-unparsed.md)
 
 **6.7.9 — features: B7 + P5-B** (2)
 
 - [`#derive(Serialize)` does not support a `: cstring` field — it is taken for a nested struct (asked by sigil)](2026-10-08-derive-serialize-cstring-fields.md)
 - [An 8-byte struct local initialised from an address is a VALUE holding the address, not a handle](2026-10-08-small-struct-local-from-address-is-value-not-handle.md)
 
-**6.7.10 — Break 2, repair 1** (36)
+**6.7.10 — Break 2, repair 1** (39)
 
 - [api-surface's line scanner resets its string state at every newline — a multi-line string hides or invents public fns](2026-10-08-api-surface-multiline-string-desync.md)
 - [The lexer's `#`-attribute word list is hand-copied into six tools; five are held to `LEXATTRWORD` by no census](2026-10-08-attribute-word-list-hand-kept-in-five-tools.md)
@@ -284,7 +283,10 @@ release plan is roadmap.md § *Release sequence* (placed 2026-10-09).
 - [A const context counts a `Pair<i64, i64>` parameter as two — `pick(0, 7)` is refused, `pick(0, 1, 7)` builds](2026-10-09-const-fn-generic-param-comma-miscounted.md)
 - [`var a, b = f();` from a struct callee wider than 16 B reads a wrong second value, silently, on every target](2026-10-09-destructure-of-wide-struct-callee-reads-wrong-second-value.md)
 - [A child the exec family starts keeps its parent's signal mask and ignored dispositions](2026-10-09-exec-family-child-inherits-signal-mask-and-ignores.md)
+- [An integer constant passed to an `f64` / `f32` parameter keeps its bits with no warning](2026-10-09-int-argument-to-f64-param-silent.md)
+- [A method call's result keeps its last argument's f64 type](2026-10-09-method-call-result-keeps-last-arg-f64-type.md)
 - [A multi-value call where a named struct over 8 B is expected is taken as its address — four shapes compile clean](2026-10-09-multi-value-call-into-named-struct-slot.md)
+- [A multi-value receive reads a return register the callee never wrote — three shapes compile silently](2026-10-09-multi-value-receive-reads-stale-return-registers.md)
 - [The overload router sends a call to a later-defined `_str` sibling without judging its arity — since 6.7.7's F2 the call is refused, naming a fn the source never called](2026-10-09-overload-router-forward-target-arity-unjudged.md)
 - [Diagnostic cascades after a 6.7.7 refusal: tuples, `: stack` pair stores, u128 compound ops and D19](2026-10-09-refusal-cascades-tuples-pairs-u128-d19.md)
 - [Source scanners: `const fn` is invisible, `Pair<i64, i64>` is two parameters, `cyrius header` prints `cyr_val ...`, cyrdoc writes past its buffers](2026-10-09-source-scanners-miss-const-fn-and-generic-commas.md)
@@ -314,7 +316,7 @@ release plan is roadmap.md § *Release sequence* (placed 2026-10-09).
 - [`xflock` has no Windows route (`LockFileEx` not wired) — patra's crash recovery never runs on Windows (asked by patra)](2026-10-08-xflock-windows-lockfileex-not-wired.md)
 - [Under wine, the PE compiler returns rc 3 at once with empty output; the full output lands later](2026-10-09-wine-pe-compiler-exits-before-output-lands.md)
 
-**6.7.12 — Break 2, repair 3** (23)
+**6.7.12 — Break 2, repair 3** (24)
 
 - [`asm { in al, dx; }` is refused: `in` lexes as keyword 76, so the `ASM_IN` emitter is unreachable by its documented spelling](2026-10-08-asm-in-mnemonic-unreachable.md)
 - [A bare const / enum-constant name as a statement is reported as an assignment (`N;` → "cannot assign to const 'N'")](2026-10-08-bare-const-statement-reported-as-assignment.md)
@@ -337,8 +339,13 @@ release plan is roadmap.md § *Release sequence* (placed 2026-10-09).
 - [A closure made inside a suspending `async fn` captures a multi-word struct or tuple with its words reversed](2026-10-09-coroutine-closure-captures-aggregate-words-reversed.md)
 - [A coroutine's reserved slot 0 keeps the previous fn's parameter name — a global of that name reads the frame address, and a local of that name is a "duplicate variable"](2026-10-09-coroutine-slot-zero-keeps-previous-fn-local-name.md)
 - [cx: a constant-folded global initializer is re-evaluated at run time, so `var Q = INT_MIN / -1;` kills cxvm with SIGFPE](2026-10-09-cx-folded-global-reevaluated-int-min-div.md)
+- [A named-field struct literal in the declaration zone is refused ("undefined variable 'a'") — the guide's own Structs example fails as written](2026-10-09-declaration-zone-named-struct-literal-refused.md)
 - [A non-generic fn's parameter type `Mp<K, V>` with `K` / `V` never declared compiles silently](2026-10-09-undeclared-generic-type-arguments-accepted.md)
 - [A whole-struct store into a ZERO-size struct global writes 8 bytes over its neighbour](2026-10-09-zero-size-struct-global-store-overwrites-neighbour.md)
+
+**6.7.13 — the full security audit + the refactor / optimization review** (1)
+
+- [A tail call that copies a by-value struct argument is an ordinary call — a per-fn "writes no memory" analysis would win its `jmp` back](2026-10-09-tail-call-by-value-copy-needs-effect-analysis.md)
 
 **Open by design — placed arcs, not bugs** (5)
 

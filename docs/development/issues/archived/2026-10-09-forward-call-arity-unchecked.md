@@ -1,12 +1,9 @@
-# A call to a fn defined later is never arity-checked — OPEN
+# A call to a fn defined later is never arity-checked — RESOLVED
 
-**Status:** 🟡 **OPEN** — reproduced 2026-10-09 against 6.7.6 @ e44470b7 with the tree's `build/cycc`: both repros
-compile clean (rc 0, no diagnostic) and run with the surplus argument dropped and a missing one unbound. The same calls
-placed after their callees are refused (`'g' expects 1 argument, got 2`). The user decided on 2026-10-09 (fork F2 of the
-6.7.7 B6 plan) that EVERY forward call is arity-checked; it is scheduled, not yet fixed.
-**Placement:** 6.7.7 (being fixed in this release). B6 (default and named arguments) packs it with the min..max arity
-check: fork F2, decided by the user 2026-10-09 ("EVERY forward call is arity-checked, not only calls to defaulted fns",
-roadmap.md § Spec, B6). Never 7.x.
+> ✅ **RESOLVED in v6.7.7** (B6 bite 3, ecf02f51; CHANGELOG [6.7.7] § *Language — default and named arguments*). Every forward call is arity-checked against the count pass 1 records (user, 2026-10-09, fork F2), not only calls to defaulted fns.
+
+**Status:** ✅ **RESOLVED in v6.7.7** — see the banner above.
+**Placement:** 6.7.7 — shipped.
 **Discovered:** 2026-10-09 during the 6.7.7 B6 planning (both planners; repro `fwd_arity_unchecked.cyr`).
 **Severity:** Medium — a silent wrong binary (a surplus argument dropped, a missing one bound to whatever its register
 held) with no diagnostic. The workaround is to define the callee above its first call.

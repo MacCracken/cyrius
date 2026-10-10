@@ -4,7 +4,7 @@
 `fn f(x: f64)` passes 0x3, a subnormal, and prints no warning. The same holds for an `f32` parameter, a method and a
 tail call. `var x: f64 = 3;` warns "an integer stored into an f64/f32 slot keeps its integer bits (write a float
 literal)".
-**Placement:** unpinned — 6.x-line backlog — never 7.x.
+**Placement:** 6.7.10 — Break 2, repair 1, the call-arguments lane (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
 **Discovered:** 2026-10-09 during the 6.7.7 B6 (default and named arguments) planning (repro `f64i.cyr`). B6 refuses
 the default-value form (`x: f64 = 3`), so this issue is the positional argument only.
 **Severity:** Low — a missing warning. The value is ADR-002's kept bits, which every other float slot also stores,

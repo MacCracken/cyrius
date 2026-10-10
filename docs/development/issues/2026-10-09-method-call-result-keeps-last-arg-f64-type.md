@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — reproduced 2026-10-09 against 6.7.6 @ e44470b7 with the tree's `build/cycc`. With
 `fn m(self, d: f64): i64` returning 21, `p.m(1.5) * 2` warns "f64 arithmetic with a non-f64 right operand" and
 evaluates to 0. The free-fn spelling `m2(&p, 1.5) * 2` is 42.
-**Placement:** unpinned — 6.x-line backlog — never 7.x.
+**Placement:** 6.7.10 — Break 2, repair 1, the call-arguments lane (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
 **Discovered:** 2026-10-09 during the 6.7.7 B6 (default and named arguments) planning (repro `method_f64_arg_leak.cyr`).
 **Severity:** Medium — a silent wrong value on an integer method result. The spurious warning is the only sign.
 **Affects:** cycc 6.7.0 – 6.7.6. Measured on 6.7.0, 6.7.3 and 6.7.6; earlier compilers reject the repro's inherent
