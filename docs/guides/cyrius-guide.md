@@ -312,12 +312,11 @@ every target. A value over 255, `-3`, `1.5` and an enum constant were refused,
 bytes were stored at startup — after the program, in a `kernel;` build, so a
 kernel that never returns read 0.
 
-### Subscripts: `a[i]` (6.6.12)
+### Subscripts: `a[i]` (6.6.12), `p[i]` (6.7.8)
 
-An integer element-typed array `var a: T[N]` (T one of `i8`..`i64`,
-`u8`..`u64`) takes a subscript — read, assignment and every compound
-operator — in a function, at top level, in a `for` step and inside a
-closure:
+An element-typed array `var a: T[N]` and a typed pointer `*T` take a subscript — read,
+assignment and every compound operator — in a function, at top level, in a `for` step and
+inside a closure, for `T` an integer (`i8`..`i64`, `u8`..`u64`), `f64`, `f32` or `bool`:
 
 ```
 var t: i16[8];
@@ -325,14 +324,37 @@ t[i] = 0 - 5;          # stores 2 bytes
 t[i] += 1;             # all eleven compound operators (+= -= *= /= %= &= |= ^= <<= >>= >>>=)
 var v = t[i];          # -4: an i8/i16/i32 element is sign-extended, u8/u16/u32 zero-extended
 if (t[0]) { ... }      # tests the element
+
+fn sum(p: *u8, n): i64 {           # a pointer subscripts too (6.7.8)
+    var s = 0;
+    for (var i = 0; i < n; i += 1) { s = s + p[i]; }
+    return s;
+}
+var d: f64[4];
+d[1] = 2.5;
+var r: f64 = d[1] * 2.0;           # an f64 element is an f64 value: a float multiply
 ```
 
-`a[i]` is exactly the element at `&a + i * sizeof(T)`, loaded and stored at
-T's width — the same bytes as `load16(&t + i * 2)` / `store16(&t + i * 2, v)`,
-which stay valid (and are what `var a: i64[N]` code wrote before 6.6.12:
-`store64(&a + i * 8, v)`). A store truncates to the element as `store8/16/32`
-do. There is **no bounds check**. Inside a capturing closure the subscript
-reads and writes the closure's captured COPY, as `&a` there does.
+`a[i]` is exactly the element at `&a + i * sizeof(T)`, and `p[i]` the one at
+`p + i * sizeof(T)` — the pointer's VALUE is the base — loaded and stored at T's width: the
+same bytes as `load16(&t + i * 2)` / `store16(p + i * 2, v)`, which stay valid (and are what
+`var a: i64[N]` code wrote before 6.6.12: `store64(&a + i * 8, v)`). A store truncates to the
+element as `store8/16/32` do. There is **no bounds check**. Inside a capturing closure an
+array's subscript reads and writes the closure's captured COPY, as `&a` there does; a
+captured pointer's subscript reaches the memory it points at.
+
+The element is a value of its declared type, as a variable of `T` would be (6.7.8): an `f64`
+is an f64 (`p[1] * 2.0`, `p[1] < 3.0` are float operations); an `f32` is its 4 bytes, in
+single precision (`p[0] += q` with `q: f32` stays an f32); a `bool` is a boolean value
+(`if (p[i])`, `var b: bool = p[i]`). A store is checked as a store into a field of `T` is: an
+`f64` value into an `f32` element rounds to f32, a value that is not a boolean into a `bool`
+element is refused (and `OP=` on one, as `b += 1` is), an integer constant into a float
+element warns (its integer bits are kept), and a narrow integer element warns when the value
+is wider.
+
+The pointer is a name declared `*T`: a `var p: *T` local, a `p: *T` parameter, a `*T` global,
+a closure's capture of one, or a generic instance's `p: *T` at its `T`. A pointer laundered
+through an untyped name (`var q = p;`) is a plain word and takes no subscript.
 
 Refused, by name (`cannot subscript 'a': ...`):
 
@@ -340,19 +362,21 @@ Refused, by name (`cannot subscript 'a': ...`):
   (bytes in a function, slots at top level), so a subscript would be a guess;
   declare `var a: u8[N]` or `var a: i64[N]`, or keep `load*`/`store*` at an
   explicit byte offset;
-- a **float, bool, pointer, vector or struct element** (`var a: f64[N]`,
-  `f32[N]`, `bool[N]`, `*T[N]`, `i8v16[N]`, `Pt[N]`) — the subscript is
-  integer-element only; keep `load*`/`store*` at `&a + i * sizeof(T)` (8 for
-  f64, bool, an enum and a pointer, **4 for f32**, 16/32 for a vector). Before
-  6.6.13 a vector-element array in the leading declaration block was read as
-  the scalar its name starts with (`i8v16` as `i8`), so `g[i]` compiled there;
-  it is refused like every other non-integer element;
-- a scalar or a pointer (`var p: *i64`) — pointer subscripts are not in the
-  language;
+- an array or pointer whose element is a **struct, pointer, enum, string or vector**
+  (`Pt[N]`, `*Pt`, `*T[N]`, `**T`, `Color[N]`, `cstring[N]`, `*Str`, `i8v16[N]`) — keep
+  `load*`/`store*` at `&a + i * sizeof(T)`, or step the pointer (`p + i`), whose step is
+  `sizeof(T)`. Before 6.6.13 a vector-element array in the leading declaration block was read
+  as the scalar its name starts with (`i8v16` as `i8`), so `g[i]` compiled there;
+- an **untyped name or a scalar** — it is not a typed array, a `*T` or a slice local;
 - a `u128` element, which does not fit one register (use `load64`/`store64`
   on its two halves).
 
-A `slice<T>` local keeps its own bounds-checked `s[i]` (`lib/slice.cyr`).
+⚠ Before 6.7.8 a pointer (`var p: *i64`) and an `f64` / `f32` / `bool` element array were
+refused here; `p[i]` was spelled `load16(p + i * 2)` and an `f32[N]` element
+`load32(&a + i * 4)`.
+
+A `slice<T>` local keeps its own bounds-checked `s[i]` read (`lib/slice.cyr`); storing into a
+slice element is refused by name.
 
 ## Functions
 
@@ -906,7 +930,8 @@ var b = *(p + 1);      # 20 (adds 8 bytes, not 1)
 A `*T` variable is an 8-byte address whatever `T` is, and `*p` always loads 8 bytes
 (use `load8` / `load16` / `load32` for narrower reads). `*p = v` and `*p OP= v` (6.7.5) write 8
 bytes the same way — `*p += 1` through a `*i32` is a WORD add over two elements; write
-`store32(p, load32(p) + 1)` or subscript a typed array for an element. `T` must name a type
+`p[0] += 1`, which loads and stores the element at its width ([Subscripts](#subscripts-ai-6612-pi-678),
+6.7.8), or `store32(p, load32(p) + 1)`. `T` must name a type
 ([Type names](#type-names-6616)). **`p + n`, `p - n`, `p += n` and `p -= n` step
 `sizeof(T)` elements, wherever `p` is declared** — a local, a parameter, a global, a
 closure capture, a struct field or a fn result: `*u8` / `*i8` step 1, `*i16` 2, `*i32` /

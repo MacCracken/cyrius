@@ -93,6 +93,57 @@
 #        `_ek_legacy` maps a float / bool kind to `g & 0x180`, which drops N with it)
 #   MN0  `_arr_gsgn` writes N behind a zero descriptor too -> RED silent_values_checked B12 B13 B15
 #        (a bare global's `b OP= v` refusal reads its word as exactly 0x100, `_arr_gbare`)
+#
+# A / AS / R / W — `p[i]` ON A NAMED `*T`, AND f64 / f32 / bool ELEMENTS (C2-4a; the user's decision,
+# 2026-10-10: "p[i] reach: integer, f64, f32 and bool elements"). A name declared `*T` (a local, a
+# `p: *T` parameter, a global, a capture, a generic instance's parameter) subscripts as an array does:
+# the element at `p + i * sizeof(T)`, the pointer's VALUE the base. Before 6.7.8 it was refused, and so
+# were `f64[N]` / `f32[N]` / `bool[N]`. The element is typed as a declared T is (`_esub_load`) and a
+# store is checked as a field of T's is (`_esub_assign`, `_ifs_bx_el`); every other name is refused
+# by name (`_sub_refuse`).
+#   A0  tests/tcyr/crossos/pointer_subscript_values.tcyr compiles with no warning; --syntax-only
+#       (cyrius lint) reports nothing
+#   A   that file on x86 (plain, CYRIUS_IR=3, CYRIUS_IR=1, CYRIUS_DCE=1), aarch64 (qemu), cx, PE (wine)
+#   AS1 an `async fn` (CYRIUS_ASYNC=1): a `p: *i16` parameter, a `*u8` local, f64 / f32 arrays in the
+#       heap frame, read and written across two awaits
+#   R1  a struct element (`*Pt` parameter, local, global, capture, a generic instance at T = Pt, `*Str`,
+#       an untyped impl `self` written): named with its struct; R1h `return self[0];` keeps 6.7.0's
+#       refusal, once
+#   R2  a pointer / string / enum / vector element (`*cstring`, `*Color`, `**i64`, `*f64v2`), `*u128`
+#   R3  an array of struct / enum / cstring / pointer / vector elements
+#   R4  an untyped local / parameter / global, a declared i64, a bare / `stack var` / global / captured
+#       bare array (their own text), a slice element store (by name until C2-6a), a laundered pointer
+#   R9 / R10 a bool element's `OP=` and a non-bool into one (R10c: boolean values compile); R11 a
+#       `: stack` pair stored or combined into an element — each exactly one error line
+#   W1-W4 the store warnings (an integer constant into a float element, narrowing into a `*u8`, an f32
+#       compound with an f64 operand); W5 none for an i64 element into an f32 element (as an f32 local /
+#       field: a float element has no integer width to narrow to)
+#
+# MUTATION LEDGER (C2-4a, scratch trees, each its 2-stage mutant cycc, this gate +
+# array_subscript_forms.sh + typed_array_elem_refusals.sh as CYCC=<mutant>; 2026-10-10):
+#   M3    the element's sign ignored (`_ek_w` for `_ek_lw` in _esub_load) -> RED Aa-Ag (`*i8` 0xFF reads
+#         255), AS1; array_subscript_forms axis 3 (typed_array_subscript.tcyr's sign rows)
+#   M4    f32 rounding dropped for an element (`_ifs_bx_el` k = 2 checks only) -> RED Aa-Ag (`p[0] = 1.5`
+#         stores 0, not 0x3FC00000), AS1; typed_array_elem_refusals axis 1b; array_subscript_forms f32_local
+#   M7    a local that is no `*T` and no array taken as a `*i64` -> RED ST1 ST1b ST3 R4a R4b R4d-f R4i;
+#         array_subscript_forms' bare / scalar / stack rows (they compile)
+#   M25   `_arr_sub_load`'s IR record of a signed load dropped -> RED Ab (CYRIUS_IR=3: `*i8` reads
+#         6293809); array_subscript_forms axis 3 IR=3
+#   MK    the element left untyped (SESTYPE 0) -> RED A0 (20 warnings), A0s, Aa-Ag (`p[1] * 2.0`)
+#   MB    a bool element's read not stamped boolean -> RED A0, Aa-Ag (`var b: bool = p[1]` refused)
+#   MBASE a local `*T`'s ADDRESS taken as the base -> RED Aa-Ag (exit 139 on x86 / aarch64), AS1;
+#         array_subscript_forms pointer_local
+#   MCAP  a captured `*T`'s word not loaded -> RED Aa-Ag (capture rows)
+#   MGLB  a `*T` global's ADDRESS taken as the base -> RED Aa-Ag (global rows)
+#   MR9   the bool-element compound refusal dropped -> RED R9a R9b
+#   MR10  the bool-element store check dropped -> RED R10a R10b
+#   MSEXW a float element's value width kept -> RED W5 ("narrowing assignment")
+#   MPW   every `*T` read as a `*i64` (the word's descriptor ignored) -> RED A0, A0s, Aa-Ag, AS1, R1a-g,
+#         R2a-d (27 rows)
+#   MSID  the pointee struct never found -> RED R1a-g (the pointer / enum text)
+#   MBARE no name taken as a bare array -> RED R4e-h; array_subscript_forms' five bare rows
+#   The C2-3b compiler (before this bite) -> RED A0 A0s Aa Ab Af Ag Ae AS1 R1a-g R2a-e R3a-e R4a-i R9-R11
+#   W1-W5 (46 rows; Ac / Ad pass: those legs' compilers are built from this tree's src)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -253,8 +304,8 @@ fn main(): i64 {
 var rc = main();
 syscall(60, rc);
 EOF
-# legs <name> <row> <what>: $T/<name>.cyr built and run on every leg — x86 (plain, CYRIUS_IR=3),
-# aarch64 (qemu), cx (cxvm), PE (wine); exit 0 passes, else the exit (ST4: the failing check's
+# legs <name> <row> <what> [full]: $T/<name>.cyr built and run on every leg — x86 (plain, CYRIUS_IR=3;
+# `full` adds CYRIUS_IR=1 and CYRIUS_DCE=1), aarch64 (qemu), cx (cxvm), PE (wine); exit 0 passes, else the exit (ST4: the failing check's
 # number; an assert program: its failure count) and the program's first FAIL line. The cross
 # compilers are built once, from this tree, by the compiler under test.
 XCC=0
@@ -276,10 +327,14 @@ leg_ok() {   # <label> <exit> <what> <output file>
 legs() {
     n=$1; r=$2; w=$3
     xcc
-    for mode in plain IR3; do
+    xm="plain IR3"
+    [ "${4:-}" = full ] && xm="plain IR3 IR1 DCE1"   # C2-4a: the value file also under IR=1 and DCE=1
+    for mode in $xm; do
         case $mode in
             plain) env_=""; lbl="${r}a: x86" ;;
             IR3) env_="CYRIUS_IR=3"; lbl="${r}b: x86, CYRIUS_IR=3" ;;
+            IR1) env_="CYRIUS_IR=1"; lbl="${r}f: x86, CYRIUS_IR=1" ;;
+            DCE1) env_="CYRIUS_DCE=1"; lbl="${r}g: x86, CYRIUS_DCE=1" ;;
         esac
         rc=0; env $env_ "$CC" < "$T/$n.cyr" > "$T/${n}_$mode" 2> "$T/${n}_$mode.err" || rc=$?
         if [ "$rc" -ne 0 ]; then bad "$lbl: rc $rc: $(grep '^error' "$T/${n}_$mode.err" | head -1)"; continue; fi
@@ -491,6 +546,105 @@ exits n0b 7 "N0b: i16[3] / i16[4] / i16[2] fold (8 B, signed), A[1] = -3 reads b
 refused n0c "global 'A' redeclared with a different type or size" "N0c: u8[8] then u8[9] stays refused (8 B vs 16 B)" \
     'var A: u8[8];\nvar A: u8[9];\nsyscall(60, 7);\n'
 
+# ── R / A: `p[i]` on a named `*T`, and f64 / f32 / bool elements (C2-4a) ─────────────────────
+# A: the value file on every leg (x86 plain / IR=1 / IR=3 / DCE=1, aarch64, cx, PE), with no
+# warning (a float element's value has no integer width to narrow from; an f32 into an f32 element
+# is not re-rounded), and silent under --syntax-only.
+PSV=tests/tcyr/crossos/pointer_subscript_values.tcyr
+[ -f "$PSV" ] || { echo "FAIL: $G: $PSV missing"; exit 1; }
+cp "$PSV" "$T/psv.cyr"
+rc=0; "$CC" < "$T/psv.cyr" > "$T/psv.chk" 2> "$T/psv.chk.err" || rc=$?
+nw=$(grep -c '^warning\|^error' "$T/psv.chk.err" || true)
+if [ "$rc" -eq 0 ] && [ "$nw" -eq 0 ]; then ok "A0: the value file compiles with no warning ($(grep -c 'assert' "$T/psv.cyr") asserts)"
+else bad "A0: rc $rc, $nw diagnostic line(s): $(grep '^warning\|^error' "$T/psv.chk.err" | head -2 | tr '\n' '|')"; fi
+rc=0; "$CC" --syntax-only < "$T/psv.cyr" > /dev/null 2> "$T/psv.so.err" || rc=$?
+if [ "$rc" -eq 0 ] && ! grep -q '^error\|^warning' "$T/psv.so.err"; then ok "A0s: --syntax-only (cyrius lint) reports nothing"
+else bad "A0s: --syntax-only rc $rc: $(grep '^error\|^warning' "$T/psv.so.err" | head -1)"; fi
+legs psv A "every kind on every named base: read, =, OP=, the for step" full
+
+# AS: an `async fn` (CYRIUS_ASYNC=1) — a `p: *T` parameter, a `*T` local and f64 / f32 arrays in its
+# heap frame, read and written across two awaits.
+printf '#!/bin/sh\nCYRIUS_ASYNC=1 exec "%s" "$@"\n' "$CC" > "$T/acc"; chmod +x "$T/acc"
+CC_SV=$CC; CC="$T/acc"
+exits as1 0 "AS1: p[i], a[i] on f64[3] / f32[2] in a suspending async fn, across awaits" \
+    'include "lib/alloc.cyr"\ninclude "lib/string.cyr"\ninclude "lib/fmt.cyr"\ninclude "lib/vec.cyr"\ninclude "lib/syscalls.cyr"\ninclude "lib/async.cyr"\nvar B: i64[4];\nfn nopark(): i64 { return 0; }\nasync fn steps(q: *i16): i64 {\n    var p: *u8 = &B;\n    var a: f64[3];\n    var c: f32[2];\n    a[1] = 1.5;\n    c[1] = 2.5;\n    p[1] = 250;\n    q[2] = 0 - 3;\n    var s1 = await nopark();\n    p[1] += 10;\n    a[1] *= 2.0;\n    q[2] -= 4;\n    var s2 = await nopark();\n    if (a[1] != 3.0) { return 1; }\n    if (load32(&c + 4) != 0x40200000) { return 2; }\n    return p[1] * 100 + q[2] + 100;\n}\nfn main(): i64 {\n    alloc_init();\n    var C = steps(&B + 16);\n    var r1 = future_force(C);\n    var r2 = future_force(C);\n    var r3 = future_force(C);\n    if (r3 != 493) { syscall(60, 10 + r3 % 100); }\n    if (load16(&B + 20) != 65529) { syscall(60, 3); }\n    syscall(60, 0);\n    return 0;\n}\nvar e = main();\n'
+CC=$CC_SV
+
+# R1-R4: every name whose element no subscript loads is refused BY NAME at the `[`, once, the
+# brackets consumed (no cascade). The texts share "a subscript takes an integer, f64, f32 or bool
+# element" (R1-R3).
+EL="a subscript takes an integer, f64, f32 or bool element"
+PT='struct Pt { x; y; }\nvar B: i64[8];\n'
+R1="cannot subscript 'p': $EL - step with p + i to an element of struct 'Pt'"
+refused r1a "$R1" "R1a: p[1] on a \`p: *Pt\` parameter" "${PT}fn f(p: *Pt): i64 { return p[1]; }\nsyscall(60, f(&B));\n"
+refused r1b "$R1" "R1b: p[1] = 5 on a \`*Pt\` local" "${PT}fn f(): i64 { var p: *Pt = &B; p[1] = 5; return 0; }\nsyscall(60, f());\n"
+refused r1c "cannot subscript 'G': $EL - step with p + i to an element of struct 'Pt'" "R1c: G[0] += 1 on a \`*Pt\` global" "${PT}var G: *Pt = 0;\nfn f(): i64 { G[0] += 1; return 0; }\nsyscall(60, f());\n"
+refused r1d "$R1" "R1d: p[0] on a captured \`*Pt\`" "include \"lib/alloc.cyr\"\n${PT}fn f(p: *Pt): i64 { var k = || p[0]; return 0; }\nalloc_init();\nsyscall(60, f(&B));\n"
+refused r1e "$R1" "R1e: p[0] in a generic instance at T = Pt (once; the base's T is its i64)" "${PT}fn g<T>(p: *T): i64 { return p[0]; }\nfn f(): i64 { return g<Pt>(&B); }\nsyscall(60, f());\n"
+refused r1f "cannot subscript 'p': $EL - step with p + i to an element of struct 'Str'" "R1f: a \`*Str\` (a struct)" "include \"lib/str.cyr\"\nfn f(p: *Str): i64 { return p[1]; }\nsyscall(60, 0);\n"
+refused r1g "cannot subscript 'self': $EL - step with p + i to an element of struct 'Pt'" "R1g: \`self[0] = 1\` on an untyped impl self" "${PT}impl Pt { fn m(self): i64 { self[0] = 1; return 0; } }\nsyscall(60, 0);\n"
+refused r1h "arithmetic on an untyped \`self\` is refused" "R1h: \`return self[0];\` keeps the 6.7.0 self refusal, once" "${PT}impl Pt { fn m(self): i64 { return self[0]; } }\nsyscall(60, 0);\n"
+R2="cannot subscript 'p': $EL - its element is a pointer, string, enum or vector; load at p + i"
+refused r2a "$R2" "R2a: a \`*cstring\` parameter" 'fn f(p: *cstring): i64 { return p[1]; }\nsyscall(60, 0);\n'
+refused r2b "$R2" "R2b: a \`*Color\` (enum) local" 'enum Color { RED = 0; BLUE = 1; }\nvar B: i64[2];\nfn f(): i64 { var p: *Color = &B; return p[1]; }\nsyscall(60, f());\n'
+refused r2c "$R2" "R2c: a \`**i64\` local" 'var B: i64[2];\nfn f(): i64 { var p: **i64 = &B; p[1] = 0; return 0; }\nsyscall(60, f());\n'
+refused r2d "$R2" "R2d: a \`*f64v2\` local" 'fn f(): i64 { var b: i64[8]; var p: *f64v2 = &b; return p[1]; }\nsyscall(60, f());\n'
+refused r2e "cannot subscript 'p': a u128 element does not fit one register" "R2e: a \`*u128\` parameter" 'fn f(p: *u128): i64 { return p[1]; }\nsyscall(60, 0);\n'
+R3="cannot subscript 'a': $EL - its element is a struct, pointer, enum, string or vector; use &a + i * sizeof(T)"
+refused r3a "$R3" "R3a: a \`Pt[2]\` local" "${PT}fn f(): i64 { var a: Pt[2]; return a[1]; }\nsyscall(60, f());\n"
+refused r3b "$R3" "R3b: a \`Color[2]\` local" 'enum Color { RED = 0; BLUE = 1; }\nfn f(): i64 { var a: Color[2]; return a[1]; }\nsyscall(60, f());\n'
+refused r3c "$R3" "R3c: a \`cstring[2]\` local" 'fn f(): i64 { var a: cstring[2]; a[0] = 0; return 0; }\nsyscall(60, f());\n'
+refused r3d "$R3" "R3d: a \`*i64[2]\` local" 'fn f(): i64 { var a: *i64[2]; return a[1]; }\nsyscall(60, f());\n'
+refused r3e "$R3" "R3e: an \`f64v2[2]\` global" 'var a: f64v2[2];\nfn f(): i64 { return a[1]; }\nsyscall(60, f());\n'
+R4="it is not a typed array, a *T or a slice local"
+refused r4a "cannot subscript 'x': $R4" "R4a: an untyped local" 'fn f(): i64 { var x = 5; return x[0]; }\nsyscall(60, f());\n'
+refused r4b "cannot subscript 'x': $R4" "R4b: an untyped parameter" 'fn f(x): i64 { return x[0]; }\nsyscall(60, f(0));\n'
+refused r4c "cannot subscript 'x': $R4" "R4c: an untyped global" 'var x = 5;\nfn f(): i64 { return x[0]; }\nsyscall(60, f());\n'
+refused r4d "cannot subscript 'n': $R4" "R4d: a declared i64 local, written" 'fn f(): i64 { var n: i64 = 5; n[0] = 1; return 0; }\nsyscall(60, f());\n'
+BA="a bare \`var a[N]\` states no element width"
+refused r4e "cannot subscript 'b': $BA" "R4e: a bare local array" 'fn f(): i64 { var b[16]; b[1] = 5; return 0; }\nsyscall(60, f());\n'
+refused r4f "cannot subscript 'b': $BA" "R4f: a \`stack var\` buffer" 'fn f(): i64 { stack var b[16]; return b[0]; }\nsyscall(60, f());\n'
+refused r4g "cannot subscript 'b': $BA" "R4g: a bare global array" 'var b[4];\nfn f(): i64 { return b[1]; }\nsyscall(60, f());\n'
+refused r4h "cannot subscript 'b': $BA" "R4h: a captured bare array" 'include "lib/alloc.cyr"\nfn f(): i64 { var b[16]; var k = || b[0]; return 0; }\nalloc_init();\nsyscall(60, f());\n'
+refused r4i "cannot subscript 's': a slice element is read as s[i]; a store into one is not supported" "R4i: a slice element store, by name (C2-6a opens it)" 'include "lib/slice.cyr"\nfn f(): i64 { var b: u8[4]; var s: [u8] = 0; slice_set(&s, &b, 4); s[1] = 9; return 0; }\nsyscall(60, f());\n'
+refused r4j "cannot subscript 'q': $R4" "R4j: a pointer laundered through an untyped name (\`var q = p;\`) is a plain word" 'var B: i64[2];\nfn f(): i64 { var p: *i32 = &B; var q = p; return q[0]; }\nsyscall(60, f());\n'
+
+# R9-R11: the element store's checks, as a field of T's.
+BP='var B: i64[4];\nfn f(x): i64 {\n    var p: *bool = &B;\n    var a: bool[2];\n'
+BE='\n    return 0;\n}\nsyscall(60, f(1));\n'
+R9="is refused - its result is not a bool"
+refused r9a "compound assignment to a bool element of 'p' $R9" "R9a: p[0] += 1 on a \`*bool\`" "${BP}    p[0] += 1;${BE}"
+refused r9b "compound assignment to a bool element of 'a' $R9" "R9b: a[0] |= true on a \`bool[2]\`" "${BP}    a[0] |= true;${BE}"
+refused r10a "cannot store a value that is not a bool into a bool element of 'p'" "R10a: p[0] = 5 on a \`*bool\`" "${BP}    p[0] = 5;${BE}"
+refused r10b "cannot store a value that is not a bool into a bool element of 'a'" "R10b: a[1] = x (untyped) on a \`bool[2]\`" "${BP}    a[1] = x;${BE}"
+exits r10c 0 "R10c: a boolean value into a bool element compiles (x > 0, true, !p[0], p[0] && a[1])" "${BP}    p[0] = x > 0;\n    a[1] = true;\n    a[0] = !p[0];\n    p[1] = p[0] && a[1];\n    if (p[1] == false) { return 1; }${BE}"
+LP='enum R: stack { ROk(v); RErr(e); }\nfn mk(n) { return ROk(n); }\nvar B: i64[2];\n'
+R11="a \`: stack\` enum returns two values"
+refused r11a "$R11" "R11a: p[0] = mk(1); (the tag stored)" "${LP}fn f(): i64 { var p: *i64 = &B; p[0] = mk(1); return 0; }\nsyscall(60, f());\n"
+refused r11b "$R11" "R11b: p[0] += mk(1);" "${LP}fn f(): i64 { var p: *i64 = &B; p[0] += mk(1); return 0; }\nsyscall(60, f());\n"
+
+# W: the stores warn as a field's do — an integer constant into a float element (kept bits), an
+# integer narrowed into a narrow element; an f32's compound with an f64 operand (as an f32 local's).
+# warns <name> <fragment> <what> <body>: compiles, and stderr has the warning
+warns() {
+    printf '%b' "$4" > "$T/$1.cyr"
+    rc=0; timeout 60 "$CC" < "$T/$1.cyr" > "$T/$1.bin" 2> "$T/$1.err" || rc=$?
+    if [ "$rc" -ne 0 ]; then bad "$3: rc $rc: $(grep '^error' "$T/$1.err" | head -1)"
+    elif grep '^warning' "$T/$1.err" | grep -qF "$2"; then ok "$3"
+    else bad "$3: no warning \"$2\": $(grep '^warning' "$T/$1.err" | head -1)"; fi
+}
+WI="an integer stored into an f64/f32 slot keeps its integer bits"
+warns w1 "$WI" "W1: p[0] = 1 on a \`*f64\`" 'var B: i64[2];\nfn f(): i64 { var p: *f64 = &B; p[0] = 1; return 0; }\nsyscall(60, f());\n'
+warns w2 "$WI" "W2: a[0] = 2 on an \`f32[2]\`" 'fn f(): i64 { var a: f32[2]; a[0] = 2; return 0; }\nsyscall(60, f());\n'
+warns w3 "narrowing assignment" "W3: p[0] = w (an i32) on a \`*u8\`" 'var B: i64[2];\nfn f(): i64 { var w: i32 = 300; var p: *u8 = &B; p[0] = w; return p[0]; }\nsyscall(60, f());\n'
+warns w4 "f32 arithmetic with a non-f32 right operand" "W4: p[0] *= 2.0 on a \`*f32\` (as \`x *= 2.0\` on an f32 local)" 'var B: i64[2];\nfn f(): i64 { var p: *f32 = &B; p[0] = 1.5; p[0] *= 2.0; return 0; }\nsyscall(60, f());\n'
+# W5: a float element's store has no integer width to narrow to — an i64 element into an f32
+# element warns nothing, as `x = a[1]` into an f32 local and `h.f = a[1]` into an f32 field do.
+printf '%b' 'var B: i64[2];\nfn f(): i64 {\n    var a: i64[2];\n    a[1] = 3;\n    var p: *f32 = &B;\n    var c: f32[2];\n    var q: f32 = 0.5;\n    p[0] = a[1];\n    p[1] = q;\n    p[1] += q;\n    c[0] = a[1];\n    c[1] -= q;\n    return 0;\n}\nsyscall(60, f());\n' > "$T/w5.cyr"
+rc=0; timeout 60 "$CC" < "$T/w5.cyr" > "$T/w5.bin" 2> "$T/w5.err" || rc=$?
+if [ "$rc" -eq 0 ] && ! grep -q '^warning\|^error' "$T/w5.err"; then ok "W5: an i64 element into an f32 element / f32[2], and f32 OP=, warn nothing"
+else bad "W5: rc $rc: $(grep '^warning\|^error' "$T/w5.err" | head -1)"; fi
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — a stale slice width is no slice (ST1-ST6); the step word carries the element kind with no change to any step, difference, merge, warning or fold (P1-P6, PV legs, S0); an array's exact N is no fold shape (N0)"
+echo "PASS: $G — a stale slice width is no slice (ST1-ST6); the step word carries the element kind with no change to any step, difference, merge, warning or fold (P1-P6, PV legs, S0); an array's exact N is no fold shape (N0); p[i] on a named *T and f64 / f32 / bool arrays read, store and combine at the element (A legs, AS), every other name refused by name (R1-R4), the element stores checked (R9-R11, W)"

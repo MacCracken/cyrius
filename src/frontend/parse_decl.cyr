@@ -64,10 +64,9 @@ fn _arr_desc_t(ew, sgn, typed): i64 {
 # load (bare, struct, pointer, vector, enum, cstring). A typed array of f64 / f32 / bool records its
 # kind now (`_arr_desc_k`) and a `*T` its pointee's (`_ek_of_ptr_ann`: the slot mark, `_gv_ped`,
 # the field and return step words — see `_ps_word`, parse_types.cyr), so C2's `p[i]`, `a[i]` on a
-# float array and `*p` at the element's width read one byte. Nothing loads by the kinds yet: f64 /
-# f32 / bool arrays keep their refusal (_arr_sub_addr) and every emitted byte is unchanged. The
-# descriptor is a byte everywhere it is stored (SLAEW, GVSGN's low byte, the step word's bits 40-47).
-# CHANGELOG [6.7.8]
+# float array and `*p` at the element's width read one byte (C2-4a: `a[i]` / `p[i]` load and store
+# by it — `_esub_load` / `_esub_assign`, parse_expr.cyr). The descriptor is a byte everywhere it is
+# stored (SLAEW, GVSGN's low byte, the step word's bits 40-47). CHANGELOG [6.7.8]
 fn _ek_w(d): i64 { return d & 0x1F; }        # the element width (1/2/4/8, 16 u128), 0 = none
 fn _ek_lw(d): i64 {                          # the load width, negative when signed (sign-extends)
     if ((d & 0x60) == 0x40) { return 0 - (d & 0x1F); }
@@ -79,6 +78,12 @@ fn _ek_fk(d): i64 {                          # `_fk_bx`'s kind: 1 f64, 2 f32, 16
     if (k != 0x20) { return 0; }
     if ((d & 0x1F) == 4) { return 2; }
     return 1;
+}
+fn _ek_lt(d): i64 {                          # the value's type: F64_TYID / F32_TYID, 0 otherwise
+    var k = _ek_fk(d);
+    if (k == 1) { return F64_TYID; }
+    if (k == 2) { return F32_TYID; }
+    return 0;
 }
 # The kind of a type code (_tn_*, parse_types.cyr): iN / uN its width (| 0x40 for i8..i32), f64
 # 0x28, f32 0x24, bool 0x68, a type parameter no binding resolved 8 (its i64 base); else 0.
@@ -1889,6 +1894,14 @@ fn _ifs_bx(S, k, ti, fnoff): i64 {
     if (k < 16) { return 0; }
     if (_BX_IS(S) == 1) { return 0; }
     return _bx_refuse(S, ti, "cannot store a value that is not a bool into bool field ", fnoff, 0, 0 - 1);
+}
+# 6.7.8 (C2-4a): the same checks for a subscript's element (`p[i] = v`, `a[i] = v`; `nm` the base's
+# name, `k` = `_ek_fk`): an integer constant into an f64 / f32 element warns, an f64 into an f32
+# element rounds, and only a bool goes into a bool element.
+fn _ifs_bx_el(S, k, ti, nm): i64 {
+    if (k < 16) { return _ifs_bx(S, k, ti, nm); }
+    if (_BX_IS(S) == 1) { return 0; }
+    return _bx_refuse(S, ti, "cannot store a value that is not a bool into a bool element of ", nm, 0, 0 - 1);
 }
 
 # The field store's end: its terminator — `;`, or a classic-for step's `)` — consumed. 6.7.5

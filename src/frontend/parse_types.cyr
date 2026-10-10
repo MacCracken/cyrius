@@ -678,6 +678,12 @@ fn _gv_ped_get(vi): i64 {
     if (vi >= 1048576) { return 0; }
     return load8(_gv_ped + vi);
 }
+# The step word of a `*T` global `vi` (GVTYPE = 0 - its step, 6.6.17; T's kind beside it), else 0.
+fn _gv_ptr_word(S, vi): i64 {
+    var vt = GVTYPE(S, vi);
+    if (vt >= 0) { return 0; }
+    return _ps_word(0 - vt, _gv_ped_get(vi));
+}
 fn _gv_ptr_sid(S, vi): i64 {
     if (_gv_psid == 0) { return 0; }
     if (vi < 0) { return 0; }

@@ -2546,34 +2546,46 @@ fn _sysx_meant_here(S, n): i64 {
 # that: the element at `&a + i * sizeof(T)`, loaded sign- or zero-extended by T, stored at
 # T's width. No bounds check (the opt-in checked mode is a separate item). A bare `var a[N]`
 # states no element width (bytes in a fn, slots at top level), so its subscript is REFUSED by
-# name rather than guessed, as is a float, bool or struct element (a struct records no width; an
-# f64 / f32 / bool records its kind since 6.7.8 (`_ek_fk`) and is refused here all the same); a
-# slice local keeps its own bounds-checked `s[i]` (below, in the factor). CHANGELOG [6.6.12]
+# name rather than guessed; a slice local keeps its own bounds-checked `s[i]` (below, in the
+# factor). CHANGELOG [6.6.12]
+# ⛔ 6.7.8 (C2-4a) — `p[i]` ON A `*T`, AND f64 / f32 / bool ELEMENTS (the user's decision,
+# 2026-10-10: "p[i] reach: integer, f64, f32 and bool elements"). A typed pointer named by a local,
+# a `p: *T` parameter, a closure capture or a global subscripts as an array does — the element at
+# `p + i * sizeof(T)`: the pointer's VALUE is the base where an array's address is — and `var a:
+# f64[N]` / `f32[N]` / `bool[N]` (refused by name until now) take `a[i]` too. The element's
+# descriptor (`_ek_*`, parse_decl.cyr: an array's from its declaration, a pointer's from the step
+# word, `_ps_word`) types the value as a declared T would be (`_esub_load`: an f64, an f32's 4
+# bytes, a boolean value, an iN sign-extended) and checks a store as a field of T is checked
+# (`_esub_assign`: an f64 into an f32 rounds, a non-bool into a bool is refused, an integer
+# constant into a float warns). Every other name is refused by name (`_sub_refuse`). The index is
+# still evaluated first, so every existing `a[i]` emits the bytes it did. CHANGELOG [6.7.8]
 #
-# Cursor at `[` after NAME: consumes `[ idx ]` and leaves rax = &NAME[idx]. Returns the element
-# width, NEGATIVE for a signed element (the EFIELD_LOAD_W convention); 0 after a diagnostic.
-# The base is resolved as `&NAME` resolves it: a local, a closure capture, then a global.
+# Cursor at `[` after NAME: consumes `[ idx ]` and leaves rax = &NAME[idx]. Returns the element's
+# descriptor (`_ek_lw` the load width, negative when signed; `_ek_fk` its float / bool kind); 0
+# after a diagnostic. The base is resolved as `&NAME` resolves it: a local, a closure capture,
+# then a global.
 fn _arr_sub_addr(S, noff): i64 {
     var k = 0;
     var ix = 0 - 1;
     var d = 0;
+    var pw = 0;   # a typed pointer's step word (6.7.8), 0 for an array
     if (GINFN(S) == 1) {
         ix = FINDLOCAL(S, noff);
-        if (ix >= 0) { k = 1; d = GLAEW(S, ix); }
+        if (ix >= 0) { k = 1; d = GLAEW(S, ix); pw = _slot_ptr_word(S, ix); }
     }
     if (k == 0) { if (_cl_capturing == 1) { if (_cl_env_lidx >= 0) {
                 var esl = _cl_snap_find(S, noff);
                 if (esl >= 0) {
                     ix = _cl_cap_find(esl);
-                    if (ix >= 0) { k = 2; d = _cl_snap_aew(esl); }
+                    if (ix >= 0) { k = 2; d = _cl_snap_aew(esl); pw = _cl_snap_ptr_word(esl); }
                 }
             } } }
     if (k == 0) {
         ix = FINDVAR(S, noff);
-        if (ix >= 0) { k = 3; d = _arr_gdesc(S, ix); }
+        if (ix >= 0) { k = 3; d = _arr_gdesc(S, ix); pw = _gv_ptr_word(S, ix); }
     }
+    if (pw > 0) { d = (pw >> 40) & 0xFF; }   # a `*T`: T's descriptor rides the step word
     var aw = _ek_w(d);
-    if (_ek_fk(d) != 0) { aw = 0; }   # 6.7.8 (C2-3a): an f64 / f32 / bool element is recorded, still refused
     if (k == 0) {
         if (_syntax_only == 0) {
             ERR_IDENT(S, "undefined variable ", noff, " (missing include or enum?)", 0 - 1);
@@ -2581,7 +2593,7 @@ fn _arr_sub_addr(S, noff): i64 {
         }
         aw = 0;
     } elif (aw == 0) {
-        ERR_IDENT(S, "cannot subscript ", noff, ": `a[i]` needs an integer element-typed array `var a: T[N]` with T one of i8..i64, u8..u64 - a bare `var a[N]` states no element width, an f64, f32, bool or struct element is not supported, and a pointer or scalar is not an array; use load/store at an explicit byte offset", 0 - 1);
+        _sub_refuse(S, noff, k, ix, d, pw);
     } elif (aw > 8) {
         ERR_IDENT(S, "cannot subscript ", noff, ": a u128 element does not fit one register - use load64/store64 on its two halves", 0 - 1);
         aw = 0;
@@ -2596,14 +2608,88 @@ fn _arr_sub_addr(S, noff): i64 {
     # The frame and capture bases are raw bytes on x86 (no IR node of their own); mark them so
     # a CYRIUS_IR pass cannot take rax for the scaled index across them. EVADDR records itself.
     if (k != 3) { _IR_REC0(S, IR_RAW_EMIT); }
-    if (k == 1) { EFLADDR(S, ix); }
-    elif (k == 2) { _CL_CAP_WORDS_RA(S, ix); }
-    else { EVADDR(S, ix); }
+    if (k == 1) {
+        if (pw > 0) { EFLLOAD(S, ix); } else { EFLADDR(S, ix); }
+    } elif (k == 2) {
+        _CL_CAP_WORDS_RA(S, ix);
+        if (pw > 0) { ELOAD64(S); }   # the captured pointer's value
+    } else {
+        if (pw > 0) { EVLOAD(S, ix); } else { EVADDR(S, ix); }
+    }
     EPOPC(S);
-    EADDR(S);             # rax = &NAME + index * sizeof(T)
-    return _ek_lw(d);     # negative when signed
+    EADDR(S);             # rax = base + index * sizeof(T)
+    return d;
 }
-# Width-correct element load: rax = the element at the address in rax. `w` from _arr_sub_addr.
+# The refusals of `NAME[i]` for a name whose element no subscript loads (k / ix / d / pw as
+# `_arr_sub_addr` resolved them): each by name at the `[`, the brackets then consumed. 6.7.8 (C2-4a)
+fn _sub_refuse(S, noff, k, ix, d, pw): i64 {
+    var el = ": a subscript takes an integer, f64, f32 or bool element";
+    if (pw > 0) {
+        var sid = _sub_ptr_sid(S, noff, k, ix);
+        if (sid > 0) {
+            return _sub_err(S, noff, el, " - step with p + i to an element of struct ",
+              L64(S + 0x1A6018 + (sid - 1) * 8));
+        }
+        return _sub_err(S, noff, el, " - its element is a pointer, string, enum or vector; load at p + i", 0 - 1);
+    }
+    if (d != 0) {
+        return _sub_err(S, noff, el,
+          " - its element is a struct, pointer, enum, string or vector; use &a + i * sizeof(T)", 0 - 1);
+    }
+    var t = " (T an integer, f64, f32 or bool), or load / store at an explicit byte offset";
+    if (_sub_bare(S, noff, k, ix) == 1) {
+        return _sub_err(S, noff, ": a bare `var a[N]` states no element width - declare `var a: T[N]`", t, 0 - 1);
+    }
+    if (k == 1) { if (_slice_lw(S, ix) > 0) {
+            return _sub_err(S, noff, ": a slice element is read as s[i]; a store into one is not supported",
+              " - store at slice_ptr(&s) + i * sizeof(T)", 0 - 1);
+        } }
+    return _sub_err(S, noff, ": it is not a typed array, a *T or a slice local - declare `var a: T[N]` or `p: *T`",
+      t, 0 - 1);
+}
+# `cannot subscript 'NAME'` + `a` + `b` (+ `'N2'` when `n2` >= 0), at the cursor — ERR_IDENT's
+# line, with its tail in two literals.
+fn _sub_err(S, noff, a, b, n2): i64 {
+    if (_panic == 1) { return 0; }
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    PRSTR(": cannot subscript '");
+    PRSTR(S + 0xEC00000 + noff);
+    PRSTR("'");
+    PRSTR(a);
+    PRSTR(b);
+    if (n2 >= 0) {
+        PRSTR("'");
+        PRSTR(S + 0xEC00000 + n2);
+        PRSTR("'");
+    }
+    syscall(SYS_WRITE, 2, "\n", 1);
+    _err_excerpt(S);
+    _had_error = 1;
+    _panic = 1;
+    return 0;
+}
+# The struct a `*T` base points at (its slot / capture typed `0 - sid`, a global's `_gv_ptr_sid`), else 0.
+fn _sub_ptr_sid(S, noff, k, ix): i64 {
+    var t = 0;
+    if (k == 1) { t = GLTYPE(S, ix); }
+    if (k == 2) { t = _cl_snap_type(_cl_snap_find(S, noff)); }
+    if (k == 3) { return _gv_ptr_sid(S, ix); }
+    if (t >= 0) { return 0; }
+    if (t <= 0 - 2048) { return 0; }   # a vector descriptor, no struct
+    return 0 - t;
+}
+# 1 when the base is a bare array (`var a[N]` / `stack var a[N]`): a local's / a capture's bit 61
+# (util.cyr GLBARR), a global's `0x100` alone.
+fn _sub_bare(S, noff, k, ix): i64 {
+    if (k == 1) { return GLBARR(S, ix); }
+    if (k == 3) { return _arr_gbare(S, ix); }
+    var esl = _cl_snap_find(S, noff);
+    if (esl < 0) { return 0; }
+    return (L64(_cl_snap + _cl_snap_n * 8 + esl * 8) >> 61) & 1;
+}
+# Width-correct element load: rax = the element at the address in rax. `w` the load width
+# (`_ek_lw`, negative = signed).
 fn _arr_sub_load(S, w): i64 {
     EMOVCA(S);
     # x86's EFIELD_LOAD_W records its raw bytes for widths 1/2/4 only, so a signed (negative)
@@ -2616,6 +2702,21 @@ fn _arr_sub_load(S, w): i64 {
     _flags_reflect_rax = 0;
     return 0;
 }
+# 6.7.8 (C2-4a) — the element at the address in rax, as a VALUE of its declared type (descriptor
+# `ed`): loaded at its width, then typed as a read of a declared T is — an f64 / f32 (F64_TYID /
+# F32_TYID: an f32 is its 4 bytes, zero-extended, as an f32 local holds it), a bool a boolean value
+# (`_BX_MARK`, last: it stamps this code pointer and token), an integer its width for the narrowing
+# check. Nothing the index left behind describes it (the step, the type, the constant folder).
+fn _esub_load(S, ed): i64 {
+    _arr_sub_load(S, _ek_lw(ed));
+    SPSC(S, 0);
+    SESTYPE(S, _ek_lt(ed));
+    var k = _ek_fk(ed);
+    if (k == 0) { SEXW(S, _ek_w(ed)); } else { SEXW(S, 0); }
+    _cfo = 0;
+    if (k == 16) { _BX_MARK(S); }
+    return 0;
+}
 # The factor: `NAME[idx]` as a value. 0 when the cursor is not at `[`, or NAME is a slice
 # local (the bounds-checked slice subscript, _slice_sub_read, handles it); 1 when consumed.
 fn _arr_sub_read(S, noff): i64 {
@@ -2624,14 +2725,15 @@ fn _arr_sub_read(S, noff): i64 {
         var sl = FINDLOCAL(S, noff);
         if (sl >= 0) { if (_slice_lw(S, sl) > 0) { return 0; } }
     }
-    var w = _arr_sub_addr(S, noff);
-    if (w != 0) { _arr_sub_load(S, w); }
-    else { EMOVI(S, 0); }
-    var aw = w;
-    if (aw < 0) { aw = 0 - aw; }
+    var ed = _arr_sub_addr(S, noff);
+    if (ed != 0) {
+        _esub_load(S, ed);
+        return 1;
+    }
+    EMOVI(S, 0);
     SPSC(S, 0);
     SESTYPE(S, 0);
-    SEXW(S, aw);
+    SEXW(S, 0);
     _cfo = 0;
     return 1;
 }
@@ -2640,21 +2742,37 @@ fn _arr_sub_read(S, noff): i64 {
 # step replay (parse_ctrl.cyr) share it. 0 when the cursor is not at `[`.
 fn _arr_sub_assign(S, noff): i64 {
     if (PEEKT(S) != 28) { return 0; }
-    var w = _arr_sub_addr(S, noff);
+    var ed = _arr_sub_addr(S, noff);
     EPUSHR(S);            # the element address
+    return _esub_assign(S, ed, noff);
+}
+# The element's `= v` / `OP= v` with its address pushed (descriptor `ed`, 0 after a refusal: the
+# value is still parsed, at word width; `nm` the base's name). `=` checks the value as a store
+# into a field of T does (`_ifs_bx_el`); `OP=` loads the element at its width and combines it —
+# the f64 / f32 arms for a float element (`p[0] += 0.25` stays an f32), a bool element refused as
+# `b += 1` is (6.7.3) and then parsed on. A float's value has no integer width to narrow from.
+fn _esub_assign(S, ed, nm): i64 {
+    var k = _ek_fk(ed);
     var cop = _asg_compound_tok(S);
     if (cop == 0) {
         if (_masg_not_plain(S, " - an element is not one") == 0) {   # 6.7.7 (T5): `a[i], b = f();`
             if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); }
             STI(S, GTI(S) + 1);
             _refuse_lossy_pair(S);   # 6.7.7 (T5b): `a[i] = f();` stored the tag
+            var ti = GTI(S);
             PCMPE(S);
+            if (k != 0) { _ifs_bx_el(S, k, ti, nm); }
         }
     } else {
-        if (w != 0) { _arr_sub_load(S, w); }
-        _asg_compound_op(S, cop, 0);
+        if (k == 16) {
+            _bx_refuse(S, GTI(S), "compound assignment to a bool element of ", nm,
+              " is refused - its result is not a bool (write `b = b && c`, `b = !b`)", 0 - 1);
+        }
+        if (ed != 0) { _arr_sub_load(S, _ek_lw(ed)); }
+        _asg_compound_op(S, cop, _ek_lt(ed));
     }
-    _asg_store_w(S, w);   # at the element's width (parse_decl.cyr, shared with a field's OP=)
+    if (k == 1 || k == 2) { SEXW(S, 0); }
+    _asg_store_w(S, _ek_lw(ed));   # at the element's width (parse_decl.cyr, shared with a field's OP=)
     return 1;
 }
 # The statement arm (_PARSE_STMT_IMPL): the assignment and its `;`.
@@ -2735,7 +2853,7 @@ fn _deref_read(S): i64 {
 # step) puts its step into the pointer-scale word, so `g + n` steps by the pointee — 6.7.8: as the
 # step word, with T's kind from `_gv_ped` (parse_types.cyr).
 fn _gv_load_ps(S, idx, vt): i64 {
-    if (vt < 0) { SPSC(S, _ps_word(0 - vt, _gv_ped_get(idx))); }
+    if (vt < 0) { SPSC(S, _gv_ptr_word(S, idx)); }
     return 0;
 }
 
