@@ -2616,7 +2616,7 @@ fn _arr_sub_load(S, w): i64 {
     return 0;
 }
 # The factor: `NAME[idx]` as a value. 0 when the cursor is not at `[`, or NAME is a slice
-# local (the bounds-checked slice subscript below handles it); 1 when consumed.
+# local (the bounds-checked slice subscript, _slice_sub_read, handles it); 1 when consumed.
 fn _arr_sub_read(S, noff): i64 {
     if (PEEKT(S) != 28) { return 0; }
     if (GINFN(S) == 1) {
@@ -2662,6 +2662,70 @@ fn _arr_sub_stmt(S, noff): i64 {
     if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
     STI(S, GTI(S) + 1);
     return 1;
+}
+
+# The three factor arms below live out of _PARSE_FACTOR_IMPL, whose body sits at cybs's silent
+# per-fn reference ceiling: each is one call there, so C2's subscript, `*p` and step-word work
+# grows these and not the giant. Each emits exactly what its inline arm emitted; moving them out
+# also took the giant under the per-fn NOP compactor's 1024-entry caps (`_nrn` / `_jsn`,
+# parse_fn.cyr), so its last 499 NOPs are harvested (cycc .text -1,680 B). CHANGELOG [6.7.8]
+
+# v5.8.15 §7: the slice subscript `s[i]` as a value, for the slice-typed local `li`. GSLICE_W
+# returns the element byte-width captured at PARSE_VAR time (v5.8.14 §6); 0 means not a slice.
+# If `[` follows the ident AND this is a slice local, lower to `_slice_idx_get_W(&local, i)` —
+# the bounds-checked sized load via the helper that matches the element width. 1 when consumed;
+# 0 (cursor untouched) otherwise.
+fn _slice_sub_read(S, li): i64 {
+    var sw = GSLICE_W(S, li);
+    if (sw > 0) { if (PEEKT(S) == 28) {
+            STI(S, GTI(S) + 1);  # consume [
+            # Push &local as first arg (helper takes slice address)
+            EFLADDR(S, li);
+            EPUSHR(S);
+            # Parse index expression — leaves idx in rax
+            PCMPE(S);
+            EPUSHR(S);
+            # Look up and call the width-specific helper.
+            # Helpers live in lib/slice.cyr; consumer must
+            # `include "lib/slice.cyr"` (or pull via deps).
+            var idx_fn = 0 - 1;
+            if (sw == 1)  { idx_fn = _FINDFN_CSTR(S, "_slice_idx_get_1",  16); }
+            if (sw == 2)  { idx_fn = _FINDFN_CSTR(S, "_slice_idx_get_2",  16); }
+            if (sw == 4)  { idx_fn = _FINDFN_CSTR(S, "_slice_idx_get_4",  16); }
+            if (sw == 8)  { idx_fn = _FINDFN_CSTR(S, "_slice_idx_get_8",  16); }
+            if (sw == 16) { idx_fn = _FINDFN_CSTR(S, "_slice_idx_get_16", 17); }
+            if (idx_fn < 0) {
+                ERR_MSG(S, "slice subscript requires include \"lib/slice.cyr\" (provides _slice_idx_get_W helpers)", 84);
+            }
+            ECALLPOPS(S, 2);
+            # ERR_MSG does not exit: -1 must not reach ECALLFIX (rc 139 on aarch64/cx
+            # after the diagnostic). The pops/clean stay so push depth balances. CHANGELOG [6.6.9]
+            if (idx_fn >= 0) { ECALLFIX(S, idx_fn); }
+            ECALLCLEAN(S, 2);   # 6.6.5: was missing — leaked Win64's 32 B shadow
+            # Result in rax. Set expression-width tracking so
+            # narrowing assignment warnings work for u8/u16/u32.
+            SEXW(S, sw);
+            if (PEEKT(S) != 29) { ERR_EXPECT(S, 29); }
+            STI(S, GTI(S) + 1);  # consume ]
+            return 1;
+        } }
+    return 0;
+}
+
+# `*expr` — the dereference: load64 through the operand's address, an untyped word.
+fn _deref_read(S): i64 {
+    STI(S, GTI(S) + 1);
+    PARSE_FACTOR(S);
+    ELOAD64(S);
+    SPSC(S, 0);
+    return 0;
+}
+
+# A global's load (global `idx`, GVTYPE `vt`): a typed-pointer global (6.6.17: GVTYPE = 0 - its
+# step) puts its step into the pointer-scale word, so `g + n` steps by the pointee.
+fn _gv_load_ps(S, idx, vt): i64 {
+    if (vt < 0) { SPSC(S, 0 - vt); }
+    return 0;
 }
 
 fn _PARSE_FACTOR_IMPL(S): i64 {
@@ -2887,46 +2951,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         if (GINFN(S) == 1) {
             var li = FINDLOCAL(S, noff);
             if (li >= 0) {
-                # v5.8.15 §7: slice subscript `s[i]` for slice-typed
-                # locals. GSLICE_W returns the element byte-width
-                # captured at PARSE_VAR time (v5.8.14 §6); 0 means
-                # not a slice. If `[` follows the ident AND this is
-                # a slice local, lower to `_slice_idx_get_W(&local, i)`
-                # — bounds-checked sized load via the helper that
-                # matches the element width.
-                var sw = GSLICE_W(S, li);
-                if (sw > 0) { if (PEEKT(S) == 28) {
-                        STI(S, GTI(S) + 1);  # consume [
-                        # Push &local as first arg (helper takes slice address)
-                        EFLADDR(S, li);
-                        EPUSHR(S);
-                        # Parse index expression — leaves idx in rax
-                        PCMPE(S);
-                        EPUSHR(S);
-                        # Look up and call the width-specific helper.
-                        # Helpers live in lib/slice.cyr; consumer must
-                        # `include "lib/slice.cyr"` (or pull via deps).
-                        var idx_fn = 0 - 1;
-                        if (sw == 1)  { idx_fn = _FINDFN_CSTR(S, "_slice_idx_get_1",  16); }
-                        if (sw == 2)  { idx_fn = _FINDFN_CSTR(S, "_slice_idx_get_2",  16); }
-                        if (sw == 4)  { idx_fn = _FINDFN_CSTR(S, "_slice_idx_get_4",  16); }
-                        if (sw == 8)  { idx_fn = _FINDFN_CSTR(S, "_slice_idx_get_8",  16); }
-                        if (sw == 16) { idx_fn = _FINDFN_CSTR(S, "_slice_idx_get_16", 17); }
-                        if (idx_fn < 0) {
-                            ERR_MSG(S, "slice subscript requires include \"lib/slice.cyr\" (provides _slice_idx_get_W helpers)", 84);
-                        }
-                        ECALLPOPS(S, 2);
-                        # ERR_MSG does not exit: -1 must not reach ECALLFIX (rc 139 on aarch64/cx
-                        # after the diagnostic). The pops/clean stay so push depth balances. CHANGELOG [6.6.9]
-                        if (idx_fn >= 0) { ECALLFIX(S, idx_fn); }
-                        ECALLCLEAN(S, 2);   # 6.6.5: was missing — leaked Win64's 32 B shadow
-                        # Result in rax. Set expression-width tracking so
-                        # narrowing assignment warnings work for u8/u16/u32.
-                        SEXW(S, sw);
-                        if (PEEKT(S) != 29) { ERR_EXPECT(S, 29); }
-                        STI(S, GTI(S) + 1);  # consume ]
-                        return 0;
-                    } }
+                if (_slice_sub_read(S, li) == 1) { return 0; }   # v5.8.15: `s[i]` on a slice local
                 var lt = _load_lt(S, li);   # 6.6.17: a typed pointer's value is a plain word
                 # v6.2.19 math arc: f64/f32 locals — load the 8-byte value and tag
                 # the expression f64/f32 so PEXPR/PARSE_TERM route operators to the
@@ -3013,7 +3038,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
             _had_error = 1; EMOVI(S, 0); return 0;
         }
         var vt = GVTYPE(S, idx);
-        if (vt < 0) { SPSC(S, 0 - vt); }
+        _gv_load_ps(S, idx, vt);
         if (vt > 0) {
             # Disambiguate scalar types from struct IDs using var_sizes:
             # Scalar i8/i16/i32 have var_sizes 1/2/4. Structs have var_sizes >= 8.
@@ -4209,14 +4234,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
         return 0;
     }
-    if (typ == 8) {
-        # *expr — dereference (load64 through address)
-        STI(S, GTI(S) + 1);
-        PARSE_FACTOR(S);
-        ELOAD64(S);
-        SPSC(S, 0);
-        return 0;
-    }
+    if (typ == 8) { return _deref_read(S); }   # *expr
     if (typ == 37) {
         # ~ bitwise NOT
         STI(S, GTI(S) + 1);
