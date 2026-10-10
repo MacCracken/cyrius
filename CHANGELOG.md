@@ -11,7 +11,14 @@ forks, 2026-10-09), built in two worktree lanes with one review round each and m
 miscompiles the user moved in after the merge (three lanes on the merged tree); the found fixes from four earlier
 lanes; and the backlog moved into `docs/development/issues/`.
 
-**Release gate** {GATES}
+**Release gate GREEN** (`release-gate.sh` on `07bcc23f`, 2026-10-09 19:31 → 19:41, **9 min 35 s**): fixpoint
+1,920,400 B, ARM lockstep 1,739,776 B, seed-derive OK, check.sh — **452 of 452** shell gates produced a result, 0 failed,
+the driver 131 of 131, the 2 named agnos-parity SKIPs — and cross-OS self-host + the `crossos/` suite on REAL ecb,
+ach, cass and pi (all `SELFHOST_OK` + `LIBTEST_OK`). Bench self_compile **1,291 ms**. The first run (on
+`918994e4`) was RED on ONE `.tcyr` in the check driver's test suite, unnamed: the gate printed only "the cyrius check
+binary" and deleted check.sh's output with its temp dir. A full check.sh re-run was green (543 of 543) and 1,629
+stressed runs (three concurrent full-suite passes, shuffled, each in its own `git archive` tree) failed nothing, so the
+flake was not reproduced; the blind spot is fixed in this release (below), and a recurrence will name its file.
 
 **Size:** cycc **1,920,400 B** (`.text` **1,719,824**), +114,160 B over 6.7.6's 1,806,240 — B4 (the tuple type,
 literals, the bridge, `a, b = f();`, the refusals), B6 (the parameter-default record and sweep, the fill, named
@@ -456,6 +463,11 @@ behind the feature releases. Three worktree lanes on the merged tree, one review
   `_asg_compound_op` reads the operand's type before any emit (so `q += f64_sqrt(u)` is seen) and warns for
   `+= -= *= /=` as the long forms do; an f64 / f32 destination and the other operators stay silent. A warning only:
   the 661-file corpus compiles byte-identical. `f64_int_mix_warn.sh` axis 14.
+- **A RED release gate names the failing test and keeps its evidence** — step 3 reported a failing driver row only
+  as "FAIL programs/checks (the cyrius check binary)", and `fail()` removed check.sh's output with the gate's temp
+  dir, so the first 6.7.7 run's failing `.tcyr` could not be named. The verdict now lists the driver's own FAIL /
+  TIMEOUT rows, and `fail()` keeps check.sh's full output in a checked `mktemp -d` dir and prints its path.
+  `release_gate_check_verdict.sh` axis 11.
 
 ### Fixed — from the backlog
 

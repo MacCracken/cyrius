@@ -14,7 +14,7 @@ unpinned watching list is [roadmap-future.md](roadmap-future.md), volatile state
 
 ## Where we are
 
-**Current head: v6.7.7** (2026-10-09, in flight) — B4 tuples + B6 default / named arguments · cycc **1,920,400 B** · `.text` **1,719,824** · `cycc-native-aarch64` **1,739,776 B** · **543** `.tcyr`, **249** in `crossos/` · **106** `lib/*.cyr` · **448** shell gates under `tests/gates/<bucket>/` · api-surface **5,828** · **96** open issues · **1** open proposal · next ledger id **CYRIUS-2026-0036**
+**Current head: v6.7.7** (2026-10-09, release gate GREEN) — B4 tuples + B6 default / named arguments · cycc **1,920,400 B** · `.text` **1,719,824** · `cycc-native-aarch64` **1,739,776 B** · **543** `.tcyr`, **249** in `crossos/` · **106** `lib/*.cyr` · **448** shell gates under `tests/gates/<bucket>/` · api-surface **5,828** · **96** open issues · **1** open proposal · next ledger id **CYRIUS-2026-0036**
 
 > Every figure above is DERIVED (2026-10-08), never carried. `version-bump.sh` rewrites only the stamp's version and
 > the `(…)` after it — re-derive the rest at each release (`find tests/gates -name '*.sh' | wc -l`, …). Keep the stamp
@@ -43,8 +43,7 @@ v6.6.x closed at 6.6.20. 6.7.0–6.7.6 shipped (2026-10-07 → 2026-10-08): [com
 
 | Release | Content |
 |---|---|
-| 6.7.0 – 6.7.6 | ✅ shipped — A traits · C3 trait-bounded generics · B1 `const` + C1 `const fn` · B2 `bool` · B3 the if-expression · B5 `loop` / `do` + B8 `OP=` on every lvalue · the W2 stdlib wave + Break 1 |
-| 6.7.7 | **B4** tuples + **B6** default and named arguments (decisions below, user 2026-10-08 / 2026-10-09) · the fixes: [`cyrius distlib`'s order-dependent owner](issues/archived/2026-10-08-distlib-owner-first-declarer-credits-fold-monolith.md) · [the ach-timing terminate-children test](issues/archived/2026-10-08-crossos-terminate-children-timing-on-ach.md) · [the silent `x += 1.5`](issues/archived/2026-10-08-compound-assign-f64-rhs-on-int-slot-silent.md) · [install.sh's init templates](issues/archived/2026-10-08-install-sh-source-bootstrap-no-init-templates.md) · [`ci.sh` and a real release tarball](issues/archived/2026-10-08-ci-sh-cannot-install-release-tarball.md) · closing with the lanes: [the pair-into-one-slot stores](issues/archived/2026-10-08-pair-call-assigned-to-single-slot-keeps-tag.md) (B4 T5 + T5b) · [every forward call arity-checked](issues/archived/2026-10-09-forward-call-arity-unchecked.md) (B6 bite 3, fork F2) · a default in a trait's required signature refused (B6, fork F1) · **the silent miscompiles, as integration bites after the lanes merge** (user, 2026-10-09): [aarch64 struct-pair vs multi-value registers](issues/archived/2026-10-09-aarch64-struct-pair-and-multi-value-registers-disagree.md) · [a struct argument sees a later argument's side effect](issues/archived/2026-10-09-struct-arg-sees-later-arg-side-effect.md) · [a closure literal's comma counted as an argument](issues/archived/2026-10-09-closure-literal-comma-counted-as-argument.md) · [an odd-size struct store into a global overwrites the next global](issues/archived/2026-10-09-global-odd-size-struct-store-overwrites-next-global.md) |
+| 6.7.0 – 6.7.7 | ✅ shipped — A traits · C3 trait-bounded generics · B1 `const` + C1 `const fn` · B2 `bool` · B3 the if-expression · B5 `loop` / `do` + B8 `OP=` on every lvalue · the W2 stdlib wave + Break 1 · B4 tuples + B6 default / named arguments (6.7.7) |
 | 6.7.8 | features: **checked `dyn`** + **C2** the bounds-checked mode |
 | 6.7.9 | features: **B7** packed narrow fields + **P5-B** execution coverage (on C2's flag plumbing) |
 | 6.7.10 | Break 2, repair 1: the 6.7.7 follow-ons (multi-value receives, call arguments, struct operators) · cybs · install, scanner and CLI hygiene |

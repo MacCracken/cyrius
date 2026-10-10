@@ -90,6 +90,7 @@ is still ahead is in roadmap.md.
 | **6.7.4** | 2026-10-08 | B3, the if-expression: one expression per branch, `else` required, every branch one kind, anywhere an expression goes — const contexts and global array lists included. |
 | **6.7.5** | 2026-10-08 | B5 `loop { … }` (contextual) and `do { … } while (c);` + B8 compound assignment on every lvalue (`>>>=`, the address taken once, `OP=` on a struct value refused); sankoch 2.8.2 refolded. |
 | **6.7.6** | 2026-10-08 | Break 1: the W2 wave refolded (all twelve folds byte-identical to their tags); the high / critical backlog (u128 carry / compare, every f32 write rounds, struct-value codegen, the x86 stale-flags class, cx parity); `cyrius.cyml` git first with local development an explicit switch, and the `[test]` scope; `cyrius test <file\|dir>` absorbs `cyrius tests`; cybs stack arguments and its dropped bytes. Tag `722bba93`. |
+| **6.7.7** | 2026-10-09 | B4 tuples (bridged to the multi-value returns, captured by type; `a, b = f();`) + B6 default and named arguments (constant defaults, every forward call arity-checked); four silent miscompiles fixed (aarch64 struct-pair registers, a by-value argument's order, a closure's comma, the odd-size global store); the backlog moved into `issues/`. |
 
 ---
 
