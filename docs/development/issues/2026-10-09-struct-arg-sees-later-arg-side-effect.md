@@ -1,9 +1,9 @@
-# A by-value struct argument over 8 bytes sees a later argument's side effect — OPEN
+# A by-value struct argument over 8 bytes sees a later argument's side effect — RESOLVED
 
-**Status:** 🟡 **OPEN** — reproduced 2026-10-09 against 6.7.6 @ e44470b7 with the tree's `build/cycc`. In
-`rd(b, bump(&b))`, where `bump` adds 10 to `b.a`, the callee reads `b.a` as 11 instead of 1. A 16-byte struct behaves
-the same way. An 8-byte struct, passed in a register, is right.
-**Placement:** unpinned — 6.x-line backlog — never 7.x.
+> ✅ **RESOLVED in v6.7.7** (462e6112; CHANGELOG [6.7.7]) an argument the callee copies in its prologue is copied where it stands when a later argument may write it (`_sarg_snap`; a vector, `_simd_arg_snap`) — every argument source, call form and backend (`by_value_arg_copy.sh`, `crossos/by_value_arg_evaluation_order.tcyr`).
+
+**Status:** ✅ **RESOLVED in v6.7.7** — see the banner above (filed OPEN 2026-10-09 against 6.7.6 @ e44470b7).
+**Placement:** 6.7.7 — shipped (integration lane: call arguments).
 **Discovered:** 2026-10-09 during the 6.7.7 B6 (default and named arguments) planning (repro `sord.cyr`). B6's named
 arguments are evaluated as written and inherit this unchanged.
 **Severity:** Low — a by-value parameter observes a mutation made after its argument was evaluated. It needs an
