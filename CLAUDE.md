@@ -324,7 +324,9 @@ reintroduce one; derive counts (`find tests/gates -name '*.sh' | wc -l`), never 
 ### Ecosystem & stdlib
 - The folded stdlibs (sigil, sakshi, bayan, ganita, …, listed in `docs/ecosystem.md`) are the language's OWN stdlib,
   never "external upstream": what ships into `lib/` IS stdlib, with full stdlib discipline. Only a fold can gate a cyrius
-  release; every other repo is a consumer (top rule).
+  release; every other repo is a consumer (top rule). **A defect in `lib/` or a folded stdlib is ALWAYS fixed, at high
+  priority** (user, 2026-10-09) — it is cyrius's own code, not the scope creep the substantial-repair rule files away.
+  Consumers are not cyrius's to fix: only a language bug a consumer reports is.
 - **Fix the SOURCE repo, not the fold** — a fix only in the vendored `lib/<fold>.cyr` evaporates at the next re-vendor:
   patch upstream, release it, regenerate its dist, re-vendor byte-identical. A fold release is a PATCH unless the user
   says otherwise. A fold's CI runs isolated (a clean `git archive` copy, throwaway `HOME` + `CYRIUS_HOME`, GitHub's shell
