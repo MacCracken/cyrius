@@ -1,0 +1,16 @@
+# 2026-10-10 — a generic METHOD called as `p.m(x)` with a STRUCT for its type parameter runs the i64 base
+# (whose body is the dead stub, rax = 0); the direct call `P_m(p, x)` instantiates it and is right.
+# Expected: exit 77 (a = 7, b = 7). Actual (6.7.8 @ 484763ed, x86_64): exit 7 (a = 0).
+include "lib/syscalls.cyr"
+struct P { v; }
+struct Q { a; b; c; }
+impl P { fn pick<V>(self, w: V): i64 { return w.b; } }
+fn main(): i64 {
+    var p = P { 5 };
+    var q = Q { 1, 7, 3 };
+    var a: i64 = p.pick(q);
+    var b: i64 = P_pick(p, q);
+    return a * 10 + b;
+}
+var rc = main();
+syscall(60, rc);

@@ -107,3 +107,24 @@ place of `_call_ret_ps(S, mfi);`, this file's repro exits 0 and the f64-return r
 row for `p.area() + 1.0` joins the two rows named above.
 Both halves change what a compiling program computes; the placement stays 6.7.10. The 6.7.8 `dyn` call types its own
 result (`_call_ret_marks` on the trait member's prototype), so it does not wait on this fix.
+
+## A STRUCT last argument leaks too (appended 2026-10-10, 6.7.8 dyn lane D2)
+
+The same missing reset with a struct as the last argument is a loud failure on valid source, not a wrong value: the
+leaked expression type is the struct, so an outer operator dispatches the struct's operator fn.
+
+```cyrius
+include "lib/syscalls.cyr"
+struct P { v; }
+impl P { fn m(self, q): i64 { return 2; } }
+fn main(): i64 { var p = P { 5 }; return p.m(p) * 10; }
+syscall(60, main());
+```
+
+```
+actual (6.7.8 @ 484763ed, x86_64): warning: undefined function 'P_mul' ... error: refusing to emit binary with 1
+        reachable undefined function(s)
+expected: exit 20 (the free spelling `fn m(a, q: P): i64` called as `m(1, p) * 10` builds and runs)
+```
+
+The fix above (`SESTYPE(S, 0)` before `_call_ret_marks`) covers it; add it as a third gate row.
