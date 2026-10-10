@@ -6084,6 +6084,7 @@ fn EMIT_OP_DISPATCH(S, stype, op_str, op_len, beg): i64 {
     _op_lhs_check(S, ofp, stype, beg);   # 6.7.3
     _OP_OPERAND_ADDR(S, svar, ofp, 0);
     EPUSHR(S);
+    _op_lhs_snap(S, ofp);   # 6.7.7: a by-value operand the right one may write is copied here
     var rsvar = _op_rhs(S, ofp);   # the rhs, parsed: a struct var's address too (6.6.20: _op_rhs)
     _OP_OPERAND_ADDR(S, rsvar, ofp, 1);
     EPUSHR(S);
@@ -6140,6 +6141,7 @@ fn _EMIT_OP_DISPATCH_AGG(S, stype, op_str, op_len, beg): i64 {
     var n = 2 + _sc_n0;
     if (park >= 0) { EFLLOAD(S, park); } else { _OP_OPERAND_ADDR(S, svar, ofi, 0); }
     EPUSHR(S);
+    _op_lhs_snap(S, ofi);   # 6.7.7 (EMIT_OP_DISPATCH)
     var rsvar = _op_rhs(S, ofi);
     _OP_OPERAND_ADDR(S, rsvar, ofi, 1);
     EPUSHR(S);

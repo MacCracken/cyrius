@@ -944,10 +944,9 @@ fn PARSE_RETURN(S): i64 {
                                     # 6.6.20: an address-passed argument is pushed as PARSE_FNCALL
                                     # pushes it; one that takes an address in this frame sets
                                     # `_fn_local_addr`, read by `_tc_after_args_divert` below.
-                                    if (_try_push_struct_addr_arg(S, _tc_prefi, tcargc, 1) == 0) {
-                                        _bx_pcmpe_arg(S, _tc_prefi, tcargc, tcnoff);   # PCMPE + 6.7.3's bool check
-                                        EPUSHR(S);
-                                    }
+                                    # 6.7.7: and a by-value argument a later one may write is copied
+                                    # where it stands (`_arg_push_snap`) — a frame address: no `jmp`.
+                                    _arg_push_snap(S, _tc_prefi, tcargc, tcnoff, 1);   # PCMPE + 6.7.3's bool check
                                     tcargc = tcargc + 1;
                                     if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
                                     else { tcgo = 0; }
@@ -4147,17 +4146,17 @@ fn _simd_arg_record(S, cls, tbl, cnt, pc): i64 {
 fn _call_arg_one(S, fi, uarg, noff, tbl, st): i64 {
     var cls = _pm_simd(fi, uarg);   # 6.6.17 (a10)
     if (cls > 0) {
+        var vs = _later_args_may_write(S);   # 6.7.7: its register is loaded after them (`_simd_arg_snap`)
         var n = load64(st + 8);
         var o = load64(st + 16);
         store64(st + 16, o + _simd_arg_record(S, cls, tbl, n, o));
         store64(st + 8, n + 1);
+        if (vs == 1) { _simd_arg_snap(S, tbl, n); }
         return 0;
     }
     _check_int_lit_cstring_arg(S, fi, uarg, noff);
     _check_str_cstring_arg(S, fi, uarg, noff);   # 6.6.13 I11
-    if (_try_push_str_literal_arg(S, fi, uarg) == 0) {
-        if (_try_push_struct_addr_arg(S, fi, uarg, 0) == 0) { _bx_pcmpe_arg(S, fi, uarg, noff); EPUSHR(S); }
-    }
+    if (_try_push_str_literal_arg(S, fi, uarg) == 0) { _arg_push_snap(S, fi, uarg, noff, 0); }   # 6.7.7: + its copy
     store64(st, load64(st) + 1);
     return 0;
 }
@@ -4235,7 +4234,10 @@ fn _ret_agg_class(S, fi): i64 {
 # addresses it (field 0), laid out exactly like a `var p: S` receive. Returns that slot.
 fn _agg_temp(S, sid): i64 {
     var sz = STRUCTSZ(S, sid - 1);
-    var n = ((sz + 7) & (0 - 8)) / 8;
+    return _agg_temp_t(S, ((sz + 7) & (0 - 8)) / 8, 0 - sid);
+}
+# ... `n` slots of local type `ty` (a struct's -sid, or a vector's type, laid out like a vector local).
+fn _agg_temp_t(S, n, ty): i64 {
     var j = 0;
     while (j < n - 1) {
         var f = GFLC(S);
@@ -4249,7 +4251,7 @@ fn _agg_temp(S, sid): i64 {
     S64(S + 0x5D9D000 + t * 8, 0 - 1);
     SLDEP(S, t, GSDEP(S));
     SLAGG(S, t, n);
-    SLTYPE(S, t, 0 - sid);
+    SLTYPE(S, t, ty);
     SFLC(S, t + 1);
     if (t + 1 > _flc_hwm) { _flc_hwm = t + 1; }
     return t;
@@ -11379,6 +11381,220 @@ fn _prescan_maybe_naked(S, ti): i64 {
 fn _sarg_escapes(fi, argc, tail): i64 {
     if (tail == 0) { if (_pm_copies(fi, argc) == 1) { return 0; } }
     _fn_local_addr = 1;
+    return 0;
+}
+
+# ⛔ 6.7.7 — A BY-VALUE ARGUMENT IS ITS VALUE WHERE IT IS WRITTEN. A parameter the callee copies in
+# its prologue (`_pm_copies`: a plain struct over 8 B, a Win64 value-form vector) is passed as an
+# ADDRESS, and that copy runs after EVERY argument of the call was evaluated — so a later argument
+# that wrote the struct was seen by the callee: `rd(b, bump(&b))` read `b.a` as 11 where 1 is
+# right, for a local, a global, a field, a capture, a pointer-mode local and `&b` alike, through a
+# method's argument or its by-value `self`, a named argument, a tail call and an operator's left
+# operand, on every backend. A value-form vector loaded into its register after the integer
+# arguments (SysV, aarch64, cx: `_simd_arg_second_pass`) the same. When a later argument may write
+# memory (`_span_may_write`), the argument is copied where it stands — into a frame temporary, at
+# top level a hidden global — and that copy's address is what the callee receives (a vector: what
+# its register is loaded from). When none can, nothing is emitted: the common call is unchanged.
+# Issue 2026-10-09-struct-arg-sees-later-arg-side-effect. CHANGELOG [6.7.7]
+# 1 = token type `t` ends an operand a `(` after it calls: a name, `)`, `]`, a type argument's `>`.
+fn _tok_calls(t): i64 {
+    if (t == 2 || t == 11 || t == 29) { return 1; }
+    if (t == 20 || t == 39 || t == 152) { return 1; }
+    return 0;
+}
+# 1 = token type `t` runs nothing: a literal (number / char, string, float, `true` / `false`), `.`,
+# `)` `[` `]`, a comparison, `& | ^ ~ % << >> >>>`, `&& || !`, and a closure's bars and the `,`
+# between its parameters (the only depth-0 `,` an argument holds) — never an operator a struct
+# dispatches (`+ - * /`, `_span_may_write`).
+fn _tok_pure(t): i64 {
+    if (t == 1 || t == 30 || t == 61 || t == 169 || t == 170) { return 1; }
+    if (t == 41 || t == 11 || t == 28 || t == 29 || t == 31) { return 1; }
+    if (t >= 17) { if (t <= 22) { return 1; } }
+    if (t >= 34) { if (t <= 39) { return 1; } }
+    if (t == 27 || t == 53 || t == 54 || t == 152 || t == 171) { return 1; }
+    return 0;
+}
+# 1 = the name at token `i` with its `.field` chain reads a STRUCT value — an operand `+ - * /`
+# dispatches on: a struct-typed name with no chain, or a chain ending at a struct-typed field.
+# `acc + p.c` reads an integer field: 0 (a copy there cost a self tail call its `jmp`). A chain
+# this does not follow (`t.0`, an unknown field) answers 1.
+fn _name_struct_val(S, i): i64 {
+    var sid = _sarg_name_sid(S, i);
+    if (sid <= 0) { return 0; }
+    var j = i + 1;
+    while (TOKTYP(S, j) == 41) {
+        if (TOKTYP(S, j + 1) != 2) { return 1; }
+        var fi = FINDFIELD(S, sid - 1, TOKVAL(S, j + 1));
+        if (fi < 0) { return 1; }
+        sid = GETFTYPE(S, sid - 1, fi);
+        if (sid <= 0) { return 0; }
+        j = j + 2;
+    }
+    return 1;
+}
+# 1 = evaluating the tokens [q, e) — one argument (its `name:` label skipped) or an operand — may
+# write memory: a call (`_tok_calls` before a `(`), any token `_tok_pure` does not name (an
+# assignment, a block or struct literal, a builtin, `?`, `if`, ...), or `+ - * /` beside a struct
+# value (`_name_struct_val`), which dispatches that struct's operator fn. Conservative: a 1 costs a
+# copy.
+fn _span_may_write(S, q, e): i64 {
+    if (_pd_label_at(S, q) == 1) { q = q + 2; }
+    var op = 0;
+    var sn = 0;
+    var i = q;
+    while (i < e) {
+        var t = TOKTYP(S, i);
+        if (t == 10) {
+            if (i > q) { if (_tok_calls(TOKTYP(S, i - 1)) == 1) { return 1; } }
+        } elif (t == 2) {
+            if (TOKTYP(S, i - 1) != 41) { if (_name_struct_val(S, i) == 1) { sn = 1; } }
+        } elif (t >= 6 && t <= 9) { op = 1; }
+        elif (t == 113 || t == 116) { op = 1; }   # `+%` / `-%` are `+` / `-`
+        elif (_tok_pure(t) == 0) { return 1; }
+        i = i + 1;
+    }
+    if (op == 1) { if (sn == 1) { return 1; } }
+    return 0;
+}
+# 1 = an argument from token `q` (just past the call's `(` or a `,`) to the call's `)` may write.
+fn _args_may_write(S, q): i64 {
+    if (TOKTYP(S, q) == 11) { return 0; }
+    var n = GTCNT(S);
+    while (q < n) {
+        var e = _arg_next(S, q);
+        if (_span_may_write(S, q, e) == 1) { return 1; }
+        if (TOKTYP(S, e) != 31) { return 0; }
+        q = e + 1;
+    }
+    return 0;
+}
+# ... an argument after the one at the cursor.
+fn _later_args_may_write(S): i64 {
+    var e = _arg_next(S, GTI(S));
+    if (TOKTYP(S, e) != 31) { return 0; }
+    return _args_may_write(S, e + 1);
+}
+# From token `q`: the first `,` `)` `]` `}` `;` outside `( [ {`, or the EOF token — where the
+# expression holding `q` ends (an operator's right operand ends there or before).
+fn _tok_expr_end(S, q): i64 {
+    var d = 0;
+    var n = GTCNT(S);
+    while (q < n) {
+        var t = TOKTYP(S, q);
+        if (t == 12) { return q; }
+        if (d == 0) {
+            if (t == 31 || t == 11 || t == 29 || t == 14 || t == 5) { return q; }
+        }
+        if (t == 10 || t == 28 || t == 13) { d = d + 1; }
+        if (t == 11 || t == 29 || t == 14) { d = d - 1; }
+        q = q + 1;
+    }
+    return q;
+}
+# The local type of parameter `k` of `fi`'s struct (-sid; the instance's for a generic), or 0.
+fn _snap_ps_ty(S, fi, k): i64 {
+    var ps = GFPSID(S, fi, k);
+    if (ps <= 0) { return 0; }
+    if (ps >= 2048) { return 0; }
+    return 0 - ps;
+}
+# The type of the vector local the argument at token `ti` names (inside any parentheses), or 0 —
+# a Win64 vector argument, which travels by address.
+fn _snap_vec_ty(S, ti): i64 {
+    if (GINFN(S) != 1) { return 0; }
+    while (TOKTYP(S, ti) == 10) { ti = ti + 1; }
+    if (TOKTYP(S, ti) != 2) { return 0; }
+    var li = FINDLOCAL(S, TOKVAL(S, ti));
+    if (li < 0) { return 0; }
+    var lt = GLTYPE(S, li);
+    if (_is_simd_any(S, lt) == 0) { return 0; }
+    return lt;
+}
+# The local type of the copy argument `argc` of `fi` (the cursor on it) takes where it stands, or
+# 0 when it takes none: the callee does not copy that parameter, or no later argument may write.
+fn _sarg_snap_ty(S, fi, argc): i64 {
+    if (fi < 0) { return 0; }
+    if (_pm_copies(fi, argc) == 0) { return 0; }
+    var ty = _snap_ps_ty(S, fi, argc);
+    if (ty == 0) { ty = _snap_vec_ty(S, GTI(S)); }
+    if (ty == 0) { return 0; }
+    if (_later_args_may_write(S) == 0) { return 0; }
+    return ty;
+}
+# The slots a copy of local type `ty` spans: a vector's, else its struct's, rounded up to words.
+fn _snap_slots(S, ty): i64 {
+    if (_is_simd_any(S, ty) == 1) { if (_vec_desc(S, ty) == 1) { return _vd_nslots; } }
+    return (STRUCTSZ(S, (0 - ty) - 1) + 7) / 8;
+}
+# The argument just pushed — an address its callee copies through — copied HERE into storage of
+# type `ty` whose address replaces it on the stack: a frame temporary, or at top level (no frame)
+# a hidden global. A frame temporary passed to a tail call escapes (`_sarg_escapes`), so that call
+# is an ordinary one. Byte-exact (`_agc_copy_bytes`): an odd-size struct reads no byte past itself.
+fn _sarg_snap(S, fi, argc, tail, ty): i64 {
+    var n = _snap_slots(S, ty);
+    var nb = n * 8;
+    if (_is_simd_any(S, ty) == 0) { nb = STRUCTSZ(S, (0 - ty) - 1); }
+    EPOPR(S);
+    var p = _HTEMP(S);
+    _HTSTORE(S, p);
+    if (p >= 0) {
+        if (p + 1 > _flc_hwm) { _flc_hwm = p + 1; }
+        var t = _agg_temp_t(S, n, ty);
+        _agc_copy_bytes(S, t, 0 - 1, _AGC_DREF(p), 0 - 1, nb);
+        _sarg_escapes(fi, argc, tail);
+        EFLADDR(S, t);
+    } else {
+        var gv = 0 - 2 - _HTEMP(S);
+        S64(_vars_base + gv * 8, n * 8);
+        _agc_copy_bytes(S, 0 - 1, gv, 0 - 1, 0 - 1000 - (0 - 2 - p), nb);
+        EVADDR(S, gv);
+    }
+    EPUSHR(S);
+    return 0;
+}
+# One int-class argument `argc` of `fi`, pushed — the struct-address arms (`_try_push_struct_addr_arg`),
+# else its value — then copied where it stands when the callee copies it and a later argument may
+# write it. Shared by `_call_arg_one` and the tail arm (`tail` 1).
+fn _arg_push_snap(S, fi, argc, noff, tail): i64 {
+    var ty = _sarg_snap_ty(S, fi, argc);
+    if (_try_push_struct_addr_arg(S, fi, argc, tail) == 0) { _bx_pcmpe_arg(S, fi, argc, noff); EPUSHR(S); }
+    if (ty != 0) { _sarg_snap(S, fi, argc, tail, ty); }
+    return 0;
+}
+# A method's `self` just pushed for `fi` (the cursor on the call's `(`; `sid` the receiver's struct):
+# copied where it stands when `fi` copies a by-value `self` and an argument may write it.
+fn _self_snap(S, fi, sid): i64 {
+    if (fi < 0) { return 0; }
+    if (_pm_copies(fi, 0) == 0) { return 0; }
+    var ty = _snap_ps_ty(S, fi, 0);
+    if (ty == 0) { if (sid > 0) { ty = 0 - sid; } }
+    if (ty == 0) { return 0; }
+    if (_args_may_write(S, GTI(S) + 1) == 0) { return 0; }
+    return _sarg_snap(S, fi, 0, 0, ty);
+}
+# An operator's left operand just pushed for operator fn `fi` (the cursor on the right operand):
+# copied where it stands when `fi` copies it and the right operand may write it.
+fn _op_lhs_snap(S, fi): i64 {
+    if (fi < 0) { return 0; }
+    if (_pm_copies(fi, 0) == 0) { return 0; }
+    var ty = _snap_ps_ty(S, fi, 0);
+    if (ty == 0) { return 0; }
+    var q = GTI(S);
+    if (_span_may_write(S, q, _tok_expr_end(S, q)) == 0) { return 0; }
+    return _sarg_snap(S, fi, 0, 0, ty);
+}
+# A value-form vector recorded for its register (entry `i` of `tbl`, `_simd_arg_record`), which is
+# loaded after every integer argument (`_simd_arg_second_pass`): copied here into a frame temporary
+# of its type, recorded in its place. The caller asks only when a later argument may write it.
+fn _simd_arg_snap(S, tbl, i): i64 {
+    var lli = load64(tbl + i * 24);
+    if (lli < 0) { return 0; }
+    var lt = GLTYPE(S, lli);
+    if (_vec_desc(S, lt) != 1) { return 0; }
+    var n = _vd_nslots;
+    var t = _agg_temp_t(S, n, lt);
+    _agc_copy_bytes(S, t, 0 - 1, lli, 0 - 1, n * 8);
+    store64(tbl + i * 24, t);
     return 0;
 }
 

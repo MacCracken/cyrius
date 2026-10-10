@@ -1687,6 +1687,7 @@ fn _field_load_on(S, noff, fnoff, pfl_beg, idx, sid): i64 {
         # a Q (see `_sarg_type_err`). An untyped `self` records the impl's own struct.
         if (sid > 0) { _sarg_type_err(S, mfi, 0, sid, noff); }
         EPUSHR(S);
+        _self_snap(S, mfi, sid);   # 6.7.7: a by-value `self` an argument may write is copied here
         # The arguments: PARSE_FNCALL's own marshaller, `self` as parameter 0 (p0 = 1) and int
         # arg `m_n0` (after the retptr `_sc_pre` pushed). ⛔ This path had its own loop with NONE of
         # PARSE_FNCALL's callee-mask gates and no arity check until 6.6.5 — the history is at

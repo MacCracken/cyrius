@@ -280,9 +280,13 @@ echo "$FNCALL" | grep -q '_owncall_args_at(' || { echo "  FAIL: method_call_gate
 for h in _call_arg_one _simd_arg_second_pass _CHECK_ARITY; do
     echo "$MARSH" | grep -q "$h(" || { echo "  FAIL: method_call_gates [helpers]: the shared argument marshaller (_owncall_args_at) no longer calls $h"; fail=1; }
 done
-for h in _check_int_lit_cstring_arg _try_push_str_literal_arg _try_push_struct_addr_arg _simd_arg_record; do
+for h in _check_int_lit_cstring_arg _try_push_str_literal_arg _arg_push_snap _simd_arg_record; do
     echo "$ARGONE" | grep -q "$h(" || { echo "  FAIL: method_call_gates [helpers]: _call_arg_one (the marshaller's per-argument body) no longer calls $h"; fail=1; }
 done
+# 6.7.7 (call arguments): the struct-address push is `_arg_push_snap`'s (shared with the tail arm,
+# which copies a by-value argument a later one may write); the row follows the call into it.
+PUSHSNAP=$(sed -n '/^fn _arg_push_snap(/,/^}/p' src/frontend/parse_fn.cyr)
+echo "$PUSHSNAP" | grep -q '_try_push_struct_addr_arg(' || { echo "  FAIL: method_call_gates [helpers]: _arg_push_snap (_call_arg_one's push) no longer calls _try_push_struct_addr_arg"; fail=1; }
 [ "$MASKS_FNCALL" -ge 4 ] || { echo "  FAIL: method_call_gates [helpers]: expected PARSE_FNCALL's file to reference all four callee masks, found $MASKS_FNCALL"; fail=1; }
 
 [ "$fail" = 0 ] && echo "  PASS: method-call args run every callee gate PARSE_FNCALL runs (str/struct/simd/cstr masks + arity), each proven against the identical free fn and a value the shell computed itself"

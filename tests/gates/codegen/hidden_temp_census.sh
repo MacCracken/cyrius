@@ -111,7 +111,10 @@ fi
 # (inside a fn it takes two frame slots instead; parse_expr.cyr).
 # 6.7.7 (B6): _pd_nreorder — an out-of-order named call (`g(c: 3, a: 1)`) holds each argument,
 # evaluated as written, until every parameter is pushed in parameter order (parse_fn.cyr).
-HT_SPEC="PARSE_SWITCH:1 PARSE_MATCH:1 _stmt_qmark:3 _PARSE_TERM_IMPL:3 PARSE_FOR:4 _gv_target:1 _await_coro_suspend:1 _await_coro_force:1 _await_spill:1 _ptr_park:1 _w128_tmp:1 _pd_nreorder:1"
+# 6.7.7 (call arguments): _sarg_snap — a by-value argument a later argument may write is copied
+# where it stands: one word holds its address; at top level the copy itself is a dead global
+# resized to the struct (inside a fn it is a frame block, `_agg_temp_t`; parse_fn.cyr).
+HT_SPEC="PARSE_SWITCH:1 PARSE_MATCH:1 _stmt_qmark:3 _PARSE_TERM_IMPL:3 PARSE_FOR:4 _gv_target:1 _await_coro_suspend:1 _await_coro_force:1 _await_spill:1 _ptr_park:1 _w128_tmp:1 _pd_nreorder:1 _sarg_snap:2"
 ht_attr=$(for f in $(find src/frontend src/common src/backend -name '*.cyr'); do
     awk '/^fn /{fn=$2; sub(/\(.*/,"",fn)} /_HTEMP\(S\)/{ if ($0 !~ /fn _HTEMP/) print fn }' "$f"
 done | sort | uniq -c | awk '{print $2":"$1}')
