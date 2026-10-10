@@ -873,6 +873,20 @@ fn _tcp_drop(S): i64 {
     return 0;
 }
 
+# ⛔ 6.7.7 — THE LANDING OF A MULTI-VALUE RETURN: `return (a, b[, c]);` and `ret2(a, b)`, values in
+# the multi-value registers (rax, rdx[, r3]), then the jump to the epilogue. In a fn returning a
+# 9-16 B struct the caller reads the struct PAIR's registers, which on aarch64 are x0:x1, not the
+# multi-value x0:x2: `fn mk(x): P { return (x, x + 1); }` gave `var p: P = mk(5);` p.b = x1's
+# leftover (55 where x86 gives 56). The pair's high register is synced from the multi-value slot
+# here (ESTRUCT_PAIR_HI_SYNC, a no-op on x86) — the other half, a `return p;` read by
+# `var a, b = f();` / `rethi()`, is EFLLOAD_STRUCT_INT_PAIR writing x2 too. CHANGELOG [6.7.7]
+fn _mret_land(S): i64 {
+    if (_cur_fn_ret_pair == 1) { ESTRUCT_PAIR_HI_SYNC(S); }
+    var rp = EJMP0(S);
+    vec_push(rp_vec, rp);
+    return 0;
+}
+
 # Parse return expr ;  (uses PCMPE so return a == b; works)
 # Tail call optimization: return fn(args); → epilogue + jmp fn
 fn PARSE_RETURN(S): i64 {
@@ -1051,8 +1065,7 @@ fn PARSE_RETURN(S): i64 {
                 EPOPR(S);                                                           # rax = a
                 if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);  # consume )
                 if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); } STI(S, GTI(S) + 1);    # consume ;
-                var rp3 = EJMP0(S);
-                vec_push(rp_vec, rp3);
+                _mret_land(S);
                 return 0;
             } }
         if (mr_is_tuple == 1) {
@@ -1069,8 +1082,7 @@ fn PARSE_RETURN(S): i64 {
             # (`_ret_box_f64`), not here; rdx carries the second. CHANGELOG [6.5.21], [6.6.20]
             if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);  # consume )
             if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); } STI(S, GTI(S) + 1);  # consume ;
-            var rp = EJMP0(S);
-            vec_push(rp_vec, rp);
+            _mret_land(S);
             return 0;
         }
     }
