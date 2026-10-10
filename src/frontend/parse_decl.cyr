@@ -131,9 +131,26 @@ fn _ek_legacy(g): i64 {
 # ⛔ 6.7.6 (D2): a BARE array (descriptor 0) is `0x100` alone, so its `b OP= v` can be refused by name
 # (_asg_wide_refused, _arr_gbare) — a plain scalar global keeps 0. `_gv_same_shape` compares the two
 # as before (_gsgn_shape).
-fn _arr_gsgn(S, ew, sgn, typed, ann): i64 {
+# ⛔ 6.7.8 (C2-3b) — AN ELEMENT-TYPED ARRAY RECORDS ITS EXACT N. The bounds-checked mode checks
+# `a[i]` against the N the declaration states, and no table held it: a global kept only its bytes
+# (N * sizeof(T), with an 8-byte floor) and a local its slot span, so `var a: u8[5]` read as 8
+# elements either way. N rides words that exist (no region, no layout change), and only behind a
+# NONZERO descriptor — the test every reader makes first — so a bare array's words are unchanged and
+# a stale value is never trusted:
+#   a global, and a fn-local array in static storage: bits 16..47 of this word (N < 2^31 by
+#     _arr_size_ok). `_arr_gdesc` reads the low byte and `_gsgn_shape` the low 16 bits, so `u8[5]`
+#     and `u8[6]` (8 B each) still fold — and the folded global keeps the FIRST declaration's N, as
+#     it keeps its element kind (this word is written before `_gv_fold`);
+#   a stack local: its named slot's slice-width word, `0 - 2^48 - N` (`_arr_named_marks`) — a band
+#     no other value of that word reaches (a pointer mark's magnitude stays under 2^48, a signed
+#     narrow mark is -1 / -2 / -4), and the word's other readers never see an array's slot (they
+#     ask behind the slice bit 62, the pointer bit 56, or a narrow scalar's SLTYPE). The closure
+#     snapshot copies the word, so a captured array carries its N.
+# Nothing reads N yet: every emitted byte is unchanged. CHANGELOG [6.7.8]
+fn _arr_gsgn(S, ew, sgn, typed, ann, n): i64 {
     var d = _arr_desc_k(S, ew, sgn, typed, ann);
-    return 0x100 | d;
+    if (d == 0) { return 0x100; }
+    return 0x100 | d | (n << 16);
 }
 # A global's element descriptor, 0 when it is not an element-typed array.
 fn _arr_gdesc(S, vi): i64 {
@@ -148,14 +165,19 @@ fn _arr_gbare(S, vi): i64 {
 }
 fn _gsgn_shape(g): i64 {
     if (g == 0x100) { return 0; }
-    return _ek_legacy(g);   # 6.7.8 (C2-3a): the element kinds are no new shape
+    return _ek_legacy(g & 0xFFFF);   # 6.7.8: the element kinds (C2-3a) and N (C2-3b) are no new shape
 }
 # The named slot of an array local (PARSE_ARRAY's stack path): its element descriptor (6.6.12), a
 # stale slice width at the index cleared, and (6.7.6, D2) the bare mark when it has no element type.
-fn _arr_named_marks(S, li, d): i64 {
+# 6.7.8 (C2-3b): an element-typed array's exact N `n` in that slice-width word (see `_arr_gsgn`).
+fn _arr_named_marks(S, li, d, n): i64 {
     SLAEW(S, li, d);
-    SSLICE_W(S, li, 0);
-    if (d == 0) { SLBARR(S, li); }
+    if (d == 0) {
+        SSLICE_W(S, li, 0);
+        SLBARR(S, li);
+        return 0;
+    }
+    SSLICE_W(S, li, 0 - 0x1000000000000 - n);
     return 0;
 }
 # `stack var b[N]` (parse.cyr): the span, and the bare mark — it states no element type either.
@@ -435,7 +457,7 @@ fn PARSE_ARRAY(S, noff, ew, sgn, eb, ann_ti): i64 {
         S64(S + 0x5D9D000 + sa_named * 8, noff);
         SLDEP(S, sa_named, GSDEP(S));
         SLAGG(S, sa_named, sa_nslots);   # 6.6.5: the slots ARE the array
-        _arr_named_marks(S, sa_named, _arr_desc_k(S, ew, sgn, ann_ti, ann_ti));   # 6.6.12: after SLAGG (see util.cyr SLAEW); 6.7.6: + the typed / bare marks; 6.7.8: + the kind
+        _arr_named_marks(S, sa_named, _arr_desc_k(S, ew, sgn, ann_ti, ann_ti), asz);   # 6.6.12: after SLAGG (see util.cyr SLAEW); 6.7.6: + the typed / bare marks; 6.7.8: + the kind, N
         SLTYPE(S, sa_named, 0);
         SFLC(S, sa_named + 1);
         return 0;
@@ -443,7 +465,7 @@ fn PARSE_ARRAY(S, noff, ew, sgn, eb, ann_ti): i64 {
     var vcnt = GVCNT(S);
     S64(_varn_base + vcnt * 8, noff);
     S64(_vars_base + vcnt * 8, aligned);
-    SVSGN(S, vcnt, _arr_gsgn(S, ew, sgn, ann_ti, ann_ti));   # 6.6.12: the element descriptor (see _arr_gsgn); 6.7.6: + the typed mark; 6.7.8: + the kind
+    SVSGN(S, vcnt, _arr_gsgn(S, ew, sgn, ann_ti, ann_ti, asz));   # 6.6.12: the element descriptor (see _arr_gsgn); 6.7.6: + the typed mark; 6.7.8: + the kind, N
     # 6.6.5 — a fn-local STATIC array is scoped to its block, not stamped as a file global.
     # The v6.6.4 stamp is what turned this shape's cross-file collision into an error naming
     # the CONSUMER's variable; scoping the name removes the collision instead of renaming it.
@@ -3178,7 +3200,7 @@ fn PARSE_GVAR_ARR(S, noff, sti, ew, sgn, eb): i64 {
     var vc0 = GVCNT(S);
     S64(_varn_base + vc0 * 8, noff);
     S64(_vars_base + vc0 * 8, sz);
-    SVSGN(S, vc0, _arr_gsgn(S, ew, sgn, eb, _gai_ann(S, sti)));   # 6.6.12: before the fold, so a redeclaration compares it; 6.7.6: + the typed mark; 6.7.8: + the kind
+    SVSGN(S, vc0, _arr_gsgn(S, ew, sgn, eb, _gai_ann(S, sti), sz_raw));   # 6.6.12: before the fold, so a redeclaration compares it; 6.7.6: + the typed mark; 6.7.8: + the kind, N
     var vc = _gv_fold(S, vc0, sti);   # 6.6.6: a redeclaration reuses the global's slot
     SLVAR(S, vc);
     # v6.6.4: stamp visibility here too. PARSE_GVAR_REG returns into this fn BEFORE its

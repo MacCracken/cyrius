@@ -68,6 +68,31 @@
 #   MIP `_int_plus_ptr` multiplies by the word           -> RED PVa-e (`2 + p`)
 #   M23 + the factor's step-8 local arm writing the plain step (`_lt_spsc` reverted): 321 fail —
 #       the i64 / u64 / f64 / bool LOCAL checks pass again (5 each): that arm is where their kind is set
+#
+# N0 — AN ELEMENT-TYPED ARRAY RECORDS ITS EXACT N (C2-3b). The bounds-checked mode checks `a[i]`
+# against the declared N, and no table held it (a global kept N * sizeof(T) with an 8-byte floor, a
+# local its slot span, so `u8[5]` read as 8 elements). N now rides, behind a nonzero descriptor, a
+# global's GVSGN bits 16..47 and a stack local's slice-width word (`0 - 2^48 - N`; the closure
+# snapshot carries it) — parse_decl.cyr `_arr_gsgn` / `_arr_named_marks`. Nothing reads N until the
+# mode's check (C2-8, rows N1-N6 by trip / no-trip), so these rows pin that it changes NOTHING: the
+# redeclaration fold compares the descriptor without N, and a bare array's word stays 0x100.
+#   N0a `u8[5]` then `u8[6]` (8 B each) fold, and the folded global subscripts as before
+#   N0b `i16[3]` / `i16[4]` / `i16[2]` (8 B each, a signed descriptor) fold
+#   N0c `u8[8]` then `u8[9]` (8 B vs 16 B) stays refused — the size still decides (anti-vacuous)
+#   (S0a / S0e above fold float / bool arrays of different N: f64[2] / f32[4], f32[2] / bool[1])
+# Measured with a scratch compiler printing the recorded N at every `a[i]` (2026-10-10): stack
+# locals (u8[5], i32[3], u64[1], u8[0], an enum-sized u8[SZ], a const-expression i8[K + 1], a local
+# after a closed block, an async fn's u16[9]), a static-fallback u8[200000], declaration-zone and
+# post-statement globals, a capture and a nested closure's capture of i32[7], a generic T[3] at
+# T = i64 / i16 / i32, f32 / bool / struct / u128 / `*u8` elements, and every fn-local array again
+# under CYRIUS_STACK_ARRAYS=0 — each the declared N; the folded `u8[5]` / `u8[6]` global keeps the
+# FIRST declaration's N (5), as it keeps its element kind (GVSGN is written before `_gv_fold`).
+#
+# MUTATION LEDGER (C2-3b, scratch trees, each its 2-stage mutant cycc as build/cycc; 2026-10-10):
+#   M24n `_gsgn_shape` keeps N (no `& 0xFFFF`)            -> RED N0a N0b (S0a / S0e stay green:
+#        `_ek_legacy` maps a float / bool kind to `g & 0x180`, which drops N with it)
+#   MN0  `_arr_gsgn` writes N behind a zero descriptor too -> RED silent_values_checked B12 B13 B15
+#        (a bare global's `b OP= v` refusal reads its word as exactly 0x100, `_arr_gbare`)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -457,6 +482,15 @@ refused s0c "global 'A' redeclared with a different type or size" "S0c: f64[2] t
 refused s0d "global 'A' redeclared with a different type or size" "S0d: f32[4] then u32[4] stays refused" \
     'var A: f32[4];\nvar A: u32[4];\nsyscall(60, 7);\n'
 
+# ── N0: an element-typed array records its exact N (C2-3b) ───────────────────────────────────
+# N is no redeclaration shape: two declarations of one storage still fold, whatever their N.
+exits n0a 9 "N0a: u8[5] then u8[6] fold (8 B), A[4] = 9 reads back" \
+    'var A: u8[5];\nvar A: u8[6];\nfn f(): i64 { A[4] = 9; A[0] = 1; return A[4]; }\nsyscall(60, f());\n'
+exits n0b 7 "N0b: i16[3] / i16[4] / i16[2] fold (8 B, signed), A[1] = -3 reads back" \
+    'var A: i16[3];\nvar A: i16[4];\nvar A: i16[2];\nfn f(): i64 { A[1] = 0 - 3; return A[1] + 10; }\nsyscall(60, f());\n'
+refused n0c "global 'A' redeclared with a different type or size" "N0c: u8[8] then u8[9] stays refused (8 B vs 16 B)" \
+    'var A: u8[8];\nvar A: u8[9];\nsyscall(60, 7);\n'
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — a stale slice width is no slice (ST1-ST6); the step word carries the element kind with no change to any step, difference, merge, warning or fold (P1-P6, PV legs, S0)"
+echo "PASS: $G — a stale slice width is no slice (ST1-ST6); the step word carries the element kind with no change to any step, difference, merge, warning or fold (P1-P6, PV legs, S0); an array's exact N is no fold shape (N0)"
