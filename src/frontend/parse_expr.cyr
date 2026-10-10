@@ -3069,6 +3069,10 @@ fn _slice_sub_read(S, li): i64 {
     if (sw > 0) { if (PEEKT(S) == 28) {
             STI(S, GTI(S) + 1);  # consume [
             # Push &local as first arg (helper takes slice address)
+            # 6.7.8: the frame base is raw bytes on x86 (no IR node of its own), so a CYRIUS_IR=3
+            # pass took rax for the index variable stored just before (`var i = 2; s[i]` passed
+            # &s as the index: exit 134) — marked, as `_arr_sub_addr` marks its base. CHANGELOG [6.7.8]
+            _IR_REC0(S, IR_RAW_EMIT);
             EFLADDR(S, li);
             EPUSHR(S);
             # Parse index expression — leaves idx in rax

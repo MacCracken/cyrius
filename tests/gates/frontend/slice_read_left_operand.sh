@@ -17,6 +17,11 @@
 #   A  tests/tcyr/crossos/slice_read_left_operand.tcyr with its full assertion count (every operator
 #      class, every element width, the index shapes, every position) on x86 (plain, CYRIUS_IR=1,
 #      CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu), cx (cxvm) and PE (wine)
+#   V  6.7.8 — the index variable stored just before the read, under CYRIUS_IR=3: the slice's frame
+#      base is raw bytes on x86 (no IR node), so the pass took rax for the variable it had just
+#      stored — `var i = 1; return s[i] + 10;` passed &s as the index and exited 134 (6.7.7 too).
+#      `_slice_sub_read` marks the base (IR_RAW_EMIT) as `_arr_sub_addr` marks its own. V1-V2 here,
+#      the tcyr's V group on every leg (A3 the IR=3 one)
 #
 # MUTATION LEDGER (scratch trees, each rebuilt with the one change, run as CYCC=<mutant>; 2026-10-10):
 #   M0 the 6.7.7 read (none of the three resets)  -> RED R1 R2 R3 P1 and A1-A7: x86 134 (IR=1, IR=3 too),
@@ -26,6 +31,7 @@
 #                                                    0"), A1-A7 (as M0)
 #   M2 `_slice_sub_read` without `SPSC(S, 0)`     -> RED A1-A7 (tcyr I9: s[ix()] + 1 is 16)
 #   M3 `_slice_sub_read` without `SESTYPE(S, 0)`  -> RED A1-A7 (tcyr I10: s[n] + 10 is 99, Idx_add)
+#   M4 `_slice_sub_read` without its IR_RAW_EMIT mark -> RED V1 V2 A3 (exit 134; every other leg green)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -75,6 +81,22 @@ exits r3 12 "R3: return s[1] * 2; (was SIGSEGV)" '    return s[1] * 2;\n'
 exits r4 15 "R4: control: return 10 + s[0];" '    return 10 + s[0];\n'
 exits r5 15 "R5: control: return (s[0]) + 10;" '    return (s[0]) + 10;\n'
 exits r6 15 "R6: control: var x = s[0]; return x + 10;" '    var x = s[0];\n    return x + 10;\n'
+
+# ── V: the index variable stored just before the read, CYRIUS_IR=3 ─────────────────────────────
+exits_ir3() {   # <name> <want> <what> <body>: as exits, built with CYRIUS_IR=3
+    printf '%b' "$HD$4$TL" > "$T/$1.cyr"
+    rc=0; CYRIUS_IR=3 timeout 60 "$CC" < "$T/$1.cyr" > "$T/$1.bin" 2> "$T/$1.err" || rc=$?
+    if [ "$rc" -ne 0 ]; then bad "$3: rc $rc: $(grep '^error' "$T/$1.err" | head -1)"; return; fi
+    chmod +x "$T/$1.bin"; got=0; timeout 10 "$T/$1.bin" > /dev/null 2>&1 || got=$?
+    if [ "$got" -eq "$2" ]; then ok "$3: exit $got"; else bad "$3: exit $got, want $2"; fi
+}
+exits_ir3 v1 16 "V1: CYRIUS_IR=3: var i = 1; return s[i] + 10; (was 134: &s passed as the index)" '    var i = 1;
+    return s[i] + 10;
+'
+exits_ir3 v2 6 "V2: CYRIUS_IR=3: var j = 2; var x = s[j - 1]; return x;" '    var j = 2;
+    var x = s[j - 1];
+    return x;
+'
 
 # ── P: the syscall builtin's literal-number reader (PE) ────────────────────────────────────────
 printf '%b' 'include "lib/slice.cyr"\nfn main(): i64 {\n    var b: i64[4];\n    b[0] = 60; b[1] = 6;\n    var s: [i64] = 0;\n    slice_set(&s, &b, 4);\n    syscall(s[0], 7);\n    return 3;\n}\nvar rc = main();\nsyscall(60, rc);\n' > "$T/p1.cyr"
@@ -137,4 +159,4 @@ fi
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — a slice read is a whole value as a left operand: the filed repro (R), the syscall-number reader (P), every operator / width / index shape / position on x86 / IR / DCE / aarch64 / cx / PE (A)"
+echo "PASS: $G — a slice read is a whole value as a left operand: the filed repro (R), the syscall-number reader (P), every operator / width / index shape / position on x86 / IR / DCE / aarch64 / cx / PE (A); an index variable stored just before the read under CYRIUS_IR=3 (V)"
