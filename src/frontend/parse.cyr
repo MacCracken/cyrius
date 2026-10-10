@@ -3388,6 +3388,7 @@ fn _asg_rhs_steps(S, di, rsid): i64 {
 fn _tup_asg_chk(S, noff, st): i64 {
     _agc_operand(S, noff);
     if (_agc_t >= 0) { return 0; }
+    if (_dyn_is(S, 0 - _agc_t) == 1) { _dyn_err(S, st, "cannot assign a value that is not a dyn to ", 0 - _agc_t, noff, 0); return 1; }   # 6.7.8
     if (_tup_is(S, 0 - _agc_t) == 0) { return 0; }
     _tup_err(S, st, "cannot assign a value that is not a tuple to tuple ", noff, 0);
     return 1;

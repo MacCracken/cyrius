@@ -2341,6 +2341,9 @@ _chk_gate "$ROOT/tests/gates/codegen/struct_pair_multi_value_crossing.sh"
 # 6.7.8 (dyn D1) — cx returns a 9-16 B struct in r0:r4 (its pair emitters were ERR_MSG stubs, so no
 # program returning or receiving one built for cx): every receive / producer shape, native vs cxvm.
 _chk_gate "$ROOT/tests/gates/codegen/cx_struct_pair.sh"
+# 6.7.8 (dyn D4) — `dyn` is reserved and `dyn Tr` is a type: each struct position takes it, every open
+# position is refused by name, uninitialised / value / address / word uses refused (decision 7).
+_chk_gate "$ROOT/tests/gates/frontend/dyn_checked.sh"
 # 6.7.7 — a whole-struct store into a packed global of 3 / 5 / 6 / 7 bytes wrote 8 (EVSTORE_W stored
 # exactly only 1 / 2 / 4), over the next global: the filed repro and every size 1..16 x every store
 # form, x86 / IR / DCE / aarch64 / cx / PE. Mutation ledger in the header.

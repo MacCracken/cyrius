@@ -889,6 +889,9 @@ fn _tcp_drop(S): i64 {
 # here (ESTRUCT_PAIR_HI_SYNC, a no-op on x86) — the other half, a `return p;` read by
 # `var a, b = f();` / `rethi()`, is EFLLOAD_STRUCT_INT_PAIR writing x2 too. CHANGELOG [6.7.7]
 fn _mret_land(S): i64 {
+    if (_dyn_is(S, _cur_fn_ret_sid) == 1) {   # 6.7.8 (V7): a dyn is returned whole, never built from values
+        _dyn_err(S, GTI(S) - 1, "a fn returning ", _cur_fn_ret_sid, 0 - 1, " returns a whole dyn - `return (a, b)` / `ret2` would write its words");
+    }
     if (_cur_fn_ret_pair == 1) { ESTRUCT_PAIR_HI_SYNC(S); }
     var rp = EJMP0(S);
     vec_push(rp_vec, rp);
@@ -2101,6 +2104,7 @@ fn _ret_struct_pair(S): i64 {
         if (_tup_lit_at(S, GTI(S)) < 0) { _refuse_pair_return(S); }
     }
     _ret_unpeel(S);   # 6.7.6: a call passes through the scalar path, wrap and all
+    _dyn_ret_arm(S);  # 6.7.8: and a dyn-returning call is this return's value, not a use of one
     return 0;
 }
 # ⛔ 6.6.17 (a1 review) — `return p;` from a fn returning a struct of 8 B or less, where `p: *T` is
@@ -5199,6 +5203,7 @@ fn _refuse_async_struct_param(S, li, pnoff): i64 {
     if (_cur_fn_ptrp == li + 1) { return 0; }
     var lt = GLTYPE(S, li);
     if (_agc_plain_big(S, lt) == 0) { return 0; }
+    if (_dyn_is(S, 0 - lt) == 1) { return 0; }   # 6.7.8: refused at its type (T11), once
     if (_panic == 1) { return 0; }
     syscall(SYS_WRITE, 2, "error:", 6);
     _err_head(S);
@@ -5232,6 +5237,7 @@ fn _refuse_async_struct_param(S, li, pnoff): i64 {
 # until a Future can carry a struct. CHANGELOG [6.6.6]
 fn _refuse_async_struct_return(S, fnoff, fi): i64 {
     if (_ret_agg_class(S, fi) == 0) { return 0; }
+    if (_dyn_is(S, GFRS(S, fi)) == 1) { return 0; }   # 6.7.8: refused at its type (T11), once
     if (_panic == 1) { return 0; }
     syscall(SYS_WRITE, 2, "error:", 6);
     _err_head(S);
@@ -11026,6 +11032,7 @@ fn _type_arg_leaf(S, noff): i64 {
 # a type argument picks a WIDTH and a layout, so an alias that silently chose one is the bug this
 # replaced. An enum gets its own line: its values are i64, and "unknown type" reads as a typo.
 fn _refuse_type_arg_name(S, noff): i64 {
+    if (_dyn_bare_nm != 0) { if (noff == _dyn_bare_nm - 1) { return 0; } }   # 6.7.8: T3 named it
     if (_is_enum_name(S, noff) == 1) {
         ERR_IDENT(S, "", noff, " is an enum, not a type argument — enum values are i64; write i64", 0 - 1);
         return 0;
@@ -12908,7 +12915,9 @@ fn _prescan_tail_loop(S): i64 {
 # forks with an object writer (main.cyr, main_win.cyr): there `object;` selects mode 3;
 # elsewhere it is not a declaration and ends the scan ("unexpected object"). CHANGELOG [6.6.17]
 fn _tl_pass1(S, objok): i64 {
+    _dyn_fold(S);     # 6.7.8: `dyn X` -> one identifier token, BEFORE any prepass records an index
     _tr_prepass(S);   # 6.7.0 (A1/A2): every trait and impl, before the first method is registered
+    _dyn_prepass(S);  # 6.7.8: each folded `dyn X` registered (its struct) and checked where it stands
     _cst_prepass(S);  # 6.7.2 (B1): every top-level const, wherever it sits (a size-0 pending slot)
     STI(S, 0);
     var go = 1;

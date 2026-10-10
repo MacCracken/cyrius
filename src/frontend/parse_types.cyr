@@ -349,26 +349,7 @@ fn _tup_is(S, sid): i64 {
 # panic latch is left as it was, so every refusal of a file is reported and none swallows the next
 # statement — and not at all under `--syntax-only` (lint's pre-pass resolves no type). 1 = reported.
 fn _tup_err(S, ti, msg, noff, tail): i64 {
-    if (_syntax_only == 1) { return 0; }
-    if (_panic == 1) { return 0; }
-    if (_tn_once(S, ti) == 0) { return 0; }
-    var sv = GTI(S);
-    STI(S, ti);
-    syscall(SYS_WRITE, 2, "error:", 6);
-    _err_head(S);
-    syscall(SYS_WRITE, 2, ": ", 2);
-    PRSTR(msg);
-    if (noff >= 0) {
-        syscall(SYS_WRITE, 2, "'", 1);
-        PRSTR(S + 0xEC00000 + noff);
-        syscall(SYS_WRITE, 2, "'", 1);
-    }
-    if (tail != 0) { PRSTR(tail); }
-    syscall(SYS_WRITE, 2, "\n", 1);
-    _err_excerpt(S);
-    _had_error = 1;
-    STI(S, sv);
-    return 1;
+    return _dyn_err(S, ti, msg, 0, noff, tail);   # 6.7.8: the one reporter, shared with dyn
 }
 # Cursor on a tuple type's `(` in a position the decision leaves open (`what` names it): refused by
 # name at the `(`, and the whole `( .. )` consumed — the parse goes on in sync.
@@ -558,6 +539,381 @@ fn _tup_gen_chk(S, ti): i64 {
     return _tup_err(S, ti, "a tuple type in a generic fn is refused - a type parameter and a tuple do not combine yet", 0 - 1, 0);
 }
 
+# ⛔ 6.7.8 — CHECKED `dyn` (the user's decisions, 2026-10-07): `o: dyn Show` is an ordinary 16-byte
+# struct of two words {data, vtable} — ADR-002's one-word model holds. THE TOKEN FOLD: before any
+# prepass records a token index, `dyn X` becomes ONE identifier token named `dyn X` (a space: no
+# lexed identifier spells it, so it collides with no user name), and `_dyn_prepass` registers that
+# name as a struct before any user struct. Every struct position then takes it unchanged — a
+# local, a global, a parameter (pass 1's scan too), a return (the rough pair scan), a field, a
+# copy checked by sid. The two words are named " data" / " vtable" (a leading space): no field
+# access reaches them (decision 7 — "unknown field 'data' on struct 'dyn Show'"). Each position
+# the decisions leave open is refused by name at the prepass, once per token. A unit that spells
+# no `dyn` folds nothing (`_lex_dyn_n`, lex.cyr): its tokens are untouched. CHANGELOG [6.7.8]
+var _dyn_ix = 0;   # the folded tokens: (index << 2) | 1 when a `+ B` after it was dropped (T2); | 2 a bare `dyn`
+var _dyn_nx = 0;
+var _dyn_nm = 0;   # one minted name per spelling: (X's name offset, `dyn X`'s)
+var _dyn_nn = 0;
+var _dyn_wd = 0;   # the word names " data" / " vtable" (name offset + 1), minted once
+var _dyn_wv = 0;
+var _dyn_hm = 0;   # per struct: 0 = not judged, 1 = holds no dyn, 2 = holds one (`_dyn_held`)
+
+fn _dyn_fold(S): i64 {
+    if (_lex_dyn_n == 0) { return 0; }
+    _dyn_ix = alloc(_lex_dyn_n * 8);
+    _dyn_nm = alloc(_lex_dyn_n * 16);
+    var n = GTCNT(S);
+    var r = 0;
+    var w = 0;
+    while (r < n) {
+        if (TOKTYP(S, r) == 173) {
+            if (TOKTYP(S, r + 1) == 2) {
+                r = _dyn_fold1(S, r, w);
+                w = w + 1;
+                continue;
+            }
+            _dyn_note(w, 2);   # a `dyn` with no trait name after it: T3, judged by the prepass
+        }
+        if (w != r) { _dyn_tok_mv(S, w, r); }
+        w = w + 1;
+        r = r + 1;
+    }
+    STCNT(S, w);
+    return 0;
+}
+# `dyn` at token `r`, the identifier X after it: ONE identifier at `w`, named `dyn X`, carrying
+# `dyn`'s line word (a diagnostic's caret points at `dyn`). A `+ B` run after it is dropped, its
+# reason recorded for the prepass (T2), so the parse goes on in sync. The next token to read.
+fn _dyn_fold1(S, r, w): i64 {
+    var lw = L64(S + 0xCC00000 + r * 8);
+    var nm = _dyn_name(S, TOKVAL(S, r + 1));
+    S64(S + 0x8C00000 + w * 8, 2);
+    S64(S + 0xAC00000 + w * 8, nm);
+    STLINE(S, w, lw);
+    var q = r + 2;
+    var plus = 0;
+    while (TOKTYP(S, q) == 6) {
+        if (TOKTYP(S, q + 1) != 2) { break; }
+        q = q + 2;
+        plus = 1;
+    }
+    _dyn_note(w, plus);
+    return q;
+}
+fn _dyn_note(w, f): i64 {
+    S64(_dyn_ix + _dyn_nx * 8, (w << 2) | f);
+    _dyn_nx = _dyn_nx + 1;
+    return 0;
+}
+fn _dyn_tok_mv(S, w, r): i64 {
+    S64(S + 0x8C00000 + w * 8, TOKTYP(S, r));
+    S64(S + 0xAC00000 + w * 8, TOKVAL(S, r));
+    STLINE(S, w, L64(S + 0xCC00000 + r * 8));
+    return 0;
+}
+# The name `dyn X` for X at name offset `xnoff` — one offset per spelling (LEXID already gives one
+# X one offset).
+fn _dyn_name(S, xnoff): i64 {
+    var i = 0;
+    while (i < _dyn_nn) {
+        if (L64(_dyn_nm + i * 16) == xnoff) { return L64(_dyn_nm + i * 16 + 8); }
+        i = i + 1;
+    }
+    var n = 0;
+    while (load8(S + 0xEC00000 + xnoff + n) != 0) { n = n + 1; }
+    var np = _dyn_mint(S, "dyn ", 4, n + 1);
+    i = 0;
+    while (i <= n) {
+        store8(S + 0xEC00000 + np + 4 + i, load8(S + 0xEC00000 + xnoff + i));
+        i = i + 1;
+    }
+    SNPOS(S, np + 4 + n + 1);
+    S64(_dyn_nm + _dyn_nn * 16, xnoff);
+    S64(_dyn_nm + _dyn_nn * 16 + 8, np);
+    _dyn_nn = _dyn_nn + 1;
+    return np;
+}
+# Write the `n` bytes of `s` at the name pool's top, `more` bytes reserved after them; the offset.
+# The caller moves the pool's top (SNPOS) past what it wrote.
+fn _dyn_mint(S, s, n, more): i64 {
+    NPOS_GUARD(S, n + more + 1);
+    var np = GNPOS(S);
+    var i = 0;
+    while (i < n) {
+        store8(S + 0xEC00000 + np + i, load8(s + i));
+        i = i + 1;
+    }
+    store8(S + 0xEC00000 + np + n, 0);
+    return np;
+}
+fn _dyn_word(S, s, n): i64 {
+    var np = _dyn_mint(S, s, n, 0);
+    SNPOS(S, np + n + 1);
+    return np + 1;
+}
+# The struct `dyn X` (name offset `noff`), registered on its first spelling: two 8-byte words.
+fn _dyn_reg(S, noff): i64 {
+    var sid = FINDSTRUCT(S, noff);
+    if (sid > 0) { return sid; }
+    sid = REGSTRUCT(S, noff);
+    if (sid == 0) { return 0; }
+    if (_dyn_wd == 0) { _dyn_wd = _dyn_word(S, " data", 5); }
+    if (_dyn_wv == 0) { _dyn_wv = _dyn_word(S, " vtable", 7); }
+    ADDFIELD(S, sid - 1, _dyn_wd - 1);
+    ADDFIELD(S, sid - 1, _dyn_wv - 1);
+    return sid;
+}
+# 1 = the source at token `st` is one whole free call returning dyn `sid` (`;` after it) — at top level
+# its own path refuses it (no frame for a 9-16 B result), so a declaration backstop stays quiet.
+fn _dyn_src_call(S, st, sid): i64 {
+    var o = _gcall_open(S, st);
+    if (o < 0) { return 0; }
+    if (TOKTYP(S, _call_close(S, o) + 1) != 5) { return 0; }
+    var fi = _gen_resolve_call(S, st);
+    if (fi < 0) { return 0; }
+    if (GFRS(S, fi) != sid) { return 0; }
+    return 1;
+}
+# 1 = struct `sid` (1-based) is a dyn: its name starts `dyn ` (only the fold mints one).
+fn _dyn_is(S, sid): i64 {
+    if (_dyn_nx == 0) { return 0; }
+    if (sid <= 0) { return 0; }
+    if (sid > GSTC(S)) { return 0; }
+    if (L64(S + 0xEC00000 + L64(S + 0x1A6018 + (sid - 1) * 8)) & 0xFFFFFFFF == 0x206E7964) { return 1; }
+    return 0;
+}
+# 1 = struct `sid` is a dyn or holds one in a field, directly or through a nested struct field
+# (a generic instance's included). Judged once per struct (`_dyn_hm`): asked only of a complete one.
+fn _dyn_held(S, sid): i64 {
+    if (_dyn_is(S, sid) == 1) { return 1; }
+    if (_dyn_nx == 0) { return 0; }
+    if (sid <= 0) { return 0; }
+    if (sid > GSTC(S)) { return 0; }
+    if (_dyn_hm == 0) { _dyn_hm = alloc(1024); }
+    var m = load8(_dyn_hm + sid - 1);
+    if (m != 0) { return m - 1; }
+    var r = 0;
+    var fc = GETFCOUNT(S, sid - 1);
+    var i = 0;
+    while (i < fc) {
+        var ft = GETFTYPE(S, sid - 1, i);
+        if (_spi_is_nested(S, ft) == 1) { if (_dyn_held(S, ft) == 1) { r = 1; } }
+        i = i + 1;
+    }
+    store8(_dyn_hm + sid - 1, r + 1);
+    return r;
+}
+# ⛔ U1 / U2 — STRUCT LOCALS ARE NOT ZEROED, so `var o: dyn Show;` in a fn — or `var h: H;` /
+# `var hs: H[N]` where H holds a dyn, directly or through a nested struct field — left a vtable word
+# of whatever the frame held: a call through it jumps to garbage. Refused by name at the annotation
+# (`ann`), the name still declared (PARSE_VAR goes on, nothing cascades). A global is zeroed (a
+# zone global is refused uninitialised anyway). `_tup_var`'s first line; `noff` -1 for an array.
+fn _dyn_var(S, noff, pscale, ann): i64 {
+    if (PEEKT(S) != 5) { return 0; }
+    if (pscale >= 0) { return 0; }
+    if (pscale <= 0 - 2048) { return 0; }
+    return _dyn_uninit(S, 0 - pscale, ann, noff);
+}
+fn _dyn_uninit(S, sid, ann, noff): i64 {
+    if (GINFN(S) != 1) { return 0; }
+    if (_dyn_held(S, sid) == 0) { return 0; }
+    if (_dyn_is(S, sid) == 1) { return _dyn_err(S, ann, "declare ", sid, noff, " with its value - struct locals are not zeroed, and a dyn's vtable is formed, never left to the frame"); }
+    if (noff < 0) { return _dyn_err(S, ann, "an array of ", sid, 0 - 1, " in a fn is refused - its records hold a dyn, struct locals are not zeroed, and a dyn's vtable is formed, never left to the frame"); }
+    return _dyn_err(S, ann, "declare ", sid, noff, " with its value - it holds a dyn, struct locals are not zeroed, and a dyn's vtable is formed, never left to the frame");
+}
+# T12 — the field of struct `si` typed by struct `fs` (its type token `ti`): a union cannot hold a dyn
+# (another member would write its words), nor can a generic struct have a dyn field (a type
+# parameter and a dyn do not combine yet: the struct `_sdef_tp_ti` is defining opens `<`).
+fn _dyn_field_chk(S, si, fs, ti): i64 {
+    if (_dyn_held(S, fs) == 0) { return 0; }
+    if (ISUNION(S, si) == 1) { return _dyn_err(S, ti, "a union cannot hold a dyn - another member would write its words", 0, 0 - 1, 0); }
+    if (_dyn_is(S, fs) == 0) { return 0; }
+    if (TOKTYP(S, _sdef_tp_ti) == 19) { return _dyn_err(S, ti, "a dyn field in a generic struct is refused - a type parameter and a dyn do not combine yet", 0, 0 - 1, 0); }
+    return 0;
+}
+
+# The prepass (`_tl_pass1`, right after `_tr_prepass`, so a trait name resolves): every folded
+# token registers its struct — a refused one too, so its later uses do not cascade — and is
+# checked where it stands. Reported through `_tup_err`'s reporter: once per token, the latch left
+# alone, silent under `--syntax-only`.
+fn _dyn_prepass(S): i64 {
+    var i = 0;
+    while (i < _dyn_nx) {
+        var e = L64(_dyn_ix + i * 8);
+        if ((e & 2) == 0) { _dyn_chk(S, e >> 2, e & 1); }
+        else { _dyn_bare(S, e >> 2); }
+        i = i + 1;
+    }
+    return 0;
+}
+# T3 — a `dyn` with no trait name after it, in a type position (after `:`, `<`, `*`, `[`, or a `,`
+# inside `<..>`), where the parser took any one token as the type (`o: dyn)`, `Vec<dyn>` compiled).
+# The token becomes the identifier `dyn`, so each type resolver after this refuses it at the same
+# token, silently (`_tn_once`): one report. In a name position the parser names the reserved word.
+var _dyn_bare_nm = 0;
+fn _dyn_bare(S, ti): i64 {
+    if (ti == 0) { return 0; }
+    var pt = TOKTYP(S, ti - 1);
+    var k = 0;
+    if (pt == 49 || pt == 19 || pt == 8 || pt == 28) { k = 1; }
+    if (pt == 31) { if (_dyn_opener(S, ti) == 19) { k = 1; } }
+    if (k == 0) { return 0; }
+    _dyn_err(S, ti, "`dyn` takes a trait's name - `dyn Show` for `trait Show`", 0, 0 - 1, 0);
+    if (_dyn_bare_nm == 0) { _dyn_bare_nm = _dyn_word(S, "dyn", 3); }
+    S64(S + 0x8C00000 + ti * 8, 2);
+    S64(S + 0xAC00000 + ti * 8, _dyn_bare_nm - 1);
+    return 0;
+}
+fn _dyn_chk(S, ti, plus): i64 {
+    var noff = TOKVAL(S, ti);
+    var sid = _dyn_reg(S, noff);
+    if (_dyn_pos(S, ti, sid) == 1) { return 0; }
+    if (plus == 1) { return _dyn_err(S, ti, "`dyn A + B` is refused - a dyn holds one vtable, of one trait", 0, 0 - 1, 0); }
+    var nt = TOKTYP(S, ti + 1);
+    if (nt == 19) { return _dyn_err(S, ti, "", sid, 0 - 1, " takes no type arguments - a trait has none"); }
+    if (nt == 28) { return _dyn_err(S, ti, "", sid, 0 - 1, " cannot be an array element - hold it in a record (`struct R { o: dyn ..; }`) and make an array of those"); }
+    if (_tr_find(S, noff + 4) < 0) { return _dyn_err(S, ti, "", 0, noff + 4, " is not a trait - `dyn` takes a declared trait's name"); }
+    return _dyn_fn_chk(S, ti);
+}
+# The position: a dyn type is written after a `:` (a var, a parameter, a return type, a field, a
+# trait member's signature). Every other position is refused by name (1 = refused).
+fn _dyn_pos(S, ti, sid): i64 {
+    if (ti == 0) { return _dyn_where(S, ti, sid); }
+    var pt = TOKTYP(S, ti - 1);
+    if (pt == 49) { return 0; }
+    if (pt == 19) {
+        if (_dyn_tok_is(S, ti - 2, "slice", 5) == 1) { return _dyn_err(S, ti, "", sid, 0 - 1, " cannot be a slice element"); }
+        return _dyn_targ(S, ti, sid);
+    }
+    if (pt == 31) { return _dyn_pos_comma(S, ti, sid); }
+    if (pt == 8) { return _dyn_err(S, ti, "a pointer to ", sid, 0 - 1, " is refused - a dyn is a two-word value; point at a record that holds one (`struct R { o: dyn ..; }`, `*R`)"); }
+    if (pt == 28) { return _dyn_err(S, ti, "", sid, 0 - 1, " cannot be a slice element"); }
+    if (pt == 10) { return _dyn_pos_paren(S, ti, ti - 1, sid); }
+    if (pt == 77) { return _dyn_err(S, ti, "`impl` takes a type that is not a dyn - implement the trait for a struct or a scalar", 0, 0 - 1, 0); }
+    if (pt == 55) { if (ti >= 3) { if (TOKTYP(S, ti - 3) == 77) {
+                return _dyn_err(S, ti, "`impl` takes a type that is not a dyn - implement the trait for a struct or a scalar", 0, 0 - 1, 0);
+            } } }
+    return _dyn_where(S, ti, sid);
+}
+fn _dyn_where(S, ti, sid): i64 {
+    _dyn_err(S, ti, "", sid, 0 - 1, " is a type - write it after a `:` (`o: dyn Show`)");
+    # As a VALUE (`= dyn Show`, `return dyn Show`, an argument) it would also be an undefined
+    # variable: it becomes the number 0 there, so the refusal above is the one report.
+    if (ti < 3) { return 1; }
+    var pt = TOKTYP(S, ti - 1);
+    var e = 0;
+    if (pt == 4 || pt == 33) { e = 1; }
+    if (pt == 10) { if (TOKTYP(S, ti - 2) == 2) { if (TOKTYP(S, ti - 3) != 32) { e = 1; } } }
+    if (e == 1) {
+        S64(S + 0x8C00000 + ti * 8, 1);
+        S64(S + 0xAC00000 + ti * 8, 0);
+    }
+    return 1;
+}
+# After a `,`: the bracket it is inside decides — `<` a type argument, `(` a tuple's element (`: (`)
+# or a `*fn(..)` parameter; else a name position.
+fn _dyn_pos_comma(S, ti, sid): i64 {
+    var t = _dyn_opener(S, ti);
+    if (t == 19) { return _dyn_targ(S, ti, sid); }
+    if (t == 10) { return _dyn_pos_paren(S, ti, _dyn_open_ti, sid); }
+    return _dyn_where(S, ti, sid);
+}
+# The bracket a `,` before token `ti` sits in: its token type (`(`, `<`, `[`), `_dyn_open_ti` its
+# index; 0 when a `;`, `{` or `}` comes first.
+var _dyn_open_ti = 0;
+fn _dyn_opener(S, ti): i64 {
+    var k = ti - 2;
+    var d = 0;
+    while (k >= 0) {
+        var t = TOKTYP(S, k);
+        if (t == 5 || t == 13 || t == 14) { return 0; }
+        if (t == 11 || t == 20 || t == 29) { d = d + 1; }
+        elif (t == 39) { d = d + 2; }
+        elif (t == 152) { d = d + 3; }
+        elif (t == 10 || t == 19 || t == 28) {
+            if (d == 0) {
+                _dyn_open_ti = k;
+                return t;
+            }
+            d = d - 1;
+        }
+        k = k - 1;
+    }
+    return 0;
+}
+# Inside the `(` at token `o`: `sizeof(`, a `*fn(..)` parameter, a tuple / multi-value element (`: (`).
+fn _dyn_pos_paren(S, ti, o, sid): i64 {
+    if (o >= 1) {
+        if (_dyn_tok_is(S, o - 1, "sizeof", 6) == 1) { return _dyn_err(S, ti, "sizeof(", sid, 0 - 1, ") is refused - a dyn is two words, and no layout of them is promised"); }
+        if (TOKTYP(S, o - 1) == 32) { return _dyn_err(S, ti, "", sid, 0 - 1, " cannot be a `*fn(..)` parameter - pass a record that holds one"); }
+        if (TOKTYP(S, o - 1) == 49) { return _dyn_err(S, ti, "", sid, 0 - 1, " cannot be a tuple or multi-value element - return or hold it alone"); }
+    }
+    return _dyn_where(S, ti, sid);
+}
+fn _dyn_targ(S, ti, sid): i64 {
+    return _dyn_err(S, ti, "", sid, 0 - 1, " cannot be a type argument - a collection holds pointers to records that hold a dyn");
+}
+# Token `ti` is the identifier spelled by the `n` bytes of `s`.
+fn _dyn_tok_is(S, ti, s, n): i64 {
+    if (ti < 0) { return 0; }
+    if (TOKTYP(S, ti) != 2) { return 0; }
+    var p = S + 0xEC00000 + TOKVAL(S, ti);
+    var i = 0;
+    while (i < n) {
+        if (load8(p + i) != load8(s + i)) { return 0; }
+        i = i + 1;
+    }
+    if (load8(p + n) != 0) { return 0; }
+    return 1;
+}
+# T11 — the fn whose signature or body holds the dyn: a generic, `async`, `const` or `#naked` fn is
+# refused (a type parameter, a suspended frame, a compile-time evaluation and a frameless body have
+# no rule with a dyn yet). Its prefix tokens are read back from its `fn`.
+fn _dyn_fn_chk(S, ti): i64 {
+    var k = _tok_enclosing_fn(S, ti);
+    if (k < 0) { return 0; }
+    if (TOKTYP(S, k + 2) == 19) { return _dyn_err(S, ti, "a dyn type in a generic fn is refused - a type parameter and a dyn do not combine yet", 0, 0 - 1, 0); }
+    var j = k - 1;
+    while (j >= 0) {
+        var t = TOKTYP(S, j);
+        if (t == 134) { return _dyn_err(S, ti, "a dyn type in an `async fn` is refused - a suspended frame and a dyn do not combine yet", 0, 0 - 1, 0); }
+        if (t == 168) { return _dyn_err(S, ti, "a dyn type in a `const fn` is refused - a compile-time evaluation takes no dyn", 0, 0 - 1, 0); }
+        if (t == 133) { return _dyn_err(S, ti, "a dyn type in a `#naked` fn is refused - a body with no frame takes no dyn", 0, 0 - 1, 0); }
+        if (t != 73 && t != 153 && _tl_flag_tok(t) == 0) { return 0; }
+        j = j - 1;
+    }
+    return 0;
+}
+# The one reporter for a dyn refusal (and a tuple's, `_tup_err`): at token `ti`,
+# "<msg>[<struct sid's name> ]['<noff>'][<tail>]". Once per token, the panic latch left as it was
+# (every refusal of a file is reported, none swallows the next statement), and silent under
+# `--syntax-only` (lint's pre-pass resolves no type). 1 = reported.
+fn _dyn_err(S, ti, msg, sid, noff, tail): i64 {
+    if (_syntax_only == 1) { return 0; }
+    if (_panic == 1) { return 0; }
+    if (_tn_once(S, ti) == 0) { return 0; }
+    var sv = GTI(S);
+    STI(S, ti);
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    syscall(SYS_WRITE, 2, ": ", 2);
+    PRSTR(msg);
+    if (sid > 0) {
+        PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (sid - 1) * 8));
+        if (noff >= 0) { syscall(SYS_WRITE, 2, " ", 1); }
+    }
+    if (noff >= 0) {
+        syscall(SYS_WRITE, 2, "'", 1);
+        PRSTR(S + 0xEC00000 + noff);
+        syscall(SYS_WRITE, 2, "'", 1);
+    }
+    if (tail != 0) { PRSTR(tail); }
+    syscall(SYS_WRITE, 2, "\n", 1);
+    _err_excerpt(S);
+    _had_error = 1;
+    STI(S, sv);
+    return 1;
+}
+
 # ⛔ 6.6.17 — `p + n` ON A `*T` STEPS sizeof(T) ELEMENTS, AT EVERY SITE (the user's decision,
 # 2026-10-05). The step used to depend on WHERE the pointer was declared: a local `*i8` / `*i16` /
 # `*i32` stepped 1 and every other local `*T` 8 (so `*u8` stepped 8 and `*Pt` 8); a parameter 1
@@ -597,6 +953,11 @@ fn _sl_ptr_type(S, li, ps, ann): i64 {
 # annotation with no `=` after it (`var G: (i64, i64);` at top level) is left to the "uninitialized"
 # refusal its declaration gets anyway. CHANGELOG [6.7.7]
 fn _tup_ptr_refuse(S, sid, ti, noff): i64 {
+    if (_dyn_is(S, sid) == 1) {   # 6.7.8: nor is a dyn (`var o: dyn Show = 5;`)
+        if (TOKTYP(S, ti + 1) != 4) { return 0; }
+        if (_dyn_src_call(S, ti + 2, sid) == 1) { return 0; }   # a call of it judged itself (top level)
+        return _dyn_err(S, ti, "cannot initialize ", sid, noff, " with a value that is not a dyn");
+    }
     if (_tup_is(S, sid) == 0) { return 0; }
     if (TOKTYP(S, _call_close(S, ti) + 1) != 4) { return 0; }
     return _tup_err(S, ti, "cannot initialize tuple ", noff, " with a value that is not a tuple");
@@ -1829,7 +2190,11 @@ fn _add_named_field(S, si, fnoff, tnoff): i64 {
         ADDFIELD(S, si, fnoff);
         return 0;
     }
-    if (fsid > 0) { ADDFIELDTYPED(S, si, fnoff, fsid); return 0; }
+    if (fsid > 0) {
+        _dyn_field_chk(S, si, fsid, GTI(S) - 1);   # 6.7.8: a dyn in a union / a generic struct
+        ADDFIELDTYPED(S, si, fnoff, fsid);
+        return 0;
+    }
     var k = _field_name_kind(S, tnoff);
     if (k < 0) {
         _refuse_field_type(S, tnoff, fnoff, L64(S + 0x1A6018 + si * 8));

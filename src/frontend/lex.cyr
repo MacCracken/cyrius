@@ -1628,6 +1628,18 @@ fn NPOS_GUARD(S, need): i64 {
     return 0;
 }
 
+# ⛔ 6.7.8 — `dyn` IS A RESERVED WORD, token 173 (the checked trait object: `o: dyn Show`, the user's
+# decision 2026-10-07). It is counted here so the token fold (`_dyn_fold`, parse_types.cyr) — which
+# turns `dyn Show` into ONE identifier token naming its struct — runs only for a unit that spells
+# it: every other program's tokens are untouched. One call from LEXID (the cybs reference ceiling).
+# CHANGELOG [6.7.8]
+var _lex_dyn_n = 0;
+fn _lex_dyn(S, p): i64 {
+    ADDTOK(S, 173, 0);
+    _lex_dyn_n = _lex_dyn_n + 1;
+    return p;
+}
+
 # Lex an identifier starting at p, return new p. Stores token.
 # The identifier pool (tok_names) is 8 MB at S+0xEC00000 since v6.5.40. It was 512 KB at
 # 0x60000, nested in the old input_buf and boxed in by fn_name_hash at 0x110000 — the
@@ -1778,6 +1790,7 @@ fn LEXID(S, p, npos): i64 {
         if (kw & 0xFFFFFFFF == 0x00627570) { ADDTOK(S, 73, 0); return p; }
         # "use" = 0x657375
         if (kw & 0xFFFFFFFF == 0x00657375) { ADDTOK(S, 74, 0); return p; }
+        if (kw & 0xFFFFFFFF == 0x006E7964) { return _lex_dyn(S, p); }   # 6.7.8: "dyn" = 0x6E7964
     }
     if (klen == 4) {
         if (kw & 0xFFFFFFFF == 0x65736C65) { ADDTOK(S, 23, 0); return p; }

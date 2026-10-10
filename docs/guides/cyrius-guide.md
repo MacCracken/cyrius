@@ -433,6 +433,10 @@ loop statement only when `loop {` starts a statement, and an ordinary identifier
 else, so the `var loop` flags that existing code is full of keep compiling. It is in neither
 table, and `cyrius.cyml`'s `[embed]` accepts it as a NAME.
 
+**`dyn` is reserved (6.7.8).** It spells the checked trait-object type (`o: dyn Show`), so
+`fn dyn`, `var dyn`, a field or a method named `dyn` are refused by name, and `[embed]` refuses it
+as a NAME. ⚠ It was an ordinary identifier before 6.7.8: rename one.
+
 Eleven more names are reserved although that table does not hold them: the
 **identifier-spelled intrinsics** `sizeof`, `mulh64` and `fncall0` … `fncall8`. They lex as
 ordinary identifiers and the compiler lowers every call to them BY NAME (`_is_ident_intrinsic`

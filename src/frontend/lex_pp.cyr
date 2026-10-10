@@ -1877,13 +1877,28 @@ fn PP_DFIELD_TAIL(S, base, p, end, fc): i64 {
 # Refused by name instead, as the walk's capture bounds are: `q` is the type's first byte.
 fn PP_DTUP(S, base, q, end, fc): i64 {
     if (q >= end) { return 0; }
-    if (load8(base + q) != 40) { return 0; }
+    if (load8(base + q) != 40) { return PP_DDYN(S, base, q, end, fc); }
+    return PP_DREFUSE(S, fc, "' is a tuple (in the declaration of ", 36);
+}
+# ⛔ 6.7.8 — the same walk meets a field typed by a DYN (`o: dyn Show`, two words the derived codec
+# cannot read or write): it took `dyn` as the type and `Show` as the next field. Refused by name,
+# as a tuple is. `q` is the type's first byte: `dyn` then a byte no identifier continues with.
+fn PP_DDYN(S, base, q, end, fc): i64 {
+    if (q + 3 >= end) { return 0; }
+    if (load8(base + q) != 100) { return 0; }
+    if (load8(base + q + 1) != 121) { return 0; }
+    if (load8(base + q + 2) != 110) { return 0; }
+    if (PP_IDC(load8(base + q + 3)) == 1) { return 0; }
+    return PP_DREFUSE(S, fc, "' is a dyn (in the declaration of ", 34);
+}
+# "error: #derive reads named field types; '<field>'<what><struct>)" and exit 1.
+fn PP_DREFUSE(S, fc, what, wn): i64 {
     syscall(SYS_WRITE, 2, "error: #derive reads named field types; '", 41);
     var f = S + 0x1FC000 + fc * 32;
     var n = 0;
     while (load8(f + n) != 0) { n = n + 1; }
     syscall(SYS_WRITE, 2, f, n);
-    syscall(SYS_WRITE, 2, "' is a tuple (in the declaration of ", 36);
+    syscall(SYS_WRITE, 2, what, wn);
     n = 0;
     while (load8(S + 0x197020 + n) != 0) { n = n + 1; }
     syscall(SYS_WRITE, 2, S + 0x197020, n);
