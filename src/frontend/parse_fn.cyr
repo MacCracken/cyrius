@@ -6384,7 +6384,9 @@ fn _tr_prefix(S, ii, m): i64 {
     return pf;
 }
 # Intern `a_b` in the name pool (NPOS advances); returns its offset.
-fn _tr_join(S, a, b): i64 {
+fn _tr_join(S, a, b): i64 { return _tr_joinc(S, a, b, 95); }
+# ... `a`, the byte `c`, `b` (6.7.8: a trait-object call's prototype is `dyn Show.show`, `c` = `.`).
+fn _tr_joinc(S, a, b, c): i64 {
     var la = 0; while (load8(S + 0xEC00000 + a + la) != 0) { la = la + 1; }
     var lb = 0; while (load8(S + 0xEC00000 + b + lb) != 0) { lb = lb + 1; }
     NPOS_GUARD(S, la + 1 + lb + 1);
@@ -6392,7 +6394,7 @@ fn _tr_join(S, a, b): i64 {
     var w = at;
     var i = 0;
     while (i < la) { store8(S + 0xEC00000 + w, load8(S + 0xEC00000 + a + i)); w = w + 1; i = i + 1; }
-    store8(S + 0xEC00000 + w, 95);
+    store8(S + 0xEC00000 + w, c);
     w = w + 1;
     i = 0;
     while (i < lb) { store8(S + 0xEC00000 + w, load8(S + 0xEC00000 + b + i)); w = w + 1; i = i + 1; }
@@ -7237,8 +7239,11 @@ fn _bs_callee(S, bsi, sid): i64 {
     return _tr_findfn_join(S, _tr_prefix(S, ii, m), m);
 }
 # The lookahead sites' method lookup (`x.m(` with `x`'s struct `sid`, the method name at token `mti`):
-# a bounded site's own callee, else `Type_m`. One compare when the program has no bound.
+# a bounded site's own callee, else `Type_m`. One compare when the program has no bound. 6.7.8 (D6): on
+# a dyn, the member's prototype (`_dyn_mfn`) — so the lookaheads type a call through a dyn as its trait
+# declares it.
 fn _meth_fn_at(S, sid, mnoff, mti): i64 {
+    if (_dyn_is(S, sid) == 1) { return _dyn_mfn(S, sid, mnoff); }
     if (_bs_n > 0) {
         var b = _bs_find(S, mti);
         if (b >= 0) {
@@ -12281,26 +12286,35 @@ fn _prescan_fn_sig(S): i64 {
         _prescan_params(S, fi);
         if (_pasync == 1) { SFBVCP(fi, 0); }   # 6.6.20: see `_pm_copies`
         if (_prescan_maybe_naked(S, start_ti) == 1) { SFBVCP(fi, 0); }
-        if (PEEKT(S) == 49) {       # optional `: ReturnType`
-            STI(S, GTI(S) + 1);     # consume ':'
-            if (PEEKT(S) == 10) {
-                # v6.5.21 — `: (T1, T2[, T3])`. Recorded HERE in pass 1 so a
-                # FORWARD call can arity-check against a fn defined later.
-                _parse_multiret_sig(S, fi, 1);
-            } elif (PEEKT(S) == 8) { _ret_ptr_annot(S, fi, 1); }   # 6.6.17: `: *T`
-            else {
-                if (PEEKT(S) == 2) {
-                    var rtc = _classify_return_type(S, PEEKV(S));
-                    rtc = _bx_sig_ret(S, fi, rtc, PEEKV(S));        # 6.7.3: `: bool` is an i64, bit 4096
-                    if (rtc > 0) { rtc = _gtype_sid(S, fi, rtc); }   # 6.6.10: `: Box<Pt>`
-                    if (rtc != 0) { SFRS(S, fi, rtc); }
-                }
-            }
-        }
+        _prescan_ret_type(S, fi);
         _prescan_ret_single(S, fi);   # 6.6.17 (a5)
     } else { _pre_dep_pending = 0; }    # an unnamed `fn`: pass 2 refuses it; never carry past it
     STI(S, start_ti);
     _prescan_skip_fn(S);
+    return 0;
+}
+
+# Pass 1, the cursor past fn `fi`'s parameter list: its optional `: ReturnType` recorded — a struct
+# sid (a generic instance's), -9 an f64, a multi-value signature, a `*T`'s pointee, a bool (the
+# cursor is left where those readers stop: `_prescan_ret_single` scans on to the `{`). Extracted from
+# `_prescan_fn_sig` (6.7.8): a trait-object call's prototype is recorded from its trait member's
+# signature the same way (`_dyn_proto`, parse_types.cyr).
+fn _prescan_ret_type(S, fi): i64 {
+    if (PEEKT(S) != 49) { return 0; }   # optional `: ReturnType`
+    STI(S, GTI(S) + 1);     # consume ':'
+    if (PEEKT(S) == 10) {
+        # v6.5.21 — `: (T1, T2[, T3])`. Recorded HERE in pass 1 so a
+        # FORWARD call can arity-check against a fn defined later.
+        _parse_multiret_sig(S, fi, 1);
+    } elif (PEEKT(S) == 8) { _ret_ptr_annot(S, fi, 1); }   # 6.6.17: `: *T`
+    else {
+        if (PEEKT(S) == 2) {
+            var rtc = _classify_return_type(S, PEEKV(S));
+            rtc = _bx_sig_ret(S, fi, rtc, PEEKV(S));        # 6.7.3: `: bool` is an i64, bit 4096
+            if (rtc > 0) { rtc = _gtype_sid(S, fi, rtc); }   # 6.6.10: `: Box<Pt>`
+            if (rtc != 0) { SFRS(S, fi, rtc); }
+        }
+    }
     return 0;
 }
 
@@ -12930,6 +12944,7 @@ fn _tl_pass1(S, objok): i64 {
     SMOD(S, 0);
     _cst_sweep(S);    # 6.7.2: every top-level const evaluated (and checked), used or not
     _pd_sweep(S);     # 6.7.7 (B6): every parameter default too
+    _dyn_p2 = 1;      # 6.7.8: every struct is registered — a trait-object call's prototype may be made
     return 0;
 }
 

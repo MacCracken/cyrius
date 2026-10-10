@@ -662,13 +662,22 @@ fn _dyn_reg(S, noff): i64 {
     ADDFIELD(S, sid - 1, _dyn_wv - 1);
     return sid;
 }
-# 1 = the source at token `st` is one whole free call returning dyn `sid` (`;` after it) — at top level
+# 1 = the source at token `st` is one whole call returning dyn `sid` (`;` after it) — at top level
 # its own path refuses it (no frame for a 9-16 B result), so a declaration backstop stays quiet.
+# 6.7.8 (D6): a method's too (`var G: dyn Show = Z.me();`, through a dyn or not).
 fn _dyn_src_call(S, st, sid): i64 {
     var o = _gcall_open(S, st);
-    if (o < 0) { return 0; }
+    if (o < 0) { return _dyn_src_mcall(S, st, sid); }
     if (TOKTYP(S, _call_close(S, o) + 1) != 5) { return 0; }
     var fi = _gen_resolve_call(S, st);
+    if (fi < 0) { return 0; }
+    if (GFRS(S, fi) != sid) { return 0; }
+    return 1;
+}
+fn _dyn_src_mcall(S, st, sid): i64 {
+    if (_tok_method_open(S, st) == 0) { return 0; }
+    if (TOKTYP(S, _call_close(S, st + 3) + 1) != 5) { return 0; }
+    var fi = _pair_callee_at(S, st);
     if (fi < 0) { return 0; }
     if (GFRS(S, fi) != sid) { return 0; }
     return 1;
@@ -1142,8 +1151,7 @@ fn _dyn_scall(S, a, b): i64 {
     if (_call_close(S, a + 3) != b - 1) { return 0 - 1; }
     var rs = _recv_sid(S, TOKVAL(S, a));
     if (rs <= 0) { return _dyn_f5(S, a); }
-    if (_dyn_is(S, rs) == 1) { return 0; }   # a call through a dyn: its own path
-    var mf = _meth_fn_at(S, rs, TOKVAL(S, a + 2), a + 2);
+    var mf = _meth_fn_at(S, rs, TOKVAL(S, a + 2), a + 2);   # 6.7.8 (D6): through a dyn, its prototype
     if (mf < 0) { return 0; }   # the method reports itself
     return _dyn_sfn(S, mf, a);
 }
@@ -1761,7 +1769,7 @@ fn _gvi_dyn(S, gi, idx, gps, sti): i64 {
     var st = GTI(S);
     var en = _dyn_ext(S, st, 5);
     var c = _dyn_src(S, st, en, dsid, 0);
-    if (c == 0) { return 0; }
+    if (c == 0) { return _gvi_dyn_mcall(S, st, en, dsid); }
     if (c == 1) {
         if (idx >= 0) { if (GVPM(S, idx) == 2) { if (GVTYPE(S, idx) == dsid) {
                     _dyn_emit(S, dsid, idx);
@@ -1770,6 +1778,19 @@ fn _gvi_dyn(S, gi, idx, gps, sti): i64 {
     }
     STI(S, en);
     _gvk_left(S, gi, sti, idx);
+    if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
+    STI(S, GTI(S) + 1);
+    return 1;
+}
+# 6.7.8 (D6): a zone dyn copied from one whole METHOD call (`var Z2: dyn Show = Z.me();`, through a
+# dyn or not): the 16-byte result comes back in rax:rdx and the replay has no frame to receive it —
+# it stored rax alone (the data word, as the address of an inline dyn: a SIGSEGV at the first call).
+# Refused by name, as the free call is (`_refuse_toplevel_pair_init`). 1 = refused, `;` consumed.
+fn _gvi_dyn_mcall(S, st, en, dsid): i64 {
+    if (_dyn_src_mcall(S, st, dsid) == 0) { return 0; }
+    STI(S, st + 2);
+    _refuse_toplevel_struct_call(S, L64(_fnt_names + _pair_callee_at(S, st) * 8));
+    STI(S, en);
     if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
     STI(S, GTI(S) + 1);
     return 1;
@@ -1938,6 +1959,257 @@ fn _gv_tn_get(vi): i64 {
     if (vi < 0) { return 0; }
     if (vi >= _gv_tnc) { return 0; }
     return L64(_gv_tn + vi * 8);
+}
+
+# ⛔ 6.7.8 (D6) — THE CALL THROUGH A DYN, `o.m(args)` (the user's decisions 3 and 7, 2026-10-07): an
+# INDIRECT call through slot k of the table word 1 points at, the data word passed as `self` —
+# visible in the declared type; static dispatch stays the default. The callee is the trait member's
+# PROTOTYPE, a fn-table entry named `dyn Show.m` (a space and a `.`: no identifier spells it, no user
+# fn collides), made on the first call naming the member (`_dyn_proto`: lazy, so a program that
+# calls through no dyn has none) from the member's signature at the trait, exactly as pass 1 records
+# a fn called before its definition (`_prescan_params`, `_prescan_ret_type`). So every argument goes
+# through the one marshaller every direct call shares (`_owncall_args_at`: a by-value struct's
+# address, a dyn formed in place, `: Str` literals, f32 rounding, SIMD), and the result through the
+# struct-call hooks (`_sc_pre_m` / `_sc_x8` / `_sc_post`: a 16 B pair, a retptr — aarch64's X8 —, a
+# chain `o.clone().show()`) and `_call_ret_marks` (an f64 comes back typed f64). A prototype has no
+# body, no defaults and no call fixup: no `shared;` export, no CYRIUS_SYMS line, no DCE note, and
+# its owner is the trait's file, so it is never "undefined". The callee is loaded from the table and
+# spilled to a fresh frame slot BEFORE `self` and the arguments (an argument may rewrite the dyn);
+# the call is `ECALLIND` on every target — PE too, never `ECALLPTR_PE`, whose forced alignment serves
+# a real Win64 callee (a dyn's callee is cyrius code) and which pops its own arguments: proven on
+# cass, ecb, ach and pi before this was written (the lane's D0). At top level the call opens the
+# indirect call's micro-frame (`PINDIRECT_CALL`'s). Refused by name at the method's name, the call
+# consumed: C1 a member the trait does not declare, C2 a generic member (decision 3), C3 one whose
+# first parameter is no untyped `self`, C4 a variadic one, C5 one returning multiple values, a
+# u128 or a vector, C6 named arguments; C7 the arity, in every call's words (`'dyn Show.m'
+# expects ..`). The lookaheads read the same prototype (`_meth_fn_at`'s dyn arm). CHANGELOG [6.7.8]
+var _dyn_p2 = 0;    # 1 once pass 1 has registered every struct: a prototype is made only from then on
+var _trm_pf = 0;    # per trait member (8192 words): its prototype fn + 1, 0 = not made yet
+var _dyc_t = 0;     # the call's struct-result temp (`_sc_pre_m`), read after the call
+
+# `x.m(..)` on a receiver of struct `sid` (PARSE_FIELD_LOAD's encoding `idx`; the cursor on `(`): 1 =
+# consumed — a call through a dyn, or a tuple's / a digit-led name's refusal (`_tup_meth_chk`).
+fn _meth_pre(S, fnoff, beg, idx, sid): i64 {
+    if (_dyn_is(S, sid) == 1) { return _dyn_call(S, fnoff, beg, idx, sid); }
+    return _tup_meth_chk(S, sid, fnoff);
+}
+fn _dyn_call(S, fnoff, beg, idx, sid): i64 {
+    var k = _dyn_callee(S, sid, fnoff, GTI(S) - 1);
+    if (k >= 0) { if (_pd_named_at(S, GTI(S)) == 1) {   # C6
+            _dyn_err(S, _pd_first_label(S, GTI(S) + 1), "named arguments need a direct call - a call through a ", sid, 0 - 1, " passes arguments by position");
+            k = 0 - 1;
+        } }
+    if (k < 0) {
+        _dyn_args_skip(S);
+        _mchain_skip(S);   # and a chain on the refused call's result
+        EMOVI(S, 0);
+        SESTYPE(S, 0);
+        return 1;
+    }
+    var pf = _dyn_proto(S, sid, k);
+    var j = k - L64(_tr_tab + L64(_trm_tab + k * 32 + 24) * 32 + 8);   # its slot
+    var na = _dyn_argc(S, GTI(S));
+    var ln = GTLINE(S, GTI(S));
+    if (_cur_fn_ix >= 0) { _dyn_call_in(S, pf, beg, idx, sid, j); }
+    else { _dyn_call_top(S, pf, beg, idx, sid, j); }
+    var t = _dyc_t;
+    var pn = L64(_fnt_names + pf * 8);
+    _CHECK_ARITY(S, ln, pn, pf, na + 1, 0);   # C7 (`self` counted, as the method form counts it)
+    SESTYPE(S, 0);
+    _sc_post(S, pf, pn, beg, t);
+    _call_ret_marks(S, pf);
+    _mcall_last = pf;
+    _method_chain(S, pf, pn, beg, t);
+    _cfo = 0;
+    return 1;
+}
+# The emission (cursor on the `(`; `j` the member's slot): the result's temp (x86 / cx: its address
+# int arg 0), the callee spilled, `self` = the data word, the arguments, X8, the indirect call.
+fn _dyn_call_in(S, pf, beg, idx, sid, j): i64 {
+    var pn = L64(_fnt_names + pf * 8);
+    var t = _sc_pre_m(S, pf, pn, beg);
+    var n0 = _sc_n0;
+    _fld_addr_ra(S, idx, sid, 8, j * 8);   # rax = &slot j of the table word 1 points at
+    ELOAD64(S);
+    var cp = _dyn_cslot(S);
+    EFLSTORE(S, cp);                       # the callee, before any argument is evaluated
+    _fld_addr_ra(S, idx, sid, 0, 0);       # rax = the data word
+    EPUSHR(S);                             # `self`, int arg n0
+    var ln = GTLINE(S, GTI(S));
+    STI(S, GTI(S) + 1);                    # (
+    var n = _owncall_args_at(S, pf, pn, 1 + n0, 1, ln);
+    _sc_x8(S, pf, t);
+    ECALLIND(S, cp);
+    ECALLCLEAN(S, n);
+    _dyc_t = t;
+    return 0;
+}
+# At top level there is no frame for the callee's slot: the indirect call's micro-frame (slot
+# numbering from 0 inside it, sized from the high-water; the enclosing state restored).
+fn _dyn_call_top(S, pf, beg, idx, sid, j): i64 {
+    var tl_flc = GFLC(S);
+    var tl_hwm = _flc_hwm;
+    SFLC(S, 0);
+    _flc_hwm = 0;
+    var tl_patch = ETLFRAME_OPEN(S);
+    _dyn_call_in(S, pf, beg, idx, sid, j);
+    var tl_n = GFLC(S);
+    if (_flc_hwm > tl_n) { tl_n = _flc_hwm; }
+    ETLFRAME_CLOSE(S, tl_patch, tl_n);
+    SFLC(S, tl_flc);
+    _flc_hwm = tl_hwm;
+    return 0;
+}
+# A fresh anonymous frame slot (`_PINDIRECT_CALL_IN`'s), the frame's high-water raised: an #inline
+# replay gives its slots back.
+fn _dyn_cslot(S): i64 {
+    var cp = GFLC(S);
+    S64(S + 0x5D9D000 + cp * 8, 0 - 1);
+    SLDEP(S, cp, 0);
+    SFLC(S, cp + 1);
+    if (cp + 1 > _flc_hwm) { _flc_hwm = cp + 1; }
+    return cp;
+}
+# A refused call's `( .. )`: stepped over — under `--syntax-only` (a trait in a sibling file, the
+# refusals silent) its arguments are parsed, so a grammar error in them is still reported.
+fn _dyn_args_skip(S): i64 {
+    if (_syntax_only == 0) {
+        STI(S, _call_close(S, GTI(S)) + 1);
+        return 0;
+    }
+    STI(S, GTI(S) + 1);
+    if (PEEKT(S) != 11) {
+        var go = 1;
+        while (go == 1) {
+            if (_pd_label_at(S, GTI(S)) == 1) { STI(S, GTI(S) + 2); }
+            PCMPE(S);
+            if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
+            else { go = 0; }
+        }
+    }
+    if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
+    STI(S, GTI(S) + 1);
+    return 0;
+}
+# The arguments in the list whose `(` is token `o`.
+fn _dyn_argc(S, o): i64 {
+    if (TOKTYP(S, o + 1) == 11) { return 0; }
+    var n = 0;
+    var q = o + 1;
+    var go = 1;
+    while (go == 1) {
+        n = n + 1;
+        q = _arg_next(S, q);
+        if (TOKTYP(S, q) == 31) { q = q + 1; }
+        else { go = 0; }
+    }
+    return n;
+}
+# The member `fnoff` of dyn `sid`'s trait a dyn can call: its index k, or -1 (refused at token `mti`,
+# the method's name; silent when the trait is unknown — T1 reported it, or a trait in a sibling file
+# under `--syntax-only`).
+fn _dyn_callee(S, sid, fnoff, mti): i64 {
+    var tx = _dyn_tx(S, sid);
+    if (tx < 0) { return 0 - 1; }
+    var k = _dyn_member(S, tx, fnoff);
+    if (k < 0) {   # C1
+        if (_dyn_ebeg(S, mti) == 0) { return 0 - 1; }
+        PRSTR("trait ");
+        _dyn_pn(S, L64(_tr_tab + tx * 32));
+        PRSTR(" declares no method ");
+        _dyn_pq(S, fnoff);
+        PRSTR(" - a ");
+        _dyn_ps(S, sid);
+        PRSTR(" calls only the methods its trait declares");
+        _dyn_eend(S);
+        return 0 - 1;
+    }
+    var w = _dyn_why(S, k);
+    if (w == 0) { return k; }
+    if (_dyn_ebeg(S, mti) == 0) { return 0 - 1; }
+    _dyn_pq(S, fnoff);
+    if (w == 2) { PRSTR(" is generic - a call through a "); }   # C2
+    elif (w == 3) { PRSTR(" takes no untyped `self` first - a call through a "); }   # C3
+    elif (w == 4) { PRSTR(" is variadic - a call through a "); }   # C4
+    elif (w == 5) { PRSTR(" returns multiple values - a call through a "); }   # C5
+    elif (w == 6) { PRSTR(" returns a u128 - a call through a "); }
+    else { PRSTR(" returns a vector - a call through a "); }
+    _dyn_ps(S, sid);
+    if (w == 2) { PRSTR(" has no instance of it to run: call it on the concrete type"); }
+    elif (w == 3) { PRSTR(" passes its data word as an untyped `self`"); }
+    elif (w == 4) { PRSTR(" passes a fixed argument list"); }
+    else { PRSTR(" returns one value - an integer, a float, a pointer or a struct"); }
+    _dyn_eend(S);
+    return 0 - 1;
+}
+# The index of trait `tx`'s member named `fnoff`, -1 = none.
+fn _dyn_member(S, tx, fnoff): i64 {
+    var k = L64(_tr_tab + tx * 32 + 8);
+    var e = k + L64(_tr_tab + tx * 32 + 16);
+    while (k < e) {
+        if (STREQ(S, L64(_trm_tab + k * 32), fnoff) == 1) { return k; }
+        k = k + 1;
+    }
+    return 0 - 1;
+}
+# Why trait member `k` cannot be called through a dyn: 0 it can; 2 generic; 3 no untyped `self`
+# first (none at all included); 4 variadic; 5 a multi-value return; 6 a u128; 7 a vector.
+fn _dyn_why(S, k): i64 {
+    var tp = L64(_trm_ft + k * 8);
+    if (TOKTYP(S, tp + 2) == 19) { return 2; }
+    var o = _tr_paren(S, tp);
+    if (o < 0) { return 3; }
+    if (TOKTYP(S, o + 1) != 2) { return 3; }
+    if (_noff_is(S, TOKVAL(S, o + 1), "self", 4) == 0) { return 3; }
+    if (TOKTYP(S, o + 2) == 49) { return 3; }
+    var i = 1;
+    while (_dps_param(S, o, i) == 1) {
+        if (_dps_va == 1) { return 4; }
+        i = i + 1;
+    }
+    var r = _dyn_ret_at(S, o);
+    if (r == _dps_te) { return 0; }   # no return type: an i64
+    var t = TOKTYP(S, r);
+    if (t == 10) { return 5; }
+    if (t == 105) { return 6; }
+    if (t == 2) { if (_classify_return_type(S, TOKVAL(S, r)) <= 0 - 2048) { return 7; } }
+    return 0;
+}
+# Member `k`'s prototype (made once): `dyn Show.m`, owned by the trait's file, its signature recorded
+# from the trait's tokens as pass 1 records a fn's — outside any impl (an untyped `self` there would
+# be typed the impl's `*T`), the cursor put back. Emits nothing.
+fn _dyn_proto(S, sid, k): i64 {
+    if (_trm_pf == 0) { _trm_pf = alloc(8192 * 8); }
+    var c = L64(_trm_pf + k * 8);
+    if (c != 0) { return c - 1; }
+    var fi = REGFN(S, _tr_joinc(S, L64(S + 0x1A6018 + (sid - 1) * 8), L64(_trm_tab + k * 32), 46));
+    var tx = L64(_trm_tab + k * 32 + 24);
+    SFFI(S, fi, FM_FILEID(S, GTLINE(S, L64(_tr_tab + tx * 32 + 24))) + 1);
+    var sv = GTI(S);
+    var si = _impl_tnoff;
+    var sii = _cur_ii;
+    _impl_tnoff = 0;
+    _cur_ii = 0 - 1;
+    STI(S, _tr_paren(S, L64(_trm_ft + k * 8)));
+    _prescan_params(S, fi);
+    _prescan_ret_type(S, fi);
+    _impl_tnoff = si;
+    _cur_ii = sii;
+    STI(S, sv);
+    S64(_trm_pf + k * 8, fi + 1);
+    return fi;
+}
+# `_meth_fn_at` on a dyn `sid` (the lookaheads: a declaration's inferred type, a destructure's
+# callee, a `Str` argument's routing, a forming source): member `mnoff`'s prototype, -1 when a dyn
+# cannot call it (the call itself reports that) or pass 1 is still registering structs.
+fn _dyn_mfn(S, sid, mnoff): i64 {
+    if (_dyn_p2 == 0) { return 0 - 1; }
+    var tx = _dyn_tx(S, sid);
+    if (tx < 0) { return 0 - 1; }
+    var k = _dyn_member(S, tx, mnoff);
+    if (k < 0) { return 0 - 1; }
+    if (_dyn_why(S, k) != 0) { return 0 - 1; }
+    return _dyn_proto(S, sid, k);
 }
 
 # ⛔ 6.6.17 — `p + n` ON A `*T` STEPS sizeof(T) ELEMENTS, AT EVERY SITE (the user's decision,

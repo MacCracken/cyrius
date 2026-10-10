@@ -1,10 +1,11 @@
-# dyn_objects.tcyr — 6.7.8, the checked `dyn` (bite D5: forming). `o: dyn Show` is an ordinary 16-byte
-# struct of two words {data, vtable} (the user's decisions, 2026-10-07): the compiler forms it from a
-# `*T` it knows, a declared scalar or a literal, builds the vtable from `impl Show for T` — one word per
-# trait member in declaration order, T's own method or T's default instance — and fills it at every
-# forming site. The call through a dyn (`o.show()`) is bite D6; here every dyn is dispatched BY HAND
-# through a wrapper record, which is also what proves the layout: `dd(o)` reads word 0 (the data word),
-# `dk(o, k)` calls slot k of the table word 1 points at with the data word as its one argument.
+# dyn_objects.tcyr — 6.7.8, the checked `dyn` (bite D5: forming; bite D6: the call). `o: dyn Show` is an
+# ordinary 16-byte struct of two words {data, vtable} (the user's decisions, 2026-10-07): the compiler
+# forms it from a `*T` it knows, a declared scalar or a literal, builds the vtable from `impl Show for T`
+# — one word per trait member in declaration order, T's own method or T's default instance — and fills
+# it at every forming site. The D5 sections dispatch BY HAND through a wrapper record, which is also what
+# proves the layout: `dd(o)` reads word 0 (the data word), `dk(o, k)` calls slot k of the table word 1
+# points at with the data word as its one argument. The D6 sections call `o.m(..)`: an indirect call
+# through that slot, the data word as `self`, every argument through the one marshaller.
 #
 #   §forming       every FORM source: `&p` of an inline local / a by-value parameter's copy / an inline
 #                  global, a `*T` local / parameter / global, an untyped impl `self`, a pointer-mode
@@ -28,14 +29,31 @@
 #                  through a `*Rec`, dispatched in a loop
 #   §inline        a declared-scalar parameter forms the same in an auto-inlined one-statement fn and an
 #                  `#inline` one (the replay re-stamps the parameter, `_dsc_inl`)
-# The refusals (F1-F11), the zone global in a `kernel;` build and the paren-wrapped destinations of a
-# refused source are compile-time: tests/gates/frontend/dyn_checked.sh. cx runs the whole file
-# (tests/gates/codegen/cx_crossos_rows_run.sh R9).
+#   §calls (D6)    every receiver — a local, a parameter, a zone global, a zone struct's dyn field, `h.o.m()`,
+#                  `hp.o.m()` through `*H`, `self.o.m()` in a method (the first call naming `show`: its
+#                  prototype is made outside the impl), a call's result, a closure's capture, statements;
+#                  every argument — i64, f64, a 24 B struct, `*P`, a `: Str` literal, cstring, bool, f64 into
+#                  f32, an f64v2 vector, a dyn formed in place, 7 and 13 arguments; every result — 8 B / 16 B
+#                  / 24 B structs (aarch64 X8), a dyn (annotated and inferred), `*P`, f64 (`o.rf() + 1.0` a
+#                  float add), bool, `.x` on a struct result, a chain; C-ORD: the callee and `self` are read
+#                  before an argument that reseats the dyn
+#   §copies        every copy of a dyn holds `&p`: all of them see p change
+#   §closures      a closure captures the two words by value: a later `o = &q` is not seen
+#   §defer_secret  a call in a `defer` body and through a `secret var`
+#   §recursion     a method called through a dyn calls through a dyn (a `*Nd` field formed in the impl)
+#   §regalloc      a `#regalloc` fn calls through a dyn in a loop (the callee's slot is no register)
+#   §toplevel      a declaration-zone initialiser, a top-level call, 7 arguments, a call in another's
+#                  arguments, an f64 result, a statement — each in the indirect call's micro-frame
+# The refusals (F1-F11, C1-C9), the zone global in a `kernel;` build, the paren-wrapped destinations,
+# what a prototype is not (S4-S7) and what the call is (CG1-CG2) are compile-time:
+# tests/gates/frontend/dyn_checked.sh. cx runs the whole file (tests/gates/codegen/cx_crossos_rows_run.sh R9).
 #
-# MUTATION LEDGER (2026-10-10, bite D5; each a one-edit scratch copy of src/, its compiler rebuilt, this
-# file run): see the header of tests/gates/frontend/dyn_checked.sh (M-F1 .. M-F13), whose rows and this
-# file's together kill every one.
+# MUTATION LEDGER (2026-10-10, bites D5 and D6; each a one-edit scratch copy of src/, its compiler rebuilt,
+# this file run): see the header of tests/gates/frontend/dyn_checked.sh (M-F1 .. M-F14, M-C1 .. M-C13,
+# M-P1, M-P2), whose rows and this file's together kill every one.
 include "lib/assert.cyr"
+include "lib/str.cyr"
+include "lib/simd.cyr"
 
 trait Show { fn show(self): i64; fn twice(self): i64 { return self.show() * 2; } }
 struct P { a; b; }
@@ -401,6 +419,237 @@ fn inl_auto(n: u64): i64 { return nk(n); }
 fn inl_forced(n: u64): i64 { return nk(n); }
 fn inl_rows(): i64 { return inl_auto(5) * 10000 + inl_forced(6); }
 
+# ── §calls (D6) — `o.m(..)`: an indirect call through slot k of the table, the data word as `self` ──
+# The first call naming `show` is in an impl's body (`HS.via`): its prototype is made outside the impl.
+struct HS { o: dyn Show; k; }
+impl HS { fn via(self): i64 { return self.o.show() * 10 + self.k; } }
+trait K {
+    fn fi(self, n): i64;
+    fn ff(self, x: f64): f64;
+    fn fbig(self, b: Big): i64;
+    fn fptr(self, q: *P): i64;
+    fn fstr(self, s: Str): i64;
+    fn fcs(self, s: cstring): i64;
+    fn fb(self, b: bool): bool;
+    fn ff32(self, x: f32): i64;
+    fn fv(self, v: f64v2): i64;
+    fn fdyn(self, o: dyn Show): i64;
+    fn a7(self, a, b, c, d, e, f): i64;
+    fn a13(self, a, b, c, d, e, f, g, h, i, j, k, l): i64;
+    fn rq8(self): Q8;
+    fn rp(self): P;
+    fn rbig(self): Big;
+    fn rdyn(self): dyn K;
+    fn rptr(self): *P;
+    fn rf(self): f64;
+    fn rb(self, n): bool;
+}
+struct T6 { k; }
+impl K for T6 {
+    fn fi(self, n): i64 { return self.k + n; }
+    fn ff(self, x: f64): f64 { return x * 2.0; }
+    fn fbig(self, b: Big): i64 { return b.a * 100 + b.b * 10 + b.c; }
+    fn fptr(self, q: *P): i64 { return q.a * 10 + q.b; }
+    fn fstr(self, s: Str): i64 { return str_len(s); }
+    fn fcs(self, s: cstring): i64 { return strlen(s); }
+    fn fb(self, b: bool): bool { return b; }
+    fn ff32(self, x: f32): i64 { return x & 0xFFFFFFFF; }
+    fn fv(self, v: f64v2): i64 { return f64v2_lo_ptr(&v) * 100 + f64v2_hi_ptr(&v); }
+    fn fdyn(self, o: dyn Show): i64 { return o.show() + 1000; }
+    fn a7(self, a, b, c, d, e, f): i64 { return a + b * 2 + c * 3 + d * 4 + e * 5 + f * 6; }
+    fn a13(self, a, b, c, d, e, f, g, h, i, j, k, l): i64 {
+        return a + b + c + d + e + f + g + h + i + j + k + l * 100;
+    }
+    fn rq8(self): Q8 {
+        var q = Q8 { self.k + 1 };
+        return q;
+    }
+    fn rp(self): P {
+        var p = P { self.k, self.k + 2 };
+        return p;
+    }
+    fn rbig(self): Big {
+        var g = Big { self.k, 5, 6 };
+        return g;
+    }
+    fn rdyn(self): dyn K { return self; }
+    fn rptr(self): *P { return &G0; }
+    fn rf(self): f64 { return 2.5; }
+    fn rb(self, n): bool { return n > self.k; }
+}
+var GT6 = T6 { 3 };
+var TK: dyn K = &GT6;
+var ZK = TK.fi(4);
+fn rcv_param(o: dyn Show): i64 { return o.show() + o.twice(); }
+var GCN = 0;
+trait Cn { fn bump(self, n): i64; }
+impl Cn for P {
+    fn bump(self, n): i64 {
+        GCN = GCN * 10 + n;
+        return n;
+    }
+}
+struct HC { a; o: dyn Cn; }
+fn mkc(q: *P): dyn Cn { return q; }
+fn receivers(): i64 {
+    var p = P { 4, 9 };
+    var o: dyn Show = &p;
+    var h = H { 7, o, 8 };
+    var hp: *H = &h;
+    var w = HS { o, 3 };
+    assert_eq(w.via(), 493, "§calls `self.o.show()` in a method (the first call naming `show`)");
+    assert_eq(o.show(), 49, "§calls a local receiver");
+    assert_eq(rcv_param(o), 147, "§calls a parameter receiver, a default member (`twice`) too");
+    assert_eq(Z.show() * 100 + ZH.o.show(), 1234, "§calls a zone global and a zone struct's dyn field");
+    assert_eq(h.o.show() * 1000 + hp.o.show(), 49049, "§calls `h.o.show()` and `hp.o.show()` through `*H`");
+    assert_eq(mkr(&p).show() * 100 + mkr(&P0).twice(), 4924, "§calls a call's result `mkr(&p).show()`");
+    var c = || o.show() + 1;
+    assert_eq(callptr(c), 50, "§calls a closure's captured dyn");
+    GCN = 0;
+    var oc: dyn Cn = &p;
+    var hc = HC { 1, oc };
+    var hcp: *HC = &hc;
+    oc.bump(1);
+    hc.o.bump(2);
+    hcp.o.bump(3);
+    mkc(&p).bump(4);
+    assert_eq(GCN, 1234, "§calls as statements: a local, a field, through `*T`, a call's result");
+    return 0;
+}
+fn arguments(): i64 {
+    var t = T6 { 3 };
+    var o: dyn K = &t;
+    assert_eq(o.fi(4), 7, "§calls an i64 argument");
+    var x: f64 = 1.25;
+    var y: f64 = o.ff(x);
+    assert(y == 2.5, "§calls an f64 argument and an f64 result");
+    var b = Big { 1, 2, 3 };
+    assert_eq(o.fbig(b), 123, "§calls a 24 B struct argument (by address, the callee copies)");
+    var p = P { 4, 5 };
+    assert_eq(o.fptr(&p), 45, "§calls a `*P` argument");
+    assert_eq(o.fstr("abcde"), 5, "§calls a string literal into a `: Str` parameter (wrapped)");
+    assert_eq(o.fcs("abc"), 3, "§calls a cstring argument");
+    assert(o.fb(true) == true, "§calls a bool argument and a bool result");
+    var z: f64 = 2.5;
+    assert_eq(o.ff32(z), 0x40200000, "§calls an f64 into an f32 parameter rounds to f32");
+    var v: f64v2 = f64v2_make(11, 22);
+    assert_eq(o.fv(v), 1122, "§calls an f64v2 vector argument (XMM / V / by address on Win64)");
+    var q = P { 7, 1 };
+    assert_eq(o.fdyn(&q), 1071, "§calls a dyn formed in place as an argument (`o.fdyn(&q)`)");
+    assert_eq(o.a7(1, 2, 3, 4, 5, 6), 91, "§calls 7 arguments counting `self` (SysV / aarch64 stack, Win64 5th-7th)");
+    assert_eq(o.a13(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12), 1266, "§calls 13 arguments counting `self`");
+    return 0;
+}
+fn results(): i64 {
+    var t = T6 { 3 };
+    var o: dyn K = &t;
+    var q: Q8 = o.rq8();
+    assert_eq(q.v, 4, "§calls a struct result of 8 B or less");
+    var r: P = o.rp();
+    assert_eq(r.a * 10 + r.b, 35, "§calls a 16 B struct result (the pair registers)");
+    var g: Big = o.rbig();
+    assert_eq(g.a * 100 + g.b * 10 + g.c, 356, "§calls a 24 B struct result through the retptr (aarch64 X8)");
+    var d: dyn K = o.rdyn();
+    assert_eq(d.fi(0), 3, "§calls a dyn result");
+    var e = o.rdyn();
+    assert_eq(e.fi(1), 4, "§calls a dyn result into an inferred declaration");
+    var pp: *P = o.rptr();
+    assert_eq(pp.a * 10 + pp.b, 12, "§calls a `*P` result");
+    var f: f64 = o.rf() + 1.0;
+    assert(f == 3.5, "§calls an f64 result is typed f64 (`o.rf() + 1.0` is a float add)");
+    var k = 0;
+    if (o.rb(5)) { k = k + 1; }
+    if (o.rb(2)) { k = k + 10; }
+    assert_eq(k, 1, "§calls a bool result in a condition");
+    assert_eq(o.rp().b * 100 + o.rbig().b * 10 + o.rq8().v, 554, "§calls `.x` on a struct result (pair, retptr, 8 B)");
+    assert_eq(o.rdyn().rdyn().fi(10), 13, "§calls a chain `o.rdyn().rdyn().fi(10)`");
+    return 0;
+}
+# C-ORD — the callee and `self` are read BEFORE the arguments: an argument that reseats the dyn does
+# not change the call it is an argument of.
+trait Ad { fn ad(self, n): i64; }
+impl Ad for P { fn ad(self, n): i64 { return self.a * 10 + self.b + n; } }
+impl Ad for Big { fn ad(self, n): i64 { return self.a * 1000 + n; } }
+struct HA { o: dyn Ad; }
+var GBIG = Big { 7, 8, 9 };
+fn reseat(h: *HA, n): i64 {
+    h.o = &GBIG;
+    return n;
+}
+fn c_ord(): i64 {
+    var p = P { 4, 9 };
+    var o: dyn Ad = &p;
+    var h = HA { o };
+    var r = h.o.ad(reseat(&h, 1));
+    return r * 10000 + h.o.ad(2);
+}
+
+# ── §copies — a dyn holds `&p`, not a copy of p: every copy of it sees p change ──────────────────────
+fn copies(): i64 {
+    var p = P { 4, 9 };
+    var o: dyn Show = &p;
+    var o2: dyn Show = o;
+    var h = H { 1, o2, 2 };
+    var o3: dyn Show = h.o;
+    p.a = 5;
+    return o.show() * 10000 + o2.show() * 100 + o3.show();
+}
+
+# ── §closures — a closure captures the dyn's two words by value: a later `o = ..` is not seen ─────
+fn closures(): i64 {
+    var p = P { 4, 9 };
+    var q = P { 1, 2 };
+    var o: dyn Show = &p;
+    var c = || o.show();
+    o = &q;
+    return callptr(c) * 100 + o.show();
+}
+
+# ── §defer_secret — a call in a `defer` body and through a `secret var` (wiped at the end) ───────────
+var GDF = 0;
+fn dfs(q: *P): i64 {
+    var o: dyn Show = q;
+    defer { GDF = o.show(); }
+    secret var s: dyn Show = o;
+    return s.show() + 1;
+}
+fn defer_secret(): i64 {
+    GDF = 0;
+    var r = dfs(&P1);
+    return r * 1000 + GDF;
+}
+
+# ── §recursion — a method called through a dyn calls through a dyn ─────────────────────────────────
+trait Sm { fn sum(self): i64; }
+struct Nd { v; nx: *Nd; }
+impl Sm for Nd {
+    fn sum(self): i64 {
+        if (self.nx == 0) { return self.v; }
+        var o: dyn Sm = self.nx;
+        return self.v + o.sum() * 10;
+    }
+}
+fn recursion(): i64 {
+    var c = Nd { 3, 0 };
+    var b = Nd { 2, &c };
+    var a = Nd { 1, &b };
+    var o: dyn Sm = &a;
+    return o.sum();
+}
+
+# ── §regalloc — a `#regalloc` fn's hot locals in registers; the callee's frame slot is not one ──────
+#regalloc
+fn rg(q: *T6, n): i64 {
+    var o: dyn K = q;
+    var s = 0;
+    var i = 0;
+    while (i < n) {
+        s = s + o.fi(i);
+        i = i + 1;
+    }
+    return s;
+}
+
 alloc_init();
 # A global after the first statement.
 var GS: dyn Show = &P1;
@@ -452,6 +701,26 @@ assert_eq(site_first_in_source(&s13), 14, "§sites ... and the first one after i
 assert_eq(records(), 112234312, "§records records holding a dyn, kept in a Vec, `r.o = q` through `*Rec`");
 
 assert_eq(inl_rows(), 20052006, "§inline a declared u64 parameter forms in an auto-inlined and an `#inline` fn");
+
+receivers();
+arguments();
+results();
+assert_eq(c_ord(), 507002, "§calls C-ORD: the callee and `self` are read before an argument reseats the dyn");
+assert_eq(copies(), 595959, "§copies every copy holds `&p`: all see `p.a = 5`");
+assert_eq(closures(), 4912, "§closures a capture is by value: the closure keeps p's words after `o = &q`");
+assert_eq(defer_secret(), 35034, "§defer_secret a call through a `secret var` and in a `defer` body");
+assert_eq(recursion(), 321, "§recursion a method called through a dyn calls through a dyn");
+var t6 = T6 { 3 };
+assert_eq(rg(&t6, 5), 25, "§regalloc a `#regalloc` fn calling through a dyn in a loop");
+
+# §toplevel — each call at top level opens the indirect call's micro-frame.
+assert_eq(ZK, 7, "§toplevel a declaration-zone global initialised by a call through a dyn");
+assert_eq(GS.show(), 34, "§toplevel a call at top level");
+assert_eq(TK.a7(1, 2, 3, 4, 5, 6), 91, "§toplevel 7 arguments: the stack arguments inside the micro-frame");
+assert_eq(TK.fi(TK.fi(1)), 7, "§toplevel a call through a dyn in another's arguments");
+var tlf: f64 = TK.rf() + 1.0;
+assert(tlf == 3.5, "§toplevel an f64 result");
+TK.fi(0);
 
 var r = assert_summary();
 syscall(60, r);

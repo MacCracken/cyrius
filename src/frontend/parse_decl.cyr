@@ -1602,7 +1602,7 @@ fn _field_load_on(S, noff, fnoff, pfl_beg, idx, sid): i64 {
 
     # Method call: ident.method(args)
     if (PEEKT(S) == 10) {
-        if (_tup_meth_chk(S, sid, fnoff) == 1) { return 0; }   # 6.7.7 (R13): a tuple, or `x.0(..)`
+        if (_meth_pre(S, fnoff, pfl_beg, idx, sid) == 1) { return 0; }   # 6.7.7 (R13) a tuple / `x.0(..)`; 6.7.8 a dyn
         # ⛔ 6.7.1 (C3) — a call on a BOUNDED receiver (recorded in pass 1 by its method-name token,
         # `_bnd_sites`) calls the bound's trait's method for T's impl, by its defined name — so a
         # colliding `m` is the bound's, and a SCALAR T (`impl Show for i64`) has a callee at all.

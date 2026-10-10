@@ -40,10 +40,12 @@
 #   R7  tests/tcyr/crossos/tuple_values.tcyr (6.7.7, B4: tuples as values) — native and cxvm each
 #       print `<N> passed, 0 failed` with N derived from the source (65 at T3, 111 at T4, 168 at T5, 191 at T6: floor 191)
 #       and exit 0.
-#   R9  (6.7.8, dyn D5) tests/tcyr/crossos/dyn_objects.tcyr — forming a checked `dyn` (every FORM
+#   R9  (6.7.8, dyn D5 / D6) tests/tcyr/crossos/dyn_objects.tcyr — forming a checked `dyn` (every FORM
 #       source, the declared scalars, the defaults, every destination, the records, the #inline
-#       replay; dispatched by hand through the vtable): native and cxvm each print `<N> passed, 0
-#       failed`, N derived from the source (37, floor 37) — the whole file, no cx fence.
+#       replay; dispatched by hand through the vtable) and (D6) calling through one (every receiver,
+#       argument and result shape, the callee read before the arguments, copies, closures, defer /
+#       secret, recursion, #regalloc, top level): native and cxvm each print `<N> passed, 0 failed`,
+#       N derived from the source (37 at D5, 78 at D6: floor 78) — the whole file, no cx fence.
 #   Anti-vacuous: each inline file's native leg is the control (a cx green on a file that is wrong
 #   everywhere is impossible), each .tcyr must match a count derived from its source, and each
 #   inline success needs a stdout marker printed only when every row in it is right.
@@ -367,12 +369,12 @@ for _r8 in aggregate_storage_class:46 for_step_struct_assign:14 generic_two_para
     tcyr_cx     "tests/tcyr/crossos/${_r8%%:*}.tcyr" "${_r8##*:}"
 done
 
-echo "R9 — dyn_objects.tcyr (6.7.8, dyn D5: forming), native then cxvm, the count derived from the source:"
-tcyr_native tests/tcyr/crossos/dyn_objects.tcyr 37
-tcyr_cx     tests/tcyr/crossos/dyn_objects.tcyr 37
+echo "R9 — dyn_objects.tcyr (6.7.8, dyn D5 forming / D6 the call), native then cxvm, the count derived from the source:"
+tcyr_native tests/tcyr/crossos/dyn_objects.tcyr 78
+tcyr_cx     tests/tcyr/crossos/dyn_objects.tcyr 78
 
 WANT=38
 if [ "$fail" -ne 0 ]; then echo "FAIL: cx_crossos_rows_run — $fail row(s) red, $pass green"; exit 1; fi
 if [ "$pass" -ne "$WANT" ]; then echo "FAIL: cx_crossos_rows_run — $pass rows ran, want $WANT (a row stopped running)"; exit 1; fi
-echo "PASS: cx_crossos_rows_run — $pass/$WANT rows: V1-V4 hold on cxvm and natively (B01/B02/B03 inline rows, narrow_slot_width + generic_struct_inference + struct_field_value_copy + tuple_values counts derived from source), every crossos file the 16 B pair kept off cx runs there in full, and dyn_objects (the checked dyn's forming) runs there whole"
+echo "PASS: cx_crossos_rows_run — $pass/$WANT rows: V1-V4 hold on cxvm and natively (B01/B02/B03 inline rows, narrow_slot_width + generic_struct_inference + struct_field_value_copy + tuple_values counts derived from source), every crossos file the 16 B pair kept off cx runs there in full, and dyn_objects (the checked dyn's forming and calls) runs there whole"
 exit 0

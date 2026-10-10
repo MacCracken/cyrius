@@ -1,6 +1,6 @@
 #!/bin/sh
 # tests/gates/frontend/dyn_checked.sh — 6.7.8 (the checked `dyn` lane: bite D4, the keyword and the type;
-# bite D5, forming)
+# bite D5, forming; bite D6, the call)
 #
 # CHECKED `dyn`. The user's decisions (2026-10-07): `o: dyn Show` is an ordinary 16-byte struct of two
 # words {data, vtable} — ADR-002's one-word model holds; the compiler builds and verifies the vtable from
@@ -60,10 +60,30 @@
 #       initializer is; the program's own forming runs
 #   PF  (D5) a parenthesised FORM source at every destination (a local, a zone and a post-statement
 #       global, an assignment, a field, an argument, a return)
-#   A   the P program on x86 (default, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu), cx (cxvm), PE (wine,
-#       a private prefix); (D5) tests/tcyr/crossos/dyn_objects.tcyr under CYRIUS_IR=3 and CYRIUS_DCE=1,
-#       and on qemu-aarch64 and wine (cx runs it in codegen/cx_crossos_rows_run.sh R9). A leg whose tool
-#       is missing is a SKIP that names it (exit 77).
+#   C   (D6) the call `o.m(..)` — an indirect call through slot k, the data word as `self`, the callee
+#       the trait member's PROTOTYPE `dyn Show.m` — refused by name once, at the method's name, the call
+#       consumed (a chain on it, a dyn argument of it): C1 a member the trait does not declare, C2 a
+#       generic member (decision 3), C3 a member with no untyped `self` first, C4 a variadic one, C5 one
+#       returning multiple values or a vector (a u128 return is refused too, but no impl can define one:
+#       defensive), C6 a named argument, C7 the arity (`'dyn Show.add' expects 2 arguments`); C8 a call
+#       through a dyn returning a dyn used as a value / untyped argument / destructured (V4, V6), one
+#       returning i64 as a forming source (F5); C9 at top level a 16 B result into a global after the
+#       first statement or in the declaration zone (the replay kept the data word alone: SIGSEGV) and a
+#       24 B one and a chain, each refused once; C10 top-level and zone calls run (the micro-frame)
+#   PD  (D6) every destination of a call through a dyn takes its dyn result whole (a var — annotated,
+#       wrapped, inferred —, an assignment, a field, an argument, a struct-literal element, a return);
+#       one returning `*P` FORMS (the forming classifier reads the prototype)
+#   X4  (D6) `--syntax-only` with a dyn of a trait in a sibling file: the calls are silent, a grammar
+#       error in their arguments is not; X5 a build names no prototype "undefined"
+#   S   (D6) what a prototype is not: S4 `object;` — one unreferenced UND symbol `dyn Show.show`, and GNU
+#       ld links the object; S5 `shared;` exports none; S6 no CYRIUS_SYMS line; S7 no unreachable-fn note
+#   CG  (D6) what the call is: CG1 x86 `call [rbp+disp32]` (ff 95) per call; CG2 PE the same, and none of
+#       ECALLPTR_PE's forced-alignment anchor (`push rbx; mov rbx, rsp; and rsp, -16`)
+#   A   the P program and (D6) the PD program on x86 (default, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu),
+#       cx (cxvm), PE (wine, a private prefix); (D5, D6) tests/tcyr/crossos/dyn_objects.tcyr under
+#       CYRIUS_IR=1 / 3 and CYRIUS_DCE=1, and on qemu-aarch64 and wine (cx runs it in
+#       codegen/cx_crossos_rows_run.sh R9), and (CW) with no warning. A leg whose tool is missing is a SKIP
+#       that names it (exit 77).
 #
 # MUTATION LEDGER (2026-10-10, bite D4; each a one-edit scratch COPY of src/, its compiler rebuilt from
 # the mutated src, then this gate run with CYCC= the mutant; each measured RED, the real tree 115/115; the
@@ -132,6 +152,43 @@
 #         runs first, second in source order, calls through an empty table)
 #   M-F14 the impl read AFTER the source is parsed (`_dyn_emit`)     -> A (§scalars `nested`: the outer dyn
 #         built with the vtable of the `dyn Num` formed inside its source — a find of this bite, fixed)
+# D6 (2026-10-10; the same method, the real tree green on every row and on dyn_objects.tcyr — 197 rows, the
+# lane's HEAD before D6 RED on 34 of them; "A" = this gate's legs run with the mutant itself — x86 IR=1 / 3
+# / DCE, PE; the qemu leg's compiler is built from the real src, so the aarch64 column is dyn_objects.tcyr
+# compiled by the MUTANT's aarch64 fork and run under qemu):
+#   M-C1  the prototype's parameters not recorded (no `_prescan_params`) -> C7a-b, C8a-d, C9a-d, C10, PD, X5,
+#         CG2, S4, S5, CW, A (every call: "'dyn Show.show' expects 0 arguments, got 1")
+#   M-C2  the data and vtable words swapped at the call            -> C10, PD, X5a, A (rc 139; PE 5)
+#   M-C3  no `_call_ret_marks` (an f64 result untyped)              -> CW ("integer arithmetic with an f64 right
+#         operand"), A (the two f64-result rows of dyn_objects)
+#   M-C4  no `_sc_x8` (aarch64's X8 for a retptr result)            -> dyn_objects under qemu with the mutant's
+#         aarch64 fork: rc 139 (x86, cx and PE pass the retptr as int arg 0: untouched)
+#   M-C5  the callee loaded AFTER the arguments                     -> A (C-ORD: 77/78 — the reseated dyn's
+#         method ran with the old data word); qemu rc 139 (x0, `self`, clobbered by the late load)
+#   M-C6  PE through ECALLPTR_PE                                    -> CG2 (3 anchors, 0 `ff 95`), A PE (75/78:
+#         the stack arguments misplaced under its forced alignment)
+#   M-C7  no top-level micro-frame                                  -> C10, A (rc 139: the callee spilled through
+#         the loader's rbp)
+#   M-C8  named arguments not refused                               -> C6
+#   M-C9  a generic member callable                                 -> C2
+#   M-C10 `_meth_fn_at`'s dyn arm gone (no lookahead sees a prototype) -> C8c, C8d, C9a, C9b (BUILT), PD, A pd
+#         (a `*P` result no longer forms: "not a dyn")
+#   M-C11 `_dyn_src_call`'s method arm gone                         -> C9a (a second error, "not a dyn")
+#   M-C12 `_gvi_dyn_mcall` gone                                     -> C9b (BUILT: the zone replay kept the data
+#         word alone, a SIGSEGV at the first call)
+#   M-C13 no arity check (C7)                                       -> C7a, C7b (BUILT)
+#   M-C14 a multi-value member not refused (C5)                     -> C5a, C5b
+#   M-C15 a refused call's arguments parsed, not stepped over       -> C1c (a second error: V1 on `o`)
+#   M-P1  the prototype without its owner (no SFFI)                 -> X5b, CW ("warning: undefined function
+#         'dyn Show.show'")
+# Defensive, no killing row (named): M-P2, `_impl_tnoff` / `_cur_ii` not cleared around the prototype's
+# scan — the call pushes `self` itself (parameter 0 is never marshalled), so no reader sees parameter 0's
+# marks; kept so a prototype records its trait member's signature and nothing of the impl being parsed
+# (dyn_objects' `HS.via` makes the first `show` prototype inside an impl). M-P3, the `_dyn_p2` guard gone
+# — no pass-1 path reaches `_meth_fn_at` with a dyn receiver (measured with an instrumented compiler over
+# zone dyn calls, destructures and copies); kept so a prototype can never be made before every struct is
+# registered. C5's `u128` arm — no fn or method can declare a `u128` return ("expected identifier, got
+# reserved keyword 'u128'"), so a trait member that does has no impl to form.
 # Defensive, no killing row (named): `_dyn_f9`'s `async` arm — an impl body cannot hold an `async fn`
 # ("expected '}', got async"), and a trait member is never one. `_op_fn_peek`'s dyn arm ("dyn Show has no operators") — every dyn
 # operand is refused at its factor first (V1 / V3 / V4 clear the stamp, V4 the `_lsc` record), so no
@@ -380,6 +437,90 @@ fi
 # ── PF: a parenthesised FORM source at every destination ───────────────────────────────────────────
 exits pf 42 "PF: \`((&p))\` / \`(q)\` as a local, a zone and a post-statement global, an assignment, a field, an argument, a return" "${SH}struct W { o: dyn Show; }\nstruct H2 { a; o: dyn Show; }\nfn dk(o: dyn Show): i64 { var w: W = W { o }; return callptr(load64(load64(&w + 8)), load64(&w)); }\nfn rt(q: *P): dyn Show { return ((q)); }\nvar P0 = P { 3, 4 };\nvar Z: dyn Show = ((&P0));\nfn f(): i64 {\n    var p = P { 5, 6 };\n    var o: dyn Show = ((&p));\n    if (dk(o) != 5) { return 1; }\n    o = (&P0);\n    if (dk(o) != 3) { return 2; }\n    var h = H2 { 1, o };\n    h.o = ((&p));\n    if (dk(h.o) != 5) { return 3; }\n    if (dk(((&p))) != 5) { return 4; }\n    if (dk(rt(&p)) != 5) { return 5; }\n    if (dk(Z) != 3) { return 6; }\n    return 42;\n}\nsyscall(1, 1, \"\", 0);\nvar G: dyn Show = ((&P0));\nif (dk(G) != 3) { syscall(60, 7); }\nsyscall(60, f());\n"
 
+# ── C: the call through a dyn (D6) — every refusal once, at the method's name, the call consumed ─────
+SC6='trait Show { fn show(self): i64; fn pick<U>(self, u: U): i64; fn nos(): i64; fn tself(self: i64): i64; fn va(self, ...): i64; fn two(self): (i64, i64); fn vec(self): f64v2; fn add(self, k): i64; fn me(self): dyn Show; fn big(self): Big; }\nstruct Big { a; b; c; }\nstruct P { a; b; }\nimpl Show for P { fn show(self): i64 { return self.a; } fn pick<U>(self, u: U): i64 { return 1; } fn nos(): i64 { return 2; } fn tself(self: i64): i64 { return 3; } fn va(self, ...): i64 { return 4; } fn two(self): (i64, i64) { return (1, 2); } fn vec(self): f64v2 { var v: f64v2; return v; } fn add(self, k): i64 { return k; } fn me(self): dyn Show { return self; } fn big(self): Big { var g = Big { 1, 2, 3 }; return g; } }\ntrait Num { fn num(self): i64; }\nimpl Num for i64 { fn num(self): i64 { return self; } }\nfn g(x): i64 { return x; }\n'
+CF='fn f(o: dyn Show): i64 { '
+CE=' }\nsyscall(60, 0);\n'
+CT="${SC6}var P0 = P { 5, 6 };\nvar Z: dyn Show = &P0;\n"
+refused c01a "trait Show declares no method 'nope' - a dyn Show calls only the methods its trait declares" "C1a: a member the trait does not declare" "${SC6}${CF}return o.nope(1);${CE}"
+refused c01b "trait Show declares no method 'nope'" "C1b: ... a chain on the refused call is consumed (one report)" "${SC6}${CF}return o.nope().show();${CE}"
+refused c01c "trait Show declares no method 'nope'" "C1c: ... a dyn argument of the refused call is not read as a value (one report)" "${SC6}${CF}return o.nope(o);${CE}"
+refused c02 "'pick' is generic - a call through a dyn Show has no instance of it to run: call it on the concrete type" "C2: a generic member (decision 3)" "${SC6}${CF}return o.pick(5);${CE}"
+C3M="takes no untyped \`self\` first - a call through a dyn Show passes its data word as an untyped \`self\`"
+refused c03a "'nos' $C3M" "C3a: a member with no \`self\`" "${SC6}${CF}return o.nos();${CE}"
+refused c03b "'tself' $C3M" "C3b: a member whose \`self\` is typed (\`self: i64\`)" "${SC6}${CF}return o.tself();${CE}"
+refused c04 "'va' is variadic - a call through a dyn Show passes a fixed argument list" "C4: a variadic member" "${SC6}${CF}return o.va(1, 2);${CE}"
+C5M="- a call through a dyn Show returns one value - an integer, a float, a pointer or a struct"
+refused c05a "'two' returns multiple values $C5M" "C5a: a multi-value member, destructured (\`var a, b = o.two();\`)" "${SC6}${CF}var a, b = o.two(); return a;${CE}"
+refused c05b "'two' returns multiple values $C5M" "C5b: ... as a statement" "${SC6}${CF}o.two(); return 0;${CE}"
+refused c05c "'vec' returns a vector $C5M" "C5c: a member returning a vector" "${SC6}${CF}o.vec(); return 0;${CE}"
+refused c06 "named arguments need a direct call - a call through a dyn Show passes arguments by position" "C6: a named argument" "${SC6}${CF}return o.add(k: 5);${CE}"
+refused c07a "'dyn Show.add' expects 2 arguments, got 3" "C7a: too many arguments (\`self\` counted, as a method call counts it)" "${SC6}${CF}return o.add(5, 6);${CE}"
+refused c07b "'dyn Show.add' expects 2 arguments, got 1" "C7b: too few" "${SC6}${CF}return o.add();${CE}"
+refused c08a "a dyn Show result $RV" "C8a (V4): a call through a dyn returning a dyn, used as a value (\`o.me() + 1\`)" "${SC6}${CF}return o.me() + 1;${CE}"
+refused c08b "a dyn Show result $RV" "C8b (V4): ... as an untyped argument" "${SC6}${CF}return g(o.me());${CE}"
+refused c08c "multi-value destructure of a dyn Show 'dyn Show.me' result - a dyn is one value" "C8c (V6): ... destructured" "${SC6}${CF}var a, b = o.me(); return a;${CE}"
+refused c08d "cannot form dyn Num from this expression" "C8d (F5): a call through a dyn returning an i64 as a forming source" "${SC6}${CF}var n: dyn Num = o.show(); return 0;${CE}"
+TLS="returns a struct by value, and a struct result needs storage in a fn's frame"
+refused c09a "'dyn Show.me' $TLS" "C9a: a 16 B result at top level into a global after the first statement (one report, not also \"not a dyn\")" "${CT}syscall(1, 1, \"\", 0);\nvar G2: dyn Show = Z.me();\nsyscall(60, 0);\n"
+refused c09b "'dyn Show.me' $TLS" "C9b: ... into a declaration-zone global (the replay stored the data word alone: a SIGSEGV)" "${CT}var Z2: dyn Show = Z.me();\nsyscall(60, 0);\n"
+refused c09c "'dyn Show.big' $TLS" "C9c: a 24 B (retptr) result at top level" "${CT}syscall(1, 1, \"\", 0);\nvar b = Z.big();\nsyscall(60, 0);\n"
+refused c09d "'dyn Show.me' $TLS" "C9d: a chain on a 16 B result at top level" "${CT}syscall(1, 1, \"\", 0);\nvar x = Z.me().show();\nsyscall(60, x);\n"
+exits c10 42 "C10: a call at top level and in a zone initialiser (the indirect call's micro-frame), nested, as a statement" "${CT}var ZN = Z.add(Z.show());\nsyscall(1, 1, \"\", 0);\nZ.show();\nvar k = Z.add(Z.add(36));\nif (ZN != 5) { syscall(60, 1); }\nsyscall(60, k + Z.show() + 1);\n"
+
+# ── PD: every destination of a call through a dyn takes its dyn result whole; a `*T` result forms ────
+PD='trait Show { fn show(self): i64; fn me(self): dyn Show; fn pp(self): *P; }\nstruct P { a; b; }\nimpl Show for P { fn show(self): i64 { return self.a * 10 + self.b; } fn me(self): dyn Show { return self; } fn pp(self): *P { return self; } }\nstruct H { a; o: dyn Show; b; }\nfn take(k, o: dyn Show, j): i64 { return k * 1000 + o.show() * 10 + j; }\nfn rme(o: dyn Show): dyn Show { return o.me(); }\nfn rmw(o: dyn Show): dyn Show { return (o.me()); }\nfn rmd(o: dyn Show): dyn Show {\n    defer { syscall(1, 1, "", 0); }\n    return o.me();\n}\nfn main(): i64 {\n    var p = P { 4, 9 };\n    var q = P { 1, 2 };\n    var o: dyn Show = &p;\n    var y1: dyn Show = o.me();\n    if (y1.show() != 49) { return 1; }\n    var y2: dyn Show = (o.me());\n    if (y2.show() != 49) { return 2; }\n    var y3 = o.me();\n    if (y3.show() != 49) { return 3; }\n    var z: dyn Show = &q;\n    z = o.me();\n    if (z.show() != 49) { return 4; }\n    z = &q;\n    z = (o.me());\n    if (z.show() != 49) { return 5; }\n    var h = H { 7, z, 8 };\n    h.o = &q;\n    h.o = o.me();\n    if (h.o.show() != 49) { return 6; }\n    h.o = &q;\n    h.o = (o.me());\n    if (h.o.show() + h.a * 1000 + h.b * 100 != 7849) { return 7; }\n    if (take(3, o.me(), 5) != 3495) { return 8; }\n    if (take(3, (o.me()), 5) != 3495) { return 9; }\n    var h2 = H { 6, o.me(), 2 };\n    if (h2.o.show() + h2.a * 1000 + h2.b * 100 != 6249) { return 10; }\n    if (rme(o).show() != 49) { return 11; }\n    if (rmw(o).show() != 49) { return 12; }\n    if (rmd(o).show() != 49) { return 13; }\n    var f1: dyn Show = o.pp();\n    if (f1.show() != 49) { return 14; }\n    var f2: dyn Show = (o.pp());\n    if (f2.show() != 49) { return 15; }\n    f2 = q.pp();\n    if (f2.show() != 12) { return 16; }\n    return 42;\n}\nsyscall(60, main());\n'
+exits pd 42 "PD1-PD16: a call through a dyn returning a dyn into a var (annotated, wrapped, inferred), an assignment (bare, wrapped), a field (bare, wrapped), an argument (bare, wrapped), a struct-literal element, a \`return\` (bare, wrapped, in a \`defer\` fn); one returning \`*P\` FORMS (the prototype types it)" "$PD"
+
+# ── X / S / CG: what a prototype is not, and what the call is (D6) ─────────────────────────────────────
+mkdir -p "$T/x4"
+printf 'fn f(o: dyn Shw): i64 { return o.show(5) + o.other(o, 2); }\nsyscall(60, 0);\n' > "$T/x4/a.cyr"
+rc=0; "$CC" --syntax-only < "$T/x4/a.cyr" > /dev/null 2> "$T/x4/a.err" || rc=$?
+if [ "$rc" -eq 0 ] && ! grep -q '^error' "$T/x4/a.err"; then ok "X4a: --syntax-only, a dyn of a trait in a sibling file: its calls are silent"
+else bad "X4a: rc $rc: $(grep '^error' "$T/x4/a.err" | head -1)"; fi
+printf 'fn f(o: dyn Shw): i64 { return o.show(1 + ); }\nsyscall(60, 0);\n' > "$T/x4/b.cyr"
+rc=0; "$CC" --syntax-only < "$T/x4/b.cyr" > /dev/null 2> "$T/x4/b.err" || rc=$?
+if [ "$rc" -ne 0 ] && [ "$(grep -c '^error' "$T/x4/b.err")" -eq 1 ] && grep -qF "unexpected ')'" "$T/x4/b.err"; then ok "X4b: ... and a grammar error in such a call's arguments is still reported"
+else bad "X4b: rc $rc: $(grep '^error' "$T/x4/b.err" | head -2 | tr '\n' '|')"; fi
+S0='trait Show { fn show(self): i64; fn sq(self, k): i64; }\nstruct P { a; b; }\nimpl Show for P { fn show(self): i64 { return self.a * 10 + self.b; } fn sq(self, k): i64 { return k * k; } }\n'
+printf '%b' "${S0}fn main(): i64 {\n    var p = P { 4, 9 };\n    var o: dyn Show = &p;\n    return o.show() + o.sq(2) + o.show() - 56;\n}\nsyscall(60, main());\n" > "$T/x5.cyr"
+rc=0; CYRIUS_SYMS="$T/x5.syms" timeout 60 "$CC" < "$T/x5.cyr" > "$T/x5.bin" 2> "$T/x5.err" || rc=$?
+if [ "$rc" -ne 0 ]; then bad "X5/S6/S7: rc $rc: $(grep '^error' "$T/x5.err" | head -1)"
+else
+    chmod +x "$T/x5.bin"; got=0; timeout 10 "$T/x5.bin" || got=$?
+    [ "$got" -eq 46 ] && ok "X5a: three calls through a dyn, two members: exit 46" || bad "X5a: exit $got, want 46"
+    if grep -q 'undefined function' "$T/x5.err"; then bad "X5b: a prototype is reported undefined: $(grep 'undefined' "$T/x5.err" | head -1)"
+    else ok "X5b: no \"undefined function 'dyn Show.show'\" (a prototype's owner is the trait's file)"; fi
+    if grep -q 'unreachable fns' "$T/x5.err"; then bad "S7: a fully reachable program notes unreachable fns (a prototype counted?): $(grep unreachable "$T/x5.err")"
+    else ok "S7: no \`note: N unreachable fns\` for a fully reachable program (a prototype has no body to count)"; fi
+    if [ -s "$T/x5.syms" ] && grep -q ' P_show$' "$T/x5.syms" && ! grep -q 'dyn' "$T/x5.syms"; then ok "S6: the CYRIUS_SYMS dump holds P_show and no prototype"
+    else bad "S6: CYRIUS_SYMS: $(grep -c . "$T/x5.syms" 2>/dev/null) lines, $(grep 'dyn' "$T/x5.syms" 2>/dev/null | head -1)"; fi
+    ff=$(od -An -tx1 -v "$T/x5.bin" | tr -s ' \n' '\n\n' | awk 'p == "ff" && $1 == "95" { n++ } { p = $1 } END { print n + 0 }')
+    [ "$ff" -eq 3 ] && ok "CG1: x86 — each call is \`call [rbp+disp32]\` (ff 95): 3 for 3 calls" || bad "CG1: x86 holds $ff \`ff 95\`, want 3"
+fi
+if CYRIUS_TARGET_WIN=1 timeout 60 "$CC" < "$T/x5.cyr" > "$T/x5.exe" 2> "$T/x5.werr" && [ -s "$T/x5.exe" ]; then
+    ff=$(od -An -tx1 -v "$T/x5.exe" | tr -s ' \n' '\n\n' | awk 'p == "ff" && $1 == "95" { n++ } { p = $1 } END { print n + 0 }')
+    an=$(od -An -tx1 -v "$T/x5.exe" | tr -s ' \n' '\n\n' | awk '{ w = w " " $1 } END { print w }' | grep -o ' 53 48 89 e3 48 83 e4 f0' | wc -l)
+    if [ "$ff" -eq 3 ] && [ "$an" -eq 0 ]; then ok "CG2: PE — the frame-slot \`call [rbp+disp32]\` (3), never ECALLPTR_PE's forced alignment (0 anchors)"
+    else bad "CG2: PE holds $ff \`ff 95\` (want 3) and $an ECALLPTR_PE anchors (want 0)"; fi
+else bad "CG2: the PE build failed: $(grep -m1 '^error' "$T/x5.werr")"; fi
+printf '%b' "object;\n${S0}fn app_entry(): i64 {\n    var p = P { 4, 9 };\n    var o: dyn Show = &p;\n    return o.show();\n}\n" > "$T/s4.cyr"
+rc=0; timeout 60 "$CC" < "$T/s4.cyr" > "$T/s4.o" 2> "$T/s4.err" || rc=$?
+if [ "$rc" -ne 0 ]; then bad "S4: the object build failed: $(grep -m1 '^error' "$T/s4.err")"
+elif ! command -v readelf > /dev/null 2>&1 || ! command -v ld > /dev/null 2>&1; then echo "  SKIP S4 — readelf / ld not installed"; skips=$((skips + 1))
+else
+    readelf -sW "$T/s4.o" > "$T/s4.syms" 2>&1
+    lrc=0; ld -e app_entry -o "$T/s4.out" "$T/s4.o" > "$T/s4.ld" 2>&1 || lrc=$?
+    if grep -q 'UND dyn Show.show$' "$T/s4.syms" && [ "$(grep -c 'dyn' "$T/s4.syms")" -eq 1 ] && [ "$lrc" -eq 0 ]; then ok "S4: \`object;\` — the prototype is one unreferenced UND symbol (\`dyn Show.show\`), and GNU ld links the object"
+    else bad "S4: ld rc $lrc ($(head -1 "$T/s4.ld")); dyn symbols: $(grep 'dyn' "$T/s4.syms" | tr '\n' '|')"; fi
+fi
+printf '%b' "shared;\n${S0}fn app_entry(): i64 {\n    var p = P { 4, 9 };\n    var o: dyn Show = &p;\n    return o.show();\n}\n" > "$T/s5.cyr"
+rc=0; timeout 60 "$CC" < "$T/s5.cyr" > "$T/s5.so" 2> "$T/s5.err" || rc=$?
+if [ "$rc" -ne 0 ] || [ ! -s "$T/s5.so" ]; then bad "S5: the shared build failed: $(grep -m1 '^error' "$T/s5.err")"
+elif grep -aq 'dyn Show' "$T/s5.so"; then bad "S5: \`shared;\` exports a \`dyn Show.*\` name"
+elif ! grep -aq 'app_entry' "$T/s5.so"; then bad "S5: \`shared;\` lost its own export app_entry (the check is vacuous)"
+else ok "S5: \`shared;\` exports app_entry and no prototype"; fi
+
 # ── P: every destination of a dyn call result takes it whole ───────────────────────────────────────
 # The value rows: each line returns its own code when the dyn it received is not (4, 9).
 PB="${HP}struct Q { a; b; }\nimpl Q { fn mk(self, o: dyn Show): dyn Show { return o; } }\nfn take(k, o: dyn Show, j): i64 { return k * 1000 + dw(o) * 10 + j; }\nfn rw(o: dyn Show): dyn Show { return (pass(o)); }\nfn rd(o: dyn Show): dyn Show {\n    defer { syscall(1, 1, \"\", 0); }\n    return pass(o);\n}\nfn rr(o: dyn Show, k): dyn Show {\n    if (k > 0) { return rr(o, k - 1); }\n    return pass(o);\n}\n${FM}    var q = Q { 1, 2 };\n"
@@ -431,51 +572,65 @@ if "$CC" < programs/cyrius-lsp.cyr > "$T/tl/lsp" 2> "$T/tl/lsp.err" && [ "$(wc -
     else bad "TT3: cyrius-lsp semantic tokens: $(tr '\n' ' ' < "$T/tl/st.tok")"; fi
 else bad "TT3: could not build programs/cyrius-lsp.cyr: $(head -1 "$T/tl/lsp.err")"; fi
 
-# ── A: the P program on every backend ──────────────────────────────────────────────────────────────
+# ── A: the P program and (D6) the PD program on every backend ──────────────────────────────────────
 printf '%b' "${PB}${PL}${ME}" > "$T/ap.cyr"
+printf '%b' "$PD" > "$T/pd.cyr"
 for mode in IR3 DCE; do
     if [ "$mode" = IR3 ]; then ev=CYRIUS_IR=3; else ev=CYRIUS_DCE=1; fi
-    rc=0; env $ev "$CC" < "$T/ap.cyr" > "$T/ap_$mode.bin" 2> "$T/ap_$mode.err" || rc=$?
-    if [ "$rc" -ne 0 ]; then bad "A $mode: rc $rc: $(grep '^error' "$T/ap_$mode.err" | head -1)"
-    else chmod +x "$T/ap_$mode.bin"; got=0; timeout 10 "$T/ap_$mode.bin" || got=$?
-        [ "$got" -eq 42 ] && ok "A x86 $ev: the P program exits 42" || bad "A x86 $ev: exit $got, want 42"; fi
+    for pg in ap pd; do
+        rc=0; env $ev "$CC" < "$T/$pg.cyr" > "$T/${pg}_$mode.bin" 2> "$T/${pg}_$mode.err" || rc=$?
+        if [ "$rc" -ne 0 ]; then bad "A $pg $mode: rc $rc: $(grep '^error' "$T/${pg}_$mode.err" | head -1)"
+        else chmod +x "$T/${pg}_$mode.bin"; got=0; timeout 10 "$T/${pg}_$mode.bin" || got=$?
+            [ "$got" -eq 42 ] && ok "A x86 $ev: the $pg program exits 42" || bad "A x86 $ev: the $pg program exits $got, want 42"; fi
+    done
 done
 if command -v qemu-aarch64 > /dev/null 2>&1; then
     if "$CC" < src/main_aarch64.cyr > "$T/cc_a64" 2>/dev/null && [ -s "$T/cc_a64" ]; then
         chmod +x "$T/cc_a64"
-        if "$T/cc_a64" < "$T/ap.cyr" > "$T/ap.a" 2> "$T/ap.aerr"; then
-            chmod +x "$T/ap.a"; got=0; (cd "$T" && timeout 60 qemu-aarch64 ./ap.a > /dev/null 2>&1) || got=$?
-            [ "$got" -eq 42 ] && ok "A aarch64 (qemu): exit 42" || bad "A aarch64 (qemu): exit $got, want 42"
-        else bad "A aarch64: did not compile: $(grep '^error' "$T/ap.aerr" | head -1)"; fi
+        for pg in ap pd; do
+            if "$T/cc_a64" < "$T/$pg.cyr" > "$T/$pg.a" 2> "$T/$pg.aerr"; then
+                chmod +x "$T/$pg.a"; got=0; (cd "$T" && timeout 60 qemu-aarch64 "./$pg.a" > /dev/null 2>&1) || got=$?
+                [ "$got" -eq 42 ] && ok "A aarch64 (qemu): the $pg program exits 42" || bad "A aarch64 (qemu): the $pg program exits $got, want 42"
+            else bad "A aarch64: the $pg program did not compile: $(grep '^error' "$T/$pg.aerr" | head -1)"; fi
+        done
     else bad "A aarch64: could not build src/main_aarch64.cyr"; fi
 else echo "  SKIP A aarch64 — qemu-aarch64 not installed"; skips=$((skips + 1)); fi
 if "$CC" < src/main_cx.cyr > "$T/cc_cx" 2>/dev/null && [ -s "$T/cc_cx" ] && \
    "$CC" < programs/cxvm.cyr > "$T/cxvm" 2>/dev/null && [ -s "$T/cxvm" ]; then
     chmod +x "$T/cc_cx" "$T/cxvm"
-    if "$T/cc_cx" < "$T/ap.cyr" > "$T/ap.cyx" 2> "$T/ap.cxerr" && [ -s "$T/ap.cyx" ]; then
-        got=0; timeout 60 "$T/cxvm" < "$T/ap.cyx" > /dev/null 2>&1 || got=$?
-        [ "$got" -eq 42 ] && ok "A cx (cxvm): exit 42" || bad "A cx (cxvm): exit $got, want 42"
-    else bad "A cx: did not compile: $(grep '^error' "$T/ap.cxerr" | head -1)"; fi
+    for pg in ap pd; do
+        if "$T/cc_cx" < "$T/$pg.cyr" > "$T/$pg.cyx" 2> "$T/$pg.cxerr" && [ -s "$T/$pg.cyx" ]; then
+            got=0; timeout 60 "$T/cxvm" < "$T/$pg.cyx" > /dev/null 2>&1 || got=$?
+            [ "$got" -eq 42 ] && ok "A cx (cxvm): the $pg program exits 42" || bad "A cx (cxvm): the $pg program exits $got, want 42"
+        else bad "A cx: the $pg program did not compile: $(grep '^error' "$T/$pg.cxerr" | head -1)"; fi
+    done
 else bad "A cx: could not build src/main_cx.cyr / programs/cxvm.cyr"; fi
 if command -v wine > /dev/null 2>&1; then
-    if CYRIUS_TARGET_WIN=1 "$CC" < "$T/ap.cyr" > "$T/ap.exe" 2> "$T/ap.werr" && [ -s "$T/ap.exe" ]; then
-        got=0
-        (cd "$T" && WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all \
-            WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' timeout 180 wine ./ap.exe > /dev/null 2>&1) || got=$?
-        [ "$got" -eq 42 ] && ok "A PE (wine): exit 42" || bad "A PE (wine): exit $got, want 42"
-    else bad "A PE: did not compile: $(grep '^error' "$T/ap.werr" | head -1)"; fi
+    for pg in ap pd; do
+        if CYRIUS_TARGET_WIN=1 "$CC" < "$T/$pg.cyr" > "$T/$pg.exe" 2> "$T/$pg.werr" && [ -s "$T/$pg.exe" ]; then
+            got=0
+            (cd "$T" && WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all \
+                WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' timeout 180 wine "./$pg.exe" > /dev/null 2>&1) || got=$?
+            [ "$got" -eq 42 ] && ok "A PE (wine): the $pg program exits 42" || bad "A PE (wine): the $pg program exits $got, want 42"
+        else bad "A PE: the $pg program did not compile: $(grep '^error' "$T/$pg.werr" | head -1)"; fi
+    done
 else echo "  SKIP A PE — wine not installed"; skips=$((skips + 1)); fi
 
-# (D5) tests/tcyr/crossos/dyn_objects.tcyr, the forming file: every assertion passes under CYRIUS_IR=3
-# and CYRIUS_DCE=1, on qemu-aarch64 and under wine (the count derived from its source).
+# (D5, D6) tests/tcyr/crossos/dyn_objects.tcyr, the forming and calling file: every assertion passes
+# under CYRIUS_IR=1, CYRIUS_IR=3 and CYRIUS_DCE=1, on qemu-aarch64 and under wine (the count derived
+# from its source), and (D6) it compiles with no warning (an f64 result is typed, no prototype is
+# "undefined").
 DO=tests/tcyr/crossos/dyn_objects.tcyr
 DON=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$DO")
+rc=0; "$CC" < "$DO" > "$T/do_cw.bin" 2> "$T/do_cw.err" || rc=$?
+if [ "$rc" -eq 0 ] && ! grep -q 'warning' "$T/do_cw.err"; then ok "CW: dyn_objects.tcyr compiles with no warning on x86"
+else bad "CW: rc $rc: $(grep 'warning\|^error' "$T/do_cw.err" | head -1)"; fi
 dosum() {   # <label> <exit> <output file>
     if [ "$2" -eq 0 ] && [ "$(tail -1 "$3")" = "$DON passed, 0 failed ($DON total)" ]; then ok "$1: $DON/$DON"
     else bad "$1: exit $2, $(tail -1 "$3")"; fi
 }
-for mode in IR3 DCE; do
-    if [ "$mode" = IR3 ]; then ev=CYRIUS_IR=3; else ev=CYRIUS_DCE=1; fi
+for mode in IR1 IR3 DCE; do
+    if [ "$mode" = IR3 ]; then ev=CYRIUS_IR=3; elif [ "$mode" = IR1 ]; then ev=CYRIUS_IR=1; else ev=CYRIUS_DCE=1; fi
     rc=0; env $ev "$CC" < "$DO" > "$T/do_$mode.bin" 2> "$T/do_$mode.err" || rc=$?
     if [ "$rc" -ne 0 ]; then bad "A dyn_objects x86 $ev: rc $rc: $(grep '^error' "$T/do_$mode.err" | head -1)"
     else chmod +x "$T/do_$mode.bin"; got=0; (cd "$T" && timeout 60 "./do_$mode.bin" > "do_$mode.out" 2>&1) || got=$?
