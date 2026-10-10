@@ -28,7 +28,9 @@ v6.6.x closed at 6.6.20. 6.7.0–6.7.6 shipped (2026-10-07 → 2026-10-08): [com
 
 1. **Language only between the breaks.** A feature release carries language features and nothing else. What it finds
    is FILED as an issue (`docs/development/issues/`), with a repro, the same turn; it is fixed in the release only when the feature cannot
-   ship around it (a prerequisite bug). A P0 security finding is reported the turn it is found — whether it interrupts
+   ship around it (a prerequisite bug) — **or when repairing it is faster than writing the issue: then it is repaired
+   where it was found** (user, 2026-10-09), its own commit with its regression row; a quick fix that changes what
+   compiles is still asked first. The repair releases are re-balanced at each one's open against what was filed since. A P0 security finding is reported the turn it is found — whether it interrupts
    the arc is the user's call.
 2. **Catch-up breaks clear the backlog.** Break 1 was 6.7.6. Break 2 is 6.7.10 – 6.7.12 (user, 2026-10-09): the open
    queue repaired to 0 bugs, so fuller audits can follow. 6.7.13 is the full security audit + the refactor /

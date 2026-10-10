@@ -264,8 +264,11 @@ reintroduce one; derive counts (`find tests/gates -name '*.sh' | wc -l`), never 
   about the same and hands back a bigger queue. File only when it genuinely cannot pack, and name why: a heap / brk
   LAYOUT change (two-step bootstrap), a decision that is the user's, or a full gate cycle the release cannot absorb.
   "Different subsystem" and "it's P2" are not reasons.
-- **Fixing bugs is not hunting bugs.** One implementer + one reviewer per bite, reviewing THE BITE; an out-of-scope find
-  is filed as an issue (only the user promotes it); a severe one met in passing is reported in one line, not swept for.
+- **Fixing bugs is not hunting bugs.** One implementer + one reviewer per bite, reviewing THE BITE; a severe find met in
+  passing is reported in one line, not swept for. **A find that can be repaired faster than its issue could be written
+  IS repaired when found** (user, 2026-10-09) — its own commit with its own regression row, in whatever release or lane
+  met it; only what genuinely cannot be done that fast is filed as an issue (only the user promotes it). A quick fix
+  that changes what compiles, or what a program does, is still the user's call — ask, do not slip it in.
 - **Deferral is real only when FILED** (its own issue, that turn) AND pinned to a roadmap slot with acceptance criteria;
   then move on. **"File the issue" means file only** — never bundle an implementation with it.
 - **Read the actual code before concluding something blocks work.** Premise-check the CLAIMS in issue files, not just

@@ -9,7 +9,9 @@ to file, read this.
 > ⭐ **This directory IS the backlog** (user, 2026-10-08: "issues that are backlogged should have issue/ filed, not
 > sit in the roadmap"). Every backlogged bug, gap or stdlib ask — found by a consumer, a fold, a release lane or a
 > closeout — is its own file here with a repro and a `**Placement:**` line. `roadmap.md` names placements and links
-> to these files; it never carries an item's text.
+> to these files; it never carries an item's text. ⚡ **A find that can be repaired faster than this file could be
+> written is repaired when found instead** (user, 2026-10-09) — its own commit and regression row; file only what
+> cannot be done that fast.
 
 - **Consumer-reported bugs** — misleading errors, silent
   truncation, crashes, perf regressions found while porting or
