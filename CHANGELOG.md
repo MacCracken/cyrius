@@ -4,6 +4,8 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [6.7.8] — 2026-10-10
+
 ## [6.7.7] — 2026-10-09
 
 B4 tuples and B6 default + named arguments (the user's decisions: roadmap.md § Spec, 2026-10-08, and the plans'
