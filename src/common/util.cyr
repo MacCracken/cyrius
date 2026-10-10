@@ -1703,6 +1703,23 @@ fn GLBARR(S, li): i64 {
     if (li < 0) { return 0; }
     return (L64(S + 0x5DBD000 + li * 8) >> 61) & 1;
 }
+# ⛔ 6.7.8 (C2-2a) — bit 62: the slot is a SLICE local's canonical slot (`var s: [T]` / `slice<T>`).
+# A slice's element width lives in the per-slot slice-width table, which most registrations never
+# clear — a fn parameter, a closure parameter, a SIMD parameter, an inline replay's binding — so a
+# slot inherited the width of whatever slice last sat there, in ANY earlier fn: `fn b(x, y) {
+# return y[0]; }` compiled as a slice read of `&y` (y.len, y.len = v likewise; `y += 1` was refused
+# as "compound assignment to slice"). The width is now trusted only behind this bit (_slice_lw,
+# parse_types.cyr), which clears itself at the next registration's SLDEP like bits 56..61. SLSLICE
+# is the one writer of a slice's width (PARSE_VAR, after its SLAGG). CHANGELOG [6.7.8]
+fn SLSLICE(S, li, w): i64 {
+    SSLICE_W(S, li, w);
+    if (w > 0) { S64(S + 0x5DBD000 + li * 8, L64(S + 0x5DBD000 + li * 8) | (1 << 62)); }
+    return 0;
+}
+fn GLSLICE(S, li): i64 {
+    if (li < 0) { return 0; }
+    return (L64(S + 0x5DBD000 + li * 8) >> 62) & 1;
+}
 # The boolean stamp (parse_expr.cyr _BX_MARK): the code pointer and token index at the end of the
 # last boolean value. 0 = none.
 var _bxr_cp = 0;

@@ -1312,7 +1312,7 @@ fn PARSE_FIELD_LOAD(S, noff): i64 {
             if (lt < 0) { sid = 0 - lt; }
             idx = 0 - 2 - lli;
             # v5.8.16 §8: slice dot-syntax field load (s.ptr / s.len).
-            # A slice fn-local has GLTYPE=0 and GSLICE_W>0 (per-local
+            # A slice fn-local has GLTYPE=0 and _slice_lw>0 (per-local
             # element width set in §6). The slice occupies a 16-byte
             # 2-slot block: slot lli (canonical, lower address) holds
             # `.ptr` at offset 0; slot lli-1 (higher address allocated
@@ -1343,7 +1343,7 @@ fn PARSE_FIELD_LOAD(S, noff): i64 {
             # &s + 8 keeps the access pattern equivalent to
             # slice_len's helper-fn path and stays out of the
             # regalloc patcher's way.
-            var sw = GSLICE_W(S, lli);
+            var sw = _slice_lw(S, lli);   # 6.7.8 (C2-2a): behind the slice bit
             if (sw > 0) {
                 var fname = L64(S + 0xEC00000 + fnoff);
                 var fld_off = 0 - 1;
@@ -1889,7 +1889,7 @@ fn PARSE_FIELD_STORE(S, noff, term): i64 {
             # land in the register only — invisible to slice_set's
             # subsequent memory reads. Address-based store keeps the
             # memory write authoritative.
-            if (GSLICE_W(S, lli) > 0) { return _slice_fld_store(S, lli, fnoff, term); }
+            if (_slice_lw(S, lli) > 0) { return _slice_fld_store(S, lli, fnoff, term); }
         }
     }
     if (idx == 0 - 1) {
@@ -2610,7 +2610,7 @@ fn _tup_wide_name(S, nm): i64 {
             if (lt <= 0 - 2048) { return 1; }
             if (lt != 0) { return 0; }
             if (GLSPAN(S, li) != 2) { return 0; }
-            if (GSLICE_W(S, li) > 0) { return 2; }
+            if (_slice_lw(S, li) > 0) { return 2; }
             return 3;
         }
     }
@@ -6736,7 +6736,7 @@ fn PARSE_VAR(S): i64 {
             SLDEP(S, li_canon, GSDEP(S));
             SLAGG(S, li_canon, 2);   # 6.6.5: a slice / u128 is a 2-slot INLINE pair
             SLTYPE(S, li_canon, 0);
-            SSLICE_W(S, li_canon, slice_elt_w);
+            SLSLICE(S, li_canon, slice_elt_w);   # 6.7.8 (C2-2a): the width + the slice bit 62 (util.cyr)
             _w16_local_init(S, li_canon, ann_ti);   # the initial value: a slice's, or (6.7.6) a u128's whole
             SFLC(S, li_canon + 1);
         } else {

@@ -671,6 +671,14 @@ fn _gv_holds_addr(S, vi): i64 {
     if (_gv_ptr_sid(S, vi) > 0) { return 1; }
     return 0;
 }
+# 6.7.8 (C2-2a) — the element width of slice local `li` (sizeof(T): 1, 2, 4, 8, 16 or a struct's
+# bytes, which can pass 255), 0 when `li` is no slice. Every reader that asks "is this name a
+# slice?" asks here: a positive slice-width word is trusted only behind the slot's slice bit
+# (GLSLICE, util.cyr), because the word goes stale on slot reuse. CHANGELOG [6.7.8]
+fn _slice_lw(S, li): i64 {
+    if (GLSLICE(S, li) == 0) { return 0; }
+    return GSLICE_W(S, li);
+}
 # The step of a typed-pointer slot `li` (a local or a `p: *T` parameter), 0 when it is none.
 fn _slot_ptr_step(S, li): i64 {
     if (GLPTRP(S, li) == 0) { return 0; }

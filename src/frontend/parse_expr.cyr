@@ -2621,7 +2621,7 @@ fn _arr_sub_read(S, noff): i64 {
     if (PEEKT(S) != 28) { return 0; }
     if (GINFN(S) == 1) {
         var sl = FINDLOCAL(S, noff);
-        if (sl >= 0) { if (GSLICE_W(S, sl) > 0) { return 0; } }
+        if (sl >= 0) { if (_slice_lw(S, sl) > 0) { return 0; } }
     }
     var w = _arr_sub_addr(S, noff);
     if (w != 0) { _arr_sub_load(S, w); }
@@ -2670,13 +2670,13 @@ fn _arr_sub_stmt(S, noff): i64 {
 # also took the giant under the per-fn NOP compactor's 1024-entry caps (`_nrn` / `_jsn`,
 # parse_fn.cyr), so its last 499 NOPs are harvested (cycc .text -1,680 B). CHANGELOG [6.7.8]
 
-# v5.8.15 §7: the slice subscript `s[i]` as a value, for the slice-typed local `li`. GSLICE_W
+# v5.8.15 §7: the slice subscript `s[i]` as a value, for the slice-typed local `li`. _slice_lw
 # returns the element byte-width captured at PARSE_VAR time (v5.8.14 §6); 0 means not a slice.
 # If `[` follows the ident AND this is a slice local, lower to `_slice_idx_get_W(&local, i)` —
 # the bounds-checked sized load via the helper that matches the element width. 1 when consumed;
 # 0 (cursor untouched) otherwise.
 fn _slice_sub_read(S, li): i64 {
-    var sw = GSLICE_W(S, li);
+    var sw = _slice_lw(S, li);   # 6.7.8 (C2-2a): behind the slice bit (a stale width is no slice)
     if (sw > 0) { if (PEEKT(S) == 28) {
             STI(S, GTI(S) + 1);  # consume [
             # Push &local as first arg (helper takes slice address)

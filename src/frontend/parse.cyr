@@ -3050,7 +3050,7 @@ fn _asg_wide_refused(S, noff, li): i64 {
     if (li >= 0) {
         if (_is_simd_any(S, GLTYPE(S, li)) == 1) { k = 1; }
         elif (GLAEW(S, li) != 0) { k = 2; }
-        elif (GSLICE_W(S, li) > 0) { k = 3; }
+        elif (_slice_lw(S, li) > 0) { k = 3; }
         elif (GLBARR(S, li) == 1) { k = 4; }   # 6.7.6 (D2): a bare `var b[N]` / `stack var b[N]`
     } else {
         var gi = _findvar_core(S, noff);
@@ -4027,7 +4027,7 @@ fn _masg_kind(S, nm, li, ti): i64 {
         elif (_is_simd_any(S, lt) == 1) { k = 2; }
         elif (lt < 0) { if (GLAGG(S, li) == 1) { k = 1; tup = _tup_is(S, 0 - lt); } }
         elif (lt == F32_TYID) { k = 3; }
-        elif (GLSPAN(S, li) > 1) { k = 4; if (GSLICE_W(S, li) > 0) { k = 6; } }
+        elif (GLSPAN(S, li) > 1) { k = 4; if (_slice_lw(S, li) > 0) { k = 6; } }
     } else {
         var gi = _findvar_core(S, nm);
         if (gi < 0) { return 0; }
