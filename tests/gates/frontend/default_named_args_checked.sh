@@ -651,7 +651,7 @@ legs() {   # <tcyr> <label prefix> <floor>: x86 plain / IR=3 / DCE, aarch64, cx,
     TC=$1; P=$2
     WANT=$(grep -cE '^ *assert_eq\(' "$TC" || true)
     [ "$WANT" -ge "$3" ] || bad "${P}0: only $WANT assertions derived from $(basename "$TC") (floor $3)"
-    # cx has no 9-16 B register-pair struct return: its leg counts without the rows under `#ifndef CYRIUS_TARGET_CX`.
+    # cx counts without the rows under `#ifndef CYRIUS_TARGET_CX` (derived; none since 6.7.8 lifted the 16 B pair fence).
     NCX=$(awk '/^ *#ifndef CYRIUS_TARGET_CX/ { s = 1 } /^ *#endif/ { s = 0 } s && /^ *assert_eq\(/ { n++ } END { print n + 0 }' "$TC")
     for mode in plain IR3 DCE; do
         case $mode in

@@ -17,7 +17,7 @@
 # The compile-time rows (a mismatched receive is refused) are in
 # tests/gates/frontend/generic_type_arg_unknown_refused.sh (K). Mutation: put the `-3` refusal
 # back in `_instantiate_generic_fn` -> this file does not build.
-# ⚠ Not run on cx: cx has no 16-byte struct pair return at all (`first(p, 9)`), generic or not.
+# On cx since 6.7.8 (its 16-byte struct pair, `first(p, 9)`): tests/gates/codegen/cx_crossos_rows_run.sh R8.
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 include "lib/assert.cyr"

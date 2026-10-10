@@ -234,15 +234,14 @@ var r = main(); syscall(60, r);
 ACCEPT_ROWS="A1 A2 A3 A4 A5 A6 A7 A8 A9"
 # Which legs an acceptance row RUNS on. Everything runs everywhere except A7, whose int-class
 # 16-byte pair return is a per-target ABI the tuple guard has nothing to do with:
-#   cx      — refuses it outright with its own diagnostic (`cx: int-class 16B struct pair-return
-#             ABI not supported`), which is itself the proof the FRONTEND passed the tuple
-#             through; the vector refusal would have stopped it before the backend saw it.
+#   cx      — runs it since 6.7.8 (r0:r4, the multi-value pair's registers); before, it refused
+#             the pair outright ("cx: int-class 16B struct pair-return ABI not supported").
 #   aarch64 — silently loses the second register: 41 for 48. PRE-EXISTING — measured identical
 #             on this lane's parent compiler (701fb02f), so it is not this bite's and not this
 #             gate's to turn red. Reported by bite 21's review for a later bite.
 # A8 and A9 (the SCALAR arity-2/arity-3 multi-return) run on all four legs and are green on all
 # four, so the "tuple syntax still works" property is not host-only.
-a_legs() { case "$1" in A7) echo "host win64";; *) echo "host cx aarch64 win64";; esac; }
+a_legs() { case "$1" in A7) echo "host cx win64";; *) echo "host cx aarch64 win64";; esac; }
 # Every expectation is derived a different way from the program that produces it: the vector
 # rows read a lane the source stored a literal into, A7 sums two distinct fields (41+7=48, and
 # 7+41 is the same — so A7 is paired with X10, which has the same operands and must be REFUSED),

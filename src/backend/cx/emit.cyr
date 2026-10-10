@@ -333,8 +333,9 @@ fn ETESTAZ(S): i64 { CX_MOVI(S, 1, 0); return 0; }  # r1 = 0 so EJCC's eq r0,r0,
 # clobbers it. Opcode 2 is `mov ra, rb` with ra = DEST.
 fn EMOVRDXRAX(S): i64 { CX_EMIT(S, 2, 4, 0, 0); return 0; }  # mov rdx, rax → mov r4, r0
 fn EMOVRA_RDX(S): i64 { CX_EMIT(S, 2, 0, 4, 0); return 0; }  # mov rax, rdx → mov r0, r4
-# 6.7.7 — cx has no 9-16 B struct pair yet (EFLLOAD_STRUCT_INT_PAIR refuses it): nothing to sync.
-# See the aarch64 ESTRUCT_PAIR_HI_SYNC. CHANGELOG [6.7.7]
+# 6.7.8 — nothing to sync: the 9-16 B struct pair's high word IS r4, the multi-value slot
+# (EFLLOAD_STRUCT_INT_PAIR / EFLSTORE_STRUCT_INT_PAIR), as rdx is both on x86. See the aarch64
+# ESTRUCT_PAIR_HI_SYNC, where x1 and x2 differ. CHANGELOG [6.7.7], [6.7.8]
 fn ESTRUCT_PAIR_HI_SYNC(S): i64 { return 0; }
 # v6.5.21 — THIRD multi-value return slot = r5 (cx's r10 peer). Same
 # survivability argument as r4: cxvm's `call` pushes only the PC, and
@@ -1024,17 +1025,35 @@ fn EFLSTORE_F64V4_PAIR(S, idx): i64 {
     return 0;
 }
 
-# v5.10.45 Phase 1 stub — int-class 16B struct pair-return.
-# cx bytecode has no pair-return ABI today. Phase 2/3 may add it
-# if cyrius-x bytecode needs to consume value-typed struct
-# returns; for now error so consumers fail loudly rather than
-# silently miscompiling.
+# 6.7.8 — the int-class 9-16 B struct pair: lo in r0, hi in r4 (x86's rax:rdx). r4, not the
+# f64v2 pair's r1, because r4 is cx's rdx peer: the multi-value second slot (`return (a, b);`,
+# `ret2`, the destructure, `rethi()` — EMOVRDXRAX / EMOVRA_RDX), so a struct fn's
+# `return (a, b);` received as the struct and a `return p;` read by `var a, b = f();` agree with
+# no sync (ESTRUCT_PAIR_HI_SYNC stays a no-op). r4 survives the return: EFNEPI and ECALLCLEAN
+# touch fp / sp / r252 only, EDEFER_SAVE keeps r0-r5. r14 / r15 are argument registers too —
+# never emitted between ECALLPOPS and the call. Same slot layout as the f64v2 pair: the named
+# slot `idx` = lo (&v + 0), its filler `idx - 1` = hi (&v + 8). Before 6.7.8 both were ERR_MSG
+# stubs ("cx: int-class 16B struct pair-return ABI not supported"). CHANGELOG [6.7.8]
 fn EFLLOAD_STRUCT_INT_PAIR(S, idx): i64 {
-    ERR_MSG(S, "cx: int-class 16B struct pair-return ABI not supported", 54);
+    CX_EMIT(S, 2, 14, 253, 0);          # mov r14, fp
+    CX_MOVI(S, 15, _cx_ldisp(idx));     # r15 = offset_lo
+    CX_EMIT(S, 17, 14, 14, 15);         # sub r14, r14, r15
+    CX_EMIT(S, 65, 0, 14, 0);           # load64 r0, [r14]
+    CX_EMIT(S, 2, 14, 253, 0);          # mov r14, fp
+    CX_MOVI(S, 15, _cx_ldisp(idx - 1)); # r15 = offset_hi
+    CX_EMIT(S, 17, 14, 14, 15);         # sub r14, r14, r15
+    CX_EMIT(S, 65, 4, 14, 0);           # load64 r4, [r14]
     return 0;
 }
 fn EFLSTORE_STRUCT_INT_PAIR(S, idx): i64 {
-    ERR_MSG(S, "cx: int-class 16B struct pair-return ABI not supported", 54);
+    CX_EMIT(S, 2, 14, 253, 0);          # mov r14, fp
+    CX_MOVI(S, 15, _cx_ldisp(idx));     # r15 = offset_lo
+    CX_EMIT(S, 17, 14, 14, 15);         # sub r14, r14, r15
+    CX_EMIT(S, 67, 14, 0, 0);           # store64 [r14], r0
+    CX_EMIT(S, 2, 14, 253, 0);          # mov r14, fp
+    CX_MOVI(S, 15, _cx_ldisp(idx - 1)); # r15 = offset_hi
+    CX_EMIT(S, 17, 14, 14, 15);         # sub r14, r14, r15
+    CX_EMIT(S, 67, 14, 4, 0);           # store64 [r14], r4
     return 0;
 }
 

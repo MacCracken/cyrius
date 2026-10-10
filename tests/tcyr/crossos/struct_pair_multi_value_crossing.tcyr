@@ -18,8 +18,8 @@
 # ⚠ WHY crossos/: the defect was aarch64-only — this file passes on x86_64 against the broken
 # compiler. It runs on pi and ecb at the release gate, and under qemu-aarch64 in
 # tests/gates/codegen/struct_pair_multi_value_crossing.sh (with the top-level declaration-zone rows
-# a file with includes cannot place, and the mutation ledger). cx has no 16 B struct pair at all yet
-# (issues/2026-10-08-cx-16b-struct-return-refused.md): this file does not build there.
+# a file with includes cannot place, and the mutation ledger). cx (6.7.8: its struct pair is r0:r4,
+# the multi-value registers themselves) runs it under cxvm in that gate's cx leg.
 #
 # ⭐ Every value is (x, x * 10 + 3) for x = 5, read back as a * 100 + b = 553: the two words differ
 # from each other and from every argument register (a two-argument `mk(a, b)` would leave b in x1

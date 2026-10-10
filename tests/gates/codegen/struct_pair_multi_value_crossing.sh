@@ -29,7 +29,9 @@
 #      on x86_64 and under qemu; the release gate runs it on pi / ecb / ach / cass
 #   R  the struct callee the tuple capture and `a, b = f();` REFUSE (the user's B4 decision: a struct
 #      return is no multi-value call) stays refused on the aarch64 compiler
-# cx has no 16 B struct pair yet (issues/2026-10-08-cx-16b-struct-return-refused.md): no cx leg.
+#   C  (6.7.8) the X rows and the values file on cx (cxvm): cx's struct pair is r0:r4, the
+#      multi-value registers themselves, so nothing differs there — the leg pins that it stays so
+#      (it had no 16 B struct pair at all before 6.7.8: issues/archived/2026-10-08-cx-16b-struct-return-refused.md)
 #
 # MUTATION LEDGER (scratch copies of the tree, each rebuilt with the one change, the gate run from
 # that copy as CYCC=<mutant>; 2026-10-09):
@@ -63,6 +65,13 @@ if [ "$QEMU" -eq 1 ]; then
         bad "src/main_aarch64.cyr did not build: $(grep '^error' "$T/cc_a64.err" | head -1 || true)"; QEMU=0
     else chmod +x "$A64"; fi
 fi
+CX=0
+CXC="$T/cc_cx"
+if "$CC" < src/main_cx.cyr > "$CXC" 2> "$T/cc_cx.err" && [ -s "$CXC" ] \
+   && "$CC" < programs/cxvm.cyr > "$T/cxvm" 2> "$T/cxvm.err" && [ -s "$T/cxvm" ]; then
+    chmod +x "$CXC" "$T/cxvm"; CX=1
+    printf '#!/bin/sh\nexec "%s" < "$1"\n' "$T/cxvm" > "$T/cxrun"; chmod +x "$T/cxrun"
+else bad "src/main_cx.cyr or programs/cxvm.cyr did not build: $(grep '^error' "$T/cc_cx.err" "$T/cxvm.err" | head -1 || true)"; fi
 # run <compiler> <runner|""> <name> <suffix> -> $got: the exit code, or "did not build ..."
 run() {
     rc=0; timeout 60 "$1" < "$T/$3.cyr" > "$T/$3.$4" 2> "$T/$3.$4.err" || rc=$?
@@ -71,7 +80,7 @@ run() {
     if [ -n "$2" ]; then timeout 30 $2 "$T/$3.$4" > /dev/null 2>&1 || got=$?
     else timeout 30 "$T/$3.$4" > /dev/null 2>&1 || got=$?; fi
 }
-# exits <name> <want> <what> <source>: x86_64 then aarch64 (qemu)
+# exits <name> <want> <what> <source>: x86_64, aarch64 (qemu), then cx (cxvm)
 exits() {
     printf '%b' "$4" > "$T/$1.cyr"
     run "$CC" "" "$1" x86
@@ -79,6 +88,10 @@ exits() {
     if [ "$QEMU" -eq 1 ]; then
         run "$A64" qemu-aarch64 "$1" a64
         if [ "$got" = "$2" ]; then ok "$3 (aarch64): exit $got"; else bad "$3 (aarch64): $got, want $2"; fi
+    fi
+    if [ "$CX" -eq 1 ]; then
+        run "$CXC" "$T/cxrun" "$1" cyx
+        if [ "$got" = "$2" ]; then ok "$3 (cx): exit $got"; else bad "$3 (cx): $got, want $2"; fi
     fi
 }
 # refused_a64 <name> <fragment> <what> <source>: the aarch64 compiler refuses it, once
@@ -132,6 +145,7 @@ tcyr() {   # <what> <compiler> <runner>
 }
 tcyr "T1: the values file (x86_64)" "$CC" ""
 if [ "$QEMU" -eq 1 ]; then tcyr "T2: the values file (aarch64, qemu)" "$A64" qemu-aarch64; fi
+if [ "$CX" -eq 1 ]; then tcyr "T3: the values file (cx, cxvm)" "$CXC" "$T/cxrun"; fi
 
 refused_a64 r1 "cannot capture 'mk' into tuple (i64, i64) - it returns struct 'P', not a tuple" "R1: \`var t: (i64, i64) = mk(5);\` from a \`: P\` fn" "${P}${ML}fn main(): i64 { var t: (i64, i64) = mk(5); return t.0 * 10 + t.1; }\n$E"
 refused_a64 r2 "cannot re-assign from 'mk' - it returns struct 'P', not multiple values" "R2: \`a, b = mk(5);\` from a \`: P\` fn" "${P}${ML}fn main(): i64 { var a = 0; var b = 0; a, b = mk(5); return a * 10 + b; }\n$E"
@@ -139,4 +153,4 @@ refused_a64 r2 "cannot re-assign from 'mk' - it returns struct 'P', not multiple
 if [ "$QEMU" -eq 0 ]; then echo "  SKIP: the aarch64 legs (qemu-aarch64 not installed; the crossos tcyr covers pi / ecb)"; skips=$((skips + 1)); fi
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — the aarch64 legs could not run; the x86_64 rows passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — a 9-16 B struct return and a multi-value return agree in both directions on x86_64 and aarch64 (cross + native fork), rethi() included"
+echo "PASS: $G — a 9-16 B struct return and a multi-value return agree in both directions on x86_64, aarch64 (cross + native fork) and cx, rethi() included"

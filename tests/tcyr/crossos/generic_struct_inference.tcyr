@@ -71,8 +71,8 @@
 # so every expression position was a syntax error ("expected ')', got '.'" / "expected ';', got
 # '.'"), and `var s = mkp(3).y + 1;` also typed `s` as the struct and dispatched `+` to an undefined
 # `Pt_add`. Rows cover the argument, the var-init, the expression and a chain, for each return
-# class: rax (a 5 B `P8`), rax:rdx (the 16 B `Pt`, `W1<Pt>`; off on cx, which has no register-pair
-# struct return) and the retptr (`P3`, `BB`, `BP`, `Box<Pt>`), plus a `Str` handle, a method on
+# class: rax (a 5 B `P8`), rax:rdx (the 16 B `Pt`, `W1<Pt>`; on cx r0:r4 since 6.7.8) and the
+# retptr (`P3`, `BB`, `BP`, `Box<Pt>`), plus a `Str` handle, a method on
 # the result, a struct-typed field taken whole, a BARE STATEMENT (`mk8(5).bump();`, `mk3(4).c;`,
 # `mkpt(3).phit();` — PARSE_STMT sent `IDENT (` straight to PARSE_FNCALL, so the `.` stayed
 # "expected ';', got '.'" after the factor learned it; the 6.6.12 review find), and a literal argument (`mk8(4).a * 10`, which
@@ -90,7 +90,7 @@
 # BARE STATEMENT, `id<i32>(4);`. The IDENT arm of PARSE_STMT sent only `IDENT (` to PARSE_FNCALL,
 # so `IDENT <` fell into the assignment path: "expected '=', got '<'" in a fn and at top level,
 # for every return class (the inferred `id(4);` worked). Rows: scalar, rax (5 B `P8`), rax:rdx
-# (16 B `Pt`, off on cx) and retptr (24 B `P3`) results dropped, a `.field` and a method on the
+# (16 B `Pt`) and retptr (24 B `P3`) results dropped, a `.field` and a method on the
 # result, and a postfix `?` on a pair-returning (`Result`) generic — Ok falls through, Err
 # propagates both halves. The top-level struct refusal and the #must_use warning are in
 # tests/gates/frontend/call_result_field.sh (G rows). Mutation: no `_stmt_explicit_generic` call
@@ -153,10 +153,8 @@ fn gl<T>(p: T): i64 { var q: T = p; var s = 0; var i = 0; while (i < 2) { s = s 
 # Forwarding by inference.
 fn outer_inf<T>(p: T): i64 { var r = g(p); return r + 2; }
 fn outer_flat<T>(p: T): i64 { return gf(p) + 2; }
-# Generic and plain fns returning a generic struct instance. (Off on cx: its backend has no
-# 9-16 B register-pair struct return, which the base `Box` and `Pt` use — a cx limit this file
-# does not test; the call-path rows, `r: Box<Pt>` parameters and controls still run there.)
-#ifndef CYRIUS_TARGET_CX
+# Generic and plain fns returning a generic struct instance. (Run on cx too since 6.7.8, when its
+# backend gained the 9-16 B register-pair struct return the base `Box` and `Pt` use.)
 fn mk<T>(x: T): Box<T> { var b: Box<T>; b.v = x; b.n = 5; return b; }
 fn mkp(x: Pt): Box<Pt> { var b: Box<Pt>; b.v = x; b.n = 5; return b; }
 fn wrap(p: Pt): Box<Pt> { return mk(p); }
@@ -177,7 +175,6 @@ fn idp<T>(x: T): T { return x; }
 fn idq<T>(x: T): T { var y: T; y.a = x.a; y.b = x.b; y.c = x.c + 1; return y; }
 fn p3i<T>(x: T): P3 { var r: P3; r.a = x; r.b = x + 1; r.c = x + 2; return r; }
 fn p3s(q: P3): i64 { return q.a + q.b * 10 + q.c * 100; }
-#endif
 # A range over a T-typed value is not a field access.
 fn sm<T>(n: T): i64 { var s = 0; for i in n..10 { s = s + i; } return s; }
 # Scalar controls.
@@ -192,12 +189,10 @@ fn top(q: Pt): i64 { var r = g(q); return r; }
 fn top_tail(q: Pt): i64 { return g(q); }
 fn tail_g(a): i64 { var p: Pt; p.x = a; p.y = 5; return g(p); }
 fn tail_gf(a): i64 { var p: Pt; p.x = a; p.y = 5; return gf(p); }
-#ifndef CYRIUS_TARGET_CX
 fn mkpt(a): Pt { var p: Pt; p.x = a; p.y = 5; return p; }
 # Calls a plain fn defined BELOW it (pass 1 must record `mkq`'s instance return).
 fn use_fwd(p: Pt): i64 { var r: Box<Pt> = mkq(p); return r.n * 10 + r.v.x + r.v.y * 100; }
 fn mkq(x: Pt): Box<Pt> { var b: Box<Pt>; b.v = x; b.n = 5; return b; }
-#endif
 
 # CF (6.6.12): struct-returning fns whose RESULT's field is taken, one per return class.
 struct P8 { a: i32; b: i8; }            # 5 B: returned in rax
@@ -290,7 +285,6 @@ fn run_call_fields(): i64 {
     return 0;
 }
 
-#ifndef CYRIUS_TARGET_CX
 fn Pt_psum(self: Pt): i64 { return self.x + self.y; }
 fn Pt_phit(self: Pt): i64 { cf_hits = cf_hits + self.x * 10 + self.y; return cf_hits; }
 struct F2 { x: f64; y: f64; }
@@ -318,7 +312,6 @@ fn run_call_fields_pair(): i64 {
     assert_eq(f64_to(f64_mul(fx, 100.0)), 375, "CF: `mkf2().x + mkf2().y` is a float add");
     return 0;
 }
-#endif
 
 # SG (6.6.12, R2): explicit generic calls as bare statements; every instance adds to sg_hits.
 var sg_hits = 0;
@@ -408,7 +401,6 @@ fn run_stmt_generics(): i64 {
     assert_eq(t2 * 100 + v2 + sg_hits * 1000, 2199, "SG: `sgdiv<i32>(6, 0)?;` Err propagates both halves (Err(99))");
     return 0;
 }
-#ifndef CYRIUS_TARGET_CX
 fn sgpt<T>(x: T): Pt { sg_hits = sg_hits + x; var p: Pt; p.x = x; p.y = 5; return p; }
 fn run_stmt_generics_pair(): i64 {
     var p: Pt; p.x = 1; p.y = 2;
@@ -421,7 +413,6 @@ fn run_stmt_generics_pair(): i64 {
     assert_eq(mk<Pt>(p).n, 5, "SG: `mk<Pt>(p);` / `mkw<Pt>(p);`, struct type arguments, as statements");
     return 0;
 }
-#endif
 
 fn run_calls(a): i64 {
     var p: Pt; p.x = a; p.y = 5;
@@ -462,7 +453,6 @@ fn run_params(): i64 {
     return 0;
 }
 
-#ifndef CYRIUS_TARGET_CX
 fn run_returns(): i64 {
     var p: Pt; p.x = 1; p.y = 2;
     test_group("a return type naming a generic struct instance");
@@ -530,7 +520,6 @@ fn run_paths(): i64 {
     assert_eq(p3s(p3i(4)), 654, "E: the same, inferred");
     return 0;
 }
-#endif
 
 fn main(): i64 {
     alloc_init();
@@ -541,12 +530,10 @@ fn main(): i64 {
     run_call_fields();
     run_stmt_generics();
     run_generic_q();
-    #ifndef CYRIUS_TARGET_CX
     run_returns();
     run_paths();
     run_call_fields_pair();
     run_stmt_generics_pair();
-    #endif
     test_group("scalar generics and controls");
     assert_eq(sm(5), 35, "RG: for i in n..10 over a T-typed n (was 0: read as a field access)");
     # Off on cx: its backend emits no tail call for ANY fn (a plain 20M-deep `c(n - 1, ..)` dies
