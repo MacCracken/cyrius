@@ -3881,9 +3881,10 @@ fn _masg_stmt(S, term): i64 {
 }
 # The callee `fi` (-1: unknown) of `a, b = f();`, cursor on it: a struct- or vector-returning one is
 # refused by name, as the capture refuses it (`_tup_cap_class`) — a struct return is no multi-value
-# call: a 24 B one's values were its retptr's words, and a 16 B one crossed aarch64's struct pair
-# (x0:x1) into the multi-value drain (x0:x2; issue 2026-10-09-aarch64-struct-pair-and-multi-value-
-# registers-disagree), 50 where 59 is right. Then the destructure's arity check. 1 = refused.
+# call: a 24 B one's values were its retptr's words, and a 16 B one is a struct, not two values (until
+# the 6.7.7 aarch64 fix it also crossed the struct pair x0:x1 into the multi-value drain x0:x2 — 50
+# where 59 is right). The refusal is the B4 decision, not a register workaround. Then the destructure's
+# arity check. 1 = refused.
 # CHANGELOG [6.7.7] (B4 review)
 fn _masg_callee(S, fi, n): i64 {
     if (fi < 0) { return 0; }

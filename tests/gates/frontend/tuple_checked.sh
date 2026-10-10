@@ -798,7 +798,8 @@ refused r19h "$R19" "R19h: a classic-for step whose value is not a call" "${MK}$
 # R19i-R19o (B4 review) — a struct- or vector-returning callee is no multi-value call: refused by name, as the
 # capture refuses it. It stored meaningless values: a 24 B struct's (its retptr's words: exit 1 where 59 on x86,
 # aarch64 and PE), a 16 B one's second word read from the multi-value register (x2) where aarch64's struct pair
-# puts it in x1 (59 on x86, 50 on aarch64 — R19m, the aarch64 compiler, is in the A5 leg).
+# put it in x1 (59 on x86, 50 on aarch64 before the 6.7.7 aarch64 fix — R19m, the aarch64 compiler, is in the A5
+# leg). The refusal stands on the B4 decision (a struct callee is no multi-value call), not on the registers.
 RA="cannot re-assign from '"
 SP3='struct P3 { a; b; c; }\nfn mk(): P3 { var p: P3; p.a = 5; p.b = 9; p.c = 4; return p; }\n'
 SPP='fn mkp(): P { var p: P; p.a = 5; p.b = 9; return p; }\n'
