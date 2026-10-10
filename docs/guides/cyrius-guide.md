@@ -1260,9 +1260,10 @@ capture, a field, a call or method / operator result (named by the fn: `'mkp'`, 
 into a by-value parameter of any size, a `p: *T` parameter or a `s: Str` handle, through a call, a
 method's arguments, a tail call and an operator's two operands (parameters 0 and 1 of `Q_add`), and
 a method's `self` (`impl Pt { fn m(self: Q) }` with `p.m()`). A generic INSTANCE is its own struct:
-a `Box<Pt>` passed where `b: Box` is declared is refused, and the reverse — so is `gx(b)` for
-`fn gx<T>(b: Box<T>)`, which does not infer `T` through `Box<T>` and so calls the `Box` base; write
-`gx<Pt>(b)`. An argument with NO struct type stays accepted: `&p` (an address, as
+a `Box<Pt>` passed where `b: Box` is declared is refused, and the reverse. (`gx(b)` for
+`fn gx<T>(b: Box<T>)` was refused here from 6.7.3 to 6.7.7: `T` was not inferred through `Box<T>`,
+so the call reached the `Box` base. Since 6.7.8 it infers `T = Pt` and calls `gx$Pt` — see
+*Generics*.) An argument with NO struct type stays accepted: `&p` (an address, as
 `var q: *Q = &p;` is), an untyped variable (`var u = &p; bq(u)`), a literal, a call returning an
 integer or a pointer, and a fn pointer (`fncall1(&bq, &p)`). Before v6.7.3 only a FIELD into an
 address-passed parameter was checked: every other mismatch compiled clean and the callee read the
@@ -4499,6 +4500,22 @@ every other path ran the i64 base). Only a WHOLE argument binds `T`: `g(p.y)`,
 `g(p.x + p.y)` and `g(p + 1)` infer `i64`, and so does a `pp: *Pt` pointer
 parameter (a pointer, like a `var q: *Pt` local). Any other argument infers
 `i64`, or the width a scalar-returning call declares.
+
+**Through a generic struct parameter** (6.7.8). A `T` that no `x: T` parameter
+carries is inferred through a parameter whose generic struct names it as a whole
+type argument — `fn gx<T>(b: Box<T>)`, `fn g2<T>(p: Pair<i64, T>)`: the argument's
+instance binds `T` to its type argument in `T`'s slot, so `gx(b)` with
+`b: Box<Pt>` calls `gx$Pt` and `b: Box<i32>` calls `gx$i32`, as `gx<Pt>(b)` /
+`gx<i32>(b)` do (before 6.7.8 the call reached the `Box` base and was refused). The
+WHOLE argument must be the instance: a local or by-value parameter, a struct
+global, or a call returning it. Through a `*Box<T>` parameter, what the argument
+POINTS AT binds: `&b`, a `bp: *Box<Pt>` name or a call returning one, or a
+`Box<Pt>` value (whose address the call passes) — before 6.7.8 these compiled, ran
+the base and read `b.n` at the base's offset. A pointer passed to a by-value
+`b: Box<T>` binds nothing (the base runs, as before), and a plain `p: *T` keeps the
+rule above. An `x: T` parameter wins over a struct one; `T` nested deeper
+(`Box<Pair<T>>`) and a generic call's own result (`gx(mk(p))`) are not inferred —
+write `gx<Pt>(..)`.
 
 Type arguments may be **inferred** from the call (`add(1, 2)`) or written
 **explicitly** (`add<i64>(x)`, `add<i32>(x)`). Inside a generic body a type

@@ -10035,6 +10035,8 @@ fn _body_has_defer(S): i64 {
 var _gsn = 0;           # the T-typed names of the fn being scanned (params, then `var x: T`)
 var _gsn_n = 0;
 var _gs_at = 0;         # _gs_params: the token just past the parameter list
+var _gs_open = 0;       # _gs_params: its `(` (a struct carrier records G's name as an offset from it)
+var _gi_sc = 0;         # _gen_infer_sc: a struct carrier bound T to a scalar other than i64
 var _gm_gen = 0;        # bumped on every record, so the closure below knows to recompute
 var _gm_closed = 0 - 1;
 
@@ -10056,6 +10058,7 @@ fn _gsn_has(noff): i64 {
 # 1-based index of the first parameter carrying each type parameter, packed as GFGM bits 8-23.
 fn _gs_params(S, fi, open): i64 {
     _gsn_n = 0;
+    _gs_open = open;
     var i = open + 1;
     var n = GTCNT(S);
     var pk = 0;
@@ -10097,6 +10100,57 @@ fn _gs_param(S, fi, i, pc, pk): i64 {
         _gsn_add(TOKVAL(S, i));
         if ((pk & 0xFF0000) == 0) { pk = pk | ((pc + 1) << 16); }
     }
+    if (TOKTYP(S, ti + 1) == 19) { pk = _gs_carrier(S, fi, ti, pc, pk, ti - i - 2); }   # 6.7.8: `G<..T..>`
+    return pk;
+}
+# ⛔ 6.7.8 — A STRUCT CARRIER. `fn gx<T>(b: Box<T>)` gave T no carrying parameter, so
+# `gx(b)` with `b: Box<Pt>` inferred i64 and called the base (`b: Box`) — refused as a struct
+# mismatch since 6.7.3; and through `*Box<T>`, `gx(&b)` compiled and read `b.n` at the base's
+# offset (4 for 8). A parameter typed `G<.., T, ..>` or `*G<.., T, ..>` (cursor `ti` on G's name,
+# `ptr` 1 behind the `*`), T a WHOLE type argument at depth 1, now carries T through G's slot.
+# Per type parameter w, a 20-bit field of GFGM at bit 24 + 20w (bits 0-23 keep their meaning):
+#   bits 0-7 the parameter's index + 1 · bit 8 T's slot in G · bit 9 the `*` · bits 10-19 G's name
+#   token as an offset from the list's `(` — G is looked up when a call infers, so a struct
+#   declared below the fn is found.
+# The first carrying parameter wins, as for a direct carrier; a direct carrier wins over this one
+# (`_gen_infer_tp`). `Box<Pair<T>>` (T nested) records nothing — its refusal stands.
+# CHANGELOG [6.7.8]
+fn _gs_carrier(S, fi, ti, pc, pk, ptr): i64 {
+    var off = ti - _gs_open;
+    if (off > 1023) { return pk; }
+    var tp = GFTP(S, fi);
+    var j = ti + 2;
+    var slot = 0;
+    var d = 1;
+    var n = GTCNT(S);
+    while (j < n) {
+        var t = TOKTYP(S, j);
+        if (t == 12 || t == 10 || t == 11 || t == 13 || t == 5) { return pk; }
+        if (d == 1) { if (slot < 2) { if (_gs_targ_whole(S, j) == 1) {
+                    pk = _gs_sc_rec(pk, TOKVAL(S, j), tp, (pc + 1) | (slot << 8) | (ptr << 9) | (off << 10));
+                } } }
+        if (t == 31) { if (d == 1) { slot = slot + 1; } }
+        if (t == 19) { d = d + 1; }
+        if (t == 20) { d = d - 1; }
+        if (t == 39) { d = d - 2; }
+        if (t == 152) { d = d - 3; }
+        if (d <= 0) { return pk; }
+        j = j + 1;
+    }
+    return pk;
+}
+# 1 = the token at j is a whole type argument: a name between `<` / `,` and `,` / a closing `>`.
+fn _gs_targ_whole(S, j): i64 {
+    if (TOKTYP(S, j) != 2) { return 0; }
+    var pt = TOKTYP(S, j - 1);
+    if (pt != 19 && pt != 31) { return 0; }
+    var nt = TOKTYP(S, j + 1);
+    if (nt == 31 || nt == 20 || nt == 39 || nt == 152) { return 1; }
+    return 0;
+}
+fn _gs_sc_rec(pk, tn, tp, f): i64 {
+    if (tn == (tp & 0xFFFFFFFF) - 1) { if (((pk >> 24) & 255) == 0) { pk = pk | (f << 24); } }
+    if (tn == ((tp >> 32) & 0xFFFFFFFF) - 1) { if (((pk >> 44) & 255) == 0) { pk = pk | (f << 44); } }
     return pk;
 }
 # From token i (past the parameter list) to the token after the body's `{`, or -1 (no body).
@@ -10298,7 +10352,7 @@ fn _gen_infer_tp(S, fi, open, which): i64 {
     var m = GFGM(S, fi);
     var k = which + 1;
     if ((m & 4) != 0) { k = (m >> (8 + which * 8)) & 255; }
-    if (k == 0) { return 0 - 8; }
+    if (k == 0) { return _gen_infer_sc(S, fi, open, (m >> (24 + which * 20)) & 0xFFFFF); }   # 6.7.8
     var a = _call_arg_for(S, fi, open, k - 1);   # 6.7.7: or the argument naming it
     if (a < 0) { return 0 - 8; }
     if (_gen_arg_whole(S, a) == 0) { return 0 - 8; }
@@ -10308,6 +10362,141 @@ fn _gen_infer_tp(S, fi, open, which): i64 {
     STI(S, sv);
     if (_tup_is(S, c) == 1) { return _gen_tup_bind(S, fi, a, c); }
     return c;
+}
+# ⛔ 6.7.8 — T through its STRUCT CARRIER (`_gs_carrier`; T has no direct one). The WHOLE
+# argument in the carrying position must be an instance of the parameter's G (`_gsc_arg`), and T
+# is that instance's type argument in T's slot (`_sinst_conc`): `gx(b)` with `b: Box<Pt>` binds Pt
+# and calls `gx$Pt`, exactly as `gx<Pt>(b)` does. Anything else infers i64 — today's base, and
+# its refusal. A scalar other than i64 (`b: Box<i32>`) marks `_gi_sc`, so the call instantiates
+# `gx$i32` as `gx<i32>(b)` does (its base takes a `Box`: a different layout). CHANGELOG [6.7.8]
+fn _gen_infer_sc(S, fi, open, f): i64 {
+    var k = f & 255;
+    if (k == 0) { return 0 - 8; }
+    var a = _call_arg_for(S, fi, open, k - 1);
+    if (a < 0) { return 0 - 8; }
+    var c = _gsc_arg(S, a, (f >> 9) & 1);
+    var r = _sinst_conc(S, c, _gsc_g(S, fi, f >> 10), (f >> 8) & 1);
+    if (r == 0) { return 0 - 8; }
+    if (r < 0) { if (r != 0 - 8) { _gi_sc = 1; } }
+    return r;
+}
+# 1 = the inference just run bound a struct carrier's T to a scalar other than i64, and fi has a
+# scalar instance (a stub generic keeps its refusal, as `gs<i32>(b)` does): the call instantiates.
+fn _gen_sc_inst(S, fi): i64 {
+    if (_gi_sc == 0) { return 0; }
+    if (_gen_stub(S, fi) != 0) { return 0; }
+    return 1;
+}
+# The generic struct G a struct carrier names: its name token is `off` past fi's `(`. 0 when it is
+# not a generic struct.
+fn _gsc_g(S, fi, off): i64 {
+    var o = _gen_def_open(S, fi);
+    if (o < 0) { return 0; }
+    if (TOKTYP(S, o + off) != 2) { return 0; }
+    var g = FINDSTRUCT(S, TOKVAL(S, o + off));
+    if (g <= 0) { return 0; }
+    if (GSTP(S, g - 1) == 0) { return 0; }
+    return g;
+}
+# The struct a struct carrier's WHOLE argument at token a holds or points at, 0 when none (the
+# call then infers i64). ptr 0 (`b: G<T>`): a G<X> VALUE — a name, a struct global, a call
+# returning it; never a pointer (`&b`, a `*G<X>` name), which binds nothing and runs the base as
+# it compiles today. ptr 1 (`b: *G<T>`): what it POINTS AT — `&b` of an inline struct or a by-value
+# parameter, a `*G<X>` name or a `*G<X>`-returning call, or a G<X> value, whose address the call
+# passes (6.6.20). CHANGELOG [6.7.8]
+fn _gsc_arg(S, a, ptr): i64 {
+    var t = TOKTYP(S, a);
+    if (t == 27) {
+        if (ptr == 0) { return 0; }
+        if (_gsc_name_end(S, a + 1) == 0) { return 0; }
+        return _gsc_addr_of(S, TOKVAL(S, a + 1));
+    }
+    if (t != 2) { return 0; }
+    if (TOKTYP(S, a + 1) == 10) { return _gsc_call(S, a, ptr); }
+    if (_gsc_name_end(S, a) == 0) { return 0; }
+    return _gsc_name(S, TOKVAL(S, a), ptr);
+}
+fn _gsc_name_end(S, a): i64 {
+    if (TOKTYP(S, a) != 2) { return 0; }
+    var nt = TOKTYP(S, a + 1);
+    if (nt == 31 || nt == 11) { return 1; }
+    return 0;
+}
+fn _gsc_call(S, a, ptr): i64 {
+    if (_call_is_whole_arg(S, a) == 0) { return 0; }
+    var fi = FINDFN(S, TOKVAL(S, a));
+    if (fi < 0) { return 0; }
+    if (ptr == 1) { if (_fn_rpsid != 0) {
+            var ps = L64(_fn_rpsid + fi * 8);
+            if (ps > 0) { return ps; }
+        } }
+    var r = GFRS(S, fi);
+    if (r > 0) { return r; }
+    return 0;
+}
+fn _gsc_name(S, noff, ptr): i64 {
+    var li = FINDLOCAL(S, noff);
+    if (li >= 0) {
+        var lt = GLTYPE(S, li);
+        if (lt >= 0) { return 0; }
+        if (lt <= 0 - 2048) { return 0; }
+        if (GLPTRP(S, li) == 1) { if (ptr == 0) { return 0; } }
+        return 0 - lt;
+    }
+    var vi = _findvar_core(S, noff);
+    if (vi < 0) { return 0; }
+    if (ptr == 1) {
+        var ps = _gv_ptr_sid(S, vi);
+        if (ps > 0) { return ps; }
+    }
+    if (GVPM(S, vi) == 0) { return 0; }
+    var gt = GVTYPE(S, vi);
+    if (gt > 0) { return gt; }
+    return 0;
+}
+# `&name` (a `*G<T>` carrier only): an inline struct local, a by-value struct parameter (whose `&`
+# is the caller's struct, 6.6.6) or an inline struct global. `&q` of a pointer or of a pointer-mode
+# handle is the slot's address — a `**` — and binds nothing.
+fn _gsc_addr_of(S, noff): i64 {
+    var li = FINDLOCAL(S, noff);
+    if (li >= 0) {
+        if (GLPTRP(S, li) == 1) { return 0; }
+        var lt = GLTYPE(S, li);
+        if (lt >= 0) { return 0; }
+        if (lt <= 0 - 2048) { return 0; }
+        if (GLAGG(S, li) == 1) { return 0 - lt; }
+        if (_local_is_sptr_param(S, li) == 1) { return 0 - lt; }
+        return 0;
+    }
+    var vi = _findvar_core(S, noff);
+    if (vi < 0) { return 0; }
+    if (GVPM(S, vi) != 2) { return 0; }
+    var gt = GVTYPE(S, vi);
+    if (gt > 0) { return gt; }
+    return 0;
+}
+# Per generic struct INSTANCE (1-based sid): its base's sid and its two type arguments, recorded
+# when `_instantiate_generic_struct` mints it. 1024 entries: REGSTRUCT's own cap. CHANGELOG [6.7.8]
+var _sinst = 0;
+fn _sinst_note(S, inst, base, c0, c1): i64 {
+    if (inst <= 0) { return 0; }
+    if (inst > 1024) { return 0; }
+    if (_sinst == 0) { _sinst = alloc(1024 * 24); }
+    var e = _sinst + (inst - 1) * 24;
+    S64(e, base);
+    S64(e + 8, c0);
+    S64(e + 16, c1);
+    return 0;
+}
+# The type argument in `slot` of struct c when c is an instance of the generic struct g, else 0.
+fn _sinst_conc(S, c, g, slot): i64 {
+    if (c <= 0) { return 0; }
+    if (c > 1024) { return 0; }
+    if (g <= 0) { return 0; }
+    if (_sinst == 0) { return 0; }
+    var e = _sinst + (c - 1) * 24;
+    if (L64(e) != g) { return 0; }
+    return L64(e + 8 + slot * 8);
 }
 # ⛔ 6.7.7 (B4, R4) — A TUPLE NEVER BINDS A TYPE PARAMETER. `first(t)` with `t: (i64, i64)` inferred
 # T = the tuple and minted `first$(i64, i64)` — a generic over a tuple, which the decision leaves open
@@ -10352,9 +10541,11 @@ fn _gen_call_head(S, fi, noff): i64 {
     if (GFTP(S, fi) == 0) { return fi; }
     if (ex == 0) {
         var open = GTI(S) - 1;
+        _gi_sc = 0;
         var c0 = _gen_infer_tp(S, fi, open, 0);
         var c1 = _gen_infer_tp(S, fi, open, 1);
         if (c0 > 0 || c1 > 0) { return _gen_call_struct(S, fi, noff, c0, c1); }
+        if (_gen_sc_inst(S, fi) == 1) { return _gen_call_struct(S, fi, noff, c0, c1); }   # 6.7.8: `Box<i32>`
         _gh_inf0 = c0;
         _gh_inf1 = c1;
     }
@@ -10407,9 +10598,10 @@ fn _gen_resolve_call(S, ti): i64 {
             if (c0 == 0 - 8 && (c1 == 0 || c1 == 0 - 8)) { return fi; }
         }
     } else {
+        _gi_sc = 0;
         c0 = _gen_infer_tp(S, fi, ti + 1, 0);
         c1 = _gen_infer_tp(S, fi, ti + 1, 1);
-        if (c0 <= 0 && c1 <= 0) { return fi; }
+        if (c0 <= 0 && c1 <= 0) { if (_gen_sc_inst(S, fi) == 0) { return fi; } }   # 6.7.8: `Box<i32>`
         if (((GFTP(S, fi) >> 32) & 0xFFFFFFFF) == 0) { c1 = 0; }
     }
     var spec = _instantiate_generic_fn(S, fi, c0, c1);
@@ -10504,9 +10696,10 @@ fn _tc_generic_divert(S, cfi, ti_after): i64 {
     if (GFTP(S, cfi) == 0) { return 0; }
     if (_gen_stub(S, cfi) != 0) { return 1; }
     if (_bnd_base_bad(S, cfi) == 1) { return 1; }   # 6.7.1 (C3): the head refuses its scalar call
+    _gi_sc = 0;
     if (_gen_infer_tp(S, cfi, ti_after, 0) > 0) { return 1; }
     if (_gen_infer_tp(S, cfi, ti_after, 1) > 0) { return 1; }
-    return 0;
+    return _gi_sc;   # 6.7.8: a struct carrier's scalar (`Box<i32>`) instantiates too
 }
 
 # v6.3.10 (instantiate-once): mint a deduped specialized name `base$<tyname>` into
@@ -10769,7 +10962,9 @@ fn _instantiate_generic_struct(S, base_si, conc0, conc1): i64 {
     _inst_name = 0;
     _tp_n0 = sv_n0; _tp_c0 = sv_c0; _tp_n1 = sv_n1; _tp_c1 = sv_c1;
     STI(S, sv_ti);
-    return FINDSTRUCT(S, mangled);                   # 1-based instance sid
+    var r = FINDSTRUCT(S, mangled);                  # 1-based instance sid
+    _sinst_note(S, r, base_si + 1, conc0, conc1);    # 6.7.8: what inference reads back (_sinst_conc)
+    return r;
 }
 
 # v6.3.33: consume one type-arg-list `>` close. A `>` (token 20) closes one level. A

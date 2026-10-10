@@ -22,10 +22,11 @@
 #       faulting cx guest could exit 0, and "0" must never read as a pass for these rows.
 #   R4  tests/tcyr/crossos/narrow_slot_width.tcyr — native and cxvm each print
 #       `<N> passed, 0 failed` with N derived from the source (58 today, floor 58) and exit 0.
-#   R5  tests/tcyr/crossos/generic_struct_inference.tcyr — native: every assertion (126, floor 126);
+#   R5  tests/tcyr/crossos/generic_struct_inference.tcyr — native: every assertion (156, floor 156);
 #       cxvm: every assertion outside `#ifndef CYRIUS_TARGET_CX` blocks, indented ones included
-#       (125, floor 125 — all but the TC row: cx emits no tail call) — the B02 LIT group, B04's
-#       CF group and, since 6.7.8, the 16 B pair-return rows run there.
+#       (155, floor 155 — all but the TC row: cx emits no tail call) — the B02 LIT group, B04's
+#       CF group and, since 6.7.8, the 16 B pair-return rows and the SC rows (T inferred through a
+#       generic struct parameter) run there.
 #   R6  tests/tcyr/crossos/struct_field_value_copy.tcyr — native and cxvm in full (96, floor 96).
 #       Until 6.7.8 cx refused it (`mkpt`/`twice` return a 16 B Pt, "cx: int-class 16B struct
 #       pair-return ABI not supported") and the row pinned that refusal by name; cx now has the
@@ -342,8 +343,8 @@ inline "R3 B03 field argument + top-level copy-init (V3, V4)" "$T/b03.cyr" 128 "
 echo "R4-R5 — the crossos .tcyr files, native then cxvm, counts derived from the source:"
 tcyr_native tests/tcyr/crossos/narrow_slot_width.tcyr 58
 tcyr_cx     tests/tcyr/crossos/narrow_slot_width.tcyr 58
-tcyr_native tests/tcyr/crossos/generic_struct_inference.tcyr 126
-tcyr_cx     tests/tcyr/crossos/generic_struct_inference.tcyr 125
+tcyr_native tests/tcyr/crossos/generic_struct_inference.tcyr 156
+tcyr_cx     tests/tcyr/crossos/generic_struct_inference.tcyr 155
 
 echo "R6 — struct_field_value_copy.tcyr, native then cxvm in full (cx refused it until 6.7.8):"
 tcyr_native tests/tcyr/crossos/struct_field_value_copy.tcyr 96

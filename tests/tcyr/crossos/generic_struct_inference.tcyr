@@ -112,6 +112,33 @@
 # measured): `_pair_callee_at` taking `name(` only -> rc 139; `_pair_ret_open` (the token passes)
 # taking `name(` only -> rc 139 (the forward-wrapper row, flagged only by the pair prescan).
 #
+# SC (6.7.8) rows `run_struct_carrier`: T inferred through a GENERIC STRUCT parameter.
+# `fn gx<T>(b: Box<T>)` gave T no carrying parameter, so `gx(b)` with `b: Box<Pt>` inferred i64
+# and called the base (`b: Box`) — refused since 6.7.3 as a struct mismatch (the filed repro,
+# issues/archived/2026-10-08-generic-inference-through-generic-struct-param.md, is G1's first row);
+# through `*Box<T>` (the user's fork F1, answered (a) 2026-10-10) `gpx(&b)` and `gpx(bp)` COMPILED
+# and read `b.n` at the base's offset: 4 where 8 is right. Now the whole argument's instance binds
+# T to its type argument in T's slot, as `gx<Pt>(b)` does. Rows: G1 every by-value path (var,
+# assignment, tail, argument, by name, a body that is not inlined, a struct global, a call
+# returning the instance); G2 `Pr<i64, T>` (slot 1) and `Pr<T, U>` (both from one parameter); G3 a
+# `: T` return received, and the pair scans' token reading of it — `sc_q`'s `?` sits above its
+# wrapper `var p = unbox(b); return p.hbx(d);`, and `hbx` is a pair on Pt but one value on Qc, so
+# only p's type through the carrier flags the wrapper; G4 an `x: T` parameter still binds T first
+# (here the literal's i64: what compiled keeps its meaning); G5 `Box<i32>` instantiates `gsz$i32`
+# (a call, a tail call); G6 a call above the generic, and a generic struct declared BELOW the fn
+# naming it; G8 the `*Box<T>` carrier — `&b`, a `*Box<Pt>` local, parameter or call, `&` of a
+# by-value parameter, a Box<Pt> value or call and a struct global (their address passed). What
+# stays refused (`Box<Pair<T>>`, an `x: T` binding i64 against a Box<Pt>) and the by-value
+# carrier's pointer (it binds nothing: the base, as before) are struct_arg_type_refused.sh R18b-R18f.
+# MUTATIONS (scratch tree, measured), each RED here:
+#   MG1 `_gs_param` records no struct carrier             -> the file does not build (G1)
+#   MG2 T's slot ignored (always slot 0)                  -> the file does not build (G2)
+#   MG3 `_tok_gen_ret_sid` not following the carrier      -> rc 139 (G3's `?` above its wrapper)
+#   MG4 the struct carrier asked before an `x: T` one     -> G4 (4 for 8)
+#   MG6 `_tc_generic_divert` blind to a scalar carrier    -> the file does not build (G5, tail)
+#   MG7 no `gsz$i32` for a scalar carrier in the head     -> the file does not build (G5)
+# (MG5, a pointer binding the by-value carrier, is RED at struct_arg_type_refused.sh R18e.)
+#
 # CROSS-HOST because each instance is a by-value struct-param fn emitted inline (jumped over) by
 # every backend, and struct returns take the per-target retptr / register-pair ABI.
 include "lib/assert.cyr"
@@ -521,6 +548,82 @@ fn run_paths(): i64 {
     return 0;
 }
 
+# SC (6.7.8): generics whose T rides a GENERIC STRUCT parameter (`_gs_carrier`).
+fn mk1<T>(x: T): Box<T> { var b: Box<T>; b.v = x; b.n = 8; return b; }   # the filed repro's two fns
+fn gx<T>(b: Box<T>): i64 { return b.n; }
+fn gxl<T>(b: Box<T>): i64 { var s = 0; var i = 0; while (i < 2) { s = s + b.n; i = i + 1; } return s; }
+fn sc_fwd(b: Box<Pt>): i64 { return gx(b); }
+struct Pr<A, B> { a: A; b: B; n; }
+fn g2<T>(p: Pr<i64, T>): i64 { return p.n; }
+fn g22<T, U>(p: Pr<T, U>): i64 { return p.n + sizeof(T) * 100 + sizeof(U) * 1000; }
+fn unbox<T>(b: Box<T>): T { var r: T = b.v; return r; }
+# `hbx` is a pair (a Result) on Pt and ONE value on Qc, so only the receiver's type decides it. The
+# `?` caller is defined ABOVE its wrapper: the pair scans must type `p` through `unbox`'s carrier.
+struct Qc { x; y; }
+fn Pt_hbx(self: Pt, d) { if (d == 0) { return Err(99); } return Ok(self.x / d); }
+fn Qc_hbx(self: Qc, d): i64 { return 77; }
+fn sc_q(n, d) { var v = sc_unb(n, d)?; return Ok(v + 22000); }
+fn sc_unb(n, d) { var b: Box<Pt>; b.v.x = n; b.v.y = 0; b.n = 1; var p = unbox(b); return p.hbx(d); }
+fn g4sz<T>(b: *Box<T>, x: T): i64 { return sizeof(T); }
+fn gsz<T>(b: Box<T>): i64 { return sizeof(T) * 100 + b.n; }
+fn sc_tail(b: Box<i32>): i64 { return gsz(b); }
+fn sc_above(): i64 { var b: Box<Pt>; b.v.y = 4; b.n = 8; return gbelow(b); }
+fn gbelow<T>(b: Box<T>): i64 { return b.n; }
+fn glater<T>(c: Later<T>): i64 { return c.n; }
+struct Later<T> { v: T; n; }    # declared BELOW the generic that names it
+fn gpx<T>(b: *Box<T>): i64 { return b.n; }
+fn sc_pp(bp: *Box<Pt>): i64 { return gpx(bp); }
+fn sc_pa(b: Box<Pt>): i64 { return gpx(&b); }
+fn sc_pid(bp: *Box<Pt>): *Box<Pt> { return bp; }
+
+fn run_struct_carrier(): i64 {
+    test_group("T inferred through a generic struct parameter (6.7.8)");
+    var p: Pt; p.x = 3; p.y = 4;
+    var b: Box<Pt> = mk1(p);
+    assert_eq(gx(b), 8, "G1: `gx(b)`, b: Box<Pt>, the filed repro (was refused: the Box base ran)");
+    var r = gx(b);
+    r = r * 10 + gx(b);
+    assert_eq(r, 88, "G1: `var r = gx(b);` / `r = .. gx(b);`");
+    assert_eq(sc_fwd(b), 8, "G1: a by-value Box<Pt> parameter forwarded, tail position");
+    assert_eq(plus1(gx(b)), 9, "G1: as an argument");
+    assert_eq(gx(b: b), 8, "G1: by name");
+    assert_eq(gxl(b), 16, "G1: a body that is not inlined");
+    assert_eq(gx(GLP), 6, "G1: a struct global");
+    assert_eq(gx(mkp(p)), 5, "G1: a call returning Box<Pt>");
+    assert_eq(gx<Pt>(b), 8, "control: the explicit `gx<Pt>(b)`");
+    var q: Pr<i64, Pt>; q.n = 8;
+    assert_eq(g2(q), 8, "G2: `Pr<i64, T>` binds T from slot 1 (was refused)");
+    var q2: Pr<Pt, i32>; q2.n = 8;
+    assert_eq(g22(q2), 5608, "G2: `Pr<T, U>` binds both from one parameter (16 * 100 + 4 * 1000 + 8)");
+    var u = unbox(b);
+    assert_eq(u.x * 10 + u.y, 34, "G3: `var u = unbox(b);` receives the Pt (a `: T` return)");
+    assert_eq(unbox(b).y, 4, "G3: `unbox(b).y`");
+    var t1, v1 = sc_q(6, 2);
+    var t2, v2 = sc_q(6, 0);
+    assert_eq(t1 * 100000 + v1 + t2 * 1000000 + v2 * 10, 1000990 + 22003,
+        "G3: `w(..)?` above its wrapper `var p = unbox(b); return p.hbx(d);` (the pair scans type p)");
+    var bi: Box<i32>; bi.v = 7; bi.n = 8;
+    assert_eq(g4sz(&bi, 5), 8, "G4: an `x: T` parameter still binds T (the literal's i64) over Box<i32>");
+    assert_eq(g4sz<i32>(&bi, 5), 4, "control: the explicit `g4sz<i32>`");
+    assert_eq(gsz(bi), 408, "G5: Box<i32> instantiates `gsz$i32` (was refused: the Box base)");
+    assert_eq(sc_tail(bi), 408, "G5: the same in tail position");
+    assert_eq(gsz<i32>(bi), 408, "control: the explicit `gsz<i32>(bi)`");
+    assert_eq(sc_above(), 8, "G6: a call above the generic's definition");
+    var lt: Later<Pt>; lt.v.y = 4; lt.n = 8;
+    assert_eq(glater(lt), 8, "G6: a generic struct declared below the generic fn");
+    assert_eq(gpx(&b), 8, "G8: `*Box<T>`, `gpx(&b)` (was 4: the base read b.n at its own offset)");
+    var bp: *Box<Pt> = &b;
+    assert_eq(gpx(bp), 8, "G8: a `*Box<Pt>` local (was 4)");
+    assert_eq(sc_pp(&b), 8, "G8: a `*Box<Pt>` parameter (was 4)");
+    assert_eq(sc_pa(b), 8, "G8: `&b` of a by-value Box<Pt> parameter");
+    assert_eq(gpx(b), 8, "G8: a Box<Pt> value, its address passed (was refused)");
+    assert_eq(gpx(sc_pid(&b)), 8, "G8: a call returning `*Box<Pt>`");
+    assert_eq(gpx(mkp(p)), 5, "G8: a call returning Box<Pt> (was refused)");
+    assert_eq(gpx(GLP), 6, "G8: a struct global");
+    assert_eq(gpx<Pt>(&b), 8, "control: the explicit `gpx<Pt>(&b)`");
+    return 0;
+}
+
 fn main(): i64 {
     alloc_init();
     run_globals();
@@ -534,6 +637,7 @@ fn main(): i64 {
     run_paths();
     run_call_fields_pair();
     run_stmt_generics_pair();
+    run_struct_carrier();
     test_group("scalar generics and controls");
     assert_eq(sm(5), 35, "RG: for i in n..10 over a T-typed n (was 0: read as a field access)");
     # Off on cx: its backend emits no tail call for ANY fn (a plain 20M-deep `c(n - 1, ..)` dies
