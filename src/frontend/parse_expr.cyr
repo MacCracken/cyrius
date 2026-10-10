@@ -2705,6 +2705,15 @@ fn _slice_sub_read(S, li): i64 {
             # Result in rax. Set expression-width tracking so
             # narrowing assignment warnings work for u8/u16/u32.
             SEXW(S, sw);
+            # ⛔ The element is an untyped word and the factor's whole result: what the INDEX
+            # left behind must not describe it — exactly `_arr_sub_read`'s resets. A constant
+            # index armed the constant folder (`_cfo`/`_cfp`), so `s[0] + 10` folded `0 + 10`
+            # and rewound the code to the index's load — the helper call's fixup then patched
+            # the return's jump (exit 134 / SIGSEGV); a `*T` index's step scaled `s[p] + 1`,
+            # a typed index's estype could dispatch an operator. CHANGELOG [6.7.8]
+            SPSC(S, 0);
+            SESTYPE(S, 0);
+            _cfo = 0;
             if (PEEKT(S) != 29) { ERR_EXPECT(S, 29); }
             STI(S, GTI(S) + 1);  # consume ]
             return 1;

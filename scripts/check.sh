@@ -2334,6 +2334,10 @@ _chk_gate "$ROOT/tests/gates/toolchain/test_absorbs_tests.sh"   # 6.7.6 (Break 1
 _chk_gate "$ROOT/tests/gates/frontend/silent_values_checked.sh"   # 6.7.6 (Break 1, lane D)
 _chk_gate "$ROOT/tests/gates/codegen/struct_value_codegen.sh"   # 6.7.6 (Break 1, lane E)
 _chk_gate "$ROOT/tests/gates/frontend/tuple_checked.sh"   # 6.7.7 (B4)
+# 6.7.8 (C2-1b) — a slice read `s[i]` is a whole value as a left operand: a constant index armed the
+# constant folder (`return s[0] + 10;` exited 134, `s[1] * 2` SIGSEGV'd), a `*T` / struct index left
+# its step / type. x86 (plain, IR=1, IR=3, DCE=1), aarch64, cx, PE legs; mutation ledger in the header.
+_chk_gate "$ROOT/tests/gates/frontend/slice_read_left_operand.sh"
 # 6.7.7 — a 9-16 B struct return and a multi-value return agree on aarch64: the struct pair (x0:x1)
 # and the multi-value slot (x2) were read across each other — `var p: P = f()` of a `return (a, b);`,
 # `var a, b = f()` / `rethi()` of a `return p;` — silently wrong on pi / ecb. x86 + qemu legs.
