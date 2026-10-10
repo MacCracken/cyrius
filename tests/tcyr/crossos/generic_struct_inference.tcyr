@@ -127,7 +127,9 @@
 # (here the literal's i64: what compiled keeps its meaning); G5 `Box<i32>` instantiates `gsz$i32`
 # (a call, a tail call); G6 a call above the generic, and a generic struct declared BELOW the fn
 # naming it; G8 the `*Box<T>` carrier — `&b`, a `*Box<Pt>` local, parameter or call, `&` of a
-# by-value parameter, a Box<Pt> value or call and a struct global (their address passed). What
+# by-value parameter, a Box<Pt> value or call and a struct global (their address passed); G9 (review)
+# a field declared `*Box<Pt>` reached through a chain — a local, a `*H` local, `self`, a global, a
+# `*H` global, two hops — and a `: T` return through it. What
 # stays refused (`Box<Pair<T>>`, an `x: T` binding i64 against a Box<Pt>) and the by-value
 # carrier's pointer (it binds nothing: the base, as before) are struct_arg_type_refused.sh R18b-R18f.
 # MUTATIONS (scratch tree, measured), each RED here:
@@ -137,6 +139,8 @@
 #   MG4 the struct carrier asked before an `x: T` one     -> G4 (4 for 8)
 #   MG6 `_tc_generic_divert` blind to a scalar carrier    -> the file does not build (G5, tail)
 #   MG7 no `gsz$i32` for a scalar carrier in the head     -> the file does not build (G5)
+#   MG8 (review) `_gsc_chain` gone (a field chain binds nothing) -> the file does not build (G9's `: T`
+#       return); without that row G9 reads 4 for 8
 # (MG5, a pointer binding the by-value carrier, is RED at struct_arg_type_refused.sh R18e.)
 #
 # CROSS-HOST because each instance is a by-value struct-param fn emitted inline (jumped over) by
@@ -575,6 +579,14 @@ fn gpx<T>(b: *Box<T>): i64 { return b.n; }
 fn sc_pp(bp: *Box<Pt>): i64 { return gpx(bp); }
 fn sc_pa(b: Box<Pt>): i64 { return gpx(&b); }
 fn sc_pid(bp: *Box<Pt>): *Box<Pt> { return bp; }
+# G9 (review, 2026-10-10): a `*Box<T>` carrier given a FIELD declared `*Box<Pt>`, through a chain.
+struct H9 { k; bp: *Box<Pt>; }
+struct HH9 { j; h: H9; hp: *H9; }
+impl H9 { fn go(self): i64 { return gpx(self.bp); } }
+fn gpv<T>(b: *Box<T>): T { var r: T = b.v; return r; }
+var GB9: Box<Pt> = Box<Pt> { gws, 8 };
+var GH9 = H9 { 5, &GB9 };
+var GHP9: *H9 = &GH9;
 
 fn run_struct_carrier(): i64 {
     test_group("T inferred through a generic struct parameter (6.7.8)");
@@ -621,6 +633,18 @@ fn run_struct_carrier(): i64 {
     assert_eq(gpx(mkp(p)), 5, "G8: a call returning Box<Pt> (was refused)");
     assert_eq(gpx(GLP), 6, "G8: a struct global");
     assert_eq(gpx<Pt>(&b), 8, "control: the explicit `gpx<Pt>(&b)`");
+    var h9 = H9 { 1, &b };
+    var hp9: *H9 = &h9;
+    var hh9 = HH9 { 7, 1, &b, &h9 };
+    assert_eq(gpx(h9.bp), 8, "G9: a `*Box<Pt>` field of a local, `gpx(h.bp)` (was 4: the base ran)");
+    assert_eq(gpx(hp9.bp), 8, "G9: ... through a `*H` local, `gpx(hp.bp)` (was 4)");
+    assert_eq(h9.go(), 8, "G9: ... of `self` in a method, `gpx(self.bp)` (was 4)");
+    assert_eq(gpx(GH9.bp), 8, "G9: ... of a global, `gpx(G.bp)` (was 4)");
+    assert_eq(gpx(GHP9.bp), 8, "G9: ... through a `*H` global (was 4)");
+    assert_eq(gpx(hh9.h.bp), 8, "G9: ... two hops through an inline field (was 4)");
+    assert_eq(gpx(hh9.hp.bp), 8, "G9: ... two hops through a `*H` field (was 4)");
+    var u9 = gpv(h9.bp);
+    assert_eq(u9.x * 10 + u9.y, 34, "G9: a `: T` return through the field binds T = Pt (was refused)");
     return 0;
 }
 

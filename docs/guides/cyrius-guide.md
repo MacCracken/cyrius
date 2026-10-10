@@ -1694,7 +1694,9 @@ so does every copy of `o`. A dyn formed from `&local` and returned outlives the 
 
 **The check, once per pair.** The first forming of a (trait, type) pair checks `impl Tr for T`
 against the trait in full: each parameter after `self` and the return by its resolved type (an
-untyped parameter, or an omitted return, is `i64`), generic-ness and `...`; and the `self` a dyn can
+untyped parameter, or an omitted return, is `i64`), generic-ness and `...`; the value class — a
+method returning a `: stack` pair (`return Ok(..);`) fills a slot only when the trait member declares
+that enum (`: Result`), so the call through the dyn returns what the trait declares; and the `self` a dyn can
 feed. For a struct `T` that is an untyped `self`, `self: *T`, or a `self: T` over 8 bytes (passed by
 address and copied on entry). **A `self: T` of 8 bytes or less is refused**, naming the method: it
 arrives in a register, and the data word is a pointer — declare `self` untyped or `self: *T`. For a
@@ -1714,7 +1716,10 @@ through a pointer, `self.o.m()`, a call's result, a chain, and at top level. The
 result follow the **trait member's** signature exactly as a direct call follows a fn's: by-value
 structs, a dyn formed in place, `: Str` literals, `f64` / `f32` / `bool`, vectors, any number of
 arguments; a struct result of any size, a dyn, a `*T`, an `f64` (typed: `o.rf() + 1.0` is a float
-add). The callee and `self` are read before the arguments run. Refused by name:
+add). A member declared `: Result` (a `: stack` enum) returns its pair, as a direct call does:
+`o.div(d)?` propagates, a destructure binds both, and a one-name bind is refused (`bind both`); any
+other member returns one value, so a destructure of it is refused. The callee and `self` are read
+before the arguments run. Refused by name:
 
 - a member the trait does not declare;
 - a **generic** member (`fn pick<U>`): the trait can still be a dyn, but a call through one has no
@@ -1728,7 +1733,9 @@ add). The callee and `self` are read before the arguments run. Refused by name:
 **The two words are opaque.** A dyn is not a value and has no fields: a dyn used as a value (an
 operator, `if (o)`, `print(o)`, an untyped argument, `var x = o;`), `&o`, `o.data` / `o.vtable`, a
 multi-value destructure, `return (a, b)` in a fn returning a dyn, and a struct literal writing a dyn
-field's words (`H { 1, 2, 3, 4 }`) are all refused. Copy a dyn whole or call its methods. Raw memory
+field's words (`H { 1, 2, 3, 4 }`) are all refused. So is a dyn RESULT anywhere but a dyn: `x = mk();`
+into an untyped, `i64` or `*T` variable (a `for` step too), `var y: i64 = mk();` (any annotation that is
+no struct), a top-level `var G = mk();`, and `return mk();` from a fn that does not return that dyn. Copy a dyn whole or call its methods. Raw memory
 stays raw: `load64(&w)` of a record holding a dyn, or `rethi()` after a call returning one, reads the
 words as it reads any bytes — unchecked, as `load64` always is.
 
@@ -4699,9 +4706,10 @@ instance binds `T` to its type argument in `T`'s slot, so `gx(b)` with
 `gx<i32>(b)` do (before 6.7.8 the call reached the `Box` base and was refused). The
 WHOLE argument must be the instance: a local or by-value parameter, a struct
 global, or a call returning it. Through a `*Box<T>` parameter, what the argument
-POINTS AT binds: `&b`, a `bp: *Box<Pt>` name or a call returning one, or a
-`Box<Pt>` value (whose address the call passes) — before 6.7.8 these compiled, ran
-the base and read `b.n` at the base's offset. A pointer passed to a by-value
+POINTS AT binds: `&b`, a `bp: *Box<Pt>` name or a call returning one, a field
+declared `bp: *Box<Pt>` reached through a chain (`h.bp`, `hp.bp`, `self.bp`,
+`G.h.bp`), or a `Box<Pt>` value (whose address the call passes) — before 6.7.8
+these compiled, ran the base and read `b.n` at the base's offset. A pointer passed to a by-value
 `b: Box<T>` binds nothing (the base runs, as before), and a plain `p: *T` keeps the
 rule above. An `x: T` parameter wins over a struct one; `T` nested deeper
 (`Box<Pair<T>>`) and a generic call's own result (`gx(mk(p))`) are not inferred —

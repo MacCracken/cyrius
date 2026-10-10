@@ -719,6 +719,7 @@ fn _dyn_held(S, sid): i64 {
 # 6.7.8 (D5): `var o: dyn S = src;` whose source is no dyn value is declared here, the dyn formed in
 # place (`_dyn_var_init`: 1, the `;` consumed); a copy is left to PARSE_VAR's struct paths (0).
 fn _dyn_var(S, noff, pscale, ann): i64 {
+    if (pscale == 0) { if (ann != 0) { return _dyn_var_ann(S, ann); } }
     if (pscale >= 0) { return 0; }
     if (pscale <= 0 - 2048) { return 0; }
     if (PEEKT(S) == 5) {
@@ -728,6 +729,26 @@ fn _dyn_var(S, noff, pscale, ann): i64 {
     if (PEEKT(S) != 4) { return 0; }
     if (_dyn_is(S, 0 - pscale) == 0) { return 0; }
     return _dyn_var_init(S, noff, 0 - pscale);   # 6.7.8 (D5): 1 = declared, formed or refused
+}
+# 6.7.8 (review) — `var y: i64 = mk();` / `: u8` / `: f64` in a fn, `mk()` returning a dyn: PARSE_VAR's
+# struct receive infers its struct from a whole free call for an annotation that is no struct, so y
+# became the dyn its annotation says it is not (`y.area()` compiled). Refused at the call, in V4's
+# words; a bool's is `_bx_decl`'s. (A method / operator initialiser is `_sc_var_receive`'s.) 0.
+fn _dyn_var_ann(S, ann): i64 {
+    if (_dyn_nx == 0) { return 0; }
+    if (GINFN(S) != 1) { return 0; }
+    if (PEEKT(S) != 4) { return 0; }
+    var a = GTI(S) + 1;
+    if (TOKTYP(S, a) != 2) { return 0; }
+    if (TOKTYP(S, a + 1) != 10) { return 0; }
+    if (_call_dotted(S, a) == 1) { return 0; }
+    if (TOKTYP(S, _call_close(S, a + 1) + 1) != 5) { return 0; }
+    if (_tn_resolve_at(S, ann) == _tn_code(4, 1)) { return 0; }
+    var fi = FINDFN(S, TOKVAL(S, a));
+    if (fi < 0) { return 0; }
+    if (_dyn_is(S, GFRS(S, fi)) == 0) { return 0; }
+    _dyn_err(S, a, "a ", GFRS(S, fi), 0 - 1, " result used as a value - call one of its methods, or copy it whole into a dyn");
+    return 0;
 }
 fn _dyn_uninit(S, sid, ann, noff): i64 {
     if (GINFN(S) != 1) { return 0; }
@@ -1430,6 +1451,11 @@ fn _dyn_pair_chk(S, ii, tx, ti): i64 {
             if (sf > 1) { return _dyn_f8(S, ti, ii, m, sf); }
             var pf = _dyn_fn_pfx(S, fp);
             if (pf == 134 || pf == 133) { return _dyn_f9(S, ti, ii, m, pf); }
+            # 10 — a slot returning a `: stack` pair where the member declares one value: the call
+            # through the dyn returns what the trait declares (the prototype's class, `_dyn_proto`).
+            if (_dyn_slot_pair(S, _dyn_slot_fi(S, ii, k), fp) == 1) {
+                if (_dyn_decl_pair(S, k) == 0) { return _dyn_f8(S, ti, ii, m, 10); }
+            }
         }
         k = k + 1;
     }
@@ -1634,6 +1660,7 @@ fn _dyn_f8(S, ti, ii, m, d): i64 {
         _dyn_pn(S, L64(_ti_tab + ii * 64 + 8));
         PRSTR(" (declare `self` untyped)");
     }
+    elif (d == 10) { PRSTR("it returns a `: stack` pair (a tag and a payload) where the trait declares one value - declare the return, in the trait and the impl, as the enum it returns (`: Result`)"); }
     else { PRSTR("`self: *T` - the dyn of a scalar holds its value, not a pointer to it (declare `self` untyped, or `self: T`)"); }
     _dyn_eend(S);
     return 0;
@@ -2196,8 +2223,83 @@ fn _dyn_proto(S, sid, k): i64 {
     _impl_tnoff = si;
     _cur_ii = sii;
     STI(S, sv);
+    # Its value class is the trait's declaration, as a body gives a direct callee's: 256, a `: stack`
+    # pair (`?` takes the two-register lowering, a one-name bind and a forwarding `return` are seen);
+    # else 1024, one value (a destructure is refused, as `var a, b = t.fi(1);` is). Every slot method
+    # agrees (`_dyn_pair_chk`, code 10). CHANGELOG [6.7.8]
+    if (_dyn_decl_pair(S, k) == 1) { SFLG(S, fi, GFLG(S, fi) | 256); }
+    else { SFLG(S, fi, GFLG(S, fi) | 1024); }
     S64(_trm_pf + k * 8, fi + 1);
     return fi;
+}
+# 1 = trait member `k` declares a `: stack` pair return: a name whose enum is declared `: stack` with a
+# payload variant (`_enum_decl_pair`) — `Result`, `Option` (a return type names no other enum).
+fn _dyn_decl_pair(S, k): i64 {
+    var o = _tr_paren(S, L64(_trm_ft + k * 8));
+    if (o < 0) { return 0; }
+    var r = _dyn_ret_at(S, o);
+    if (r == _dps_te) { return 0; }
+    if (TOKTYP(S, r) != 2) { return 0; }
+    return _enum_decl_pair(S, TOKVAL(S, r));
+}
+# 1 = `noff` names an enum declared `: stack` with a payload variant `V(x)`: its value is (tag,
+# payload) in two registers. Read from the declaration's tokens — its constructors' flag 256 waits
+# for pass 2 to reach the declaration, and a prototype is made once.
+fn _enum_decl_pair(S, noff): i64 {
+    if (_is_enum_name(S, noff) == 0) { return 0; }
+    var n = GTCNT(S);
+    var i = 0;
+    while (i < n) {
+        if (TOKTYP(S, i) == 60) { if (TOKTYP(S, i + 1) == 2) { if (STREQ(S, TOKVAL(S, i + 1), noff) == 1) {
+                    if (_enum_at_pair(S, i + 2) == 1) { return 1; }
+                } } }
+        i = i + 1;
+    }
+    return 0;
+}
+# The declaration after `enum NAME` at token j: `[<..>] : stack {` with a member `V(x)` (a variant
+# name first in its member, then `(` and a field name).
+fn _enum_at_pair(S, j): i64 {
+    if (TOKTYP(S, j) == 19) {
+        j = _tok_targs_close(S, j + 1);
+        if (j < 0) { return 0; }
+        j = j + 1;
+    }
+    if (TOKTYP(S, j) != 49) { return 0; }
+    if (TOKTYP(S, j + 1) != 111) { return 0; }
+    if (TOKTYP(S, j + 2) != 13) { return 0; }
+    j = j + 3;
+    var n = GTCNT(S);
+    while (j < n) {
+        var t = TOKTYP(S, j);
+        if (t == 14) { return 0; }
+        if (t == 2) { if (TOKTYP(S, j + 1) == 10) { if (TOKTYP(S, j + 2) == 2) {
+                    var p = TOKTYP(S, j - 1);
+                    if (p == 13 || p == 5) { return 1; }
+                } } }
+        j = j + 1;
+    }
+    return 0;
+}
+# 1 = slot method `fi` (its code's `fn` token `fp`) returns a `: stack` pair — its flag 256, or, when
+# pass 2 has not reached its body yet (an impl below the forming site), its body's returns as
+# `_pair_prescan` reads them.
+fn _dyn_slot_pair(S, fi, fp): i64 {
+    if (fi >= 0) { if ((GFLG(S, fi) & 256) != 0) { return 1; } }
+    var o = _tr_paren(S, fp);
+    if (o < 0) { return 0; }
+    var j = _call_close(S, o) + 1;
+    var n = GTCNT(S);
+    while (j < n) {
+        var t = TOKTYP(S, j);
+        if (t == 13) {
+            _ensure_pair_flags(S);
+            return _pair_body_scan(S, fp, j);
+        }
+        if (t == 5) { return 0; }
+        j = j + 1;
+    }
+    return 0;
 }
 # `_meth_fn_at` on a dyn `sid` (the lookaheads: a declaration's inferred type, a destructure's
 # callee, a `Str` argument's routing, a forming source): member `mnoff`'s prototype, -1 when a dyn

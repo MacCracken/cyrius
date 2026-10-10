@@ -503,36 +503,9 @@ fn _pair_prescan(S): i64 {
                                 }
                                 if (j < n) {
                                     if (TOKTYP(S, j) == 13) {
-                                        var bd = 0;
-                                        var k = j;
-                                        var go = 1;
-                                        while (go == 1) {
-                                            if (k >= n) { go = 0; }
-                                            else {
-                                                var t = TOKTYP(S, k);
-                                                if (t == 13) {
-                                                    # a closure body — its returns are its own
-                                                    var sk = _skip_nested_body(S, k);
-                                                    if (sk >= 0) { k = sk; } else { bd = bd + 1; }
-                                                }
-                                                elif (t == 14) {
-                                                    bd = bd - 1;
-                                                    if (bd == 0) { go = 0; }
-                                                }
-                                                elif (t == 32) { k = _skip_nested_body(S, k); }   # a refused nested fn (header)
-                                                elif (t == 33) {                  # `return`
-                                                    # `return f(`, `return g<..>(`, `return x.m(` (6.6.16)
-                                                    var rf = _tok_ret_callee(S, i, k + 1);
-                                                    if (rf >= 0) {
-                                                        if ((GFLG(S, rf) & 256) != 0) {
-                                                            SFLG(S, pfi, GFLG(S, pfi) | 256);
-                                                            changed = 1;
-                                                            go = 0;
-                                                        }
-                                                    }
-                                                }
-                                                if (go == 1) { k = k + 1; }
-                                            }
+                                        if (_pair_body_scan(S, i, j) == 1) {
+                                            SFLG(S, pfi, GFLG(S, pfi) | 256);
+                                            changed = 1;
                                         }
                                     }
                                 }
@@ -544,6 +517,34 @@ fn _pair_prescan(S): i64 {
             i = i + 1;
         }
         if (changed == 0) { round = 6; } else { round = round + 1; }
+    }
+    return 0;
+}
+# 1 = the body whose `{` is token j (of the fn whose `fn` token is a — the unit `_tok_ret_callee`
+# resolves names in) has a `return f(..)` / `return g<..>(..)` / `return x.m(..)` whose callee is
+# flagged 256: it forwards a `: stack` pair. Closure bodies are their own units, skipped, as is a
+# refused nested fn. `_pair_prescan`'s scan of one fn, and (6.7.8) the dyn pair check's of a slot
+# method whose body pass 2 has not reached (`_dyn_slot_pair`, parse_types.cyr).
+fn _pair_body_scan(S, a, j): i64 {
+    var n = GTCNT(S);
+    var bd = 0;
+    var k = j;
+    while (k < n) {
+        var t = TOKTYP(S, k);
+        if (t == 13) {
+            var sk = _skip_nested_body(S, k);   # a closure body — its returns are its own
+            if (sk >= 0) { k = sk; } else { bd = bd + 1; }
+        }
+        elif (t == 14) {
+            bd = bd - 1;
+            if (bd == 0) { return 0; }
+        }
+        elif (t == 32) { k = _skip_nested_body(S, k); }   # a refused nested fn (header)
+        elif (t == 33) {                  # `return`
+            var rf = _tok_ret_callee(S, a, k + 1);   # `return f(`, `return g<..>(`, `return x.m(` (6.6.16)
+            if (rf >= 0) { if ((GFLG(S, rf) & 256) != 0) { return 1; } }
+        }
+        k = k + 1;
     }
     return 0;
 }
@@ -3400,16 +3401,19 @@ fn _pcmpe_struct_assign(S, noff, term): i64 {
         } }
     var st = GTI(S);
     _agc_operand(S, noff);
-    _fla_arm(st, _agc_t);
+    var dt = _agc_t;
+    _fla_arm(st, dt);
     var fs = _fla_stp;
     if (term == 11) { _fla_stp = st; }   # 6.6.20: a for step's field source ends at `)`
     var w = _sc_arm(S);
     PCMPE(S);
-    _bx_asg(S, noff, st);          # 6.7.3 (B2): a write into a bool takes a boolean value
+    var dx = _dyn_dst_chk(S, st, dt);   # 6.7.8: a whole dyn result goes only into that dyn
+    if (dx == 0) { _bx_asg(S, noff, st); }   # 6.7.3 (B2): a write into a bool takes a boolean value
     _asg_ufv = _UFV_IS_FLOAT(S);   # 6.6.11: here, while _FBR_KIND is still valid (see _asg_rejudge)
     _sc_want = w;
     _fla_want = 0 - 1;
     _fla_stp = fs;
+    if (dx == 1) { return 0; }
     if (_fla_hit == 1) { return _fla_assign(S, noff, term); }
     var t = _sc_whole(S, st);
     if (t == 0 - 2) { _fls_asg_check(S, noff, st); _tup_asg_chk(S, noff, st); return 0; }   # 6.7.6: a `Str` field; 6.7.7 (R12): a value is never a tuple

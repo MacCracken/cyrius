@@ -1939,10 +1939,35 @@ fn _dyn_rchk(S, ti0): i64 {
     if (_lsc_beg != ti0) { return 0; }
     if (_lsc_end != e) { return 0; }
     if (_dyn_is(S, _lsc_sid) == 0) { return 0; }
-    if (_dyn_want(S, ti0) == 1) { return 0; }
+    if (_dyn_want(S, ti0) == 1) {
+        _dyn_xb = ti0;   # let through for the destination, which must be this dyn (`_dyn_dst_chk`)
+        _dyn_xe = e;
+        _dyn_xs = _lsc_sid;
+        return 0;
+    }
     _dyn_err(S, ti0, "a ", _lsc_sid, 0 - 1, " result used as a value - call one of its methods, or copy it whole into a dyn");
     SESTYPE(S, 0);
     _lsc_cp = 0 - 1;   # nor is it the left operand of an operator (`_op_lst`)
+    return 1;
+}
+# ⛔ 6.7.8 (review) — V4 LETS A WHOLE DYN RESULT THROUGH FOR AN ARMED DESTINATION, and three arm for
+# any type: an assignment (`x = mk();` into an untyped / i64 / `*T` variable or global, a for step), a
+# declaration with an annotation that is no struct (`var y: i64 = mk();`, `: *Sq`, `: f64`), and any
+# declaration at top level after the first statement (`var G = mk();` — no frame takes the 16 B, so
+# the store kept the first word). Each stored the DATA word — the leak V4 exists to stop. The
+# exemption is recorded (the factor's span and its dyn) and each of those destinations asks after its
+# parse: refused, V4's words at the call, unless the destination is that dyn (`dt` = `0 - sid`, as
+# `_agc_t` / PARSE_VAR's pscale give it). 1 = refused. (A tail call is the fourth path: it never reaches
+# the factor — `_tc_callee_divert`.) CHANGELOG [6.7.8]
+var _dyn_xb = 0 - 1;   # the last whole dyn result V4 let through: its first token,
+var _dyn_xe = 0 - 1;   # ... the token after it,
+var _dyn_xs = 0;       # ... and its dyn
+fn _dyn_dst_chk(S, st, dt): i64 {
+    if (_dyn_xb != st) { return 0; }
+    if (_dyn_xe != GTI(S)) { return 0; }
+    _dyn_xb = 0 - 1;
+    if (dt == 0 - _dyn_xs) { return 0; }
+    _dyn_err(S, st, "a ", _dyn_xs, 0 - 1, " result used as a value - call one of its methods, or copy it whole into a dyn");
     return 1;
 }
 # 1 = the factor at `ti0` (just parsed, the cursor after it) is a whole expression a destination

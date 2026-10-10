@@ -34,7 +34,10 @@
 #       nested struct, through a generic instance), and `var hs: H[N]` — struct locals are not zeroed
 #   V   opacity (decision 7): V1 a dyn name as a value; V2 `&o`; V3 a whole dyn field as a value; V4 a
 #       dyn-returning call as a value (not a destination's whole expression; an un-annotated `var x =
-#       (mk());`); V5 `o.data` / `o.vtable` / `o.0` / `o.m` (FINDFIELD's own words); V6 a multi-value
+#       (mk());`), and (review) a whole one into a destination that is not that dyn — an assignment to
+#       an untyped / i64 / `*T` variable or global or a for step, a declaration annotated with no
+#       struct, a top-level declaration after the first statement, a tail `return` from a fn that
+#       does not return it (V4h-V4z); V5 `o.data` / `o.vtable` / `o.0` / `o.m` (FINDFIELD's own words); V6 a multi-value
 #       destructure; V7 `return (a, b)` / `ret2` in a fn returning a dyn; V8 a struct literal writing a
 #       dyn field's words; the backstops (`var o: dyn S = 5;`, `o = 5;`, `h.o = 5;`)
 #   P   every destination of a dyn call result takes it whole — a var (annotated, inferred), an
@@ -58,7 +61,9 @@
 #       enum constant, a call returning i64, `callptr`, a struct literal's element); F6 no `impl Tr for
 #       T` (a literal, a struct); F7 `self: Q` by value, Q of 8 B or less (decision 2); F8 a signature
 #       that differs (a parameter's type, the return type, generic-ness, a `...`, `self: Q`, a scalar's
-#       `self: *T`, a pointer to a scalar) — one report per pair, at its first forming; F9 a `#naked`
+#       `self: *T`, a pointer to a scalar) — one report per pair, at its first forming; (review) F8i /
+#       F8j a slot method returning a `: stack` pair where the member declares one value (an impl
+#       above and below the forming site); F9 a `#naked`
 #       slot method (an `async` one cannot be written in an impl); F10 a slot method private to another
 #       file (two files); F11 a FORM at top level into an assignment, a field, an argument
 #   K   (D5) a declaration-zone dyn in a `kernel;` build is named late, as every non-constant zone
@@ -74,7 +79,10 @@
 #       through a dyn returning a dyn used as a value / untyped argument / destructured (V4, V6), one
 #       returning i64 as a forming source (F5); C9 at top level a 16 B result into a global after the
 #       first statement or in the declaration zone (the replay kept the data word alone: SIGSEGV) and a
-#       24 B one and a chain, each refused once; C10 top-level and zone calls run (the micro-frame)
+#       24 B one and a chain, each refused once; C10 top-level and zone calls run (the micro-frame);
+#       (review) C11 the call's value class is the trait member's — a `: Result` member's pair into one
+#       name refused ("bind both"), a one-value member destructured refused (fn scope, assignment,
+#       declaration zone), and `o.div(d)?` / a forwarding wrapper's `?` run (rc 139 before)
 #   PD  (D6) every destination of a call through a dyn takes its dyn result whole (a var — annotated,
 #       wrapped, inferred —, an assignment, a field, an argument, a struct-literal element, a return);
 #       one returning `*P` FORMS (the forming classifier reads the prototype)
@@ -210,6 +218,22 @@
 #   MTT10 the guide's first example stating `= 40` (docs/guides/cyrius-guide.md) -> TT10 (example 1: exit 39)
 #   M-C2  (D6's, re-measured) the call's data and vtable words swapped (src/) -> the TT sample row and TT10
 #         (all three examples: rc 139), with the D6 rows (17 rows)
+# REVIEW (2026-10-10; the same method — a one-edit scratch copy of src/, its compiler rebuilt, this gate
+# run with CYCC= the mutant; the real tree 234/234, the lane's HEAD before the review RED on the 27 new
+# rows and on dyn_objects.tcyr's §pairs):
+#   MR1  the prototype not flagged 256 for a `: Result` member     -> C11a, C11b, C11f, A dyn_objects (rc 139)
+#   MR2  the prototype not flagged 1024 for a one-value member     -> C11c, C11d, C11e (BUILT)
+#   MR3  the value-class check (F8 code 10) gone                   -> F8i, F8j (BUILT)
+#   MR4  `_dyn_slot_pair` without the body scan (flag only)        -> F8j (BUILT: the impl below the site)
+#   MR5  `_enum_decl_pair` answering 0 (no member is a pair)       -> C11a-f, CW, A dyn_objects
+#   MR7  `_pcmpe_struct_assign` without `_dyn_dst_chk`             -> V4h-V4m, V4u (BUILT)
+#   MR8  `_sc_var_receive` without `_scv_dyn_chk`                  -> V4q, V4r (BUILT)
+#   MR9  `_sc_global_receive` without its dyn arm                  -> V4s, V4t (BUILT)
+#   MR10 `_dyn_var` without `_dyn_var_ann`                         -> V4n, V4o, V4p (BUILT)
+#   MR11 the tail call not diverted for a dyn callee               -> V4v-V4z (BUILT)
+#   MR12 V4's exemption not recorded (`_dyn_xb`)                   -> V4h-V4m, V4q-V4u (BUILT)
+#   (MR6, `_gsc_chain` gone: tests/tcyr/crossos/generic_struct_inference.tcyr G9 — the file does not build,
+#   and the value rows read 4 for 8.)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -374,6 +398,32 @@ refused v04d "a dyn Show result $RV" "V4d: an un-annotated \`var x = (pass(o));\
 refused v04e "a dyn Show result $RV" "V4e: a method result, \`p.mk(o) + 1\`" "${HP}struct Q { a; b; }\nimpl Q { fn mk(self, o: dyn Show): dyn Show { return o; } }\n${FO}var q = Q { 1, 2 }; return q.mk(o) + 1;${FE}"
 refused v04f "a dyn Show result $RV" "V4f: \`1 + p.mk(o)\`" "${HP}struct Q { a; b; }\nimpl Q { fn mk(self, o: dyn Show): dyn Show { return o; } }\n${FO}var q = Q { 1, 2 }; return 1 + q.mk(o);${FE}"
 refused v04g "a dyn Show result $RV" "V4g: \`return pass(o);\` from an i64 fn" "${HP}fn f(o: dyn Show, k): i64 { if (k > 0) { return 1; } return (pass(o)); }\nsyscall(60, 0);\n"
+# (review, 2026-10-10) V4 lets a whole dyn result through for a DESTINATION — which must then be that
+# dyn. Every row below compiled and handed the program the dyn's DATA word: an assignment arms for any
+# target, a declaration whose annotation is no struct took the call's struct (or its first word), a
+# top-level declaration after the first statement kept the first word, and a tail call jumped past
+# the factor. Refused by name, once, at the call.
+RD="a dyn Show result $RV"
+QM='struct Q { a; b; }\nimpl Q { fn mk(self, o: dyn Show): dyn Show { return o; } }\n'
+refused v04h "$RD" "V4h: \`x = pass(o);\` into an untyped local" "${HP}${FO}var x = 0; x = pass(o); return x;${FE}"
+refused v04i "$RD" "V4i: \`x = pass(o);\` into an \`i64\` local" "${HP}${FO}var x: i64 = 0; x = pass(o); return x;${FE}"
+refused v04j "$RD" "V4j: \`GU = pass(o);\` into an untyped global" "${HP}var GU = 0;\n${FO}GU = pass(o); return GU;${FE}"
+refused v04k "$RD" "V4k: a classic-for step \`x = pass(o)\`" "${HP}${FO}var x = 0; for (var i = 0; i < 1; x = pass(o)) { i = 1; } return x;${FE}"
+refused v04l "$RD" "V4l: \`x = q.mk(o);\`, a method result" "${HP}${QM}${FO}var q = Q { 1, 2 }; var x = 0; x = q.mk(o); return x;${FE}"
+refused v04m "$RD" "V4m: \`sp = pass(o);\` into a \`*S1\` local (S1 of 8 bytes)" "${HP}struct S1 { a; }\n${FO}var s = S1 { 1 }; var sp: *S1 = &s; sp = pass(o); return 0;${FE}"
+refused v04n "$RD" "V4n: \`var y: i64 = pass(o);\` (y became the dyn its annotation says it is not)" "${HP}${FO}var y: i64 = pass(o); return 0;${FE}"
+refused v04o "$RD" "V4o: \`var y: u8 = pass(o);\`" "${HP}${FO}var y: u8 = pass(o); return 0;${FE}"
+refused v04p "$RD" "V4p: \`var y: f64 = pass(o);\`" "${HP}${FO}var y: f64 = pass(o); return 0;${FE}"
+refused v04q "$RD" "V4q: \`var y: *W = pass(o);\` (only a pointer warning)" "${HP}${FO}var y: *W = pass(o); return 0;${FE}"
+refused v04r "$RD" "V4r: \`var y: i64 = q.mk(o);\`, a method result" "${HP}${QM}${FO}var q = Q { 1, 2 }; var y: i64 = q.mk(o); return y;${FE}"
+refused v04s "$RD" "V4s: a top-level \`var G = get(..);\` after the first statement (it kept the data word)" "${HP}syscall(1, 1, \"\", 0);\nvar G = get(mkw(4, 9));\nsyscall(60, 0);\n"
+refused v04t "$RD" "V4t: a top-level \`var G: i64 = get(..);\` after the first statement" "${HP}syscall(1, 1, \"\", 0);\nvar G: i64 = get(mkw(4, 9));\nsyscall(60, 0);\n"
+refused v04u "$RD" "V4u: a top-level \`GU = get(..);\`" "${HP}var GU = 0;\nsyscall(1, 1, \"\", 0);\nGU = get(mkw(4, 9));\nsyscall(60, 0);\n"
+refused v04v "$RD" "V4v: \`return pass(o);\` from an i64 fn — a TAIL call (it jumped past the factor)" "${HP}fn r(o: dyn Show): i64 { return pass(o); }\nsyscall(60, 0);\n"
+refused v04w "$RD" "V4w: ... from an untyped fn" "${HP}fn r(o: dyn Show) { return pass(o); }\nsyscall(60, 0);\n"
+refused v04x "$RD" "V4x: ... from a fn returning \`*W\`" "${HP}fn r(o: dyn Show): *W { return pass(o); }\nsyscall(60, 0);\n"
+refused v04y "$RD" "V4y: ... from a fn returning a struct of 8 bytes" "${HP}struct S1 { a; }\nfn r(o: dyn Show): S1 { return pass(o); }\nsyscall(60, 0);\n"
+refused v04z "$RD" "V4z: ... from a closure's body" "${HP}${FO}var d = |k| { return get(mkw(k, k)); }; return 0;${FE}"
 VF="unknown field '"
 refused v05a "${VF}data' on struct 'dyn Show'" "V5a: \`o.data\`" "${HP}${FO}return o.data;${FE}"
 refused v05b "${VF}vtable' on struct 'dyn Show'" "V5b: \`o.vtable\`" "${HP}${FO}return o.vtable;${FE}"
@@ -428,6 +478,13 @@ refused f08e "${F8M} 'sh' does not match its declaration in trait T2: its \`self
 refused f08f "cannot form dyn T2 from i64 - its method 'sh' does not match its declaration in trait T2: \`self: *T\` - the dyn of a scalar holds its value" "F8f: a scalar impl's \`self: *i64\`" "${SN}trait T2 { fn sh(self): i64; }\nimpl T2 for i64 { fn sh(self: *i64): i64 { return 1; } }\nfn f(): i64 { var n: i64 = 5; var o: dyn T2 = n; return 0; }\nsyscall(60, 0);\n"
 refused f08g "${FN}'q' - a pointer to a scalar: the dyn of a scalar holds its value" "F8g: a \`q: *i64\` into a scalar impl" "${SN}fn f(q: *i64): i64 { var o: dyn Num = q; return 0; }\nsyscall(60, 0);\n"
 refused f08h "${F8M} 'z' does not match its declaration in trait T2: the return type differs" "F8h: one report per pair — three forming sites in two fns, one error at the first" "${SN}trait T2 { fn sh(self): i64; fn z(self): i64; }\nimpl T2 for P { fn sh(self): i64 { return 1; } fn z(self): i32 { return 1; } }\nfn f(q: *P): i64 { var o: dyn T2 = q; var o2: dyn T2 = q; return 0; }\nfn h(q: *P): i64 { var o: dyn T2 = q; return 0; }\nsyscall(60, 0);\n"
+# (review, 2026-10-10) The value class: a call through a dyn returns what the trait member declares
+# (its prototype's flag), so a slot method returning a `: stack` pair under a member that declares one
+# value is refused — `o.div(d)?` took the boxed lowering and dereferenced the tag (rc 139).
+P10="does not match its declaration in trait Dv: it returns a \`: stack\` pair (a tag and a payload) where the trait declares one value"
+SDV='include "lib/result.cyr"\nstruct Dn { x; y; }\n'
+refused f08i "cannot form dyn Dv from Dn - its method 'div' ${P10}" "F8i: an untyped member whose impl returns \`Ok(..)\` / \`Err(..)\` (\`o.div(d)?\` dereferenced the tag)" "${SDV}trait Dv { fn div(self, d); }\nimpl Dv for Dn { fn div(self, d) { if (d == 0) { return Err(99); } return Ok(self.x / d); } }\nfn q(p: *Dn, d) { var o: dyn Dv = p; var v = o.div(d)?; return Ok(v + 1000); }\nsyscall(60, 0);\n"
+refused f08j "cannot form dyn Dv from Dn - its method 'div' ${P10}" "F8j: a \`: i64\` member, the impl BELOW the forming site (its body read before pass 2 reaches it)" "${SDV}trait Dv { fn div(self, d): i64; }\nfn q(p: *Dn, d): i64 { var o: dyn Dv = p; var v = o.div(d); return v; }\nimpl Dv for Dn { fn div(self, d): i64 { return mkr(self.x, d); } }\nfn mkr(x, d) { if (d == 0) { return Err(99); } return Ok(x / d); }\nsyscall(60, 0);\n"
 refused f09 "${F8M} 'sh' is \`#naked\` - a dyn calls its methods as plain fns" "F9: a \`#naked\` slot method" "${SN}trait T2 { fn sh(self): i64; }\nimpl T2 for P { #naked\nfn sh(self): i64 { asm { 0xC3; } } }\nfn f(q: *P): i64 { var o: dyn T2 = q; return 0; }\nsyscall(60, 0);\n"
 mkdir -p "$T/f10"
 printf 'private\ntrait Show { fn show(self): i64; }\npublic struct P { a; b; }\nimpl Show for P { fn show(self): i64 { return self.a; } }\n' > "$T/f10/a.cyr"
@@ -483,6 +540,18 @@ refused c09b "'dyn Show.me' $TLS" "C9b: ... into a declaration-zone global (the 
 refused c09c "'dyn Show.big' $TLS" "C9c: a 24 B (retptr) result at top level" "${CT}syscall(1, 1, \"\", 0);\nvar b = Z.big();\nsyscall(60, 0);\n"
 refused c09d "'dyn Show.me' $TLS" "C9d: a chain on a 16 B result at top level" "${CT}syscall(1, 1, \"\", 0);\nvar x = Z.me().show();\nsyscall(60, x);\n"
 exits c10 42 "C10: a call at top level and in a zone initialiser (the indirect call's micro-frame), nested, as a statement" "${CT}var ZN = Z.add(Z.show());\nsyscall(1, 1, \"\", 0);\nZ.show();\nvar k = Z.add(Z.add(36));\nif (ZN != 5) { syscall(60, 1); }\nsyscall(60, k + Z.show() + 1);\n"
+# (review, 2026-10-10) C11 — a call through a dyn returns the trait member's VALUE CLASS, as a direct call
+# returns its fn's: a `: Result` member's pair is refused into one name (it kept the tag), and a
+# one-value member's result into a destructure (b took a stale register: 77 / 1).
+SPR='include "lib/result.cyr"\ntrait Dv { fn div(self, d): Result; fn fi(self, n): i64; }\nstruct Dn { x; y; }\nimpl Dv for Dn { fn div(self, d): Result { if (d == 0) { return Err(99); } return Ok(self.x / d); } fn fi(self, n): i64 { return self.x + n; } }\nfn mk2(): (i64, i64) { return (100, 77); }\n'
+BB="a \`: stack\` enum returns two values — bind both"
+DT="multi-value destructure binds 2 names, but 'dyn Dv.fi' returns 1 value"
+refused c11a "$BB" "C11a: \`var v = o.div(3);\` on a \`: Result\` member" "${SPR}fn f(p: *Dn): i64 { var o: dyn Dv = p; var v = o.div(3); return v; }\nsyscall(60, 0);\n"
+refused c11b "$BB" "C11b: \`v = o.div(3);\`" "${SPR}fn f(p: *Dn): i64 { var o: dyn Dv = p; var v = 0; v = o.div(3); return v; }\nsyscall(60, 0);\n"
+refused c11c "$DT" "C11c: \`var a, b = o.fi(1);\` on a \`: i64\` member" "${SPR}fn f(p: *Dn): i64 { var o: dyn Dv = p; var x, y = mk2(); var a, b = o.fi(1); return b; }\nsyscall(60, 0);\n"
+refused c11d "$DT" "C11d: \`a, b = o.fi(1);\`" "${SPR}fn f(p: *Dn): i64 { var o: dyn Dv = p; var a = 0; var b = 0; a, b = o.fi(1); return b; }\nsyscall(60, 0);\n"
+refused c11e "$DT" "C11e: a declaration-zone \`var za, zb = TK.fi(1);\`" "${SPR}var GD = Dn { 3, 0 };\nvar TK: dyn Dv = &GD;\nvar za, zb = TK.fi(1);\nsyscall(60, zb);\n"
+exits c11f 42 "C11f: \`o.div(d)?\` and \`wrap(p, d)?\` above a wrapper \`return o.div(d);\` (rc 139: the tag dereferenced)" "${SPR}fn uz(p: *Dn, d) { var v = wrap(p, d)?; return Ok(v + 1); }\nfn q(p: *Dn, d) { var o: dyn Dv = p; var v = o.div(d)?; return Ok(v + 1000); }\nfn wrap(p: *Dn, d) { var o: dyn Dv = p; return o.div(d); }\nfn main(): i64 {\n    var p = Dn { 12, 0 };\n    var g, h = q(&p, 4);\n    if (g != 0 || h != 1003) { return 1; }\n    var i, j = q(&p, 0);\n    if (i == 0 || j != 99) { return 2; }\n    var k, l = uz(&p, 3);\n    if (k != 0 || l != 5) { return 3; }\n    var m, n = uz(&p, 0);\n    if (m == 0 || n != 99) { return 4; }\n    return 42;\n}\nsyscall(60, main());\n"
 
 # ── PD: every destination of a call through a dyn takes its dyn result whole; a `*T` result forms ────
 PD='trait Show { fn show(self): i64; fn me(self): dyn Show; fn pp(self): *P; }\nstruct P { a; b; }\nimpl Show for P { fn show(self): i64 { return self.a * 10 + self.b; } fn me(self): dyn Show { return self; } fn pp(self): *P { return self; } }\nstruct H { a; o: dyn Show; b; }\nfn take(k, o: dyn Show, j): i64 { return k * 1000 + o.show() * 10 + j; }\nfn rme(o: dyn Show): dyn Show { return o.me(); }\nfn rmw(o: dyn Show): dyn Show { return (o.me()); }\nfn rmd(o: dyn Show): dyn Show {\n    defer { syscall(1, 1, "", 0); }\n    return o.me();\n}\nfn main(): i64 {\n    var p = P { 4, 9 };\n    var q = P { 1, 2 };\n    var o: dyn Show = &p;\n    var y1: dyn Show = o.me();\n    if (y1.show() != 49) { return 1; }\n    var y2: dyn Show = (o.me());\n    if (y2.show() != 49) { return 2; }\n    var y3 = o.me();\n    if (y3.show() != 49) { return 3; }\n    var z: dyn Show = &q;\n    z = o.me();\n    if (z.show() != 49) { return 4; }\n    z = &q;\n    z = (o.me());\n    if (z.show() != 49) { return 5; }\n    var h = H { 7, z, 8 };\n    h.o = &q;\n    h.o = o.me();\n    if (h.o.show() != 49) { return 6; }\n    h.o = &q;\n    h.o = (o.me());\n    if (h.o.show() + h.a * 1000 + h.b * 100 != 7849) { return 7; }\n    if (take(3, o.me(), 5) != 3495) { return 8; }\n    if (take(3, (o.me()), 5) != 3495) { return 9; }\n    var h2 = H { 6, o.me(), 2 };\n    if (h2.o.show() + h2.a * 1000 + h2.b * 100 != 6249) { return 10; }\n    if (rme(o).show() != 49) { return 11; }\n    if (rmw(o).show() != 49) { return 12; }\n    if (rmd(o).show() != 49) { return 13; }\n    var f1: dyn Show = o.pp();\n    if (f1.show() != 49) { return 14; }\n    var f2: dyn Show = (o.pp());\n    if (f2.show() != 49) { return 15; }\n    f2 = q.pp();\n    if (f2.show() != 12) { return 16; }\n    return 42;\n}\nsyscall(60, main());\n'

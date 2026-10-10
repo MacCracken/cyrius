@@ -42,6 +42,11 @@
 #   §defer_secret  a call in a `defer` body and through a `secret var`
 #   §recursion     a method called through a dyn calls through a dyn (a `*Nd` field formed in the impl)
 #   §regalloc      a `#regalloc` fn calls through a dyn in a loop (the callee's slot is no register)
+#   §pairs         a member declared `: Result` / `: Option` (a `: stack` enum) returns its pair through
+#                  the dyn: `o.div(d)?` on a local and a parameter, a wrapper `return o.div(d);` whose `?`
+#                  caller sits above it (the pair scans read the prototype), a destructure, a forming site
+#                  above the impl (the pair check reads the slot's body); a `: i64` member returns one
+#                  value (review 2026-10-10: the prototype had no value class, `?` dereferenced the tag)
 #   §toplevel      a declaration-zone initialiser, a top-level call, 7 arguments, a call in another's
 #                  arguments, an f64 result, a statement — each in the indirect call's micro-frame
 # The refusals (F1-F11, C1-C9), the zone global in a `kernel;` build, the paren-wrapped destinations,
@@ -54,6 +59,7 @@
 include "lib/assert.cyr"
 include "lib/str.cyr"
 include "lib/simd.cyr"
+include "lib/tagged.cyr"   # Result, Option
 
 trait Show { fn show(self): i64; fn twice(self): i64 { return self.show() * 2; } }
 struct P { a; b; }
@@ -650,6 +656,43 @@ fn rg(q: *T6, n): i64 {
     return s;
 }
 
+# ── §pairs — a `: Result` / `: Option` member returns its pair through the dyn, as a direct call does ──
+trait Dv { fn div(self, d): Result; fn pick(self, k): Option; fn one(self): i64; }
+struct Dn { x; y; }
+fn pr_use(p: *Dn, d) { var v = pr_wrap(p, d)?; return Ok(v + 1); }   # above its wrapper
+fn pr_arg(o: dyn Dv, d) { var v = o.div(d)?; return Ok(v * 2); }
+fn pr_wrap(p: *Dn, d) { var o: dyn Dv = p; return o.div(d); }
+fn pr_fwd(p: *Dn, d) { var o: dyn Dv = p; var v = o.div(d)?; return Ok(v + 3); }   # above the impl
+impl Dv for Dn {
+    fn div(self, d): Result { if (d == 0) { return Err(99); } return Ok(self.x / d); }
+    fn pick(self, k): Option { if (k == 0) { return None(); } return Some(self.x + k); }
+    fn one(self): i64 { return self.y; }
+}
+fn pairs_q(): i64 {
+    var p = Dn { 12, 7 };
+    var t1, v1 = pr_use(&p, 3);
+    var t2, v2 = pr_use(&p, 0);
+    return t1 * 100000 + v1 * 1000 + t2 * 100 + v2;
+}
+fn pairs_arg(): i64 {
+    var p = Dn { 12, 7 };
+    var o: dyn Dv = &p;
+    var t1, v1 = pr_arg(o, 4);
+    var t2, v2 = pr_arg(o, 0);
+    return t1 * 100000 + v1 * 1000 + t2 * 100 + v2;
+}
+fn pairs_bind(): i64 {
+    var p = Dn { 12, 7 };
+    var o: dyn Dv = &p;
+    var t1, v1 = o.div(6);
+    var t2, v2 = o.div(0);
+    var t3, v3 = o.pick(3);
+    var t4, v4 = o.pick(0);
+    var t5, v5 = pr_fwd(&p, 4);
+    var r = t1 * 100000000 + v1 * 10000000 + t2 * 1000000 + v2 * 10000 + t3 * 1000 + v3 * 10 + t4;
+    return r + t5 * 100000000000 + v5 * 1000000000 + o.one() * 10000000000000;
+}
+
 alloc_init();
 # A global after the first statement.
 var GS: dyn Show = &P1;
@@ -712,6 +755,10 @@ assert_eq(defer_secret(), 35034, "§defer_secret a call through a `secret var` a
 assert_eq(recursion(), 321, "§recursion a method called through a dyn calls through a dyn");
 var t6 = T6 { 3 };
 assert_eq(rg(&t6, 5), 25, "§regalloc a `#regalloc` fn calling through a dyn in a loop");
+assert_eq(pairs_q(), 5199, "§pairs `wrap(p, d)?` above its wrapper `return o.div(d);` (Ok 4 + 1, then Err 99)");
+assert_eq(pairs_arg(), 6199, "§pairs `o.div(d)?` on a dyn parameter (Ok 3 * 2, then Err 99)");
+assert_eq(pairs_bind(), 70006021991150,
+  "§pairs a destructure of a `: Result` / `: Option` member, a forming site above the impl, a `: i64` member");
 
 # §toplevel — each call at top level opens the indirect call's micro-frame.
 assert_eq(ZK, 7, "§toplevel a declaration-zone global initialised by a call through a dyn");

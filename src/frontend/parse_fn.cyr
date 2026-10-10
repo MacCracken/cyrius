@@ -677,6 +677,10 @@ fn _tc_callee_divert(S, cfi): i64 {
     # 6.6.6 — a >16 B struct-returning callee writes through a retptr the tail path never passes.
     if (_ret_agg_class(S, cfi) == 2) { return 1; }
     if (cfi < 0) { return 0; }
+    # 6.7.8 — a dyn-returning callee from a fn that does not return that dyn: the `jmp` handed our
+    # caller the dyn's DATA word as this fn's value (`return mk();` in an i64, untyped, `*T` or
+    # closure body) — the normal path is where V4 refuses it.
+    if (_dyn_is(S, GFRS(S, cfi)) == 1) { if (_cur_fn_ret_sid != GFRS(S, cfi)) { return 1; } }
     # (v6.3.36's "any address-passed param diverts" is replaced since 6.6.20 by the rules above
     # `_tc_after_args_divert`.)
     # v6.4.53 — value-form SIMD params travel in vector registers; the tail path loads only the
@@ -4737,6 +4741,7 @@ fn _sc_pwrap(S, start): i64 {
 # untyped, the same inference). `ext` != 0 = a scalar/float/slice annotation: the first word, as
 # ever. Returns 1 when `p` is declared. CHANGELOG [6.6.6]
 fn _sc_var_receive(S, noff, pscale, ext, start): i64 {
+    if (_scv_dyn_chk(S, pscale, ext, start) == 1) { return 0; }   # 6.7.8
     if (_fla_hit == 1) { return _fla_var_receive(S, noff, pscale); }   # 6.6.11: `var p: S = b.v`
     if (_fls_whole(S, start) == 1) { _fls_type_err(S, pscale, noff); return 0; }   # 6.7.6: a `Str` field
     var t = _sc_whole(S, start);
@@ -4754,9 +4759,21 @@ fn _sc_var_receive(S, noff, pscale, ext, start): i64 {
     return 1;
 }
 
+# 6.7.8 (review) — a declaration's whole dyn initialiser (`_dyn_dst_chk`, parse_expr.cyr): in a fn an
+# untyped one infers the dyn (a copy) and a struct annotation is `_sc_decl_mismatch`'s; any other
+# annotation (`: i64`, `: *Sq`, `: f64`, a vector — `ext` a scalar / float / slice / bool one) is
+# refused. 1 = refused.
+fn _scv_dyn_chk(S, pscale, ext, start): i64 {
+    if (pscale == 0) { if (ext == 0) { return 0; } }
+    if (pscale < 0) { if (pscale > 0 - 2048) { return 0; } }
+    return _dyn_dst_chk(S, start, 0);
+}
+
 # `var G: S = <expr>` at top level: no frame, so a 9-16 B method/operator result is refused by name
-# (a >16 B one already was, in `_sc_pre`). Untyped `var g = ..` keeps the first word.
+# (a >16 B one already was, in `_sc_pre`). Untyped `var g = ..` keeps the first word — 6.7.8: never a
+# dyn's, which is refused whatever the annotation (a dyn global's own is `_dyn_var`'s).
 fn _sc_global_receive(S, pscale, start): i64 {
+    if (pscale >= 0 || pscale <= 0 - 2048) { if (_dyn_dst_chk(S, start, 0) == 1) { return 0; } }
     if (pscale <= 0 - 2048) { return _vecg_rhs_ok(S, start); }   # 6.6.17 (a3): a vector global
     if (_sc_global_mismatch(S, pscale, start) != 0) { return 0; }
     if (_sc_whole(S, start) != 0 - 1) { return 0; }
@@ -10427,8 +10444,39 @@ fn _gsc_arg(S, a, ptr): i64 {
     }
     if (t != 2) { return 0; }
     if (TOKTYP(S, a + 1) == 10) { return _gsc_call(S, a, ptr); }
+    if (ptr == 1) { if (TOKTYP(S, a + 1) == 41) { return _gsc_chain(S, a); } }
     if (_gsc_name_end(S, a) == 0) { return 0; }
     return _gsc_name(S, TOKVAL(S, a), ptr);
+}
+# A `*G<T>` carrier given a field chain `h.bp` / `hp.bp` / `self.bp` / `GH.k.bp` (the whole argument):
+# what its LEAF field points at when it is declared `*G<X>` — each hop through an inline struct field
+# or a `*T` field, the head a local, a parameter, a capture or a global (`_dyn_base_sid`). It ran the
+# i64 base, `Box<i64>`'s layout, silently (4 for 8). Any other leaf binds nothing (an inline `G<X>`
+# field keeps the base's own refusal). CHANGELOG [6.7.8]
+fn _gsc_chain(S, a): i64 {
+    var i = a + 1;
+    while (TOKTYP(S, i) == 41) {
+        if (TOKTYP(S, i + 1) != 2) { return 0; }
+        i = i + 2;
+    }
+    var nt = TOKTYP(S, i);
+    if (nt != 31 && nt != 11) { return 0; }
+    var sid = _dyn_base_sid(S, TOKVAL(S, a));
+    var k = a + 2;
+    while (k < i) {
+        if (sid <= 0) { return 0; }
+        var fi = FINDFIELD(S, sid - 1, TOKVAL(S, k));
+        if (fi < 0) { return 0; }
+        var ps = _fld_ptr_sid(S, sid - 1, fi);
+        if (k + 1 == i) {
+            if (ps > 0) { return ps; }
+            return 0;
+        }
+        if (ps > 0) { sid = ps; }
+        else { sid = GETFTYPE(S, sid - 1, fi); }
+        k = k + 2;
+    }
+    return 0;
 }
 fn _gsc_name_end(S, a): i64 {
     if (TOKTYP(S, a) != 2) { return 0; }

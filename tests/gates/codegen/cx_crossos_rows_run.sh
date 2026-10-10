@@ -22,9 +22,9 @@
 #       faulting cx guest could exit 0, and "0" must never read as a pass for these rows.
 #   R4  tests/tcyr/crossos/narrow_slot_width.tcyr — native and cxvm each print
 #       `<N> passed, 0 failed` with N derived from the source (58 today, floor 58) and exit 0.
-#   R5  tests/tcyr/crossos/generic_struct_inference.tcyr — native: every assertion (156, floor 156);
+#   R5  tests/tcyr/crossos/generic_struct_inference.tcyr — native: every assertion (164, floor 164);
 #       cxvm: every assertion outside `#ifndef CYRIUS_TARGET_CX` blocks, indented ones included
-#       (155, floor 155 — all but the TC row: cx emits no tail call) — the B02 LIT group, B04's
+#       (163, floor 163 — all but the TC row: cx emits no tail call) — the B02 LIT group, B04's
 #       CF group and, since 6.7.8, the 16 B pair-return rows and the SC rows (T inferred through a
 #       generic struct parameter) run there.
 #   R6  tests/tcyr/crossos/struct_field_value_copy.tcyr — native and cxvm in full (96, floor 96).
@@ -45,7 +45,8 @@
 #       replay; dispatched by hand through the vtable) and (D6) calling through one (every receiver,
 #       argument and result shape, the callee read before the arguments, copies, closures, defer /
 #       secret, recursion, #regalloc, top level): native and cxvm each print `<N> passed, 0 failed`,
-#       N derived from the source (37 at D5, 78 at D6: floor 78) — the whole file, no cx fence.
+#       N derived from the source (37 at D5, 78 at D6, 81 at the review's §pairs: floor 81) — the whole
+#       file, no cx fence.
 #   Anti-vacuous: each inline file's native leg is the control (a cx green on a file that is wrong
 #   everywhere is impossible), each .tcyr must match a count derived from its source, and each
 #   inline success needs a stdout marker printed only when every row in it is right.
@@ -349,8 +350,8 @@ inline "R3 B03 field argument + top-level copy-init (V3, V4)" "$T/b03.cyr" 128 "
 echo "R4-R5 — the crossos .tcyr files, native then cxvm, counts derived from the source:"
 tcyr_native tests/tcyr/crossos/narrow_slot_width.tcyr 58
 tcyr_cx     tests/tcyr/crossos/narrow_slot_width.tcyr 58
-tcyr_native tests/tcyr/crossos/generic_struct_inference.tcyr 156
-tcyr_cx     tests/tcyr/crossos/generic_struct_inference.tcyr 155
+tcyr_native tests/tcyr/crossos/generic_struct_inference.tcyr 164
+tcyr_cx     tests/tcyr/crossos/generic_struct_inference.tcyr 163
 
 echo "R6 — struct_field_value_copy.tcyr, native then cxvm in full (cx refused it until 6.7.8):"
 tcyr_native tests/tcyr/crossos/struct_field_value_copy.tcyr 96
@@ -370,8 +371,8 @@ for _r8 in aggregate_storage_class:46 for_step_struct_assign:14 generic_two_para
 done
 
 echo "R9 — dyn_objects.tcyr (6.7.8, dyn D5 forming / D6 the call), native then cxvm, the count derived from the source:"
-tcyr_native tests/tcyr/crossos/dyn_objects.tcyr 78
-tcyr_cx     tests/tcyr/crossos/dyn_objects.tcyr 78
+tcyr_native tests/tcyr/crossos/dyn_objects.tcyr 81
+tcyr_cx     tests/tcyr/crossos/dyn_objects.tcyr 81
 
 WANT=38
 if [ "$fail" -ne 0 ]; then echo "FAIL: cx_crossos_rows_run — $fail row(s) red, $pass green"; exit 1; fi
