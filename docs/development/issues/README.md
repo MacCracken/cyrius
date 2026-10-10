@@ -238,13 +238,12 @@ release plan is roadmap.md § *Release sequence* (placed 2026-10-09).
 **6.7.7 — in flight** (0)
 
 
-**6.7.8 — features: checked dyn + C2 (prerequisites and decisions)** (7)
+**6.7.8 — features: checked dyn + C2 (prerequisites and decisions)** (6)
 
 - [cx: a fn returning a 16-byte struct is refused ("int-class 16B struct pair-return ABI not supported")](2026-10-08-cx-16b-struct-return-refused.md)
 - [`*p = v` through `p: *f32` / `*i32` is a raw 8-byte word store (documented design gap)](2026-10-08-deref-store-through-narrow-typed-pointer-is-word-store.md)
 - [A variable or subscript classic-`for` step never checks its `)`](2026-10-08-for-step-variable-subscript-close-paren-unchecked.md)
 - [Generic inference does not see through a generic struct parameter (`gx(b)` for `b: Box<T>`)](2026-10-08-generic-inference-through-generic-struct-param.md)
-- [A call through a variable or closure that returns f64 gives an untyped word (documented design gap)](2026-10-08-indirect-call-f64-result-untyped.md)
 - [A slice type outside a fn-local `var` is a mis-diagnosed parse error: declaration-zone globals, parameters, return types, fields](2026-10-09-slice-type-outside-fn-local-misdiagnosed.md)
 - [A trait's required signature is never parsed, and an overridden default method's is not either](2026-10-09-trait-signature-parameter-list-unparsed.md)
 

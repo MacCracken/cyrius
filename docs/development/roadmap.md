@@ -97,16 +97,24 @@ taken; it reuses C2's flag plumbing. A third feature release is needed only if a
   fields follow today (`struct { a: i8; b: i64; }` is 9 bytes). Only structs declaring one of them move — an ABI
   change: `lib/` declares none; cyrius's own tcyr files (23 fields) change in the release. It ships with its
   migration written up in the CHANGELOG and [ecosystem-migration.md](ecosystem-migration.md) — never silently.
-- **C2 — the opt-in bounds-checked memory mode** (`CYRIUS_BOUNDS` / `#bounds`, OFF by default). 6.6.12 shipped the
-  unchecked half for integer-element `var a: T[N]`; still to do: `*T` pointer subscripts, slice writes and the
-  checked mode itself. The stdlib must run clean under it (what it trips is a stdlib repair for the next break).
-  **With it, proposal P5's execution half**
-  ([proposals/2026-09-20-coverage-should-accept-run-programs-as-a-corpus.md](proposals/2026-09-20-coverage-should-accept-run-programs-as-a-corpus.md);
-  P5-A shipped in 6.6.17) — the same insertion point and build-flag plumbing. The bare-local-array slot-write lint
-  ([issue](issues/2026-10-08-cyrlint-array-overrun-and-write-length-checks.md)) may fold in here.
-- **Checked `dyn` — DECIDED (user, 2026-10-07).** Static dispatch stays the default (ADR-004). `o: dyn Show` is an
-  ordinary 16-byte `{data, vtable}` struct (ADR-002's one-word model holds); the compiler builds and VERIFIES the
-  vtable from `impl Show for T`, and `o.show()` is an indirect call visible in the declared type. Why: the run-time
+- **C2 — the opt-in bounds-checked memory mode — DECIDED (user, 2026-10-10, at the 6.7.8 open).** OFF by default;
+  `CYRIUS_BOUNDS=1` / a `CYRIUS_BOUNDS` predefine / `--bounds` / `[build] bounds = true` / a `#bounds` directive
+  (argument > env > manifest > source). Checked: typed arrays against their exact N, slice reads and writes, a `*T`
+  subscript for a negative index only; raw `load*/store*` stay unchecked; a provably out-of-range constant index warns
+  in every mode and is an error under it; `@unsafe { }` turns checks off. A violation prints `bounds: index N out of
+  [0, LEN) at <file>:<line>` and exits 134 (the slice check's code; lib/bounds.cyr and vec keep exit 1). **`*p` reads
+  and writes at the element's width everywhere** (a language change, approved) — `p[i]` covers integer / f64 / f32 /
+  bool elements on names, fields and call results. Slices stay locals (a slice parameter or global is refused by
+  name). **The stdlib run's trips are fixed in 6.7.8**, fold releases included; cyrlint stays in 6.7.10. With it,
+  proposal P5's execution half moves to 6.7.9 (on C2's flag plumbing).
+- **Checked `dyn` — DECIDED (user, 2026-10-07; the open shapes 2026-10-10).** Static dispatch stays the default
+  (ADR-004). `o: dyn Show` is an ordinary 16-byte `{data, vtable}` struct (ADR-002's one-word model holds); the
+  compiler builds and VERIFIES the vtable from `impl Show for T`, and `o.show()` is an indirect call visible in the
+  declared type. Formed automatically at a `dyn Tr` destination from a known `*T` or a declared scalar / literal (an
+  untyped name is refused); a `self: T` of 8 B or less makes forming that dyn refused by name; a generic member is
+  refused only when called through a dyn; full signatures are checked for every pair formed into a dyn (count-only
+  elsewhere, unchanged); `dyn` is not a type argument; the two words are opaque and `dyn A + B` is refused;
+  `lib/trait.cyr` is kept. Generic inference through `Box<T>` parameters ships in the same lane. Why: the run-time
   vtables `lib/trait.cyr` and hand-rolled code build are unchecked — a wrong slot or a missing method is a crash.
 
 ## The releases after 6.7.7 (placed 2026-10-09)
@@ -128,7 +136,7 @@ Sized from every open issue and the three remaining features (the 6.7.x release-
   - [`*p` through a narrow `*T` is a word store](issues/2026-10-08-deref-store-through-narrow-typed-pointer-is-word-store.md),
     because `p[0] = v` and `*p = v` must not disagree.
 - Placed by the open's answer:
-  - [an indirect call's f64 result is untyped](issues/2026-10-08-indirect-call-f64-result-untyped.md): (a) a bite in
+  - [an indirect call's f64 result is untyped](issues/archived/2026-10-08-indirect-call-f64-result-untyped.md): (a) a bite in
     the dyn lane · (b) goes to 6.7.10 · (c) closed at the open;
   - [generic inference through `Box<T>`](issues/2026-10-08-generic-inference-through-generic-struct-param.md): the
     inference is a bite in the dyn lane; the diagnostic only goes to 6.7.12.

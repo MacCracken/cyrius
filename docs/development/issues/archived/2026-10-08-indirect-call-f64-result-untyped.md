@@ -1,10 +1,9 @@
-# A call through a variable or closure that returns f64 gives an untyped word (documented design gap) — OPEN
+# A call through a variable or closure that returns f64 gives an untyped word (documented design gap) — CLOSED (decided)
 
-**Status:** 🟡 **OPEN** (design gap, documented) — reproduced 2026-10-08 against 6.7.6 @ 2fb6ad8b with `build/cycc`:
-`fncall1(&dbl, d) + 1.0` is an f64 add (5.0), `fncall1(fp, d) + 1.0` with `var fp = &dbl;` is an INTEGER add of the
-bit patterns (warns "integer arithmetic with an f64 right operand"; the value is wrong), and binding the result to a
-`var r: f64` first is right.
-**Placement:** 6.7.8 — features: checked dyn + C2 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
+> ✅ **CLOSED as decided, 2026-10-10** (user, at the 6.7.8 open): the documented rule stays — a call through a variable or closure returning f64 gives an untyped word (the guide says so). Typed fn pointers can come later as their own feature.
+
+**Status:** ✅ **CLOSED (decided 2026-10-10)** — see the banner above.
+**Placement:** decided at the 6.7.8 open — closed.
 **Discovered:** 6.7.6 (lane FE's `_icall_result`, struct_value_codegen.sh rows I / I3); written into the guide as the
 rule; filed 2026-10-08 from roadmap.md.
 **Severity:** Low — a design gap the guide documents, with a stated workaround and a warning at the site.
