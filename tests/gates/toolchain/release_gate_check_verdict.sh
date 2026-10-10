@@ -136,4 +136,17 @@ done
 [ "$_an" = 2 ] || fail "axis 10: RG_SKIP_ALLOW holds $_an entries, expected the 2 agnos-parity gates"
 grep -q '^#   4\. cross-OS self-host .*ach' "$RG" || fail "axis 10: the header's step 4 does not name ach"
 
-echo "PASS: release_gate_check_verdict (10 axes)"
+# ── axis 11 (6.7.7): a RED run names the driver's failing rows, and fail() keeps check.sh's
+# output — the first 6.7.7 gate run was RED on "the cyrius check binary" with no file named and
+# the output deleted with the temp dir ─────────────────────────────────────────────────────
+mk g11 "541 passed, 2 failed, 0 skipped (543 total)" 0
+{ echo "  codegen/some_test                 PASS"; echo "  crossos/flaky_timing_row          FAIL (exit 1)";
+  echo "  platform/slow_child               TIMEOUT (run) — killed at the deadline"; cat "$WORK/g11"; } > "$WORK/g11b"
+verdict 11 g11b 1 1
+grep -q 'driver rows that failed:' "$WORK/v11" || fail "axis 11: the RED verdict lists no failing driver rows: $(cat "$WORK/v11")"
+grep -q 'crossos/flaky_timing_row' "$WORK/v11" || fail "axis 11: a FAIL row is not named"
+grep -q 'platform/slow_child' "$WORK/v11" || fail "axis 11: a TIMEOUT row is not named"
+grep -q 'codegen/some_test' "$WORK/v11" && fail "axis 11: a PASS row is listed as failed"
+grep -q '_rg_kd/check.out' "$RG" || fail "axis 11: fail() no longer keeps check.sh's output in a checked mktemp dir"
+
+echo "PASS: release_gate_check_verdict (11 axes)"

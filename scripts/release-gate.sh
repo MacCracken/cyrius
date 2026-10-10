@@ -63,6 +63,10 @@ _rg_check_verdict() {
     sed -n '/check.sh summary/,$p' "$1" | sed 's/^/  /'
     if [ "$2" != "0" ]; then
         grep -E "^  FAIL|^  SKIP|NOT RUN" "$1" | tail -12
+        # 6.7.7: the driver's own failing rows, named — check.sh's summary says only "the cyrius check
+        # binary", so a RED test suite never named its file (the first 6.7.7 gate run).
+        _rg_tf=$(grep -E '^  [A-Za-z0-9_./-]+ +(FAIL|TIMEOUT)' "$1" | head -20 || true)
+        if [ -n "$_rg_tf" ]; then echo "  driver rows that failed:"; printf '%s\n' "$_rg_tf" | sed 's/^/  /'; fi
         _RG_WHY="check.sh exited $2 — see its summary above (the binary's 'N passed, M failed' line does NOT cover the shell gates)"
         return 1
     fi
@@ -141,6 +145,12 @@ fail() {
     # 6.7.0: cross-OS legs still running in the background (the parallel gate) are stopped; each
     # removes its own local and remote staging on the way out (cross-os-selfhost.sh's trap).
     if [ -n "${_RG_LEG_PIDS:-}" ]; then kill -TERM $_RG_LEG_PIDS 2>/dev/null || true; wait $_RG_LEG_PIDS 2>/dev/null || true; fi
+    # 6.7.7: check.sh's full output outlives a RED run (in a private mktemp file, never a fixed
+    # name) — it was removed with $T, so the first 6.7.7 run's failing test could not be named.
+    if [ -s "$T/check.out" ]; then
+        _rg_kd=$(mktemp -d) && [ -d "$_rg_kd" ] || { echo "error: mktemp -d failed — check.sh's output stays in $T"; exit 1; }
+        cp "$T/check.out" "$_rg_kd/check.out" && echo "check.sh's full output is kept at $_rg_kd/check.out"
+    fi
     rm -rf "$T"
     exit 1
 }
